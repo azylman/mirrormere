@@ -1,14 +1,15 @@
-# SPEC-007: Core Ingestion Providers (iCal Feeds & Open-Meteo Weather)
+# SPEC-007: Core Ingestion Providers (iCal Feeds, Open-Meteo Weather, & Google Photos Shared Albums)
 
 ## Status
 Approved / Core Ingestion Contract
 
 ## Context & Motivation
-Mirrormere decouples physical display clients from data ingestion. To avoid third-party cloud credential friction (such as Google Cloud Console project registration, OAuth consent screens, and refresh token expiration) on Day 1, Mirrormere standardizes its foundational data ingestion on **two zero-credential, local-first protocols**:
+Mirrormere decouples physical display clients from data ingestion. To avoid third-party cloud credential friction (such as Google Cloud Console project registration, OAuth consent screens, and refresh token expiration) on Day 1, Mirrormere standardizes its foundational data ingestion on **three zero-credential, local-first protocols**:
 1. **Multi-Calendar iCal (.ics) / CalDAV feeds**: Stateless polling of private calendar URLs.
 2. **Open-Meteo Forecast Engine**: Public, keyless, rate-limit-free meteorological API.
+3. **Google Photos Shared Album Ingestion**: Zero-auth extraction of high-resolution photo streams via public/unlisted album share links.
 
-Both providers run as background worker loops within the Go daemon, normalizing external payloads into typed structs published via the Server-Sent Events (SSE) bus (`GET /api/events`).
+All three providers run as background worker loops within the Go daemon, normalizing external payloads into typed structs published via the Server-Sent Events (SSE) bus (`GET /api/events`).
 
 ---
 
@@ -178,3 +179,95 @@ Weather codes conform to the World Meteorological Organization (WMO 4501) standa
 ### Dual-Use Target Routing
 1. **Grid Widget (`widgets/weather-forecast`)**: Renders full 24-hour hourly timeline and 7-day extended forecasts on the 6×2 grid canvas (`[2, 1]` or `[3, 2]` blocks).
 2. **Fixed Header Zone**: Automatically extracts `current.temperature` and `current.icon` into the persistent top banner across all screens without incurring extra API requests.
+
+---
+
+## 3. Google Photos Shared Album Provider (`providers/photos`)
+
+```mermaid
+flowchart LR
+    subgraph GooglePhotos [Google Photos Cloud]
+        Album[Shared Album\nphotos.app.goo.gl/...]
+        CDN[Google Image CDN\nlh3.googleusercontent.com/pw/...]
+    end
+
+    subgraph GoDaemon [Mirrormere Go Daemon]
+        Fetch[HTML Scraper & Metadata Extractor\nDefault: 3600s Cadence]
+        Parser[AF_initDataCallback Image Parser]
+        Cache[Photo URL Cache & Shuffler]
+        SSEHub[SSE Event Hub]
+    end
+
+    Album -->|HTTPS GET Share URL| Fetch
+    Fetch --> Parser
+    Parser --> Cache
+    Cache -->|widget.update: photo-carousel| SSEHub
+    SSEHub -->|Client Image URLs| Touch[Touch Kiosk 60Hz]
+    Touch -->|Direct HTTPS Fetch with Dynamic Resizing| CDN
+```
+
+### Context: The Share Link Architecture
+Historically, Google Photos integrations required the Google Photos Library API with `photoslibrary.readonly` OAuth scopes. However, Google deprecated and severely restricted third-party access to this API in 2025. 
+
+Fortunately, Google Photos provides **Unlisted Share Links** (e.g. `https://photos.app.goo.gl/...`). When an album is shared via link:
+1. Anyone with the URL can view the album in a browser without signing into a Google account.
+2. The initial page payload embeds structured metadata arrays containing the direct CDN image URLs (`https://lh3.googleusercontent.com/pw/...`).
+3. Appending standard Google image sizing parameters (e.g. `=w1920-h1080-no` or `=w800-h480-c`) instructs Google's edge cache to serve the exact resolution and crop required by the display hardware.
+
+### Configuration Schema (`config.yaml`)
+
+```yaml
+providers:
+  photos:
+    refresh_interval_seconds: 3600 # 1 hour
+    albums:
+      - name: "Family Live Album"
+        share_url: "https://photos.app.goo.gl/AbCdEf123456789"
+        shuffle: true
+        preload_count: 50
+        cycle_interval_seconds: 60 # Rotate image every 60s within widget
+```
+
+### Parsing Pipeline in Go
+1. **HTTP Resolution**: The Go fetcher performs an HTTP GET on the `share_url` following redirects to `https://photos.google.com/share/...`.
+2. **Data Extraction**: Extracts the JSON-like data blob within the `AF_initDataCallback` script tag or HTML meta tags containing photo entries:
+   - Base image URL (`https://lh3.googleusercontent.com/...`)
+   - Original upload timestamp
+   - Intrinsic image width and height (aspect ratio)
+3. **Parameter Injection**: Dynamic sizing parameters are applied based on the client hardware target:
+   - **Touch Kiosk (1080p)**: `=w1920-h1080` (or `=w960-h960` for 50/50 split).
+   - **E-Ink (800×480)**: `=w800-h480` for grayscale rendering.
+
+### Normalized Internal Schema (`PhotoItem`)
+
+Emitted via SSE on `widget.update`:
+
+```json
+{
+  "widget_id": "photo-carousel",
+  "timestamp": "2026-09-24T22:22:00Z",
+  "data": {
+    "album_name": "Family Live Album",
+    "total_photos": 142,
+    "cycle_interval_seconds": 60,
+    "photos": [
+      {
+        "id": "photo_101",
+        "url": "https://lh3.googleusercontent.com/pw/AP1Gcz...=w1920-h1080",
+        "timestamp": "2026-08-15T14:30:00Z",
+        "aspect_ratio": 1.33
+      },
+      {
+        "id": "photo_102",
+        "url": "https://lh3.googleusercontent.com/pw/AP1Gcz...=w1920-h1080",
+        "timestamp": "2026-09-02T18:45:00Z",
+        "aspect_ratio": 1.50
+      }
+    ]
+  }
+}
+```
+
+### Dual Display Adapter Handling
+- **Touch Kiosk (Profile A)**: The PWA renders a smooth hardware-accelerated CSS crossfade slideshow occupying a 50/50 `[3, 2]` block or full-screen `[6, 2]` hero canvas, preloading the next image in background DOM.
+- **Ambient E-Ink (Profile B)**: The headless renderer downloads the image, converts to 8-bit grayscale, applies Floyd-Steinberg or Atkinson dithering to 1-bit monochrome, and renders crisp photo cards on the e-paper panel.
