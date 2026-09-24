@@ -1,4 +1,4 @@
-.PHONY: all build run test coverage lint verify clean
+.PHONY: all build run test coverage lint verify clean docker-build docker-run
 
 all: build
 
@@ -20,6 +20,12 @@ lint:
 
 verify:
 	./scripts/verify.sh --full
+
+docker-build:
+	docker build -t mirrormere:local .
+
+docker-run:
+	docker run --rm -p 8080:8080 mirrormere:local
 
 clean:
 	rm -rf bin/ coverage.out .mirrormere-coverage-*.tmp

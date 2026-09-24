@@ -1,0 +1,18 @@
+# Version control & internal tools
+.git
+.github
+
+# Build & coverage outputs
+bin/
+*.out
+.mirrormere-coverage-*.tmp
+coverage/
+
+# Specifications & documentation
+specs/
+*.md
+
+# Developer tooling & configurations
+.golangci.yml
+Makefile
+scripts/
