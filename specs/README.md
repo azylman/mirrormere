@@ -11,3 +11,4 @@ This directory contains the foundational technical specifications, architectural
 - **[005-screen-layout-and-rotation.md](005-screen-layout-and-rotation.md)**: Declarative 6×2 grid canvas, fixed header zone, and exact bin-packing rotation algorithm with fully-filled screen invariants.
 - **[006-realtime-comms-and-mutations.md](006-realtime-comms-and-mutations.md)**: Realtime client-server communication via Server-Sent Events (SSE) state streaming paired with REST mutation endpoints (CQRS).
 - **[007-core-data-providers.md](007-core-data-providers.md)**: Core data ingestion providers for multi-calendar iCal/CalDAV feeds, Open-Meteo weather forecasts, and Google Photos shared albums.
+- **[008-tasks-and-lists.md](008-tasks-and-lists.md)**: Checklists, grocery lists and chores: local SQLite store, pluggable source-of-truth adapters (Google Tasks, generic HTTP), widget actions over the SPEC-006 protocol, and read-only e-ink rendering.
