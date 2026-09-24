@@ -17,7 +17,8 @@ Mirrormere targets two hardware archetypes:
 - **Compute Unit**: Beelink Mini S12 Pro (Intel N100 4C/4T up to 3.4GHz, 16GB DDR4 RAM, 500GB NVMe SSD, ~6W idle).
 - **Video Capture Ingest**: USB 3.0 HDMI Video Capture Dongle (MS2109 or MacroSilicon UVC compliant, 1080p60 input).
 - **Cast Receiver**: Google Chromecast (HDMI output feeding into the capture card).
-- **Audio Node**: Nano USB Microphone Dongle (thumbnail-sized stub plugged into rear USB port).
+- **Audio Output**: Dual built-in stereo speakers integrated into the UPERFECT monitor chassis (audio delivered digitally over HDMI/USB-C, zero extra cables).
+- **Audio / Voice Ingest (optional)**: Nano USB Microphone Dongle (thumbnail-sized stub plugged into rear USB port; software voice stack deferred past v1).
 - **Mounting**: Low-profile fixed 75×75mm VESA wall mount + short right-angle USB-C and HDMI jumper cables.
 
 ### Physical Architecture ("The VESA Sandwich")
@@ -29,15 +30,12 @@ Mirrormere targets two hardware archetypes:
 ### Operating System & Runtime Environment
 - **Base OS**: Minimal Debian 12 / Ubuntu Server (headless base, zero desktop bloat).
 - **Display Server**: Wayland with the `cage` kiosk compositor (single-application fullscreen confinement).
-- **Frontend Container**: Chromium browser launched with:
-  ```bash
-  chromium --kiosk --noerrdialogs --disable-infobars \
-    --check-for-update-interval=31536000 \
-    --enable-features=OverlayScrollbar \
-    --use-gl=egl \
-    http://localhost:8080
-  ```
-- **Power Management**: Display DPMS sleep via `wlr-randr` or CEC scheduling based on room motion or time of day.
+- **Frontend Runtime**: Chromium browser running in `--kiosk` mode pointing to `http://localhost:8080/display` (see SPEC-010).
+- **Input Strategy**: Glance-and-tap only (tap to complete checklist items, swipe to switch screens/dismiss, tap media controls). Zero on-screen virtual keyboard (OSK); task/list additions are handled companion/phone-first.
+- **Power Management**: Display DPMS sleep via `swayidle` and `wlr-randr` (see SPEC-010):
+  - Fixed night schedule (display hard sleep 11 PM – 6 AM).
+  - Daytime idle timeout (10 minutes of inactivity blanks panel).
+  - Wake on tap: touch digitizer input event instantly restores display power.
 
 ---
 
