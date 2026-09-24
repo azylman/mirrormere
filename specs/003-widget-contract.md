@@ -123,6 +123,7 @@ To keep the core Go daemon container lightweight, hermetic, and minimal (< 25MB 
 - The core Go server exposes the full-screen layout at `GET /display` (HTML).
 - Ambient e-ink displays are serviced by an **optional headless capture sidecar** (`mirrormere-eink-renderer`).
 - The sidecar loads the page, captures the 800×480 viewport, applies 1-bit Floyd-Steinberg dithering / quantization, and exposes `GET /eink.png` for display nodes to fetch.
+- `GET /eink.png` renders on request (or returns a render newer than the last `widget.update`) and sends a strong `ETag` equal to a hash of the PNG bytes, so display nodes can skip unchanged frames (SPEC-009).
 
 ---
 

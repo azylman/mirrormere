@@ -44,24 +44,26 @@ Mirrormere targets two hardware archetypes:
 ## Profile B: Ambient E-Paper Kiosk (Mike & Amos)
 
 ### Bill of Materials (BOM)
-- **Display**: Waveshare 7.5" e-Paper HAT (V2, 800×480 resolution, SPI interface, Black & White).
+- **Display**: Waveshare 7.5" V2 raw e-paper panel (800×480, SPI, Black & White).
   > **Critical Warning**: Must be strictly the Black/White V2 model. 3-color (Red/Yellow) panels require 15–30 seconds per full refresh and lack partial refresh support.
-- **Compute Unit**: Raspberry Pi 4 Model B (4GB RAM).
-- **Power Supply**: Official Raspberry Pi 15W (5.1V / 3A) or 27W USB-C Power Adapter.
-- **Storage**: 32GB Class A1 MicroSD Card (SanDisk Ultra / High Endurance).
-- **Thermals**: Low-profile adhesive copper/aluminum heatsink pack (passive fins clearing the GPIO HAT).
-- **Audio / Voice Array**: reSpeaker XVF3800 USB 4-Mic Array with case (or nano USB mic stub).
-- **Mounting**: Flat bench stand or custom 3D printed bezel.
+- **Driver Board**: Adafruit E-Ink Bonnet for Raspberry Pi (24-pin FPC). Pin map differs from the Waveshare HAT; see SPEC-009.
+  - The all-in-one Waveshare 7.5" e-Paper HAT (V2) is a supported alternative using the driver's default pins.
+- **Compute Unit**: Raspberry Pi 3 Model B+ (Mike's unit, already owned). Raspberry Pi 4 Model B also supported.
+- **Power Supply**: 5V 2.5A micro-USB supply (Pi 3 B+), or official USB-C supply (Pi 4B).
+- **Storage**: 32GB Class A1 MicroSD Card.
+- **Sensors (optional)**: DHT22 temperature/humidity sensor for an indoor-climate widget.
+- **Audio / Voice Array (optional)**: reSpeaker XVF3800 USB 4-Mic Array with case.
+- **Mounting**: None for now; M2.5 nylon standoffs secure the Bonnet to the Pi.
 
 ### Physical Architecture
-- The Waveshare HAT stacks directly onto the Pi 4B 40-pin GPIO header via standard standoffs.
-- The ribbon cable connects the HAT driver board to the raw 7.5" e-paper raw panel mounted on the front.
-- Passive heatsinks provide adequate cooling for the BCM2711 SoC without requiring a noisy or bulky active fan.
+- The Adafruit E-Ink Bonnet stacks onto the Pi's 40-pin GPIO header, held by M2.5 standoffs.
+- The panel's 24-pin ribbon connects to the Bonnet's FPC connector.
+- Rendering happens on the server (SPEC-003 §3 sidecar); the Pi only fetches and flushes images, so no active cooling is needed.
 
 ### Operating System & Runtime Environment
 - **Base OS**: Raspberry Pi OS Lite (64-bit, headless, no X11/Wayland).
 - **Hardware Interface**: SPI enabled via `/boot/config.txt` (`dtparam=spi=on`).
-- **Rendering Pipeline**: Python script utilizing Pillow (PIL) or headless SVG/cairo rendering, pushing raw byte buffers directly to the e-paper driver via `spidev`.
+- **Rendering Pipeline**: No local rendering. The `clients/eink-node` daemon (SPEC-009) fetches the sidecar's 1-bit PNG and pushes it to the panel via `spidev`.
 - **Refresh Strategy**:
   - Full refresh every 60 minutes to clear accumulated ghosting.
   - Partial refreshes on state change (e.g. new calendar events, chore completion) or every 5 minutes for clock updates.
