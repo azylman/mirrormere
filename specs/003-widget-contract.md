@@ -1,10 +1,10 @@
 # SPEC-003: Pluggable Widget Contract & Extension Model
 
 ## Status
-Draft / Architecture Defined
+Approved / Architecture Defined
 
 ## Overview
-Mirrormere uses a pluggable, declarative widget model. A widget is a self-contained unit responsible for data ingestion and presentation. To support both 60Hz capacitive touchscreens and low-refresh e-paper panels, widgets decouple the data pipeline from the physical display adapter.
+Mirrormere uses a pluggable, declarative widget model. A widget is a self-contained unit responsible for data ingestion and presentation. To support both 60Hz capacitive touchscreens and low-refresh e-paper panels, widgets decouple the data pipeline from the physical display adapter while utilizing a unified semantic HTML template styled per deployment.
 
 ---
 
@@ -15,11 +15,10 @@ A widget package lives in `widgets/<widget-id>/` (for standard core widgets) or 
 ```
 widgets/calendar-agenda/
 ├── manifest.yaml           # Widget metadata, configuration schema, and capabilities
-├── provider.py (or .go)    # Backend data fetcher and event publisher
+├── provider.go             # Backend data fetcher and event publisher
 ├── views/
-│   ├── touch.html          # Interactive Web Component for 60Hz touch displays
-│   └── eink.svg            # Static high-contrast SVG template for 800×480 e-paper
-└── assets/                 # Optional static icons or style sheets
+│   └── widget.html         # Unified semantic HTML layout for all display profiles
+└── assets/                 # Optional static icons or assets
 ```
 
 ---
@@ -97,20 +96,33 @@ The backend data provider runs in the Mirrormere Core service:
 
 ---
 
-## Dual View Adapters
+## Unified Semantic HTML & Server-Wide Styling
 
-### 1. Touch Interactive View (`views/touch.html`)
-- Delivered as a modern Web Component or HTML5 snippet loaded by the Chromium kiosk PWA.
-- Fully supports CSS variables for theming, touch drag-and-drop, tap-to-complete chores, and fluid layout resizing.
-- Receives state updates reactively via WebSocket.
+Mirrormere eliminates the authoring and maintenance overhead of dual templates (`touch.html` vs. `eink.svg`). Every widget authors **one single semantic HTML template** (`views/widget.html`).
 
-### 2. Ambient E-Ink View (`views/eink.svg` or Python renderer)
-- Rendered on the Raspberry Pi into a high-contrast 1-bit or 4-bit grayscale buffer.
-- Strict design rules:
-  - Zero grayscale anti-aliasing on text edges for crisp 1-bit rendering.
-  - Solid geometric shapes, high-contrast borders (2px minimum), and heavy font weights (e.g. Inter Bold, Roboto Black).
-  - No CSS transitions or keyframe animations.
-  - Layout sized explicitly to 800×480 pixels.
+### 1. View Template (`views/widget.html`)
+- Delivered as a clean semantic HTML5 snippet or modern Web Component loaded into the canvas.
+- Markup uses clean semantic classes (e.g. `.widget`, `.widget-title`, `.item-done`) and standard CSS variables for styling.
+- Layout flexes and responds dynamically to its assigned grid cells per SPEC-005.
+- Receives state updates reactively via Server-Sent Events (`widget.update` per SPEC-006).
+
+### 2. Server-Wide Volume-Mounted Stylesheet (`/config/custom.css`)
+In alignment with Mirrormere's independent deployment topology and zero-runtime-multiplexing invariant:
+- **Zero Config Keys**: There are no `theme:`, `profile:`, or `css:` selectors in `config.yaml`.
+- The server serves a single unified stylesheet at `/style.css`.
+- At startup, the server inspects `/config/custom.css` on disk:
+  - **Mounted File Present**: Serves the volume-mounted file directly.
+  - **Unmounted / Absent**: Serves the default embedded stylesheet (`embed.FS`).
+- Each household injects its display styling purely via Docker volume mounts:
+  - **Alex's Touch Kiosk**: `-v ./kiosk.css:/config/custom.css:ro` (dark mode cyberpunk palette, 48px touch targets, glowing accents).
+  - **Mike's Ambient E-Ink**: `-v ./eink.css:/config/custom.css:ro` (high-contrast 1-bit monochrome, bold typography, zero animations, 2px solid borders).
+
+### 3. Decoupled E-Ink Headless Capture Sidecar
+To keep the core Go daemon container lightweight, hermetic, and minimal (< 25MB static binary with `CGO_ENABLED=0`):
+- The core Go server **never bundles Chromium or headless browser dependencies**.
+- The core Go server exposes the full-screen layout at `GET /display` (HTML).
+- Ambient e-ink displays are serviced by an **optional headless capture sidecar** (`mirrormere-eink-renderer`).
+- The sidecar loads the page, captures the 800×480 viewport, applies 1-bit Floyd-Steinberg dithering / quantization, and exposes `GET /eink.png` for display nodes to fetch.
 
 ---
 

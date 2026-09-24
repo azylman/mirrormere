@@ -43,9 +43,8 @@ Mirrormere supports two distinct reference hardware profiles:
 Widgets in Mirrormere are modular packages containing a server-side data provider and display-specific view adapters:
 
 - **Data Provider**: Scheduled or WebSocket-driven worker responsible for fetching and caching state (e.g. Google Calendar OAuth / CalDAV sync, Open-Meteo weather, Home Assistant state streams).
-- **View Adapters**:
-  - `touch.html` / Web Component: Fluid, high-resolution layout with touch gestures, animations, and interactive controls for the Touch Kiosk.
-  - `eink.svg` / monochrome template: High-contrast, black-and-white static template tailored for 800×480 e-paper refresh cycles.
+- **View Adapter**:
+  - `widget.html`: Unified semantic HTML layout rendered dynamically into the canvas and styled via the volume-mounted server stylesheet (`/config/custom.css` with embedded fallback). E-ink displays are rendered via an optional headless capture sidecar, eliminating dual SVG templates.
 
 ### Capability Profiles
 Displays declare a capability profile in their local configuration (e.g. `touch-interactive` vs. `ambient-static`). Interactive-only widgets (such as Chromecast UVC capture or video streams) automatically exclude themselves from static e-paper clients.
