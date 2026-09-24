@@ -13,6 +13,25 @@ Mirrormere solves this by establishing an open, headless smart display platform 
 
 ---
 
+## Scope & Phasing
+
+- **Phase 1 (v1 MVP Core Pillars)**:
+  1. Multi-Calendar Ingestion (iCal / CalDAV / Google Calendar - SPEC-007)
+  2. Weather Forecasts & Live Conditions (Open-Meteo - SPEC-007)
+  3. Household Lists, Chores & Tasks (Local SQLite / Google Tasks - SPEC-008)
+  4. Google Photos Shared Album Slideshows (SPEC-007)
+  5. Physical Google Cast Video Capture (UVC HDMI - SPEC-004)
+  6. 6×2 Grid Layouts with Auto-Packed Bin-Packing Engine (SPEC-005)
+  7. Client Ecosystem: Ambient E-Ink Node (SPEC-009) & Touch Kiosk (SPEC-010)
+
+- **Phase 2 (Post-MVP Roadmap)**:
+  1. Home Assistant Core entity state streaming (climate, lights, locks, sensors)
+  2. Smart home quick-action widget controls
+  3. Doorbell camera popup interrupts on ring/motion events
+  4. Voice assistant satellite pipeline (`wyoming-satellite`)
+
+---
+
 ## System Topology
 
 ```mermaid
@@ -20,44 +39,46 @@ graph TD
     subgraph Data Sources
         GCal[Google Calendar / CalDAV]
         Weather[Open-Meteo API]
-        HA[Home Assistant Core]
-        Chores[Local Task Storage]
+        Photos[Google Photos Shared Album]
+        Chores[Local Task Storage / SQLite]
         CC[Chromecast via HDMI]
+        HA[Home Assistant Core - Phase 2]
     end
 
     subgraph Mirrormere Core Daemon
         Engine[Sync & Ingestion Engine]
-        PubSub[WebSocket & Event Bus]
-        WidgetEngine[Widget Plugin Manager]
+        PubSub[SSE Event Stream Bus]
+        WidgetEngine[Widget Engine & 6x2 Solver]
     end
 
     subgraph Client Tier: Touch Kiosk (Intel N100)
+        Cage[cage Wayland Compositor]
         Chromium[Chromium Kiosk Browser]
-        PWA[Touch PWA & Web Components]
         V4L2[UVC Video /dev/video0]
+        Cage --> Chromium
     end
 
-    subgraph Client Tier: Ambient E-Ink (Raspberry Pi 4B)
-        Cron[Timer & Event Listener]
-        Renderer[SVG / Pillow Static Renderer]
+    subgraph Client Tier: Ambient E-Ink (Raspberry Pi 3B+ / 4B)
+        Sidecar[mirrormere-eink-renderer Sidecar]
+        Node[clients/eink-node Python Daemon]
         Driver[Waveshare SPI Driver]
+        Sidecar -->|GET /eink.png| Node
+        Node --> Driver
     end
 
     GCal --> Engine
     Weather --> Engine
-    HA --> Engine
+    Photos --> Engine
     Chores --> Engine
+    HA -.->|Phase 2| Engine
 
     Engine --> WidgetEngine
     WidgetEngine --> PubSub
 
-    PubSub -->|WebSocket / State JSON| PWA
+    PubSub -->|SSE widget.update| Chromium
+    PubSub -->|SSE widget.update| Node
     CC -->|HDMI to USB UVC| V4L2
     V4L2 -->|getUserMedia HTML5| Chromium
-
-    PubSub -->|REST / Webhook Trigger| Cron
-    Cron --> Renderer
-    Renderer --> Driver
 ```
 
 ---
@@ -65,24 +86,30 @@ graph TD
 ## Architectural Pillars
 
 ### 1. Headless Data Engine
-The core service is a lightweight daemon (written in Go or Python/Node) running locally on the home network (or directly on the display host). It is responsible for:
-- Synchronizing external calendars (Google Calendar OAuth, CalDAV, local iCal).
-- Maintaining household chore and meal lists in a local SQLite database.
-- Subscribing to Home Assistant WebSocket streams for live entity states and camera events.
-- Exposing a local REST API and WebSocket event feed for client displays.
+The core service is a lightweight daemon written in Go running locally on the home network (or directly on the display host). It is responsible for:
+- Synchronizing external calendars (Google Calendar iCal/CalDAV feeds, local iCal - SPEC-007).
+- Maintaining household chore, grocery, and to-do lists in a local SQLite database (SPEC-008).
+- Ingesting Open-Meteo weather forecasts and Google Photos shared albums (SPEC-007).
+- Ingesting physical Google Cast HDMI video via USB 3.0 UVC capture (SPEC-004).
+- Executing the exact 6×2 bin-packing layout engine to automatically pack widgets into minimal screens (SPEC-005).
+- Exposing a local REST API and Server-Sent Events (SSE) state stream for client displays (SPEC-006).
+- Home Assistant entity streaming and camera interrupts (deferred to Phase 2).
 
 ### 2. Client Display Tiers
 Mirrormere targets two distinct display classes:
 
 - **Tier 1: Touch-Interactive Kiosk (60Hz)**
-  - Targeted at Intel N100 hardware driving 1080p/4K capacitive touch monitors.
-  - Runs a Progressive Web App (PWA) under Wayland with hardware-accelerated WebGL/CSS.
+  - Targeted at Intel N100 hardware driving 1080p capacitive touch monitors (SPEC-002, SPEC-010).
+  - Runs Chromium under Wayland `cage` with hardware-accelerated WebGL/CSS.
   - Supports live touch gestures, smooth transitions, real-time status pulses, and video capture overlays.
+  - Zero on-screen keyboard (OSK) overhead; item editing is companion/phone-first.
+  - DPMS sleep lifecycle with night window and daytime tap-to-wake.
 
 - **Tier 2: Ambient E-Paper Kiosk (0.01Hz)**
-  - Targeted at Raspberry Pi 4B hardware driving 7.5" e-Paper SPI HATs.
-  - Operates completely headlessly without running a heavy browser.
-  - Subscribes to backend change events or runs on a scheduled cron (e.g. 5–15 minute cadence), rendering static high-contrast monochrome layouts directly to the frame buffer.
+  - Targeted at Raspberry Pi hardware driving 7.5" e-Paper SPI HATs/Bonnets (SPEC-002, SPEC-009).
+  - Operates completely headlessly without running a local browser on the display node.
+  - Subscribes to backend SSE change events with 5s coalescing and 60s minimum refresh floors.
+  - Renders 1-bit dithered PNGs via the server-side `mirrormere-eink-renderer` sidecar.
 
 ### 3. Decoupled Presentation Layer
-The backend has zero awareness of how pixels are drawn. Each widget package defines separate view adapters, allowing the same underlying calendar or task model to be rendered as an interactive HTML5 component or a static monochrome bitmap.
+The Go backend has zero awareness of how pixels are drawn. The server renders semantic HTML layouts (`views/widget.html`), injected with deployment-time volume-mounted stylesheets (`/config/custom.css`), allowing the exact same underlying calendar or task model to be presented on interactive touch kiosks or captured for static monochrome e-paper.
