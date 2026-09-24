@@ -61,3 +61,5 @@ lerna-debug.log*
 tmp/
 temp/
 scratch/
+.mirrormere-coverage-*.tmp
+coverage/
