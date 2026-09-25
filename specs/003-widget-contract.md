@@ -52,6 +52,27 @@ If `/config/widgets/<widget-type>/` exists, it is selected as the authoritative 
   ```
   The daemon never falls back to `/app/widgets/<widget-type>/` for missing files within an overridden package directory. This enables households to introduce brand-new custom widgets OR completely replace built-in widget implementations cleanly without leaking underlying assets or schemas.
 
+### Static Asset Serving & URL Contract (`assets/`)
+Widget packages can optionally provide static icons, images, or assets within an `assets/` subdirectory (e.g., `widgets/<widget-type>/assets/icon.svg`).
+
+1. **HTTP Asset Route (`GET /widgets/{type}/assets/{path}`)**:
+   The Go daemon routes static assets via:
+   `GET /widgets/{type}/assets/{path}`
+   - **Resolution Source**: Static assets are served strictly from the resolved widget package directory per the whole-package override rule. If `/config/widgets/{type}/` exists, assets are served from `/config/widgets/{type}/assets/{path}`. Otherwise, they are served from `/app/widgets/{type}/assets/{path}`.
+   - **Path Traversal Protection**: The HTTP handler sanitizes `{path}` using `filepath.Clean`. Any attempts at path traversal (such as `..`, null bytes, or paths resolving outside the resolved package's `assets/` directory) are rejected with `400 Bad Request` or `404 Not Found`.
+   - **MIME Types**: Assets are served with standard `Content-Type` headers inferred from the file extension (e.g. `image/svg+xml`, `image/png`, `image/webp`).
+   - **Status Codes**:
+     - `200 OK`: File exists and is served with appropriate MIME type.
+     - `404 Not Found`: Asset file does not exist, or the resolved package omits the `assets/` directory.
+     - `400 Bad Request`: Malformed path or directory traversal attempt.
+   - **API Schema**: This route is formally defined in `api/openapi.yaml`.
+
+2. **Template Context Integration**:
+   Templates must never hard-code asset path prefixes. The server injects an `.Assets` base URL variable (evaluating to `/widgets/<widget-type>/assets`) into the template execution context:
+   ```html
+   <img src="{{ .Assets }}/weather-icon.svg" alt="Weather condition" class="widget-icon" />
+   ```
+
 ---
 
 ## Manifest Schema (`manifest.yaml`)
@@ -446,6 +467,7 @@ Mirrormere eliminates the authoring and maintenance overhead of dual templates (
 - Markup uses clean semantic classes (e.g. `.widget`, `.widget-title`, `.item-done`) and standard CSS variables for styling.
 - Layout flexes and responds dynamically to its assigned grid cells per SPEC-005.
 - Receives state updates reactively via Server-Sent Events (`widget.update` per SPEC-006).
+- Template Execution Context: Evaluated with `.Config`, `.Data`, `.State`, `.Timestamp`, and `.Assets` (base URL path `/widgets/<widget-type>/assets` referencing static package assets).
 
 ### 2. Server-Wide Volume-Mounted Stylesheet (`/config/custom.css`)
 In alignment with Mirrormere's independent deployment topology and zero-runtime-multiplexing invariant:
