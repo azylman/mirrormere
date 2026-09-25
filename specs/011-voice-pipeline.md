@@ -117,7 +117,7 @@ data: {"duration_ms": 1240}
 ### 3. Event Specifications
 - `event: state`: Notifies the edge of active sub-state transitions (`transcribing`, `synthesizing`).
 - `event: transcript`: Fired immediately when Whisper finishes transcription. Contains the recognized user `transcript`.
-- `event: thinking`: Keep-alive heartbeat emitted every 5 seconds while waiting for agent brains with asynchronous task queues (which may take 10–60s). Prevents reverse proxies, client HTTP timeouts, and socket drops.
+- `event: thinking`: Keep-alive heartbeat emitted every 5 seconds while waiting for agent brains with asynchronous task queues (which may take 10–60s). Prevents reverse proxies, client HTTP timeouts, and socket drops by continuously resetting client read/idle timers.
 - `event: reply`: Fired when the agent brain returns its answer text, enabling instant caption toast rendering. Contains `reply` text and the active `tts_engine`.
 - `event: audio_chunk`: Carries audio payload. Supports `format: "pcm"`, `format: "wav"`, or `format: "mp3"`. Allows either multi-chunk streaming (Kokoro) or a single complete payload (ElevenLabs / Piper) indicated by `is_final: true`.
 - `event: error`: Emitted if the brain or STT exceeds configured timeouts (e.g. 60s) or encounters fatal exceptions:
@@ -268,7 +268,7 @@ voice:
 
   hub:
     url: "http://localhost:9000/api/voice/interact"      # Voice Hub running locally on the Pi 4B
-    timeout_seconds: 75
+    timeout_seconds: 120
 
   playback:
     sink: "default"

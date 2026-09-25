@@ -123,7 +123,7 @@ services:
 - **Rendering Pipeline**: Rendered via the `eink-renderer` Chromium sidecar. The `clients/eink-node` daemon (SPEC-009) fetches the 1-bit PNG and pushes it to the panel via `spidev`.
 - **Refresh Strategy**:
   - Full refresh every 60 minutes to clear accumulated ghosting.
-  - Partial refreshes on state change (e.g. new calendar events, chore completion) or every 5 minutes for clock updates.
+  - Partial refreshes on state change (e.g. new calendar events, upstream chore updates), screen rotation, or periodic clock refresh timer (`clock_refresh_seconds`, see SPEC-009).
   - Strict zero-animation rule: UI redrawing is purely event- or timer-driven.
 
 ### Reference Deployment Topology & Manifest (`deploy/compose.yml`)
