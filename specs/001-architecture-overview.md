@@ -121,6 +121,29 @@ Mirrormere targets two distinct display classes:
 ### 3. Decoupled Presentation Layer
 The Go backend has zero awareness of how pixels are drawn. The server renders semantic HTML layouts (`views/widget.html`), injected with deployment-time volume-mounted stylesheets (`/config/custom.css`), allowing the exact same underlying calendar or task model to be presented on interactive touch kiosks or captured for static monochrome e-paper.
 
+### 4. Declarative Configuration & House Timezone (`config.yaml`)
+Mirrormere instances are statically configured at deployment time via a root configuration file mounted into `/config/config.yaml`:
+- **Top-Level `timezone` Key**: Declares the authoritative household IANA timezone (e.g. `timezone: "America/Los_Angeles"`). All date formatting, header clocks, calendar event bounding intervals, and midnight chore rollovers execute against this house timezone, preventing container host timezone divergence.
+- **Top-Level Schema Structure**:
+  ```yaml
+  timezone: "America/Los_Angeles" # Authoritative house timezone (IANA)
+
+  display:
+    rotation:
+      interval_seconds: 30
+      transition: "slide"
+    header:
+      enabled: true
+      elements: [clock, date, weather_badge, sync_status]
+    widgets:
+      - id: family-calendar
+        type: calendar-agenda
+        dimensions: [4, 2]
+      - id: calendar-pad
+        type: spacer
+        dimensions: [2, 2]
+  ```
+
 ---
 
 ## Standardized Port Allocations & Network Topology
