@@ -28,7 +28,7 @@ Mirrormere solves this by establishing an open, headless smart display platform 
   1. Home Assistant Core entity state streaming (climate, lights, locks, sensors)
   2. Smart home quick-action widget controls
   3. Doorbell camera popup interrupts on ring/motion events
-  4. Voice assistant satellite pipeline (`wyoming-satellite`)
+  4. Voice assistant satellite pipeline (`wyoming-satellite`, or the adapter pipeline in SPEC-011)
 
 ---
 
