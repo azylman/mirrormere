@@ -114,11 +114,11 @@ data: {"online":true,"time":"2026-09-24T22:15:20Z","home_assistant":"connected",
 ```
 
 #### D. `video.state`
-Emitted whenever the video priority stack mutates (stream trigger, doorbell interruption, or dismissal per SPEC-004):
+Emitted whenever the video priority stack mutates or player transport changes (stream trigger, doorbell interruption, play/pause, or dismissal per SPEC-004):
 ```http
 event: video.state
 id: evt_1727216290_04
-data: {"mode":"video","primary":{"id":"chromecast","stream_url":"http://127.0.0.1:1984/cast","type":"webrtc"},"pip":{"id":"doorbell","stream_url":"http://homeassistant:1984/doorbell","type":"webrtc","muted":true,"timeout_seconds":45}}
+data: {"mode":"video","primary":{"id":"chromecast","stream_url":"http://127.0.0.1:1984/cast","type":"webrtc","player_state":"playing","controllable":true},"pip":{"id":"doorbell","stream_url":"http://homeassistant:1984/doorbell","type":"webrtc","muted":true,"timeout_seconds":45}}
 ```
 
 #### E. `audio.state`
@@ -287,7 +287,7 @@ External sidecars, local microservices, and Home Assistant automations can immed
     }
     ```
 
-### 3. Video Stream Lifecycle Endpoints
+### 3. Video Stream Lifecycle & Action Endpoints
 - **Trigger Stream**: `POST /api/video/trigger`
   - **Payload**:
     ```json
@@ -296,7 +296,8 @@ External sidecars, local microservices, and Home Assistant automations can immed
       "stream_url": "http://127.0.0.1:1984/cast",
       "type": "webrtc",
       "priority": "persistent",
-      "timeout_seconds": 0
+      "timeout_seconds": 0,
+      "controllable": true
     }
     ```
 - **Dismiss Stream**: `POST /api/video/dismiss`
@@ -306,6 +307,16 @@ External sidecars, local microservices, and Home Assistant automations can immed
       "id": "chromecast"
     }
     ```
+- **Video Action & Transport Control**: `POST /api/video/action`
+  - **Payload**:
+    ```json
+    {
+      "id": "chromecast",
+      "action": "toggle_playback",
+      "value": null
+    }
+    ```
+  - Controls playback state, volume, or mute on active controllable streams (SPEC-004).
 
 ### 4. Master Audio Volume & Mute Endpoints
 Controls host-level audio sink attenuation and mute states (driving WirePlumber/PipeWire over the HDMI/USB-C monitor speakers per SPEC-002 and SPEC-010) while in `widgets` mode or video presentation:
@@ -488,16 +499,16 @@ Controls the automatic rotation timer loop:
   ```json
   { "status": "ok", "volume": 75, "muted": false }
   ```
-- **`202 Accepted`**: Action dispatched asynchronously to an external system (e.g. Home Assistant service call).
+- **`202 Accepted`**: Action dispatched asynchronously to an external system (e.g. Home Assistant service call or CastV2 socket).
 - **`400 Bad Request`**: Unknown action, invalid parameter schema, malformed payload envelope, or path/body ID mismatch.
 - **`404 Not Found`**: Widget ID or stream ID not loaded in active configuration.
-- **`502 Bad Gateway`**: Upstream provider (e.g. Google API, Home Assistant) failed.
+- **`502 Bad Gateway`**: Upstream provider (e.g. Google API, Home Assistant, Cast socket) failed.
 
 ### 7. Optimistic UI Updates on Touch Kiosks
-1. User taps a chore checkbox on the 1080p capacitive touch display.
-2. The Touch PWA immediately flips the visual checkbox state locally (< 16ms, 60fps responsiveness).
-3. The PWA dispatches `POST /api/widgets/daily-chores/action` with payload `{"action": "toggle_item", "params": {"item_id": "i1", "done": true}}`.
-4. If the server returns success, the subsequent `widget.update` SSE message reconciles state seamlessly.
+1. User taps a chore checkbox or HUD play/pause button on the 1080p capacitive touch display.
+2. The Touch PWA immediately flips the visual state locally (< 16ms, 60fps responsiveness).
+3. The PWA dispatches the respective REST action endpoint (`POST /api/widgets/{widget_id}/action` or `POST /api/video/action`).
+4. If the server returns success, the subsequent SSE message (`widget.update` or `video.state`) reconciles state seamlessly.
 5. If the request fails (e.g. network partition), the PWA rolls back the optimistic visual state with an error toast.
 
 ---

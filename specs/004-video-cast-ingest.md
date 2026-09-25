@@ -11,12 +11,12 @@ Smart wall displays frequently handle multiple video feeds:
 Traditional approaches either hardcode browser-level webcam APIs (`getUserMedia`) to capture local USB dongles or create bespoke modal popups for security cameras. Both create severe architectural issues:
 - `getUserMedia` couples the browser frontend to specific host hardware, requires intrusive browser permission prompts, and breaks when testing remotely or across different devices.
 - Ambient backdrop trap: A physical Chromecast continuously outputs an active 1080p60 HDMI signal even when idle (displaying landscape photos). Hardware-level signal detection cannot distinguish between active media and the idle screensaver.
-- Multi-feed collisions: When a doorbell rings while a cast is playing, audio and video must not clobber each other.
+- Multi-feed collisions: When a doorbell rings while casting, media must not be rudely unmounted or cut off.
 
 Mirrormere solves this cleanly by adopting a **Hardware-Agnostic Unified Video Stream Architecture**:
 - All video sources feed into a single, consistent REST API (`POST /api/video/trigger`).
-- Mirrormere Core manages a first-class **Video Priority Stack** with automatic Picture-in-Picture (PiP) handoff.
-- Local hardware conversion and Cast protocol monitoring are isolated in an edge **Kiosk Cast Sidecar** (`clients/cast-sidecar`).
+- Mirrormere Core manages a first-class **Role-Based Video Priority Stack** with persistent media precedence and automatic Picture-in-Picture (PiP) docking.
+- Local hardware conversion, Cast protocol monitoring, and transport controls are isolated in an edge **Kiosk Cast Sidecar** (`clients/cast-sidecar`).
 
 ---
 
@@ -29,14 +29,15 @@ flowchart TD
         
         subgraph CastSidecar [clients/cast-sidecar]
             Streamer[go2rtc WebRTC Server\nhttp://127.0.0.1:1984/cast]
-            CastMon[CastV2 Socket Monitor\nTCP :8009]
+            CastMon[CastV2 Socket Monitor\nTCP :8009 - Receiver & Media]
         end
         UVC --> Streamer
-        CC -.->|mDNS / CastV2 State| CastMon
+        CC -.->|mDNS / CastV2 State & Media Transport| CastMon
 
         subgraph KioskClient [Touch Kiosk PWA - Chromium]
-            Player[HTML5 Video Player\nWebRTC Audio & Video]
-            HUD[Touch HUD\nVolume / Mute / Dismiss]
+            Player[Primary Fullscreen Player\nChromecast Audio & Video]
+            PiP[Picture-in-Picture Dock\nDoorbell Video (Muted)]
+            HUD[Touch HUD\nPlay/Pause / Volume / Mute / Dismiss]
             Speakers[UPERFECT Dual Speakers\nHDMI/DP Audio Sink]
             Player --> Speakers
             HUD --> Player
@@ -48,8 +49,8 @@ flowchart TD
     end
 
     subgraph Server [Mirrormere Core Daemon]
-        API[REST API\nPOST /api/video/trigger\nPOST /api/video/dismiss]
-        Stack[Video Priority Stack\nPrimary vs PiP]
+        API[REST API\nPOST /api/video/trigger\nPOST /api/video/dismiss\nPOST /api/video/action]
+        Stack[Role-Based Video Priority Stack\nPersistent Media vs Alert PiP]
         SSE[SSE Hub\nGET /api/events]
         API --> Stack
         Stack --> SSE
@@ -57,16 +58,18 @@ flowchart TD
 
     CastMon -->|POST /api/video/trigger\nid: chromecast, persistent| API
     Doorbell -->|POST /api/video/trigger\nid: doorbell, temporary| API
+    HUD -->|POST /api/video/action\naction: toggle_playback| API
+    API -->|Dispatch Media Action| CastMon
     SSE -->|event: video.state| KioskClient
-    Streamer -->|WebRTC Media Stream| Player
-    Doorbell -.->|RTSP / WebRTC Stream| Player
+    Streamer -->|WebRTC Primary Stream| Player
+    Doorbell -.->|WebRTC PiP Stream| PiP
 ```
 
 ---
 
 ## The Unified Video Stream API
 
-Mirrormere Core exposes two generic endpoints for video lifecycle management:
+Mirrormere Core exposes generic endpoints for video lifecycle and transport management:
 
 ### 1. Trigger Video Stream (`POST /api/video/trigger`)
 Dispatched when any video source becomes active.
@@ -84,7 +87,8 @@ Accept: application/json
   "stream_url": "http://127.0.0.1:1984/cast",
   "type": "webrtc",
   "priority": "persistent",
-  "timeout_seconds": 0
+  "timeout_seconds": 0,
+  "controllable": true
 }
 ```
 
@@ -92,9 +96,10 @@ Accept: application/json
 - `stream_url` (string, required): Playable stream URL accessible to the display client (WebRTC, HLS, or MJPEG).
 - `type` (string, default `"webrtc"`): Stream format (`"webrtc"`, `"hls"`, `"mjpeg"`).
 - `priority` (string, default `"persistent"`):
-  - `"persistent"`: Remains active until explicitly dismissed (e.g. casting).
-  - `"temporary"`: Automatically dismisses after `timeout_seconds` (e.g. doorbell ring).
+  - `"persistent"`: Top tier. Media streaming that remains active until explicitly stopped or disconnected (e.g. Chromecast). Retains primary fullscreen and audio precedence.
+  - `"temporary"`: Alert tier. Automatically dismisses after `timeout_seconds` (e.g. doorbell ring, motion camera).
 - `timeout_seconds` (integer, optional): Auto-dismiss timeout for temporary streams (default 45s). Ignored for persistent streams.
+- `controllable` (boolean, optional, default `false`): Set to `true` if the stream supports remote transport actions (play/pause/mute).
 
 ### 2. Dismiss Video Stream (`POST /api/video/dismiss`)
 Dispatched when media stops or when manually dismissed by a client.
@@ -106,44 +111,73 @@ Dispatched when media stops or when manually dismissed by a client.
 }
 ```
 
+### 3. Video Action & Transport Control (`POST /api/video/action`)
+Dispatched by touch interaction or companion controllers to manipulate active media streams.
+
+**Payload Schema**:
+```json
+{
+  "id": "chromecast",
+  "action": "toggle_playback",
+  "value": null
+}
+```
+
+- `id` (string, required): Stream identifier to control.
+- `action` (string, required): Supported actions:
+  - `"toggle_playback"`: Toggles play/pause state.
+  - `"play"`: Resumes playback.
+  - `"pause"`: Pauses playback.
+  - `"mute"`: Mutes stream audio.
+  - `"unmute"`: Unmutes stream audio.
+  - `"volume"`: Adjusts stream volume (`value`: float `0.0`–`1.0`).
+
 ---
 
-## The Video Priority Stack & Display Modes
+## Role-Based Video Priority Stack & Display Modes
 
 The Touch Kiosk UI supports two primary display modes:
 1. **`widgets` Mode**: The standard 6×2 grid canvas with fixed header (SPEC-005).
-2. **`video` Mode**: Dedicated fullscreen video presentation.
+2. **`video` Mode**: Dedicated video presentation (fullscreen primary with optional corner PiP dock).
 
-Mirrormere Core manages active video streams in a **Last-In, Highest-Priority Stack**:
+### Precedence Hierarchy: Media Retains Primary Focus
+To prevent doorbell alerts from interrupting movies, music, or cooking tutorials:
+- **`persistent` (Chromecast)** has **absolute priority** over `temporary` alert streams.
+- If Chromecast is playing, it **remains fullscreen with audio uninterrupted**.
+- Incoming alert streams (doorbells) dock into a floating **Picture-in-Picture (PiP)** window with **no audio**.
 
 ```
-[ Top / Primary (Fullscreen) ] -> Latest triggered video
-[ Bottom / PiP (Corner Dock) ]  -> Older active video (if any)
+[ Primary Slot (Fullscreen + Audio Focus) ]  -> Persistent Media (Chromecast), or Alert when idle
+[ PiP Dock Slot (Corner Overlay, Muted)   ]  -> Temporary Alert (Doorbell) when persistent media active
 ```
 
 ### Transition State Machine
 
-1. **Idle (`widgets` mode)**:
-   - When a video triggers (`POST /api/video/trigger`), the UI immediately transitions to `video` mode, mounting the stream full-screen.
-2. **Video-Over-Video Collision (PiP Handoff)**:
-   - When a new video triggers while already in `video` mode (e.g. a doorbell rings while casting YouTube):
-     - The **newest video (Doorbell)** immediately takes **full-screen**.
-     - The **older video (Chromecast)** smoothly transitions into a floating **Picture-in-Picture (PiP)** window in the lower-right corner.
-3. **Stream Dismissal**:
-   - When the top video dismisses (doorbell timer expires or user taps dismiss 'X'):
-     - The top video unmounts.
-     - The PiP stream (Chromecast) smoothly expands back to full-screen.
-4. **Empty Stack Return**:
-   - When all video streams are dismissed (or casting disconnects), the display transitions back to `widgets` mode.
+1. **Idle State (`widgets` mode)**:
+   - When a `persistent` stream triggers (Chromecast): Display transitions to `video` mode, mounting Chromecast fullscreen with audio.
+   - When a `temporary` stream triggers (Doorbell while not casting): Display transitions to `video` mode, mounting the doorbell fullscreen with audio for `timeout_seconds`, then returning to `widgets`.
+2. **Doorbell Interrupts Active Cast (PiP Docking)**:
+   - When a doorbell rings while Chromecast is already playing:
+     - **Chromecast stays full-screen**: Audio continues playing uninterrupted at normal volume.
+     - **Doorbell mounts in PiP**: A floating corner window appears in the lower-right corner displaying the live camera feed **with audio muted** (`muted = true`).
+     - Tapping the PiP window allows the user to manually swap PiP and fullscreen if desired.
+3. **Alert Dismissal**:
+   - When the doorbell timer expires (default 45s) or user taps dismiss on the PiP card:
+     - The PiP overlay unmounts cleanly.
+     - The fullscreen Chromecast stream is completely unaffected.
+4. **Casting Disconnects**:
+   - When casting stops:
+     - If an alert is still active in PiP, it expands to fullscreen.
+     - If no streams remain, display returns to `widgets` mode.
 
 ### SSE Wire Schema (`video.state`)
 
-Whenever the priority stack mutates, Mirrormere broadcasts a `video.state` event across `GET /api/events` (SPEC-006):
+Whenever the priority stack mutates or player transport state changes, Mirrormere broadcasts a `video.state` event across `GET /api/events` (SPEC-006):
 
 ```http
 event: video.state
 id: evt_1727221200_01
-data: {"mode":"video","primary":{"id":"doorbell","stream_url":"http://homeassistant:1984/doorbell","type":"webrtc","timeout_seconds":45},"pip":{"id":"chromecast","stream_url":"http://127.0.0.1:1984/cast","type":"webrtc"}}
+data: {"mode":"video","primary":{"id":"chromecast","stream_url":"http://127.0.0.1:1984/cast","type":"webrtc","player_state":"playing","controllable":true},"pip":{"id":"doorbell","stream_url":"http://homeassistant:1984/doorbell","type":"webrtc","timeout_seconds":45,"muted":true}}
 ```
 
 When no videos remain active:
@@ -171,12 +205,17 @@ streams:
 - Ingests 1080p60 HDMI video directly over `/dev/video0` (UVC) and digital audio over ALSA (UAC).
 - Serves sub-10ms, hardware-accelerated WebRTC locally at `http://127.0.0.1:1984/cast`.
 
-### 2. CastV2 Socket Monitor (Avoiding the Backdrop Trap)
+### 2. CastV2 Socket Monitor & Transport Bridge
 Chromecast continuously outputs 1080p HDMI video even when idle, rendering the Google Ambient Backdrop slideshow.
 The sidecar connects directly to the Chromecast's LAN IP over TCP port 8009 (**Google Cast v2 protocol**):
-- Subscribes to the receiver status channel (`urn:x-cast:com.google.cast.receiver`).
-- **Active Casting Detected**: When `applications[0].appId != "E8C28D3C"` (not the Backdrop app), casting is active. The sidecar immediately dispatches `POST /api/video/trigger`.
-- **Casting Disconnected**: When the status returns to Backdrop or empty, the sidecar dispatches `POST /api/video/dismiss`.
+- Subscribes to receiver status (`urn:x-cast:com.google.cast.receiver`) and media session status (`urn:x-cast:com.google.cast.media`).
+- **Active Casting Detected**: When `applications[0].appId != "E8C28D3C"` (not the Backdrop app), casting is active. The sidecar immediately dispatches `POST /api/video/trigger` with `priority: "persistent"` and `controllable: true`.
+- **Casting Disconnected**: When status returns to Backdrop or empty, the sidecar dispatches `POST /api/video/dismiss`.
+- **Bidirectional Transport Control**:
+  - When the kiosk user taps the Play/Pause HUD button, Mirrormere dispatches the action to the sidecar.
+  - The sidecar transmits a CastV2 `PAUSE` or `PLAY` message to the active media session on `:8009`.
+  - The upstream media (Spotify, YouTube, Netflix, Plex) pauses/resumes cleanly at the Chromecast source.
+  - The sidecar reads `mediaStatus.playerState` (`PLAYING` / `PAUSED`) and updates Mirrormere Core so the HUD icon stays 100% in sync regardless of whether playback was paused via phone, voice, or screen touch.
 
 ---
 
@@ -184,16 +223,20 @@ The sidecar connects directly to the Chromecast's LAN IP over TCP port 8009 (**G
 
 Because audio is packaged directly into the WebRTC stream alongside video, Chromium's standard HTML5 `<video>` element acts as the single source of truth for audio output.
 
-### 1. Audio Routing & Ducking
+### 1. Audio Routing & Precedence
 - **Audio Output**: Chromium plays audio through the default ALSA/PipeWire sink, driving the UPERFECT monitor's integrated dual stereo speakers over HDMI/USB-C.
-- **PiP Audio Focus**: The primary full-screen video holds audio focus (`primaryVideo.muted = false`). Any secondary video docked into PiP is **automatically muted** (`pipVideo.muted = true`).
-- **Audio Ducking**: When a doorbell rings during a cast, the Chromecast audio is muted instantly upon moving to PiP. When the doorbell finishes, Chromecast audio resumes without user intervention.
+- **Audio Precedence**:
+  - The primary fullscreen video holds exclusive audio focus (`primaryVideo.muted = false`).
+  - Secondary streams docked into PiP (doorbell/alerts) are **strictly muted** (`pipVideo.muted = true`).
+  - When a doorbell rings during a Chromecast session, **Chromecast audio continues playing completely uninterrupted**.
+- **Voice Assistant Ducking (SPEC-011)**: When an assistant wake word fires or speech plays, video audio ducks smoothly to **20%**, restoring when speech completes.
 
-### 2. Volume Controls
+### 2. Touch HUD & Transport Controls
 - **Remote / Phone Volume**: When casting from a phone, the user's phone volume rocker attenuates audio digitally at the Chromecast hardware source via CastV2.
-- **On-Screen Touch HUD**: Tapping the video screen displays a touch HUD overlay (auto-fading after 3s) containing:
-  - Mute / unmute toggle button.
-  - Linear volume slider (0–100%) controlling `video.volume`.
-  - Manual dismiss ('X') button.
-  - Volume preference is stored in `localStorage` across video sessions.
+- **On-Screen Touch HUD**: Tapping anywhere on the video screen displays a floating cyber HUD overlay (auto-fading after 3s of inactivity) containing:
+  - **Play / Pause Transport Toggle**: Large (minimum 48×48px) touch-friendly button in the control bar. Tapping toggles media playback via CastV2 upstream.
+  - **Mute / Unmute Toggle**: Toggles audio mute state.
+  - **Volume Slider**: Linear touch slider (0–100%) controlling `video.volume` (persisted in `localStorage`).
+  - **Dismiss ('X') Button**: Unmounts video mode immediately and returns to `widgets` mode.
+- **Non-Controllable Streams**: For live camera and doorbell feeds (`controllable: false`), the play/pause transport button is hidden.
 - **Host Hardware Ceiling**: WirePlumber configures an 80% maximum volume ceiling on boot to prevent chassis speaker distortion or clipping.
