@@ -467,7 +467,7 @@ Returns the current master volume and mute state:
   ```
 
 ### 6. Voice Pipeline State Relay Endpoint (`POST /api/voice/state`)
-The edge voice companion daemon (`mirrormere-voice` per SPEC-011) relays interaction lifecycle events to Mirrormere Core to synchronize on-screen microphone indicators, caption toasts, and e-ink status widgets:
+The edge voice companion daemon (`mirrormere-voice` per SPEC-011) relays interaction lifecycle events to Mirrormere Core to synchronize on-screen microphone indicators and caption toasts:
 - **Endpoint**: `POST /api/voice/state`
 - **Authentication**: None (all inbound LAN calls are fully trusted per the local-network trust model).
 - **Request Headers**:
@@ -486,7 +486,7 @@ The edge voice companion daemon (`mirrormere-voice` per SPEC-011) relays interac
   ```
   - `state` (string, required): Active voice lifecycle state. Must be one of `"idle"`, `"listening"`, `"transcribing"`, `"thinking"`, `"synthesizing"`, `"speaking"`, or `"error"`.
   - `transcript` (string or null, optional): Recognized user utterance returned by STT. Null when idle or listening before transcription completes.
-  - `reply` (string or null, optional): Assistant reply text returned by the brain. Rendered as caption toasts on interactive kiosks or text lines on e-ink status widgets.
+  - `reply` (string or null, optional): Assistant reply text returned by the brain. Rendered as caption toasts on interactive kiosks (SPEC-010, SPEC-011).
   - `tts_engine` (string or null, optional): Name of the active TTS engine synthesizing or speaking audio (e.g. `"kokoro"`, `"elevenlabs"`, `"piper"`).
 - **Behavior & Rebroadcast Invariant**:
   - Updates Core's in-memory voice state cache.

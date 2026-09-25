@@ -25,7 +25,7 @@ Mirrormere solves this cleanly by adopting a **Hardware-Agnostic Unified Video S
 ```mermaid
 flowchart TD
     subgraph KioskHost [Kiosk Host - Intel N100]
-        CC[Google Chromecast] -->|HDMI Video & Audio| UVC[USB 3.0 HDMI Capture Dongle\n/dev/video0 + hw:CARD=MS2109]
+        CC[Google Chromecast] -->|HDMI Video & Audio| UVC[HDMI Capture Dongle\n/dev/video0 + hw:CARD=<capture-card>]
         
         Streamer[Stock go2rtc WebRTC Server\nhttp://127.0.0.1:1984/cast]
         CastMon[sidecars/cast-watcher\nTCP :8009 - Receiver & Media]
@@ -235,15 +235,15 @@ data: {"mode":"widgets","primary":null,"pip":null}
 To keep Mirrormere Core and the Touch PWA completely hardware-agnostic, physical USB capture and Cast protocol tracking are decoupled into two distinct container services running on the kiosk host:
 
 ### 1. Hardware Stream Producer (`go2rtc`)
-The physical Chromecast plugs into a USB 3.0 HDMI capture card (MacroSilicon MS2130 or MS2109).
+The physical Chromecast plugs into an HDMI capture card: USB 3.0 (MacroSilicon MS2130, primary for uncompressed 1080p60) or USB 2.0 (MacroSilicon MS2109, fallback for 1080p30 MJPEG).
 A stock `alexxit/go2rtc` container runs with `deploy/go2rtc.yaml` mounted:
 ```yaml
 # deploy/go2rtc.yaml
 streams:
   cast:
-    - ffmpeg:device?video=/dev/video0&audio=hw:CARD=MS2109#video=h264#hardware#audio=opus
+    - ffmpeg:device?video=/dev/video0&audio=hw:CARD=<capture-card>#video=h264#hardware#audio=opus
 ```
-- Ingests HDMI video directly over `/dev/video0` (UVC) and digital audio over ALSA (UAC). With hardware transcoding (`#video=h264#hardware` via Intel VAAPI/QSV on the N100), go2rtc transcodes incoming MJPEG/YUV to H.264 for browser WebRTC compatibility.
+- Ingests HDMI video directly over `/dev/video0` (UVC) and digital audio over ALSA (UAC). The ALSA audio card placeholder (`hw:CARD=<capture-card>`) must match the exact device identifier reported by `arecord -l` on the host (e.g. `hw:CARD=MS2130` for the primary MS2130 dongle, or `hw:CARD=MS2109` for the MS2109 fallback). With hardware transcoding (`#video=h264#hardware` via Intel VAAPI/QSV on the N100), go2rtc transcodes incoming MJPEG/YUV to H.264 for browser WebRTC compatibility.
 - Serves low-latency (~15–30ms), hardware-accelerated WebRTC locally at `http://127.0.0.1:1984/cast`.
 
 ### 2. CastV2 Socket Monitor & Transport Bridge (`sidecars/cast-watcher`)
@@ -278,4 +278,4 @@ Because audio is packaged directly into the WebRTC stream alongside video, Chrom
   - **Volume Slider**: Linear touch slider (0–100%) controlling master volume via `POST /api/audio/volume` (rendering state dynamically from `audio.state` SSE events; zero client-side `localStorage` drift).
   - **Dismiss ('X') Button**: Unmounts video mode immediately and returns to `widgets` mode.
 - **Non-Controllable Streams**: For live camera and doorbell feeds (`controllable: false`), the play/pause transport button is hidden.
-- **Host Hardware Ceiling**: WirePlumber configures an 80% maximum volume ceiling on boot to prevent chassis speaker distortion or clipping.
+- **Software Master Volume Ceiling**: As specified in SPEC-006 (§5) and SPEC-010 (§2), an 80% maximum volume ceiling is enforced strictly in client software on the DOM media element (`element.volume = (volume / 100) * 0.80`) to protect small monitor chassis speakers without touching or multiplying host OS/WirePlumber mixer levels.
