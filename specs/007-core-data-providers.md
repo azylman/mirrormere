@@ -49,12 +49,16 @@ providers:
     window_days_future: 14
     sources:
       - name: "Family Calendar"
-        url: "https://calendar.google.com/calendar/ical/example%40group.calendar.google.com/private-token/basic.ics"
+        url_env: FAMILY_CALENDAR_URL # Resolved from environment variable
         color: "#3b82f6" # Blue
         enabled: true
       - name: "Personal / Work"
-        url: "https://p123-caldav.icloud.com/..."
+        url_env: WORK_CALENDAR_URL # Resolved from environment variable
         color: "#10b981" # Green
+        enabled: true
+      - name: "US Holidays"
+        url: "https://calendar.google.com/calendar/ical/en.usa%23holiday%40group.v.calendar.google.com/public/basic.ics"
+        color: "#f59e0b" # Amber (public non-secret feeds may use url directly)
         enabled: true
 ```
 
@@ -101,6 +105,15 @@ The parser evaluates RFC 5545 VEVENT components, expands recurrence rules (RRULE
 - **Zero App Registration**: Requires no GCP project, verification audit, or client secret rotation.
 - **Universal Interoperability**: Every major calendar system (Google, Apple, Microsoft Outlook 365, Fastmail, Nextcloud) exports a secret private iCal URL natively.
 - **Hermetic & Airgapped Testing**: Tests can feed static `.ics` fixtures directly without mocking OAuth token refreshes.
+
+### Zero-Secret Configuration Boundary (`url_env`)
+Private iCal feeds (e.g. Google Calendar secret address `.ics` URLs, iCloud private share URLs, or CalDAV basic auth links) embed unauthenticated tokens or credentials directly within their URLs. Committing these URLs into version-controlled `config.yaml` files violates Mirrormere's Zero Plaintext Token invariant.
+
+To enforce secret isolation:
+- Private calendar sources MUST declare `url_env: <ENV_VAR_NAME>` rather than plaintext `url:`.
+- At daemon startup, Mirrormere resolves the environment variable via `os.Getenv(source.URLEnv)`.
+- If `url_env` is declared but the variable is unset or empty, configuration validation fails fast with an explicit diagnostic error before any network polling begins.
+- Exactly one of `url` or `url_env` must be provided per calendar source. Plaintext `url:` is strictly reserved for public, non-secret feeds (e.g. national holidays or community schedules).
 
 ---
 
