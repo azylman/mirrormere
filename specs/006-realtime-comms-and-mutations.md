@@ -336,7 +336,10 @@ External sidecars, local microservices, and Home Assistant automations can immed
   - Dispatched by the stream producer sidecar (e.g. `sidecars/cast-watcher`) when player transport state changes (`"playing"`, `"paused"`, or `"buffering"`). Core updates the active stream record and broadcasts an updated `video.state` SSE event to synchronize all connected displays.
 
 ### 4. Master Audio Volume & Mute Endpoints
-Controls host-level audio sink attenuation and mute states (driving WirePlumber/PipeWire over the HDMI/USB-C monitor speakers per SPEC-002 and SPEC-010) while in `widgets` mode or video presentation:
+Mirrormere Core acts as the centralized coordinator for master audio volume and mute state, tracking desired values and synchronizing connected clients. Because Mirrormere runs in a rootless container (`uid 10001`) and may be hosted off-node on a separate home server (Profile B) where no physical speakers exist, Core decouples audio state coordination from hardware audio sink attenuation:
+- **Centralized State Coordination**: Core maintains the authoritative in-memory `volume` (0–100) and `muted` (boolean) state, broadcasting changes immediately across `GET /api/events` as `audio.state` SSE events.
+- **Client & Edge Host Enforcement**: The active display client (e.g. Chromium running in `--kiosk` mode under Wayland `cage` per SPEC-010) or edge voice companion subscribes to `audio.state` and attenuates its local HTML5 audio elements or executes host-level PipeWire/WirePlumber commands (`wpctl set-volume @DEFAULT_AUDIO_SINK@ <level>` capped at the 80% hardware safety ceiling).
+- **Optional Co-Located PipeWire Sink**: On co-located installations (Profile A where Core and the physical display share the same Intel N100 host), operators may optionally bind-mount the user PipeWire socket (`-v /run/user/1000/pipewire-0:/tmp/pipewire-0` with `PIPEWIRE_RUNTIME_DIR=/tmp`) to allow Core to directly invoke `wpctl`. Where no local audio sink is mounted or reachable, direct host execution is a safe no-op and Core relies exclusively on client-side SSE synchronization.
 
 #### A. Set Master Volume (`POST /api/audio/volume`)
 Sets the host master audio sink volume level:
@@ -367,7 +370,7 @@ Sets the host master audio sink volume level:
     "error": "invalid volume: must be an integer between 0 and 100"
   }
   ```
-- **Side Effects**: Attenuates host WirePlumber audio sink via `wpctl set-volume @DEFAULT_AUDIO_SINK@ <level>` (capped at the configured 80% hardware safety ceiling per SPEC-010) and broadcasts an `audio.state` SSE event.
+- **Side Effects**: Updates Core's in-memory audio state, broadcasts an `audio.state` SSE event to synchronize all connected displays and companion controllers, and (if co-located PipeWire integration is mounted) applies attenuation to the host audio sink.
 
 #### B. Set / Toggle Master Mute (`POST /api/audio/mute`)
 Sets or toggles the host master audio mute state:
@@ -398,7 +401,7 @@ Sets or toggles the host master audio mute state:
     "error": "invalid payload: muted must be a boolean"
   }
   ```
-- **Side Effects**: Sets or toggles host audio mute via `wpctl set-mute @DEFAULT_AUDIO_SINK@ <state>` and broadcasts an `audio.state` SSE event.
+- **Side Effects**: Updates Core's in-memory mute state, broadcasts an `audio.state` SSE event to all connected displays, and (if co-located PipeWire integration is mounted) sets host sink mute.
 
 #### C. Get Audio State (`GET /api/audio`)
 Returns the current master volume and mute state:

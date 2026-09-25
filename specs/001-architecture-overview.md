@@ -159,7 +159,7 @@ To maintain predictable local network service discovery, simplify firewall confi
 | **8080** | `mirrormere-core` | HTTP / SSE | Core Daemon: REST API, SSE event stream (`/api/events`), healthcheck (`/healthz`), and web UI | Base Default (all instances) |
 | **8081** | `eink-renderer` | HTTP | E-Ink PNG Renderer: Headless Chromium rasterizer generating 800×480 1-bit dithered image (`GET /eink.png`) | `profiles: [eink]` |
 | **1984** | `go2rtc` | HTTP / WebRTC | Video Stream Ingest: Stock UVC capture ingest, WebRTC streaming, and RTSP stream proxy | `profiles: [video]` |
-| **—** | `cast-watcher` | LAN Socket | CastV2 Protocol Bridge: Outbound LAN TCP 8009 to Chromecast; relays play/pause and triggers core | `profiles: [video]` |
+| **8090** | `cast-watcher` | HTTP | CastV2 Protocol Bridge: Internal HTTP transport control (`POST /action`) and outbound LAN TCP 8009 to Chromecast | `profiles: [video]` (internal network) |
 | **9000** | `voice-hub` | HTTP / SSE | LAN Voice Hub Sidecar: Audio ingest, wake word, Whisper STT, and Kokoro/Piper TTS gateway | Phase 2 `profiles: [voice]` |
 
 All container services are declared within a single, unified `deploy/compose.yml` leveraging native Docker Compose `profiles:` (`video`, `eink`, `voice`), completely eliminating divergent per-profile compose files.

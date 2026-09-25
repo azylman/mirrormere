@@ -86,9 +86,12 @@ services:
     container_name: cast-watcher
     profiles: ["video"]
     restart: unless-stopped
+    expose:
+      - "8090" # Internal container port for Core transport control (POST /action)
     environment:
       - CORE_URL=http://mirrormere-core:8080
       - CHROMECAST_IP=192.168.1.50 # Configurable target IP
+      - PORT=8090
     depends_on:
       - mirrormere-core
 ```
@@ -102,7 +105,7 @@ services:
   > **Critical Warning**: Must be strictly the Black/White V2 model. 3-color (Red/Yellow) panels require 15–30 seconds per full refresh and lack partial refresh support.
 - **Driver Board**: Adafruit E-Ink Bonnet for Raspberry Pi (24-pin FPC). Pin map differs from the Waveshare HAT; see SPEC-009.
   - The all-in-one Waveshare 7.5" e-Paper HAT (V2) is a supported alternative using the driver's default pins.
-- **Compute Unit**: Raspberry Pi 3 Model B+ (Mike's unit, already owned). Raspberry Pi 4 Model B also supported.
+- **Compute Unit (Display Node)**: Raspberry Pi 3 Model B+ (Mike's unit, already owned) or Raspberry Pi 4 Model B driving the panel over SPI. Runs only the lightweight client; the compose stack runs off-node on a separate 64-bit host.
 - **Power Supply**: 5V 2.5A micro-USB supply (Pi 3 B+), or official USB-C supply (Pi 4B).
 - **Storage**: 32GB Class A1 MicroSD Card.
 - **Sensors (optional)**: DHT22 temperature/humidity sensor for an indoor-climate widget.
@@ -112,7 +115,7 @@ services:
 ### Physical Architecture
 - The Adafruit E-Ink Bonnet stacks onto the Pi's 40-pin GPIO header, held by M2.5 standoffs.
 - The panel's 24-pin ribbon connects to the Bonnet's FPC connector.
-- Rendering happens on the server (SPEC-003 §3 sidecar); the Pi only fetches and flushes images, so no active cooling is needed.
+- Rendering happens on the separate home server (SPEC-003 §3 sidecar); the display Pi only fetches and flushes images over the local network via HTTP, keeping CPU and memory overhead minimal (< 50MB RAM) with no active cooling needed.
 
 ### Operating System & Runtime Environment
 - **Base OS**: Raspberry Pi OS Lite (64-bit, headless, no X11/Wayland).
@@ -124,7 +127,7 @@ services:
   - Strict zero-animation rule: UI redrawing is purely event- or timer-driven.
 
 ### Reference Deployment Topology & Manifest (`deploy/compose.yml`)
-In Profile B, the Raspberry Pi display node connects over SPI to the raw e-paper panel and runs the lightweight Python client (`clients/eink-node`, SPEC-009) as a native systemd service. The server-side rendering and data synchronization run on a Docker host (the same Pi 4B or a home server) activated via Compose's native `eink` profile:
+In Profile B, the physical Raspberry Pi display node connects over SPI to the raw e-paper panel and runs only the lightweight Python client (`clients/eink-node`, SPEC-009) as a native systemd service. Because the headless Chromium renderer sidecar (`sidecars/eink-renderer`) requires significant memory and 64-bit architecture (`linux/amd64` or `linux/arm64`), the server-side Mirrormere daemon and renderer sidecar run on a separate always-on server (e.g. an existing home server, NAS, or 64-bit host with 2 GB+ RAM) activated via Compose's native `eink` profile. The display node does not run Docker or co-host the Chromium renderer:
 
 ```yaml
 # deploy/compose.yml (Activated with: docker compose --profile eink up -d)
