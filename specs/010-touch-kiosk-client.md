@@ -13,8 +13,8 @@ This specification defines the dedicated client runtime environment and OS boots
 - **Browser Runtime**: Native Chromium in `--kiosk` mode pointing to `http://localhost:8080/display`.
 - **Zero On-Screen Keyboard (OSK)**: Tap-and-gesture interaction only (checkbox toggles, screen rotation swipes, video PiP controls). No virtual keyboard daemon or touch keyboard overlays; new task/list additions are handled phone-first.
 - **Power Management**: Dual sleep lifecycle—a fixed night schedule (hard off 11 PM – 6 AM) paired with daytime idle DPMS blanking (10-minute timeout) with instant wake-on-tap via capacitive touchscreen input events.
-- **Audio Routing**: UVC HDMI capture audio routed straight to the UPERFECT monitor's built-in dual stereo speakers over HDMI/USB-C via PipeWire loopback (`pw-loopback`).
-- **Voice Ingest**: Nano USB microphone hardware present on the compute unit, but software voice processing (`wyoming-satellite`) is deferred to post-v1.
+- **Audio Routing**: Video and alert audio are delivered directly via standard WebRTC playback in Chromium to the UPERFECT monitor's built-in dual stereo speakers over HDMI/USB-C via PipeWire. Host-level loopback (`pw-loopback`) is eliminated so that browser volume/mute controls, PiP ducking, and touch HUD controls remain unified.
+- **Voice Ingest**: Nano USB microphone hardware present on the compute unit, but software voice processing (`wyoming-satellite` / SPEC-011) is deferred to post-v1.
 
 ---
 
@@ -38,13 +38,10 @@ flowchart TD
         end
 
         subgraph AudioStack [PipeWire Audio Pipeline]
-            UVC[UVC Capture Audio\n/dev/snd/pcmC*]
-            PW[PipeWire + WirePlumber]
-            Loopback[pw-loopback]
+            PW[PipeWire + WirePlumber\n80% Hardware Ceiling]
             Speakers[UPERFECT Dual Speakers\nHDMI/DP Audio Sink]
-            UVC --> PW
-            PW --> Loopback
-            Loopback --> Speakers
+            Chromium -->|WebRTC Audio Playback| PW
+            PW --> Speakers
         end
     end
 ```
@@ -69,15 +66,13 @@ exec cage -s -- chromium \
   --ozone-platform=wayland \
   --enable-wayland-ime \
   --autoplay-policy=no-user-gesture-required \
-  --use-fake-ui-for-media-stream \
   http://localhost:8080/display
 ```
 
 ### Flag Rationale
 - `--kiosk`: Enforces true fullscreen execution with navigation controls and URL bar stripped.
 - `--ozone-platform=wayland` and `--use-gl=egl`: Native Wayland buffer presentation with hardware acceleration on Intel N100 Gen12 graphics.
-- `--autoplay-policy=no-user-gesture-required`: Permits video streaming from the UVC capture card (SPEC-004) without requiring manual touch interaction to start playback.
-- `--use-fake-ui-for-media-stream`: Automatically grants `getUserMedia` camera/audio permissions for the UVC capture device (`/dev/video0`), eliminating permission popups.
+- `--autoplay-policy=no-user-gesture-required`: Permits instant WebRTC video and alert audio playback without requiring manual user touch interactions.
 
 ---
 
@@ -104,18 +99,15 @@ The monitor backlight consumes power and emits light that must be suppressed at 
 
 ## Audio Pipeline
 
-The UPERFECT 15.6" monitor contains dual integrated chassis speakers. Audio is delivered digitally over the HDMI / USB-C connection from the Intel N100.
+The UPERFECT 15.6" monitor contains dual integrated chassis speakers. Audio is delivered digitally over the HDMI / USB-C connection from the Intel N100 via PipeWire.
 
-### Chromecast UVC Loopback
-When video is cast to the Chromecast dongle, the MS2109 USB capture card exposes both a video capture node (`/dev/video0`) and an ALSA audio capture node (`hw:CARD=MS2109,DEV=0`).
-
-PipeWire routes audio from the capture card to the display speakers using a persistent loopback service (`mirrormere-audio-loopback.service`):
-```bash
-pw-loopback \
-  --capture-props='media.class=Audio/Sink node.name=uvc_capture' \
-  --playback-props='node.target=alsa_output.pci-0000_00_1f.3.hdmi-stereo'
-```
-This guarantees zero latency mismatch between the HTML5 video player (SPEC-004) and monitor audio output.
+### WebRTC Audio Playback & WirePlumber Ceiling
+Rather than running an external ALSA host loopback daemon (which bypasses browser volume and mutes), all video and doorbell alert audio streams are delivered as WebRTC media streams directly to Chromium's HTML5 `<video>` player (SPEC-004):
+- **Unified Controls**: Chromium handles digital volume attenuation, muting, and PiP audio ducking natively in DOM without split-brain host routing.
+- **Hardware Volume Ceiling**: WirePlumber enforces a safe master volume limit (80%) on boot to prevent speaker distortion or blown drivers:
+  ```bash
+  wpctl set-volume @DEFAULT_AUDIO_SINK@ 0.8
+  ```
 
 ---
 
@@ -130,6 +122,5 @@ The client setup is maintained in `clients/touch-kiosk/` with an automated insta
 
 ### Service Units
 - `mirrormere-kiosk.service`: Manages the `cage` + `chromium` process tree with `Restart=always`.
-- `mirrormere-audio-loopback.service`: Manages `pw-loopback` for UVC capture audio.
 - `mirrormere-kiosk-sleep.{service,timer}`: Night schedule blanking.
 - `mirrormere-kiosk-wake.{service,timer}`: Morning schedule waking.

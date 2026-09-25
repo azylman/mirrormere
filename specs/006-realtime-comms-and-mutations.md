@@ -106,17 +106,25 @@ id: evt_1727216260_03
 data: {"online":true,"time":"2026-09-24T22:15:20Z","home_assistant":"connected","weather_api":"ok"}
 ```
 
-#### D. Keep-Alive Heartbeat
+#### D. `video.state`
+Emitted whenever the video priority stack mutates (stream trigger, doorbell interruption, or dismissal per SPEC-004):
+```http
+event: video.state
+id: evt_1727216290_04
+data: {"mode":"video","primary":{"id":"doorbell","stream_url":"http://homeassistant:1984/doorbell","type":"webrtc","timeout_seconds":45},"pip":{"id":"chromecast","stream_url":"http://127.0.0.1:1984/cast","type":"webrtc"}}
+```
+
+#### E. Keep-Alive Heartbeat
 The server writes an empty comment line `: ping` or event every 15–30 seconds to prevent reverse proxy idle timeouts:
 ```http
-: ping 1727216290
+: ping 1727216320
 ```
 
 ---
 
-## Client Touch Mutation Specification
+## Client Touch Mutation & Video Action Specification
 
-### 1. Mutation Endpoint
+### 1. Widget Mutation Endpoint
 - **URL**: `POST /api/widgets/{widget_id}/action`
 - **Headers**:
   ```http
@@ -134,14 +142,34 @@ The server writes an empty comment line `: ping` or event every 15–30 seconds 
   }
   ```
 
-### 2. Standard Responses
+### 2. Video Stream Lifecycle Endpoints
+- **Trigger Stream**: `POST /api/video/trigger`
+  - **Payload**:
+    ```json
+    {
+      "id": "chromecast",
+      "stream_url": "http://127.0.0.1:1984/cast",
+      "type": "webrtc",
+      "priority": "persistent",
+      "timeout_seconds": 0
+    }
+    ```
+- **Dismiss Stream**: `POST /api/video/dismiss`
+  - **Payload**:
+    ```json
+    {
+      "id": "chromecast"
+    }
+    ```
+
+### 3. Standard Responses
 - **`200 OK`**: Action executed immediately and state updated.
   ```json
   { "status": "ok", "widget_id": "daily_chores", "result": { "task_id": "t1", "completed": true } }
   ```
 - **`202 Accepted`**: Action dispatched asynchronously to an external system (e.g. Home Assistant service call).
 - **`400 Bad Request`**: Unknown action or invalid parameter schema.
-- **`404 Not Found`**: Widget not loaded in active configuration.
+- **`404 Not Found`**: Widget or stream ID not loaded in active configuration.
 - **`502 Bad Gateway`**: Upstream provider (e.g. Google API, Home Assistant) failed.
 
 ### 3. Optimistic UI Updates on Touch Kiosks
