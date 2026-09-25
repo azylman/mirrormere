@@ -195,18 +195,55 @@ On daemon startup or configuration reload, Mirrormere executes an exact 2D bin-p
 ### Algorithmic Implementation (Exact Backtracking)
 
 Because the grid is compact (only 12 discrete cells) and typical configurations contain 3 to 12 widgets, the search space is small ($< 10^4$ states). The packing engine solves the exact cover problem using recursive backtracking with bitmasks on config load in $< 1$ millisecond:
-1. Pinned widgets $W_{\text{pinned}}$ are positioned first and their occupied cells are stamped into the bitmasks of all $K$ screens simultaneously.
-2. Unpinned widgets $W_{\text{unpinned}}$ are sorted by area descending and placed into the remaining unmasked cells across screens $[0..K-1]$.
+1. Pinned widgets $W_{\text{pinned}}$ must occupy identical `(col, row)` coordinates across every screen $0..K-1$. The solver tries valid origins on screen 0, stamps their bitmasks across all $K$ screens simultaneously, and recurses. If unpinned tiling fails for a given pinned placement, the solver backtracks and tries alternative pinned origins.
+2. Unpinned widgets $W_{\text{unpinned}}$ are sorted by area descending (heuristic pruning) and placed into the remaining unmasked cells across screens $[0..K-1]$.
+3. A 12-bit integer bitmask (`0x000` to `0xFFF`) represents the occupancy of each 6×2 screen ($2 \times 6 = 12$ bits). A solution is valid when every screen bitmask equals `0xFFF` (all 12 cells covered with zero overlap).
 
 ```
 Function SolvePacking(pinned_widgets, unpinned_widgets, K):
-    Initialize screen bitmasks [0..K-1] to 0x000 (all 12 bits empty)
-    For each pw in pinned_widgets:
-        Find valid (col, row) that fits on screen 0
-        Stamp pw bits across ALL screens [0..K-1]
-    
+    Initialize screen_bitmasks [0..K-1] to 0x000 (all 12 bits empty)
+    Sort pinned_widgets by area descending
     Sort unpinned_widgets by area descending
-    Return Backtrack(0)
+
+    # Pinned widgets must occupy the identical (col, row) across ALL screens 0..K-1
+    Function PlacePinned(pinned_idx):
+        If pinned_idx == len(pinned_widgets):
+            Return PlaceUnpinned(0)
+        
+        pw = pinned_widgets[pinned_idx]
+        For each valid origin (col, row) on screen 0:
+            mask = BitmaskFor(pw, col, row)
+            If (screen_bitmasks[0] & mask) == 0:
+                # Stamp pw bits across ALL screens 0..K-1
+                For s in [0..K-1]:
+                    screen_bitmasks[s] |= mask
+                
+                If PlacePinned(pinned_idx + 1):
+                    Return True
+                
+                # Backtrack: clear pw bits across ALL screens if unpinned search fails
+                For s in [0..K-1]:
+                    screen_bitmasks[s] &= ~mask
+        Return False
+
+    # Unpinned widgets rotate and tile remaining cells across screens 0..K-1
+    Function PlaceUnpinned(unpinned_idx):
+        If unpinned_idx == len(unpinned_widgets):
+            # Base case: verify all K screens are 100% full (all 12 bits set: 0xFFF)
+            Return All(screen_bitmasks[s] == 0xFFF for s in [0..K-1])
+        
+        uw = unpinned_widgets[unpinned_idx]
+        For each screen s in [0..K-1]:
+            For each valid origin (col, row) on screen s:
+                mask = BitmaskFor(uw, col, row)
+                If (screen_bitmasks[s] & mask) == 0:
+                    screen_bitmasks[s] |= mask
+                    If PlaceUnpinned(unpinned_idx + 1):
+                        Return True
+                    screen_bitmasks[s] &= ~mask
+        Return False
+
+    Return PlacePinned(0)
 ```
 
 ### Config Load Diagnostics & Deficit Guidance

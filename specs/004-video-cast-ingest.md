@@ -48,17 +48,18 @@ flowchart TD
     end
 
     subgraph Server [Mirrormere Core Daemon]
-        API[REST API\nPOST /api/video/trigger\nPOST /api/video/dismiss\nPOST /api/video/action]
+        API[REST API\nPOST /api/video/trigger\nPOST /api/video/dismiss\nPOST /api/video/action\nPOST /api/video/state]
         Stack[Role-Based Video Priority Stack\nPersistent Media vs Alert PiP]
         SSE[SSE Hub\nGET /api/events]
         API --> Stack
         Stack --> SSE
     end
 
-    CastMon -->|POST /api/video/trigger\nid: chromecast, persistent| API
+    CastMon -->|POST /api/video/trigger\nid: chromecast, persistent, control_url| API
+    CastMon -->|POST /api/video/state\nid: chromecast, player_state: playing| API
     Doorbell -->|POST /api/video/trigger\nid: doorbell, temporary| API
     HUD -->|POST /api/video/action\naction: toggle_playback| API
-    API -->|Dispatch Media Action| CastMon
+    API -->|Dispatch Media Action (POST to control_url)| CastMon
     SSE -->|event: video.state| KioskClient
     Streamer -->|WebRTC Primary Stream| Player
     Doorbell -.->|WebRTC PiP Stream| PiP
@@ -87,7 +88,8 @@ Accept: application/json
   "type": "webrtc",
   "priority": "persistent",
   "timeout_seconds": 0,
-  "controllable": true
+  "controllable": true,
+  "control_url": "http://cast-watcher:8090/action"
 }
 ```
 
@@ -99,6 +101,7 @@ Accept: application/json
   - `"temporary"`: Alert tier. Automatically dismisses after `timeout_seconds` (e.g. doorbell ring, motion camera).
 - `timeout_seconds` (integer, optional): Auto-dismiss timeout for temporary streams (default 45s). Ignored for persistent streams.
 - `controllable` (boolean, optional, default `false`): Set to `true` if the stream supports remote transport actions (play/pause/mute).
+- `control_url` (string, optional): HTTP webhook URL on the stream producer sidecar where Mirrormere Core forwards incoming `POST /api/video/action` commands. Required if `controllable: true` and upstream transport manipulation is supported.
 
 ### 2. Dismiss Video Stream (`POST /api/video/dismiss`)
 Dispatched when media stops or when manually dismissed by a client.
@@ -130,6 +133,47 @@ Dispatched by touch interaction or companion controllers to manipulate active me
   - `"mute"`: Mutes stream audio.
   - `"unmute"`: Unmutes stream audio.
   - `"volume"`: Adjusts stream volume (`value`: float `0.0`–`1.0`).
+
+#### Core-to-Sidecar Dispatching
+When Mirrormere Core receives `POST /api/video/action`:
+1. Core verifies that the target stream `id` is active in the video stack. If not found, it responds with `404 Not Found`.
+2. Core verifies that `controllable: true` and `control_url` is specified on the active stream. If not controllable or no `control_url` exists, Core responds with `422 Unprocessable Entity` (`{"status": "error", "error": "stream is not controllable"}`).
+3. Core forwards the action payload via an HTTP POST request to `{control_url}` (with a 2-second timeout).
+4. If the sidecar responds with HTTP 2xx, Core returns `200 OK` (`{"status": "ok"}`). If the sidecar is unreachable, times out, or returns a non-2xx status, Core returns `502 Bad Gateway` (`{"status": "error", "error": "stream controller unreachable"}`).
+
+### 4. Video Player State Update (`POST /api/video/state`)
+Dispatched by the producing sidecar (e.g. `sidecars/cast-watcher`) whenever the underlying player transport state changes (play, pause, buffering).
+
+**Headers**:
+```http
+Content-Type: application/json
+Accept: application/json
+```
+
+**Payload Schema**:
+```json
+{
+  "id": "chromecast",
+  "player_state": "playing"
+}
+```
+
+- `id` (string, required): Stream identifier matching the active stream in the video stack.
+- `player_state` (string, required): Player transport state: `"playing"`, `"paused"`, or `"buffering"`.
+
+**Response (`200 OK`)**:
+```json
+{
+  "status": "ok",
+  "id": "chromecast",
+  "player_state": "playing"
+}
+```
+
+#### Sidecar-to-Core Flow & Event Broadcast
+1. If the stream `id` is not currently in the active video stack, Core returns `404 Not Found` (`{"status": "error", "error": "stream not active"}`).
+2. Core updates the stream record's `player_state` within its in-memory video priority stack.
+3. Core immediately broadcasts an updated `video.state` SSE event to all connected clients on `GET /api/events` (SPEC-006). This guarantees touch HUD transport icons synchronize immediately across all displays regardless of whether playback was paused from a phone, voice assistant, or touchscreen tap.
 
 ---
 
@@ -208,13 +252,11 @@ streams:
 Chromecast continuously outputs 1080p HDMI video even when idle, rendering the Google Ambient Backdrop slideshow.
 The custom `sidecars/cast-watcher` container connects directly to the Chromecast's LAN IP over TCP port 8009 (**Google Cast v2 protocol**):
 - Subscribes to receiver status (`urn:x-cast:com.google.cast.receiver`) and media session status (`urn:x-cast:com.google.cast.media`).
-- **Active Casting Detected**: When `applications[0].appId != "E8C28D3C"` (not the Backdrop app), casting is active. The sidecar immediately dispatches `POST /api/video/trigger` with `priority: "persistent"` and `controllable: true`.
+- **Active Casting Detected**: When `applications[0].appId != "E8C28D3C"` (not the Backdrop app), casting is active. The sidecar immediately dispatches `POST /api/video/trigger` with `id: "chromecast"`, `priority: "persistent"`, `controllable: true`, and `control_url: "http://cast-watcher:8090/action"`.
 - **Casting Disconnected**: When status returns to Backdrop or empty, the sidecar dispatches `POST /api/video/dismiss`.
 - **Bidirectional Transport Control**:
-  - When the kiosk user taps the Play/Pause HUD button, Mirrormere dispatches the action to the sidecar.
-  - The sidecar transmits a CastV2 `PAUSE` or `PLAY` message to the active media session on `:8009`.
-  - The upstream media (Spotify, YouTube, Netflix, Plex) pauses/resumes cleanly at the Chromecast source.
-  - The sidecar reads `mediaStatus.playerState` (`PLAYING` / `PAUSED`) and updates Mirrormere Core so the HUD icon stays 100% in sync regardless of whether playback was paused via phone, voice, or screen touch.
+  - **Core-to-Sidecar Transport Forwarding**: The `cast-watcher` container runs a lightweight HTTP server on port 8090 (`POST /action`). When the kiosk user taps the Play/Pause HUD button, Mirrormere Core forwards the action payload to `http://cast-watcher:8090/action`. The sidecar translates the action into a Google Cast v2 `PLAY` or `PAUSE` media command sent over TCP port 8009 to the Chromecast. Upstream media (Spotify, YouTube, Netflix, Plex) resumes or pauses cleanly at the source.
+  - **Sidecar-to-Core Player State Synchronization**: The sidecar listens for media status changes (`urn:x-cast:com.google.cast.media`) over the CastV2 TCP socket. Whenever `mediaStatus.playerState` changes (`PLAYING`, `PAUSED`, `BUFFERING`), the sidecar posts `POST http://core:8080/api/video/state` with `{"id": "chromecast", "player_state": "playing" | "paused" | "buffering"}`. Mirrormere Core updates its video stack and broadcasts a `video.state` SSE event so the HUD icon stays 100% in sync regardless of whether playback was paused via phone, voice, or screen touch.
 
 ---
 
