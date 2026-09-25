@@ -114,11 +114,69 @@ id: evt_1727216290_04
 data: {"mode":"video","primary":{"id":"doorbell","stream_url":"http://homeassistant:1984/doorbell","type":"webrtc","timeout_seconds":45},"pip":{"id":"chromecast","stream_url":"http://127.0.0.1:1984/cast","type":"webrtc"}}
 ```
 
-#### E. Keep-Alive Heartbeat
+#### E. `voice.state`
+Emitted whenever the voice interaction pipeline state changes (wake word detection, listening, transcription, agent thinking, or TTS reply):
+```http
+event: voice.state
+id: evt_1727216300_05
+data: {"state":"idle","transcript":null,"reply":null,"tts_engine":null}
+```
+
+#### F. Keep-Alive Heartbeat
 The server writes an empty comment line `: ping` or event every 15–30 seconds to prevent reverse proxy idle timeouts:
 ```http
 : ping 1727216320
 ```
+
+---
+
+### 3. Connection Handshake & Initial State Hydration
+
+When a client establishes an SSE connection to `GET /api/events`:
+- **Resumption with `Last-Event-ID`**: If the request includes a valid `Last-Event-ID` header and the missed events are present in the server's in-memory ring buffer (default retention: 5 minutes / 1,000 events), the server replays only the missed events in sequence.
+- **Initial Connection / Cache Expiry Hydration**: If `Last-Event-ID` is omitted, blank, or expired, the server **immediately flushes an initial state hydration batch** before streaming live events. This guarantees that cold-booting kiosks, reloaded browser PWAs, and newly booted ambient e-ink nodes never render a blank canvas while waiting for subsequent background poll cycles:
+
+1. **Current Screen Configuration (`screen.rotate`)**:
+   Immediately emits the currently active screen index, total screen count, rotation interval, and widget layout positions.
+   ```http
+   event: screen.rotate
+   id: evt_init_01
+   data: {"current_screen":0,"total_screens":2,"interval_seconds":30,"widgets":[{"name":"daily_chores","origin":[0,0],"dimensions":[3,2]},{"name":"calendar_agenda","origin":[3,0],"dimensions":[3,2]}]}
+   ```
+
+2. **Active Widget State Hydration (`widget.update`)**:
+   Immediately emits a `widget.update` event for every widget on the active screen (sourced from each provider's last known good cache snapshot in memory or SQLite).
+   ```http
+   event: widget.update
+   id: evt_init_02
+   data: {"widget_id":"daily_chores","timestamp":"2026-09-24T22:15:00Z","data":{"tasks":[{"id":"t1","text":"Take out compost","completed":true}]}}
+   ```
+
+3. **Active Video Pipeline State (`video.state`)**:
+   Flushes the current video presentation state (idle widget display vs active primary cast/camera and optional PiP window).
+   ```http
+   event: video.state
+   id: evt_init_03
+   data: {"mode":"widgets","primary":null,"pip":null}
+   ```
+
+4. **Active Voice Pipeline State (`voice.state`)**:
+   Flushes the current voice state to hydrate microphone indicators and status badges immediately.
+   ```http
+   event: voice.state
+   id: evt_init_04
+   data: {"state":"idle","transcript":null,"reply":null,"tts_engine":null}
+   ```
+
+5. **System Health Status (`system.status`)**:
+   Flushes connectivity and upstream integration health.
+   ```http
+   event: system.status
+   id: evt_init_05
+   data: {"online":true,"time":"2026-09-24T22:15:20Z","home_assistant":"connected","weather_api":"ok"}
+   ```
+
+Following the initial state hydration burst, the stream transitions seamlessly to live real-time event broadcasting and periodic keep-alive pings.
 
 ---
 
