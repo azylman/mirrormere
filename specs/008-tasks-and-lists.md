@@ -4,17 +4,17 @@
 Proposed
 
 ## Context & Motivation
-Both reference households want a checklist surface on day one: a grocery or
-to-do list on the Touch Kiosk, and the same list shown read-only on the E-Ink
-node. The two households keep their lists in different places. One may use
-Google Tasks; the other keeps lists in a locally hosted list service that
-already pushes selected lists to a Skylight frame.
+Both reference households want an ambient checklist surface on day one: grocery,
+to-do, or chore lists shown on the Touch Kiosk and the Ambient E-Ink node. The two
+households keep their lists in different places. One may use Google Tasks; the other
+keeps lists in a locally hosted list service that already pushes selected lists to a
+Skylight frame.
 
-Mirrormere therefore must not own the one true list. It must:
-1. Ship a working local list store, so a household with no list tool gets
-   checklists out of the box.
-2. Let each list point at an external **source of truth** through an adapter.
-3. Present every list through one uniform shape, whatever sits behind it.
+Mirrormere operates as a **strictly read-only ambient display** for tasks and lists.
+It does not own the authoritative list or accept write mutations. It:
+1. Ships an embedded local SQLite store, so a household can seed or ingest lists cleanly out of the box.
+2. Lets each list point at an external **source of truth** through a pluggable read-only adapter (Google Tasks, generic HTTP service, or local store).
+3. Presents every list through one uniform shape, rendering ambiently on the wall without bidirectional sync complexity, optimistic UI reconciliation, provisional IDs, or write conflict handling.
 
 ### Security & Local-Network Trust Model
 Mirrormere operates strictly as an appliance on trusted local networks and has no user accounts:
@@ -59,9 +59,6 @@ type ListSource interface {
     Name() string
     Lists(ctx context.Context) ([]List, error)
     Items(ctx context.Context, listID string) ([]ListItem, error)
-    Add(ctx context.Context, listID string, item ListItem) (ListItem, error)
-    Update(ctx context.Context, listID, itemID string, patch ItemPatch) (ListItem, error)
-    Delete(ctx context.Context, listID, itemID string) error
     // Changes may return nil when the source cannot push; the daemon then polls.
     Changes(ctx context.Context) (<-chan ListChange, error)
 }
@@ -126,7 +123,7 @@ display:
 2. **Primary Source Definition**: A widget instance that specifies `source:` (and its adapter options such as `gtasks:` or `http:`) acts as the primary definition for that `list_id`, establishing its upstream sync loop in the Go daemon.
 3. **Consumer Reference Widgets**: Any secondary widget on another screen (e.g. `id: compact-chores`) can display the same list simply by declaring `list_id: "chores"` with its own presentation parameters (e.g. `show_completed: 0`). It reuses the in-memory cache and background sync worker created by the primary definition without spinning up redundant polling loops.
 4. **Conflict Validation**: If multiple widgets define `source` for the same `list_id`, their source configurations must be identical; conflicting definitions are rejected at startup with an explicit validation error.
-5. **Decoupled Phone & Companion Writes**: Companion apps, mobile shortcuts, and voice pipelines interact directly with the list provider keyed by `list_id` via the direct REST endpoints (`GET/POST /api/lists/{list_id}/items`, `PATCH/DELETE /api/lists/{list_id}/items/{item_id}` per SPEC-006 §5) or via physical on-screen widget actions (`POST /api/widgets/{widget_id}/action`). Mutations persist directly to the list's source of truth (SQLite `/data/lists.db`, Google Tasks, or generic HTTP service), updating all widgets sharing `list_id` regardless of which screen is currently visible.
+5. **Read-Only Ingestion Invariant**: Mirrormere treats task and checklist widgets as strictly read-only ambient surfaces. Task creations, completion toggles, edits, and deletions are performed directly in the user's primary client (e.g. Google Tasks mobile app, web application, or household service). Mirrormere periodically polls or ingests updates from the source of truth, updating all widgets sharing `list_id` regardless of which screen is currently visible.
 
 ---
 
@@ -186,8 +183,7 @@ All automated unit and contract tests in `internal/storage/sqlite` or `internal/
 
 ## Wire Protocol
 
-Lists follow SPEC-006 unchanged: state flows out over SSE, mutations flow in
-over the widget action endpoint. There are no list-specific transports.
+Lists follow SPEC-006: state flows out over SSE (`widget.update`), and snapshot state can be inspected via `GET /api/widgets/{widget_id}/state` or `GET /api/lists/{list_id}/items`. Task widgets are strictly read-only ambient surfaces—Core exposes no list mutation endpoints (`POST/PATCH/DELETE /api/lists/...`) and no on-screen widget action handlers (`toggle_item`, `add_item`).
 
 ### Reads: `widget.update`
 A list widget publishes its full current list (items are few; no deltas):
@@ -197,76 +193,39 @@ id: evt_1727217000_07
 data: {"widget_id":"groceries","timestamp":"2026-09-24T22:30:00Z","data":{"list":{"id":"groceries","name":"Groceries","source":"local"},"items":[{"id":"i1","title":"Oat milk","done":false,"section":"Dairy","position":0}]}}
 ```
 
-A snapshot read for clients that do not hold an SSE stream:
-- `GET /api/widgets/{widget_id}/state` returns the same `data` object.
-
-### Writes: Dual Mutation Surfaces
-Mirrormere exposes two distinct write surfaces for list mutations depending on the client execution context:
-
-#### 1. On-Screen Touch Widget Actions (`POST /api/widgets/{widget_id}/action`)
-Used by the Touch Kiosk PWA when a user interacts directly with a widget on the physical screen (SPEC-006 §1). The action is dispatched to the specific widget ID, which resolves its configured `list_id` and forwards the mutation to the underlying source adapter:
-
-| `action` | `params` | Description |
-|---|---|---|
-| `add_item` | `{"title": "...", "section": "..."}` | Append new item to list |
-| `toggle_item` | `{"item_id": "...", "done": true}` | Toggle item completion |
-| `update_item` | `{"item_id": "...", "title": "...", "section": "...", "position": 3}` | Update mutable item fields |
-| `delete_item` | `{"item_id": "..."}` | Delete item from list |
-| `clear_done` | `{}` | Remove all completed items |
-
-Responses use SPEC-006 codes: `200` when the source confirmed the write synchronously, `202` when accepted asynchronously, and `502` when the source rejected it or was unreachable.
-
-#### 2. Direct List Management Endpoints (`/api/lists/{list_id}/items`)
-Used by companion mobile apps, voice assistants, and external scripts to manage list contents directly by canonical `list_id` (SPEC-006 §5), independent of whether any screen currently displays the list:
-- `GET /api/lists/{list_id}/items`: Fetch full item list (`include_done=false` optional query).
-- `POST /api/lists/{list_id}/items`: Append a new item (returns `201 Created` with created `ListItem` on synchronous write, or `202 Accepted` with provisional ID for async upstream sources).
-- `PATCH /api/lists/{list_id}/items/{item_id}`: Partially update mutable item fields (returns `200 OK` on synchronous write, or `202 Accepted` for async upstream sources).
-- `DELETE /api/lists/{list_id}/items/{item_id}`: Remove an item (returns `204 No Content` on synchronous write, or `202 Accepted` for async upstream sources).
+### Snapshot Reads
+Snapshot reads for clients that do not hold an SSE stream:
+- `GET /api/widgets/{widget_id}/state` returns the widget's current cached state payload.
+- `GET /api/lists/{list_id}/items` returns the full item list for a canonical `list_id` (`include_done=false` optional query per SPEC-006 §5).
 
 ### `http` adapter contract
-A household list service is compatible if it serves:
+A household list service is compatible for read-only ingestion if it serves:
 - `GET  {base_url}` → `List`
 - `GET  {base_url}/items` → `[]ListItem`
-- `POST {base_url}/items` → created `ListItem`
-- `PATCH {base_url}/items/{id}` → updated `ListItem`
-- `DELETE {base_url}/items/{id}` → `204`
 
 ---
 
 ## Consistency Rules
 
-1. **Writes go to the source.** An action is forwarded through the adapter to
-   the system that owns the list. Mirrormere holds only a cache for rendering,
-   never a second authoritative copy. The `widget.update` that follows reflects
-   what the source actually stored.
-2. **Last write wins on `updated_at`.** Concurrent edits from two surfaces
-   (kiosk and phone app) resolve by the newest timestamp. Household lists need
-   no merge logic.
-3. **Downstream mirrors are the source's job.** If a household also shows a
-   list on another device (e.g. a Skylight frame), the source system pushes to
-   it. Mirrormere does not fan out writes to multiple destinations.
-4. **Source outage degrades to read-only.** When an adapter fails, the widget
-   keeps its last good state, marks it stale in `system.status`, and rejects
-   actions with `502`. The kiosk rolls back its optimistic update (SPEC-006 §3).
-5. **Push webhooks prohibited on list widgets.** Pushing arbitrary state to
-   `POST /api/widgets/{widget_id}/push` on a list widget is rejected with `409 Conflict`.
-   Items belong to their canonical `list_id` and must be mutated via the source of truth
-   to maintain cache integrity and prevent silent overwrites on subsequent background sync cycles.
+1. **Source of Truth is External.** Mirrormere holds only a local cache for rendering, never an authoritative or mutable copy. State reflects what the upstream source actually provides.
+2. **Zero Inbound Write Conflicts.** Because Mirrormere is strictly read-only for task lists, there is no bidirectional cloud synchronization, no provisional ID reconciliation, no 409 conflict rollbacks, and no client-side merge logic.
+3. **Downstream Mirrors are the Source's Job.** If a household also shows a list on another device (e.g. a Skylight frame), the source system pushes to it. Mirrormere does not fan out writes to multiple destinations.
+4. **Source Outage Degrades Gracefully.** When an adapter fails or an upstream service is unreachable, the widget retains its last known good cached state and marks the provider degraded in `system.status`.
+5. **Push Webhooks Prohibited on List Widgets.** Pushing arbitrary state to `POST /api/widgets/{widget_id}/push` on a list widget is rejected with `409 Conflict`. List widgets are managed strictly via their configured source adapter (polling or provider push channel) to maintain cache integrity.
 
 ---
 
 ## Display Profile Behavior
 
 ### Touch Kiosk (Profile A)
-- Tap-and-gesture interaction only: tap checkbox to toggle completion state, swipe to dismiss/delete.
-- Zero On-Screen Keyboard (OSK): task and list additions or text edits are handled companion/phone-first (via mobile browser, companion app, or voice pipeline per SPEC-002, SPEC-010, and SPEC-011). No virtual keyboard overlay or daemon runs on the kiosk.
-- Optimistic updates per SPEC-006.
+- **Ambient Read-Only Display**: Checklists serve as glanceable ambient references (e.g. kitchen grocery glances or daily chore boards). Tapping checkboxes does not mutate items (zero write actions).
+- **Zero On-Screen Keyboard (OSK)**: No virtual keyboard daemon or touch keyboard overlays. List additions and task checking are handled on personal devices (phones, tablets, voice hubs) at the source.
+- Touch gestures on the kiosk are reserved for navigation (e.g. screen swipes) and HUD media controls.
 
 ### Ambient E-Ink (Profile B)
 - **Read-only.** Renders unchecked items first, then at most the three most
   recently completed items struck through, grouped by section.
 - Re-render is triggered by `widget.update` but coalesced: at most one panel
-  refresh per `eink.min_refresh_seconds` (default 60), so a burst of kiosk taps
-  produces one refresh.
+  refresh per `eink.min_refresh_seconds` (default 60).
 - Items that overflow the widget cell render as "+N more" rather than
   shrinking text below the 1-bit legibility floor.
