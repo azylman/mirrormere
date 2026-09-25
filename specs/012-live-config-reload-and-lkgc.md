@@ -103,7 +103,7 @@ Following the instance diff, the rotation engine updates the active canvas state
    - If the current screen is still within valid bounds, the active screen index is preserved, minimizing jarring visual jumps for viewers currently looking at the wall.
 3. **SSE Signal Dispatch (`screen.rotate`)**:
    - The engine immediately broadcasts a fresh `screen.rotate` event over `GET /api/events` carrying the updated layout for the active screen.
-   - For any newly placed widgets on the active screen, clients fetch `GET /widgets/{widget_id}/render` for each widget on the new layout and mount the updated HTML fragments into the grid canvas.
+   - For any newly placed widgets on the active screen, clients fetch `GET /api/widgets/{widget_id}/render` for each widget on the new layout and mount the updated HTML fragments into the grid canvas.
 
 ---
 
