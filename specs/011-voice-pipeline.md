@@ -68,7 +68,7 @@ flowchart TD
     Hub -->|SSE: error (on timeout/failure)| Relay
     Hub -->|SSE: done (state=idle)| Relay
 
-    Relay -->|POST /api/voice/state\nState + Transcript + Reply| API
+    Relay -->|POST /api/voice/state\nState + Transcript + Reply + TTS Engine| API
 ```
 
 ---
@@ -99,26 +99,26 @@ event: state
 data: {"state": "transcribing"}
 
 event: transcript
-data: {"state": "thinking", "text": "What time is Alex's next meeting?"}
+data: {"transcript": "What time is Alex's next meeting?"}
 
 event: thinking
-data: {"state": "thinking", "elapsed_seconds": 5}
+data: {"elapsed_seconds": 5}
 
 event: reply
-data: {"state": "speaking", "text": "Your next meeting is Project Sync at 2:00 PM."}
+data: {"reply": "Your next meeting is Project Sync at 2:00 PM.", "tts_engine": "kokoro"}
 
 event: audio_chunk
 data: {"chunk_index": 0, "format": "mp3", "is_final": true, "data": "<base64-audio>"}
 
 event: done
-data: {"state": "idle", "duration_ms": 1240}
+data: {"duration_ms": 1240}
 ```
 
 ### 3. Event Specifications
 - `event: state`: Notifies the edge of active sub-state transitions (`transcribing`, `synthesizing`).
-- `event: transcript`: Fired immediately when Whisper finishes transcription. Contains the recognized user text.
+- `event: transcript`: Fired immediately when Whisper finishes transcription. Contains the recognized user `transcript`.
 - `event: thinking`: Keep-alive heartbeat emitted every 5 seconds while waiting for agent brains with asynchronous task queues (which may take 10–60s). Prevents reverse proxies, client HTTP timeouts, and socket drops.
-- `event: reply`: Fired when the agent brain returns its answer text, enabling instant caption toast rendering.
+- `event: reply`: Fired when the agent brain returns its answer text, enabling instant caption toast rendering. Contains `reply` text and the active `tts_engine`.
 - `event: audio_chunk`: Carries audio payload. Supports `format: "pcm"`, `format: "wav"`, or `format: "mp3"`. Allows either multi-chunk streaming (Kokoro) or a single complete payload (ElevenLabs / Piper) indicated by `is_final: true`.
 - `event: error`: Emitted if the brain or STT exceeds configured timeouts (e.g. 60s) or encounters fatal exceptions:
   ```json
@@ -128,14 +128,24 @@ data: {"state": "idle", "duration_ms": 1240}
 - `event: done`: Signals completion of synthesis and turn closure.
 
 ### 4. Edge Dock Relay to Mirrormere Display
-Upon receiving each event over the interaction stream, the dock's `mirrormere-voice` client immediately forwards the state to local Mirrormere Core via `POST /api/voice/state`:
-- **Touch Kiosk (Profile A)**:
-  - `event: transcript` ➔ Sets state to `thinking` and renders recognized query in the pinned header.
-  - `event: reply` ➔ Sets state to `speaking` and pops a cyberpunk caption toast along the bottom HUD while active video ducks to 20%.
-  - `event: audio_chunk` ➔ Audio chunks stream into PipeWire ALSA buffer for speaker output.
-  - `event: done` ➔ HUD clears toasts, returns to `idle`, and video un-ducks.
-- **Ambient E-Ink (Profile B)**:
-  - The voice satellite receives the hub's events directly, but the e-paper panel is drawn from the daemon's image. The satellite forwards state changes to Mirrormere daemon's `POST /api/voice/state`, updating `voice.state` on the SSE bus so the 2×1 status widget renders the recognized text or mic glyph on the next coalesced e-ink refresh.
+Upon receiving interaction lifecycle events, the dock's `mirrormere-voice` client immediately forwards the state to local Mirrormere Core via `POST /api/voice/state` (defined in SPEC-006 §5):
+- **Wire Payload Schema (`POST /api/voice/state`)**:
+  ```json
+  {
+    "state": "thinking",
+    "transcript": "What time is Alex's next meeting?",
+    "reply": null,
+    "tts_engine": null
+  }
+  ```
+  Core validates the payload, updates its in-memory voice state cache, and rebroadcasts it across `GET /api/events` as a `voice.state` SSE event to synchronize all connected screens.
+- **Relay Lifecycle Progression**:
+  - `Wake Detected`: Client immediately posts `state: "listening"` (`transcript: null`, `reply: null`, `tts_engine: null`).
+  - `event: state (transcribing)`: Client posts `state: "transcribing"` (`transcript: null`, `reply: null`, `tts_engine: null`).
+  - `event: transcript`: Client posts `state: "thinking"` with the recognized `transcript`. Touch Kiosk renders the recognized query in the pinned header; E-Ink updates its status widget on the next coalesced refresh.
+  - `event: reply`: Client posts `state: "speaking"` with `transcript`, `reply`, and `tts_engine`. Touch Kiosk pops a caption toast along the bottom HUD while active video ducks to 20%.
+  - `event: audio_chunk`: Chunks stream directly into the local PipeWire/ALSA playback buffer.
+  - `event: done` or `event: error`: Client posts `state: "idle"` (or `state: "error"` on unrecovered failure) with null values. HUD clears toasts, returns to idle, and active video un-ducks.
 
 ---
 
@@ -143,6 +153,7 @@ Upon receiving each event over the interaction stream, the dock's `mirrormere-vo
 
 ### 1. Ear & Dock Presentation (Edge Unit: N100 / Pi 4B)
 - **Local Wake Word**: `openWakeWord` runs locally on the CPU ("Hey Aerial" / "Hey Amos"). Zero raw audio is transmitted across the LAN until wake verification completes.
+- **Listening State Visibility Invariant**: The listening state is ALWAYS visible on at least one surface whenever the microphone is actively capturing audio (e.g. live pulsing visual indicator on Touch Kiosk, static mic glyph on e-ink, or hardware LED on reSpeaker XVF3800). A device that listens without showing it is a bug.
 - **Echo Cancellation (AEC)**:
   - **Alex (Touch Kiosk)**: PipeWire `module-echo-cancel` (`webrtc-aec`) using monitor speakers as reference channel.
   - **Mike (Ambient E-Ink)**: reSpeaker XVF3800 hardware DSP AEC.
@@ -156,6 +167,7 @@ Upon receiving each event over the interaction stream, the dock's `mirrormere-vo
 - **Mike's Hub (Raspberry Pi 4B)**:
   - Runs on the always-on Pi 4B, calling Mike's desktop PC for Whisper STT over LAN.
   - Routes turns to Amos via the agent task queue with periodic `thinking` pulses.
+  - Text Channel Record: The `http_agent` adapter also posts the transcribed prompt and reply text to a dedicated Discord text channel as a persistent interaction record.
   - Synthesizes speech via ElevenLabs with local Piper fallback.
 
 ### 3. TTS Fallback Invariant (Zero Sticky State)
@@ -164,16 +176,20 @@ Upon receiving each event over the interaction stream, the dock's `mirrormere-vo
    - For Alex: Kokoro-82M on Jetson Orin is attempted on every single reply with a 5-second timeout.
 2. **Deterministic Offline Fallback (Piper)**:
    - Piper (`en_US-lessac-medium`) executes only when the primary engine encounters a timeout, 429 rate limit, HTTP 5xx error, or network refusal.
-3. **Audit Logging & Zero Sticky State**:
-   - Every fallback event logs its exact failure cause (`timeout`, `rate_limit`, `connection_refused`) to `voice_fallback.log`.
+3. **Audit Logging & Visible Fallback**:
+   - Every fallback event logs its exact failure cause (`rate_limited`, `timeout`, `network_error`, `http_error:NNN`, `empty_response`) to `voice_fallback.log`, so a voice-quality downgrade is visible afterwards, not silent.
+   - Fallback status is propagated in `POST /api/voice/state` and `voice.state` via `tts_engine: "piper"` (or `tts_engine: "elevenlabs"` on success), allowing on-screen status widgets and toasts to indicate engine fallback rather than failing silently.
    - The engine never sticks in fallback mode; every subsequent utterance retries the configured primary engine.
 
 ### 4. Playback Safety & Privacy Rules
-1. **Quiet Hours**:
+1. **Quiet Hours & Mute Switch Delivery Prerequisite**:
+   - Quiet hours and a functional software/hardware mute switch must ship and be verified before any unit that plays audio is enabled in production.
+2. **Quiet Hours Enforcement**:
    - Suppresses audible speech during configured hours (e.g. `21:00-07:00` for Mike; `23:00-07:00` for Alex). Responses during quiet hours are routed exclusively to display widgets and caption toasts without emitting sound.
-2. **Mute Switch Protection**:
-   - Physical or software privacy mute status is verified prior to activating audio capture or playback.
-3. **No Unconfirmed Live Tests**:
+3. **Mute Switch Protection & Visual Indicators**:
+   - Physical or software privacy mute status is verified prior to activating audio capture or playback. When muted, wake word detection is halted, the microphone stream is closed at the OS/hardware level, and the display reflects muted status.
+   - Active listening must be visibly indicated on screen or hardware LEDs whenever the mic is live per the Listening State Visibility Invariant.
+4. **No Unconfirmed Live Tests**:
    - Automated tests and verification scripts must NEVER trigger unprompted audible sound on physical speakers without explicit, prior confirmation from the household owner (Alex / Mike). Test pipelines must mock the ALSA/PipeWire playback sink.
 
 ---

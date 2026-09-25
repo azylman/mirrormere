@@ -418,7 +418,48 @@ Returns the current master volume and mute state:
   }
   ```
 
-### 5. Household List Inspection Endpoint (`GET /api/lists/{list_id}/items`)
+### 5. Voice Pipeline State Relay Endpoint (`POST /api/voice/state`)
+The edge voice companion daemon (`mirrormere-voice` per SPEC-011) relays interaction lifecycle events to Mirrormere Core to synchronize on-screen microphone indicators, caption toasts, and e-ink status widgets:
+- **Endpoint**: `POST /api/voice/state`
+- **Authentication**: None (all inbound LAN calls are fully trusted per the local-network trust model).
+- **Request Headers**:
+  ```http
+  Content-Type: application/json
+  Accept: application/json
+  ```
+- **Request Body Schema**:
+  ```json
+  {
+    "state": "thinking",
+    "transcript": "What time is Alex's next meeting?",
+    "reply": null,
+    "tts_engine": null
+  }
+  ```
+  - `state` (string, required): Active voice lifecycle state. Must be one of `"idle"`, `"listening"`, `"transcribing"`, `"thinking"`, `"speaking"`, or `"error"`.
+  - `transcript` (string or null, optional): Recognized user utterance returned by STT. Null when idle or listening before transcription completes.
+  - `reply` (string or null, optional): Assistant reply text returned by the brain. Rendered as caption toasts on interactive kiosks or text lines on e-ink status widgets.
+  - `tts_engine` (string or null, optional): Name of the active TTS engine synthesizing or speaking audio (e.g. `"kokoro"`, `"elevenlabs"`, `"piper"`).
+- **Behavior & Rebroadcast Invariant**:
+  - Updates Core's in-memory voice state cache.
+  - Immediately rebroadcasts the updated state across `GET /api/events` as a `voice.state` SSE event (Section F) to synchronize all connected display clients.
+  - Hydrates new clients connecting to `GET /api/events` during initial state hydration (Section 3).
+- **Responses**:
+  - `200 OK`:
+    ```json
+    {
+      "status": "ok"
+    }
+    ```
+  - `400 Bad Request`:
+    ```json
+    {
+      "status": "error",
+      "error": "invalid voice state: must be one of 'idle', 'listening', 'transcribing', 'thinking', 'speaking', 'error'"
+    }
+    ```
+
+### 6. Household List Inspection Endpoint (`GET /api/lists/{list_id}/items`)
 
 Direct list inspection enables mobile companion apps, headless automation scripts, and voice pipelines to inspect household lists (groceries, chores, todo items) directly by canonical `list_id`, without requiring or coupling to a visible widget on screen (per SPEC-008). Because Mirrormere operates as a strictly read-only ambient display for tasks, no list mutation endpoints (`POST`, `PATCH`, `DELETE`) exist; list modifications are made upstream at the source of truth.
 
@@ -455,7 +496,7 @@ Retrieves all current items for a specific list from the local cache:
   }
   ```
 
-### 6. Screen Navigation & Rotation Endpoints
+### 7. Screen Navigation & Rotation Endpoints
 
 #### A. Select Screen (`POST /api/screen/select`)
 Selects a specific screen directly by zero-based index:
@@ -545,7 +586,7 @@ Controls the automatic rotation timer loop:
   - `paused: true`: Suspends the automatic rotation timer loop; the display remains indefinitely on the active screen until explicitly advanced or unpaused.
   - `paused: false`: Re-arms the rotation timer using `interval_seconds` and resumes periodic rotation.
 
-### 7. Standard Responses
+### 8. Standard Responses
 - **`200 OK`**: Action executed immediately, push webhook accepted and cached, or audio settings changed:
   ```json
   { "status": "ok", "widget_id": "porch-light", "result": { "state": "on" } }
@@ -565,7 +606,7 @@ Controls the automatic rotation timer loop:
 - **`422 Unprocessable Entity`**: Payload syntactically valid but cannot be processed by the target resource state (e.g. stream is not controllable, or missing `control_url` for transport control).
 - **`502 Bad Gateway`**: Upstream provider (e.g. Home Assistant, Cast socket, external HTTP service) failed or unreachable.
 
-### 8. Optimistic UI Updates on Touch Kiosks
+### 9. Optimistic UI Updates on Touch Kiosks
 1. User taps a HUD play/pause button or volume slider on the 1080p capacitive touch display (note: task list widgets are ambient and read-only, avoiding optimistic task state reconciliation).
 2. The Touch PWA immediately flips the visual state locally (< 16ms, 60fps responsiveness).
 3. The PWA dispatches the respective REST action endpoint (`POST /api/widgets/{widget_id}/action` or `POST /api/video/action`).
