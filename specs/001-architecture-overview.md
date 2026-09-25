@@ -116,7 +116,7 @@ Mirrormere targets two distinct display classes:
   - Targeted at Raspberry Pi hardware driving 7.5" e-Paper SPI HATs/Bonnets (SPEC-002, SPEC-009).
   - Operates completely headlessly without running a local browser on the display node.
   - Subscribes to backend SSE change events with 5s coalescing and 60s minimum refresh floors.
-  - Renders 1-bit dithered PNGs via the server-side `mirrormere-eink-renderer` sidecar.
+  - Renders 1-bit selectively dithered PNGs via the server-side `mirrormere-eink-renderer` sidecar (SPEC-003, SPEC-009).
 
 ### 3. Decoupled Presentation Layer
 The Go backend has zero awareness of how pixels are drawn. The server renders semantic HTML layouts (`views/widget.html`), injected with deployment-time volume-mounted stylesheets (`/config/custom.css`), allowing the exact same underlying calendar or task model to be presented on interactive touch kiosks or captured for static monochrome e-paper.
