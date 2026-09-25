@@ -126,7 +126,7 @@ display:
 2. **Primary Source Definition**: A widget instance that specifies `source:` (and its adapter options such as `gtasks:` or `http:`) acts as the primary definition for that `list_id`, establishing its upstream sync loop in the Go daemon.
 3. **Consumer Reference Widgets**: Any secondary widget on another screen (e.g. `id: compact-chores`) can display the same list simply by declaring `list_id: "chores"` with its own presentation parameters (e.g. `show_completed: 0`). It reuses the in-memory cache and background sync worker created by the primary definition without spinning up redundant polling loops.
 4. **Conflict Validation**: If multiple widgets define `source` for the same `list_id`, their source configurations must be identical; conflicting definitions are rejected at startup with an explicit validation error.
-5. **Decoupled Phone Writes**: Companion apps and local REST mutations (`POST /api/widgets/{widget_id}/action` or `/api/lists/{list_id}/items`) interact with the list provider keyed by `list_id`, persisting changes directly to SQLite (`/data/lists.db`) or forwarding upstream regardless of which screen is currently visible.
+5. **Decoupled Phone & Companion Writes**: Companion apps, mobile shortcuts, and voice pipelines interact directly with the list provider keyed by `list_id` via the direct REST endpoints (`GET/POST /api/lists/{list_id}/items`, `PATCH/DELETE /api/lists/{list_id}/items/{item_id}` per SPEC-006 §5) or via physical on-screen widget actions (`POST /api/widgets/{widget_id}/action`). Mutations persist directly to the list's source of truth (SQLite `/data/lists.db`, Google Tasks, or generic HTTP service), updating all widgets sharing `list_id` regardless of which screen is currently visible.
 
 ---
 
@@ -200,19 +200,28 @@ data: {"widget_id":"groceries","timestamp":"2026-09-24T22:30:00Z","data":{"list"
 A snapshot read for clients that do not hold an SSE stream:
 - `GET /api/widgets/{widget_id}/state` returns the same `data` object.
 
-### Writes: `POST /api/widgets/{widget_id}/action`
+### Writes: Dual Mutation Surfaces
+Mirrormere exposes two distinct write surfaces for list mutations depending on the client execution context:
 
-| `action` | `params` |
-|---|---|
-| `add_item` | `{"title": "...", "section": "..."}` |
-| `toggle_item` | `{"item_id": "...", "done": true}` |
-| `update_item` | `{"item_id": "...", "title": "...", "section": "...", "position": 3}` (all optional but `item_id`) |
-| `delete_item` | `{"item_id": "..."}` |
-| `clear_done` | `{}` |
+#### 1. On-Screen Touch Widget Actions (`POST /api/widgets/{widget_id}/action`)
+Used by the Touch Kiosk PWA when a user interacts directly with a widget on the physical screen (SPEC-006 §1). The action is dispatched to the specific widget ID, which resolves its configured `list_id` and forwards the mutation to the underlying source adapter:
 
-Responses use SPEC-006 codes. `200` when the source confirmed the write
-synchronously, `202` when it was accepted but not yet confirmed, `502` when the
-source rejected it or was unreachable.
+| `action` | `params` | Description |
+|---|---|---|
+| `add_item` | `{"title": "...", "section": "..."}` | Append new item to list |
+| `toggle_item` | `{"item_id": "...", "done": true}` | Toggle item completion |
+| `update_item` | `{"item_id": "...", "title": "...", "section": "...", "position": 3}` | Update mutable item fields |
+| `delete_item` | `{"item_id": "..."}` | Delete item from list |
+| `clear_done` | `{}` | Remove all completed items |
+
+Responses use SPEC-006 codes: `200` when the source confirmed the write synchronously, `202` when accepted asynchronously, and `502` when the source rejected it or was unreachable.
+
+#### 2. Direct List Management Endpoints (`/api/lists/{list_id}/items`)
+Used by companion mobile apps, voice assistants, and external scripts to manage list contents directly by canonical `list_id` (SPEC-006 §5), independent of whether any screen currently displays the list:
+- `GET /api/lists/{list_id}/items`: Fetch full item list (`include_done=false` optional query).
+- `POST /api/lists/{list_id}/items`: Append a new item (returns `201 Created` with created `ListItem`).
+- `PATCH /api/lists/{list_id}/items/{item_id}`: Partially update mutable item fields (returns `200 OK`).
+- `DELETE /api/lists/{list_id}/items/{item_id}`: Remove an item (returns `204 No Content`).
 
 ### `http` adapter contract
 A household list service is compatible if it serves:
@@ -239,6 +248,10 @@ A household list service is compatible if it serves:
 4. **Source outage degrades to read-only.** When an adapter fails, the widget
    keeps its last good state, marks it stale in `system.status`, and rejects
    actions with `502`. The kiosk rolls back its optimistic update (SPEC-006 §3).
+5. **Push webhooks prohibited on list widgets.** Pushing arbitrary state to
+   `POST /api/widgets/{widget_id}/push` on a list widget is rejected with `409 Conflict`.
+   Items belong to their canonical `list_id` and must be mutated via the source of truth
+   to maintain cache integrity and prevent silent overwrites on subsequent background sync cycles.
 
 ---
 
