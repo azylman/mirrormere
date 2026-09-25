@@ -219,9 +219,9 @@ Responses use SPEC-006 codes: `200` when the source confirmed the write synchron
 #### 2. Direct List Management Endpoints (`/api/lists/{list_id}/items`)
 Used by companion mobile apps, voice assistants, and external scripts to manage list contents directly by canonical `list_id` (SPEC-006 §5), independent of whether any screen currently displays the list:
 - `GET /api/lists/{list_id}/items`: Fetch full item list (`include_done=false` optional query).
-- `POST /api/lists/{list_id}/items`: Append a new item (returns `201 Created` with created `ListItem`).
-- `PATCH /api/lists/{list_id}/items/{item_id}`: Partially update mutable item fields (returns `200 OK`).
-- `DELETE /api/lists/{list_id}/items/{item_id}`: Remove an item (returns `204 No Content`).
+- `POST /api/lists/{list_id}/items`: Append a new item (returns `201 Created` with created `ListItem` on synchronous write, or `202 Accepted` with provisional ID for async upstream sources).
+- `PATCH /api/lists/{list_id}/items/{item_id}`: Partially update mutable item fields (returns `200 OK` on synchronous write, or `202 Accepted` for async upstream sources).
+- `DELETE /api/lists/{list_id}/items/{item_id}`: Remove an item (returns `204 No Content` on synchronous write, or `202 Accepted` for async upstream sources).
 
 ### `http` adapter contract
 A household list service is compatible if it serves:
