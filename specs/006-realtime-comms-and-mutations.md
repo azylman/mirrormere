@@ -118,18 +118,26 @@ Emitted whenever the video priority stack mutates (stream trigger, doorbell inte
 ```http
 event: video.state
 id: evt_1727216290_04
-data: {"mode":"video","primary":{"id":"doorbell","stream_url":"http://homeassistant:1984/doorbell","type":"webrtc","timeout_seconds":45},"pip":{"id":"chromecast","stream_url":"http://127.0.0.1:1984/cast","type":"webrtc"}}
+data: {"mode":"video","primary":{"id":"chromecast","stream_url":"http://127.0.0.1:1984/cast","type":"webrtc"},"pip":{"id":"doorbell","stream_url":"http://homeassistant:1984/doorbell","type":"webrtc","muted":true,"timeout_seconds":45}}
 ```
 
-#### E. `voice.state`
+#### E. `audio.state`
+Emitted whenever host audio volume or mute state mutates:
+```http
+event: audio.state
+id: evt_1727216295_05
+data: {"volume":75,"muted":false}
+```
+
+#### F. `voice.state`
 Emitted whenever the voice interaction pipeline state changes (wake word detection, listening, transcription, agent thinking, or TTS reply):
 ```http
 event: voice.state
-id: evt_1727216300_05
+id: evt_1727216300_06
 data: {"state":"idle","transcript":null,"reply":null,"tts_engine":null}
 ```
 
-#### F. Keep-Alive Heartbeat
+#### G. Keep-Alive Heartbeat
 The server writes an empty comment line `: ping` or event every 15–30 seconds to prevent reverse proxy idle timeouts:
 ```http
 : ping 1727216320
@@ -167,15 +175,23 @@ When a client establishes an SSE connection to `GET /api/events`:
    data: {"mode":"widgets","primary":null,"pip":null}
    ```
 
-4. **Active Voice Pipeline State (`voice.state`)**:
+4. **Active Audio State (`audio.state`)**:
+   Flushes the current master volume level and mute state.
+   ```http
+   event: audio.state
+   id: evt_init_04
+   data: {"volume":75,"muted":false}
+   ```
+
+5. **Active Voice Pipeline State (`voice.state`)**:
    Flushes the current voice state to hydrate microphone indicators and status badges immediately.
    ```http
    event: voice.state
-   id: evt_init_04
+   id: evt_init_05
    data: {"state":"idle","transcript":null,"reply":null,"tts_engine":null}
    ```
 
-5. **System Health Status (`system.status`)**:
+6. **System Health Status (`system.status`)**:
    Flushes connectivity and upstream integration health.
    ```http
    event: system.status
@@ -291,7 +307,87 @@ External sidecars, local microservices, and Home Assistant automations can immed
     }
     ```
 
-### 4. Screen Navigation & Rotation Endpoints
+### 4. Master Audio Volume & Mute Endpoints
+Controls host-level audio sink attenuation and mute states (driving WirePlumber/PipeWire over the HDMI/USB-C monitor speakers per SPEC-002 and SPEC-010) while in `widgets` mode or video presentation:
+
+#### A. Set Master Volume (`POST /api/audio/volume`)
+Sets the host master audio sink volume level:
+- **Headers**:
+  ```http
+  Content-Type: application/json
+  Accept: application/json
+  ```
+- **Request Payload**:
+  ```json
+  {
+    "volume": 75
+  }
+  ```
+  - `volume` (integer, required): Master volume percentage between `0` and `100` inclusive.
+- **Response (`200 OK`)**:
+  ```json
+  {
+    "status": "ok",
+    "volume": 75,
+    "muted": false
+  }
+  ```
+- **Error Response (`400 Bad Request`)**:
+  ```json
+  {
+    "status": "error",
+    "error": "invalid volume: must be an integer between 0 and 100"
+  }
+  ```
+- **Side Effects**: Attenuates host WirePlumber audio sink via `wpctl set-volume @DEFAULT_AUDIO_SINK@ <level>` (capped at the configured 80% hardware safety ceiling per SPEC-010) and broadcasts an `audio.state` SSE event.
+
+#### B. Set / Toggle Master Mute (`POST /api/audio/mute`)
+Sets or toggles the host master audio mute state:
+- **Headers**:
+  ```http
+  Content-Type: application/json
+  Accept: application/json
+  ```
+- **Request Payload** (optional or empty `{}`):
+  ```json
+  {
+    "muted": true
+  }
+  ```
+  - `muted` (boolean, optional): Explicit target mute state (`true` to mute, `false` to unmute). If omitted or empty `{}`: toggles current mute state.
+- **Response (`200 OK`)**:
+  ```json
+  {
+    "status": "ok",
+    "muted": true,
+    "volume": 75
+  }
+  ```
+- **Error Response (`400 Bad Request`)**:
+  ```json
+  {
+    "status": "error",
+    "error": "invalid payload: muted must be a boolean"
+  }
+  ```
+- **Side Effects**: Sets or toggles host audio mute via `wpctl set-mute @DEFAULT_AUDIO_SINK@ <state>` and broadcasts an `audio.state` SSE event.
+
+#### C. Get Audio State (`GET /api/audio`)
+Returns the current master volume and mute state:
+- **Headers**:
+  ```http
+  Accept: application/json
+  ```
+- **Response (`200 OK`)**:
+  ```json
+  {
+    "status": "ok",
+    "volume": 75,
+    "muted": false
+  }
+  ```
+
+### 5. Screen Navigation & Rotation Endpoints
 
 #### A. Select Screen (`POST /api/screen/select`)
 Selects a specific screen directly by zero-based index:
@@ -381,20 +477,23 @@ Controls the automatic rotation timer loop:
   - `paused: true`: Suspends the automatic rotation timer loop; the display remains indefinitely on the active screen until explicitly advanced or unpaused.
   - `paused: false`: Re-arms the rotation timer using `interval_seconds` and resumes periodic rotation.
 
-### 5. Standard Responses
-- **`200 OK`**: Action executed immediately, or push webhook accepted and cached:
+### 6. Standard Responses
+- **`200 OK`**: Action executed immediately, push webhook accepted and cached, or audio settings updated:
   ```json
   { "status": "ok", "widget_id": "daily-chores", "result": { "item_id": "i1", "done": true } }
   ```
   ```json
   { "status": "ok", "widget_id": "daily-chores", "updated_at": "2026-09-24T22:20:00Z" }
   ```
+  ```json
+  { "status": "ok", "volume": 75, "muted": false }
+  ```
 - **`202 Accepted`**: Action dispatched asynchronously to an external system (e.g. Home Assistant service call).
 - **`400 Bad Request`**: Unknown action, invalid parameter schema, malformed payload envelope, or path/body ID mismatch.
 - **`404 Not Found`**: Widget ID or stream ID not loaded in active configuration.
 - **`502 Bad Gateway`**: Upstream provider (e.g. Google API, Home Assistant) failed.
 
-### 6. Optimistic UI Updates on Touch Kiosks
+### 7. Optimistic UI Updates on Touch Kiosks
 1. User taps a chore checkbox on the 1080p capacitive touch display.
 2. The Touch PWA immediately flips the visual checkbox state locally (< 16ms, 60fps responsiveness).
 3. The PWA dispatches `POST /api/widgets/daily-chores/action` with payload `{"action": "toggle_item", "params": {"item_id": "i1", "done": true}}`.
