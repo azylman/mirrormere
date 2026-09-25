@@ -136,7 +136,7 @@ Additionally, the sidecar is responsible for applying the **selective dithering 
 | Button | GPIO | Action |
 |---|---|---|
 | 1 | 5 | Force fetch and **full** refresh now |
-| 2 | 6 | `POST /api/screen/select` to advance to the next screen (SPEC-005/006) |
+| 2 | 6 | `POST /api/screen/advance` (or `POST /api/screen/select`) to advance to the next screen (SPEC-005/006) |
 
 Disabled unless `buttons.enabled: true`.
 
