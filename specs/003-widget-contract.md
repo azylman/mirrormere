@@ -216,15 +216,17 @@ Upstream network partitions, rate limits, and external service outages (e.g. Goo
 For user-specific integrations, private household services, or extensions written in any language (Python, Node.js, Go), Mirrormere provides an out-of-process Generic HTTP Provider adapter (matching the HTTP provider pattern in SPEC-008):
 
 1. **Manifest & Configuration**:
-   A custom widget declares its HTTP provider endpoint in `manifest.yaml` or `config.yaml`:
+   A custom widget instance is declared directly under `display.widgets` in `config.yaml` using `type: http`, supplying its layout dimensions and provider settings under `config:`:
    ```yaml
-   widgets:
-     - id: custom-sensor-hud
-       provider: http
-       http:
-         endpoint: "http://sensor-sidecar:8090/data"
-         refresh_interval_seconds: 60
-         token_env: SENSOR_HUD_TOKEN
+   display:
+     widgets:
+       - id: custom-sensor-hud
+         type: http
+         dimensions: [2, 1]
+         config:
+           endpoint: "http://sensor-sidecar:8095/data"
+           refresh_interval_seconds: 60
+           token_env: SENSOR_HUD_TOKEN
    ```
 
 2. **Wire Endpoints**:
@@ -310,7 +312,7 @@ Mirrormere enforces a strict separation between core public widgets and private 
 
 1. **Standard Core Library (`widgets/`)**:
    - 100% generic, reusable, and free of personal identifiers or proprietary hardware dependencies.
-   - Includes: Google Calendar / CalDAV, Open-Meteo Weather, Daily Chores & Todo, Clock & World Time, Family Photo Carousel.
+   - Core widget types: calendar agenda (`calendar-agenda`), weather forecast (`weather-forecast`), tasks & chores (`tasks`), photo carousel (`photo-carousel`), and grid spacer (`spacer`). Fixed header zones independently render the clock and ambient status.
 
 2. **Private User Extensions (`custom_widgets/` or Sidecar Services)**:
    - User-defined integrations that reference personal home configurations or specific hardware peripherals.

@@ -78,16 +78,18 @@ refresh timer), one lock around the panel. Only the refresh worker touches SPI.
 ## Trigger Model
 
 1. The client holds `GET /api/events` (SPEC-006) open.
-2. Any `widget.update` or `screen.rotate` event marks the screen **dirty**.
+2. Any `widget.update`, `header.update`, or `screen.rotate` event marks the screen **dirty**.
    `system.status` and `: ping` lines do not.
-3. The refresh worker waits until the screen has been dirty for
+3. A periodic clock refresh timer marks the screen **dirty** every `clock_refresh_seconds`
+   (default 300) so the fixed header clock stays synchronized without requiring high-frequency tick events from Core.
+4. The refresh worker waits until the screen has been dirty for
    `coalesce_seconds` (default 5) **and** at least `min_refresh_seconds`
    (default 60) have passed since the last panel write. A burst of kiosk taps
    produces one refresh.
-4. The worker fetches `GET /eink.png` with `If-None-Match: <last etag>`.
+5. The worker fetches `GET /eink.png` with `If-None-Match: <last etag>`.
    - `304` or identical bytes: no panel write. Dirty flag clears.
    - `200` with new bytes: partial refresh (below).
-5. A safety fetch runs every `max_idle_seconds` (default 900) even with no
+6. A safety fetch runs every `max_idle_seconds` (default 900) even with no
    events, so a missed event cannot leave the panel stale indefinitely.
 
 ### Requirement on the sidecar (amends SPEC-003 §3 & §4)
@@ -161,6 +163,7 @@ panel:
 refresh:
   coalesce_seconds: 5
   min_refresh_seconds: 60
+  clock_refresh_seconds: 300
   max_idle_seconds: 900
   full_refresh_minutes: 60
   max_consecutive_partials: 30

@@ -97,47 +97,55 @@ id: evt_1727216200_01
 data: {"widget_id":"daily-chores","timestamp":"2026-09-24T22:15:00Z","state":"healthy","data":{"list":{"id":"chores","name":"Chores","source":"local"},"items":[{"id":"i1","title":"Take out compost","done":true,"position":0},{"id":"i2","title":"Feed cat","done":false,"position":1}]}}
 ```
 
-#### B. `screen.rotate`
+#### B. `header.update`
+Pushed when the autonomous header weather poller completes an ingestion cycle (SPEC-007 §4), delivering persistent top-banner weather directly to all connected displays without requiring an on-grid weather widget:
+```http
+event: header.update
+id: evt_1727216215_02
+data: {"timestamp":"2026-09-24T22:15:00Z","weather":{"temperature":68.5,"units":"F","weather_code":1,"icon":"weather-sunny"}}
+```
+
+#### C. `screen.rotate`
 Emitted by the Go rotation engine when the active screen advances to the next 6×2 layout:
 ```http
 event: screen.rotate
-id: evt_1727216230_02
-data: {"current_screen":1,"total_screens":2,"interval_seconds":30,"widgets":[{"widget_id":"photo-carousel","origin":[0,0],"dimensions":[3,2]},{"widget_id":"home-assistant","origin":[3,0],"dimensions":[3,2]}]}
+id: evt_1727216230_03
+data: {"current_screen":1,"total_screens":2,"interval_seconds":30,"widgets":[{"widget_id":"photo-carousel","origin":[0,0],"dimensions":[3,2]},{"widget_id":"family-calendar","origin":[3,0],"dimensions":[3,2]}]}
 ```
 
-#### C. `system.status`
+#### D. `system.status`
 Emitted on system-level changes (backend sync health, Wi-Fi connectivity, or sensor telemetry):
 ```http
 event: system.status
-id: evt_1727216260_03
-data: {"online":true,"time":"2026-09-24T22:15:20Z","home_assistant":"connected","weather_api":"ok"}
+id: evt_1727216260_04
+data: {"online":true,"time":"2026-09-24T22:15:20Z","calendar_provider":"connected","weather_api":"ok"}
 ```
 
-#### D. `video.state`
+#### E. `video.state`
 Emitted whenever the video priority stack mutates or player transport changes (stream trigger, doorbell interruption, play/pause, or dismissal per SPEC-004):
 ```http
 event: video.state
-id: evt_1727216290_04
+id: evt_1727216290_05
 data: {"mode":"video","primary":{"id":"chromecast","stream_url":"http://127.0.0.1:1984/cast","type":"webrtc","player_state":"playing","controllable":true},"pip":{"id":"doorbell","stream_url":"http://homeassistant:1984/doorbell","type":"webrtc","muted":true,"timeout_seconds":45}}
 ```
 
-#### E. `audio.state`
+#### F. `audio.state`
 Emitted whenever host audio volume or mute state mutates:
 ```http
 event: audio.state
-id: evt_1727216295_05
+id: evt_1727216295_06
 data: {"volume":75,"muted":false}
 ```
 
-#### F. `voice.state`
+#### G. `voice.state`
 Emitted whenever the voice interaction pipeline state changes (wake word detection, listening, transcription, agent thinking, or TTS reply):
 ```http
 event: voice.state
-id: evt_1727216300_06
+id: evt_1727216300_07
 data: {"state":"idle","transcript":null,"reply":null,"tts_engine":null}
 ```
 
-#### G. Keep-Alive Heartbeat
+#### H. Keep-Alive Heartbeat
 The server writes an empty comment line `: ping` or event every 15–30 seconds to prevent reverse proxy idle timeouts:
 ```http
 : ping 1727216320
@@ -167,36 +175,44 @@ When a client establishes an SSE connection to `GET /api/events`:
    data: {"widget_id":"daily-chores","timestamp":"2026-09-24T22:15:00Z","state":"healthy","data":{"list":{"id":"chores","name":"Chores","source":"local"},"items":[{"id":"i1","title":"Take out compost","done":true,"position":0}]}}
    ```
 
-3. **Active Video Pipeline State (`video.state`)**:
+3. **Fixed Header Ambient Weather (`header.update`)**:
+   Flushes the current ambient weather conditions for the persistent top banner.
+   ```http
+   event: header.update
+   id: evt_init_03
+   data: {"timestamp":"2026-09-24T22:15:00Z","weather":{"temperature":68.5,"units":"F","weather_code":1,"icon":"weather-sunny"}}
+   ```
+
+4. **Active Video Pipeline State (`video.state`)**:
    Flushes the current video presentation state (idle widget display vs active primary cast/camera and optional PiP window).
    ```http
    event: video.state
-   id: evt_init_03
+   id: evt_init_04
    data: {"mode":"widgets","primary":null,"pip":null}
    ```
 
-4. **Active Audio State (`audio.state`)**:
+5. **Active Audio State (`audio.state`)**:
    Flushes the current master volume level and mute state.
    ```http
    event: audio.state
-   id: evt_init_04
+   id: evt_init_05
    data: {"volume":75,"muted":false}
    ```
 
-5. **Active Voice Pipeline State (`voice.state`)**:
+6. **Active Voice Pipeline State (`voice.state`)**:
    Flushes the current voice state to hydrate microphone indicators and status badges immediately.
    ```http
    event: voice.state
-   id: evt_init_05
+   id: evt_init_06
    data: {"state":"idle","transcript":null,"reply":null,"tts_engine":null}
    ```
 
-6. **System Health Status (`system.status`)**:
+7. **System Health Status (`system.status`)**:
    Flushes connectivity and upstream integration health.
    ```http
    event: system.status
-   id: evt_init_05
-   data: {"online":true,"time":"2026-09-24T22:15:20Z","home_assistant":"connected","weather_api":"ok"}
+   id: evt_init_07
+   data: {"online":true,"time":"2026-09-24T22:15:20Z","calendar_provider":"connected","weather_api":"ok"}
    ```
 
 Following the initial state hydration burst, the stream transitions seamlessly to live real-time event broadcasting and periodic keep-alive pings.
@@ -324,7 +340,7 @@ External sidecars, local microservices, and Home Assistant automations can immed
       "value": null
     }
     ```
-  - Controls playback state, volume, or mute on active controllable streams (SPEC-004). When received, Core verifies `controllable: true` and forwards the action payload directly via HTTP POST to `{control_url}` (returning `200 OK` on forward success, `502 Bad Gateway` on controller failure, or `422 Unprocessable Entity` if non-controllable).
+  - Controls playback state on active controllable streams (SPEC-004). When received, Core verifies `controllable: true` and forwards the action payload directly via HTTP POST to `{control_url}` (returning `200 OK` on forward success, `502 Bad Gateway` on controller failure, or `422 Unprocessable Entity` if non-controllable).
 - **Player State Update**: `POST /api/video/state`
   - **Payload**:
     ```json
@@ -336,7 +352,7 @@ External sidecars, local microservices, and Home Assistant automations can immed
   - Dispatched by the stream producer sidecar (e.g. `sidecars/cast-watcher`) when player transport state changes (`"playing"`, `"paused"`, or `"buffering"`). Core updates the active stream record and broadcasts an updated `video.state` SSE event to synchronize all connected displays.
 
 ### 4. Master Audio Volume & Mute Endpoints
-Mirrormere Core acts as the centralized coordinator for master audio volume and mute state, tracking desired values and synchronizing connected clients. Because Mirrormere runs in a rootless container (`uid 10001`) and may be hosted off-node on a separate home server (Profile B) where no physical speakers exist, Core decouples audio state coordination from hardware audio sink attenuation:
+Mirrormere Core acts as the centralized coordinator for master audio volume and mute state, tracking desired values and synchronizing connected clients. Because Mirrormere runs in a rootless container (`uid 10001`) and may be hosted off-node on a separate home server where no physical speakers exist, Core decouples audio state coordination from hardware audio sink attenuation:
 - **Centralized State Coordination**: Core maintains the authoritative in-memory `volume` (0–100) and `muted` (boolean) state, broadcasting changes immediately across `GET /api/events` as `audio.state` SSE events.
 - **Client & Edge Host Enforcement**: The active display client (e.g. Chromium running in `--kiosk` mode under Wayland `cage` per SPEC-010) or edge voice companion subscribes to `audio.state` and attenuates its local HTML5 audio elements or executes host-level PipeWire/WirePlumber commands (`wpctl set-volume @DEFAULT_AUDIO_SINK@ <level>` capped at the 80% hardware safety ceiling).
 - **Optional Co-Located PipeWire Sink**: On co-located installations (Profile A where Core and the physical display share the same Intel N100 host), operators may optionally bind-mount the user PipeWire socket (`-v /run/user/1000/pipewire-0:/tmp/pipewire-0` with `PIPEWIRE_RUNTIME_DIR=/tmp`) to allow Core to directly invoke `wpctl`. Where no local audio sink is mounted or reachable, direct host execution is a safe no-op and Core relies exclusively on client-side SSE synchronization.
@@ -626,5 +642,5 @@ Controls the automatic rotation timer loop:
 ### Ambient E-Ink (Profile B - Low-Power / E-Paper)
 - On the single-host Pi 4B setup (or in a decoupled multi-host deployment):
   - The local `clients/eink-node` daemon (or remote client) connects to `/api/events` (`http://localhost:8080/api/events`).
-  - Headless Chromium rasterizes the static 800×480 monochrome buffer only on `screen.rotate` or when relevant widget state changes.
-  - The display client fetches `http://localhost:8081/eink.png` on trigger, coalesces rapid events, and flushes over SPI, completely insulating the e-paper panel from useless high-frequency refreshes.
+  - Headless Chromium (`eink-renderer`) rasterizes the static 800×480 monochrome buffer on request when the display node fetches `GET /eink.png` (SPEC-003 §4 and SPEC-009).
+  - The display client (`clients/eink-node`) fetches `http://localhost:8081/eink.png` when triggered by `widget.update`, `screen.rotate`, or periodic clock tick (`clock_refresh_seconds`), coalesces rapid events, and flushes over SPI, completely insulating the e-paper panel from useless high-frequency refreshes.

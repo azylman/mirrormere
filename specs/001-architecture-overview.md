@@ -223,7 +223,7 @@ To guarantee interoperability across polyglot components (Go server, Python clie
 
 ### 1. Single Source of Truth (`api/openapi.yaml` & `api/schemas/`)
 - All REST endpoints, query parameters, request bodies, and JSON responses are formally defined in `api/openapi.yaml` (OpenAPI 3.1).
-- All Server-Sent Events (SSE) dispatched on `GET /api/events` are formally defined via JSON Schemas in `api/schemas/`, exactly matching the canonical event names defined in SPEC-006 §2: `widget.update.json`, `screen.rotate.json`, `system.status.json`, `video.state.json`, `audio.state.json`, and `voice.state.json`. Every event type emitted across the SSE event bus must maintain an authoritative schema file under `api/schemas/` enforced via CI pre-flight validation.
+- All Server-Sent Events (SSE) dispatched on `GET /api/events` are formally defined via JSON Schemas in `api/schemas/`, exactly matching the canonical event names defined in SPEC-006 §2: `widget.update.json`, `header.update.json`, `screen.rotate.json`, `system.status.json`, `video.state.json`, `audio.state.json`, and `voice.state.json`. Every event type emitted across the SSE event bus must maintain an authoritative schema file under `api/schemas/` enforced via CI pre-flight validation.
 
 ### 2. Compile-Time Go Server Contract (`oapi-codegen`)
 - Core REST interfaces and Data Transfer Objects (DTOs) are generated into `internal/api/` via `oapi-codegen`.

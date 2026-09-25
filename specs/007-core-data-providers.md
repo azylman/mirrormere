@@ -75,8 +75,9 @@ The parser evaluates RFC 5545 VEVENT components, expands recurrence rules (RRULE
 
 ```json
 {
-  "widget_id": "calendar-agenda",
+  "widget_id": "family-calendar",
   "timestamp": "2026-09-24T22:20:00Z",
+  "state": "healthy",
   "data": {
     "last_sync": "2026-09-24T22:20:00Z",
     "sync_status": "ok",
@@ -176,8 +177,9 @@ Weather codes conform to the World Meteorological Organization (WMO 4501) standa
 
 ```json
 {
-  "widget_id": "weather-forecast",
+  "widget_id": "local-weather",
   "timestamp": "2026-09-24T22:20:00Z",
+  "state": "healthy",
   "data": {
     "current": {
       "temperature": 68.4,
@@ -210,9 +212,9 @@ Weather codes conform to the World Meteorological Organization (WMO 4501) standa
 }
 ```
 
-### Dual-Use Target Routing
+### Target Routing
 1. **Grid Widget (`widgets/weather-forecast`)**: Renders full 24-hour hourly timeline and 7-day extended forecasts on the 6×2 grid canvas (`[2, 1]` or `[3, 2]` blocks).
-2. **Fixed Header Zone**: Automatically extracts `current.temperature` and `current.icon` into the persistent top banner across all screens without incurring extra API requests.
+*(Note: Top-banner header weather is managed independently via `display.header.weather` and `header.update` SSE events per Section 4 below).*
 
 ---
 
@@ -262,6 +264,7 @@ display:
         cycle_interval_seconds: 60     # Rotate image every 60s within widget
         preload_count: 50
         shuffle: true
+        image_size: [1920, 1080]       # Optional [width, height] sizing; defaults to [1920, 1080]
 ```
 
 ### Parsing Pipeline in Go
@@ -270,9 +273,9 @@ display:
    - Base image URL (`https://lh3.googleusercontent.com/...`)
    - Original upload timestamp
    - Intrinsic image width and height (aspect ratio)
-3. **Parameter Injection**: Dynamic sizing parameters are applied based on the client hardware target:
-   - **Touch Kiosk (1080p)**: `=w1920-h1080` (or `=w960-h960` for 50/50 split).
-   - **E-Ink (800×480)**: `=w800-h480` for grayscale rendering.
+3. **Parameter Injection**: Dynamic sizing parameters are applied based on the widget instance's configured `image_size: [width, height]` (defaults to `[1920, 1080]`):
+   - Appends `=w{width}-h{height}` to the base image URL (e.g. `=w1920-h1080` for 1080p, or `=w800-h480` for 800×480 panels).
+   - Core remains completely agnostic of client hardware classes; the sizing suffix is determined strictly by the widget instance configuration.
 
 ### Normalized Internal Schema (`PhotoItem`)
 
@@ -353,4 +356,21 @@ When any widget instance completes an ingestion cycle (e.g. `home-weather` vs `o
 ```
 
 Display clients match incoming SSE events to their respective DOM containers via `data-widget-id="home-weather"`, ensuring independent updating across multiple instances without cross-talk or redundant fetches.
+
+### Header Weather Delivery (`header.update`)
+When the autonomous header weather poller completes an ingestion cycle, Core broadcasts a dedicated `header.update` SSE event (SPEC-006 §2) containing the current ambient conditions:
+
+```json
+{
+  "timestamp": "2026-09-24T22:20:00Z",
+  "weather": {
+    "temperature": 72.4,
+    "units": "F",
+    "weather_code": 1,
+    "icon": "weather-sunny"
+  }
+}
+```
+
+All connected display clients (touch kiosks and ambient e-paper nodes) update their persistent top banner directly from `header.update` without requiring an on-grid weather widget or custom client-side parsing.
 

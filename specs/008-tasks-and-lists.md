@@ -190,7 +190,7 @@ A list widget publishes its full current list (items are few; no deltas):
 ```http
 event: widget.update
 id: evt_1727217000_07
-data: {"widget_id":"groceries","timestamp":"2026-09-24T22:30:00Z","data":{"list":{"id":"groceries","name":"Groceries","source":"local"},"items":[{"id":"i1","title":"Oat milk","done":false,"section":"Dairy","position":0}]}}
+data: {"widget_id":"groceries","timestamp":"2026-09-24T22:30:00Z","state":"healthy","data":{"list":{"id":"groceries","name":"Groceries","source":"local"},"items":[{"id":"i1","title":"Oat milk","done":false,"section":"Dairy","position":0}]}}
 ```
 
 ### Snapshot Reads

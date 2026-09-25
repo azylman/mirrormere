@@ -129,8 +129,8 @@ display:
         share_url: "https://photos.app.goo.gl/AbCdEf123456789"
         refresh_interval_seconds: 3600
         cycle_interval_seconds: 60
-    - id: home-assistant
-      type: home-assistant
+    - id: chores
+      type: tasks
       dimensions: [3, 2] # 1/2 width, full height (6 cells)
 ```
 
@@ -282,11 +282,11 @@ display:
     - id: local-weather
       type: weather-forecast
       dimensions: [2, 1]
-    - id: transit-commute
-      type: transit-commute
+    - id: grocery-list
+      type: tasks
       dimensions: [2, 1]
-    - id: trash-schedule
-      type: trash-schedule
+    - id: office-weather
+      type: weather-forecast
       dimensions: [2, 1]
 ```
 

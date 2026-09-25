@@ -127,12 +127,10 @@ Dispatched by touch interaction or companion controllers to manipulate active me
 
 - `id` (string, required): Stream identifier to control.
 - `action` (string, required): Supported actions:
-  - `"toggle_playback"`: Toggles play/pause state.
+  - `"toggle_playback"`: Toggles play/pause state via stream controller.
   - `"play"`: Resumes playback.
   - `"pause"`: Pauses playback.
-  - `"mute"`: Mutes stream audio.
-  - `"unmute"`: Unmutes stream audio.
-  - `"volume"`: Adjusts stream volume (`value`: float `0.0`–`1.0`).
+  *(Note: Audio volume and mute are managed exclusively via the centralized master audio endpoints `POST /api/audio/volume` and `POST /api/audio/mute` per SPEC-006 §4).*
 
 #### Core-to-Sidecar Dispatching
 When Mirrormere Core receives `POST /api/video/action`:
@@ -275,9 +273,9 @@ Because audio is packaged directly into the WebRTC stream alongside video, Chrom
 ### 2. Touch HUD & Transport Controls
 - **Remote / Phone Volume**: When casting from a phone, the user's phone volume rocker attenuates audio digitally at the Chromecast hardware source via CastV2.
 - **On-Screen Touch HUD**: Tapping anywhere on the video screen displays a floating cyber HUD overlay (auto-fading after 3s of inactivity) containing:
-  - **Play / Pause Transport Toggle**: Large (minimum 48×48px) touch-friendly button in the control bar. Tapping toggles media playback via CastV2 upstream.
-  - **Mute / Unmute Toggle**: Toggles audio mute state.
-  - **Volume Slider**: Linear touch slider (0–100%) controlling `video.volume` (persisted in `localStorage`).
+  - **Play / Pause Transport Toggle**: Large (minimum 48×48px) touch-friendly button in the control bar. Tapping toggles media playback via CastV2 upstream (`POST /api/video/action`).
+  - **Mute / Unmute Toggle**: Toggles master audio mute state via `POST /api/audio/mute` (rendering state dynamically from `audio.state` SSE events).
+  - **Volume Slider**: Linear touch slider (0–100%) controlling master volume via `POST /api/audio/volume` (rendering state dynamically from `audio.state` SSE events; zero client-side `localStorage` drift).
   - **Dismiss ('X') Button**: Unmounts video mode immediately and returns to `widgets` mode.
 - **Non-Controllable Streams**: For live camera and doorbell feeds (`controllable: false`), the play/pause transport button is hidden.
 - **Host Hardware Ceiling**: WirePlumber configures an 80% maximum volume ceiling on boot to prevent chassis speaker distortion or clipping.
