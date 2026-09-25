@@ -37,6 +37,59 @@ Mirrormere targets two hardware archetypes:
   - Daytime idle timeout (10 minutes of inactivity blanks panel).
   - Wake on tap: touch digitizer input event instantly restores display power.
 
+### Reference Deployment Topology & Manifest (`docker-compose.yml`)
+Profile A runs on the Beelink N100 mini PC driving the touch kiosk directly. The core daemon and video cast sidecar run as co-located Docker containers:
+
+```yaml
+# Profile A: Touch Kiosk Reference Docker Compose Manifest
+services:
+  mirrormere-core:
+    image: ghcr.io/azylman/mirrormere:latest
+    container_name: mirrormere-core
+    restart: unless-stopped
+    ports:
+      - "8080:8080" # Core Daemon: REST API, SSE (/api/events), web UI
+    environment:
+      - PORT=8080
+      - HOST=0.0.0.0
+      - TZ=America/Los_Angeles
+    volumes:
+      - ./config.yaml:/config/config.yaml:ro
+      - ./kiosk.css:/config/custom.css:ro
+      - ./data:/data
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:8080/healthz"]
+      interval: 15s
+      timeout: 3s
+      start_period: 5s
+      retries: 3
+
+  mirrormere-cast:
+    image: alexxit/go2rtc:latest
+    container_name: mirrormere-cast
+    restart: unless-stopped
+    ports:
+      - "1984:1984" # go2rtc WebRTC stream server & REST API
+      - "8554:8554" # RTSP stream proxy (optional)
+      - "8555:8555/tcp" # WebRTC media signaling
+      - "8555:8555/udp"
+    devices:
+      - /dev/video0:/dev/video0 # USB 3.0 UVC HDMI capture card (Chromecast ingest)
+    volumes:
+      - ./go2rtc.yaml:/config/go2rtc.yaml:ro
+
+  # Optional Phase 2 Voice Hub Sidecar (SPEC-011):
+  mirrormere-voice:
+    image: ghcr.io/azylman/mirrormere-voice:latest
+    container_name: mirrormere-voice
+    profiles: ["voice"]
+    restart: unless-stopped
+    ports:
+      - "9000:9000" # Voice Hub: local audio stream & TTS
+    environment:
+      - MIRRORMERE_URL=http://mirrormere-core:8080
+```
+
 ---
 
 ## Profile B: Ambient E-Paper Kiosk (Mike & Amos)
@@ -66,3 +119,54 @@ Mirrormere targets two hardware archetypes:
   - Full refresh every 60 minutes to clear accumulated ghosting.
   - Partial refreshes on state change (e.g. new calendar events, chore completion) or every 5 minutes for clock updates.
   - Strict zero-animation rule: UI redrawing is purely event- or timer-driven.
+
+### Reference Deployment Topology & Manifest (`docker-compose.yml`)
+In Profile B, the Raspberry Pi 3 B+ display node connects over SPI to the raw e-paper panel and runs the lightweight Python client (`clients/eink-node`, SPEC-009) as a native systemd service. The server-side rendering and data synchronization run on a Docker host (the same Pi or an existing home server):
+
+```yaml
+# Profile B: Ambient E-Paper Reference Docker Compose Manifest
+services:
+  mirrormere-core:
+    image: ghcr.io/azylman/mirrormere:latest
+    container_name: mirrormere-core
+    restart: unless-stopped
+    ports:
+      - "8080:8080" # Core Daemon: REST API, SSE (/api/events), web UI
+    environment:
+      - PORT=8080
+      - HOST=0.0.0.0
+      - TZ=America/Los_Angeles
+    volumes:
+      - ./config.yaml:/config/config.yaml:ro
+      - ./eink.css:/config/custom.css:ro
+      - ./data:/data
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:8080/healthz"]
+      interval: 15s
+      timeout: 3s
+      start_period: 5s
+      retries: 3
+
+  mirrormere-eink-renderer:
+    image: ghcr.io/azylman/mirrormere-eink-renderer:latest
+    container_name: mirrormere-eink-renderer
+    restart: unless-stopped
+    ports:
+      - "8081:8081" # E-Ink PNG Renderer: headless 800x480 1-bit dithered rasterizer
+    environment:
+      - DAEMON_URL=http://mirrormere-core:8080
+      - PORT=8081
+    depends_on:
+      - mirrormere-core
+
+  # Optional Phase 2 Voice Hub Sidecar (SPEC-011):
+  mirrormere-voice:
+    image: ghcr.io/azylman/mirrormere-voice:latest
+    container_name: mirrormere-voice
+    profiles: ["voice"]
+    restart: unless-stopped
+    ports:
+      - "9000:9000" # Voice Hub: local audio stream & TTS
+    environment:
+      - MIRRORMERE_URL=http://mirrormere-core:8080
+```
