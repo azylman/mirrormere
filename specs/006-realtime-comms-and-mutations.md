@@ -87,7 +87,7 @@ Pushed when a data provider yields updated state (e.g. calendar fetch, weather r
 ```http
 event: widget.update
 id: evt_1727216200_01
-data: {"widget_id":"daily-chores","timestamp":"2026-09-24T22:15:00Z","data":{"tasks":[{"id":"t1","text":"Take out compost","completed":true},{"id":"t2","text":"Feed cat","completed":false}]}}
+data: {"widget_id":"daily-chores","timestamp":"2026-09-24T22:15:00Z","state":"healthy","data":{"list":{"id":"chores","name":"Chores","source":"local"},"items":[{"id":"i1","title":"Take out compost","done":true,"position":0},{"id":"i2","title":"Feed cat","done":false,"position":1}]}}
 ```
 
 #### B. `screen.rotate`
@@ -95,7 +95,7 @@ Emitted by the Go rotation engine when the active screen advances to the next 6ร
 ```http
 event: screen.rotate
 id: evt_1727216230_02
-data: {"current_screen":1,"total_screens":2,"interval_seconds":30,"widgets":[{"name":"photo-carousel","origin":[0,0],"dimensions":[3,2]},{"name":"home-assistant","origin":[3,0],"dimensions":[3,2]}]}
+data: {"current_screen":1,"total_screens":2,"interval_seconds":30,"widgets":[{"widget_id":"photo-carousel","origin":[0,0],"dimensions":[3,2]},{"widget_id":"home-assistant","origin":[3,0],"dimensions":[3,2]}]}
 ```
 
 #### C. `system.status`
@@ -141,7 +141,7 @@ When a client establishes an SSE connection to `GET /api/events`:
    ```http
    event: screen.rotate
    id: evt_init_01
-   data: {"current_screen":0,"total_screens":2,"interval_seconds":30,"widgets":[{"name":"daily-chores","origin":[0,0],"dimensions":[3,2]},{"name":"calendar-agenda","origin":[3,0],"dimensions":[3,2]}]}
+   data: {"current_screen":0,"total_screens":2,"interval_seconds":30,"widgets":[{"widget_id":"daily-chores","origin":[0,0],"dimensions":[3,2]},{"widget_id":"calendar-agenda","origin":[3,0],"dimensions":[3,2]}]}
    ```
 
 2. **Active Widget State Hydration (`widget.update`)**:
@@ -149,7 +149,7 @@ When a client establishes an SSE connection to `GET /api/events`:
    ```http
    event: widget.update
    id: evt_init_02
-   data: {"widget_id":"daily-chores","timestamp":"2026-09-24T22:15:00Z","data":{"tasks":[{"id":"t1","text":"Take out compost","completed":true}]}}
+   data: {"widget_id":"daily-chores","timestamp":"2026-09-24T22:15:00Z","state":"healthy","data":{"list":{"id":"chores","name":"Chores","source":"local"},"items":[{"id":"i1","title":"Take out compost","done":true,"position":0}]}}
    ```
 
 3. **Active Video Pipeline State (`video.state`)**:
@@ -192,13 +192,14 @@ Following the initial state hydration burst, the stream transitions seamlessly t
 - **Payload Schema**:
   ```json
   {
-    "action": "toggle_task",
+    "action": "toggle_item",
     "params": {
-      "task_id": "t1",
-      "completed": true
+      "item_id": "i1",
+      "done": true
     }
   }
   ```
+  *(Supported actions and parameter schemas conform to the target widget's specification, e.g. SPEC-008 ยง3 for tasks and lists).*
 
 ### 2. Video Stream Lifecycle Endpoints
 - **Trigger Stream**: `POST /api/video/trigger`
@@ -313,7 +314,7 @@ Controls the automatic rotation timer loop:
 ### 4. Standard Responses
 - **`200 OK`**: Action executed immediately and state updated.
   ```json
-  { "status": "ok", "widget_id": "daily-chores", "result": { "task_id": "t1", "completed": true } }
+  { "status": "ok", "widget_id": "daily-chores", "result": { "item_id": "i1", "done": true } }
   ```
 - **`202 Accepted`**: Action dispatched asynchronously to an external system (e.g. Home Assistant service call).
 - **`400 Bad Request`**: Unknown action or invalid parameter schema.
@@ -323,7 +324,7 @@ Controls the automatic rotation timer loop:
 ### 5. Optimistic UI Updates on Touch Kiosks
 1. User taps a chore checkbox on the 1080p capacitive touch display.
 2. The Touch PWA immediately flips the visual checkbox state locally (< 16ms, 60fps responsiveness).
-3. The PWA dispatches `POST /api/widgets/daily-chores/action`.
+3. The PWA dispatches `POST /api/widgets/daily-chores/action` with payload `{"action": "toggle_item", "params": {"item_id": "i1", "done": true}}`.
 4. If the server returns success, the subsequent `widget.update` SSE message reconciles state seamlessly.
 5. If the request fails (e.g. network partition), the PWA rolls back the optimistic visual state with an error toast.
 
