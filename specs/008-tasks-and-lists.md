@@ -195,7 +195,7 @@ data: {"widget_id":"groceries","timestamp":"2026-09-24T22:30:00Z","state":"healt
 
 ### Snapshot Reads
 Snapshot reads for clients that do not hold an SSE stream:
-- `GET /api/widgets/{widget_id}/state` returns the widget's current cached state payload (SPEC-006 §2).
+- `GET /api/widgets/{widget_id}/state` returns the widget's current cached state payload (SPEC-006 §1).
 - `GET /api/lists/{list_id}/items` returns the full item list for a canonical `list_id` (`include_done=false` optional query per SPEC-006 §7).
 
 ### `http` adapter contract

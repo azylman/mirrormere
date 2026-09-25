@@ -8,7 +8,7 @@ Mirrormere requires a communication protocol between the headless Go backend dae
 
 While traditional dashboard projects frequently default to bidirectional WebSockets, Mirrormere intentionally adopts a **Command-Query Responsibility Segregation (CQRS)** pattern:
 - **Server → Client (Query / State Push)**: Unidirectional **Server-Sent Events (SSE)**.
-- **Client → Server (Command / Touch Actions)**: Standard **REST Endpoints (`POST`)**.
+- **Client → Server (Command / Media & Navigation Controls)**: Standard **REST Endpoints (`POST`)**.
 
 ---
 
@@ -27,14 +27,11 @@ flowchart LR
 
     subgraph GoDaemon [Mirrormere Go Daemon]
         SSEHub[SSE Event Hub / Broadcast Channel]
-        ActionHandler[REST Action Dispatcher]
         PushHandler[Push Webhook Ingestion]
         StateStore[Widget State Engine & Cache]
     end
 
-    Touch -->|POST /api/widgets/:id/action\nDiscrete Touch Actions| ActionHandler
     Sidecar -->|POST /api/widgets/:id/push\nImmediate State Push| PushHandler
-    ActionHandler -->|Mutate & Trigger Event| StateStore
     PushHandler -->|Update Cache & Broadcast| StateStore
     StateStore -->|Publish Widget State| SSEHub
 
@@ -45,7 +42,7 @@ flowchart LR
 ### 1. Natural Protocol Separation
 - Bidirectional WebSockets require custom application-level framing protocols (e.g. `{ "type": "action", "payload": ... }` vs `{ "type": "event", ... }`), re-implementing error handling, status codes, and routing over raw frames.
 - SSE + REST splits concerns cleanly:
-  - **Commands (Mutations)** use standard HTTP semantics (`200 OK`, `202 Accepted`, `400 Bad Request`, `502 Bad Gateway`).
+  - **Commands (Navigation & Media Controls)** use standard HTTP semantics (`200 OK`, `400 Bad Request`, `502 Bad Gateway`).
   - **Queries (State Streams)** use native HTTP streaming over standard port 80/443.
 
 ### 2. Zero External Go Dependencies
@@ -242,28 +239,9 @@ Following the initial state hydration burst, the stream transitions seamlessly t
 
 ---
 
-## Inbound Mutations, Video Actions & Push Webhooks
+## Inbound Push Webhooks, Media Controls & Navigation Endpoints
 
-### 1. Widget Mutation Endpoint
-- **URL**: `POST /api/widgets/{widget_id}/action`
-- **Headers**:
-  ```http
-  Content-Type: application/json
-  Accept: application/json
-  ```
-- **Payload Schema**:
-  ```json
-  {
-    "action": "trigger_calibration",
-    "params": {
-      "sensor_id": "air-quality-co2",
-      "baseline_ppm": 420
-    }
-  }
-  ```
-  *(Supported actions and parameter schemas conform to the target widget's specification, e.g. custom provider actions or trigger webhooks. Read-only widgets such as calendar-agenda, weather-forecast, and tasks reject action requests with `400 Bad Request`).*
-
-### 2. Widget State Snapshot Endpoint (`GET /api/widgets/{widget_id}/state`)
+### 1. Widget State Snapshot Endpoint (`GET /api/widgets/{widget_id}/state`)
 Retrieves the latest cached state snapshot for a single widget on demand (useful for initial component mounting, deep-link widget refreshes, or headless scripts outside the SSE push stream):
 - **URL**: `GET /api/widgets/{widget_id}/state`
 - **Headers**:
@@ -292,7 +270,7 @@ Retrieves the latest cached state snapshot for a single widget on demand (useful
   }
   ```
 
-### 3. Widget Realtime Push Webhook Endpoint
+### 2. Widget Realtime Push Webhook Endpoint
 External sidecars, local microservices, and Home Assistant automations can immediately push fresh data into Mirrormere without waiting for the widget's next background polling interval:
 - **URL**: `POST /api/widgets/{widget_id}/push`
 - **Headers**:
@@ -353,7 +331,7 @@ External sidecars, local microservices, and Home Assistant automations can immed
     }
     ```
 
-### 4. Custom Widget Ingestion Polling Contract (`POST {endpoint}`)
+### 3. Custom Widget Ingestion Polling Contract (`POST {endpoint}`)
 When Mirrormere ingests data for custom widgets declared with `provider: http`, the Go daemon polls the configured `{endpoint}` on its declared `refresh_interval_seconds` cadence:
 
 - **Method**: Standard `POST` (prevents reverse proxies, web frameworks, and client libraries from stripping request bodies, which commonly occurs with HTTP `GET`). An optional `method: GET` configuration is supported in `config.yaml` for simple parameterless IoT hardware (e.g. an ESP32 displaying a static `/status` page).
@@ -394,7 +372,7 @@ When Mirrormere ingests data for custom widgets declared with `provider: http`, 
     - Core preserves the Last-Known-Good (LKG) data snapshot in cache and marks the widget `state: "degraded"` (or `state: "error"` if cold-booting with an empty cache), per Stale-While-Revalidate rules.
     - Core emits a degraded `widget.update` SSE event and retries on the next polling cycle with exponential backoff.
 
-### 5. Video Stream Lifecycle & Action Endpoints
+### 4. Video Stream Lifecycle & Action Endpoints
 - **Trigger Stream**: `POST /api/video/trigger`
   - **Payload**:
     ```json
@@ -436,7 +414,7 @@ When Mirrormere ingests data for custom widgets declared with `provider: http`, 
     ```
   - Dispatched by the stream producer sidecar (e.g. `sidecars/cast-watcher`) when player transport state changes (`"playing"`, `"paused"`, or `"buffering"`). Core updates the active stream record and broadcasts an updated `video.state` SSE event to synchronize all connected displays.
 
-### 6. Master Audio Volume & Mute Endpoints
+### 5. Master Audio Volume & Mute Endpoints
 Mirrormere Core acts as the centralized coordinator for master audio volume and mute state, tracking desired values and synchronizing connected clients. To avoid fragile host-level dependencies, permissions, or split-brain attenuation layers, volume and muting are managed entirely in software at the application/client level rather than relying on host-level OS settings (`wpctl` or PipeWire socket bind-mounts):
 - **Centralized State Coordination**: Core maintains authoritative in-memory `volume` (0–100) and `muted` (boolean) state, broadcasting changes immediately across `GET /api/events` as `audio.state` SSE events.
 - **Client-Side Software Enforcement**: Active display clients (e.g. Chromium running in `--kiosk` mode under Wayland `cage` per SPEC-010) or edge voice companions subscribe to `audio.state` and apply digital attenuation directly to their HTML5 `<video>` / WebRTC playback elements.
@@ -523,7 +501,7 @@ Returns the current master volume and mute state:
   }
   ```
 
-### 7. Voice Pipeline State Relay Endpoint (`POST /api/voice/state`)
+### 6. Voice Pipeline State Relay Endpoint (`POST /api/voice/state`)
 The edge voice companion daemon (`mirrormere-voice` per SPEC-011) relays interaction lifecycle events to Mirrormere Core to synchronize on-screen microphone indicators and caption toasts:
 - **Endpoint**: `POST /api/voice/state`
 - **Authentication**: None (all inbound LAN calls are fully trusted per the local-network trust model).
@@ -564,7 +542,7 @@ The edge voice companion daemon (`mirrormere-voice` per SPEC-011) relays interac
     }
     ```
 
-### 8. Household List Inspection Endpoint (`GET /api/lists/{list_id}/items`)
+### 7. Household List Inspection Endpoint (`GET /api/lists/{list_id}/items`)
 
 Direct list inspection enables mobile companion apps, headless automation scripts, and voice pipelines to inspect household lists (groceries, chores, todo items) directly by canonical `list_id`, without requiring or coupling to a visible widget on screen (per SPEC-008). Because Mirrormere operates as a strictly read-only ambient display for tasks, no list mutation endpoints (`POST`, `PATCH`, `DELETE`) exist; list modifications are made upstream at the source of truth.
 
@@ -601,7 +579,7 @@ Retrieves all current items for a specific list from the local cache:
   }
   ```
 
-### 9. Screen Navigation & Rotation Endpoints
+### 8. Screen Navigation & Rotation Endpoints
 
 #### A. Select Screen (`POST /api/screen/select`)
 Selects a specific screen directly by zero-based index:
@@ -693,29 +671,25 @@ Controls the automatic rotation timer loop:
   - `paused: true`: Suspends the automatic rotation timer loop for `duration_seconds` (or indefinitely if set to 0). Core auto-resumes periodic rotation once the timer elapses.
   - `paused: false`: Re-arms the rotation timer using `interval_seconds` and immediately resumes periodic rotation.
 
-### 10. Standard Responses
-- **`200 OK`**: Action executed immediately, push webhook accepted and cached, or audio settings changed:
-  ```json
-  { "status": "ok", "widget_id": "indoor-air-quality", "result": { "calibrated": true } }
-  ```
+### 9. Standard Responses
+- **`200 OK`**: Push webhook accepted and cached, video stream triggered/dismissed, audio settings changed, or screen navigated:
   ```json
   { "status": "ok", "widget_id": "custom-sensor-hud", "updated_at": "2026-09-24T22:20:00Z" }
   ```
   ```json
   { "status": "ok", "volume": 75, "muted": false }
   ```
-- **`202 Accepted`**: Action dispatched asynchronously to an external system (e.g. out-of-process generic HTTP provider background operation).
-- **`400 Bad Request`**: Unknown action, invalid parameter schema, schema validation failure, or malformed JSON payload.
+- **`400 Bad Request`**: Invalid parameter schema, missing required fields, or malformed JSON payload.
 - **`404 Not Found`**: Widget ID, list ID, or stream ID not found.
-- **`409 Conflict`**: Mutation rejected due to source-of-truth invariants (e.g. attempting `push` on a list-backed widget).
+- **`409 Conflict`**: State push rejected due to source-of-truth invariants (e.g. attempting `push` on a list-backed widget).
 - **`422 Unprocessable Entity`**: Payload syntactically valid but cannot be processed by the target resource state (e.g. stream is not controllable, or missing `control_url` for transport control).
-- **`502 Bad Gateway`**: Upstream provider (e.g. out-of-process HTTP service or Cast socket) failed or unreachable.
+- **`502 Bad Gateway`**: Upstream provider (e.g. Cast socket transport control) failed or unreachable.
 
-### 11. Optimistic UI Updates on Touch Kiosks
-1. User interacts with touch controls on the 1080p capacitive touch display—such as tapping a HUD play/pause button, dragging the master volume slider, or toggling mute (note: task list widgets are ambient and read-only, avoiding optimistic task state reconciliation).
+### 10. Optimistic UI Updates on Touch Kiosks
+1. User interacts with touch controls on the 1080p capacitive touch display—such as tapping a HUD play/pause button, dragging the master volume slider, or toggling mute (note: all Phase 1 widgets and task lists are read-only ambient surfaces, avoiding optimistic widget data reconciliation).
 2. The Touch PWA immediately flips the visual state locally (< 16ms, 60fps responsiveness).
-3. The PWA dispatches the respective REST endpoint (`POST /api/widgets/{widget_id}/action`, `POST /api/video/action`, `POST /api/audio/volume`, or `POST /api/audio/mute`).
-4. When the server processes the command, the corresponding SSE event (`widget.update`, `video.state`, or `audio.state`) reconciles authoritative state across all connected clients.
+3. The PWA dispatches the respective REST endpoint (`POST /api/video/action`, `POST /api/audio/volume`, or `POST /api/audio/mute`).
+4. When the server processes the command, the corresponding SSE event (`video.state` or `audio.state`) reconciles authoritative state across all connected clients.
 5. If the request fails (e.g. network partition or upstream error), the PWA rolls back the optimistic visual state with an error toast.
 
 ---

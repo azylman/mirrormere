@@ -125,7 +125,7 @@ config_schema:
 ### Manifest Functional Roles
 1. **Hardware Profile Filtering (`capabilities`)**: Tells the 6×2 layout solver which display tiers can render the widget:
    - `ambient-static`: Supports rendering to static monochrome or grayscale displays (e-paper).
-   - `touch-interactive`: Supports full touch interaction, tapping to view event details, gestures, and animations.
+   - `touch-interactive`: Supports full touch interaction, gestures, animations, and purely client-side presentations (such as tapping to expand event details inline with zero server mutation calls).
    - `video-capture`: Involves live video streaming or UVC ingestion (automatically ignored by e-paper targets).
    - `audio-reactive`: Utilizes microphone input or voice triggers.
 2. **Data Provider Routing (`provider`)**: Identifies how data is ingested. Built-in widgets point to compiled Go fetchers (`calendar-agenda`, `weather-forecast`, `tasks`, `photo-carousel`, `spacer`), while custom extensions declare `provider: http` to invoke the generic HTTP sidecar client.
@@ -409,8 +409,6 @@ For user-specific integrations, private household services, or extensions writte
      ```
      - **2xx Success (e.g. `200 OK`)**: The response body must be a JSON object containing the domain data, validated against the widget package's `response_schema`. On successful validation, Core stamps `timestamp` with the current UTC receive time, sets `state: "healthy"`, wraps it into the internal payload envelope (`widget_id`, `timestamp`, `state`, `data`), and updates the in-memory and SQLite cache.
      - **Non-2xx Status / Network Error**: If the endpoint returns a non-2xx status code (e.g. `500 Internal Server Error`, `502 Bad Gateway`, `429 Too Many Requests`) or the request times out, Core treats this as an upstream fetch failure. Per Stale-While-Revalidate rules, Core preserves the Last-Known-Good (LKG) data snapshot in cache, marks the widget `state: "degraded"` (or `state: "error"` if cold-booting with an empty cache), emits a degraded `widget.update` SSE event, and schedules retry with exponential backoff.
-   - **Mutation Handling (`POST {endpoint}/action`)**:
-     Optional mutation handler. Forwards user actions from `POST /api/widgets/{widget_id}/action` (returns `200` OK, `202` Accepted, or `502` Bad Gateway per SPEC-006).
 
 3. **Runtime Response Schema Validation (`response_schema`)**:
    When data is received from the HTTP endpoint (or inbound push webhook), the Go daemon validates the payload before passing it to the presentation layer:
