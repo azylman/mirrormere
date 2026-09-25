@@ -64,6 +64,87 @@ config_schema:
 
 ---
 
+## Declarative Widget Instance Configuration (`config.yaml`)
+
+Mirrormere uses a generic, decoupled configuration model where **each widget instance declared in `display.widgets` is a self-contained unit managing both its data ingestion parameters and its UI presentation settings**. There is no disconnected top-level providers block; all sync cadences, data sources, and display parameters live directly in the widget's `config:` mapping.
+
+### 1. Unified Widget Instance Declaration
+In `config.yaml`, the `display.widgets` array defines the active widgets. Each entry decouples the instance identity (`id`) from its underlying widget type (`type`) and supplies a generic `config:` dictionary:
+
+```yaml
+display:
+  widgets:
+    - id: home-weather              # Unique instance identifier (kebab-case)
+      type: weather-forecast        # Widget engine / template type
+      dimensions: [2, 1]            # [width_cols, height_rows] on 6x2 grid
+      pinned: false                 # Pinned across all rotation screens
+      config:                       # Widget-specific parameters & sync settings
+        refresh_interval_seconds: 900 # Ingestion sync loop cadence
+        latitude: 37.8044
+        longitude: -122.2712
+        units: imperial             # "metric" | "imperial"
+        hourly: false
+        forecast_days: 5
+
+    - id: office-weather            # Second independent weather instance!
+      type: weather-forecast
+      dimensions: [2, 1]
+      config:
+        refresh_interval_seconds: 900
+        latitude: 37.7749
+        longitude: -122.4194
+        units: imperial
+        hourly: false
+        forecast_days: 5
+
+    - id: family-calendar
+      type: calendar-agenda
+      dimensions: [4, 2]
+      config:
+        refresh_interval_seconds: 300 # Ingestion sync loop cadence
+        view: week                  # Presentation: "day" | "week" | "month"
+        days_ahead: 7
+        max_events: 12
+        show_relative_time: true
+        calendars:
+          - name: "Family Events"
+            url_env: FAMILY_CALENDAR_URL
+            color: "#a855f7"
+
+    - id: living-room-photos
+      type: photo-carousel
+      dimensions: [3, 2]
+      config:
+        share_url: "https://photos.app.goo.gl/AbCdEf123456789"
+        refresh_interval_seconds: 3600 # Album metadata sync cadence
+        cycle_interval_seconds: 60     # Local client photo rotation interval
+        shuffle: true
+
+    - id: grocery-list
+      type: tasks
+      dimensions: [2, 1]
+      config:
+        list_id: "groceries"
+        show_completed: 3
+```
+
+### 2. Multi-Instance Capability
+Separating `id` from `type` and attaching sync configuration directly to the instance enables multiple independent instances of the same widget type across screens with distinct upstream targets:
+- Multiple weather locations: `id: home-weather` on Screen 1 and `id: office-weather` on Screen 2 with different GPS coordinates and polling rates.
+- Multiple task lists: `id: family-chores` on Screen 1 and `id: grocery-list` on Screen 2.
+- Multiple photo streams: `id: family-photos` on Screen 1 and `id: art-gallery` on Screen 2 with distinct Google Photos share URLs.
+- Multiple calendar views: a `[2, 1]` compact `day` view on Screen 1 and a `[4, 2]` expansive `week` view on Screen 2.
+
+### 3. Lifecycle Binding & Background Ingestion in Go
+The Go backend unmarshals the generic `config` mapping as `map[string]any`:
+- When initializing each widget instance on server boot, the engine passes `w.Config` into `Init(ctx, w.Config)`.
+- Core built-in widgets deserialize `w.Config` into strongly typed internal structs (e.g. `CalendarConfig`, `WeatherConfig`) using `mitchellh/mapstructure` or YAML decoder defaults.
+- **Dedicated Sync Goroutine**: During `Init`, the widget instance starts its own background goroutine running on its configured `refresh_interval_seconds`. This worker runs for the lifetime of the Mirrormere daemon, keeping in-memory caches continuously fresh regardless of whether the widget is currently visible or rotated off-screen.
+- **SSE Event Emission**: When the sync loop fetches updated data, it publishes a `widget.update` event over the SSE bus tagged with its unique instance ID (`widget_id: w.ID`).
+- **Template Context Injection**: The `config` object is also injected into the semantic HTML template renderer context (`views/widget.html`), allowing templates to inspect presentation parameters directly (e.g. `{{ if eq .Config.view "month" }}...{{ end }}`).
+
+---
+
 ## The Data Provider Contract & Architecture
 
 Mirrormere compiles into a static, zero-CGO Go binary (`CGO_ENABLED=0`). Because Go cannot dynamically load shared libraries (`.so` plugins via `plugin.Open`) into static binaries, Mirrormere does not support dynamic runtime Go plugins. Instead, data providers follow one of two clean extension models:
@@ -108,7 +189,7 @@ For user-specific integrations, private household services, or extensions writte
        provider: http
        http:
          endpoint: "http://sensor-sidecar:8090/data"
-         poll_interval_seconds: 60
+         refresh_interval_seconds: 60
          token_env: SENSOR_HUD_TOKEN
    ```
 

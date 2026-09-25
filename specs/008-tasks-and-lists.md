@@ -76,27 +76,43 @@ type ListSource interface {
 
 ### Configuration Schema (`config.yaml`)
 
+Each tasks/checklist widget instance configures its list identity, upstream source, and sync cadence directly in `display.widgets[].config`:
+
 ```yaml
-providers:
-  lists:
-    db_path: "/data/lists.db"       # Local SQLite database path (default: /data/lists.db)
-    poll_interval_seconds: 120
-    lists:
-      - id: groceries
-        name: "Groceries"
-        source: local
-      - id: family-todo
-        name: "To Do"
-        source: http
+display:
+  widgets:
+    - id: groceries
+      type: tasks
+      dimensions: [2, 1]
+      config:
+        list_name: "Groceries"
+        source: local               # Local SQLite database (default)
+        show_completed: 3
+
+    - id: family-todo
+      type: tasks
+      dimensions: [2, 1]
+      config:
+        list_name: "To Do"
+        source: http                # Generic HTTP list service adapter
+        refresh_interval_seconds: 120
         http:
-          base_url: "http://192.168.1.77:8300/lists/family-todo"
+          base_url: "http://192.0.2.10:8300/lists/family-todo"
           token_env: HOUSEHOLD_LISTS_TOKEN
-      - id: chores
-        name: "Chores"
-        source: gtasks
+
+    - id: chores
+      type: tasks
+      dimensions: [2, 1]
+      config:
+        list_name: "Chores"
+        source: gtasks              # Google Tasks adapter
+        refresh_interval_seconds: 120
         gtasks:
           tasklist_id: "MDk3..."
 ```
+
+### Shared List State & Deduplication
+When multiple widget instances reference the same underlying list (e.g. `list_id: groceries` or `list_id: chores` across different rotation screens), the Go daemon's list provider deduplicates polling loops and syncs via an in-memory singleflight/cache layer, while local SQLite lists share the daemon's internal `/data/lists.db` store.
 
 ---
 
@@ -120,7 +136,7 @@ PRAGMA temp_store = MEMORY;        -- Avoid ephemeral disk I/O on embedded flash
 ```
 
 ### 3. Database Schema & Migrations
-The local SQLite store persists at `/data/lists.db` (configurable via `providers.lists.db_path`):
+The local SQLite store persists at `/data/lists.db` (internal daemon default):
 
 ```sql
 CREATE TABLE IF NOT EXISTS lists (
