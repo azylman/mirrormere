@@ -39,7 +39,7 @@ flowchart TD
 ---
 
 ### Phase 1: Docker Core, Config & Widget Package Loader
-**Objective:** Establish Day-1 Docker Compose, authoritative OpenAPI/SSE contracts, config parser with LKGC, full widget package loader, and 6×2 layout solver with 100% test coverage before implementing business logic.
+**Objective:** Establish Day-1 Docker Compose, authoritative OpenAPI/SSE contracts, config parser, widget package loader, 6×2 layout solver, LKGC validation pipeline, and fsnotify reload watcher with >= 95.0% statement test coverage floor before implementing business logic.
 
 - [x] **Task 1.1: Docker Compose Foundation & Scaffolding**
   - Files:
@@ -49,64 +49,78 @@ flowchart TD
     - Create: `deploy/examples/custom.css`
   - Deliverable: Reproducible container build running a healthcheck endpoint from Day 1.
 
-- [ ] **Task 1.2: OpenAPI 3.1 Specification & SSE JSON Schemas**
+- [ ] **Task 1.2: OpenAPI 3.1 Specification & Reload Event Schemas**
   - Files:
-    - Create: `api/openapi.yaml` (full REST API specification per SPEC-003, SPEC-004, SPEC-006, SPEC-007, SPEC-008, SPEC-012)
-    - Create: `api/schemas/widget.update.json`
-    - Create: `api/schemas/header.update.json`
-    - Create: `api/schemas/screen.rotate.json`
-    - Create: `api/schemas/system.status.json`
-    - Create: `api/schemas/video.state.json`
-    - Create: `api/schemas/audio.state.json`
-    - Create: `api/schemas/voice.state.json`
+    - Create: `api/openapi.yaml` (scoped strictly to Phase 1 foundation routes: `/healthz`, `/health`, `/api/widgets/{widget_id}/render`, `/widget-types/{type}/assets/{path}`)
     - Create: `api/schemas/widget.reload.json`
     - Create: `api/schemas/style.reload.json`
-  - Endpoints to Codify:
-    - `GET /healthz`, `GET /health`
-    - `GET /api/events` (SSE bus)
-    - `POST /api/screen/select`, `POST /api/screen/advance`, `POST /api/screen/pause`
-    - `GET /api/audio`, `POST /api/audio/volume`, `POST /api/audio/mute`
-    - `POST /api/video/trigger`, `POST /api/video/dismiss`, `POST /api/video/state`, `POST /api/video/action`
-    - `POST /api/voice/state`
-    - `GET /api/lists/{list_id}/items`
-    - `GET /api/widgets/{widget_id}/state`
-    - `GET /api/widgets/{widget_id}/render` (SSR HTML fragment)
-    - `GET /widget-types/{type}/assets/{path}` (Widget package static asset route)
-    - `POST /api/widgets/{widget_id}/push` (Push webhook data path; rejected with 409 Conflict on task widgets)
-  - Deliverable: Validated OpenAPI 3.1 contract and JSON Schemas with compile-time code generation via `oapi-codegen`.
+  - Deliverable: Validated Phase 1 OpenAPI 3.1 contract and JSON Schemas with compile-time code generation via `oapi-codegen` into `internal/api/`.
 
-- [ ] **Task 1.3: Configuration Engine with Explicit `*_env` Resolution & LKGC**
+- [ ] **Task 1.3: Core Configuration Parser & Explicit `*_env` Resolution**
   - Files:
     - Create: `internal/config/config.go`
     - Create: `internal/config/config_test.go`
   - Requirements:
-    - Parse `config.yaml` with schema validation (`screens`, `widgets`, `display`, `providers`).
+    - Parse `config.yaml` with schema validation for canonical keys: `timezone`, `display` (holding `rotation`, `grid`, `header`, and `widgets`). No manual `screens` key; no top-level `providers` block (SPEC-003, SPEC-005).
     - Resolve secrets strictly through explicit `*_env` keys (`token_env`, `url_env`) reading from the host environment. Zero `${VAR}` string interpolation (SPEC-012 §6).
-    - Last Known Good Configuration (LKGC) in-memory fallback on parse failure.
   - Deliverable: Hermetic unit tests achieving `>= 95%` coverage validating valid, invalid, and edge configuration structures.
 
-- [ ] **Task 1.4: Widget Package Loader & 6×2 Layout Bitmask Solver**
+- [ ] **Task 1.4: Widget Package Loader & Manifest Validator**
   - Files:
     - Create: `internal/domain/widget.go`
     - Create: `internal/domain/manifest.go`
     - Create: `internal/widget/loader.go`
     - Create: `internal/widget/loader_test.go`
+  - Requirements:
+    - Widget package discovery across built-ins (`/app/widgets`) and overrides/custom (`/config/widgets`). Whole-package overriding invariant: any custom widget must supply complete package (`manifest.yaml`, `views/widget.html`, and optional `assets/`).
+    - Parse and validate `manifest.yaml` (schema validation: forbid `default` keyword in config schema, validate supported dimensions).
+    - Apply manifest `default_dimensions` when instance config omits `dimensions: [cols, rows]`.
+  - Deliverable: Hermetic unit tests achieving `>= 95%` coverage using isolated filesystem fixtures.
+
+- [ ] **Task 1.5: 6×2 Grid Bitmask Backtracking Solver**
+  - Files:
     - Create: `internal/layout/solver.go`
     - Create: `internal/layout/solver_test.go`
   - Requirements:
-    - Widget package discovery across built-ins (`/app/widgets`) and overrides/custom (`/config/widgets`). Whole-package overriding invariant: any custom widget must supply complete package (`manifest.yaml`, `views/widget.html`, assets).
-    - Parse and validate `manifest.yaml` (schema validation: forbid `default` keyword in config schema, validate supported dimensions).
-    - Apply `default_dimensions` when instance config omits `width`/`height`.
     - Implement exact 2D recursive backtracking bitmask solver for 6×2 grid (`cols ∈ [0, 5]`, `rows ∈ [0, 1]`, 12 discrete cells):
       - Compute minimal rotation screens: $K = \lceil A_{\text{unpinned}} / (12 - A_{\text{pinned}}) \rceil$.
       - Pinned widget replication across all screens.
       - Bitmask placement verification (`screen_bitmask == 0xFFF`).
       - Helpful layout deficit and spacer tile (`type: spacer`) guidance on tiling errors per SPEC-005.
+  - Deliverable: Comprehensive unit tests in `internal/layout/solver_test.go` across various tile sizes and edge cases.
+
+- [ ] **Task 1.6: LKGC 6-Stage Validation Pipeline & Atomic Swap**
+  - Files:
+    - Create: `internal/config/lkgc.go`
+    - Create: `internal/config/lkgc_test.go`
+  - Requirements:
+    - Implement 6-stage validation pipeline from SPEC-012:
+      1. YAML Syntax & Structure (top-level `timezone`, `display`)
+      2. Core Instance Schemas
+      3. Package Existence & Completeness (via Chunk 1.4 loader)
+      4. Manifest `config_schema` Validation
+      5. List Source-of-Truth Rules
+      6. 6×2 Bin-Packing Layout Solver (via Chunk 1.5 solver)
+    - On pass: execute atomic configuration swap in memory.
+    - On fail: retain running LKGC snapshot in memory, log structured error, and preserve active service state.
+  - Deliverable: Hermetic unit tests achieving `>= 95%` coverage covering all 6 stages and LKGC fallbacks.
+
+- [ ] **Task 1.7: `fsnotify` Directory Watcher & Reload Dispatcher**
+  - Files:
+    - Create: `internal/watcher/watcher.go`
+    - Create: `internal/watcher/watcher_test.go`
+  - Requirements:
+    - Monitor `/config` directory descriptor, `/app/widgets`, and `/config/widgets` with 100ms debouncing and temporary file filtering.
+    - Handle atomic editor renames and clean read settle.
+    - On `config.yaml` modification: trigger LKGC pipeline and atomic swap.
+    - On `/config/custom.css` edit: dispatch `style.reload` SSE event.
+    - On widget template or manifest edits: dispatch `widget.reload` SSE event.
+  - Deliverable: Hermetic unit tests achieving `>= 95%` coverage.
 
 ---
 
 ### Phase 2: Realtime SSE Bus, Web Shell & Walking Skeleton
-**Objective:** Deliver the centralized SSE bus, rotation engine, `html/template` SSR engine, `fsnotify` live reload, and vanilla ES6 display HUD—achieving an end-to-end "walking skeleton" displaying live grid cells in the browser.
+**Objective:** Deliver the centralized SSE bus, rotation engine, `html/template` SSR engine, and vanilla ES6 display HUD—achieving an end-to-end "walking skeleton" displaying live grid cells in the browser.
 
 - [ ] **Task 2.1: High-Performance SSE Bus & Initial Hydration**
   - Files:
@@ -129,7 +143,7 @@ flowchart TD
     - Create: `internal/api/handlers_screen_test.go`
   - Requirements:
     - Timer-driven screen rotation (`display.rotation.interval_seconds`).
-    - Emit `screen.rotate` carrying active screen index and SSR HTML fragments for current widgets.
+    - Emit `screen.rotate` carrying active screen index and layout metadata; clients fetch `GET /api/widgets/{widget_id}/render` for each widget on the new layout (SPEC-006 §2.C, #146).
     - Implement navigation endpoints: `POST /api/screen/select`, `POST /api/screen/advance`, and `POST /api/screen/pause` (with optional `duration_seconds: 120` auto-resume timer).
 
 - [ ] **Task 2.3: Server-Side Rendering (SSR) Engine & Static Asset Pipeline**
@@ -142,19 +156,9 @@ flowchart TD
     - In-process `html/template` renderer executing widget `views/widget.html`.
     - Route `GET /api/widgets/{widget_id}/render`: renders HTML fragment using active widget state.
     - Route `GET /widget-types/{type}/assets/{path}`: serves static assets from widget package directory.
-    - Route `GET /config/custom.css`: serves user custom stylesheet.
+    - Route `GET /style.css`: serves volume-mounted custom stylesheet (`/config/custom.css`) if present, otherwise default `hud.css` (SPEC-003 §3, SPEC-006 §2.I).
 
-- [ ] **Task 2.4: `fsnotify` File Watcher & Dynamic Hot Reloading (SPEC-012)**
-  - Files:
-    - Create: `internal/watcher/watcher.go`
-    - Create: `internal/watcher/watcher_test.go`
-  - Requirements:
-    - Monitor `/config/` directory with 100ms debouncing.
-    - On `config.yaml` modification: trigger atomic reload and state reconcile or LKGC fallback.
-    - On `/config/custom.css` change: emit `style.reload` SSE event.
-    - On `/config/widgets/` modification: reload template and emit `widget.reload` SSE event.
-
-- [ ] **Task 2.5: Web Display HUD & Walking Skeleton**
+- [ ] **Task 2.4: Web Display HUD & Walking Skeleton**
   - Files:
     - Create: `web/templates/display.html`
     - Create: `web/static/css/hud.css` (Cyber HUD variables, CSS Grid tokens, high-contrast dark theme)
@@ -178,7 +182,7 @@ flowchart TD
     - Create: `internal/provider/cache.go`
     - Create: `internal/provider/coordinator.go`
   - Requirements:
-    - Pluggable `Provider` interface: `ID() string`, `Fetch(ctx context.Context) (any, error)`, `Interval() time.Duration`.
+    - Pluggable `Provider` lifecycle interface per SPEC-003: `Init(ctx context.Context, cfg map[string]any) error`, `Fetch(ctx context.Context) (any, error)`, `Subscribe(events chan<- WidgetEvent)`, `Shutdown(ctx context.Context) error`.
     - In-memory Stale-While-Revalidate cache: return stale data immediately on transient errors while logging background fetch failures.
     - Exponential backoff with jitter on network refusal or upstream 5xx.
     - Degraded state tracking: `healthy`, `degraded` (LKG preserved, opacity 0.8), `error` (cold-boot empty state).
@@ -285,7 +289,7 @@ flowchart TD
     - Create: `clients/eink-node/config.yaml`
   - Requirements:
     - Adafruit Bonnet GPIO pin mapping: RST=27, DC=22, BUSY=17, CS=CE0 (GPIO 8), Buttons=GPIO 5 & 6 (SPEC-009).
-    - Wire button tap on GPIO 5/6 to trigger `POST /api/screen/advance` on Core daemon.
+    - Wire button tap on GPIO 6 to trigger `POST /api/screen/advance` on Core daemon; button on GPIO 5 forces a full panel refresh to clear accumulated ghosting per SPEC-009.
     - Refresh lifecycle: 5s debounce, 60s minimum panel write floor, 60m full refresh cycle, deep sleep after every write.
     - Offline guard: 8×8 black dot in top-right corner if offline > 120s; persist last good frame to `/var/lib/mirrormere-eink/last.png`.
     - Standardized healthcheck endpoint on port 8099 (`GET :8099/healthz`).
