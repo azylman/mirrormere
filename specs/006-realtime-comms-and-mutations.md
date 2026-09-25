@@ -154,7 +154,7 @@ data: {"state":"idle","transcript":null,"reply":null,"tts_engine":null}
 ```
 
 #### H. `widget.reload`
-Emitted when the in-process `fsnotify` file watcher detects a template update (`views/widget.html`) or metadata update (`manifest.yaml`) in `/config/widgets/<widget-type>/` or `/app/widgets/<widget-type>/`:
+Emitted when the in-process `fsnotify` file watcher detects a template update (`views/widget.html`) or metadata update (`manifest.yaml`) in `/config/widgets/<widget-type>/` or `/app/widgets/<widget-type>/`, or when an incomplete custom package created at runtime is completed with all required files:
 ```http
 event: widget.reload
 id: evt_1727216300_08

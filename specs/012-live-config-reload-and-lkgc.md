@@ -64,7 +64,7 @@ Before any running process, widget worker, or layout solver is touched, the cand
 ### Validation Stages
 1. **YAML Syntax & Schema**: Validates well-formed YAML structure, top-level keys (`display`, `header`, `timezone`), and standard types.
 2. **Standard Instance Keys**: Validates that all items in `display.widgets` contain mandatory framework fields (`id`, `type`), valid `dimensions` (or valid fallback to `manifest.yaml` `default_dimensions`), and positive integer cadences (`refresh_interval_seconds`).
-3. **Package Existence & Completeness**: Verifies that every referenced `type` resolves to a complete widget package (`manifest.yaml` and `views/widget.html`) under `/config/widgets/<type>/` or `/app/widgets/<type>/` (per SPEC-003).
+3. **Package Existence & Completeness**: Verifies that every referenced `type` resolves to a complete widget package (`manifest.yaml` and `views/widget.html`) under `/config/widgets/<type>/` or `/app/widgets/<type>/` (per SPEC-003). At runtime, an incomplete package created after boot is not selected, retaining active LKGC until all required files exist on disk.
 4. **Manifest `config_schema` Validation**: Validates the nested `config:` mapping for every instance against its package `config_schema` using JSON Schema Draft 2020-12 (`github.com/santhosh-tekuri/jsonschema/v6`).
 5. **Domain & Source-of-Truth Rules**: Enforces domain-level integrity (e.g. task widgets reference valid list sources per SPEC-008; HTTP providers declare valid `endpoint` URLs).
 6. **Bin-Packing Layout Solver (SPEC-005)**: Executes the exact 6×2 layout solver. Verifies that all declared widgets fit cleanly onto screens adhering to the fully-filled screen invariant with no overflowing tiles.

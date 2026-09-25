@@ -44,13 +44,22 @@ While all core application files live under `/app/` (`/app/web`, `/app/widgets`)
 1. `/config/widgets/<widget-type>/` (Custom User Package override)
 2. `/app/widgets/<widget-type>/` (Core Built-In Package)
 
-If `/config/widgets/<widget-type>/` exists, it is selected as the authoritative package, and `/app/widgets/<widget-type>/` is ignored entirely. There is **zero partial inheritance, layering, or file-by-file fallback** between `/config` and `/app`:
+If `/config/widgets/<widget-type>/` exists and is complete, it is selected as the authoritative package, and `/app/widgets/<widget-type>/` is ignored entirely. There is **zero partial inheritance, layering, or file-by-file fallback** between `/config` and `/app`:
 - **Complete Package Requirement**: An override package in `/config/widgets/<widget-type>/` must be fully self-contained, supplying both its own `manifest.yaml` and `views/widget.html`. The `assets/` directory remains optional within an override package (matching built-in packages).
-- **Startup Validation Error**: If `/config/widgets/<widget-type>/` exists but lacks either required file, the Go daemon aborts startup with a fatal validation error:
+- **Startup Fatal Validation Error**: At startup, if `/config/widgets/<widget-type>/` exists but lacks either required file, the Go daemon aborts startup with a fatal validation error:
   ```text
   [widget.loader] fatal: widget package at /config/widgets/<widget-type>/ is incomplete: missing required file manifest.yaml (or views/widget.html); overriding a widget type requires a complete package
   ```
   The daemon never falls back to `/app/widgets/<widget-type>/` for missing files within an overridden package directory. This enables households to introduce brand-new custom widgets OR completely replace built-in widget implementations cleanly without leaking underlying assets or schemas.
+- **Runtime Incomplete Package Resolution (LKGC Resilience)**: When a package directory is created or modified at runtime after startup (e.g. `mkdir /config/widgets/<widget-type>/` or copying files in incrementally):
+  - An incomplete package directory is **not selected** for resolution. The display engine will never crash a running display or attempt to mount an unparseable package.
+  - The previously resolved package (or the built-in package at `/app/widgets/<widget-type>/` if shadowing a built-in widget) remains active without disruption, adhering to the Last Known Good Configuration (LKGC) resilience model (SPEC-012).
+  - The Go daemon logs a structured warning:
+    ```text
+    [widget.watcher] warning: widget package at /config/widgets/<widget-type>/ is incomplete: missing required file manifest.yaml (or views/widget.html); retaining active package resolution
+    ```
+    and surfaces the condition via `system.status` (`config_status: "error"`, `config_error: "widget package at /config/widgets/<widget-type>/ is incomplete: missing required file manifest.yaml (or views/widget.html)"`).
+  - The package is re-evaluated dynamically on each subsequent filesystem event within `/config/widgets/<widget-type>/`. As soon as all required files (`manifest.yaml` and `views/widget.html`) are present and valid, the daemon promotes the new package to active, clears the error in `system.status`, evicts the template cache, and broadcasts `event: widget.reload` (`{"type": "<widget-type>"}`).
 
 ### Static Asset Serving & URL Contract (`assets/`)
 Widget packages can optionally provide static icons, images, or assets within an `assets/` subdirectory (e.g., `widgets/<widget-type>/assets/icon.svg`).
@@ -489,7 +498,13 @@ The Go daemon runs a background `fsnotify` file system watcher monitoring direct
 - **In-Memory Cache Eviction & Reload Dispatch**:
   - When any `views/widget.html` file changes on disk (in either `/config/widgets/` or `/app/widgets/`), the Go server immediately evicts its in-memory compiled `html/template` cache and broadcasts `event: widget.reload` (`{"type": "<widget-type>"}`). The next canvas render parses the fresh template directly from disk.
   - When `manifest.yaml` updates on disk, the daemon reloads the widget registry metadata JIT and validates schemas. It also emits `event: widget.reload` for that `<widget-type>` so connected clients re-render and pick up any updated metadata or dimension changes.
+  - When an incomplete package directory is populated at runtime, the arrival of the missing required files triggers package promotion, clears any `system.status` warning, and emits `event: widget.reload` for `<widget-type>`.
   - When `/config/config.yaml` updates, the configuration parser validates and reloads running instances under the Last Known Good Configuration (LKGC) resilience model without restarting the process (see SPEC-012 for the full LKGC pipeline, worker diffing, and layout recalculation specification).
+- **Runtime Package Creation & Incompleteness Handling**: When a new directory is created under `/config/widgets/` after boot (e.g. `mkdir /config/widgets/weather-forecast`), it is watched immediately, but will inherently be incomplete until its `manifest.yaml` and `views/widget.html` are written. During this transient window:
+  - The runtime package resolver does not select the incomplete directory as authoritative.
+  - If shadowing an existing built-in widget, the running display continues serving the built-in `/app/widgets/<widget-type>/` package uninterrupted without crashing. If introducing a new widget type referenced by a live config reload, LKGC validation fails Stage 3 (SPEC-012) and the running configuration is preserved.
+  - The daemon logs a structured warning and reports the incomplete package error in `system.status`.
+  - Every subsequent file creation or atomic rename event in that directory triggers re-evaluation. Once both `manifest.yaml` and `views/widget.html` exist and validate cleanly, the package is selected, `system.status` error is cleared, the compiled template cache is updated, and `event: widget.reload` is broadcast to connected displays.
 
 ### 2. Live SSE Signal Dispatch
 Because connected display clients (Chromium kiosk browser, companion tablets, e-ink renderers) maintain an active stream on `GET /api/events`, the Go daemon broadcasts targeted reload events over the event bus:
