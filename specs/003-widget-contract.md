@@ -64,9 +64,9 @@ If `/config/widgets/<widget-type>/` exists and is complete, it is selected as th
 ### Static Asset Serving & URL Contract (`assets/`)
 Widget packages can optionally provide static icons, images, or assets within an `assets/` subdirectory (e.g., `widgets/<widget-type>/assets/icon.svg`).
 
-1. **HTTP Asset Route (`GET /widgets/{type}/assets/{path}`)**:
+1. **HTTP Asset Route (`GET /widget-types/{type}/assets/{path}`)**:
    The Go daemon routes static assets via:
-   `GET /widgets/{type}/assets/{path}`
+   `GET /widget-types/{type}/assets/{path}`
    - **Resolution Source**: Static assets are served strictly from the resolved widget package directory per the whole-package override rule. If `/config/widgets/{type}/` exists, assets are served from `/config/widgets/{type}/assets/{path}`. Otherwise, they are served from `/app/widgets/{type}/assets/{path}`.
    - **Path Traversal Protection**: The HTTP handler sanitizes `{path}` using `filepath.Clean`. Any attempts at path traversal (such as `..`, null bytes, or paths resolving outside the resolved package's `assets/` directory) are rejected with `400 Bad Request` or `404 Not Found`.
    - **MIME Types**: Assets are served with standard `Content-Type` headers inferred from the file extension (e.g. `image/svg+xml`, `image/png`, `image/webp`).
@@ -77,7 +77,7 @@ Widget packages can optionally provide static icons, images, or assets within an
    - **API Schema**: This route is formally defined in `api/openapi.yaml`.
 
 2. **Template Context Integration**:
-   Templates must never hard-code asset path prefixes. The server injects an `.Assets` base URL variable (evaluating to `/widgets/<widget-type>/assets`) into the template execution context:
+   Templates must never hard-code asset path prefixes. The server injects an `.Assets` base URL variable (evaluating to `/widget-types/<widget-type>/assets`) into the template execution context:
    ```html
    <img src="{{ .Assets }}/weather-icon.svg" alt="Weather condition" class="widget-icon" />
    ```
@@ -267,7 +267,7 @@ The Go backend unmarshals the generic `config` mapping as `map[string]any`:
   - `.Data`: The latest domain data payload object from the cached envelope (e.g. `{{ range .Data.events }}...{{ end }}`).
   - `.State`: Current operational state string (`healthy`, `degraded`, `error`).
   - `.Timestamp`: ISO 8601 timestamp string of the latest update.
-  - `.Assets`: Base URL path (`/widgets/<widget-type>/assets`) for referencing static package assets.
+  - `.Assets`: Base URL path (`/widget-types/<widget-type>/assets`) for referencing static package assets.
 
 ---
 
@@ -456,17 +456,17 @@ Mirrormere eliminates the authoring and maintenance overhead of dual templates (
   - `.Data`: Domain payload object conforming to the widget's schema.
   - `.State`: Health string (`healthy`, `degraded`, `error`).
   - `.Timestamp`: ISO 8601 string of the payload timestamp.
-  - `.Assets`: Base URL path (`/widgets/<widget-type>/assets`) for referencing static package assets.
+  - `.Assets`: Base URL path (`/widget-types/<widget-type>/assets`) for referencing static package assets.
 - **Markup & Layout**: Delivered as a clean semantic HTML5 snippet or modern Web Component loaded into the canvas. Markup uses clean semantic classes (e.g. `.widget`, `.widget-title`, `.item-done`) and standard CSS variables for styling, flexing dynamically across its assigned 6×2 grid cells per SPEC-005.
 
-### 2. Widget HTML Fragment Endpoint (`GET /widgets/{widget_id}/render`)
+### 2. Widget HTML Fragment Endpoint (`GET /api/widgets/{widget_id}/render`)
 To deliver rendered updates to connected screens when data mutates or templates are edited:
-- **Route**: `GET /widgets/{widget_id}/render`
+- **Route**: `GET /api/widgets/{widget_id}/render`
 - **Response**: `200 OK` with `Content-Type: text/html; charset=utf-8` returning the server-rendered HTML fragment for instance `widget_id`.
 - **Data Source**: Rendered using the instance's active `config` and latest cached payload envelope (`data`, `state`, `timestamp`).
-- **Live Data Delivery (`widget.update`)**: When background pollers or webhooks ingest fresh data, the daemon broadcasts `widget.update` over SSE (`GET /api/events`). If the widget is visible on the currently active screen, the frontend client fetches `GET /widgets/{widget_id}/render` and replaces the widget's DOM node. If the widget is rotated off-screen, no immediate fetch occurs.
-- **Rotated-In Widget Rendering (`screen.rotate`)**: When the rotation engine advances to a new screen (or during initial connection hydration), the Go daemon broadcasts `screen.rotate` carrying the incoming layout's `widgets[]` array. Connected display clients fetch `GET /widgets/{widget_id}/render` for every widget on the incoming screen and mount the HTML fragments into the grid canvas. To achieve zero blank flashes during transitions, clients may pre-fetch fragments for the upcoming screen before executing the transition animation.
-- **Template Reloads (`widget.reload`)**: When an in-process template edit is detected, the daemon invalidates its template cache and emits `widget.reload` (`{"type": "<widget-type>"}`). The client re-fetches `GET /widgets/{widget_id}/render` for all rendered instances of that type and patches the DOM.
+- **Live Data Delivery (`widget.update`)**: When background pollers or webhooks ingest fresh data, the daemon broadcasts `widget.update` over SSE (`GET /api/events`). If the widget is visible on the currently active screen, the frontend client fetches `GET /api/widgets/{widget_id}/render` and replaces the widget's DOM node. If the widget is rotated off-screen, no immediate fetch occurs.
+- **Rotated-In Widget Rendering (`screen.rotate`)**: When the rotation engine advances to a new screen (or during initial connection hydration), the Go daemon broadcasts `screen.rotate` carrying the incoming layout's `widgets[]` array. Connected display clients fetch `GET /api/widgets/{widget_id}/render` for every widget on the incoming screen and mount the HTML fragments into the grid canvas. To achieve zero blank flashes during transitions, clients may pre-fetch fragments for the upcoming screen before executing the transition animation.
+- **Template Reloads (`widget.reload`)**: When an in-process template edit is detected, the daemon invalidates its template cache and emits `widget.reload` (`{"type": "<widget-type>"}`). The client re-fetches `GET /api/widgets/{widget_id}/render` for all rendered instances of that type and patches the DOM.
 - **E-Ink Display Parity**: Ambient e-ink display nodes (SPEC-009) capture the full composite canvas via `/display`, which renders all widgets via the server-rendered layout without requiring any client-side JavaScript rendering engine.
 
 ### 3. Server-Wide Volume-Mounted Stylesheet (`/config/custom.css`)
@@ -514,7 +514,7 @@ Because connected display clients (Chromium kiosk browser, companion tablets, e-
 ### 3. Client DOM Reaction (Zero Manual Screen Taps)
 The frontend display script (`web/static/js/sse.js`) handles reload events reactively:
 - **Zero-Flicker Style Hot-Swapping**: On `style.reload`, the browser swaps the stylesheet `<link>` tag's `href` with a cache-busting timestamp query parameter (`/style.css?t=Date.now()`). The entire display updates its visual theme instantly with **zero visual flicker**.
-- **Instant Template Refresh**: On `widget.reload`, the client re-fetches the updated widget markup fragment via `GET /widgets/{widget_id}/render` for all active DOM instances matching `type` and patches the DOM node (or cleanly invokes `location.reload()`).
+- **Instant Template Refresh**: On `widget.reload`, the client re-fetches the updated widget markup fragment via `GET /api/widgets/{widget_id}/render` for all active DOM instances matching `type` and patches the DOM node (or cleanly invokes `location.reload()`).
 
 Developers and users edit files in their IDE on the host, and the physical kiosk on the wall updates in under 100ms—with zero container restarts, zero SSH sessions, and zero touching the display.
 
