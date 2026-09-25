@@ -52,7 +52,7 @@ flowchart TD
     subgraph MirrormereCore [Mirrormere Core & Display]
         API[Voice State Ingress\nPOST /api/voice/state]
         SSE[SSE Event Stream Bus\nGET /api/events\nevent: voice.state]
-        HUD[Display Surface\nTouch Kiosk HUD / E-Ink Status Widget]
+        HUD[Display Surface\nTouch Kiosk HUD]
         
         API --> SSE
         SSE --> HUD
@@ -152,7 +152,7 @@ Upon receiving interaction lifecycle events, the dock's `mirrormere-voice` clien
 
 ### 1. Ear & Dock Presentation (Edge Unit: N100 / Pi 4B)
 - **Local Wake Word**: `openWakeWord` runs locally on the CPU ("Hey Aerial" / "Hey Amos"). Zero raw audio is transmitted across the LAN until wake verification completes.
-- **Listening State Visibility Invariant**: The listening state is ALWAYS visible on at least one surface whenever the microphone is actively capturing audio (e.g. live pulsing visual indicator on Touch Kiosk, static mic glyph on e-ink, or hardware LED on reSpeaker XVF3800). A device that listens without showing it is a bug.
+- **Listening State Visibility Invariant**: The listening state is ALWAYS visible on at least one surface whenever the microphone is actively capturing audio (e.g. live pulsing visual indicator on Touch Kiosk HUD, or hardware LED on reSpeaker XVF3800). A device that listens without showing it is a bug.
 - **Echo Cancellation (AEC)**:
   - **Alex (Touch Kiosk)**: PipeWire `module-echo-cancel` (`webrtc-aec`) using monitor speakers as reference channel.
   - **Mike (Ambient E-Ink)**: reSpeaker XVF3800 hardware DSP AEC.
@@ -177,14 +177,14 @@ Upon receiving interaction lifecycle events, the dock's `mirrormere-voice` clien
    - Piper (`en_US-lessac-medium`) executes only when the primary engine encounters a timeout, 429 rate limit, HTTP 5xx error, or network refusal.
 3. **Audit Logging & Visible Fallback**:
    - Every fallback event logs its exact failure cause (`rate_limited`, `timeout`, `network_error`, `http_error:NNN`, `empty_response`) to `voice_fallback.log`, so a voice-quality downgrade is visible afterwards, not silent.
-   - Fallback status is propagated in `POST /api/voice/state` and `voice.state` via `tts_engine: "piper"` (or `tts_engine: "elevenlabs"` on success), allowing on-screen status widgets and toasts to indicate engine fallback rather than failing silently.
+   - Fallback status is propagated in `POST /api/voice/state` and `voice.state` via `tts_engine: "piper"` (or `tts_engine: "elevenlabs"` on success), allowing kiosk toasts to indicate engine fallback rather than failing silently (and recorded to `voice_fallback.log`).
    - The engine never sticks in fallback mode; every subsequent utterance retries the configured primary engine.
 
 ### 4. Playback Safety & Privacy Rules
 1. **Quiet Hours & Mute Switch Delivery Prerequisite**:
    - Quiet hours and a functional software/hardware mute switch must ship and be verified before any unit that plays audio is enabled in production.
 2. **Quiet Hours Enforcement**:
-   - Suppresses audible speech during configured hours (e.g. `21:00-07:00` for Mike; `23:00-07:00` for Alex). Responses during quiet hours are routed exclusively to display widgets and caption toasts without emitting sound.
+   - Suppresses audible speech during configured hours (e.g. `21:00-07:00` for Mike; `23:00-07:00` for Alex). Responses during quiet hours are routed exclusively to display caption toasts on interactive kiosks without emitting sound.
 3. **Mute Switch Protection & Visual Indicators**:
    - Physical or software privacy mute status is verified prior to activating audio capture or playback. When muted, wake word detection is halted, the microphone stream is closed at the OS/hardware level, and the display reflects muted status.
    - Active listening must be visibly indicated on screen or hardware LEDs whenever the mic is live per the Listening State Visibility Invariant.
