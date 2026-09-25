@@ -66,7 +66,7 @@ type ListSource interface {
 
 | Adapter | Scope | Notes |
 |---|---|---|
-| `local` | Core | Pure-Go SQLite (`modernc.org/sqlite`, zero CGO; `lists`, `list_items` tables), default for any list with no `source`. Pushes changes natively. |
+| `local` | Core | Pure-Go SQLite (`modernc.org/sqlite`, zero CGO; `lists`, `list_items` tables), active when `source: local` is explicitly declared. Operators and local tools can seed or modify `lists.db` directly for testing/demo environments. |
 | `gtasks` | Core, optional | Google Tasks API. Needs OAuth; polled (default 120 s). |
 | `http` | Core | Generic adapter for a household's own list service exposing the endpoint shape below. Lets private systems plug in without Go code. |
 | Private | Sidecar / HTTP | Anything else (e.g. a Skylight bridge) runs as an out-of-process HTTP provider sidecar per SPEC-003. |
@@ -84,7 +84,7 @@ display:
       config:
         list_id: "chores"           # Canonical list identifier (defaults to widget id if omitted)
         list_name: "Daily Chores"
-        source: gtasks              # Source adapter ("local" | "gtasks" | "http")
+        source: gtasks              # Explicit source adapter ("local" | "gtasks" | "http")
         refresh_interval_seconds: 120
         gtasks:
           tasklist_id: "MDk3..."
@@ -95,7 +95,7 @@ display:
       config:
         list_id: "groceries"
         list_name: "Groceries"
-        source: local               # Local SQLite database (default)
+        source: local               # Explicit local SQLite database
         show_completed: 3
 
     - id: family-todo
@@ -114,15 +114,15 @@ display:
       type: tasks
       dimensions: [1, 1]
       config:
-        list_id: "chores"           # References the chores list defined above
+        list_id: "chores"           # References the chores list defined above (omits source)
         show_completed: 0
 ```
 
 ### Shared List State & Source Ownership Rules
 1. **Canonical Identifier (`list_id`)**: Every list has a stable identifier (`list_id`). If omitted from `config:`, `list_id` defaults to the widget's instance `id`.
-2. **Primary Source Definition**: A widget instance that specifies `source:` (and its adapter options such as `gtasks:` or `http:`) acts as the primary definition for that `list_id`, establishing its upstream sync loop in the Go daemon.
-3. **Consumer Reference Widgets**: Any secondary widget on another screen (e.g. `id: compact-chores`) can display the same list simply by declaring `list_id: "chores"` with its own presentation parameters (e.g. `show_completed: 0`). It reuses the in-memory cache and background sync worker created by the primary definition without spinning up redundant polling loops.
-4. **Conflict Validation**: If multiple widgets define `source` for the same `list_id`, their source configurations must be identical; conflicting definitions are rejected at startup with an explicit validation error.
+2. **Explicit Source Mandate & Validation (No Implicit Fallback)**: Every unique `list_id` MUST be backed by exactly one primary widget instance declaring an explicit `source:` (`gtasks`, `http`, or `local`). Omitting `source` does NOT default to `local`. If a widget defines a `list_id` but no widget in the configuration provides an explicit `source:` for that `list_id`, configuration validation fails fast at startup with an explicit diagnostic error: `[Mirrormere Config Error] tasks widget '<id>' references list_id '<list_id>' with no primary source definition`.
+3. **Consumer Reference Widgets**: Any secondary widget on another screen (e.g. `id: compact-chores`) can display an existing list simply by declaring `list_id: "chores"` (omitting `source:`) with its own presentation parameters (e.g. `show_completed: 0`). It reuses the in-memory cache and background sync worker established by the primary definition without spinning up redundant polling loops.
+4. **Conflict Validation**: If multiple widgets declare `source:` for the same `list_id`, their source configurations must be identical; conflicting definitions are rejected at startup with an explicit validation error.
 5. **Read-Only Ingestion Invariant**: Mirrormere treats task and checklist widgets as strictly read-only ambient surfaces. Task creations, completion toggles, edits, and deletions are performed directly in the user's primary client (e.g. Google Tasks mobile app, web application, or household service). Mirrormere periodically polls or ingests updates from the source of truth, updating all widgets sharing `list_id` regardless of which screen is currently visible.
 
 ---
@@ -195,8 +195,8 @@ data: {"widget_id":"groceries","timestamp":"2026-09-24T22:30:00Z","state":"healt
 
 ### Snapshot Reads
 Snapshot reads for clients that do not hold an SSE stream:
-- `GET /api/widgets/{widget_id}/state` returns the widget's current cached state payload.
-- `GET /api/lists/{list_id}/items` returns the full item list for a canonical `list_id` (`include_done=false` optional query per SPEC-006 §5).
+- `GET /api/widgets/{widget_id}/state` returns the widget's current cached state payload (SPEC-006 §2).
+- `GET /api/lists/{list_id}/items` returns the full item list for a canonical `list_id` (`include_done=false` optional query per SPEC-006 §7).
 
 ### `http` adapter contract
 A household list service is compatible for read-only ingestion if it serves:

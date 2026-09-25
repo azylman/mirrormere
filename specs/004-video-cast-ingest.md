@@ -130,7 +130,7 @@ Dispatched by touch interaction or companion controllers to manipulate active me
   - `"toggle_playback"`: Toggles play/pause state via stream controller.
   - `"play"`: Resumes playback.
   - `"pause"`: Pauses playback.
-  *(Note: Audio volume and mute are managed exclusively via the centralized master audio endpoints `POST /api/audio/volume` and `POST /api/audio/mute` per SPEC-006 §4).*
+  *(Note: Audio volume and mute are managed exclusively via the centralized master audio endpoints `POST /api/audio/volume` and `POST /api/audio/mute` per SPEC-006 §5).*
 
 #### Core-to-Sidecar Dispatching
 When Mirrormere Core receives `POST /api/video/action`:

@@ -53,15 +53,20 @@ In alignment with Mirrormere's decoupled deployment topology, each independent i
 
 ## Repository Structure
 
-```
+```text
 mirrormere/
+├── api/                    # OpenAPI 3.1 contract and formal JSON Schemas for SSE payloads
+├── cmd/
+│   └── server/             # mirrormere-core entrypoint binary (main.go)
+├── internal/               # Private Go core application packages (api, config, layout, providers, storage)
+├── web/                    # Static CSS/JS HUD assets and semantic HTML widget templates (widget.html)
+├── sidecars/               # Custom auxiliary microservices (eink-renderer, cast-watcher)
+├── clients/                # Standalone edge display clients (eink-node Python SPI daemon)
+├── deploy/                 # Docker Compose manifests, go2rtc config, and kiosk launch units
 ├── specs/                  # Living architectural specifications (001–011, see specs/README.md)
-├── core/                   # [Planned] Shared backend daemon & data providers
-├── web/                    # [Planned] Touch kiosk PWA (Wayland / Chromium)
-├── eink/                   # [Planned] E-paper driver & renderer for Raspberry Pi
-├── widgets/                # [Planned] Standard core widget library
-├── custom_widgets/         # User-specific private extensions (HA, RTSP, Cast)
-└── .gitignore
+├── scripts/                # Verification (verify.sh) and development scripts
+├── Dockerfile              # Multi-stage, multi-arch build for mirrormere-core
+└── Makefile                # Local build, test, and verification shortcuts
 ```
 
 ---

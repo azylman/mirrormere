@@ -129,14 +129,22 @@ To enforce secret isolation:
 
 ```mermaid
 flowchart LR
-    OpenMeteo[Open-Meteo Public API\napi.open-meteo.com] -->|HTTPS GET JSON| Poller[Weather Ingestion Loop]
+    OpenMeteo[Open-Meteo Public API\napi.open-meteo.com]
 
     subgraph GoDaemon [Mirrormere Go Daemon]
-        Poller --> WMO[WMO Weather Code Mapper]
-        WMO --> Snap[Weather Snapshot Normalizer]
-        Snap -->|Header Weather Hydration| Header[Fixed Header Zone]
-        Snap -->|widget.update: <widget_id>| SSEHub[SSE Event Hub]
+        HeaderPoller[Autonomous Header Poller\ndisplay.header.weather]
+        WidgetPoller[Grid Widget Ingestion Loop\ndisplay.widgets[].config]
+        WMO[WMO Weather Code Mapper]
+        SSEHub[SSE Event Hub]
+
+        HeaderPoller --> WMO
+        WidgetPoller --> WMO
+        WMO -->|header.update| SSEHub
+        WMO -->|widget.update: <widget_id>| SSEHub
     end
+
+    OpenMeteo -->|HTTPS GET JSON| HeaderPoller
+    OpenMeteo -->|HTTPS GET JSON| WidgetPoller
 ```
 
 ### Configuration Schema (`config.yaml`)
