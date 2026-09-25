@@ -31,7 +31,7 @@ Mirrormere targets two hardware archetypes:
 - **Base OS**: Minimal Debian 12 / Ubuntu Server (headless base, zero desktop bloat).
 - **Display Server**: Wayland with the `cage` kiosk compositor (single-application fullscreen confinement).
 - **Frontend Runtime**: Chromium browser running in `--kiosk` mode pointing to `http://localhost:8080/display` (see SPEC-010).
-- **Input Strategy**: Glance-and-tap only (tap to complete checklist items, swipe to switch screens/dismiss, tap media controls). Zero on-screen virtual keyboard (OSK); task/list additions are handled companion/phone-first.
+- **Input Strategy**: Glance-and-tap only (screen navigation swipes, video dismiss, tap media transport controls). Zero on-screen virtual keyboard (OSK); task lists are strictly read-only ambient surfaces, and all task additions/edits are handled phone-first at the source.
 - **Power Management**: Display DPMS sleep via `swayidle` and `wlr-randr` (see SPEC-010):
   - Fixed night schedule (display hard sleep 11 PM – 6 AM).
   - Daytime idle timeout (10 minutes of inactivity blanks panel).
