@@ -123,7 +123,7 @@ Mirrormere targets two distinct display classes:
   - Renders 1-bit selectively dithered PNGs via the server-side `sidecars/eink-renderer` sidecar (SPEC-003, SPEC-009).
 
 ### 3. Decoupled Presentation Layer
-The Go backend has zero awareness of how pixels are drawn. The server renders semantic HTML layouts (`views/widget.html`), injected with deployment-time volume-mounted stylesheets (`/config/custom.css`), allowing the exact same underlying calendar or task model to be presented on interactive touch kiosks or captured for static monochrome e-paper.
+The Go backend has zero awareness of how pixels are drawn. The server renders semantic HTML layouts (`widgets/<widget-id>/views/widget.html`), injected with deployment-time volume-mounted stylesheets (`/config/custom.css`), allowing the exact same underlying calendar or task model to be presented on interactive touch kiosks or captured for static monochrome e-paper.
 
 ### 4. Declarative Configuration & House Timezone (`config.yaml`)
 Mirrormere instances are statically configured at deployment time via a root configuration file mounted into `/config/config.yaml`:
@@ -185,9 +185,11 @@ mirrormere/
 │   ├── layout/                 # 6x2 grid bin-packing, rotation engine, and spacer solver
 │   ├── providers/              # Data sync clients (iCal/CalDAV, Open-Meteo, Google Photos)
 │   └── storage/                # SQLite WAL store for custom lists, chores, and persistent state
-├── web/
+├── widgets/                    # Core widget packages (compiled and embedded into binary)
+│   └── <widget-id>/            # Self-contained widget (manifest.yaml, views/widget.html, assets/)
+├── web/                        # Web display runtime assets
 │   ├── static/                 # Embedded base CSS (cyber HUD variables), JS, and touch handlers
-│   └── views/                  # Embedded semantic HTML widget templates (widget.html)
+│   └── templates/              # Base dashboard HTML shell (display.html canvas)
 ├── sidecars/
 │   ├── eink-renderer/          # Headless Chromium snapshotter (Dockerfile, Node/Puppeteer or Go)
 │   └── cast-watcher/           # Lightweight CastV2 LAN bridge (Dockerfile, Python/Go)
@@ -214,6 +216,9 @@ mirrormere/
    - Shell launch wrappers, desktop compositor configurations, and systemd units for the display kiosk belong in `deploy/kiosk/`.
 4. **Deferred Phase 2 Scaffolding**:
    - Phase 2 Voice directories (`sidecars/voice-hub`, `clients/mirrormere-voice`) are intentionally deferred from Git scaffolding until active Phase 2 implementation begins to prevent empty directory drift.
+5. **Widget Packaging & Display Runtime (`widgets/` vs. `web/`)**:
+   - `widgets/` contains standard core widget packages (`manifest.yaml`, `views/widget.html`, `assets/`) adhering to the pluggable contract (SPEC-003). This structure is identical to user extensions mounted into `/config/widgets/<widget-id>/` or `custom_widgets/`.
+   - `web/` contains the web display runtime shell (`display.html`), cyber HUD stylesheets, SSE event bus wiring, and client touch handlers.
 
 ---
 
