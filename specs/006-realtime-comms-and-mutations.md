@@ -54,8 +54,8 @@ flowchart LR
 ### 4. Lightweight E-Ink and Headless Consumption
 - A Python script or minimal Go binary on an ambient Raspberry Pi (e.g. Pi 3 B+ or Pi 4B) can consume SSE by reading line-by-line from a persistent HTTP request without asyncio event loops or complex WebSocket runtimes.
 
-### 5. Proxy & Network Transparency
-- SSE runs over standard HTTP/1.1 or HTTP/2. It passes smoothly through Cloudflare Tunnels, Tailscale, Nginx, Envoy, and Home Assistant Ingress without hitting 60-second WebSocket upgrade timeouts or proxy termination issues.
+### 5. Proxy & Local Network Transparency
+- SSE runs over standard HTTP/1.1 or HTTP/2. It passes smoothly through local reverse proxies (Nginx, Caddy, Envoy, and Home Assistant Ingress) without hitting 60-second WebSocket upgrade timeouts or proxy termination issues.
 
 ---
 
