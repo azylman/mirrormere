@@ -215,7 +215,8 @@ A household list service is compatible if it serves:
 ## Display Profile Behavior
 
 ### Touch Kiosk (Profile A)
-- Full interaction: tap to toggle, add via on-screen keyboard, swipe to delete.
+- Tap-and-gesture interaction only: tap checkbox to toggle completion state, swipe to dismiss/delete.
+- Zero On-Screen Keyboard (OSK): task and list additions or text edits are handled companion/phone-first (via mobile browser, companion app, or voice pipeline per SPEC-002, SPEC-010, and SPEC-011). No virtual keyboard overlay or daemon runs on the kiosk.
 - Optimistic updates per SPEC-006.
 
 ### Ambient E-Ink (Profile B)
