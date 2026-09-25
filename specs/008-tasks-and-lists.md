@@ -73,7 +73,7 @@ type ListSource interface {
 
 ### Configuration Schema (`config.yaml`)
 
-Each tasks/checklist widget instance configures its list identity, upstream source, and sync cadence directly in `display.widgets[].config`:
+Each tasks/checklist widget instance configures standard instance settings (`id`, `type`, `dimensions`, `refresh_interval_seconds`) at the top level, with its list identity and upstream source parameters nested in `config:`:
 
 ```yaml
 display:
@@ -81,11 +81,11 @@ display:
     - id: daily-chores              # Primary widget definition establishing chores sync
       type: tasks
       dimensions: [2, 1]
+      refresh_interval_seconds: 120
       config:
         list_id: "chores"           # Canonical list identifier (defaults to widget id if omitted)
         list_name: "Daily Chores"
         source: gtasks              # Explicit source adapter ("local" | "gtasks" | "http")
-        refresh_interval_seconds: 120
         gtasks:
           tasklist_id: "MDk3..."
 
@@ -101,11 +101,11 @@ display:
     - id: family-todo
       type: tasks
       dimensions: [2, 1]
+      refresh_interval_seconds: 120
       config:
         list_id: "family-todo"
         list_name: "To Do"
         source: http                # Generic HTTP list service adapter
-        refresh_interval_seconds: 120
         http:
           base_url: "http://192.0.2.10:8300/lists/family-todo"
           token_env: HOUSEHOLD_LISTS_TOKEN

@@ -104,17 +104,34 @@ response_schema:
    - `audio-reactive`: Utilizes microphone input or voice triggers.
 2. **Data Provider Routing (`provider`)**: Identifies how data is ingested. Built-in widgets point to compiled Go fetchers (`calendar-agenda`, `weather-forecast`, `tasks`, `photo-carousel`, `spacer`), while custom extensions declare `provider: http` to invoke the generic HTTP sidecar client.
 3. **Default Cadence Fallback (`refresh`)**: If an instance in `config.yaml` omits `refresh_interval_seconds`, the daemon automatically defaults to this declared interval.
-4. **Boot-Time Configuration Schema Validation (`config_schema`)**: The Go daemon validates the instance's `config:` mapping against this schema during startup, failing fast with descriptive diagnostic logs rather than silently malfunctioning at runtime.
+4. **Boot-Time Configuration Schema Validation (`config_schema`)**: The Go daemon validates the instance's nested `config:` mapping against this schema during startup, failing fast with descriptive diagnostic logs rather than silently malfunctioning at runtime. Standard instance settings (`id`, `type`, `dimensions`, `pinned`, `refresh_interval_seconds`, `endpoint`, `method`, `token_env`) are validated by the Core framework and are never passed to `config_schema`.
 5. **Runtime Response Schema Validation (`response_schema`)**: The Go daemon validates incoming data payloads (the domain fields within the `data:` object) received from HTTP servers, upstream provider syncs, or inbound webhooks against this schema. Invalid payloads are rejected, preserving the Last-Known-Good (LKG) cache and transitioning the widget to `degraded` state under Stale-While-Revalidate rules, guaranteeing templates never execute against corrupt or incomplete state.
 
 ---
 
 ## Declarative Widget Instance Configuration (`config.yaml`)
 
-Mirrormere uses a generic, decoupled configuration model where **each widget instance declared in `display.widgets` is a self-contained unit managing both its data ingestion parameters and its UI presentation settings**. There is no disconnected top-level providers block; all sync cadences, data sources, and display parameters live directly in the widget's `config:` mapping.
+Mirrormere uses a generic, decoupled configuration model where **each widget instance declared in `display.widgets` is a self-contained unit managing both its data ingestion parameters and its UI presentation settings**. There is no disconnected top-level providers block; all sync cadences, data sources, and display parameters live directly in the widget declaration.
 
-### 1. Unified Widget Instance Declaration
-In `config.yaml`, the `display.widgets` array defines the active widgets. Each entry decouples the instance identity (`id`) from its underlying widget type (`type`) and supplies a generic `config:` dictionary:
+To maintain strict schema isolation and prevent false-positive validation crashes, Mirrormere cleanly decouples **standard framework settings** (which live at the top level of each widget instance entry) from **custom domain configuration** (which is nested inside the widget's `config:` dictionary):
+
+### 1. Standard Instance Keys vs. Custom Domain Configuration
+- **Standard Framework Keys** (Top-Level):
+  - `id` (string, required): Unique instance identifier (kebab-case).
+  - `type` (string, required): Widget package/template type.
+  - `dimensions` ([cols, rows], optional): Target layout dimensions on the 6×2 grid. Defaults to package manifest `default_dimensions` (SPEC-005).
+  - `pinned` (boolean, optional, default: `false`): Pin widget across all rotation screens.
+  - `refresh_interval_seconds` (integer, optional): Sync/polling loop interval in seconds. Defaults to package manifest `refresh.interval_seconds`.
+- **Standard Transport Keys** (Top-Level, `provider: http` only):
+  - `endpoint` (string, required for `provider: http`): Outbound HTTP URL to poll for widget data.
+  - `method` (string, optional, default: `POST`): Outbound HTTP method (`POST` or `GET`).
+  - `token_env` (string, optional): Environment variable name containing bearer authentication token.
+- **Custom Domain Keys** (Nested under `config:`):
+  - `config` (mapping, optional): Domain-specific parameters unique to the widget type (e.g. coordinates for weather, calendar feed URLs, task list IDs, sensor entity IDs).
+  - **Validation Boundary**: Only the keys inside `config:` are validated against the widget package's `config_schema`. Top-level standard keys are handled exclusively by the Core engine and are excluded from manifest schema validation.
+
+### 2. Unified Widget Instance Declaration
+In `config.yaml`, the `display.widgets` array defines the active widgets using this nested structure:
 
 ```yaml
 display:
@@ -123,8 +140,8 @@ display:
       type: weather-forecast        # Widget engine / template type
       dimensions: [2, 1]            # [width_cols, height_rows] on 6x2 grid
       pinned: false                 # Pinned across all rotation screens
-      config:                       # Widget-specific parameters & sync settings
-        refresh_interval_seconds: 900 # Ingestion sync loop cadence
+      refresh_interval_seconds: 900 # Ingestion sync loop cadence
+      config:                       # Widget-specific parameters validated by manifest config_schema
         latitude: 37.8044
         longitude: -122.2712
         units: imperial             # "metric" | "imperial"
@@ -132,8 +149,8 @@ display:
     - id: office-weather            # Second independent weather instance!
       type: weather-forecast
       dimensions: [2, 1]
+      refresh_interval_seconds: 900
       config:
-        refresh_interval_seconds: 900
         latitude: 37.7749
         longitude: -122.4194
         units: imperial
@@ -141,8 +158,8 @@ display:
     - id: family-calendar
       type: calendar-agenda
       dimensions: [4, 2]
+      refresh_interval_seconds: 300 # Ingestion sync loop cadence
       config:
-        refresh_interval_seconds: 300 # Ingestion sync loop cadence
         view: week                  # Presentation: "day" | "week" | "month"
         window_days_past: 1
         window_days_future: 14
@@ -155,15 +172,16 @@ display:
     - id: living-room-photos
       type: photo-carousel
       dimensions: [3, 2]
+      refresh_interval_seconds: 3600 # Album metadata sync cadence
       config:
         share_url: "https://photos.app.goo.gl/AbCdEf123456789"
-        refresh_interval_seconds: 3600 # Album metadata sync cadence
         cycle_interval_seconds: 60     # Local client photo rotation interval
         shuffle: true
 
     - id: grocery-list
       type: tasks
       dimensions: [2, 1]
+      refresh_interval_seconds: 300
       config:
         list_id: "groceries"
         list_name: "Groceries"
@@ -177,15 +195,16 @@ display:
     - id: living-room-temp
       type: sensor-card             # Custom widget resolved from /config/widgets/sensor-card/
       dimensions: [2, 1]
+      pinned: false
+      refresh_interval_seconds: 60
+      endpoint: "http://ha-bridge:8095/data"
+      token_env: HA_SENSOR_TOKEN
       config:
-        endpoint: "http://ha-bridge:8095/data"
-        refresh_interval_seconds: 60
-        token_env: HA_SENSOR_TOKEN
         entity_id: "sensor.living_room_temp"
         unit: "F"
 ```
 
-### 2. Multi-Instance Capability
+### 3. Multi-Instance Capability
 Separating `id` from `type` and attaching sync configuration directly to the instance enables multiple independent instances of the same widget type across screens with distinct upstream targets:
 - Multiple weather locations: `id: home-weather` on Screen 1 and `id: office-weather` on Screen 2 with different GPS coordinates and polling rates.
 - Multiple task lists: `id: daily-chores` on Screen 1 defines `list_id: chores` with `source: gtasks`, while `id: compact-chores` on Screen 2 references the same `list_id: chores` with `show_completed: 0`, sharing its background sync worker.
@@ -282,11 +301,6 @@ For user-specific integrations, private household services, or extensions writte
      interval_seconds: 60
 
    config_schema:
-     endpoint:
-       type: string
-       required: true
-     token_env:
-       type: string
      entity_id:
        type: string
        required: true
@@ -313,17 +327,18 @@ For user-specific integrations, private household services, or extensions writte
        - id: living-room-temp
          type: sensor-card           # Resolved from /config/widgets/sensor-card/
          dimensions: [2, 1]
+         pinned: false
+         refresh_interval_seconds: 60
+         endpoint: "http://sensor-sidecar:8095/data"
+         token_env: SENSOR_HUD_TOKEN
          config:
-           endpoint: "http://sensor-sidecar:8095/data"
-           refresh_interval_seconds: 60
-           token_env: SENSOR_HUD_TOKEN
            entity_id: "sensor.living_room_temp"
            unit: "F"
    ```
 
 2. **Ingestion Polling Wire Contract (`POST {endpoint}`)**:
    To prevent HTTP proxies, web servers, and client frameworks (FastAPI, Express, Axios, nginx) from stripping or rejecting request bodies, Mirrormere uses standard **`POST`** requests to poll the custom endpoint:
-   - **Method**: `POST {endpoint}` (configured via `config.endpoint`; optional `method: GET` configuration supported for dumb IoT sensors that only expose a static parameterless `/status` page).
+   - **Method**: `POST {endpoint}` (configured via top-level instance key `endpoint`; optional `method: GET` configuration supported for dumb IoT sensors that only expose a static parameterless `/status` page).
    - **Headers**:
      - `Content-Type: application/json`
      - `Accept: application/json`

@@ -93,41 +93,41 @@ display:
     columns: 6
     rows: 2
 
-  # Array of widgets, target dimensions [cols, rows], and generic per-widget configuration
+  # Array of widgets, target dimensions [cols, rows], standard settings, and nested custom configuration
   widgets:
     - id: family-calendar
       type: calendar-agenda
       dimensions: [4, 2] # 2/3 width, full height (8 cells)
       pinned: false
+      refresh_interval_seconds: 300
       config:
-        refresh_interval_seconds: 300
         view: week
         window_days_past: 1
         window_days_future: 14
     - id: daily-chores
       type: tasks
       dimensions: [2, 1] # 1/3 width, top half (2 cells)
+      refresh_interval_seconds: 120
       config:
         list_id: "chores"
         list_name: "Chores"
         source: gtasks
-        refresh_interval_seconds: 120
         gtasks:
           tasklist_id: "MDk3..."
     - id: local-weather
       type: weather-forecast
       dimensions: [2, 1] # 1/3 width, bottom half (2 cells)
+      refresh_interval_seconds: 900
       config:
-        refresh_interval_seconds: 900
         latitude: 37.8044
         longitude: -122.2712
         units: imperial
     - id: family-photos
       type: photo-carousel
       dimensions: [3, 2] # 1/2 width, full height (6 cells)
+      refresh_interval_seconds: 3600
       config:
         share_url: "https://photos.app.goo.gl/AbCdEf123456789"
-        refresh_interval_seconds: 3600
         cycle_interval_seconds: 60
     - id: chores
       type: tasks
