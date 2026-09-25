@@ -87,16 +87,16 @@ display:
 
   # Array of widgets and their desired dimensions [width_cols, height_rows]
   widgets:
-    - name: calendar_agenda
+    - name: calendar-agenda
       dimensions: [4, 2] # 2/3 width, full height (8 cells)
       pinned: false
-    - name: daily_chores
+    - name: daily-chores
       dimensions: [2, 1] # 1/3 width, top half (2 cells)
-    - name: weather_forecast
+    - name: weather-forecast
       dimensions: [2, 1] # 1/3 width, bottom half (2 cells)
-    - name: photo_carousel
+    - name: photo-carousel
       dimensions: [3, 2] # 1/2 width, full height (6 cells)
-    - name: home_assistant
+    - name: home-assistant
       dimensions: [3, 2] # 1/2 width, full height (6 cells)
 ```
 
@@ -179,18 +179,18 @@ To accommodate primary household hero widgets (such as a 4×2 Family Calendar) t
 
 ```yaml
 widgets:
-  - name: calendar_agenda
+  - name: calendar-agenda
     dimensions: [4, 2]
     pinned: true # Automatically replicated onto all rotation screens
 
   # Remaining widgets rotate through the 2x2 side panel (4 cells per screen):
-  - name: daily_chores
+  - name: daily-chores
     dimensions: [2, 1]
-  - name: weather_forecast
+  - name: weather-forecast
     dimensions: [2, 1]
-  - name: transit_commute
+  - name: transit-commute
     dimensions: [2, 1]
-  - name: trash_schedule
+  - name: trash-schedule
     dimensions: [2, 1]
 ```
 
