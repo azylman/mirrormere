@@ -159,28 +159,56 @@ Core built-in widgets run directly in the Mirrormere Core service process:
    - `Subscribe(ctx context.Context, eventSink chan<- WidgetPayload) error`: Emits real-time event updates when data changes.
    - `Shutdown(ctx context.Context) error`: Cleans up background listeners and connections.
 
-2. **Standard Payload Envelope**:
-   ```json
-   {
-     "widget_id": "calendar-agenda",
-     "timestamp": "2026-09-24T18:00:00Z",
-     "state": "healthy",
-     "data": {
-       "events": [
-         {
-           "id": "evt_101",
-           "title": "Soccer Practice",
-           "start": "2026-09-24T18:30:00Z",
-           "end": "2026-09-24T19:30:00Z",
-           "calendar": "Family",
-           "color": "#3b82f6"
-         }
-       ]
-     }
-   }
-   ```
+### 2. Standard Payload Envelope & Stale-While-Revalidate Policy
+Every widget payload envelope published over the SSE bus (`widget.update` per SPEC-006) or returned via provider fetch conforms to the standard JSON structure:
 
-### 2. Out-of-Process Generic HTTP Providers (Private Extensions & Sidecars)
+```json
+{
+  "widget_id": "family-calendar",
+  "timestamp": "2026-09-24T18:00:00Z",
+  "state": "healthy",
+  "data": {
+    "events": [
+      {
+        "id": "evt_101",
+        "title": "Soccer Practice",
+        "start": "2026-09-24T18:30:00Z",
+        "end": "2026-09-24T19:30:00Z",
+        "calendar": "Family",
+        "color": "#3b82f6"
+      }
+    ]
+  }
+}
+```
+
+- `widget_id` (string, required): Canonical instance identifier (kebab-case).
+- `timestamp` (string, RFC 3339, required): Time the data snapshot was captured by the provider.
+- `state` (string, required): Operational state: `"healthy"` | `"degraded"` | `"error"`.
+- `data` (object, required): Strongly typed domain payload conforming to the widget type's schema.
+
+#### Stale-While-Revalidate Degraded State Policy
+Upstream network partitions, rate limits, and external service outages (e.g. Google Calendar CalDAV 500s, Open-Meteo downtime) must **never blank, crash, or unmount a widget cell** on the wall display. All widgets strictly implement a **stale-while-revalidate** policy:
+
+1. **State Transitions**:
+   - **`healthy`**: The upstream provider returned a valid response during its most recent sync cycle. `timestamp` reflects the fresh fetch time.
+   - **`degraded` (Stale-While-Revalidate)**: The upstream provider experienced a fetch timeout, network partition, or non-200 error, BUT the daemon holds a Last-Known-Good (LKG) data snapshot in memory or SQLite cache.
+     - The Go daemon **freezes and preserves the LKG data in `data`**.
+     - `state` transitions to `"degraded"`.
+     - `timestamp` retains the timestamp of the last successful data fetch, allowing clients to calculate data staleness.
+     - The background worker continues retrying on its standard polling interval with exponential backoff (e.g. 30s, 60s, up to the regular interval).
+   - **`error` (Cold Boot Failure)**: The widget has NO last-known-good data (e.g. cold-booting without internet connectivity and an empty cache).
+     - `data` is empty or contains minimal fallback schema (e.g. empty lists).
+     - `state` is set to `"error"`.
+
+2. **Client Presentation Guidelines (Touch & E-Ink)**:
+   - **Never Blank**: The client MUST NEVER replace a degraded widget with an empty container, crash boundary, or stack trace.
+   - **Visual Stale Indicator**:
+     - When `state == "degraded"`, the client dims widget content slightly (`opacity: 0.8`) and displays an unobtrusive, subtle stale badge in the widget corner (e.g. "Updated 2h ago" or a discreet warning dot).
+     - When `state == "error"` on cold boot, the client renders an empty state illustration with an inline message (e.g. "Connecting to calendar...") rather than a blank box.
+   - **Instant Re-Hydration**: As soon as the upstream provider recovers and a successful sync occurs, the Go daemon emits a `widget.update` with `state: "healthy"`, and the client automatically removes the stale badge and restores full visual brightness without requiring a page reload.
+
+### 3. Out-of-Process Generic HTTP Providers (Private Extensions & Sidecars)
 For user-specific integrations, private household services, or extensions written in any language (Python, Node.js, Go), Mirrormere provides an out-of-process Generic HTTP Provider adapter (matching the HTTP provider pattern in SPEC-008):
 
 1. **Manifest & Configuration**:
