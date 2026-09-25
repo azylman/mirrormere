@@ -133,7 +133,7 @@ flowchart LR
 
     subgraph GoDaemon [Mirrormere Go Daemon]
         HeaderPoller[Autonomous Header Poller\ndisplay.header.weather]
-        WidgetPoller[Grid Widget Ingestion Loop\ndisplay.widgets[].config]
+        WidgetPoller[Grid Widget Ingestion Loop\ndisplay.widgets[]]
         WMO[WMO Weather Code Mapper]
         SSEHub[SSE Event Hub]
 
