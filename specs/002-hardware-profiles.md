@@ -105,8 +105,8 @@ services:
   > **Critical Warning**: Must be strictly the Black/White V2 model. 3-color (Red/Yellow) panels require 15–30 seconds per full refresh and lack partial refresh support.
 - **Driver Board**: Adafruit E-Ink Bonnet for Raspberry Pi (24-pin FPC). Pin map differs from the Waveshare HAT; see SPEC-009.
   - The all-in-one Waveshare 7.5" e-Paper HAT (V2) is a supported alternative using the driver's default pins.
-- **Compute Unit (Display Node)**: Raspberry Pi 3 Model B+ (Mike's unit, already owned) or Raspberry Pi 4 Model B driving the panel over SPI. Runs only the lightweight client; the compose stack runs off-node on a separate 64-bit host.
-- **Power Supply**: 5V 2.5A micro-USB supply (Pi 3 B+), or official USB-C supply (Pi 4B).
+- **Compute Unit**: Raspberry Pi 4 Model B (Mike's unit: 8GB RAM, 64-bit OS; minimum 2GB+ required to co-host Docker Compose and the display client). Drives the panel over SPI.
+- **Power Supply**: Official Raspberry Pi 15W USB-C Power Supply (5.1V 3.0A).
 - **Storage**: 32GB Class A1 MicroSD Card.
 - **Sensors (optional)**: DHT22 temperature/humidity sensor for an indoor-climate widget.
 - **Audio / Voice Array (optional)**: reSpeaker XVF3800 USB 4-Mic Array with case.
@@ -115,19 +115,19 @@ services:
 ### Physical Architecture
 - The Adafruit E-Ink Bonnet stacks onto the Pi's 40-pin GPIO header, held by M2.5 standoffs.
 - The panel's 24-pin ribbon connects to the Bonnet's FPC connector.
-- Rendering happens on the separate home server (SPEC-003 §3 sidecar); the display Pi only fetches and flushes images over the local network via HTTP, keeping CPU and memory overhead minimal (< 50MB RAM) with no active cooling needed.
+- Rendering and daemon co-location: Mike's Pi 4B hosts both the Docker Compose stack (`mirrormere-core` and `eink-renderer`) and the display client (`clients/eink-node`) on a single machine. The client fetches pre-rendered 1-bit monochrome images locally over loopback (`http://localhost:8081/eink.png`) and pushes them to SPI. (A decoupled multi-host topology—where Compose runs on an existing home server or NAS and the display Pi only runs `eink-node`—remains a supported deployment option, but Profile B's reference setup runs entirely on the single Pi 4B).
 
 ### Operating System & Runtime Environment
 - **Base OS**: Raspberry Pi OS Lite (64-bit, headless, no X11/Wayland).
 - **Hardware Interface**: SPI enabled via `/boot/config.txt` (`dtparam=spi=on`).
-- **Rendering Pipeline**: No local rendering. The `clients/eink-node` daemon (SPEC-009) fetches the sidecar's 1-bit PNG and pushes it to the panel via `spidev`.
+- **Rendering Pipeline**: Rendered via the `eink-renderer` Chromium sidecar. The `clients/eink-node` daemon (SPEC-009) fetches the 1-bit PNG and pushes it to the panel via `spidev`.
 - **Refresh Strategy**:
   - Full refresh every 60 minutes to clear accumulated ghosting.
   - Partial refreshes on state change (e.g. new calendar events, chore completion) or every 5 minutes for clock updates.
   - Strict zero-animation rule: UI redrawing is purely event- or timer-driven.
 
 ### Reference Deployment Topology & Manifest (`deploy/compose.yml`)
-In Profile B, the physical Raspberry Pi display node connects over SPI to the raw e-paper panel and runs only the lightweight Python client (`clients/eink-node`, SPEC-009) as a native systemd service. Because the headless Chromium renderer sidecar (`sidecars/eink-renderer`) requires significant memory and 64-bit architecture (`linux/amd64` or `linux/arm64`), the server-side Mirrormere daemon and renderer sidecar run on a separate always-on server (e.g. an existing home server, NAS, or 64-bit host with 2 GB+ RAM) activated via Compose's native `eink` profile. The display node does not run Docker or co-host the Chromium renderer:
+In Profile B, the reference setup is a single Raspberry Pi 4 Model B (2 GB+ RAM, 64-bit OS) running Docker Compose (`docker compose --profile eink up -d`) to host `mirrormere-core` (port 8080) and `eink-renderer` (port 8081). Alongside Compose, `clients/eink-node` (SPEC-009) runs as a native systemd service on the same machine, listening for SSE events on `http://localhost:8080/api/events` and fetching rendered frames from `http://localhost:8081/eink.png` to drive the e-paper panel over SPI. A separate-server topology remains supported for low-power or decoupled deployments where the display Pi connects over the LAN:
 
 ```yaml
 # deploy/compose.yml (Activated with: docker compose --profile eink up -d)

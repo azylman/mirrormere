@@ -6,16 +6,16 @@ Approved / Phase 2 Reference Architecture (SPEC-001)
 ## Context & Motivation
 Both reference households deploy microphones and speakers on their wall hardware:
 - **Alex's Touch Kiosk (Profile A)**: Intel N100 Mini PC behind a 15.6" UPERFECT touchscreen monitor with a USB microphone and integrated monitor speakers, backed by a dedicated **NVIDIA Jetson Orin** on the local network for GPU inference (Whisper STT and Kokoro TTS) and **Aerial** as the autonomous agent brain.
-- **Mike's Ambient E-Ink (Profile B)**: Raspberry Pi 3 Model B+ (`amos-pi`) with a Waveshare 7.5" V2 raw e-paper panel driven by an Adafruit E-Ink Bonnet (with custom GPIO pin mappings per SPEC-002 and SPEC-009), **reSpeaker XVF3800** 4-mic array, and living room audio, backed by an NVIDIA GPU desktop on the LAN for Whisper STT, **Amos** as the autonomous agent brain, and ElevenLabs TTS with local Piper fallback.
+- **Mike's Ambient E-Ink (Profile B)**: Raspberry Pi 4 Model B with a Waveshare 7.5" V2 raw e-paper panel driven by an Adafruit E-Ink Bonnet (with custom GPIO pin mappings per SPEC-002 and SPEC-009), **reSpeaker XVF3800** 4-mic array, and living room audio, backed by an NVIDIA GPU desktop on the LAN for Whisper STT, **Amos** as the autonomous agent brain, and ElevenLabs TTS with local Piper fallback.
 
 ### The Architectural Problem: Thick Edge vs. Hub-and-Spoke
 Earlier drafts required the edge unit (kiosk / Pi) to coordinate every stage: calling STT, waiting for text, calling the agent brain, waiting for reply text, calling TTS, and managing fallback engines. This placed excessive configuration burden, network latency, and secret management onto the wall hardware.
 
 To achieve clean separation of concerns, Mirrormere adopts a **Hub-and-Spoke Streaming Architecture**:
 1. **Dumb Edge Audio Terminal & HUD Presenter**: The edge dock only knows how to listen for the local wake word, stream recorded audio to a single **Voice Hub** endpoint, play returned audio on its speakers, and reflect status changes on the display HUD.
-2. **Coordinated Voice Hub**: A dedicated LAN gateway (Alex's Jetson Orin sidecar; Mike's always-on `amos-pi`) orchestrates STT, agent brain routing, and TTS synthesis.
+2. **Coordinated Voice Hub**: A dedicated LAN gateway (Alex's Jetson Orin sidecar; Mike's always-on voice hub) orchestrates STT, agent brain routing, and TTS synthesis.
    - On Alex's network: The Jetson Orin runs Whisper and Kokoro locally on GPU and calls Aerial over HTTP.
-   - On Mike's network: `amos-pi` runs the Voice Hub, reaching out to his desktop GPU PC for Whisper (avoiding WSL2 port-forwarding issues for inbound traffic), routing through the HESTIA queue to Amos, and calling ElevenLabs with local Piper fallback directly on `amos-pi`.
+   - On Mike's network: The Voice Hub runs on the Pi 4B, reaching out to his desktop GPU PC for Whisper (avoiding WSL2 port-forwarding issues for inbound traffic), routing through the agent task queue to Amos, and calling ElevenLabs with local Piper fallback directly on the Pi 4B.
 3. **Streaming Event Feedback & Keep-Alives**: The Hub returns Server-Sent Events (SSE) over the active interaction stream. As soon as STT finishes, the transcript is streamed back so the kiosk HUD immediately renders the user's words; periodic `thinking` pulses keep connections alive during queued agent deliberation; when the brain replies, the reply text is streamed back for caption toasts; synthesized audio chunks (PCM, WAV, or MP3) stream back for immediate playback.
 
 ---
@@ -37,10 +37,10 @@ flowchart TD
         Rec -->|POST /api/voice/interact\nWAV Audio| Hub
     end
 
-    subgraph Hub [LAN Voice Hub Gateway\nJetson Orin (Alex) / amos-pi (Mike)]
+    subgraph Hub [LAN Voice Hub Gateway\nJetson Orin (Alex) / Pi 4B (Mike)]
         Router[Interaction Controller]
         STT[2. STT: faster-whisper large-v3\nAlex: Jetson Orin / Mike: Desktop GPU]
-        Brain[3. Agent Brain: http_agent\nAerial (Ameridroid) / Amos (HESTIA Queue)]
+        Brain[3. Agent Brain: http_agent\nAerial / Amos]
         TTS[4. TTS Engine\nAlex: Kokoro-82M on Orin\nMike: ElevenLabs + Piper Fallback]
         
         Router --> STT
@@ -117,7 +117,7 @@ data: {"state": "idle", "duration_ms": 1240}
 ### 3. Event Specifications
 - `event: state`: Notifies the edge of active sub-state transitions (`transcribing`, `synthesizing`).
 - `event: transcript`: Fired immediately when Whisper finishes transcription. Contains the recognized user text.
-- `event: thinking`: Keep-alive heartbeat emitted every 5 seconds while waiting for agent brains with asynchronous task queues (e.g. Amos via HESTIA, which may take 10–60s). Prevents reverse proxies, client HTTP timeouts, and socket drops.
+- `event: thinking`: Keep-alive heartbeat emitted every 5 seconds while waiting for agent brains with asynchronous task queues (which may take 10–60s). Prevents reverse proxies, client HTTP timeouts, and socket drops.
 - `event: reply`: Fired when the agent brain returns its answer text, enabling instant caption toast rendering.
 - `event: audio_chunk`: Carries audio payload. Supports `format: "pcm"`, `format: "wav"`, or `format: "mp3"`. Allows either multi-chunk streaming (Kokoro) or a single complete payload (ElevenLabs / Piper) indicated by `is_final: true`.
 - `event: error`: Emitted if the brain or STT exceeds configured timeouts (e.g. 60s) or encounters fatal exceptions:
@@ -141,7 +141,7 @@ Upon receiving each event over the interaction stream, the dock's `mirrormere-vo
 
 ## Component Responsibilities & Operational Invariants
 
-### 1. Ear & Dock Presentation (Edge Unit: N100 / Pi 3 B+)
+### 1. Ear & Dock Presentation (Edge Unit: N100 / Pi 4B)
 - **Local Wake Word**: `openWakeWord` runs locally on the CPU ("Hey Aerial" / "Hey Amos"). Zero raw audio is transmitted across the LAN until wake verification completes.
 - **Echo Cancellation (AEC)**:
   - **Alex (Touch Kiosk)**: PipeWire `module-echo-cancel` (`webrtc-aec`) using monitor speakers as reference channel.
@@ -153,9 +153,9 @@ Upon receiving each event over the interaction stream, the dock's `mirrormere-vo
 - **Alex's Hub (NVIDIA Jetson Orin)**:
   - Co-locates `faster-whisper large-v3` (CUDA) and `kokoro-82m` (CUDA/TensorRT, `POST /v1/audio/speech`).
   - Calls Aerial Brain over HTTP (`POST /api/voice/ask`).
-- **Mike's Hub (`amos-pi` / Raspberry Pi 3 B+)**:
-  - Runs on the always-on `amos-pi`, calling Mike's desktop PC for Whisper STT over LAN.
-  - Routes turns to Amos via the HESTIA queue with periodic `thinking` pulses.
+- **Mike's Hub (Raspberry Pi 4B)**:
+  - Runs on the always-on Pi 4B, calling Mike's desktop PC for Whisper STT over LAN.
+  - Routes turns to Amos via the agent task queue with periodic `thinking` pulses.
   - Synthesizes speech via ElevenLabs with local Piper fallback.
 
 ### 3. TTS Fallback Invariant (Zero Sticky State)
@@ -235,7 +235,7 @@ hub:
       voice: en_US-lessac-medium
 ```
 
-### 3. Mike's Ambient E-Ink (`/etc/mirrormere/voice.yaml` on Pi 3 B+)
+### 3. Mike's Ambient E-Ink (`/etc/mirrormere/voice.yaml` on Pi 4B)
 ```yaml
 voice:
   enabled: true
@@ -251,7 +251,7 @@ voice:
       backend: respeaker_hardware_dsp
 
   hub:
-    url: "http://localhost:9000/api/voice/interact"      # Voice Hub running locally on amos-pi
+    url: "http://localhost:9000/api/voice/interact"      # Voice Hub running locally on the Pi 4B
     timeout_seconds: 75
 
   playback:
@@ -263,14 +263,14 @@ voice:
     mirrormere_url: "http://localhost:8080"
 ```
 
-### 4. Mike's Voice Hub (`/etc/voice-hub/config.yaml` on `amos-pi` / Pi 3 B+)
+### 4. Mike's Voice Hub (`/etc/voice-hub/config.yaml` on Pi 4B)
 ```yaml
 hub:
   listen: "0.0.0.0:9000"
 
   stt:
     engine: whisper_http
-    url: "http://192.168.1.185:9099/transcribe"         # Desktop CUDA PC LAN IP
+    url: "http://<desktop-gpu-host>:9099/transcribe"    # Desktop CUDA PC LAN address
     timeout_seconds: 10
     fallback: whisper_local
     whisper_local:
@@ -279,7 +279,7 @@ hub:
 
   brain:
     adapter: http_agent
-    url: "http://192.168.1.185:8000/agent/ask"          # Amos Agent API via HESTIA Queue
+    url: "http://<agent-host>:8000/agent/ask"           # Amos Agent API via task queue
     timeout_seconds: 60
     keepalive_interval_seconds: 5
 

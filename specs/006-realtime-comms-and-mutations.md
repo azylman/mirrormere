@@ -59,7 +59,7 @@ flowchart LR
   - Zero client-side JavaScript libraries required.
 
 ### 4. Lightweight E-Ink and Headless Consumption
-- A Python script or minimal Go binary on an ambient Raspberry Pi (e.g. Pi 3 B+ or Pi 4B) can consume SSE by reading line-by-line from a persistent HTTP request without asyncio event loops or complex WebSocket runtimes.
+- A Python script or minimal Go binary on an ambient Raspberry Pi (e.g. Pi 4B) can consume SSE by reading line-by-line from a persistent HTTP request without asyncio event loops or complex WebSocket runtimes.
 
 ### 5. Proxy & Local Network Transparency
 - SSE runs over standard HTTP/1.1 or HTTP/2. It passes smoothly through local reverse proxies (Nginx, Caddy, Envoy, and Home Assistant Ingress) without hitting 60-second WebSocket upgrade timeouts or proxy termination issues.
@@ -583,7 +583,7 @@ Controls the automatic rotation timer loop:
 - Touch swipe gestures reset/pause the rotation timer locally, sending a `POST /api/screen/pause` or `POST /api/screen/select` if desired.
 
 ### Ambient E-Ink (Profile B - Low-Power / E-Paper)
-- In the decoupled setup (e.g. Pi 3 B+ display node + amos-pi rendering hub):
-  - The rendering node connects to `/api/events`.
-  - Re-rendering of the static 800×480 monochrome image occurs only on `screen.rotate` or when relevant widget state changes.
-  - The display Pi downloads the pre-rendered image on trigger, completely insulating the e-paper panel from useless high-frequency refreshes.
+- On the single-host Pi 4B setup (or in a decoupled multi-host deployment):
+  - The local `clients/eink-node` daemon (or remote client) connects to `/api/events` (`http://localhost:8080/api/events`).
+  - Headless Chromium rasterizes the static 800×480 monochrome buffer only on `screen.rotate` or when relevant widget state changes.
+  - The display client fetches `http://localhost:8081/eink.png` on trigger, coalesces rapid events, and flushes over SPI, completely insulating the e-paper panel from useless high-frequency refreshes.

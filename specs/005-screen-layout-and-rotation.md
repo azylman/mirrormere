@@ -315,7 +315,7 @@ Mirrormere's Go daemon is strictly hardware-agnostic and maintains no concept of
    - The automated rotation timer loop is disabled entirely.
    - The display remains on the active screen until explicitly advanced via:
      - REST API call (`POST /api/screen/select` or `POST /api/screen/advance` per SPEC-006).
-     - Physical hardware button (e.g. Adafruit Bonnet Button 2 on GPIO 6 via client webhook per SPEC-009).
+     - Physical hardware button (e.g. Adafruit Bonnet Button 2 on GPIO 6, which calls `POST /api/screen/advance`, per SPEC-009).
      - Touch swipe gestures on interactive clients.
      - Webhook or high-priority automation alert.
 

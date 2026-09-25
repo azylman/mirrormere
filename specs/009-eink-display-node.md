@@ -24,10 +24,10 @@ refresh, **how** to refresh, and **what to show when things are down**.
 ---
 
 ## Reference Hardware (Mike's unit)
-- **Compute**: Raspberry Pi 3 Model B+ (Pi 4B also supported). Raspberry Pi OS Lite, 64-bit.
+- **Compute**: Raspberry Pi 4 Model B (Mike's unit: 8GB; minimum 2GB+ required). Raspberry Pi OS Lite, 64-bit.
 - **Panel**: Waveshare 7.5" V2 raw e-paper panel, 800×480, black/white.
 - **Driver board**: Adafruit E-Ink Bonnet (24-pin FPC), **not** the Waveshare HAT.
-- **Power**: 5V 2.5A micro-USB supply (Pi 3 B+) or USB-C (Pi 4B).
+- **Power**: Official Raspberry Pi 15W USB-C Power Supply (5.1V 3.0A).
 
 ### Pin Map
 `waveshare-epd` hardcodes Waveshare HAT pins in `epdconfig.py`. The Bonnet
@@ -146,8 +146,8 @@ Disabled unless `buttons.enabled: true`.
 
 ```yaml
 server:
-  events_url: "http://192.0.2.10:8080/api/events"
-  image_url: "http://192.0.2.10:8081/eink.png"
+  events_url: "http://localhost:8080/api/events" # Or http://<server-ip>:8080/api/events for decoupled multi-host
+  image_url: "http://localhost:8081/eink.png"    # Or http://<server-ip>:8081/eink.png for decoupled multi-host
 
 panel:
   driver: epd7in5_V2
