@@ -41,25 +41,32 @@ flowchart LR
 
 ### Configuration Schema (`config.yaml`)
 
+Each calendar widget instance configures its sync cadence, presentation window, and calendar feeds directly in `display.widgets[].config`:
+
 ```yaml
-providers:
-  calendar:
-    refresh_interval_seconds: 300 # 5 minutes
-    window_days_past: 1
-    window_days_future: 14
-    sources:
-      - name: "Family Calendar"
-        url_env: FAMILY_CALENDAR_URL # Resolved from environment variable
-        color: "#3b82f6" # Blue
-        enabled: true
-      - name: "Personal / Work"
-        url_env: WORK_CALENDAR_URL # Resolved from environment variable
-        color: "#10b981" # Green
-        enabled: true
-      - name: "US Holidays"
-        url: "https://calendar.google.com/calendar/ical/en.usa%23holiday%40group.v.calendar.google.com/public/basic.ics"
-        color: "#f59e0b" # Amber (public non-secret feeds may use url directly)
-        enabled: true
+display:
+  widgets:
+    - id: family-calendar
+      type: calendar-agenda
+      dimensions: [4, 2]
+      config:
+        refresh_interval_seconds: 300 # 5 minutes
+        window_days_past: 1
+        window_days_future: 14
+        view: week
+        calendars:
+          - name: "Family Calendar"
+            url_env: FAMILY_CALENDAR_URL # Resolved from environment variable
+            color: "#3b82f6" # Blue
+            enabled: true
+          - name: "Personal / Work"
+            url_env: WORK_CALENDAR_URL # Resolved from environment variable
+            color: "#10b981" # Green
+            enabled: true
+          - name: "US Holidays"
+            url: "https://calendar.google.com/calendar/ical/en.usa%23holiday%40group.v.calendar.google.com/public/basic.ics"
+            color: "#f59e0b" # Amber (public non-secret feeds may use url directly)
+            enabled: true
 ```
 
 ### Normalized Internal Schema (`CalendarEvent`)
@@ -121,26 +128,40 @@ To enforce secret isolation:
 
 ```mermaid
 flowchart LR
-    OpenMeteo[Open-Meteo Public API\napi.open-meteo.com] -->|HTTPS GET JSON| Poller[Weather Fetcher Loop\nDefault: 900s Cadence]
+    OpenMeteo[Open-Meteo Public API\napi.open-meteo.com] -->|HTTPS GET JSON| Poller[Weather Ingestion Loop]
 
     subgraph GoDaemon [Mirrormere Go Daemon]
         Poller --> WMO[WMO Weather Code Mapper]
         WMO --> Snap[Weather Snapshot Normalizer]
-        Snap -->|widget.update: weather-forecast| SSEHub[SSE Event Hub]
-        Snap -->|Header Weather Badge Snapshot| Header[Fixed Header Zone]
+        Snap -->|Header Weather Hydration| Header[Fixed Header Zone]
+        Snap -->|widget.update: <widget_id>| SSEHub[SSE Event Hub]
     end
 ```
 
 ### Configuration Schema (`config.yaml`)
 
+Each weather widget instance specifies its own coordinates, units, and refresh interval directly in its `config:` mapping:
+
 ```yaml
-providers:
-  weather:
-    refresh_interval_seconds: 900 # 15 minutes
-    latitude: 37.8044
-    longitude: -122.2712
-    timezone: "America/Los_Angeles" # "auto" or Olson TZ string
-    units: "imperial" # "imperial" (F, mph, in) or "metric" (C, km/h, mm)
+display:
+  widgets:
+    - id: home-weather
+      type: weather-forecast
+      dimensions: [2, 1]
+      config:
+        refresh_interval_seconds: 900 # 15 minutes
+        latitude: 37.8044
+        longitude: -122.2712
+        units: "imperial" # "imperial" (F, mph, in) or "metric" (C, km/h, mm)
+
+    - id: office-weather            # Second independent location on another screen!
+      type: weather-forecast
+      dimensions: [2, 1]
+      config:
+        refresh_interval_seconds: 900
+        latitude: 37.7749
+        longitude: -122.4194
+        units: "imperial"
 ```
 
 ### Upstream Endpoint
@@ -230,15 +251,17 @@ Fortunately, Google Photos provides **Unlisted Share Links** (e.g. `https://phot
 ### Configuration Schema (`config.yaml`)
 
 ```yaml
-providers:
-  photos:
-    refresh_interval_seconds: 3600 # 1 hour
-    albums:
-      - name: "Family Live Album"
+display:
+  widgets:
+    - id: living-room-photos
+      type: photo-carousel
+      dimensions: [3, 2]
+      config:
         share_url: "https://photos.app.goo.gl/AbCdEf123456789"
-        shuffle: true
+        refresh_interval_seconds: 3600 # 1 hour album metadata sync
+        cycle_interval_seconds: 60     # Rotate image every 60s within widget
         preload_count: 50
-        cycle_interval_seconds: 60 # Rotate image every 60s within widget
+        shuffle: true
 ```
 
 ### Parsing Pipeline in Go
@@ -257,8 +280,9 @@ Emitted via SSE on `widget.update`:
 
 ```json
 {
-  "widget_id": "photo-carousel",
+  "widget_id": "living-room-photos",
   "timestamp": "2026-09-24T22:22:00Z",
+  "state": "healthy",
   "data": {
     "album_name": "Family Live Album",
     "total_photos": 142,
@@ -284,3 +308,49 @@ Emitted via SSE on `widget.update`:
 ### Dual Display Adapter Handling
 - **Touch Kiosk (Profile A)**: The PWA renders a smooth hardware-accelerated CSS crossfade slideshow occupying a 50/50 `[3, 2]` block or full-screen `[6, 2]` hero canvas, preloading the next image in background DOM.
 - **Ambient E-Ink (Profile B)**: Photos carry the `.dither` class in `views/widget.html`. The headless renderer converts the photo bounding box to 8-bit grayscale and applies Floyd-Steinberg or Atkinson dithering to 1-bit monochrome (SPEC-003 §4), preserving sharp text thresholds for surrounding metadata, captions, and borders.
+
+---
+
+## 4. Autonomous Header Weather & Multi-Instance SSE Routing
+
+Data ingestion for the persistent 60px Fixed Header operates completely separate from `display.widgets`. A deployment may display ambient weather in the header without configuring any weather widgets on the 6×2 grid.
+
+### Autonomous Fixed Header Weather Configuration
+When `weather_badge` is enabled in `display.header.elements`, its weather parameters are configured directly under `display.header.weather`:
+
+```yaml
+display:
+  header:
+    enabled: true
+    elements:
+      - clock
+      - date
+      - weather_badge
+      - sync_status
+    weather:                        # Fully autonomous header weather configuration
+      refresh_interval_seconds: 900 # 15 minutes
+      latitude: 37.8044
+      longitude: -122.2712
+      timezone: "America/Los_Angeles"
+      units: imperial               # "imperial" | "metric"
+```
+
+The Go daemon manages a lightweight poller dedicated to hydrating the header's temperature and condition badge across all screens. It does not require any `weather-forecast` widget to be defined in `display.widgets`.
+
+### Independent Grid Widget Ingestion
+If a deployment also includes one or more `weather-forecast` widgets on the 6×2 grid (e.g. for hourly timeline cards or secondary locations like `office-weather`), each widget manages its own independent poller and configuration under `display.widgets[].config`.
+
+### Multi-Instance SSE Event Routing
+When any widget instance completes an ingestion cycle (e.g. `home-weather` vs `office-weather`), it emits a `widget.update` event over the Server-Sent Events bus tagged with its unique `widget_id`:
+
+```json
+{
+  "widget_id": "home-weather",
+  "timestamp": "2026-09-24T22:20:00Z",
+  "state": "healthy",
+  "data": { ... }
+}
+```
+
+Display clients match incoming SSE events to their respective DOM containers via `data-widget-id="home-weather"`, ensuring independent updating across multiple instances without cross-talk or redundant fetches.
+

@@ -146,8 +146,8 @@ Disabled unless `buttons.enabled: true`.
 
 ```yaml
 server:
-  events_url: "http://192.168.1.77:8080/api/events"
-  image_url: "http://192.168.1.77:8081/eink.png"
+  events_url: "http://192.0.2.10:8080/api/events"
+  image_url: "http://192.0.2.10:8081/eink.png"
 
 panel:
   driver: epd7in5_V2

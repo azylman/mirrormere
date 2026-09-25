@@ -81,23 +81,50 @@ display:
       - date
       - weather_badge
       - sync_status
+    weather:                        # Fully autonomous header weather configuration (independent of widgets)
+      refresh_interval_seconds: 900 # 15 minutes
+      latitude: 37.8044
+      longitude: -122.2712
+      timezone: "America/Los_Angeles"
+      units: imperial
 
   grid:
     columns: 6
     rows: 2
 
-  # Array of widgets and their desired dimensions [width_cols, height_rows]
+  # Array of widgets, target dimensions [cols, rows], and generic per-widget configuration
   widgets:
-    - name: calendar-agenda
+    - id: family-calendar
+      type: calendar-agenda
       dimensions: [4, 2] # 2/3 width, full height (8 cells)
       pinned: false
-    - name: daily-chores
+      config:
+        refresh_interval_seconds: 300
+        view: week
+        days_ahead: 7
+    - id: daily-chores
+      type: tasks
       dimensions: [2, 1] # 1/3 width, top half (2 cells)
-    - name: weather-forecast
+      config:
+        refresh_interval_seconds: 120
+        list_id: "chores"
+    - id: local-weather
+      type: weather-forecast
       dimensions: [2, 1] # 1/3 width, bottom half (2 cells)
-    - name: photo-carousel
+      config:
+        refresh_interval_seconds: 900
+        latitude: 37.8044
+        longitude: -122.2712
+        units: imperial
+    - id: family-photos
+      type: photo-carousel
       dimensions: [3, 2] # 1/2 width, full height (6 cells)
-    - name: home-assistant
+      config:
+        share_url: "https://photos.app.goo.gl/AbCdEf123456789"
+        refresh_interval_seconds: 3600
+        cycle_interval_seconds: 60
+    - id: home-assistant
+      type: home-assistant
       dimensions: [3, 2] # 1/2 width, full height (6 cells)
 ```
 
