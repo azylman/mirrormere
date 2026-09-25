@@ -120,7 +120,6 @@ config_schema:
             type: string
     show_relative_time:
       type: boolean
-      default: true
 ```
 
 ### Manifest Functional Roles
@@ -139,7 +138,9 @@ Manifest schemas (`config_schema` for all widgets, and `response_schema` for cus
 - **Object & Collection Schemas**: Top-level schemas define `type: object`, declare child keys under `properties:`, enforce mandatory presence via a `required:` array of property names, and represent lists using `type: array` with an `items:` schema (rather than legacy ad-hoc `type: list` or inline `required: true`).
 - **Provider Scope**: `response_schema` is mandatory for custom widgets (`provider: http`) to enforce safe deserialization across network boundaries. Built-in providers use compiled Go structs and do not use manifest `response_schema`.
 - **Go Validator Engine**: In Go, Mirrormere compiles and evaluates both boot-time configuration schemas and runtime response schemas using `github.com/santhosh-tekuri/jsonschema/v6`.
-- **Default Value Semantics**: In JSON Schema Draft 2020-12, `default` is an annotation keyword only; standard validators do not populate or apply default values to instance payloads or configuration mappings.
+- **Disallowed `default` Keyword**: The `default` keyword is **strictly disallowed** in all manifest schemas (`config_schema` and `response_schema`). Manifests declaring `default` fail schema validation at startup or package load time. Payloads and configurations are always expected to be complete:
+  - In `response_schema`, upstream providers and rendering servers must provide complete payloads containing all necessary domain fields; Core never applies or injects default values into payload data.
+  - In `config_schema`, configuration properties must either be declared as mandatory via `required:` or treated as optional, with widget templates responsible for gracefully handling the absence of optional keys.
 
 ---
 
@@ -348,12 +349,13 @@ For user-specific integrations, private household services, or extensions writte
          type: string
        unit:
          type: string
-         default: "F"
 
    response_schema:
      type: object
      required:
        - temperature
+       - humidity
+       - status
      properties:
        temperature:
          type: number
@@ -361,7 +363,6 @@ For user-specific integrations, private household services, or extensions writte
          type: number
        status:
          type: string
-         default: "ok"
    ```
 
    Widget instances in `config.yaml` reference that custom `type` under `display.widgets`:
