@@ -347,19 +347,14 @@ For user-specific integrations, private household services, or extensions writte
      - `X-Widget-Type: sensor-card`
      - `X-Widget-Dimensions: 2x1`
    - **Request Body Sent TO Endpoint**:
-     Mirrormere serializes the instance context and its entire `config` mapping:
+     Mirrormere serializes ONLY the custom domain configuration (the exact object declared under the instance's nested `config:` mapping). Top-level framework settings (`id`, `type`, `dimensions`, `pinned`, `refresh_interval_seconds`) and transport keys (`endpoint`, `method`, `token_env`) are never included in the body; instance metadata is passed exclusively via `X-Widget-*` request headers:
      ```json
      {
-       "widget_id": "living-room-temp",
-       "widget_type": "sensor-card",
-       "dimensions": [2, 1],
-       "config": {
-         "entity_id": "sensor.living_room_temp",
-         "unit": "F"
-       }
+       "entity_id": "sensor.living_room_temp",
+       "unit": "F"
      }
      ```
-     This allows a single multi-tenant sidecar (e.g. a Home Assistant bridge or Prometheus scraper) to service multiple widget instances dynamically without requiring its own separate configuration files or complex URL query parsing.
+     This keeps outbound request payloads clean, prevents internal framework settings or secrets from leaking across the network, and allows custom sidecars to directly deserialize domain parameters without unwrapping a wrapper object.
    - **Response Body Received FROM Endpoint**:
      Returns the standard JSON payload envelope:
      ```json
