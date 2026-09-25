@@ -220,7 +220,97 @@ Following the initial state hydration burst, the stream transitions seamlessly t
     }
     ```
 
-### 3. Standard Responses
+### 3. Screen Navigation & Rotation Endpoints
+
+#### A. Select Screen (`POST /api/screen/select`)
+Selects a specific screen directly by zero-based index:
+- **Headers**:
+  ```http
+  Content-Type: application/json
+  Accept: application/json
+  ```
+- **Request Payload**:
+  ```json
+  {
+    "screen_index": 1
+  }
+  ```
+  - `screen_index` (integer, required): 0-indexed screen number (`0 <= screen_index < total_screens`).
+- **Response (`200 OK`)**:
+  ```json
+  {
+    "status": "ok",
+    "current_screen": 1,
+    "total_screens": 2
+  }
+  ```
+- **Error Response (`400 Bad Request`)**:
+  ```json
+  {
+    "status": "error",
+    "error": "invalid screen_index: must be between 0 and total_screens - 1"
+  }
+  ```
+- **Side Effects**: Switches the active screen layout immediately, resets the automatic rotation interval countdown, and broadcasts a `screen.rotate` SSE event.
+
+#### B. Advance Screen (`POST /api/screen/advance`)
+Advances the active screen sequentially (designed for single-button hardware triggers or sequential gesture navigations):
+- **Headers**:
+  ```http
+  Content-Type: application/json
+  Accept: application/json
+  ```
+- **Request Payload** (optional or empty `{}`):
+  ```json
+  {
+    "direction": "next"
+  }
+  ```
+  - `direction` (string, optional, default `"next"`): Either `"next"` to advance forward `(current_screen + 1) % total_screens`, or `"prev"` to advance backward `(current_screen - 1 + total_screens) % total_screens`.
+- **Response (`200 OK`)**:
+  ```json
+  {
+    "status": "ok",
+    "current_screen": 1,
+    "total_screens": 2
+  }
+  ```
+- **Side Effects**: Advances the active screen in the requested direction, resets the automatic rotation countdown, and broadcasts a `screen.rotate` SSE event.
+
+#### C. Pause / Resume Rotation (`POST /api/screen/pause`)
+Controls the automatic rotation timer loop:
+- **Headers**:
+  ```http
+  Content-Type: application/json
+  Accept: application/json
+  ```
+- **Request Payload**:
+  ```json
+  {
+    "paused": true
+  }
+  ```
+  - `paused` (boolean, required): `true` to pause automatic rotation; `false` to resume automatic rotation.
+- **Response (`200 OK`)**:
+  ```json
+  {
+    "status": "ok",
+    "paused": true,
+    "current_screen": 0
+  }
+  ```
+- **Error Response (`400 Bad Request`)**:
+  ```json
+  {
+    "status": "error",
+    "error": "invalid payload: paused must be a boolean"
+  }
+  ```
+- **Side Effects**:
+  - `paused: true`: Suspends the automatic rotation timer loop; the display remains indefinitely on the active screen until explicitly advanced or unpaused.
+  - `paused: false`: Re-arms the rotation timer using `interval_seconds` and resumes periodic rotation.
+
+### 4. Standard Responses
 - **`200 OK`**: Action executed immediately and state updated.
   ```json
   { "status": "ok", "widget_id": "daily_chores", "result": { "task_id": "t1", "completed": true } }
@@ -230,7 +320,7 @@ Following the initial state hydration burst, the stream transitions seamlessly t
 - **`404 Not Found`**: Widget or stream ID not loaded in active configuration.
 - **`502 Bad Gateway`**: Upstream provider (e.g. Google API, Home Assistant) failed.
 
-### 3. Optimistic UI Updates on Touch Kiosks
+### 5. Optimistic UI Updates on Touch Kiosks
 1. User taps a chore checkbox on the 1080p capacitive touch display.
 2. The Touch PWA immediately flips the visual checkbox state locally (< 16ms, 60fps responsiveness).
 3. The PWA dispatches `POST /api/widgets/daily_chores/action`.
