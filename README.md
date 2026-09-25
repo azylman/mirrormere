@@ -77,3 +77,10 @@ mirrormere/
 3. **PWA Touch Kiosk**: Scaffold the Wayland kiosk frontend with touch navigation and UVC video capture overlays.
 4. **E-Paper Rendering Engine**: Deploy the Python/C SPI framebuffer pipeline for the 7.5" Waveshare panel.
 5. **Widget SDK**: Document the developer contract for authoring third-party widgets.
+
+---
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
