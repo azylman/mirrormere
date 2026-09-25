@@ -147,7 +147,25 @@ In alignment with Mirrormere's independent deployment topology and zero-runtime-
   - **Alex's Touch Kiosk**: `-v ./kiosk.css:/config/custom.css:ro` (dark mode cyberpunk palette, 48px touch targets, glowing accents).
   - **Mike's Ambient E-Ink**: `-v ./eink.css:/config/custom.css:ro` (high-contrast 1-bit monochrome, bold typography, zero animations, 2px solid borders).
 
-### 3. Decoupled E-Ink Headless Capture Sidecar
+### 3. Visual Styling Standards & Design Tokens
+To achieve a refined, modern aesthetic suitable for high-visibility wall mounting, Mirrormere establishes consistent design tokens and layout conventions across all semantic widgets:
+
+1. **Atmospheric Depth & Frosted Glass**:
+   - Backgrounds adopt dark slate/charcoal foundations (`#1c1c1e` base, `#2c2c2e` surface).
+   - Widget cards utilize subtle frosted glass (`backdrop-filter: blur(12px)`, background `rgba(255, 255, 255, 0.05)`, border `1px solid rgba(255, 255, 255, 0.08)`, border-radius `16px`).
+   - Clean high-contrast typography hierarchy (`#ffffff` primary text, `#d3d3d3` secondary, `#8e8e93` muted).
+
+2. **Ambient Sensor Pill Badges (`.pill-badge`)**:
+   - Secondary status readouts (temperature, humidity, active light counts, open doors, sync state) are encapsulated in compact pill capsules (`height: 24px–28px`, `border-radius: 9999px`, padding `2px 10px`).
+   - Pairs micro-icons with clean tabular numbers, preserving glanceability on 1080p touch screens while thresholding cleanly to crisp 1-bit vector shapes on e-paper.
+
+3. **Chunky Inset Pill Sliders (`.slider-pill`)**:
+   - Volume, brightness, and range controls reject default browser `<input type="range">` elements in favor of tactile inset pill tracks with minimum 48px hit areas for effortless finger targeting.
+
+4. **Clean Photo Canvas Invariant**:
+   - Family photography (`photo-carousel` widget) is rendered edge-to-edge with zero floating text overlays, clocks, or weather badges. Ambient glance data is strictly partitioned into the fixed header zone to keep photos clean.
+
+### 4. Decoupled E-Ink Headless Capture Sidecar
 To keep the core Go daemon container lightweight, hermetic, and minimal (< 25MB static binary with `CGO_ENABLED=0`):
 - The core Go server **never bundles Chromium or headless browser dependencies**.
 - The core Go server exposes the full-screen layout at `GET /display` (HTML).
@@ -155,7 +173,7 @@ To keep the core Go daemon container lightweight, hermetic, and minimal (< 25MB 
 - The sidecar loads the page, captures the 800×480 viewport, applies selective 1-bit quantization and dithering (detailed below), and exposes `GET /eink.png` for display nodes to fetch.
 - `GET /eink.png` renders on request (or returns a render newer than the last `widget.update`) and sends a strong `ETag` equal to a hash of the PNG bytes, so display nodes can skip unchanged frames (SPEC-009).
 
-### 4. Selective Dithering Pipeline
+### 5. Selective Dithering Pipeline
 Full-page error diffusion (e.g. applying naive Floyd-Steinberg dithering across the entire 800×480 viewport) degrades sharp text, numbers, and thin borders into fuzzy gray pixel speckles. To deliver crisp typography alongside high-quality continuous-tone graphics, `mirrormere-eink-renderer` employs a two-pass selective quantization pipeline:
 
 1. **Strict 1-Bit Thresholding Default**:
