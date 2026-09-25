@@ -20,14 +20,14 @@ Mirrormere solves this by establishing an open, headless smart display platform 
   2. Weather Forecasts & Live Conditions (Open-Meteo - SPEC-007)
   3. Household Lists, Chores & Tasks (Local SQLite / Google Tasks - SPEC-008)
   4. Google Photos Shared Album Slideshows (SPEC-007)
-  5. Physical Google Cast Video Capture (UVC HDMI - SPEC-004)
+  5. Unified Video Stream API, Priority Stack & Cast Sidecar (SPEC-004)
   6. 6×2 Grid Layouts with Auto-Packed Bin-Packing Engine (SPEC-005)
   7. Client Ecosystem: Ambient E-Ink Node (SPEC-009) & Touch Kiosk (SPEC-010)
 
 - **Phase 2 (Post-MVP Roadmap)**:
   1. Home Assistant Core entity state streaming (climate, lights, locks, sensors)
   2. Smart home quick-action widget controls
-  3. Doorbell camera popup interrupts on ring/motion events
+  3. Native Home Assistant doorbell push integration (complementing Phase 1 generic Webhook API)
   4. Voice assistant satellite pipeline (`wyoming-satellite`, or the adapter pipeline in SPEC-011)
 
 ---
@@ -42,6 +42,7 @@ graph TD
         Photos[Google Photos Shared Album]
         Chores[Local Task Storage / SQLite]
         CC[Chromecast via HDMI]
+        Doorbell[Doorbell / Security Camera]
         HA[Home Assistant Core - Phase 2]
     end
 
@@ -49,12 +50,13 @@ graph TD
         Engine[Sync & Ingestion Engine]
         PubSub[SSE Event Stream Bus]
         WidgetEngine[Widget Engine & 6x2 Solver]
+        VideoStack[Video Priority Stack]
     end
 
     subgraph Client Tier: Touch Kiosk (Intel N100)
         Cage[cage Wayland Compositor]
         Chromium[Chromium Kiosk Browser]
-        V4L2[UVC Video /dev/video0]
+        CastSidecar[clients/cast-sidecar go2rtc]
         Cage --> Chromium
     end
 
@@ -71,14 +73,19 @@ graph TD
     Photos --> Engine
     Chores --> Engine
     HA -.->|Phase 2| Engine
+    Doorbell -->|POST /api/video/trigger| Engine
 
     Engine --> WidgetEngine
     WidgetEngine --> PubSub
+    Engine --> VideoStack
+    VideoStack --> PubSub
 
-    PubSub -->|SSE widget.update| Chromium
-    PubSub -->|SSE widget.update| Node
-    CC -->|HDMI to USB UVC| V4L2
-    V4L2 -->|getUserMedia HTML5| Chromium
+    PubSub -->|SSE events| Chromium
+    PubSub -->|SSE events| Node
+    CC -->|HDMI to USB UVC| CastSidecar
+    CastSidecar -->|POST /api/video/trigger| Engine
+    CastSidecar -->|WebRTC Stream| Chromium
+    Doorbell -.->|WebRTC / HLS Stream| Chromium
 ```
 
 ---
