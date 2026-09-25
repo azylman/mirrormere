@@ -180,7 +180,7 @@ CREATE INDEX IF NOT EXISTS idx_list_items_updated_at ON list_items(updated_at);
 ```
 
 ### 4. Hermetic Testing Policy
-All automated unit and contract tests in `pkg/storage/sqlite` or `providers/lists` MUST use in-memory SQLite handles (`file::memory:?cache=shared`) or temporary file fixtures (`t.TempDir()`). Unit tests must never write to `/data` or touch shared disk state.
+All automated unit and contract tests in `internal/storage/sqlite` or `internal/providers/lists` MUST use in-memory SQLite handles (`file::memory:?cache=shared`) or temporary file fixtures (`t.TempDir()`). Unit tests must never write to `/data` or touch shared disk state.
 
 ---
 
