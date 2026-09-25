@@ -1,4 +1,4 @@
-# SPEC-010: Voice Pipeline (Wake Word, STT, Agent, TTS with Local Fallback)
+# SPEC-011: Voice Pipeline (Wake Word, STT, Agent, TTS with Local Fallback)
 
 ## Status
 Proposed. Reference implementation exists (Mike's household); Mirrormere
