@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/azylman/mirrormere/pkg/server"
+	"github.com/azylman/mirrormere/internal/server"
 )
 
 func TestConfig_ApplyDefaults(t *testing.T) {

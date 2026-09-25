@@ -1,0 +1,82 @@
+# Mirrormere Reference Configuration Template
+# Authoritative Documentation: specs/001-architecture-overview.md, specs/003-widget-contract.md, specs/005-screen-layout-and-rotation.md, specs/007-core-data-providers.md
+
+# Authoritative household IANA timezone (SPEC-001 §4)
+timezone: "America/Los_Angeles"
+
+# Display and layout configuration
+display:
+  rotation:
+    interval_seconds: 30
+    transition: "slide"
+
+  # Persistent Fixed Header (SPEC-005, SPEC-007 §4)
+  header:
+    enabled: true
+    elements:
+      - clock
+      - date
+      - weather_badge
+      - sync_status
+    # Autonomous header weather poller hydrating header.update (SPEC-007 §4)
+    weather:
+      refresh_interval_seconds: 900
+      latitude: 37.8044
+      longitude: -122.2712
+      units: imperial
+
+  # Active widget instances (SPEC-003 §2)
+  # Widgets are automatically packed across minimal rotation screens via the 6x2 bitmask solver (SPEC-005).
+  # No manual 'screens' or top-level 'providers' blocks are required.
+  widgets:
+    # Screen 1 Tiles (12 cells total: 4x2 + 2x1 + 2x1 = 12)
+    - id: family-calendar
+      type: calendar-agenda
+      dimensions: [4, 2]
+      pinned: false
+      refresh_interval_seconds: 300
+      config:
+        view: week
+        window_days_past: 1
+        window_days_future: 14
+        show_relative_time: true
+        calendars:
+          - name: "Family Events"
+            url_env: FAMILY_CALENDAR_URL # Resolved via host environment variable per SPEC-012 §6
+            color: "#a855f7"
+
+    - id: home-weather
+      type: weather-forecast
+      dimensions: [2, 1]
+      pinned: false
+      refresh_interval_seconds: 900
+      config:
+        latitude: 37.8044
+        longitude: -122.2712
+        units: imperial
+
+    - id: household-tasks
+      type: tasks
+      dimensions: [2, 1]
+      pinned: false
+      refresh_interval_seconds: 300
+      config:
+        source: local
+        list_id: family-chores
+
+    # Screen 2 Tiles (12 cells total: 3x2 + 3x2 = 12)
+    - id: living-room-photos
+      type: photo-carousel
+      dimensions: [3, 2]
+      pinned: false
+      refresh_interval_seconds: 3600
+      config:
+        share_url: "https://photos.app.goo.gl/AbCdEf123456789"
+        cycle_interval_seconds: 60
+        preload_count: 50
+        shuffle: true
+
+    - id: calendar-pad
+      type: spacer
+      dimensions: [3, 2]
+      pinned: false
