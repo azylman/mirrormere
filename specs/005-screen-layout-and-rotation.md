@@ -106,8 +106,12 @@ display:
       type: tasks
       dimensions: [2, 1] # 1/3 width, top half (2 cells)
       config:
-        refresh_interval_seconds: 120
         list_id: "chores"
+        list_name: "Chores"
+        source: gtasks
+        refresh_interval_seconds: 120
+        gtasks:
+          tasklist_id: "MDk3..."
     - id: local-weather
       type: weather-forecast
       dimensions: [2, 1] # 1/3 width, bottom half (2 cells)
@@ -206,20 +210,26 @@ If the user's configured widgets cannot cleanly partition into fully filled scre
 To accommodate primary household hero widgets (such as a 4×2 Family Calendar) that users want visible at all times, widgets can optionally declare `pinned: true` or specify explicit target screens:
 
 ```yaml
-widgets:
-  - name: calendar-agenda
-    dimensions: [4, 2]
-    pinned: true # Automatically replicated onto all rotation screens
+display:
+  widgets:
+    - id: family-calendar
+      type: calendar-agenda
+      dimensions: [4, 2]
+      pinned: true # Automatically replicated onto all rotation screens
 
-  # Remaining widgets rotate through the 2x2 side panel (4 cells per screen):
-  - name: daily-chores
-    dimensions: [2, 1]
-  - name: weather-forecast
-    dimensions: [2, 1]
-  - name: transit-commute
-    dimensions: [2, 1]
-  - name: trash-schedule
-    dimensions: [2, 1]
+    # Remaining widgets rotate through the 2x2 side panel (4 cells per screen):
+    - id: daily-chores
+      type: tasks
+      dimensions: [2, 1]
+    - id: local-weather
+      type: weather-forecast
+      dimensions: [2, 1]
+    - id: transit-commute
+      type: transit-commute
+      dimensions: [2, 1]
+    - id: trash-schedule
+      type: trash-schedule
+      dimensions: [2, 1]
 ```
 
 - When `pinned: true` is set, the solver accounts for the pinned widget's area across each screen, ensuring the remaining rotating widgets perfectly tile the remaining grid cells.

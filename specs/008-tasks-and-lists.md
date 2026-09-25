@@ -81,10 +81,22 @@ Each tasks/checklist widget instance configures its list identity, upstream sour
 ```yaml
 display:
   widgets:
+    - id: daily-chores              # Primary widget definition establishing chores sync
+      type: tasks
+      dimensions: [2, 1]
+      config:
+        list_id: "chores"           # Canonical list identifier (defaults to widget id if omitted)
+        list_name: "Daily Chores"
+        source: gtasks              # Source adapter ("local" | "gtasks" | "http")
+        refresh_interval_seconds: 120
+        gtasks:
+          tasklist_id: "MDk3..."
+
     - id: groceries
       type: tasks
       dimensions: [2, 1]
       config:
+        list_id: "groceries"
         list_name: "Groceries"
         source: local               # Local SQLite database (default)
         show_completed: 3
@@ -93,6 +105,7 @@ display:
       type: tasks
       dimensions: [2, 1]
       config:
+        list_id: "family-todo"
         list_name: "To Do"
         source: http                # Generic HTTP list service adapter
         refresh_interval_seconds: 120
@@ -100,19 +113,20 @@ display:
           base_url: "http://192.0.2.10:8300/lists/family-todo"
           token_env: HOUSEHOLD_LISTS_TOKEN
 
-    - id: chores
+    - id: compact-chores            # Secondary consumer widget referencing existing list!
       type: tasks
-      dimensions: [2, 1]
+      dimensions: [1, 1]
       config:
-        list_name: "Chores"
-        source: gtasks              # Google Tasks adapter
-        refresh_interval_seconds: 120
-        gtasks:
-          tasklist_id: "MDk3..."
+        list_id: "chores"           # References the chores list defined above
+        show_completed: 0
 ```
 
-### Shared List State & Deduplication
-When multiple widget instances reference the same underlying list (e.g. `list_id: groceries` or `list_id: chores` across different rotation screens), the Go daemon's list provider deduplicates polling loops and syncs via an in-memory singleflight/cache layer, while local SQLite lists share the daemon's internal `/data/lists.db` store.
+### Shared List State & Source Ownership Rules
+1. **Canonical Identifier (`list_id`)**: Every list has a stable identifier (`list_id`). If omitted from `config:`, `list_id` defaults to the widget's instance `id`.
+2. **Primary Source Definition**: A widget instance that specifies `source:` (and its adapter options such as `gtasks:` or `http:`) acts as the primary definition for that `list_id`, establishing its upstream sync loop in the Go daemon.
+3. **Consumer Reference Widgets**: Any secondary widget on another screen (e.g. `id: compact-chores`) can display the same list simply by declaring `list_id: "chores"` with its own presentation parameters (e.g. `show_completed: 0`). It reuses the in-memory cache and background sync worker created by the primary definition without spinning up redundant polling loops.
+4. **Conflict Validation**: If multiple widgets define `source` for the same `list_id`, their source configurations must be identical; conflicting definitions are rejected at startup with an explicit validation error.
+5. **Decoupled Phone Writes**: Companion apps and local REST mutations (`POST /api/widgets/{widget_id}/action` or `/api/lists/{list_id}/items`) interact with the list provider keyed by `list_id`, persisting changes directly to SQLite (`/data/lists.db`) or forwarding upstream regardless of which screen is currently visible.
 
 ---
 

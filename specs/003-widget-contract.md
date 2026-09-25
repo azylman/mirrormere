@@ -125,13 +125,15 @@ display:
       dimensions: [2, 1]
       config:
         list_id: "groceries"
+        list_name: "Groceries"
+        source: local
         show_completed: 3
 ```
 
 ### 2. Multi-Instance Capability
 Separating `id` from `type` and attaching sync configuration directly to the instance enables multiple independent instances of the same widget type across screens with distinct upstream targets:
 - Multiple weather locations: `id: home-weather` on Screen 1 and `id: office-weather` on Screen 2 with different GPS coordinates and polling rates.
-- Multiple task lists: `id: family-chores` on Screen 1 and `id: grocery-list` on Screen 2.
+- Multiple task lists: `id: daily-chores` on Screen 1 defines `list_id: chores` with `source: gtasks`, while `id: compact-chores` on Screen 2 references the same `list_id: chores` with `show_completed: 0`, sharing its background sync worker.
 - Multiple photo streams: `id: family-photos` on Screen 1 and `id: art-gallery` on Screen 2 with distinct Google Photos share URLs.
 - Multiple calendar views: a `[2, 1]` compact `day` view on Screen 1 and a `[4, 2]` expansive `week` view on Screen 2.
 
