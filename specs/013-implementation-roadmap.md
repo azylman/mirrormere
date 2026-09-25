@@ -37,8 +37,8 @@ All code, schemas, and assets committed to the repository must adhere to the fol
 flowchart TD
     P1["Phase 1: Docker Core, Config & Widget Package Loader"] --> P2["Phase 2: Realtime SSE Bus, Web Shell & Walking Skeleton"]
     P2 --> P3["Phase 3: Ingest Providers & Custom Widget Data Paths"]
-    P3 --> P4["Phase 4: Ambient E-Ink Profile B (Mike's Build)"]
-    P3 --> P5["Phase 5: Touch Kiosk Profile A & Cast Ingest (Alex's Build)"]
+    P3 --> P4["Phase 4: Touch Kiosk Profile A & Cast Ingest (Alex & Mike Monitor Bringup)"]
+    P3 --> P5["Phase 5: Ambient E-Ink Profile B (Mike's E-Paper Build)"]
     P4 --> P6["Phase 6: Voice Pipeline & Bench Validation"]
     P5 --> P6
 ```
@@ -140,16 +140,41 @@ flowchart TD
 
 ---
 
-### Phase 4: Ambient E-Ink Profile B (Mike's Build)
-**Objective:** Deliver the low-power e-paper rendering companion and standalone SPI daemon for the Raspberry Pi 4B so Mike's hardware can be stood up first.
+### Phase 4: Touch Kiosk Profile A & Cast Ingest (Alex & Mike Monitor Bringup)
+**Objective:** Assemble the interactive 60Hz Touch Kiosk stack, hardware video capture pipeline, and Linux host provisioning for Alex's N100 and Mike's HDMI test monitor.
 
-- **Task 4.1: Headless Snapshot Sidecar (`sidecars/eink-renderer`)**
+- **Task 4.1: Audio Coordinator & DOM Ceiling**
+  - Core audio endpoints: `GET /api/audio`, `POST /api/audio/volume`, `POST /api/audio/mute`.
+  - Strict 80% DOM volume ceiling: `(vol/100)*0.80*(isDucked?0.2:1)*(isMuted?0:1)`. Zero host OS PipeWire manipulation.
+  - Touch volume slider 200ms debounce during continuous drag; commit on `pointerup`.
+
+- **Task 4.2: Video State Relay & Priority Stack**
+  - Video priority stack: `doorbell` PiP > `chromecast` fullscreen.
+  - Endpoints: `POST /api/video/trigger`, `dismiss`, `state`, `action`.
+  - Embed go2rtc WebRTC stream playback with touch HUD overlay.
+
+- **Task 4.3: CastV2 Socket Monitor (`sidecars/cast-watcher`) & `go2rtc` Ingest**
+  - Connect to Chromecast TCP port 8009 over LAN.
+  - Detect active casting (`appId != "E8C28D3C"`), trigger video overlay (`POST /api/video/trigger`), and dismiss on return to backdrop.
+  - Hardware transcoding (`#video=h264#hardware` via Intel VAAPI/QSV on the N100) capturing UVC MS2130 and ALSA audio.
+
+- **Task 4.4: Kiosk Host Provisioning & Wayland Confinement**
+  - Minimal Wayland `cage` compositor launching Chromium with kiosk flags: `--kiosk --ozone-platform=wayland --use-gl=egl --autoplay-policy=no-user-gesture-required`.
+  - Power management: `swayidle` 10m idle blanking (`wlr-randr --output HDMI-A-1 --off`) with capacitive touch wake (`evdev`), and systemd night schedule timers (23:00 sleep / 06:00 wake).
+  - Nightly automated browser process restart during the sleep window to prevent 24/7 memory drift.
+
+---
+
+### Phase 5: Ambient E-Ink Profile B (Mike's E-Paper Build)
+**Objective:** Deliver the low-power e-paper rendering companion and standalone SPI daemon for the Raspberry Pi 4B as Mike's e-paper panel arrives.
+
+- **Task 5.1: Headless Snapshot Sidecar (`sidecars/eink-renderer`)**
   - Dockerized headless Chromium capture service.
   - Capture 800×480 1-bit monochrome snapshot of `/display` on dirty trigger or rotation.
   - Floyd-Steinberg dithering for photos and grayscale images.
   - Expose 1-bit packed byte array or PNG at `GET /eink.png` with ETag caching.
 
-- **Task 4.2: E-Ink Node Client (`clients/eink-node`)**
+- **Task 5.2: E-Ink Node Client (`clients/eink-node`)**
   - Standalone Python daemon running on Raspberry Pi 4B with Waveshare 7.5" e-paper display.
   - Adafruit Bonnet GPIO pin mapping: RST=27, DC=22, BUSY=17, CS=CE0 (GPIO 8), Buttons=GPIO 5 & 6 (SPEC-009).
   - Hardware button tap on GPIO 5/6 triggers `POST /api/screen/advance` on Core daemon.
@@ -157,30 +182,6 @@ flowchart TD
   - Offline guard: 8×8 black dot in top-right corner if offline > 120s; persist last good frame to `/var/lib/mirrormere-eink/last.png`.
   - Standardized healthcheck endpoint on port 8099 (`GET :8099/healthz`).
 
----
-
-### Phase 5: Touch Kiosk Profile A & Cast Ingest (Alex's Build)
-**Objective:** Assemble the interactive 60Hz Touch Kiosk stack, hardware video capture pipeline, and Linux host provisioning.
-
-- **Task 5.1: Audio Coordinator & DOM Ceiling**
-  - Core audio endpoints: `GET /api/audio`, `POST /api/audio/volume`, `POST /api/audio/mute`.
-  - Strict 80% DOM volume ceiling: `(vol/100)*0.80*(isDucked?0.2:1)*(isMuted?0:1)`. Zero host OS PipeWire manipulation.
-  - Touch volume slider 200ms debounce during continuous drag; commit on `pointerup`.
-
-- **Task 5.2: Video State Relay & Priority Stack**
-  - Video priority stack: `doorbell` PiP > `chromecast` fullscreen.
-  - Endpoints: `POST /api/video/trigger`, `dismiss`, `state`, `action`.
-  - Embed go2rtc WebRTC stream playback with touch HUD overlay.
-
-- **Task 5.3: CastV2 Socket Monitor (`sidecars/cast-watcher`) & `go2rtc` Ingest**
-  - Connect to Chromecast TCP port 8009 over LAN.
-  - Detect active casting (`appId != "E8C28D3C"`), trigger video overlay (`POST /api/video/trigger`), and dismiss on return to backdrop.
-  - Hardware transcoding (`#video=h264#hardware` via Intel VAAPI/QSV on the N100) capturing UVC MS2130 and ALSA audio.
-
-- **Task 5.4: Kiosk Host Provisioning & Wayland Confinement**
-  - Minimal Wayland `cage` compositor launching Chromium with kiosk flags: `--kiosk --ozone-platform=wayland --use-gl=egl --autoplay-policy=no-user-gesture-required`.
-  - Power management: `swayidle` 10m idle blanking (`wlr-randr --output HDMI-A-1 --off`) with capacitive touch wake (`evdev`), and systemd night schedule timers (23:00 sleep / 06:00 wake).
-  - Nightly automated browser process restart during the sleep window to prevent 24/7 memory drift.
 
 ---
 
