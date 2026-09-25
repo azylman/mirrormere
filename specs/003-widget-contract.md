@@ -203,9 +203,9 @@ For user-specific integrations, private household services, or extensions writte
    Sidecars and external services can push updates immediately into Mirrormere by issuing an HTTP POST webhook:
    - `POST /api/widgets/{widget_id}/push`
    - Headers: `Content-Type: application/json`
-   - Body: Standard payload envelope.
-   - Triggers an immediate SSE broadcast (`widget.update` per SPEC-006) to active display nodes without waiting for the polling timer.
-   - Auth: None (all inbound LAN calls are fully trusted).
+   - Body: Standard payload envelope (`widget_id`, `timestamp`, `state`, `data`).
+   - Auth: None (all inbound LAN calls are fully trusted per the local-network trust model).
+   - Behavior: Updates the widget's in-memory and SQLite cache regardless of active screen. If the target widget is currently visible on the active screen, triggers an immediate SSE broadcast (`widget.update` per SPEC-006); otherwise hydrates smoothly when the display rotates to that screen. See SPEC-006 for full request/response schemas, status codes (200/400/404), and validation rules.
 
 ---
 

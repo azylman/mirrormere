@@ -21,14 +21,21 @@ flowchart LR
         EInk[E-Ink Renderer Node\nRaspberry Pi]
     end
 
+    subgraph External [External Producers]
+        Sidecar[Sidecars & Automations\nHome Assistant / Webhooks]
+    end
+
     subgraph GoDaemon [Mirrormere Go Daemon]
         SSEHub[SSE Event Hub / Broadcast Channel]
         ActionHandler[REST Action Dispatcher]
-        StateStore[Widget State Engine]
+        PushHandler[Push Webhook Ingestion]
+        StateStore[Widget State Engine & Cache]
     end
 
     Touch -->|POST /api/widgets/:id/action\nDiscrete Touch Actions| ActionHandler
+    Sidecar -->|POST /api/widgets/:id/push\nImmediate State Push| PushHandler
     ActionHandler -->|Mutate & Trigger Event| StateStore
+    PushHandler -->|Update Cache & Broadcast| StateStore
     StateStore -->|Publish Widget State| SSEHub
 
     SSEHub -->|GET /api/events\ntext/event-stream| Touch
@@ -180,7 +187,7 @@ Following the initial state hydration burst, the stream transitions seamlessly t
 
 ---
 
-## Client Touch Mutation & Video Action Specification
+## Inbound Mutations, Video Actions & Push Webhooks
 
 ### 1. Widget Mutation Endpoint
 - **URL**: `POST /api/widgets/{widget_id}/action`
@@ -201,7 +208,70 @@ Following the initial state hydration burst, the stream transitions seamlessly t
   ```
   *(Supported actions and parameter schemas conform to the target widget's specification, e.g. SPEC-008 §3 for tasks and lists).*
 
-### 2. Video Stream Lifecycle Endpoints
+### 2. Widget Realtime Push Webhook Endpoint
+External sidecars, local microservices, and Home Assistant automations can immediately push fresh data into Mirrormere without waiting for the widget's next background polling interval:
+- **URL**: `POST /api/widgets/{widget_id}/push`
+- **Headers**:
+  ```http
+  Content-Type: application/json
+  Accept: application/json
+  ```
+- **Authentication**: None (Mirrormere runs strictly on local networks with zero authn/authz; all inbound LAN calls are fully trusted per the local-network trust model).
+- **Request Payload**:
+  Conforms to the standard JSON payload envelope defined in SPEC-003:
+  ```json
+  {
+    "widget_id": "daily-chores",
+    "timestamp": "2026-09-24T22:20:00Z",
+    "state": "healthy",
+    "data": {
+      "list": {
+        "id": "chores",
+        "name": "Chores",
+        "source": "local"
+      },
+      "items": [
+        { "id": "i1", "title": "Take out compost", "done": true, "position": 0 },
+        { "id": "i2", "title": "Feed cat", "done": false, "position": 1 }
+      ]
+    }
+  }
+  ```
+  - `widget_id` (string, optional in body): If provided in the JSON body, it MUST match the `{widget_id}` in the URL path. If they differ, the server rejects the request with `400 Bad Request`.
+  - `timestamp` (string, RFC 3339, optional): Timestamp of data snapshot; defaults to the server's current UTC arrival time if omitted.
+  - `state` (string, optional, default `"healthy"`): `"healthy"` | `"degraded"` | `"error"`.
+  - `data` (object, required): Widget-specific domain payload conforming to the widget type's schema. Missing or non-object `data` yields `400 Bad Request`.
+
+- **Cache Ingestion & Screen-Agnostic Propagation**:
+  - **Immediate Cache Ingestion**: The daemon validates the payload and updates the widget provider's in-memory state and persistent SQLite cache immediately, **regardless of whether the widget is currently visible on the active screen**.
+  - **Active Screen Broadcast**: If the target widget is located on the currently active rotation screen, the server broadcasts an immediate `widget.update` SSE event across all open `/api/events` connections, rendering the update in real time without waiting for the next polling cycle.
+  - **Inactive Screen Hydration**: If the target widget is on an inactive screen, the state is safely cached. When the screen rotation engine subsequently advances to that screen, the updated payload is served instantly during initial screen hydration, preventing stale flickers or lag.
+
+- **Responses**:
+  - **`200 OK`**: Push payload accepted and cache updated (and SSE broadcast emitted if widget is on active screen).
+    ```json
+    {
+      "status": "ok",
+      "widget_id": "daily-chores",
+      "updated_at": "2026-09-24T22:20:00Z"
+    }
+    ```
+  - **`400 Bad Request`**: Invalid JSON syntax, missing `data` object, or `widget_id` mismatch between path and body.
+    ```json
+    {
+      "status": "error",
+      "error": "payload widget_id 'groceries' does not match path widget_id 'daily-chores'"
+    }
+    ```
+  - **`404 Not Found`**: Widget ID `{widget_id}` does not exist in the active server configuration.
+    ```json
+    {
+      "status": "error",
+      "error": "widget 'custom-sensor' not found in active configuration"
+    }
+    ```
+
+### 3. Video Stream Lifecycle Endpoints
 - **Trigger Stream**: `POST /api/video/trigger`
   - **Payload**:
     ```json
@@ -221,7 +291,7 @@ Following the initial state hydration burst, the stream transitions seamlessly t
     }
     ```
 
-### 3. Screen Navigation & Rotation Endpoints
+### 4. Screen Navigation & Rotation Endpoints
 
 #### A. Select Screen (`POST /api/screen/select`)
 Selects a specific screen directly by zero-based index:
@@ -311,17 +381,20 @@ Controls the automatic rotation timer loop:
   - `paused: true`: Suspends the automatic rotation timer loop; the display remains indefinitely on the active screen until explicitly advanced or unpaused.
   - `paused: false`: Re-arms the rotation timer using `interval_seconds` and resumes periodic rotation.
 
-### 4. Standard Responses
-- **`200 OK`**: Action executed immediately and state updated.
+### 5. Standard Responses
+- **`200 OK`**: Action executed immediately, or push webhook accepted and cached:
   ```json
   { "status": "ok", "widget_id": "daily-chores", "result": { "item_id": "i1", "done": true } }
   ```
+  ```json
+  { "status": "ok", "widget_id": "daily-chores", "updated_at": "2026-09-24T22:20:00Z" }
+  ```
 - **`202 Accepted`**: Action dispatched asynchronously to an external system (e.g. Home Assistant service call).
-- **`400 Bad Request`**: Unknown action or invalid parameter schema.
-- **`404 Not Found`**: Widget or stream ID not loaded in active configuration.
+- **`400 Bad Request`**: Unknown action, invalid parameter schema, malformed payload envelope, or path/body ID mismatch.
+- **`404 Not Found`**: Widget ID or stream ID not loaded in active configuration.
 - **`502 Bad Gateway`**: Upstream provider (e.g. Google API, Home Assistant) failed.
 
-### 5. Optimistic UI Updates on Touch Kiosks
+### 6. Optimistic UI Updates on Touch Kiosks
 1. User taps a chore checkbox on the 1080p capacitive touch display.
 2. The Touch PWA immediately flips the visual checkbox state locally (< 16ms, 60fps responsiveness).
 3. The PWA dispatches `POST /api/widgets/daily-chores/action` with payload `{"action": "toggle_item", "params": {"item_id": "i1", "done": true}}`.
