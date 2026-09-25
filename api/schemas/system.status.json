@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "system.status",
+  "description": "System health and configuration status broadcast over SSE",
+  "type": "object",
+  "required": [
+    "online",
+    "time",
+    "calendar_provider",
+    "weather_api",
+    "config_status",
+    "config_error"
+  ],
+  "properties": {
+    "online": {
+      "type": "boolean",
+      "description": "Network and daemon online status"
+    },
+    "time": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Current server UTC timestamp in ISO 8601 / RFC 3339 format"
+    },
+    "calendar_provider": {
+      "type": "string",
+      "description": "Operational status of the primary calendar provider connection"
+    },
+    "weather_api": {
+      "type": "string",
+      "description": "Operational status of the ambient weather API poller"
+    },
+    "config_status": {
+      "type": "string",
+      "enum": ["ok", "error"],
+      "description": "Configuration health status under Last-Known-Good Configuration (LKGC)"
+    },
+    "config_error": {
+      "type": ["string", "null"],
+      "description": "Diagnostic error message when config_status is error, null when config_status is ok"
+    }
+  },
+  "additionalProperties": false
+}

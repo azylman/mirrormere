@@ -22,7 +22,7 @@ To guarantee that file updates are always detected:
 ### Debounce & Temporary File Filtering
 - **Debounce Window (100ms)**: File saves generate clusters of filesystem events within milliseconds (e.g. `Create(config.yaml.tmp)`, `Write(config.yaml.tmp)`, `Rename(config.yaml.tmp -> config.yaml)`, `Chmod(config.yaml)`). The watcher debounces incoming filesystem events with a 100ms timer. Rapid successive events reset the timer.
 - **Temporary File Ignore Filter**: Events matching temporary editor patterns (`*.tmp`, `*.swp`, `*~`, `4913`, `.goutputstream-*`) are filtered out and do not trigger reload evaluations.
-- **Clean Read Settle**: When the debounce timer fires, the file descriptor has been closed and the file is guaranteed to be fully written to disk before the parser opens `/config/config.yaml`.
+- **Clean Read Settle**: When the debounce timer fires, the file descriptor has typically been closed and the file is written to disk before the parser opens `/config/config.yaml`. While atomic-rename saves guarantee a complete file on rename, an in-place editor or slow streaming writer could still be mid-write when the 100ms timer fires; in that case, Stage 1 YAML parsing fails cleanly, LKGC retains the running configuration, and the subsequent write event re-triggers evaluation once settled.
 
 ---
 
@@ -76,7 +76,7 @@ If any validation stage fails:
    ```text
    [config.reloader] error="live config validation failed: manifest config_schema validation error for widget 'living-room-temp': missing required property 'entity_id'; retaining LKGC"
    ```
-3. **Telemetry & HUD Alerting**: The daemon broadcasts a `system.status` event over `GET /api/events` (`config_status: "error"`, `config_error: "..."`), allowing connected kiosks to display a subtle diagnostic warning badge in the header without disrupting active widget tiles.
+3. **Telemetry & HUD Alerting**: The daemon broadcasts a `system.status` event over `GET /api/events` (`config_status: "error"`, `config_error: "..."`), allowing connected kiosks to display a subtle diagnostic warning badge in the header without disrupting active widget tiles. Core retains this error state in memory and flushes it during initial connection hydration (SPEC-006 §3) so newly connected or reconnecting displays immediately reflect the diagnostic badge. The error state is cleared and `config_status` transitions back to `"ok"` (with `config_error: null`) as soon as a subsequent valid configuration is successfully applied.
 
 ---
 
@@ -89,7 +89,17 @@ When a candidate configuration passes validation, Mirrormere computes a determin
 | **Unchanged** | Identical `id`, `type`, `config`, `refresh_interval_seconds`, `endpoint` | **Zero interruption**: Goroutine continues running; cache remains valid. |
 | **Added** | `id` exists in new config but not in running config | **Initialize & Start**: Instantiate provider, run `Init()`, start dedicated sync goroutine, emit `widget.update`. |
 | **Removed** | `id` exists in running config but not in new config | **Graceful Shutdown**: Cancel worker context (`cancel()`), flush background connections, purge in-memory cache, remove from SQLite cache. |
-| **Modified** | Same `id`, but `config`, interval, or transport settings changed | **In-Place Worker Restart**: Cancel existing worker context, re-instantiate provider with updated settings, start new sync loop. **LKG Preservation**: Existing cached data is retained until the new sync worker completes its first successful ingestion cycle. |
+| **Modified** | Same `id` and `type`, but `config`, interval, or transport settings changed | **In-Place Worker Restart**: Cancel existing worker context, re-instantiate provider with updated settings, start new sync loop (see Cache Policy below). |
+
+### Classification Rules & Cache Retention Policies
+
+1. **Type Change on Same ID (Replacement = Removed + Added)**:
+   - If an instance in the new configuration shares the same `id` as a running instance but alters its `type` (e.g. `id: hub` changes from `type: weather-forecast` to `type: calendar-agenda`), this is NOT classified as a simple in-place modification.
+   - The reloader classifies this as a composite **Removed plus Added** operation: the old provider's sync worker is canceled and its cached state is completely purged from memory and SQLite (preventing schema type contamination across different data providers), followed by a fresh initialization and cold boot of the new provider type.
+
+2. **Cache Retention Policy on Modification**:
+   - **Transport & Cadence Changes** (e.g. `refresh_interval_seconds`, `token_env`): When only polling cadence or transport credentials change, existing cached data remains valid and is retained in memory and SQLite as `healthy` until the updated sync worker completes its first successful ingestion cycle under Stale-While-Revalidate.
+   - **Domain `config` Changes** (e.g. new `latitude`/`longitude`, different `entity_id`, `list_id`, or `calendars`): When the target domain parameters change, the previous target's data does not represent the new target. To avoid showing outdated target state as `healthy`, the reloader immediately purges the instance's cached data (or transitions the tile state to `degraded` with an empty loading state) and emits a `widget.update` SSE event so connected clients display a clean loading indicator until the new sync loop ingests fresh data for the new target.
 
 ---
 
@@ -113,7 +123,7 @@ Mirrormere maximizes live reconfigurability while clearly delineating settings b
 
 ### Settings Applied Live (Zero Restart)
 - **Widget Instances**: Adding, removing, reconfiguring, or resizing any widget instance in `display.widgets`.
-- **Screen Rotation Cadence**: Changes to `display.rotation_interval_seconds` update the active rotation timer JIT.
+- **Screen Rotation Settings (`display.rotation`)**: Changes to `display.rotation.interval_seconds` update the active rotation timer JIT. Associated rotation parameters (`transition` visual hint, `pause_on_touch` client policy, and `pause_duration_seconds` touch pause window) are also applied live without container restart.
 - **Top-Banner Weather Poller**: Coordinates (`latitude`, `longitude`), `units`, and polling cadences under `header.weather` restart the background poller immediately.
 - **Timezone**: Changing `timezone` updates Go's `time.Local` / location pointer JIT, immediately adjusting digital clock formats, agenda relative times, and rollover timers.
 - **Custom Stylesheet (`/config/custom.css`)**: Hot-reloaded live and broadcast via `style.reload`.
