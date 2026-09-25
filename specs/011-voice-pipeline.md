@@ -1,7 +1,7 @@
 # SPEC-011: Voice Pipeline (Wake Word, STT, Agent, TTS with Local Fallback)
 
 ## Status
-Proposed. Reference implementation exists (Mike's household); Mirrormere
+Proposed, Phase 2 (SPEC-001). Reference implementation exists (Mike's household); Mirrormere
 integration not yet built.
 
 ## Context & Motivation
