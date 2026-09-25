@@ -14,7 +14,7 @@ This specification defines the dedicated client runtime environment and OS boots
 - **Zero On-Screen Keyboard (OSK)**: Tap-and-gesture interaction only (checkbox toggles, screen rotation swipes, video PiP controls). No virtual keyboard daemon or touch keyboard overlays; new task/list additions are handled phone-first.
 - **Power Management**: Dual sleep lifecycle—a fixed night schedule (hard off 11 PM – 6 AM) paired with daytime idle DPMS blanking (10-minute timeout) with instant wake-on-tap via capacitive touchscreen input events.
 - **Audio Routing**: Video and alert audio are delivered directly via standard WebRTC playback in Chromium to the UPERFECT monitor's built-in dual stereo speakers over HDMI/USB-C via PipeWire. Host-level loopback (`pw-loopback`) is eliminated so that browser volume/mute controls, PiP ducking, and touch HUD controls remain unified.
-- **Voice Ingest**: Nano USB microphone hardware present on the compute unit, but software voice processing (`wyoming-satellite` / SPEC-011) is deferred to post-v1.
+- **Voice Ingest**: Nano USB microphone hardware present on the compute unit, but software voice processing (`mirrormere-voice` client and LAN Voice Hub in SPEC-011) is deferred to post-v1.
 
 ---
 

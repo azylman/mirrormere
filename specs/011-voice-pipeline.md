@@ -6,7 +6,7 @@ Approved / Phase 2 Reference Architecture (SPEC-001)
 ## Context & Motivation
 Both reference households deploy microphones and speakers on their wall hardware:
 - **Alex's Touch Kiosk (Profile A)**: Intel N100 Mini PC behind a 15.6" UPERFECT touchscreen monitor with a USB microphone and integrated monitor speakers, backed by a dedicated **NVIDIA Jetson Orin** on the local network for GPU inference (Whisper STT and Kokoro TTS) and **Aerial** as the autonomous agent brain.
-- **Mike's Ambient E-Ink (Profile B)**: Raspberry Pi 3 Model B+ (`amos-pi`) with a Waveshare 7.5" e-paper HAT, **reSpeaker XVF3800** 4-mic array, and living room audio, backed by an NVIDIA GPU desktop on the LAN for Whisper STT, **Amos** as the autonomous agent brain, and ElevenLabs TTS with local Piper fallback.
+- **Mike's Ambient E-Ink (Profile B)**: Raspberry Pi 3 Model B+ (`amos-pi`) with a Waveshare 7.5" V2 raw e-paper panel driven by an Adafruit E-Ink Bonnet (with custom GPIO pin mappings per SPEC-002 and SPEC-009), **reSpeaker XVF3800** 4-mic array, and living room audio, backed by an NVIDIA GPU desktop on the LAN for Whisper STT, **Amos** as the autonomous agent brain, and ElevenLabs TTS with local Piper fallback.
 
 ### The Architectural Problem: Thick Edge vs. Hub-and-Spoke
 Earlier drafts required the edge unit (kiosk / Pi) to coordinate every stage: calling STT, waiting for text, calling the agent brain, waiting for reply text, calling TTS, and managing fallback engines. This placed excessive configuration burden, network latency, and secret management onto the wall hardware.
