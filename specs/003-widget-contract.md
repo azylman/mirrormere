@@ -48,7 +48,8 @@ config_schema:
     required: true
     items:
       name: string
-      url: string
+      url: string       # optional public feed URL
+      url_env: string   # environment variable name resolving private secret URL
       color: string
   show_relative_time:
     type: boolean
