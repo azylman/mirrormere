@@ -223,9 +223,9 @@ A household list service is compatible for read-only ingestion if it serves:
 - Touch gestures on the kiosk are reserved for navigation (e.g. screen swipes) and HUD media controls.
 
 ### Ambient E-Ink (Profile B)
-- **Read-only.** Renders unchecked items first, then at most the three most
-  recently completed items struck through, grouped by section.
+- **Read-only.** Renders unchecked items first, then at most `show_completed`
+  (default 3) recently completed items struck through, grouped by section.
 - Re-render is triggered by `widget.update` but coalesced: at most one panel
-  refresh per `eink.min_refresh_seconds` (default 60).
+  refresh per `refresh.min_refresh_seconds` (default 60 per SPEC-009).
 - Items that overflow the widget cell render as "+N more" rather than
   shrinking text below the 1-bit legibility floor.

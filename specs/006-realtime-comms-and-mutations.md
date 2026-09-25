@@ -94,7 +94,7 @@ Pushed when a data provider yields updated state (e.g. calendar fetch, weather r
 ```http
 event: widget.update
 id: evt_1727216200_01
-data: {"widget_id":"daily-chores","timestamp":"2026-09-24T22:15:00Z","state":"healthy","data":{"list":{"id":"chores","name":"Chores","source":"local"},"items":[{"id":"i1","title":"Take out compost","done":true,"position":0},{"id":"i2","title":"Feed cat","done":false,"position":1}]}}
+data: {"widget_id":"daily-chores","timestamp":"2026-09-24T22:15:00Z","state":"healthy","data":{"list":{"id":"chores","name":"Chores","source":"gtasks"},"items":[{"id":"i1","title":"Take out compost","done":true,"position":0},{"id":"i2","title":"Feed cat","done":false,"position":1}]}}
 ```
 
 #### B. `header.update`
@@ -164,15 +164,15 @@ When a client establishes an SSE connection to `GET /api/events`:
    ```http
    event: screen.rotate
    id: evt_init_01
-   data: {"current_screen":0,"total_screens":2,"interval_seconds":30,"widgets":[{"widget_id":"daily-chores","origin":[0,0],"dimensions":[3,2]},{"widget_id":"calendar-agenda","origin":[3,0],"dimensions":[3,2]}]}
+   data: {"current_screen":0,"total_screens":2,"interval_seconds":30,"widgets":[{"widget_id":"daily-chores","origin":[0,0],"dimensions":[3,2]},{"widget_id":"family-calendar","origin":[3,0],"dimensions":[3,2]}]}
    ```
 
-2. **Active Widget State Hydration (`widget.update`)**:
-   Immediately emits a `widget.update` event for every widget on the active screen (sourced from each provider's last known good cache snapshot in memory or SQLite).
+2. **Full Widget State Hydration (`widget.update`)**:
+   Immediately emits a `widget.update` event for every widget configured in `display.widgets` across all screens (sourced from each provider's last known good cache snapshot in memory or SQLite). This guarantees that client DOM caches are fully primed so that subsequent screens render instantaneously with zero blank flashes on rotation.
    ```http
    event: widget.update
    id: evt_init_02
-   data: {"widget_id":"daily-chores","timestamp":"2026-09-24T22:15:00Z","state":"healthy","data":{"list":{"id":"chores","name":"Chores","source":"local"},"items":[{"id":"i1","title":"Take out compost","done":true,"position":0}]}}
+   data: {"widget_id":"daily-chores","timestamp":"2026-09-24T22:15:00Z","state":"healthy","data":{"list":{"id":"chores","name":"Chores","source":"gtasks"},"items":[{"id":"i1","title":"Take out compost","done":true,"position":0}]}}
    ```
 
 3. **Fixed Header Ambient Weather (`header.update`)**:
@@ -380,13 +380,17 @@ External sidecars, local microservices, and Home Assistant automations can immed
   - Dispatched by the stream producer sidecar (e.g. `sidecars/cast-watcher`) when player transport state changes (`"playing"`, `"paused"`, or `"buffering"`). Core updates the active stream record and broadcasts an updated `video.state` SSE event to synchronize all connected displays.
 
 ### 5. Master Audio Volume & Mute Endpoints
-Mirrormere Core acts as the centralized coordinator for master audio volume and mute state, tracking desired values and synchronizing connected clients. Because Mirrormere runs in a rootless container (`uid 10001`) and may be hosted off-node on a separate home server where no physical speakers exist, Core decouples audio state coordination from hardware audio sink attenuation:
-- **Centralized State Coordination**: Core maintains the authoritative in-memory `volume` (0–100) and `muted` (boolean) state, broadcasting changes immediately across `GET /api/events` as `audio.state` SSE events.
-- **Client & Edge Host Enforcement**: The active display client (e.g. Chromium running in `--kiosk` mode under Wayland `cage` per SPEC-010) or edge voice companion subscribes to `audio.state` and attenuates its local HTML5 audio elements or executes host-level PipeWire/WirePlumber commands (`wpctl set-volume @DEFAULT_AUDIO_SINK@ <level>` capped at the 80% hardware safety ceiling).
-- **Optional Co-Located PipeWire Sink**: On co-located installations (Profile A where Core and the physical display share the same Intel N100 host), operators may optionally bind-mount the user PipeWire socket (`-v /run/user/1000/pipewire-0:/tmp/pipewire-0` with `PIPEWIRE_RUNTIME_DIR=/tmp`) to allow Core to directly invoke `wpctl`. Where no local audio sink is mounted or reachable, direct host execution is a safe no-op and Core relies exclusively on client-side SSE synchronization.
+Mirrormere Core acts as the centralized coordinator for master audio volume and mute state, tracking desired values and synchronizing connected clients. To avoid fragile host-level dependencies, permissions, or split-brain attenuation layers, volume and muting are managed entirely in software at the application/client level rather than relying on host-level OS settings (`wpctl` or PipeWire socket bind-mounts):
+- **Centralized State Coordination**: Core maintains authoritative in-memory `volume` (0–100) and `muted` (boolean) state, broadcasting changes immediately across `GET /api/events` as `audio.state` SSE events.
+- **Client-Side Software Enforcement**: Active display clients (e.g. Chromium running in `--kiosk` mode under Wayland `cage` per SPEC-010) or edge voice companions subscribe to `audio.state` and apply digital attenuation directly to their HTML5 `<video>` / WebRTC playback elements.
+- **80% Software Ceiling**: To protect small monitor chassis speakers from distortion or driver burnout, the client software maps the 0–100 master volume to a maximum 80% element volume ceiling:
+  ```javascript
+  element.volume = (volume / 100) * 0.80 * (isDucked ? 0.2 : 1.0) * (isMuted ? 0.0 : 1.0);
+  ```
+- **Zero Host Coupling & Single Attenuation Layer**: The Linux host audio sink remains set to its standard system level and is never manipulated by Mirrormere. This guarantees container hermeticity, eliminates double-attenuation bugs, and works identically across bare metal, Docker, and remote browser testing.
 
 #### A. Set Master Volume (`POST /api/audio/volume`)
-Sets the host master audio sink volume level:
+Sets the master audio volume level:
 - **Headers**:
   ```http
   Content-Type: application/json
@@ -414,7 +418,7 @@ Sets the host master audio sink volume level:
     "error": "invalid volume: must be an integer between 0 and 100"
   }
   ```
-- **Side Effects**: Updates Core's in-memory audio state, broadcasts an `audio.state` SSE event to synchronize all connected displays and companion controllers, and (if co-located PipeWire integration is mounted) applies attenuation to the host audio sink.
+- **Side Effects**: Updates Core's in-memory audio state and broadcasts an `audio.state` SSE event to synchronize all connected displays and companion controllers.
 
 #### B. Set / Toggle Master Mute (`POST /api/audio/mute`)
 Sets or toggles the host master audio mute state:
@@ -480,7 +484,7 @@ The edge voice companion daemon (`mirrormere-voice` per SPEC-011) relays interac
     "tts_engine": null
   }
   ```
-  - `state` (string, required): Active voice lifecycle state. Must be one of `"idle"`, `"listening"`, `"transcribing"`, `"thinking"`, `"speaking"`, or `"error"`.
+  - `state` (string, required): Active voice lifecycle state. Must be one of `"idle"`, `"listening"`, `"transcribing"`, `"thinking"`, `"synthesizing"`, `"speaking"`, or `"error"`.
   - `transcript` (string or null, optional): Recognized user utterance returned by STT. Null when idle or listening before transcription completes.
   - `reply` (string or null, optional): Assistant reply text returned by the brain. Rendered as caption toasts on interactive kiosks or text lines on e-ink status widgets.
   - `tts_engine` (string or null, optional): Name of the active TTS engine synthesizing or speaking audio (e.g. `"kokoro"`, `"elevenlabs"`, `"piper"`).
@@ -499,7 +503,7 @@ The edge voice companion daemon (`mirrormere-voice` per SPEC-011) relays interac
     ```json
     {
       "status": "error",
-      "error": "invalid voice state: must be one of 'idle', 'listening', 'transcribing', 'thinking', 'speaking', 'error'"
+      "error": "invalid voice state: must be one of 'idle', 'listening', 'transcribing', 'thinking', 'synthesizing', 'speaking', 'error'"
     }
     ```
 
@@ -607,10 +611,12 @@ Controls the automatic rotation timer loop:
 - **Request Payload**:
   ```json
   {
-    "paused": true
+    "paused": true,
+    "duration_seconds": 120
   }
   ```
   - `paused` (boolean, required): `true` to pause automatic rotation; `false` to resume automatic rotation.
+  - `duration_seconds` (integer, optional): When pausing (`paused: true`), specifies the number of seconds to suspend rotation before Core automatically unpauses and resumes. If omitted, defaults to configured `rotation.pause_duration_seconds` (e.g. 120). If explicitly set to `0`, rotation remains paused indefinitely until explicitly unpaused.
 - **Response (`200 OK`)**:
   ```json
   {
@@ -627,13 +633,13 @@ Controls the automatic rotation timer loop:
   }
   ```
 - **Side Effects**:
-  - `paused: true`: Suspends the automatic rotation timer loop; the display remains indefinitely on the active screen until explicitly advanced or unpaused.
-  - `paused: false`: Re-arms the rotation timer using `interval_seconds` and resumes periodic rotation.
+  - `paused: true`: Suspends the automatic rotation timer loop for `duration_seconds` (or indefinitely if set to 0). Core auto-resumes periodic rotation once the timer elapses.
+  - `paused: false`: Re-arms the rotation timer using `interval_seconds` and immediately resumes periodic rotation.
 
 ### 9. Standard Responses
 - **`200 OK`**: Action executed immediately, push webhook accepted and cached, or audio settings changed:
   ```json
-  { "status": "ok", "widget_id": "porch-light", "result": { "state": "on" } }
+  { "status": "ok", "widget_id": "indoor-air-quality", "result": { "calibrated": true } }
   ```
   ```json
   { "status": "ok", "widget_id": "custom-sensor-hud", "updated_at": "2026-09-24T22:20:00Z" }
@@ -641,14 +647,12 @@ Controls the automatic rotation timer loop:
   ```json
   { "status": "ok", "volume": 75, "muted": false }
   ```
-- **`201 Created`**: Resource created successfully (e.g. new resource initialized). Returns newly created resource.
-- **`202 Accepted`**: Action dispatched asynchronously to an external system (e.g. Home Assistant service call or CastV2 socket).
-- **`204 No Content`**: Resource successfully deleted or reset.
+- **`202 Accepted`**: Action dispatched asynchronously to an external system (e.g. out-of-process generic HTTP provider background operation).
 - **`400 Bad Request`**: Unknown action, invalid parameter schema, malformed payload envelope, or path/body ID mismatch.
 - **`404 Not Found`**: Widget ID, list ID, or stream ID not found.
 - **`409 Conflict`**: Mutation rejected due to source-of-truth invariants (e.g. attempting `push` on a list-backed widget).
 - **`422 Unprocessable Entity`**: Payload syntactically valid but cannot be processed by the target resource state (e.g. stream is not controllable, or missing `control_url` for transport control).
-- **`502 Bad Gateway`**: Upstream provider (e.g. Home Assistant, Cast socket, external HTTP service) failed or unreachable.
+- **`502 Bad Gateway`**: Upstream provider (e.g. out-of-process HTTP service or Cast socket) failed or unreachable.
 
 ### 10. Optimistic UI Updates on Touch Kiosks
 1. User interacts with touch controls on the 1080p capacitive touch display—such as tapping a HUD play/pause button, dragging the master volume slider, or toggling mute (note: task list widgets are ambient and read-only, avoiding optimistic task state reconciliation).
@@ -665,7 +669,7 @@ Controls the automatic rotation timer loop:
 - PWA maintains a long-lived `EventSource` connection to `/api/events`.
 - In-memory reactive state tree updates instantly on `widget.update`.
 - Smooth slide/flip animation triggers on `screen.rotate`.
-- Touch swipe gestures reset/pause the rotation timer locally, sending a `POST /api/screen/pause` or `POST /api/screen/select` if desired.
+- Touch swipe gestures pause the server's rotation timer by dispatching `POST /api/screen/pause` (with `duration_seconds` matching `rotation.pause_duration_seconds`), or navigate directly via `POST /api/screen/select` or `POST /api/screen/advance`.
 
 ### Ambient E-Ink (Profile B - Low-Power / E-Paper)
 - On the single-host Pi 4B setup (or in a decoupled multi-host deployment):

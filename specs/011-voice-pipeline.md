@@ -52,11 +52,9 @@ flowchart TD
     subgraph MirrormereCore [Mirrormere Core & Display]
         API[Voice State Ingress\nPOST /api/voice/state]
         SSE[SSE Event Stream Bus\nGET /api/events\nevent: voice.state]
-        Ducker[Video Audio Ducking\nChromecast -> 20%]
         HUD[Display Surface\nTouch Kiosk HUD / E-Ink Status Widget]
         
         API --> SSE
-        API --> Ducker
         SSE --> HUD
     end
 
@@ -140,12 +138,13 @@ Upon receiving interaction lifecycle events, the dock's `mirrormere-voice` clien
   ```
   Core validates the payload, updates its in-memory voice state cache, and rebroadcasts it across `GET /api/events` as a `voice.state` SSE event to synchronize all connected screens.
 - **Relay Lifecycle Progression**:
-  - `Wake Detected`: Client immediately posts `state: "listening"` (`transcript: null`, `reply: null`, `tts_engine: null`).
+  - `Wake Detected`: Client immediately posts `state: "listening"` (`transcript: null`, `reply: null`, `tts_engine: null`). Touch Kiosk PWA automatically ducks active video playback to 20% in the DOM.
   - `event: state (transcribing)`: Client posts `state: "transcribing"` (`transcript: null`, `reply: null`, `tts_engine: null`).
-  - `event: transcript`: Client posts `state: "thinking"` with the recognized `transcript`. Touch Kiosk renders the recognized query in the pinned header; E-Ink updates its status widget on the next coalesced refresh.
-  - `event: reply`: Client posts `state: "speaking"` with `transcript`, `reply`, and `tts_engine`. Touch Kiosk pops a caption toast along the bottom HUD while active video ducks to 20%.
+  - `event: transcript`: Client posts `state: "thinking"` with the recognized `transcript`. Touch Kiosk renders the recognized query in the pinned header; E-Ink hardware LED ring indicates processing without e-paper refreshes.
+  - `event: reply`: Client posts `state: "speaking"` with `transcript`, `reply`, and `tts_engine`. Touch Kiosk pops a caption toast along the bottom HUD while video remains ducked at 20%.
   - `event: audio_chunk`: Chunks stream directly into the local PipeWire/ALSA playback buffer.
-  - `event: done` or `event: error`: Client posts `state: "idle"` (or `state: "error"` on unrecovered failure) with null values. HUD clears toasts, returns to idle, and active video un-ducks.
+  - `event: done` or `event: error`: Client posts `state: "idle"` (or `state: "error"` on unrecovered failure) with null values. HUD clears toasts, returns to idle, and active video volume un-ducks.
+  *(Note: Video ducking is managed strictly client-side by the Touch Kiosk PWA in response to `voice.state` SSE events; Mirrormere Core does not process or route audio streams).*
 
 ---
 

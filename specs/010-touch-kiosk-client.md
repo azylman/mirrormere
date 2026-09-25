@@ -37,10 +37,10 @@ flowchart TD
             Timers -->|Night Schedule| WlrRandr
         end
 
-        subgraph AudioStack [PipeWire Audio Pipeline]
-            PW[PipeWire + WirePlumber\n80% Hardware Ceiling]
+        subgraph AudioStack [Audio Pipeline]
+            PW[PipeWire Audio Sink]
             Speakers[UPERFECT Dual Speakers\nHDMI/DP Audio Sink]
-            Chromium -->|WebRTC Audio Playback| PW
+            Chromium -->|WebRTC Playback\n80% DOM Volume Ceiling| PW
             PW --> Speakers
         end
     end
@@ -101,12 +101,13 @@ The monitor backlight consumes power and emits light that must be suppressed at 
 
 The UPERFECT 15.6" monitor contains dual integrated chassis speakers. Audio is delivered digitally over the HDMI / USB-C connection from the Intel N100 via PipeWire.
 
-### WebRTC Audio Playback & WirePlumber Ceiling
-Rather than running an external ALSA host loopback daemon (which bypasses browser volume and mutes), all video and doorbell alert audio streams are delivered as WebRTC media streams directly to Chromium's HTML5 `<video>` player (SPEC-004):
-- **Unified Controls**: Chromium handles digital volume attenuation, muting, and PiP audio ducking natively in DOM without split-brain host routing.
-- **Hardware Volume Ceiling**: WirePlumber enforces a safe master volume limit (80%) on boot to prevent speaker distortion or blown drivers:
-  ```bash
-  wpctl set-volume @DEFAULT_AUDIO_SINK@ 0.8
+### WebRTC Audio Playback & Pure Software Volume Attenuation
+Rather than running an external ALSA host loopback daemon (which bypasses browser volume and mutes) or modifying host-level ALSA/PipeWire volume settings (e.g. `wpctl`), all video and doorbell alert audio streams are delivered as WebRTC media streams directly to Chromium's HTML5 `<video>` player (SPEC-004):
+- **Unified Controls**: Chromium handles digital volume attenuation, muting, and PiP audio ducking natively in the DOM without split-brain host routing or host OS privileges.
+- **Pure Software Volume Ceiling**: To prevent speaker distortion or blown drivers without depending on host OS commands, Chromium enforces an 80% maximum volume ceiling directly in software on the media element:
+  ```javascript
+  const effectiveVolume = (masterVolume / 100) * 0.80 * (isDucked ? 0.20 : 1.0) * (isMuted ? 0.0 : 1.0);
+  videoElement.volume = effectiveVolume;
   ```
 
 ---
@@ -137,7 +138,7 @@ The Touch Kiosk PWA implements strict touch and animation hygiene to deliver a r
    - **Minimum Touch Targets**: All interactive targets (navigation controls, HUD transport buttons) must meet or exceed a 48×48px tap hit area.
 
 2. **Slider Drag Commit Semantics**:
-   - When manipulating touch sliders (e.g. video HUD volume controls or future device dimmers), the UI updates visually in real-time (60fps local tracking) but defers network mutation calls (`POST /api/.../action`) until the gesture commits on touch release (`pointerup` / `touchend`), or throttles network dispatch to at most once per 200ms during continuous drags, preventing REST dispatch storms.
+   - When manipulating touch sliders (e.g. video HUD volume controls or future device dimmers), the UI updates visually in real-time (60fps local tracking) but defers network mutation calls (`POST /api/audio/volume`) until the gesture commits on touch release (`pointerup` / `touchend`), or throttles network dispatch to at most once per 200ms during continuous drags, preventing REST dispatch storms.
 
 3. **Motion & Transitions**:
    - Screen rotation transitions (slide/fade per SPEC-005) are hardware-accelerated (`transform: translate3d(...)` / `opacity`) and capped at `300ms` duration with `cubic-bezier(0.25, 1, 0.5, 1)` easing.

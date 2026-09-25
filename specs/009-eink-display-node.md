@@ -79,7 +79,7 @@ refresh timer), one lock around the panel. Only the refresh worker touches SPI.
 
 1. The client holds `GET /api/events` (SPEC-006) open.
 2. Any `widget.update`, `header.update`, or `screen.rotate` event marks the screen **dirty**.
-   `system.status` and `: ping` lines do not.
+   `system.status`, `voice.state`, and `: ping` lines do not mark the screen dirty. On Profile B, the reSpeaker XVF3800 hardware LED ring reflects active voice state transitions (`listening`, `thinking`, `speaking`) directly in hardware (SPEC-011 §1), avoiding distracting and latency-heavy e-paper panel refreshes.
 3. A periodic clock refresh timer marks the screen **dirty** every `clock_refresh_seconds`
    (default 300) so the fixed header clock stays synchronized without requiring high-frequency tick events from Core.
 4. The refresh worker waits until the screen has been dirty for
@@ -193,7 +193,7 @@ buttons:
 ## Observability
 - Logs to the journal: every panel write with refresh type, trigger, ETag and
   write duration; every connect/disconnect.
-- `GET :9100/healthz` on the node (optional) returns last write time, last
+- `GET :8099/healthz` on the node (optional) returns last write time, last
   ETag, connection state, and partials since last full refresh.
 
 ## Testing

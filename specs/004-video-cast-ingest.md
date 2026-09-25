@@ -100,7 +100,7 @@ Accept: application/json
   - `"persistent"`: Top tier. Media streaming that remains active until explicitly stopped or disconnected (e.g. Chromecast). Retains primary fullscreen and audio precedence.
   - `"temporary"`: Alert tier. Automatically dismisses after `timeout_seconds` (e.g. doorbell ring, motion camera).
 - `timeout_seconds` (integer, optional): Auto-dismiss timeout for temporary streams (default 45s). Ignored for persistent streams.
-- `controllable` (boolean, optional, default `false`): Set to `true` if the stream supports remote transport actions (play/pause/mute).
+- `controllable` (boolean, optional, default `false`): Set to `true` if the stream supports remote transport actions (play/pause/toggle_playback).
 - `control_url` (string, optional): HTTP webhook URL on the stream producer sidecar where Mirrormere Core forwards incoming `POST /api/video/action` commands. Required if `controllable: true` and upstream transport manipulation is supported.
 
 ### 2. Dismiss Video Stream (`POST /api/video/dismiss`)
@@ -235,16 +235,16 @@ data: {"mode":"widgets","primary":null,"pip":null}
 To keep Mirrormere Core and the Touch PWA completely hardware-agnostic, physical USB capture and Cast protocol tracking are decoupled into two distinct container services running on the kiosk host:
 
 ### 1. Hardware Stream Producer (`go2rtc`)
-The physical Chromecast plugs into a USB 3.0 HDMI capture card (MacroSilicon MS2109 or similar).
+The physical Chromecast plugs into a USB 3.0 HDMI capture card (MacroSilicon MS2130 or MS2109).
 A stock `alexxit/go2rtc` container runs with `deploy/go2rtc.yaml` mounted:
 ```yaml
 # deploy/go2rtc.yaml
 streams:
   cast:
-    - ffmpeg:device?video=/dev/video0&audio=hw:CARD=MS2109#video=copy#audio=opus
+    - ffmpeg:device?video=/dev/video0&audio=hw:CARD=MS2109#video=h264#hardware#audio=opus
 ```
-- Ingests 1080p60 HDMI video directly over `/dev/video0` (UVC) and digital audio over ALSA (UAC).
-- Serves sub-10ms, hardware-accelerated WebRTC locally at `http://127.0.0.1:1984/cast`.
+- Ingests HDMI video directly over `/dev/video0` (UVC) and digital audio over ALSA (UAC). With hardware transcoding (`#video=h264#hardware` via Intel VAAPI/QSV on the N100), go2rtc transcodes incoming MJPEG/YUV to H.264 for browser WebRTC compatibility.
+- Serves low-latency (~15–30ms), hardware-accelerated WebRTC locally at `http://127.0.0.1:1984/cast`.
 
 ### 2. CastV2 Socket Monitor & Transport Bridge (`sidecars/cast-watcher`)
 Chromecast continuously outputs 1080p HDMI video even when idle, rendering the Google Ambient Backdrop slideshow.

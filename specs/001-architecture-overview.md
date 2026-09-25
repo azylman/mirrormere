@@ -160,6 +160,7 @@ To maintain predictable local network service discovery, simplify firewall confi
 | **8081** | `eink-renderer` | HTTP | E-Ink PNG Renderer: Headless Chromium rasterizer generating 800×480 1-bit dithered image (`GET /eink.png`) | `profiles: [eink]` |
 | **1984** | `go2rtc` | HTTP / WebRTC | Video Stream Ingest: Stock UVC capture ingest, WebRTC streaming, and RTSP stream proxy | `profiles: [video]` |
 | **8090** | `cast-watcher` | HTTP | CastV2 Protocol Bridge: Internal HTTP transport control (`POST /action`) and outbound LAN TCP 8009 to Chromecast | `profiles: [video]` (internal network) |
+| **8099** | `eink-node` | HTTP | E-Ink Node Health: Optional health and telemetry endpoint (`GET /healthz`) on display client | Host-native `clients/eink-node` |
 | **9000** | `voice-hub` | HTTP / SSE | LAN Voice Hub Sidecar: Audio ingest, wake word, Whisper STT, and Kokoro/Piper TTS gateway | Phase 2 `profiles: [voice]` |
 
 All container services are declared within a single, unified `deploy/compose.yml` leveraging native Docker Compose `profiles:` (`video`, `eink`, `voice`), completely eliminating divergent per-profile compose files.

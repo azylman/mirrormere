@@ -87,7 +87,6 @@ display:
       refresh_interval_seconds: 900 # 15 minutes
       latitude: 37.8044
       longitude: -122.2712
-      timezone: "America/Los_Angeles"
       units: imperial
 
   grid:
@@ -103,7 +102,8 @@ display:
       config:
         refresh_interval_seconds: 300
         view: week
-        days_ahead: 7
+        window_days_past: 1
+        window_days_future: 14
     - id: daily-chores
       type: tasks
       dimensions: [2, 1] # 1/3 width, top half (2 cells)
@@ -265,7 +265,7 @@ If the user's configured widgets cannot cleanly partition into fully filled scre
 
 ## Pinned Widgets & Screen Replication
 
-To accommodate primary household hero widgets (such as a 4×2 Family Calendar) that users want visible at all times, widgets can optionally declare `pinned: true` or specify explicit target screens:
+To accommodate primary household hero widgets (such as a 4×2 Family Calendar) that users want visible at all times, widgets can optionally declare `pinned: true`:
 
 ```yaml
 display:
