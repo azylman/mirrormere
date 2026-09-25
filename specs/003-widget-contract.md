@@ -71,29 +71,59 @@ refresh:
     - midnight_rollover
 
 config_schema:
-  calendars:
-    type: list
-    required: true
-    items:
-      name: string
-      url: string       # optional public feed URL
-      url_env: string   # environment variable name resolving private secret URL
-      color: string
-  show_relative_time:
-    type: boolean
-    default: true
+  type: object
+  required:
+    - calendars
+  properties:
+    calendars:
+      type: array
+      items:
+        type: object
+        required:
+          - name
+          - color
+        properties:
+          name:
+            type: string
+          url:
+            type: string       # optional public feed URL
+          url_env:
+            type: string       # environment variable name resolving private secret URL
+          color:
+            type: string
+    show_relative_time:
+      type: boolean
+      default: true
 
 response_schema:
-  events:
-    type: list
-    required: true
-    items:
-      id: string
-      title: string
-      start: string
-      end: string
-      calendar: string
-      color: string
+  type: object
+  required:
+    - events
+  properties:
+    events:
+      type: array
+      items:
+        type: object
+        required:
+          - id
+          - title
+          - start
+          - end
+          - calendar
+          - color
+        properties:
+          id:
+            type: string
+          title:
+            type: string
+          start:
+            type: string
+          end:
+            type: string
+          calendar:
+            type: string
+          color:
+            type: string
 ```
 
 ### Manifest Functional Roles
@@ -106,6 +136,12 @@ response_schema:
 3. **Default Cadence Fallback (`refresh`)**: If an instance in `config.yaml` omits `refresh_interval_seconds`, the daemon automatically defaults to this declared interval.
 4. **Boot-Time Configuration Schema Validation (`config_schema`)**: The Go daemon validates the instance's nested `config:` mapping against this schema during startup, failing fast with descriptive diagnostic logs rather than silently malfunctioning at runtime. Standard instance settings (`id`, `type`, `dimensions`, `pinned`, `refresh_interval_seconds`, `endpoint`, `method`, `token_env`) are validated by the Core framework and are never passed to `config_schema`.
 5. **Runtime Response Schema Validation (`response_schema`)**: The Go daemon validates incoming data payloads (the domain fields within the `data:` object) received from HTTP servers, upstream provider syncs, or inbound webhooks against this schema. Invalid payloads are rejected, preserving the Last-Known-Good (LKG) cache and transitioning the widget to `degraded` state under Stale-While-Revalidate rules, guaranteeing templates never execute against corrupt or incomplete state.
+
+#### Schema Dialect & Validation Standards
+Manifest schemas (`config_schema` and `response_schema`) adhere strictly to standard **JSON Schema Draft 2020-12** (represented directly in YAML), matching OpenAPI 3.1:
+- **Object & Collection Schemas**: Top-level schemas define `type: object`, declare child keys under `properties:`, enforce mandatory presence via a `required:` array of property names, and represent lists using `type: array` with an `items:` schema (rather than legacy ad-hoc `type: list` or inline `required: true`).
+- **Go Validator Engine**: In Go, Mirrormere compiles and evaluates both boot-time configuration schemas and runtime response schemas using `github.com/santhosh-tekuri/jsonschema/v6`.
+- **Default Value Semantics**: In JSON Schema Draft 2020-12, `default` is an annotation keyword only; standard validators do not populate or apply default values to instance payloads or configuration mappings.
 
 ---
 
@@ -301,23 +337,28 @@ For user-specific integrations, private household services, or extensions writte
      interval_seconds: 60
 
    config_schema:
-     entity_id:
-       type: string
-       required: true
-     unit:
-       type: string
-       default: "F"
+     type: object
+     required:
+       - entity_id
+     properties:
+       entity_id:
+         type: string
+       unit:
+         type: string
+         default: "F"
 
    response_schema:
-     temperature:
-       type: number
-       required: true
-     humidity:
-       type: number
-       required: false
-     status:
-       type: string
-       default: "ok"
+     type: object
+     required:
+       - temperature
+     properties:
+       temperature:
+         type: number
+       humidity:
+         type: number
+       status:
+         type: string
+         default: "ok"
    ```
 
    Widget instances in `config.yaml` reference that custom `type` under `display.widgets`:
@@ -372,7 +413,7 @@ For user-specific integrations, private household services, or extensions writte
 
 3. **Runtime Response Schema Validation (`response_schema`)**:
    When data is received from the HTTP endpoint (or inbound push webhook), the Go daemon validates the payload before passing it to the presentation layer:
-   - **Validation Scope**: Validates the contents of the `data` object against the `response_schema` defined in the widget's `manifest.yaml`. If an IoT endpoint returns raw domain JSON without an outer envelope (e.g. `{"temperature": 71.2}`), the daemon validates it against `response_schema` and wraps it into the canonical envelope automatically.
+   - **Validation Scope**: Validates the contents of the `data` object against the `response_schema` defined in the widget's `manifest.yaml` using JSON Schema Draft 2020-12 compiled via `github.com/santhosh-tekuri/jsonschema/v6`. If an IoT endpoint returns raw domain JSON without an outer envelope (e.g. `{"temperature": 71.2}`), the daemon validates it against `response_schema` and wraps it into the canonical envelope automatically.
    - **Enforcement & Stale-While-Revalidate**: If required fields are missing, unexpected nulls occur, or primitive types mismatch (e.g. string provided instead of number), the Go daemon:
      1. Emits a structured log (`[widget.validator] widget="living-room-temp" error="response_schema validation failed: missing required field 'temperature'"`).
      2. Freezes and preserves the Last-Known-Good (LKG) data snapshot.
