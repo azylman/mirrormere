@@ -67,10 +67,37 @@ Displays declare their active widgets and target dimensions in `config.yaml`:
 
 ```yaml
 display:
+  profile: touch # "touch" (Profile A) or "eink" (Profile B)
   rotation:
-    interval_seconds: 30
-    transition: "slide" # slide, fade, or instant (e-paper)
+    interval_seconds: 30 # Profile A default: 30s. Profile B default: 600s (>=60s) or 0 (manual only)
+    transition: "slide" # "slide" or "fade" for touch; "instant" for e-ink
+    pause_on_touch: true # Touch kiosk only: pause rotation timer on interaction
+```
+
+### Profile Configuration Examples
+
+#### Profile A: Touch Kiosk Configuration (`config.yaml`)
+```yaml
+display:
+  profile: touch
+  rotation:
+    interval_seconds: 30 # Smooth carousel rotation every 30s
+    transition: "slide"
     pause_on_touch: true
+    pause_duration_seconds: 120 # Resume rotation after 2 minutes of inactivity
+```
+
+#### Profile B: Ambient E-Ink Display Configuration (`config.yaml`)
+```yaml
+display:
+  profile: eink
+  rotation:
+    # 600s (10m) carousel interval, or 0 for manual/event-only advance.
+    # Enforces hard minimum interval >= 60s when enabled to protect panel from degradation.
+    interval_seconds: 600
+    transition: "instant" # Instant 1-bit buffer swap (zero CSS animations)
+    pause_on_touch: false
+```
 
   header:
     enabled: true
@@ -197,11 +224,24 @@ widgets:
 
 ---
 
-## Profile-Specific Display Behavior
+## Profile-Specific Display Behavior & Rotation Policies
 
 | Feature | Touch Kiosk (Profile A - 60Hz) | Ambient E-Paper (Profile B - 0.01Hz) |
 | :--- | :--- | :--- |
-| **Rotation Cadence** | Timed carousel (e.g. every 30s) | Periodic refresh (e.g. 5–15 min) or event-triggered |
-| **Transition Animation** | Hardware-accelerated CSS slide/fade | Instant monochrome buffer switch (or partial update) |
-| **Touch Interaction** | Horizontal swipe to flip screens; tap to pause | Non-interactive (physical button or passive timer) |
-| **Header Persistence** | Continuous live DOM header | Statically redrawn on every full/partial buffer write |
+| **Default Rotation Cadence** | `interval_seconds: 30` (fast carousel) | `interval_seconds: 600` (10 min) or `0` (manual only) |
+| **Minimum Interval Floor** | 10 seconds | 60 seconds (hard floor to prevent panel degradation) |
+| **Manual Rotation Mode (`interval_seconds: 0`)** | Supported (advances via swipe gesture or API) | Supported (advances via GPIO button 1 or API) |
+| **Transition Animation** | Hardware-accelerated CSS slide/fade | Instant monochrome buffer switch (zero transition CSS) |
+| **Interaction Triggers** | Horizontal swipe, tap to pause, touch HUD | Non-interactive (physical GPIO button or SSE event) |
+| **Header Persistence** | Continuous live DOM header | Statically redrawn on each coalesced buffer capture |
+
+### Rotation Modes for E-Ink Displays
+1. **Periodic Timed Rotation (`interval_seconds >= 60`)**:
+   - The Go daemon automatically advances `screen.rotate` every $N$ seconds (default: 600s / 10 minutes).
+   - Any value between $1$ and $59$ seconds is rejected at configuration validation with an error, enforcing the 60-second minimum refresh floor defined in SPEC-009.
+2. **Manual / Event-Driven Rotation (`interval_seconds: 0`)**:
+   - The automated rotation timer loop is disabled entirely.
+   - The display remains locked on the current screen until explicitly advanced via:
+     - Physical hardware button (e.g. Adafruit Bonnet Button 1 on GPIO 5 per SPEC-009/011).
+     - REST API call (`POST /api/screen/select` or `POST /api/screen/advance`).
+     - Webhook or high-priority automation alert.
