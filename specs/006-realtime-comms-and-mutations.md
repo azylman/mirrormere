@@ -87,7 +87,7 @@ Pushed when a data provider yields updated state (e.g. calendar fetch, weather r
 ```http
 event: widget.update
 id: evt_1727216200_01
-data: {"widget_id":"daily_chores","timestamp":"2026-09-24T22:15:00Z","data":{"tasks":[{"id":"t1","text":"Take out compost","completed":true},{"id":"t2","text":"Feed cat","completed":false}]}}
+data: {"widget_id":"daily-chores","timestamp":"2026-09-24T22:15:00Z","data":{"tasks":[{"id":"t1","text":"Take out compost","completed":true},{"id":"t2","text":"Feed cat","completed":false}]}}
 ```
 
 #### B. `screen.rotate`
@@ -95,7 +95,7 @@ Emitted by the Go rotation engine when the active screen advances to the next 6Ã
 ```http
 event: screen.rotate
 id: evt_1727216230_02
-data: {"current_screen":1,"total_screens":2,"interval_seconds":30,"widgets":[{"name":"photo_carousel","origin":[0,0],"dimensions":[3,2]},{"name":"home_assistant","origin":[3,0],"dimensions":[3,2]}]}
+data: {"current_screen":1,"total_screens":2,"interval_seconds":30,"widgets":[{"name":"photo-carousel","origin":[0,0],"dimensions":[3,2]},{"name":"home-assistant","origin":[3,0],"dimensions":[3,2]}]}
 ```
 
 #### C. `system.status`
@@ -141,7 +141,7 @@ When a client establishes an SSE connection to `GET /api/events`:
    ```http
    event: screen.rotate
    id: evt_init_01
-   data: {"current_screen":0,"total_screens":2,"interval_seconds":30,"widgets":[{"name":"daily_chores","origin":[0,0],"dimensions":[3,2]},{"name":"calendar_agenda","origin":[3,0],"dimensions":[3,2]}]}
+   data: {"current_screen":0,"total_screens":2,"interval_seconds":30,"widgets":[{"name":"daily-chores","origin":[0,0],"dimensions":[3,2]},{"name":"calendar-agenda","origin":[3,0],"dimensions":[3,2]}]}
    ```
 
 2. **Active Widget State Hydration (`widget.update`)**:
@@ -149,7 +149,7 @@ When a client establishes an SSE connection to `GET /api/events`:
    ```http
    event: widget.update
    id: evt_init_02
-   data: {"widget_id":"daily_chores","timestamp":"2026-09-24T22:15:00Z","data":{"tasks":[{"id":"t1","text":"Take out compost","completed":true}]}}
+   data: {"widget_id":"daily-chores","timestamp":"2026-09-24T22:15:00Z","data":{"tasks":[{"id":"t1","text":"Take out compost","completed":true}]}}
    ```
 
 3. **Active Video Pipeline State (`video.state`)**:
@@ -313,7 +313,7 @@ Controls the automatic rotation timer loop:
 ### 4. Standard Responses
 - **`200 OK`**: Action executed immediately and state updated.
   ```json
-  { "status": "ok", "widget_id": "daily_chores", "result": { "task_id": "t1", "completed": true } }
+  { "status": "ok", "widget_id": "daily-chores", "result": { "task_id": "t1", "completed": true } }
   ```
 - **`202 Accepted`**: Action dispatched asynchronously to an external system (e.g. Home Assistant service call).
 - **`400 Bad Request`**: Unknown action or invalid parameter schema.
@@ -323,7 +323,7 @@ Controls the automatic rotation timer loop:
 ### 5. Optimistic UI Updates on Touch Kiosks
 1. User taps a chore checkbox on the 1080p capacitive touch display.
 2. The Touch PWA immediately flips the visual checkbox state locally (< 16ms, 60fps responsiveness).
-3. The PWA dispatches `POST /api/widgets/daily_chores/action`.
+3. The PWA dispatches `POST /api/widgets/daily-chores/action`.
 4. If the server returns success, the subsequent `widget.update` SSE message reconciles state seamlessly.
 5. If the request fails (e.g. network partition), the PWA rolls back the optimistic visual state with an error toast.
 

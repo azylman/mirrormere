@@ -150,7 +150,7 @@ budget.
   event: voice.state
   data: {"state":"thinking","transcript":"what's on the calendar tomorrow","reply":null,"tts_engine":null}
   ```
-- A core `voice_status` widget renders it:
+- A core `voice-status` widget renders it:
   - Touch Kiosk: a live listening indicator and caption.
   - E-Ink: **only** a static glyph for listening/idle and the last reply text.
     Transitions are coalesced by the SPEC-009 rules, so the panel is not
