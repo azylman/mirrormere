@@ -124,3 +124,20 @@ The client setup is maintained in `clients/touch-kiosk/` with an automated insta
 - `mirrormere-kiosk.service`: Manages the `cage` + `chromium` process tree with `Restart=always`.
 - `mirrormere-kiosk-sleep.{service,timer}`: Night schedule blanking.
 - `mirrormere-kiosk-wake.{service,timer}`: Morning schedule waking.
+
+---
+
+## Touch Interaction & UI Polish
+
+The Touch Kiosk PWA implements strict touch and animation hygiene to deliver a responsive, appliance-grade feel:
+
+1. **Browser Touch Sanitization**:
+   - **Tap Highlight Suppression**: `-webkit-tap-highlight-color: transparent` eliminates default blue/gray flash artifacts on capacitive taps.
+   - **Text Selection Suppression**: `user-select: none; -webkit-user-select: none; -webkit-touch-callout: none` prevents accidental text highlighting, magnifiers, or context menus during rapid screen taps.
+   - **Minimum Touch Targets**: All interactive targets (checkboxes, navigation controls, HUD transport buttons) must meet or exceed a 48×48px tap hit area.
+
+2. **Slider Drag Commit Semantics**:
+   - When manipulating touch sliders (e.g. video HUD volume controls or future device dimmers), the UI updates visually in real-time (60fps local tracking) but defers network mutation calls (`POST /api/.../action`) until the gesture commits on touch release (`pointerup` / `touchend`), or throttles network dispatch to at most once per 200ms during continuous drags, preventing REST dispatch storms.
+
+3. **Motion & Transitions**:
+   - Screen rotation transitions (slide/fade per SPEC-005) are hardware-accelerated (`transform: translate3d(...)` / `opacity`) and capped at `300ms` duration with `cubic-bezier(0.25, 1, 0.5, 1)` easing.

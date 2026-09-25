@@ -34,11 +34,12 @@ flowchart TD
 ### 1. Fixed Header Zone (Pinned Top Banner)
 - Pinned at the top of the display surface across all rotation cycles.
 - Never flips, rotates, or unmounts during screen transitions.
-- Displays high-priority ambient data:
+- Displays high-priority ambient glance data:
   - Digital / analog clock and full formatted calendar date.
   - Quick-look weather summary badge (current temp and condition icon).
-  - Ambient status indicators (Wi-Fi/network connectivity, backend sync health, active alerts).
+  - Ambient status indicators (`.pill-badge` capsules for Wi-Fi/network connectivity, backend sync health, and active alerts).
 - Allocated a fixed vertical height (~10–12% of total display height; e.g. 100–120px on 1080p, 60px on 800×480 e-paper).
+- **Glance-First Information Partitioning**: The fixed header zone is the sole authoritative host for ambient glance metrics (clock, calendar date, weather temperature/condition, and sensor badges). This guarantees that lower-body widgets—especially the family photo carousel—remain 100% clean, edge-to-edge, and unobstructed by redundant overlaid clocks or sensor widgets.
 
 ### 2. Dynamic 6×2 Grid Canvas (Lower Body)
 - Occupies the remaining screen height below the fixed header.
