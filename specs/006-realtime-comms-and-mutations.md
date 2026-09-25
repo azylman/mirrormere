@@ -97,7 +97,7 @@ data: {"widget_id":"daily-chores","timestamp":"2026-09-24T22:15:00Z","state":"he
 - **Client DOM Update Flow**: When a display client receives `widget.update`:
   1. It checks whether the target instance (`widget_id`) is currently mounted and visible on the active screen (`document.getElementById("widget-" + msg.widget_id)`).
   2. If visible, the client fetches the freshly rendered markup fragment via `GET /widgets/{widget_id}/render` (`Content-Type: text/html`) and swaps the element's DOM node.
-  3. If the widget is rotated off-screen, the fetch is omitted; the server will render fresh markup when the screen rotation advances.
+  3. If the widget is rotated off-screen, the fetch is omitted at update time; the client fetches fresh markup via `GET /widgets/{widget_id}/render` when the rotation engine advances to that screen (see §C).
 
 #### B. `header.update`
 Pushed when the autonomous header weather poller completes an ingestion cycle (SPEC-007 §4), delivering persistent top-banner weather directly to all connected displays without requiring an on-grid weather widget:
@@ -114,6 +114,12 @@ event: screen.rotate
 id: evt_1727216230_03
 data: {"current_screen":1,"total_screens":2,"interval_seconds":30,"widgets":[{"widget_id":"photo-carousel","origin":[0,0],"dimensions":[3,2]},{"widget_id":"family-calendar","origin":[3,0],"dimensions":[3,2]}]}
 ```
+- **Client Layout & Fragment Mounting Flow**: When a display client receives `screen.rotate` (during periodic or manual rotation, or during initial connection hydration):
+  1. **Layout Parsing**: The client inspects the `widgets` array containing each widget's `widget_id`, `origin: [col, row]`, and `dimensions: [cols, rows]`.
+  2. **Markup Retrieval (`GET /widgets/{widget_id}/render`)**: For every widget entry in `widgets[]`, the client fetches `GET /widgets/{widget_id}/render` (`Content-Type: text/html`) to obtain the server-rendered HTML fragment.
+  3. **Canvas DOM Mounting**: The client mounts each retrieved HTML fragment into the 6×2 CSS grid canvas container positioned at the declared `origin` and sized according to `dimensions`.
+  4. **Unmounting Off-Screen Widgets**: Existing DOM nodes for widgets rotated off-screen are removed or recycled from the active display tree.
+  5. **Zero-Flash Transition Strategy (Pre-Fetching)**: To eliminate blank flashes and ensure smooth 60Hz slide or fade animations on touch kiosks, clients may pre-fetch `GET /widgets/{widget_id}/render` for widgets on the upcoming screen prior to triggering the transition animation.
 
 #### D. `system.status`
 Emitted on system-level changes (backend sync health, Wi-Fi connectivity, or sensor telemetry):
@@ -180,7 +186,7 @@ When a client establishes an SSE connection to `GET /api/events`:
 - **Initial Connection / Cache Expiry Hydration**: If `Last-Event-ID` is omitted, blank, or expired, the server **immediately flushes an initial state hydration batch** before streaming live events. This guarantees that cold-booting kiosks, reloaded browser PWAs, and newly booted ambient e-ink nodes never render a blank canvas while waiting for subsequent background poll cycles:
 
 1. **Current Screen Configuration (`screen.rotate`)**:
-   Immediately emits the currently active screen index, total screen count, rotation interval, and widget layout positions.
+   Immediately emits the currently active screen index, total screen count, rotation interval, and widget layout positions. Connected clients use this initial layout to fetch markup fragments via `GET /widgets/{widget_id}/render` for all widgets on the active screen, mounting them into the grid canvas immediately upon connection.
    ```http
    event: screen.rotate
    id: evt_init_01
@@ -188,7 +194,7 @@ When a client establishes an SSE connection to `GET /api/events`:
    ```
 
 2. **Full Widget State Hydration (`widget.update`)**:
-   Immediately emits a `widget.update` event for every widget configured in `display.widgets` across all screens (sourced from each provider's last known good cache snapshot in memory or SQLite). This guarantees that client DOM caches are fully primed so that subsequent screens render instantaneously with zero blank flashes on rotation.
+   Immediately emits a `widget.update` event for every widget configured in `display.widgets` across all screens (sourced from each provider's last known good cache snapshot in memory or SQLite). This primes the client-side state registry with operational health (`healthy`, `degraded`) and domain data across all configured widgets. While visual markup for the active screen is loaded via `GET /widgets/{widget_id}/render` per Item 1, this full state hydration burst ensures client telemetry, companion dashboards, and off-screen pre-fetchers know the operational readiness of all widgets.
    ```http
    event: widget.update
    id: evt_init_02
@@ -298,7 +304,7 @@ External sidecars, local microservices, and Home Assistant automations can immed
 
 - **Cache Ingestion & Realtime Broadcast Invariant**:
   - **Immediate Cache Ingestion**: The daemon validates the payload against the widget's `response_schema` and updates the widget provider's in-memory state and persistent SQLite cache immediately, **regardless of whether the widget is currently visible on the active screen**.
-  - **Unconditional SSE Broadcast**: The server immediately broadcasts a `widget.update` SSE event across all open `/api/events` connections, ensuring all connected displays, companion nodes, and cached client stores update their local state immediately without waiting for a rotation event or poll cycle. Inactive displays or hidden components update their local stores in background, guaranteeing instant 0ms rendering with zero flicker when switching or rotating screens.
+  - **Unconditional SSE Broadcast**: The server immediately broadcasts a `widget.update` SSE event across all open `/api/events` connections, notifying all connected displays and companion nodes of the updated operational state and payload immediately. Visible widgets on active screens fetch `GET /widgets/{widget_id}/render` to update their DOM; off-screen widgets defer the markup fetch until rotated into view (or pre-fetch ahead of rotation).
 
 - **Responses**:
   - **`200 OK`**: Push payload accepted, cache updated, and `widget.update` broadcast emitted to all SSE subscribers.
