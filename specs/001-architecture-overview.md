@@ -120,3 +120,19 @@ Mirrormere targets two distinct display classes:
 
 ### 3. Decoupled Presentation Layer
 The Go backend has zero awareness of how pixels are drawn. The server renders semantic HTML layouts (`views/widget.html`), injected with deployment-time volume-mounted stylesheets (`/config/custom.css`), allowing the exact same underlying calendar or task model to be presented on interactive touch kiosks or captured for static monochrome e-paper.
+
+---
+
+## Standardized Port Allocations & Network Topology
+
+To maintain predictable local network service discovery, simplify firewall configuration, and prevent port collisions across sidecars, Mirrormere standardizes host port allocations across all deployment topologies:
+
+| Port | Service | Protocol | Description | Profile |
+|---|---|---|---|---|
+| **8080** | `mirrormere-core` | HTTP / SSE | Core Daemon: REST API, SSE event stream (`/api/events`), healthcheck (`/healthz`), and web UI | Profile A & Profile B |
+| **8081** | `mirrormere-eink-renderer` | HTTP | E-Ink PNG Renderer: Headless browser rasterizer generating 800×480 1-bit dithered image (`GET /eink.png`) | Profile B |
+| **1984** | `mirrormere-cast` (`go2rtc`) | HTTP / WebRTC | Video Stream Ingest: UVC capture ingest, WebRTC streaming, and RTSP stream proxy | Profile A |
+| **9000** | `mirrormere-voice` | HTTP / WebSocket | Voice Hub Sidecar: Local audio ingest, wake word, Whisper STT, and ElevenLabs/Piper TTS coordinator | Phase 2 (Optional) |
+
+See SPEC-002 for authoritative reference `docker-compose.yml` manifests for both Profile A and Profile B.
+
