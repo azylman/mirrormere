@@ -4,37 +4,65 @@
 Approved / Architecture Defined
 
 ## Overview
-Mirrormere uses a pluggable, declarative widget model. A widget is a self-contained unit responsible for data ingestion and presentation. To support both 60Hz capacitive touchscreens and low-refresh e-paper panels, widgets decouple the data pipeline from the physical display adapter while utilizing a unified semantic HTML template styled per deployment.
+Mirrormere uses a pluggable, declarative widget model. A widget is a self-contained package responsible for data ingestion and presentation. To support both 60Hz capacitive touchscreens and low-refresh e-paper panels, widgets decouple the data pipeline from the physical display adapter while utilizing a unified semantic HTML template styled per deployment.
+
+To ensure frictionless development and rapid iteration, Mirrormere enforces a **filesystem-first dependency model with zero embedded static assets**: the Go binary compiles purely as an ingestion and layout engine, while all widget templates, manifests, and assets are served and parsed directly from disk.
 
 ---
 
-## Directory Structure
+## Directory Structure & Deterministic Dual Paths
 
-A widget package lives in `widgets/<widget-id>/` (for standard core widgets compiled into the binary) or in a mounted configuration directory (e.g. `/config/widgets/<widget-id>/` or `custom_widgets/<widget-id>/` for custom user extensions):
+A widget package lives in a directory named strictly after its widget **type** (`<widget-type>`), completely decoupling the package definition from runtime instance identifiers (`id`):
 
 ```
-widgets/calendar-agenda/
-├── manifest.yaml           # Widget metadata, configuration schema, and capabilities
+widgets/<widget-type>/
+├── manifest.yaml           # Widget metadata, configuration schema, provider binding, and capabilities
 ├── views/
 │   └── widget.html         # Unified semantic HTML layout for all display profiles
 └── assets/                 # Optional static icons or assets
 ```
 
+### Deterministic Dual Paths & Invariant
+To eliminate environment variable bloat and prevent volume mount conflicts, the Go daemon always resolves widget packages from two fixed, deterministic directory paths with zero runtime flag or ENV sprawl:
+
+1. **Core Built-In Widgets (`/app/widgets/<widget-type>/`)**:
+   - Shipped directly within the container image (source repository path: `widgets/<widget-type>/`).
+   - Contains core standard widgets (`calendar-agenda`, `weather-forecast`, `tasks`, `photo-carousel`, `spacer`).
+2. **Custom User Extensions (`/config/widgets/<widget-type>/`)**:
+   - Reserved exclusively for user volume mounts (e.g. `-v ./custom_widgets:/config/widgets:ro`).
+   - Houses household-specific widgets, Home Assistant sensor tiles, and custom sidecar wrappers.
+
+### Clean `/config/` Territory Rule & Precedence Chain
+All user-provided configuration, styles, and custom extensions reside strictly under `/config/`:
+- `/config/config.yaml` → Household layout, screens, and widget instances
+- `/config/custom.css` → Household theme and display styling
+- `/config/widgets/<widget-type>/` → Household custom templates and manifests
+
+While all core application files live under `/app/` (`/app/web`, `/app/widgets`). A household can mount their entire private configuration directory directly to `/config` without clobbering or hiding built-in widgets.
+
+**Resolution Precedence**: When the display engine resolves a widget's template and assets for `type: <widget-type>`, it evaluates:
+1. `/config/widgets/<widget-type>/views/widget.html` (Custom User Package)
+2. `/app/widgets/<widget-type>/views/widget.html` (Core Built-In Package)
+
+This enables households to introduce brand-new custom widgets OR seamlessly shadow/override built-in widget HTML layouts without modifying or forking core files.
+
 ---
 
 ## Manifest Schema (`manifest.yaml`)
 
-Each widget declares its identity, required capabilities, and configuration parameters:
+Each widget declares its identity, required capabilities, provider binding, default dimensions, and configuration parameters:
 
 ```yaml
-id: calendar-agenda
 name: Family Calendar Agenda
 version: "1.0.0"
 description: Multi-calendar agenda view supporting Google Calendar, CalDAV, and iCal feeds.
+provider: calendar-agenda   # Built-in driver name or "http" for custom sidecar extensions
 
 capabilities:
   - ambient-static
   - touch-interactive
+
+default_dimensions: [4, 2]  # Suggested default size on the 6x2 grid
 
 refresh:
   interval_seconds: 300
@@ -56,11 +84,15 @@ config_schema:
     default: true
 ```
 
-### Capability Tags
-- `ambient-static`: Supports rendering to static monochrome or grayscale displays (e-paper).
-- `touch-interactive`: Supports full touch interaction, tapping to view event details, gestures, and animations.
-- `video-capture`: Involves live video streaming or UVC ingestion (automatically ignored by e-paper targets).
-- `audio-reactive`: Utilizes microphone input or voice triggers.
+### Manifest Functional Roles
+1. **Hardware Profile Filtering (`capabilities`)**: Tells the 6×2 layout solver which display tiers can render the widget:
+   - `ambient-static`: Supports rendering to static monochrome or grayscale displays (e-paper).
+   - `touch-interactive`: Supports full touch interaction, tapping to view event details, gestures, and animations.
+   - `video-capture`: Involves live video streaming or UVC ingestion (automatically ignored by e-paper targets).
+   - `audio-reactive`: Utilizes microphone input or voice triggers.
+2. **Data Provider Routing (`provider`)**: Identifies how data is ingested. Built-in widgets point to compiled Go fetchers (`calendar-agenda`, `weather-forecast`, `tasks`, `photo-carousel`, `spacer`), while custom extensions declare `provider: http` to invoke the generic HTTP sidecar client.
+3. **Default Cadence Fallback (`refresh`)**: If an instance in `config.yaml` omits `refresh_interval_seconds`, the daemon automatically defaults to this declared interval.
+4. **Boot-Time Schema Validation (`config_schema`)**: The Go daemon validates the instance's `config:` mapping against this schema during startup, failing fast with descriptive diagnostic logs rather than silently malfunctioning at runtime.
 
 ---
 
@@ -128,6 +160,16 @@ display:
     - id: layout-spacer
       type: spacer
       dimensions: [2, 1] # Built-in zero-data transparent tile to satisfy 12-cell bin-packing (SPEC-005)
+
+    - id: living-room-temp
+      type: sensor-card             # Custom widget resolved from /config/widgets/sensor-card/
+      dimensions: [2, 1]
+      config:
+        endpoint: "http://ha-bridge:8095/data"
+        refresh_interval_seconds: 60
+        token_env: HA_SENSOR_TOKEN
+        entity_id: "sensor.living_room_temp"
+        unit: "F"
 ```
 
 ### 2. Multi-Instance Capability
@@ -211,23 +253,61 @@ Upstream network partitions, rate limits, and external service outages (e.g. Goo
 ### 3. Out-of-Process Generic HTTP Providers (Private Extensions & Sidecars)
 For user-specific integrations, private household services, or extensions written in any language (Python, Node.js, Go), Mirrormere provides an out-of-process Generic HTTP Provider adapter (matching the HTTP provider pattern in SPEC-008):
 
-1. **Manifest & Configuration**:
-   A custom widget instance is declared directly under `display.widgets` in `config.yaml` using `type: http`, supplying its layout dimensions and provider settings under `config:`:
+1. **Manifest & Instance Declaration**:
+   A custom widget declares `provider: http` in its `manifest.yaml` located at `/config/widgets/<widget-type>/manifest.yaml`.
+   Widget instances in `config.yaml` reference that custom `type` under `display.widgets`:
    ```yaml
    display:
      widgets:
-       - id: custom-sensor-hud
-         type: http
+       - id: living-room-temp
+         type: sensor-card           # Resolved from /config/widgets/sensor-card/
          dimensions: [2, 1]
          config:
            endpoint: "http://sensor-sidecar:8095/data"
            refresh_interval_seconds: 60
            token_env: SENSOR_HUD_TOKEN
+           entity_id: "sensor.living_room_temp"
+           unit: "F"
    ```
 
-2. **Wire Endpoints**:
-   - `GET {endpoint}`: Returns the standard JSON payload envelope (`widget_id`, `timestamp`, `state`, `data`).
-   - `POST {endpoint}/action`: Optional mutation handler. Forwards user actions from `POST /api/widgets/{widget_id}/action` (returns `200` OK, `202` Accepted, or `502` Bad Gateway per SPEC-006).
+2. **Ingestion Polling Wire Contract (`POST {endpoint}`)**:
+   To prevent HTTP proxies, web servers, and client frameworks (FastAPI, Express, Axios, nginx) from stripping or rejecting request bodies, Mirrormere uses standard **`POST`** requests to poll the custom endpoint:
+   - **Method**: `POST {endpoint}` (configured via `config.endpoint`; optional `method: GET` configuration supported for dumb IoT sensors that only expose a static parameterless `/status` page).
+   - **Headers**:
+     - `Content-Type: application/json`
+     - `Accept: application/json`
+     - `Authorization: Bearer <TOKEN>` (resolved dynamically from `token_env` if defined)
+     - `X-Widget-ID: living-room-temp`
+     - `X-Widget-Type: sensor-card`
+     - `X-Widget-Dimensions: 2x1`
+   - **Request Body Sent TO Endpoint**:
+     Mirrormere serializes the instance context and its entire `config` mapping:
+     ```json
+     {
+       "widget_id": "living-room-temp",
+       "widget_type": "sensor-card",
+       "dimensions": [2, 1],
+       "config": {
+         "entity_id": "sensor.living_room_temp",
+         "unit": "F"
+       }
+     }
+     ```
+     This allows a single multi-tenant sidecar (e.g. a Home Assistant bridge or Prometheus scraper) to service multiple widget instances dynamically without requiring its own separate configuration files or complex URL query parsing.
+   - **Response Body Received FROM Endpoint**:
+     Returns the standard JSON payload envelope:
+     ```json
+     {
+       "widget_id": "living-room-temp",
+       "timestamp": "2026-09-24T22:20:00Z",
+       "state": "healthy",
+       "data": {
+         "temperature": 71.2
+       }
+     }
+     ```
+   - **Mutation Handling (`POST {endpoint}/action`)**:
+     Optional mutation handler. Forwards user actions from `POST /api/widgets/{widget_id}/action` (returns `200` OK, `202` Accepted, or `502` Bad Gateway per SPEC-006).
 
 3. **Realtime Push / Webhook Support**:
    Sidecars and external services can push updates immediately into Mirrormere by issuing an HTTP POST webhook:
@@ -255,10 +335,36 @@ In alignment with Mirrormere's independent deployment topology and zero-runtime-
 - The server serves a single unified stylesheet at `/style.css`.
 - At startup, the server inspects `/config/custom.css` on disk:
   - **Mounted File Present**: Serves the volume-mounted file directly.
-  - **Unmounted / Absent**: Serves the default embedded stylesheet (`embed.FS`).
+  - **Unmounted / Absent**: Serves the default core stylesheet directly from disk (`/app/web/static/css/hud.css`).
 - Each household injects its display styling purely via Docker volume mounts:
   - **Alex's Touch Kiosk**: `-v ./kiosk.css:/config/custom.css:ro` (dark mode cyberpunk palette, 48px touch targets, glowing accents).
   - **Mike's Ambient E-Ink**: `-v ./eink.css:/config/custom.css:ro` (high-contrast 1-bit monochrome, bold typography, zero animations, 2px solid borders).
+
+---
+
+## In-Process Hot-Reloading (`fsnotify` & SSE)
+
+To deliver a frictionless developer experience and enable instant visual iteration on physical display hardware without restarting the Go daemon or rebuilding containers:
+
+### 1. In-Process File Watching (`fsnotify`)
+The Go daemon runs a background `fsnotify` file system watcher monitoring `/config/widgets/`, `/config/custom.css`, and `/config/config.yaml`:
+- **Debounced Processing (100ms)**: Batches rapid filesystem events from code editors and atomic file rename operations to eliminate thrashing.
+- **In-Memory Cache Eviction**:
+  - When any `views/widget.html` file changes on disk, the Go server immediately evicts its in-memory compiled `html/template` cache. The next canvas render parses the fresh template directly from disk.
+  - When `manifest.yaml` updates, the daemon updates the widget registry metadata JIT.
+  - When `/config/config.yaml` updates, the configuration parser re-parses with `${VAR}` interpolation under the Last Known Good Configuration (LKGC) resilience model.
+
+### 2. Live SSE Signal Dispatch
+Because connected display clients (Chromium kiosk browser, companion tablets, e-ink renderers) maintain an active stream on `GET /api/events`, the Go daemon broadcasts targeted reload events over the event bus:
+- **Widget Markup Updates**: Broadcasts `event: widget.reload` with payload `{"type": "<widget-type>"}`.
+- **Stylesheet Updates**: Broadcasts `event: style.reload` with payload `{"file": "custom.css", "timestamp": "2026-09-25T19:40:00Z"}`.
+
+### 3. Client DOM Reaction (Zero Manual Screen Taps)
+The frontend display script (`web/static/js/sse.js`) handles reload events reactively:
+- **Zero-Flicker Style Hot-Swapping**: On `style.reload`, the browser swaps the stylesheet `<link>` tag's `href` with a cache-busting timestamp query parameter (`/style.css?t=Date.now()`). The entire display updates its visual theme instantly with **zero visual flicker**.
+- **Instant Template Refresh**: On `widget.reload`, the client re-fetches the updated widget markup fragment and patches its DOM node (or cleanly invokes `location.reload()`).
+
+Developers and users edit files in their IDE on the host, and the physical kiosk on the wall updates in under 100ms—with zero container restarts, zero SSH sessions, and zero touching the display.
 
 ### 3. Visual Styling Standards & Design Tokens
 To achieve a refined, modern aesthetic suitable for high-visibility wall mounting, Mirrormere establishes consistent design tokens and layout conventions across all semantic widgets:

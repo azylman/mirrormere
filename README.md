@@ -44,7 +44,7 @@ Widgets in Mirrormere are modular packages containing a server-side data provide
 
 - **Data Provider**: Scheduled or WebSocket-driven worker responsible for fetching and caching state (e.g. Google Calendar OAuth / CalDAV sync, Open-Meteo weather, Home Assistant state streams).
 - **View Adapter**:
-  - `widget.html`: Unified semantic HTML layout rendered dynamically into the canvas and styled via the volume-mounted server stylesheet (`/config/custom.css` with embedded fallback). E-ink displays are rendered via an optional headless capture sidecar, eliminating dual SVG templates.
+  - `widget.html`: Unified semantic HTML layout rendered dynamically into the canvas and styled via the volume-mounted server stylesheet (`/config/custom.css` with default fallback from `web/static/css/`). Templates are loaded directly from disk (built-ins at `/app/widgets/<type>/`, custom at `/config/widgets/<type>/`) supporting instant in-process hot-reloading without container restarts. E-ink displays are rendered via an optional headless capture sidecar, eliminating dual SVG templates.
 
 ### Deployment-Specific Widget Declarations
 In alignment with Mirrormere's decoupled deployment topology, each independent instance declares exactly the widgets it needs in its local `config.yaml` (`display.widgets`). Interactive-only widgets (such as Chromecast UVC capture or video streams) are simply omitted from configurations targeting static ambient displays.
