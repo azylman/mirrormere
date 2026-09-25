@@ -8,7 +8,7 @@ This specification codifies the phased implementation roadmap, architectural mil
 
 Mirrormere decouples headless backend data ingestion, layout calculation, and real-time state synchronization from physical display surfaces. The architecture supports two reference deployment profiles:
 1. **Touch Kiosk Profile A**: 60Hz interactive capacitive touchscreen (Intel N100 Mini PC, 15.6" 1080p display, Wayland `cage` compositor, Chromium `--kiosk`, and UVC/HDMI video ingest via `go2rtc`).
-2. **Ambient E-Ink Profile B**: Low-power static monochrome dashboard (Raspberry Pi 4 Model B, Waveshare 7.5" black & white e-paper HAT with Adafruit Bonnet pinout, partial refresh lifecycle, and thin Python SPI display node).
+2. **Ambient E-Ink Profile B**: Low-power static monochrome dashboard (Raspberry Pi 4 Model B, Waveshare 7.5" V2 raw panel on an Adafruit E-Ink Bonnet, partial refresh lifecycle, and thin Python SPI display node per SPEC-009).
 
 This plan structures development into **six sequential milestones**, prioritizing Day-1 Dockerization and early visual feedback (a "walking skeleton" displaying live grid cells in Phase 2) before proceeding to external provider integrations, Ambient E-Ink bringup, and Touch Kiosk video capture.
 
@@ -48,38 +48,63 @@ flowchart TD
 ## 3. Detailed Phase Breakdown
 
 ### Phase 1: Docker Core Foundation, Config & Widget Package Loader
-**Objective:** Establish Day-1 Docker Compose, authoritative OpenAPI/SSE contracts, config parser with LKGC, full widget package loader, and 6×2 layout solver with 100% test coverage before implementing business logic.
+**Objective:** Establish Day-1 Docker Compose, authoritative OpenAPI/SSE contracts, config parser, widget package loader, 6×2 layout solver, LKGC validation pipeline, and fsnotify reload watcher with >= 95.0% statement test coverage floor before implementing business logic.
 
 - **Task 1.1: Docker Compose Foundation & Scaffolding**
-  - Implement root `deploy/compose.yml` defining the `mirrormere` daemon service with non-root security context, read-only volume mounts (`/config:ro`, `/data`), and healthchecks.
-  - Multi-stage `Dockerfile` compiling static Go 1.24 binary (`CGO_ENABLED=0`) targeting minimal scratch/alpine base image.
+  - Implement root `deploy/compose.yml` defining the `mirrormere-core` daemon service with non-root security context (`user: 10001:10001`, `no-new-privileges:true`), read-only volume mounts (`/config:ro`, `/data`), and healthcheck.
+  - Multi-stage `Dockerfile` compiling static Go 1.24 binary (`CGO_ENABLED=0`) targeting minimal hardened Alpine image.
   - Provide baseline `deploy/examples/config.yaml` and `deploy/examples/custom.css`.
 
-- **Task 1.2: OpenAPI 3.1 Specification & SSE JSON Schemas**
-  - Codify authoritative REST and SSE contracts in `api/openapi.yaml` and `api/schemas/`:
-    - Schemas: `widget.update.json`, `header.update.json`, `screen.rotate.json`, `system.status.json`, `video.state.json`, `audio.state.json`, `voice.state.json`, `widget.reload.json`, `style.reload.json`.
-    - Endpoints: `GET /healthz`, `GET /api/events`, `POST /api/screen/select`, `POST /api/screen/advance`, `POST /api/screen/pause`, `GET /api/audio`, `POST /api/audio/volume`, `POST /api/audio/mute`, `POST /api/video/trigger`, `dismiss`, `state`, `action`, `POST /api/voice/state`, `GET /api/lists/{list_id}/items`, `GET /api/widgets/{widget_id}/state`, `GET /api/widgets/{widget_id}/render`, `GET /widget-types/{type}/assets/{path}`, `POST /api/widgets/{widget_id}/push`.
-  - Wire `oapi-codegen` code generation into `internal/api/` ensuring compile-time interface adherence.
+- **Task 1.2: OpenAPI 3.1 Specification & Reload Event Schemas**
+  - Codify authoritative REST and SSE contracts in `api/openapi.yaml` and `api/schemas/` scoped strictly to Phase 1 foundation routes:
+    - Endpoints: `GET /healthz`, `GET /health`, `GET /api/widgets/{widget_id}/render`, `GET /widget-types/{type}/assets/{path}`.
+    - Reload schemas: `widget.reload.json`, `style.reload.json`.
+  - Wire `oapi-codegen` code generation into `internal/api/` ensuring compile-time interface adherence without requiring premature stubs for later phases.
 
-- **Task 1.3: Configuration Engine with Explicit `*_env` Resolution & LKGC**
-  - Parse `/config/config.yaml` with schema validation (`screens`, `widgets`, `display`, `providers`).
-  - Resolve secrets strictly through explicit `*_env` keys (`token_env`, `url_env`) reading directly from process environment. Arbitrary `${VAR}` string interpolation is explicitly rejected (SPEC-012 §6).
-  - In-memory Last-Known-Good Configuration (LKGC) fallback on parse or validation failure.
+- **Task 1.3: Core Configuration Parser & Explicit `*_env` Resolution**
+  - Parse `/config/config.yaml` with schema validation for canonical keys: `timezone`, `display` (holding `rotation`, `grid`, `header`, and `widgets`). No manual `screens` key (computed by solver); no top-level `providers` block (SPEC-003, SPEC-005).
+  - Resolve secrets strictly through explicit `*_env` keys (`token_env`, `url_env`) reading directly from host process environment. Arbitrary `${VAR}` string interpolation is strictly rejected (SPEC-012 §6).
+  - Hermetic unit tests in `internal/config/config_test.go` covering valid configs, missing keys, and environment secret resolution.
 
-- **Task 1.4: Widget Package Loader & 6×2 Layout Bitmask Solver**
-  - Package discovery across built-ins (`/app/widgets`) and custom overrides (`/config/widgets`). Enforce whole-package overriding invariant (a custom widget must supply a complete package: `manifest.yaml`, `views/widget.html`, assets).
+- **Task 1.4: Widget Package Loader & Manifest Validator**
+  - Package discovery across built-ins (`/app/widgets`) and custom overrides (`/config/widgets`). Enforce whole-package overriding invariant (a custom widget must supply complete `manifest.yaml`, `views/widget.html`, and optional `assets/`).
   - Parse and validate `manifest.yaml` (validate supported dimensions, forbid `default` keyword in config schema).
-  - Apply `default_dimensions` when instance config omits `width`/`height`.
+  - Apply manifest `default_dimensions` when instance config omits `dimensions: [cols, rows]`.
+  - Unit tests in `internal/widget/loader_test.go` using isolated filesystem fixtures.
+
+- **Task 1.5: 6×2 Grid Bitmask Backtracking Solver**
   - Implement 2D recursive backtracking bitmask solver for 6×2 grid (`cols ∈ [0, 5]`, `rows ∈ [0, 1]`, 12 discrete cells):
     - Compute minimal rotation screens: $K = \lceil A_{\text{unpinned}} / (12 - A_{\text{pinned}}) \rceil$.
     - Pinned widget replication across all screens.
     - Bitmask placement verification (`screen_bitmask == 0xFFF`).
     - Layout deficit and spacer tile (`type: spacer`) guidance on tiling errors per SPEC-005.
+  - Comprehensive unit tests in `internal/layout/solver_test.go` across various tile sizes and edge cases.
+
+- **Task 1.6: LKGC 6-Stage Validation Pipeline & Atomic Swap**
+  - Implement `internal/config/lkgc.go` orchestrating the 6-stage validation pipeline from SPEC-012:
+    1. YAML Syntax & Structure (top-level `timezone`, `display`)
+    2. Core Instance Schemas
+    3. Package Existence & Completeness (via Chunk 1.4 loader)
+    4. Manifest `config_schema` Validation
+    5. List Source-of-Truth Rules
+    6. 6×2 Bin-Packing Layout Solver (via Chunk 1.5 solver)
+  - On pass: execute atomic configuration swap in memory.
+  - On fail: retain running LKGC snapshot in memory, log structured error, and preserve active service state.
+  - Hermetic unit tests covering all 6 stages and LKGC fallbacks.
+
+- **Task 1.7: `fsnotify` Directory Watcher & Reload Dispatcher**
+  - Implement `internal/watcher/watcher.go` using in-process `fsnotify`.
+  - Monitor parent `/config` directory descriptor, `/app/widgets`, and `/config/widgets`.
+  - 100ms debounce timer with temporary file ignore filter (`*.tmp`, `*.swp`, `*~`, `4913`, `.goutputstream-*`).
+  - Handle atomic editor renames and clean read settle.
+  - Trigger LKGC pipeline on `config.yaml` changes.
+  - Dispatch `style.reload` on `/config/custom.css` edits and `widget.reload` on widget template or manifest edits.
+  - Hermetic unit tests in `internal/watcher/watcher_test.go`.
 
 ---
 
 ### Phase 2: Realtime SSE Bus, Web Shell & Walking Skeleton
-**Objective:** Deliver the centralized SSE bus, rotation engine, `html/template` SSR engine, `fsnotify` live reload, and vanilla ES6 display HUD—achieving an end-to-end "walking skeleton" displaying live grid cells in the browser.
+**Objective:** Deliver the centralized SSE bus, rotation engine, `html/template` SSR engine, and vanilla ES6 display HUD—achieving an end-to-end "walking skeleton" displaying live grid cells in the browser.
 
 - **Task 2.1: High-Performance SSE Bus & Initial Hydration**
   - `GET /api/events` handler supporting concurrent display clients.
@@ -90,22 +115,16 @@ flowchart TD
 
 - **Task 2.2: Screen Rotation Coordinator & Navigation Endpoints**
   - Timer-driven screen rotation (`display.rotation.interval_seconds`).
-  - Emit `screen.rotate` carrying active screen index and SSR HTML fragments for current widgets.
+  - Emit `screen.rotate` carrying active screen index and layout metadata; clients fetch `GET /api/widgets/{widget_id}/render` for each widget on the new layout (SPEC-006 §2.C, #146).
   - Implement navigation endpoints: `POST /api/screen/select`, `POST /api/screen/advance`, and `POST /api/screen/pause` (with optional `duration_seconds: 120` auto-resume timer).
 
 - **Task 2.3: Server-Side Rendering (SSR) Engine & Static Asset Pipeline**
   - In-process `html/template` renderer executing widget `views/widget.html`.
   - Route `GET /api/widgets/{widget_id}/render`: renders HTML fragment using active widget state.
   - Route `GET /widget-types/{type}/assets/{path}`: serves static assets from widget package directory.
-  - Route `GET /config/custom.css`: serves user custom stylesheet.
+  - Route `GET /style.css`: serves volume-mounted custom stylesheet (`/config/custom.css`) if present, otherwise default `hud.css` (SPEC-003 §3, SPEC-006 §2.I).
 
-- **Task 2.4: `fsnotify` File Watcher & Dynamic Hot Reloading (SPEC-012)**
-  - Monitor `/config/` directory descriptor with 100ms debouncing and temporary file filtering.
-  - On `config.yaml` modification: trigger atomic reload and state reconcile or LKGC fallback.
-  - On `/config/custom.css` change: emit `style.reload` SSE event.
-  - On `/config/widgets/` modification: reload template and emit `widget.reload` SSE event.
-
-- **Task 2.5: Web Display HUD & Walking Skeleton**
+- **Task 2.4: Web Display HUD & Walking Skeleton**
   - Vanilla ES6 display client (`/display`): CSS grid canvas below fixed header zone.
   - Cyber HUD styling tokens (`hud.css`), DOM pre-warming to eliminate rotation flicker.
   - Built-in `spacer` widget (`widgets/spacer/manifest.yaml` & `views/widget.html`).
@@ -117,7 +136,7 @@ flowchart TD
 **Objective:** Implement decoupled data ingestion workers with Stale-While-Revalidate caching, rate limiting, custom HTTP polling/push paths, and zero-CGO SQLite storage.
 
 - **Task 3.1: Provider Polling Coordinator & SWR Cache**
-  - Pluggable `Provider` interface: `ID() string`, `Fetch(ctx context.Context) (any, error)`, `Interval() time.Duration`.
+  - Pluggable `Provider` lifecycle interface per SPEC-003: `Init(ctx context.Context, cfg map[string]any) error`, `Fetch(ctx context.Context) (any, error)`, `Subscribe(events chan<- WidgetEvent)`, `Shutdown(ctx context.Context) error`.
   - In-memory Stale-While-Revalidate cache: return stale data immediately on transient errors while logging background fetch failures.
   - Exponential backoff with jitter on network refusal or upstream 5xx.
   - Degraded state tracking: `healthy`, `degraded` (LKG preserved, opacity 0.8), `error` (cold-boot empty state).
@@ -177,7 +196,7 @@ flowchart TD
 - **Task 5.2: E-Ink Node Client (`clients/eink-node`)**
   - Standalone Python daemon running on Raspberry Pi 4B with Waveshare 7.5" e-paper display.
   - Adafruit Bonnet GPIO pin mapping: RST=27, DC=22, BUSY=17, CS=CE0 (GPIO 8), Buttons=GPIO 5 & 6 (SPEC-009).
-  - Hardware button tap on GPIO 5/6 triggers `POST /api/screen/advance` on Core daemon.
+  - Hardware button tap on GPIO 6 triggers `POST /api/screen/advance` on Core daemon; button on GPIO 5 forces a full panel refresh to clear accumulated ghosting per SPEC-009.
   - Panel refresh lifecycle: 5s debounce, 60s minimum panel write floor, 60m full refresh cycle, deep sleep after every write.
   - Offline guard: 8×8 black dot in top-right corner if offline > 120s; persist last good frame to `/var/lib/mirrormere-eink/last.png`.
   - Standardized healthcheck endpoint on port 8099 (`GET :8099/healthz`).

@@ -62,7 +62,7 @@ Before any running process, widget worker, or layout solver is touched, the cand
 ```
 
 ### Validation Stages
-1. **YAML Syntax & Schema**: Validates well-formed YAML structure, top-level keys (`display`, `header`, `timezone`), and standard types.
+1. **YAML Syntax & Schema**: Validates well-formed YAML structure, top-level keys (`timezone`, `display`), and standard types.
 2. **Standard Instance Keys**: Validates that all items in `display.widgets` contain mandatory framework fields (`id`, `type`), valid `dimensions` (or valid fallback to `manifest.yaml` `default_dimensions`), and positive integer cadences (`refresh_interval_seconds`).
 3. **Package Existence & Completeness**: Verifies that every referenced `type` resolves to a complete widget package (`manifest.yaml` and `views/widget.html`) under `/config/widgets/<type>/` or `/app/widgets/<type>/` (per SPEC-003). At runtime, an incomplete package created after boot is not selected, retaining active LKGC until all required files exist on disk.
 4. **Manifest `config_schema` Validation**: Validates the nested `config:` mapping for every instance against its package `config_schema` using JSON Schema Draft 2020-12 (`github.com/santhosh-tekuri/jsonschema/v6`).
@@ -124,7 +124,7 @@ Mirrormere maximizes live reconfigurability while clearly delineating settings b
 ### Settings Applied Live (Zero Restart)
 - **Widget Instances**: Adding, removing, reconfiguring, or resizing any widget instance in `display.widgets`.
 - **Screen Rotation Settings (`display.rotation`)**: Changes to `display.rotation.interval_seconds` update the active rotation timer JIT. Associated rotation parameters (`transition` visual hint, `pause_on_touch` client policy, and `pause_duration_seconds` touch pause window) are also applied live without container restart.
-- **Top-Banner Weather Poller**: Coordinates (`latitude`, `longitude`), `units`, and polling cadences under `header.weather` restart the background poller immediately.
+- **Top-Banner Weather Poller**: Coordinates (`latitude`, `longitude`), `units`, and polling cadences under `display.header.weather` restart the background poller immediately.
 - **Timezone**: Changing `timezone` updates Go's `time.Local` / location pointer JIT, immediately adjusting digital clock formats, agenda relative times, and rollover timers.
 - **Custom Stylesheet (`/config/custom.css`)**: Hot-reloaded live and broadcast via `style.reload`.
 
