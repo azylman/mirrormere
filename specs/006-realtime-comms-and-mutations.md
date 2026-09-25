@@ -306,24 +306,17 @@ External sidecars, local microservices, and Home Assistant automations can immed
   - **List Widgets Protected (`409 Conflict`)**: List-backed widgets (`type: tasks`) are strictly read-only ambient surfaces ingesting state from upstream sources (Google Tasks, generic HTTP, or local store per SPEC-008). Pushing arbitrary item lists to `POST /api/widgets/{widget_id}/push` on a `tasks` widget circumvents provider ingestion, causes cache drift across consumer widgets (e.g. `compact-chores`), and would be overwritten on the next poll cycle.
   - Calling `POST /api/widgets/{widget_id}/push` on a `tasks` widget is rejected with **`409 Conflict`**.
 - **Request Payload**:
-  Conforms to the standard JSON payload envelope defined in SPEC-003:
+  Domain data object directly (matching the polling endpoint response contract in SPEC-003):
   ```json
   {
-    "widget_id": "custom-sensor-hud",
-    "timestamp": "2026-09-24T22:20:00Z",
-    "state": "healthy",
-    "data": {
-      "co2_ppm": 640,
-      "temperature_f": 71.2,
-      "humidity_pct": 45,
-      "air_quality": "good"
-    }
+    "co2_ppm": 640,
+    "temperature_f": 71.2,
+    "humidity_pct": 45,
+    "air_quality": "good"
   }
   ```
-  - `widget_id` (string, optional in body): If provided in the JSON body, it MUST match the `{widget_id}` in the URL path. If they differ, the server rejects the request with `400 Bad Request`.
-  - `timestamp` (string, RFC 3339, optional): Timestamp of data snapshot; defaults to the server's current UTC arrival time if omitted.
-  - `state` (string, optional, default `"healthy"`): `"healthy"` | `"degraded"` | `"error"`.
-  - `data` (object, required): Widget-specific domain payload conforming to the widget type's `response_schema` in `manifest.yaml`. Missing or non-object `data`—or payloads that fail schema validation—yields `400 Bad Request`.
+  - The request body contains only the domain data object. There is no outer envelope (`widget_id`, `timestamp`, `state`, and `data` wrapper keys are omitted). Core identifies the target widget from `{widget_id}` in the URL path, stamps `timestamp` with the current UTC arrival time, sets `state: "healthy"`, and validates the body directly against the widget's `response_schema` in `manifest.yaml`.
+  - If the body is malformed JSON, not a JSON object, or fails validation against `response_schema`, the server rejects the push with `400 Bad Request`.
 
 - **Cache Ingestion & Realtime Broadcast Invariant**:
   - **Immediate Cache Ingestion**: The daemon validates the payload against the widget's `response_schema` and updates the widget provider's in-memory state and persistent SQLite cache immediately, **regardless of whether the widget is currently visible on the active screen**.
@@ -338,11 +331,11 @@ External sidecars, local microservices, and Home Assistant automations can immed
       "updated_at": "2026-09-24T22:20:00Z"
     }
     ```
-  - **`400 Bad Request`**: Invalid JSON syntax, missing `data` object, `widget_id` mismatch between path and body, or `data` payload fails validation against `response_schema`.
+  - **`400 Bad Request`**: Invalid JSON syntax, not a JSON object, or domain payload fails validation against `response_schema`.
     ```json
     {
       "status": "error",
-      "error": "payload widget_id 'living-room' does not match path widget_id 'custom-sensor-hud'"
+      "error": "response_schema validation failed: missing required field 'co2_ppm'"
     }
     ```
   - **`404 Not Found`**: Widget ID `{widget_id}` does not exist in the active server configuration.
@@ -383,21 +376,23 @@ When Mirrormere ingests data for custom widgets declared with `provider: http`, 
   ```
   This keeps outbound request payloads clean, prevents internal framework settings or secrets from leaking across the network, and allows custom sidecars to directly deserialize domain parameters without unwrapping a wrapper object.
 
-- **Response Body Received FROM Endpoint (`200 OK`)**:
-  Conforms to the standard JSON payload envelope:
-  ```json
-  {
-    "widget_id": "living-room-temp",
-    "timestamp": "2026-09-24T22:20:00Z",
-    "state": "healthy",
-    "data": {
+- **Response Body Received FROM Endpoint**:
+  The custom endpoint returns ONLY the domain data object. Operational health is conveyed strictly via standard HTTP status codes (no custom headers or outer envelopes):
+  - **2xx Success (e.g. `200 OK`)**:
+    The response body is the domain data object directly:
+    ```json
+    {
       "temperature": 71.2
     }
-  }
-  ```
-  On receipt, Mirrormere validates the `data` object against the widget type's `response_schema` declared in its `manifest.yaml`:
-  - **Validation Success**: Updates in-memory and SQLite cache and broadcasts a `widget.update` SSE event across all connected displays.
-  - **Validation Failure**: Rejects the invalid payload from updating cache, preserves the Last-Known-Good data under Stale-While-Revalidate, logs a structured validation warning, transitions the widget to `state: "degraded"`, and emits a degraded `widget.update` SSE event to dim the widget on screen with a stale badge.
+    ```
+    On receipt, Mirrormere validates the body directly against the widget type's `response_schema` declared in its `manifest.yaml`:
+    - **Validation Success**: Core stamps `timestamp` with the current UTC receive time, sets `state: "healthy"`, wraps the payload into the internal envelope (`widget_id`, `timestamp`, `state`, `data`), updates in-memory and SQLite cache, and broadcasts a `widget.update` SSE event across all connected displays.
+    - **Validation Failure**: Rejects the invalid payload from updating cache, preserves the Last-Known-Good data under Stale-While-Revalidate, logs a structured validation warning, transitions the widget to `state: "degraded"`, and emits a degraded `widget.update` SSE event to dim the widget on screen with a stale badge.
+  - **Non-2xx Status / Network Error**:
+    If the endpoint returns a non-2xx status code (e.g. `500 Internal Server Error`, `502 Bad Gateway`, `429 Too Many Requests`) or the request times out:
+    - The endpoint could not produce fresh data.
+    - Core preserves the Last-Known-Good (LKG) data snapshot in cache and marks the widget `state: "degraded"` (or `state: "error"` if cold-booting with an empty cache), per Stale-While-Revalidate rules.
+    - Core emits a degraded `widget.update` SSE event and retries on the next polling cycle with exponential backoff.
 
 ### 5. Video Stream Lifecycle & Action Endpoints
 - **Trigger Stream**: `POST /api/video/trigger`
@@ -710,7 +705,7 @@ Controls the automatic rotation timer loop:
   { "status": "ok", "volume": 75, "muted": false }
   ```
 - **`202 Accepted`**: Action dispatched asynchronously to an external system (e.g. out-of-process generic HTTP provider background operation).
-- **`400 Bad Request`**: Unknown action, invalid parameter schema, malformed payload envelope, or path/body ID mismatch.
+- **`400 Bad Request`**: Unknown action, invalid parameter schema, schema validation failure, or malformed JSON payload.
 - **`404 Not Found`**: Widget ID, list ID, or stream ID not found.
 - **`409 Conflict`**: Mutation rejected due to source-of-truth invariants (e.g. attempting `push` on a list-backed widget).
 - **`422 Unprocessable Entity`**: Payload syntactically valid but cannot be processed by the target resource state (e.g. stream is not controllable, or missing `control_url` for transport control).
