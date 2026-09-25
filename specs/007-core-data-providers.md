@@ -41,7 +41,7 @@ flowchart LR
 
 ### Configuration Schema (`config.yaml`)
 
-Each calendar widget instance configures its sync cadence, presentation window, and calendar feeds directly in `display.widgets[].config`:
+Each calendar widget instance configures standard instance settings (`id`, `type`, `dimensions`, `refresh_interval_seconds`) at the top level, with its presentation window and calendar feeds nested in `config:`:
 
 ```yaml
 display:
@@ -49,8 +49,8 @@ display:
     - id: family-calendar
       type: calendar-agenda
       dimensions: [4, 2]
+      refresh_interval_seconds: 300 # 5 minutes
       config:
-        refresh_interval_seconds: 300 # 5 minutes
         window_days_past: 1
         window_days_future: 14
         view: week
@@ -149,7 +149,7 @@ flowchart LR
 
 ### Configuration Schema (`config.yaml`)
 
-Each weather widget instance specifies its own coordinates, units, and refresh interval directly in its `config:` mapping:
+Each weather widget instance specifies standard instance settings (`id`, `type`, `dimensions`, `refresh_interval_seconds`) at the top level, with coordinates and units in its `config:` mapping:
 
 ```yaml
 display:
@@ -157,8 +157,8 @@ display:
     - id: home-weather
       type: weather-forecast
       dimensions: [2, 1]
+      refresh_interval_seconds: 900 # 15 minutes
       config:
-        refresh_interval_seconds: 900 # 15 minutes
         latitude: 37.8044
         longitude: -122.2712
         units: "imperial" # "imperial" (F, mph, in) or "metric" (C, km/h, mm)
@@ -166,8 +166,8 @@ display:
     - id: office-weather            # Second independent location on another screen!
       type: weather-forecast
       dimensions: [2, 1]
+      refresh_interval_seconds: 900
       config:
-        refresh_interval_seconds: 900
         latitude: 37.7749
         longitude: -122.4194
         units: "imperial"
@@ -266,9 +266,9 @@ display:
     - id: living-room-photos
       type: photo-carousel
       dimensions: [3, 2]
+      refresh_interval_seconds: 3600 # 1 hour album metadata sync
       config:
         share_url: "https://photos.app.goo.gl/AbCdEf123456789"
-        refresh_interval_seconds: 3600 # 1 hour album metadata sync
         cycle_interval_seconds: 60     # Rotate image every 60s within widget
         preload_count: 50
         shuffle: true
@@ -367,7 +367,7 @@ display:
 The Go daemon manages a lightweight poller dedicated to hydrating the header's temperature and condition badge across all screens. It does not require any `weather-forecast` widget to be defined in `display.widgets`.
 
 ### Independent Grid Widget Ingestion
-If a deployment also includes one or more `weather-forecast` widgets on the 6×2 grid (e.g. for hourly timeline cards or secondary locations like `office-weather`), each widget manages its own independent poller and configuration under `display.widgets[].config`.
+If a deployment also includes one or more `weather-forecast` widgets on the 6×2 grid (e.g. for hourly timeline cards or secondary locations like `office-weather`), each widget manages its own independent poller and configuration under `display.widgets[]`.
 
 ### Multi-Instance SSE Event Routing
 When any widget instance completes an ingestion cycle (e.g. `home-weather` vs `office-weather`), it emits a `widget.update` event over the Server-Sent Events bus tagged with its unique `widget_id`:
