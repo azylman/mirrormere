@@ -19,7 +19,9 @@ FROM alpine:3.21
 # Install runtime certificates and timezone database
 RUN apk add --no-cache ca-certificates tzdata \
     && addgroup -g 10001 -S appgroup \
-    && adduser -u 10001 -S appuser -G appgroup
+    && adduser -u 10001 -S appuser -G appgroup \
+    && mkdir -p /config /data \
+    && chown -R 10001:10001 /config /data
 
 WORKDIR /app
 

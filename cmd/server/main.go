@@ -14,7 +14,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/azylman/mirrormere/pkg/server"
+	"github.com/azylman/mirrormere/internal/server"
 )
 
 var (

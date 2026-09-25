@@ -41,7 +41,7 @@ flowchart TD
 ### Phase 1: Docker Core, Config & Widget Package Loader
 **Objective:** Establish Day-1 Docker Compose, authoritative OpenAPI/SSE contracts, config parser with LKGC, full widget package loader, and 6×2 layout solver with 100% test coverage before implementing business logic.
 
-- [ ] **Task 1.1: Docker Compose Foundation & Scaffolding**
+- [x] **Task 1.1: Docker Compose Foundation & Scaffolding**
   - Files:
     - Create: `deploy/compose.yml` (base multi-container Docker Compose with build targets)
     - Create: `Dockerfile` (multi-stage Go 1.24 static binary build, non-root user)
