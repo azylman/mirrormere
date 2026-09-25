@@ -96,6 +96,11 @@ event: widget.update
 id: evt_1727216200_01
 data: {"widget_id":"daily-chores","timestamp":"2026-09-24T22:15:00Z","state":"healthy","data":{"list":{"id":"chores","name":"Chores","source":"gtasks"},"items":[{"id":"i1","title":"Take out compost","done":true,"position":0},{"id":"i2","title":"Feed cat","done":false,"position":1}]}}
 ```
+- **Server-Side Rendering Contract**: All widget HTML rendering occurs strictly on the server using Go's `html/template`. Neither browser clients nor ambient display nodes compile templates or perform client-side data binding.
+- **Client DOM Update Flow**: When a display client receives `widget.update`:
+  1. It checks whether the target instance (`widget_id`) is currently mounted and visible on the active screen (`document.getElementById("widget-" + msg.widget_id)`).
+  2. If visible, the client fetches the freshly rendered markup fragment via `GET /widgets/{widget_id}/render` (`Content-Type: text/html`) and swaps the element's DOM node.
+  3. If the widget is rotated off-screen, the fetch is omitted; the server will render fresh markup when the screen rotation advances.
 
 #### B. `header.update`
 Pushed when the autonomous header weather poller completes an ingestion cycle (SPEC-007 §4), delivering persistent top-banner weather directly to all connected displays without requiring an on-grid weather widget:
@@ -152,7 +157,7 @@ event: widget.reload
 id: evt_1727216300_08
 data: {"type":"sensor-card"}
 ```
-Connected display clients receive this event and immediately patch the target widget's DOM tree (or trigger a clean page reload) with zero manual screen interaction.
+Connected display clients receive this event, identify all active DOM elements matching the reloaded `type`, and re-fetch each instance's markup fragment via `GET /widgets/{widget_id}/render` to patch the DOM live with zero manual screen interaction.
 
 #### I. `style.reload`
 Emitted when the in-process `fsnotify` file watcher detects an update to the volume-mounted custom stylesheet (`/config/custom.css`):

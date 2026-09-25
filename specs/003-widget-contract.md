@@ -280,7 +280,12 @@ The Go backend unmarshals the generic `config` mapping as `map[string]any`:
 - Core built-in widgets deserialize `w.Config` into strongly typed internal structs (e.g. `CalendarConfig`, `WeatherConfig`) using `mitchellh/mapstructure` or YAML decoder defaults.
 - **Dedicated Sync Goroutine**: During `Init`, the widget instance starts its own background goroutine running on its configured `refresh_interval_seconds`. This worker runs for the lifetime of the Mirrormere daemon, keeping in-memory caches continuously fresh regardless of whether the widget is currently visible or rotated off-screen.
 - **SSE Event Emission**: When the sync loop fetches updated data, it publishes a `widget.update` event over the SSE bus tagged with its unique instance ID (`widget_id: w.ID`).
-- **Template Context Injection**: The `config` object is also injected into the semantic HTML template renderer context (`views/widget.html`), allowing templates to inspect presentation parameters directly (e.g. `{{ if eq .Config.view "month" }}...{{ end }}`).
+- **Server-Side Template Execution Context**: All widget HTML rendering happens strictly on the server using Go's `html/template`. When rendering a widget instance, the template engine executes with a unified context combining:
+  - `.Config`: The instance's custom configuration mapping declared under `config:` in `config.yaml` (e.g. `{{ if eq .Config.view "month" }}...{{ end }}`).
+  - `.Data`: The latest domain data payload object from the cached envelope (e.g. `{{ range .Data.events }}...{{ end }}`).
+  - `.State`: Current operational state string (`healthy`, `degraded`, `error`).
+  - `.Timestamp`: ISO 8601 timestamp string of the latest update.
+  - `.Assets`: Base URL path (`/widgets/<widget-type>/assets`) for referencing static package assets.
 
 ---
 
@@ -462,14 +467,26 @@ For user-specific integrations, private household services, or extensions writte
 
 Mirrormere eliminates the authoring and maintenance overhead of dual templates (`touch.html` vs. `eink.svg`). Every widget authors **one single semantic HTML template** (`views/widget.html`).
 
-### 1. View Template (`views/widget.html`)
-- Delivered as a clean semantic HTML5 snippet or modern Web Component loaded into the canvas.
-- Markup uses clean semantic classes (e.g. `.widget`, `.widget-title`, `.item-done`) and standard CSS variables for styling.
-- Layout flexes and responds dynamically to its assigned grid cells per SPEC-005.
-- Receives state updates reactively via Server-Sent Events (`widget.update` per SPEC-006).
-- Template Execution Context: Evaluated with `.Config`, `.Data`, `.State`, `.Timestamp`, and `.Assets` (base URL path `/widgets/<widget-type>/assets` referencing static package assets).
+### 1. View Template (`views/widget.html`) & Server-Side Rendering
+- **Server-Side Rendering Invariant**: All widget rendering occurs strictly on the server using Go's `html/template`. Neither browser clients nor ambient display adapters compile templates or execute client-side data binding; they receive or fetch pre-rendered HTML fragments directly from the server.
+- **Template Execution Context**: The template executes on the server with a unified context:
+  - `.Config`: Domain-specific configuration mapping from `config.yaml`.
+  - `.Data`: Domain payload object conforming to the widget's schema.
+  - `.State`: Health string (`healthy`, `degraded`, `error`).
+  - `.Timestamp`: ISO 8601 string of the payload timestamp.
+  - `.Assets`: Base URL path (`/widgets/<widget-type>/assets`) for referencing static package assets.
+- **Markup & Layout**: Delivered as a clean semantic HTML5 snippet or modern Web Component loaded into the canvas. Markup uses clean semantic classes (e.g. `.widget`, `.widget-title`, `.item-done`) and standard CSS variables for styling, flexing dynamically across its assigned 6×2 grid cells per SPEC-005.
 
-### 2. Server-Wide Volume-Mounted Stylesheet (`/config/custom.css`)
+### 2. Widget HTML Fragment Endpoint (`GET /widgets/{widget_id}/render`)
+To deliver rendered updates to connected screens when data mutates or templates are edited:
+- **Route**: `GET /widgets/{widget_id}/render`
+- **Response**: `200 OK` with `Content-Type: text/html; charset=utf-8` returning the server-rendered HTML fragment for instance `widget_id`.
+- **Data Source**: Rendered using the instance's active `config` and latest cached payload envelope (`data`, `state`, `timestamp`).
+- **Live Data Delivery (`widget.update`)**: When background pollers or webhooks ingest fresh data, the daemon broadcasts `widget.update` over SSE (`GET /api/events`). If the widget is visible on the currently active screen, the frontend client fetches `GET /widgets/{widget_id}/render` and replaces the widget's DOM node. If the widget is rotated off-screen, no fetch occurs; the fresh markup will be rendered when the rotation engine advances to that screen.
+- **Template Reloads (`widget.reload`)**: When an in-process template edit is detected, the daemon invalidates its template cache and emits `widget.reload` (`{"type": "<widget-type>"}`). The client re-fetches `GET /widgets/{widget_id}/render` for all rendered instances of that type and patches the DOM.
+- **E-Ink Display Parity**: Ambient e-ink display nodes (SPEC-009) capture the full composite canvas via `/display`, which renders all widgets via the server-rendered layout without requiring any client-side JavaScript rendering engine.
+
+### 3. Server-Wide Volume-Mounted Stylesheet (`/config/custom.css`)
 In alignment with Mirrormere's independent deployment topology and zero-runtime-multiplexing invariant:
 - **Zero Config Keys**: There are no `theme:`, `profile:`, or `css:` selectors in `config.yaml`.
 - The server serves a single unified stylesheet at `/style.css`.
@@ -502,11 +519,11 @@ Because connected display clients (Chromium kiosk browser, companion tablets, e-
 ### 3. Client DOM Reaction (Zero Manual Screen Taps)
 The frontend display script (`web/static/js/sse.js`) handles reload events reactively:
 - **Zero-Flicker Style Hot-Swapping**: On `style.reload`, the browser swaps the stylesheet `<link>` tag's `href` with a cache-busting timestamp query parameter (`/style.css?t=Date.now()`). The entire display updates its visual theme instantly with **zero visual flicker**.
-- **Instant Template Refresh**: On `widget.reload`, the client re-fetches the updated widget markup fragment and patches its DOM node (or cleanly invokes `location.reload()`).
+- **Instant Template Refresh**: On `widget.reload`, the client re-fetches the updated widget markup fragment via `GET /widgets/{widget_id}/render` for all active DOM instances matching `type` and patches the DOM node (or cleanly invokes `location.reload()`).
 
 Developers and users edit files in their IDE on the host, and the physical kiosk on the wall updates in under 100ms—with zero container restarts, zero SSH sessions, and zero touching the display.
 
-### 3. Visual Styling Standards & Design Tokens
+### 4. Visual Styling Standards & Design Tokens
 To achieve a refined, modern aesthetic suitable for high-visibility wall mounting, Mirrormere establishes consistent design tokens and layout conventions across all semantic widgets:
 
 1. **Atmospheric Depth & Frosted Glass**:
