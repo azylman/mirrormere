@@ -1,5 +1,5 @@
 # Build stage: compile static Go binary using official Go 1.24 toolchain
-FROM golang:1.24-alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:1.24-alpine AS builder
 
 WORKDIR /src
 
@@ -9,8 +9,9 @@ COPY go.mod go.sum* ./
 RUN go mod download
 
 # Copy source tree and compile minimal static Linux executable
+ARG TARGETOS TARGETARCH
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w -extldflags '-static'" -o /app/server ./cmd/server
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w -extldflags '-static'" -o /app/server ./cmd/server
 
 # Runtime stage: minimal hardened Alpine 3.21 environment
 FROM alpine:3.21
