@@ -119,7 +119,7 @@ services:
 
 ### Operating System & Runtime Environment
 - **Base OS**: Raspberry Pi OS Lite (64-bit, headless, no X11/Wayland).
-- **Hardware Interface**: SPI enabled via `/boot/config.txt` (`dtparam=spi=on`).
+- **Hardware Interface**: SPI enabled via `/boot/firmware/config.txt` (`dtparam=spi=on`).
 - **Rendering Pipeline**: Rendered via the `eink-renderer` Chromium sidecar. The `clients/eink-node` daemon (SPEC-009) fetches the 1-bit PNG and pushes it to the panel via `spidev`.
 - **Refresh Strategy**:
   - Full refresh every 60 minutes to clear accumulated ghosting.

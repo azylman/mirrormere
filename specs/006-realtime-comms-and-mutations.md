@@ -231,16 +231,45 @@ Following the initial state hydration burst, the stream transitions seamlessly t
 - **Payload Schema**:
   ```json
   {
-    "action": "toggle_power",
+    "action": "trigger_calibration",
     "params": {
-      "entity_id": "switch.kitchen_under_cabinet",
-      "state": "on"
+      "sensor_id": "air-quality-co2",
+      "baseline_ppm": 420
     }
   }
   ```
-  *(Supported actions and parameter schemas conform to the target widget's specification, e.g. smart home toggles or custom provider actions. Read-only widgets such as calendar-agenda, weather-forecast, and tasks reject action requests with `400 Bad Request`).*
+  *(Supported actions and parameter schemas conform to the target widget's specification, e.g. custom provider actions or trigger webhooks. Read-only widgets such as calendar-agenda, weather-forecast, and tasks reject action requests with `400 Bad Request`).*
 
-### 2. Widget Realtime Push Webhook Endpoint
+### 2. Widget State Snapshot Endpoint (`GET /api/widgets/{widget_id}/state`)
+Retrieves the latest cached state snapshot for a single widget on demand (useful for initial component mounting, deep-link widget refreshes, or headless scripts outside the SSE push stream):
+- **URL**: `GET /api/widgets/{widget_id}/state`
+- **Headers**:
+  ```http
+  Accept: application/json
+  ```
+- **Response (`200 OK`)**:
+  ```json
+  {
+    "widget_id": "custom-sensor-hud",
+    "timestamp": "2026-09-24T22:20:00Z",
+    "state": "healthy",
+    "data": {
+      "co2_ppm": 640,
+      "temperature_f": 71.2,
+      "humidity_pct": 45,
+      "air_quality": "good"
+    }
+  }
+  ```
+- **Error Response (`404 Not Found`)**:
+  ```json
+  {
+    "status": "error",
+    "error": "widget 'custom-sensor-hud' not found in active configuration"
+  }
+  ```
+
+### 3. Widget Realtime Push Webhook Endpoint
 External sidecars, local microservices, and Home Assistant automations can immediately push fresh data into Mirrormere without waiting for the widget's next background polling interval:
 - **URL**: `POST /api/widgets/{widget_id}/push`
 - **Headers**:
@@ -273,13 +302,12 @@ External sidecars, local microservices, and Home Assistant automations can immed
   - `state` (string, optional, default `"healthy"`): `"healthy"` | `"degraded"` | `"error"`.
   - `data` (object, required): Widget-specific domain payload conforming to the widget type's schema. Missing or non-object `data` yields `400 Bad Request`.
 
-- **Cache Ingestion & Screen-Agnostic Propagation**:
+- **Cache Ingestion & Realtime Broadcast Invariant**:
   - **Immediate Cache Ingestion**: The daemon validates the payload and updates the widget provider's in-memory state and persistent SQLite cache immediately, **regardless of whether the widget is currently visible on the active screen**.
-  - **Active Screen & Pinned Widget Broadcast**: If the target widget is located on the currently active rotation screen OR is pinned in the layout (per SPEC-005), the server immediately broadcasts a `widget.update` SSE event across all open `/api/events` connections, rendering the update in real time without waiting for the next polling cycle.
-  - **Inactive Screen Hydration**: If the target widget is on an inactive screen, the state is safely cached. When the screen rotation engine subsequently advances to that screen, the updated payload is served instantly during initial screen hydration, preventing stale flickers or lag.
+  - **Unconditional SSE Broadcast**: The server immediately broadcasts a `widget.update` SSE event across all open `/api/events` connections, ensuring all connected displays, companion nodes, and cached client stores update their local state immediately without waiting for a rotation event or poll cycle. Inactive displays or hidden components update their local stores in background, guaranteeing instant 0ms rendering with zero flicker when switching or rotating screens.
 
 - **Responses**:
-  - **`200 OK`**: Push payload accepted and cache updated (and SSE broadcast emitted if widget is on active screen or pinned).
+  - **`200 OK`**: Push payload accepted, cache updated, and `widget.update` broadcast emitted to all SSE subscribers.
     ```json
     {
       "status": "ok",
@@ -309,7 +337,7 @@ External sidecars, local microservices, and Home Assistant automations can immed
     }
     ```
 
-### 3. Video Stream Lifecycle & Action Endpoints
+### 4. Video Stream Lifecycle & Action Endpoints
 - **Trigger Stream**: `POST /api/video/trigger`
   - **Payload**:
     ```json
@@ -351,7 +379,7 @@ External sidecars, local microservices, and Home Assistant automations can immed
     ```
   - Dispatched by the stream producer sidecar (e.g. `sidecars/cast-watcher`) when player transport state changes (`"playing"`, `"paused"`, or `"buffering"`). Core updates the active stream record and broadcasts an updated `video.state` SSE event to synchronize all connected displays.
 
-### 4. Master Audio Volume & Mute Endpoints
+### 5. Master Audio Volume & Mute Endpoints
 Mirrormere Core acts as the centralized coordinator for master audio volume and mute state, tracking desired values and synchronizing connected clients. Because Mirrormere runs in a rootless container (`uid 10001`) and may be hosted off-node on a separate home server where no physical speakers exist, Core decouples audio state coordination from hardware audio sink attenuation:
 - **Centralized State Coordination**: Core maintains the authoritative in-memory `volume` (0–100) and `muted` (boolean) state, broadcasting changes immediately across `GET /api/events` as `audio.state` SSE events.
 - **Client & Edge Host Enforcement**: The active display client (e.g. Chromium running in `--kiosk` mode under Wayland `cage` per SPEC-010) or edge voice companion subscribes to `audio.state` and attenuates its local HTML5 audio elements or executes host-level PipeWire/WirePlumber commands (`wpctl set-volume @DEFAULT_AUDIO_SINK@ <level>` capped at the 80% hardware safety ceiling).
@@ -434,7 +462,7 @@ Returns the current master volume and mute state:
   }
   ```
 
-### 5. Voice Pipeline State Relay Endpoint (`POST /api/voice/state`)
+### 6. Voice Pipeline State Relay Endpoint (`POST /api/voice/state`)
 The edge voice companion daemon (`mirrormere-voice` per SPEC-011) relays interaction lifecycle events to Mirrormere Core to synchronize on-screen microphone indicators, caption toasts, and e-ink status widgets:
 - **Endpoint**: `POST /api/voice/state`
 - **Authentication**: None (all inbound LAN calls are fully trusted per the local-network trust model).
@@ -458,7 +486,7 @@ The edge voice companion daemon (`mirrormere-voice` per SPEC-011) relays interac
   - `tts_engine` (string or null, optional): Name of the active TTS engine synthesizing or speaking audio (e.g. `"kokoro"`, `"elevenlabs"`, `"piper"`).
 - **Behavior & Rebroadcast Invariant**:
   - Updates Core's in-memory voice state cache.
-  - Immediately rebroadcasts the updated state across `GET /api/events` as a `voice.state` SSE event (Section F) to synchronize all connected display clients.
+  - Immediately rebroadcasts the updated state across `GET /api/events` as a `voice.state` SSE event (Section 2.G) to synchronize all connected display clients.
   - Hydrates new clients connecting to `GET /api/events` during initial state hydration (Section 3).
 - **Responses**:
   - `200 OK`:
@@ -475,7 +503,7 @@ The edge voice companion daemon (`mirrormere-voice` per SPEC-011) relays interac
     }
     ```
 
-### 6. Household List Inspection Endpoint (`GET /api/lists/{list_id}/items`)
+### 7. Household List Inspection Endpoint (`GET /api/lists/{list_id}/items`)
 
 Direct list inspection enables mobile companion apps, headless automation scripts, and voice pipelines to inspect household lists (groceries, chores, todo items) directly by canonical `list_id`, without requiring or coupling to a visible widget on screen (per SPEC-008). Because Mirrormere operates as a strictly read-only ambient display for tasks, no list mutation endpoints (`POST`, `PATCH`, `DELETE`) exist; list modifications are made upstream at the source of truth.
 
@@ -512,7 +540,7 @@ Retrieves all current items for a specific list from the local cache:
   }
   ```
 
-### 7. Screen Navigation & Rotation Endpoints
+### 8. Screen Navigation & Rotation Endpoints
 
 #### A. Select Screen (`POST /api/screen/select`)
 Selects a specific screen directly by zero-based index:
@@ -602,7 +630,7 @@ Controls the automatic rotation timer loop:
   - `paused: true`: Suspends the automatic rotation timer loop; the display remains indefinitely on the active screen until explicitly advanced or unpaused.
   - `paused: false`: Re-arms the rotation timer using `interval_seconds` and resumes periodic rotation.
 
-### 8. Standard Responses
+### 9. Standard Responses
 - **`200 OK`**: Action executed immediately, push webhook accepted and cached, or audio settings changed:
   ```json
   { "status": "ok", "widget_id": "porch-light", "result": { "state": "on" } }
@@ -622,12 +650,12 @@ Controls the automatic rotation timer loop:
 - **`422 Unprocessable Entity`**: Payload syntactically valid but cannot be processed by the target resource state (e.g. stream is not controllable, or missing `control_url` for transport control).
 - **`502 Bad Gateway`**: Upstream provider (e.g. Home Assistant, Cast socket, external HTTP service) failed or unreachable.
 
-### 9. Optimistic UI Updates on Touch Kiosks
-1. User taps a HUD play/pause button or volume slider on the 1080p capacitive touch display (note: task list widgets are ambient and read-only, avoiding optimistic task state reconciliation).
+### 10. Optimistic UI Updates on Touch Kiosks
+1. User interacts with touch controls on the 1080p capacitive touch display—such as tapping a HUD play/pause button, dragging the master volume slider, or toggling mute (note: task list widgets are ambient and read-only, avoiding optimistic task state reconciliation).
 2. The Touch PWA immediately flips the visual state locally (< 16ms, 60fps responsiveness).
-3. The PWA dispatches the respective REST action endpoint (`POST /api/widgets/{widget_id}/action` or `POST /api/video/action`).
-4. If the server returns success, the subsequent SSE message (`widget.update` or `video.state`) reconciles state seamlessly.
-5. If the request fails (e.g. network partition), the PWA rolls back the optimistic visual state with an error toast.
+3. The PWA dispatches the respective REST endpoint (`POST /api/widgets/{widget_id}/action`, `POST /api/video/action`, `POST /api/audio/volume`, or `POST /api/audio/mute`).
+4. When the server processes the command, the corresponding SSE event (`widget.update`, `video.state`, or `audio.state`) reconciles authoritative state across all connected clients.
+5. If the request fails (e.g. network partition or upstream error), the PWA rolls back the optimistic visual state with an error toast.
 
 ---
 

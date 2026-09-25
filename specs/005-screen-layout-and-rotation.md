@@ -279,12 +279,18 @@ display:
     - id: daily-chores
       type: tasks
       dimensions: [2, 1]
+      config:
+        list_id: "chores"
+        source: gtasks
     - id: local-weather
       type: weather-forecast
       dimensions: [2, 1]
     - id: grocery-list
       type: tasks
       dimensions: [2, 1]
+      config:
+        list_id: "groceries"
+        source: local
     - id: office-weather
       type: weather-forecast
       dimensions: [2, 1]

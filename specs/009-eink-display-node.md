@@ -4,7 +4,7 @@
 Proposed
 
 ## Context & Motivation
-SPEC-003 §3 moves all e-ink rasterization into the `mirrormere-eink-renderer`
+SPEC-003 §4 moves all e-ink rasterization into the `mirrormere-eink-renderer`
 sidecar, which serves an 800×480 1-bit PNG at `GET /eink.png`. Something still
 has to run on the physical display Pi, take that image, and put it on the
 panel without wasting refreshes or losing the screen when the network drops.
@@ -92,13 +92,13 @@ refresh timer), one lock around the panel. Only the refresh worker touches SPI.
 6. A safety fetch runs every `max_idle_seconds` (default 900) even with no
    events, so a missed event cannot leave the panel stale indefinitely.
 
-### Requirement on the sidecar (amends SPEC-003 §3 & §4)
+### Requirement on the sidecar (amends SPEC-003 §4 & §5)
 To avoid a race where the client fetches before the sidecar re-renders,
 `GET /eink.png` must render **on request** (or return a render newer than the
 last `widget.update`), and must send a strong `ETag` equal to a hash of the
 PNG bytes.
 
-Additionally, the sidecar is responsible for applying the **selective dithering pipeline** (SPEC-003 §4). By strictly thresholding text/UI lines and restricting error-diffusion dithering to `.dither` regions (photos/weather icons), the sidecar ensures the display node receives clean 1-bit monochrome data. The client node validates that incoming PNG payloads are 1-bit (`mode == "1"`) and passes pixels directly to the hardware frame buffer without performing client-side re-dithering.
+Additionally, the sidecar is responsible for applying the **selective dithering pipeline** (SPEC-003 §5). By strictly thresholding text/UI lines and restricting error-diffusion dithering to `.dither` regions (photos/weather icons), the sidecar ensures the display node receives clean 1-bit monochrome data. The client node validates that incoming PNG payloads are 1-bit (`mode == "1"`) and passes pixels directly to the hardware frame buffer without performing client-side re-dithering.
 
 ---
 

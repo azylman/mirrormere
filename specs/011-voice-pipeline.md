@@ -128,7 +128,7 @@ data: {"duration_ms": 1240}
 - `event: done`: Signals completion of synthesis and turn closure.
 
 ### 4. Edge Dock Relay to Mirrormere Display
-Upon receiving interaction lifecycle events, the dock's `mirrormere-voice` client immediately forwards the state to local Mirrormere Core via `POST /api/voice/state` (defined in SPEC-006 §5):
+Upon receiving interaction lifecycle events, the dock's `mirrormere-voice` client immediately forwards the state to local Mirrormere Core via `POST /api/voice/state` (defined in SPEC-006 §6):
 - **Wire Payload Schema (`POST /api/voice/state`)**:
   ```json
   {
