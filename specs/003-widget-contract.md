@@ -128,6 +128,10 @@ display:
         list_name: "Groceries"
         source: local
         show_completed: 3
+
+    - id: layout-spacer
+      type: spacer
+      dimensions: [2, 1] # Built-in zero-data transparent tile to satisfy 12-cell bin-packing (SPEC-005)
 ```
 
 ### 2. Multi-Instance Capability
@@ -152,7 +156,7 @@ The Go backend unmarshals the generic `config` mapping as `map[string]any`:
 Mirrormere compiles into a static, zero-CGO Go binary (`CGO_ENABLED=0`). Because Go cannot dynamically load shared libraries (`.so` plugins via `plugin.Open`) into static binaries, Mirrormere does not support dynamic runtime Go plugins. Instead, data providers follow one of two clean extension models:
 
 ### 1. In-Process Compiled Providers (Core Widgets & Custom Builds)
-Core built-in widgets run directly in the Mirrormere Core service process:
+Core built-in widgets run directly in the Mirrormere Core service process (`calendar-agenda`, `weather-forecast`, `tasks`, `photo-carousel`, and `spacer` for layout padding per SPEC-005):
 1. **Lifecycle Interface**:
    - `Init(ctx context.Context, config map[string]any) error`: Validates credentials, sets up sync loops or WebSocket listeners.
    - `Fetch(ctx context.Context) (WidgetPayload, error)`: Returns an atomic JSON payload representing current state.

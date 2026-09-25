@@ -64,9 +64,11 @@ Because 6 is composite with factors 1, 2, 3, and 6, the 6×2 grid natively satis
 
 ## Declarative Widget Configuration Schema
 
-Displays declare their active widgets, rotation behavior, and target dimensions in `config.yaml`:
+Displays declare their top-level house timezone, active widgets, rotation behavior, and target dimensions in `config.yaml`:
 
 ```yaml
+timezone: "America/Los_Angeles" # Authoritative house timezone (IANA format)
+
 display:
   rotation:
     interval_seconds: 30 # Seconds between automatic screen advance; 0 disables rotation (manual only)
@@ -145,6 +147,19 @@ A widget's dimensions are specified as `[cols, rows]` where $1 \le cols \le 6$ a
 - `[2, 1]`: 1/3 width, half height card (Area: 2)
 - `[1, 1]`: 1/6 width, half height chip (Area: 1)
 
+### Native Spacer Tiles (`type: spacer`)
+To support sparse widget layouts (such as an operator who only wants a single `[4, 2]` calendar widget on screen without extra widgets) while strictly satisfying the 12-cell fully-filled grid invariant, Mirrormere provides a built-in `spacer` tile (`type: spacer`):
+- **Invisible Canvas Area**: Renders as an empty, transparent grid tile with no card chrome, background box, headers, or borders, allowing the underlying wallpaper/theme background to show through cleanly.
+- **Zero Overhead**: Does not fetch data, schedule poll timers, connect to external APIs, or allocate database storage.
+- **Supported Dimensions**: Can take any supported dimension `[cols, rows]` (e.g. `[2, 2]`, `[1, 1]`, `[2, 1]`, `[3, 2]`).
+- **Sample Configuration**:
+  ```yaml
+  - id: calendar-pad
+    type: spacer
+    dimensions: [2, 2] # Cleanly pads the 4 empty cells adjacent to a [4, 2] calendar
+    pinned: false
+  ```
+
 ---
 
 ## The Bin-Packing & Rotation Algorithm
@@ -153,13 +168,25 @@ On daemon startup or configuration reload, Mirrormere executes an exact 2D bin-p
 
 ### Mathematical Invariants & Constraints
 
-1. **Fewest Number of Screens ($K$)**:
-   The engine computes the minimal screen count $K = \lceil \sum \text{Area}(w_i) / 12 \rceil$ needed to present all declared widgets.
+1. **Fewest Number of Screens ($K$) with Pinned Budgeting**:
+   Pinned widgets (`pinned: true`) are replicated across every rotation screen at identical grid coordinates `(col, row)`. Let:
+   - $W_{\text{pinned}}$ be the set of pinned widgets, with total occupied area $A_{\text{pinned}} = \sum_{w \in W_{\text{pinned}}} \text{Area}(w)$.
+   - $W_{\text{unpinned}}$ be the set of rotating, unpinned widgets, with total area $A_{\text{unpinned}} = \sum_{w \in W_{\text{unpinned}}} \text{Area}(w)$.
+
+   Because pinned widgets occupy $A_{\text{pinned}}$ cells on *every* screen, each screen provides an available unpinned budget of $(12 - A_{\text{pinned}})$ cells. The theoretical minimal screen count $K$ is therefore:
+   $$K = \begin{cases}
+   1 & \text{if } A_{\text{unpinned}} = 0 \text{ and } A_{\text{pinned}} \le 12 \\
+   \left\lceil \frac{A_{\text{unpinned}}}{12 - A_{\text{pinned}}} \right\rceil & \text{if } A_{\text{pinned}} < 12 \\
+   \text{Invalid} & \text{if } A_{\text{pinned}} \ge 12 \text{ and } A_{\text{unpinned}} > 0
+   \end{cases}$$
+   If $A_{\text{pinned}} \ge 12$ and unpinned widgets exist, config validation fails fast because no screen space remains to rotate unpinned content.
 
 2. **Strict Fully-Filled Screen Invariant**:
-   Every screen must be 100% tiled with zero empty or dead grid cells.
+   Every screen must be 100% tiled with zero empty or dead grid cells:
    $$\sum_{w \in \text{Screen}_k} (w.\text{cols} \times w.\text{rows}) = 12 \quad \forall k \in [1..K]$$
-   Configurations where the total widget area does not sum to a multiple of 12 ($12K$), or where widget geometries cannot tile a $6 \times 2$ rectangle without gaps, are rejected fast on config validation with explicit remediation diagnostics.
+   Consequently, the aggregate unpinned widget area must balance the available unpinned screen capacity:
+   $$A_{\text{unpinned}} = K \times (12 - A_{\text{pinned}})$$
+   Configurations where widget areas do not satisfy this balance, or where widget geometries cannot tile a $6 \times 2$ rectangle without gaps, are rejected fast on config validation with explicit remediation diagnostics.
 
 3. **Non-Overlapping Rectangular Tiling**:
    For every screen $k$, each placed widget occupies a bounding rectangle $[x, x + cols - 1] \times [y, y + rows - 1]$ such that no two widgets share any grid cell:
@@ -168,25 +195,18 @@ On daemon startup or configuration reload, Mirrormere executes an exact 2D bin-p
 ### Algorithmic Implementation (Exact Backtracking)
 
 Because the grid is compact (only 12 discrete cells) and typical configurations contain 3 to 12 widgets, the search space is small ($< 10^4$ states). The packing engine solves the exact cover problem using recursive backtracking with bitmasks on config load in $< 1$ millisecond:
+1. Pinned widgets $W_{\text{pinned}}$ are positioned first and their occupied cells are stamped into the bitmasks of all $K$ screens simultaneously.
+2. Unpinned widgets $W_{\text{unpinned}}$ are sorted by area descending and placed into the remaining unmasked cells across screens $[0..K-1]$.
 
 ```
-Function SolvePacking(widgets, target_screens):
-    Sort widgets by area descending (heuristic optimization)
+Function SolvePacking(pinned_widgets, unpinned_widgets, K):
     Initialize screen bitmasks [0..K-1] to 0x000 (all 12 bits empty)
-
-    Function Backtrack(widget_index):
-        If widget_index == len(widgets):
-            Return CheckAllScreensFullyFilled(screen_bitmasks)
-        
-        widget = widgets[widget_index]
-        For each screen s in [0..K-1]:
-            For each valid origin (col, row) on screen s:
-                If widget fits at (col, row) without overlap:
-                    Place widget (set bits on screen s)
-                    If Backtrack(widget_index + 1):
-                        Return True
-                    Remove widget (clear bits on screen s)
-        Return False
+    For each pw in pinned_widgets:
+        Find valid (col, row) that fits on screen 0
+        Stamp pw bits across ALL screens [0..K-1]
+    
+    Sort unpinned_widgets by area descending
+    Return Backtrack(0)
 ```
 
 ### Config Load Diagnostics & Deficit Guidance
@@ -201,6 +221,7 @@ If the user's configured widgets cannot cleanly partition into fully filled scre
   Suggestions:
     - Add a [4, 2] widget (8 cells) and a [2, 1] widget (2 cells).
     - Or expand existing [2, 1] widgets to [3, 2] / [4, 2].
+    - Or insert native spacer tiles (e.g. { type: "spacer", dimensions: [2, 2] }) to intentionally leave layout space open.
 ```
 
 ---
@@ -232,7 +253,8 @@ display:
       dimensions: [2, 1]
 ```
 
-- When `pinned: true` is set, the solver accounts for the pinned widget's area across each screen, ensuring the remaining rotating widgets perfectly tile the remaining grid cells.
+- When `pinned: true` is set, the solver reserves the pinned widget's area $A_{\text{pinned}}$ across every screen before solving for unpinned rotating widgets, ensuring $A_{\text{unpinned}} = K \times (12 - A_{\text{pinned}})$.
+- If rotating widgets cannot cleanly tile the remaining $(12 - A_{\text{pinned}})$ cells on each screen, the operator can place one or more `type: spacer` tiles to satisfy the budget without adding unwanted widgets.
 
 ---
 
