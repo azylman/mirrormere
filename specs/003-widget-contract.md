@@ -568,7 +568,7 @@ Mirrormere enforces a strict separation between core public widgets and private 
    - 100% generic, reusable, and free of personal identifiers or proprietary hardware dependencies.
    - Core widget types: calendar agenda (`calendar-agenda`), weather forecast (`weather-forecast`), tasks & chores (`tasks`), photo carousel (`photo-carousel`), and grid spacer (`spacer`). Fixed header zones independently render the clock and ambient status.
 
-2. **Private User Extensions (`custom_widgets/` or Sidecar Services)**:
+2. **Private User Extensions (`config/widgets/` or Sidecar Services)**:
    - User-defined integrations that reference personal home configurations or specific hardware peripherals.
    - Run out-of-process as generic HTTP provider sidecars (or custom containers) communicating via the HTTP/webhook contract, with semantic templates mounted into `/config/widgets/`.
    - Includes: Home Assistant entity dashboards and custom LAN sensor monitors (video feeds such as Chromecast and doorbell cameras enter directly through the Unified Video Stream API per SPEC-004 rather than as grid widgets).

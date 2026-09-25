@@ -218,7 +218,7 @@ mirrormere/
 4. **Deferred Phase 2 Scaffolding**:
    - Phase 2 Voice directories (`sidecars/voice-hub`, `clients/mirrormere-voice`) are intentionally deferred from Git scaffolding until active Phase 2 implementation begins to prevent empty directory drift.
 5. **Widget Packaging & Display Runtime (`widgets/` vs. `web/`)**:
-   - `widgets/` contains standard core widget packages (`manifest.yaml`, `views/widget.html`, `assets/`) adhering to the pluggable contract (SPEC-003). This structure is identical to user extensions mounted into `/config/widgets/<widget-type>/` or `custom_widgets/`. All templates and manifests are served and parsed directly from the filesystem (zero embedded assets), enabling instant in-process hot-reloading without container restarts.
+   - `widgets/` contains standard core widget packages (`manifest.yaml`, `views/widget.html`, `assets/`) adhering to the pluggable contract (SPEC-003). This structure is identical to user extensions mounted into `/config/widgets/<widget-type>/` (host `config/widgets/`). All templates and manifests are served and parsed directly from the filesystem (zero embedded assets), enabling instant in-process hot-reloading without container restarts.
    - `web/` contains the web display runtime shell (`display.html`), cyber HUD stylesheets, SSE event bus wiring, and client touch handlers.
 
 ---
