@@ -150,8 +150,22 @@ To keep the core Go daemon container lightweight, hermetic, and minimal (< 25MB 
 - The core Go server **never bundles Chromium or headless browser dependencies**.
 - The core Go server exposes the full-screen layout at `GET /display` (HTML).
 - Ambient e-ink displays are serviced by an **optional headless capture sidecar** (`mirrormere-eink-renderer`).
-- The sidecar loads the page, captures the 800×480 viewport, applies 1-bit Floyd-Steinberg dithering / quantization, and exposes `GET /eink.png` for display nodes to fetch.
+- The sidecar loads the page, captures the 800×480 viewport, applies selective 1-bit quantization and dithering (detailed below), and exposes `GET /eink.png` for display nodes to fetch.
 - `GET /eink.png` renders on request (or returns a render newer than the last `widget.update`) and sends a strong `ETag` equal to a hash of the PNG bytes, so display nodes can skip unchanged frames (SPEC-009).
+
+### 4. Selective Dithering Pipeline
+Full-page error diffusion (e.g. applying naive Floyd-Steinberg dithering across the entire 800×480 viewport) degrades sharp text, numbers, and thin borders into fuzzy gray pixel speckles. To deliver crisp typography alongside high-quality continuous-tone graphics, `mirrormere-eink-renderer` employs a two-pass selective quantization pipeline:
+
+1. **Strict 1-Bit Thresholding Default**:
+   - Typography, digits, calendar grids, task checkboxes, clock glyphs, and UI borders are processed via a strict luminance threshold (luminance < 128 → black, ≥ 128 → white).
+   - Guarantees razor-sharp vector edges and clean typography with zero dithering artifacts or salt-and-pepper noise.
+2. **Selective Dithering on `.dither` Regions**:
+   - Continuous-tone elements such as photographs (photo carousel) and grayscale weather illustrations declare the CSS class `.dither` in their template markup (`views/widget.html`).
+   - The renderer queries the DOM for all `.dither` elements (`document.querySelectorAll('.dither')`) to extract their bounding client rectangles.
+   - Only pixel regions within these bounding boxes are quantized via Floyd-Steinberg or Atkinson error-diffusion dithering.
+3. **Buffer Composition & Output**:
+   - The selectively dithered regions are composited onto the thresholded 1-bit canvas.
+   - The resulting 800×480 1-bit monochrome image is encoded as a standard PNG (color type 0, bit depth 1) and served at `GET /eink.png`.
 
 ---
 
