@@ -59,7 +59,8 @@ mirrormere/
 ├── cmd/
 │   └── server/             # mirrormere-core entrypoint binary (main.go)
 ├── internal/               # Private Go core application packages (api, config, layout, providers, storage)
-├── web/                    # Static CSS/JS HUD assets and semantic HTML widget templates (widget.html)
+├── widgets/                # Core widget packages (manifest.yaml, views/widget.html, assets/)
+├── web/                    # Web display client runtime (static CSS/JS HUD tokens, display.html shell)
 ├── sidecars/               # Custom auxiliary microservices (eink-renderer, cast-watcher)
 ├── clients/                # Standalone edge display clients (eink-node Python SPI daemon)
 ├── deploy/                 # Docker Compose manifests, go2rtc config, and kiosk launch units
