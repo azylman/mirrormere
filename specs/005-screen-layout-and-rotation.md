@@ -64,7 +64,7 @@ Because 6 is composite with factors 1, 2, 3, and 6, the 6×2 grid natively satis
 
 ## Declarative Widget Configuration Schema
 
-Displays declare their top-level house timezone, active widgets, rotation behavior, and target dimensions in `config.yaml`:
+Displays declare their top-level house timezone, active widgets, rotation behavior, and target dimensions in `config.yaml`. Specifying `dimensions: [cols, rows]` on individual widget instances is **optional**; when omitted, Core defaults to `default_dimensions` from the resolved widget package manifest (`manifest.yaml`):
 
 ```yaml
 timezone: "America/Los_Angeles" # Authoritative house timezone (IANA format)
@@ -116,7 +116,7 @@ display:
           tasklist_id: "MDk3..."
     - id: local-weather
       type: weather-forecast
-      dimensions: [2, 1] # 1/3 width, bottom half (2 cells)
+      # dimensions: [2, 1]          # Optional: omitted here to demonstrate fallback to manifest default_dimensions [2, 1]
       refresh_interval_seconds: 900
       config:
         latitude: 37.8044
@@ -131,7 +131,7 @@ display:
         cycle_interval_seconds: 60
     - id: chores
       type: tasks
-      dimensions: [3, 2] # 1/2 width, full height (6 cells)
+      dimensions: [3, 2] # 1/2 width, full height (6 cells) - overrides manifest default_dimensions [2, 1]
 ```
 
 ### Supported Widget Dimensions
@@ -146,6 +146,19 @@ A widget's dimensions are specified as `[cols, rows]` where $1 \le cols \le 6$ a
 - `[3, 1]`: 1/2 width, half height (Area: 3)
 - `[2, 1]`: 1/3 width, half height card (Area: 2)
 - `[1, 1]`: 1/6 width, half height chip (Area: 1)
+
+### Widget Dimension Resolution & Manifest Fallbacks
+
+1. **Optional `dimensions:` Key**:
+   Specifying `dimensions: [cols, rows]` on widget instances in `config.yaml` is **optional**. When `dimensions:` is omitted from an instance declaration, Core automatically defaults to `default_dimensions` defined in the resolved widget package's `manifest.yaml` (e.g. `[4, 2]` for `calendar-agenda`, `[2, 1]` for `weather-forecast` or `tasks`).
+
+2. **Explicit Instance Override**:
+   An explicit `dimensions: [cols, rows]` in `config.yaml` takes precedence and overrides the manifest's `default_dimensions`, enabling operators to customize and resize widget footprints (e.g. expanding a tasks widget from its `[2, 1]` default to hero `[3, 2]`).
+
+3. **Validation Rules**:
+   - **Missing Manifest Fallback**: If `dimensions` is omitted on a widget instance and the resolved package manifest does not define a valid `default_dimensions` (or declares dimensions that violate the 6×2 grid bounds $1 \le cols \le 6, 1 \le rows \le 2$), configuration validation fails fast at startup with an explicit diagnostic error:
+     `[Mirrormere Config Error] widget '<id>' omits 'dimensions' and package manifest '<type>' has no valid default_dimensions`.
+   - **Grid Bounds Enforcement**: All dimensions—whether explicitly configured in `config.yaml` or resolved via manifest `default_dimensions` fallback—must strictly satisfy $1 \le cols \le 6$ and $1 \le rows \le 2$. Out-of-bounds dimensions fail startup validation fast.
 
 ### Native Spacer Tiles (`type: spacer`)
 To support sparse widget layouts (such as an operator who only wants a single `[4, 2]` calendar widget on screen without extra widgets) while strictly satisfying the 12-cell fully-filled grid invariant, Mirrormere provides a built-in `spacer` tile (`type: spacer`):
