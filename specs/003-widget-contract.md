@@ -29,7 +29,7 @@ To eliminate environment variable bloat and prevent volume mount conflicts, the 
    - Shipped directly within the container image (source repository path: `widgets/<widget-type>/`).
    - Contains core standard widgets (`calendar-agenda`, `weather-forecast`, `tasks`, `photo-carousel`, `spacer`).
 2. **Custom User Extensions (`/config/widgets/<widget-type>/`)**:
-   - Reserved exclusively for user volume mounts (e.g. `-v ./custom_widgets:/config/widgets:ro`).
+   - Resides under the volume-mounted configuration directory (e.g. `-v ./config:/config:ro` containing `widgets/<widget-type>/`).
    - Houses household-specific widgets, Home Assistant sensor tiles, and custom sidecar wrappers.
 
 ### Clean `/config/` Territory Rule & Precedence Chain
@@ -493,9 +493,9 @@ In alignment with Mirrormere's independent deployment topology and zero-runtime-
 - At startup, the server inspects `/config/custom.css` on disk:
   - **Mounted File Present**: Serves the volume-mounted file directly.
   - **Unmounted / Absent**: Serves the default core stylesheet directly from disk (`/app/web/static/css/hud.css`).
-- Each household injects its display styling purely via Docker volume mounts:
-  - **Alex's Touch Kiosk**: `-v ./kiosk.css:/config/custom.css:ro` (dark mode cyberpunk palette, 48px touch targets, glowing accents).
-  - **Mike's Ambient E-Ink**: `-v ./eink.css:/config/custom.css:ro` (high-contrast 1-bit monochrome, bold typography, zero animations, 2px solid borders).
+- Each household injects its display styling purely via the root configuration volume mount (`-v ./config:/config:ro`):
+  - **Alex's Touch Kiosk**: `./config/custom.css` styled with dark mode cyberpunk palette, 48px touch targets, glowing accents (e.g. copied from `deploy/examples/kiosk.css`).
+  - **Mike's Ambient E-Ink**: `./config/custom.css` styled with high-contrast 1-bit monochrome, bold typography, zero animations, 2px solid borders (e.g. copied from `deploy/examples/eink.css`).
 
 ---
 
@@ -504,12 +504,12 @@ In alignment with Mirrormere's independent deployment topology and zero-runtime-
 To deliver a frictionless developer experience and enable instant visual iteration on physical display hardware without restarting the Go daemon or rebuilding containers:
 
 ### 1. In-Process File Watching (`fsnotify`)
-The Go daemon runs a background `fsnotify` file system watcher monitoring:
+The Go daemon runs a background `fsnotify` file system watcher monitoring directory trees rather than individual file paths:
+- `/config/` (root configuration directory)
 - `/config/widgets/` (custom user widget packages)
 - `/app/widgets/` (core built-in widget packages)
-- `/config/custom.css`
-- `/config/config.yaml`
 
+- **Directory-Level Inode Preservation**: Most code editors (VS Code, vim, JetBrains) save changes by writing to a temporary file and atomically renaming it over the destination file. Single-file bind mounts (`-v ./config.yaml:/config/config.yaml:ro`) remain pinned to the original inode after a rename, causing the container to lose sync and preventing `fsnotify` from receiving events. By mounting and watching `/config/` as a directory, atomic renames and file modifications to `config.yaml` and `custom.css` are detected reliably.
 - **Recursive Subdirectory Registration**: Because `fsnotify` operates non-recursively on Linux/Unix systems, the daemon recursively walks and adds filesystem watches to every package subdirectory (`views/`, `assets/`, etc.) under both `/config/widgets/` and `/app/widgets/` at boot. When a new directory is created after startup (e.g. `mkdir /config/widgets/new-widget`), the parent directory watcher detects the `Create` event and dynamically registers a new watch on the newly created subdirectory.
 - **Debounced Processing (100ms)**: Batches rapid filesystem events from code editors and atomic file rename operations to eliminate thrashing.
 - **In-Memory Cache Eviction & Reload Dispatch**:

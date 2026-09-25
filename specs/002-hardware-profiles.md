@@ -55,8 +55,7 @@ services:
       - HOST=0.0.0.0
       - TZ=America/Los_Angeles
     volumes:
-      - ./config.yaml:/config/config.yaml:ro
-      - ./custom.css:/config/custom.css:ro # e.g. from deploy/examples/kiosk.css
+      - ./config:/config:ro # Contains config.yaml, custom.css, and optional widgets/
       - ./data:/data
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:8080/healthz"]
@@ -144,8 +143,7 @@ services:
       - HOST=0.0.0.0
       - TZ=America/Los_Angeles
     volumes:
-      - ./config.yaml:/config/config.yaml:ro
-      - ./custom.css:/config/custom.css:ro # e.g. from deploy/examples/eink.css
+      - ./config:/config:ro # Contains config.yaml, custom.css, and optional widgets/
       - ./data:/data
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:8080/healthz"]
