@@ -40,11 +40,17 @@ All user-provided configuration, styles, and custom extensions reside strictly u
 
 While all core application files live under `/app/` (`/app/web`, `/app/widgets`). A household can mount their entire private configuration directory directly to `/config` without clobbering or hiding built-in widgets.
 
-**Resolution Precedence**: When the display engine resolves a widget's template and assets for `type: <widget-type>`, it evaluates:
-1. `/config/widgets/<widget-type>/views/widget.html` (Custom User Package)
-2. `/app/widgets/<widget-type>/views/widget.html` (Core Built-In Package)
+**Package-Level Resolution Precedence & Whole-Package Override Rule**: When the display engine resolves a widget package for `type: <widget-type>`, it evaluates candidate directories at the whole-package level:
+1. `/config/widgets/<widget-type>/` (Custom User Package override)
+2. `/app/widgets/<widget-type>/` (Core Built-In Package)
 
-This enables households to introduce brand-new custom widgets OR seamlessly shadow/override built-in widget HTML layouts without modifying or forking core files.
+If `/config/widgets/<widget-type>/` exists, it is selected as the authoritative package, and `/app/widgets/<widget-type>/` is ignored entirely. There is **zero partial inheritance, layering, or file-by-file fallback** between `/config` and `/app`:
+- **Complete Package Requirement**: An override package in `/config/widgets/<widget-type>/` must be fully self-contained, supplying both its own `manifest.yaml` and `views/widget.html`. The `assets/` directory remains optional within an override package (matching built-in packages).
+- **Startup Validation Error**: If `/config/widgets/<widget-type>/` exists but lacks either required file, the Go daemon aborts startup with a fatal validation error:
+  ```text
+  [widget.loader] fatal: widget package at /config/widgets/<widget-type>/ is incomplete: missing required file manifest.yaml (or views/widget.html); overriding a widget type requires a complete package
+  ```
+  The daemon never falls back to `/app/widgets/<widget-type>/` for missing files within an overridden package directory. This enables households to introduce brand-new custom widgets OR completely replace built-in widget implementations cleanly without leaking underlying assets or schemas.
 
 ---
 
