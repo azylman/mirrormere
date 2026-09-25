@@ -11,7 +11,7 @@ This specification defines the dedicated client runtime environment and OS boots
 ### Decisions (settled in #mirrormere, 2026-09-24)
 - **Kiosk Compositor**: Wayland with `cage` (single-application fullscreen confinement, hardware-accelerated via Intel Mesa/Iris EGL).
 - **Browser Runtime**: Native Chromium in `--kiosk` mode pointing to `http://localhost:8080/display`.
-- **Zero On-Screen Keyboard (OSK)**: Tap-and-gesture interaction only (checkbox toggles, screen rotation swipes, video PiP controls). No virtual keyboard daemon or touch keyboard overlays; new task/list additions are handled phone-first.
+- **Zero On-Screen Keyboard (OSK)**: Tap-and-gesture interaction only (screen rotation swipes, video HUD transport controls). No virtual keyboard daemon or touch keyboard overlays; task lists are strictly read-only ambient surfaces, and all task additions/edits are handled phone-first at the source.
 - **Power Management**: Dual sleep lifecycle—a fixed night schedule (hard off 11 PM – 6 AM) paired with daytime idle DPMS blanking (10-minute timeout) with instant wake-on-tap via capacitive touchscreen input events.
 - **Audio Routing**: Video and alert audio are delivered directly via standard WebRTC playback in Chromium to the UPERFECT monitor's built-in dual stereo speakers over HDMI/USB-C via PipeWire. Host-level loopback (`pw-loopback`) is eliminated so that browser volume/mute controls, PiP ducking, and touch HUD controls remain unified.
 - **Voice Ingest**: Nano USB microphone hardware present on the compute unit, but software voice processing (`mirrormere-voice` client and LAN Voice Hub in SPEC-011) is deferred to post-v1.
@@ -134,7 +134,7 @@ The Touch Kiosk PWA implements strict touch and animation hygiene to deliver a r
 1. **Browser Touch Sanitization**:
    - **Tap Highlight Suppression**: `-webkit-tap-highlight-color: transparent` eliminates default blue/gray flash artifacts on capacitive taps.
    - **Text Selection Suppression**: `user-select: none; -webkit-user-select: none; -webkit-touch-callout: none` prevents accidental text highlighting, magnifiers, or context menus during rapid screen taps.
-   - **Minimum Touch Targets**: All interactive targets (checkboxes, navigation controls, HUD transport buttons) must meet or exceed a 48×48px tap hit area.
+   - **Minimum Touch Targets**: All interactive targets (navigation controls, HUD transport buttons) must meet or exceed a 48×48px tap hit area.
 
 2. **Slider Drag Commit Semantics**:
    - When manipulating touch sliders (e.g. video HUD volume controls or future device dimmers), the UI updates visually in real-time (60fps local tracking) but defers network mutation calls (`POST /api/.../action`) until the gesture commits on touch release (`pointerup` / `touchend`), or throttles network dispatch to at most once per 200ms during continuous drags, preventing REST dispatch storms.
