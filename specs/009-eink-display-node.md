@@ -63,7 +63,7 @@ flowchart LR
         Panel[Panel Controller\nepd7in5_V2 over spidev]
     end
 
-    Daemon -->|widget.update / screen.rotate| SSE
+    Daemon -->|updates & reload events| SSE
     SSE --> Coalesce
     Coalesce --> Fetch
     Sidecar -->|200 PNG + ETag / 304| Fetch
@@ -78,7 +78,8 @@ refresh timer), one lock around the panel. Only the refresh worker touches SPI.
 ## Trigger Model
 
 1. The client holds `GET /api/events` (SPEC-006) open.
-2. Any `widget.update`, `header.update`, or `screen.rotate` event marks the screen **dirty**.
+2. Any `widget.update`, `header.update`, `screen.rotate`, `widget.reload`, or `style.reload` event marks the screen **dirty**.
+   `widget.reload` (SPEC-006 §2.H) and `style.reload` (SPEC-006 §2.I) ensure that live edits to widget templates (`views/widget.html`) or custom stylesheets (`/config/custom.css`) trigger an immediate panel redraw (subject to coalescing and `min_refresh_seconds`) during development and styling.
    `system.status`, `voice.state`, and `: ping` lines do not mark the screen dirty. On Profile B, the reSpeaker XVF3800 hardware LED ring reflects active voice state transitions (`listening`, `thinking`, `speaking`) directly in hardware (SPEC-011 §1), avoiding distracting and latency-heavy e-paper panel refreshes.
 3. A periodic clock refresh timer marks the screen **dirty** every `clock_refresh_seconds`
    (default 300) so the fixed header clock stays synchronized without requiring high-frequency tick events from Core.
@@ -95,7 +96,7 @@ refresh timer), one lock around the panel. Only the refresh worker touches SPI.
 ### Requirement on the sidecar (amends SPEC-003 §4 & §5)
 To avoid a race where the client fetches before the sidecar re-renders,
 `GET /eink.png` must render **on request** (or return a render newer than the
-last `widget.update`), and must send a strong `ETag` equal to a hash of the
+last update or reload event), and must send a strong `ETag` equal to a hash of the
 PNG bytes.
 
 Additionally, the sidecar is responsible for applying the **selective dithering pipeline** (SPEC-003 §5). By strictly thresholding text/UI lines and restricting error-diffusion dithering to `.dither` regions (photos/weather icons), the sidecar ensures the display node receives clean 1-bit monochrome data. The client node validates that incoming PNG payloads are 1-bit (`mode == "1"`) and passes pixels directly to the hardware frame buffer without performing client-side re-dithering.
