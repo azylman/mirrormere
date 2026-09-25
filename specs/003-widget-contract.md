@@ -504,11 +504,17 @@ In alignment with Mirrormere's independent deployment topology and zero-runtime-
 To deliver a frictionless developer experience and enable instant visual iteration on physical display hardware without restarting the Go daemon or rebuilding containers:
 
 ### 1. In-Process File Watching (`fsnotify`)
-The Go daemon runs a background `fsnotify` file system watcher monitoring `/config/widgets/`, `/config/custom.css`, and `/config/config.yaml`:
+The Go daemon runs a background `fsnotify` file system watcher monitoring:
+- `/config/widgets/` (custom user widget packages)
+- `/app/widgets/` (core built-in widget packages)
+- `/config/custom.css`
+- `/config/config.yaml`
+
+- **Recursive Subdirectory Registration**: Because `fsnotify` operates non-recursively on Linux/Unix systems, the daemon recursively walks and adds filesystem watches to every package subdirectory (`views/`, `assets/`, etc.) under both `/config/widgets/` and `/app/widgets/` at boot. When a new directory is created after startup (e.g. `mkdir /config/widgets/new-widget`), the parent directory watcher detects the `Create` event and dynamically registers a new watch on the newly created subdirectory.
 - **Debounced Processing (100ms)**: Batches rapid filesystem events from code editors and atomic file rename operations to eliminate thrashing.
-- **In-Memory Cache Eviction**:
-  - When any `views/widget.html` file changes on disk, the Go server immediately evicts its in-memory compiled `html/template` cache. The next canvas render parses the fresh template directly from disk.
-  - When `manifest.yaml` updates, the daemon updates the widget registry metadata JIT.
+- **In-Memory Cache Eviction & Reload Dispatch**:
+  - When any `views/widget.html` file changes on disk (in either `/config/widgets/` or `/app/widgets/`), the Go server immediately evicts its in-memory compiled `html/template` cache and broadcasts `event: widget.reload` (`{"type": "<widget-type>"}`). The next canvas render parses the fresh template directly from disk.
+  - When `manifest.yaml` updates on disk, the daemon reloads the widget registry metadata JIT and validates schemas. It also emits `event: widget.reload` for that `<widget-type>` so connected clients re-render and pick up any updated metadata or dimension changes.
   - When `/config/config.yaml` updates, the configuration parser re-parses with `${VAR}` interpolation under the Last Known Good Configuration (LKGC) resilience model.
 
 ### 2. Live SSE Signal Dispatch
