@@ -515,7 +515,7 @@ The Go daemon runs a background `fsnotify` file system watcher monitoring direct
 - **In-Memory Cache Eviction & Reload Dispatch**:
   - When any `views/widget.html` file changes on disk (in either `/config/widgets/` or `/app/widgets/`), the Go server immediately evicts its in-memory compiled `html/template` cache and broadcasts `event: widget.reload` (`{"type": "<widget-type>"}`). The next canvas render parses the fresh template directly from disk.
   - When `manifest.yaml` updates on disk, the daemon reloads the widget registry metadata JIT and validates schemas. It also emits `event: widget.reload` for that `<widget-type>` so connected clients re-render and pick up any updated metadata or dimension changes.
-  - When `/config/config.yaml` updates, the configuration parser re-parses with `${VAR}` interpolation under the Last Known Good Configuration (LKGC) resilience model.
+  - When `/config/config.yaml` updates, the configuration parser validates and reloads running instances under the Last Known Good Configuration (LKGC) resilience model without restarting the process (see SPEC-012 for the full LKGC pipeline, worker diffing, and layout recalculation specification).
 
 ### 2. Live SSE Signal Dispatch
 Because connected display clients (Chromium kiosk browser, companion tablets, e-ink renderers) maintain an active stream on `GET /api/events`, the Go daemon broadcasts targeted reload events over the event bus:
