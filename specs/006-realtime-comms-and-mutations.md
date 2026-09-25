@@ -62,12 +62,13 @@ flowchart LR
 ## Server-Sent Events (SSE) Specification
 
 ### 1. Connection Endpoint
-- **URL**: `GET /api/events`
+- **URL**: `GET /api/events` (or `GET /api/events?token=<shared_secret>` for browser `EventSource` clients when authenticated)
 - **Headers**:
   ```http
   Accept: text/event-stream
   Cache-Control: no-cache
   Connection: keep-alive
+  Authorization: Bearer <shared_secret>   # (Optional / Required if server.shared_secret is configured)
   ```
 - **Response Headers**:
   ```http
@@ -177,6 +178,70 @@ When a client establishes an SSE connection to `GET /api/events`:
    ```
 
 Following the initial state hydration burst, the stream transitions seamlessly to live real-time event broadcasting and periodic keep-alive pings.
+
+---
+
+## Authentication & Tunnel Security (Shared Secret)
+
+Mirrormere is designed as a local LAN appliance without multi-user accounts. However, when deployed behind an external tunnel (e.g. Cloudflare Tunnels, Tailscale Funnel) or exposed beyond the trusted LAN, the daemon requires setting `server.shared_secret` (configured via `config.yaml` or `MIRRORMERE_SHARED_SECRET` environment variable per SPEC-008).
+
+### 1. Browser `EventSource` Header Limitation
+The standard W3C browser `EventSource` JavaScript API (`new EventSource('/api/events')`) does **not** support setting custom HTTP request headers. While native or script clients (e.g. Python e-ink daemons, curl, or sidecars) can send `Authorization: Bearer <shared_secret>`, browser clients running on touch kiosks, mobile web apps, or desktop browsers cannot pass authorization headers to `EventSource` without third-party polyfills or fetch-based workarounds.
+
+### 2. Dual Authentication Mechanism
+To support both browser clients and programmatic clients uniformly, Mirrormere's auth middleware accepts the shared secret through either of two mechanisms:
+1. **HTTP Authorization Header** (Preferred for REST mutations & headless scripts):
+   ```http
+   Authorization: Bearer <shared_secret>
+   ```
+2. **URL Query Parameter** (Supported for browser `EventSource` and web clients):
+   ```http
+   GET /api/events?token=<shared_secret>
+   ```
+
+### 3. Middleware Verification Logic
+For every incoming request against protected endpoints (`GET /api/events`, `POST /api/widgets/{widget_id}/action`, `POST /api/video/*`, `POST /api/screen/*`):
+1. **Unsecured LAN Mode**: If `server.shared_secret` is unset or empty, authentication is disabled and all requests are permitted.
+2. **Secured / Tunneled Mode**: If `server.shared_secret` is configured:
+   - The middleware first checks the `Authorization` request header for a `Bearer <token>` value.
+   - If the header is missing or does not contain a Bearer token, the middleware checks the `token` URL query parameter (`r.URL.Query().Get("token")`).
+   - The extracted candidate token is compared against `server.shared_secret` using constant-time string comparison (`crypto/subtle.ConstantTimeCompare`) to prevent timing side-channel attacks.
+   - If neither the header nor the query parameter matches the configured secret:
+     - The server rejects the request immediately with `401 Unauthorized`.
+     - Response headers: `Content-Type: application/json`
+     - Response payload:
+       ```json
+       {
+         "status": "error",
+         "error": "unauthorized: missing or invalid shared secret"
+       }
+       ```
+
+### 4. Touch Kiosk Browser Connection Example
+The Touch Kiosk PWA initializes its persistent SSE connection with token query parameter authentication:
+```javascript
+const sharedSecret = window.MIRRORMERE_CONFIG?.sharedSecret || '';
+const sseUrl = sharedSecret 
+  ? `/api/events?token=${encodeURIComponent(sharedSecret)}` 
+  : '/api/events';
+
+const eventSource = new EventSource(sseUrl);
+
+eventSource.onmessage = (e) => {
+  // dispatch live updates
+};
+
+eventSource.onerror = (err) => {
+  console.warn('SSE connection error; native EventSource will auto-retry', err);
+};
+```
+
+### 5. Auto-Reconnect Behavior
+Browser `EventSource` automatically attempts reconnection when the stream drops due to proxy idle timeouts, network blips, or server restarts. Because the `?token=<secret>` parameter is part of the connection URL, the browser automatically includes the credentials on every auto-reconnect attempt, preserving uninterrupted streaming without custom retry orchestration or token refresh callbacks.
+
+### 6. Security & Reverse Proxy Considerations
+- **Transport Security**: Deployments exposing `server.shared_secret` over public networks must use TLS (HTTPS/WSS) via Cloudflare Tunnels, Tailscale HTTPS, Caddy, or Nginx to prevent token sniffing in transit.
+- **Access Log Redaction**: Reverse proxies and daemon HTTP logging middleware should redact the `token` query parameter from access logs (e.g. transforming `/api/events?token=xyz` to `/api/events?token=[REDACTED]`) to prevent secrets from leaking into disk logs or observability platforms.
 
 ---
 
@@ -332,7 +397,7 @@ Controls the automatic rotation timer loop:
 ## Display Profile Consumption Details
 
 ### Touch Kiosk (Profile A - 60Hz Interactive)
-- PWA maintains a long-lived `EventSource` connection to `/api/events`.
+- PWA maintains a long-lived `EventSource` connection to `/api/events` (with `?token=<shared_secret>` query authentication when tunneled).
 - In-memory reactive state tree updates instantly on `widget.update`.
 - Smooth slide/flip animation triggers on `screen.rotate`.
 - Touch swipe gestures reset/pause the rotation timer locally, sending a `POST /api/screen/pause` or `POST /api/screen/select` if desired.

@@ -148,7 +148,7 @@ Disabled unless `buttons.enabled: true`.
 server:
   events_url: "http://192.168.1.77:8080/api/events"
   image_url: "http://192.168.1.77:8081/eink.png"
-  shared_secret_env: MIRRORMERE_SECRET   # optional, SPEC-008 auth
+  shared_secret_env: MIRRORMERE_SECRET   # optional, SPEC-008 / SPEC-006 auth (Bearer header or ?token=)
 
 panel:
   driver: epd7in5_V2

@@ -21,7 +21,8 @@ Mirrormere is a LAN appliance, not a cloud service, and has no user accounts.
 Two rules still hold:
 - The daemon binds to the local network by default. Exposure through a tunnel
   (Cloudflare, Tailscale Funnel) requires setting `server.shared_secret`,
-  which clients then send as `Authorization: Bearer <secret>`.
+  which clients then send as `Authorization: Bearer <secret>` (or `?token=<secret>`
+  query parameter for browser `EventSource` tunnels per SPEC-006).
 - Upstream credentials (Google OAuth tokens, Home Assistant long-lived tokens,
   private API tokens) live in config or env files readable only by the daemon.
   They are the most sensitive thing Mirrormere holds.
