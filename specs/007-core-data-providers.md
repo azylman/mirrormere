@@ -248,7 +248,7 @@ Historically, Google Photos integrations required the Google Photos Library API 
 Fortunately, Google Photos provides **Unlisted Share Links** (e.g. `https://photos.app.goo.gl/...`). When an album is shared via link:
 1. Anyone with the URL can view the album in a browser without signing into a Google account.
 2. The initial page payload embeds structured metadata arrays containing the direct CDN image URLs (`https://lh3.googleusercontent.com/pw/...`).
-3. Appending standard Google image sizing parameters (e.g. `=w1920-h1080-no` or `=w800-h480-c`) instructs Google's edge cache to serve the exact resolution and crop required by the display hardware.
+3. Appending standard Google image sizing parameters (e.g. `=w{width}-h{height}-c`) instructs Google's edge cache to serve the exact resolution and crop required by the client.
 
 ### Configuration Schema (`config.yaml`)
 
@@ -264,7 +264,6 @@ display:
         cycle_interval_seconds: 60     # Rotate image every 60s within widget
         preload_count: 50
         shuffle: true
-        image_size: [1920, 1080]       # Optional [width, height] sizing; defaults to [1920, 1080]
 ```
 
 ### Parsing Pipeline in Go
@@ -273,9 +272,29 @@ display:
    - Base image URL (`https://lh3.googleusercontent.com/...`)
    - Original upload timestamp
    - Intrinsic image width and height (aspect ratio)
-3. **Parameter Injection**: Dynamic sizing parameters are applied based on the widget instance's configured `image_size: [width, height]` (defaults to `[1920, 1080]`):
-   - Appends `=w{width}-h{height}` to the base image URL (e.g. `=w1920-h1080` for 1080p, or `=w800-h480` for 800×480 panels).
-   - Core remains completely agnostic of client hardware classes; the sizing suffix is determined strictly by the widget instance configuration.
+3. **Clean Base URL Emission**: Core emits the unadorned CDN base image URL in `PhotoItem.url` (along with `aspect_ratio`). Core avoids baking static resolution parameters or hardware-specific targets into stored photo payloads.
+
+### Dynamic Presentation Sizing (Zero Hardware Targets)
+
+Rather than hard-coding hardware resolutions in `config.yaml` or maintaining device profile lookup tables in Go, photo sizing is computed **dynamically at presentation time based on the rendered geometry of the photo widget on the grid canvas**:
+
+1. **DOM Container Measurement**:
+   When the photo widget (`widgets/photo-carousel/views/widget.html`) mounts in the client (either interactive Touch Kiosk Chromium or E-Ink headless Chromium sidecar), the client presentation script measures the rendered container element's bounding box:
+   ```javascript
+   const rect = container.getBoundingClientRect();
+   const dpr = window.devicePixelRatio || 1;
+   const targetWidth = Math.round(rect.width * dpr);
+   const targetHeight = Math.round(rect.height * dpr);
+   ```
+2. **Dynamic CDN Parameter Injection**:
+   The client appends Google's edge-resizing query parameters to the clean base URL:
+   ```javascript
+   const sizedUrl = `${photo.url}=w${targetWidth}-h${targetHeight}-c`;
+   ```
+3. **Adaptive Across Screen Densities & Grid Dimensions**:
+   - **Grid Geometry Adaptivity**: A `dimensions: [3, 2]` widget (half-width on 6×2 grid) dynamically requests ~960×960px on a 1080p kiosk. If the operator reconfigures the widget to a full-screen hero `dimensions: [6, 2]`, it automatically requests ~1920×980px with zero configuration changes.
+   - **Display Target Adaptivity**: On Mike's 800×480 E-Ink panel, the headless Chromium capture sidecar measures the widget container as ~400×420px (for `[3, 2]`), automatically pulling low-bandwidth, downscaled images from Google's edge before dithering.
+   - **Optional Override**: Operators may optionally specify `image_size: [width, height]` under widget `config:` if they wish to pin or cap the maximum CDN fetch resolution explicitly.
 
 ### Normalized Internal Schema (`PhotoItem`)
 
@@ -293,13 +312,13 @@ Emitted via SSE on `widget.update`:
     "photos": [
       {
         "id": "photo_101",
-        "url": "https://lh3.googleusercontent.com/pw/AP1Gcz...=w1920-h1080",
+        "url": "https://lh3.googleusercontent.com/pw/AP1Gcz...",
         "timestamp": "2026-08-15T14:30:00Z",
         "aspect_ratio": 1.33
       },
       {
         "id": "photo_102",
-        "url": "https://lh3.googleusercontent.com/pw/AP1Gcz...=w1920-h1080",
+        "url": "https://lh3.googleusercontent.com/pw/AP1Gcz...",
         "timestamp": "2026-09-02T18:45:00Z",
         "aspect_ratio": 1.50
       }
