@@ -145,7 +145,25 @@ id: evt_1727216300_07
 data: {"state":"idle","transcript":null,"reply":null,"tts_engine":null}
 ```
 
-#### H. Keep-Alive Heartbeat
+#### H. `widget.reload`
+Emitted when the in-process `fsnotify` file watcher detects a template update in `/config/widgets/<widget-type>/views/widget.html` or `/app/widgets/<widget-type>/views/widget.html`:
+```http
+event: widget.reload
+id: evt_1727216300_08
+data: {"type":"sensor-card"}
+```
+Connected display clients receive this event and immediately patch the target widget's DOM tree (or trigger a clean page reload) with zero manual screen interaction.
+
+#### I. `style.reload`
+Emitted when the in-process `fsnotify` file watcher detects an update to the volume-mounted custom stylesheet (`/config/custom.css`):
+```http
+event: style.reload
+id: evt_1727216300_09
+data: {"file":"custom.css","timestamp":"2026-09-25T19:40:00Z"}
+```
+Connected browser clients hot-swap the stylesheet `<link>` tag's `href` with a cache-busting timestamp parameter (`/style.css?t=Date.now()`), restyling the UI live with zero visual flicker.
+
+#### J. Keep-Alive Heartbeat
 The server writes an empty comment line `: ping` or event every 15–30 seconds to prevent reverse proxy idle timeouts:
 ```http
 : ping 1727216320
@@ -337,7 +355,49 @@ External sidecars, local microservices, and Home Assistant automations can immed
     }
     ```
 
-### 4. Video Stream Lifecycle & Action Endpoints
+### 4. Custom Widget Ingestion Polling Contract (`POST {endpoint}`)
+When Mirrormere ingests data for custom widgets declared with `provider: http`, the Go daemon polls the configured `{endpoint}` on its declared `refresh_interval_seconds` cadence:
+
+- **Method**: Standard `POST` (prevents reverse proxies, web frameworks, and client libraries from stripping request bodies, which commonly occurs with HTTP `GET`). An optional `method: GET` configuration is supported in `config.yaml` for simple parameterless IoT hardware (e.g. an ESP32 displaying a static `/status` page).
+- **Headers**:
+  ```http
+  Content-Type: application/json
+  Accept: application/json
+  Authorization: Bearer <TOKEN>        (if token_env is configured)
+  X-Widget-ID: living-room-temp
+  X-Widget-Type: sensor-card
+  X-Widget-Dimensions: 2x1
+  ```
+- **Request Body Sent TO Endpoint**:
+  Mirrormere serializes the widget instance context and its full custom `config:` mapping:
+  ```json
+  {
+    "widget_id": "living-room-temp",
+    "widget_type": "sensor-card",
+    "dimensions": [2, 1],
+    "config": {
+      "entity_id": "sensor.living_room_temp",
+      "unit": "F"
+    }
+  }
+  ```
+  This allows a single multi-tenant sidecar (such as a Home Assistant bridge or database query runner) to power multiple widget instances dynamically without requiring its own routing table or separate configuration files.
+
+- **Response Body Received FROM Endpoint (`200 OK`)**:
+  Conforms to the standard JSON payload envelope:
+  ```json
+  {
+    "widget_id": "living-room-temp",
+    "timestamp": "2026-09-24T22:20:00Z",
+    "state": "healthy",
+    "data": {
+      "temperature": 71.2
+    }
+  }
+  ```
+  On receipt, Mirrormere updates its in-memory and SQLite cache and broadcasts a `widget.update` SSE event across all connected displays.
+
+### 5. Video Stream Lifecycle & Action Endpoints
 - **Trigger Stream**: `POST /api/video/trigger`
   - **Payload**:
     ```json
@@ -379,7 +439,7 @@ External sidecars, local microservices, and Home Assistant automations can immed
     ```
   - Dispatched by the stream producer sidecar (e.g. `sidecars/cast-watcher`) when player transport state changes (`"playing"`, `"paused"`, or `"buffering"`). Core updates the active stream record and broadcasts an updated `video.state` SSE event to synchronize all connected displays.
 
-### 5. Master Audio Volume & Mute Endpoints
+### 6. Master Audio Volume & Mute Endpoints
 Mirrormere Core acts as the centralized coordinator for master audio volume and mute state, tracking desired values and synchronizing connected clients. To avoid fragile host-level dependencies, permissions, or split-brain attenuation layers, volume and muting are managed entirely in software at the application/client level rather than relying on host-level OS settings (`wpctl` or PipeWire socket bind-mounts):
 - **Centralized State Coordination**: Core maintains authoritative in-memory `volume` (0–100) and `muted` (boolean) state, broadcasting changes immediately across `GET /api/events` as `audio.state` SSE events.
 - **Client-Side Software Enforcement**: Active display clients (e.g. Chromium running in `--kiosk` mode under Wayland `cage` per SPEC-010) or edge voice companions subscribe to `audio.state` and apply digital attenuation directly to their HTML5 `<video>` / WebRTC playback elements.
@@ -466,7 +526,7 @@ Returns the current master volume and mute state:
   }
   ```
 
-### 6. Voice Pipeline State Relay Endpoint (`POST /api/voice/state`)
+### 7. Voice Pipeline State Relay Endpoint (`POST /api/voice/state`)
 The edge voice companion daemon (`mirrormere-voice` per SPEC-011) relays interaction lifecycle events to Mirrormere Core to synchronize on-screen microphone indicators and caption toasts:
 - **Endpoint**: `POST /api/voice/state`
 - **Authentication**: None (all inbound LAN calls are fully trusted per the local-network trust model).
@@ -507,7 +567,7 @@ The edge voice companion daemon (`mirrormere-voice` per SPEC-011) relays interac
     }
     ```
 
-### 7. Household List Inspection Endpoint (`GET /api/lists/{list_id}/items`)
+### 8. Household List Inspection Endpoint (`GET /api/lists/{list_id}/items`)
 
 Direct list inspection enables mobile companion apps, headless automation scripts, and voice pipelines to inspect household lists (groceries, chores, todo items) directly by canonical `list_id`, without requiring or coupling to a visible widget on screen (per SPEC-008). Because Mirrormere operates as a strictly read-only ambient display for tasks, no list mutation endpoints (`POST`, `PATCH`, `DELETE`) exist; list modifications are made upstream at the source of truth.
 
@@ -544,7 +604,7 @@ Retrieves all current items for a specific list from the local cache:
   }
   ```
 
-### 8. Screen Navigation & Rotation Endpoints
+### 9. Screen Navigation & Rotation Endpoints
 
 #### A. Select Screen (`POST /api/screen/select`)
 Selects a specific screen directly by zero-based index:
@@ -636,7 +696,7 @@ Controls the automatic rotation timer loop:
   - `paused: true`: Suspends the automatic rotation timer loop for `duration_seconds` (or indefinitely if set to 0). Core auto-resumes periodic rotation once the timer elapses.
   - `paused: false`: Re-arms the rotation timer using `interval_seconds` and immediately resumes periodic rotation.
 
-### 9. Standard Responses
+### 10. Standard Responses
 - **`200 OK`**: Action executed immediately, push webhook accepted and cached, or audio settings changed:
   ```json
   { "status": "ok", "widget_id": "indoor-air-quality", "result": { "calibrated": true } }
@@ -654,7 +714,7 @@ Controls the automatic rotation timer loop:
 - **`422 Unprocessable Entity`**: Payload syntactically valid but cannot be processed by the target resource state (e.g. stream is not controllable, or missing `control_url` for transport control).
 - **`502 Bad Gateway`**: Upstream provider (e.g. out-of-process HTTP service or Cast socket) failed or unreachable.
 
-### 10. Optimistic UI Updates on Touch Kiosks
+### 11. Optimistic UI Updates on Touch Kiosks
 1. User interacts with touch controls on the 1080p capacitive touch display—such as tapping a HUD play/pause button, dragging the master volume slider, or toggling mute (note: task list widgets are ambient and read-only, avoiding optimistic task state reconciliation).
 2. The Touch PWA immediately flips the visual state locally (< 16ms, 60fps responsiveness).
 3. The PWA dispatches the respective REST endpoint (`POST /api/widgets/{widget_id}/action`, `POST /api/video/action`, `POST /api/audio/volume`, or `POST /api/audio/mute`).
