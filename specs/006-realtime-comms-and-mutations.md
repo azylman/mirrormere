@@ -233,23 +233,22 @@ External sidecars, local microservices, and Home Assistant automations can immed
   Accept: application/json
   ```
 - **Authentication**: None (Mirrormere runs strictly on local networks with zero authn/authz; all inbound LAN calls are fully trusted per the local-network trust model).
+- **Scope & Source-of-Truth Guard**:
+  - **HTTP & Sidecar Providers Only**: The push webhook is strictly limited to widgets whose data an external sidecar or custom HTTP provider owns (HTTP-provider widgets per SPEC-003 §3, such as `custom-sensor-hud` or indoor air quality monitors).
+  - **List Widgets Protected (`409 Conflict`)**: List-backed widgets (`type: tasks`) manage their items through their authoritative source of truth (local SQLite, Google Tasks, or generic HTTP list service per SPEC-008). Pushing arbitrary item lists to `POST /api/widgets/{widget_id}/push` on a `tasks` widget circumvents upstream synchronization, causes cache drift across consumer widgets (e.g. `compact-chores`), and will be overwritten on the next poll cycle.
+  - Calling `POST /api/widgets/{widget_id}/push` on a `tasks` widget is rejected with **`409 Conflict`** and an error message directing callers to use the list management endpoints (`/api/lists/{list_id}/items` or widget actions).
 - **Request Payload**:
   Conforms to the standard JSON payload envelope defined in SPEC-003:
   ```json
   {
-    "widget_id": "daily-chores",
+    "widget_id": "custom-sensor-hud",
     "timestamp": "2026-09-24T22:20:00Z",
     "state": "healthy",
     "data": {
-      "list": {
-        "id": "chores",
-        "name": "Chores",
-        "source": "local"
-      },
-      "items": [
-        { "id": "i1", "title": "Take out compost", "done": true, "position": 0 },
-        { "id": "i2", "title": "Feed cat", "done": false, "position": 1 }
-      ]
+      "co2_ppm": 640,
+      "temperature_f": 71.2,
+      "humidity_pct": 45,
+      "air_quality": "good"
     }
   }
   ```
@@ -260,15 +259,15 @@ External sidecars, local microservices, and Home Assistant automations can immed
 
 - **Cache Ingestion & Screen-Agnostic Propagation**:
   - **Immediate Cache Ingestion**: The daemon validates the payload and updates the widget provider's in-memory state and persistent SQLite cache immediately, **regardless of whether the widget is currently visible on the active screen**.
-  - **Active Screen Broadcast**: If the target widget is located on the currently active rotation screen, the server broadcasts an immediate `widget.update` SSE event across all open `/api/events` connections, rendering the update in real time without waiting for the next polling cycle.
+  - **Active Screen & Pinned Widget Broadcast**: If the target widget is located on the currently active rotation screen OR is pinned in the layout (per SPEC-005), the server immediately broadcasts a `widget.update` SSE event across all open `/api/events` connections, rendering the update in real time without waiting for the next polling cycle.
   - **Inactive Screen Hydration**: If the target widget is on an inactive screen, the state is safely cached. When the screen rotation engine subsequently advances to that screen, the updated payload is served instantly during initial screen hydration, preventing stale flickers or lag.
 
 - **Responses**:
-  - **`200 OK`**: Push payload accepted and cache updated (and SSE broadcast emitted if widget is on active screen).
+  - **`200 OK`**: Push payload accepted and cache updated (and SSE broadcast emitted if widget is on active screen or pinned).
     ```json
     {
       "status": "ok",
-      "widget_id": "daily-chores",
+      "widget_id": "custom-sensor-hud",
       "updated_at": "2026-09-24T22:20:00Z"
     }
     ```
@@ -276,14 +275,21 @@ External sidecars, local microservices, and Home Assistant automations can immed
     ```json
     {
       "status": "error",
-      "error": "payload widget_id 'groceries' does not match path widget_id 'daily-chores'"
+      "error": "payload widget_id 'living-room' does not match path widget_id 'custom-sensor-hud'"
     }
     ```
   - **`404 Not Found`**: Widget ID `{widget_id}` does not exist in the active server configuration.
     ```json
     {
       "status": "error",
-      "error": "widget 'custom-sensor' not found in active configuration"
+      "error": "widget 'custom-sensor-hud' not found in active configuration"
+    }
+    ```
+  - **`409 Conflict`**: Target widget is backed by a list/task provider (`type: tasks`).
+    ```json
+    {
+      "status": "error",
+      "error": "cannot push state to list-backed widget 'daily-chores'; use /api/lists/chores/items or /api/widgets/daily-chores/action"
     }
     ```
 
@@ -398,7 +404,103 @@ Returns the current master volume and mute state:
   }
   ```
 
-### 5. Screen Navigation & Rotation Endpoints
+### 5. Household List Management Endpoints
+
+Direct list mutation endpoints enable mobile companion apps, headless automation scripts, and voice pipelines to inspect and mutate household lists (groceries, chores, todo items) directly by canonical `list_id`, without requiring or coupling to a visible widget on screen (per SPEC-008):
+
+#### A. Get List Items (`GET /api/lists/{list_id}/items`)
+Retrieves all current items for a specific list:
+- **Headers**:
+  ```http
+  Accept: application/json
+  ```
+- **Query Parameters**:
+  - `include_done` (boolean, optional, default `true`): If `false`, filters out completed items.
+- **Response (`200 OK`)**:
+  ```json
+  [
+    {
+      "id": "i1",
+      "list_id": "groceries",
+      "title": "Oat milk",
+      "done": false,
+      "section": "Dairy",
+      "position": 0,
+      "assignee": null,
+      "due_date": null,
+      "created_at": "2026-09-24T22:00:00Z",
+      "updated_at": "2026-09-24T22:30:00Z"
+    }
+  ]
+  ```
+
+#### B. Add List Item (`POST /api/lists/{list_id}/items`)
+Appends a new item to the list:
+- **Headers**:
+  ```http
+  Content-Type: application/json
+  Accept: application/json
+  ```
+- **Request Payload**:
+  ```json
+  {
+    "title": "Sourdough bread",
+    "section": "Bakery",
+    "due_date": null,
+    "assignee": null
+  }
+  ```
+  - `title` (string, required): Item text description.
+  - `section` (string, optional, default `null`): Section/category tag.
+  - `due_date` (string, optional, default `null`): Target completion date (`YYYY-MM-DD`).
+  - `assignee` (string, optional, default `null`): Family member or assignee name.
+- **Response (`201 Created`)**:
+  Returns the created `ListItem` object with populated `id`, `position`, `created_at`, and `updated_at`.
+  ```json
+  {
+    "id": "i2",
+    "list_id": "groceries",
+    "title": "Sourdough bread",
+    "done": false,
+    "section": "Bakery",
+    "position": 1,
+    "assignee": null,
+    "due_date": null,
+    "created_at": "2026-09-24T22:35:00Z",
+    "updated_at": "2026-09-24T22:35:00Z"
+  }
+  ```
+- **Side Effects**: Persists the item into the list's source of truth (local SQLite `/data/lists.db` or external adapter per SPEC-008), updates cached list state, and emits a `widget.update` SSE broadcast for all active widgets displaying this `list_id`.
+
+#### C. Update List Item (`PATCH /api/lists/{list_id}/items/{item_id}`)
+Updates mutable fields of an existing list item:
+- **Headers**:
+  ```http
+  Content-Type: application/json
+  Accept: application/json
+  ```
+- **Request Payload** (at least one field required):
+  ```json
+  {
+    "title": "Organic oat milk",
+    "done": true,
+    "section": "Dairy",
+    "position": 1,
+    "due_date": "2026-09-26",
+    "assignee": "Alex"
+  }
+  ```
+- **Response (`200 OK`)**:
+  Returns the updated `ListItem` object.
+- **Side Effects**: Persists changes to the list's source of truth with last-write-wins on `updated_at`, updates cached state, and broadcasts a `widget.update` SSE event to active display widgets.
+
+#### D. Delete List Item (`DELETE /api/lists/{list_id}/items/{item_id}`)
+Removes an item from the list:
+- **Response (`204 No Content`)**:
+  Empty body confirming item removal.
+- **Side Effects**: Deletes the row from SQLite or calls upstream delete, updates cached state, and broadcasts a `widget.update` SSE event.
+
+### 6. Screen Navigation & Rotation Endpoints
 
 #### A. Select Screen (`POST /api/screen/select`)
 Selects a specific screen directly by zero-based index:
@@ -488,23 +590,26 @@ Controls the automatic rotation timer loop:
   - `paused: true`: Suspends the automatic rotation timer loop; the display remains indefinitely on the active screen until explicitly advanced or unpaused.
   - `paused: false`: Re-arms the rotation timer using `interval_seconds` and resumes periodic rotation.
 
-### 6. Standard Responses
-- **`200 OK`**: Action executed immediately, push webhook accepted and cached, or audio settings updated:
+### 7. Standard Responses
+- **`200 OK`**: Action executed immediately, push webhook accepted and cached, list item updated, or audio settings changed:
   ```json
   { "status": "ok", "widget_id": "daily-chores", "result": { "item_id": "i1", "done": true } }
   ```
   ```json
-  { "status": "ok", "widget_id": "daily-chores", "updated_at": "2026-09-24T22:20:00Z" }
+  { "status": "ok", "widget_id": "custom-sensor-hud", "updated_at": "2026-09-24T22:20:00Z" }
   ```
   ```json
   { "status": "ok", "volume": 75, "muted": false }
   ```
+- **`201 Created`**: Resource created successfully (e.g. new item added via `POST /api/lists/{list_id}/items`). Returns newly created resource.
 - **`202 Accepted`**: Action dispatched asynchronously to an external system (e.g. Home Assistant service call or CastV2 socket).
+- **`204 No Content`**: Resource successfully deleted (e.g. `DELETE /api/lists/{list_id}/items/{item_id}`).
 - **`400 Bad Request`**: Unknown action, invalid parameter schema, malformed payload envelope, or path/body ID mismatch.
-- **`404 Not Found`**: Widget ID or stream ID not loaded in active configuration.
-- **`502 Bad Gateway`**: Upstream provider (e.g. Google API, Home Assistant, Cast socket) failed.
+- **`404 Not Found`**: Widget ID, list ID, item ID, or stream ID not found.
+- **`409 Conflict`**: Mutation rejected due to source-of-truth invariants (e.g. attempting `push` on a list-backed widget).
+- **`502 Bad Gateway`**: Upstream provider (e.g. Google API, Home Assistant, Cast socket, external list HTTP service) failed or unreachable.
 
-### 7. Optimistic UI Updates on Touch Kiosks
+### 8. Optimistic UI Updates on Touch Kiosks
 1. User taps a chore checkbox or HUD play/pause button on the 1080p capacitive touch display.
 2. The Touch PWA immediately flips the visual state locally (< 16ms, 60fps responsiveness).
 3. The PWA dispatches the respective REST action endpoint (`POST /api/widgets/{widget_id}/action` or `POST /api/video/action`).

@@ -237,7 +237,7 @@ For user-specific integrations, private household services, or extensions writte
    - Headers: `Content-Type: application/json`
    - Body: Standard payload envelope (`widget_id`, `timestamp`, `state`, `data`).
    - Auth: None (all inbound LAN calls are fully trusted per the local-network trust model).
-   - Behavior: Updates the widget's in-memory and SQLite cache regardless of active screen. If the target widget is currently visible on the active screen, triggers an immediate SSE broadcast (`widget.update` per SPEC-006); otherwise hydrates smoothly when the display rotates to that screen. See SPEC-006 for full request/response schemas, status codes (200/400/404), and validation rules.
+   - Behavior: Updates the widget's in-memory and SQLite cache regardless of active screen. Push webhooks are strictly limited to sidecar and generic HTTP provider widgets; calling push on list-backed widgets (`type: tasks`) is rejected with `409 Conflict` (directing callers to `/api/lists/{list_id}/items` or widget actions per SPEC-006 and SPEC-008). If the target widget is on the active rotation screen OR is pinned in the layout (per SPEC-005), an immediate SSE broadcast (`widget.update` per SPEC-006) is triggered; otherwise hydrates smoothly when the display rotates to that screen. See SPEC-006 for full request/response schemas, status codes (200/400/404/409), and validation rules.
 
 ---
 
