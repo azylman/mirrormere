@@ -88,8 +88,8 @@ class Brain(Protocol):
 | `ha_assist` | Alex | Home Assistant Assist pipeline over its API or Wyoming. |
 | `http_agent` | Mike | POST the transcript to an agent endpoint; the reply text comes back. Mike's stack also posts the transcript and reply to a text channel as a record. |
 
-The brain is where household-specific logic lives, and it lives in the
-private extensions directory (SPEC-003). Mirrormere ships only the interface
+The brain is where household-specific logic lives, and it runs as an
+out-of-process HTTP sidecar service (SPEC-003). Mirrormere ships only the interface
 and the `ha_assist` adapter.
 
 ### 4. TTS adapter: ElevenLabs primary, Piper fallback
@@ -177,7 +177,7 @@ voice:
     fallback: whisper_local
     whisper_local: { model: small, compute_type: int8 }
   brain:
-    adapter: http_agent          # custom_widgets/ extension, or ha_assist
+    adapter: http_agent          # out-of-process HTTP sidecar (SPEC-003), or ha_assist
   tts:
     primary: elevenlabs
     elevenlabs: { model: eleven_multilingual_v2, voice_id_env: ELEVENLABS_VOICE_ID, timeout_s: 10 }
