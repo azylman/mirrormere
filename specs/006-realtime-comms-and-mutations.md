@@ -318,10 +318,10 @@ External sidecars, local microservices, and Home Assistant automations can immed
   - `widget_id` (string, optional in body): If provided in the JSON body, it MUST match the `{widget_id}` in the URL path. If they differ, the server rejects the request with `400 Bad Request`.
   - `timestamp` (string, RFC 3339, optional): Timestamp of data snapshot; defaults to the server's current UTC arrival time if omitted.
   - `state` (string, optional, default `"healthy"`): `"healthy"` | `"degraded"` | `"error"`.
-  - `data` (object, required): Widget-specific domain payload conforming to the widget type's schema. Missing or non-object `data` yields `400 Bad Request`.
+  - `data` (object, required): Widget-specific domain payload conforming to the widget type's `response_schema` in `manifest.yaml`. Missing or non-object `data`—or payloads that fail schema validation—yields `400 Bad Request`.
 
 - **Cache Ingestion & Realtime Broadcast Invariant**:
-  - **Immediate Cache Ingestion**: The daemon validates the payload and updates the widget provider's in-memory state and persistent SQLite cache immediately, **regardless of whether the widget is currently visible on the active screen**.
+  - **Immediate Cache Ingestion**: The daemon validates the payload against the widget's `response_schema` and updates the widget provider's in-memory state and persistent SQLite cache immediately, **regardless of whether the widget is currently visible on the active screen**.
   - **Unconditional SSE Broadcast**: The server immediately broadcasts a `widget.update` SSE event across all open `/api/events` connections, ensuring all connected displays, companion nodes, and cached client stores update their local state immediately without waiting for a rotation event or poll cycle. Inactive displays or hidden components update their local stores in background, guaranteeing instant 0ms rendering with zero flicker when switching or rotating screens.
 
 - **Responses**:
@@ -333,7 +333,7 @@ External sidecars, local microservices, and Home Assistant automations can immed
       "updated_at": "2026-09-24T22:20:00Z"
     }
     ```
-  - **`400 Bad Request`**: Invalid JSON syntax, missing `data` object, or `widget_id` mismatch between path and body.
+  - **`400 Bad Request`**: Invalid JSON syntax, missing `data` object, `widget_id` mismatch between path and body, or `data` payload fails validation against `response_schema`.
     ```json
     {
       "status": "error",
@@ -395,7 +395,9 @@ When Mirrormere ingests data for custom widgets declared with `provider: http`, 
     }
   }
   ```
-  On receipt, Mirrormere updates its in-memory and SQLite cache and broadcasts a `widget.update` SSE event across all connected displays.
+  On receipt, Mirrormere validates the `data` object against the widget type's `response_schema` declared in its `manifest.yaml`:
+  - **Validation Success**: Updates in-memory and SQLite cache and broadcasts a `widget.update` SSE event across all connected displays.
+  - **Validation Failure**: Rejects the invalid payload from updating cache, preserves the Last-Known-Good data under Stale-While-Revalidate, logs a structured validation warning, transitions the widget to `state: "degraded"`, and emits a degraded `widget.update` SSE event to dim the widget on screen with a stale badge.
 
 ### 5. Video Stream Lifecycle & Action Endpoints
 - **Trigger Stream**: `POST /api/video/trigger`
