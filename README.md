@@ -55,11 +55,7 @@ In alignment with Mirrormere's decoupled deployment topology, each independent i
 
 ```
 mirrormere/
-├── specs/                  # Architectural and hardware specifications
-│   ├── 001-architecture-overview.md
-│   ├── 002-hardware-profiles.md
-│   ├── 003-widget-contract.md
-│   └── 004-video-cast-ingest.md
+├── specs/                  # Living architectural specifications (001–011, see specs/README.md)
 ├── core/                   # [Planned] Shared backend daemon & data providers
 ├── web/                    # [Planned] Touch kiosk PWA (Wayland / Chromium)
 ├── eink/                   # [Planned] E-paper driver & renderer for Raspberry Pi

@@ -212,7 +212,7 @@ voice:
       backend: pipewire_echo_cancel
 
   hub:
-    url: "http://192.168.1.180:9000/api/voice/interact"   # Jetson Orin Voice Hub
+    url: "http://<voice-hub-host>:9000/api/voice/interact" # Jetson Orin Voice Hub LAN address
     timeout_seconds: 60
 
   playback:
@@ -237,7 +237,7 @@ hub:
 
   brain:
     adapter: http_agent
-    url: "http://192.168.1.77:4000/api/voice/ask"       # Aerial Brain on Ameridroid
+    url: "http://<agent-host>:4000/api/voice/ask"          # Aerial Brain on Ameridroid LAN address
     timeout_seconds: 30
 
   tts:
