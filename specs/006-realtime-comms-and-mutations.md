@@ -468,8 +468,8 @@ Appends a new item to the list:
   - `section` (string, optional, default `null`): Section/category tag.
   - `due_date` (string, optional, default `null`): Target completion date (`YYYY-MM-DD`).
   - `assignee` (string, optional, default `null`): Family member or assignee name.
-- **Response (`201 Created`)**:
-  Returns the created `ListItem` object with populated `id`, `position`, `created_at`, and `updated_at`.
+- **Response (`201 Created` - Synchronous Source)**:
+  Returned when the list adapter confirms item creation synchronously (e.g. local SQLite `/data/lists.db`). Returns the created `ListItem` object with populated `id`, `position`, `created_at`, and `updated_at`.
   ```json
   {
     "id": "i2",
@@ -484,7 +484,17 @@ Appends a new item to the list:
     "updated_at": "2026-09-24T22:35:00Z"
   }
   ```
-- **Side Effects**: Persists the item into the list's source of truth (local SQLite `/data/lists.db` or external adapter per SPEC-008), updates cached list state, and emits a `widget.update` SSE broadcast for all active widgets displaying this `list_id`.
+- **Response (`202 Accepted` - Asynchronous Upstream Source)**:
+  Returned when writing to an asynchronous external list provider (e.g. Google Tasks, Todoist, or remote HTTP service) that acknowledges write receipt before upstream confirmation.
+  ```json
+  {
+    "status": "accepted",
+    "provisional_id": "prov_1727223300_01",
+    "list_id": "groceries",
+    "title": "Sourdough bread"
+  }
+  ```
+- **Side Effects**: Persists the item into the list's source of truth (local SQLite `/data/lists.db` or external adapter per SPEC-008) and updates cached state. For synchronous writes (`201`), Core immediately emits a `widget.update` SSE broadcast for all active widgets displaying this `list_id`; for asynchronous writes (`202`), the `widget.update` broadcast follows once upstream confirmation completes.
 
 #### C. Update List Item (`PATCH /api/lists/{list_id}/items/{item_id}`)
 Updates mutable fields of an existing list item:
@@ -504,15 +514,19 @@ Updates mutable fields of an existing list item:
     "assignee": "Alex"
   }
   ```
-- **Response (`200 OK`)**:
+- **Response (`200 OK` - Synchronous Source)**:
   Returns the updated `ListItem` object.
-- **Side Effects**: Persists changes to the list's source of truth with last-write-wins on `updated_at`, updates cached state, and broadcasts a `widget.update` SSE event to active display widgets.
+- **Response (`202 Accepted` - Asynchronous Upstream Source)**:
+  Returns `{"status": "accepted", "item_id": "i1", "list_id": "groceries"}` when the update is accepted by an external upstream source with confirmation pending.
+- **Side Effects**: Persists changes to the list's source of truth with last-write-wins on `updated_at`, updates cached state, and broadcasts a `widget.update` SSE event to active display widgets (immediately on `200`, or following upstream confirmation on `202`).
 
 #### D. Delete List Item (`DELETE /api/lists/{list_id}/items/{item_id}`)
 Removes an item from the list:
-- **Response (`204 No Content`)**:
-  Empty body confirming item removal.
-- **Side Effects**: Deletes the row from SQLite or calls upstream delete, updates cached state, and broadcasts a `widget.update` SSE event.
+- **Response (`204 No Content` - Synchronous Source)**:
+  Empty body confirming item removal from local storage.
+- **Response (`202 Accepted` - Asynchronous Upstream Source)**:
+  Returns `{"status": "accepted", "item_id": "i1", "list_id": "groceries"}` when deletion request is dispatched upstream with confirmation pending.
+- **Side Effects**: Deletes the row from SQLite or dispatches upstream delete, updates cached state, and broadcasts a `widget.update` SSE event (immediately on `204`, or upon upstream confirmation on `202`).
 
 ### 6. Screen Navigation & Rotation Endpoints
 
@@ -615,12 +629,13 @@ Controls the automatic rotation timer loop:
   ```json
   { "status": "ok", "volume": 75, "muted": false }
   ```
-- **`201 Created`**: Resource created successfully (e.g. new item added via `POST /api/lists/{list_id}/items`). Returns newly created resource.
-- **`202 Accepted`**: Action dispatched asynchronously to an external system (e.g. Home Assistant service call or CastV2 socket).
+- **`201 Created`**: Resource created successfully (e.g. new item added synchronously via `POST /api/lists/{list_id}/items`). Returns newly created resource.
+- **`202 Accepted`**: Action or mutation dispatched asynchronously to an external system (e.g. Google Tasks upstream sync, Home Assistant service call, or CastV2 socket).
 - **`204 No Content`**: Resource successfully deleted (e.g. `DELETE /api/lists/{list_id}/items/{item_id}`).
 - **`400 Bad Request`**: Unknown action, invalid parameter schema, malformed payload envelope, or path/body ID mismatch.
 - **`404 Not Found`**: Widget ID, list ID, item ID, or stream ID not found.
 - **`409 Conflict`**: Mutation rejected due to source-of-truth invariants (e.g. attempting `push` on a list-backed widget).
+- **`422 Unprocessable Entity`**: Payload syntactically valid but cannot be processed by the target resource state (e.g. stream is not controllable, or missing `control_url` for transport control).
 - **`502 Bad Gateway`**: Upstream provider (e.g. Google API, Home Assistant, Cast socket, external list HTTP service) failed or unreachable.
 
 ### 8. Optimistic UI Updates on Touch Kiosks
