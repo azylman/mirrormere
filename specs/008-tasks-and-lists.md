@@ -74,7 +74,7 @@ type ListSource interface {
 
 | Adapter | Scope | Notes |
 |---|---|---|
-| `local` | Core | SQLite (`lists`, `list_items`), default for any list with no `source`. Pushes changes natively. |
+| `local` | Core | Pure-Go SQLite (`modernc.org/sqlite`, zero CGO; `lists`, `list_items` tables), default for any list with no `source`. Pushes changes natively. |
 | `gtasks` | Core, optional | Google Tasks API. Needs OAuth; polled (default 120 s). |
 | `http` | Core | Generic adapter for a household's own list service exposing the endpoint shape below. Lets private systems plug in without Go code. |
 | Private | Sidecar / HTTP | Anything else (e.g. a Skylight bridge) runs as an out-of-process HTTP provider sidecar per SPEC-003. |
@@ -84,6 +84,7 @@ type ListSource interface {
 ```yaml
 providers:
   lists:
+    db_path: "/data/lists.db"       # Local SQLite database path (default: /data/lists.db)
     poll_interval_seconds: 120
     lists:
       - id: groceries
@@ -101,6 +102,60 @@ providers:
         gtasks:
           tasklist_id: "MDk3..."
 ```
+
+---
+
+## Local SQLite Storage Architecture
+
+Mirrormere ships an embedded, zero-maintenance local database for household lists, groceries, and chore items that do not sync to external cloud providers.
+
+### 1. Pure Go Zero-CGO Driver Mandate
+- **Driver Standard**: Mirrormere standardizes strictly on **`modernc.org/sqlite`** as its local SQLite engine across all database packages and build tooling.
+- **Hermetic Zero-CGO Invariant**: CGO-dependent drivers (such as `github.com/mattn/go-sqlite3`) are **strictly prohibited**. The daemon compiles hermetically with `CGO_ENABLED=0` across all architectures (`linux/amd64`, `linux/arm64`), producing fully static, standalone binaries with zero dynamic libc bindings and no host C-compiler toolchain dependencies.
+- **Concurrency & Connection Pool**: SQLite writers require serialization. The local store configures single-writer connection pooling via `SetMaxOpenConns(1)` (or dedicated single-writer serialized locks) with a busy timeout to eliminate write contention and `SQLITE_BUSY` errors.
+
+### 2. Pragmas & Operational Modes
+On database connection initialization, the storage engine executes the following connection pragmas:
+```sql
+PRAGMA journal_mode = WAL;         -- Write-Ahead Logging for high concurrency and crash resilience
+PRAGMA synchronous = NORMAL;       -- Safe and performant for WAL mode
+PRAGMA busy_timeout = 5000;        -- Wait up to 5000ms on locks before erroring
+PRAGMA foreign_keys = ON;          -- Enforce relational cascades on list deletion
+PRAGMA temp_store = MEMORY;        -- Avoid ephemeral disk I/O on embedded flash
+```
+
+### 3. Database Schema & Migrations
+The local SQLite store persists at `/data/lists.db` (configurable via `providers.lists.db_path`):
+
+```sql
+CREATE TABLE IF NOT EXISTS lists (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT 'local',
+    sections TEXT NOT NULL DEFAULT '[]', -- JSON string array
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS list_items (
+    id TEXT PRIMARY KEY,
+    list_id TEXT NOT NULL REFERENCES lists(id) ON DELETE CASCADE,
+    title TEXT NOT NULL,
+    done BOOLEAN NOT NULL DEFAULT 0,
+    section TEXT,
+    position INTEGER NOT NULL DEFAULT 0,
+    assignee TEXT,
+    due_date TEXT, -- YYYY-MM-DD
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_list_items_list_id_position ON list_items(list_id, position);
+CREATE INDEX IF NOT EXISTS idx_list_items_updated_at ON list_items(updated_at);
+```
+
+### 4. Hermetic Testing Policy
+All automated unit and contract tests in `pkg/storage/sqlite` or `providers/lists` MUST use in-memory SQLite handles (`file::memory:?cache=shared`) or temporary file fixtures (`t.TempDir()`). Unit tests must never write to `/data` or touch shared disk state.
 
 ---
 

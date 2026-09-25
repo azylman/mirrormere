@@ -95,7 +95,7 @@ graph TD
 ### 1. Headless Data Engine
 The core service is a lightweight daemon written in Go running locally on the home network (or directly on the display host). It is responsible for:
 - Synchronizing external calendars (Google Calendar iCal/CalDAV feeds, local iCal - SPEC-007).
-- Maintaining household chore, grocery, and to-do lists in a local SQLite database (SPEC-008).
+- Maintaining household chore, grocery, and to-do lists in a local pure-Go SQLite database (`modernc.org/sqlite`, zero CGO) (SPEC-008).
 - Ingesting Open-Meteo weather forecasts and Google Photos shared albums (SPEC-007).
 - Ingesting physical Google Cast HDMI video via USB 3.0 UVC capture (SPEC-004).
 - Executing the exact 6×2 bin-packing layout engine to automatically pack widgets into minimal screens (SPEC-005).
