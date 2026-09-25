@@ -337,7 +337,7 @@ Emitted via SSE on `widget.update`:
 
 ### Dual Display Adapter Handling
 - **Touch Kiosk (Profile A)**: The PWA renders a smooth hardware-accelerated CSS crossfade slideshow occupying a 50/50 `[3, 2]` block or full-screen `[6, 2]` hero canvas, preloading the next image in background DOM.
-- **Ambient E-Ink (Profile B)**: Photos carry the `.dither` class in `views/widget.html`. The headless renderer converts the photo bounding box to 8-bit grayscale and applies Floyd-Steinberg or Atkinson dithering to 1-bit monochrome (SPEC-003 §4), preserving sharp text thresholds for surrounding metadata, captions, and borders.
+- **Ambient E-Ink (Profile B)**: Photos carry the `.dither` class in `views/widget.html`. The headless renderer converts the photo bounding box to 8-bit grayscale and applies Floyd-Steinberg or Atkinson dithering to 1-bit monochrome (SPEC-003 §5), preserving sharp text thresholds for surrounding metadata, captions, and borders.
 
 ---
 
@@ -361,7 +361,6 @@ display:
       refresh_interval_seconds: 900 # 15 minutes
       latitude: 37.8044
       longitude: -122.2712
-      timezone: "America/Los_Angeles"
       units: imperial               # "imperial" | "metric"
 ```
 

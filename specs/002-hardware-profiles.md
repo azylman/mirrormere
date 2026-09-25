@@ -15,7 +15,7 @@ Mirrormere targets two hardware archetypes:
 ### Bill of Materials (BOM)
 - **Display**: UPERFECT 15.6" 1080p Capacitive Touchscreen Monitor (rear 75×75mm VESA holes, USB-C single-cable power/video/touch).
 - **Compute Unit**: Beelink Mini S12 Pro (Intel N100 4C/4T up to 3.4GHz, 16GB DDR4 RAM, 500GB NVMe SSD, ~6W idle).
-- **Video Capture Ingest**: USB 3.0 HDMI Video Capture Dongle (MS2109 or MacroSilicon UVC compliant, 1080p60 input).
+- **Video Capture Ingest**: USB 3.0 HDMI Video Capture Dongle (MacroSilicon MS2130 or UVC-compliant USB 3.0 chip for uncompressed 1080p60 capture; MS2109 USB 2.0 supported as fallback at 1080p30 MJPEG with hardware transcode).
 - **Cast Receiver**: Google Chromecast (HDMI output feeding into the capture card).
 - **Audio Output**: Dual built-in stereo speakers integrated into the UPERFECT monitor chassis (audio delivered digitally over HDMI/USB-C, zero extra cables).
 - **Audio / Voice Ingest (optional)**: Nano USB Microphone Dongle (thumbnail-sized stub plugged into rear USB port; software voice stack deferred past v1).

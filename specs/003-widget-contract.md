@@ -83,8 +83,6 @@ display:
         latitude: 37.8044
         longitude: -122.2712
         units: imperial             # "metric" | "imperial"
-        hourly: false
-        forecast_days: 5
 
     - id: office-weather            # Second independent weather instance!
       type: weather-forecast
@@ -94,8 +92,6 @@ display:
         latitude: 37.7749
         longitude: -122.4194
         units: imperial
-        hourly: false
-        forecast_days: 5
 
     - id: family-calendar
       type: calendar-agenda
@@ -103,8 +99,8 @@ display:
       config:
         refresh_interval_seconds: 300 # Ingestion sync loop cadence
         view: week                  # Presentation: "day" | "week" | "month"
-        days_ahead: 7
-        max_events: 12
+        window_days_past: 1
+        window_days_future: 14
         show_relative_time: true
         calendars:
           - name: "Family Events"
@@ -317,4 +313,4 @@ Mirrormere enforces a strict separation between core public widgets and private 
 2. **Private User Extensions (`custom_widgets/` or Sidecar Services)**:
    - User-defined integrations that reference personal home configurations or specific hardware peripherals.
    - Run out-of-process as generic HTTP provider sidecars (or custom containers) communicating via the HTTP/webhook contract, with semantic templates mounted into `/config/widgets/`.
-   - Includes: Home Assistant entity dashboards, live RTSP doorbell camera feeds, and Chromecast UVC ingest pipelines.
+   - Includes: Home Assistant entity dashboards and custom LAN sensor monitors (video feeds such as Chromecast and doorbell cameras enter directly through the Unified Video Stream API per SPEC-004 rather than as grid widgets).
