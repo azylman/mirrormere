@@ -1,4 +1,4 @@
-# SPEC-010: Touch Kiosk Client Environment (`clients/touch-kiosk`)
+# SPEC-010: Touch Kiosk Client Environment (`deploy/kiosk`)
 
 ## Status
 Approved
@@ -6,7 +6,7 @@ Approved
 ## Context & Motivation
 SPEC-002 defines the hardware architecture for the Touch Kiosk (Profile A): an Intel N100 Mini PC paired with a 15.6" 1080p capacitive touchscreen monitor in a VESA sandwich mount. SPEC-009 defines the ambient e-ink display node client (`clients/eink-node`). 
 
-This specification defines the dedicated client runtime environment and OS bootstrap for the Touch Kiosk (`clients/touch-kiosk`), formalizing how Wayland kiosk confinement, hardware-accelerated Chromium rendering, DPMS power management, HDMI audio routing, and systemd services operate together on Debian/Ubuntu Linux.
+This specification defines the dedicated client runtime environment and OS bootstrap for the Touch Kiosk (`deploy/kiosk`), formalizing how Wayland kiosk confinement, hardware-accelerated Chromium rendering, DPMS power management, HDMI audio routing, and systemd services operate together on Debian/Ubuntu Linux.
 
 ### Decisions (settled in #mirrormere, 2026-09-24)
 - **Kiosk Compositor**: Wayland with `cage` (single-application fullscreen confinement, hardware-accelerated via Intel Mesa/Iris EGL).
@@ -113,7 +113,7 @@ Rather than running an external ALSA host loopback daemon (which bypasses browse
 
 ## Packaging & Systemd Bootstrap
 
-The client setup is maintained in `clients/touch-kiosk/` with an automated install script (`install.sh`) targeting Debian 12 / Ubuntu 24.04 Server.
+The host kiosk provisioning setup is maintained in `deploy/kiosk/` with an automated install script (`install.sh`) targeting Debian 12 / Ubuntu 24.04 Server.
 
 ### System Prerequisites
 - Packages: `cage`, `chromium`, `swayidle`, `wlr-randr`, `pipewire`, `wireplumber`, `pipewire-alsa`, `libinput-bin`.

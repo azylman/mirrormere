@@ -16,7 +16,7 @@ Traditional approaches either hardcode browser-level webcam APIs (`getUserMedia`
 Mirrormere solves this cleanly by adopting a **Hardware-Agnostic Unified Video Stream Architecture**:
 - All video sources feed into a single, consistent REST API (`POST /api/video/trigger`).
 - Mirrormere Core manages a first-class **Role-Based Video Priority Stack** with persistent media precedence and automatic Picture-in-Picture (PiP) docking.
-- Local hardware conversion, Cast protocol monitoring, and transport controls are isolated in an edge **Kiosk Cast Sidecar** (`clients/cast-sidecar`).
+- Hardware video conversion is handled by a stock **`go2rtc`** container (`deploy/go2rtc.yaml`), while protocol tracking and transport controls are handled by **`sidecars/cast-watcher`**.
 
 ---
 
@@ -27,10 +27,9 @@ flowchart TD
     subgraph KioskHost [Kiosk Host - Intel N100]
         CC[Google Chromecast] -->|HDMI Video & Audio| UVC[USB 3.0 HDMI Capture Dongle\n/dev/video0 + hw:CARD=MS2109]
         
-        subgraph CastSidecar [clients/cast-sidecar]
-            Streamer[go2rtc WebRTC Server\nhttp://127.0.0.1:1984/cast]
-            CastMon[CastV2 Socket Monitor\nTCP :8009 - Receiver & Media]
-        end
+        Streamer[Stock go2rtc WebRTC Server\nhttp://127.0.0.1:1984/cast]
+        CastMon[sidecars/cast-watcher\nTCP :8009 - Receiver & Media]
+        
         UVC --> Streamer
         CC -.->|mDNS / CastV2 State & Media Transport| CastMon
 
@@ -189,15 +188,15 @@ data: {"mode":"widgets","primary":null,"pip":null}
 
 ---
 
-## Kiosk Cast Sidecar (`clients/cast-sidecar`)
+## Kiosk Video Ingest & Cast Services
 
-To keep Mirrormere Core and the Touch PWA completely hardware-agnostic, all physical USB capture and Cast protocol tracking are handled by an edge sidecar running directly on the kiosk Mini PC.
+To keep Mirrormere Core and the Touch PWA completely hardware-agnostic, physical USB capture and Cast protocol tracking are decoupled into two distinct container services running on the kiosk host:
 
 ### 1. Hardware Stream Producer (`go2rtc`)
 The physical Chromecast plugs into a USB 3.0 HDMI capture card (MacroSilicon MS2109 or similar).
-The sidecar runs `go2rtc` as a lightweight media bridge:
+A stock `alexxit/go2rtc` container runs with `deploy/go2rtc.yaml` mounted:
 ```yaml
-# go2rtc.yaml
+# deploy/go2rtc.yaml
 streams:
   cast:
     - ffmpeg:device?video=/dev/video0&audio=hw:CARD=MS2109#video=copy#audio=opus
@@ -205,9 +204,9 @@ streams:
 - Ingests 1080p60 HDMI video directly over `/dev/video0` (UVC) and digital audio over ALSA (UAC).
 - Serves sub-10ms, hardware-accelerated WebRTC locally at `http://127.0.0.1:1984/cast`.
 
-### 2. CastV2 Socket Monitor & Transport Bridge
+### 2. CastV2 Socket Monitor & Transport Bridge (`sidecars/cast-watcher`)
 Chromecast continuously outputs 1080p HDMI video even when idle, rendering the Google Ambient Backdrop slideshow.
-The sidecar connects directly to the Chromecast's LAN IP over TCP port 8009 (**Google Cast v2 protocol**):
+The custom `sidecars/cast-watcher` container connects directly to the Chromecast's LAN IP over TCP port 8009 (**Google Cast v2 protocol**):
 - Subscribes to receiver status (`urn:x-cast:com.google.cast.receiver`) and media session status (`urn:x-cast:com.google.cast.media`).
 - **Active Casting Detected**: When `applications[0].appId != "E8C28D3C"` (not the Backdrop app), casting is active. The sidecar immediately dispatches `POST /api/video/trigger` with `priority: "persistent"` and `controllable: true`.
 - **Casting Disconnected**: When status returns to Backdrop or empty, the sidecar dispatches `POST /api/video/dismiss`.

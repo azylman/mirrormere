@@ -37,13 +37,14 @@ Mirrormere targets two hardware archetypes:
   - Daytime idle timeout (10 minutes of inactivity blanks panel).
   - Wake on tap: touch digitizer input event instantly restores display power.
 
-### Reference Deployment Topology & Manifest (`docker-compose.yml`)
-Profile A runs on the Beelink N100 mini PC driving the touch kiosk directly. The core daemon and video cast sidecar run as co-located Docker containers:
+### Reference Deployment Topology & Manifest (`deploy/compose.yml`)
+Profile A runs on the Beelink N100 mini PC driving the touch kiosk directly. Host bootstrap and Wayland `cage` launch scripts are provisioned from `deploy/kiosk/`. The core daemon, `go2rtc` stream ingest, and custom `cast-watcher` bridge run as Docker containers activated via Compose's native `video` profile:
 
 ```yaml
-# Profile A: Touch Kiosk Reference Docker Compose Manifest
+# deploy/compose.yml (Activated with: docker compose --profile video up -d)
 services:
   mirrormere-core:
+    build: .
     image: ghcr.io/azylman/mirrormere:latest
     container_name: mirrormere-core
     restart: unless-stopped
@@ -55,7 +56,7 @@ services:
       - TZ=America/Los_Angeles
     volumes:
       - ./config.yaml:/config/config.yaml:ro
-      - ./kiosk.css:/config/custom.css:ro
+      - ./custom.css:/config/custom.css:ro # e.g. from deploy/examples/kiosk.css
       - ./data:/data
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:8080/healthz"]
@@ -64,9 +65,10 @@ services:
       start_period: 5s
       retries: 3
 
-  mirrormere-cast:
+  go2rtc:
     image: alexxit/go2rtc:latest
-    container_name: mirrormere-cast
+    container_name: go2rtc
+    profiles: ["video"]
     restart: unless-stopped
     ports:
       - "1984:1984" # go2rtc WebRTC stream server & REST API
@@ -78,16 +80,17 @@ services:
     volumes:
       - ./go2rtc.yaml:/config/go2rtc.yaml:ro
 
-  # Optional Phase 2 Voice Hub Sidecar (SPEC-011):
-  mirrormere-voice:
-    image: ghcr.io/azylman/mirrormere-voice:latest
-    container_name: mirrormere-voice
-    profiles: ["voice"]
+  cast-watcher:
+    build: sidecars/cast-watcher
+    image: ghcr.io/azylman/mirrormere-cast-watcher:latest
+    container_name: cast-watcher
+    profiles: ["video"]
     restart: unless-stopped
-    ports:
-      - "9000:9000" # Voice Hub: local audio stream & TTS
     environment:
-      - MIRRORMERE_URL=http://mirrormere-core:8080
+      - CORE_URL=http://mirrormere-core:8080
+      - CHROMECAST_IP=192.168.1.50 # Configurable target IP
+    depends_on:
+      - mirrormere-core
 ```
 
 ---
@@ -120,13 +123,14 @@ services:
   - Partial refreshes on state change (e.g. new calendar events, chore completion) or every 5 minutes for clock updates.
   - Strict zero-animation rule: UI redrawing is purely event- or timer-driven.
 
-### Reference Deployment Topology & Manifest (`docker-compose.yml`)
-In Profile B, the Raspberry Pi 3 B+ display node connects over SPI to the raw e-paper panel and runs the lightweight Python client (`clients/eink-node`, SPEC-009) as a native systemd service. The server-side rendering and data synchronization run on a Docker host (the same Pi or an existing home server):
+### Reference Deployment Topology & Manifest (`deploy/compose.yml`)
+In Profile B, the Raspberry Pi display node connects over SPI to the raw e-paper panel and runs the lightweight Python client (`clients/eink-node`, SPEC-009) as a native systemd service. The server-side rendering and data synchronization run on a Docker host (the same Pi 4B or a home server) activated via Compose's native `eink` profile:
 
 ```yaml
-# Profile B: Ambient E-Paper Reference Docker Compose Manifest
+# deploy/compose.yml (Activated with: docker compose --profile eink up -d)
 services:
   mirrormere-core:
+    build: .
     image: ghcr.io/azylman/mirrormere:latest
     container_name: mirrormere-core
     restart: unless-stopped
@@ -138,7 +142,7 @@ services:
       - TZ=America/Los_Angeles
     volumes:
       - ./config.yaml:/config/config.yaml:ro
-      - ./eink.css:/config/custom.css:ro
+      - ./custom.css:/config/custom.css:ro # e.g. from deploy/examples/eink.css
       - ./data:/data
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:8080/healthz"]
@@ -147,9 +151,11 @@ services:
       start_period: 5s
       retries: 3
 
-  mirrormere-eink-renderer:
+  eink-renderer:
+    build: sidecars/eink-renderer
     image: ghcr.io/azylman/mirrormere-eink-renderer:latest
-    container_name: mirrormere-eink-renderer
+    container_name: eink-renderer
+    profiles: ["eink"]
     restart: unless-stopped
     ports:
       - "8081:8081" # E-Ink PNG Renderer: headless 800x480 1-bit dithered rasterizer
@@ -158,15 +164,4 @@ services:
       - PORT=8081
     depends_on:
       - mirrormere-core
-
-  # Optional Phase 2 Voice Hub Sidecar (SPEC-011):
-  mirrormere-voice:
-    image: ghcr.io/azylman/mirrormere-voice:latest
-    container_name: mirrormere-voice
-    profiles: ["voice"]
-    restart: unless-stopped
-    ports:
-      - "9000:9000" # Voice Hub: local audio stream & TTS
-    environment:
-      - MIRRORMERE_URL=http://mirrormere-core:8080
 ```
