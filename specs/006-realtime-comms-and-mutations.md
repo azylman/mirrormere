@@ -303,9 +303,11 @@ External sidecars, local microservices, and Home Assistant automations can immed
       "type": "webrtc",
       "priority": "persistent",
       "timeout_seconds": 0,
-      "controllable": true
+      "controllable": true,
+      "control_url": "http://cast-watcher:8090/action"
     }
     ```
+  - `control_url` (string, optional): HTTP webhook URL on the stream producer sidecar where Mirrormere Core forwards incoming client transport actions.
 - **Dismiss Stream**: `POST /api/video/dismiss`
   - **Payload**:
     ```json
@@ -322,7 +324,16 @@ External sidecars, local microservices, and Home Assistant automations can immed
       "value": null
     }
     ```
-  - Controls playback state, volume, or mute on active controllable streams (SPEC-004).
+  - Controls playback state, volume, or mute on active controllable streams (SPEC-004). When received, Core verifies `controllable: true` and forwards the action payload directly via HTTP POST to `{control_url}` (returning `200 OK` on forward success, `502 Bad Gateway` on controller failure, or `422 Unprocessable Entity` if non-controllable).
+- **Player State Update**: `POST /api/video/state`
+  - **Payload**:
+    ```json
+    {
+      "id": "chromecast",
+      "player_state": "playing"
+    }
+    ```
+  - Dispatched by the stream producer sidecar (e.g. `sidecars/cast-watcher`) when player transport state changes (`"playing"`, `"paused"`, or `"buffering"`). Core updates the active stream record and broadcasts an updated `video.state` SSE event to synchronize all connected displays.
 
 ### 4. Master Audio Volume & Mute Endpoints
 Controls host-level audio sink attenuation and mute states (driving WirePlumber/PipeWire over the HDMI/USB-C monitor speakers per SPEC-002 and SPEC-010) while in `widgets` mode or video presentation:
