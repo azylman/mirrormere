@@ -63,41 +63,15 @@ Because 6 is composite with factors 1, 2, 3, and 6, the 6×2 grid natively satis
 
 ## Declarative Widget Configuration Schema
 
-Displays declare their active widgets and target dimensions in `config.yaml`:
+Displays declare their active widgets, rotation behavior, and target dimensions in `config.yaml`:
 
 ```yaml
 display:
-  profile: touch # "touch" (Profile A) or "eink" (Profile B)
   rotation:
-    interval_seconds: 30 # Profile A default: 30s. Profile B default: 600s (>=60s) or 0 (manual only)
-    transition: "slide" # "slide" or "fade" for touch; "instant" for e-ink
-    pause_on_touch: true # Touch kiosk only: pause rotation timer on interaction
-```
-
-### Profile Configuration Examples
-
-#### Profile A: Touch Kiosk Configuration (`config.yaml`)
-```yaml
-display:
-  profile: touch
-  rotation:
-    interval_seconds: 30 # Smooth carousel rotation every 30s
-    transition: "slide"
-    pause_on_touch: true
-    pause_duration_seconds: 120 # Resume rotation after 2 minutes of inactivity
-```
-
-#### Profile B: Ambient E-Ink Display Configuration (`config.yaml`)
-```yaml
-display:
-  profile: eink
-  rotation:
-    # 600s (10m) carousel interval, or 0 for manual/event-only advance.
-    # Enforces hard minimum interval >= 60s when enabled to protect panel from degradation.
-    interval_seconds: 600
-    transition: "instant" # Instant 1-bit buffer swap (zero CSS animations)
-    pause_on_touch: false
-```
+    interval_seconds: 30 # Seconds between automatic screen advance; 0 disables rotation (manual only)
+    transition: "slide" # Visual transition hint sent via SSE: "slide", "fade", "instant", "none"
+    pause_on_touch: true # Pause rotation timer on user touch/pointer interaction (if supported by client)
+    pause_duration_seconds: 120 # Seconds to pause automated rotation after interaction before resuming
 
   header:
     enabled: true
@@ -224,24 +198,29 @@ widgets:
 
 ---
 
-## Profile-Specific Display Behavior & Rotation Policies
+## Display Adaptation & Tuning Knobs
 
-| Feature | Touch Kiosk (Profile A - 60Hz) | Ambient E-Paper (Profile B - 0.01Hz) |
+Mirrormere's Go daemon is strictly hardware-agnostic and maintains no concept of hardware profiles or device classes. Instead, deployments tune generic configuration knobs in `config.yaml` to match their hardware capabilities and physical refresh constraints:
+
+| Feature / Goal | Interactive Touch Kiosks (60Hz) | Ambient E-Paper / Low-Refresh (0.01Hz) |
 | :--- | :--- | :--- |
-| **Default Rotation Cadence** | `interval_seconds: 30` (fast carousel) | `interval_seconds: 600` (10 min) or `0` (manual only) |
-| **Minimum Interval Floor** | 10 seconds | 60 seconds (hard floor to prevent panel degradation) |
-| **Manual Rotation Mode (`interval_seconds: 0`)** | Supported (advances via swipe gesture or API) | Supported (advances via GPIO button 1 or API) |
-| **Transition Animation** | Hardware-accelerated CSS slide/fade | Instant monochrome buffer switch (zero transition CSS) |
-| **Interaction Triggers** | Horizontal swipe, tap to pause, touch HUD | Non-interactive (physical GPIO button or SSE event) |
-| **Header Persistence** | Continuous live DOM header | Statically redrawn on each coalesced buffer capture |
+| **Rotation Cadence** | `interval_seconds: 30` (fast carousel) | `interval_seconds: 600` (10 min) or `0` (manual only) |
+| **Transition Animation** | `transition: "slide"` (CSS animated) | `transition: "instant"` (zero CSS animation overhead) |
+| **Touch Interaction** | `pause_on_touch: true` | `pause_on_touch: false` |
+| **Screen Advancing** | Automatic timer + touch swipe gestures | Timer, physical GPIO button, or REST API |
+| **Header Persistence** | Continuous live DOM header | Statically redrawn on coalesced buffer captures |
 
-### Rotation Modes for E-Ink Displays
-1. **Periodic Timed Rotation (`interval_seconds >= 60`)**:
-   - The Go daemon automatically advances `screen.rotate` every $N$ seconds (default: 600s / 10 minutes).
-   - Any value between $1$ and $59$ seconds is rejected at configuration validation with an error, enforcing the 60-second minimum refresh floor defined in SPEC-009.
+### Rotation Modes & Invariants
+1. **Periodic Timed Rotation (`interval_seconds > 0`)**:
+   - The Go daemon automatically emits `screen.rotate` events every $N$ seconds.
+   - Deployments can set this to fast intervals (e.g. 15–60s) for active touchscreen kiosks, or slow intervals (e.g. 300–900s) for low-refresh ambient displays.
 2. **Manual / Event-Driven Rotation (`interval_seconds: 0`)**:
    - The automated rotation timer loop is disabled entirely.
-   - The display remains locked on the current screen until explicitly advanced via:
-     - Physical hardware button (e.g. Adafruit Bonnet Button 1 on GPIO 5 per SPEC-009/011).
+   - The display remains on the active screen until explicitly advanced via:
      - REST API call (`POST /api/screen/select` or `POST /api/screen/advance`).
+     - Physical hardware button (e.g. Adafruit Bonnet Button 1 on GPIO 5 via client webhook).
+     - Touch swipe gestures on interactive clients.
      - Webhook or high-priority automation alert.
+
+### Hardware Protection Decoupling
+The Mirrormere daemon enforces zero hardware-specific validation rules or artificial interval minimums. Panel protection constraints (such as enforcing minimum refresh intervals to avoid e-paper ghosting or hardware degradation) belong strictly at the physical client node level (e.g. `clients/eink-node` per SPEC-009) or are set by the operator in `config.yaml`.

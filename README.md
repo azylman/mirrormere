@@ -46,8 +46,8 @@ Widgets in Mirrormere are modular packages containing a server-side data provide
 - **View Adapter**:
   - `widget.html`: Unified semantic HTML layout rendered dynamically into the canvas and styled via the volume-mounted server stylesheet (`/config/custom.css` with embedded fallback). E-ink displays are rendered via an optional headless capture sidecar, eliminating dual SVG templates.
 
-### Capability Profiles
-Displays declare a capability profile in their local configuration (e.g. `touch-interactive` vs. `ambient-static`). Interactive-only widgets (such as Chromecast UVC capture or video streams) automatically exclude themselves from static e-paper clients.
+### Deployment-Specific Widget Declarations
+In alignment with Mirrormere's decoupled deployment topology, each independent instance declares exactly the widgets it needs in its local `config.yaml` (`display.widgets`). Interactive-only widgets (such as Chromecast UVC capture or video streams) are simply omitted from configurations targeting static ambient displays.
 
 ---
 
