@@ -132,7 +132,7 @@ config_schema:
 2. **Data Provider Routing (`provider`)**: Identifies how data is ingested. Built-in widgets point to compiled Go fetchers (`calendar-agenda`, `weather-forecast`, `tasks`, `photo-carousel`, `spacer`), while custom extensions declare `provider: http` to invoke the generic HTTP sidecar client.
 3. **Default Cadence Fallback (`refresh`)**: If an instance in `config.yaml` omits `refresh_interval_seconds`, the daemon automatically defaults to this declared interval.
 4. **Boot-Time Configuration Schema Validation (`config_schema`)**: The Go daemon validates the instance's nested `config:` mapping against this schema during startup, failing fast with descriptive diagnostic logs rather than silently malfunctioning at runtime. Standard instance settings (`id`, `type`, `dimensions`, `pinned`, `refresh_interval_seconds`, `endpoint`, `method`, `token_env`) are validated by the Core framework and are never passed to `config_schema`.
-5. **Runtime Response Schema Validation (`response_schema`, Custom `provider: http` Only)**: Custom sidecars and external widgets declaring `provider: http` must provide a `response_schema`. The Go daemon validates incoming data payloads (the domain fields within the `data:` object) received from HTTP endpoint responses or inbound push webhooks against this schema. Invalid payloads are rejected, preserving the Last-Known-Good (LKG) cache and transitioning the widget to `degraded` state under Stale-While-Revalidate rules, guaranteeing templates never execute against corrupt or incomplete state. Built-in providers (`calendar-agenda`, `weather-forecast`, `tasks`, etc.) use typed Go structs defined in SPEC-007/SPEC-008 and do not declare a `response_schema` (if declared on a built-in provider, it is ignored).
+5. **Runtime Response Schema Validation (`response_schema`, Custom `provider: http` Only)**: Custom sidecars and external widgets declaring `provider: http` must provide a `response_schema`. The Go daemon validates incoming domain data payloads received from HTTP endpoint responses or inbound push webhooks directly against this schema. Invalid payloads are rejected, preserving the Last-Known-Good (LKG) cache and transitioning the widget to `degraded` state under Stale-While-Revalidate rules, guaranteeing templates never execute against corrupt or incomplete state. Built-in providers (`calendar-agenda`, `weather-forecast`, `tasks`, etc.) use typed Go structs defined in SPEC-007/SPEC-008 and do not declare a `response_schema` (if declared on a built-in provider, it is ignored).
 
 #### Schema Dialect & Validation Standards
 Manifest schemas (`config_schema` for all widgets, and `response_schema` for custom `provider: http` widgets) adhere strictly to standard **JSON Schema Draft 2020-12** (represented directly in YAML), matching OpenAPI 3.1:
@@ -273,7 +273,7 @@ Core built-in widgets run directly in the Mirrormere Core service process (`cale
    - `Shutdown(ctx context.Context) error`: Cleans up background listeners and connections.
 
 ### 2. Standard Payload Envelope & Stale-While-Revalidate Policy
-Every widget payload envelope published over the SSE bus (`widget.update` per SPEC-006) or returned via provider fetch conforms to the standard JSON structure:
+Every widget payload envelope published over the SSE bus (`widget.update` per SPEC-006) or stored in cache conforms to the standard JSON structure:
 
 ```json
 {
@@ -400,24 +400,21 @@ For user-specific integrations, private household services, or extensions writte
      ```
      This keeps outbound request payloads clean, prevents internal framework settings or secrets from leaking across the network, and allows custom sidecars to directly deserialize domain parameters without unwrapping a wrapper object.
    - **Response Body Received FROM Endpoint**:
-     Returns the standard JSON payload envelope:
+     The custom endpoint returns ONLY the domain data object. Operational health is conveyed strictly via standard HTTP status codes (no custom headers or outer envelopes):
      ```json
      {
-       "widget_id": "living-room-temp",
-       "timestamp": "2026-09-24T22:20:00Z",
-       "state": "healthy",
-       "data": {
-         "temperature": 71.2
-       }
+       "temperature": 71.2
      }
      ```
+     - **2xx Success (e.g. `200 OK`)**: The response body must be a JSON object containing the domain data, validated against the widget package's `response_schema`. On successful validation, Core stamps `timestamp` with the current UTC receive time, sets `state: "healthy"`, wraps it into the internal payload envelope (`widget_id`, `timestamp`, `state`, `data`), and updates the in-memory and SQLite cache.
+     - **Non-2xx Status / Network Error**: If the endpoint returns a non-2xx status code (e.g. `500 Internal Server Error`, `502 Bad Gateway`, `429 Too Many Requests`) or the request times out, Core treats this as an upstream fetch failure. Per Stale-While-Revalidate rules, Core preserves the Last-Known-Good (LKG) data snapshot in cache, marks the widget `state: "degraded"` (or `state: "error"` if cold-booting with an empty cache), emits a degraded `widget.update` SSE event, and schedules retry with exponential backoff.
    - **Mutation Handling (`POST {endpoint}/action`)**:
      Optional mutation handler. Forwards user actions from `POST /api/widgets/{widget_id}/action` (returns `200` OK, `202` Accepted, or `502` Bad Gateway per SPEC-006).
 
 3. **Runtime Response Schema Validation (`response_schema`)**:
    When data is received from the HTTP endpoint (or inbound push webhook), the Go daemon validates the payload before passing it to the presentation layer:
-   - **Validation Scope**: Validates the contents of the `data` object against the `response_schema` defined in the widget's `manifest.yaml` using JSON Schema Draft 2020-12 compiled via `github.com/santhosh-tekuri/jsonschema/v6`. If an IoT endpoint returns raw domain JSON without an outer envelope (e.g. `{"temperature": 71.2}`), the daemon validates it against `response_schema` and wraps it into the canonical envelope automatically.
-   - **Enforcement & Stale-While-Revalidate**: If required fields are missing, unexpected nulls occur, or primitive types mismatch (e.g. string provided instead of number), the Go daemon:
+   - **Validation Scope**: Validates the received domain data object directly against the `response_schema` defined in the widget's `manifest.yaml` using JSON Schema Draft 2020-12 compiled via `github.com/santhosh-tekuri/jsonschema/v6`.
+   - **Enforcement & Stale-While-Revalidate**: If required fields are missing, unexpected nulls occur, primitive types mismatch (e.g. string provided instead of number), or the body is not a valid JSON object, the Go daemon:
      1. Emits a structured log (`[widget.validator] widget="living-room-temp" error="response_schema validation failed: missing required field 'temperature'"`).
      2. Freezes and preserves the Last-Known-Good (LKG) data snapshot.
      3. Transitions widget operational state to `degraded` (or `error` on cold boot).
@@ -428,9 +425,14 @@ For user-specific integrations, private household services, or extensions writte
    Sidecars and external services can push updates immediately into Mirrormere by issuing an HTTP POST webhook:
    - `POST /api/widgets/{widget_id}/push`
    - Headers: `Content-Type: application/json`
-   - Body: Standard payload envelope (`widget_id`, `timestamp`, `state`, `data`).
+   - Body: Domain data object directly (matching the endpoint response format, validated against `response_schema`):
+     ```json
+     {
+       "temperature": 71.2
+     }
+     ```
    - Auth: None (all inbound LAN calls are fully trusted per the local-network trust model).
-   - Behavior: Validates `data` against `response_schema`, then updates the widget's in-memory and SQLite cache regardless of active screen. Push webhooks are strictly limited to sidecar and generic HTTP provider widgets; calling push on list-backed widgets (`type: tasks`) is rejected with `409 Conflict` (task lists are strictly read-only ambient displays ingested from configured upstream providers per SPEC-006 and SPEC-008). The daemon immediately broadcasts a `widget.update` SSE event across all open `/api/events` connections (per SPEC-006), ensuring all connected displays, companion nodes, and cached client stores update their local state immediately with zero rotation delay. See SPEC-006 for full request/response schemas, status codes (200/400/404/409), and validation rules.
+   - Behavior: Validates the domain data object against `response_schema`, sets `state: "healthy"`, stamps `timestamp` with current UTC receive time, wraps the payload into the internal envelope, and updates the widget's in-memory and SQLite cache regardless of active screen. Push webhooks are strictly limited to sidecar and generic HTTP provider widgets; calling push on list-backed widgets (`type: tasks`) is rejected with `409 Conflict` (task lists are strictly read-only ambient displays ingested from configured upstream providers per SPEC-006 and SPEC-008). The daemon immediately broadcasts a `widget.update` SSE event across all open `/api/events` connections (per SPEC-006), ensuring all connected displays, companion nodes, and cached client stores update their local state immediately with zero rotation delay. See SPEC-006 for full request/response schemas, status codes (200/400/404/409), and validation rules.
 
 ---
 
