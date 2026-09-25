@@ -28,7 +28,7 @@ Mirrormere solves this by establishing an open, headless smart display platform 
   1. Home Assistant Core entity state streaming (climate, lights, locks, sensors)
   2. Smart home quick-action widget controls
   3. Native Home Assistant doorbell push integration (complementing Phase 1 generic Webhook API)
-  4. Voice assistant satellite pipeline (`wyoming-satellite`, or the adapter pipeline in SPEC-011)
+  4. Voice assistant streaming pipeline (`mirrormere-voice` client and LAN Voice Hub in SPEC-011)
 
 ---
 
