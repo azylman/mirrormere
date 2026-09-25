@@ -1,7 +1,7 @@
 /* ==========================================================================
    Mirrormere Reference Stylesheet: Purple Cyberpunk HUD (Touch Kiosk / Desktop)
    Authoritative Reference: specs/001-architecture-overview.md & specs/003 §3
-   Mount target: -v ./custom.css:/config/custom.css:ro
+   Mount target: copy to ./config/custom.css (mounted via directory mount ./config:/config:ro per SPEC-003 §3)
    ========================================================================== */
 
 :root {

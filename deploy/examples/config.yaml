@@ -1,5 +1,5 @@
 # Mirrormere Reference Configuration Template
-# Authoritative Documentation: specs/001-architecture-overview.md, specs/003-widget-contract.md, specs/005-screen-layout-and-rotation.md
+# Authoritative Documentation: specs/001-architecture-overview.md, specs/003-widget-contract.md, specs/005-screen-layout-and-rotation.md, specs/007-core-data-providers.md
 
 # Authoritative household IANA timezone (SPEC-001 §4)
 timezone: "America/Los_Angeles"
@@ -10,6 +10,7 @@ display:
     interval_seconds: 30
     transition: "slide"
 
+  # Persistent Fixed Header (SPEC-005, SPEC-007 §4)
   header:
     enabled: true
     elements:
@@ -17,6 +18,12 @@ display:
       - date
       - weather_badge
       - sync_status
+    # Autonomous header weather poller hydrating header.update (SPEC-007 §4)
+    weather:
+      refresh_interval_seconds: 900
+      latitude: 37.8044
+      longitude: -122.2712
+      units: imperial
 
   # Active widget instances (SPEC-003 §2)
   # Widgets are automatically packed across minimal rotation screens via the 6x2 bitmask solver (SPEC-005).
@@ -64,8 +71,10 @@ display:
       pinned: false
       refresh_interval_seconds: 3600
       config:
-        album_id: family-favorites
-        interval_seconds: 60
+        share_url: "https://photos.app.goo.gl/AbCdEf123456789"
+        cycle_interval_seconds: 60
+        preload_count: 50
+        shuffle: true
 
     - id: calendar-pad
       type: spacer
