@@ -10,12 +10,11 @@ Mirrormere uses a pluggable, declarative widget model. A widget is a self-contai
 
 ## Directory Structure
 
-A widget package lives in `widgets/<widget-id>/` (for standard core widgets) or `custom_widgets/<widget-id>/` (for user-specific extensions):
+A widget package lives in `widgets/<widget-id>/` (for standard core widgets compiled into the binary) or in a mounted configuration directory (e.g. `/config/widgets/<widget-id>/` or `custom_widgets/<widget-id>/` for custom user extensions):
 
 ```
 widgets/calendar-agenda/
 ├── manifest.yaml           # Widget metadata, configuration schema, and capabilities
-├── provider.go             # Backend data fetcher and event publisher
 ├── views/
 │   └── widget.html         # Unified semantic HTML layout for all display profiles
 └── assets/                 # Optional static icons or assets
@@ -64,14 +63,17 @@ config_schema:
 
 ---
 
-## The Data Provider Contract
+## The Data Provider Contract & Architecture
 
-The backend data provider runs in the Mirrormere Core service:
-1. **Lifecycle**:
-   - `Init(config)`: Validates credentials, sets up sync loops or WebSocket listeners.
-   - `Fetch()`: Returns an atomic JSON payload representing current state.
-   - `Subscribe(eventSink)`: Emits real-time event updates when data changes.
-   - `Shutdown()`: Cleans up background listeners and connections.
+Mirrormere compiles into a static, zero-CGO Go binary (`CGO_ENABLED=0`). Because Go cannot dynamically load shared libraries (`.so` plugins via `plugin.Open`) into static binaries, Mirrormere does not support dynamic runtime Go plugins. Instead, data providers follow one of two clean extension models:
+
+### 1. In-Process Compiled Providers (Core Widgets & Custom Builds)
+Core built-in widgets run directly in the Mirrormere Core service process:
+1. **Lifecycle Interface**:
+   - `Init(ctx context.Context, config map[string]any) error`: Validates credentials, sets up sync loops or WebSocket listeners.
+   - `Fetch(ctx context.Context) (WidgetPayload, error)`: Returns an atomic JSON payload representing current state.
+   - `Subscribe(ctx context.Context, eventSink chan<- WidgetPayload) error`: Emits real-time event updates when data changes.
+   - `Shutdown(ctx context.Context) error`: Cleans up background listeners and connections.
 
 2. **Standard Payload Envelope**:
    ```json
@@ -93,6 +95,32 @@ The backend data provider runs in the Mirrormere Core service:
      }
    }
    ```
+
+### 2. Out-of-Process Generic HTTP Providers (Private Extensions & Sidecars)
+For user-specific integrations, private household services, or extensions written in any language (Python, Node.js, Go), Mirrormere provides an out-of-process Generic HTTP Provider adapter (matching the HTTP provider pattern in SPEC-008):
+
+1. **Manifest & Configuration**:
+   A custom widget declares its HTTP provider endpoint in `manifest.yaml` or `config.yaml`:
+   ```yaml
+   widgets:
+     - id: custom-sensor-hud
+       provider: http
+       http:
+         endpoint: "http://sensor-sidecar:8090/data"
+         poll_interval_seconds: 60
+         token_env: SENSOR_HUD_TOKEN
+   ```
+
+2. **Wire Endpoints**:
+   - `GET {endpoint}`: Returns the standard JSON payload envelope (`widget_id`, `timestamp`, `state`, `data`).
+   - `POST {endpoint}/action`: Optional mutation handler. Forwards user actions from `POST /api/widgets/{widget_id}/action` (returns `200` OK, `202` Accepted, or `502` Bad Gateway per SPEC-006).
+
+3. **Realtime Push / Webhook Support**:
+   Sidecars and external services can push updates immediately into Mirrormere by issuing an authenticated webhook:
+   - `POST /api/widgets/{widget_id}/push`
+   - Headers: `Authorization: Bearer <shared_secret>`, `Content-Type: application/json`
+   - Body: Standard payload envelope.
+   - Triggers an immediate SSE broadcast (`widget.update` per SPEC-006) to active display nodes without waiting for the polling timer.
 
 ---
 
@@ -135,6 +163,7 @@ Mirrormere enforces a strict separation between core public widgets and private 
    - 100% generic, reusable, and free of personal identifiers or proprietary hardware dependencies.
    - Includes: Google Calendar / CalDAV, Open-Meteo Weather, Daily Chores & Todo, Clock & World Time, Family Photo Carousel.
 
-2. **Private User Extensions (`custom_widgets/`)**:
+2. **Private User Extensions (`custom_widgets/` or Sidecar Services)**:
    - User-defined integrations that reference personal home configurations or specific hardware peripherals.
+   - Run out-of-process as generic HTTP provider sidecars (or custom containers) communicating via the HTTP/webhook contract, with semantic templates mounted into `/config/widgets/`.
    - Includes: Home Assistant entity dashboards, live RTSP doorbell camera feeds, and Chromecast UVC ingest pipelines.

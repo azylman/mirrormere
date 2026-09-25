@@ -77,7 +77,7 @@ type ListSource interface {
 | `local` | Core | SQLite (`lists`, `list_items`), default for any list with no `source`. Pushes changes natively. |
 | `gtasks` | Core, optional | Google Tasks API. Needs OAuth; polled (default 120 s). |
 | `http` | Core | Generic adapter for a household's own list service exposing the endpoint shape below. Lets private systems plug in without Go code. |
-| Private | Extension dir | Anything else (e.g. a Skylight bridge) lives in the private extensions directory per SPEC-003. |
+| Private | Sidecar / HTTP | Anything else (e.g. a Skylight bridge) runs as an out-of-process HTTP provider sidecar per SPEC-003. |
 
 ### Configuration Schema (`config.yaml`)
 
