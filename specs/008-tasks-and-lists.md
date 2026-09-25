@@ -16,15 +16,10 @@ Mirrormere therefore must not own the one true list. It must:
 2. Let each list point at an external **source of truth** through an adapter.
 3. Present every list through one uniform shape, whatever sits behind it.
 
-### Authentication
-Mirrormere is a LAN appliance, not a cloud service, and has no user accounts.
-Two rules still hold:
-- The daemon binds to the local network by default. Exposure through a tunnel
-  (Cloudflare, Tailscale Funnel) requires setting `server.shared_secret`,
-  which clients then send as `Authorization: Bearer <secret>`.
-- Upstream credentials (Google OAuth tokens, Home Assistant long-lived tokens,
-  private API tokens) live in config or env files readable only by the daemon.
-  They are the most sensitive thing Mirrormere holds.
+### Security & Local-Network Trust Model
+Mirrormere operates strictly as an appliance on trusted local networks and has no user accounts:
+- **Zero Inbound Authentication**: All inbound REST mutations, SSE streams, and webhook pushes require no authentication or authorization; all LAN calls are fully trusted.
+- **Upstream Credentials**: Outbound integration credentials (Google OAuth tokens, Home Assistant long-lived tokens, private API keys) live in config or env files readable only by the daemon. They are the most sensitive thing Mirrormere holds.
 
 ---
 

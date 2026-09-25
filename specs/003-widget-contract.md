@@ -116,11 +116,12 @@ For user-specific integrations, private household services, or extensions writte
    - `POST {endpoint}/action`: Optional mutation handler. Forwards user actions from `POST /api/widgets/{widget_id}/action` (returns `200` OK, `202` Accepted, or `502` Bad Gateway per SPEC-006).
 
 3. **Realtime Push / Webhook Support**:
-   Sidecars and external services can push updates immediately into Mirrormere by issuing an authenticated webhook:
+   Sidecars and external services can push updates immediately into Mirrormere by issuing an HTTP POST webhook:
    - `POST /api/widgets/{widget_id}/push`
-   - Headers: `Authorization: Bearer <shared_secret>`, `Content-Type: application/json`
+   - Headers: `Content-Type: application/json`
    - Body: Standard payload envelope.
    - Triggers an immediate SSE broadcast (`widget.update` per SPEC-006) to active display nodes without waiting for the polling timer.
+   - Auth: None (all inbound LAN calls are fully trusted).
 
 ---
 
