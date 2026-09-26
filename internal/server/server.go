@@ -37,6 +37,7 @@ type Config struct {
 	ReadHeaderTimeout time.Duration
 	WriteTimeout      time.Duration
 	IdleTimeout       time.Duration
+	EventsHandler     http.Handler
 }
 
 // ApplyDefaults sets fallback values for any unspecified configuration fields.
@@ -79,13 +80,14 @@ type RootResponse struct {
 
 // Server wraps http.Server with lifecycle signaling and healthcheck routing.
 type Server struct {
-	cfg        Config
-	mux        *http.ServeMux
-	httpServer *http.Server
-	ready      chan struct{}
-	readyOnce  sync.Once
-	mu         sync.RWMutex
-	addr       string
+	cfg           Config
+	mux           *http.ServeMux
+	httpServer    *http.Server
+	ready         chan struct{}
+	readyOnce     sync.Once
+	mu            sync.RWMutex
+	addr          string
+	eventsHandler http.Handler
 }
 
 // New constructs a configured Server instance.
@@ -93,9 +95,10 @@ func New(cfg Config) *Server {
 	cfg.ApplyDefaults()
 
 	s := &Server{
-		cfg:   cfg,
-		mux:   http.NewServeMux(),
-		ready: make(chan struct{}),
+		cfg:           cfg,
+		mux:           http.NewServeMux(),
+		ready:         make(chan struct{}),
+		eventsHandler: cfg.EventsHandler,
 	}
 
 	s.setupRoutes()
@@ -128,10 +131,36 @@ func (s *Server) Routes() http.Handler {
 	return s.mux
 }
 
+// RegisterEventsHandler dynamically registers or replaces the /api/events HTTP handler.
+func (s *Server) RegisterEventsHandler(h http.Handler) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.eventsHandler = h
+}
+
+// EventsHandler returns the currently registered events handler.
+func (s *Server) EventsHandler() http.Handler {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.eventsHandler
+}
+
 func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/healthz", s.handleHealth)
 	s.mux.HandleFunc("/health", s.handleHealth)
+	s.mux.HandleFunc("/api/events", s.handleEvents)
 	s.mux.HandleFunc("/", s.handleRoot)
+}
+
+func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	h := s.eventsHandler
+	s.mu.RUnlock()
+	if h == nil {
+		http.NotFound(w, r)
+		return
+	}
+	h.ServeHTTP(w, r)
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
