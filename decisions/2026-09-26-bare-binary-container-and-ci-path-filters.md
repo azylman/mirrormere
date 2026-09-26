@@ -25,10 +25,17 @@ This introduced unnecessary build overhead, slow turnaround times for frontend/C
      - `mirrormere-eink-renderer`: builds strictly when `sidecars/eink-renderer/**` is modified.
    - Build and publish steps are conditionally guarded by `steps.filter.outputs[matrix.name] == 'true'`.
 
+4. **Purge of `embed.FS` and Embedded Static Fallbacks**:
+   - Removed `web/embed.go` (`var Content embed.FS`).
+   - Replaced `web/embed.go` with `web/doc.go` documenting host-mounted runtime web assets.
+   - Purged `embeddedFS` from `internal/display/handler.go`, eliminating embedded asset fallbacks.
+   - The compiled `/app/server` binary no longer embeds HTML templates or web static files, strictly requiring filesystem resolution on disk.
+
 ## Consequences
 - **Positive**:
   - Image builds are skipped entirely when changes are limited to documentation or static assets.
   - Multi-arch Docker matrix jobs only build and publish the specific containers that were actually modified.
   - Rapid local iteration: template and CSS updates reflect immediately via host-mounted volumes without waiting on CI/CD pipelines.
+  - Static assets and HTML templates are no longer baked into the compiled Go binary. Missing host mounts cleanly return 404 rather than silently serving stale compiled-in fallbacks.
 - **Operational Requirement**:
   - Deployments running the bare binary image must volume-mount `/app/web` and `/app/widgets` from the host repository or asset directory.

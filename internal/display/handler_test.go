@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"testing/fstest"
 
 	"github.com/azylman/mirrormere/internal/api"
 	"github.com/azylman/mirrormere/internal/display"
@@ -74,7 +73,6 @@ func TestGetDisplay_Resolutions(t *testing.T) {
 		h := display.NewHandler(
 			display.WithTemplatePath(tmplPath),
 			display.WithLocalTemplatePath(""),
-			display.WithEmbeddedFS(nil),
 		)
 
 		req := httptest.NewRequest(http.MethodGet, "/display", nil)
@@ -100,7 +98,6 @@ func TestGetDisplay_Resolutions(t *testing.T) {
 		h := display.NewHandler(
 			display.WithTemplatePath("/nonexistent/display.html"),
 			display.WithLocalTemplatePath(tmplPath),
-			display.WithEmbeddedFS(nil),
 		)
 
 		req := httptest.NewRequest(http.MethodGet, "/display", nil)
@@ -135,38 +132,11 @@ func TestGetDisplay_Resolutions(t *testing.T) {
 		}
 	})
 
-	t.Run("EmbeddedFS", func(t *testing.T) {
-		t.Parallel()
-		mockFS := fstest.MapFS{
-			"templates/display.html": &fstest.MapFile{
-				Data: []byte("<html>mock-fs</html>"),
-			},
-		}
-
-		h := display.NewHandler(
-			display.WithTemplatePath("/nonexistent/path"),
-			display.WithLocalTemplatePath("/nonexistent/local"),
-			display.WithEmbeddedFS(mockFS),
-		)
-
-		req := httptest.NewRequest(http.MethodGet, "/display", nil)
-		rec := httptest.NewRecorder()
-		h.GetDisplay(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Fatalf("expected status 200, got %d", rec.Code)
-		}
-		if !strings.Contains(rec.Body.String(), "<html>mock-fs</html>") {
-			t.Errorf("unexpected body: %s", rec.Body.String())
-		}
-	})
-
 	t.Run("NotFound", func(t *testing.T) {
 		t.Parallel()
 		h := display.NewHandler(
 			display.WithTemplatePath("/nonexistent/path"),
 			display.WithLocalTemplatePath("/nonexistent/local"),
-			display.WithEmbeddedFS(fstest.MapFS{}),
 		)
 
 		req := httptest.NewRequest(http.MethodGet, "/display", nil)
@@ -250,7 +220,6 @@ func TestGetStatic_Resolutions(t *testing.T) {
 		h := display.NewHandler(
 			display.WithStaticDir(tempDir),
 			display.WithLocalStaticDir(""),
-			display.WithEmbeddedFS(nil),
 		)
 
 		req := httptest.NewRequest(http.MethodGet, "/static/app.js", nil)
@@ -276,7 +245,6 @@ func TestGetStatic_Resolutions(t *testing.T) {
 		h := display.NewHandler(
 			display.WithStaticDir("/nonexistent/static"),
 			display.WithLocalStaticDir(tempDir),
-			display.WithEmbeddedFS(nil),
 		)
 
 		req := httptest.NewRequest(http.MethodGet, "/static/theme.css", nil)
@@ -291,39 +259,29 @@ func TestGetStatic_Resolutions(t *testing.T) {
 		}
 	})
 
-	t.Run("EmbeddedFSMimeTypes", func(t *testing.T) {
+	t.Run("DiskMimeTypes", func(t *testing.T) {
 		t.Parallel()
-		mockFS := fstest.MapFS{
-			"static/test.js": &fstest.MapFile{
-				Data: []byte("const x = 1;"),
-			},
-			"static/test.css": &fstest.MapFile{
-				Data: []byte(".a { color: red; }"),
-			},
-			"static/test.svg": &fstest.MapFile{
-				Data: []byte("<svg></svg>"),
-			},
-			"static/test.json": &fstest.MapFile{
-				Data: []byte(`{"status":"ok"}`),
-			},
-			"static/test.png": &fstest.MapFile{
-				Data: []byte{0x89, 'P', 'N', 'G'},
-			},
-			"static/test.webp": &fstest.MapFile{
-				Data: []byte("RIFF....WEBP"),
-			},
-			"static/test.html": &fstest.MapFile{
-				Data: []byte("<html>test</html>"),
-			},
-			"static/test.unknown": &fstest.MapFile{
-				Data: []byte("binary data"),
-			},
+		tempDir := t.TempDir()
+		files := map[string][]byte{
+			"test.js":      []byte("const x = 1;"),
+			"test.css":     []byte(".a { color: red; }"),
+			"test.svg":     []byte("<svg></svg>"),
+			"test.json":    []byte(`{"status":"ok"}`),
+			"test.png":     []byte{0x89, 'P', 'N', 'G'},
+			"test.webp":    []byte("RIFF....WEBP"),
+			"test.html":    []byte("<html>test</html>"),
+			"test.unknown": []byte("binary data"),
+		}
+
+		for name, data := range files {
+			if err := os.WriteFile(filepath.Join(tempDir, name), data, 0644); err != nil {
+				t.Fatal(err)
+			}
 		}
 
 		h := display.NewHandler(
-			display.WithStaticDir("/nonexistent/static"),
-			display.WithLocalStaticDir("/nonexistent/local"),
-			display.WithEmbeddedFS(mockFS),
+			display.WithStaticDir(tempDir),
+			display.WithLocalStaticDir(""),
 		)
 
 		testCases := []struct {
@@ -359,16 +317,14 @@ func TestGetStatic_Resolutions(t *testing.T) {
 
 	t.Run("HEADMethod", func(t *testing.T) {
 		t.Parallel()
-		mockFS := fstest.MapFS{
-			"static/test.js": &fstest.MapFile{
-				Data: []byte("const x = 1;"),
-			},
+		tempDir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(tempDir, "test.js"), []byte("const x = 1;"), 0644); err != nil {
+			t.Fatal(err)
 		}
 
 		h := display.NewHandler(
-			display.WithStaticDir("/nonexistent/static"),
-			display.WithLocalStaticDir("/nonexistent/local"),
-			display.WithEmbeddedFS(mockFS),
+			display.WithStaticDir(tempDir),
+			display.WithLocalStaticDir(""),
 		)
 
 		req := httptest.NewRequest(http.MethodHead, "/static/test.js", nil)
@@ -388,7 +344,6 @@ func TestGetStatic_Resolutions(t *testing.T) {
 		h := display.NewHandler(
 			display.WithStaticDir("/nonexistent/static"),
 			display.WithLocalStaticDir("/nonexistent/local"),
-			display.WithEmbeddedFS(fstest.MapFS{}),
 		)
 
 		req := httptest.NewRequest(http.MethodGet, "/static/missing.js", nil)

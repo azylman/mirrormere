@@ -4,23 +4,21 @@ import (
 	"os"
 	"os/exec"
 	"testing"
-
-	"github.com/azylman/mirrormere/web"
 )
 
-func TestEmbeddedContent(t *testing.T) {
+func TestFilesystemContent(t *testing.T) {
 	t.Parallel()
 
-	// Verify display.html is embedded
-	displayHTML, err := web.Content.ReadFile("templates/display.html")
+	// Verify display.html is present on disk
+	displayHTML, err := os.ReadFile("templates/display.html")
 	if err != nil {
-		t.Fatalf("failed to read embedded templates/display.html: %v", err)
+		t.Fatalf("failed to read templates/display.html: %v", err)
 	}
 	if len(displayHTML) == 0 {
 		t.Errorf("expected non-empty templates/display.html")
 	}
 
-	// Verify static assets are embedded
+	// Verify static assets are present on disk
 	expectedFiles := []string{
 		"static/css/hud.css",
 		"static/js/sse.js",
@@ -33,12 +31,12 @@ func TestEmbeddedContent(t *testing.T) {
 	}
 
 	for _, file := range expectedFiles {
-		data, err := web.Content.ReadFile(file)
+		data, err := os.ReadFile(file)
 		if err != nil {
-			t.Fatalf("failed to read embedded file %q: %v", file, err)
+			t.Fatalf("failed to read file %q: %v", file, err)
 		}
 		if len(data) == 0 {
-			t.Errorf("expected non-empty content for embedded file %q", file)
+			t.Errorf("expected non-empty content for file %q", file)
 		}
 	}
 }
