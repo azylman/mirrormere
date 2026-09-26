@@ -43,6 +43,13 @@ func (h *Hub) DispatchConfigReload(snapshot *config.Snapshot, diff *config.Confi
 		}
 	}
 
+	// Reconcile active providers if provider coordinator registered
+	if pc := h.ProviderCoordinator(); pc != nil {
+		if err := pc.UpdateConfig(snapshot); err != nil {
+			h.logger.Error("failed to reconcile provider coordinator on config reload", "error", err)
+		}
+	}
+
 	// 3. For any modified instance whose domain parameters changed, broadcast degraded widget.update per SPEC-012 §3
 	if diff != nil {
 		now := h.cfg.NowFunc()

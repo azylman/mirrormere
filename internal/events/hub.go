@@ -23,6 +23,11 @@ type RotationCoordinator interface {
 	UpdateConfig(snap *config.Snapshot) ScreenRotateData
 }
 
+// ProviderCoordinator abstracts provider reconciliation for configuration reload.
+type ProviderCoordinator interface {
+	UpdateConfig(snap *config.Snapshot) error
+}
+
 // HubConfig configures buffering, timing, and capacity for the SSE event hub.
 type HubConfig struct {
 	RingCapacity      int
@@ -99,6 +104,7 @@ type Hub struct {
 	idGen               *IDGenerator
 	stateProvider       StateProvider
 	rotationCoordinator RotationCoordinator
+	providerCoordinator ProviderCoordinator
 	nextSubID           atomic.Uint64
 	logger              *slog.Logger
 	closed              atomic.Bool
@@ -138,6 +144,20 @@ func (h *Hub) RotationCoordinator() RotationCoordinator {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	return h.rotationCoordinator
+}
+
+// SetProviderCoordinator registers a provider coordinator.
+func (h *Hub) SetProviderCoordinator(c ProviderCoordinator) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.providerCoordinator = c
+}
+
+// ProviderCoordinator returns the registered provider coordinator.
+func (h *Hub) ProviderCoordinator() ProviderCoordinator {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.providerCoordinator
 }
 
 // Config returns the active hub configuration snapshot.
