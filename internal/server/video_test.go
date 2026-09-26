@@ -205,6 +205,21 @@ func TestDefaultVideoHandler_PostVideoTrigger(t *testing.T) {
 		t.Fatalf("expected 400 for missing fields, got %d", recMissing.Code)
 	}
 
+	// 5b. Reserved sentinels 'all' and '*'
+	reqAll := httptest.NewRequest(http.MethodPost, "/api/video/trigger", strings.NewReader(`{"id":"all","stream_url":"http://127.0.0.1:1984/cast"}`))
+	recAll := httptest.NewRecorder()
+	h.PostVideoTrigger(recAll, reqAll)
+	if recAll.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for reserved sentinel 'all', got %d", recAll.Code)
+	}
+
+	reqWildcardTrigger := httptest.NewRequest(http.MethodPost, "/api/video/trigger", strings.NewReader(`{"id":"*","stream_url":"http://127.0.0.1:1984/cast"}`))
+	recWildcardTrigger := httptest.NewRecorder()
+	h.PostVideoTrigger(recWildcardTrigger, reqWildcardTrigger)
+	if recWildcardTrigger.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for reserved sentinel '*', got %d", recWildcardTrigger.Code)
+	}
+
 	// 6. Coordinator Trigger Error
 	mock.triggerErr = video.ErrInvalidPlayerState
 	reqErr := httptest.NewRequest(http.MethodPost, "/api/video/trigger", strings.NewReader(body))
@@ -264,6 +279,18 @@ func TestDefaultVideoHandler_PostVideoDismiss(t *testing.T) {
 	}
 	if mock.lastDismissID != "all" {
 		t.Fatalf("expected dismiss ID 'all', got %s", mock.lastDismissID)
+	}
+
+	// 1c. Success POST with id: "*"
+	reqWildcard := httptest.NewRequest(http.MethodPost, "/api/video/dismiss", strings.NewReader(`{"id":"*"}`))
+	recWildcard := httptest.NewRecorder()
+	h.PostVideoDismiss(recWildcard, reqWildcard)
+
+	if recWildcard.Code != http.StatusOK {
+		t.Fatalf("expected 200 for id '*', got %d", recWildcard.Code)
+	}
+	if mock.lastDismissID != "*" {
+		t.Fatalf("expected dismiss ID '*', got %s", mock.lastDismissID)
 	}
 
 	// 2. Stream not found (404)

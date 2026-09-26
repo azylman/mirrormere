@@ -96,6 +96,11 @@ func (h *DefaultVideoHandler) PostVideoTrigger(w http.ResponseWriter, r *http.Re
 		writeVideoError(w, http.StatusBadRequest, "invalid video trigger request: id and stream_url are required")
 		return
 	}
+	reqID := strings.TrimSpace(req.Id)
+	if reqID == "all" || reqID == "*" {
+		writeVideoError(w, http.StatusBadRequest, "invalid video trigger request: 'all' and '*' are reserved sentinels")
+		return
+	}
 
 	vType := video.TypeWebRTC
 	if req.Type != nil && string(*req.Type) != "" {
