@@ -137,8 +137,60 @@ run_coverage_gate() {
     sh "$REPO_ROOT/scripts/check-coverage.sh" --check --summary
 }
 
+# 6. Codegen Zero-Drift Gate (SPEC-001 §2.3)
+OAPI_CODEGEN_BIN=""
+ensure_oapi_codegen() {
+    if [ -n "$OAPI_CODEGEN_BIN" ]; then
+        return 0
+    fi
+    if has_cmd oapi-codegen; then
+        OAPI_CODEGEN_BIN="oapi-codegen"
+        return 0
+    fi
+    gopath="$(go env GOPATH 2>/dev/null || true)"
+    if [ -n "$gopath" ] && [ -x "$gopath/bin/oapi-codegen" ]; then
+        OAPI_CODEGEN_BIN="$gopath/bin/oapi-codegen"
+        export PATH="$gopath/bin:$PATH"
+        return 0
+    fi
+    if [ -x "$HOME/go/bin/oapi-codegen" ]; then
+        OAPI_CODEGEN_BIN="$HOME/go/bin/oapi-codegen"
+        export PATH="$HOME/go/bin:$PATH"
+        return 0
+    fi
+    if has_cmd go; then
+        echo "   [oapi-codegen] Installing oapi-codegen via go install..."
+        go install github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.4.1
+        if [ -n "$gopath" ] && [ -x "$gopath/bin/oapi-codegen" ]; then
+            OAPI_CODEGEN_BIN="$gopath/bin/oapi-codegen"
+            export PATH="$gopath/bin:$PATH"
+            return 0
+        elif [ -x "$HOME/go/bin/oapi-codegen" ]; then
+            OAPI_CODEGEN_BIN="$HOME/go/bin/oapi-codegen"
+            export PATH="$HOME/go/bin:$PATH"
+            return 0
+        fi
+    fi
+    echo "🚨 [Mirrormere Verify] Error: Neither oapi-codegen nor go found in PATH to perform code generation." >&2
+    exit 1
+}
+
+run_codegen_drift() {
+    echo "   [codegen] Verifying zero-drift for generated Go code..."
+    ensure_oapi_codegen
+    go generate ./...
+    if has_cmd git; then
+        if ! git diff --exit-code internal/api/; then
+            echo "🚨 [Mirrormere Verify] Error: Generated code drift detected in internal/api/." >&2
+            echo "Run 'go generate ./...' and commit the updated files." >&2
+            exit 1
+        fi
+    fi
+}
+
 # Execute checks in pipeline order
 check_utf8_bom
+run_codegen_drift
 run_go_vet
 run_golangci_lint
 run_deadcode

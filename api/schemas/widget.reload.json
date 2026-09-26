@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "widget.reload",
+  "description": "Widget template or manifest reload event broadcast over SSE",
+  "type": "object",
+  "required": [
+    "type"
+  ],
+  "properties": {
+    "type": {
+      "type": "string",
+      "description": "Widget package type identifier whose template or manifest was reloaded"
+    }
+  },
+  "additionalProperties": false
+}

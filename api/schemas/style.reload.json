@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "style.reload",
+  "description": "Custom stylesheet reload event broadcast over SSE",
+  "type": "object",
+  "required": [
+    "file",
+    "timestamp"
+  ],
+  "properties": {
+    "file": {
+      "type": "string",
+      "description": "Stylesheet file name that was updated (e.g. custom.css)"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "UTC timestamp of the stylesheet reload in ISO 8601 / RFC 3339 format"
+    }
+  },
+  "additionalProperties": false
+}
