@@ -31,13 +31,21 @@ type TasksConfig struct {
 // TasksProvider implements Provider for the built-in tasks widget.
 // Backed by the local pure-Go SQLite store and pluggable ingestion adapters per SPEC-008.
 type TasksProvider struct {
-	mu        sync.RWMutex
-	widgetID  string
-	cfg       TasksConfig
-	store     tasks.Store
-	ownsStore bool
-	adapter   adapters.Adapter
-	notifier  *tasks.ChangeNotifier
+	mu          sync.RWMutex
+	widgetID    string
+	cfg         TasksConfig
+	store       tasks.Store
+	ownsStore   bool
+	adapter     adapters.Adapter
+	notifier    *tasks.ChangeNotifier
+	onSubscribe func()
+}
+
+// SetOnSubscribeForTest sets a callback invoked when Subscribe has registered its listener.
+func (p *TasksProvider) SetOnSubscribeForTest(fn func()) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.onSubscribe = fn
 }
 
 // NewTasksProvider constructs a new TasksProvider.
@@ -325,6 +333,13 @@ func (p *TasksProvider) Subscribe(ctx context.Context, eventSink chan<- WidgetPa
 	updateCh := make(chan struct{}, 4)
 	unregister := notifier.RegisterListener(listID, updateCh)
 	defer unregister()
+
+	p.mu.RLock()
+	onSub := p.onSubscribe
+	p.mu.RUnlock()
+	if onSub != nil {
+		onSub()
+	}
 
 	for {
 		select {

@@ -651,18 +651,22 @@ func TestWatcher_MaxDebounceDurationCeiling(t *testing.T) {
 
 	// Keep sending rapid writes until event is received
 	stopWrites := make(chan struct{})
+	doneWrites := make(chan struct{})
 	go func() {
+		defer close(doneWrites)
 		for i := 0; i < 20; i++ {
 			select {
 			case <-stopWrites:
 				return
-			default:
-				time.Sleep(5 * time.Millisecond)
+			case <-time.After(5 * time.Millisecond):
 				_ = os.WriteFile(cssPath, []byte(fmt.Sprintf("body { color: %d; }", i)), 0644)
 			}
 		}
 	}()
-	defer close(stopWrites)
+	defer func() {
+		close(stopWrites)
+		<-doneWrites
+	}()
 
 	select {
 	case ev := <-disp.styleEvents:

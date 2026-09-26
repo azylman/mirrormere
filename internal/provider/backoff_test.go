@@ -60,6 +60,12 @@ func TestIsNetworkOrServerError(t *testing.T) {
 		{name: "string contains 502 Bad Gateway", err: errors.New("received 502 Bad Gateway from upstream"), expected: true},
 		{name: "string contains 429 Too Many Requests", err: errors.New("received 429 Too Many Requests from API"), expected: true},
 		{name: "string contains status 503", err: errors.New("upstream failed with status 503"), expected: true},
+		{name: "string contains HTTP 503", err: errors.New("HTTP 503: upstream unavailable"), expected: true},
+		{name: "string contains HTTP 429", err: errors.New("HTTP 429: rate limit exceeded"), expected: true},
+		{name: "HTTPStatusError 500", err: &provider.HTTPStatusError{Code: 500, Body: "internal error"}, expected: true},
+		{name: "HTTPStatusError 503 empty body", err: &provider.HTTPStatusError{Code: 503}, expected: true},
+		{name: "HTTPStatusError 429", err: &provider.HTTPStatusError{Code: 429, Body: "rate limited"}, expected: true},
+		{name: "HTTPStatusError 404", err: &provider.HTTPStatusError{Code: 404, Body: "not found"}, expected: false},
 		{name: "schema validation failure", err: errors.New("data validation failed against response_schema"), expected: false},
 		{name: "generic parse error", err: errors.New("json: cannot unmarshal string into Go value"), expected: false},
 	}

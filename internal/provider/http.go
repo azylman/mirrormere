@@ -20,6 +20,24 @@ const (
 	MaxHTTPResponseBodySize = 1 << 20
 )
 
+// HTTPStatusError represents a non-2xx HTTP response from an upstream provider.
+// It implements HTTPStatusCoder and error.
+type HTTPStatusError struct {
+	Code int
+	Body string
+}
+
+func (e *HTTPStatusError) Error() string {
+	if e.Body == "" {
+		return fmt.Sprintf("HTTP %d", e.Code)
+	}
+	return fmt.Sprintf("HTTP %d: %s", e.Code, e.Body)
+}
+
+func (e *HTTPStatusError) StatusCode() int {
+	return e.Code
+}
+
 // HTTPProvider implements the Provider interface for out-of-process generic HTTP sidecars
 // per SPEC-003 §3 and SPEC-006 §3.
 type HTTPProvider struct {
@@ -166,7 +184,10 @@ func (p *HTTPProvider) Fetch(ctx context.Context) (any, error) {
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(bodyBytes)))
+		return nil, &HTTPStatusError{
+			Code: resp.StatusCode,
+			Body: strings.TrimSpace(string(bodyBytes)),
+		}
 	}
 
 	valDoc, err := jsonschema.UnmarshalJSON(bytes.NewReader(bodyBytes))

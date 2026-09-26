@@ -67,7 +67,12 @@ func IsNetworkOrServerError(err error) bool {
 		strings.Contains(msg, "status 502") ||
 		strings.Contains(msg, "status 503") ||
 		strings.Contains(msg, "status 504") ||
-		strings.Contains(msg, "status 429") {
+		strings.Contains(msg, "status 429") ||
+		strings.Contains(msg, "http 500") ||
+		strings.Contains(msg, "http 502") ||
+		strings.Contains(msg, "http 503") ||
+		strings.Contains(msg, "http 504") ||
+		strings.Contains(msg, "http 429") {
 		return true
 	}
 

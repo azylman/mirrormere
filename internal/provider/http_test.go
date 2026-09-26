@@ -3,6 +3,7 @@ package provider_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -226,7 +227,7 @@ func TestHTTPProvider_FetchGET(t *testing.T) {
 func TestHTTPProvider_FetchErrors(t *testing.T) {
 	t.Parallel()
 
-	t.Run("non-2xx HTTP status returns error", func(t *testing.T) {
+	t.Run("non-2xx HTTP status returns HTTPStatusError and triggers backoff", func(t *testing.T) {
 		t.Parallel()
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "upstream service unavailable", http.StatusServiceUnavailable)
@@ -242,6 +243,61 @@ func TestHTTPProvider_FetchErrors(t *testing.T) {
 		_, err := p.Fetch(context.Background())
 		if err == nil || !strings.Contains(err.Error(), "HTTP 503") {
 			t.Fatalf("expected HTTP 503 error, got: %v", err)
+		}
+
+		// Verify error implements HTTPStatusCoder interface
+		var statusErr provider.HTTPStatusCoder
+		if !errors.As(err, &statusErr) {
+			t.Fatalf("expected error to implement HTTPStatusCoder, got %T", err)
+		}
+		if statusErr.StatusCode() != http.StatusServiceUnavailable {
+			t.Fatalf("expected StatusCode 503, got %d", statusErr.StatusCode())
+		}
+
+		// Verify IsNetworkOrServerError recognizes HTTP 503 as transient
+		if !provider.IsNetworkOrServerError(err) {
+			t.Fatalf("expected IsNetworkOrServerError to return true for HTTP 503, got false")
+		}
+
+		// Verify ComputeRetryDelay calculates backoff delay, not the 15-minute interval cap
+		intervalCap := 900 * time.Second
+		backoff := provider.DefaultBackoffPolicy()
+		retryDelay := backoff.ComputeRetryDelay(err, 1, intervalCap)
+		if retryDelay >= intervalCap {
+			t.Fatalf("expected retry delay to be backed off (< %v), got %v", intervalCap, retryDelay)
+		}
+		if retryDelay < 3*time.Second || retryDelay > 7*time.Second {
+			t.Fatalf("expected retry delay around 5s (+/- 20%%), got %v", retryDelay)
+		}
+	})
+
+	t.Run("4xx client error is classified as permanent", func(t *testing.T) {
+		t.Parallel()
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "bad request", http.StatusBadRequest)
+		}))
+		defer srv.Close()
+
+		p := provider.NewHTTPProviderWithClient(srv.Client(), nil)
+		_ = p.Init(context.Background(), nil, provider.InitOptions{
+			Endpoint:       srv.URL,
+			ResponseSchema: sampleResponseSchema(),
+		})
+
+		_, err := p.Fetch(context.Background())
+		if err == nil || !strings.Contains(err.Error(), "HTTP 400") {
+			t.Fatalf("expected HTTP 400 error, got: %v", err)
+		}
+
+		if provider.IsNetworkOrServerError(err) {
+			t.Fatalf("expected IsNetworkOrServerError to return false for HTTP 400, got true")
+		}
+
+		intervalCap := 900 * time.Second
+		backoff := provider.DefaultBackoffPolicy()
+		retryDelay := backoff.ComputeRetryDelay(err, 1, intervalCap)
+		if retryDelay != intervalCap {
+			t.Fatalf("expected permanent client error to retain intervalCap %v, got %v", intervalCap, retryDelay)
 		}
 	})
 
