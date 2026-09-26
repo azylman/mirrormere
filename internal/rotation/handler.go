@@ -140,9 +140,17 @@ func (h *Handler) PostScreenPause(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req api.ScreenPauseRequest
+	var req struct {
+		Paused          *bool `json:"paused"`
+		DurationSeconds *int  `json:"duration_seconds"`
+	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+		writeError(w, http.StatusBadRequest, "invalid payload: paused must be a boolean")
+		return
+	}
+
+	if req.Paused == nil {
+		writeError(w, http.StatusBadRequest, "invalid payload: paused must be a boolean")
 		return
 	}
 
@@ -154,7 +162,7 @@ func (h *Handler) PostScreenPause(w http.ResponseWriter, r *http.Request) {
 	var currentScreen int
 	var err error
 
-	if req.Paused {
+	if *req.Paused {
 		var dur time.Duration
 		if req.DurationSeconds == nil {
 			dur = -1
@@ -173,7 +181,7 @@ func (h *Handler) PostScreenPause(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, api.ScreenPauseResponse{
 		Status:        "ok",
-		Paused:        req.Paused,
+		Paused:        *req.Paused,
 		CurrentScreen: currentScreen,
 	})
 }
