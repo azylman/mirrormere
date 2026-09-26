@@ -65,6 +65,8 @@ func TestParseTime(t *testing.T) {
 		{"DateOnly string", "2026-09-25", true},
 		{"TimeOnly string", "20:00:00", true},
 		{"ShortTime string", "20:00", true},
+		{"OpenMeteo short ISO string", "2026-09-26T15:00", true},
+		{"OpenMeteo space short ISO string", "2026-09-26 15:00", true},
 		{"12h time string", "8:00 PM", true},
 		{"0-padded 12h time", "08:00 PM", true},
 		{"int64 unix", int64(1758830400), true},
@@ -253,5 +255,80 @@ func TestStandardFuncMap(t *testing.T) {
 	defaultFuncs := render.StandardFuncMap(nil)
 	if defaultFuncs["seq"] == nil {
 		t.Error("expected non-nil seq in defaultFuncs")
+	}
+	if defaultFuncs["weatherIcon"] == nil {
+		t.Error("expected non-nil weatherIcon in defaultFuncs")
+	}
+}
+
+func TestWeatherIcon(t *testing.T) {
+	t.Parallel()
+
+	tokens := []string{
+		"weather-sunny",
+		"weather-partly-cloudy",
+		"weather-cloudy",
+		"weather-fog",
+		"weather-rainy",
+		"weather-pouring",
+		"weather-snowy",
+		"weather-snowy-rainy",
+		"weather-lightning",
+		"weather-lightning-rainy",
+		"unknown-token",
+	}
+
+	for _, token := range tokens {
+		t.Run(token, func(t *testing.T) {
+			t.Parallel()
+			svg := render.WeatherIcon(token)
+			if !strings.HasPrefix(string(svg), "<svg") || !strings.HasSuffix(string(svg), "</svg>") {
+				t.Fatalf("expected valid SVG element for %s, got: %s", token, svg)
+			}
+			if !strings.Contains(string(svg), `width="20"`) || !strings.Contains(string(svg), `height="20"`) {
+				t.Errorf("expected default 20px dimensions for %s, got: %s", token, svg)
+			}
+		})
+	}
+
+	// Sizing tests
+	sizeTests := []struct {
+		name     string
+		args     []any
+		wantSize string
+	}{
+		{"no args", []any{}, `width="20"`},
+		{"nil arg", []any{nil}, `width="20"`},
+		{"custom int", []any{"weather-sunny", 32}, `width="32"`},
+		{"custom int64", []any{"weather-sunny", int64(28)}, `width="28"`},
+		{"custom float64", []any{"weather-sunny", float64(24)}, `width="24"`},
+		{"custom string", []any{"weather-sunny", "36"}, `width="36"`},
+		{"invalid string", []any{"weather-sunny", "bad-size"}, `width="20"`},
+		{"clamp below min", []any{"weather-sunny", 5}, `width="12"`},
+		{"clamp above max", []any{"weather-sunny", 120}, `width="64"`},
+		{"negative int", []any{"weather-sunny", -10}, `width="20"`},
+	}
+
+	for _, tc := range sizeTests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			svg := render.WeatherIcon(tc.args...)
+			if !strings.Contains(string(svg), tc.wantSize) {
+				t.Errorf("expected %s in output, got: %s", tc.wantSize, svg)
+			}
+		})
+	}
+
+	// Template execution test
+	tmpl, err := template.New("icon-test").Funcs(render.StandardFuncMap(nil)).Parse(`{{weatherIcon "weather-partly-cloudy" 24}}`)
+	if err != nil {
+		t.Fatalf("failed to parse template: %v", err)
+	}
+	var sb strings.Builder
+	if err := tmpl.Execute(&sb, nil); err != nil {
+		t.Fatalf("failed to execute template: %v", err)
+	}
+	if !strings.Contains(sb.String(), `width="24"`) || !strings.Contains(sb.String(), `mm-icon-weather-partly-cloudy`) {
+		t.Errorf("expected rendered SVG in template output, got: %s", sb.String())
 	}
 }
