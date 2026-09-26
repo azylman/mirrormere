@@ -794,6 +794,12 @@ func TestSQLiteStore_SyncList_Lifecycle(t *testing.T) {
 	if err != nil || normList.Source != "local" {
 		t.Fatalf("expected source 'local' on empty source, got %+v", normList)
 	}
+
+	// 11. Sync against an existing list whose stored sections is empty string / nil
+	_, _ = store.db.Exec("INSERT INTO lists (id, name, sections) VALUES ('empty-sec-list', 'Empty Sec', '')")
+	if _, err := store.SyncList(ctx, List{ID: "empty-sec-list", Name: "Empty Sec"}, nil); err != nil {
+		t.Fatalf("expected sync to succeed on empty sections: %v", err)
+	}
 }
 
 func TestSQLiteStore_SyncList_Errors(t *testing.T) {
@@ -1119,6 +1125,127 @@ func TestSQLiteStore_Migration_LegacySingleColumnPK(t *testing.T) {
 	}
 }
 
+func TestSQLiteStore_Migration_PreExistingMigratedTable(t *testing.T) {
+	t.Parallel()
+	dbPath := filepath.Join(t.TempDir(), "leftover_migrated.db")
+
+	legacyDB, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("failed to open legacy db: %v", err)
+	}
+	// Seed legacy schema with an existing list_items_migrated table (leftover from an interrupted run)
+	legacyDDL := `
+	CREATE TABLE lists (
+		id TEXT PRIMARY KEY,
+		name TEXT NOT NULL,
+		source TEXT NOT NULL DEFAULT 'local',
+		sections TEXT NOT NULL DEFAULT '[]',
+		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE TABLE list_items (
+		id TEXT PRIMARY KEY,
+		list_id TEXT NOT NULL REFERENCES lists(id) ON DELETE CASCADE,
+		title TEXT NOT NULL,
+		done BOOLEAN NOT NULL DEFAULT 0,
+		section TEXT,
+		position INTEGER NOT NULL DEFAULT 0,
+		assignee TEXT,
+		due_date TEXT,
+		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+	);
+
+	-- Leftover table from a prior crash/interrupted migration
+	CREATE TABLE list_items_migrated (
+		junk_col TEXT
+	);
+	INSERT INTO list_items_migrated (junk_col) VALUES ('stale');
+
+	INSERT INTO lists (id, name, source) VALUES ('todo', 'Todo List', 'local');
+	INSERT INTO list_items (id, list_id, title, done, position) VALUES ('t1', 'todo', 'Buy Milk', 0, 1);
+	`
+	if _, err := legacyDB.Exec(legacyDDL); err != nil {
+		_ = legacyDB.Close()
+		t.Fatalf("failed to seed legacy db with leftover migrated table: %v", err)
+	}
+	_ = legacyDB.Close()
+
+	// NewSQLiteStore must cleanly drop list_items_migrated, migrate list_items, and preserve all rows
+	store, err := NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatalf("expected NewSQLiteStore to succeed with leftover list_items_migrated, got: %v", err)
+	}
+	defer store.Close()
+
+	items, err := store.GetListItems(context.Background(), "todo", true)
+	if err != nil {
+		t.Fatalf("failed to get items after migration: %v", err)
+	}
+	if len(items) != 1 || items[0].Title != "Buy Milk" {
+		t.Fatalf("expected preserved legacy item, got: %+v", items)
+	}
+}
+
+func TestSQLiteStore_Migration_OrphanedMigratedTableRecovery(t *testing.T) {
+	t.Parallel()
+	dbPath := filepath.Join(t.TempDir(), "orphaned_recovery.db")
+
+	legacyDB, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("failed to open db: %v", err)
+	}
+	// Simulate an older non-transactional crash after DROP list_items but before RENAME
+	setupDDL := `
+	CREATE TABLE lists (
+		id TEXT PRIMARY KEY,
+		name TEXT NOT NULL,
+		source TEXT NOT NULL DEFAULT 'local',
+		sections TEXT NOT NULL DEFAULT '[]',
+		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE TABLE list_items_migrated (
+		id TEXT NOT NULL,
+		list_id TEXT NOT NULL REFERENCES lists(id) ON DELETE CASCADE,
+		title TEXT NOT NULL,
+		done BOOLEAN NOT NULL DEFAULT 0,
+		section TEXT,
+		position INTEGER NOT NULL DEFAULT 0,
+		assignee TEXT,
+		due_date TEXT,
+		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY (list_id, id)
+	);
+
+	INSERT INTO lists (id, name, source) VALUES ('chores', 'Household Chores', 'local');
+	INSERT INTO list_items_migrated (id, list_id, title, done, position) VALUES ('c1', 'chores', 'Sweep Floor', 1, 0);
+	`
+	if _, err := legacyDB.Exec(setupDDL); err != nil {
+		_ = legacyDB.Close()
+		t.Fatalf("failed to seed orphaned migration scenario: %v", err)
+	}
+	_ = legacyDB.Close()
+
+	// Opening store should recover the rows from list_items_migrated into list_items
+	store, err := NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatalf("failed to open store with orphaned migrated rows: %v", err)
+	}
+	defer store.Close()
+
+	items, err := store.GetListItems(context.Background(), "chores", true)
+	if err != nil {
+		t.Fatalf("failed to get items after orphan recovery: %v", err)
+	}
+	if len(items) != 1 || items[0].Title != "Sweep Floor" || !items[0].Done {
+		t.Fatalf("expected recovered orphan item, got: %+v", items)
+	}
+}
+
 func TestSQLiteStore_MigrateErrors(t *testing.T) {
 	t.Parallel()
 	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "migrate_err.db"))
@@ -1142,7 +1269,7 @@ func TestSQLiteStore_MigrateErrors(t *testing.T) {
 		t.Error("expected error from migrate when underlying db is closed")
 	}
 
-	// 3. Migration failure when list_items_migrated already exists with incompatible schema
+	// 3. Migration failure statement execution error inside transaction (triggers rollback)
 	dbPath3 := filepath.Join(t.TempDir(), "migrate_err3.db")
 	legacyDB, err := sql.Open("sqlite", dbPath3)
 	if err != nil {
@@ -1150,13 +1277,26 @@ func TestSQLiteStore_MigrateErrors(t *testing.T) {
 	}
 	_, _ = legacyDB.Exec(`
 		CREATE TABLE lists (id TEXT PRIMARY KEY, name TEXT);
-		CREATE TABLE list_items (id TEXT PRIMARY KEY, list_id TEXT, title TEXT);
-		CREATE TABLE list_items_migrated (incompatible_column TEXT);
+		CREATE TABLE list_items (
+			id TEXT PRIMARY KEY,
+			list_id TEXT,
+			title TEXT,
+			done BOOLEAN DEFAULT 0,
+			section TEXT,
+			position INTEGER DEFAULT 0,
+			assignee TEXT,
+			due_date TEXT,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+		INSERT INTO lists (id, name) VALUES ('l1', 'List 1');
+		-- NULL title violates NOT NULL constraint in list_items_migrated, causing tx.Exec statement failure and rollback
+		INSERT INTO list_items (id, list_id, title) VALUES ('i1', 'l1', NULL);
 	`)
 	_ = legacyDB.Close()
 
 	if _, err := NewSQLiteStore(dbPath3); err == nil {
-		t.Error("expected NewSQLiteStore to fail migration when list_items_migrated already exists")
+		t.Error("expected NewSQLiteStore to fail migration when INSERT violates NOT NULL constraint")
 	}
 }
 
