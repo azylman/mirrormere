@@ -1,0 +1,16 @@
+# deploy/compose.override.yml - Local Bench & Development Overrides
+# Reference: SPEC-013 Phase 6 (Issue #250) & SPEC-002 §1-§2
+#
+# Automatically merged by Docker Compose with deploy/compose.yml.
+# Provides bench-safe defaults for developer workstations and test environments
+# lacking physical USB capture cards (/dev/video0), ALSA sound cards (/dev/snd),
+# or Intel DRI hardware (/dev/dri).
+
+services:
+  go2rtc:
+    devices: !reset []
+    group_add: !reset []
+
+  cast-watcher:
+    environment:
+      - CHROMECAST_ADDR=${CHROMECAST_ADDR:-127.0.0.1:8009}
