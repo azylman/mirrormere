@@ -34,6 +34,7 @@
       this.currentMode = 'widgets';
       this.isSwapped = false;
       this.mountEpoch = 0;
+      this.sessionTokenSeq = 0;
 
       // Track server-assigned state
       this.serverPrimary = null;
@@ -217,7 +218,7 @@
             this.primarySession = null;
           }
           if (this.primarySlot) {
-            this.primarySession = this.mountStream(data.primary, this.primarySlot, false, this.mountEpoch);
+            this.primarySession = this.mountStream(data.primary, this.primarySlot, false);
           }
         } else {
           // Update properties if changed
@@ -234,7 +235,7 @@
             this.pipSession = null;
           }
           if (this.pipSlot) {
-            this.pipSession = this.mountStream(data.pip, this.pipSlot, true, this.mountEpoch);
+            this.pipSession = this.mountStream(data.pip, this.pipSlot, true);
           }
         } else {
           this.pipSession.stream = { ...this.pipSession.stream, ...data.pip };
@@ -297,10 +298,9 @@
      * @param {Object} stream - { id, stream_url, type, ... }
      * @param {HTMLElement} container - Target slot element.
      * @param {boolean} isPip - Whether the stream is initially mounted in PiP.
-     * @param {number} epoch - Mount generation epoch guard.
      * @returns {Object} Active session record.
      */
-    mountStream(stream, container, isPip, epoch) {
+    mountStream(stream, container, isPip) {
       if (!container) return null;
       container.innerHTML = '';
 
@@ -315,7 +315,7 @@
       }
 
       // Default to WebRTC
-      return this.mountWebRTC(stream, container, isPip, epoch);
+      return this.mountWebRTC(stream, container, isPip);
     }
 
     /**
@@ -328,7 +328,7 @@
       img.src = stream.stream_url;
 
       container.appendChild(img);
-      return { stream, element: img, type: 'mjpeg' };
+      return { stream, element: img, type: 'mjpeg', token: ++this.sessionTokenSeq, cancelled: false };
     }
 
     /**
@@ -365,13 +365,13 @@
       container.appendChild(video);
       this.safePlay(video);
 
-      return { stream, element: video, hls: hlsInstance, type: 'hls' };
+      return { stream, element: video, hls: hlsInstance, type: 'hls', token: ++this.sessionTokenSeq, cancelled: false };
     }
 
     /**
      * Mounts WebRTC stream using RTCPeerConnection and SDP offer/answer exchange.
      */
-    mountWebRTC(stream, container, isPip, epoch) {
+    mountWebRTC(stream, container, isPip) {
       const video = document.createElement('video');
       video.className = 'video-stream-media';
       video.autoplay = true;
@@ -381,10 +381,19 @@
 
       container.appendChild(video);
 
-      let pc = null;
+      const session = {
+        stream,
+        element: video,
+        pc: null,
+        type: 'webrtc',
+        token: ++this.sessionTokenSeq,
+        cancelled: false,
+      };
+
       if (this.PeerConnectionClass) {
         try {
-          pc = new this.PeerConnectionClass();
+          const pc = new this.PeerConnectionClass();
+          session.pc = pc;
 
           if (typeof pc.addTransceiver === 'function') {
             pc.addTransceiver('video', { direction: 'recvonly' });
@@ -392,7 +401,7 @@
           }
 
           pc.ontrack = (event) => {
-            if (epoch !== this.mountEpoch) return;
+            if (session.cancelled) return;
             if (event.streams && event.streams[0]) {
               video.srcObject = event.streams[0];
             } else {
@@ -406,31 +415,32 @@
             }
           };
 
-          this.negotiateWebRTC(pc, stream.stream_url, epoch, video);
+          this.negotiateWebRTC(session, stream.stream_url, video);
         } catch (err) {
           console.warn('[MirrormereVideo] RTCPeerConnection initialization error:', err);
         }
       }
 
       this.safePlay(video);
-      return { stream, element: video, pc, type: 'webrtc' };
+      return session;
     }
 
     /**
      * Performs async WebRTC offer/answer SDP negotiation with go2rtc endpoint.
      */
-    async negotiateWebRTC(pc, streamUrl, epoch, video) {
+    async negotiateWebRTC(session, streamUrl, video) {
+      const pc = session ? session.pc : null;
       if (!pc) return;
 
       try {
         const offer = await pc.createOffer();
-        if (epoch !== this.mountEpoch) {
+        if (session.cancelled) {
           if (typeof pc.close === 'function') pc.close();
           return;
         }
 
         await pc.setLocalDescription(offer);
-        if (epoch !== this.mountEpoch) {
+        if (session.cancelled) {
           if (typeof pc.close === 'function') pc.close();
           return;
         }
@@ -452,7 +462,7 @@
           setTimeout(resolve, 500);
         });
 
-        if (epoch !== this.mountEpoch) {
+        if (session.cancelled) {
           if (typeof pc.close === 'function') pc.close();
           return;
         }
@@ -466,7 +476,7 @@
           body: sdpPayload,
         });
 
-        if (epoch !== this.mountEpoch) {
+        if (session.cancelled) {
           if (typeof pc.close === 'function') pc.close();
           return;
         }
@@ -476,7 +486,7 @@
         }
 
         const text = await res.text();
-        if (epoch !== this.mountEpoch) {
+        if (session.cancelled) {
           if (typeof pc.close === 'function') pc.close();
           return;
         }
@@ -493,7 +503,7 @@
 
         await pc.setRemoteDescription({ type: 'answer', sdp: answerSDP });
       } catch (err) {
-        if (epoch === this.mountEpoch) {
+        if (!session.cancelled) {
           console.warn('[MirrormereVideo] WebRTC SDP negotiation failed:', err);
         }
         if (typeof pc.close === 'function') pc.close();
@@ -522,6 +532,7 @@
      */
     teardownSession(session) {
       if (!session) return;
+      session.cancelled = true;
 
       if (this.audioManager && session.element && typeof this.audioManager.unregisterMediaElement === 'function') {
         this.audioManager.unregisterMediaElement(session.element);
