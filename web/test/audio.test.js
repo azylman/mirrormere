@@ -223,6 +223,47 @@ test('Audio Coordinator & 80% Software Volume Ceiling (SPEC-004 §3, SPEC-006 §
       listeners['audio.state']({ data: '{invalid json' });
       assert.strictEqual(mgr.volume, 100); // preserves last valid state
     });
+
+    await t2.test('setDucked updates ducked state and element volumes idempotently', () => {
+      let applyCount = 0;
+      const el = {
+        _volume: 1.0,
+        isConnected: true,
+        get volume() { return this._volume; },
+        set volume(v) {
+          this._volume = v;
+          applyCount++;
+        },
+      };
+
+      const mgr = new AudioManager({ initialVolume: 75 });
+      mgr.registerMediaElement(el);
+      assert.strictEqual(mgr.getEffectiveVolume(), 0.60);
+      assert.strictEqual(el.volume, 0.60);
+      assert.strictEqual(applyCount, 1);
+
+      // Duck audio (20% attenuation)
+      mgr.setDucked(true);
+      assert.strictEqual(mgr.ducked, true);
+      assert.strictEqual(mgr.getEffectiveVolume(), 0.12);
+      assert.strictEqual(el.volume, 0.12);
+      assert.strictEqual(applyCount, 2);
+
+      // Idempotent call should be a no-op
+      mgr.setDucked(true);
+      assert.strictEqual(applyCount, 2);
+
+      // Unduck audio
+      mgr.setDucked(false);
+      assert.strictEqual(mgr.ducked, false);
+      assert.strictEqual(mgr.getEffectiveVolume(), 0.60);
+      assert.strictEqual(el.volume, 0.60);
+      assert.strictEqual(applyCount, 3);
+
+      // Idempotent unduck call
+      mgr.setDucked(false);
+      assert.strictEqual(applyCount, 3);
+    });
   });
 
   await t.test('browser global window.MirrormereAudio binding', () => {

@@ -250,6 +250,14 @@
         });
       }
 
+      // 7. Initialize Voice HUD Controller (SPEC-010 §5, SPEC-011 §2–§5)
+      if (window.MirrormereVoice && window.MirrormereVoice.VoiceHUDController) {
+        window.voiceHUD = new window.MirrormereVoice.VoiceHUDController({
+          audioManager: window.audioManager,
+          sseClient: sseClient,
+        });
+      }
+
       sseClient.on('screen.rotate', (data) => {
         if (carousel) carousel.handleScreenRotate(data);
       });

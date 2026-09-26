@@ -541,3 +541,219 @@ button, .touch-target {
   box-shadow: 0 0 12px var(--mm-accent-purple-glow);
   border: 2px solid #fff;
 }
+
+/* ==========================================================================
+   Voice Assistant HUD Presentation & Caption Toasts (SPEC-010 §5, SPEC-011 §2–§5)
+   ========================================================================== */
+
+/* Header Voice Zone (Centered between Weather and System Status) */
+.header-voice {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 12px;
+  margin: 0 16px;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.25s cubic-bezier(0.25, 1, 0.5, 1), visibility 0.25s cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.header-voice.visible {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+}
+
+/* Voice State Indicator Capsule */
+.voice-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 14px;
+  background: var(--mm-bg-surface);
+  border: var(--mm-border-hud);
+  border-radius: 9999px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.4);
+  position: relative;
+  flex-shrink: 0;
+}
+
+.voice-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background-color: var(--mm-accent-cyan);
+  box-shadow: 0 0 8px var(--mm-accent-cyan);
+  position: relative;
+  z-index: 2;
+  transition: background-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+/* GPU-Composited Radar Pulse Ring (Active strictly and exclusively during 'listening') */
+.voice-pulse-ring {
+  position: absolute;
+  top: 50%;
+  left: 19px;
+  width: 20px;
+  height: 20px;
+  margin-top: -10px;
+  margin-left: -10px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(6, 182, 212, 0.7) 0%, rgba(168, 85, 247, 0.4) 60%, transparent 100%);
+  z-index: 1;
+  pointer-events: none;
+  opacity: 0;
+  transform: scale(0.5);
+}
+
+.voice-indicator.listening .voice-dot {
+  background-color: var(--mm-accent-cyan);
+  box-shadow: 0 0 10px var(--mm-accent-cyan), 0 0 16px var(--mm-accent-purple);
+}
+
+.voice-indicator.listening .voice-pulse-ring {
+  animation: voiceRadarPulse 1.6s cubic-bezier(0.25, 1, 0.5, 1) infinite;
+}
+
+@keyframes voiceRadarPulse {
+  0% {
+    transform: scale(0.5);
+    opacity: 0.9;
+  }
+  50% {
+    opacity: 0.4;
+  }
+  100% {
+    transform: scale(2.2);
+    opacity: 0;
+  }
+}
+
+.voice-indicator.thinking .voice-dot,
+.voice-indicator.transcribing .voice-dot {
+  background-color: var(--mm-accent-purple);
+  box-shadow: 0 0 8px var(--mm-accent-purple);
+}
+
+.voice-indicator.speaking .voice-dot {
+  background-color: var(--mm-accent-cyan);
+  box-shadow: 0 0 8px var(--mm-accent-cyan);
+}
+
+.voice-label {
+  font-family: var(--mm-font-mono);
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--mm-text-secondary);
+  letter-spacing: -0.02em;
+}
+
+/* User Transcript Presentation */
+.voice-transcript {
+  font-size: 1.05rem;
+  font-weight: 500;
+  color: var(--mm-text-primary);
+  font-style: italic;
+  min-width: 0;
+  max-width: 480px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-shadow: 0 0 12px var(--mm-accent-purple-glow);
+}
+
+/* Floating Caption Toast Dock (Elevated to bottom: 96px to clear video HUD controls) */
+.voice-toast-dock {
+  position: fixed;
+  bottom: 96px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  z-index: 1000;
+  pointer-events: none;
+  width: calc(100% - 64px);
+  max-width: 680px;
+}
+
+/* Caption Toast Card */
+.voice-toast {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 48px;
+  padding: 12px 20px;
+  background: rgba(26, 16, 48, 0.94);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: var(--mm-border-accent);
+  border-radius: var(--mm-border-radius-lg);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.7), 0 0 20px var(--mm-accent-purple-glow);
+  color: var(--mm-text-primary);
+  pointer-events: auto;
+  cursor: pointer;
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  box-sizing: border-box;
+  opacity: 0;
+  transform: translateY(16px);
+  transition: transform 0.25s cubic-bezier(0.25, 1, 0.5, 1), opacity 0.25s cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.voice-toast.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* TTS Engine Indicator Badge */
+.voice-toast-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--mm-font-mono);
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 4px 8px;
+  border-radius: var(--mm-border-radius-sm);
+  background: rgba(168, 85, 247, 0.25);
+  border: 1px solid var(--mm-accent-purple);
+  color: var(--mm-accent-purple);
+  flex-shrink: 0;
+}
+
+.voice-toast-badge[data-engine="kokoro"] {
+  background: rgba(6, 182, 212, 0.25);
+  border-color: var(--mm-accent-cyan);
+  color: var(--mm-accent-cyan);
+}
+
+.voice-toast-badge[data-engine="elevenlabs"] {
+  background: rgba(168, 85, 247, 0.25);
+  border-color: var(--mm-accent-purple);
+  color: var(--mm-accent-purple);
+}
+
+.voice-toast-badge[data-engine="piper"] {
+  background: rgba(245, 158, 11, 0.25);
+  border-color: var(--mm-status-degraded);
+  color: var(--mm-status-degraded);
+}
+
+/* Toast Body Text */
+.voice-toast-body {
+  flex: 1;
+  font-size: 1.15rem;
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--mm-text-primary);
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.6);
+  word-break: break-word;
+}

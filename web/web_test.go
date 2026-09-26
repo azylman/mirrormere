@@ -28,6 +28,7 @@ func TestEmbeddedContent(t *testing.T) {
 		"static/js/carousel.js",
 		"static/js/video.js",
 		"static/js/video_hud.js",
+		"static/js/voice.js",
 		"static/js/display.js",
 	}
 
@@ -103,6 +104,38 @@ func TestVideoHUD_NodeRunner(t *testing.T) {
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("node video_hud.test.js failed: %v\nOutput:\n%s", err, string(out))
+	}
+}
+
+func TestAudio_NodeRunner(t *testing.T) {
+	t.Parallel()
+
+	nodePath, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node executable not found in PATH; skipping client-side JS audio tests")
+	}
+
+	cmd := exec.Command(nodePath, "--test", "test/audio.test.js")
+	cmd.Env = append(os.Environ(), "TZ=UTC")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("node audio.test.js failed: %v\nOutput:\n%s", err, string(out))
+	}
+}
+
+func TestVoice_NodeRunner(t *testing.T) {
+	t.Parallel()
+
+	nodePath, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node executable not found in PATH; skipping client-side JS voice HUD tests")
+	}
+
+	cmd := exec.Command(nodePath, "--test", "test/voice.test.js")
+	cmd.Env = append(os.Environ(), "TZ=UTC")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("node voice.test.js failed: %v\nOutput:\n%s", err, string(out))
 	}
 }
 
