@@ -13,8 +13,29 @@ class MirrormereCarousel {
     this.touchStartY = 0;
     this.touchStartTime = 0;
     this.isTransitioning = false;
+    this.isPaused = false;
+    this.pendingRotateData = null;
 
     this.bindTouchGestures();
+  }
+
+  /**
+   * Pause carousel rotation and swipe handling during video presentation mode (SPEC-004, SPEC-010).
+   */
+  pause() {
+    this.isPaused = true;
+  }
+
+  /**
+   * Resume carousel rotation and apply any pending rotation state.
+   */
+  resume() {
+    this.isPaused = false;
+    if (this.pendingRotateData) {
+      const data = this.pendingRotateData;
+      this.pendingRotateData = null;
+      this.handleScreenRotate(data);
+    }
   }
 
   /**
@@ -23,6 +44,11 @@ class MirrormereCarousel {
    */
   async handleScreenRotate(data) {
     if (!data || !Array.isArray(data.widgets)) {
+      return;
+    }
+
+    if (this.isPaused) {
+      this.pendingRotateData = data;
       return;
     }
 
@@ -104,7 +130,7 @@ class MirrormereCarousel {
    * fetches fresh markup and updates the element in place.
    */
   async handleWidgetUpdate(data) {
-    if (!data || !data.widget_id) {
+    if (!data || !data.widget_id || this.isPaused) {
       return;
     }
 
@@ -146,7 +172,7 @@ class MirrormereCarousel {
    * React to widget.reload: reload all mounted instances matching the updated widget type.
    */
   async handleWidgetReload(data) {
-    if (!data || !data.type) {
+    if (!data || !data.type || this.isPaused) {
       return;
     }
 
@@ -167,6 +193,7 @@ class MirrormereCarousel {
     const target = this.canvas || document.body;
 
     target.addEventListener('touchstart', (e) => {
+      if (this.isPaused) return;
       if (e.touches && e.touches.length === 1) {
         this.touchStartX = e.touches[0].clientX;
         this.touchStartY = e.touches[0].clientY;
@@ -175,6 +202,7 @@ class MirrormereCarousel {
     }, { passive: true });
 
     target.addEventListener('touchend', (e) => {
+      if (this.isPaused) return;
       if (!e.changedTouches || e.changedTouches.length !== 1) {
         return;
       }

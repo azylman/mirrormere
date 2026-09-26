@@ -222,3 +222,148 @@ button, .touch-target {
   border: none;
   pointer-events: none;
 }
+
+/* ==========================================================================
+   Video Presentation Stage & PiP Dock (SPEC-004 §1, §5, SPEC-010 §1)
+   ========================================================================== */
+
+.video-stage {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 100;
+  background-color: var(--mm-bg-canvas);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.video-stage.active {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* Primary Slot (Default: Fullscreen presentation) */
+.video-primary-slot {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: #000;
+  overflow: hidden;
+  transition: all 0.3s cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+/* PiP Slot (Default: Floating corner dock in lower-right) */
+.video-pip-slot {
+  position: absolute;
+  bottom: 24px;
+  right: 24px;
+  width: 360px;
+  max-width: 35vw;
+  aspect-ratio: 16 / 9;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: #000;
+  border: 2px solid var(--mm-accent-purple);
+  border-radius: var(--mm-border-radius-md);
+  box-shadow: 0 4px 20px var(--mm-accent-purple-glow);
+  overflow: hidden;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: all 0.3s cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.video-pip-slot:hover {
+  transform: scale(1.02);
+  border-color: var(--mm-accent-purple-glow);
+}
+
+.video-pip-slot:active {
+  transform: scale(0.98);
+}
+
+/* Zero-Reparenting Swap Inversion (when data-swapped="true") */
+.video-stage[data-swapped="true"] .video-primary-slot {
+  position: absolute;
+  inset: auto;
+  bottom: 24px;
+  right: 24px;
+  width: 360px;
+  max-width: 35vw;
+  aspect-ratio: 16 / 9;
+  z-index: 50;
+  border: 2px solid var(--mm-accent-purple);
+  border-radius: var(--mm-border-radius-md);
+  box-shadow: 0 4px 20px var(--mm-accent-purple-glow);
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.video-stage[data-swapped="true"] .video-primary-slot:hover {
+  transform: scale(1.02);
+  border-color: var(--mm-accent-purple-glow);
+}
+
+.video-stage[data-swapped="true"] .video-primary-slot:active {
+  transform: scale(0.98);
+}
+
+.video-stage[data-swapped="true"] .video-pip-slot {
+  position: absolute;
+  inset: 0;
+  bottom: 0;
+  right: 0;
+  width: 100%;
+  max-width: 100%;
+  height: 100%;
+  aspect-ratio: auto;
+  z-index: 10;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  cursor: default;
+  transform: none;
+}
+
+/* Media Elements */
+.video-stream-media {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+  background-color: #000;
+}
+
+/* Slot Error Fallback */
+.video-error-slot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  background: var(--mm-bg-card);
+  color: var(--mm-status-error);
+  font-family: var(--mm-font-family);
+  font-size: 1rem;
+  font-weight: 600;
+  gap: 8px;
+  padding: 16px;
+  box-sizing: border-box;
+  text-align: center;
+}
