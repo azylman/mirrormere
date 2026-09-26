@@ -47,7 +47,7 @@ Mirrormere resolves this by creating a dedicated, zero-dependency Node.js snapsh
   - Injected `screenshotProvider` interface enables hermetic unit testing without requiring a live browser subprocess.
 
 ### Snapshot HTTP Server (`server.js`)
-- Serves HTTP on internal port 8081 with Slowloris timeouts (`headersTimeout: 5000`, `requestTimeout: 10000`).
+- Serves HTTP on internal port 8081 with Slowloris timeouts (`headersTimeout: 6000`, `keepAliveTimeout: 4000`, `requestTimeout: 10000`).
 - `GET /healthz`: Returns 200 `{"status":"ok"}` for container health monitoring.
 - `GET /eink.png`:
   - Validates `If-None-Match` against the computed strong ETag. If matched, returns `304 Not Modified` with zero response body.
@@ -56,14 +56,14 @@ Mirrormere resolves this by creating a dedicated, zero-dependency Node.js snapsh
 
 ### Deployment & Compose Configuration (`deploy/compose.yml`)
 - Added `eink-renderer` service under `profiles: ["eink"]` ensuring it is isolated to e-ink profiles and not run on video/touch kiosks.
-- Hardened Alpine container (`sidecars/eink-renderer/Dockerfile`) with Chromium, Noto fonts, and non-root user `10001:10001`.
+- Hardened Alpine container (`sidecars/eink-renderer/Dockerfile`) with Chromium, Noto fonts, `NODE_OPTIONS="--experimental-websocket"`, and non-root user `10001:10001`.
 - Healthchecked via `wget --spider http://127.0.0.1:8081/healthz`.
 
 ---
 
 ## 3. Verification & Compliance
 - **Hermetic Testing**:
-  - `sidecars/eink-renderer/test/dither.test.js`: Verified ITU-R BT.601 luminance and alpha blending, Pass 1 strict thresholding with zero noise outside `.dither` regions, Pass 2 Floyd-Steinberg error diffusion bounded within `.dither` regions without boundary leakage, overlapping and out-of-bounds rect handling, standard 800×480 1-bit monochrome PNG encoding (Color Type 0, Bit Depth 1), pure-JS `decodePNG` unfiltering and bit-unpacking, `CaptureService` concurrent single-flight coalescing, HTTP 200/304 ETag caching, and 503 cold boot error fallback. All 9 test suites pass cleanly.
+  - `sidecars/eink-renderer/test/dither.test.js`: Verified ITU-R BT.601 luminance and alpha blending, Pass 1 strict thresholding with zero noise outside `.dither` regions, Pass 2 Floyd-Steinberg error diffusion bounded within `.dither` regions without boundary leakage, overlapping and out-of-bounds rect handling, standard 800×480 1-bit monochrome PNG encoding (Color Type 0, Bit Depth 1), pure-JS `decodePNG` unfiltering and bit-unpacking, `CaptureService` concurrent single-flight coalescing, clean rejection on closed/failed CDP endpoints, HTTP 200/304 ETag caching, and 503 cold boot error fallback. All 10 test suites pass cleanly.
   - `scripts/verify.sh`: Integrated sidecar test suite into `run_node_tests()`.
 - **Zero Invariant Violations**:
   - Zero markdown tables in ADR or manifests.

@@ -29,6 +29,7 @@ RUN chmod +x ./entrypoint.sh \
 USER 10001:10001
 
 ENV PORT=8081 \
+    NODE_OPTIONS="--experimental-websocket" \
     CHROMIUM_BIN=/usr/bin/chromium-browser \
     CORE_URL=http://mirrormere-core:8080 \
     DISPLAY_URL=http://mirrormere-core:8080/display \

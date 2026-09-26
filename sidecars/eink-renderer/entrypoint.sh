@@ -49,4 +49,4 @@ if [ "$START_LOCAL_CHROMIUM" = true ]; then
     fi
 fi
 
-exec node src/server.js
+exec node --experimental-websocket src/server.js

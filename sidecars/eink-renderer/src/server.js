@@ -91,7 +91,8 @@ function createServer(options = {}) {
   });
 
   // Slowloris timeout mitigation
-  server.headersTimeout = 5000;
+  server.keepAliveTimeout = 4000;
+  server.headersTimeout = 6000;
   server.requestTimeout = 10000;
 
   return { server, captureService, port };

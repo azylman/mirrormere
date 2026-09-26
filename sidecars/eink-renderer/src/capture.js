@@ -150,8 +150,20 @@ class CaptureService {
         }
       };
 
+      let closedNormally = false;
+
       ws.onerror = (err) => {
         reject(err);
+      };
+
+      ws.onclose = () => {
+        if (!closedNormally) {
+          for (const [, cb] of callbacks) {
+            cb.reject(new Error('CDP WebSocket closed unexpectedly'));
+          }
+          callbacks.clear();
+          reject(new Error('CDP WebSocket closed unexpectedly'));
+        }
       };
 
       ws.onopen = async () => {
@@ -201,9 +213,11 @@ class CaptureService {
           });
 
           const pngBuffer = Buffer.from(screenshotRes.data, 'base64');
+          closedNormally = true;
           ws.close();
           resolve({ pngBuffer, ditherRects });
         } catch (err) {
+          closedNormally = true;
           ws.close();
           reject(err);
         }

@@ -321,4 +321,20 @@ describe('E-Ink Dithering & 1-Bit PNG Engine (SPEC-003 §4-§5, SPEC-009 §3)', 
       await new Promise((resolve) => server.close(resolve));
     }
   });
+
+  it('CaptureService rejects cleanly on invalid or closed CDP endpoint', async () => {
+    const service = new CaptureService({
+      cdpURL: 'http://127.0.0.1:1', // Non-existent CDP port
+      debounceWindowMs: 0,
+    });
+    await assert.rejects(
+      async () => {
+        await service.getSnapshot(true);
+      },
+      (err) => {
+        assert.ok(err);
+        return true;
+      }
+    );
+  });
 });
