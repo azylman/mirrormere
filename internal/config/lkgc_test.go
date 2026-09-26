@@ -1376,3 +1376,32 @@ func TestLKGC_PackageErrorsAndExplicitStatus(t *testing.T) {
 	}
 }
 
+func TestManager_ReloadClearsStalePackageErrors(t *testing.T) {
+	t.Parallel()
+
+	packages := createStandardPackages()
+	loader := &mockPackageLoader{packages: packages}
+	m, err := config.NewManager([]byte(validBaseYAML), loader, nil, nil)
+	if err != nil {
+		t.Fatalf("setup failed: %v", err)
+	}
+
+	// Record a package error for an unreferenced type
+	m.SetPackageError("orphan-widget", fmt.Errorf("views/widget.html missing"))
+	if m.Status().ConfigStatus != config.ConfigStatusError {
+		t.Fatalf("expected error status after SetPackageError, got %v", m.Status().ConfigStatus)
+	}
+
+	// Reload with valid config
+	_, _, err = m.Reload([]byte(validBaseYAML))
+	if err != nil {
+		t.Fatalf("Reload failed: %v", err)
+	}
+
+	// Status should return to OK per SPEC-006 §2.D
+	st := m.Status()
+	if st.ConfigStatus != config.ConfigStatusOK || st.ConfigError != nil {
+		t.Errorf("expected OK status after successful config reload, got %v", st)
+	}
+}
+
