@@ -21,6 +21,8 @@ services:
     volumes:
       - ./config:/config:ro # Contains config.yaml, custom.css, and optional widgets/
       - ./data:/data
+      - ../web:/app/web:ro
+      - ../widgets:/app/widgets:ro
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:8080/healthz"]
       interval: 15s
