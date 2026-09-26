@@ -140,33 +140,69 @@ func (s *SQLiteStore) migrate() error {
 	}
 	_ = rows.Close() //nolint:errcheck
 
-	if !listIDIsPK {
-		migrationSQL := `
-		CREATE TABLE list_items_migrated (
-			id TEXT NOT NULL,
-			list_id TEXT NOT NULL REFERENCES lists(id) ON DELETE CASCADE,
-			title TEXT NOT NULL,
-			done BOOLEAN NOT NULL DEFAULT 0,
-			section TEXT,
-			position INTEGER NOT NULL DEFAULT 0,
-			assignee TEXT,
-			due_date TEXT,
-			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			PRIMARY KEY (list_id, id)
-		);
-		INSERT OR REPLACE INTO list_items_migrated (id, list_id, title, done, section, position, assignee, due_date, created_at, updated_at)
-			SELECT id, list_id, title, done, section, position, assignee, due_date, created_at, updated_at FROM list_items;
-		DROP TABLE list_items;
-		ALTER TABLE list_items_migrated RENAME TO list_items;
-		CREATE INDEX IF NOT EXISTS idx_list_items_list_id_position ON list_items(list_id, position);
-		CREATE INDEX IF NOT EXISTS idx_list_items_updated_at ON list_items(updated_at);
-		CREATE INDEX IF NOT EXISTS idx_list_items_list_done_pos ON list_items(list_id, done, position, created_at);
-		CREATE INDEX IF NOT EXISTS idx_list_items_list_done_updated ON list_items(list_id, done, updated_at DESC);
-		`
-		if _, err := s.db.Exec(migrationSQL); err != nil {
-			return fmt.Errorf("failed to migrate list_items to composite primary key: %w", err)
+	// Check if list_items_migrated exists from an older non-transactional run interrupted after DROP list_items but before RENAME
+	var migratedTableExists bool
+	if err := s.db.QueryRow(`SELECT count(*) > 0 FROM sqlite_master WHERE type='table' AND name='list_items_migrated'`).Scan(&migratedTableExists); err == nil && migratedTableExists {
+		var itemsCount int
+		_ = s.db.QueryRow(`SELECT count(*) FROM list_items`).Scan(&itemsCount) //nolint:errcheck
+		if itemsCount == 0 {
+			// Orphaned recovery: copy rows from list_items_migrated into list_items
+			if _, err := s.db.Exec(`INSERT OR REPLACE INTO list_items (id, list_id, title, done, section, position, assignee, due_date, created_at, updated_at)
+				SELECT id, list_id, title, done, section, position, assignee, due_date, created_at, updated_at FROM list_items_migrated;`); err != nil {
+				return fmt.Errorf("failed to recover orphaned list_items_migrated rows: %w", err)
+			}
 		}
+		if _, err := s.db.Exec(`DROP TABLE IF EXISTS list_items_migrated;`); err != nil {
+			return fmt.Errorf("failed to drop leftover list_items_migrated table: %w", err)
+		}
+	}
+
+	if !listIDIsPK {
+		tx, err := s.db.Begin()
+		if err != nil {
+			return fmt.Errorf("failed to begin migration transaction: %w", err)
+		}
+		defer func() {
+			if tx != nil {
+				_ = tx.Rollback() //nolint:errcheck
+			}
+		}()
+
+		migrationStatements := []string{
+			`DROP TABLE IF EXISTS list_items_migrated;`,
+			`CREATE TABLE list_items_migrated (
+				id TEXT NOT NULL,
+				list_id TEXT NOT NULL REFERENCES lists(id) ON DELETE CASCADE,
+				title TEXT NOT NULL,
+				done BOOLEAN NOT NULL DEFAULT 0,
+				section TEXT,
+				position INTEGER NOT NULL DEFAULT 0,
+				assignee TEXT,
+				due_date TEXT,
+				created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				PRIMARY KEY (list_id, id)
+			);`,
+			`INSERT OR REPLACE INTO list_items_migrated (id, list_id, title, done, section, position, assignee, due_date, created_at, updated_at)
+				SELECT id, list_id, title, done, section, position, assignee, due_date, created_at, updated_at FROM list_items;`,
+			`DROP TABLE list_items;`,
+			`ALTER TABLE list_items_migrated RENAME TO list_items;`,
+			`CREATE INDEX IF NOT EXISTS idx_list_items_list_id_position ON list_items(list_id, position);`,
+			`CREATE INDEX IF NOT EXISTS idx_list_items_updated_at ON list_items(updated_at);`,
+			`CREATE INDEX IF NOT EXISTS idx_list_items_list_done_pos ON list_items(list_id, done, position, created_at);`,
+			`CREATE INDEX IF NOT EXISTS idx_list_items_list_done_updated ON list_items(list_id, done, updated_at DESC);`,
+		}
+
+		for _, stmt := range migrationStatements {
+			if _, err := tx.Exec(stmt); err != nil {
+				return fmt.Errorf("failed to execute migration statement: %w", err)
+			}
+		}
+
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("failed to commit migration transaction: %w", err)
+		}
+		tx = nil
 	}
 
 	return nil
