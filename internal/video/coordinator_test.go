@@ -679,3 +679,28 @@ func TestCoordinator_TimerExpiredWhileClosed(t *testing.T) {
 	}
 }
 
+func TestCoordinator_Trigger_DefaultPriorityPersistent(t *testing.T) {
+	t.Parallel()
+
+	coord := NewCoordinator(nil)
+	defer coord.Close()
+
+	state, err := coord.Trigger(VideoStream{
+		ID:        "stream-no-priority",
+		StreamURL: "http://stream",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error triggering stream without priority: %v", err)
+	}
+
+	if state.Primary == nil {
+		t.Fatalf("expected primary stream to be mounted")
+	}
+	if state.Primary.Priority != PriorityPersistent {
+		t.Errorf("expected Priority to default to %q, got %q", PriorityPersistent, state.Primary.Priority)
+	}
+	if state.Primary.TimeoutSeconds != 0 {
+		t.Errorf("expected TimeoutSeconds for persistent stream to be 0, got %d", state.Primary.TimeoutSeconds)
+	}
+}
+
