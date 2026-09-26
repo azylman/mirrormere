@@ -188,11 +188,11 @@ run_codegen_drift() {
     fi
 }
 
-# 7. Client Runtime Tests (Node.js)
+# 7. Client & Sidecar Runtime Tests (Node.js)
 run_node_tests() {
     if has_cmd node; then
-        echo "   [node test] Running web client test suite..."
-        TZ=UTC node --test web/test/*.test.js
+        echo "   [node test] Running web client and sidecar test suites..."
+        TZ=UTC node --test web/test/*.test.js sidecars/eink-renderer/test/*.test.js
     fi
 }
 
