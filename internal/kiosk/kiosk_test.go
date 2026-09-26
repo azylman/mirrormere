@@ -350,7 +350,73 @@ func TestDeployKioskFiles(t *testing.T) {
 			t.Fatalf("restart.service validation failed: %v", err)
 		}
 	})
+
+	t.Run("DPMSScriptDirectives", func(t *testing.T) {
+		data, err := os.ReadFile(filepath.Join(kioskDir, "dpms.sh"))
+		if err != nil {
+			t.Fatalf("failed to read dpms.sh: %v", err)
+		}
+		if err := kiosk.ValidateDPMSScript(string(data)); err != nil {
+			t.Fatalf("dpms.sh validation failed: %v", err)
+		}
+	})
+
+	t.Run("SessionScriptDirectives", func(t *testing.T) {
+		data, err := os.ReadFile(filepath.Join(kioskDir, "session.sh"))
+		if err != nil {
+			t.Fatalf("failed to read session.sh: %v", err)
+		}
+		if err := kiosk.ValidateSessionScript(string(data)); err != nil {
+			t.Fatalf("session.sh validation failed: %v", err)
+		}
+	})
 }
+
+func TestValidateDPMSScript(t *testing.T) {
+	t.Parallel()
+
+	valid := `
+trigger_swayidle_idle
+reset_swayidle_active
+SIGUSR1
+SIGTERM
+night-restart
+`
+	if err := kiosk.ValidateDPMSScript(valid); err != nil {
+		t.Fatalf("unexpected error on valid dpms script: %v", err)
+	}
+
+	bad := `
+reset_swayidle_active
+SIGTERM
+`
+	if err := kiosk.ValidateDPMSScript(bad); err == nil {
+		t.Error("expected error for missing trigger_swayidle_idle directive")
+	}
+}
+
+func TestValidateSessionScript(t *testing.T) {
+	t.Parallel()
+
+	valid := `
+swayidle
+run_swayidle
+cleanup
+trap cleanup
+`
+	if err := kiosk.ValidateSessionScript(valid); err != nil {
+		t.Fatalf("unexpected error on valid session script: %v", err)
+	}
+
+	bad := `
+swayidle
+cleanup
+`
+	if err := kiosk.ValidateSessionScript(bad); err == nil {
+		t.Error("expected error for missing run_swayidle supervisor directive")
+	}
+}
+
 
 func cloneUnit(u *kiosk.SystemdUnit) *kiosk.SystemdUnit {
 	res := &kiosk.SystemdUnit{

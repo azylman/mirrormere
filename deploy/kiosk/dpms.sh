@@ -51,6 +51,22 @@ wait_for_wayland() {
     return 1
 }
 
+# Trigger swayidle to transition immediately into idle state (fires timeout command)
+trigger_swayidle_idle() {
+    if pgrep -u "$KIOSK_USER" swayidle >/dev/null 2>&1; then
+        echo "[Mirrormere DPMS] Triggering idle state via swayidle SIGUSR1"
+        pkill -USR1 -u "$KIOSK_USER" swayidle 2>/dev/null || true
+    fi
+}
+
+# Reset swayidle to active state by terminating current process; session supervisor respawns fresh timer
+reset_swayidle_active() {
+    if pgrep -u "$KIOSK_USER" swayidle >/dev/null 2>&1; then
+        echo "[Mirrormere DPMS] Resetting swayidle timeout via SIGTERM"
+        pkill -TERM -u "$KIOSK_USER" swayidle 2>/dev/null || true
+    fi
+}
+
 cmd="${1:-status}"
 
 case "$cmd" in
@@ -59,6 +75,7 @@ case "$cmd" in
             output="$(get_output)"
             echo "[Mirrormere DPMS] Powering off output: ${output}"
             run_kiosk_wayland wlr-randr --output "${output}" --off
+            trigger_swayidle_idle
         fi
         ;;
     on)
@@ -66,24 +83,38 @@ case "$cmd" in
             output="$(get_output)"
             echo "[Mirrormere DPMS] Powering on output: ${output}"
             run_kiosk_wayland wlr-randr --output "${output}" --on
+            reset_swayidle_active
         fi
         ;;
     status)
         if wait_for_wayland; then
             run_kiosk_wayland wlr-randr
+            if pgrep -u "$KIOSK_USER" swayidle >/dev/null 2>&1; then
+                echo "[Mirrormere DPMS] swayidle daemon is active (PID: $(pgrep -d, -u "$KIOSK_USER" swayidle))"
+            else
+                echo "[Mirrormere DPMS] swayidle daemon is not active"
+            fi
         else
             echo "[Mirrormere DPMS] Compositor offline or socket inaccessible"
             exit 1
         fi
         ;;
     night-restart)
-        # Fix for Issue #257: Restart kiosk service and immediately re-assert DPMS off
+        # Fix for Issue #257 & #280: Restart kiosk service, re-assert DPMS off, and trigger idle state
         echo "[Mirrormere DPMS] Restarting mirrormere-kiosk.service for nightly memory refresh..."
         systemctl restart mirrormere-kiosk.service
         if wait_for_wayland; then
             output="$(get_output)"
             echo "[Mirrormere DPMS] Re-asserting night blackout on output: ${output}"
             run_kiosk_wayland wlr-randr --output "${output}" --off
+            # Wait briefly for swayidle to initialize, then trigger idle state so night touches wake screen
+            for ((i=1; i<=10; i++)); do
+                if pgrep -u "$KIOSK_USER" swayidle >/dev/null 2>&1; then
+                    trigger_swayidle_idle
+                    break
+                fi
+                sleep 0.2
+            done
         else
             echo "[Mirrormere DPMS] Warning: Could not re-assert night blackout after restart" >&2
         fi
