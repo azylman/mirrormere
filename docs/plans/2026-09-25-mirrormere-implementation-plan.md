@@ -49,7 +49,7 @@ flowchart TD
     - Create: `deploy/examples/custom.css`
   - Deliverable: Reproducible container build running a healthcheck endpoint from Day 1.
 
-- [ ] **Task 1.2: OpenAPI 3.1 Specification & Reload Event Schemas**
+- [x] **Task 1.2: OpenAPI 3.1 Specification & Reload Event Schemas**
   - Files:
     - Create: `api/openapi.yaml` (scoped strictly to Phase 1 foundation routes: `/healthz`, `/health`, `/api/widgets/{widget_id}/render`, `/widget-types/{type}/assets/{path}`)
     - Create: `api/schemas/widget.reload.json`

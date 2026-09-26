@@ -1,0 +1,115 @@
+openapi: 3.1.0
+info:
+  title: Mirrormere API
+  description: Foundation API specification for the Mirrormere ambient smart display daemon.
+  version: 0.1.0
+paths:
+  /healthz:
+    get:
+      summary: Health check endpoint
+      description: Returns service health status for container probes and orchestration.
+      operationId: getHealthz
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+  /health:
+    get:
+      summary: Health check alias endpoint
+      description: Alias of /healthz returning service health status.
+      operationId: getHealth
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+  /api/widgets/{widget_id}/render:
+    get:
+      summary: Render widget HTML fragment
+      description: Retrieves the server-rendered HTML fragment for a single widget instance on demand.
+      operationId: getWidgetRender
+      parameters:
+        - name: widget_id
+          in: path
+          required: true
+          description: Unique identifier of the widget instance
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Server-rendered HTML fragment
+          content:
+            text/html:
+              schema:
+                type: string
+        '404':
+          description: Widget not found in active configuration
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /widget-types/{type}/assets/{path}:
+    get:
+      summary: Serve static widget package asset
+      description: Serves static assets from the resolved widget package directory with path traversal protection.
+      operationId: getWidgetAsset
+      parameters:
+        - name: type
+          in: path
+          required: true
+          description: Widget type identifier
+          schema:
+            type: string
+        - name: path
+          in: path
+          required: true
+          description: Relative path to the asset within the widget package assets directory
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Static asset file stream
+          content:
+            '*/*':
+              schema:
+                type: string
+                format: binary
+        '400':
+          description: Invalid path or path traversal attempt
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Asset or widget package not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+components:
+  schemas:
+    HealthResponse:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          example: ok
+    ErrorResponse:
+      type: object
+      required:
+        - status
+        - error
+      properties:
+        status:
+          type: string
+          example: error
+        error:
+          type: string
+          example: widget 'custom-sensor-hud' not found in active configuration
