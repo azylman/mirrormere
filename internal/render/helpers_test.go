@@ -2,6 +2,7 @@ package render_test
 
 import (
 	"html/template"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -331,4 +332,148 @@ func TestWeatherIcon(t *testing.T) {
 	if !strings.Contains(sb.String(), `width="24"`) || !strings.Contains(sb.String(), `mm-icon-weather-partly-cloudy`) {
 		t.Errorf("expected rendered SVG in template output, got: %s", sb.String())
 	}
+}
+
+type testHourlyItem struct {
+	Time       string
+	Temp       float64
+	PrecipProb int
+	Icon       string
+}
+
+func TestWeatherHourlyGraph(t *testing.T) {
+	t.Parallel()
+
+	// Empty and invalid inputs
+	emptyCases := []struct {
+		name string
+		args []any
+	}{
+		{"no args", []any{}},
+		{"nil arg", []any{nil}},
+		{"unsupported type string", []any{"invalid"}},
+		{"unsupported type int", []any{123}},
+		{"empty slice of any", []any{[]any{}}},
+		{"empty typed slice", []any{[]testHourlyItem{}}},
+		{"slice with all nil items", []any{[]any{nil, nil}}},
+	}
+
+	for _, tc := range emptyCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := render.WeatherHourlyGraph(tc.args...)
+			if got != "" {
+				t.Errorf("expected empty HTML, got: %s", got)
+			}
+		})
+	}
+
+	// Single item
+	t.Run("single item", func(t *testing.T) {
+		t.Parallel()
+		items := []testHourlyItem{
+			{Time: "2026-09-26T14:00", Temp: 72.0, PrecipProb: 0, Icon: "weather-sunny"},
+		}
+		got := string(render.WeatherHourlyGraph(items))
+		if !strings.HasPrefix(got, "<svg") || !strings.HasSuffix(got, "</svg>") {
+			t.Fatalf("expected valid SVG, got: %s", got)
+		}
+		if !strings.Contains(got, `72°`) {
+			t.Errorf("expected temp label 72°, got: %s", got)
+		}
+		if !strings.Contains(got, `Now`) {
+			t.Errorf("expected Now time label, got: %s", got)
+		}
+		// Single item should not render multi-point curve stroke path
+		if strings.Contains(got, `<path d="M`) && strings.Contains(got, `stroke-width="2.5"`) {
+			t.Errorf("single item should not render multi-point curve path, got: %s", got)
+		}
+	})
+
+	// Flatline temperatures (max == min, span < 4)
+	t.Run("flatline temperatures", func(t *testing.T) {
+		t.Parallel()
+		items := []testHourlyItem{
+			{Time: "2026-09-26T14:00", Temp: 65.0, PrecipProb: 10, Icon: "weather-cloudy"},
+			{Time: "2026-09-26T15:00", Temp: 65.0, PrecipProb: 10, Icon: "weather-cloudy"},
+			{Time: "2026-09-26T16:00", Temp: 65.0, PrecipProb: 0, Icon: "weather-cloudy"},
+		}
+		got := string(render.WeatherHourlyGraph(items))
+		if !strings.Contains(got, `stroke-width="2.5"`) {
+			t.Errorf("expected curve path for multiple points, got: %s", got)
+		}
+		if !strings.Contains(got, `10%`) {
+			t.Errorf("expected precip label 10%%, got: %s", got)
+		}
+		if !strings.Contains(got, `3 PM`) || !strings.Contains(got, `4 PM`) {
+			t.Errorf("expected formatted times 3 PM and 4 PM, got: %s", got)
+		}
+	})
+
+	// Varied multi-hour with negative and zero-crossing temperatures
+	t.Run("negative and zero-crossing temperatures", func(t *testing.T) {
+		t.Parallel()
+		items := []testHourlyItem{
+			{Time: "2026-09-26T00:00", Temp: -5.0, PrecipProb: 50, Icon: "weather-snowy"},
+			{Time: "2026-09-26T01:00", Temp: 0.0, PrecipProb: 30, Icon: "weather-snowy-rainy"},
+			{Time: "2026-09-26T02:00", Temp: 10.0, PrecipProb: 0, Icon: "weather-sunny"},
+		}
+		got := string(render.WeatherHourlyGraph(items, "custom-id"))
+		if !strings.Contains(got, `id="mm-weather-grad-custom-id"`) {
+			t.Errorf("expected custom gradient ID in defs, got: %s", got)
+		}
+		if !strings.Contains(got, `-5°`) || !strings.Contains(got, `0°`) || !strings.Contains(got, `10°`) {
+			t.Errorf("expected negative and positive temp labels, got: %s", got)
+		}
+		if !strings.Contains(got, `50%`) {
+			t.Errorf("expected 50%% precip label, got: %s", got)
+		}
+	})
+
+	// Map slice and NaN/Inf handling
+	t.Run("map slice with NaN and unparseable time", func(t *testing.T) {
+		t.Parallel()
+		items := []map[string]any{
+			{"time": "2026-09-26T14:00", "temp": math.NaN(), "precip_prob": 25.0, "icon": ""},
+			{"time": "custom-time-format", "temp": math.Inf(1), "precip_prob": 0, "icon": "weather-partly-cloudy"},
+			{"time": "2026-09-26T16:00", "temp": 70, "precip_prob": 40, "icon": "weather-rainy"},
+		}
+		got := string(render.WeatherHourlyGraph(items))
+		if strings.Contains(got, "NaN") || strings.Contains(got, "Inf") {
+			t.Errorf("output should never contain literal NaN or Inf, got: %s", got)
+		}
+		if !strings.Contains(got, "custom-time-format") {
+			t.Errorf("expected unparseable time fallback, got: %s", got)
+		}
+	})
+
+	// Full template execution via StandardFuncMap
+	t.Run("template execution", func(t *testing.T) {
+		t.Parallel()
+		data := map[string]any{
+			"Hourly": []testHourlyItem{
+				{Time: "2026-09-26T12:00", Temp: 68.0, PrecipProb: 0, Icon: "weather-sunny"},
+				{Time: "2026-09-26T13:00", Temp: 71.0, PrecipProb: 20, Icon: "weather-partly-cloudy"},
+			},
+			"ID": "widget-123",
+		}
+		tmpl, err := template.New("graph-test").Funcs(render.StandardFuncMap(nil)).Parse(`{{weatherHourlyGraph .Hourly .ID}}`)
+		if err != nil {
+			t.Fatalf("failed to parse template: %v", err)
+		}
+		var sb strings.Builder
+		if err := tmpl.Execute(&sb, data); err != nil {
+			t.Fatalf("failed to execute template: %v", err)
+		}
+		out := sb.String()
+		if !strings.Contains(out, `class="weather-hourly-graph"`) {
+			t.Errorf("expected weather-hourly-graph class in template output, got: %s", out)
+		}
+		if !strings.Contains(out, `id="mm-weather-grad-widget-123"`) {
+			t.Errorf("expected namespaced gradient ID, got: %s", out)
+		}
+		if !strings.Contains(out, `68°`) || !strings.Contains(out, `71°`) {
+			t.Errorf("expected temp labels in output, got: %s", out)
+		}
+	})
 }

@@ -44,15 +44,8 @@
     <style>
       .weather-hourly-timeline::-webkit-scrollbar { display: none; }
     </style>
-    <div class="weather-hourly-timeline" style="display: flex; gap: 8px; overflow-x: auto; padding: 6px 2px 2px 2px; border-top: 1px solid rgba(168, 85, 247, 0.15); scrollbar-width: none; -ms-overflow-style: none; -webkit-overflow-scrolling: touch; overscroll-behavior-x: contain; touch-action: pan-x;">
-      {{ range $i, $h := .Data.Hourly }}
-      <div class="hourly-item{{ if eq $i 0 }} hourly-now{{ end }}" style="display: flex; flex-direction: column; align-items: center; min-width: 48px; flex-shrink: 0; padding: 6px 4px; border-radius: 8px; text-align: center; {{ if eq $i 0 }}background: rgba(168, 85, 247, 0.15); border: 1px solid rgba(168, 85, 247, 0.35);{{ else }}background: rgba(255, 255, 255, 0.03);{{ end }}">
-        <span class="hourly-time" style="font-size: 0.72rem; font-weight: {{ if eq $i 0 }}700{{ else }}500{{ end }}; color: {{ if eq $i 0 }}var(--mm-accent-purple){{ else }}var(--mm-text-muted){{ end }}; margin-bottom: 3px;">{{ if eq $i 0 }}Now{{ else }}{{ formatTime "3 PM" $h.Time }}{{ end }}</span>
-        <span class="hourly-icon" style="color: var(--mm-accent-purple); display: inline-flex; align-items: center; justify-content: center; height: 22px;">{{ weatherIcon $h.Icon 18 }}</span>
-        <span class="hourly-temp" style="font-size: 0.85rem; font-weight: 600; color: var(--mm-text-primary); margin: 3px 0 2px 0;">{{ printf "%.0f" $h.Temp }}°</span>
-        <span class="hourly-precip" style="font-size: 0.68rem; font-weight: 600; color: var(--mm-accent-cyan); visibility: {{ if gt $h.PrecipProb 0 }}visible{{ else }}hidden{{ end }};">{{ if gt $h.PrecipProb 0 }}{{ $h.PrecipProb }}%{{ else }}&nbsp;{{ end }}</span>
-      </div>
-      {{ end }}
+    <div class="weather-hourly-timeline" style="display: flex; overflow-x: auto; padding: 6px 0 2px 0; border-top: 1px solid rgba(168, 85, 247, 0.15); scrollbar-width: none; -ms-overflow-style: none; -webkit-overflow-scrolling: touch; overscroll-behavior-x: contain; touch-action: pan-x;">
+      {{ weatherHourlyGraph .Data.Hourly .ID }}
     </div>
     {{ end }}
   </div>
