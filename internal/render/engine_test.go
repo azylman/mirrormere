@@ -215,7 +215,7 @@ func TestEngine_RenderWidget_Success(t *testing.T) {
 	if !strings.Contains(htmlStr, `class="origin">2,1<`) {
 		t.Errorf("missing placed origin: %s", htmlStr)
 	}
-	if !strings.Contains(htmlStr, `class="assets">/widget-types/weather/assets<`) {
+	if !strings.Contains(htmlStr, `class="assets">widget-types/weather/assets<`) {
 		t.Errorf("missing assets path: %s", htmlStr)
 	}
 	if !strings.Contains(htmlStr, `class="data">72.5<`) {

@@ -250,6 +250,6 @@ func (e *Engine) buildContext(widgetID string, w *config.WidgetConfig, pkg *doma
 		Origin:     origin,
 		Theme:      "dark",
 		Online:     online,
-		Assets:     fmt.Sprintf("/widget-types/%s/assets", w.Type),
+		Assets:     fmt.Sprintf("widget-types/%s/assets", w.Type),
 	}
 }
