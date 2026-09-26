@@ -885,4 +885,64 @@ func TestServer_VideoHandler(t *testing.T) {
 	}
 }
 
+type mockServerVoiceHandler struct {
+	stateCalls int
+}
+
+func (m *mockServerVoiceHandler) PostVoiceState(w http.ResponseWriter, r *http.Request) {
+	m.stateCalls++
+	w.WriteHeader(http.StatusOK)
+}
+
+func TestServer_VoiceHandler(t *testing.T) {
+	t.Parallel()
+
+	// Case 1: Unset VoiceHandler returns 404
+	srv := server.New(server.Config{})
+	if srv.VoiceHandler() != nil {
+		t.Fatal("expected nil VoiceHandler initially")
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/voice/state", nil)
+	rec := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 when VoiceHandler unset, got %d", rec.Code)
+	}
+
+	// Case 2: Config.VoiceHandler set at creation
+	mockH := &mockServerVoiceHandler{}
+	srvWithHandler := server.New(server.Config{VoiceHandler: mockH})
+	if srvWithHandler.VoiceHandler() == nil {
+		t.Fatal("expected non-nil VoiceHandler")
+	}
+
+	req2 := httptest.NewRequest(http.MethodPost, "/api/voice/state", nil)
+	rec2 := httptest.NewRecorder()
+	srvWithHandler.Routes().ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec2.Code)
+	}
+	if mockH.stateCalls != 1 {
+		t.Fatalf("expected 1 call, got %d", mockH.stateCalls)
+	}
+
+	// Case 3: RegisterVoiceHandler dynamically updates handler
+	mockH2 := &mockServerVoiceHandler{}
+	srv.RegisterVoiceHandler(mockH2)
+	if srv.VoiceHandler() == nil {
+		t.Fatal("expected non-nil VoiceHandler after registration")
+	}
+
+	req3 := httptest.NewRequest(http.MethodPost, "/api/voice/state", nil)
+	rec3 := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(rec3, req3)
+	if rec3.Code != http.StatusOK {
+		t.Fatalf("expected 200 after dynamic registration, got %d", rec3.Code)
+	}
+	if mockH2.stateCalls != 1 {
+		t.Fatalf("expected mockH2 to receive call, got %d", mockH2.stateCalls)
+	}
+}
+
 

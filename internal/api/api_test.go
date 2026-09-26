@@ -27,6 +27,7 @@ type mockServer struct {
 	lastAction     string
 	lastDismissID  string
 	lastTriggerID  string
+	lastVoiceState string
 }
 
 func (m *mockServer) PostWidgetPush(w http.ResponseWriter, r *http.Request, widgetID string) {
@@ -413,6 +414,25 @@ func (m *mockServer) PostVideoState(w http.ResponseWriter, r *http.Request) {
 		Status:      "ok",
 		Id:          req.Id,
 		PlayerState: VideoPlayerStateResponsePlayerState(req.PlayerState),
+	})
+}
+
+func (m *mockServer) PostVoiceState(w http.ResponseWriter, r *http.Request) {
+	var req VoiceStateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(ErrorResponse{
+			Status: "error",
+			Error:  "invalid voice state payload",
+		})
+		return
+	}
+	m.lastVoiceState = string(req.State)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(VoiceStateResponse{
+		Status: "ok",
 	})
 }
 
@@ -972,6 +992,41 @@ func TestHandler_Endpoints(t *testing.T) {
 
 		// Bad JSON
 		reqBad := httptest.NewRequest(http.MethodPost, "/api/video/state", strings.NewReader(`not-json`))
+		reqBad.Header.Set("Content-Type", "application/json")
+		recBad := httptest.NewRecorder()
+		handler.ServeHTTP(recBad, reqBad)
+		if recBad.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d", recBad.Code)
+		}
+	})
+
+	t.Run("POST /api/voice/state", func(t *testing.T) {
+		t.Parallel()
+		mock := &mockServer{}
+		handler := Handler(mock)
+
+		// 200 OK
+		req := httptest.NewRequest(http.MethodPost, "/api/voice/state", strings.NewReader(`{"state":"thinking","transcript":"What time is it?"}`))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rec.Code)
+		}
+		var resp VoiceStateResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("failed to decode response: %v", err)
+		}
+		if resp.Status != "ok" {
+			t.Fatalf("expected status ok, got %q", resp.Status)
+		}
+		if mock.lastVoiceState != "thinking" {
+			t.Fatalf("expected lastVoiceState 'thinking', got %q", mock.lastVoiceState)
+		}
+
+		// Bad JSON
+		reqBad := httptest.NewRequest(http.MethodPost, "/api/voice/state", strings.NewReader(`not-json`))
 		reqBad.Header.Set("Content-Type", "application/json")
 		recBad := httptest.NewRecorder()
 		handler.ServeHTTP(recBad, reqBad)

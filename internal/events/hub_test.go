@@ -306,4 +306,29 @@ func TestHub_PublishVideoState_SyncsStateProvider(t *testing.T) {
 	}
 }
 
+func TestHub_PublishVoiceState_SyncsStateProvider(t *testing.T) {
+	t.Parallel()
+
+	provider := NewInMemoryStateProvider(nil)
+	hub := NewHub(HubConfig{}, provider, nil)
+	defer hub.Close()
+
+	transcript := "What is the weather?"
+	payload, _ := json.Marshal(VoiceStateData{
+		State:      "thinking",
+		Transcript: &transcript,
+		Reply:      nil,
+		TTSEngine:  nil,
+	})
+	hub.Publish(EventVoiceState, payload)
+
+	state := provider.GetVoiceState()
+	if state.State != "thinking" {
+		t.Fatalf("expected state 'thinking' in stateProvider, got %+v", state)
+	}
+	if state.Transcript == nil || *state.Transcript != transcript {
+		t.Fatalf("expected transcript %q in stateProvider, got %+v", transcript, state.Transcript)
+	}
+}
+
 

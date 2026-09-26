@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "voice.state",
+  "description": "Voice pipeline state broadcast over SSE and ingested via REST relay",
+  "type": "object",
+  "required": [
+    "state"
+  ],
+  "properties": {
+    "state": {
+      "type": "string",
+      "enum": [
+        "idle",
+        "listening",
+        "transcribing",
+        "thinking",
+        "synthesizing",
+        "speaking",
+        "error"
+      ],
+      "description": "Active voice interaction lifecycle state"
+    },
+    "transcript": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Recognized user utterance returned by STT; null when idle or before transcription completes"
+    },
+    "reply": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Assistant reply text returned by the agent brain; rendered as caption toasts"
+    },
+    "tts_engine": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Name of the active TTS engine synthesizing or speaking audio (e.g. kokoro, elevenlabs, piper)"
+    }
+  },
+  "additionalProperties": false
+}

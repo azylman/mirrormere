@@ -208,6 +208,13 @@ func (h *Hub) PublishEvent(evt *Event) {
 					isp.SetVideoState(&vd)
 				}
 			}
+		} else if evt.Type == EventVoiceState {
+			var vs VoiceStateData
+			if err := json.Unmarshal(evt.Data, &vs); err == nil {
+				if isp, ok := h.stateProvider.(*InMemoryStateProvider); ok {
+					isp.SetVoiceState(&vs)
+				}
+			}
 		}
 	}
 
