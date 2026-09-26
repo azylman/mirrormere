@@ -389,6 +389,7 @@ When the autonomous header weather poller completes an ingestion cycle, Core bro
 ```json
 {
   "timestamp": "2026-09-24T22:20:00Z",
+  "timezone": "America/Los_Angeles",
   "weather": {
     "temperature": 72.4,
     "units": "F",

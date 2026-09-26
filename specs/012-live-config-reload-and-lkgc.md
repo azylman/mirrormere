@@ -125,7 +125,7 @@ Mirrormere maximizes live reconfigurability while clearly delineating settings b
 - **Widget Instances**: Adding, removing, reconfiguring, or resizing any widget instance in `display.widgets`.
 - **Screen Rotation Settings (`display.rotation`)**: Changes to `display.rotation.interval_seconds` update the active rotation timer JIT. Associated rotation parameters (`transition` visual hint, `pause_on_touch` client policy, and `pause_duration_seconds` touch pause window) are also applied live without container restart.
 - **Top-Banner Weather Poller**: Coordinates (`latitude`, `longitude`), `units`, and polling cadences under `display.header.weather` restart the background poller immediately.
-- **Timezone**: Changing `timezone` updates Go's `time.Local` / location pointer JIT, immediately adjusting digital clock formats, agenda relative times, and rollover timers.
+- **Timezone**: Changing `timezone` updates Go's `time.Local` / location pointer JIT (immediately adjusting digital clock formats, agenda relative times, and rollover timers) and triggers an immediate `header.update` SSE event (SPEC-006 §2.B) to synchronize connected display clocks and date formatters to the new timezone without a container restart.
 - **Custom Stylesheet (`/config/custom.css`)**: Hot-reloaded live and broadcast via `style.reload`.
 
 ### Settings Requiring Container Restart
