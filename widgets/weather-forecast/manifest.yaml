@@ -36,6 +36,4 @@ config_schema:
       enum:
         - imperial
         - metric
-    timezone:
-      type: string
   additionalProperties: false

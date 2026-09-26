@@ -187,9 +187,9 @@ func (p *WeatherProvider) Init(ctx context.Context, config map[string]any, opts 
 		}
 	}
 
-	tz := "auto"
-	if t, ok := config["timezone"].(string); ok && strings.TrimSpace(t) != "" {
-		tz = strings.TrimSpace(t)
+	tz := "UTC"
+	if strings.TrimSpace(opts.Timezone) != "" {
+		tz = strings.TrimSpace(opts.Timezone)
 	}
 
 	if opts.Endpoint != "" {

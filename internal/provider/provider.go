@@ -31,6 +31,7 @@ type InitOptions struct {
 	Endpoint       string
 	Method         string
 	Token          string
+	Timezone       string
 	Secrets        map[string]string
 	ResponseSchema map[string]any
 }

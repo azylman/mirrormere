@@ -915,6 +915,7 @@ func TestProviderCoordinator_DomainConfigAndTransportSecretsSeparation(t *testin
 	interval := 30
 	snap := &config.Snapshot{
 		Config: &config.Config{
+			Timezone: "America/Los_Angeles",
 			Display: config.DisplayConfig{
 				Widgets: []config.WidgetConfig{
 					{
@@ -1001,6 +1002,9 @@ func TestProviderCoordinator_DomainConfigAndTransportSecretsSeparation(t *testin
 	}
 	if mockP.initOpts.GetSecret("api_key") != "secret-sensor-api-key" {
 		t.Errorf("expected InitOptions.GetSecret('api_key') == 'secret-sensor-api-key', got %q", mockP.initOpts.GetSecret("api_key"))
+	}
+	if mockP.initOpts.Timezone != "America/Los_Angeles" {
+		t.Errorf("expected InitOptions.Timezone == 'America/Los_Angeles', got %q", mockP.initOpts.Timezone)
 	}
 }
 
@@ -1671,6 +1675,101 @@ func TestProviderCoordinator_PushWidgetData(t *testing.T) {
 	if !errors.Is(err, provider.ErrWidgetNotFound) {
 		t.Errorf("expected ErrWidgetNotFound for nil snapshot, got: %v", err)
 	}
+}
+
+func TestProviderCoordinator_UpdateConfig_TimezoneChanged(t *testing.T) {
+	t.Parallel()
+
+	registry := provider.NewRegistry()
+	var mu sync.Mutex
+	var instances []*controllableMockProvider
+
+	registry.Register("mock-weather", func() provider.Provider {
+		p := newControllableMockProvider()
+		mu.Lock()
+		instances = append(instances, p)
+		mu.Unlock()
+		return p
+	})
+
+	interval := 30
+	snap1 := &config.Snapshot{
+		Config: &config.Config{
+			Timezone: "America/Los_Angeles",
+			Display: config.DisplayConfig{
+				Widgets: []config.WidgetConfig{
+					{
+						ID:                     "weather-tile",
+						Type:                   "mock-weather",
+						Dimensions:             []int{2, 1},
+						RefreshIntervalSeconds: &interval,
+						Config: map[string]any{
+							"latitude":  37.8,
+							"longitude": -122.2,
+						},
+					},
+				},
+			},
+		},
+	}
+
+	coord := provider.NewCoordinator(provider.CoordinatorConfig{
+		Registry: registry,
+	}, snap1)
+	defer func() { _ = coord.Stop() }()
+
+	mu.Lock()
+	if len(instances) != 1 {
+		mu.Unlock()
+		t.Fatalf("expected 1 instance created, got %d", len(instances))
+	}
+	p1 := instances[0]
+	mu.Unlock()
+
+	p1.mu.Lock()
+	if p1.initOpts.Timezone != "America/Los_Angeles" {
+		t.Errorf("expected initial Timezone == 'America/Los_Angeles', got %q", p1.initOpts.Timezone)
+	}
+	p1.mu.Unlock()
+
+	// UpdateConfig with new household timezone
+	snap2 := &config.Snapshot{
+		Config: &config.Config{
+			Timezone: "America/New_York",
+			Display: config.DisplayConfig{
+				Widgets: []config.WidgetConfig{
+					{
+						ID:                     "weather-tile",
+						Type:                   "mock-weather",
+						Dimensions:             []int{2, 1},
+						RefreshIntervalSeconds: &interval,
+						Config: map[string]any{
+							"latitude":  37.8,
+							"longitude": -122.2,
+						},
+					},
+				},
+			},
+		},
+	}
+
+	if err := coord.UpdateConfig(snap2); err != nil {
+		t.Fatalf("UpdateConfig failed: %v", err)
+	}
+
+	mu.Lock()
+	if len(instances) != 2 {
+		mu.Unlock()
+		t.Fatalf("expected 2 instances created (restarted on TimezoneChanged), got %d", len(instances))
+	}
+	p2 := instances[1]
+	mu.Unlock()
+
+	p2.mu.Lock()
+	if p2.initOpts.Timezone != "America/New_York" {
+		t.Errorf("expected updated Timezone == 'America/New_York', got %q", p2.initOpts.Timezone)
+	}
+	p2.mu.Unlock()
 }
 
 
