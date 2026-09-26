@@ -569,10 +569,21 @@ func TestTasksProvider_Subscribe_ReactiveNotifications(t *testing.T) {
 
 	eventSink := make(chan provider.WidgetPayload, 4)
 	subErrCh := make(chan error, 1)
+	subscribed := make(chan struct{})
+
+	pConsumer.SetOnSubscribeForTest(func() {
+		close(subscribed)
+	})
 
 	go func() {
 		subErrCh <- pConsumer.Subscribe(ctx, eventSink)
 	}()
+
+	select {
+	case <-subscribed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for consumer subscription")
+	}
 
 	// Primary provider ingests items
 	fake := &fakeAdapter{
