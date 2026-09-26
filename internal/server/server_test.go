@@ -470,3 +470,111 @@ func TestServer_ScreenHandler(t *testing.T) {
 		t.Errorf("expected mockH2 to receive call, got %d", mockH2.selectCalls)
 	}
 }
+
+type mockRenderHandler struct {
+	renderCalls  int
+	lastWidgetID string
+	assetCalls   int
+	lastType     string
+	lastPath     string
+	styleCalls   int
+}
+
+func (m *mockRenderHandler) GetWidgetRender(w http.ResponseWriter, r *http.Request, widgetID string) {
+	m.renderCalls++
+	m.lastWidgetID = widgetID
+	w.WriteHeader(http.StatusOK)
+}
+
+func (m *mockRenderHandler) GetWidgetAsset(w http.ResponseWriter, r *http.Request, widgetType string, assetPath string) {
+	m.assetCalls++
+	m.lastType = widgetType
+	m.lastPath = assetPath
+	w.WriteHeader(http.StatusOK)
+}
+
+func (m *mockRenderHandler) ServeStyle(w http.ResponseWriter, r *http.Request) {
+	m.styleCalls++
+	w.WriteHeader(http.StatusOK)
+}
+
+func TestServer_RenderHandler(t *testing.T) {
+	t.Parallel()
+
+	// Case 1: Unset RenderHandler returns 404
+	srv := server.New(server.Config{})
+	if srv.RenderHandler() != nil {
+		t.Fatal("expected nil RenderHandler initially")
+	}
+
+	endpoints := []string{
+		"/api/widgets/w1/render",
+		"/widget-types/t1/assets/icon.svg",
+		"/style.css",
+	}
+	for _, ep := range endpoints {
+		req := httptest.NewRequest(http.MethodGet, ep, nil)
+		rec := httptest.NewRecorder()
+		srv.Routes().ServeHTTP(rec, req)
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("expected 404 for %s when RenderHandler unset, got %d", ep, rec.Code)
+		}
+	}
+
+	// Case 2: Config.RenderHandler set at creation
+	mockH := &mockRenderHandler{}
+	srvWithHandler := server.New(server.Config{RenderHandler: mockH})
+	if srvWithHandler.RenderHandler() == nil {
+		t.Fatal("expected non-nil RenderHandler")
+	}
+
+	// Test GET /api/widgets/{widget_id}/render
+	reqRender := httptest.NewRequest(http.MethodGet, "/api/widgets/weather-1/render", nil)
+	recRender := httptest.NewRecorder()
+	srvWithHandler.Routes().ServeHTTP(recRender, reqRender)
+	if recRender.Code != http.StatusOK {
+		t.Fatalf("expected 200 for render, got %d", recRender.Code)
+	}
+	if mockH.renderCalls != 1 || mockH.lastWidgetID != "weather-1" {
+		t.Errorf("expected render call with widget_id 'weather-1', got %d calls, id=%q", mockH.renderCalls, mockH.lastWidgetID)
+	}
+
+	// Test GET /widget-types/{type}/assets/{path...}
+	reqAsset := httptest.NewRequest(http.MethodGet, "/widget-types/weather/assets/sub/icons/sun.svg", nil)
+	recAsset := httptest.NewRecorder()
+	srvWithHandler.Routes().ServeHTTP(recAsset, reqAsset)
+	if recAsset.Code != http.StatusOK {
+		t.Fatalf("expected 200 for asset, got %d", recAsset.Code)
+	}
+	if mockH.assetCalls != 1 || mockH.lastType != "weather" || mockH.lastPath != "sub/icons/sun.svg" {
+		t.Errorf("expected asset call with type='weather', path='sub/icons/sun.svg', got calls=%d type=%q path=%q",
+			mockH.assetCalls, mockH.lastType, mockH.lastPath)
+	}
+
+	// Test GET /style.css
+	reqStyle := httptest.NewRequest(http.MethodGet, "/style.css", nil)
+	recStyle := httptest.NewRecorder()
+	srvWithHandler.Routes().ServeHTTP(recStyle, reqStyle)
+	if recStyle.Code != http.StatusOK {
+		t.Fatalf("expected 200 for style, got %d", recStyle.Code)
+	}
+	if mockH.styleCalls != 1 {
+		t.Errorf("expected 1 style call, got %d", mockH.styleCalls)
+	}
+
+	// Case 3: RegisterRenderHandler dynamically updates handler
+	mockH2 := &mockRenderHandler{}
+	srv.RegisterRenderHandler(mockH2)
+	if srv.RenderHandler() == nil {
+		t.Fatal("expected non-nil RenderHandler after registration")
+	}
+
+	recDynamic := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(recDynamic, reqStyle)
+	if recDynamic.Code != http.StatusOK {
+		t.Fatalf("expected 200 after dynamic registration, got %d", recDynamic.Code)
+	}
+	if mockH2.styleCalls != 1 {
+		t.Errorf("expected mockH2 to receive style call, got %d", mockH2.styleCalls)
+	}
+}
