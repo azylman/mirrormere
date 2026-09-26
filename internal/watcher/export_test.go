@@ -1,5 +1,7 @@
 package watcher
 
+import "github.com/azylman/mirrormere/internal/config"
+
 // RemoveDir exposes removeDir for internal package test assertions.
 func (w *Watcher) RemoveDir(path string) {
 	w.removeDir(path)
@@ -24,3 +26,9 @@ func (w *Watcher) AddWatchedDirForTest(path string) {
 func (w *Watcher) SendErrorForTest(err error) {
 	w.fsWatcher.Errors <- err
 }
+
+// IsWidgetTypeReferencedForTest exposes isWidgetTypeReferenced for unit testing edge cases.
+func IsWidgetTypeReferencedForTest(snap *config.Snapshot, widgetType string) bool {
+	return isWidgetTypeReferenced(snap, widgetType)
+}
+

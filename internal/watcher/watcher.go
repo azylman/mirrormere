@@ -218,6 +218,7 @@ func (w *Watcher) run(ctx context.Context) {
 	dirtyConfig := false
 	dirtyStyle := false
 	dirtyWidgets := make(map[string]bool)
+	dirtyManifests := make(map[string]bool)
 
 	stopDebounce := func() {
 		if debounceTimer != nil {
@@ -283,6 +284,9 @@ func (w *Watcher) run(ctx context.Context) {
 				dirtyStyle = true
 			case TargetWidget:
 				dirtyWidgets[target.WidgetType] = true
+				if target.IsManifest {
+					dirtyManifests[target.WidgetType] = true
+				}
 			}
 
 			now := time.Now()
@@ -293,10 +297,11 @@ func (w *Watcher) run(ctx context.Context) {
 			// 6. Check MaxDebounceDuration ceiling
 			if now.Sub(batchStartTime) >= w.cfg.MaxDebounceDuration {
 				stopDebounce()
-				w.flush(dirtyConfig, dirtyStyle, dirtyWidgets)
+				w.flush(dirtyConfig, dirtyStyle, dirtyWidgets, dirtyManifests)
 				dirtyConfig = false
 				dirtyStyle = false
 				dirtyWidgets = make(map[string]bool)
+				dirtyManifests = make(map[string]bool)
 				batchStartTime = time.Time{}
 				continue
 			}
@@ -314,27 +319,45 @@ func (w *Watcher) run(ctx context.Context) {
 		case <-debounceTimerC:
 			debounceTimer = nil
 			debounceTimerC = nil
-			w.flush(dirtyConfig, dirtyStyle, dirtyWidgets)
+			w.flush(dirtyConfig, dirtyStyle, dirtyWidgets, dirtyManifests)
 			dirtyConfig = false
 			dirtyStyle = false
 			dirtyWidgets = make(map[string]bool)
+			dirtyManifests = make(map[string]bool)
 			batchStartTime = time.Time{}
 		}
 	}
 }
 
-func (w *Watcher) flush(dirtyConfig, dirtyStyle bool, dirtyWidgets map[string]bool) {
+func (w *Watcher) flush(dirtyConfig, dirtyStyle bool, dirtyWidgets, dirtyManifests map[string]bool) {
 	// 1. Config Reload (LKGC Pipeline)
 	if dirtyConfig {
 		configPath := filepath.Join(w.cfg.ConfigDir, w.cfg.ConfigFileName)
 		data, err := os.ReadFile(configPath)
 		if err != nil {
 			w.logger.Error("failed to read configuration file for reload", "path", configPath, "error", err)
+			if w.configManager != nil {
+				w.configManager.SetErrorStatus(fmt.Errorf("failed to read configuration file: %w", err))
+				if w.dispatcher != nil {
+					if err := w.dispatcher.DispatchStatus(w.configManager.Status()); err != nil {
+						w.logger.Error("failed to dispatch status on config read failure", "error", err)
+					}
+				}
+			}
 		} else if w.configManager != nil {
 			snap, diff, rerr := w.configManager.Reload(data)
-			if rerr == nil && w.dispatcher != nil {
+			if rerr != nil {
+				if w.dispatcher != nil {
+					if err := w.dispatcher.DispatchStatus(w.configManager.Status()); err != nil {
+						w.logger.Error("failed to dispatch status on config reload failure", "error", err)
+					}
+				}
+			} else if w.dispatcher != nil {
 				if err := w.dispatcher.DispatchConfigReload(snap, diff); err != nil {
 					w.logger.Error("failed to dispatch config reload", "error", err)
+				}
+				if err := w.dispatcher.DispatchStatus(w.configManager.Status()); err != nil {
+					w.logger.Error("failed to dispatch status on config reload success", "error", err)
 				}
 			}
 		}
@@ -353,7 +376,7 @@ func (w *Watcher) flush(dirtyConfig, dirtyStyle bool, dirtyWidgets map[string]bo
 		}
 	}
 
-	// 3. Widget Reload (Package Completeness Verification)
+	// 3. Widget Reload (Package Completeness Verification & Manifest JIT Reload)
 	if len(dirtyWidgets) > 0 {
 		types := make([]string, 0, len(dirtyWidgets))
 		for t := range dirtyWidgets {
@@ -361,14 +384,98 @@ func (w *Watcher) flush(dirtyConfig, dirtyStyle bool, dirtyWidgets map[string]bo
 		}
 		sort.Strings(types)
 
+		// First, verify package completeness
+		incomplete := make(map[string]bool)
 		for _, widgetType := range types {
 			if w.packageLoader != nil {
 				_, err := w.packageLoader.LoadPackage(widgetType)
 				if err != nil {
 					w.logger.Warn(fmt.Sprintf("[widget.watcher] warning=\"widget package '%s' is incomplete: %s; waiting for manifest.yaml and views/widget.html\"", widgetType, err.Error()))
+					incomplete[widgetType] = true
+					if w.configManager != nil {
+						w.configManager.SetPackageError(widgetType, fmt.Errorf("widget package '%s' is incomplete: %w", widgetType, err))
+						if w.dispatcher != nil {
+							if err := w.dispatcher.DispatchStatus(w.configManager.Status()); err != nil {
+								w.logger.Error("failed to dispatch status on incomplete package", "type", widgetType, "error", err)
+							}
+						}
+					}
+					continue
+				}
+				if w.configManager != nil {
+					if cleared := w.configManager.ClearPackageError(widgetType); cleared {
+						if w.dispatcher != nil {
+							if err := w.dispatcher.DispatchStatus(w.configManager.Status()); err != nil {
+								w.logger.Error("failed to dispatch status on package completion", "type", widgetType, "error", err)
+							}
+						}
+					}
+				}
+			}
+		}
+
+		// Next, if any complete widget with a modified manifest is referenced in the running config,
+		// re-run Manager.Reload on the current config.yaml bytes (unless config was already reloaded).
+		manifestReloadFailed := false
+		if !dirtyConfig && w.configManager != nil {
+			currentSnap := w.configManager.CurrentSnapshot()
+			needsManifestReload := false
+			for _, widgetType := range types {
+				if !incomplete[widgetType] && dirtyManifests[widgetType] && isWidgetTypeReferenced(currentSnap, widgetType) {
+					needsManifestReload = true
+					break
+				}
+			}
+
+			if needsManifestReload {
+				configPath := filepath.Join(w.cfg.ConfigDir, w.cfg.ConfigFileName)
+				data, err := os.ReadFile(configPath)
+				if err != nil {
+					w.logger.Error("failed to read configuration file for manifest reload", "path", configPath, "error", err)
+					manifestReloadFailed = true
+					w.configManager.SetErrorStatus(fmt.Errorf("failed to read configuration file: %w", err))
+					if w.dispatcher != nil {
+						if err := w.dispatcher.DispatchStatus(w.configManager.Status()); err != nil {
+							w.logger.Error("failed to dispatch status on manifest config read failure", "error", err)
+						}
+					}
+				} else {
+					snap, diff, rerr := w.configManager.Reload(data)
+					if rerr != nil {
+						w.logger.Error("live config validation failed after manifest update; retaining LKGC", "error", rerr)
+						manifestReloadFailed = true
+						if w.dispatcher != nil {
+							if err := w.dispatcher.DispatchStatus(w.configManager.Status()); err != nil {
+								w.logger.Error("failed to dispatch status on manifest reload failure", "error", err)
+							}
+						}
+					} else if w.dispatcher != nil {
+						if err := w.dispatcher.DispatchConfigReload(snap, diff); err != nil {
+							w.logger.Error("failed to dispatch config reload on manifest update", "error", err)
+						}
+						if err := w.dispatcher.DispatchStatus(w.configManager.Status()); err != nil {
+							w.logger.Error("failed to dispatch status on manifest reload success", "error", err)
+						}
+					}
+				}
+			}
+		}
+
+		// Finally, dispatch widget.reload events for complete packages
+		for _, widgetType := range types {
+			if incomplete[widgetType] {
+				continue
+			}
+
+			// If manifest reload failed and this widget had its manifest updated while referenced in config,
+			// abort widget.reload per Issue #189.
+			if manifestReloadFailed && dirtyManifests[widgetType] {
+				currentSnap := w.configManager.CurrentSnapshot()
+				if isWidgetTypeReferenced(currentSnap, widgetType) {
 					continue
 				}
 			}
+
 			if w.dispatcher != nil {
 				event := WidgetReloadEvent{Type: widgetType}
 				if err := w.dispatcher.DispatchWidgetReload(event); err != nil {
@@ -385,4 +492,16 @@ func (w *Watcher) flush(dirtyConfig, dirtyStyle bool, dirtyWidgets map[string]bo
 	if hook != nil {
 		hook()
 	}
+}
+
+func isWidgetTypeReferenced(snap *config.Snapshot, widgetType string) bool {
+	if snap == nil || snap.Config == nil {
+		return false
+	}
+	for _, w := range snap.Config.Display.Widgets {
+		if w.Type == widgetType {
+			return true
+		}
+	}
+	return false
 }

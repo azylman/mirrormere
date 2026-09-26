@@ -38,6 +38,7 @@ const (
 type TargetInfo struct {
 	Type       TargetType
 	WidgetType string
+	IsManifest bool
 }
 
 // ClassifyPath determines the TargetInfo for a given filesystem path based on watcher configuration.
@@ -56,7 +57,8 @@ func ClassifyPath(cleanPath string, cfg Config) TargetInfo {
 			parts := strings.Split(rel, string(filepath.Separator))
 			widgetType := parts[0]
 			if widgetType != "" && !strings.HasPrefix(widgetType, ".") {
-				return TargetInfo{Type: TargetWidget, WidgetType: widgetType}
+				isManifest := filepath.Base(cleanPath) == "manifest.yaml"
+				return TargetInfo{Type: TargetWidget, WidgetType: widgetType, IsManifest: isManifest}
 			}
 		}
 	}
@@ -69,7 +71,8 @@ func ClassifyPath(cleanPath string, cfg Config) TargetInfo {
 			parts := strings.Split(rel, string(filepath.Separator))
 			widgetType := parts[0]
 			if widgetType != "" && !strings.HasPrefix(widgetType, ".") {
-				return TargetInfo{Type: TargetWidget, WidgetType: widgetType}
+				isManifest := filepath.Base(cleanPath) == "manifest.yaml"
+				return TargetInfo{Type: TargetWidget, WidgetType: widgetType, IsManifest: isManifest}
 			}
 		}
 	}
