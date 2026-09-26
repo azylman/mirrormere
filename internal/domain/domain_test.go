@@ -1,6 +1,7 @@
 package domain_test
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -97,6 +98,46 @@ func TestDimension_YAML(t *testing.T) {
 	}
 	if err := yaml.Unmarshal([]byte(`"scalar"`), &dBad); err == nil {
 		t.Fatal("expected error for scalar node, got nil")
+	}
+}
+
+func TestDimension_JSON(t *testing.T) {
+	t.Parallel()
+
+	// 1. Array unmarshaling [4, 2]
+	var d1 domain.Dimension
+	if err := json.Unmarshal([]byte("[4, 2]"), &d1); err != nil {
+		t.Fatalf("unexpected error unmarshaling array: %v", err)
+	}
+	if d1.Cols != 4 || d1.Rows != 2 {
+		t.Errorf("expected 4x2, got %dx%d", d1.Cols, d1.Rows)
+	}
+
+	// 2. Object unmarshaling {"cols": 3, "rows": 1}
+	var d2 domain.Dimension
+	if err := json.Unmarshal([]byte(`{"cols": 3, "rows": 1}`), &d2); err != nil {
+		t.Fatalf("unexpected error unmarshaling object: %v", err)
+	}
+	if d2.Cols != 3 || d2.Rows != 1 {
+		t.Errorf("expected 3x1, got %dx%d", d2.Cols, d2.Rows)
+	}
+
+	// 3. Marshaling to JSON array [4, 2]
+	marshaled, err := json.Marshal(d1)
+	if err != nil {
+		t.Fatalf("unexpected marshal error: %v", err)
+	}
+	if string(marshaled) != "[4,2]" {
+		t.Errorf("expected '[4,2]', got %s", string(marshaled))
+	}
+
+	// 4. Invalid JSON cases
+	var dBad domain.Dimension
+	if err := json.Unmarshal([]byte("[4]"), &dBad); err == nil {
+		t.Fatal("expected error for 1-element array, got nil")
+	}
+	if err := json.Unmarshal([]byte(`"scalar"`), &dBad); err == nil {
+		t.Fatal("expected error for scalar JSON string, got nil")
 	}
 }
 
