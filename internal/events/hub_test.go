@@ -281,3 +281,29 @@ func TestHub_PublishAudioState_SyncsStateProvider(t *testing.T) {
 	}
 }
 
+func TestHub_PublishVideoState_SyncsStateProvider(t *testing.T) {
+	t.Parallel()
+
+	provider := NewInMemoryStateProvider(nil)
+	hub := NewHub(HubConfig{}, provider, nil)
+	defer hub.Close()
+
+	payload, _ := json.Marshal(VideoStateData{
+		Mode: "video",
+		Primary: map[string]any{
+			"id": "chromecast",
+		},
+		Pip: nil,
+	})
+	hub.Publish(EventVideoState, payload)
+
+	state := provider.GetVideoState()
+	if state.Mode != "video" {
+		t.Fatalf("expected mode 'video' in stateProvider, got %+v", state)
+	}
+	if state.Primary == nil {
+		t.Fatalf("expected primary to be set in stateProvider")
+	}
+}
+
+

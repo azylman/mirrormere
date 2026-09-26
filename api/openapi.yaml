@@ -302,6 +302,143 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+  /api/video/trigger:
+    post:
+      summary: Trigger video stream
+      description: Mounts or updates a video stream in the priority stack and broadcasts video.state.
+      operationId: postVideoTrigger
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VideoTriggerRequest'
+      responses:
+        '200':
+          description: Video stream triggered successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VideoStateResponse'
+        '400':
+          description: Invalid video trigger request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/video/dismiss:
+    post:
+      summary: Dismiss video stream
+      description: Dismisses an active video stream from primary or PiP and broadcasts video.state.
+      operationId: postVideoDismiss
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VideoDismissRequest'
+      responses:
+        '200':
+          description: Video stream dismissed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VideoStateResponse'
+        '400':
+          description: Invalid video dismiss request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Stream not active
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/video/action:
+    post:
+      summary: Dispatch video transport action
+      description: Forwards remote playback action to active stream control_url.
+      operationId: postVideoAction
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VideoActionRequest'
+      responses:
+        '200':
+          description: Video action dispatched successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActionResponse'
+        '400':
+          description: Invalid video action request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Stream not active
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Stream is not controllable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '502':
+          description: Stream controller unreachable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/video/state:
+    get:
+      summary: Get video presentation state
+      description: Returns the active video presentation mode and stream assignments.
+      operationId: getVideoState
+      responses:
+        '200':
+          description: Video state retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VideoStateResponse'
+    post:
+      summary: Update video player transport state
+      description: Webhook dispatched by sidecar when player state mutates and broadcasts video.state.
+      operationId: postVideoState
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VideoPlayerStateRequest'
+      responses:
+        '200':
+          description: Video player state updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VideoPlayerStateResponse'
+        '400':
+          description: Invalid player state request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Stream not active
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 components:
   schemas:
     ScreenSelectRequest:
@@ -484,4 +621,163 @@ components:
         muted:
           type: boolean
           example: true
+    VideoStream:
+      type: object
+      required:
+        - id
+        - stream_url
+        - type
+      properties:
+        id:
+          type: string
+          example: chromecast
+        stream_url:
+          type: string
+          example: http://127.0.0.1:1984/cast
+        type:
+          type: string
+          enum: [webrtc, hls, mjpeg]
+          default: webrtc
+          example: webrtc
+        priority:
+          type: string
+          enum: [persistent, temporary]
+          default: temporary
+          example: persistent
+        timeout_seconds:
+          type: integer
+          minimum: 0
+          example: 45
+        controllable:
+          type: boolean
+          default: false
+          example: true
+        control_url:
+          type: string
+          example: http://cast-watcher:8090/action
+        player_state:
+          type: string
+          enum: [playing, paused, buffering]
+          example: playing
+        muted:
+          type: boolean
+          example: false
+    VideoStateResponse:
+      type: object
+      required:
+        - status
+        - mode
+      properties:
+        status:
+          type: string
+          example: ok
+        mode:
+          type: string
+          enum: [widgets, video]
+          example: widgets
+        primary:
+          $ref: '#/components/schemas/VideoStream'
+          nullable: true
+        pip:
+          $ref: '#/components/schemas/VideoStream'
+          nullable: true
+    VideoTriggerRequest:
+      type: object
+      required:
+        - id
+        - stream_url
+      properties:
+        id:
+          type: string
+          example: chromecast
+        stream_url:
+          type: string
+          example: http://127.0.0.1:1984/cast
+        type:
+          type: string
+          enum: [webrtc, hls, mjpeg]
+          default: webrtc
+          example: webrtc
+        priority:
+          type: string
+          enum: [persistent, temporary]
+          default: temporary
+          example: persistent
+        timeout_seconds:
+          type: integer
+          minimum: 0
+          example: 45
+        controllable:
+          type: boolean
+          default: false
+          example: true
+        control_url:
+          type: string
+          example: http://cast-watcher:8090/action
+        player_state:
+          type: string
+          enum: [playing, paused, buffering]
+          example: playing
+    VideoDismissRequest:
+      type: object
+      required:
+        - id
+      properties:
+        id:
+          type: string
+          example: chromecast
+    VideoActionRequest:
+      type: object
+      required:
+        - id
+        - action
+      properties:
+        id:
+          type: string
+          example: chromecast
+        action:
+          type: string
+          enum: [toggle_playback, play, pause]
+          example: toggle_playback
+        value:
+          nullable: true
+    VideoPlayerStateRequest:
+      type: object
+      required:
+        - id
+        - player_state
+      properties:
+        id:
+          type: string
+          example: chromecast
+        player_state:
+          type: string
+          enum: [playing, paused, buffering]
+          example: playing
+    VideoPlayerStateResponse:
+      type: object
+      required:
+        - status
+        - id
+        - player_state
+      properties:
+        status:
+          type: string
+          example: ok
+        id:
+          type: string
+          example: chromecast
+        player_state:
+          type: string
+          enum: [playing, paused, buffering]
+          example: playing
+    ActionResponse:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          example: ok
+
 

@@ -66,6 +66,15 @@ type AudioHandler interface {
 	PostAudioMute(w http.ResponseWriter, r *http.Request)
 }
 
+// VideoHandler handles video stream priority stack and transport manipulation endpoints.
+type VideoHandler interface {
+	PostVideoTrigger(w http.ResponseWriter, r *http.Request)
+	PostVideoDismiss(w http.ResponseWriter, r *http.Request)
+	PostVideoAction(w http.ResponseWriter, r *http.Request)
+	PostVideoState(w http.ResponseWriter, r *http.Request)
+	GetVideoState(w http.ResponseWriter, r *http.Request)
+}
+
 // Config encapsulates configuration for the HTTP server.
 type Config struct {
 	Host              string
@@ -81,6 +90,7 @@ type Config struct {
 	DisplayHandler    DisplayHandler
 	ListsHandler      ListsHandler
 	AudioHandler      AudioHandler
+	VideoHandler      VideoHandler
 }
 
 // ApplyDefaults sets fallback values for any unspecified configuration fields.
@@ -137,6 +147,7 @@ type Server struct {
 	displayHandler DisplayHandler
 	listsHandler   ListsHandler
 	audioHandler   AudioHandler
+	videoHandler   VideoHandler
 }
 
 // New constructs a configured Server instance.
@@ -154,6 +165,7 @@ func New(cfg Config) *Server {
 		displayHandler: cfg.DisplayHandler,
 		listsHandler:   cfg.ListsHandler,
 		audioHandler:   cfg.AudioHandler,
+		videoHandler:   cfg.VideoHandler,
 	}
 
 	s.setupRoutes()
@@ -284,6 +296,20 @@ func (s *Server) AudioHandler() AudioHandler {
 	return s.audioHandler
 }
 
+// RegisterVideoHandler dynamically registers or replaces the video stream handler.
+func (s *Server) RegisterVideoHandler(h VideoHandler) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.videoHandler = h
+}
+
+// VideoHandler returns the currently registered video handler.
+func (s *Server) VideoHandler() VideoHandler {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.videoHandler
+}
+
 func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/healthz", s.handleHealth)
 	s.mux.HandleFunc("/health", s.handleHealth)
@@ -295,6 +321,10 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/api/audio", s.handleAudio)
 	s.mux.HandleFunc("/api/audio/volume", s.handleAudioVolume)
 	s.mux.HandleFunc("/api/audio/mute", s.handleAudioMute)
+	s.mux.HandleFunc("/api/video/trigger", s.handleVideoTrigger)
+	s.mux.HandleFunc("/api/video/dismiss", s.handleVideoDismiss)
+	s.mux.HandleFunc("/api/video/action", s.handleVideoAction)
+	s.mux.HandleFunc("/api/video/state", s.handleVideoState)
 	s.mux.HandleFunc("/api/widgets/{widget_id}/render", s.handleWidgetRender)
 	s.mux.HandleFunc("/api/widgets/{widget_id}/push", s.handleWidgetPush)
 	s.mux.HandleFunc("/widget-types/{type}/assets/{path...}", s.handleWidgetAsset)
@@ -391,6 +421,54 @@ func (s *Server) handleAudioMute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.PostAudioMute(w, r)
+}
+
+func (s *Server) handleVideoTrigger(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	h := s.videoHandler
+	s.mu.RUnlock()
+	if h == nil {
+		http.NotFound(w, r)
+		return
+	}
+	h.PostVideoTrigger(w, r)
+}
+
+func (s *Server) handleVideoDismiss(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	h := s.videoHandler
+	s.mu.RUnlock()
+	if h == nil {
+		http.NotFound(w, r)
+		return
+	}
+	h.PostVideoDismiss(w, r)
+}
+
+func (s *Server) handleVideoAction(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	h := s.videoHandler
+	s.mu.RUnlock()
+	if h == nil {
+		http.NotFound(w, r)
+		return
+	}
+	h.PostVideoAction(w, r)
+}
+
+func (s *Server) handleVideoState(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	h := s.videoHandler
+	s.mu.RUnlock()
+	if h == nil {
+		http.NotFound(w, r)
+		return
+	}
+	if r.Method == http.MethodGet || r.Method == http.MethodHead {
+		h.GetVideoState(w, r)
+		return
+	}
+	h.PostVideoState(w, r)
 }
 
 func (s *Server) handleWidgetRender(w http.ResponseWriter, r *http.Request) {
