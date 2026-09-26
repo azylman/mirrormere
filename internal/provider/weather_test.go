@@ -680,3 +680,81 @@ func TestWeatherProvider_Fetch_HourlyAndDailyLimits(t *testing.T) {
 		t.Errorf("expected 7 daily items, got %d", len(snap.Daily))
 	}
 }
+
+func TestWeatherProvider_Init_LocationName(t *testing.T) {
+	t.Parallel()
+
+	jsonMap := map[string]any{
+		"latitude":  37.83,
+		"longitude": -122.28,
+		"current": map[string]any{
+			"temperature_2m": 68.0,
+			"weather_code":   1,
+		},
+		"hourly": map[string]any{
+			"time":           []string{},
+			"temperature_2m": []float64{},
+		},
+		"daily": map[string]any{
+			"time":         []string{},
+			"weather_code": []int{},
+		},
+	}
+	payload, _ := json.Marshal(jsonMap)
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(payload)
+	}))
+	defer ts.Close()
+
+	// 1. With "name"
+	p1 := provider.NewWeatherProviderWithClient(ts.Client(), ts.URL)
+	if err := p1.Init(context.Background(), map[string]any{
+		"latitude":  37.83,
+		"longitude": -122.28,
+		"name":      "Home",
+	}, provider.InitOptions{}); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+	res1, err := p1.Fetch(context.Background())
+	if err != nil {
+		t.Fatalf("Fetch failed: %v", err)
+	}
+	snap1 := res1.(provider.WeatherSnapshot)
+	if snap1.Location != "Home" {
+		t.Errorf("expected Location 'Home', got %q", snap1.Location)
+	}
+
+	// 2. With "location_name"
+	p2 := provider.NewWeatherProviderWithClient(ts.Client(), ts.URL)
+	if err := p2.Init(context.Background(), map[string]any{
+		"latitude":      37.83,
+		"longitude":     -122.28,
+		"location_name": "Ayda's School",
+	}, provider.InitOptions{}); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+	res2, err := p2.Fetch(context.Background())
+	if err != nil {
+		t.Fatalf("Fetch failed: %v", err)
+	}
+	snap2 := res2.(provider.WeatherSnapshot)
+	if snap2.Location != "Ayda's School" {
+		t.Errorf("expected Location 'Ayda's School', got %q", snap2.Location)
+	}
+
+	// 3. JSON marshal with location
+	b, err := json.Marshal(snap1)
+	if err != nil {
+		t.Fatalf("json.Marshal failed: %v", err)
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(b, &parsed); err != nil {
+		t.Fatalf("json.Unmarshal failed: %v", err)
+	}
+	if parsed["location"] != "Home" {
+		t.Errorf("expected location 'Home' in JSON, got %v", parsed["location"])
+	}
+}

@@ -23,6 +23,10 @@ config_schema:
     - latitude
     - longitude
   properties:
+    name:
+      type: string
+    location_name:
+      type: string
     latitude:
       type: number
       minimum: -90
