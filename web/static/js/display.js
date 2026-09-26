@@ -108,6 +108,29 @@
     }
   }
 
+  const WEATHER_ICON_PATHS = {
+    'weather-sunny': '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/>',
+    'weather-partly-cloudy': '<path d="M12 2v2M4.93 4.93l1.41 1.41M20 12h2M19.07 4.93l-1.41 1.41"/><path d="M17.5 19H9a5 5 0 0 1-1-9.9 6 6 0 0 1 11.8 1.9 4 4 0 0 1-2.3 8z"/>',
+    'weather-cloudy': '<path d="M17.5 19H9a5 5 0 0 1-1-9.9 6 6 0 0 1 11.8 1.9 4 4 0 0 1-2.3 8z"/>',
+    'weather-fog': '<path d="M4 14h16M4 18h16M7 10h10M9 6h6"/>',
+    'weather-rainy': '<path d="M17.5 14H9a5 5 0 0 1-1-9.9 6 6 0 0 1 11.8 1.9 4 4 0 0 1-2.3 8z"/><path d="M8 17v4M12 17v4M16 17v4"/>',
+    'weather-pouring': '<path d="M17.5 13H9a5 5 0 0 1-1-9.9 6 6 0 0 1 11.8 1.9 4 4 0 0 1-2.3 8z"/><path d="M7 16l-2 5M11 16l-2 5M15 16l-2 5M19 16l-2 5"/>',
+    'weather-snowy': '<path d="M17.5 14H9a5 5 0 0 1-1-9.9 6 6 0 0 1 11.8 1.9 4 4 0 0 1-2.3 8z"/><path d="M8 18h.01M12 18h.01M16 18h.01M10 21h.01M14 21h.01"/>',
+    'weather-snowy-rainy': '<path d="M17.5 14H9a5 5 0 0 1-1-9.9 6 6 0 0 1 11.8 1.9 4 4 0 0 1-2.3 8z"/><path d="M8 18h.01M12 18h.01M16 18h.01M10 21h.01M14 21h.01"/>',
+    'weather-lightning': '<path d="M17.5 13H9a5 5 0 0 1-1-9.9 6 6 0 0 1 11.8 1.9 4 4 0 0 1-2.3 8z"/><polygon points="13 14 10 19 14 19 11 23 16 16 12 16 13 14"/>',
+    'weather-lightning-rainy': '<path d="M17.5 13H9a5 5 0 0 1-1-9.9 6 6 0 0 1 11.8 1.9 4 4 0 0 1-2.3 8z"/><polygon points="13 14 10 19 14 19 11 23 16 16 12 16 13 14"/>',
+  };
+
+  /**
+   * Return inline SVG markup for a WMO weather condition token.
+   */
+  function getWeatherIconSVG(token, size = 18) {
+    const key = token && WEATHER_ICON_PATHS[token] ? token : 'weather-cloudy';
+    const path = WEATHER_ICON_PATHS[key] || WEATHER_ICON_PATHS['weather-cloudy'];
+    const safeToken = key.replace(/[^a-z0-9_-]/gi, '');
+    return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="mm-weather-icon mm-icon-${safeToken}">${path}</svg>`;
+  }
+
   /**
    * Update header ambient weather pill badge and household timezone (header.update event).
    */
@@ -131,7 +154,8 @@
 
       if (conditionEl) {
         const condition = weather.icon || weather.condition || '';
-        conditionEl.textContent = condition;
+        conditionEl.innerHTML = getWeatherIconSVG(condition, 18);
+        conditionEl.title = condition;
       }
     }
   }
@@ -299,6 +323,7 @@
     handleHeaderUpdate,
     handleSystemStatus,
     handleStyleReload,
+    getWeatherIconSVG,
     getTimezone,
     setTimezone,
     formatTime,

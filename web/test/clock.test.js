@@ -7,7 +7,7 @@ describe('Header Clock Household Timezone (SPEC-001 §4, SPEC-012 §5)', () => {
     global.document = {
       getElementById(id) {
         if (!elements[id]) {
-          elements[id] = { textContent: '', dataset: {} };
+          elements[id] = { textContent: '', innerHTML: '', title: '', dataset: {} };
         }
         return elements[id];
       },
@@ -80,5 +80,38 @@ describe('Header Clock Household Timezone (SPEC-001 §4, SPEC-012 §5)', () => {
 
     const clockEl = document.getElementById('header-clock');
     assert.ok(clockEl.textContent.length > 0);
+  });
+
+  test('updates weather condition icon with SVG markup in header.update', () => {
+    const elements = setupMockDOM();
+
+    delete require.cache[require.resolve('../static/js/display.js')];
+    const display = require('../static/js/display.js');
+
+    // Test helper directly
+    const sunnySvg = display.getWeatherIconSVG('weather-sunny', 20);
+    assert.ok(sunnySvg.includes('width="20"'));
+    assert.ok(sunnySvg.includes('mm-icon-weather-sunny'));
+
+    const fallbackSvg = display.getWeatherIconSVG('unknown-token', 18);
+    assert.ok(fallbackSvg.includes('width="18"'));
+    assert.ok(fallbackSvg.includes('mm-icon-weather-cloudy'));
+
+    // Test handleHeaderUpdate
+    display.handleHeaderUpdate({
+      weather: {
+        temperature: 72.4,
+        units: '°F',
+        icon: 'weather-partly-cloudy',
+      },
+    });
+
+    const tempEl = elements['weather-temp'];
+    const conditionEl = elements['weather-condition'];
+
+    assert.equal(tempEl.textContent, '72°F');
+    assert.ok(conditionEl.innerHTML.includes('<svg'));
+    assert.ok(conditionEl.innerHTML.includes('mm-icon-weather-partly-cloudy'));
+    assert.equal(conditionEl.title, 'weather-partly-cloudy');
   });
 });

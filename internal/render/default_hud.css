@@ -141,9 +141,15 @@ html, body {
 }
 
 .weather-condition {
-  font-size: 0.95rem;
-  font-weight: 500;
-  color: var(--mm-text-secondary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--mm-accent-purple);
+  line-height: 1;
+}
+
+.weather-condition .mm-weather-icon {
+  display: block;
 }
 
 .header-status {
