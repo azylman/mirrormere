@@ -19,8 +19,10 @@ func (h *Hub) DispatchConfigReload(snapshot *config.Snapshot, diff *config.Confi
 		isp.SetSnapshot(snapshot)
 	}
 
-	// 2. Broadcast screen.rotate if layout exists
-	if snapshot.Layout != nil && len(snapshot.Layout.Screens) > 0 {
+	// 2. Broadcast screen.rotate via rotation coordinator if registered, or fallback to layout
+	if rc := h.RotationCoordinator(); rc != nil {
+		rc.UpdateConfig(snapshot)
+	} else if snapshot.Layout != nil && len(snapshot.Layout.Screens) > 0 {
 		var rotateData ScreenRotateData
 		rotateData.CurrentScreen = 0
 		rotateData.TotalScreens = snapshot.Layout.TotalScreens

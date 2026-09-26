@@ -29,6 +29,13 @@ const (
 	Version = "0.1.0"
 )
 
+// ScreenHandler handles screen navigation and pause endpoints matching OpenAPI specifications.
+type ScreenHandler interface {
+	PostScreenAdvance(w http.ResponseWriter, r *http.Request)
+	PostScreenPause(w http.ResponseWriter, r *http.Request)
+	PostScreenSelect(w http.ResponseWriter, r *http.Request)
+}
+
 // Config encapsulates configuration for the HTTP server.
 type Config struct {
 	Host              string
@@ -38,6 +45,7 @@ type Config struct {
 	WriteTimeout      time.Duration
 	IdleTimeout       time.Duration
 	EventsHandler     http.Handler
+	ScreenHandler     ScreenHandler
 }
 
 // ApplyDefaults sets fallback values for any unspecified configuration fields.
@@ -88,6 +96,7 @@ type Server struct {
 	mu            sync.RWMutex
 	addr          string
 	eventsHandler http.Handler
+	screenHandler ScreenHandler
 }
 
 // New constructs a configured Server instance.
@@ -99,6 +108,7 @@ func New(cfg Config) *Server {
 		mux:           http.NewServeMux(),
 		ready:         make(chan struct{}),
 		eventsHandler: cfg.EventsHandler,
+		screenHandler: cfg.ScreenHandler,
 	}
 
 	s.setupRoutes()
@@ -145,10 +155,27 @@ func (s *Server) EventsHandler() http.Handler {
 	return s.eventsHandler
 }
 
+// RegisterScreenHandler dynamically registers or replaces the screen navigation handler.
+func (s *Server) RegisterScreenHandler(h ScreenHandler) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.screenHandler = h
+}
+
+// ScreenHandler returns the currently registered screen handler.
+func (s *Server) ScreenHandler() ScreenHandler {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.screenHandler
+}
+
 func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/healthz", s.handleHealth)
 	s.mux.HandleFunc("/health", s.handleHealth)
 	s.mux.HandleFunc("/api/events", s.handleEvents)
+	s.mux.HandleFunc("/api/screen/select", s.handleScreenSelect)
+	s.mux.HandleFunc("/api/screen/advance", s.handleScreenAdvance)
+	s.mux.HandleFunc("/api/screen/pause", s.handleScreenPause)
 	s.mux.HandleFunc("/", s.handleRoot)
 }
 
@@ -161,6 +188,39 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.ServeHTTP(w, r)
+}
+
+func (s *Server) handleScreenSelect(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	h := s.screenHandler
+	s.mu.RUnlock()
+	if h == nil {
+		http.NotFound(w, r)
+		return
+	}
+	h.PostScreenSelect(w, r)
+}
+
+func (s *Server) handleScreenAdvance(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	h := s.screenHandler
+	s.mu.RUnlock()
+	if h == nil {
+		http.NotFound(w, r)
+		return
+	}
+	h.PostScreenAdvance(w, r)
+}
+
+func (s *Server) handleScreenPause(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	h := s.screenHandler
+	s.mu.RUnlock()
+	if h == nil {
+		http.NotFound(w, r)
+		return
+	}
+	h.PostScreenPause(w, r)
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {

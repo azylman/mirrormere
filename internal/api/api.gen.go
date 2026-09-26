@@ -12,6 +12,12 @@ import (
 	"github.com/oapi-codegen/runtime"
 )
 
+// Defines values for ScreenAdvanceRequestDirection.
+const (
+	Next ScreenAdvanceRequestDirection = "next"
+	Prev ScreenAdvanceRequestDirection = "prev"
+)
+
 // ErrorResponse defines model for ErrorResponse.
 type ErrorResponse struct {
 	Error  string `json:"error"`
@@ -23,8 +29,64 @@ type HealthResponse struct {
 	Status string `json:"status"`
 }
 
+// ScreenAdvanceRequest defines model for ScreenAdvanceRequest.
+type ScreenAdvanceRequest struct {
+	// Direction Direction to advance screen (next or prev)
+	Direction *ScreenAdvanceRequestDirection `json:"direction,omitempty"`
+}
+
+// ScreenAdvanceRequestDirection Direction to advance screen (next or prev)
+type ScreenAdvanceRequestDirection string
+
+// ScreenNavigationResponse defines model for ScreenNavigationResponse.
+type ScreenNavigationResponse struct {
+	CurrentScreen int    `json:"current_screen"`
+	Status        string `json:"status"`
+	TotalScreens  int    `json:"total_screens"`
+}
+
+// ScreenPauseRequest defines model for ScreenPauseRequest.
+type ScreenPauseRequest struct {
+	// DurationSeconds Seconds to suspend rotation before auto-resuming (0 = indefinitely)
+	DurationSeconds *int `json:"duration_seconds,omitempty"`
+
+	// Paused true to pause automatic rotation; false to resume
+	Paused bool `json:"paused"`
+}
+
+// ScreenPauseResponse defines model for ScreenPauseResponse.
+type ScreenPauseResponse struct {
+	CurrentScreen int    `json:"current_screen"`
+	Paused        bool   `json:"paused"`
+	Status        string `json:"status"`
+}
+
+// ScreenSelectRequest defines model for ScreenSelectRequest.
+type ScreenSelectRequest struct {
+	// ScreenIndex 0-indexed screen number
+	ScreenIndex int `json:"screen_index"`
+}
+
+// PostScreenAdvanceJSONRequestBody defines body for PostScreenAdvance for application/json ContentType.
+type PostScreenAdvanceJSONRequestBody = ScreenAdvanceRequest
+
+// PostScreenPauseJSONRequestBody defines body for PostScreenPause for application/json ContentType.
+type PostScreenPauseJSONRequestBody = ScreenPauseRequest
+
+// PostScreenSelectJSONRequestBody defines body for PostScreenSelect for application/json ContentType.
+type PostScreenSelectJSONRequestBody = ScreenSelectRequest
+
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
+	// Advance screen sequentially
+	// (POST /api/screen/advance)
+	PostScreenAdvance(w http.ResponseWriter, r *http.Request)
+	// Pause or resume automatic rotation
+	// (POST /api/screen/pause)
+	PostScreenPause(w http.ResponseWriter, r *http.Request)
+	// Select screen by index
+	// (POST /api/screen/select)
+	PostScreenSelect(w http.ResponseWriter, r *http.Request)
 	// Render widget HTML fragment
 	// (GET /api/widgets/{widget_id}/render)
 	GetWidgetRender(w http.ResponseWriter, r *http.Request, widgetId string)
@@ -47,6 +109,48 @@ type ServerInterfaceWrapper struct {
 }
 
 type MiddlewareFunc func(http.Handler) http.Handler
+
+// PostScreenAdvance operation middleware
+func (siw *ServerInterfaceWrapper) PostScreenAdvance(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostScreenAdvance(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostScreenPause operation middleware
+func (siw *ServerInterfaceWrapper) PostScreenPause(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostScreenPause(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostScreenSelect operation middleware
+func (siw *ServerInterfaceWrapper) PostScreenSelect(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostScreenSelect(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
 
 // GetWidgetRender operation middleware
 func (siw *ServerInterfaceWrapper) GetWidgetRender(w http.ResponseWriter, r *http.Request) {
@@ -255,6 +359,9 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 		ErrorHandlerFunc:   options.ErrorHandlerFunc,
 	}
 
+	m.HandleFunc("POST "+options.BaseURL+"/api/screen/advance", wrapper.PostScreenAdvance)
+	m.HandleFunc("POST "+options.BaseURL+"/api/screen/pause", wrapper.PostScreenPause)
+	m.HandleFunc("POST "+options.BaseURL+"/api/screen/select", wrapper.PostScreenSelect)
 	m.HandleFunc("GET "+options.BaseURL+"/api/widgets/{widget_id}/render", wrapper.GetWidgetRender)
 	m.HandleFunc("GET "+options.BaseURL+"/health", wrapper.GetHealth)
 	m.HandleFunc("GET "+options.BaseURL+"/healthz", wrapper.GetHealthz)
