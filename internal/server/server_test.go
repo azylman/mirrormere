@@ -665,3 +665,63 @@ func TestServer_DisplayHandler(t *testing.T) {
 	}
 }
 
+type mockPushHandler struct {
+	pushCalls    int
+	lastWidgetID string
+}
+
+func (m *mockPushHandler) PostWidgetPush(w http.ResponseWriter, r *http.Request, widgetID string) {
+	m.pushCalls++
+	m.lastWidgetID = widgetID
+	w.WriteHeader(http.StatusOK)
+}
+
+func TestServer_PushHandler(t *testing.T) {
+	t.Parallel()
+
+	// Case 1: Unset PushHandler returns 404
+	srv := server.New(server.Config{})
+	if srv.PushHandler() != nil {
+		t.Fatal("expected nil PushHandler initially")
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/widgets/sensor-1/push", nil)
+	rec := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 when PushHandler unset, got %d", rec.Code)
+	}
+
+	// Case 2: Config.PushHandler set at creation
+	mockH := &mockPushHandler{}
+	srvWithHandler := server.New(server.Config{PushHandler: mockH})
+	if srvWithHandler.PushHandler() == nil {
+		t.Fatal("expected non-nil PushHandler")
+	}
+
+	rec2 := httptest.NewRecorder()
+	srvWithHandler.Routes().ServeHTTP(rec2, req)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec2.Code)
+	}
+	if mockH.pushCalls != 1 || mockH.lastWidgetID != "sensor-1" {
+		t.Fatalf("expected 1 push call with widgetID 'sensor-1', got calls=%d id=%q", mockH.pushCalls, mockH.lastWidgetID)
+	}
+
+	// Case 3: RegisterPushHandler dynamically updates handler
+	mockH2 := &mockPushHandler{}
+	srv.RegisterPushHandler(mockH2)
+	if srv.PushHandler() == nil {
+		t.Fatal("expected non-nil PushHandler after registration")
+	}
+
+	rec3 := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(rec3, req)
+	if rec3.Code != http.StatusOK {
+		t.Fatalf("expected 200 after dynamic registration, got %d", rec3.Code)
+	}
+	if mockH2.pushCalls != 1 || mockH2.lastWidgetID != "sensor-1" {
+		t.Fatalf("expected mockH2 to receive push call, got calls=%d id=%q", mockH2.pushCalls, mockH2.lastWidgetID)
+	}
+}
+

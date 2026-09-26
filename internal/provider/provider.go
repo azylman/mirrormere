@@ -25,13 +25,14 @@ type WidgetPayload struct {
 
 // InitOptions contains instance metadata, transport parameters, and resolved secrets passed to Provider.Init.
 type InitOptions struct {
-	ID         string
-	Type       string
-	Dimensions []int
-	Endpoint   string
-	Method     string
-	Token      string
-	Secrets    map[string]string
+	ID             string
+	Type           string
+	Dimensions     []int
+	Endpoint       string
+	Method         string
+	Token          string
+	Secrets        map[string]string
+	ResponseSchema map[string]any
 }
 
 // GetSecret retrieves a secret by key from the Secrets map, or returns empty string if not found.
@@ -62,7 +63,12 @@ type Registry interface {
 }
 
 // ErrProviderNotRegistered indicates no factory is registered for the requested provider type.
-var ErrProviderNotRegistered = errors.New("provider not registered")
+var (
+	ErrProviderNotRegistered   = errors.New("provider not registered")
+	ErrWidgetNotFound          = errors.New("widget not found in active configuration")
+	ErrListWidgetPushForbidden = errors.New("cannot push state to list-backed widget; task lists are read-only and ingested from configured upstream providers")
+	ErrSchemaValidation        = errors.New("response_schema validation failed")
+)
 
 // DefaultRegistry implements a thread-safe Registry.
 type DefaultRegistry struct {
@@ -77,6 +83,9 @@ func NewRegistry() *DefaultRegistry {
 	}
 	r.Register("spacer", func() Provider {
 		return NewSpacerProvider()
+	})
+	r.Register("http", func() Provider {
+		return NewHTTPProvider()
 	})
 	return r
 }

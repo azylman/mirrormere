@@ -1,11 +1,13 @@
 package provider
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -13,6 +15,7 @@ import (
 	"github.com/azylman/mirrormere/internal/config"
 	"github.com/azylman/mirrormere/internal/domain"
 	"github.com/azylman/mirrormere/internal/events"
+	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
 // Broadcaster defines the interface for emitting Server-Sent Events over the event bus.
@@ -74,6 +77,8 @@ type ProviderCoordinator struct {
 	sinkCancel         context.CancelFunc
 	sinkWg             sync.WaitGroup
 	onBeforeRecordPush func(widgetID string)
+	schemaMu           sync.RWMutex
+	schemas            map[string]*jsonschema.Schema
 	stopped            bool
 }
 
@@ -103,19 +108,20 @@ func NewCoordinator(cfg CoordinatorConfig, initialSnapshot *config.Snapshot) *Pr
 	sinkCtx, sinkCancel := context.WithCancel(context.Background())
 
 	c := &ProviderCoordinator{
-		registry:    reg,
-		broadcaster: cfg.Broadcaster,
-		stateSink:   cfg.StateSink,
-		cache:       cache,
-		logger:      logger,
-		nowFunc:     nowFn,
-		backoff:     bo,
-		workers:     make(map[string]*worker),
-		snapshot:    initialSnapshot,
+		registry:           reg,
+		broadcaster:        cfg.Broadcaster,
+		stateSink:          cfg.StateSink,
+		cache:              cache,
+		logger:             logger,
+		nowFunc:            nowFn,
+		backoff:            bo,
+		workers:            make(map[string]*worker),
+		snapshot:           initialSnapshot,
 		eventSink:          make(chan workerEvent, 64),
 		sinkCtx:            sinkCtx,
 		sinkCancel:         sinkCancel,
 		onBeforeRecordPush: cfg.OnBeforeRecordPush,
+		schemas:            make(map[string]*jsonschema.Schema),
 	}
 
 	c.sinkWg.Add(1)
@@ -198,6 +204,10 @@ func (c *ProviderCoordinator) UpdateConfig(snap *config.Snapshot) error {
 
 	oldSnap := c.snapshot
 	c.snapshot = snap
+
+	c.schemaMu.Lock()
+	c.schemas = make(map[string]*jsonschema.Schema)
+	c.schemaMu.Unlock()
 
 	// Diff widgets to determine added, removed, and modified
 	var diff *config.ConfigDiff
@@ -331,7 +341,7 @@ func (c *ProviderCoordinator) startSingleWorkerLocked(w *config.WidgetConfig, sn
 
 	// Prepare configuration map and instance options
 	cfgMap := c.buildProviderConfig(w)
-	opts := c.buildInitOptions(w)
+	opts := c.buildInitOptions(w, pkg)
 	initCtx, cancelInit := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancelInit()
 
@@ -582,7 +592,7 @@ func (c *ProviderCoordinator) buildProviderConfig(w *config.WidgetConfig) map[st
 	return cfgMap
 }
 
-func (c *ProviderCoordinator) buildInitOptions(w *config.WidgetConfig) InitOptions {
+func (c *ProviderCoordinator) buildInitOptions(w *config.WidgetConfig, pkg *domain.Package) InitOptions {
 	method := w.Method
 	if method == "" && w.Endpoint != "" {
 		method = "POST"
@@ -607,15 +617,133 @@ func (c *ProviderCoordinator) buildInitOptions(w *config.WidgetConfig) InitOptio
 		copy(dims, w.Dimensions)
 	}
 
-	return InitOptions{
-		ID:         w.ID,
-		Type:       w.Type,
-		Dimensions: dims,
-		Endpoint:   w.Endpoint,
-		Method:     method,
-		Token:      token,
-		Secrets:    secrets,
+	var respSchema map[string]any
+	if pkg != nil && pkg.Manifest.ResponseSchema != nil {
+		respSchema = pkg.Manifest.ResponseSchema
 	}
+
+	return InitOptions{
+		ID:             w.ID,
+		Type:           w.Type,
+		Dimensions:     dims,
+		Endpoint:       w.Endpoint,
+		Method:         method,
+		Token:          token,
+		Secrets:        secrets,
+		ResponseSchema: respSchema,
+	}
+}
+
+// PushWidgetData ingests an immediate domain data payload for a configured widget instance,
+// validates against response_schema, records into SWR cache and state sink, and broadcasts widget.update.
+// Complies with SPEC-006 §2 and SPEC-008 §5.
+func (c *ProviderCoordinator) PushWidgetData(ctx context.Context, widgetID string, data map[string]any) (WidgetPayload, error) {
+	if c.stopped {
+		return WidgetPayload{}, errors.New("coordinator is stopped")
+	}
+	if strings.TrimSpace(widgetID) == "" {
+		return WidgetPayload{}, fmt.Errorf("%w: empty widget ID", ErrWidgetNotFound)
+	}
+
+	p, err := c.recordPushLocked(widgetID, data)
+	if err != nil {
+		return WidgetPayload{}, err
+	}
+
+	c.broadcastUpdate(p)
+	return p, nil
+}
+
+func (c *ProviderCoordinator) recordPushLocked(widgetID string, data map[string]any) (WidgetPayload, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	if c.snapshot == nil || c.snapshot.Config == nil {
+		return WidgetPayload{}, fmt.Errorf("%w: %q", ErrWidgetNotFound, widgetID)
+	}
+
+	var targetWidget *config.WidgetConfig
+	for i := range c.snapshot.Config.Display.Widgets {
+		if c.snapshot.Config.Display.Widgets[i].ID == widgetID {
+			targetWidget = &c.snapshot.Config.Display.Widgets[i]
+			break
+		}
+	}
+	if targetWidget == nil {
+		return WidgetPayload{}, fmt.Errorf("%w: %q", ErrWidgetNotFound, widgetID)
+	}
+
+	if targetWidget.Type == "tasks" {
+		return WidgetPayload{}, fmt.Errorf("%w: %q", ErrListWidgetPushForbidden, widgetID)
+	}
+
+	var pkg *domain.Package
+	if c.snapshot.Packages != nil {
+		pkg = c.snapshot.Packages[targetWidget.Type]
+	}
+
+	if pkg != nil && len(pkg.Manifest.ResponseSchema) > 0 {
+		sch, err := c.getCompiledResponseSchema(targetWidget.Type, pkg.Manifest.ResponseSchema)
+		if err != nil {
+			return WidgetPayload{}, fmt.Errorf("%w: %w", ErrSchemaValidation, err)
+		}
+		valJSON, err := json.Marshal(data)
+		if err != nil {
+			return WidgetPayload{}, fmt.Errorf("%w: %w", ErrSchemaValidation, err)
+		}
+		valDoc, err := jsonschema.UnmarshalJSON(bytes.NewReader(valJSON))
+		if err != nil {
+			return WidgetPayload{}, fmt.Errorf("%w: %w", ErrSchemaValidation, err)
+		}
+		if err := sch.Validate(valDoc); err != nil {
+			return WidgetPayload{}, fmt.Errorf("%w: %w", ErrSchemaValidation, err)
+		}
+	}
+
+	now := c.nowFunc()
+	p, _ := c.cache.RecordPush(widgetID, data, now)
+	if c.stateSink != nil {
+		c.stateSink.SetWidgetState(p.WidgetID, p.Data, p.State, p.Timestamp)
+		c.stateSink.SetProvidersStatus(c.cache.GetStatusMap())
+	}
+	return p, nil
+}
+
+func (c *ProviderCoordinator) getCompiledResponseSchema(widgetType string, schemaMap map[string]any) (*jsonschema.Schema, error) {
+	c.schemaMu.RLock()
+	sch, ok := c.schemas[widgetType]
+	c.schemaMu.RUnlock()
+	if ok {
+		return sch, nil
+	}
+
+	c.schemaMu.Lock()
+	defer c.schemaMu.Unlock()
+	if sch, ok := c.schemas[widgetType]; ok {
+		return sch, nil
+	}
+
+	compiler := jsonschema.NewCompiler()
+	compiler.DefaultDraft(jsonschema.Draft2020)
+
+	schemaJSON, err := json.Marshal(schemaMap)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal response_schema: %w", err)
+	}
+	doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(schemaJSON))
+	if err != nil {
+		return nil, fmt.Errorf("failed to unmarshal response_schema: %w", err)
+	}
+	schemaURL := fmt.Sprintf("schema://widgets/%s/response_schema.json", widgetType)
+	if err := compiler.AddResource(schemaURL, doc); err != nil {
+		return nil, fmt.Errorf("failed to add response_schema resource: %w", err)
+	}
+	sch, err = compiler.Compile(schemaURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to compile response_schema: %w", err)
+	}
+	c.schemas[widgetType] = sch
+	return sch, nil
 }
 
 func resolveProviderName(w *config.WidgetConfig, snap *config.Snapshot) string {

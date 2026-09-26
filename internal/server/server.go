@@ -43,6 +43,11 @@ type RenderHandler interface {
 	ServeStyle(w http.ResponseWriter, r *http.Request)
 }
 
+// PushHandler handles realtime widget push webhooks matching OpenAPI specifications.
+type PushHandler interface {
+	PostWidgetPush(w http.ResponseWriter, r *http.Request, widgetID string)
+}
+
 // DisplayHandler handles display UI and static web runtime asset endpoints.
 type DisplayHandler interface {
 	GetDisplay(w http.ResponseWriter, r *http.Request)
@@ -60,6 +65,7 @@ type Config struct {
 	EventsHandler     http.Handler
 	ScreenHandler     ScreenHandler
 	RenderHandler     RenderHandler
+	PushHandler       PushHandler
 	DisplayHandler    DisplayHandler
 }
 
@@ -113,6 +119,7 @@ type Server struct {
 	eventsHandler  http.Handler
 	screenHandler  ScreenHandler
 	renderHandler  RenderHandler
+	pushHandler    PushHandler
 	displayHandler DisplayHandler
 }
 
@@ -127,6 +134,7 @@ func New(cfg Config) *Server {
 		eventsHandler:  cfg.EventsHandler,
 		screenHandler:  cfg.ScreenHandler,
 		renderHandler:  cfg.RenderHandler,
+		pushHandler:    cfg.PushHandler,
 		displayHandler: cfg.DisplayHandler,
 	}
 
@@ -202,6 +210,20 @@ func (s *Server) RenderHandler() RenderHandler {
 	return s.renderHandler
 }
 
+// RegisterPushHandler dynamically registers or replaces the widget push webhook handler.
+func (s *Server) RegisterPushHandler(h PushHandler) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pushHandler = h
+}
+
+// PushHandler returns the currently registered push handler.
+func (s *Server) PushHandler() PushHandler {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.pushHandler
+}
+
 // RegisterDisplayHandler dynamically registers or replaces the display and static asset handler.
 func (s *Server) RegisterDisplayHandler(h DisplayHandler) {
 	s.mu.Lock()
@@ -224,6 +246,7 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/api/screen/advance", s.handleScreenAdvance)
 	s.mux.HandleFunc("/api/screen/pause", s.handleScreenPause)
 	s.mux.HandleFunc("/api/widgets/{widget_id}/render", s.handleWidgetRender)
+	s.mux.HandleFunc("/api/widgets/{widget_id}/push", s.handleWidgetPush)
 	s.mux.HandleFunc("/widget-types/{type}/assets/{path...}", s.handleWidgetAsset)
 	s.mux.HandleFunc("/style.css", s.handleStyle)
 	s.mux.HandleFunc("/display", s.handleDisplay)
@@ -285,6 +308,18 @@ func (s *Server) handleWidgetRender(w http.ResponseWriter, r *http.Request) {
 	}
 	widgetID := r.PathValue("widget_id")
 	h.GetWidgetRender(w, r, widgetID)
+}
+
+func (s *Server) handleWidgetPush(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	h := s.pushHandler
+	s.mu.RUnlock()
+	if h == nil {
+		http.NotFound(w, r)
+		return
+	}
+	widgetID := r.PathValue("widget_id")
+	h.PostWidgetPush(w, r, widgetID)
 }
 
 func (s *Server) handleWidgetAsset(w http.ResponseWriter, r *http.Request) {
