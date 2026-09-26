@@ -196,6 +196,14 @@ run_node_tests() {
     fi
 }
 
+# 8. E-Ink Display Node Client Tests (Python)
+run_python_tests() {
+    if has_cmd python3; then
+        echo "   [python test] Running e-ink node client test suite..."
+        PYTHONPATH="clients/eink-node" python3 -m unittest discover -s clients/eink-node/tests -p "test_*.py"
+    fi
+}
+
 # Execute checks in pipeline order
 check_utf8_bom
 run_codegen_drift
@@ -204,5 +212,6 @@ run_golangci_lint
 run_deadcode
 run_coverage_gate
 run_node_tests
+run_python_tests
 
 echo "✨ [Mirrormere Verify] All pre-flight checks passed successfully! Ready for commit/PR."
