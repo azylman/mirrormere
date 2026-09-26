@@ -210,7 +210,7 @@ A household list service is compatible for read-only ingestion if it serves:
 1. **Source of Truth is External.** Mirrormere holds only a local cache for rendering, never an authoritative or mutable copy. State reflects what the upstream source actually provides.
 2. **Zero Inbound Write Conflicts.** Because Mirrormere is strictly read-only for task lists, there is no bidirectional cloud synchronization, no provisional ID reconciliation, no 409 conflict rollbacks, and no client-side merge logic.
 3. **Downstream Mirrors are the Source's Job.** If a household also shows a list on another device (e.g. a Skylight frame), the source system pushes to it. Mirrormere does not fan out writes to multiple destinations.
-4. **Source Outage Degrades Gracefully.** When an adapter fails or an upstream service is unreachable, the widget retains its last known good cached state and marks the provider degraded in `system.status`.
+4. **Source Outage Degrades Gracefully.** When an adapter fails or an upstream service is unreachable, the widget retains its last known good cached state and transitions its instance state to `degraded` via `widget.update`.
 5. **Push Webhooks Prohibited on List Widgets.** Pushing arbitrary state to `POST /api/widgets/{widget_id}/push` on a list widget is rejected with `409 Conflict`. List widgets are managed strictly via their configured source adapter (polling or provider push channel) to maintain cache integrity.
 
 ---

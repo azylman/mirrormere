@@ -6,8 +6,6 @@
   "required": [
     "online",
     "time",
-    "calendar_provider",
-    "weather_api",
     "config_status",
     "config_error"
   ],
@@ -21,14 +19,6 @@
       "format": "date-time",
       "description": "Current server UTC timestamp in ISO 8601 / RFC 3339 format"
     },
-    "calendar_provider": {
-      "type": "string",
-      "description": "Operational status of the primary calendar provider connection"
-    },
-    "weather_api": {
-      "type": "string",
-      "description": "Operational status of the ambient weather API poller"
-    },
     "config_status": {
       "type": "string",
       "enum": ["ok", "error"],
@@ -37,6 +27,14 @@
     "config_error": {
       "type": ["string", "null"],
       "description": "Diagnostic error message when config_status is error, null when config_status is ok"
+    },
+    "providers": {
+      "type": "object",
+      "description": "Optional health summary map of upstream data providers keyed by widget instance ID",
+      "additionalProperties": {
+        "type": "string",
+        "description": "Operational health status of the provider (e.g. 'connected', 'degraded', 'offline')"
+      }
     }
   },
   "additionalProperties": false
