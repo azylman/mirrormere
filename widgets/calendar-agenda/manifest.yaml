@@ -1,0 +1,50 @@
+name: calendar-agenda
+version: "1.0.0"
+description: Chronological calendar agenda widget displaying upcoming events across synchronized iCal feeds.
+provider: calendar-agenda
+
+capabilities:
+  - ambient-static
+  - touch-interactive
+
+default_dimensions: [4, 2]
+
+supported_dimensions:
+  - [2, 1]
+  - [2, 2]
+  - [3, 2]
+  - [4, 1]
+  - [4, 2]
+  - [6, 1]
+  - [6, 2]
+
+config_schema:
+  type: object
+  properties:
+    window_days_past:
+      type: integer
+      minimum: 0
+    window_days_future:
+      type: integer
+      minimum: 1
+    view:
+      type: string
+    calendars:
+      type: array
+      items:
+        type: object
+        required:
+          - name
+        properties:
+          name:
+            type: string
+          url:
+            type: string
+          url_env:
+            type: string
+          color:
+            type: string
+          enabled:
+            type: boolean
+        additionalProperties: false
+  additionalProperties: false

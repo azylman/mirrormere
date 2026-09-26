@@ -812,3 +812,112 @@ func TestRenderBuiltinWeatherForecastWidget(t *testing.T) {
 		t.Errorf("expected loading message in rendered output, got: %s", htmlLoading)
 	}
 }
+
+func TestEngine_RenderWidget_CalendarAgendaPackage(t *testing.T) {
+	t.Parallel()
+
+	repoWidgetsDir := filepath.Join("..", "..", "widgets")
+	loader := widget.NewLoader(repoWidgetsDir, t.TempDir())
+	pkg, err := loader.LoadPackage("calendar-agenda")
+	if err != nil {
+		t.Fatalf("failed to load calendar-agenda package: %v", err)
+	}
+
+	snap := &config.Snapshot{
+		Config: &config.Config{
+			Display: config.DisplayConfig{
+				Widgets: []config.WidgetConfig{
+					{ID: "w-cal-loaded", Type: "calendar-agenda", Dimensions: []int{4, 2}},
+					{ID: "w-cal-empty", Type: "calendar-agenda", Dimensions: []int{4, 2}},
+					{ID: "w-cal-loading", Type: "calendar-agenda", Dimensions: []int{4, 2}},
+				},
+			},
+		},
+		Packages: map[string]*domain.Package{"calendar-agenda": pkg},
+	}
+
+	calData := provider.CalendarSnapshot{
+		LastSync:   "2026-09-26T12:00:00Z",
+		SyncStatus: "ok",
+		Events: []provider.CalendarEvent{
+			{
+				ID:           "evt_1",
+				CalendarName: "Family Calendar",
+				Color:        "#3b82f6",
+				Title:        "Soccer Practice",
+				Start:        "2026-09-26T18:30:00Z",
+				End:          "2026-09-26T19:30:00Z",
+				AllDay:       false,
+				Location:     "Community Park Field 2",
+			},
+			{
+				ID:           "evt_2",
+				CalendarName: "Home",
+				Color:        "#10b981",
+				Title:        "Trash & Recycling",
+				Start:        "2026-09-27",
+				End:          "2026-09-27",
+				AllDay:       true,
+			},
+		},
+	}
+
+	emptyCalData := provider.CalendarSnapshot{
+		LastSync:   "2026-09-26T12:00:00Z",
+		SyncStatus: "ok",
+		Events:     []provider.CalendarEvent{},
+	}
+
+	p := &mockSnapshotProvider{
+		snapshot: snap,
+		states: map[string]mockState{
+			"w-cal-loaded":  {data: calData, state: "healthy", timestamp: "2026-09-26T12:00:00Z"},
+			"w-cal-empty":   {data: emptyCalData, state: "healthy", timestamp: "2026-09-26T12:00:00Z"},
+			"w-cal-loading": {data: nil, state: "healthy"},
+		},
+	}
+
+	resolver := &mockResolver{packages: map[string]*domain.Package{"calendar-agenda": pkg}}
+	engine := render.NewEngine(resolver, p)
+
+	// 1. Render loaded calendar
+	htmlLoaded, err := engine.RenderWidget(context.Background(), "w-cal-loaded")
+	if err != nil {
+		t.Fatalf("RenderWidget failed on loaded calendar: %v", err)
+	}
+	htmlStr := string(htmlLoaded)
+	if !strings.Contains(htmlStr, "Soccer Practice") {
+		t.Errorf("expected 'Soccer Practice' in output: %s", htmlStr)
+	}
+	if !strings.Contains(htmlStr, "Community Park Field 2") {
+		t.Errorf("expected 'Community Park Field 2' in output: %s", htmlStr)
+	}
+	if !strings.Contains(htmlStr, "Family Calendar") {
+		t.Errorf("expected 'Family Calendar' in output: %s", htmlStr)
+	}
+	if !strings.Contains(htmlStr, "Trash") {
+		t.Errorf("expected 'Trash' in output: %s", htmlStr)
+	}
+	if !strings.Contains(htmlStr, "All Day") {
+		t.Errorf("expected 'All Day' in output: %s", htmlStr)
+	}
+
+	// 2. Render empty calendar
+	htmlEmpty, err := engine.RenderWidget(context.Background(), "w-cal-empty")
+	if err != nil {
+		t.Fatalf("RenderWidget failed on empty calendar: %v", err)
+	}
+	if !strings.Contains(string(htmlEmpty), "No upcoming events") {
+		t.Errorf("expected 'No upcoming events' in empty output: %s", htmlEmpty)
+	}
+
+	// 3. Render loading calendar
+	htmlLoading, err := engine.RenderWidget(context.Background(), "w-cal-loading")
+	if err != nil {
+		t.Fatalf("RenderWidget failed on loading calendar: %v", err)
+	}
+	if !strings.Contains(string(htmlLoading), "Loading calendar agenda...") {
+		t.Errorf("expected 'Loading calendar agenda...' in loading output: %s", htmlLoading)
+	}
+}
+

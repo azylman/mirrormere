@@ -1,0 +1,42 @@
+<div class="widget-card widget-calendar" data-widget-id="{{ .ID }}" data-widget-type="{{ .Type }}" style="grid-column: span {{ .Dimensions.Cols }}; grid-row: span {{ .Dimensions.Rows }};">
+  {{ if .Data }}
+    {{ if and .Data.Events (gt (len .Data.Events) 0) }}
+    <div class="calendar-agenda-container" style="display: flex; flex-direction: column; height: 100%; overflow-y: auto; gap: 8px; padding-right: 4px; touch-action: pan-y; -webkit-overflow-scrolling: touch;">
+      {{ $prevDate := "" }}
+      {{ range .Data.Events }}
+        {{ $date := formatDate "2006-01-02" .Start }}
+        {{ if ne $date $prevDate }}
+          {{ $prevDate = $date }}
+          <div class="calendar-day-header" style="display: flex; align-items: baseline; gap: 8px; padding: 4px 2px 2px 2px; border-bottom: 1px solid rgba(168, 85, 247, 0.2); margin-top: 4px;">
+            <span class="day-rel" style="font-size: 0.85rem; font-weight: 700; color: var(--mm-accent-purple); text-transform: uppercase; letter-spacing: 0.05em;">{{ relDate .Start }}</span>
+            <span class="day-full" style="font-size: 0.75rem; color: var(--mm-text-muted);">{{ formatDate "Monday, Jan 2" .Start }}</span>
+          </div>
+        {{ end }}
+        <div class="calendar-event-item" style="display: flex; align-items: center; gap: 12px; padding: 6px 10px; border-radius: 6px; background: rgba(255, 255, 255, 0.03); border-left: 3px solid {{ if .Color }}{{ .Color }}{{ else }}var(--mm-accent-purple){{ end }};">
+          <div class="event-time-col" style="min-width: 68px; display: flex; flex-direction: column;">
+            <span class="event-time-chip" style="font-size: 0.85rem; font-family: var(--mm-font-mono); font-weight: 600; color: var(--mm-text-primary);">
+              {{ if .AllDay }}All Day{{ else }}{{ formatTime "15:04" .Start }}{{ end }}
+            </span>
+          </div>
+          <div class="event-details-col" style="display: flex; flex-direction: column; overflow: hidden; flex: 1;">
+            <span class="event-title" style="font-size: 0.95rem; font-weight: 600; color: var(--mm-text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ .Title }}</span>
+            <div class="event-meta-row" style="display: flex; gap: 8px; font-size: 0.75rem; color: var(--mm-text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+              {{ if .CalendarName }}<span>{{ .CalendarName }}</span>{{ end }}
+              {{ if and .CalendarName .Location }}<span>•</span>{{ end }}
+              {{ if .Location }}<span>{{ .Location }}</span>{{ end }}
+            </div>
+          </div>
+        </div>
+      {{ end }}
+    </div>
+    {{ else }}
+    <div class="calendar-empty" style="display: flex; align-items: center; justify-content: center; height: 100%; color: var(--mm-text-muted); font-size: 0.95rem;">
+      <span>No upcoming events</span>
+    </div>
+    {{ end }}
+  {{ else }}
+  <div class="calendar-loading" style="display: flex; align-items: center; justify-content: center; height: 100%; color: var(--mm-text-muted); font-size: 0.95rem;">
+    <span>Loading calendar agenda...</span>
+  </div>
+  {{ end }}
+</div>
