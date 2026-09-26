@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -1412,5 +1413,212 @@ func TestProviderCoordinator_PushInterleavedWithDomainChangeReload_Atomic(t *tes
 		t.Fatal("UpdateConfig failed to purge stale push data!")
 	}
 }
+
+func TestProviderCoordinator_PushWidgetData(t *testing.T) {
+	t.Parallel()
+
+	broadcaster := &mockBroadcaster{}
+	stateSink := newMockStateSink()
+
+	snap := &config.Snapshot{
+		Config: &config.Config{
+			Display: config.DisplayConfig{
+				Widgets: []config.WidgetConfig{
+					{
+						ID:       "tile-custom",
+						Type:     "custom-sensor",
+						Endpoint: "https://example.com/sensor",
+					},
+					{
+						ID:   "tile-tasks",
+						Type: "tasks",
+					},
+					{
+						ID:       "tile-bad-schema",
+						Type:     "bad-schema-widget",
+						Endpoint: "https://example.com/bad",
+					},
+				},
+			},
+		},
+		Packages: map[string]*domain.Package{
+			"custom-sensor": {
+				Type: "custom-sensor",
+				Manifest: domain.WidgetManifest{
+					Name:     "custom-sensor",
+					Provider: "http",
+					ResponseSchema: map[string]any{
+						"type": "object",
+						"required": []any{"temperature", "humidity"},
+						"properties": map[string]any{
+							"temperature": map[string]any{"type": "number"},
+							"humidity":    map[string]any{"type": "number"},
+						},
+					},
+				},
+			},
+			"tasks": {
+				Type: "tasks",
+				Manifest: domain.WidgetManifest{
+					Name:     "tasks",
+					Provider: "spacer",
+				},
+			},
+			"bad-schema-widget": {
+				Type: "bad-schema-widget",
+				Manifest: domain.WidgetManifest{
+					Name:     "bad-schema-widget",
+					Provider: "http",
+					ResponseSchema: map[string]any{
+						"type": 12345, // invalid type in schema
+					},
+				},
+			},
+		},
+	}
+
+	coord := provider.NewCoordinator(provider.CoordinatorConfig{
+		Broadcaster: broadcaster,
+		StateSink:   stateSink,
+	}, snap)
+	defer func() { _ = coord.Stop() }()
+
+	ctx := context.Background()
+
+	// 1. Valid push
+	validData := map[string]any{"temperature": 23.5, "humidity": 60.0}
+	payload, err := coord.PushWidgetData(ctx, "tile-custom", validData)
+	if err != nil {
+		t.Fatalf("unexpected error pushing valid data: %v", err)
+	}
+	if payload.WidgetID != "tile-custom" {
+		t.Errorf("got widgetID %q, want 'tile-custom'", payload.WidgetID)
+	}
+	if payload.State != provider.StateHealthy {
+		t.Errorf("got state %q, want %q", payload.State, provider.StateHealthy)
+	}
+
+	// Verify cached
+	cached, ok := coord.Cache().Get("tile-custom")
+	if !ok {
+		t.Fatal("expected tile-custom in cache")
+	}
+	if cached.State != provider.StateHealthy {
+		t.Errorf("cached state %q, want %q", cached.State, provider.StateHealthy)
+	}
+
+	// Verify state sink
+	sinkData, sinkState, _, found := stateSink.getState("tile-custom")
+	if !found {
+		t.Fatal("expected stateSink entry for tile-custom")
+	}
+	if sinkState != provider.StateHealthy {
+		t.Errorf("sink state %q, want %q", sinkState, provider.StateHealthy)
+	}
+	if d, ok := sinkData.(map[string]any); !ok || d["temperature"] != 23.5 {
+		t.Errorf("unexpected sink data: %v", sinkData)
+	}
+
+	// Verify broadcaster
+	evt, received := broadcaster.waitForPublish(time.Second)
+	if !received {
+		t.Fatal("expected widget.update event from broadcaster")
+	}
+	if evt.Type != events.EventWidgetUpdate {
+		t.Errorf("got event type %q, want %q", evt.Type, events.EventWidgetUpdate)
+	}
+
+	// 2. Second push to tile-custom (exercises schema cache hit)
+	payloadCached, err := coord.PushWidgetData(ctx, "tile-custom", validData)
+	if err != nil {
+		t.Fatalf("unexpected error on second push: %v", err)
+	}
+	if payloadCached.WidgetID != "tile-custom" {
+		t.Errorf("got widgetID %q, want 'tile-custom'", payloadCached.WidgetID)
+	}
+
+	// 3. Widget without package in snapshot
+	snapWithUnloaded := &config.Snapshot{
+		Config: &config.Config{
+			Display: config.DisplayConfig{
+				Widgets: []config.WidgetConfig{
+					{ID: "tile-unloaded", Type: "unloaded-type"},
+					{ID: "tile-empty-schema", Type: "empty-schema-type"},
+				},
+			},
+		},
+		Packages: map[string]*domain.Package{
+			"empty-schema-type": {
+				Type: "empty-schema-type",
+				Manifest: domain.WidgetManifest{
+					Name: "empty-schema-type",
+				},
+			},
+		},
+	}
+	coordUnloaded := provider.NewCoordinator(provider.CoordinatorConfig{
+		Broadcaster: broadcaster,
+		StateSink:   stateSink,
+	}, snapWithUnloaded)
+	defer func() { _ = coordUnloaded.Stop() }()
+
+	// Push to widget with nil package
+	if _, err := coordUnloaded.PushWidgetData(ctx, "tile-unloaded", validData); err != nil {
+		t.Fatalf("unexpected error pushing to widget without package: %v", err)
+	}
+
+	// Push to widget with empty response schema
+	if _, err := coordUnloaded.PushWidgetData(ctx, "tile-empty-schema", validData); err != nil {
+		t.Fatalf("unexpected error pushing to widget with empty schema: %v", err)
+	}
+
+	// 4. Widget not found
+	_, err = coord.PushWidgetData(ctx, "nonexistent-widget", validData)
+	if !errors.Is(err, provider.ErrWidgetNotFound) {
+		t.Errorf("got error %v, want ErrWidgetNotFound", err)
+	}
+
+	// 5. Empty widget ID
+	_, err = coord.PushWidgetData(ctx, "", validData)
+	if !errors.Is(err, provider.ErrWidgetNotFound) {
+		t.Errorf("got error %v, want ErrWidgetNotFound", err)
+	}
+
+	// 6. List widget push forbidden (409)
+	_, err = coord.PushWidgetData(ctx, "tile-tasks", map[string]any{"items": []any{}})
+	if !errors.Is(err, provider.ErrListWidgetPushForbidden) {
+		t.Errorf("got error %v, want ErrListWidgetPushForbidden", err)
+	}
+
+	// 7. Schema validation failure (bad data)
+	invalidData := map[string]any{"temperature": "not a number", "humidity": 60.0}
+	_, err = coord.PushWidgetData(ctx, "tile-custom", invalidData)
+	if !errors.Is(err, provider.ErrSchemaValidation) {
+		t.Errorf("got error %v, want ErrSchemaValidation", err)
+	}
+
+	// 8. Schema compilation failure
+	_, err = coord.PushWidgetData(ctx, "tile-bad-schema", map[string]any{"foo": "bar"})
+	if !errors.Is(err, provider.ErrSchemaValidation) {
+		t.Errorf("got error %v, want ErrSchemaValidation for bad schema", err)
+	}
+
+	// 9. Push on stopped coordinator
+	coordStopped := provider.NewCoordinator(provider.CoordinatorConfig{}, snap)
+	_ = coordStopped.Stop()
+	_, err = coordStopped.PushWidgetData(ctx, "tile-custom", validData)
+	if err == nil || !strings.Contains(err.Error(), "coordinator is stopped") {
+		t.Errorf("expected 'coordinator is stopped' error, got: %v", err)
+	}
+
+	// 10. Nil snapshot on coordinator
+	coordNilSnap := provider.NewCoordinator(provider.CoordinatorConfig{}, nil)
+	defer func() { _ = coordNilSnap.Stop() }()
+	_, err = coordNilSnap.PushWidgetData(ctx, "tile-custom", validData)
+	if !errors.Is(err, provider.ErrWidgetNotFound) {
+		t.Errorf("expected ErrWidgetNotFound for nil snapshot, got: %v", err)
+	}
+}
+
 
 

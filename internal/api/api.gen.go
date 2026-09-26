@@ -8,6 +8,7 @@ package api
 import (
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/oapi-codegen/runtime"
 )
@@ -67,6 +68,16 @@ type ScreenSelectRequest struct {
 	ScreenIndex int `json:"screen_index"`
 }
 
+// WidgetPushResponse defines model for WidgetPushResponse.
+type WidgetPushResponse struct {
+	Status    string    `json:"status"`
+	UpdatedAt time.Time `json:"updated_at"`
+	WidgetId  string    `json:"widget_id"`
+}
+
+// PostWidgetPushJSONBody defines parameters for PostWidgetPush.
+type PostWidgetPushJSONBody map[string]interface{}
+
 // PostScreenAdvanceJSONRequestBody defines body for PostScreenAdvance for application/json ContentType.
 type PostScreenAdvanceJSONRequestBody = ScreenAdvanceRequest
 
@@ -75,6 +86,9 @@ type PostScreenPauseJSONRequestBody = ScreenPauseRequest
 
 // PostScreenSelectJSONRequestBody defines body for PostScreenSelect for application/json ContentType.
 type PostScreenSelectJSONRequestBody = ScreenSelectRequest
+
+// PostWidgetPushJSONRequestBody defines body for PostWidgetPush for application/json ContentType.
+type PostWidgetPushJSONRequestBody PostWidgetPushJSONBody
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
@@ -87,6 +101,9 @@ type ServerInterface interface {
 	// Select screen by index
 	// (POST /api/screen/select)
 	PostScreenSelect(w http.ResponseWriter, r *http.Request)
+	// Push realtime widget payload
+	// (POST /api/widgets/{widget_id}/push)
+	PostWidgetPush(w http.ResponseWriter, r *http.Request, widgetId string)
 	// Render widget HTML fragment
 	// (GET /api/widgets/{widget_id}/render)
 	GetWidgetRender(w http.ResponseWriter, r *http.Request, widgetId string)
@@ -143,6 +160,31 @@ func (siw *ServerInterfaceWrapper) PostScreenSelect(w http.ResponseWriter, r *ht
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.PostScreenSelect(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostWidgetPush operation middleware
+func (siw *ServerInterfaceWrapper) PostWidgetPush(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "widget_id" -------------
+	var widgetId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "widget_id", r.PathValue("widget_id"), &widgetId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "widget_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostWidgetPush(w, r, widgetId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -362,6 +404,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc("POST "+options.BaseURL+"/api/screen/advance", wrapper.PostScreenAdvance)
 	m.HandleFunc("POST "+options.BaseURL+"/api/screen/pause", wrapper.PostScreenPause)
 	m.HandleFunc("POST "+options.BaseURL+"/api/screen/select", wrapper.PostScreenSelect)
+	m.HandleFunc("POST "+options.BaseURL+"/api/widgets/{widget_id}/push", wrapper.PostWidgetPush)
 	m.HandleFunc("GET "+options.BaseURL+"/api/widgets/{widget_id}/render", wrapper.GetWidgetRender)
 	m.HandleFunc("GET "+options.BaseURL+"/health", wrapper.GetHealth)
 	m.HandleFunc("GET "+options.BaseURL+"/healthz", wrapper.GetHealthz)

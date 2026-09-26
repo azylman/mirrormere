@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 type mockServer struct {
@@ -16,6 +17,45 @@ type mockServer struct {
 	lastPath     string
 	healthCalls  int
 	healthzCalls int
+}
+
+func (m *mockServer) PostWidgetPush(w http.ResponseWriter, r *http.Request, widgetID string) {
+	m.lastWidgetID = widgetID
+	if widgetID == "not-found" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_ = json.NewEncoder(w).Encode(ErrorResponse{
+			Status: "error",
+			Error:  fmt.Sprintf("widget '%s' not found in active configuration", widgetID),
+		})
+		return
+	}
+	if widgetID == "conflict-tasks" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(ErrorResponse{
+			Status: "error",
+			Error:  "cannot push state to list-backed widget",
+		})
+		return
+	}
+	var body map[string]any
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(ErrorResponse{
+			Status: "error",
+			Error:  "invalid json",
+		})
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(WidgetPushResponse{
+		Status:    "ok",
+		WidgetId:  widgetID,
+		UpdatedAt: time.Date(2026, 9, 26, 6, 0, 0, 0, time.UTC),
+	})
 }
 
 func (m *mockServer) GetHealth(w http.ResponseWriter, r *http.Request) {
@@ -265,6 +305,69 @@ func TestHandler_Endpoints(t *testing.T) {
 			t.Fatalf("expected 200, got %d", rec.Code)
 		}
 	})
+
+	t.Run("POST /api/widgets/{widget_id}/push success", func(t *testing.T) {
+		t.Parallel()
+		mock := &mockServer{}
+		handler := Handler(mock)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/widgets/sensor-card/push", strings.NewReader(`{"co2_ppm":640}`))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rec.Code)
+		}
+		if mock.lastWidgetID != "sensor-card" {
+			t.Fatalf("expected widget_id 'sensor-card', got '%s'", mock.lastWidgetID)
+		}
+	})
+
+	t.Run("POST /api/widgets/{widget_id}/push not found", func(t *testing.T) {
+		t.Parallel()
+		mock := &mockServer{}
+		handler := Handler(mock)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/widgets/not-found/push", strings.NewReader(`{"co2_ppm":640}`))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("expected 404, got %d", rec.Code)
+		}
+	})
+
+	t.Run("POST /api/widgets/{widget_id}/push conflict task widget", func(t *testing.T) {
+		t.Parallel()
+		mock := &mockServer{}
+		handler := Handler(mock)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/widgets/conflict-tasks/push", strings.NewReader(`{"items":[]}`))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusConflict {
+			t.Fatalf("expected 409, got %d", rec.Code)
+		}
+	})
+
+	t.Run("POST /api/widgets/{widget_id}/push bad json", func(t *testing.T) {
+		t.Parallel()
+		mock := &mockServer{}
+		handler := Handler(mock)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/widgets/sensor-card/push", strings.NewReader(`not-json`))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d", rec.Code)
+		}
+	})
 }
 
 func TestHandlerWithOptions_CustomMuxAndBaseURL(t *testing.T) {
@@ -361,6 +464,54 @@ func TestServerInterfaceWrapper_ParameterErrors(t *testing.T) {
 
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("expected 400, got %d", rec.Code)
+		}
+	})
+
+	t.Run("Default error handler triggers on missing widget_id for PostWidgetPush", func(t *testing.T) {
+		t.Parallel()
+		mock := &mockServer{}
+		wrapper := ServerInterfaceWrapper{
+			Handler: mock,
+			ErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+			},
+		}
+
+		req := httptest.NewRequest(http.MethodPost, "/api/widgets//push", nil)
+		rec := httptest.NewRecorder()
+		wrapper.PostWidgetPush(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d", rec.Code)
+		}
+	})
+
+	t.Run("Middlewares executed for PostWidgetPush", func(t *testing.T) {
+		t.Parallel()
+		mock := &mockServer{}
+		var mwCalled bool
+		wrapper := ServerInterfaceWrapper{
+			Handler: mock,
+			HandlerMiddlewares: []MiddlewareFunc{
+				func(next http.Handler) http.Handler {
+					return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						mwCalled = true
+						next.ServeHTTP(w, r)
+					})
+				},
+			},
+		}
+
+		req := httptest.NewRequest(http.MethodPost, "/api/widgets/widget-1/push", strings.NewReader(`{"status":"ok"}`))
+		req.SetPathValue("widget_id", "widget-1")
+		rec := httptest.NewRecorder()
+		wrapper.PostWidgetPush(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rec.Code)
+		}
+		if !mwCalled {
+			t.Fatal("expected middleware to be called")
 		}
 	})
 

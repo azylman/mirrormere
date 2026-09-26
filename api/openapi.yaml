@@ -53,6 +53,51 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+  /api/widgets/{widget_id}/push:
+    post:
+      summary: Push realtime widget payload
+      description: Ingests an immediate domain data payload for a custom HTTP provider widget, validates against manifest response_schema, updates SWR cache, and broadcasts widget.update over SSE.
+      operationId: postWidgetPush
+      parameters:
+        - name: widget_id
+          in: path
+          required: true
+          description: Unique identifier of the target widget instance
+          schema:
+            type: string
+      requestBody:
+        required: true
+        description: Custom widget domain data object matching manifest response_schema
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Push payload accepted and broadcast emitted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WidgetPushResponse'
+        '400':
+          description: Invalid JSON syntax or failed response_schema validation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Widget not found in active configuration
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Target widget is a list/task widget which cannot accept push updates
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /widget-types/{type}/assets/{path}:
     get:
       summary: Serve static widget package asset
@@ -243,3 +288,20 @@ components:
         error:
           type: string
           example: widget 'custom-sensor-hud' not found in active configuration
+    WidgetPushResponse:
+      type: object
+      required:
+        - status
+        - widget_id
+        - updated_at
+      properties:
+        status:
+          type: string
+          example: ok
+        widget_id:
+          type: string
+          example: custom-sensor-hud
+        updated_at:
+          type: string
+          format: date-time
+          example: 2026-09-24T22:20:00Z
