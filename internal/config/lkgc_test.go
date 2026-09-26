@@ -766,6 +766,112 @@ display:
 		t.Fatalf("expected conflicting source error, got %v", err)
 	}
 
+	// 6a. Matching local source with differing presentation parameters (Issue #182)
+	yamlMatchingLocalDifferentPresentation := `
+timezone: America/New_York
+display:
+  widgets:
+    - id: tasks-primary-1
+      type: tasks
+      dimensions: [3, 2]
+      config:
+        list_id: "shared-chores"
+        source: "local"
+        show_completed: 3
+    - id: tasks-primary-2
+      type: tasks
+      dimensions: [3, 2]
+      config:
+        list_id: "shared-chores"
+        source: "local"
+        show_completed: 0
+`
+	if _, _, err = m.Reload([]byte(yamlMatchingLocalDifferentPresentation)); err != nil {
+		t.Fatalf("expected matching local source with differing presentation to succeed, got: %v", err)
+	}
+
+	// 6b. Matching gtasks source with differing presentation parameters (Issue #182)
+	yamlMatchingGtasksDifferentPresentation := `
+timezone: America/New_York
+display:
+  widgets:
+    - id: tasks-primary-1
+      type: tasks
+      dimensions: [3, 2]
+      config:
+        list_id: "shared-chores"
+        source: "gtasks"
+        gtasks:
+          tasklist_id: "list-123"
+        show_completed: 5
+    - id: tasks-primary-2
+      type: tasks
+      dimensions: [3, 2]
+      config:
+        list_id: "shared-chores"
+        source: "gtasks"
+        gtasks:
+          tasklist_id: "list-123"
+        show_completed: 1
+`
+	if _, _, err = m.Reload([]byte(yamlMatchingGtasksDifferentPresentation)); err != nil {
+		t.Fatalf("expected matching gtasks source with differing presentation to succeed, got: %v", err)
+	}
+
+	// 6c. Conflicting gtasks tasklist_id under same list_id
+	yamlConflictingGtasks := `
+timezone: America/New_York
+display:
+  widgets:
+    - id: tasks-primary-1
+      type: tasks
+      dimensions: [3, 2]
+      config:
+        list_id: "shared-chores"
+        source: "gtasks"
+        gtasks:
+          tasklist_id: "list-123"
+    - id: tasks-primary-2
+      type: tasks
+      dimensions: [3, 2]
+      config:
+        list_id: "shared-chores"
+        source: "gtasks"
+        gtasks:
+          tasklist_id: "list-999"
+`
+	_, _, err = m.Reload([]byte(yamlConflictingGtasks))
+	if err == nil || !strings.Contains(err.Error(), "conflicting source definitions for list_id 'shared-chores'") {
+		t.Fatalf("expected conflicting gtasks source error, got %v", err)
+	}
+
+	// 6d. Conflicting http base_url under same list_id
+	yamlConflictingHTTP := `
+timezone: America/New_York
+display:
+  widgets:
+    - id: tasks-primary-1
+      type: tasks
+      dimensions: [3, 2]
+      config:
+        list_id: "shared-chores"
+        source: "http"
+        http:
+          base_url: "https://api1.example.com/lists"
+    - id: tasks-primary-2
+      type: tasks
+      dimensions: [3, 2]
+      config:
+        list_id: "shared-chores"
+        source: "http"
+        http:
+          base_url: "https://api2.example.com/lists"
+`
+	_, _, err = m.Reload([]byte(yamlConflictingHTTP))
+	if err == nil || !strings.Contains(err.Error(), "conflicting source definitions for list_id 'shared-chores'") {
+		t.Fatalf("expected conflicting http source error, got %v", err)
+	}
+
 	// 7. Generic HTTP provider missing endpoint URL
 	yamlHTTPNoEndpoint := `
 timezone: America/New_York

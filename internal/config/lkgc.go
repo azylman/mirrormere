@@ -426,9 +426,9 @@ func validateDomainRulesStage(cfg *Config, registry map[string]*domain.Package) 
 
 	// 2. Tasks & Lists Source-of-Truth Rules (SPEC-008 §Shared List State & Source Ownership Rules)
 	type primarySourceDef struct {
-		widgetID string
-		source   string
-		config   map[string]any
+		widgetID  string
+		source    string
+		sourceCfg any
 	}
 	primarySources := make(map[string]primarySourceDef)
 	allListIDs := make(map[string][]string) // list_id -> []widgetID
@@ -461,6 +461,7 @@ func validateDomainRulesStage(cfg *Config, registry map[string]*domain.Package) 
 				return fmt.Errorf("[Mirrormere Config Error] tasks widget '%s' declares invalid source '%s' (must be 'local', 'gtasks', or 'http')", w.ID, source)
 			}
 
+			var sourceCfg any
 			if source == "http" {
 				httpCfg, ok := w.Config["http"].(map[string]any)
 				if !ok || httpCfg == nil {
@@ -474,6 +475,7 @@ func validateDomainRulesStage(cfg *Config, registry map[string]*domain.Package) 
 				if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 					return fmt.Errorf("[Mirrormere Config Error] tasks widget '%s': invalid http.base_url '%s' (must be http:// or https:// with host)", w.ID, baseURL)
 				}
+				sourceCfg = httpCfg
 			} else if source == "gtasks" {
 				gtasksCfg, ok := w.Config["gtasks"].(map[string]any)
 				if !ok || gtasksCfg == nil {
@@ -483,18 +485,19 @@ func validateDomainRulesStage(cfg *Config, registry map[string]*domain.Package) 
 				if !ok || taskListID == "" {
 					return fmt.Errorf("[Mirrormere Config Error] tasks widget '%s' with source 'gtasks' requires non-empty 'gtasks.tasklist_id'", w.ID)
 				}
+				sourceCfg = gtasksCfg
 			}
 
 			if existing, exists := primarySources[listID]; exists {
-				if existing.source != source || !reflect.DeepEqual(existing.config, w.Config) {
+				if existing.source != source || !reflect.DeepEqual(existing.sourceCfg, sourceCfg) {
 					return fmt.Errorf("[Mirrormere Config Error] conflicting source definitions for list_id '%s' between widget '%s' and widget '%s'",
 						listID, existing.widgetID, w.ID)
 				}
 			} else {
 				primarySources[listID] = primarySourceDef{
-					widgetID: w.ID,
-					source:   source,
-					config:   w.Config,
+					widgetID:  w.ID,
+					source:    source,
+					sourceCfg: sourceCfg,
 				}
 			}
 		}

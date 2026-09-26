@@ -862,3 +862,35 @@ func dispWithoutEvents() watcher.Dispatcher {
 	return &errDispatcher{}
 }
 
+func TestWatcher_RemoveDir_NestedAndErrors(t *testing.T) {
+	t.Parallel()
+
+	tempDir, mgr, loader, disp := setupTestEnv(t)
+	configDir := filepath.Join(tempDir, "config")
+
+	w := watcher.New(watcher.Config{
+		ConfigDir: configDir,
+	}, mgr, loader, disp, slog.Default())
+
+	if err := w.Start(context.Background()); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer func() { _ = w.Close() }()
+
+	parentDir := filepath.Join(tempDir, "parent")
+	childDir := filepath.Join(parentDir, "child")
+	_ = os.MkdirAll(childDir, 0755)
+
+	w.AddWatchedDirForTest(parentDir)
+	w.AddWatchedDirForTest(childDir)
+
+	w.RemoveDir(parentDir)
+
+	if w.HasWatchedDir(parentDir) || w.HasWatchedDir(childDir) {
+		t.Errorf("expected parent and child to be removed from watchedDirs")
+	}
+
+	w.SendErrorForTest(fmt.Errorf("simulated watcher error"))
+	time.Sleep(10 * time.Millisecond)
+}
+
