@@ -146,16 +146,31 @@ flowchart TD
   - Webhook data path: `POST /api/widgets/{widget_id}/push` validates payload against schema and updates state.
   - Reject push webhooks targeting task widgets with `409 Conflict`.
 
-- **Task 3.3: Core Ingest Providers (Calendar, Weather & Photos)**
-  - Calendar: fetch and parse remote iCal (.ics) and CalDAV URLs (Google Calendar, iCloud, Fastmail/Nextcloud).
-  - Weather: query Open-Meteo keyless API; autonomous poller emitting dedicated `header.update` SSE events (SPEC-007 §4).
-  - Photos: zero-credential Google Photos shared album scraper extracting `AF_initDataCallback` image URLs with dynamic `=w{w}-h{h}-c` sizing parameters.
-  - Built-in widget views: `calendar`, `weather`, and `photos`.
+- **Task 3.3A: Weather-Forecast Provider & Header Weather Poller (SPEC-007 §2, §4)**
+  - Open-Meteo keyless API ingest driver (`provider: weather-forecast`), WMO code mapping, `WeatherSnapshot` domain model.
+  - Autonomous header weather poller (`display.header.weather`), `header.update` SSE broadcast, eviction of hardcoded 68.5°F fallback.
+  - Built-in `weather-forecast` widget package (`widgets/weather-forecast/manifest.yaml` & `views/widget.html`).
 
-- **Task 3.4: Read-Only Tasks & Lists Service (SPEC-008)**
+- **Task 3.3B: Calendar-Agenda Provider (iCal & Recurrence) (SPEC-007 §1)**
+  - Remote iCal (.ics) fetcher, VEVENT parser, RRULE expansion via `teambition/rrule-go`, timezone transformation.
+  - Stale-While-Revalidate caching, multi-calendar merging, and built-in `calendar-agenda` widget view.
+
+- **Task 3.3C: Calendar-Agenda CalDAV Sync Extension (SPEC-007 §1)**
+  - CalDAV REPORT time-range queries (`emersion/go-webdav`), Basic/Digest auth with secret resolution.
+  - Integration with `calendar-agenda` provider.
+
+- **Task 3.3D: Photo-Carousel Google Photos Shared Album Provider (SPEC-007 §3)**
+  - Zero-credential Google Photos shared album scraper (`AF_initDataCallback` parsing).
+  - Dynamic presentation sizing, shuffle/cycling, and built-in `photo-carousel` widget view.
+
+- **Task 3.4: Local Tasks SQLite Storage & Inspection Service (SPEC-008 §1-§3)**
   - Pure-Go zero-CGO SQLite storage using `modernc.org/sqlite` in `/data/lists.db` (WAL mode, busy timeout 5000ms).
   - Read-only inspection endpoint: `GET /api/lists/{list_id}/items` (optional `include_done`).
   - Built-in `tasks` widget: strike-through completed items, "+N more" overflow, zero client mutation controls.
+
+- **Task 3.5: External Task List Ingest Adapters (SPEC-008 §4)**
+  - Ingest synchronization adapters for external task providers (Google Tasks, Todoist, Home Assistant).
+  - Periodic reconciliation and update broadcasts.
 
 ---
 

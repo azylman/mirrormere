@@ -44,7 +44,7 @@ type HeaderWeather struct {
 type HeaderUpdateData struct {
 	Timestamp string         `json:"timestamp"`
 	Timezone  string         `json:"timezone"`
-	Weather   *HeaderWeather `json:"weather"`
+	Weather   *HeaderWeather `json:"weather,omitempty"`
 }
 
 // VideoStateData matches SPEC-006 §2.E.
@@ -417,15 +417,6 @@ func BuildHydrationBatch(provider StateProvider, idGen *IDGenerator, now time.Ti
 	if provider != nil {
 		if w, ok := provider.GetHeaderWeather(); ok {
 			weather = w
-		}
-	}
-	if weather == nil {
-		// Provide default nominal weather if header weather is declared
-		weather = &HeaderWeather{
-			Temperature: 68.5,
-			Units:       "F",
-			WeatherCode: 1,
-			Icon:        "weather-sunny",
 		}
 	}
 	tz := "UTC"
