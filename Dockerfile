@@ -20,15 +20,13 @@ FROM alpine:3.21
 RUN apk add --no-cache ca-certificates tzdata \
     && addgroup -g 10001 -S appgroup \
     && adduser -u 10001 -S appuser -G appgroup \
-    && mkdir -p /config /data \
-    && chown -R 10001:10001 /config /data
+    && mkdir -p /config /data /app/web /app/widgets \
+    && chown -R 10001:10001 /config /data /app/web /app/widgets
 
 WORKDIR /app
 
 # Copy compiled executable from builder stage
 COPY --from=builder /app/server /app/server
-COPY web /app/web
-COPY widgets /app/widgets
 
 
 # Switch to unprivileged non-root user

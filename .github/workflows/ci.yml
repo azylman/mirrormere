@@ -3,6 +3,14 @@ name: Continuous Delivery
 on:
   push:
     branches: [ main ]
+    paths-ignore:
+      - 'docs/**'
+      - 'specs/**'
+      - 'decisions/**'
+      - '*.md'
+      - '.gitignore'
+      - '.gitattributes'
+      - 'LICENSE'
   pull_request:
     branches: [ main ]
 
@@ -59,18 +67,39 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
+      - name: Path Filter Check
+        uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            mirrormere:
+              - 'Dockerfile'
+              - 'go.mod'
+              - 'go.sum'
+              - 'cmd/**'
+              - 'internal/**'
+              - 'api/**'
+              - 'Makefile'
+            mirrormere-cast-watcher:
+              - 'sidecars/cast-watcher/**'
+            mirrormere-eink-renderer:
+              - 'sidecars/eink-renderer/**'
+
       - name: Set up QEMU
+        if: steps.filter.outputs[matrix.name] == 'true'
         uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
+        if: steps.filter.outputs[matrix.name] == 'true'
         uses: docker/setup-buildx-action@v3
 
       - name: Lowercase Repository Owner
+        if: steps.filter.outputs[matrix.name] == 'true'
         id: repo_owner
         run: echo "owner=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
 
       - name: Log in to GitHub Container Registry
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.filter.outputs[matrix.name] == 'true'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -78,6 +107,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and Push Docker Image
+        if: steps.filter.outputs[matrix.name] == 'true'
         uses: docker/build-push-action@v5
         with:
           context: ${{ matrix.context }}
