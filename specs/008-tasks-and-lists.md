@@ -160,7 +160,7 @@ CREATE TABLE IF NOT EXISTS lists (
 );
 
 CREATE TABLE IF NOT EXISTS list_items (
-    id TEXT PRIMARY KEY,
+    id TEXT NOT NULL,
     list_id TEXT NOT NULL REFERENCES lists(id) ON DELETE CASCADE,
     title TEXT NOT NULL,
     done BOOLEAN NOT NULL DEFAULT 0,
@@ -169,7 +169,8 @@ CREATE TABLE IF NOT EXISTS list_items (
     assignee TEXT,
     due_date TEXT, -- YYYY-MM-DD
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (list_id, id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_list_items_list_id_position ON list_items(list_id, position);

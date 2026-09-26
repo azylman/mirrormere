@@ -2,6 +2,7 @@ package tasks
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"os"
 	"path/filepath"
@@ -925,3 +926,237 @@ func TestSQLiteStore_SyncList_DuplicateIncomingIDs(t *testing.T) {
 		t.Error("expected changed=true when incoming items have duplicate IDs reducing unique count")
 	}
 }
+
+func TestSQLiteStore_MultiList_SharedItemIDs(t *testing.T) {
+	t.Parallel()
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "shared_ids.db"))
+	if err != nil {
+		t.Fatalf("failed to init store: %v", err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+
+	listA := List{ID: "list_a", Name: "List A", Source: "http"}
+	listB := List{ID: "list_b", Name: "List B", Source: "http"}
+
+	itemsA := []ListItem{
+		{ID: "item-1", ListID: "list_a", Title: "Apples", Done: false, Position: 0},
+		{ID: "item-2", ListID: "list_a", Title: "Bananas", Done: true, Position: 1},
+	}
+	itemsB := []ListItem{
+		{ID: "item-1", ListID: "list_b", Title: "Oranges", Done: true, Position: 0},
+		{ID: "item-2", ListID: "list_b", Title: "Grapes", Done: false, Position: 1},
+	}
+
+	// 1. Sync list A
+	changedA, err := store.SyncList(ctx, listA, itemsA)
+	if err != nil || !changedA {
+		t.Fatalf("expected changed=true on list A sync, got changed=%v, err=%v", changedA, err)
+	}
+
+	// 2. Sync list B (with identical item IDs)
+	changedB, err := store.SyncList(ctx, listB, itemsB)
+	if err != nil || !changedB {
+		t.Fatalf("expected changed=true on list B sync, got changed=%v, err=%v", changedB, err)
+	}
+
+	// 3. Verify List A items were NOT overwritten by List B
+	fetchedA, err := store.GetListItems(ctx, "list_a", true)
+	if err != nil {
+		t.Fatalf("failed to get list A items: %v", err)
+	}
+	if len(fetchedA) != 2 {
+		t.Fatalf("expected 2 items for list A, got %d", len(fetchedA))
+	}
+	if fetchedA[0].ID != "item-1" || fetchedA[0].Title != "Apples" || fetchedA[0].Done {
+		t.Errorf("list A item-1 corrupted: %+v", fetchedA[0])
+	}
+	if fetchedA[1].ID != "item-2" || fetchedA[1].Title != "Bananas" || !fetchedA[1].Done {
+		t.Errorf("list A item-2 corrupted: %+v", fetchedA[1])
+	}
+
+	// 4. Verify List B items are correct
+	fetchedB, err := store.GetListItems(ctx, "list_b", true)
+	if err != nil {
+		t.Fatalf("failed to get list B items: %v", err)
+	}
+	if len(fetchedB) != 2 {
+		t.Fatalf("expected 2 items for list B, got %d", len(fetchedB))
+	}
+	if fetchedB[0].ID != "item-1" || fetchedB[0].Title != "Oranges" || !fetchedB[0].Done {
+		t.Errorf("list B item-1 corrupted: %+v", fetchedB[0])
+	}
+	if fetchedB[1].ID != "item-2" || fetchedB[1].Title != "Grapes" || fetchedB[1].Done {
+		t.Errorf("list B item-2 corrupted: %+v", fetchedB[1])
+	}
+
+	// 5. Repeat sync returns changed=false on both (no diff churn!)
+	changedA2, err := store.SyncList(ctx, listA, itemsA)
+	if err != nil || changedA2 {
+		t.Fatalf("expected changed=false on repeat list A sync, got changed=%v, err=%v", changedA2, err)
+	}
+	changedB2, err := store.SyncList(ctx, listB, itemsB)
+	if err != nil || changedB2 {
+		t.Fatalf("expected changed=false on repeat list B sync, got changed=%v, err=%v", changedB2, err)
+	}
+
+	// 6. Test UpsertItem isolation
+	updatedItemA := ListItem{
+		ID:       "item-1",
+		ListID:   "list_a",
+		Title:    "Honeycrisp Apples",
+		Done:     false,
+		Position: 0,
+	}
+	if err := store.UpsertItem(ctx, updatedItemA); err != nil {
+		t.Fatalf("failed to upsert item A: %v", err)
+	}
+
+	// List B's item-1 must still be Oranges
+	fetchedBAfterUpsert, err := store.GetListItems(ctx, "list_b", true)
+	if err != nil {
+		t.Fatalf("failed to get list B items: %v", err)
+	}
+	if fetchedBAfterUpsert[0].Title != "Oranges" {
+		t.Errorf("expected list B item-1 to remain 'Oranges', got %q", fetchedBAfterUpsert[0].Title)
+	}
+
+	// 7. Test DeleteItem isolation: deleting item-1 from list A does not delete item-1 from list B
+	if err := store.DeleteItem(ctx, "list_a", "item-1"); err != nil {
+		t.Fatalf("failed to delete item from list A: %v", err)
+	}
+	fetchedBAfterDelete, err := store.GetListItems(ctx, "list_b", true)
+	if err != nil {
+		t.Fatalf("failed to get list B items: %v", err)
+	}
+	if len(fetchedBAfterDelete) != 2 || fetchedBAfterDelete[0].ID != "item-1" {
+		t.Errorf("expected list B to retain item-1, got %+v", fetchedBAfterDelete)
+	}
+}
+
+func TestSQLiteStore_Migration_LegacySingleColumnPK(t *testing.T) {
+	t.Parallel()
+	dbPath := filepath.Join(t.TempDir(), "legacy_migration.db")
+
+	// Create legacy database schema with id TEXT PRIMARY KEY
+	legacyDB, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("failed to create legacy db: %v", err)
+	}
+	legacyDDL := `
+	CREATE TABLE lists (
+		id TEXT PRIMARY KEY,
+		name TEXT NOT NULL,
+		source TEXT NOT NULL DEFAULT 'local',
+		sections TEXT NOT NULL DEFAULT '[]',
+		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE TABLE list_items (
+		id TEXT PRIMARY KEY,
+		list_id TEXT NOT NULL REFERENCES lists(id) ON DELETE CASCADE,
+		title TEXT NOT NULL,
+		done BOOLEAN NOT NULL DEFAULT 0,
+		section TEXT,
+		position INTEGER NOT NULL DEFAULT 0,
+		assignee TEXT,
+		due_date TEXT,
+		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+	);
+
+	INSERT INTO lists (id, name, source) VALUES ('legacy-list', 'Legacy List', 'local');
+	INSERT INTO list_items (id, list_id, title, done, position) VALUES ('i1', 'legacy-list', 'Legacy Item 1', 0, 0);
+	`
+	if _, err := legacyDB.Exec(legacyDDL); err != nil {
+		_ = legacyDB.Close()
+		t.Fatalf("failed to seed legacy db: %v", err)
+	}
+	_ = legacyDB.Close()
+
+	// Open with NewSQLiteStore which should trigger migrate() and upgrade list_items
+	store, err := NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatalf("failed to open store on legacy db: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+
+	// Verify legacy item preserved
+	items, err := store.GetListItems(ctx, "legacy-list", true)
+	if err != nil {
+		t.Fatalf("failed to get items from migrated db: %v", err)
+	}
+	if len(items) != 1 || items[0].Title != "Legacy Item 1" {
+		t.Fatalf("unexpected items after migration: %+v", items)
+	}
+
+	// Verify composite primary key by creating second list with same item ID
+	if err := store.UpsertList(ctx, List{ID: "new-list", Name: "New List"}); err != nil {
+		t.Fatalf("failed to upsert new list: %v", err)
+	}
+	newItem := ListItem{
+		ID:       "i1",
+		ListID:   "new-list",
+		Title:    "New List Item 1",
+		Done:     true,
+		Position: 0,
+	}
+	if err := store.UpsertItem(ctx, newItem); err != nil {
+		t.Fatalf("failed to insert item with colliding id into new list: %v", err)
+	}
+
+	// Verify both items coexist
+	itemsLegacy, err := store.GetListItems(ctx, "legacy-list", true)
+	if err != nil || len(itemsLegacy) != 1 || itemsLegacy[0].Title != "Legacy Item 1" {
+		t.Errorf("legacy item corrupted after inserting duplicate ID on new list: %+v", itemsLegacy)
+	}
+	itemsNew, err := store.GetListItems(ctx, "new-list", true)
+	if err != nil || len(itemsNew) != 1 || itemsNew[0].Title != "New List Item 1" {
+		t.Errorf("new item corrupted: %+v", itemsNew)
+	}
+}
+
+func TestSQLiteStore_MigrateErrors(t *testing.T) {
+	t.Parallel()
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "migrate_err.db"))
+	if err != nil {
+		t.Fatalf("failed to init store: %v", err)
+	}
+	_ = store.Close()
+
+	// 1. Closed DB error on migrate()
+	if err := store.migrate(); err == nil {
+		t.Error("expected error from migrate on closed store")
+	}
+
+	// 2. Closed underlying DB handle error when store is not marked nil
+	store2, err := NewSQLiteStore(filepath.Join(t.TempDir(), "migrate_err2.db"))
+	if err != nil {
+		t.Fatalf("failed to init store2: %v", err)
+	}
+	_ = store2.db.Close()
+	if err := store2.migrate(); err == nil {
+		t.Error("expected error from migrate when underlying db is closed")
+	}
+
+	// 3. Migration failure when list_items_migrated already exists with incompatible schema
+	dbPath3 := filepath.Join(t.TempDir(), "migrate_err3.db")
+	legacyDB, err := sql.Open("sqlite", dbPath3)
+	if err != nil {
+		t.Fatalf("failed to create legacy db: %v", err)
+	}
+	_, _ = legacyDB.Exec(`
+		CREATE TABLE lists (id TEXT PRIMARY KEY, name TEXT);
+		CREATE TABLE list_items (id TEXT PRIMARY KEY, list_id TEXT, title TEXT);
+		CREATE TABLE list_items_migrated (incompatible_column TEXT);
+	`)
+	_ = legacyDB.Close()
+
+	if _, err := NewSQLiteStore(dbPath3); err == nil {
+		t.Error("expected NewSQLiteStore to fail migration when list_items_migrated already exists")
+	}
+}
+
