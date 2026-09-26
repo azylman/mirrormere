@@ -329,7 +329,7 @@ paths:
   /api/video/dismiss:
     post:
       summary: Dismiss video stream
-      description: Dismisses an active video stream from primary or PiP and broadcasts video.state.
+      description: Dismisses an active video stream from primary or PiP (or all active streams when id is "all") and broadcasts video.state.
       operationId: postVideoDismiss
       requestBody:
         required: true
@@ -749,6 +749,7 @@ components:
       properties:
         id:
           type: string
+          description: Stream identifier to dismiss, or "all" to dismiss all active streams and return to widgets mode.
           example: chromecast
     VideoActionRequest:
       type: object

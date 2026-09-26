@@ -326,9 +326,17 @@
 
     /**
      * Dispatch video stream dismiss action with in-flight lock.
+     * Unmounts video mode immediately and returns to widgets mode per SPEC-004 §2.
      */
     handleDismiss() {
-      if (this.isActionPending || !this.activeStream || !this.activeStream.id) {
+      if (this.isActionPending) {
+        return;
+      }
+
+      const primaryId = this.videoManager?.serverPrimary?.id || this.lastVideoState?.primary?.id;
+      const pipId = this.videoManager?.serverPip?.id || this.lastVideoState?.pip?.id;
+
+      if (!primaryId && !pipId && (!this.activeStream || !this.activeStream.id)) {
         return;
       }
 
@@ -337,9 +345,14 @@
         this.isActionPending = false;
       }, 300);
 
-      this.postDismiss({
-        id: this.activeStream.id,
-      });
+      if (primaryId && pipId && primaryId !== pipId) {
+        // When multiple streams are present (primary and PiP), dismiss all streams
+        // to guarantee unmounting video mode and returning to widgets mode per SPEC-004 §2.
+        this.postDismiss({ id: 'all' });
+      } else {
+        const targetId = primaryId || pipId || this.activeStream?.id;
+        this.postDismiss({ id: targetId });
+      }
     }
 
     /**

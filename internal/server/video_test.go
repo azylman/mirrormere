@@ -254,6 +254,18 @@ func TestDefaultVideoHandler_PostVideoDismiss(t *testing.T) {
 		t.Fatalf("expected dismiss ID 'chromecast', got %s", mock.lastDismissID)
 	}
 
+	// 1b. Success POST with id: "all"
+	reqAll := httptest.NewRequest(http.MethodPost, "/api/video/dismiss", strings.NewReader(`{"id":"all"}`))
+	recAll := httptest.NewRecorder()
+	h.PostVideoDismiss(recAll, reqAll)
+
+	if recAll.Code != http.StatusOK {
+		t.Fatalf("expected 200 for id 'all', got %d", recAll.Code)
+	}
+	if mock.lastDismissID != "all" {
+		t.Fatalf("expected dismiss ID 'all', got %s", mock.lastDismissID)
+	}
+
 	// 2. Stream not found (404)
 	mock.dismissErr = video.ErrStreamNotFound
 	req404 := httptest.NewRequest(http.MethodPost, "/api/video/dismiss", strings.NewReader(`{"id":"missing"}`))

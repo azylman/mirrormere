@@ -553,3 +553,77 @@ test('VideoHUDController: tap-to-wake in swapped stream state', () => {
 
   hud.destroy();
 });
+
+test('VideoHUDController: dismiss button sends id: "all" when both primary and PiP are active per SPEC-004 §2', async () => {
+  const dom = createHUDDOM();
+  const networkCalls = [];
+
+  const mockFetch = async (url, opts) => {
+    networkCalls.push({ url, body: JSON.parse(opts.body) });
+    return { ok: true, status: 200, json: async () => ({ status: 'ok' }) };
+  };
+
+  const hud = new VideoHUDController({
+    overlayElement: dom.overlay,
+    titleElement: dom.title,
+    dismissBtn: dom.dismissBtn,
+    playBtn: dom.playBtn,
+    playIcon: dom.playIcon,
+    muteBtn: dom.muteBtn,
+    muteIcon: dom.muteIcon,
+    volumeSlider: dom.volumeSlider,
+    stageElement: dom.stage,
+    fetch: mockFetch,
+  });
+
+  hud.handleVideoState({
+    mode: 'video',
+    primary: { id: 'chromecast', title: 'Chromecast', controllable: true, player_state: 'playing' },
+    pip: { id: 'doorbell', title: 'Doorbell', controllable: false, player_state: 'playing' },
+  });
+
+  dom.dismissBtn.click();
+  assert.equal(networkCalls.length, 1);
+  assert.equal(networkCalls[0].url, 'api/video/dismiss');
+  assert.deepEqual(networkCalls[0].body, { id: 'all' });
+
+  hud.destroy();
+});
+
+test('VideoHUDController: dismiss button sends id: "all" in swapped presentation state per SPEC-004 §2', async () => {
+  const dom = createHUDDOM();
+  const networkCalls = [];
+
+  const mockFetch = async (url, opts) => {
+    networkCalls.push({ url, body: JSON.parse(opts.body) });
+    return { ok: true, status: 200, json: async () => ({ status: 'ok' }) };
+  };
+
+  const mockVideoManager = {
+    isSwapped: true,
+    serverPrimary: { id: 'chromecast', title: 'Chromecast', controllable: true, player_state: 'playing' },
+    serverPip: { id: 'doorbell', title: 'Doorbell', controllable: false, player_state: 'playing' },
+  };
+
+  const hud = new VideoHUDController({
+    overlayElement: dom.overlay,
+    titleElement: dom.title,
+    dismissBtn: dom.dismissBtn,
+    playBtn: dom.playBtn,
+    playIcon: dom.playIcon,
+    muteBtn: dom.muteBtn,
+    muteIcon: dom.muteIcon,
+    volumeSlider: dom.volumeSlider,
+    stageElement: dom.stage,
+    videoManager: mockVideoManager,
+    fetch: mockFetch,
+  });
+
+  dom.dismissBtn.click();
+  assert.equal(networkCalls.length, 1);
+  assert.equal(networkCalls[0].url, 'api/video/dismiss');
+  assert.deepEqual(networkCalls[0].body, { id: 'all' });
+
+  hud.destroy();
+});
+
