@@ -105,7 +105,7 @@ flowchart TD
     - On fail: retain running LKGC snapshot in memory, log structured error, and preserve active service state.
   - Deliverable: Hermetic unit tests achieving `>= 95%` coverage covering all 6 stages and LKGC fallbacks.
 
-- [ ] **Task 1.7: `fsnotify` Directory Watcher & Reload Dispatcher**
+- [x] **Task 1.7: `fsnotify` Directory Watcher & Reload Dispatcher**
   - Files:
     - Create: `internal/watcher/watcher.go`
     - Create: `internal/watcher/watcher_test.go`

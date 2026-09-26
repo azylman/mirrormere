@@ -128,6 +128,16 @@ if [ -z "$cgo_val" ]; then
     fi
 fi
 
+GO_TEST_PREFIX=""
+if [ "$(id -u)" -eq 0 ] && command -v setpriv >/dev/null 2>&1 && id -u ubuntu >/dev/null 2>&1; then
+    if command -v python3 >/dev/null 2>&1; then
+        if ! python3 -c "import ctypes; libc=ctypes.CDLL('libc.so.6', use_errno=True); exit(0 if libc.inotify_init() >= 0 else 1)" 2>/dev/null; then
+            GO_TEST_PREFIX="setpriv --reuid=1000 --regid=1000 --clear-groups env HOME=/tmp"
+            chmod 777 "$PROF_DIR" 2>/dev/null || true
+        fi
+    fi
+fi
+
 # Discover all Go packages with source files
 PACKAGES=$(go list ./... 2>/dev/null || true)
 
@@ -141,7 +151,7 @@ for pkg in $PACKAGES; do
     fi
 
     # Run tests with coverage profile
-    if CGO_ENABLED="$cgo_val" go test -coverprofile="$prof" "$pkg" >/dev/null 2>&1; then
+    if $GO_TEST_PREFIX env CGO_ENABLED="$cgo_val" go test -coverprofile="$prof" "$pkg" >/dev/null 2>&1; then
         if [ -f "$prof" ] && [ -s "$prof" ]; then
             # Parse statements from profile
             cov_stats=$(awk 'NR>1 { total += $2; if ($3 > 0) covered += $2 } END { printf "%d %d\n", total, covered }' "$prof")
