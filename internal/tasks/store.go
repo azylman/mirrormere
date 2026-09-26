@@ -84,6 +84,9 @@ func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
 func (s *SQLiteStore) migrate() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.db == nil {
+		return errors.New("database is closed")
+	}
 
 	ddl := `
 	CREATE TABLE IF NOT EXISTS lists (
@@ -96,7 +99,7 @@ func (s *SQLiteStore) migrate() error {
 	);
 
 	CREATE TABLE IF NOT EXISTS list_items (
-		id TEXT PRIMARY KEY,
+		id TEXT NOT NULL,
 		list_id TEXT NOT NULL REFERENCES lists(id) ON DELETE CASCADE,
 		title TEXT NOT NULL,
 		done BOOLEAN NOT NULL DEFAULT 0,
@@ -105,7 +108,8 @@ func (s *SQLiteStore) migrate() error {
 		assignee TEXT,
 		due_date TEXT,
 		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-		updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+		updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY (list_id, id)
 	);
 
 	CREATE INDEX IF NOT EXISTS idx_list_items_list_id_position ON list_items(list_id, position);
@@ -114,8 +118,58 @@ func (s *SQLiteStore) migrate() error {
 	CREATE INDEX IF NOT EXISTS idx_list_items_list_done_updated ON list_items(list_id, done, updated_at DESC);
 	`
 
-	_, err := s.db.Exec(ddl)
-	return err
+	if _, err := s.db.Exec(ddl); err != nil {
+		return err
+	}
+
+	// Check if list_items has legacy primary key (id only instead of composite (list_id, id))
+	rows, err := s.db.Query(`PRAGMA table_info(list_items)`)
+	if err != nil {
+		return fmt.Errorf("failed to inspect list_items schema: %w", err)
+	}
+
+	var listIDIsPK bool
+	for rows.Next() {
+		var cid int
+		var name, colType string
+		var notNull, pk int
+		var dfltVal sql.NullString
+		if err := rows.Scan(&cid, &name, &colType, &notNull, &dfltVal, &pk); err == nil && name == "list_id" && pk > 0 {
+			listIDIsPK = true
+		}
+	}
+	_ = rows.Close() //nolint:errcheck
+
+	if !listIDIsPK {
+		migrationSQL := `
+		CREATE TABLE list_items_migrated (
+			id TEXT NOT NULL,
+			list_id TEXT NOT NULL REFERENCES lists(id) ON DELETE CASCADE,
+			title TEXT NOT NULL,
+			done BOOLEAN NOT NULL DEFAULT 0,
+			section TEXT,
+			position INTEGER NOT NULL DEFAULT 0,
+			assignee TEXT,
+			due_date TEXT,
+			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (list_id, id)
+		);
+		INSERT OR REPLACE INTO list_items_migrated (id, list_id, title, done, section, position, assignee, due_date, created_at, updated_at)
+			SELECT id, list_id, title, done, section, position, assignee, due_date, created_at, updated_at FROM list_items;
+		DROP TABLE list_items;
+		ALTER TABLE list_items_migrated RENAME TO list_items;
+		CREATE INDEX IF NOT EXISTS idx_list_items_list_id_position ON list_items(list_id, position);
+		CREATE INDEX IF NOT EXISTS idx_list_items_updated_at ON list_items(updated_at);
+		CREATE INDEX IF NOT EXISTS idx_list_items_list_done_pos ON list_items(list_id, done, position, created_at);
+		CREATE INDEX IF NOT EXISTS idx_list_items_list_done_updated ON list_items(list_id, done, updated_at DESC);
+		`
+		if _, err := s.db.Exec(migrationSQL); err != nil {
+			return fmt.Errorf("failed to migrate list_items to composite primary key: %w", err)
+		}
+	}
+
+	return nil
 }
 
 // Close closes the underlying SQLite database handle.
@@ -354,7 +408,7 @@ func (s *SQLiteStore) UpsertItem(ctx context.Context, item ListItem) error {
 
 	query := `INSERT INTO list_items (id, list_id, title, done, section, position, assignee, due_date, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(id) DO UPDATE SET
+		ON CONFLICT(list_id, id) DO UPDATE SET
 			title = excluded.title,
 			done = excluded.done,
 			section = excluded.section,
@@ -567,7 +621,7 @@ func (s *SQLiteStore) SyncList(ctx context.Context, list List, items []ListItem)
 
 	upsertItemSQL := `INSERT INTO list_items (id, list_id, title, done, section, position, assignee, due_date, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(id) DO UPDATE SET
+		ON CONFLICT(list_id, id) DO UPDATE SET
 			title = excluded.title,
 			done = excluded.done,
 			section = excluded.section,
