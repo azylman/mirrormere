@@ -48,17 +48,29 @@ func Handler(hub *Hub) http.Handler {
 		w.WriteHeader(http.StatusOK)
 		flusher.Flush()
 
-		// 5. Initial Hydration vs Replay
+		// 5. Subscribe to live stream BEFORE snapshot/replay to eliminate race window (Issue #199)
+		ch, unsubscribe := hub.Subscribe(r.Context())
+		defer unsubscribe()
+
+		// 6. Initial Hydration vs Replay
 		lastEventID := strings.TrimSpace(r.Header.Get("Last-Event-ID"))
 		if lastEventID == "" {
 			// Also check query param fallback for non-standard clients
 			lastEventID = strings.TrimSpace(r.URL.Query().Get("lastEventId"))
 		}
 
-		var initialBatch []*Event
+		var (
+			initialBatch  []*Event
+			seenReplayIDs map[string]struct{}
+		)
 		if lastEventID != "" {
 			if replayed, found := hub.ReplaySince(lastEventID); found {
 				initialBatch = replayed
+				seenReplayIDs = make(map[string]struct{}, len(replayed)+1)
+				seenReplayIDs[lastEventID] = struct{}{}
+				for _, evt := range replayed {
+					seenReplayIDs[evt.ID] = struct{}{}
+				}
 			} else {
 				// Replay missed/expired: execute full initial state hydration
 				initialBatch = hub.BuildHydration()
@@ -68,6 +80,7 @@ func Handler(hub *Hub) http.Handler {
 			initialBatch = hub.BuildHydration()
 		}
 
+		// 7. Flush initial batch (hydration or replay)
 		for _, evt := range initialBatch {
 			if _, err := w.Write(evt.Format()); err != nil {
 				return
@@ -75,15 +88,27 @@ func Handler(hub *Hub) http.Handler {
 		}
 		flusher.Flush()
 
-		// 6. Subscribe to live stream
-		ch, unsubscribe := hub.Subscribe(r.Context())
-		defer unsubscribe()
-
-		// 7. Keep-alive heartbeat ticker
+		// 8. Keep-alive heartbeat ticker
 		ticker := time.NewTicker(hub.cfg.HeartbeatInterval)
 		defer ticker.Stop()
 
-		// 8. Stream Loop
+		deliverEvent := func(evt *Event) bool {
+			if seenReplayIDs != nil {
+				if _, seen := seenReplayIDs[evt.ID]; seen {
+					return true
+				}
+				// Reached first new event beyond replayed batch; discard filter map
+				seenReplayIDs = nil
+			}
+			if _, err := w.Write(evt.Format()); err != nil {
+				return false
+			}
+			flusher.Flush()
+			return true
+		}
+
+		// 9. Drain any events queued during batch preparation
+		drainLoop:
 		for {
 			select {
 			case <-r.Context().Done():
@@ -92,10 +117,26 @@ func Handler(hub *Hub) http.Handler {
 				if !ok {
 					return
 				}
-				if _, err := w.Write(evt.Format()); err != nil {
+				if !deliverEvent(evt) {
 					return
 				}
-				flusher.Flush()
+			default:
+				break drainLoop
+			}
+		}
+
+		// 10. Live Stream Loop
+		for {
+			select {
+			case <-r.Context().Done():
+				return
+			case evt, ok := <-ch:
+				if !ok {
+					return
+				}
+				if !deliverEvent(evt) {
+					return
+				}
 			case t := <-ticker.C:
 				if _, err := w.Write(FormatPing(t)); err != nil {
 					return

@@ -114,8 +114,12 @@ func TestHub_SlowConsumerDrop(t *testing.T) {
 
 	// Fill buffer
 	hub.Publish(EventWidgetUpdate, []byte("1"))
-	// Second publish overflows buffer and should be dropped without blocking
+	// Second publish overflows buffer and terminates subscriber per SPEC-006
 	hub.Publish(EventWidgetUpdate, []byte("2"))
+
+	if hub.SubscriberCount() != 0 {
+		t.Fatalf("expected subscriber to be evicted, count: %d", hub.SubscriberCount())
+	}
 
 	select {
 	case received := <-ch:
@@ -124,6 +128,16 @@ func TestHub_SlowConsumerDrop(t *testing.T) {
 		}
 	case <-time.After(1 * time.Second):
 		t.Fatal("timeout reading from ch")
+	}
+
+	// Next read must return closed channel
+	select {
+	case _, ok := <-ch:
+		if ok {
+			t.Error("expected channel to be closed after slow consumer eviction")
+		}
+	case <-time.After(1 * time.Second):
+		t.Fatal("timeout waiting for closed channel")
 	}
 }
 
