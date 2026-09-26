@@ -80,7 +80,7 @@ type SystemStatusData struct {
 type StateProvider interface {
 	CurrentSnapshot() *config.Snapshot
 	CurrentStatus() config.Status
-	GetWidgetState(widgetID string) (data any, state string, ok bool)
+	GetWidgetState(widgetID string) (data any, state string, timestamp string, ok bool)
 	GetHeaderWeather() (*HeaderWeather, bool)
 	GetVideoState() *VideoStateData
 	GetAudioState() *AudioStateData
@@ -185,15 +185,15 @@ func (p *InMemoryStateProvider) SetWidgetState(widgetID string, data any, state 
 	p.widgetStates[widgetID] = widgetStateEntry{data: data, state: state, timestamp: ts}
 }
 
-// GetWidgetState returns cached state and domain data for a widget instance.
-func (p *InMemoryStateProvider) GetWidgetState(widgetID string) (any, string, bool) {
+// GetWidgetState returns cached state, domain data, and timestamp for a widget instance.
+func (p *InMemoryStateProvider) GetWidgetState(widgetID string) (any, string, string, bool) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	entry, ok := p.widgetStates[widgetID]
 	if !ok {
-		return nil, "", false
+		return nil, "", "", false
 	}
-	return entry.data, entry.state, true
+	return entry.data, entry.state, entry.timestamp, true
 }
 
 // GetWidgetTimestamp returns the recorded timestamp for a widget instance.
@@ -375,12 +375,15 @@ func BuildHydrationBatch(provider StateProvider, idGen *IDGenerator, now time.Ti
 			wState := "healthy"
 			wTimestamp := nowStr
 			if provider != nil {
-				if d, s, ok := provider.GetWidgetState(w.ID); ok {
+				if d, s, ts, ok := provider.GetWidgetState(w.ID); ok {
 					if d != nil {
 						wData = d
 					}
 					if s != "" {
 						wState = s
+					}
+					if ts != "" {
+						wTimestamp = ts
 					}
 				}
 				if tsProvider, ok := provider.(interface{ GetWidgetTimestamp(string) (string, bool) }); ok {

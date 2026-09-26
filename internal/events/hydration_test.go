@@ -43,7 +43,7 @@ func TestInMemoryStateProvider_GettersAndSetters(t *testing.T) {
 		t.Error("expected no weather initially")
 	}
 
-	if _, _, ok := provider.GetWidgetState("unknown"); ok {
+	if _, _, _, ok := provider.GetWidgetState("unknown"); ok {
 		t.Error("expected unknown widget to return ok=false")
 	}
 
@@ -64,9 +64,9 @@ func TestInMemoryStateProvider_GettersAndSetters(t *testing.T) {
 	}
 
 	provider.SetWidgetState("w1", map[string]string{"foo": "bar"}, "healthy", "2026-09-25T10:00:00Z")
-	data, state, ok := provider.GetWidgetState("w1")
-	if !ok || state != "healthy" || data == nil {
-		t.Errorf("widget state setter failed: %v, %v, %v", data, state, ok)
+	data, state, ts, ok := provider.GetWidgetState("w1")
+	if !ok || state != "healthy" || data == nil || ts != "2026-09-25T10:00:00Z" {
+		t.Errorf("widget state setter failed: %v, %v, %v, %v", data, state, ts, ok)
 	}
 	ts, tsOk := provider.GetWidgetTimestamp("w1")
 	if !tsOk || ts != "2026-09-25T10:00:00Z" {

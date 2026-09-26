@@ -23,8 +23,8 @@ func (p *staticSnapshotProvider) CurrentSnapshot() *config.Snapshot {
 	return p.snapshot
 }
 
-func (p *staticSnapshotProvider) GetWidgetState(widgetID string) (any, string, bool) {
-	return map[string]any{}, "healthy", true
+func (p *staticSnapshotProvider) GetWidgetState(widgetID string) (any, string, string, bool) {
+	return map[string]any{}, "healthy", "", true
 }
 
 func (p *staticSnapshotProvider) CurrentStatus() config.Status {

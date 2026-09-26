@@ -21,7 +21,7 @@ type PackageResolver interface {
 // StateSnapshotProvider supplies runtime configuration snapshots and widget states.
 type StateSnapshotProvider interface {
 	CurrentSnapshot() *config.Snapshot
-	GetWidgetState(widgetID string) (data any, state string, ok bool)
+	GetWidgetState(widgetID string) (data any, state string, timestamp string, ok bool)
 	CurrentStatus() config.Status
 }
 
@@ -210,13 +210,23 @@ func (e *Engine) buildContext(widgetID string, w *config.WidgetConfig, pkg *doma
 
 	var wData any = map[string]any{}
 	wState := "healthy"
+	var timestamp string
 	if e.provider != nil {
-		if d, s, ok := e.provider.GetWidgetState(widgetID); ok {
+		if d, s, ts, ok := e.provider.GetWidgetState(widgetID); ok {
 			if d != nil {
 				wData = d
 			}
 			if s != "" {
 				wState = s
+			}
+			timestamp = ts
+		}
+	}
+
+	if timestamp == "" && e.provider != nil {
+		if tsProvider, ok := e.provider.(interface{ GetWidgetTimestamp(string) (string, bool) }); ok {
+			if ts, ok := tsProvider.GetWidgetTimestamp(widgetID); ok && ts != "" {
+				timestamp = ts
 			}
 		}
 	}
@@ -226,14 +236,6 @@ func (e *Engine) buildContext(widgetID string, w *config.WidgetConfig, pkg *doma
 		st := e.provider.CurrentStatus()
 		if st.ConfigStatus == config.ConfigStatusError {
 			online = false
-		}
-	}
-
-	now := e.nowFunc()
-	timestamp := now.UTC().Format(time.RFC3339)
-	if tsProvider, ok := e.provider.(interface{ GetWidgetTimestamp(string) (string, bool) }); ok {
-		if ts, ok := tsProvider.GetWidgetTimestamp(widgetID); ok && ts != "" {
-			timestamp = ts
 		}
 	}
 
