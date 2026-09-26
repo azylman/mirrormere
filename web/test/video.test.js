@@ -535,7 +535,7 @@ test('Video Presentation Mode & Multi-Stream Player with PiP (SPEC-004 §1, §5,
     mgr.exitVideoMode();
   });
 
-  await t.test('Mount Epoch Guard: Cancel async SDP negotiation if state changes mid-flight', async () => {
+  await t.test('Session Cancellation Token: Cancel async SDP negotiation if session is torn down mid-flight', async () => {
     const stage = createMockElement('div', 'video-stage');
     const primarySlot = createMockElement('div', 'video-primary-slot');
 
@@ -575,5 +575,146 @@ test('Video Presentation Mode & Multi-Stream Player with PiP (SPEC-004 §1, §5,
     // Connection remains closed and not resurrected
     assert.strictEqual(createdPC.closed, true);
     assert.strictEqual(primarySlot.children.length, 0);
+  });
+
+  await t.test('Session Cancellation Token: Unchanged stream metadata/player_state updates mid-negotiation do NOT abort negotiation', async () => {
+    const stage = createMockElement('div', 'video-stage');
+    const primarySlot = createMockElement('div', 'video-primary-slot');
+    const pipSlot = createMockElement('div', 'video-pip-slot');
+
+    let resolveFetch = null;
+    const slowFetch = () => new Promise((resolve) => { resolveFetch = resolve; });
+
+    let createdPC = null;
+    class TrackablePC extends MockRTCPeerConnection {
+      constructor() {
+        super();
+        createdPC = this;
+      }
+    }
+
+    const mgr = new VideoPlayerManager({
+      stageElement: stage,
+      primarySlot,
+      pipSlot,
+      RTCPeerConnection: TrackablePC,
+      fetch: slowFetch,
+    });
+
+    // Mount primary stream
+    mgr.handleVideoState({
+      mode: 'video',
+      primary: { id: 'chromecast', stream_url: 'http://cast/webrtc', type: 'webrtc', player_state: 'buffering' },
+    });
+
+    assert.ok(createdPC);
+    assert.strictEqual(createdPC.closed, false);
+
+    // Yield to let negotiation reach in-flight fetch
+    await new Promise((r) => setImmediate(r));
+    assert.ok(resolveFetch, 'slowFetch should be in-flight');
+
+    // Cast-watcher reports transition from buffering to playing mid-negotiation
+    mgr.handleVideoState({
+      mode: 'video',
+      primary: { id: 'chromecast', stream_url: 'http://cast/webrtc', type: 'webrtc', player_state: 'playing' },
+    });
+
+    // Peer connection must NOT be closed because the stream is unchanged
+    assert.strictEqual(createdPC.closed, false);
+
+    // Secondary PiP alert arrives mid-negotiation as well
+    mgr.handleVideoState({
+      mode: 'video',
+      primary: { id: 'chromecast', stream_url: 'http://cast/webrtc', type: 'webrtc', player_state: 'playing' },
+      pip: { id: 'doorbell', stream_url: 'http://doorbell/mjpeg', type: 'mjpeg' },
+    });
+
+    // Primary peer connection still must NOT be closed
+    assert.strictEqual(createdPC.closed, false);
+
+    // Now resolve the in-flight SDP fetch
+    resolveFetch({ ok: true, status: 200, text: async () => 'v=0\r\ns=cast-answer' });
+    await new Promise((r) => setImmediate(r));
+
+    // Negotiation succeeded! Remote description applied and connection remained open
+    assert.strictEqual(createdPC.closed, false);
+    assert.ok(createdPC.remoteDescription);
+    assert.strictEqual(createdPC.remoteDescription.sdp, 'v=0\r\ns=cast-answer');
+
+    mgr.exitVideoMode();
+    assert.strictEqual(createdPC.closed, true);
+  });
+
+  await t.test('Session Cancellation Token: Replaced stream mid-negotiation aborts stale negotiation and mounts new stream', async () => {
+    const stage = createMockElement('div', 'video-stage');
+    const primarySlot = createMockElement('div', 'video-primary-slot');
+
+    let resolveFetch1 = null;
+    let resolveFetch2 = null;
+    const mockFetch = (url) => {
+      if (url === 'http://stream1/webrtc') {
+        return new Promise((r) => { resolveFetch1 = r; });
+      }
+      return new Promise((r) => { resolveFetch2 = r; });
+    };
+
+    const pcs = [];
+    class TrackablePC extends MockRTCPeerConnection {
+      constructor() {
+        super();
+        pcs.push(this);
+      }
+    }
+
+    const mgr = new VideoPlayerManager({
+      stageElement: stage,
+      primarySlot,
+      RTCPeerConnection: TrackablePC,
+      fetch: mockFetch,
+    });
+
+    mgr.handleVideoState({
+      mode: 'video',
+      primary: { id: 'stream1', stream_url: 'http://stream1/webrtc', type: 'webrtc' },
+    });
+
+    assert.strictEqual(pcs.length, 1);
+    const pc1 = pcs[0];
+    assert.strictEqual(pc1.closed, false);
+
+    // Yield to let stream1 negotiation reach in-flight fetch
+    await new Promise((r) => setImmediate(r));
+    assert.ok(resolveFetch1, 'resolveFetch1 should be in-flight');
+
+    // Replace primary with stream2 while stream1 negotiation is in-flight
+    mgr.handleVideoState({
+      mode: 'video',
+      primary: { id: 'stream2', stream_url: 'http://stream2/webrtc', type: 'webrtc' },
+    });
+
+    // Old pc1 must be torn down and cancelled
+    assert.strictEqual(pc1.closed, true);
+    assert.strictEqual(pcs.length, 2);
+    const pc2 = pcs[1];
+    assert.strictEqual(pc2.closed, false);
+
+    // Yield to let stream2 negotiation reach in-flight fetch
+    await new Promise((r) => setImmediate(r));
+    assert.ok(resolveFetch2, 'resolveFetch2 should be in-flight');
+
+    // Resolve stream1 fetch late - must be ignored and not touch anything
+    resolveFetch1({ ok: true, status: 200, text: async () => 'v=0\r\ns=stale-answer' });
+    await new Promise((r) => setImmediate(r));
+    assert.strictEqual(pc1.remoteDescription, null);
+
+    // Resolve stream2 fetch
+    resolveFetch2({ ok: true, status: 200, text: async () => 'v=0\r\ns=stream2-answer' });
+    await new Promise((r) => setImmediate(r));
+    assert.strictEqual(pc2.closed, false);
+    assert.strictEqual(pc2.remoteDescription.sdp, 'v=0\r\ns=stream2-answer');
+
+    mgr.exitVideoMode();
+    assert.strictEqual(pc2.closed, true);
   });
 });
