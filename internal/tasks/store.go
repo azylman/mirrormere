@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"time"
 
@@ -21,6 +22,7 @@ type Store interface {
 	GetTasksSnapshot(ctx context.Context, listID string, showCompleted int) (*TasksSnapshot, error)
 	UpsertList(ctx context.Context, list List) error
 	UpsertItem(ctx context.Context, item ListItem) error
+	SyncList(ctx context.Context, list List, items []ListItem) (bool, error)
 	DeleteList(ctx context.Context, id string) error
 	DeleteItem(ctx context.Context, listID, itemID string) error
 	Close() error
@@ -63,9 +65,7 @@ func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
 	PRAGMA temp_store = MEMORY;
 	`
 	if _, err := db.Exec(initSQL); err != nil {
-		if closeErr := db.Close(); closeErr != nil {
-			return nil, fmt.Errorf("failed to close database after pragma error: %w (pragma error: %w)", closeErr, err)
-		}
+		_ = db.Close() //nolint:errcheck
 		return nil, fmt.Errorf("failed to execute pragmas: %w", err)
 	}
 
@@ -74,9 +74,7 @@ func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
 	}
 
 	if err := store.migrate(); err != nil {
-		if closeErr := db.Close(); closeErr != nil {
-			return nil, fmt.Errorf("failed to close database after migration error: %w (migration error: %w)", closeErr, err)
-		}
+		_ = db.Close() //nolint:errcheck
 		return nil, fmt.Errorf("failed to run migrations: %w", err)
 	}
 
@@ -136,6 +134,10 @@ func (s *SQLiteStore) Close() error {
 func (s *SQLiteStore) GetList(ctx context.Context, id string) (*List, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	return s.getListLocked(ctx, id)
+}
+
+func (s *SQLiteStore) getListLocked(ctx context.Context, id string) (*List, error) {
 	if s.db == nil {
 		return nil, errors.New("database is closed")
 	}
@@ -178,9 +180,7 @@ func (s *SQLiteStore) queryItems(ctx context.Context, query string, args ...any)
 		return nil, fmt.Errorf("failed to query list items: %w", queryErr)
 	}
 	defer func() {
-		if closeErr := rows.Close(); closeErr != nil && err == nil {
-			err = fmt.Errorf("failed to close rows: %w", closeErr)
-		}
+		_ = rows.Close() //nolint:errcheck
 	}()
 
 	items = make([]ListItem, 0)
@@ -238,13 +238,13 @@ func (s *SQLiteStore) GetListItems(ctx context.Context, listID string, includeDo
 //   - showCompleted == 0: excludes completed items entirely
 //   - showCompleted < 0: includes all completed items
 func (s *SQLiteStore) GetTasksSnapshot(ctx context.Context, listID string, showCompleted int) (*TasksSnapshot, error) {
-	list, err := s.GetList(ctx, listID)
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	list, err := s.getListLocked(ctx, listID)
 	if err != nil {
 		return nil, err
 	}
-
-	s.mu.RLock()
-	defer s.mu.RUnlock()
 
 	// 1. Unchecked items ordered by position ASC, created_at ASC
 	uncheckedQuery := `SELECT id, list_id, title, done, section, position, assignee, due_date, created_at, updated_at
@@ -395,6 +395,232 @@ func (s *SQLiteStore) UpsertItem(ctx context.Context, item ListItem) error {
 		return fmt.Errorf("failed to upsert list item: %w", err)
 	}
 	return nil
+}
+
+// SyncList reconciles an external task list and its items into SQLite in a single transaction.
+// Returns (changed=true, nil) if metadata or items changed, or (false, nil) if no changes were detected.
+func (s *SQLiteStore) SyncList(ctx context.Context, list List, items []ListItem) (changed bool, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.db == nil {
+		return false, errors.New("database is closed")
+	}
+
+	tx, txErr := s.db.BeginTx(ctx, nil)
+	if txErr != nil {
+		return false, fmt.Errorf("failed to begin sync transaction: %w", txErr)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			if rollbackErr := tx.Rollback(); rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) && err == nil {
+				err = fmt.Errorf("failed to rollback transaction: %w", rollbackErr)
+			}
+		}
+	}()
+
+	// 1. Check existing list metadata
+	var existingName, existingSource, existingSectionsJSON string
+	row := tx.QueryRowContext(ctx, `SELECT name, source, sections FROM lists WHERE id = ?`, list.ID)
+	scanErr := row.Scan(&existingName, &existingSource, &existingSectionsJSON)
+
+	if errors.Is(scanErr, sql.ErrNoRows) {
+		changed = true
+	} else if scanErr != nil {
+		return false, fmt.Errorf("failed to query existing list: %w", scanErr)
+	} else {
+		var existingSections []string
+		if existingSectionsJSON != "" {
+			if jsonErr := json.Unmarshal([]byte(existingSectionsJSON), &existingSections); jsonErr != nil {
+				existingSections = []string{}
+			}
+		}
+		if existingSections == nil {
+			existingSections = []string{}
+		}
+		incomingSections := list.Sections
+		if incomingSections == nil {
+			incomingSections = []string{}
+		}
+		if existingName != list.Name || existingSource != list.Source || !slices.Equal(existingSections, incomingSections) {
+			changed = true
+		}
+	}
+
+	// 2. Query existing items for this list
+	query := `SELECT id, title, done, section, position, assignee, due_date FROM list_items WHERE list_id = ?`
+	rows, queryErr := tx.QueryContext(ctx, query, list.ID)
+	if queryErr != nil {
+		return false, fmt.Errorf("failed to query existing items: %w", queryErr)
+	}
+
+	type itemState struct {
+		title    string
+		done     bool
+		section  string
+		position int
+		assignee string
+		dueDate  string
+	}
+	existingItems := make(map[string]itemState)
+
+	for rows.Next() {
+		var id, title string
+		var doneInt, pos int
+		var sec, ass, due sql.NullString
+		if scanItemErr := rows.Scan(&id, &title, &doneInt, &sec, &pos, &ass, &due); scanItemErr != nil {
+			_ = rows.Close() //nolint:errcheck
+			return false, fmt.Errorf("failed to scan item state: %w", scanItemErr)
+		}
+		existingItems[id] = itemState{
+			title:    title,
+			done:     doneInt != 0,
+			section:  sec.String,
+			position: pos,
+			assignee: ass.String,
+			dueDate:  due.String,
+		}
+	}
+	if rowsErr := rows.Err(); rowsErr != nil {
+		_ = rows.Close() //nolint:errcheck
+		return false, fmt.Errorf("error reading existing items: %w", rowsErr)
+	}
+	_ = rows.Close() //nolint:errcheck
+
+	// 3. Compare with incoming items
+	incomingIDs := make(map[string]bool, len(items))
+	for _, item := range items {
+		incomingIDs[item.ID] = true
+	}
+
+	if !changed {
+		if len(incomingIDs) != len(existingItems) {
+			changed = true
+		} else {
+			for _, item := range items {
+				prev, exists := existingItems[item.ID]
+				if !exists {
+					changed = true
+					break
+				}
+				var assStr, dueStr string
+				if item.Assignee != nil {
+					assStr = *item.Assignee
+				}
+				if item.DueDate != nil {
+					dueStr = *item.DueDate
+				}
+				if prev.title != item.Title ||
+					prev.done != item.Done ||
+					prev.section != item.Section ||
+					prev.position != item.Position ||
+					prev.assignee != assStr ||
+					prev.dueDate != dueStr {
+					changed = true
+					break
+				}
+			}
+		}
+	}
+
+	// If no changes detected, commit read-only transaction and return
+	if !changed {
+		if commitErr := tx.Commit(); commitErr != nil {
+			return false, fmt.Errorf("failed to commit no-op transaction: %w", commitErr)
+		}
+		committed = true
+		return false, nil
+	}
+
+	// 4. Apply changes
+	now := time.Now().UTC()
+	if list.CreatedAt.IsZero() {
+		list.CreatedAt = now
+	}
+	if list.UpdatedAt.IsZero() {
+		list.UpdatedAt = now
+	}
+	if list.Source == "" {
+		list.Source = "local"
+	}
+	if list.Sections == nil {
+		list.Sections = []string{}
+	}
+	sectionsJSON, jsonErr := json.Marshal(list.Sections)
+	if jsonErr != nil {
+		return false, fmt.Errorf("failed to marshal sections: %w", jsonErr)
+	}
+
+	upsertListSQL := `INSERT INTO lists (id, name, source, sections, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			name = excluded.name,
+			source = excluded.source,
+			sections = excluded.sections,
+			updated_at = excluded.updated_at`
+
+	if _, execErr := tx.ExecContext(ctx, upsertListSQL,
+		list.ID, list.Name, list.Source, string(sectionsJSON),
+		list.CreatedAt.Format(time.RFC3339Nano), list.UpdatedAt.Format(time.RFC3339Nano)); execErr != nil {
+		return false, fmt.Errorf("failed to upsert list: %w", execErr)
+	}
+
+	upsertItemSQL := `INSERT INTO list_items (id, list_id, title, done, section, position, assignee, due_date, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			title = excluded.title,
+			done = excluded.done,
+			section = excluded.section,
+			position = excluded.position,
+			assignee = excluded.assignee,
+			due_date = excluded.due_date,
+			updated_at = excluded.updated_at`
+
+	for _, item := range items {
+		incomingIDs[item.ID] = true
+		if item.CreatedAt.IsZero() {
+			item.CreatedAt = now
+		}
+		if item.UpdatedAt.IsZero() {
+			item.UpdatedAt = now
+		}
+		doneInt := 0
+		if item.Done {
+			doneInt = 1
+		}
+		var secVal, assVal, dueVal any
+		if item.Section != "" {
+			secVal = item.Section
+		}
+		if item.Assignee != nil {
+			assVal = *item.Assignee
+		}
+		if item.DueDate != nil {
+			dueVal = *item.DueDate
+		}
+
+		if _, execErr := tx.ExecContext(ctx, upsertItemSQL,
+			item.ID, list.ID, item.Title, doneInt, secVal, item.Position, assVal, dueVal,
+			item.CreatedAt.Format(time.RFC3339Nano), item.UpdatedAt.Format(time.RFC3339Nano)); execErr != nil {
+			return false, fmt.Errorf("failed to upsert item %s: %w", item.ID, execErr)
+		}
+	}
+
+	// Delete items removed from upstream
+	for existingID := range existingItems {
+		if !incomingIDs[existingID] {
+			if _, delErr := tx.ExecContext(ctx, `DELETE FROM list_items WHERE list_id = ? AND id = ?`, list.ID, existingID); delErr != nil {
+				return false, fmt.Errorf("failed to delete removed item %s: %w", existingID, delErr)
+			}
+		}
+	}
+
+	if commitErr := tx.Commit(); commitErr != nil {
+		return false, fmt.Errorf("failed to commit sync transaction: %w", commitErr)
+	}
+	committed = true
+
+	return true, nil
 }
 
 // DeleteList removes a list and cascades item deletions. Returns ErrListNotFound if no rows affected.
