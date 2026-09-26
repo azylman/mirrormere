@@ -34,9 +34,23 @@ config_schema:
       properties:
         tasklist_id:
           type: string
+        client_id:
+          type: string
+        client_id_env:
+          type: string
+        client_secret:
+          type: string
+        client_secret_env:
+          type: string
+        refresh_token:
+          type: string
+        refresh_token_env:
+          type: string
         token:
           type: string
         token_env:
+          type: string
+        token_url:
           type: string
         base_url:
           type: string

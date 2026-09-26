@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -191,33 +192,50 @@ func (p *TasksProvider) Init(ctx context.Context, config map[string]any, opts In
 			if rawURL, ok := gtasksCfg["base_url"].(string); ok {
 				baseURL = rawURL
 			}
+			tokenURL := ""
+			if rawURL, ok := gtasksCfg["token_url"].(string); ok {
+				tokenURL = rawURL
+			}
 
-			token := opts.GetSecret("gtasks.token")
+			resolveSecret := func(field, envField string) string {
+				val := opts.GetSecret("gtasks." + field)
+				if val == "" {
+					val = opts.GetSecret(field)
+				}
+				if val == "" {
+					if raw, ok := gtasksCfg[field].(string); ok {
+						val = raw
+					}
+				}
+				if val == "" {
+					if envKey, ok := gtasksCfg[envField].(string); ok && envKey != "" {
+						val = opts.GetSecret(envKey)
+						if val == "" {
+							val = os.Getenv(envKey)
+						}
+					}
+				}
+				return strings.TrimSpace(val)
+			}
+
+			clientID := resolveSecret("client_id", "client_id_env")
+			clientSecret := resolveSecret("client_secret", "client_secret_env")
+			refreshToken := resolveSecret("refresh_token", "refresh_token_env")
+
+			token := resolveSecret("token", "token_env")
 			if token == "" {
 				token = opts.Token
 			}
-			if token == "" {
-				if rawTok, tokOk := gtasksCfg["token"].(string); tokOk {
-					token = rawTok
-				}
-			}
-			if token == "" {
-				token = opts.GetSecret("token")
-			}
-			if token == "" {
-				if tokEnv, envOk := gtasksCfg["token_env"].(string); envOk && tokEnv != "" {
-					token = opts.GetSecret(tokEnv)
-					if token == "" {
-						token = os.Getenv(tokEnv)
-					}
-				}
-			}
 
 			ad, err := adapters.NewGTasksAdapter(adapters.GTasksAdapterConfig{
-				TaskListID: taskListID,
-				Token:      token,
-				ListName:   cfg.ListName,
-				BaseURL:    baseURL,
+				TaskListID:   taskListID,
+				Token:        token,
+				ClientID:     clientID,
+				ClientSecret: clientSecret,
+				RefreshToken: refreshToken,
+				TokenURL:     tokenURL,
+				ListName:     cfg.ListName,
+				BaseURL:      baseURL,
 			})
 			if err != nil {
 				return fmt.Errorf("failed to create gtasks adapter: %w", err)
