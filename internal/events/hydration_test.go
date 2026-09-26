@@ -104,6 +104,24 @@ func TestInMemoryStateProvider_GettersAndSetters(t *testing.T) {
 	if provider.GetVoiceState().State != "idle" {
 		t.Error("expected nil voice reset to default")
 	}
+
+	// ScreenRotateData
+	if provider.GetScreenRotateData() != nil {
+		t.Error("expected nil ScreenRotateData initially")
+	}
+	provider.SetScreenRotateData(&ScreenRotateData{
+		CurrentScreen:   2,
+		TotalScreens:    3,
+		IntervalSeconds: 15,
+	})
+	rd := provider.GetScreenRotateData()
+	if rd == nil || rd.CurrentScreen != 2 || rd.TotalScreens != 3 || rd.IntervalSeconds != 15 {
+		t.Errorf("expected ScreenRotateData to be preserved, got %+v", rd)
+	}
+	provider.SetScreenRotateData(nil)
+	if provider.GetScreenRotateData() != nil {
+		t.Error("expected nil ScreenRotateData after nil reset")
+	}
 }
 
 func TestBuildHydrationBatch_OrderingAndPayloads(t *testing.T) {
@@ -308,5 +326,50 @@ display:
 	st := provider.CurrentStatus()
 	if st.ConfigStatus != config.ConfigStatusOK {
 		t.Errorf("expected OK status, got %v", st.ConfigStatus)
+	}
+}
+
+func TestBuildHydrationBatch_WithActiveScreenRotate(t *testing.T) {
+	t.Parallel()
+
+	provider := NewInMemoryStateProvider(nil)
+	provider.SetScreenRotateData(&ScreenRotateData{
+		CurrentScreen:   1,
+		TotalScreens:    3,
+		IntervalSeconds: 45,
+		Widgets: []ScreenRotateWidget{
+			{WidgetID: "clock-main", Origin: [2]int{0, 0}, Dimensions: domain.NewDimension(3, 2)},
+		},
+	})
+
+	idGen := NewIDGenerator()
+	now := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+	batch := BuildHydrationBatch(provider, idGen, now)
+
+	if len(batch) == 0 {
+		t.Fatal("expected non-empty hydration batch")
+	}
+
+	first := batch[0]
+	if first.Type != EventScreenRotate {
+		t.Fatalf("expected first event to be screen.rotate, got %s", first.Type)
+	}
+
+	var rotateData ScreenRotateData
+	if err := json.Unmarshal(first.Data, &rotateData); err != nil {
+		t.Fatalf("failed to decode screen.rotate payload: %v", err)
+	}
+
+	if rotateData.CurrentScreen != 1 {
+		t.Errorf("expected CurrentScreen 1, got %d", rotateData.CurrentScreen)
+	}
+	if rotateData.TotalScreens != 3 {
+		t.Errorf("expected TotalScreens 3, got %d", rotateData.TotalScreens)
+	}
+	if rotateData.IntervalSeconds != 45 {
+		t.Errorf("expected IntervalSeconds 45, got %d", rotateData.IntervalSeconds)
+	}
+	if len(rotateData.Widgets) != 1 || rotateData.Widgets[0].WidgetID != "clock-main" {
+		t.Errorf("unexpected widgets: %+v", rotateData.Widgets)
 	}
 }

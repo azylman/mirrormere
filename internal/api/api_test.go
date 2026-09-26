@@ -65,6 +65,36 @@ func (m *mockServer) GetWidgetAsset(w http.ResponseWriter, r *http.Request, pTyp
 	_, _ = w.Write([]byte("<svg></svg>"))
 }
 
+func (m *mockServer) PostScreenAdvance(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(ScreenNavigationResponse{
+		Status:        "ok",
+		CurrentScreen: 1,
+		TotalScreens:  2,
+	})
+}
+
+func (m *mockServer) PostScreenPause(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(ScreenPauseResponse{
+		Status:        "ok",
+		Paused:        true,
+		CurrentScreen: 0,
+	})
+}
+
+func (m *mockServer) PostScreenSelect(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(ScreenNavigationResponse{
+		Status:        "ok",
+		CurrentScreen: 1,
+		TotalScreens:  2,
+	})
+}
+
 func TestHandler_Endpoints(t *testing.T) {
 	t.Parallel()
 
@@ -188,6 +218,51 @@ func TestHandler_Endpoints(t *testing.T) {
 
 		if rec.Code != http.StatusNotFound {
 			t.Fatalf("expected 404, got %d", rec.Code)
+		}
+	})
+
+	t.Run("POST /api/screen/advance", func(t *testing.T) {
+		t.Parallel()
+		mock := &mockServer{}
+		handler := Handler(mock)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/screen/advance", strings.NewReader(`{"direction":"next"}`))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rec.Code)
+		}
+	})
+
+	t.Run("POST /api/screen/pause", func(t *testing.T) {
+		t.Parallel()
+		mock := &mockServer{}
+		handler := Handler(mock)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/screen/pause", strings.NewReader(`{"paused":true,"duration_seconds":120}`))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rec.Code)
+		}
+	})
+
+	t.Run("POST /api/screen/select", func(t *testing.T) {
+		t.Parallel()
+		mock := &mockServer{}
+		handler := Handler(mock)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/screen/select", strings.NewReader(`{"screen_index":1}`))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rec.Code)
 		}
 	})
 }

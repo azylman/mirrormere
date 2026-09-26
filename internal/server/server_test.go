@@ -391,3 +391,82 @@ func TestServer_EventsHandler(t *testing.T) {
 		t.Fatalf("expected 418 from dynamically registered EventsHandler, got %d", rec3.Code)
 	}
 }
+
+type mockScreenHandler struct {
+	selectCalls  int
+	advanceCalls int
+	pauseCalls   int
+}
+
+func (m *mockScreenHandler) PostScreenSelect(w http.ResponseWriter, r *http.Request) {
+	m.selectCalls++
+	w.WriteHeader(http.StatusOK)
+}
+
+func (m *mockScreenHandler) PostScreenAdvance(w http.ResponseWriter, r *http.Request) {
+	m.advanceCalls++
+	w.WriteHeader(http.StatusOK)
+}
+
+func (m *mockScreenHandler) PostScreenPause(w http.ResponseWriter, r *http.Request) {
+	m.pauseCalls++
+	w.WriteHeader(http.StatusOK)
+}
+
+func TestServer_ScreenHandler(t *testing.T) {
+	t.Parallel()
+
+	// Case 1: Unset ScreenHandler returns 404
+	srv := server.New(server.Config{})
+	if srv.ScreenHandler() != nil {
+		t.Fatal("expected nil ScreenHandler initially")
+	}
+
+	endpoints := []string{"/api/screen/select", "/api/screen/advance", "/api/screen/pause"}
+	for _, ep := range endpoints {
+		req := httptest.NewRequest(http.MethodPost, ep, nil)
+		rec := httptest.NewRecorder()
+		srv.Routes().ServeHTTP(rec, req)
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("expected 404 for %s when ScreenHandler unset, got %d", ep, rec.Code)
+		}
+	}
+
+	// Case 2: Config.ScreenHandler set at creation
+	mockH := &mockScreenHandler{}
+	srvWithHandler := server.New(server.Config{ScreenHandler: mockH})
+	if srvWithHandler.ScreenHandler() == nil {
+		t.Fatal("expected non-nil ScreenHandler")
+	}
+
+	for _, ep := range endpoints {
+		req := httptest.NewRequest(http.MethodPost, ep, nil)
+		rec := httptest.NewRecorder()
+		srvWithHandler.Routes().ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200 for %s, got %d", ep, rec.Code)
+		}
+	}
+
+	if mockH.selectCalls != 1 || mockH.advanceCalls != 1 || mockH.pauseCalls != 1 {
+		t.Errorf("unexpected call counts: select=%d advance=%d pause=%d",
+			mockH.selectCalls, mockH.advanceCalls, mockH.pauseCalls)
+	}
+
+	// Case 3: RegisterScreenHandler dynamically updates handler
+	mockH2 := &mockScreenHandler{}
+	srv.RegisterScreenHandler(mockH2)
+	if srv.ScreenHandler() == nil {
+		t.Fatal("expected non-nil ScreenHandler after registration")
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/screen/select", nil)
+	rec := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 after dynamic registration, got %d", rec.Code)
+	}
+	if mockH2.selectCalls != 1 {
+		t.Errorf("expected mockH2 to receive call, got %d", mockH2.selectCalls)
+	}
+}

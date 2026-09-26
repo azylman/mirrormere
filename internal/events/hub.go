@@ -2,10 +2,13 @@ package events
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/azylman/mirrormere/internal/config"
 )
 
 const (
@@ -14,6 +17,11 @@ const (
 	// DefaultHeartbeatInterval is the SSE keep-alive ping period per SPEC-006 §2.J.
 	DefaultHeartbeatInterval = 15 * time.Second
 )
+
+// RotationCoordinator abstracts screen rotation coordination for configuration reload.
+type RotationCoordinator interface {
+	UpdateConfig(snap *config.Snapshot) ScreenRotateData
+}
 
 // HubConfig configures buffering, timing, and capacity for the SSE event hub.
 type HubConfig struct {
@@ -52,15 +60,16 @@ type subscriber struct {
 
 // Hub coordinates event publishing, ring-buffer retention, and concurrent SSE fan-out.
 type Hub struct {
-	cfg           HubConfig
-	mu            sync.RWMutex
-	subscribers   map[uint64]*subscriber
-	ring          *RingBuffer
-	idGen         *IDGenerator
-	stateProvider StateProvider
-	nextSubID     atomic.Uint64
-	logger        *slog.Logger
-	closed        atomic.Bool
+	cfg                 HubConfig
+	mu                  sync.RWMutex
+	subscribers         map[uint64]*subscriber
+	ring                *RingBuffer
+	idGen               *IDGenerator
+	stateProvider       StateProvider
+	rotationCoordinator RotationCoordinator
+	nextSubID           atomic.Uint64
+	logger              *slog.Logger
+	closed              atomic.Bool
 }
 
 // NewHub constructs a configured Hub instance.
@@ -83,6 +92,20 @@ func NewHub(cfg HubConfig, stateProvider StateProvider, logger *slog.Logger) *Hu
 // StateProvider returns the active state provider.
 func (h *Hub) StateProvider() StateProvider {
 	return h.stateProvider
+}
+
+// SetRotationCoordinator registers a screen rotation coordinator.
+func (h *Hub) SetRotationCoordinator(c RotationCoordinator) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.rotationCoordinator = c
+}
+
+// RotationCoordinator returns the registered screen rotation coordinator.
+func (h *Hub) RotationCoordinator() RotationCoordinator {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.rotationCoordinator
 }
 
 // Config returns the active hub configuration snapshot.
@@ -129,6 +152,16 @@ func (h *Hub) PublishEvent(evt *Event) {
 
 	// 1. Retain in ring buffer
 	h.ring.Add(evt)
+
+	// 2. Update stateProvider if event is screen.rotate
+	if evt.Type == EventScreenRotate && h.stateProvider != nil {
+		var rd ScreenRotateData
+		if err := json.Unmarshal(evt.Data, &rd); err == nil {
+			if isp, ok := h.stateProvider.(*InMemoryStateProvider); ok {
+				isp.SetScreenRotateData(&rd)
+			}
+		}
+	}
 
 	// 2. Snapshot active subscribers under read lock
 	h.mu.RLock()

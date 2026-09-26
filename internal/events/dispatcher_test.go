@@ -195,3 +195,61 @@ func TestHub_DispatchStatus(t *testing.T) {
 		t.Errorf("expected provider status updated to error")
 	}
 }
+
+type mockCoordinator struct {
+	calledWith *config.Snapshot
+}
+
+func (m *mockCoordinator) UpdateConfig(snap *config.Snapshot) ScreenRotateData {
+	m.calledWith = snap
+	return ScreenRotateData{
+		CurrentScreen:   0,
+		TotalScreens:    2,
+		IntervalSeconds: 30,
+	}
+}
+
+func TestHub_DispatchConfigReload_WithCoordinator(t *testing.T) {
+	t.Parallel()
+
+	hub := NewHub(HubConfig{}, nil, nil)
+	defer hub.Close()
+
+	coord := &mockCoordinator{}
+	hub.SetRotationCoordinator(coord)
+	if hub.RotationCoordinator() != coord {
+		t.Error("expected registered RotationCoordinator")
+	}
+
+	snap := &config.Snapshot{
+		Config: &config.Config{},
+	}
+	if err := hub.DispatchConfigReload(snap, nil); err != nil {
+		t.Fatalf("DispatchConfigReload failed: %v", err)
+	}
+
+	if coord.calledWith != snap {
+		t.Errorf("expected coordinator.UpdateConfig called with snapshot")
+	}
+}
+
+func TestHub_PublishEvent_ScreenRotateUpdatesStateProvider(t *testing.T) {
+	t.Parallel()
+
+	provider := NewInMemoryStateProvider(nil)
+	hub := NewHub(HubConfig{}, provider, nil)
+	defer hub.Close()
+
+	rotateData := ScreenRotateData{
+		CurrentScreen:   1,
+		TotalScreens:    2,
+		IntervalSeconds: 20,
+	}
+	dataBytes, _ := json.Marshal(rotateData)
+	hub.Publish(EventScreenRotate, dataBytes)
+
+	rd := provider.GetScreenRotateData()
+	if rd == nil || rd.CurrentScreen != 1 || rd.TotalScreens != 2 || rd.IntervalSeconds != 20 {
+		t.Errorf("expected stateProvider to receive ScreenRotateData from hub.Publish: %+v", rd)
+	}
+}

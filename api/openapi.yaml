@@ -85,14 +85,144 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
-        '404':
-          description: Asset or widget package not found
+  /api/screen/select:
+    post:
+      summary: Select screen by index
+      description: Selects an active screen directly by zero-based index and broadcasts screen.rotate.
+      operationId: postScreenSelect
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScreenSelectRequest'
+      responses:
+        '200':
+          description: Screen selected successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScreenNavigationResponse'
+        '400':
+          description: Invalid screen index
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/screen/advance:
+    post:
+      summary: Advance screen sequentially
+      description: Advances the active screen forward or backward and broadcasts screen.rotate.
+      operationId: postScreenAdvance
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScreenAdvanceRequest'
+      responses:
+        '200':
+          description: Screen advanced successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScreenNavigationResponse'
+        '400':
+          description: Invalid direction
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/screen/pause:
+    post:
+      summary: Pause or resume automatic rotation
+      description: Controls the automatic screen rotation timer loop with optional auto-resume duration.
+      operationId: postScreenPause
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScreenPauseRequest'
+      responses:
+        '200':
+          description: Screen rotation pause state updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScreenPauseResponse'
+        '400':
+          description: Invalid pause request payload
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 components:
   schemas:
+    ScreenSelectRequest:
+      type: object
+      required:
+        - screen_index
+      properties:
+        screen_index:
+          type: integer
+          description: 0-indexed screen number
+          example: 1
+    ScreenAdvanceRequest:
+      type: object
+      properties:
+        direction:
+          type: string
+          enum: [next, prev]
+          default: next
+          description: Direction to advance screen (next or prev)
+          example: next
+    ScreenNavigationResponse:
+      type: object
+      required:
+        - status
+        - current_screen
+        - total_screens
+      properties:
+        status:
+          type: string
+          example: ok
+        current_screen:
+          type: integer
+          example: 1
+        total_screens:
+          type: integer
+          example: 2
+    ScreenPauseRequest:
+      type: object
+      required:
+        - paused
+      properties:
+        paused:
+          type: boolean
+          description: true to pause automatic rotation; false to resume
+          example: true
+        duration_seconds:
+          type: integer
+          minimum: 0
+          description: Seconds to suspend rotation before auto-resuming (0 = indefinitely)
+          example: 120
+    ScreenPauseResponse:
+      type: object
+      required:
+        - status
+        - paused
+        - current_screen
+      properties:
+        status:
+          type: string
+          example: ok
+        paused:
+          type: boolean
+          example: true
+        current_screen:
+          type: integer
+          example: 0
     HealthResponse:
       type: object
       required:

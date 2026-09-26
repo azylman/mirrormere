@@ -86,6 +86,7 @@ type StateProvider interface {
 	GetAudioState() *AudioStateData
 	GetVoiceState() *VoiceStateData
 	GetProvidersStatus() map[string]string
+	GetScreenRotateData() *ScreenRotateData
 }
 
 type widgetStateEntry struct {
@@ -105,6 +106,7 @@ type InMemoryStateProvider struct {
 	audioState   *AudioStateData
 	voiceState   *VoiceStateData
 	providers    map[string]string
+	screenRotate *ScreenRotateData
 }
 
 // NewInMemoryStateProvider constructs an InMemoryStateProvider.
@@ -277,6 +279,24 @@ func (p *InMemoryStateProvider) GetProvidersStatus() map[string]string {
 	return copied
 }
 
+// SetScreenRotateData updates the cached screen rotation data.
+func (p *InMemoryStateProvider) SetScreenRotateData(data *ScreenRotateData) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.screenRotate = data
+}
+
+// GetScreenRotateData returns the active screen rotation data if set.
+func (p *InMemoryStateProvider) GetScreenRotateData() *ScreenRotateData {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	if p.screenRotate == nil {
+		return nil
+	}
+	cp := *p.screenRotate
+	return &cp
+}
+
 // BuildHydrationBatch constructs the authoritative 7-step initial state hydration batch
 // matching the exact sequence mandated by SPEC-006 §3.
 func BuildHydrationBatch(provider StateProvider, idGen *IDGenerator, now time.Time) []*Event {
@@ -290,23 +310,33 @@ func BuildHydrationBatch(provider StateProvider, idGen *IDGenerator, now time.Ti
 
 	// 1. Current Screen Configuration (screen.rotate)
 	var rotateData ScreenRotateData
-	rotateData.CurrentScreen = 0
-	rotateData.TotalScreens = 1
-	rotateData.IntervalSeconds = 30
-	rotateData.Widgets = []ScreenRotateWidget{}
+	var haveRotateData bool
+	if provider != nil {
+		if rd := provider.GetScreenRotateData(); rd != nil {
+			rotateData = *rd
+			haveRotateData = true
+		}
+	}
 
-	if snap != nil && snap.Config != nil {
-		rotateData.IntervalSeconds = snap.Config.Display.Rotation.GetIntervalSeconds()
-		if snap.Layout != nil {
-			rotateData.TotalScreens = snap.Layout.TotalScreens
-			if len(snap.Layout.Screens) > 0 {
-				activeScreen := snap.Layout.Screens[0]
-				for _, pw := range activeScreen.Widgets {
-					rotateData.Widgets = append(rotateData.Widgets, ScreenRotateWidget{
-						WidgetID:   pw.WidgetID,
-						Origin:     pw.Origin,
-						Dimensions: pw.Dimensions,
-					})
+	if !haveRotateData {
+		rotateData.CurrentScreen = 0
+		rotateData.TotalScreens = 1
+		rotateData.IntervalSeconds = 30
+		rotateData.Widgets = []ScreenRotateWidget{}
+
+		if snap != nil && snap.Config != nil {
+			rotateData.IntervalSeconds = snap.Config.Display.Rotation.GetIntervalSeconds()
+			if snap.Layout != nil {
+				rotateData.TotalScreens = snap.Layout.TotalScreens
+				if len(snap.Layout.Screens) > 0 {
+					activeScreen := snap.Layout.Screens[0]
+					for _, pw := range activeScreen.Widgets {
+						rotateData.Widgets = append(rotateData.Widgets, ScreenRotateWidget{
+							WidgetID:   pw.WidgetID,
+							Origin:     pw.Origin,
+							Dimensions: pw.Dimensions,
+						})
+					}
 				}
 			}
 		}
