@@ -85,8 +85,8 @@ services:
   eink-renderer:
     profiles: ["eink"]
     build:
-      context: ..
-      dockerfile: sidecars/eink-renderer/Dockerfile
+      context: ../sidecars/eink-renderer
+      dockerfile: Dockerfile
     image: ghcr.io/azylman/mirrormere-eink-renderer:latest
     container_name: mirrormere-eink-renderer
     restart: unless-stopped

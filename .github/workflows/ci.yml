@@ -36,12 +36,25 @@ jobs:
           sh scripts/verify.sh --full
 
   docker:
-    name: Build & Publish Container Image
+    name: Build & Publish Container Image (${{ matrix.name }})
     needs: [verify]
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: mirrormere
+            context: .
+            file: ./Dockerfile
+          - name: mirrormere-cast-watcher
+            context: .
+            file: ./sidecars/cast-watcher/Dockerfile
+          - name: mirrormere-eink-renderer
+            context: ./sidecars/eink-renderer
+            file: ./sidecars/eink-renderer/Dockerfile
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -67,17 +80,17 @@ jobs:
       - name: Build and Push Docker Image
         uses: docker/build-push-action@v5
         with:
-          context: .
-          file: ./Dockerfile
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
           platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
           tags: |
-            ghcr.io/${{ steps.repo_owner.outputs.owner }}/mirrormere:${{ github.sha }}
-            ghcr.io/${{ steps.repo_owner.outputs.owner }}/mirrormere:latest
+            ghcr.io/${{ steps.repo_owner.outputs.owner }}/${{ matrix.name }}:${{ github.sha }}
+            ghcr.io/${{ steps.repo_owner.outputs.owner }}/${{ matrix.name }}:latest
           labels: |
-            org.opencontainers.image.title=mirrormere
+            org.opencontainers.image.title=${{ matrix.name }}
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.licenses=MIT
-          cache-from: type=gha
-          cache-to: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'type=gha,mode=max' || '' }}
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && format('type=gha,mode=max,scope={0}', matrix.name) || '' }}
