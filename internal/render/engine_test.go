@@ -753,6 +753,9 @@ func TestRenderBuiltinWeatherForecastWidget(t *testing.T) {
 				Widgets: []config.WidgetConfig{
 					{ID: "w-weather-loaded", Type: "weather-forecast", Dimensions: []int{2, 1}},
 					{ID: "w-weather-loading", Type: "weather-forecast", Dimensions: []int{2, 1}},
+					{ID: "w-weather-named", Type: "weather-forecast", Dimensions: []int{2, 1}, Config: map[string]any{"name": "Home"}},
+					{ID: "w-weather-loc-named", Type: "weather-forecast", Dimensions: []int{2, 1}, Config: map[string]any{"location_name": "Ayda's School"}},
+					{ID: "w-weather-loading-named", Type: "weather-forecast", Dimensions: []int{2, 1}, Config: map[string]any{"name": "Home"}},
 				},
 			},
 		},
@@ -781,15 +784,18 @@ func TestRenderBuiltinWeatherForecastWidget(t *testing.T) {
 	p := &mockSnapshotProvider{
 		snapshot: snap,
 		states: map[string]mockState{
-			"w-weather-loaded":  {data: weatherData, state: "healthy", timestamp: "2026-09-26T12:00:00Z"},
-			"w-weather-loading": {data: nil, state: "healthy"},
+			"w-weather-loaded":        {data: weatherData, state: "healthy", timestamp: "2026-09-26T12:00:00Z"},
+			"w-weather-loading":       {data: nil, state: "healthy"},
+			"w-weather-named":         {data: weatherData, state: "healthy", timestamp: "2026-09-26T12:00:00Z"},
+			"w-weather-loc-named":     {data: weatherData, state: "healthy", timestamp: "2026-09-26T12:00:00Z"},
+			"w-weather-loading-named": {data: nil, state: "healthy"},
 		},
 	}
 
 	resolver := &mockResolver{packages: map[string]*domain.Package{"weather-forecast": pkg}}
 	engine := render.NewEngine(resolver, p)
 
-	// 1. Render loaded widget
+	// 1. Render loaded widget without name
 	htmlLoaded, err := engine.RenderWidget(context.Background(), "w-weather-loaded")
 	if err != nil {
 		t.Fatalf("RenderWidget failed on loaded weather: %v", err)
@@ -803,6 +809,9 @@ func TestRenderBuiltinWeatherForecastWidget(t *testing.T) {
 	if !strings.Contains(string(htmlLoaded), "weather-partly-cloudy") {
 		t.Errorf("expected icon token in rendered output, got: %s", htmlLoaded)
 	}
+	if strings.Contains(string(htmlLoaded), "weather-location-name") {
+		t.Errorf("expected no weather-location-name when unconfigured, got: %s", htmlLoaded)
+	}
 
 	// 2. Render loading widget (data: nil)
 	htmlLoading, err := engine.RenderWidget(context.Background(), "w-weather-loading")
@@ -811,6 +820,36 @@ func TestRenderBuiltinWeatherForecastWidget(t *testing.T) {
 	}
 	if !strings.Contains(string(htmlLoading), "Loading weather forecast...") {
 		t.Errorf("expected loading message in rendered output, got: %s", htmlLoading)
+	}
+
+	// 3. Render widget with "name: Home"
+	htmlNamed, err := engine.RenderWidget(context.Background(), "w-weather-named")
+	if err != nil {
+		t.Fatalf("RenderWidget failed on named weather: %v", err)
+	}
+	if !strings.Contains(string(htmlNamed), "weather-location-name") || !strings.Contains(string(htmlNamed), "Home") {
+		t.Errorf("expected 'Home' location name in rendered output, got: %s", htmlNamed)
+	}
+
+	// 4. Render widget with "location_name: Ayda's School"
+	htmlLocNamed, err := engine.RenderWidget(context.Background(), "w-weather-loc-named")
+	if err != nil {
+		t.Fatalf("RenderWidget failed on loc-named weather: %v", err)
+	}
+	if !strings.Contains(string(htmlLocNamed), "weather-location-name") || !strings.Contains(string(htmlLocNamed), "Ayda&#39;s School") && !strings.Contains(string(htmlLocNamed), "Ayda's School") {
+		t.Errorf("expected 'Ayda's School' location name in rendered output, got: %s", htmlLocNamed)
+	}
+
+	// 5. Render loading widget with name
+	htmlLoadingNamed, err := engine.RenderWidget(context.Background(), "w-weather-loading-named")
+	if err != nil {
+		t.Fatalf("RenderWidget failed on loading named weather: %v", err)
+	}
+	if !strings.Contains(string(htmlLoadingNamed), "Home") {
+		t.Errorf("expected 'Home' in loading named weather, got: %s", htmlLoadingNamed)
+	}
+	if !strings.Contains(string(htmlLoadingNamed), "Loading weather forecast...") {
+		t.Errorf("expected loading text in loading named weather, got: %s", htmlLoadingNamed)
 	}
 }
 

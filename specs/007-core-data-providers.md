@@ -159,6 +159,7 @@ display:
       dimensions: [2, 1]
       refresh_interval_seconds: 900 # 15 minutes
       config:
+        name: "Home"
         latitude: 37.8044
         longitude: -122.2712
         units: "imperial" # "imperial" (F, mph, in) or "metric" (C, km/h, mm)
@@ -168,6 +169,7 @@ display:
       dimensions: [2, 1]
       refresh_interval_seconds: 900
       config:
+        name: "Office"
         latitude: 37.7749
         longitude: -122.4194
         units: "imperial"
@@ -185,10 +187,11 @@ Weather codes conform to the World Meteorological Organization (WMO 4501) standa
 
 ```json
 {
-  "widget_id": "local-weather",
+  "widget_id": "home-weather",
   "timestamp": "2026-09-24T22:20:00Z",
   "state": "healthy",
   "data": {
+    "location": "Home",
     "current": {
       "temperature": 68.4,
       "feels_like": 67.8,

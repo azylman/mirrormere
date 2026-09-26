@@ -1,6 +1,19 @@
 <div class="widget-card widget-weather" data-widget-id="{{ .ID }}" data-widget-type="{{ .Type }}" style="grid-column: span {{ .Dimensions.Cols }}; grid-row: span {{ .Dimensions.Rows }};">
+  {{ if or .Config.name .Config.location_name (and .Data .Data.Location) }}
+  <div class="weather-header" style="display: flex; align-items: center; justify-content: space-between; padding-bottom: 6px; margin-bottom: 6px; border-bottom: 1px solid rgba(168, 85, 247, 0.2);">
+    <div style="display: flex; align-items: center; gap: 6px;">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--mm-accent-purple)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 2a8 8 0 0 0-8 8c0 5.25 8 12 8 12s8-6.75 8-12a8 8 0 0 0-8-8z"/>
+        <circle cx="12" cy="10" r="3"/>
+      </svg>
+      <span class="weather-location-name" style="font-size: 0.9rem; font-weight: 700; color: var(--mm-text-primary); letter-spacing: 0.02em;">
+        {{ if .Config.name }}{{ .Config.name }}{{ else if .Config.location_name }}{{ .Config.location_name }}{{ else if and .Data .Data.Location }}{{ .Data.Location }}{{ end }}
+      </span>
+    </div>
+  </div>
+  {{ end }}
   {{ if and .Data .Data.Current }}
-  <div class="weather-container" style="display: flex; flex-direction: column; height: 100%; justify-content: space-between;">
+  <div class="weather-container" style="display: flex; flex-direction: column; flex: 1; justify-content: space-between;">
     <div class="weather-current-row" style="display: flex; align-items: center; justify-content: space-between; gap: 12px;">
       <div class="weather-temp-group" style="display: flex; align-items: baseline; gap: 8px;">
         <span class="weather-temp-main" style="font-family: var(--mm-font-mono); font-size: 2.5rem; font-weight: 700; color: var(--mm-text-primary); text-shadow: 0 0 16px var(--mm-accent-purple-glow);">
@@ -42,7 +55,7 @@
     {{ end }}
   </div>
   {{ else }}
-  <div class="weather-loading" style="display: flex; align-items: center; justify-content: center; height: 100%; color: var(--mm-text-muted); font-size: 0.95rem;">
+  <div class="weather-loading" style="display: flex; align-items: center; justify-content: center; flex: 1; color: var(--mm-text-muted); font-size: 0.95rem;">
     <span>Loading weather forecast...</span>
   </div>
   {{ end }}

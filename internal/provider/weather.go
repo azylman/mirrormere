@@ -60,9 +60,10 @@ func MapWMOCode(code int) (string, string) {
 
 // WeatherSnapshot matches the normalized internal weather schema in SPEC-007 §2.
 type WeatherSnapshot struct {
-	Current WeatherCurrent  `json:"current"`
-	Hourly  []WeatherHourly `json:"hourly"`
-	Daily   []WeatherDaily  `json:"daily"`
+	Location string          `json:"location,omitempty"`
+	Current  WeatherCurrent  `json:"current"`
+	Hourly   []WeatherHourly `json:"hourly"`
+	Daily    []WeatherDaily  `json:"daily"`
 }
 
 // WeatherCurrent encapsulates current ambient observations.
@@ -137,6 +138,7 @@ type WeatherProvider struct {
 	longitude float64
 	units     string
 	timezone  string
+	location  string
 	logger    *slog.Logger
 }
 
@@ -196,10 +198,18 @@ func (p *WeatherProvider) Init(ctx context.Context, config map[string]any, opts 
 		p.baseURL = opts.Endpoint
 	}
 
+	location := ""
+	if n, ok := config["name"].(string); ok && strings.TrimSpace(n) != "" {
+		location = strings.TrimSpace(n)
+	} else if loc, ok := config["location_name"].(string); ok && strings.TrimSpace(loc) != "" {
+		location = strings.TrimSpace(loc)
+	}
+
 	p.latitude = latVal
 	p.longitude = lonVal
 	p.units = units
 	p.timezone = tz
+	p.location = location
 
 	return nil
 }
@@ -266,6 +276,7 @@ func (p *WeatherProvider) Fetch(ctx context.Context) (any, error) {
 	condText, iconToken := MapWMOCode(data.Current.WeatherCode)
 
 	snapshot := WeatherSnapshot{
+		Location: p.location,
 		Current: WeatherCurrent{
 			Temperature:   data.Current.Temperature2m,
 			FeelsLike:     data.Current.ApparentTemperature,
