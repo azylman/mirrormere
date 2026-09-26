@@ -27,6 +27,7 @@
       this.pipSlot = options.pipSlot || (typeof document !== 'undefined' ? document.getElementById('video-pip-slot') : null);
       this.audioManager = options.audioManager || (typeof window !== 'undefined' ? window.audioManager : null);
       this.carousel = options.carousel || (typeof window !== 'undefined' ? window.carousel : null);
+      this.hud = options.hud || null;
       this.fetchFn = options.fetch || (typeof fetch !== 'undefined' ? fetch : null);
       this.PeerConnectionClass = options.RTCPeerConnection || (typeof RTCPeerConnection !== 'undefined' ? RTCPeerConnection : null);
 
@@ -51,8 +52,10 @@
     bindSlotGestures() {
       if (this.pipSlot) {
         this.pipSlot.addEventListener('click', (e) => {
-          e.stopPropagation();
-          this.handleSlotClick('pip');
+          if (!this.isSwapped) {
+            e.stopPropagation();
+            this.handleSlotClick('pip');
+          }
         });
       }
 
@@ -84,6 +87,14 @@
     }
 
     /**
+     * Connect or update HUD controller reference.
+     * @param {Object} hud - VideoHUDController instance.
+     */
+    setHUD(hud) {
+      this.hud = hud;
+    }
+
+    /**
      * Swaps the active presentation and audio focus between primary and PiP streams
      * without reparenting DOM nodes or dropping WebRTC/MSE playback.
      */
@@ -99,6 +110,10 @@
       }
 
       this.syncAudioFocus();
+
+      if (this.hud && typeof this.hud.syncStream === 'function') {
+        this.hud.syncStream();
+      }
     }
 
     /**
@@ -237,6 +252,10 @@
     exitVideoMode() {
       this.currentMode = 'widgets';
       this.isSwapped = false;
+
+      if (this.hud && typeof this.hud.hideHUD === 'function') {
+        this.hud.hideHUD();
+      }
 
       if (this.stage) {
         this.stage.dataset.swapped = 'false';

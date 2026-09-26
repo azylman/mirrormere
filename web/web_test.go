@@ -27,6 +27,7 @@ func TestEmbeddedContent(t *testing.T) {
 		"static/js/audio.js",
 		"static/js/carousel.js",
 		"static/js/video.js",
+		"static/js/video_hud.js",
 		"static/js/display.js",
 	}
 
@@ -86,6 +87,22 @@ func TestVideoPlayer_NodeRunner(t *testing.T) {
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("node video.test.js failed: %v\nOutput:\n%s", err, string(out))
+	}
+}
+
+func TestVideoHUD_NodeRunner(t *testing.T) {
+	t.Parallel()
+
+	nodePath, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node executable not found in PATH; skipping client-side JS video HUD tests")
+	}
+
+	cmd := exec.Command(nodePath, "--test", "test/video_hud.test.js")
+	cmd.Env = append(os.Environ(), "TZ=UTC")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("node video_hud.test.js failed: %v\nOutput:\n%s", err, string(out))
 	}
 }
 
