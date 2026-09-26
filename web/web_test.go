@@ -24,7 +24,9 @@ func TestEmbeddedContent(t *testing.T) {
 	expectedFiles := []string{
 		"static/css/hud.css",
 		"static/js/sse.js",
+		"static/js/audio.js",
 		"static/js/carousel.js",
+		"static/js/video.js",
 		"static/js/display.js",
 	}
 
@@ -70,5 +72,22 @@ func TestSSEClient_ReconnectionReplay_NodeRunner(t *testing.T) {
 		t.Fatalf("node sse.test.js failed: %v\nOutput:\n%s", err, string(out))
 	}
 }
+
+func TestVideoPlayer_NodeRunner(t *testing.T) {
+	t.Parallel()
+
+	nodePath, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node executable not found in PATH; skipping client-side JS video tests")
+	}
+
+	cmd := exec.Command(nodePath, "--test", "test/video.test.js")
+	cmd.Env = append(os.Environ(), "TZ=UTC")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("node video.test.js failed: %v\nOutput:\n%s", err, string(out))
+	}
+}
+
 
 

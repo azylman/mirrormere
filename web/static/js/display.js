@@ -203,6 +203,26 @@
         window.audioManager = new window.MirrormereAudio.AudioManager({ sseClient });
       }
 
+      // 5. Initialize Video Player Manager (SPEC-004 §1, §5, SPEC-010 §1)
+      if (window.MirrormereVideo && window.MirrormereVideo.VideoPlayerManager) {
+        const stageEl = document.getElementById('video-stage');
+        const primaryEl = document.getElementById('video-primary-slot');
+        const pipEl = document.getElementById('video-pip-slot');
+        window.videoManager = new window.MirrormereVideo.VideoPlayerManager({
+          stageElement: stageEl,
+          primarySlot: primaryEl,
+          pipSlot: pipEl,
+          audioManager: window.audioManager,
+          carousel: carousel,
+        });
+
+        sseClient.on('video.state', (data) => {
+          if (window.videoManager) {
+            window.videoManager.handleVideoState(data);
+          }
+        });
+      }
+
       sseClient.on('screen.rotate', (data) => {
         if (carousel) carousel.handleScreenRotate(data);
       });
