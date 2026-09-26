@@ -633,28 +633,35 @@ func TestProviderCoordinator_ProviderPushSubscription(t *testing.T) {
 		t.Fatal("timeout waiting for subscribe setup")
 	}
 
-	// Provider pushes an event via its eventSink
+	// Provider pushes an event with empty WidgetID via its eventSink.
+	// Coordinator worker forwarder must stamp the worker's widgetID ("streaming-tile").
 	mockP.emitPush(provider.WidgetPayload{
-		WidgetID:  "streaming-tile",
+		WidgetID:  "", // Provider leaves empty; coordinator must stamp "streaming-tile"
 		State:     provider.StateHealthy,
 		Data:      map[string]any{"stream_event": "alert_fired"},
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 	})
 
-	// Wait briefly for coordinator's listenEventSink to process
-	var received bool
-	for i := 0; i < 50; i++ {
-		p, ok := coord.Cache().Get("streaming-tile")
-		if ok {
+	// Wait for broadcast event
+	for {
+		evt, ok := broadcaster.waitForPublish(2 * time.Second)
+		if !ok {
+			t.Fatal("timeout waiting for push event broadcast")
+		}
+		var p provider.WidgetPayload
+		if err := json.Unmarshal(evt.Data, &p); err == nil && p.WidgetID == "streaming-tile" {
 			if d, ok := p.Data.(map[string]any); ok && d["stream_event"] == "alert_fired" {
-				received = true
 				break
 			}
 		}
-		time.Sleep(10 * time.Millisecond)
 	}
-	if !received {
+
+	p, ok := coord.Cache().Get("streaming-tile")
+	if !ok {
 		t.Fatal("expected push event to update cache with stream_event")
+	}
+	if d, ok := p.Data.(map[string]any); !ok || d["stream_event"] != "alert_fired" {
+		t.Fatalf("unexpected cached data: %v", p.Data)
 	}
 }
 
@@ -1048,4 +1055,219 @@ func TestProviderCoordinator_InitOptionsFallbacks(t *testing.T) {
 		t.Errorf("expected GetSecret('token') == 'standalone-token', got %q", mockP.initOpts.GetSecret("token"))
 	}
 }
+
+func TestProviderCoordinator_PushDoesNotResurrectPurgedCacheAfterDomainChange(t *testing.T) {
+	t.Parallel()
+
+	broadcaster := &mockBroadcaster{}
+	stateSink := newMockStateSink()
+	registry := provider.NewRegistry()
+
+	mockP1 := newControllableMockProvider()
+	mockP2 := newControllableMockProvider()
+
+	var providerCallCount int
+	var providerMu sync.Mutex
+	registry.Register("dynamic-provider", func() provider.Provider {
+		providerMu.Lock()
+		defer providerMu.Unlock()
+		providerCallCount++
+		if providerCallCount == 1 {
+			return mockP1
+		}
+		return mockP2
+	})
+
+	snap1 := &config.Snapshot{
+		Config: &config.Config{
+			Display: config.DisplayConfig{
+				Widgets: []config.WidgetConfig{
+					{
+						ID:     "tile-dyn",
+						Type:   "dynamic-provider",
+						Config: map[string]any{"city": "Tokyo"},
+					},
+				},
+			},
+		},
+	}
+
+	coord := provider.NewCoordinator(provider.CoordinatorConfig{
+		Registry:    registry,
+		Broadcaster: broadcaster,
+		StateSink:   stateSink,
+	}, snap1)
+	defer func() { _ = coord.Stop() }()
+
+	// Wait for mockP1 initial fetch and subscribe
+	select {
+	case <-mockP1.fetchSignal:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for initial fetch")
+	}
+	select {
+	case <-mockP1.subscribeSignal:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for subscribe")
+	}
+
+	// Verify initial cache entry is healthy
+	p1, ok := coord.Cache().Get("tile-dyn")
+	if !ok || p1.State != provider.StateHealthy {
+		t.Fatalf("expected healthy cache entry, got state %q, ok=%v", p1.State, ok)
+	}
+
+	// Prepare mockP2 to fail on initial fetch (so state remains degraded/error until new push)
+	mockP2.fetchFunc = func(ctx context.Context) (any, error) {
+		return nil, errors.New("upstream connection pending")
+	}
+
+	// Provider 1 emits a push right before reload
+	mockP1.emitPush(provider.WidgetPayload{
+		Data: map[string]any{"city": "Old-Tokyo-Data"},
+	})
+
+	// Reload with domain change (city changed to Paris)
+	snap2 := &config.Snapshot{
+		Config: &config.Config{
+			Display: config.DisplayConfig{
+				Widgets: []config.WidgetConfig{
+					{
+						ID:     "tile-dyn",
+						Type:   "dynamic-provider",
+						Config: map[string]any{"city": "Paris"},
+					},
+				},
+			},
+		},
+	}
+
+	if err := coord.UpdateConfig(snap2); err != nil {
+		t.Fatalf("UpdateConfig failed: %v", err)
+	}
+
+	// Wait for mockP2 initial fetch (which fails with degraded/error)
+	select {
+	case <-mockP2.fetchSignal:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for mockP2 fetch")
+	}
+
+	// Ensure coordinator processed all pending events
+	// The in-flight push from mockP1 must NOT have resurrected the purged entry with old Tokyo data
+	pAfter, ok := coord.Cache().Get("tile-dyn")
+	if !ok {
+		t.Fatal("expected tile-dyn entry in cache")
+	}
+	if pAfter.State == provider.StateHealthy {
+		if d, ok := pAfter.Data.(map[string]any); ok && d["city"] == "Old-Tokyo-Data" {
+			t.Fatal("stale push resurrected purged cache entry with old domain data!")
+		}
+	}
+
+	// Now mockP2 sends a valid push for the new domain
+	select {
+	case <-mockP2.subscribeSignal:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for mockP2 subscribe")
+	}
+
+	mockP2.emitPush(provider.WidgetPayload{
+		Data: map[string]any{"city": "New-Paris-Data"},
+	})
+
+	for {
+		evt, ok := broadcaster.waitForPublish(2 * time.Second)
+		if !ok {
+			t.Fatal("timeout waiting for mockP2 broadcast")
+		}
+		var payload provider.WidgetPayload
+		if err := json.Unmarshal(evt.Data, &payload); err == nil && payload.WidgetID == "tile-dyn" {
+			if d, ok := payload.Data.(map[string]any); ok && d["city"] == "New-Paris-Data" {
+				break
+			}
+		}
+	}
+
+	pFinal, ok := coord.Cache().Get("tile-dyn")
+	if !ok || pFinal.State != provider.StateHealthy {
+		t.Fatalf("expected healthy state after new push, got %v", pFinal)
+	}
+	if d, ok := pFinal.Data.(map[string]any); !ok || d["city"] != "New-Paris-Data" {
+		t.Fatalf("expected New-Paris-Data, got %v", pFinal.Data)
+	}
+}
+
+func TestProviderCoordinator_PushFromRemovedWidgetIgnored(t *testing.T) {
+	t.Parallel()
+
+	broadcaster := &mockBroadcaster{}
+	stateSink := newMockStateSink()
+	registry := provider.NewRegistry()
+
+	mockP := newControllableMockProvider()
+	registry.Register("removable-provider", func() provider.Provider {
+		return mockP
+	})
+
+	snap1 := &config.Snapshot{
+		Config: &config.Config{
+			Display: config.DisplayConfig{
+				Widgets: []config.WidgetConfig{
+					{
+						ID:   "w-remove-me",
+						Type: "removable-provider",
+					},
+				},
+			},
+		},
+	}
+
+	coord := provider.NewCoordinator(provider.CoordinatorConfig{
+		Registry:    registry,
+		Broadcaster: broadcaster,
+		StateSink:   stateSink,
+	}, snap1)
+	defer func() { _ = coord.Stop() }()
+
+	select {
+	case <-mockP.fetchSignal:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for fetch")
+	}
+	select {
+	case <-mockP.subscribeSignal:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for subscribe")
+	}
+
+	// Push before removal
+	mockP.emitPush(provider.WidgetPayload{
+		Data: map[string]any{"stale": true},
+	})
+
+	// Reload with empty widgets
+	snap2 := &config.Snapshot{
+		Config: &config.Config{
+			Display: config.DisplayConfig{
+				Widgets: []config.WidgetConfig{},
+			},
+		},
+	}
+
+	if err := coord.UpdateConfig(snap2); err != nil {
+		t.Fatalf("UpdateConfig failed: %v", err)
+	}
+
+	// Verify w-remove-me is purged and NOT resurrected as phantom entry
+	if _, ok := coord.Cache().Get("w-remove-me"); ok {
+		t.Fatal("expected w-remove-me to be purged from cache and not resurrected")
+	}
+
+	statusMap := coord.Cache().GetStatusMap()
+	if _, ok := statusMap["w-remove-me"]; ok {
+		t.Fatal("phantom status entry for removed widget in cache status map")
+	}
+}
+
 

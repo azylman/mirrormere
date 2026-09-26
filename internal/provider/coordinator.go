@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/azylman/mirrormere/internal/config"
@@ -37,6 +38,7 @@ type CoordinatorConfig struct {
 }
 
 type worker struct {
+	ctx        context.Context
 	widgetID   string
 	widgetType string
 	provider   Provider
@@ -45,6 +47,12 @@ type worker struct {
 	cancel     context.CancelFunc
 	done       chan struct{}
 	subWg      sync.WaitGroup
+	stopped    atomic.Bool
+}
+
+type workerEvent struct {
+	worker  *worker
+	payload WidgetPayload
 }
 
 // ProviderCoordinator orchestrates lifecycle and sync loops for all active widget providers.
@@ -60,7 +68,7 @@ type ProviderCoordinator struct {
 	backoff     *BackoffPolicy
 	workers     map[string]*worker
 	snapshot    *config.Snapshot
-	eventSink   chan WidgetPayload
+	eventSink   chan workerEvent
 	sinkCtx     context.Context
 	sinkCancel  context.CancelFunc
 	sinkWg      sync.WaitGroup
@@ -102,7 +110,7 @@ func NewCoordinator(cfg CoordinatorConfig, initialSnapshot *config.Snapshot) *Pr
 		backoff:     bo,
 		workers:     make(map[string]*worker),
 		snapshot:    initialSnapshot,
-		eventSink:   make(chan WidgetPayload, 64),
+		eventSink:   make(chan workerEvent, 64),
 		sinkCtx:     sinkCtx,
 		sinkCancel:  sinkCancel,
 	}
@@ -203,9 +211,13 @@ func (c *ProviderCoordinator) UpdateConfig(snap *config.Snapshot) error {
 		c.stopWorkerLocked(w.ID)
 		c.cache.Purge(w.ID)
 	}
+	if len(diff.Removed) > 0 && c.stateSink != nil {
+		c.stateSink.SetProvidersStatus(c.cache.GetStatusMap())
+	}
 
 	// 2. Restart or reconfigure modified widgets
 	for _, m := range diff.Modified {
+		c.stopWorkerLocked(m.ID)
 		if m.DomainChange {
 			c.cache.Purge(m.ID)
 			nowStr := c.nowFunc().UTC().Format(time.RFC3339)
@@ -220,7 +232,6 @@ func (c *ProviderCoordinator) UpdateConfig(snap *config.Snapshot) error {
 				Data:      map[string]any{},
 			})
 		}
-		c.stopWorkerLocked(m.ID)
 		if m.NewInstance != nil {
 			c.startSingleWorkerLocked(m.NewInstance, snap)
 		}
@@ -250,6 +261,7 @@ func (c *ProviderCoordinator) Shutdown(ctx context.Context) error {
 
 	workersToStop := make([]*worker, 0, len(c.workers))
 	for _, w := range c.workers {
+		w.stopped.Store(true)
 		workersToStop = append(workersToStop, w)
 	}
 	c.workers = make(map[string]*worker)
@@ -329,6 +341,7 @@ func (c *ProviderCoordinator) startSingleWorkerLocked(w *config.WidgetConfig, sn
 	interval := resolveInterval(w, pkg)
 	workerCtx, workerCancel := context.WithCancel(context.Background())
 	wrk := &worker{
+		ctx:        workerCtx,
 		widgetID:   w.ID,
 		widgetType: w.Type,
 		provider:   p,
@@ -339,11 +352,39 @@ func (c *ProviderCoordinator) startSingleWorkerLocked(w *config.WidgetConfig, sn
 	}
 	c.workers[w.ID] = wrk
 
+	workerSink := make(chan WidgetPayload, 64)
+
+	// Forward pushes from workerSink to coordinator eventSink, stamping the worker's widget ID
+	// and dropping payloads once the worker context is cancelled.
+	wrk.subWg.Add(1)
+	go func() {
+		defer wrk.subWg.Done()
+		for {
+			select {
+			case <-workerCtx.Done():
+				return
+			case payload, ok := <-workerSink:
+				if !ok {
+					return
+				}
+				if workerCtx.Err() != nil {
+					return
+				}
+				payload.WidgetID = wrk.widgetID
+				select {
+				case <-workerCtx.Done():
+					return
+				case c.eventSink <- workerEvent{worker: wrk, payload: payload}:
+				}
+			}
+		}
+	}()
+
 	// Start subscription if provider supports push events
 	wrk.subWg.Add(1)
 	go func() {
 		defer wrk.subWg.Done()
-		if err := p.Subscribe(workerCtx, c.eventSink); err != nil && !errors.Is(err, context.Canceled) {
+		if err := p.Subscribe(workerCtx, workerSink); err != nil && !errors.Is(err, context.Canceled) {
 			c.logger.Warn("provider subscribe error", "widget_id", wrk.widgetID, "error", err)
 		}
 	}()
@@ -358,6 +399,7 @@ func (c *ProviderCoordinator) stopWorkerLocked(widgetID string) {
 		return
 	}
 	delete(c.workers, widgetID)
+	w.stopped.Store(true)
 	w.cancel()
 
 	stopTimer := time.NewTimer(3 * time.Second)
@@ -422,7 +464,7 @@ func (c *ProviderCoordinator) fetchAndRecord(ctx context.Context, w *worker) err
 	defer cancel()
 
 	data, err := w.provider.Fetch(fetchCtx)
-	if ctx.Err() != nil || errors.Is(err, context.Canceled) {
+	if ctx.Err() != nil || errors.Is(err, context.Canceled) || w.stopped.Load() {
 		return err
 	}
 	now := c.nowFunc()
@@ -469,12 +511,15 @@ func (c *ProviderCoordinator) listenEventSink() {
 		select {
 		case <-c.sinkCtx.Done():
 			return
-		case payload, ok := <-c.eventSink:
+		case ev, ok := <-c.eventSink:
 			if !ok {
 				return
 			}
+			if !c.isWorkerActive(ev.worker, ev.payload.WidgetID) {
+				continue
+			}
 			now := c.nowFunc()
-			p, _ := c.cache.RecordPush(payload.WidgetID, payload.Data, now)
+			p, _ := c.cache.RecordPush(ev.payload.WidgetID, ev.payload.Data, now)
 			if c.stateSink != nil {
 				c.stateSink.SetWidgetState(p.WidgetID, p.Data, p.State, p.Timestamp)
 				c.stateSink.SetProvidersStatus(c.cache.GetStatusMap())
@@ -482,6 +527,16 @@ func (c *ProviderCoordinator) listenEventSink() {
 			c.broadcastUpdate(p)
 		}
 	}
+}
+
+func (c *ProviderCoordinator) isWorkerActive(w *worker, widgetID string) bool {
+	if w == nil || w.stopped.Load() {
+		return false
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	current, ok := c.workers[widgetID]
+	return ok && current == w && !w.stopped.Load()
 }
 
 func (c *ProviderCoordinator) broadcastUpdate(payload WidgetPayload) {
