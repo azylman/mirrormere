@@ -94,8 +94,11 @@ func TestLoad_ExampleConfig(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected calendar map, got %+v", calendars[0])
 	}
-	if firstCal["url"] != mockEnv["FAMILY_CALENDAR_URL"] {
-		t.Errorf("expected resolved calendar url %s, got %v", mockEnv["FAMILY_CALENDAR_URL"], firstCal["url"])
+	if _, exists := firstCal["url"]; exists {
+		t.Errorf("expected secret key 'url' NOT to exist in Config map, got %v", firstCal["url"])
+	}
+	if calWidget.Secrets["calendars[0].url"] != mockEnv["FAMILY_CALENDAR_URL"] {
+		t.Errorf("expected resolved secret %s, got %v", mockEnv["FAMILY_CALENDAR_URL"], calWidget.Secrets["calendars[0].url"])
 	}
 }
 
@@ -577,7 +580,7 @@ display:
 	}
 }
 
-func TestValidate_RootHeaderCompatibility(t *testing.T) {
+func TestValidate_DisallowedRootHeader(t *testing.T) {
 	t.Parallel()
 
 	raw := []byte(`
@@ -592,12 +595,9 @@ display:
     - id: test
       type: spacer
 `)
-	cfg, err := config.ParseWithEnv(raw, mockGetenv(nil))
-	if err != nil {
-		t.Fatalf("unexpected error with root header: %v", err)
-	}
-	if len(cfg.Display.Header.Elements) != 2 {
-		t.Errorf("expected 2 elements in display.header mapped from root header, got %d", len(cfg.Display.Header.Elements))
+	_, err := config.ParseWithEnv(raw, mockGetenv(nil))
+	if err == nil || !strings.Contains(err.Error(), "configuration contains disallowed top-level key 'header': header must be configured under display.header") {
+		t.Fatalf("expected disallowed root header error, got %v", err)
 	}
 }
 
@@ -823,8 +823,15 @@ display:
 	}
 	cals := cfg.Display.Widgets[0].Config["calendars"].([]any)
 	calMap := cals[0].(map[string]any)
-	if calMap["url"] != "https://calendar.google.com/feed.ics" {
-		t.Errorf("expected resolved url, got %v", calMap["url"])
+	if _, exists := calMap["url"]; exists {
+		t.Errorf("expected secret key 'url' NOT to be written into Config map, got %v", calMap["url"])
+	}
+	if calMap["url_env"] != "PERSONAL_CAL_URL" {
+		t.Errorf("expected 'url_env' to remain in Config map, got %v", calMap["url_env"])
+	}
+	expectedSecret := "https://calendar.google.com/feed.ics"
+	if cfg.Display.Widgets[0].Secrets["calendars[0].url"] != expectedSecret {
+		t.Errorf("expected secret at 'calendars[0].url' to be %q, got %q", expectedSecret, cfg.Display.Widgets[0].Secrets["calendars[0].url"])
 	}
 
 	// Invalid: non-string value for *_env
@@ -987,8 +994,11 @@ display:
 	if err != nil {
 		t.Fatalf("unexpected error with Load: %v", err)
 	}
-	if cfg.Display.Widgets[0].Config["url"] != "https://system.calendar.url" {
-		t.Errorf("expected resolved url, got %v", cfg.Display.Widgets[0].Config["url"])
+	if _, exists := cfg.Display.Widgets[0].Config["url"]; exists {
+		t.Errorf("expected 'url' NOT to exist in Config map, got %v", cfg.Display.Widgets[0].Config["url"])
+	}
+	if cfg.Display.Widgets[0].Secrets["url"] != "https://system.calendar.url" {
+		t.Errorf("expected resolved secret in Secrets map, got %v", cfg.Display.Widgets[0].Secrets["url"])
 	}
 }
 
@@ -1065,8 +1075,14 @@ display:
 		t.Fatalf("unexpected error resolving nested secrets: %v", err)
 	}
 	subMap := cfg.Display.Widgets[0].Config["sub"].(map[string]any)
-	if subMap["nested_secret"] != "nested-value" {
-		t.Errorf("expected nested_secret resolved, got %v", subMap["nested_secret"])
+	if _, exists := subMap["nested_secret"]; exists {
+		t.Errorf("expected nested_secret NOT to be in Config, got %v", subMap["nested_secret"])
+	}
+	if cfg.Display.Widgets[0].Secrets["sub.nested_secret"] != "nested-value" {
+		t.Errorf("expected Secrets[sub.nested_secret] == 'nested-value', got %q", cfg.Display.Widgets[0].Secrets["sub.nested_secret"])
+	}
+	if cfg.Display.Widgets[0].Secrets["matrix[0][0].matrix_secret"] != "matrix-value" {
+		t.Errorf("expected Secrets[matrix[0][0].matrix_secret] == 'matrix-value', got %q", cfg.Display.Widgets[0].Secrets["matrix[0][0].matrix_secret"])
 	}
 
 	// 5. Handling map[any]any
@@ -1098,6 +1114,12 @@ display:
 	}
 	if err := customCfg.ResolveEnv(mockGetenv(anyEnv)); err != nil {
 		t.Fatalf("unexpected error resolving map[any]any: %v", err)
+	}
+	if customCfg.Display.Widgets[0].Secrets["sub.token"] != "token-123" {
+		t.Errorf("expected Secrets[sub.token] == 'token-123', got %q", customCfg.Display.Widgets[0].Secrets["sub.token"])
+	}
+	if customCfg.Display.Widgets[0].Secrets["slice[0].url"] != "http://example.org" {
+		t.Errorf("expected Secrets[slice[0].url] == 'http://example.org', got %q", customCfg.Display.Widgets[0].Secrets["slice[0].url"])
 	}
 
 	// 6. Error handling in map[any]any

@@ -440,3 +440,45 @@ func TestDefaultLoader(t *testing.T) {
 		t.Fatal("expected DefaultLoader to return non-nil instance")
 	}
 }
+
+func TestLoader_HiddenDirectories(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	builtinDir := filepath.Join(tmpDir, "builtin")
+	customDir := filepath.Join(tmpDir, "custom")
+	if err := os.MkdirAll(builtinDir, 0755); err != nil {
+		t.Fatalf("failed to create builtinDir: %v", err)
+	}
+	if err := os.MkdirAll(customDir, 0755); err != nil {
+		t.Fatalf("failed to create customDir: %v", err)
+	}
+
+	// Create hidden directory in customDir, e.g. .git and .vscode
+	hiddenGit := filepath.Join(customDir, ".git")
+	if err := os.MkdirAll(hiddenGit, 0755); err != nil {
+		t.Fatalf("failed to create .git: %v", err)
+	}
+	hiddenVSCode := filepath.Join(builtinDir, ".vscode")
+	if err := os.MkdirAll(hiddenVSCode, 0755); err != nil {
+		t.Fatalf("failed to create .vscode: %v", err)
+	}
+
+	// Create valid package
+	createPackageFixture(t, builtinDir, "calendar-agenda", standardCalendarManifest, "<div></div>", false)
+
+	loader := widget.NewLoader(builtinDir, customDir)
+	registry, err := loader.Discover()
+	if err != nil {
+		t.Fatalf("unexpected error discovering widgets: %v", err)
+	}
+	if len(registry) != 1 || registry["calendar-agenda"] == nil {
+		t.Errorf("expected only calendar-agenda in registry, got %d entries", len(registry))
+	}
+
+	// LoadPackage with hidden directory should fail
+	if _, err := loader.LoadPackage(".git"); err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("expected error loading hidden package, got %v", err)
+	}
+}
+
