@@ -657,6 +657,38 @@ button, .touch-target {
   letter-spacing: -0.02em;
 }
 
+/* Live Tool Status Badge (Purple Cyberpunk Telemetry Pill) */
+.voice-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: rgba(168, 85, 247, 0.15);
+  border: 1px solid rgba(168, 85, 247, 0.4);
+  border-radius: 9999px;
+  font-family: var(--mm-font-mono);
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--mm-accent-purple);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 260px;
+  box-shadow: 0 0 10px var(--mm-accent-purple-glow);
+  animation: voiceStatusGlow 2s ease-in-out infinite alternate;
+}
+
+@keyframes voiceStatusGlow {
+  0% {
+    border-color: rgba(168, 85, 247, 0.3);
+    box-shadow: 0 0 6px rgba(168, 85, 247, 0.2);
+  }
+  100% {
+    border-color: rgba(168, 85, 247, 0.7);
+    box-shadow: 0 0 12px rgba(168, 85, 247, 0.5);
+  }
+}
+
 /* User Transcript Presentation */
 .voice-transcript {
   font-size: 1.05rem;

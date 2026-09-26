@@ -5,12 +5,14 @@ via openWakeWord, relays interaction states to Mirrormere Core HUD, and streams
 captured speech utterances to the LAN Voice Hub.
 """
 
+import base64
 from collections import deque
 import glob
 import json
 import logging
 import math
 import os
+import shutil
 import signal
 import struct
 import subprocess
@@ -221,22 +223,20 @@ class VoiceDaemon:
 
             if (self.has_spoken and silence_duration >= silence_limit) or elapsed >= self.cfg.max_record_seconds:
                 logger.info(
-                    "Utterance complete (%.2fs, silence=%.2fs). Transitioning to transcribing...",
+                    "Utterance complete (%.2fs, silence=%.2fs). Forwarding to Voice Hub...",
                     elapsed,
                     silence_duration,
                 )
-                self.state = "transcribing"
-                post_voice_state(self.cfg.mirrormere_url, "transcribing")
-
                 self.save_utterance(self.utterance_buffer)
                 if self.cfg.hub_url:
                     self.dispatch_hub_interaction(self.cfg.save_path)
+                else:
+                    post_voice_state(self.cfg.mirrormere_url, "idle")
 
                 self.flush_openwakeword()
                 self.cooldown_until = time.time() + self.cfg.cooldown_seconds
                 self.max_seen = {m: 0.0 for m in self.active_models}
                 self.state = "idle"
-                post_voice_state(self.cfg.mirrormere_url, "idle")
                 self.utterance_buffer = []
                 return "utterance_saved"
 
@@ -257,6 +257,20 @@ class VoiceDaemon:
         except Exception as e:
             logger.error("Failed to save utterance WAV: %s", e)
             return False
+
+    def play_audio(self, audio_data: bytes) -> bool:
+        """Plays audio bytes (MP3 or WAV) using a local audio player."""
+        if not audio_data:
+            return False
+        try:
+            player = shutil.which("pw-play") or shutil.which("aplay") or shutil.which("mpv")
+            if player:
+                p = subprocess.Popen([player, "-"], stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
+                p.communicate(input=audio_data, timeout=30)
+                return p.returncode == 0
+        except Exception as e:
+            logger.debug("Audio playback failed: %s", e)
+        return False
 
     def dispatch_hub_interaction(self, wav_path: str) -> None:
         """Dispatches hub streaming interaction on a background worker thread."""
@@ -318,26 +332,25 @@ class VoiceDaemon:
                         if current_event == "transcript":
                             transcript = payload.get("transcript", "")
                             logger.info("Received transcript: '%s'", transcript)
-                            post_voice_state(self.cfg.mirrormere_url, "thinking", transcript=transcript)
-                        elif current_event == "thinking":
-                            logger.debug("Hub thinking heartbeat pulse received.")
+                        elif current_event == "status":
+                            status_text = payload.get("status", "")
+                            logger.info("Agent tool status: %s", status_text)
                         elif current_event == "reply":
                             reply = payload.get("reply", "")
-                            engine = payload.get("tts_engine", "kokoro")
                             logger.info("Received reply: '%s'", reply)
-                            post_voice_state(
-                                self.cfg.mirrormere_url,
-                                "speaking",
-                                reply=reply,
-                                tts_engine=engine,
-                            )
+                        elif current_event == "audio_chunk":
+                            audio_b64 = payload.get("audio", "")
+                            if audio_b64:
+                                try:
+                                    audio_bytes = base64.b64decode(audio_b64)
+                                    self.play_audio(audio_bytes)
+                                except Exception as e:
+                                    logger.warning("Failed to decode/play audio chunk: %s", e)
                         elif current_event == "done":
                             logger.info("Hub interaction complete.")
-                            post_voice_state(self.cfg.mirrormere_url, "idle")
                             break
                         elif current_event == "error":
                             logger.warning("Hub returned error: %s", payload.get("error"))
-                            post_voice_state(self.cfg.mirrormere_url, "error")
                             break
         except Exception as e:
             logger.info("Voice Hub stream connection failed: %s", e)

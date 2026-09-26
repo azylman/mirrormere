@@ -436,6 +436,12 @@ func (m *mockServer) PostVoiceState(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (m *mockServer) PostVoiceInteract(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte("event: state\ndata: {\"state\":\"transcribing\"}\n\n"))
+}
+
 func TestHandler_Endpoints(t *testing.T) {
 	t.Parallel()
 
@@ -1034,6 +1040,22 @@ func TestHandler_Endpoints(t *testing.T) {
 			t.Fatalf("expected 400, got %d", recBad.Code)
 		}
 	})
+
+	t.Run("POST /api/voice/interact", func(t *testing.T) {
+		t.Parallel()
+		mock := &mockServer{}
+		handler := Handler(mock)
+
+		body := "--boundary\r\nContent-Disposition: form-data; name=\"audio\"; filename=\"test.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF....\r\n--boundary--\r\n"
+		req := httptest.NewRequest(http.MethodPost, "/api/voice/interact", strings.NewReader(body))
+		req.Header.Set("Content-Type", "multipart/form-data; boundary=boundary")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rec.Code)
+		}
+	})
 }
 
 func TestHandlerWithOptions_CustomMuxAndBaseURL(t *testing.T) {
@@ -1202,6 +1224,55 @@ func TestServerInterfaceWrapper_ParameterErrors(t *testing.T) {
 		}
 		if !mwCalled {
 			t.Fatal("expected middleware to be called")
+		}
+	})
+
+	t.Run("Middlewares executed for Voice and Video endpoints", func(t *testing.T) {
+		t.Parallel()
+		mock := &mockServer{}
+		var mwCalls int
+		wrapper := ServerInterfaceWrapper{
+			Handler: mock,
+			HandlerMiddlewares: []MiddlewareFunc{
+				func(next http.Handler) http.Handler {
+					return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						mwCalls++
+						next.ServeHTTP(w, r)
+					})
+				},
+			},
+		}
+
+		req := httptest.NewRequest(http.MethodPost, "/api/voice/interact", nil)
+		rec := httptest.NewRecorder()
+		wrapper.PostVoiceInteract(rec, req)
+
+		req = httptest.NewRequest(http.MethodPost, "/api/voice/state", strings.NewReader(`{"state":"idle"}`))
+		rec = httptest.NewRecorder()
+		wrapper.PostVoiceState(rec, req)
+
+		req = httptest.NewRequest(http.MethodPost, "/api/video/action", strings.NewReader(`{"id":"chromecast","action":"play"}`))
+		rec = httptest.NewRecorder()
+		wrapper.PostVideoAction(rec, req)
+
+		req = httptest.NewRequest(http.MethodPost, "/api/video/dismiss", strings.NewReader(`{"id":"chromecast"}`))
+		rec = httptest.NewRecorder()
+		wrapper.PostVideoDismiss(rec, req)
+
+		req = httptest.NewRequest(http.MethodGet, "/api/video/state", nil)
+		rec = httptest.NewRecorder()
+		wrapper.GetVideoState(rec, req)
+
+		req = httptest.NewRequest(http.MethodPost, "/api/video/state", strings.NewReader(`{"id":"chromecast","player_state":"playing"}`))
+		rec = httptest.NewRecorder()
+		wrapper.PostVideoState(rec, req)
+
+		req = httptest.NewRequest(http.MethodPost, "/api/video/trigger", strings.NewReader(`{"id":"chromecast","stream_url":"http://127.0.0.1/cast"}`))
+		rec = httptest.NewRecorder()
+		wrapper.PostVideoTrigger(rec, req)
+
+		if mwCalls != 7 {
+			t.Fatalf("expected 7 middleware calls, got %d", mwCalls)
 		}
 	})
 

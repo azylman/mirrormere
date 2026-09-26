@@ -2,6 +2,7 @@ import io
 import math
 import os
 import struct
+import subprocess
 import tempfile
 import time
 import unittest
@@ -165,8 +166,14 @@ class TestVoiceDaemon(unittest.TestCase):
             b"event: transcript\r\n",
             b'data: {"transcript": "is the garage door open"}\r\n',
             b"\r\n",
+            b"event: status\r\n",
+            b'data: {"status": "Checking Home Assistant..."}\r\n',
+            b"\r\n",
             b"event: reply\r\n",
-            b'data: {"reply": "The garage door is closed", "tts_engine": "kokoro"}\r\n',
+            b'data: {"reply": "The garage door is closed"}\r\n',
+            b"\r\n",
+            b"event: audio_chunk\r\n",
+            b'data: {"chunk_index": 0, "audio": "ZmFrZS1hdWRpby1ieXRlcw=="}\r\n',
             b"\r\n",
             b"event: done\r\n",
             b"data: {}\r\n",
@@ -182,10 +189,28 @@ class TestVoiceDaemon(unittest.TestCase):
             f.write(b"RIFFdummyWAVE")
 
         daemon = VoiceDaemon(self.cfg, model=MockModel())
-        daemon._hub_stream_worker(self.save_path)
+        with patch.object(daemon, "play_audio") as mock_play:
+            daemon._hub_stream_worker(self.save_path)
+            mock_play.assert_called_once_with(b"fake-audio-bytes")
 
-        # Verified mock_urlopen called for Hub POST and Core state posts
-        self.assertGreaterEqual(mock_urlopen.call_count, 3)
+        # Verified mock_urlopen called for Hub POST
+        self.assertEqual(mock_urlopen.call_count, 1)
+
+    def test_play_audio_empty(self):
+        daemon = VoiceDaemon(self.cfg, model=MockModel())
+        self.assertFalse(daemon.play_audio(b""))
+
+    @patch("clients.voice.client.shutil.which", return_value="/usr/bin/pw-play")
+    @patch("clients.voice.client.subprocess.Popen")
+    def test_play_audio_success(self, mock_popen, mock_which):
+        proc = MagicMock()
+        proc.communicate.return_value = (b"", b"")
+        proc.returncode = 0
+        mock_popen.return_value = proc
+
+        daemon = VoiceDaemon(self.cfg, model=MockModel())
+        self.assertTrue(daemon.play_audio(b"fake-mp3-bytes"))
+        mock_popen.assert_called_once_with(["/usr/bin/pw-play", "-"], stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
 
     def test_stop_signal(self):
         mock_model = MockModel()

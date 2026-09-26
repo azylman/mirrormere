@@ -92,10 +92,14 @@ function createVoiceDOM() {
   const voiceLabel = createMockElement('span', 'voice-label');
   const voiceTranscript = createMockElement('div', 'voice-transcript');
 
+  const voiceStatus = createMockElement('span', 'voice-status');
+  voiceStatus.style.display = 'none';
+
   voiceIndicator.appendChild(voicePulseRing);
   voiceIndicator.appendChild(voiceDot);
   voiceIndicator.appendChild(voiceLabel);
   headerVoice.appendChild(voiceIndicator);
+  headerVoice.appendChild(voiceStatus);
   headerVoice.appendChild(voiceTranscript);
 
   const toastDock = createMockElement('div', 'voice-toast-dock');
@@ -113,6 +117,7 @@ function createVoiceDOM() {
     voiceDot,
     voicePulseRing,
     voiceLabel,
+    voiceStatus,
     voiceTranscript,
     toastDock,
     toast,
@@ -484,6 +489,58 @@ test('Touch Kiosk Voice HUD, Caption Toasts & Dynamic Video Ducking (SPEC-010 §
     // Malformed JSON should not throw
     addListeners['voice.state']({ data: '{invalid json' });
     assert.strictEqual(c2.currentState, 'thinking');
+  });
+
+  await t.test('renders live tool status telemetry in thinking/transcribing and clears on speaking/idle', () => {
+    const dom = createVoiceDOM();
+    const audioManager = new AudioManager({ initialVolume: 75 });
+    const controller = new VoiceHUDController({
+      ...dom,
+      headerVoiceElement: dom.headerVoice,
+      voiceIndicatorElement: dom.voiceIndicator,
+      voiceStatusElement: dom.voiceStatus,
+      voiceTranscriptElement: dom.voiceTranscript,
+      audioManager,
+      safetyTimeoutMs: 1000,
+    });
+
+    // Initial state: status badge hidden
+    assert.strictEqual(dom.voiceStatus.style.display, 'none');
+
+    // 1. Thinking with live tool status update
+    controller.handleVoiceState({
+      state: 'thinking',
+      transcript: 'Turn on kitchen lights',
+      status: '⚡ Checking Home Assistant...',
+    });
+
+    assert.strictEqual(dom.voiceStatus.style.display, '');
+    assert.strictEqual(dom.voiceStatus.textContent, '⚡ Checking Home Assistant...');
+    assert.strictEqual(controller.currentStatus, '⚡ Checking Home Assistant...');
+
+    // 2. Subsequent status update within thinking phase
+    controller.handleVoiceState({
+      state: 'thinking',
+      status: '💡 Turning on 3 lights...',
+    });
+    assert.strictEqual(dom.voiceStatus.textContent, '💡 Turning on 3 lights...');
+    assert.strictEqual(dom.voiceStatus.style.display, '');
+
+    // 3. Transition to speaking clears status badge
+    controller.handleVoiceState({
+      state: 'speaking',
+      reply: 'Kitchen lights are now on.',
+      tts_engine: 'kokoro',
+    });
+    assert.strictEqual(dom.voiceStatus.style.display, 'none');
+    assert.strictEqual(dom.voiceStatus.textContent, '');
+    assert.strictEqual(controller.currentStatus, null);
+
+    // 4. Entering listening clears status badge
+    controller.handleVoiceState({
+      state: 'listening',
+    });
+    assert.strictEqual(dom.voiceStatus.style.display, 'none');
   });
 
   await t.test('browser global window.MirrormereVoice binding', () => {

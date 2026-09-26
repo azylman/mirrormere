@@ -204,9 +204,14 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 	defer videoCoord.Close()
 	videoHandler := server.NewDefaultVideoHandler(videoCoord)
 
-	// 8. Voice Coordinator & Handler
+	// 8. Voice Coordinator, Hub & Handler
 	voiceCoord := voice.NewCoordinator(hub, stateProvider)
-	voiceHandler := server.NewDefaultVoiceHandler(voiceCoord)
+	var voiceHubCfg *config.VoiceHubConfig
+	if snapshot != nil && snapshot.Config != nil {
+		voiceHubCfg = snapshot.Config.VoiceHub
+	}
+	voiceHub := voice.NewHub(voiceHubCfg, voiceCoord)
+	voiceHandler := server.NewDefaultVoiceHandler(voiceCoord, voiceHub)
 
 	// 9. Rotation Coordinator & Screen Handler
 	rotationCoord := rotation.NewCoordinator(rotation.Config{

@@ -52,6 +52,7 @@ type Coordinator struct {
 	transcript *string
 	reply      *string
 	ttsEngine  *string
+	status     *string
 	hub        *events.Hub
 	sink       VoiceStateSink
 }
@@ -84,38 +85,68 @@ func (c *Coordinator) GetState() events.VoiceStateData {
 		Transcript: c.transcript,
 		Reply:      c.reply,
 		TTSEngine:  c.ttsEngine,
+		Status:     c.status,
 	}
 }
 
-// SetState updates the voice pipeline state and broadcasts voice.state.
+// SetState updates the voice pipeline state and broadcasts voice.state (clearing status).
 func (c *Coordinator) SetState(state string, transcript, reply, ttsEngine *string) (events.VoiceStateData, error) {
+	return c.SetFullState(state, transcript, reply, ttsEngine, nil)
+}
+
+// SetFullState updates the complete voice pipeline state including intermediate status.
+func (c *Coordinator) SetFullState(state string, transcript, reply, ttsEngine, status *string) (events.VoiceStateData, error) {
 	if !IsValidState(state) {
 		return events.VoiceStateData{}, ErrInvalidState
 	}
 
+	return c.updateState(state, transcript, reply, ttsEngine, status), nil
+}
+
+// Transition updates the voice pipeline state without validating string inputs (used internally for known constants).
+func (c *Coordinator) Transition(state string, transcript, reply, ttsEngine, status *string) events.VoiceStateData {
+	return c.updateState(state, transcript, reply, ttsEngine, status)
+}
+
+// SetStatus updates intermediate tool/thinking status without altering state or transcript.
+func (c *Coordinator) SetStatus(status *string) events.VoiceStateData {
 	c.mu.Lock()
-	c.state = state
-	c.transcript = transcript
-	c.reply = reply
-	c.ttsEngine = ttsEngine
+	c.status = status
 	data := events.VoiceStateData{
 		State:      c.state,
 		Transcript: c.transcript,
 		Reply:      c.reply,
 		TTSEngine:  c.ttsEngine,
+		Status:     c.status,
 	}
 	c.mu.Unlock()
 
 	c.publishState(data)
-	return data, nil
+	return data
 }
 
 // Reset resets the coordinator to default idle state and broadcasts voice.state.
 func (c *Coordinator) Reset() events.VoiceStateData {
-	data, err := c.SetState(StateIdle, nil, nil, nil)
-	if err != nil {
-		return events.VoiceStateData{State: StateIdle}
+	return c.updateState(StateIdle, nil, nil, nil, nil)
+}
+
+func (c *Coordinator) updateState(state string, transcript, reply, ttsEngine, status *string) events.VoiceStateData {
+	c.mu.Lock()
+	c.state = state
+	c.transcript = transcript
+	c.reply = reply
+	c.ttsEngine = ttsEngine
+	c.status = status
+	data := events.VoiceStateData{
+		State:      c.state,
+		Transcript: c.transcript,
+		Reply:      c.reply,
+		TTSEngine:  c.ttsEngine,
+		Status:     c.status,
 	}
+	c.mu.Unlock()
+
+	c.publishState(data)
 	return data
 }
 

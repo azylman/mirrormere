@@ -1,8 +1,14 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
 	"net/http"
+	"sync"
 
 	"github.com/azylman/mirrormere/internal/api"
 	"github.com/azylman/mirrormere/internal/events"
@@ -15,14 +21,21 @@ type VoiceCoordinator interface {
 	SetState(state string, transcript, reply, ttsEngine *string) (events.VoiceStateData, error)
 }
 
-// DefaultVoiceHandler serves OpenAPI /api/voice/state endpoint.
-type DefaultVoiceHandler struct {
-	coord VoiceCoordinator
+// VoiceHub abstracts voice interaction pipeline coordination.
+type VoiceHub interface {
+	IsEnabled() bool
+	Interact(ctx context.Context, audio io.Reader, nodeID, sessionID string, sink voice.SSEEventSink) error
 }
 
-// NewDefaultVoiceHandler constructs a DefaultVoiceHandler backed by coord.
-func NewDefaultVoiceHandler(coord VoiceCoordinator) *DefaultVoiceHandler {
-	return &DefaultVoiceHandler{coord: coord}
+// DefaultVoiceHandler serves OpenAPI /api/voice/state and /api/voice/interact endpoints.
+type DefaultVoiceHandler struct {
+	coord VoiceCoordinator
+	hub   VoiceHub
+}
+
+// NewDefaultVoiceHandler constructs a DefaultVoiceHandler backed by coord and hub.
+func NewDefaultVoiceHandler(coord VoiceCoordinator, hub VoiceHub) *DefaultVoiceHandler {
+	return &DefaultVoiceHandler{coord: coord, hub: hub}
 }
 
 // PostVoiceState handles POST /api/voice/state.
@@ -70,6 +83,107 @@ func (h *DefaultVoiceHandler) PostVoiceState(w http.ResponseWriter, r *http.Requ
 		Status: "ok",
 	}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+// PostVoiceInteract handles POST /api/voice/interact.
+func (h *DefaultVoiceHandler) PostVoiceInteract(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Accept")
+
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", "POST, OPTIONS")
+		writeVoiceError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	if h.hub == nil || !h.hub.IsEnabled() {
+		writeVoiceError(w, http.StatusServiceUnavailable, "voice hub is disabled")
+		return
+	}
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeVoiceError(w, http.StatusInternalServerError, "streaming unsupported")
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, 10<<20)
+
+	if err := r.ParseMultipartForm(10 << 20); err != nil {
+		writeVoiceError(w, http.StatusBadRequest, "invalid multipart form: "+err.Error())
+		return
+	}
+	if r.MultipartForm != nil {
+		defer func() {
+			if removeErr := r.MultipartForm.RemoveAll(); removeErr != nil {
+				slog.Debug("failed to clean up multipart form", "error", removeErr)
+			}
+		}()
+	}
+
+	file, _, err := r.FormFile("audio")
+	if err != nil {
+		writeVoiceError(w, http.StatusBadRequest, "missing required 'audio' form field")
+		return
+	}
+	defer file.Close()
+
+	nodeID := r.FormValue("node_id")
+	sessionID := r.FormValue("session_id")
+
+	var wroteHeader bool
+	var sinkMu sync.Mutex
+
+	sink := func(event string, data any) error {
+		sinkMu.Lock()
+		defer sinkMu.Unlock()
+
+		if !wroteHeader {
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.Header().Set("Cache-Control", "no-cache")
+			w.Header().Set("Connection", "keep-alive")
+			w.Header().Set("X-Accel-Buffering", "no")
+			w.WriteHeader(http.StatusOK)
+			wroteHeader = true
+		}
+
+		payload, err := json.Marshal(data)
+		if err != nil {
+			return err
+		}
+
+		if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, payload); err != nil {
+			return err
+		}
+		flusher.Flush()
+		return nil
+	}
+
+	if err := h.hub.Interact(r.Context(), file, nodeID, sessionID, sink); err != nil {
+		sinkMu.Lock()
+		alreadyWrote := wroteHeader
+		sinkMu.Unlock()
+
+		if !alreadyWrote {
+			switch {
+			case errors.Is(err, voice.ErrHubDisabled):
+				writeVoiceError(w, http.StatusServiceUnavailable, err.Error())
+			case errors.Is(err, voice.ErrInteractionBusy):
+				writeVoiceError(w, http.StatusConflict, err.Error())
+			case errors.Is(err, voice.ErrInvalidAudio):
+				writeVoiceError(w, http.StatusBadRequest, err.Error())
+			default:
+				writeVoiceError(w, http.StatusInternalServerError, err.Error())
+			}
+			return
+		}
 	}
 }
 

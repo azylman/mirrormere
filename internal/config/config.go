@@ -18,8 +18,9 @@ var interpolationRegex = regexp.MustCompile(`\$\{([^}]+)\}`)
 
 // Config represents the root configuration schema of Mirrormere.
 type Config struct {
-	Timezone string        `yaml:"timezone"`
-	Display  DisplayConfig `yaml:"display"`
+	Timezone string          `yaml:"timezone"`
+	Display  DisplayConfig   `yaml:"display"`
+	VoiceHub *VoiceHubConfig `yaml:"voice_hub,omitempty"`
 
 	location *time.Location
 }
@@ -82,6 +83,55 @@ type WidgetConfig struct {
 	Token                  string            `yaml:"-"` // Resolved secret populated from TokenEnv
 	Secrets                map[string]string `yaml:"-"` // Resolved secrets populated from *_env keys in Config
 	Config                 map[string]any    `yaml:"config,omitempty"`
+}
+
+// VoiceHubConfig configures the LAN voice pipeline coordinator.
+type VoiceHubConfig struct {
+	Enabled             bool   `yaml:"enabled"`
+	STTURL              string `yaml:"stt_url,omitempty"`
+	BrainURL            string `yaml:"brain_url,omitempty"`
+	BrainTimeoutSeconds *int   `yaml:"brain_timeout_seconds,omitempty"`
+	TTSURL              string `yaml:"tts_url,omitempty"`
+	TTSVoice            string `yaml:"tts_voice,omitempty"`
+	TTSModel            string `yaml:"tts_model,omitempty"`
+	TTSTimeoutSeconds   *int   `yaml:"tts_timeout_seconds,omitempty"`
+}
+
+// IsEnabled reports whether the voice hub is enabled.
+func (vh *VoiceHubConfig) IsEnabled() bool {
+	return vh != nil && vh.Enabled
+}
+
+// GetBrainTimeoutSeconds returns the brain deliberation timeout in seconds (default: 30).
+func (vh *VoiceHubConfig) GetBrainTimeoutSeconds() int {
+	if vh == nil || vh.BrainTimeoutSeconds == nil || *vh.BrainTimeoutSeconds <= 0 {
+		return 30
+	}
+	return *vh.BrainTimeoutSeconds
+}
+
+// GetTTSTimeoutSeconds returns the TTS synthesis timeout in seconds (default: 10).
+func (vh *VoiceHubConfig) GetTTSTimeoutSeconds() int {
+	if vh == nil || vh.TTSTimeoutSeconds == nil || *vh.TTSTimeoutSeconds <= 0 {
+		return 10
+	}
+	return *vh.TTSTimeoutSeconds
+}
+
+// GetTTSVoice returns the voice model identifier (default: "af_bella").
+func (vh *VoiceHubConfig) GetTTSVoice() string {
+	if vh == nil || vh.TTSVoice == "" {
+		return "af_bella"
+	}
+	return vh.TTSVoice
+}
+
+// GetTTSModel returns the TTS engine/model identifier (default: "kokoro").
+func (vh *VoiceHubConfig) GetTTSModel() string {
+	if vh == nil || vh.TTSModel == "" {
+		return "kokoro"
+	}
+	return vh.TTSModel
 }
 
 // Location returns the validated IANA time.Location pointer for the household.
@@ -249,6 +299,8 @@ func validateStructuralKeys(root *yaml.Node) error {
 			return fmt.Errorf("line %d: configuration contains disallowed top-level key 'header': header must be configured under display.header", keyNode.Line)
 		case "timezone":
 			// Canonical top-level key
+		case "voice_hub":
+			// Canonical top-level key
 		case "display":
 			if valNode.Kind == yaml.MappingNode {
 				if err := validateDisplayKeys(valNode); err != nil {
@@ -411,6 +463,16 @@ func (c *Config) Validate() error {
 			if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 				return fmt.Errorf("widget '%s': invalid endpoint URL '%s' (must be http:// or https:// with host)", w.ID, w.Endpoint)
 			}
+		}
+	}
+
+	// 6. VoiceHub validation
+	if vh := c.VoiceHub; vh != nil && vh.Enabled {
+		if vh.BrainTimeoutSeconds != nil && *vh.BrainTimeoutSeconds <= 0 {
+			return fmt.Errorf("voice_hub brain_timeout_seconds must be positive (got %d)", *vh.BrainTimeoutSeconds)
+		}
+		if vh.TTSTimeoutSeconds != nil && *vh.TTSTimeoutSeconds <= 0 {
+			return fmt.Errorf("voice_hub tts_timeout_seconds must be positive (got %d)", *vh.TTSTimeoutSeconds)
 		}
 	}
 
