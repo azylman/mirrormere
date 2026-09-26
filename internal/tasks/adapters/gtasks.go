@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -120,6 +121,7 @@ type gtasksItem struct {
 	Status    string `json:"status"` // "needsAction" or "completed"
 	Due       string `json:"due"`    // RFC 3339 timestamp e.g. "2026-09-27T00:00:00.000Z"
 	Position  string `json:"position"`
+	Parent    string `json:"parent"`
 	Notes     string `json:"notes"`
 	Deleted   bool   `json:"deleted"`
 	Hidden    bool   `json:"hidden"`
@@ -197,16 +199,22 @@ func (a *GTasksAdapter) FetchList(ctx context.Context) (*tasks.List, []tasks.Lis
 		seenTokens[pageToken] = true
 	}
 
-	// 3. Map into tasks.ListItem
-	now := time.Now().UTC()
-	items := make([]tasks.ListItem, 0, len(allGTasks))
-
+	// 3. Filter soft-deleted items and sort hierarchically by parent and position
+	activeItems := make([]gtasksItem, 0, len(allGTasks))
 	for _, gt := range allGTasks {
 		// Skip soft-deleted items per Google Tasks protocol
 		if gt.Deleted {
 			continue
 		}
+		activeItems = append(activeItems, gt)
+	}
 
+	orderedGTasks := orderGTasks(activeItems)
+
+	now := time.Now().UTC()
+	items := make([]tasks.ListItem, 0, len(orderedGTasks))
+
+	for _, gt := range orderedGTasks {
 		done := strings.EqualFold(gt.Status, "completed")
 
 		var dueDate *string
@@ -245,6 +253,73 @@ func (a *GTasksAdapter) FetchList(ctx context.Context) (*tasks.List, []tasks.Lis
 	}
 
 	return list, items, nil
+}
+
+// orderGTasks sorts Google Tasks items according to their hierarchical structure:
+// top-level tasks are ordered by their Position key lexicographically, with direct subtasks
+// (items with Parent set) placed immediately after their parent task in sibling Position order.
+func orderGTasks(items []gtasksItem) []gtasksItem {
+	if len(items) <= 1 {
+		return items
+	}
+
+	itemByID := make(map[string]gtasksItem, len(items))
+	childrenByParent := make(map[string][]gtasksItem)
+	var topLevel []gtasksItem
+
+	for _, item := range items {
+		itemByID[item.ID] = item
+	}
+
+	for _, item := range items {
+		if item.Parent == "" {
+			topLevel = append(topLevel, item)
+		} else if _, exists := itemByID[item.Parent]; exists {
+			childrenByParent[item.Parent] = append(childrenByParent[item.Parent], item)
+		} else {
+			// Orphaned subtask with non-existent or deleted parent; treat as top-level
+			topLevel = append(topLevel, item)
+		}
+	}
+
+	sortGTasks := func(slice []gtasksItem) {
+		sort.SliceStable(slice, func(i, j int) bool {
+			return slice[i].Position < slice[j].Position
+		})
+	}
+
+	sortGTasks(topLevel)
+	for parentID := range childrenByParent {
+		sortGTasks(childrenByParent[parentID])
+	}
+
+	ordered := make([]gtasksItem, 0, len(items))
+	visited := make(map[string]bool, len(items))
+
+	var traverse func(item gtasksItem)
+	traverse = func(item gtasksItem) {
+		if visited[item.ID] {
+			return
+		}
+		visited[item.ID] = true
+		ordered = append(ordered, item)
+		for _, child := range childrenByParent[item.ID] {
+			traverse(child)
+		}
+	}
+
+	for _, item := range topLevel {
+		traverse(item)
+	}
+
+	// Safeguard against cyclic or unvisited items
+	for _, item := range items {
+		if !visited[item.ID] {
+			traverse(item)
+		}
+	}
+
+	return ordered
 }
 
 type oauthTokenResponse struct {
