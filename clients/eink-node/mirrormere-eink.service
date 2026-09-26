@@ -1,0 +1,21 @@
+[Unit]
+Description=Mirrormere E-Ink Display Node Client
+Documentation=https://github.com/azylman/mirrormere
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mirrormere
+Group=mirrormere
+SupplementaryGroups=spi gpio
+WorkingDirectory=/opt/mirrormere-eink
+EnvironmentFile=-/etc/default/mirrormere-eink
+ExecStart=/opt/mirrormere-eink/venv/bin/python -m mirrormere_eink.client --config /etc/mirrormere-eink/config.yaml
+Restart=always
+RestartSec=5
+KillMode=process
+TimeoutStopSec=10
+
+[Install]
+WantedBy=multi-user.target
