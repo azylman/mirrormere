@@ -22,6 +22,14 @@
           <span class="weather-condition" id="weather-condition"></span>
         </span>
       </div>
+      <div class="header-voice" id="header-voice">
+        <div class="voice-indicator" id="voice-indicator">
+          <span class="voice-pulse-ring" id="voice-pulse-ring"></span>
+          <span class="voice-dot" id="voice-dot"></span>
+          <span class="voice-label" id="voice-label"></span>
+        </div>
+        <div class="voice-transcript" id="voice-transcript" style="display: none;"></div>
+      </div>
       <div class="header-status">
         <span class="status-dot status-ok" id="system-status-dot" title="System Status: Healthy"></span>
       </div>
@@ -54,11 +62,19 @@
     </div>
   </div>
 
+  <div id="voice-toast-dock" class="voice-toast-dock" aria-live="polite">
+    <div id="voice-toast" class="voice-toast" style="display: none;">
+      <span class="voice-toast-badge" id="voice-toast-badge" style="display: none;"></span>
+      <span class="voice-toast-body" id="voice-toast-body"></span>
+    </div>
+  </div>
+
   <script src="/static/js/sse.js"></script>
   <script src="/static/js/audio.js"></script>
   <script src="/static/js/carousel.js"></script>
   <script src="/static/js/video.js"></script>
   <script src="/static/js/video_hud.js"></script>
+  <script src="/static/js/voice.js"></script>
   <script src="/static/js/display.js"></script>
 </body>
 </html>

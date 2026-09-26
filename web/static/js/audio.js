@@ -99,6 +99,17 @@ class AudioManager {
   }
 
   /**
+   * Sets ducking attenuation state idempotently and reapplies effective volume.
+   * @param {boolean} isDucked
+   */
+  setDucked(isDucked) {
+    const ducked = Boolean(isDucked);
+    if (this.ducked === ducked) return;
+    this.ducked = ducked;
+    this.applyVolumeToAll();
+  }
+
+  /**
    * Calculates the current effective volume based on volume, mute, and ducking.
    * @returns {number}
    */
