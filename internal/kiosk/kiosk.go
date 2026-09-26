@@ -194,3 +194,37 @@ func CheckShellScriptSyntax(scriptPath string) error {
 
 	return nil
 }
+
+// ValidateDPMSScript verifies that dpms.sh implements swayidle idle and reset coordination.
+func ValidateDPMSScript(content string) error {
+	required := []string{
+		"trigger_swayidle_idle",
+		"reset_swayidle_active",
+		"SIGUSR1",
+		"SIGTERM",
+		"night-restart",
+	}
+	for _, req := range required {
+		if !strings.Contains(content, req) {
+			return fmt.Errorf("dpms.sh missing required coordination directive %q", req)
+		}
+	}
+	return nil
+}
+
+// ValidateSessionScript verifies that session.sh implements swayidle process supervision and signal cleanup.
+func ValidateSessionScript(content string) error {
+	required := []string{
+		"swayidle",
+		"run_swayidle",
+		"cleanup",
+		"trap cleanup",
+	}
+	for _, req := range required {
+		if !strings.Contains(content, req) {
+			return fmt.Errorf("session.sh missing required supervisor directive %q", req)
+		}
+	}
+	return nil
+}
+

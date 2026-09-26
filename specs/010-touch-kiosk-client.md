@@ -81,27 +81,30 @@ exec cage -s -- chromium \
 The monitor backlight consumes power and emits light that must be suppressed at night and when the room is empty.
 
 ### 1. Daytime Inactivity Sleep (DPMS)
-- Managed by `swayidle` running in the `kiosk` session:
+- Managed by `swayidle` supervised in the `kiosk` session (`session.sh`):
   ```bash
   swayidle -w \
     timeout 600 'wlr-randr --output HDMI-A-1 --off' \
     resume 'wlr-randr --output HDMI-A-1 --on'
   ```
+- **Process Supervision**: `session.sh` wraps `swayidle` in a restart loop (`run_swayidle`) so that state resets (e.g. at 06:00 wake) cleanly terminate and restart `swayidle` with a fresh 10-minute inactivity timer.
 - **Wake on Tap**: Capacitive touchscreen touches register as Linux `evdev` touch events through `libinput`. Wayland seat activity triggers `swayidle` resume, instantly powering the display back on without requiring physical power buttons.
 
 ### 2. Fixed Night Schedule
 - Systemd timers enforce hard blackout during night hours:
-  - `mirrormere-kiosk-sleep.timer`: Runs at `23:00` daily, issuing `wlr-randr --output HDMI-A-1 --off`.
-  - `mirrormere-kiosk-wake.timer`: Runs at `06:00` daily, issuing `wlr-randr --output HDMI-A-1 --on`.
-- Tapping the display during the night window temporarily wakes the screen for the daytime idle duration (10 minutes) before returning to sleep.
+  - `mirrormere-kiosk-sleep.timer`: Runs at `23:00` daily, issuing `/opt/mirrormere/kiosk/dpms.sh off`.
+  - `mirrormere-kiosk-wake.timer`: Runs at `06:00` daily, issuing `/opt/mirrormere/kiosk/dpms.sh on`.
+- **Coordinated State Synchronization (Issue #280)**:
+  - At `23:00`, `dpms.sh off` issues `wlr-randr --off` and signals `swayidle` with `SIGUSR1` to immediately transition `swayidle` into the idle state. This ensures that any capacitive tap during the night immediately triggers `swayidle`'s `resume` command, waking the screen for 10 minutes before returning to sleep.
+  - At `06:00`, `dpms.sh on` powers the output on with `wlr-randr --on` and sends `SIGTERM` to `swayidle`, prompting the supervisor loop to start a fresh `swayidle` instance in the active state with a 10-minute countdown. If the room is unoccupied after 06:00, the display automatically idle-blanks at 06:10 rather than remaining illuminated all day.
 
 ### 3. Automated Nightly Browser Process Restart
 - Running a 24/7 WebRTC, media, and SSE-heavy client in Chromium inevitably accumulates DOM and memory drift over time.
 - To maintain pristine appliance performance indefinitely without disrupting daytime operation:
   - `mirrormere-kiosk-restart.timer`: Fires at `03:00` daily during the night blackout window.
-  - `mirrormere-kiosk-restart.service`: Dispatches `/opt/mirrormere/kiosk/dpms.sh night-restart`. This triggers `systemctl restart mirrormere-kiosk.service`, waits for the fresh Wayland display socket to become ready, and immediately re-asserts `wlr-randr --output ${OUTPUT} --off` (resolving Issue #257).
+  - `mirrormere-kiosk-restart.service`: Dispatches `/opt/mirrormere/kiosk/dpms.sh night-restart`. This triggers `systemctl restart mirrormere-kiosk.service`, waits for the fresh Wayland display socket to become ready, immediately re-asserts `wlr-randr --output ${OUTPUT} --off` (resolving Issue #257), and signals `swayidle` with `SIGUSR1` so that taps between 03:00 and 06:00 wake the screen (resolving Issue #280).
   - Because DPMS off is re-asserted immediately upon compositor startup, the screen remains completely dark while Chromium reloads, rehydrates SSE state from `/api/events`, and pre-warms off-screen with zero visible screen disturbance.
-  - The kiosk session runner (`session.sh`) launches `swayidle` as an internal child process, ensuring daytime idle blanking and capacitive touch resume policies survive the nightly restart.
+  - The kiosk session runner (`session.sh`) launches `swayidle` as an internal supervised child process, ensuring daytime idle blanking and capacitive touch resume policies survive the nightly restart.
 
 ---
 

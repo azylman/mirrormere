@@ -24,19 +24,28 @@ OUTPUT="${OUTPUT:-HDMI-A-1}"
 
 echo "[Mirrormere Session] Active output: ${OUTPUT}, Target URL: ${DISPLAY_URL}"
 
-# Start swayidle for daytime inactivity blanking with capacitive touch resume
-# Runs as a child process of the Cage session; Cage ensures only Chromium creates a window surface.
-swayidle -w \
-    timeout "$IDLE_TIMEOUT_SECONDS" "wlr-randr --output ${OUTPUT} --off" \
-    resume "wlr-randr --output ${OUTPUT} --on" &
-SWAYIDLE_PID=$!
+# Start swayidle supervisor loop for daytime inactivity blanking with capacitive touch resume.
+# Runs as a supervised background child of the Cage session; respawns if restarted by dpms.sh on.
+run_swayidle() {
+    while true; do
+        swayidle -w \
+            timeout "$IDLE_TIMEOUT_SECONDS" "wlr-randr --output ${OUTPUT} --off" \
+            resume "wlr-randr --output ${OUTPUT} --on" || true
+        # Brief backoff before respawning if swayidle was terminated to reset state
+        sleep 0.5
+    done
+}
+run_swayidle &
+SWAYIDLE_SUB_PID=$!
 
-# Trap signals to cleanly terminate background swayidle process on session shutdown
+# Trap signals to cleanly terminate background swayidle supervisor and daemon on session shutdown
 cleanup() {
     echo "[Mirrormere Session] Terminating session child processes..."
-    if [[ -n "${SWAYIDLE_PID:-}" ]] && kill -0 "$SWAYIDLE_PID" 2>/dev/null; then
-        kill "$SWAYIDLE_PID" 2>/dev/null || true
+    trap - EXIT INT TERM
+    if [[ -n "${SWAYIDLE_SUB_PID:-}" ]]; then
+        kill "$SWAYIDLE_SUB_PID" 2>/dev/null || true
     fi
+    pkill -u "$(id -u)" swayidle 2>/dev/null || true
 }
 trap cleanup EXIT INT TERM
 
