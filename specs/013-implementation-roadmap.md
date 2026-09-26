@@ -169,7 +169,7 @@ flowchart TD
   - Built-in `tasks` widget: strike-through completed items, "+N more" overflow, zero client mutation controls.
 
 - **Task 3.5: External Task List Ingest Adapters (SPEC-008 §4)**
-  - Ingest synchronization adapters for external task providers (Google Tasks, Todoist, Home Assistant).
+  - `gtasks` and `http` list source adapters syncing into SQLite (SPEC-008, Source Adapters).
   - Periodic reconciliation and update broadcasts.
 
 ---

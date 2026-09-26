@@ -87,6 +87,9 @@ func RunWithReady(
 
 	defaultControlURL := os.Getenv("CONTROL_URL")
 	if defaultControlURL == "" {
+		defaultControlURL = os.Getenv("CAST_WATCHER_CONTROL_URL")
+	}
+	if defaultControlURL == "" {
 		defaultControlURL = fmt.Sprintf("http://cast-watcher:%d/action", defaultPort)
 	}
 

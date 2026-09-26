@@ -6,7 +6,7 @@ streams:
   # Ingests HDMI video from MacroSilicon MS2130 USB capture card (/dev/video0)
   # and ALSA digital stereo audio (hw:CARD=MS2130,DEV=0).
   # Hardware transcoding uses Intel VAAPI/QSV on Intel N100 to transcode incoming video to H.264
-  # and audio to Opus, serving low-latency WebRTC at http://127.0.0.1:1984/cast.
+  # and audio to Opus, serving low-latency WebRTC at http://127.0.0.1:1984/api/webrtc?src=cast.
   cast:
     - ffmpeg:device?video=/dev/video0&audio=hw:CARD=MS2130,DEV=0#video=h264#hardware#audio=opus
 

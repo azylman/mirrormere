@@ -84,7 +84,55 @@ func TestRun_EnvOverrides(t *testing.T) {
 	t.Setenv("CHROMECAST_IP", "127.0.0.1")
 	t.Setenv("CONTROL_PORT", "0")
 	t.Setenv("CORE_URL", "http://127.0.0.1:8080")
-	t.Setenv("STREAM_URL", "http://127.0.0.1:1984/cast")
+	t.Setenv("STREAM_URL", "http://127.0.0.1:1984/api/webrtc?src=cast")
+	t.Setenv("CONTROL_URL", "http://cast-watcher:8090/action")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	readyChan := make(chan struct{}, 1)
+	var stdout, stderr bytes.Buffer
+
+	mockDialer := func(ctx context.Context, network, addr string) (net.Conn, error) {
+		c, _ := net.Pipe()
+		return c, nil
+	}
+	client := NewCastClient(ClientConfig{
+		ChromecastAddr: "127.0.0.1:8009",
+		Dialer:         mockDialer,
+	})
+
+	errChan := make(chan error, 1)
+	go func() {
+		errChan <- RunWithReady(ctx, nil, &stdout, &stderr, readyChan, client)
+	}()
+
+	select {
+	case <-readyChan:
+	case err := <-errChan:
+		t.Fatalf("RunWithReady failed: %v", err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for readyChan")
+	}
+
+	cancel()
+
+	select {
+	case err := <-errChan:
+		if err != nil {
+			t.Fatalf("Run returned error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for shutdown")
+	}
+}
+
+func TestRun_CastWatcherControlURLFallback(t *testing.T) {
+	t.Setenv("CHROMECAST_IP", "127.0.0.1")
+	t.Setenv("CONTROL_PORT", "0")
+	t.Setenv("CORE_URL", "http://127.0.0.1:8080")
+	t.Setenv("STREAM_URL", "http://127.0.0.1:1984/api/webrtc?src=cast")
+	t.Setenv("CAST_WATCHER_CONTROL_URL", "http://legacy-watcher:8090/action")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
