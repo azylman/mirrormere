@@ -1,51 +1,55 @@
 <div class="widget-card widget-weather" data-widget-id="{{ .ID }}" data-widget-type="{{ .Type }}" style="grid-column: span {{ .Dimensions.Cols }}; grid-row: span {{ .Dimensions.Rows }};">
-  {{ if or .Config.name .Config.location_name (and .Data .Data.Location) }}
-  <div class="weather-header" style="display: flex; align-items: center; justify-content: space-between; padding-bottom: 6px; margin-bottom: 6px; border-bottom: 1px solid rgba(168, 85, 247, 0.2);">
+  {{ if or .Config.name .Config.location_name (and .Data .Data.Location) .Data }}
+  <div class="weather-header" style="display: flex; align-items: center; justify-content: space-between; padding-bottom: 8px; margin-bottom: 8px; border-bottom: 1px solid rgba(168, 85, 247, 0.2);">
     <div style="display: flex; align-items: center; gap: 6px;">
+      {{ if or .Config.name .Config.location_name (and .Data .Data.Location) }}
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--mm-accent-purple)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <path d="M12 2a8 8 0 0 0-8 8c0 5.25 8 12 8 12s8-6.75 8-12a8 8 0 0 0-8-8z"/>
         <circle cx="12" cy="10" r="3"/>
       </svg>
-      <span class="weather-location-name" style="font-size: 0.9rem; font-weight: 700; color: var(--mm-text-primary); letter-spacing: 0.02em;">
+      <span class="weather-location-name" style="font-size: 0.95rem; font-weight: 700; color: var(--mm-text-primary); letter-spacing: 0.02em;">
         {{ if .Config.name }}{{ .Config.name }}{{ else if .Config.location_name }}{{ .Config.location_name }}{{ else if and .Data .Data.Location }}{{ .Data.Location }}{{ end }}
       </span>
+      {{ else if and .Data .Data.Current }}
+      <span class="weather-header-icon" title="{{ .Data.Current.ConditionText }}" style="color: var(--mm-accent-purple); display: inline-flex; align-items: center;">{{ weatherIcon .Data.Current.Icon 18 }}</span>
+      <span class="weather-header-title" style="font-size: 0.95rem; font-weight: 700; color: var(--mm-text-primary); letter-spacing: 0.02em;">Weather</span>
+      {{ end }}
     </div>
+
+    {{ if and .Data .Data.Current }}
+    <div class="weather-header-meta" style="display: flex; align-items: center; gap: 12px;">
+      <span class="weather-temp-main" style="font-family: var(--mm-font-mono); font-size: 1.25rem; font-weight: 700; color: var(--mm-text-primary); text-shadow: 0 0 12px var(--mm-accent-purple-glow);" title="{{ .Data.Current.ConditionText }}">
+        {{ printf "%.0f" .Data.Current.Temperature }}{{ if .Data.Current.Units.Temperature }}{{ .Data.Current.Units.Temperature }}{{ else }}°{{ end }}
+      </span>
+      <span class="weather-condition-text" style="display: none;">{{ .Data.Current.ConditionText }}</span>
+      <span class="weather-meta-humidity" style="display: inline-flex; align-items: center; gap: 4px; font-size: 0.82rem; color: var(--mm-text-muted);" title="Humidity: {{ .Data.Current.Humidity }}%">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--mm-accent-cyan)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/>
+        </svg>
+        <span>{{ .Data.Current.Humidity }}%</span>
+      </span>
+      <span class="weather-meta-wind" style="display: inline-flex; align-items: center; gap: 4px; font-size: 0.82rem; color: var(--mm-text-muted);" title="Wind: {{ printf "%.1f" .Data.Current.WindSpeed }} {{ if .Data.Current.Units.WindSpeed }}{{ .Data.Current.Units.WindSpeed }}{{ else }}mph{{ end }}">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--mm-accent-purple)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M9.59 4.59A2 2 0 1 1 11 8H2m10.59 11.41A2 2 0 1 0 14 16H2m15.73-8.27A2.5 2.5 0 1 1 19.5 12H2"/>
+        </svg>
+        <span>{{ printf "%.1f" .Data.Current.WindSpeed }} {{ if .Data.Current.Units.WindSpeed }}{{ .Data.Current.Units.WindSpeed }}{{ else }}mph{{ end }}</span>
+      </span>
+    </div>
+    {{ end }}
   </div>
   {{ end }}
   {{ if and .Data .Data.Current }}
-  <div class="weather-container" style="display: flex; flex-direction: column; flex: 1; justify-content: space-between;">
-    <div class="weather-current-row" style="display: flex; align-items: center; justify-content: space-between; gap: 12px;">
-      <div class="weather-temp-group" style="display: flex; align-items: baseline; gap: 8px;">
-        <span class="weather-temp-main" style="font-family: var(--mm-font-mono); font-size: 2.5rem; font-weight: 700; color: var(--mm-text-primary); text-shadow: 0 0 16px var(--mm-accent-purple-glow);">
-          {{ printf "%.0f" .Data.Current.Temperature }}{{ if .Data.Current.Units.Temperature }}{{ .Data.Current.Units.Temperature }}{{ else }}°{{ end }}
-        </span>
-        <span class="weather-condition-text" style="font-size: 1.1rem; color: var(--mm-text-secondary); font-weight: 500;">
-          {{ .Data.Current.ConditionText }}
-        </span>
-      </div>
-      <div class="weather-icon-badge" style="display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; border-radius: 50%; background: var(--mm-bg-surface); border: var(--mm-border-hud); color: var(--mm-accent-purple); box-shadow: 0 2px 10px rgba(0,0,0,0.4);">
-        <span class="weather-icon" data-icon="{{ .Data.Current.Icon }}" title="{{ .Data.Current.ConditionText }}">{{ weatherIcon .Data.Current.Icon 28 }}</span>
-      </div>
-    </div>
-
-    <div class="weather-meta-row" style="display: flex; gap: 16px; font-size: 0.85rem; color: var(--mm-text-muted);">
-      {{ if .Data.Current.FeelsLike }}
-      <span>Feels {{ printf "%.0f" .Data.Current.FeelsLike }}°</span>
-      {{ end }}
-      {{ if .Data.Current.Humidity }}
-      <span>Humidity {{ .Data.Current.Humidity }}%</span>
-      {{ end }}
-      {{ if .Data.Current.WindSpeed }}
-      <span>Wind {{ printf "%.1f" .Data.Current.WindSpeed }} {{ if .Data.Current.Units.WindSpeed }}{{ .Data.Current.Units.WindSpeed }}{{ end }}</span>
-      {{ end }}
-    </div>
-
+  <div class="weather-container" style="display: flex; flex-direction: column; flex: 1; min-height: 0; justify-content: center;">
     {{ if .Data.Hourly }}
     <style>
       .weather-hourly-timeline::-webkit-scrollbar { display: none; }
     </style>
-    <div class="weather-hourly-timeline" style="display: flex; overflow-x: auto; padding: 6px 0 2px 0; border-top: 1px solid rgba(168, 85, 247, 0.15); scrollbar-width: none; -ms-overflow-style: none; -webkit-overflow-scrolling: touch; overscroll-behavior-x: contain; touch-action: pan-x;">
+    <div class="weather-hourly-timeline" style="display: flex; flex: 1; align-items: center; overflow-x: auto; padding: 4px 0; scrollbar-width: none; -ms-overflow-style: none; -webkit-overflow-scrolling: touch; overscroll-behavior-x: contain; touch-action: pan-x;">
       {{ weatherHourlyGraph .Data.Hourly .ID }}
+    </div>
+    {{ else }}
+    <div style="display: flex; align-items: center; justify-content: center; flex: 1; color: var(--mm-text-muted); font-size: 0.9rem;">
+      <span>No hourly forecast available</span>
     </div>
     {{ end }}
   </div>
