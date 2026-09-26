@@ -28,13 +28,14 @@ type StateSink interface {
 
 // CoordinatorConfig specifies dependencies and options for ProviderCoordinator.
 type CoordinatorConfig struct {
-	Registry    Registry
-	Broadcaster Broadcaster
-	StateSink   StateSink
-	Cache       *SWRCache
-	Logger      *slog.Logger
-	NowFunc     func() time.Time
-	Backoff     *BackoffPolicy
+	Registry           Registry
+	Broadcaster        Broadcaster
+	StateSink          StateSink
+	Cache              *SWRCache
+	Logger             *slog.Logger
+	NowFunc            func() time.Time
+	Backoff            *BackoffPolicy
+	OnBeforeRecordPush func(widgetID string)
 }
 
 type worker struct {
@@ -58,21 +59,22 @@ type workerEvent struct {
 // ProviderCoordinator orchestrates lifecycle and sync loops for all active widget providers.
 // Complies with SPEC-003, SPEC-006, and SPEC-013 Chunk 3.1.
 type ProviderCoordinator struct {
-	mu          sync.RWMutex
-	registry    Registry
-	broadcaster Broadcaster
-	stateSink   StateSink
-	cache       *SWRCache
-	logger      *slog.Logger
-	nowFunc     func() time.Time
-	backoff     *BackoffPolicy
-	workers     map[string]*worker
-	snapshot    *config.Snapshot
-	eventSink   chan workerEvent
-	sinkCtx     context.Context
-	sinkCancel  context.CancelFunc
-	sinkWg      sync.WaitGroup
-	stopped     bool
+	mu                 sync.RWMutex
+	registry           Registry
+	broadcaster        Broadcaster
+	stateSink          StateSink
+	cache              *SWRCache
+	logger             *slog.Logger
+	nowFunc            func() time.Time
+	backoff            *BackoffPolicy
+	workers            map[string]*worker
+	snapshot           *config.Snapshot
+	eventSink          chan workerEvent
+	sinkCtx            context.Context
+	sinkCancel         context.CancelFunc
+	sinkWg             sync.WaitGroup
+	onBeforeRecordPush func(widgetID string)
+	stopped            bool
 }
 
 // NewCoordinator constructs an initialized ProviderCoordinator.
@@ -110,9 +112,10 @@ func NewCoordinator(cfg CoordinatorConfig, initialSnapshot *config.Snapshot) *Pr
 		backoff:     bo,
 		workers:     make(map[string]*worker),
 		snapshot:    initialSnapshot,
-		eventSink:   make(chan workerEvent, 64),
-		sinkCtx:     sinkCtx,
-		sinkCancel:  sinkCancel,
+		eventSink:          make(chan workerEvent, 64),
+		sinkCtx:            sinkCtx,
+		sinkCancel:         sinkCancel,
+		onBeforeRecordPush: cfg.OnBeforeRecordPush,
 	}
 
 	c.sinkWg.Add(1)
@@ -515,29 +518,47 @@ func (c *ProviderCoordinator) listenEventSink() {
 			if !ok {
 				return
 			}
-			if !c.isWorkerActive(ev.worker, ev.payload.WidgetID) {
-				continue
+			p, recorded := c.recordWorkerPush(ev.worker, ev.payload)
+			if recorded {
+				c.broadcastUpdate(p)
 			}
-			now := c.nowFunc()
-			p, _ := c.cache.RecordPush(ev.payload.WidgetID, ev.payload.Data, now)
-			if c.stateSink != nil {
-				c.stateSink.SetWidgetState(p.WidgetID, p.Data, p.State, p.Timestamp)
-				c.stateSink.SetProvidersStatus(c.cache.GetStatusMap())
-			}
-			c.broadcastUpdate(p)
 		}
 	}
 }
 
-func (c *ProviderCoordinator) isWorkerActive(w *worker, widgetID string) bool {
+func (c *ProviderCoordinator) recordWorkerPush(w *worker, payload WidgetPayload) (WidgetPayload, bool) {
+	if w == nil || w.stopped.Load() {
+		return WidgetPayload{}, false
+	}
+
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	if !c.isWorkerActiveLocked(w, payload.WidgetID) {
+		return WidgetPayload{}, false
+	}
+
+	if c.onBeforeRecordPush != nil {
+		c.onBeforeRecordPush(payload.WidgetID)
+	}
+
+	now := c.nowFunc()
+	p, _ := c.cache.RecordPush(payload.WidgetID, payload.Data, now)
+	if c.stateSink != nil {
+		c.stateSink.SetWidgetState(p.WidgetID, p.Data, p.State, p.Timestamp)
+		c.stateSink.SetProvidersStatus(c.cache.GetStatusMap())
+	}
+	return p, true
+}
+
+func (c *ProviderCoordinator) isWorkerActiveLocked(w *worker, widgetID string) bool {
 	if w == nil || w.stopped.Load() {
 		return false
 	}
-	c.mu.RLock()
-	defer c.mu.RUnlock()
 	current, ok := c.workers[widgetID]
 	return ok && current == w && !w.stopped.Load()
 }
+
 
 func (c *ProviderCoordinator) broadcastUpdate(payload WidgetPayload) {
 	if c.broadcaster == nil {

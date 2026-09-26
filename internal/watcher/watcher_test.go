@@ -214,7 +214,6 @@ func setupTestEnv(t *testing.T) (string, *config.Manager, *testPackageLoader, *m
 }
 
 func TestWatcher_StartErrors(t *testing.T) {
-	t.Parallel()
 
 	// Empty ConfigDir
 	w := watcher.New(watcher.Config{}, nil, nil, nil, nil)
@@ -232,7 +231,6 @@ func TestWatcher_StartErrors(t *testing.T) {
 }
 
 func TestWatcher_ConfigValidAtomicUpdate(t *testing.T) {
-	t.Parallel()
 
 	tempDir, mgr, loader, disp := setupTestEnv(t)
 	configDir := filepath.Join(tempDir, "config")
@@ -279,7 +277,6 @@ func TestWatcher_ConfigValidAtomicUpdate(t *testing.T) {
 }
 
 func TestWatcher_ConfigSyntaxError_RetainsLKGC(t *testing.T) {
-	t.Parallel()
 
 	tempDir, mgr, loader, disp := setupTestEnv(t)
 	configDir := filepath.Join(tempDir, "config")
@@ -325,7 +322,6 @@ func TestWatcher_ConfigSyntaxError_RetainsLKGC(t *testing.T) {
 }
 
 func TestWatcher_StyleReloadDispatch(t *testing.T) {
-	t.Parallel()
 
 	tempDir, mgr, loader, disp := setupTestEnv(t)
 	configDir := filepath.Join(tempDir, "config")
@@ -363,7 +359,6 @@ func TestWatcher_StyleReloadDispatch(t *testing.T) {
 }
 
 func TestWatcher_WidgetReloadDispatch_TemplateAndManifest(t *testing.T) {
-	t.Parallel()
 
 	tempDir, mgr, loader, disp := setupTestEnv(t)
 	configDir := filepath.Join(tempDir, "config")
@@ -427,7 +422,6 @@ func TestWatcher_WidgetReloadDispatch_TemplateAndManifest(t *testing.T) {
 }
 
 func TestWatcher_IncompletePackageGating(t *testing.T) {
-	t.Parallel()
 
 	tempDir, mgr, loader, disp := setupTestEnv(t)
 	configDir := filepath.Join(tempDir, "config")
@@ -508,7 +502,6 @@ func TestWatcher_IncompletePackageGating(t *testing.T) {
 }
 
 func TestWatcher_TemporaryFilesIgnored(t *testing.T) {
-	t.Parallel()
 
 	tempDir, mgr, loader, disp := setupTestEnv(t)
 	configDir := filepath.Join(tempDir, "config")
@@ -555,7 +548,6 @@ func TestWatcher_TemporaryFilesIgnored(t *testing.T) {
 }
 
 func TestWatcher_DynamicDirectoryCreationAndRemoval(t *testing.T) {
-	t.Parallel()
 
 	tempDir, mgr, loader, disp := setupTestEnv(t)
 	configDir := filepath.Join(tempDir, "config")
@@ -610,7 +602,6 @@ func TestWatcher_DynamicDirectoryCreationAndRemoval(t *testing.T) {
 }
 
 func TestWatcher_MissingCustomDirectoryAtBoot(t *testing.T) {
-	t.Parallel()
 
 	tempDir, mgr, loader, disp := setupTestEnv(t)
 	configDir := filepath.Join(tempDir, "config")
@@ -637,7 +628,6 @@ func TestWatcher_MissingCustomDirectoryAtBoot(t *testing.T) {
 }
 
 func TestWatcher_MaxDebounceDurationCeiling(t *testing.T) {
-	t.Parallel()
 
 	tempDir, mgr, loader, disp := setupTestEnv(t)
 	configDir := filepath.Join(tempDir, "config")
@@ -676,7 +666,6 @@ func TestWatcher_MaxDebounceDurationCeiling(t *testing.T) {
 }
 
 func TestWatcher_BuiltinWidgetsReload(t *testing.T) {
-	t.Parallel()
 
 	tempDir, mgr, loader, disp := setupTestEnv(t)
 	configDir := filepath.Join(tempDir, "config")
@@ -720,7 +709,6 @@ func TestWatcher_BuiltinWidgetsReload(t *testing.T) {
 }
 
 func TestWatcher_AddDir_NotADirectory(t *testing.T) {
-	t.Parallel()
 
 	tempDir := t.TempDir()
 	filePath := filepath.Join(tempDir, "file.txt")
@@ -739,7 +727,6 @@ func TestWatcher_AddDir_NotADirectory(t *testing.T) {
 }
 
 func TestWatcher_WalkDir_SkipsHiddenDirectories(t *testing.T) {
-	t.Parallel()
 
 	tempDir, mgr, loader, disp := setupTestEnv(t)
 	configDir := filepath.Join(tempDir, "config")
@@ -760,7 +747,6 @@ func TestWatcher_WalkDir_SkipsHiddenDirectories(t *testing.T) {
 }
 
 func TestWatcher_ContextCancellation(t *testing.T) {
-	t.Parallel()
 
 	tempDir, mgr, loader, disp := setupTestEnv(t)
 	configDir := filepath.Join(tempDir, "config")
@@ -800,7 +786,6 @@ func (d *errDispatcher) DispatchStatus(status config.Status) error {
 }
 
 func TestWatcher_DispatcherErrorsAndConfigMissing(t *testing.T) {
-	t.Parallel()
 
 	tempDir, mgr, loader, _ := setupTestEnv(t)
 	configDir := filepath.Join(tempDir, "config")
@@ -955,7 +940,6 @@ func dispWithoutEvents() watcher.Dispatcher {
 }
 
 func TestWatcher_RemoveDir_NestedAndErrors(t *testing.T) {
-	t.Parallel()
 
 	tempDir, mgr, loader, disp := setupTestEnv(t)
 	configDir := filepath.Join(tempDir, "config")
@@ -987,7 +971,6 @@ func TestWatcher_RemoveDir_NestedAndErrors(t *testing.T) {
 }
 
 func TestWatcher_ManifestDefaultDimensionsProducesNewLayoutAndConfigReload(t *testing.T) {
-	t.Parallel()
 
 	tempDir := t.TempDir()
 	configDir := filepath.Join(tempDir, "config")
@@ -1103,7 +1086,6 @@ display:
 }
 
 func TestWatcher_ManifestValidationFailureRetainsLKGCAndAbortsWidgetReload(t *testing.T) {
-	t.Parallel()
 
 	tempDir := t.TempDir()
 	configDir := filepath.Join(tempDir, "config")
@@ -1221,7 +1203,6 @@ display:
 }
 
 func TestWatcher_ConfigReloadFailureDispatchesErrorStatusAndRecoveryDispatchesOK(t *testing.T) {
-	t.Parallel()
 
 	tempDir, mgr, loader, disp := setupTestEnv(t)
 	configDir := filepath.Join(tempDir, "config")
@@ -1276,7 +1257,6 @@ func TestWatcher_ConfigReloadFailureDispatchesErrorStatusAndRecoveryDispatchesOK
 }
 
 func TestWatcher_IncompletePackageDispatchesErrorStatusAndRecoveryDispatchesOK(t *testing.T) {
-	t.Parallel()
 
 	tempDir, mgr, loader, disp := setupTestEnv(t)
 	configDir := filepath.Join(tempDir, "config")
@@ -1367,7 +1347,6 @@ func TestWatcher_IncompletePackageDispatchesErrorStatusAndRecoveryDispatchesOK(t
 }
 
 func TestWatcher_MkdirRmdirCustomPackageStatusReturnsOK(t *testing.T) {
-	t.Parallel()
 
 	tempDir, mgr, loader, disp := setupTestEnv(t)
 	configDir := filepath.Join(tempDir, "config")
@@ -1443,7 +1422,6 @@ func TestWatcher_MkdirRmdirCustomPackageStatusReturnsOK(t *testing.T) {
 }
 
 func TestWatcher_DeleteCustomOverrideFallsBackToBuiltinAndRevalidates(t *testing.T) {
-	t.Parallel()
 
 	tempDir, mgr, loader, disp := setupTestEnv(t)
 	configDir := filepath.Join(tempDir, "config")
@@ -1571,7 +1549,6 @@ func TestWatcher_DeleteCustomOverrideFallsBackToBuiltinAndRevalidates(t *testing
 }
 
 func TestWatcher_DeleteCustomOverrideValidationFailureRetainsLKGC(t *testing.T) {
-	t.Parallel()
 
 	tempDir, mgr, loader, disp := setupTestEnv(t)
 	configDir := filepath.Join(tempDir, "config")

@@ -1277,4 +1277,140 @@ func TestProviderCoordinator_PushFromRemovedWidgetIgnored(t *testing.T) {
 	}
 }
 
+func TestProviderCoordinator_PushInterleavedWithDomainChangeReload_Atomic(t *testing.T) {
+	t.Parallel()
+
+	broadcaster := &mockBroadcaster{}
+	stateSink := newMockStateSink()
+	registry := provider.NewRegistry()
+
+	mockP1 := newControllableMockProvider()
+	mockP2 := newControllableMockProvider()
+
+	var providerCallCount int
+	var providerMu sync.Mutex
+	registry.Register("interleaved-provider", func() provider.Provider {
+		providerMu.Lock()
+		defer providerMu.Unlock()
+		providerCallCount++
+		if providerCallCount == 1 {
+			return mockP1
+		}
+		return mockP2
+	})
+
+	snap1 := &config.Snapshot{
+		Config: &config.Config{
+			Display: config.DisplayConfig{
+				Widgets: []config.WidgetConfig{
+					{
+						ID:     "tile-atomic",
+						Type:   "interleaved-provider",
+						Config: map[string]any{"city": "Tokyo"},
+					},
+				},
+			},
+		},
+	}
+
+	hookCalled := make(chan struct{}, 1)
+	releaseHook := make(chan struct{})
+
+	coord := provider.NewCoordinator(provider.CoordinatorConfig{
+		Registry:    registry,
+		Broadcaster: broadcaster,
+		StateSink:   stateSink,
+		OnBeforeRecordPush: func(widgetID string) {
+			if widgetID == "tile-atomic" {
+				select {
+				case hookCalled <- struct{}{}:
+				default:
+				}
+				<-releaseHook
+			}
+		},
+	}, snap1)
+	defer func() { _ = coord.Stop() }()
+
+	select {
+	case <-mockP1.fetchSignal:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for initial fetch")
+	}
+	select {
+	case <-mockP1.subscribeSignal:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for subscribe")
+	}
+
+	// Provider 1 emits push
+	mockP1.emitPush(provider.WidgetPayload{
+		Data: map[string]any{"city": "Old-Tokyo-Data"},
+	})
+
+	// Wait for listener to enter recordWorkerPush and pause inside hook under c.mu.RLock()
+	select {
+	case <-hookCalled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for hook called")
+	}
+
+	// In a background goroutine, initiate UpdateConfig (which requires c.mu.Lock())
+	snap2 := &config.Snapshot{
+		Config: &config.Config{
+			Display: config.DisplayConfig{
+				Widgets: []config.WidgetConfig{
+					{
+						ID:     "tile-atomic",
+						Type:   "interleaved-provider",
+						Config: map[string]any{"city": "Paris"},
+					},
+				},
+			},
+		},
+	}
+
+	updateDone := make(chan error, 1)
+	go func() {
+		updateDone <- coord.UpdateConfig(snap2)
+	}()
+
+	// Verify UpdateConfig cannot complete while RLock is held by recordWorkerPush
+	select {
+	case <-updateDone:
+		t.Fatal("UpdateConfig completed prematurely while RLock was held by push listener!")
+	case <-time.After(50 * time.Millisecond):
+		// Expected: UpdateConfig is blocked waiting for Lock()
+	}
+
+	// Release hook to let recordWorkerPush finish under RLock
+	close(releaseHook)
+
+	// Now UpdateConfig must proceed and finish
+	select {
+	case err := <-updateDone:
+		if err != nil {
+			t.Fatalf("UpdateConfig failed: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for UpdateConfig to complete after hook release")
+	}
+
+	// Wait for mockP2 initial fetch on the new instance
+	select {
+	case <-mockP2.fetchSignal:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for mockP2 fetch")
+	}
+
+	// Verify the cache has the new instance's data and not the stale push data
+	p, ok := coord.Cache().Get("tile-atomic")
+	if !ok {
+		t.Fatal("expected tile-atomic entry in cache after mockP2 fetch")
+	}
+	if d, ok := p.Data.(map[string]any); ok && d["city"] == "Old-Tokyo-Data" {
+		t.Fatal("UpdateConfig failed to purge stale push data!")
+	}
+}
+
 

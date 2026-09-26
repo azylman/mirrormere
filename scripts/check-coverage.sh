@@ -144,7 +144,8 @@ for pkg in $PACKAGES; do
     fi
 
     # Run tests with coverage profile
-    if $GO_TEST_PREFIX env CGO_ENABLED="$cgo_val" go test -coverprofile="$prof" "$pkg" >/dev/null 2>&1; then
+    test_log="${PROF_DIR}/test_${idx}.log"
+    if $GO_TEST_PREFIX env CGO_ENABLED="$cgo_val" go test -coverprofile="$prof" "$pkg" >"$test_log" 2>&1; then
         if [ -f "$prof" ] && [ -s "$prof" ]; then
             # Parse statements from profile
             cov_stats=$(awk 'NR>1 { total += $2; if ($3 > 0) covered += $2 } END { printf "%d %d\n", total, covered }' "$prof")
@@ -168,6 +169,7 @@ for pkg in $PACKAGES; do
             echo "$pkg_rel 0 0 100.00" >> "$PKG_DATA_FILE"
         fi
     else
+        cat "$test_log" >&2 || true
         record_violation "Package '$pkg_rel' tests failed"
     fi
 done
