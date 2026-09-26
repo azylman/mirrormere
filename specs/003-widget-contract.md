@@ -77,7 +77,7 @@ Widget packages can optionally provide static icons, images, or assets within an
    - **API Schema**: This route is formally defined in `api/openapi.yaml`.
 
 2. **Template Context Integration**:
-   Templates must never hard-code asset path prefixes. The server injects an `.Assets` base URL variable (evaluating to `/widget-types/<widget-type>/assets`) into the template execution context:
+   Templates must never hard-code asset path prefixes. The server injects an `.Assets` base URL variable (evaluating to `widget-types/<widget-type>/assets`) into the template execution context:
    ```html
    <img src="{{ .Assets }}/weather-icon.svg" alt="Weather condition" class="widget-icon" />
    ```
@@ -267,7 +267,7 @@ The Go backend unmarshals the generic `config` mapping as `map[string]any`:
   - `.Data`: The latest domain data payload object from the cached envelope (e.g. `{{ range .Data.events }}...{{ end }}`).
   - `.State`: Current operational state string (`healthy`, `degraded`, `error`).
   - `.Timestamp`: ISO 8601 timestamp string of the latest update.
-  - `.Assets`: Base URL path (`/widget-types/<widget-type>/assets`) for referencing static package assets.
+  - `.Assets`: Relative base URL path (`widget-types/<widget-type>/assets`) for referencing static package assets.
 
 ---
 
@@ -456,7 +456,7 @@ Mirrormere eliminates the authoring and maintenance overhead of dual templates (
   - `.Data`: Domain payload object conforming to the widget's schema.
   - `.State`: Health string (`healthy`, `degraded`, `error`).
   - `.Timestamp`: ISO 8601 string of the payload timestamp.
-  - `.Assets`: Base URL path (`/widget-types/<widget-type>/assets`) for referencing static package assets.
+  - `.Assets`: Relative base URL path (`widget-types/<widget-type>/assets`) for referencing static package assets.
 - **Markup & Layout**: Delivered as a clean semantic HTML5 snippet or modern Web Component loaded into the canvas. Markup uses clean semantic classes (e.g. `.widget`, `.widget-title`, `.item-done`) and standard CSS variables for styling, flexing dynamically across its assigned 6×2 grid cells per SPEC-005.
 
 ### 2. Widget HTML Fragment Endpoint (`GET /api/widgets/{widget_id}/render`)
