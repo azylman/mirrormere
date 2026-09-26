@@ -16,8 +16,9 @@ import (
 )
 
 type mockBroadcaster struct {
-	mu     sync.Mutex
-	events []*events.Event
+	mu        sync.Mutex
+	events    []*events.Event
+	publishCh chan *events.Event
 }
 
 func (m *mockBroadcaster) Publish(eventType string, data []byte) *events.Event {
@@ -30,7 +31,30 @@ func (m *mockBroadcaster) Publish(eventType string, data []byte) *events.Event {
 		Timestamp: time.Now(),
 	}
 	m.events = append(m.events, evt)
+	if m.publishCh == nil {
+		m.publishCh = make(chan *events.Event, 64)
+	}
+	select {
+	case m.publishCh <- evt:
+	default:
+	}
 	return evt
+}
+
+func (m *mockBroadcaster) waitForPublish(timeout time.Duration) (*events.Event, bool) {
+	m.mu.Lock()
+	if m.publishCh == nil {
+		m.publishCh = make(chan *events.Event, 64)
+	}
+	ch := m.publishCh
+	m.mu.Unlock()
+
+	select {
+	case evt := <-ch:
+		return evt, true
+	case <-time.After(timeout):
+		return nil, false
+	}
 }
 
 func (m *mockBroadcaster) getEvents() []*events.Event {
@@ -94,9 +118,11 @@ func (s *mockStateSink) getState(widgetID string) (any, string, string, bool) {
 type controllableMockProvider struct {
 	mu              sync.Mutex
 	fetchFunc       func(ctx context.Context) (any, error)
-	initFunc        func(ctx context.Context, config map[string]any) error
+	initFunc        func(ctx context.Context, config map[string]any, opts provider.InitOptions) error
 	subSink         chan<- provider.WidgetPayload
 	initCalled      bool
+	initCfg         map[string]any
+	initOpts        provider.InitOptions
 	shutDown        bool
 	fetchCount      atomic.Int64
 	fetchSignal     chan struct{}
@@ -110,13 +136,15 @@ func newControllableMockProvider() *controllableMockProvider {
 	}
 }
 
-func (p *controllableMockProvider) Init(ctx context.Context, cfg map[string]any) error {
+func (p *controllableMockProvider) Init(ctx context.Context, cfg map[string]any, opts provider.InitOptions) error {
 	p.mu.Lock()
 	p.initCalled = true
+	p.initCfg = cfg
+	p.initOpts = opts
 	fn := p.initFunc
 	p.mu.Unlock()
 	if fn != nil {
-		return fn(ctx, cfg)
+		return fn(ctx, cfg, opts)
 	}
 	return nil
 }
@@ -289,11 +317,9 @@ func TestProviderCoordinator_LifecycleAndManualRefresh(t *testing.T) {
 	}, snap)
 	defer func() { _ = coord.Stop() }()
 
-	// Wait for initial fetch
-	select {
-	case <-mockP.fetchSignal:
-	case <-time.After(2 * time.Second):
-		t.Fatal("timeout waiting for initial fetch")
+	// Wait for initial fetch broadcast
+	if _, ok := broadcaster.waitForPublish(2 * time.Second); !ok {
+		t.Fatal("timeout waiting for initial fetch broadcast")
 	}
 
 	// Verify cache and StateSink
@@ -325,10 +351,8 @@ func TestProviderCoordinator_LifecycleAndManualRefresh(t *testing.T) {
 		t.Fatalf("RefreshWidget failed: %v", err)
 	}
 
-	select {
-	case <-mockP.fetchSignal:
-	case <-time.After(2 * time.Second):
-		t.Fatal("timeout waiting for manual refresh fetch")
+	if _, ok := broadcaster.waitForPublish(2 * time.Second); !ok {
+		t.Fatal("timeout waiting for manual refresh broadcast")
 	}
 
 	if mockP.fetchCount.Load() < 2 {
@@ -522,7 +546,7 @@ func TestProviderCoordinator_ProviderCreationAndInitFailure(t *testing.T) {
 
 	// Register a provider whose Init() always fails
 	mockP := newControllableMockProvider()
-	mockP.initFunc = func(ctx context.Context, config map[string]any) error {
+	mockP.initFunc = func(ctx context.Context, config map[string]any, opts provider.InitOptions) error {
 		return errors.New("bad configuration credentials")
 	}
 	registry.Register("failing-init", func() provider.Provider {
@@ -870,3 +894,158 @@ func TestProviderCoordinator_ShutdownEdgeCases(t *testing.T) {
 	// Calling Shutdown with canceledCtx returns context error
 	_ = coord.Shutdown(canceledCtx)
 }
+
+func TestProviderCoordinator_DomainConfigAndTransportSecretsSeparation(t *testing.T) {
+	t.Parallel()
+
+	registry := provider.NewRegistry()
+	mockP := newControllableMockProvider()
+	registry.Register("custom-sensor", func() provider.Provider {
+		return mockP
+	})
+
+	interval := 30
+	snap := &config.Snapshot{
+		Config: &config.Config{
+			Display: config.DisplayConfig{
+				Widgets: []config.WidgetConfig{
+					{
+						ID:                     "sensor-tile-1",
+						Type:                   "custom-sensor",
+						Dimensions:             []int{2, 1},
+						RefreshIntervalSeconds: &interval,
+						Endpoint:               "https://sensor.local/api/metrics",
+						Method:                 "POST",
+						TokenEnv:               "SENSOR_TOKEN",
+						Token:                  "resolved-bearer-token",
+						Secrets: map[string]string{
+							"token":   "resolved-bearer-token",
+							"api_key": "secret-sensor-api-key",
+						},
+						Config: map[string]any{
+							"city":        "Oakland",
+							"endpoint":    "domain-endpoint-override",
+							"api_key_env": "SENSOR_API_KEY",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	coord := provider.NewCoordinator(provider.CoordinatorConfig{
+		Registry: registry,
+	}, snap)
+	defer func() {
+		_ = coord.Stop()
+	}()
+
+	mockP.mu.Lock()
+	defer mockP.mu.Unlock()
+
+	if !mockP.initCalled {
+		t.Fatal("expected provider Init to be called")
+	}
+
+	// 1. Verify Domain Config Isolation
+	// - Must NOT contain transport keys injected by Core (token, token_env, method)
+	if _, ok := mockP.initCfg["token"]; ok {
+		t.Errorf("expected domain config to NOT contain 'token', got %v", mockP.initCfg["token"])
+	}
+	if _, ok := mockP.initCfg["token_env"]; ok {
+		t.Errorf("expected domain config to NOT contain 'token_env', got %v", mockP.initCfg["token_env"])
+	}
+	if _, ok := mockP.initCfg["method"]; ok {
+		t.Errorf("expected domain config to NOT contain 'method', got %v", mockP.initCfg["method"])
+	}
+	// - Domain key literally named 'endpoint' must NOT be overwritten by transport Endpoint
+	if mockP.initCfg["endpoint"] != "domain-endpoint-override" {
+		t.Errorf("expected domain config 'endpoint' to be preserved as 'domain-endpoint-override', got %v", mockP.initCfg["endpoint"])
+	}
+	if mockP.initCfg["city"] != "Oakland" {
+		t.Errorf("expected domain config 'city' to be 'Oakland', got %v", mockP.initCfg["city"])
+	}
+	if mockP.initCfg["api_key_env"] != "SENSOR_API_KEY" {
+		t.Errorf("expected domain config 'api_key_env' to be preserved, got %v", mockP.initCfg["api_key_env"])
+	}
+
+	// 2. Verify InitOptions Transport & Secrets
+	if mockP.initOpts.ID != "sensor-tile-1" {
+		t.Errorf("expected InitOptions.ID == 'sensor-tile-1', got %q", mockP.initOpts.ID)
+	}
+	if mockP.initOpts.Type != "custom-sensor" {
+		t.Errorf("expected InitOptions.Type == 'custom-sensor', got %q", mockP.initOpts.Type)
+	}
+	if len(mockP.initOpts.Dimensions) != 2 || mockP.initOpts.Dimensions[0] != 2 || mockP.initOpts.Dimensions[1] != 1 {
+		t.Errorf("expected InitOptions.Dimensions == [2, 1], got %v", mockP.initOpts.Dimensions)
+	}
+	if mockP.initOpts.Endpoint != "https://sensor.local/api/metrics" {
+		t.Errorf("expected InitOptions.Endpoint == 'https://sensor.local/api/metrics', got %q", mockP.initOpts.Endpoint)
+	}
+	if mockP.initOpts.Method != "POST" {
+		t.Errorf("expected InitOptions.Method == 'POST', got %q", mockP.initOpts.Method)
+	}
+	if mockP.initOpts.Token != "resolved-bearer-token" {
+		t.Errorf("expected InitOptions.Token == 'resolved-bearer-token', got %q", mockP.initOpts.Token)
+	}
+	if mockP.initOpts.GetSecret("token") != "resolved-bearer-token" {
+		t.Errorf("expected InitOptions.GetSecret('token') == 'resolved-bearer-token', got %q", mockP.initOpts.GetSecret("token"))
+	}
+	if mockP.initOpts.GetSecret("api_key") != "secret-sensor-api-key" {
+		t.Errorf("expected InitOptions.GetSecret('api_key') == 'secret-sensor-api-key', got %q", mockP.initOpts.GetSecret("api_key"))
+	}
+}
+
+func TestProviderCoordinator_InitOptionsFallbacks(t *testing.T) {
+	t.Parallel()
+
+	registry := provider.NewRegistry()
+	mockP := newControllableMockProvider()
+	registry.Register("minimal-type", func() provider.Provider {
+		return mockP
+	})
+
+	interval := 30
+	snap := &config.Snapshot{
+		Config: &config.Config{
+			Display: config.DisplayConfig{
+				Widgets: []config.WidgetConfig{
+					{
+						ID:                     "min-tile",
+						Type:                   "minimal-type",
+						RefreshIntervalSeconds: &interval,
+						Endpoint:               "http://bare.local/poll",
+						Token:                  "standalone-token",
+						// Method omitted -> defaults to POST when Endpoint is set
+						// Secrets omitted -> Token should populate Secrets["token"]
+					},
+				},
+			},
+		},
+	}
+
+	coord := provider.NewCoordinator(provider.CoordinatorConfig{
+		Registry: registry,
+	}, snap)
+	defer func() {
+		_ = coord.Stop()
+	}()
+
+	mockP.mu.Lock()
+	defer mockP.mu.Unlock()
+
+	if !mockP.initCalled {
+		t.Fatal("expected provider Init to be called")
+	}
+
+	if mockP.initOpts.Method != "POST" {
+		t.Errorf("expected default method 'POST', got %q", mockP.initOpts.Method)
+	}
+	if mockP.initOpts.Token != "standalone-token" {
+		t.Errorf("expected Token == 'standalone-token', got %q", mockP.initOpts.Token)
+	}
+	if mockP.initOpts.GetSecret("token") != "standalone-token" {
+		t.Errorf("expected GetSecret('token') == 'standalone-token', got %q", mockP.initOpts.GetSecret("token"))
+	}
+}
+

@@ -13,7 +13,7 @@ type dummyProvider struct {
 	shutDown    bool
 }
 
-func (d *dummyProvider) Init(ctx context.Context, config map[string]any) error {
+func (d *dummyProvider) Init(ctx context.Context, config map[string]any, opts provider.InitOptions) error {
 	d.initialized = true
 	return nil
 }
@@ -49,7 +49,7 @@ func TestRegistry_BuiltInSpacer(t *testing.T) {
 
 	// Verify spacer provider contract
 	ctx := context.Background()
-	if err := p.Init(ctx, nil); err != nil {
+	if err := p.Init(ctx, nil, provider.InitOptions{}); err != nil {
 		t.Fatalf("spacer Init failed: %v", err)
 	}
 
@@ -103,3 +103,36 @@ func TestRegistry_CustomProviderRegistration(t *testing.T) {
 		t.Fatalf("expected ErrProviderNotRegistered, got %v", err)
 	}
 }
+
+func TestInitOptions_GetSecret(t *testing.T) {
+	t.Parallel()
+
+	opts := provider.InitOptions{
+		ID:         "test-id",
+		Type:       "test-type",
+		Dimensions: []int{2, 1},
+		Endpoint:   "http://localhost:8080/data",
+		Method:     "POST",
+		Token:      "tok-123",
+		Secrets: map[string]string{
+			"token":   "tok-123",
+			"api_key": "secret-xyz",
+		},
+	}
+
+	if opts.GetSecret("token") != "tok-123" {
+		t.Errorf("expected tok-123, got %q", opts.GetSecret("token"))
+	}
+	if opts.GetSecret("api_key") != "secret-xyz" {
+		t.Errorf("expected secret-xyz, got %q", opts.GetSecret("api_key"))
+	}
+	if opts.GetSecret("unset") != "" {
+		t.Errorf("expected empty string for unset secret, got %q", opts.GetSecret("unset"))
+	}
+
+	var emptyOpts provider.InitOptions
+	if emptyOpts.GetSecret("anything") != "" {
+		t.Errorf("expected empty string when Secrets is nil, got %q", emptyOpts.GetSecret("anything"))
+	}
+}
+
