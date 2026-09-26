@@ -24,13 +24,15 @@ type mockDispatcher struct {
 	configEvents chan struct{}
 	styleEvents  chan watcher.StyleReloadEvent
 	widgetEvents chan watcher.WidgetReloadEvent
+	statusEvents chan config.Status
 }
 
 func newMockDispatcher() *mockDispatcher {
 	return &mockDispatcher{
-		configEvents: make(chan struct{}, 10),
-		styleEvents:  make(chan watcher.StyleReloadEvent, 10),
-		widgetEvents: make(chan watcher.WidgetReloadEvent, 10),
+		configEvents: make(chan struct{}, 20),
+		styleEvents:  make(chan watcher.StyleReloadEvent, 20),
+		widgetEvents: make(chan watcher.WidgetReloadEvent, 20),
+		statusEvents: make(chan config.Status, 20),
 	}
 }
 
@@ -52,6 +54,13 @@ func (d *mockDispatcher) DispatchWidgetReload(ev watcher.WidgetReloadEvent) erro
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.widgetEvents <- ev
+	return nil
+}
+
+func (d *mockDispatcher) DispatchStatus(status config.Status) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.statusEvents <- status
 	return nil
 }
 
@@ -786,6 +795,10 @@ func (d *errDispatcher) DispatchWidgetReload(ev watcher.WidgetReloadEvent) error
 	return fmt.Errorf("widget dispatch failure")
 }
 
+func (d *errDispatcher) DispatchStatus(status config.Status) error {
+	return fmt.Errorf("status dispatch failure")
+}
+
 func TestWatcher_DispatcherErrorsAndConfigMissing(t *testing.T) {
 	t.Parallel()
 
@@ -825,7 +838,15 @@ func TestWatcher_DispatcherErrorsAndConfigMissing(t *testing.T) {
 	cssFile := filepath.Join(configDir, "custom.css")
 	viewFile := filepath.Join(clockDir, "widget.html")
 
-	_ = os.WriteFile(configFile, []byte(updatedYAML()), 0644)
+	clockYAML := `
+timezone: America/New_York
+display:
+  widgets:
+    - id: clock-1
+      type: clock
+      dimensions: [6, 2]
+`
+	_ = os.WriteFile(configFile, []byte(clockYAML), 0644)
 	_ = os.WriteFile(cssFile, []byte("body {}"), 0644)
 	_ = os.WriteFile(viewFile, []byte("<div>Updated</div>"), 0644)
 
@@ -836,11 +857,73 @@ func TestWatcher_DispatcherErrorsAndConfigMissing(t *testing.T) {
 		t.Fatal("timed out waiting for settle hook")
 	}
 
-	// Now delete config.yaml, touch it, and trigger flush where os.ReadFile fails
+	// Incomplete package with errDispatcher
+	manifestFile := filepath.Join(customWidgetsDir, "clock", "manifest.yaml")
+	loader.mu.Lock()
+	loader.failType["clock"] = fmt.Errorf("simulated package load failure")
+	loader.mu.Unlock()
+	_ = os.WriteFile(manifestFile, []byte("name: Clock Incomplete\n"), 0644)
+	select {
+	case <-settledCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for settle hook on incomplete package with errDispatcher")
+	}
+
+	// Recover package with errDispatcher
+	loader.mu.Lock()
+	delete(loader.failType, "clock")
+	loader.mu.Unlock()
+	_ = os.WriteFile(manifestFile, []byte("name: Clock Recovered\n"), 0644)
+	select {
+	case <-settledCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for settle hook on package recovery with errDispatcher")
+	}
+
+	// Manifest reload validation failure with errDispatcher
+	loader.mu.Lock()
+	loader.packages["clock"].Manifest.SupportedDimensions = []domain.Dimension{domain.NewDimension(1, 1)}
+	loader.mu.Unlock()
+	_ = os.WriteFile(manifestFile, []byte("name: Clock Incompatible\n"), 0644)
+	select {
+	case <-settledCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for settle hook on manifest reload failure with errDispatcher")
+	}
+
+	// Restore valid package supported dimensions
+	loader.mu.Lock()
+	loader.packages["clock"].Manifest.SupportedDimensions = []domain.Dimension{domain.NewDimension(6, 2), domain.NewDimension(6, 1)}
+	loader.mu.Unlock()
+
+	// Remove config.yaml and wait for settle
 	_ = os.Remove(configFile)
-	// We need an event targeting config.yaml so dirtyConfig becomes true
-	// We can write to a temp file and rename to config.yaml then remove before flush, or test missing file:
-	// A simpler way: write config.yaml, then quickly remove it before debounce timer fires
+	select {
+	case <-settledCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for settle hook on config removal")
+	}
+
+	// Manifest reload when config.yaml is missing
+	_ = os.WriteFile(manifestFile, []byte("name: Clock No Config\n"), 0644)
+	select {
+	case <-settledCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for settle hook on manifest reload without config.yaml")
+	}
+
+	// Test IsWidgetTypeReferenced edge cases
+	if watcher.IsWidgetTypeReferencedForTest(nil, "clock") {
+		t.Error("expected false for nil snapshot")
+	}
+	if watcher.IsWidgetTypeReferencedForTest(&config.Snapshot{}, "clock") {
+		t.Error("expected false for nil Config")
+	}
+	if watcher.IsWidgetTypeReferencedForTest(&config.Snapshot{Config: &config.Config{}}, "clock") {
+		t.Error("expected false for empty widgets")
+	}
+
+	// Delete config.yaml and trigger dirtyConfig flush where os.ReadFile fails
 	wFast := watcher.New(watcher.Config{
 		ConfigDir:        configDir,
 		DebounceDuration: 50 * time.Millisecond,
@@ -893,4 +976,385 @@ func TestWatcher_RemoveDir_NestedAndErrors(t *testing.T) {
 	w.SendErrorForTest(fmt.Errorf("simulated watcher error"))
 	time.Sleep(10 * time.Millisecond)
 }
+
+func TestWatcher_ManifestDefaultDimensionsProducesNewLayoutAndConfigReload(t *testing.T) {
+	t.Parallel()
+
+	tempDir := t.TempDir()
+	configDir := filepath.Join(tempDir, "config")
+	customWidgetsDir := filepath.Join(configDir, "widgets")
+	appWidgetsDir := filepath.Join(tempDir, "app", "widgets")
+
+	_ = os.MkdirAll(configDir, 0755)
+	_ = os.MkdirAll(customWidgetsDir, 0755)
+	_ = os.MkdirAll(appWidgetsDir, 0755)
+
+	// Config where clock widgets have no explicit dimensions, relying on default_dimensions [6, 1]
+	clockConfigYAML := `
+timezone: America/New_York
+display:
+  widgets:
+    - id: clock-1
+      type: clock
+    - id: clock-2
+      type: clock
+`
+	configFile := filepath.Join(configDir, "config.yaml")
+	_ = os.WriteFile(configFile, []byte(clockConfigYAML), 0644)
+
+	clockDir := filepath.Join(customWidgetsDir, "clock")
+	clockViews := filepath.Join(clockDir, "views")
+	_ = os.MkdirAll(clockViews, 0755)
+	_ = os.WriteFile(filepath.Join(clockViews, "widget.html"), []byte("<div>Clock</div>"), 0644)
+	clockManifest := filepath.Join(clockDir, "manifest.yaml")
+	_ = os.WriteFile(clockManifest, []byte("name: Clock\nversion: 1.0.0\nprovider: static\ndefault_dimensions: [6, 1]\nsupported_dimensions:\n  - [6, 1]\n  - [6, 2]\n"), 0644)
+
+	dim62 := domain.NewDimension(6, 2)
+	dim61 := domain.NewDimension(6, 1)
+
+	packages := map[string]*domain.Package{
+		"clock": {
+			Type:   "clock",
+			Source: "custom",
+			Manifest: domain.WidgetManifest{
+				Name:                "Clock",
+				Version:             "1.0.0",
+				Provider:            "static",
+				DefaultDimensions:   dim61,
+				SupportedDimensions: []domain.Dimension{dim61, dim62},
+			},
+			ViewPath: filepath.Join(clockViews, "widget.html"),
+		},
+	}
+	loader := &testPackageLoader{packages: packages, failType: make(map[string]error)}
+
+	mgr, err := config.NewManager([]byte(clockConfigYAML), loader, nil, nil)
+	if err != nil {
+		t.Fatalf("config manager init failed: %v", err)
+	}
+
+	disp := newMockDispatcher()
+	w := watcher.New(watcher.Config{
+		ConfigDir:        configDir,
+		CustomWidgetsDir: customWidgetsDir,
+		DebounceDuration: 5 * time.Millisecond,
+	}, mgr, loader, disp, slog.Default())
+
+	if err := w.Start(context.Background()); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer func() { _ = w.Close() }()
+
+	// Verify initial layout has 1 screen with dimensions [6, 1]
+	initialLayout := mgr.CurrentLayout()
+	if len(initialLayout.Screens) != 1 || initialLayout.Screens[0].Widgets[0].Dimensions != dim61 {
+		t.Fatalf("expected initial placement [6, 1], got %v", initialLayout.Screens[0].Widgets[0].Dimensions)
+	}
+
+	// Update package in loader and rewrite manifest.yaml on disk to have default_dimensions [6, 2]
+	loader.mu.Lock()
+	loader.packages["clock"] = &domain.Package{
+		Type:   "clock",
+		Source: "custom",
+		Manifest: domain.WidgetManifest{
+			Name:                "Clock",
+			Version:             "1.0.1",
+			Provider:            "static",
+			DefaultDimensions:   dim62,
+			SupportedDimensions: []domain.Dimension{dim61, dim62},
+		},
+		ViewPath: filepath.Join(clockViews, "widget.html"),
+	}
+	loader.mu.Unlock()
+
+	_ = os.WriteFile(clockManifest, []byte("name: Clock\nversion: 1.0.1\nprovider: static\ndefault_dimensions: [6, 2]\nsupported_dimensions:\n  - [6, 1]\n  - [6, 2]\n"), 0644)
+
+	// Await config reload and widget reload
+	select {
+	case <-disp.configEvents:
+		// Succeeded
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for config reload on manifest update")
+	}
+
+	select {
+	case ev := <-disp.widgetEvents:
+		if ev.Type != "clock" {
+			t.Errorf("expected widget reload for clock, got %v", ev)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for widget reload on manifest update")
+	}
+
+	// Verify layout is updated to 2 screens with [6, 2]
+	newLayout := mgr.CurrentLayout()
+	if len(newLayout.Screens) != 2 || newLayout.Screens[0].Widgets[0].Dimensions != dim62 {
+		t.Errorf("expected updated 2 screens with [6, 2], got %d screens (dim: %v)", len(newLayout.Screens), newLayout.Screens[0].Widgets[0].Dimensions)
+	}
+}
+
+func TestWatcher_ManifestValidationFailureRetainsLKGCAndAbortsWidgetReload(t *testing.T) {
+	t.Parallel()
+
+	tempDir := t.TempDir()
+	configDir := filepath.Join(tempDir, "config")
+	customWidgetsDir := filepath.Join(configDir, "widgets")
+	appWidgetsDir := filepath.Join(tempDir, "app", "widgets")
+
+	_ = os.MkdirAll(configDir, 0755)
+	_ = os.MkdirAll(customWidgetsDir, 0755)
+	_ = os.MkdirAll(appWidgetsDir, 0755)
+
+	clockConfigYAML := `
+timezone: America/New_York
+display:
+  widgets:
+    - id: clock-1
+      type: clock
+      dimensions: [6, 2]
+`
+	configFile := filepath.Join(configDir, "config.yaml")
+	_ = os.WriteFile(configFile, []byte(clockConfigYAML), 0644)
+
+	clockDir := filepath.Join(customWidgetsDir, "clock")
+	clockViews := filepath.Join(clockDir, "views")
+	_ = os.MkdirAll(clockViews, 0755)
+	_ = os.WriteFile(filepath.Join(clockViews, "widget.html"), []byte("<div>Clock</div>"), 0644)
+	clockManifest := filepath.Join(clockDir, "manifest.yaml")
+	_ = os.WriteFile(clockManifest, []byte("name: Clock\nversion: 1.0.0\nprovider: static\ndefault_dimensions: [6, 2]\nsupported_dimensions:\n  - [6, 2]\n"), 0644)
+
+	dim62 := domain.NewDimension(6, 2)
+	dim61 := domain.NewDimension(6, 1)
+
+	packages := map[string]*domain.Package{
+		"clock": {
+			Type:   "clock",
+			Source: "custom",
+			Manifest: domain.WidgetManifest{
+				Name:                "Clock",
+				Version:             "1.0.0",
+				Provider:            "static",
+				DefaultDimensions:   dim62,
+				SupportedDimensions: []domain.Dimension{dim62},
+			},
+			ViewPath: filepath.Join(clockViews, "widget.html"),
+		},
+	}
+	loader := &testPackageLoader{packages: packages, failType: make(map[string]error)}
+
+	mgr, err := config.NewManager([]byte(clockConfigYAML), loader, nil, nil)
+	if err != nil {
+		t.Fatalf("config manager init failed: %v", err)
+	}
+
+	disp := newMockDispatcher()
+	w := watcher.New(watcher.Config{
+		ConfigDir:        configDir,
+		CustomWidgetsDir: customWidgetsDir,
+		DebounceDuration: 5 * time.Millisecond,
+	}, mgr, loader, disp, slog.Default())
+
+	settledCh := make(chan struct{}, 10)
+	w.SetSettledHook(func() { settledCh <- struct{}{} })
+
+	if err := w.Start(context.Background()); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer func() { _ = w.Close() }()
+
+	// Update package so supported_dimensions only allows [6, 1], making the running [6, 2] instance invalid (Stage 3 failure)
+	loader.mu.Lock()
+	loader.packages["clock"] = &domain.Package{
+		Type:   "clock",
+		Source: "custom",
+		Manifest: domain.WidgetManifest{
+			Name:                "Clock",
+			Version:             "2.0.0",
+			Provider:            "static",
+			DefaultDimensions:   dim61,
+			SupportedDimensions: []domain.Dimension{dim61},
+		},
+		ViewPath: filepath.Join(clockViews, "widget.html"),
+	}
+	loader.mu.Unlock()
+
+	_ = os.WriteFile(clockManifest, []byte("name: Clock\nversion: 2.0.0\nprovider: static\ndefault_dimensions: [6, 1]\nsupported_dimensions:\n  - [6, 1]\n"), 0644)
+
+	// Wait for debounce settle
+	select {
+	case <-settledCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for settle hook")
+	}
+
+	// Assert status was dispatched with error
+	select {
+	case st := <-disp.statusEvents:
+		if st.ConfigStatus != config.ConfigStatusError {
+			t.Errorf("expected error status, got %v", st.ConfigStatus)
+		}
+	default:
+		t.Error("expected status event to be dispatched on manifest validation failure")
+	}
+
+	// Assert widget reload was NOT dispatched
+	select {
+	case ev := <-disp.widgetEvents:
+		t.Fatalf("unexpected widget reload dispatched when manifest invalidates running config: %v", ev)
+	default:
+		// Passed
+	}
+
+	// Assert LKGC retained
+	if mgr.CurrentLayout().Screens[0].Widgets[0].Dimensions != dim62 {
+		t.Errorf("expected LKGC [6, 2] to be retained")
+	}
+}
+
+func TestWatcher_ConfigReloadFailureDispatchesErrorStatusAndRecoveryDispatchesOK(t *testing.T) {
+	t.Parallel()
+
+	tempDir, mgr, loader, disp := setupTestEnv(t)
+	configDir := filepath.Join(tempDir, "config")
+	configFile := filepath.Join(configDir, "config.yaml")
+
+	w := watcher.New(watcher.Config{
+		ConfigDir:        configDir,
+		DebounceDuration: 5 * time.Millisecond,
+	}, mgr, loader, disp, slog.Default())
+
+	settledCh := make(chan struct{}, 10)
+	w.SetSettledHook(func() { settledCh <- struct{}{} })
+
+	if err := w.Start(context.Background()); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer func() { _ = w.Close() }()
+
+	// 1. Write syntax error
+	_ = os.WriteFile(configFile, []byte("invalid: [yaml"), 0644)
+	select {
+	case <-settledCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for settle hook")
+	}
+
+	select {
+	case st := <-disp.statusEvents:
+		if st.ConfigStatus != config.ConfigStatusError || st.ConfigError == nil {
+			t.Errorf("expected error status with message, got %v", st)
+		}
+	default:
+		t.Error("expected status event on config reload failure")
+	}
+
+	// 2. Write valid config (recovery)
+	_ = os.WriteFile(configFile, []byte(updatedYAML()), 0644)
+	select {
+	case <-settledCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for settle hook")
+	}
+
+	select {
+	case st := <-disp.statusEvents:
+		if st.ConfigStatus != config.ConfigStatusOK || st.ConfigError != nil {
+			t.Errorf("expected OK status on recovery, got %v", st)
+		}
+	default:
+		t.Error("expected status event on config reload recovery")
+	}
+}
+
+func TestWatcher_IncompletePackageDispatchesErrorStatusAndRecoveryDispatchesOK(t *testing.T) {
+	t.Parallel()
+
+	tempDir, mgr, loader, disp := setupTestEnv(t)
+	configDir := filepath.Join(tempDir, "config")
+	customWidgetsDir := filepath.Join(configDir, "widgets")
+
+	w := watcher.New(watcher.Config{
+		ConfigDir:        configDir,
+		CustomWidgetsDir: customWidgetsDir,
+		DebounceDuration: 5 * time.Millisecond,
+	}, mgr, loader, disp, slog.Default())
+
+	settledCh := make(chan struct{}, 10)
+	w.SetSettledHook(func() { settledCh <- struct{}{} })
+
+	if err := w.Start(context.Background()); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer func() { _ = w.Close() }()
+
+	// 1. Create incomplete widget package
+	loader.mu.Lock()
+	loader.failType["radar"] = fmt.Errorf("manifest.yaml not found")
+	loader.mu.Unlock()
+
+	radarDir := filepath.Join(customWidgetsDir, "radar", "views")
+	_ = os.MkdirAll(radarDir, 0755)
+	_ = os.WriteFile(filepath.Join(radarDir, "widget.html"), []byte("<div>Radar</div>"), 0644)
+
+	select {
+	case <-settledCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for settle hook")
+	}
+
+	select {
+	case st := <-disp.statusEvents:
+		if st.ConfigStatus != config.ConfigStatusError || st.ConfigError == nil || !strings.Contains(*st.ConfigError, "radar") {
+			t.Errorf("expected error status mentioning radar, got %v", st)
+		}
+	default:
+		t.Error("expected status event on incomplete package")
+	}
+
+	// 2. Complete package
+	dim62 := domain.NewDimension(6, 2)
+	loader.mu.Lock()
+	delete(loader.failType, "radar")
+	loader.packages["radar"] = &domain.Package{
+		Type:   "radar",
+		Source: "custom",
+		Manifest: domain.WidgetManifest{
+			Name:              "Radar",
+			Version:           "1.0.0",
+			Provider:          "static",
+			DefaultDimensions: dim62,
+		},
+		ViewPath: filepath.Join(radarDir, "widget.html"),
+	}
+	loader.mu.Unlock()
+
+	_ = os.WriteFile(filepath.Join(customWidgetsDir, "radar", "manifest.yaml"), []byte("name: Radar\nversion: 1.0.0\n"), 0644)
+
+	select {
+	case <-settledCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for settle hook")
+	}
+
+	foundOK := false
+	for len(disp.statusEvents) > 0 {
+		st := <-disp.statusEvents
+		if st.ConfigStatus == config.ConfigStatusOK {
+			foundOK = true
+		}
+	}
+	if !foundOK {
+		t.Error("expected status event recovery to OK after package completion")
+	}
+
+	select {
+	case ev := <-disp.widgetEvents:
+		if ev.Type != "radar" {
+			t.Errorf("expected widget reload for radar, got %v", ev)
+		}
+	default:
+		t.Error("expected widget reload event after package completion")
+	}
+}
+
 

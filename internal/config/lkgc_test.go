@@ -1289,3 +1289,90 @@ display:
 		t.Fatalf("expected empty base_url error, got %v", err)
 	}
 }
+
+func TestLKGC_PackageErrorsAndExplicitStatus(t *testing.T) {
+	t.Parallel()
+
+	packages := createStandardPackages()
+	loader := &mockPackageLoader{packages: packages}
+	m, err := config.NewManager([]byte(validBaseYAML), loader, nil, nil)
+	if err != nil {
+		t.Fatalf("setup failed: %v", err)
+	}
+
+	// Initial status is OK
+	st := m.Status()
+	if st.ConfigStatus != config.ConfigStatusOK {
+		t.Errorf("expected OK, got %v", st.ConfigStatus)
+	}
+
+	// Set nil error - no-op
+	m.SetPackageError("pkg-a", nil)
+	if m.Status().ConfigStatus != config.ConfigStatusOK {
+		t.Errorf("expected OK after nil error, got %v", m.Status().ConfigStatus)
+	}
+
+	// Set package error
+	errA := fmt.Errorf("manifest.yaml missing")
+	m.SetPackageError("pkg-a", errA)
+	st = m.Status()
+	if st.ConfigStatus != config.ConfigStatusError || st.ConfigError == nil || !strings.Contains(*st.ConfigError, "manifest.yaml missing") {
+		t.Errorf("expected pkg-a error, got %v", st)
+	}
+
+	// Set second package error
+	errB := fmt.Errorf("views/widget.html missing")
+	m.SetPackageError("pkg-b", errB)
+
+	// Clear non-existent package - returns false
+	if m.ClearPackageError("pkg-nonexistent") {
+		t.Error("expected false for clearing non-existent package error")
+	}
+
+	// Clear pkg-a: pkg-b should remain
+	if !m.ClearPackageError("pkg-a") {
+		t.Error("expected true when clearing existing package error")
+	}
+	st = m.Status()
+	if st.ConfigStatus != config.ConfigStatusError || st.ConfigError == nil || !strings.Contains(*st.ConfigError, "views/widget.html missing") {
+		t.Errorf("expected pkg-b error to remain, got %v", st)
+	}
+
+	// Clear pkg-b: status returns to OK
+	if !m.ClearPackageError("pkg-b") {
+		t.Error("expected true when clearing pkg-b")
+	}
+	st = m.Status()
+	if st.ConfigStatus != config.ConfigStatusOK || st.ConfigError != nil {
+		t.Errorf("expected OK status after clearing all package errors, got %v", st)
+	}
+
+	// Test SetErrorStatus and ClearErrorStatus
+	m.SetErrorStatus(fmt.Errorf("file read error"))
+	st = m.Status()
+	if st.ConfigStatus != config.ConfigStatusError || st.ConfigError == nil || !strings.Contains(*st.ConfigError, "file read error") {
+		t.Errorf("expected file read error, got %v", st)
+	}
+
+	// When config error is active, clearing a package error does not clear the config error
+	m.SetPackageError("pkg-c", fmt.Errorf("pkg-c error"))
+	m.ClearPackageError("pkg-c")
+	st = m.Status()
+	if st.ConfigStatus != config.ConfigStatusError || st.ConfigError == nil || !strings.Contains(*st.ConfigError, "file read error") {
+		t.Errorf("expected file read error to persist after clearing pkg-c, got %v", st)
+	}
+
+	// ClearErrorStatus resets back to OK
+	m.ClearErrorStatus()
+	st = m.Status()
+	if st.ConfigStatus != config.ConfigStatusOK || st.ConfigError != nil {
+		t.Errorf("expected OK after ClearErrorStatus, got %v", st)
+	}
+
+	// Set nil error status - no-op
+	m.SetErrorStatus(nil)
+	if m.Status().ConfigStatus != config.ConfigStatusOK {
+		t.Errorf("expected OK after nil SetErrorStatus, got %v", m.Status().ConfigStatus)
+	}
+}
+

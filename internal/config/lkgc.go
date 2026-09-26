@@ -82,12 +82,14 @@ type ConfigDiff struct {
 
 // Manager coordinates live configuration reloads and enforces LKGC resilience per SPEC-012.
 type Manager struct {
-	reloadMu sync.Mutex
-	current  atomic.Pointer[Snapshot]
-	status   atomic.Pointer[Status]
-	loader   PackageLoader
-	getenv   func(string) string
-	logger   *slog.Logger
+	reloadMu        sync.Mutex
+	current         atomic.Pointer[Snapshot]
+	status          atomic.Pointer[Status]
+	loader          PackageLoader
+	getenv          func(string) string
+	logger          *slog.Logger
+	configReloadErr error
+	packageErrors   map[string]string
 }
 
 // NewManager creates and initializes an LKGC Manager with the initial configuration.
@@ -104,9 +106,10 @@ func NewManager(initialYAML []byte, loader PackageLoader, getenv func(string) st
 	}
 
 	m := &Manager{
-		loader: loader,
-		getenv: getenv,
-		logger: logger,
+		loader:        loader,
+		getenv:        getenv,
+		logger:        logger,
+		packageErrors: make(map[string]string),
 	}
 
 	snapshot, err := ValidatePipeline(initialYAML, loader, getenv)
@@ -163,6 +166,104 @@ func (m *Manager) Status() Status {
 	return *st
 }
 
+func (m *Manager) updateStatusLocked() {
+	now := time.Now()
+	prev := m.status.Load()
+	var lastSuccess time.Time
+	if prev != nil {
+		lastSuccess = prev.LastSuccess
+	}
+
+	if m.configReloadErr != nil {
+		errMsg := m.configReloadErr.Error()
+		m.status.Store(&Status{
+			ConfigStatus: ConfigStatusError,
+			ConfigError:  &errMsg,
+			LastChecked:  now,
+			LastSuccess:  lastSuccess,
+		})
+		return
+	}
+
+	if len(m.packageErrors) > 0 {
+		var firstType string
+		for t := range m.packageErrors {
+			if firstType == "" || t < firstType {
+				firstType = t
+			}
+		}
+		errMsg := m.packageErrors[firstType]
+		m.status.Store(&Status{
+			ConfigStatus: ConfigStatusError,
+			ConfigError:  &errMsg,
+			LastChecked:  now,
+			LastSuccess:  lastSuccess,
+		})
+		return
+	}
+
+	m.status.Store(&Status{
+		ConfigStatus: ConfigStatusOK,
+		ConfigError:  nil,
+		LastChecked:  now,
+		LastSuccess:  now,
+	})
+}
+
+// SetPackageError records a package incompleteness error in Manager's status per SPEC-003 §1.
+func (m *Manager) SetPackageError(widgetType string, err error) {
+	if err == nil {
+		return
+	}
+	m.reloadMu.Lock()
+	defer m.reloadMu.Unlock()
+
+	if m.packageErrors == nil {
+		m.packageErrors = make(map[string]string)
+	}
+	m.packageErrors[widgetType] = err.Error()
+	m.updateStatusLocked()
+}
+
+// ClearPackageError clears an incomplete package error for widgetType.
+// If all package errors are resolved and no active config error exists, status returns to OK and returns true.
+func (m *Manager) ClearPackageError(widgetType string) bool {
+	m.reloadMu.Lock()
+	defer m.reloadMu.Unlock()
+
+	if m.packageErrors == nil {
+		return false
+	}
+	if _, ok := m.packageErrors[widgetType]; !ok {
+		return false
+	}
+	delete(m.packageErrors, widgetType)
+	m.updateStatusLocked()
+	return true
+}
+
+// SetErrorStatus explicitly records an error status (e.g. for configuration read errors).
+func (m *Manager) SetErrorStatus(err error) {
+	if err == nil {
+		return
+	}
+	m.reloadMu.Lock()
+	defer m.reloadMu.Unlock()
+
+	m.configReloadErr = err
+	m.updateStatusLocked()
+}
+
+// ClearErrorStatus resets the error status back to OK if it was in error state.
+func (m *Manager) ClearErrorStatus() {
+	m.reloadMu.Lock()
+	defer m.reloadMu.Unlock()
+
+	m.configReloadErr = nil
+	m.packageErrors = make(map[string]string)
+	m.updateStatusLocked()
+}
+
 // Reload executes the 6-stage validation pipeline on candidate YAML data.
 // If validation succeeds, it atomically swaps the running configuration and returns the diff.
 // If validation fails, it retains running LKGC, logs structured diagnostics, and updates telemetry.
@@ -170,23 +271,13 @@ func (m *Manager) Reload(data []byte) (*Snapshot, *ConfigDiff, error) {
 	m.reloadMu.Lock()
 	defer m.reloadMu.Unlock()
 
-	now := time.Now()
 	candidate, err := ValidatePipeline(data, m.loader, m.getenv)
 	if err != nil {
 		errMsg := err.Error()
 		m.logger.Error(fmt.Sprintf("[config.reloader] error=\"live config validation failed: %s; retaining LKGC\"", errMsg))
 
-		prev := m.status.Load()
-		var lastSuccess time.Time
-		if prev != nil {
-			lastSuccess = prev.LastSuccess
-		}
-		m.status.Store(&Status{
-			ConfigStatus: ConfigStatusError,
-			ConfigError:  &errMsg,
-			LastChecked:  now,
-			LastSuccess:  lastSuccess,
-		})
+		m.configReloadErr = err
+		m.updateStatusLocked()
 		return nil, nil, err
 	}
 
@@ -199,13 +290,9 @@ func (m *Manager) Reload(data []byte) (*Snapshot, *ConfigDiff, error) {
 		diff.Added = append(diff.Added, candidate.Config.Display.Widgets...)
 	}
 
+	m.configReloadErr = nil
 	m.current.Store(candidate)
-	m.status.Store(&Status{
-		ConfigStatus: ConfigStatusOK,
-		ConfigError:  nil,
-		LastChecked:  now,
-		LastSuccess:  now,
-	})
+	m.updateStatusLocked()
 
 	return candidate, diff, nil
 }
