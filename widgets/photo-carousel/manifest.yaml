@@ -1,0 +1,43 @@
+name: photo-carousel
+version: "1.0.0"
+description: Google Photos shared album carousel with dynamic client-side edge sizing.
+provider: photo-carousel
+
+capabilities:
+  - ambient-static
+  - touch-interactive
+
+default_dimensions: [3, 2]
+
+supported_dimensions:
+  - [2, 1]
+  - [3, 1]
+  - [4, 1]
+  - [2, 2]
+  - [3, 2]
+  - [4, 2]
+  - [6, 2]
+
+config_schema:
+  type: object
+  properties:
+    share_url:
+      type: string
+    share_url_env:
+      type: string
+    cycle_interval_seconds:
+      type: integer
+      minimum: 5
+    preload_count:
+      type: integer
+      minimum: 1
+      maximum: 500
+    shuffle:
+      type: boolean
+    image_size:
+      type: array
+      items:
+        type: integer
+      minItems: 2
+      maxItems: 2
+  additionalProperties: false

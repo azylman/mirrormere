@@ -1,0 +1,23 @@
+<div class="widget-card widget-photo-carousel dither" data-widget-id="{{ .ID }}" data-widget-type="{{ .Type }}" style="grid-column: span {{ .Dimensions.Cols }}; grid-row: span {{ .Dimensions.Rows }}; position: relative; overflow: hidden; padding: 0; background: #000; border: none; border-radius: 8px;">
+  {{ if .Data }}
+    {{ if and .Data.Photos (gt (len .Data.Photos) 0) }}
+      {{ $first := index .Data.Photos 0 }}
+      <div class="photo-viewport dither" style="position: absolute; inset: 0; width: 100%; height: 100%; overflow: hidden;">
+        <img class="photo-layer photo-current dither" src="{{ $first.URL }}=w960-h640-c" alt="Photo" style="position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 1; transition: opacity 0.8s ease-in-out;" />
+        <img class="photo-layer photo-next dither" src="" alt="Photo" style="position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity 0.8s ease-in-out;" />
+      </div>
+      <script type="application/json" class="photo-carousel-data">
+        {{ json .Data }}
+      </script>
+      <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E" style="display:none;" alt="" onload="window.MirrormerePhotoCarousel &amp;&amp; window.MirrormerePhotoCarousel.mount(this.closest('.widget-photo-carousel'))" />
+    {{ else }}
+      <div class="photo-empty" style="display: flex; align-items: center; justify-content: center; height: 100%; color: var(--mm-text-muted); font-size: 0.95rem;">
+        <span>No photos in shared album</span>
+      </div>
+    {{ end }}
+  {{ else }}
+    <div class="photo-loading" style="display: flex; align-items: center; justify-content: center; height: 100%; color: var(--mm-text-muted); font-size: 0.95rem;">
+      <span>Loading photos...</span>
+    </div>
+  {{ end }}
+</div>

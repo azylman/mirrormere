@@ -216,3 +216,139 @@ class MirrormereCarousel {
 
 // Attach globally
 window.MirrormereCarousel = MirrormereCarousel;
+
+/**
+ * MirrormerePhotoCarousel Controller
+ * Manages photo carousel instances, dynamic edge-resizing parameter injection (=w{w}-h{h}-c),
+ * background image preloading, and smooth CSS cross-fade transitions.
+ * Complies with SPEC-007 §3 and SPEC-003 §4.
+ */
+class PhotoCarouselInstance {
+  constructor(element) {
+    this.element = element;
+    this.widgetId = element.dataset.widgetId;
+    this.timer = null;
+    this.currentIndex = 0;
+    this.photos = [];
+    this.cycleIntervalSeconds = 60;
+
+    const dataScript = element.querySelector('.photo-carousel-data');
+    if (dataScript) {
+      try {
+        const data = JSON.parse(dataScript.textContent);
+        if (data && Array.isArray(data.photos)) {
+          this.photos = data.photos;
+        }
+        if (data && data.cycle_interval_seconds) {
+          this.cycleIntervalSeconds = data.cycle_interval_seconds;
+        }
+      } catch (e) {
+        console.warn('[PhotoCarousel] Failed to parse carousel data:', e);
+      }
+    }
+
+    this.currentImg = element.querySelector('.photo-current');
+    this.nextImg = element.querySelector('.photo-next');
+
+    // Update first image with dynamic DOM sizing if container is measured
+    this.updateCurrentSizing();
+
+    if (this.photos.length > 1) {
+      this.startCycling();
+    }
+  }
+
+  getSizedURL(rawURL) {
+    if (!rawURL) return '';
+    const rect = this.element.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    let targetWidth = Math.round((rect.width || 960) * dpr);
+    let targetHeight = Math.round((rect.height || 640) * dpr);
+    if (targetWidth <= 0) targetWidth = 960;
+    if (targetHeight <= 0) targetHeight = 640;
+    return `${rawURL}=w${targetWidth}-h${targetHeight}-c`;
+  }
+
+  updateCurrentSizing() {
+    if (!this.currentImg || this.photos.length === 0) return;
+    const first = this.photos[this.currentIndex];
+    if (first && first.url) {
+      const sized = this.getSizedURL(first.url);
+      if (sized && !this.currentImg.src.includes(sized)) {
+        this.currentImg.src = sized;
+      }
+    }
+  }
+
+  startCycling() {
+    this.stopCycling();
+    const intervalMs = Math.max(5000, this.cycleIntervalSeconds * 1000);
+    this.timer = setInterval(() => {
+      this.cycleNext();
+    }, intervalMs);
+  }
+
+  stopCycling() {
+    if (this.timer) {
+      clearInterval(this.timer);
+      this.timer = null;
+    }
+  }
+
+  cycleNext() {
+    if (this.element && this.element.isConnected === false) {
+      this.destroy();
+      return;
+    }
+    if (this.photos.length <= 1 || !this.currentImg || !this.nextImg) return;
+
+    const nextIndex = (this.currentIndex + 1) % this.photos.length;
+    const nextPhoto = this.photos[nextIndex];
+    if (!nextPhoto || !nextPhoto.url) return;
+
+    const nextSizedURL = this.getSizedURL(nextPhoto.url);
+
+    // Preload next image in memory
+    const preloader = new Image();
+    preloader.onload = () => {
+      this.nextImg.src = nextSizedURL;
+      this.nextImg.style.opacity = '1';
+      this.currentImg.style.opacity = '0';
+
+      setTimeout(() => {
+        this.currentImg.src = nextSizedURL;
+        this.currentImg.style.opacity = '1';
+        this.nextImg.style.opacity = '0';
+        this.nextImg.src = '';
+        this.currentIndex = nextIndex;
+      }, 850);
+    };
+    preloader.src = nextSizedURL;
+  }
+
+  destroy() {
+    this.stopCycling();
+  }
+}
+
+window.MirrormerePhotoCarousel = {
+  instances: new Map(),
+  mount(element) {
+    if (!element) return;
+    const id = element.dataset.widgetId;
+    if (!id) return;
+    if (this.instances.has(id)) {
+      this.instances.get(id).destroy();
+      this.instances.delete(id);
+    }
+    const instance = new PhotoCarouselInstance(element);
+    this.instances.set(id, instance);
+  },
+  unmount(id) {
+    if (this.instances.has(id)) {
+      this.instances.get(id).destroy();
+      this.instances.delete(id);
+    }
+  }
+};
+
