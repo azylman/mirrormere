@@ -99,6 +99,12 @@ func NewRegistry() *DefaultRegistry {
 	r.Register("calendar", func() Provider {
 		return NewCalendarProvider()
 	})
+	r.Register("photo-carousel", func() Provider {
+		return NewPhotosProvider()
+	})
+	r.Register("photos", func() Provider {
+		return NewPhotosProvider()
+	})
 	return r
 }
 
