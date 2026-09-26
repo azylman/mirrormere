@@ -988,6 +988,8 @@ func TestLKGC_DiffConfigs(t *testing.T) {
 				{ID: "mod-transport", Type: "spacer", Dimensions: []int{2, 1}, Endpoint: "http://old"},
 				{ID: "mod-domain", Type: "tasks", Dimensions: []int{2, 1}, Config: map[string]any{"list_id": "old"}},
 				{ID: "replaced-1", Type: "tasks", Dimensions: []int{2, 1}},
+				{ID: "resized-only", Type: "spacer", Dimensions: []int{2, 1}, Pinned: false},
+				{ID: "pinned-only", Type: "spacer", Dimensions: []int{2, 1}, Pinned: false},
 			},
 		},
 	}
@@ -1001,14 +1003,39 @@ func TestLKGC_DiffConfigs(t *testing.T) {
 				{ID: "mod-transport", Type: "spacer", Dimensions: []int{2, 1}, Endpoint: "http://new", RefreshIntervalSeconds: &newInterval},
 				{ID: "mod-domain", Type: "tasks", Dimensions: []int{2, 1}, Config: map[string]any{"list_id": "new"}},
 				{ID: "replaced-1", Type: "spacer", Dimensions: []int{2, 1}}, // Type changed from tasks to spacer
+				{ID: "resized-only", Type: "spacer", Dimensions: []int{4, 1}, Pinned: false}, // Layout change: dimensions
+				{ID: "pinned-only", Type: "spacer", Dimensions: []int{2, 1}, Pinned: true},   // Layout change: pinned
 			},
 		},
 	}
 
 	diff := config.DiffConfigs(oldCfg, newCfg)
-	if len(diff.Unchanged) != 1 || diff.Unchanged[0].ID != "unchanged-1" {
-		t.Errorf("expected 1 unchanged widget, got %v", diff.Unchanged)
+	if len(diff.Unchanged) != 3 {
+		t.Fatalf("expected 3 unchanged widgets, got %d: %v", len(diff.Unchanged), diff.Unchanged)
 	}
+	unchangedMap := make(map[string]bool)
+	for _, u := range diff.Unchanged {
+		unchangedMap[u.ID] = true
+	}
+	for _, expectedID := range []string{"unchanged-1", "resized-only", "pinned-only"} {
+		if !unchangedMap[expectedID] {
+			t.Errorf("expected widget '%s' in diff.Unchanged", expectedID)
+		}
+	}
+
+	if len(diff.LayoutModified) != 2 {
+		t.Fatalf("expected 2 layout-modified widgets, got %d: %v", len(diff.LayoutModified), diff.LayoutModified)
+	}
+	layoutMap := make(map[string]bool)
+	for _, lm := range diff.LayoutModified {
+		layoutMap[lm.ID] = true
+	}
+	for _, expectedID := range []string{"resized-only", "pinned-only"} {
+		if !layoutMap[expectedID] {
+			t.Errorf("expected widget '%s' in diff.LayoutModified", expectedID)
+		}
+	}
+
 	if len(diff.Added) != 1 || diff.Added[0].ID != "added-1" {
 		t.Errorf("expected 1 added widget, got %v", diff.Added)
 	}
@@ -1039,6 +1066,8 @@ func TestLKGC_DiffConfigs(t *testing.T) {
 			if m.Change != config.ChangeReplaced {
 				t.Errorf("expected ChangeReplaced, got %s", m.Change)
 			}
+		case "resized-only", "pinned-only":
+			t.Errorf("layout-only edit '%s' must not be classified as Modified", m.ID)
 		}
 	}
 }

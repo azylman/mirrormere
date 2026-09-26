@@ -73,10 +73,11 @@ type InstanceDiff struct {
 
 // ConfigDiff summarizes all instance-level diffs between running and new configurations.
 type ConfigDiff struct {
-	Unchanged []WidgetConfig
-	Added     []WidgetConfig
-	Removed   []WidgetConfig
-	Modified  []InstanceDiff
+	Unchanged      []WidgetConfig
+	Added          []WidgetConfig
+	Removed        []WidgetConfig
+	Modified       []InstanceDiff
+	LayoutModified []WidgetConfig // Instances whose dimensions or pinned status changed without worker modifications
 }
 
 // Manager coordinates live configuration reloads and enforces LKGC resilience per SPEC-012.
@@ -578,12 +579,15 @@ func DiffConfigs(oldCfg, newCfg *Config) *ConfigDiff {
 			transportChanged := oldW.Endpoint != newW.Endpoint ||
 				oldW.Method != newW.Method ||
 				oldW.TokenEnv != newW.TokenEnv ||
-				!equalIntPtr(oldW.RefreshIntervalSeconds, newW.RefreshIntervalSeconds) ||
-				!reflect.DeepEqual(oldW.Dimensions, newW.Dimensions) ||
+				!equalIntPtr(oldW.RefreshIntervalSeconds, newW.RefreshIntervalSeconds)
+			layoutChanged := !reflect.DeepEqual(oldW.Dimensions, newW.Dimensions) ||
 				oldW.Pinned != newW.Pinned
 
 			if !domainChanged && !transportChanged {
 				diff.Unchanged = append(diff.Unchanged, newW)
+				if layoutChanged {
+					diff.LayoutModified = append(diff.LayoutModified, newW)
+				}
 			} else {
 				diff.Modified = append(diff.Modified, InstanceDiff{
 					ID:           newW.ID,
