@@ -82,6 +82,10 @@ func (h *PushHandler) PostWidgetPush(w http.ResponseWriter, r *http.Request, wid
 			h.writeErrorJSON(w, http.StatusConflict, fmt.Sprintf("cannot push state to list-backed widget '%s'; task lists are read-only and ingested from configured upstream providers", widgetID))
 			return
 		}
+		if errors.Is(err, ErrNonHTTPWidgetPushForbidden) {
+			h.writeErrorJSON(w, http.StatusConflict, fmt.Sprintf("cannot push state to widget '%s'; push webhook is strictly limited to widgets using the http provider", widgetID))
+			return
+		}
 		if errors.Is(err, ErrSchemaValidation) {
 			h.writeErrorJSON(w, http.StatusBadRequest, err.Error())
 			return

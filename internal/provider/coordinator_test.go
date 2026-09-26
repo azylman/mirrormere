@@ -1438,6 +1438,22 @@ func TestProviderCoordinator_PushWidgetData(t *testing.T) {
 						Type:     "bad-schema-widget",
 						Endpoint: "https://example.com/bad",
 					},
+					{
+						ID:   "tile-calendar",
+						Type: "calendar-agenda",
+					},
+					{
+						ID:   "tile-weather",
+						Type: "weather-forecast",
+					},
+					{
+						ID:   "tile-spacer",
+						Type: "spacer",
+					},
+					{
+						ID:   "tile-photos",
+						Type: "photo-carousel",
+					},
 				},
 			},
 		},
@@ -1448,7 +1464,7 @@ func TestProviderCoordinator_PushWidgetData(t *testing.T) {
 					Name:     "custom-sensor",
 					Provider: "http",
 					ResponseSchema: map[string]any{
-						"type": "object",
+						"type":     "object",
 						"required": []any{"temperature", "humidity"},
 						"properties": map[string]any{
 							"temperature": map[string]any{"type": "number"},
@@ -1461,7 +1477,35 @@ func TestProviderCoordinator_PushWidgetData(t *testing.T) {
 				Type: "tasks",
 				Manifest: domain.WidgetManifest{
 					Name:     "tasks",
+					Provider: "tasks",
+				},
+			},
+			"calendar-agenda": {
+				Type: "calendar-agenda",
+				Manifest: domain.WidgetManifest{
+					Name:     "calendar-agenda",
+					Provider: "calendar-agenda",
+				},
+			},
+			"weather-forecast": {
+				Type: "weather-forecast",
+				Manifest: domain.WidgetManifest{
+					Name:     "weather-forecast",
+					Provider: "weather-forecast",
+				},
+			},
+			"spacer": {
+				Type: "spacer",
+				Manifest: domain.WidgetManifest{
+					Name:     "spacer",
 					Provider: "spacer",
+				},
+			},
+			"photo-carousel": {
+				Type: "photo-carousel",
+				Manifest: domain.WidgetManifest{
+					Name:     "photo-carousel",
+					Provider: "photo-carousel",
 				},
 			},
 			"bad-schema-widget": {
@@ -1537,12 +1581,12 @@ func TestProviderCoordinator_PushWidgetData(t *testing.T) {
 		t.Errorf("got widgetID %q, want 'tile-custom'", payloadCached.WidgetID)
 	}
 
-	// 3. Widget without package in snapshot
+	// 3. HTTP widgets with and without package / response_schema
 	snapWithUnloaded := &config.Snapshot{
 		Config: &config.Config{
 			Display: config.DisplayConfig{
 				Widgets: []config.WidgetConfig{
-					{ID: "tile-unloaded", Type: "unloaded-type"},
+					{ID: "tile-unloaded", Type: "http"},
 					{ID: "tile-empty-schema", Type: "empty-schema-type"},
 				},
 			},
@@ -1551,7 +1595,8 @@ func TestProviderCoordinator_PushWidgetData(t *testing.T) {
 			"empty-schema-type": {
 				Type: "empty-schema-type",
 				Manifest: domain.WidgetManifest{
-					Name: "empty-schema-type",
+					Name:     "empty-schema-type",
+					Provider: "http",
 				},
 			},
 		},
@@ -1562,12 +1607,12 @@ func TestProviderCoordinator_PushWidgetData(t *testing.T) {
 	}, snapWithUnloaded)
 	defer func() { _ = coordUnloaded.Stop() }()
 
-	// Push to widget with nil package
+	// Push to widget with nil package (type "http")
 	if _, err := coordUnloaded.PushWidgetData(ctx, "tile-unloaded", validData); err != nil {
 		t.Fatalf("unexpected error pushing to widget without package: %v", err)
 	}
 
-	// Push to widget with empty response schema
+	// Push to widget with empty response schema (provider "http")
 	if _, err := coordUnloaded.PushWidgetData(ctx, "tile-empty-schema", validData); err != nil {
 		t.Fatalf("unexpected error pushing to widget with empty schema: %v", err)
 	}
@@ -1588,6 +1633,14 @@ func TestProviderCoordinator_PushWidgetData(t *testing.T) {
 	_, err = coord.PushWidgetData(ctx, "tile-tasks", map[string]any{"items": []any{}})
 	if !errors.Is(err, provider.ErrListWidgetPushForbidden) {
 		t.Errorf("got error %v, want ErrListWidgetPushForbidden", err)
+	}
+
+	// 6b. Non-HTTP / built-in widgets push forbidden (409)
+	for _, nonHTTPID := range []string{"tile-calendar", "tile-weather", "tile-spacer", "tile-photos"} {
+		_, err = coord.PushWidgetData(ctx, nonHTTPID, validData)
+		if !errors.Is(err, provider.ErrNonHTTPWidgetPushForbidden) {
+			t.Errorf("expected ErrNonHTTPWidgetPushForbidden for %q, got: %v", nonHTTPID, err)
+		}
 	}
 
 	// 7. Schema validation failure (bad data)
