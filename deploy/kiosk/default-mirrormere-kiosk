@@ -1,0 +1,15 @@
+# /etc/default/mirrormere-kiosk
+# Configuration overrides for the Mirrormere Wayland Touch Kiosk
+
+# Target display URL for Chromium
+MIRRORMERE_DISPLAY_URL=http://localhost:8080/display
+
+# Active display output (leave empty for automatic detection)
+# Examples: HDMI-A-1, DP-1
+MIRRORMERE_OUTPUT=
+
+# Daytime idle timeout in seconds before blanking (default: 600 = 10 minutes)
+MIRRORMERE_IDLE_TIMEOUT=600
+
+# Kiosk username
+MIRRORMERE_KIOSK_USER=kiosk

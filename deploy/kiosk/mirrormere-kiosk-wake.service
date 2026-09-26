@@ -1,0 +1,7 @@
+[Unit]
+Description=Mirrormere Kiosk Morning Wake (DPMS On)
+After=mirrormere-kiosk.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/mirrormere/kiosk/dpms.sh on

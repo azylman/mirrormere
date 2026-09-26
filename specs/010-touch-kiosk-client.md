@@ -99,8 +99,9 @@ The monitor backlight consumes power and emits light that must be suppressed at 
 - Running a 24/7 WebRTC, media, and SSE-heavy client in Chromium inevitably accumulates DOM and memory drift over time.
 - To maintain pristine appliance performance indefinitely without disrupting daytime operation:
   - `mirrormere-kiosk-restart.timer`: Fires at `03:00` daily during the night blackout window.
-  - `mirrormere-kiosk-restart.service`: Restarts `mirrormere-kiosk.service` via `systemctl restart mirrormere-kiosk.service`.
-  - Because the screen is powered down via DPMS (`wlr-randr --off`), Chromium restarts, re-authenticates/rehydrates SSE state from `/api/events`, and pre-warms off-screen with zero visible screen disturbance.
+  - `mirrormere-kiosk-restart.service`: Dispatches `/opt/mirrormere/kiosk/dpms.sh night-restart`. This triggers `systemctl restart mirrormere-kiosk.service`, waits for the fresh Wayland display socket to become ready, and immediately re-asserts `wlr-randr --output ${OUTPUT} --off` (resolving Issue #257).
+  - Because DPMS off is re-asserted immediately upon compositor startup, the screen remains completely dark while Chromium reloads, rehydrates SSE state from `/api/events`, and pre-warms off-screen with zero visible screen disturbance.
+  - The kiosk session runner (`session.sh`) launches `swayidle` as an internal child process, ensuring daytime idle blanking and capacitive touch resume policies survive the nightly restart.
 
 ---
 
