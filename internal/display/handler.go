@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"html/template"
-	"io/fs"
 	"mime"
 	"net/http"
 	"os"
@@ -13,7 +12,6 @@ import (
 	"sync"
 
 	"github.com/azylman/mirrormere/internal/api"
-	"github.com/azylman/mirrormere/web"
 )
 
 const (
@@ -59,18 +57,16 @@ func WithLocalStaticDir(dir string) HandlerOption {
 	}
 }
 
-// WithEmbeddedFS sets the fallback embedded filesystem for templates and static assets.
-func WithEmbeddedFS(embeddedFS fs.FS) HandlerOption {
+// WithTemplateContent sets an in-memory template override directly (primarily for testing).
+func WithTemplateContent(content []byte) HandlerOption {
 	return func(h *Handler) {
-		h.embeddedFS = embeddedFS
+		h.templateContent = content
 	}
 }
 
-// WithEmbeddedTemplate overrides the fallback embedded template content directly.
+// WithEmbeddedTemplate is an alias for WithTemplateContent for backward compatibility.
 func WithEmbeddedTemplate(content []byte) HandlerOption {
-	return func(h *Handler) {
-		h.embeddedTemplate = content
-	}
+	return WithTemplateContent(content)
 }
 
 // WithTimezone sets the static fallback household IANA timezone.
@@ -93,8 +89,7 @@ type Handler struct {
 	localTemplatePath string
 	staticDir         string
 	localStaticDir    string
-	embeddedFS        fs.FS
-	embeddedTemplate  []byte
+	templateContent   []byte
 	mu                sync.RWMutex
 	timezone          string
 	timezoneProvider  func() string
@@ -127,14 +122,13 @@ type DisplayTemplateData struct {
 	Timezone string
 }
 
-// NewHandler constructs a Handler with default fallback paths and embedded assets.
+// NewHandler constructs a Handler with default filesystem paths.
 func NewHandler(opts ...HandlerOption) *Handler {
 	h := &Handler{
 		templatePath:      DefaultContainerTemplatePath,
 		localTemplatePath: LocalFallbackTemplatePath,
 		staticDir:         DefaultContainerStaticDir,
 		localStaticDir:    LocalFallbackStaticDir,
-		embeddedFS:        web.Content,
 	}
 
 	for _, opt := range opts {
@@ -176,31 +170,30 @@ func (h *Handler) GetDisplay(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// 2. Check local repo development template path on disk
+	// 2. Explicit template content override (primarily unit tests)
+	if !found && len(h.templateContent) > 0 {
+		raw = h.templateContent
+		found = true
+	}
+
+	// 3. Check local repo development template path on disk
 	if !found && h.localTemplatePath != "" {
-		if fi, err := os.Stat(h.localTemplatePath); err == nil && !fi.IsDir() {
-			if data, err := os.ReadFile(h.localTemplatePath); err == nil {
-				raw = data
-				found = true
+		candidates := []string{
+			h.localTemplatePath,
+			filepath.Join("..", "..", h.localTemplatePath),
+		}
+		for _, c := range candidates {
+			if fi, err := os.Stat(c); err == nil && !fi.IsDir() {
+				if data, err := os.ReadFile(c); err == nil {
+					raw = data
+					found = true
+					break
+				}
 			}
 		}
 	}
 
-	// 3. Fallback: override embedded template content if provided
-	if !found && len(h.embeddedTemplate) > 0 {
-		raw = h.embeddedTemplate
-		found = true
-	}
-
-	// 4. Fallback: read from embedded filesystem
-	if !found && h.embeddedFS != nil {
-		if data, err := fs.ReadFile(h.embeddedFS, "templates/display.html"); err == nil && len(data) > 0 {
-			raw = data
-			found = true
-		}
-	}
-
-	// 5. Not found
+	// 4. Not found
 	if !found {
 		writeJSONError(w, http.StatusNotFound, "display template not found")
 		return
@@ -262,6 +255,8 @@ func (h *Handler) GetStatic(w http.ResponseWriter, r *http.Request, assetPath st
 		rel, err := filepath.Rel(h.staticDir, fullPath)
 		if err == nil && !strings.HasPrefix(rel, "..") {
 			if fi, err := os.Stat(fullPath); err == nil && !fi.IsDir() {
+				w.Header().Set("Content-Type", detectContentType(clean))
+				w.Header().Set("Cache-Control", "public, max-age=0, must-revalidate")
 				http.ServeFile(w, r, fullPath)
 				return
 			}
@@ -270,35 +265,25 @@ func (h *Handler) GetStatic(w http.ResponseWriter, r *http.Request, assetPath st
 
 	// 3. Check local development fallback static dir on disk
 	if h.localStaticDir != "" {
-		fullPath := filepath.Join(h.localStaticDir, clean)
-		rel, err := filepath.Rel(h.localStaticDir, fullPath)
-		if err == nil && !strings.HasPrefix(rel, "..") {
-			if fi, err := os.Stat(fullPath); err == nil && !fi.IsDir() {
-				http.ServeFile(w, r, fullPath)
-				return
-			}
+		candidates := []string{
+			h.localStaticDir,
+			filepath.Join("..", "..", h.localStaticDir),
 		}
-	}
-
-	// 4. Fallback: embedded filesystem
-	if h.embeddedFS != nil {
-		embeddedPath := filepath.ToSlash(filepath.Join("static", clean))
-		data, err := fs.ReadFile(h.embeddedFS, embeddedPath)
-		if err == nil {
-			mimeType := detectContentType(clean)
-			w.Header().Set("Content-Type", mimeType)
-			w.Header().Set("Cache-Control", "public, max-age=0, must-revalidate")
-			w.WriteHeader(http.StatusOK)
-			if r.Method == http.MethodGet {
-				if _, err := w.Write(data); err != nil {
-					http.Error(w, err.Error(), http.StatusInternalServerError)
+		for _, baseDir := range candidates {
+			fullPath := filepath.Join(baseDir, clean)
+			rel, err := filepath.Rel(baseDir, fullPath)
+			if err == nil && !strings.HasPrefix(rel, "..") {
+				if fi, err := os.Stat(fullPath); err == nil && !fi.IsDir() {
+					w.Header().Set("Content-Type", detectContentType(clean))
+					w.Header().Set("Cache-Control", "public, max-age=0, must-revalidate")
+					http.ServeFile(w, r, fullPath)
+					return
 				}
 			}
-			return
 		}
 	}
 
-	// 5. Asset not found
+	// 4. Asset not found
 	writeJSONError(w, http.StatusNotFound, "static asset not found")
 }
 
