@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "header.update",
+  "type": "object",
+  "required": [
+    "timestamp",
+    "weather"
+  ],
+  "properties": {
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "timezone": {
+      "type": "string"
+    },
+    "weather": {
+      "type": "object",
+      "required": [
+        "temperature"
+      ],
+      "properties": {
+        "temperature": {
+          "type": "number"
+        },
+        "units": {
+          "type": "string"
+        },
+        "weather_code": {
+          "type": "integer"
+        },
+        "icon": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

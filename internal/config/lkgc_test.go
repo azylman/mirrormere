@@ -1070,6 +1070,17 @@ func TestLKGC_DiffConfigs(t *testing.T) {
 			t.Errorf("layout-only edit '%s' must not be classified as Modified", m.ID)
 		}
 	}
+
+	if diff.TimezoneChanged {
+		t.Errorf("expected TimezoneChanged to be false when both timezones are empty or identical")
+	}
+
+	tzOld := &config.Config{Timezone: "America/Los_Angeles"}
+	tzNew := &config.Config{Timezone: "America/New_York"}
+	tzDiff := config.DiffConfigs(tzOld, tzNew)
+	if !tzDiff.TimezoneChanged {
+		t.Errorf("expected TimezoneChanged to be true when timezone changed from LA to NY")
+	}
 }
 
 func TestLKGC_RecoveryAndTelemetry(t *testing.T) {

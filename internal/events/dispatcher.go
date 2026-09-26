@@ -61,6 +61,36 @@ func (h *Hub) DispatchConfigReload(snapshot *config.Snapshot, diff *config.Confi
 				}
 			}
 		}
+
+		// 4. If household timezone changed per SPEC-012 §5, broadcast header.update
+		if diff.TimezoneChanged && snapshot.Config != nil {
+			var weather *HeaderWeather
+			if isp, ok := h.stateProvider.(*InMemoryStateProvider); ok {
+				if w, ok := isp.GetHeaderWeather(); ok {
+					weather = w
+				}
+			}
+			if weather == nil {
+				weather = &HeaderWeather{
+					Temperature: 68.5,
+					Units:       "F",
+					WeatherCode: 1,
+					Icon:        "weather-sunny",
+				}
+			}
+			tz := snapshot.Config.Timezone
+			if tz == "" {
+				tz = "UTC"
+			}
+			headerBytes, err := json.Marshal(HeaderUpdateData{
+				Timestamp: nowStr,
+				Timezone:  tz,
+				Weather:   weather,
+			})
+			if err == nil {
+				h.Publish(EventHeaderUpdate, headerBytes)
+			}
+		}
 	}
 
 	return nil

@@ -188,6 +188,14 @@ run_codegen_drift() {
     fi
 }
 
+# 7. Client Runtime Tests (Node.js)
+run_node_tests() {
+    if has_cmd node; then
+        echo "   [node test] Running web client test suite..."
+        TZ=UTC node --test web/test/*.test.js
+    fi
+}
+
 # Execute checks in pipeline order
 check_utf8_bom
 run_codegen_drift
@@ -195,5 +203,6 @@ run_go_vet
 run_golangci_lint
 run_deadcode
 run_coverage_gate
+run_node_tests
 
 echo "✨ [Mirrormere Verify] All pre-flight checks passed successfully! Ready for commit/PR."

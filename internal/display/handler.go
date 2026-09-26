@@ -1,13 +1,16 @@
 package display
 
 import (
+	"bytes"
 	"encoding/json"
+	"html/template"
 	"io/fs"
 	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/azylman/mirrormere/internal/api"
 	"github.com/azylman/mirrormere/web"
@@ -70,6 +73,20 @@ func WithEmbeddedTemplate(content []byte) HandlerOption {
 	}
 }
 
+// WithTimezone sets the static fallback household IANA timezone.
+func WithTimezone(tz string) HandlerOption {
+	return func(h *Handler) {
+		h.timezone = tz
+	}
+}
+
+// WithTimezoneProvider sets a dynamic function returning the current household IANA timezone.
+func WithTimezoneProvider(provider func() string) HandlerOption {
+	return func(h *Handler) {
+		h.timezoneProvider = provider
+	}
+}
+
 // Handler serves the web display HUD shell and static web runtime assets.
 type Handler struct {
 	templatePath      string
@@ -78,6 +95,36 @@ type Handler struct {
 	localStaticDir    string
 	embeddedFS        fs.FS
 	embeddedTemplate  []byte
+	mu                sync.RWMutex
+	timezone          string
+	timezoneProvider  func() string
+}
+
+// SetTimezone updates the household timezone dynamically.
+func (h *Handler) SetTimezone(tz string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.timezone = tz
+}
+
+// Timezone returns the effective household timezone, defaulting to "UTC".
+func (h *Handler) Timezone() string {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	if h.timezoneProvider != nil {
+		if tz := h.timezoneProvider(); tz != "" {
+			return tz
+		}
+	}
+	if h.timezone != "" {
+		return h.timezone
+	}
+	return "UTC"
+}
+
+// DisplayTemplateData holds context parameters passed to display.html template.
+type DisplayTemplateData struct {
+	Timezone string
 }
 
 // NewHandler constructs a Handler with default fallback paths and embedded assets.
@@ -97,7 +144,7 @@ func NewHandler(opts ...HandlerOption) *Handler {
 	return h
 }
 
-// GetDisplay handles GET /display requests, serving display.html.
+// GetDisplay handles GET /display requests, serving display.html with household timezone context.
 func (h *Handler) GetDisplay(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
@@ -116,49 +163,69 @@ func (h *Handler) GetDisplay(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "public, max-age=0, must-revalidate")
 
+	var raw []byte
+	var found bool
+
 	// 1. Check primary container template path on disk
 	if h.templatePath != "" {
 		if fi, err := os.Stat(h.templatePath); err == nil && !fi.IsDir() {
-			http.ServeFile(w, r, h.templatePath)
-			return
+			if data, err := os.ReadFile(h.templatePath); err == nil {
+				raw = data
+				found = true
+			}
 		}
 	}
 
 	// 2. Check local repo development template path on disk
-	if h.localTemplatePath != "" {
+	if !found && h.localTemplatePath != "" {
 		if fi, err := os.Stat(h.localTemplatePath); err == nil && !fi.IsDir() {
-			http.ServeFile(w, r, h.localTemplatePath)
-			return
+			if data, err := os.ReadFile(h.localTemplatePath); err == nil {
+				raw = data
+				found = true
+			}
 		}
 	}
 
 	// 3. Fallback: override embedded template content if provided
-	if len(h.embeddedTemplate) > 0 {
-		w.WriteHeader(http.StatusOK)
-		if r.Method == http.MethodGet {
-			if _, err := w.Write(h.embeddedTemplate); err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-			}
-		}
-		return
+	if !found && len(h.embeddedTemplate) > 0 {
+		raw = h.embeddedTemplate
+		found = true
 	}
 
 	// 4. Fallback: read from embedded filesystem
-	if h.embeddedFS != nil {
-		data, err := fs.ReadFile(h.embeddedFS, "templates/display.html")
-		if err == nil && len(data) > 0 {
-			w.WriteHeader(http.StatusOK)
-			if r.Method == http.MethodGet {
-				if _, err := w.Write(data); err != nil {
-					http.Error(w, err.Error(), http.StatusInternalServerError)
-				}
-			}
-			return
+	if !found && h.embeddedFS != nil {
+		if data, err := fs.ReadFile(h.embeddedFS, "templates/display.html"); err == nil && len(data) > 0 {
+			raw = data
+			found = true
 		}
 	}
 
 	// 5. Not found
-	writeJSONError(w, http.StatusNotFound, "display template not found")
+	if !found {
+		writeJSONError(w, http.StatusNotFound, "display template not found")
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	if r.Method == http.MethodHead {
+		return
+	}
+
+	out := raw
+	tmpl, err := template.New("display.html").Parse(string(raw))
+	if err == nil {
+		var buf bytes.Buffer
+		data := DisplayTemplateData{
+			Timezone: h.Timezone(),
+		}
+		if err := tmpl.Execute(&buf, data); err == nil {
+			out = buf.Bytes()
+		}
+	}
+
+	if _, err := w.Write(out); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
 }
 
 // GetStatic handles GET /static/{path...} requests with strict path traversal defenses.

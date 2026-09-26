@@ -9,11 +9,11 @@
   <title>Mirrormere</title>
   <link rel="stylesheet" id="hud-stylesheet" href="/style.css">
 </head>
-<body>
-  <div id="mirrormere-app">
+<body data-timezone="{{ .Timezone }}">
+  <div id="mirrormere-app" data-timezone="{{ .Timezone }}">
     <header class="header-zone">
       <div class="header-time-block">
-        <div class="header-clock" id="header-clock">--:--</div>
+        <div class="header-clock" id="header-clock" data-timezone="{{ .Timezone }}">--:--</div>
         <div class="header-date" id="header-date">------</div>
       </div>
       <div class="header-weather" id="header-weather">

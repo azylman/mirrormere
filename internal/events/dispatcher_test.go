@@ -102,6 +102,49 @@ func TestHub_DispatchConfigReload(t *testing.T) {
 	}
 }
 
+func TestHub_DispatchConfigReload_TimezoneChange(t *testing.T) {
+	t.Parallel()
+
+	hub := NewHub(HubConfig{}, nil, nil)
+	defer hub.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ch, unsub := hub.Subscribe(ctx)
+	defer unsub()
+
+	snap := &config.Snapshot{
+		Config: &config.Config{
+			Timezone: "America/Chicago",
+		},
+	}
+
+	diff := &config.ConfigDiff{
+		TimezoneChanged: true,
+	}
+
+	if err := hub.DispatchConfigReload(snap, diff); err != nil {
+		t.Fatalf("DispatchConfigReload failed: %v", err)
+	}
+
+	select {
+	case evt := <-ch:
+		if evt.Type != EventHeaderUpdate {
+			t.Fatalf("expected EventHeaderUpdate, got %s", evt.Type)
+		}
+		var hdr HeaderUpdateData
+		if err := json.Unmarshal(evt.Data, &hdr); err != nil {
+			t.Fatalf("failed to unmarshal HeaderUpdateData: %v", err)
+		}
+		if hdr.Timezone != "America/Chicago" {
+			t.Errorf("expected timezone America/Chicago, got %s", hdr.Timezone)
+		}
+	case <-time.After(1 * time.Second):
+		t.Fatal("timeout waiting for header.update")
+	}
+}
+
 func TestHub_DispatchStyleAndWidgetReload(t *testing.T) {
 	t.Parallel()
 

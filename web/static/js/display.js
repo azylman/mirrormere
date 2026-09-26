@@ -2,54 +2,137 @@
  * Mirrormere Display Application Runtime
  * Bootstraps persistent header (clock, weather pill, system status),
  * SSE subscriptions, stylesheet hot-reloading, and screen carousel.
- * Complies with SPEC-003, SPEC-006, and SPEC-010.
+ * Complies with SPEC-001, SPEC-003, SPEC-006, SPEC-010, and SPEC-012.
  */
 (() => {
   let sseClient = null;
   let carousel = null;
+  let currentTimezone = null;
+
+  /**
+   * Validate IANA timezone string.
+   */
+  function isValidTimezone(tz) {
+    if (!tz || typeof tz !== 'string') return false;
+    if (tz.includes('{{') || tz.includes('}}')) return false;
+    try {
+      new Intl.DateTimeFormat(undefined, { timeZone: tz });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Resolve active household timezone from DOM data-timezone attributes or runtime state.
+   */
+  function getTimezone() {
+    if (currentTimezone) return currentTimezone;
+
+    if (typeof document !== 'undefined') {
+      const appEl = document.getElementById('mirrormere-app');
+      if (appEl && appEl.dataset && isValidTimezone(appEl.dataset.timezone)) {
+        currentTimezone = appEl.dataset.timezone;
+        return currentTimezone;
+      }
+
+      if (document.body && document.body.dataset && isValidTimezone(document.body.dataset.timezone)) {
+        currentTimezone = document.body.dataset.timezone;
+        return currentTimezone;
+      }
+
+      const clockEl = document.getElementById('header-clock');
+      if (clockEl && clockEl.dataset && isValidTimezone(clockEl.dataset.timezone)) {
+        currentTimezone = clockEl.dataset.timezone;
+        return currentTimezone;
+      }
+    }
+
+    return undefined;
+  }
+
+  /**
+   * Set active household timezone and update clock immediately.
+   */
+  function setTimezone(tz) {
+    if (isValidTimezone(tz)) {
+      currentTimezone = tz;
+      if (typeof document !== 'undefined') {
+        const appEl = document.getElementById('mirrormere-app');
+        if (appEl && appEl.dataset) appEl.dataset.timezone = tz;
+        if (document.body && document.body.dataset) document.body.dataset.timezone = tz;
+        const clockEl = document.getElementById('header-clock');
+        if (clockEl && clockEl.dataset) clockEl.dataset.timezone = tz;
+      }
+      updateClock();
+    }
+  }
+
+  /**
+   * Format digital time respecting household timezone and client locale.
+   */
+  function formatTime(date, tz) {
+    const opts = { hour: 'numeric', minute: '2-digit' };
+    if (isValidTimezone(tz)) opts.timeZone = tz;
+    return new Intl.DateTimeFormat(undefined, opts).format(date);
+  }
+
+  /**
+   * Format date respecting household timezone and client locale.
+   */
+  function formatDate(date, tz) {
+    const opts = { weekday: 'long', month: 'short', day: 'numeric' };
+    if (isValidTimezone(tz)) opts.timeZone = tz;
+    return new Intl.DateTimeFormat(undefined, opts).format(date);
+  }
 
   /**
    * Update header clock and date.
    */
-  function updateClock() {
+  function updateClock(customInstant) {
+    if (typeof document === 'undefined') return;
     const clockEl = document.getElementById('header-clock');
     const dateEl = document.getElementById('header-date');
     if (!clockEl || !dateEl) return;
 
-    const now = new Date();
+    const now = customInstant instanceof Date ? customInstant : new Date();
+    const tz = getTimezone();
 
-    // 12-hour format with AM/PM (e.g. 10:24 AM)
-    let hours = now.getHours();
-    const minutes = String(now.getMinutes()).padStart(2, '0');
-    const ampm = hours >= 12 ? 'PM' : 'AM';
-    hours = hours % 12;
-    hours = hours ? hours : 12; // 0 becomes 12
-    clockEl.textContent = `${hours}:${minutes} ${ampm}`;
-
-    // Date: Weekday, Month Day (e.g. Friday, Sep 25)
-    const options = { weekday: 'long', month: 'short', day: 'numeric' };
-    dateEl.textContent = now.toLocaleDateString(undefined, options);
+    try {
+      clockEl.textContent = formatTime(now, tz);
+      dateEl.textContent = formatDate(now, tz);
+    } catch {
+      // Graceful fallback to unzoned locale format if timezone is invalid
+      clockEl.textContent = formatTime(now, undefined);
+      dateEl.textContent = formatDate(now, undefined);
+    }
   }
 
   /**
-   * Update header ambient weather pill badge (header.update event).
+   * Update header ambient weather pill badge and household timezone (header.update event).
    */
   function handleHeaderUpdate(data) {
-    if (!data || !data.weather) return;
+    if (!data) return;
 
-    const weather = data.weather;
-    const tempEl = document.getElementById('weather-temp');
-    const conditionEl = document.getElementById('weather-condition');
-
-    if (tempEl && weather.temperature !== undefined) {
-      const units = weather.units || '°';
-      const unitLabel = units.includes('°') ? units : `${units}`;
-      tempEl.textContent = `${Math.round(weather.temperature)}°${unitLabel.replace('°', '')}`;
+    if (data.timezone && isValidTimezone(data.timezone)) {
+      setTimezone(data.timezone);
     }
 
-    if (conditionEl) {
-      const condition = weather.icon || weather.condition || '';
-      conditionEl.textContent = condition;
+    if (data.weather) {
+      const weather = data.weather;
+      const tempEl = document.getElementById('weather-temp');
+      const conditionEl = document.getElementById('weather-condition');
+
+      if (tempEl && weather.temperature !== undefined) {
+        const units = weather.units || '°';
+        const unitLabel = units.includes('°') ? units : `${units}`;
+        tempEl.textContent = `${Math.round(weather.temperature)}°${unitLabel.replace('°', '')}`;
+      }
+
+      if (conditionEl) {
+        const condition = weather.icon || weather.condition || '';
+        conditionEl.textContent = condition;
+      }
     }
   }
 
@@ -57,6 +140,7 @@
    * Update system status indicator dot (system.status event).
    */
   function handleSystemStatus(data) {
+    if (typeof document === 'undefined') return;
     const dot = document.getElementById('system-status-dot');
     if (!dot || !data) return;
 
@@ -78,6 +162,7 @@
    * Hot-swap stylesheet link on style.reload event with zero visual flicker.
    */
   function handleStyleReload(data) {
+    if (typeof document === 'undefined') return;
     const link = document.getElementById('hud-stylesheet') || document.querySelector('link[rel="stylesheet"][href*="/style.css"]');
     if (!link) return;
 
@@ -87,22 +172,30 @@
     console.log(`[MirrormereDisplay] Hot-swapped stylesheet: ${data && data.file ? data.file : 'custom.css'}`);
   }
 
+  let clockTimer = null;
+
   /**
    * Initialize display client application.
    */
   function init() {
+    if (typeof document === 'undefined') return;
+
     // 1. Start real-time clock
     updateClock();
-    setInterval(updateClock, 1000);
+    if (clockTimer) clearInterval(clockTimer);
+    clockTimer = setInterval(updateClock, 1000);
+    if (clockTimer && typeof clockTimer.unref === 'function') {
+      clockTimer.unref();
+    }
 
     // 2. Initialize Carousel controller
     const canvasEl = document.getElementById('grid-canvas');
-    if (window.MirrormereCarousel) {
+    if (typeof window !== 'undefined' && window.MirrormereCarousel) {
       carousel = new window.MirrormereCarousel(canvasEl);
     }
 
     // 3. Initialize SSE client
-    if (window.MirrormereSSE) {
+    if (typeof window !== 'undefined' && window.MirrormereSSE) {
       sseClient = new window.MirrormereSSE('/api/events');
 
       sseClient.on('screen.rotate', (data) => {
@@ -133,9 +226,31 @@
     }
   }
 
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init);
-  } else {
-    init();
+  if (typeof document !== 'undefined' && (typeof module === 'undefined' || !module.exports)) {
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', init);
+    } else {
+      init();
+    }
+  }
+
+  const api = {
+    updateClock,
+    handleHeaderUpdate,
+    handleSystemStatus,
+    handleStyleReload,
+    getTimezone,
+    setTimezone,
+    formatTime,
+    formatDate,
+    isValidTimezone,
+    init,
+  };
+
+  if (typeof window !== 'undefined') {
+    window.MirrormereDisplay = api;
+  }
+  if (typeof module !== 'undefined' && module.exports) {
+    module.exports = api;
   }
 })();

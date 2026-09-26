@@ -138,6 +138,7 @@ func TestBuildHydrationBatch_OrderingAndPayloads(t *testing.T) {
 
 	// Mock Snapshot with Layout and Widgets
 	cfg := &config.Config{
+		Timezone: "America/Los_Angeles",
 		Display: config.DisplayConfig{
 			Widgets: []config.WidgetConfig{
 				{ID: "w1", Type: "clock"},
@@ -234,6 +235,9 @@ func TestBuildHydrationBatch_OrderingAndPayloads(t *testing.T) {
 	var hdr HeaderUpdateData
 	if err := json.Unmarshal(batch[3].Data, &hdr); err != nil || hdr.Weather.Temperature != 72.0 {
 		t.Errorf("unexpected header update: %+v", hdr)
+	}
+	if hdr.Timezone != "America/Los_Angeles" {
+		t.Errorf("expected header update timezone America/Los_Angeles, got %s", hdr.Timezone)
 	}
 
 	// 5. video.state

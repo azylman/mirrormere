@@ -73,11 +73,12 @@ type InstanceDiff struct {
 
 // ConfigDiff summarizes all instance-level diffs between running and new configurations.
 type ConfigDiff struct {
-	Unchanged      []WidgetConfig
-	Added          []WidgetConfig
-	Removed        []WidgetConfig
-	Modified       []InstanceDiff
-	LayoutModified []WidgetConfig // Instances whose dimensions or pinned status changed without worker modifications
+	Unchanged       []WidgetConfig
+	Added           []WidgetConfig
+	Removed         []WidgetConfig
+	Modified        []InstanceDiff
+	LayoutModified  []WidgetConfig // Instances whose dimensions or pinned status changed without worker modifications
+	TimezoneChanged bool           // Household IANA timezone updated per SPEC-012 §5
 }
 
 // Manager coordinates live configuration reloads and enforces LKGC resilience per SPEC-012.
@@ -628,6 +629,9 @@ func validateLayoutSolverStage(cfg *Config) (*layout.Layout, error) {
 // DiffConfigs computes instance-level differences between old and new configurations per SPEC-012 §3.
 func DiffConfigs(oldCfg, newCfg *Config) *ConfigDiff {
 	diff := &ConfigDiff{}
+	if oldCfg != nil && newCfg != nil && oldCfg.Timezone != newCfg.Timezone {
+		diff.TimezoneChanged = true
+	}
 	oldMap := make(map[string]WidgetConfig)
 	if oldCfg != nil {
 		for _, w := range oldCfg.Display.Widgets {
