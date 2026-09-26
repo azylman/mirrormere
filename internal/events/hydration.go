@@ -66,6 +66,7 @@ type VoiceStateData struct {
 	Transcript *string `json:"transcript"`
 	Reply      *string `json:"reply"`
 	TTSEngine  *string `json:"tts_engine"`
+	Status     *string `json:"status"`
 }
 
 // SystemStatusData matches api/schemas/system.status.json and SPEC-006 §2.D.

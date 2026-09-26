@@ -45,6 +45,7 @@
       this.voiceDot = options.voiceDotElement || (typeof document !== 'undefined' ? document.getElementById('voice-dot') : null);
       this.voicePulseRing = options.voicePulseRingElement || (typeof document !== 'undefined' ? document.getElementById('voice-pulse-ring') : null);
       this.voiceLabel = options.voiceLabelElement || (typeof document !== 'undefined' ? document.getElementById('voice-label') : null);
+      this.voiceStatus = options.voiceStatusElement || (typeof document !== 'undefined' ? document.getElementById('voice-status') : null);
       this.voiceTranscript = options.voiceTranscriptElement || (typeof document !== 'undefined' ? document.getElementById('voice-transcript') : null);
 
       this.toastDock = options.toastDockElement || (typeof document !== 'undefined' ? document.getElementById('voice-toast-dock') : null);
@@ -55,6 +56,7 @@
       // State
       this.currentState = 'idle';
       this.currentTranscript = null;
+      this.currentStatus = null;
       this.currentReply = null;
       this.currentTTSEngine = null;
       this.turnDismissed = false;
@@ -137,6 +139,13 @@
       const transcript = typeof data.transcript === 'string' ? data.transcript : null;
       const reply = typeof data.reply === 'string' ? data.reply : null;
       const ttsEngine = typeof data.tts_engine === 'string' ? data.tts_engine : null;
+      const statusText = typeof data.status === 'string' ? data.status : null;
+
+      if (statusText) {
+        this.renderStatus(statusText);
+      } else if (state !== 'thinking' && state !== 'transcribing') {
+        this.clearStatus();
+      }
 
       // Reset turnDismissed flag when entering a fresh interaction turn or closing
       if (state === 'listening' || state === 'idle' || state === 'error') {
@@ -183,10 +192,40 @@
     }
 
     /**
+     * Render live agent tool execution status badge.
+     * @param {string} statusText
+     */
+    renderStatus(statusText) {
+      if (statusText && typeof statusText === 'string') {
+        this.currentStatus = statusText;
+        if (this.voiceStatus) {
+          this.voiceStatus.textContent = statusText;
+          this.voiceStatus.style.display = '';
+        }
+        // Live tool status update re-arms the safety watchdog
+        this.armSafetyWatchdog();
+      } else {
+        this.clearStatus();
+      }
+    }
+
+    /**
+     * Clear active tool status badge.
+     */
+    clearStatus() {
+      this.currentStatus = null;
+      if (this.voiceStatus) {
+        this.voiceStatus.textContent = '';
+        this.voiceStatus.style.display = 'none';
+      }
+    }
+
+    /**
      * Render listening state.
      * SPEC-011 §5: Listening State Visibility Invariant requires active pulsing cyan/violet radar ring.
      */
     renderListening() {
+      this.clearStatus();
       this.showHeaderVoice(true);
 
       if (this.voiceIndicator) {
@@ -299,6 +338,7 @@
      * @param {string|null} transcript
      */
     renderSpeaking(reply, ttsEngine, transcript) {
+      this.clearStatus();
       this.showHeaderVoice(true);
 
       if (this.voiceIndicator) {
@@ -374,6 +414,7 @@
      */
     resetHUD() {
       this.clearSafetyWatchdog();
+      this.clearStatus();
 
       this.currentState = 'idle';
       this.currentTranscript = null;

@@ -78,6 +78,7 @@ type VideoHandler interface {
 // VoiceHandler handles voice pipeline state relay endpoints matching OpenAPI specifications.
 type VoiceHandler interface {
 	PostVoiceState(w http.ResponseWriter, r *http.Request)
+	PostVoiceInteract(w http.ResponseWriter, r *http.Request)
 }
 
 // Config encapsulates configuration for the HTTP server.
@@ -348,6 +349,7 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/api/video/action", s.handleVideoAction)
 	s.mux.HandleFunc("/api/video/state", s.handleVideoState)
 	s.mux.HandleFunc("/api/voice/state", s.handleVoiceState)
+	s.mux.HandleFunc("/api/voice/interact", s.handleVoiceInteract)
 	s.mux.HandleFunc("/api/widgets/{widget_id}/render", s.handleWidgetRender)
 	s.mux.HandleFunc("/api/widgets/{widget_id}/push", s.handleWidgetPush)
 	s.mux.HandleFunc("/widget-types/{type}/assets/{path...}", s.handleWidgetAsset)
@@ -503,6 +505,17 @@ func (s *Server) handleVoiceState(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.PostVoiceState(w, r)
+}
+
+func (s *Server) handleVoiceInteract(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	h := s.voiceHandler
+	s.mu.RUnlock()
+	if h == nil {
+		http.NotFound(w, r)
+		return
+	}
+	h.PostVoiceInteract(w, r)
 }
 
 func (s *Server) handleWidgetRender(w http.ResponseWriter, r *http.Request) {

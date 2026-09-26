@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/azylman/mirrormere/internal/events"
 )
@@ -277,5 +278,59 @@ func TestVoiceStateData_SchemaCompliance(t *testing.T) {
 	}
 	if parsed["tts_engine"] != engine {
 		t.Fatalf("expected tts_engine %q, got %v", engine, parsed["tts_engine"])
+	}
+}
+
+func TestCoordinator_StatusAndFullState(t *testing.T) {
+	t.Parallel()
+	sink := &mockSink{}
+	hub := events.NewHub(events.HubConfig{}, nil, nil)
+	defer hub.Close()
+
+	subCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sub, unsub := hub.Subscribe(subCtx)
+	defer unsub()
+
+	c := NewCoordinator(hub, sink)
+
+	status := "⚡ Running tool..."
+	transcript := "Turn on lights"
+	st, err := c.SetFullState(StateThinking, &transcript, nil, nil, &status)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if st.Status == nil || *st.Status != status {
+		t.Fatalf("expected status %q, got %v", status, st.Status)
+	}
+
+	// Verify SSE received status
+	select {
+	case evt := <-sub:
+		var vs events.VoiceStateData
+		if err := json.Unmarshal(evt.Data, &vs); err != nil {
+			t.Fatalf("failed to unmarshal SSE event: %v", err)
+		}
+		if vs.Status == nil || *vs.Status != status {
+			t.Fatalf("expected SSE status %q, got %v", status, vs.Status)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for SSE event")
+	}
+
+	// Verify SetStatus
+	newStatus := "⚡ Querying Home Assistant..."
+	st2 := c.SetStatus(&newStatus)
+	if st2.Status == nil || *st2.Status != newStatus {
+		t.Fatalf("expected status %q, got %v", newStatus, st2.Status)
+	}
+	if st2.State != StateThinking {
+		t.Fatalf("expected state unchanged, got %q", st2.State)
+	}
+
+	// Reset clears status
+	resetState := c.Reset()
+	if resetState.State != StateIdle || resetState.Status != nil {
+		t.Fatalf("expected idle with nil status, got %+v", resetState)
 	}
 }
