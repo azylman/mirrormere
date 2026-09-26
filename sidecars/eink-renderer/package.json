@@ -1,0 +1,19 @@
+{
+  "name": "mirrormere-eink-renderer",
+  "version": "1.0.0",
+  "description": "Headless E-Ink snapshot capture sidecar with selective two-pass dithering",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test test/*.test.js"
+  },
+  "keywords": [
+    "mirrormere",
+    "eink",
+    "epaper",
+    "dithering",
+    "floyd-steinberg"
+  ],
+  "author": "Mirrormere Team",
+  "license": "MIT"
+}
