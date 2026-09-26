@@ -12,11 +12,14 @@ import (
 )
 
 type mockServer struct {
-	lastWidgetID string
-	lastType     string
-	lastPath     string
-	healthCalls  int
-	healthzCalls int
+	lastWidgetID   string
+	lastType       string
+	lastPath       string
+	healthCalls    int
+	healthzCalls   int
+	audioVolume    int
+	audioVolumeSet bool
+	audioMuted     bool
 }
 
 func (m *mockServer) PostWidgetPush(w http.ResponseWriter, r *http.Request, widgetID string) {
@@ -167,8 +170,207 @@ func (m *mockServer) GetListItems(w http.ResponseWriter, r *http.Request, listId
 	_ = json.NewEncoder(w).Encode(items)
 }
 
+func (m *mockServer) GetAudio(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	vol := m.audioVolume
+	if vol == 0 && !m.audioVolumeSet {
+		vol = 75
+	}
+	_ = json.NewEncoder(w).Encode(AudioStateResponse{
+		Status: "ok",
+		Volume: vol,
+		Muted:  m.audioMuted,
+	})
+}
+
+func (m *mockServer) PostAudioVolume(w http.ResponseWriter, r *http.Request) {
+	var body map[string]any
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(ErrorResponse{
+			Status: "error",
+			Error:  "invalid json",
+		})
+		return
+	}
+	rawVol, exists := body["volume"]
+	if !exists {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(ErrorResponse{
+			Status: "error",
+			Error:  "invalid volume: must be an integer between 0 and 100",
+		})
+		return
+	}
+	floatVol, ok := rawVol.(float64)
+	if !ok || floatVol != float64(int(floatVol)) || floatVol < 0 || floatVol > 100 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(ErrorResponse{
+			Status: "error",
+			Error:  "invalid volume: must be an integer between 0 and 100",
+		})
+		return
+	}
+	m.audioVolume = int(floatVol)
+	m.audioVolumeSet = true
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(AudioStateResponse{
+		Status: "ok",
+		Volume: m.audioVolume,
+		Muted:  m.audioMuted,
+	})
+}
+
+func (m *mockServer) PostAudioMute(w http.ResponseWriter, r *http.Request) {
+	var body map[string]any
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	if rawMuted, exists := body["muted"]; exists {
+		b, ok := rawMuted.(bool)
+		if !ok {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(ErrorResponse{
+				Status: "error",
+				Error:  "invalid payload: muted must be a boolean",
+			})
+			return
+		}
+		m.audioMuted = b
+	} else {
+		m.audioMuted = !m.audioMuted
+	}
+	vol := m.audioVolume
+	if vol == 0 && !m.audioVolumeSet {
+		vol = 75
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(AudioStateResponse{
+		Status: "ok",
+		Volume: vol,
+		Muted:  m.audioMuted,
+	})
+}
+
 func TestHandler_Endpoints(t *testing.T) {
 	t.Parallel()
+
+	t.Run("GET /api/audio", func(t *testing.T) {
+		t.Parallel()
+		mock := &mockServer{}
+		handler := Handler(mock)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/audio", nil)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rec.Code)
+		}
+		var resp AudioStateResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("failed to decode response: %v", err)
+		}
+		if resp.Volume != 75 || resp.Muted != false || resp.Status != "ok" {
+			t.Fatalf("unexpected audio state: %+v", resp)
+		}
+	})
+
+	t.Run("POST /api/audio/volume", func(t *testing.T) {
+		t.Parallel()
+		mock := &mockServer{}
+		handler := Handler(mock)
+
+		// 200 OK
+		req := httptest.NewRequest(http.MethodPost, "/api/audio/volume", strings.NewReader(`{"volume":80}`))
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rec.Code)
+		}
+		var resp AudioStateResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("failed to decode response: %v", err)
+		}
+		if resp.Volume != 80 {
+			t.Fatalf("expected volume 80, got %d", resp.Volume)
+		}
+
+		// 400 Bad Request: missing volume
+		reqBad := httptest.NewRequest(http.MethodPost, "/api/audio/volume", strings.NewReader(`{}`))
+		recBad := httptest.NewRecorder()
+		handler.ServeHTTP(recBad, reqBad)
+		if recBad.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400 for empty volume, got %d", recBad.Code)
+		}
+
+		// 400 Bad Request: out of range
+		reqOOB := httptest.NewRequest(http.MethodPost, "/api/audio/volume", strings.NewReader(`{"volume":150}`))
+		recOOB := httptest.NewRecorder()
+		handler.ServeHTTP(recOOB, reqOOB)
+		if recOOB.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400 for out of range volume, got %d", recOOB.Code)
+		}
+
+		// 400 Bad Request: invalid json
+		reqInvalid := httptest.NewRequest(http.MethodPost, "/api/audio/volume", strings.NewReader(`{invalid`))
+		recInvalid := httptest.NewRecorder()
+		handler.ServeHTTP(recInvalid, reqInvalid)
+		if recInvalid.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400 for invalid json, got %d", recInvalid.Code)
+		}
+	})
+
+	t.Run("POST /api/audio/mute", func(t *testing.T) {
+		t.Parallel()
+		mock := &mockServer{}
+		handler := Handler(mock)
+
+		// Toggle mute from false to true with empty body
+		reqToggle := httptest.NewRequest(http.MethodPost, "/api/audio/mute", strings.NewReader(`{}`))
+		recToggle := httptest.NewRecorder()
+		handler.ServeHTTP(recToggle, reqToggle)
+
+		if recToggle.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", recToggle.Code)
+		}
+		var respToggle AudioStateResponse
+		if err := json.Unmarshal(recToggle.Body.Bytes(), &respToggle); err != nil {
+			t.Fatalf("failed to decode response: %v", err)
+		}
+		if !respToggle.Muted {
+			t.Fatalf("expected muted true, got false")
+		}
+
+		// Set explicit mute state false
+		reqExplicit := httptest.NewRequest(http.MethodPost, "/api/audio/mute", strings.NewReader(`{"muted":false}`))
+		recExplicit := httptest.NewRecorder()
+		handler.ServeHTTP(recExplicit, reqExplicit)
+		if recExplicit.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", recExplicit.Code)
+		}
+		var respExplicit AudioStateResponse
+		if err := json.Unmarshal(recExplicit.Body.Bytes(), &respExplicit); err != nil {
+			t.Fatalf("failed to decode response: %v", err)
+		}
+		if respExplicit.Muted {
+			t.Fatalf("expected muted false, got true")
+		}
+
+		// 400 Bad Request: invalid muted type
+		reqBad := httptest.NewRequest(http.MethodPost, "/api/audio/mute", strings.NewReader(`{"muted":"notabool"}`))
+		recBad := httptest.NewRecorder()
+		handler.ServeHTTP(recBad, reqBad)
+		if recBad.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400 for bad muted type, got %d", recBad.Code)
+		}
+	})
 
 	t.Run("GET /api/lists/{list_id}/items", func(t *testing.T) {
 		t.Parallel()
@@ -459,6 +661,7 @@ func TestHandlerWithOptions_CustomMuxAndBaseURL(t *testing.T) {
 	endpoints := []string{
 		"/v1/healthz",
 		"/v1/health",
+		"/v1/api/audio",
 		"/v1/api/widgets/widget-1/render",
 		"/v1/widget-types/clock/assets/icon.svg",
 	}
@@ -472,6 +675,29 @@ func TestHandlerWithOptions_CustomMuxAndBaseURL(t *testing.T) {
 		}
 		if mwCalls[ep] != 1 {
 			t.Fatalf("expected middleware call for %s, got %d", ep, mwCalls[ep])
+		}
+	}
+
+	postEndpoints := []struct {
+		path string
+		body string
+	}{
+		{"/v1/api/audio/volume", `{"volume": 50}`},
+		{"/v1/api/audio/mute", `{}`},
+		{"/v1/api/screen/advance", `{"direction": "next"}`},
+		{"/v1/api/screen/pause", `{"paused": true}`},
+		{"/v1/api/screen/select", `{"screen_index": 0}`},
+	}
+
+	for _, ep := range postEndpoints {
+		req := httptest.NewRequest(http.MethodPost, ep.path, strings.NewReader(ep.body))
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("endpoint %s expected 200, got %d", ep.path, rec.Code)
+		}
+		if mwCalls[ep.path] != 1 {
+			t.Fatalf("expected middleware call for %s, got %d", ep.path, mwCalls[ep.path])
 		}
 	}
 }

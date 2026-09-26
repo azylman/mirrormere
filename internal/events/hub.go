@@ -185,12 +185,21 @@ func (h *Hub) PublishEvent(evt *Event) {
 	// 1. Retain in ring buffer
 	h.ring.Add(evt)
 
-	// 2. Update stateProvider if event is screen.rotate
-	if evt.Type == EventScreenRotate && h.stateProvider != nil {
-		var rd ScreenRotateData
-		if err := json.Unmarshal(evt.Data, &rd); err == nil {
-			if isp, ok := h.stateProvider.(*InMemoryStateProvider); ok {
-				isp.SetScreenRotateData(&rd)
+	// 2. Update stateProvider if event is screen.rotate or audio.state
+	if h.stateProvider != nil {
+		if evt.Type == EventScreenRotate {
+			var rd ScreenRotateData
+			if err := json.Unmarshal(evt.Data, &rd); err == nil {
+				if isp, ok := h.stateProvider.(*InMemoryStateProvider); ok {
+					isp.SetScreenRotateData(&rd)
+				}
+			}
+		} else if evt.Type == EventAudioState {
+			var ad AudioStateData
+			if err := json.Unmarshal(evt.Data, &ad); err == nil {
+				if isp, ok := h.stateProvider.(*InMemoryStateProvider); ok {
+					isp.SetAudioState(&ad)
+				}
 			}
 		}
 	}

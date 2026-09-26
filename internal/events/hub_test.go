@@ -2,6 +2,7 @@ package events
 
 import (
 	"context"
+	"encoding/json"
 	"sync"
 	"testing"
 	"time"
@@ -263,3 +264,20 @@ func TestHub_PublishNilAndContextDone(t *testing.T) {
 		t.Errorf("expected 0 subscribers after context done unsubscription, got %d", hub.SubscriberCount())
 	}
 }
+
+func TestHub_PublishAudioState_SyncsStateProvider(t *testing.T) {
+	t.Parallel()
+
+	provider := NewInMemoryStateProvider(nil)
+	hub := NewHub(HubConfig{}, provider, nil)
+	defer hub.Close()
+
+	payload, _ := json.Marshal(AudioStateData{Volume: 85, Muted: true})
+	hub.Publish(EventAudioState, payload)
+
+	state := provider.GetAudioState()
+	if state.Volume != 85 || !state.Muted {
+		t.Fatalf("expected volume 85, muted true in stateProvider, got %+v", state)
+	}
+}
+
