@@ -223,6 +223,33 @@
         });
       }
 
+      // 6. Initialize Touch Video HUD Controller (SPEC-004 §5, SPEC-010 §1, §4)
+      if (window.MirrormereHUD && window.MirrormereHUD.VideoHUDController) {
+        const overlayEl = document.getElementById('video-hud-overlay');
+        const stageEl = document.getElementById('video-stage');
+        window.videoHUD = new window.MirrormereHUD.VideoHUDController({
+          overlayElement: overlayEl,
+          stageElement: stageEl,
+          videoManager: window.videoManager,
+        });
+
+        if (window.videoManager && typeof window.videoManager.setHUD === 'function') {
+          window.videoManager.setHUD(window.videoHUD);
+        }
+
+        sseClient.on('video.state', (data) => {
+          if (window.videoHUD) {
+            window.videoHUD.handleVideoState(data);
+          }
+        });
+
+        sseClient.on('audio.state', (data) => {
+          if (window.videoHUD) {
+            window.videoHUD.handleAudioState(data);
+          }
+        });
+      }
+
       sseClient.on('screen.rotate', (data) => {
         if (carousel) carousel.handleScreenRotate(data);
       });

@@ -35,12 +35,30 @@
   <div id="video-stage" class="video-stage" style="display: none;">
     <div id="video-primary-slot" class="video-primary-slot"></div>
     <div id="video-pip-slot" class="video-pip-slot" style="display: none;"></div>
+    <div id="video-hud-overlay" class="video-hud-overlay">
+      <div class="video-hud-header">
+        <span id="video-hud-title" class="video-hud-title">Live Video</span>
+        <button id="video-hud-dismiss-btn" class="video-hud-btn video-hud-dismiss" aria-label="Dismiss Video" title="Dismiss Video">✕</button>
+      </div>
+      <div class="video-hud-controls">
+        <button id="video-hud-play-btn" class="video-hud-btn video-hud-play" aria-label="Play / Pause" title="Play / Pause">
+          <span class="video-hud-icon" id="video-hud-play-icon">⏸</span>
+        </button>
+        <button id="video-hud-mute-btn" class="video-hud-btn video-hud-mute" aria-label="Mute / Unmute" title="Mute / Unmute">
+          <span class="video-hud-icon" id="video-hud-mute-icon">🔊</span>
+        </button>
+        <div class="video-hud-volume-container">
+          <input type="range" id="video-hud-volume-slider" class="video-hud-volume-slider" min="0" max="100" value="75" aria-label="Master Volume">
+        </div>
+      </div>
+    </div>
   </div>
 
   <script src="/static/js/sse.js"></script>
   <script src="/static/js/audio.js"></script>
   <script src="/static/js/carousel.js"></script>
   <script src="/static/js/video.js"></script>
+  <script src="/static/js/video_hud.js"></script>
   <script src="/static/js/display.js"></script>
 </body>
 </html>

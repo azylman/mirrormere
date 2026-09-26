@@ -367,3 +367,177 @@ button, .touch-target {
   box-sizing: border-box;
   text-align: center;
 }
+
+/* ==========================================================================
+   Touch HUD Video Controls Overlay (SPEC-004 §5, SPEC-010 §1, §4)
+   ========================================================================== */
+
+.video-hud-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 80;
+  pointer-events: none;
+  opacity: 0;
+  background: linear-gradient(180deg, rgba(9, 5, 20, 0.8) 0%, transparent 22%, transparent 78%, rgba(9, 5, 20, 0.85) 100%);
+  transition: opacity 0.3s cubic-bezier(0.25, 1, 0.5, 1);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 24px;
+  box-sizing: border-box;
+}
+
+.video-hud-overlay.visible {
+  opacity: 1;
+}
+
+/* Header with Title and Dismiss Button */
+.video-hud-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  pointer-events: auto;
+}
+
+.video-hud-title {
+  font-family: var(--mm-font-family);
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--mm-text-primary);
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.8);
+  letter-spacing: -0.02em;
+}
+
+/* Centered Bottom Controls Bar */
+.video-hud-controls {
+  position: absolute;
+  bottom: 32px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: calc(100% - 64px);
+  max-width: 600px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 12px 20px;
+  background: rgba(26, 16, 48, 0.88);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: var(--mm-border-hud);
+  border-radius: var(--mm-border-radius-lg);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6), 0 0 16px var(--mm-accent-purple-glow);
+  pointer-events: auto;
+  box-sizing: border-box;
+}
+
+/* Touch Action Buttons */
+.video-hud-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 48px;
+  min-height: 48px;
+  width: 48px;
+  height: 48px;
+  padding: 0;
+  border: var(--mm-border-hud);
+  border-radius: var(--mm-border-radius-md);
+  background: var(--mm-bg-surface);
+  color: var(--mm-text-primary);
+  font-size: 1.25rem;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.1s ease;
+}
+
+.video-hud-btn:hover {
+  border-color: var(--mm-accent-purple);
+  box-shadow: 0 0 12px var(--mm-accent-purple-glow);
+}
+
+.video-hud-btn:active {
+  transform: scale(0.94);
+}
+
+.video-hud-dismiss {
+  font-size: 1.1rem;
+}
+
+/* Volume Slider Container */
+.video-hud-volume-container {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 140px;
+  max-width: 280px;
+  height: 48px;
+}
+
+.video-hud-volume-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 36px;
+  background: transparent;
+  cursor: pointer;
+  touch-action: none;
+  margin: 0;
+  transition: opacity 0.2s ease;
+}
+
+.video-hud-volume-slider.muted {
+  opacity: 0.5;
+}
+
+.video-hud-volume-slider:focus {
+  outline: none;
+}
+
+/* Slider Track (WebKit) */
+.video-hud-volume-slider::-webkit-slider-runnable-track {
+  height: 8px;
+  border-radius: 4px;
+  background: rgba(168, 85, 247, 0.25);
+  border: 1px solid rgba(168, 85, 247, 0.4);
+}
+
+/* Slider Thumb (WebKit) */
+.video-hud-volume-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--mm-accent-purple);
+  box-shadow: 0 0 12px var(--mm-accent-purple-glow);
+  border: 2px solid #fff;
+  margin-top: -12px;
+  transition: transform 0.1s ease;
+}
+
+.video-hud-volume-slider::-webkit-slider-thumb:active {
+  transform: scale(1.15);
+}
+
+/* Slider Track (Firefox) */
+.video-hud-volume-slider::-moz-range-track {
+  height: 8px;
+  border-radius: 4px;
+  background: rgba(168, 85, 247, 0.25);
+  border: 1px solid rgba(168, 85, 247, 0.4);
+}
+
+/* Slider Thumb (Firefox) */
+.video-hud-volume-slider::-moz-range-thumb {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--mm-accent-purple);
+  box-shadow: 0 0 12px var(--mm-accent-purple-glow);
+  border: 2px solid #fff;
+}
