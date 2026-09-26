@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"gopkg.in/yaml.v3"
@@ -86,4 +87,34 @@ func (d *Dimension) UnmarshalYAML(node *yaml.Node) error {
 // MarshalYAML serializes Dimension as a standard 2-element sequence [cols, rows].
 func (d Dimension) MarshalYAML() (any, error) {
 	return []int{d.Cols, d.Rows}, nil
+}
+
+// MarshalJSON serializes Dimension as a standard 2-element JSON array [cols, rows].
+func (d Dimension) MarshalJSON() ([]byte, error) {
+	return json.Marshal([]int{d.Cols, d.Rows})
+}
+
+// UnmarshalJSON deserializes Dimension from both a 2-element array [cols, rows] and an object {"cols": c, "rows": r}.
+func (d *Dimension) UnmarshalJSON(data []byte) error {
+	var slice []int
+	if err := json.Unmarshal(data, &slice); err == nil {
+		if len(slice) != 2 {
+			return fmt.Errorf("dimension JSON array must contain exactly 2 integers [cols, rows], got %d", len(slice))
+		}
+		d.Cols = slice[0]
+		d.Rows = slice[1]
+		return nil
+	}
+
+	type rawDimension struct {
+		Cols int `json:"cols"`
+		Rows int `json:"rows"`
+	}
+	var raw rawDimension
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return fmt.Errorf("dimension must be JSON array [cols, rows] or object: %w", err)
+	}
+	d.Cols = raw.Cols
+	d.Rows = raw.Rows
+	return nil
 }

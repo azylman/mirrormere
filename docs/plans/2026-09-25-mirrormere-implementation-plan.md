@@ -77,7 +77,7 @@ flowchart TD
     - Apply manifest `default_dimensions` when instance config omits `dimensions: [cols, rows]`.
   - Deliverable: Hermetic unit tests achieving `>= 95%` coverage using isolated filesystem fixtures.
 
-- [ ] **Task 1.5: 6×2 Grid Bitmask Backtracking Solver**
+- [x] **Task 1.5: 6×2 Grid Bitmask Backtracking Solver**
   - Files:
     - Create: `internal/layout/solver.go`
     - Create: `internal/layout/solver_test.go`
