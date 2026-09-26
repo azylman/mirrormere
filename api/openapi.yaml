@@ -666,7 +666,7 @@ components:
         priority:
           type: string
           enum: [persistent, temporary]
-          default: temporary
+          default: persistent
           example: persistent
         timeout_seconds:
           type: integer
@@ -725,7 +725,7 @@ components:
         priority:
           type: string
           enum: [persistent, temporary]
-          default: temporary
+          default: persistent
           example: persistent
         timeout_seconds:
           type: integer

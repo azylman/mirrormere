@@ -124,7 +124,7 @@ func (c *Coordinator) Trigger(stream VideoStream) (VideoState, error) {
 	}
 
 	if stream.Priority == "" {
-		stream.Priority = PriorityTemporary
+		stream.Priority = PriorityPersistent
 	} else if stream.Priority != PriorityPersistent && stream.Priority != PriorityTemporary {
 		return VideoState{}, ErrInvalidStream
 	}

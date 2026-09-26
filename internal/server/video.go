@@ -101,7 +101,7 @@ func (h *DefaultVideoHandler) PostVideoTrigger(w http.ResponseWriter, r *http.Re
 	if req.Type != nil && string(*req.Type) != "" {
 		vType = string(*req.Type)
 	}
-	vPriority := video.PriorityTemporary
+	vPriority := video.PriorityPersistent
 	if req.Priority != nil && string(*req.Priority) != "" {
 		vPriority = string(*req.Priority)
 	}
