@@ -1,0 +1,7 @@
+[Unit]
+Description=Mirrormere Kiosk Nightly Memory Refresh (Issue #257)
+After=mirrormere-kiosk.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/mirrormere/kiosk/dpms.sh night-restart

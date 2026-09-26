@@ -1,0 +1,7 @@
+[Unit]
+Description=Mirrormere Kiosk Night Blackout (DPMS Off)
+After=mirrormere-kiosk.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/mirrormere/kiosk/dpms.sh off
