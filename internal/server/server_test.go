@@ -725,3 +725,63 @@ func TestServer_PushHandler(t *testing.T) {
 	}
 }
 
+type mockListsHandler struct {
+	calls      int
+	lastListID string
+}
+
+func (m *mockListsHandler) GetListItems(w http.ResponseWriter, r *http.Request, listID string) {
+	m.calls++
+	m.lastListID = listID
+	w.WriteHeader(http.StatusOK)
+}
+
+func TestServer_ListsHandler(t *testing.T) {
+	t.Parallel()
+
+	// Case 1: Unset ListsHandler returns 404
+	srv := server.New(server.Config{})
+	if srv.ListsHandler() != nil {
+		t.Fatal("expected nil ListsHandler initially")
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/lists/groceries/items", nil)
+	rec := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 when ListsHandler unset, got %d", rec.Code)
+	}
+
+	// Case 2: Config.ListsHandler set at creation
+	mockH := &mockListsHandler{}
+	srvWithHandler := server.New(server.Config{ListsHandler: mockH})
+	if srvWithHandler.ListsHandler() == nil {
+		t.Fatal("expected non-nil ListsHandler")
+	}
+
+	rec2 := httptest.NewRecorder()
+	srvWithHandler.Routes().ServeHTTP(rec2, req)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec2.Code)
+	}
+	if mockH.calls != 1 || mockH.lastListID != "groceries" {
+		t.Fatalf("expected 1 list call with listID 'groceries', got calls=%d id=%q", mockH.calls, mockH.lastListID)
+	}
+
+	// Case 3: RegisterListsHandler dynamically updates handler
+	mockH2 := &mockListsHandler{}
+	srv.RegisterListsHandler(mockH2)
+	if srv.ListsHandler() == nil {
+		t.Fatal("expected non-nil ListsHandler after registration")
+	}
+
+	rec3 := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(rec3, req)
+	if rec3.Code != http.StatusOK {
+		t.Fatalf("expected 200 after dynamic registration, got %d", rec3.Code)
+	}
+	if mockH2.calls != 1 || mockH2.lastListID != "groceries" {
+		t.Fatalf("expected mockH2 to receive list call, got calls=%d id=%q", mockH2.calls, mockH2.lastListID)
+	}
+}
+

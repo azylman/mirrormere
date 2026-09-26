@@ -54,6 +54,11 @@ type DisplayHandler interface {
 	GetStatic(w http.ResponseWriter, r *http.Request, path string)
 }
 
+// ListsHandler handles task and checklist inspection endpoints matching OpenAPI specifications.
+type ListsHandler interface {
+	GetListItems(w http.ResponseWriter, r *http.Request, listID string)
+}
+
 // Config encapsulates configuration for the HTTP server.
 type Config struct {
 	Host              string
@@ -67,6 +72,7 @@ type Config struct {
 	RenderHandler     RenderHandler
 	PushHandler       PushHandler
 	DisplayHandler    DisplayHandler
+	ListsHandler      ListsHandler
 }
 
 // ApplyDefaults sets fallback values for any unspecified configuration fields.
@@ -121,6 +127,7 @@ type Server struct {
 	renderHandler  RenderHandler
 	pushHandler    PushHandler
 	displayHandler DisplayHandler
+	listsHandler   ListsHandler
 }
 
 // New constructs a configured Server instance.
@@ -136,6 +143,7 @@ func New(cfg Config) *Server {
 		renderHandler:  cfg.RenderHandler,
 		pushHandler:    cfg.PushHandler,
 		displayHandler: cfg.DisplayHandler,
+		listsHandler:   cfg.ListsHandler,
 	}
 
 	s.setupRoutes()
@@ -238,6 +246,20 @@ func (s *Server) DisplayHandler() DisplayHandler {
 	return s.displayHandler
 }
 
+// RegisterListsHandler dynamically registers or replaces the tasks/lists inspection handler.
+func (s *Server) RegisterListsHandler(h ListsHandler) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.listsHandler = h
+}
+
+// ListsHandler returns the currently registered lists handler.
+func (s *Server) ListsHandler() ListsHandler {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.listsHandler
+}
+
 func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/healthz", s.handleHealth)
 	s.mux.HandleFunc("/health", s.handleHealth)
@@ -245,6 +267,7 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/api/screen/select", s.handleScreenSelect)
 	s.mux.HandleFunc("/api/screen/advance", s.handleScreenAdvance)
 	s.mux.HandleFunc("/api/screen/pause", s.handleScreenPause)
+	s.mux.HandleFunc("/api/lists/{list_id}/items", s.handleListItems)
 	s.mux.HandleFunc("/api/widgets/{widget_id}/render", s.handleWidgetRender)
 	s.mux.HandleFunc("/api/widgets/{widget_id}/push", s.handleWidgetPush)
 	s.mux.HandleFunc("/widget-types/{type}/assets/{path...}", s.handleWidgetAsset)
@@ -296,6 +319,18 @@ func (s *Server) handleScreenPause(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.PostScreenPause(w, r)
+}
+
+func (s *Server) handleListItems(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	h := s.listsHandler
+	s.mu.RUnlock()
+	if h == nil {
+		http.NotFound(w, r)
+		return
+	}
+	listID := r.PathValue("list_id")
+	h.GetListItems(w, r, listID)
 }
 
 func (s *Server) handleWidgetRender(w http.ResponseWriter, r *http.Request) {

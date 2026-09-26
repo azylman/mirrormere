@@ -135,8 +135,71 @@ func (m *mockServer) PostScreenSelect(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (m *mockServer) GetListItems(w http.ResponseWriter, r *http.Request, listId string, params GetListItemsParams) {
+	if listId == "not-found" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_ = json.NewEncoder(w).Encode(ErrorResponse{
+			Status: "error",
+			Error:  fmt.Sprintf("list '%s' not found", listId),
+		})
+		return
+	}
+	section := "Dairy"
+	assignee := "Alex"
+	dueDate := "2026-09-26"
+	items := []ListItem{
+		{
+			Id:        "i1",
+			ListId:    listId,
+			Title:     "Oat milk",
+			Done:      false,
+			Section:   &section,
+			Position:  0,
+			Assignee:  &assignee,
+			DueDate:   &dueDate,
+			CreatedAt: time.Date(2026, 9, 24, 22, 0, 0, 0, time.UTC),
+			UpdatedAt: time.Date(2026, 9, 24, 22, 30, 0, 0, time.UTC),
+		},
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(items)
+}
+
 func TestHandler_Endpoints(t *testing.T) {
 	t.Parallel()
+
+	t.Run("GET /api/lists/{list_id}/items", func(t *testing.T) {
+		t.Parallel()
+		mock := &mockServer{}
+		handler := Handler(mock)
+
+		// 200 OK
+		req := httptest.NewRequest(http.MethodGet, "/api/lists/groceries/items?include_done=false", nil)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rec.Code)
+		}
+		var items []ListItem
+		if err := json.Unmarshal(rec.Body.Bytes(), &items); err != nil {
+			t.Fatalf("failed to decode items: %v", err)
+		}
+		if len(items) != 1 || items[0].Id != "i1" {
+			t.Fatalf("expected item i1, got %+v", items)
+		}
+
+		// 404 Not Found
+		req404 := httptest.NewRequest(http.MethodGet, "/api/lists/not-found/items", nil)
+		rec404 := httptest.NewRecorder()
+		handler.ServeHTTP(rec404, req404)
+
+		if rec404.Code != http.StatusNotFound {
+			t.Fatalf("expected 404, got %d", rec404.Code)
+		}
+	})
 
 	t.Run("GET /healthz", func(t *testing.T) {
 		t.Parallel()
@@ -548,6 +611,45 @@ func TestServerInterfaceWrapper_ParameterErrors(t *testing.T) {
 		req.SetPathValue("type", "clock")
 		rec := httptest.NewRecorder()
 		wrapper.GetWidgetAsset(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d", rec.Code)
+		}
+	})
+
+	t.Run("Default error handler triggers on invalid include_done query parameter", func(t *testing.T) {
+		t.Parallel()
+		mock := &mockServer{}
+		wrapper := ServerInterfaceWrapper{
+			Handler: mock,
+			ErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+			},
+		}
+
+		req := httptest.NewRequest(http.MethodGet, "/api/lists/groceries/items?include_done=not-a-bool", nil)
+		req.SetPathValue("list_id", "groceries")
+		rec := httptest.NewRecorder()
+		wrapper.GetListItems(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d", rec.Code)
+		}
+	})
+
+	t.Run("Default error handler triggers on missing list_id", func(t *testing.T) {
+		t.Parallel()
+		mock := &mockServer{}
+		wrapper := ServerInterfaceWrapper{
+			Handler: mock,
+			ErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+			},
+		}
+
+		req := httptest.NewRequest(http.MethodGet, "/api/lists//items", nil)
+		rec := httptest.NewRecorder()
+		wrapper.GetListItems(rec, req)
 
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("expected 400, got %d", rec.Code)

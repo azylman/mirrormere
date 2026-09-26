@@ -1,0 +1,67 @@
+<div class="widget-card widget-tasks" data-widget-id="{{ .ID }}" data-widget-type="{{ .Type }}" style="grid-column: span {{ .Dimensions.Cols }}; grid-row: span {{ .Dimensions.Rows }};">
+  {{ if .Data }}
+    <div class="tasks-header" style="display: flex; align-items: center; justify-content: space-between; padding-bottom: 6px; border-bottom: 1px solid rgba(168, 85, 247, 0.2); margin-bottom: 8px;">
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--mm-accent-purple)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M9 11l3 3L22 4"></path>
+          <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path>
+        </svg>
+        <span class="tasks-title" style="font-size: 0.95rem; font-weight: 700; color: var(--mm-text-primary); letter-spacing: 0.02em;">
+          {{ if .Data.List.Name }}{{ .Data.List.Name }}{{ else }}Checklist{{ end }}
+        </span>
+      </div>
+      {{ if .Data.List.Source }}
+        <span class="tasks-source-badge" style="font-size: 0.7rem; font-family: var(--mm-font-mono); color: var(--mm-accent-cyan); text-transform: uppercase; background: rgba(6, 182, 212, 0.1); padding: 2px 6px; border-radius: 4px; border: 1px solid rgba(6, 182, 212, 0.25);">
+          {{ .Data.List.Source }}
+        </span>
+      {{ end }}
+    </div>
+
+    {{ if and .Data.Items (gt (len .Data.Items) 0) }}
+    <div class="tasks-items-container" style="display: flex; flex-direction: column; height: calc(100% - 36px); overflow-y: auto; gap: 6px; padding-right: 4px; touch-action: pan-y; -webkit-overflow-scrolling: touch;">
+      {{ range .Data.Items }}
+        <div class="task-item {{ if .Done }}task-item-done{{ end }}" style="display: flex; align-items: flex-start; gap: 10px; padding: 5px 8px; border-radius: 6px; background: rgba(255, 255, 255, 0.02); border-left: 2px solid {{ if .Done }}rgba(168, 85, 247, 0.3){{ else }}var(--mm-accent-cyan){{ end }};">
+          <div class="task-check-glyph" style="margin-top: 2px; flex-shrink: 0;">
+            {{ if .Done }}
+              <svg width="16" height="16" viewBox="0 0 20 20" fill="none">
+                <circle cx="10" cy="10" r="8" fill="rgba(168, 85, 247, 0.2)" stroke="var(--mm-accent-purple)" stroke-width="2"/>
+                <path d="M6 10l3 3 5-5" stroke="var(--mm-accent-purple)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            {{ else }}
+              <svg width="16" height="16" viewBox="0 0 20 20" fill="none">
+                <circle cx="10" cy="10" r="8" stroke="var(--mm-accent-cyan)" stroke-width="2" stroke-opacity="0.8"/>
+              </svg>
+            {{ end }}
+          </div>
+          <div class="task-body" style="display: flex; flex-direction: column; overflow: hidden; flex: 1; gap: 2px;">
+            <span class="task-title" style="font-size: 0.9rem; {{ if .Done }}text-decoration: line-through; opacity: 0.55; color: var(--mm-text-muted);{{ else }}font-weight: 500; color: var(--mm-text-primary);{{ end }} word-break: break-word;">
+              {{ .Title }}
+            </span>
+            {{ if or .Section .Assignee .DueDate }}
+              <div class="task-tags" style="display: flex; flex-wrap: wrap; gap: 6px; font-size: 0.7rem; align-items: center;">
+                {{ if .Section }}
+                  <span class="task-tag-section" style="color: var(--mm-accent-purple); opacity: 0.85;">#{{ .Section }}</span>
+                {{ end }}
+                {{ if .Assignee }}
+                  <span class="task-tag-assignee" style="color: var(--mm-text-muted);">@{{ .Assignee }}</span>
+                {{ end }}
+                {{ if .DueDate }}
+                  <span class="task-tag-due" style="font-family: var(--mm-font-mono); color: var(--mm-accent-pink); opacity: 0.85;">{{ .DueDate }}</span>
+                {{ end }}
+              </div>
+            {{ end }}
+          </div>
+        </div>
+      {{ end }}
+    </div>
+    {{ else }}
+    <div class="tasks-empty" style="display: flex; align-items: center; justify-content: center; height: calc(100% - 36px); color: var(--mm-text-muted); font-size: 0.9rem;">
+      <span>All tasks completed</span>
+    </div>
+    {{ end }}
+  {{ else }}
+  <div class="tasks-loading" style="display: flex; align-items: center; justify-content: center; height: 100%; color: var(--mm-text-muted); font-size: 0.9rem;">
+    <span>Loading checklist...</span>
+  </div>
+  {{ end }}
+</div>
