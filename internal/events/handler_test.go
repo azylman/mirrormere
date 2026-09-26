@@ -252,6 +252,63 @@ func TestHandler_QueryParamLastEventID(t *testing.T) {
 	}
 }
 
+func TestHandler_QueryParamLastEventID_Replay(t *testing.T) {
+	t.Parallel()
+
+	hub := NewHub(HubConfig{}, nil, nil)
+	defer hub.Close()
+	handler := Handler(hub)
+
+	evt1 := hub.Publish(EventWidgetReload, []byte(`{"type":"card1"}`))
+	evt2 := hub.Publish(EventWidgetUpdate, []byte(`{"widget_id":"weather","state":"healthy"}`))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/events?lastEventId="+evt1.ID, nil).WithContext(ctx)
+	rec := newFlushingRecorder()
+
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	body := rec.Body.String()
+	if !strings.Contains(body, evt2.ID) {
+		t.Errorf("expected replayed event %s in body, got:\n%s", evt2.ID, body)
+	}
+	if strings.Contains(body, evt1.ID) {
+		t.Errorf("did not expect event %s in replayed body since it was lastEventId", evt1.ID)
+	}
+}
+
+func TestHandler_QueryParamSnakeCase_Fallback(t *testing.T) {
+	t.Parallel()
+
+	hub := NewHub(HubConfig{}, nil, nil)
+	defer hub.Close()
+	handler := Handler(hub)
+
+	evt1 := hub.Publish(EventWidgetReload, []byte(`{"type":"card1"}`))
+	evt2 := hub.Publish(EventWidgetUpdate, []byte(`{"widget_id":"weather","state":"healthy"}`))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/events?last_event_id="+evt1.ID, nil).WithContext(ctx)
+	rec := newFlushingRecorder()
+
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	body := rec.Body.String()
+	if !strings.Contains(body, evt2.ID) {
+		t.Errorf("expected replayed event %s in body, got:\n%s", evt2.ID, body)
+	}
+}
+
 type failOnWriteFlusher struct {
 	header http.Header
 	code   int

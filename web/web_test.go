@@ -55,3 +55,20 @@ func TestHeaderClock_HouseholdTimezone_NodeRunner(t *testing.T) {
 	}
 }
 
+func TestSSEClient_ReconnectionReplay_NodeRunner(t *testing.T) {
+	t.Parallel()
+
+	nodePath, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node executable not found in PATH; skipping client-side JS SSE tests")
+	}
+
+	cmd := exec.Command(nodePath, "--test", "test/sse.test.js")
+	cmd.Env = append(os.Environ(), "TZ=UTC")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("node sse.test.js failed: %v\nOutput:\n%s", err, string(out))
+	}
+}
+
+
