@@ -3,6 +3,7 @@ package events
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -294,5 +295,46 @@ func TestHub_PublishEvent_ScreenRotateUpdatesStateProvider(t *testing.T) {
 	rd := provider.GetScreenRotateData()
 	if rd == nil || rd.CurrentScreen != 1 || rd.TotalScreens != 2 || rd.IntervalSeconds != 20 {
 		t.Errorf("expected stateProvider to receive ScreenRotateData from hub.Publish: %+v", rd)
+	}
+}
+
+type mockProviderCoordinator struct {
+	calledWith *config.Snapshot
+	err        error
+}
+
+func (m *mockProviderCoordinator) UpdateConfig(snap *config.Snapshot) error {
+	m.calledWith = snap
+	return m.err
+}
+
+func TestHub_DispatchConfigReload_WithProviderCoordinator(t *testing.T) {
+	t.Parallel()
+
+	hub := NewHub(HubConfig{}, nil, nil)
+	defer hub.Close()
+
+	coord := &mockProviderCoordinator{}
+	hub.SetProviderCoordinator(coord)
+	if hub.ProviderCoordinator() != coord {
+		t.Error("expected registered ProviderCoordinator")
+	}
+
+	snap := &config.Snapshot{
+		Config: &config.Config{},
+	}
+	if err := hub.DispatchConfigReload(snap, nil); err != nil {
+		t.Fatalf("DispatchConfigReload failed: %v", err)
+	}
+
+	if coord.calledWith != snap {
+		t.Errorf("expected providerCoordinator.UpdateConfig called with snapshot")
+	}
+
+	// Error path
+	coordErr := &mockProviderCoordinator{err: errors.New("reconcile error")}
+	hub.SetProviderCoordinator(coordErr)
+	if err := hub.DispatchConfigReload(snap, nil); err != nil {
+		t.Fatalf("expected nil error even if providerCoordinator returns error, got: %v", err)
 	}
 }
