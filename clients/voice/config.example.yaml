@@ -1,0 +1,47 @@
+# /etc/mirrormere/voice.yaml
+# Mirrormere Edge Voice Listener Daemon Configuration (SPEC-011)
+
+voice:
+  # Unique node identifier (touch-kiosk-kitchen, eink-display-livingroom)
+  node_id: "touch-kiosk-kitchen"
+
+  # Base URL of local Mirrormere Core for SSE state broadcasts and HUD updates
+  mirrormere_url: "http://192.168.1.14/kiosk"
+
+  # LAN Voice Hub streaming interaction endpoint (POST /api/voice/interact)
+  hub_url: "http://192.168.1.14:9000/api/voice/interact"
+
+  # Target wake words to activate on (matches built-ins or custom models)
+  wake_models:
+    - "alexa"
+    - "hey_jarvis"
+    - "hey_mycroft"
+    - "hey_aerial"
+
+  # Confidence threshold for wake word activation (0.0 to 1.0)
+  threshold: 0.35
+
+  # Directory scanned for custom .onnx / .tflite wake word models
+  models_dir: "/opt/mirrormere/voice/models"
+
+  # VAD Silence detection: how many ms of silence after speech ends an utterance
+  silence_ms: 800
+
+  # Maximum duration of a single utterance before auto-saving (seconds)
+  max_record_seconds: 10.0
+
+  # Calibrated speech energy floor in dBFS (speech must exceed this to count as active)
+  speech_threshold_db: -31.0
+
+  # Refractory cooldown period after utterance to prevent echo re-triggers (seconds)
+  cooldown_seconds: 2.5
+
+  # Output path for captured utterance WAV file
+  save_path: "/tmp/last_utterance.wav"
+
+  # ALSA / PipeWire capture device node
+  audio_device: "default"
+
+  # Audio sampling configuration (16 kHz 16-bit mono PCM required by openWakeWord & Whisper)
+  sample_rate: 16000
+  chunk_samples: 1280
