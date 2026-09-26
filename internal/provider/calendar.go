@@ -45,11 +45,18 @@ type CalendarSnapshot struct {
 
 // CalendarSource defines configuration for a single upstream calendar feed.
 type CalendarSource struct {
-	Name    string `json:"name" yaml:"name"`
-	URL     string `json:"url,omitempty" yaml:"url,omitempty"`
-	URLEnv  string `json:"url_env,omitempty" yaml:"url_env,omitempty"`
-	Color   string `json:"color,omitempty" yaml:"color,omitempty"`
-	Enabled bool   `json:"enabled" yaml:"enabled"`
+	Name        string `json:"name" yaml:"name"`
+	Type        string `json:"type,omitempty" yaml:"type,omitempty"` // "ical" (default) or "caldav"
+	URL         string `json:"url,omitempty" yaml:"url,omitempty"`
+	URLEnv      string `json:"url_env,omitempty" yaml:"url_env,omitempty"`
+	Color       string `json:"color,omitempty" yaml:"color,omitempty"`
+	Enabled     bool   `json:"enabled" yaml:"enabled"`
+	Username    string `json:"username,omitempty" yaml:"username,omitempty"`
+	UsernameEnv string `json:"username_env,omitempty" yaml:"username_env,omitempty"`
+	Password    string `json:"password,omitempty" yaml:"password,omitempty"`
+	PasswordEnv string `json:"password_env,omitempty" yaml:"password_env,omitempty"`
+	Token       string `json:"token,omitempty" yaml:"token,omitempty"`
+	TokenEnv    string `json:"token_env,omitempty" yaml:"token_env,omitempty"`
 }
 
 // CalendarConfig defines the full instance configuration for calendar-agenda.
@@ -62,10 +69,11 @@ type CalendarConfig struct {
 
 // CalendarProvider fetches, parses, expands recurrence rules, and normalizes iCal feeds per SPEC-007 §1.
 type CalendarProvider struct {
-	client  *http.Client
-	config  *CalendarConfig
-	nowFunc func() time.Time
-	logger  *slog.Logger
+	client       *http.Client
+	config       *CalendarConfig
+	nowFunc      func() time.Time
+	logger       *slog.Logger
+	caldavClient *CalDAVClient
 }
 
 // NewCalendarProvider constructs a standard CalendarProvider.
@@ -81,10 +89,12 @@ func NewCalendarProviderWithClient(client *http.Client, nowFunc func() time.Time
 	if nowFunc == nil {
 		nowFunc = time.Now
 	}
+	logger := slog.Default()
 	return &CalendarProvider{
-		client:  client,
-		nowFunc: nowFunc,
-		logger:  slog.Default(),
+		client:       client,
+		nowFunc:      nowFunc,
+		logger:       logger,
+		caldavClient: NewCalDAVClient(client, logger),
 	}
 }
 
@@ -146,6 +156,18 @@ func parseCalendarConfig(raw map[string]any, opts InitOptions) (*CalendarConfig,
 		}
 		name = strings.TrimSpace(name)
 
+		var rawType string
+		if t, ok := m["type"].(string); ok {
+			rawType = t
+		}
+		sourceType := strings.ToLower(strings.TrimSpace(rawType))
+		if sourceType == "" {
+			sourceType = "ical"
+		}
+		if sourceType != "ical" && sourceType != "caldav" {
+			return nil, fmt.Errorf("calendar %q: invalid type %q (must be 'ical' or 'caldav')", name, sourceType)
+		}
+
 		var rawURL string
 		if u, ok := m["url"].(string); ok {
 			rawURL = strings.TrimSpace(u)
@@ -178,6 +200,97 @@ func parseCalendarConfig(raw map[string]any, opts InitOptions) (*CalendarConfig,
 			resolvedURL = resolved
 		}
 
+		var rawUsername string
+		if u, ok := m["username"].(string); ok {
+			rawUsername = strings.TrimSpace(u)
+		}
+		var usernameEnv string
+		if ue, ok := m["username_env"].(string); ok {
+			usernameEnv = strings.TrimSpace(ue)
+		}
+		if rawUsername != "" && usernameEnv != "" {
+			return nil, fmt.Errorf("calendar %q cannot specify both 'username' and 'username_env'", name)
+		}
+		resolvedUsername := rawUsername
+		if usernameEnv != "" {
+			resolved := opts.GetSecret(fmt.Sprintf("calendars[%d].username", idx))
+			if resolved == "" {
+				resolved = opts.GetSecret(usernameEnv)
+			}
+			if resolved == "" {
+				resolved = os.Getenv(usernameEnv)
+			}
+			if resolved == "" {
+				return nil, fmt.Errorf("calendar %q: environment variable %q is not set or empty", name, usernameEnv)
+			}
+			resolvedUsername = resolved
+		}
+
+		var rawPassword string
+		if p, ok := m["password"].(string); ok {
+			rawPassword = strings.TrimSpace(p)
+		}
+		var passwordEnv string
+		if pe, ok := m["password_env"].(string); ok {
+			passwordEnv = strings.TrimSpace(pe)
+		}
+		if rawPassword != "" && passwordEnv != "" {
+			return nil, fmt.Errorf("calendar %q cannot specify both 'password' and 'password_env'", name)
+		}
+		resolvedPassword := rawPassword
+		if passwordEnv != "" {
+			resolved := opts.GetSecret(fmt.Sprintf("calendars[%d].password", idx))
+			if resolved == "" {
+				resolved = opts.GetSecret(passwordEnv)
+			}
+			if resolved == "" {
+				resolved = os.Getenv(passwordEnv)
+			}
+			if resolved == "" {
+				return nil, fmt.Errorf("calendar %q: environment variable %q is not set or empty", name, passwordEnv)
+			}
+			resolvedPassword = resolved
+		}
+
+		var rawToken string
+		if t, ok := m["token"].(string); ok {
+			rawToken = strings.TrimSpace(t)
+		}
+		var tokenEnv string
+		if te, ok := m["token_env"].(string); ok {
+			tokenEnv = strings.TrimSpace(te)
+		}
+		if rawToken != "" && tokenEnv != "" {
+			return nil, fmt.Errorf("calendar %q cannot specify both 'token' and 'token_env'", name)
+		}
+		resolvedToken := rawToken
+		if tokenEnv != "" {
+			resolved := opts.GetSecret(fmt.Sprintf("calendars[%d].token", idx))
+			if resolved == "" {
+				resolved = opts.GetSecret(tokenEnv)
+			}
+			if resolved == "" {
+				resolved = os.Getenv(tokenEnv)
+			}
+			if resolved == "" {
+				return nil, fmt.Errorf("calendar %q: environment variable %q is not set or empty", name, tokenEnv)
+			}
+			resolvedToken = resolved
+		}
+
+		// Auth exclusivity: Cannot specify both Basic Auth and Bearer Token
+		if (resolvedUsername != "" || resolvedPassword != "") && resolvedToken != "" {
+			return nil, fmt.Errorf("calendar %q cannot specify both Basic auth (username/password) and Bearer auth (token)", name)
+		}
+
+		// Basic auth completeness
+		if resolvedUsername != "" && resolvedPassword == "" {
+			return nil, fmt.Errorf("calendar %q: username provided without password", name)
+		}
+		if resolvedPassword != "" && resolvedUsername == "" {
+			return nil, fmt.Errorf("calendar %q: password provided without username", name)
+		}
+
 		color := "#3b82f6"
 		if c, ok := m["color"].(string); ok && strings.TrimSpace(c) != "" {
 			color = strings.TrimSpace(c)
@@ -189,11 +302,18 @@ func parseCalendarConfig(raw map[string]any, opts InitOptions) (*CalendarConfig,
 		}
 
 		cfg.Calendars = append(cfg.Calendars, CalendarSource{
-			Name:    name,
-			URL:     resolvedURL,
-			URLEnv:  urlEnv,
-			Color:   color,
-			Enabled: enabled,
+			Name:        name,
+			Type:        sourceType,
+			URL:         resolvedURL,
+			URLEnv:      urlEnv,
+			Color:       color,
+			Enabled:     enabled,
+			Username:    resolvedUsername,
+			UsernameEnv: usernameEnv,
+			Password:    resolvedPassword,
+			PasswordEnv: passwordEnv,
+			Token:       resolvedToken,
+			TokenEnv:    tokenEnv,
 		})
 	}
 
@@ -269,6 +389,10 @@ func (p *CalendarProvider) Fetch(ctx context.Context) (any, error) {
 }
 
 func (p *CalendarProvider) fetchCalendar(ctx context.Context, source CalendarSource, windowStart, windowEnd time.Time) ([]CalendarEvent, error) {
+	if source.Type == "caldav" {
+		return p.caldavClient.FetchCalendarEvents(ctx, source, windowStart, windowEnd)
+	}
+
 	targetURL := source.URL
 	if strings.HasPrefix(targetURL, "webcal://") {
 		targetURL = "https://" + strings.TrimPrefix(targetURL, "webcal://")
