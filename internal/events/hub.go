@@ -201,6 +201,13 @@ func (h *Hub) PublishEvent(evt *Event) {
 					isp.SetAudioState(&ad)
 				}
 			}
+		} else if evt.Type == EventVideoState {
+			var vd VideoStateData
+			if err := json.Unmarshal(evt.Data, &vd); err == nil {
+				if isp, ok := h.stateProvider.(*InMemoryStateProvider); ok {
+					isp.SetVideoState(&vd)
+				}
+			}
 		}
 	}
 

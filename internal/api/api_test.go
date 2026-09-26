@@ -20,6 +20,13 @@ type mockServer struct {
 	audioVolume    int
 	audioVolumeSet bool
 	audioMuted     bool
+	videoMode      string
+	videoPrimary   *VideoStream
+	videoPip       *VideoStream
+	lastActionID   string
+	lastAction     string
+	lastDismissID  string
+	lastTriggerID  string
 }
 
 func (m *mockServer) PostWidgetPush(w http.ResponseWriter, r *http.Request, widgetID string) {
@@ -254,6 +261,158 @@ func (m *mockServer) PostAudioMute(w http.ResponseWriter, r *http.Request) {
 		Status: "ok",
 		Volume: vol,
 		Muted:  m.audioMuted,
+	})
+}
+
+func (m *mockServer) GetVideoState(w http.ResponseWriter, r *http.Request) {
+	mode := m.videoMode
+	if mode == "" {
+		mode = "widgets"
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(VideoStateResponse{
+		Status:  "ok",
+		Mode:    VideoStateResponseMode(mode),
+		Primary: m.videoPrimary,
+		Pip:     m.videoPip,
+	})
+}
+
+func (m *mockServer) PostVideoTrigger(w http.ResponseWriter, r *http.Request) {
+	var req VideoTriggerRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(ErrorResponse{
+			Status: "error",
+			Error:  "invalid trigger payload",
+		})
+		return
+	}
+	m.lastTriggerID = req.Id
+	vType := VideoStreamTypeWebrtc
+	if req.Type != nil {
+		vType = VideoStreamType(*req.Type)
+	}
+	m.videoPrimary = &VideoStream{
+		Id:        req.Id,
+		StreamUrl: req.StreamUrl,
+		Type:      vType,
+	}
+	m.videoMode = "video"
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(VideoStateResponse{
+		Status:  "ok",
+		Mode:    VideoStateResponseMode("video"),
+		Primary: m.videoPrimary,
+	})
+}
+
+func (m *mockServer) PostVideoDismiss(w http.ResponseWriter, r *http.Request) {
+	var req VideoDismissRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(ErrorResponse{
+			Status: "error",
+			Error:  "invalid dismiss payload",
+		})
+		return
+	}
+	if req.Id == "not-found" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_ = json.NewEncoder(w).Encode(ErrorResponse{
+			Status: "error",
+			Error:  "stream not active",
+		})
+		return
+	}
+	m.lastDismissID = req.Id
+	m.videoPrimary = nil
+	m.videoPip = nil
+	m.videoMode = "widgets"
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(VideoStateResponse{
+		Status: "ok",
+		Mode:   VideoStateResponseMode("widgets"),
+	})
+}
+
+func (m *mockServer) PostVideoAction(w http.ResponseWriter, r *http.Request) {
+	var req VideoActionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(ErrorResponse{
+			Status: "error",
+			Error:  "invalid action payload",
+		})
+		return
+	}
+	if req.Id == "not-found" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_ = json.NewEncoder(w).Encode(ErrorResponse{
+			Status: "error",
+			Error:  "stream not active",
+		})
+		return
+	}
+	if req.Id == "not-controllable" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_ = json.NewEncoder(w).Encode(ErrorResponse{
+			Status: "error",
+			Error:  "stream is not controllable",
+		})
+		return
+	}
+	if req.Id == "unreachable" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadGateway)
+		_ = json.NewEncoder(w).Encode(ErrorResponse{
+			Status: "error",
+			Error:  "stream controller unreachable",
+		})
+		return
+	}
+	m.lastActionID = req.Id
+	m.lastAction = string(req.Action)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(ActionResponse{Status: "ok"})
+}
+
+func (m *mockServer) PostVideoState(w http.ResponseWriter, r *http.Request) {
+	var req VideoPlayerStateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(ErrorResponse{
+			Status: "error",
+			Error:  "invalid player state payload",
+		})
+		return
+	}
+	if req.Id == "not-found" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_ = json.NewEncoder(w).Encode(ErrorResponse{
+			Status: "error",
+			Error:  "stream not active",
+		})
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(VideoPlayerStateResponse{
+		Status:      "ok",
+		Id:          req.Id,
+		PlayerState: VideoPlayerStateResponsePlayerState(req.PlayerState),
 	})
 }
 
@@ -631,6 +790,193 @@ func TestHandler_Endpoints(t *testing.T) {
 
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("expected 400, got %d", rec.Code)
+		}
+	})
+
+	t.Run("GET /api/video/state", func(t *testing.T) {
+		t.Parallel()
+		mock := &mockServer{}
+		handler := Handler(mock)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/video/state", nil)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rec.Code)
+		}
+		var resp VideoStateResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("failed to decode response: %v", err)
+		}
+		if resp.Mode != Widgets {
+			t.Fatalf("expected widgets, got %s", resp.Mode)
+		}
+	})
+
+	t.Run("POST /api/video/trigger", func(t *testing.T) {
+		t.Parallel()
+		mock := &mockServer{}
+		handler := Handler(mock)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/video/trigger", strings.NewReader(`{"id":"chromecast","stream_url":"http://127.0.0.1:1984/cast","type":"webrtc"}`))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rec.Code)
+		}
+		var resp VideoStateResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("failed to decode response: %v", err)
+		}
+		if resp.Mode != Video {
+			t.Fatalf("expected video mode, got %s", resp.Mode)
+		}
+		if mock.lastTriggerID != "chromecast" {
+			t.Fatalf("expected trigger id 'chromecast', got '%s'", mock.lastTriggerID)
+		}
+
+		// Bad JSON
+		reqBad := httptest.NewRequest(http.MethodPost, "/api/video/trigger", strings.NewReader(`not-json`))
+		reqBad.Header.Set("Content-Type", "application/json")
+		recBad := httptest.NewRecorder()
+		handler.ServeHTTP(recBad, reqBad)
+		if recBad.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400 for bad json, got %d", recBad.Code)
+		}
+	})
+
+	t.Run("POST /api/video/dismiss", func(t *testing.T) {
+		t.Parallel()
+		mock := &mockServer{}
+		handler := Handler(mock)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/video/dismiss", strings.NewReader(`{"id":"chromecast"}`))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rec.Code)
+		}
+		if mock.lastDismissID != "chromecast" {
+			t.Fatalf("expected dismiss id 'chromecast', got '%s'", mock.lastDismissID)
+		}
+
+		// 404 Not Found
+		req404 := httptest.NewRequest(http.MethodPost, "/api/video/dismiss", strings.NewReader(`{"id":"not-found"}`))
+		req404.Header.Set("Content-Type", "application/json")
+		rec404 := httptest.NewRecorder()
+		handler.ServeHTTP(rec404, req404)
+		if rec404.Code != http.StatusNotFound {
+			t.Fatalf("expected 404, got %d", rec404.Code)
+		}
+
+		// Bad JSON
+		reqBad := httptest.NewRequest(http.MethodPost, "/api/video/dismiss", strings.NewReader(`not-json`))
+		reqBad.Header.Set("Content-Type", "application/json")
+		recBad := httptest.NewRecorder()
+		handler.ServeHTTP(recBad, reqBad)
+		if recBad.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d", recBad.Code)
+		}
+	})
+
+	t.Run("POST /api/video/action", func(t *testing.T) {
+		t.Parallel()
+		mock := &mockServer{}
+		handler := Handler(mock)
+
+		// 200 OK
+		req := httptest.NewRequest(http.MethodPost, "/api/video/action", strings.NewReader(`{"id":"chromecast","action":"toggle_playback"}`))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rec.Code)
+		}
+		if mock.lastActionID != "chromecast" || mock.lastAction != "toggle_playback" {
+			t.Fatalf("expected action chromecast toggle_playback, got %s %s", mock.lastActionID, mock.lastAction)
+		}
+
+		// 404 Not Found
+		req404 := httptest.NewRequest(http.MethodPost, "/api/video/action", strings.NewReader(`{"id":"not-found","action":"play"}`))
+		req404.Header.Set("Content-Type", "application/json")
+		rec404 := httptest.NewRecorder()
+		handler.ServeHTTP(rec404, req404)
+		if rec404.Code != http.StatusNotFound {
+			t.Fatalf("expected 404, got %d", rec404.Code)
+		}
+
+		// 422 Unprocessable Entity
+		req422 := httptest.NewRequest(http.MethodPost, "/api/video/action", strings.NewReader(`{"id":"not-controllable","action":"play"}`))
+		req422.Header.Set("Content-Type", "application/json")
+		rec422 := httptest.NewRecorder()
+		handler.ServeHTTP(rec422, req422)
+		if rec422.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("expected 422, got %d", rec422.Code)
+		}
+
+		// 502 Bad Gateway
+		req502 := httptest.NewRequest(http.MethodPost, "/api/video/action", strings.NewReader(`{"id":"unreachable","action":"play"}`))
+		req502.Header.Set("Content-Type", "application/json")
+		rec502 := httptest.NewRecorder()
+		handler.ServeHTTP(rec502, req502)
+		if rec502.Code != http.StatusBadGateway {
+			t.Fatalf("expected 502, got %d", rec502.Code)
+		}
+
+		// Bad JSON
+		reqBad := httptest.NewRequest(http.MethodPost, "/api/video/action", strings.NewReader(`not-json`))
+		reqBad.Header.Set("Content-Type", "application/json")
+		recBad := httptest.NewRecorder()
+		handler.ServeHTTP(recBad, reqBad)
+		if recBad.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d", recBad.Code)
+		}
+	})
+
+	t.Run("POST /api/video/state", func(t *testing.T) {
+		t.Parallel()
+		mock := &mockServer{}
+		handler := Handler(mock)
+
+		// 200 OK
+		req := httptest.NewRequest(http.MethodPost, "/api/video/state", strings.NewReader(`{"id":"chromecast","player_state":"playing"}`))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rec.Code)
+		}
+		var resp VideoPlayerStateResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("failed to decode response: %v", err)
+		}
+		if resp.Id != "chromecast" || resp.PlayerState != VideoPlayerStateResponsePlayerStatePlaying {
+			t.Fatalf("expected chromecast playing, got %s %s", resp.Id, resp.PlayerState)
+		}
+
+		// 404 Not Found
+		req404 := httptest.NewRequest(http.MethodPost, "/api/video/state", strings.NewReader(`{"id":"not-found","player_state":"paused"}`))
+		req404.Header.Set("Content-Type", "application/json")
+		rec404 := httptest.NewRecorder()
+		handler.ServeHTTP(rec404, req404)
+		if rec404.Code != http.StatusNotFound {
+			t.Fatalf("expected 404, got %d", rec404.Code)
+		}
+
+		// Bad JSON
+		reqBad := httptest.NewRequest(http.MethodPost, "/api/video/state", strings.NewReader(`not-json`))
+		reqBad.Header.Set("Content-Type", "application/json")
+		recBad := httptest.NewRecorder()
+		handler.ServeHTTP(recBad, reqBad)
+		if recBad.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d", recBad.Code)
 		}
 	})
 }

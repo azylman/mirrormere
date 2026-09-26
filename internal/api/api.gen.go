@@ -19,6 +19,78 @@ const (
 	Prev ScreenAdvanceRequestDirection = "prev"
 )
 
+// Defines values for VideoActionRequestAction.
+const (
+	Pause          VideoActionRequestAction = "pause"
+	Play           VideoActionRequestAction = "play"
+	TogglePlayback VideoActionRequestAction = "toggle_playback"
+)
+
+// Defines values for VideoPlayerStateRequestPlayerState.
+const (
+	VideoPlayerStateRequestPlayerStateBuffering VideoPlayerStateRequestPlayerState = "buffering"
+	VideoPlayerStateRequestPlayerStatePaused    VideoPlayerStateRequestPlayerState = "paused"
+	VideoPlayerStateRequestPlayerStatePlaying   VideoPlayerStateRequestPlayerState = "playing"
+)
+
+// Defines values for VideoPlayerStateResponsePlayerState.
+const (
+	VideoPlayerStateResponsePlayerStateBuffering VideoPlayerStateResponsePlayerState = "buffering"
+	VideoPlayerStateResponsePlayerStatePaused    VideoPlayerStateResponsePlayerState = "paused"
+	VideoPlayerStateResponsePlayerStatePlaying   VideoPlayerStateResponsePlayerState = "playing"
+)
+
+// Defines values for VideoStateResponseMode.
+const (
+	Video   VideoStateResponseMode = "video"
+	Widgets VideoStateResponseMode = "widgets"
+)
+
+// Defines values for VideoStreamPlayerState.
+const (
+	VideoStreamPlayerStateBuffering VideoStreamPlayerState = "buffering"
+	VideoStreamPlayerStatePaused    VideoStreamPlayerState = "paused"
+	VideoStreamPlayerStatePlaying   VideoStreamPlayerState = "playing"
+)
+
+// Defines values for VideoStreamPriority.
+const (
+	VideoStreamPriorityPersistent VideoStreamPriority = "persistent"
+	VideoStreamPriorityTemporary  VideoStreamPriority = "temporary"
+)
+
+// Defines values for VideoStreamType.
+const (
+	VideoStreamTypeHls    VideoStreamType = "hls"
+	VideoStreamTypeMjpeg  VideoStreamType = "mjpeg"
+	VideoStreamTypeWebrtc VideoStreamType = "webrtc"
+)
+
+// Defines values for VideoTriggerRequestPlayerState.
+const (
+	VideoTriggerRequestPlayerStateBuffering VideoTriggerRequestPlayerState = "buffering"
+	VideoTriggerRequestPlayerStatePaused    VideoTriggerRequestPlayerState = "paused"
+	VideoTriggerRequestPlayerStatePlaying   VideoTriggerRequestPlayerState = "playing"
+)
+
+// Defines values for VideoTriggerRequestPriority.
+const (
+	VideoTriggerRequestPriorityPersistent VideoTriggerRequestPriority = "persistent"
+	VideoTriggerRequestPriorityTemporary  VideoTriggerRequestPriority = "temporary"
+)
+
+// Defines values for VideoTriggerRequestType.
+const (
+	VideoTriggerRequestTypeHls    VideoTriggerRequestType = "hls"
+	VideoTriggerRequestTypeMjpeg  VideoTriggerRequestType = "mjpeg"
+	VideoTriggerRequestTypeWebrtc VideoTriggerRequestType = "webrtc"
+)
+
+// ActionResponse defines model for ActionResponse.
+type ActionResponse struct {
+	Status string `json:"status"`
+}
+
 // AudioMuteRequest defines model for AudioMuteRequest.
 type AudioMuteRequest struct {
 	Muted *bool `json:"muted,omitempty"`
@@ -99,6 +171,94 @@ type ScreenSelectRequest struct {
 	ScreenIndex int `json:"screen_index"`
 }
 
+// VideoActionRequest defines model for VideoActionRequest.
+type VideoActionRequest struct {
+	Action VideoActionRequestAction `json:"action"`
+	Id     string                   `json:"id"`
+	Value  *interface{}             `json:"value"`
+}
+
+// VideoActionRequestAction defines model for VideoActionRequest.Action.
+type VideoActionRequestAction string
+
+// VideoDismissRequest defines model for VideoDismissRequest.
+type VideoDismissRequest struct {
+	Id string `json:"id"`
+}
+
+// VideoPlayerStateRequest defines model for VideoPlayerStateRequest.
+type VideoPlayerStateRequest struct {
+	Id          string                             `json:"id"`
+	PlayerState VideoPlayerStateRequestPlayerState `json:"player_state"`
+}
+
+// VideoPlayerStateRequestPlayerState defines model for VideoPlayerStateRequest.PlayerState.
+type VideoPlayerStateRequestPlayerState string
+
+// VideoPlayerStateResponse defines model for VideoPlayerStateResponse.
+type VideoPlayerStateResponse struct {
+	Id          string                              `json:"id"`
+	PlayerState VideoPlayerStateResponsePlayerState `json:"player_state"`
+	Status      string                              `json:"status"`
+}
+
+// VideoPlayerStateResponsePlayerState defines model for VideoPlayerStateResponse.PlayerState.
+type VideoPlayerStateResponsePlayerState string
+
+// VideoStateResponse defines model for VideoStateResponse.
+type VideoStateResponse struct {
+	Mode    VideoStateResponseMode `json:"mode"`
+	Pip     *VideoStream           `json:"pip,omitempty"`
+	Primary *VideoStream           `json:"primary,omitempty"`
+	Status  string                 `json:"status"`
+}
+
+// VideoStateResponseMode defines model for VideoStateResponse.Mode.
+type VideoStateResponseMode string
+
+// VideoStream defines model for VideoStream.
+type VideoStream struct {
+	ControlUrl     *string                 `json:"control_url,omitempty"`
+	Controllable   *bool                   `json:"controllable,omitempty"`
+	Id             string                  `json:"id"`
+	Muted          *bool                   `json:"muted,omitempty"`
+	PlayerState    *VideoStreamPlayerState `json:"player_state,omitempty"`
+	Priority       *VideoStreamPriority    `json:"priority,omitempty"`
+	StreamUrl      string                  `json:"stream_url"`
+	TimeoutSeconds *int                    `json:"timeout_seconds,omitempty"`
+	Type           VideoStreamType         `json:"type"`
+}
+
+// VideoStreamPlayerState defines model for VideoStream.PlayerState.
+type VideoStreamPlayerState string
+
+// VideoStreamPriority defines model for VideoStream.Priority.
+type VideoStreamPriority string
+
+// VideoStreamType defines model for VideoStream.Type.
+type VideoStreamType string
+
+// VideoTriggerRequest defines model for VideoTriggerRequest.
+type VideoTriggerRequest struct {
+	ControlUrl     *string                         `json:"control_url,omitempty"`
+	Controllable   *bool                           `json:"controllable,omitempty"`
+	Id             string                          `json:"id"`
+	PlayerState    *VideoTriggerRequestPlayerState `json:"player_state,omitempty"`
+	Priority       *VideoTriggerRequestPriority    `json:"priority,omitempty"`
+	StreamUrl      string                          `json:"stream_url"`
+	TimeoutSeconds *int                            `json:"timeout_seconds,omitempty"`
+	Type           *VideoTriggerRequestType        `json:"type,omitempty"`
+}
+
+// VideoTriggerRequestPlayerState defines model for VideoTriggerRequest.PlayerState.
+type VideoTriggerRequestPlayerState string
+
+// VideoTriggerRequestPriority defines model for VideoTriggerRequest.Priority.
+type VideoTriggerRequestPriority string
+
+// VideoTriggerRequestType defines model for VideoTriggerRequest.Type.
+type VideoTriggerRequestType string
+
 // WidgetPushResponse defines model for WidgetPushResponse.
 type WidgetPushResponse struct {
 	Status    string    `json:"status"`
@@ -130,6 +290,18 @@ type PostScreenPauseJSONRequestBody = ScreenPauseRequest
 // PostScreenSelectJSONRequestBody defines body for PostScreenSelect for application/json ContentType.
 type PostScreenSelectJSONRequestBody = ScreenSelectRequest
 
+// PostVideoActionJSONRequestBody defines body for PostVideoAction for application/json ContentType.
+type PostVideoActionJSONRequestBody = VideoActionRequest
+
+// PostVideoDismissJSONRequestBody defines body for PostVideoDismiss for application/json ContentType.
+type PostVideoDismissJSONRequestBody = VideoDismissRequest
+
+// PostVideoStateJSONRequestBody defines body for PostVideoState for application/json ContentType.
+type PostVideoStateJSONRequestBody = VideoPlayerStateRequest
+
+// PostVideoTriggerJSONRequestBody defines body for PostVideoTrigger for application/json ContentType.
+type PostVideoTriggerJSONRequestBody = VideoTriggerRequest
+
 // PostWidgetPushJSONRequestBody defines body for PostWidgetPush for application/json ContentType.
 type PostWidgetPushJSONRequestBody PostWidgetPushJSONBody
 
@@ -156,6 +328,21 @@ type ServerInterface interface {
 	// Select screen by index
 	// (POST /api/screen/select)
 	PostScreenSelect(w http.ResponseWriter, r *http.Request)
+	// Dispatch video transport action
+	// (POST /api/video/action)
+	PostVideoAction(w http.ResponseWriter, r *http.Request)
+	// Dismiss video stream
+	// (POST /api/video/dismiss)
+	PostVideoDismiss(w http.ResponseWriter, r *http.Request)
+	// Get video presentation state
+	// (GET /api/video/state)
+	GetVideoState(w http.ResponseWriter, r *http.Request)
+	// Update video player transport state
+	// (POST /api/video/state)
+	PostVideoState(w http.ResponseWriter, r *http.Request)
+	// Trigger video stream
+	// (POST /api/video/trigger)
+	PostVideoTrigger(w http.ResponseWriter, r *http.Request)
 	// Push realtime widget payload
 	// (POST /api/widgets/{widget_id}/push)
 	PostWidgetPush(w http.ResponseWriter, r *http.Request, widgetId string)
@@ -293,6 +480,76 @@ func (siw *ServerInterfaceWrapper) PostScreenSelect(w http.ResponseWriter, r *ht
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.PostScreenSelect(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostVideoAction operation middleware
+func (siw *ServerInterfaceWrapper) PostVideoAction(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostVideoAction(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostVideoDismiss operation middleware
+func (siw *ServerInterfaceWrapper) PostVideoDismiss(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostVideoDismiss(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetVideoState operation middleware
+func (siw *ServerInterfaceWrapper) GetVideoState(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetVideoState(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostVideoState operation middleware
+func (siw *ServerInterfaceWrapper) PostVideoState(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostVideoState(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostVideoTrigger operation middleware
+func (siw *ServerInterfaceWrapper) PostVideoTrigger(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostVideoTrigger(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -541,6 +798,11 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc("POST "+options.BaseURL+"/api/screen/advance", wrapper.PostScreenAdvance)
 	m.HandleFunc("POST "+options.BaseURL+"/api/screen/pause", wrapper.PostScreenPause)
 	m.HandleFunc("POST "+options.BaseURL+"/api/screen/select", wrapper.PostScreenSelect)
+	m.HandleFunc("POST "+options.BaseURL+"/api/video/action", wrapper.PostVideoAction)
+	m.HandleFunc("POST "+options.BaseURL+"/api/video/dismiss", wrapper.PostVideoDismiss)
+	m.HandleFunc("GET "+options.BaseURL+"/api/video/state", wrapper.GetVideoState)
+	m.HandleFunc("POST "+options.BaseURL+"/api/video/state", wrapper.PostVideoState)
+	m.HandleFunc("POST "+options.BaseURL+"/api/video/trigger", wrapper.PostVideoTrigger)
 	m.HandleFunc("POST "+options.BaseURL+"/api/widgets/{widget_id}/push", wrapper.PostWidgetPush)
 	m.HandleFunc("GET "+options.BaseURL+"/api/widgets/{widget_id}/render", wrapper.GetWidgetRender)
 	m.HandleFunc("GET "+options.BaseURL+"/health", wrapper.GetHealth)

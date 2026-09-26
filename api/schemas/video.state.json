@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "video.state",
+  "type": "object",
+  "required": [
+    "mode",
+    "primary",
+    "pip"
+  ],
+  "properties": {
+    "mode": {
+      "type": "string",
+      "enum": [
+        "widgets",
+        "video"
+      ]
+    },
+    "primary": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "required": [
+        "id",
+        "stream_url",
+        "type"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "stream_url": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "webrtc",
+            "hls",
+            "mjpeg"
+          ]
+        },
+        "priority": {
+          "type": "string",
+          "enum": [
+            "persistent",
+            "temporary"
+          ]
+        },
+        "timeout_seconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "controllable": {
+          "type": "boolean"
+        },
+        "control_url": {
+          "type": "string"
+        },
+        "player_state": {
+          "type": "string",
+          "enum": [
+            "playing",
+            "paused",
+            "buffering"
+          ]
+        },
+        "muted": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "pip": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "required": [
+        "id",
+        "stream_url",
+        "type"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "stream_url": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "webrtc",
+            "hls",
+            "mjpeg"
+          ]
+        },
+        "priority": {
+          "type": "string",
+          "enum": [
+            "persistent",
+            "temporary"
+          ]
+        },
+        "timeout_seconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "controllable": {
+          "type": "boolean"
+        },
+        "control_url": {
+          "type": "string"
+        },
+        "player_state": {
+          "type": "string",
+          "enum": [
+            "playing",
+            "paused",
+            "buffering"
+          ]
+        },
+        "muted": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

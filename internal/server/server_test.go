@@ -785,3 +785,104 @@ func TestServer_ListsHandler(t *testing.T) {
 	}
 }
 
+type mockServerVideoHandler struct {
+	triggerCalls  int
+	dismissCalls  int
+	actionCalls   int
+	stateCalls    int
+	getStateCalls int
+}
+
+func (m *mockServerVideoHandler) PostVideoTrigger(w http.ResponseWriter, r *http.Request) {
+	m.triggerCalls++
+	w.WriteHeader(http.StatusOK)
+}
+
+func (m *mockServerVideoHandler) PostVideoDismiss(w http.ResponseWriter, r *http.Request) {
+	m.dismissCalls++
+	w.WriteHeader(http.StatusOK)
+}
+
+func (m *mockServerVideoHandler) PostVideoAction(w http.ResponseWriter, r *http.Request) {
+	m.actionCalls++
+	w.WriteHeader(http.StatusOK)
+}
+
+func (m *mockServerVideoHandler) PostVideoState(w http.ResponseWriter, r *http.Request) {
+	m.stateCalls++
+	w.WriteHeader(http.StatusOK)
+}
+
+func (m *mockServerVideoHandler) GetVideoState(w http.ResponseWriter, r *http.Request) {
+	m.getStateCalls++
+	w.WriteHeader(http.StatusOK)
+}
+
+func TestServer_VideoHandler(t *testing.T) {
+	t.Parallel()
+
+	// Case 1: Unset VideoHandler returns 404
+	srv := server.New(server.Config{})
+	if srv.VideoHandler() != nil {
+		t.Fatal("expected nil VideoHandler initially")
+	}
+
+	endpoints := []struct {
+		method string
+		path   string
+	}{
+		{http.MethodPost, "/api/video/trigger"},
+		{http.MethodPost, "/api/video/dismiss"},
+		{http.MethodPost, "/api/video/action"},
+		{http.MethodGet, "/api/video/state"},
+		{http.MethodPost, "/api/video/state"},
+	}
+
+	for _, ep := range endpoints {
+		req := httptest.NewRequest(ep.method, ep.path, nil)
+		rec := httptest.NewRecorder()
+		srv.Routes().ServeHTTP(rec, req)
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("expected 404 for %s %s when VideoHandler unset, got %d", ep.method, ep.path, rec.Code)
+		}
+	}
+
+	// Case 2: Config.VideoHandler set at creation
+	mockH := &mockServerVideoHandler{}
+	srvWithHandler := server.New(server.Config{VideoHandler: mockH})
+	if srvWithHandler.VideoHandler() == nil {
+		t.Fatal("expected non-nil VideoHandler")
+	}
+
+	for _, ep := range endpoints {
+		req := httptest.NewRequest(ep.method, ep.path, nil)
+		rec := httptest.NewRecorder()
+		srvWithHandler.Routes().ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200 for %s %s, got %d", ep.method, ep.path, rec.Code)
+		}
+	}
+
+	if mockH.triggerCalls != 1 || mockH.dismissCalls != 1 || mockH.actionCalls != 1 || mockH.getStateCalls != 1 || mockH.stateCalls != 1 {
+		t.Fatalf("unexpected call counts on mockH: %+v", mockH)
+	}
+
+	// Case 3: RegisterVideoHandler dynamically updates handler
+	mockH2 := &mockServerVideoHandler{}
+	srv.RegisterVideoHandler(mockH2)
+	if srv.VideoHandler() == nil {
+		t.Fatal("expected non-nil VideoHandler after registration")
+	}
+
+	reqTrigger := httptest.NewRequest(http.MethodPost, "/api/video/trigger", nil)
+	recTrigger := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(recTrigger, reqTrigger)
+	if recTrigger.Code != http.StatusOK {
+		t.Fatalf("expected 200 after dynamic registration, got %d", recTrigger.Code)
+	}
+	if mockH2.triggerCalls != 1 {
+		t.Fatalf("expected mockH2 to receive trigger call")
+	}
+}
+
+
