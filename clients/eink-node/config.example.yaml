@@ -1,0 +1,31 @@
+# Mirrormere E-Ink Node Client Reference Configuration
+# Location: /etc/mirrormere-eink/config.yaml
+# Reference: SPEC-009 §Configuration
+
+server:
+  events_url: "http://localhost:8080/api/events"
+  image_url: "http://localhost:8081/eink.png"
+
+panel:
+  driver: epd7in5_V2
+  pins:            # Adafruit E-Ink Bonnet
+    rst: 27
+    dc: 22
+    busy: 17
+    cs: 8
+    pwr: null
+
+refresh:
+  coalesce_seconds: 5
+  min_refresh_seconds: 60
+  clock_refresh_seconds: 300
+  max_idle_seconds: 900
+  full_refresh_minutes: 60
+  max_consecutive_partials: 30
+  offline_grace_seconds: 120
+  clear_on_shutdown: false
+
+buttons:
+  enabled: false
+  refresh_pin: 5
+  next_screen_pin: 6
