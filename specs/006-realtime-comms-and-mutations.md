@@ -109,7 +109,7 @@ data: {"timestamp":"2026-09-24T22:15:00Z","timezone":"America/Los_Angeles","weat
 - **Fields**:
   - `timestamp` (string, ISO 8601 / RFC 3339, required): Current UTC timestamp.
   - `timezone` (string, required): IANA timezone string configured in `config.yaml` (e.g. `"America/Los_Angeles"`, defaulting to `"UTC"`). Connected display clients bind digital clocks and localized date formatters to this value, preventing kiosk containers and headless renderers from drifting to browser or host UTC defaults (SPEC-001 §4, SPEC-010).
-  - `weather` (object, required): Ambient weather conditions for the top banner.
+  - `weather` (object, optional): Ambient weather conditions for the top banner. Omitted when `display.header.weather` is unset in configuration or when no fetch has succeeded yet. Clients render the top-banner weather pill when present, and hide or preserve prior state when omitted.
 - **Triggers**:
   1. **Autonomous Weather Ingestion**: Emitted whenever the header weather poller refreshes ambient temperature, units, weather code, and icon.
   2. **Household Timezone Reload**: Emitted immediately whenever a live configuration reload alters `timezone` in `config.yaml`, enabling displays to rebind digital clocks and dates dynamically without restarting the client.
@@ -148,7 +148,7 @@ Emitted whenever the video priority stack mutates or player transport changes (s
 ```http
 event: video.state
 id: evt_1727216290_05
-data: {"mode":"video","primary":{"id":"chromecast","stream_url":"http://127.0.0.1:1984/cast","type":"webrtc","player_state":"playing","controllable":true},"pip":{"id":"doorbell","stream_url":"http://homeassistant:1984/doorbell","type":"webrtc","muted":true,"timeout_seconds":45}}
+data: {"mode":"video","primary":{"id":"chromecast","stream_url":"http://127.0.0.1:1984/api/webrtc?src=cast","type":"webrtc","player_state":"playing","controllable":true},"pip":{"id":"doorbell","stream_url":"http://homeassistant:1984/doorbell","type":"webrtc","muted":true,"timeout_seconds":45}}
 ```
 
 #### F. `audio.state`
@@ -216,7 +216,7 @@ When a client establishes an SSE connection to `GET /api/events`:
    ```
 
 3. **Fixed Header Ambient Weather & Household Timezone (`header.update`)**:
-   Flushes the current ambient weather conditions and configured household timezone for the persistent top banner. Connected displays use the hydrated timezone to initialize digital clocks and date formatters to the correct household timezone upon first connection:
+   Flushes the current ambient weather conditions (when configured and fetched) and configured household timezone for the persistent top banner. Connected displays use the hydrated timezone to initialize digital clocks and date formatters to the correct household timezone upon first connection; `weather` is omitted when unconfigured or not yet hydrated:
    ```http
    event: header.update
    id: evt_init_03
@@ -418,7 +418,7 @@ When Mirrormere ingests data for custom widgets declared with `provider: http`, 
     ```json
     {
       "id": "chromecast",
-      "stream_url": "http://127.0.0.1:1984/cast",
+      "stream_url": "http://127.0.0.1:1984/api/webrtc?src=cast",
       "type": "webrtc",
       "priority": "persistent",
       "timeout_seconds": 0,

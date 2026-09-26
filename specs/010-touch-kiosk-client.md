@@ -127,13 +127,13 @@ The host kiosk provisioning setup is maintained in `deploy/kiosk/` with an autom
 ### System Prerequisites
 - Packages: `cage`, `chromium`, `swayidle`, `wlr-randr`, `pipewire`, `wireplumber`, `pipewire-alsa`, `libinput-bin`.
 - User permissions: `kiosk` user added to groups `video`, `input`, `audio`, `render`.
-- TTY auto-login: Configured via `/etc/systemd/system/getty@tty1.service.d/override.conf` to automatically launch the `kiosk` user session on boot.
+- Logind session lingering: Enabled via `loginctl enable-linger kiosk` to ensure `/run/user/<uid>` and user PipeWire services stay alive indefinitely.
 
 ### Service Units
-- `mirrormere-kiosk.service`: Manages the `cage` + `chromium` process tree with `Restart=always`.
+- `mirrormere-kiosk.service`: Manages the `cage` + `chromium` process tree with `Restart=always`, binding directly to `/dev/tty1` with `Conflicts=getty@tty1.service` and `PAMName=login` instead of relying on a getty auto-login override.
 - `mirrormere-kiosk-sleep.{service,timer}`: Night schedule blanking (23:00).
 - `mirrormere-kiosk-wake.{service,timer}`: Morning schedule waking (06:00).
-- `mirrormere-kiosk-restart.{service,timer}`: Nightly browser process restart (03:00).
+- `mirrormere-kiosk-restart.{service,timer}`: Nightly browser process restart (03:00) with coordinated DPMS blackout.
 
 ---
 

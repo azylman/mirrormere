@@ -27,7 +27,7 @@ flowchart TD
     subgraph KioskHost [Kiosk Host - Intel N100]
         CC[Google Chromecast] -->|HDMI Video & Audio| UVC[HDMI Capture Dongle\n/dev/video0 + hw:CARD=<capture-card>]
         
-        Streamer[Stock go2rtc WebRTC Server\nhttp://127.0.0.1:1984/cast]
+        Streamer[Stock go2rtc WebRTC Server\nhttp://127.0.0.1:1984/api/webrtc?src=cast]
         CastMon[sidecars/cast-watcher\nTCP :8009 - Receiver & Media]
         
         UVC --> Streamer
@@ -84,7 +84,7 @@ Accept: application/json
 ```json
 {
   "id": "chromecast",
-  "stream_url": "http://127.0.0.1:1984/cast",
+  "stream_url": "http://127.0.0.1:1984/api/webrtc?src=cast",
   "type": "webrtc",
   "priority": "persistent",
   "timeout_seconds": 0,
@@ -218,7 +218,7 @@ Whenever the priority stack mutates or player transport state changes, Mirrormer
 ```http
 event: video.state
 id: evt_1727221200_01
-data: {"mode":"video","primary":{"id":"chromecast","stream_url":"http://127.0.0.1:1984/cast","type":"webrtc","player_state":"playing","controllable":true},"pip":{"id":"doorbell","stream_url":"http://homeassistant:1984/doorbell","type":"webrtc","timeout_seconds":45,"muted":true}}
+data: {"mode":"video","primary":{"id":"chromecast","stream_url":"http://127.0.0.1:1984/api/webrtc?src=cast","type":"webrtc","player_state":"playing","controllable":true},"pip":{"id":"doorbell","stream_url":"http://homeassistant:1984/doorbell","type":"webrtc","timeout_seconds":45,"muted":true}}
 ```
 
 When no videos remain active:
@@ -244,13 +244,13 @@ streams:
     - ffmpeg:device?video=/dev/video0&audio=hw:CARD=<capture-card>#video=h264#hardware#audio=opus
 ```
 - Ingests HDMI video directly over `/dev/video0` (UVC) and digital audio over ALSA (UAC). The ALSA audio card placeholder (`hw:CARD=<capture-card>`) must match the exact device identifier reported by `arecord -l` on the host (e.g. `hw:CARD=MS2130` for the primary MS2130 dongle, or `hw:CARD=MS2109` for the MS2109 fallback). With hardware transcoding (`#video=h264#hardware` via Intel VAAPI/QSV on the N100), go2rtc transcodes incoming MJPEG/YUV to H.264 for browser WebRTC compatibility.
-- Serves low-latency (~15–30ms), hardware-accelerated WebRTC locally at `http://127.0.0.1:1984/cast`.
+- Serves low-latency (~15–30ms), hardware-accelerated WebRTC locally at `http://127.0.0.1:1984/api/webrtc?src=cast`.
 
 ### 2. CastV2 Socket Monitor & Transport Bridge (`sidecars/cast-watcher`)
 Chromecast continuously outputs 1080p HDMI video even when idle, rendering the Google Ambient Backdrop slideshow.
 The custom `sidecars/cast-watcher` container connects directly to the Chromecast's LAN IP over TCP port 8009 (**Google Cast v2 protocol**):
 - Subscribes to receiver status (`urn:x-cast:com.google.cast.receiver`) and media session status (`urn:x-cast:com.google.cast.media`).
-- **Active Casting Detected**: When `applications[0].appId != "E8C28D3C"` (not the Backdrop app), casting is active. The sidecar immediately dispatches `POST /api/video/trigger` to `${CORE_URL:-http://mirrormere-core:8080}/api/video/trigger` with `id: "chromecast"`, `priority: "persistent"`, `controllable: true`, and `control_url: "${CAST_WATCHER_CONTROL_URL:-http://cast-watcher:8090/action}"`.
+- **Active Casting Detected**: When `applications[0].appId != "E8C28D3C"` (not the Backdrop app), casting is active. The sidecar immediately dispatches `POST /api/video/trigger` to `${CORE_URL:-http://mirrormere-core:8080}/api/video/trigger` with `id: "chromecast"`, `priority: "persistent"`, `controllable: true`, and `control_url: "${CONTROL_URL:-http://cast-watcher:8090/action}"` (with backward-compatible fallback to `${CAST_WATCHER_CONTROL_URL}`).
 - **Casting Disconnected**: When status returns to Backdrop or empty, the sidecar dispatches `POST /api/video/dismiss` to `${CORE_URL:-http://mirrormere-core:8080}/api/video/dismiss`.
 - **Bidirectional Transport Control**:
   - **Core-to-Sidecar Transport Forwarding**: The `cast-watcher` container runs a lightweight HTTP server on internal port 8090 (`POST /action`). When the kiosk user taps the Play/Pause HUD button, Mirrormere Core forwards the action payload to `{control_url}` (`http://cast-watcher:8090/action` on the Docker compose network). The sidecar translates the action into a Google Cast v2 `PLAY` or `PAUSE` media command sent over TCP port 8009 to the Chromecast. Upstream media (Spotify, YouTube, Netflix, Plex) resumes or pauses cleanly at the source.
@@ -272,7 +272,7 @@ Because audio is packaged directly into the WebRTC stream alongside video, Chrom
 
 ### 2. Touch HUD & Transport Controls
 - **Remote / Phone Volume**: When casting from a phone, the user's phone volume rocker attenuates audio digitally at the Chromecast hardware source via CastV2.
-- **On-Screen Touch HUD**: Tapping anywhere on the video screen displays a floating cyber HUD overlay (auto-fading after 3s of inactivity) containing:
+- **On-Screen Touch HUD**: Tapping anywhere on the video screen displays a floating cyber HUD overlay (auto-fading after 5s of inactivity) containing:
   - **Play / Pause Transport Toggle**: Large (minimum 48×48px) touch-friendly button in the control bar. Tapping toggles media playback via CastV2 upstream (`POST /api/video/action`).
   - **Mute / Unmute Toggle**: Toggles master audio mute state via `POST /api/audio/mute` (rendering state dynamically from `audio.state` SSE events).
   - **Volume Slider**: Linear touch slider (0–100%) controlling master volume via `POST /api/audio/volume` (rendering state dynamically from `audio.state` SSE events; zero client-side `localStorage` drift).
