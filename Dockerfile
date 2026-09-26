@@ -27,6 +27,9 @@ WORKDIR /app
 
 # Copy compiled executable from builder stage
 COPY --from=builder /app/server /app/server
+COPY web /app/web
+COPY widgets /app/widgets
+
 
 # Switch to unprivileged non-root user
 USER 10001:10001

@@ -1,16 +1,18 @@
 /* ==========================================================================
-   Mirrormere Embedded Default Stylesheet: Cyber HUD (Touch Kiosk / Desktop)
+   Mirrormere Default Stylesheet: Cyber HUD (Touch Kiosk / Desktop)
    Authoritative Reference: specs/001-architecture-overview.md & specs/003 §3
    Mount target: fallback when /config/custom.css is absent
    ========================================================================== */
 
 :root {
+  /* Surface & Background Palette (Moody Cyber Slate & Dark Violet) */
   --mm-bg-canvas: #090514;
   --mm-bg-surface: #120b22;
   --mm-bg-card: #1a1030;
   --mm-bg-card-hover: #241642;
   --mm-bg-glass: rgba(26, 16, 48, 0.75);
 
+  /* Neon Accents & Cyberpunk Glows */
   --mm-accent-purple: #a855f7;
   --mm-accent-purple-glow: rgba(168, 85, 247, 0.35);
   --mm-accent-cyan: #06b6d4;
@@ -18,29 +20,37 @@
   --mm-accent-pink: #f43f5e;
   --mm-accent-pink-glow: rgba(244, 63, 94, 0.35);
 
+  /* Typography Colors */
   --mm-text-primary: #f5f3ff;
   --mm-text-secondary: #c084fc;
   --mm-text-muted: #8b5cf6;
   --mm-text-dim: #6d28d9;
 
+  /* Status Colors */
   --mm-status-ok: #10b981;
   --mm-status-degraded: #f59e0b;
   --mm-status-error: #ef4444;
 
+  /* Borders & Dividers */
   --mm-border-hud: 1px solid rgba(168, 85, 247, 0.25);
   --mm-border-accent: 1px solid rgba(168, 85, 247, 0.6);
   --mm-border-radius-sm: 6px;
   --mm-border-radius-md: 12px;
   --mm-border-radius-lg: 18px;
 
+  /* Typography Scales */
   --mm-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --mm-font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
 
+  /* Touch Target Standards (Touch Kiosk Profile A: minimum 48px target size) */
   --mm-touch-target-min: 48px;
+
+  /* Layout Constants */
   --mm-header-height: 80px;
   --mm-grid-gap: 16px;
 }
 
+/* Base Body & Reset */
 html, body {
   margin: 0;
   padding: 0;
@@ -52,9 +62,12 @@ html, body {
   font-family: var(--mm-font-family);
   user-select: none;
   -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
   touch-action: pan-x pan-y;
 }
 
+/* Master Kiosk Canvas */
 #mirrormere-app {
   display: flex;
   flex-direction: column;
@@ -65,6 +78,7 @@ html, body {
   background: radial-gradient(circle at 50% 10%, #1e0e38 0%, var(--mm-bg-canvas) 80%);
 }
 
+/* Header Area (Fixed Top Zone) */
 .header-zone {
   display: flex;
   align-items: center;
@@ -80,6 +94,12 @@ html, body {
   box-shadow: 0 4px 20px var(--mm-accent-purple-glow);
 }
 
+.header-time-block {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
 .header-clock {
   font-family: var(--mm-font-mono);
   font-size: 2.5rem;
@@ -87,10 +107,41 @@ html, body {
   letter-spacing: -0.05em;
   color: var(--mm-text-primary);
   text-shadow: 0 0 16px var(--mm-accent-purple-glow);
+  line-height: 1.1;
 }
 
 .header-date {
   font-size: 1.1rem;
+  font-weight: 500;
+  color: var(--mm-text-secondary);
+}
+
+.header-weather {
+  display: flex;
+  align-items: center;
+}
+
+.pill-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 16px;
+  background: var(--mm-bg-surface);
+  border: var(--mm-border-hud);
+  border-radius: 9999px;
+  font-size: 1.15rem;
+  font-weight: 600;
+  color: var(--mm-text-primary);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.4);
+}
+
+.weather-temp {
+  font-family: var(--mm-font-mono);
+  color: var(--mm-text-primary);
+}
+
+.weather-condition {
+  font-size: 0.95rem;
   font-weight: 500;
   color: var(--mm-text-secondary);
 }
@@ -107,8 +158,20 @@ html, body {
   border-radius: 50%;
   background-color: var(--mm-status-ok);
   box-shadow: 0 0 8px var(--mm-status-ok);
+  transition: background-color 0.2s ease, box-shadow 0.2s ease;
 }
 
+.status-dot.status-degraded {
+  background-color: var(--mm-status-degraded);
+  box-shadow: 0 0 8px var(--mm-status-degraded);
+}
+
+.status-dot.status-error {
+  background-color: var(--mm-status-error);
+  box-shadow: 0 0 8px var(--mm-status-error);
+}
+
+/* 6x2 Grid Dashboard Canvas */
 .grid-canvas {
   display: grid;
   flex: 1;
@@ -117,8 +180,16 @@ html, body {
   gap: var(--mm-grid-gap);
   width: 100%;
   height: calc(100% - var(--mm-header-height) - var(--mm-grid-gap));
+  position: relative;
+  transition: opacity 0.3s cubic-bezier(0.25, 1, 0.5, 1);
 }
 
+.grid-canvas.transitioning {
+  opacity: 0.6;
+}
+
+
+/* Universal Widget Container Card */
 .widget-card {
   display: flex;
   flex-direction: column;
@@ -136,6 +207,7 @@ html, body {
   box-shadow: 0 0 16px var(--mm-accent-purple-glow);
 }
 
+/* Interactive Touch Targets */
 button, .touch-target {
   min-width: var(--mm-touch-target-min);
   min-height: var(--mm-touch-target-min);
@@ -144,6 +216,7 @@ button, .touch-target {
   touch-action: manipulation;
 }
 
+/* Spacer Widget */
 .widget-spacer {
   background: transparent;
   border: none;

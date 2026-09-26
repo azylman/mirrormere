@@ -43,6 +43,12 @@ type RenderHandler interface {
 	ServeStyle(w http.ResponseWriter, r *http.Request)
 }
 
+// DisplayHandler handles display UI and static web runtime asset endpoints.
+type DisplayHandler interface {
+	GetDisplay(w http.ResponseWriter, r *http.Request)
+	GetStatic(w http.ResponseWriter, r *http.Request, path string)
+}
+
 // Config encapsulates configuration for the HTTP server.
 type Config struct {
 	Host              string
@@ -54,6 +60,7 @@ type Config struct {
 	EventsHandler     http.Handler
 	ScreenHandler     ScreenHandler
 	RenderHandler     RenderHandler
+	DisplayHandler    DisplayHandler
 }
 
 // ApplyDefaults sets fallback values for any unspecified configuration fields.
@@ -96,16 +103,17 @@ type RootResponse struct {
 
 // Server wraps http.Server with lifecycle signaling and healthcheck routing.
 type Server struct {
-	cfg           Config
-	mux           *http.ServeMux
-	httpServer    *http.Server
-	ready         chan struct{}
-	readyOnce     sync.Once
-	mu            sync.RWMutex
-	addr          string
-	eventsHandler http.Handler
-	screenHandler ScreenHandler
-	renderHandler RenderHandler
+	cfg            Config
+	mux            *http.ServeMux
+	httpServer     *http.Server
+	ready          chan struct{}
+	readyOnce      sync.Once
+	mu             sync.RWMutex
+	addr           string
+	eventsHandler  http.Handler
+	screenHandler  ScreenHandler
+	renderHandler  RenderHandler
+	displayHandler DisplayHandler
 }
 
 // New constructs a configured Server instance.
@@ -113,12 +121,13 @@ func New(cfg Config) *Server {
 	cfg.ApplyDefaults()
 
 	s := &Server{
-		cfg:           cfg,
-		mux:           http.NewServeMux(),
-		ready:         make(chan struct{}),
-		eventsHandler: cfg.EventsHandler,
-		screenHandler: cfg.ScreenHandler,
-		renderHandler: cfg.RenderHandler,
+		cfg:            cfg,
+		mux:            http.NewServeMux(),
+		ready:          make(chan struct{}),
+		eventsHandler:  cfg.EventsHandler,
+		screenHandler:  cfg.ScreenHandler,
+		renderHandler:  cfg.RenderHandler,
+		displayHandler: cfg.DisplayHandler,
 	}
 
 	s.setupRoutes()
@@ -193,6 +202,20 @@ func (s *Server) RenderHandler() RenderHandler {
 	return s.renderHandler
 }
 
+// RegisterDisplayHandler dynamically registers or replaces the display and static asset handler.
+func (s *Server) RegisterDisplayHandler(h DisplayHandler) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.displayHandler = h
+}
+
+// DisplayHandler returns the currently registered display handler.
+func (s *Server) DisplayHandler() DisplayHandler {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.displayHandler
+}
+
 func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/healthz", s.handleHealth)
 	s.mux.HandleFunc("/health", s.handleHealth)
@@ -203,6 +226,8 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/api/widgets/{widget_id}/render", s.handleWidgetRender)
 	s.mux.HandleFunc("/widget-types/{type}/assets/{path...}", s.handleWidgetAsset)
 	s.mux.HandleFunc("/style.css", s.handleStyle)
+	s.mux.HandleFunc("/display", s.handleDisplay)
+	s.mux.HandleFunc("/static/{path...}", s.handleStatic)
 	s.mux.HandleFunc("/", s.handleRoot)
 }
 
@@ -285,6 +310,30 @@ func (s *Server) handleStyle(w http.ResponseWriter, r *http.Request) {
 	}
 	h.ServeStyle(w, r)
 }
+
+func (s *Server) handleDisplay(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	h := s.displayHandler
+	s.mu.RUnlock()
+	if h == nil {
+		http.NotFound(w, r)
+		return
+	}
+	h.GetDisplay(w, r)
+}
+
+func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	h := s.displayHandler
+	s.mu.RUnlock()
+	if h == nil {
+		http.NotFound(w, r)
+		return
+	}
+	path := r.PathValue("path")
+	h.GetStatic(w, r, path)
+}
+
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	// CORS Headers for client probes & autoheal

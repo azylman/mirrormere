@@ -578,3 +578,90 @@ func TestServer_RenderHandler(t *testing.T) {
 		t.Errorf("expected mockH2 to receive style call, got %d", mockH2.styleCalls)
 	}
 }
+
+type mockDisplayHandler struct {
+	displayCalls int
+	staticCalls  int
+	lastPath     string
+}
+
+func (m *mockDisplayHandler) GetDisplay(w http.ResponseWriter, r *http.Request) {
+	m.displayCalls++
+	w.WriteHeader(http.StatusOK)
+}
+
+func (m *mockDisplayHandler) GetStatic(w http.ResponseWriter, r *http.Request, path string) {
+	m.staticCalls++
+	m.lastPath = path
+	w.WriteHeader(http.StatusOK)
+}
+
+func TestServer_DisplayHandler(t *testing.T) {
+	t.Parallel()
+
+	// Case 1: Unset DisplayHandler returns 404
+	srv := server.New(server.Config{})
+	if srv.DisplayHandler() != nil {
+		t.Fatal("expected nil DisplayHandler initially")
+	}
+
+	endpoints := []string{
+		"/display",
+		"/static/js/sse.js",
+		"/static/css/hud.css",
+	}
+	for _, ep := range endpoints {
+		req := httptest.NewRequest(http.MethodGet, ep, nil)
+		rec := httptest.NewRecorder()
+		srv.Routes().ServeHTTP(rec, req)
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("expected 404 for %s when DisplayHandler unset, got %d", ep, rec.Code)
+		}
+	}
+
+	// Case 2: Config.DisplayHandler set at creation
+	mockH := &mockDisplayHandler{}
+	srvWithHandler := server.New(server.Config{DisplayHandler: mockH})
+	if srvWithHandler.DisplayHandler() == nil {
+		t.Fatal("expected non-nil DisplayHandler")
+	}
+
+	// Test GET /display
+	reqDisplay := httptest.NewRequest(http.MethodGet, "/display", nil)
+	recDisplay := httptest.NewRecorder()
+	srvWithHandler.Routes().ServeHTTP(recDisplay, reqDisplay)
+	if recDisplay.Code != http.StatusOK {
+		t.Fatalf("expected 200 for /display, got %d", recDisplay.Code)
+	}
+	if mockH.displayCalls != 1 {
+		t.Errorf("expected 1 display call, got %d", mockH.displayCalls)
+	}
+
+	// Test GET /static/{path...}
+	reqStatic := httptest.NewRequest(http.MethodGet, "/static/js/sse.js", nil)
+	recStatic := httptest.NewRecorder()
+	srvWithHandler.Routes().ServeHTTP(recStatic, reqStatic)
+	if recStatic.Code != http.StatusOK {
+		t.Fatalf("expected 200 for static asset, got %d", recStatic.Code)
+	}
+	if mockH.staticCalls != 1 || mockH.lastPath != "js/sse.js" {
+		t.Errorf("expected 1 static call with path 'js/sse.js', got calls=%d path=%q", mockH.staticCalls, mockH.lastPath)
+	}
+
+	// Case 3: RegisterDisplayHandler dynamically updates handler
+	mockH2 := &mockDisplayHandler{}
+	srv.RegisterDisplayHandler(mockH2)
+	if srv.DisplayHandler() == nil {
+		t.Fatal("expected non-nil DisplayHandler after registration")
+	}
+
+	recDynamic := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(recDynamic, reqDisplay)
+	if recDynamic.Code != http.StatusOK {
+		t.Fatalf("expected 200 after dynamic registration, got %d", recDynamic.Code)
+	}
+	if mockH2.displayCalls != 1 {
+		t.Errorf("expected mockH2 to receive display call, got %d", mockH2.displayCalls)
+	}
+}
+

@@ -482,3 +482,34 @@ func TestLoader_HiddenDirectories(t *testing.T) {
 	}
 }
 
+func TestBuiltinSpacerPackage(t *testing.T) {
+	t.Parallel()
+
+	repoWidgetsDir := filepath.Join("..", "..", "widgets")
+	loader := widget.NewLoader(repoWidgetsDir, t.TempDir())
+	pkg, err := loader.LoadPackage("spacer")
+	if err != nil {
+		t.Fatalf("failed to load built-in spacer package: %v", err)
+	}
+
+	if pkg.Type != "spacer" {
+		t.Errorf("expected package type 'spacer', got %q", pkg.Type)
+	}
+	if pkg.Manifest.Name != "spacer" {
+		t.Errorf("expected manifest name 'spacer', got %q", pkg.Manifest.Name)
+	}
+	if pkg.Manifest.Provider != "spacer" {
+		t.Errorf("expected provider 'spacer', got %q", pkg.Manifest.Provider)
+	}
+	if pkg.Manifest.DefaultDimensions.Cols != 1 || pkg.Manifest.DefaultDimensions.Rows != 1 {
+		t.Errorf("expected default dimensions [1, 1], got %v", pkg.Manifest.DefaultDimensions)
+	}
+	if len(pkg.Manifest.SupportedDimensions) != 12 {
+		t.Errorf("expected 12 supported dimensions, got %d", len(pkg.Manifest.SupportedDimensions))
+	}
+	if !pkg.Manifest.HasCapability("ambient-static") || !pkg.Manifest.HasCapability("touch-interactive") {
+		t.Errorf("expected ambient-static and touch-interactive capabilities")
+	}
+}
+
+
