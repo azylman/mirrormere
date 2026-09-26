@@ -198,6 +198,11 @@
     if (typeof window !== 'undefined' && window.MirrormereSSE) {
       sseClient = new window.MirrormereSSE('/api/events');
 
+      // 4. Initialize Audio Manager
+      if (window.MirrormereAudio && window.MirrormereAudio.AudioManager) {
+        window.audioManager = new window.MirrormereAudio.AudioManager({ sseClient });
+      }
+
       sseClient.on('screen.rotate', (data) => {
         if (carousel) carousel.handleScreenRotate(data);
       });

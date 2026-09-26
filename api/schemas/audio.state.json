@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "audio.state",
+  "type": "object",
+  "required": [
+    "volume",
+    "muted"
+  ],
+  "properties": {
+    "volume": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "muted": {
+      "type": "boolean"
+    }
+  },
+  "additionalProperties": false
+}

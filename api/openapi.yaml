@@ -242,6 +242,66 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+  /api/audio:
+    get:
+      summary: Get master audio state
+      description: Returns the current master audio volume level and mute state.
+      operationId: getAudio
+      responses:
+        '200':
+          description: Audio state retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AudioStateResponse'
+  /api/audio/volume:
+    post:
+      summary: Set master audio volume
+      description: Sets the master audio volume percentage (0-100) and broadcasts audio.state.
+      operationId: postAudioVolume
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AudioVolumeRequest'
+      responses:
+        '200':
+          description: Audio volume updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AudioStateResponse'
+        '400':
+          description: Invalid volume request payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/audio/mute:
+    post:
+      summary: Set or toggle master audio mute
+      description: Sets or toggles the master audio mute state and broadcasts audio.state.
+      operationId: postAudioMute
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AudioMuteRequest'
+      responses:
+        '200':
+          description: Audio mute state updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AudioStateResponse'
+        '400':
+          description: Invalid mute request payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 components:
   schemas:
     ScreenSelectRequest:
@@ -390,3 +450,38 @@ components:
           type: string
           format: date-time
           example: 2026-09-24T22:30:00Z
+    AudioStateResponse:
+      type: object
+      required:
+        - status
+        - volume
+        - muted
+      properties:
+        status:
+          type: string
+          example: ok
+        volume:
+          type: integer
+          minimum: 0
+          maximum: 100
+          example: 75
+        muted:
+          type: boolean
+          example: false
+    AudioVolumeRequest:
+      type: object
+      required:
+        - volume
+      properties:
+        volume:
+          type: integer
+          minimum: 0
+          maximum: 100
+          example: 75
+    AudioMuteRequest:
+      type: object
+      properties:
+        muted:
+          type: boolean
+          example: true
+

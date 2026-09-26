@@ -59,6 +59,13 @@ type ListsHandler interface {
 	GetListItems(w http.ResponseWriter, r *http.Request, listID string)
 }
 
+// AudioHandler handles master audio volume and mute endpoints matching OpenAPI specifications.
+type AudioHandler interface {
+	GetAudio(w http.ResponseWriter, r *http.Request)
+	PostAudioVolume(w http.ResponseWriter, r *http.Request)
+	PostAudioMute(w http.ResponseWriter, r *http.Request)
+}
+
 // Config encapsulates configuration for the HTTP server.
 type Config struct {
 	Host              string
@@ -73,6 +80,7 @@ type Config struct {
 	PushHandler       PushHandler
 	DisplayHandler    DisplayHandler
 	ListsHandler      ListsHandler
+	AudioHandler      AudioHandler
 }
 
 // ApplyDefaults sets fallback values for any unspecified configuration fields.
@@ -128,6 +136,7 @@ type Server struct {
 	pushHandler    PushHandler
 	displayHandler DisplayHandler
 	listsHandler   ListsHandler
+	audioHandler   AudioHandler
 }
 
 // New constructs a configured Server instance.
@@ -144,6 +153,7 @@ func New(cfg Config) *Server {
 		pushHandler:    cfg.PushHandler,
 		displayHandler: cfg.DisplayHandler,
 		listsHandler:   cfg.ListsHandler,
+		audioHandler:   cfg.AudioHandler,
 	}
 
 	s.setupRoutes()
@@ -260,6 +270,20 @@ func (s *Server) ListsHandler() ListsHandler {
 	return s.listsHandler
 }
 
+// RegisterAudioHandler dynamically registers or replaces the master audio handler.
+func (s *Server) RegisterAudioHandler(h AudioHandler) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.audioHandler = h
+}
+
+// AudioHandler returns the currently registered audio handler.
+func (s *Server) AudioHandler() AudioHandler {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.audioHandler
+}
+
 func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/healthz", s.handleHealth)
 	s.mux.HandleFunc("/health", s.handleHealth)
@@ -268,6 +292,9 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/api/screen/advance", s.handleScreenAdvance)
 	s.mux.HandleFunc("/api/screen/pause", s.handleScreenPause)
 	s.mux.HandleFunc("/api/lists/{list_id}/items", s.handleListItems)
+	s.mux.HandleFunc("/api/audio", s.handleAudio)
+	s.mux.HandleFunc("/api/audio/volume", s.handleAudioVolume)
+	s.mux.HandleFunc("/api/audio/mute", s.handleAudioMute)
 	s.mux.HandleFunc("/api/widgets/{widget_id}/render", s.handleWidgetRender)
 	s.mux.HandleFunc("/api/widgets/{widget_id}/push", s.handleWidgetPush)
 	s.mux.HandleFunc("/widget-types/{type}/assets/{path...}", s.handleWidgetAsset)
@@ -331,6 +358,39 @@ func (s *Server) handleListItems(w http.ResponseWriter, r *http.Request) {
 	}
 	listID := r.PathValue("list_id")
 	h.GetListItems(w, r, listID)
+}
+
+func (s *Server) handleAudio(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	h := s.audioHandler
+	s.mu.RUnlock()
+	if h == nil {
+		http.NotFound(w, r)
+		return
+	}
+	h.GetAudio(w, r)
+}
+
+func (s *Server) handleAudioVolume(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	h := s.audioHandler
+	s.mu.RUnlock()
+	if h == nil {
+		http.NotFound(w, r)
+		return
+	}
+	h.PostAudioVolume(w, r)
+}
+
+func (s *Server) handleAudioMute(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	h := s.audioHandler
+	s.mu.RUnlock()
+	if h == nil {
+		http.NotFound(w, r)
+		return
+	}
+	h.PostAudioMute(w, r)
 }
 
 func (s *Server) handleWidgetRender(w http.ResponseWriter, r *http.Request) {

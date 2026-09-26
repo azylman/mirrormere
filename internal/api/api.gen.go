@@ -19,6 +19,23 @@ const (
 	Prev ScreenAdvanceRequestDirection = "prev"
 )
 
+// AudioMuteRequest defines model for AudioMuteRequest.
+type AudioMuteRequest struct {
+	Muted *bool `json:"muted,omitempty"`
+}
+
+// AudioStateResponse defines model for AudioStateResponse.
+type AudioStateResponse struct {
+	Muted  bool   `json:"muted"`
+	Status string `json:"status"`
+	Volume int    `json:"volume"`
+}
+
+// AudioVolumeRequest defines model for AudioVolumeRequest.
+type AudioVolumeRequest struct {
+	Volume int `json:"volume"`
+}
+
 // ErrorResponse defines model for ErrorResponse.
 type ErrorResponse struct {
 	Error  string `json:"error"`
@@ -98,6 +115,12 @@ type GetListItemsParams struct {
 // PostWidgetPushJSONBody defines parameters for PostWidgetPush.
 type PostWidgetPushJSONBody map[string]interface{}
 
+// PostAudioMuteJSONRequestBody defines body for PostAudioMute for application/json ContentType.
+type PostAudioMuteJSONRequestBody = AudioMuteRequest
+
+// PostAudioVolumeJSONRequestBody defines body for PostAudioVolume for application/json ContentType.
+type PostAudioVolumeJSONRequestBody = AudioVolumeRequest
+
 // PostScreenAdvanceJSONRequestBody defines body for PostScreenAdvance for application/json ContentType.
 type PostScreenAdvanceJSONRequestBody = ScreenAdvanceRequest
 
@@ -112,6 +135,15 @@ type PostWidgetPushJSONRequestBody PostWidgetPushJSONBody
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
+	// Get master audio state
+	// (GET /api/audio)
+	GetAudio(w http.ResponseWriter, r *http.Request)
+	// Set or toggle master audio mute
+	// (POST /api/audio/mute)
+	PostAudioMute(w http.ResponseWriter, r *http.Request)
+	// Set master audio volume
+	// (POST /api/audio/volume)
+	PostAudioVolume(w http.ResponseWriter, r *http.Request)
 	// Get household list items
 	// (GET /api/lists/{list_id}/items)
 	GetListItems(w http.ResponseWriter, r *http.Request, listId string, params GetListItemsParams)
@@ -149,6 +181,48 @@ type ServerInterfaceWrapper struct {
 }
 
 type MiddlewareFunc func(http.Handler) http.Handler
+
+// GetAudio operation middleware
+func (siw *ServerInterfaceWrapper) GetAudio(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetAudio(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostAudioMute operation middleware
+func (siw *ServerInterfaceWrapper) PostAudioMute(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostAudioMute(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostAudioVolume operation middleware
+func (siw *ServerInterfaceWrapper) PostAudioVolume(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostAudioVolume(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
 
 // GetListItems operation middleware
 func (siw *ServerInterfaceWrapper) GetListItems(w http.ResponseWriter, r *http.Request) {
@@ -460,6 +534,9 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 		ErrorHandlerFunc:   options.ErrorHandlerFunc,
 	}
 
+	m.HandleFunc("GET "+options.BaseURL+"/api/audio", wrapper.GetAudio)
+	m.HandleFunc("POST "+options.BaseURL+"/api/audio/mute", wrapper.PostAudioMute)
+	m.HandleFunc("POST "+options.BaseURL+"/api/audio/volume", wrapper.PostAudioVolume)
 	m.HandleFunc("GET "+options.BaseURL+"/api/lists/{list_id}/items", wrapper.GetListItems)
 	m.HandleFunc("POST "+options.BaseURL+"/api/screen/advance", wrapper.PostScreenAdvance)
 	m.HandleFunc("POST "+options.BaseURL+"/api/screen/pause", wrapper.PostScreenPause)
