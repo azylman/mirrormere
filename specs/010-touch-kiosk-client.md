@@ -95,6 +95,13 @@ The monitor backlight consumes power and emits light that must be suppressed at 
   - `mirrormere-kiosk-wake.timer`: Runs at `06:00` daily, issuing `wlr-randr --output HDMI-A-1 --on`.
 - Tapping the display during the night window temporarily wakes the screen for the daytime idle duration (10 minutes) before returning to sleep.
 
+### 3. Automated Nightly Browser Process Restart
+- Running a 24/7 WebRTC, media, and SSE-heavy client in Chromium inevitably accumulates DOM and memory drift over time.
+- To maintain pristine appliance performance indefinitely without disrupting daytime operation:
+  - `mirrormere-kiosk-restart.timer`: Fires at `03:00` daily during the night blackout window.
+  - `mirrormere-kiosk-restart.service`: Restarts `mirrormere-kiosk.service` via `systemctl restart mirrormere-kiosk.service`.
+  - Because the screen is powered down via DPMS (`wlr-randr --off`), Chromium restarts, re-authenticates/rehydrates SSE state from `/api/events`, and pre-warms off-screen with zero visible screen disturbance.
+
 ---
 
 ## Audio Pipeline
@@ -123,8 +130,9 @@ The host kiosk provisioning setup is maintained in `deploy/kiosk/` with an autom
 
 ### Service Units
 - `mirrormere-kiosk.service`: Manages the `cage` + `chromium` process tree with `Restart=always`.
-- `mirrormere-kiosk-sleep.{service,timer}`: Night schedule blanking.
-- `mirrormere-kiosk-wake.{service,timer}`: Morning schedule waking.
+- `mirrormere-kiosk-sleep.{service,timer}`: Night schedule blanking (23:00).
+- `mirrormere-kiosk-wake.{service,timer}`: Morning schedule waking (06:00).
+- `mirrormere-kiosk-restart.{service,timer}`: Nightly browser process restart (03:00).
 
 ---
 

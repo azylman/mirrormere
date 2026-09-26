@@ -177,25 +177,40 @@ flowchart TD
 ### Phase 4: Touch Kiosk Profile A & Cast Ingest (Alex & Mike Monitor Bringup)
 **Objective:** Assemble the interactive 60Hz Touch Kiosk stack, hardware video capture pipeline, and Linux host provisioning for Alex's N100 and Mike's HDMI test monitor.
 
-- **Task 4.1: Audio Coordinator & DOM Ceiling**
+- **Task 4.1: Audio Coordinator & 80% DOM Volume Ceiling (SPEC-004 §3, SPEC-006 §5, SPEC-010 §4)**
   - Core audio endpoints: `GET /api/audio`, `POST /api/audio/volume`, `POST /api/audio/mute`.
-  - Strict 80% DOM volume ceiling: `(vol/100)*0.80*(isDucked?0.2:1)*(isMuted?0:1)`. Zero host OS PipeWire manipulation.
-  - Touch volume slider 200ms debounce during continuous drag; commit on `pointerup`.
+  - Authoritative schema `audio.state.json` and `audio.state` SSE broadcast on mutations and hydration.
+  - Strict 80% DOM volume ceiling: `(vol/100) * 0.80 * (isDucked ? 0.2 : 1) * (isMuted ? 0 : 1)`. Zero host OS PipeWire manipulation.
+  - `isDucked` formula ready but held false until Phase 6 voice assistant bringup (SPEC-011); PiP stream is strictly muted, not ducked.
+  - Interactive volume slider UI deferred to Task 4.3B.
 
-- **Task 4.2: Video State Relay & Priority Stack**
-  - Video priority stack: `doorbell` PiP > `chromecast` fullscreen.
-  - Endpoints: `POST /api/video/trigger`, `dismiss`, `state`, `action`.
-  - Embed go2rtc WebRTC stream playback with touch HUD overlay.
+- **Task 4.2: Unified Video Stream API & Priority Stack (SPEC-004 §1-§4, SPEC-006 §4)**
+  - Video priority stack per SPEC-004 §4: `persistent` (Chromecast fullscreen + unmuted audio) holds absolute priority over `temporary` (doorbell). Doorbell docks into a muted floating PiP when Chromecast is active, or takes fullscreen when idle.
+  - Core video endpoints: `POST /api/video/trigger`, `POST /api/video/dismiss`, `POST /api/video/action`, `GET /api/video/state`.
+  - Forward remote transport actions to sidecar `control_url` with 2s timeout and 404/422/502 handling.
+  - Broadcast `video.state` SSE events on stack mutations and transport state updates.
 
-- **Task 4.3: CastV2 Socket Monitor (`sidecars/cast-watcher`) & `go2rtc` Ingest**
-  - Connect to Chromecast TCP port 8009 over LAN.
-  - Detect active casting (`appId != "E8C28D3C"`), trigger video overlay (`POST /api/video/trigger`), and dismiss on return to backdrop.
-  - Hardware transcoding (`#video=h264#hardware` via Intel VAAPI/QSV on the N100) capturing UVC MS2130 and ALSA audio.
+- **Task 4.3A: Video Presentation Mode & Multi-Stream Player with PiP (SPEC-004 §1, §5, SPEC-010 §1)**
+  - Display mode transitions (`widgets` <-> `video`) driven by `video.state` SSE events.
+  - Multi-stream protocol triad supporting `webrtc` (go2rtc WebRTC), `hls` (hls.js), and `mjpeg` (`<img>` stream path).
+  - Primary fullscreen player slot with 80% DOM volume ceiling; floating corner PiP dock with muted audio (`muted = true`).
+  - Interactive swap-on-tap gesture between primary and PiP streams.
 
-- **Task 4.4: Kiosk Host Provisioning & Wayland Confinement**
+- **Task 4.3B: Touch HUD Video Overlay & Debounced Audio Controls (SPEC-004 §5, SPEC-010 §1, §4)**
+  - Touch HUD video overlay with 5s idle fade-out and tap-to-wake.
+  - Transport controls (Play/Pause, Dismiss, audio unmute) dispatching `POST /api/video/action` and `dismiss`.
+  - Touch volume slider with 200ms debounce during continuous drag, committing on `pointerup` (`POST /api/audio/volume`).
+
+- **Task 4.4: CastV2 Socket Monitor Sidecar & go2rtc Ingest (SPEC-004 §5, §7)**
+  - `sidecars/cast-watcher`: TCP 8009 CastV2 socket monitor over LAN, detects active casting (`appId != "E8C28D3C"`), dispatches trigger/dismiss, forwards transport actions.
+  - `deploy/go2rtc.yaml`: Hardware-accelerated H.264 transcoding (`#video=h264#hardware` via Intel VAAPI/QSV on N100) capturing UVC MS2130 and ALSA audio, serving WebRTC stream.
+  - *Hardware Bench Prerequisite*: Validation requires physical Chromecast and MS2130 USB capture card on test bench.
+
+- **Task 4.5: Kiosk Host Provisioning, Wayland cage Confinement & Nightly Restart (SPEC-010)**
   - Minimal Wayland `cage` compositor launching Chromium with kiosk flags: `--kiosk --ozone-platform=wayland --use-gl=egl --autoplay-policy=no-user-gesture-required`.
   - Power management: `swayidle` 10m idle blanking (`wlr-randr --output HDMI-A-1 --off`) with capacitive touch wake (`evdev`), and systemd night schedule timers (23:00 sleep / 06:00 wake).
-  - Nightly automated browser process restart during the sleep window to prevent 24/7 memory drift.
+  - Reinstated automated nightly browser process restart during 23:00–06:00 sleep window (03:00 timer) to eliminate 24/7 memory drift.
+  - Automated provisioning script (`deploy/kiosk/install.sh`) targeting Debian 12 / Ubuntu 24.04 Server.
 
 ---
 
