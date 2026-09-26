@@ -1,0 +1,41 @@
+name: weather-forecast
+version: "1.0.0"
+description: Ambient weather forecast card displaying current conditions, hourly timeline, and multi-day extended forecast.
+provider: weather-forecast
+
+capabilities:
+  - ambient-static
+  - touch-interactive
+
+default_dimensions: [2, 1]
+
+supported_dimensions:
+  - [2, 1]
+  - [3, 1]
+  - [2, 2]
+  - [3, 2]
+  - [4, 2]
+  - [6, 2]
+
+config_schema:
+  type: object
+  required:
+    - latitude
+    - longitude
+  properties:
+    latitude:
+      type: number
+      minimum: -90
+      maximum: 90
+    longitude:
+      type: number
+      minimum: -180
+      maximum: 180
+    units:
+      type: string
+      enum:
+        - imperial
+        - metric
+    timezone:
+      type: string
+  additionalProperties: false

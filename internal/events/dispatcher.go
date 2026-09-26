@@ -70,14 +70,6 @@ func (h *Hub) DispatchConfigReload(snapshot *config.Snapshot, diff *config.Confi
 					weather = w
 				}
 			}
-			if weather == nil {
-				weather = &HeaderWeather{
-					Temperature: 68.5,
-					Units:       "F",
-					WeatherCode: 1,
-					Icon:        "weather-sunny",
-				}
-			}
 			tz := snapshot.Config.Timezone
 			if tz == "" {
 				tz = "UTC"

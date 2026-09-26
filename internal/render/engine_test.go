@@ -12,7 +12,9 @@ import (
 	"github.com/azylman/mirrormere/internal/config"
 	"github.com/azylman/mirrormere/internal/domain"
 	"github.com/azylman/mirrormere/internal/layout"
+	"github.com/azylman/mirrormere/internal/provider"
 	"github.com/azylman/mirrormere/internal/render"
+	"github.com/azylman/mirrormere/internal/widget"
 )
 
 type mockSnapshotProvider struct {
@@ -731,5 +733,82 @@ func TestEngine_MissingTemplateFileAndExecutionError(t *testing.T) {
 
 	if _, err := engine2.RenderWidget(context.Background(), "w-exec-err"); err == nil {
 		t.Error("expected error when template execution fails")
+	}
+}
+
+func TestRenderBuiltinWeatherForecastWidget(t *testing.T) {
+	t.Parallel()
+
+	repoWidgetsDir := filepath.Join("..", "..", "widgets")
+	loader := widget.NewLoader(repoWidgetsDir, t.TempDir())
+	pkg, err := loader.LoadPackage("weather-forecast")
+	if err != nil {
+		t.Fatalf("failed to load weather-forecast package: %v", err)
+	}
+
+	snap := &config.Snapshot{
+		Config: &config.Config{
+			Display: config.DisplayConfig{
+				Widgets: []config.WidgetConfig{
+					{ID: "w-weather-loaded", Type: "weather-forecast", Dimensions: []int{2, 1}},
+					{ID: "w-weather-loading", Type: "weather-forecast", Dimensions: []int{2, 1}},
+				},
+			},
+		},
+		Packages: map[string]*domain.Package{"weather-forecast": pkg},
+	}
+
+	weatherData := provider.WeatherSnapshot{
+		Current: provider.WeatherCurrent{
+			Temperature:   72.4,
+			FeelsLike:     70.5,
+			Humidity:      45,
+			WindSpeed:     5.5,
+			Units:         provider.WeatherUnits{Temperature: "°F", WindSpeed: "mph"},
+			ConditionCode: 1,
+			ConditionText: "Mainly Clear",
+			Icon:          "weather-partly-cloudy",
+		},
+		Hourly: []provider.WeatherHourly{
+			{Time: "2026-09-26T12:00:00Z", Temp: 72.4, PrecipProb: 0, Icon: "weather-partly-cloudy"},
+		},
+		Daily: []provider.WeatherDaily{
+			{Date: "2026-09-26", TempMax: 75.0, TempMin: 55.0, PrecipProbMax: 10, ConditionText: "Mainly Clear", Icon: "weather-partly-cloudy"},
+		},
+	}
+
+	p := &mockSnapshotProvider{
+		snapshot: snap,
+		states: map[string]mockState{
+			"w-weather-loaded":  {data: weatherData, state: "healthy", timestamp: "2026-09-26T12:00:00Z"},
+			"w-weather-loading": {data: nil, state: "healthy"},
+		},
+	}
+
+	resolver := &mockResolver{packages: map[string]*domain.Package{"weather-forecast": pkg}}
+	engine := render.NewEngine(resolver, p)
+
+	// 1. Render loaded widget
+	htmlLoaded, err := engine.RenderWidget(context.Background(), "w-weather-loaded")
+	if err != nil {
+		t.Fatalf("RenderWidget failed on loaded weather: %v", err)
+	}
+	if !strings.Contains(string(htmlLoaded), "72°F") && !strings.Contains(string(htmlLoaded), "72") {
+		t.Errorf("expected 72 in rendered output, got: %s", htmlLoaded)
+	}
+	if !strings.Contains(string(htmlLoaded), "Mainly Clear") {
+		t.Errorf("expected 'Mainly Clear' in rendered output, got: %s", htmlLoaded)
+	}
+	if !strings.Contains(string(htmlLoaded), "weather-partly-cloudy") {
+		t.Errorf("expected icon token in rendered output, got: %s", htmlLoaded)
+	}
+
+	// 2. Render loading widget (data: nil)
+	htmlLoading, err := engine.RenderWidget(context.Background(), "w-weather-loading")
+	if err != nil {
+		t.Fatalf("RenderWidget failed on loading weather: %v", err)
+	}
+	if !strings.Contains(string(htmlLoading), "Loading weather forecast...") {
+		t.Errorf("expected loading message in rendered output, got: %s", htmlLoading)
 	}
 }

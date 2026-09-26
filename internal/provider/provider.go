@@ -87,6 +87,12 @@ func NewRegistry() *DefaultRegistry {
 	r.Register("http", func() Provider {
 		return NewHTTPProvider()
 	})
+	r.Register("weather-forecast", func() Provider {
+		return NewWeatherProvider()
+	})
+	r.Register("weather", func() Provider {
+		return NewWeatherProvider()
+	})
 	return r
 }
 

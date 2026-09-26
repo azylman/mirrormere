@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -31,14 +32,17 @@ type StateSink interface {
 
 // CoordinatorConfig specifies dependencies and options for ProviderCoordinator.
 type CoordinatorConfig struct {
-	Registry           Registry
-	Broadcaster        Broadcaster
-	StateSink          StateSink
-	Cache              *SWRCache
-	Logger             *slog.Logger
-	NowFunc            func() time.Time
-	Backoff            *BackoffPolicy
-	OnBeforeRecordPush func(widgetID string)
+	Registry            Registry
+	Broadcaster         Broadcaster
+	StateSink           StateSink
+	HeaderWeatherSink   HeaderWeatherSink
+	Cache               *SWRCache
+	Logger              *slog.Logger
+	NowFunc             func() time.Time
+	Backoff             *BackoffPolicy
+	OnBeforeRecordPush  func(widgetID string)
+	HeaderPollerClient  *http.Client
+	HeaderPollerBaseURL string
 }
 
 type worker struct {
@@ -80,6 +84,7 @@ type ProviderCoordinator struct {
 	schemaMu           sync.RWMutex
 	schemas            map[string]*jsonschema.Schema
 	stopped            bool
+	headerPoller       *HeaderWeatherPoller
 }
 
 // NewCoordinator constructs an initialized ProviderCoordinator.
@@ -105,6 +110,22 @@ func NewCoordinator(cfg CoordinatorConfig, initialSnapshot *config.Snapshot) *Pr
 		bo = DefaultBackoffPolicy()
 	}
 
+	var headerSink HeaderWeatherSink
+	if cfg.HeaderWeatherSink != nil {
+		headerSink = cfg.HeaderWeatherSink
+	} else if hs, ok := cfg.StateSink.(HeaderWeatherSink); ok {
+		headerSink = hs
+	}
+
+	headerPoller := NewHeaderWeatherPoller(HeaderWeatherPollerConfig{
+		Client:      cfg.HeaderPollerClient,
+		BaseURL:     cfg.HeaderPollerBaseURL,
+		Broadcaster: cfg.Broadcaster,
+		StateSink:   headerSink,
+		Logger:      logger,
+		NowFunc:     nowFn,
+	})
+
 	sinkCtx, sinkCancel := context.WithCancel(context.Background())
 
 	c := &ProviderCoordinator{
@@ -122,12 +143,16 @@ func NewCoordinator(cfg CoordinatorConfig, initialSnapshot *config.Snapshot) *Pr
 		sinkCancel:         sinkCancel,
 		onBeforeRecordPush: cfg.OnBeforeRecordPush,
 		schemas:            make(map[string]*jsonschema.Schema),
+		headerPoller:       headerPoller,
 	}
 
 	c.sinkWg.Add(1)
 	go c.listenEventSink()
 
 	if initialSnapshot != nil && initialSnapshot.Config != nil {
+		if initialSnapshot.Config.Display.Header.Weather != nil {
+			c.headerPoller.Start(context.Background(), initialSnapshot.Config.Display.Header.Weather, initialSnapshot.Config.Timezone)
+		}
 		c.startWorkersLocked(initialSnapshot)
 	}
 
@@ -255,7 +280,19 @@ func (c *ProviderCoordinator) UpdateConfig(snap *config.Snapshot) error {
 		c.startSingleWorkerLocked(&diff.Added[i], snap)
 	}
 
+	// 4. Update autonomous header weather poller per SPEC-007 §4
+	if snap.Config.Display.Header.Weather != nil {
+		c.headerPoller.UpdateConfig(context.Background(), snap.Config.Display.Header.Weather, snap.Config.Timezone)
+	} else {
+		c.headerPoller.Stop()
+	}
+
 	return nil
+}
+
+// HeaderPoller returns the coordinator's autonomous header weather poller.
+func (c *ProviderCoordinator) HeaderPoller() *HeaderWeatherPoller {
+	return c.headerPoller
 }
 
 // Stop gracefully shuts down all worker goroutines, subscriptions, and event listeners.
@@ -271,6 +308,10 @@ func (c *ProviderCoordinator) Shutdown(ctx context.Context) error {
 		return nil
 	}
 	c.stopped = true
+
+	if c.headerPoller != nil {
+		c.headerPoller.Stop()
+	}
 
 	workersToStop := make([]*worker, 0, len(c.workers))
 	for _, w := range c.workers {

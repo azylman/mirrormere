@@ -512,4 +512,31 @@ func TestBuiltinSpacerPackage(t *testing.T) {
 	}
 }
 
+func TestBuiltinWeatherForecastPackage(t *testing.T) {
+	t.Parallel()
+
+	repoWidgetsDir := filepath.Join("..", "..", "widgets")
+	loader := widget.NewLoader(repoWidgetsDir, t.TempDir())
+	pkg, err := loader.LoadPackage("weather-forecast")
+	if err != nil {
+		t.Fatalf("failed to load built-in weather-forecast package: %v", err)
+	}
+
+	if pkg.Type != "weather-forecast" {
+		t.Errorf("expected package type 'weather-forecast', got %q", pkg.Type)
+	}
+	if pkg.Manifest.Name != "weather-forecast" {
+		t.Errorf("expected manifest name 'weather-forecast', got %q", pkg.Manifest.Name)
+	}
+	if pkg.Manifest.Provider != "weather-forecast" {
+		t.Errorf("expected provider 'weather-forecast', got %q", pkg.Manifest.Provider)
+	}
+	if pkg.Manifest.DefaultDimensions.Cols != 2 || pkg.Manifest.DefaultDimensions.Rows != 1 {
+		t.Errorf("expected default dimensions [2, 1], got %v", pkg.Manifest.DefaultDimensions)
+	}
+	if !pkg.Manifest.HasCapability("ambient-static") || !pkg.Manifest.HasCapability("touch-interactive") {
+		t.Errorf("expected ambient-static and touch-interactive capabilities")
+	}
+}
+
 
