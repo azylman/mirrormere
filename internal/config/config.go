@@ -19,7 +19,6 @@ var interpolationRegex = regexp.MustCompile(`\$\{([^}]+)\}`)
 type Config struct {
 	Timezone string        `yaml:"timezone"`
 	Display  DisplayConfig `yaml:"display"`
-	Header   *HeaderConfig `yaml:"header,omitempty"` // Root-level compatibility alias mapped to Display.Header
 
 	location *time.Location
 }
@@ -71,16 +70,17 @@ type GridConfig struct {
 
 // WidgetConfig declares a self-contained widget instance with placement and domain settings.
 type WidgetConfig struct {
-	ID                     string         `yaml:"id"`
-	Type                   string         `yaml:"type"`
-	Dimensions             []int          `yaml:"dimensions,omitempty"`
-	Pinned                 bool           `yaml:"pinned"`
-	RefreshIntervalSeconds *int           `yaml:"refresh_interval_seconds,omitempty"`
-	Endpoint               string         `yaml:"endpoint,omitempty"`
-	Method                 string         `yaml:"method,omitempty"`
-	TokenEnv               string         `yaml:"token_env,omitempty"`
-	Token                  string         `yaml:"-"` // Resolved secret populated from TokenEnv
-	Config                 map[string]any `yaml:"config,omitempty"`
+	ID                     string            `yaml:"id"`
+	Type                   string            `yaml:"type"`
+	Dimensions             []int             `yaml:"dimensions,omitempty"`
+	Pinned                 bool              `yaml:"pinned"`
+	RefreshIntervalSeconds *int              `yaml:"refresh_interval_seconds,omitempty"`
+	Endpoint               string            `yaml:"endpoint,omitempty"`
+	Method                 string            `yaml:"method,omitempty"`
+	TokenEnv               string            `yaml:"token_env,omitempty"`
+	Token                  string            `yaml:"-"` // Resolved secret populated from TokenEnv
+	Secrets                map[string]string `yaml:"-"` // Resolved secrets populated from *_env keys in Config
+	Config                 map[string]any    `yaml:"config,omitempty"`
 }
 
 // Location returns the validated IANA time.Location pointer for the household.
@@ -244,8 +244,10 @@ func validateStructuralKeys(root *yaml.Node) error {
 			return fmt.Errorf("line %d: configuration contains disallowed top-level key 'screens': screens are dynamically computed by the 6x2 layout solver", keyNode.Line)
 		case "providers":
 			return fmt.Errorf("line %d: configuration contains disallowed top-level key 'providers': widget instances configure their own data sources under display.widgets", keyNode.Line)
-		case "timezone", "header":
-			// Canonical top-level key or compatibility alias
+		case "header":
+			return fmt.Errorf("line %d: configuration contains disallowed top-level key 'header': header must be configured under display.header", keyNode.Line)
+		case "timezone":
+			// Canonical top-level key
 		case "display":
 			if valNode.Kind == yaml.MappingNode {
 				if err := validateDisplayKeys(valNode); err != nil {
@@ -280,10 +282,6 @@ func validateDisplayKeys(displayNode *yaml.Node) error {
 }
 
 func (c *Config) applyDefaults() {
-	if c.Display.Header.Elements == nil && c.Header != nil {
-		c.Display.Header = *c.Header
-	}
-
 	// Rotation defaults
 	if c.Display.Rotation.Transition == "" {
 		c.Display.Rotation.Transition = "slide"
@@ -411,7 +409,7 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-// ResolveEnv resolves secret environment variables for all widget instances.
+// ResolveEnv resolves secret environment variables for all widget instances into isolated Secrets maps.
 func (c *Config) ResolveEnv(getenv func(string) string) error {
 	if getenv == nil {
 		getenv = os.Getenv
@@ -419,6 +417,9 @@ func (c *Config) ResolveEnv(getenv func(string) string) error {
 
 	for i := range c.Display.Widgets {
 		w := &c.Display.Widgets[i]
+		if w.Secrets == nil {
+			w.Secrets = make(map[string]string)
+		}
 
 		if w.TokenEnv != "" {
 			envVar := strings.TrimSpace(w.TokenEnv)
@@ -427,10 +428,11 @@ func (c *Config) ResolveEnv(getenv func(string) string) error {
 				return fmt.Errorf("widget '%s': environment variable '%s' defined in token_env is unset or empty", w.ID, envVar)
 			}
 			w.Token = val
+			w.Secrets["token"] = val
 		}
 
 		if w.Config != nil {
-			if err := resolveEnvInMap(w.ID, w.Config, getenv); err != nil {
+			if err := resolveEnvInMap(w.ID, w.Config, "", w.Secrets, getenv); err != nil {
 				return err
 			}
 		}
@@ -439,7 +441,7 @@ func (c *Config) ResolveEnv(getenv func(string) string) error {
 	return nil
 }
 
-func resolveEnvInMap(widgetID string, m map[string]any, getenv func(string) string) error {
+func resolveEnvInMap(widgetID string, m map[string]any, prefix string, secrets map[string]string, getenv func(string) string) error {
 	for k, v := range m {
 		if strings.HasSuffix(k, "_env") {
 			baseKey := strings.TrimSuffix(k, "_env")
@@ -456,12 +458,22 @@ func resolveEnvInMap(widgetID string, m map[string]any, getenv func(string) stri
 			if val == "" {
 				return fmt.Errorf("widget '%s': environment variable '%s' defined in %s is unset or empty", widgetID, envVarName, k)
 			}
-			m[baseKey] = val
+
+			secretPath := baseKey
+			if prefix != "" {
+				secretPath = prefix + "." + baseKey
+			}
+			secrets[secretPath] = val
+		}
+
+		childPrefix := k
+		if prefix != "" {
+			childPrefix = prefix + "." + k
 		}
 
 		switch val := v.(type) {
 		case map[string]any:
-			if err := resolveEnvInMap(widgetID, val, getenv); err != nil {
+			if err := resolveEnvInMap(widgetID, val, childPrefix, secrets, getenv); err != nil {
 				return err
 			}
 		case map[any]any:
@@ -470,11 +482,11 @@ func resolveEnvInMap(widgetID string, m map[string]any, getenv func(string) stri
 				converted[fmt.Sprint(subK)] = subV
 			}
 			m[k] = converted
-			if err := resolveEnvInMap(widgetID, converted, getenv); err != nil {
+			if err := resolveEnvInMap(widgetID, converted, childPrefix, secrets, getenv); err != nil {
 				return err
 			}
 		case []any:
-			if err := resolveEnvInSlice(widgetID, val, getenv); err != nil {
+			if err := resolveEnvInSlice(widgetID, val, childPrefix, secrets, getenv); err != nil {
 				return err
 			}
 		}
@@ -482,11 +494,12 @@ func resolveEnvInMap(widgetID string, m map[string]any, getenv func(string) stri
 	return nil
 }
 
-func resolveEnvInSlice(widgetID string, s []any, getenv func(string) string) error {
+func resolveEnvInSlice(widgetID string, s []any, prefix string, secrets map[string]string, getenv func(string) string) error {
 	for i, item := range s {
+		childPrefix := fmt.Sprintf("%s[%d]", prefix, i)
 		switch elem := item.(type) {
 		case map[string]any:
-			if err := resolveEnvInMap(widgetID, elem, getenv); err != nil {
+			if err := resolveEnvInMap(widgetID, elem, childPrefix, secrets, getenv); err != nil {
 				return err
 			}
 		case map[any]any:
@@ -495,11 +508,11 @@ func resolveEnvInSlice(widgetID string, s []any, getenv func(string) string) err
 				converted[fmt.Sprint(subK)] = subV
 			}
 			s[i] = converted
-			if err := resolveEnvInMap(widgetID, converted, getenv); err != nil {
+			if err := resolveEnvInMap(widgetID, converted, childPrefix, secrets, getenv); err != nil {
 				return err
 			}
 		case []any:
-			if err := resolveEnvInSlice(widgetID, elem, getenv); err != nil {
+			if err := resolveEnvInSlice(widgetID, elem, childPrefix, secrets, getenv); err != nil {
 				return err
 			}
 		}

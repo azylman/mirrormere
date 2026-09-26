@@ -201,6 +201,13 @@ config_schema:
 		t.Fatalf("expected missing provider error, got %v", err)
 	}
 
+	// Omitted default_dimensions is valid
+	mNoDefDim := m
+	mNoDefDim.DefaultDimensions = domain.Dimension{}
+	if err := mNoDefDim.Validate(); err != nil {
+		t.Fatalf("expected omitted default_dimensions to be valid, got %v", err)
+	}
+
 	// Invalid default_dimensions
 	mBadDefDim := m
 	mBadDefDim.DefaultDimensions = domain.NewDimension(7, 2)
@@ -213,6 +220,94 @@ config_schema:
 	mBadSupDim.SupportedDimensions = []domain.Dimension{domain.NewDimension(4, 3)}
 	if err := mBadSupDim.Validate(); err == nil || !strings.Contains(err.Error(), "supported_dimensions[0] [4, 3] violates 6x2 grid bounds") {
 		t.Fatalf("expected supported_dimensions bounds error, got %v", err)
+	}
+
+	// Property named "default" is allowed under properties and $defs
+	mPropNamedDefault := m
+	mPropNamedDefault.ConfigSchema = map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"default": map[string]any{
+				"type": "boolean",
+			},
+		},
+		"$defs": map[string]any{
+			"default": map[string]any{
+				"type": "string",
+			},
+		},
+	}
+	if err := mPropNamedDefault.Validate(); err != nil {
+		t.Fatalf("expected property named 'default' to be allowed, got error: %v", err)
+	}
+
+	// Map[any]any with property named "default"
+	mMapAnyNamedDefault := m
+	mMapAnyNamedDefault.ConfigSchema = map[string]any{
+		"type": "object",
+		"properties": map[any]any{
+			"default": map[any]any{
+				"type": "string",
+			},
+		},
+	}
+	if err := mMapAnyNamedDefault.Validate(); err != nil {
+		t.Fatalf("expected map[any]any property named 'default' to be allowed, got error: %v", err)
+	}
+
+	// Disallowed default inside map[any]any properties
+	mMapAnyNamedDefaultErr := m
+	mMapAnyNamedDefaultErr.ConfigSchema = map[string]any{
+		"type": "object",
+		"properties": map[any]any{
+			"default": map[any]any{
+				"default": "disallowed",
+			},
+		},
+	}
+	if err := mMapAnyNamedDefaultErr.Validate(); err == nil || !strings.Contains(err.Error(), "declares disallowed keyword 'default'") {
+		t.Fatalf("expected error for default keyword inside map[any]any properties, got %v", err)
+	}
+
+	// Nested map[any]any with properties
+	mMapAnyTop := m
+	mMapAnyTop.ConfigSchema = map[string]any{
+		"nested": map[any]any{
+			"properties": map[any]any{
+				"valid_prop": map[string]any{"type": "string"},
+			},
+		},
+	}
+	if err := mMapAnyTop.Validate(); err != nil {
+		t.Fatalf("expected valid map[any]any nested properties, got %v", err)
+	}
+
+	// Nested map[any]any with properties containing error
+	mMapAnyTopErr := m
+	mMapAnyTopErr.ConfigSchema = map[string]any{
+		"nested": map[any]any{
+			"properties": map[any]any{
+				"bad_prop": map[string]any{"default": "disallowed"},
+			},
+		},
+	}
+	if err := mMapAnyTopErr.Validate(); err == nil || !strings.Contains(err.Error(), "declares disallowed keyword 'default'") {
+		t.Fatalf("expected error for default keyword in nested map[any]any properties, got %v", err)
+	}
+
+	// Property named "default" that itself declares a disallowed "default" keyword must fail
+	mPropNamedDefaultWithKeyword := m
+	mPropNamedDefaultWithKeyword.ConfigSchema = map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"default": map[string]any{
+				"type":    "boolean",
+				"default": true,
+			},
+		},
+	}
+	if err := mPropNamedDefaultWithKeyword.Validate(); err == nil || !strings.Contains(err.Error(), "declares disallowed keyword 'default'") {
+		t.Fatalf("expected error for default keyword inside property named 'default', got %v", err)
 	}
 
 	// Disallowed default keyword in config_schema

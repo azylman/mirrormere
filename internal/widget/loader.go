@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/azylman/mirrormere/internal/config"
 	"github.com/azylman/mirrormere/internal/domain"
@@ -72,7 +73,7 @@ func (l *Loader) scanDir(baseDir, source string, registry map[string]*domain.Pac
 	}
 
 	for _, entry := range entries {
-		if !entry.IsDir() {
+		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
 			continue
 		}
 		widgetType := entry.Name()
@@ -95,6 +96,10 @@ func (l *Loader) scanDir(baseDir, source string, registry map[string]*domain.Pac
 
 // LoadPackage resolves a single widget package by type, adhering to whole-package precedence.
 func (l *Loader) LoadPackage(widgetType string) (*domain.Package, error) {
+	if strings.HasPrefix(widgetType, ".") {
+		return nil, fmt.Errorf("widget package '%s' not found", widgetType)
+	}
+
 	// Check custom first
 	customPkgDir := filepath.Join(l.customDir, widgetType)
 	if fi, err := os.Stat(customPkgDir); err == nil && fi.IsDir() {

@@ -5,10 +5,9 @@ import (
 	"strings"
 )
 
-// ManifestRefresh defines default ingestion intervals and push triggers.
+// ManifestRefresh defines default ingestion intervals.
 type ManifestRefresh struct {
-	IntervalSeconds int      `yaml:"interval_seconds,omitempty"`
-	PushTriggers    []string `yaml:"push_triggers,omitempty"`
+	IntervalSeconds int `yaml:"interval_seconds,omitempty"`
 }
 
 // WidgetManifest represents the declarative metadata, capabilities, and schema declared in manifest.yaml.
@@ -18,7 +17,7 @@ type WidgetManifest struct {
 	Description         string          `yaml:"description,omitempty"`
 	Provider            string          `yaml:"provider"`
 	Capabilities        []string        `yaml:"capabilities,omitempty"`
-	DefaultDimensions   Dimension       `yaml:"default_dimensions"`
+	DefaultDimensions   Dimension       `yaml:"default_dimensions,omitempty"`
 	SupportedDimensions []Dimension     `yaml:"supported_dimensions,omitempty"`
 	Refresh             ManifestRefresh `yaml:"refresh,omitempty"`
 	ConfigSchema        map[string]any  `yaml:"config_schema,omitempty"`
@@ -37,10 +36,12 @@ func (m *WidgetManifest) Validate() error {
 		return fmt.Errorf("manifest '%s' missing required field 'provider'", m.Name)
 	}
 
-	// Validate default_dimensions
-	if !m.DefaultDimensions.IsValid() {
-		return fmt.Errorf("manifest '%s': default_dimensions [%d, %d] violates 6x2 grid bounds (cols 1..6, rows 1..2)",
-			m.Name, m.DefaultDimensions.Cols, m.DefaultDimensions.Rows)
+	// Validate default_dimensions only when present
+	if m.DefaultDimensions.Cols != 0 || m.DefaultDimensions.Rows != 0 {
+		if !m.DefaultDimensions.IsValid() {
+			return fmt.Errorf("manifest '%s': default_dimensions [%d, %d] violates 6x2 grid bounds (cols 1..6, rows 1..2)",
+				m.Name, m.DefaultDimensions.Cols, m.DefaultDimensions.Rows)
+		}
 	}
 
 	// Validate supported_dimensions if specified
@@ -85,6 +86,35 @@ func (m *WidgetManifest) HasCapability(capability string) bool {
 	return false
 }
 
+func isNamedSchemaMapKeyword(k string) bool {
+	switch k {
+	case "properties", "patternProperties", "$defs", "definitions", "dependentSchemas":
+		return true
+	default:
+		return false
+	}
+}
+
+func checkNamedSchemaMap(v any, path string) error {
+	switch val := v.(type) {
+	case map[string]any:
+		for k, child := range val {
+			childPath := path + "." + k
+			if err := checkForDisallowedDefaultKeyword(child, childPath); err != nil {
+				return err
+			}
+		}
+	case map[any]any:
+		for k, child := range val {
+			childPath := fmt.Sprintf("%s.%v", path, k)
+			if err := checkForDisallowedDefaultKeyword(child, childPath); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func checkForDisallowedDefaultKeyword(v any, path string) error {
 	switch val := v.(type) {
 	case map[string]any:
@@ -93,15 +123,28 @@ func checkForDisallowedDefaultKeyword(v any, path string) error {
 			if k == "default" {
 				return fmt.Errorf("schema at '%s' declares disallowed keyword 'default'; default values in schemas are strictly prohibited per SPEC-003 §Disallowed default Keyword", path)
 			}
+			if isNamedSchemaMapKeyword(k) {
+				if err := checkNamedSchemaMap(child, childPath); err != nil {
+					return err
+				}
+				continue
+			}
 			if err := checkForDisallowedDefaultKeyword(child, childPath); err != nil {
 				return err
 			}
 		}
 	case map[any]any:
 		for k, child := range val {
-			childPath := fmt.Sprintf("%s.%v", path, k)
-			if fmt.Sprint(k) == "default" {
+			kStr := fmt.Sprint(k)
+			childPath := path + "." + kStr
+			if kStr == "default" {
 				return fmt.Errorf("schema at '%s' declares disallowed keyword 'default'; default values in schemas are strictly prohibited per SPEC-003 §Disallowed default Keyword", path)
+			}
+			if isNamedSchemaMapKeyword(kStr) {
+				if err := checkNamedSchemaMap(child, childPath); err != nil {
+					return err
+				}
+				continue
 			}
 			if err := checkForDisallowedDefaultKeyword(child, childPath); err != nil {
 				return err
