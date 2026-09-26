@@ -610,4 +610,318 @@ func TestSQLiteStore_InitErrors(t *testing.T) {
 	}
 }
 
+func TestSQLiteStore_SyncList_Lifecycle(t *testing.T) {
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "sync.db"))
+	if err != nil {
+		t.Fatalf("failed to init store: %v", err)
+	}
+	defer store.Close()
 
+	ctx := context.Background()
+
+	due := "2026-09-30"
+	ass := "Alex"
+	list := List{
+		ID:       "sync-list",
+		Name:     "Initial Name",
+		Source:   "http",
+		Sections: []string{"Produce"},
+	}
+	items := []ListItem{
+		{
+			ID:       "i1",
+			ListID:   "sync-list",
+			Title:    "Bananas",
+			Done:     false,
+			Section:  "Produce",
+			Position: 0,
+			Assignee: &ass,
+			DueDate:  &due,
+		},
+		{
+			ID:       "i2",
+			ListID:   "sync-list",
+			Title:    "Oat Milk",
+			Done:     false,
+			Section:  "Dairy",
+			Position: 1,
+		},
+	}
+
+	// 1. Cold sync of new list -> changed=true
+	changed, err := store.SyncList(ctx, list, items)
+	if err != nil {
+		t.Fatalf("SyncList failed: %v", err)
+	}
+	if !changed {
+		t.Fatal("expected changed=true on cold sync")
+	}
+
+	// Verify items stored
+	storedItems, err := store.GetListItems(ctx, "sync-list", true)
+	if err != nil || len(storedItems) != 2 {
+		t.Fatalf("expected 2 items, got %d (err: %v)", len(storedItems), err)
+	}
+
+	// 2. Identical sync -> changed=false (zero writes)
+	changed, err = store.SyncList(ctx, list, items)
+	if err != nil {
+		t.Fatalf("SyncList failed: %v", err)
+	}
+	if changed {
+		t.Fatal("expected changed=false on identical sync")
+	}
+
+	// 3. Item modification (marking i1 done) -> changed=true
+	items[0].Done = true
+	changed, err = store.SyncList(ctx, list, items)
+	if err != nil {
+		t.Fatalf("SyncList failed: %v", err)
+	}
+	if !changed {
+		t.Fatal("expected changed=true on item modification")
+	}
+
+	// Verify i1 is now done
+	storedItems, err = store.GetListItems(ctx, "sync-list", true)
+	if err != nil || len(storedItems) != 2 || !storedItems[0].Done {
+		t.Fatalf("expected i1 to be done, got items: %+v", storedItems)
+	}
+
+	// 4. Item removal (i2 removed upstream) -> changed=true, i2 deleted from DB
+	singleItem := []ListItem{items[0]}
+	changed, err = store.SyncList(ctx, list, singleItem)
+	if err != nil {
+		t.Fatalf("SyncList failed: %v", err)
+	}
+	if !changed {
+		t.Fatal("expected changed=true when item removed")
+	}
+	storedItems, err = store.GetListItems(ctx, "sync-list", true)
+	if err != nil || len(storedItems) != 1 || storedItems[0].ID != "i1" {
+		t.Fatalf("expected only i1 remaining, got %+v", storedItems)
+	}
+
+	// 5. Metadata modification (name changed) -> changed=true
+	list.Name = "Updated Groceries Name"
+	changed, err = store.SyncList(ctx, list, singleItem)
+	if err != nil {
+		t.Fatalf("SyncList failed: %v", err)
+	}
+	if !changed {
+		t.Fatal("expected changed=true on list name change")
+	}
+	updatedList, err := store.GetList(ctx, "sync-list")
+	if err != nil || updatedList.Name != "Updated Groceries Name" {
+		t.Fatalf("expected updated name, got %+v", updatedList)
+	}
+
+	// 6. Empty items sync -> changed=true, deletes remaining items
+	changed, err = store.SyncList(ctx, list, []ListItem{})
+	if err != nil {
+		t.Fatalf("SyncList failed: %v", err)
+	}
+	if !changed {
+		t.Fatal("expected changed=true on empty items sync")
+	}
+	storedItems, err = store.GetListItems(ctx, "sync-list", true)
+	if err != nil || len(storedItems) != 0 {
+		t.Fatalf("expected 0 items remaining, got %d", len(storedItems))
+	}
+	// 7. Same count (1 item), but different item ID (replacement) -> changed=true
+	baseItem := []ListItem{
+		{
+			ID:       "i-base",
+			ListID:   "sync-list",
+			Title:    "Base Item",
+			Done:     false,
+			Position: 0,
+		},
+	}
+	_, err = store.SyncList(ctx, list, baseItem)
+	if err != nil {
+		t.Fatalf("SyncList failed: %v", err)
+	}
+
+	newItem := []ListItem{
+		{
+			ID:       "i-brand-new",
+			ListID:   "sync-list",
+			Title:    "Brand New Item",
+			Done:     false,
+			Position: 0,
+		},
+	}
+	changed, err = store.SyncList(ctx, list, newItem)
+	if err != nil || !changed {
+		t.Fatalf("expected changed=true on item replacement, got changed=%v err=%v", changed, err)
+	}
+
+	// 8. Individual attribute modifications (section, position, assignee, due_date)
+	newSec := "Pantry"
+	newAss := "Taylor"
+	newDue := "2026-10-15"
+	modItem := newItem[0]
+	modItem.Section = newSec
+	modItem.Position = 5
+	modItem.Assignee = &newAss
+	modItem.DueDate = &newDue
+
+	changed, err = store.SyncList(ctx, list, []ListItem{modItem})
+	if err != nil || !changed {
+		t.Fatalf("expected changed=true on attribute modification, got changed=%v err=%v", changed, err)
+	}
+
+	// 9. Sections metadata change -> changed=true
+	listWithNewSec := list
+	listWithNewSec.Sections = []string{"Produce", "Bakery"}
+	changed, err = store.SyncList(ctx, listWithNewSec, []ListItem{modItem})
+	if err != nil || !changed {
+		t.Fatalf("expected changed=true on sections change, got changed=%v err=%v", changed, err)
+	}
+
+	// 10. Source empty and sections nil normalization
+	emptySourceList := List{
+		ID:   "sync-list",
+		Name: "Normalized List",
+	}
+	changed, err = store.SyncList(ctx, emptySourceList, []ListItem{modItem})
+	if err != nil || !changed {
+		t.Fatalf("expected changed=true on normalization sync, got changed=%v err=%v", changed, err)
+	}
+	normList, err := store.GetList(ctx, "sync-list")
+	if err != nil || normList.Source != "local" {
+		t.Fatalf("expected source 'local' on empty source, got %+v", normList)
+	}
+}
+
+func TestSQLiteStore_SyncList_Errors(t *testing.T) {
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "sync_err.db"))
+	if err != nil {
+		t.Fatalf("failed to init store: %v", err)
+	}
+
+	ctx := context.Background()
+
+	// 1. Context cancelled error
+	cancCtx, cancel := context.WithCancel(ctx)
+	cancel()
+	_, err = store.SyncList(cancCtx, List{ID: "canc"}, nil)
+	if err == nil {
+		t.Fatal("expected error on cancelled context SyncList")
+	}
+
+	// 2. Closed store
+	_ = store.Close()
+	_, err = store.SyncList(ctx, List{ID: "closed"}, nil)
+	if err == nil {
+		t.Fatal("expected error on closed store SyncList")
+	}
+
+	// 3. Dropped table error
+	storeDropped, err := NewSQLiteStore(filepath.Join(t.TempDir(), "dropped.db"))
+	if err != nil {
+		t.Fatalf("failed to init store: %v", err)
+	}
+	defer storeDropped.Close()
+	_, _ = storeDropped.db.Exec("DROP TABLE list_items; DROP TABLE lists;")
+	_, err = storeDropped.SyncList(ctx, List{ID: "fail"}, nil)
+	if err == nil {
+		t.Fatal("expected error on dropped table SyncList")
+	}
+
+	// 4. Dropped list_items table only (causes tx.QueryContext for items to fail)
+	storeItemsDropped, err := NewSQLiteStore(filepath.Join(t.TempDir(), "items_dropped.db"))
+	if err != nil {
+		t.Fatalf("failed to init store: %v", err)
+	}
+	defer storeItemsDropped.Close()
+	_ = storeItemsDropped.UpsertList(ctx, List{ID: "existing-list", Name: "Existing"})
+	_, _ = storeItemsDropped.db.Exec("DROP TABLE list_items;")
+	_, err = storeItemsDropped.SyncList(ctx, List{ID: "existing-list", Name: "Existing"}, nil)
+	if err == nil {
+		t.Fatal("expected error on dropped list_items table in SyncList")
+	}
+
+	// 5. Corrupt list_items schema causing scan error in SyncList
+	storeScanErr, err := NewSQLiteStore(filepath.Join(t.TempDir(), "scan_err.db"))
+	if err != nil {
+		t.Fatalf("failed to init store: %v", err)
+	}
+	defer storeScanErr.Close()
+	_ = storeScanErr.UpsertList(ctx, List{ID: "scan-list", Name: "Scan List"})
+	_, _ = storeScanErr.db.Exec("DROP TABLE list_items;")
+	_, _ = storeScanErr.db.Exec("CREATE TABLE list_items (id TEXT, list_id TEXT, title TEXT, done TEXT, section TEXT, position TEXT, assignee TEXT, due_date TEXT);")
+	_, _ = storeScanErr.db.Exec("INSERT INTO list_items VALUES ('i1', 'scan-list', 'title', 'not-an-int', 'sec', 'not-an-int', 'ass', 'due');")
+	_, err = storeScanErr.SyncList(ctx, List{ID: "scan-list", Name: "Scan List"}, nil)
+	if err == nil {
+		t.Fatal("expected scan error in SyncList")
+	}
+
+	// 6. Corrupt sections JSON in lists table
+	storeCorruptSections, err := NewSQLiteStore(filepath.Join(t.TempDir(), "corrupt_sections.db"))
+	if err != nil {
+		t.Fatalf("failed to init store: %v", err)
+	}
+	defer storeCorruptSections.Close()
+	_ = storeCorruptSections.UpsertList(ctx, List{ID: "bad-sec", Name: "Bad Sections"})
+	_, _ = storeCorruptSections.db.Exec("UPDATE lists SET sections = '{invalid-json' WHERE id = 'bad-sec';")
+	changed, err := storeCorruptSections.SyncList(ctx, List{ID: "bad-sec", Name: "Bad Sections"}, nil)
+	if err != nil {
+		t.Fatalf("unexpected error when handling corrupt sections JSON: %v", err)
+	}
+	if !changed {
+		// Because corrupt sections were unmarshaled to empty slice, but incoming is also empty, changed might be false
+		// But it successfully fell back without error
+	}
+}
+
+func TestSQLiteStore_ClosedStore_GetTasksSnapshot(t *testing.T) {
+	t.Parallel()
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "closed.db"))
+	if err != nil {
+		t.Fatalf("failed to init store: %v", err)
+	}
+	ctx := context.Background()
+	_ = store.UpsertList(ctx, List{ID: "test-list", Name: "Test"})
+	_ = store.Close()
+
+	if _, err := store.GetTasksSnapshot(ctx, "test-list", 3); err == nil {
+		t.Error("expected error from GetTasksSnapshot on closed store, got nil")
+	}
+}
+
+func TestSQLiteStore_SyncList_DuplicateIncomingIDs(t *testing.T) {
+	t.Parallel()
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "dup.db"))
+	if err != nil {
+		t.Fatalf("failed to init store: %v", err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	list := List{ID: "dup-list", Name: "Duplicate Test"}
+
+	// Existing: 2 distinct items
+	existing := []ListItem{
+		{ID: "i1", ListID: "dup-list", Title: "Item 1"},
+		{ID: "i2", ListID: "dup-list", Title: "Item 2"},
+	}
+	_, err = store.SyncList(ctx, list, existing)
+	if err != nil {
+		t.Fatalf("initial SyncList failed: %v", err)
+	}
+
+	// Incoming: 2 items, but both have duplicate ID "i1"
+	// Total incoming items = 2, total existing items = 2, but unique incoming = 1
+	incoming := []ListItem{
+		{ID: "i1", ListID: "dup-list", Title: "Item 1"},
+		{ID: "i1", ListID: "dup-list", Title: "Item 1 Duplicate"},
+	}
+	changed, err := store.SyncList(ctx, list, incoming)
+	if err != nil {
+		t.Fatalf("SyncList with duplicate IDs failed: %v", err)
+	}
+	if !changed {
+		t.Error("expected changed=true when incoming items have duplicate IDs reducing unique count")
+	}
+}

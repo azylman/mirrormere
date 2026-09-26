@@ -29,4 +29,26 @@ config_schema:
       minimum: 0
     db_path:
       type: string
+    gtasks:
+      type: object
+      properties:
+        tasklist_id:
+          type: string
+        token:
+          type: string
+        token_env:
+          type: string
+        base_url:
+          type: string
+      additionalProperties: false
+    http:
+      type: object
+      properties:
+        base_url:
+          type: string
+        token:
+          type: string
+        token_env:
+          type: string
+      additionalProperties: false
   additionalProperties: false
