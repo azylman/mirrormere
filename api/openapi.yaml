@@ -439,6 +439,30 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+  /api/voice/state:
+    post:
+      summary: Update voice interaction lifecycle state
+      description: Relays voice interaction state from voice companion to core and broadcasts voice.state.
+      operationId: postVoiceState
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VoiceStateRequest'
+      responses:
+        '200':
+          description: Voice state updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoiceStateResponse'
+        '400':
+          description: Invalid voice state request payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 components:
   schemas:
     ScreenSelectRequest:
@@ -772,6 +796,35 @@ components:
           enum: [playing, paused, buffering]
           example: playing
     ActionResponse:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          example: ok
+    VoiceStateRequest:
+      type: object
+      required:
+        - state
+      properties:
+        state:
+          type: string
+          enum: [idle, listening, transcribing, thinking, synthesizing, speaking, error]
+          example: listening
+        transcript:
+          type: string
+          nullable: true
+          example: "What time is Alex's next meeting?"
+        reply:
+          type: string
+          nullable: true
+          example: "Your next meeting is at 2 PM."
+        tts_engine:
+          type: string
+          nullable: true
+          example: kokoro
+    VoiceStateResponse:
       type: object
       required:
         - status

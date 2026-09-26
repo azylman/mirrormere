@@ -86,6 +86,17 @@ const (
 	VideoTriggerRequestTypeWebrtc VideoTriggerRequestType = "webrtc"
 )
 
+// Defines values for VoiceStateRequestState.
+const (
+	Error        VoiceStateRequestState = "error"
+	Idle         VoiceStateRequestState = "idle"
+	Listening    VoiceStateRequestState = "listening"
+	Speaking     VoiceStateRequestState = "speaking"
+	Synthesizing VoiceStateRequestState = "synthesizing"
+	Thinking     VoiceStateRequestState = "thinking"
+	Transcribing VoiceStateRequestState = "transcribing"
+)
+
 // ActionResponse defines model for ActionResponse.
 type ActionResponse struct {
 	Status string `json:"status"`
@@ -259,6 +270,22 @@ type VideoTriggerRequestPriority string
 // VideoTriggerRequestType defines model for VideoTriggerRequest.Type.
 type VideoTriggerRequestType string
 
+// VoiceStateRequest defines model for VoiceStateRequest.
+type VoiceStateRequest struct {
+	Reply      *string                `json:"reply"`
+	State      VoiceStateRequestState `json:"state"`
+	Transcript *string                `json:"transcript"`
+	TtsEngine  *string                `json:"tts_engine"`
+}
+
+// VoiceStateRequestState defines model for VoiceStateRequest.State.
+type VoiceStateRequestState string
+
+// VoiceStateResponse defines model for VoiceStateResponse.
+type VoiceStateResponse struct {
+	Status string `json:"status"`
+}
+
 // WidgetPushResponse defines model for WidgetPushResponse.
 type WidgetPushResponse struct {
 	Status    string    `json:"status"`
@@ -302,6 +329,9 @@ type PostVideoStateJSONRequestBody = VideoPlayerStateRequest
 // PostVideoTriggerJSONRequestBody defines body for PostVideoTrigger for application/json ContentType.
 type PostVideoTriggerJSONRequestBody = VideoTriggerRequest
 
+// PostVoiceStateJSONRequestBody defines body for PostVoiceState for application/json ContentType.
+type PostVoiceStateJSONRequestBody = VoiceStateRequest
+
 // PostWidgetPushJSONRequestBody defines body for PostWidgetPush for application/json ContentType.
 type PostWidgetPushJSONRequestBody PostWidgetPushJSONBody
 
@@ -343,6 +373,9 @@ type ServerInterface interface {
 	// Trigger video stream
 	// (POST /api/video/trigger)
 	PostVideoTrigger(w http.ResponseWriter, r *http.Request)
+	// Update voice interaction lifecycle state
+	// (POST /api/voice/state)
+	PostVoiceState(w http.ResponseWriter, r *http.Request)
 	// Push realtime widget payload
 	// (POST /api/widgets/{widget_id}/push)
 	PostWidgetPush(w http.ResponseWriter, r *http.Request, widgetId string)
@@ -550,6 +583,20 @@ func (siw *ServerInterfaceWrapper) PostVideoTrigger(w http.ResponseWriter, r *ht
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.PostVideoTrigger(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostVoiceState operation middleware
+func (siw *ServerInterfaceWrapper) PostVoiceState(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostVoiceState(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -803,6 +850,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc("GET "+options.BaseURL+"/api/video/state", wrapper.GetVideoState)
 	m.HandleFunc("POST "+options.BaseURL+"/api/video/state", wrapper.PostVideoState)
 	m.HandleFunc("POST "+options.BaseURL+"/api/video/trigger", wrapper.PostVideoTrigger)
+	m.HandleFunc("POST "+options.BaseURL+"/api/voice/state", wrapper.PostVoiceState)
 	m.HandleFunc("POST "+options.BaseURL+"/api/widgets/{widget_id}/push", wrapper.PostWidgetPush)
 	m.HandleFunc("GET "+options.BaseURL+"/api/widgets/{widget_id}/render", wrapper.GetWidgetRender)
 	m.HandleFunc("GET "+options.BaseURL+"/health", wrapper.GetHealth)

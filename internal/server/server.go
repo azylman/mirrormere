@@ -75,6 +75,11 @@ type VideoHandler interface {
 	GetVideoState(w http.ResponseWriter, r *http.Request)
 }
 
+// VoiceHandler handles voice pipeline state relay endpoints matching OpenAPI specifications.
+type VoiceHandler interface {
+	PostVoiceState(w http.ResponseWriter, r *http.Request)
+}
+
 // Config encapsulates configuration for the HTTP server.
 type Config struct {
 	Host              string
@@ -91,6 +96,7 @@ type Config struct {
 	ListsHandler      ListsHandler
 	AudioHandler      AudioHandler
 	VideoHandler      VideoHandler
+	VoiceHandler      VoiceHandler
 }
 
 // ApplyDefaults sets fallback values for any unspecified configuration fields.
@@ -148,6 +154,7 @@ type Server struct {
 	listsHandler   ListsHandler
 	audioHandler   AudioHandler
 	videoHandler   VideoHandler
+	voiceHandler   VoiceHandler
 }
 
 // New constructs a configured Server instance.
@@ -166,6 +173,7 @@ func New(cfg Config) *Server {
 		listsHandler:   cfg.ListsHandler,
 		audioHandler:   cfg.AudioHandler,
 		videoHandler:   cfg.VideoHandler,
+		voiceHandler:   cfg.VoiceHandler,
 	}
 
 	s.setupRoutes()
@@ -310,6 +318,20 @@ func (s *Server) VideoHandler() VideoHandler {
 	return s.videoHandler
 }
 
+// RegisterVoiceHandler dynamically registers or replaces the voice pipeline handler.
+func (s *Server) RegisterVoiceHandler(h VoiceHandler) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.voiceHandler = h
+}
+
+// VoiceHandler returns the currently registered voice handler.
+func (s *Server) VoiceHandler() VoiceHandler {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.voiceHandler
+}
+
 func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/healthz", s.handleHealth)
 	s.mux.HandleFunc("/health", s.handleHealth)
@@ -325,6 +347,7 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/api/video/dismiss", s.handleVideoDismiss)
 	s.mux.HandleFunc("/api/video/action", s.handleVideoAction)
 	s.mux.HandleFunc("/api/video/state", s.handleVideoState)
+	s.mux.HandleFunc("/api/voice/state", s.handleVoiceState)
 	s.mux.HandleFunc("/api/widgets/{widget_id}/render", s.handleWidgetRender)
 	s.mux.HandleFunc("/api/widgets/{widget_id}/push", s.handleWidgetPush)
 	s.mux.HandleFunc("/widget-types/{type}/assets/{path...}", s.handleWidgetAsset)
@@ -469,6 +492,17 @@ func (s *Server) handleVideoState(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.PostVideoState(w, r)
+}
+
+func (s *Server) handleVoiceState(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	h := s.voiceHandler
+	s.mu.RUnlock()
+	if h == nil {
+		http.NotFound(w, r)
+		return
+	}
+	h.PostVoiceState(w, r)
 }
 
 func (s *Server) handleWidgetRender(w http.ResponseWriter, r *http.Request) {
