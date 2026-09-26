@@ -499,6 +499,60 @@ func TestHandler_PostScreenPause(t *testing.T) {
 			t.Fatalf("expected 400, got %d", rec.Code)
 		}
 	})
+
+	t.Run("Missing paused field in empty body returns 400", func(t *testing.T) {
+		t.Parallel()
+		h := NewHandler(&mockController{})
+		req := httptest.NewRequest(http.MethodPost, "/api/screen/pause", strings.NewReader(`{}`))
+		rec := httptest.NewRecorder()
+
+		h.PostScreenPause(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d", rec.Code)
+		}
+		var errResp api.ErrorResponse
+		_ = json.Unmarshal(rec.Body.Bytes(), &errResp)
+		if errResp.Error != "invalid payload: paused must be a boolean" {
+			t.Errorf("expected %q, got %q", "invalid payload: paused must be a boolean", errResp.Error)
+		}
+	})
+
+	t.Run("Missing paused field with duration returns 400", func(t *testing.T) {
+		t.Parallel()
+		h := NewHandler(&mockController{})
+		req := httptest.NewRequest(http.MethodPost, "/api/screen/pause", strings.NewReader(`{"duration_seconds":120}`))
+		rec := httptest.NewRecorder()
+
+		h.PostScreenPause(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d", rec.Code)
+		}
+		var errResp api.ErrorResponse
+		_ = json.Unmarshal(rec.Body.Bytes(), &errResp)
+		if errResp.Error != "invalid payload: paused must be a boolean" {
+			t.Errorf("expected %q, got %q", "invalid payload: paused must be a boolean", errResp.Error)
+		}
+	})
+
+	t.Run("Non-boolean paused field returns 400", func(t *testing.T) {
+		t.Parallel()
+		h := NewHandler(&mockController{})
+		req := httptest.NewRequest(http.MethodPost, "/api/screen/pause", strings.NewReader(`{"paused":"true"}`))
+		rec := httptest.NewRecorder()
+
+		h.PostScreenPause(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d", rec.Code)
+		}
+		var errResp api.ErrorResponse
+		_ = json.Unmarshal(rec.Body.Bytes(), &errResp)
+		if errResp.Error != "invalid payload: paused must be a boolean" {
+			t.Errorf("expected %q, got %q", "invalid payload: paused must be a boolean", errResp.Error)
+		}
+	})
 }
 
 func TestWriteJSONAndErrorHelpers(t *testing.T) {

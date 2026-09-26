@@ -119,41 +119,38 @@ func (c *Coordinator) ScreenRotateData() events.ScreenRotateData {
 // SelectScreen navigates directly to a target screen index and broadcasts screen.rotate.
 func (c *Coordinator) SelectScreen(index int) (events.ScreenRotateData, error) {
 	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	if c.stopped {
-		c.mu.Unlock()
 		return events.ScreenRotateData{}, errors.New("coordinator stopped")
 	}
 
 	if c.snapshot == nil || c.snapshot.Layout == nil || c.snapshot.Layout.TotalScreens <= 0 {
-		c.mu.Unlock()
 		return events.ScreenRotateData{}, ErrNoScreens
 	}
 
 	total := c.snapshot.Layout.TotalScreens
 	if index < 0 || index >= total {
-		c.mu.Unlock()
 		return events.ScreenRotateData{}, ErrInvalidScreenIndex
 	}
 
 	c.currentScreen = index
 	c.armRotationTimerLocked()
 	data := c.buildRotateDataLocked()
-	c.mu.Unlock()
-
-	c.publishRotate(data)
+	c.publishRotateLocked(data)
 	return data, nil
 }
 
 // AdvanceScreen navigates sequentially forward ("next") or backward ("prev") and broadcasts screen.rotate.
 func (c *Coordinator) AdvanceScreen(direction string) (events.ScreenRotateData, error) {
 	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	if c.stopped {
-		c.mu.Unlock()
 		return events.ScreenRotateData{}, errors.New("coordinator stopped")
 	}
 
 	if c.snapshot == nil || c.snapshot.Layout == nil || c.snapshot.Layout.TotalScreens <= 0 {
-		c.mu.Unlock()
 		return events.ScreenRotateData{}, ErrNoScreens
 	}
 
@@ -162,8 +159,7 @@ func (c *Coordinator) AdvanceScreen(direction string) (events.ScreenRotateData, 
 		// Single screen: rotation is a safe no-op per Edge Case 1
 		c.currentScreen = 0
 		data := c.buildRotateDataLocked()
-		c.mu.Unlock()
-		c.publishRotate(data)
+		c.publishRotateLocked(data)
 		return data, nil
 	}
 
@@ -173,15 +169,12 @@ func (c *Coordinator) AdvanceScreen(direction string) (events.ScreenRotateData, 
 	case "prev":
 		c.currentScreen = (c.currentScreen - 1 + total) % total
 	default:
-		c.mu.Unlock()
 		return events.ScreenRotateData{}, ErrInvalidDirection
 	}
 
 	c.armRotationTimerLocked()
 	data := c.buildRotateDataLocked()
-	c.mu.Unlock()
-
-	c.publishRotate(data)
+	c.publishRotateLocked(data)
 	return data, nil
 }
 
@@ -242,12 +235,13 @@ func (c *Coordinator) ResumeRotation() (int, error) {
 // It clamps currentScreen if the new screen count decreased, updates timers, and broadcasts screen.rotate.
 func (c *Coordinator) UpdateConfig(snap *config.Snapshot) events.ScreenRotateData {
 	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	c.snapshot = snap
 
 	if snap == nil || snap.Layout == nil || snap.Layout.TotalScreens <= 0 {
 		c.currentScreen = 0
 		c.stopRotationTimerLocked()
-		c.mu.Unlock()
 		return events.ScreenRotateData{}
 	}
 
@@ -258,9 +252,7 @@ func (c *Coordinator) UpdateConfig(snap *config.Snapshot) events.ScreenRotateDat
 
 	c.armRotationTimerLocked()
 	data := c.buildRotateDataLocked()
-	c.mu.Unlock()
-
-	c.publishRotate(data)
+	c.publishRotateLocked(data)
 	return data
 }
 
@@ -322,13 +314,13 @@ func (c *Coordinator) stopPauseTimerLocked() {
 
 func (c *Coordinator) onRotateTimeout(gen uint64) {
 	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	if c.stopped || c.paused || c.timerGen != gen {
-		c.mu.Unlock()
 		return
 	}
 
 	if c.snapshot == nil || c.snapshot.Layout == nil || c.snapshot.Layout.TotalScreens <= 1 {
-		c.mu.Unlock()
 		return
 	}
 
@@ -336,9 +328,7 @@ func (c *Coordinator) onRotateTimeout(gen uint64) {
 	c.currentScreen = (c.currentScreen + 1) % total
 	c.armRotationTimerLocked()
 	data := c.buildRotateDataLocked()
-	c.mu.Unlock()
-
-	c.publishRotate(data)
+	c.publishRotateLocked(data)
 }
 
 func (c *Coordinator) onPauseTimeout(gen uint64) {
@@ -382,7 +372,7 @@ func (c *Coordinator) buildRotateDataLocked() events.ScreenRotateData {
 	return data
 }
 
-func (c *Coordinator) publishRotate(data events.ScreenRotateData) {
+func (c *Coordinator) publishRotateLocked(data events.ScreenRotateData) {
 	if c.broadcaster == nil {
 		return
 	}

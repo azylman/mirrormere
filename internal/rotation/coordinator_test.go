@@ -1,6 +1,7 @@
 package rotation
 
 import (
+	"encoding/json"
 	"errors"
 	"sync"
 	"testing"
@@ -486,8 +487,82 @@ func TestCoordinator_BranchCoverage(t *testing.T) {
 	coord2.Stop()
 	coord2.onPauseTimeout(123) // stopped -> return
 
-	// 4. publishRotate with nil broadcaster
+	// 4. publishRotateLocked with nil broadcaster
 	coord3 := NewCoordinator(Config{Broadcaster: nil}, snap)
-	coord3.publishRotate(events.ScreenRotateData{})
+	coord3.publishRotateLocked(events.ScreenRotateData{})
 	coord3.Stop()
+}
+
+func TestCoordinator_ConcurrentTimerAndAdvanceScreen(t *testing.T) {
+	t.Parallel()
+
+	mb := &mockBroadcaster{}
+	snap := makeTestSnapshot(4, 1, 120) // 4 screens
+	coord := NewCoordinator(Config{
+		Broadcaster: mb,
+	}, snap)
+	defer coord.Stop()
+
+	var wg sync.WaitGroup
+	const iterations = 50
+
+	// Goroutine 1: Invoke onRotateTimeout simulating timer firing
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < iterations; i++ {
+			coord.mu.RLock()
+			gen := coord.timerGen
+			coord.mu.RUnlock()
+			coord.onRotateTimeout(gen)
+			time.Sleep(100 * time.Microsecond)
+		}
+	}()
+
+	// Goroutine 2: Rapidly invoke AdvanceScreen
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < iterations; i++ {
+			_, _ = coord.AdvanceScreen("next")
+			time.Sleep(100 * time.Microsecond)
+		}
+	}()
+
+	// Goroutine 3: Rapidly invoke SelectScreen
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < iterations; i++ {
+			_, _ = coord.SelectScreen(i % 4)
+			time.Sleep(100 * time.Microsecond)
+		}
+	}()
+
+	wg.Wait()
+
+	// Verify that the last published screen.rotate event strictly matches coord.CurrentScreen()
+	mb.mu.Lock()
+	defer mb.mu.Unlock()
+
+	var lastRotate events.ScreenRotateData
+	found := false
+	for i := len(mb.events) - 1; i >= 0; i-- {
+		if mb.events[i] == events.EventScreenRotate {
+			if err := json.Unmarshal(mb.datas[i], &lastRotate); err == nil {
+				found = true
+				break
+			}
+		}
+	}
+
+	if !found {
+		t.Fatal("expected at least one screen.rotate event published")
+	}
+
+	current := coord.CurrentScreen()
+	if lastRotate.CurrentScreen != current {
+		t.Fatalf("race condition detected: last published current_screen=%d does not match Coordinator.CurrentScreen()=%d",
+			lastRotate.CurrentScreen, current)
+	}
 }
