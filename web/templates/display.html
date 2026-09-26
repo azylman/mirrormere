@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#090514">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Mirrormere</title>
+  <link rel="stylesheet" id="hud-stylesheet" href="/style.css">
+</head>
+<body>
+  <div id="mirrormere-app">
+    <header class="header-zone">
+      <div class="header-time-block">
+        <div class="header-clock" id="header-clock">--:--</div>
+        <div class="header-date" id="header-date">------</div>
+      </div>
+      <div class="header-weather" id="header-weather">
+        <span class="pill-badge" id="weather-pill">
+          <span class="weather-temp" id="weather-temp">--°</span>
+          <span class="weather-condition" id="weather-condition"></span>
+        </span>
+      </div>
+      <div class="header-status">
+        <span class="status-dot status-ok" id="system-status-dot" title="System Status: Healthy"></span>
+      </div>
+    </header>
+
+    <main class="grid-canvas" id="grid-canvas">
+      <!-- Active screen widgets mounted dynamically by carousel.js -->
+    </main>
+  </div>
+
+  <script src="/static/js/sse.js"></script>
+  <script src="/static/js/carousel.js"></script>
+  <script src="/static/js/display.js"></script>
+</body>
+</html>
