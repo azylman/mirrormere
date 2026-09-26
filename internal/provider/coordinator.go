@@ -275,6 +275,15 @@ func (c *ProviderCoordinator) UpdateConfig(snap *config.Snapshot) error {
 		}
 	}
 
+	// If household timezone changed, restart unchanged widgets with updated timezone per SPEC-012 §5
+	if diff.TimezoneChanged {
+		for _, u := range diff.Unchanged {
+			c.stopWorkerLocked(u.ID)
+			c.cache.Purge(u.ID)
+			c.startSingleWorkerLocked(&u, snap)
+		}
+	}
+
 	// 3. Start newly added widgets
 	for i := range diff.Added {
 		c.startSingleWorkerLocked(&diff.Added[i], snap)
@@ -382,7 +391,7 @@ func (c *ProviderCoordinator) startSingleWorkerLocked(w *config.WidgetConfig, sn
 
 	// Prepare configuration map and instance options
 	cfgMap := c.buildProviderConfig(w)
-	opts := c.buildInitOptions(w, pkg)
+	opts := c.buildInitOptions(w, pkg, snap)
 	initCtx, cancelInit := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancelInit()
 
@@ -633,7 +642,7 @@ func (c *ProviderCoordinator) buildProviderConfig(w *config.WidgetConfig) map[st
 	return cfgMap
 }
 
-func (c *ProviderCoordinator) buildInitOptions(w *config.WidgetConfig, pkg *domain.Package) InitOptions {
+func (c *ProviderCoordinator) buildInitOptions(w *config.WidgetConfig, pkg *domain.Package, snap *config.Snapshot) InitOptions {
 	method := w.Method
 	if method == "" && w.Endpoint != "" {
 		method = "POST"
@@ -663,6 +672,13 @@ func (c *ProviderCoordinator) buildInitOptions(w *config.WidgetConfig, pkg *doma
 		respSchema = pkg.Manifest.ResponseSchema
 	}
 
+	tz := ""
+	if snap != nil && snap.Config != nil {
+		tz = snap.Config.Timezone
+	} else if c.snapshot != nil && c.snapshot.Config != nil {
+		tz = c.snapshot.Config.Timezone
+	}
+
 	return InitOptions{
 		ID:             w.ID,
 		Type:           w.Type,
@@ -670,6 +686,7 @@ func (c *ProviderCoordinator) buildInitOptions(w *config.WidgetConfig, pkg *doma
 		Endpoint:       w.Endpoint,
 		Method:         method,
 		Token:          token,
+		Timezone:       tz,
 		Secrets:        secrets,
 		ResponseSchema: respSchema,
 	}

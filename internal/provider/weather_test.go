@@ -71,12 +71,27 @@ func TestWeatherProvider_Init_Validation(t *testing.T) {
 		errorSubstr string
 	}{
 		{
-			name: "valid imperial with float coordinates",
+			name: "valid imperial with float coordinates and timezone in opts",
 			cfg: map[string]any{
 				"latitude":  37.8044,
 				"longitude": -122.2712,
 				"units":     "imperial",
-				"timezone":  "America/Los_Angeles",
+			},
+			opts: provider.InitOptions{
+				Timezone: "America/Los_Angeles",
+			},
+			expectError: false,
+		},
+		{
+			name: "valid metric with string coordinates and legacy config timezone ignored",
+			cfg: map[string]any{
+				"latitude":  "51.5074",
+				"longitude": "-0.1278",
+				"units":     "metric",
+				"timezone":  "America/Chicago",
+			},
+			opts: provider.InitOptions{
+				Timezone: "Europe/London",
 			},
 			expectError: false,
 		},
@@ -258,8 +273,9 @@ func TestWeatherProvider_Fetch_Imperial(t *testing.T) {
 		"latitude":  37.8044,
 		"longitude": -122.2712,
 		"units":     "imperial",
-		"timezone":  "America/Los_Angeles",
-	}, provider.InitOptions{})
+	}, provider.InitOptions{
+		Timezone: "America/Los_Angeles",
+	})
 	if err != nil {
 		t.Fatalf("Init failed: %v", err)
 	}
@@ -329,6 +345,9 @@ func TestWeatherProvider_Fetch_Imperial(t *testing.T) {
 	if !strings.Contains(receivedQuery, "precipitation_unit=inch") {
 		t.Errorf("expected precipitation_unit=inch in query, got %q", receivedQuery)
 	}
+	if !strings.Contains(receivedQuery, "timezone=America%2FLos_Angeles") {
+		t.Errorf("expected timezone=America%%2FLos_Angeles in query, got %q", receivedQuery)
+	}
 }
 
 func TestWeatherProvider_Fetch_Metric(t *testing.T) {
@@ -371,6 +390,9 @@ func TestWeatherProvider_Fetch_Metric(t *testing.T) {
 	}
 	if !strings.Contains(receivedQuery, "precipitation_unit=mm") {
 		t.Errorf("expected precipitation_unit=mm in query, got %q", receivedQuery)
+	}
+	if !strings.Contains(receivedQuery, "timezone=UTC") {
+		t.Errorf("expected default timezone=UTC in query, got %q", receivedQuery)
 	}
 }
 

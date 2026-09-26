@@ -182,7 +182,11 @@ func (p *HeaderWeatherPoller) FetchOnce(ctx context.Context) (*events.HeaderWeat
 	q.Set("longitude", fmt.Sprintf("%.4f", cfg.Longitude))
 	q.Set("current", "temperature_2m,weather_code")
 	q.Set("temperature_unit", tempUnit)
-	q.Set("timezone", "auto")
+	if tz != "" {
+		q.Set("timezone", tz)
+	} else {
+		q.Set("timezone", "UTC")
+	}
 	parsedURL.RawQuery = q.Encode()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, parsedURL.String(), nil)
