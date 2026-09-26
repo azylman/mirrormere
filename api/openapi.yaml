@@ -202,6 +202,46 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+  /api/lists/{list_id}/items:
+    get:
+      summary: Get household list items
+      description: Retrieves all current items for a specific list from the local store with optional completed filter.
+      operationId: getListItems
+      parameters:
+        - name: list_id
+          in: path
+          required: true
+          description: Canonical list identifier
+          schema:
+            type: string
+        - name: include_done
+          in: query
+          required: false
+          description: If false, filters out completed items (default true)
+          schema:
+            type: boolean
+            default: true
+      responses:
+        '200':
+          description: List items retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ListItem'
+        '400':
+          description: Invalid query parameter syntax
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: List not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 components:
   schemas:
     ScreenSelectRequest:
@@ -305,3 +345,48 @@ components:
           type: string
           format: date-time
           example: 2026-09-24T22:20:00Z
+    ListItem:
+      type: object
+      required:
+        - id
+        - list_id
+        - title
+        - done
+        - position
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+          example: i1
+        list_id:
+          type: string
+          example: groceries
+        title:
+          type: string
+          example: Oat milk
+        done:
+          type: boolean
+          example: false
+        section:
+          type: string
+          example: Dairy
+        position:
+          type: integer
+          example: 0
+        assignee:
+          type: string
+          nullable: true
+          example: Alex
+        due_date:
+          type: string
+          nullable: true
+          example: "2026-09-26"
+        created_at:
+          type: string
+          format: date-time
+          example: 2026-09-24T22:00:00Z
+        updated_at:
+          type: string
+          format: date-time
+          example: 2026-09-24T22:30:00Z

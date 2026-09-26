@@ -105,6 +105,9 @@ func NewRegistry() *DefaultRegistry {
 	r.Register("photos", func() Provider {
 		return NewPhotosProvider()
 	})
+	r.Register("tasks", func() Provider {
+		return NewTasksProvider()
+	})
 	return r
 }
 

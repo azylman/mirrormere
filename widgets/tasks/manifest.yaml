@@ -1,0 +1,32 @@
+name: tasks
+version: "1.0.0"
+description: Ambient household checklist and tasks widget backed by local SQLite storage.
+provider: tasks
+
+capabilities:
+  - ambient-static
+
+default_dimensions: [2, 1]
+
+supported_dimensions:
+  - [2, 1]
+  - [2, 2]
+  - [3, 2]
+  - [4, 1]
+  - [4, 2]
+
+config_schema:
+  type: object
+  properties:
+    list_id:
+      type: string
+    list_name:
+      type: string
+    source:
+      type: string
+    show_completed:
+      type: integer
+      minimum: 0
+    db_path:
+      type: string
+  additionalProperties: false

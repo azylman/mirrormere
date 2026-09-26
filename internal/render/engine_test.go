@@ -14,6 +14,7 @@ import (
 	"github.com/azylman/mirrormere/internal/layout"
 	"github.com/azylman/mirrormere/internal/provider"
 	"github.com/azylman/mirrormere/internal/render"
+	"github.com/azylman/mirrormere/internal/tasks"
 	"github.com/azylman/mirrormere/internal/widget"
 )
 
@@ -918,6 +919,135 @@ func TestEngine_RenderWidget_CalendarAgendaPackage(t *testing.T) {
 	}
 	if !strings.Contains(string(htmlLoading), "Loading calendar agenda...") {
 		t.Errorf("expected 'Loading calendar agenda...' in loading output: %s", htmlLoading)
+	}
+}
+
+func TestEngine_RenderWidget_TasksPackage(t *testing.T) {
+	t.Parallel()
+
+	repoWidgetsDir := filepath.Join("..", "..", "widgets")
+	loader := widget.NewLoader(repoWidgetsDir, t.TempDir())
+	pkg, err := loader.LoadPackage("tasks")
+	if err != nil {
+		t.Fatalf("failed to load tasks package: %v", err)
+	}
+
+	snap := &config.Snapshot{
+		Config: &config.Config{
+			Display: config.DisplayConfig{
+				Widgets: []config.WidgetConfig{
+					{ID: "w-tasks-loaded", Type: "tasks", Dimensions: []int{2, 1}},
+					{ID: "w-tasks-empty", Type: "tasks", Dimensions: []int{2, 1}},
+					{ID: "w-tasks-loading", Type: "tasks", Dimensions: []int{2, 1}},
+				},
+			},
+		},
+		Packages: map[string]*domain.Package{"tasks": pkg},
+	}
+
+	assignee := "Alex"
+	dueDate := "2026-09-26"
+	now := time.Now().UTC()
+
+	tasksData := tasks.TasksSnapshot{
+		List: tasks.List{
+			ID:        "groceries",
+			Name:      "Groceries",
+			Source:    "local",
+			Sections:  []string{"Produce", "Dairy"},
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+		Items: []tasks.ListItem{
+			{
+				ID:        "i1",
+				ListID:    "groceries",
+				Title:     "Oat Milk",
+				Done:      false,
+				Section:   "Dairy",
+				Position:  0,
+				Assignee:  &assignee,
+				DueDate:   &dueDate,
+				CreatedAt: now,
+				UpdatedAt: now,
+			},
+			{
+				ID:        "i2",
+				ListID:    "groceries",
+				Title:     "Coffee Beans",
+				Done:      true,
+				Section:   "Pantry",
+				Position:  1,
+				CreatedAt: now,
+				UpdatedAt: now,
+			},
+		},
+	}
+
+	emptyTasksData := tasks.TasksSnapshot{
+		List: tasks.List{
+			ID:        "empty-list",
+			Name:      "Chores",
+			Source:    "local",
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+		Items: []tasks.ListItem{},
+	}
+
+	p := &mockSnapshotProvider{
+		snapshot: snap,
+		states: map[string]mockState{
+			"w-tasks-loaded":  {data: tasksData, state: "healthy", timestamp: "2026-09-26T12:00:00Z"},
+			"w-tasks-empty":   {data: emptyTasksData, state: "healthy", timestamp: "2026-09-26T12:00:00Z"},
+			"w-tasks-loading": {data: nil, state: "healthy"},
+		},
+	}
+
+	resolver := &mockResolver{packages: map[string]*domain.Package{"tasks": pkg}}
+	engine := render.NewEngine(resolver, p)
+
+	// 1. Render loaded tasks
+	htmlLoaded, err := engine.RenderWidget(context.Background(), "w-tasks-loaded")
+	if err != nil {
+		t.Fatalf("RenderWidget failed on loaded tasks: %v", err)
+	}
+	htmlStr := string(htmlLoaded)
+	if !strings.Contains(htmlStr, "Groceries") {
+		t.Errorf("expected 'Groceries' in output: %s", htmlStr)
+	}
+	if !strings.Contains(htmlStr, "Oat Milk") {
+		t.Errorf("expected 'Oat Milk' in output: %s", htmlStr)
+	}
+	if !strings.Contains(htmlStr, "Coffee Beans") {
+		t.Errorf("expected 'Coffee Beans' in output: %s", htmlStr)
+	}
+	if !strings.Contains(htmlStr, "task-item-done") {
+		t.Errorf("expected 'task-item-done' in output: %s", htmlStr)
+	}
+	if !strings.Contains(htmlStr, "@Alex") {
+		t.Errorf("expected '@Alex' in output: %s", htmlStr)
+	}
+	if !strings.Contains(htmlStr, "#Dairy") {
+		t.Errorf("expected '#Dairy' in output: %s", htmlStr)
+	}
+
+	// 2. Render empty tasks
+	htmlEmpty, err := engine.RenderWidget(context.Background(), "w-tasks-empty")
+	if err != nil {
+		t.Fatalf("RenderWidget failed on empty tasks: %v", err)
+	}
+	if !strings.Contains(string(htmlEmpty), "All tasks completed") {
+		t.Errorf("expected 'All tasks completed' in empty output: %s", htmlEmpty)
+	}
+
+	// 3. Render loading tasks
+	htmlLoading, err := engine.RenderWidget(context.Background(), "w-tasks-loading")
+	if err != nil {
+		t.Fatalf("RenderWidget failed on loading tasks: %v", err)
+	}
+	if !strings.Contains(string(htmlLoading), "Loading checklist...") {
+		t.Errorf("expected 'Loading checklist...' in loading output: %s", htmlLoading)
 	}
 }
 

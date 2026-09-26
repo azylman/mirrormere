@@ -30,6 +30,20 @@ type HealthResponse struct {
 	Status string `json:"status"`
 }
 
+// ListItem defines model for ListItem.
+type ListItem struct {
+	Assignee  *string   `json:"assignee"`
+	CreatedAt time.Time `json:"created_at"`
+	Done      bool      `json:"done"`
+	DueDate   *string   `json:"due_date"`
+	Id        string    `json:"id"`
+	ListId    string    `json:"list_id"`
+	Position  int       `json:"position"`
+	Section   *string   `json:"section,omitempty"`
+	Title     string    `json:"title"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 // ScreenAdvanceRequest defines model for ScreenAdvanceRequest.
 type ScreenAdvanceRequest struct {
 	// Direction Direction to advance screen (next or prev)
@@ -75,6 +89,12 @@ type WidgetPushResponse struct {
 	WidgetId  string    `json:"widget_id"`
 }
 
+// GetListItemsParams defines parameters for GetListItems.
+type GetListItemsParams struct {
+	// IncludeDone If false, filters out completed items (default true)
+	IncludeDone *bool `form:"include_done,omitempty" json:"include_done,omitempty"`
+}
+
 // PostWidgetPushJSONBody defines parameters for PostWidgetPush.
 type PostWidgetPushJSONBody map[string]interface{}
 
@@ -92,6 +112,9 @@ type PostWidgetPushJSONRequestBody PostWidgetPushJSONBody
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
+	// Get household list items
+	// (GET /api/lists/{list_id}/items)
+	GetListItems(w http.ResponseWriter, r *http.Request, listId string, params GetListItemsParams)
 	// Advance screen sequentially
 	// (POST /api/screen/advance)
 	PostScreenAdvance(w http.ResponseWriter, r *http.Request)
@@ -126,6 +149,42 @@ type ServerInterfaceWrapper struct {
 }
 
 type MiddlewareFunc func(http.Handler) http.Handler
+
+// GetListItems operation middleware
+func (siw *ServerInterfaceWrapper) GetListItems(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "list_id" -------------
+	var listId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "list_id", r.PathValue("list_id"), &listId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "list_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetListItemsParams
+
+	// ------------- Optional query parameter "include_done" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "include_done", r.URL.Query(), &params.IncludeDone)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "include_done", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetListItems(w, r, listId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
 
 // PostScreenAdvance operation middleware
 func (siw *ServerInterfaceWrapper) PostScreenAdvance(w http.ResponseWriter, r *http.Request) {
@@ -401,6 +460,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 		ErrorHandlerFunc:   options.ErrorHandlerFunc,
 	}
 
+	m.HandleFunc("GET "+options.BaseURL+"/api/lists/{list_id}/items", wrapper.GetListItems)
 	m.HandleFunc("POST "+options.BaseURL+"/api/screen/advance", wrapper.PostScreenAdvance)
 	m.HandleFunc("POST "+options.BaseURL+"/api/screen/pause", wrapper.PostScreenPause)
 	m.HandleFunc("POST "+options.BaseURL+"/api/screen/select", wrapper.PostScreenSelect)
