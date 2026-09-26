@@ -886,11 +886,17 @@ func TestServer_VideoHandler(t *testing.T) {
 }
 
 type mockServerVoiceHandler struct {
-	stateCalls int
+	stateCalls    int
+	interactCalls int
 }
 
 func (m *mockServerVoiceHandler) PostVoiceState(w http.ResponseWriter, r *http.Request) {
 	m.stateCalls++
+	w.WriteHeader(http.StatusOK)
+}
+
+func (m *mockServerVoiceHandler) PostVoiceInteract(w http.ResponseWriter, r *http.Request) {
+	m.interactCalls++
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -910,6 +916,13 @@ func TestServer_VoiceHandler(t *testing.T) {
 		t.Fatalf("expected 404 when VoiceHandler unset, got %d", rec.Code)
 	}
 
+	reqInteract := httptest.NewRequest(http.MethodPost, "/api/voice/interact", nil)
+	recInteract := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(recInteract, reqInteract)
+	if recInteract.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 when VoiceHandler unset for interact, got %d", recInteract.Code)
+	}
+
 	// Case 2: Config.VoiceHandler set at creation
 	mockH := &mockServerVoiceHandler{}
 	srvWithHandler := server.New(server.Config{VoiceHandler: mockH})
@@ -924,7 +937,17 @@ func TestServer_VoiceHandler(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rec2.Code)
 	}
 	if mockH.stateCalls != 1 {
-		t.Fatalf("expected 1 call, got %d", mockH.stateCalls)
+		t.Fatalf("expected 1 state call, got %d", mockH.stateCalls)
+	}
+
+	reqInteract2 := httptest.NewRequest(http.MethodPost, "/api/voice/interact", nil)
+	recInteract2 := httptest.NewRecorder()
+	srvWithHandler.Routes().ServeHTTP(recInteract2, reqInteract2)
+	if recInteract2.Code != http.StatusOK {
+		t.Fatalf("expected 200 for interact, got %d", recInteract2.Code)
+	}
+	if mockH.interactCalls != 1 {
+		t.Fatalf("expected 1 interact call, got %d", mockH.interactCalls)
 	}
 
 	// Case 3: RegisterVoiceHandler dynamically updates handler
@@ -941,7 +964,17 @@ func TestServer_VoiceHandler(t *testing.T) {
 		t.Fatalf("expected 200 after dynamic registration, got %d", rec3.Code)
 	}
 	if mockH2.stateCalls != 1 {
-		t.Fatalf("expected mockH2 to receive call, got %d", mockH2.stateCalls)
+		t.Fatalf("expected mockH2 to receive state call, got %d", mockH2.stateCalls)
+	}
+
+	reqInteract3 := httptest.NewRequest(http.MethodPost, "/api/voice/interact", nil)
+	recInteract3 := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(recInteract3, reqInteract3)
+	if recInteract3.Code != http.StatusOK {
+		t.Fatalf("expected 200 after dynamic registration for interact, got %d", recInteract3.Code)
+	}
+	if mockH2.interactCalls != 1 {
+		t.Fatalf("expected mockH2 to receive interact call, got %d", mockH2.interactCalls)
 	}
 }
 

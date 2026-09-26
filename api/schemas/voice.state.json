@@ -40,6 +40,13 @@
         "null"
       ],
       "description": "Name of the active TTS engine synthesizing or speaking audio (e.g. kokoro, elevenlabs, piper)"
+    },
+    "status": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Active intermediate tool execution or thinking status badge streamed from agent brain"
     }
   },
   "additionalProperties": false

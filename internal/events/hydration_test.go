@@ -93,8 +93,9 @@ func TestInMemoryStateProvider_GettersAndSetters(t *testing.T) {
 	}
 
 	transcript := "hello"
-	provider.SetVoiceState(&VoiceStateData{State: "listening", Transcript: &transcript})
-	if provider.GetVoiceState().State != "listening" || *provider.GetVoiceState().Transcript != "hello" {
+	status := "⚡ Running tool..."
+	provider.SetVoiceState(&VoiceStateData{State: "thinking", Transcript: &transcript, Status: &status})
+	if provider.GetVoiceState().State != "thinking" || *provider.GetVoiceState().Transcript != "hello" || *provider.GetVoiceState().Status != status {
 		t.Error("voice setter failed")
 	}
 

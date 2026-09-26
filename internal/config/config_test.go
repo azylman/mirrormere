@@ -1308,4 +1308,114 @@ display:
 	}
 }
 
+func TestVoiceHubConfig(t *testing.T) {
+	t.Parallel()
+
+	// Nil receiver tests
+	var nilVH *config.VoiceHubConfig
+	if nilVH.IsEnabled() {
+		t.Error("expected nil VoiceHubConfig IsEnabled to be false")
+	}
+	if nilVH.GetBrainTimeoutSeconds() != 30 {
+		t.Errorf("expected default brain timeout 30, got %d", nilVH.GetBrainTimeoutSeconds())
+	}
+	if nilVH.GetTTSTimeoutSeconds() != 10 {
+		t.Errorf("expected default tts timeout 10, got %d", nilVH.GetTTSTimeoutSeconds())
+	}
+	if nilVH.GetTTSVoice() != "af_bella" {
+		t.Errorf("expected default voice af_bella, got %s", nilVH.GetTTSVoice())
+	}
+	if nilVH.GetTTSModel() != "kokoro" {
+		t.Errorf("expected default model kokoro, got %s", nilVH.GetTTSModel())
+	}
+
+	// Populated tests
+	timeout30 := 45
+	ttsTimeout := 15
+	vh := &config.VoiceHubConfig{
+		Enabled:             true,
+		BrainTimeoutSeconds: &timeout30,
+		TTSTimeoutSeconds:   &ttsTimeout,
+		TTSVoice:            "custom_voice",
+		TTSModel:            "piper",
+	}
+	if !vh.IsEnabled() {
+		t.Error("expected IsEnabled to be true")
+	}
+	if vh.GetBrainTimeoutSeconds() != 45 {
+		t.Errorf("expected 45, got %d", vh.GetBrainTimeoutSeconds())
+	}
+	if vh.GetTTSTimeoutSeconds() != 15 {
+		t.Errorf("expected 15, got %d", vh.GetTTSTimeoutSeconds())
+	}
+	if vh.GetTTSVoice() != "custom_voice" {
+		t.Errorf("expected custom_voice, got %s", vh.GetTTSVoice())
+	}
+	if vh.GetTTSModel() != "piper" {
+		t.Errorf("expected piper, got %s", vh.GetTTSModel())
+	}
+
+	// Parsing from YAML
+	raw := []byte(`
+timezone: UTC
+display:
+  widgets:
+    - id: test
+      type: spacer
+voice_hub:
+  enabled: true
+  stt_url: "tcp://192.168.1.70:10300"
+  brain_url: "http://aerial-brain:4000/api/voice/ask"
+  brain_timeout_seconds: 25
+  tts_url: "http://192.168.1.70:8880/v1/audio/speech"
+  tts_voice: "af_bella"
+  tts_model: "kokoro"
+  tts_timeout_seconds: 8
+`)
+	cfg, err := config.ParseWithEnv(raw, mockGetenv(nil))
+	if err != nil {
+		t.Fatalf("unexpected error parsing voice_hub: %v", err)
+	}
+	if cfg.VoiceHub == nil || !cfg.VoiceHub.Enabled {
+		t.Fatal("expected voice_hub to be enabled")
+	}
+	if cfg.VoiceHub.GetBrainTimeoutSeconds() != 25 {
+		t.Errorf("expected 25, got %d", cfg.VoiceHub.GetBrainTimeoutSeconds())
+	}
+	if cfg.VoiceHub.GetTTSTimeoutSeconds() != 8 {
+		t.Errorf("expected 8, got %d", cfg.VoiceHub.GetTTSTimeoutSeconds())
+	}
+
+	// Invalid timeouts in Validate
+	badRaw := []byte(`
+timezone: UTC
+display:
+  widgets:
+    - id: test
+      type: spacer
+voice_hub:
+  enabled: true
+  brain_timeout_seconds: -1
+`)
+	_, err = config.ParseWithEnv(badRaw, mockGetenv(nil))
+	if err == nil || !strings.Contains(err.Error(), "brain_timeout_seconds must be positive") {
+		t.Fatalf("expected error for negative brain_timeout_seconds, got: %v", err)
+	}
+
+	badTTSRaw := []byte(`
+timezone: UTC
+display:
+  widgets:
+    - id: test
+      type: spacer
+voice_hub:
+  enabled: true
+  tts_timeout_seconds: 0
+`)
+	_, err = config.ParseWithEnv(badTTSRaw, mockGetenv(nil))
+	if err == nil || !strings.Contains(err.Error(), "tts_timeout_seconds must be positive") {
+		t.Fatalf("expected error for zero tts_timeout_seconds, got: %v", err)
+	}
+}
+
 

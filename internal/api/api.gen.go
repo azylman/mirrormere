@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/oapi-codegen/runtime"
+	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
 // Defines values for ScreenAdvanceRequestDirection.
@@ -277,6 +278,7 @@ type VideoTriggerRequestType string
 type VoiceStateRequest struct {
 	Reply      *string                `json:"reply"`
 	State      VoiceStateRequestState `json:"state"`
+	Status     *string                `json:"status"`
 	Transcript *string                `json:"transcript"`
 	TtsEngine  *string                `json:"tts_engine"`
 }
@@ -300,6 +302,18 @@ type WidgetPushResponse struct {
 type GetListItemsParams struct {
 	// IncludeDone If false, filters out completed items (default true)
 	IncludeDone *bool `form:"include_done,omitempty" json:"include_done,omitempty"`
+}
+
+// PostVoiceInteractMultipartBody defines parameters for PostVoiceInteract.
+type PostVoiceInteractMultipartBody struct {
+	// Audio Recorded 16 kHz mono PCM WAV audio file
+	Audio openapi_types.File `json:"audio"`
+
+	// NodeId Originating kiosk node identifier
+	NodeId *string `json:"node_id,omitempty"`
+
+	// SessionId Optional session or interaction correlation ID
+	SessionId *string `json:"session_id,omitempty"`
 }
 
 // PostWidgetPushJSONBody defines parameters for PostWidgetPush.
@@ -331,6 +345,9 @@ type PostVideoStateJSONRequestBody = VideoPlayerStateRequest
 
 // PostVideoTriggerJSONRequestBody defines body for PostVideoTrigger for application/json ContentType.
 type PostVideoTriggerJSONRequestBody = VideoTriggerRequest
+
+// PostVoiceInteractMultipartRequestBody defines body for PostVoiceInteract for multipart/form-data ContentType.
+type PostVoiceInteractMultipartRequestBody PostVoiceInteractMultipartBody
 
 // PostVoiceStateJSONRequestBody defines body for PostVoiceState for application/json ContentType.
 type PostVoiceStateJSONRequestBody = VoiceStateRequest
@@ -376,6 +393,9 @@ type ServerInterface interface {
 	// Trigger video stream
 	// (POST /api/video/trigger)
 	PostVideoTrigger(w http.ResponseWriter, r *http.Request)
+	// Coordinate voice interaction pipeline
+	// (POST /api/voice/interact)
+	PostVoiceInteract(w http.ResponseWriter, r *http.Request)
 	// Update voice interaction lifecycle state
 	// (POST /api/voice/state)
 	PostVoiceState(w http.ResponseWriter, r *http.Request)
@@ -586,6 +606,20 @@ func (siw *ServerInterfaceWrapper) PostVideoTrigger(w http.ResponseWriter, r *ht
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.PostVideoTrigger(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostVoiceInteract operation middleware
+func (siw *ServerInterfaceWrapper) PostVoiceInteract(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostVoiceInteract(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -853,6 +887,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc("GET "+options.BaseURL+"/api/video/state", wrapper.GetVideoState)
 	m.HandleFunc("POST "+options.BaseURL+"/api/video/state", wrapper.PostVideoState)
 	m.HandleFunc("POST "+options.BaseURL+"/api/video/trigger", wrapper.PostVideoTrigger)
+	m.HandleFunc("POST "+options.BaseURL+"/api/voice/interact", wrapper.PostVoiceInteract)
 	m.HandleFunc("POST "+options.BaseURL+"/api/voice/state", wrapper.PostVoiceState)
 	m.HandleFunc("POST "+options.BaseURL+"/api/widgets/{widget_id}/push", wrapper.PostWidgetPush)
 	m.HandleFunc("GET "+options.BaseURL+"/api/widgets/{widget_id}/render", wrapper.GetWidgetRender)
