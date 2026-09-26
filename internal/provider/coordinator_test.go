@@ -303,11 +303,11 @@ func TestProviderCoordinator_LifecycleAndManualRefresh(t *testing.T) {
 	}
 
 	// Test GetWidgetState and GetWidgetTimestamp methods
-	wsData, wsState, wsOk := coord.GetWidgetState("weather-tile")
-	if !wsOk || wsState != provider.StateHealthy || wsData == nil {
-		t.Fatalf("GetWidgetState returned invalid result: %v, %s, %v", wsData, wsState, wsOk)
+	wsData, wsState, wsTs, wsOk := coord.GetWidgetState("weather-tile")
+	if !wsOk || wsState != provider.StateHealthy || wsData == nil || wsTs == "" {
+		t.Fatalf("GetWidgetState returned invalid result: %v, %s, %s, %v", wsData, wsState, wsTs, wsOk)
 	}
-	if _, _, ok := coord.GetWidgetState("unknown-widget"); ok {
+	if _, _, _, ok := coord.GetWidgetState("unknown-widget"); ok {
 		t.Fatal("expected false for unknown widget state")
 	}
 

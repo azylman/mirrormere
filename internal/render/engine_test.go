@@ -22,23 +22,24 @@ type mockSnapshotProvider struct {
 }
 
 type mockState struct {
-	data  any
-	state string
+	data      any
+	state     string
+	timestamp string
 }
 
 func (m *mockSnapshotProvider) CurrentSnapshot() *config.Snapshot {
 	return m.snapshot
 }
 
-func (m *mockSnapshotProvider) GetWidgetState(widgetID string) (any, string, bool) {
+func (m *mockSnapshotProvider) GetWidgetState(widgetID string) (any, string, string, bool) {
 	if m.states == nil {
-		return nil, "", false
+		return nil, "", "", false
 	}
 	st, ok := m.states[widgetID]
 	if !ok {
-		return nil, "", false
+		return nil, "", "", false
 	}
-	return st.data, st.state, true
+	return st.data, st.state, st.timestamp, true
 }
 
 func (m *mockSnapshotProvider) CurrentStatus() config.Status {
@@ -222,6 +223,74 @@ func TestEngine_RenderWidget_Success(t *testing.T) {
 	}
 	if strings.Contains(htmlStr, "SECRET_KEY") || strings.Contains(htmlStr, "secret123") || strings.Contains(htmlStr, "bearer123") {
 		t.Errorf("secrets leaked in output: %s", htmlStr)
+	}
+}
+
+func TestEngine_RenderWidget_CachedTimestampStaleness(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	viewTmpl := `<div id="{{.ID}}"><span class="timestamp">{{.Timestamp}}</span></div>`
+	pkg := createTestPackage(t, tmpDir, "sensor", viewTmpl)
+
+	cachedTimeStr := "2026-09-25T11:00:00Z"
+	nowTime := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+
+	snap := &config.Snapshot{
+		Config: &config.Config{
+			Display: config.DisplayConfig{
+				Widgets: []config.WidgetConfig{
+					{
+						ID:   "cached-sensor",
+						Type: "sensor",
+					},
+					{
+						ID:   "uncached-sensor",
+						Type: "sensor",
+					},
+				},
+			},
+		},
+		Layout:   &layout.Layout{Screens: []layout.Screen{}},
+		Packages: map[string]*domain.Package{"sensor": pkg},
+	}
+
+	provider := &mockSnapshotProvider{
+		snapshot: snap,
+		states: map[string]mockState{
+			"cached-sensor": {
+				data:      map[string]any{"val": 42},
+				state:     "healthy",
+				timestamp: cachedTimeStr,
+			},
+		},
+		status: config.Status{ConfigStatus: config.ConfigStatusOK},
+	}
+	resolver := &mockResolver{packages: map[string]*domain.Package{"sensor": pkg}}
+	engine := render.NewEngine(resolver, provider, render.WithNowFunc(func() time.Time { return nowTime }))
+
+	// 1. Cached widget renders cached timestamp from 1 hour ago, NOT nowTime
+	outCached, err := engine.RenderWidget(context.Background(), "cached-sensor")
+	if err != nil {
+		t.Fatalf("failed to render cached widget: %v", err)
+	}
+	if !strings.Contains(string(outCached), `<span class="timestamp">2026-09-25T11:00:00Z</span>`) {
+		t.Errorf("expected cached timestamp %s, got: %s", cachedTimeStr, outCached)
+	}
+	if strings.Contains(string(outCached), "2026-09-25T12:00:00Z") {
+		t.Errorf("cached widget incorrectly rendered current render time instead of cached timestamp: %s", outCached)
+	}
+
+	// 2. Uncached widget renders empty string for .Timestamp
+	outUncached, err := engine.RenderWidget(context.Background(), "uncached-sensor")
+	if err != nil {
+		t.Fatalf("failed to render uncached widget: %v", err)
+	}
+	if !strings.Contains(string(outUncached), `<span class="timestamp"></span>`) {
+		t.Errorf("expected empty timestamp for uncached widget, got: %s", outUncached)
+	}
+	if strings.Contains(string(outUncached), "2026-09-25T12:00:00Z") {
+		t.Errorf("uncached widget incorrectly rendered current render time instead of empty string: %s", outUncached)
 	}
 }
 

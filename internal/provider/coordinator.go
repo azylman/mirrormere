@@ -122,13 +122,13 @@ func (c *ProviderCoordinator) Cache() *SWRCache {
 	return c.cache
 }
 
-// GetWidgetState retrieves current state and domain data for a widget instance,
+// GetWidgetState retrieves current state, domain data, and timestamp for a widget instance,
 // directly satisfying the render.StateSnapshotProvider contract.
-func (c *ProviderCoordinator) GetWidgetState(widgetID string) (any, string, bool) {
+func (c *ProviderCoordinator) GetWidgetState(widgetID string) (any, string, string, bool) {
 	if p, ok := c.cache.Get(widgetID); ok {
-		return p.Data, p.State, true
+		return p.Data, p.State, p.Timestamp, true
 	}
-	return nil, "", false
+	return nil, "", "", false
 }
 
 // GetWidgetTimestamp retrieves the cached timestamp for a widget instance,
