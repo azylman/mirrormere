@@ -225,6 +225,7 @@ func (c *Coordinator) Trigger(stream VideoStream) (VideoState, error) {
 }
 
 // Dismiss unmounts an active video stream by ID per SPEC-004 §4.
+// If id is "all" or "*", all active streams are unmounted and the mode returns to widgets per SPEC-004 §2.
 func (c *Coordinator) Dismiss(id string) (VideoState, error) {
 	id = strings.TrimSpace(id)
 	if id == "" {
@@ -235,6 +236,23 @@ func (c *Coordinator) Dismiss(id string) (VideoState, error) {
 	if c.closed {
 		c.mu.Unlock()
 		return VideoState{}, ErrStreamNotFound
+	}
+
+	if id == "all" || id == "*" {
+		if c.primary == nil && c.pip == nil {
+			c.mu.Unlock()
+			return VideoState{}, ErrStreamNotFound
+		}
+		for tid := range c.timers {
+			c.stopTimerLocked(tid)
+		}
+		c.primary = nil
+		c.pip = nil
+		c.mode = ModeWidgets
+		snap := c.snapshotLocked()
+		c.mu.Unlock()
+		c.publishState(snap)
+		return snap, nil
 	}
 
 	if c.pip != nil && c.pip.ID == id {
@@ -266,6 +284,11 @@ func (c *Coordinator) Dismiss(id string) (VideoState, error) {
 
 	c.mu.Unlock()
 	return VideoState{}, ErrStreamNotFound
+}
+
+// DismissAll unmounts all active video streams and returns to widgets mode per SPEC-004 §2.
+func (c *Coordinator) DismissAll() (VideoState, error) {
+	return c.Dismiss("all")
 }
 
 // SetPlayerState updates the transport state on an active stream per SPEC-004 §3.4.

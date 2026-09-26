@@ -498,6 +498,98 @@ func TestCoordinator_DismissValidation(t *testing.T) {
 	}
 }
 
+func TestCoordinator_DismissAll(t *testing.T) {
+	t.Parallel()
+
+	// 1. Dismiss("all") when both primary and PiP are active
+	coord := NewCoordinator(nil)
+	defer coord.Close()
+
+	_, err := coord.Trigger(VideoStream{
+		ID:        "chromecast",
+		StreamURL: "http://127.0.0.1:1984/cast",
+		Type:      TypeWebRTC,
+		Priority:  PriorityPersistent,
+	})
+	if err != nil {
+		t.Fatalf("unexpected trigger error: %v", err)
+	}
+
+	_, err = coord.Trigger(VideoStream{
+		ID:             "doorbell",
+		StreamURL:      "http://127.0.0.1:1984/doorbell",
+		Type:           TypeWebRTC,
+		Priority:       PriorityTemporary,
+		TimeoutSeconds: 30,
+	})
+	if err != nil {
+		t.Fatalf("unexpected trigger error: %v", err)
+	}
+
+	state := coord.GetState()
+	if state.Mode != ModeVideo || state.Primary == nil || state.Pip == nil {
+		t.Fatalf("expected video mode with both primary and pip active, got %+v", state)
+	}
+
+	snap, err := coord.Dismiss("all")
+	if err != nil {
+		t.Fatalf("unexpected Dismiss('all') error: %v", err)
+	}
+	if snap.Mode != ModeWidgets || snap.Primary != nil || snap.Pip != nil {
+		t.Fatalf("expected widgets mode with nil streams, got %+v", snap)
+	}
+
+	// 2. DismissAll() method when single stream is active
+	_, err = coord.Trigger(VideoStream{
+		ID:        "porch",
+		StreamURL: "http://127.0.0.1:1984/porch",
+		Type:      TypeWebRTC,
+		Priority:  PriorityPersistent,
+	})
+	if err != nil {
+		t.Fatalf("unexpected trigger error: %v", err)
+	}
+
+	snap2, err := coord.DismissAll()
+	if err != nil {
+		t.Fatalf("unexpected DismissAll error: %v", err)
+	}
+	if snap2.Mode != ModeWidgets || snap2.Primary != nil || snap2.Pip != nil {
+		t.Fatalf("expected widgets mode, got %+v", snap2)
+	}
+
+	// 3. DismissAll() on idle coordinator returns ErrStreamNotFound
+	if _, err := coord.DismissAll(); !errors.Is(err, ErrStreamNotFound) {
+		t.Fatalf("expected ErrStreamNotFound on idle coordinator, got %v", err)
+	}
+
+	// 4. Wildcard Dismiss("*")
+	_, err = coord.Trigger(VideoStream{
+		ID:        "camera",
+		StreamURL: "http://127.0.0.1:1984/camera",
+		Type:      TypeWebRTC,
+		Priority:  PriorityPersistent,
+	})
+	if err != nil {
+		t.Fatalf("unexpected trigger error: %v", err)
+	}
+
+	snap3, err := coord.Dismiss("*")
+	if err != nil {
+		t.Fatalf("unexpected Dismiss('*') error: %v", err)
+	}
+	if snap3.Mode != ModeWidgets || snap3.Primary != nil || snap3.Pip != nil {
+		t.Fatalf("expected widgets mode, got %+v", snap3)
+	}
+
+	// 5. DismissAll() on closed coordinator
+	closedCoord := NewCoordinator(nil)
+	closedCoord.Close()
+	if _, err := closedCoord.DismissAll(); !errors.Is(err, ErrStreamNotFound) {
+		t.Fatalf("expected ErrStreamNotFound on closed coordinator, got %v", err)
+	}
+}
+
 func TestCoordinator_SchemaValidation(t *testing.T) {
 	t.Parallel()
 

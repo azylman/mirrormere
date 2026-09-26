@@ -113,6 +113,8 @@ Dispatched when media stops or when manually dismissed by a client.
 }
 ```
 
+- `id` (string, required): Unique identifier for the stream source to dismiss (e.g. `"chromecast"`), or `"all"` / `"*"` to dismiss all active streams and unmount video mode immediately returning to `widgets` mode.
+
 ### 3. Video Action & Transport Control (`POST /api/video/action`)
 Dispatched by touch interaction or companion controllers to manipulate active media streams.
 

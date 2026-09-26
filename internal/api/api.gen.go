@@ -194,6 +194,7 @@ type VideoActionRequestAction string
 
 // VideoDismissRequest defines model for VideoDismissRequest.
 type VideoDismissRequest struct {
+	// Id Stream identifier to dismiss, or "all" to dismiss all active streams and return to widgets mode.
 	Id string `json:"id"`
 }
 
