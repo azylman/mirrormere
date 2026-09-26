@@ -501,47 +501,81 @@ func TestSanitizeConfig(t *testing.T) {
 		t.Errorf("expected empty map for nil config, got %v", res)
 	}
 
-	// 2. Complex nested structure with slice and maps
+	// 2. Complex nested structure verifying domain keys preserved and sensitive keys stripped
 	cfg := map[string]any{
-		"title":     "Safe",
-		"token":     "leak1",
-		"auth_key":  "leak2",
-		"api_key":   "leak3",
-		"user_pass": "leak4",
-		"my_env":    "VAR",
+		"title":        "Safe",
+		"author":       "J.R.R. Tolkien",
+		"authors":      []any{"Frodo", "Sam"},
+		"show_passed":  true,
+		"passengers":   4,
+		"bypass_cache": true,
+		"compass":      "north",
+		"max_tokens":   100,
+		"token":        "leak1",
+		"secret":       "leak2",
+		"password":     "leak3",
+		"api_key":      "leak4",
+		"apikey":       "leak5",
+		"auth":         "leak6",
+		"auth_token":   "leak7",
+		"access_token": "leak8",
+		"token_env":    "TOKEN_VAR",
+		"my_env":       "MY_VAR",
 		"list": []any{
 			"simple-string",
 			map[string]any{
 				"safe_item":   "ok",
-				"secret_item": "hide",
+				"show_passed": false,
+				"author":      "Nested Author",
+				"secret":      "hide",
+				"nested_env":  "ENV_VAR",
 			},
 		},
 		"nested": map[string]any{
-			"public": "show",
-			"secret": "hide",
+			"public":      "show",
+			"bypass_cache": true,
+			"secret":      "hide",
+			"sub_token_env": "SUB_VAR",
 		},
 	}
 
 	sanitized := render.SanitizeConfig(cfg)
+
+	// Domain keys preserved
 	if sanitized["title"] != "Safe" {
-		t.Errorf("missing safe title")
+		t.Errorf("expected title preserved, got %v", sanitized["title"])
 	}
-	if _, exists := sanitized["token"]; exists {
-		t.Errorf("token leaked")
+	if sanitized["author"] != "J.R.R. Tolkien" {
+		t.Errorf("expected author preserved, got %v", sanitized["author"])
 	}
-	if _, exists := sanitized["auth_key"]; exists {
-		t.Errorf("auth_key leaked")
+	if sanitized["show_passed"] != true {
+		t.Errorf("expected show_passed preserved, got %v", sanitized["show_passed"])
 	}
-	if _, exists := sanitized["api_key"]; exists {
-		t.Errorf("api_key leaked")
+	if sanitized["passengers"] != 4 {
+		t.Errorf("expected passengers preserved, got %v", sanitized["passengers"])
 	}
-	if _, exists := sanitized["user_pass"]; exists {
-		t.Errorf("password leaked")
+	if sanitized["bypass_cache"] != true {
+		t.Errorf("expected bypass_cache preserved, got %v", sanitized["bypass_cache"])
 	}
-	if _, exists := sanitized["my_env"]; exists {
-		t.Errorf("my_env leaked")
+	if sanitized["compass"] != "north" {
+		t.Errorf("expected compass preserved, got %v", sanitized["compass"])
+	}
+	if sanitized["max_tokens"] != 100 {
+		t.Errorf("expected max_tokens preserved, got %v", sanitized["max_tokens"])
 	}
 
+	// Sensitive keys stripped
+	sensitiveKeys := []string{
+		"token", "secret", "password", "api_key", "apikey",
+		"auth", "auth_token", "access_token", "token_env", "my_env",
+	}
+	for _, k := range sensitiveKeys {
+		if _, exists := sanitized[k]; exists {
+			t.Errorf("sensitive key %q leaked in sanitized config", k)
+		}
+	}
+
+	// Nested list verification
 	list, ok := sanitized["list"].([]any)
 	if !ok || len(list) != 2 {
 		t.Fatalf("expected list of length 2")
@@ -550,11 +584,101 @@ func TestSanitizeConfig(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected subMap in list")
 	}
-	if subMap["safe_item"] != "ok" {
-		t.Errorf("expected safe_item preserved")
+	if subMap["safe_item"] != "ok" || subMap["show_passed"] != false || subMap["author"] != "Nested Author" {
+		t.Errorf("expected nested domain keys preserved in slice map, got: %v", subMap)
 	}
-	if _, exists := subMap["secret_item"]; exists {
-		t.Errorf("secret_item leaked in slice map")
+	if _, exists := subMap["secret"]; exists {
+		t.Errorf("secret leaked in slice map")
+	}
+	if _, exists := subMap["nested_env"]; exists {
+		t.Errorf("nested_env leaked in slice map")
+	}
+
+	// Nested map verification
+	nestedMap, ok := sanitized["nested"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected nested map")
+	}
+	if nestedMap["public"] != "show" || nestedMap["bypass_cache"] != true {
+		t.Errorf("expected nested domain keys preserved in map, got: %v", nestedMap)
+	}
+	if _, exists := nestedMap["secret"]; exists {
+		t.Errorf("secret leaked in nested map")
+	}
+	if _, exists := nestedMap["sub_token_env"]; exists {
+		t.Errorf("sub_token_env leaked in nested map")
+	}
+}
+
+func TestEngine_RenderWidget_DomainConfigKeysReachTemplate(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	viewTmpl := `<div id="{{.ID}}">` +
+		`<span class="author">{{.Config.author}}</span>` +
+		`<span class="show-passed">{{.Config.show_passed}}</span>` +
+		`<span class="bypass-cache">{{.Config.bypass_cache}}</span>` +
+		`<span class="max-tokens">{{.Config.max_tokens}}</span>` +
+		`</div>`
+	pkg := createTestPackage(t, tmpDir, "book-widget", viewTmpl)
+
+	snap := &config.Snapshot{
+		Config: &config.Config{
+			Display: config.DisplayConfig{
+				Widgets: []config.WidgetConfig{
+					{
+						ID:   "book-info",
+						Type: "book-widget",
+						Config: map[string]any{
+							"author":       "J.R.R. Tolkien",
+							"show_passed":  true,
+							"bypass_cache": true,
+							"max_tokens":   500,
+							"token_env":    "SECRET_VAR_NAME",
+							"password":     "raw-secret-leak",
+						},
+					},
+				},
+			},
+		},
+		Layout:   &layout.Layout{Screens: []layout.Screen{}},
+		Packages: map[string]*domain.Package{"book-widget": pkg},
+	}
+
+	provider := &mockSnapshotProvider{
+		snapshot: snap,
+		states: map[string]mockState{
+			"book-info": {
+				data:      map[string]any{},
+				state:     "healthy",
+				timestamp: "2026-09-25T12:00:00Z",
+			},
+		},
+		status: config.Status{ConfigStatus: config.ConfigStatusOK},
+	}
+	resolver := &mockResolver{packages: map[string]*domain.Package{"book-widget": pkg}}
+	engine := render.NewEngine(resolver, provider)
+
+	out, err := engine.RenderWidget(context.Background(), "book-info")
+	if err != nil {
+		t.Fatalf("failed to render widget: %v", err)
+	}
+
+	outStr := string(out)
+	if !strings.Contains(outStr, `<span class="author">J.R.R. Tolkien</span>`) {
+		t.Errorf("missing .Config.author in rendered HTML: %s", outStr)
+	}
+	if !strings.Contains(outStr, `<span class="show-passed">true</span>`) {
+		t.Errorf("missing .Config.show_passed in rendered HTML: %s", outStr)
+	}
+	if !strings.Contains(outStr, `<span class="bypass-cache">true</span>`) {
+		t.Errorf("missing .Config.bypass_cache in rendered HTML: %s", outStr)
+	}
+	if !strings.Contains(outStr, `<span class="max-tokens">500</span>`) {
+		t.Errorf("missing .Config.max_tokens in rendered HTML: %s", outStr)
+	}
+	if strings.Contains(outStr, "SECRET_VAR_NAME") || strings.Contains(outStr, "raw-secret-leak") {
+		t.Errorf("sensitive credentials leaked into rendered HTML: %s", outStr)
 	}
 }
 

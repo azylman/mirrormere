@@ -22,20 +22,22 @@ type Context struct {
 	Assets     string           `json:"assets"`
 }
 
-// sensitiveKeys defines suffixes or substrings of keys that must be omitted from template context.
-var sensitivePatterns = []string{
-	"_env",
-	"token",
-	"secret",
-	"password",
-	"pass",
-	"api_key",
-	"apikey",
-	"auth",
+// exactSensitiveKeys defines exact key names (case-insensitive) of credentials that must be omitted from template context.
+var exactSensitiveKeys = map[string]struct{}{
+	"token":        {},
+	"secret":       {},
+	"password":     {},
+	"api_key":      {},
+	"apikey":       {},
+	"auth":         {},
+	"auth_token":   {},
+	"access_token": {},
 }
 
 // SanitizeConfig performs a deep clone of the widget instance custom configuration,
-// omitting any keys that contain sensitive credential patterns or environment pointers.
+// omitting keys that end with "_env" (environment variable pointers) or match exact
+// credential key names. Ordinary domain keys (e.g. "author", "show_passed", "bypass_cache",
+// "compass", "max_tokens") are strictly preserved per SPEC-003.
 func SanitizeConfig(cfg map[string]any) map[string]any {
 	if cfg == nil {
 		return map[string]any{}
@@ -52,12 +54,11 @@ func SanitizeConfig(cfg map[string]any) map[string]any {
 
 func isSensitiveKey(key string) bool {
 	lower := strings.ToLower(strings.TrimSpace(key))
-	for _, p := range sensitivePatterns {
-		if strings.Contains(lower, p) {
-			return true
-		}
+	if strings.HasSuffix(lower, "_env") || lower == "_env" {
+		return true
 	}
-	return false
+	_, exact := exactSensitiveKeys[lower]
+	return exact
 }
 
 func sanitizeValue(v any) any {
