@@ -14,7 +14,7 @@ func NewSpacerProvider() *SpacerProvider {
 }
 
 // Init initializes the spacer provider (no-op).
-func (s *SpacerProvider) Init(ctx context.Context, config map[string]any) error {
+func (s *SpacerProvider) Init(ctx context.Context, config map[string]any, opts InitOptions) error {
 	return nil
 }
 

@@ -23,10 +23,29 @@ type WidgetPayload struct {
 	Data      any    `json:"data"`
 }
 
+// InitOptions contains instance metadata, transport parameters, and resolved secrets passed to Provider.Init.
+type InitOptions struct {
+	ID         string
+	Type       string
+	Dimensions []int
+	Endpoint   string
+	Method     string
+	Token      string
+	Secrets    map[string]string
+}
+
+// GetSecret retrieves a secret by key from the Secrets map, or returns empty string if not found.
+func (o InitOptions) GetSecret(key string) string {
+	if o.Secrets == nil {
+		return ""
+	}
+	return o.Secrets[key]
+}
+
 // Provider defines the lifecycle and synchronization contract for all widget data fetchers.
 // Complies with SPEC-003 §1 and Phase 3 Chunk 3.1.
 type Provider interface {
-	Init(ctx context.Context, config map[string]any) error
+	Init(ctx context.Context, config map[string]any, opts InitOptions) error
 	Fetch(ctx context.Context) (any, error)
 	Subscribe(ctx context.Context, eventSink chan<- WidgetPayload) error
 	Shutdown(ctx context.Context) error

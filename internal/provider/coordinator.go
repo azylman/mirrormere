@@ -314,12 +314,13 @@ func (c *ProviderCoordinator) startSingleWorkerLocked(w *config.WidgetConfig, sn
 		return
 	}
 
-	// Merge configuration map including transport details
+	// Prepare configuration map and instance options
 	cfgMap := c.buildProviderConfig(w)
+	opts := c.buildInitOptions(w)
 	initCtx, cancelInit := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancelInit()
 
-	if err := p.Init(initCtx, cfgMap); err != nil {
+	if err := p.Init(initCtx, cfgMap, opts); err != nil {
 		c.logger.Error("failed to initialize provider for widget", "widget_id", w.ID, "provider", providerName, "error", err)
 		c.recordColdBootError(w.ID, err)
 		return
@@ -502,19 +503,43 @@ func (c *ProviderCoordinator) buildProviderConfig(w *config.WidgetConfig) map[st
 			cfgMap[k] = v
 		}
 	}
-	if w.Endpoint != "" {
-		cfgMap["endpoint"] = w.Endpoint
-	}
-	if w.Method != "" {
-		cfgMap["method"] = w.Method
-	}
-	if w.Token != "" {
-		cfgMap["token"] = w.Token
-	}
-	if w.TokenEnv != "" {
-		cfgMap["token_env"] = w.TokenEnv
-	}
 	return cfgMap
+}
+
+func (c *ProviderCoordinator) buildInitOptions(w *config.WidgetConfig) InitOptions {
+	method := w.Method
+	if method == "" && w.Endpoint != "" {
+		method = "POST"
+	}
+
+	secrets := make(map[string]string)
+	if w.Secrets != nil {
+		for k, v := range w.Secrets {
+			secrets[k] = v
+		}
+	}
+	token := w.Token
+	if token == "" && secrets["token"] != "" {
+		token = secrets["token"]
+	} else if token != "" && secrets["token"] == "" {
+		secrets["token"] = token
+	}
+
+	var dims []int
+	if len(w.Dimensions) > 0 {
+		dims = make([]int, len(w.Dimensions))
+		copy(dims, w.Dimensions)
+	}
+
+	return InitOptions{
+		ID:         w.ID,
+		Type:       w.Type,
+		Dimensions: dims,
+		Endpoint:   w.Endpoint,
+		Method:     method,
+		Token:      token,
+		Secrets:    secrets,
+	}
 }
 
 func resolveProviderName(w *config.WidgetConfig, snap *config.Snapshot) string {
