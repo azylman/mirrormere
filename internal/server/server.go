@@ -36,6 +36,13 @@ type ScreenHandler interface {
 	PostScreenSelect(w http.ResponseWriter, r *http.Request)
 }
 
+// RenderHandler handles widget rendering, package static assets, and stylesheet endpoints.
+type RenderHandler interface {
+	GetWidgetRender(w http.ResponseWriter, r *http.Request, widgetID string)
+	GetWidgetAsset(w http.ResponseWriter, r *http.Request, widgetType string, assetPath string)
+	ServeStyle(w http.ResponseWriter, r *http.Request)
+}
+
 // Config encapsulates configuration for the HTTP server.
 type Config struct {
 	Host              string
@@ -46,6 +53,7 @@ type Config struct {
 	IdleTimeout       time.Duration
 	EventsHandler     http.Handler
 	ScreenHandler     ScreenHandler
+	RenderHandler     RenderHandler
 }
 
 // ApplyDefaults sets fallback values for any unspecified configuration fields.
@@ -97,6 +105,7 @@ type Server struct {
 	addr          string
 	eventsHandler http.Handler
 	screenHandler ScreenHandler
+	renderHandler RenderHandler
 }
 
 // New constructs a configured Server instance.
@@ -109,6 +118,7 @@ func New(cfg Config) *Server {
 		ready:         make(chan struct{}),
 		eventsHandler: cfg.EventsHandler,
 		screenHandler: cfg.ScreenHandler,
+		renderHandler: cfg.RenderHandler,
 	}
 
 	s.setupRoutes()
@@ -169,6 +179,20 @@ func (s *Server) ScreenHandler() ScreenHandler {
 	return s.screenHandler
 }
 
+// RegisterRenderHandler dynamically registers or replaces the render and asset handler.
+func (s *Server) RegisterRenderHandler(h RenderHandler) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.renderHandler = h
+}
+
+// RenderHandler returns the currently registered render handler.
+func (s *Server) RenderHandler() RenderHandler {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.renderHandler
+}
+
 func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/healthz", s.handleHealth)
 	s.mux.HandleFunc("/health", s.handleHealth)
@@ -176,6 +200,9 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/api/screen/select", s.handleScreenSelect)
 	s.mux.HandleFunc("/api/screen/advance", s.handleScreenAdvance)
 	s.mux.HandleFunc("/api/screen/pause", s.handleScreenPause)
+	s.mux.HandleFunc("/api/widgets/{widget_id}/render", s.handleWidgetRender)
+	s.mux.HandleFunc("/widget-types/{type}/assets/{path...}", s.handleWidgetAsset)
+	s.mux.HandleFunc("/style.css", s.handleStyle)
 	s.mux.HandleFunc("/", s.handleRoot)
 }
 
@@ -221,6 +248,42 @@ func (s *Server) handleScreenPause(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.PostScreenPause(w, r)
+}
+
+func (s *Server) handleWidgetRender(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	h := s.renderHandler
+	s.mu.RUnlock()
+	if h == nil {
+		http.NotFound(w, r)
+		return
+	}
+	widgetID := r.PathValue("widget_id")
+	h.GetWidgetRender(w, r, widgetID)
+}
+
+func (s *Server) handleWidgetAsset(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	h := s.renderHandler
+	s.mu.RUnlock()
+	if h == nil {
+		http.NotFound(w, r)
+		return
+	}
+	pType := r.PathValue("type")
+	path := r.PathValue("path")
+	h.GetWidgetAsset(w, r, pType, path)
+}
+
+func (s *Server) handleStyle(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	h := s.renderHandler
+	s.mu.RUnlock()
+	if h == nil {
+		http.NotFound(w, r)
+		return
+	}
+	h.ServeStyle(w, r)
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
