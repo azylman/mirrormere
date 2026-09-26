@@ -28,6 +28,7 @@ Households keep their authoritative task lists in various external services: one
    - Filters out soft-deleted tasks (`item.Deleted == true`).
    - Normalizes task status: `status == "completed"` -> `Done = true`, else `false`.
    - Normalizes due dates: extracts `YYYY-MM-DD` from RFC 3339 timestamps (`item.Due`) with length verification (`len >= 10`) and format validation.
+   - Hierarchical position ordering: decodes Google's `position` and `parent` fields, sorting top-level tasks by lexicographical `position` and flattening subtasks immediately after their parent in sibling position order before assigning contiguous integer positions (0, 1, 2, ...). Orphaned subtasks whose parent is deleted or absent fall back to top-level positioning.
 
 4. **Single-Transaction SQLite Reconciliation (`SQLiteStore.SyncList`)**:
    - Reconciles external lists and items within a single serialized transaction (`tx, err := s.db.BeginTx(ctx, nil)`).
@@ -47,4 +48,5 @@ Households keep their authoritative task lists in various external services: one
 ## Consequences & Alternatives Considered
 - **Direct Database Upsert vs Reconciled Sync**: Direct blind upserts without difference detection would cause continuous WAL disk churn on embedded flash nodes. Implementing atomic change detection in `SyncList` ensures disk writes only occur when data actually changes.
 - **Polling vs Push**: Google Tasks API does not support webhooks for personal accounts; polling on configured intervals (default 120s) with SWR caching satisfies appliance requirements while respecting Google rate limits.
+- **Subtask Hierarchy & Flat Display Model**: Google Tasks represents tasks hierarchically via `parent` and `position` fields, whereas `SPEC-008` defines a flat `ListItem` model with integer positions. Skipping subtasks was rejected to prevent data loss on household displays. Instead, subtasks are flattened in depth-first tree order directly following their respective parent task. This preserves user-defined ordering and avoids false-positive `SyncList` change detection triggers caused by arbitrary API response page ordering.
 - **Graceful Degradation**: On upstream network failure or 401/500 errors, `TasksProvider.Fetch` returns an error, allowing the `ProviderCoordinator` SWR cache to transition to `StateDegraded` while preserving the Last Known Good (LKG) cached data on screen.

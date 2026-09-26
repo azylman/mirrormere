@@ -631,3 +631,192 @@ func TestGTasksAdapter_OAuthRefresh_Errors(t *testing.T) {
 		t.Errorf("expected missing access_token error, got %v", err)
 	}
 }
+
+func TestGTasksAdapter_FetchList_PositionAndSubtaskOrdering(t *testing.T) {
+	t.Parallel()
+
+	// Google Tasks returns items in arbitrary response order.
+	// Test checks that items are sorted by Position ascending, with subtasks (Parent set)
+	// placed immediately after their parent in sibling Position order.
+	rawTasks := []map[string]any{
+		{
+			"id":       "task-3",
+			"title":    "Top Task 3",
+			"position": "00000000000000000003",
+		},
+		{
+			"id":       "subtask-1b",
+			"title":    "Subtask 1B",
+			"parent":   "task-1",
+			"position": "00000000000000000002",
+		},
+		{
+			"id":       "task-1",
+			"title":    "Top Task 1",
+			"position": "00000000000000000001",
+		},
+		{
+			"id":       "subtask-1a",
+			"title":    "Subtask 1A",
+			"parent":   "task-1",
+			"position": "00000000000000000001",
+		},
+		{
+			"id":       "task-2",
+			"title":    "Top Task 2",
+			"position": "00000000000000000002",
+		},
+		{
+			"id":       "subtask-2a",
+			"title":    "Subtask 2A",
+			"parent":   "task-2",
+			"position": "00000000000000000001",
+		},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/tasks/v1/users/@me/lists/ordered-list" {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id":    "ordered-list",
+				"title": "Ordered List",
+			})
+			return
+		}
+		if r.URL.Path == "/tasks/v1/lists/ordered-list/tasks" {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"items": rawTasks,
+			})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	ad, err := adapters.NewGTasksAdapter(adapters.GTasksAdapterConfig{
+		TaskListID: "ordered-list",
+		Token:      "static-token",
+		BaseURL:    server.URL,
+		Client:     server.Client(),
+	})
+	if err != nil {
+		t.Fatalf("failed to create adapter: %v", err)
+	}
+
+	_, items, err := ad.FetchList(context.Background())
+	if err != nil {
+		t.Fatalf("FetchList failed: %v", err)
+	}
+
+	expectedOrder := []struct {
+		id       string
+		title    string
+		position int
+	}{
+		{"task-1", "Top Task 1", 0},
+		{"subtask-1a", "Subtask 1A", 1},
+		{"subtask-1b", "Subtask 1B", 2},
+		{"task-2", "Top Task 2", 3},
+		{"subtask-2a", "Subtask 2A", 4},
+		{"task-3", "Top Task 3", 5},
+	}
+
+	if len(items) != len(expectedOrder) {
+		t.Fatalf("expected %d items, got %d", len(expectedOrder), len(items))
+	}
+
+	for i, exp := range expectedOrder {
+		if items[i].ID != exp.id {
+			t.Errorf("item[%d]: expected ID %q, got %q", i, exp.id, items[i].ID)
+		}
+		if items[i].Title != exp.title {
+			t.Errorf("item[%d]: expected Title %q, got %q", i, exp.title, items[i].Title)
+		}
+		if items[i].Position != exp.position {
+			t.Errorf("item[%d]: expected Position %d, got %d", i, exp.position, items[i].Position)
+		}
+	}
+}
+
+func TestGTasksAdapter_FetchList_SubtaskOrphanAndCycleSafety(t *testing.T) {
+	t.Parallel()
+
+	// Test edge cases:
+	// 1. Orphaned subtask with non-existent parent
+	// 2. Subtask with deleted parent
+	// 3. Cyclic parent reference (cycle A -> B -> A)
+	rawTasks := []map[string]any{
+		{
+			"id":       "orphan-1",
+			"title":    "Orphan Subtask",
+			"parent":   "non-existent-parent",
+			"position": "00000000000000000005",
+		},
+		{
+			"id":       "deleted-parent",
+			"title":    "Deleted Parent",
+			"deleted":  true,
+			"position": "00000000000000000001",
+		},
+		{
+			"id":       "child-of-deleted",
+			"title":    "Child of Deleted",
+			"parent":   "deleted-parent",
+			"position": "00000000000000000006",
+		},
+		{
+			"id":       "cycle-a",
+			"title":    "Cycle A",
+			"parent":   "cycle-b",
+			"position": "00000000000000000002",
+		},
+		{
+			"id":       "cycle-b",
+			"title":    "Cycle B",
+			"parent":   "cycle-a",
+			"position": "00000000000000000003",
+		},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/tasks/v1/users/@me/lists/edge-list" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "edge-list", "title": "Edge List"})
+			return
+		}
+		if r.URL.Path == "/tasks/v1/lists/edge-list/tasks" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"items": rawTasks})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	ad, err := adapters.NewGTasksAdapter(adapters.GTasksAdapterConfig{
+		TaskListID: "edge-list",
+		Token:      "static-token",
+		BaseURL:    server.URL,
+		Client:     server.Client(),
+	})
+	if err != nil {
+		t.Fatalf("failed to create adapter: %v", err)
+	}
+
+	_, items, err := ad.FetchList(context.Background())
+	if err != nil {
+		t.Fatalf("FetchList failed: %v", err)
+	}
+
+	// Deleted parent is filtered out; the 4 active items should all be returned safely
+	if len(items) != 4 {
+		t.Fatalf("expected 4 items, got %d", len(items))
+	}
+
+	// Verify sequential positions 0, 1, 2, 3
+	for i, item := range items {
+		if item.Position != i {
+			t.Errorf("item[%d]: expected Position %d, got %d", i, i, item.Position)
+		}
+	}
+}
+
