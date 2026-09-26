@@ -163,7 +163,7 @@
    */
   function handleStyleReload(data) {
     if (typeof document === 'undefined') return;
-    const link = document.getElementById('hud-stylesheet') || document.querySelector('link[rel="stylesheet"][href*="/style.css"]');
+    const link = document.getElementById('hud-stylesheet') || document.querySelector('link[rel="stylesheet"][href*="style.css"]');
     if (!link) return;
 
     const cacheBuster = `t=${Date.now()}`;
@@ -196,7 +196,7 @@
 
     // 3. Initialize SSE client
     if (typeof window !== 'undefined' && window.MirrormereSSE) {
-      sseClient = new window.MirrormereSSE('/api/events');
+      sseClient = new window.MirrormereSSE('api/events');
 
       // 4. Initialize Audio Manager
       if (window.MirrormereAudio && window.MirrormereAudio.AudioManager) {

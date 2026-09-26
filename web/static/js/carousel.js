@@ -58,7 +58,7 @@ class MirrormereCarousel {
     // 1. Pre-warm: fetch all widget fragments in parallel before touching the active DOM
     const fetchPromises = data.widgets.map(async (widget) => {
       try {
-        const res = await fetch(`/api/widgets/${encodeURIComponent(widget.widget_id)}/render`);
+        const res = await fetch(`api/widgets/${encodeURIComponent(widget.widget_id)}/render`);
         if (!res.ok) {
           throw new Error(`HTTP ${res.status}`);
         }
@@ -141,7 +141,7 @@ class MirrormereCarousel {
     }
 
     try {
-      const res = await fetch(`/api/widgets/${encodeURIComponent(widgetID)}/render`);
+      const res = await fetch(`api/widgets/${encodeURIComponent(widgetID)}/render`);
       if (!res.ok) {
         throw new Error(`HTTP ${res.status}`);
       }
@@ -231,7 +231,7 @@ class MirrormereCarousel {
    */
   async advanceScreen(direction = 'next') {
     try {
-      await fetch('/api/screen/advance', {
+      await fetch('api/screen/advance', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ direction }),
