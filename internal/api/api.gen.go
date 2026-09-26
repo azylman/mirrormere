@@ -194,7 +194,7 @@ type VideoActionRequestAction string
 
 // VideoDismissRequest defines model for VideoDismissRequest.
 type VideoDismissRequest struct {
-	// Id Stream identifier to dismiss, or "all" to dismiss all active streams and return to widgets mode.
+	// Id Stream identifier to dismiss, or "all" / "*" to dismiss all active streams and return to widgets mode.
 	Id string `json:"id"`
 }
 
@@ -252,8 +252,10 @@ type VideoStreamType string
 
 // VideoTriggerRequest defines model for VideoTriggerRequest.
 type VideoTriggerRequest struct {
-	ControlUrl     *string                         `json:"control_url,omitempty"`
-	Controllable   *bool                           `json:"controllable,omitempty"`
+	ControlUrl   *string `json:"control_url,omitempty"`
+	Controllable *bool   `json:"controllable,omitempty"`
+
+	// Id Unique stream identifier ("all" and "*" are reserved sentinels).
 	Id             string                          `json:"id"`
 	PlayerState    *VideoTriggerRequestPlayerState `json:"player_state,omitempty"`
 	Priority       *VideoTriggerRequestPriority    `json:"priority,omitempty"`

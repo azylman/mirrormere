@@ -113,7 +113,7 @@ func cloneStream(s *VideoStream) *VideoStream {
 func (c *Coordinator) Trigger(stream VideoStream) (VideoState, error) {
 	stream.ID = strings.TrimSpace(stream.ID)
 	stream.StreamURL = strings.TrimSpace(stream.StreamURL)
-	if stream.ID == "" || stream.StreamURL == "" {
+	if stream.ID == "" || stream.StreamURL == "" || stream.ID == "all" || stream.ID == "*" {
 		return VideoState{}, ErrInvalidStream
 	}
 

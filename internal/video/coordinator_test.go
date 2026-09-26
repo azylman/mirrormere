@@ -118,6 +118,14 @@ func TestCoordinator_TriggerValidation(t *testing.T) {
 		t.Fatalf("expected ErrInvalidStream, got %v", err)
 	}
 
+	// Reserved sentinels 'all' and '*'
+	if _, err := coord.Trigger(VideoStream{ID: "all", StreamURL: "http://x"}); !errors.Is(err, ErrInvalidStream) {
+		t.Fatalf("expected ErrInvalidStream for reserved id 'all', got %v", err)
+	}
+	if _, err := coord.Trigger(VideoStream{ID: "*", StreamURL: "http://x"}); !errors.Is(err, ErrInvalidStream) {
+		t.Fatalf("expected ErrInvalidStream for reserved id '*', got %v", err)
+	}
+
 	// Invalid type
 	if _, err := coord.Trigger(VideoStream{ID: "c", StreamURL: "http://x", Type: "mp4"}); !errors.Is(err, ErrInvalidStream) {
 		t.Fatalf("expected ErrInvalidStream for mp4, got %v", err)

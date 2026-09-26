@@ -93,7 +93,7 @@ Accept: application/json
 }
 ```
 
-- `id` (string, required): Unique identifier for the stream source (e.g. `"chromecast"`, `"doorbell_front"`).
+- `id` (string, required): Unique identifier for the stream source (e.g. `"chromecast"`, `"doorbell_front"`). Note: `"all"` and `"*"` are reserved sentinels and will be rejected with HTTP 400.
 - `stream_url` (string, required): Playable stream URL accessible to the display client (WebRTC, HLS, or MJPEG).
 - `type` (string, default `"webrtc"`): Stream format (`"webrtc"`, `"hls"`, `"mjpeg"`).
 - `priority` (string, default `"persistent"`):
