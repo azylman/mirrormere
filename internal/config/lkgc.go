@@ -291,6 +291,7 @@ func (m *Manager) Reload(data []byte) (*Snapshot, *ConfigDiff, error) {
 	}
 
 	m.configReloadErr = nil
+	m.packageErrors = make(map[string]string)
 	m.current.Store(candidate)
 	m.updateStatusLocked()
 

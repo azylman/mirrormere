@@ -912,6 +912,15 @@ display:
 		t.Fatal("timed out waiting for settle hook on manifest reload without config.yaml")
 	}
 
+	// Delete package directory with errDispatcher to exercise package error clear status error
+	mgr.SetPackageError("clock", fmt.Errorf("clock error"))
+	_ = os.RemoveAll(filepath.Join(customWidgetsDir, "clock"))
+	select {
+	case <-settledCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for settle hook on package deletion with errDispatcher")
+	}
+
 	// Test IsWidgetTypeReferenced edge cases
 	if watcher.IsWidgetTypeReferencedForTest(nil, "clock") {
 		t.Error("expected false for nil snapshot")
@@ -1354,6 +1363,337 @@ func TestWatcher_IncompletePackageDispatchesErrorStatusAndRecoveryDispatchesOK(t
 		}
 	default:
 		t.Error("expected widget reload event after package completion")
+	}
+}
+
+func TestWatcher_MkdirRmdirCustomPackageStatusReturnsOK(t *testing.T) {
+	t.Parallel()
+
+	tempDir, mgr, loader, disp := setupTestEnv(t)
+	configDir := filepath.Join(tempDir, "config")
+	customWidgetsDir := filepath.Join(configDir, "widgets")
+
+	w := watcher.New(watcher.Config{
+		ConfigDir:        configDir,
+		CustomWidgetsDir: customWidgetsDir,
+		DebounceDuration: 5 * time.Millisecond,
+	}, mgr, loader, disp, slog.Default())
+
+	settledCh := make(chan struct{}, 10)
+	w.SetSettledHook(func() { settledCh <- struct{}{} })
+
+	if err := w.Start(context.Background()); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer func() { _ = w.Close() }()
+
+	// 1. Run `mkdir /config/widgets/foo` for a type with no built-in
+	fooDir := filepath.Join(customWidgetsDir, "foo")
+	if err := os.MkdirAll(fooDir, 0755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+
+	select {
+	case <-settledCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for settle hook after mkdir")
+	}
+
+	// Verify status is error mentioning foo
+	st := mgr.Status()
+	if st.ConfigStatus != config.ConfigStatusError || st.ConfigError == nil || !strings.Contains(*st.ConfigError, "foo") {
+		t.Fatalf("expected error status mentioning foo after mkdir, got %+v", st)
+	}
+
+	// 2. Run `rmdir /config/widgets/foo`
+	if err := os.Remove(fooDir); err != nil {
+		t.Fatalf("rmdir failed: %v", err)
+	}
+
+	select {
+	case <-settledCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for settle hook after rmdir")
+	}
+
+	// Verify status returns to OK
+	st = mgr.Status()
+	if st.ConfigStatus != config.ConfigStatusOK || st.ConfigError != nil {
+		t.Errorf("expected OK status after rmdir, got %+v", st)
+	}
+
+	foundOK := false
+	for len(disp.statusEvents) > 0 {
+		ev := <-disp.statusEvents
+		if ev.ConfigStatus == config.ConfigStatusOK {
+			foundOK = true
+		}
+	}
+	if !foundOK {
+		t.Error("expected status event with ConfigStatusOK after rmdir")
+	}
+
+	// Verify no widget.reload was dispatched for foo
+	for len(disp.widgetEvents) > 0 {
+		ev := <-disp.widgetEvents
+		if ev.Type == "foo" {
+			t.Errorf("unexpected widget reload for deleted package foo")
+		}
+	}
+}
+
+func TestWatcher_DeleteCustomOverrideFallsBackToBuiltinAndRevalidates(t *testing.T) {
+	t.Parallel()
+
+	tempDir, mgr, loader, disp := setupTestEnv(t)
+	configDir := filepath.Join(tempDir, "config")
+	customWidgetsDir := filepath.Join(configDir, "widgets")
+	appWidgetsDir := filepath.Join(tempDir, "app", "widgets")
+
+	dim62 := domain.NewDimension(6, 2)
+	dim61 := domain.NewDimension(6, 1)
+
+	// Builtin spacer supports [6, 2] and [6, 1]
+	builtinSpacerDir := filepath.Join(appWidgetsDir, "spacer")
+	_ = os.MkdirAll(filepath.Join(builtinSpacerDir, "views"), 0755)
+
+	// Custom spacer override exists and is initially active
+	customSpacerDir := filepath.Join(customWidgetsDir, "spacer")
+	_ = os.MkdirAll(filepath.Join(customSpacerDir, "views"), 0755)
+	_ = os.WriteFile(filepath.Join(customSpacerDir, "manifest.yaml"), []byte("name: Custom Spacer\nversion: 1.0.0\n"), 0644)
+	_ = os.WriteFile(filepath.Join(customSpacerDir, "views", "widget.html"), []byte("<div>Custom Spacer</div>"), 0644)
+
+	loader.mu.Lock()
+	loader.packages["spacer"] = &domain.Package{
+		Type:   "spacer",
+		Source: "custom",
+		Dir:    customSpacerDir,
+		Manifest: domain.WidgetManifest{
+			Name:                "Custom Spacer",
+			Version:             "1.0.0",
+			Provider:            "static",
+			DefaultDimensions:   dim61,
+			SupportedDimensions: []domain.Dimension{dim62, dim61},
+		},
+		ViewPath: filepath.Join(customSpacerDir, "views", "widget.html"),
+	}
+	loader.mu.Unlock()
+
+	// Initial config manager reload so snapshot has custom package
+	configBytes := []byte(baseYAML())
+	if _, _, err := mgr.Reload(configBytes); err != nil {
+		t.Fatalf("initial reload failed: %v", err)
+	}
+
+	snap := mgr.CurrentSnapshot()
+	if snap == nil || snap.Packages["spacer"] == nil || snap.Packages["spacer"].Source != "custom" {
+		t.Fatalf("expected running snapshot to have custom spacer package, got %+v", snap)
+	}
+
+	w := watcher.New(watcher.Config{
+		ConfigDir:         configDir,
+		CustomWidgetsDir:  customWidgetsDir,
+		BuiltinWidgetsDir: appWidgetsDir,
+		DebounceDuration:  5 * time.Millisecond,
+	}, mgr, loader, disp, slog.Default())
+
+	settledCh := make(chan struct{}, 10)
+	w.SetSettledHook(func() { settledCh <- struct{}{} })
+
+	if err := w.Start(context.Background()); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer func() { _ = w.Close() }()
+
+	// Drain any startup events
+	for len(disp.configEvents) > 0 {
+		<-disp.configEvents
+	}
+	for len(disp.widgetEvents) > 0 {
+		<-disp.widgetEvents
+	}
+
+	// Delete custom override directory
+	loader.mu.Lock()
+	loader.packages["spacer"] = &domain.Package{
+		Type:   "spacer",
+		Source: "builtin",
+		Dir:    builtinSpacerDir,
+		Manifest: domain.WidgetManifest{
+			Name:                "Builtin Spacer",
+			Version:             "1.0.0",
+			Provider:            "static",
+			DefaultDimensions:   dim62,
+			SupportedDimensions: []domain.Dimension{dim62, dim61},
+		},
+		ViewPath: filepath.Join(builtinSpacerDir, "views", "widget.html"),
+	}
+	loader.mu.Unlock()
+
+	if err := os.RemoveAll(customSpacerDir); err != nil {
+		t.Fatalf("failed to remove custom override dir: %v", err)
+	}
+
+	select {
+	case <-settledCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for settle hook after removing custom override")
+	}
+
+	// Verify running snapshot has now fallen back to builtin
+	newSnap := mgr.CurrentSnapshot()
+	if newSnap == nil || newSnap.Packages["spacer"] == nil {
+		t.Fatalf("expected new snapshot to have spacer package")
+	}
+	if newSnap.Packages["spacer"].Source != "builtin" {
+		t.Errorf("expected package source 'builtin', got %s", newSnap.Packages["spacer"].Source)
+	}
+	if mgr.Status().ConfigStatus != config.ConfigStatusOK {
+		t.Errorf("expected OK status after fallback to builtin, got %+v", mgr.Status())
+	}
+
+	// Verify config reload was dispatched
+	select {
+	case <-disp.configEvents:
+	default:
+		t.Error("expected config reload event when fallback to builtin occurred")
+	}
+
+	// Verify widget reload was dispatched
+	select {
+	case ev := <-disp.widgetEvents:
+		if ev.Type != "spacer" {
+			t.Errorf("expected widget reload for spacer, got %v", ev)
+		}
+	default:
+		t.Error("expected widget reload event for spacer after fallback to builtin")
+	}
+}
+
+func TestWatcher_DeleteCustomOverrideValidationFailureRetainsLKGC(t *testing.T) {
+	t.Parallel()
+
+	tempDir, mgr, loader, disp := setupTestEnv(t)
+	configDir := filepath.Join(tempDir, "config")
+	customWidgetsDir := filepath.Join(configDir, "widgets")
+	appWidgetsDir := filepath.Join(tempDir, "app", "widgets")
+
+	dim62 := domain.NewDimension(6, 2)
+	dim61 := domain.NewDimension(6, 1)
+
+	// Builtin spacer only supports [6, 2]
+	builtinSpacerDir := filepath.Join(appWidgetsDir, "spacer")
+	_ = os.MkdirAll(filepath.Join(builtinSpacerDir, "views"), 0755)
+
+	// Custom spacer override exists and supports [6, 1]
+	customSpacerDir := filepath.Join(customWidgetsDir, "spacer")
+	_ = os.MkdirAll(filepath.Join(customSpacerDir, "views"), 0755)
+	_ = os.WriteFile(filepath.Join(customSpacerDir, "manifest.yaml"), []byte("name: Custom Spacer\nversion: 1.0.0\n"), 0644)
+	_ = os.WriteFile(filepath.Join(customSpacerDir, "views", "widget.html"), []byte("<div>Custom Spacer</div>"), 0644)
+
+	loader.mu.Lock()
+	loader.packages["spacer"] = &domain.Package{
+		Type:   "spacer",
+		Source: "custom",
+		Dir:    customSpacerDir,
+		Manifest: domain.WidgetManifest{
+			Name:                "Custom Spacer",
+			Version:             "1.0.0",
+			Provider:            "static",
+			DefaultDimensions:   dim61,
+			SupportedDimensions: []domain.Dimension{dim61},
+		},
+		ViewPath: filepath.Join(customSpacerDir, "views", "widget.html"),
+	}
+	loader.mu.Unlock()
+
+	// Config has spacer with dimensions [6, 1]
+	configBytes := []byte(`
+timezone: America/New_York
+display:
+  widgets:
+    - id: spacer-1
+      type: spacer
+      dimensions: [6, 1]
+    - id: spacer-2
+      type: spacer
+      dimensions: [6, 1]
+`)
+	if err := os.WriteFile(filepath.Join(configDir, "config.yaml"), configBytes, 0644); err != nil {
+		t.Fatalf("failed to write config.yaml: %v", err)
+	}
+	if _, _, err := mgr.Reload(configBytes); err != nil {
+		t.Fatalf("initial reload failed: %v", err)
+	}
+
+	w := watcher.New(watcher.Config{
+		ConfigDir:         configDir,
+		CustomWidgetsDir:  customWidgetsDir,
+		BuiltinWidgetsDir: appWidgetsDir,
+		DebounceDuration:  5 * time.Millisecond,
+	}, mgr, loader, disp, slog.Default())
+
+	settledCh := make(chan struct{}, 10)
+	w.SetSettledHook(func() { settledCh <- struct{}{} })
+
+	if err := w.Start(context.Background()); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer func() { _ = w.Close() }()
+
+	// Drain any startup events
+	for len(disp.configEvents) > 0 {
+		<-disp.configEvents
+	}
+	for len(disp.widgetEvents) > 0 {
+		<-disp.widgetEvents
+	}
+
+	// Delete custom override directory, fallback to builtin that does not support [6, 1]
+	loader.mu.Lock()
+	loader.packages["spacer"] = &domain.Package{
+		Type:   "spacer",
+		Source: "builtin",
+		Dir:    builtinSpacerDir,
+		Manifest: domain.WidgetManifest{
+			Name:                "Builtin Spacer",
+			Version:             "1.0.0",
+			Provider:            "static",
+			DefaultDimensions:   dim62,
+			SupportedDimensions: []domain.Dimension{dim62}, // Does NOT support [6, 1]
+		},
+		ViewPath: filepath.Join(builtinSpacerDir, "views", "widget.html"),
+	}
+	loader.mu.Unlock()
+
+	if err := os.RemoveAll(customSpacerDir); err != nil {
+		t.Fatalf("failed to remove custom override dir: %v", err)
+	}
+
+	select {
+	case <-settledCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for settle hook after removing custom override")
+	}
+
+	// Verify LKGC was retained (source remains custom)
+	currentSnap := mgr.CurrentSnapshot()
+	if currentSnap.Packages["spacer"].Source != "custom" {
+		t.Errorf("expected LKGC retained with source 'custom', got %s", currentSnap.Packages["spacer"].Source)
+	}
+
+	// Verify status is error
+	st := mgr.Status()
+	if st.ConfigStatus != config.ConfigStatusError || st.ConfigError == nil {
+		t.Fatalf("expected error status when fallback fails validation, got %+v", st)
+	}
+
+	// Verify widget.reload was aborted
+	for len(disp.widgetEvents) > 0 {
+		ev := <-disp.widgetEvents
+		if ev.Type == "spacer" {
+			t.Errorf("unexpected widget.reload for spacer when fallback validation failed")
+		}
 	}
 }
 

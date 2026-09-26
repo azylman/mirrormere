@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -384,9 +385,39 @@ func (w *Watcher) flush(dirtyConfig, dirtyStyle bool, dirtyWidgets, dirtyManifes
 		}
 		sort.Strings(types)
 
-		// First, verify package completeness
+		// First, verify package completeness and directory existence
 		incomplete := make(map[string]bool)
+		deleted := make(map[string]bool)
 		for _, widgetType := range types {
+			customDirExists := false
+			if w.cfg.CustomWidgetsDir != "" {
+				if fi, err := os.Stat(filepath.Join(w.cfg.CustomWidgetsDir, widgetType)); err == nil && fi.IsDir() {
+					customDirExists = true
+				}
+			}
+			builtinDirExists := false
+			if w.cfg.BuiltinWidgetsDir != "" {
+				if fi, err := os.Stat(filepath.Join(w.cfg.BuiltinWidgetsDir, widgetType)); err == nil && fi.IsDir() {
+					builtinDirExists = true
+				}
+			}
+
+			packageDirExists := customDirExists || builtinDirExists
+			if !packageDirExists {
+				deleted[widgetType] = true
+				incomplete[widgetType] = true
+				if w.configManager != nil {
+					if cleared := w.configManager.ClearPackageError(widgetType); cleared {
+						if w.dispatcher != nil {
+							if err := w.dispatcher.DispatchStatus(w.configManager.Status()); err != nil {
+								w.logger.Error("failed to dispatch status on package error clear", "type", widgetType, "error", err)
+							}
+						}
+					}
+				}
+				continue
+			}
+
 			if w.packageLoader != nil {
 				_, err := w.packageLoader.LoadPackage(widgetType)
 				if err != nil {
@@ -414,16 +445,46 @@ func (w *Watcher) flush(dirtyConfig, dirtyStyle bool, dirtyWidgets, dirtyManifes
 			}
 		}
 
-		// Next, if any complete widget with a modified manifest is referenced in the running config,
-		// re-run Manager.Reload on the current config.yaml bytes (unless config was already reloaded).
+		// Next, if any complete or modified widget is referenced in the running config,
+		// check if a live re-validation (Manager.Reload) is required.
 		manifestReloadFailed := false
 		if !dirtyConfig && w.configManager != nil {
 			currentSnap := w.configManager.CurrentSnapshot()
 			needsManifestReload := false
 			for _, widgetType := range types {
-				if !incomplete[widgetType] && dirtyManifests[widgetType] && isWidgetTypeReferenced(currentSnap, widgetType) {
+				if !isWidgetTypeReferenced(currentSnap, widgetType) {
+					continue
+				}
+
+				// If a referenced widget was deleted entirely
+				if deleted[widgetType] {
 					needsManifestReload = true
 					break
+				}
+
+				// If manifest was explicitly marked dirty
+				if dirtyManifests[widgetType] {
+					needsManifestReload = true
+					break
+				}
+
+				// If package definition changed (e.g. override was deleted falling back to built-in, or override was created)
+				if !incomplete[widgetType] && w.packageLoader != nil {
+					loadedPkg, err := w.packageLoader.LoadPackage(widgetType)
+					if err == nil && loadedPkg != nil {
+						if currentSnap == nil || currentSnap.Packages == nil {
+							needsManifestReload = true
+							break
+						}
+						snapPkg := currentSnap.Packages[widgetType]
+						if snapPkg == nil ||
+							snapPkg.Source != loadedPkg.Source ||
+							snapPkg.Dir != loadedPkg.Dir ||
+							!reflect.DeepEqual(snapPkg.Manifest, loadedPkg.Manifest) {
+							needsManifestReload = true
+							break
+						}
+					}
 				}
 			}
 
@@ -467,9 +528,9 @@ func (w *Watcher) flush(dirtyConfig, dirtyStyle bool, dirtyWidgets, dirtyManifes
 				continue
 			}
 
-			// If manifest reload failed and this widget had its manifest updated while referenced in config,
-			// abort widget.reload per Issue #189.
-			if manifestReloadFailed && dirtyManifests[widgetType] {
+			// If manifest reload failed and this widget is referenced in config,
+			// abort widget.reload per Issue #189 and #194.
+			if manifestReloadFailed {
 				currentSnap := w.configManager.CurrentSnapshot()
 				if isWidgetTypeReferenced(currentSnap, widgetType) {
 					continue
