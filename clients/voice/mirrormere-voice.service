@@ -1,0 +1,27 @@
+[Unit]
+Description=Mirrormere Edge Voice Listener Daemon
+Documentation=https://github.com/azylman/mirrormere/blob/main/specs/011-voice-pipeline.md
+After=network.target sound.target pipewire.service
+Wants=pipewire.service
+
+[Service]
+Type=simple
+User=mirrormere
+Group=mirrormere
+SupplementaryGroups=audio
+WorkingDirectory=/opt/mirrormere/voice
+ExecStart=/opt/mirrormere/voice/venv/bin/python3 /opt/mirrormere/voice/client.py
+Restart=always
+RestartSec=3
+KillMode=mixed
+TimeoutStopSec=10
+Environment=PYTHONUNBUFFERED=1
+Environment=MIRRORMERE_VOICE_CONFIG=/etc/mirrormere/voice.yaml
+
+# Security and sandbox hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/tmp /opt/mirrormere/voice
+
+[Install]
+WantedBy=default.target
