@@ -224,10 +224,30 @@ func recommendedSpacerDimensions(deficit int) [2]int {
 	}
 }
 
+const defaultMaxSearchNodes = 100_000
+
+type shapeGroup struct {
+	dims    domain.Dimension
+	count   int
+	widgets []WidgetInput
+}
+
+type unpinnedPlacement struct {
+	screen int
+	origin [2]int
+	widget WidgetInput
+}
+
 // Solve executes exact 2D recursive backtracking bitmask bin-packing for the 6x2 grid.
 // It replicates pinned widgets across all K rotation screens at identical coordinates
 // and tiles unpinned widgets across remaining cells, enforcing screen_bitmask == 0x0FFF.
 func Solve(widgets []WidgetInput) (*Layout, error) {
+	return SolveWithBudget(widgets, defaultMaxSearchNodes)
+}
+
+// SolveWithBudget executes the solver with an explicit search node ceiling.
+// If the search exceeds maxSearchNodes, it aborts and returns a geometric deadlock error.
+func SolveWithBudget(widgets []WidgetInput, maxSearchNodes int) (*Layout, error) {
 	if len(widgets) == 0 {
 		return nil, FormatDeficitError(0, 1, GridTotalCells)
 	}
@@ -269,37 +289,63 @@ func Solve(widgets []WidgetInput) (*Layout, error) {
 		return nil, FormatDeficitError(effectiveTotalArea, k, deficit)
 	}
 
-	// Area descending sort with deterministic tie-breaking (rows desc, cols desc, ID asc)
-	sortWidgets := func(slice []WidgetInput) {
-		sort.SliceStable(slice, func(i, j int) bool {
-			if slice[i].Dimensions.Area() != slice[j].Dimensions.Area() {
-				return slice[i].Dimensions.Area() > slice[j].Dimensions.Area()
-			}
-			if slice[i].Dimensions.Rows != slice[j].Dimensions.Rows {
-				return slice[i].Dimensions.Rows > slice[j].Dimensions.Rows
-			}
-			return slice[i].ID < slice[j].ID
+	// Sort pinned widgets: area desc, rows desc, ID asc
+	sort.SliceStable(pinned, func(i, j int) bool {
+		if pinned[i].Dimensions.Area() != pinned[j].Dimensions.Area() {
+			return pinned[i].Dimensions.Area() > pinned[j].Dimensions.Area()
+		}
+		if pinned[i].Dimensions.Rows != pinned[j].Dimensions.Rows {
+			return pinned[i].Dimensions.Rows > pinned[j].Dimensions.Rows
+		}
+		return pinned[i].ID < pinned[j].ID
+	})
+
+	// Shape grouping for unpinned widgets: eliminates M! permutation explosions
+	shapeMap := make(map[[2]int]*shapeGroup)
+	var shapeGroups []*shapeGroup
+	for _, w := range unpinned {
+		key := [2]int{w.Dimensions.Cols, w.Dimensions.Rows}
+		sg, exists := shapeMap[key]
+		if !exists {
+			sg = &shapeGroup{dims: w.Dimensions}
+			shapeMap[key] = sg
+			shapeGroups = append(shapeGroups, sg)
+		}
+		sg.count++
+		sg.widgets = append(sg.widgets, w)
+	}
+
+	// Sort shape groups: area desc, rows desc
+	sort.Slice(shapeGroups, func(i, j int) bool {
+		if shapeGroups[i].dims.Area() != shapeGroups[j].dims.Area() {
+			return shapeGroups[i].dims.Area() > shapeGroups[j].dims.Area()
+		}
+		return shapeGroups[i].dims.Rows > shapeGroups[j].dims.Rows
+	})
+
+	// Deterministic widget order within each shape group: ID asc
+	for _, sg := range shapeGroups {
+		sort.SliceStable(sg.widgets, func(i, j int) bool {
+			return sg.widgets[i].ID < sg.widgets[j].ID
 		})
 	}
-	sortWidgets(pinned)
-	sortWidgets(unpinned)
 
 	screenMasks := make([]uint16, k)
 	pinnedPlacements := make([]PlacedWidget, len(pinned))
-	unpinnedPlacements := make([]PlacedWidget, len(unpinned))
-	unpinnedScreens := make([]int, len(unpinned))
+	unpinnedPlacements := make([]unpinnedPlacement, len(unpinned))
+	placedCount := 0
+	nodeCount := 0
 
 	var placePinned func(pIdx int) bool
-	var placeUnpinned func(uIdx int) bool
+	var placeUnpinnedExactCover func() bool
 
 	placePinned = func(pIdx int) bool {
 		if pIdx == len(pinned) {
-			return placeUnpinned(0)
+			return placeUnpinnedExactCover()
 		}
 
 		pw := pinned[pIdx]
-		w := pw.Dimensions.Cols
-		h := pw.Dimensions.Rows
+		w, h := pw.Dimensions.Cols, pw.Dimensions.Rows
 		maxCol := GridColumns - w
 		maxRow := GridRows - h
 
@@ -307,7 +353,6 @@ func Solve(widgets []WidgetInput) (*Layout, error) {
 			for c := 0; c <= maxCol; c++ {
 				mask := ComputeWidgetBitmask(w, h, c, r)
 				if (screenMasks[0] & mask) == 0 {
-					// Stamp mask across all K screens simultaneously
 					for s := 0; s < k; s++ {
 						screenMasks[s] |= mask
 					}
@@ -323,7 +368,6 @@ func Solve(widgets []WidgetInput) (*Layout, error) {
 						return true
 					}
 
-					// Backtrack: clear mask across all K screens
 					for s := 0; s < k; s++ {
 						screenMasks[s] &= ^mask
 					}
@@ -333,62 +377,59 @@ func Solve(widgets []WidgetInput) (*Layout, error) {
 		return false
 	}
 
-	placeUnpinned = func(uIdx int) bool {
-		if uIdx == len(unpinned) {
-			return true
+	placeUnpinnedExactCover = func() bool {
+		nodeCount++
+		if maxSearchNodes > 0 && nodeCount > maxSearchNodes {
+			return false
 		}
 
-		uw := unpinned[uIdx]
-		w := uw.Dimensions.Cols
-		h := uw.Dimensions.Rows
-		area := uw.Dimensions.Area()
-		maxCol := GridColumns - w
-		maxRow := GridRows - h
-
+		targetScreen := -1
 		for s := 0; s < k; s++ {
-			currentMask := screenMasks[s]
-
-			// Screen symmetry pruning: skip screen s if it has identical mask to an earlier screen
-			isDuplicateMask := false
-			for prev := 0; prev < s; prev++ {
-				if screenMasks[prev] == currentMask {
-					isDuplicateMask = true
-					break
-				}
-			}
-			if isDuplicateMask {
-				continue
-			}
-
-			// Popcount capacity pruning: if remaining empty cells < widget area, skip screen
-			remainingCells := GridTotalCells - bits.OnesCount16(currentMask)
-			if remainingCells < area {
-				continue
-			}
-
-			for r := 0; r <= maxRow; r++ {
-				for c := 0; c <= maxCol; c++ {
-					mask := ComputeWidgetBitmask(w, h, c, r)
-					if (currentMask & mask) == 0 {
-						screenMasks[s] |= mask
-						unpinnedPlacements[uIdx] = PlacedWidget{
-							WidgetID:   uw.ID,
-							Type:       uw.Type,
-							Origin:     [2]int{c, r},
-							Dimensions: uw.Dimensions,
-							Pinned:     false,
-						}
-						unpinnedScreens[uIdx] = s
-
-						if placeUnpinned(uIdx + 1) {
-							return true
-						}
-
-						screenMasks[s] &= ^mask
-					}
-				}
+			if screenMasks[s] != FullGridMask {
+				targetScreen = s
+				break
 			}
 		}
+		if targetScreen == -1 {
+			return true // All screens 100% full
+		}
+
+		sMask := screenMasks[targetScreen]
+		emptyCell := bits.TrailingZeros16(^sMask)
+		c := emptyCell % GridColumns
+		r := emptyCell / GridColumns
+
+		for _, sg := range shapeGroups {
+			if sg.count == 0 {
+				continue
+			}
+			w, h := sg.dims.Cols, sg.dims.Rows
+			if c+w > GridColumns || r+h > GridRows {
+				continue
+			}
+			mask := ComputeWidgetBitmask(w, h, c, r)
+			if (sMask & mask) == 0 {
+				screenMasks[targetScreen] |= mask
+				sg.count--
+
+				assignedWidget := sg.widgets[len(sg.widgets)-sg.count-1]
+				unpinnedPlacements[placedCount] = unpinnedPlacement{
+					screen: targetScreen,
+					origin: [2]int{c, r},
+					widget: assignedWidget,
+				}
+				placedCount++
+
+				if placeUnpinnedExactCover() {
+					return true
+				}
+
+				placedCount--
+				sg.count++
+				screenMasks[targetScreen] &= ^mask
+			}
+		}
+
 		return false
 	}
 
@@ -404,9 +445,15 @@ func Solve(widgets []WidgetInput) (*Layout, error) {
 	for s := 0; s < k; s++ {
 		screenWidgets := make([]PlacedWidget, 0, len(pinned)+len(unpinned))
 		screenWidgets = append(screenWidgets, pinnedPlacements...)
-		for i, uw := range unpinnedPlacements {
-			if unpinnedScreens[i] == s {
-				screenWidgets = append(screenWidgets, uw)
+		for i := 0; i < placedCount; i++ {
+			if unpinnedPlacements[i].screen == s {
+				screenWidgets = append(screenWidgets, PlacedWidget{
+					WidgetID:   unpinnedPlacements[i].widget.ID,
+					Type:       unpinnedPlacements[i].widget.Type,
+					Origin:     unpinnedPlacements[i].origin,
+					Dimensions: unpinnedPlacements[i].widget.Dimensions,
+					Pinned:     false,
+				})
 			}
 		}
 

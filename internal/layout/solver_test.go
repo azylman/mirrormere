@@ -2,8 +2,10 @@ package layout_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/azylman/mirrormere/internal/domain"
 	"github.com/azylman/mirrormere/internal/layout"
@@ -461,6 +463,34 @@ func TestSolve_PinnedFullScreen(t *testing.T) {
 	}
 }
 
+func TestSolve_MultiplePinnedSorting(t *testing.T) {
+	t.Parallel()
+
+	// 4 pinned widgets with different areas, rows, and IDs:
+	// - pinned-b: [2, 1] (area 2)
+	// - pinned-a: [2, 1] (area 2, same area, same rows, ID tiebreak)
+	// - pinned-c: [4, 1] (area 4, rows=1)
+	// - pinned-d: [2, 2] (area 4, rows=2 vs rows=1)
+	// Total pinned area = 2 + 2 + 4 + 4 = 12 (full screen)
+	widgets := []layout.WidgetInput{
+		{ID: "pinned-b", Dimensions: domain.NewDimension(2, 1), Pinned: true},
+		{ID: "pinned-a", Dimensions: domain.NewDimension(2, 1), Pinned: true},
+		{ID: "pinned-c", Dimensions: domain.NewDimension(4, 1), Pinned: true},
+		{ID: "pinned-d", Dimensions: domain.NewDimension(2, 2), Pinned: true},
+	}
+
+	res, err := layout.Solve(widgets)
+	if err != nil {
+		t.Fatalf("Solve failed: %v", err)
+	}
+	if res.TotalScreens != 1 {
+		t.Fatalf("expected 1 screen, got %d", res.TotalScreens)
+	}
+	if res.Screens[0].Bitmask != layout.FullGridMask {
+		t.Fatalf("screen bitmask %012b; want %012b", res.Screens[0].Bitmask, layout.FullGridMask)
+	}
+}
+
 func TestSolve_DeficitGuidance(t *testing.T) {
 	t.Parallel()
 
@@ -640,5 +670,171 @@ func BenchmarkSolve(b *testing.B) {
 		if err != nil {
 			b.Fatalf("Solve failed: %v", err)
 		}
+	}
+}
+
+func TestSolve_Issue180_UntileableWallClock(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		builder func() []layout.WidgetInput
+	}{
+		{
+			name: "6x [5,1] + 9x [2,1] (area 48, K=4)",
+			builder: func() []layout.WidgetInput {
+				var widgets []layout.WidgetInput
+				for i := 0; i < 6; i++ {
+					widgets = append(widgets, layout.WidgetInput{
+						ID:         fmt.Sprintf("w-5x1-%d", i),
+						Dimensions: domain.NewDimension(5, 1),
+					})
+				}
+				for i := 0; i < 9; i++ {
+					widgets = append(widgets, layout.WidgetInput{
+						ID:         fmt.Sprintf("w-2x1-%d", i),
+						Dimensions: domain.NewDimension(2, 1),
+					})
+				}
+				return widgets
+			},
+		},
+		{
+			name: "10x [5,1] + 5x [2,1] (area 60, K=5)",
+			builder: func() []layout.WidgetInput {
+				var widgets []layout.WidgetInput
+				for i := 0; i < 10; i++ {
+					widgets = append(widgets, layout.WidgetInput{
+						ID:         fmt.Sprintf("w-5x1-%d", i),
+						Dimensions: domain.NewDimension(5, 1),
+					})
+				}
+				for i := 0; i < 5; i++ {
+					widgets = append(widgets, layout.WidgetInput{
+						ID:         fmt.Sprintf("w-2x1-%d", i),
+						Dimensions: domain.NewDimension(2, 1),
+					})
+				}
+				return widgets
+			},
+		},
+		{
+			name: "1x [3,2] + 6x [5,1] + 6x [2,1] (area 48, K=4)",
+			builder: func() []layout.WidgetInput {
+				widgets := []layout.WidgetInput{
+					{ID: "w-3x2", Dimensions: domain.NewDimension(3, 2)},
+				}
+				for i := 0; i < 6; i++ {
+					widgets = append(widgets, layout.WidgetInput{
+						ID:         fmt.Sprintf("w-5x1-%d", i),
+						Dimensions: domain.NewDimension(5, 1),
+					})
+				}
+				for i := 0; i < 6; i++ {
+					widgets = append(widgets, layout.WidgetInput{
+						ID:         fmt.Sprintf("w-2x1-%d", i),
+						Dimensions: domain.NewDimension(2, 1),
+					})
+				}
+				return widgets
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			widgets := tc.builder()
+
+			start := time.Now()
+			_, err := layout.Solve(widgets)
+			elapsed := time.Since(start)
+
+			if err == nil {
+				t.Fatalf("expected geometric deadlock error for untileable configuration %q, got nil", tc.name)
+			}
+			if !strings.Contains(err.Error(), "cannot geometrically tile the 6x2 grid") {
+				t.Fatalf("expected deadlock error string, got %v", err)
+			}
+			// Must complete sub-millisecond; 50ms is a safe generous CI bound
+			if elapsed > 50*time.Millisecond {
+				t.Fatalf("Solve took %v on untileable config, expected < 50ms", elapsed)
+			}
+		})
+	}
+}
+
+func TestSolve_NodeBudgetCeiling(t *testing.T) {
+	t.Parallel()
+
+	// 6x [5,1] + 9x [2,1] with a budget of 2 nodes
+	var widgets []layout.WidgetInput
+	for i := 0; i < 6; i++ {
+		widgets = append(widgets, layout.WidgetInput{
+			ID:         fmt.Sprintf("w-5x1-%d", i),
+			Dimensions: domain.NewDimension(5, 1),
+		})
+	}
+	for i := 0; i < 9; i++ {
+		widgets = append(widgets, layout.WidgetInput{
+			ID:         fmt.Sprintf("w-2x1-%d", i),
+			Dimensions: domain.NewDimension(2, 1),
+		})
+	}
+
+	_, err := layout.SolveWithBudget(widgets, 2)
+	if err == nil {
+		t.Fatal("expected error when search budget exhausted, got nil")
+	}
+	if !strings.Contains(err.Error(), "cannot geometrically tile the 6x2 grid") {
+		t.Fatalf("expected geometric deadlock error, got %v", err)
+	}
+}
+
+func TestSolve_MultiScreenBacktrackingDeadlock(t *testing.T) {
+	t.Parallel()
+
+	// Screen 1 can tile with [6, 2], but remaining widgets: 2x [5, 1] + 1x [2, 1] (12 cells)
+	// cannot tile Screen 2. Must backtrack cleanly and report deadlock.
+	widgets := []layout.WidgetInput{
+		{ID: "hero-6x2", Dimensions: domain.NewDimension(6, 2)},
+		{ID: "w-5x1-a", Dimensions: domain.NewDimension(5, 1)},
+		{ID: "w-5x1-b", Dimensions: domain.NewDimension(5, 1)},
+		{ID: "w-2x1-a", Dimensions: domain.NewDimension(2, 1)},
+	}
+
+	start := time.Now()
+	_, err := layout.Solve(widgets)
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected multi-screen deadlock error, got nil")
+	}
+	if !strings.Contains(err.Error(), "cannot geometrically tile the 6x2 grid") {
+		t.Fatalf("expected deadlock error, got %v", err)
+	}
+	if elapsed > 50*time.Millisecond {
+		t.Fatalf("multi-screen deadlock solve took %v, expected < 50ms", elapsed)
+	}
+}
+
+func BenchmarkSolve_Untileable_Issue180(b *testing.B) {
+	var widgets []layout.WidgetInput
+	for i := 0; i < 6; i++ {
+		widgets = append(widgets, layout.WidgetInput{
+			ID:         fmt.Sprintf("w-5x1-%d", i),
+			Dimensions: domain.NewDimension(5, 1),
+		})
+	}
+	for i := 0; i < 9; i++ {
+		widgets = append(widgets, layout.WidgetInput{
+			ID:         fmt.Sprintf("w-2x1-%d", i),
+			Dimensions: domain.NewDimension(2, 1),
+		})
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = layout.Solve(widgets)
 	}
 }
