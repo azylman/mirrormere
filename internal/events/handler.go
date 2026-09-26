@@ -57,6 +57,9 @@ func Handler(hub *Hub) http.Handler {
 		if lastEventID == "" {
 			// Also check query param fallback for non-standard clients
 			lastEventID = strings.TrimSpace(r.URL.Query().Get("lastEventId"))
+			if lastEventID == "" {
+				lastEventID = strings.TrimSpace(r.URL.Query().Get("last_event_id"))
+			}
 		}
 
 		var (
