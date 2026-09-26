@@ -209,6 +209,27 @@ func TestPushHandler_PostWidgetPush(t *testing.T) {
 			},
 		},
 		{
+			name:     "push to non-http widget returns 409 conflict",
+			method:   http.MethodPost,
+			widgetID: "tile-calendar",
+			body:     strings.NewReader(`{"status":"ok"}`),
+			pusher: &mockWidgetPusher{
+				pushFunc: func(ctx context.Context, widgetID string, data map[string]any) (provider.WidgetPayload, error) {
+					return provider.WidgetPayload{}, provider.ErrNonHTTPWidgetPushForbidden
+				},
+			},
+			wantStatusCode: http.StatusConflict,
+			checkResponse: func(t *testing.T, rec *httptest.ResponseRecorder) {
+				var res map[string]string
+				if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil {
+					t.Fatalf("failed to decode response: %v", err)
+				}
+				if !strings.Contains(res["error"], "push webhook is strictly limited to widgets using the http provider") {
+					t.Errorf("unexpected error msg: %q", res["error"])
+				}
+			},
+		},
+		{
 			name:     "schema validation error returns 400",
 			method:   http.MethodPost,
 			widgetID: "tile-weather",

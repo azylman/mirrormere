@@ -64,10 +64,11 @@ type Registry interface {
 
 // ErrProviderNotRegistered indicates no factory is registered for the requested provider type.
 var (
-	ErrProviderNotRegistered   = errors.New("provider not registered")
-	ErrWidgetNotFound          = errors.New("widget not found in active configuration")
-	ErrListWidgetPushForbidden = errors.New("cannot push state to list-backed widget; task lists are read-only and ingested from configured upstream providers")
-	ErrSchemaValidation        = errors.New("response_schema validation failed")
+	ErrProviderNotRegistered      = errors.New("provider not registered")
+	ErrWidgetNotFound             = errors.New("widget not found in active configuration")
+	ErrListWidgetPushForbidden    = errors.New("cannot push state to list-backed widget; task lists are read-only and ingested from configured upstream providers")
+	ErrNonHTTPWidgetPushForbidden = errors.New("cannot push state to non-HTTP widget; push webhook is strictly limited to widgets using the http provider")
+	ErrSchemaValidation           = errors.New("response_schema validation failed")
 )
 
 // DefaultRegistry implements a thread-safe Registry.

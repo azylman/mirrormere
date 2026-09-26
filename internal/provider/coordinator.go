@@ -714,8 +714,12 @@ func (c *ProviderCoordinator) recordPushLocked(widgetID string, data map[string]
 		return WidgetPayload{}, fmt.Errorf("%w: %q", ErrWidgetNotFound, widgetID)
 	}
 
-	if targetWidget.Type == "tasks" {
+	providerName := resolveProviderName(targetWidget, c.snapshot)
+	if targetWidget.Type == "tasks" || providerName == "tasks" {
 		return WidgetPayload{}, fmt.Errorf("%w: %q", ErrListWidgetPushForbidden, widgetID)
+	}
+	if providerName != "http" {
+		return WidgetPayload{}, fmt.Errorf("%w: widget %q uses provider %q", ErrNonHTTPWidgetPushForbidden, widgetID, providerName)
 	}
 
 	var pkg *domain.Package
