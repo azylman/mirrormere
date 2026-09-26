@@ -67,7 +67,7 @@ type ListSource interface {
 | Adapter | Scope | Notes |
 |---|---|---|
 | `local` | Core | Pure-Go SQLite (`modernc.org/sqlite`, zero CGO; `lists`, `list_items` tables), active when `source: local` is explicitly declared. Operators and local tools can seed or modify `lists.db` directly for testing/demo environments. |
-| `gtasks` | Core, optional | Google Tasks API. Needs OAuth; polled (default 120 s). |
+| `gtasks` | Core, optional | Google Tasks API. Uses OAuth 2.0 refresh token exchange (minting short-lived access tokens via token endpoint); polled (default 120 s). |
 | `http` | Core | Generic adapter for a household's own list service exposing the endpoint shape below. Lets private systems plug in without Go code. |
 | Private | Sidecar / HTTP | Anything else (e.g. a Skylight bridge) runs as an out-of-process HTTP provider sidecar per SPEC-003. |
 
@@ -88,6 +88,9 @@ display:
         source: gtasks              # Explicit source adapter ("local" | "gtasks" | "http")
         gtasks:
           tasklist_id: "MDk3..."
+          client_id_env: GOOGLE_CLIENT_ID
+          client_secret_env: GOOGLE_CLIENT_SECRET
+          refresh_token_env: GOOGLE_REFRESH_TOKEN
 
     - id: groceries
       type: tasks

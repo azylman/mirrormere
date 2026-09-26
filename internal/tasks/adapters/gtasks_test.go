@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/azylman/mirrormere/internal/tasks/adapters"
@@ -371,5 +372,262 @@ func TestGTasksAdapter_FetchList_TimestampsAndDefaultTitle(t *testing.T) {
 	// Invalid due date should result in nil DueDate
 	if items[0].DueDate != nil {
 		t.Errorf("expected nil DueDate for invalid-date, got %v", *items[0].DueDate)
+	}
+}
+
+func TestGTasksAdapter_OAuthRefresh_SuccessAndCaching(t *testing.T) {
+	t.Parallel()
+
+	var tokenRequests atomic.Int32
+	var taskRequests atomic.Int32
+
+	oauthServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/token" {
+			tokenRequests.Add(1)
+			_ = r.ParseForm()
+			if r.Form.Get("grant_type") != "refresh_token" {
+				http.Error(w, "invalid grant_type", http.StatusBadRequest)
+				return
+			}
+			if r.Form.Get("client_id") != "test-client-id" ||
+				r.Form.Get("client_secret") != "test-client-secret" ||
+				r.Form.Get("refresh_token") != "test-refresh-token" {
+				http.Error(w, "invalid credentials", http.StatusUnauthorized)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"access_token": "minted-token-123",
+				"expires_in":   3600,
+				"token_type":   "Bearer",
+			})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer oauthServer.Close()
+
+	tasksServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		taskRequests.Add(1)
+		auth := r.Header.Get("Authorization")
+		if auth != "Bearer minted-token-123" {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(r.URL.Path, "/users/@me/lists/") {
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "list-1", "title": "My List"})
+			return
+		}
+		if strings.Contains(r.URL.Path, "/tasks") {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"items": []map[string]any{
+					{"id": "task-1", "title": "Item 1", "status": "needsAction"},
+				},
+			})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer tasksServer.Close()
+
+	ad, err := adapters.NewGTasksAdapter(adapters.GTasksAdapterConfig{
+		TaskListID:   "list-1",
+		ClientID:     "test-client-id",
+		ClientSecret: "test-client-secret",
+		RefreshToken: "test-refresh-token",
+		TokenURL:     oauthServer.URL + "/token",
+		BaseURL:      tasksServer.URL,
+		Client:       tasksServer.Client(),
+	})
+	if err != nil {
+		t.Fatalf("failed to create adapter: %v", err)
+	}
+
+	ctx := context.Background()
+
+	// 1. First fetch exchanges refresh_token for access_token and succeeds
+	list, items, err := ad.FetchList(ctx)
+	if err != nil {
+		t.Fatalf("FetchList 1 failed: %v", err)
+	}
+	if list.Name != "My List" || len(items) != 1 {
+		t.Fatalf("unexpected list or items: %+v, %+v", list, items)
+	}
+	if tokenRequests.Load() != 1 {
+		t.Errorf("expected 1 token request, got %d", tokenRequests.Load())
+	}
+
+	// 2. Second fetch within expiry window reuses cached access_token (zero token requests)
+	list2, items2, err := ad.FetchList(ctx)
+	if err != nil {
+		t.Fatalf("FetchList 2 failed: %v", err)
+	}
+	if list2.Name != "My List" || len(items2) != 1 {
+		t.Fatalf("unexpected list2 or items2: %+v, %+v", list2, items2)
+	}
+	if tokenRequests.Load() != 1 {
+		t.Errorf("expected still 1 token request due to caching, got %d", tokenRequests.Load())
+	}
+}
+
+func TestGTasksAdapter_OAuthRefresh_401Retry(t *testing.T) {
+	t.Parallel()
+
+	var tokenRequests atomic.Int32
+	var taskRequests atomic.Int32
+
+	oauthServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reqNum := tokenRequests.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		if reqNum == 1 {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"access_token": "expired-initial-token",
+				"expires_in":   3600,
+			})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"access_token": "fresh-token-456",
+			"expires_in":   3600,
+		})
+	}))
+	defer oauthServer.Close()
+
+	tasksServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		taskRequests.Add(1)
+		auth := r.Header.Get("Authorization")
+		if auth == "Bearer expired-initial-token" {
+			// Reject stale token
+			http.Error(w, "token revoked", http.StatusUnauthorized)
+			return
+		}
+		if auth == "Bearer fresh-token-456" {
+			w.Header().Set("Content-Type", "application/json")
+			if strings.Contains(r.URL.Path, "/users/@me/lists/") {
+				_ = json.NewEncoder(w).Encode(map[string]any{"id": "list-1", "title": "Recovered List"})
+				return
+			}
+			if strings.Contains(r.URL.Path, "/tasks") {
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"items": []map[string]any{
+						{"id": "task-1", "title": "Recovered Item", "status": "needsAction"},
+					},
+				})
+				return
+			}
+		}
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	}))
+	defer tasksServer.Close()
+
+	ad, err := adapters.NewGTasksAdapter(adapters.GTasksAdapterConfig{
+		TaskListID:   "list-1",
+		ClientID:     "cid",
+		ClientSecret: "csec",
+		RefreshToken: "rtoken",
+		TokenURL:     oauthServer.URL + "/token",
+		BaseURL:      tasksServer.URL,
+		Client:       tasksServer.Client(),
+	})
+	if err != nil {
+		t.Fatalf("failed to create adapter: %v", err)
+	}
+
+	// Fetch should get 401 on first attempt, refresh token, retry, and succeed!
+	list, items, err := ad.FetchList(context.Background())
+	if err != nil {
+		t.Fatalf("FetchList failed to recover on 401 retry: %v", err)
+	}
+	if list.Name != "Recovered List" || len(items) != 1 {
+		t.Errorf("unexpected list or items: %+v, %+v", list, items)
+	}
+	if tokenRequests.Load() < 2 {
+		t.Errorf("expected at least 2 token requests (initial + 401 refresh), got %d", tokenRequests.Load())
+	}
+}
+
+func TestGTasksAdapter_OAuthRefresh_Errors(t *testing.T) {
+	t.Parallel()
+
+	// 1. Invalid TokenURL
+	_, err := adapters.NewGTasksAdapter(adapters.GTasksAdapterConfig{
+		TaskListID: "t-1",
+		TokenURL:   "://bad-url",
+	})
+	if err == nil || !strings.Contains(err.Error(), "invalid token_url") {
+		t.Errorf("expected invalid token_url error, got %v", err)
+	}
+
+	// 2. OAuth network failure (closed token server)
+	closedOAuthServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	closedOAuthURL := closedOAuthServer.URL
+	closedOAuthServer.Close()
+
+	adClosedOAuth, _ := adapters.NewGTasksAdapter(adapters.GTasksAdapterConfig{
+		TaskListID:   "t-1",
+		RefreshToken: "ref-tok",
+		TokenURL:     closedOAuthURL,
+		BaseURL:      "https://example.com",
+	})
+	_, _, err = adClosedOAuth.FetchList(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "oauth token request failed") {
+		t.Errorf("expected oauth token request failed error, got %v", err)
+	}
+
+	// 3. OAuth endpoint returns 500 error
+	oauthErrServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+	}))
+	defer oauthErrServer.Close()
+
+	adOAuthErr, _ := adapters.NewGTasksAdapter(adapters.GTasksAdapterConfig{
+		TaskListID:   "t-1",
+		RefreshToken: "ref-tok",
+		TokenURL:     oauthErrServer.URL,
+		BaseURL:      "https://example.com",
+		Client:       oauthErrServer.Client(),
+	})
+	_, _, err = adOAuthErr.FetchList(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "oauth token refresh failed") {
+		t.Errorf("expected oauth token refresh failed error, got %v", err)
+	}
+
+	// 4. OAuth endpoint returns invalid JSON
+	oauthBadJSON := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte("{invalid-json"))
+	}))
+	defer oauthBadJSON.Close()
+
+	adBadJSON, _ := adapters.NewGTasksAdapter(adapters.GTasksAdapterConfig{
+		TaskListID:   "t-1",
+		RefreshToken: "ref-tok",
+		TokenURL:     oauthBadJSON.URL,
+		BaseURL:      "https://example.com",
+		Client:       oauthBadJSON.Client(),
+	})
+	_, _, err = adBadJSON.FetchList(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "failed to parse oauth token response") {
+		t.Errorf("expected failed to parse oauth token response, got %v", err)
+	}
+
+	// 5. OAuth endpoint returns empty access_token
+	oauthEmptyTok := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "", "expires_in": 3600})
+	}))
+	defer oauthEmptyTok.Close()
+
+	adEmptyTok, _ := adapters.NewGTasksAdapter(adapters.GTasksAdapterConfig{
+		TaskListID:   "t-1",
+		RefreshToken: "ref-tok",
+		TokenURL:     oauthEmptyTok.URL,
+		BaseURL:      "https://example.com",
+		Client:       oauthEmptyTok.Client(),
+	})
+	_, _, err = adEmptyTok.FetchList(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "missing access_token") {
+		t.Errorf("expected missing access_token error, got %v", err)
 	}
 }

@@ -758,6 +758,29 @@ func TestTasksProvider_Init_TokenEnv_SecretResolution(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GTasks Init with token_env in secrets failed: %v", err)
 	}
+
+	// 3. GTasks with OAuth credentials resolved from config and secrets
+	pOAuth := provider.NewTasksProvider()
+	optsOAuth := provider.InitOptions{
+		ID: "gtasks-oauth-widget",
+		Secrets: map[string]string{
+			"G_REFRESH": "vault-refresh-token",
+		},
+	}
+	err = pOAuth.Init(ctx, map[string]any{
+		"source":  "gtasks",
+		"db_path": filepath.Join(t.TempDir(), "gtasks_oauth.db"),
+		"gtasks": map[string]any{
+			"tasklist_id":       "list-oauth",
+			"client_id":         "my-client-id",
+			"client_secret":     "my-client-secret",
+			"refresh_token_env": "G_REFRESH",
+			"token_url":         "https://example.com/oauth/token",
+		},
+	}, optsOAuth)
+	if err != nil {
+		t.Fatalf("GTasks Init with OAuth credentials failed: %v", err)
+	}
 }
 
 func TestTasksProvider_Subscribe_CancelledContextUnblocking(t *testing.T) {

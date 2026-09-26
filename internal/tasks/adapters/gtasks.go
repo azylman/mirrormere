@@ -10,33 +10,47 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/azylman/mirrormere/internal/tasks"
 )
 
 const (
-	defaultGoogleTasksBaseURL = "https://tasks.googleapis.com"
-	maxGoogleTasksPages       = 10
-	googleTasksPageSize       = 100
+	defaultGoogleTasksBaseURL  = "https://tasks.googleapis.com"
+	defaultGoogleOAuthTokenURL = "https://oauth2.googleapis.com/token"
+	maxGoogleTasksPages        = 10
+	googleTasksPageSize        = 100
 )
 
 // GTasksAdapterConfig holds configuration for the Google Tasks API adapter.
 type GTasksAdapterConfig struct {
-	TaskListID string
-	Token      string
-	ListName   string
-	BaseURL    string
-	Client     *http.Client
+	TaskListID   string
+	Token        string // static access token (test-only fallback)
+	ClientID     string
+	ClientSecret string
+	RefreshToken string
+	TokenURL     string // defaults to https://oauth2.googleapis.com/token
+	ListName     string
+	BaseURL      string
+	Client       *http.Client
 }
 
 // GTasksAdapter ingests task lists and items from the Google Tasks API per SPEC-008 §3.
 type GTasksAdapter struct {
-	taskListID string
-	token      string
-	listName   string
-	baseURL    string
-	client     *http.Client
+	taskListID   string
+	token        string
+	clientID     string
+	clientSecret string
+	refreshToken string
+	tokenURL     string
+	listName     string
+	baseURL      string
+	client       *http.Client
+
+	tokenMu     sync.Mutex
+	cachedToken string
+	tokenExpiry time.Time
 }
 
 // NewGTasksAdapter creates a validated GTasksAdapter.
@@ -57,6 +71,17 @@ func NewGTasksAdapter(cfg GTasksAdapterConfig) (*GTasksAdapter, error) {
 		return nil, fmt.Errorf("invalid base_url %q: must be http:// or https:// with host", baseURL)
 	}
 
+	tokenURL := strings.TrimSpace(cfg.TokenURL)
+	if tokenURL == "" {
+		tokenURL = defaultGoogleOAuthTokenURL
+	}
+	tokenURL = strings.TrimRight(tokenURL, "/")
+
+	tu, err := url.ParseRequestURI(tokenURL)
+	if err != nil || (tu.Scheme != "http" && tu.Scheme != "https") || tu.Host == "" {
+		return nil, fmt.Errorf("invalid token_url %q: must be http:// or https:// with host", tokenURL)
+	}
+
 	client := cfg.Client
 	if client == nil {
 		client = &http.Client{
@@ -65,11 +90,15 @@ func NewGTasksAdapter(cfg GTasksAdapterConfig) (*GTasksAdapter, error) {
 	}
 
 	return &GTasksAdapter{
-		taskListID: taskListID,
-		token:      strings.TrimSpace(cfg.Token),
-		listName:   strings.TrimSpace(cfg.ListName),
-		baseURL:    baseURL,
-		client:     client,
+		taskListID:   taskListID,
+		token:        strings.TrimSpace(cfg.Token),
+		clientID:     strings.TrimSpace(cfg.ClientID),
+		clientSecret: strings.TrimSpace(cfg.ClientSecret),
+		refreshToken: strings.TrimSpace(cfg.RefreshToken),
+		tokenURL:     tokenURL,
+		listName:     strings.TrimSpace(cfg.ListName),
+		baseURL:      baseURL,
+		client:       client,
 	}, nil
 }
 
@@ -218,15 +247,95 @@ func (a *GTasksAdapter) FetchList(ctx context.Context) (*tasks.List, []tasks.Lis
 	return list, items, nil
 }
 
+type oauthTokenResponse struct {
+	AccessToken string `json:"access_token"`
+	ExpiresIn   int    `json:"expires_in"`
+	TokenType   string `json:"token_type"`
+}
+
+func (a *GTasksAdapter) getAccessToken(ctx context.Context, forceRefresh bool) (string, error) {
+	a.tokenMu.Lock()
+	defer a.tokenMu.Unlock()
+
+	// If refresh token is not configured, fall back to static token (test-only)
+	if a.refreshToken == "" {
+		return a.token, nil
+	}
+
+	// Reuse cached token if valid and not forcing refresh
+	if !forceRefresh && a.cachedToken != "" && time.Now().Add(60*time.Second).Before(a.tokenExpiry) {
+		return a.cachedToken, nil
+	}
+
+	// Request new access token via refresh_token exchange
+	form := url.Values{}
+	form.Set("grant_type", "refresh_token")
+	form.Set("client_id", a.clientID)
+	form.Set("client_secret", a.clientSecret)
+	form.Set("refresh_token", a.refreshToken)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.tokenURL, strings.NewReader(form.Encode()))
+	if err != nil {
+		return "", fmt.Errorf("failed to create oauth token request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("oauth token request failed: %w", err)
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
+	body, readErr := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	if readErr != nil {
+		return "", fmt.Errorf("failed to read oauth token response: %w", readErr)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("oauth token refresh failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var tokenResp oauthTokenResponse
+	if err := json.Unmarshal(body, &tokenResp); err != nil {
+		return "", fmt.Errorf("failed to parse oauth token response: %w", err)
+	}
+
+	if tokenResp.AccessToken == "" {
+		return "", errors.New("oauth token response missing access_token")
+	}
+
+	expiresIn := tokenResp.ExpiresIn
+	if expiresIn <= 0 {
+		expiresIn = 3600
+	}
+
+	a.cachedToken = tokenResp.AccessToken
+	a.tokenExpiry = time.Now().Add(time.Duration(expiresIn) * time.Second)
+
+	return a.cachedToken, nil
+}
+
 func (a *GTasksAdapter) doGet(ctx context.Context, targetURL string) ([]byte, error) {
+	return a.doGetWithRetry(ctx, targetURL, false)
+}
+
+func (a *GTasksAdapter) doGetWithRetry(ctx context.Context, targetURL string, isRetry bool) ([]byte, error) {
+	token, err := a.getAccessToken(ctx, false)
+	if err != nil {
+		return nil, fmt.Errorf("failed to obtain gtasks access token: %w", err)
+	}
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create http request: %w", err)
 	}
 
 	req.Header.Set("Accept", "application/json")
-	if a.token != "" {
-		req.Header.Set("Authorization", "Bearer "+a.token)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
 	}
 
 	resp, err := a.client.Do(req)
@@ -236,6 +345,13 @@ func (a *GTasksAdapter) doGet(ctx context.Context, targetURL string) ([]byte, er
 	defer func() {
 		_ = resp.Body.Close()
 	}()
+
+	if resp.StatusCode == http.StatusUnauthorized && !isRetry && a.refreshToken != "" {
+		// Refresh token once on 401
+		if _, refreshErr := a.getAccessToken(ctx, true); refreshErr == nil {
+			return a.doGetWithRetry(ctx, targetURL, true)
+		}
+	}
 
 	switch resp.StatusCode {
 	case http.StatusOK:
