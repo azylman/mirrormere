@@ -38,6 +38,11 @@ config_schema:
         properties:
           name:
             type: string
+          type:
+            type: string
+            enum:
+              - ical
+              - caldav
           url:
             type: string
           url_env:
@@ -46,5 +51,17 @@ config_schema:
             type: string
           enabled:
             type: boolean
+          username:
+            type: string
+          username_env:
+            type: string
+          password:
+            type: string
+          password_env:
+            type: string
+          token:
+            type: string
+          token_env:
+            type: string
         additionalProperties: false
   additionalProperties: false

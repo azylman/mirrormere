@@ -632,11 +632,13 @@ func TestWatcher_MaxDebounceDurationCeiling(t *testing.T) {
 	tempDir, mgr, loader, disp := setupTestEnv(t)
 	configDir := filepath.Join(tempDir, "config")
 
-	// Set short MaxDebounceDuration of 15ms with DebounceDuration of 10ms
+	// Set short MaxDebounceDuration of 20ms with generous DebounceDuration of 250ms.
+	// This guarantees that continuous rapid writes force a flush via MaxDebounceDuration ceiling,
+	// because debounceTimer (250ms) will never expire during the write loop.
 	w := watcher.New(watcher.Config{
 		ConfigDir:           configDir,
-		DebounceDuration:    10 * time.Millisecond,
-		MaxDebounceDuration: 15 * time.Millisecond,
+		DebounceDuration:    250 * time.Millisecond,
+		MaxDebounceDuration: 20 * time.Millisecond,
 	}, mgr, loader, disp, slog.Default())
 
 	if err := w.Start(context.Background()); err != nil {
@@ -647,20 +649,27 @@ func TestWatcher_MaxDebounceDurationCeiling(t *testing.T) {
 	cssPath := filepath.Join(configDir, "custom.css")
 	_ = os.WriteFile(cssPath, []byte("body { color: red; }"), 0644)
 
-	// Keep sending rapid writes
+	// Keep sending rapid writes until event is received
+	stopWrites := make(chan struct{})
 	go func() {
-		for i := 0; i < 5; i++ {
-			time.Sleep(3 * time.Millisecond)
-			_ = os.WriteFile(cssPath, []byte(fmt.Sprintf("body { color: %d; }", i)), 0644)
+		for i := 0; i < 20; i++ {
+			select {
+			case <-stopWrites:
+				return
+			default:
+				time.Sleep(5 * time.Millisecond)
+				_ = os.WriteFile(cssPath, []byte(fmt.Sprintf("body { color: %d; }", i)), 0644)
+			}
 		}
 	}()
+	defer close(stopWrites)
 
 	select {
 	case ev := <-disp.styleEvents:
 		if ev.File != "custom.css" {
 			t.Errorf("expected 'custom.css', got %q", ev.File)
 		}
-	case <-time.After(500 * time.Millisecond):
+	case <-time.After(2 * time.Second):
 		t.Fatal("timed out: MaxDebounceDuration did not force flush under continuous writes")
 	}
 }
@@ -1673,5 +1682,72 @@ display:
 		}
 	}
 }
+
+func TestWatcher_FSWatcherChannelClose(t *testing.T) {
+	tempDir, mgr, loader, disp := setupTestEnv(t)
+	configDir := filepath.Join(tempDir, "config")
+
+	w := watcher.New(watcher.Config{
+		ConfigDir: configDir,
+	}, mgr, loader, disp, slog.Default())
+
+	if err := w.Start(context.Background()); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+
+	// Close the fsnotify watcher directly to test channel closure (!ok) handling
+	w.CloseFSWatcherForTest()
+
+	// Wait for watcher to terminate cleanly
+	done := make(chan struct{})
+	go func() {
+		_ = w.Close()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("watcher did not terminate cleanly after fsWatcher close")
+	}
+}
+
+func TestWatcher_FlushEdgeCases(t *testing.T) {
+	tempDir, mgr, loader, _ := setupTestEnv(t)
+	configDir := filepath.Join(tempDir, "config")
+
+	disp := &errDispatcher{}
+
+	w := watcher.New(watcher.Config{
+		ConfigDir: configDir,
+	}, mgr, loader, disp, slog.Default())
+
+	// 1. Config reload failure with dispatcher status error
+	configPath := filepath.Join(configDir, "config.yaml")
+	_ = os.WriteFile(configPath, []byte("invalid: yaml: ["), 0644)
+	w.FlushForTest(true, false, nil, nil)
+
+	// 2. Package manifest differs from snapshot
+	loader.mu.Lock()
+	origPkg := loader.packages["spacer"]
+	loader.packages["spacer"] = &domain.Package{
+		Type:   origPkg.Type,
+		Source: origPkg.Source,
+		Dir:    origPkg.Dir,
+		Manifest: domain.WidgetManifest{
+			Name:                "Different Manifest Name",
+			Version:             "2.0.0",
+			Provider:            origPkg.Manifest.Provider,
+			DefaultDimensions:   origPkg.Manifest.DefaultDimensions,
+			SupportedDimensions: origPkg.Manifest.SupportedDimensions,
+		},
+		ViewPath: origPkg.ViewPath,
+	}
+	loader.mu.Unlock()
+
+	// Trigger flush for widget spacer - should detect manifest change and reload
+	w.FlushForTest(false, false, map[string]bool{"spacer": true}, nil)
+}
+
 
 
