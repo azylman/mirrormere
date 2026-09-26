@@ -114,13 +114,13 @@ func TestWalkingSkeleton_EndToEnd(t *testing.T) {
 	if !strings.Contains(displayBody, "id=\"grid-canvas\"") {
 		t.Errorf("expected grid-canvas container in /display")
 	}
-	if !strings.Contains(displayBody, "src=\"/static/js/sse.js\"") {
+	if !strings.Contains(displayBody, "src=\"static/js/sse.js\"") {
 		t.Errorf("expected sse.js script tag in /display")
 	}
-	if !strings.Contains(displayBody, "src=\"/static/js/carousel.js\"") {
+	if !strings.Contains(displayBody, "src=\"static/js/carousel.js\"") {
 		t.Errorf("expected carousel.js script tag in /display")
 	}
-	if !strings.Contains(displayBody, "src=\"/static/js/display.js\"") {
+	if !strings.Contains(displayBody, "src=\"static/js/display.js\"") {
 		t.Errorf("expected display.js script tag in /display")
 	}
 

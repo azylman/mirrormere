@@ -326,7 +326,7 @@ test('VideoHUDController: transport action and dismiss dispatching with in-fligh
   // Play/pause toggle
   dom.playBtn.click();
   assert.equal(networkCalls.length, 1);
-  assert.equal(networkCalls[0].url, '/api/video/action');
+  assert.equal(networkCalls[0].url, 'api/video/action');
   assert.deepEqual(networkCalls[0].body, { id: 'stream_porch', action: 'toggle_playback' });
 
   // Rapid second click blocked by in-flight lock
@@ -339,7 +339,7 @@ test('VideoHUDController: transport action and dismiss dispatching with in-fligh
   // Dismiss button click
   dom.dismissBtn.click();
   assert.equal(networkCalls.length, 2);
-  assert.equal(networkCalls[1].url, '/api/video/dismiss');
+  assert.equal(networkCalls[1].url, 'api/video/dismiss');
   assert.deepEqual(networkCalls[1].body, { id: 'stream_porch' });
 
   // Rapid second dismiss blocked by in-flight lock
@@ -382,7 +382,7 @@ test('VideoHUDController: audio state updates and mute toggle', async () => {
   // Click mute
   dom.muteBtn.click();
   assert.equal(networkCalls.length, 1);
-  assert.equal(networkCalls[0].url, '/api/audio/mute');
+  assert.equal(networkCalls[0].url, 'api/audio/mute');
   assert.deepEqual(networkCalls[0].body, { muted: true });
 
   // Incoming muted state update
@@ -398,7 +398,7 @@ test('VideoHUDController: audio state updates and mute toggle', async () => {
   // Click unmute
   dom.muteBtn.click();
   assert.equal(networkCalls.length, 2);
-  assert.equal(networkCalls[1].url, '/api/audio/mute');
+  assert.equal(networkCalls[1].url, 'api/audio/mute');
   assert.deepEqual(networkCalls[1].body, { muted: false });
 
   hud.destroy();
@@ -436,7 +436,7 @@ test('VideoHUDController: continuous slider drag 200ms throttle and release comm
   dom.volumeSlider.dispatchEvent('input');
   assert.equal(hud.isDragging, true);
   assert.equal(networkCalls.length, 1);
-  assert.equal(networkCalls[0].url, '/api/audio/volume');
+  assert.equal(networkCalls[0].url, 'api/audio/volume');
   assert.deepEqual(networkCalls[0].body, { volume: 50 });
 
   // Rapid intermediate inputs within throttle window do not send immediate requests

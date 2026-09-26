@@ -1,10 +1,10 @@
 /**
  * Mirrormere Realtime Event Client (SSE)
- * Connects to GET /api/events with auto-reconnection and exponential backoff.
+ * Connects to GET api/events with auto-reconnection and exponential backoff.
  * Complies with SPEC-006: Event Streaming & Client Communication.
  */
 class MirrormereSSE {
-  constructor(url = '/api/events', options = {}) {
+  constructor(url = 'api/events', options = {}) {
     this.url = url;
     this.options = options || {};
     this.eventSource = null;

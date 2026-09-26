@@ -4,6 +4,11 @@ const MirrormereSSE = require('../static/js/sse.js');
 
 describe('MirrormereSSE Client & Replay Resumption (SPEC-006 §1, §3)', () => {
   describe('Connection URL Construction (getConnectionURL)', () => {
+    test('defaults to relative api/events URL when omitted', () => {
+      const sse = new MirrormereSSE();
+      assert.equal(sse.getConnectionURL(), 'api/events');
+    });
+
     test('returns base URL unmodified when lastEventId is null or empty', () => {
       const sse = new MirrormereSSE('/api/events');
       assert.equal(sse.getConnectionURL(), '/api/events');
