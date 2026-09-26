@@ -56,7 +56,7 @@ flowchart TD
     - Create: `api/schemas/style.reload.json`
   - Deliverable: Validated Phase 1 OpenAPI 3.1 contract and JSON Schemas with compile-time code generation via `oapi-codegen` into `internal/api/`.
 
-- [ ] **Task 1.3: Core Configuration Parser & Explicit `*_env` Resolution**
+- [x] **Task 1.3: Core Configuration Parser & Explicit `*_env` Resolution**
   - Files:
     - Create: `internal/config/config.go`
     - Create: `internal/config/config_test.go`
@@ -65,7 +65,7 @@ flowchart TD
     - Resolve secrets strictly through explicit `*_env` keys (`token_env`, `url_env`) reading from the host environment. Zero `${VAR}` string interpolation (SPEC-012 §6).
   - Deliverable: Hermetic unit tests achieving `>= 95%` coverage validating valid, invalid, and edge configuration structures.
 
-- [ ] **Task 1.4: Widget Package Loader & Manifest Validator**
+- [x] **Task 1.4: Widget Package Loader & Manifest Validator**
   - Files:
     - Create: `internal/domain/widget.go`
     - Create: `internal/domain/manifest.go`
@@ -89,7 +89,7 @@ flowchart TD
       - Helpful layout deficit and spacer tile (`type: spacer`) guidance on tiling errors per SPEC-005.
   - Deliverable: Comprehensive unit tests in `internal/layout/solver_test.go` across various tile sizes and edge cases.
 
-- [ ] **Task 1.6: LKGC 6-Stage Validation Pipeline & Atomic Swap**
+- [x] **Task 1.6: LKGC 6-Stage Validation Pipeline & Atomic Swap**
   - Files:
     - Create: `internal/config/lkgc.go`
     - Create: `internal/config/lkgc_test.go`

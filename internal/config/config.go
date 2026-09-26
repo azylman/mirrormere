@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"regexp"
 	"strings"
@@ -403,6 +404,13 @@ func (c *Config) Validate() error {
 			w.Method = upper
 		} else if w.Endpoint != "" {
 			w.Method = "POST"
+		}
+
+		if w.Endpoint != "" {
+			u, err := url.ParseRequestURI(w.Endpoint)
+			if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+				return fmt.Errorf("widget '%s': invalid endpoint URL '%s' (must be http:// or https:// with host)", w.ID, w.Endpoint)
+			}
 		}
 	}
 
