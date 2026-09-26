@@ -51,11 +51,43 @@ func (c *HubConfig) ApplyDefaults() {
 	}
 }
 
+type sendResult int
+
+const (
+	sendSuccess sendResult = iota
+	sendBufferFull
+	sendClosed
+)
+
 type subscriber struct {
 	id     uint64
 	ch     chan *Event
 	ctx    context.Context
-	closed atomic.Bool
+	mu     sync.Mutex
+	closed bool
+}
+
+func (s *subscriber) trySend(evt *Event) sendResult {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return sendClosed
+	}
+	select {
+	case s.ch <- evt:
+		return sendSuccess
+	default:
+		return sendBufferFull
+	}
+}
+
+func (s *subscriber) close() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.closed {
+		s.closed = true
+		close(s.ch)
+	}
 }
 
 // Hub coordinates event publishing, ring-buffer retention, and concurrent SSE fan-out.
@@ -163,7 +195,7 @@ func (h *Hub) PublishEvent(evt *Event) {
 		}
 	}
 
-	// 2. Snapshot active subscribers under read lock
+	// 3. Snapshot active subscribers under read lock
 	h.mu.RLock()
 	subs := make([]*subscriber, 0, len(h.subscribers))
 	for _, sub := range h.subscribers {
@@ -171,28 +203,27 @@ func (h *Hub) PublishEvent(evt *Event) {
 	}
 	h.mu.RUnlock()
 
-	// 3. Non-blocking fan-out
+	// 4. Non-blocking fan-out with slow-consumer disconnection per SPEC-006
 	for _, sub := range subs {
-		if sub.closed.Load() {
-			continue
-		}
-
 		if sub.ctx.Err() != nil {
 			h.Unsubscribe(sub.id)
 			continue
 		}
 
-		select {
-		case <-sub.ctx.Done():
-			h.Unsubscribe(sub.id)
-		case sub.ch <- evt:
-		default:
-			// Buffer full on slow consumer
-			h.logger.Warn("slow SSE consumer detected; dropping event",
+		res := sub.trySend(evt)
+		switch res {
+		case sendSuccess:
+			// Delivered successfully
+		case sendBufferFull:
+			// Buffer full on slow consumer: terminate subscriber to force client reconnect & state resync
+			h.logger.Warn("slow SSE consumer detected; terminating connection to force resync",
 				"subscriber_id", sub.id,
 				"event_type", evt.Type,
 				"event_id", evt.ID,
 			)
+			h.Unsubscribe(sub.id)
+		case sendClosed:
+			// Already closed
 		}
 	}
 }
@@ -209,6 +240,8 @@ func (h *Hub) Subscribe(ctx context.Context) (<-chan *Event, func()) {
 	h.mu.Lock()
 	if !h.closed.Load() {
 		h.subscribers[subID] = sub
+	} else {
+		sub.close()
 	}
 	h.mu.Unlock()
 
@@ -228,8 +261,8 @@ func (h *Hub) Unsubscribe(subID uint64) {
 	}
 	h.mu.Unlock()
 
-	if exists && sub.closed.CompareAndSwap(false, true) {
-		close(sub.ch)
+	if exists {
+		sub.close()
 	}
 }
 
@@ -254,12 +287,15 @@ func (h *Hub) BuildHydration() []*Event {
 func (h *Hub) Close() {
 	if h.closed.CompareAndSwap(false, true) {
 		h.mu.Lock()
+		subs := make([]*subscriber, 0, len(h.subscribers))
 		for id, sub := range h.subscribers {
 			delete(h.subscribers, id)
-			if sub.closed.CompareAndSwap(false, true) {
-				close(sub.ch)
-			}
+			subs = append(subs, sub)
 		}
 		h.mu.Unlock()
+
+		for _, sub := range subs {
+			sub.close()
+		}
 	}
 }
