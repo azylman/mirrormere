@@ -338,3 +338,56 @@ func TestServer_ListenAndServe_Success(t *testing.T) {
 		t.Fatal("server did not shut down cleanly")
 	}
 }
+
+func TestServer_EventsHandler(t *testing.T) {
+	t.Parallel()
+
+	// Case 1: Unset EventsHandler returns 404
+	srv := server.New(server.Config{})
+	if srv.EventsHandler() != nil {
+		t.Fatal("expected nil EventsHandler initially")
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/events", nil)
+	rec := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 when EventsHandler unset, got %d", rec.Code)
+	}
+
+	// Case 2: Config.EventsHandler set at creation
+	mockHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("event: test\ndata: ok\n\n"))
+	})
+
+	srvWithHandler := server.New(server.Config{EventsHandler: mockHandler})
+	if srvWithHandler.EventsHandler() == nil {
+		t.Fatal("expected non-nil EventsHandler")
+	}
+
+	rec2 := httptest.NewRecorder()
+	srvWithHandler.Routes().ServeHTTP(rec2, req)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("expected 200 from configured EventsHandler, got %d", rec2.Code)
+	}
+	if rec2.Body.String() != "event: test\ndata: ok\n\n" {
+		t.Fatalf("unexpected body: %q", rec2.Body.String())
+	}
+
+	// Case 3: RegisterEventsHandler dynamically updates handler
+	mockHandler2 := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTeapot)
+	})
+	srv.RegisterEventsHandler(mockHandler2)
+	if srv.EventsHandler() == nil {
+		t.Fatal("expected non-nil EventsHandler after registration")
+	}
+
+	rec3 := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(rec3, req)
+	if rec3.Code != http.StatusTeapot {
+		t.Fatalf("expected 418 from dynamically registered EventsHandler, got %d", rec3.Code)
+	}
+}
