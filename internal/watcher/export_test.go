@@ -32,3 +32,15 @@ func IsWidgetTypeReferencedForTest(snap *config.Snapshot, widgetType string) boo
 	return isWidgetTypeReferenced(snap, widgetType)
 }
 
+// FlushForTest exposes flush directly for testing edge branches.
+func (w *Watcher) FlushForTest(dirtyConfig, dirtyStyle bool, dirtyWidgets, dirtyManifests map[string]bool) {
+	w.flush(dirtyConfig, dirtyStyle, dirtyWidgets, dirtyManifests)
+}
+
+// CloseFSWatcherForTest closes the underlying fsnotify watcher directly.
+func (w *Watcher) CloseFSWatcherForTest() {
+	if w.fsWatcher != nil {
+		_ = w.fsWatcher.Close()
+	}
+}
+
