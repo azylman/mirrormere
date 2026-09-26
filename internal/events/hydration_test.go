@@ -63,10 +63,17 @@ func TestInMemoryStateProvider_GettersAndSetters(t *testing.T) {
 		t.Error("status setter failed")
 	}
 
-	provider.SetWidgetState("w1", map[string]string{"foo": "bar"}, "healthy")
+	provider.SetWidgetState("w1", map[string]string{"foo": "bar"}, "healthy", "2026-09-25T10:00:00Z")
 	data, state, ok := provider.GetWidgetState("w1")
 	if !ok || state != "healthy" || data == nil {
 		t.Errorf("widget state setter failed: %v, %v, %v", data, state, ok)
+	}
+	ts, tsOk := provider.GetWidgetTimestamp("w1")
+	if !tsOk || ts != "2026-09-25T10:00:00Z" {
+		t.Errorf("expected timestamp '2026-09-25T10:00:00Z', got %q, %v", ts, tsOk)
+	}
+	if _, emptyOk := provider.GetWidgetTimestamp("unknown-widget"); emptyOk {
+		t.Error("expected false for unknown widget timestamp")
 	}
 
 	provider.SetHeaderWeather(&HeaderWeather{Temperature: 75.0, Units: "F"})

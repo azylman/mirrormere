@@ -230,6 +230,12 @@ func (e *Engine) buildContext(widgetID string, w *config.WidgetConfig, pkg *doma
 	}
 
 	now := e.nowFunc()
+	timestamp := now.UTC().Format(time.RFC3339)
+	if tsProvider, ok := e.provider.(interface{ GetWidgetTimestamp(string) (string, bool) }); ok {
+		if ts, ok := tsProvider.GetWidgetTimestamp(widgetID); ok && ts != "" {
+			timestamp = ts
+		}
+	}
 
 	return Context{
 		ID:         widgetID,
@@ -237,7 +243,7 @@ func (e *Engine) buildContext(widgetID string, w *config.WidgetConfig, pkg *doma
 		Dimensions: dim,
 		Data:       wData,
 		State:      wState,
-		Timestamp:  now.UTC().Format(time.RFC3339),
+		Timestamp:  timestamp,
 		Config:     SanitizeConfig(w.Config),
 		Origin:     origin,
 		Theme:      "dark",

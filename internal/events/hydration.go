@@ -90,8 +90,9 @@ type StateProvider interface {
 }
 
 type widgetStateEntry struct {
-	data  any
-	state string
+	data      any
+	state     string
+	timestamp string
 }
 
 // InMemoryStateProvider maintains thread-safe cached state across subsystems.
@@ -173,10 +174,15 @@ func (p *InMemoryStateProvider) CurrentStatus() config.Status {
 }
 
 // SetWidgetState stores the latest state and domain data for a widget instance.
-func (p *InMemoryStateProvider) SetWidgetState(widgetID string, data any, state string) {
+// Optional timestamp parameter preserves the last successful fetch timestamp for degraded widgets.
+func (p *InMemoryStateProvider) SetWidgetState(widgetID string, data any, state string, timestamp ...string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.widgetStates[widgetID] = widgetStateEntry{data: data, state: state}
+	var ts string
+	if len(timestamp) > 0 {
+		ts = timestamp[0]
+	}
+	p.widgetStates[widgetID] = widgetStateEntry{data: data, state: state, timestamp: ts}
 }
 
 // GetWidgetState returns cached state and domain data for a widget instance.
@@ -188,6 +194,17 @@ func (p *InMemoryStateProvider) GetWidgetState(widgetID string) (any, string, bo
 		return nil, "", false
 	}
 	return entry.data, entry.state, true
+}
+
+// GetWidgetTimestamp returns the recorded timestamp for a widget instance.
+func (p *InMemoryStateProvider) GetWidgetTimestamp(widgetID string) (string, bool) {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	entry, ok := p.widgetStates[widgetID]
+	if !ok || entry.timestamp == "" {
+		return "", false
+	}
+	return entry.timestamp, true
 }
 
 // SetHeaderWeather updates the ambient header weather.
@@ -356,6 +373,7 @@ func BuildHydrationBatch(provider StateProvider, idGen *IDGenerator, now time.Ti
 		for _, w := range snap.Config.Display.Widgets {
 			var wData any = map[string]any{}
 			wState := "healthy"
+			wTimestamp := nowStr
 			if provider != nil {
 				if d, s, ok := provider.GetWidgetState(w.ID); ok {
 					if d != nil {
@@ -365,11 +383,16 @@ func BuildHydrationBatch(provider StateProvider, idGen *IDGenerator, now time.Ti
 						wState = s
 					}
 				}
+				if tsProvider, ok := provider.(interface{ GetWidgetTimestamp(string) (string, bool) }); ok {
+					if ts, ok := tsProvider.GetWidgetTimestamp(w.ID); ok && ts != "" {
+						wTimestamp = ts
+					}
+				}
 			}
 
 			payload := WidgetUpdateData{
 				WidgetID:  w.ID,
-				Timestamp: nowStr,
+				Timestamp: wTimestamp,
 				State:     wState,
 				Data:      wData,
 			}
