@@ -1,6 +1,8 @@
 package web_test
 
 import (
+	"os"
+	"os/exec"
 	"testing"
 
 	"github.com/azylman/mirrormere/web"
@@ -36,3 +38,20 @@ func TestEmbeddedContent(t *testing.T) {
 		}
 	}
 }
+
+func TestHeaderClock_HouseholdTimezone_NodeRunner(t *testing.T) {
+	t.Parallel()
+
+	nodePath, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node executable not found in PATH; skipping client-side JS clock tests")
+	}
+
+	cmd := exec.Command(nodePath, "--test", "test/clock.test.js")
+	cmd.Env = append(os.Environ(), "TZ=UTC")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("node clock.test.js failed: %v\nOutput:\n%s", err, string(out))
+	}
+}
+

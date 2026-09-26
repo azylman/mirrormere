@@ -80,7 +80,14 @@ func TestWalkingSkeleton_EndToEnd(t *testing.T) {
 	// 2. Wire rendering, display, and server
 	renderEngine := render.NewEngine(loader, provider)
 	renderH := render.NewHandler(renderEngine, loader)
-	displayH := display.NewHandler()
+	displayH := display.NewHandler(
+		display.WithTimezoneProvider(func() string {
+			if snap := provider.CurrentSnapshot(); snap != nil && snap.Config != nil {
+				return snap.Config.Timezone
+			}
+			return ""
+		}),
+	)
 
 	srv := server.New(server.Config{
 		RenderHandler:  renderH,
@@ -100,6 +107,9 @@ func TestWalkingSkeleton_EndToEnd(t *testing.T) {
 	displayBody := recDisplay.Body.String()
 	if !strings.Contains(displayBody, "id=\"mirrormere-app\"") {
 		t.Errorf("expected mirrormere-app container in /display")
+	}
+	if !strings.Contains(displayBody, `data-timezone="America/Los_Angeles"`) {
+		t.Errorf("expected data-timezone=\"America/Los_Angeles\" in /display")
 	}
 	if !strings.Contains(displayBody, "id=\"grid-canvas\"") {
 		t.Errorf("expected grid-canvas container in /display")

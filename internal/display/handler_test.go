@@ -404,3 +404,120 @@ func TestGetStatic_Resolutions(t *testing.T) {
 		}
 	})
 }
+
+func TestGetDisplay_Timezone(t *testing.T) {
+	t.Parallel()
+
+	t.Run("DefaultTimezoneUTC", func(t *testing.T) {
+		t.Parallel()
+		h := display.NewHandler(
+			display.WithEmbeddedTemplate([]byte(`<div data-timezone="{{ .Timezone }}"></div>`)),
+		)
+		if h.Timezone() != "UTC" {
+			t.Errorf("expected default timezone UTC, got %s", h.Timezone())
+		}
+
+		req := httptest.NewRequest(http.MethodGet, "/display", nil)
+		rec := httptest.NewRecorder()
+		h.GetDisplay(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rec.Code)
+		}
+		if !strings.Contains(rec.Body.String(), `data-timezone="UTC"`) {
+			t.Errorf("expected data-timezone=\"UTC\", got %s", rec.Body.String())
+		}
+	})
+
+	t.Run("StaticWithTimezone", func(t *testing.T) {
+		t.Parallel()
+		h := display.NewHandler(
+			display.WithTimezone("America/Los_Angeles"),
+			display.WithEmbeddedTemplate([]byte(`<div data-timezone="{{ .Timezone }}"></div>`)),
+		)
+		if h.Timezone() != "America/Los_Angeles" {
+			t.Errorf("expected timezone America/Los_Angeles, got %s", h.Timezone())
+		}
+
+		req := httptest.NewRequest(http.MethodGet, "/display", nil)
+		rec := httptest.NewRecorder()
+		h.GetDisplay(rec, req)
+
+		if !strings.Contains(rec.Body.String(), `data-timezone="America/Los_Angeles"`) {
+			t.Errorf("expected data-timezone=\"America/Los_Angeles\", got %s", rec.Body.String())
+		}
+	})
+
+	t.Run("DynamicWithTimezoneProviderAndSetTimezone", func(t *testing.T) {
+		t.Parallel()
+		tz := "Europe/London"
+		h := display.NewHandler(
+			display.WithTimezoneProvider(func() string {
+				return tz
+			}),
+			display.WithEmbeddedTemplate([]byte(`<div data-timezone="{{ .Timezone }}"></div>`)),
+		)
+
+		req := httptest.NewRequest(http.MethodGet, "/display", nil)
+		rec := httptest.NewRecorder()
+		h.GetDisplay(rec, req)
+
+		if !strings.Contains(rec.Body.String(), `data-timezone="Europe/London"`) {
+			t.Errorf("expected data-timezone=\"Europe/London\", got %s", rec.Body.String())
+		}
+
+		// Update via SetTimezone when provider returns empty
+		h2 := display.NewHandler(
+			display.WithEmbeddedTemplate([]byte(`<div data-timezone="{{ .Timezone }}"></div>`)),
+		)
+		h2.SetTimezone("Asia/Tokyo")
+		if h2.Timezone() != "Asia/Tokyo" {
+			t.Errorf("expected Asia/Tokyo, got %s", h2.Timezone())
+		}
+
+		rec2 := httptest.NewRecorder()
+		h2.GetDisplay(rec2, req)
+		if !strings.Contains(rec2.Body.String(), `data-timezone="Asia/Tokyo"`) {
+			t.Errorf("expected data-timezone=\"Asia/Tokyo\", got %s", rec2.Body.String())
+		}
+	})
+
+	t.Run("HEADMethodWithTimezone", func(t *testing.T) {
+		t.Parallel()
+		h := display.NewHandler(
+			display.WithTimezone("America/Chicago"),
+			display.WithEmbeddedTemplate([]byte(`<div data-timezone="{{ .Timezone }}"></div>`)),
+		)
+
+		req := httptest.NewRequest(http.MethodHead, "/display", nil)
+		rec := httptest.NewRecorder()
+		h.GetDisplay(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rec.Code)
+		}
+		if rec.Body.Len() != 0 {
+			t.Errorf("expected empty body for HEAD, got %d bytes", rec.Body.Len())
+		}
+	})
+
+	t.Run("MalformedTemplateFallback", func(t *testing.T) {
+		t.Parallel()
+		raw := []byte(`<div>{{ invalid template syntax`)
+		h := display.NewHandler(
+			display.WithEmbeddedTemplate(raw),
+		)
+
+		req := httptest.NewRequest(http.MethodGet, "/display", nil)
+		rec := httptest.NewRecorder()
+		h.GetDisplay(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rec.Code)
+		}
+		if rec.Body.String() != string(raw) {
+			t.Errorf("expected fallback to raw content, got %s", rec.Body.String())
+		}
+	})
+}
+

@@ -40,9 +40,10 @@ type HeaderWeather struct {
 	Icon        string  `json:"icon"`
 }
 
-// HeaderUpdateData matches SPEC-006 §2.B.
+// HeaderUpdateData matches SPEC-006 §2.B and SPEC-012 §5.
 type HeaderUpdateData struct {
 	Timestamp string         `json:"timestamp"`
+	Timezone  string         `json:"timezone,omitempty"`
 	Weather   *HeaderWeather `json:"weather"`
 }
 
@@ -427,8 +428,15 @@ func BuildHydrationBatch(provider StateProvider, idGen *IDGenerator, now time.Ti
 			Icon:        "weather-sunny",
 		}
 	}
+	tz := "UTC"
+	if provider != nil {
+		if snap := provider.CurrentSnapshot(); snap != nil && snap.Config != nil && snap.Config.Timezone != "" {
+			tz = snap.Config.Timezone
+		}
+	}
 	headerBytes, err := json.Marshal(HeaderUpdateData{
 		Timestamp: nowStr,
+		Timezone:  tz,
 		Weather:   weather,
 	})
 	if err == nil {

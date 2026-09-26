@@ -119,20 +119,13 @@ $msg"
     fi
 }
 
-cgo_val="${CGO_ENABLED:-}"
-if [ -z "$cgo_val" ]; then
-    if command -v gcc >/dev/null 2>&1 || command -v clang >/dev/null 2>&1; then
-        cgo_val=1
-    else
-        cgo_val=0
-    fi
-fi
+cgo_val="${CGO_ENABLED:-0}"
 
 GO_TEST_PREFIX=""
 if [ "$(id -u)" -eq 0 ] && command -v setpriv >/dev/null 2>&1 && id -u ubuntu >/dev/null 2>&1; then
     if command -v python3 >/dev/null 2>&1; then
         if ! python3 -c "import ctypes; libc=ctypes.CDLL('libc.so.6', use_errno=True); fds=[libc.inotify_init() for _ in range(10)]; exit(0 if all(f >= 0 for f in fds) else 1)" 2>/dev/null; then
-            GO_TEST_PREFIX="setpriv --reuid=1000 --regid=1000 --clear-groups env HOME=/tmp"
+            GO_TEST_PREFIX="setpriv --reuid=1000 --regid=1000 --clear-groups env HOME=/tmp PATH=$PATH"
             chmod 777 "$PROF_DIR" 2>/dev/null || true
         fi
     fi
