@@ -43,7 +43,7 @@ type HeaderWeather struct {
 // HeaderUpdateData matches SPEC-006 §2.B and SPEC-012 §5.
 type HeaderUpdateData struct {
 	Timestamp string         `json:"timestamp"`
-	Timezone  string         `json:"timezone,omitempty"`
+	Timezone  string         `json:"timezone"`
 	Weather   *HeaderWeather `json:"weather"`
 }
 

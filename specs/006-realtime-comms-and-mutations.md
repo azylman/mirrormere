@@ -100,12 +100,19 @@ data: {"widget_id":"daily-chores","timestamp":"2026-09-24T22:15:00Z","state":"he
   3. If the widget is rotated off-screen, the fetch is omitted at update time; the client fetches fresh markup via `GET /api/widgets/{widget_id}/render` when the rotation engine advances to that screen (see §C).
 
 #### B. `header.update`
-Pushed when the autonomous header weather poller completes an ingestion cycle (SPEC-007 §4), delivering persistent top-banner weather directly to all connected displays without requiring an on-grid weather widget:
+Pushed when the autonomous header weather poller completes an ingestion cycle (SPEC-007 §4) or when a live configuration reload updates the household `timezone` (SPEC-012 §5), delivering persistent top-banner weather and the authoritative household timezone directly to all connected displays without requiring an on-grid weather widget or full screen reload:
 ```http
 event: header.update
 id: evt_1727216215_02
-data: {"timestamp":"2026-09-24T22:15:00Z","weather":{"temperature":68.5,"units":"F","weather_code":1,"icon":"weather-sunny"}}
+data: {"timestamp":"2026-09-24T22:15:00Z","timezone":"America/Los_Angeles","weather":{"temperature":68.5,"units":"F","weather_code":1,"icon":"weather-sunny"}}
 ```
+- **Fields**:
+  - `timestamp` (string, ISO 8601 / RFC 3339, required): Current UTC timestamp.
+  - `timezone` (string, required): IANA timezone string configured in `config.yaml` (e.g. `"America/Los_Angeles"`, defaulting to `"UTC"`). Connected display clients bind digital clocks and localized date formatters to this value, preventing kiosk containers and headless renderers from drifting to browser or host UTC defaults (SPEC-001 §4, SPEC-010).
+  - `weather` (object, required): Ambient weather conditions for the top banner.
+- **Triggers**:
+  1. **Autonomous Weather Ingestion**: Emitted whenever the header weather poller refreshes ambient temperature, units, weather code, and icon.
+  2. **Household Timezone Reload**: Emitted immediately whenever a live configuration reload alters `timezone` in `config.yaml`, enabling displays to rebind digital clocks and dates dynamically without restarting the client.
 
 #### C. `screen.rotate`
 Emitted by the Go rotation engine when the active screen advances to the next 6×2 layout:
@@ -208,12 +215,12 @@ When a client establishes an SSE connection to `GET /api/events`:
    data: {"widget_id":"daily-chores","timestamp":"2026-09-24T22:15:00Z","state":"healthy","data":{"list":{"id":"chores","name":"Chores","source":"gtasks"},"items":[{"id":"i1","title":"Take out compost","done":true,"position":0}]}}
    ```
 
-3. **Fixed Header Ambient Weather (`header.update`)**:
-   Flushes the current ambient weather conditions for the persistent top banner.
+3. **Fixed Header Ambient Weather & Household Timezone (`header.update`)**:
+   Flushes the current ambient weather conditions and configured household timezone for the persistent top banner. Connected displays use the hydrated timezone to initialize digital clocks and date formatters to the correct household timezone upon first connection:
    ```http
    event: header.update
    id: evt_init_03
-   data: {"timestamp":"2026-09-24T22:15:00Z","weather":{"temperature":68.5,"units":"F","weather_code":1,"icon":"weather-sunny"}}
+   data: {"timestamp":"2026-09-24T22:15:00Z","timezone":"America/Los_Angeles","weather":{"temperature":68.5,"units":"F","weather_code":1,"icon":"weather-sunny"}}
    ```
 
 4. **Active Video Pipeline State (`video.state`)**:

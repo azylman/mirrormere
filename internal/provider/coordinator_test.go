@@ -1146,11 +1146,18 @@ func TestProviderCoordinator_PushDoesNotResurrectPurgedCacheAfterDomainChange(t 
 		t.Fatalf("UpdateConfig failed: %v", err)
 	}
 
-	// Wait for mockP2 initial fetch (which fails with degraded/error)
-	select {
-	case <-mockP2.fetchSignal:
-	case <-time.After(2 * time.Second):
-		t.Fatal("timeout waiting for mockP2 fetch")
+	// Wait for mockP2 initial fetch failure to be recorded and broadcast
+	for {
+		evt, ok := broadcaster.waitForPublish(2 * time.Second)
+		if !ok {
+			t.Fatal("timeout waiting for mockP2 fetch failure broadcast")
+		}
+		var p provider.WidgetPayload
+		if err := json.Unmarshal(evt.Data, &p); err == nil && p.WidgetID == "tile-dyn" {
+			if p.State == provider.StateError {
+				break
+			}
+		}
 	}
 
 	// Ensure coordinator processed all pending events
