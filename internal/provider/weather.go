@@ -291,22 +291,39 @@ func (p *WeatherProvider) Fetch(ctx context.Context) (any, error) {
 		Daily:  make([]WeatherDaily, 0, len(data.Daily.Time)),
 	}
 
-	hourlyCount := len(data.Hourly.Time)
-	if len(data.Hourly.Temperature2m) < hourlyCount {
-		hourlyCount = len(data.Hourly.Temperature2m)
+	maxSafeLen := len(data.Hourly.Time)
+	if len(data.Hourly.Temperature2m) < maxSafeLen {
+		maxSafeLen = len(data.Hourly.Temperature2m)
 	}
-	if len(data.Hourly.WeatherCode) < hourlyCount {
-		hourlyCount = len(data.Hourly.WeatherCode)
+	if len(data.Hourly.WeatherCode) < maxSafeLen {
+		maxSafeLen = len(data.Hourly.WeatherCode)
 	}
-	if len(data.Hourly.PrecipitationProbability) < hourlyCount {
-		hourlyCount = len(data.Hourly.PrecipitationProbability)
-	}
-	// Limit hourly timeline to next 24 entries per SPEC-007 §2
-	if hourlyCount > 24 {
-		hourlyCount = 24
+	if len(data.Hourly.PrecipitationProbability) < maxSafeLen {
+		maxSafeLen = len(data.Hourly.PrecipitationProbability)
 	}
 
-	for i := 0; i < hourlyCount; i++ {
+	startIndex := 0
+	if len(data.Current.Time) >= 13 {
+		curHour := data.Current.Time[:13]
+		for i := 0; i < maxSafeLen; i++ {
+			hTime := data.Hourly.Time[i]
+			if len(hTime) >= 13 && hTime[:13] >= curHour {
+				startIndex = i
+				break
+			}
+		}
+	}
+	if startIndex >= maxSafeLen {
+		startIndex = 0
+	}
+
+	// Limit hourly timeline to next 24 entries per SPEC-007 §2
+	endIndex := startIndex + 24
+	if endIndex > maxSafeLen {
+		endIndex = maxSafeLen
+	}
+
+	for i := startIndex; i < endIndex; i++ {
 		_, hIcon := MapWMOCode(data.Hourly.WeatherCode[i])
 		snapshot.Hourly = append(snapshot.Hourly, WeatherHourly{
 			Time:       data.Hourly.Time[i],

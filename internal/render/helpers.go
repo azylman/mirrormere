@@ -12,6 +12,8 @@ var timeLayouts = []string{
 	time.RFC3339,
 	"2006-01-02T15:04:05",
 	"2006-01-02 15:04:05",
+	"2006-01-02T15:04",
+	"2006-01-02 15:04",
 	"2006-01-02",
 	"15:04:05",
 	"15:04",
@@ -32,8 +34,9 @@ func StandardFuncMap(nowFunc func() time.Time) template.FuncMap {
 		"relDate": func(args ...any) string {
 			return RelDate(nowFunc(), args...)
 		},
-		"json":   JSONHelper,
-		"jsonJS": JSONJSHelper,
+		"json":        JSONHelper,
+		"jsonJS":      JSONJSHelper,
+		"weatherIcon": WeatherIcon,
 	}
 }
 
@@ -214,4 +217,66 @@ func JSONJSHelper(v any) (template.JS, error) {
 		return "", err
 	}
 	return template.JS(b), nil
+}
+
+// WeatherIcon returns a sanitized, scalable vector inline SVG for WMO condition tokens.
+func WeatherIcon(args ...any) template.HTML {
+	token := "weather-cloudy"
+	size := 20
+	if len(args) > 0 && args[0] != nil {
+		s := fmt.Sprint(args[0])
+		if s != "" {
+			token = s
+		}
+	}
+	if len(args) > 1 {
+		switch v := args[1].(type) {
+		case int:
+			if v > 0 {
+				size = v
+			}
+		case int64:
+			if v > 0 {
+				size = int(v)
+			}
+		case float64:
+			if v > 0 {
+				size = int(v)
+			}
+		case string:
+			var parsedSize int
+			if n, err := fmt.Sscanf(v, "%d", &parsedSize); err == nil && n > 0 && parsedSize > 0 {
+				size = parsedSize
+			}
+		}
+	}
+	if size < 12 {
+		size = 12
+	} else if size > 64 {
+		size = 64
+	}
+
+	var pathHTML string
+	switch token {
+	case "weather-sunny":
+		pathHTML = `<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/>`
+	case "weather-partly-cloudy":
+		pathHTML = `<path d="M12 2v2M4.93 4.93l1.41 1.41M20 12h2M19.07 4.93l-1.41 1.41"/><path d="M17.5 19H9a5 5 0 0 1-1-9.9 6 6 0 0 1 11.8 1.9 4 4 0 0 1-2.3 8z"/>`
+	case "weather-cloudy":
+		pathHTML = `<path d="M17.5 19H9a5 5 0 0 1-1-9.9 6 6 0 0 1 11.8 1.9 4 4 0 0 1-2.3 8z"/>`
+	case "weather-fog":
+		pathHTML = `<path d="M4 14h16M4 18h16M7 10h10M9 6h6"/>`
+	case "weather-rainy":
+		pathHTML = `<path d="M17.5 14H9a5 5 0 0 1-1-9.9 6 6 0 0 1 11.8 1.9 4 4 0 0 1-2.3 8z"/><path d="M8 17v4M12 17v4M16 17v4"/>`
+	case "weather-pouring":
+		pathHTML = `<path d="M17.5 13H9a5 5 0 0 1-1-9.9 6 6 0 0 1 11.8 1.9 4 4 0 0 1-2.3 8z"/><path d="M7 16l-2 5M11 16l-2 5M15 16l-2 5M19 16l-2 5"/>`
+	case "weather-snowy", "weather-snowy-rainy":
+		pathHTML = `<path d="M17.5 14H9a5 5 0 0 1-1-9.9 6 6 0 0 1 11.8 1.9 4 4 0 0 1-2.3 8z"/><path d="M8 18h.01M12 18h.01M16 18h.01M10 21h.01M14 21h.01"/>`
+	case "weather-lightning", "weather-lightning-rainy":
+		pathHTML = `<path d="M17.5 13H9a5 5 0 0 1-1-9.9 6 6 0 0 1 11.8 1.9 4 4 0 0 1-2.3 8z"/><polygon points="13 14 10 19 14 19 11 23 16 16 12 16 13 14"/>`
+	default:
+		pathHTML = `<path d="M17.5 19H9a5 5 0 0 1-1-9.9 6 6 0 0 1 11.8 1.9 4 4 0 0 1-2.3 8z"/>`
+	}
+
+	return template.HTML(fmt.Sprintf(`<svg width="%d" height="%d" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="mm-weather-icon mm-icon-%s">%s</svg>`, size, size, template.HTMLEscapeString(token), pathHTML))
 }

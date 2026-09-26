@@ -809,6 +809,12 @@ func TestRenderBuiltinWeatherForecastWidget(t *testing.T) {
 	if !strings.Contains(string(htmlLoaded), "weather-partly-cloudy") {
 		t.Errorf("expected icon token in rendered output, got: %s", htmlLoaded)
 	}
+	if !strings.Contains(string(htmlLoaded), "Now") {
+		t.Errorf("expected 'Now' badge in rendered hourly timeline, got: %s", htmlLoaded)
+	}
+	if !strings.Contains(string(htmlLoaded), "mm-weather-icon") {
+		t.Errorf("expected mm-weather-icon SVG in rendered output, got: %s", htmlLoaded)
+	}
 	if strings.Contains(string(htmlLoaded), "weather-location-name") {
 		t.Errorf("expected no weather-location-name when unconfigured, got: %s", htmlLoaded)
 	}

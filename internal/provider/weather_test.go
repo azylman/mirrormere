@@ -758,3 +758,121 @@ func TestWeatherProvider_Init_LocationName(t *testing.T) {
 		t.Errorf("expected location 'Home' in JSON, got %v", parsed["location"])
 	}
 }
+
+func TestWeatherProvider_Fetch_CurrentHourAlignment(t *testing.T) {
+	t.Parallel()
+
+	// 48 hours of forecast
+	hours := make([]string, 48)
+	temps := make([]float64, 48)
+	probs := make([]int, 48)
+	codes := make([]int, 48)
+	for i := 0; i < 48; i++ {
+		hours[i] = fmt.Sprintf("2026-09-26T%02d:00", i)
+		temps[i] = 60.0 + float64(i)
+		probs[i] = i
+		codes[i] = 1
+	}
+
+	// 1. Current.Time at 14:00 -> should return 24 entries starting at 14:00
+	json1 := map[string]any{
+		"current": map[string]any{
+			"time":           "2026-09-26T14:15",
+			"temperature_2m": 72.0,
+			"weather_code":   1,
+		},
+		"hourly": map[string]any{
+			"time":                      hours,
+			"temperature_2m":            temps,
+			"precipitation_probability": probs,
+			"weather_code":              codes,
+		},
+	}
+	payload1, _ := json.Marshal(json1)
+
+	ts1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(payload1)
+	}))
+	defer ts1.Close()
+
+	p1 := provider.NewWeatherProviderWithClient(ts1.Client(), ts1.URL)
+	_ = p1.Init(context.Background(), map[string]any{"latitude": 37.0, "longitude": -122.0}, provider.InitOptions{})
+	res1, err := p1.Fetch(context.Background())
+	if err != nil {
+		t.Fatalf("Fetch failed: %v", err)
+	}
+	snap1 := res1.(provider.WeatherSnapshot)
+	if len(snap1.Hourly) != 24 {
+		t.Fatalf("expected 24 hourly entries, got %d", len(snap1.Hourly))
+	}
+	if snap1.Hourly[0].Time != "2026-09-26T14:00" {
+		t.Errorf("expected first hourly item to be 2026-09-26T14:00, got %s", snap1.Hourly[0].Time)
+	}
+
+	// 2. Current.Time near end (40:00) with 48 items -> should safely return 8 items
+	json2 := map[string]any{
+		"current": map[string]any{
+			"time":           "2026-09-26T40:00",
+			"temperature_2m": 75.0,
+			"weather_code":   1,
+		},
+		"hourly": map[string]any{
+			"time":                      hours,
+			"temperature_2m":            temps,
+			"precipitation_probability": probs,
+			"weather_code":              codes,
+		},
+	}
+	payload2, _ := json.Marshal(json2)
+
+	ts2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(payload2)
+	}))
+	defer ts2.Close()
+
+	p2 := provider.NewWeatherProviderWithClient(ts2.Client(), ts2.URL)
+	_ = p2.Init(context.Background(), map[string]any{"latitude": 37.0, "longitude": -122.0}, provider.InitOptions{})
+	res2, err := p2.Fetch(context.Background())
+	if err != nil {
+		t.Fatalf("Fetch failed: %v", err)
+	}
+	snap2 := res2.(provider.WeatherSnapshot)
+	if len(snap2.Hourly) != 8 {
+		t.Errorf("expected 8 hourly items near end, got %d", len(snap2.Hourly))
+	}
+
+	// 3. Short / unparseable Current.Time -> defaults to 0 without panic
+	json3 := map[string]any{
+		"current": map[string]any{
+			"time":           "bad",
+			"temperature_2m": 65.0,
+			"weather_code":   0,
+		},
+		"hourly": map[string]any{
+			"time":                      hours[:10],
+			"temperature_2m":            temps[:10],
+			"precipitation_probability": probs[:10],
+			"weather_code":              codes[:10],
+		},
+	}
+	payload3, _ := json.Marshal(json3)
+
+	ts3 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(payload3)
+	}))
+	defer ts3.Close()
+
+	p3 := provider.NewWeatherProviderWithClient(ts3.Client(), ts3.URL)
+	_ = p3.Init(context.Background(), map[string]any{"latitude": 37.0, "longitude": -122.0}, provider.InitOptions{})
+	res3, err := p3.Fetch(context.Background())
+	if err != nil {
+		t.Fatalf("Fetch failed: %v", err)
+	}
+	snap3 := res3.(provider.WeatherSnapshot)
+	if len(snap3.Hourly) != 10 {
+		t.Errorf("expected 10 hourly items for short time fallback, got %d", len(snap3.Hourly))
+	}
+}
