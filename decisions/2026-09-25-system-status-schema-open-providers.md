@@ -26,7 +26,7 @@ This created multiple architectural contradictions:
      - `config_status` (`"ok"` | `"error"`, required)
      - `config_error` (string or null, required)
 2. **Decoupled Optional `providers` Map**:
-   - Added an optional `providers` map property keyed by widget instance ID (`additionalProperties: {"type": "string"}`), permitting arbitrary provider summaries (e.g. `{"family-calendar": "connected", "outdoor-weather": "degraded"}`) without rigid top-level property names.
+   - Added an optional `providers` map property keyed by widget instance ID (`additionalProperties: {"type": "string", "enum": ["healthy", "degraded", "error"]}`), permitting arbitrary provider summaries (e.g. `{"family-calendar": "healthy", "outdoor-weather": "degraded"}`) while strictly reusing canonical widget state words.
    - Removed hardcoded `calendar_provider` and `weather_api` fields from `required` and top-level schema.
 3. **Instance-Level Failure Delegation**:
    - Updated SPEC-008 Consistency Rule 4: when a list adapter fails, the widget instance transitions its state to `degraded` via `widget.update`, leveraging the universal widget lifecycle contract rather than overloading `system.status`.

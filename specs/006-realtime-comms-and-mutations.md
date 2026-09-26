@@ -133,7 +133,7 @@ data: {"online":true,"time":"2026-09-24T22:15:20Z","config_status":"ok","config_
   - `time` (string, ISO 8601 / RFC 3339, required): Current UTC timestamp from server clock.
   - `config_status` (string, required): `"ok"` | `"error"`. Defaults to `"ok"`. Transitions to `"error"` when live configuration reload validation fails (SPEC-012 §2) or an incomplete package is detected at runtime (SPEC-003 §1), and returns to `"ok"` as soon as a subsequent valid `config.yaml` or complete package is successfully validated and applied.
   - `config_error` (string or null, required): Detailed diagnostic error message when `config_status == "error"`; null when `config_status == "ok"`.
-  - `providers` (object, optional): Summary map of upstream data provider operational statuses keyed by widget instance ID (e.g. `{"family-calendar": "connected", "outdoor-weather": "degraded"}`). Individual widget health and failure transitions are primarily reported per instance via `widget.update` (`state: "degraded"` | `"error"`).
+  - `providers` (object, optional): Summary map of upstream data provider operational statuses keyed by widget instance ID (e.g. `{"family-calendar": "healthy", "outdoor-weather": "degraded"}`). Individual widget health and failure transitions are primarily reported per instance via `widget.update` (`state: "degraded"` | `"error"`).
 - **Initial Connection Hydration Invariant**: The initial SSE state hydration batch (Section 3, Item 7) authoritatively carries the active `config_status` and `config_error`, ensuring that a cold-booting or reconnecting kiosk immediately displays the diagnostic warning badge in the header without missing transient reload failures.
 
 #### E. `video.state`

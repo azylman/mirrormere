@@ -33,7 +33,8 @@
       "description": "Optional health summary map of upstream data providers keyed by widget instance ID",
       "additionalProperties": {
         "type": "string",
-        "description": "Operational health status of the provider (e.g. 'connected', 'degraded', 'offline')"
+        "enum": ["healthy", "degraded", "error"],
+        "description": "Operational health status of the provider ('healthy', 'degraded', 'error')"
       }
     }
   },
