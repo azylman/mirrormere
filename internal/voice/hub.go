@@ -302,10 +302,16 @@ func (c *DefaultSTTClient) transcribeWyoming(ctx context.Context, wavData []byte
 
 	var buf bytes.Buffer
 	buf.WriteString("{\"type\":\"transcribe\"}\n")
-	buf.WriteString("{\"type\":\"audio-start\",\"data\":{\"rate\":16000,\"width\":2,\"channels\":1}}\n")
-	fmt.Fprintf(&buf, "{\"type\":\"audio-chunk\",\"data\":{\"rate\":16000,\"width\":2,\"channels\":1},\"payload_length\":%d}\n", len(pcm))
+
+	startData := `{"rate":16000,"width":2,"channels":1,"timestamp":null}`
+	fmt.Fprintf(&buf, "{\"type\":\"audio-start\",\"data_length\":%d}\n%s", len(startData), startData)
+
+	chunkData := `{"rate":16000,"width":2,"channels":1,"timestamp":null}`
+	fmt.Fprintf(&buf, "{\"type\":\"audio-chunk\",\"data_length\":%d,\"payload_length\":%d}\n%s", len(chunkData), len(pcm), chunkData)
 	buf.Write(pcm)
-	buf.WriteString("{\"type\":\"audio-stop\"}\n")
+
+	stopData := `{"timestamp":null}`
+	fmt.Fprintf(&buf, "{\"type\":\"audio-stop\",\"data_length\":%d}\n%s", len(stopData), stopData)
 
 	if _, err := conn.Write(buf.Bytes()); err != nil {
 		return "", err

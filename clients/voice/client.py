@@ -29,7 +29,10 @@ try:
 except ImportError:
     np = None
 
-from .config import VoiceConfig, load_config
+try:
+    from .config import VoiceConfig, load_config
+except (ImportError, ValueError):
+    from config import VoiceConfig, load_config
 
 logger = logging.getLogger("mirrormere-voice")
 
