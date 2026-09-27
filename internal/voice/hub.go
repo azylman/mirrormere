@@ -63,6 +63,7 @@ type Hub struct {
 	stt      STTClient
 	brain    BrainClient
 	tts      TTSClient
+	speaker  SpeakerIdentifier
 }
 
 // HubOption configures optional Hub overrides (e.g. for testing).
@@ -83,6 +84,11 @@ func WithTTSClient(tts TTSClient) HubOption {
 	return func(h *Hub) { h.tts = tts }
 }
 
+// WithSpeakerIdentifier overrides the speaker identification implementation.
+func WithSpeakerIdentifier(id SpeakerIdentifier) HubOption {
+	return func(h *Hub) { h.speaker = id }
+}
+
 // NewHub constructs a Voice Hub coordinator.
 func NewHub(cfg *config.VoiceHubConfig, coord *Coordinator, opts ...HubOption) *Hub {
 	h := &Hub{
@@ -93,6 +99,9 @@ func NewHub(cfg *config.VoiceHubConfig, coord *Coordinator, opts ...HubOption) *
 		h.stt = NewDefaultSTTClient(cfg.STTURL)
 		h.brain = NewDefaultBrainClient(cfg.BrainURL, cfg.GetBrainTimeoutSeconds())
 		h.tts = NewDefaultTTSClient(cfg.TTSURL, cfg.GetTTSModel(), cfg.GetTTSVoice(), cfg.GetTTSTimeoutSeconds())
+		if sid := NewSpeakerIdentifierFromConfig(cfg.SpeakerID); sid != nil {
+			h.speaker = sid
+		}
 	}
 	for _, opt := range opts {
 		opt(h)
@@ -152,11 +161,25 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 		return err
 	}
 
-	// Step 2: Speech-to-Text transcription
+	// Step 2: Speech-to-Text transcription, with speaker matching in parallel
 	if h.stt == nil {
 		return ErrSTTFailed
 	}
+	speakerCh := make(chan string, 1)
+	if h.speaker != nil {
+		go func() {
+			id, idErr := h.speaker.Identify(ctx, wavData)
+			if idErr != nil {
+				// Speaker matching is best-effort: the turn proceeds without a speaker.
+				slog.Warn("speaker identification failed", "error", idErr)
+			}
+			speakerCh <- id
+		}()
+	} else {
+		speakerCh <- ""
+	}
 	transcript, err := h.stt.Transcribe(ctx, wavData)
+	speaker := <-speakerCh
 	if err != nil {
 		if h.coord != nil {
 			h.coord.Transition(StateError, nil, nil, nil, nil)
@@ -171,7 +194,7 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 	if h.coord != nil {
 		h.coord.Transition(StateThinking, &transcript, nil, nil, nil)
 	}
-	if err := safeSink("transcript", map[string]string{"transcript": transcript}); err != nil {
+	if err := safeSink("transcript", map[string]string{"transcript": transcript, "speaker": speaker}); err != nil {
 		return err
 	}
 
@@ -179,7 +202,8 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 	if h.brain == nil {
 		return ErrBrainFailed
 	}
-	reply, err := h.brain.Ask(ctx, transcript, sessionID, func(status string) {
+	brainCtx := WithTurnMeta(ctx, TurnMeta{NodeID: nodeID, Speaker: speaker})
+	reply, err := h.brain.Ask(brainCtx, transcript, sessionID, func(status string) {
 		if h.coord != nil {
 			h.coord.SetStatus(&status)
 		}
@@ -432,11 +456,16 @@ func (b *DefaultBrainClient) Ask(ctx context.Context, prompt string, sessionID s
 		return fmt.Sprintf("I heard: %s", prompt), nil
 	}
 
-	reqBody, err := json.Marshal(map[string]any{
+	body := map[string]any{
 		"prompt":     prompt,
 		"session_id": sessionID,
 		"effort":     "low",
-	})
+	}
+	if meta, ok := TurnMetaFrom(ctx); ok {
+		body["node_id"] = meta.NodeID
+		body["speaker"] = meta.Speaker
+	}
+	reqBody, err := json.Marshal(body)
 	if err != nil {
 		return "", err
 	}

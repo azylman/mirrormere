@@ -193,6 +193,57 @@ Upon receiving interaction lifecycle events, the dock's `mirrormere-voice` clien
 
 ---
 
+## Speaker Identification (Voice Fingerprints)
+
+The Voice Hub can tell who is speaking by matching each utterance against enrolled voice fingerprints. It is optional: with no `speaker_id` block configured, `speaker` is always empty and nothing else changes.
+
+### Matching (implemented in `internal/voice/speaker.go`)
+- On every `POST /api/voice/interact`, the Hub embeds the recording and runs STT at the same time, so matching adds no latency to the turn.
+- The utterance embedding is compared by cosine similarity against each enrolled fingerprint. The best match at or above `threshold` (default `0.70`) becomes `speaker`; below it, `speaker` is `""`.
+- Matching is best-effort. An embed failure, a missing or malformed fingerprint file, or a model mismatch is logged and the turn proceeds with an empty `speaker`.
+- `speaker` is added to the `transcript` SSE event and, with `node_id`, to the brain request body:
+  ```json
+  {"prompt": "What's on my calendar?", "session_id": "...", "node_id": "eink-display-livingroom", "speaker": "mike"}
+  ```
+
+### Embedding endpoint
+Embedding runs outside Core, behind the same kind of HTTP endpoint as STT:
+```http
+POST <embed_url>
+Content-Type: audio/wav
+
+<raw 16 kHz mono WAV>
+
+200 {"embedding": [0.012, -0.087, ...], "model": "speechbrain/spkrec-ecapa-voxceleb"}
+```
+
+### Fingerprint store
+A JSON file on the Hub, re-read whenever it changes on disk so re-enrollment needs no restart. Only embeddings are stored, never audio. `model` must match the embed endpoint's `model`; embeddings from different models are not comparable.
+```json
+{
+  "model": "speechbrain/spkrec-ecapa-voxceleb",
+  "speakers": [
+    {"id": "mike",   "embedding": [0.031, -0.112, ...]},
+    {"id": "lauren", "embedding": [-0.054, 0.090, ...]}
+  ]
+}
+```
+
+### Configuration
+```yaml
+voice_hub:
+  speaker_id:
+    embed_url: "http://<gpu-host>:9099/embed"
+    fingerprints_path: "/config/speakers.json"
+    threshold: 0.70      # optional, (0, 1]
+    timeout_seconds: 5   # optional
+```
+
+### Not yet built
+Enrollment (the "Add my voice" flow that records prompted phrases and writes the fingerprint file) is a follow-up. Until then the file is produced out of band.
+
+---
+
 ## Reference Configurations
 
 ### 1. Alex's Wall Kiosk (`/etc/mirrormere/voice.yaml` on N100 Kiosk)

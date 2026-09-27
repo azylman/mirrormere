@@ -95,6 +95,47 @@ type VoiceHubConfig struct {
 	TTSVoice            string `yaml:"tts_voice,omitempty"`
 	TTSModel            string `yaml:"tts_model,omitempty"`
 	TTSTimeoutSeconds   *int   `yaml:"tts_timeout_seconds,omitempty"`
+
+	// SpeakerID enables matching each utterance against enrolled voice
+	// fingerprints (SPEC-011 §Speaker Identification). Optional: when absent,
+	// every turn carries an empty speaker.
+	SpeakerID *SpeakerIDConfig `yaml:"speaker_id,omitempty"`
+}
+
+// SpeakerIDConfig configures voice-fingerprint speaker matching.
+type SpeakerIDConfig struct {
+	// EmbedURL is an HTTP endpoint that accepts a raw WAV body and returns
+	// {"embedding": [float...], "model": "<model id>"}.
+	EmbedURL string `yaml:"embed_url"`
+	// FingerprintsPath is the JSON file of enrolled fingerprints. It is
+	// re-read when its modification time changes, so re-enrollment needs
+	// no restart.
+	FingerprintsPath string `yaml:"fingerprints_path"`
+	// Threshold is the minimum cosine similarity to accept a match (default 0.70).
+	Threshold *float64 `yaml:"threshold,omitempty"`
+	// TimeoutSeconds bounds the embed call (default 5).
+	TimeoutSeconds *int `yaml:"timeout_seconds,omitempty"`
+}
+
+// IsEnabled reports whether speaker matching is configured.
+func (s *SpeakerIDConfig) IsEnabled() bool {
+	return s != nil && strings.TrimSpace(s.EmbedURL) != "" && strings.TrimSpace(s.FingerprintsPath) != ""
+}
+
+// GetThreshold returns the match threshold (default: 0.70).
+func (s *SpeakerIDConfig) GetThreshold() float64 {
+	if s == nil || s.Threshold == nil {
+		return 0.70
+	}
+	return *s.Threshold
+}
+
+// GetTimeoutSeconds returns the embed timeout in seconds (default: 5).
+func (s *SpeakerIDConfig) GetTimeoutSeconds() int {
+	if s == nil || s.TimeoutSeconds == nil || *s.TimeoutSeconds <= 0 {
+		return 5
+	}
+	return *s.TimeoutSeconds
 }
 
 // IsEnabled reports whether the voice hub is enabled.
@@ -473,6 +514,17 @@ func (c *Config) Validate() error {
 		}
 		if vh.TTSTimeoutSeconds != nil && *vh.TTSTimeoutSeconds <= 0 {
 			return fmt.Errorf("voice_hub tts_timeout_seconds must be positive (got %d)", *vh.TTSTimeoutSeconds)
+		}
+		if sid := vh.SpeakerID; sid != nil {
+			if strings.TrimSpace(sid.EmbedURL) == "" || strings.TrimSpace(sid.FingerprintsPath) == "" {
+				return fmt.Errorf("voice_hub speaker_id requires both embed_url and fingerprints_path")
+			}
+			if sid.Threshold != nil && (*sid.Threshold <= 0 || *sid.Threshold > 1) {
+				return fmt.Errorf("voice_hub speaker_id threshold must be in (0, 1] (got %v)", *sid.Threshold)
+			}
+			if sid.TimeoutSeconds != nil && *sid.TimeoutSeconds <= 0 {
+				return fmt.Errorf("voice_hub speaker_id timeout_seconds must be positive (got %d)", *sid.TimeoutSeconds)
+			}
 		}
 	}
 
