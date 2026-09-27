@@ -154,3 +154,8 @@ The Touch Kiosk PWA implements strict touch and animation hygiene to deliver a r
 
 3. **Motion & Transitions**:
    - Screen rotation transitions (slide/fade per SPEC-005) are hardware-accelerated (`transform: translate3d(...)` / `opacity`) and capped at `300ms` duration with `cubic-bezier(0.25, 1, 0.5, 1)` easing.
+
+4. **Appliance-Grade Cursor Suppression**:
+   - Touch kiosks must not display floating mouse cursors, pointer arrows, or hover hands on capacitive taps or screen loads.
+   - Enforced globally via `cursor: none !important;` on `html, body` and universal selectors (`*, *::before, *::after`), with interactive touch targets (`button, .touch-target`) enforcing `cursor: none;`.
+
