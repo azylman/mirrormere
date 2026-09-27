@@ -63,6 +63,12 @@ html, body {
   user-select: none;
   -webkit-user-select: none;
   touch-action: pan-x pan-y;
+  cursor: none !important;
+}
+
+/* Global Appliance-Grade Kiosk Cursor Suppression (Touch Only) */
+*, *::before, *::after {
+  cursor: none !important;
 }
 
 /* Master Kiosk Canvas */
@@ -155,7 +161,7 @@ button, .touch-target {
   min-width: var(--mm-touch-target-min);
   min-height: var(--mm-touch-target-min);
   border-radius: var(--mm-border-radius-sm);
-  cursor: pointer;
+  cursor: none;
   touch-action: manipulation;
 }
 

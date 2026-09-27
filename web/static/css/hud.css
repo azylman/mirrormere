@@ -65,6 +65,12 @@ html, body {
   -webkit-touch-callout: none;
   -webkit-tap-highlight-color: transparent;
   touch-action: pan-x pan-y;
+  cursor: none !important;
+}
+
+/* Global Appliance-Grade Kiosk Cursor Suppression (Touch Only) */
+*, *::before, *::after {
+  cursor: none !important;
 }
 
 /* Master Kiosk Canvas */
@@ -218,7 +224,7 @@ button, .touch-target {
   min-width: var(--mm-touch-target-min);
   min-height: var(--mm-touch-target-min);
   border-radius: var(--mm-border-radius-sm);
-  cursor: pointer;
+  cursor: none;
   touch-action: manipulation;
 }
 
@@ -286,7 +292,7 @@ button, .touch-target {
   border-radius: var(--mm-border-radius-md);
   box-shadow: 0 4px 20px var(--mm-accent-purple-glow);
   overflow: hidden;
-  cursor: pointer;
+  cursor: none;
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
   user-select: none;
@@ -317,7 +323,7 @@ button, .touch-target {
   border-radius: var(--mm-border-radius-md);
   box-shadow: 0 4px 20px var(--mm-accent-purple-glow);
   overflow: hidden;
-  cursor: pointer;
+  cursor: none;
 }
 
 .video-stage[data-swapped="true"] .video-primary-slot:hover {
@@ -342,7 +348,7 @@ button, .touch-target {
   border: none;
   border-radius: 0;
   box-shadow: none;
-  cursor: default;
+  cursor: none;
   transform: none;
 }
 
@@ -453,7 +459,7 @@ button, .touch-target {
   background: var(--mm-bg-surface);
   color: var(--mm-text-primary);
   font-size: 1.25rem;
-  cursor: pointer;
+  cursor: none;
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
   user-select: none;
@@ -490,7 +496,7 @@ button, .touch-target {
   width: 100%;
   height: 36px;
   background: transparent;
-  cursor: pointer;
+  cursor: none;
   touch-action: none;
   margin: 0;
   transition: opacity 0.2s ease;
@@ -733,7 +739,7 @@ button, .touch-target {
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.7), 0 0 20px var(--mm-accent-purple-glow);
   color: var(--mm-text-primary);
   pointer-events: auto;
-  cursor: pointer;
+  cursor: none;
   touch-action: manipulation;
   user-select: none;
   -webkit-user-select: none;
