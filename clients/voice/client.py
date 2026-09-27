@@ -342,7 +342,7 @@ class VoiceDaemon:
                             reply = payload.get("reply", "")
                             logger.info("Received reply: '%s'", reply)
                         elif current_event == "audio_chunk":
-                            audio_b64 = payload.get("audio", "")
+                            audio_b64 = payload.get("data", "")
                             if audio_b64:
                                 try:
                                     audio_bytes = base64.b64decode(audio_b64)
