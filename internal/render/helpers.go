@@ -8,6 +8,8 @@ import (
 	"reflect"
 	"strings"
 	"time"
+
+	"github.com/azylman/mirrormere/internal/domain"
 )
 
 var timeLayouts = []string{
@@ -41,6 +43,9 @@ func StandardFuncMap(nowFunc func() time.Time) template.FuncMap {
 		"jsonJS":             JSONJSHelper,
 		"weatherIcon":        WeatherIcon,
 		"weatherHourlyGraph": WeatherHourlyGraph,
+		"calendarFamilyView": func(data any, cfg map[string]any, dims domain.Dimension) (*FamilyViewModel, error) {
+			return BuildFamilyView(data, cfg, dims, nowFunc())
+		},
 	}
 }
 

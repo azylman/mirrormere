@@ -514,6 +514,16 @@ func validateDomainRulesStage(cfg *Config, registry map[string]*domain.Package) 
 		}
 	}
 
+	// 1b. calendar-family member/calendar cross-field rules (SPEC-014 "Validation (boot and LKGC)")
+	for _, w := range cfg.Display.Widgets {
+		if w.Type != "calendar-family" {
+			continue
+		}
+		if err := validateFamilyCalendarConfig(w.ID, w.Config); err != nil {
+			return err
+		}
+	}
+
 	// 2. Tasks & Lists Source-of-Truth Rules (SPEC-008 §Shared List State & Source Ownership Rules)
 	type primarySourceDef struct {
 		widgetID  string
@@ -598,6 +608,83 @@ func validateDomainRulesStage(cfg *Config, registry map[string]*domain.Package) 
 			firstWidget := widgetIDs[0]
 			return fmt.Errorf("[Mirrormere Config Error] tasks widget '%s' references list_id '%s' with no primary source definition",
 				firstWidget, listID)
+		}
+	}
+
+	return nil
+}
+
+// validateFamilyCalendarConfig enforces the calendar-family cross-field validation rules from
+// SPEC-014 "Configuration > Validation (boot and LKGC)" that a structural JSON Schema cannot
+// express: member-to-calendar name references, member uniqueness/limit, e-ink pattern
+// distinctness, and hours ordering.
+func validateFamilyCalendarConfig(widgetID string, rawConfig map[string]any) error {
+	calendarNames := make(map[string]bool)
+	if rawList, ok := rawConfig["calendars"].([]any); ok {
+		for _, item := range rawList {
+			if m, ok := item.(map[string]any); ok {
+				if name, ok := m["name"].(string); ok && strings.TrimSpace(name) != "" {
+					calendarNames[name] = true
+				}
+			}
+		}
+	}
+
+	rawMembers, hasMembers := rawConfig["members"].([]any)
+	if !hasMembers {
+		rawMembers = nil
+	}
+	if len(rawMembers) > 8 {
+		return fmt.Errorf("[Mirrormere Config Error] calendar-family widget '%s': at most 8 members are supported, found %d", widgetID, len(rawMembers))
+	}
+
+	seenNames := make(map[string]bool)
+	seenPatterns := make(map[string]string)
+	for idx, item := range rawMembers {
+		m, ok := item.(map[string]any)
+		if !ok {
+			return fmt.Errorf("[Mirrormere Config Error] calendar-family widget '%s': members[%d] is not a mapping", widgetID, idx)
+		}
+		var name string
+		if v, ok := m["name"].(string); ok {
+			name = v
+		}
+		name = strings.TrimSpace(name)
+		if name == "" {
+			return fmt.Errorf("[Mirrormere Config Error] calendar-family widget '%s': members[%d] requires non-empty 'name'", widgetID, idx)
+		}
+		if seenNames[name] {
+			return fmt.Errorf("[Mirrormere Config Error] calendar-family widget '%s': duplicate member name %q", widgetID, name)
+		}
+		seenNames[name] = true
+
+		if pattern, ok := m["pattern"].(string); ok && strings.TrimSpace(pattern) != "" {
+			if prevMember, exists := seenPatterns[pattern]; exists {
+				return fmt.Errorf("[Mirrormere Config Error] calendar-family widget '%s': member %q and member %q both declare e-ink pattern %q; patterns must be distinct", widgetID, prevMember, name, pattern)
+			}
+			seenPatterns[pattern] = name
+		}
+
+		claimed, hasClaimed := m["calendars"].([]any)
+		if !hasClaimed {
+			claimed = nil
+		}
+		for _, c := range claimed {
+			calName, ok := c.(string)
+			if !ok || strings.TrimSpace(calName) == "" {
+				return fmt.Errorf("[Mirrormere Config Error] calendar-family widget '%s': member %q declares an empty calendar reference", widgetID, name)
+			}
+			if !calendarNames[calName] {
+				return fmt.Errorf("[Mirrormere Config Error] calendar-family widget '%s': member %q claims unknown calendar %q (not declared in 'calendars')", widgetID, name, calName)
+			}
+		}
+	}
+
+	if rawHours, ok := rawConfig["hours"].([]any); ok && len(rawHours) == 2 {
+		start, okStart := rawHours[0].(string)
+		end, okEnd := rawHours[1].(string)
+		if okStart && okEnd && start >= end {
+			return fmt.Errorf("[Mirrormere Config Error] calendar-family widget '%s': 'hours' start %q must be before end %q", widgetID, start, end)
 		}
 	}
 
