@@ -8,14 +8,6 @@ import (
 	"github.com/azylman/mirrormere/internal/provider"
 )
 
-func mustTime(t *testing.T, layout, val string) time.Time {
-	tm, err := time.Parse(layout, val)
-	if err != nil {
-		t.Fatalf("parse time %q: %v", val, err)
-	}
-	return tm
-}
-
 func baseFamilyConfig() map[string]any {
 	return map[string]any{
 		"shared_color": "#3D405B",
