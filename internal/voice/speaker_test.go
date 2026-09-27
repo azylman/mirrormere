@@ -348,3 +348,61 @@ func TestHub_STTErrorDoesNotWaitForSpeaker(t *testing.T) {
 		t.Fatalf("STT error waited on speaker matching: %v", elapsed)
 	}
 }
+
+func TestSpeakerErrorPaths(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	// Malformed JSON is rejected.
+	badJSON := filepath.Join(dir, "bad.json")
+	if err := os.WriteFile(badJSON, []byte("{not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewFingerprintStore(badJSON).Load(); err == nil {
+		t.Error("malformed json: expected error")
+	}
+
+	// Identify surfaces a store error.
+	if _, err := NewFingerprintIdentifier(&mockEmbedder{}, NewFingerprintStore(filepath.Join(dir, "missing.json")), 0.7).Identify(context.Background(), nil); err == nil {
+		t.Error("missing store: expected error")
+	}
+
+	// Identify surfaces an uncomparable utterance embedding.
+	good := filepath.Join(dir, "good.json")
+	writeFingerprints(t, good, FingerprintFile{Speakers: []Fingerprint{{ID: "mike", Embedding: []float64{1, 0}}}})
+	if _, err := NewFingerprintIdentifier(&mockEmbedder{emb: []float64{0, 0}}, NewFingerprintStore(good), 0.7).Identify(context.Background(), nil); err == nil {
+		t.Error("zero utterance embedding: expected error")
+	}
+
+	// Embed client: empty URL, bad JSON body, unreachable host.
+	if _, _, err := NewDefaultEmbedClient("  ", 1).Embed(context.Background(), nil); err == nil {
+		t.Error("empty url: expected error")
+	}
+	garbage := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("not json"))
+	}))
+	defer garbage.Close()
+	if _, _, err := NewDefaultEmbedClient(garbage.URL, 1).Embed(context.Background(), nil); err == nil {
+		t.Error("bad json: expected error")
+	}
+	if _, _, err := NewDefaultEmbedClient("http://127.0.0.1:1", 1).Embed(context.Background(), nil); err == nil {
+		t.Error("unreachable: expected error")
+	}
+	if _, _, err := NewDefaultEmbedClient("http://bad host", 1).Embed(context.Background(), nil); err == nil {
+		t.Error("invalid url: expected error")
+	}
+}
+
+func TestNewHub_WiresSpeakerIDFromConfig(t *testing.T) {
+	t.Parallel()
+	cfg := &config.VoiceHubConfig{
+		Enabled:   true,
+		SpeakerID: &config.SpeakerIDConfig{EmbedURL: "http://x/embed", FingerprintsPath: "/f.json"},
+	}
+	if h := NewHub(cfg, nil); h.speaker == nil {
+		t.Fatal("expected speaker identifier from config")
+	}
+	if h := NewHub(&config.VoiceHubConfig{Enabled: true}, nil); h.speaker != nil {
+		t.Fatal("expected no speaker identifier without config")
+	}
+}

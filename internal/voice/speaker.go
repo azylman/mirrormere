@@ -262,7 +262,10 @@ func (c *DefaultEmbedClient) Embed(ctx context.Context, wavData []byte) ([]float
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		body, readErr := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		if readErr != nil {
+			body = []byte("unknown error")
+		}
 		return nil, "", fmt.Errorf("embed http error %d: %s", resp.StatusCode, string(body))
 	}
 	var out struct {
