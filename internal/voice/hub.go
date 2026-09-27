@@ -36,6 +36,10 @@ var (
 	ErrTTSFailed = errors.New("text-to-speech synthesis failed")
 )
 
+// speakerGrace is how long the hub waits for speaker matching after STT has
+// already finished. Matching normally finishes first; this bounds the worst case.
+var speakerGrace = 500 * time.Millisecond
+
 // SSEEventSink is a callback to emit an SSE event to the client stream.
 type SSEEventSink func(event string, data any) error
 
@@ -44,9 +48,22 @@ type STTClient interface {
 	Transcribe(ctx context.Context, wavData []byte) (string, error)
 }
 
+// AskRequest is one turn sent to the agent brain.
+type AskRequest struct {
+	Prompt    string
+	SessionID string
+	// NodeID is the edge device that heard the utterance.
+	NodeID string
+	// Speaker is the matched enrolled speaker, or "" (SPEC-011 §Speaker Identification).
+	// It is a personalisation hint, not authentication.
+	Speaker string
+	// SpeakerScore is the best cosine similarity seen, 0 when matching did not run.
+	SpeakerScore float64
+}
+
 // BrainClient abstracts agent deliberation and live tool status streaming.
 type BrainClient interface {
-	Ask(ctx context.Context, prompt string, sessionID string, onStatus func(status string)) (string, error)
+	Ask(ctx context.Context, req AskRequest, onStatus func(status string)) (string, error)
 }
 
 // TTSClient abstracts speech synthesis.
@@ -165,21 +182,37 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 	if h.stt == nil {
 		return ErrSTTFailed
 	}
-	speakerCh := make(chan string, 1)
+	// The channel is buffered so the goroutine never blocks, and idCancel stops
+	// a slow embed call once the turn no longer needs it.
+	speakerCh := make(chan SpeakerMatch, 1)
+	idCtx, idCancel := context.WithCancel(ctx)
+	defer idCancel()
 	if h.speaker != nil {
 		go func() {
-			id, idErr := h.speaker.Identify(ctx, wavData)
+			m, idErr := h.speaker.Identify(idCtx, wavData)
 			if idErr != nil {
 				// Speaker matching is best-effort: the turn proceeds without a speaker.
 				slog.Warn("speaker identification failed", "error", idErr)
+				m = SpeakerMatch{}
 			}
-			speakerCh <- id
+			speakerCh <- m
 		}()
 	} else {
-		speakerCh <- ""
+		speakerCh <- SpeakerMatch{}
 	}
 	transcript, err := h.stt.Transcribe(ctx, wavData)
-	speaker := <-speakerCh
+	var match SpeakerMatch
+	if err == nil {
+		// STT is the critical path. Give matching a short grace period after STT
+		// finishes, then continue without a speaker rather than stall the turn.
+		select {
+		case match = <-speakerCh:
+		case <-time.After(speakerGrace):
+			idCancel()
+			slog.Warn("speaker identification exceeded grace period after STT; continuing without speaker", "grace", speakerGrace)
+		}
+	}
+	speaker := match.Speaker
 	if err != nil {
 		if h.coord != nil {
 			h.coord.Transition(StateError, nil, nil, nil, nil)
@@ -202,8 +235,13 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 	if h.brain == nil {
 		return ErrBrainFailed
 	}
-	brainCtx := WithTurnMeta(ctx, TurnMeta{NodeID: nodeID, Speaker: speaker})
-	reply, err := h.brain.Ask(brainCtx, transcript, sessionID, func(status string) {
+	reply, err := h.brain.Ask(ctx, AskRequest{
+		Prompt:       transcript,
+		SessionID:    sessionID,
+		NodeID:       nodeID,
+		Speaker:      speaker,
+		SpeakerScore: match.Score,
+	}, func(status string) {
 		if h.coord != nil {
 			h.coord.SetStatus(&status)
 		}
@@ -451,21 +489,19 @@ func NewDefaultBrainClient(url string, timeoutSec int) BrainClient {
 }
 
 // Ask sends the transcribed prompt to the agent brain and listens for status updates and reply.
-func (b *DefaultBrainClient) Ask(ctx context.Context, prompt string, sessionID string, onStatus func(status string)) (string, error) {
+func (b *DefaultBrainClient) Ask(ctx context.Context, ask AskRequest, onStatus func(status string)) (string, error) {
 	if b.url == "" {
-		return fmt.Sprintf("I heard: %s", prompt), nil
+		return fmt.Sprintf("I heard: %s", ask.Prompt), nil
 	}
 
-	body := map[string]any{
-		"prompt":     prompt,
-		"session_id": sessionID,
-		"effort":     "low",
-	}
-	if meta, ok := TurnMetaFrom(ctx); ok {
-		body["node_id"] = meta.NodeID
-		body["speaker"] = meta.Speaker
-	}
-	reqBody, err := json.Marshal(body)
+	reqBody, err := json.Marshal(map[string]any{
+		"prompt":        ask.Prompt,
+		"session_id":    ask.SessionID,
+		"effort":        "low",
+		"node_id":       ask.NodeID,
+		"speaker":       ask.Speaker,
+		"speaker_score": ask.SpeakerScore,
+	})
 	if err != nil {
 		return "", err
 	}

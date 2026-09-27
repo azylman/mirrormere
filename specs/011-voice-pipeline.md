@@ -197,13 +197,21 @@ Upon receiving interaction lifecycle events, the dock's `mirrormere-voice` clien
 
 The Voice Hub can tell who is speaking by matching each utterance against enrolled voice fingerprints. It is optional: with no `speaker_id` block configured, `speaker` is always empty and nothing else changes.
 
+### Speaker is a hint, not authentication
+- `speaker` exists to personalise answers (whose calendar, whose list). It is not an identity check. A guest, a child, a recording or a similar voice can clear the threshold, especially on short utterances.
+- Brains must not treat `speaker` as proof of identity for anything consequential: sending messages, changing another person's data, purchases, unlocking, or reading private content aloud. For those, confirm by another channel or ask.
+- `speaker_score` (best cosine similarity, `0` when matching did not run) is sent alongside so a brain can demand more certainty for writes than for reads.
+- An empty `speaker` means "unknown": nobody cleared the threshold, matching is disabled, or matching failed. Brains should answer as the household, not as any individual.
+- The `0.70` default threshold is a starting point, not a calibrated value. Each household should tune it against its own enrolled voices and room acoustics. Wake-word-length clips produce less reliable embeddings than multi-second ones.
+- The dock's optional `speaker` form field on `POST /api/voice/interact` (above) is not read by Core. Hub-side matching is the only source of `speaker`.
+
 ### Matching (implemented in `internal/voice/speaker.go`)
-- On every `POST /api/voice/interact`, the Hub embeds the recording and runs STT at the same time, so matching adds no latency to the turn.
+- On every `POST /api/voice/interact`, the Hub embeds the recording and runs STT at the same time. STT stays the critical path: if matching has not finished within 500 ms of STT completing, the turn continues with an empty `speaker`. An STT failure never waits on matching.
 - The utterance embedding is compared by cosine similarity against each enrolled fingerprint. The best match at or above `threshold` (default `0.70`) becomes `speaker`; below it, `speaker` is `""`.
-- Matching is best-effort. An embed failure, a missing or malformed fingerprint file, or a model mismatch is logged and the turn proceeds with an empty `speaker`.
-- `speaker` is added to the `transcript` SSE event and, with `node_id`, to the brain request body:
+- Matching is best-effort. An embed failure, a missing or malformed fingerprint file, or a model mismatch is logged and the turn proceeds with an empty `speaker`. A fingerprint that cannot be compared with the utterance is skipped rather than failing the match for everyone.
+- `speaker` is added to the `transcript` SSE event. `node_id`, `speaker` and `speaker_score` are added to the brain request body:
   ```json
-  {"prompt": "What's on my calendar?", "session_id": "...", "node_id": "eink-display-livingroom", "speaker": "mike"}
+  {"prompt": "What's on my calendar?", "session_id": "...", "node_id": "eink-display-livingroom", "speaker": "mike", "speaker_score": 0.83}
   ```
 
 ### Embedding endpoint
@@ -218,7 +226,7 @@ Content-Type: audio/wav
 ```
 
 ### Fingerprint store
-A JSON file on the Hub, re-read whenever it changes on disk so re-enrollment needs no restart. Only embeddings are stored, never audio. `model` must match the embed endpoint's `model`; embeddings from different models are not comparable.
+A JSON file on the Hub, one per Hub, re-read whenever it changes on disk so re-enrollment needs no restart. (The rest of the `speaker_id` block, like all of `voice_hub`, is read at startup; changing `embed_url` or `threshold` needs a restart.) All fingerprints must share one dimension and be finite and non-zero, or the file is rejected. Only embeddings are stored, never audio. Sharing fingerprints across multiple Hubs is out of scope. `model` must match the embed endpoint's `model`; embeddings from different models are not comparable.
 ```json
 {
   "model": "speechbrain/spkrec-ecapa-voxceleb",

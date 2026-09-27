@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -28,12 +29,21 @@ func (m *mockEmbedder) Embed(ctx context.Context, wavData []byte) ([]float64, st
 }
 
 type mockIdentifier struct {
-	id  string
-	err error
+	id    string
+	score float64
+	err   error
+	delay time.Duration
 }
 
-func (m *mockIdentifier) Identify(ctx context.Context, wavData []byte) (string, error) {
-	return m.id, m.err
+func (m *mockIdentifier) Identify(ctx context.Context, wavData []byte) (SpeakerMatch, error) {
+	if m.delay > 0 {
+		select {
+		case <-time.After(m.delay):
+		case <-ctx.Done():
+			return SpeakerMatch{}, ctx.Err()
+		}
+	}
+	return SpeakerMatch{Speaker: m.id, Score: m.score}, m.err
 }
 
 func writeFingerprints(t *testing.T, path string, f FingerprintFile) {
@@ -89,7 +99,19 @@ func TestMatchSpeaker(t *testing.T) {
 	}
 
 	if _, _, err := MatchSpeaker([]float64{1, 0}, speakers, 0.7); err == nil {
-		t.Fatal("expected dimension mismatch error")
+		t.Fatal("expected error when no fingerprint is comparable")
+	}
+
+	// An uncomparable fingerprint is skipped; the rest still match.
+	mixed := []Fingerprint{{ID: "broken", Embedding: []float64{1, 0}}, speakers[0]}
+	id, _, err = MatchSpeaker([]float64{1, 0, 0}, mixed, 0.7)
+	if err != nil || id != "mike" {
+		t.Fatalf("expected mike despite broken fingerprint, got id=%q err=%v", id, err)
+	}
+
+	nan := math.NaN()
+	if _, _, err := MatchSpeaker([]float64{nan, 0, 0}, speakers, 0.7); err == nil {
+		t.Fatal("expected error for NaN utterance embedding")
 	}
 }
 
@@ -126,6 +148,8 @@ func TestFingerprintStore_Invalid(t *testing.T) {
 		"empty-id":        {Speakers: []Fingerprint{{ID: "", Embedding: []float64{1}}}},
 		"duplicate-id":    {Speakers: []Fingerprint{{ID: "a", Embedding: []float64{1}}, {ID: "a", Embedding: []float64{1}}}},
 		"empty-embedding": {Speakers: []Fingerprint{{ID: "a"}}},
+		"mixed-dimension": {Speakers: []Fingerprint{{ID: "a", Embedding: []float64{1, 0}}, {ID: "b", Embedding: []float64{1}}}},
+		"zero-vector":     {Speakers: []Fingerprint{{ID: "a", Embedding: []float64{0, 0}}}},
 	}
 	for name, f := range cases {
 		path := filepath.Join(dir, name+".json")
@@ -148,9 +172,9 @@ func TestFingerprintIdentifier(t *testing.T) {
 	}})
 	store := NewFingerprintStore(path)
 
-	id, err := NewFingerprintIdentifier(&mockEmbedder{emb: []float64{0.2, 0.98}, model: "ecapa"}, store, 0.7).Identify(context.Background(), nil)
-	if err != nil || id != "lauren" {
-		t.Fatalf("expected lauren, got %q err=%v", id, err)
+	m, err := NewFingerprintIdentifier(&mockEmbedder{emb: []float64{0.2, 0.98}, model: "ecapa"}, store, 0.7).Identify(context.Background(), nil)
+	if err != nil || m.Speaker != "lauren" || m.Score < 0.9 {
+		t.Fatalf("expected lauren, got %+v err=%v", m, err)
 	}
 
 	_, err = NewFingerprintIdentifier(&mockEmbedder{emb: []float64{0, 1}, model: "wavlm"}, store, 0.7).Identify(context.Background(), nil)
@@ -166,9 +190,9 @@ func TestFingerprintIdentifier(t *testing.T) {
 	// No enrolled speakers: empty result, embedder never needed.
 	emptyPath := filepath.Join(t.TempDir(), "empty.json")
 	writeFingerprints(t, emptyPath, FingerprintFile{Model: "ecapa"})
-	id, err = NewFingerprintIdentifier(&mockEmbedder{err: errors.New("should not be called")}, NewFingerprintStore(emptyPath), 0.7).Identify(context.Background(), nil)
-	if err != nil || id != "" {
-		t.Fatalf("empty store: id=%q err=%v", id, err)
+	m, err = NewFingerprintIdentifier(&mockEmbedder{err: errors.New("should not be called")}, NewFingerprintStore(emptyPath), 0.7).Identify(context.Background(), nil)
+	if err != nil || m.Speaker != "" {
+		t.Fatalf("empty store: %+v err=%v", m, err)
 	}
 }
 
@@ -252,7 +276,7 @@ func TestHub_SpeakerCarriedToTranscriptAndBrain(t *testing.T) {
 		WithSTTClient(&mockSTT{text: "what's on my calendar"}),
 		WithBrainClient(NewDefaultBrainClient(brainSrv.URL, 5)),
 		WithTTSClient(&mockTTS{}),
-		WithSpeakerIdentifier(&mockIdentifier{id: "mike"}),
+		WithSpeakerIdentifier(&mockIdentifier{id: "mike", score: 0.83}),
 	)
 	events := collectHubEvents(t, h)
 
@@ -260,7 +284,7 @@ func TestHub_SpeakerCarriedToTranscriptAndBrain(t *testing.T) {
 	if tr["speaker"] != "mike" || tr["transcript"] != "what's on my calendar" {
 		t.Fatalf("transcript event: %+v", events["transcript"])
 	}
-	if brainBody["speaker"] != "mike" || brainBody["node_id"] != "eink-display-livingroom" {
+	if brainBody["speaker"] != "mike" || brainBody["node_id"] != "eink-display-livingroom" || brainBody["speaker_score"] != 0.83 {
 		t.Fatalf("brain request: %+v", brainBody)
 	}
 }
@@ -285,5 +309,42 @@ func TestHub_SpeakerFailureIsNotFatal(t *testing.T) {
 	}
 	if brain.calledWith != "hello" {
 		t.Fatalf("brain not called with transcript: %q", brain.calledWith)
+	}
+}
+
+func TestHub_SlowSpeakerDoesNotStallTurn(t *testing.T) {
+	t.Parallel()
+	h := NewHub(&config.VoiceHubConfig{Enabled: true}, nil,
+		WithSTTClient(&mockSTT{text: "hello"}),
+		WithBrainClient(&mockBrain{reply: "ok"}),
+		WithTTSClient(&mockTTS{}),
+		WithSpeakerIdentifier(&mockIdentifier{id: "mike", delay: 10 * time.Second}),
+	)
+	start := time.Now()
+	events := collectHubEvents(t, h)
+	if elapsed := time.Since(start); elapsed > 3*time.Second {
+		t.Fatalf("turn stalled on slow speaker matching: %v", elapsed)
+	}
+	tr, _ := events["transcript"].(map[string]string)
+	if tr["speaker"] != "" {
+		t.Fatalf("expected empty speaker after grace timeout, got %+v", tr)
+	}
+}
+
+func TestHub_STTErrorDoesNotWaitForSpeaker(t *testing.T) {
+	t.Parallel()
+	h := NewHub(&config.VoiceHubConfig{Enabled: true}, nil,
+		WithSTTClient(&mockSTT{err: errors.New("whisper down")}),
+		WithBrainClient(&mockBrain{reply: "ok"}),
+		WithTTSClient(&mockTTS{}),
+		WithSpeakerIdentifier(&mockIdentifier{id: "mike", delay: 10 * time.Second}),
+	)
+	start := time.Now()
+	err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(1600)), "n", "s", func(string, any) error { return nil })
+	if err == nil {
+		t.Fatal("expected STT error")
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("STT error waited on speaker matching: %v", elapsed)
 	}
 }

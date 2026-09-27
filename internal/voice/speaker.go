@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"math"
 	"net/http"
 	"os"
@@ -23,10 +24,19 @@ type SpeakerEmbedder interface {
 	Embed(ctx context.Context, wavData []byte) ([]float64, string, error)
 }
 
-// SpeakerIdentifier resolves the speaker of an utterance. It returns an empty
-// string when nobody matches; an error is never fatal to the voice turn.
+// SpeakerMatch is the result of speaker identification. Speaker is a hint for
+// personalisation, not authentication (SPEC-011 §Speaker Identification).
+type SpeakerMatch struct {
+	// Speaker is the matched enrolled id, or "" when nobody cleared the threshold.
+	Speaker string
+	// Score is the best cosine similarity seen (0 when matching did not run).
+	Score float64
+}
+
+// SpeakerIdentifier resolves the speaker of an utterance. An error is never
+// fatal to the voice turn.
 type SpeakerIdentifier interface {
-	Identify(ctx context.Context, wavData []byte) (string, error)
+	Identify(ctx context.Context, wavData []byte) (SpeakerMatch, error)
 }
 
 // Fingerprint is one enrolled speaker.
@@ -80,6 +90,7 @@ func (s *FingerprintStore) Load() (*FingerprintFile, error) {
 		return nil, fmt.Errorf("fingerprints: parse %s: %w", s.path, err)
 	}
 	seen := make(map[string]bool, len(f.Speakers))
+	dim := 0
 	for i, sp := range f.Speakers {
 		if strings.TrimSpace(sp.ID) == "" {
 			return nil, fmt.Errorf("fingerprints: speaker %d has an empty id", i)
@@ -91,12 +102,35 @@ func (s *FingerprintStore) Load() (*FingerprintFile, error) {
 		if len(sp.Embedding) == 0 {
 			return nil, fmt.Errorf("fingerprints: speaker %q has an empty embedding", sp.ID)
 		}
+		if dim == 0 {
+			dim = len(sp.Embedding)
+		} else if len(sp.Embedding) != dim {
+			return nil, fmt.Errorf("fingerprints: speaker %q has dimension %d, expected %d", sp.ID, len(sp.Embedding), dim)
+		}
+		if err := checkVector(sp.Embedding); err != nil {
+			return nil, fmt.Errorf("fingerprints: speaker %q: %w", sp.ID, err)
+		}
 	}
 
 	s.loaded = &f
 	s.modTime = info.ModTime()
 	s.size = info.Size()
 	return s.loaded, nil
+}
+
+// checkVector rejects vectors that cannot be compared: non-finite values or zero magnitude.
+func checkVector(v []float64) error {
+	var norm float64
+	for _, x := range v {
+		if math.IsNaN(x) || math.IsInf(x, 0) {
+			return errors.New("embedding contains NaN or Inf")
+		}
+		norm += x * x
+	}
+	if norm == 0 {
+		return errors.New("embedding has zero magnitude")
+	}
+	return nil
 }
 
 // CosineSimilarity returns the cosine similarity of two equal-length vectors.
@@ -118,19 +152,28 @@ func CosineSimilarity(a, b []float64) (float64, error) {
 
 // MatchSpeaker returns the enrolled speaker most similar to the embedding, if
 // that similarity is at least threshold. It returns "" when nobody qualifies.
+// The utterance embedding must be finite and non-zero; a fingerprint that
+// cannot be compared is skipped so it cannot block matching for everyone else.
 func MatchSpeaker(embedding []float64, speakers []Fingerprint, threshold float64) (string, float64, error) {
+	if err := checkVector(embedding); err != nil {
+		return "", 0, fmt.Errorf("utterance: %w", err)
+	}
 	bestID := ""
 	best := math.Inf(-1)
 	for _, sp := range speakers {
 		sim, err := CosineSimilarity(embedding, sp.Embedding)
-		if err != nil {
-			return "", 0, fmt.Errorf("speaker %q: %w", sp.ID, err)
+		if err != nil || math.IsNaN(sim) {
+			slog.Warn("skipping uncomparable fingerprint", "speaker", sp.ID, "error", err)
+			continue
 		}
 		if sim > best {
 			best, bestID = sim, sp.ID
 		}
 	}
-	if bestID == "" || best < threshold {
+	if bestID == "" {
+		return "", 0, errors.New("no enrolled fingerprint is comparable with the utterance embedding")
+	}
+	if best < threshold {
 		return "", best, nil
 	}
 	return bestID, best, nil
@@ -161,23 +204,26 @@ func NewSpeakerIdentifierFromConfig(cfg *config.SpeakerIDConfig) SpeakerIdentifi
 }
 
 // Identify embeds the utterance and matches it against enrolled fingerprints.
-func (f *FingerprintIdentifier) Identify(ctx context.Context, wavData []byte) (string, error) {
+func (f *FingerprintIdentifier) Identify(ctx context.Context, wavData []byte) (SpeakerMatch, error) {
 	file, err := f.store.Load()
 	if err != nil {
-		return "", err
+		return SpeakerMatch{}, err
 	}
 	if len(file.Speakers) == 0 {
-		return "", nil
+		return SpeakerMatch{}, nil
 	}
 	emb, model, err := f.embedder.Embed(ctx, wavData)
 	if err != nil {
-		return "", fmt.Errorf("embed: %w", err)
+		return SpeakerMatch{}, fmt.Errorf("embed: %w", err)
 	}
 	if file.Model != "" && model != "" && file.Model != model {
-		return "", fmt.Errorf("embedding model %q does not match fingerprint model %q", model, file.Model)
+		return SpeakerMatch{}, fmt.Errorf("model mismatch: embedding model %q does not match fingerprint model %q", model, file.Model)
 	}
-	id, _, err := MatchSpeaker(emb, file.Speakers, f.threshold)
-	return id, err
+	id, score, err := MatchSpeaker(emb, file.Speakers, f.threshold)
+	if err != nil {
+		return SpeakerMatch{}, err
+	}
+	return SpeakerMatch{Speaker: id, Score: score}, nil
 }
 
 // DefaultEmbedClient calls an HTTP speaker-embedding endpoint.
@@ -230,24 +276,4 @@ func (c *DefaultEmbedClient) Embed(ctx context.Context, wavData []byte) ([]float
 		return nil, "", errors.New("embed response has an empty embedding")
 	}
 	return out.Embedding, out.Model, nil
-}
-
-// TurnMeta is request-scoped metadata about the current voice turn, carried
-// to the brain client through the context.
-type TurnMeta struct {
-	NodeID  string
-	Speaker string
-}
-
-type turnMetaKey struct{}
-
-// WithTurnMeta returns a context carrying the turn metadata.
-func WithTurnMeta(ctx context.Context, meta TurnMeta) context.Context {
-	return context.WithValue(ctx, turnMetaKey{}, meta)
-}
-
-// TurnMetaFrom returns the turn metadata from the context, if any.
-func TurnMetaFrom(ctx context.Context) (TurnMeta, bool) {
-	m, ok := ctx.Value(turnMetaKey{}).(TurnMeta)
-	return m, ok
 }
