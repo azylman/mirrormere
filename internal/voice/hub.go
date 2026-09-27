@@ -36,6 +36,10 @@ var (
 	ErrTTSFailed = errors.New("text-to-speech synthesis failed")
 )
 
+// speakerGrace is how long the hub waits for speaker matching after STT has
+// already finished. Matching normally finishes first; this bounds the worst case.
+var speakerGrace = 500 * time.Millisecond
+
 // SSEEventSink is a callback to emit an SSE event to the client stream.
 type SSEEventSink func(event string, data any) error
 
@@ -44,9 +48,22 @@ type STTClient interface {
 	Transcribe(ctx context.Context, wavData []byte) (string, error)
 }
 
+// AskRequest is one turn sent to the agent brain.
+type AskRequest struct {
+	Prompt    string
+	SessionID string
+	// NodeID is the edge device that heard the utterance.
+	NodeID string
+	// Speaker is the matched enrolled speaker, or "" (SPEC-011 §Speaker Identification).
+	// It is a personalisation hint, not authentication.
+	Speaker string
+	// SpeakerScore is the best cosine similarity seen, 0 when matching did not run.
+	SpeakerScore float64
+}
+
 // BrainClient abstracts agent deliberation and live tool status streaming.
 type BrainClient interface {
-	Ask(ctx context.Context, prompt string, sessionID string, onStatus func(status string)) (string, error)
+	Ask(ctx context.Context, req AskRequest, onStatus func(status string)) (string, error)
 }
 
 // TTSClient abstracts speech synthesis.
@@ -63,6 +80,7 @@ type Hub struct {
 	stt      STTClient
 	brain    BrainClient
 	tts      TTSClient
+	speaker  SpeakerIdentifier
 }
 
 // HubOption configures optional Hub overrides (e.g. for testing).
@@ -83,6 +101,11 @@ func WithTTSClient(tts TTSClient) HubOption {
 	return func(h *Hub) { h.tts = tts }
 }
 
+// WithSpeakerIdentifier overrides the speaker identification implementation.
+func WithSpeakerIdentifier(id SpeakerIdentifier) HubOption {
+	return func(h *Hub) { h.speaker = id }
+}
+
 // NewHub constructs a Voice Hub coordinator.
 func NewHub(cfg *config.VoiceHubConfig, coord *Coordinator, opts ...HubOption) *Hub {
 	h := &Hub{
@@ -93,6 +116,9 @@ func NewHub(cfg *config.VoiceHubConfig, coord *Coordinator, opts ...HubOption) *
 		h.stt = NewDefaultSTTClient(cfg.STTURL)
 		h.brain = NewDefaultBrainClient(cfg.BrainURL, cfg.GetBrainTimeoutSeconds())
 		h.tts = NewDefaultTTSClient(cfg.TTSURL, cfg.GetTTSModel(), cfg.GetTTSVoice(), cfg.GetTTSTimeoutSeconds())
+		if sid := NewSpeakerIdentifierFromConfig(cfg.SpeakerID); sid != nil {
+			h.speaker = sid
+		}
 	}
 	for _, opt := range opts {
 		opt(h)
@@ -152,11 +178,41 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 		return err
 	}
 
-	// Step 2: Speech-to-Text transcription
+	// Step 2: Speech-to-Text transcription, with speaker matching in parallel
 	if h.stt == nil {
 		return ErrSTTFailed
 	}
+	// The channel is buffered so the goroutine never blocks, and idCancel stops
+	// a slow embed call once the turn no longer needs it.
+	speakerCh := make(chan SpeakerMatch, 1)
+	idCtx, idCancel := context.WithCancel(ctx)
+	defer idCancel()
+	if h.speaker != nil {
+		go func() {
+			m, idErr := h.speaker.Identify(idCtx, wavData)
+			if idErr != nil {
+				// Speaker matching is best-effort: the turn proceeds without a speaker.
+				slog.Warn("speaker identification failed", "error", idErr)
+				m = SpeakerMatch{}
+			}
+			speakerCh <- m
+		}()
+	} else {
+		speakerCh <- SpeakerMatch{}
+	}
 	transcript, err := h.stt.Transcribe(ctx, wavData)
+	var match SpeakerMatch
+	if err == nil {
+		// STT is the critical path. Give matching a short grace period after STT
+		// finishes, then continue without a speaker rather than stall the turn.
+		select {
+		case match = <-speakerCh:
+		case <-time.After(speakerGrace):
+			idCancel()
+			slog.Warn("speaker identification exceeded grace period after STT; continuing without speaker", "grace", speakerGrace)
+		}
+	}
+	speaker := match.Speaker
 	if err != nil {
 		if h.coord != nil {
 			h.coord.Transition(StateError, nil, nil, nil, nil)
@@ -171,7 +227,7 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 	if h.coord != nil {
 		h.coord.Transition(StateThinking, &transcript, nil, nil, nil)
 	}
-	if err := safeSink("transcript", map[string]string{"transcript": transcript}); err != nil {
+	if err := safeSink("transcript", map[string]string{"transcript": transcript, "speaker": speaker}); err != nil {
 		return err
 	}
 
@@ -179,7 +235,13 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 	if h.brain == nil {
 		return ErrBrainFailed
 	}
-	reply, err := h.brain.Ask(ctx, transcript, sessionID, func(status string) {
+	reply, err := h.brain.Ask(ctx, AskRequest{
+		Prompt:       transcript,
+		SessionID:    sessionID,
+		NodeID:       nodeID,
+		Speaker:      speaker,
+		SpeakerScore: match.Score,
+	}, func(status string) {
 		if h.coord != nil {
 			h.coord.SetStatus(&status)
 		}
@@ -433,15 +495,18 @@ func NewDefaultBrainClient(url string, timeoutSec int) BrainClient {
 }
 
 // Ask sends the transcribed prompt to the agent brain and listens for status updates and reply.
-func (b *DefaultBrainClient) Ask(ctx context.Context, prompt string, sessionID string, onStatus func(status string)) (string, error) {
+func (b *DefaultBrainClient) Ask(ctx context.Context, ask AskRequest, onStatus func(status string)) (string, error) {
 	if b.url == "" {
-		return fmt.Sprintf("I heard: %s", prompt), nil
+		return fmt.Sprintf("I heard: %s", ask.Prompt), nil
 	}
 
 	reqBody, err := json.Marshal(map[string]any{
-		"prompt":     prompt,
-		"session_id": sessionID,
-		"effort":     "low",
+		"prompt":        ask.Prompt,
+		"session_id":    ask.SessionID,
+		"effort":        "low",
+		"node_id":       ask.NodeID,
+		"speaker":       ask.Speaker,
+		"speaker_score": ask.SpeakerScore,
 	})
 	if err != nil {
 		return "", err

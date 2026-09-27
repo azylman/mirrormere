@@ -39,12 +39,14 @@ type mockBrain struct {
 	statuses   []string
 	err        error
 	calledWith string
+	lastReq    AskRequest
 }
 
-func (m *mockBrain) Ask(ctx context.Context, prompt string, sessionID string, onStatus func(status string)) (string, error) {
+func (m *mockBrain) Ask(ctx context.Context, req AskRequest, onStatus func(status string)) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.calledWith = prompt
+	m.calledWith = req.Prompt
+	m.lastReq = req
 	for _, s := range m.statuses {
 		if onStatus != nil {
 			onStatus(s)
@@ -449,7 +451,7 @@ func TestDefaultBrainClient_SSEAndJSON(t *testing.T) {
 
 	var statuses []string
 	b := NewDefaultBrainClient(sseServer.URL, 5)
-	reply, err := b.Ask(context.Background(), "turn on light", "s1", func(status string) {
+	reply, err := b.Ask(context.Background(), AskRequest{Prompt: "turn on light", SessionID: "s1"}, func(status string) {
 		statuses = append(statuses, status)
 	})
 	if err != nil {
@@ -472,7 +474,7 @@ func TestDefaultBrainClient_SSEAndJSON(t *testing.T) {
 	defer jsonServer.Close()
 
 	bJSON := NewDefaultBrainClient(jsonServer.URL, 5)
-	reply, err = bJSON.Ask(context.Background(), "hello", "s1", nil)
+	reply, err = bJSON.Ask(context.Background(), AskRequest{Prompt: "hello", SessionID: "s1"}, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -482,7 +484,7 @@ func TestDefaultBrainClient_SSEAndJSON(t *testing.T) {
 
 	// Empty URL fallback
 	bEmpty := NewDefaultBrainClient("", 5)
-	reply, err = bEmpty.Ask(context.Background(), "test prompt", "s1", nil)
+	reply, err = bEmpty.Ask(context.Background(), AskRequest{Prompt: "test prompt", SessionID: "s1"}, nil)
 	if err != nil || !strings.Contains(reply, "test prompt") {
 		t.Errorf("expected fallback containing test prompt, got: %q, err: %v", reply, err)
 	}
@@ -493,7 +495,7 @@ func TestDefaultBrainClient_SSEAndJSON(t *testing.T) {
 	}))
 	defer errServer.Close()
 	bErr := NewDefaultBrainClient(errServer.URL, 5)
-	_, err = bErr.Ask(context.Background(), "fail", "s1", nil)
+	_, err = bErr.Ask(context.Background(), AskRequest{Prompt: "fail", SessionID: "s1"}, nil)
 	if err == nil || !strings.Contains(err.Error(), "502") {
 		t.Errorf("expected 502 error, got: %v", err)
 	}
@@ -702,7 +704,7 @@ func TestDefaultBrainClient_Fallbacks(t *testing.T) {
 	defer tsText.Close()
 
 	b1 := NewDefaultBrainClient(tsText.URL, 5)
-	rep, err := b1.Ask(context.Background(), "q", "s", nil)
+	rep, err := b1.Ask(context.Background(), AskRequest{Prompt: "q", SessionID: "s"}, nil)
 	if err != nil || rep != "text fallback" {
 		t.Errorf("expected 'text fallback', got %q, err: %v", rep, err)
 	}
@@ -715,7 +717,7 @@ func TestDefaultBrainClient_Fallbacks(t *testing.T) {
 	defer tsContent.Close()
 
 	b2 := NewDefaultBrainClient(tsContent.URL, 5)
-	rep, err = b2.Ask(context.Background(), "q", "s", nil)
+	rep, err = b2.Ask(context.Background(), AskRequest{Prompt: "q", SessionID: "s"}, nil)
 	if err != nil || rep != "content fallback" {
 		t.Errorf("expected 'content fallback', got %q, err: %v", rep, err)
 	}
@@ -728,7 +730,7 @@ func TestDefaultBrainClient_Fallbacks(t *testing.T) {
 	defer tsBadJSON.Close()
 
 	b3 := NewDefaultBrainClient(tsBadJSON.URL, 5)
-	_, err = b3.Ask(context.Background(), "q", "s", nil)
+	_, err = b3.Ask(context.Background(), AskRequest{Prompt: "q", SessionID: "s"}, nil)
 	if err == nil {
 		t.Error("expected json decode error")
 	}
@@ -741,7 +743,7 @@ func TestDefaultBrainClient_Fallbacks(t *testing.T) {
 	defer tsNoDone.Close()
 
 	b4 := NewDefaultBrainClient(tsNoDone.URL, 5)
-	rep, err = b4.Ask(context.Background(), "q", "s", nil)
+	rep, err = b4.Ask(context.Background(), AskRequest{Prompt: "q", SessionID: "s"}, nil)
 	if err != nil || rep != "streamed without done" {
 		t.Errorf("expected 'streamed without done', got %q, err: %v", rep, err)
 	}
@@ -924,7 +926,7 @@ func TestClients_NetworkFailures(t *testing.T) {
 
 	// Brain client network failure
 	brain := NewDefaultBrainClient("http://127.0.0.1:59998/invalid", 1)
-	_, err = brain.Ask(context.Background(), "hi", "s1", nil)
+	_, err = brain.Ask(context.Background(), AskRequest{Prompt: "hi", SessionID: "s1"}, nil)
 	if err == nil {
 		t.Error("expected network error for brain client")
 	}
@@ -948,7 +950,7 @@ func TestDefaultBrainClient_SSE_MalformedDataAndError(t *testing.T) {
 	defer tsMalformed.Close()
 
 	brain := NewDefaultBrainClient(tsMalformed.URL, 5)
-	reply, err := brain.Ask(context.Background(), "hi", "s1", nil)
+	reply, err := brain.Ask(context.Background(), AskRequest{Prompt: "hi", SessionID: "s1"}, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -967,7 +969,7 @@ func TestDefaultBrainClient_SSE_ScannerError(t *testing.T) {
 	defer tsLong.Close()
 
 	brain := NewDefaultBrainClient(tsLong.URL, 5)
-	_, err := brain.Ask(context.Background(), "hi", "s1", nil)
+	_, err := brain.Ask(context.Background(), AskRequest{Prompt: "hi", SessionID: "s1"}, nil)
 	if err == nil {
 		t.Fatal("expected scanner error for line exceeding max scan token size")
 	}

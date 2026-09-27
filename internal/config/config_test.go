@@ -1419,3 +1419,36 @@ voice_hub:
 }
 
 
+
+func TestVoiceHubSpeakerIDConfig(t *testing.T) {
+	t.Parallel()
+	head := "timezone: UTC\ndisplay:\n  widgets:\n    - id: test\n      type: spacer\nvoice_hub:\n  enabled: true\n  speaker_id:\n"
+	cases := []struct {
+		name    string
+		body    string
+		wantErr bool
+	}{
+		{"missing path", "    embed_url: http://x/embed\n", true},
+		{"missing url", "    fingerprints_path: /config/speakers.json\n", true},
+		{"threshold zero", "    embed_url: http://x/embed\n    fingerprints_path: /f.json\n    threshold: 0\n", true},
+		{"threshold above 1", "    embed_url: http://x/embed\n    fingerprints_path: /f.json\n    threshold: 1.5\n", true},
+		{"zero timeout", "    embed_url: http://x/embed\n    fingerprints_path: /f.json\n    timeout_seconds: 0\n", true},
+		{"valid", "    embed_url: http://x/embed\n    fingerprints_path: /f.json\n    threshold: 0.8\n", false},
+	}
+	for _, tc := range cases {
+		cfg, err := config.ParseWithEnv([]byte(head+tc.body), mockGetenv(nil))
+		if (err != nil) != tc.wantErr {
+			t.Errorf("%s: err=%v wantErr=%v", tc.name, err, tc.wantErr)
+		}
+		if tc.name == "valid" && err == nil {
+			sid := cfg.VoiceHub.SpeakerID
+			if !sid.IsEnabled() || sid.GetThreshold() != 0.8 || sid.GetTimeoutSeconds() != 5 {
+				t.Errorf("valid: unexpected parsed config %+v", sid)
+			}
+		}
+	}
+	var nilCfg *config.SpeakerIDConfig
+	if nilCfg.GetThreshold() != 0.70 || nilCfg.GetTimeoutSeconds() != 5 || nilCfg.IsEnabled() {
+		t.Error("nil SpeakerIDConfig defaults wrong")
+	}
+}
