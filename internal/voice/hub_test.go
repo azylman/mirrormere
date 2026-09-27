@@ -346,9 +346,14 @@ func TestDefaultSTTClient_Wyoming(t *testing.T) {
 			}
 			var hdr struct {
 				Type          string `json:"type"`
+				DataLength    int    `json:"data_length"`
 				PayloadLength int    `json:"payload_length"`
 			}
 			_ = json.Unmarshal(line, &hdr)
+			if hdr.DataLength > 0 {
+				dataBytes := make([]byte, hdr.DataLength)
+				_, _ = io.ReadFull(reader, dataBytes)
+			}
 			if hdr.PayloadLength > 0 {
 				payload := make([]byte, hdr.PayloadLength)
 				_, _ = io.ReadFull(reader, payload)
