@@ -196,6 +196,61 @@
     console.log(`[MirrormereDisplay] Hot-swapped stylesheet: ${data && data.file ? data.file : 'custom.css'}`);
   }
 
+  const STYLE_HEARTBEAT_INTERVAL_MS = 120000; // 2 minutes
+  let lastStyleModified = null;
+  let lastStyleETag = null;
+  let styleHeartbeatTimer = null;
+
+  /**
+   * Check style.css via conditional HEAD request and hot-swap on change.
+   */
+  async function checkStyleHeartbeat() {
+    if (typeof fetch === 'undefined' || typeof document === 'undefined') return;
+    const link = document.getElementById('hud-stylesheet') || document.querySelector('link[rel="stylesheet"][href*="style.css"]');
+    if (!link) return;
+
+    const url = link.href.split('?')[0];
+    try {
+      const headers = {};
+      if (lastStyleModified) headers['If-Modified-Since'] = lastStyleModified;
+      if (lastStyleETag) headers['If-None-Match'] = lastStyleETag;
+
+      const res = await fetch(url, { method: 'HEAD', headers });
+      if (res.status === 200) {
+        const newModified = res.headers ? res.headers.get('Last-Modified') : null;
+        const newETag = res.headers ? res.headers.get('ETag') : null;
+        const hasExisting = Boolean(lastStyleModified || lastStyleETag);
+        const isChanged = (lastStyleModified && newModified && lastStyleModified !== newModified) ||
+                          (lastStyleETag && newETag && lastStyleETag !== newETag);
+
+        if (hasExisting && isChanged) {
+          handleStyleReload({ file: 'style.css (heartbeat)' });
+        }
+        if (newModified) lastStyleModified = newModified;
+        if (newETag) lastStyleETag = newETag;
+      }
+    } catch (_) {
+      // Ignore transient network errors on heartbeat
+    }
+  }
+
+  function getStyleHeartbeatState() {
+    return {
+      lastStyleModified,
+      lastStyleETag,
+      hasTimer: Boolean(styleHeartbeatTimer),
+    };
+  }
+
+  function resetStyleHeartbeatState() {
+    lastStyleModified = null;
+    lastStyleETag = null;
+    if (styleHeartbeatTimer) {
+      clearInterval(styleHeartbeatTimer);
+      styleHeartbeatTimer = null;
+    }
+  }
+
   let clockTimer = null;
 
   /**
@@ -210,6 +265,14 @@
     clockTimer = setInterval(updateClock, 1000);
     if (clockTimer && typeof clockTimer.unref === 'function') {
       clockTimer.unref();
+    }
+
+    // 1b. Start stylesheet freshness heartbeat (SPEC-003 §3, SPEC-010 §3)
+    checkStyleHeartbeat();
+    if (styleHeartbeatTimer) clearInterval(styleHeartbeatTimer);
+    styleHeartbeatTimer = setInterval(checkStyleHeartbeat, STYLE_HEARTBEAT_INTERVAL_MS);
+    if (styleHeartbeatTimer && typeof styleHeartbeatTimer.unref === 'function') {
+      styleHeartbeatTimer.unref();
     }
 
     // 2. Initialize Carousel controller
@@ -296,6 +359,13 @@
 
       sseClient.on('style.reload', (data) => {
         handleStyleReload(data);
+        checkStyleHeartbeat();
+      });
+
+      sseClient.on('connection', (data) => {
+        if (data && data.status === 'connected') {
+          checkStyleHeartbeat();
+        }
       });
 
       sseClient.on('header.update', (data) => {
@@ -323,6 +393,9 @@
     handleHeaderUpdate,
     handleSystemStatus,
     handleStyleReload,
+    checkStyleHeartbeat,
+    getStyleHeartbeatState,
+    resetStyleHeartbeatState,
     getWeatherIconSVG,
     getTimezone,
     setTimezone,
