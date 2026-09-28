@@ -485,9 +485,12 @@ paths:
                   type: string
                   format: binary
                   description: Recorded 16 kHz mono PCM WAV audio file
+                device_name:
+                  type: string
+                  description: Originating client static device name (e.g. kitchen-display)
                 node_id:
                   type: string
-                  description: Originating kiosk node identifier
+                  description: Originating kiosk node identifier (alias for device_name)
                 session_id:
                   type: string
                   description: Optional session or interaction correlation ID

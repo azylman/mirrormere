@@ -508,6 +508,30 @@ func TestDefaultBrainClient_SSEAndJSON(t *testing.T) {
 	}
 }
 
+func TestDefaultBrainClient_DeviceNameSessionFallback(t *testing.T) {
+	t.Parallel()
+
+	var receivedBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&receivedBody)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{"reply": "ok"})
+	}))
+	defer server.Close()
+
+	b := NewDefaultBrainClient(server.URL, 5)
+	_, err := b.Ask(context.Background(), AskRequest{Prompt: "hello", NodeID: "kitchen-display"}, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if receivedBody["session_id"] != "kitchen-display" {
+		t.Errorf("expected session_id fallback 'kitchen-display', got %v", receivedBody["session_id"])
+	}
+	if receivedBody["device_name"] != "kitchen-display" {
+		t.Errorf("expected device_name 'kitchen-display', got %v", receivedBody["device_name"])
+	}
+}
+
 func TestDefaultTTSClient(t *testing.T) {
 	t.Parallel()
 

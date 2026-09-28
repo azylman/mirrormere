@@ -196,6 +196,10 @@ class TestVoiceDaemon(unittest.TestCase):
 
         # Verified mock_urlopen called for Hub POST
         self.assertEqual(mock_urlopen.call_count, 1)
+        req = mock_urlopen.call_args[0][0]
+        self.assertIn(b'name="device_name"\r\n\r\nkitchen-display', req.data)
+        self.assertIn(b'name="node_id"\r\n\r\nkitchen-display', req.data)
+        self.assertNotIn(b'name="session_id"', req.data)
 
     @patch("clients.voice.client.urllib.request.urlopen")
     def test_hub_sse_stream_worker_multi_sentence_audio(self, mock_urlopen):

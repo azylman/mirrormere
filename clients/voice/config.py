@@ -12,7 +12,8 @@ except ImportError:
 
 @dataclass
 class VoiceConfig:
-    node_id: str = "touch-kiosk-kitchen"
+    device_name: str = "kitchen-display"
+    node_id: str = "kitchen-display"
     mirrormere_url: str = "http://192.168.1.14/kiosk"
     hub_url: str = "http://192.168.1.14:9000/api/voice/interact"
     wake_models: List[str] = field(default_factory=lambda: ["alexa", "hey_jarvis", "hey_mycroft", "hey_aerial"])
@@ -53,13 +54,24 @@ def load_config(path: Optional[str] = None) -> VoiceConfig:
                                 setattr(cfg, k, [str(item) for item in v])
                             elif field_type == str and isinstance(v, str):
                                 setattr(cfg, k, str(v))
+                    # Synchronize device_name and legacy node_id
+                    if "device_name" in voice_data and isinstance(voice_data["device_name"], str):
+                        cfg.device_name = str(voice_data["device_name"])
+                        cfg.node_id = cfg.device_name
+                    elif "node_id" in voice_data and isinstance(voice_data["node_id"], str):
+                        cfg.device_name = str(voice_data["node_id"])
+                        cfg.node_id = cfg.device_name
         except Exception:
             # Fall back safely to defaults on parse error
             pass
 
     # Environment overrides
-    if "MIRRORMERE_NODE_ID" in os.environ:
-        cfg.node_id = os.environ["MIRRORMERE_NODE_ID"]
+    if "MIRRORMERE_DEVICE_NAME" in os.environ:
+        cfg.device_name = os.environ["MIRRORMERE_DEVICE_NAME"]
+        cfg.node_id = cfg.device_name
+    elif "MIRRORMERE_NODE_ID" in os.environ:
+        cfg.device_name = os.environ["MIRRORMERE_NODE_ID"]
+        cfg.node_id = cfg.device_name
     if "MIRRORMERE_URL" in os.environ:
         cfg.mirrormere_url = os.environ["MIRRORMERE_URL"]
     if "MIRRORMERE_HUB_URL" in os.environ:
