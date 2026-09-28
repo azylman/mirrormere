@@ -193,6 +193,112 @@ Upon receiving interaction lifecycle events, the dock's `mirrormere-voice` clien
 
 ---
 
+## Sentence Streaming (MANDOS)
+
+Mike's Voice Hub (`internal/voice/hub.go`) can play Amos's reply sentence by
+sentence, starting well before the full reply is known, when its configured
+`brain.url` points at the karakos voice gateway's `POST /ask/stream` (same
+request shape as `POST /ask`, in the karakos workspace, not this repo)
+instead of `POST /ask`. This is a deployment/config change only — the wire
+contract below is purely additive, so pointing `brain.url` back at `/ask`
+(or any brain that has never heard of `/ask/stream`) reverts to the
+single-chunk behavior above with no other change.
+
+### Capability detection, not a config flag
+`BrainClient` gained an optional capability interface rather than a new
+field:
+```go
+type AudioStreamingBrainClient interface {
+    BrainClient
+    AskStreaming(ctx context.Context, req AskRequest, onStatus func(status string), onAudio func(chunk BrainAudioChunk)) (string, error)
+}
+```
+The Hub checks for this via a type assertion on `h.brain`. `DefaultBrainClient`
+implements it unconditionally — `AskStreaming` hits the same configured URL as
+`Ask`, so if that URL never sends a `sentence` event (a plain `/ask` brain, an
+older gateway, a turn with nothing to stream), `onAudio` simply never fires and
+the turn behaves exactly like the non-streaming path below. A brain fake in
+tests that implements only `Ask` (e.g. `mockBrain`) is untouched and continues
+to compile and run unchanged.
+
+### Wire format (`event: sentence`, karakos gateway only)
+Additive to the SSE contract above; `/ask` is unchanged.
+```
+event: sentence
+data: {"text": "It's sunny.", "engine": "desktop-tts", "audio_b64": "<base64 WAV>"}
+```
+- `audio_b64` decodes to raw WAV bytes — the gateway's `synthesize()` always
+  returns WAV, so there is no separate `format` field on the wire; the Hub
+  hardcodes `Format: "wav"` for every decoded `BrainAudioChunk`.
+- `engine` names which TTS engine spoke that sentence (may differ sentence to
+  sentence, e.g. one hits the desktop Chatterbox clone and the next falls
+  back to Piper mid-turn) — carried through `BrainAudioChunk` but not
+  currently forwarded to the edge dock; the `reply` event's `tts_engine`
+  stays the Hub's own configured default, as it always has.
+- A `sentence` event with a missing or undecodable `audio_b64` still fires
+  `onAudio`, with `Data` empty — the caller decides how to handle it (see
+  fallback below), it is never silently dropped by the SSE consumer itself.
+
+### Hub behavior when the brain streams sentence audio
+- Each `sentence` event becomes one `audio_chunk` SSE event to the edge dock,
+  forwarded **immediately** as it arrives (not held back), `chunk_index`
+  incrementing from 0, `format: "wav"`, `is_final: false`. The coordinator
+  transitions to `StateSpeaking` on the **first** chunk. Forwarding
+  immediately (rather than buffering to look ahead for the last one) is the
+  point of streaming at all — it's what lets playback start well before the
+  full reply is known.
+- **Completion marker, not a buffered final chunk**: because the Hub doesn't
+  know in advance how many sentences there will be, it can't mark a chunk
+  `is_final` at the moment it sends it. Once the brain call returns (and at
+  least one real chunk was sent), the Hub emits one more `audio_chunk` with
+  empty `data` and `is_final: true` — a pure completion marker, not a
+  resend of the last sentence's audio. The edge dock's `_hub_stream_worker`
+  already treats an empty/absent `data` as a no-op (`if audio_b64:` before
+  decoding+playing), so this marker plays nothing and needs no client
+  change.
+- **No double speech**: if any sentence audio streamed, the Hub does not also
+  call its own `TTSClient.Synthesize` on the full reply text.
+- **Text-only sentences (first-class)**: a `sentence` event may carry text
+  and no audio. The Hub synthesizes *just that sentence's text* with its own
+  `h.tts`. This is a supported mode, not a degraded one: a brain that
+  streams text while this instance does speech locally (e.g. Kokoro on an
+  Orin) gets the same sentence-level time-to-first-audio as a brain that
+  streams pre-rendered audio (the karakos gateway). The same path covers a
+  sentence whose audio was missing or undecodable. It logs at debug level. If `h.tts` is unset, or that fallback synthesis also fails,
+  the sentence's audio is dropped (logged at warn), but the `reply` event still
+  carries the full, un-truncated text for the caption toast.
+- **All sentences failed**: if every streamed sentence (and its fallback)
+  failed, so zero real chunks were ever sent, the Hub falls back one more
+  level — a single `TTSClient.Synthesize` call over the *entire* reply text,
+  emitted as one `is_final: true` chunk carrying the audio (not an empty
+  marker) — so a turn is never silently mute.
+- **Kiosk caption**: the touch kiosk reads `voice.state` from the
+  coordinator, not this SSE stream. Each sent chunk transitions the
+  coordinator to `StateSpeaking` with `reply` set to the sentences spoken so
+  far, so the caption grows sentence by sentence; when the brain call
+  returns, `reply` is set to the brain's final text before the completion
+  marker.
+- **Event ordering changes for a streaming turn only**: `audio_chunk` events
+  arrive *during* the brain call (as each sentence completes), and `reply`
+  is emitted only once the brain call returns with the final text — the
+  reverse of the non-streaming order above (`reply` then a single
+  `audio_chunk`). A streaming turn's full sequence is:
+  `state → transcript → status* → audio_chunk+ → audio_chunk(marker) →
+  reply → done`.
+  A non-streaming turn (or a streaming-capable brain that streamed nothing
+  this turn) is unchanged: `state → transcript → status* → reply →
+  audio_chunk → done`.
+
+### Edge dock playback
+`clients/voice/client.py`'s `_hub_stream_worker` already plays every
+`audio_chunk` event it receives via a blocking `play_audio()` call as the
+event arrives, so N sequential chunks for one turn play back-to-back in
+order with no client code change required — `is_final` is informational for
+the dock (nothing currently branches on it), not required for correct
+playback ordering.
+
+---
+
 ## Speaker Identification (Voice Fingerprints)
 
 The Voice Hub can tell who is speaking by matching each utterance against enrolled voice fingerprints. It is optional: with no `speaker_id` block configured, `speaker` is always empty and nothing else changes.
