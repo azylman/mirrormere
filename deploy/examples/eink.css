@@ -209,23 +209,50 @@ div[data-widget-type="calendar-family"] .cf-owner-chip {
    on `.cf-owner-chip` and `.cf-event` alike). "solid" is a flat black fill
    with white content; an event/chip with no claimed owner carries no
    `.cf-pattern-*` class at all and keeps the plain white-fill/black-border
-   `.cf-event`/`.cf-owner-chip` rule above. */
+   `.cf-event`/`.cf-owner-chip` rule above.
+
+   The legend chip is small and carries only a single printed initial, so it
+   is fully patterned per spec. An event card carries a title (and for timed
+   events, a time and initials too), so hatch/dots there are confined to a
+   left identification strip rather than tiled behind the text - a
+   full-card tile reads as noise once dithered and fights the text SPEC-014
+   "E-Ink Rendering" requires stay legible. */
 div[data-widget-type="calendar-family"] .cf-pattern-solid {
   background: #000000 !important;
   background-image: none !important;
   color: #ffffff !important;
 }
 
-div[data-widget-type="calendar-family"] .cf-pattern-hatch {
+div[data-widget-type="calendar-family"] .cf-owner-chip.cf-pattern-hatch {
   background: #ffffff !important;
   background-image: repeating-linear-gradient(45deg, #000 0, #000 2px, #fff 2px, #fff 5px) !important;
   color: #000000 !important;
 }
 
-div[data-widget-type="calendar-family"] .cf-pattern-dots {
+div[data-widget-type="calendar-family"] .cf-owner-chip.cf-pattern-dots {
   background: #ffffff !important;
   background-image: radial-gradient(circle, #000 1.4px, transparent 1.6px) !important;
   background-size: 6px 6px !important;
+  color: #000000 !important;
+}
+
+div[data-widget-type="calendar-family"] .cf-event.cf-pattern-hatch {
+  background-color: #ffffff !important;
+  background-image: repeating-linear-gradient(45deg, #000 0, #000 2px, #fff 2px, #fff 5px) !important;
+  background-repeat: no-repeat !important;
+  background-size: 10px 100% !important;
+  background-position: left !important;
+  padding-left: 13px !important;
+  color: #000000 !important;
+}
+
+div[data-widget-type="calendar-family"] .cf-event.cf-pattern-dots {
+  background-color: #ffffff !important;
+  background-image: radial-gradient(circle, #000 1.4px, transparent 1.6px) !important;
+  background-repeat: no-repeat !important;
+  background-size: 6px 6px !important;
+  background-position: 3px center !important;
+  padding-left: 13px !important;
   color: #000000 !important;
 }
 

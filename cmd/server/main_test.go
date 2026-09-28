@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/azylman/mirrormere/internal/config"
 )
 
 func init() {
@@ -442,5 +444,36 @@ func TestMain_ExecutionWithError(t *testing.T) {
 
 	if exitCode != 1 {
 		t.Errorf("expected exit code 1, got %d", exitCode)
+	}
+}
+
+// fakeSnapshotProvider is a minimal render.StateSnapshotProvider stub carrying only what
+// householdNowFunc reads.
+type fakeSnapshotProvider struct {
+	snap *config.Snapshot
+}
+
+func (f *fakeSnapshotProvider) CurrentSnapshot() *config.Snapshot { return f.snap }
+func (f *fakeSnapshotProvider) GetWidgetState(string) (any, string, string, bool) {
+	return nil, "", "", false
+}
+func (f *fakeSnapshotProvider) CurrentStatus() config.Status { return config.Status{} }
+
+func TestHouseholdNowFunc_UsesConfiguredTimezoneRegardlessOfProcessLocal(t *testing.T) {
+	// Asia/Tokyo (UTC+9, no DST) is very unlikely to match this test process's own local zone,
+	// so if householdNowFunc returned time.Now() untouched, the location would not be JST.
+	sp := &fakeSnapshotProvider{snap: &config.Snapshot{Config: &config.Config{Timezone: "Asia/Tokyo"}}}
+	now := householdNowFunc(sp)()
+	if zone, _ := now.Zone(); zone != "JST" {
+		t.Fatalf("expected householdNowFunc to report the household's configured zone (JST), got %s", zone)
+	}
+}
+
+func TestHouseholdNowFunc_FallsBackToProcessLocalWithoutASnapshot(t *testing.T) {
+	if got := householdNowFunc(&fakeSnapshotProvider{snap: nil})(); got.IsZero() {
+		t.Fatal("expected a non-zero time when no snapshot is available")
+	}
+	if got := householdNowFunc(nil)(); got.IsZero() {
+		t.Fatal("expected a non-zero time for a nil provider")
 	}
 }
