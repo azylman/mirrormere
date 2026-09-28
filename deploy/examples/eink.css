@@ -1,0 +1,237 @@
+/* ==========================================================================
+   Mirrormere Reference Stylesheet: High-Contrast 1-Bit Monochrome (E-Ink)
+   Authoritative Reference: specs/001-architecture-overview.md & specs/003 §3
+   Mount target: copy to ./config/custom.css (mounted via directory mount ./config:/config:ro per SPEC-003 §3)
+
+   Replaces the touch-kiosk stylesheet entirely (SPEC-003 §3: /style.css serves
+   either the mounted custom.css or the fallback hud.css, never both), so this
+   file carries its own base layout and tokens rather than only overriding
+   selectors from deploy/examples/custom.css.
+
+   Per SPEC-003 §3's own framing of the e-ink profile: "high-contrast 1-bit
+   monochrome, bold typography, zero animations, 2px solid borders." The
+   `eink-renderer` sidecar (SPEC-009) captures this page and dithers it down
+   to a true 1-bit PNG, so colors here only need to read as unambiguously
+   light or dark before that pass - no gradients, glows, blur, or
+   transitions, all of which dither into noise.
+
+   SPEC-014 "No e-ink CSS in the widget": calendar-family's core template
+   (widgets/calendar-family/views/widget.html) is unconditional, full-color
+   HTML with inline member/event colors bound from the server-side view
+   model. This stylesheet supplies the e-ink presentation for it - pattern
+   fills on `.cf-owner-chip`/`.cf-event` keyed to each member's `pattern`,
+   and an inverted "today" header - by overriding those inline colors with
+   `!important`.
+   ========================================================================== */
+
+:root {
+  --mm-bg-canvas: #ffffff;
+  --mm-bg-surface: #ffffff;
+  --mm-bg-card: #ffffff;
+  --mm-bg-card-hover: #ffffff;
+  --mm-bg-glass: #ffffff;
+
+  /* No color accents on e-ink: "accent" here just means black-on-white. */
+  --mm-accent-purple: #000000;
+  --mm-accent-purple-glow: transparent;
+  --mm-accent-cyan: #000000;
+  --mm-accent-cyan-glow: transparent;
+  --mm-accent-pink: #000000;
+  --mm-accent-pink-glow: transparent;
+
+  --mm-text-primary: #000000;
+  --mm-text-secondary: #000000;
+  --mm-text-muted: #333333;
+  --mm-text-dim: #555555;
+
+  --mm-status-ok: #000000;
+  --mm-status-degraded: #000000;
+  --mm-status-error: #000000;
+
+  --mm-border-hud: 2px solid #000000;
+  --mm-border-accent: 2px solid #000000;
+  --mm-border-radius-sm: 0px;
+  --mm-border-radius-md: 0px;
+  --mm-border-radius-lg: 0px;
+
+  --mm-font-family: "Helvetica Neue", Arial, sans-serif;
+  --mm-font-mono: "Liberation Mono", Consolas, monospace;
+
+  --mm-touch-target-min: 48px;
+
+  --mm-header-height: 80px;
+  --mm-grid-gap: 12px;
+}
+
+/* Base Body & Reset */
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  background-color: var(--mm-bg-canvas);
+  color: var(--mm-text-primary);
+  font-family: var(--mm-font-family);
+  font-weight: 700;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+  cursor: none !important;
+}
+
+*, *::before, *::after {
+  cursor: none !important;
+  transition: none !important;
+  animation: none !important;
+  box-shadow: none !important;
+  text-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+#mirrormere-app {
+  display: flex;
+  flex-direction: column;
+  width: 100vw;
+  height: 100vh;
+  box-sizing: border-box;
+  padding: 12px;
+  background: var(--mm-bg-canvas);
+}
+
+.header-zone {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: var(--mm-header-height);
+  padding: 0 20px;
+  margin-bottom: var(--mm-grid-gap);
+  background: var(--mm-bg-canvas);
+  border: var(--mm-border-hud);
+}
+
+.header-clock {
+  font-family: var(--mm-font-mono);
+  font-size: 2.5rem;
+  font-weight: 700;
+  color: var(--mm-text-primary);
+}
+
+.header-date {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--mm-text-primary);
+}
+
+.header-status {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.status-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background-color: var(--mm-status-ok);
+}
+
+.grid-canvas {
+  display: grid;
+  flex: 1;
+  grid-template-columns: repeat(6, 1fr);
+  grid-template-rows: repeat(2, 1fr);
+  gap: var(--mm-grid-gap);
+  width: 100%;
+  height: calc(100% - var(--mm-header-height) - var(--mm-grid-gap));
+}
+
+.widget-card {
+  display: flex;
+  flex-direction: column;
+  background: var(--mm-bg-card);
+  border: var(--mm-border-hud);
+  padding: 12px;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+button, .touch-target {
+  min-width: var(--mm-touch-target-min);
+  min-height: var(--mm-touch-target-min);
+  cursor: none;
+  touch-action: manipulation;
+}
+
+.widget-spacer {
+  background: transparent;
+  border: none;
+  pointer-events: none;
+}
+
+/* ==========================================================================
+   calendar-family (SPEC-014) e-ink presentation
+
+   The widget's own <style> block was removed (this stylesheet is now the
+   only place e-ink-specific CSS lives). Member/event color is set inline
+   from the view model for the full-color profile, so overriding it here
+   needs !important on every color-bearing property, including the
+   `background` shorthand's image layer for pattern fills.
+   ========================================================================== */
+
+div[data-widget-type="calendar-family"] .cf-day.cf-today {
+  outline: 2px solid #000000;
+}
+
+div[data-widget-type="calendar-family"] .cf-day.cf-today .cf-day-header {
+  background: #000000 !important;
+  color: #ffffff !important;
+}
+
+div[data-widget-type="calendar-family"] .cf-event {
+  background: #ffffff !important;
+  background-image: none !important;
+  border: 2px solid #000000;
+  color: #000000 !important;
+}
+
+div[data-widget-type="calendar-family"] .cf-owner-chip {
+  background: #ffffff !important;
+  background-image: none !important;
+  color: #000000 !important;
+  border: 1px solid #000000;
+}
+
+/* Pattern fills, keyed to each member's config-level `pattern` (SPEC-014
+   "E-Ink Rendering"). Applied to both the legend chip and any event card
+   the pattern's owner appears first on (widget.html: `.cf-pattern-<name>`
+   on `.cf-owner-chip` and `.cf-event` alike). "solid" is a flat black fill
+   with white content; an event/chip with no claimed owner carries no
+   `.cf-pattern-*` class at all and keeps the plain white-fill/black-border
+   `.cf-event`/`.cf-owner-chip` rule above. */
+div[data-widget-type="calendar-family"] .cf-pattern-solid {
+  background: #000000 !important;
+  background-image: none !important;
+  color: #ffffff !important;
+}
+
+div[data-widget-type="calendar-family"] .cf-pattern-hatch {
+  background: #ffffff !important;
+  background-image: repeating-linear-gradient(45deg, #000 0, #000 2px, #fff 2px, #fff 5px) !important;
+  color: #000000 !important;
+}
+
+div[data-widget-type="calendar-family"] .cf-pattern-dots {
+  background: #ffffff !important;
+  background-image: radial-gradient(circle, #000 1.4px, transparent 1.6px) !important;
+  background-size: 6px 6px !important;
+  color: #000000 !important;
+}
+
+div[data-widget-type="calendar-family"] .cf-pattern-outline {
+  background: #ffffff !important;
+  background-image: none !important;
+  border: 2px solid #000000;
+  color: #000000 !important;
+}

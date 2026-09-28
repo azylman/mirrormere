@@ -658,12 +658,18 @@ func validateFamilyCalendarConfig(widgetID string, rawConfig map[string]any) err
 		}
 		seenNames[name] = true
 
-		if pattern, ok := m["pattern"].(string); ok && strings.TrimSpace(pattern) != "" {
-			if prevMember, exists := seenPatterns[pattern]; exists {
-				return fmt.Errorf("[Mirrormere Config Error] calendar-family widget '%s': member %q and member %q both declare e-ink pattern %q; patterns must be distinct", widgetID, prevMember, name, pattern)
-			}
-			seenPatterns[pattern] = name
+		// An omitted 'pattern' defaults to "solid" at render time (parseFamilyMembers), so two
+		// members that both omit it - or one that omits it and one that sets "solid" explicitly
+		// - collide on the same e-ink pattern just as if both had typed "solid". Apply the same
+		// default here before the collision check.
+		pattern := "solid"
+		if v, ok := m["pattern"].(string); ok && strings.TrimSpace(v) != "" {
+			pattern = strings.TrimSpace(v)
 		}
+		if prevMember, exists := seenPatterns[pattern]; exists {
+			return fmt.Errorf("[Mirrormere Config Error] calendar-family widget '%s': member %q and member %q both declare e-ink pattern %q; patterns must be distinct", widgetID, prevMember, name, pattern)
+		}
+		seenPatterns[pattern] = name
 
 		claimed, hasClaimed := m["calendars"].([]any)
 		if !hasClaimed {

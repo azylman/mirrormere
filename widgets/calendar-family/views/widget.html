@@ -1,31 +1,10 @@
 {{ $view := calendarFamilyView .Data .Config .Dimensions }}
-<div class="widget-card widget-calendar-family" data-widget-id="{{ .ID }}" data-widget-type="{{ .Type }}" style="grid-column: span {{ .Dimensions.Cols }}; grid-row: span {{ .Dimensions.Rows }}; display: flex; flex-direction: column; --mm-cf-shared: {{ $view.SharedColor }};{{ range $i, $m := $view.Members }} --mm-member-{{ $i }}: {{ $m.Color }}; --mm-member-{{ $i }}-text: {{ $m.TextColor }};{{ end }}">
-  <style>
-    div[data-widget-id="{{ .ID }}"] .cf-day.cf-today { outline: 2px solid var(--mm-accent-purple); }
-    div[data-widget-id="{{ .ID }}"] .cf-event { background: var(--mm-cf-shared); }
-    {{ range $i, $m := $view.Members }}
-    div[data-widget-id="{{ $.ID }}"] .cf-owner-{{ $i }} { background: var(--mm-member-{{ $i }}); color: var(--mm-member-{{ $i }}-text); }
-    {{ end }}
-    /* E-ink presentation (SPEC-014 "E-Ink Rendering"): color blocks give way to each member's
-       pattern fill with the initial always printed, and today's header inverts instead of
-       tinting. Gated on the standard `monochrome` media feature so a single template and a
-       single view model serve both the touch and e-ink render paths (SPEC-014 "Styling"). */
-    @media (monochrome) {
-      div[data-widget-id="{{ .ID }}"] .cf-event { background: #fff; border: 2px solid #000; color: #000; }
-      div[data-widget-id="{{ .ID }}"] .cf-owner-chip { background: #fff !important; color: #000 !important; border: 1px solid #000; }
-      div[data-widget-id="{{ .ID }}"] .cf-owner-chip.cf-pattern-solid { background: #000 !important; color: #fff !important; }
-      div[data-widget-id="{{ .ID }}"] .cf-owner-chip.cf-pattern-hatch { background-image: repeating-linear-gradient(45deg, #000 0, #000 2px, #fff 2px, #fff 5px) !important; }
-      div[data-widget-id="{{ .ID }}"] .cf-owner-chip.cf-pattern-dots { background-image: radial-gradient(circle, #000 1.4px, transparent 1.6px) !important; background-size: 6px 6px; }
-      div[data-widget-id="{{ .ID }}"] .cf-owner-chip.cf-pattern-outline { background: #fff !important; border: 2px solid #000; }
-      div[data-widget-id="{{ .ID }}"] .cf-day.cf-today .cf-day-header { background: #000; color: #fff; outline: none; }
-    }
-  </style>
-
+<div class="widget-card widget-calendar-family" data-widget-id="{{ .ID }}" data-widget-type="{{ .Type }}" style="grid-column: span {{ .Dimensions.Cols }}; grid-row: span {{ .Dimensions.Rows }}; display: flex; flex-direction: column;">
   <div class="cf-header" style="display: flex; align-items: center; justify-content: space-between; padding-bottom: 8px; margin-bottom: 6px; border-bottom: 1px solid rgba(168, 85, 247, 0.2);">
     <span class="cf-range-label" style="font-size: 0.95rem; font-weight: 700; color: var(--mm-text-primary);">{{ $view.RangeLabel }}</span>
     <div class="cf-legend" style="display: flex; gap: 6px;">
       {{ range $i, $m := $view.Members }}
-      <span class="cf-owner-chip cf-owner-{{ $i }} cf-pattern-{{ $m.Pattern }}" title="{{ $m.Name }}" style="display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: 50%; font-size: 0.65rem; font-weight: 700;">{{ $m.Initial }}</span>
+      <span class="cf-owner-chip cf-pattern-{{ $m.Pattern }}" title="{{ $m.Name }}" style="display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: 50%; font-size: 0.65rem; font-weight: 700; background: {{ $m.Color }}; color: {{ $m.TextColor }};">{{ $m.Initial }}</span>
       {{ end }}
     </div>
   </div>
@@ -33,7 +12,7 @@
   {{ if $view.Days }}
   <div class="cf-week-grid" style="display: grid; grid-template-columns: repeat({{ len $view.Days }}, 1fr); gap: 4px; flex: 1; min-height: 0;">
     {{ range $view.Days }}
-    <div class="cf-day{{ if .IsToday }} cf-today{{ end }}{{ if .IsWeekend }} cf-weekend{{ end }}" style="display: flex; flex-direction: column; min-width: 0; background: {{ if .IsWeekend }}rgba(255,255,255,0.03){{ else }}transparent{{ end }}; border-radius: 6px; overflow: hidden;">
+    <div class="cf-day{{ if .IsToday }} cf-today{{ end }}{{ if .IsWeekend }} cf-weekend{{ end }}" style="display: flex; flex-direction: column; min-width: 0; background: {{ if .IsWeekend }}rgba(255,255,255,0.03){{ else }}transparent{{ end }}; border-radius: 6px; overflow: hidden;{{ if .IsToday }} outline: 2px solid var(--mm-accent-purple);{{ end }}">
       <div class="cf-day-header" style="display: flex; flex-direction: column; align-items: center; padding: 3px 2px; font-size: 0.72rem; font-weight: 700; color: var(--mm-text-primary); {{ if .IsToday }}background: var(--mm-accent-purple); border-radius: 4px;{{ end }}">
         <span class="cf-day-weekday">{{ .WeekdayAbb }}</span>
         <span class="cf-day-num">{{ .DayOfMonth }}</span>
@@ -42,14 +21,14 @@
       {{ if .AllDay }}
       <div class="cf-allday-band" style="display: flex; flex-direction: column; gap: 2px; padding: 2px 0;">
         {{ range .AllDay }}
-        <div class="cf-event cf-allday" style="font-size: 0.65rem; font-weight: 600; border-radius: 3px; padding: 1px 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #fff; background: {{ .Color }};">{{ .Title }}</div>
+        <div class="cf-event cf-allday{{ if .Pattern }} cf-pattern-{{ .Pattern }}{{ end }}" style="font-size: 0.65rem; font-weight: 600; border-radius: 3px; padding: 1px 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: {{ .TextColor }}; background: {{ .Color }};">{{ .Title }}</div>
         {{ end }}
       </div>
       {{ end }}
 
       <div class="cf-timed-list" style="display: flex; flex-direction: column; gap: 2px; padding: 2px 0; overflow: hidden;">
         {{ range .Timed }}
-        <div class="cf-event cf-timed" style="font-size: 0.68rem; border-radius: 3px; padding: 2px 3px; overflow: hidden; color: #fff; background: {{ .Color }};">
+        <div class="cf-event cf-timed{{ if .Pattern }} cf-pattern-{{ .Pattern }}{{ end }}" style="font-size: 0.68rem; border-radius: 3px; padding: 2px 3px; overflow: hidden; color: {{ .TextColor }}; background: {{ .Color }};">
           <span class="cf-event-time" style="font-family: var(--mm-font-mono); font-weight: 700;">{{ .Start }}</span>
           <span class="cf-event-title" style="margin-left: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ .Title }}</span>
           {{ if .Initials }}

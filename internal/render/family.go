@@ -23,16 +23,19 @@ type FamilyMember struct {
 
 // FamilyEvent represents a resolved, presentation-ready event within a single day column.
 type FamilyEvent struct {
-	ID       string   `json:"id"`
-	Title    string   `json:"title"`
-	Location string   `json:"location"`
-	Start    string   `json:"start"`
-	End      string   `json:"end"`
-	AllDay   bool     `json:"all_day"`
-	Owners   []string `json:"owners"`
-	Initials []string `json:"initials"`
-	Colors   []string `json:"colors"`
-	Color    string   `json:"color"`
+	ID        string   `json:"id"`
+	Title     string   `json:"title"`
+	Location  string   `json:"location"`
+	Start     string   `json:"start"`
+	End       string   `json:"end"`
+	AllDay    bool     `json:"all_day"`
+	Owners    []string `json:"owners"`
+	Initials  []string `json:"initials"`
+	Colors    []string `json:"colors"`
+	Color     string   `json:"color"`
+	TextColor string   `json:"text_color"`
+	Patterns  []string `json:"patterns"`
+	Pattern   string   `json:"pattern"`
 }
 
 // FamilyDay represents one column of the week view per SPEC-014 "Week (default)".
@@ -122,13 +125,29 @@ func BuildFamilyView(data any, cfg map[string]any, dims domain.Dimension, now ti
 	// owned by every claiming member, per SPEC-014 "Shared events".
 	merged := make(map[string]*FamilyEvent)
 	mergedOrder := make([]string, 0)
-	mergedDate := make(map[string]string)
+	// mergedDates holds every in-window date key a merged event lands on: a single entry for
+	// a timed event, or one entry per spanned day for a multi-day all-day event (SPEC-014
+	// "Multi-day events" - a spanning all-day event appears in every date column it covers,
+	// not only its start day).
+	mergedDates := make(map[string][]string)
 	mergedOwnerSet := make(map[string]map[string]bool)
 
 	for _, ev := range snapshot.Events {
-		evDate := eventDateKey(ev)
-		if _, ok := dayIndex[evDate]; !ok {
-			continue // outside the displayed window
+		var evDates []string
+		if ev.AllDay {
+			evDates = familyDateRange(ev.Start, ev.End)
+		} else {
+			evDates = []string{eventDateKey(ev, now.Location())}
+		}
+
+		var matchedDates []string
+		for _, d := range evDates {
+			if _, ok := dayIndex[d]; ok {
+				matchedDates = append(matchedDates, d)
+			}
+		}
+		if len(matchedDates) == 0 {
+			continue // no day this event spans falls inside the displayed window
 		}
 
 		fe, exists := merged[ev.ID]
@@ -141,15 +160,15 @@ func BuildFamilyView(data any, cfg map[string]any, dims domain.Dimension, now ti
 			}
 			if !ev.AllDay {
 				if t, ok := parseFamilyTime(ev.Start); ok {
-					fe.Start = t.Format("15:04")
+					fe.Start = t.In(now.Location()).Format("15:04")
 				}
 				if t, ok := parseFamilyTime(ev.End); ok {
-					fe.End = t.Format("15:04")
+					fe.End = t.In(now.Location()).Format("15:04")
 				}
 			}
 			merged[ev.ID] = fe
 			mergedOrder = append(mergedOrder, ev.ID)
-			mergedDate[ev.ID] = evDate
+			mergedDates[ev.ID] = matchedDates
 			mergedOwnerSet[ev.ID] = make(map[string]bool)
 		}
 
@@ -175,6 +194,7 @@ func BuildFamilyView(data any, cfg map[string]any, dims domain.Dimension, now ti
 				fe.Owners = append(fe.Owners, m.Name)
 				fe.Initials = append(fe.Initials, m.Initial)
 				fe.Colors = append(fe.Colors, m.Color)
+				fe.Patterns = append(fe.Patterns, m.Pattern)
 			}
 		}
 	}
@@ -186,11 +206,17 @@ func BuildFamilyView(data any, cfg map[string]any, dims domain.Dimension, now ti
 		} else {
 			fe.Color = sharedColor
 		}
-		idx := dayIndex[mergedDate[id]]
-		if fe.AllDay {
-			days[idx].AllDay = append(days[idx].AllDay, *fe)
-		} else {
-			days[idx].Timed = append(days[idx].Timed, *fe)
+		if len(fe.Patterns) > 0 {
+			fe.Pattern = fe.Patterns[0]
+		}
+		fe.TextColor = contrastTextColor(fe.Color)
+		for _, d := range mergedDates[id] {
+			idx := dayIndex[d]
+			if fe.AllDay {
+				days[idx].AllDay = append(days[idx].AllDay, *fe)
+			} else {
+				days[idx].Timed = append(days[idx].Timed, *fe)
+			}
 		}
 	}
 
@@ -227,14 +253,40 @@ func extractCalendarSnapshot(data any) provider.CalendarSnapshot {
 	return provider.CalendarSnapshot{}
 }
 
-func eventDateKey(ev provider.CalendarEvent) string {
+// eventDateKey resolves the local calendar date a timed event's start falls on, per SPEC-014
+// "Timezones" - the provider emits RFC3339 timestamps, which must be converted to the
+// household's location before date-keying or a UTC event near local midnight lands on the
+// wrong day. All-day events are already plain date strings with no timezone component.
+func eventDateKey(ev provider.CalendarEvent, loc *time.Location) string {
 	if ev.AllDay {
 		return ev.Start
 	}
 	if t, ok := parseFamilyTime(ev.Start); ok {
-		return t.Format("2006-01-02")
+		return t.In(loc).Format("2006-01-02")
 	}
 	return ev.Start
+}
+
+// familyDateRange returns every date key (inclusive, "2006-01-02") from startDate through
+// endDate, per SPEC-014 "Multi-day events". endDate is the provider's already-normalized
+// inclusive last day (see provider.formatEventRange); an empty or earlier endDate collapses
+// to the single startDate. Capped well above any realistic display window to bound a
+// malformed or absurdly long feed entry.
+func familyDateRange(startDate, endDate string) []string {
+	start, ok := parseFamilyTime(startDate)
+	if !ok {
+		return []string{startDate}
+	}
+	end, ok := parseFamilyTime(endDate)
+	if !ok || end.Before(start) {
+		end = start
+	}
+	const maxSpanDays = 400
+	dates := make([]string, 0, 1)
+	for d, i := start, 0; !d.After(end) && i < maxSpanDays; d, i = d.AddDate(0, 0, 1), i+1 {
+		dates = append(dates, d.Format("2006-01-02"))
+	}
+	return dates
 }
 
 func parseFamilyTime(v string) (time.Time, bool) {

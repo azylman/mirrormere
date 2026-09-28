@@ -334,7 +334,7 @@ func TestParseFamilyTime_Invalid(t *testing.T) {
 
 func TestEventDateKey_UnparsableTimedFallsBackToRawStart(t *testing.T) {
 	ev := provider.CalendarEvent{Start: "garbage"}
-	if got := eventDateKey(ev); got != "garbage" {
+	if got := eventDateKey(ev, time.UTC); got != "garbage" {
 		t.Fatalf("expected raw fallback, got %q", got)
 	}
 }
@@ -409,6 +409,162 @@ func TestBuildFamilyView_MemberCalendarsNotAList(t *testing.T) {
 	}
 	if len(view.Members[0].Calendars) != 0 {
 		t.Fatalf("expected no claimed calendars, got %+v", view.Members[0].Calendars)
+	}
+}
+
+func TestBuildFamilyView_TimezoneConvertsToLocalDay(t *testing.T) {
+	// A fixed-offset zone (no tzdata dependency): PDT, UTC-7.
+	loc := time.FixedZone("PDT", -7*3600)
+	now := time.Date(2026, 9, 27, 12, 0, 0, 0, loc) // "today" is Sep 27 in this location.
+
+	// 05:30 UTC on Sep 28 is 22:30 local on Sep 27 - a UTC event near midnight that must land
+	// on the *local* day (Sep 27), not the UTC day (Sep 28), per SPEC-014 "Timezones".
+	snap := provider.CalendarSnapshot{Events: []provider.CalendarEvent{
+		{ID: "evt_tz", CalendarName: "alex-personal", Title: "Late call", Start: "2026-09-28T05:30:00Z", End: "2026-09-28T06:00:00Z"},
+	}}
+
+	view, err := BuildFamilyView(snap, baseFamilyConfig(), domain.NewDimension(6, 2), now)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var found *FamilyEvent
+	var foundDate string
+	for _, d := range view.Days {
+		for i, ev := range d.Timed {
+			if ev.ID == "evt_tz" {
+				found = &d.Timed[i]
+				foundDate = d.Date
+			}
+		}
+	}
+	if found == nil {
+		t.Fatal("expected the timezone-converted event to appear in the timed list")
+	}
+	if foundDate != "2026-09-27" {
+		t.Fatalf("expected event to land on local day 2026-09-27, landed on %s", foundDate)
+	}
+	if found.Start != "22:30" {
+		t.Fatalf("expected local start time 22:30, got %q", found.Start)
+	}
+}
+
+func TestBuildFamilyView_ContrastTextColorBoundToEvent(t *testing.T) {
+	view, err := BuildFamilyView(
+		provider.CalendarSnapshot{Events: []provider.CalendarEvent{
+			{ID: "evt_light", CalendarName: "school", Title: "Light bg", Start: "2026-09-27T15:00:00Z", End: "2026-09-27T16:00:00Z"},
+		}},
+		baseFamilyConfig(), domain.NewDimension(6, 2), testNow,
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var light *FamilyEvent
+	for i := range view.Days[0].Timed {
+		if view.Days[0].Timed[i].ID == "evt_light" {
+			light = &view.Days[0].Timed[i]
+		}
+	}
+	if light == nil {
+		t.Fatal("expected evt_light in today's timed list")
+	}
+	// Kid's color #81B29A is light enough for black text.
+	if light.Color != "#81B29A" || light.TextColor != "#000000" {
+		t.Fatalf("expected light bg #81B29A -> black text, got color=%s text=%s", light.Color, light.TextColor)
+	}
+}
+
+func TestBuildFamilyView_UnclaimedEventDefaultTextColor(t *testing.T) {
+	snap := provider.CalendarSnapshot{Events: []provider.CalendarEvent{
+		{ID: "evt_2", CalendarName: "holidays", Title: "Rosh Hashanah", AllDay: true, Start: "2026-09-27", End: "2026-09-27"},
+	}}
+	view, err := BuildFamilyView(snap, baseFamilyConfig(), domain.NewDimension(6, 2), testNow)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var holiday *FamilyEvent
+	for i := range view.Days[0].AllDay {
+		if view.Days[0].AllDay[i].ID == "evt_2" {
+			holiday = &view.Days[0].AllDay[i]
+		}
+	}
+	if holiday == nil {
+		t.Fatal("expected holiday in today's all-day list")
+	}
+	// Default shared_color #3D405B is dark: expect white text and no owner pattern.
+	if holiday.TextColor != "#ffffff" {
+		t.Fatalf("expected dark shared_color -> white text, got %q", holiday.TextColor)
+	}
+	if holiday.Pattern != "" {
+		t.Fatalf("expected unclaimed event to carry no pattern, got %q", holiday.Pattern)
+	}
+}
+
+func TestBuildFamilyView_MultiDayAllDayEventSpansEveryColumn(t *testing.T) {
+	// testNow is Sunday 2026-09-27. A 3-day all-day event Sep 28-30 (inclusive) must appear on
+	// all three of its own columns, per SPEC-014 "Multi-day events".
+	snap := provider.CalendarSnapshot{Events: []provider.CalendarEvent{
+		{ID: "evt_multi", CalendarName: "alex-personal", Title: "Camping trip", AllDay: true, Start: "2026-09-28", End: "2026-09-30"},
+	}}
+	view, err := BuildFamilyView(snap, baseFamilyConfig(), domain.NewDimension(6, 2), testNow)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	wantDates := map[string]bool{"2026-09-28": false, "2026-09-29": false, "2026-09-30": false}
+	for _, d := range view.Days {
+		for _, ev := range d.AllDay {
+			if ev.ID == "evt_multi" {
+				if _, ok := wantDates[d.Date]; !ok {
+					t.Fatalf("multi-day event appeared on unexpected date %s", d.Date)
+				}
+				wantDates[d.Date] = true
+			}
+		}
+	}
+	for date, seen := range wantDates {
+		if !seen {
+			t.Fatalf("expected multi-day event to appear on %s", date)
+		}
+	}
+	// And must NOT appear on the day before its start or after its end.
+	for _, d := range view.Days {
+		if d.Date == "2026-09-27" || d.Date == "2026-10-01" {
+			for _, ev := range d.AllDay {
+				if ev.ID == "evt_multi" {
+					t.Fatalf("multi-day event must not appear outside its span, found on %s", d.Date)
+				}
+			}
+		}
+	}
+}
+
+func TestBuildFamilyView_MultiDayEventSpanningIntoWindowFromBefore(t *testing.T) {
+	// An event that starts before the displayed window but ends inside it must still appear on
+	// every in-window day it covers, rather than being dropped because its start day (the old
+	// single-date lookup) falls outside dayIndex.
+	snap := provider.CalendarSnapshot{Events: []provider.CalendarEvent{
+		{ID: "evt_early_start", CalendarName: "alex-personal", Title: "Started earlier", AllDay: true, Start: "2026-09-20", End: "2026-09-28"},
+	}}
+	view, err := BuildFamilyView(snap, baseFamilyConfig(), domain.NewDimension(6, 2), testNow)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var foundOn27, foundOn28 bool
+	for _, d := range view.Days {
+		for _, ev := range d.AllDay {
+			if ev.ID == "evt_early_start" {
+				if d.Date == "2026-09-27" {
+					foundOn27 = true
+				}
+				if d.Date == "2026-09-28" {
+					foundOn28 = true
+				}
+			}
+		}
+	}
+	if !foundOn27 || !foundOn28 {
+		t.Fatalf("expected event spanning into the window to appear on both in-window days, foundOn27=%v foundOn28=%v", foundOn27, foundOn28)
 	}
 }
 

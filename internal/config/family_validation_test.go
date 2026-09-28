@@ -147,6 +147,47 @@ func TestFamilyCalendar_DuplicatePatternFails(t *testing.T) {
 	}
 }
 
+func TestFamilyCalendar_OmittedPatternDefaultsAndCollides(t *testing.T) {
+	// Neither member declares 'pattern'; both default to "solid" (parseFamilyMembers) and must
+	// collide exactly as if both had typed "solid" explicitly.
+	members := `          - name: Alex
+            color: "#E07A5F"
+            calendars: [alex-personal]
+          - name: Kid
+            color: "#81B29A"
+            calendars: [school]`
+
+	loader := &mockPackageLoader{packages: familyPackages()}
+	_, err := config.ValidatePipeline([]byte(buildFamilyYAML(members)), loader, nil)
+	if err == nil {
+		t.Fatal("expected error for two members both omitting 'pattern'")
+	}
+	if !strings.Contains(err.Error(), "must be distinct") {
+		t.Fatalf("expected pattern-distinctness error, got: %v", err)
+	}
+}
+
+func TestFamilyCalendar_OmittedPatternCollidesWithExplicitSolid(t *testing.T) {
+	// One member omits 'pattern' (defaults to "solid"), the other sets "solid" explicitly:
+	// same collision.
+	members := `          - name: Alex
+            color: "#E07A5F"
+            calendars: [alex-personal]
+          - name: Kid
+            color: "#81B29A"
+            pattern: solid
+            calendars: [school]`
+
+	loader := &mockPackageLoader{packages: familyPackages()}
+	_, err := config.ValidatePipeline([]byte(buildFamilyYAML(members)), loader, nil)
+	if err == nil {
+		t.Fatal("expected error for omitted pattern colliding with explicit 'solid'")
+	}
+	if !strings.Contains(err.Error(), "must be distinct") {
+		t.Fatalf("expected pattern-distinctness error, got: %v", err)
+	}
+}
+
 func TestFamilyCalendar_BadHoursOrderFails(t *testing.T) {
 	yaml := `
 timezone: America/New_York
