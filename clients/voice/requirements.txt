@@ -1,4 +1,9 @@
-openwakeword>=0.5.1
+# openwakeword>=0.5.1 pulls in tflite-runtime, which has no published wheel
+# for Python 3.13 on aarch64 (Raspberry Pi 4 / Debian 13), so `pip install`
+# fails during setup.sh on that platform. 0.4.0 has no tflite-runtime
+# dependency, installs cleanly there, and works with this client's
+# Model(wakeword_model_paths=...) call.
+openwakeword>=0.4.0,<0.5.0
 onnxruntime>=1.16.0
 pyyaml>=6.0
 requests>=2.31.0

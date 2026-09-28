@@ -3,11 +3,17 @@
 Listens to microphone input (ALSA / PipeWire), performs local wake word detection
 via openWakeWord, relays interaction states to Mirrormere Core HUD, and streams
 captured speech utterances to the LAN Voice Hub.
+
+Optionally runs in "ambient" or "both" wake mode (see `wake_mode` in
+`config.py`): the existing energy VAD cuts every speech segment and posts it
+to a classifier-gated `ambient_url` endpoint instead of (or alongside) the
+openWakeWord wake phrase. See SPEC-011 "Ambient (Classifier-Gated) Wake Mode".
 """
 
 import base64
 from collections import deque
 import glob
+import io
 import json
 import logging
 import math
@@ -22,7 +28,7 @@ import urllib.error
 import urllib.request
 import uuid
 import wave
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 try:
     import numpy as np
@@ -75,6 +81,10 @@ def post_voice_state(
 class VoiceDaemon:
     """Manages audio capture, wake word detection, and utterance forwarding."""
 
+    # Minimum voiced span (seconds) an ambient-mode segment must contain
+    # before it's worth POSTing to the classifier.
+    AMBIENT_MIN_SPEECH_SECONDS = 0.4
+
     def __init__(self, cfg: VoiceConfig, model: Optional[Any] = None) -> None:
         self.cfg = cfg
         self.running = True
@@ -88,9 +98,29 @@ class VoiceDaemon:
         self.max_seen = {}
         self.current_worker: Optional[threading.Thread] = None
 
+        # Ambient (classifier-gated, no wake word) capture state.
+        self.ambient_buffer: List[bytes] = []
+        self.ambient_record_start: Optional[float] = None
+        self.ambient_silence_start: Optional[float] = None
+        self.ambient_first_voice_at: Optional[float] = None
+        self.ambient_last_voice_at: Optional[float] = None
+        self.ambient_inflight = False
+
+        # Busy tracking so ambient mode never sends the daemon's own reply
+        # audio back to the classifier. Set for the duration of every hub
+        # interaction (wake-triggered or ambient-engaged) and for
+        # cooldown_seconds afterwards.
+        self.busy = False
+        self.reply_ended_at = 0.0
+
         if model is not None:
             self.model = model
             self.active_models = list(cfg.wake_models)
+        elif cfg.wake_mode == "ambient":
+            # Ambient-only mode never needs openWakeWord: skip loading its
+            # models entirely to keep CPU usage low.
+            self.model = None
+            self.active_models = []
         else:
             self.model, self.active_models = self._init_openwakeword()
 
@@ -164,39 +194,126 @@ class VoiceDaemon:
             rms = math.sqrt(sum_sq / n_samples)
         return 20.0 * math.log10(rms / 32768.0) if rms > 0 else -100.0
 
+    def wake_mode_uses_openwakeword(self) -> bool:
+        return self.cfg.wake_mode in ("openwakeword", "both") and self.model is not None
+
+    def wake_mode_uses_ambient(self) -> bool:
+        return self.cfg.wake_mode in ("ambient", "both")
+
+    def _check_wake_word(self, raw_bytes: bytes) -> Optional[str]:
+        """Runs one openWakeWord prediction pass and returns the triggered model name, if any."""
+        chunk = np.frombuffer(raw_bytes, dtype=np.int16) if np is not None else raw_bytes
+        preds = self.model.predict(chunk)
+        triggered_model = None
+
+        for m in self.active_models:
+            score = float(preds.get(m, 0.0))
+            if score > self.max_seen[m]:
+                self.max_seen[m] = score
+            if score >= 0.05:
+                logger.debug("[WAKE SCORE] %s: %.3f (threshold=%.2f)", m, score, self.cfg.threshold)
+            if score >= self.cfg.threshold:
+                logger.info("*** WAKE WORD DETECTED: %s (score: %.3f) ***", m, score)
+                triggered_model = m
+                break
+
+        return triggered_model
+
+    def _start_listening(self, now: float) -> None:
+        """Transitions into wake-triggered recording, mirroring the wake-word flow."""
+        self.state = "listening"
+        post_voice_state(self.cfg.mirrormere_url, "listening")
+        # Prepend pre-roll buffer so starting speech phonemes are never clipped
+        self.utterance_buffer = list(self.pre_roll)
+        self.record_start = now
+        self.silence_start = None
+        self.has_spoken = False
+
+    def _ambient_ready(self, now: float) -> bool:
+        """True when it's safe to start/send an ambient segment: not mid-reply, not in the post-reply cooldown."""
+        if self.busy:
+            return False
+        if now < self.reply_ended_at + self.cfg.cooldown_seconds:
+            return False
+        return True
+
+    def _reset_ambient_state(self) -> None:
+        self.ambient_buffer = []
+        self.ambient_record_start = None
+        self.ambient_silence_start = None
+        self.ambient_first_voice_at = None
+        self.ambient_last_voice_at = None
+
+    def _start_ambient_segment(self, now: float) -> None:
+        self.state = "ambient_listening"
+        # Prepend pre-roll buffer, same rationale as the wake-word path.
+        self.ambient_buffer = list(self.pre_roll)
+        self.ambient_record_start = now
+        self.ambient_silence_start = None
+        self.ambient_first_voice_at = now
+        self.ambient_last_voice_at = now
+
     def process_frame(self, raw_bytes: bytes) -> Optional[str]:
         """Processes a single audio frame (1280 samples = 80ms @ 16kHz)."""
         now = time.time()
 
         if self.state == "idle":
             self.pre_roll.append(raw_bytes)
-            if now < self.cooldown_until:
-                return None
 
-            chunk = np.frombuffer(raw_bytes, dtype=np.int16) if np is not None else raw_bytes
-            preds = self.model.predict(chunk)
-            triggered_model = None
+            if self.wake_mode_uses_openwakeword() and now >= self.cooldown_until:
+                if self._check_wake_word(raw_bytes):
+                    self._start_listening(now)
+                    return "wake_detected"
 
-            for m in self.active_models:
-                score = float(preds.get(m, 0.0))
-                if score > self.max_seen[m]:
-                    self.max_seen[m] = score
-                if score >= 0.05:
-                    logger.debug("[WAKE SCORE] %s: %.3f (threshold=%.2f)", m, score, self.cfg.threshold)
-                if score >= self.cfg.threshold:
-                    logger.info("*** WAKE WORD DETECTED: %s (score: %.3f) ***", m, score)
-                    triggered_model = m
-                    break
+            if self.wake_mode_uses_ambient() and self._ambient_ready(now):
+                db = self.compute_db(raw_bytes)
+                if db > self.cfg.speech_threshold_db:
+                    self._start_ambient_segment(now)
+                    return "ambient_segment_started"
 
-            if triggered_model:
-                self.state = "listening"
-                post_voice_state(self.cfg.mirrormere_url, "listening")
-                # Prepend pre-roll buffer so starting speech phonemes are never clipped
-                self.utterance_buffer = list(self.pre_roll)
-                self.record_start = now
-                self.silence_start = None
-                self.has_spoken = False
+            return None
+
+        elif self.state == "ambient_listening":
+            if self.wake_mode_uses_openwakeword() and self._check_wake_word(raw_bytes):
+                # Wake word fired mid-segment ("both" mode): hand off to the
+                # normal wake-triggered flow and discard the ambient buffer
+                # so this segment never reaches the classifier.
+                self._reset_ambient_state()
+                self._start_listening(now)
                 return "wake_detected"
+
+            self.ambient_buffer.append(raw_bytes)
+            elapsed = now - (self.ambient_record_start or now)
+            db = self.compute_db(raw_bytes)
+            is_speech = db > self.cfg.speech_threshold_db
+
+            if is_speech:
+                if self.ambient_first_voice_at is None:
+                    self.ambient_first_voice_at = now
+                self.ambient_last_voice_at = now
+                self.ambient_silence_start = None
+            else:
+                if self.ambient_silence_start is None:
+                    self.ambient_silence_start = now
+
+            silence_duration = (now - self.ambient_silence_start) if self.ambient_silence_start else 0.0
+            silence_limit = self.cfg.silence_ms / 1000.0
+
+            if silence_duration >= silence_limit or elapsed >= self.cfg.max_record_seconds:
+                frames = self.ambient_buffer
+                voiced_span = 0.0
+                if self.ambient_first_voice_at is not None and self.ambient_last_voice_at is not None:
+                    voiced_span = self.ambient_last_voice_at - self.ambient_first_voice_at
+
+                self._reset_ambient_state()
+                self.state = "idle"
+
+                if voiced_span >= self.AMBIENT_MIN_SPEECH_SECONDS and self._ambient_ready(now):
+                    self._dispatch_ambient_classification(frames)
+                    return "ambient_segment_dispatched"
+                return "ambient_segment_dropped"
+
+            return None
 
         elif self.state == "listening":
             self.utterance_buffer.append(raw_bytes)
@@ -261,6 +378,102 @@ class VoiceDaemon:
             logger.error("Failed to save utterance WAV: %s", e)
             return False
 
+    def _frames_to_wav_bytes(self, frames: List[bytes]) -> bytes:
+        """Encodes accumulated PCM audio frames into an in-memory 16 kHz mono WAV."""
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(self.cfg.sample_rate)
+            wf.writeframes(b"".join(frames))
+        return buf.getvalue()
+
+    def _classify_ambient(self, wav_bytes: bytes) -> Optional[Dict[str, Any]]:
+        """POSTs a captured segment to ambient_url and returns the decoded JSON response, or None on failure."""
+        if not self.cfg.ambient_url:
+            return None
+
+        boundary = f"----AmbientBoundary{uuid.uuid4().hex}"
+        body = bytearray()
+        body.extend(f"--{boundary}\r\n".encode("utf-8"))
+        body.extend(b'Content-Disposition: form-data; name="node_id"\r\n\r\n')
+        body.extend(f"{self.cfg.node_id}\r\n".encode("utf-8"))
+        body.extend(f"--{boundary}\r\n".encode("utf-8"))
+        body.extend(b'Content-Disposition: form-data; name="audio"; filename="segment.wav"\r\n')
+        body.extend(b"Content-Type: audio/wav\r\n\r\n")
+        body.extend(wav_bytes)
+        body.extend(b"\r\n")
+        body.extend(f"--{boundary}--\r\n".encode("utf-8"))
+
+        req = urllib.request.Request(
+            self.cfg.ambient_url,
+            data=bytes(body),
+            headers={
+                "Content-Type": f"multipart/form-data; boundary={boundary}",
+                "Accept": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=self.cfg.ambient_timeout_seconds) as resp:
+                raw = resp.read()
+            data = json.loads(raw.decode("utf-8"))
+            if not isinstance(data, dict):
+                logger.debug("Ambient classifier returned non-object JSON from %s", self.cfg.ambient_url)
+                return None
+            return data
+        except Exception as e:
+            logger.debug("Ambient classification request to %s failed: %s", self.cfg.ambient_url, e)
+            return None
+
+    def _dispatch_ambient_classification(self, frames: List[bytes]) -> None:
+        """Sends a captured segment to the ambient classifier on a background worker thread.
+
+        At most one classification request is in flight at a time; segments
+        that arrive while one is pending are dropped rather than queued.
+        """
+        if self.ambient_inflight:
+            logger.debug("Ambient classification already in flight; dropping segment.")
+            return
+        self.ambient_inflight = True
+        t = threading.Thread(target=self._ambient_worker, args=(list(frames),), daemon=True)
+        t.start()
+
+    def _ambient_worker(self, frames: List[bytes]) -> None:
+        """Classifies a segment and, on engage, runs the same hub interaction a wake word would."""
+        try:
+            wav_bytes = self._frames_to_wav_bytes(frames)
+            result = self._classify_ambient(wav_bytes)
+            if not result or result.get("engage") is not True:
+                if result:
+                    logger.debug(
+                        "Ambient classifier declined segment (score=%s, classifier=%s): '%s'",
+                        result.get("score"),
+                        result.get("classifier"),
+                        result.get("transcript"),
+                    )
+                return
+
+            logger.info(
+                "Ambient classifier engaged (score=%s, classifier=%s): '%s'",
+                result.get("score"),
+                result.get("classifier"),
+                result.get("transcript"),
+            )
+            # Only relay a state once we know we're engaging - not for every
+            # ambient segment - to avoid flashing the HUD all day.
+            post_voice_state(self.cfg.mirrormere_url, "listening")
+
+            if not self.save_utterance(frames):
+                return
+            if self.cfg.hub_url:
+                # Same code path a wake word triggers today, on the same WAV.
+                self.dispatch_hub_interaction(self.cfg.save_path)
+            else:
+                post_voice_state(self.cfg.mirrormere_url, "idle")
+        finally:
+            self.ambient_inflight = False
+
     def play_audio(self, audio_data: bytes) -> bool:
         """Plays audio bytes (MP3 or WAV) using a local audio player."""
         if not audio_data:
@@ -285,6 +498,10 @@ class VoiceDaemon:
         """Consumes Server-Sent Events stream from Voice Hub (POST /api/voice/interact)."""
         if not os.path.exists(wav_path):
             return
+        # Mark busy for the full interaction (plus cooldown_seconds afterwards)
+        # so ambient mode never sends the daemon's own reply audio back to
+        # the classifier.
+        self.busy = True
         try:
             with open(wav_path, "rb") as f:
                 wav_data = f.read()
@@ -357,6 +574,9 @@ class VoiceDaemon:
                             break
         except Exception as e:
             logger.info("Voice Hub stream connection failed: %s", e)
+        finally:
+            self.busy = False
+            self.reply_ended_at = time.time()
 
     def run(self, audio_source=None) -> None:
         """Starts main daemon audio capture and processing loop."""

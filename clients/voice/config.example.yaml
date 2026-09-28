@@ -11,6 +11,22 @@ voice:
   # LAN Voice Hub streaming interaction endpoint (POST /api/voice/interact)
   hub_url: "http://192.168.1.14:9000/api/voice/interact"
 
+  # Wake mode:
+  #   openwakeword (default) - today's behavior, unchanged.
+  #   ambient - no wake word. Every VAD-cut speech segment (min 0.4s, max
+  #     max_record_seconds) is POSTed to ambient_url; engaging runs the same
+  #     hub interaction a wake word would, on the same WAV.
+  #   both - the wake word still triggers directly; segments without one go
+  #     through the ambient gate.
+  wake_mode: "openwakeword"
+
+  # Ambient classifier endpoint (required for wake_mode: ambient or both).
+  # See SPEC-011 "Ambient (Classifier-Gated) Wake Mode" for the contract.
+  # ambient_url: "http://192.168.1.77:9098/ambient"
+
+  # Timeout (seconds) for the ambient classification request.
+  ambient_timeout_seconds: 6.0
+
   # Target wake words to activate on (matches built-ins or custom models)
   wake_models:
     - "alexa"
@@ -45,3 +61,8 @@ voice:
   # Audio sampling configuration (16 kHz 16-bit mono PCM required by openWakeWord & Whisper)
   sample_rate: 16000
   chunk_samples: 1280
+
+# --- Example: ambient (edge, no wake word) config -----------------------
+# voice:
+#   wake_mode: ambient
+#   ambient_url: "http://192.168.1.77:9098/ambient"

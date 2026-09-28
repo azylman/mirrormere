@@ -252,6 +252,49 @@ Enrollment (the "Add my voice" flow that records prompted phrases and writes the
 
 ---
 
+## Ambient (Classifier-Gated) Wake Mode — Optional Edge Mode
+
+This is an **opt-in edge mode**, off by default (`wake_mode: openwakeword`). Where it's enabled, it is a deliberate, explicit exception to two invariants stated above:
+- The "zero raw audio is transmitted across the LAN until wake verification completes" rule (§1, Ear & Dock Presentation): in `ambient` mode, every VAD-cut speech segment leaves the edge unit and crosses the LAN to the classifier, with no local wake word gating it first.
+- The Listening State Visibility Invariant: ambient segments do **not** flash a `listening` HUD state per segment (that would light up the display all day). The `mirrormere-voice` client only relays `listening` once a segment is engaged.
+
+`clients/voice` (`wake_mode` in `config.py` / `voice.yaml`) supports three values:
+- **`openwakeword`** (default): unchanged — local wake word only.
+- **`ambient`**: no wake word. `openWakeWord` isn't loaded at all (keeps edge CPU low). The existing energy VAD (`speech_threshold_db`, `silence_ms`) cuts every speech segment — minimum 0.4s of voiced audio, maximum `max_record_seconds` — and POSTs each one to `ambient_url`. If the response says `engage: true`, the client runs the exact same hub interaction (`POST /api/voice/interact`, per the Streaming Interaction Contract above) that a wake word triggers today, using that same WAV — including the `listening` state relay at the start of that interaction. If `engage: false`, the segment is dropped silently: no hub call, no state relay.
+- **`both`**: the wake word still triggers the hub interaction directly, bypassing the classifier; segments that don't start with a wake word fall through to the ambient gate instead.
+
+### Suppression
+The client never sends a segment while it is playing a reply, or during `cooldown_seconds` after one ends — otherwise the device's own voice (TTS reply audio) would be captured and re-classified. If `ambient_url` errors or times out (`ambient_timeout_seconds`, default 6s), the client logs at debug and returns to listening; a single classifier failure never crashes or wedges the capture loop, and a timeout does not disable subsequent segments.
+
+### The Ambient Classification Contract (`POST <ambient_url>`)
+The endpoint is generic — any service implementing this request/response shape works (the household gateway's own `/ambient` endpoint is one implementation, built separately from this client).
+
+**Request** — `multipart/form-data`:
+- `audio`: the captured segment as a 16 kHz mono WAV (same format as `POST /api/voice/interact`'s `audio` field).
+- `node_id`: edge dock identifier.
+
+**Response** — `200 application/json`:
+```json
+{
+  "engage": true,
+  "transcript": "hey, can you turn on the porch light",
+  "score": 0.87,
+  "classifier": "keyword-and-intent-v1"
+}
+```
+- `engage`: whether the household brain should act on this segment. Anything other than a literal `true` (missing field, `false`, non-boolean, malformed/non-JSON body, non-2xx status, or a request error/timeout) is treated as "don't engage."
+- `transcript`, `score`, `classifier` are informational — logged by the client, not otherwise required by it.
+
+### Configuration
+```yaml
+voice:
+  wake_mode: ambient
+  ambient_url: "http://192.168.1.77:9098/ambient"
+  ambient_timeout_seconds: 6.0   # optional, default 6.0
+```
+
+---
+
 ## Reference Configurations
 
 ### 1. Alex's Wall Kiosk (`/etc/mirrormere/voice.yaml` on N100 Kiosk)

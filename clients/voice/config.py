@@ -26,6 +26,13 @@ class VoiceConfig:
     sample_rate: int = 16000
     chunk_samples: int = 1280
     models_dir: str = "/opt/mirrormere/voice/models"
+    # Wake mode: "openwakeword" (default, today's behavior), "ambient" (no
+    # wake word - every VAD-cut speech segment is classified by ambient_url),
+    # or "both" (wake word triggers directly; segments without one go
+    # through the ambient gate).
+    wake_mode: str = "openwakeword"
+    ambient_url: str = ""
+    ambient_timeout_seconds: float = 6.0
 
 
 DEFAULT_CONFIG_PATH = os.environ.get("MIRRORMERE_VOICE_CONFIG", "/etc/mirrormere/voice.yaml")
