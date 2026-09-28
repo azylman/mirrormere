@@ -249,9 +249,9 @@ div[data-widget-type="calendar-family"] .cf-event.cf-pattern-hatch {
 div[data-widget-type="calendar-family"] .cf-event.cf-pattern-dots {
   background-color: #ffffff !important;
   background-image: radial-gradient(circle, #000 1.4px, transparent 1.6px) !important;
-  background-repeat: no-repeat !important;
+  background-repeat: repeat-y !important;
   background-size: 6px 6px !important;
-  background-position: 3px center !important;
+  background-position: 2px 0 !important;
   padding-left: 13px !important;
   color: #000000 !important;
 }
