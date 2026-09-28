@@ -1,0 +1,51 @@
+{{ $view := calendarFamilyView .Data .Config .Dimensions }}
+<div class="widget-card widget-calendar-family" data-widget-id="{{ .ID }}" data-widget-type="{{ .Type }}" style="grid-column: span {{ .Dimensions.Cols }}; grid-row: span {{ .Dimensions.Rows }}; display: flex; flex-direction: column; --mm-cf-shared: {{ $view.SharedColor }};{{ range $i, $m := $view.Members }} --mm-member-{{ $i }}: {{ $m.Color }}; --mm-member-{{ $i }}-text: {{ $m.TextColor }};{{ end }}">
+  <div class="cf-header" style="display: flex; align-items: center; justify-content: space-between; padding-bottom: 8px; margin-bottom: 6px; border-bottom: 1px solid rgba(168, 85, 247, 0.2);">
+    <span class="cf-range-label" style="font-size: 0.95rem; font-weight: 700; color: var(--mm-text-primary);">{{ $view.RangeLabel }}</span>
+    <div class="cf-legend" style="display: flex; gap: 6px;">
+      {{ range $i, $m := $view.Members }}
+      <span class="cf-owner-chip cf-pattern-{{ $m.Pattern }}" title="{{ $m.Name }}" style="display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: 50%; font-size: 0.65rem; font-weight: 700; background: var(--mm-member-{{ $i }}); color: var(--mm-member-{{ $i }}-text);">{{ $m.Initial }}</span>
+      {{ end }}
+    </div>
+  </div>
+
+  {{ if $view.Days }}
+  <div class="cf-week-grid" style="display: grid; grid-template-columns: repeat({{ len $view.Days }}, 1fr); gap: 4px; flex: 1; min-height: 0;">
+    {{ range $view.Days }}
+    <div class="cf-day{{ if .IsToday }} cf-today{{ end }}{{ if .IsWeekend }} cf-weekend{{ end }}" style="display: flex; flex-direction: column; min-width: 0; background: {{ if .IsWeekend }}rgba(255,255,255,0.03){{ else }}transparent{{ end }}; border-radius: 6px; overflow: hidden;{{ if .IsToday }} outline: 2px solid var(--mm-accent-purple);{{ end }}">
+      <div class="cf-day-header" style="display: flex; flex-direction: column; align-items: center; padding: 3px 2px; font-size: 0.72rem; font-weight: 700; color: var(--mm-text-primary); {{ if .IsToday }}background: var(--mm-accent-purple); border-radius: 4px;{{ end }}">
+        <span class="cf-day-weekday">{{ .WeekdayAbb }}</span>
+        <span class="cf-day-num">{{ .DayOfMonth }}</span>
+      </div>
+
+      {{ if .AllDay }}
+      <div class="cf-allday-band" style="display: flex; flex-direction: column; gap: 2px; padding: 2px 0;">
+        {{ range .AllDay }}
+        <div class="cf-event cf-allday{{ if .Pattern }} cf-pattern-{{ .Pattern }}{{ end }}" style="font-size: 0.65rem; font-weight: 600; border-radius: 3px; padding: 1px 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: {{ .TextColor }}; background: {{ .Color }};">{{ .Title }}</div>
+        {{ end }}
+      </div>
+      {{ end }}
+
+      <div class="cf-timed-list" style="display: flex; flex-direction: column; gap: 2px; padding: 2px 0; overflow: hidden;">
+        {{ range .Timed }}
+        <div class="cf-event cf-timed{{ if .Pattern }} cf-pattern-{{ .Pattern }}{{ end }}" style="font-size: 0.68rem; border-radius: 3px; padding: 2px 3px; overflow: hidden; color: {{ .TextColor }}; background: {{ .Color }};">
+          <span class="cf-event-time" style="font-family: var(--mm-font-mono); font-weight: 700;">{{ .Start }}</span>
+          <span class="cf-event-title" style="margin-left: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ .Title }}</span>
+          {{ if .Initials }}
+          <span class="cf-event-initials" style="margin-left: 3px; font-weight: 700; opacity: 0.85;">{{ range .Initials }}{{ . }}{{ end }}</span>
+          {{ end }}
+        </div>
+        {{ end }}
+        {{ if gt .Overflow 0 }}
+        <div class="cf-overflow" style="font-size: 0.65rem; color: var(--mm-text-muted); padding: 1px 3px;">+{{ .Overflow }} more</div>
+        {{ end }}
+      </div>
+    </div>
+    {{ end }}
+  </div>
+  {{ else }}
+  <div class="cf-empty" style="display: flex; align-items: center; justify-content: center; flex: 1; color: var(--mm-text-muted); font-size: 0.9rem;">
+    <span>No calendar data yet</span>
+  </div>
+  {{ end }}
+</div>

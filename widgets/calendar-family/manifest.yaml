@@ -1,0 +1,94 @@
+name: calendar-family
+version: "1.0.0"
+description: Family wall calendar with per-member colour coding and week, day and month views.
+provider: calendar-agenda
+
+capabilities:
+  - ambient-static
+  - touch-interactive
+
+default_dimensions: [6, 2]
+
+supported_dimensions:
+  - [4, 2]
+  - [6, 2]
+
+config_schema:
+  type: object
+  required:
+    - members
+    - calendars
+  properties:
+    default_view:
+      type: string
+      enum:
+        - week
+        - day
+        - month
+    days:
+      type:
+        - string
+        - integer
+    week_starts:
+      type: string
+      enum:
+        - sunday
+        - monday
+    hours:
+      type: array
+      items:
+        type: string
+    shared_color:
+      type: string
+    window_days_past:
+      type: integer
+      minimum: 0
+    window_days_future:
+      type: integer
+      minimum: 1
+    members:
+      type: array
+      items:
+        type: object
+        required:
+          - name
+          - color
+          - calendars
+        properties:
+          name:
+            type: string
+          color:
+            type: string
+          initial:
+            type: string
+          pattern:
+            type: string
+            enum:
+              - solid
+              - hatch
+              - dots
+              - outline
+          calendars:
+            type: array
+            items:
+              type: string
+        additionalProperties: false
+    calendars:
+      type: array
+      items:
+        type: object
+        required:
+          - name
+        properties:
+          name:
+            type: string
+          url:
+            type: string
+          url_env:
+            type: string
+          color:
+            type: string
+          private:
+            type: boolean
+        additionalProperties: false
+  additionalProperties: false

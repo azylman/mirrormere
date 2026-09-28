@@ -65,6 +65,25 @@ func WithAddrChan(ch chan<- string) Option {
 	}
 }
 
+// householdNowFunc returns a clock for the render engine that reports the current instant in
+// the household's configured timezone (SPEC-001 §4: "calendar event bounding intervals ...
+// execute against this house timezone") rather than the server process's own zone, which is
+// UTC in the production container. Without this, BuildFamilyView's t.In(now.Location()) calls
+// in internal/render/family.go are a no-op (now.Location() would already be UTC), so a UTC
+// event near local midnight would still land on the wrong day (SPEC-014 "Timezones").
+func householdNowFunc(sp render.StateSnapshotProvider) func() time.Time {
+	return func() time.Time {
+		now := time.Now()
+		if sp == nil {
+			return now
+		}
+		if snap := sp.CurrentSnapshot(); snap != nil && snap.Config != nil {
+			return now.In(snap.Config.Location())
+		}
+		return now
+	}
+}
+
 // Run executes the server application with the supplied arguments and context.
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	return RunWithReady(ctx, args, stdout, stderr, nil)
@@ -238,7 +257,7 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 	pushHandler := provider.NewPushHandler(providerCoord, logger)
 
 	// 11. Render & Display Handlers
-	renderEngine := render.NewEngine(loader, stateProvider)
+	renderEngine := render.NewEngine(loader, stateProvider, render.WithNowFunc(householdNowFunc(stateProvider)))
 	renderHandler := render.NewHandler(renderEngine, loader)
 	displayHandler := display.NewHandler(
 		display.WithTimezoneProvider(func() string {
