@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/azylman/mirrormere/internal/api"
 	"github.com/azylman/mirrormere/internal/events"
@@ -114,6 +115,12 @@ func (h *DefaultVoiceHandler) PostVoiceInteract(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	// Disable write deadline for persistent streaming (matches internal/events/handler.go)
+	rc := http.NewResponseController(w)
+	if err := rc.SetWriteDeadline(time.Time{}); err != nil && !errors.Is(err, http.ErrNotSupported) {
+		slog.Debug("failed to disable response write deadline", "error", err)
+	}
+
 	r.Body = http.MaxBytesReader(w, r.Body, 10<<20)
 
 	if err := r.ParseMultipartForm(10 << 20); err != nil {
@@ -150,6 +157,9 @@ func (h *DefaultVoiceHandler) PostVoiceInteract(w http.ResponseWriter, r *http.R
 			w.Header().Set("Cache-Control", "no-cache")
 			w.Header().Set("Connection", "keep-alive")
 			w.Header().Set("X-Accel-Buffering", "no")
+			if err := rc.SetWriteDeadline(time.Time{}); err != nil && !errors.Is(err, http.ErrNotSupported) {
+				slog.Debug("failed to disable response write deadline in sink", "error", err)
+			}
 			w.WriteHeader(http.StatusOK)
 			wroteHeader = true
 		}

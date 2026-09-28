@@ -517,7 +517,7 @@ func TestDefaultVoiceHandler_PostVoiceInteract(t *testing.T) {
 				if err := sink("reply", map[string]string{"reply": "Hello Alex!"}); err != nil {
 					return err
 				}
-				if err := sink("audio_chunk", map[string]any{"chunk_index": 0, "audio": "base64audio"}); err != nil {
+				if err := sink("audio_chunk", map[string]any{"chunk_index": 0, "data": "base64audio"}); err != nil {
 					return err
 				}
 				return sink("done", map[string]any{"duration_ms": 150})

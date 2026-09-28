@@ -173,7 +173,7 @@ class TestVoiceDaemon(unittest.TestCase):
             b'data: {"reply": "The garage door is closed"}\r\n',
             b"\r\n",
             b"event: audio_chunk\r\n",
-            b'data: {"chunk_index": 0, "audio": "ZmFrZS1hdWRpby1ieXRlcw=="}\r\n',
+            b'data: {"chunk_index": 0, "data": "ZmFrZS1hdWRpby1ieXRlcw=="}\r\n',
             b"\r\n",
             b"event: done\r\n",
             b"data: {}\r\n",
