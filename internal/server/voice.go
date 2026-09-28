@@ -143,11 +143,9 @@ func (h *DefaultVoiceHandler) PostVoiceInteract(w http.ResponseWriter, r *http.R
 	}
 	defer file.Close()
 
-	nodeID := strings.TrimSpace(r.FormValue("node_id"))
-	if dev := strings.TrimSpace(r.FormValue("device_name")); dev != "" {
-		if nodeID == "" {
-			nodeID = dev
-		}
+	nodeID := strings.TrimSpace(r.FormValue("device_name"))
+	if nodeID == "" {
+		nodeID = strings.TrimSpace(r.FormValue("node_id"))
 	}
 	sessionID := strings.TrimSpace(r.FormValue("session_id"))
 
