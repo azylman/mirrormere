@@ -465,3 +465,67 @@ func equalStrings(a, b []string) bool {
 	}
 	return true
 }
+
+// recordingStateSink captures every voice.state the coordinator publishes,
+// which is what the touch kiosk HUD renders (not the dock's SSE stream).
+type recordingStateSink struct {
+	mu     sync.Mutex
+	states []events.VoiceStateData
+}
+
+func (r *recordingStateSink) SetVoiceState(s *events.VoiceStateData) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.states = append(r.states, *s)
+}
+
+// TestHub_Interact_StreamingBrain_KioskCaption proves the kiosk caption is
+// populated during a streaming turn: it grows sentence by sentence, then
+// shows the brain's final reply before the coordinator resets to idle.
+func TestHub_Interact_StreamingBrain_KioskCaption(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.VoiceHubConfig{Enabled: true}
+	rec := &recordingStateSink{}
+	coord := NewCoordinator(nil, rec)
+
+	stt := &mockSTT{text: "weather?"}
+	brain := &mockStreamingBrain{
+		reply: "It's sunny. High of 72.",
+		sentences: []BrainAudioChunk{
+			{Text: "It's sunny.", Format: "wav", Data: []byte("a1")},
+			{Text: "High of 72.", Format: "", Data: nil}, // text-only: local TTS
+		},
+	}
+	tts := &mockTTS{audio: []byte("local"), format: "wav"}
+	h := NewHub(cfg, coord, WithSTTClient(stt), WithBrainClient(brain), WithTTSClient(tts))
+
+	sink, _ := collectEvents()
+	if err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(1600)), "kiosk-kitchen", "sess-1", sink); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	var speaking []string
+	for _, s := range rec.states {
+		if s.State == StateSpeaking {
+			if s.Reply == nil {
+				t.Fatalf("speaking state published with nil reply: kiosk caption would be blank")
+			}
+			speaking = append(speaking, *s.Reply)
+		}
+	}
+	want := []string{"It's sunny.", "It's sunny. High of 72.", "It's sunny. High of 72."}
+	if len(speaking) != len(want) {
+		t.Fatalf("expected %d speaking states %q, got %d %q", len(want), want, len(speaking), speaking)
+	}
+	for i := range want {
+		if speaking[i] != want[i] {
+			t.Errorf("speaking state %d: want caption %q, got %q", i, want[i], speaking[i])
+		}
+	}
+	if last := rec.states[len(rec.states)-1]; last.State != StateIdle {
+		t.Errorf("expected final state idle, got %s", last.State)
+	}
+}

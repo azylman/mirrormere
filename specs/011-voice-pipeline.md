@@ -258,17 +258,26 @@ data: {"text": "It's sunny.", "engine": "desktop-tts", "audio_b64": "<base64 WAV
   change.
 - **No double speech**: if any sentence audio streamed, the Hub does not also
   call its own `TTSClient.Synthesize` on the full reply text.
-- **Missing sentence audio**: a chunk with empty `Data` is skipped (not sent
-  as-is); the Hub instead synthesizes *just that sentence's text* with its
-  own `h.tts` as a fallback, so one bad sentence doesn't drop from the
-  spoken reply. If `h.tts` is unset, or that fallback synthesis also fails,
-  the sentence's audio is dropped (logged), but the `reply` event still
+- **Text-only sentences (first-class)**: a `sentence` event may carry text
+  and no audio. The Hub synthesizes *just that sentence's text* with its own
+  `h.tts`. This is a supported mode, not a degraded one: a brain that
+  streams text while this instance does speech locally (e.g. Kokoro on an
+  Orin) gets the same sentence-level time-to-first-audio as a brain that
+  streams pre-rendered audio (the karakos gateway). The same path covers a
+  sentence whose audio was missing or undecodable. It logs at debug level. If `h.tts` is unset, or that fallback synthesis also fails,
+  the sentence's audio is dropped (logged at warn), but the `reply` event still
   carries the full, un-truncated text for the caption toast.
 - **All sentences failed**: if every streamed sentence (and its fallback)
   failed, so zero real chunks were ever sent, the Hub falls back one more
   level — a single `TTSClient.Synthesize` call over the *entire* reply text,
   emitted as one `is_final: true` chunk carrying the audio (not an empty
   marker) — so a turn is never silently mute.
+- **Kiosk caption**: the touch kiosk reads `voice.state` from the
+  coordinator, not this SSE stream. Each sent chunk transitions the
+  coordinator to `StateSpeaking` with `reply` set to the sentences spoken so
+  far, so the caption grows sentence by sentence; when the brain call
+  returns, `reply` is set to the brain's final text before the completion
+  marker.
 - **Event ordering changes for a streaming turn only**: `audio_chunk` events
   arrive *during* the brain call (as each sentence completes), and `reply`
   is emitted only once the brain call returns with the final text — the

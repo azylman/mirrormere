@@ -296,6 +296,11 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 			chunkIdx     int
 			streamedAny  bool
 			anyChunkSent bool
+			// caption accumulates the text of every sentence actually sent,
+			// so the kiosk HUD (fed by the coordinator's voice.state, not by
+			// this SSE stream) shows a live caption that grows sentence by
+			// sentence.
+			caption strings.Builder
 		)
 
 		emitChunk := func(format string, data []byte, isFinal bool) {
@@ -315,10 +320,10 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 			data := chunk.Data
 			format := chunk.Format
 			if len(data) == 0 {
-				// Missing/undecodable sentence audio: skip it, but try to
-				// fall back by synthesizing just that sentence locally
-				// rather than dropping it from the spoken reply.
-				slog.Warn("streamed sentence had no audio; falling back to local TTS", "text", chunk.Text)
+				// Text-only sentence: either the brain streams text and
+				// leaves speech to this instance (a first-class mode, e.g.
+				// a local Kokoro), or its audio was missing. Either way,
+				// synthesize just that sentence locally.
 				if h.tts == nil {
 					slog.Warn("no local TTS client configured; dropping streamed sentence", "text", chunk.Text)
 					return
@@ -328,13 +333,17 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 					slog.Warn("local TTS fallback for streamed sentence failed; dropping sentence", "text", chunk.Text, "error", fbErr)
 					return
 				}
+				slog.Debug("synthesized text-only streamed sentence locally", "text", chunk.Text)
 				data, format = fbData, fbFormat
 			}
 
-			if !anyChunkSent {
-				if h.coord != nil {
-					h.coord.Transition(StateSpeaking, &transcript, nil, &engine, nil)
-				}
+			if caption.Len() > 0 && chunk.Text != "" {
+				caption.WriteString(" ")
+			}
+			caption.WriteString(chunk.Text)
+			if h.coord != nil {
+				captionSoFar := caption.String()
+				h.coord.Transition(StateSpeaking, &transcript, &captionSoFar, &engine, nil)
 			}
 			anyChunkSent = true
 			emitChunk(format, data, false)
@@ -355,6 +364,11 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 			// The brain streamed sentence audio, so the hub must NOT also
 			// run its own TTS over the full reply (no double speech).
 			if anyChunkSent {
+				// The kiosk caption shows the brain's final reply text,
+				// which is authoritative over the joined sentences.
+				if h.coord != nil {
+					h.coord.Transition(StateSpeaking, &transcript, &reply, &engine, nil)
+				}
 				// Every real chunk already went out as is_final:false above
 				// (immediately, as it arrived) — this marker chunk (empty
 				// data) is what tells the dock playback is complete now
