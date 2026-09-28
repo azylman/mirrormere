@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -961,7 +962,13 @@ func TestDefaultBrainClient_SSE_MalformedDataAndError(t *testing.T) {
 
 func TestDefaultBrainClient_SSE_ScannerError(t *testing.T) {
 	t.Parallel()
-	longLine := "data: " + strings.Repeat("A", 70000) + "\n\n"
+	// scanSSE's buffer is 8MB, up from bufio.Scanner's 64KB default — a
+	// `sentence` event's base64-encoded WAV audio (MANDOS streaming,
+	// specs/2026-09-28-mandos-streaming.md) can easily exceed 64KB for a
+	// few seconds of speech, so 70000 bytes (the old test's size) no
+	// longer exceeds the limit. Assert against a line that exceeds the
+	// new, larger limit instead.
+	longLine := "data: " + strings.Repeat("A", 9*1024*1024) + "\n\n"
 	tsLong := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = w.Write([]byte(longLine))
@@ -1019,4 +1026,468 @@ func TestDefaultSTTClient_Wyoming_TruncatedDataAndPayload(t *testing.T) {
 	}
 }
 
+// --- MANDOS streaming (specs/2026-09-28-mandos-streaming.md) ---
 
+// fakeStreamingBrain implements both BrainClient and StreamingBrainClient so
+// Hub-level tests can exercise the streaming path, the non-streaming
+// fallback, and mid-stream failure without a real HTTP server.
+type fakeStreamingBrain struct {
+	mu sync.Mutex
+
+	// AskStream behavior
+	sentences  []fakeSentence
+	streamErr  error // returned by AskStream after emitting `sentences`
+	finalReply string
+	statuses   []string
+
+	// Ask (fallback) behavior
+	askReply string
+	askErr   error
+
+	calledAsk       bool
+	calledAskStream bool
+}
+
+type fakeSentence struct {
+	text, engine string
+	wav          []byte
+}
+
+func (f *fakeStreamingBrain) Ask(ctx context.Context, req AskRequest, onStatus func(status string)) (string, error) {
+	f.mu.Lock()
+	f.calledAsk = true
+	f.mu.Unlock()
+	for _, s := range f.statuses {
+		if onStatus != nil {
+			onStatus(s)
+		}
+	}
+	return f.askReply, f.askErr
+}
+
+func (f *fakeStreamingBrain) AskStream(ctx context.Context, req AskRequest, onStatus func(status string), onSentence func(text, engine string, wav []byte) error) (string, error) {
+	f.mu.Lock()
+	f.calledAskStream = true
+	f.mu.Unlock()
+	for _, s := range f.statuses {
+		if onStatus != nil {
+			onStatus(s)
+		}
+	}
+	for _, sent := range f.sentences {
+		if err := onSentence(sent.text, sent.engine, sent.wav); err != nil {
+			return f.finalReply, err
+		}
+	}
+	if f.streamErr != nil {
+		return f.finalReply, f.streamErr
+	}
+	return f.finalReply, nil
+}
+
+func TestDefaultBrainClient_AskStream_SSE(t *testing.T) {
+	t.Parallel()
+
+	wav1 := []byte("wav-bytes-one")
+	wav2 := []byte("wav-bytes-two")
+	body := "event: status\ndata: {\"status\":\"thinking\"}\n\n" +
+		"event: sentence\ndata: {\"text\":\"Hello there.\",\"engine\":\"kokoro\",\"audio_b64\":\"" + base64.StdEncoding.EncodeToString(wav1) + "\"}\n\n" +
+		"event: sentence\ndata: {\"text\":\"How are you?\",\"engine\":\"kokoro\",\"audio_b64\":\"" + base64.StdEncoding.EncodeToString(wav2) + "\"}\n\n" +
+		"event: reply\ndata: {\"reply\":\"Hello there. How are you?\"}\n\n" +
+		"event: done\ndata: {}\n\n"
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(body))
+	}))
+	defer ts.Close()
+
+	b := NewDefaultBrainClientWithStream("http://unused.invalid/ask", ts.URL, 5)
+
+	var statuses []string
+	var gotSentences []fakeSentence
+	reply, err := b.AskStream(context.Background(), AskRequest{Prompt: "hi"}, func(status string) {
+		statuses = append(statuses, status)
+	}, func(text, engine string, wav []byte) error {
+		gotSentences = append(gotSentences, fakeSentence{text: text, engine: engine, wav: wav})
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if reply != "Hello there. How are you?" {
+		t.Errorf("unexpected reply: %q", reply)
+	}
+	if len(statuses) != 1 || statuses[0] != "thinking" {
+		t.Errorf("expected status forwarded, got: %+v", statuses)
+	}
+	if len(gotSentences) != 2 {
+		t.Fatalf("expected 2 sentences, got %d: %+v", len(gotSentences), gotSentences)
+	}
+	if gotSentences[0].text != "Hello there." || !bytes.Equal(gotSentences[0].wav, wav1) {
+		t.Errorf("sentence 0 mismatch: %+v", gotSentences[0])
+	}
+	if gotSentences[1].text != "How are you?" || !bytes.Equal(gotSentences[1].wav, wav2) {
+		t.Errorf("sentence 1 mismatch: %+v", gotSentences[1])
+	}
+	if gotSentences[0].engine != "kokoro" || gotSentences[1].engine != "kokoro" {
+		t.Errorf("expected engine forwarded, got: %+v", gotSentences)
+	}
+}
+
+func TestDefaultBrainClient_AskStream_NotConfigured(t *testing.T) {
+	t.Parallel()
+	b := NewDefaultBrainClient("http://unused.invalid/ask", 5)
+	sb, ok := b.(StreamingBrainClient)
+	if !ok {
+		t.Fatal("expected DefaultBrainClient to implement StreamingBrainClient")
+	}
+	_, err := sb.AskStream(context.Background(), AskRequest{Prompt: "hi"}, nil, func(string, string, []byte) error {
+		t.Fatal("onSentence should never be called when streaming isn't configured")
+		return nil
+	})
+	if !errors.Is(err, ErrStreamingNotConfigured) {
+		t.Fatalf("expected ErrStreamingNotConfigured, got: %v", err)
+	}
+}
+
+func TestDefaultBrainClient_AskStream_ErrorEvent(t *testing.T) {
+	t.Parallel()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("event: error\ndata: {\"error\":\"empty_transcript\"}\n\n"))
+	}))
+	defer ts.Close()
+
+	b := NewDefaultBrainClientWithStream("http://unused.invalid/ask", ts.URL, 5)
+	_, err := b.AskStream(context.Background(), AskRequest{Prompt: "hi"}, nil, func(string, string, []byte) error {
+		t.Fatal("onSentence should not be called for an error event")
+		return nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "empty_transcript") {
+		t.Fatalf("expected error event surfaced, got: %v", err)
+	}
+}
+
+func TestDefaultBrainClient_AskStream_Non2xxAndBadContentType(t *testing.T) {
+	t.Parallel()
+
+	ts404 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}))
+	defer ts404.Close()
+	b404 := NewDefaultBrainClientWithStream("http://unused.invalid/ask", ts404.URL, 5)
+	if _, err := b404.AskStream(context.Background(), AskRequest{Prompt: "hi"}, nil, nil); err == nil {
+		t.Fatal("expected error on 404")
+	}
+
+	tsJSON := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"reply":"not a stream"}`))
+	}))
+	defer tsJSON.Close()
+	bJSON := NewDefaultBrainClientWithStream("http://unused.invalid/ask", tsJSON.URL, 5)
+	if _, err := bJSON.AskStream(context.Background(), AskRequest{Prompt: "hi"}, nil, nil); err == nil {
+		t.Fatal("expected error on non-event-stream content-type")
+	}
+}
+
+func TestHub_Interact_StreamingSuccess(t *testing.T) {
+	t.Parallel()
+	cfg := &config.VoiceHubConfig{Enabled: true}
+	coord := NewCoordinator(nil)
+	stt := &mockSTT{text: "hello"}
+	wav1 := []byte("wav-one")
+	wav2 := []byte("wav-two")
+	brain := &fakeStreamingBrain{
+		sentences: []fakeSentence{
+			{text: "Hi.", engine: "kokoro", wav: wav1},
+			{text: "There.", engine: "kokoro", wav: wav2},
+		},
+		finalReply: "Hi. There.",
+	}
+	h := NewHub(cfg, coord, WithSTTClient(stt), WithBrainClient(brain))
+
+	type recorded struct {
+		event string
+		data  any
+	}
+	var events []recorded
+	sink := func(event string, data any) error {
+		events = append(events, recorded{event, data})
+		return nil
+	}
+
+	err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(100)), "", "", sink)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !brain.calledAskStream {
+		t.Error("expected AskStream to be called")
+	}
+	if brain.calledAsk {
+		t.Error("did not expect fallback Ask() to be called on a fully successful stream")
+	}
+
+	var chunks []map[string]any
+	var replyIdx, doneIdx = -1, -1
+	for i, e := range events {
+		if e.event == "audio_chunk" {
+			chunks = append(chunks, e.data.(map[string]any))
+		}
+		if e.event == "reply" {
+			replyIdx = i
+		}
+		if e.event == "done" {
+			doneIdx = i
+		}
+	}
+	if len(chunks) != 3 {
+		t.Fatalf("expected 3 audio_chunk events (2 sentences + terminal), got %d: %+v", len(chunks), chunks)
+	}
+	for i, c := range chunks {
+		if c["chunk_index"] != i {
+			t.Errorf("chunk %d: expected chunk_index %d, got %v", i, i, c["chunk_index"])
+		}
+	}
+	if chunks[0]["is_final"] != false || chunks[1]["is_final"] != false {
+		t.Errorf("expected only the terminal chunk to carry is_final:true, got %+v", chunks)
+	}
+	if chunks[2]["is_final"] != true || chunks[2]["data"] != "" {
+		t.Errorf("expected terminal chunk to be is_final:true with empty data, got %+v", chunks[2])
+	}
+	if replyIdx == -1 || doneIdx == -1 || replyIdx >= doneIdx {
+		t.Errorf("expected reply before done, got events: %+v", events)
+	}
+	// The terminal audio_chunk and reply may be emitted in either order
+	// relative to each other, but both must precede done and both must
+	// follow every sentence chunk.
+	if len(chunks) > 0 {
+		lastSentenceChunkIdx := -1
+		for i, e := range events {
+			if e.event == "audio_chunk" && e.data.(map[string]any)["is_final"] == false {
+				lastSentenceChunkIdx = i
+			}
+		}
+		if lastSentenceChunkIdx >= replyIdx {
+			t.Errorf("expected sentence audio to precede the reply event")
+		}
+	}
+	if coord.GetState().State != StateIdle {
+		t.Errorf("expected coordinator reset to idle after done, got: %s", coord.GetState().State)
+	}
+}
+
+func TestHub_Interact_StreamingFallbackBeforeAnySentence(t *testing.T) {
+	t.Parallel()
+	cfg := &config.VoiceHubConfig{Enabled: true}
+	coord := NewCoordinator(nil)
+	stt := &mockSTT{text: "hello"}
+	brain := &fakeStreamingBrain{
+		streamErr: errors.New("stream endpoint 404"), // no sentences emitted first
+		askReply:  "fallback reply",
+	}
+	h := NewHub(cfg, coord, WithSTTClient(stt), WithBrainClient(brain))
+
+	var sawReply, sawDone bool
+	var replyText string
+	sink := func(event string, data any) error {
+		if event == "reply" {
+			sawReply = true
+			replyText = data.(map[string]string)["reply"]
+		}
+		if event == "done" {
+			sawDone = true
+		}
+		return nil
+	}
+
+	err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(100)), "", "", sink)
+	if err != nil {
+		t.Fatalf("expected fallback turn to complete without error, got: %v", err)
+	}
+	if !brain.calledAskStream {
+		t.Error("expected AskStream to have been attempted")
+	}
+	if !brain.calledAsk {
+		t.Error("expected fallback to non-streaming Ask() after a stream failure with zero sentences")
+	}
+	if !sawReply || replyText != "fallback reply" {
+		t.Errorf("expected fallback reply emitted, sawReply=%v text=%q", sawReply, replyText)
+	}
+	if !sawDone {
+		t.Error("expected turn to complete with a done event")
+	}
+}
+
+func TestHub_Interact_StreamingMidFailureAborts(t *testing.T) {
+	t.Parallel()
+	cfg := &config.VoiceHubConfig{Enabled: true}
+	coord := NewCoordinator(nil)
+	stt := &mockSTT{text: "hello"}
+	brain := &fakeStreamingBrain{
+		sentences: []fakeSentence{
+			{text: "Hi.", engine: "kokoro", wav: []byte("wav")},
+		},
+		streamErr:  errors.New("connection reset mid-stream"),
+		finalReply: "Hi.",
+	}
+	h := NewHub(cfg, coord, WithSTTClient(stt), WithBrainClient(brain))
+
+	var events []string
+	sink := func(event string, data any) error {
+		events = append(events, event)
+		return nil
+	}
+
+	err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(100)), "", "", sink)
+	if !errors.Is(err, ErrBrainFailed) {
+		t.Fatalf("expected ErrBrainFailed, got: %v", err)
+	}
+	if brain.calledAsk {
+		t.Error("must not replay via non-streaming Ask() after audio already played")
+	}
+	for _, e := range events {
+		if e == "done" {
+			t.Error("must not emit done after a mid-stream failure")
+		}
+	}
+	if coord.GetState().State != StateError {
+		t.Errorf("expected state error, got: %s", coord.GetState().State)
+	}
+}
+
+func TestHub_Interact_StreamingSentenceMissingAudio_TTSFallback(t *testing.T) {
+	t.Parallel()
+	cfg := &config.VoiceHubConfig{Enabled: true}
+	coord := NewCoordinator(nil)
+	stt := &mockSTT{text: "hello"}
+	brain := &fakeStreamingBrain{
+		sentences: []fakeSentence{
+			{text: "Hi there.", engine: "kokoro", wav: nil}, // no audio from the gateway
+		},
+		finalReply: "Hi there.",
+	}
+	tts := &mockTTS{audio: []byte("local-wav"), format: "wav"}
+	h := NewHub(cfg, coord, WithSTTClient(stt), WithBrainClient(brain), WithTTSClient(tts))
+
+	var chunks []map[string]any
+	sink := func(event string, data any) error {
+		if event == "audio_chunk" {
+			chunks = append(chunks, data.(map[string]any))
+		}
+		return nil
+	}
+
+	err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(100)), "", "", sink)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if tts.calledWith != "Hi there." {
+		t.Errorf("expected local TTS fallback synthesis of the sentence text, got calledWith=%q", tts.calledWith)
+	}
+	if len(chunks) < 1 {
+		t.Fatal("expected at least one audio_chunk from the TTS fallback")
+	}
+	got, err := base64.StdEncoding.DecodeString(chunks[0]["data"].(string))
+	if err != nil || !bytes.Equal(got, []byte("local-wav")) {
+		t.Errorf("expected fallback audio in chunk 0, got %+v (err=%v)", chunks[0], err)
+	}
+}
+
+func TestHub_Interact_StreamingSentenceMissingAudio_NoFallbackTTS_EmitsError(t *testing.T) {
+	t.Parallel()
+	cfg := &config.VoiceHubConfig{Enabled: true}
+	coord := NewCoordinator(nil)
+	stt := &mockSTT{text: "hello"}
+	brain := &fakeStreamingBrain{
+		sentences: []fakeSentence{
+			{text: "Hi there.", engine: "kokoro", wav: nil},
+		},
+		finalReply: "Hi there.",
+	}
+	// No WithTTSClient: h.tts is nil, so there is no local fallback available.
+	h := NewHub(cfg, coord, WithSTTClient(stt), WithBrainClient(brain))
+
+	var sawError, sawDone bool
+	sink := func(event string, data any) error {
+		if event == "error" {
+			sawError = true
+		}
+		if event == "done" {
+			sawDone = true
+		}
+		return nil
+	}
+
+	err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(100)), "", "", sink)
+	if err != nil {
+		t.Fatalf("a missing sentence audio must not abort the turn, got: %v", err)
+	}
+	if !sawError {
+		t.Error("expected a tts_error event when no fallback audio could be produced")
+	}
+	if !sawDone {
+		t.Error("expected the turn to still complete")
+	}
+}
+
+func TestHub_Interact_BlankTranscript(t *testing.T) {
+	t.Parallel()
+	cfg := &config.VoiceHubConfig{Enabled: true}
+	coord := NewCoordinator(nil)
+	stt := &mockSTT{text: "   "}
+	brain := &mockBrain{reply: "should never be used"}
+	h := NewHub(cfg, coord, WithSTTClient(stt), WithBrainClient(brain))
+
+	var events []string
+	var errPayload map[string]string
+	sink := func(event string, data any) error {
+		events = append(events, event)
+		if event == "error" {
+			errPayload = data.(map[string]string)
+		}
+		return nil
+	}
+
+	err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(100)), "", "", sink)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if brain.calledWith != "" {
+		t.Errorf("brain must never be called for a blank transcript, calledWith=%q", brain.calledWith)
+	}
+	if errPayload["error"] != "empty_transcript" {
+		t.Errorf("expected empty_transcript error event, got: %+v", errPayload)
+	}
+	found := map[string]bool{}
+	for _, e := range events {
+		found[e] = true
+	}
+	if !found["error"] || !found["done"] {
+		t.Errorf("expected error and done events, got: %+v", events)
+	}
+	if found["transcript"] || found["reply"] || found["audio_chunk"] {
+		t.Errorf("did not expect transcript/reply/audio_chunk events for a blank transcript, got: %+v", events)
+	}
+	if coord.GetState().State != StateIdle {
+		t.Errorf("expected coordinator reset to idle, got: %s", coord.GetState().State)
+	}
+}
+
+func TestHub_Interact_EmptyTranscriptAfterTrim(t *testing.T) {
+	t.Parallel()
+	cfg := &config.VoiceHubConfig{Enabled: true}
+	coord := NewCoordinator(nil)
+	stt := &mockSTT{text: ""}
+	brain := &mockBrain{reply: "should never be used"}
+	h := NewHub(cfg, coord, WithSTTClient(stt), WithBrainClient(brain))
+
+	err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(100)), "", "", func(string, any) error { return nil })
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if brain.calledWith != "" {
+		t.Error("brain must never be called for an empty transcript")
+	}
+}

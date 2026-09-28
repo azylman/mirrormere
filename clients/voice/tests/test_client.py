@@ -6,7 +6,7 @@ import subprocess
 import tempfile
 import time
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 from clients.voice.config import VoiceConfig
 from clients.voice.client import VoiceDaemon, post_voice_state
@@ -195,6 +195,53 @@ class TestVoiceDaemon(unittest.TestCase):
 
         # Verified mock_urlopen called for Hub POST
         self.assertEqual(mock_urlopen.call_count, 1)
+
+    @patch("clients.voice.client.urllib.request.urlopen")
+    def test_hub_sse_stream_worker_multiple_chunks_played_in_order(self, mock_urlopen):
+        # MANDOS streaming (specs/2026-09-28-mandos-streaming.md): the hub
+        # now emits one audio_chunk per sentence (is_final: false) as each
+        # is spoken, then a terminal audio_chunk with is_final: true and
+        # empty data. This client doesn't read chunk_index or is_final —
+        # only `data` — so it should just play every non-empty chunk, in
+        # the order the SSE lines arrive, and skip the empty terminal one.
+        sse_lines = [
+            b"event: transcript\r\n",
+            b'data: {"transcript": "tell me a short story"}\r\n',
+            b"\r\n",
+            b"event: audio_chunk\r\n",
+            b'data: {"chunk_index": 0, "is_final": false, "format": "wav", "data": "c2VudGVuY2Utb25l"}\r\n',
+            b"\r\n",
+            b"event: audio_chunk\r\n",
+            b'data: {"chunk_index": 1, "is_final": false, "format": "wav", "data": "c2VudGVuY2UtdHdv"}\r\n',
+            b"\r\n",
+            b"event: reply\r\n",
+            b'data: {"reply": "sentence one sentence two"}\r\n',
+            b"\r\n",
+            b"event: audio_chunk\r\n",
+            b'data: {"chunk_index": 2, "is_final": true, "format": "wav", "data": ""}\r\n',
+            b"\r\n",
+            b"event: done\r\n",
+            b"data: {}\r\n",
+            b"\r\n",
+        ]
+        mock_resp = MagicMock()
+        mock_resp.status = 200
+        mock_resp.__iter__.return_value = iter(sse_lines)
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        with open(self.save_path, "wb") as f:
+            f.write(b"RIFFdummyWAVE")
+
+        daemon = VoiceDaemon(self.cfg, model=MockModel())
+        with patch.object(daemon, "play_audio") as mock_play:
+            daemon._hub_stream_worker(self.save_path)
+            # Two non-empty sentence chunks played, in arrival order; the
+            # empty terminal chunk is not passed to play_audio at all
+            # (play_audio itself also treats empty bytes as a no-op).
+            self.assertEqual(
+                mock_play.call_args_list,
+                [call(b"sentence-one"), call(b"sentence-two")],
+            )
 
     def test_play_audio_empty(self):
         daemon = VoiceDaemon(self.cfg, model=MockModel())

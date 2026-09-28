@@ -87,9 +87,18 @@ type WidgetConfig struct {
 
 // VoiceHubConfig configures the LAN voice pipeline coordinator.
 type VoiceHubConfig struct {
-	Enabled             bool   `yaml:"enabled"`
-	STTURL              string `yaml:"stt_url,omitempty"`
-	BrainURL            string `yaml:"brain_url,omitempty"`
+	Enabled  bool   `yaml:"enabled"`
+	STTURL   string `yaml:"stt_url,omitempty"`
+	BrainURL string `yaml:"brain_url,omitempty"`
+	// BrainStreamURL is the karakos gateway's SSE streaming endpoint
+	// (specs/2026-09-28-mandos-streaming.md's /ask/stream, e.g.
+	// "http://192.168.1.77:9098/ask/stream"). Optional: when empty (the
+	// default), the hub behaves exactly as it does today — one Ask() call,
+	// one TTS synthesis, one audio_chunk. When set, the hub speaks each
+	// sentence as soon as the gateway has synthesized it, falling back to
+	// the non-streaming path if the stream endpoint is unreachable before
+	// any sentence was spoken.
+	BrainStreamURL      string `yaml:"brain_stream_url,omitempty"`
 	BrainTimeoutSeconds *int   `yaml:"brain_timeout_seconds,omitempty"`
 	TTSURL              string `yaml:"tts_url,omitempty"`
 	TTSVoice            string `yaml:"tts_voice,omitempty"`
