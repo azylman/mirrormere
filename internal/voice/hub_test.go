@@ -56,19 +56,26 @@ func (m *mockBrain) Ask(ctx context.Context, req AskRequest, onStatus func(statu
 }
 
 type mockTTS struct {
-	mu         sync.Mutex
-	audio      []byte
-	format     string
-	err        error
-	calledWith string
+	mu          sync.Mutex
+	audio       []byte
+	format      string
+	err         error
+	calledWith  string
+	calledTexts []string
+	calls       int
 }
 
 func (m *mockTTS) Synthesize(ctx context.Context, text string) ([]byte, string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.calledWith = text
+	m.calledTexts = append(m.calledTexts, text)
+	m.calls++
 	return m.audio, m.format, m.err
 }
+
+// mockStreamingBrain (AudioStreamingBrainClient) lives in hub_stream_test.go
+// alongside the streaming-specific tests that use it.
 
 func makeValidWAV(sampleCount int) []byte {
 	// 44-byte standard WAV header + PCM samples
@@ -1018,5 +1025,3 @@ func TestDefaultSTTClient_Wyoming_TruncatedDataAndPayload(t *testing.T) {
 		t.Fatal("expected error on truncated payload")
 	}
 }
-
-

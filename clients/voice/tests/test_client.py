@@ -1,3 +1,4 @@
+import base64
 import io
 import math
 import os
@@ -6,7 +7,7 @@ import subprocess
 import tempfile
 import time
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 from clients.voice.config import VoiceConfig
 from clients.voice.client import VoiceDaemon, post_voice_state
@@ -195,6 +196,67 @@ class TestVoiceDaemon(unittest.TestCase):
 
         # Verified mock_urlopen called for Hub POST
         self.assertEqual(mock_urlopen.call_count, 1)
+
+    @patch("clients.voice.client.urllib.request.urlopen")
+    def test_hub_sse_stream_worker_multi_sentence_audio(self, mock_urlopen):
+        """MANDOS sentence streaming: when the Voice Hub's configured brain
+        streams sentence audio (from the karakos gateway's POST
+        /ask/stream), the Hub's own POST /api/voice/interact response can
+        carry several audio_chunk events for one turn, one per sentence,
+        is_final true only on the last (a completion marker). This test
+        pins the dock's existing behavior against that shape:
+        _hub_stream_worker must play each audio_chunk, in order, via the
+        same blocking play_audio() call it already uses for a single
+        chunk — no client code change needed for correctness, this test
+        just pins that behavior so a future refactor can't silently drop or
+        reorder chunks."""
+        sse_lines = [
+            b"event: transcript\r\n",
+            b'data: {"transcript": "tell me a story"}\r\n',
+            b"\r\n",
+            b"event: audio_chunk\r\n",
+            b'data: {"chunk_index": 0, "is_final": false, "data": "'
+            + base64.b64encode(b"sentence-one-audio")
+            + b'"}\r\n',
+            b"\r\n",
+            b"event: audio_chunk\r\n",
+            b'data: {"chunk_index": 1, "is_final": false, "data": "'
+            + base64.b64encode(b"sentence-two-audio")
+            + b'"}\r\n',
+            b"\r\n",
+            b"event: audio_chunk\r\n",
+            b'data: {"chunk_index": 2, "is_final": true, "data": "'
+            + base64.b64encode(b"sentence-three-audio")
+            + b'"}\r\n',
+            b"\r\n",
+            b"event: reply\r\n",
+            b'data: {"reply": "Once upon a time. Middle. The end."}\r\n',
+            b"\r\n",
+            b"event: done\r\n",
+            b"data: {}\r\n",
+            b"\r\n",
+        ]
+        mock_resp = MagicMock()
+        mock_resp.status = 200
+        mock_resp.__iter__.return_value = iter(sse_lines)
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        with open(self.save_path, "wb") as f:
+            f.write(b"RIFFdummyWAVE")
+
+        daemon = VoiceDaemon(self.cfg, model=MockModel())
+        with patch.object(daemon, "play_audio") as mock_play:
+            daemon._hub_stream_worker(self.save_path)
+            # Played in order, one call per sentence, sequential (blocking)
+            # playback via the existing play_audio() path.
+            self.assertEqual(
+                mock_play.call_args_list,
+                [
+                    call(b"sentence-one-audio"),
+                    call(b"sentence-two-audio"),
+                    call(b"sentence-three-audio"),
+                ],
+            )
 
     def test_play_audio_empty(self):
         daemon = VoiceDaemon(self.cfg, model=MockModel())

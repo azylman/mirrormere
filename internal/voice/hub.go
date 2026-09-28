@@ -66,6 +66,32 @@ type BrainClient interface {
 	Ask(ctx context.Context, req AskRequest, onStatus func(status string)) (string, error)
 }
 
+// BrainAudioChunk is one sentence's worth of pre-synthesized audio delivered
+// by a brain that streams TTS as it goes (MANDOS, SPEC-011 "Sentence
+// Streaming" — the karakos gateway's POST /ask/stream). Format is the audio
+// container (e.g. "wav"); Data is raw decoded bytes. An empty/undecodable
+// Data (len(Data) == 0) signals that sentence's audio failed upstream —
+// Text is still populated so the hub can synthesize a local fallback for
+// just that sentence rather than dropping it.
+type BrainAudioChunk struct {
+	Text   string
+	Format string
+	Data   []byte
+}
+
+// AudioStreamingBrainClient is an optional capability a BrainClient may
+// additionally implement: alongside status and the final reply, it delivers
+// sentence-level audio as soon as each sentence is synthesized upstream, so
+// the hub can start playback well before the full reply is known. Hub
+// checks for this via a type assertion, so a plain BrainClient (JSON /ask,
+// an older brain, or a test fake that only implements Ask) keeps compiling
+// and behaves exactly as before — no double speech, one audio_chunk at the
+// end. See SPEC-011.
+type AudioStreamingBrainClient interface {
+	BrainClient
+	AskStreaming(ctx context.Context, req AskRequest, onStatus func(status string), onAudio func(chunk BrainAudioChunk)) (string, error)
+}
+
 // TTSClient abstracts speech synthesis.
 type TTSClient interface {
 	Synthesize(ctx context.Context, text string) ([]byte, string, error) // audioBytes, format ("mp3"), error
@@ -231,17 +257,13 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 		return err
 	}
 
-	// Step 4: Brain deliberation with live tool status forwarding
+	// Step 4: Brain deliberation with live tool status forwarding, and (if
+	// the brain supports it) sentence-level audio streaming (MANDOS).
 	if h.brain == nil {
 		return ErrBrainFailed
 	}
-	reply, err := h.brain.Ask(ctx, AskRequest{
-		Prompt:       transcript,
-		SessionID:    sessionID,
-		NodeID:       nodeID,
-		Speaker:      speaker,
-		SpeakerScore: match.Score,
-	}, func(status string) {
+
+	onStatus := func(status string) {
 		if h.coord != nil {
 			h.coord.SetStatus(&status)
 		}
@@ -249,44 +271,178 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 			// Status stream dropped by client; deliberate gracefully
 			slog.Debug("status sink error", "error", sinkErr)
 		}
-	})
-	if err != nil {
-		if h.coord != nil {
-			h.coord.Transition(StateError, nil, nil, nil, nil)
-		}
-		if sinkErr := safeSink("error", map[string]string{"error": "brain_error", "message": err.Error()}); sinkErr != nil {
-			return sinkErr
-		}
-		return fmt.Errorf("%w: %w", ErrBrainFailed, err)
+	}
+
+	askReq := AskRequest{
+		Prompt:       transcript,
+		SessionID:    sessionID,
+		NodeID:       nodeID,
+		Speaker:      speaker,
+		SpeakerScore: match.Score,
 	}
 
 	engine := h.cfg.GetTTSModel()
-	// Devil's Advocate catch: Always emit reply event so kiosk caption toast renders reply text,
-	// even if TTS synthesis subsequently fails!
-	if err := safeSink("reply", map[string]string{"reply": reply, "tts_engine": engine}); err != nil {
-		return err
-	}
 
-	// Step 5: Speech synthesis (TTS)
-	if h.tts != nil {
-		audioBytes, format, ttsErr := h.tts.Synthesize(ctx, reply)
-		if ttsErr != nil {
-			// Graceful degradation: Log/emit error for TTS but don't drop the interaction reply
-			if sinkErr := safeSink("error", map[string]string{"error": "tts_error", "message": ttsErr.Error()}); sinkErr != nil {
+	var reply string
+	if streamingBrain, ok := h.brain.(AudioStreamingBrainClient); ok {
+		// Sentence audio is forwarded to the dock the instant it arrives —
+		// that head start (skip the wait for the whole reply) is the point
+		// of streaming at all. Since the Hub doesn't know in advance how
+		// many sentences there will be, it can't mark a chunk is_final as
+		// it sends it; instead every real chunk goes out as is_final:false,
+		// and once the brain call returns, one extra marker audio_chunk
+		// (empty data, is_final:true) tells the dock playback is complete.
+		var (
+			chunkIdx     int
+			streamedAny  bool
+			anyChunkSent bool
+		)
+
+		emitChunk := func(format string, data []byte, isFinal bool) {
+			if sinkErr := safeSink("audio_chunk", map[string]any{
+				"chunk_index": chunkIdx,
+				"format":      format,
+				"is_final":    isFinal,
+				"data":        base64.StdEncoding.EncodeToString(data),
+			}); sinkErr != nil {
+				slog.Debug("streamed audio_chunk sink error", "error", sinkErr)
+			}
+			chunkIdx++
+		}
+
+		onAudio := func(chunk BrainAudioChunk) {
+			streamedAny = true
+			data := chunk.Data
+			format := chunk.Format
+			if len(data) == 0 {
+				// Missing/undecodable sentence audio: skip it, but try to
+				// fall back by synthesizing just that sentence locally
+				// rather than dropping it from the spoken reply.
+				slog.Warn("streamed sentence had no audio; falling back to local TTS", "text", chunk.Text)
+				if h.tts == nil {
+					slog.Warn("no local TTS client configured; dropping streamed sentence", "text", chunk.Text)
+					return
+				}
+				fbData, fbFormat, fbErr := h.tts.Synthesize(ctx, chunk.Text)
+				if fbErr != nil || len(fbData) == 0 {
+					slog.Warn("local TTS fallback for streamed sentence failed; dropping sentence", "text", chunk.Text, "error", fbErr)
+					return
+				}
+				data, format = fbData, fbFormat
+			}
+
+			if !anyChunkSent {
+				if h.coord != nil {
+					h.coord.Transition(StateSpeaking, &transcript, nil, &engine, nil)
+				}
+			}
+			anyChunkSent = true
+			emitChunk(format, data, false)
+		}
+
+		reply, err = streamingBrain.AskStreaming(ctx, askReq, onStatus, onAudio)
+		if err != nil {
+			if h.coord != nil {
+				h.coord.Transition(StateError, nil, nil, nil, nil)
+			}
+			if sinkErr := safeSink("error", map[string]string{"error": "brain_error", "message": err.Error()}); sinkErr != nil {
 				return sinkErr
 			}
-		} else if len(audioBytes) > 0 {
-			if h.coord != nil {
-				h.coord.Transition(StateSpeaking, &transcript, &reply, &engine, nil)
+			return fmt.Errorf("%w: %w", ErrBrainFailed, err)
+		}
+
+		if streamedAny {
+			// The brain streamed sentence audio, so the hub must NOT also
+			// run its own TTS over the full reply (no double speech).
+			if anyChunkSent {
+				// Every real chunk already went out as is_final:false above
+				// (immediately, as it arrived) — this marker chunk (empty
+				// data) is what tells the dock playback is complete now
+				// that the brain call has returned.
+				emitChunk("wav", nil, true)
+			} else if h.tts != nil {
+				// Every streamed sentence's audio (and its local fallback)
+				// failed: last resort is one TTS call over the full reply
+				// so the reply is never silently dropped.
+				audioBytes, format, ttsErr := h.tts.Synthesize(ctx, reply)
+				if ttsErr != nil {
+					if sinkErr := safeSink("error", map[string]string{"error": "tts_error", "message": ttsErr.Error()}); sinkErr != nil {
+						return sinkErr
+					}
+				} else if len(audioBytes) > 0 {
+					if h.coord != nil {
+						h.coord.Transition(StateSpeaking, &transcript, &reply, &engine, nil)
+					}
+					emitChunk(format, audioBytes, true)
+				}
 			}
-			b64 := base64.StdEncoding.EncodeToString(audioBytes)
-			if err := safeSink("audio_chunk", map[string]any{
-				"chunk_index": 0,
-				"format":      format,
-				"is_final":    true,
-				"data":        b64,
-			}); err != nil {
+			// Devil's Advocate catch: still emit reply so the kiosk caption
+			// toast renders the reply text, even though (for streaming) it
+			// arrives after the audio rather than before.
+			if err := safeSink("reply", map[string]string{"reply": reply, "tts_engine": engine}); err != nil {
 				return err
+			}
+		} else {
+			// The brain implements AudioStreamingBrainClient but this turn
+			// streamed no sentence audio (e.g. it's pointed at plain /ask
+			// rather than /ask/stream) — behave exactly like a
+			// non-streaming brain: reply first, then one TTS call.
+			if err := safeSink("reply", map[string]string{"reply": reply, "tts_engine": engine}); err != nil {
+				return err
+			}
+			if h.tts != nil {
+				audioBytes, format, ttsErr := h.tts.Synthesize(ctx, reply)
+				if ttsErr != nil {
+					if sinkErr := safeSink("error", map[string]string{"error": "tts_error", "message": ttsErr.Error()}); sinkErr != nil {
+						return sinkErr
+					}
+				} else if len(audioBytes) > 0 {
+					if h.coord != nil {
+						h.coord.Transition(StateSpeaking, &transcript, &reply, &engine, nil)
+					}
+					emitChunk(format, audioBytes, true)
+				}
+			}
+		}
+	} else {
+		reply, err = h.brain.Ask(ctx, askReq, onStatus)
+		if err != nil {
+			if h.coord != nil {
+				h.coord.Transition(StateError, nil, nil, nil, nil)
+			}
+			if sinkErr := safeSink("error", map[string]string{"error": "brain_error", "message": err.Error()}); sinkErr != nil {
+				return sinkErr
+			}
+			return fmt.Errorf("%w: %w", ErrBrainFailed, err)
+		}
+
+		// Devil's Advocate catch: Always emit reply event so kiosk caption toast renders reply text,
+		// even if TTS synthesis subsequently fails!
+		if err := safeSink("reply", map[string]string{"reply": reply, "tts_engine": engine}); err != nil {
+			return err
+		}
+
+		// Step 5: Speech synthesis (TTS)
+		if h.tts != nil {
+			audioBytes, format, ttsErr := h.tts.Synthesize(ctx, reply)
+			if ttsErr != nil {
+				// Graceful degradation: Log/emit error for TTS but don't drop the interaction reply
+				if sinkErr := safeSink("error", map[string]string{"error": "tts_error", "message": ttsErr.Error()}); sinkErr != nil {
+					return sinkErr
+				}
+			} else if len(audioBytes) > 0 {
+				if h.coord != nil {
+					h.coord.Transition(StateSpeaking, &transcript, &reply, &engine, nil)
+				}
+				b64 := base64.StdEncoding.EncodeToString(audioBytes)
+				if err := safeSink("audio_chunk", map[string]any{
+					"chunk_index": 0,
+					"format":      format,
+					"is_final":    true,
+					"data":        b64,
+				}); err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -500,6 +656,46 @@ func (b *DefaultBrainClient) Ask(ctx context.Context, ask AskRequest, onStatus f
 		return fmt.Sprintf("I heard: %s", ask.Prompt), nil
 	}
 
+	resp, jsonReply, err := b.doAskRequest(ctx, ask)
+	if err != nil {
+		return "", err
+	}
+	if resp == nil {
+		// Non-SSE JSON response, already fully decoded.
+		return jsonReply, nil
+	}
+	defer resp.Body.Close()
+	return b.consumeSSE(resp.Body, onStatus)
+}
+
+// AskStreaming is like Ask, but also delivers sentence-level audio as it
+// streams in (MANDOS, SPEC-011). Same request as Ask — the only thing that
+// makes a brain "streaming" is the URL it's pointed at (the karakos
+// gateway's POST /ask/stream instead of POST /ask): if that URL sends no
+// `sentence` events, onAudio simply never fires and this behaves exactly
+// like Ask.
+func (b *DefaultBrainClient) AskStreaming(ctx context.Context, ask AskRequest, onStatus func(status string), onAudio func(chunk BrainAudioChunk)) (string, error) {
+	if b.url == "" {
+		return fmt.Sprintf("I heard: %s", ask.Prompt), nil
+	}
+
+	resp, jsonReply, err := b.doAskRequest(ctx, ask)
+	if err != nil {
+		return "", err
+	}
+	if resp == nil {
+		return jsonReply, nil
+	}
+	defer resp.Body.Close()
+	return b.consumeSSEStreaming(resp.Body, onStatus, onAudio)
+}
+
+// doAskRequest builds and sends the shared brain HTTP request for Ask and
+// AskStreaming. For a text/event-stream response it returns the open
+// *http.Response for the caller to consume (and closes nothing); for a
+// plain JSON response it fully reads and decodes the body itself and
+// returns (nil, reply, nil).
+func (b *DefaultBrainClient) doAskRequest(ctx context.Context, ask AskRequest) (*http.Response, string, error) {
 	reqBody, err := json.Marshal(map[string]any{
 		"prompt":        ask.Prompt,
 		"session_id":    ask.SessionID,
@@ -509,34 +705,35 @@ func (b *DefaultBrainClient) Ask(ctx context.Context, ask AskRequest, onStatus f
 		"speaker_score": ask.SpeakerScore,
 	})
 	if err != nil {
-		return "", err
+		return nil, "", err
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, b.url, bytes.NewReader(reqBody))
 	if err != nil {
-		return "", err
+		return nil, "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "text/event-stream, application/json")
 
 	resp, err := b.httpClient.Do(req)
 	if err != nil {
-		return "", err
+		return nil, "", err
 	}
-	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		defer resp.Body.Close()
 		respBytes, readErr := io.ReadAll(io.LimitReader(resp.Body, 1024))
 		if readErr != nil {
 			respBytes = []byte("unknown error")
 		}
-		return "", fmt.Errorf("brain http error %d: %s", resp.StatusCode, string(respBytes))
+		return nil, "", fmt.Errorf("brain http error %d: %s", resp.StatusCode, string(respBytes))
 	}
 
 	contentType := resp.Header.Get("Content-Type")
 	if strings.Contains(contentType, "text/event-stream") {
-		return b.consumeSSE(resp.Body, onStatus)
+		return resp, "", nil
 	}
+	defer resp.Body.Close()
 
 	// JSON fallback
 	var res struct {
@@ -545,15 +742,15 @@ func (b *DefaultBrainClient) Ask(ctx context.Context, ask AskRequest, onStatus f
 		Content string `json:"content"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
-		return "", err
+		return nil, "", err
 	}
 	if res.Reply != "" {
-		return strings.TrimSpace(res.Reply), nil
+		return nil, strings.TrimSpace(res.Reply), nil
 	}
 	if res.Text != "" {
-		return strings.TrimSpace(res.Text), nil
+		return nil, strings.TrimSpace(res.Text), nil
 	}
-	return strings.TrimSpace(res.Content), nil
+	return nil, strings.TrimSpace(res.Content), nil
 }
 
 func (b *DefaultBrainClient) consumeSSE(r io.Reader, onStatus func(status string)) (string, error) {
@@ -583,6 +780,76 @@ func (b *DefaultBrainClient) consumeSSE(r io.Reader, onStatus func(status string
 				if statusVal, ok := payload["status"].(string); ok && onStatus != nil {
 					onStatus(statusVal)
 				}
+			case "reply":
+				if replyVal, ok := payload["reply"].(string); ok {
+					reply = replyVal
+				}
+			case "done":
+				return strings.TrimSpace(reply), nil
+			}
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return reply, err
+	}
+	return strings.TrimSpace(reply), nil
+}
+
+// sseScannerMaxLine is the max single SSE `data:` line consumeSSEStreaming
+// will accept. A `sentence` event's line carries a whole sentence's base64
+// WAV audio inline (no chunked transfer within one line), which easily
+// exceeds bufio.Scanner's 64KB default — a few seconds of 16kHz mono PCM,
+// base64-inflated, is already past that.
+const sseScannerMaxLine = 16 * 1024 * 1024
+
+// consumeSSEStreaming is consumeSSE plus a `sentence` event: sentence-level
+// pre-synthesized audio (karakos gateway's POST /ask/stream, MANDOS). A
+// sentence event with missing or undecodable audio_b64 still calls onAudio,
+// with an empty Data, so the hub can decide how to fall back — it is not
+// silently dropped here.
+func (b *DefaultBrainClient) consumeSSEStreaming(r io.Reader, onStatus func(status string), onAudio func(chunk BrainAudioChunk)) (string, error) {
+	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 0, 64*1024), sseScannerMaxLine)
+	var reply string
+	var currentEvent string
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "" {
+			currentEvent = ""
+			continue
+		}
+		if strings.HasPrefix(line, "event:") {
+			currentEvent = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
+			continue
+		}
+		if strings.HasPrefix(line, "data:") {
+			dataStr := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+			var payload map[string]any
+			if unmarshalErr := json.Unmarshal([]byte(dataStr), &payload); unmarshalErr != nil {
+				continue
+			}
+
+			switch currentEvent {
+			case "status":
+				if statusVal, ok := payload["status"].(string); ok && onStatus != nil {
+					onStatus(statusVal)
+				}
+			case "sentence":
+				if onAudio == nil {
+					continue
+				}
+				text, _ := payload["text"].(string)
+				chunk := BrainAudioChunk{Text: text, Format: "wav"}
+				if b64Val, ok := payload["audio_b64"].(string); ok && b64Val != "" {
+					if decoded, decErr := base64.StdEncoding.DecodeString(b64Val); decErr == nil {
+						chunk.Data = decoded
+					} else {
+						slog.Warn("sentence event audio_b64 failed to decode", "error", decErr)
+					}
+				}
+				onAudio(chunk)
 			case "reply":
 				if replyVal, ok := payload["reply"].(string); ok {
 					reply = replyVal
