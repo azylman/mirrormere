@@ -854,8 +854,10 @@ func (b *DefaultBrainClient) consumeSSEStreaming(r io.Reader, onStatus func(stat
 				if onAudio == nil {
 					continue
 				}
-				text, _ := payload["text"].(string)
-				chunk := BrainAudioChunk{Text: text, Format: "wav"}
+				chunk := BrainAudioChunk{Format: "wav"}
+				if textVal, ok := payload["text"].(string); ok {
+					chunk.Text = textVal
+				}
 				if b64Val, ok := payload["audio_b64"].(string); ok && b64Val != "" {
 					if decoded, decErr := base64.StdEncoding.DecodeString(b64Val); decErr == nil {
 						chunk.Data = decoded
