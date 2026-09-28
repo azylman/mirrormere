@@ -80,9 +80,10 @@ The edge dock communicates with the Voice Hub via a single bidirectional HTTP in
 - **Content-Type**: `multipart/form-data`
 - **Fields**:
   - `audio`: Recorded PCM WAV file (16 kHz mono 16-bit).
-  - `node_id`: Edge dock identifier (`touch-kiosk-kitchen` or `eink-display-livingroom`).
+  - `device_name`: Originating client static device name (`kitchen-display`, `touch-kiosk-kitchen`, or `eink-display-livingroom`).
+  - `node_id`: Edge dock identifier (backwards-compatible alias for `device_name`).
   - `speaker`: Optional speaker hint if identified by dock.
-  - `session_id`: Unique interaction trace ID.
+  - `session_id`: (Optional) Interaction correlation ID. Edge voice clients omit `session_id`; the client's static `device_name` is used to maintain persistent agent daemons.
 
 ### 2. Streaming Response (`text/event-stream`)
 The Hub holds the HTTP response open, streaming chunked Server-Sent Events as processing progresses:

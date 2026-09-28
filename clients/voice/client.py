@@ -297,8 +297,8 @@ class VoiceDaemon:
                 body.extend(f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode("utf-8"))
                 body.extend(f"{val}\r\n".encode("utf-8"))
 
+            add_field("device_name", self.cfg.device_name)
             add_field("node_id", self.cfg.node_id)
-            add_field("session_id", str(int(time.time())))
 
             body.extend(f"--{boundary}\r\n".encode("utf-8"))
             body.extend(b'Content-Disposition: form-data; name="audio"; filename="utterance.wav"\r\n')

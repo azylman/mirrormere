@@ -710,10 +710,15 @@ func (b *DefaultBrainClient) AskStreaming(ctx context.Context, ask AskRequest, o
 // plain JSON response it fully reads and decodes the body itself and
 // returns (nil, reply, nil).
 func (b *DefaultBrainClient) doAskRequest(ctx context.Context, ask AskRequest) (*http.Response, string, error) {
+	sessionID := ask.SessionID
+	if sessionID == "" {
+		sessionID = ask.NodeID
+	}
 	reqBody, err := json.Marshal(map[string]any{
 		"prompt":        ask.Prompt,
-		"session_id":    ask.SessionID,
+		"session_id":    sessionID,
 		"effort":        "low",
+		"device_name":   ask.NodeID,
 		"node_id":       ask.NodeID,
 		"speaker":       ask.Speaker,
 		"speaker_score": ask.SpeakerScore,
