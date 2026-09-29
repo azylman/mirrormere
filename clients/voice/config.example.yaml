@@ -2,11 +2,8 @@
 # Mirrormere Edge Voice Listener Daemon Configuration (SPEC-011)
 
 voice:
-  # Static client device name (e.g. kitchen-display, touch-kiosk-kitchen)
-  device_name: "kitchen-display"
-
-  # Unique node identifier (backwards-compatible alias for device_name)
-  node_id: "kitchen-display"
+  # Unique node identifier (touch-kiosk-kitchen, eink-display-livingroom)
+  node_id: "touch-kiosk-kitchen"
 
   # Base URL of local Mirrormere Core for SSE state broadcasts and HUD updates
   mirrormere_url: "http://192.168.1.14/kiosk"

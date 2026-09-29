@@ -309,10 +309,7 @@ type PostVoiceInteractMultipartBody struct {
 	// Audio Recorded 16 kHz mono PCM WAV audio file
 	Audio openapi_types.File `json:"audio"`
 
-	// DeviceName Originating client static device name (e.g. kitchen-display)
-	DeviceName *string `json:"device_name,omitempty"`
-
-	// NodeId Originating kiosk node identifier (alias for device_name)
+	// NodeId Originating kiosk node identifier
 	NodeId *string `json:"node_id,omitempty"`
 
 	// SessionId Optional session or interaction correlation ID

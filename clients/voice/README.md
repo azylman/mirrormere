@@ -18,8 +18,7 @@ Configuration is loaded from `/etc/mirrormere/voice.yaml` (or via `MIRRORMERE_VO
 
 ```yaml
 voice:
-  device_name: "kitchen-display"
-  node_id: "kitchen-display"
+  node_id: "touch-kiosk-kitchen"
   mirrormere_url: "http://192.168.1.14/kiosk"
   hub_url: "http://192.168.1.14:9000/api/voice/interact"
   wake_models:

@@ -297,7 +297,6 @@ class VoiceDaemon:
                 body.extend(f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode("utf-8"))
                 body.extend(f"{val}\r\n".encode("utf-8"))
 
-            add_field("device_name", self.cfg.device_name)
             add_field("node_id", self.cfg.node_id)
 
             body.extend(f"--{boundary}\r\n".encode("utf-8"))
