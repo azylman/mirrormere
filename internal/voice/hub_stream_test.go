@@ -278,7 +278,7 @@ func TestHub_Interact_StreamingBrain_SentenceAudio(t *testing.T) {
 	sink, getEvents := collectEvents()
 
 	wav := makeValidWAV(1600)
-	if err := h.Interact(context.Background(), bytes.NewReader(wav), "kiosk-kitchen", "sess-1", sink); err != nil {
+	if err := h.Interact(context.Background(), bytes.NewReader(wav), "kiosk-kitchen", "sess-1", sink, EdgeTimings{}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -357,7 +357,7 @@ func TestHub_Interact_StreamingBrain_NoSentenceAudio(t *testing.T) {
 	sink, getEvents := collectEvents()
 
 	wav := makeValidWAV(1600)
-	if err := h.Interact(context.Background(), bytes.NewReader(wav), "kiosk-kitchen", "sess-1", sink); err != nil {
+	if err := h.Interact(context.Background(), bytes.NewReader(wav), "kiosk-kitchen", "sess-1", sink, EdgeTimings{}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -412,7 +412,7 @@ func TestHub_Interact_StreamingBrain_MissingSentenceAudioFallback(t *testing.T) 
 	sink, getEvents := collectEvents()
 
 	wav := makeValidWAV(1600)
-	if err := h.Interact(context.Background(), bytes.NewReader(wav), "kiosk-kitchen", "sess-1", sink); err != nil {
+	if err := h.Interact(context.Background(), bytes.NewReader(wav), "kiosk-kitchen", "sess-1", sink, EdgeTimings{}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -501,7 +501,7 @@ func TestHub_Interact_StreamingBrain_KioskCaption(t *testing.T) {
 	h := NewHub(cfg, coord, WithSTTClient(stt), WithBrainClient(brain), WithTTSClient(tts))
 
 	sink, _ := collectEvents()
-	if err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(1600)), "kiosk-kitchen", "sess-1", sink); err != nil {
+	if err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(1600)), "kiosk-kitchen", "sess-1", sink, EdgeTimings{}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 

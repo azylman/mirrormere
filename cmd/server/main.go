@@ -230,7 +230,7 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 		voiceHubCfg = snapshot.Config.VoiceHub
 	}
 	voiceHub := voice.NewHub(voiceHubCfg, voiceCoord)
-	voiceHandler := server.NewDefaultVoiceHandler(voiceCoord, voiceHub)
+	voiceHandler := server.NewDefaultVoiceHandler(voiceCoord, voiceHub, server.WithVoiceMetrics(voice.DefaultMetrics()))
 
 	// 9. Rotation Coordinator & Screen Handler
 	rotationCoord := rotation.NewCoordinator(rotation.Config{

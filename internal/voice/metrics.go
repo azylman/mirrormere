@@ -20,6 +20,13 @@ func SanitizeNodeID(nodeID string) string {
 	return nodeID
 }
 
+// EdgeTimings encapsulates client-side edge latency and audio measurements.
+type EdgeTimings struct {
+	WakeEvalSec         float64
+	UtteranceSpeechSec  float64
+	UtteranceSilenceSec float64
+}
+
 // Metrics encapsulates Prometheus collectors for the voice pipeline with bounded cardinality.
 type Metrics struct {
 	stageDuration    *prometheus.HistogramVec

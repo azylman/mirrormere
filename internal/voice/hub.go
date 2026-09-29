@@ -158,7 +158,7 @@ func (h *Hub) IsEnabled() bool {
 }
 
 // Interact coordinates the complete voice interaction pipeline for an incoming audio recording.
-func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID string, sink SSEEventSink) error {
+func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID string, sink SSEEventSink, timings EdgeTimings) error {
 	if !h.IsEnabled() {
 		return ErrHubDisabled
 	}

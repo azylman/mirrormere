@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 const (
@@ -79,6 +81,7 @@ type VideoHandler interface {
 type VoiceHandler interface {
 	PostVoiceState(w http.ResponseWriter, r *http.Request)
 	PostVoiceInteract(w http.ResponseWriter, r *http.Request)
+	PostVoiceHeartbeat(w http.ResponseWriter, r *http.Request)
 }
 
 // Config encapsulates configuration for the HTTP server.
@@ -336,6 +339,7 @@ func (s *Server) VoiceHandler() VoiceHandler {
 func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/healthz", s.handleHealth)
 	s.mux.HandleFunc("/health", s.handleHealth)
+	s.mux.Handle("/metrics", promhttp.Handler())
 	s.mux.HandleFunc("/api/events", s.handleEvents)
 	s.mux.HandleFunc("/api/screen/select", s.handleScreenSelect)
 	s.mux.HandleFunc("/api/screen/advance", s.handleScreenAdvance)
@@ -350,6 +354,7 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/api/video/state", s.handleVideoState)
 	s.mux.HandleFunc("/api/voice/state", s.handleVoiceState)
 	s.mux.HandleFunc("/api/voice/interact", s.handleVoiceInteract)
+	s.mux.HandleFunc("/api/voice/heartbeat", s.handleVoiceHeartbeat)
 	s.mux.HandleFunc("/api/widgets/{widget_id}/render", s.handleWidgetRender)
 	s.mux.HandleFunc("/api/widgets/{widget_id}/push", s.handleWidgetPush)
 	s.mux.HandleFunc("/widget-types/{type}/assets/{path...}", s.handleWidgetAsset)
@@ -516,6 +521,17 @@ func (s *Server) handleVoiceInteract(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.PostVoiceInteract(w, r)
+}
+
+func (s *Server) handleVoiceHeartbeat(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	h := s.voiceHandler
+	s.mu.RUnlock()
+	if h == nil {
+		http.NotFound(w, r)
+		return
+	}
+	h.PostVoiceHeartbeat(w, r)
 }
 
 func (s *Server) handleWidgetRender(w http.ResponseWriter, r *http.Request) {

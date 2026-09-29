@@ -136,7 +136,7 @@ func TestHub_Interact_Success(t *testing.T) {
 	}
 
 	wav := makeValidWAV(1600)
-	err := h.Interact(context.Background(), bytes.NewReader(wav), "kiosk-kitchen", "sess-1", sink)
+	err := h.Interact(context.Background(), bytes.NewReader(wav), "kiosk-kitchen", "sess-1", sink, EdgeTimings{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -163,7 +163,7 @@ func TestHub_Interact_Success(t *testing.T) {
 func TestHub_Interact_Disabled(t *testing.T) {
 	t.Parallel()
 	h := NewHub(&config.VoiceHubConfig{Enabled: false}, nil)
-	err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(100)), "", "", func(string, any) error { return nil })
+	err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(100)), "", "", func(string, any) error { return nil }, EdgeTimings{})
 	if !errors.Is(err, ErrHubDisabled) {
 		t.Fatalf("expected ErrHubDisabled, got: %v", err)
 	}
@@ -174,13 +174,13 @@ func TestHub_Interact_InvalidAudio(t *testing.T) {
 	h := NewHub(&config.VoiceHubConfig{Enabled: true}, nil)
 
 	// Nil reader
-	err := h.Interact(context.Background(), nil, "", "", func(string, any) error { return nil })
+	err := h.Interact(context.Background(), nil, "", "", func(string, any) error { return nil }, EdgeTimings{})
 	if !errors.Is(err, ErrInvalidAudio) {
 		t.Fatalf("expected ErrInvalidAudio for nil, got: %v", err)
 	}
 
 	// Too short (< 44 bytes)
-	err = h.Interact(context.Background(), bytes.NewReader([]byte("RIFFshort")), "", "", func(string, any) error { return nil })
+	err = h.Interact(context.Background(), bytes.NewReader([]byte("RIFFshort")), "", "", func(string, any) error { return nil }, EdgeTimings{})
 	if !errors.Is(err, ErrInvalidAudio) {
 		t.Fatalf("expected ErrInvalidAudio for short, got: %v", err)
 	}
@@ -188,7 +188,7 @@ func TestHub_Interact_InvalidAudio(t *testing.T) {
 	// Not RIFF
 	notWav := make([]byte, 50)
 	copy(notWav, []byte("NOT_A_WAV_FILE_HEADER"))
-	err = h.Interact(context.Background(), bytes.NewReader(notWav), "", "", func(string, any) error { return nil })
+	err = h.Interact(context.Background(), bytes.NewReader(notWav), "", "", func(string, any) error { return nil }, EdgeTimings{})
 	if !errors.Is(err, ErrInvalidAudio) {
 		t.Fatalf("expected ErrInvalidAudio for non-RIFF, got: %v", err)
 	}
@@ -212,13 +212,13 @@ func TestHub_Interact_ConcurrentBusy(t *testing.T) {
 	doneCh := make(chan error)
 	go func() {
 		wav := makeValidWAV(100)
-		doneCh <- h.Interact(context.Background(), bytes.NewReader(wav), "", "", func(string, any) error { return nil })
+		doneCh <- h.Interact(context.Background(), bytes.NewReader(wav), "", "", func(string, any) error { return nil }, EdgeTimings{})
 	}()
 
 	<-sttStarted
 
 	// Second concurrent call must return ErrInteractionBusy
-	secondErr := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(100)), "", "", func(string, any) error { return nil })
+	secondErr := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(100)), "", "", func(string, any) error { return nil }, EdgeTimings{})
 	if !errors.Is(secondErr, ErrInteractionBusy) {
 		t.Errorf("expected ErrInteractionBusy, got: %v", secondErr)
 	}
@@ -254,7 +254,7 @@ func TestHub_Interact_STTFailure(t *testing.T) {
 		return nil
 	}
 
-	err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(100)), "", "", sink)
+	err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(100)), "", "", sink, EdgeTimings{})
 	if !errors.Is(err, ErrSTTFailed) {
 		t.Fatalf("expected ErrSTTFailed, got: %v", err)
 	}
@@ -280,7 +280,7 @@ func TestHub_Interact_BrainFailure(t *testing.T) {
 		return nil
 	}
 
-	err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(100)), "", "", sink)
+	err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(100)), "", "", sink, EdgeTimings{})
 	if !errors.Is(err, ErrBrainFailed) {
 		t.Fatalf("expected ErrBrainFailed, got: %v", err)
 	}
@@ -304,7 +304,7 @@ func TestHub_Interact_TTSDegradation(t *testing.T) {
 		return nil
 	}
 
-	err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(100)), "", "", sink)
+	err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(100)), "", "", sink, EdgeTimings{})
 	if err != nil {
 		t.Fatalf("expected success with degraded TTS, got: %v", err)
 	}
@@ -595,7 +595,7 @@ func TestHub_Interact_EdgeCases(t *testing.T) {
 		h := NewHub(cfg, nil, WithSTTClient(nil), WithBrainClient(&mockBrain{}), WithTTSClient(&mockTTS{}))
 		err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(100)), "", "", func(event string, data any) error {
 			return nil
-		})
+		}, EdgeTimings{})
 		if !errors.Is(err, ErrSTTFailed) {
 			t.Fatalf("expected ErrSTTFailed, got: %v", err)
 		}
@@ -606,7 +606,7 @@ func TestHub_Interact_EdgeCases(t *testing.T) {
 		h := NewHub(cfg, nil, WithSTTClient(&mockSTT{text: "hello"}), WithBrainClient(nil), WithTTSClient(&mockTTS{}))
 		err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(100)), "", "", func(event string, data any) error {
 			return nil
-		})
+		}, EdgeTimings{})
 		if !errors.Is(err, ErrBrainFailed) {
 			t.Fatalf("expected ErrBrainFailed, got: %v", err)
 		}
@@ -620,7 +620,7 @@ func TestHub_Interact_EdgeCases(t *testing.T) {
 				return errors.New("disconnected")
 			}
 			return nil
-		})
+		}, EdgeTimings{})
 		if err == nil || !strings.Contains(err.Error(), "disconnected") {
 			t.Fatalf("expected disconnected error, got: %v", err)
 		}
@@ -634,7 +634,7 @@ func TestHub_Interact_EdgeCases(t *testing.T) {
 				return errors.New("aborted on transcript")
 			}
 			return nil
-		})
+		}, EdgeTimings{})
 		if err == nil || !strings.Contains(err.Error(), "aborted on transcript") {
 			t.Fatalf("expected aborted on transcript, got: %v", err)
 		}
@@ -648,7 +648,7 @@ func TestHub_Interact_EdgeCases(t *testing.T) {
 				return errors.New("stream closed")
 			}
 			return nil
-		})
+		}, EdgeTimings{})
 		if err == nil || !strings.Contains(err.Error(), "stream closed") {
 			t.Fatalf("expected stream closed error, got: %v", err)
 		}
@@ -801,7 +801,7 @@ func TestHub_Interact_SinkErrors(t *testing.T) {
 				return errors.New("status sink error")
 			}
 			return nil
-		})
+		}, EdgeTimings{})
 		if err != nil {
 			t.Fatalf("status sink error should be tolerated, got: %v", err)
 		}
@@ -819,7 +819,7 @@ func TestHub_Interact_SinkErrors(t *testing.T) {
 				return errors.New("audio sink error")
 			}
 			return nil
-		})
+		}, EdgeTimings{})
 		if err == nil || !strings.Contains(err.Error(), "audio sink error") {
 			t.Fatalf("expected audio sink error, got: %v", err)
 		}
@@ -837,7 +837,7 @@ func TestHub_Interact_SinkErrors(t *testing.T) {
 				return errors.New("done sink error")
 			}
 			return nil
-		})
+		}, EdgeTimings{})
 		if err == nil || !strings.Contains(err.Error(), "done sink error") {
 			t.Fatalf("expected done sink error, got: %v", err)
 		}
@@ -853,7 +853,7 @@ func TestHub_Interact_SinkErrors(t *testing.T) {
 				return errors.New("sink error on stt failure")
 			}
 			return nil
-		})
+		}, EdgeTimings{})
 		if err == nil || !strings.Contains(err.Error(), "sink error on stt failure") {
 			t.Fatalf("expected sink error on stt failure, got: %v", err)
 		}
@@ -870,7 +870,7 @@ func TestHub_Interact_SinkErrors(t *testing.T) {
 				return errors.New("sink error on brain failure")
 			}
 			return nil
-		})
+		}, EdgeTimings{})
 		if err == nil || !strings.Contains(err.Error(), "sink error on brain failure") {
 			t.Fatalf("expected sink error on brain failure, got: %v", err)
 		}
@@ -888,7 +888,7 @@ func TestHub_Interact_SinkErrors(t *testing.T) {
 				return errors.New("sink error on tts failure")
 			}
 			return nil
-		})
+		}, EdgeTimings{})
 		if err == nil || !strings.Contains(err.Error(), "sink error on tts failure") {
 			t.Fatalf("expected sink error on tts failure, got: %v", err)
 		}
