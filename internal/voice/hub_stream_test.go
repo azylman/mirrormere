@@ -529,3 +529,72 @@ func TestHub_Interact_StreamingBrain_KioskCaption(t *testing.T) {
 		t.Errorf("expected final state idle, got %s", last.State)
 	}
 }
+
+// TestHub_Interact_StreamingBrain_PCM_BufferingAndFlush tests that raw PCM streams
+// are buffered to ~100ms (4800 bytes) and any trailing bytes are flushed on stream completion.
+func TestHub_Interact_StreamingBrain_PCM_BufferingAndFlush(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.VoiceHubConfig{Enabled: true}
+	stt := &mockSTT{text: "stream pcm"}
+	brain := &mockStreamingBrain{
+		reply: "Streaming PCM audio test.",
+		sentences: []BrainAudioChunk{
+			{Text: "One.", Format: "pcm", Data: make([]byte, 3000), SampleRate: 24000, Channels: 1},
+			{Text: "Two.", Format: "pcm", Data: make([]byte, 3000), SampleRate: 24000, Channels: 1},
+			{Text: "Three.", Format: "pcm", Data: make([]byte, 2000), SampleRate: 24000, Channels: 1},
+		},
+	}
+	h := NewHub(cfg, nil, WithSTTClient(stt), WithBrainClient(brain))
+
+	sink, getEvents := collectEvents()
+	if err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(1600)), "kiosk-kitchen", "sess-1", sink, EdgeTimings{}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var pcmChunks []map[string]any
+	for _, e := range getEvents() {
+		if e.Event == "audio_chunk" {
+			dataMap, ok := e.Data.(map[string]any)
+			if !ok {
+				t.Fatalf("unexpected audio_chunk payload type: %T", e.Data)
+			}
+			pcmChunks = append(pcmChunks, dataMap)
+		}
+	}
+
+	// We expect 3 audio_chunk events:
+	// Chunk 0: 4800 bytes, is_final: false
+	// Chunk 1: 3200 bytes (flushed remainder), is_final: false
+	// Chunk 2: 0 bytes (completion marker), is_final: true
+	if len(pcmChunks) != 3 {
+		t.Fatalf("expected 3 audio_chunk events (1 buffered + 1 flushed remainder + 1 completion marker), got %d", len(pcmChunks))
+	}
+
+	// Verify Chunk 0
+	c0 := pcmChunks[0]
+	if c0["format"] != "pcm" || c0["is_final"] != false || c0["sample_rate"] != 24000 || c0["channels"] != 1 {
+		t.Errorf("chunk 0 mismatch: %v", c0)
+	}
+	dec0, _ := base64.StdEncoding.DecodeString(c0["data"].(string))
+	if len(dec0) != 4800 {
+		t.Errorf("expected chunk 0 length 4800, got %d", len(dec0))
+	}
+
+	// Verify Chunk 1 (flushed trailing bytes)
+	c1 := pcmChunks[1]
+	if c1["format"] != "pcm" || c1["is_final"] != false || c1["sample_rate"] != 24000 || c1["channels"] != 1 {
+		t.Errorf("chunk 1 mismatch: %v", c1)
+	}
+	dec1, _ := base64.StdEncoding.DecodeString(c1["data"].(string))
+	if len(dec1) != 3200 {
+		t.Errorf("expected chunk 1 length 3200, got %d", len(dec1))
+	}
+
+	// Verify Chunk 2 (final marker)
+	c2 := pcmChunks[2]
+	if c2["format"] != "pcm" || c2["is_final"] != true || c2["data"] != "" {
+		t.Errorf("chunk 2 marker mismatch: %v", c2)
+	}
+}
+

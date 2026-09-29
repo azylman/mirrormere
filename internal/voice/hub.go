@@ -74,9 +74,11 @@ type BrainClient interface {
 // Text is still populated so the hub can synthesize a local fallback for
 // just that sentence rather than dropping it.
 type BrainAudioChunk struct {
-	Text   string
-	Format string
-	Data   []byte
+	Text       string
+	Format     string
+	Data       []byte
+	SampleRate int
+	Channels   int
 }
 
 // AudioStreamingBrainClient is an optional capability a BrainClient may
@@ -358,15 +360,29 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 			streamChars   int
 			streamStart   time.Time
 			hasStreamTime bool
+
+			pcmBuf       []byte
+			streamFormat = "wav"
+			streamRate   = 24000
+			streamCh     = 1
 		)
 
-		emitChunk := func(format string, data []byte, isFinal bool) {
-			if sinkErr := safeSink("audio_chunk", map[string]any{
+		const pcmChunkFloor = 4800 // ~100ms at 24kHz 16-bit mono
+
+		emitChunk := func(format string, data []byte, sampleRate int, channels int, isFinal bool) {
+			payload := map[string]any{
 				"chunk_index": chunkIdx,
 				"format":      format,
 				"is_final":    isFinal,
 				"data":        base64.StdEncoding.EncodeToString(data),
-			}); sinkErr != nil {
+			}
+			if sampleRate > 0 {
+				payload["sample_rate"] = sampleRate
+			}
+			if channels > 0 {
+				payload["channels"] = channels
+			}
+			if sinkErr := safeSink("audio_chunk", payload); sinkErr != nil {
 				slog.Debug("streamed audio_chunk sink error", "error", sinkErr)
 			}
 			chunkIdx++
@@ -382,6 +398,21 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 
 			data := chunk.Data
 			format := chunk.Format
+			if format == "" {
+				format = "wav"
+			}
+			streamFormat = format
+			rate := chunk.SampleRate
+			if rate <= 0 {
+				rate = 24000
+			}
+			streamRate = rate
+			ch := chunk.Channels
+			if ch <= 0 {
+				ch = 1
+			}
+			streamCh = ch
+
 			if len(data) == 0 {
 				// Text-only sentence: either the brain streams text and
 				// leaves speech to this instance (a first-class mode, e.g.
@@ -398,6 +429,7 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 				}
 				slog.Debug("synthesized text-only streamed sentence locally", "text", chunk.Text)
 				data, format = fbData, fbFormat
+				streamFormat = format
 			}
 
 			if caption.Len() > 0 && chunk.Text != "" {
@@ -408,8 +440,19 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 				captionSoFar := caption.String()
 				h.coord.Transition(StateSpeaking, &transcript, &captionSoFar, &engine, nil)
 			}
-			anyChunkSent = true
-			emitChunk(format, data, false)
+
+			if format == "pcm" {
+				pcmBuf = append(pcmBuf, data...)
+				for len(pcmBuf) >= pcmChunkFloor {
+					emitPiece := pcmBuf[:pcmChunkFloor]
+					pcmBuf = pcmBuf[pcmChunkFloor:]
+					anyChunkSent = true
+					emitChunk("pcm", emitPiece, rate, ch, false)
+				}
+			} else {
+				anyChunkSent = true
+				emitChunk(format, data, rate, ch, false)
+			}
 		}
 
 		brainStart := time.Now()
@@ -432,7 +475,13 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 		if streamedAny {
 			// The brain streamed sentence audio, so the hub must NOT also
 			// run its own TTS over the full reply (no double speech).
-			if anyChunkSent {
+			if anyChunkSent || len(pcmBuf) > 0 {
+				if len(pcmBuf) > 0 {
+					anyChunkSent = true
+					emitChunk("pcm", pcmBuf, streamRate, streamCh, false)
+					pcmBuf = nil
+				}
+
 				streamTTSDuration := time.Since(streamStart).Seconds()
 				h.metrics.RecordStageDuration(nodeID, "tts", "success", streamTTSDuration)
 				if streamTTSDuration > 0.001 && streamChars > 0 {
@@ -449,7 +498,7 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 				// (immediately, as it arrived) — this marker chunk (empty
 				// data) is what tells the dock playback is complete now
 				// that the brain call has returned.
-				emitChunk("wav", nil, true)
+				emitChunk(streamFormat, nil, streamRate, streamCh, true)
 			} else if h.tts != nil {
 				// Every streamed sentence's audio (and its local fallback)
 				// failed: last resort is one TTS call over the full reply
@@ -475,7 +524,7 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 						if h.coord != nil {
 							h.coord.Transition(StateSpeaking, &transcript, &reply, &engine, nil)
 						}
-						emitChunk(format, audioBytes, true)
+						emitChunk(format, audioBytes, streamRate, streamCh, true)
 					}
 				}
 			}
@@ -515,7 +564,7 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 						if h.coord != nil {
 							h.coord.Transition(StateSpeaking, &transcript, &reply, &engine, nil)
 						}
-						emitChunk(format, audioBytes, true)
+						emitChunk(format, audioBytes, streamRate, streamCh, true)
 					}
 				}
 			}
@@ -572,6 +621,8 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 					if err := safeSink("audio_chunk", map[string]any{
 						"chunk_index": 0,
 						"format":      format,
+						"sample_rate": 24000,
+						"channels":    1,
 						"is_final":    true,
 						"data":        b64,
 					}); err != nil {
@@ -980,7 +1031,16 @@ func (b *DefaultBrainClient) consumeSSEStreaming(r io.Reader, onStatus func(stat
 				if onAudio == nil {
 					continue
 				}
-				chunk := BrainAudioChunk{Format: "wav"}
+				chunk := BrainAudioChunk{Format: "wav", SampleRate: 24000, Channels: 1}
+				if fmtVal, ok := payload["format"].(string); ok && fmtVal != "" {
+					chunk.Format = fmtVal
+				}
+				if rateVal, ok := payload["sample_rate"].(float64); ok && rateVal > 0 {
+					chunk.SampleRate = int(rateVal)
+				}
+				if chVal, ok := payload["channels"].(float64); ok && chVal > 0 {
+					chunk.Channels = int(chVal)
+				}
 				if textVal, ok := payload["text"].(string); ok {
 					chunk.Text = textVal
 				}
@@ -1042,7 +1102,7 @@ func (t *DefaultTTSClient) Synthesize(ctx context.Context, text string) ([]byte,
 		"model":           t.model,
 		"input":           text,
 		"voice":           t.voice,
-		"response_format": "mp3",
+		"response_format": "wav",
 	})
 	if err != nil {
 		return nil, "", err
@@ -1053,7 +1113,7 @@ func (t *DefaultTTSClient) Synthesize(ctx context.Context, text string) ([]byte,
 		return nil, "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "audio/mpeg, audio/mp3, audio/wav, */*")
+	req.Header.Set("Accept", "audio/wav, audio/mpeg, audio/mp3, */*")
 
 	resp, err := t.httpClient.Do(req)
 	if err != nil {
