@@ -111,6 +111,7 @@ class VoiceDaemon:
         # interaction (wake-triggered or ambient-engaged) and for
         # cooldown_seconds afterwards.
         self.busy = False
+        self.busy_lock = threading.Lock()
         self.reply_ended_at = 0.0
 
         if model is not None:
@@ -349,6 +350,10 @@ class VoiceDaemon:
                 )
                 self.save_utterance(self.utterance_buffer)
                 if self.cfg.hub_url:
+                    # Claim busy now, not when the worker thread starts, so
+                    # an ambient engage can't slip into the gap.
+                    with self.busy_lock:
+                        self.busy = True
                     self.dispatch_hub_interaction(self.cfg.save_path)
                 else:
                     post_voice_state(self.cfg.mirrormere_url, "idle")
@@ -454,6 +459,19 @@ class VoiceDaemon:
                     )
                 return
 
+            # Claim the daemon before anything else, so a wake word ("both"
+            # mode) can't start a second interaction in the gap before the
+            # hub worker thread runs. If a wake-word turn already holds it,
+            # that turn wins and this segment is dropped.
+            with self.busy_lock:
+                if self.busy or self.state == "listening":
+                    logger.info(
+                        "Ambient classifier engaged but an interaction is already in progress; dropping segment: '%s'",
+                        result.get("transcript"),
+                    )
+                    return
+                self.busy = True
+
             logger.info(
                 "Ambient classifier engaged (score=%s, classifier=%s): '%s'",
                 result.get("score"),
@@ -464,13 +482,17 @@ class VoiceDaemon:
             # ambient segment - to avoid flashing the HUD all day.
             post_voice_state(self.cfg.mirrormere_url, "listening")
 
-            if not self.save_utterance(frames):
-                return
-            if self.cfg.hub_url:
-                # Same code path a wake word triggers today, on the same WAV.
-                self.dispatch_hub_interaction(self.cfg.save_path)
-            else:
-                post_voice_state(self.cfg.mirrormere_url, "idle")
+            dispatched = False
+            try:
+                if self.save_utterance(frames) and self.cfg.hub_url:
+                    # Same code path a wake word triggers today, on the same WAV.
+                    self.dispatch_hub_interaction(self.cfg.save_path)
+                    dispatched = True
+            finally:
+                if not dispatched:
+                    # Nothing will clear busy for us: release it here.
+                    self.busy = False
+                    post_voice_state(self.cfg.mirrormere_url, "idle")
         finally:
             self.ambient_inflight = False
 
@@ -497,6 +519,7 @@ class VoiceDaemon:
     def _hub_stream_worker(self, wav_path: str) -> None:
         """Consumes Server-Sent Events stream from Voice Hub (POST /api/voice/interact)."""
         if not os.path.exists(wav_path):
+            self.busy = False
             return
         # Mark busy for the full interaction (plus cooldown_seconds afterwards)
         # so ambient mode never sends the daemon's own reply audio back to

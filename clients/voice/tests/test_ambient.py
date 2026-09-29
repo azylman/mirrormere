@@ -364,6 +364,52 @@ class TestAmbientMode(unittest.TestCase):
         self.assertIsNone(daemon.model)
         self.assertEqual(daemon.active_models, [])
 
+    # --- engage claims busy before dispatch (no wake-word race) -------------
+
+    ENGAGE = {"engage": True, "transcript": "lights on", "score": 0.9, "classifier": "test"}
+
+    @patch("clients.voice.client.post_voice_state")
+    def test_engage_claims_busy_before_dispatch(self, mock_post_state):
+        daemon = VoiceDaemon(self._cfg(hub_url="http://hub.invalid/interact"))
+        busy_at_dispatch = []
+        with patch.object(daemon, "_classify_ambient", return_value=self.ENGAGE), \
+                patch.object(daemon, "dispatch_hub_interaction",
+                             side_effect=lambda _p: busy_at_dispatch.append(daemon.busy)):
+            daemon._ambient_worker([self._speech_frame()])
+        self.assertEqual(busy_at_dispatch, [True])
+
+    @patch("clients.voice.client.post_voice_state")
+    def test_engage_dropped_while_wake_word_turn_listening(self, mock_post_state):
+        daemon = VoiceDaemon(self._cfg(hub_url="http://hub.invalid/interact"))
+        daemon.state = "listening"
+        with patch.object(daemon, "_classify_ambient", return_value=self.ENGAGE), \
+                patch.object(daemon, "dispatch_hub_interaction") as mock_dispatch:
+            daemon._ambient_worker([self._speech_frame()])
+        mock_dispatch.assert_not_called()
+        self.assertFalse(daemon.busy)
+        mock_post_state.assert_not_called()
+
+    @patch("clients.voice.client.post_voice_state")
+    def test_engage_dropped_while_busy(self, mock_post_state):
+        daemon = VoiceDaemon(self._cfg(hub_url="http://hub.invalid/interact"))
+        daemon.busy = True
+        with patch.object(daemon, "_classify_ambient", return_value=self.ENGAGE), \
+                patch.object(daemon, "dispatch_hub_interaction") as mock_dispatch:
+            daemon._ambient_worker([self._speech_frame()])
+        mock_dispatch.assert_not_called()
+        self.assertTrue(daemon.busy, "must not clear another interaction's busy flag")
+
+    @patch("clients.voice.client.post_voice_state")
+    def test_engage_releases_busy_when_not_dispatched(self, mock_post_state):
+        daemon = VoiceDaemon(self._cfg(hub_url=""))
+        with patch.object(daemon, "_classify_ambient", return_value=self.ENGAGE), \
+                patch.object(daemon, "dispatch_hub_interaction") as mock_dispatch:
+            daemon._ambient_worker([self._speech_frame()])
+        mock_dispatch.assert_not_called()
+        self.assertFalse(daemon.busy)
+        self.assertFalse(daemon.ambient_inflight)
+        mock_post_state.assert_called_with(daemon.cfg.mirrormere_url, "idle")
+
 
 if __name__ == "__main__":
     unittest.main()
