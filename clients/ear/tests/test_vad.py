@@ -2,13 +2,13 @@ import struct
 import unittest
 from unittest.mock import MagicMock, patch
 
-from clients.voice.vad import (
+from clients.ear.vad import (
     EnergyDetector,
     SileroDetector,
     build_detector,
     SILERO_WINDOW_SAMPLES,
 )
-from clients.voice.client import VoiceDaemon
+from clients.ear.client import VoiceDaemon
 
 
 def _frame(amplitude: int, n_samples: int = 1280) -> bytes:
@@ -107,13 +107,13 @@ class TestBuildDetector(unittest.TestCase):
         det = build_detector("energy", 0.5, -31.0, VoiceDaemon.compute_db)
         self.assertIsInstance(det, EnergyDetector)
 
-    @patch("clients.voice.vad.load_silero_vad_model")
+    @patch("clients.ear.vad.load_silero_vad_model")
     def test_silero_mode_builds_silero_detector(self, mock_load):
         mock_load.return_value = MockSileroVAD()
         det = build_detector("silero", 0.5, -31.0, VoiceDaemon.compute_db)
         self.assertIsInstance(det, SileroDetector)
 
-    @patch("clients.voice.vad.load_silero_vad_model", side_effect=RuntimeError("onnx load failed"))
+    @patch("clients.ear.vad.load_silero_vad_model", side_effect=RuntimeError("onnx load failed"))
     def test_silero_load_failure_falls_back_to_energy(self, mock_load):
         det = build_detector("silero", 0.5, -31.0, VoiceDaemon.compute_db)
         self.assertIsInstance(det, EnergyDetector)
@@ -122,12 +122,12 @@ class TestBuildDetector(unittest.TestCase):
 class TestVoiceDaemonAmbientNoSpeechNotSent(unittest.TestCase):
     """Ambient segments with no speech, in silero mode, are never dispatched."""
 
-    @patch("clients.voice.client.urllib.request.urlopen")
+    @patch("clients.ear.client.urllib.request.urlopen")
     def test_ambient_segment_with_no_silero_speech_is_dropped(self, mock_urlopen):
         import tempfile
         import os
         import time
-        from clients.voice.config import VoiceConfig
+        from clients.ear.config import VoiceConfig
         from unittest.mock import MagicMock as MM
 
         mock_resp = MM()
@@ -146,7 +146,7 @@ class TestVoiceDaemonAmbientNoSpeechNotSent(unittest.TestCase):
 
         # openwakeword.vad.VAD never gets a real speech score here: everything
         # reads as non-speech, so no segment should ever start.
-        with patch("clients.voice.vad.load_silero_vad_model", return_value=MockSileroVAD()):
+        with patch("clients.ear.vad.load_silero_vad_model", return_value=MockSileroVAD()):
             daemon = VoiceDaemon(cfg)
 
         silent_frame = _frame(0)

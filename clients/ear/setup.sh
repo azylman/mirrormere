@@ -14,6 +14,7 @@ echo "🎙️  Installing Mirrormere Voice Daemon to ${INSTALL_DIR}..."
 sudo mkdir -p "${INSTALL_DIR}" "${INSTALL_DIR}/models" "/etc/mirrormere"
 sudo cp "${SCRIPT_DIR}/client.py" "${INSTALL_DIR}/client.py"
 sudo cp "${SCRIPT_DIR}/config.py" "${INSTALL_DIR}/config.py"
+sudo cp "${SCRIPT_DIR}/vad.py" "${INSTALL_DIR}/vad.py"
 sudo cp "${SCRIPT_DIR}/requirements.txt" "${INSTALL_DIR}/requirements.txt"
 
 if [ ! -f "${CONFIG_PATH}" ]; then

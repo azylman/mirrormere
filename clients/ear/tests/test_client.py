@@ -10,8 +10,8 @@ import time
 import unittest
 from unittest.mock import MagicMock, call, patch
 
-from clients.voice.config import VoiceConfig
-from clients.voice.client import VoiceDaemon, post_voice_state, post_voice_heartbeat
+from clients.ear.config import VoiceConfig
+from clients.ear.client import VoiceDaemon, post_voice_state, post_voice_heartbeat
 
 
 class MockModel:
@@ -63,7 +63,7 @@ class TestVoiceDaemon(unittest.TestCase):
         db_loud = VoiceDaemon.compute_db(loud_bytes)
         self.assertAlmostEqual(db_loud, 0.0, delta=0.5)
 
-    @patch("clients.voice.client.urllib.request.urlopen")
+    @patch("clients.ear.client.urllib.request.urlopen")
     def test_post_voice_state(self, mock_urlopen):
         mock_resp = MagicMock()
         mock_resp.status = 200
@@ -78,7 +78,7 @@ class TestVoiceDaemon(unittest.TestCase):
     def test_post_voice_state_empty_url(self):
         self.assertFalse(post_voice_state("", "listening"))
 
-    @patch("clients.voice.client.urllib.request.urlopen")
+    @patch("clients.ear.client.urllib.request.urlopen")
     def test_wake_detection_and_preroll(self, mock_urlopen):
         mock_resp = MagicMock()
         mock_resp.status = 200
@@ -103,7 +103,7 @@ class TestVoiceDaemon(unittest.TestCase):
         # Pre-roll frames (4) should be captured in utterance buffer
         self.assertEqual(len(daemon.utterance_buffer), 4)
 
-    @patch("clients.voice.client.urllib.request.urlopen")
+    @patch("clients.ear.client.urllib.request.urlopen")
     def test_false_wake_abort(self, mock_urlopen):
         mock_resp = MagicMock()
         mock_resp.status = 200
@@ -125,7 +125,7 @@ class TestVoiceDaemon(unittest.TestCase):
         self.assertEqual(daemon.state, "idle")
         self.assertTrue(mock_model.reset_called)
 
-    @patch("clients.voice.client.urllib.request.urlopen")
+    @patch("clients.ear.client.urllib.request.urlopen")
     def test_utterance_completion_and_flushing(self, mock_urlopen):
         mock_resp = MagicMock()
         mock_resp.status = 200
@@ -161,7 +161,7 @@ class TestVoiceDaemon(unittest.TestCase):
         self.assertIsNone(retrigger_event)
         self.assertEqual(daemon.state, "idle")
 
-    @patch("clients.voice.client.urllib.request.urlopen")
+    @patch("clients.ear.client.urllib.request.urlopen")
     def test_hub_sse_stream_worker(self, mock_urlopen):
         # Mock SSE stream lines from Hub
         sse_lines = [
@@ -201,7 +201,7 @@ class TestVoiceDaemon(unittest.TestCase):
         self.assertNotIn(b'name="device_name"', req.data)
         self.assertNotIn(b'name="session_id"', req.data)
 
-    @patch("clients.voice.client.urllib.request.urlopen")
+    @patch("clients.ear.client.urllib.request.urlopen")
     def test_hub_sse_stream_worker_multi_sentence_audio(self, mock_urlopen):
         """MANDOS sentence streaming: when the Voice Hub's configured brain
         streams sentence audio (from the karakos gateway's POST
@@ -266,8 +266,8 @@ class TestVoiceDaemon(unittest.TestCase):
         daemon = VoiceDaemon(self.cfg, model=MockModel())
         self.assertFalse(daemon.play_audio(b""))
 
-    @patch("clients.voice.client.shutil.which", return_value="/usr/bin/pw-play")
-    @patch("clients.voice.client.subprocess.Popen")
+    @patch("clients.ear.client.shutil.which", return_value="/usr/bin/pw-play")
+    @patch("clients.ear.client.subprocess.Popen")
     def test_play_audio_success(self, mock_popen, mock_which):
         proc = MagicMock()
         proc.communicate.return_value = (b"", b"")
@@ -300,7 +300,7 @@ class TestVoiceDaemon(unittest.TestCase):
             daemon._ambient_worker([silent_frame])
         self.assertEqual(daemon.last_wake_eval_ms, 0.0)
 
-    @patch("clients.voice.client.post_voice_state")
+    @patch("clients.ear.client.post_voice_state")
     def test_utterance_timing_includes_preroll(self, mock_post_state):
         mock_model = MockModel(score_map={"hey_jarvis": 0.0})
         daemon = VoiceDaemon(self.cfg, model=mock_model)
@@ -339,7 +339,7 @@ class TestVoiceDaemon(unittest.TestCase):
         self.assertAlmostEqual(daemon.last_speech_duration_ms, 2120.0, delta=100.0)
         self.assertAlmostEqual(daemon.last_silence_duration_ms, 200.0, delta=100.0)
 
-    @patch("clients.voice.client.post_voice_state")
+    @patch("clients.ear.client.post_voice_state")
     def test_false_wake_increments_counter(self, mock_post_state):
         mock_model = MockModel(score_map={"hey_jarvis": 0.90})
         daemon = VoiceDaemon(self.cfg, model=mock_model)
@@ -363,7 +363,7 @@ class TestVoiceDaemon(unittest.TestCase):
         self.assertEqual(event2, "wake_aborted")
         self.assertEqual(daemon.false_wakes_count, 2)
 
-    @patch("clients.voice.client.urllib.request.urlopen")
+    @patch("clients.ear.client.urllib.request.urlopen")
     def test_hub_stream_worker_attaches_timings_and_120s_timeout(self, mock_urlopen):
         mock_resp = MagicMock()
         mock_resp.status = 200
@@ -391,7 +391,7 @@ class TestVoiceDaemon(unittest.TestCase):
         self.assertIn('name="node_id"\r\n\r\ntouch-kiosk-kitchen', body)
         self.assertIn('name="audio"; filename="utterance.wav"', body)
 
-    @patch("clients.voice.client.urllib.request.urlopen")
+    @patch("clients.ear.client.urllib.request.urlopen")
     def test_heartbeat_payload_and_exception_handling(self, mock_urlopen):
         mock_resp = MagicMock()
         mock_resp.status = 200
@@ -442,12 +442,12 @@ class TestVoiceDaemon(unittest.TestCase):
         proc = MagicMock()
         proc.communicate.side_effect = lambda input, timeout: (time.sleep(0.002), (b"", b""))[1]
         proc.returncode = 0
-        with patch("clients.voice.client.shutil.which", return_value="/usr/bin/pw-play"), \
-                patch("clients.voice.client.subprocess.Popen", return_value=proc):
+        with patch("clients.ear.client.shutil.which", return_value="/usr/bin/pw-play"), \
+                patch("clients.ear.client.subprocess.Popen", return_value=proc):
             daemon.play_audio(b"sample-audio")
             self.assertGreater(daemon.last_playback_sec, 0.0)
 
-    @patch("clients.voice.client.threading.Thread")
+    @patch("clients.ear.client.threading.Thread")
     def test_run_heartbeat_dispatch(self, mock_thread_cls):
         mock_model = MockModel(score_map={"hey_jarvis": 0.0})
         daemon = VoiceDaemon(self.cfg, model=mock_model)
@@ -460,8 +460,8 @@ class TestVoiceDaemon(unittest.TestCase):
         audio_stream = io.BytesIO(silent_frame)
 
         time_calls = [100.0, 100.0, 115.0, 115.0]
-        with patch("clients.voice.client.time.time", side_effect=lambda: time_calls.pop(0) if time_calls else 115.0), \
-             patch("clients.voice.client.post_voice_state"):
+        with patch("clients.ear.client.time.time", side_effect=lambda: time_calls.pop(0) if time_calls else 115.0), \
+             patch("clients.ear.client.post_voice_state"):
             daemon.run(audio_source=audio_stream)
 
         mock_thread_cls.assert_called_once()

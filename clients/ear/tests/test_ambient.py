@@ -11,8 +11,8 @@ import unittest
 from email.parser import BytesParser
 from unittest.mock import patch
 
-from clients.voice.config import VoiceConfig
-from clients.voice.client import VoiceDaemon
+from clients.ear.config import VoiceConfig
+from clients.ear.client import VoiceDaemon
 
 
 class MockModel:
@@ -162,7 +162,7 @@ class TestAmbientMode(unittest.TestCase):
 
     # --- engage -> hub call with the same bytes -----------------------------
 
-    @patch("clients.voice.client.post_voice_state")
+    @patch("clients.ear.client.post_voice_state")
     def test_engage_dispatches_hub_with_same_bytes(self, mock_post_state):
         server = FakeAmbientServer(response_body={
             "engage": True,
@@ -195,7 +195,7 @@ class TestAmbientMode(unittest.TestCase):
 
     # --- no engage -> no hub call, no state relay ---------------------------
 
-    @patch("clients.voice.client.post_voice_state")
+    @patch("clients.ear.client.post_voice_state")
     def test_no_engage_makes_no_hub_call_and_relays_no_state(self, mock_post_state):
         server = FakeAmbientServer(response_body={
             "engage": False,
@@ -290,7 +290,7 @@ class TestAmbientMode(unittest.TestCase):
         try:
             cfg = self._cfg(wake_mode="both", server_url=server.url, threshold=0.4)
             mock_model = MockModel(score_map={"hey_jarvis": 0.9})
-            with patch("clients.voice.client.post_voice_state"):
+            with patch("clients.ear.client.post_voice_state"):
                 daemon = VoiceDaemon(cfg, model=mock_model)
                 event = daemon.process_frame(self._speech_frame())
             self.assertEqual(event, "wake_detected")
@@ -305,7 +305,7 @@ class TestAmbientMode(unittest.TestCase):
         try:
             cfg = self._cfg(wake_mode="both", server_url=server.url, threshold=0.9)
             mock_model = MockModel(score_map={"hey_jarvis": 0.0})
-            with patch("clients.voice.client.post_voice_state"):
+            with patch("clients.ear.client.post_voice_state"):
                 daemon = VoiceDaemon(cfg, model=mock_model)
                 with patch.object(daemon, "dispatch_hub_interaction") as mock_dispatch:
                     self._feed_segment(daemon)
@@ -320,7 +320,7 @@ class TestAmbientMode(unittest.TestCase):
         try:
             cfg = self._cfg(wake_mode="both", server_url=server.url, threshold=0.9)
             mock_model = MockModel(score_map={"hey_jarvis": 0.0})
-            with patch("clients.voice.client.post_voice_state"):
+            with patch("clients.ear.client.post_voice_state"):
                 daemon = VoiceDaemon(cfg, model=mock_model)
                 daemon.process_frame(self._speech_frame())
                 self.assertEqual(daemon.state, "ambient_listening")
@@ -368,7 +368,7 @@ class TestAmbientMode(unittest.TestCase):
 
     ENGAGE = {"engage": True, "transcript": "lights on", "score": 0.9, "classifier": "test"}
 
-    @patch("clients.voice.client.post_voice_state")
+    @patch("clients.ear.client.post_voice_state")
     def test_engage_claims_busy_before_dispatch(self, mock_post_state):
         daemon = VoiceDaemon(self._cfg(hub_url="http://hub.invalid/interact"))
         busy_at_dispatch = []
@@ -378,7 +378,7 @@ class TestAmbientMode(unittest.TestCase):
             daemon._ambient_worker([self._speech_frame()])
         self.assertEqual(busy_at_dispatch, [True])
 
-    @patch("clients.voice.client.post_voice_state")
+    @patch("clients.ear.client.post_voice_state")
     def test_engage_dropped_while_wake_word_turn_listening(self, mock_post_state):
         daemon = VoiceDaemon(self._cfg(hub_url="http://hub.invalid/interact"))
         daemon.state = "listening"
@@ -389,7 +389,7 @@ class TestAmbientMode(unittest.TestCase):
         self.assertFalse(daemon.busy)
         mock_post_state.assert_not_called()
 
-    @patch("clients.voice.client.post_voice_state")
+    @patch("clients.ear.client.post_voice_state")
     def test_engage_dropped_while_busy(self, mock_post_state):
         daemon = VoiceDaemon(self._cfg(hub_url="http://hub.invalid/interact"))
         daemon.busy = True
@@ -399,7 +399,7 @@ class TestAmbientMode(unittest.TestCase):
         mock_dispatch.assert_not_called()
         self.assertTrue(daemon.busy, "must not clear another interaction's busy flag")
 
-    @patch("clients.voice.client.post_voice_state")
+    @patch("clients.ear.client.post_voice_state")
     def test_engage_releases_busy_when_not_dispatched(self, mock_post_state):
         daemon = VoiceDaemon(self._cfg(hub_url=""))
         with patch.object(daemon, "_classify_ambient", return_value=self.ENGAGE), \

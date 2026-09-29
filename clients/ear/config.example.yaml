@@ -1,7 +1,10 @@
 # /etc/mirrormere/voice.yaml
-# Mirrormere Edge Voice Listener Daemon Configuration (SPEC-011)
+# The Ear: Mirrormere Edge Voice Listener Daemon Configuration (SPEC-011)
+#
+# "ear" is the preferred top-level key (wins if both are present); "voice"
+# is still accepted for existing deployed configs.
 
-voice:
+ear:
   # Unique node identifier (touch-kiosk-kitchen, eink-display-livingroom)
   node_id: "touch-kiosk-kitchen"
 
@@ -73,6 +76,6 @@ voice:
   chunk_samples: 1280
 
 # --- Example: ambient (edge, no wake word) config -----------------------
-# voice:
+# ear:
 #   wake_mode: ambient
 #   ambient_url: "http://192.168.1.77:9098/ambient"

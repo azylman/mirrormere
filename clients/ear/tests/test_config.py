@@ -1,7 +1,7 @@
 import os
 import tempfile
 import unittest
-from clients.voice.config import VoiceConfig, load_config
+from clients.ear.config import VoiceConfig, load_config
 
 
 class TestVoiceConfig(unittest.TestCase):
