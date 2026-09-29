@@ -290,7 +290,7 @@ data: {"text": "It's sunny.", "engine": "desktop-tts", "audio_b64": "<base64 WAV
   audio_chunk → done`.
 
 ### Edge dock playback
-`clients/voice/client.py`'s `_hub_stream_worker` already plays every
+`clients/ear/client.py`'s `_hub_stream_worker` already plays every
 `audio_chunk` event it receives via a blocking `play_audio()` call as the
 event arrives, so N sequential chunks for one turn play back-to-back in
 order with no client code change required — `is_final` is informational for
@@ -364,9 +364,9 @@ This is an **opt-in edge mode**, off by default (`wake_mode: openwakeword`). Whe
 - The "zero raw audio is transmitted across the LAN until wake verification completes" rule (§1, Ear & Dock Presentation): in `ambient` mode, every VAD-cut speech segment leaves the edge unit and crosses the LAN to the classifier, with no local wake word gating it first.
 - The Listening State Visibility Invariant: ambient segments do **not** flash a `listening` HUD state per segment (that would light up the display all day). The `mirrormere-voice` client only relays `listening` once a segment is engaged.
 
-`clients/voice` (`wake_mode` in `config.py` / `voice.yaml`) supports three values:
+`clients/ear` (`wake_mode` in `config.py` / `voice.yaml`) supports three values:
 - **`openwakeword`** (default): unchanged — local wake word only.
-- **`ambient`**: no wake word. `openWakeWord` isn't loaded at all (keeps edge CPU low). The existing energy VAD (`speech_threshold_db`, `silence_ms`) cuts every speech segment — minimum 0.4s of voiced audio, maximum `max_record_seconds` — and POSTs each one to `ambient_url`. If the response says `engage: true`, the client runs the exact same hub interaction (`POST /api/voice/interact`, per the Streaming Interaction Contract above) that a wake word triggers today, using that same WAV — including the `listening` state relay at the start of that interaction. If `engage: false`, the segment is dropped silently: no hub call, no state relay.
+- **`ambient`**: no wake word. `openWakeWord` isn't loaded at all (keeps edge CPU low). The end-of-speech VAD (`vad`, `silence_ms` — either the `speech_threshold_db` energy gate or Silero, see "End-of-Speech Detection" below) cuts every speech segment — minimum 0.4s of voiced audio, maximum `max_record_seconds` — and POSTs each one to `ambient_url`. If the response says `engage: true`, the client runs the exact same hub interaction (`POST /api/voice/interact`, per the Streaming Interaction Contract above) that a wake word triggers today, using that same WAV — including the `listening` state relay at the start of that interaction. If `engage: false`, the segment is dropped silently: no hub call, no state relay.
 - **`both`**: the wake word still triggers the hub interaction directly, bypassing the classifier; segments that don't start with a wake word fall through to the ambient gate instead.
 
 ### Suppression
@@ -393,10 +393,30 @@ The endpoint is generic — any service implementing this request/response shape
 
 ### Configuration
 ```yaml
-voice:
+ear:
   wake_mode: ambient
   ambient_url: "http://192.168.1.77:9098/ambient"
   ambient_timeout_seconds: 6.0   # optional, default 6.0
+```
+
+### End-of-Speech Detection (VAD)
+`vad` (`config.py` / `voice.yaml`) selects how the client decides a frame is
+speech, used by both the wake-triggered utterance recorder and the ambient
+segmenter above:
+- **`energy`** (default): the original dBFS gate against `speech_threshold_db`.
+- **`silero`**: [Silero VAD](https://github.com/snakers4/silero-vad) scores
+  each 512-sample (32ms) window of 16kHz audio via the same ONNX model
+  `openWakeWord` already bundles and loads for its own wake-word gating (no
+  new dependency); a frame is speech if any window in it scores >=
+  `vad_threshold` (default `0.5`). Falls back to `energy` mode with a
+  logged warning if the model fails to load at startup.
+
+`silence_ms` still governs the trailing-silence window that ends an
+utterance/segment in either mode.
+```yaml
+ear:
+  vad: silero
+  vad_threshold: 0.5
 ```
 
 ---

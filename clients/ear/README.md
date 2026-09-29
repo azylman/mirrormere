@@ -1,10 +1,10 @@
-# Mirrormere Edge Voice Daemon (`mirrormere-voice`)
+# The Ear — Mirrormere Edge Voice Daemon (`mirrormere-voice`)
 
-The edge voice companion daemon for Mirrormere displays and ambient nodes, adhering to **[SPEC-011: Unified Voice Pipeline](../../specs/011-voice-pipeline.md)**.
+"The ear" is the edge voice companion daemon for Mirrormere displays and ambient nodes, adhering to **[SPEC-011: Unified Voice Pipeline](../../specs/011-voice-pipeline.md)**.
 
 ## Architecture & Responsibilities
 
-`mirrormere-voice` implements the "Dumb Edge Audio Terminal & HUD Presenter" tier of Mirrormere's hub-and-spoke voice architecture:
+The ear implements the "Dumb Edge Audio Terminal & HUD Presenter" tier of Mirrormere's hub-and-spoke voice architecture:
 
 1. **Ambient Wake Word Detection**: Continuously ingests 16 kHz 16-bit mono PCM from PipeWire/ALSA and runs local openWakeWord neural inference entirely on the edge CPU (<5% CPU load).
 2. **State & Event Relay**: Relays interaction states (`listening`, `transcribing`, `thinking`, `speaking`, `idle`, `error`) to Mirrormere Core (`POST /api/voice/state`) to update visual indicators, header transcripts, and caption toasts on interactive touch kiosks (SPEC-010).
@@ -14,10 +14,13 @@ The edge voice companion daemon for Mirrormere displays and ambient nodes, adher
 
 ## Configuration
 
-Configuration is loaded from `/etc/mirrormere/voice.yaml` (or via `MIRRORMERE_VOICE_CONFIG`):
+Configuration is loaded from `/etc/mirrormere/voice.yaml` (or via `MIRRORMERE_VOICE_CONFIG`).
+The top-level key is `ear:` (preferred; if a config carries both `ear:` and
+the older `voice:` key, `ear:` wins). `voice:` is still accepted, unchanged,
+for existing deployed configs:
 
 ```yaml
-voice:
+ear:
   node_id: "touch-kiosk-kitchen"
   mirrormere_url: "http://192.168.1.14/kiosk"
   hub_url: "http://192.168.1.14:9000/api/voice/interact"
@@ -32,6 +35,31 @@ voice:
   speech_threshold_db: -31.0
   cooldown_seconds: 2.5
   audio_device: "default"
+```
+
+## End-of-Speech Detection (VAD)
+
+`vad` controls how the daemon decides whether a given audio frame is speech,
+both for the wake-triggered utterance recorder and the ambient segmenter:
+
+- **`energy`** (default): the original dBFS energy gate against
+  `speech_threshold_db`. Unchanged behavior.
+- **`silero`**: [Silero VAD](https://github.com/snakers4/silero-vad), a small
+  recurrent neural model, scores each 512-sample (32ms) window of 16kHz
+  audio; a frame counts as speech if any window in it scores >=
+  `vad_threshold` (default `0.5`). It reuses the same ONNX model
+  `openwakeword` already bundles and loads for its own wake-word gating (no
+  new dependency). If the model fails to load at startup, the daemon logs a
+  warning and falls back to `energy` mode rather than crashing.
+
+`silence_ms` still governs the trailing-silence window that ends an
+utterance/segment in either mode. Per-window Silero inference time (mean ms)
+is included in the 10s heartbeat log line.
+
+```yaml
+ear:
+  vad: "silero"
+  vad_threshold: 0.5
 ```
 
 ## Wake Mode
@@ -61,7 +89,7 @@ engage on) its own voice. If `ambient_url` errors or times out
 capture continues uninterrupted.
 
 ```yaml
-voice:
+ear:
   wake_mode: ambient
   ambient_url: "http://192.168.1.77:9098/ambient"
 ```
@@ -72,7 +100,7 @@ On the edge unit (kiosk mini-PC or Raspberry Pi):
 
 ```bash
 # Run automated setup:
-sudo ./clients/voice/setup.sh
+sudo ./clients/ear/setup.sh
 
 # Start the service:
 sudo systemctl start mirrormere-voice.service

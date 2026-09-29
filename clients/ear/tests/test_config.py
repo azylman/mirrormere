@@ -1,7 +1,7 @@
 import os
 import tempfile
 import unittest
-from clients.voice.config import VoiceConfig, load_config
+from clients.ear.config import VoiceConfig, load_config
 
 
 class TestVoiceConfig(unittest.TestCase):
@@ -43,6 +43,76 @@ voice:
         cfg = load_config("/path/to/nonexistent/voice.yaml")
         self.assertEqual(cfg.node_id, "touch-kiosk-kitchen")
         self.assertEqual(cfg.threshold, 0.35)
+
+    def test_vad_defaults(self):
+        cfg = VoiceConfig()
+        self.assertEqual(cfg.vad, "energy")
+        self.assertEqual(cfg.vad_threshold, 0.5)
+
+    def test_vad_from_yaml(self):
+        yaml_content = """
+voice:
+  vad: "silero"
+  vad_threshold: 0.6
+"""
+        with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
+            f.write(yaml_content)
+            temp_path = f.name
+        try:
+            cfg = load_config(temp_path)
+            self.assertEqual(cfg.vad, "silero")
+            self.assertEqual(cfg.vad_threshold, 0.6)
+        finally:
+            os.unlink(temp_path)
+
+    def test_vad_invalid_values_fall_back_to_defaults(self):
+        yaml_content = """
+voice:
+  vad: "not-a-real-mode"
+  vad_threshold: 4.2
+"""
+        with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
+            f.write(yaml_content)
+            temp_path = f.name
+        try:
+            cfg = load_config(temp_path)
+            self.assertEqual(cfg.vad, "energy")
+            self.assertEqual(cfg.vad_threshold, 0.5)
+        finally:
+            os.unlink(temp_path)
+
+    def test_ear_key_preferred_over_voice_key(self):
+        yaml_content = """
+ear:
+  node_id: "from-ear-key"
+  vad: "silero"
+voice:
+  node_id: "from-voice-key"
+  vad: "energy"
+"""
+        with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
+            f.write(yaml_content)
+            temp_path = f.name
+        try:
+            cfg = load_config(temp_path)
+            self.assertEqual(cfg.node_id, "from-ear-key")
+            self.assertEqual(cfg.vad, "silero")
+        finally:
+            os.unlink(temp_path)
+
+    def test_voice_key_still_works_alone(self):
+        yaml_content = """
+voice:
+  node_id: "from-voice-key-alone"
+"""
+        with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
+            f.write(yaml_content)
+            temp_path = f.name
+        try:
+            cfg = load_config(temp_path)
+            self.assertEqual(cfg.node_id, "from-voice-key-alone")
+        finally:
+            os.unlink(temp_path)
 
     def test_env_overrides(self):
         os.environ["MIRRORMERE_NODE_ID"] = "env-node-1"

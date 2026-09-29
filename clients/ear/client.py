@@ -37,8 +37,10 @@ except ImportError:
 
 try:
     from .config import VoiceConfig, load_config
+    from .vad import build_detector
 except (ImportError, ValueError):
     from config import VoiceConfig, load_config
+    from vad import build_detector
 
 logger = logging.getLogger("mirrormere-voice")
 
@@ -183,6 +185,10 @@ class VoiceDaemon:
         for m in self.active_models:
             self.max_seen[m] = 0.0
 
+        self.speech_detector = build_detector(
+            cfg.vad, cfg.vad_threshold, cfg.speech_threshold_db, self.compute_db
+        )
+
     def _init_openwakeword(self):
         """Discovers custom models and instantiates the openWakeWord Model."""
         from openwakeword.model import Model
@@ -286,6 +292,7 @@ class VoiceDaemon:
         self.record_start = now
         self.silence_start = None
         self.has_spoken = False
+        self.speech_detector.reset()
 
     def _ambient_ready(self, now: float) -> bool:
         """True when it's safe to start/send an ambient segment: not mid-reply, not in the post-reply cooldown."""
@@ -310,6 +317,7 @@ class VoiceDaemon:
         self.ambient_silence_start = None
         self.ambient_first_voice_at = now
         self.ambient_last_voice_at = now
+        self.speech_detector.reset()
 
     def process_frame(self, raw_bytes: bytes) -> Optional[str]:
         """Processes a single audio frame (1280 samples = 80ms @ 16kHz)."""
@@ -324,8 +332,7 @@ class VoiceDaemon:
                     return "wake_detected"
 
             if self.wake_mode_uses_ambient() and self._ambient_ready(now):
-                db = self.compute_db(raw_bytes)
-                if db > self.cfg.speech_threshold_db:
+                if self.speech_detector.is_speech(raw_bytes):
                     self._start_ambient_segment(now)
                     return "ambient_segment_started"
 
@@ -342,8 +349,7 @@ class VoiceDaemon:
 
             self.ambient_buffer.append(raw_bytes)
             elapsed = now - (self.ambient_record_start or now)
-            db = self.compute_db(raw_bytes)
-            is_speech = db > self.cfg.speech_threshold_db
+            is_speech = self.speech_detector.is_speech(raw_bytes)
 
             if is_speech:
                 if self.ambient_first_voice_at is None:
@@ -376,9 +382,8 @@ class VoiceDaemon:
         elif self.state == "listening":
             self.utterance_buffer.append(raw_bytes)
             elapsed = now - (self.record_start or now)
-            db = self.compute_db(raw_bytes)
 
-            is_speech = db > self.cfg.speech_threshold_db
+            is_speech = self.speech_detector.is_speech(raw_bytes)
             if is_speech:
                 self.has_spoken = True
                 self.silence_start = None
@@ -772,7 +777,9 @@ class VoiceDaemon:
                 if time.time() - last_heartbeat > 10.0:
                     db = self.compute_db(raw)
                     scores_str = ", ".join(f"{k}={v:.3f}" for k, v in self.max_seen.items())
-                    logger.info("[Heartbeat] RMS: %.1f dBFS | Max scores: %s", db, scores_str)
+                    vad_mean_ms, vad_count = self.speech_detector.drain_inference_stats()
+                    vad_str = f" | VAD infer: {vad_mean_ms:.2f}ms avg (n={vad_count})" if vad_count else ""
+                    logger.info("[Heartbeat] RMS: %.1f dBFS | Max scores: %s%s", db, scores_str, vad_str)
                     self.max_seen = {m: 0.0 for m in self.active_models}
                     last_heartbeat = time.time()
 
