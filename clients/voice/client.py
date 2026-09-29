@@ -78,6 +78,54 @@ def post_voice_state(
         return False
 
 
+def _heartbeat_url(hub_url: str) -> str:
+    """Resolves the heartbeat endpoint URL from hub_url."""
+    if not hub_url:
+        return ""
+    if hub_url.endswith("/api/voice/heartbeat"):
+        return hub_url
+    if "/api/voice/interact" in hub_url:
+        return hub_url.replace("/api/voice/interact", "/api/voice/heartbeat")
+    if hub_url.endswith("/interact"):
+        return hub_url[:-len("/interact")] + "/heartbeat"
+    return f"{hub_url.rstrip('/')}/api/voice/heartbeat"
+
+
+def post_voice_heartbeat(
+    hub_url: str,
+    node_id: str,
+    db: float,
+    false_wakes: int = 0,
+    last_playback_sec: float = 0.0,
+    timeout: float = 2.0,
+) -> bool:
+    """Relays edge liveness, ambient RMS, false wake counts, and playback duration to Mirrormere Voice Hub."""
+    if not hub_url:
+        return False
+    url = _heartbeat_url(hub_url)
+    payload = {
+        "node_id": node_id,
+        "ambient_rms_dbfs": round(float(db), 1),
+        "false_wakes": int(false_wakes),
+        "last_playback_sec": round(float(last_playback_sec), 2),
+    }
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=data,
+        headers={"Content-Type": "application/json", "Accept": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            status = getattr(resp, "status", 200)
+            logger.debug("Posted heartbeat to %s: HTTP %d", url, status)
+            return status == 200
+    except (urllib.error.URLError, Exception) as e:
+        logger.debug("Failed to post voice heartbeat to %s: %s", url, e)
+        return False
+
+
 class VoiceDaemon:
     """Manages audio capture, wake word detection, and utterance forwarding."""
 
@@ -97,6 +145,13 @@ class VoiceDaemon:
         self.has_spoken = False
         self.max_seen = {}
         self.current_worker: Optional[threading.Thread] = None
+
+        # Telemetry tracking attributes (SPEC-011 Task 4)
+        self.last_wake_eval_ms: float = 0.0
+        self.last_speech_duration_ms: float = 0.0
+        self.last_silence_duration_ms: float = 0.0
+        self.false_wakes_count: int = 0
+        self.last_playback_sec: float = 0.0
 
         # Ambient (classifier-gated, no wake word) capture state.
         self.ambient_buffer: List[bytes] = []
@@ -203,8 +258,10 @@ class VoiceDaemon:
 
     def _check_wake_word(self, raw_bytes: bytes) -> Optional[str]:
         """Runs one openWakeWord prediction pass and returns the triggered model name, if any."""
+        t0 = time.perf_counter()
         chunk = np.frombuffer(raw_bytes, dtype=np.int16) if np is not None else raw_bytes
         preds = self.model.predict(chunk)
+        self.last_wake_eval_ms = (time.perf_counter() - t0) * 1000.0
         triggered_model = None
 
         for m in self.active_models:
@@ -337,12 +394,19 @@ class VoiceDaemon:
                 self.state = "idle"
                 post_voice_state(self.cfg.mirrormere_url, "idle")
                 self.utterance_buffer = []
+                self.false_wakes_count += 1
                 return "wake_aborted"
 
             silence_duration = (now - self.silence_start) if self.silence_start else 0.0
             silence_limit = self.cfg.silence_ms / 1000.0
 
             if (self.has_spoken and silence_duration >= silence_limit) or elapsed >= self.cfg.max_record_seconds:
+                pre_roll_sec = (len(self.pre_roll) * self.cfg.chunk_samples) / float(self.cfg.sample_rate)
+                elapsed = (now - (self.record_start or now)) + pre_roll_sec
+                silence_duration = (now - self.silence_start) if self.silence_start else 0.0
+                self.last_speech_duration_ms = max(0.0, elapsed - silence_duration) * 1000.0
+                self.last_silence_duration_ms = silence_duration * 1000.0
+
                 logger.info(
                     "Utterance complete (%.2fs, silence=%.2fs). Forwarding to Voice Hub...",
                     elapsed,
@@ -447,6 +511,7 @@ class VoiceDaemon:
     def _ambient_worker(self, frames: List[bytes]) -> None:
         """Classifies a segment and, on engage, runs the same hub interaction a wake word would."""
         try:
+            self.last_wake_eval_ms = 0.0
             wav_bytes = self._frames_to_wav_bytes(frames)
             result = self._classify_ambient(wav_bytes)
             if not result or result.get("engage") is not True:
@@ -472,6 +537,7 @@ class VoiceDaemon:
                     return
                 self.busy = True
 
+            self.last_wake_eval_ms = 0.0
             logger.info(
                 "Ambient classifier engaged (score=%s, classifier=%s): '%s'",
                 result.get("score"),
@@ -500,11 +566,13 @@ class VoiceDaemon:
         """Plays audio bytes (MP3 or WAV) using a local audio player."""
         if not audio_data:
             return False
+        t0 = time.perf_counter()
         try:
             player = shutil.which("pw-play") or shutil.which("aplay") or shutil.which("mpv")
             if player:
                 p = subprocess.Popen([player, "-"], stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
                 p.communicate(input=audio_data, timeout=30)
+                self.last_playback_sec = time.perf_counter() - t0
                 return p.returncode == 0
         except Exception as e:
             logger.debug("Audio playback failed: %s", e)
@@ -538,6 +606,9 @@ class VoiceDaemon:
                 body.extend(f"{val}\r\n".encode("utf-8"))
 
             add_field("node_id", self.cfg.node_id)
+            add_field("wake_eval_ms", f"{self.last_wake_eval_ms:.1f}")
+            add_field("speech_duration_ms", f"{self.last_speech_duration_ms:.1f}")
+            add_field("silence_duration_ms", f"{self.last_silence_duration_ms:.1f}")
 
             body.extend(f"--{boundary}\r\n".encode("utf-8"))
             body.extend(b'Content-Disposition: form-data; name="audio"; filename="utterance.wav"\r\n')
@@ -556,7 +627,7 @@ class VoiceDaemon:
                 method="POST",
             )
             logger.info("Streaming utterance to Voice Hub at %s...", self.cfg.hub_url)
-            with urllib.request.urlopen(req, timeout=30.0) as resp:
+            with urllib.request.urlopen(req, timeout=120.0) as resp:
                 current_event = None
                 for raw_line in resp:
                     line = raw_line.decode("utf-8").strip()
@@ -599,6 +670,39 @@ class VoiceDaemon:
         finally:
             self.busy = False
             self.reply_ended_at = time.time()
+
+    def _send_heartbeat(self, hub_url: str, payload: Dict[str, Any]) -> None:
+        """Dispatches heartbeat payload to Voice Hub asynchronously."""
+        try:
+            post_voice_heartbeat(
+                hub_url=hub_url,
+                node_id=payload.get("node_id", self.cfg.node_id),
+                db=payload.get("ambient_rms_dbfs", 0.0),
+                false_wakes=payload.get("false_wakes", 0),
+                last_playback_sec=payload.get("last_playback_sec", 0.0),
+                timeout=2.0,
+            )
+        except (urllib.error.URLError, Exception) as e:
+            logger.debug("Heartbeat background dispatch failed: %s", e)
+
+    def post_voice_heartbeat(
+        self,
+        hub_url: str,
+        node_id: str,
+        db: float,
+        false_wakes: int = 0,
+        last_playback_sec: float = 0.0,
+        timeout: float = 2.0,
+    ) -> bool:
+        """Helper method to invoke post_voice_heartbeat."""
+        return post_voice_heartbeat(
+            hub_url=hub_url,
+            node_id=node_id,
+            db=db,
+            false_wakes=false_wakes,
+            last_playback_sec=last_playback_sec,
+            timeout=timeout,
+        )
 
     def run(self, audio_source=None) -> None:
         """Starts main daemon audio capture and processing loop."""
@@ -664,13 +768,28 @@ class VoiceDaemon:
 
                 self.process_frame(raw)
 
-                # 10s heartbeat logging
+                # 10s heartbeat logging and telemetry emission
                 if time.time() - last_heartbeat > 10.0:
                     db = self.compute_db(raw)
                     scores_str = ", ".join(f"{k}={v:.3f}" for k, v in self.max_seen.items())
                     logger.info("[Heartbeat] RMS: %.1f dBFS | Max scores: %s", db, scores_str)
                     self.max_seen = {m: 0.0 for m in self.active_models}
                     last_heartbeat = time.time()
+
+                    if self.cfg.hub_url:
+                        payload = {
+                            "node_id": self.cfg.node_id,
+                            "ambient_rms_dbfs": round(db, 1),
+                            "false_wakes": self.false_wakes_count,
+                            "last_playback_sec": round(self.last_playback_sec, 2),
+                        }
+                        self.false_wakes_count = 0
+                        self.last_playback_sec = 0.0
+                        threading.Thread(
+                            target=self._send_heartbeat,
+                            args=(self.cfg.hub_url, payload),
+                            daemon=True,
+                        ).start()
 
         finally:
             if proc:
