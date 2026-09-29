@@ -201,8 +201,8 @@ run_python_tests() {
     if has_cmd python3; then
         echo "   [python test] Running e-ink node client test suite..."
         PYTHONPATH="clients/eink-node" python3 -m unittest discover -s clients/eink-node/tests -p "test_*.py"
-        echo "   [python test] Running edge voice daemon test suite..."
-        PYTHONPATH="." python3 -m unittest discover -s clients/voice/tests -p "test_*.py"
+        echo "   [python test] Running edge ear (voice) daemon test suite..."
+        PYTHONPATH="." python3 -m unittest discover -s clients/ear/tests -p "test_*.py"
     fi
 }
 
