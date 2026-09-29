@@ -34,6 +34,38 @@ voice:
   audio_device: "default"
 ```
 
+## Wake Mode
+
+`wake_mode` controls how an utterance gets triggered (see SPEC-011 "Ambient
+(Classifier-Gated) Wake Mode" for the full contract):
+
+- **`openwakeword`** (default): today's behavior, unchanged. `openWakeWord`
+  runs locally and a wake phrase starts recording.
+- **`ambient`**: no wake word at all. `openWakeWord` isn't even loaded (keeps
+  CPU low). The existing energy VAD cuts every speech segment (minimum 0.4s,
+  maximum `max_record_seconds`) and POSTs it as multipart form data (`audio`
+  = 16 kHz mono WAV, `node_id`) to `ambient_url`. The response must be
+  `{"engage": bool, "transcript": str, "score": float, "classifier": str}`.
+  When `engage` is true, the daemon runs the exact same hub interaction a
+  wake word triggers today, on that same WAV, including the `listening`
+  state relay. When `engage` is false, the segment is dropped silently -
+  nothing is relayed and the HUD doesn't flash.
+- **`both`**: the wake word still triggers directly and bypasses the
+  ambient classifier; segments that don't start with a wake word go through
+  the ambient gate instead.
+
+Segments are never sent while the device is playing a reply, or during
+`cooldown_seconds` after one ends, so the daemon doesn't classify (or
+engage on) its own voice. If `ambient_url` errors or times out
+(`ambient_timeout_seconds`, default 6s), the failure is logged at debug and
+capture continues uninterrupted.
+
+```yaml
+voice:
+  wake_mode: ambient
+  ambient_url: "http://192.168.1.77:9098/ambient"
+```
+
 ## Quickstart & Installation
 
 On the edge unit (kiosk mini-PC or Raspberry Pi):
