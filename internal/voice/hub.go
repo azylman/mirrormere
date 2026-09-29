@@ -458,6 +458,7 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 				audioBytes, format, ttsErr := h.tts.Synthesize(ctx, reply)
 				ttsDuration := time.Since(ttsStart).Seconds()
 				if ttsErr != nil {
+					slog.Warn("TTS synthesis failed", "node_id", nodeID, "error", ttsErr)
 					finalStatus = "error"
 					h.metrics.RecordStageDuration(nodeID, "tts", "error", ttsDuration)
 					h.metrics.RecordError(nodeID, "tts", "tts_error")
@@ -497,6 +498,7 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 				audioBytes, format, ttsErr := h.tts.Synthesize(ctx, reply)
 				ttsDuration := time.Since(ttsStart).Seconds()
 				if ttsErr != nil {
+					slog.Warn("TTS synthesis failed", "node_id", nodeID, "error", ttsErr)
 					finalStatus = "error"
 					h.metrics.RecordStageDuration(nodeID, "tts", "error", ttsDuration)
 					h.metrics.RecordError(nodeID, "tts", "tts_error")
@@ -548,6 +550,7 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 			audioBytes, format, ttsErr := h.tts.Synthesize(ctx, reply)
 			ttsDuration := time.Since(ttsStart).Seconds()
 			if ttsErr != nil {
+				slog.Warn("TTS synthesis failed", "node_id", nodeID, "error", ttsErr)
 				finalStatus = "error"
 				h.metrics.RecordStageDuration(nodeID, "tts", "error", ttsDuration)
 				h.metrics.RecordError(nodeID, "tts", "tts_error")

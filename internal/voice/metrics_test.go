@@ -16,8 +16,8 @@ func TestMetrics_RecordStageDuration(t *testing.T) {
 	m.RecordStageDuration("kitchen-display", "brain", "success", 1.850)
 	m.RecordStageDuration("kitchen-display", "tts", "success", 0.410)
 
-	// Test boundary condition: durationSec > 60.0 ignored
-	m.RecordStageDuration("kitchen-display", "tts", "timeout", 65.0)
+	// Test boundary condition: durationSec > 300.0 ignored
+	m.RecordStageDuration("kitchen-display", "tts", "timeout", 350.0)
 
 	mfs, err := reg.Gather()
 	if err != nil {
@@ -110,8 +110,43 @@ func TestMetrics_RecordEfficiencyAndZeroDivisions(t *testing.T) {
 		t.Fatalf("failed to gather metrics: %v", err)
 	}
 
-	var foundRTF, foundCPS bool
+	var foundRTF, foundCPS, foundTurns, foundErrors bool
 	for _, mf := range mfs {
+		if mf.GetName() == "mirrormere_voice_turns_total" {
+			for _, mMetric := range mf.GetMetric() {
+				var nodeID, status string
+				for _, label := range mMetric.GetLabel() {
+					if label.GetName() == "node_id" {
+						nodeID = label.GetValue()
+					}
+					if label.GetName() == "status" {
+						status = label.GetValue()
+					}
+				}
+				if nodeID == "kitchen-display" && status == "success" && mMetric.GetCounter().GetValue() == 1.0 {
+					foundTurns = true
+				}
+			}
+		}
+		if mf.GetName() == "mirrormere_voice_errors_total" {
+			for _, mMetric := range mf.GetMetric() {
+				var nodeID, stage, errType string
+				for _, label := range mMetric.GetLabel() {
+					if label.GetName() == "node_id" {
+						nodeID = label.GetValue()
+					}
+					if label.GetName() == "stage" {
+						stage = label.GetValue()
+					}
+					if label.GetName() == "error_type" {
+						errType = label.GetValue()
+					}
+				}
+				if nodeID == "kitchen-display" && stage == "stt" && errType == "network_timeout" && mMetric.GetCounter().GetValue() == 1.0 {
+					foundErrors = true
+				}
+			}
+		}
 		if mf.GetName() == "mirrormere_voice_stt_rtf" {
 			foundRTF = true
 			var foundLargeV3, foundUnknown bool
@@ -163,6 +198,12 @@ func TestMetrics_RecordEfficiencyAndZeroDivisions(t *testing.T) {
 	}
 	if !foundRTF || !foundCPS {
 		t.Fatal("missing RTF or CPS metrics")
+	}
+	if !foundTurns {
+		t.Fatal("missing or incorrect mirrormere_voice_turns_total metric")
+	}
+	if !foundErrors {
+		t.Fatal("missing or incorrect mirrormere_voice_errors_total metric")
 	}
 }
 

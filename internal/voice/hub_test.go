@@ -346,6 +346,30 @@ func TestHub_Interact_TTSDegradation(t *testing.T) {
 	}
 }
 
+func drainMockWyomingRequest(reader *bufio.Reader) {
+	for {
+		line, rErr := reader.ReadBytes('\n')
+		if rErr != nil {
+			break
+		}
+		var hdr struct {
+			Type          string `json:"type"`
+			DataLength    int    `json:"data_length"`
+			PayloadLength int    `json:"payload_length"`
+		}
+		_ = json.Unmarshal(line, &hdr)
+		if hdr.DataLength > 0 {
+			_, _ = io.CopyN(io.Discard, reader, int64(hdr.DataLength))
+		}
+		if hdr.PayloadLength > 0 {
+			_, _ = io.CopyN(io.Discard, reader, int64(hdr.PayloadLength))
+		}
+		if hdr.Type == "audio-stop" {
+			break
+		}
+	}
+}
+
 func TestDefaultSTTClient_Wyoming(t *testing.T) {
 	t.Parallel()
 
@@ -365,29 +389,7 @@ func TestDefaultSTTClient_Wyoming(t *testing.T) {
 
 		// Read events until audio-stop
 		reader := bufio.NewReader(conn)
-		for {
-			line, err := reader.ReadBytes('\n')
-			if err != nil {
-				return
-			}
-			var hdr struct {
-				Type          string `json:"type"`
-				DataLength    int    `json:"data_length"`
-				PayloadLength int    `json:"payload_length"`
-			}
-			_ = json.Unmarshal(line, &hdr)
-			if hdr.DataLength > 0 {
-				dataBytes := make([]byte, hdr.DataLength)
-				_, _ = io.ReadFull(reader, dataBytes)
-			}
-			if hdr.PayloadLength > 0 {
-				payload := make([]byte, hdr.PayloadLength)
-				_, _ = io.ReadFull(reader, payload)
-			}
-			if hdr.Type == "audio-stop" {
-				break
-			}
-		}
+		drainMockWyomingRequest(reader)
 
 		// Send transcript response
 		respJSON := `{"text":"test transcript from wyoming"}`
@@ -690,27 +692,7 @@ func TestDefaultSTTClient_Wyoming_Advanced(t *testing.T) {
 		defer conn.Close()
 
 		reader := bufio.NewReader(conn)
-		for {
-			line, rErr := reader.ReadBytes('\n')
-			if rErr != nil {
-				break
-			}
-			var hdr struct {
-				Type          string `json:"type"`
-				DataLength    int    `json:"data_length"`
-				PayloadLength int    `json:"payload_length"`
-			}
-			_ = json.Unmarshal(line, &hdr)
-			if hdr.DataLength > 0 {
-				_, _ = io.CopyN(io.Discard, reader, int64(hdr.DataLength))
-			}
-			if hdr.PayloadLength > 0 {
-				_, _ = io.CopyN(io.Discard, reader, int64(hdr.PayloadLength))
-			}
-			if hdr.Type == "audio-stop" {
-				break
-			}
-		}
+		drainMockWyomingRequest(reader)
 
 		// Send non-json garbage line
 		_, _ = conn.Write([]byte("not-json-line\n"))
@@ -974,28 +956,7 @@ func TestDefaultSTTClient_Wyoming_ReadCloseAndRawText(t *testing.T) {
 		}
 		defer conn.Close()
 
-		reader := bufio.NewReader(conn)
-		for {
-			line, rErr := reader.ReadBytes('\n')
-			if rErr != nil {
-				break
-			}
-			var hdr struct {
-				Type          string `json:"type"`
-				DataLength    int    `json:"data_length"`
-				PayloadLength int    `json:"payload_length"`
-			}
-			_ = json.Unmarshal(line, &hdr)
-			if hdr.DataLength > 0 {
-				_, _ = io.CopyN(io.Discard, reader, int64(hdr.DataLength))
-			}
-			if hdr.PayloadLength > 0 {
-				_, _ = io.CopyN(io.Discard, reader, int64(hdr.PayloadLength))
-			}
-			if hdr.Type == "audio-stop" {
-				break
-			}
-		}
+		drainMockWyomingRequest(bufio.NewReader(conn))
 
 		rawString := "raw transcript fallback"
 		hdr := fmt.Sprintf("{\"type\":\"transcript\",\"data_length\":%d}\n", len(rawString))
@@ -1090,6 +1051,7 @@ func TestDefaultSTTClient_Wyoming_TruncatedDataAndPayload(t *testing.T) {
 			return
 		}
 		defer conn.Close()
+		drainMockWyomingRequest(bufio.NewReader(conn))
 		_, _ = conn.Write([]byte("{\"type\":\"event\",\"data_length\":100}\nshort"))
 	}()
 	c1 := NewDefaultSTTClient("tcp://" + l1.Addr().String())
@@ -1110,6 +1072,7 @@ func TestDefaultSTTClient_Wyoming_TruncatedDataAndPayload(t *testing.T) {
 			return
 		}
 		defer conn.Close()
+		drainMockWyomingRequest(bufio.NewReader(conn))
 		_, _ = conn.Write([]byte("{\"type\":\"event\",\"payload_length\":100}\nshort"))
 	}()
 	c2 := NewDefaultSTTClient("tcp://" + l2.Addr().String())

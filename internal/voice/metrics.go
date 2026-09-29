@@ -156,11 +156,7 @@ func (m *Metrics) RecordStageDuration(nodeID, stage, status string, durationSec 
 	if m == nil || m.stageDuration == nil {
 		return
 	}
-	limit := 60.0
-	if stage == "brain" {
-		limit = 300.0
-	}
-	if math.IsNaN(durationSec) || math.IsInf(durationSec, 0) || durationSec < 0 || durationSec > limit {
+	if math.IsNaN(durationSec) || math.IsInf(durationSec, 0) || durationSec < 0 || durationSec > 300.0 {
 		return
 	}
 	m.stageDuration.WithLabelValues(SanitizeNodeID(nodeID), stage, status).Observe(durationSec)
