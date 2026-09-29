@@ -278,6 +278,203 @@ class TestVoiceDaemon(unittest.TestCase):
         self.assertTrue(daemon.play_audio(b"fake-mp3-bytes"))
         mock_popen.assert_called_once_with(["/usr/bin/pw-play", "-"], stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
 
+    @patch("clients.ear.client.shutil.which")
+    @patch("clients.ear.client.subprocess.Popen")
+    def test_start_pcm_stream_commands(self, mock_popen, mock_which):
+        daemon = VoiceDaemon(self.cfg, model=MockModel())
+
+        # pw-play command
+        mock_which.return_value = "/usr/bin/pw-play"
+        daemon._start_pcm_stream(sample_rate=24000, channels=1)
+        mock_popen.assert_called_with(
+            ["/usr/bin/pw-play", "--format=s16", "--rate=24000", "--channels=1", "-"],
+            stdin=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+
+        # aplay fallback
+        mock_which.return_value = "/usr/bin/aplay"
+        daemon._start_pcm_stream(sample_rate=16000, channels=2)
+        mock_popen.assert_called_with(
+            ["/usr/bin/aplay", "-f", "S16_LE", "-r", "16000", "-c", "2", "-"],
+            stdin=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+
+        # mpv fallback
+        mock_which.return_value = "/usr/bin/mpv"
+        daemon._start_pcm_stream(sample_rate=24000, channels=1)
+        mock_popen.assert_called_with(
+            [
+                "/usr/bin/mpv",
+                "--demuxer-rawaudio-format=s16le",
+                "--demuxer-rawaudio-rate=24000",
+                "--demuxer-rawaudio-channels=1",
+                "-",
+            ],
+            stdin=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+
+        # No player found
+        mock_which.return_value = None
+        self.assertIsNone(daemon._start_pcm_stream(24000, 1))
+
+    @patch("clients.ear.client.urllib.request.urlopen")
+    def test_hub_sse_stream_worker_pcm_stream(self, mock_urlopen):
+        """Tests that format: pcm chunks spawn a single persistent player subprocess,
+        pipe data to stdin, close stdin on completion, and wait for drain."""
+        pcm1 = b"\x00\x01" * 100
+        pcm2 = b"\x02\x03" * 100
+        sse_lines = [
+            b"event: audio_chunk\r\n",
+            b'data: {"chunk_index": 0, "format": "pcm", "sample_rate": 24000, "channels": 1, "is_final": false, "data": "'
+            + base64.b64encode(pcm1)
+            + b'"}\r\n',
+            b"\r\n",
+            b"event: audio_chunk\r\n",
+            b'data: {"chunk_index": 1, "format": "pcm", "sample_rate": 24000, "channels": 1, "is_final": false, "data": "'
+            + base64.b64encode(pcm2)
+            + b'"}\r\n',
+            b"\r\n",
+            b"event: audio_chunk\r\n",
+            b'data: {"chunk_index": 2, "format": "pcm", "sample_rate": 24000, "channels": 1, "is_final": true, "data": ""}\r\n',
+            b"\r\n",
+            b"event: done\r\n",
+            b"data: {}\r\n",
+            b"\r\n",
+        ]
+        mock_resp = MagicMock()
+        mock_resp.status = 200
+        mock_resp.__iter__.return_value = iter(sse_lines)
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        with open(self.save_path, "wb") as f:
+            f.write(b"RIFFdummyWAVE")
+
+        daemon = VoiceDaemon(self.cfg, model=MockModel())
+        mock_proc = MagicMock()
+        mock_proc.stdin = MagicMock()
+        mock_proc.wait.return_value = 0
+
+        with patch.object(daemon, "_start_pcm_stream", return_value=mock_proc) as mock_start:
+            daemon._hub_stream_worker(self.save_path)
+            mock_start.assert_called_once_with(24000, 1)
+            self.assertEqual(mock_proc.stdin.write.call_args_list, [call(pcm1), call(pcm2)])
+            self.assertEqual(mock_proc.stdin.flush.call_count, 2)
+            mock_proc.stdin.close.assert_called_once()
+            mock_proc.wait.assert_called_once_with(timeout=5.0)
+            self.assertFalse(daemon.busy)
+            self.assertGreater(daemon.reply_ended_at, 0.0)
+
+    @patch("clients.ear.client.urllib.request.urlopen")
+    def test_hub_sse_stream_worker_drain_before_clear_gating(self, mock_urlopen):
+        """Tests that self.busy remains True until player.wait() returns."""
+        pcm = b"\x01\x02" * 50
+        sse_lines = [
+            b"event: audio_chunk\r\n",
+            b'data: {"chunk_index": 0, "format": "pcm", "sample_rate": 24000, "channels": 1, "is_final": true, "data": "'
+            + base64.b64encode(pcm)
+            + b'"}\r\n',
+            b"\r\n",
+            b"event: done\r\n",
+            b"data: {}\r\n",
+            b"\r\n",
+        ]
+        mock_resp = MagicMock()
+        mock_resp.status = 200
+        mock_resp.__iter__.return_value = iter(sse_lines)
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        with open(self.save_path, "wb") as f:
+            f.write(b"RIFFdummyWAVE")
+
+        daemon = VoiceDaemon(self.cfg, model=MockModel())
+        mock_proc = MagicMock()
+        mock_proc.stdin = MagicMock()
+
+        busy_during_wait = []
+
+        def fake_wait(timeout=None):
+            busy_during_wait.append(daemon.busy)
+            return 0
+
+        mock_proc.wait.side_effect = fake_wait
+
+        with patch.object(daemon, "_start_pcm_stream", return_value=mock_proc):
+            daemon._hub_stream_worker(self.save_path)
+
+        self.assertEqual(busy_during_wait, [True], "busy flag must remain True while player.wait() executes")
+        self.assertFalse(daemon.busy, "busy flag must clear after player.wait() completes")
+
+    @patch("clients.ear.client.urllib.request.urlopen")
+    def test_hub_sse_stream_worker_pcm_timeout_kill(self, mock_urlopen):
+        """Tests that a hung player subprocess is killed and reaped before releasing busy."""
+        pcm = b"\x01\x02" * 50
+        sse_lines = [
+            b"event: audio_chunk\r\n",
+            b'data: {"chunk_index": 0, "format": "pcm", "sample_rate": 24000, "channels": 1, "is_final": true, "data": "'
+            + base64.b64encode(pcm)
+            + b'"}\r\n',
+            b"\r\n",
+            b"event: done\r\n",
+            b"data: {}\r\n",
+            b"\r\n",
+        ]
+        mock_resp = MagicMock()
+        mock_resp.status = 200
+        mock_resp.__iter__.return_value = iter(sse_lines)
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        with open(self.save_path, "wb") as f:
+            f.write(b"RIFFdummyWAVE")
+
+        daemon = VoiceDaemon(self.cfg, model=MockModel())
+        mock_proc = MagicMock()
+        mock_proc.stdin = MagicMock()
+        # First wait times out, second wait succeeds after kill()
+        mock_proc.wait.side_effect = [subprocess.TimeoutExpired(cmd="pw-play", timeout=5.0), 0]
+
+        with patch.object(daemon, "_start_pcm_stream", return_value=mock_proc):
+            daemon._hub_stream_worker(self.save_path)
+
+        mock_proc.kill.assert_called_once()
+        self.assertEqual(mock_proc.wait.call_count, 2)
+        self.assertFalse(daemon.busy)
+
+    @patch("clients.ear.client.urllib.request.urlopen")
+    def test_hub_sse_stream_worker_total_playback_telemetry(self, mock_urlopen):
+        """Tests that last_playback_sec totals duration across multiple chunks (fixing #340)."""
+        sse_lines = [
+            b"event: audio_chunk\r\n",
+            b'data: {"chunk_index": 0, "format": "wav", "is_final": false, "data": "'
+            + base64.b64encode(b"chunk1")
+            + b'"}\r\n',
+            b"\r\n",
+            b"event: audio_chunk\r\n",
+            b'data: {"chunk_index": 1, "format": "wav", "is_final": true, "data": "'
+            + base64.b64encode(b"chunk2")
+            + b'"}\r\n',
+            b"\r\n",
+            b"event: done\r\n",
+            b"data: {}\r\n",
+            b"\r\n",
+        ]
+        mock_resp = MagicMock()
+        mock_resp.status = 200
+        mock_resp.__iter__.return_value = iter(sse_lines)
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        with open(self.save_path, "wb") as f:
+            f.write(b"RIFFdummyWAVE")
+
+        daemon = VoiceDaemon(self.cfg, model=MockModel())
+        with patch.object(daemon, "play_audio", side_effect=lambda data: (time.sleep(0.01), True)[1]):
+            daemon._hub_stream_worker(self.save_path)
+
+        self.assertGreaterEqual(daemon.last_playback_sec, 0.015)
+
+
     def test_check_wake_word_measures_eval_latency(self):
         mock_model = MockModel(score_map={"hey_jarvis": 0.1})
         daemon = VoiceDaemon(self.cfg, model=mock_model)

@@ -567,6 +567,30 @@ class VoiceDaemon:
         finally:
             self.ambient_inflight = False
 
+    def _start_pcm_stream(self, sample_rate: int = 24000, channels: int = 1) -> Optional[subprocess.Popen]:
+        """Spawns a persistent player subprocess for streaming raw PCM audio."""
+        player = shutil.which("pw-play") or shutil.which("aplay") or shutil.which("mpv")
+        if not player:
+            logger.warning("No audio player found for PCM stream")
+            return None
+        if "pw-play" in player:
+            cmd = [player, "--format=s16", f"--rate={sample_rate}", f"--channels={channels}", "-"]
+        elif "aplay" in player:
+            cmd = [player, "-f", "S16_LE", "-r", str(sample_rate), "-c", str(channels), "-"]
+        else:
+            cmd = [
+                player,
+                "--demuxer-rawaudio-format=s16le",
+                f"--demuxer-rawaudio-rate={sample_rate}",
+                f"--demuxer-rawaudio-channels={channels}",
+                "-",
+            ]
+        try:
+            return subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        except Exception as e:
+            logger.warning("Failed to start PCM player subprocess (%s): %s", player, e)
+            return None
+
     def play_audio(self, audio_data: bytes) -> bool:
         """Plays audio bytes (MP3 or WAV) using a local audio player."""
         if not audio_data:
@@ -598,6 +622,34 @@ class VoiceDaemon:
         # so ambient mode never sends the daemon's own reply audio back to
         # the classifier.
         self.busy = True
+        pcm_proc = None
+        turn_playback_start = None
+        turn_playback_total = 0.0
+
+        def close_pcm_proc():
+            nonlocal pcm_proc, turn_playback_start
+            if pcm_proc:
+                try:
+                    if pcm_proc.stdin:
+                        try:
+                            pcm_proc.stdin.close()
+                        except Exception:
+                            pass
+                    pcm_proc.wait(timeout=5.0)
+                except subprocess.TimeoutExpired:
+                    logger.warning("PCM player timed out waiting for drain; killing process")
+                    try:
+                        pcm_proc.kill()
+                        pcm_proc.wait(timeout=2.0)
+                    except Exception:
+                        pass
+                except Exception as e:
+                    logger.debug("PCM player wait error: %s", e)
+                finally:
+                    if turn_playback_start is not None:
+                        self.last_playback_sec = max(0.0, time.perf_counter() - turn_playback_start)
+                    pcm_proc = None
+
         try:
             with open(wav_path, "rb") as f:
                 wav_data = f.read()
@@ -657,13 +709,39 @@ class VoiceDaemon:
                             reply = payload.get("reply", "")
                             logger.info("Received reply: '%s'", reply)
                         elif current_event == "audio_chunk":
+                            fmt = (payload.get("format") or "wav").lower()
                             audio_b64 = payload.get("data", "")
+                            is_final = payload.get("is_final") is True
+                            audio_bytes = b""
                             if audio_b64:
                                 try:
                                     audio_bytes = base64.b64decode(audio_b64)
-                                    self.play_audio(audio_bytes)
                                 except Exception as e:
-                                    logger.warning("Failed to decode/play audio chunk: %s", e)
+                                    logger.warning("Failed to decode audio chunk: %s", e)
+
+                            if fmt == "pcm":
+                                if audio_bytes:
+                                    if pcm_proc is None:
+                                        sample_rate = int(payload.get("sample_rate") or 24000)
+                                        channels = int(payload.get("channels") or 1)
+                                        pcm_proc = self._start_pcm_stream(sample_rate, channels)
+                                        turn_playback_start = time.perf_counter()
+                                    if pcm_proc and pcm_proc.stdin:
+                                        try:
+                                            pcm_proc.stdin.write(audio_bytes)
+                                            pcm_proc.stdin.flush()
+                                        except Exception as e:
+                                            logger.warning("Failed to write audio to PCM stream: %s", e)
+                                if is_final:
+                                    close_pcm_proc()
+                            else:
+                                if audio_bytes:
+                                    if turn_playback_start is None:
+                                        turn_playback_start = time.perf_counter()
+                                    t0 = time.perf_counter()
+                                    self.play_audio(audio_bytes)
+                                    turn_playback_total += (time.perf_counter() - t0)
+                                    self.last_playback_sec = turn_playback_total
                         elif current_event == "done":
                             logger.info("Hub interaction complete.")
                             break
@@ -673,6 +751,7 @@ class VoiceDaemon:
         except Exception as e:
             logger.info("Voice Hub stream connection failed: %s", e)
         finally:
+            close_pcm_proc()
             self.busy = False
             self.reply_ended_at = time.time()
 
