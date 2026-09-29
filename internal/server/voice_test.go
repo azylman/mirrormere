@@ -594,7 +594,7 @@ func TestDefaultVoiceHandler_PostVoiceInteract(t *testing.T) {
 		}
 	})
 
-	t.Run("device_name field populates node_id with empty session_id", func(t *testing.T) {
+	t.Run("node_id and session_id forwarded to hub", func(t *testing.T) {
 		t.Parallel()
 		var capturedNodeID, capturedSessionID string
 		hub := &mockVoiceHub{
@@ -608,7 +608,8 @@ func TestDefaultVoiceHandler_PostVoiceInteract(t *testing.T) {
 		h := server.NewDefaultVoiceHandler(nil, hub)
 
 		req, err := createMultipartAudioRequest(http.MethodPost, "/api/voice/interact", "audio", "sample.wav", dummyWAV, map[string]string{
-			"device_name": "kitchen-display",
+			"node_id":    "touch-kiosk-kitchen",
+			"session_id": "custom-sess-123",
 		})
 		if err != nil {
 			t.Fatalf("failed to create req: %v", err)
@@ -619,70 +620,11 @@ func TestDefaultVoiceHandler_PostVoiceInteract(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Fatalf("expected 200 OK, got %d: %s", rec.Code, rec.Body.String())
 		}
-		if capturedNodeID != "kitchen-display" {
-			t.Errorf("expected node_id kitchen-display, got %q", capturedNodeID)
+		if capturedNodeID != "touch-kiosk-kitchen" {
+			t.Errorf("expected node_id touch-kiosk-kitchen, got %q", capturedNodeID)
 		}
-		if capturedSessionID != "" {
-			t.Errorf("expected empty session_id, got %q", capturedSessionID)
-		}
-	})
-
-	t.Run("device_name takes precedence over node_id when both are present", func(t *testing.T) {
-		t.Parallel()
-		var capturedNodeID string
-		hub := &mockVoiceHub{
-			enabled: true,
-			interactFn: func(ctx context.Context, audio io.Reader, nodeID, sessionID string, sink voice.SSEEventSink) error {
-				capturedNodeID = nodeID
-				return sink("done", map[string]any{"duration_ms": 100})
-			},
-		}
-		h := server.NewDefaultVoiceHandler(nil, hub)
-
-		req, err := createMultipartAudioRequest(http.MethodPost, "/api/voice/interact", "audio", "sample.wav", dummyWAV, map[string]string{
-			"device_name": "kitchen-display",
-			"node_id":     "legacy-touch-kiosk",
-		})
-		if err != nil {
-			t.Fatalf("failed to create req: %v", err)
-		}
-		rec := httptest.NewRecorder()
-		h.PostVoiceInteract(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Fatalf("expected 200 OK, got %d: %s", rec.Code, rec.Body.String())
-		}
-		if capturedNodeID != "kitchen-display" {
-			t.Errorf("expected device_name to win, got %q", capturedNodeID)
-		}
-	})
-
-	t.Run("node_id fallback when device_name is empty", func(t *testing.T) {
-		t.Parallel()
-		var capturedNodeID string
-		hub := &mockVoiceHub{
-			enabled: true,
-			interactFn: func(ctx context.Context, audio io.Reader, nodeID, sessionID string, sink voice.SSEEventSink) error {
-				capturedNodeID = nodeID
-				return sink("done", map[string]any{"duration_ms": 100})
-			},
-		}
-		h := server.NewDefaultVoiceHandler(nil, hub)
-
-		req, err := createMultipartAudioRequest(http.MethodPost, "/api/voice/interact", "audio", "sample.wav", dummyWAV, map[string]string{
-			"node_id": "legacy-touch-kiosk",
-		})
-		if err != nil {
-			t.Fatalf("failed to create req: %v", err)
-		}
-		rec := httptest.NewRecorder()
-		h.PostVoiceInteract(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Fatalf("expected 200 OK, got %d: %s", rec.Code, rec.Body.String())
-		}
-		if capturedNodeID != "legacy-touch-kiosk" {
-			t.Errorf("expected node_id fallback, got %q", capturedNodeID)
+		if capturedSessionID != "custom-sess-123" {
+			t.Errorf("expected session_id custom-sess-123, got %q", capturedSessionID)
 		}
 	})
 }

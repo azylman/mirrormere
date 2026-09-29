@@ -177,6 +177,10 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 		h.mu.Unlock()
 	}()
 
+	if sessionID == "" {
+		sessionID = fmt.Sprintf("turn-%d", time.Now().UnixNano())
+	}
+
 	// Mutex to protect concurrent SSE writes from multiple goroutines
 	var sinkMu sync.Mutex
 	safeSink := func(event string, data any) error {
@@ -712,13 +716,12 @@ func (b *DefaultBrainClient) AskStreaming(ctx context.Context, ask AskRequest, o
 func (b *DefaultBrainClient) doAskRequest(ctx context.Context, ask AskRequest) (*http.Response, string, error) {
 	sessionID := ask.SessionID
 	if sessionID == "" {
-		sessionID = ask.NodeID
+		sessionID = fmt.Sprintf("turn-%d", time.Now().UnixNano())
 	}
 	reqBody, err := json.Marshal(map[string]any{
 		"prompt":        ask.Prompt,
 		"session_id":    sessionID,
 		"effort":        "low",
-		"device_name":   ask.NodeID,
 		"node_id":       ask.NodeID,
 		"speaker":       ask.Speaker,
 		"speaker_score": ask.SpeakerScore,

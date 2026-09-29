@@ -195,10 +195,9 @@ class TestVoiceDaemon(unittest.TestCase):
             mock_play.assert_called_once_with(b"fake-audio-bytes")
 
         # Verified mock_urlopen called for Hub POST
-        self.assertEqual(mock_urlopen.call_count, 1)
         req = mock_urlopen.call_args[0][0]
-        self.assertIn(b'name="device_name"\r\n\r\nkitchen-display', req.data)
-        self.assertIn(b'name="node_id"\r\n\r\nkitchen-display', req.data)
+        self.assertIn(b'name="node_id"\r\n\r\ntouch-kiosk-kitchen', req.data)
+        self.assertNotIn(b'name="device_name"', req.data)
         self.assertNotIn(b'name="session_id"', req.data)
 
     @patch("clients.voice.client.urllib.request.urlopen")

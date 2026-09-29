@@ -508,7 +508,7 @@ func TestDefaultBrainClient_SSEAndJSON(t *testing.T) {
 	}
 }
 
-func TestDefaultBrainClient_DeviceNameSessionFallback(t *testing.T) {
+func TestDefaultBrainClient_TurnSessionGenerationAndNodeID(t *testing.T) {
 	t.Parallel()
 
 	var receivedBody map[string]any
@@ -520,15 +520,19 @@ func TestDefaultBrainClient_DeviceNameSessionFallback(t *testing.T) {
 	defer server.Close()
 
 	b := NewDefaultBrainClient(server.URL, 5)
-	_, err := b.Ask(context.Background(), AskRequest{Prompt: "hello", NodeID: "kitchen-display"}, nil)
+	_, err := b.Ask(context.Background(), AskRequest{Prompt: "hello", NodeID: "touch-kiosk-kitchen"}, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if receivedBody["session_id"] != "kitchen-display" {
-		t.Errorf("expected session_id fallback 'kitchen-display', got %v", receivedBody["session_id"])
+	sessID, ok := receivedBody["session_id"].(string)
+	if !ok || !strings.HasPrefix(sessID, "turn-") {
+		t.Errorf("expected generated per-turn session_id starting with 'turn-', got %v", receivedBody["session_id"])
 	}
-	if receivedBody["device_name"] != "kitchen-display" {
-		t.Errorf("expected device_name 'kitchen-display', got %v", receivedBody["device_name"])
+	if receivedBody["node_id"] != "touch-kiosk-kitchen" {
+		t.Errorf("expected node_id 'touch-kiosk-kitchen', got %v", receivedBody["node_id"])
+	}
+	if _, exists := receivedBody["device_name"]; exists {
+		t.Errorf("expected no device_name in body, got %v", receivedBody["device_name"])
 	}
 }
 
