@@ -30,7 +30,7 @@ func runStreamingTurn(t *testing.T, brain BrainClient, tts TTSClient, sink func(
 	if tts == nil {
 		h.tts = nil
 	}
-	return h.Interact(context.Background(), bytes.NewReader(makeValidWAV(1600)), "kiosk", "s1", sink)
+	return h.Interact(context.Background(), bytes.NewReader(makeValidWAV(1600)), "kiosk", "s1", sink, EdgeTimings{})
 }
 
 func eventNames(evs []recordedEvent) []string {

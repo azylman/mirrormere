@@ -107,6 +107,7 @@ type Hub struct {
 	brain    BrainClient
 	tts      TTSClient
 	speaker  SpeakerIdentifier
+	metrics  *Metrics
 }
 
 // HubOption configures optional Hub overrides (e.g. for testing).
@@ -132,6 +133,11 @@ func WithSpeakerIdentifier(id SpeakerIdentifier) HubOption {
 	return func(h *Hub) { h.speaker = id }
 }
 
+// WithMetrics overrides the voice metrics collector.
+func WithMetrics(m *Metrics) HubOption {
+	return func(h *Hub) { h.metrics = m }
+}
+
 // NewHub constructs a Voice Hub coordinator.
 func NewHub(cfg *config.VoiceHubConfig, coord *Coordinator, opts ...HubOption) *Hub {
 	h := &Hub{
@@ -149,8 +155,12 @@ func NewHub(cfg *config.VoiceHubConfig, coord *Coordinator, opts ...HubOption) *
 	for _, opt := range opts {
 		opt(h)
 	}
+	if h.metrics == nil {
+		h.metrics = DefaultMetrics()
+	}
 	return h
 }
+
 
 // IsEnabled reports whether the voice hub is enabled.
 func (h *Hub) IsEnabled() bool {
@@ -158,7 +168,7 @@ func (h *Hub) IsEnabled() bool {
 }
 
 // Interact coordinates the complete voice interaction pipeline for an incoming audio recording.
-func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID string, sink SSEEventSink) error {
+func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID string, sink SSEEventSink, timings EdgeTimings) (retErr error) {
 	if !h.IsEnabled() {
 		return ErrHubDisabled
 	}
@@ -200,6 +210,24 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 
 	start := time.Now()
 
+	if timings.WakeEvalSec > 0 {
+		h.metrics.RecordStageDuration(nodeID, "wake_eval", "success", timings.WakeEvalSec)
+	}
+	if timings.UtteranceSpeechSec > 0 {
+		h.metrics.RecordStageDuration(nodeID, "utterance_speech", "success", timings.UtteranceSpeechSec)
+	}
+	if timings.UtteranceSilenceSec > 0 {
+		h.metrics.RecordStageDuration(nodeID, "utterance_silence", "success", timings.UtteranceSilenceSec)
+	}
+
+	finalStatus := "success"
+	defer func() {
+		if retErr != nil {
+			finalStatus = "error"
+		}
+		h.metrics.RecordTurn(nodeID, finalStatus)
+	}()
+
 	// Step 1: Notify HUD and client: transcribing
 	if h.coord != nil {
 		h.coord.Transition(StateTranscribing, nil, nil, nil, nil)
@@ -210,6 +238,9 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 
 	// Step 2: Speech-to-Text transcription, with speaker matching in parallel
 	if h.stt == nil {
+		finalStatus = "error"
+		h.metrics.RecordStageDuration(nodeID, "stt", "error", 0)
+		h.metrics.RecordError(nodeID, "stt", "stt_error")
 		return ErrSTTFailed
 	}
 	// The channel is buffered so the goroutine never blocks, and idCancel stops
@@ -230,7 +261,9 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 	} else {
 		speakerCh <- SpeakerMatch{}
 	}
+	sttStart := time.Now()
 	transcript, err := h.stt.Transcribe(ctx, wavData)
+	sttDuration := time.Since(sttStart).Seconds()
 	var match SpeakerMatch
 	if err == nil {
 		// STT is the critical path. Give matching a short grace period after STT
@@ -244,6 +277,9 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 	}
 	speaker := match.Speaker
 	if err != nil {
+		finalStatus = "error"
+		h.metrics.RecordStageDuration(nodeID, "stt", "error", sttDuration)
+		h.metrics.RecordError(nodeID, "stt", "stt_error")
 		if h.coord != nil {
 			h.coord.Transition(StateError, nil, nil, nil, nil)
 		}
@@ -251,6 +287,16 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 			return sinkErr
 		}
 		return fmt.Errorf("%w: %w", ErrSTTFailed, err)
+	}
+	h.metrics.RecordStageDuration(nodeID, "stt", "success", sttDuration)
+	pcmBytes := len(wavData) - 44
+	if pcmBytes < 0 {
+		pcmBytes = 0
+	}
+	audioSec := float64(pcmBytes) / (16000.0 * 2.0)
+	if audioSec > 0.001 {
+		rtf := sttDuration / audioSec
+		h.metrics.RecordSTTRTF(nodeID, "whisper", rtf)
 	}
 
 	// Step 3: Transition to thinking with recognized transcript
@@ -264,6 +310,9 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 	// Step 4: Brain deliberation with live tool status forwarding, and (if
 	// the brain supports it) sentence-level audio streaming (MANDOS).
 	if h.brain == nil {
+		finalStatus = "error"
+		h.metrics.RecordStageDuration(nodeID, "brain", "error", 0)
+		h.metrics.RecordError(nodeID, "brain", "brain_error")
 		return ErrBrainFailed
 	}
 
@@ -305,6 +354,10 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 			// this SSE stream) shows a live caption that grows sentence by
 			// sentence.
 			caption strings.Builder
+
+			streamChars   int
+			streamStart   time.Time
+			hasStreamTime bool
 		)
 
 		emitChunk := func(format string, data []byte, isFinal bool) {
@@ -321,6 +374,12 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 
 		onAudio := func(chunk BrainAudioChunk) {
 			streamedAny = true
+			if !hasStreamTime {
+				streamStart = time.Now()
+				hasStreamTime = true
+			}
+			streamChars += len(chunk.Text)
+
 			data := chunk.Data
 			format := chunk.Format
 			if len(data) == 0 {
@@ -353,8 +412,13 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 			emitChunk(format, data, false)
 		}
 
+		brainStart := time.Now()
 		reply, err = streamingBrain.AskStreaming(ctx, askReq, onStatus, onAudio)
+		brainDuration := time.Since(brainStart).Seconds()
 		if err != nil {
+			finalStatus = "error"
+			h.metrics.RecordStageDuration(nodeID, "brain", "error", brainDuration)
+			h.metrics.RecordError(nodeID, "brain", "brain_error")
 			if h.coord != nil {
 				h.coord.Transition(StateError, nil, nil, nil, nil)
 			}
@@ -363,11 +427,19 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 			}
 			return fmt.Errorf("%w: %w", ErrBrainFailed, err)
 		}
+		h.metrics.RecordStageDuration(nodeID, "brain", "success", brainDuration)
 
 		if streamedAny {
 			// The brain streamed sentence audio, so the hub must NOT also
 			// run its own TTS over the full reply (no double speech).
 			if anyChunkSent {
+				streamTTSDuration := time.Since(streamStart).Seconds()
+				h.metrics.RecordStageDuration(nodeID, "tts", "success", streamTTSDuration)
+				if streamTTSDuration > 0.001 && streamChars > 0 {
+					cps := float64(streamChars) / streamTTSDuration
+					h.metrics.RecordTTSCPS(nodeID, engine, cps)
+				}
+
 				// The kiosk caption shows the brain's final reply text,
 				// which is authoritative over the joined sentences.
 				if h.coord != nil {
@@ -382,16 +454,29 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 				// Every streamed sentence's audio (and its local fallback)
 				// failed: last resort is one TTS call over the full reply
 				// so the reply is never silently dropped.
+				ttsStart := time.Now()
 				audioBytes, format, ttsErr := h.tts.Synthesize(ctx, reply)
+				ttsDuration := time.Since(ttsStart).Seconds()
 				if ttsErr != nil {
+					slog.Warn("TTS synthesis failed", "node_id", nodeID, "error", ttsErr)
+					finalStatus = "error"
+					h.metrics.RecordStageDuration(nodeID, "tts", "error", ttsDuration)
+					h.metrics.RecordError(nodeID, "tts", "tts_error")
 					if sinkErr := safeSink("error", map[string]string{"error": "tts_error", "message": ttsErr.Error()}); sinkErr != nil {
 						return sinkErr
 					}
-				} else if len(audioBytes) > 0 {
-					if h.coord != nil {
-						h.coord.Transition(StateSpeaking, &transcript, &reply, &engine, nil)
+				} else {
+					h.metrics.RecordStageDuration(nodeID, "tts", "success", ttsDuration)
+					if ttsDuration > 0.001 && len(reply) > 0 {
+						cps := float64(len(reply)) / ttsDuration
+						h.metrics.RecordTTSCPS(nodeID, engine, cps)
 					}
-					emitChunk(format, audioBytes, true)
+					if len(audioBytes) > 0 {
+						if h.coord != nil {
+							h.coord.Transition(StateSpeaking, &transcript, &reply, &engine, nil)
+						}
+						emitChunk(format, audioBytes, true)
+					}
 				}
 			}
 			// Devil's Advocate catch: still emit reply so the kiosk caption
@@ -409,22 +494,40 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 				return err
 			}
 			if h.tts != nil {
+				ttsStart := time.Now()
 				audioBytes, format, ttsErr := h.tts.Synthesize(ctx, reply)
+				ttsDuration := time.Since(ttsStart).Seconds()
 				if ttsErr != nil {
+					slog.Warn("TTS synthesis failed", "node_id", nodeID, "error", ttsErr)
+					finalStatus = "error"
+					h.metrics.RecordStageDuration(nodeID, "tts", "error", ttsDuration)
+					h.metrics.RecordError(nodeID, "tts", "tts_error")
 					if sinkErr := safeSink("error", map[string]string{"error": "tts_error", "message": ttsErr.Error()}); sinkErr != nil {
 						return sinkErr
 					}
-				} else if len(audioBytes) > 0 {
-					if h.coord != nil {
-						h.coord.Transition(StateSpeaking, &transcript, &reply, &engine, nil)
+				} else {
+					h.metrics.RecordStageDuration(nodeID, "tts", "success", ttsDuration)
+					if ttsDuration > 0.001 && len(reply) > 0 {
+						cps := float64(len(reply)) / ttsDuration
+						h.metrics.RecordTTSCPS(nodeID, engine, cps)
 					}
-					emitChunk(format, audioBytes, true)
+					if len(audioBytes) > 0 {
+						if h.coord != nil {
+							h.coord.Transition(StateSpeaking, &transcript, &reply, &engine, nil)
+						}
+						emitChunk(format, audioBytes, true)
+					}
 				}
 			}
 		}
 	} else {
+		brainStart := time.Now()
 		reply, err = h.brain.Ask(ctx, askReq, onStatus)
+		brainDuration := time.Since(brainStart).Seconds()
 		if err != nil {
+			finalStatus = "error"
+			h.metrics.RecordStageDuration(nodeID, "brain", "error", brainDuration)
+			h.metrics.RecordError(nodeID, "brain", "brain_error")
 			if h.coord != nil {
 				h.coord.Transition(StateError, nil, nil, nil, nil)
 			}
@@ -433,6 +536,7 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 			}
 			return fmt.Errorf("%w: %w", ErrBrainFailed, err)
 		}
+		h.metrics.RecordStageDuration(nodeID, "brain", "success", brainDuration)
 
 		// Devil's Advocate catch: Always emit reply event so kiosk caption toast renders reply text,
 		// even if TTS synthesis subsequently fails!
@@ -442,24 +546,37 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 
 		// Step 5: Speech synthesis (TTS)
 		if h.tts != nil {
+			ttsStart := time.Now()
 			audioBytes, format, ttsErr := h.tts.Synthesize(ctx, reply)
+			ttsDuration := time.Since(ttsStart).Seconds()
 			if ttsErr != nil {
+				slog.Warn("TTS synthesis failed", "node_id", nodeID, "error", ttsErr)
+				finalStatus = "error"
+				h.metrics.RecordStageDuration(nodeID, "tts", "error", ttsDuration)
+				h.metrics.RecordError(nodeID, "tts", "tts_error")
 				// Graceful degradation: Log/emit error for TTS but don't drop the interaction reply
 				if sinkErr := safeSink("error", map[string]string{"error": "tts_error", "message": ttsErr.Error()}); sinkErr != nil {
 					return sinkErr
 				}
-			} else if len(audioBytes) > 0 {
-				if h.coord != nil {
-					h.coord.Transition(StateSpeaking, &transcript, &reply, &engine, nil)
+			} else {
+				h.metrics.RecordStageDuration(nodeID, "tts", "success", ttsDuration)
+				if ttsDuration > 0.001 && len(reply) > 0 {
+					cps := float64(len(reply)) / ttsDuration
+					h.metrics.RecordTTSCPS(nodeID, engine, cps)
 				}
-				b64 := base64.StdEncoding.EncodeToString(audioBytes)
-				if err := safeSink("audio_chunk", map[string]any{
-					"chunk_index": 0,
-					"format":      format,
-					"is_final":    true,
-					"data":        b64,
-				}); err != nil {
-					return err
+				if len(audioBytes) > 0 {
+					if h.coord != nil {
+						h.coord.Transition(StateSpeaking, &transcript, &reply, &engine, nil)
+					}
+					b64 := base64.StdEncoding.EncodeToString(audioBytes)
+					if err := safeSink("audio_chunk", map[string]any{
+						"chunk_index": 0,
+						"format":      format,
+						"is_final":    true,
+						"data":        b64,
+					}); err != nil {
+						return err
+					}
 				}
 			}
 		}
@@ -476,6 +593,7 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 
 	return nil
 }
+
 
 // --- Default STT Client ---
 

@@ -1,5 +1,6 @@
 import base64
 import io
+import json
 import math
 import os
 import struct
@@ -10,7 +11,7 @@ import unittest
 from unittest.mock import MagicMock, call, patch
 
 from clients.voice.config import VoiceConfig
-from clients.voice.client import VoiceDaemon, post_voice_state
+from clients.voice.client import VoiceDaemon, post_voice_state, post_voice_heartbeat
 
 
 class MockModel:
@@ -276,6 +277,204 @@ class TestVoiceDaemon(unittest.TestCase):
         daemon = VoiceDaemon(self.cfg, model=MockModel())
         self.assertTrue(daemon.play_audio(b"fake-mp3-bytes"))
         mock_popen.assert_called_once_with(["/usr/bin/pw-play", "-"], stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
+
+    def test_check_wake_word_measures_eval_latency(self):
+        mock_model = MockModel(score_map={"hey_jarvis": 0.1})
+        daemon = VoiceDaemon(self.cfg, model=mock_model)
+        self.assertEqual(daemon.last_wake_eval_ms, 0.0)
+        self.assertEqual(daemon.last_speech_duration_ms, 0.0)
+        self.assertEqual(daemon.last_silence_duration_ms, 0.0)
+        self.assertEqual(daemon.false_wakes_count, 0)
+        self.assertEqual(daemon.last_playback_sec, 0.0)
+
+        # Measure eval latency during prediction
+        silent_frame = struct.pack("<1280h", *([0] * 1280))
+        with patch.object(mock_model, "predict", side_effect=lambda chunk: (time.sleep(0.002), {"hey_jarvis": 0.1})[1]):
+            daemon._check_wake_word(silent_frame)
+
+        self.assertGreater(daemon.last_wake_eval_ms, 0.0)
+
+        # Ambient reset: preparing an ambient segment resets last_wake_eval_ms to 0.0
+        daemon.last_wake_eval_ms = 42.0
+        with patch.object(daemon, "_classify_ambient", return_value={"engage": False}):
+            daemon._ambient_worker([silent_frame])
+        self.assertEqual(daemon.last_wake_eval_ms, 0.0)
+
+    @patch("clients.voice.client.post_voice_state")
+    def test_utterance_timing_includes_preroll(self, mock_post_state):
+        mock_model = MockModel(score_map={"hey_jarvis": 0.0})
+        daemon = VoiceDaemon(self.cfg, model=mock_model)
+
+        silent_frame = struct.pack("<1280h", *([0] * 1280))
+        # Feed 3 pre-roll frames in idle (3 * 1280 / 16000 = 0.24s)
+        daemon.process_frame(silent_frame)
+        daemon.process_frame(silent_frame)
+        daemon.process_frame(silent_frame)
+        self.assertEqual(len(daemon.pre_roll), 3)
+
+        # Wake detection on 4th frame
+        mock_model.score_map = {"hey_jarvis": 0.90}
+        event = daemon.process_frame(silent_frame)
+        self.assertEqual(event, "wake_detected")
+        self.assertEqual(daemon.state, "listening")
+
+        # Speech frame
+        speech_frame = struct.pack("<1280h", *([10000] * 1280))
+        daemon.process_frame(speech_frame)
+        self.assertTrue(daemon.has_spoken)
+
+        # Simulate 2.0s elapsed speech and 0.2s silence
+        now = time.time()
+        daemon.record_start = now - 2.0
+        daemon.silence_start = now - 0.2
+        with patch.object(daemon, "dispatch_hub_interaction") as mock_dispatch:
+            event = daemon.process_frame(silent_frame)
+            self.assertEqual(event, "utterance_saved")
+            mock_dispatch.assert_called_once_with(self.save_path)
+
+        # Pre-roll is 4 frames now (4 * 1280 / 16000 = 0.32s)
+        # Total elapsed = 2.0 + 0.32 = 2.32s
+        # Silence duration = 0.2s
+        # Speech duration = (2.32 - 0.2) = 2.12s -> 2120ms
+        self.assertAlmostEqual(daemon.last_speech_duration_ms, 2120.0, delta=100.0)
+        self.assertAlmostEqual(daemon.last_silence_duration_ms, 200.0, delta=100.0)
+
+    @patch("clients.voice.client.post_voice_state")
+    def test_false_wake_increments_counter(self, mock_post_state):
+        mock_model = MockModel(score_map={"hey_jarvis": 0.90})
+        daemon = VoiceDaemon(self.cfg, model=mock_model)
+        self.assertEqual(daemon.false_wakes_count, 0)
+
+        silent_frame = struct.pack("<1280h", *([0] * 1280))
+        # 1. First false wake
+        daemon.process_frame(silent_frame)
+        self.assertEqual(daemon.state, "listening")
+        daemon.record_start = time.time() - 3.2
+        event1 = daemon.process_frame(silent_frame)
+        self.assertEqual(event1, "wake_aborted")
+        self.assertEqual(daemon.false_wakes_count, 1)
+
+        # 2. Second false wake
+        daemon.cooldown_until = 0.0
+        daemon.process_frame(silent_frame)
+        self.assertEqual(daemon.state, "listening")
+        daemon.record_start = time.time() - 3.2
+        event2 = daemon.process_frame(silent_frame)
+        self.assertEqual(event2, "wake_aborted")
+        self.assertEqual(daemon.false_wakes_count, 2)
+
+    @patch("clients.voice.client.urllib.request.urlopen")
+    def test_hub_stream_worker_attaches_timings_and_120s_timeout(self, mock_urlopen):
+        mock_resp = MagicMock()
+        mock_resp.status = 200
+        mock_resp.__iter__.return_value = iter([b"event: done\r\ndata: {}\r\n\r\n"])
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        with open(self.save_path, "wb") as f:
+            f.write(b"RIFFdummyWAVE")
+
+        daemon = VoiceDaemon(self.cfg, model=MockModel())
+        daemon.last_wake_eval_ms = 45.2
+        daemon.last_speech_duration_ms = 2150.3
+        daemon.last_silence_duration_ms = 850.1
+
+        daemon._hub_stream_worker(self.save_path)
+
+        mock_urlopen.assert_called_once()
+        req, kwargs = mock_urlopen.call_args[0][0], mock_urlopen.call_args[1]
+        self.assertEqual(kwargs.get("timeout"), 120.0)
+
+        body = req.data.decode("utf-8", errors="replace")
+        self.assertIn('name="wake_eval_ms"\r\n\r\n45.2', body)
+        self.assertIn('name="speech_duration_ms"\r\n\r\n2150.3', body)
+        self.assertIn('name="silence_duration_ms"\r\n\r\n850.1', body)
+        self.assertIn('name="node_id"\r\n\r\ntouch-kiosk-kitchen', body)
+        self.assertIn('name="audio"; filename="utterance.wav"', body)
+
+    @patch("clients.voice.client.urllib.request.urlopen")
+    def test_heartbeat_payload_and_exception_handling(self, mock_urlopen):
+        mock_resp = MagicMock()
+        mock_resp.status = 200
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        # 1. Valid heartbeat post
+        res = post_voice_heartbeat(
+            hub_url="http://test-hub:9000/api/voice/interact",
+            node_id="touch-kiosk-kitchen",
+            db=-40.56,
+            false_wakes=3,
+            last_playback_sec=1.234,
+            timeout=2.0,
+        )
+        self.assertTrue(res)
+        mock_urlopen.assert_called_once()
+        req, kwargs = mock_urlopen.call_args[0][0], mock_urlopen.call_args[1]
+        self.assertEqual(req.full_url, "http://test-hub:9000/api/voice/heartbeat")
+        self.assertEqual(kwargs.get("timeout"), 2.0)
+        payload = json.loads(req.data.decode("utf-8"))
+        self.assertEqual(payload["node_id"], "touch-kiosk-kitchen")
+        self.assertEqual(payload["ambient_rms_dbfs"], -40.6)
+        self.assertEqual(payload["false_wakes"], 3)
+        self.assertEqual(payload["last_playback_sec"], 1.23)
+
+        # 2. Empty hub_url returns False without throwing
+        self.assertFalse(post_voice_heartbeat("", "touch-kiosk-kitchen", -50.0))
+
+        # 3. Exception handling in post_voice_heartbeat (URLError and Exception)
+        import urllib.error
+        mock_urlopen.side_effect = urllib.error.URLError("Network unreachable")
+        self.assertFalse(
+            post_voice_heartbeat("http://test-hub:9000", "touch-kiosk-kitchen", -50.0)
+        )
+
+        mock_urlopen.side_effect = RuntimeError("Fatal socket error")
+        self.assertFalse(
+            post_voice_heartbeat("http://test-hub:9000", "touch-kiosk-kitchen", -50.0)
+        )
+
+        # 4. VoiceDaemon._send_heartbeat catches exceptions cleanly
+        daemon = VoiceDaemon(self.cfg, model=MockModel())
+        mock_urlopen.side_effect = urllib.error.URLError("Connection refused")
+        # Should not raise
+        daemon._send_heartbeat("http://test-hub:9000", payload)
+
+        # 5. Play audio measures playback duration
+        proc = MagicMock()
+        proc.communicate.side_effect = lambda input, timeout: (time.sleep(0.002), (b"", b""))[1]
+        proc.returncode = 0
+        with patch("clients.voice.client.shutil.which", return_value="/usr/bin/pw-play"), \
+                patch("clients.voice.client.subprocess.Popen", return_value=proc):
+            daemon.play_audio(b"sample-audio")
+            self.assertGreater(daemon.last_playback_sec, 0.0)
+
+    @patch("clients.voice.client.threading.Thread")
+    def test_run_heartbeat_dispatch(self, mock_thread_cls):
+        mock_model = MockModel(score_map={"hey_jarvis": 0.0})
+        daemon = VoiceDaemon(self.cfg, model=mock_model)
+        daemon.false_wakes_count = 2
+        daemon.last_playback_sec = 3.5
+
+        # Feed 1 frame, but simulate time advancing past 10s
+        chunk_bytes = self.cfg.chunk_samples * 2
+        silent_frame = struct.pack("<1280h", *([0] * 1280))
+        audio_stream = io.BytesIO(silent_frame)
+
+        time_calls = [100.0, 100.0, 115.0, 115.0]
+        with patch("clients.voice.client.time.time", side_effect=lambda: time_calls.pop(0) if time_calls else 115.0), \
+             patch("clients.voice.client.post_voice_state"):
+            daemon.run(audio_source=audio_stream)
+
+        mock_thread_cls.assert_called_once()
+        _, kwargs = mock_thread_cls.call_args
+        self.assertEqual(kwargs.get("target"), daemon._send_heartbeat)
+        args = kwargs.get("args")
+        self.assertEqual(args[0], self.cfg.hub_url)
+        payload = args[1]
+        self.assertEqual(payload["node_id"], self.cfg.node_id)
+        self.assertEqual(payload["false_wakes"], 2)
+        self.assertEqual(payload["last_playback_sec"], 3.5)
+        self.assertEqual(daemon.false_wakes_count, 0)
+        self.assertEqual(daemon.last_playback_sec, 0.0)
 
     def test_stop_signal(self):
         mock_model = MockModel()

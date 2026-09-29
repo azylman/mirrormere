@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -886,8 +887,9 @@ func TestServer_VideoHandler(t *testing.T) {
 }
 
 type mockServerVoiceHandler struct {
-	stateCalls    int
-	interactCalls int
+	stateCalls     int
+	interactCalls  int
+	heartbeatCalls int
 }
 
 func (m *mockServerVoiceHandler) PostVoiceState(w http.ResponseWriter, r *http.Request) {
@@ -897,6 +899,11 @@ func (m *mockServerVoiceHandler) PostVoiceState(w http.ResponseWriter, r *http.R
 
 func (m *mockServerVoiceHandler) PostVoiceInteract(w http.ResponseWriter, r *http.Request) {
 	m.interactCalls++
+	w.WriteHeader(http.StatusOK)
+}
+
+func (m *mockServerVoiceHandler) PostVoiceHeartbeat(w http.ResponseWriter, r *http.Request) {
+	m.heartbeatCalls++
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -921,6 +928,13 @@ func TestServer_VoiceHandler(t *testing.T) {
 	srv.Routes().ServeHTTP(recInteract, reqInteract)
 	if recInteract.Code != http.StatusNotFound {
 		t.Fatalf("expected 404 when VoiceHandler unset for interact, got %d", recInteract.Code)
+	}
+
+	reqHeartbeat := httptest.NewRequest(http.MethodPost, "/api/voice/heartbeat", nil)
+	recHeartbeat := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(recHeartbeat, reqHeartbeat)
+	if recHeartbeat.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 when VoiceHandler unset for heartbeat, got %d", recHeartbeat.Code)
 	}
 
 	// Case 2: Config.VoiceHandler set at creation
@@ -950,6 +964,16 @@ func TestServer_VoiceHandler(t *testing.T) {
 		t.Fatalf("expected 1 interact call, got %d", mockH.interactCalls)
 	}
 
+	reqHeartbeat2 := httptest.NewRequest(http.MethodPost, "/api/voice/heartbeat", nil)
+	recHeartbeat2 := httptest.NewRecorder()
+	srvWithHandler.Routes().ServeHTTP(recHeartbeat2, reqHeartbeat2)
+	if recHeartbeat2.Code != http.StatusOK {
+		t.Fatalf("expected 200 for heartbeat, got %d", recHeartbeat2.Code)
+	}
+	if mockH.heartbeatCalls != 1 {
+		t.Fatalf("expected 1 heartbeat call, got %d", mockH.heartbeatCalls)
+	}
+
 	// Case 3: RegisterVoiceHandler dynamically updates handler
 	mockH2 := &mockServerVoiceHandler{}
 	srv.RegisterVoiceHandler(mockH2)
@@ -975,6 +999,31 @@ func TestServer_VoiceHandler(t *testing.T) {
 	}
 	if mockH2.interactCalls != 1 {
 		t.Fatalf("expected mockH2 to receive interact call, got %d", mockH2.interactCalls)
+	}
+
+	reqHeartbeat3 := httptest.NewRequest(http.MethodPost, "/api/voice/heartbeat", nil)
+	recHeartbeat3 := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(recHeartbeat3, reqHeartbeat3)
+	if recHeartbeat3.Code != http.StatusOK {
+		t.Fatalf("expected 200 after dynamic registration for heartbeat, got %d", recHeartbeat3.Code)
+	}
+	if mockH2.heartbeatCalls != 1 {
+		t.Fatalf("expected mockH2 to receive heartbeat call, got %d", mockH2.heartbeatCalls)
+	}
+}
+
+func TestServer_MetricsEndpoint(t *testing.T) {
+	t.Parallel()
+	srv := server.New(server.Config{})
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	rec := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK from /metrics, got %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "# HELP") {
+		t.Fatalf("expected prometheus metrics format from /metrics")
 	}
 }
 

@@ -256,7 +256,7 @@ func collectHubEvents(t *testing.T, h *Hub) map[string]any {
 		events[event] = data
 		return nil
 	}
-	if err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(1600)), "eink-display-livingroom", "sess-1", sink); err != nil {
+	if err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(1600)), "eink-display-livingroom", "sess-1", sink, EdgeTimings{}); err != nil {
 		t.Fatalf("interact: %v", err)
 	}
 	return events
@@ -340,7 +340,7 @@ func TestHub_STTErrorDoesNotWaitForSpeaker(t *testing.T) {
 		WithSpeakerIdentifier(&mockIdentifier{id: "mike", delay: 10 * time.Second}),
 	)
 	start := time.Now()
-	err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(1600)), "n", "s", func(string, any) error { return nil })
+	err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(1600)), "n", "s", func(string, any) error { return nil }, EdgeTimings{})
 	if err == nil {
 		t.Fatal("expected STT error")
 	}

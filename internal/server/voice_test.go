@@ -16,6 +16,7 @@ import (
 	"github.com/azylman/mirrormere/internal/events"
 	"github.com/azylman/mirrormere/internal/server"
 	"github.com/azylman/mirrormere/internal/voice"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 type mockVoiceCoord struct {
@@ -53,19 +54,21 @@ func (m *mockVoiceCoord) SetState(state string, transcript, reply, ttsEngine *st
 
 type mockVoiceHub struct {
 	enabled    bool
-	interactFn func(ctx context.Context, audio io.Reader, nodeID, sessionID string, sink voice.SSEEventSink) error
+	interactFn func(ctx context.Context, audio io.Reader, nodeID, sessionID string, sink voice.SSEEventSink, timings voice.EdgeTimings) error
 }
 
 func (m *mockVoiceHub) IsEnabled() bool {
 	return m.enabled
 }
 
-func (m *mockVoiceHub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID string, sink voice.SSEEventSink) error {
+func (m *mockVoiceHub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID string, sink voice.SSEEventSink, timings voice.EdgeTimings) error {
 	if m.interactFn != nil {
-		return m.interactFn(ctx, audio, nodeID, sessionID, sink)
+		return m.interactFn(ctx, audio, nodeID, sessionID, sink, timings)
 	}
 	return nil
 }
+
+var dummyWAV = append([]byte("RIFF1234WAVEfmt \x10\x00\x00\x00\x01\x00\x01\x00\x80>\x00\x00\x00}\x00\x00\x02\x00\x10\x00data\x00\x00\x00\x00"), make([]byte, 100)...)
 
 func createMultipartAudioRequest(method, url string, fieldName, fileName string, fileContent []byte, extraFields map[string]string) (*http.Request, error) {
 	var b bytes.Buffer
@@ -279,8 +282,6 @@ func TestDefaultVoiceHandler_PostVoiceState(t *testing.T) {
 func TestDefaultVoiceHandler_PostVoiceInteract(t *testing.T) {
 	t.Parallel()
 
-	dummyWAV := append([]byte("RIFF1234WAVEfmt \x10\x00\x00\x00\x01\x00\x01\x00\x80>\x00\x00\x00}\x00\x00\x02\x00\x10\x00data\x00\x00\x00\x00"), make([]byte, 100)...)
-
 	t.Run("OPTIONS returns 204 No Content", func(t *testing.T) {
 		t.Parallel()
 		hub := &mockVoiceHub{enabled: true}
@@ -415,7 +416,7 @@ func TestDefaultVoiceHandler_PostVoiceInteract(t *testing.T) {
 		t.Parallel()
 		hub := &mockVoiceHub{
 			enabled: true,
-			interactFn: func(ctx context.Context, audio io.Reader, nodeID, sessionID string, sink voice.SSEEventSink) error {
+			interactFn: func(ctx context.Context, audio io.Reader, nodeID, sessionID string, sink voice.SSEEventSink, timings voice.EdgeTimings) error {
 				return voice.ErrInvalidAudio
 			},
 		}
@@ -437,7 +438,7 @@ func TestDefaultVoiceHandler_PostVoiceInteract(t *testing.T) {
 		t.Parallel()
 		hub := &mockVoiceHub{
 			enabled: true,
-			interactFn: func(ctx context.Context, audio io.Reader, nodeID, sessionID string, sink voice.SSEEventSink) error {
+			interactFn: func(ctx context.Context, audio io.Reader, nodeID, sessionID string, sink voice.SSEEventSink, timings voice.EdgeTimings) error {
 				return voice.ErrInteractionBusy
 			},
 		}
@@ -459,7 +460,7 @@ func TestDefaultVoiceHandler_PostVoiceInteract(t *testing.T) {
 		t.Parallel()
 		hub := &mockVoiceHub{
 			enabled: true,
-			interactFn: func(ctx context.Context, audio io.Reader, nodeID, sessionID string, sink voice.SSEEventSink) error {
+			interactFn: func(ctx context.Context, audio io.Reader, nodeID, sessionID string, sink voice.SSEEventSink, timings voice.EdgeTimings) error {
 				return voice.ErrHubDisabled
 			},
 		}
@@ -481,7 +482,7 @@ func TestDefaultVoiceHandler_PostVoiceInteract(t *testing.T) {
 		t.Parallel()
 		hub := &mockVoiceHub{
 			enabled: true,
-			interactFn: func(ctx context.Context, audio io.Reader, nodeID, sessionID string, sink voice.SSEEventSink) error {
+			interactFn: func(ctx context.Context, audio io.Reader, nodeID, sessionID string, sink voice.SSEEventSink, timings voice.EdgeTimings) error {
 				return errors.New("boom")
 			},
 		}
@@ -504,7 +505,7 @@ func TestDefaultVoiceHandler_PostVoiceInteract(t *testing.T) {
 		var capturedNodeID, capturedSessionID string
 		hub := &mockVoiceHub{
 			enabled: true,
-			interactFn: func(ctx context.Context, audio io.Reader, nodeID, sessionID string, sink voice.SSEEventSink) error {
+			interactFn: func(ctx context.Context, audio io.Reader, nodeID, sessionID string, sink voice.SSEEventSink, timings voice.EdgeTimings) error {
 				capturedNodeID = nodeID
 				capturedSessionID = sessionID
 
@@ -573,7 +574,7 @@ func TestDefaultVoiceHandler_PostVoiceInteract(t *testing.T) {
 		t.Parallel()
 		hub := &mockVoiceHub{
 			enabled: true,
-			interactFn: func(ctx context.Context, audio io.Reader, nodeID, sessionID string, sink voice.SSEEventSink) error {
+			interactFn: func(ctx context.Context, audio io.Reader, nodeID, sessionID string, sink voice.SSEEventSink, timings voice.EdgeTimings) error {
 				if err := sink("state", map[string]string{"state": "transcribing"}); err != nil {
 					return err
 				}
@@ -599,7 +600,7 @@ func TestDefaultVoiceHandler_PostVoiceInteract(t *testing.T) {
 		var capturedNodeID, capturedSessionID string
 		hub := &mockVoiceHub{
 			enabled: true,
-			interactFn: func(ctx context.Context, audio io.Reader, nodeID, sessionID string, sink voice.SSEEventSink) error {
+			interactFn: func(ctx context.Context, audio io.Reader, nodeID, sessionID string, sink voice.SSEEventSink, timings voice.EdgeTimings) error {
 				capturedNodeID = nodeID
 				capturedSessionID = sessionID
 				return sink("done", map[string]any{"duration_ms": 100})
@@ -628,4 +629,330 @@ func TestDefaultVoiceHandler_PostVoiceInteract(t *testing.T) {
 		}
 	})
 }
+
+func TestDefaultVoiceHandler_PostVoiceHeartbeat(t *testing.T) {
+	t.Parallel()
+
+	t.Run("valid payload records metrics and returns 200 OK", func(t *testing.T) {
+		t.Parallel()
+		reg := prometheus.NewRegistry()
+		m := voice.NewMetrics(reg)
+		h := server.NewDefaultVoiceHandler(nil, nil, server.WithVoiceMetrics(m))
+
+		payload := `{"node_id":"kitchen-display","ambient_rms_dbfs":-42.3,"false_wakes":2,"last_playback_sec":1.5}`
+		req := httptest.NewRequest(http.MethodPost, "/api/voice/heartbeat", strings.NewReader(payload))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+
+		h.PostVoiceHeartbeat(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200 OK, got %d: %s", rec.Code, rec.Body.String())
+		}
+		if origin := rec.Header().Get("Access-Control-Allow-Origin"); origin != "*" {
+			t.Errorf("expected CORS origin '*', got %q", origin)
+		}
+		if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
+			t.Errorf("expected Content-Type application/json, got %q", ct)
+		}
+
+		var resp map[string]string
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("failed to decode response: %v", err)
+		}
+		if resp["status"] != "ok" {
+			t.Errorf("expected status 'ok', got %q", resp["status"])
+		}
+
+		mfs, err := reg.Gather()
+		if err != nil {
+			t.Fatalf("failed to gather metrics: %v", err)
+		}
+		var foundRMS, foundHeartbeat, foundFalseWakes, foundPlayback bool
+		for _, mf := range mfs {
+			switch mf.GetName() {
+			case "mirrormere_voice_ambient_rms_dbfs":
+				foundRMS = true
+				if val := mf.GetMetric()[0].GetGauge().GetValue(); val != -42.3 {
+					t.Errorf("expected ambient RMS -42.3, got %f", val)
+				}
+			case "mirrormere_voice_edge_last_seen_timestamp_seconds":
+				foundHeartbeat = true
+				if val := mf.GetMetric()[0].GetGauge().GetValue(); val <= 0 {
+					t.Errorf("expected positive heartbeat timestamp, got %f", val)
+				}
+			case "mirrormere_voice_false_wakes_total":
+				foundFalseWakes = true
+				if val := mf.GetMetric()[0].GetCounter().GetValue(); val != 2 {
+					t.Errorf("expected 2 false wakes, got %f", val)
+				}
+			case "mirrormere_voice_playback_duration_seconds":
+				foundPlayback = true
+				if count := mf.GetMetric()[0].GetHistogram().GetSampleCount(); count != 1 {
+					t.Errorf("expected 1 playback observation, got %d", count)
+				}
+			}
+		}
+		if !foundRMS || !foundHeartbeat || !foundFalseWakes || !foundPlayback {
+			t.Errorf("missing expected metrics: rms=%v, heartbeat=%v, falseWakes=%v, playback=%v",
+				foundRMS, foundHeartbeat, foundFalseWakes, foundPlayback)
+		}
+	})
+
+	t.Run("missing or empty node_id returns 400 Bad Request", func(t *testing.T) {
+		t.Parallel()
+		h := server.NewDefaultVoiceHandler(nil, nil)
+
+		cases := []string{
+			`{}`,
+			`{"node_id":""}`,
+			`{"node_id":"   "}`,
+		}
+
+		for _, payload := range cases {
+			req := httptest.NewRequest(http.MethodPost, "/api/voice/heartbeat", strings.NewReader(payload))
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+
+			h.PostVoiceHeartbeat(rec, req)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400 for payload %q, got %d: %s", payload, rec.Code, rec.Body.String())
+			}
+			if !strings.Contains(rec.Body.String(), "missing required 'node_id' field") {
+				t.Errorf("expected missing node_id message, got %s", rec.Body.String())
+			}
+		}
+	})
+
+	t.Run("malformed JSON body returns 400 Bad Request", func(t *testing.T) {
+		t.Parallel()
+		h := server.NewDefaultVoiceHandler(nil, nil)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/voice/heartbeat", strings.NewReader(`{invalid-json`))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+
+		h.PostVoiceHeartbeat(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d", rec.Code)
+		}
+		if !strings.Contains(rec.Body.String(), "invalid heartbeat payload") {
+			t.Errorf("expected invalid payload error, got %s", rec.Body.String())
+		}
+	})
+
+	t.Run("method not allowed returns 405 with Allow header", func(t *testing.T) {
+		t.Parallel()
+		h := server.NewDefaultVoiceHandler(nil, nil)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/voice/heartbeat", nil)
+		rec := httptest.NewRecorder()
+
+		h.PostVoiceHeartbeat(rec, req)
+		if rec.Code != http.StatusMethodNotAllowed {
+			t.Fatalf("expected 405, got %d", rec.Code)
+		}
+		if allow := rec.Header().Get("Allow"); !strings.Contains(allow, "POST") {
+			t.Errorf("expected Allow header containing POST, got %q", allow)
+		}
+	})
+
+	t.Run("OPTIONS returns 204 No Content with CORS headers", func(t *testing.T) {
+		t.Parallel()
+		h := server.NewDefaultVoiceHandler(nil, nil)
+
+		req := httptest.NewRequest(http.MethodOptions, "/api/voice/heartbeat", nil)
+		rec := httptest.NewRecorder()
+
+		h.PostVoiceHeartbeat(rec, req)
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("expected 204, got %d", rec.Code)
+		}
+		if origin := rec.Header().Get("Access-Control-Allow-Origin"); origin != "*" {
+			t.Errorf("expected origin '*', got %q", origin)
+		}
+	})
+
+	t.Run("nil metrics in handler does not panic", func(t *testing.T) {
+		t.Parallel()
+		h := server.NewDefaultVoiceHandler(nil, nil)
+
+		payload := `{"node_id":"kitchen-display","ambient_rms_dbfs":-40.0,"false_wakes":1,"last_playback_sec":2.0}`
+		req := httptest.NewRequest(http.MethodPost, "/api/voice/heartbeat", strings.NewReader(payload))
+		rec := httptest.NewRecorder()
+
+		h.PostVoiceHeartbeat(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200 OK, got %d", rec.Code)
+		}
+	})
+
+	t.Run("omitted or zero/negative optional fields do not record false wakes or playback", func(t *testing.T) {
+		t.Parallel()
+		reg := prometheus.NewRegistry()
+		m := voice.NewMetrics(reg)
+		h := server.NewDefaultVoiceHandler(nil, nil, server.WithVoiceMetrics(m))
+
+		negFalseWakes := -1
+		zeroPlayback := 0.0
+		reqPayload, _ := json.Marshal(server.VoiceHeartbeatRequest{
+			NodeID:          "kitchen-display",
+			FalseWakes:      &negFalseWakes,
+			LastPlaybackSec: &zeroPlayback,
+		})
+		req := httptest.NewRequest(http.MethodPost, "/api/voice/heartbeat", bytes.NewReader(reqPayload))
+		rec := httptest.NewRecorder()
+
+		h.PostVoiceHeartbeat(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200 OK, got %d", rec.Code)
+		}
+
+		mfs, err := reg.Gather()
+		if err != nil {
+			t.Fatalf("failed to gather: %v", err)
+		}
+		for _, mf := range mfs {
+			if mf.GetName() == "mirrormere_voice_false_wakes_total" {
+				t.Fatalf("expected no false_wakes recorded for negative value")
+			}
+			if mf.GetName() == "mirrormere_voice_playback_duration_seconds" {
+				t.Fatalf("expected no playback recorded for zero duration")
+			}
+		}
+	})
+}
+
+func TestDefaultVoiceHandler_PostVoiceInteract_TimingFields(t *testing.T) {
+	t.Parallel()
+
+	t.Run("parses valid timing fields in milliseconds into seconds", func(t *testing.T) {
+		t.Parallel()
+		var capturedTimings voice.EdgeTimings
+		hub := &mockVoiceHub{
+			enabled: true,
+			interactFn: func(ctx context.Context, audio io.Reader, nodeID, sessionID string, sink voice.SSEEventSink, timings voice.EdgeTimings) error {
+				capturedTimings = timings
+				return sink("done", map[string]any{"status": "ok"})
+			},
+		}
+		h := server.NewDefaultVoiceHandler(nil, hub)
+
+		req, err := createMultipartAudioRequest(http.MethodPost, "/api/voice/interact", "audio", "sample.wav", dummyWAV, map[string]string{
+			"node_id":             "node-1",
+			"session_id":          "s-1",
+			"wake_eval_ms":        "45.5",
+			"speech_duration_ms":  "1250.0",
+			"silence_duration_ms": "400.0",
+		})
+		if err != nil {
+			t.Fatalf("failed to create req: %v", err)
+		}
+		rec := httptest.NewRecorder()
+		h.PostVoiceInteract(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200 OK, got %d: %s", rec.Code, rec.Body.String())
+		}
+		if capturedTimings.WakeEvalSec != 0.0455 {
+			t.Errorf("expected WakeEvalSec 0.0455, got %f", capturedTimings.WakeEvalSec)
+		}
+		if capturedTimings.UtteranceSpeechSec != 1.25 {
+			t.Errorf("expected UtteranceSpeechSec 1.25, got %f", capturedTimings.UtteranceSpeechSec)
+		}
+		if capturedTimings.UtteranceSilenceSec != 0.4 {
+			t.Errorf("expected UtteranceSilenceSec 0.4, got %f", capturedTimings.UtteranceSilenceSec)
+		}
+	})
+
+	t.Run("malformed and out of range timing fields default to zero without crashing", func(t *testing.T) {
+		t.Parallel()
+		var capturedTimings voice.EdgeTimings
+		hub := &mockVoiceHub{
+			enabled: true,
+			interactFn: func(ctx context.Context, audio io.Reader, nodeID, sessionID string, sink voice.SSEEventSink, timings voice.EdgeTimings) error {
+				capturedTimings = timings
+				return sink("done", map[string]any{"status": "ok"})
+			},
+		}
+		h := server.NewDefaultVoiceHandler(nil, hub)
+
+		req, err := createMultipartAudioRequest(http.MethodPost, "/api/voice/interact", "audio", "sample.wav", dummyWAV, map[string]string{
+			"node_id":             "node-1",
+			"session_id":          "s-1",
+			"wake_eval_ms":        "not-a-number",
+			"speech_duration_ms":  "-50",
+			"silence_duration_ms": "999999",
+		})
+		if err != nil {
+			t.Fatalf("failed to create req: %v", err)
+		}
+		rec := httptest.NewRecorder()
+		h.PostVoiceInteract(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200 OK, got %d: %s", rec.Code, rec.Body.String())
+		}
+		if capturedTimings.WakeEvalSec != 0 {
+			t.Errorf("expected WakeEvalSec 0 for NaN, got %f", capturedTimings.WakeEvalSec)
+		}
+		if capturedTimings.UtteranceSpeechSec != 0 {
+			t.Errorf("expected UtteranceSpeechSec 0 for negative, got %f", capturedTimings.UtteranceSpeechSec)
+		}
+		if capturedTimings.UtteranceSilenceSec != 0 {
+			t.Errorf("expected UtteranceSilenceSec 0 for >60s, got %f", capturedTimings.UtteranceSilenceSec)
+		}
+
+		// Also verify parse error on speech and silence, and out-of-range on wake
+		req2, err := createMultipartAudioRequest(http.MethodPost, "/api/voice/interact", "audio", "sample.wav", dummyWAV, map[string]string{
+			"node_id":             "node-1",
+			"session_id":          "s-1",
+			"wake_eval_ms":        "-10",
+			"speech_duration_ms":  "invalid",
+			"silence_duration_ms": "bad",
+		})
+		if err != nil {
+			t.Fatalf("failed to create req2: %v", err)
+		}
+		rec2 := httptest.NewRecorder()
+		h.PostVoiceInteract(rec2, req2)
+		if rec2.Code != http.StatusOK {
+			t.Fatalf("expected 200 OK, got %d: %s", rec2.Code, rec2.Body.String())
+		}
+		if capturedTimings != (voice.EdgeTimings{}) {
+			t.Errorf("expected zero EdgeTimings, got %+v", capturedTimings)
+		}
+	})
+
+	t.Run("missing timing fields leave EdgeTimings zeroed", func(t *testing.T) {
+		t.Parallel()
+		var capturedTimings voice.EdgeTimings
+		hub := &mockVoiceHub{
+			enabled: true,
+			interactFn: func(ctx context.Context, audio io.Reader, nodeID, sessionID string, sink voice.SSEEventSink, timings voice.EdgeTimings) error {
+				capturedTimings = timings
+				return sink("done", map[string]any{"status": "ok"})
+			},
+		}
+		h := server.NewDefaultVoiceHandler(nil, hub)
+
+		req, err := createMultipartAudioRequest(http.MethodPost, "/api/voice/interact", "audio", "sample.wav", dummyWAV, map[string]string{
+			"node_id":    "node-1",
+			"session_id": "s-1",
+		})
+		if err != nil {
+			t.Fatalf("failed to create req: %v", err)
+		}
+		rec := httptest.NewRecorder()
+		h.PostVoiceInteract(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200 OK, got %d: %s", rec.Code, rec.Body.String())
+		}
+		if capturedTimings != (voice.EdgeTimings{}) {
+			t.Errorf("expected zero EdgeTimings, got %+v", capturedTimings)
+		}
+	})
+}
+
 
