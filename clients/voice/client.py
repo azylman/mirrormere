@@ -122,7 +122,7 @@ def post_voice_heartbeat(
             logger.debug("Posted heartbeat to %s: HTTP %d", url, status)
             return status == 200
     except (urllib.error.URLError, Exception) as e:
-        logger.debug("Failed to post voice heartbeat to %s: %s", url, e)
+        logger.warning("Failed to post voice heartbeat to %s: %s", url, e)
         return False
 
 
@@ -683,7 +683,7 @@ class VoiceDaemon:
                 timeout=2.0,
             )
         except (urllib.error.URLError, Exception) as e:
-            logger.debug("Heartbeat background dispatch failed: %s", e)
+            logger.warning("Heartbeat background dispatch failed: %s", e)
 
     def post_voice_heartbeat(
         self,
