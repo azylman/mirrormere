@@ -64,3 +64,4 @@ scratch/
 .mirrormere-coverage-*.tmp
 coverage/
 PR_DESCRIPTION.md
+.superpowers/
