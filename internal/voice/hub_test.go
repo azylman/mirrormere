@@ -14,13 +14,18 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/azylman/mirrormere/internal/config"
+
 	"github.com/azylman/mirrormere/internal/events"
+	"github.com/prometheus/client_golang/prometheus"
 )
+
 
 type mockSTT struct {
 	mu         sync.Mutex
+	delay      time.Duration
 	text       string
 	err        error
 	calledWith []byte
@@ -28,9 +33,14 @@ type mockSTT struct {
 
 func (m *mockSTT) Transcribe(ctx context.Context, wavData []byte) (string, error) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	delay := m.delay
 	m.calledWith = wavData
-	return m.text, m.err
+	text, err := m.text, m.err
+	m.mu.Unlock()
+	if delay > 0 {
+		time.Sleep(delay)
+	}
+	return text, err
 }
 
 type mockBrain struct {
@@ -57,6 +67,7 @@ func (m *mockBrain) Ask(ctx context.Context, req AskRequest, onStatus func(statu
 
 type mockTTS struct {
 	mu          sync.Mutex
+	delay       time.Duration
 	audio       []byte
 	format      string
 	err         error
@@ -67,12 +78,18 @@ type mockTTS struct {
 
 func (m *mockTTS) Synthesize(ctx context.Context, text string) ([]byte, string, error) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	delay := m.delay
 	m.calledWith = text
 	m.calledTexts = append(m.calledTexts, text)
 	m.calls++
-	return m.audio, m.format, m.err
+	audio, format, err := m.audio, m.format, m.err
+	m.mu.Unlock()
+	if delay > 0 {
+		time.Sleep(delay)
+	}
+	return audio, format, err
 }
+
 
 // mockStreamingBrain (AudioStreamingBrainClient) lives in hub_stream_test.go
 // alongside the streaming-specific tests that use it.
@@ -672,6 +689,29 @@ func TestDefaultSTTClient_Wyoming_Advanced(t *testing.T) {
 		}
 		defer conn.Close()
 
+		reader := bufio.NewReader(conn)
+		for {
+			line, rErr := reader.ReadBytes('\n')
+			if rErr != nil {
+				break
+			}
+			var hdr struct {
+				Type          string `json:"type"`
+				DataLength    int    `json:"data_length"`
+				PayloadLength int    `json:"payload_length"`
+			}
+			_ = json.Unmarshal(line, &hdr)
+			if hdr.DataLength > 0 {
+				_, _ = io.CopyN(io.Discard, reader, int64(hdr.DataLength))
+			}
+			if hdr.PayloadLength > 0 {
+				_, _ = io.CopyN(io.Discard, reader, int64(hdr.PayloadLength))
+			}
+			if hdr.Type == "audio-stop" {
+				break
+			}
+		}
+
 		// Send non-json garbage line
 		_, _ = conn.Write([]byte("not-json-line\n"))
 		// Send event with payload_length > 0
@@ -682,6 +722,7 @@ func TestDefaultSTTClient_Wyoming_Advanced(t *testing.T) {
 		_, _ = conn.Write([]byte(hdr))
 		_, _ = conn.Write([]byte(transcriptJSON))
 	}()
+
 
 	client := NewDefaultSTTClient("tcp://" + listener.Addr().String())
 	txt, err := client.Transcribe(context.Background(), makeValidWAV(100))
@@ -933,11 +974,35 @@ func TestDefaultSTTClient_Wyoming_ReadCloseAndRawText(t *testing.T) {
 		}
 		defer conn.Close()
 
+		reader := bufio.NewReader(conn)
+		for {
+			line, rErr := reader.ReadBytes('\n')
+			if rErr != nil {
+				break
+			}
+			var hdr struct {
+				Type          string `json:"type"`
+				DataLength    int    `json:"data_length"`
+				PayloadLength int    `json:"payload_length"`
+			}
+			_ = json.Unmarshal(line, &hdr)
+			if hdr.DataLength > 0 {
+				_, _ = io.CopyN(io.Discard, reader, int64(hdr.DataLength))
+			}
+			if hdr.PayloadLength > 0 {
+				_, _ = io.CopyN(io.Discard, reader, int64(hdr.PayloadLength))
+			}
+			if hdr.Type == "audio-stop" {
+				break
+			}
+		}
+
 		rawString := "raw transcript fallback"
 		hdr := fmt.Sprintf("{\"type\":\"transcript\",\"data_length\":%d}\n", len(rawString))
 		_, _ = conn.Write([]byte(hdr))
 		_, _ = conn.Write([]byte(rawString))
 	}()
+
 
 	clientRaw := NewDefaultSTTClient("tcp://" + listenerRaw.Addr().String())
 	txt, err := clientRaw.Transcribe(context.Background(), makeValidWAV(100))
@@ -1053,3 +1118,559 @@ func TestDefaultSTTClient_Wyoming_TruncatedDataAndPayload(t *testing.T) {
 		t.Fatal("expected error on truncated payload")
 	}
 }
+
+func TestHub_MetricsRecording_Success(t *testing.T) {
+	t.Parallel()
+
+	reg := prometheus.NewRegistry()
+	m := NewMetrics(reg)
+
+	cfg := &config.VoiceHubConfig{
+		Enabled:  true,
+		TTSModel: "kokoro",
+	}
+	stt := &mockSTT{delay: 2 * time.Millisecond, text: "lights on"}
+	brain := &mockBrain{reply: "turning on lights"}
+	tts := &mockTTS{delay: 2 * time.Millisecond, audio: []byte("tts-audio-bytes"), format: "wav"}
+
+
+	h := NewHub(cfg, nil,
+		WithSTTClient(stt),
+		WithBrainClient(brain),
+		WithTTSClient(tts),
+		WithMetrics(m),
+	)
+
+	// 16000 samples = 1 second of audio at 16kHz
+	wav := makeValidWAV(16000)
+	timings := EdgeTimings{
+		WakeEvalSec:         0.05,
+		UtteranceSpeechSec:  1.0,
+		UtteranceSilenceSec: 0.25,
+	}
+
+	sink := func(string, any) error { return nil }
+	err := h.Interact(context.Background(), bytes.NewReader(wav), "kiosk-kitchen", "sess-1", sink, timings)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	mfs, err := reg.Gather()
+	if err != nil {
+		t.Fatalf("failed to gather metrics: %v", err)
+	}
+
+	stagesFound := make(map[string]bool)
+	var turnsSuccessCount float64
+	var foundRTF, foundCPS bool
+
+	for _, mf := range mfs {
+		switch mf.GetName() {
+		case "mirrormere_voice_stage_duration_seconds":
+			for _, metric := range mf.GetMetric() {
+				var stage, status string
+				for _, lbl := range metric.GetLabel() {
+					if lbl.GetName() == "stage" {
+						stage = lbl.GetValue()
+					}
+					if lbl.GetName() == "status" {
+						status = lbl.GetValue()
+					}
+				}
+				if status == "success" {
+					stagesFound[stage] = true
+				}
+			}
+		case "mirrormere_voice_turns_total":
+			for _, metric := range mf.GetMetric() {
+				var status string
+				for _, lbl := range metric.GetLabel() {
+					if lbl.GetName() == "status" {
+						status = lbl.GetValue()
+					}
+				}
+				if status == "success" {
+					turnsSuccessCount += metric.GetCounter().GetValue()
+				}
+			}
+		case "mirrormere_voice_stt_rtf":
+			for _, metric := range mf.GetMetric() {
+				var engine string
+				for _, lbl := range metric.GetLabel() {
+					if lbl.GetName() == "engine" {
+						engine = lbl.GetValue()
+					}
+				}
+				if engine == "whisper" && metric.GetGauge().GetValue() >= 0 {
+					foundRTF = true
+				}
+			}
+		case "mirrormere_voice_tts_chars_per_second":
+			for _, metric := range mf.GetMetric() {
+				var voiceLbl string
+				for _, lbl := range metric.GetLabel() {
+					if lbl.GetName() == "voice" {
+						voiceLbl = lbl.GetValue()
+					}
+				}
+				if voiceLbl == "kokoro" && metric.GetGauge().GetValue() > 0 {
+					foundCPS = true
+				}
+			}
+		}
+	}
+
+	expectedStages := []string{"wake_eval", "utterance_speech", "utterance_silence", "stt", "brain", "tts"}
+	for _, s := range expectedStages {
+		if !stagesFound[s] {
+			t.Errorf("missing success stage duration metric for: %s", s)
+		}
+	}
+	if turnsSuccessCount != 1 {
+		t.Errorf("expected 1 successful turn, got %f", turnsSuccessCount)
+	}
+	if !foundRTF {
+		t.Errorf("expected valid RTF gauge for whisper")
+	}
+	if !foundCPS {
+		t.Errorf("expected valid CPS gauge for kokoro")
+	}
+}
+
+func TestHub_MetricsRecording_STTFailure(t *testing.T) {
+	t.Parallel()
+
+	reg := prometheus.NewRegistry()
+	m := NewMetrics(reg)
+
+	cfg := &config.VoiceHubConfig{Enabled: true}
+	stt := &mockSTT{err: errors.New("whisper down")}
+
+	h := NewHub(cfg, nil,
+		WithSTTClient(stt),
+		WithMetrics(m),
+	)
+
+	wav := makeValidWAV(1600)
+	sink := func(string, any) error { return nil }
+	err := h.Interact(context.Background(), bytes.NewReader(wav), "kiosk-kitchen", "sess-1", sink, EdgeTimings{})
+	if !errors.Is(err, ErrSTTFailed) {
+		t.Fatalf("expected ErrSTTFailed, got: %v", err)
+	}
+
+	mfs, err := reg.Gather()
+	if err != nil {
+		t.Fatalf("failed to gather metrics: %v", err)
+	}
+
+	var foundSTTErrorStage bool
+	var foundSTTErrorCounter bool
+	var foundErrorTurn bool
+
+	for _, mf := range mfs {
+		switch mf.GetName() {
+		case "mirrormere_voice_stage_duration_seconds":
+			for _, metric := range mf.GetMetric() {
+				var stage, status string
+				for _, lbl := range metric.GetLabel() {
+					if lbl.GetName() == "stage" {
+						stage = lbl.GetValue()
+					}
+					if lbl.GetName() == "status" {
+						status = lbl.GetValue()
+					}
+				}
+				if stage == "stt" && status == "error" {
+					foundSTTErrorStage = true
+				}
+			}
+		case "mirrormere_voice_errors_total":
+			for _, metric := range mf.GetMetric() {
+				var stage, errType string
+				for _, lbl := range metric.GetLabel() {
+					if lbl.GetName() == "stage" {
+						stage = lbl.GetValue()
+					}
+					if lbl.GetName() == "error_type" {
+						errType = lbl.GetValue()
+					}
+				}
+				if stage == "stt" && errType == "stt_error" && metric.GetCounter().GetValue() == 1 {
+					foundSTTErrorCounter = true
+				}
+			}
+		case "mirrormere_voice_turns_total":
+			for _, metric := range mf.GetMetric() {
+				for _, lbl := range metric.GetLabel() {
+					if lbl.GetName() == "status" && lbl.GetValue() == "error" && metric.GetCounter().GetValue() == 1 {
+						foundErrorTurn = true
+					}
+				}
+			}
+		}
+	}
+
+	if !foundSTTErrorStage {
+		t.Errorf("missing stt error stage duration metric")
+	}
+	if !foundSTTErrorCounter {
+		t.Errorf("missing stt error counter metric")
+	}
+	if !foundErrorTurn {
+		t.Errorf("missing turns_total error counter metric")
+	}
+}
+
+func TestHub_MetricsRecording_BrainFailure(t *testing.T) {
+	t.Parallel()
+
+	reg := prometheus.NewRegistry()
+	m := NewMetrics(reg)
+
+	cfg := &config.VoiceHubConfig{Enabled: true}
+	stt := &mockSTT{text: "hello"}
+	brain := &mockBrain{err: errors.New("brain failed")}
+
+	h := NewHub(cfg, nil,
+		WithSTTClient(stt),
+		WithBrainClient(brain),
+		WithMetrics(m),
+	)
+
+	wav := makeValidWAV(1600)
+	sink := func(string, any) error { return nil }
+	err := h.Interact(context.Background(), bytes.NewReader(wav), "kiosk-kitchen", "sess-1", sink, EdgeTimings{})
+	if !errors.Is(err, ErrBrainFailed) {
+		t.Fatalf("expected ErrBrainFailed, got: %v", err)
+	}
+
+	mfs, err := reg.Gather()
+	if err != nil {
+		t.Fatalf("failed to gather metrics: %v", err)
+	}
+
+	var foundBrainErrorStage bool
+	var foundBrainErrorCounter bool
+	var foundErrorTurn bool
+
+	for _, mf := range mfs {
+		switch mf.GetName() {
+		case "mirrormere_voice_stage_duration_seconds":
+			for _, metric := range mf.GetMetric() {
+				var stage, status string
+				for _, lbl := range metric.GetLabel() {
+					if lbl.GetName() == "stage" {
+						stage = lbl.GetValue()
+					}
+					if lbl.GetName() == "status" {
+						status = lbl.GetValue()
+					}
+				}
+				if stage == "brain" && status == "error" {
+					foundBrainErrorStage = true
+				}
+			}
+		case "mirrormere_voice_errors_total":
+			for _, metric := range mf.GetMetric() {
+				var stage, errType string
+				for _, lbl := range metric.GetLabel() {
+					if lbl.GetName() == "stage" {
+						stage = lbl.GetValue()
+					}
+					if lbl.GetName() == "error_type" {
+						errType = lbl.GetValue()
+					}
+				}
+				if stage == "brain" && errType == "brain_error" && metric.GetCounter().GetValue() == 1 {
+					foundBrainErrorCounter = true
+				}
+			}
+		case "mirrormere_voice_turns_total":
+			for _, metric := range mf.GetMetric() {
+				for _, lbl := range metric.GetLabel() {
+					if lbl.GetName() == "status" && lbl.GetValue() == "error" && metric.GetCounter().GetValue() == 1 {
+						foundErrorTurn = true
+					}
+				}
+			}
+		}
+	}
+
+	if !foundBrainErrorStage {
+		t.Errorf("missing brain error stage duration metric")
+	}
+	if !foundBrainErrorCounter {
+		t.Errorf("missing brain error counter metric")
+	}
+	if !foundErrorTurn {
+		t.Errorf("missing turns_total error counter metric")
+	}
+}
+
+func TestHub_MetricsRecording_TTSFailure(t *testing.T) {
+	t.Parallel()
+
+	reg := prometheus.NewRegistry()
+	m := NewMetrics(reg)
+
+	cfg := &config.VoiceHubConfig{Enabled: true}
+	stt := &mockSTT{text: "hello"}
+	brain := &mockBrain{reply: "hi there"}
+	tts := &mockTTS{err: errors.New("tts failed")}
+
+	h := NewHub(cfg, nil,
+		WithSTTClient(stt),
+		WithBrainClient(brain),
+		WithTTSClient(tts),
+		WithMetrics(m),
+	)
+
+	wav := makeValidWAV(1600)
+	sink := func(string, any) error { return nil }
+	err := h.Interact(context.Background(), bytes.NewReader(wav), "kiosk-kitchen", "sess-1", sink, EdgeTimings{})
+	if err != nil {
+		t.Fatalf("expected graceful degradation on TTS failure, got err: %v", err)
+	}
+
+	mfs, err := reg.Gather()
+	if err != nil {
+		t.Fatalf("failed to gather metrics: %v", err)
+	}
+
+	var foundTTSErrorStage bool
+	var foundTTSErrorCounter bool
+	var foundErrorTurn bool
+
+	for _, mf := range mfs {
+		switch mf.GetName() {
+		case "mirrormere_voice_stage_duration_seconds":
+			for _, metric := range mf.GetMetric() {
+				var stage, status string
+				for _, lbl := range metric.GetLabel() {
+					if lbl.GetName() == "stage" {
+						stage = lbl.GetValue()
+					}
+					if lbl.GetName() == "status" {
+						status = lbl.GetValue()
+					}
+				}
+				if stage == "tts" && status == "error" {
+					foundTTSErrorStage = true
+				}
+			}
+		case "mirrormere_voice_errors_total":
+			for _, metric := range mf.GetMetric() {
+				var stage, errType string
+				for _, lbl := range metric.GetLabel() {
+					if lbl.GetName() == "stage" {
+						stage = lbl.GetValue()
+					}
+					if lbl.GetName() == "error_type" {
+						errType = lbl.GetValue()
+					}
+				}
+				if stage == "tts" && errType == "tts_error" && metric.GetCounter().GetValue() == 1 {
+					foundTTSErrorCounter = true
+				}
+			}
+		case "mirrormere_voice_turns_total":
+			for _, metric := range mf.GetMetric() {
+				for _, lbl := range metric.GetLabel() {
+					if lbl.GetName() == "status" && lbl.GetValue() == "error" && metric.GetCounter().GetValue() == 1 {
+						foundErrorTurn = true
+					}
+				}
+			}
+		}
+	}
+
+	if !foundTTSErrorStage {
+		t.Errorf("missing tts error stage duration metric")
+	}
+	if !foundTTSErrorCounter {
+		t.Errorf("missing tts error counter metric")
+	}
+	if !foundErrorTurn {
+		t.Errorf("missing turns_total error counter metric on degraded TTS")
+	}
+}
+
+type delayStreamingBrain struct {
+	*mockStreamingBrain
+	delay time.Duration
+}
+
+func (d *delayStreamingBrain) AskStreaming(ctx context.Context, req AskRequest, onStatus func(status string), onAudio func(chunk BrainAudioChunk)) (string, error) {
+	reply, err := d.mockStreamingBrain.AskStreaming(ctx, req, onStatus, onAudio)
+	if d.delay > 0 {
+		time.Sleep(d.delay)
+	}
+	return reply, err
+}
+
+func TestHub_MetricsRecording_StreamingBrain(t *testing.T) {
+	t.Parallel()
+
+	reg := prometheus.NewRegistry()
+	m := NewMetrics(reg)
+
+	cfg := &config.VoiceHubConfig{
+		Enabled:  true,
+		TTSModel: "kokoro",
+	}
+	stt := &mockSTT{delay: 2 * time.Millisecond, text: "what is the weather"}
+	baseBrain := &mockStreamingBrain{
+		reply: "It's sunny today. Enjoy the warmth.",
+		sentences: []BrainAudioChunk{
+			{Text: "It's sunny today.", Format: "wav", Data: []byte("chunk-1")},
+			{Text: "Enjoy the warmth.", Format: "wav", Data: []byte("chunk-2")},
+		},
+	}
+	brain := &delayStreamingBrain{
+		mockStreamingBrain: baseBrain,
+		delay:              2 * time.Millisecond,
+	}
+
+	h := NewHub(cfg, nil,
+		WithSTTClient(stt),
+		WithBrainClient(brain),
+		WithMetrics(m),
+	)
+
+
+	wav := makeValidWAV(16000)
+	sink := func(string, any) error { return nil }
+	err := h.Interact(context.Background(), bytes.NewReader(wav), "kiosk-kitchen", "sess-1", sink, EdgeTimings{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	mfs, err := reg.Gather()
+	if err != nil {
+		t.Fatalf("failed to gather metrics: %v", err)
+	}
+
+	var foundTTSSuccessStage bool
+	var foundCPS bool
+	var foundSuccessTurn bool
+
+	for _, mf := range mfs {
+		switch mf.GetName() {
+		case "mirrormere_voice_stage_duration_seconds":
+			for _, metric := range mf.GetMetric() {
+				var stage, status string
+				for _, lbl := range metric.GetLabel() {
+					if lbl.GetName() == "stage" {
+						stage = lbl.GetValue()
+					}
+					if lbl.GetName() == "status" {
+						status = lbl.GetValue()
+					}
+				}
+				if stage == "tts" && status == "success" {
+					foundTTSSuccessStage = true
+				}
+			}
+		case "mirrormere_voice_tts_chars_per_second":
+			for _, metric := range mf.GetMetric() {
+				var voiceLbl string
+				for _, lbl := range metric.GetLabel() {
+					if lbl.GetName() == "voice" {
+						voiceLbl = lbl.GetValue()
+					}
+				}
+				if voiceLbl == "kokoro" && metric.GetGauge().GetValue() > 0 {
+					foundCPS = true
+				}
+			}
+		case "mirrormere_voice_turns_total":
+			for _, metric := range mf.GetMetric() {
+				for _, lbl := range metric.GetLabel() {
+					if lbl.GetName() == "status" && lbl.GetValue() == "success" && metric.GetCounter().GetValue() == 1 {
+						foundSuccessTurn = true
+					}
+				}
+			}
+		}
+	}
+
+	if !foundTTSSuccessStage {
+		t.Errorf("missing tts success stage duration metric for streaming brain")
+	}
+	if !foundCPS {
+		t.Errorf("missing tts_chars_per_second metric for streaming brain")
+	}
+	if !foundSuccessTurn {
+		t.Errorf("missing turns_total success counter metric for streaming brain")
+	}
+}
+
+func TestMetrics_RecordFalseWakes(t *testing.T) {
+	t.Parallel()
+	reg := prometheus.NewRegistry()
+	m := NewMetrics(reg)
+
+	m.RecordFalseWakes("kitchen-display", 3)
+	// <= 0 ignored
+	m.RecordFalseWakes("kitchen-display", 0)
+	m.RecordFalseWakes("kitchen-display", -2)
+	// clamped to 1000
+	m.RecordFalseWakes("kitchen-display", 1500)
+
+	mfs, err := reg.Gather()
+	if err != nil {
+		t.Fatalf("failed to gather metrics: %v", err)
+	}
+
+	var found bool
+	for _, mf := range mfs {
+		if mf.GetName() == "mirrormere_voice_false_wakes_total" {
+			found = true
+			val := mf.GetMetric()[0].GetCounter().GetValue()
+			if val != 1003 { // 3 + 1000
+				t.Fatalf("expected 1003 false wakes, got %f", val)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("mirrormere_voice_false_wakes_total metric not found")
+	}
+
+	// Nil safety check
+	var mNil *Metrics
+	mNil.RecordFalseWakes("kitchen-display", 5)
+}
+
+func TestMetrics_RecordStageDuration_DeliberationClamp(t *testing.T) {
+	t.Parallel()
+	reg := prometheus.NewRegistry()
+	m := NewMetrics(reg)
+
+	// 120s deliberation turn accepted
+	m.RecordStageDuration("kitchen-display", "brain", "success", 120.0)
+	// > 300s deliberation turn rejected
+	m.RecordStageDuration("kitchen-display", "brain", "timeout", 305.0)
+
+	mfs, err := reg.Gather()
+	if err != nil {
+		t.Fatalf("failed to gather metrics: %v", err)
+	}
+
+	var foundBrainCount int
+	for _, mf := range mfs {
+		if mf.GetName() == "mirrormere_voice_stage_duration_seconds" {
+			for _, metric := range mf.GetMetric() {
+				for _, lbl := range metric.GetLabel() {
+					if lbl.GetName() == "stage" && lbl.GetValue() == "brain" {
+						foundBrainCount++
+					}
+				}
+			}
+		}
+	}
+	if foundBrainCount != 1 {
+		t.Fatalf("expected 1 brain metric observed (120s accepted, 305s ignored), got %d", foundBrainCount)
+	}
+}
+
+

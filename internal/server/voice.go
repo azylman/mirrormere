@@ -130,6 +130,8 @@ func (h *DefaultVoiceHandler) PostVoiceHeartbeat(w http.ResponseWriter, r *http.
 		return
 	}
 
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
+
 	var req VoiceHeartbeatRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeVoiceError(w, http.StatusBadRequest, "invalid heartbeat payload: "+err.Error())
@@ -147,15 +149,14 @@ func (h *DefaultVoiceHandler) PostVoiceHeartbeat(w http.ResponseWriter, r *http.
 		if req.AmbientRMSDBFS != nil {
 			h.metrics.RecordAmbientRMS(nodeID, *req.AmbientRMSDBFS)
 		}
-		if req.FalseWakes != nil && *req.FalseWakes > 0 {
-			for i := 0; i < *req.FalseWakes; i++ {
-				h.metrics.RecordFalseWake(nodeID)
-			}
+		if req.FalseWakes != nil {
+			h.metrics.RecordFalseWakes(nodeID, *req.FalseWakes)
 		}
 		if req.LastPlaybackSec != nil && *req.LastPlaybackSec > 0 {
 			h.metrics.RecordPlaybackDuration(nodeID, *req.LastPlaybackSec)
 		}
 	}
+
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)

@@ -156,11 +156,16 @@ func (m *Metrics) RecordStageDuration(nodeID, stage, status string, durationSec 
 	if m == nil || m.stageDuration == nil {
 		return
 	}
-	if math.IsNaN(durationSec) || math.IsInf(durationSec, 0) || durationSec < 0 || durationSec > 60.0 {
+	limit := 60.0
+	if stage == "brain" {
+		limit = 300.0
+	}
+	if math.IsNaN(durationSec) || math.IsInf(durationSec, 0) || durationSec < 0 || durationSec > limit {
 		return
 	}
 	m.stageDuration.WithLabelValues(SanitizeNodeID(nodeID), stage, status).Observe(durationSec)
 }
+
 
 // RecordAmbientRMS updates the ambient RMS level gauge for a node.
 func (m *Metrics) RecordAmbientRMS(nodeID string, rmsDBFS float64) {
@@ -188,6 +193,18 @@ func (m *Metrics) RecordFalseWake(nodeID string) {
 	}
 	m.falseWakes.WithLabelValues(SanitizeNodeID(nodeID)).Inc()
 }
+
+// RecordFalseWakes increments the false wake counter by count with bounding.
+func (m *Metrics) RecordFalseWakes(nodeID string, count int) {
+	if m == nil || m.falseWakes == nil || count <= 0 {
+		return
+	}
+	if count > 1000 {
+		count = 1000
+	}
+	m.falseWakes.WithLabelValues(SanitizeNodeID(nodeID)).Add(float64(count))
+}
+
 
 // RecordPlaybackDuration records audio playback duration on the edge.
 func (m *Metrics) RecordPlaybackDuration(nodeID string, durationSec float64) {
