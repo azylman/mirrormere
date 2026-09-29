@@ -2,6 +2,12 @@ import struct
 import unittest
 from unittest.mock import MagicMock, patch
 
+try:
+    import numpy  # noqa: F401
+    HAS_NUMPY = True
+except ImportError:
+    HAS_NUMPY = False
+
 from clients.ear.vad import (
     EnergyDetector,
     SileroDetector,
@@ -49,6 +55,11 @@ class TestEnergyDetector(unittest.TestCase):
         self.assertEqual(count, 0)
 
 
+# SileroDetector needs numpy for window slicing, and so does Silero itself
+# (openwakeword depends on numpy), so it can never run without it. CI's
+# system Python has no numpy; skip there rather than test a path that
+# cannot exist in production.
+@unittest.skipUnless(HAS_NUMPY, "numpy not installed")
 class TestSileroDetector(unittest.TestCase):
     def test_frame_resliced_into_512_sample_windows_with_remainder_carried(self):
         mock_vad = MockSileroVAD(score_sequence=[0.0] * 10)
