@@ -33,6 +33,14 @@ class VoiceConfig:
     wake_mode: str = "openwakeword"
     ambient_url: str = ""
     ambient_timeout_seconds: float = 6.0
+    # End-of-speech detection: "energy" (default, today's dBFS gate against
+    # speech_threshold_db) or "silero" (Silero VAD neural speech
+    # probability, reusing openWakeWord's bundled ONNX model). silence_ms
+    # still governs the trailing-silence window in either mode.
+    vad: str = "energy"
+    # Silero speech-probability threshold (0.0-1.0) at or above which a
+    # window counts as speech. Only used when vad == "silero".
+    vad_threshold: float = 0.5
 
 
 DEFAULT_CONFIG_PATH = os.environ.get("MIRRORMERE_VOICE_CONFIG", "/etc/mirrormere/voice.yaml")
@@ -47,7 +55,15 @@ def load_config(path: Optional[str] = None) -> VoiceConfig:
         try:
             with open(target_path, "r", encoding="utf-8") as f:
                 data = yaml.safe_load(f) or {}
-                voice_data = data.get("voice", data)
+                # Top-level key: "ear" is the preferred name (the client is
+                # "the ear"); "voice" is kept for existing deployed configs.
+                # If both are present, "ear" wins.
+                if isinstance(data.get("ear"), dict):
+                    voice_data = data["ear"]
+                elif isinstance(data.get("voice"), dict):
+                    voice_data = data["voice"]
+                else:
+                    voice_data = data
                 if isinstance(voice_data, dict):
                     for k, v in voice_data.items():
                         if hasattr(cfg, k):
@@ -74,4 +90,15 @@ def load_config(path: Optional[str] = None) -> VoiceConfig:
     if "MIRRORMERE_AUDIO_DEVICE" in os.environ:
         cfg.audio_device = os.environ["MIRRORMERE_AUDIO_DEVICE"]
 
+    _validate(cfg)
     return cfg
+
+
+def _validate(cfg: VoiceConfig) -> None:
+    """Clamps/normalizes fields that can't be trusted to arbitrary YAML input."""
+    if cfg.vad not in ("energy", "silero"):
+        cfg.vad = "energy"
+    if not isinstance(cfg.vad_threshold, (int, float)) or not (0.0 <= float(cfg.vad_threshold) <= 1.0):
+        cfg.vad_threshold = 0.5
+    else:
+        cfg.vad_threshold = float(cfg.vad_threshold)

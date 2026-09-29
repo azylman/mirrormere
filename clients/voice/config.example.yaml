@@ -46,8 +46,18 @@ voice:
   # Maximum duration of a single utterance before auto-saving (seconds)
   max_record_seconds: 10.0
 
-  # Calibrated speech energy floor in dBFS (speech must exceed this to count as active)
+  # Calibrated speech energy floor in dBFS (speech must exceed this to count as active).
+  # Only used when vad: "energy" (the default).
   speech_threshold_db: -31.0
+
+  # End-of-speech detection: "energy" (default, the speech_threshold_db gate
+  # above) or "silero" (Silero VAD neural speech probability, reusing
+  # openWakeWord's bundled ONNX model - no new dependency). Falls back to
+  # energy mode automatically if the model fails to load.
+  vad: "energy"
+
+  # Silero speech-probability threshold (0.0-1.0). Only used when vad: "silero".
+  vad_threshold: 0.5
 
   # Refractory cooldown period after utterance to prevent echo re-triggers (seconds)
   cooldown_seconds: 2.5

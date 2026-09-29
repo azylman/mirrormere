@@ -34,6 +34,31 @@ voice:
   audio_device: "default"
 ```
 
+## End-of-Speech Detection (VAD)
+
+`vad` controls how the daemon decides whether a given audio frame is speech,
+both for the wake-triggered utterance recorder and the ambient segmenter:
+
+- **`energy`** (default): the original dBFS energy gate against
+  `speech_threshold_db`. Unchanged behavior.
+- **`silero`**: [Silero VAD](https://github.com/snakers4/silero-vad), a small
+  recurrent neural model, scores each 512-sample (32ms) window of 16kHz
+  audio; a frame counts as speech if any window in it scores >=
+  `vad_threshold` (default `0.5`). It reuses the same ONNX model
+  `openwakeword` already bundles and loads for its own wake-word gating (no
+  new dependency). If the model fails to load at startup, the daemon logs a
+  warning and falls back to `energy` mode rather than crashing.
+
+`silence_ms` still governs the trailing-silence window that ends an
+utterance/segment in either mode. Per-window Silero inference time (mean ms)
+is included in the 10s heartbeat log line.
+
+```yaml
+voice:
+  vad: "silero"
+  vad_threshold: 0.5
+```
+
 ## Wake Mode
 
 `wake_mode` controls how an utterance gets triggered (see SPEC-011 "Ambient
