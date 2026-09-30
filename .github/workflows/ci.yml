@@ -63,6 +63,9 @@ jobs:
           - name: mirrormere-eink-renderer
             context: ./sidecars/eink-renderer
             file: ./sidecars/eink-renderer/Dockerfile
+          - name: mirrormere-voice-fingerprinter
+            context: ./sidecars/voice-fingerprinter
+            file: ./sidecars/voice-fingerprinter/Dockerfile
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -84,6 +87,20 @@ jobs:
               - 'sidecars/cast-watcher/**'
             mirrormere-eink-renderer:
               - 'sidecars/eink-renderer/**'
+            mirrormere-voice-fingerprinter:
+              - 'sidecars/voice-fingerprinter/**'
+
+      - name: Set up Python (voice-fingerprinter unit tests)
+        if: matrix.name == 'mirrormere-voice-fingerprinter' && steps.filter.outputs[matrix.name] == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Run voice-fingerprinter unit tests
+        if: matrix.name == 'mirrormere-voice-fingerprinter' && steps.filter.outputs[matrix.name] == 'true'
+        run: |
+          pip install --quiet -r sidecars/voice-fingerprinter/requirements-test.txt
+          cd sidecars/voice-fingerprinter && python -m pytest test/ -v
 
       - name: Set up QEMU
         if: steps.filter.outputs[matrix.name] == 'true'

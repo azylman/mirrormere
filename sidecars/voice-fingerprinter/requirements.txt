@@ -1,0 +1,10 @@
+# CPU-only wheels — installed with --extra-index-url https://download.pytorch.org/whl/cpu
+# (see Dockerfile). Pinned versions for reproducible builds.
+torch==2.4.1
+torchaudio==2.4.1
+speechbrain==1.0.2
+fastapi==0.115.0
+uvicorn==0.30.6
+soundfile==0.12.1
+numpy==1.26.4
+huggingface-hub==0.25.1

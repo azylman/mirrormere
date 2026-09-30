@@ -331,6 +331,14 @@ Content-Type: audio/wav
 200 {"embedding": [0.012, -0.087, ...], "model": "speechbrain/spkrec-ecapa-voxceleb"}
 ```
 
+Reference implementation: `sidecars/voice-fingerprinter` — a CPU-only
+container (speechbrain `spkrec-ecapa-voxceleb`, FastAPI) that satisfies this
+contract exactly. It accepts any sample rate/channel count on `POST /embed`
+(downmixing and resampling to 16 kHz mono itself) and exposes `GET /health`.
+Any other model or service that produces stable, comparable vectors behind
+the same two endpoints also satisfies it. `deploy/compose.yml`'s
+`speaker-id` profile wires it up.
+
 ### Fingerprint store
 A JSON file on the Hub, one per Hub, re-read whenever it changes on disk so re-enrollment needs no restart. (The rest of the `speaker_id` block, like all of `voice_hub`, is read at startup; changing `embed_url` or `threshold` needs a restart.) All fingerprints must share one dimension and be finite and non-zero, or the file is rejected. Only embeddings are stored, never audio. Sharing fingerprints across multiple Hubs is out of scope. `model` must match the embed endpoint's `model`; embeddings from different models are not comparable.
 ```json
@@ -353,8 +361,11 @@ voice_hub:
     timeout_seconds: 5   # optional
 ```
 
+### Enrollment
+`sidecars/voice-fingerprinter/enroll.py` builds the fingerprint file: it takes one or more WAV recordings of a speaker and a speaker id, calls the embed endpoint for each ~4s chunk (dropping near-silent chunks), L2-normalizes and averages the results into a centroid, and merges it into the fingerprints JSON — refusing to mix models unless `--force`. Run it against the sidecar's own container (`docker compose exec voice-fingerprinter python enroll.py <id> --wav <file>... --output /config/speakers.json`) or standalone against any reachable `embed_url`. `enroll.py --list` / `--remove <id>` manage the file without re-recording. See the script's own docstring for the full flag set.
+
 ### Not yet built
-Enrollment (the "Add my voice" flow that records prompted phrases and writes the fingerprint file) is a follow-up. Until then the file is produced out of band.
+The "Add my voice" UI flow — recording prompted phrases from within the household UI and calling the enrollment path automatically — is a follow-up; today enrollment is a CLI run by hand.
 
 ---
 
