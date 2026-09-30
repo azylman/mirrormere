@@ -76,7 +76,7 @@ type mockTTS struct {
 	calls       int
 }
 
-func (m *mockTTS) Synthesize(ctx context.Context, text string) ([]byte, string, error) {
+func (m *mockTTS) Synthesize(ctx context.Context, text string, onChunk func(chunk TTSAudioChunk) error) error {
 	m.mu.Lock()
 	delay := m.delay
 	m.calledWith = text
@@ -87,7 +87,21 @@ func (m *mockTTS) Synthesize(ctx context.Context, text string) ([]byte, string, 
 	if delay > 0 {
 		time.Sleep(delay)
 	}
-	return audio, format, err
+	if err != nil {
+		return err
+	}
+	if len(audio) > 0 && onChunk != nil {
+		if format == "" {
+			format = "wav"
+		}
+		return onChunk(TTSAudioChunk{
+			Data:       audio,
+			Format:     format,
+			SampleRate: 24000,
+			Channels:   1,
+		})
+	}
+	return nil
 }
 
 
@@ -161,7 +175,7 @@ func TestHub_Interact_Success(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 
-	expectedSequence := []string{"state", "transcript", "status", "status", "reply", "audio_chunk", "done"}
+	expectedSequence := []string{"state", "transcript", "status", "status", "reply", "audio_chunk", "audio_chunk", "done"}
 	if len(emittedEvents) != len(expectedSequence) {
 		t.Fatalf("expected %d events, got %d: %+v", len(expectedSequence), len(emittedEvents), emittedEvents)
 	}
@@ -558,50 +572,186 @@ func TestDefaultBrainClient_TurnSessionGenerationAndNodeID(t *testing.T) {
 func TestDefaultTTSClient(t *testing.T) {
 	t.Parallel()
 
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "audio/mpeg")
-		_, _ = w.Write([]byte("fake-mp3-bytes"))
-	}))
-	defer ts.Close()
+	t.Run("WAV stream parsed to PCM chunks", func(t *testing.T) {
+		t.Parallel()
+		wavData := makeValidWAV(4800) // 9600 bytes PCM at 16kHz mono
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "audio/wav")
+			_, _ = w.Write(wavData[:44+4800])
+			if flusher, ok := w.(http.Flusher); ok {
+				flusher.Flush()
+			}
+			_, _ = w.Write(wavData[44+4800:])
+		}))
+		defer ts.Close()
 
-	tts := NewDefaultTTSClient(ts.URL, "kokoro", "af_bella", 5)
-	audio, fmtStr, err := tts.Synthesize(context.Background(), "hello world")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if string(audio) != "fake-mp3-bytes" || fmtStr != "mp3" {
-		t.Errorf("expected fake-mp3-bytes mp3, got %s %s", string(audio), fmtStr)
-	}
+		tts := NewDefaultTTSClient(ts.URL, "kokoro", "af_bella", 5)
+		var chunks []TTSAudioChunk
+		err := tts.Synthesize(context.Background(), "hello world", func(chunk TTSAudioChunk) error {
+			chunks = append(chunks, chunk)
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("unexpected streaming error: %v", err)
+		}
+		if len(chunks) == 0 {
+			t.Fatalf("expected at least 1 audio chunk, got 0")
+		}
+		var totalPCM int
+		for i, c := range chunks {
+			if c.Format != "pcm" {
+				t.Errorf("chunk %d: expected format pcm, got %s", i, c.Format)
+			}
+			if c.SampleRate != 16000 {
+				t.Errorf("chunk %d: expected sample rate 16000, got %d", i, c.SampleRate)
+			}
+			if c.Channels != 1 {
+				t.Errorf("chunk %d: expected channels 1, got %d", i, c.Channels)
+			}
+			totalPCM += len(c.Data)
+		}
+		if totalPCM != 9600 {
+			t.Errorf("expected 9600 bytes total PCM, got %d", totalPCM)
+		}
+	})
 
-	// Empty URL
-	ttsEmpty := NewDefaultTTSClient("", "kokoro", "af_bella", 5)
-	audio, fmtStr, err = ttsEmpty.Synthesize(context.Background(), "hello")
-	if err != nil || len(audio) != 0 || fmtStr != "mp3" {
-		t.Errorf("expected empty audio, got %v %s %v", audio, fmtStr, err)
-	}
+	t.Run("raw PCM stream pass-through", func(t *testing.T) {
+		t.Parallel()
+		pcmData := bytes.Repeat([]byte{0x01, 0x02}, 2400)
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "audio/pcm")
+			_, _ = w.Write(pcmData)
+		}))
+		defer ts.Close()
 
-	// WAV response format
-	wavServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "audio/wav")
-		_, _ = w.Write([]byte("fake-wav-bytes"))
-	}))
-	defer wavServer.Close()
-	ttsWAV := NewDefaultTTSClient(wavServer.URL, "kokoro", "af_bella", 5)
-	audio, fmtStr, err = ttsWAV.Synthesize(context.Background(), "hello wav")
-	if err != nil || string(audio) != "fake-wav-bytes" || fmtStr != "wav" {
-		t.Errorf("expected fake-wav-bytes wav, got %s %s %v", string(audio), fmtStr, err)
-	}
+		tts := NewDefaultTTSClient(ts.URL, "kokoro", "af_bella", 5)
+		var chunks []TTSAudioChunk
+		err := tts.Synthesize(context.Background(), "hello", func(chunk TTSAudioChunk) error {
+			chunks = append(chunks, chunk)
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(chunks) == 0 || chunks[0].Format != "pcm" {
+			t.Fatalf("expected pcm chunks, got %+v", chunks)
+		}
+	})
 
-	// Server error
-	errServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "tts service error", http.StatusInternalServerError)
-	}))
-	defer errServer.Close()
-	ttsErr := NewDefaultTTSClient(errServer.URL, "kokoro", "af_bella", 5)
-	_, _, err = ttsErr.Synthesize(context.Background(), "fail")
-	if err == nil || !strings.Contains(err.Error(), "500") {
-		t.Errorf("expected 500 error, got: %v", err)
-	}
+	t.Run("MP3 stream pass-through", func(t *testing.T) {
+		t.Parallel()
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "audio/mpeg")
+			_, _ = w.Write([]byte("fake-streaming-mp3-bytes"))
+		}))
+		defer ts.Close()
+
+		tts := NewDefaultTTSClient(ts.URL, "kokoro", "af_bella", 5)
+		var chunks []TTSAudioChunk
+		err := tts.Synthesize(context.Background(), "hello", func(chunk TTSAudioChunk) error {
+			chunks = append(chunks, chunk)
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(chunks) == 0 || chunks[0].Format != "mp3" {
+			t.Fatalf("expected mp3 chunks, got %+v", chunks)
+		}
+	})
+
+	t.Run("empty URL and empty text return nil", func(t *testing.T) {
+		t.Parallel()
+		ttsEmpty := NewDefaultTTSClient("", "kokoro", "af_bella", 5)
+		if err := ttsEmpty.Synthesize(context.Background(), "hello", func(TTSAudioChunk) error {
+			t.Fatal("unexpected chunk emitted for empty URL")
+			return nil
+		}); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		ttsReal := NewDefaultTTSClient("http://127.0.0.1:9", "kokoro", "af_bella", 5)
+		if err := ttsReal.Synthesize(context.Background(), "   ", func(TTSAudioChunk) error {
+			t.Fatal("unexpected chunk emitted for empty text")
+			return nil
+		}); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("server error returns error", func(t *testing.T) {
+		t.Parallel()
+		errServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "server dead", http.StatusInternalServerError)
+		}))
+		defer errServer.Close()
+
+		ttsErr := NewDefaultTTSClient(errServer.URL, "kokoro", "af_bella", 5)
+		err := ttsErr.Synthesize(context.Background(), "hello", func(TTSAudioChunk) error { return nil })
+		if err == nil || !strings.Contains(err.Error(), "500") {
+			t.Fatalf("expected 500 error, got: %v", err)
+		}
+	})
+
+	t.Run("onChunk error in WAV stream terminates early", func(t *testing.T) {
+		t.Parallel()
+		wavData := makeValidWAV(4800)
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "audio/wav")
+			_, _ = w.Write(wavData)
+		}))
+		defer ts.Close()
+
+		tts := NewDefaultTTSClient(ts.URL, "kokoro", "af_bella", 5)
+		err := tts.Synthesize(context.Background(), "hello", func(chunk TTSAudioChunk) error {
+			return errors.New("sink abort")
+		})
+		if err == nil || !strings.Contains(err.Error(), "sink abort") {
+			t.Fatalf("expected sink abort error, got: %v", err)
+		}
+	})
+
+	t.Run("onChunk error in non-WAV stream terminates early", func(t *testing.T) {
+		t.Parallel()
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "audio/mpeg")
+			_, _ = w.Write([]byte("some-initial-header-and-body-payload-for-mp3"))
+		}))
+		defer ts.Close()
+
+		tts := NewDefaultTTSClient(ts.URL, "kokoro", "af_bella", 5)
+		err := tts.Synthesize(context.Background(), "hello", func(chunk TTSAudioChunk) error {
+			return errors.New("mp3 sink abort")
+		})
+		if err == nil || !strings.Contains(err.Error(), "mp3 sink abort") {
+			t.Fatalf("expected mp3 sink abort error, got: %v", err)
+		}
+	})
+
+	t.Run("WAV with zero sample rate and channels uses defaults", func(t *testing.T) {
+		t.Parallel()
+		wavData := makeValidWAV(2400)
+		copy(wavData[22:24], []byte{0, 0})
+		copy(wavData[24:28], []byte{0, 0, 0, 0})
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "audio/wav")
+			_, _ = w.Write(wavData)
+		}))
+		defer ts.Close()
+
+		tts := NewDefaultTTSClient(ts.URL, "kokoro", "af_bella", 5)
+		var chunk TTSAudioChunk
+		err := tts.Synthesize(context.Background(), "hello", func(c TTSAudioChunk) error {
+			chunk = c
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if chunk.Channels != 1 || chunk.SampleRate != 24000 {
+			t.Errorf("expected defaults (1 ch, 24000 rate), got %d ch, %d rate", chunk.Channels, chunk.SampleRate)
+		}
+	})
 }
 
 func TestHub_Interact_EdgeCases(t *testing.T) {
@@ -994,7 +1144,7 @@ func TestClients_NetworkFailures(t *testing.T) {
 
 	// TTS client network failure
 	tts := NewDefaultTTSClient("http://127.0.0.1:59998/invalid", "k", "v", 1)
-	_, _, err = tts.Synthesize(context.Background(), "hi")
+	err = tts.Synthesize(context.Background(), "hi", func(chunk TTSAudioChunk) error { return nil })
 	if err == nil {
 		t.Error("expected network error for tts client")
 	}
