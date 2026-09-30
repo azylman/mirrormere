@@ -108,3 +108,32 @@ services:
       start_period: 5s
       retries: 3
 
+
+  voice-fingerprinter:
+    profiles: ["speaker-id"]
+    build:
+      context: ../sidecars/voice-fingerprinter
+      dockerfile: Dockerfile
+    image: ghcr.io/azylman/mirrormere-voice-fingerprinter:latest
+    container_name: mirrormere-voice-fingerprinter
+    restart: unless-stopped
+    ports:
+      - "9096:9096" # Speaker-embedding server (SPEC-011 §Embedding endpoint)
+    environment:
+      - MDE_PORT=9096
+      - MDE_BIND=0.0.0.0
+      - MDE_DEVICE=cpu
+    volumes:
+      - voice-fingerprinter-models:/models  # ECAPA model cache, downloaded on first run (~80MB)
+      - ./config:/config                    # rw: shares mirrormere-core's fingerprints_path directory,
+                                             # so `enroll.py --output /config/speakers.json` writes
+                                             # where the Hub reads (config is mounted :ro there)
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:9096/health"]
+      interval: 15s
+      timeout: 3s
+      start_period: 30s  # first run downloads the model
+      retries: 3
+
+volumes:
+  voice-fingerprinter-models:
