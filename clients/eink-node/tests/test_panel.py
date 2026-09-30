@@ -8,13 +8,16 @@ import os
 import struct
 import tempfile
 import time
+import sys
+import types
 import unittest
+from unittest import mock
 import urllib.request
 import zlib
 
 from config import EinkConfig, PanelPinsConfig
 from image import validate_png, stamp_offline_dot, save_last_image, load_last_image
-from panel import FakePanel, PanelManager, patch_bonnet_pins
+from panel import FakePanel, PanelManager, WaveshareEPDPanel, patch_bonnet_pins
 from offline import OfflineGuard
 from buttons import ButtonHandler
 from health import HealthServer
@@ -74,6 +77,81 @@ class TestEinkPanelAndHardware(unittest.TestCase):
         self.assertEqual(MockEPDConfig.BUSY_PIN, 17)
         self.assertEqual(MockEPDConfig.CS_PIN, 8)
         self.assertIsNone(MockEPDConfig.PWR_PIN)
+
+    def _make_waveshare_panel(self):
+        panel = WaveshareEPDPanel.__new__(WaveshareEPDPanel)
+        panel._epd = mock.MagicMock()
+        panel._epd.width = 800
+        panel._epd.height = 480
+        return panel
+
+    def test_waveshare_decodes_png_before_getbuffer(self):
+        from PIL import Image
+
+        panel = self._make_waveshare_panel()
+        png = make_test_png(800, 480, 1)
+        panel.display_full(png)
+        arg = panel._epd.getbuffer.call_args[0][0]
+        self.assertIsInstance(arg, Image.Image)
+        self.assertEqual(arg.size, (800, 480))
+        panel._epd.display.assert_called_once_with(panel._epd.getbuffer.return_value)
+
+        panel._epd.getbuffer.reset_mock()
+        panel.display_partial(png)
+        self.assertIsInstance(panel._epd.getbuffer.call_args[0][0], Image.Image)
+
+    def test_waveshare_partial_uses_full_frame_coords(self):
+        panel = self._make_waveshare_panel()
+        panel.display_partial(make_test_png(800, 480, 1))
+        panel._epd.display_Partial.assert_called_once_with(
+            panel._epd.getbuffer.return_value, 0, 0, 800, 480
+        )
+
+    def test_repin_real_implementation_recreates_pins(self):
+        made = []
+
+        class FakePin:
+            def __init__(self, kind, pin, **kw):
+                self.kind, self.pin, self.kw, self.closed = kind, pin, kw, False
+                made.append(self)
+
+            def close(self):
+                self.closed = True
+
+        fake_gz = types.ModuleType("gpiozero")
+        fake_gz.LED = lambda pin: FakePin("LED", pin)
+        fake_gz.Button = lambda pin, **kw: FakePin("Button", pin, **kw)
+
+        class Impl:
+            RST_PIN, DC_PIN, BUSY_PIN, CS_PIN, PWR_PIN = 17, 25, 24, 8, 18
+
+        impl = Impl()
+        olds = {n: FakePin("old", 0) for n in
+                ("GPIO_RST_PIN", "GPIO_DC_PIN", "GPIO_PWR_PIN", "GPIO_BUSY_PIN")}
+        for n, o in olds.items():
+            setattr(impl, n, o)
+        made.clear()
+        cfg = types.SimpleNamespace(implementation=impl)
+
+        pins = PanelPinsConfig(rst=27, dc=22, busy=17, cs=8, pwr=None)
+        with mock.patch.dict(sys.modules, {"gpiozero": fake_gz}):
+            patch_bonnet_pins(pins, cfg)
+
+        self.assertTrue(all(o.closed for o in olds.values()))
+        self.assertEqual((impl.RST_PIN, impl.DC_PIN, impl.BUSY_PIN), (27, 22, 17))
+        self.assertEqual(impl.PWR_PIN, 18)  # kept: real driver needs a PWR pin
+        self.assertEqual(impl.GPIO_RST_PIN.pin, 27)
+        self.assertEqual(impl.GPIO_DC_PIN.pin, 22)
+        self.assertEqual(impl.GPIO_PWR_PIN.pin, 18)
+        self.assertEqual(impl.GPIO_BUSY_PIN.kind, "Button")
+        self.assertEqual(impl.GPIO_BUSY_PIN.pin, 17)
+        self.assertEqual(impl.GPIO_BUSY_PIN.kw, {"pull_up": False})
+
+        # Unchanged pins: no recreation.
+        before = list(made)
+        with mock.patch.dict(sys.modules, {"gpiozero": fake_gz}):
+            patch_bonnet_pins(pins, cfg)
+        self.assertEqual(made, before)
 
     def test_image_validation(self):
         """
