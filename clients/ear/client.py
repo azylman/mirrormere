@@ -302,6 +302,16 @@ class VoiceDaemon:
             return False
         return True
 
+    def _wake_ready(self, now: float) -> bool:
+        """True when it's safe to evaluate wake words: not mid-reply, not in post-reply or utterance cooldown."""
+        if self.busy:
+            return False
+        if now < self.reply_ended_at + self.cfg.cooldown_seconds:
+            return False
+        if now < self.cooldown_until:
+            return False
+        return True
+
     def _reset_ambient_state(self) -> None:
         self.ambient_buffer = []
         self.ambient_record_start = None
@@ -326,7 +336,7 @@ class VoiceDaemon:
         if self.state == "idle":
             self.pre_roll.append(raw_bytes)
 
-            if self.wake_mode_uses_openwakeword() and now >= self.cooldown_until:
+            if self.wake_mode_uses_openwakeword() and self._wake_ready(now):
                 if self._check_wake_word(raw_bytes):
                     self._start_listening(now)
                     return "wake_detected"
@@ -339,7 +349,7 @@ class VoiceDaemon:
             return None
 
         elif self.state == "ambient_listening":
-            if self.wake_mode_uses_openwakeword() and self._check_wake_word(raw_bytes):
+            if self.wake_mode_uses_openwakeword() and self._wake_ready(now) and self._check_wake_word(raw_bytes):
                 # Wake word fired mid-segment ("both" mode): hand off to the
                 # normal wake-triggered flow and discard the ambient buffer
                 # so this segment never reaches the classifier.
@@ -617,6 +627,7 @@ class VoiceDaemon:
         """Consumes Server-Sent Events stream from Voice Hub (POST /api/voice/interact)."""
         if not os.path.exists(wav_path):
             self.busy = False
+            self.reply_ended_at = time.time()
             return
         # Mark busy for the full interaction (plus cooldown_seconds afterwards)
         # so ambient mode never sends the daemon's own reply audio back to
@@ -754,6 +765,8 @@ class VoiceDaemon:
             close_pcm_proc()
             self.busy = False
             self.reply_ended_at = time.time()
+            self.flush_openwakeword()
+            self.pre_roll.clear()
 
     def _send_heartbeat(self, hub_url: str, payload: Dict[str, Any]) -> None:
         """Dispatches heartbeat payload to Voice Hub asynchronously."""

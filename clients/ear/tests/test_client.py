@@ -673,6 +673,84 @@ class TestVoiceDaemon(unittest.TestCase):
         self.assertEqual(daemon.false_wakes_count, 0)
         self.assertEqual(daemon.last_playback_sec, 0.0)
 
+    @patch("clients.ear.client.post_voice_state")
+    def test_wake_word_suppressed_while_busy(self, mock_post_state):
+        mock_model = MockModel(score_map={"hey_jarvis": 0.95})
+        daemon = VoiceDaemon(self.cfg, model=mock_model)
+        daemon.busy = True
+
+        silent_frame = struct.pack("<1280h", *([0] * 1280))
+        event = daemon.process_frame(silent_frame)
+
+        self.assertIsNone(event)
+        self.assertEqual(daemon.state, "idle")
+        mock_post_state.assert_not_called()
+
+    @patch("clients.ear.client.post_voice_state")
+    def test_wake_word_suppressed_during_post_reply_cooldown(self, mock_post_state):
+        mock_model = MockModel(score_map={"hey_jarvis": 0.95})
+        daemon = VoiceDaemon(self.cfg, model=mock_model)
+        daemon.reply_ended_at = time.time()
+
+        silent_frame = struct.pack("<1280h", *([0] * 1280))
+        event = daemon.process_frame(silent_frame)
+
+        self.assertIsNone(event)
+        self.assertEqual(daemon.state, "idle")
+        mock_post_state.assert_not_called()
+
+    @patch("clients.ear.client.post_voice_state")
+    def test_wake_word_suppressed_during_cooldown_until(self, mock_post_state):
+        mock_model = MockModel(score_map={"hey_jarvis": 0.95})
+        daemon = VoiceDaemon(self.cfg, model=mock_model)
+        daemon.cooldown_until = time.time() + 5.0
+
+        silent_frame = struct.pack("<1280h", *([0] * 1280))
+        event = daemon.process_frame(silent_frame)
+
+        self.assertIsNone(event)
+        self.assertEqual(daemon.state, "idle")
+        mock_post_state.assert_not_called()
+
+    @patch("clients.ear.client.post_voice_state")
+    def test_ambient_listening_wake_word_suppressed_while_busy(self, mock_post_state):
+        cfg = VoiceConfig(
+            save_path=self.save_path,
+            wake_mode="both",
+            threshold=0.40,
+            silence_ms=100,
+            cooldown_seconds=1.0,
+        )
+        mock_model = MockModel(score_map={"hey_jarvis": 0.95})
+        daemon = VoiceDaemon(cfg, model=mock_model)
+        daemon.state = "ambient_listening"
+        daemon.busy = True
+
+        speech_frame = struct.pack("<1280h", *([10000] * 1280))
+        event = daemon.process_frame(speech_frame)
+
+        self.assertNotEqual(event, "wake_detected")
+        self.assertEqual(daemon.state, "ambient_listening")
+
+    @patch("clients.ear.client.urllib.request.urlopen")
+    def test_hub_stream_worker_clears_preroll_and_flushes_model(self, mock_urlopen):
+        mock_resp = MagicMock()
+        mock_resp.status = 200
+        mock_resp.__iter__.return_value = iter([b"event: done\r\ndata: {}\r\n\r\n"])
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        with open(self.save_path, "wb") as f:
+            f.write(b"RIFFdummyWAVE")
+
+        mock_model = MockModel()
+        daemon = VoiceDaemon(self.cfg, model=mock_model)
+        daemon.pre_roll.append(b"stale-audio")
+
+        daemon._hub_stream_worker(self.save_path)
+
+        self.assertEqual(len(daemon.pre_roll), 0, "pre_roll must be cleared when playback finishes")
+        self.assertTrue(mock_model.reset_called, "model must be flushed when playback finishes")
+
     def test_stop_signal(self):
         mock_model = MockModel()
         daemon = VoiceDaemon(self.cfg, model=mock_model)
