@@ -131,7 +131,9 @@ class TestEinkPanelAndHardware(unittest.TestCase):
         for n, o in olds.items():
             setattr(impl, n, o)
         made.clear()
-        cfg = types.SimpleNamespace(implementation=impl)
+        cfg = types.SimpleNamespace(
+            implementation=impl, RST_PIN=17, DC_PIN=25, BUSY_PIN=24, CS_PIN=8, PWR_PIN=18
+        )
 
         pins = PanelPinsConfig(rst=27, dc=22, busy=17, cs=8, pwr=None)
         with mock.patch.dict(sys.modules, {"gpiozero": fake_gz}):
@@ -146,6 +148,11 @@ class TestEinkPanelAndHardware(unittest.TestCase):
         self.assertEqual(impl.GPIO_BUSY_PIN.kind, "Button")
         self.assertEqual(impl.GPIO_BUSY_PIN.pin, 17)
         self.assertEqual(impl.GPIO_BUSY_PIN.kw, {"pull_up": False})
+
+        # Module constants must match the implementation (incl. kept PWR).
+        for name in ("RST_PIN", "DC_PIN", "BUSY_PIN", "CS_PIN", "PWR_PIN"):
+            self.assertEqual(getattr(cfg, name), getattr(impl, name), name)
+        self.assertEqual((cfg.RST_PIN, cfg.DC_PIN, cfg.BUSY_PIN, cfg.PWR_PIN), (27, 22, 17, 18))
 
         # Unchanged pins: no recreation.
         before = list(made)

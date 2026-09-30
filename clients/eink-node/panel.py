@@ -20,12 +20,12 @@ except ImportError:
 logger = logging.getLogger("mirrormere.eink.panel")
 
 
-def _repin_implementation(impl: Any, pins: PanelPinsConfig) -> None:
+def _repin_implementation(impl: Any, pins: PanelPinsConfig) -> tuple:
     """
     Re-creates the gpiozero pin objects owned by the real Waveshare
     epdconfig.RaspberryPi implementation. The real driver builds them in
     __init__ at import time, so changing attributes alone does not move the
-    hardware lines.
+    hardware lines. Returns the (rst, dc, busy, cs, pwr) actually applied.
     """
     import gpiozero
 
@@ -50,7 +50,7 @@ def _repin_implementation(impl: Any, pins: PanelPinsConfig) -> None:
         impl.CS_PIN = pins.cs
     if current == wanted:
         logger.info("Driver pins already match configuration; no repin needed")
-        return
+        return (wanted[0], wanted[1], wanted[2], pins.cs, wanted[3])
 
     for name in ("GPIO_RST_PIN", "GPIO_DC_PIN", "GPIO_PWR_PIN", "GPIO_BUSY_PIN"):
         old = getattr(impl, name, None)
@@ -65,6 +65,7 @@ def _repin_implementation(impl: Any, pins: PanelPinsConfig) -> None:
     impl.GPIO_DC_PIN = gpiozero.LED(impl.DC_PIN)
     impl.GPIO_PWR_PIN = gpiozero.LED(impl.PWR_PIN)
     impl.GPIO_BUSY_PIN = gpiozero.Button(impl.BUSY_PIN, pull_up=False)
+    return (wanted[0], wanted[1], wanted[2], pins.cs, wanted[3])
 
 
 def patch_bonnet_pins(pins: PanelPinsConfig, epdconfig_module: Any) -> None:
@@ -81,7 +82,15 @@ def patch_bonnet_pins(pins: PanelPinsConfig, epdconfig_module: Any) -> None:
     """
     impl = getattr(epdconfig_module, "implementation", None)
     if impl is not None:
-        _repin_implementation(impl, pins)
+        rst, dc, busy, cs, pwr = _repin_implementation(impl, pins)
+        # EPD.__init__ reads pin numbers from the module, and the real
+        # digital_write/read dispatch against the implementation's pins, so
+        # the module constants must match what was actually applied.
+        epdconfig_module.RST_PIN = rst
+        epdconfig_module.DC_PIN = dc
+        epdconfig_module.BUSY_PIN = busy
+        epdconfig_module.CS_PIN = cs
+        epdconfig_module.PWR_PIN = pwr
     else:
         if hasattr(epdconfig_module, "RST_PIN"):
             epdconfig_module.RST_PIN = pins.rst
