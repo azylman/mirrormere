@@ -32,18 +32,29 @@ This combined script provides approximately **45–50 seconds of clean speech (~
 ## Quick Enrollment Usage
 
 ### 1. Record WAV Audio
-Record a single-channel (mono) 16kHz WAV file from your kiosk or desk microphone:
+Stop the voice service temporarily so it releases the ALSA capture hardware, then record a single-channel (mono) 16kHz WAV file into `deploy/data/` using your node's configured `audio_device` (from `voice.yaml`):
+
 ```bash
-arecord -D hw:CARD=Array,DEV=0 -f S16_LE -r 16000 -c 1 -d 50 sample.wav
+# Stop the voice client so it releases the audio device:
+sudo systemctl stop mirrormere-voice
+
+# Record 50s calibration audio using your node's audio device:
+arecord -D <audio_device> -f S16_LE -r 16000 -c 1 -d 50 deploy/data/enroll-<speaker_id>.wav
+
+# Restart the voice client:
+sudo systemctl start mirrormere-voice
 ```
 
 ### 2. Enroll Speaker Fingerprint
-Feed the recording to `enroll.py` targeting your Mirrormere `speakers.json`:
+Feed the recording to `enroll.py` targeting your Mirrormere `/data/speakers.json`, then delete the temporary recording:
 
 ```bash
-# Running inside the sidecar container
-docker compose exec voice-fingerprinter python enroll.py <speaker_id> --wav /path/to/sample.wav --output /data/speakers.json
+# Running inside the sidecar container (with ./data mounted to /data)
+docker compose exec voice-fingerprinter python enroll.py <speaker_id> --wav /data/enroll-<speaker_id>.wav --output /data/speakers.json
+
+# Audio is never stored long-term (SPEC-011 §Speaker Identification); clean up the WAV:
+rm deploy/data/enroll-<speaker_id>.wav
 
 # Running standalone against the sidecar HTTP endpoint
-python sidecars/voice-fingerprinter/enroll.py <speaker_id> --wav sample.wav --embed-url http://localhost:9096/embed --output speakers.json
+python sidecars/voice-fingerprinter/enroll.py <speaker_id> --wav deploy/data/enroll-<speaker_id>.wav --embed-url http://localhost:9096/embed --output deploy/data/speakers.json
 ```

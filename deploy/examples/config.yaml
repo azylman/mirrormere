@@ -86,11 +86,11 @@ display:
 # embed_url at the voice-fingerprinter sidecar (deploy/compose.yml,
 # profile "speaker-id") to enable it. Enroll speakers with
 # `docker compose exec voice-fingerprinter python enroll.py <id> --wav <file>...
-# --output /config/speakers.json` (or standalone, see sidecars/voice-fingerprinter) —
-# /config is the same host directory mirrormere-core reads fingerprints_path from.
+# --output /data/speakers.json` (or standalone, see sidecars/voice-fingerprinter) —
+# /data is the shared persistent data volume mirrormere-core reads fingerprints_path from.
 # voice_hub:
 #   speaker_id:
 #     embed_url: "http://voice-fingerprinter:9096/embed"
-#     fingerprints_path: "/config/speakers.json"
+#     fingerprints_path: "/data/speakers.json"
 #     threshold: 0.70      # optional, (0, 1]
 #     timeout_seconds: 5   # optional
