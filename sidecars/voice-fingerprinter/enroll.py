@@ -10,7 +10,7 @@ reachable embed_url when run standalone outside the container) for one or
 more WAV files, L2-normalizes and averages the resulting embeddings into a
 centroid, and merges the result into a fingerprints JSON file
 (default ./speakers.json — point --output at the Hub's
-`voice_hub.speaker_id.fingerprints_path`, e.g. `deploy/config/speakers.json`).
+`voice_hub.speaker_id.fingerprints_path`, e.g. `deploy/data/speakers.json`).
 
 Usage:
   enroll.py <id> --wav f1.wav f2.wav ... [--output speakers.json] [--dry-run]

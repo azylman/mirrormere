@@ -539,8 +539,8 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 				// that the brain call has returned.
 				emitChunk(streamFormat, nil, streamRate, streamCh, true)
 			} else if h.tts != nil {
-				// Every streamed sentence's audio (and its local fallback)
-				// failed: last resort is one TTS call over the full reply
+				// Every streamed sentence in remote-tts mode failed synthesis:
+				// last resort is one TTS call over the full reply
 				// so the reply is never silently dropped.
 				ttsStart := time.Now()
 				audioBytes, format, ttsErr := h.tts.Synthesize(ctx, reply)

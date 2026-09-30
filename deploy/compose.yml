@@ -125,9 +125,9 @@ services:
       - MDE_DEVICE=cpu
     volumes:
       - voice-fingerprinter-models:/models  # ECAPA model cache, downloaded on first run (~80MB)
-      - ./config:/config                    # rw: shares mirrormere-core's fingerprints_path directory,
-                                             # so `enroll.py --output /config/speakers.json` writes
-                                             # where the Hub reads (config is mounted :ro there)
+      - ./data:/data                        # rw: shares mirrormere-core's fingerprints_path directory (/data),
+                                             # so `enroll.py --output /data/speakers.json` writes
+                                             # where the Hub reads
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:9096/health"]
       interval: 15s

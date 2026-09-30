@@ -237,7 +237,7 @@ data: {"text": "It's sunny.", "engine": "desktop-tts", "audio_b64": "<base64 WAV
   stays the Hub's own configured default, as it always has.
 - A `sentence` event with a missing or undecodable `audio_b64` still fires
   `onAudio`, with `Data` empty — the caller decides how to handle it (see
-  fallback below), it is never silently dropped by the SSE consumer itself.
+  streaming mode latch below), it is never silently dropped by the SSE consumer itself.
 
 ### Hub behavior when the brain streams sentence audio
 - Each `sentence` event becomes one `audio_chunk` SSE event to the edge dock,
@@ -258,17 +258,14 @@ data: {"text": "It's sunny.", "engine": "desktop-tts", "audio_b64": "<base64 WAV
   change.
 - **No double speech**: if any sentence audio streamed, the Hub does not also
   call its own `TTSClient.Synthesize` on the full reply text.
-- **Text-only sentences (first-class)**: a `sentence` event may carry text
-  and no audio. The Hub synthesizes *just that sentence's text* with its own
-  `h.tts`. This is a supported mode, not a degraded one: a brain that
-  streams text while this instance does speech locally (e.g. Kokoro on an
-  Orin) gets the same sentence-level time-to-first-audio as a brain that
-  streams pre-rendered audio (the karakos gateway). The same path covers a
-  sentence whose audio was missing or undecodable. It logs at debug level. If `h.tts` is unset, or that fallback synthesis also fails,
-  the sentence's audio is dropped (logged at warn), but the `reply` event still
-  carries the full, un-truncated text for the caption toast.
-- **All sentences failed**: if every streamed sentence (and its fallback)
-  failed, so zero real chunks were ever sent, the Hub falls back one more
+- **Streaming mode latch & sentence consistency**:
+  The stream audio mode is determined by the first `sentence` event:
+  - If the first sentence carries non-empty audio data, the turn latches to `brain-audio`. Every subsequent sentence in that turn must also provide audio data. A brain that streams audio must send every sentence with audio or skip it (the karakos gateway already skips a sentence whose TTS failed rather than sending it text-only).
+  - If the first sentence is text-only (empty audio), the turn latches to `remote-tts`. In this mode, the Hub synthesizes each sentence's text sequentially with its own `h.tts` client (e.g. Kokoro on an Orin), providing sentence-level time-to-first-audio without brain-synthesized audio.
+  - If any subsequent sentence conflicts with the latched mode (e.g., a text-only or missing/undecodable audio sentence arrives during a `brain-audio` turn, or an audio chunk arrives during a `remote-tts` turn), the Hub aborts the turn immediately with `ErrMixedAudioStream`, cancels the stream context, transitions the coordinator to `StateError`, and emits an SSE `error` event (`error: "brain_error"`). The dock plays whatever valid sentence chunks arrived prior to the error, followed by the error notification. Splicing or falling back mid-stream to TTS during a `brain-audio` turn is strictly prohibited.
+  - If a turn latched to `remote-tts` has no `h.tts` configured or a synthesis call fails, that sentence's audio is dropped (logged at warn), but subsequent sentences continue.
+- **All sentences failed**: if every streamed sentence in a `remote-tts` turn
+  failed synthesis (or no TTS client was configured), so zero real chunks were ever sent, the Hub falls back one more
   level — a single `TTSClient.Synthesize` call over the *entire* reply text,
   emitted as one `is_final: true` chunk carrying the audio (not an empty
   marker) — so a turn is never silently mute.
@@ -356,13 +353,13 @@ A JSON file on the Hub, one per Hub, re-read whenever it changes on disk so re-e
 voice_hub:
   speaker_id:
     embed_url: "http://<gpu-host>:9099/embed"
-    fingerprints_path: "/config/speakers.json"
+    fingerprints_path: "/data/speakers.json"
     threshold: 0.70      # optional, (0, 1]
     timeout_seconds: 5   # optional
 ```
 
 ### Enrollment
-`sidecars/voice-fingerprinter/enroll.py` builds the fingerprint file: it takes one or more WAV recordings of a speaker and a speaker id, calls the embed endpoint for each ~4s chunk (dropping near-silent chunks), L2-normalizes and averages the results into a centroid, and merges it into the fingerprints JSON — refusing to mix models unless `--force`. Run it against the sidecar's own container (`docker compose exec voice-fingerprinter python enroll.py <id> --wav <file>... --output /config/speakers.json`) or standalone against any reachable `embed_url`. `enroll.py --list` / `--remove <id>` manage the file without re-recording. See the script's own docstring for the full flag set.
+`sidecars/voice-fingerprinter/enroll.py` builds the fingerprint file: it takes one or more WAV recordings of a speaker and a speaker id, calls the embed endpoint for each ~4s chunk (dropping near-silent chunks), L2-normalizes and averages the results into a centroid, and merges it into the fingerprints JSON — refusing to mix models unless `--force`. Run it against the sidecar's own container (`docker compose exec voice-fingerprinter python enroll.py <id> --wav <file>... --output /data/speakers.json`) or standalone against any reachable `embed_url`. `enroll.py --list` / `--remove <id>` manage the file without re-recording. See the script's own docstring for the full flag set.
 
 ### Not yet built
 The "Add my voice" UI flow — recording prompted phrases from within the household UI and calling the enrollment path automatically — is a follow-up; today enrollment is a CLI run by hand.
