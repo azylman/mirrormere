@@ -39,6 +39,9 @@ var (
 	ErrTTSFailed = errors.New("text-to-speech synthesis failed")
 	// ErrMixedAudioStream is returned when a streaming turn mixes brain audio and TTS synthesis.
 	ErrMixedAudioStream = errors.New("mixed audio stream: turn cannot mix brain audio and TTS synthesis")
+	// ErrMixedPCMFormat is returned when PCM audio changes sample rate or channel count mid-turn.
+	// It wraps ErrMixedAudioStream: one response must keep one audio format (#347).
+	ErrMixedPCMFormat = fmt.Errorf("%w: PCM sample rate or channel count changed mid-turn", ErrMixedAudioStream)
 )
 
 const (
@@ -384,8 +387,9 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 			hasStreamTime bool
 
 			pcmBuf       []byte
-			pcmBufRate   int // rate/channels the bytes in pcmBuf were synthesized at
-			pcmBufCh     int
+			pcmLatched   bool // first PCM chunk latches the turn's rate/channels
+			latchRate    int
+			latchCh      int
 			streamFormat = "wav"
 			streamRate   = 24000
 			streamCh     = 1
@@ -415,23 +419,23 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 			chunkIdx++
 		}
 
-		// flushPCM emits any buffered PCM under the rate and channel count it
-		// was produced at, so a rate change never relabels leftover samples.
-		flushPCM := func() {
-			if len(pcmBuf) == 0 {
-				return
+		// checkPCMFormat latches the turn's PCM rate and channel count on the
+		// first PCM chunk and fails the turn if a later chunk differs.
+		checkPCMFormat := func(rate, ch int) bool {
+			if !pcmLatched {
+				pcmLatched = true
+				latchRate, latchCh = rate, ch
+				return true
 			}
-			anyChunkSent = true
-			emitChunk("pcm", pcmBuf, pcmBufRate, pcmBufCh, false)
-			pcmBuf = nil
+			if rate == latchRate && ch == latchCh {
+				return true
+			}
+			streamErr = fmt.Errorf("%w: latched %d Hz/%d ch, got %d Hz/%d ch", ErrMixedPCMFormat, latchRate, latchCh, rate, ch)
+			slog.Error("PCM format changed mid-turn", "error", streamErr)
+			cancelStream()
+			return false
 		}
-		// appendPCM buffers PCM and emits full pieces, flushing first when
-		// the sample rate or channel count differs from the buffered data.
 		appendPCM := func(data []byte, rate, ch int) {
-			if len(pcmBuf) > 0 && (rate != pcmBufRate || ch != pcmBufCh) {
-				flushPCM()
-			}
-			pcmBufRate, pcmBufCh = rate, ch
 			pcmBuf = append(pcmBuf, data...)
 			for len(pcmBuf) >= pcmChunkFloor {
 				emitPiece := pcmBuf[:pcmChunkFloor]
@@ -513,12 +517,14 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 					}
 					streamedTTSAny = true
 					if tc.Format == "pcm" {
+						if !checkPCMFormat(tc.SampleRate, tc.Channels) {
+							return streamErr
+						}
 						appendPCM(tc.Data, tc.SampleRate, tc.Channels)
 						streamFormat = "pcm"
 						streamRate = tc.SampleRate
 						streamCh = tc.Channels
 					} else {
-						flushPCM() // keep ordering: buffered PCM precedes this chunk
 						anyChunkSent = true
 						streamFormat = tc.Format
 						emitChunk(tc.Format, tc.Data, tc.SampleRate, tc.Channels, false)
@@ -534,9 +540,11 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 			}
 
 			if format == "pcm" {
+				if !checkPCMFormat(rate, ch) {
+					return
+				}
 				appendPCM(data, rate, ch)
 			} else {
-				flushPCM()
 				anyChunkSent = true
 				emitChunk(format, data, rate, ch, false)
 			}
@@ -566,7 +574,11 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 			// The brain streamed sentence audio, so the hub must NOT also
 			// run its own TTS over the full reply (no double speech).
 			if anyChunkSent || len(pcmBuf) > 0 {
-				flushPCM()
+				if len(pcmBuf) > 0 {
+					anyChunkSent = true
+					emitChunk("pcm", pcmBuf, latchRate, latchCh, false)
+					pcmBuf = nil
+				}
 
 				streamTTSDuration := time.Since(streamStart).Seconds()
 				h.metrics.RecordStageDuration(nodeID, "tts", "success", streamTTSDuration)
@@ -584,6 +596,9 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 				// (immediately, as it arrived) — this marker chunk (empty
 				// data) is what tells the dock playback is complete now
 				// that the brain call has returned.
+				if pcmLatched {
+					streamRate, streamCh = latchRate, latchCh
+				}
 				emitChunk(streamFormat, nil, streamRate, streamCh, true)
 			} else if h.tts != nil {
 				// Every streamed sentence in remote-tts mode failed synthesis:
@@ -688,34 +703,12 @@ func (h *Hub) synthesizeAndEmitReply(
 
 	const pcmChunkFloor = 4800
 	var pcmBuf []byte
-	var pcmBufRate, pcmBufCh int
 	chunkIdx := 0
 	var anySent bool
 	streamFormat := "pcm"
 	streamRate := 24000
 	streamCh := 1
-
-	// flushPCM emits buffered PCM under the rate and channels it was
-	// produced at (never the current chunk's, which may differ).
-	flushPCM := func() error {
-		if len(pcmBuf) == 0 {
-			return nil
-		}
-		anySent = true
-		if err := safeSink("audio_chunk", map[string]any{
-			"chunk_index": chunkIdx,
-			"format":      "pcm",
-			"sample_rate": pcmBufRate,
-			"channels":    pcmBufCh,
-			"is_final":    false,
-			"data":        base64.StdEncoding.EncodeToString(pcmBuf),
-		}); err != nil {
-			return err
-		}
-		chunkIdx++
-		pcmBuf = nil
-		return nil
-	}
+	pcmSeen := false
 
 	ttsErr := h.tts.Synthesize(ctx, reply, func(tc TTSAudioChunk) error {
 		if len(tc.Data) == 0 {
@@ -725,15 +718,13 @@ func (h *Hub) synthesizeAndEmitReply(
 			h.coord.Transition(StateSpeaking, transcript, &reply, &engine, nil)
 		}
 		if tc.Format == "pcm" {
-			if len(pcmBuf) > 0 && (tc.SampleRate != pcmBufRate || tc.Channels != pcmBufCh) {
-				if err := flushPCM(); err != nil {
-					return err
-				}
+			if pcmSeen && (tc.SampleRate != streamRate || tc.Channels != streamCh) {
+				return fmt.Errorf("%w: latched %d Hz/%d ch, got %d Hz/%d ch", ErrMixedPCMFormat, streamRate, streamCh, tc.SampleRate, tc.Channels)
 			}
+			pcmSeen = true
 			streamFormat = "pcm"
 			streamRate = tc.SampleRate
 			streamCh = tc.Channels
-			pcmBufRate, pcmBufCh = tc.SampleRate, tc.Channels
 			pcmBuf = append(pcmBuf, tc.Data...)
 			for len(pcmBuf) >= pcmChunkFloor {
 				piece := pcmBuf[:pcmChunkFloor]
@@ -753,9 +744,6 @@ func (h *Hub) synthesizeAndEmitReply(
 				chunkIdx++
 			}
 		} else {
-			if err := flushPCM(); err != nil {
-				return err
-			}
 			anySent = true
 			streamFormat = tc.Format
 			b64 := base64.StdEncoding.EncodeToString(tc.Data)
@@ -779,8 +767,34 @@ func (h *Hub) synthesizeAndEmitReply(
 		return nil
 	})
 
-	if err := flushPCM(); err != nil {
-		return "error", err
+	if errors.Is(ttsErr, ErrMixedAudioStream) {
+		// Fail fast: one response must keep one audio format (#347).
+		slog.Error("TTS audio format changed mid-response", "node_id", nodeID, "error", ttsErr)
+		h.metrics.RecordStageDuration(nodeID, "tts", "error", time.Since(ttsStart).Seconds())
+		h.metrics.RecordError(nodeID, "tts", "tts_error")
+		if h.coord != nil {
+			h.coord.Transition(StateError, nil, nil, nil, nil)
+		}
+		if sinkErr := safeSink("error", map[string]string{"error": "tts_error", "message": ttsErr.Error()}); sinkErr != nil {
+			return "error", sinkErr
+		}
+		return "error", ttsErr
+	}
+
+	if len(pcmBuf) > 0 {
+		anySent = true
+		if err := safeSink("audio_chunk", map[string]any{
+			"chunk_index": chunkIdx,
+			"format":      "pcm",
+			"sample_rate": streamRate,
+			"channels":    streamCh,
+			"is_final":    false,
+			"data":        base64.StdEncoding.EncodeToString(pcmBuf),
+		}); err != nil {
+			return "error", err
+		}
+		chunkIdx++
+		pcmBuf = nil
 	}
 	if anySent {
 		if err := safeSink("audio_chunk", map[string]any{
