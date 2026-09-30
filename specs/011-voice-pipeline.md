@@ -294,6 +294,19 @@ order with no client code change required — `is_final` is informational for
 the dock (nothing currently branches on it), not required for correct
 playback ordering.
 
+### Streaming TTS Client (`TTSClient`)
+Speech synthesis is natively streaming across all voice modes (sentence-level `remote-tts` or full reply):
+```go
+type TTSClient interface {
+    Synthesize(ctx context.Context, text string, onChunk func(chunk TTSAudioChunk) error) error
+}
+```
+`DefaultTTSClient` implements `TTSClient`. Rather than buffering the entire HTTP response payload via `io.ReadAll(resp.Body)`, it streams audio chunks directly as bytes arrive from the TTS server:
+- If the incoming stream starts with a standard 44-byte WAV (`RIFF...WAVE`) header, it extracts the sample rate and channel count, strips the header, and emits the payload as raw `pcm` in ~100ms slices (4,800 bytes at 24kHz 16-bit mono).
+- If the incoming stream is raw PCM or MP3, chunks are emitted with their detected format as they arrive.
+- The Voice Hub forwards these chunks immediately to the edge ear dock via SSE (`audio_chunk`), buffering PCM slices to 4,800 bytes and flushing trailing remainders upon stream completion followed by an empty `is_final: true` completion marker.
+- This cuts time-to-first-audio latency on both non-streaming turns and sentence-level remote TTS from multi-second buffering down to wire transmission latency (~100-250ms).
+
 ---
 
 ## Speaker Identification (Voice Fingerprints)

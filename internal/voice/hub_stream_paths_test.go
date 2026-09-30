@@ -15,8 +15,18 @@ import (
 // funcTTS lets a test decide synthesis per text.
 type funcTTS func(text string) ([]byte, string, error)
 
-func (f funcTTS) Synthesize(_ context.Context, text string) ([]byte, string, error) {
-	return f(text)
+func (f funcTTS) Synthesize(_ context.Context, text string, onChunk func(chunk TTSAudioChunk) error) error {
+	data, format, err := f(text)
+	if err != nil {
+		return err
+	}
+	if len(data) > 0 && onChunk != nil {
+		if format == "" {
+			format = "wav"
+		}
+		return onChunk(TTSAudioChunk{Data: data, Format: format, SampleRate: 24000, Channels: 1})
+	}
+	return nil
 }
 
 func runStreamingTurn(t *testing.T, brain BrainClient, tts TTSClient, sink func(string, any) error) error {
@@ -103,11 +113,11 @@ func TestHub_Streaming_AllSentencesFail_FullReplyTTSSucceeds(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	chunks := extractAudioChunkEvents(t, get())
-	if len(chunks) != 1 {
-		t.Fatalf("expected one full-reply chunk, got %d", len(chunks))
+	if len(chunks) != 2 {
+		t.Fatalf("expected two full-reply chunks (data + marker), got %d", len(chunks))
 	}
-	if final, ok := chunks[0]["is_final"].(bool); !ok || !final {
-		t.Errorf("full-reply fallback chunk must be is_final:true")
+	if final, ok := chunks[1]["is_final"].(bool); !ok || !final {
+		t.Errorf("completion marker must be is_final:true")
 	}
 }
 
