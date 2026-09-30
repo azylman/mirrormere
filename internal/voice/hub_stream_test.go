@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/binary"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -988,3 +989,291 @@ func TestHub_Interact_StreamingBrain_RemoteTTS_StreamingTTSClient_MP3(t *testing
 
 
 
+
+// --- #356: rate change flushes pcmBuf ---
+
+func rateChangeTTS() *mockStreamingTTS {
+	return &mockStreamingTTS{
+		streamingFn: func(ctx context.Context, text string, onChunk func(TTSAudioChunk) error) error {
+			rate := 24000
+			if text == "Sentence two." {
+				rate = 22050
+			}
+			return onChunk(TTSAudioChunk{Data: make([]byte, 1000), Format: "pcm", SampleRate: rate, Channels: 1})
+		},
+	}
+}
+
+// TestHub_Interact_StreamingBrain_RemoteTTS_RateChangeFlushesBuffer: leftover
+// samples from a 24 kHz sentence must go out labelled 24000, not relabelled
+// with the next sentence's 22050 Hz.
+func TestHub_Interact_StreamingBrain_RemoteTTS_RateChangeFlushesBuffer(t *testing.T) {
+	t.Parallel()
+
+	brain := &mockStreamingBrain{
+		reply: "Sentence one. Sentence two.",
+		sentences: []BrainAudioChunk{
+			{Text: "Sentence one."},
+			{Text: "Sentence two."},
+		},
+	}
+	h := NewHub(&config.VoiceHubConfig{Enabled: true}, nil, WithSTTClient(&mockSTT{text: "q"}), WithBrainClient(brain), WithTTSClient(rateChangeTTS()))
+
+	sink, getEvents := collectEvents()
+	if err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(1600)), "kiosk-kitchen", "sess-1", sink, EdgeTimings{}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	chunks := extractAudioChunkEvents(t, getEvents())
+	if len(chunks) != 3 {
+		t.Fatalf("expected 2 data chunks + marker, got %d: %v", len(chunks), chunks)
+	}
+	if chunks[0]["sample_rate"] != 24000 || chunks[1]["sample_rate"] != 22050 {
+		t.Errorf("rates mislabelled: %v / %v", chunks[0]["sample_rate"], chunks[1]["sample_rate"])
+	}
+	for i := 0; i < 2; i++ {
+		dec, _ := base64.StdEncoding.DecodeString(chunks[i]["data"].(string))
+		if len(dec) != 1000 {
+			t.Errorf("chunk %d: expected 1000 bytes, got %d", i, len(dec))
+		}
+	}
+}
+
+func TestHub_SynthesizeAndEmitReply_RateChangeFlushesBuffer(t *testing.T) {
+	t.Parallel()
+
+	tts := &mockStreamingTTS{
+		streamingFn: func(ctx context.Context, text string, onChunk func(TTSAudioChunk) error) error {
+			if err := onChunk(TTSAudioChunk{Data: make([]byte, 1000), Format: "pcm", SampleRate: 24000, Channels: 1}); err != nil {
+				return err
+			}
+			return onChunk(TTSAudioChunk{Data: make([]byte, 600), Format: "pcm", SampleRate: 22050, Channels: 2})
+		},
+	}
+	h := NewHub(&config.VoiceHubConfig{Enabled: true}, nil, WithTTSClient(tts))
+	sink, getEvents := collectEvents()
+	tr := "q"
+	if _, err := h.synthesizeAndEmitReply(context.Background(), "hello there", "n1", "e", &tr, sink); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	chunks := extractAudioChunkEvents(t, getEvents())
+	if len(chunks) != 3 {
+		t.Fatalf("expected 3 chunks, got %d: %v", len(chunks), chunks)
+	}
+	if chunks[0]["sample_rate"] != 24000 || chunks[0]["channels"] != 1 {
+		t.Errorf("chunk 0 mislabelled: %v", chunks[0])
+	}
+	if chunks[1]["sample_rate"] != 22050 || chunks[1]["channels"] != 2 {
+		t.Errorf("chunk 1 mislabelled: %v", chunks[1])
+	}
+}
+
+// --- #357 / #358 / #359: DefaultTTSClient ---
+
+func riffChunk(id string, body []byte) []byte {
+	out := append([]byte(id), 0, 0, 0, 0)
+	binary.LittleEndian.PutUint32(out[4:], uint32(len(body)))
+	out = append(out, body...)
+	if len(body)%2 == 1 {
+		out = append(out, 0)
+	}
+	return out
+}
+
+func fmtBody(tag uint16, ch uint16, rate uint32, bits uint16, extra int) []byte {
+	b := make([]byte, 16+extra)
+	binary.LittleEndian.PutUint16(b[0:], tag)
+	binary.LittleEndian.PutUint16(b[2:], ch)
+	binary.LittleEndian.PutUint32(b[4:], rate)
+	binary.LittleEndian.PutUint32(b[8:], rate*uint32(ch)*uint32(bits)/8)
+	binary.LittleEndian.PutUint16(b[12:], ch*bits/8)
+	binary.LittleEndian.PutUint16(b[14:], bits)
+	return b
+}
+
+func buildWAV(chunks ...[]byte) []byte {
+	out := []byte("RIFF\x00\x00\x00\x00WAVE")
+	for _, c := range chunks {
+		out = append(out, c...)
+	}
+	binary.LittleEndian.PutUint32(out[4:], uint32(len(out)-8))
+	return out
+}
+
+func synthesizeFromServer(t *testing.T, contentType string, hdr map[string]string, body []byte) []TTSAudioChunk {
+	t.Helper()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", contentType)
+		for k, v := range hdr {
+			w.Header().Set(k, v)
+		}
+		_, _ = w.Write(body)
+	}))
+	defer ts.Close()
+	var chunks []TTSAudioChunk
+	err := NewDefaultTTSClient(ts.URL, "m", "v", 5).Synthesize(context.Background(), "hello", func(c TTSAudioChunk) error {
+		chunks = append(chunks, c)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	return chunks
+}
+
+func concatData(chunks []TTSAudioChunk) []byte {
+	var out []byte
+	for _, c := range chunks {
+		out = append(out, c.Data...)
+	}
+	return out
+}
+
+func TestDefaultTTSClient_WAVChunkWalking(t *testing.T) {
+	t.Parallel()
+	pcm := bytes.Repeat([]byte{0x11, 0x22}, 5000) // 10000 bytes
+
+	cases := map[string][]byte{
+		"LIST chunk before data": buildWAV(
+			riffChunk("fmt ", fmtBody(1, 1, 22050, 16, 0)),
+			riffChunk("LIST", []byte("INFOISFT\x05\x00\x00\x00Lavf\x00")),
+			riffChunk("data", pcm)),
+		"fmt size 18": buildWAV(
+			riffChunk("fmt ", fmtBody(1, 1, 22050, 16, 2)),
+			riffChunk("data", pcm)),
+		"WAVE_FORMAT_EXTENSIBLE": buildWAV(
+			riffChunk("fmt ", func() []byte {
+				b := fmtBody(0xFFFE, 1, 22050, 16, 24)
+				binary.LittleEndian.PutUint16(b[16:], 22) // cbSize
+				binary.LittleEndian.PutUint16(b[24:], 1)  // subformat PCM
+				return b
+			}()),
+			riffChunk("data", pcm)),
+	}
+	for name, wav := range cases {
+		wav := wav
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			chunks := synthesizeFromServer(t, "audio/wav", nil, wav)
+			if !bytes.Equal(concatData(chunks), pcm) {
+				t.Fatalf("header bytes leaked into or audio lost from PCM output (got %d bytes)", len(concatData(chunks)))
+			}
+			for _, c := range chunks {
+				if c.Format != "pcm" || c.SampleRate != 22050 || c.Channels != 1 {
+					t.Errorf("bad chunk: format=%s rate=%d ch=%d", c.Format, c.SampleRate, c.Channels)
+				}
+			}
+		})
+	}
+
+	t.Run("streamed data size 0xFFFFFFFF and 0", func(t *testing.T) {
+		t.Parallel()
+		for _, size := range []uint32{0xFFFFFFFF, 0} {
+			wav := buildWAV(riffChunk("fmt ", fmtBody(1, 2, 16000, 16, 0)))
+			hdr := append([]byte("data"), 0, 0, 0, 0)
+			binary.LittleEndian.PutUint32(hdr[4:], size)
+			wav = append(append(wav, hdr...), pcm...)
+			chunks := synthesizeFromServer(t, "audio/wav", nil, wav)
+			if !bytes.Equal(concatData(chunks), pcm) {
+				t.Fatalf("size %#x: expected all %d PCM bytes, got %d", size, len(pcm), len(concatData(chunks)))
+			}
+			if chunks[0].SampleRate != 16000 || chunks[0].Channels != 2 {
+				t.Errorf("size %#x: bad rate/channels %d/%d", size, chunks[0].SampleRate, chunks[0].Channels)
+			}
+		}
+	})
+
+	t.Run("known data size excludes trailing chunks", func(t *testing.T) {
+		t.Parallel()
+		wav := buildWAV(riffChunk("fmt ", fmtBody(1, 1, 24000, 16, 0)), riffChunk("data", pcm), riffChunk("LIST", []byte("INFOtrailing!")))
+		chunks := synthesizeFromServer(t, "audio/wav", nil, wav)
+		if !bytes.Equal(concatData(chunks), pcm) {
+			t.Fatalf("expected exactly the data chunk, got %d bytes", len(concatData(chunks)))
+		}
+	})
+}
+
+// #358: non-PCM audio is delivered as one complete file.
+func TestDefaultTTSClient_NonPCMEmittedAsOneChunk(t *testing.T) {
+	t.Parallel()
+
+	t.Run("mp3", func(t *testing.T) {
+		t.Parallel()
+		mp3 := bytes.Repeat([]byte("mp3frame"), 2000) // 16000 bytes
+		chunks := synthesizeFromServer(t, "audio/mpeg", nil, mp3)
+		if len(chunks) != 1 || chunks[0].Format != "mp3" || !bytes.Equal(chunks[0].Data, mp3) {
+			t.Fatalf("expected one whole mp3 chunk, got %d chunks", len(chunks))
+		}
+	})
+
+	t.Run("non-streamable wav (float)", func(t *testing.T) {
+		t.Parallel()
+		wav := buildWAV(riffChunk("fmt ", fmtBody(3, 1, 44100, 32, 0)), riffChunk("data", make([]byte, 12000)))
+		chunks := synthesizeFromServer(t, "audio/wav", nil, wav)
+		if len(chunks) != 1 || chunks[0].Format != "wav" || !bytes.Equal(chunks[0].Data, wav) {
+			t.Fatalf("expected one whole wav chunk with header intact, got %d chunks", len(chunks))
+		}
+		if chunks[0].SampleRate != 44100 {
+			t.Errorf("expected rate from header 44100, got %d", chunks[0].SampleRate)
+		}
+	})
+}
+
+// #359: Data must not alias the reused read buffer; raw PCM rate comes from
+// the response.
+func TestDefaultTTSClient_ChunkDataNotAliased(t *testing.T) {
+	t.Parallel()
+	pcm := make([]byte, 4800*3)
+	for i := range pcm {
+		pcm[i] = byte(i / 4800) + 1
+	}
+	wav := buildWAV(riffChunk("fmt ", fmtBody(1, 1, 24000, 16, 0)), riffChunk("data", pcm))
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "audio/wav")
+		f := w.(http.Flusher)
+		for i := 0; i < len(wav); i += 1000 { // many small flushed writes -> many reads
+			end := i + 1000
+			if end > len(wav) {
+				end = len(wav)
+			}
+			_, _ = w.Write(wav[i:end])
+			f.Flush()
+		}
+	}))
+	defer ts.Close()
+
+	var retained [][]byte
+	err := NewDefaultTTSClient(ts.URL, "m", "v", 5).Synthesize(context.Background(), "hi", func(c TTSAudioChunk) error {
+		retained = append(retained, c.Data) // retain without copying
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var got []byte
+	for _, d := range retained {
+		got = append(got, d...)
+	}
+	if !bytes.Equal(got, pcm) {
+		t.Fatal("retained chunk Data was corrupted by buffer reuse")
+	}
+}
+
+func TestDefaultTTSClient_RawPCMRateFromResponse(t *testing.T) {
+	t.Parallel()
+	pcm := bytes.Repeat([]byte{1, 2}, 1000)
+
+	chunks := synthesizeFromServer(t, "audio/pcm;rate=22050;channels=2", nil, pcm)
+	if len(chunks) == 0 || chunks[0].SampleRate != 22050 || chunks[0].Channels != 2 || !bytes.Equal(concatData(chunks), pcm) {
+		t.Errorf("content-type params not honoured: %+v", chunks)
+	}
+
+	chunks = synthesizeFromServer(t, "audio/pcm", map[string]string{"X-Sample-Rate": "16000"}, pcm)
+	if len(chunks) == 0 || chunks[0].SampleRate != 16000 || chunks[0].Channels != 1 {
+		t.Errorf("X-Sample-Rate not honoured: %+v", chunks)
+	}
+
+	chunks = synthesizeFromServer(t, "audio/pcm", nil, pcm)
+	if len(chunks) == 0 || chunks[0].SampleRate != 24000 || chunks[0].Channels != 1 {
+		t.Errorf("expected 24000/1 default: %+v", chunks)
+	}
+}

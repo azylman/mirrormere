@@ -11,10 +11,12 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"mime"
 	"mime/multipart"
 	"net"
 	"net/http"
 	"net/textproto"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -382,6 +384,8 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 			hasStreamTime bool
 
 			pcmBuf       []byte
+			pcmBufRate   int // rate/channels the bytes in pcmBuf were synthesized at
+			pcmBufCh     int
 			streamFormat = "wav"
 			streamRate   = 24000
 			streamCh     = 1
@@ -409,6 +413,32 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 				slog.Debug("streamed audio_chunk sink error", "error", sinkErr)
 			}
 			chunkIdx++
+		}
+
+		// flushPCM emits any buffered PCM under the rate and channel count it
+		// was produced at, so a rate change never relabels leftover samples.
+		flushPCM := func() {
+			if len(pcmBuf) == 0 {
+				return
+			}
+			anyChunkSent = true
+			emitChunk("pcm", pcmBuf, pcmBufRate, pcmBufCh, false)
+			pcmBuf = nil
+		}
+		// appendPCM buffers PCM and emits full pieces, flushing first when
+		// the sample rate or channel count differs from the buffered data.
+		appendPCM := func(data []byte, rate, ch int) {
+			if len(pcmBuf) > 0 && (rate != pcmBufRate || ch != pcmBufCh) {
+				flushPCM()
+			}
+			pcmBufRate, pcmBufCh = rate, ch
+			pcmBuf = append(pcmBuf, data...)
+			for len(pcmBuf) >= pcmChunkFloor {
+				emitPiece := pcmBuf[:pcmChunkFloor]
+				pcmBuf = pcmBuf[pcmChunkFloor:]
+				anyChunkSent = true
+				emitChunk("pcm", emitPiece, rate, ch, false)
+			}
 		}
 
 		onAudio := func(chunk BrainAudioChunk) {
@@ -483,17 +513,12 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 					}
 					streamedTTSAny = true
 					if tc.Format == "pcm" {
-						pcmBuf = append(pcmBuf, tc.Data...)
-						for len(pcmBuf) >= pcmChunkFloor {
-							emitPiece := pcmBuf[:pcmChunkFloor]
-							pcmBuf = pcmBuf[pcmChunkFloor:]
-							anyChunkSent = true
-							emitChunk("pcm", emitPiece, tc.SampleRate, tc.Channels, false)
-						}
+						appendPCM(tc.Data, tc.SampleRate, tc.Channels)
 						streamFormat = "pcm"
 						streamRate = tc.SampleRate
 						streamCh = tc.Channels
 					} else {
+						flushPCM() // keep ordering: buffered PCM precedes this chunk
 						anyChunkSent = true
 						streamFormat = tc.Format
 						emitChunk(tc.Format, tc.Data, tc.SampleRate, tc.Channels, false)
@@ -509,14 +534,9 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 			}
 
 			if format == "pcm" {
-				pcmBuf = append(pcmBuf, data...)
-				for len(pcmBuf) >= pcmChunkFloor {
-					emitPiece := pcmBuf[:pcmChunkFloor]
-					pcmBuf = pcmBuf[pcmChunkFloor:]
-					anyChunkSent = true
-					emitChunk("pcm", emitPiece, rate, ch, false)
-				}
+				appendPCM(data, rate, ch)
 			} else {
+				flushPCM()
 				anyChunkSent = true
 				emitChunk(format, data, rate, ch, false)
 			}
@@ -546,11 +566,7 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 			// The brain streamed sentence audio, so the hub must NOT also
 			// run its own TTS over the full reply (no double speech).
 			if anyChunkSent || len(pcmBuf) > 0 {
-				if len(pcmBuf) > 0 {
-					anyChunkSent = true
-					emitChunk("pcm", pcmBuf, streamRate, streamCh, false)
-					pcmBuf = nil
-				}
+				flushPCM()
 
 				streamTTSDuration := time.Since(streamStart).Seconds()
 				h.metrics.RecordStageDuration(nodeID, "tts", "success", streamTTSDuration)
@@ -672,11 +688,34 @@ func (h *Hub) synthesizeAndEmitReply(
 
 	const pcmChunkFloor = 4800
 	var pcmBuf []byte
+	var pcmBufRate, pcmBufCh int
 	chunkIdx := 0
 	var anySent bool
 	streamFormat := "pcm"
 	streamRate := 24000
 	streamCh := 1
+
+	// flushPCM emits buffered PCM under the rate and channels it was
+	// produced at (never the current chunk's, which may differ).
+	flushPCM := func() error {
+		if len(pcmBuf) == 0 {
+			return nil
+		}
+		anySent = true
+		if err := safeSink("audio_chunk", map[string]any{
+			"chunk_index": chunkIdx,
+			"format":      "pcm",
+			"sample_rate": pcmBufRate,
+			"channels":    pcmBufCh,
+			"is_final":    false,
+			"data":        base64.StdEncoding.EncodeToString(pcmBuf),
+		}); err != nil {
+			return err
+		}
+		chunkIdx++
+		pcmBuf = nil
+		return nil
+	}
 
 	ttsErr := h.tts.Synthesize(ctx, reply, func(tc TTSAudioChunk) error {
 		if len(tc.Data) == 0 {
@@ -686,9 +725,15 @@ func (h *Hub) synthesizeAndEmitReply(
 			h.coord.Transition(StateSpeaking, transcript, &reply, &engine, nil)
 		}
 		if tc.Format == "pcm" {
+			if len(pcmBuf) > 0 && (tc.SampleRate != pcmBufRate || tc.Channels != pcmBufCh) {
+				if err := flushPCM(); err != nil {
+					return err
+				}
+			}
 			streamFormat = "pcm"
 			streamRate = tc.SampleRate
 			streamCh = tc.Channels
+			pcmBufRate, pcmBufCh = tc.SampleRate, tc.Channels
 			pcmBuf = append(pcmBuf, tc.Data...)
 			for len(pcmBuf) >= pcmChunkFloor {
 				piece := pcmBuf[:pcmChunkFloor]
@@ -708,6 +753,9 @@ func (h *Hub) synthesizeAndEmitReply(
 				chunkIdx++
 			}
 		} else {
+			if err := flushPCM(); err != nil {
+				return err
+			}
 			anySent = true
 			streamFormat = tc.Format
 			b64 := base64.StdEncoding.EncodeToString(tc.Data)
@@ -731,21 +779,8 @@ func (h *Hub) synthesizeAndEmitReply(
 		return nil
 	})
 
-	if len(pcmBuf) > 0 {
-		anySent = true
-		b64 := base64.StdEncoding.EncodeToString(pcmBuf)
-		if err := safeSink("audio_chunk", map[string]any{
-			"chunk_index": chunkIdx,
-			"format":      "pcm",
-			"sample_rate": streamRate,
-			"channels":    streamCh,
-			"is_final":    false,
-			"data":        b64,
-		}); err != nil {
-			return "error", err
-		}
-		chunkIdx++
-		pcmBuf = nil
+	if err := flushPCM(); err != nil {
+		return "error", err
 	}
 	if anySent {
 		if err := safeSink("audio_chunk", map[string]any{
@@ -1265,53 +1300,26 @@ func (t *DefaultTTSClient) Synthesize(ctx context.Context, text string, onChunk 
 
 	ct := strings.ToLower(resp.Header.Get("Content-Type"))
 
-	// Check if stream begins with a standard 44-byte WAV (RIFF...WAVE) header.
-	header := make([]byte, 44)
-	n, readErr := io.ReadFull(resp.Body, header)
-	if readErr != nil && !errors.Is(readErr, io.ErrUnexpectedEOF) && !errors.Is(readErr, io.EOF) {
-		return readErr
+	// Walk the RIFF chunk list (fmt, then any others such as LIST, until
+	// data) instead of assuming a fixed 44-byte header. Every byte consumed
+	// is retained so a non-streamable response can still be emitted whole.
+	var consumed bytes.Buffer
+	info := parseWAVHeader(io.TeeReader(resp.Body, &consumed))
+
+	if info.streamable {
+		var body io.Reader = resp.Body
+		// A streamed data chunk carries size 0 or 0xFFFFFFFF (unknown
+		// length); a known size bounds the PCM so trailing chunks are not
+		// played as audio.
+		if info.dataSize > 0 && info.dataSize != 0xFFFFFFFF {
+			body = io.LimitReader(resp.Body, int64(info.dataSize))
+		}
+		return streamPCM(body, "pcm", info.sampleRate, info.channels, onChunk)
 	}
 
-	isStandardWAV := n >= 44 &&
-		bytes.HasPrefix(header, []byte("RIFF")) &&
-		len(header) >= 40 &&
-		string(header[8:12]) == "WAVE" &&
-		string(header[12:16]) == "fmt " &&
-		binary.LittleEndian.Uint16(header[20:22]) == 1 &&
-		string(header[36:40]) == "data"
-
-	if isStandardWAV {
-		channels := int(binary.LittleEndian.Uint16(header[22:24]))
-		sampleRate := int(binary.LittleEndian.Uint32(header[24:28]))
-		if channels <= 0 {
-			channels = 1
-		}
-		if sampleRate <= 0 {
-			sampleRate = 24000
-		}
-
-		buf := make([]byte, 4800)
-		for {
-			nr, rErr := resp.Body.Read(buf)
-			if nr > 0 {
-				chunk := TTSAudioChunk{
-					Format:     "pcm",
-					Data:       buf[:nr],
-					SampleRate: sampleRate,
-					Channels:   channels,
-				}
-				if err := onChunk(chunk); err != nil {
-					return err
-				}
-			}
-			if rErr != nil {
-				if errors.Is(rErr, io.EOF) {
-					break
-				}
-				return rErr
-			}
-		}
-		return nil
+	rate, channels := ttsRateFromResponse(resp)
+	if info.haveFmt {
+		rate, channels = info.sampleRate, info.channels
 	}
 
 	format := "mp3"
@@ -1321,41 +1329,152 @@ func (t *DefaultTTSClient) Synthesize(ctx context.Context, text string, onChunk 
 		format = "pcm"
 	}
 
-	if n > 0 {
-		chunk := TTSAudioChunk{
-			Format:     format,
-			Data:       header[:n],
-			SampleRate: 24000,
-			Channels:   1,
-		}
-		if err := onChunk(chunk); err != nil {
-			return err
-		}
+	if info.isRIFF {
+		format = "wav"
+	}
+	if format == "pcm" && !info.isRIFF {
+		// Raw PCM has no container, so it can be sliced anywhere.
+		var body io.Reader = io.MultiReader(bytes.NewReader(consumed.Bytes()), resp.Body)
+		return streamPCM(body, "pcm", rate, channels, onChunk)
 	}
 
-	if readErr == nil {
-		buf := make([]byte, 4800)
-		for {
-			nr, rErr := resp.Body.Read(buf)
-			if nr > 0 {
-				chunk := TTSAudioChunk{
-					Format:     format,
-					Data:       buf[:nr],
-					SampleRate: 24000,
-					Channels:   1,
-				}
-				if err := onChunk(chunk); err != nil {
-					return err
-				}
+	// mp3 and non-streamable WAV must reach the ear as one complete file:
+	// it decodes each non-PCM chunk standalone (clients/ear/client.py
+	// play_audio), so slicing would produce garbage and gaps.
+	rest, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	whole := append(consumed.Bytes(), rest...)
+	if len(whole) == 0 {
+		return nil
+	}
+	return onChunk(TTSAudioChunk{Format: format, Data: whole, SampleRate: rate, Channels: channels})
+}
+
+// streamPCM reads r and emits it as chunks of at most 4800 bytes. Each chunk
+// owns its Data: the read buffer is reused, so the slice is copied before
+// onChunk sees it and callbacks may retain it.
+func streamPCM(r io.Reader, format string, sampleRate, channels int, onChunk func(chunk TTSAudioChunk) error) error {
+	buf := make([]byte, 4800)
+	for {
+		nr, rErr := r.Read(buf)
+		if nr > 0 {
+			data := make([]byte, nr)
+			copy(data, buf[:nr])
+			if err := onChunk(TTSAudioChunk{Format: format, Data: data, SampleRate: sampleRate, Channels: channels}); err != nil {
+				return err
 			}
-			if rErr != nil {
-				if errors.Is(rErr, io.EOF) {
-					break
-				}
-				return rErr
+		}
+		if rErr != nil {
+			if errors.Is(rErr, io.EOF) {
+				return nil
+			}
+			return rErr
+		}
+	}
+}
+
+// ttsRateFromResponse reads the PCM sample rate and channel count from the
+// Content-Type parameters (audio/pcm;rate=22050;channels=1) or the
+// X-Sample-Rate / X-Channels headers, defaulting to 24 kHz mono.
+func ttsRateFromResponse(resp *http.Response) (int, int) {
+	rate, channels := 24000, 1
+	params := map[string]string{}
+	if _, p, err := mime.ParseMediaType(resp.Header.Get("Content-Type")); err == nil {
+		params = p
+	}
+	pick := func(param, header string) int {
+		for _, s := range []string{params[param], resp.Header.Get(header)} {
+			if v, err := strconv.Atoi(strings.TrimSpace(s)); err == nil && v > 0 {
+				return v
+			}
+		}
+		return 0
+	}
+	if v := pick("rate", "X-Sample-Rate"); v > 0 {
+		rate = v
+	}
+	if v := pick("channels", "X-Channels"); v > 0 {
+		channels = v
+	}
+	return rate, channels
+}
+
+// wavInfo is the result of walking a RIFF/WAVE header.
+type wavInfo struct {
+	isRIFF     bool // starts with RIFF....WAVE
+	haveFmt    bool // a fmt chunk was parsed (sampleRate/channels valid)
+	streamable bool // 16-bit PCM and the data chunk was reached
+	sampleRate int
+	channels   int
+	dataSize   uint32
+}
+
+const maxWAVHeaderSkip = 1 << 20
+
+// parseWAVHeader consumes r up to and including the data chunk header,
+// walking chunks (fmt, LIST, ...). It tolerates fmt sizes of 16/18/40,
+// WAVE_FORMAT_EXTENSIBLE, and a data size of 0 or 0xFFFFFFFF.
+func parseWAVHeader(r io.Reader) wavInfo {
+	var info wavInfo
+	var riff [12]byte
+	if _, err := io.ReadFull(r, riff[:]); err != nil {
+		return info
+	}
+	if string(riff[0:4]) != "RIFF" || string(riff[8:12]) != "WAVE" {
+		return info
+	}
+	info.isRIFF = true
+
+	var isPCM bool
+	var bits int
+	for {
+		var ch [8]byte
+		if _, err := io.ReadFull(r, ch[:]); err != nil {
+			return info
+		}
+		id := string(ch[0:4])
+		size := binary.LittleEndian.Uint32(ch[4:8])
+		switch id {
+		case "data":
+			info.dataSize = size
+			info.streamable = info.haveFmt && isPCM && bits == 16
+			return info
+		case "fmt ":
+			if size < 16 || size > 4096 {
+				return info
+			}
+			body := make([]byte, size)
+			if _, err := io.ReadFull(r, body); err != nil {
+				return info
+			}
+			if size%2 == 1 {
+				_, _ = io.CopyN(io.Discard, r, 1)
+			}
+			tag := binary.LittleEndian.Uint16(body[0:2])
+			if tag == 0xFFFE && size >= 26 {
+				tag = binary.LittleEndian.Uint16(body[24:26])
+			}
+			isPCM = tag == 1
+			info.channels = int(binary.LittleEndian.Uint16(body[2:4]))
+			info.sampleRate = int(binary.LittleEndian.Uint32(body[4:8]))
+			bits = int(binary.LittleEndian.Uint16(body[14:16]))
+			if info.channels <= 0 {
+				info.channels = 1
+			}
+			if info.sampleRate <= 0 {
+				info.sampleRate = 24000
+			}
+			info.haveFmt = true
+		default:
+			skip := int64(size) + int64(size%2)
+			if skip > maxWAVHeaderSkip {
+				return info
+			}
+			if _, err := io.CopyN(io.Discard, r, skip); err != nil {
+				return info
 			}
 		}
 	}
-
-	return nil
 }
