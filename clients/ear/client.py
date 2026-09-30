@@ -583,10 +583,21 @@ class VoiceDaemon:
         if not player:
             logger.warning("No audio player found for PCM stream")
             return None
+        # Playback buffer for the persistent PCM player. The aplay default
+        # (~0.5 s) underruns at sentence starts on slow speakers.
+        try:
+            buffer_us = int(os.environ.get("EAR_PCM_BUFFER_US", "800000"))
+        except ValueError:
+            buffer_us = 800000
+        if buffer_us <= 0:
+            buffer_us = 800000
         if "pw-play" in player:
-            cmd = [player, "--format=s16", f"--rate={sample_rate}", f"--channels={channels}", "-"]
+            cmd = [
+                player, "--format=s16", f"--rate={sample_rate}", f"--channels={channels}",
+                f"--latency={max(1, buffer_us // 1000)}ms", "-",
+            ]
         elif "aplay" in player:
-            cmd = [player, "-f", "S16_LE", "-r", str(sample_rate), "-c", str(channels), "-"]
+            cmd = [player, "-f", "S16_LE", "-r", str(sample_rate), "-c", str(channels), "-B", str(buffer_us), "-"]
         else:
             cmd = [
                 player,
