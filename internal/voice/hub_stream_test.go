@@ -959,7 +959,6 @@ func TestHub_Interact_StreamingBrain_BrainNonPCMAudioFailsFast(t *testing.T) {
 	t.Parallel()
 
 	for _, format := range []string{"wav", "mp3"} {
-		format := format
 		t.Run(format, func(t *testing.T) {
 			t.Parallel()
 			brain := &mockStreamingBrain{
@@ -1139,7 +1138,6 @@ func TestDefaultTTSClient_WAVChunkWalking(t *testing.T) {
 			riffChunk("data", pcm)),
 	}
 	for name, wav := range cases {
-		wav := wav
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			chunks := synthesizeFromServer(t, "audio/wav", nil, wav)
@@ -1196,7 +1194,6 @@ func TestDefaultTTSClient_NonPCMIsUnsupported(t *testing.T) {
 		"unknown content type": {"application/octet-stream", make([]byte, 100)},
 	}
 	for name, tc := range cases {
-		tc := tc
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

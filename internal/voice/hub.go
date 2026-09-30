@@ -1434,7 +1434,9 @@ func parseWAVHeader(r io.Reader) wavInfo {
 				return info
 			}
 			if size%2 == 1 {
-				_, _ = io.CopyN(io.Discard, r, 1)
+				if _, err := io.CopyN(io.Discard, r, 1); err != nil {
+					return info
+				}
 			}
 			tag := binary.LittleEndian.Uint16(body[0:2])
 			if tag == 0xFFFE && size >= 26 {
