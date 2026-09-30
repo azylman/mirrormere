@@ -268,12 +268,12 @@ func TestHub_Interact_StreamingBrain_SentenceAudio(t *testing.T) {
 		reply:    "It's sunny. High of seventy two. Bring sunglasses.",
 		statuses: []string{"checking weather"},
 		sentences: []BrainAudioChunk{
-			{Text: "It's sunny.", Format: "wav", Data: []byte("audio-one")},
-			{Text: "High of seventy two.", Format: "wav", Data: []byte("audio-two")},
-			{Text: "Bring sunglasses.", Format: "wav", Data: []byte("audio-three")},
+			{Text: "It's sunny.", Format: "pcm", Data: []byte("audio-one")},
+			{Text: "High of seventy two.", Format: "pcm", Data: []byte("audio-two")},
+			{Text: "Bring sunglasses.", Format: "pcm", Data: []byte("audio-three")},
 		},
 	}
-	tts := &mockTTS{audio: []byte("should-not-be-used"), format: "wav"}
+	tts := &mockTTS{audio: []byte("should-not-be-used"), format: "pcm"}
 
 	h := NewHub(cfg, coord, WithSTTClient(stt), WithBrainClient(brain), WithTTSClient(tts))
 
@@ -296,16 +296,18 @@ func TestHub_Interact_StreamingBrain_SentenceAudio(t *testing.T) {
 		t.Errorf("expected hub TTS to never be called (no double speech), got %d calls: %+v", tts.calls, tts.calledTexts)
 	}
 
-	expectedSequence := []string{"state", "transcript", "status", "audio_chunk", "audio_chunk", "audio_chunk", "audio_chunk", "reply", "done"}
+	// PCM sentences are buffered (below the 4800-byte floor) and flushed as
+	// one chunk, followed by the completion marker.
+	expectedSequence := []string{"state", "transcript", "status", "audio_chunk", "audio_chunk", "reply", "done"}
 	if got := eventSequence(evs); !equalStrings(got, expectedSequence) {
 		t.Fatalf("expected sequence %v, got %v", expectedSequence, got)
 	}
 
 	chunks := extractAudioChunkEvents(t, evs)
-	if len(chunks) != 4 {
-		t.Fatalf("expected 4 audio_chunk events (3 sentences + 1 completion marker), got %d", len(chunks))
+	if len(chunks) != 2 {
+		t.Fatalf("expected 2 audio_chunk events (buffered PCM + completion marker), got %d", len(chunks))
 	}
-	wantData := []string{"audio-one", "audio-two", "audio-three", ""}
+	wantData := []string{"audio-oneaudio-twoaudio-three", ""}
 	for i, c := range chunks {
 		if idx, ok := c["chunk_index"].(int); !ok || idx != i {
 			t.Errorf("chunk %d: expected chunk_index %d, got %v", i, i, c["chunk_index"])
@@ -321,14 +323,14 @@ func TestHub_Interact_StreamingBrain_SentenceAudio(t *testing.T) {
 		if string(gotData) != wantData[i] {
 			t.Errorf("chunk %d: expected data %q, got %q", i, wantData[i], string(gotData))
 		}
-		if c["format"] != "wav" {
-			t.Errorf("chunk %d: expected format wav, got %v", i, c["format"])
+		if c["format"] != "pcm" {
+			t.Errorf("chunk %d: expected format pcm, got %v", i, c["format"])
 		}
 	}
 	// The completion marker (last chunk) must carry empty data, not
 	// re-send the last sentence's audio.
-	if len(chunks[3]["data"].(string)) != 0 {
-		t.Errorf("expected completion marker chunk to have empty data, got %q", chunks[3]["data"])
+	if len(chunks[1]["data"].(string)) != 0 {
+		t.Errorf("expected completion marker chunk to have empty data, got %q", chunks[1]["data"])
 	}
 
 	if coord.GetState().State != StateIdle {
@@ -352,7 +354,7 @@ func TestHub_Interact_StreamingBrain_NoSentenceAudio(t *testing.T) {
 
 	stt := &mockSTT{text: "turn off the lights"}
 	brain := &mockStreamingBrain{reply: "Lights off.", statuses: []string{"turning off lights"}}
-	tts := &mockTTS{audio: []byte("fallback-full-reply-audio"), format: "wav"}
+	tts := &mockTTS{audio: []byte("fallback-full-reply-audio"), format: "pcm"}
 
 	h := NewHub(cfg, coord, WithSTTClient(stt), WithBrainClient(brain), WithTTSClient(tts))
 
@@ -402,11 +404,11 @@ func TestHub_Interact_StreamingBrain_MixedAudioStreamRejected(t *testing.T) {
 		brain := &mockStreamingBrain{
 			reply: "Once upon a time. The audio broke here. The end.",
 			sentences: []BrainAudioChunk{
-				{Text: "Once upon a time.", Format: "wav", Data: []byte("audio-one")},
+				{Text: "Once upon a time.", Format: "pcm", Data: []byte("audio-one")},
 				{Text: "The audio broke here.", Format: "", Data: nil}, // conflicting text-only
 			},
 		}
-		tts := &mockTTS{audio: []byte("fallback-audio"), format: "wav"}
+		tts := &mockTTS{audio: []byte("fallback-audio"), format: "pcm"}
 		h := NewHub(cfg, coord, WithSTTClient(stt), WithBrainClient(brain), WithTTSClient(tts))
 
 		sink, getEvents := collectEvents()
@@ -429,11 +431,11 @@ func TestHub_Interact_StreamingBrain_MixedAudioStreamRejected(t *testing.T) {
 		brain := &mockStreamingBrain{
 			reply: "Once upon a time. Brain audio suddenly sent.",
 			sentences: []BrainAudioChunk{
-				{Text: "Once upon a time.", Format: "", Data: nil}, // latches remote-tts
-				{Text: "Brain audio suddenly sent.", Format: "wav", Data: []byte("audio-two")}, // conflicting audio
+				{Text: "Once upon a time.", Format: "", Data: nil},                             // latches remote-tts
+				{Text: "Brain audio suddenly sent.", Format: "pcm", Data: []byte("audio-two")}, // conflicting audio
 			},
 		}
-		tts := &mockTTS{audio: []byte("fallback-audio"), format: "wav"}
+		tts := &mockTTS{audio: []byte("fallback-audio"), format: "pcm"}
 		h := NewHub(cfg, coord, WithSTTClient(stt), WithBrainClient(brain), WithTTSClient(tts))
 
 		sink, getEvents := collectEvents()
@@ -487,11 +489,11 @@ func TestHub_Interact_StreamingBrain_KioskCaption(t *testing.T) {
 	brain := &mockStreamingBrain{
 		reply: "It's sunny. High of 72.",
 		sentences: []BrainAudioChunk{
-			{Text: "It's sunny.", Format: "wav", Data: []byte("a1")},
-			{Text: "High of 72.", Format: "wav", Data: []byte("a2")},
+			{Text: "It's sunny.", Format: "pcm", Data: []byte("a1")},
+			{Text: "High of 72.", Format: "pcm", Data: []byte("a2")},
 		},
 	}
-	tts := &mockTTS{audio: []byte("local"), format: "wav"}
+	tts := &mockTTS{audio: []byte("local"), format: "pcm"}
 	h := NewHub(cfg, coord, WithSTTClient(stt), WithBrainClient(brain), WithTTSClient(tts))
 
 	sink, _ := collectEvents()
@@ -751,46 +753,29 @@ func TestHub_Interact_NonStreamingBrain_StreamingTTSClient_FallbackOnError(t *te
 	}
 }
 
-// TestHub_Interact_NonStreamingBrain_StreamingTTSClient_MP3 tests streaming non-PCM (MP3)
-// audio chunks directly through to the edge dock.
-func TestHub_Interact_NonStreamingBrain_StreamingTTSClient_MP3(t *testing.T) {
+// TestHub_Interact_NonStreamingBrain_StreamingTTSClient_MP3FailsFast: non-PCM
+// TTS audio aborts the turn with ErrUnsupportedAudioFormat and an error event.
+func TestHub_Interact_NonStreamingBrain_StreamingTTSClient_MP3FailsFast(t *testing.T) {
 	t.Parallel()
 
-	cfg := &config.VoiceHubConfig{Enabled: true}
-	rec := &recordingStateSink{}
-	coord := NewCoordinator(nil, rec)
-	stt := &mockSTT{text: "play mp3"}
-	brain := &mockBrain{reply: "Streaming MP3 audio reply."}
 	tts := &mockStreamingTTS{
 		streamingFn: func(ctx context.Context, text string, onChunk func(TTSAudioChunk) error) error {
-			// emit empty data chunk first (should be safely ignored)
-			_ = onChunk(TTSAudioChunk{Data: nil, Format: "mp3"})
-			// emit real mp3 chunk
-			return onChunk(TTSAudioChunk{
-				Data:       []byte("mp3-data-frame"),
-				Format:     "mp3",
-				SampleRate: 44100,
-				Channels:   2,
-			})
+			return onChunk(TTSAudioChunk{Data: []byte("mp3-data-frame"), Format: "mp3", SampleRate: 44100, Channels: 2})
 		},
 	}
-
-	h := NewHub(cfg, coord, WithSTTClient(stt), WithBrainClient(brain), WithTTSClient(tts))
+	h := NewHub(&config.VoiceHubConfig{Enabled: true}, nil, WithSTTClient(&mockSTT{text: "play mp3"}), WithBrainClient(&mockBrain{reply: "Streaming MP3 audio reply."}), WithTTSClient(tts))
 
 	sink, getEvents := collectEvents()
-	if err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(1600)), "kiosk-kitchen", "sess-1", sink, EdgeTimings{}); err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(1600)), "kiosk-kitchen", "sess-1", sink, EdgeTimings{})
+	if !errors.Is(err, ErrUnsupportedAudioFormat) {
+		t.Fatalf("expected ErrUnsupportedAudioFormat, got %v", err)
 	}
-
-	chunks := extractAudioChunkEvents(t, getEvents())
-	if len(chunks) != 2 {
-		t.Fatalf("expected 2 audio chunks (1 mp3 + 1 completion marker), got %d", len(chunks))
+	evs := getEvents()
+	if n := len(extractAudioChunkEvents(t, evs)); n != 0 {
+		t.Errorf("expected no audio chunks, got %d", n)
 	}
-	if chunks[0]["format"] != "mp3" || chunks[0]["is_final"] != false || chunks[0]["sample_rate"] != 44100 || chunks[0]["channels"] != 2 {
-		t.Errorf("chunk 0 mismatch: %v", chunks[0])
-	}
-	if chunks[1]["is_final"] != true || chunks[1]["format"] != "mp3" {
-		t.Errorf("chunk 1 mismatch: %v", chunks[1])
+	if seq := eventSequence(evs); len(seq) == 0 || seq[len(seq)-1] != "error" {
+		t.Errorf("expected trailing error event, got %v", seq)
 	}
 }
 
@@ -873,7 +858,7 @@ func TestHub_Interact_StreamingBrain_RemoteTTS_PlainTTSClient(t *testing.T) {
 			{Text: "Second sentence.", Format: "", Data: nil},
 		},
 	}
-	tts := &mockTTS{audio: makeValidWAV(1600), format: "wav"}
+	tts := &mockTTS{audio: makeValidWAV(1600), format: "pcm"}
 	h := NewHub(cfg, nil, WithSTTClient(stt), WithBrainClient(brain), WithTTSClient(tts))
 
 	sink, getEvents := collectEvents()
@@ -942,53 +927,57 @@ func TestHub_Interact_StreamingBrain_RemoteTTS_AllSentencesFailedFallback(t *tes
 	}
 }
 
-// TestHub_Interact_StreamingBrain_RemoteTTS_StreamingTTSClient_MP3 tests streaming non-PCM (MP3)
-// audio chunks directly through to the edge dock in remote-tts mode.
-func TestHub_Interact_StreamingBrain_RemoteTTS_StreamingTTSClient_MP3(t *testing.T) {
+// TestHub_Interact_StreamingBrain_RemoteTTS_MP3FailsFast: non-PCM TTS audio in
+// remote-tts mode aborts the turn.
+func TestHub_Interact_StreamingBrain_RemoteTTS_MP3FailsFast(t *testing.T) {
 	t.Parallel()
 
-	cfg := &config.VoiceHubConfig{Enabled: true}
-	stt := &mockSTT{text: "stream mp3"}
 	brain := &mockStreamingBrain{
-		reply: "MP3 sentence.",
-		sentences: []BrainAudioChunk{
-			{Text: "MP3 sentence.", Format: "", Data: nil},
-		},
+		reply:     "MP3 sentence.",
+		sentences: []BrainAudioChunk{{Text: "MP3 sentence."}},
 	}
 	tts := &mockStreamingTTS{
 		streamingFn: func(ctx context.Context, text string, onChunk func(TTSAudioChunk) error) error {
-			return onChunk(TTSAudioChunk{
-				Data:       []byte("mp3-raw-frame"),
-				Format:     "mp3",
-				SampleRate: 44100,
-				Channels:   2,
-			})
+			return onChunk(TTSAudioChunk{Data: []byte("mp3-raw-frame"), Format: "mp3", SampleRate: 44100, Channels: 2})
 		},
 	}
-
-	h := NewHub(cfg, nil, WithSTTClient(stt), WithBrainClient(brain), WithTTSClient(tts))
+	h := NewHub(&config.VoiceHubConfig{Enabled: true}, nil, WithSTTClient(&mockSTT{text: "stream mp3"}), WithBrainClient(brain), WithTTSClient(tts))
 
 	sink, getEvents := collectEvents()
-	if err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(1600)), "kiosk-kitchen", "sess-1", sink, EdgeTimings{}); err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(1600)), "kiosk-kitchen", "sess-1", sink, EdgeTimings{})
+	if !errors.Is(err, ErrUnsupportedAudioFormat) {
+		t.Fatalf("expected ErrUnsupportedAudioFormat, got %v", err)
 	}
-
-	chunks := extractAudioChunkEvents(t, getEvents())
-	if len(chunks) != 2 {
-		t.Fatalf("expected 2 audio chunks, got %d", len(chunks))
-	}
-	if chunks[0]["format"] != "mp3" || chunks[0]["is_final"] != false || chunks[0]["sample_rate"] != 44100 || chunks[0]["channels"] != 2 {
-		t.Errorf("chunk 0 mismatch: %v", chunks[0])
-	}
-	if chunks[1]["format"] != "mp3" || chunks[1]["is_final"] != true {
-		t.Errorf("chunk 1 marker mismatch: %v", chunks[1])
+	if n := len(extractAudioChunkEvents(t, getEvents())); n != 0 {
+		t.Errorf("expected no audio chunks, got %d", n)
 	}
 }
 
+// TestHub_Interact_StreamingBrain_BrainWAVAudioFailsFast: brain sentence audio
+// that is not PCM (wav/mp3) aborts the turn.
+func TestHub_Interact_StreamingBrain_BrainNonPCMAudioFailsFast(t *testing.T) {
+	t.Parallel()
 
-
-
-
+	for _, format := range []string{"wav", "mp3"} {
+		format := format
+		t.Run(format, func(t *testing.T) {
+			t.Parallel()
+			brain := &mockStreamingBrain{
+				reply:     "One.",
+				sentences: []BrainAudioChunk{{Text: "One.", Format: format, Data: []byte("audio"), SampleRate: 24000, Channels: 1}},
+			}
+			h := NewHub(&config.VoiceHubConfig{Enabled: true}, nil, WithSTTClient(&mockSTT{text: "q"}), WithBrainClient(brain))
+			sink, getEvents := collectEvents()
+			err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(1600)), "kiosk-kitchen", "sess-1", sink, EdgeTimings{})
+			if !errors.Is(err, ErrUnsupportedAudioFormat) {
+				t.Fatalf("expected ErrUnsupportedAudioFormat, got %v", err)
+			}
+			if n := len(extractAudioChunkEvents(t, getEvents())); n != 0 {
+				t.Errorf("expected no audio chunks, got %d", n)
+			}
+		})
+	}
+}
 
 // --- #356: a PCM rate/channel change mid-turn fails fast ---
 
@@ -1192,30 +1181,38 @@ func TestDefaultTTSClient_WAVChunkWalking(t *testing.T) {
 	})
 }
 
-// #358: non-PCM audio is delivered as one complete file.
-func TestDefaultTTSClient_NonPCMEmittedAsOneChunk(t *testing.T) {
+// #358: non-PCM audio (mp3, or a WAV wrapping something other than 16-bit
+// PCM) is unsupported and fails fast rather than being sliced or passed through.
+func TestDefaultTTSClient_NonPCMIsUnsupported(t *testing.T) {
 	t.Parallel()
 
-	t.Run("mp3", func(t *testing.T) {
-		t.Parallel()
-		mp3 := bytes.Repeat([]byte("mp3frame"), 2000) // 16000 bytes
-		chunks := synthesizeFromServer(t, "audio/mpeg", nil, mp3)
-		if len(chunks) != 1 || chunks[0].Format != "mp3" || !bytes.Equal(chunks[0].Data, mp3) {
-			t.Fatalf("expected one whole mp3 chunk, got %d chunks", len(chunks))
-		}
-	})
-
-	t.Run("non-streamable wav (float)", func(t *testing.T) {
-		t.Parallel()
-		wav := buildWAV(riffChunk("fmt ", fmtBody(3, 1, 44100, 32, 0)), riffChunk("data", make([]byte, 12000)))
-		chunks := synthesizeFromServer(t, "audio/wav", nil, wav)
-		if len(chunks) != 1 || chunks[0].Format != "wav" || !bytes.Equal(chunks[0].Data, wav) {
-			t.Fatalf("expected one whole wav chunk with header intact, got %d chunks", len(chunks))
-		}
-		if chunks[0].SampleRate != 44100 {
-			t.Errorf("expected rate from header 44100, got %d", chunks[0].SampleRate)
-		}
-	})
+	cases := map[string]struct {
+		contentType string
+		body        []byte
+	}{
+		"mp3":                  {"audio/mpeg", bytes.Repeat([]byte("mp3frame"), 2000)},
+		"wav float":            {"audio/wav", buildWAV(riffChunk("fmt ", fmtBody(3, 1, 44100, 32, 0)), riffChunk("data", make([]byte, 12000)))},
+		"wav 8-bit":            {"audio/wav", buildWAV(riffChunk("fmt ", fmtBody(1, 1, 8000, 8, 0)), riffChunk("data", make([]byte, 4000)))},
+		"unknown content type": {"application/octet-stream", make([]byte, 100)},
+	}
+	for name, tc := range cases {
+		tc := tc
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", tc.contentType)
+				_, _ = w.Write(tc.body)
+			}))
+			defer ts.Close()
+			err := NewDefaultTTSClient(ts.URL, "m", "v", 5).Synthesize(context.Background(), "hello", func(c TTSAudioChunk) error {
+				t.Errorf("no chunk should be emitted, got format %s", c.Format)
+				return nil
+			})
+			if !errors.Is(err, ErrUnsupportedAudioFormat) {
+				t.Fatalf("expected ErrUnsupportedAudioFormat, got %v", err)
+			}
+		})
+	}
 }
 
 // #359: Data must not alias the reused read buffer; raw PCM rate comes from
@@ -1224,7 +1221,7 @@ func TestDefaultTTSClient_ChunkDataNotAliased(t *testing.T) {
 	t.Parallel()
 	pcm := make([]byte, 4800*3)
 	for i := range pcm {
-		pcm[i] = byte(i / 4800) + 1
+		pcm[i] = byte(i/4800) + 1
 	}
 	wav := buildWAV(riffChunk("fmt ", fmtBody(1, 1, 24000, 16, 0)), riffChunk("data", pcm))
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -22,7 +22,7 @@ func (f funcTTS) Synthesize(_ context.Context, text string, onChunk func(chunk T
 	}
 	if len(data) > 0 && onChunk != nil {
 		if format == "" {
-			format = "wav"
+			format = "pcm"
 		}
 		return onChunk(TTSAudioChunk{Data: data, Format: format, SampleRate: 24000, Channels: 1})
 	}
@@ -67,7 +67,7 @@ func TestHub_Streaming_BrainError(t *testing.T) {
 	t.Parallel()
 	brain := &mockStreamingBrain{err: errors.New("boom")}
 	sink, get := collectEvents()
-	err := runStreamingTurn(t, brain, &mockTTS{audio: []byte("a"), format: "wav"}, sink)
+	err := runStreamingTurn(t, brain, &mockTTS{audio: []byte("a"), format: "pcm"}, sink)
 	if !errors.Is(err, ErrBrainFailed) {
 		t.Fatalf("expected ErrBrainFailed, got %v", err)
 	}
@@ -104,7 +104,7 @@ func TestHub_Streaming_AllSentencesFail_FullReplyTTSSucceeds(t *testing.T) {
 	}
 	tts := funcTTS(func(text string) ([]byte, string, error) {
 		if text == "One. Two." {
-			return []byte("full"), "wav", nil
+			return []byte("full"), "pcm", nil
 		}
 		return nil, "", errors.New("sentence synth failed")
 	})
@@ -153,7 +153,7 @@ func TestHub_Streaming_AudioChunkSinkErrorDoesNotAbortTurn(t *testing.T) {
 	t.Parallel()
 	brain := &mockStreamingBrain{
 		reply:     "One.",
-		sentences: []BrainAudioChunk{{Text: "One.", Format: "wav", Data: []byte("a")}},
+		sentences: []BrainAudioChunk{{Text: "One.", Format: "pcm", Data: []byte("a")}},
 	}
 	var got []string
 	sink := func(event string, _ any) error {
@@ -163,7 +163,7 @@ func TestHub_Streaming_AudioChunkSinkErrorDoesNotAbortTurn(t *testing.T) {
 		}
 		return nil
 	}
-	_ = runStreamingTurn(t, brain, &mockTTS{audio: []byte("x"), format: "wav"}, sink)
+	_ = runStreamingTurn(t, brain, &mockTTS{audio: []byte("x"), format: "pcm"}, sink)
 	if !strings.Contains(strings.Join(got, ","), "audio_chunk") {
 		t.Errorf("expected an audio_chunk attempt, got %v", got)
 	}

@@ -39,6 +39,9 @@ var (
 	ErrTTSFailed = errors.New("text-to-speech synthesis failed")
 	// ErrMixedAudioStream is returned when a streaming turn mixes brain audio and TTS synthesis.
 	ErrMixedAudioStream = errors.New("mixed audio stream: turn cannot mix brain audio and TTS synthesis")
+	// ErrUnsupportedAudioFormat is returned when audio is not raw 16-bit PCM (s16le). The hub
+	// only plays PCM; wav/mp3 chunks and non-PCM TTS responses abort the turn.
+	ErrUnsupportedAudioFormat = errors.New("unsupported audio format: only raw s16le PCM is supported")
 	// ErrMixedPCMFormat is returned when PCM audio changes sample rate or channel count mid-turn.
 	// It wraps ErrMixedAudioStream: one response must keep one audio format (#347).
 	ErrMixedPCMFormat = fmt.Errorf("%w: PCM sample rate or channel count changed mid-turn", ErrMixedAudioStream)
@@ -484,6 +487,12 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 			if format == "" {
 				format = "wav"
 			}
+			if hasAudio && format != "pcm" {
+				streamErr = fmt.Errorf("%w: brain sent %q audio for sentence %q", ErrUnsupportedAudioFormat, format, chunk.Text)
+				slog.Error("unsupported brain audio format", "format", format, "error", streamErr)
+				cancelStream()
+				return
+			}
 			streamFormat = format
 			rate := chunk.SampleRate
 			if rate <= 0 {
@@ -516,21 +525,27 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 						return nil
 					}
 					streamedTTSAny = true
-					if tc.Format == "pcm" {
-						if !checkPCMFormat(tc.SampleRate, tc.Channels) {
-							return streamErr
-						}
-						appendPCM(tc.Data, tc.SampleRate, tc.Channels)
-						streamFormat = "pcm"
-						streamRate = tc.SampleRate
-						streamCh = tc.Channels
-					} else {
-						anyChunkSent = true
-						streamFormat = tc.Format
-						emitChunk(tc.Format, tc.Data, tc.SampleRate, tc.Channels, false)
+					if tc.Format != "pcm" {
+						streamErr = fmt.Errorf("%w: TTS returned %q audio for sentence %q", ErrUnsupportedAudioFormat, tc.Format, chunk.Text)
+						slog.Error("unsupported TTS audio format", "format", tc.Format, "error", streamErr)
+						cancelStream()
+						return streamErr
 					}
+					if !checkPCMFormat(tc.SampleRate, tc.Channels) {
+						return streamErr
+					}
+					appendPCM(tc.Data, tc.SampleRate, tc.Channels)
+					streamFormat = "pcm"
+					streamRate = tc.SampleRate
+					streamCh = tc.Channels
 					return nil
 				})
+				if errors.Is(ttsErr, ErrUnsupportedAudioFormat) && streamErr == nil {
+					// DefaultTTSClient rejected the response itself.
+					streamErr = fmt.Errorf("%w (sentence %q)", ttsErr, chunk.Text)
+					cancelStream()
+					return
+				}
 				if ttsErr != nil || !streamedTTSAny {
 					slog.Warn("TTS synthesis for streamed sentence failed; dropping sentence", "text", chunk.Text, "error", ttsErr)
 					return
@@ -539,15 +554,10 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 				return
 			}
 
-			if format == "pcm" {
-				if !checkPCMFormat(rate, ch) {
-					return
-				}
-				appendPCM(data, rate, ch)
-			} else {
-				anyChunkSent = true
-				emitChunk(format, data, rate, ch, false)
+			if !checkPCMFormat(rate, ch) {
+				return
 			}
+			appendPCM(data, rate, ch)
 		}
 
 		brainStart := time.Now()
@@ -717,49 +727,30 @@ func (h *Hub) synthesizeAndEmitReply(
 		if h.coord != nil && !anySent {
 			h.coord.Transition(StateSpeaking, transcript, &reply, &engine, nil)
 		}
-		if tc.Format == "pcm" {
-			if pcmSeen && (tc.SampleRate != streamRate || tc.Channels != streamCh) {
-				return fmt.Errorf("%w: latched %d Hz/%d ch, got %d Hz/%d ch", ErrMixedPCMFormat, streamRate, streamCh, tc.SampleRate, tc.Channels)
-			}
-			pcmSeen = true
-			streamFormat = "pcm"
-			streamRate = tc.SampleRate
-			streamCh = tc.Channels
-			pcmBuf = append(pcmBuf, tc.Data...)
-			for len(pcmBuf) >= pcmChunkFloor {
-				piece := pcmBuf[:pcmChunkFloor]
-				pcmBuf = pcmBuf[pcmChunkFloor:]
-				anySent = true
-				b64 := base64.StdEncoding.EncodeToString(piece)
-				if err := safeSink("audio_chunk", map[string]any{
-					"chunk_index": chunkIdx,
-					"format":      "pcm",
-					"sample_rate": streamRate,
-					"channels":    streamCh,
-					"is_final":    false,
-					"data":        b64,
-				}); err != nil {
-					return err
-				}
-				chunkIdx++
-			}
-		} else {
+		if tc.Format != "pcm" {
+			return fmt.Errorf("%w: TTS returned %q audio", ErrUnsupportedAudioFormat, tc.Format)
+		}
+		if pcmSeen && (tc.SampleRate != streamRate || tc.Channels != streamCh) {
+			return fmt.Errorf("%w: latched %d Hz/%d ch, got %d Hz/%d ch", ErrMixedPCMFormat, streamRate, streamCh, tc.SampleRate, tc.Channels)
+		}
+		pcmSeen = true
+		streamFormat = "pcm"
+		streamRate = tc.SampleRate
+		streamCh = tc.Channels
+		pcmBuf = append(pcmBuf, tc.Data...)
+		for len(pcmBuf) >= pcmChunkFloor {
+			piece := pcmBuf[:pcmChunkFloor]
+			pcmBuf = pcmBuf[pcmChunkFloor:]
 			anySent = true
-			streamFormat = tc.Format
-			b64 := base64.StdEncoding.EncodeToString(tc.Data)
-			payload := map[string]any{
+			b64 := base64.StdEncoding.EncodeToString(piece)
+			if err := safeSink("audio_chunk", map[string]any{
 				"chunk_index": chunkIdx,
-				"format":      tc.Format,
+				"format":      "pcm",
+				"sample_rate": streamRate,
+				"channels":    streamCh,
 				"is_final":    false,
 				"data":        b64,
-			}
-			if tc.SampleRate > 0 {
-				payload["sample_rate"] = tc.SampleRate
-			}
-			if tc.Channels > 0 {
-				payload["channels"] = tc.Channels
-			}
-			if err := safeSink("audio_chunk", payload); err != nil {
+			}); err != nil {
 				return err
 			}
 			chunkIdx++
@@ -767,9 +758,9 @@ func (h *Hub) synthesizeAndEmitReply(
 		return nil
 	})
 
-	if errors.Is(ttsErr, ErrMixedAudioStream) {
+	if errors.Is(ttsErr, ErrMixedAudioStream) || errors.Is(ttsErr, ErrUnsupportedAudioFormat) {
 		// Fail fast: one response must keep one audio format (#347).
-		slog.Error("TTS audio format changed mid-response", "node_id", nodeID, "error", ttsErr)
+		slog.Error("TTS audio rejected mid-response", "node_id", nodeID, "error", ttsErr)
 		h.metrics.RecordStageDuration(nodeID, "tts", "error", time.Since(ttsStart).Seconds())
 		h.metrics.RecordError(nodeID, "tts", "tts_error")
 		if h.coord != nil {
@@ -1315,8 +1306,9 @@ func (t *DefaultTTSClient) Synthesize(ctx context.Context, text string, onChunk 
 	ct := strings.ToLower(resp.Header.Get("Content-Type"))
 
 	// Walk the RIFF chunk list (fmt, then any others such as LIST, until
-	// data) instead of assuming a fixed 44-byte header. Every byte consumed
-	// is retained so a non-streamable response can still be emitted whole.
+	// data) instead of assuming a fixed 44-byte header; the WAV is only a
+	// wrapper around 16-bit PCM. Consumed bytes are retained so a raw PCM
+	// response that is not RIFF is not truncated.
 	var consumed bytes.Buffer
 	info := parseWAVHeader(io.TeeReader(resp.Body, &consumed))
 
@@ -1331,39 +1323,17 @@ func (t *DefaultTTSClient) Synthesize(ctx context.Context, text string, onChunk 
 		return streamPCM(body, "pcm", info.sampleRate, info.channels, onChunk)
 	}
 
-	rate, channels := ttsRateFromResponse(resp)
-	if info.haveFmt {
-		rate, channels = info.sampleRate, info.channels
-	}
-
-	format := "mp3"
-	if strings.Contains(ct, "wav") {
-		format = "wav"
-	} else if strings.Contains(ct, "pcm") || strings.Contains(ct, "raw") {
-		format = "pcm"
-	}
-
 	if info.isRIFF {
-		format = "wav"
+		// A WAV wrapper whose payload is not 16-bit PCM.
+		return fmt.Errorf("%w: WAV payload is not 16-bit PCM", ErrUnsupportedAudioFormat)
 	}
-	if format == "pcm" && !info.isRIFF {
+	if strings.Contains(ct, "pcm") || strings.Contains(ct, "raw") {
 		// Raw PCM has no container, so it can be sliced anywhere.
-		var body io.Reader = io.MultiReader(bytes.NewReader(consumed.Bytes()), resp.Body)
+		rate, channels := ttsRateFromResponse(resp)
+		body := io.MultiReader(bytes.NewReader(consumed.Bytes()), resp.Body)
 		return streamPCM(body, "pcm", rate, channels, onChunk)
 	}
-
-	// mp3 and non-streamable WAV must reach the ear as one complete file:
-	// it decodes each non-PCM chunk standalone (clients/ear/client.py
-	// play_audio), so slicing would produce garbage and gaps.
-	rest, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return err
-	}
-	whole := append(consumed.Bytes(), rest...)
-	if len(whole) == 0 {
-		return nil
-	}
-	return onChunk(TTSAudioChunk{Format: format, Data: whole, SampleRate: rate, Channels: channels})
+	return fmt.Errorf("%w: TTS response content type %q", ErrUnsupportedAudioFormat, ct)
 }
 
 // streamPCM reads r and emits it as chunks of at most 4800 bytes. Each chunk
