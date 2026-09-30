@@ -34,6 +34,15 @@ var (
 	ErrBrainFailed = errors.New("agent brain deliberation failed")
 	// ErrTTSFailed is returned when text-to-speech synthesis fails.
 	ErrTTSFailed = errors.New("text-to-speech synthesis failed")
+	// ErrMixedAudioStream is returned when a streaming turn mixes brain audio and TTS synthesis.
+	ErrMixedAudioStream = errors.New("mixed audio stream: turn cannot mix brain audio and TTS synthesis")
+)
+
+const (
+	// StreamModeBrainAudio indicates the streaming turn provides upstream audio chunks directly from the brain.
+	StreamModeBrainAudio = "brain-audio"
+	// StreamModeRemoteTTS indicates the streaming turn delivers text chunks from the brain, synthesized via TTS.
+	StreamModeRemoteTTS = "remote-tts"
 )
 
 // speakerGrace is how long the hub waits for speaker matching after STT has
@@ -348,9 +357,11 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 		// and once the brain call returns, one extra marker audio_chunk
 		// (empty data, is_final:true) tells the dock playback is complete.
 		var (
-			chunkIdx     int
-			streamedAny  bool
-			anyChunkSent bool
+			chunkIdx        int
+			streamedAny     bool
+			anyChunkSent    bool
+			streamAudioMode string
+			streamErr       error
 			// caption accumulates the text of every sentence actually sent,
 			// so the kiosk HUD (fed by the coordinator's voice.state, not by
 			// this SSE stream) shows a live caption that grows sentence by
@@ -366,6 +377,9 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 			streamRate   = 24000
 			streamCh     = 1
 		)
+
+		streamCtx, cancelStream := context.WithCancel(ctx)
+		defer cancelStream()
 
 		const pcmChunkFloor = 4800 // ~100ms at 24kHz 16-bit mono
 
@@ -389,12 +403,38 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 		}
 
 		onAudio := func(chunk BrainAudioChunk) {
+			if streamErr != nil {
+				return
+			}
 			streamedAny = true
 			if !hasStreamTime {
 				streamStart = time.Now()
 				hasStreamTime = true
 			}
 			streamChars += len(chunk.Text)
+
+			hasAudio := len(chunk.Data) > 0
+			if streamAudioMode == "" {
+				if hasAudio {
+					streamAudioMode = StreamModeBrainAudio
+				} else {
+					streamAudioMode = StreamModeRemoteTTS
+				}
+				slog.Debug("latched stream audio mode", "mode", streamAudioMode)
+			} else {
+				if streamAudioMode == StreamModeBrainAudio && !hasAudio {
+					streamErr = fmt.Errorf("%w: turn latched to %s but received text-only sentence: %q", ErrMixedAudioStream, streamAudioMode, chunk.Text)
+					slog.Error("mixed audio stream detected", "mode", streamAudioMode, "error", streamErr)
+					cancelStream()
+					return
+				}
+				if streamAudioMode != StreamModeBrainAudio && hasAudio {
+					streamErr = fmt.Errorf("%w: turn latched to %s but received audio chunk for sentence: %q", ErrMixedAudioStream, streamAudioMode, chunk.Text)
+					slog.Error("mixed audio stream detected", "mode", streamAudioMode, "error", streamErr)
+					cancelStream()
+					return
+				}
+			}
 
 			data := chunk.Data
 			format := chunk.Format
@@ -414,20 +454,16 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 			streamCh = ch
 
 			if len(data) == 0 {
-				// Text-only sentence: either the brain streams text and
-				// leaves speech to this instance (a first-class mode, e.g.
-				// a local Kokoro), or its audio was missing. Either way,
-				// synthesize just that sentence locally.
 				if h.tts == nil {
-					slog.Warn("no local TTS client configured; dropping streamed sentence", "text", chunk.Text)
+					slog.Warn("no TTS client configured; dropping streamed sentence", "text", chunk.Text)
 					return
 				}
 				fbData, fbFormat, fbErr := h.tts.Synthesize(ctx, chunk.Text)
 				if fbErr != nil || len(fbData) == 0 {
-					slog.Warn("local TTS fallback for streamed sentence failed; dropping sentence", "text", chunk.Text, "error", fbErr)
+					slog.Warn("TTS synthesis for streamed sentence failed; dropping sentence", "text", chunk.Text, "error", fbErr)
 					return
 				}
-				slog.Debug("synthesized text-only streamed sentence locally", "text", chunk.Text)
+				slog.Debug("synthesized text-only streamed sentence via remote TTS", "text", chunk.Text)
 				data, format = fbData, fbFormat
 				streamFormat = format
 			}
@@ -456,8 +492,11 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 		}
 
 		brainStart := time.Now()
-		reply, err = streamingBrain.AskStreaming(ctx, askReq, onStatus, onAudio)
+		reply, err = streamingBrain.AskStreaming(streamCtx, askReq, onStatus, onAudio)
 		brainDuration := time.Since(brainStart).Seconds()
+		if streamErr != nil {
+			err = streamErr
+		}
 		if err != nil {
 			finalStatus = "error"
 			h.metrics.RecordStageDuration(nodeID, "brain", "error", brainDuration)

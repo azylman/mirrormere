@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -384,74 +385,66 @@ func TestHub_Interact_StreamingBrain_NoSentenceAudio(t *testing.T) {
 	}
 }
 
-// TestHub_Interact_StreamingBrain_MissingSentenceAudioFallback covers a
-// sentence event whose audio is missing/undecodable: the hub must skip
-// that sentence's streamed audio, fall back to synthesizing just that
-// sentence's text with its own TTS client, and still emit every sentence's
-// audio in order (no dropped reply, no double speech for the sentences
-// that DID stream fine).
-func TestHub_Interact_StreamingBrain_MissingSentenceAudioFallback(t *testing.T) {
+// TestHub_Interact_StreamingBrain_MixedAudioStreamRejected covers streaming turns
+// that attempt to mix brain audio and text-only sentences: the hub must latch to
+// either brain-audio or remote-tts on chunk 0 and reject conflicting chunks with
+// ErrMixedAudioStream.
+func TestHub_Interact_StreamingBrain_MixedAudioStreamRejected(t *testing.T) {
 	t.Parallel()
 
-	cfg := &config.VoiceHubConfig{Enabled: true}
-	coord := NewCoordinator(nil)
+	t.Run("brain_audio_latched_rejects_text_only", func(t *testing.T) {
+		t.Parallel()
+		cfg := &config.VoiceHubConfig{Enabled: true}
+		coord := NewCoordinator(nil)
 
-	stt := &mockSTT{text: "tell me a story"}
-	brain := &mockStreamingBrain{
-		reply: "Once upon a time. The audio broke here. The end.",
-		sentences: []BrainAudioChunk{
-			{Text: "Once upon a time.", Format: "wav", Data: []byte("audio-one")},
-			{Text: "The audio broke here.", Format: "", Data: nil}, // missing audio
-			{Text: "The end.", Format: "wav", Data: []byte("audio-three")},
-		},
-	}
-	tts := &mockTTS{audio: []byte("local-fallback-audio"), format: "wav"}
-
-	h := NewHub(cfg, coord, WithSTTClient(stt), WithBrainClient(brain), WithTTSClient(tts))
-
-	sink, getEvents := collectEvents()
-
-	wav := makeValidWAV(1600)
-	if err := h.Interact(context.Background(), bytes.NewReader(wav), "kiosk-kitchen", "sess-1", sink, EdgeTimings{}); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	evs := getEvents()
-
-	if tts.calls != 1 {
-		t.Fatalf("expected exactly 1 local TTS fallback call (only for the missing sentence), got %d: %+v", tts.calls, tts.calledTexts)
-	}
-	if tts.calledWith != "The audio broke here." {
-		t.Errorf("expected TTS fallback called with the missing sentence's text, got %q", tts.calledWith)
-	}
-
-	chunks := extractAudioChunkEvents(t, evs)
-	if len(chunks) != 4 {
-		t.Fatalf("expected 4 audio_chunk events (one per sentence, including the recovered one, plus the completion marker), got %d", len(chunks))
-	}
-	wantData := []string{"audio-one", "local-fallback-audio", "audio-three", ""}
-	for i, c := range chunks {
-		gotData, decErr := base64.StdEncoding.DecodeString(c["data"].(string))
-		if decErr != nil {
-			t.Fatalf("chunk %d: bad base64: %v", i, decErr)
+		stt := &mockSTT{text: "tell me a story"}
+		brain := &mockStreamingBrain{
+			reply: "Once upon a time. The audio broke here. The end.",
+			sentences: []BrainAudioChunk{
+				{Text: "Once upon a time.", Format: "wav", Data: []byte("audio-one")},
+				{Text: "The audio broke here.", Format: "", Data: nil}, // conflicting text-only
+			},
 		}
-		if string(gotData) != wantData[i] {
-			t.Errorf("chunk %d: expected data %q, got %q", i, wantData[i], string(gotData))
-		}
-	}
-	if final, _ := chunks[3]["is_final"].(bool); !final {
-		t.Error("expected is_final=true on the completion marker chunk")
-	}
+		tts := &mockTTS{audio: []byte("fallback-audio"), format: "wav"}
+		h := NewHub(cfg, coord, WithSTTClient(stt), WithBrainClient(brain), WithTTSClient(tts))
 
-	// The reply event must still carry the full, undropped reply text.
-	for _, e := range evs {
-		if e.Event == "reply" {
-			data := e.Data.(map[string]string)
-			if data["reply"] != "Once upon a time. The audio broke here. The end." {
-				t.Errorf("expected full reply text preserved, got %q", data["reply"])
-			}
+		sink, getEvents := collectEvents()
+		wav := makeValidWAV(1600)
+		err := h.Interact(context.Background(), bytes.NewReader(wav), "kiosk-kitchen", "sess-1", sink, EdgeTimings{})
+		if !errors.Is(err, ErrMixedAudioStream) {
+			t.Fatalf("expected ErrMixedAudioStream, got %v", err)
 		}
-	}
+		if !hasErrorCode(getEvents(), "brain_error") {
+			t.Errorf("expected brain_error event in sink")
+		}
+	})
+
+	t.Run("remote_tts_latched_rejects_brain_audio", func(t *testing.T) {
+		t.Parallel()
+		cfg := &config.VoiceHubConfig{Enabled: true}
+		coord := NewCoordinator(nil)
+
+		stt := &mockSTT{text: "tell me a story"}
+		brain := &mockStreamingBrain{
+			reply: "Once upon a time. Brain audio suddenly sent.",
+			sentences: []BrainAudioChunk{
+				{Text: "Once upon a time.", Format: "", Data: nil}, // latches remote-tts
+				{Text: "Brain audio suddenly sent.", Format: "wav", Data: []byte("audio-two")}, // conflicting audio
+			},
+		}
+		tts := &mockTTS{audio: []byte("fallback-audio"), format: "wav"}
+		h := NewHub(cfg, coord, WithSTTClient(stt), WithBrainClient(brain), WithTTSClient(tts))
+
+		sink, getEvents := collectEvents()
+		wav := makeValidWAV(1600)
+		err := h.Interact(context.Background(), bytes.NewReader(wav), "kiosk-kitchen", "sess-1", sink, EdgeTimings{})
+		if !errors.Is(err, ErrMixedAudioStream) {
+			t.Fatalf("expected ErrMixedAudioStream, got %v", err)
+		}
+		if !hasErrorCode(getEvents(), "brain_error") {
+			t.Errorf("expected brain_error event in sink")
+		}
+	})
 }
 
 func equalStrings(a, b []string) bool {
@@ -494,7 +487,7 @@ func TestHub_Interact_StreamingBrain_KioskCaption(t *testing.T) {
 		reply: "It's sunny. High of 72.",
 		sentences: []BrainAudioChunk{
 			{Text: "It's sunny.", Format: "wav", Data: []byte("a1")},
-			{Text: "High of 72.", Format: "", Data: nil}, // text-only: local TTS
+			{Text: "High of 72.", Format: "wav", Data: []byte("a2")},
 		},
 	}
 	tts := &mockTTS{audio: []byte("local"), format: "wav"}
