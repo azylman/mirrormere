@@ -44,6 +44,19 @@ except (ImportError, ValueError):
 
 logger = logging.getLogger("mirrormere-voice")
 
+HEARTBEAT_FILE = os.environ.get("MIRRORMERE_HEARTBEAT_FILE", "/tmp/ear.heartbeat")
+
+
+def _touch_heartbeat(path: Optional[str] = None) -> None:
+    """Touches local heartbeat timestamp file for container healthcheck."""
+    target_path = path or os.environ.get("MIRRORMERE_HEARTBEAT_FILE", HEARTBEAT_FILE)
+    try:
+        os.makedirs(os.path.dirname(os.path.abspath(target_path)), exist_ok=True)
+        with open(target_path, "w", encoding="utf-8") as f:
+            f.write(str(int(time.time())))
+    except Exception:
+        pass
+
 
 def post_voice_state(
     mirrormere_url: str,
@@ -828,6 +841,7 @@ class VoiceDaemon:
         proc = None
         restart_delay = 1.0
         last_heartbeat = time.time()
+        _touch_heartbeat()
 
         try:
             while self.running:
@@ -885,6 +899,7 @@ class VoiceDaemon:
                     logger.info("[Heartbeat] RMS: %.1f dBFS | Max scores: %s%s", db, scores_str, vad_str)
                     self.max_seen = {m: 0.0 for m in self.active_models}
                     last_heartbeat = time.time()
+                    _touch_heartbeat()
 
                     if self.cfg.hub_url:
                         payload = {

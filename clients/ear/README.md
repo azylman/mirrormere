@@ -96,6 +96,35 @@ ear:
 
 ## Quickstart & Installation
 
+### Option 1: Docker Container (Recommended for Touch Kiosk / N100)
+
+Run as part of the edge kiosk compose stack (`deploy/compose.client.yaml`):
+
+```bash
+docker compose -f deploy/compose.client.yaml up -d mirrormere-ear
+```
+
+Or run directly with direct ALSA device passthrough:
+
+```bash
+docker run -d \
+  --name mirrormere-ear \
+  --restart unless-stopped \
+  --network host \
+  --read-only \
+  --tmpfs /tmp \
+  --security-opt no-new-privileges:true \
+  --ulimit rtprio=99 \
+  --ulimit memlock=-1 \
+  --device /dev/snd:/dev/snd \
+  --group-add audio \
+  -v /etc/mirrormere/voice.yaml:/config/voice.yaml:ro \
+  -v /opt/mirrormere/voice/models:/opt/mirrormere/voice/models \
+  ghcr.io/azylman/mirrormere-ear:latest
+```
+
+### Option 2: Systemd Service (Bare Metal on Debian / Raspberry Pi)
+
 On the edge unit (kiosk mini-PC or Raspberry Pi):
 
 ```bash
@@ -114,4 +143,4 @@ journalctl -u mirrormere-voice.service -f
 To add custom wake word models (e.g. `hey_aerial.onnx`):
 1. Place the `.onnx` or `.tflite` file into `/opt/mirrormere/voice/models/`.
 2. Add the model base name to `wake_models` in `/etc/mirrormere/voice.yaml`.
-3. Restart `mirrormere-voice.service`. The daemon auto-scans the directory and loads the model into its active evaluation graph.
+3. Restart `mirrormere-voice.service` (or restart the `mirrormere-ear` container). The daemon auto-scans the directory and loads the model into its active evaluation graph.

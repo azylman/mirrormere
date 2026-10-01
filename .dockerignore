@@ -16,6 +16,8 @@ docs/
 
 # Clients & local deployment configs
 clients/
+!clients/ear
+!clients/ear/**
 deploy/
 
 # Developer tooling & configurations
