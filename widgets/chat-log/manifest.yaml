@@ -1,0 +1,55 @@
+name: chat-log
+version: "1.0.0"
+description: Recent conversation transcript, newest message at the bottom. Data is pushed by an external script (POST /api/widgets/{widget_id}/push), not polled.
+provider: http
+
+# Payload contract (see README.md in this directory):
+#
+#   {
+#     "session":    "kitchen",                      # optional title
+#     "updated_at": "2026-01-02T15:04:05Z",         # optional, shown in the header
+#     "messages": [                                  # oldest first
+#       {"role": "human|agent", "author": "sam", "ts": "2026-01-02T15:04:00Z", "text": "..."}
+#     ]
+#   }
+
+capabilities:
+  - ambient-static
+
+default_dimensions: [3, 2]
+
+supported_dimensions:
+  - [2, 2]
+  - [3, 2]
+  - [4, 2]
+  - [6, 2]
+
+config_schema:
+  type: object
+  additionalProperties: false
+
+# Every field is optional at the top level so that a payload-less response
+# (any 2xx JSON object) still validates; only messages[].role and .text are
+# required.
+response_schema:
+  type: object
+  properties:
+    session:
+      type: string
+    updated_at:
+      type: string
+    messages:
+      type: array
+      items:
+        type: object
+        properties:
+          role:
+            type: string
+            enum: [human, agent]
+          author:
+            type: string
+          ts:
+            type: string
+          text:
+            type: string
+        required: [role, text]

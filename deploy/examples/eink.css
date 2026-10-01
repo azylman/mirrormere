@@ -262,3 +262,18 @@ div[data-widget-type="calendar-family"] .cf-pattern-outline {
   border: 2px solid #000000;
   color: #000000 !important;
 }
+
+/* ---- chat-log (widgets/chat-log) -------------------------------------
+   Sized for a large e-ink pane (about 520x380 px at 4x2): 24 px type, the
+   author name runs inline with the message text to fit more lines, and the
+   human/agent distinction is a solid vs dotted left rule (no color). The
+   widget's base styles are inline, hence !important. */
+.widget-card[data-widget-type="chat-log"] { padding: 4px 10px 4px 4px !important; border: none !important; }
+.widget-card[data-widget-type="chat-log"] .chat-log-header { padding-bottom: 2px !important; margin-bottom: 4px !important; border-bottom: 3px solid #000000 !important; }
+.widget-card[data-widget-type="chat-log"] .chat-log-session,
+.widget-card[data-widget-type="chat-log"] .chat-log-updated { font-size: 24px !important; font-weight: 700 !important; }
+.widget-card[data-widget-type="chat-log"] .chat-log-messages { gap: 7px !important; }
+.widget-card[data-widget-type="chat-log"] .chat-log-message { display: block !important; padding-left: 8px !important; }
+.widget-card[data-widget-type="chat-log"] .chat-log-meta { display: inline !important; font-size: 24px !important; font-weight: 700 !important; }
+.widget-card[data-widget-type="chat-log"] .chat-log-ts { display: none !important; }
+.widget-card[data-widget-type="chat-log"] .chat-log-text { display: inline !important; font-size: 24px !important; line-height: 1.15 !important; font-weight: 400 !important; }
