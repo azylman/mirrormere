@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/azylman/mirrormere/internal/chatlog"
@@ -16,11 +17,14 @@ func (f fakeSnapshots) GetWidgetState(string) (any, string, string, bool) {
 }
 func (f fakeSnapshots) CurrentStatus() config.Status { return config.Status{} }
 
-type fakePusher struct{ ids []string }
+type fakePusher struct {
+	ids []string
+	err error
+}
 
 func (f *fakePusher) PushUpdate(id string, _ any) (provider.WidgetPayload, error) {
 	f.ids = append(f.ids, id)
-	return provider.WidgetPayload{}, nil
+	return provider.WidgetPayload{}, f.err
 }
 
 func chatSnap() fakeSnapshots {
@@ -52,5 +56,24 @@ func TestChatLogNodeData(t *testing.T) {
 	}
 	if _, ok := fn("s", "kitchen"); ok {
 		t.Fatal("non chat-log widgets keep their shared data")
+	}
+}
+
+func TestPushChatLogUpdates_ContinuesAfterPushError(t *testing.T) {
+	p := &fakePusher{err: errors.New("boom")}
+	pushChatLogUpdates(chatSnap(), p, chatlog.NewStore())
+	if len(p.ids) != 2 {
+		t.Fatalf("a failing push must not stop the other widgets, got %v", p.ids)
+	}
+}
+
+func TestNewChatLogHook_ResolvesPusherLazily(t *testing.T) {
+	var current chatLogPusher
+	hook := newChatLogHook(chatSnap(), func() chatLogPusher { return current }, chatlog.NewStore())
+	p := &fakePusher{}
+	current = p // assigned after the hook was built, as the coordinator is in main
+	hook()
+	if len(p.ids) != 2 {
+		t.Fatalf("hook should push to both chat-log widgets, got %v", p.ids)
 	}
 }

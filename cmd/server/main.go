@@ -86,13 +86,22 @@ func chatLogWidgetIDs(snap *config.Snapshot) []string {
 	return ids
 }
 
+// chatLogPusher is the slice of the provider coordinator the chat-log hook needs.
+type chatLogPusher interface {
+	PushUpdate(widgetID string, data any) (provider.WidgetPayload, error)
+}
+
+// newChatLogHook returns the voice hub's on-change hook. The pusher is looked up
+// lazily because the provider coordinator is built after the hub.
+func newChatLogHook(sp render.StateSnapshotProvider, pusher func() chatLogPusher, store *chatlog.Store) func() {
+	return func() { pushChatLogUpdates(sp, pusher(), store) }
+}
+
 // pushChatLogUpdates runs every chat-log widget through the normal push path
 // (cache update + widget.update broadcast) after the voice hub records a turn.
 // Each display then re-renders through GET /api/widgets/{id}/render?node=<id>
 // and gets its own conversation. The cached copy is the most-recent-node view.
-func pushChatLogUpdates(sp render.StateSnapshotProvider, pusher interface {
-	PushUpdate(widgetID string, data any) (provider.WidgetPayload, error)
-}, store *chatlog.Store) {
+func pushChatLogUpdates(sp render.StateSnapshotProvider, pusher chatLogPusher, store *chatlog.Store) {
 	for _, id := range chatLogWidgetIDs(sp.CurrentSnapshot()) {
 		if _, err := pusher.PushUpdate(id, store.View(id, "")); err != nil {
 			slog.Warn("chat-log widget update failed", "widget_id", id, "error", err)
@@ -283,7 +292,7 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 	if snapshot != nil && snapshot.Config != nil {
 		voiceHubCfg = snapshot.Config.VoiceHub
 	}
-	voiceHub := voice.NewHub(voiceHubCfg, voiceCoord, voice.WithChatLog(chatStore, func() { pushChatLogUpdates(stateProvider, providerCoord, chatStore) }))
+	voiceHub := voice.NewHub(voiceHubCfg, voiceCoord, voice.WithChatLog(chatStore, newChatLogHook(stateProvider, func() chatLogPusher { return providerCoord }, chatStore)))
 	voiceHandler := server.NewDefaultVoiceHandler(voiceCoord, voiceHub, server.WithVoiceMetrics(voice.DefaultMetrics()))
 
 	// 9. Rotation Coordinator & Screen Handler
