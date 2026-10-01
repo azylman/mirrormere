@@ -11,24 +11,35 @@
 
 FROM python:3.11-slim AS base
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
         libsndfile1 \
         ca-certificates \
         wget \
-    && rm -rf /var/lib/apt/lists/* \
     && groupadd -g 10001 appgroup \
     && useradd -u 10001 -g appgroup -M -s /usr/sbin/nologin appuser
 
 WORKDIR /app
 
-COPY --link requirements.txt ./
-RUN pip install --no-cache-dir \
+RUN --mount=type=bind,source=requirements.txt,target=requirements.txt \
+    --mount=type=cache,target=/root/.cache/pip \
+    pip install \
         --extra-index-url https://download.pytorch.org/whl/cpu \
-        -r requirements.txt
+        -r requirements.txt \
+    && rm -rf \
+        /usr/local/lib/python3.11/site-packages/torch/test \
+        /usr/local/lib/python3.11/site-packages/torch/include \
+        /usr/local/lib/python3.11/site-packages/torch/bin \
+        /usr/local/lib/python3.11/site-packages/torch/testing \
+        /usr/local/lib/python3.11/site-packages/torchgen \
+        /usr/local/lib/python3.11/site-packages/pip \
+        /usr/local/lib/python3.11/site-packages/setuptools \
+    && python -m compileall -b -q /usr/local/lib/python3.11/site-packages
 
 COPY --link --chown=10001:10001 app.py enroll.py ./
 
-RUN mkdir -p /models && chown -R 10001:10001 /app /models
+RUN python -m compileall -b -q /app && mkdir -p /models && chown -R 10001:10001 /app /models
 
 USER 10001:10001
 
@@ -42,7 +53,7 @@ EXPOSE 9096
 
 VOLUME ["/models"]
 
-HEALTHCHECK --interval=15s --timeout=3s --start-period=30s --retries=3 \
+HEALTHCHECK --interval=15s --timeout=3s --start-period=30s --start-interval=2s --retries=3 \
   CMD wget --no-verbose --tries=1 --spider http://127.0.0.1:9096/health || exit 1
 
 ENTRYPOINT ["python", "app.py"]

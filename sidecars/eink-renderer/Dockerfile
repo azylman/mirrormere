@@ -5,13 +5,14 @@
 FROM node:20-alpine
 
 # Install headless Chromium, fonts (Noto for typography & icons), and CA certificates
-RUN apk add --no-cache \
-    chromium \
-    font-noto \
-    font-noto-cjk \
-    ca-certificates \
-    tzdata \
-    wget \
+RUN --mount=type=cache,target=/etc/apk/cache,sharing=locked \
+    apk add \
+        chromium \
+        font-noto \
+        font-noto-cjk \
+        ca-certificates \
+        tzdata \
+    && rm -rf /usr/local/lib/node_modules/npm /opt/yarn* /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/yarn* /usr/local/bin/corepack \
     && addgroup -g 10001 -S appgroup \
     && adduser -u 10001 -S appuser -G appgroup \
     && mkdir -p /app /tmp/chromium-eink \
@@ -35,7 +36,7 @@ ENV PORT=8081 \
 
 EXPOSE 8081
 
-HEALTHCHECK --interval=15s --timeout=3s --start-period=5s --retries=3 \
+HEALTHCHECK --interval=15s --timeout=3s --start-period=5s --start-interval=2s --retries=3 \
   CMD wget --no-verbose --tries=1 --spider http://127.0.0.1:8081/healthz || exit 1
 
 ENTRYPOINT ["./entrypoint.sh"]
