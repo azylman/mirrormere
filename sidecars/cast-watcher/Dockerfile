@@ -4,20 +4,26 @@ FROM --platform=$BUILDPLATFORM golang:1.24-alpine AS builder
 
 WORKDIR /src
 
-# Copy module definitions first for optimal layer caching
-COPY --link go.mod go.sum* ./
-RUN go mod download
+# Download dependencies using bind-mounted manifests and BuildKit cache mount
+RUN --mount=type=bind,source=go.mod,target=go.mod \
+    --mount=type=bind,source=go.sum,target=go.sum \
+    --mount=type=cache,target=/go/pkg/mod \
+    go mod download
 
 # Copy source tree and compile minimal static Linux executable
 ARG TARGETOS TARGETARCH
 COPY --link . .
-RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w -extldflags '-static'" -o /app/cast-watcher ./sidecars/cast-watcher
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
+    go build -trimpath -ldflags="-s -w -extldflags '-static'" -o /app/cast-watcher ./sidecars/cast-watcher
 
 # Runtime stage: minimal hardened Alpine 3.21 environment
 FROM alpine:3.21
 
-# Install runtime certificates and create non-root user
-RUN apk add --no-cache ca-certificates tzdata \
+# Install runtime certificates and create non-root user (no tzdata needed)
+RUN --mount=type=cache,target=/etc/apk/cache,sharing=locked \
+    apk add ca-certificates \
     && addgroup -g 10001 -S appgroup \
     && adduser -u 10001 -S appuser -G appgroup
 
@@ -34,7 +40,7 @@ ENV CONTROL_PORT=8090
 EXPOSE 8090
 
 # Native Busybox wget probe for Docker health monitoring
-HEALTHCHECK --interval=15s --timeout=3s --start-period=5s --retries=3 \
+HEALTHCHECK --interval=15s --timeout=3s --start-period=5s --start-interval=2s --retries=3 \
   CMD wget --no-verbose --tries=1 --spider http://127.0.0.1:8090/healthz || exit 1
 
 # PID 1 execution ensures instant SIGTERM handling and graceful shutdown
