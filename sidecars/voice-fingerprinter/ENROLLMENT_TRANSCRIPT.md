@@ -32,29 +32,40 @@ This combined script provides approximately **45–50 seconds of clean speech (~
 ## Quick Enrollment Usage
 
 ### 1. Record WAV Audio
-Stop the voice service temporarily so it releases the ALSA capture hardware, then record a single-channel (mono) 16kHz WAV file into `deploy/data/` using your node's configured `audio_device` (from `voice.yaml`):
+Stop the voice service on the voice node temporarily so it releases the ALSA capture hardware, then record a single-channel (mono) 16kHz WAV file using your node's configured `audio_device` (from `voice.yaml`):
 
 ```bash
+# On the voice node / ear device:
 # Stop the voice client so it releases the audio device:
 sudo systemctl stop mirrormere-voice
 
-# Record 50s calibration audio using your node's audio device:
-arecord -D <audio_device> -f S16_LE -r 16000 -c 1 -d 50 deploy/data/enroll-<speaker_id>.wav
+# Record 50s calibration audio:
+arecord -D <audio_device> -f S16_LE -r 16000 -c 1 -d 50 /tmp/enroll-<speaker_id>.wav
 
 # Restart the voice client:
 sudo systemctl start mirrormere-voice
 ```
 
+> [!NOTE]
+> **Single-Host vs. Split Deployment**:
+> - **Single-host (Hub and Ear on same machine)**: Move the file directly: `mv /tmp/enroll-<speaker_id>.wav deploy/data/enroll-<speaker_id>.wav`.
+> - **Split deployment (Ear on satellite Pi, Hub on server)**: Copy the recorded WAV from the voice node to the Hub host's data directory:
+>   ```bash
+>   scp /tmp/enroll-<speaker_id>.wav <hub-host>:/path/to/mirrormere/deploy/data/enroll-<speaker_id>.wav
+>   rm /tmp/enroll-<speaker_id>.wav
+>   ```
+
 ### 2. Enroll Speaker Fingerprint
-Feed the recording to `enroll.py` targeting your Mirrormere `/data/speakers.json`, then delete the temporary recording:
+On the Hub host, feed the recording to `enroll.py` targeting your Mirrormere `/data/speakers.json`, then delete the temporary recording:
 
 ```bash
-# Running inside the sidecar container (with ./data mounted to /data)
+# Running inside the sidecar container (with ./data mounted to /data):
 docker compose exec voice-fingerprinter python enroll.py <speaker_id> --wav /data/enroll-<speaker_id>.wav --output /data/speakers.json
 
-# Audio is never stored long-term (SPEC-011 §Speaker Identification); clean up the WAV:
+# Audio is never stored long-term (SPEC-011 §Speaker Identification); clean up the WAV on both hosts:
 rm deploy/data/enroll-<speaker_id>.wav
 
-# Running standalone against the sidecar HTTP endpoint
+# Or running standalone against the sidecar HTTP endpoint:
 python sidecars/voice-fingerprinter/enroll.py <speaker_id> --wav deploy/data/enroll-<speaker_id>.wav --embed-url http://localhost:9096/embed --output deploy/data/speakers.json
+rm deploy/data/enroll-<speaker_id>.wav
 ```
