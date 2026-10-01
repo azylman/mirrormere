@@ -66,6 +66,9 @@ jobs:
           - name: mirrormere-voice-fingerprinter
             context: ./sidecars/voice-fingerprinter
             file: ./sidecars/voice-fingerprinter/Dockerfile
+          - name: mirrormere-ear
+            context: ./clients/ear
+            file: ./clients/ear/Dockerfile
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -89,6 +92,8 @@ jobs:
               - 'sidecars/eink-renderer/**'
             mirrormere-voice-fingerprinter:
               - 'sidecars/voice-fingerprinter/**'
+            mirrormere-ear:
+              - 'clients/ear/**'
 
       - name: Set up Python (voice-fingerprinter unit tests)
         if: matrix.name == 'mirrormere-voice-fingerprinter' && steps.filter.outputs[matrix.name] == 'true'
