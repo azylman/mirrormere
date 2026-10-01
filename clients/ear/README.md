@@ -98,13 +98,19 @@ ear:
 
 ### Option 1: Docker Container (Recommended for Touch Kiosk / N100)
 
+Pull the pre-built multi-architecture container image from GitHub Container Registry:
+
+```bash
+docker pull ghcr.io/azylman/mirrormere-ear:latest
+```
+
 Run as part of the edge kiosk compose stack (`deploy/compose.client.yaml`):
 
 ```bash
 docker compose -f deploy/compose.client.yaml up -d mirrormere-ear
 ```
 
-Or run directly with direct ALSA device passthrough:
+Or run directly with ALSA capture and PipeWire PulseAudio socket passthrough:
 
 ```bash
 docker run -d \
@@ -118,6 +124,8 @@ docker run -d \
   --ulimit memlock=-1 \
   --device /dev/snd:/dev/snd \
   --group-add audio \
+  -e PULSE_SERVER=unix:/run/user/1000/pulse/native \
+  -v /run/user/1000/pulse/native:/run/user/1000/pulse/native:ro \
   -v /etc/mirrormere/voice.yaml:/config/voice.yaml:ro \
   -v /opt/mirrormere/voice/models:/opt/mirrormere/voice/models \
   ghcr.io/azylman/mirrormere-ear:latest
