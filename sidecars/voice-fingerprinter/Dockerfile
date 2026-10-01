@@ -30,11 +30,8 @@ RUN --mount=type=bind,source=requirements.txt,target=requirements.txt \
     && rm -rf \
         /usr/local/lib/python3.11/site-packages/torch/test \
         /usr/local/lib/python3.11/site-packages/torch/include \
-        /usr/local/lib/python3.11/site-packages/torch/bin \
-        /usr/local/lib/python3.11/site-packages/torch/testing \
-        /usr/local/lib/python3.11/site-packages/torchgen \
         /usr/local/lib/python3.11/site-packages/pip \
-        /usr/local/lib/python3.11/site-packages/setuptools \
+    && find /usr/local/lib/python3.11/site-packages/torch/bin -type f ! -name torch_shm_manager -delete \
     && python -m compileall -b -q /usr/local/lib/python3.11/site-packages
 
 COPY --link --chown=10001:10001 app.py enroll.py ./
