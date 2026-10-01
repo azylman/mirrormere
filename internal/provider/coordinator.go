@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/azylman/mirrormere/internal/chatlog"
 	"github.com/azylman/mirrormere/internal/config"
 	"github.com/azylman/mirrormere/internal/domain"
 	"github.com/azylman/mirrormere/internal/events"
@@ -41,6 +42,8 @@ type CoordinatorConfig struct {
 	NowFunc             func() time.Time
 	Backoff             *BackoffPolicy
 	OnBeforeRecordPush  func(widgetID string)
+	// ChatLog, when set, receives chat-log widget pushes (SPEC-007 §5).
+	ChatLog             *chatlog.Store
 	HeaderPollerClient  *http.Client
 	HeaderPollerBaseURL string
 }
@@ -81,6 +84,7 @@ type ProviderCoordinator struct {
 	sinkCancel         context.CancelFunc
 	sinkWg             sync.WaitGroup
 	onBeforeRecordPush func(widgetID string)
+	chatLog            *chatlog.Store
 	schemaMu           sync.RWMutex
 	schemas            map[string]*jsonschema.Schema
 	stopped            bool
@@ -142,6 +146,7 @@ func NewCoordinator(cfg CoordinatorConfig, initialSnapshot *config.Snapshot) *Pr
 		sinkCtx:            sinkCtx,
 		sinkCancel:         sinkCancel,
 		onBeforeRecordPush: cfg.OnBeforeRecordPush,
+		chatLog:            cfg.ChatLog,
 		schemas:            make(map[string]*jsonschema.Schema),
 		headerPoller:       headerPoller,
 	}
@@ -371,7 +376,10 @@ func (c *ProviderCoordinator) startSingleWorkerLocked(w *config.WidgetConfig, sn
 	}
 
 	// Native Spacer Optimization (SPEC-005): Zero-overhead padding, no polling ticker needed
-	if w.Type == "spacer" || providerName == "spacer" {
+	// The chat-log widget takes the same path: its data lives in the in-memory
+	// chatlog store, the voice hub and push webhook update it, and nothing polls
+	// (so nothing can overwrite the cache).
+	if w.Type == "spacer" || providerName == "spacer" || providerName == "chat-log" {
 		now := c.nowFunc()
 		payload, _ := c.cache.RecordSuccess(w.ID, map[string]any{}, now)
 		if c.stateSink != nil {
@@ -735,7 +743,7 @@ func (c *ProviderCoordinator) recordPushLocked(widgetID string, data map[string]
 	if targetWidget.Type == "tasks" || providerName == "tasks" {
 		return WidgetPayload{}, fmt.Errorf("%w: %q", ErrListWidgetPushForbidden, widgetID)
 	}
-	if providerName != "http" {
+	if providerName != "http" && providerName != "chat-log" {
 		return WidgetPayload{}, fmt.Errorf("%w: widget %q uses provider %q", ErrNonHTTPWidgetPushForbidden, widgetID, providerName)
 	}
 
@@ -760,6 +768,16 @@ func (c *ProviderCoordinator) recordPushLocked(widgetID string, data map[string]
 		if err := sch.Validate(valDoc); err != nil {
 			return WidgetPayload{}, fmt.Errorf("%w: %w", ErrSchemaValidation, err)
 		}
+	}
+
+	if providerName == "chat-log" && c.chatLog != nil {
+		// The pushed transcript becomes this widget's own conversation in the
+		// shared in-memory store (same TTL and cap as voice turns).
+		msgs, err := chatlog.ParsePush(data)
+		if err != nil {
+			return WidgetPayload{}, fmt.Errorf("%w: %w", ErrSchemaValidation, err)
+		}
+		c.chatLog.Replace(chatlog.WidgetKey(widgetID), msgs)
 	}
 
 	now := c.nowFunc()

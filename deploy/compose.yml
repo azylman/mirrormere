@@ -97,6 +97,9 @@ services:
     environment:
       - PORT=8081
       - CORE_URL=${CORE_URL:-http://mirrormere-core:8080}
+      # Page the renderer screenshots. Add ?node=<voice node_id of this panel>
+      # (e.g. .../display?node=eink-display-livingroom) so the chat-log widget
+      # shows this panel's own conversation.
       - DISPLAY_URL=${DISPLAY_URL:-http://mirrormere-core:8080/display}
     depends_on:
       mirrormere-core:

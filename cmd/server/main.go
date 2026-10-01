@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/azylman/mirrormere/internal/audio"
+	"github.com/azylman/mirrormere/internal/chatlog"
 	"github.com/azylman/mirrormere/internal/config"
 	"github.com/azylman/mirrormere/internal/display"
 	"github.com/azylman/mirrormere/internal/events"
@@ -71,6 +72,56 @@ func WithAddrChan(ch chan<- string) Option {
 // UTC in the production container. Without this, BuildFamilyView's t.In(now.Location()) calls
 // in internal/render/family.go are a no-op (now.Location() would already be UTC), so a UTC
 // event near local midnight would still land on the wrong day (SPEC-014 "Timezones").
+// chatLogWidgetIDs lists the chat-log widget instances in the active configuration.
+func chatLogWidgetIDs(snap *config.Snapshot) []string {
+	if snap == nil || snap.Config == nil {
+		return nil
+	}
+	var ids []string
+	for _, w := range snap.Config.Display.Widgets {
+		if w.Type == "chat-log" {
+			ids = append(ids, w.ID)
+		}
+	}
+	return ids
+}
+
+// chatLogPusher is the slice of the provider coordinator the chat-log hook needs.
+type chatLogPusher interface {
+	PushUpdate(widgetID string, data any) (provider.WidgetPayload, error)
+}
+
+// newChatLogHook returns the voice hub's on-change hook. The pusher is looked up
+// lazily because the provider coordinator is built after the hub.
+func newChatLogHook(sp render.StateSnapshotProvider, pusher func() chatLogPusher, store *chatlog.Store) func() {
+	return func() { pushChatLogUpdates(sp, pusher(), store) }
+}
+
+// pushChatLogUpdates runs every chat-log widget through the normal push path
+// (cache update + widget.update broadcast) after the voice hub records a turn.
+// Each display then re-renders through GET /api/widgets/{id}/render?node=<id>
+// and gets its own conversation. The cached copy is the most-recent-node view.
+func pushChatLogUpdates(sp render.StateSnapshotProvider, pusher chatLogPusher, store *chatlog.Store) {
+	for _, id := range chatLogWidgetIDs(sp.CurrentSnapshot()) {
+		if _, err := pusher.PushUpdate(id, store.View(id, "")); err != nil {
+			slog.Warn("chat-log widget update failed", "widget_id", id, "error", err)
+		}
+	}
+}
+
+// chatLogNodeData supplies per-display render data for chat-log widgets: the
+// requesting display's own conversation, chosen from the ?node= it passed.
+func chatLogNodeData(sp render.StateSnapshotProvider, store *chatlog.Store) func(widgetID, nodeID string) (any, bool) {
+	return func(widgetID, nodeID string) (any, bool) {
+		for _, id := range chatLogWidgetIDs(sp.CurrentSnapshot()) {
+			if id == widgetID {
+				return store.View(widgetID, nodeID), true
+			}
+		}
+		return nil, false
+	}
+}
+
 func householdNowFunc(sp render.StateSnapshotProvider) func() time.Time {
 	return func() time.Time {
 		now := time.Now()
@@ -209,6 +260,17 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 	}()
 	listsHandler := server.NewDefaultListsHandler(tasksStore)
 
+	// In-memory conversation store shared by the voice hub (writer) and the
+	// chat-log provider (reader). Nothing is persisted.
+	var chatLogCfg *config.ChatLogConfig
+	if snapshot != nil && snapshot.Config != nil {
+		chatLogCfg = snapshot.Config.ChatLog
+	}
+	chatStore := chatlog.NewStore(
+		chatlog.WithTTL(chatLogCfg.GetTTL()),
+		chatlog.WithMaxPerKey(chatLogCfg.GetMaxMessagesPerNode()),
+	)
+
 	reg := provider.NewRegistry()
 	reg.Register("tasks", func() provider.Provider {
 		return provider.NewTasksProviderWithStore(tasksStore)
@@ -225,11 +287,12 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 
 	// 8. Voice Coordinator, Hub & Handler
 	voiceCoord := voice.NewCoordinator(hub, stateProvider)
+	var providerCoord *provider.ProviderCoordinator // assigned in step 10; the chat-log hook only runs once turns arrive
 	var voiceHubCfg *config.VoiceHubConfig
 	if snapshot != nil && snapshot.Config != nil {
 		voiceHubCfg = snapshot.Config.VoiceHub
 	}
-	voiceHub := voice.NewHub(voiceHubCfg, voiceCoord)
+	voiceHub := voice.NewHub(voiceHubCfg, voiceCoord, voice.WithChatLog(chatStore, newChatLogHook(stateProvider, func() chatLogPusher { return providerCoord }, chatStore)))
 	voiceHandler := server.NewDefaultVoiceHandler(voiceCoord, voiceHub, server.WithVoiceMetrics(voice.DefaultMetrics()))
 
 	// 9. Rotation Coordinator & Screen Handler
@@ -242,11 +305,12 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 	screenHandler := rotation.NewHandler(rotationCoord)
 
 	// 10. Provider Coordinator & Push Handler
-	providerCoord := provider.NewCoordinator(provider.CoordinatorConfig{
+	providerCoord = provider.NewCoordinator(provider.CoordinatorConfig{
 		Registry:    reg,
 		Broadcaster: hub,
 		StateSink:   stateProvider,
 		Logger:      logger,
+		ChatLog:     chatStore,
 	}, snapshot)
 	defer func() {
 		if err := providerCoord.Stop(); err != nil {
@@ -257,7 +321,10 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 	pushHandler := provider.NewPushHandler(providerCoord, logger)
 
 	// 11. Render & Display Handlers
-	renderEngine := render.NewEngine(loader, stateProvider, render.WithNowFunc(householdNowFunc(stateProvider)))
+	renderEngine := render.NewEngine(loader, stateProvider,
+		render.WithNowFunc(householdNowFunc(stateProvider)),
+		render.WithNodeDataFunc(chatLogNodeData(stateProvider, chatStore)),
+	)
 	renderHandler := render.NewHandler(renderEngine, loader)
 	displayHandler := display.NewHandler(
 		display.WithTimezoneProvider(func() string {

@@ -20,6 +20,24 @@ class MirrormereCarousel {
   }
 
   /**
+   * Build the widget render URL. When the display page was opened with a
+   * ?node=<voice node_id> query parameter, it is forwarded so per-display
+   * widgets (chat-log) render that device's own conversation.
+   */
+  renderURL(widgetID) {
+    let url = `api/widgets/${encodeURIComponent(widgetID)}/render`;
+    try {
+      const node = new URLSearchParams(window.location.search).get('node');
+      if (node) {
+        url += `?node=${encodeURIComponent(node)}`;
+      }
+    } catch (_) {
+      // No window.location (non-browser test harness): render without a node.
+    }
+    return url;
+  }
+
+  /**
    * Pause carousel rotation and swipe handling during video presentation mode (SPEC-004, SPEC-010).
    */
   pause() {
@@ -58,7 +76,7 @@ class MirrormereCarousel {
     // 1. Pre-warm: fetch all widget fragments in parallel before touching the active DOM
     const fetchPromises = data.widgets.map(async (widget) => {
       try {
-        const res = await fetch(`api/widgets/${encodeURIComponent(widget.widget_id)}/render`);
+        const res = await fetch(this.renderURL(widget.widget_id));
         if (!res.ok) {
           throw new Error(`HTTP ${res.status}`);
         }
@@ -141,7 +159,7 @@ class MirrormereCarousel {
     }
 
     try {
-      const res = await fetch(`api/widgets/${encodeURIComponent(widgetID)}/render`);
+      const res = await fetch(this.renderURL(widgetID));
       if (!res.ok) {
         throw new Error(`HTTP ${res.status}`);
       }

@@ -1,0 +1,54 @@
+name: chat-log
+version: "1.0.0"
+description: Recent conversation transcript, newest message at the bottom. Voice turns are recorded by the voice hub; other sources may POST /api/widgets/{widget_id}/push.
+provider: chat-log
+
+# Data comes from an in-memory, TTL-bounded store written by the voice hub
+# (SPEC-007 §5): no endpoint, no polling. response_schema validates the optional
+# POST /api/widgets/{widget_id}/push body.
+#
+# Payload contract (see README.md in this directory):
+#
+#   {
+#     "messages": [                                  # oldest first
+#       {"role": "human|agent", "author": "sam", "ts": "2026-01-02T15:04:00Z", "text": "..."}
+#     ]
+#   }
+
+capabilities:
+  - ambient-static
+
+default_dimensions: [3, 2]
+
+supported_dimensions:
+  - [2, 2]
+  - [3, 2]
+  - [4, 2]
+  - [6, 2]
+
+config_schema:
+  type: object
+  properties:
+    title:
+      type: string
+      description: Header text. Defaults to "Chat".
+  additionalProperties: false
+
+response_schema:
+  type: object
+  properties:
+    messages:
+      type: array
+      items:
+        type: object
+        properties:
+          role:
+            type: string
+            enum: [human, agent]
+          author:
+            type: string
+          ts:
+            type: string
+          text:
+            type: string
+        required: [role, text]

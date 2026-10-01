@@ -4,6 +4,11 @@
 # Target display URL for Chromium
 MIRRORMERE_DISPLAY_URL=http://localhost:8080/display
 
+# Voice node id of this device (same as node_id in the ear's voice.yaml).
+# Leave empty to read it from /etc/mirrormere/voice.yaml. It is appended to the
+# display URL as ?node=<id> so the chat-log widget shows this device's conversation.
+MIRRORMERE_NODE_ID=
+
 # Active display output (leave empty for automatic detection)
 # Examples: HDMI-A-1, DP-1
 MIRRORMERE_OUTPUT=

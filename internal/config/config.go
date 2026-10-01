@@ -21,6 +21,7 @@ type Config struct {
 	Timezone string          `yaml:"timezone"`
 	Display  DisplayConfig   `yaml:"display"`
 	VoiceHub *VoiceHubConfig `yaml:"voice_hub,omitempty"`
+	ChatLog  *ChatLogConfig  `yaml:"chat_log,omitempty"`
 
 	location *time.Location
 }
@@ -83,6 +84,31 @@ type WidgetConfig struct {
 	Token                  string            `yaml:"-"` // Resolved secret populated from TokenEnv
 	Secrets                map[string]string `yaml:"-"` // Resolved secrets populated from *_env keys in Config
 	Config                 map[string]any    `yaml:"config,omitempty"`
+}
+
+// ChatLogConfig tunes the in-memory conversation store behind the chat-log
+// widget (nothing is persisted). Changes take effect on restart.
+type ChatLogConfig struct {
+	// TTLMinutes is how long a message stays visible (default 20).
+	TTLMinutes *int `yaml:"ttl_minutes,omitempty"`
+	// MaxMessagesPerNode caps retained messages per voice node (default 50).
+	MaxMessagesPerNode *int `yaml:"max_messages_per_node,omitempty"`
+}
+
+// GetTTL returns the message lifetime (default: 20 minutes).
+func (c *ChatLogConfig) GetTTL() time.Duration {
+	if c == nil || c.TTLMinutes == nil || *c.TTLMinutes <= 0 {
+		return 20 * time.Minute
+	}
+	return time.Duration(*c.TTLMinutes) * time.Minute
+}
+
+// GetMaxMessagesPerNode returns the per-node message cap (default: 50).
+func (c *ChatLogConfig) GetMaxMessagesPerNode() int {
+	if c == nil || c.MaxMessagesPerNode == nil || *c.MaxMessagesPerNode <= 0 {
+		return 50
+	}
+	return *c.MaxMessagesPerNode
 }
 
 // VoiceHubConfig configures the LAN voice pipeline coordinator.
@@ -340,8 +366,8 @@ func validateStructuralKeys(root *yaml.Node) error {
 			return fmt.Errorf("line %d: configuration contains disallowed top-level key 'header': header must be configured under display.header", keyNode.Line)
 		case "timezone":
 			// Canonical top-level key
-		case "voice_hub":
-			// Canonical top-level key
+		case "voice_hub", "chat_log":
+			// Canonical top-level keys
 		case "display":
 			if valNode.Kind == yaml.MappingNode {
 				if err := validateDisplayKeys(valNode); err != nil {
@@ -504,6 +530,16 @@ func (c *Config) Validate() error {
 			if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 				return fmt.Errorf("widget '%s': invalid endpoint URL '%s' (must be http:// or https:// with host)", w.ID, w.Endpoint)
 			}
+		}
+	}
+
+	// 5b. ChatLog validation
+	if cl := c.ChatLog; cl != nil {
+		if cl.TTLMinutes != nil && *cl.TTLMinutes <= 0 {
+			return fmt.Errorf("chat_log ttl_minutes must be positive (got %d)", *cl.TTLMinutes)
+		}
+		if cl.MaxMessagesPerNode != nil && *cl.MaxMessagesPerNode <= 0 {
+			return fmt.Errorf("chat_log max_messages_per_node must be positive (got %d)", *cl.MaxMessagesPerNode)
 		}
 	}
 

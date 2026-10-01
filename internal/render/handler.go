@@ -70,7 +70,8 @@ func NewHandler(engine *Engine, resolver PackageResolver, opts ...HandlerOption)
 	return h
 }
 
-// GetWidgetRender handles GET /api/widgets/{widget_id}/render requests.
+// GetWidgetRender handles GET /api/widgets/{widget_id}/render requests. The optional
+// "node" query parameter is the requesting display's voice node_id.
 func (h *Handler) GetWidgetRender(w http.ResponseWriter, r *http.Request, widgetID string) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
@@ -91,7 +92,7 @@ func (h *Handler) GetWidgetRender(w http.ResponseWriter, r *http.Request, widget
 		return
 	}
 
-	htmlBytes, err := h.engine.RenderWidget(r.Context(), widgetID)
+	htmlBytes, err := h.engine.RenderWidgetForNode(r.Context(), widgetID, r.URL.Query().Get("node"))
 	if err != nil {
 		var notFound WidgetNotFoundError
 		if errors.As(err, &notFound) {
