@@ -1,7 +1,7 @@
 <div class="widget-card widget-chat-log" data-widget-id="{{ .ID }}" data-widget-type="{{ .Type }}" style="grid-column: span {{ .Dimensions.Cols }}; grid-row: span {{ .Dimensions.Rows }}; display: flex; flex-direction: column; overflow: hidden; color: var(--mm-text-primary);">
   {{ if .Data.messages }}
     <div class="chat-log-header" style="display: flex; align-items: baseline; justify-content: space-between; padding-bottom: 4px; border-bottom: 2px solid var(--mm-text-primary); margin-bottom: 6px; flex-shrink: 0;">
-      <span class="chat-log-session" style="font-size: 1.1rem; font-weight: 700; letter-spacing: 0.02em;">{{ if .Data.session }}{{ .Data.session }}{{ else }}Chat{{ end }}</span>
+      <span class="chat-log-session" style="font-size: 1.1rem; font-weight: 700; letter-spacing: 0.02em;">{{ if .Data.session }}{{ .Data.session }}{{ else if .Config.title }}{{ .Config.title }}{{ else }}Chat{{ end }}</span>
       {{ if .Data.updated_at }}<span class="chat-log-updated" style="font-size: 0.95rem; font-family: var(--mm-font-mono);">{{ formatTime .Data.updated_at }}</span>{{ end }}
     </div>
     <div class="chat-log-messages" style="display: flex; flex-direction: column; justify-content: flex-end; gap: 8px; flex: 1; min-height: 0; overflow: hidden;">

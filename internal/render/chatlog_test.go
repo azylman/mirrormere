@@ -3,11 +3,14 @@ package render_test
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/azylman/mirrormere/internal/chatlog"
 	"github.com/azylman/mirrormere/internal/config"
 	"github.com/azylman/mirrormere/internal/domain"
 	"github.com/azylman/mirrormere/internal/render"
@@ -93,5 +96,86 @@ func TestEngine_RenderWidget_ChatLogPackage(t *testing.T) {
 	}
 	if !strings.Contains(string(htmlEsc), "Chat") {
 		t.Errorf("expected default session title: %s", htmlEsc)
+	}
+}
+
+// The widget renders from the chat-log provider, per requesting display: the
+// "node" query parameter on the render request selects that device's conversation.
+func TestChatLogWidget_RendersFromProviderPerNode(t *testing.T) {
+	t.Parallel()
+
+	repoWidgetsDir := filepath.Join("..", "..", "widgets")
+	loader := widget.NewLoader(repoWidgetsDir, t.TempDir())
+	pkg, err := loader.LoadPackage("chat-log")
+	if err != nil {
+		t.Fatalf("failed to load chat-log package: %v", err)
+	}
+	if pkg.Manifest.Provider != "chat-log" {
+		t.Fatalf("manifest should use the endpoint-less chat-log provider, got %q", pkg.Manifest.Provider)
+	}
+
+	store := chatlog.NewStore()
+	store.Add(chatlog.NodeKey("kitchen"), chatlog.Message{Role: chatlog.RoleHuman, Author: "sam", Text: "kitchen question"})
+	store.Add(chatlog.NodeKey("kitchen"), chatlog.Message{Role: chatlog.RoleAgent, Text: "kitchen answer"})
+	store.Add(chatlog.NodeKey("office"), chatlog.Message{Role: chatlog.RoleHuman, Text: "office question <b>"})
+
+	snap := &config.Snapshot{
+		Config: &config.Config{Display: config.DisplayConfig{Widgets: []config.WidgetConfig{
+			{ID: "chat", Type: "chat-log", Dimensions: []int{3, 2}, Config: map[string]any{"title": "Home"}},
+		}}},
+		Packages: map[string]*domain.Package{"chat-log": pkg},
+	}
+	state := &mockSnapshotProvider{snapshot: snap, states: map[string]mockState{}}
+	engine := render.NewEngine(&mockResolver{packages: map[string]*domain.Package{"chat-log": pkg}}, state,
+		render.WithNodeDataFunc(func(widgetID, nodeID string) (any, bool) {
+			if widgetID != "chat" {
+				return nil, false
+			}
+			return store.View(widgetID, nodeID), true
+		}),
+	)
+
+	kitchen, err := engine.RenderWidgetForNode(context.Background(), "chat", "kitchen")
+	if err != nil {
+		t.Fatalf("render kitchen: %v", err)
+	}
+	for _, want := range []string{"Home", "kitchen question", "kitchen answer", "sam", "chat-log-human", "chat-log-agent"} {
+		if !strings.Contains(string(kitchen), want) {
+			t.Errorf("kitchen render missing %q: %s", want, kitchen)
+		}
+	}
+	if strings.Contains(string(kitchen), "office question") {
+		t.Errorf("kitchen render leaked the office conversation")
+	}
+
+	office, err := engine.RenderWidgetForNode(context.Background(), "chat", "office")
+	if err != nil {
+		t.Fatalf("render office: %v", err)
+	}
+	if !strings.Contains(string(office), "office question &lt;b&gt;") || strings.Contains(string(office), "kitchen question") {
+		t.Errorf("unexpected office render: %s", office)
+	}
+
+	// No node: the most recently active node (office).
+	fallback, err := engine.RenderWidget(context.Background(), "chat")
+	if err != nil {
+		t.Fatalf("render fallback: %v", err)
+	}
+	if !strings.Contains(string(fallback), "office question") {
+		t.Errorf("fallback should show the most recent node: %s", fallback)
+	}
+
+	// Never-spoken node: empty state, not an error.
+	empty, err := engine.RenderWidgetForNode(context.Background(), "chat", "garage")
+	if err != nil || !strings.Contains(string(empty), "No messages yet") {
+		t.Errorf("garage render: err=%v out=%s", err, empty)
+	}
+
+	// The HTTP handler forwards ?node= to the engine.
+	h := render.NewHandler(engine, &mockResolver{packages: map[string]*domain.Package{"chat-log": pkg}})
+	rec := httptest.NewRecorder()
+	h.GetWidgetRender(rec, httptest.NewRequest(http.MethodGet, "/api/widgets/chat/render?node=kitchen", nil), "chat")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "kitchen answer") {
+		t.Errorf("handler render: %d %s", rec.Code, rec.Body.String())
 	}
 }

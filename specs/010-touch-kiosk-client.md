@@ -50,6 +50,8 @@ flowchart TD
 
 ## Compositor & Chromium Kiosk Flags
 
+**Node identity in the display URL.** The browser cannot read the dock's local config, so the launcher (`deploy/kiosk/session.sh`) opens `/display?node=<node_id>`, where `<node_id>` is `MIRRORMERE_NODE_ID` or, when unset, the `node_id` in the ear config (`/etc/mirrormere/voice.yaml`), so it is set once per device. The page forwards `node` on every widget render request; per-display widgets such as `chat-log` (SPEC-007 §5) use it, and without it show the most recently active node.
+
 The kiosk session is launched as a dedicated systemd service under an unprivileged `kiosk` user.
 
 ### Launch Command

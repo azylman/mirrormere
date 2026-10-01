@@ -76,10 +76,24 @@ display:
         preload_count: 50
         shuffle: true
 
+    # Conversation transcript (type chat-log; no endpoint, no database). The
+    # voice hub records each turn per voice node; open the display with
+    # ?node=<node_id> (e.g. /display?node=touch-kiosk-kitchen) so each device
+    # shows its own conversation. Replace a spacer with:
+    #   - id: voice-chat
+    #     type: chat-log
+    #     dimensions: [3, 2]
+
     - id: calendar-pad
       type: spacer
       dimensions: [3, 2]
       pinned: false
+
+# In-memory chat-log store (all optional; nothing is written to disk and a
+# restart starts empty). Defaults shown.
+# chat_log:
+#   ttl_minutes: 20
+#   max_messages_per_node: 50
 
 # Speaker identification (SPEC-011 §Speaker Identification). Optional: with
 # this block absent, `speaker` is always empty. Uncomment and point

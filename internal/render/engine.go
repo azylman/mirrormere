@@ -44,6 +44,15 @@ func WithNowFunc(fn func() time.Time) EngineOption {
 	}
 }
 
+// WithNodeDataFunc supplies per-display widget data. fn is called at render
+// time with the widget ID and the requesting display's node_id (possibly empty);
+// when it reports ok, its data replaces the shared cached data for that render.
+func WithNodeDataFunc(fn func(widgetID, nodeID string) (any, bool)) EngineOption {
+	return func(e *Engine) {
+		e.nodeData = fn
+	}
+}
+
 // Engine manages widget template compilation, in-memory template caching, and server-side rendering.
 type Engine struct {
 	mu       sync.RWMutex
@@ -51,6 +60,7 @@ type Engine struct {
 	resolver PackageResolver
 	provider StateSnapshotProvider
 	nowFunc  func() time.Time
+	nodeData func(widgetID, nodeID string) (any, bool)
 }
 
 // NewEngine constructs a thread-safe Engine.
@@ -83,6 +93,14 @@ func (e *Engine) InvalidateAll() {
 
 // RenderWidget executes the HTML template for the given widget instance, returning the rendered HTML fragment.
 func (e *Engine) RenderWidget(ctx context.Context, widgetID string) ([]byte, error) {
+	return e.RenderWidgetForNode(ctx, widgetID, "")
+}
+
+// RenderWidgetForNode renders a widget for one display, identified by its
+// voice node_id. Widgets whose data depends on the requesting display (see
+// WithNodeDataFunc) get that display's data; every other widget renders from
+// the shared state exactly as RenderWidget does.
+func (e *Engine) RenderWidgetForNode(ctx context.Context, widgetID, nodeID string) ([]byte, error) {
 	if widgetID == "" {
 		return nil, WidgetNotFoundError{WidgetID: ""}
 	}
@@ -132,6 +150,11 @@ func (e *Engine) RenderWidget(ctx context.Context, widgetID string) ([]byte, err
 
 	// 4. Build execution context
 	tmplCtx := e.buildContext(widgetID, targetWidget, pkg, snap)
+	if e.nodeData != nil {
+		if d, ok := e.nodeData(widgetID, nodeID); ok {
+			tmplCtx.Data = d
+		}
+	}
 
 	// 5. Execute template
 	var buf bytes.Buffer

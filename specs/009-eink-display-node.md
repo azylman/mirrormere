@@ -203,3 +203,7 @@ buttons:
   full/partial logic are unit-tested without hardware.
 - Hardware smoke test: `python -m mirrormere_eink.selftest` draws a test card
   with a full refresh, then a partial update of one region.
+
+## Node Identity for Per-Display Widgets
+
+A renderer sidecar serves one panel. To show that panel's own conversation in the `chat-log` widget (SPEC-007 §5), configure the sidecar's page URL with the panel's voice node id: `DISPLAY_URL=http://mirrormere-core:8080/display?node=<node_id>` (the same `node_id` as the panel's ear config). The `/display` page forwards `node` on every widget render request. Without it the widget shows the most recently active node.

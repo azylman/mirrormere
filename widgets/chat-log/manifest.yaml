@@ -1,13 +1,15 @@
 name: chat-log
 version: "1.0.0"
-description: Recent conversation transcript, newest message at the bottom. Data is pushed by an external script (POST /api/widgets/{widget_id}/push), not polled.
-provider: http
+description: Recent conversation transcript, newest message at the bottom. Voice turns are recorded by the voice hub; other sources may POST /api/widgets/{widget_id}/push.
+provider: chat-log
 
+# Data comes from an in-memory, TTL-bounded store written by the voice hub
+# (SPEC-007 §5): no endpoint, no polling. response_schema validates the optional
+# POST /api/widgets/{widget_id}/push body.
+#
 # Payload contract (see README.md in this directory):
 #
 #   {
-#     "session":    "kitchen",                      # optional title
-#     "updated_at": "2026-01-02T15:04:05Z",         # optional, shown in the header
 #     "messages": [                                  # oldest first
 #       {"role": "human|agent", "author": "sam", "ts": "2026-01-02T15:04:00Z", "text": "..."}
 #     ]
@@ -26,18 +28,15 @@ supported_dimensions:
 
 config_schema:
   type: object
+  properties:
+    title:
+      type: string
+      description: Header text. Defaults to "Chat".
   additionalProperties: false
 
-# Every field is optional at the top level so that a payload-less response
-# (any 2xx JSON object) still validates; only messages[].role and .text are
-# required.
 response_schema:
   type: object
   properties:
-    session:
-      type: string
-    updated_at:
-      type: string
     messages:
       type: array
       items:

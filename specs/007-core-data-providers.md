@@ -404,3 +404,12 @@ When the autonomous header weather poller completes an ingestion cycle, Core bro
 
 All connected display clients (touch kiosks and ambient e-paper nodes) update their persistent top banner directly from `header.update` without requiring an on-grid weather widget or custom client-side parsing.
 
+## 5. Chat-Log Widget Data (`provider: chat-log`)
+
+The `chat-log` widget declares `provider: chat-log`: a built-in, **no-poll** provider type. Like `spacer`, the coordinator starts no worker for it (so no endpoint, no `refresh_interval_seconds`, and nothing that can overwrite its cache). Its data is an in-memory store (`internal/chatlog`) keyed by conversation: one key per voice `node_id`, plus one per widget instance for pushes.
+
+- **Writers**: the voice hub (SPEC-011) records the transcribed user text (`role: human`, `author` = identified speaker if known) and the brain's final reply (`role: agent`) for every turn under the turn's `node_id`. `POST /api/widgets/{widget_id}/push` (SPEC-006 §2, validated against the manifest `response_schema`) replaces that widget's own pushed transcript in the same store.
+- **Retention**: entries expire `chat_log.ttl_minutes` (default 20) after their timestamp and each key keeps at most `chat_log.max_messages_per_node` (default 50). Expiry is applied when the store is read, so an expired line disappears on the next render. Nothing is persisted; a restart starts empty. Thread-safe.
+- **Existing transport only**: after the hub records a message, the server runs each `chat-log` widget through the same cache-update-and-`widget.update`-broadcast path the push webhook uses (`ProviderCoordinator.PushUpdate`). One broadcast reaches every display over `GET /api/events`.
+- **Per-display view**: one server renders for several devices, so the conversation is chosen at render time, not in widget config. A display opens `/display?node=<node_id>`; the web client forwards `node` to `GET /api/widgets/{widget_id}/render?node=<node_id>`, and the server renders that node's conversation merged with the widget's pushed messages. Without `node`, the most recently active node is shown. The cached copy carried by `widget.update` is the no-node view.
+- **Config**: only `title` (optional header text, default "Chat").

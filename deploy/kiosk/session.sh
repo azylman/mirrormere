@@ -12,6 +12,24 @@ fi
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 export WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-0}"
 DISPLAY_URL="${MIRRORMERE_DISPLAY_URL:-http://localhost:8080/display}"
+
+# Identify this device to the server so per-display widgets (chat-log) show this
+# kiosk's own conversation. The node id is the ear's node_id: taken from
+# MIRRORMERE_NODE_ID, else read from the ear config, so it is set once per device.
+# A URL that already carries node= is left alone; no node id means no parameter.
+EAR_CONFIG="${MIRRORMERE_EAR_CONFIG:-/etc/mirrormere/voice.yaml}"
+NODE_ID="${MIRRORMERE_NODE_ID:-}"
+if [[ -z "$NODE_ID" && -r "$EAR_CONFIG" ]]; then
+    NODE_ID="$(sed -n -E 's/^[[:space:]]*node_id:[[:space:]]*["'"'"']?([A-Za-z0-9._-]+)["'"'"']?[[:space:]]*(#.*)?$/\1/p' "$EAR_CONFIG" | head -n 1 || true)"
+fi
+NODE_ID="$(printf '%s' "$NODE_ID" | tr -cd 'A-Za-z0-9._-')"
+if [[ -n "$NODE_ID" && "$DISPLAY_URL" != *"node="* ]]; then
+    if [[ "$DISPLAY_URL" == *"?"* ]]; then
+        DISPLAY_URL="${DISPLAY_URL}&node=${NODE_ID}"
+    else
+        DISPLAY_URL="${DISPLAY_URL}?node=${NODE_ID}"
+    fi
+fi
 IDLE_TIMEOUT_SECONDS="${MIRRORMERE_IDLE_TIMEOUT:-600}"
 
 # Auto-detect display output if not explicitly configured

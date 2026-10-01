@@ -21,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/azylman/mirrormere/internal/chatlog"
 	"github.com/azylman/mirrormere/internal/config"
 )
 
@@ -136,6 +137,8 @@ type Hub struct {
 	tts      TTSClient
 	speaker  SpeakerIdentifier
 	metrics  *Metrics
+	chatLog  *chatlog.Store
+	onChat   func()
 }
 
 // HubOption configures optional Hub overrides (e.g. for testing).
@@ -164,6 +167,26 @@ func WithSpeakerIdentifier(id SpeakerIdentifier) HubOption {
 // WithMetrics overrides the voice metrics collector.
 func WithMetrics(m *Metrics) HubOption {
 	return func(h *Hub) { h.metrics = m }
+}
+
+// WithChatLog makes the hub record every turn (the transcribed user text and
+// the brain's final reply) into store, keyed by voice node, for the chat-log
+// widget. onChange (optional) runs after each recorded message; the server
+// uses it to run the normal widget push path (cache update + widget.update
+// broadcast) so displays re-render.
+func WithChatLog(store *chatlog.Store, onChange func()) HubOption {
+	return func(h *Hub) { h.chatLog, h.onChat = store, onChange }
+}
+
+// recordChat appends one message to the node's conversation. Empty text is ignored.
+func (h *Hub) recordChat(nodeID, role, author, text string) {
+	if h.chatLog == nil || strings.TrimSpace(text) == "" {
+		return
+	}
+	h.chatLog.Add(chatlog.NodeKey(nodeID), chatlog.Message{Role: role, Author: author, Text: text})
+	if h.onChat != nil {
+		h.onChat()
+	}
 }
 
 // NewHub constructs a Voice Hub coordinator.
@@ -331,6 +354,7 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 	if h.coord != nil {
 		h.coord.Transition(StateThinking, &transcript, nil, nil, nil)
 	}
+	h.recordChat(nodeID, chatlog.RoleHuman, speaker, transcript)
 	if err := safeSink("transcript", map[string]string{"transcript": transcript, "speaker": speaker}); err != nil {
 		return err
 	}
@@ -579,6 +603,7 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 			return fmt.Errorf("%w: %w", ErrBrainFailed, err)
 		}
 		h.metrics.RecordStageDuration(nodeID, "brain", "success", brainDuration)
+		h.recordChat(nodeID, chatlog.RoleAgent, "", reply)
 
 		if streamedAny {
 			// The brain streamed sentence audio, so the hub must NOT also
@@ -663,6 +688,7 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 			return fmt.Errorf("%w: %w", ErrBrainFailed, err)
 		}
 		h.metrics.RecordStageDuration(nodeID, "brain", "success", brainDuration)
+		h.recordChat(nodeID, chatlog.RoleAgent, "", reply)
 
 		// Devil's Advocate catch: Always emit reply event so kiosk caption toast renders reply text,
 		// even if TTS synthesis subsequently fails!

@@ -169,6 +169,8 @@ Upon receiving interaction lifecycle events, the dock's `mirrormere-voice` clien
   - Text Channel Record: The `http_agent` adapter also posts the transcribed prompt and reply text to a dedicated Discord text channel as a persistent interaction record.
   - Synthesizes speech via ElevenLabs with local Piper fallback.
 
+Chat-log recording: when wired to the chat-log store (always, in `cmd/server`), the hub records the transcribed user text right after STT (`role: human`, `author` = identified speaker or empty) and the brain's final reply right after the brain returns (`role: agent`), both under the turn's `node_id`, then triggers the normal widget push path so the `chat-log` widget (SPEC-007 §5) re-renders on every display, each showing its own conversation. Storage is in-memory with a TTL (`chat_log.ttl_minutes`, default 20) and a per-node cap (`chat_log.max_messages_per_node`, default 50). A display shows its own node by opening `/display?node=<node_id>` (the same `node_id` as its `voice.yaml`).
+
 ### 3. TTS Fallback Invariant (Zero Sticky State)
 1. **Primary First on Every Turn**:
    - For Mike: ElevenLabs (`eleven_multilingual_v2`) is attempted on **every single reply** with a strict **10-second timeout**.
