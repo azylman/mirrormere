@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # sidecars/voice-fingerprinter/Dockerfile - CPU Speaker-Embedding Sidecar
 # Reference: SPEC-011 Speaker Identification / Embedding endpoint
 #
@@ -20,12 +21,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-COPY requirements.txt ./
+COPY --link requirements.txt ./
 RUN pip install --no-cache-dir \
         --extra-index-url https://download.pytorch.org/whl/cpu \
         -r requirements.txt
 
-COPY app.py enroll.py ./
+COPY --link --chown=10001:10001 app.py enroll.py ./
 
 RUN mkdir -p /models && chown -R 10001:10001 /app /models
 

@@ -10,7 +10,13 @@ coverage/
 
 # Specifications & documentation
 specs/
+decisions/
+docs/
 *.md
+
+# Clients & local deployment configs
+clients/
+deploy/
 
 # Developer tooling & configurations
 .golangci.yml
