@@ -9,7 +9,7 @@ class TestVoiceConfig(unittest.TestCase):
         cfg = VoiceConfig()
         self.assertEqual(cfg.node_id, "touch-kiosk-kitchen")
         self.assertEqual(cfg.threshold, 0.35)
-        self.assertEqual(cfg.silence_ms, 800)
+        self.assertEqual(cfg.silence_ms, 400)
         self.assertEqual(cfg.sample_rate, 16000)
         self.assertEqual(cfg.chunk_samples, 1280)
         self.assertIn("hey_jarvis", cfg.wake_models)
@@ -119,6 +119,9 @@ voice:
         os.environ["MIRRORMERE_URL"] = "http://env-host/kiosk"
         os.environ["MIRRORMERE_HUB_URL"] = "http://env-hub:9000/api/voice/interact"
         os.environ["MIRRORMERE_AUDIO_DEVICE"] = "hw:1,0"
+        os.environ["MIRRORMERE_SILENCE_MS"] = "350"
+        os.environ["MIRRORMERE_VAD"] = "silero"
+        os.environ["MIRRORMERE_VAD_THRESHOLD"] = "0.65"
 
         try:
             cfg = load_config("/path/to/nonexistent.yaml")
@@ -126,11 +129,17 @@ voice:
             self.assertEqual(cfg.mirrormere_url, "http://env-host/kiosk")
             self.assertEqual(cfg.hub_url, "http://env-hub:9000/api/voice/interact")
             self.assertEqual(cfg.audio_device, "hw:1,0")
+            self.assertEqual(cfg.silence_ms, 350)
+            self.assertEqual(cfg.vad, "silero")
+            self.assertEqual(cfg.vad_threshold, 0.65)
         finally:
             del os.environ["MIRRORMERE_NODE_ID"]
             del os.environ["MIRRORMERE_URL"]
             del os.environ["MIRRORMERE_HUB_URL"]
             del os.environ["MIRRORMERE_AUDIO_DEVICE"]
+            del os.environ["MIRRORMERE_SILENCE_MS"]
+            del os.environ["MIRRORMERE_VAD"]
+            del os.environ["MIRRORMERE_VAD_THRESHOLD"]
 
 
 if __name__ == "__main__":

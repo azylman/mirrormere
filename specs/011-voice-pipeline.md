@@ -455,7 +455,7 @@ voice:
   ear:
     engine: openwakeword
     wake_phrases: ["hey aerial"]
-    silence_ms: 800
+    silence_ms: 400
     followup_seconds: 8
     aec:
       enabled: true
@@ -510,7 +510,7 @@ voice:
   ear:
     engine: openwakeword
     wake_phrases: ["hey amos"]
-    silence_ms: 800
+    silence_ms: 400
     followup_seconds: 8
     aec:
       enabled: true

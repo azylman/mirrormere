@@ -30,7 +30,7 @@ ear:
     - "hey_aerial"
   threshold: 0.35
   models_dir: "/opt/mirrormere/voice/models"
-  silence_ms: 800
+  silence_ms: 400
   max_record_seconds: 10.0
   speech_threshold_db: -31.0
   cooldown_seconds: 2.5
