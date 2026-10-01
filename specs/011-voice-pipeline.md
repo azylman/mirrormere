@@ -267,10 +267,10 @@ data: {"text": "It's sunny.", "engine": "desktop-tts", "audio_b64": "<base64 WAV
   - If any subsequent sentence conflicts with the latched mode (e.g., a text-only or missing/undecodable audio sentence arrives during a `brain-audio` turn, or an audio chunk arrives during a `remote-tts` turn), the Hub aborts the turn immediately with `ErrMixedAudioStream`, cancels the stream context, transitions the coordinator to `StateError`, and emits an SSE `error` event (`error: "brain_error"`). The dock plays whatever valid sentence chunks arrived prior to the error, followed by the error notification. Splicing or falling back mid-stream to TTS during a `brain-audio` turn is strictly prohibited.
   - If a turn latched to `remote-tts` has no `h.tts` configured or a synthesis call fails, that sentence's audio is dropped (logged at warn), but subsequent sentences continue.
 - **All sentences failed**: if every streamed sentence in a `remote-tts` turn
-  failed synthesis (or no TTS client was configured), so zero real chunks were ever sent, the Hub falls back one more
+  failed synthesis (and a TTS client is configured), so zero real chunks were ever sent, the Hub falls back one more
   level — a single `TTSClient.Synthesize` call over the *entire* reply text,
   emitted as one `is_final: true` chunk carrying the audio (not an empty
-  marker) — so a turn is never silently mute.
+  marker) — so a turn is never silently mute. If no TTS client is configured (`h.tts == nil`), the turn completes with no audio while the `reply` event and kiosk caption still carry the full response text.
 - **Kiosk caption**: the touch kiosk reads `voice.state` from the
   coordinator, not this SSE stream. Each sent chunk transitions the
   coordinator to `StateSpeaking` with `reply` set to the sentences spoken so
