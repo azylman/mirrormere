@@ -287,7 +287,7 @@ class TestVoiceDaemon(unittest.TestCase):
         mock_which.return_value = "/usr/bin/pw-play"
         daemon._start_pcm_stream(sample_rate=24000, channels=1)
         mock_popen.assert_called_with(
-            ["/usr/bin/pw-play", "--format=s16", "--rate=24000", "--channels=1", "-"],
+            ["/usr/bin/pw-play", "--format=s16", "--rate=24000", "--channels=1", "--latency=800ms", "-"],
             stdin=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
         )
@@ -296,7 +296,7 @@ class TestVoiceDaemon(unittest.TestCase):
         mock_which.return_value = "/usr/bin/aplay"
         daemon._start_pcm_stream(sample_rate=16000, channels=2)
         mock_popen.assert_called_with(
-            ["/usr/bin/aplay", "-f", "S16_LE", "-r", "16000", "-c", "2", "-"],
+            ["/usr/bin/aplay", "-f", "S16_LE", "-r", "16000", "-c", "2", "-B", "800000", "-"],
             stdin=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
         )
@@ -319,6 +319,22 @@ class TestVoiceDaemon(unittest.TestCase):
         # No player found
         mock_which.return_value = None
         self.assertIsNone(daemon._start_pcm_stream(24000, 1))
+
+    @patch("clients.ear.client.shutil.which")
+    @patch("clients.ear.client.subprocess.Popen")
+    def test_start_pcm_stream_buffer_env_override(self, mock_popen, mock_which):
+        daemon = VoiceDaemon(self.cfg, model=MockModel())
+        with patch.dict(os.environ, {"EAR_PCM_BUFFER_US": "1200000"}):
+            mock_which.return_value = "/usr/bin/aplay"
+            daemon._start_pcm_stream(24000, 1)
+            self.assertEqual(mock_popen.call_args[0][0][-3:], ["-B", "1200000", "-"])
+            mock_which.return_value = "/usr/bin/pw-play"
+            daemon._start_pcm_stream(24000, 1)
+            self.assertIn("--latency=1200ms", mock_popen.call_args[0][0])
+        with patch.dict(os.environ, {"EAR_PCM_BUFFER_US": "junk"}):
+            mock_which.return_value = "/usr/bin/aplay"
+            daemon._start_pcm_stream(24000, 1)
+            self.assertEqual(mock_popen.call_args[0][0][-3:], ["-B", "800000", "-"])
 
     @patch("clients.ear.client.urllib.request.urlopen")
     def test_hub_sse_stream_worker_pcm_stream(self, mock_urlopen):
