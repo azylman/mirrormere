@@ -1,0 +1,84 @@
+# deploy/compose.server.yaml - Mirrormere Central Server Orchestration Manifest
+# Deploys Mirrormere Core daemon, Voice Fingerprinter, and E-Ink Renderer.
+# Reference: specs/001-architecture-overview.md, specs/002-hardware-profiles.md, & specs/011-speaker-identification.md
+
+services:
+  mirrormere-core:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: ghcr.io/azylman/mirrormere:latest
+    container_name: mirrormere-core
+    restart: unless-stopped
+    user: "10001:10001"
+    security_opt:
+      - no-new-privileges:true
+    ports:
+      - "8080:8080" # Core Daemon: REST API, SSE (/api/events), web UI
+    environment:
+      - PORT=8080
+      - HOST=0.0.0.0
+      - TZ=America/Los_Angeles
+    volumes:
+      - ./config:/config:ro # Contains config.yaml, custom.css, and optional widgets/
+      - ./data:/data
+      - ../web:/app/web:ro
+      - ../widgets:/app/widgets:ro
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:8080/healthz"]
+      interval: 15s
+      timeout: 3s
+      start_period: 5s
+      start_interval: 2s
+      retries: 3
+
+  voice-fingerprinter:
+    build:
+      context: ../sidecars/voice-fingerprinter
+      dockerfile: Dockerfile
+    image: ghcr.io/azylman/mirrormere-voice-fingerprinter:latest
+    container_name: mirrormere-voice-fingerprinter
+    restart: unless-stopped
+    ports:
+      - "9096:9096" # Speaker-embedding server (SPEC-011 §Embedding endpoint)
+    environment:
+      - MDE_PORT=9096
+      - MDE_BIND=0.0.0.0
+      - MDE_DEVICE=cpu
+    volumes:
+      - voice-fingerprinter-models:/models  # ECAPA model cache, downloaded on first run (~80MB)
+      - ./data:/data                        # rw: shares mirrormere-core's fingerprints_path directory (/data)
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:9096/health"]
+      interval: 15s
+      timeout: 3s
+      start_period: 30s  # first run downloads the model
+      start_interval: 2s
+      retries: 3
+
+  eink-renderer:
+    build:
+      context: ../sidecars/eink-renderer
+      dockerfile: Dockerfile
+    image: ghcr.io/azylman/mirrormere-eink-renderer:latest
+    container_name: mirrormere-eink-renderer
+    restart: unless-stopped
+    ports:
+      - "8081:8081" # E-Ink Snapshot server & ETag caching
+    environment:
+      - PORT=8081
+      - CORE_URL=${CORE_URL:-http://mirrormere-core:8080}
+      - DISPLAY_URL=${DISPLAY_URL:-http://mirrormere-core:8080/display}
+    depends_on:
+      mirrormere-core:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:8081/healthz"]
+      interval: 15s
+      timeout: 3s
+      start_period: 5s
+      start_interval: 2s
+      retries: 3
+
+volumes:
+  voice-fingerprinter-models:
