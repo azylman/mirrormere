@@ -12,21 +12,32 @@ const { decodePNG, applySelectiveDithering, encode1BitPNG, computeETag } = requi
  *
  * Settled means:
  *  - the document has finished loading, AND
- *  - at least one widget has been mounted onto the grid canvas
- *    (handleScreenRotate in carousel.js sets data-widget-id per widget node), AND
+ *  - the carousel has hydrated the current screen (handleScreenRotate in
+ *    carousel.js sets data-screen-hydrated="true" and data-widget-count=<N> on
+ *    the canvas), AND all N widgets are mounted (data-widget-id per node).
+ *    N may be 0 for a header-only screen, which is settled once hydrated, AND
  *  - the canvas is not mid hot-swap transition (carousel.js toggles the
  *    `transitioning` class on the canvas for ~150ms around the DOM swap).
  *
  * Before SSE delivers `screen.rotate` and the widget fetches resolve, the page
  * only shows the header + placeholder text ("--:-- ------ --°"), so the
- * `[data-widget-id]` check is what actually distinguishes "populated" from
+ * hydration marker is what actually distinguishes "populated" from
  * "placeholder" rather than just readyState, which is already 'complete' by
  * then.
  */
 const SETTLE_PREDICATE_EXPRESSION = `
   (function () {
     if (document.readyState !== 'complete') return false;
-    if (document.querySelectorAll('#grid-canvas [data-widget-id]').length === 0) return false;
+    var canvas = document.querySelector('#grid-canvas');
+    if (!canvas) return false;
+    // carousel.js stamps data-screen-hydrated / data-widget-count on the canvas
+    // after each screen.rotate hot-swap. The count is the number of widgets the
+    // screen is configured for, which is 0 for an intentional header-only view.
+    var ds = canvas.dataset || {};
+    if (ds.screenHydrated !== 'true') return false;
+    var expected = Number(ds.widgetCount);
+    if (!isFinite(expected) || expected < 0) return false;
+    if (document.querySelectorAll('#grid-canvas [data-widget-id]').length < expected) return false;
     if (document.querySelector('#grid-canvas.transitioning')) return false;
     return true;
   })()
@@ -35,6 +46,7 @@ const SETTLE_PREDICATE_EXPRESSION = `
 const DEFAULT_SETTLE_TIMEOUT_MS = 5000;
 const SETTLE_MIN_WAIT_MS = 300; // floor: preserves the previous fixed-delay behavior
 const SETTLE_POLL_INTERVAL_MS = 100;
+const DEFAULT_LOAD_EVENT_TIMEOUT_MS = 10000; // cap on waiting for Page.loadEventFired after navigate
 const SETTLE_PAINT_DELAY_MS = 150; // extra settle time for paint after the predicate passes
 
 const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -102,6 +114,15 @@ async function pollForSettle(evaluateFn, options = {}) {
   return settled;
 }
 
+/** Throws a descriptive error for a non-2xx CDP HTTP response. */
+function assertOk(res, body, endpoint) {
+  const status = res.statusCode;
+  if (typeof status !== 'number' || status < 200 || status >= 300) {
+    const snippet = String(body).slice(0, 200);
+    throw new Error(`CDP ${endpoint} returned HTTP ${status}: ${snippet}`);
+  }
+}
+
 class CaptureService {
   constructor(options = {}) {
     this.coreURL = options.coreURL || process.env.CORE_URL || 'http://mirrormere-core:8080';
@@ -113,6 +134,9 @@ class CaptureService {
     this.settleTimeoutMs = options.settleTimeoutMs
       || Number(process.env.SETTLE_TIMEOUT_MS)
       || DEFAULT_SETTLE_TIMEOUT_MS;
+
+    this.loadEventTimeoutMs = options.loadEventTimeoutMs || DEFAULT_LOAD_EVENT_TIMEOUT_MS;
+    this.sleep = options.sleep || defaultSleep;
 
     // In-flight coalescing promise to prevent rendering stampedes
     this.inFlightPromise = null;
@@ -238,6 +262,9 @@ class CaptureService {
 
       ws.onmessage = (event) => {
         const msg = JSON.parse(event.data);
+        if (msg.method && eventListeners.has(msg.method)) {
+          for (const fn of Array.from(eventListeners.get(msg.method))) fn(msg.params);
+        }
         if (msg.id && callbacks.has(msg.id)) {
           const cb = callbacks.get(msg.id);
           callbacks.delete(msg.id);
@@ -250,6 +277,12 @@ class CaptureService {
       };
 
       let closedNormally = false;
+      const eventListeners = new Map(); // CDP event method -> Set<fn>
+      const onEvent = (method, fn) => {
+        if (!eventListeners.has(method)) eventListeners.set(method, new Set());
+        eventListeners.get(method).add(fn);
+        return () => eventListeners.get(method).delete(fn);
+      };
 
       ws.onerror = (err) => {
         reject(err);
@@ -275,8 +308,34 @@ class CaptureService {
             mobile: false,
           });
 
-          // Navigate to display URL
-          await send('Page.navigate', { url: this.displayURL });
+          // Navigate to display URL. Page.navigate resolves as soon as the
+          // navigation is scheduled, NOT when the new document commits, so a
+          // reused target would still show the previous (already hydrated)
+          // DOM and the settle predicate would pass instantly on stale pixels.
+          // Register the load listener BEFORE navigating so the event cannot
+          // be missed, then gate the poll on it.
+          let loadFired = false;
+          let resolveLoad;
+          const loadPromise = new Promise((r) => { resolveLoad = r; });
+          const offLoad = onEvent('Page.loadEventFired', () => { loadFired = true; resolveLoad(); });
+          let loadTimer;
+          try {
+            await send('Page.navigate', { url: this.displayURL });
+            await Promise.race([
+              loadPromise,
+              new Promise((r) => { loadTimer = setTimeout(r, this.loadEventTimeoutMs); }),
+            ]);
+          } finally {
+            clearTimeout(loadTimer);
+            offLoad();
+          }
+          if (!loadFired) {
+            // eslint-disable-next-line no-console
+            console.warn(
+              `[eink-renderer] captureViaCDP: Page.loadEventFired not seen within `
+              + `${this.loadEventTimeoutMs}ms - polling for settle anyway`
+            );
+          }
 
           // Poll until the carousel has actually hydrated widgets onto the
           // canvas (see SETTLE_PREDICATE_EXPRESSION) instead of trusting a
@@ -293,6 +352,7 @@ class CaptureService {
             },
             {
               maxWaitMs: this.settleTimeoutMs,
+              sleep: this.sleep,
               onTimeout: (elapsedMs) => {
                 // eslint-disable-next-line no-console
                 console.warn(
@@ -358,6 +418,7 @@ class CaptureService {
         res.on('data', (chunk) => { body += chunk; });
         res.on('end', () => {
           try {
+            assertOk(res, body, '/json/list');
             const list = JSON.parse(body);
             const page = list.find((t) => t.type === 'page');
             if (page) {
@@ -374,6 +435,7 @@ class CaptureService {
                 newRes.on('data', (chunk) => { newBody += chunk; });
                 newRes.on('end', () => {
                   try {
+                    assertOk(newRes, newBody, '/json/new');
                     resolve(JSON.parse(newBody));
                   } catch (e) {
                     reject(e);

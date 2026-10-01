@@ -223,7 +223,12 @@ describe('SETTLE_PREDICATE_EXPRESSION', () => {
     return fn(fakeDocument);
   }
 
-  function makeFakeDocument({ readyState, widgetCount, transitioning }) {
+  function makeFakeDocument({ readyState, widgetCount, transitioning, hydrated = true, expected = widgetCount, noCanvas = false }) {
+    const dataset = {};
+    if (hydrated) {
+      dataset.screenHydrated = 'true';
+      if (expected !== undefined) dataset.widgetCount = String(expected);
+    }
     return {
       readyState,
       querySelectorAll(selector) {
@@ -236,6 +241,9 @@ describe('SETTLE_PREDICATE_EXPRESSION', () => {
         if (selector === '#grid-canvas.transitioning') {
           return transitioning ? {} : null;
         }
+        if (selector === '#grid-canvas') {
+          return noCanvas ? null : { dataset };
+        }
         throw new Error(`unexpected querySelector selector: ${selector}`);
       },
     };
@@ -246,8 +254,18 @@ describe('SETTLE_PREDICATE_EXPRESSION', () => {
     assert.strictEqual(evaluateAgainst(doc), false);
   });
 
-  it('is NOT settled when no widgets have been mounted yet (the pre-hydration placeholder state)', () => {
-    const doc = makeFakeDocument({ readyState: 'complete', widgetCount: 0, transitioning: false });
+  it('is NOT settled before the carousel has hydrated the screen (pre-hydration placeholder state)', () => {
+    const doc = makeFakeDocument({ readyState: 'complete', widgetCount: 0, transitioning: false, hydrated: false });
+    assert.strictEqual(evaluateAgainst(doc), false);
+  });
+
+  it('is NOT settled when fewer widgets are mounted than the screen expects', () => {
+    const doc = makeFakeDocument({ readyState: 'complete', widgetCount: 1, expected: 3, transitioning: false });
+    assert.strictEqual(evaluateAgainst(doc), false);
+  });
+
+  it('is NOT settled when there is no grid canvas', () => {
+    const doc = makeFakeDocument({ readyState: 'complete', widgetCount: 0, transitioning: false, noCanvas: true });
     assert.strictEqual(evaluateAgainst(doc), false);
   });
 
@@ -259,5 +277,189 @@ describe('SETTLE_PREDICATE_EXPRESSION', () => {
   it('IS settled once loaded, widgets are mounted, and no transition is in flight', () => {
     const doc = makeFakeDocument({ readyState: 'complete', widgetCount: 2, transitioning: false });
     assert.strictEqual(evaluateAgainst(doc), true);
+  });
+
+  it('IS settled for a zero-widget (header-only) screen once the canvas is hydrated', () => {
+    const doc = makeFakeDocument({ readyState: 'complete', widgetCount: 0, expected: 0, transitioning: false });
+    assert.strictEqual(evaluateAgainst(doc), true);
+  });
+});
+
+describe('captureViaCDP load-event gating', () => {
+  const { CaptureService } = require('../src/capture');
+  const http = require('node:http');
+
+  /** Minimal fake CDP WebSocket; behaviour is driven by the `script` object. */
+  function installFakeWebSocket(script) {
+    const original = globalThis.WebSocket;
+    const log = [];
+    class FakeWS {
+      constructor() {
+        script.instance = this;
+        setImmediate(() => this.onopen && this.onopen());
+      }
+      emit(method, params = {}) {
+        this.onmessage({ data: JSON.stringify({ method, params }) });
+      }
+      reply(id, result = {}) {
+        this.onmessage({ data: JSON.stringify({ id, result }) });
+      }
+      send(raw) {
+        const { id, method, params } = JSON.parse(raw);
+        log.push(method);
+        script.onSend(this, id, method, params);
+      }
+      close() {}
+    }
+    globalThis.WebSocket = FakeWS;
+    return { log, restore: () => { globalThis.WebSocket = original; } };
+  }
+
+  function makeService(extra = {}) {
+    const svc = new CaptureService({
+      settleTimeoutMs: 1000,
+      sleep: () => Promise.resolve(),
+      ...extra,
+    });
+    svc.getOrCreateTarget = async () => ({ webSocketDebuggerUrl: 'ws://fake' });
+    return svc;
+  }
+
+  const PNG_B64 = Buffer.from('png').toString('base64');
+
+  it('does not start polling before Page.loadEventFired and ignores a stale-DOM settled result', async () => {
+    let loadFired = false;
+    let evaluatesBeforeLoad = 0;
+    let settleEvaluates = 0;
+    const script = {
+      onSend(ws, id, method, params) {
+        if (method === 'Page.navigate') {
+          ws.reply(id, { frameId: 'f' });
+          // The new document commits late; fire load well after navigate resolved.
+          setTimeout(() => { loadFired = true; ws.emit('Page.loadEventFired', { timestamp: 1 }); }, 40);
+        } else if (method === 'Runtime.evaluate') {
+          if (params.expression.includes('readyState')) {
+            settleEvaluates++;
+            if (!loadFired) evaluatesBeforeLoad++;
+            // Stale predicate: the previous hydrated DOM claims "settled" until load fires...
+            // after load the fresh DOM becomes settled on the second check.
+            ws.reply(id, { result: { value: !loadFired ? true : settleEvaluates > 1 } });
+          } else {
+            ws.reply(id, { result: { value: [] } });
+          }
+        } else if (method === 'Page.captureScreenshot') {
+          ws.reply(id, { data: PNG_B64 });
+        } else {
+          ws.reply(id);
+        }
+      },
+    };
+    const fake = installFakeWebSocket(script);
+    try {
+      const res = await makeService().captureViaCDP();
+      assert.strictEqual(evaluatesBeforeLoad, 0, 'poll must not evaluate before Page.loadEventFired');
+      assert.ok(settleEvaluates >= 2, 'the stale "settled" answer must not have been accepted; poll continued after load');
+      assert.ok(Buffer.isBuffer(res.pngBuffer));
+      const order = fake.log;
+      assert.ok(order.indexOf('Page.navigate') < order.indexOf('Runtime.evaluate'));
+    } finally {
+      fake.restore();
+    }
+  });
+
+  it('registers the load listener before navigating (load fired synchronously with the navigate reply is not missed)', async () => {
+    const script = {
+      onSend(ws, id, method) {
+        if (method === 'Page.navigate') {
+          ws.emit('Page.loadEventFired', {});
+          ws.reply(id, {});
+        } else if (method === 'Runtime.evaluate') {
+          ws.reply(id, { result: { value: true } });
+        } else if (method === 'Page.captureScreenshot') {
+          ws.reply(id, { data: PNG_B64 });
+        } else {
+          ws.reply(id);
+        }
+      },
+    };
+    const fake = installFakeWebSocket(script);
+    try {
+      // 5s timeout would fail the test runner's patience if the event were missed;
+      // use a tiny timeout so a miss shows up as a warning-path difference.
+      const warnings = [];
+      const origWarn = console.warn;
+      console.warn = (m) => warnings.push(String(m));
+      try {
+        await makeService({ loadEventTimeoutMs: 2000 }).captureViaCDP();
+      } finally {
+        console.warn = origWarn;
+      }
+      assert.deepStrictEqual(warnings.filter((w) => w.includes('loadEventFired')), []);
+    } finally {
+      fake.restore();
+    }
+  });
+
+  it('falls through to polling with a logged warning if Page.loadEventFired never fires', async () => {
+    const script = {
+      onSend(ws, id, method) {
+        if (method === 'Runtime.evaluate') ws.reply(id, { result: { value: true } });
+        else if (method === 'Page.captureScreenshot') ws.reply(id, { data: PNG_B64 });
+        else ws.reply(id);
+      },
+    };
+    const fake = installFakeWebSocket(script);
+    const warnings = [];
+    const origWarn = console.warn;
+    console.warn = (m) => warnings.push(String(m));
+    try {
+      const res = await makeService({ loadEventTimeoutMs: 30 }).captureViaCDP();
+      assert.ok(Buffer.isBuffer(res.pngBuffer));
+      assert.ok(warnings.some((w) => w.includes('Page.loadEventFired')), 'expected a load-event timeout warning');
+    } finally {
+      console.warn = origWarn;
+      fake.restore();
+    }
+  });
+
+  describe('getOrCreateTarget status checking', () => {
+    function withServer(handler, fn) {
+      return new Promise((resolve, reject) => {
+        const server = http.createServer(handler);
+        server.listen(0, '127.0.0.1', async () => {
+          try {
+            await fn(`http://127.0.0.1:${server.address().port}`);
+            server.close(() => resolve());
+          } catch (e) {
+            server.close(() => reject(e));
+          }
+        });
+      });
+    }
+
+    it('throws a clear error with status and body snippet on a non-2xx /json/list', async () => {
+      await withServer((req, res) => { res.statusCode = 503; res.end('upstream unavailable'); }, async (url) => {
+        const svc = new CaptureService({ cdpURL: url });
+        await assert.rejects(() => svc.getOrCreateTarget(), /\/json\/list returned HTTP 503: upstream unavailable/);
+      });
+    });
+
+    it('throws a clear error with status and body snippet on a non-2xx /json/new', async () => {
+      await withServer((req, res) => {
+        if (req.url.startsWith('/json/list')) { res.end('[]'); return; }
+        res.statusCode = 405;
+        res.end('Using unsafe HTTP verb');
+      }, async (url) => {
+        const svc = new CaptureService({ cdpURL: url });
+        await assert.rejects(() => svc.getOrCreateTarget(), /\/json\/new returned HTTP 405: Using unsafe HTTP verb/);
+      });
+    });
+
+    it('still returns the target on 2xx', async () => {
+      await withServer((req, res) => { res.end(JSON.stringify([{ type: 'page', id: 'x' }])); }, async (url) => {
+        const svc = new CaptureService({ cdpURL: url });
+        assert.strictEqual((await svc.getOrCreateTarget()).id, 'x');
+      });
+    });
   });
 });
