@@ -17,7 +17,7 @@ class VoiceConfig:
     hub_url: str = "http://192.168.1.14:9000/api/voice/interact"
     wake_models: List[str] = field(default_factory=lambda: ["alexa", "hey_jarvis", "hey_mycroft", "hey_aerial"])
     threshold: float = 0.35
-    silence_ms: int = 800
+    silence_ms: int = 400
     max_record_seconds: float = 10.0
     speech_threshold_db: float = -31.0
     cooldown_seconds: float = 2.5
@@ -89,6 +89,18 @@ def load_config(path: Optional[str] = None) -> VoiceConfig:
         cfg.hub_url = os.environ["MIRRORMERE_HUB_URL"]
     if "MIRRORMERE_AUDIO_DEVICE" in os.environ:
         cfg.audio_device = os.environ["MIRRORMERE_AUDIO_DEVICE"]
+    if "MIRRORMERE_SILENCE_MS" in os.environ:
+        try:
+            cfg.silence_ms = int(os.environ["MIRRORMERE_SILENCE_MS"])
+        except ValueError:
+            pass
+    if "MIRRORMERE_VAD" in os.environ:
+        cfg.vad = os.environ["MIRRORMERE_VAD"]
+    if "MIRRORMERE_VAD_THRESHOLD" in os.environ:
+        try:
+            cfg.vad_threshold = float(os.environ["MIRRORMERE_VAD_THRESHOLD"])
+        except ValueError:
+            pass
 
     _validate(cfg)
     return cfg

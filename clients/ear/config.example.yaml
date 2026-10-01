@@ -44,7 +44,7 @@ ear:
   models_dir: "/opt/mirrormere/voice/models"
 
   # VAD Silence detection: how many ms of silence after speech ends an utterance
-  silence_ms: 800
+  silence_ms: 400
 
   # Maximum duration of a single utterance before auto-saving (seconds)
   max_record_seconds: 10.0
