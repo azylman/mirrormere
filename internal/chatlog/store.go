@@ -138,21 +138,29 @@ func (s *Store) Replace(key string, msgs []Message) {
 // into messages. Shape errors (missing role/text) are normally caught earlier by the
 // manifest response_schema; this only fails on what a schema cannot check (RFC 3339 ts).
 func ParsePush(data map[string]any) ([]Message, error) {
-	raw, _ := data["messages"].([]any)
+	raw, ok := data["messages"].([]any)
+	if !ok && data["messages"] != nil {
+		return nil, fmt.Errorf("messages must be an array")
+	}
 	out := make([]Message, 0, len(raw))
 	for i, r := range raw {
 		obj, ok := r.(map[string]any)
 		if !ok {
 			return nil, fmt.Errorf("messages[%d] must be an object", i)
 		}
-		role, _ := obj["role"].(string)
-		text, _ := obj["text"].(string)
-		if role != RoleHuman && role != RoleAgent {
+		role, roleOK := obj["role"].(string)
+		text, textOK := obj["text"].(string)
+		if !textOK {
+			return nil, fmt.Errorf("messages[%d].text must be a string", i)
+		}
+		if !roleOK || (role != RoleHuman && role != RoleAgent) {
 			return nil, fmt.Errorf("messages[%d].role must be %q or %q", i, RoleHuman, RoleAgent)
 		}
 		m := Message{Role: role, Text: text}
-		m.Author, _ = obj["author"].(string)
-		if ts, _ := obj["ts"].(string); ts != "" {
+		if author, ok := obj["author"].(string); ok {
+			m.Author = author
+		}
+		if ts, ok := obj["ts"].(string); ok && ts != "" {
 			at, err := time.Parse(time.RFC3339, ts)
 			if err != nil {
 				return nil, fmt.Errorf("messages[%d].ts must be RFC 3339", i)
