@@ -23,8 +23,11 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     alsa-utils \
     libasound2 \
+    libasound2-plugins \
     libgomp1 \
     && rm -rf /var/lib/apt/lists/*
+
+RUN echo 'pcm.!default { type pulse }\nctl.!default { type pulse }' > /etc/asound.conf
 
 RUN groupadd -g 10001 mirrormere && \
     useradd -u 10001 -g mirrormere -G audio -m -s /bin/bash mirrormere
