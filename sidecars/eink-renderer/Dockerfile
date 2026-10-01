@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # sidecars/eink-renderer/Dockerfile - Headless E-Ink Snapshot Sidecar
 # Reference: SPEC-003 §4-§5, SPEC-009 §3
 
@@ -19,12 +20,9 @@ RUN apk add --no-cache \
 WORKDIR /app
 
 # Copy application files (zero external npm dependencies required)
-COPY package.json ./
-COPY src/ ./src/
-COPY entrypoint.sh ./
-
-RUN chmod +x ./entrypoint.sh \
-    && chown -R 10001:10001 /app
+COPY --link --chown=10001:10001 package.json ./
+COPY --link --chown=10001:10001 src/ ./src/
+COPY --link --chown=10001:10001 --chmod=0755 entrypoint.sh ./
 
 USER 10001:10001
 

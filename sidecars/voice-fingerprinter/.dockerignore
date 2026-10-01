@@ -1,0 +1,6 @@
+test/
+requirements-test.txt
+ENROLLMENT_TRANSCRIPT.md
+__pycache__/
+*.pyc
+*.wav

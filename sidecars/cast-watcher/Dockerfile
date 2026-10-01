@@ -1,15 +1,16 @@
+# syntax=docker/dockerfile:1
 # Build stage: compile static Go binary using official Go 1.24 toolchain
 FROM --platform=$BUILDPLATFORM golang:1.24-alpine AS builder
 
 WORKDIR /src
 
 # Copy module definitions first for optimal layer caching
-COPY go.mod go.sum* ./
+COPY --link go.mod go.sum* ./
 RUN go mod download
 
 # Copy source tree and compile minimal static Linux executable
 ARG TARGETOS TARGETARCH
-COPY . .
+COPY --link . .
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w -extldflags '-static'" -o /app/cast-watcher ./sidecars/cast-watcher
 
 # Runtime stage: minimal hardened Alpine 3.21 environment
@@ -23,7 +24,7 @@ RUN apk add --no-cache ca-certificates tzdata \
 WORKDIR /app
 
 # Copy compiled executable from builder stage
-COPY --from=builder /app/cast-watcher /app/cast-watcher
+COPY --from=builder --link --chown=10001:10001 /app/cast-watcher /app/cast-watcher
 
 # Switch to unprivileged non-root user
 USER 10001:10001
