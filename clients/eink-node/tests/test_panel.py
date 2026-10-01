@@ -75,6 +75,39 @@ class TestEinkPanelAndHardware(unittest.TestCase):
         self.assertEqual(MockEPDConfig.CS_PIN, 8)
         self.assertIsNone(MockEPDConfig.PWR_PIN)
 
+    def test_bonnet_pins_reach_epd_instance_via_implementation(self):
+        """
+        Real-driver layout: pins live on epdconfig.implementation and the module
+        constants are copied by EPD().__init__, so they must be synced back.
+        """
+        import types
+        from unittest import mock
+
+        class Impl:
+            RST_PIN, DC_PIN, BUSY_PIN, CS_PIN, PWR_PIN = 17, 25, 24, 8, 18
+
+        epdconfig = types.SimpleNamespace(
+            implementation=Impl(), RST_PIN=17, DC_PIN=25, BUSY_PIN=24, CS_PIN=8, PWR_PIN=18
+        )
+
+        class EPD:  # mirrors the real epd7in5_V2.EPD.__init__
+            def __init__(self):
+                self.reset_pin = epdconfig.RST_PIN
+                self.dc_pin = epdconfig.DC_PIN
+                self.busy_pin = epdconfig.BUSY_PIN
+                self.cs_pin = epdconfig.CS_PIN
+
+        pins = PanelPinsConfig(rst=27, dc=22, busy=17, cs=8, pwr=None)
+        with mock.patch("panel._repin_implementation") as repin:
+            def apply(impl, p):
+                impl.RST_PIN, impl.DC_PIN, impl.BUSY_PIN, impl.CS_PIN = p.rst, p.dc, p.busy, p.cs
+            repin.side_effect = apply
+            patch_bonnet_pins(pins, epdconfig)
+        epd = EPD()
+        self.assertEqual(
+            (epd.reset_pin, epd.dc_pin, epd.busy_pin, epd.cs_pin), (27, 22, 17, 8)
+        )
+
     def test_image_validation(self):
         """
         Verifies input validation rejects malformed PNGs, invalid dimensions, or non-1-bit payloads.
@@ -318,10 +351,6 @@ class TestEinkPanelAndHardware(unittest.TestCase):
             server.stop()
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class HangingPartialPanel(FakePanel):
     """FakePanel whose partial write wedges (as a stuck BUSY line would)."""
 
@@ -396,3 +425,7 @@ class TestPartialRecovery(unittest.TestCase):
         panel._busy_timeout, panel._stage = 0.05, "display_partial"
         with self.assertRaises(PanelTimeoutError):
             panel._read_busy()
+
+
+if __name__ == "__main__":
+    unittest.main()

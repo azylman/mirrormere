@@ -90,6 +90,11 @@ def patch_bonnet_pins(pins: PanelPinsConfig, epdconfig_module: Any) -> None:
     impl = getattr(epdconfig_module, "implementation", None)
     if impl is not None:
         _repin_implementation(impl, pins)
+        # epd7in5_V2.EPD().__init__ copies RST/DC/BUSY/CS from the epdconfig
+        # *module* constants, so mirror what was applied onto the module.
+        for name in ("RST_PIN", "DC_PIN", "BUSY_PIN", "CS_PIN", "PWR_PIN"):
+            if hasattr(impl, name) and hasattr(epdconfig_module, name):
+                setattr(epdconfig_module, name, getattr(impl, name))
     else:
         if hasattr(epdconfig_module, "RST_PIN"):
             epdconfig_module.RST_PIN = pins.rst
@@ -310,9 +315,9 @@ class WaveshareEPDPanel(BasePanel):
                       0, 0, (epd.height - 1) // 256, (epd.height - 1) % 256, 0x01):
                 epd.send_data(v)
             epd.send_command(0x10)
-            epd.send_data2(list(self._prev_buf))
+            epd.send_data2(self._prev_buf)
             epd.send_command(0x13)
-            epd.send_data2(list(self._partial_polarity(buf)))
+            epd.send_data2(self._partial_polarity(buf))
             epd.send_command(0x12)
             self._epdconfig.delay_ms(100)
             epd.ReadBusy()
