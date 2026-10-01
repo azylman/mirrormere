@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-COPY clients/ear/requirements.txt* requirements.txt* ./
+COPY requirements.txt ./
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
@@ -36,7 +36,7 @@ ENV PATH="/opt/venv/bin:$PATH" \
     MIRRORMERE_VOICE_CONFIG="/config/voice.yaml" \
     MIRRORMERE_HEARTBEAT_FILE="/tmp/ear.heartbeat"
 
-COPY --link clients/ear/client.py* clients/ear/config.py* clients/ear/vad.py* client.py* config.py* vad.py* ./
+COPY --link client.py config.py vad.py ./
 
 RUN python -m compileall -b -q /app
 

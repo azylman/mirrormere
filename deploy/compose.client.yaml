@@ -5,8 +5,8 @@
 services:
   mirrormere-ear:
     build:
-      context: ..
-      dockerfile: clients/ear/Dockerfile
+      context: ../clients/ear
+      dockerfile: Dockerfile
     image: ghcr.io/azylman/mirrormere-ear:latest
     container_name: mirrormere-ear
     restart: unless-stopped
