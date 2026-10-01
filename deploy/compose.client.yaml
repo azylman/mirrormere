@@ -22,15 +22,18 @@ services:
     devices:
       - /dev/snd:/dev/snd
     group_add:
-      - audio
+      - "29" # audio
     environment:
       - MIRRORMERE_NODE_ID=${MIRRORMERE_NODE_ID:-touch-kiosk-kitchen}
       - MIRRORMERE_URL=${MIRRORMERE_URL:-http://192.168.1.14/kiosk}
-      - MIRRORMERE_HUB_URL=${MIRRORMERE_HUB_URL:-http://192.168.1.14:9000/api/voice/interact}
+      - MIRRORMERE_HUB_URL=${MIRRORMERE_HUB_URL:-http://192.168.1.14/kiosk/api/voice/interact}
       - MIRRORMERE_VOICE_CONFIG=/config/voice.yaml
       - MIRRORMERE_HEARTBEAT_FILE=/tmp/ear.heartbeat
+      - MIRRORMERE_AUDIO_DEVICE=${MIRRORMERE_AUDIO_DEVICE:-plughw:CARD=SF558,DEV=0}
+      - PULSE_SERVER=${PULSE_SERVER:-unix:/run/user/1000/pulse/native}
     volumes:
       - ./config/voice.yaml:/config/voice.yaml:ro
+      - /run/user/1000/pulse/native:/run/user/1000/pulse/native:ro
       - ear-models:/opt/mirrormere/voice/models
     healthcheck:
       test: ["CMD-SHELL", "test $$(expr $$(date +%s) - $$(stat -c %Y /tmp/ear.heartbeat 2>/dev/null || echo 0)) -lt 30"]
@@ -41,7 +44,7 @@ services:
       retries: 3
 
   go2rtc:
-    image: alexxit/go2rtc:v1.9.8
+    image: alexxit/go2rtc:1.9.8
     container_name: mirrormere-go2rtc
     restart: unless-stopped
     ports:
@@ -55,9 +58,9 @@ services:
       - /dev/dri:/dev/dri        # Intel VAAPI/QSV hardware transcoding
       - /dev/snd:/dev/snd        # ALSA stereo audio capture
     group_add:
-      - video
-      - render
-      - audio
+      - "44"   # video
+      - "991"  # render
+      - "29"   # audio
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:1984/api"]
       interval: 15s
