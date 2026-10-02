@@ -90,7 +90,6 @@ description: Live video stream tile with one-tap expansion into fullscreen play 
 provider: live-view
 
 capabilities:
-  - ambient-static
   - touch-interactive
 
 default_dimensions: [3, 2]
@@ -222,14 +221,13 @@ When the widget is rendered into `#grid-canvas`:
 
 ---
 
-## E-Ink & Ambient Display Adapter
+## E-Ink & Ambient Display Profile Alignment
 
-On e-paper display nodes (`clients/eink-node`, SPEC-009):
-- The rendering engine compiles `widgets/live-view/views/widget.html`.
-- For `profile: eink` or server-side headless snapshots, the template checks `.Config.poster_url`:
-  - If `poster_url` is provided: renders an `<img>` tag pointing to the snapshot endpoint.
-  - If omitted: renders a clean stylized cyber placeholder badge displaying the stream title and a camera glyph.
-- Avoids spawning headless Chromium WebRTC negotiation processes during static image capture.
+E-paper displays (Profile B, `clients/eink-node`, SPEC-009) operate on multi-second refresh cycles and strictly passive glanceability. Real-time video streaming, 60fps animations, and WebRTC handoffs are incompatible with e-paper physical refresh characteristics.
+
+Accordingly:
+- The `live-view` manifest declares only the `touch-interactive` capability (omitting `ambient-static`), preventing the layout solver from auto-placing video tiles on e-paper screens.
+- If placed manually on a headless capture endpoint, `live-view` does not attempt WebRTC negotiation. Video presentation and expand-to-play workflows are exclusively scoped to Profile A Touch Kiosks (SPEC-010).
 
 ---
 
