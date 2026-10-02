@@ -36,16 +36,14 @@ class EPD:
         return 0
 
     def getbuffer(self, image):
-        """Converts PIL or raw buffer into 1-bit scanline array."""
-        if hasattr(image, "tobytes"):
-            return bytearray(image.tobytes())
-        return bytearray(image)
+        """Converts a PIL Image into a 1-bit scanline array (as the real driver)."""
+        return bytearray(image.convert("1").tobytes())
 
     def display(self, image):
         """Pushes full frame to panel display registers."""
         logger.debug("EPD full display write (%d bytes)", len(image) if image else 0)
 
-    def display_Partial(self, image):
+    def display_Partial(self, image, Xstart, Ystart, Xend, Yend):
         """Pushes partial frame to panel display registers."""
         logger.debug("EPD partial display write (%d bytes)", len(image) if image else 0)
 

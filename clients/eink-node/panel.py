@@ -4,6 +4,7 @@ Reference: SPEC-009 §Reference Hardware, §Refresh Lifecycle, §Pin Map
 """
 
 from abc import ABC, abstractmethod
+import io
 import logging
 import threading
 import time
@@ -19,23 +20,88 @@ except ImportError:
 logger = logging.getLogger("mirrormere.eink.panel")
 
 
+def _repin_implementation(impl: Any, pins: PanelPinsConfig) -> tuple:
+    """
+    Re-creates the gpiozero pin objects owned by the real Waveshare
+    epdconfig.RaspberryPi implementation. The real driver builds them in
+    __init__ at import time, so changing attributes alone does not move the
+    hardware lines. Returns the (rst, dc, busy, cs, pwr) actually applied.
+    """
+    import gpiozero
+
+    pwr = pins.pwr
+    if pwr is None:
+        # The real driver calls GPIO_PWR_PIN.on()/.off() unconditionally in
+        # module_init/module_exit, so it cannot run without a PWR pin.
+        pwr = getattr(impl, "PWR_PIN", None)
+        logger.warning(
+            "Real Waveshare driver requires a PWR pin; keeping PWR at existing pin %s",
+            pwr,
+        )
+
+    current = (
+        getattr(impl, "RST_PIN", None),
+        getattr(impl, "DC_PIN", None),
+        getattr(impl, "BUSY_PIN", None),
+        getattr(impl, "PWR_PIN", None),
+    )
+    wanted = (pins.rst, pins.dc, pins.busy, pwr)
+    if hasattr(impl, "CS_PIN"):
+        impl.CS_PIN = pins.cs
+    if current == wanted:
+        logger.info("Driver pins already match configuration; no repin needed")
+        return (wanted[0], wanted[1], wanted[2], pins.cs, wanted[3])
+
+    for name in ("GPIO_RST_PIN", "GPIO_DC_PIN", "GPIO_PWR_PIN", "GPIO_BUSY_PIN"):
+        old = getattr(impl, name, None)
+        if old is not None:
+            try:
+                old.close()
+            except Exception:
+                logger.exception("Failed to close %s", name)
+
+    impl.RST_PIN, impl.DC_PIN, impl.BUSY_PIN, impl.PWR_PIN = wanted
+    impl.GPIO_RST_PIN = gpiozero.LED(impl.RST_PIN)
+    impl.GPIO_DC_PIN = gpiozero.LED(impl.DC_PIN)
+    impl.GPIO_PWR_PIN = gpiozero.LED(impl.PWR_PIN)
+    impl.GPIO_BUSY_PIN = gpiozero.Button(impl.BUSY_PIN, pull_up=False)
+    return (wanted[0], wanted[1], wanted[2], pins.cs, wanted[3])
+
+
 def patch_bonnet_pins(pins: PanelPinsConfig, epdconfig_module: Any) -> None:
     """
-    Patches epdconfig module constants with the Adafruit E-Ink Bonnet pin mapping
+    Applies the Adafruit E-Ink Bonnet pin mapping to the loaded epdconfig
     prior to calling epd.init().
     Reference: SPEC-009 §Pin Map
       RST: 27, DC: 22, BUSY: 17, CS: 8, PWR: None
+
+    With the real Waveshare driver the pins live on
+    epdconfig.implementation (created at import time), so they are set there
+    and the gpiozero objects are re-created. The vendored stub keeps plain
+    module-level constants.
     """
-    if hasattr(epdconfig_module, "RST_PIN"):
-        epdconfig_module.RST_PIN = pins.rst
-    if hasattr(epdconfig_module, "DC_PIN"):
-        epdconfig_module.DC_PIN = pins.dc
-    if hasattr(epdconfig_module, "BUSY_PIN"):
-        epdconfig_module.BUSY_PIN = pins.busy
-    if hasattr(epdconfig_module, "CS_PIN"):
-        epdconfig_module.CS_PIN = pins.cs
-    if hasattr(epdconfig_module, "PWR_PIN"):
-        epdconfig_module.PWR_PIN = pins.pwr
+    impl = getattr(epdconfig_module, "implementation", None)
+    if impl is not None:
+        rst, dc, busy, cs, pwr = _repin_implementation(impl, pins)
+        # EPD.__init__ reads pin numbers from the module, and the real
+        # digital_write/read dispatch against the implementation's pins, so
+        # the module constants must match what was actually applied.
+        epdconfig_module.RST_PIN = rst
+        epdconfig_module.DC_PIN = dc
+        epdconfig_module.BUSY_PIN = busy
+        epdconfig_module.CS_PIN = cs
+        epdconfig_module.PWR_PIN = pwr
+    else:
+        if hasattr(epdconfig_module, "RST_PIN"):
+            epdconfig_module.RST_PIN = pins.rst
+        if hasattr(epdconfig_module, "DC_PIN"):
+            epdconfig_module.DC_PIN = pins.dc
+        if hasattr(epdconfig_module, "BUSY_PIN"):
+            epdconfig_module.BUSY_PIN = pins.busy
+        if hasattr(epdconfig_module, "CS_PIN"):
+            epdconfig_module.CS_PIN = pins.cs
+        if hasattr(epdconfig_module, "PWR_PIN"):
+            epdconfig_module.PWR_PIN = pins.pwr
 
     logger.info(
         "Patched epdconfig pins: RST=%s, DC=%s, BUSY=%s, CS=%s, PWR=%s",
@@ -146,16 +212,23 @@ class WaveshareEPDPanel(BasePanel):
     def init_full(self) -> None:
         self._epd.init()
 
+    @staticmethod
+    def _decode(buffer: bytes):
+        """Decodes PNG bytes to a PIL Image, as the real getbuffer() expects."""
+        from PIL import Image
+
+        return Image.open(io.BytesIO(buffer))
+
     def display_full(self, buffer: bytes) -> None:
-        buf = self._epd.getbuffer(buffer)
+        buf = self._epd.getbuffer(self._decode(buffer))
         self._epd.display(buf)
 
     def init_part(self) -> None:
         self._epd.init_part()
 
     def display_partial(self, buffer: bytes) -> None:
-        buf = self._epd.getbuffer(buffer)
-        self._epd.display_Partial(buf)
+        buf = self._epd.getbuffer(self._decode(buffer))
+        self._epd.display_Partial(buf, 0, 0, self._epd.width, self._epd.height)
 
     def sleep(self) -> None:
         self._epd.sleep()
