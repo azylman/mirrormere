@@ -132,6 +132,10 @@ class MirrormereCarousel {
       this.canvas.innerHTML = '';
       this.canvas.appendChild(fragment);
       this.activeWidgets = newActiveWidgets;
+      // Hydration marker for the e-ink renderer's settle poll: lets it tell
+      // "hydrated with N widgets" (N may be 0) from the pre-hydration page.
+      this.canvas.dataset.widgetCount = String(newActiveWidgets.size);
+      this.canvas.dataset.screenHydrated = 'true';
 
       requestAnimationFrame(() => {
         setTimeout(() => {
