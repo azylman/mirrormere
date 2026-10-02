@@ -561,8 +561,8 @@ func TestBuiltinLiveViewPackage(t *testing.T) {
 	if pkg.Manifest.DefaultDimensions.Cols != 3 || pkg.Manifest.DefaultDimensions.Rows != 2 {
 		t.Errorf("expected default dimensions [3, 2], got %v", pkg.Manifest.DefaultDimensions)
 	}
-	if !pkg.Manifest.HasCapability("ambient-static") || !pkg.Manifest.HasCapability("touch-interactive") {
-		t.Errorf("expected ambient-static and touch-interactive capabilities")
+	if pkg.Manifest.HasCapability("ambient-static") || !pkg.Manifest.HasCapability("touch-interactive") {
+		t.Errorf("expected touch-interactive capability and no ambient-static")
 	}
 	if pkg.Manifest.ConfigSchema == nil {
 		t.Errorf("expected config schema to be defined")

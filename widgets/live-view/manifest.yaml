@@ -4,7 +4,6 @@ description: Live video stream tile with one-tap expansion into fullscreen prese
 provider: live-view
 
 capabilities:
-  - ambient-static
   - touch-interactive
 
 default_dimensions: [3, 2]
