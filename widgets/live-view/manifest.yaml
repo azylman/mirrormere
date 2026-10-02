@@ -4,7 +4,6 @@ description: Live video stream tile with one-tap expansion into fullscreen prese
 provider: live-view
 
 capabilities:
-  - ambient-static
   - touch-interactive
 
 default_dimensions: [3, 2]
@@ -35,7 +34,7 @@ config_schema:
       description: Optional overlay title displayed in the corner of the tile.
     poster_url:
       type: string
-      description: Snapshot image URL for initial poster frame and e-ink rendering.
+      description: Snapshot image URL for the initial poster frame shown before the stream connects.
     expand_on_click:
       type: boolean
       description: Whether tapping the widget expands into fullscreen video mode. Defaults to true.
