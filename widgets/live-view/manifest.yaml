@@ -1,0 +1,66 @@
+name: live-view
+version: "1.0.0"
+description: Live video stream tile with one-tap expansion into fullscreen presentation mode.
+provider: live-view
+
+capabilities:
+  - ambient-static
+  - touch-interactive
+
+default_dimensions: [3, 2]
+
+supported_dimensions:
+  - [2, 1]
+  - [3, 1]
+  - [4, 1]
+  - [2, 2]
+  - [3, 2]
+  - [4, 2]
+  - [6, 2]
+
+config_schema:
+  type: object
+  required:
+    - stream_url
+  properties:
+    stream_url:
+      type: string
+      description: URL of the live stream for the widget tile (WebRTC endpoint or MJPEG).
+    stream_type:
+      type: string
+      enum: ["webrtc", "mjpeg", "hls"]
+      description: Stream format for the widget tile. Defaults to 'webrtc' if omitted.
+    title:
+      type: string
+      description: Optional overlay title displayed in the corner of the tile.
+    poster_url:
+      type: string
+      description: Snapshot image URL for initial poster frame and e-ink rendering.
+    expand_on_click:
+      type: boolean
+      description: Whether tapping the widget expands into fullscreen video mode. Defaults to true.
+    stream_id:
+      type: string
+      description: Stream ID for the priority stack. Defaults to widget ID.
+    priority:
+      type: string
+      enum: ["persistent", "temporary"]
+      description: Priority tier in video stack ('persistent' for media, 'temporary' for alert cams). Defaults to 'persistent'.
+    timeout_seconds:
+      type: integer
+      minimum: 1
+      description: Auto-dismiss timeout for temporary streams. Core defaults to 45s if omitted. Ignored for persistent streams.
+    controllable:
+      type: boolean
+      description: Whether the stream supports transport controls (play/pause) when expanded. Defaults to false.
+    control_url:
+      type: string
+      description: Webhook URL on stream sidecar where Core forwards transport actions.
+    expand_stream_url:
+      type: string
+      description: Optional override stream URL for fullscreen presentation. Defaults to stream_url.
+    expand_stream_type:
+      type: string
+      enum: ["webrtc", "mjpeg", "hls"]
+      description: Optional override stream format for fullscreen presentation. Defaults to stream_type.
+  additionalProperties: false

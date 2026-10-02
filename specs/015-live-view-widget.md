@@ -27,7 +27,7 @@ Smart wall displays frequently integrate real-time video feeds from local device
 ## Non-Goals
 - **In-Widget Audio Playback**: Audio playback on the dashboard grid while multiple widgets are active creates cacophony and violates SPEC-004. Audio belongs exclusively to fullscreen `video` presentation mode.
 - **Custom Ingest Sidecars**: Core does not manage physical capture hardware; it interfaces strictly with standard HTTP/WebRTC endpoints provided by `go2rtc` or external cameras.
-- **On-Screen Keyboard Input**: All transport controls on expansion rely on the existing Touch HUD overlay (SPEC-004 §5, SPEC-010 §4).
+- **On-Screen Keyboard Input**: All transport controls on expansion rely on the existing Touch HUD overlay (SPEC-004 §7.2 "Touch HUD & Transport Controls", SPEC-010 §4).
 
 ---
 
@@ -115,7 +115,7 @@ config_schema:
     stream_type:
       type: string
       enum: ["webrtc", "mjpeg", "hls"]
-      default: "webrtc"
+      description: Stream format for the widget tile. Defaults to 'webrtc' if omitted.
     title:
       type: string
       description: Optional overlay title displayed in the corner of the tile.
@@ -124,8 +124,7 @@ config_schema:
       description: Snapshot image URL for initial poster frame and e-ink rendering.
     expand_on_click:
       type: boolean
-      default: true
-      description: Whether tapping the widget expands into fullscreen video mode.
+      description: Whether tapping the widget expands into fullscreen video mode. Defaults to true.
     # Video Presentation Parameters (forwarded to POST /api/video/trigger on expansion)
     stream_id:
       type: string
@@ -133,15 +132,14 @@ config_schema:
     priority:
       type: string
       enum: ["persistent", "temporary"]
-      default: "persistent"
+      description: Priority tier in video stack ('persistent' for media, 'temporary' for alert cams). Defaults to 'persistent'.
     timeout_seconds:
       type: integer
-      minimum: 0
-      default: 0
+      minimum: 1
+      description: Auto-dismiss timeout for temporary streams. Core defaults to 45s if omitted. Ignored for persistent streams.
     controllable:
       type: boolean
-      default: false
-      description: Whether the stream supports transport controls (play/pause) when expanded.
+      description: Whether the stream supports transport controls (play/pause) when expanded. Defaults to false.
     control_url:
       type: string
       description: Webhook URL on stream sidecar where Core forwards transport actions.
@@ -200,11 +198,11 @@ When the widget is rendered into `#grid-canvas`:
     "stream_url": config.expand_stream_url || config.stream_url,
     "type": config.expand_stream_type || config.stream_type || "webrtc",
     "priority": config.priority || "persistent",
-    "timeout_seconds": config.timeout_seconds || 0,
     "controllable": Boolean(config.controllable),
     "control_url": config.control_url || ""
   }
   ```
+  *(Note: `timeout_seconds` is conditionally included only when `config.timeout_seconds > 0`. If omitted, Core automatically applies its standard 45s default for temporary alert streams).*
 - Core handles the mutation and broadcasts `event: video.state`.
 
 ### 3. Background Power & Decoder Hygiene (SSE & Carousel Rotation)
@@ -226,8 +224,8 @@ When the widget is rendered into `#grid-canvas`:
 
 ## E-Ink & Ambient Display Adapter
 
-On e-paper display nodes (`clients/eink-display-node`, SPEC-009):
-- The rendering engine compiles `views/widget.html`.
+On e-paper display nodes (`clients/eink-node`, SPEC-009):
+- The rendering engine compiles `widgets/live-view/views/widget.html`.
 - For `profile: eink` or server-side headless snapshots, the template checks `.Config.poster_url`:
   - If `poster_url` is provided: renders an `<img>` tag pointing to the snapshot endpoint.
   - If omitted: renders a clean stylized cyber placeholder badge displaying the stream title and a camera glyph.

@@ -539,4 +539,37 @@ func TestBuiltinWeatherForecastPackage(t *testing.T) {
 	}
 }
 
+func TestBuiltinLiveViewPackage(t *testing.T) {
+	t.Parallel()
+
+	repoWidgetsDir := filepath.Join("..", "..", "widgets")
+	loader := widget.NewLoader(repoWidgetsDir, t.TempDir())
+	pkg, err := loader.LoadPackage("live-view")
+	if err != nil {
+		t.Fatalf("failed to load built-in live-view package: %v", err)
+	}
+
+	if pkg.Type != "live-view" {
+		t.Errorf("expected package type 'live-view', got %q", pkg.Type)
+	}
+	if pkg.Manifest.Name != "live-view" {
+		t.Errorf("expected manifest name 'live-view', got %q", pkg.Manifest.Name)
+	}
+	if pkg.Manifest.Provider != "live-view" {
+		t.Errorf("expected provider 'live-view', got %q", pkg.Manifest.Provider)
+	}
+	if pkg.Manifest.DefaultDimensions.Cols != 3 || pkg.Manifest.DefaultDimensions.Rows != 2 {
+		t.Errorf("expected default dimensions [3, 2], got %v", pkg.Manifest.DefaultDimensions)
+	}
+	if !pkg.Manifest.HasCapability("ambient-static") || !pkg.Manifest.HasCapability("touch-interactive") {
+		t.Errorf("expected ambient-static and touch-interactive capabilities")
+	}
+	if pkg.Manifest.ConfigSchema == nil {
+		t.Errorf("expected config schema to be defined")
+	}
+	if err := pkg.Manifest.Validate(); err != nil {
+		t.Errorf("expected manifest to pass validation, got %v", err)
+	}
+}
+
 
