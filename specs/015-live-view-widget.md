@@ -19,12 +19,12 @@ Smart wall displays frequently integrate real-time video feeds from local device
 - **Click-to-Expand Handoff**: Tapping a `live-view` tile dispatches `POST /api/video/trigger`, promoting the stream to primary fullscreen presentation mode (`#video-stage`) with unmuted audio and Touch HUD controls.
 - **Hardware Decoder Hygiene**: When the kiosk transitions to `video` mode (hiding `#grid-canvas`), `live-view` widgets cleanly detach their background WebRTC peer connections or pause stream consumption to prevent GPU/CPU decoder saturation on the Intel N100 Mini PC or Raspberry Pi 4.
 - **Seamless Re-Hydration**: When fullscreen video mode is dismissed (returning to `widgets` mode), `live-view` widgets automatically reconnect and resume live monitoring.
-- **1-Bit E-Ink Fallback**: For Ambient E-Ink displays (SPEC-009), display a periodic snapshot poster frame (`poster_url`) or clean static indicator rather than attempting WebRTC streaming.
 - **100% Generic & Domain-Agnostic**: Core templates, schemas, and Go services contain zero hardcoded device names or Chromecast assumptions. All stream parameters are configured declaratively in `config.yaml`.
 
 ---
 
 ## Non-Goals
+- **E-Ink Displays**: E-ink displays are out of scope. The manifest omits `ambient-static`, so the layout solver never places `live-view` on e-ink, because e-ink's slow refresh can't use live video.
 - **In-Widget Audio Playback**: Audio playback on the dashboard grid while multiple widgets are active creates cacophony and violates SPEC-004. Audio belongs exclusively to fullscreen `video` presentation mode.
 - **Custom Ingest Sidecars**: Core does not manage physical capture hardware; it interfaces strictly with standard HTTP/WebRTC endpoints provided by `go2rtc` or external cameras.
 - **On-Screen Keyboard Input**: All transport controls on expansion rely on the existing Touch HUD overlay (SPEC-004 §7.2 "Touch HUD & Transport Controls", SPEC-010 §4).
@@ -86,7 +86,7 @@ sequenceDiagram
 ```yaml
 name: live-view
 version: "1.0.0"
-description: Live video stream tile with one-tap expansion into fullscreen play mode.
+description: Live video stream tile with one-tap expansion into fullscreen presentation mode.
 provider: live-view
 
 capabilities:
@@ -120,7 +120,7 @@ config_schema:
       description: Optional overlay title displayed in the corner of the tile.
     poster_url:
       type: string
-      description: Snapshot image URL for initial poster frame and e-ink rendering.
+      description: Snapshot image URL for the initial poster frame shown before the stream connects.
     expand_on_click:
       type: boolean
       description: Whether tapping the widget expands into fullscreen video mode. Defaults to true.
