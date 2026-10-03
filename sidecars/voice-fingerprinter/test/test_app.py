@@ -140,3 +140,21 @@ def test_embed_48k_stereo_downmix_and_resample(app_module):
     samples = app_module._decode_and_resample(wav)
     expected_len = int(1.5 * 16000)
     assert abs(len(samples) - expected_len) <= expected_len * 0.05
+
+
+def test_load_config_file(tmp_path):
+    cfg_file = tmp_path / "voice-fingerprinter.yaml"
+    cfg_file.write_text("port: 9099\nbind: 127.0.0.1\ndevice: cpu\nthreads: 2\n")
+    import app
+    loaded = app.load_config_file(str(cfg_file))
+    assert str(loaded["port"]) == "9099"
+    assert loaded["bind"] == "127.0.0.1"
+
+
+def test_load_config_file_port_zero(tmp_path):
+    cfg_file = tmp_path / "voice-fingerprinter.yaml"
+    cfg_file.write_text("port: 0\nbind: 127.0.0.1\n")
+    import app
+    loaded = app.load_config_file(str(cfg_file))
+    assert str(loaded["port"]) == "0"
+
