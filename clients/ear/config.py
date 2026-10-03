@@ -46,6 +46,44 @@ class VoiceConfig:
 DEFAULT_CONFIG_PATH = os.environ.get("MIRRORMERE_VOICE_CONFIG", "/etc/mirrormere/voice.yaml")
 
 
+def _parse_simple_yaml(text: str) -> dict:
+    data = {}
+    current_section = data
+    current_list = None
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        indent = len(line) - len(line.lstrip())
+        if stripped.startswith("- ") and current_list is not None:
+            current_list.append(stripped[2:].strip().strip("\"'"))
+            continue
+        current_list = None
+        if ":" in stripped:
+            k, v = stripped.split(":", 1)
+            k = k.strip()
+            v = v.strip()
+            if indent == 0 and not v:
+                sub = {}
+                data[k] = sub
+                current_section = sub
+            elif not v:
+                sub_list = []
+                current_section[k] = sub_list
+                current_list = sub_list
+            else:
+                clean_v = v.strip("\"'")
+                try:
+                    if "." in clean_v:
+                        parsed_v = float(clean_v)
+                    else:
+                        parsed_v = int(clean_v)
+                except ValueError:
+                    parsed_v = clean_v
+                current_section[k] = parsed_v
+    return data
+
+
 def load_config(path: Optional[str] = None) -> VoiceConfig:
     """Loads configuration from YAML file with fallback to environment variables and defaults."""
     cfg = VoiceConfig()
@@ -54,7 +92,10 @@ def load_config(path: Optional[str] = None) -> VoiceConfig:
     if os.path.exists(target_path):
         try:
             with open(target_path, "r", encoding="utf-8") as f:
-                data = yaml.safe_load(f) or {}
+                if yaml is not None:
+                    data = yaml.safe_load(f) or {}
+                else:
+                    data = _parse_simple_yaml(f.read())
                 # Top-level key: "ear" is the preferred name (the client is
                 # "the ear"); "voice" is kept for existing deployed configs.
                 # If both are present, "ear" wins.

@@ -62,15 +62,56 @@ from typing import Optional
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
+try:
+    import yaml
+except ImportError:
+    yaml = None
 
-PORT = int(os.environ.get("MDE_PORT", "9096"))
-BIND = os.environ.get("MDE_BIND", "0.0.0.0")
 
-MODEL_SOURCE = os.environ.get("MDE_MODEL_SOURCE", "speechbrain/spkrec-ecapa-voxceleb")
+def load_config_file(path: str | None = None) -> dict:
+    candidates = []
+    if path:
+        candidates.append(path)
+    if os.environ.get("CONFIG_PATH"):
+        candidates.append(os.environ["CONFIG_PATH"])
+    candidates.extend([
+        "/config/config.yaml",
+        "/config/config.yml",
+        "/share/aerial-config/services/mirrormere/voice-fingerprinter.yaml",
+        "/app/config.yaml",
+    ])
+    for c in candidates:
+        if os.path.exists(c):
+            if yaml is not None:
+                with open(c, "r", encoding="utf-8") as f:
+                    data = yaml.safe_load(f)
+                    if isinstance(data, dict):
+                        return data
+            else:
+                try:
+                    res = {}
+                    with open(c, "r", encoding="utf-8") as f:
+                        for line in f:
+                            line = line.strip()
+                            if not line or line.startswith("#") or ":" not in line:
+                                continue
+                            k, v = line.split(":", 1)
+                            res[k.strip()] = v.strip().strip("\"'")
+                    return res
+                except Exception:
+                    pass
+    return {}
+
+
+_file_cfg = load_config_file()
+PORT = int(os.environ["MDE_PORT"]) if "MDE_PORT" in os.environ else (int(_file_cfg["port"]) if "port" in _file_cfg and _file_cfg["port"] is not None else 9096)
+BIND = os.environ.get("MDE_BIND") if "MDE_BIND" in os.environ else (_file_cfg.get("bind") or "0.0.0.0")
+
+MODEL_SOURCE = os.environ.get("MDE_MODEL_SOURCE") or _file_cfg.get("model_source") or "speechbrain/spkrec-ecapa-voxceleb"
 MODEL_ID = MODEL_SOURCE  # the model string the hub's speakers.json must match exactly
-DEVICE = os.environ.get("MDE_DEVICE", "cpu")
-SAVEDIR = Path(os.environ.get("MDE_SAVEDIR") or "/models/speechbrain-ecapa")
-THREADS = int(os.environ.get("MDE_THREADS", str(os.cpu_count() or 1)))
+DEVICE = os.environ.get("MDE_DEVICE") or _file_cfg.get("device") or "cpu"
+SAVEDIR = Path(os.environ.get("MDE_SAVEDIR") or _file_cfg.get("savedir") or "/models/speechbrain-ecapa")
+THREADS = int(os.environ.get("MDE_THREADS") or _file_cfg.get("threads") or str(os.cpu_count() or 1))
 TARGET_SAMPLE_RATE = 16000
 MIN_DURATION_SEC = 0.5
 WARMUP_SEC = 1.0  # 1s of near-silence, just enough to exercise the full path

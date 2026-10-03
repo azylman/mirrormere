@@ -190,6 +190,11 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 		return err
 	}
 
+	flagsSet := make(map[string]bool)
+	fs.Visit(func(f *flag.Flag) {
+		flagsSet[f.Name] = true
+	})
+
 	// 1. Resolve widget directories and initialize loader
 	builtinDir := *builtinFlag
 	if builtinDir == "" {
@@ -357,12 +362,21 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 
 	// 13. Assemble Server Configuration
 	portVal := *portFlag
+	hostVal := *hostFlag
+	if snapshot != nil && snapshot.Config != nil {
+		if snapshot.Config.Port != nil && !flagsSet["port"] && os.Getenv("PORT") == "" {
+			portVal = *snapshot.Config.Port
+		}
+		if snapshot.Config.Host != "" && !flagsSet["host"] && os.Getenv("HOST") == "" {
+			hostVal = snapshot.Config.Host
+		}
+	}
 	if portVal == 0 {
 		portVal = -1
 	}
 
 	cfg := server.Config{
-		Host:           *hostFlag,
+		Host:           hostVal,
 		Port:           portVal,
 		EventsHandler:  eventsHandler,
 		ScreenHandler:  screenHandler,

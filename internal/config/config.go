@@ -18,6 +18,8 @@ var interpolationRegex = regexp.MustCompile(`\$\{([^}]+)\}`)
 
 // Config represents the root configuration schema of Mirrormere.
 type Config struct {
+	Host     string          `yaml:"host,omitempty"`
+	Port     *int            `yaml:"port,omitempty"`
 	Timezone string          `yaml:"timezone"`
 	Display  DisplayConfig   `yaml:"display"`
 	VoiceHub *VoiceHubConfig `yaml:"voice_hub,omitempty"`
@@ -364,8 +366,8 @@ func validateStructuralKeys(root *yaml.Node) error {
 			return fmt.Errorf("line %d: configuration contains disallowed top-level key 'providers': widget instances configure their own data sources under display.widgets", keyNode.Line)
 		case "header":
 			return fmt.Errorf("line %d: configuration contains disallowed top-level key 'header': header must be configured under display.header", keyNode.Line)
-		case "timezone":
-			// Canonical top-level key
+		case "timezone", "host", "port":
+			// Canonical top-level keys
 		case "voice_hub", "chat_log":
 			// Canonical top-level keys
 		case "display":

@@ -477,3 +477,47 @@ func TestHouseholdNowFunc_FallsBackToProcessLocalWithoutASnapshot(t *testing.T) 
 		t.Fatal("expected a non-zero time for a nil provider")
 	}
 }
+
+func TestRun_YAMLHostPortConfig(t *testing.T) {
+	t.Setenv("PORT", "")
+	t.Setenv("HOST", "")
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "mirrormere.yaml")
+	yamlContent := `
+host: "127.0.0.1"
+port: 0
+timezone: "UTC"
+display:
+  widgets:
+    - id: spacer
+      type: spacer
+      dimensions: [6, 2]
+`
+	if err := os.WriteFile(configPath, []byte(yamlContent), 0644); err != nil {
+		t.Fatalf("failed to write test yaml: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	readyChan := make(chan struct{}, 1)
+	addrChan := make(chan string, 1)
+	var stdout, stderr bytes.Buffer
+
+	errChan := make(chan error, 1)
+	go func() {
+		errChan <- RunWithReady(ctx, []string{"-config", configPath}, &stdout, &stderr, readyChan, WithAddrChan(addrChan))
+	}()
+
+	select {
+	case <-readyChan:
+	case err := <-errChan:
+		t.Fatalf("RunWithReady failed: %v", err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for ready signal")
+	}
+
+	cancel()
+	<-errChan
+}
+
