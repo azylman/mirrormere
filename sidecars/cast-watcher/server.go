@@ -8,7 +8,10 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
+	"runtime/coverage"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -23,6 +26,39 @@ type ServerConfig struct {
 	Host   string
 	Port   int
 	Logger *slog.Logger
+}
+
+var (
+	flushMu            sync.Mutex
+	lastFlushTime      time.Time
+	nowFn              = time.Now
+	writeCountersDirMu sync.RWMutex
+	writeCountersDirFn = coverage.WriteCountersDir
+)
+
+// SetNowFnForTest overrides the time provider for testing debounce without sleeps.
+func SetNowFnForTest(fn func() time.Time) func() {
+	flushMu.Lock()
+	prev := nowFn
+	nowFn = fn
+	flushMu.Unlock()
+	return func() {
+		flushMu.Lock()
+		nowFn = prev
+		flushMu.Unlock()
+	}
+}
+
+func SetWriteCountersDirForTest(fn func(string) error) func() {
+	writeCountersDirMu.Lock()
+	prev := writeCountersDirFn
+	writeCountersDirFn = fn
+	writeCountersDirMu.Unlock()
+	return func() {
+		writeCountersDirMu.Lock()
+		writeCountersDirFn = prev
+		writeCountersDirMu.Unlock()
+	}
 }
 
 // ActionServer handles incoming transport webhook actions and health probes.
@@ -58,6 +94,7 @@ func NewActionServer(cfg ServerConfig, client MediaActionSender) *ActionServer {
 
 	mux.HandleFunc("/action", s.handleAction)
 	mux.HandleFunc("/healthz", s.handleHealthz)
+	mux.HandleFunc("/debug/coverage/flush", s.handleCoverageFlush)
 
 	bindAddr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
 	s.server = &http.Server{
@@ -157,6 +194,40 @@ func writeJSON(w http.ResponseWriter, status int, data any) {
 	if err := json.NewEncoder(w).Encode(data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
+}
+
+func (s *ActionServer) handleCoverageFlush(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
+		w.Header().Set("Allow", "GET, POST")
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	if dir := os.Getenv("GOCOVERDIR"); dir != "" {
+		flushMu.Lock()
+		now := nowFn()
+		if now.Sub(lastFlushTime) < time.Second {
+			flushMu.Unlock()
+			writeJSON(w, http.StatusOK, map[string]string{"status": "debounced"})
+			return
+		}
+		lastFlushTime = now
+		writeCountersDirMu.RLock()
+		fn := writeCountersDirFn
+		writeCountersDirMu.RUnlock()
+		err := fn(dir)
+		flushMu.Unlock()
+
+		if err != nil {
+			s.logger.Error("coverage flush failed", "error", err)
+			writeJSONError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{
+		"status": "ok",
+	})
 }
 
 func writeJSONError(w http.ResponseWriter, status int, msg string) {

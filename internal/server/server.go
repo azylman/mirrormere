@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os"
+	"runtime/coverage"
 	"sync"
 	"time"
 
@@ -339,6 +341,7 @@ func (s *Server) VoiceHandler() VoiceHandler {
 func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/healthz", s.handleHealth)
 	s.mux.HandleFunc("/health", s.handleHealth)
+	s.mux.HandleFunc("/debug/coverage/flush", s.handleCoverageFlush)
 	s.mux.Handle("/metrics", promhttp.Handler())
 	s.mux.HandleFunc("/api/events", s.handleEvents)
 	s.mux.HandleFunc("/api/screen/select", s.handleScreenSelect)
@@ -627,6 +630,84 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	default:
 		w.Header().Set("Allow", "GET, HEAD, OPTIONS")
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+var (
+	flushMu            sync.Mutex
+	lastFlushTime      time.Time
+	nowFn              = time.Now
+	writeCountersDirMu sync.RWMutex
+	writeCountersDirFn = coverage.WriteCountersDir
+)
+
+// SetNowFnForTest overrides the time provider for testing debounce without sleeps.
+func SetNowFnForTest(fn func() time.Time) func() {
+	flushMu.Lock()
+	prev := nowFn
+	nowFn = fn
+	flushMu.Unlock()
+	return func() {
+		flushMu.Lock()
+		nowFn = prev
+		flushMu.Unlock()
+	}
+}
+
+// SetWriteCountersDirForTest overrides writeCountersDirFn for testing purposes.
+func SetWriteCountersDirForTest(fn func(string) error) func() {
+	writeCountersDirMu.Lock()
+	prev := writeCountersDirFn
+	writeCountersDirFn = fn
+	writeCountersDirMu.Unlock()
+	return func() {
+		writeCountersDirMu.Lock()
+		writeCountersDirFn = prev
+		writeCountersDirMu.Unlock()
+	}
+}
+
+func (s *Server) handleCoverageFlush(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
+		w.Header().Set("Allow", "GET, POST")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if dir := os.Getenv("GOCOVERDIR"); dir != "" {
+		flushMu.Lock()
+		now := nowFn()
+		if now.Sub(lastFlushTime) < time.Second {
+			flushMu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			if _, err := w.Write([]byte("{\"status\":\"debounced\"}\n")); err != nil {
+				return
+			}
+			return
+		}
+		lastFlushTime = now
+		writeCountersDirMu.RLock()
+		fn := writeCountersDirFn
+		writeCountersDirMu.RUnlock()
+		err := fn(dir)
+		flushMu.Unlock()
+
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	data, err := json.Marshal(map[string]string{"status": "ok"})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	if _, err := w.Write(append(data, '\n')); err != nil {
+		return
 	}
 }
 

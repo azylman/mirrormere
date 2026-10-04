@@ -7,7 +7,9 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 )
 
 type mockMediaActionSender struct {
@@ -210,4 +212,103 @@ func (e *errResponseWriter) WriteHeader(statusCode int) {}
 func TestWriteJSON_Error(t *testing.T) {
 	rw := &errResponseWriter{header: make(http.Header)}
 	writeJSON(rw, http.StatusOK, map[string]string{"key": "val"})
+}
+
+func TestActionServer_HandleCoverageFlush(t *testing.T) {
+	mockClient := &mockMediaActionSender{}
+	server := NewActionServer(ServerConfig{}, mockClient)
+
+	// 1. Method Not Allowed (e.g. DELETE)
+	t.Run("MethodNotAllowed", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodDelete, "/debug/coverage/flush", nil)
+		rec := httptest.NewRecorder()
+		server.mux.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusMethodNotAllowed {
+			t.Fatalf("expected 405 Method Not Allowed, got %d", rec.Code)
+		}
+	})
+
+	// 2. Unset GOCOVERDIR -> 200 OK
+	t.Run("UnsetGOCOVERDIR", func(t *testing.T) {
+		t.Setenv("GOCOVERDIR", "")
+		req := httptest.NewRequest(http.MethodGet, "/debug/coverage/flush", nil)
+		rec := httptest.NewRecorder()
+		server.mux.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200 OK, got %d", rec.Code)
+		}
+		if !strings.Contains(rec.Body.String(), "\"status\":\"ok\"") {
+			t.Fatalf("expected status ok in body, got %q", rec.Body.String())
+		}
+	})
+
+	// 3. Set GOCOVERDIR with success and debounce
+	t.Run("SuccessWithGOCOVERDIR_And_Debounce", func(t *testing.T) {
+		simulatedTime := time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC)
+		restoreTime := SetNowFnForTest(func() time.Time {
+			return simulatedTime
+		})
+		defer restoreTime()
+
+		tempDir := t.TempDir()
+		t.Setenv("GOCOVERDIR", tempDir)
+
+		var capturedDir string
+		restoreWriter := SetWriteCountersDirForTest(func(dir string) error {
+			capturedDir = dir
+			return nil
+		})
+		defer restoreWriter()
+
+		req := httptest.NewRequest(http.MethodPost, "/debug/coverage/flush", nil)
+		rec := httptest.NewRecorder()
+		server.mux.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200 OK, got %d", rec.Code)
+		}
+		if capturedDir != tempDir {
+			t.Fatalf("expected capturedDir %q, got %q", tempDir, capturedDir)
+		}
+		if !strings.Contains(rec.Body.String(), "\"status\":\"ok\"") {
+			t.Fatalf("expected status ok in body, got %q", rec.Body.String())
+		}
+
+		// Immediate second call should be debounced
+		rec2 := httptest.NewRecorder()
+		server.mux.ServeHTTP(rec2, req)
+		if rec2.Code != http.StatusOK {
+			t.Fatalf("expected 200 OK for debounced flush, got %d", rec2.Code)
+		}
+		if !strings.Contains(rec2.Body.String(), "\"status\":\"debounced\"") {
+			t.Fatalf("expected debounced status in body, got %q", rec2.Body.String())
+		}
+	})
+
+	// 4. Set GOCOVERDIR with error -> 500
+	t.Run("ErrorWithGOCOVERDIR", func(t *testing.T) {
+		simulatedTime := time.Date(2026, 10, 4, 13, 0, 0, 0, time.UTC)
+		restoreTime := SetNowFnForTest(func() time.Time {
+			return simulatedTime
+		})
+		defer restoreTime()
+
+		tempDir := t.TempDir()
+		t.Setenv("GOCOVERDIR", tempDir)
+
+		restoreWriter := SetWriteCountersDirForTest(func(dir string) error {
+			return errors.New("simulated flush error")
+		})
+		defer restoreWriter()
+
+		req := httptest.NewRequest(http.MethodGet, "/debug/coverage/flush", nil)
+		rec := httptest.NewRecorder()
+		server.mux.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusInternalServerError {
+			t.Fatalf("expected 500 Internal Server Error, got %d", rec.Code)
+		}
+	})
 }

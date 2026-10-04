@@ -2,6 +2,7 @@ package server_test
 
 import (
 	"context"
+	"errors"
 	"encoding/json"
 	"io"
 	"net"
@@ -1027,4 +1028,105 @@ func TestServer_MetricsEndpoint(t *testing.T) {
 	}
 }
 
+func TestCoverageFlushEndpoint(t *testing.T) {
+	// Case 1: Method Not Allowed (e.g. DELETE)
+	t.Run("MethodNotAllowed", func(t *testing.T) {
+		srv := server.New(server.Config{})
+		req := httptest.NewRequest(http.MethodDelete, "/debug/coverage/flush", nil)
+		rec := httptest.NewRecorder()
+		srv.Routes().ServeHTTP(rec, req)
 
+		if rec.Code != http.StatusMethodNotAllowed {
+			t.Fatalf("expected 405 Method Not Allowed, got %d", rec.Code)
+		}
+	})
+
+	// Case 2: Unset GOCOVERDIR returns 200 OK without writing
+	t.Run("UnsetGOCOVERDIR", func(t *testing.T) {
+		t.Setenv("GOCOVERDIR", "")
+		srv := server.New(server.Config{})
+		req := httptest.NewRequest(http.MethodGet, "/debug/coverage/flush", nil)
+		rec := httptest.NewRecorder()
+		srv.Routes().ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200 OK, got %d", rec.Code)
+		}
+		if !strings.Contains(rec.Body.String(), "\"status\":\"ok\"") {
+			t.Fatalf("expected status ok in body, got %q", rec.Body.String())
+		}
+	})
+
+	// Case 3: Set GOCOVERDIR with successful counter write and debounce
+	t.Run("SuccessWithGOCOVERDIR_And_Debounce", func(t *testing.T) {
+		simulatedTime := time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC)
+		restoreTime := server.SetNowFnForTest(func() time.Time {
+			return simulatedTime
+		})
+		defer restoreTime()
+
+		tempDir := t.TempDir()
+		t.Setenv("GOCOVERDIR", tempDir)
+
+		var capturedDir string
+		restoreWriter := server.SetWriteCountersDirForTest(func(dir string) error {
+			capturedDir = dir
+			return nil
+		})
+		defer restoreWriter()
+
+		srv := server.New(server.Config{})
+		req := httptest.NewRequest(http.MethodPost, "/debug/coverage/flush", nil)
+		rec := httptest.NewRecorder()
+		srv.Routes().ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200 OK, got %d", rec.Code)
+		}
+		if capturedDir != tempDir {
+			t.Fatalf("expected capturedDir %q, got %q", tempDir, capturedDir)
+		}
+		if !strings.Contains(rec.Body.String(), "\"status\":\"ok\"") {
+			t.Fatalf("expected status ok in body, got %q", rec.Body.String())
+		}
+
+		// Immediate second call should be debounced
+		rec2 := httptest.NewRecorder()
+		srv.Routes().ServeHTTP(rec2, req)
+		if rec2.Code != http.StatusOK {
+			t.Fatalf("expected 200 OK for debounced flush, got %d", rec2.Code)
+		}
+		if !strings.Contains(rec2.Body.String(), "\"status\":\"debounced\"") {
+			t.Fatalf("expected debounced status in body, got %q", rec2.Body.String())
+		}
+	})
+
+	// Case 4: Set GOCOVERDIR with write failure returns 500
+	t.Run("ErrorWithGOCOVERDIR", func(t *testing.T) {
+		simulatedTime := time.Date(2026, 10, 4, 13, 0, 0, 0, time.UTC)
+		restoreTime := server.SetNowFnForTest(func() time.Time {
+			return simulatedTime
+		})
+		defer restoreTime()
+
+		tempDir := t.TempDir()
+		t.Setenv("GOCOVERDIR", tempDir)
+
+		restoreWriter := server.SetWriteCountersDirForTest(func(dir string) error {
+			return errors.New("simulated flush error")
+		})
+		defer restoreWriter()
+
+		srv := server.New(server.Config{})
+		req := httptest.NewRequest(http.MethodGet, "/debug/coverage/flush", nil)
+		rec := httptest.NewRecorder()
+		srv.Routes().ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusInternalServerError {
+			t.Fatalf("expected 500 Internal Server Error, got %d", rec.Code)
+		}
+		if !strings.Contains(rec.Body.String(), "simulated flush error") {
+			t.Fatalf("expected error body to contain simulated flush error, got %q", rec.Body.String())
+		}
+	})
+}

@@ -16,7 +16,7 @@ COPY --link . .
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
-    go build -trimpath -ldflags="-s -w -extldflags '-static'" -o /app/server ./cmd/server
+    go build -cover -covermode=atomic -trimpath -ldflags="-s -w -extldflags '-static'" -o /app/server ./cmd/server
 
 # Runtime stage: minimal hardened Alpine 3.21 environment
 FROM alpine:3.21
@@ -26,8 +26,8 @@ RUN --mount=type=cache,target=/etc/apk/cache,sharing=locked \
     apk add ca-certificates tzdata \
     && addgroup -g 10001 -S appgroup \
     && adduser -u 10001 -S appuser -G appgroup \
-    && mkdir -p /config /data /app/web /app/widgets \
-    && chown -R 10001:10001 /config /data /app/web /app/widgets
+    && mkdir -p /config /data /coverage /app/web /app/widgets \
+    && chown -R 10001:10001 /config /data /coverage /app/web /app/widgets
 
 WORKDIR /app
 
