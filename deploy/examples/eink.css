@@ -1,6 +1,5 @@
 /* ==========================================================================
    Mirrormere Reference Stylesheet: High-Contrast 1-Bit Monochrome (E-Ink)
-   Authoritative Reference:  &  §3
    Mount target: copy to ./config/custom.css (mounted via directory mount ./config:/config:ro
 
    Replaces the touch-kiosk stylesheet entirely, so this

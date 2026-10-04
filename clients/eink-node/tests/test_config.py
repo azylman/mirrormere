@@ -1,6 +1,5 @@
 """
 test_config.py - Hermetic unit tests for EinkConfig and load_config
-Reference: 
 """
 
 import os

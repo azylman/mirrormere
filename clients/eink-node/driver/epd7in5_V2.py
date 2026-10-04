@@ -1,6 +1,5 @@
 """
 epd7in5_V2.py - Waveshare 7.5inch e-Paper V2 driver reference module
-Reference:  Hardware, §Refresh Lifecycle
 """
 
 import logging

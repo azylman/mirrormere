@@ -1,6 +1,5 @@
 """
 test_sse.py - Hermetic unit tests for SSE stream listener and event filtering
-Reference: , , Issue #246
 """
 
 import io

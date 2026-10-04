@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # setup.sh - Installer for Mirrormere Edge Voice Daemon on Linux Kiosk / Raspberry Pi
-# Follows  for edge dock deployment.
+# Script for edge dock deployment.
 
 INSTALL_DIR="/opt/mirrormere/voice"
 CONFIG_PATH="/etc/mirrormere/voice.yaml"

@@ -7,7 +7,7 @@ captured speech utterances to the LAN Voice Hub.
 Optionally runs in "ambient" or "both" wake mode (see `wake_mode` in
 `config.py`): the existing energy VAD cuts every speech segment and posts it
 to a classifier-gated `ambient_url` endpoint instead of (or alongside) the
-openWakeWord wake phrase. See  "Ambient (Classifier-Gated) Wake Mode".
+openWakeWord wake phrase.
 """
 
 import base64

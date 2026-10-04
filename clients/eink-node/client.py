@@ -1,6 +1,5 @@
 """
 client.py - Standalone E-Ink Node Client daemon for Raspberry Pi Profile B
-Reference: 
 """
 
 import argparse

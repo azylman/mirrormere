@@ -1,6 +1,5 @@
 """
 sse.py - Server-Sent Events (SSE) listener and trigger router for Mirrormere E-Ink display node
-Reference: , 
 """
 
 import logging

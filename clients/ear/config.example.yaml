@@ -24,7 +24,7 @@ ear:
   wake_mode: "openwakeword"
 
   # Ambient classifier endpoint (required for wake_mode: ambient or both).
-  # See  "Ambient (Classifier-Gated) Wake Mode" for the contract.
+  # Classifier-gated ambient wake mode configuration.
   # ambient_url: "http://192.168.1.77:9098/ambient"
 
   # Timeout (seconds) for the ambient classification request.
