@@ -2,6 +2,7 @@ package events
 
 import (
 	"encoding/json"
+	"fmt"
 	"sync"
 	"time"
 
@@ -76,6 +77,7 @@ type SystemStatusData struct {
 	ConfigStatus string            `json:"config_status"`
 	ConfigError  *string           `json:"config_error"`
 	Providers    map[string]string `json:"providers,omitempty"`
+	BootID       string            `json:"boot_id,omitempty"`
 }
 
 // StateProvider supplies active subsystem snapshots for initial connection hydration.
@@ -89,6 +91,7 @@ type StateProvider interface {
 	GetVoiceState() *VoiceStateData
 	GetProvidersStatus() map[string]string
 	GetScreenRotateData() *ScreenRotateData
+	BootID() string
 }
 
 type widgetStateEntry struct {
@@ -110,12 +113,14 @@ type InMemoryStateProvider struct {
 	voiceState   *VoiceStateData
 	providers    map[string]string
 	screenRotate *ScreenRotateData
+	bootID       string
 }
 
 // NewInMemoryStateProvider constructs an InMemoryStateProvider.
 func NewInMemoryStateProvider(mgr *config.Manager) *InMemoryStateProvider {
 	return &InMemoryStateProvider{
 		mgr:          mgr,
+		bootID:       fmt.Sprintf("%d", time.Now().UnixNano()),
 		widgetStates: make(map[string]widgetStateEntry),
 		providers:    make(map[string]string),
 		videoState: &VideoStateData{
@@ -314,6 +319,11 @@ func (p *InMemoryStateProvider) GetScreenRotateData() *ScreenRotateData {
 	}
 	cp := *p.screenRotate
 	return &cp
+}
+
+// BootID returns the unique process startup identifier.
+func (p *InMemoryStateProvider) BootID() string {
+	return p.bootID
 }
 
 // BuildHydrationBatch constructs the authoritative 7-step initial state hydration batch
@@ -517,8 +527,10 @@ func BuildHydrationBatch(provider StateProvider, idGen *IDGenerator, now time.Ti
 	}
 
 	var providers map[string]string
+	var bootID string
 	if provider != nil {
 		providers = provider.GetProvidersStatus()
+		bootID = provider.BootID()
 	}
 
 	sysStatus := SystemStatusData{
@@ -527,6 +539,7 @@ func BuildHydrationBatch(provider StateProvider, idGen *IDGenerator, now time.Ti
 		ConfigStatus: configStatus,
 		ConfigError:  status.ConfigError,
 		Providers:    providers,
+		BootID:       bootID,
 	}
 	statusBytes, err := json.Marshal(sysStatus)
 	if err == nil {

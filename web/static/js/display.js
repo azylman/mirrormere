@@ -91,11 +91,12 @@
    */
   function updateClock(customInstant) {
     if (typeof document === 'undefined') return;
+    const now = customInstant instanceof Date ? customInstant : new Date();
+    checkDailyMaintenanceReload(now);
+
     const clockEl = document.getElementById('header-clock');
     const dateEl = document.getElementById('header-date');
     if (!clockEl || !dateEl) return;
-
-    const now = customInstant instanceof Date ? customInstant : new Date();
     const tz = getTimezone();
 
     try {
@@ -160,26 +161,108 @@
     }
   }
 
+  let currentBootId = null;
+  let lastReloadTimestamp = 0;
+  let lastDailyReloadDate = '';
+
   /**
-   * Update system status indicator dot (system.status event).
+   * Check and execute daily maintenance reload at 4:00 AM household time.
+   * Flushes long-lived DOM buffers, GPU memory, and browser cache while kiosk is idle.
+   */
+  function checkDailyMaintenanceReload(customInstant) {
+    const now = customInstant instanceof Date ? customInstant : new Date();
+    const tz = getTimezone();
+    let hour = now.getHours();
+    let minute = now.getMinutes();
+    let dateStr = now.toDateString();
+
+    if (isValidTimezone(tz)) {
+      try {
+        const parts = new Intl.DateTimeFormat('en-US', {
+          timeZone: tz,
+          hour: 'numeric',
+          minute: 'numeric',
+          hour12: false,
+          year: 'numeric',
+          month: 'numeric',
+          day: 'numeric',
+        }).formatToParts(now);
+
+        for (const p of parts) {
+          if (p.type === 'hour') hour = parseInt(p.value, 10);
+          if (p.type === 'minute') minute = parseInt(p.value, 10);
+        }
+        dateStr = new Intl.DateTimeFormat('en-US', { timeZone: tz }).format(now);
+      } catch (_) {}
+    }
+
+    if (hour === 4 && minute === 0 && lastDailyReloadDate !== dateStr) {
+      lastDailyReloadDate = dateStr;
+      console.log(`[MirrormereDisplay] Executing scheduled 4:00 AM maintenance reload for ${dateStr}...`);
+      if (typeof window !== 'undefined' && window.location && typeof window.location.reload === 'function') {
+        window.location.reload();
+      }
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Update system status indicator dot and detect backend deployments (system.status event).
    */
   function handleSystemStatus(data) {
     if (typeof document === 'undefined') return;
     const dot = document.getElementById('system-status-dot');
-    if (!dot || !data) return;
+    if (dot && data) {
+      dot.classList.remove('status-ok', 'status-degraded', 'status-error');
 
-    dot.classList.remove('status-ok', 'status-degraded', 'status-error');
-
-    if (data.online === false) {
-      dot.classList.add('status-error');
-      dot.title = 'System Status: Offline';
-    } else if (data.config_status === 'error') {
-      dot.classList.add('status-degraded');
-      dot.title = `Configuration Degraded: ${data.config_error || 'Error'}`;
-    } else {
-      dot.classList.add('status-ok');
-      dot.title = 'System Status: Healthy';
+      if (data.online === false) {
+        dot.classList.add('status-error');
+        dot.title = 'System Status: Offline';
+      } else if (data.config_status === 'error') {
+        dot.classList.add('status-degraded');
+        dot.title = `Configuration Degraded: ${data.config_error || 'Error'}`;
+      } else {
+        dot.classList.add('status-ok');
+        dot.title = 'System Status: Healthy';
+      }
     }
+
+    // Server deployment detection: reload if boot_id changes after initial connection
+    if (data && data.boot_id) {
+      if (currentBootId === null) {
+        currentBootId = data.boot_id;
+      } else if (currentBootId !== data.boot_id) {
+        const now = Date.now();
+        // Prevent reload storm if server is in crash-loop (minimum 30 seconds cooldown)
+        if (now - lastReloadTimestamp >= 30000) {
+          lastReloadTimestamp = now;
+          currentBootId = data.boot_id;
+          console.log(`[MirrormereDisplay] Server deployment detected (${data.boot_id}), reloading page...`);
+          if (typeof window !== 'undefined' && window.location && typeof window.location.reload === 'function') {
+            window.location.reload();
+          }
+        } else {
+          console.warn('[MirrormereDisplay] Rapid deployment reload throttled (< 30s)');
+        }
+      }
+    }
+  }
+
+  function getBootIdState() {
+    return { currentBootId, lastReloadTimestamp, lastDailyReloadDate };
+  }
+
+  function setBootIdState(state = {}) {
+    if ('currentBootId' in state) currentBootId = state.currentBootId;
+    if ('lastReloadTimestamp' in state) lastReloadTimestamp = state.lastReloadTimestamp;
+    if ('lastDailyReloadDate' in state) lastDailyReloadDate = state.lastDailyReloadDate;
+  }
+
+  function resetBootIdState() {
+    currentBootId = null;
+    lastReloadTimestamp = 0;
+    lastDailyReloadDate = '';
   }
 
   /**
@@ -392,6 +475,10 @@
     updateClock,
     handleHeaderUpdate,
     handleSystemStatus,
+    checkDailyMaintenanceReload,
+    getBootIdState,
+    setBootIdState,
+    resetBootIdState,
     handleStyleReload,
     checkStyleHeartbeat,
     getStyleHeartbeatState,
