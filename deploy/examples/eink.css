@@ -1,21 +1,18 @@
 /* ==========================================================================
    Mirrormere Reference Stylesheet: High-Contrast 1-Bit Monochrome (E-Ink)
-   Authoritative Reference: specs/001-architecture-overview.md & specs/003 §3
-   Mount target: copy to ./config/custom.css (mounted via directory mount ./config:/config:ro per SPEC-003 §3)
+   Authoritative Reference:  &  §3
+   Mount target: copy to ./config/custom.css (mounted via directory mount ./config:/config:ro
 
-   Replaces the touch-kiosk stylesheet entirely (SPEC-003 §3: /style.css serves
-   either the mounted custom.css or the fallback hud.css, never both), so this
+   Replaces the touch-kiosk stylesheet entirely, so this
    file carries its own base layout and tokens rather than only overriding
-   selectors from deploy/examples/custom.css.
-
-   Per SPEC-003 §3's own framing of the e-ink profile: "high-contrast 1-bit
+   selectors from deploy/examples/custom.css. own framing of the e-ink profile: "high-contrast 1-bit
    monochrome, bold typography, zero animations, 2px solid borders." The
-   `eink-renderer` sidecar (SPEC-009) captures this page and dithers it down
+   `eink-renderer` sidecar captures this page and dithers it down
    to a true 1-bit PNG, so colors here only need to read as unambiguously
    light or dark before that pass - no gradients, glows, blur, or
    transitions, all of which dither into noise.
 
-   SPEC-014 "No e-ink CSS in the widget": calendar-family's core template
+    "No e-ink CSS in the widget": calendar-family's core template
    (widgets/calendar-family/views/widget.html) is unconditional, full-color
    HTML with inline member/event colors bound from the server-side view
    model. This stylesheet supplies the e-ink presentation for it - pattern
@@ -171,7 +168,7 @@ button, .touch-target {
 }
 
 /* ==========================================================================
-   calendar-family (SPEC-014) e-ink presentation
+   calendar-family e-ink presentation
 
    The widget's own <style> block was removed (this stylesheet is now the
    only place e-ink-specific CSS lives). Member/event color is set inline
@@ -203,8 +200,7 @@ div[data-widget-type="calendar-family"] .cf-owner-chip {
   border: 1px solid #000000;
 }
 
-/* Pattern fills, keyed to each member's config-level `pattern` (SPEC-014
-   "E-Ink Rendering"). Applied to both the legend chip and any event card
+/* Pattern fills, keyed to each member's config-level `pattern`. Applied to both the legend chip and any event card
    the pattern's owner appears first on (widget.html: `.cf-pattern-<name>`
    on `.cf-owner-chip` and `.cf-event` alike). "solid" is a flat black fill
    with white content; an event/chip with no claimed owner carries no
@@ -215,7 +211,7 @@ div[data-widget-type="calendar-family"] .cf-owner-chip {
    is fully patterned per spec. An event card carries a title (and for timed
    events, a time and initials too), so hatch/dots there are confined to a
    left identification strip rather than tiled behind the text - a
-   full-card tile reads as noise once dithered and fights the text SPEC-014
+   full-card tile reads as noise once dithered and fights the text 
    "E-Ink Rendering" requires stay legible. */
 div[data-widget-type="calendar-family"] .cf-pattern-solid {
   background: #000000 !important;

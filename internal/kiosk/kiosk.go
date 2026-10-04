@@ -77,7 +77,7 @@ func ParseSystemdUnitFile(filePath string) (*SystemdUnit, error) {
 	return unit, nil
 }
 
-// ValidateKioskService checks that the main kiosk service adheres to SPEC-010 requirements.
+// ValidateKioskService checks that the main kiosk service adheres to  requirements.
 func ValidateKioskService(unit *SystemdUnit) error {
 	if unit == nil {
 		return fmt.Errorf("unit is nil")

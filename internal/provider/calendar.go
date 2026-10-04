@@ -23,7 +23,7 @@ const (
 	maxCalendarFeedBytes   = 2 * 1024 * 1024 // 2MB Slowloris defense ceiling
 )
 
-// CalendarEvent represents a single normalized calendar event per SPEC-007 §1.
+// CalendarEvent represents a single normalized calendar event.
 type CalendarEvent struct {
 	ID           string `json:"id"`
 	CalendarName string `json:"calendar_name"`
@@ -36,7 +36,7 @@ type CalendarEvent struct {
 	Description  string `json:"description"`
 }
 
-// CalendarSnapshot represents the normalized calendar provider payload per SPEC-007 §1.
+// CalendarSnapshot represents the normalized calendar provider payload.
 type CalendarSnapshot struct {
 	LastSync   string          `json:"last_sync"`
 	SyncStatus string          `json:"sync_status"`
@@ -67,7 +67,7 @@ type CalendarConfig struct {
 	Calendars        []CalendarSource `json:"calendars" yaml:"calendars"`
 }
 
-// CalendarProvider fetches, parses, expands recurrence rules, and normalizes iCal feeds per SPEC-007 §1.
+// CalendarProvider fetches, parses, expands recurrence rules, and normalizes iCal feeds.
 type CalendarProvider struct {
 	client       *http.Client
 	config       *CalendarConfig

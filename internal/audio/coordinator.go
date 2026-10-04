@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	// DefaultVolume is the standard initial master volume level per SPEC-006 §5.
+	// DefaultVolume is the standard initial master volume level.
 	DefaultVolume = 75
 	// DefaultMuted is the standard initial master mute state.
 	DefaultMuted = false

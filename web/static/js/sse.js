@@ -1,7 +1,6 @@
 /**
  * Mirrormere Realtime Event Client (SSE)
  * Connects to GET api/events with auto-reconnection and exponential backoff.
- * Complies with SPEC-006: Event Streaming & Client Communication.
  */
 class MirrormereSSE {
   constructor(url = 'api/events', options = {}) {
@@ -187,7 +186,7 @@ class MirrormereSSE {
 
     this._attachedEvents = new Set();
 
-    // Standard SSE event types defined in SPEC-006
+    // Standard SSE event types defined in 
     const standardEvents = [
       'screen.rotate',
       'widget.update',

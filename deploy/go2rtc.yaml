@@ -1,5 +1,4 @@
 # deploy/go2rtc.yaml - Mirrormere Hardware-Accelerated Video Ingest Configuration
-# Reference: specs/002-hardware-profiles.md §2 & specs/004-video-cast-ingest.md §7
 
 # Stream Definitions
 streams:

@@ -62,7 +62,7 @@ On the Hub host, feed the recording to `enroll.py` targeting your Mirrormere `/d
 # Running inside the sidecar container (with ./data mounted to /data):
 docker compose exec voice-fingerprinter python enroll.py <speaker_id> --wav /data/enroll-<speaker_id>.wav --output /data/speakers.json
 
-# Audio is never stored long-term (SPEC-011 §Speaker Identification); clean up the WAV on both hosts:
+# Audio is never stored long-term; clean up the WAV on both hosts:
 rm deploy/data/enroll-<speaker_id>.wav
 
 # Or running standalone against the sidecar HTTP endpoint:

@@ -1,6 +1,5 @@
 # deploy/compose.client.yaml - Mirrormere Client / Kiosk Manifest
 # Deploys Edge Voice Ear client, go2rtc HDMI ingest daemon, and Cast Watcher sidecar.
-# Reference: specs/001-architecture-overview.md, specs/002-hardware-profiles.md, & specs/004-video-cast-ingest.md
 
 services:
   mirrormere-ear:

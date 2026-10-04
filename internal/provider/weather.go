@@ -20,7 +20,7 @@ const (
 )
 
 // MapWMOCode maps a WMO 4501 weather code to human-readable condition text and vector icon token.
-// Conforms to SPEC-007 §2.
+// Conforms to .
 func MapWMOCode(code int) (string, string) {
 	switch code {
 	case 0:
@@ -58,7 +58,7 @@ func MapWMOCode(code int) (string, string) {
 	}
 }
 
-// WeatherSnapshot matches the normalized internal weather schema in SPEC-007 §2.
+// WeatherSnapshot matches the normalized internal weather schema in .
 type WeatherSnapshot struct {
 	Location string          `json:"location,omitempty"`
 	Current  WeatherCurrent  `json:"current"`
@@ -130,7 +130,7 @@ type openMeteoResponse struct {
 	} `json:"daily"`
 }
 
-// WeatherProvider ingests weather data from Open-Meteo per SPEC-007 §2.
+// WeatherProvider ingests weather data from Open-Meteo.
 type WeatherProvider struct {
 	client    *http.Client
 	baseURL   string
@@ -317,7 +317,7 @@ func (p *WeatherProvider) Fetch(ctx context.Context) (any, error) {
 		startIndex = 0
 	}
 
-	// Limit hourly timeline to next 24 entries per SPEC-007 §2
+	// Limit hourly timeline to next 24 entries
 	endIndex := startIndex + 24
 	if endIndex > maxSafeLen {
 		endIndex = maxSafeLen
@@ -346,7 +346,7 @@ func (p *WeatherProvider) Fetch(ctx context.Context) (any, error) {
 	if len(data.Daily.PrecipitationProbabilityMax) < dailyCount {
 		dailyCount = len(data.Daily.PrecipitationProbabilityMax)
 	}
-	// Limit daily timeline to 7 days per SPEC-007 §2
+	// Limit daily timeline to 7 days
 	if dailyCount > 7 {
 		dailyCount = 7
 	}

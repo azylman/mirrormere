@@ -1,6 +1,5 @@
 /**
  * dither.js - Pure-JS Selective Two-Pass Quantization & 1-Bit Monochrome PNG Engine
- * Reference: SPEC-003 §4-§5, SPEC-009 §3
  */
 
 const zlib = require('zlib');
@@ -352,7 +351,7 @@ function decodePNG(pngBuffer) {
 }
 
 /**
- * Computes a strong SHA-256 ETag wrapped in quotes for HTTP cache validation per SPEC-009 §3.
+ * Computes a strong SHA-256 ETag wrapped in quotes for HTTP cache validation.
  *
  * @param {Buffer} buffer Target byte buffer
  * @returns {string} Strong ETag string e.g. '"a1b2c3..."'

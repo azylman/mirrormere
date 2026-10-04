@@ -1,6 +1,6 @@
 """
 offline.py - Offline disconnection guard, 8x8 dot overlay, and persistence
-Reference: SPEC-009 §Offline Behavior
+Reference:  Behavior
 """
 
 import logging

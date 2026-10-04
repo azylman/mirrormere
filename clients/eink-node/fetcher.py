@@ -1,6 +1,6 @@
 """
 fetcher.py - ETag-based HTTP image fetcher for Mirrormere E-Ink display node
-Reference: SPEC-009 §1-§3, SPEC-003 §4-§5
+Reference: , 
 """
 
 from dataclasses import dataclass

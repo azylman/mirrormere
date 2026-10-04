@@ -7,7 +7,7 @@ import (
 	"sync"
 )
 
-// Standard operational states for widget payloads per SPEC-003 §2.
+// Standard operational states for widget payloads.
 const (
 	StateHealthy  = "healthy"
 	StateDegraded = "degraded"
@@ -15,7 +15,7 @@ const (
 )
 
 // WidgetPayload represents the standard JSON payload envelope published over the SSE bus
-// or stored in cache per SPEC-003 §2 and SPEC-006 §2.A.
+// or stored in cache.A.
 type WidgetPayload struct {
 	WidgetID  string `json:"widget_id"`
 	Timestamp string `json:"timestamp"`
@@ -45,7 +45,6 @@ func (o InitOptions) GetSecret(key string) string {
 }
 
 // Provider defines the lifecycle and synchronization contract for all widget data fetchers.
-// Complies with SPEC-003 §1 and Phase 3 Chunk 3.1.
 type Provider interface {
 	Init(ctx context.Context, config map[string]any, opts InitOptions) error
 	Fetch(ctx context.Context) (any, error)

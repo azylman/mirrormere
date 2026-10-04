@@ -6,9 +6,9 @@ import (
 )
 
 const (
-	// DefaultRingCapacity is 1,000 events per SPEC-006 §3.
+	// DefaultRingCapacity is 1,000 events.
 	DefaultRingCapacity = 1000
-	// DefaultRingTTL is 5 minutes per SPEC-006 §3.
+	// DefaultRingTTL is 5 minutes.
 	DefaultRingTTL = 5 * time.Minute
 	// MaxEventIDLength prevents processing adversarial header values.
 	MaxEventIDLength = 128

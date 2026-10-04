@@ -1,7 +1,6 @@
 /**
  * Mirrormere Display Carousel & Layout Engine
  * Manages 6x2 CSS grid canvas rendering, DOM pre-warming, hot-swapping, and touch swipe navigation.
- * Complies with SPEC-005, SPEC-006, and SPEC-010.
  */
 class MirrormereCarousel {
   constructor(canvasElement) {
@@ -38,7 +37,7 @@ class MirrormereCarousel {
   }
 
   /**
-   * Pause carousel rotation and swipe handling during video presentation mode (SPEC-004, SPEC-010).
+   * Pause carousel rotation and swipe handling during video presentation mode.
    */
   pause() {
     this.isPaused = true;
@@ -154,7 +153,7 @@ class MirrormereCarousel {
 
     const widgetID = data.widget_id;
     if (!this.activeWidgets.has(widgetID)) {
-      // Widget is rotated off-screen; skip DOM fetch per SPEC-006 §100
+      // Widget is rotated off-screen; skip DOM fetch
       return;
     }
 
@@ -205,7 +204,7 @@ class MirrormereCarousel {
   }
 
   /**
-   * Bind touch swipe gestures for Touch Kiosk Profile A (SPEC-010).
+   * Bind touch swipe gestures for Touch Kiosk Profile A.
    */
   bindTouchGestures() {
     const target = this.canvas || document.body;
@@ -267,7 +266,6 @@ window.MirrormereCarousel = MirrormereCarousel;
  * MirrormerePhotoCarousel Controller
  * Manages photo carousel instances, dynamic edge-resizing parameter injection (=w{w}-h{h}-c),
  * background image preloading, and smooth CSS cross-fade transitions.
- * Complies with SPEC-007 §3 and SPEC-003 §4.
  */
 class PhotoCarouselInstance {
   constructor(element) {

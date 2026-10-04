@@ -109,7 +109,7 @@ func (c *Coordinator) IntervalSeconds() int {
 	return c.snapshot.Config.Display.Rotation.GetIntervalSeconds()
 }
 
-// ScreenRotateData snapshots the active screen layout payload matching SPEC-006 §2.C.
+// ScreenRotateData snapshots the active screen layout payload matching .C.
 func (c *Coordinator) ScreenRotateData() events.ScreenRotateData {
 	c.mu.RLock()
 	defer c.mu.RUnlock()

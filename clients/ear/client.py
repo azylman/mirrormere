@@ -1,4 +1,4 @@
-"""Mirrormere Edge Voice Daemon (SPEC-011)
+"""Mirrormere Edge Voice Daemon
 
 Listens to microphone input (ALSA / PipeWire), performs local wake word detection
 via openWakeWord, relays interaction states to Mirrormere Core HUD, and streams
@@ -7,7 +7,7 @@ captured speech utterances to the LAN Voice Hub.
 Optionally runs in "ambient" or "both" wake mode (see `wake_mode` in
 `config.py`): the existing energy VAD cuts every speech segment and posts it
 to a classifier-gated `ambient_url` endpoint instead of (or alongside) the
-openWakeWord wake phrase. See SPEC-011 "Ambient (Classifier-Gated) Wake Mode".
+openWakeWord wake phrase. See  "Ambient (Classifier-Gated) Wake Mode".
 """
 
 import base64
@@ -161,7 +161,7 @@ class VoiceDaemon:
         self.max_seen = {}
         self.current_worker: Optional[threading.Thread] = None
 
-        # Telemetry tracking attributes (SPEC-011 Task 4)
+        # Telemetry tracking attributes
         self.last_wake_eval_ms: float = 0.0
         self.last_speech_duration_ms: float = 0.0
         self.last_silence_duration_ms: float = 0.0

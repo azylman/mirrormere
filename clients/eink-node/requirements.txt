@@ -1,5 +1,4 @@
 # Mirrormere E-Ink Node Client Dependencies
-# Reference: SPEC-009 §Packaging & Deployment
 
 # Core configuration parser
 PyYAML>=6.0.1

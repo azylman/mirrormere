@@ -8,7 +8,7 @@ import (
 	"github.com/azylman/mirrormere/internal/events"
 )
 
-// Standard voice lifecycle states per SPEC-006 §2.G and SPEC-011 §3.
+// Standard voice lifecycle states.G and .
 const (
 	StateIdle         = "idle"
 	StateListening    = "listening"

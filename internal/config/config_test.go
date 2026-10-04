@@ -20,7 +20,7 @@ func TestLoad_ExampleConfig(t *testing.T) {
 
 	examplePath := filepath.Join("..", "..", "deploy", "examples", "config.yaml")
 
-	// 1. Without FAMILY_CALENDAR_URL set, validation must fail per SPEC-012 §6
+	// 1. Without FAMILY_CALENDAR_URL set, validation must fail
 	_, err := config.LoadWithEnv(examplePath, mockGetenv(nil))
 	if err == nil {
 		t.Fatal("expected error loading example config without FAMILY_CALENDAR_URL, got nil")

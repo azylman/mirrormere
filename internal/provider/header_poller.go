@@ -38,7 +38,7 @@ type headerOpenMeteoResponse struct {
 	} `json:"current"`
 }
 
-// HeaderWeatherPoller manages autonomous polling for display.header.weather per SPEC-007 §4.
+// HeaderWeatherPoller manages autonomous polling for display.header.weather.
 type HeaderWeatherPoller struct {
 	client      *http.Client
 	baseURL     string
@@ -122,7 +122,7 @@ func (p *HeaderWeatherPoller) stopLocked() {
 	p.running = false
 }
 
-// UpdateConfig applies configuration changes during live reload per SPEC-012.
+// UpdateConfig applies configuration changes during live reload.
 func (p *HeaderWeatherPoller) UpdateConfig(ctx context.Context, weatherCfg *config.HeaderWeatherConfig, timezone string) {
 	p.Start(ctx, weatherCfg, timezone)
 }

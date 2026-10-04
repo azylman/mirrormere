@@ -114,7 +114,7 @@ func TestSWRCache_LifecycleAndStateTransitions(t *testing.T) {
 	if p5.State != provider.StateDegraded {
 		t.Fatalf("expected state %q, got %q", provider.StateDegraded, p5.State)
 	}
-	// CRITICAL SPEC-003: Timestamp retains the last successful fetch timestamp (t3), NOT the failure time (t4)
+	// CRITICAL : Timestamp retains the last successful fetch timestamp (t3), NOT the failure time (t4)
 	if p5.Timestamp != t3.Format(time.RFC3339) {
 		t.Fatalf("expected LKG timestamp %q, got %q", t3.Format(time.RFC3339), p5.Timestamp)
 	}

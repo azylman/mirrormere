@@ -8,9 +8,7 @@ bin/
 .mirrormere-coverage-*.tmp
 coverage/
 
-# Specifications & documentation
-specs/
-decisions/
+# Documentation
 docs/
 *.md
 

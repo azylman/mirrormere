@@ -1,6 +1,6 @@
 """
 test_panel.py - Hermetic unit tests for SPI panel manager, pin patching, offline guard, and hardware buttons
-Reference: SPEC-009 §4-§8, Issue #247
+Reference: , Issue #247
 """
 
 import json

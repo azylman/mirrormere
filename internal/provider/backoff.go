@@ -88,7 +88,7 @@ type BackoffPolicy struct {
 	RandFunc        func() float64
 }
 
-// DefaultBackoffPolicy returns standard exponential backoff configuration per SPEC-003.
+// DefaultBackoffPolicy returns standard exponential backoff configuration.
 func DefaultBackoffPolicy() *BackoffPolicy {
 	return &BackoffPolicy{
 		InitialInterval: 5 * time.Second,
@@ -121,7 +121,7 @@ func (b *BackoffPolicy) NextDelay(failures int, intervalCap time.Duration) time.
 		maxDelay = 300 * time.Second
 	}
 
-	// Clamp to the widget's configured refresh interval per SPEC-003 §323
+	// Clamp to the widget's configured refresh interval
 	if intervalCap > 0 && intervalCap < maxDelay {
 		maxDelay = intervalCap
 	}

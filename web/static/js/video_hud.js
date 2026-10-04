@@ -3,7 +3,6 @@
  * Manages the semi-transparent Cyber HUD video overlay, 5-second auto-fade lifecycle,
  * tap-to-wake gestures, transport controls (play/pause, dismiss), and debounced touch
  * volume slider network mutations.
- * Complies with SPEC-004 §5, SPEC-010 §1, and SPEC-010 §4.
  */
 (() => {
   /**
@@ -326,7 +325,7 @@
 
     /**
      * Dispatch video stream dismiss action with in-flight lock.
-     * Unmounts video mode immediately and returns to widgets mode per SPEC-004 §2.
+     * Unmounts video mode immediately and returns to widgets mode.
      */
     handleDismiss() {
       if (this.isActionPending) {
@@ -347,7 +346,7 @@
 
       if (primaryId && pipId && primaryId !== pipId) {
         // When multiple streams are present (primary and PiP), dismiss all streams
-        // to guarantee unmounting video mode and returning to widgets mode per SPEC-004 §2.
+        // to guarantee unmounting video mode and returning to widgets mode.
         this.postDismiss({ id: 'all' });
       } else {
         const targetId = primaryId || pipId || this.activeStream?.id;

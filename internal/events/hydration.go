@@ -17,7 +17,7 @@ type ScreenRotateWidget struct {
 	Dimensions domain.Dimension `json:"dimensions"`
 }
 
-// ScreenRotateData matches SPEC-006 §2.C.
+// ScreenRotateData matches .C.
 type ScreenRotateData struct {
 	CurrentScreen   int                  `json:"current_screen"`
 	TotalScreens    int                  `json:"total_screens"`
@@ -25,7 +25,7 @@ type ScreenRotateData struct {
 	Widgets         []ScreenRotateWidget `json:"widgets"`
 }
 
-// WidgetUpdateData matches SPEC-006 §2.A.
+// WidgetUpdateData matches .A.
 type WidgetUpdateData struct {
 	WidgetID  string `json:"widget_id"`
 	Timestamp string `json:"timestamp"`
@@ -33,7 +33,7 @@ type WidgetUpdateData struct {
 	Data      any    `json:"data"`
 }
 
-// HeaderWeather matches SPEC-006 §2.B and SPEC-007 §4.
+// HeaderWeather matches .B and .
 type HeaderWeather struct {
 	Temperature float64 `json:"temperature"`
 	Units       string  `json:"units"`
@@ -41,27 +41,27 @@ type HeaderWeather struct {
 	Icon        string  `json:"icon"`
 }
 
-// HeaderUpdateData matches SPEC-006 §2.B and SPEC-012 §5.
+// HeaderUpdateData matches .B and .
 type HeaderUpdateData struct {
 	Timestamp string         `json:"timestamp"`
 	Timezone  string         `json:"timezone"`
 	Weather   *HeaderWeather `json:"weather,omitempty"`
 }
 
-// VideoStateData matches SPEC-006 §2.E.
+// VideoStateData matches .E.
 type VideoStateData struct {
 	Mode    string `json:"mode"`
 	Primary any    `json:"primary"`
 	Pip     any    `json:"pip"`
 }
 
-// AudioStateData matches SPEC-006 §2.F.
+// AudioStateData matches .F.
 type AudioStateData struct {
 	Volume int  `json:"volume"`
 	Muted  bool `json:"muted"`
 }
 
-// VoiceStateData matches SPEC-006 §2.G.
+// VoiceStateData matches .G.
 type VoiceStateData struct {
 	State      string  `json:"state"`
 	Transcript *string `json:"transcript"`
@@ -70,7 +70,7 @@ type VoiceStateData struct {
 	Status     *string `json:"status"`
 }
 
-// SystemStatusData matches api/schemas/system.status.json and SPEC-006 §2.D.
+// SystemStatusData matches api/schemas/system.status.json and .D.
 type SystemStatusData struct {
 	Online       bool              `json:"online"`
 	Time         string            `json:"time"`
@@ -327,7 +327,7 @@ func (p *InMemoryStateProvider) BootID() string {
 }
 
 // BuildHydrationBatch constructs the authoritative 7-step initial state hydration batch
-// matching the exact sequence mandated by SPEC-006 §3.
+// matching the exact sequence mandated by .
 func BuildHydrationBatch(provider StateProvider, idGen *IDGenerator, now time.Time) []*Event {
 	events := make([]*Event, 0, 8)
 	nowStr := now.UTC().Format(time.RFC3339)

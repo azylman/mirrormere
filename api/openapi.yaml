@@ -470,7 +470,7 @@ paths:
         Ingests recorded WAV audio from edge kiosk, coordinates Whisper STT, agent brain, and Kokoro TTS,
         streaming SSE events back to the client. When voice_hub.speaker_id is configured, the
         `transcript` event carries `speaker` (matched enrolled id, or "" when nobody matched or matching
-        was unavailable). See SPEC-011 §Speaker Identification.
+        was unavailable).
       operationId: postVoiceInteract
       requestBody:
         required: true

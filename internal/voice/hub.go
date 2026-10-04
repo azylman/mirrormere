@@ -73,7 +73,7 @@ type AskRequest struct {
 	SessionID string
 	// NodeID is the edge device that heard the utterance.
 	NodeID string
-	// Speaker is the matched enrolled speaker, or "" (SPEC-011 §Speaker Identification).
+	// Speaker is the matched enrolled speaker, or "".
 	// It is a personalisation hint, not authentication.
 	Speaker string
 	// SpeakerScore is the best cosine similarity seen, 0 when matching did not run.
@@ -86,7 +86,7 @@ type BrainClient interface {
 }
 
 // BrainAudioChunk is one sentence's worth of pre-synthesized audio delivered
-// by a brain that streams TTS as it goes (MANDOS, SPEC-011 "Sentence
+// by a brain that streams TTS as it goes (MANDOS,  "Sentence
 // Streaming" — the karakos gateway's POST /ask/stream). Format is the audio
 // container (e.g. "wav"); Data is raw decoded bytes. An empty/undecodable
 // Data (len(Data) == 0) signals that sentence's audio failed upstream —
@@ -107,7 +107,7 @@ type BrainAudioChunk struct {
 // checks for this via a type assertion, so a plain BrainClient (JSON /ask,
 // an older brain, or a test fake that only implements Ask) keeps compiling
 // and behaves exactly as before — no double speech, one audio_chunk at the
-// end. See SPEC-011.
+// end. See .
 type AudioStreamingBrainClient interface {
 	BrainClient
 	AskStreaming(ctx context.Context, req AskRequest, onStatus func(status string), onAudio func(chunk BrainAudioChunk)) (string, error)
@@ -1056,7 +1056,7 @@ func (b *DefaultBrainClient) Ask(ctx context.Context, ask AskRequest, onStatus f
 }
 
 // AskStreaming is like Ask, but also delivers sentence-level audio as it
-// streams in (MANDOS, SPEC-011). Same request as Ask — the only thing that
+// streams in (MANDOS, ). Same request as Ask — the only thing that
 // makes a brain "streaming" is the URL it's pointed at (the karakos
 // gateway's POST /ask/stream instead of POST /ask): if that URL sends no
 // `sentence` events, onAudio simply never fires and this behaves exactly

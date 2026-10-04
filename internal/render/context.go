@@ -7,7 +7,7 @@ import (
 )
 
 // Context encapsulates the full unified execution context exposed to widget HTML templates.
-// Conforms strictly to SPEC-003 §1 and SPEC-006 §1.A.
+// Conforms strictly to  and .A.
 type Context struct {
 	ID         string           `json:"id"`
 	Type       string           `json:"type"`
@@ -37,7 +37,7 @@ var exactSensitiveKeys = map[string]struct{}{
 // SanitizeConfig performs a deep clone of the widget instance custom configuration,
 // omitting keys that end with "_env" (environment variable pointers) or match exact
 // credential key names. Ordinary domain keys (e.g. "author", "show_passed", "bypass_cache",
-// "compass", "max_tokens") are strictly preserved per SPEC-003.
+// "compass", "max_tokens") are strictly preserved.
 func SanitizeConfig(cfg map[string]any) map[string]any {
 	if cfg == nil {
 		return map[string]any{}

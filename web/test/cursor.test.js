@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-describe('Touch Kiosk Cursor Suppression (SPEC-010 §Touch Interaction & UI Polish)', () => {
+describe('Touch Kiosk Cursor Suppression', () => {
   const hudCSSPath = path.resolve(__dirname, '../static/css/hud.css');
   const defaultHudCSSPath = path.resolve(__dirname, '../../internal/render/default_hud.css');
   const customCSSPath = path.resolve(__dirname, '../../deploy/examples/custom.css');

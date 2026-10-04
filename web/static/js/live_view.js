@@ -2,7 +2,6 @@
  * Mirrormere Live View Widget Controller
  * Manages ambient video tile streams (WebRTC, MJPEG, HLS), one-tap expand-to-play CQRS handoff,
  * IntersectionObserver off-screen decoder teardown, and SSE synchronization.
- * Complies with SPEC-003, SPEC-004, and SPEC-015.
  */
 (() => {
   class LiveViewInstance {

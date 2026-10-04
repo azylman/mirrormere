@@ -1,7 +1,7 @@
 const { test, describe, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
 
-describe('Display Deployment and Daily Maintenance Reload (SPEC-010 §3)', () => {
+describe('Display Deployment and Daily Maintenance Reload', () => {
   let reloadedCount = 0;
   let mockWindow;
   let mockElements;

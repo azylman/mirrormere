@@ -1,4 +1,4 @@
-"""Mirrormere Edge Voice Package (SPEC-011)"""
+"""Mirrormere Edge Voice Package"""
 
 from .config import VoiceConfig, load_config
 

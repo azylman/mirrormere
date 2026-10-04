@@ -14,7 +14,7 @@ import (
 const (
 	// DefaultSubscriberBuffer is the per-subscriber buffered channel capacity.
 	DefaultSubscriberBuffer = 128
-	// DefaultHeartbeatInterval is the SSE keep-alive ping period per SPEC-006 §2.J.
+	// DefaultHeartbeatInterval is the SSE keep-alive ping period.J.
 	DefaultHeartbeatInterval = 15 * time.Second
 )
 
@@ -246,7 +246,7 @@ func (h *Hub) PublishEvent(evt *Event) {
 	}
 	h.mu.RUnlock()
 
-	// 4. Non-blocking fan-out with slow-consumer disconnection per SPEC-006
+	// 4. Non-blocking fan-out with slow-consumer disconnection
 	for _, sub := range subs {
 		if sub.ctx.Err() != nil {
 			h.Unsubscribe(sub.id)

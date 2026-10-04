@@ -4,7 +4,7 @@ description: Recent conversation transcript, newest message at the bottom. Voice
 provider: chat-log
 
 # Data comes from an in-memory, TTL-bounded store written by the voice hub
-# (SPEC-007 §5): no endpoint, no polling. response_schema validates the optional
+#: no endpoint, no polling. response_schema validates the optional
 # POST /api/widgets/{widget_id}/push body.
 #
 # Payload contract (see README.md in this directory):

@@ -1,6 +1,6 @@
 """
 coalesce.py - Refresh coalescing engine and rate limiting for Mirrormere E-Ink display node
-Reference: SPEC-009 §1-§3
+Reference: 
 """
 
 from dataclasses import dataclass

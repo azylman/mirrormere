@@ -1,6 +1,6 @@
 """
 config.py - Configuration loader and schemas for Mirrormere E-Ink display node
-Reference: SPEC-009 §Configuration
+Reference: 
 """
 
 from dataclasses import dataclass, field

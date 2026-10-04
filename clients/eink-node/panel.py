@@ -1,6 +1,6 @@
 """
 panel.py - Waveshare SPI panel driver controller, Adafruit Bonnet pin patching, and refresh lifecycle
-Reference: SPEC-009 §Reference Hardware, §Refresh Lifecycle, §Pin Map
+Reference:  Hardware, §Refresh Lifecycle, §Pin Map
 """
 
 from abc import ABC, abstractmethod
@@ -23,7 +23,7 @@ def patch_bonnet_pins(pins: PanelPinsConfig, epdconfig_module: Any) -> None:
     """
     Patches epdconfig module constants with the Adafruit E-Ink Bonnet pin mapping
     prior to calling epd.init().
-    Reference: SPEC-009 §Pin Map
+    Reference:  Map
       RST: 27, DC: 22, BUSY: 17, CS: 8, PWR: None
     """
     if hasattr(epdconfig_module, "RST_PIN"):

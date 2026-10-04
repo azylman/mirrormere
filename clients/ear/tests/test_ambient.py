@@ -1,4 +1,4 @@
-"""Tests for wake_mode "ambient" / "both" (SPEC-011 classifier-gated ambient wake)."""
+"""Tests for wake_mode "ambient" / "both"."""
 
 import http.server
 import json

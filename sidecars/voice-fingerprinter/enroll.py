@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """enroll.py — enroll (or remove/list) a speaker fingerprint for Mirrormere's
-Voice Hub speaker-ID feature (SPEC-011 §Speaker Identification, §Fingerprint
-store), via the voice-fingerprinter sidecar.
+Voice Hub speaker-ID feature, via the voice-fingerprinter sidecar.
 
 Calls the sidecar's /embed endpoint (default http://localhost:9096/embed —
 this container's own service when run via

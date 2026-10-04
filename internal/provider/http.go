@@ -39,7 +39,7 @@ func (e *HTTPStatusError) StatusCode() int {
 }
 
 // HTTPProvider implements the Provider interface for out-of-process generic HTTP sidecars
-// per SPEC-003 §3 and SPEC-006 §3.
+//.
 type HTTPProvider struct {
 	client       *http.Client
 	logger       *slog.Logger

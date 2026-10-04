@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// Supported Server-Sent Event types per SPEC-006.
+// Supported Server-Sent Event types.
 const (
 	EventWidgetUpdate = "widget.update"
 	EventHeaderUpdate = "header.update"

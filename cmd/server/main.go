@@ -81,11 +81,10 @@ func WithOnReload(fn func()) Option {
 }
 
 // householdNowFunc returns a clock for the render engine that reports the current instant in
-// the household's configured timezone (SPEC-001 §4: "calendar event bounding intervals ...
-// execute against this house timezone") rather than the server process's own zone, which is
+// the household's configured timezone rather than the server process's own zone, which is
 // UTC in the production container. Without this, BuildFamilyView's t.In(now.Location()) calls
 // in internal/render/family.go are a no-op (now.Location() would already be UTC), so a UTC
-// event near local midnight would still land on the wrong day (SPEC-014 "Timezones").
+// event near local midnight would still land on the wrong day.
 // chatLogWidgetIDs lists the chat-log widget instances in the active configuration.
 func chatLogWidgetIDs(snap *config.Snapshot) []string {
 	if snap == nil || snap.Config == nil {

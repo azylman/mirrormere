@@ -1,6 +1,5 @@
 # syntax=docker/dockerfile:1
 # sidecars/eink-renderer/Dockerfile - Headless E-Ink Snapshot Sidecar
-# Reference: SPEC-003 §4-§5, SPEC-009 §3
 
 FROM node:20-alpine
 

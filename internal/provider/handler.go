@@ -15,7 +15,7 @@ type WidgetPusher interface {
 	PushWidgetData(ctx context.Context, widgetID string, data map[string]any) (WidgetPayload, error)
 }
 
-// PushHandler serves the POST /api/widgets/{widget_id}/push webhook endpoint per SPEC-006 §2.
+// PushHandler serves the POST /api/widgets/{widget_id}/push webhook endpoint.
 type PushHandler struct {
 	pusher WidgetPusher
 	logger *slog.Logger

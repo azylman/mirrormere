@@ -2,7 +2,7 @@ const { test, describe } = require('node:test');
 const assert = require('node:assert/strict');
 const MirrormereSSE = require('../static/js/sse.js');
 
-describe('MirrormereSSE Client & Replay Resumption (SPEC-006 §1, §3)', () => {
+describe('MirrormereSSE Client & Replay Resumption', () => {
   describe('Connection URL Construction (getConnectionURL)', () => {
     test('defaults to relative api/events URL when omitted', () => {
       const sse = new MirrormereSSE();

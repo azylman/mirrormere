@@ -1,5 +1,5 @@
 # /etc/mirrormere/voice.yaml
-# The Ear: Mirrormere Edge Voice Listener Daemon Configuration (SPEC-011)
+# The Ear: Mirrormere Edge Voice Listener Daemon Configuration
 #
 # "ear" is the preferred top-level key (wins if both are present); "voice"
 # is still accepted for existing deployed configs.
@@ -24,7 +24,7 @@ ear:
   wake_mode: "openwakeword"
 
   # Ambient classifier endpoint (required for wake_mode: ambient or both).
-  # See SPEC-011 "Ambient (Classifier-Gated) Wake Mode" for the contract.
+  # See  "Ambient (Classifier-Gated) Wake Mode" for the contract.
   # ambient_url: "http://192.168.1.77:9098/ambient"
 
   # Timeout (seconds) for the ambient classification request.

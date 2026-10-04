@@ -126,7 +126,7 @@ function createVoiceDOM() {
   };
 }
 
-test('Touch Kiosk Voice HUD, Caption Toasts & Dynamic Video Ducking (SPEC-010 §5, SPEC-011 §2–§5)', async (t) => {
+test('Touch Kiosk Voice HUD, Caption Toasts & Dynamic Video Ducking', async (t) => {
   await t.test('initializes with default idle state and hidden elements', () => {
     const dom = createVoiceDOM();
     const audioManager = new AudioManager({ initialVolume: 75 });
@@ -153,7 +153,7 @@ test('Touch Kiosk Voice HUD, Caption Toasts & Dynamic Video Ducking (SPEC-010 §
     assert.strictEqual(audioManager.getEffectiveVolume(), 0.60);
   });
 
-  await t.test('Listening State Visibility Invariant (SPEC-011 §5)', () => {
+  await t.test('Listening State Visibility Invariant', () => {
     const dom = createVoiceDOM();
     const mediaEl = { volume: 1.0, isConnected: true };
     const audioManager = new AudioManager({ initialVolume: 75, mediaElements: [mediaEl] });
@@ -208,7 +208,7 @@ test('Touch Kiosk Voice HUD, Caption Toasts & Dynamic Video Ducking (SPEC-010 §
     controller.handleVoiceState({ state: 'listening' });
     assert.strictEqual(dom.voiceIndicator.classList.contains('listening'), true);
 
-    // 2. Transition to transcribing (pulse ring must stop per SPEC-011)
+    // 2. Transition to transcribing (pulse ring must stop)
     controller.handleVoiceState({ state: 'transcribing' });
     assert.strictEqual(dom.voiceIndicator.classList.contains('listening'), false);
     assert.strictEqual(dom.voiceIndicator.classList.contains('transcribing'), true);
@@ -277,7 +277,7 @@ test('Touch Kiosk Voice HUD, Caption Toasts & Dynamic Video Ducking (SPEC-010 §
     assert.strictEqual(dom.toastBadge.textContent, 'elevenlabs');
     assert.strictEqual(dom.toastBadge.dataset.engine, 'elevenlabs');
 
-    // Piper engine (amber degraded fallback badge per SPEC-011 §3.3)
+    // Piper engine (amber degraded fallback badge.3)
     controller.handleVoiceState({
       state: 'speaking',
       reply: 'Offline fallback active.',

@@ -2,7 +2,6 @@
  * Mirrormere Touch Kiosk Voice HUD, Caption Toasts & Dynamic Audio Ducking
  * Manages client-side voice interaction state presentation, listening state visibility invariant,
  * recognized transcript rendering, caption toast dock, and 20% video audio ducking.
- * Complies with SPEC-010 §4–§5 and SPEC-011 §2–§5.
  */
 (() => {
   const DUCK_STATES = new Set([
@@ -222,7 +221,7 @@
 
     /**
      * Render listening state.
-     * SPEC-011 §5: Listening State Visibility Invariant requires active pulsing cyan/violet radar ring.
+     *  Listening State Visibility Invariant requires active pulsing cyan/violet radar ring.
      */
     renderListening() {
       this.clearStatus();
@@ -258,7 +257,7 @@
       this.showHeaderVoice(true);
 
       if (this.voiceIndicator) {
-        // Stop pulse ring immediately: audio capture is halted per SPEC-011
+        // Stop pulse ring immediately: audio capture is halted
         this.voiceIndicator.classList.remove('listening', 'thinking', 'speaking');
         this.voiceIndicator.classList.add('transcribing');
       }

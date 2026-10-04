@@ -10,7 +10,7 @@ import (
 
 // Standard constants and errors for list ingestion adapters.
 const (
-	// MaxPayloadBytes enforces a strict 2MB Slowloris ceiling on external payloads per SPEC-008.
+	// MaxPayloadBytes enforces a strict 2MB Slowloris ceiling on external payloads.
 	MaxPayloadBytes = 2 * 1024 * 1024
 )
 
@@ -40,7 +40,7 @@ func (e UpstreamHTTPError) StatusCode() int {
 	return e.Code
 }
 
-// Adapter defines the external task list ingestion contract per SPEC-008 §Source Adapters.
+// Adapter defines the external task list ingestion contract Adapters.
 type Adapter interface {
 	Name() string
 	FetchList(ctx context.Context) (*tasks.List, []tasks.ListItem, error)

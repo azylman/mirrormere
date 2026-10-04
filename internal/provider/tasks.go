@@ -30,7 +30,7 @@ type TasksConfig struct {
 }
 
 // TasksProvider implements Provider for the built-in tasks widget.
-// Backed by the local pure-Go SQLite store and pluggable ingestion adapters per SPEC-008.
+// Backed by the local pure-Go SQLite store and pluggable ingestion adapters.
 type TasksProvider struct {
 	mu          sync.RWMutex
 	widgetID    string
@@ -304,7 +304,7 @@ func (p *TasksProvider) Fetch(ctx context.Context) (any, error) {
 	if err != nil {
 		if errors.Is(err, tasks.ErrListNotFound) {
 			if adapter == nil {
-				// Auto-seed empty list on cold boot per SPEC-008
+				// Auto-seed empty list on cold boot
 				now := time.Now().UTC().Truncate(time.Second)
 				source := cfg.Source
 				if source == "" {

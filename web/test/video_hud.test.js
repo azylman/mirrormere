@@ -554,7 +554,7 @@ test('VideoHUDController: tap-to-wake in swapped stream state', () => {
   hud.destroy();
 });
 
-test('VideoHUDController: dismiss button sends id: "all" when both primary and PiP are active per SPEC-004 §2', async () => {
+test('VideoHUDController: dismiss button sends id: "all" when both primary and PiP are active', async () => {
   const dom = createHUDDOM();
   const networkCalls = [];
 
@@ -590,7 +590,7 @@ test('VideoHUDController: dismiss button sends id: "all" when both primary and P
   hud.destroy();
 });
 
-test('VideoHUDController: dismiss button sends id: "all" in swapped presentation state per SPEC-004 §2', async () => {
+test('VideoHUDController: dismiss button sends id: "all" in swapped presentation state', async () => {
   const dom = createHUDDOM();
   const networkCalls = [];
 

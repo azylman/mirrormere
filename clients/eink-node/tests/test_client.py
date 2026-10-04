@@ -1,6 +1,6 @@
 """
 test_client.py - Integrated unit tests for EinkClient orchestration
-Reference: SPEC-009 §1-§3, Issue #246
+Reference: , Issue #246
 """
 
 import time

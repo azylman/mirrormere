@@ -18,7 +18,7 @@ type cacheEntry struct {
 }
 
 // SWRCache maintains the in-memory Stale-While-Revalidate state registry for all widgets.
-// Thread-safe for concurrent read and write access per SPEC-003 §2.
+// Thread-safe for concurrent read and write access.
 type SWRCache struct {
 	mu      sync.RWMutex
 	entries map[string]*cacheEntry
@@ -111,7 +111,7 @@ func (c *SWRCache) RecordFailure(widgetID string, err error, now time.Time) (Wid
 		transitioned = (oldState != StateDegraded)
 		payload = WidgetPayload{
 			WidgetID:  widgetID,
-			Timestamp: e.timestamp, // Retains timestamp of last successful fetch per SPEC-003 §2
+			Timestamp: e.timestamp, // Retains timestamp of last successful fetch
 			State:     StateDegraded,
 			Data:      e.data, // LKG frozen and preserved
 		}

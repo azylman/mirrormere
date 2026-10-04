@@ -92,7 +92,7 @@ func ComputeWidgetBitmask(cols, rows, originCol, originRow int) uint16 {
 }
 
 // ComputeScreens calculates the minimal number of rotation screens K and cell deficit.
-// Math per SPEC-005:
+// Math:
 // - Pinned widgets occupy A_pinned cells on every screen.
 // - Each screen provides (12 - A_pinned) unpinned cells.
 // - K = ceil(A_unpinned / (12 - A_pinned)).
@@ -123,7 +123,7 @@ func ComputeScreens(pinnedArea, unpinnedArea int) (int, int, error) {
 	return k, deficit, nil
 }
 
-// FormatDeficitError formats layout configuration errors per SPEC-005 §Config Load Diagnostics & Deficit Guidance.
+// FormatDeficitError formats layout configuration errors Load Diagnostics & Deficit Guidance.
 func FormatDeficitError(totalArea, targetScreens, deficit int) error {
 	var b strings.Builder
 	fmt.Fprintf(&b, "[Mirrormere Config Error] Invalid widget layout configuration:\n")
