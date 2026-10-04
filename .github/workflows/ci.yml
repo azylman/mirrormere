@@ -43,32 +43,12 @@ jobs:
         run: |
           sh scripts/verify.sh --full
 
-  docker:
-    name: Build & Publish Container Image (${{ matrix.name }})
-    needs: [verify]
+  changes:
+    name: Detect Changed Microservices
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: mirrormere
-            context: .
-            file: ./Dockerfile
-          - name: mirrormere-cast-watcher
-            context: .
-            file: ./sidecars/cast-watcher/Dockerfile
-          - name: mirrormere-eink-renderer
-            context: ./sidecars/eink-renderer
-            file: ./sidecars/eink-renderer/Dockerfile
-          - name: mirrormere-voice-fingerprinter
-            context: ./sidecars/voice-fingerprinter
-            file: ./sidecars/voice-fingerprinter/Dockerfile
-          - name: mirrormere-ear
-            context: ./clients/ear
-            file: ./clients/ear/Dockerfile
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+      has_builds: ${{ steps.set-matrix.outputs.has_builds }}
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -85,6 +65,7 @@ jobs:
               - 'cmd/**'
               - 'internal/**'
               - 'api/**'
+              - 'web/**'
               - 'Makefile'
             mirrormere-cast-watcher:
               - 'sidecars/cast-watcher/**'
@@ -95,33 +76,76 @@ jobs:
             mirrormere-ear:
               - 'clients/ear/**'
 
+      - name: Compute Dynamic Build Matrix
+        id: set-matrix
+        run: |
+          node -e '
+            const filter = {
+              mirrormere: "${{ steps.filter.outputs.mirrormere }}",
+              "mirrormere-cast-watcher": "${{ steps.filter.outputs.mirrormere-cast-watcher }}",
+              "mirrormere-eink-renderer": "${{ steps.filter.outputs.mirrormere-eink-renderer }}",
+              "mirrormere-voice-fingerprinter": "${{ steps.filter.outputs.mirrormere-voice-fingerprinter }}",
+              "mirrormere-ear": "${{ steps.filter.outputs.mirrormere-ear }}"
+            };
+
+            const catalog = [
+              { name: "mirrormere", context: ".", file: "./Dockerfile" },
+              { name: "mirrormere-cast-watcher", context: ".", file: "./sidecars/cast-watcher/Dockerfile" },
+              { name: "mirrormere-eink-renderer", context: "./sidecars/eink-renderer", file: "./sidecars/eink-renderer/Dockerfile" },
+              { name: "mirrormere-voice-fingerprinter", context: "./sidecars/voice-fingerprinter", file: "./sidecars/voice-fingerprinter/Dockerfile" },
+              { name: "mirrormere-ear", context: "./clients/ear", file: "./clients/ear/Dockerfile" }
+            ];
+
+            const matrix = catalog.filter(c => filter[c.name] === "true");
+            console.log("Computed matrix:", JSON.stringify(matrix));
+            const hasBuilds = matrix.length > 0;
+            const fs = require("fs");
+            const output = process.env.GITHUB_OUTPUT;
+            const safeMatrix = hasBuilds ? matrix : [{ name: "none", context: ".", file: "./Dockerfile" }];
+            fs.appendFileSync(output, `matrix=${JSON.stringify(safeMatrix)}\n`);
+            fs.appendFileSync(output, `has_builds=${hasBuilds}\n`);
+          '
+
+  docker:
+    name: Build & Publish Container Image (${{ matrix.name }})
+    needs: [verify, changes]
+    if: needs.changes.outputs.has_builds == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.changes.outputs.matrix) }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
       - name: Set up Python (voice-fingerprinter unit tests)
-        if: matrix.name == 'mirrormere-voice-fingerprinter' && steps.filter.outputs[matrix.name] == 'true'
+        if: matrix.name == 'mirrormere-voice-fingerprinter'
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
       - name: Run voice-fingerprinter unit tests
-        if: matrix.name == 'mirrormere-voice-fingerprinter' && steps.filter.outputs[matrix.name] == 'true'
+        if: matrix.name == 'mirrormere-voice-fingerprinter'
         run: |
           pip install --quiet -r sidecars/voice-fingerprinter/requirements-test.txt
           cd sidecars/voice-fingerprinter && python -m pytest test/ -v
 
       - name: Set up QEMU
-        if: steps.filter.outputs[matrix.name] == 'true'
         uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
-        if: steps.filter.outputs[matrix.name] == 'true'
         uses: docker/setup-buildx-action@v3
 
       - name: Lowercase Repository Owner
-        if: steps.filter.outputs[matrix.name] == 'true'
         id: repo_owner
         run: echo "owner=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
 
       - name: Log in to GitHub Container Registry
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.filter.outputs[matrix.name] == 'true'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -129,7 +153,6 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and Push Docker Image
-        if: steps.filter.outputs[matrix.name] == 'true'
         uses: docker/build-push-action@v5
         with:
           context: ${{ matrix.context }}
