@@ -1,13 +1,13 @@
 <div class="widget-card widget-live-view dither" data-widget-id="{{ .ID }}" data-widget-type="{{ .Type }}" style="grid-column: span {{ .Dimensions.Cols }}; grid-row: span {{ .Dimensions.Rows }}; position: relative; overflow: hidden; padding: 0; background: #000; border: none; border-radius: 8px; cursor: pointer; user-select: none; -webkit-user-select: none;">
   <div class="live-view-viewport" style="position: absolute; inset: 0; width: 100%; height: 100%; overflow: hidden; display: flex; align-items: center; justify-content: center;">
     {{ if eq .Config.stream_type "mjpeg" }}
-      <img class="live-view-media live-view-mjpeg" src="{{ .Config.stream_url }}" alt="{{ if .Config.title }}{{ .Config.title }}{{ else }}Live View{{ end }}" style="width: 100%; height: 100%; object-fit: cover;" />
+      <img class="live-view-media live-view-mjpeg" src="{{ .Config.stream_url }}" alt="{{ if .Config.title }}{{ .Config.title }}{{ else }}Live View{{ end }}" style="width: 100%; height: 100%; object-fit: {{ if eq .Config.fit "cover" }}cover{{ else }}contain{{ end }};" />
     {{ else }}
-      <video class="live-view-media live-view-video" autoplay muted playsinline style="width: 100%; height: 100%; object-fit: cover;"></video>
+      <video class="live-view-media live-view-video" autoplay muted playsinline style="width: 100%; height: 100%; object-fit: {{ if eq .Config.fit "cover" }}cover{{ else }}contain{{ end }};"></video>
     {{ end }}
 
     {{ if .Config.poster_url }}
-      <img class="live-view-poster" src="{{ .Config.poster_url }}" alt="Poster" style="position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: none;" />
+      <img class="live-view-poster" src="{{ .Config.poster_url }}" alt="Poster" style="position: absolute; inset: 0; width: 100%; height: 100%; object-fit: {{ if eq .Config.fit "cover" }}cover{{ else }}contain{{ end }}; display: none;" />
     {{ end }}
 
     <div class="live-view-overlay" style="position: absolute; inset: 0; pointer-events: none; display: flex; flex-direction: column; justify-content: space-between; padding: 8px; background: linear-gradient(180deg, rgba(0,0,0,0.5) 0%, rgba(0,0,0,0) 40%, rgba(0,0,0,0.6) 100%);">
