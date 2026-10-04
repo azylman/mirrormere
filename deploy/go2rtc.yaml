@@ -8,11 +8,14 @@ streams:
   # Hardware transcoding uses Intel VAAPI/QSV on Intel N100 to transcode incoming video to H.264
   # and audio to Opus, serving low-latency WebRTC at http://127.0.0.1:1984/api/webrtc?src=cast.
   cast:
+    - ffmpeg:device?video=/dev/video0&audio=hw:CARD=C4K,DEV=0#video=h264#hardware#audio=opus
     - ffmpeg:device?video=/dev/video0&audio=hw:CARD=Video,DEV=0#video=h264#hardware#audio=opus
+    - ffmpeg:device?video=/dev/video0#video=h264#hardware
 
 # WebRTC & HTTP API Configuration
 api:
   listen: ":1984"
+  origin: "*"
 
 webrtc:
   listen: ":8555"

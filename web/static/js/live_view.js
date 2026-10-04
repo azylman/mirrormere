@@ -34,7 +34,13 @@
       const configEl = this.element.querySelector('.live-view-config');
       if (configEl && configEl.textContent) {
         try {
-          return JSON.parse(configEl.textContent.trim()) || {};
+          let parsed = JSON.parse(configEl.textContent.trim()) || {};
+          if (typeof parsed === 'string') {
+            try {
+              parsed = JSON.parse(parsed) || {};
+            } catch (_) {}
+          }
+          return parsed;
         } catch (e) {
           console.warn(`[MirrormereLiveView] Failed to parse config for ${this.widgetId}:`, e);
         }
@@ -160,6 +166,10 @@
     }
 
     async startStream() {
+      if (this.pc) {
+        this.pauseStream();
+      }
+
       this.mountEpoch++;
       const currentEpoch = this.mountEpoch;
       const streamType = (this.config.stream_type || 'webrtc').toLowerCase();
@@ -179,10 +189,6 @@
       if (!this.PeerConnectionClass) return;
 
       try {
-        if (this.pc) {
-          this.pauseStream();
-        }
-
         const pc = new this.PeerConnectionClass();
         this.pc = pc;
 

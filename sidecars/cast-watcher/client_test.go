@@ -608,3 +608,23 @@ func TestCastClient_CloseAndHeartbeatErrors(t *testing.T) {
 		PayloadUTF8: `{"type":"PING"}`,
 	})
 }
+
+
+func TestCastClient_SupervisorBackoffMax(t *testing.T) {
+	client := NewCastClient(ClientConfig{
+		ReconnectBase:  10 * time.Millisecond,
+		ReconnectMax:   5 * time.Millisecond,
+		ChromecastAddr: "127.0.0.1:65534",
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
+	defer cancel()
+	client.Start(ctx)
+}
+
+
+func TestCastClient_PostToCoreFail(t *testing.T) {
+	client := NewCastClient(ClientConfig{
+		CoreURL: "http://127.0.0.1:65534",
+	})
+	client.postToCore("http://127.0.0.1:65534", []byte("{}"), "trigger")
+}
