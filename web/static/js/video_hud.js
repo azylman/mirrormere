@@ -39,7 +39,10 @@
       this.volumeSlider = options.volumeSlider || (typeof document !== 'undefined' ? document.getElementById('video-hud-volume-slider') : null);
       this.stageElement = options.stageElement || (typeof document !== 'undefined' ? document.getElementById('video-stage') : null);
       this.videoManager = options.videoManager || null;
-      this.fetchFn = options.fetch || (typeof fetch !== 'undefined' ? fetch : null);
+      const defaultFetch = (typeof window !== 'undefined' && typeof window.fetch === 'function')
+        ? window.fetch.bind(window)
+        : (typeof fetch === 'function' ? fetch : null);
+      this.fetchFn = options.fetch || defaultFetch;
 
       this.autoFadeTimeout = options.autoFadeTimeout !== undefined ? options.autoFadeTimeout : 5000;
       this.throttleInterval = options.throttleInterval !== undefined ? options.throttleInterval : 200;
@@ -219,11 +222,16 @@
      */
     syncStream() {
       const stream = this.getActiveStream();
+      const hadStream = Boolean(this.activeStream);
       this.activeStream = stream;
 
       if (!stream) {
         this.hideHUD();
         return;
+      }
+
+      if (!hadStream && stream) {
+        this.showHUD();
       }
 
       // Update stream title
@@ -435,7 +443,7 @@
      */
     postAction(body) {
       if (!this.fetchFn) return Promise.resolve();
-      return this.fetchFn('api/video/action', {
+      return (0, this.fetchFn)('api/video/action', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -446,7 +454,7 @@
 
     postDismiss(body) {
       if (!this.fetchFn) return Promise.resolve();
-      return this.fetchFn('api/video/dismiss', {
+      return (0, this.fetchFn)('api/video/dismiss', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -457,7 +465,7 @@
 
     postMute(body) {
       if (!this.fetchFn) return Promise.resolve();
-      return this.fetchFn('api/audio/mute', {
+      return (0, this.fetchFn)('api/audio/mute', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -468,7 +476,7 @@
 
     postVolume(body) {
       if (!this.fetchFn) return Promise.resolve();
-      return this.fetchFn('api/audio/volume', {
+      return (0, this.fetchFn)('api/audio/volume', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),

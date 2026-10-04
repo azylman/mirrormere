@@ -389,8 +389,9 @@ button, .touch-target {
   z-index: 80;
   pointer-events: none;
   opacity: 0;
+  visibility: hidden;
   background: linear-gradient(180deg, rgba(9, 5, 20, 0.8) 0%, transparent 22%, transparent 78%, rgba(9, 5, 20, 0.85) 100%);
-  transition: opacity 0.3s cubic-bezier(0.25, 1, 0.5, 1);
+  transition: opacity 0.3s cubic-bezier(0.25, 1, 0.5, 1), visibility 0.3s cubic-bezier(0.25, 1, 0.5, 1);
   display: flex;
   flex-direction: column;
   justify-content: space-between;
@@ -400,6 +401,7 @@ button, .touch-target {
 
 .video-hud-overlay.visible {
   opacity: 1;
+  visibility: visible;
 }
 
 /* Header with Title and Dismiss Button */

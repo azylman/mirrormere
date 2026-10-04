@@ -27,7 +27,10 @@
       this.audioManager = options.audioManager || (typeof window !== 'undefined' ? window.audioManager : null);
       this.carousel = options.carousel || (typeof window !== 'undefined' ? window.carousel : null);
       this.hud = options.hud || null;
-      this.fetchFn = options.fetch || (typeof fetch !== 'undefined' ? fetch : null);
+      const defaultFetch = (typeof window !== 'undefined' && typeof window.fetch === 'function')
+        ? window.fetch.bind(window)
+        : (typeof fetch === 'function' ? fetch : null);
+      this.fetchFn = options.fetch || defaultFetch;
       this.PeerConnectionClass = options.RTCPeerConnection || (typeof RTCPeerConnection !== 'undefined' ? RTCPeerConnection : null);
 
       this.currentMode = 'widgets';
