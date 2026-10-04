@@ -237,4 +237,51 @@ test('Live View Client Controller (SPEC-015)', async (t) => {
 
     global.window.MirrormereLiveView.unmount('cam-tile');
   });
+
+  await t.test('mounts instance and parses double-encoded config string cleanly', () => {
+    const rawConfig = { stream_url: 'http://127.0.0.1:1984/api/webrtc?src=cast', stream_type: 'webrtc' };
+    const el = createMockElement(rawConfig);
+    el.querySelector = (selector) => {
+      if (selector === '.live-view-config') {
+        return { textContent: JSON.stringify(JSON.stringify(rawConfig)) };
+      }
+      if (selector === 'video.live-view-media') return el._video;
+      if (selector === 'img.live-view-mjpeg') return el._img;
+      return null;
+    };
+
+    const inst = global.window.MirrormereLiveView.mount(el, {
+      RTCPeerConnection: MockPeerConnection,
+    });
+
+    assert.ok(inst);
+    assert.equal(typeof inst.config, 'object');
+    assert.equal(inst.config.stream_url, 'http://127.0.0.1:1984/api/webrtc?src=cast');
+    assert.ok(inst.pc);
+
+    global.window.MirrormereLiveView.unmount('cam-tile');
+  });
+
+  await t.test('startStream cleans up existing pc without invalidating currentEpoch', async () => {
+    const el = createMockElement({ stream_url: 'http://127.0.0.1:1984/api/webrtc?src=cast' });
+    const mockFetch = async () => ({
+      ok: true,
+      text: () => Promise.resolve('{"sdp":"v=0\\r\\no=mock\\r\\n"}'),
+    });
+    const inst = global.window.MirrormereLiveView.mount(el, {
+      RTCPeerConnection: MockPeerConnection,
+      fetch: mockFetch,
+    });
+
+    assert.ok(inst.pc);
+    const initialPc = inst.pc;
+
+    await inst.startStream();
+
+    assert.ok(initialPc.closed);
+    assert.ok(inst.pc);
+    assert.equal(inst.pc.closed, false);
+
+    global.window.MirrormereLiveView.unmount('cam-tile');
+  });
 });
