@@ -1,6 +1,6 @@
 """
 test_config.py - Hermetic unit tests for EinkConfig and load_config
-Reference: SPEC-009 §Configuration
+Reference: 
 """
 
 import os
@@ -13,7 +13,7 @@ from config import EinkConfig, load_config
 class TestConfig(unittest.TestCase):
     def test_default_config(self):
         """
-        Validates default values specified in SPEC-009 §Configuration.
+        Validates default values specified in .
         """
         cfg = EinkConfig()
         self.assertEqual(cfg.server.events_url, "http://localhost:8080/api/events")

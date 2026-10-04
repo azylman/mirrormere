@@ -22,7 +22,7 @@ function setupDOMMock() {
   fn(global.window, {}, global.setInterval, global.clearInterval, global.setTimeout, global.clearTimeout);
 }
 
-test('Photo Carousel Client Controller (SPEC-007 §3)', async (t) => {
+test('Photo Carousel Client Controller', async (t) => {
   setupDOMMock();
 
   await t.test('computes dynamic edge-sizing query parameters with dpr', () => {

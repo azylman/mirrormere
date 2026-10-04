@@ -1,6 +1,6 @@
 """
 image.py - 1-bit monochrome image validation, 8x8 offline dot stamping, and persistence
-Reference: SPEC-009 §4, §Offline Behavior
+Reference: , §Offline Behavior
 """
 
 import logging

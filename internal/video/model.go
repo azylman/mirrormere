@@ -34,7 +34,7 @@ const (
 	// ActionPause pauses playback on controllable streams.
 	ActionPause = "pause"
 
-	// DefaultTemporaryTimeoutSeconds is the fallback auto-dismiss timeout for temporary streams per SPEC-004.
+	// DefaultTemporaryTimeoutSeconds is the fallback auto-dismiss timeout for temporary streams.
 	DefaultTemporaryTimeoutSeconds = 45
 )
 
@@ -66,7 +66,7 @@ type VideoStream struct {
 	Muted          bool   `json:"muted,omitempty"`
 }
 
-// VideoState defines the authoritative video presentation snapshot matching SPEC-006 §2.E and SPEC-004 §4.
+// VideoState defines the authoritative video presentation snapshot matching .E and .
 type VideoState struct {
 	Mode    string       `json:"mode"`
 	Primary *VideoStream `json:"primary"`

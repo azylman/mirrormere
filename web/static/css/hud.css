@@ -1,6 +1,6 @@
 /* ==========================================================================
    Mirrormere Default Stylesheet: Cyber HUD (Touch Kiosk / Desktop)
-   Authoritative Reference: specs/001-architecture-overview.md & specs/003 §3
+   Authoritative Reference:  &  §3
    Mount target: fallback when /config/custom.css is absent
    ========================================================================== */
 
@@ -236,7 +236,7 @@ button, .touch-target {
 }
 
 /* ==========================================================================
-   Video Presentation Stage & PiP Dock (SPEC-004 §1, §5, SPEC-010 §1)
+   Video Presentation Stage & PiP Dock
    ========================================================================== */
 
 .video-stage {
@@ -381,7 +381,7 @@ button, .touch-target {
 }
 
 /* ==========================================================================
-   Touch HUD Video Controls Overlay (SPEC-004 §5, SPEC-010 §1, §4)
+   Touch HUD Video Controls Overlay
    ========================================================================== */
 
 .video-hud-overlay {
@@ -555,7 +555,7 @@ button, .touch-target {
 }
 
 /* ==========================================================================
-   Voice Assistant HUD Presentation & Caption Toasts (SPEC-010 §5, SPEC-011 §2–§5)
+   Voice Assistant HUD Presentation & Caption Toasts
    ========================================================================== */
 
 /* Header Voice Zone (Centered between Weather and System Status) */

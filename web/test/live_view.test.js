@@ -11,7 +11,7 @@ function setupDOMMock() {
   fn(global.window, {}, global.fetch, undefined, undefined, global.setTimeout, global.clearTimeout);
 }
 
-test('Live View Client Controller (SPEC-015)', async (t) => {
+test('Live View Client Controller', async (t) => {
   setupDOMMock();
 
   class MockPeerConnection {

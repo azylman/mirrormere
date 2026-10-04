@@ -1,6 +1,6 @@
 """
 health.py - Observability and healthcheck HTTP server on port 8099
-Reference: SPEC-009 §Observability
+Reference: 
 """
 
 from http.server import HTTPServer, BaseHTTPRequestHandler

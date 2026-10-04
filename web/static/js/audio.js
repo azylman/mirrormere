@@ -1,7 +1,7 @@
 /**
  * Mirrormere Master Audio Manager & Software Volume Ceiling
  * Manages client-side digital volume attenuation, mute state synchronization,
- * and 80% maximum element volume ceiling per SPEC-004 §3, SPEC-006 §5, and SPEC-010 §4.
+ * and 80% maximum element volume ceiling, , and .
  */
 
 /**
@@ -38,7 +38,7 @@ class AudioManager {
   constructor(options = {}) {
     this.volume = options.initialVolume !== undefined ? Number(options.initialVolume) : 75;
     this.muted = Boolean(options.initialMuted);
-    this.ducked = false; // Held false until Phase 6 voice assistant bringup (SPEC-011)
+    this.ducked = false; // Held false until Phase 6 voice assistant bringup
     this.mediaElements = new Set();
 
     if (Array.isArray(options.mediaElements)) {

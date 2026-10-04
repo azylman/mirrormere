@@ -2,7 +2,6 @@
 set -eu
 
 # scripts/bench-verify.sh - Mirrormere Full-Stack Bench Smoke Test & Connectivity Verifier
-# Reference: SPEC-013 Phase 6 (Chunk 6.3 - Issue #250) & SPEC-002
 #
 # Validates live connectivity across all active container profiles:
 #   - Core Daemon:       ${CORE_URL:-http://localhost:8080}/healthz and /display

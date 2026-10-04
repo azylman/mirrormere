@@ -11,7 +11,7 @@ var (
 	ErrItemNotFound = errors.New("item not found")
 )
 
-// List represents a distinct task or checklist entity per SPEC-008 §Data Model.
+// List represents a distinct task or checklist entity Model.
 type List struct {
 	ID        string    `json:"id"`
 	Name      string    `json:"name"`
@@ -21,7 +21,7 @@ type List struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// ListItem represents an individual item or task belonging to a List per SPEC-008 §Data Model.
+// ListItem represents an individual item or task belonging to a List Model.
 type ListItem struct {
 	ID        string    `json:"id"`
 	ListID    string    `json:"list_id"`
@@ -36,7 +36,7 @@ type ListItem struct {
 }
 
 // TasksSnapshot represents the normalized payload published over the SSE bus (widget.update)
-// and consumed by widgets per SPEC-008 §Wire Protocol.
+// and consumed by widgets Protocol.
 type TasksSnapshot struct {
 	List  List       `json:"list"`
 	Items []ListItem `json:"items"`

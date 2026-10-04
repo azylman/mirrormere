@@ -67,7 +67,7 @@ func (hw *HeaderWeatherConfig) GetRefreshIntervalSeconds() int {
 	return *hw.RefreshIntervalSeconds
 }
 
-// GridConfig defines the discrete tile geometry (strictly 6x2 per SPEC-005).
+// GridConfig defines the discrete tile geometry (strictly 6x2).
 type GridConfig struct {
 	Columns int `yaml:"columns,omitempty"`
 	Rows    int `yaml:"rows,omitempty"`
@@ -125,7 +125,7 @@ type VoiceHubConfig struct {
 	TTSTimeoutSeconds   *int   `yaml:"tts_timeout_seconds,omitempty"`
 
 	// SpeakerID enables matching each utterance against enrolled voice
-	// fingerprints (SPEC-011 §Speaker Identification). Optional: when absent,
+	// fingerprints. Optional: when absent,
 	// every turn carries an empty speaker.
 	SpeakerID *SpeakerIDConfig `yaml:"speaker_id,omitempty"`
 }
@@ -446,7 +446,7 @@ func (c *Config) Validate() error {
 	}
 	c.location = loc
 
-	// 2. Grid validation (SPEC-005: strictly 6 columns by 2 rows)
+	// 2. Grid validation
 	if c.Display.Grid.Columns != 6 {
 		return fmt.Errorf("grid columns must be 6 (got %d)", c.Display.Grid.Columns)
 	}

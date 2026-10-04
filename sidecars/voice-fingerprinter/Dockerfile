@@ -1,6 +1,5 @@
 # syntax=docker/dockerfile:1
 # sidecars/voice-fingerprinter/Dockerfile - CPU Speaker-Embedding Sidecar
-# Reference: SPEC-011 Speaker Identification / Embedding endpoint
 #
 # CPU-only build: torch/torchaudio come from the PyTorch CPU wheel index,
 # never the default PyPI index (which resolves a multi-GB CUDA build).

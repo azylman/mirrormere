@@ -8,7 +8,7 @@
 
 **Tech Stack:** Go 1.24 (standard library `net/http`, Slowloris hardening, `oapi-codegen`, zero-CGO SQLite via `modernc.org/sqlite`), Vanilla ES6 / CSS3 (Cyber HUD tokens, CSS Grid, WebRTC), Docker Compose multi-arch, Python 3.11 (CastV2, Waveshare SPI e-paper).
 
-**Specs:** `specs/001-architecture-overview.md` through `specs/012-live-config-reload-and-lkgc.md`.
+**Specs:** `` through ``.
 
 ---
 
@@ -17,9 +17,9 @@
 - **Test Coverage:** Strict `>= 95.0%` statement coverage floor across all Go packages, gated locally via `scripts/check-coverage.sh` and `./scripts/verify.sh`.
 - **API First:** Single source of truth in `api/openapi.yaml` and `api/schemas/*.json`. Compile-time interface compliance via `oapi-codegen` into `internal/api/`. Zero contract drift.
 - **Audio Ceiling:** Enforce master volume 80% ceiling strictly in client DOM software (`element.volume = (volume / 100) * 0.80 * (isDucked ? 0.20 : 1.0) * (isMuted ? 0.0 : 1.0)`), zero host-level OS settings or PipeWire manipulation.
-- **Read-Only Ambient Tasks Contract:** Mirrormere operates strictly as a read-only ambient display surface for lists and tasks (SPEC-006 §7, SPEC-008). Zero write mutations, zero provisional IDs, and zero client-side optimistic UI reconciliation. Lists ingest via pluggable `ListSource` adapters (`local`, `gtasks`, `http`), inspected exclusively via `GET /api/lists/{list_id}/items`.
-- **Deterministic 6×2 Grid Engine:** 6 columns × 2 rows = 12 discrete cells below a fixed header zone, solved via a 2D recursive backtracking bitmask solver (`0x000` to `0xFFF`) with pinned widget replication, auto-computed minimum screens, and deficit guidance (SPEC-005).
-- **Zero `${VAR}` Env Interpolation:** Secrets are resolved exclusively via explicit `*_env` keys (`token_env`, `url_env`) per SPEC-012 §6. No arbitrary string interpolation.
+- **Read-Only Ambient Tasks Contract:** Mirrormere operates strictly as a read-only ambient display surface for lists and tasks. Zero write mutations, zero provisional IDs, and zero client-side optimistic UI reconciliation. Lists ingest via pluggable `ListSource` adapters (`local`, `gtasks`, `http`), inspected exclusively via `GET /api/lists/{list_id}/items`.
+- **Deterministic 6×2 Grid Engine:** 6 columns × 2 rows = 12 discrete cells below a fixed header zone, solved via a 2D recursive backtracking bitmask solver (`0x000` to `0xFFF`) with pinned widget replication, auto-computed minimum screens, and deficit guidance.
+- **Zero `${VAR}` Env Interpolation:** Secrets are resolved exclusively via explicit `*_env` keys (`token_env`, `url_env`). No arbitrary string interpolation.
 - **Deployment-Time Configuration:** Zero runtime theme switching or multi-tenant display multiplexing. Independent container instances load their owner's specific config and mounted stylesheet.
 
 ---
@@ -61,8 +61,8 @@ flowchart TD
     - Create: `internal/config/config.go`
     - Create: `internal/config/config_test.go`
   - Requirements:
-    - Parse `config.yaml` with schema validation for canonical keys: `timezone`, `display` (holding `rotation`, `grid`, `header`, and `widgets`). No manual `screens` key; no top-level `providers` block (SPEC-003, SPEC-005).
-    - Resolve secrets strictly through explicit `*_env` keys (`token_env`, `url_env`) reading from the host environment. Zero `${VAR}` string interpolation (SPEC-012 §6).
+    - Parse `config.yaml` with schema validation for canonical keys: `timezone`, `display` (holding `rotation`, `grid`, `header`, and `widgets`). No manual `screens` key; no top-level `providers` block.
+    - Resolve secrets strictly through explicit `*_env` keys (`token_env`, `url_env`) reading from the host environment. Zero `${VAR}` string interpolation.
   - Deliverable: Hermetic unit tests achieving `>= 95%` coverage validating valid, invalid, and edge configuration structures.
 
 - [x] **Task 1.4: Widget Package Loader & Manifest Validator**
@@ -86,7 +86,7 @@ flowchart TD
       - Compute minimal rotation screens: $K = \lceil A_{\text{unpinned}} / (12 - A_{\text{pinned}}) \rceil$.
       - Pinned widget replication across all screens.
       - Bitmask placement verification (`screen_bitmask == 0xFFF`).
-      - Helpful layout deficit and spacer tile (`type: spacer`) guidance on tiling errors per SPEC-005.
+      - Helpful layout deficit and spacer tile (`type: spacer`) guidance on tiling errors.
   - Deliverable: Comprehensive unit tests in `internal/layout/solver_test.go` across various tile sizes and edge cases.
 
 - [x] **Task 1.6: LKGC 6-Stage Validation Pipeline & Atomic Swap**
@@ -94,7 +94,7 @@ flowchart TD
     - Create: `internal/config/lkgc.go`
     - Create: `internal/config/lkgc_test.go`
   - Requirements:
-    - Implement 6-stage validation pipeline from SPEC-012:
+    - Implement 6-stage validation pipeline from :
       1. YAML Syntax & Structure (top-level `timezone`, `display`)
       2. Core Instance Schemas
       3. Package Existence & Completeness (via Chunk 1.4 loader)
@@ -133,7 +133,7 @@ flowchart TD
     - Zero write deadlines on SSE connections via `http.ResponseController(w).SetWriteDeadline(time.Time{})`.
     - 1,000 events / 5-minute ring buffer for `Last-Event-ID` reconnection replay.
     - Periodic heartbeat ping (`: ping\n\n`) every 15s.
-    - **Initial State Hydration Invariant (SPEC-006 §3)**: Flushes full snapshot across all configured widgets and screens on initial connection (`screen.rotate`, all `widget.update`s, `header.update`, `video.state`, `audio.state`, `voice.state`, `system.status`).
+    - **Initial State Hydration Invariant**: Flushes full snapshot across all configured widgets and screens on initial connection (`screen.rotate`, all `widget.update`s, `header.update`, `video.state`, `audio.state`, `voice.state`, `system.status`).
 
 - [ ] **Task 2.2: Screen Rotation Coordinator & Navigation Endpoints**
   - Files:
@@ -143,7 +143,7 @@ flowchart TD
     - Create: `internal/api/handlers_screen_test.go`
   - Requirements:
     - Timer-driven screen rotation (`display.rotation.interval_seconds`).
-    - Emit `screen.rotate` carrying active screen index and layout metadata; clients fetch `GET /api/widgets/{widget_id}/render` for each widget on the new layout (SPEC-006 §2.C, #146).
+    - Emit `screen.rotate` carrying active screen index and layout metadata; clients fetch `GET /api/widgets/{widget_id}/render` for each widget on the new layout.
     - Implement navigation endpoints: `POST /api/screen/select`, `POST /api/screen/advance`, and `POST /api/screen/pause` (with optional `duration_seconds: 120` auto-resume timer).
 
 - [ ] **Task 2.3: Server-Side Rendering (SSR) Engine & Static Asset Pipeline**
@@ -156,7 +156,7 @@ flowchart TD
     - In-process `html/template` renderer executing widget `views/widget.html`.
     - Route `GET /api/widgets/{widget_id}/render`: renders HTML fragment using active widget state.
     - Route `GET /widget-types/{type}/assets/{path}`: serves static assets from widget package directory.
-    - Route `GET /style.css`: serves volume-mounted custom stylesheet (`/config/custom.css`) if present, otherwise default `hud.css` (SPEC-003 §3, SPEC-006 §2.I).
+    - Route `GET /style.css`: serves volume-mounted custom stylesheet (`/config/custom.css`) if present, otherwise default `hud.css`.
 
 - [ ] **Task 2.4: Web Display HUD & Walking Skeleton**
   - Files:
@@ -182,7 +182,7 @@ flowchart TD
     - Create: `internal/provider/cache.go`
     - Create: `internal/provider/coordinator.go`
   - Requirements:
-    - Pluggable `Provider` lifecycle interface per SPEC-003: `Init(ctx context.Context, cfg map[string]any) error`, `Fetch(ctx context.Context) (any, error)`, `Subscribe(events chan<- WidgetEvent)`, `Shutdown(ctx context.Context) error`.
+    - Pluggable `Provider` lifecycle interface: `Init(ctx context.Context, cfg map[string]any) error`, `Fetch(ctx context.Context) (any, error)`, `Subscribe(events chan<- WidgetEvent)`, `Shutdown(ctx context.Context) error`.
     - In-memory Stale-While-Revalidate cache: return stale data immediately on transient errors while logging background fetch failures.
     - Exponential backoff with jitter on network refusal or upstream 5xx.
     - Degraded state tracking: `healthy`, `degraded` (LKG preserved, opacity 0.8), `error` (cold-boot empty state).
@@ -208,10 +208,10 @@ flowchart TD
     - Create: `widgets/photos/manifest.yaml` & `views/widget.html`
   - Requirements:
     - Calendar: fetch and parse remote iCal (.ics) and CalDAV URLs (Google Calendar, iCloud, Fastmail/Nextcloud).
-    - Weather: query Open-Meteo keyless API; autonomous poller emitting dedicated `header.update` SSE events (SPEC-007 §4).
+    - Weather: query Open-Meteo keyless API; autonomous poller emitting dedicated `header.update` SSE events.
     - Photos: zero-credential Google Photos shared album scraper extracting `AF_initDataCallback` image URLs with dynamic `=w{w}-h{h}-c` sizing parameters.
 
-- [ ] **Task 3.4: Read-Only Tasks & Lists Service (SPEC-008)**
+- [ ] **Task 3.4: Read-Only Tasks & Lists Service**
   - Files:
     - Create: `internal/storage/sqlite/db.go`
     - Create: `internal/provider/lists/lists.go`
@@ -288,8 +288,8 @@ flowchart TD
     - Create: `clients/eink-node/requirements.txt`
     - Create: `clients/eink-node/config.yaml`
   - Requirements:
-    - Adafruit Bonnet GPIO pin mapping: RST=27, DC=22, BUSY=17, CS=CE0 (GPIO 8), Buttons=GPIO 5 & 6 (SPEC-009).
-    - Wire button tap on GPIO 6 to trigger `POST /api/screen/advance` on Core daemon; button on GPIO 5 forces a full panel refresh to clear accumulated ghosting per SPEC-009.
+    - Adafruit Bonnet GPIO pin mapping: RST=27, DC=22, BUSY=17, CS=CE0 (GPIO 8), Buttons=GPIO 5 & 6.
+    - Wire button tap on GPIO 6 to trigger `POST /api/screen/advance` on Core daemon; button on GPIO 5 forces a full panel refresh to clear accumulated ghosting.
     - Refresh lifecycle: 5s debounce, 60s minimum panel write floor, 60m full refresh cycle, deep sleep after every write.
     - Offline guard: 8×8 black dot in top-right corner if offline > 120s; persist last good frame to `/var/lib/mirrormere-eink/last.png`.
     - Standardized healthcheck endpoint on port 8099 (`GET :8099/healthz`).

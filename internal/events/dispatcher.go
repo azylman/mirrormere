@@ -60,7 +60,7 @@ func (h *Hub) DispatchConfigReload(snapshot *config.Snapshot, diff *config.Confi
 		}
 	}
 
-	// 3. For any modified instance whose domain parameters changed, broadcast degraded widget.update per SPEC-012 §3
+	// 3. For any modified instance whose domain parameters changed, broadcast degraded widget.update
 	if diff != nil {
 		now := h.cfg.NowFunc()
 		nowStr := now.UTC().Format(time.RFC3339)
@@ -79,7 +79,7 @@ func (h *Hub) DispatchConfigReload(snapshot *config.Snapshot, diff *config.Confi
 			}
 		}
 
-		// 4. If household timezone changed per SPEC-012 §5, broadcast header.update
+		// 4. If household timezone changed, broadcast header.update
 		if diff.TimezoneChanged && snapshot.Config != nil {
 			var weather *HeaderWeather
 			if isp, ok := h.stateProvider.(*InMemoryStateProvider); ok {

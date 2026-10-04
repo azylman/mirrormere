@@ -50,7 +50,7 @@ type Snapshot struct {
 	LoadedAt time.Time
 }
 
-// InstanceChangeType categorizes the diff between running and new widget instances per SPEC-012 §3.
+// InstanceChangeType categorizes the diff between running and new widget instances.
 type InstanceChangeType string
 
 const (
@@ -78,10 +78,10 @@ type ConfigDiff struct {
 	Removed         []WidgetConfig
 	Modified        []InstanceDiff
 	LayoutModified  []WidgetConfig // Instances whose dimensions or pinned status changed without worker modifications
-	TimezoneChanged bool           // Household IANA timezone updated per SPEC-012 §5
+	TimezoneChanged bool           // Household IANA timezone updated
 }
 
-// Manager coordinates live configuration reloads and enforces LKGC resilience per SPEC-012.
+// Manager coordinates live configuration reloads and enforces LKGC resilience.
 type Manager struct {
 	reloadMu        sync.Mutex
 	current         atomic.Pointer[Snapshot]
@@ -211,7 +211,7 @@ func (m *Manager) updateStatusLocked() {
 	})
 }
 
-// SetPackageError records a package incompleteness error in Manager's status per SPEC-003 §1.
+// SetPackageError records a package incompleteness error in Manager's status.
 func (m *Manager) SetPackageError(widgetType string, err error) {
 	if err == nil {
 		return
@@ -299,7 +299,7 @@ func (m *Manager) Reload(data []byte) (*Snapshot, *ConfigDiff, error) {
 	return candidate, diff, nil
 }
 
-// ValidatePipeline executes the 6-stage LKGC validation pipeline per SPEC-012 §2.
+// ValidatePipeline executes the 6-stage LKGC validation pipeline.
 func ValidatePipeline(data []byte, loader PackageLoader, getenv func(string) string) (*Snapshot, error) {
 	if loader == nil {
 		return nil, fmt.Errorf("package loader cannot be nil")
@@ -423,7 +423,7 @@ func validatePackagesStage(cfg *Config, loader PackageLoader) (map[string]*domai
 		}
 	}
 
-	// Verify supported_dimensions if declared in manifest per SPEC-003 §107
+	// Verify supported_dimensions if declared in manifest
 	for _, w := range cfg.Display.Widgets {
 		pkg := registry[w.Type]
 		if len(pkg.Manifest.SupportedDimensions) > 0 {
@@ -504,17 +504,17 @@ func validateManifestConfigSchemasStage(cfg *Config, registry map[string]*domain
 }
 
 func validateDomainRulesStage(cfg *Config, registry map[string]*domain.Package) error {
-	// 1. Generic HTTP widgets check (SPEC-003)
+	// 1. Generic HTTP widgets check
 	for _, w := range cfg.Display.Widgets {
 		pkg := registry[w.Type]
 		if pkg != nil && pkg.Manifest.Provider == "http" {
 			if w.Endpoint == "" {
-				return fmt.Errorf("widget '%s': provider 'http' requires non-empty 'endpoint' URL per SPEC-003", w.ID)
+				return fmt.Errorf("widget '%s': provider 'http' requires non-empty 'endpoint' URL", w.ID)
 			}
 		}
 	}
 
-	// 1b. calendar-family member/calendar cross-field rules (SPEC-014 "Validation (boot and LKGC)")
+	// 1b. calendar-family member/calendar cross-field rules")
 	for _, w := range cfg.Display.Widgets {
 		if w.Type != "calendar-family" {
 			continue
@@ -524,7 +524,7 @@ func validateDomainRulesStage(cfg *Config, registry map[string]*domain.Package) 
 		}
 	}
 
-	// 2. Tasks & Lists Source-of-Truth Rules (SPEC-008 §Shared List State & Source Ownership Rules)
+	// 2. Tasks & Lists Source-of-Truth Rules
 	type primarySourceDef struct {
 		widgetID  string
 		source    string
@@ -615,7 +615,7 @@ func validateDomainRulesStage(cfg *Config, registry map[string]*domain.Package) 
 }
 
 // validateFamilyCalendarConfig enforces the calendar-family cross-field validation rules from
-// SPEC-014 "Configuration > Validation (boot and LKGC)" that a structural JSON Schema cannot
+//  "Configuration > Validation (boot and LKGC)" that a structural JSON Schema cannot
 // express: member-to-calendar name references, member uniqueness/limit, e-ink pattern
 // distinctness, and hours ordering.
 func validateFamilyCalendarConfig(widgetID string, rawConfig map[string]any) error {
@@ -719,7 +719,7 @@ func validateLayoutSolverStage(cfg *Config) (*layout.Layout, error) {
 	return l, nil
 }
 
-// DiffConfigs computes instance-level differences between old and new configurations per SPEC-012 §3.
+// DiffConfigs computes instance-level differences between old and new configurations.
 func DiffConfigs(oldCfg, newCfg *Config) *ConfigDiff {
 	diff := &ConfigDiff{}
 	if oldCfg != nil && newCfg != nil && oldCfg.Timezone != newCfg.Timezone {

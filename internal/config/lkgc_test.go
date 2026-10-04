@@ -1409,7 +1409,7 @@ func TestManager_ReloadClearsStalePackageErrors(t *testing.T) {
 		t.Fatalf("Reload failed: %v", err)
 	}
 
-	// Status should return to OK per SPEC-006 §2.D
+	// Status should return to OK.D
 	st := m.Status()
 	if st.ConfigStatus != config.ConfigStatusOK || st.ConfigError != nil {
 		t.Errorf("expected OK status after successful config reload, got %v", st)

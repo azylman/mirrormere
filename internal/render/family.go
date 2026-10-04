@@ -11,7 +11,7 @@ import (
 	"github.com/azylman/mirrormere/internal/provider"
 )
 
-// FamilyMember represents a resolved member per SPEC-014 "Member resolution".
+// FamilyMember represents a resolved member "Member resolution".
 type FamilyMember struct {
 	Name      string   `json:"name"`
 	Initial   string   `json:"initial"`
@@ -38,7 +38,7 @@ type FamilyEvent struct {
 	Pattern   string   `json:"pattern"`
 }
 
-// FamilyDay represents one column of the week view per SPEC-014 "Week (default)".
+// FamilyDay represents one column of the week view "Week (default)".
 type FamilyDay struct {
 	Date       string        `json:"date"`
 	WeekdayAbb string        `json:"weekday_abbr"`
@@ -51,7 +51,7 @@ type FamilyDay struct {
 }
 
 // FamilyViewModel is the fully resolved server-side view model consumed by the calendar-family
-// week view template per SPEC-014 "View model".
+// week view template "View model".
 type FamilyViewModel struct {
 	RangeStart  string         `json:"range_start"`
 	RangeEnd    string         `json:"range_end"`
@@ -76,10 +76,10 @@ type familyCalendarSource struct {
 }
 
 // BuildFamilyView resolves the calendar-agenda provider's CalendarSnapshot payload plus the
-// calendar-family widget instance config into the week-view model per SPEC-014.
+// calendar-family widget instance config into the week-view model.
 //
-// dims is the widget's rendered grid dimensions (SPEC-005), used to size the visible-row cutoff
-// that produces the "+N more" overflow per SPEC-014 "Size adaptation".
+// dims is the widget's rendered grid dimensions, used to size the visible-row cutoff
+// that produces the "+N more" overflow "Size adaptation".
 func BuildFamilyView(data any, cfg map[string]any, dims domain.Dimension, now time.Time) (*FamilyViewModel, error) {
 	members, err := parseFamilyMembers(cfg)
 	if err != nil {
@@ -122,13 +122,11 @@ func BuildFamilyView(data any, cfg map[string]any, dims domain.Dimension, now ti
 	maxVisible := maxVisibleTimedRows(dims)
 
 	// Merge shared events by id: an event id seen on multiple member calendars is one event
-	// owned by every claiming member, per SPEC-014 "Shared events".
+	// owned by every claiming member, "Shared events".
 	merged := make(map[string]*FamilyEvent)
 	mergedOrder := make([]string, 0)
 	// mergedDates holds every in-window date key a merged event lands on: a single entry for
-	// a timed event, or one entry per spanned day for a multi-day all-day event (SPEC-014
-	// "Multi-day events" - a spanning all-day event appears in every date column it covers,
-	// not only its start day).
+	// a timed event, or one entry per spanned day for a multi-day all-day event.
 	mergedDates := make(map[string][]string)
 	mergedOwnerSet := make(map[string]map[string]bool)
 
@@ -184,7 +182,7 @@ func BuildFamilyView(data any, cfg map[string]any, dims domain.Dimension, now ti
 		}
 	}
 
-	// Resolve owners in member order (SPEC-014 "Member order"), independent of the order in
+	// Resolve owners in member order, independent of the order in
 	// which each merged event's underlying per-calendar occurrences were fetched.
 	for _, id := range mergedOrder {
 		fe := merged[id]
@@ -253,7 +251,7 @@ func extractCalendarSnapshot(data any) provider.CalendarSnapshot {
 	return provider.CalendarSnapshot{}
 }
 
-// eventDateKey resolves the local calendar date a timed event's start falls on, per SPEC-014
+// eventDateKey resolves the local calendar date a timed event's start falls on,
 // "Timezones" - the provider emits RFC3339 timestamps, which must be converted to the
 // household's location before date-keying or a UTC event near local midnight lands on the
 // wrong day. All-day events are already plain date strings with no timezone component.
@@ -268,7 +266,7 @@ func eventDateKey(ev provider.CalendarEvent, loc *time.Location) string {
 }
 
 // familyDateRange returns every date key (inclusive, "2006-01-02") from startDate through
-// endDate, per SPEC-014 "Multi-day events". endDate is the provider's already-normalized
+// endDate, "Multi-day events". endDate is the provider's already-normalized
 // inclusive last day (see provider.formatEventRange); an empty or earlier endDate collapses
 // to the single startDate. Capped well above any realistic display window to bound a
 // malformed or absurdly long feed entry.
@@ -464,7 +462,7 @@ func parseFamilyCalendarSources(cfg map[string]any) map[string]familyCalendarSou
 }
 
 // contrastTextColor returns "#000000" or "#ffffff", whichever has the higher contrast against
-// the given hex background color, per SPEC-014 "Styling".
+// the given hex background color, "Styling".
 func contrastTextColor(hex string) string {
 	r, g, b, ok := parseHexColor(hex)
 	if !ok {

@@ -180,7 +180,7 @@ function createMockCarousel() {
   };
 }
 
-test('Video Presentation Mode & Multi-Stream Player with PiP (SPEC-004 §1, §5, SPEC-010 §1)', async (t) => {
+test('Video Presentation Mode & Multi-Stream Player with PiP', async (t) => {
   // Setup mock DOM environment
   global.document = {
     createElement(tag) { return createMockElement(tag); },

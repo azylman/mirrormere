@@ -1,6 +1,6 @@
 """
 epdconfig.py - Pin definitions and hardware configuration for Waveshare e-Paper panels.
-Reference: SPEC-009 §Reference Hardware
+Reference:  Hardware
 
 Default values reflect the Waveshare HAT.
 Adafruit E-Ink Bonnet requires dynamic patching before init():

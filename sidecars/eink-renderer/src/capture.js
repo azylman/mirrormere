@@ -1,6 +1,5 @@
 /**
  * capture.js - Headless Chromium Capture Controller & CDP Integration
- * Reference: SPEC-003 §4-§5, SPEC-009 §3
  */
 
 const http = require('http');

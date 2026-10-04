@@ -25,7 +25,7 @@ type SpeakerEmbedder interface {
 }
 
 // SpeakerMatch is the result of speaker identification. Speaker is a hint for
-// personalisation, not authentication (SPEC-011 §Speaker Identification).
+// personalisation, not authentication.
 type SpeakerMatch struct {
 	// Speaker is the matched enrolled id, or "" when nobody cleared the threshold.
 	Speaker string
@@ -45,7 +45,7 @@ type Fingerprint struct {
 	Embedding []float64 `json:"embedding"`
 }
 
-// FingerprintFile is the on-disk enrollment store (SPEC-011 §Speaker Identification).
+// FingerprintFile is the on-disk enrollment store.
 type FingerprintFile struct {
 	// Model is the embedding model the fingerprints were generated with.
 	// Embeddings from different models are not comparable.

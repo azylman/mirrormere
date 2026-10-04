@@ -1,6 +1,5 @@
 /**
  * server.js - E-Ink Snapshot Sidecar HTTP Server & ETag Caching Endpoint
- * Reference: SPEC-003 §4-§5, SPEC-009 §3
  */
 
 const http = require('http');

@@ -35,7 +35,6 @@ var (
 )
 
 // PhotoSnapshot represents the normalized photo carousel data emitted over SSE.
-// Complies with SPEC-007 §3.
 type PhotoSnapshot struct {
 	AlbumName            string      `json:"album_name"`
 	TotalPhotos          int         `json:"total_photos"`
@@ -63,7 +62,6 @@ type PhotosConfig struct {
 }
 
 // PhotosProvider implements Provider for Google Photos unlisted shared album carousels.
-// Complies with SPEC-003 §1, SPEC-007 §3, and Phase 3 Chunk 3.3D.
 type PhotosProvider struct {
 	mu             sync.RWMutex
 	cfg            PhotosConfig

@@ -8,7 +8,7 @@
 
 **Tech Stack:** Go 1.24 (`github.com/prometheus/client_golang`), Python 3.11 (`openwakeword`, `urllib`), VictoriaMetrics (`scrape_configs`), PostgreSQL (`aerial-voice-kiosk-hud` Grafana dashboard).
 
-**Spec:** `specs/011-voice-pipeline.md` and `specs/001-architecture-overview.md`.
+**Spec:** `` and ``.
 
 ## Global Constraints
 - Pure Go standard library and official `prometheus/client_golang` library for metrics.

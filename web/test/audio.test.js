@@ -5,7 +5,7 @@ const path = require('node:path');
 
 const { computeEffectiveVolume, AudioManager } = require('../static/js/audio.js');
 
-test('Audio Coordinator & 80% Software Volume Ceiling (SPEC-004 §3, SPEC-006 §5, SPEC-010 §4)', async (t) => {
+test('Audio Coordinator & 80% Software Volume Ceiling', async (t) => {
   await t.test('computeEffectiveVolume pure function', async (t2) => {
     await t2.test('calculates nominal volume at 80% ceiling without ducking or mute', () => {
       assert.strictEqual(computeEffectiveVolume(100), 0.80);

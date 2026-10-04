@@ -184,7 +184,7 @@ func TestDefaultVoiceHandler_PostVoiceState(t *testing.T) {
 		}
 	})
 
-	t.Run("invalid state enum returns 400 Bad Request with SPEC-006 error message", func(t *testing.T) {
+	t.Run("invalid state enum returns 400 Bad Request with  error message", func(t *testing.T) {
 		t.Parallel()
 		coord := &mockVoiceCoord{}
 		h := server.NewDefaultVoiceHandler(coord, nil)

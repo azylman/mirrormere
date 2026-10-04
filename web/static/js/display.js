@@ -2,7 +2,6 @@
  * Mirrormere Display Application Runtime
  * Bootstraps persistent header (clock, weather pill, system status),
  * SSE subscriptions, stylesheet hot-reloading, and screen carousel.
- * Complies with SPEC-001, SPEC-003, SPEC-006, SPEC-010, and SPEC-012.
  */
 (() => {
   let sseClient = null;
@@ -398,7 +397,7 @@
       clockTimer.unref();
     }
 
-    // 1b. Start stylesheet freshness heartbeat (SPEC-003 §3, SPEC-010 §3)
+    // 1b. Start stylesheet freshness heartbeat
     checkStyleHeartbeat();
     if (styleHeartbeatTimer) clearInterval(styleHeartbeatTimer);
     styleHeartbeatTimer = setInterval(checkStyleHeartbeat, STYLE_HEARTBEAT_INTERVAL_MS);
@@ -426,7 +425,7 @@
         window.audioManager = new window.MirrormereAudio.AudioManager({ sseClient });
       }
 
-      // 5. Initialize Video Player Manager (SPEC-004 §1, §5, SPEC-010 §1)
+      // 5. Initialize Video Player Manager
       if (window.MirrormereVideo && window.MirrormereVideo.VideoPlayerManager) {
         const stageEl = document.getElementById('video-stage');
         const primaryEl = document.getElementById('video-primary-slot');
@@ -446,7 +445,7 @@
         });
       }
 
-      // 6. Initialize Touch Video HUD Controller (SPEC-004 §5, SPEC-010 §1, §4)
+      // 6. Initialize Touch Video HUD Controller
       if (window.MirrormereHUD && window.MirrormereHUD.VideoHUDController) {
         const overlayEl = document.getElementById('video-hud-overlay');
         const stageEl = document.getElementById('video-stage');
@@ -473,7 +472,7 @@
         });
       }
 
-      // 7. Initialize Voice HUD Controller (SPEC-010 §5, SPEC-011 §2–§5)
+      // 7. Initialize Voice HUD Controller
       if (window.MirrormereVoice && window.MirrormereVoice.VoiceHUDController) {
         window.voiceHUD = new window.MirrormereVoice.VoiceHUDController({
           audioManager: window.audioManager,

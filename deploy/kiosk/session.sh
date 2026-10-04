@@ -67,7 +67,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-# Hardware-accelerated Chromium kiosk flags per SPEC-010
+# Hardware-accelerated Chromium kiosk flags
 CHROMIUM_FLAGS=(
     --kiosk
     --noerrdialogs

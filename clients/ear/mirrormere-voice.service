@@ -1,6 +1,6 @@
 [Unit]
 Description=Mirrormere Edge Voice Listener Daemon
-Documentation=https://github.com/azylman/mirrormere/blob/main/specs/011-voice-pipeline.md
+Documentation=https://github.com/azylman/mirrormere/blob/main/
 After=network.target sound.target pipewire.service
 Wants=pipewire.service
 

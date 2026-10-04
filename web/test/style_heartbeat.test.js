@@ -1,7 +1,7 @@
 const { test, describe, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 
-describe('Display Stylesheet Freshness Heartbeat (SPEC-003 §3, SPEC-010 §3)', () => {
+describe('Display Stylesheet Freshness Heartbeat', () => {
   let originalFetch;
   let originalDocument;
   let linkElement;

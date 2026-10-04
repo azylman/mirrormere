@@ -229,7 +229,7 @@ func TestDefaultVideoHandler_PostVideoTrigger(t *testing.T) {
 		t.Fatalf("expected 400 on coordinator error, got %d", recErr.Code)
 	}
 
-	// 7. Omitted priority defaults to video.PriorityPersistent (Issue #273, SPEC-004)
+	// 7. Omitted priority defaults to video.PriorityPersistent (Issue #273, )
 	mock.triggerErr = nil
 	bodyDefaultPriority := `{"id":"chromecast-default","stream_url":"http://127.0.0.1:1984/cast"}`
 	reqDefaultPriority := httptest.NewRequest(http.MethodPost, "/api/video/trigger", strings.NewReader(bodyDefaultPriority))

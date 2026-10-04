@@ -1,6 +1,6 @@
 """
 buttons.py - Adafruit E-Ink Bonnet hardware button listeners and REST action dispatch
-Reference: SPEC-009 §Buttons
+Reference: 
 """
 
 import logging

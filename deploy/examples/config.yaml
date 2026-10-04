@@ -1,7 +1,7 @@
 # Mirrormere Reference Configuration Template
-# Authoritative Documentation: specs/001-architecture-overview.md, specs/003-widget-contract.md, specs/005-screen-layout-and-rotation.md, specs/007-core-data-providers.md
+# Authoritative Documentation: , , , 
 
-# Authoritative household IANA timezone (SPEC-001 §4)
+# Authoritative household IANA timezone
 timezone: "America/Los_Angeles"
 
 # Display and layout configuration
@@ -10,7 +10,7 @@ display:
     interval_seconds: 30
     transition: "slide"
 
-  # Persistent Fixed Header (SPEC-005, SPEC-007 §4)
+  # Persistent Fixed Header
   header:
     enabled: true
     elements:
@@ -18,15 +18,15 @@ display:
       - date
       - weather_badge
       - sync_status
-    # Autonomous header weather poller hydrating header.update (SPEC-007 §4)
+    # Autonomous header weather poller hydrating header.update
     weather:
       refresh_interval_seconds: 900
       latitude: 37.8044
       longitude: -122.2712
       units: imperial
 
-  # Active widget instances (SPEC-003 §2)
-  # Widgets are automatically packed across minimal rotation screens via the 6x2 bitmask solver (SPEC-005).
+  # Active widget instances
+  # Widgets are automatically packed across minimal rotation screens via the 6x2 bitmask solver.
   # No manual 'screens' or top-level 'providers' blocks are required.
   widgets:
     # Screen 1 Tiles (12 cells total: 4x2 + 2x1 + 2x1 = 12)
@@ -42,7 +42,7 @@ display:
         show_relative_time: true
         calendars:
           - name: "Family Events"
-            url_env: FAMILY_CALENDAR_URL # Resolved via host environment variable per SPEC-012 §6
+            url_env: FAMILY_CALENDAR_URL # Resolved via host environment variable
             color: "#a855f7"
 
     - id: home-weather
@@ -95,7 +95,7 @@ display:
 #   ttl_minutes: 20
 #   max_messages_per_node: 50
 
-# Speaker identification (SPEC-011 §Speaker Identification). Optional: with
+# Speaker identification. Optional: with
 # this block absent, `speaker` is always empty. Uncomment and point
 # embed_url at the voice-fingerprinter sidecar (deploy/compose.yml,
 # profile "speaker-id") to enable it. Enroll speakers with

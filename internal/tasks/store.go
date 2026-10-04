@@ -15,7 +15,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// Store defines the data access contract for task lists and items per SPEC-008.
+// Store defines the data access contract for task lists and items.
 type Store interface {
 	GetList(ctx context.Context, id string) (*List, error)
 	GetListItems(ctx context.Context, listID string, includeDone bool) ([]ListItem, error)
@@ -52,7 +52,7 @@ func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
 		return nil, fmt.Errorf("failed to open sqlite database: %w", err)
 	}
 
-	// Single-writer connection pool to eliminate write contention and SQLITE_BUSY errors per SPEC-008 §1
+	// Single-writer connection pool to eliminate write contention and SQLITE_BUSY errors
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
 	db.SetConnMaxLifetime(0)
@@ -297,7 +297,7 @@ func (s *SQLiteStore) GetListItems(ctx context.Context, listID string, includeDo
 		return nil, errors.New("database is closed")
 	}
 
-	// Verify parent list exists first per SPEC-006 §7
+	// Verify parent list exists first
 	var exists int
 	err := s.db.QueryRowContext(ctx, `SELECT 1 FROM lists WHERE id = ?`, listID).Scan(&exists)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -322,7 +322,7 @@ func (s *SQLiteStore) GetListItems(ctx context.Context, listID string, includeDo
 	return s.queryItems(ctx, query, listID)
 }
 
-// GetTasksSnapshot aggregates list metadata and items for widget presentation per SPEC-008 §Wire Protocol.
+// GetTasksSnapshot aggregates list metadata and items for widget presentation Protocol.
 // showCompleted specifies the maximum number of recently completed items to include:
 //   - showCompleted > 0: includes up to showCompleted completed items ordered by updated_at DESC
 //   - showCompleted == 0: excludes completed items entirely

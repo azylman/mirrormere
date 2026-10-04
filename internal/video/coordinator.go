@@ -46,7 +46,7 @@ func WithTimerFunc(tf TimerFunc) CoordinatorOption {
 }
 
 // Coordinator manages the authoritative in-memory video priority stack, auto-dismiss timers,
-// transport action forwarding, and real-time SSE broadcasts per SPEC-004 §1–§4 and SPEC-006 §4.
+// transport action forwarding, and real-time SSE broadcasts.
 type Coordinator struct {
 	mu         sync.RWMutex
 	mode       string
@@ -109,7 +109,7 @@ func cloneStream(s *VideoStream) *VideoStream {
 	return &cp
 }
 
-// Trigger mounts or updates a video stream within the priority stack according to SPEC-004 §4.
+// Trigger mounts or updates a video stream within the priority stack according to .
 func (c *Coordinator) Trigger(stream VideoStream) (VideoState, error) {
 	stream.ID = strings.TrimSpace(stream.ID)
 	stream.StreamURL = strings.TrimSpace(stream.StreamURL)
@@ -224,8 +224,8 @@ func (c *Coordinator) Trigger(stream VideoStream) (VideoState, error) {
 	return snap, nil
 }
 
-// Dismiss unmounts an active video stream by ID per SPEC-004 §4.
-// If id is "all" or "*", all active streams are unmounted and the mode returns to widgets per SPEC-004 §2.
+// Dismiss unmounts an active video stream by ID.
+// If id is "all" or "*", all active streams are unmounted and the mode returns to widgets.
 func (c *Coordinator) Dismiss(id string) (VideoState, error) {
 	id = strings.TrimSpace(id)
 	if id == "" {
@@ -286,12 +286,12 @@ func (c *Coordinator) Dismiss(id string) (VideoState, error) {
 	return VideoState{}, ErrStreamNotFound
 }
 
-// DismissAll unmounts all active video streams and returns to widgets mode per SPEC-004 §2.
+// DismissAll unmounts all active video streams and returns to widgets mode.
 func (c *Coordinator) DismissAll() (VideoState, error) {
 	return c.Dismiss("all")
 }
 
-// SetPlayerState updates the transport state on an active stream per SPEC-004 §3.4.
+// SetPlayerState updates the transport state on an active stream.4.
 func (c *Coordinator) SetPlayerState(id string, playerState string) (VideoState, error) {
 	id = strings.TrimSpace(id)
 	if id == "" {

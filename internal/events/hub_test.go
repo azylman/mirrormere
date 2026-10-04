@@ -115,7 +115,7 @@ func TestHub_SlowConsumerDrop(t *testing.T) {
 
 	// Fill buffer
 	hub.Publish(EventWidgetUpdate, []byte("1"))
-	// Second publish overflows buffer and terminates subscriber per SPEC-006
+	// Second publish overflows buffer and terminates subscriber
 	hub.Publish(EventWidgetUpdate, []byte("2"))
 
 	if hub.SubscriberCount() != 0 {

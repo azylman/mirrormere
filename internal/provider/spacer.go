@@ -5,7 +5,7 @@ import (
 )
 
 // SpacerProvider provides the data lifecycle implementation for native spacer tiles.
-// Conforms to SPEC-005 §Native Spacer Tiles (zero overhead, empty domain payload).
+// Conforms to  Spacer Tiles (zero overhead, empty domain payload).
 type SpacerProvider struct{}
 
 // NewSpacerProvider constructs a SpacerProvider.

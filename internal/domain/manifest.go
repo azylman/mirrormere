@@ -24,7 +24,7 @@ type WidgetManifest struct {
 	ResponseSchema      map[string]any  `yaml:"response_schema,omitempty"`
 }
 
-// Validate checks the semantic correctness of the manifest per SPEC-003.
+// Validate checks the semantic correctness of the manifest.
 func (m *WidgetManifest) Validate() error {
 	if strings.TrimSpace(m.Name) == "" {
 		return fmt.Errorf("manifest missing required field 'name'")
@@ -52,14 +52,14 @@ func (m *WidgetManifest) Validate() error {
 		}
 	}
 
-	// Forbid 'default' keyword in config_schema per SPEC-003 §Disallowed default Keyword
+	// Forbid 'default' keyword in config_schema default Keyword
 	if m.ConfigSchema != nil {
 		if err := checkForDisallowedDefaultKeyword(m.ConfigSchema, "config_schema"); err != nil {
 			return fmt.Errorf("manifest '%s': %w", m.Name, err)
 		}
 	}
 
-	// Forbid 'default' keyword in response_schema per SPEC-003 §Disallowed default Keyword
+	// Forbid 'default' keyword in response_schema default Keyword
 	if m.ResponseSchema != nil {
 		if err := checkForDisallowedDefaultKeyword(m.ResponseSchema, "response_schema"); err != nil {
 			return fmt.Errorf("manifest '%s': %w", m.Name, err)
@@ -69,7 +69,7 @@ func (m *WidgetManifest) Validate() error {
 	// Custom provider: http requires response_schema
 	if m.Provider == "http" {
 		if len(m.ResponseSchema) == 0 {
-			return fmt.Errorf("manifest '%s': provider 'http' requires non-empty response_schema per SPEC-003 §Schema Dialect & Validation Standards", m.Name)
+			return fmt.Errorf("manifest '%s': provider 'http' requires non-empty response_schema Dialect & Validation Standards", m.Name)
 		}
 	}
 
@@ -121,7 +121,7 @@ func checkForDisallowedDefaultKeyword(v any, path string) error {
 		for k, child := range val {
 			childPath := path + "." + k
 			if k == "default" {
-				return fmt.Errorf("schema at '%s' declares disallowed keyword 'default'; default values in schemas are strictly prohibited per SPEC-003 §Disallowed default Keyword", path)
+				return fmt.Errorf("schema at '%s' declares disallowed keyword 'default'; default values in schemas are strictly prohibited default Keyword", path)
 			}
 			if isNamedSchemaMapKeyword(k) {
 				if err := checkNamedSchemaMap(child, childPath); err != nil {
@@ -138,7 +138,7 @@ func checkForDisallowedDefaultKeyword(v any, path string) error {
 			kStr := fmt.Sprint(k)
 			childPath := path + "." + kStr
 			if kStr == "default" {
-				return fmt.Errorf("schema at '%s' declares disallowed keyword 'default'; default values in schemas are strictly prohibited per SPEC-003 §Disallowed default Keyword", path)
+				return fmt.Errorf("schema at '%s' declares disallowed keyword 'default'; default values in schemas are strictly prohibited default Keyword", path)
 			}
 			if isNamedSchemaMapKeyword(kStr) {
 				if err := checkNamedSchemaMap(child, childPath); err != nil {

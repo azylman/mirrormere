@@ -22,7 +22,7 @@ type HTTPAdapterConfig struct {
 	Client  *http.Client
 }
 
-// HTTPAdapter ingests task lists and items from an external HTTP endpoint per SPEC-008 §3.
+// HTTPAdapter ingests task lists and items from an external HTTP endpoint.
 type HTTPAdapter struct {
 	baseURL string
 	token   string
@@ -71,8 +71,8 @@ type rawCombinedPayload struct {
 }
 
 // FetchList retrieves task list metadata and items from the configured HTTP endpoint.
-// Supports both combined payloads (SPEC-008 §Source Adapters - HTTP) and split endpoints
-// GET {base_url} -> List and GET {base_url}/items -> []ListItem per SPEC-008 §Wire Protocol.
+// Supports both combined payloads and split endpoints
+// GET {base_url} -> List and GET {base_url}/items -> []ListItem Protocol.
 func (a *HTTPAdapter) FetchList(ctx context.Context) (*tasks.List, []tasks.ListItem, error) {
 	baseBody, err := a.doGet(ctx, a.baseURL)
 	if err != nil {
@@ -115,7 +115,7 @@ func (a *HTTPAdapter) FetchList(ctx context.Context) (*tasks.List, []tasks.ListI
 			return list, items, nil
 		}
 
-		// Items not provided in base response: query secondary GET {baseURL}/items per SPEC-008 §Wire Protocol
+		// Items not provided in base response: query secondary GET {baseURL}/items Protocol
 		itemsURL, buildErr := a.buildItemsURL()
 		if buildErr != nil {
 			return nil, nil, fmt.Errorf("failed to build items URL: %w", buildErr)

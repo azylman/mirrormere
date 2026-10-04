@@ -3,7 +3,6 @@
  * Manages client-side video mode switching ('widgets' <-> 'video'),
  * the multi-stream protocol triad (webrtc, hls, mjpeg), floating PiP dock,
  * interactive zero-reparenting swap-on-tap, and audio ceiling integration.
- * Complies with SPEC-004 §1–§5, SPEC-006 §4, and SPEC-010 §1.
  */
 (() => {
   /**

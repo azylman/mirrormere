@@ -1,6 +1,5 @@
 /**
  * dither.test.js - Unit and Integration Tests for E-Ink Snapshot Sidecar
- * Reference: SPEC-003 §4-§5, SPEC-009 §3
  */
 
 const { describe, it } = require('node:test');
@@ -18,7 +17,7 @@ const {
 const { CaptureService } = require('../src/capture');
 const { createServer } = require('../src/server');
 
-describe('E-Ink Dithering & 1-Bit PNG Engine (SPEC-003 §4-§5, SPEC-009 §3)', () => {
+describe('E-Ink Dithering & 1-Bit PNG Engine', () => {
   it('calculates ITU-R BT.601 luminance and blends alpha over black', () => {
     assert.strictEqual(luminance(0, 0, 0), 0);
     assert.strictEqual(luminance(255, 255, 255), 255);

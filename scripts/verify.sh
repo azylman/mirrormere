@@ -137,7 +137,7 @@ run_coverage_gate() {
     sh "$REPO_ROOT/scripts/check-coverage.sh" --check --summary
 }
 
-# 6. Codegen Zero-Drift Gate (SPEC-001 §2.3)
+# 6. Codegen Zero-Drift Gate
 OAPI_CODEGEN_BIN=""
 ensure_oapi_codegen() {
     if [ -n "$OAPI_CODEGEN_BIN" ]; then

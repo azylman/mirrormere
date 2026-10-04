@@ -1,13 +1,13 @@
 # The Ear — Mirrormere Edge Voice Daemon (`mirrormere-voice`)
 
-"The ear" is the edge voice companion daemon for Mirrormere displays and ambient nodes, adhering to **[SPEC-011: Unified Voice Pipeline](../../specs/011-voice-pipeline.md)**.
+"The ear" is the edge voice companion daemon for Mirrormere displays and ambient nodes, adhering to **[: Unified Voice Pipeline](../../)**.
 
 ## Architecture & Responsibilities
 
 The ear implements the "Dumb Edge Audio Terminal & HUD Presenter" tier of Mirrormere's hub-and-spoke voice architecture:
 
 1. **Ambient Wake Word Detection**: Continuously ingests 16 kHz 16-bit mono PCM from PipeWire/ALSA and runs local openWakeWord neural inference entirely on the edge CPU (<5% CPU load).
-2. **State & Event Relay**: Relays interaction states (`listening`, `transcribing`, `thinking`, `speaking`, `idle`, `error`) to Mirrormere Core (`POST /api/voice/state`) to update visual indicators, header transcripts, and caption toasts on interactive touch kiosks (SPEC-010).
+2. **State & Event Relay**: Relays interaction states (`listening`, `transcribing`, `thinking`, `speaking`, `idle`, `error`) to Mirrormere Core (`POST /api/voice/state`) to update visual indicators, header transcripts, and caption toasts on interactive touch kiosks.
 3. **Utterance Capture**: Once triggered, records speech through an energy-calibrated VAD gate and saves the resulting audio to a temporary 16 kHz WAV file.
 4. **Hub Forwarding**: Forwards captured utterances to the LAN Voice Hub (`POST /api/voice/interact`) for GPU-accelerated STT (Whisper), agent deliberation (Aerial/Amos), and neural TTS (Kokoro/ElevenLabs).
 5. **Buffer Flushing & Refractory Cooldown**: Flushes model feature buffers and enforces a refractory cooldown period after recording to eliminate echo re-triggers.
@@ -64,8 +64,7 @@ ear:
 
 ## Wake Mode
 
-`wake_mode` controls how an utterance gets triggered (see SPEC-011 "Ambient
-(Classifier-Gated) Wake Mode" for the full contract):
+`wake_mode` controls how an utterance gets triggered Wake Mode" for the full contract):
 
 - **`openwakeword`** (default): today's behavior, unchanged. `openWakeWord`
   runs locally and a wake phrase starts recording.

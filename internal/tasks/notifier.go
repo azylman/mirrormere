@@ -4,7 +4,7 @@ import (
 	"sync"
 )
 
-// ChangeNotifier coordinates real-time notification dispatching when a list changes per SPEC-008.
+// ChangeNotifier coordinates real-time notification dispatching when a list changes.
 type ChangeNotifier struct {
 	mu        sync.RWMutex
 	listeners map[string]map[uint64]chan<- struct{}

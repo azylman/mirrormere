@@ -42,7 +42,7 @@ type CoordinatorConfig struct {
 	NowFunc             func() time.Time
 	Backoff             *BackoffPolicy
 	OnBeforeRecordPush  func(widgetID string)
-	// ChatLog, when set, receives chat-log widget pushes (SPEC-007 §5).
+	// ChatLog, when set, receives chat-log widget pushes.
 	ChatLog             *chatlog.Store
 	HeaderPollerClient  *http.Client
 	HeaderPollerBaseURL string
@@ -67,7 +67,6 @@ type workerEvent struct {
 }
 
 // ProviderCoordinator orchestrates lifecycle and sync loops for all active widget providers.
-// Complies with SPEC-003, SPEC-006, and SPEC-013 Chunk 3.1.
 type ProviderCoordinator struct {
 	mu                 sync.RWMutex
 	registry           Registry
@@ -220,7 +219,7 @@ func (c *ProviderCoordinator) PushUpdate(widgetID string, data any) (WidgetPaylo
 	return payload, nil
 }
 
-// UpdateConfig reconciles active providers and workers against a new configuration snapshot per SPEC-012.
+// UpdateConfig reconciles active providers and workers against a new configuration snapshot.
 func (c *ProviderCoordinator) UpdateConfig(snap *config.Snapshot) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -280,7 +279,7 @@ func (c *ProviderCoordinator) UpdateConfig(snap *config.Snapshot) error {
 		}
 	}
 
-	// If household timezone changed, restart unchanged widgets with updated timezone per SPEC-012 §5
+	// If household timezone changed, restart unchanged widgets with updated timezone
 	if diff.TimezoneChanged {
 		for _, u := range diff.Unchanged {
 			c.stopWorkerLocked(u.ID)
@@ -294,7 +293,7 @@ func (c *ProviderCoordinator) UpdateConfig(snap *config.Snapshot) error {
 		c.startSingleWorkerLocked(&diff.Added[i], snap)
 	}
 
-	// 4. Update autonomous header weather poller per SPEC-007 §4
+	// 4. Update autonomous header weather poller
 	if snap.Config.Display.Header.Weather != nil {
 		c.headerPoller.UpdateConfig(context.Background(), snap.Config.Display.Header.Weather, snap.Config.Timezone)
 	} else {
@@ -375,7 +374,7 @@ func (c *ProviderCoordinator) startSingleWorkerLocked(w *config.WidgetConfig, sn
 		pkg = snap.Packages[w.Type]
 	}
 
-	// Native Spacer Optimization (SPEC-005): Zero-overhead padding, no polling ticker needed
+	// Native Spacer Optimization: Zero-overhead padding, no polling ticker needed
 	// The chat-log widget takes the same path: its data lives in the in-memory
 	// chatlog store, the voice hub and push webhook update it, and nothing polls
 	// (so nothing can overwrite the cache).
@@ -702,7 +701,6 @@ func (c *ProviderCoordinator) buildInitOptions(w *config.WidgetConfig, pkg *doma
 
 // PushWidgetData ingests an immediate domain data payload for a configured widget instance,
 // validates against response_schema, records into SWR cache and state sink, and broadcasts widget.update.
-// Complies with SPEC-006 §2 and SPEC-008 §5.
 func (c *ProviderCoordinator) PushWidgetData(ctx context.Context, widgetID string, data map[string]any) (WidgetPayload, error) {
 	if c.stopped {
 		return WidgetPayload{}, errors.New("coordinator is stopped")

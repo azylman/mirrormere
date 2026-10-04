@@ -1,6 +1,6 @@
 """
 test_coalesce.py - Hermetic unit tests for refresh coalescing engine and ETag caching
-Reference: SPEC-009 §1-§3, Issue #246
+Reference: , Issue #246
 """
 
 import unittest

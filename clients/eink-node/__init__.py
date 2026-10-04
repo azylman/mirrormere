@@ -1,6 +1,6 @@
 """
 Mirrormere E-Ink Node Client Package
-Reference: SPEC-009 §1-§8
+Reference: 
 """
 
 try:

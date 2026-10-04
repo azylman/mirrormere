@@ -82,6 +82,6 @@ is the newest message's time; the header title comes from `config.title`).
 The template is unconditional and uses `var(--mm-*)` tokens plus semantic
 classes (`chat-log-header`, `chat-log-message`, `chat-log-human`,
 `chat-log-agent`, `chat-log-meta`, `chat-log-author`, `chat-log-ts`,
-`chat-log-text`, ...). Per SPEC-014 the e-ink presentation lives in
+`chat-log-text`, ...). the e-ink presentation lives in
 `deploy/examples/eink.css`, not in the widget. The widget does not truncate;
 the container clips the oldest messages that do not fit.

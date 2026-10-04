@@ -418,7 +418,7 @@ func TestBuildFamilyView_TimezoneConvertsToLocalDay(t *testing.T) {
 	now := time.Date(2026, 9, 27, 12, 0, 0, 0, loc) // "today" is Sep 27 in this location.
 
 	// 05:30 UTC on Sep 28 is 22:30 local on Sep 27 - a UTC event near midnight that must land
-	// on the *local* day (Sep 27), not the UTC day (Sep 28), per SPEC-014 "Timezones".
+	// on the *local* day (Sep 27), not the UTC day (Sep 28), "Timezones".
 	snap := provider.CalendarSnapshot{Events: []provider.CalendarEvent{
 		{ID: "evt_tz", CalendarName: "alex-personal", Title: "Late call", Start: "2026-09-28T05:30:00Z", End: "2026-09-28T06:00:00Z"},
 	}}
@@ -502,7 +502,7 @@ func TestBuildFamilyView_UnclaimedEventDefaultTextColor(t *testing.T) {
 
 func TestBuildFamilyView_MultiDayAllDayEventSpansEveryColumn(t *testing.T) {
 	// testNow is Sunday 2026-09-27. A 3-day all-day event Sep 28-30 (inclusive) must appear on
-	// all three of its own columns, per SPEC-014 "Multi-day events".
+	// all three of its own columns, "Multi-day events".
 	snap := provider.CalendarSnapshot{Events: []provider.CalendarEvent{
 		{ID: "evt_multi", CalendarName: "alex-personal", Title: "Camping trip", AllDay: true, Start: "2026-09-28", End: "2026-09-30"},
 	}}

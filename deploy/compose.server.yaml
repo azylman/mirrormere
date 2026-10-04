@@ -1,6 +1,5 @@
 # deploy/compose.server.yaml - Mirrormere Central Server Orchestration Manifest
 # Deploys Mirrormere Core daemon, Voice Fingerprinter, and E-Ink Renderer.
-# Reference: specs/001-architecture-overview.md, specs/002-hardware-profiles.md, & specs/011-speaker-identification.md
 
 services:
   mirrormere-core:
@@ -40,7 +39,7 @@ services:
     container_name: mirrormere-voice-fingerprinter
     restart: unless-stopped
     ports:
-      - "9096:9096" # Speaker-embedding server (SPEC-011 §Embedding endpoint)
+      - "9096:9096" # Speaker-embedding server
     environment:
       - MDE_PORT=9096
       - MDE_BIND=0.0.0.0

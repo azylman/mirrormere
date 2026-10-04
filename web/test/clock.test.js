@@ -1,7 +1,7 @@
 const { test, describe } = require('node:test');
 const assert = require('node:assert/strict');
 
-describe('Header Clock Household Timezone (SPEC-001 §4, SPEC-012 §5)', () => {
+describe('Header Clock Household Timezone', () => {
   function setupMockDOM(dataset = {}) {
     const elements = {};
     global.document = {

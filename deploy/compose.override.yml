@@ -1,5 +1,4 @@
 # deploy/compose.override.yml - Local Bench & Development Overrides
-# Reference: SPEC-013 Phase 6 (Issue #250) & SPEC-002 §1-§2
 #
 # Automatically merged by Docker Compose with deploy/compose.yml.
 # Provides bench-safe defaults for developer workstations and test environments

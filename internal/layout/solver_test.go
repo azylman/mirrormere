@@ -162,7 +162,7 @@ func TestComputeScreens(t *testing.T) {
 		t.Fatalf("expected k=2, def=0, got k=%d, def=%d, err=%v", k, def, err)
 	}
 
-	// 3. Unpinned deficit (SPEC-005 example: 14 cells -> K=2, deficit=10)
+	// 3. Unpinned deficit
 	k, def, err = layout.ComputeScreens(0, 14)
 	if err != nil || k != 2 || def != 10 {
 		t.Fatalf("expected k=2, def=10, got k=%d, def=%d, err=%v", k, def, err)

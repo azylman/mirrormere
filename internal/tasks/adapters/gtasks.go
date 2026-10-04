@@ -37,7 +37,7 @@ type GTasksAdapterConfig struct {
 	Client       *http.Client
 }
 
-// GTasksAdapter ingests task lists and items from the Google Tasks API per SPEC-008 §3.
+// GTasksAdapter ingests task lists and items from the Google Tasks API.
 type GTasksAdapter struct {
 	taskListID   string
 	token        string

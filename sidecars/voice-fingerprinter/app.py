@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """voice-fingerprinter — CPU speaker-embedding sidecar for Mirrormere's Voice
-Hub speaker-ID feature (SPEC-011 §Speaker Identification, §Embedding
-endpoint).
+Hub speaker-ID feature.
 
 Ported from the karakos household's desktop_embed.py (GPU, desktop-only)
 to run as a small standalone container on Alex's Intel N150 edge box, CPU

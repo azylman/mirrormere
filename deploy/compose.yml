@@ -1,5 +1,4 @@
 # deploy/compose.yml - Mirrormere Multi-Container Orchestration Manifest (All-In-One / Monolith)
-# Reference: specs/001-architecture-overview.md, specs/002-hardware-profiles.md, & specs/004-video-cast-ingest.md
 #
 # Topology Split:
 # - deploy/compose.server.yaml: Standalone server deployment (Core, Voice Fingerprinter, E-Ink Renderer)
@@ -130,7 +129,7 @@ services:
     container_name: mirrormere-voice-fingerprinter
     restart: unless-stopped
     ports:
-      - "9096:9096" # Speaker-embedding server (SPEC-011 §Embedding endpoint)
+      - "9096:9096" # Speaker-embedding server
     environment:
       - MDE_PORT=9096
       - MDE_BIND=0.0.0.0
