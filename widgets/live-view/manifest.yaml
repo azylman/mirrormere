@@ -29,6 +29,10 @@ config_schema:
       type: string
       enum: ["webrtc", "mjpeg", "hls"]
       description: Stream format for the widget tile. Defaults to 'webrtc' if omitted.
+    fit:
+      type: string
+      enum: ["contain", "cover"]
+      description: Video scaling mode in ambient widget tile. Defaults to 'contain'.
     title:
       type: string
       description: Optional overlay title displayed in the corner of the tile.
