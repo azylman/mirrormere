@@ -64,7 +64,7 @@ mirrormere/
 ├── sidecars/               # Custom auxiliary microservices (eink-renderer, cast-watcher, voice-fingerprinter)
 ├── clients/                # Standalone edge display clients (eink-node Python SPI daemon)
 ├── deploy/                 # Docker Compose manifests, go2rtc config, and kiosk launch units
-├── specs/                  # Living architectural specifications (001–011, see specs/README.md)
+├── docs/                   # Architectural decisions and deployment documentation
 ├── scripts/                # Verification (verify.sh) and development scripts
 ├── Dockerfile              # Multi-stage, multi-arch build for mirrormere-core
 └── Makefile                # Local build, test, and verification shortcuts
