@@ -69,7 +69,7 @@ func (m *WidgetManifest) Validate() error {
 	// Custom provider: http requires response_schema
 	if m.Provider == "http" {
 		if len(m.ResponseSchema) == 0 {
-			return fmt.Errorf("manifest '%s': provider 'http' requires non-empty response_schema Dialect & Validation Standards", m.Name)
+			return fmt.Errorf("manifest '%s': provider 'http' requires non-empty response_schema", m.Name)
 		}
 	}
 
@@ -121,7 +121,7 @@ func checkForDisallowedDefaultKeyword(v any, path string) error {
 		for k, child := range val {
 			childPath := path + "." + k
 			if k == "default" {
-				return fmt.Errorf("schema at '%s' declares disallowed keyword 'default'; default values in schemas are strictly prohibited default Keyword", path)
+				return fmt.Errorf("schema at '%s' declares disallowed keyword 'default'; default values in schemas are strictly prohibited", path)
 			}
 			if isNamedSchemaMapKeyword(k) {
 				if err := checkNamedSchemaMap(child, childPath); err != nil {
@@ -138,7 +138,7 @@ func checkForDisallowedDefaultKeyword(v any, path string) error {
 			kStr := fmt.Sprint(k)
 			childPath := path + "." + kStr
 			if kStr == "default" {
-				return fmt.Errorf("schema at '%s' declares disallowed keyword 'default'; default values in schemas are strictly prohibited default Keyword", path)
+				return fmt.Errorf("schema at '%s' declares disallowed keyword 'default'; default values in schemas are strictly prohibited", path)
 			}
 			if isNamedSchemaMapKeyword(kStr) {
 				if err := checkNamedSchemaMap(child, childPath); err != nil {

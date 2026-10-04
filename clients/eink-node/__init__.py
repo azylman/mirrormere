@@ -1,6 +1,5 @@
 """
 Mirrormere E-Ink Node Client Package
-Reference: 
 """
 
 try:

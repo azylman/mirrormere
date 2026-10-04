@@ -1,6 +1,5 @@
 """
 config.py - Configuration loader and schemas for Mirrormere E-Ink display node
-Reference: 
 """
 
 from dataclasses import dataclass, field

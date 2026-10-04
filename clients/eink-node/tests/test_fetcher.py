@@ -1,6 +1,5 @@
 """
 test_fetcher.py - Hermetic unit tests for ETagFetcher
-Reference: , Issue #246
 """
 
 import io
