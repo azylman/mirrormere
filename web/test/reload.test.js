@@ -5,6 +5,7 @@ describe('Display Deployment and Daily Maintenance Reload (SPEC-010 §3)', () =>
   let reloadedCount = 0;
   let mockWindow;
   let mockElements;
+  let sessionStorageStore = {};
 
   function setupMockDOM(dataset = {}) {
     mockElements = {};
@@ -13,6 +14,20 @@ describe('Display Deployment and Daily Maintenance Reload (SPEC-010 §3)', () =>
       location: {
         reload() {
           reloadedCount++;
+        },
+      },
+      sessionStorage: {
+        getItem(key) {
+          return Object.prototype.hasOwnProperty.call(sessionStorageStore, key) ? sessionStorageStore[key] : null;
+        },
+        setItem(key, val) {
+          sessionStorageStore[key] = String(val);
+        },
+        removeItem(key) {
+          delete sessionStorageStore[key];
+        },
+        clear() {
+          sessionStorageStore = {};
         },
       },
     };
@@ -44,6 +59,7 @@ describe('Display Deployment and Daily Maintenance Reload (SPEC-010 §3)', () =>
   }
 
   beforeEach(() => {
+    sessionStorageStore = {};
     setupMockDOM({ timezone: 'America/Los_Angeles' });
     delete require.cache[require.resolve('../static/js/display.js')];
   });
@@ -103,6 +119,52 @@ describe('Display Deployment and Daily Maintenance Reload (SPEC-010 §3)', () =>
 
     display.handleSystemStatus({ online: true, boot_id: 'boot-4' });
     assert.equal(reloadedCount, 2, 'reload permitted after cooldown expires');
+  });
+
+  test('sessionStorage prevents 4:00 AM infinite crash loop across page teardown', () => {
+    let display = require('../static/js/display.js');
+    display.resetBootIdState();
+
+    // 4:00:00 AM PDT (UTC-7) on 2026-10-04 is 11:00:00 AM UTC
+    const fourAmExact = new Date('2026-10-04T11:00:00Z');
+    assert.equal(display.checkDailyMaintenanceReload(fourAmExact), true);
+    assert.equal(reloadedCount, 1, 'first reload at 4:00:00 AM');
+
+    // Verify persisted in sessionStorage
+    assert.ok(sessionStorageStore['mm_last_daily_reload_date']);
+
+    // Simulate full browser page reload & memory teardown 5 seconds later (4:00:05 AM)
+    delete require.cache[require.resolve('../static/js/display.js')];
+    display = require('../static/js/display.js');
+    // Note: in-memory state is now completely wiped (defaulting to ''), but sessionStorage persisted!
+
+    const fourAmFiveSeconds = new Date('2026-10-04T11:00:05Z');
+    const triggeredAgain = display.checkDailyMaintenanceReload(fourAmFiveSeconds);
+    assert.equal(triggeredAgain, false, 'must NOT trigger infinite reload loop during the 4:00 AM minute');
+    assert.equal(reloadedCount, 1, 'reload count must remain 1');
+  });
+
+  test('sessionStorage persists deployment reload cooldown across page teardown', () => {
+    let display = require('../static/js/display.js');
+    display.resetBootIdState();
+
+    display.handleSystemStatus({ online: true, boot_id: 'boot-alpha' });
+    display.handleSystemStatus({ online: true, boot_id: 'boot-beta' });
+    assert.equal(reloadedCount, 1, 'first deployment reload triggered');
+
+    // Verify timestamp was persisted to sessionStorage
+    assert.ok(sessionStorageStore['mm_last_reload_timestamp']);
+
+    // Simulate page reload & memory wipe (new JS isolate)
+    delete require.cache[require.resolve('../static/js/display.js')];
+    display = require('../static/js/display.js');
+
+    // Backend crash-loops and spins up a new instance 5 seconds later
+    display.handleSystemStatus({ online: true, boot_id: 'boot-gamma' });
+    // First connection of new page swallows boot-gamma
+    display.handleSystemStatus({ online: true, boot_id: 'boot-delta' });
+    // boot-delta is different, but cooldown (< 30s) persisted in sessionStorage!
+    assert.equal(reloadedCount, 1, 'crash loop must remain throttled across page reload');
   });
 
   test('executes daily maintenance reload at 4:00 AM in household timezone', () => {

@@ -165,6 +165,26 @@
   let lastReloadTimestamp = 0;
   let lastDailyReloadDate = '';
 
+  const STORAGE_KEY_DAILY_RELOAD = 'mm_last_daily_reload_date';
+  const STORAGE_KEY_DEPLOY_RELOAD = 'mm_last_reload_timestamp';
+
+  function getSessionStorageItem(key) {
+    try {
+      if (typeof window !== 'undefined' && window.sessionStorage) {
+        return window.sessionStorage.getItem(key);
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  function setSessionStorageItem(key, val) {
+    try {
+      if (typeof window !== 'undefined' && window.sessionStorage) {
+        window.sessionStorage.setItem(key, String(val));
+      }
+    } catch (_) {}
+  }
+
   /**
    * Check and execute daily maintenance reload at 4:00 AM household time.
    * Flushes long-lived DOM buffers, GPU memory, and browser cache while kiosk is idle.
@@ -193,11 +213,17 @@
           if (p.type === 'minute') minute = parseInt(p.value, 10);
         }
         dateStr = new Intl.DateTimeFormat('en-US', { timeZone: tz }).format(now);
-      } catch (_) {}
+      } catch (err) {
+        console.warn(`[MirrormereDisplay] Failed to format timezone ${tz} for maintenance check:`, err);
+      }
     }
 
-    if (hour === 4 && minute === 0 && lastDailyReloadDate !== dateStr) {
+    const storedDailyDate = getSessionStorageItem(STORAGE_KEY_DAILY_RELOAD);
+    const effectiveDailyDate = lastDailyReloadDate || storedDailyDate || '';
+
+    if (hour === 4 && minute === 0 && effectiveDailyDate !== dateStr) {
       lastDailyReloadDate = dateStr;
+      setSessionStorageItem(STORAGE_KEY_DAILY_RELOAD, dateStr);
       console.log(`[MirrormereDisplay] Executing scheduled 4:00 AM maintenance reload for ${dateStr}...`);
       if (typeof window !== 'undefined' && window.location && typeof window.location.reload === 'function') {
         window.location.reload();
@@ -234,9 +260,13 @@
         currentBootId = data.boot_id;
       } else if (currentBootId !== data.boot_id) {
         const now = Date.now();
+        const storedTs = parseInt(getSessionStorageItem(STORAGE_KEY_DEPLOY_RELOAD) || '0', 10);
+        const effectiveLastReload = Math.max(lastReloadTimestamp, isNaN(storedTs) ? 0 : storedTs);
+
         // Prevent reload storm if server is in crash-loop (minimum 30 seconds cooldown)
-        if (now - lastReloadTimestamp >= 30000) {
+        if (now - effectiveLastReload >= 30000) {
           lastReloadTimestamp = now;
+          setSessionStorageItem(STORAGE_KEY_DEPLOY_RELOAD, String(now));
           currentBootId = data.boot_id;
           console.log(`[MirrormereDisplay] Server deployment detected (${data.boot_id}), reloading page...`);
           if (typeof window !== 'undefined' && window.location && typeof window.location.reload === 'function') {
@@ -250,19 +280,37 @@
   }
 
   function getBootIdState() {
-    return { currentBootId, lastReloadTimestamp, lastDailyReloadDate };
+    const storedDailyDate = getSessionStorageItem(STORAGE_KEY_DAILY_RELOAD);
+    const storedTs = parseInt(getSessionStorageItem(STORAGE_KEY_DEPLOY_RELOAD) || '0', 10);
+    return {
+      currentBootId,
+      lastReloadTimestamp: Math.max(lastReloadTimestamp, isNaN(storedTs) ? 0 : storedTs),
+      lastDailyReloadDate: lastDailyReloadDate || storedDailyDate || '',
+    };
   }
 
   function setBootIdState(state = {}) {
     if ('currentBootId' in state) currentBootId = state.currentBootId;
-    if ('lastReloadTimestamp' in state) lastReloadTimestamp = state.lastReloadTimestamp;
-    if ('lastDailyReloadDate' in state) lastDailyReloadDate = state.lastDailyReloadDate;
+    if ('lastReloadTimestamp' in state) {
+      lastReloadTimestamp = state.lastReloadTimestamp;
+      setSessionStorageItem(STORAGE_KEY_DEPLOY_RELOAD, state.lastReloadTimestamp);
+    }
+    if ('lastDailyReloadDate' in state) {
+      lastDailyReloadDate = state.lastDailyReloadDate;
+      setSessionStorageItem(STORAGE_KEY_DAILY_RELOAD, state.lastDailyReloadDate);
+    }
   }
 
   function resetBootIdState() {
     currentBootId = null;
     lastReloadTimestamp = 0;
     lastDailyReloadDate = '';
+    try {
+      if (typeof window !== 'undefined' && window.sessionStorage) {
+        window.sessionStorage.removeItem(STORAGE_KEY_DAILY_RELOAD);
+        window.sessionStorage.removeItem(STORAGE_KEY_DEPLOY_RELOAD);
+      }
+    } catch (_) {}
   }
 
   /**
