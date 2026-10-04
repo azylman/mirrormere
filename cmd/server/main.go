@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strconv"
 	"syscall"
 	"time"
@@ -28,7 +27,6 @@ import (
 	"github.com/azylman/mirrormere/internal/tasks"
 	"github.com/azylman/mirrormere/internal/video"
 	"github.com/azylman/mirrormere/internal/voice"
-	"github.com/azylman/mirrormere/internal/watcher"
 	"github.com/azylman/mirrormere/internal/widget"
 )
 
@@ -57,12 +55,28 @@ type Option func(*runConfig)
 
 type runConfig struct {
 	addrChan chan<- string
+	hupChan  <-chan os.Signal
+	onReload func()
 }
 
 // WithAddrChan supplies a channel that receives the bound listener address.
 func WithAddrChan(ch chan<- string) Option {
 	return func(rc *runConfig) {
 		rc.addrChan = ch
+	}
+}
+
+// WithHupChan injects a custom SIGHUP signal channel for testing.
+func WithHupChan(ch <-chan os.Signal) Option {
+	return func(rc *runConfig) {
+		rc.hupChan = ch
+	}
+}
+
+// WithOnReload injects a callback invoked after a SIGHUP reload attempt completes.
+func WithOnReload(fn func()) Option {
+	return func(rc *runConfig) {
+		rc.onReload = fn
 	}
 }
 
@@ -340,24 +354,74 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 		}),
 	)
 
-	// 12. Optional Filesystem Watcher
-	if configPath != "" {
-		configDir := filepath.Dir(configPath)
-		if fi, err := os.Stat(configDir); err == nil && fi.IsDir() {
-			w := watcher.New(watcher.Config{
-				ConfigDir:         configDir,
-				ConfigFileName:    filepath.Base(configPath),
-				BuiltinWidgetsDir: builtinDir,
-				CustomWidgetsDir:  customDir,
-			}, configManager, loader, hub, logger)
-			if err := w.Start(ctx); err == nil {
-				defer func() {
-					if err := w.Close(); err != nil {
-						logger.Warn("failed to close watcher", "error", err)
-					}
-				}()
-			}
+	// 12. SIGHUP Signal Listener for Live Configuration Reloads
+	var hupChan <-chan os.Signal
+	var stopHup func()
+	if rcfg.hupChan != nil {
+		hupChan = rcfg.hupChan
+	} else {
+		ch := make(chan os.Signal, 1)
+		signal.Notify(ch, syscall.SIGHUP)
+		hupChan = ch
+		stopHup = func() {
+			signal.Stop(ch)
 		}
+	}
+	if stopHup != nil {
+		defer stopHup()
+	}
+
+	if configPath != "" {
+		hupCtx, hupCancel := context.WithCancel(ctx)
+		defer hupCancel()
+		go func() {
+			for {
+				select {
+				case <-hupCtx.Done():
+					return
+				case sig, ok := <-hupChan:
+					if !ok {
+						return
+					}
+					if sig == syscall.SIGHUP {
+						logger.Info("received SIGHUP, reloading configuration", "path", configPath)
+						data, err := os.ReadFile(configPath)
+						if err != nil {
+							logger.Error("failed to read configuration file on SIGHUP", "path", configPath, "error", err)
+							configManager.SetErrorStatus(err)
+							if serr := hub.DispatchStatus(configManager.Status()); serr != nil {
+								logger.Error("failed to dispatch status on SIGHUP read failure", "error", serr)
+							}
+							if rcfg.onReload != nil {
+								rcfg.onReload()
+							}
+							continue
+						}
+						snap, diff, err := configManager.Reload(data)
+						if err != nil {
+							logger.Error("failed to validate configuration on SIGHUP; retaining LKGC", "error", err)
+							if serr := hub.DispatchStatus(configManager.Status()); serr != nil {
+								logger.Error("failed to dispatch status on SIGHUP validation failure", "error", serr)
+							}
+							if rcfg.onReload != nil {
+								rcfg.onReload()
+							}
+							continue
+						}
+						if err := hub.DispatchConfigReload(snap, diff); err != nil {
+							logger.Error("failed to dispatch config reload on SIGHUP", "error", err)
+						}
+						if err := hub.DispatchStatus(configManager.Status()); err != nil {
+							logger.Error("failed to dispatch status on SIGHUP", "error", err)
+						}
+						logger.Info("configuration reloaded successfully on SIGHUP", "widgets", len(snap.Config.Display.Widgets))
+						if rcfg.onReload != nil {
+							rcfg.onReload()
+						}
+					}
+				}
+			}
+		}()
 	}
 
 	// 13. Assemble Server Configuration

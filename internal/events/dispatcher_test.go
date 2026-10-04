@@ -10,7 +10,6 @@ import (
 	"github.com/azylman/mirrormere/internal/config"
 	"github.com/azylman/mirrormere/internal/domain"
 	"github.com/azylman/mirrormere/internal/layout"
-	"github.com/azylman/mirrormere/internal/watcher"
 )
 
 func TestHub_DispatchConfigReload(t *testing.T) {
@@ -159,7 +158,7 @@ func TestHub_DispatchStyleAndWidgetReload(t *testing.T) {
 	defer unsub()
 
 	// 1. Style reload
-	styleEvt := watcher.StyleReloadEvent{
+	styleEvt := StyleReloadEvent{
 		File:      "custom.css",
 		Timestamp: "2026-09-25T20:00:00Z",
 	}
@@ -177,7 +176,7 @@ func TestHub_DispatchStyleAndWidgetReload(t *testing.T) {
 	}
 
 	// 2. Widget reload
-	widgetEvt := watcher.WidgetReloadEvent{
+	widgetEvt := WidgetReloadEvent{
 		Type: "sensor-card",
 	}
 	if err := hub.DispatchWidgetReload(widgetEvt); err != nil {

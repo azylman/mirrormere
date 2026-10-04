@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -515,6 +516,226 @@ display:
 		t.Fatalf("RunWithReady failed: %v", err)
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for ready signal")
+	}
+
+	cancel()
+	<-errChan
+}
+
+func TestRun_SIGHUP_ValidReload(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "mirrormere.yaml")
+	initialYAML := `
+timezone: "UTC"
+display:
+  widgets:
+    - id: spacer-1
+      type: spacer
+      dimensions: [6, 2]
+`
+	if err := os.WriteFile(configPath, []byte(initialYAML), 0644); err != nil {
+		t.Fatalf("failed to write initial config: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	readyChan := make(chan struct{}, 1)
+	hupChan := make(chan os.Signal, 1)
+	reloadedChan := make(chan struct{}, 1)
+	addrChan := make(chan string, 1)
+	var stdout, stderr bytes.Buffer
+
+	errChan := make(chan error, 1)
+	go func() {
+		errChan <- RunWithReady(
+			ctx,
+			[]string{"-config", configPath, "-port", "0", "-host", "127.0.0.1"},
+			&stdout,
+			&stderr,
+			readyChan,
+			WithAddrChan(addrChan),
+			WithHupChan(hupChan),
+			WithOnReload(func() {
+				select {
+				case reloadedChan <- struct{}{}:
+				default:
+				}
+			}),
+		)
+	}()
+
+	select {
+	case <-readyChan:
+	case err := <-errChan:
+		t.Fatalf("RunWithReady failed: %v", err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for ready signal")
+	}
+
+	// Update config on disk with new timezone
+	updatedYAML := `
+timezone: "America/New_York"
+display:
+  widgets:
+    - id: spacer-1
+      type: spacer
+      dimensions: [6, 2]
+`
+	if err := os.WriteFile(configPath, []byte(updatedYAML), 0644); err != nil {
+		t.Fatalf("failed to write updated config: %v", err)
+	}
+
+	// Send SIGHUP
+	hupChan <- syscall.SIGHUP
+
+	select {
+	case <-reloadedChan:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for SIGHUP reload completion")
+	}
+
+	close(hupChan)
+	cancel()
+	<-errChan
+}
+
+func TestRun_SIGHUP_InvalidYAML_RetainsLKGC(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "mirrormere.yaml")
+	initialYAML := `
+timezone: "UTC"
+display:
+  widgets:
+    - id: spacer-1
+      type: spacer
+      dimensions: [6, 2]
+`
+	if err := os.WriteFile(configPath, []byte(initialYAML), 0644); err != nil {
+		t.Fatalf("failed to write initial config: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	readyChan := make(chan struct{}, 1)
+	hupChan := make(chan os.Signal, 1)
+	reloadedChan := make(chan struct{}, 1)
+	addrChan := make(chan string, 1)
+	var stdout, stderr bytes.Buffer
+
+	errChan := make(chan error, 1)
+	go func() {
+		errChan <- RunWithReady(
+			ctx,
+			[]string{"-config", configPath, "-port", "0", "-host", "127.0.0.1"},
+			&stdout,
+			&stderr,
+			readyChan,
+			WithAddrChan(addrChan),
+			WithHupChan(hupChan),
+			WithOnReload(func() {
+				select {
+				case reloadedChan <- struct{}{}:
+				default:
+				}
+			}),
+		)
+	}()
+
+	select {
+	case <-readyChan:
+	case err := <-errChan:
+		t.Fatalf("RunWithReady failed: %v", err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for ready signal")
+	}
+
+	// Overwrite with invalid YAML
+	if err := os.WriteFile(configPath, []byte("invalid: yaml: syntax: [unclosed"), 0644); err != nil {
+		t.Fatalf("failed to write invalid config: %v", err)
+	}
+
+	// Send SIGHUP
+	hupChan <- syscall.SIGHUP
+
+	select {
+	case <-reloadedChan:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for SIGHUP reload error completion")
+	}
+
+	// Server should still be running and healthy (LKGC)
+	addr := <-addrChan
+	resp, err := http.Get("http://" + addr + "/healthz")
+	if err != nil {
+		t.Fatalf("expected server to remain running after invalid reload, got err: %v", err)
+	}
+	_ = resp.Body.Close()
+
+	cancel()
+	<-errChan
+}
+
+func TestRun_SIGHUP_ReadError_RetainsLKGC(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "mirrormere.yaml")
+	initialYAML := `
+timezone: "UTC"
+display:
+  widgets:
+    - id: spacer-1
+      type: spacer
+      dimensions: [6, 2]
+`
+	if err := os.WriteFile(configPath, []byte(initialYAML), 0644); err != nil {
+		t.Fatalf("failed to write initial config: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	readyChan := make(chan struct{}, 1)
+	hupChan := make(chan os.Signal, 1)
+	reloadedChan := make(chan struct{}, 1)
+	var stdout, stderr bytes.Buffer
+
+	errChan := make(chan error, 1)
+	go func() {
+		errChan <- RunWithReady(
+			ctx,
+			[]string{"-config", configPath, "-port", "0", "-host", "127.0.0.1"},
+			&stdout,
+			&stderr,
+			readyChan,
+			WithHupChan(hupChan),
+			WithOnReload(func() {
+				select {
+				case reloadedChan <- struct{}{}:
+				default:
+				}
+			}),
+		)
+	}()
+
+	select {
+	case <-readyChan:
+	case err := <-errChan:
+		t.Fatalf("RunWithReady failed: %v", err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for ready signal")
+	}
+
+	// Delete file
+	_ = os.Remove(configPath)
+
+	// Send SIGHUP
+	hupChan <- syscall.SIGHUP
+
+	select {
+	case <-reloadedChan:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for SIGHUP read error completion")
 	}
 
 	cancel()
