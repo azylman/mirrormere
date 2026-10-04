@@ -5,8 +5,18 @@ import (
 	"time"
 
 	"github.com/azylman/mirrormere/internal/config"
-	"github.com/azylman/mirrormere/internal/watcher"
 )
+
+// StyleReloadEvent matches api/schemas/style.reload.json.
+type StyleReloadEvent struct {
+	File      string `json:"file"`
+	Timestamp string `json:"timestamp"`
+}
+
+// WidgetReloadEvent matches api/schemas/widget.reload.json.
+type WidgetReloadEvent struct {
+	Type string `json:"type"`
+}
 
 // DispatchConfigReload handles configuration updates, layout changes, and domain state resets.
 func (h *Hub) DispatchConfigReload(snapshot *config.Snapshot, diff *config.ConfigDiff) error {
@@ -96,7 +106,7 @@ func (h *Hub) DispatchConfigReload(snapshot *config.Snapshot, diff *config.Confi
 }
 
 // DispatchStyleReload broadcasts style.reload notifications to connected clients.
-func (h *Hub) DispatchStyleReload(event watcher.StyleReloadEvent) error {
+func (h *Hub) DispatchStyleReload(event StyleReloadEvent) error {
 	data, err := json.Marshal(event)
 	if err != nil {
 		return err
@@ -106,7 +116,7 @@ func (h *Hub) DispatchStyleReload(event watcher.StyleReloadEvent) error {
 }
 
 // DispatchWidgetReload broadcasts widget.reload notifications to connected clients.
-func (h *Hub) DispatchWidgetReload(event watcher.WidgetReloadEvent) error {
+func (h *Hub) DispatchWidgetReload(event WidgetReloadEvent) error {
 	data, err := json.Marshal(event)
 	if err != nil {
 		return err
