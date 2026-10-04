@@ -131,8 +131,10 @@ func (h *Hub) DispatchStatus(status config.Status) error {
 	}
 
 	var providers map[string]string
+	var bootID string
 	if h.stateProvider != nil {
 		providers = h.stateProvider.GetProvidersStatus()
+		bootID = h.stateProvider.BootID()
 	}
 
 	sysStatus := SystemStatusData{
@@ -141,6 +143,7 @@ func (h *Hub) DispatchStatus(status config.Status) error {
 		ConfigStatus: configStatus,
 		ConfigError:  status.ConfigError,
 		Providers:    providers,
+		BootID:       bootID,
 	}
 
 	data, err := json.Marshal(sysStatus)

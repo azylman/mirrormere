@@ -36,6 +36,10 @@
         "enum": ["healthy", "degraded", "error"],
         "description": "Operational health status of the provider ('healthy', 'degraded', 'error')"
       }
+    },
+    "boot_id": {
+      "type": "string",
+      "description": "Unique startup timestamp or boot identifier of the server process"
     }
   },
   "additionalProperties": false

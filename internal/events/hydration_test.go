@@ -267,6 +267,9 @@ func TestBuildHydrationBatch_OrderingAndPayloads(t *testing.T) {
 	if !sys.Online || sys.ConfigStatus != "ok" || sys.Providers["bad-pkg"] != errTxt {
 		t.Errorf("unexpected system status: %+v", sys)
 	}
+	if sys.BootID == "" || sys.BootID != provider.BootID() {
+		t.Errorf("expected BootID %s, got %s", provider.BootID(), sys.BootID)
+	}
 }
 
 func TestBuildHydrationBatch_NilProvider(t *testing.T) {

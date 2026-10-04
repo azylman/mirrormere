@@ -230,6 +230,9 @@ func TestHub_DispatchStatus(t *testing.T) {
 		if sys.ConfigStatus != "error" || *sys.ConfigError != errStr || sys.Providers["pkg"] != "missing manifest" {
 			t.Errorf("unexpected status data: %+v", sys)
 		}
+		if sys.BootID == "" || sys.BootID != provider.BootID() {
+			t.Errorf("expected BootID %s, got %s", provider.BootID(), sys.BootID)
+		}
 	case <-time.After(1 * time.Second):
 		t.Fatal("timeout waiting for system.status")
 	}
