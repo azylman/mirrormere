@@ -415,6 +415,11 @@
     // 3. Initialize SSE client
     if (typeof window !== 'undefined' && window.MirrormereSSE) {
       sseClient = new window.MirrormereSSE('api/events');
+      window.sseClient = sseClient;
+
+      if (window.MirrormereLiveView && typeof window.MirrormereLiveView.attachSSE === 'function') {
+        window.MirrormereLiveView.attachSSE(sseClient);
+      }
 
       // 4. Initialize Audio Manager
       if (window.MirrormereAudio && window.MirrormereAudio.AudioManager) {

@@ -25,7 +25,7 @@
 
       this.fetchFn = options.fetch || (typeof fetch !== 'undefined' ? fetch.bind(window) : null);
       this.PeerConnectionClass = options.RTCPeerConnection || (typeof RTCPeerConnection !== 'undefined' ? RTCPeerConnection : null);
-      this.sseClient = options.sseClient || (typeof window !== 'undefined' ? window.sseClient : null);
+      this.sseClient = options.sseClient || (typeof window !== 'undefined' && window.sseClient ? window.sseClient : null);
 
       this.init();
     }
@@ -133,6 +133,23 @@
       this.observer.observe(this.element);
     }
 
+    isElementVisible() {
+      if (!this.element) return false;
+      if (typeof this.element.isConnected !== 'undefined' && !this.element.isConnected) return false;
+      if (typeof this.element.getBoundingClientRect === 'function') {
+        const rect = this.element.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+      }
+      return true;
+    }
+
+    attachSSE(client) {
+      if (!client) return;
+      if (this.sseClient === client) return;
+      this.sseClient = client;
+      this.bindSSE();
+    }
+
     bindSSE() {
       if (!this.sseClient) return;
 
@@ -147,8 +164,20 @@
           if (this.safetyTimer) clearTimeout(this.safetyTimer);
         } else if (mode === 'widgets') {
           // Display returned to dashboard grid: resume tile if visible
-          if (this.isIntersecting) {
-            this.startStream();
+          this.isLoading = false;
+          this.element.classList.remove('loading');
+          if (this.safetyTimer) clearTimeout(this.safetyTimer);
+
+          const checkAndStart = () => {
+            if (this.isIntersecting || this.isElementVisible()) {
+              this.startStream();
+            }
+          };
+
+          if (typeof requestAnimationFrame !== 'undefined') {
+            requestAnimationFrame(checkAndStart);
+          } else {
+            checkAndStart();
           }
         }
       };
@@ -313,6 +342,13 @@
         this.observer.disconnect();
         this.observer = null;
       }
+      if (this.sseClient && this.videoStateHandler) {
+        if (typeof this.sseClient.off === 'function') {
+          this.sseClient.off('video.state', this.videoStateHandler);
+        } else if (typeof this.sseClient.removeEventListener === 'function') {
+          this.sseClient.removeEventListener('video.state', this.videoStateHandler);
+        }
+      }
     }
   }
 
@@ -340,6 +376,13 @@
 
     getInstance(widgetId) {
       return this.instances.get(widgetId) || null;
+    },
+
+    attachSSE(client) {
+      if (!client) return;
+      for (const instance of this.instances.values()) {
+        instance.attachSSE(client);
+      }
     }
   };
 })();

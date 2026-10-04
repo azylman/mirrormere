@@ -284,4 +284,50 @@ test('Live View Client Controller (SPEC-015)', async (t) => {
 
     global.window.MirrormereLiveView.unmount('cam-tile');
   });
+
+  await t.test('attachSSE dynamically binds SSE client and resumes stream on widgets mode even if isIntersecting is false', async () => {
+    let sseCallback = null;
+    let sseOffCalled = false;
+    const mockSSE = {
+      on(evt, cb) {
+        if (evt === 'video.state') sseCallback = cb;
+      },
+      off(evt, cb) {
+        if (evt === 'video.state') sseOffCalled = true;
+      }
+    };
+
+    const el = createMockElement({ stream_url: 'http://127.0.0.1:1984/api/webrtc?src=cast' });
+    el.isConnected = true;
+    el.getBoundingClientRect = () => ({ width: 400, height: 250 });
+
+    // Mount without sseClient (simulating widget rendered before display.js initializes SSE)
+    const inst = global.window.MirrormereLiveView.mount(el, {
+      RTCPeerConnection: MockPeerConnection,
+    });
+
+    assert.equal(inst.sseClient, null);
+    assert.ok(inst.pc);
+
+    // Later, display.js initializes and calls attachSSE
+    global.window.MirrormereLiveView.attachSSE(mockSSE);
+    assert.equal(inst.sseClient, mockSSE);
+    assert.ok(sseCallback);
+
+    // Fullscreen presentation activates: enters video mode
+    sseCallback({ mode: 'video', primary: { id: 'chromecast' } });
+    assert.equal(inst.pc, null);
+
+    // Simulate display: none making isIntersecting false
+    inst.isIntersecting = false;
+
+    // Fullscreen dismissed: returns to widgets mode
+    sseCallback({ mode: 'widgets', primary: null });
+
+    // Stream resumes via isElementVisible()
+    assert.ok(inst.pc, 'stream should resume on widgets mode transition via element visibility');
+
+    global.window.MirrormereLiveView.unmount('cam-tile');
+    assert.equal(sseOffCalled, true, 'unmount should remove SSE listener');
+  });
 });
