@@ -627,3 +627,69 @@ test('VideoHUDController: dismiss button sends id: "all" in swapped presentation
   hud.destroy();
 });
 
+test('VideoHUDController: initial stream presentation reveals HUD', () => {
+  const dom = createHUDDOM();
+  const hud = new VideoHUDController({
+    overlayElement: dom.overlay,
+    titleElement: dom.title,
+    dismissBtn: dom.dismissBtn,
+    stageElement: dom.stage,
+  });
+
+  assert.equal(hud.isVisible, false);
+
+  hud.handleVideoState({
+    mode: 'video',
+    primary: { id: 'stream_porch', title: 'Porch Camera', controllable: true, player_state: 'playing' },
+  });
+
+  assert.equal(hud.isVisible, true);
+  assert.equal(dom.overlay.classList.contains('visible'), true);
+
+  hud.destroy();
+});
+
+test('VideoHUDController: default fetch binds window context without Illegal invocation', async () => {
+  const dom = createHUDDOM();
+  const networkCalls = [];
+
+  const fakeWindow = {
+    fetch: function(url, opts) {
+      if (this !== fakeWindow) {
+        throw new TypeError("Failed to execute 'fetch' on 'Window': Illegal invocation");
+      }
+      networkCalls.push({ url, body: JSON.parse(opts.body) });
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({ status: 'ok' }) });
+    },
+  };
+
+  const originalWindow = global.window;
+  try {
+    global.window = fakeWindow;
+
+    const hud = new VideoHUDController({
+      overlayElement: dom.overlay,
+      titleElement: dom.title,
+      dismissBtn: dom.dismissBtn,
+      stageElement: dom.stage,
+      // fetch option intentionally omitted to test default fetch binding
+    });
+
+    hud.handleVideoState({
+      mode: 'video',
+      primary: { id: 'stream_porch', title: 'Porch Camera' },
+    });
+
+    dom.dismissBtn.click();
+
+    // Verify network call completed without throwing Illegal invocation
+    assert.equal(networkCalls.length, 1);
+    assert.equal(networkCalls[0].url, 'api/video/dismiss');
+    assert.deepEqual(networkCalls[0].body, { id: 'stream_porch' });
+
+    hud.destroy();
+  } finally {
+    global.window = originalWindow;
+  }
+});
+
