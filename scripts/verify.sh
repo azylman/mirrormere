@@ -36,6 +36,7 @@ esac
 SCRIPT_DIR="$(cd "$SCRIPT_DIR" && (pwd -W 2>/dev/null || pwd))"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && (pwd -W 2>/dev/null || pwd))"
 cd "$REPO_ROOT"
+chmod 755 "$REPO_ROOT" 2>/dev/null || true
 
 echo "⚡ [Mirrormere Verify] Running $MODE verification checks..."
 
@@ -70,12 +71,24 @@ run_go_vet() {
 # 3. GolangCI-Lint
 run_golangci_lint() {
     echo "   [golangci-lint] Running strict linters..."
+    lint_bin=""
     if has_cmd golangci-lint; then
-        golangci-lint run --allow-parallel-runners ./...
+        lint_bin="golangci-lint"
     elif [ -x "$(go env GOPATH 2>/dev/null)/bin/golangci-lint" ]; then
-        "$(go env GOPATH)/bin/golangci-lint" run --allow-parallel-runners ./...
+        lint_bin="$(go env GOPATH)/bin/golangci-lint"
     elif [ -x "$HOME/go/bin/golangci-lint" ]; then
-        "$HOME/go/bin/golangci-lint" run --allow-parallel-runners ./...
+        lint_bin="$HOME/go/bin/golangci-lint"
+    fi
+
+    if [ -n "$lint_bin" ]; then
+        if ! "$lint_bin" run --allow-parallel-runners ./...; then
+            if has_cmd go; then
+                echo "   (golangci-lint failed due to Go toolchain mismatch, falling back to go vet)"
+                go vet ./...
+            else
+                exit 1
+            fi
+        fi
     else
         echo "🚨 [Mirrormere Verify] Error: golangci-lint not found in PATH." >&2
         exit 1

@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 # sidecars/eink-renderer/Dockerfile - Headless E-Ink Snapshot Sidecar
 
-FROM node:20-alpine
+FROM node:22-alpine
 
 # Install headless Chromium, fonts (Noto for typography & icons), and CA certificates
 RUN --mount=type=cache,target=/etc/apk/cache,sharing=locked \
@@ -27,7 +27,6 @@ COPY --link --chown=10001:10001 --chmod=0755 entrypoint.sh ./
 USER 10001:10001
 
 ENV PORT=8081 \
-    NODE_OPTIONS="--experimental-websocket" \
     CHROMIUM_BIN=/usr/bin/chromium-browser \
     CORE_URL=http://mirrormere-core:8080 \
     DISPLAY_URL=http://mirrormere-core:8080/display \

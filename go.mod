@@ -3,7 +3,7 @@ module github.com/azylman/mirrormere
 go 1.24.0
 
 require (
-	github.com/arran4/golang-ical v0.3.6
+	github.com/arran4/golang-ical v0.3.7
 	github.com/oapi-codegen/runtime v1.7.0
 	github.com/prometheus/client_golang v1.21.1
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
