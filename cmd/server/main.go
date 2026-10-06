@@ -350,6 +350,12 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 			}
 			return "UTC"
 		}),
+		display.WithHideCursorProvider(func() bool {
+			if snap := stateProvider.CurrentSnapshot(); snap != nil && snap.Config != nil {
+				return snap.Config.Display.HideCursor
+			}
+			return false
+		}),
 	)
 	assetReloader := NewAssetReloader(customCSSPath, loader, builtinDir, customDir, renderEngine, configManager, hub, logger)
 

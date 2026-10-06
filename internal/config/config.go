@@ -30,10 +30,11 @@ type Config struct {
 
 // DisplayConfig specifies visual presentation, rotation parameters, and active widget instances.
 type DisplayConfig struct {
-	Rotation RotationConfig `yaml:"rotation"`
-	Header   HeaderConfig   `yaml:"header"`
-	Grid     GridConfig     `yaml:"grid"`
-	Widgets  []WidgetConfig `yaml:"widgets"`
+	HideCursor bool           `yaml:"hide_cursor,omitempty"`
+	Rotation   RotationConfig `yaml:"rotation"`
+	Header     HeaderConfig   `yaml:"header"`
+	Grid       GridConfig     `yaml:"grid"`
+	Widgets    []WidgetConfig `yaml:"widgets"`
 }
 
 // RotationConfig configures screen advance intervals and transition visual hints.
@@ -394,7 +395,7 @@ func validateDisplayKeys(displayNode *yaml.Node) error {
 			return fmt.Errorf("line %d: display contains disallowed key 'screens': screens are dynamically computed by the 6x2 layout solver", keyNode.Line)
 		case "providers":
 			return fmt.Errorf("line %d: display contains disallowed key 'providers': widget instances configure their own data sources under display.widgets", keyNode.Line)
-		case "rotation", "grid", "header", "widgets":
+		case "rotation", "grid", "header", "widgets", "hide_cursor":
 			// Canonical keys
 		default:
 			return fmt.Errorf("line %d: unknown key '%s' under display", keyNode.Line, key)

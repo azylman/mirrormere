@@ -476,3 +476,106 @@ func TestGetDisplay_Timezone(t *testing.T) {
 	})
 }
 
+func TestGetDisplay_HideCursor(t *testing.T) {
+	t.Parallel()
+
+	tmplContent := []byte(`<body data-timezone="{{ .Timezone }}"{{ if .HideCursor }} class="mm-touch-kiosk"{{ end }}>`)
+
+	t.Run("DefaultHideCursorFalse", func(t *testing.T) {
+		t.Parallel()
+		h := display.NewHandler(
+			display.WithEmbeddedTemplate(tmplContent),
+		)
+		if h.HideCursor() {
+			t.Errorf("expected default HideCursor false, got true")
+		}
+
+		req := httptest.NewRequest(http.MethodGet, "/display", nil)
+		rec := httptest.NewRecorder()
+		h.GetDisplay(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rec.Code)
+		}
+		if strings.Contains(rec.Body.String(), "mm-touch-kiosk") {
+			t.Errorf("expected body without mm-touch-kiosk, got %s", rec.Body.String())
+		}
+	})
+
+	t.Run("StaticWithHideCursorTrue", func(t *testing.T) {
+		t.Parallel()
+		h := display.NewHandler(
+			display.WithHideCursor(true),
+			display.WithEmbeddedTemplate(tmplContent),
+		)
+		if !h.HideCursor() {
+			t.Errorf("expected HideCursor true, got false")
+		}
+
+		req := httptest.NewRequest(http.MethodGet, "/display", nil)
+		rec := httptest.NewRecorder()
+		h.GetDisplay(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rec.Code)
+		}
+		if !strings.Contains(rec.Body.String(), `class="mm-touch-kiosk"`) {
+			t.Errorf("expected body with class=\"mm-touch-kiosk\", got %s", rec.Body.String())
+		}
+	})
+
+	t.Run("DynamicProvider", func(t *testing.T) {
+		t.Parallel()
+		active := false
+		h := display.NewHandler(
+			display.WithHideCursorProvider(func() bool {
+				return active
+			}),
+			display.WithEmbeddedTemplate(tmplContent),
+		)
+
+		if h.HideCursor() {
+			t.Errorf("expected initial HideCursor false")
+		}
+
+		req := httptest.NewRequest(http.MethodGet, "/display", nil)
+		rec := httptest.NewRecorder()
+		h.GetDisplay(rec, req)
+		if strings.Contains(rec.Body.String(), "mm-touch-kiosk") {
+			t.Errorf("expected body without mm-touch-kiosk, got %s", rec.Body.String())
+		}
+
+		// Toggle active
+		active = true
+		if !h.HideCursor() {
+			t.Errorf("expected updated HideCursor true")
+		}
+
+		req2 := httptest.NewRequest(http.MethodGet, "/display", nil)
+		rec2 := httptest.NewRecorder()
+		h.GetDisplay(rec2, req2)
+		if !strings.Contains(rec2.Body.String(), `class="mm-touch-kiosk"`) {
+			t.Errorf("expected body with class=\"mm-touch-kiosk\", got %s", rec2.Body.String())
+		}
+	})
+
+	t.Run("SetHideCursor", func(t *testing.T) {
+		t.Parallel()
+		h := display.NewHandler(
+			display.WithEmbeddedTemplate(tmplContent),
+		)
+		h.SetHideCursor(true)
+		if !h.HideCursor() {
+			t.Errorf("expected HideCursor true after SetHideCursor")
+		}
+
+		req := httptest.NewRequest(http.MethodGet, "/display", nil)
+		rec := httptest.NewRecorder()
+		h.GetDisplay(rec, req)
+		if !strings.Contains(rec.Body.String(), `class="mm-touch-kiosk"`) {
+			t.Errorf("expected body with class=\"mm-touch-kiosk\", got %s", rec.Body.String())
+		}
+	})
+}
+
+

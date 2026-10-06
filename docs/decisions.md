@@ -10,7 +10,7 @@ Normative API schemas and event payloads are governed by `api/openapi.yaml` and 
 
 ## 2. Display Adapters & Modality Rules
 - **No Video on E-Ink**: Video streaming (`live-view`) and dynamic animation are exclusively scoped to touch displays (`touch-interactive` capability only). E-ink profiles render static monochrome frames via headless capture and Atkinson/Floyd-Steinberg dithering.
-- **Appliance Cursor Suppression**: Floating cursor suppression on kiosks is controlled via `?kiosk=true` (or `.mm-touch-kiosk`), preserving standard mouse pointers on desktop browser sessions.
+- **Appliance Cursor Suppression**: Floating cursor suppression is declarative per-deployment via `display.hide_cursor: bool` in `config.yaml` (defaulting to `false`, preserving standard mouse cursors on desktop and HDMI monitors). When `hide_cursor: true`, the server attaches `.mm-touch-kiosk` to the HTML `<body>`, scoping `.mm-touch-kiosk, .mm-touch-kiosk * { cursor: none !important; }`. URL query parameter overrides (`?kiosk=true` / `?cursor=none` / `?cursor=visible`) are supported for ad-hoc browser testing.
 
 ## 3. Configuration & Runtime Lifecycle
 - **Declarative YAML & Zero Precedence**: Core and sidecars load declarative YAML configuration (`config.yaml`) as the single source of truth at boot. Command-line flags are prohibited, and legacy environment variable overrides (`HOST`, `PORT`) are removed. Secrets are strictly decoupled and injected via environment variables resolved through explicit `*_env` keys.

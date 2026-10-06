@@ -430,10 +430,27 @@
   let clockTimer = null;
 
   /**
+   * Resolve cursor suppression query overrides (?kiosk=true, ?cursor=none/visible).
+   */
+  function resolveCursorSuppression() {
+    if (typeof window !== 'undefined' && window.location && window.location.search && typeof document !== 'undefined' && document.body) {
+      const urlParams = new URLSearchParams(window.location.search);
+      if (urlParams.get('kiosk') === 'true' || urlParams.get('cursor') === 'none' || urlParams.get('hide_cursor') === 'true') {
+        document.body.classList.add('mm-touch-kiosk');
+      } else if (urlParams.get('kiosk') === 'false' || urlParams.get('cursor') === 'visible' || urlParams.get('hide_cursor') === 'false') {
+        document.body.classList.remove('mm-touch-kiosk');
+      }
+    }
+  }
+
+  /**
    * Initialize display client application.
    */
   function init() {
     if (typeof document === 'undefined') return;
+
+    // 0. Resolve cursor suppression query overrides
+    resolveCursorSuppression();
 
     // 1. Start real-time clock
     updateClock();
@@ -587,6 +604,7 @@
     formatTime,
     formatDate,
     isValidTimezone,
+    resolveCursorSuppression,
     init,
   };
 

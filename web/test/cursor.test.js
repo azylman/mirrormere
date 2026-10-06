@@ -8,61 +8,119 @@ describe('Touch Kiosk Cursor Suppression', () => {
   const defaultHudCSSPath = path.resolve(__dirname, '../../internal/render/default_hud.css');
   const customCSSPath = path.resolve(__dirname, '../../deploy/examples/custom.css');
 
-  test('hud.css enforces global cursor suppression without pointer or default regressions', () => {
+  test('hud.css scopes cursor suppression to .mm-touch-kiosk', () => {
     assert.ok(fs.existsSync(hudCSSPath), 'hud.css must exist');
     const content = fs.readFileSync(hudCSSPath, 'utf8');
 
-    // Must enforce cursor: none !important on html/body and universal selectors
-    assert.match(
+    // Must NOT enforce cursor: none !important on global html, body
+    assert.doesNotMatch(
       content,
-      /html,\s*body\s*\{[^}]*cursor:\s*none\s*!important/s,
-      'hud.css must define cursor: none !important on html, body'
-    );
-    assert.match(
-      content,
-      /\*,\s*\*::before,\s*\*::after\s*\{[^}]*cursor:\s*none\s*!important/s,
-      'hud.css must define cursor: none !important on *, *::before, *::after'
+      /html,\s*body\s*\{[^}]*cursor:\s*none/s,
+      'hud.css must not define cursor: none on html, body'
     );
 
-    // Must not retain cursor: pointer or cursor: default
-    assert.doesNotMatch(content, /cursor:\s*pointer/i, 'hud.css must not contain cursor: pointer');
-    assert.doesNotMatch(content, /cursor:\s*default/i, 'hud.css must not contain cursor: default');
+    // Must NOT enforce unconditional universal cursor: none
+    assert.doesNotMatch(
+      content,
+      /(?:^|\n)\*,\s*\*::before,\s*\*::after\s*\{[^}]*cursor:\s*none/m,
+      'hud.css must not define unconditional universal cursor: none'
+    );
+
+    // Must enforce cursor: none !important scoped to .mm-touch-kiosk
+    assert.match(
+      content,
+      /\.mm-touch-kiosk,\s*\.mm-touch-kiosk\s*\*,?\s*(\.mm-touch-kiosk\s*\*::before,?\s*)?(\.mm-touch-kiosk\s*\*::after)?\s*\{[^}]*cursor:\s*none\s*!important/s,
+      'hud.css must define cursor: none !important scoped to .mm-touch-kiosk'
+    );
   });
 
-  test('default_hud.css fallback enforces global cursor suppression', () => {
+  test('default_hud.css fallback scopes cursor suppression to .mm-touch-kiosk', () => {
     assert.ok(fs.existsSync(defaultHudCSSPath), 'default_hud.css must exist');
     const content = fs.readFileSync(defaultHudCSSPath, 'utf8');
 
-    assert.match(
+    assert.doesNotMatch(
       content,
-      /html,\s*body\s*\{[^}]*cursor:\s*none\s*!important/s,
-      'default_hud.css must define cursor: none !important on html, body'
-    );
-    assert.match(
-      content,
-      /\*,\s*\*::before,\s*\*::after\s*\{[^}]*cursor:\s*none\s*!important/s,
-      'default_hud.css must define cursor: none !important on *, *::before, *::after'
+      /html,\s*body\s*\{[^}]*cursor:\s*none/s,
+      'default_hud.css must not define cursor: none on html, body'
     );
 
-    assert.doesNotMatch(content, /cursor:\s*pointer/i, 'default_hud.css must not contain cursor: pointer');
-    assert.doesNotMatch(content, /cursor:\s*default/i, 'default_hud.css must not contain cursor: default');
+    assert.doesNotMatch(
+      content,
+      /(?:^|\n)\*,\s*\*::before,\s*\*::after\s*\{[^}]*cursor:\s*none/m,
+      'default_hud.css must not define unconditional universal cursor: none'
+    );
+
+    assert.match(
+      content,
+      /\.mm-touch-kiosk,\s*\.mm-touch-kiosk\s*\*,?\s*(\.mm-touch-kiosk\s*\*::before,?\s*)?(\.mm-touch-kiosk\s*\*::after)?\s*\{[^}]*cursor:\s*none\s*!important/s,
+      'default_hud.css must define cursor: none !important scoped to .mm-touch-kiosk'
+    );
   });
 
-  test('deploy/examples/custom.css enforces global cursor suppression', () => {
+  test('deploy/examples/custom.css scopes cursor suppression to .mm-touch-kiosk', () => {
     assert.ok(fs.existsSync(customCSSPath), 'deploy/examples/custom.css must exist');
     const content = fs.readFileSync(customCSSPath, 'utf8');
 
-    assert.match(
+    assert.doesNotMatch(
       content,
-      /html,\s*body\s*\{[^}]*cursor:\s*none\s*!important/s,
-      'custom.css must define cursor: none !important on html, body'
-    );
-    assert.match(
-      content,
-      /\*,\s*\*::before,\s*\*::after\s*\{[^}]*cursor:\s*none\s*!important/s,
-      'custom.css must define cursor: none !important on *, *::before, *::after'
+      /html,\s*body\s*\{[^}]*cursor:\s*none/s,
+      'custom.css must not define cursor: none on html, body'
     );
 
-    assert.doesNotMatch(content, /cursor:\s*pointer/i, 'custom.css must not contain cursor: pointer');
+    assert.doesNotMatch(
+      content,
+      /(?:^|\n)\*,\s*\*::before,\s*\*::after\s*\{[^}]*cursor:\s*none/m,
+      'custom.css must not define unconditional universal cursor: none'
+    );
+
+    assert.match(
+      content,
+      /\.mm-touch-kiosk,\s*\.mm-touch-kiosk\s*\*,?\s*(\.mm-touch-kiosk\s*\*::before,?\s*)?(\.mm-touch-kiosk\s*\*::after)?\s*\{[^}]*cursor:\s*none\s*!important/s,
+      'custom.css must define cursor: none !important scoped to .mm-touch-kiosk'
+    );
+  });
+
+  test('display.js resolves query parameter cursor overrides', () => {
+    const originalWindow = global.window;
+    const originalDocument = global.document;
+
+    try {
+      const classList = new Set();
+      global.document = {
+        body: {
+          classList: {
+            add: (c) => classList.add(c),
+            remove: (c) => classList.delete(c),
+            contains: (c) => classList.has(c),
+          },
+        },
+      };
+
+      // ?kiosk=true adds mm-touch-kiosk
+      global.window = {
+        location: { search: '?kiosk=true' },
+      };
+      const display = require('../static/js/display.js');
+      display.resolveCursorSuppression();
+      assert.ok(global.document.body.classList.contains('mm-touch-kiosk'), '?kiosk=true must add mm-touch-kiosk');
+
+      // ?cursor=visible removes mm-touch-kiosk
+      global.window.location.search = '?cursor=visible';
+      display.resolveCursorSuppression();
+      assert.ok(!global.document.body.classList.contains('mm-touch-kiosk'), '?cursor=visible must remove mm-touch-kiosk');
+
+      // ?cursor=none adds mm-touch-kiosk
+      global.window.location.search = '?cursor=none';
+      display.resolveCursorSuppression();
+      assert.ok(global.document.body.classList.contains('mm-touch-kiosk'), '?cursor=none must add mm-touch-kiosk');
+
+      // ?hide_cursor=false removes mm-touch-kiosk
+      global.window.location.search = '?hide_cursor=false';
+      display.resolveCursorSuppression();
+      assert.ok(!global.document.body.classList.contains('mm-touch-kiosk'), '?hide_cursor=false must remove mm-touch-kiosk');
+    } finally {
+      global.window = originalWindow;
+      global.document = originalDocument;
+    }
   });
 });
