@@ -87,11 +87,9 @@ services:
     restart: unless-stopped
     network_mode: host
     environment:
-      - CHROMECAST_ADDR=${CHROMECAST_ADDR:-192.168.1.50:8009}
-      - CORE_URL=${CORE_URL:-http://192.168.1.14/kiosk}
-      - STREAM_URL=${STREAM_URL:-http://localhost:1984/api/webrtc?src=cast}
-      - CONTROL_PORT=${CONTROL_PORT:-8090}
-      - CONTROL_URL=${CONTROL_URL:-http://localhost:8090/action}
+      - CONFIG_PATH=/config/cast-watcher.yaml
+    volumes:
+      - ./cast-watcher.yaml:/config/cast-watcher.yaml:ro
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:8090/healthz"]
       interval: 15s

@@ -73,11 +73,9 @@ services:
     ports:
       - "8090:8090" # Webhook action server & healthcheck
     environment:
-      - CHROMECAST_ADDR=${CHROMECAST_ADDR:-192.168.1.50:8009}
-      - CORE_URL=${CORE_URL:-http://mirrormere-core:8080}
-      - STREAM_URL=${STREAM_URL:-http://localhost:1984/api/webrtc?src=cast}
-      - CONTROL_PORT=${CONTROL_PORT:-8090}
-      - CONTROL_URL=${CONTROL_URL:-http://cast-watcher:8090/action}
+      - CONFIG_PATH=/config/cast-watcher.yaml
+    volumes:
+      - ./examples/cast-watcher.yaml:/config/cast-watcher.yaml:ro
     depends_on:
       mirrormere-core:
         condition: service_healthy

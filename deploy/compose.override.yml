@@ -9,7 +9,3 @@ services:
   go2rtc:
     devices: !reset []
     group_add: !reset []
-
-  cast-watcher:
-    environment:
-      - CHROMECAST_ADDR=${CHROMECAST_ADDR:-127.0.0.1:8009}
