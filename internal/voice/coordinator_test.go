@@ -328,9 +328,195 @@ func TestCoordinator_StatusAndFullState(t *testing.T) {
 		t.Fatalf("expected state unchanged, got %q", st2.State)
 	}
 
-	// Reset clears status
+	// Late-idle suppression: Reset while in StateThinking does NOT clobber active input state
+	suppressedReset := c.Reset()
+	if suppressedReset.State != StateThinking {
+		t.Fatalf("expected late-idle reset to be suppressed while thinking, got %q", suppressedReset.State)
+	}
+
+	// Transition to speaking, then Reset clears status and returns to idle
+	c.Transition(StateSpeaking, &transcript, nil, nil, nil)
 	resetState := c.Reset()
 	if resetState.State != StateIdle || resetState.Status != nil {
 		t.Fatalf("expected idle with nil status, got %+v", resetState)
 	}
+}
+
+func TestCoordinator_LateIdleSuppression(t *testing.T) {
+	t.Parallel()
+
+	activeInputStates := []string{StateListening, StateTranscribing, StateThinking}
+	for _, activeState := range activeInputStates {
+		t.Run("suppresses idle when in "+activeState, func(t *testing.T) {
+			t.Parallel()
+			c := NewCoordinator(nil)
+			q := "query"
+			_, err := c.SetState(activeState, &q, nil, nil)
+			if err != nil {
+				t.Fatalf("unexpected error setting %s: %v", activeState, err)
+			}
+
+			// Try SetState(StateIdle)
+			st, err := c.SetState(StateIdle, nil, nil, nil)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if st.State != activeState {
+				t.Fatalf("expected SetState(StateIdle) to be ignored, got %q", st.State)
+			}
+			if c.GetState().State != activeState {
+				t.Fatalf("expected GetState() to remain %q, got %q", activeState, c.GetState().State)
+			}
+
+			// Try SetFullState(StateIdle)
+			stFull, err := c.SetFullState(StateIdle, nil, nil, nil, nil)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if stFull.State != activeState {
+				t.Fatalf("expected SetFullState(StateIdle) to be ignored, got %q", stFull.State)
+			}
+
+			// Try Reset()
+			stReset := c.Reset()
+			if stReset.State != activeState {
+				t.Fatalf("expected Reset() to be ignored, got %q", stReset.State)
+			}
+			if c.GetState().State != activeState {
+				t.Fatalf("expected GetState() to remain %q, got %q", activeState, c.GetState().State)
+			}
+
+			// Try Transition(StateIdle)
+			stTrans := c.Transition(StateIdle, nil, nil, nil, nil)
+			if stTrans.State != activeState {
+				t.Fatalf("expected Transition(StateIdle) to be ignored, got %q", stTrans.State)
+			}
+			if c.GetState().State != activeState {
+				t.Fatalf("expected GetState() to remain %q, got %q", activeState, c.GetState().State)
+			}
+		})
+	}
+
+	resettableStates := []string{StateSpeaking, StateSynthesizing, StateError}
+	for _, stName := range resettableStates {
+		t.Run("allows idle when in "+stName, func(t *testing.T) {
+			t.Parallel()
+			c := NewCoordinator(nil)
+			txt := "text"
+			_, err := c.SetState(stName, &txt, &txt, nil)
+			if err != nil {
+				t.Fatalf("unexpected error setting %s: %v", stName, err)
+			}
+
+			st, err := c.SetState(StateIdle, nil, nil, nil)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if st.State != StateIdle {
+				t.Fatalf("expected state to transition to idle from %s, got %q", stName, st.State)
+			}
+		})
+	}
+}
+
+func TestCoordinator_SpeakingSafetyWatchdog(t *testing.T) {
+	t.Parallel()
+
+	t.Run("auto-resets to idle after speaking timeout", func(t *testing.T) {
+		t.Parallel()
+		c := NewCoordinator(nil)
+		c.SetSpeakingTimeout(50 * time.Millisecond)
+
+		txt := "hello"
+		rep := "hi"
+		c.Transition(StateSpeaking, &txt, &rep, nil, nil)
+		if c.GetState().State != StateSpeaking {
+			t.Fatalf("expected state speaking, got %s", c.GetState().State)
+		}
+
+		// Wait for watchdog timer to fire
+		time.Sleep(100 * time.Millisecond)
+
+		if c.GetState().State != StateIdle {
+			t.Fatalf("expected watchdog to auto-reset to idle, got %s", c.GetState().State)
+		}
+	})
+
+	t.Run("defaults to 30s when timeout non-positive", func(t *testing.T) {
+		t.Parallel()
+		c := NewCoordinator(nil)
+		c.SetSpeakingTimeout(0)
+		txt := "hello"
+		c.Transition(StateSpeaking, &txt, nil, nil, nil)
+		c.Stop()
+	})
+
+	t.Run("transition out of speaking cancels watchdog", func(t *testing.T) {
+		t.Parallel()
+		c := NewCoordinator(nil)
+		c.SetSpeakingTimeout(50 * time.Millisecond)
+
+		txt := "hello"
+		rep := "hi"
+		c.Transition(StateSpeaking, &txt, &rep, nil, nil)
+		if c.GetState().State != StateSpeaking {
+			t.Fatalf("expected state speaking, got %s", c.GetState().State)
+		}
+
+		// Transition out of speaking
+		c.Transition(StateError, nil, nil, nil, nil)
+		if c.GetState().State != StateError {
+			t.Fatalf("expected state error, got %s", c.GetState().State)
+		}
+
+		time.Sleep(100 * time.Millisecond)
+
+		// Watchdog must not have reset StateError back to StateIdle
+		if c.GetState().State != StateError {
+			t.Fatalf("expected state to remain error, got %s", c.GetState().State)
+		}
+	})
+
+	t.Run("Reset cancels watchdog timer", func(t *testing.T) {
+		t.Parallel()
+		c := NewCoordinator(nil)
+		c.SetSpeakingTimeout(50 * time.Millisecond)
+
+		txt := "hello"
+		rep := "hi"
+		c.Transition(StateSpeaking, &txt, &rep, nil, nil)
+		c.Reset()
+		if c.GetState().State != StateIdle {
+			t.Fatalf("expected state idle, got %s", c.GetState().State)
+		}
+
+		// Transition to listening before watchdog would fire
+		c.Transition(StateListening, nil, nil, nil, nil)
+
+		time.Sleep(100 * time.Millisecond)
+
+		// Late idle and watchdog timer must not have reset StateListening
+		if c.GetState().State != StateListening {
+			t.Fatalf("expected state to remain listening, got %s", c.GetState().State)
+		}
+	})
+}
+
+func TestCoordinator_Stop(t *testing.T) {
+	t.Parallel()
+	c := NewCoordinator(nil)
+	c.SetSpeakingTimeout(50 * time.Millisecond)
+
+	txt := "hello"
+	rep := "hi"
+	c.Transition(StateSpeaking, &txt, &rep, nil, nil)
+	c.Stop()
+
+	time.Sleep(100 * time.Millisecond)
+
+	// Since Stop cancelled the timer, it should still be in speaking
+	if c.GetState().State != StateSpeaking {
+		t.Fatalf("expected state speaking after Stop(), got %s", c.GetState().State)
+	}
+	c.Reset()
 }

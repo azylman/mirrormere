@@ -333,8 +333,16 @@ func TestHub_Interact_StreamingBrain_SentenceAudio(t *testing.T) {
 		t.Errorf("expected completion marker chunk to have empty data, got %q", chunks[1]["data"])
 	}
 
-	if coord.GetState().State != StateIdle {
-		t.Errorf("expected final state idle, got %s", coord.GetState().State)
+	st := coord.GetState()
+	if st.State != StateSpeaking {
+		t.Errorf("expected final state speaking, got %s", st.State)
+	}
+	if st.Reply == nil || *st.Reply != brain.reply {
+		t.Errorf("expected final reply %q, got %v", brain.reply, st.Reply)
+	}
+	reset := coord.Reset()
+	if reset.State != StateIdle {
+		t.Errorf("expected state idle after reset, got %s", reset.State)
 	}
 }
 
@@ -502,11 +510,11 @@ func TestHub_Interact_StreamingBrain_KioskCaption(t *testing.T) {
 	}
 
 	rec.mu.Lock()
-	defer rec.mu.Unlock()
 	var speaking []string
 	for _, s := range rec.states {
 		if s.State == StateSpeaking {
 			if s.Reply == nil {
+				rec.mu.Unlock()
 				t.Fatalf("speaking state published with nil reply: kiosk caption would be blank")
 			}
 			speaking = append(speaking, *s.Reply)
@@ -514,6 +522,7 @@ func TestHub_Interact_StreamingBrain_KioskCaption(t *testing.T) {
 	}
 	want := []string{"It's sunny.", "It's sunny. High of 72.", "It's sunny. High of 72."}
 	if len(speaking) != len(want) {
+		rec.mu.Unlock()
 		t.Fatalf("expected %d speaking states %q, got %d %q", len(want), want, len(speaking), speaking)
 	}
 	for i := range want {
@@ -521,9 +530,18 @@ func TestHub_Interact_StreamingBrain_KioskCaption(t *testing.T) {
 			t.Errorf("speaking state %d: want caption %q, got %q", i, want[i], speaking[i])
 		}
 	}
-	if last := rec.states[len(rec.states)-1]; last.State != StateIdle {
-		t.Errorf("expected final state idle, got %s", last.State)
+	if last := rec.states[len(rec.states)-1]; last.State != StateSpeaking {
+		t.Errorf("expected final state speaking, got %s", last.State)
 	}
+	rec.mu.Unlock()
+
+	coord.Reset()
+
+	rec.mu.Lock()
+	if last := rec.states[len(rec.states)-1]; last.State != StateIdle {
+		t.Errorf("expected final state idle after reset, got %s", last.State)
+	}
+	rec.mu.Unlock()
 }
 
 // TestHub_Interact_StreamingBrain_PCM_BufferingAndFlush tests that raw PCM streams

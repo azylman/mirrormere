@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 import time
 import unittest
+import urllib.error
 from unittest.mock import MagicMock, call, patch
 
 from clients.ear.config import VoiceConfig
@@ -196,11 +197,15 @@ class TestVoiceDaemon(unittest.TestCase):
             daemon._hub_stream_worker(self.save_path)
             mock_play.assert_called_once_with(b"fake-audio-bytes")
 
-        # Verified mock_urlopen called for Hub POST
-        req = mock_urlopen.call_args[0][0]
+        # Verified mock_urlopen called for Hub POST and post_voice_state idle
+        self.assertEqual(mock_urlopen.call_count, 2)
+        req = mock_urlopen.call_args_list[0][0][0]
         self.assertIn(b'name="node_id"\r\n\r\ntouch-kiosk-kitchen', req.data)
         self.assertNotIn(b'name="device_name"', req.data)
         self.assertNotIn(b'name="session_id"', req.data)
+        idle_req = mock_urlopen.call_args_list[1][0][0]
+        self.assertEqual(idle_req.full_url, "http://test-core/kiosk/api/voice/state")
+        self.assertIn(b'"state": "idle"', idle_req.data)
 
     @patch("clients.ear.client.urllib.request.urlopen")
     def test_hub_sse_stream_worker_multi_sentence_audio(self, mock_urlopen):
@@ -594,8 +599,8 @@ class TestVoiceDaemon(unittest.TestCase):
 
         daemon._hub_stream_worker(self.save_path)
 
-        mock_urlopen.assert_called_once()
-        req, kwargs = mock_urlopen.call_args[0][0], mock_urlopen.call_args[1]
+        self.assertEqual(mock_urlopen.call_count, 2)
+        req, kwargs = mock_urlopen.call_args_list[0][0][0], mock_urlopen.call_args_list[0][1]
         self.assertEqual(kwargs.get("timeout"), 120.0)
 
         body = req.data.decode("utf-8", errors="replace")
@@ -604,6 +609,141 @@ class TestVoiceDaemon(unittest.TestCase):
         self.assertIn('name="silence_duration_ms"\r\n\r\n850.1', body)
         self.assertIn('name="node_id"\r\n\r\ntouch-kiosk-kitchen', body)
         self.assertIn('name="audio"; filename="utterance.wav"', body)
+
+        idle_req, idle_kwargs = mock_urlopen.call_args_list[1][0][0], mock_urlopen.call_args_list[1][1]
+        self.assertEqual(idle_req.full_url, "http://test-core/kiosk/api/voice/state")
+        self.assertEqual(idle_kwargs.get("timeout"), 2.0)
+        self.assertIn(b'"state": "idle"', idle_req.data)
+
+    @patch("clients.ear.client.post_voice_state")
+    def test_hub_stream_worker_posts_idle_on_missing_wav(self, mock_post_state):
+        daemon = VoiceDaemon(self.cfg, model=MockModel())
+        missing_path = os.path.join(self.temp_dir, "nonexistent.wav")
+        daemon._hub_stream_worker(missing_path)
+
+        mock_post_state.assert_called_once_with(self.cfg.mirrormere_url, "idle", timeout=2.0)
+        self.assertFalse(daemon.busy)
+        self.assertGreater(daemon.reply_ended_at, 0.0)
+
+    @patch("clients.ear.client.post_voice_state")
+    @patch("clients.ear.client.urllib.request.urlopen")
+    def test_hub_stream_worker_posts_idle_on_connection_failure(self, mock_urlopen, mock_post_state):
+        with open(self.save_path, "wb") as f:
+            f.write(b"RIFFdummyWAVE")
+
+        daemon = VoiceDaemon(self.cfg, model=MockModel())
+        mock_urlopen.side_effect = urllib.error.HTTPError(
+            url=self.cfg.hub_url,
+            code=409,
+            msg="Conflict",
+            hdrs={},
+            fp=None,
+        )
+
+        daemon._hub_stream_worker(self.save_path)
+
+        mock_post_state.assert_called_once_with(self.cfg.mirrormere_url, "idle", timeout=2.0)
+        self.assertFalse(daemon.busy)
+        self.assertGreater(daemon.reply_ended_at, 0.0)
+
+        # Also test URLError
+        mock_post_state.reset_mock()
+        mock_urlopen.side_effect = urllib.error.URLError("Connection refused")
+        daemon._hub_stream_worker(self.save_path)
+        mock_post_state.assert_called_once_with(self.cfg.mirrormere_url, "idle", timeout=2.0)
+        self.assertFalse(daemon.busy)
+
+    @patch("clients.ear.client.post_voice_state")
+    @patch("clients.ear.client.urllib.request.urlopen")
+    def test_hub_stream_worker_posts_idle_on_playback_completion(self, mock_urlopen, mock_post_state):
+        sse_lines = [
+            b"event: reply\r\n",
+            b'data: {"reply": "The garage door is closed."}\r\n',
+            b"\r\n",
+            b"event: audio_chunk\r\n",
+            b'data: {"chunk_index": 0, "format": "wav", "is_final": true, "data": "'
+            + base64.b64encode(b"audio-data")
+            + b'"}\r\n',
+            b"\r\n",
+            b"event: done\r\n",
+            b"data: {}\r\n",
+            b"\r\n",
+        ]
+        mock_resp = MagicMock()
+        mock_resp.status = 200
+        mock_resp.__iter__.return_value = iter(sse_lines)
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        with open(self.save_path, "wb") as f:
+            f.write(b"RIFFdummyWAVE")
+
+        daemon = VoiceDaemon(self.cfg, model=MockModel())
+        with patch.object(daemon, "play_audio") as mock_play:
+            daemon._hub_stream_worker(self.save_path)
+            mock_play.assert_called_once_with(b"audio-data")
+
+        mock_post_state.assert_called_once_with(self.cfg.mirrormere_url, "idle", timeout=2.0)
+        self.assertFalse(daemon.busy)
+
+    @patch("clients.ear.client.time.sleep")
+    @patch("clients.ear.client.post_voice_state")
+    @patch("clients.ear.client.urllib.request.urlopen")
+    def test_hub_stream_worker_caption_only_reading_delay(self, mock_urlopen, mock_post_state, mock_sleep):
+        # 30 words: reading delay should be min(max(30 * 0.3, 5.0), 15.0) = 9.0s
+        reply_text = "word " * 30
+        sse_lines = [
+            b"event: reply\r\n",
+            f'data: {{"reply": "{reply_text.strip()}"}}\r\n'.encode("utf-8"),
+            b"\r\n",
+            b"event: done\r\n",
+            b"data: {}\r\n",
+            b"\r\n",
+        ]
+        mock_resp = MagicMock()
+        mock_resp.status = 200
+        mock_resp.__iter__.return_value = iter(sse_lines)
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        with open(self.save_path, "wb") as f:
+            f.write(b"RIFFdummyWAVE")
+
+        daemon = VoiceDaemon(self.cfg, model=MockModel())
+        daemon._hub_stream_worker(self.save_path)
+
+        mock_sleep.assert_called_once_with(9.0)
+        mock_post_state.assert_called_once_with(self.cfg.mirrormere_url, "idle", timeout=2.0)
+        self.assertFalse(daemon.busy)
+
+        # Test minimum bound clamp (3 words: 3 * 0.3 = 0.9s -> clamped to 5.0s)
+        mock_sleep.reset_mock()
+        mock_post_state.reset_mock()
+        mock_resp.__iter__.return_value = iter([
+            b"event: reply\r\n",
+            b'data: {"reply": "Too short reply"}\r\n',
+            b"\r\n",
+            b"event: done\r\n",
+            b"data: {}\r\n",
+            b"\r\n",
+        ])
+        daemon._hub_stream_worker(self.save_path)
+        mock_sleep.assert_called_once_with(5.0)
+        mock_post_state.assert_called_once_with(self.cfg.mirrormere_url, "idle", timeout=2.0)
+
+        # Test maximum bound clamp (60 words: 60 * 0.3 = 18.0s -> clamped to 15.0s)
+        mock_sleep.reset_mock()
+        mock_post_state.reset_mock()
+        long_reply = "word " * 60
+        mock_resp.__iter__.return_value = iter([
+            b"event: reply\r\n",
+            f'data: {{"reply": "{long_reply.strip()}"}}\r\n'.encode("utf-8"),
+            b"\r\n",
+            b"event: done\r\n",
+            b"data: {}\r\n",
+            b"\r\n",
+        ])
+        daemon._hub_stream_worker(self.save_path)
+        mock_sleep.assert_called_once_with(15.0)
+        mock_post_state.assert_called_once_with(self.cfg.mirrormere_url, "idle", timeout=2.0)
 
     @patch("clients.ear.client.urllib.request.urlopen")
     def test_heartbeat_payload_and_exception_handling(self, mock_urlopen):

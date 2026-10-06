@@ -185,9 +185,19 @@ func TestHub_Interact_Success(t *testing.T) {
 		}
 	}
 
-	// Coordinator must be reset to idle
-	if coord.GetState().State != StateIdle {
-		t.Errorf("expected final state idle, got %s", coord.GetState().State)
+	// Coordinator must be left in StateSpeaking with reply
+	st := coord.GetState()
+	if st.State != StateSpeaking {
+		t.Errorf("expected final state speaking, got %s", st.State)
+	}
+	if st.Reply == nil || *st.Reply != brain.reply {
+		t.Errorf("expected final reply %q, got %v", brain.reply, st.Reply)
+	}
+
+	// Calling Reset transitions it to idle
+	reset := coord.Reset()
+	if reset.State != StateIdle {
+		t.Errorf("expected state idle after reset, got %s", reset.State)
 	}
 }
 
@@ -358,6 +368,169 @@ func TestHub_Interact_TTSDegradation(t *testing.T) {
 	if !hasReply || !hasError || !hasDone {
 		t.Errorf("expected reply, error, and done events, got: %+v", eventsEmitted)
 	}
+
+	st := coord.GetState()
+	if st.State != StateSpeaking {
+		t.Errorf("expected state speaking with degraded TTS, got %s", st.State)
+	}
+	if st.Reply == nil || *st.Reply != "hi there" {
+		t.Errorf("expected reply 'hi there', got %v", st.Reply)
+	}
+}
+
+func TestHub_Interact_NilTTS_CoordinatorSpeaking(t *testing.T) {
+	t.Parallel()
+	cfg := &config.VoiceHubConfig{Enabled: true}
+	coord := NewCoordinator(nil)
+	stt := &mockSTT{text: "hello"}
+	brain := &mockBrain{reply: "quiet hours response"}
+	h := NewHub(cfg, coord, WithSTTClient(stt), WithBrainClient(brain), WithTTSClient(nil))
+
+	err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(100)), "", "", func(event string, data any) error {
+		return nil
+	}, EdgeTimings{})
+	if err != nil {
+		t.Fatalf("unexpected error with nil TTS: %v", err)
+	}
+
+	st := coord.GetState()
+	if st.State != StateSpeaking {
+		t.Errorf("expected state speaking with nil TTS, got %s", st.State)
+	}
+	if st.Reply == nil || *st.Reply != "quiet hours response" {
+		t.Errorf("expected reply 'quiet hours response', got %v", st.Reply)
+	}
+}
+
+func TestHub_Interact_ErrorTransitionsCoordinator(t *testing.T) {
+	t.Parallel()
+	cfg := &config.VoiceHubConfig{Enabled: true}
+
+	t.Run("nil STT transitions coordinator to error", func(t *testing.T) {
+		t.Parallel()
+		coord := NewCoordinator(nil)
+		h := NewHub(cfg, coord, WithSTTClient(nil), WithBrainClient(&mockBrain{}), WithTTSClient(&mockTTS{}))
+		err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(100)), "", "", func(event string, data any) error {
+			return nil
+		}, EdgeTimings{})
+		if !errors.Is(err, ErrSTTFailed) {
+			t.Fatalf("expected ErrSTTFailed, got: %v", err)
+		}
+		if coord.GetState().State != StateError {
+			t.Errorf("expected coordinator state error on nil STT, got: %s", coord.GetState().State)
+		}
+	})
+
+	t.Run("nil Brain transitions coordinator to error", func(t *testing.T) {
+		t.Parallel()
+		coord := NewCoordinator(nil)
+		h := NewHub(cfg, coord, WithSTTClient(&mockSTT{text: "hello"}), WithBrainClient(nil), WithTTSClient(&mockTTS{}))
+		err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(100)), "", "", func(event string, data any) error {
+			return nil
+		}, EdgeTimings{})
+		if !errors.Is(err, ErrBrainFailed) {
+			t.Fatalf("expected ErrBrainFailed, got: %v", err)
+		}
+		if coord.GetState().State != StateError {
+			t.Errorf("expected coordinator state error on nil Brain, got: %s", coord.GetState().State)
+		}
+	})
+
+	t.Run("sink error on state transitions coordinator to error", func(t *testing.T) {
+		t.Parallel()
+		coord := NewCoordinator(nil)
+		h := NewHub(cfg, coord, WithSTTClient(&mockSTT{text: "hello"}), WithBrainClient(&mockBrain{reply: "hi"}), WithTTSClient(&mockTTS{}))
+		err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(100)), "", "", func(event string, data any) error {
+			if event == "state" {
+				return errors.New("sink state disconnected")
+			}
+			return nil
+		}, EdgeTimings{})
+		if err == nil {
+			t.Fatal("expected error from sink")
+		}
+		if coord.GetState().State != StateError {
+			t.Errorf("expected coordinator state error on sink state error, got: %s", coord.GetState().State)
+		}
+	})
+
+	t.Run("sink error on transcript transitions coordinator to error", func(t *testing.T) {
+		t.Parallel()
+		coord := NewCoordinator(nil)
+		h := NewHub(cfg, coord, WithSTTClient(&mockSTT{text: "hello"}), WithBrainClient(&mockBrain{reply: "hi"}), WithTTSClient(&mockTTS{}))
+		err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(100)), "", "", func(event string, data any) error {
+			if event == "transcript" {
+				return errors.New("sink transcript aborted")
+			}
+			return nil
+		}, EdgeTimings{})
+		if err == nil {
+			t.Fatal("expected error from sink")
+		}
+		if coord.GetState().State != StateError {
+			t.Errorf("expected coordinator state error on sink transcript error, got: %s", coord.GetState().State)
+		}
+	})
+
+	t.Run("sink error on reply transitions coordinator to error", func(t *testing.T) {
+		t.Parallel()
+		coord := NewCoordinator(nil)
+		h := NewHub(cfg, coord, WithSTTClient(&mockSTT{text: "hello"}), WithBrainClient(&mockBrain{reply: "hi"}), WithTTSClient(&mockTTS{}))
+		err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(100)), "", "", func(event string, data any) error {
+			if event == "reply" {
+				return errors.New("sink reply broken")
+			}
+			return nil
+		}, EdgeTimings{})
+		if err == nil {
+			t.Fatal("expected error from sink")
+		}
+		if coord.GetState().State != StateError {
+			t.Errorf("expected coordinator state error on sink reply error, got: %s", coord.GetState().State)
+		}
+	})
+
+	t.Run("sink error on done transitions coordinator to error", func(t *testing.T) {
+		t.Parallel()
+		coord := NewCoordinator(nil)
+		h := NewHub(cfg, coord, WithSTTClient(&mockSTT{text: "hello"}), WithBrainClient(&mockBrain{reply: "hi"}), WithTTSClient(&mockTTS{}))
+		err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(100)), "", "", func(event string, data any) error {
+			if event == "done" {
+				return errors.New("sink done timeout")
+			}
+			return nil
+		}, EdgeTimings{})
+		if err == nil {
+			t.Fatal("expected error from sink")
+		}
+		if coord.GetState().State != StateError {
+			t.Errorf("expected coordinator state error on sink done error, got: %s", coord.GetState().State)
+		}
+	})
+}
+
+func TestHub_Interact_PanicRecoversAndTransitionsCoordinator(t *testing.T) {
+	t.Parallel()
+	cfg := &config.VoiceHubConfig{Enabled: true}
+	coord := NewCoordinator(nil)
+	panickingSTT := &mockBlockingSTT{
+		onTranscribe: func() {
+			panic("unexpected boom")
+		},
+	}
+	h := NewHub(cfg, coord, WithSTTClient(panickingSTT))
+
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("expected panic, got none")
+		}
+		if coord.GetState().State != StateError {
+			t.Errorf("expected coordinator state error on panic, got %s", coord.GetState().State)
+		}
+	}()
+
+	_ = h.Interact(context.Background(), bytes.NewReader(makeValidWAV(100)), "", "", func(string, any) error { return nil }, EdgeTimings{})
 }
 
 func drainMockWyomingRequest(reader *bufio.Reader) {
