@@ -37,9 +37,6 @@ COPY --from=builder --link --chown=10001:10001 /app/server /app/server
 # Switch to unprivileged non-root user
 USER 10001:10001
 
-ENV PORT=8080 \
-    HOST=0.0.0.0
-
 EXPOSE 8080
 
 # Native Busybox wget probe to avoid IPv6 musl localhost delays and extra dependencies

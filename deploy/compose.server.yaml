@@ -15,8 +15,6 @@ services:
     ports:
       - "8080:8080" # Core Daemon: REST API, SSE (/api/events), web UI
     environment:
-      - PORT=8080
-      - HOST=0.0.0.0
       - TZ=America/Los_Angeles
     volumes:
       - ./config:/config:ro # Contains config.yaml, custom.css, and optional widgets/

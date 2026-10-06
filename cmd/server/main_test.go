@@ -30,9 +30,30 @@ func (failWriter) Write(p []byte) (n int, err error) {
 	return 0, errors.New("simulated stdout write failure")
 }
 
+func writeTestServerYAML(t *testing.T, dir, filename, content string) string {
+	t.Helper()
+	p := filepath.Join(dir, filename)
+	if err := os.WriteFile(p, []byte(content), 0644); err != nil {
+		t.Fatalf("failed to write %s: %v", filename, err)
+	}
+	return p
+}
+
 func TestRun_SuccessAndShutdown(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	tmpDir := t.TempDir()
+	cfgPath := writeTestServerYAML(t, tmpDir, "config.yaml", `
+host: "127.0.0.1"
+port: 0
+timezone: "UTC"
+display:
+  widgets:
+    - id: default-spacer
+      type: spacer
+      dimensions: [6, 2]
+`)
 
 	readyChan := make(chan struct{}, 1)
 	addrChan := make(chan string, 1)
@@ -40,8 +61,8 @@ func TestRun_SuccessAndShutdown(t *testing.T) {
 
 	errChan := make(chan error, 1)
 	go func() {
-		// Bind to ephemeral port 0 on 127.0.0.1
-		errChan <- RunWithReady(ctx, []string{"-host", "127.0.0.1", "-port", "0"}, &stdout, &stderr, readyChan, WithAddrChan(addrChan))
+		// Bind to ephemeral port 0 on 127.0.0.1 via config file
+		errChan <- RunWithReady(ctx, []string{cfgPath}, &stdout, &stderr, readyChan, WithAddrChan(addrChan))
 	}()
 
 	select {
@@ -81,11 +102,8 @@ func TestRun_CompositionRootSmoke(t *testing.T) {
 	defer cancel()
 
 	cfgDir := t.TempDir()
-	cfgPath := filepath.Join(cfgDir, "config.yaml")
-	cfgContent := "timezone: America/New_York\ndisplay:\n  widgets:\n    - id: default-spacer\n      type: spacer\n      dimensions: [6, 2]\n"
-	if err := os.WriteFile(cfgPath, []byte(cfgContent), 0644); err != nil {
-		t.Fatalf("failed to write test config: %v", err)
-	}
+	cfgContent := "host: \"127.0.0.1\"\nport: 0\ntimezone: America/New_York\ndisplay:\n  widgets:\n    - id: default-spacer\n      type: spacer\n      dimensions: [6, 2]\n"
+	cfgPath := writeTestServerYAML(t, cfgDir, "config.yaml", cfgContent)
 
 	readyChan := make(chan struct{}, 1)
 	addrChan := make(chan string, 1)
@@ -93,12 +111,7 @@ func TestRun_CompositionRootSmoke(t *testing.T) {
 
 	errChan := make(chan error, 1)
 	go func() {
-		errChan <- RunWithReady(ctx, []string{
-			"-host", "127.0.0.1",
-			"-port", "0",
-			"-config", cfgPath,
-			"-db", ":memory:",
-		}, &stdout, &stderr, readyChan, WithAddrChan(addrChan))
+		errChan <- RunWithReady(ctx, []string{cfgPath}, &stdout, &stderr, readyChan, WithAddrChan(addrChan))
 	}()
 
 	select {
@@ -241,7 +254,7 @@ func TestRun_ConfigReadError(t *testing.T) {
 	ctx := context.Background()
 	var stdout, stderr bytes.Buffer
 
-	err := Run(ctx, []string{"-config", "/nonexistent/path/to/config.yaml"}, &stdout, &stderr)
+	err := Run(ctx, []string{"/nonexistent/path/to/config.yaml"}, &stdout, &stderr)
 	if err == nil {
 		t.Fatal("expected error on nonexistent config file, got nil")
 	}
@@ -257,7 +270,7 @@ func TestRun_ConfigManagerError(t *testing.T) {
 	_ = os.WriteFile(cfgPath, []byte("display: [unclosed"), 0644)
 
 	var stdout, stderr bytes.Buffer
-	err := Run(ctx, []string{"-config", cfgPath}, &stdout, &stderr)
+	err := Run(ctx, []string{cfgPath}, &stdout, &stderr)
 	if err == nil {
 		t.Fatal("expected error on invalid yaml config, got nil")
 	}
@@ -270,17 +283,26 @@ func TestRun_TasksStoreFallback(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	tmpDir := t.TempDir()
+	cfgPath := writeTestServerYAML(t, tmpDir, "config.yaml", `
+host: "127.0.0.1"
+port: 0
+timezone: "UTC"
+display:
+  widgets:
+    - id: default-spacer
+      type: spacer
+      dimensions: [6, 2]
+`)
+	t.Setenv("DB_PATH", "/proc/impossible/dir/lists.db")
+
 	readyChan := make(chan struct{}, 1)
 	var stdout, stderr bytes.Buffer
 
 	errChan := make(chan error, 1)
 	go func() {
-		// Use an impossible path to trigger fallback to :memory:
-		errChan <- RunWithReady(ctx, []string{
-			"-host", "127.0.0.1",
-			"-port", "0",
-			"-db", "/proc/impossible/dir/lists.db",
-		}, &stdout, &stderr, readyChan)
+		// Use an impossible path in DB_PATH to trigger fallback to :memory:
+		errChan <- RunWithReady(ctx, []string{cfgPath}, &stdout, &stderr, readyChan)
 	}()
 
 	select {
@@ -312,12 +334,24 @@ func TestRun_EmptyEnvDB(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	tmpDir := t.TempDir()
+	cfgPath := writeTestServerYAML(t, tmpDir, "config.yaml", `
+host: "127.0.0.1"
+port: 0
+timezone: "UTC"
+display:
+  widgets:
+    - id: default-spacer
+      type: spacer
+      dimensions: [6, 2]
+`)
+
 	readyChan := make(chan struct{}, 1)
 	var stdout, stderr bytes.Buffer
 
 	errChan := make(chan error, 1)
 	go func() {
-		errChan <- RunWithReady(ctx, []string{"-host", "127.0.0.1", "-port", "0", "-db", ":memory:"}, &stdout, &stderr, readyChan)
+		errChan <- RunWithReady(ctx, []string{cfgPath}, &stdout, &stderr, readyChan)
 	}()
 
 	select {
@@ -342,11 +376,34 @@ func TestRun_EmptyEnvDB(t *testing.T) {
 
 func TestRun_HelpFlag(t *testing.T) {
 	ctx := context.Background()
-	var stdout, stderr bytes.Buffer
 
-	err := Run(ctx, []string{"-help"}, &stdout, &stderr)
-	if err != nil {
-		t.Fatalf("expected nil error on help flag, got %v", err)
+	for _, flag := range []string{"-h", "-help", "--help"} {
+		var stdout, stderr bytes.Buffer
+		err := Run(ctx, []string{flag}, &stdout, &stderr)
+		if err != nil {
+			t.Fatalf("expected nil error on help flag %s, got %v", flag, err)
+		}
+		if !strings.Contains(stderr.String(), "Usage: mirrormere [config-path]") {
+			t.Errorf("expected usage string in stderr for %s, got: %s", flag, stderr.String())
+		}
+	}
+
+	var stdout bytes.Buffer
+	err := Run(ctx, []string{"-h"}, &stdout, failWriter{})
+	if err == nil {
+		t.Fatal("expected error on failing stderr writer, got nil")
+	}
+}
+
+func TestRun_ConfigPathEnv_MissingFile(t *testing.T) {
+	t.Setenv("CONFIG_PATH", "/nonexistent/test-config.yaml")
+	var stdout, stderr bytes.Buffer
+	err := Run(context.Background(), []string{}, &stdout, &stderr)
+	if err == nil {
+		t.Fatal("expected error for non-existent CONFIG_PATH, got nil")
+	}
+	if !strings.Contains(err.Error(), `failed to read configuration file "/nonexistent/test-config.yaml"`) {
+		t.Errorf("unexpected error message: %v", err)
 	}
 }
 
@@ -358,13 +415,39 @@ func TestRun_InvalidFlag(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error on invalid flag, got nil")
 	}
+	if !strings.Contains(err.Error(), "flags are not supported; configure via config file") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+func TestRun_FlagsRejected(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	err := Run(context.Background(), []string{"-port", "8080"}, &stdout, &stderr)
+	if err == nil {
+		t.Fatal("expected error for flag, got nil")
+	}
+	if !strings.Contains(err.Error(), "flags are not supported; configure via config file: -port") {
+		t.Errorf("unexpected error message: %v", err)
+	}
 }
 
 func TestRun_BindError(t *testing.T) {
 	ctx := context.Background()
 	var stdout, stderr bytes.Buffer
 
-	err := Run(ctx, []string{"-host", "999.999.999.999", "-port", "8080"}, &stdout, &stderr)
+	tmpDir := t.TempDir()
+	cfgPath := writeTestServerYAML(t, tmpDir, "config.yaml", `
+host: "999.999.999.999"
+port: 8080
+timezone: "UTC"
+display:
+  widgets:
+    - id: default-spacer
+      type: spacer
+      dimensions: [6, 2]
+`)
+
+	err := Run(ctx, []string{cfgPath}, &stdout, &stderr)
 	if err == nil {
 		t.Fatal("expected bind error for invalid host, got nil")
 	}
@@ -374,8 +457,20 @@ func TestRun_StdoutWriteError(t *testing.T) {
 	ctx := context.Background()
 	var stderr bytes.Buffer
 
+	tmpDir := t.TempDir()
+	cfgPath := writeTestServerYAML(t, tmpDir, "config.yaml", `
+host: "127.0.0.1"
+port: 0
+timezone: "UTC"
+display:
+  widgets:
+    - id: default-spacer
+      type: spacer
+      dimensions: [6, 2]
+`)
+
 	// Force stdout write to fail
-	err := RunWithReady(ctx, []string{"-host", "127.0.0.1", "-port", "0"}, failWriter{}, &stderr, nil)
+	err := RunWithReady(ctx, []string{cfgPath}, failWriter{}, &stderr, nil)
 	if err == nil {
 		t.Fatal("expected write error on stdout failure, got nil")
 	}
@@ -384,20 +479,32 @@ func TestRun_StdoutWriteError(t *testing.T) {
 	}
 }
 
-func TestRun_EnvOverrides(t *testing.T) {
-	t.Setenv("HOST", "127.0.0.1")
-	t.Setenv("PORT", "0")
-	t.Setenv("CONFIG_PATH", "")
+func TestRun_EnvHostPortIgnored(t *testing.T) {
+	t.Setenv("HOST", "1.2.3.4")
+	t.Setenv("PORT", "9999")
+
+	tmpDir := t.TempDir()
+	cfgPath := writeTestServerYAML(t, tmpDir, "config.yaml", `
+host: "127.0.0.1"
+port: 0
+timezone: "UTC"
+display:
+  widgets:
+    - id: default-spacer
+      type: spacer
+      dimensions: [6, 2]
+`)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	readyChan := make(chan struct{}, 1)
+	addrChan := make(chan string, 1)
 	var stdout, stderr bytes.Buffer
 
 	errChan := make(chan error, 1)
 	go func() {
-		errChan <- RunWithReady(ctx, nil, &stdout, &stderr, readyChan)
+		errChan <- RunWithReady(ctx, []string{cfgPath}, &stdout, &stderr, readyChan, WithAddrChan(addrChan))
 	}()
 
 	select {
@@ -406,6 +513,14 @@ func TestRun_EnvOverrides(t *testing.T) {
 		t.Fatalf("RunWithReady failed: %v", err)
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for server ready signal")
+	}
+
+	addr := <-addrChan
+	if !strings.HasPrefix(addr, "127.0.0.1:") {
+		t.Errorf("expected server to bind 127.0.0.1 (ignoring HOST env 1.2.3.4), got %s", addr)
+	}
+	if strings.HasSuffix(addr, ":9999") {
+		t.Errorf("expected server to bind ephemeral port 0 (ignoring PORT env 9999), got %s", addr)
 	}
 
 	cancel()
@@ -508,7 +623,7 @@ display:
 
 	errChan := make(chan error, 1)
 	go func() {
-		errChan <- RunWithReady(ctx, []string{"-config", configPath}, &stdout, &stderr, readyChan, WithAddrChan(addrChan))
+		errChan <- RunWithReady(ctx, []string{configPath}, &stdout, &stderr, readyChan, WithAddrChan(addrChan))
 	}()
 
 	select {
@@ -527,6 +642,8 @@ func TestRun_SIGHUP_ValidReload(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "mirrormere.yaml")
 	initialYAML := `
+host: "127.0.0.1"
+port: 0
 timezone: "UTC"
 display:
   widgets:
@@ -551,7 +668,7 @@ display:
 	go func() {
 		errChan <- RunWithReady(
 			ctx,
-			[]string{"-config", configPath, "-port", "0", "-host", "127.0.0.1"},
+			[]string{configPath},
 			&stdout,
 			&stderr,
 			readyChan,
@@ -576,6 +693,8 @@ display:
 
 	// Update config on disk with new timezone
 	updatedYAML := `
+host: "127.0.0.1"
+port: 0
 timezone: "America/New_York"
 display:
   widgets:
@@ -605,6 +724,8 @@ func TestRun_SIGHUP_InvalidYAML_RetainsLKGC(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "mirrormere.yaml")
 	initialYAML := `
+host: "127.0.0.1"
+port: 0
 timezone: "UTC"
 display:
   widgets:
@@ -629,7 +750,7 @@ display:
 	go func() {
 		errChan <- RunWithReady(
 			ctx,
-			[]string{"-config", configPath, "-port", "0", "-host", "127.0.0.1"},
+			[]string{configPath},
 			&stdout,
 			&stderr,
 			readyChan,
@@ -682,6 +803,8 @@ func TestRun_SIGHUP_ReadError_RetainsLKGC(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "mirrormere.yaml")
 	initialYAML := `
+host: "127.0.0.1"
+port: 0
 timezone: "UTC"
 display:
   widgets:
@@ -705,7 +828,7 @@ display:
 	go func() {
 		errChan <- RunWithReady(
 			ctx,
-			[]string{"-config", configPath, "-port", "0", "-host", "127.0.0.1"},
+			[]string{configPath},
 			&stdout,
 			&stderr,
 			readyChan,
@@ -749,6 +872,8 @@ func TestRun_SIGHUP_StyleReload(t *testing.T) {
 	customCSSPath := filepath.Join(tmpDir, "custom.css")
 
 	initialYAML := `
+host: "127.0.0.1"
+port: 0
 timezone: "UTC"
 display:
   widgets:
@@ -776,7 +901,7 @@ display:
 	go func() {
 		errChan <- RunWithReady(
 			ctx,
-			[]string{"-config", configPath, "-port", "0", "-host", "127.0.0.1"},
+			[]string{configPath},
 			&stdout,
 			&stderr,
 			readyChan,
@@ -919,6 +1044,8 @@ default_dimensions: [6, 2]
 	}
 
 	initialYAML := `
+host: "127.0.0.1"
+port: 0
 timezone: "UTC"
 display:
   widgets:
@@ -943,12 +1070,7 @@ display:
 	go func() {
 		errChan <- RunWithReady(
 			ctx,
-			[]string{
-				"-config", configPath,
-				"-custom-widgets", customWidgetsDir,
-				"-port", "0",
-				"-host", "127.0.0.1",
-			},
+			[]string{configPath},
 			&stdout,
 			&stderr,
 			readyChan,
@@ -1077,6 +1199,112 @@ display:
 	}
 
 	sseCancel()
+	cancel()
+	<-errChan
+}
+
+func TestRun_SIGHUP_HostPortChange_LogsRestartRequired(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "mirrormere.yaml")
+	initialYAML := `
+host: "127.0.0.1"
+port: 0
+timezone: "UTC"
+display:
+  widgets:
+    - id: spacer-1
+      type: spacer
+      dimensions: [6, 2]
+`
+	if err := os.WriteFile(configPath, []byte(initialYAML), 0644); err != nil {
+		t.Fatalf("failed to write initial config: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	readyChan := make(chan struct{}, 1)
+	hupChan := make(chan os.Signal, 1)
+	reloadedChan := make(chan struct{}, 1)
+	addrChan := make(chan string, 1)
+	var stdout, stderr bytes.Buffer
+
+	errChan := make(chan error, 1)
+	go func() {
+		errChan <- RunWithReady(
+			ctx,
+			[]string{configPath},
+			&stdout,
+			&stderr,
+			readyChan,
+			WithAddrChan(addrChan),
+			WithHupChan(hupChan),
+			WithOnReload(func() {
+				select {
+				case reloadedChan <- struct{}{}:
+				default:
+				}
+			}),
+		)
+	}()
+
+	select {
+	case <-readyChan:
+	case err := <-errChan:
+		t.Fatalf("RunWithReady failed: %v", err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for ready signal")
+	}
+
+	addr := <-addrChan
+
+	// Update config on disk with new port and host
+	updatedYAML := `
+host: "127.0.0.2"
+port: 9090
+timezone: "UTC"
+display:
+  widgets:
+    - id: spacer-1
+      type: spacer
+      dimensions: [6, 2]
+`
+	if err := os.WriteFile(configPath, []byte(updatedYAML), 0644); err != nil {
+		t.Fatalf("failed to write updated config: %v", err)
+	}
+
+	// Send SIGHUP via injected mock channel
+	hupChan <- syscall.SIGHUP
+
+	select {
+	case <-reloadedChan:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for SIGHUP reload completion")
+	}
+
+	// Verify the restart required warning is logged to stderr
+	errStr := stderr.String()
+	if !strings.Contains(errStr, "host or port changed in configuration; server restart required for changes to take effect") {
+		t.Errorf("expected restart required warning in stderr, got: %s", errStr)
+	}
+	if !strings.Contains(errStr, "bound_host=127.0.0.1") || !strings.Contains(errStr, "new_host=127.0.0.2") {
+		t.Errorf("expected bound_host and new_host in warning, got: %s", errStr)
+	}
+	if !strings.Contains(errStr, "new_port=9090") {
+		t.Errorf("expected new_port=9090 in warning, got: %s", errStr)
+	}
+
+	// Verify server remains running on the original bound address
+	resp, err := http.Get("http://" + addr + "/healthz")
+	if err != nil {
+		t.Fatalf("expected server to remain reachable on original address, got: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected status 200, got %d", resp.StatusCode)
+	}
+
+	close(hupChan)
 	cancel()
 	<-errChan
 }

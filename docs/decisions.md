@@ -13,8 +13,9 @@ Normative API schemas and event payloads are governed by `api/openapi.yaml` and 
 - **Appliance Cursor Suppression**: Floating cursor suppression on kiosks is controlled via `?kiosk=true` (or `.mm-touch-kiosk`), preserving standard mouse pointers on desktop browser sessions.
 
 ## 3. Configuration & Runtime Lifecycle
-- **Declarative YAML**: Core and sidecars load declarative YAML configuration (`config.yaml`) at boot.
-- **Reload Policy**: Server configuration reload is triggered via `SIGHUP` signal (or container restart), avoiding inode detachment issues with editor file renames.
+- **Declarative YAML & Zero Precedence**: Core and sidecars load declarative YAML configuration (`config.yaml`) as the single source of truth at boot. Command-line flags are prohibited, and legacy environment variable overrides (`HOST`, `PORT`) are removed. Secrets are strictly decoupled and injected via environment variables resolved through explicit `*_env` keys.
+- **Host & Port Bindings**: Server network binding is declared via top-level `host` (default: `"0.0.0.0"`) and `port` (default: `8080`) in `config.yaml`.
+- **Reload Policy & Restart Warnings**: Server configuration reload is triggered via `SIGHUP` signal (or container restart), avoiding inode detachment issues with editor file renames. Dynamic configuration (widgets, layout, weather, rotation) reloads live. Because open network sockets cannot be rebound at runtime, modifications to `host` or `port` during live reload emit a structured "restart required" warning log and require a server restart to take effect.
 - **Last-Known-Good Configuration (LKGC)**: If proposed configuration changes fail validation, the running configuration remains active and untouched.
 
 ## 4. Audio & Voice Pipeline
