@@ -95,7 +95,7 @@ ear:
 
 ## Quickstart & Installation
 
-### Option 1: Docker Container (Recommended for Touch Kiosk / N100)
+### Docker Container (Multi-Arch AMD64 / ARM64)
 
 Pull the pre-built multi-architecture container image from GitHub Container Registry:
 
@@ -130,24 +130,9 @@ docker run -d \
   ghcr.io/azylman/mirrormere-ear:latest
 ```
 
-### Option 2: Systemd Service (Bare Metal on Debian / Raspberry Pi)
-
-On the edge unit (kiosk mini-PC or Raspberry Pi):
-
-```bash
-# Run automated setup:
-sudo ./clients/ear/setup.sh
-
-# Start the service:
-sudo systemctl start mirrormere-voice.service
-
-# View live telemetry and wake scores:
-journalctl -u mirrormere-voice.service -f
-```
-
 ## Custom Wake Word Models
 
 To add custom wake word models (e.g. `hey_aerial.onnx`):
 1. Place the `.onnx` or `.tflite` file into `/opt/mirrormere/voice/models/`.
 2. Add the model base name to `wake_models` in `/etc/mirrormere/voice.yaml`.
-3. Restart `mirrormere-voice.service` (or restart the `mirrormere-ear` container). The daemon auto-scans the directory and loads the model into its active evaluation graph.
+3. Restart the `mirrormere-ear` container (`docker restart mirrormere-ear`). The daemon auto-scans the directory and loads the model into its active evaluation graph.
