@@ -2,8 +2,10 @@
 
 # Stream Definitions
 streams:
-  # Ingests HDMI video from MacroSilicon MS2130 USB capture card (/dev/video0)
-  # and ALSA digital stereo audio (hw:CARD=Video,DEV=0 or hw:CARD=MS2130,DEV=0).
+  # Ingests HDMI video from USB capture card (/dev/video0) and ALSA digital stereo audio:
+  # 1. hw:CARD=C4K,DEV=0 primary (Elgato Cam Link 4K USB capture card)
+  # 2. hw:CARD=Video,DEV=0 or hw:CARD=MS2130,DEV=0 fallback (MacroSilicon MS2130/MS2109 or generic UVC)
+  # 3. Video-only fallback without audio track
   # Hardware transcoding uses Intel VAAPI/QSV on Intel N100 to transcode incoming video to H.264
   # and audio to Opus, serving low-latency WebRTC at http://127.0.0.1:1984/api/webrtc?src=cast.
   cast:
@@ -13,8 +15,12 @@ streams:
 
 # WebRTC & HTTP API Configuration
 api:
+  # In container bridge mode (Docker Compose), listen on ":1984" and bind to
+  # "127.0.0.1:1984:1984" on the host to prevent unauthenticated API access from the LAN.
+  # If running go2rtc with host networking (network_mode: host), set listen to "127.0.0.1:1984".
   listen: ":1984"
   origin: "*"
 
 webrtc:
   listen: ":8555"
+

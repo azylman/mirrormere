@@ -1,10 +1,20 @@
-# deploy/compose.client.yaml - Mirrormere Client / Kiosk Manifest
-# Deploys Edge Voice Ear client, go2rtc HDMI ingest daemon, and Cast Watcher sidecar.
+# deploy/examples/compose.client.yaml - Mirrormere Reference Client / Kiosk Compose Stack
+#
+# Reference deployment for Touch Kiosk Profile A (Intel N100 or similar mini-PC):
+# - Edge Voice Ear client (microphone capture + voice interaction)
+# - go2rtc (HDMI capture card video/audio ingest + hardware WebRTC transcoding)
+# - Cast Watcher (Chromecast receiver socket monitor + auto-switch)
+#
+# NOTE: Hardware devices, ALSA card names, GIDs, and network IPs are host-specific examples.
+# Users should adjust these settings to match their local hardware and network:
+# - Video capture card: check `v4l2-ctl --list-devices`
+# - Audio capture card: check `arecord -l`
+# - Host group IDs: verify via `getent group video`, `getent group render`, `getent group audio`
 
 services:
   mirrormere-ear:
     build:
-      context: ../clients/ear
+      context: ../../clients/ear
       dockerfile: Dockerfile
     image: ghcr.io/azylman/mirrormere-ear:latest
     container_name: mirrormere-ear
@@ -21,14 +31,14 @@ services:
     devices:
       - /dev/snd:/dev/snd
     group_add:
-      - "29" # audio
+      - "29" # audio (adjust to host audio GID: `getent group audio`)
     environment:
       - MIRRORMERE_NODE_ID=${MIRRORMERE_NODE_ID:-touch-kiosk-kitchen}
       - MIRRORMERE_URL=${MIRRORMERE_URL:-http://192.168.1.14/kiosk}
       - MIRRORMERE_HUB_URL=${MIRRORMERE_HUB_URL:-http://192.168.1.14/kiosk/api/voice/interact}
       - MIRRORMERE_VOICE_CONFIG=/config/voice.yaml
       - MIRRORMERE_HEARTBEAT_FILE=/tmp/ear.heartbeat
-      - MIRRORMERE_AUDIO_DEVICE=${MIRRORMERE_AUDIO_DEVICE:-plughw:CARD=SF558,DEV=0}
+      - MIRRORMERE_AUDIO_DEVICE=${MIRRORMERE_AUDIO_DEVICE:-plughw:CARD=SF558,DEV=0} # Example mic (check `arecord -l`)
       - PULSE_SERVER=${PULSE_SERVER:-unix:/run/user/1000/pulse/native}
     volumes:
       - ./config/voice.yaml:/config/voice.yaml:ro
@@ -47,19 +57,19 @@ services:
     container_name: mirrormere-go2rtc
     restart: unless-stopped
     ports:
-      - "1984:1984"       # WebRTC & HTTP REST API
+      - "127.0.0.1:1984:1984"       # WebRTC & HTTP REST API (loopback only - prevents unauthenticated LAN API access)
       - "8555:8555/tcp"  # WebRTC TCP candidates
       - "8555:8555/udp"  # WebRTC UDP candidates
     volumes:
-      - ./go2rtc.yaml:/config/go2rtc.yaml:ro
+      - ../go2rtc.yaml:/config/go2rtc.yaml:ro
     devices:
-      - /dev/video0:/dev/video0  # MacroSilicon MS2130 USB capture card video
+      - /dev/video0:/dev/video0  # UVC USB capture card video (e.g. Elgato Cam Link 4K, MS2130)
       - /dev/dri:/dev/dri        # Intel VAAPI/QSV hardware transcoding
       - /dev/snd:/dev/snd        # ALSA stereo audio capture
     group_add:
-      - "44"   # video
-      - "991"  # render
-      - "29"   # audio
+      - "44"   # video (adjust to host video GID: `getent group video`)
+      - "991"  # render (adjust to host render GID: `getent group render`)
+      - "29"   # audio (adjust to host audio GID: `getent group audio`)
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:1984/api"]
       interval: 15s
@@ -70,7 +80,7 @@ services:
 
   cast-watcher:
     build:
-      context: ..
+      context: ../..
       dockerfile: sidecars/cast-watcher/Dockerfile
     image: ghcr.io/azylman/mirrormere-cast-watcher:latest
     container_name: mirrormere-cast-watcher
@@ -92,3 +102,4 @@ services:
 
 volumes:
   ear-models:
+
