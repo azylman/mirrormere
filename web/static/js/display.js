@@ -163,6 +163,8 @@
   let currentBootId = null;
   let lastReloadTimestamp = 0;
   let lastDailyReloadDate = '';
+  let pendingReloadTimer = null;
+  let pendingBootId = null;
 
   const STORAGE_KEY_DAILY_RELOAD = 'mm_last_daily_reload_date';
   const STORAGE_KEY_DEPLOY_RELOAD = 'mm_last_reload_timestamp';
@@ -261,9 +263,15 @@
         const now = Date.now();
         const storedTs = parseInt(getSessionStorageItem(STORAGE_KEY_DEPLOY_RELOAD) || '0', 10);
         const effectiveLastReload = Math.max(lastReloadTimestamp, isNaN(storedTs) ? 0 : storedTs);
+        const elapsed = now - effectiveLastReload;
 
         // Prevent reload storm if server is in crash-loop (minimum 30 seconds cooldown)
-        if (now - effectiveLastReload >= 30000) {
+        if (elapsed >= 30000) {
+          if (pendingReloadTimer) {
+            clearTimeout(pendingReloadTimer);
+            pendingReloadTimer = null;
+          }
+          pendingBootId = null;
           lastReloadTimestamp = now;
           setSessionStorageItem(STORAGE_KEY_DEPLOY_RELOAD, String(now));
           currentBootId = data.boot_id;
@@ -272,8 +280,38 @@
             window.location.reload();
           }
         } else {
-          console.warn('[MirrormereDisplay] Rapid deployment reload throttled (< 30s)');
+          // Defer reload until cooldown expires so rapid restarts/deploys are not dropped
+          pendingBootId = data.boot_id;
+          if (!pendingReloadTimer) {
+            const delay = Math.max(0, 30000 - elapsed);
+            console.warn(`[MirrormereDisplay] Rapid deployment reload throttled (< 30s), deferred for ${delay}ms`);
+            pendingReloadTimer = setTimeout(() => {
+              pendingReloadTimer = null;
+              const targetBootId = pendingBootId;
+              pendingBootId = null;
+              if (targetBootId && targetBootId !== currentBootId) {
+                const reloadNow = Date.now();
+                lastReloadTimestamp = reloadNow;
+                setSessionStorageItem(STORAGE_KEY_DEPLOY_RELOAD, String(reloadNow));
+                currentBootId = targetBootId;
+                console.log(`[MirrormereDisplay] Deferred server deployment reload executing (${targetBootId})...`);
+                if (typeof window !== 'undefined' && window.location && typeof window.location.reload === 'function') {
+                  window.location.reload();
+                }
+              }
+            }, delay);
+            if (pendingReloadTimer && typeof pendingReloadTimer.unref === 'function') {
+              pendingReloadTimer.unref();
+            }
+          } else {
+            console.warn(`[MirrormereDisplay] Rapid deployment reload throttled (< 30s), updated pending boot_id to ${data.boot_id}`);
+          }
         }
+      } else if (pendingReloadTimer && data.boot_id === currentBootId) {
+        // If server boot_id reverted to currentBootId before timer fired, cancel deferred reload
+        clearTimeout(pendingReloadTimer);
+        pendingReloadTimer = null;
+        pendingBootId = null;
       }
     }
   }
@@ -285,6 +323,8 @@
       currentBootId,
       lastReloadTimestamp: Math.max(lastReloadTimestamp, isNaN(storedTs) ? 0 : storedTs),
       lastDailyReloadDate: lastDailyReloadDate || storedDailyDate || '',
+      pendingBootId,
+      hasPendingReloadTimer: pendingReloadTimer !== null,
     };
   }
 
@@ -298,12 +338,18 @@
       lastDailyReloadDate = state.lastDailyReloadDate;
       setSessionStorageItem(STORAGE_KEY_DAILY_RELOAD, state.lastDailyReloadDate);
     }
+    if ('pendingBootId' in state) pendingBootId = state.pendingBootId;
   }
 
   function resetBootIdState() {
     currentBootId = null;
     lastReloadTimestamp = 0;
     lastDailyReloadDate = '';
+    if (pendingReloadTimer) {
+      clearTimeout(pendingReloadTimer);
+      pendingReloadTimer = null;
+    }
+    pendingBootId = null;
     try {
       if (typeof window !== 'undefined' && window.sessionStorage) {
         window.sessionStorage.removeItem(STORAGE_KEY_DAILY_RELOAD);

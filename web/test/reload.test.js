@@ -121,6 +121,83 @@ describe('Display Deployment and Daily Maintenance Reload', () => {
     assert.equal(reloadedCount, 2, 'reload permitted after cooldown expires');
   });
 
+  test('defers reload when boot_id changes inside cooldown and executes once cooldown expires', async () => {
+    const display = require('../static/js/display.js');
+    display.resetBootIdState();
+
+    display.handleSystemStatus({ online: true, boot_id: 'boot-1' });
+    assert.equal(reloadedCount, 0);
+
+    display.handleSystemStatus({ online: true, boot_id: 'boot-2' });
+    assert.equal(reloadedCount, 1, 'first deployment reloads immediately');
+    assert.equal(display.getBootIdState().currentBootId, 'boot-2');
+
+    // Simulate arriving near end of cooldown (50ms remaining)
+    const nearExpiry = Date.now() - 29950;
+    display.setBootIdState({ lastReloadTimestamp: nearExpiry });
+
+    display.handleSystemStatus({ online: true, boot_id: 'boot-3' });
+    assert.equal(reloadedCount, 1, 'reload must be deferred, not executed immediately');
+    const stateBefore = display.getBootIdState();
+    assert.equal(stateBefore.currentBootId, 'boot-2', 'currentBootId remains old until reload executes');
+    assert.equal(stateBefore.pendingBootId, 'boot-3');
+    assert.equal(stateBefore.hasPendingReloadTimer, true);
+
+    // Await deferred execution
+    await new Promise((resolve) => setTimeout(resolve, 120));
+
+    assert.equal(reloadedCount, 2, 'deferred reload must execute after cooldown expires');
+    const stateAfter = display.getBootIdState();
+    assert.equal(stateAfter.currentBootId, 'boot-3', 'currentBootId updated to deferred boot_id');
+    assert.equal(stateAfter.pendingBootId, null);
+    assert.equal(stateAfter.hasPendingReloadTimer, false);
+  });
+
+  test('coalesces multiple rapid boot_id changes during cooldown to single deferred reload of newest build', async () => {
+    const display = require('../static/js/display.js');
+    display.resetBootIdState();
+
+    display.handleSystemStatus({ online: true, boot_id: 'boot-alpha' });
+    display.handleSystemStatus({ online: true, boot_id: 'boot-beta' });
+    assert.equal(reloadedCount, 1);
+
+    const nearExpiry = Date.now() - 29950;
+    display.setBootIdState({ lastReloadTimestamp: nearExpiry });
+
+    display.handleSystemStatus({ online: true, boot_id: 'boot-gamma' });
+    display.handleSystemStatus({ online: true, boot_id: 'boot-delta' });
+    assert.equal(reloadedCount, 1, 'neither deferred reload runs immediately');
+    assert.equal(display.getBootIdState().pendingBootId, 'boot-delta');
+
+    await new Promise((resolve) => setTimeout(resolve, 120));
+
+    assert.equal(reloadedCount, 2, 'single deferred reload executed');
+    assert.equal(display.getBootIdState().currentBootId, 'boot-delta');
+  });
+
+  test('cancels pending deferred reload if server boot_id reverts to currentBootId', async () => {
+    const display = require('../static/js/display.js');
+    display.resetBootIdState();
+
+    display.handleSystemStatus({ online: true, boot_id: 'boot-1' });
+    display.handleSystemStatus({ online: true, boot_id: 'boot-2' });
+    assert.equal(reloadedCount, 1);
+
+    const nearExpiry = Date.now() - 29950;
+    display.setBootIdState({ lastReloadTimestamp: nearExpiry });
+
+    display.handleSystemStatus({ online: true, boot_id: 'boot-3' });
+    assert.equal(display.getBootIdState().hasPendingReloadTimer, true);
+
+    // Server reverts back to boot-2
+    display.handleSystemStatus({ online: true, boot_id: 'boot-2' });
+    assert.equal(display.getBootIdState().hasPendingReloadTimer, false);
+    assert.equal(display.getBootIdState().pendingBootId, null);
+
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    assert.equal(reloadedCount, 1, 'no deferred reload occurred');
+  });
+
   test('sessionStorage prevents 4:00 AM infinite crash loop across page teardown', () => {
     let display = require('../static/js/display.js');
     display.resetBootIdState();
