@@ -576,6 +576,36 @@ func TestGetDisplay_HideCursor(t *testing.T) {
 			t.Errorf("expected body with class=\"mm-touch-kiosk\", got %s", rec.Body.String())
 		}
 	})
+
+	t.Run("QueryParamOverrideTrue", func(t *testing.T) {
+		t.Parallel()
+		h := display.NewHandler(
+			display.WithEmbeddedTemplate(tmplContent),
+			display.WithHideCursor(false),
+		)
+
+		req := httptest.NewRequest(http.MethodGet, "/display?hide_cursor=true", nil)
+		rec := httptest.NewRecorder()
+		h.GetDisplay(rec, req)
+		if !strings.Contains(rec.Body.String(), `class="mm-touch-kiosk"`) {
+			t.Errorf("expected body with class=\"mm-touch-kiosk\" when ?hide_cursor=true, got %s", rec.Body.String())
+		}
+	})
+
+	t.Run("QueryParamOverrideFalse", func(t *testing.T) {
+		t.Parallel()
+		h := display.NewHandler(
+			display.WithEmbeddedTemplate(tmplContent),
+			display.WithHideCursor(true),
+		)
+
+		req := httptest.NewRequest(http.MethodGet, "/display?hide_cursor=false", nil)
+		rec := httptest.NewRecorder()
+		h.GetDisplay(rec, req)
+		if strings.Contains(rec.Body.String(), `class="mm-touch-kiosk"`) {
+			t.Errorf("expected body without class=\"mm-touch-kiosk\" when ?hide_cursor=false, got %s", rec.Body.String())
+		}
+	})
 }
 
 

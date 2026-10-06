@@ -30,6 +30,16 @@ if [[ -n "$NODE_ID" && "$DISPLAY_URL" != *"node="* ]]; then
         DISPLAY_URL="${DISPLAY_URL}?node=${NODE_ID}"
     fi
 fi
+
+# Append hide_cursor=true to display URL if enabled and not already explicitly set
+HIDE_CURSOR="${MIRRORMERE_HIDE_CURSOR:-true}"
+if [[ "$HIDE_CURSOR" == "true" && "$DISPLAY_URL" != *"hide_cursor="* ]]; then
+    if [[ "$DISPLAY_URL" == *"?"* ]]; then
+        DISPLAY_URL="${DISPLAY_URL}&hide_cursor=true"
+    else
+        DISPLAY_URL="${DISPLAY_URL}?hide_cursor=true"
+    fi
+fi
 IDLE_TIMEOUT_SECONDS="${MIRRORMERE_IDLE_TIMEOUT:-600}"
 
 # Auto-detect display output if not explicitly configured
