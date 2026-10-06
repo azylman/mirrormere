@@ -1,6 +1,10 @@
 # Mirrormere Reference Configuration Template
 # Authoritative Documentation: , , , 
 
+# Server host and port bindings (restart required to apply changes)
+host: "0.0.0.0"
+port: 8080
+
 # Authoritative household IANA timezone
 timezone: "America/Los_Angeles"
 

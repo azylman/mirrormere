@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/azylman/mirrormere/internal/config"
+	"github.com/azylman/mirrormere/internal/domain"
 	"github.com/azylman/mirrormere/internal/events"
 	"github.com/azylman/mirrormere/internal/render"
 	"github.com/azylman/mirrormere/internal/widget"
@@ -688,3 +689,47 @@ func TestAssetReloader_NilSafety(t *testing.T) {
 		t.Errorf("expected (false, false), got (%v, %v)", css, wid)
 	}
 }
+
+func TestAssetReloader_ReadErrorBranches(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// customCSSPath is a directory, not a file -> os.ReadFile fails with EISDIR
+	cssDir := filepath.Join(tmpDir, "css-dir")
+	if err := os.MkdirAll(cssDir, 0755); err != nil {
+		t.Fatalf("failed to create css-dir: %v", err)
+	}
+
+	// customDir is a regular file, not a directory -> os.ReadDir fails with ENOTDIR
+	customFile := filepath.Join(tmpDir, "custom-file")
+	if err := os.WriteFile(customFile, []byte("not a dir"), 0644); err != nil {
+		t.Fatalf("failed to write custom-file: %v", err)
+	}
+
+	// builtinDir is a regular file, not a directory -> os.ReadDir fails with ENOTDIR
+	builtinFile := filepath.Join(tmpDir, "builtin-file")
+	if err := os.WriteFile(builtinFile, []byte("not a dir"), 0644); err != nil {
+		t.Fatalf("failed to write builtin-file: %v", err)
+	}
+
+	reloader := NewAssetReloader(cssDir, nil, builtinFile, customFile, nil, nil, nil, nil)
+
+	// ReloadCSS should handle read error gracefully and return false
+	if reloader.ReloadCSS() {
+		t.Error("expected ReloadCSS to return false when CSS path is a directory")
+	}
+
+	// ReloadWidgets should handle non-directory custom and builtin paths gracefully
+	if reloader.ReloadWidgets() {
+		t.Error("expected ReloadWidgets to return false when widget dirs are files")
+	}
+
+	// computePackageHash error branches for missing manifest and view template
+	hash := reloader.computePackageHash(&domain.Package{
+		ManifestPath: filepath.Join(tmpDir, "nonexistent-manifest.yaml"),
+		ViewPath:     filepath.Join(tmpDir, "nonexistent-view.html"),
+	})
+	if hash == "" {
+		t.Error("expected non-empty hash even with missing files")
+	}
+}
+
