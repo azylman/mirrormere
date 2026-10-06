@@ -394,3 +394,36 @@ control_port: %d
 		t.Errorf("unexpected error: %v", err)
 	}
 }
+
+func TestDeployExampleConfigs_Valid(t *testing.T) {
+	bridgeExample := filepath.Join("..", "..", "deploy", "examples", "cast-watcher.yaml")
+	cfg, err := loadConfigFile(bridgeExample)
+	if err != nil {
+		t.Fatalf("failed to load bridge example %s: %v", bridgeExample, err)
+	}
+	if cfg == nil {
+		t.Fatalf("expected non-nil config from %s", bridgeExample)
+	}
+	if cfg.CoreURL != "http://mirrormere-core:8080" {
+		t.Errorf("expected CoreURL http://mirrormere-core:8080, got %s", cfg.CoreURL)
+	}
+	if cfg.ControlURL != "http://cast-watcher:8090/action" {
+		t.Errorf("expected ControlURL http://cast-watcher:8090/action, got %s", cfg.ControlURL)
+	}
+
+	clientExample := filepath.Join("..", "..", "deploy", "examples", "cast-watcher.client.yaml")
+	clientCfg, err := loadConfigFile(clientExample)
+	if err != nil {
+		t.Fatalf("failed to load client example %s: %v", clientExample, err)
+	}
+	if clientCfg == nil {
+		t.Fatalf("expected non-nil config from %s", clientExample)
+	}
+	if clientCfg.CoreURL != "http://<core-ip>:8080" {
+		t.Errorf("expected CoreURL http://<core-ip>:8080, got %s", clientCfg.CoreURL)
+	}
+	if clientCfg.ControlURL != "http://<kiosk-ip>:8090/action" {
+		t.Errorf("expected ControlURL http://<kiosk-ip>:8090/action, got %s", clientCfg.ControlURL)
+	}
+}
+

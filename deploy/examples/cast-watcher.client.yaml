@@ -1,0 +1,18 @@
+# deploy/examples/cast-watcher.client.yaml - Mirrormere Cast Watcher Configuration (Client Kiosk Profile)
+#
+# Monitors Chromecast CastV2 socket state on the client kiosk (network_mode: host)
+# and notifies Mirrormere Core over the LAN to auto-switch display between dashboard
+# HUD and WebRTC live stream.
+#
+# NOTE: Under host networking on the client kiosk, Docker bridge service names
+# (e.g. mirrormere-core, cast-watcher) do not resolve across the LAN.
+# Set core_url to the LAN address of your Mirrormere Core server, and control_url
+# to this kiosk client's LAN IP/hostname reachable by Core:
+# - core_url: LAN address of Mirrormere Core server (e.g. http://<core-ip>:8080)
+# - control_url: LAN address of this kiosk client reachable by Core (e.g. http://<kiosk-ip>:8090/action)
+
+chromecast_addr: "10.0.0.50:8009"
+core_url: "http://<core-ip>:8080"
+stream_url: "http://localhost:1984/api/webrtc?src=cast"
+control_port: 8090
+control_url: "http://<kiosk-ip>:8090/action"
