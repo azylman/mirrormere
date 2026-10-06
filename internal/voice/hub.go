@@ -238,6 +238,19 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 		h.mu.Unlock()
 	}()
 
+	var turnActive bool
+	defer func() {
+		if r := recover(); r != nil {
+			if h.coord != nil {
+				h.coord.Transition(StateError, nil, nil, nil, nil)
+			}
+			panic(r)
+		}
+		if retErr != nil && turnActive && h.coord != nil {
+			h.coord.Transition(StateError, nil, nil, nil, nil)
+		}
+	}()
+
 	if sessionID == "" {
 		sessionID = fmt.Sprintf("turn-%d", time.Now().UnixNano())
 	}
@@ -280,6 +293,7 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 	}()
 
 	// Step 1: Notify HUD and client: transcribing
+	turnActive = true
 	if h.coord != nil {
 		h.coord.Transition(StateTranscribing, nil, nil, nil, nil)
 	}
@@ -608,6 +622,9 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 		if streamedAny {
 			// The brain streamed sentence audio, so the hub must NOT also
 			// run its own TTS over the full reply (no double speech).
+			if h.coord != nil {
+				h.coord.Transition(StateSpeaking, &transcript, &reply, &engine, nil)
+			}
 			if anyChunkSent || len(pcmBuf) > 0 {
 				if len(pcmBuf) > 0 {
 					anyChunkSent = true
@@ -622,11 +639,6 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 					h.metrics.RecordTTSCPS(nodeID, engine, cps)
 				}
 
-				// The kiosk caption shows the brain's final reply text,
-				// which is authoritative over the joined sentences.
-				if h.coord != nil {
-					h.coord.Transition(StateSpeaking, &transcript, &reply, &engine, nil)
-				}
 				// Every real chunk already went out as is_final:false above
 				// (immediately, as it arrived) — this marker chunk (empty
 				// data) is what tells the dock playback is complete now
@@ -658,6 +670,9 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 			// streamed no sentence audio (e.g. it's pointed at plain /ask
 			// rather than /ask/stream) — behave exactly like a
 			// non-streaming brain: reply first, then one TTS call.
+			if h.coord != nil {
+				h.coord.Transition(StateSpeaking, &transcript, &reply, &engine, nil)
+			}
 			if err := safeSink("reply", map[string]string{"reply": reply, "tts_engine": engine}); err != nil {
 				return err
 			}
@@ -690,6 +705,11 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 		h.metrics.RecordStageDuration(nodeID, "brain", "success", brainDuration)
 		h.recordChat(nodeID, chatlog.RoleAgent, "", reply)
 
+		// Immediate transition to StateSpeaking with reply before safeSink("reply") and TTS synthesis
+		if h.coord != nil {
+			h.coord.Transition(StateSpeaking, &transcript, &reply, &engine, nil)
+		}
+
 		// Devil's Advocate catch: Always emit reply event so kiosk caption toast renders reply text,
 		// even if TTS synthesis subsequently fails!
 		if err := safeSink("reply", map[string]string{"reply": reply, "tts_engine": engine}); err != nil {
@@ -709,9 +729,6 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 	}
 
 	// Step 6: Complete interaction and return to idle
-	if h.coord != nil {
-		h.coord.Reset()
-	}
 	durationMs := time.Since(start).Milliseconds()
 	if err := safeSink("done", map[string]int64{"duration_ms": durationMs}); err != nil {
 		return err

@@ -681,6 +681,7 @@ class VoiceDaemon:
         if not os.path.exists(wav_path):
             self.busy = False
             self.reply_ended_at = time.time()
+            post_voice_state(self.cfg.mirrormere_url, "idle", timeout=2.0)
             return
         # Mark busy for the full interaction (plus cooldown_seconds afterwards)
         # so ambient mode never sends the daemon's own reply audio back to
@@ -689,6 +690,8 @@ class VoiceDaemon:
         pcm_proc = None
         turn_playback_start = None
         turn_playback_total = 0.0
+        reply_received = False
+        reply_text = ""
 
         def close_pcm_proc():
             nonlocal pcm_proc, turn_playback_start
@@ -770,8 +773,9 @@ class VoiceDaemon:
                             status_text = payload.get("status", "")
                             logger.info("Agent tool status: %s", status_text)
                         elif current_event == "reply":
-                            reply = payload.get("reply", "")
-                            logger.info("Received reply: '%s'", reply)
+                            reply_received = True
+                            reply_text = payload.get("reply", "")
+                            logger.info("Received reply: '%s'", reply_text)
                         elif current_event == "audio_chunk":
                             fmt = (payload.get("format") or "wav").lower()
                             audio_b64 = payload.get("data", "")
@@ -820,6 +824,15 @@ class VoiceDaemon:
             self.reply_ended_at = time.time()
             self.flush_openwakeword()
             self.pre_roll.clear()
+            if reply_received and turn_playback_start is None:
+                # Text-only reply (quiet hours or disabled TTS): hold caption toast
+                # on screen so user can read it, but allow new wake-words to interrupt.
+                words = len(reply_text.split())
+                reading_delay = min(max(float(words) * 0.3, 5.0), 15.0)
+                time.sleep(reading_delay)
+            # Only post idle if a new wake word has not already started a new turn
+            if self.state == "idle":
+                post_voice_state(self.cfg.mirrormere_url, "idle", timeout=2.0)
 
     def _send_heartbeat(self, hub_url: str, payload: Dict[str, Any]) -> None:
         """Dispatches heartbeat payload to Voice Hub asynchronously."""

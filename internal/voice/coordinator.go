@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"sync"
+	"time"
 
 	"github.com/azylman/mirrormere/internal/events"
 )
@@ -18,6 +19,8 @@ const (
 	StateSpeaking     = "speaking"
 	StateError        = "error"
 )
+
+const defaultSpeakingWatchdogTimeout = 30 * time.Second
 
 // ErrInvalidState is returned when state is not one of the allowed lifecycle states.
 var ErrInvalidState = errors.New("invalid voice state: must be one of 'idle', 'listening', 'transcribing', 'thinking', 'synthesizing', 'speaking', 'error'")
@@ -47,14 +50,16 @@ type VoiceStateSink interface {
 // Coordinator tracks and manages authoritative in-memory voice pipeline state.
 // It broadcasts updates across the SSE event hub and synchronizes initial connection hydration.
 type Coordinator struct {
-	mu         sync.RWMutex
-	state      string
-	transcript *string
-	reply      *string
-	ttsEngine  *string
-	status     *string
-	hub        *events.Hub
-	sink       VoiceStateSink
+	mu              sync.RWMutex
+	state           string
+	transcript      *string
+	reply           *string
+	ttsEngine       *string
+	status          *string
+	hub             *events.Hub
+	sink            VoiceStateSink
+	speakingTimer   *time.Timer
+	speakingTimeout time.Duration
 }
 
 // NewCoordinator constructs a VoiceCoordinator with default settings (idle state, nil fields).
@@ -64,9 +69,10 @@ func NewCoordinator(hub *events.Hub, sink ...VoiceStateSink) *Coordinator {
 		s = sink[0]
 	}
 	c := &Coordinator{
-		state: StateIdle,
-		hub:   hub,
-		sink:  s,
+		state:           StateIdle,
+		hub:             hub,
+		sink:            s,
+		speakingTimeout: defaultSpeakingWatchdogTimeout,
 	}
 	if s != nil {
 		s.SetVoiceState(&events.VoiceStateData{
@@ -86,6 +92,23 @@ func (c *Coordinator) GetState() events.VoiceStateData {
 		Reply:      c.reply,
 		TTSEngine:  c.ttsEngine,
 		Status:     c.status,
+	}
+}
+
+// SetSpeakingTimeout overrides the speaking watchdog timeout (default 30s).
+func (c *Coordinator) SetSpeakingTimeout(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.speakingTimeout = d
+}
+
+// Stop stops and clears any active timers.
+func (c *Coordinator) Stop() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.speakingTimer != nil {
+		c.speakingTimer.Stop()
+		c.speakingTimer = nil
 	}
 }
 
@@ -132,11 +155,54 @@ func (c *Coordinator) Reset() events.VoiceStateData {
 
 func (c *Coordinator) updateState(state string, transcript, reply, ttsEngine, status *string) events.VoiceStateData {
 	c.mu.Lock()
+
+	// Prevent late-idle race condition:
+	// If incoming state is StateIdle, but current state is StateListening,
+	// StateTranscribing, or StateThinking, do NOT clobber the active input state with StateIdle.
+	if state == StateIdle && (c.state == StateListening || c.state == StateTranscribing || c.state == StateThinking) {
+		data := events.VoiceStateData{
+			State:      c.state,
+			Transcript: c.transcript,
+			Reply:      c.reply,
+			TTSEngine:  c.ttsEngine,
+			Status:     c.status,
+		}
+		c.mu.Unlock()
+		return data
+	}
+
 	c.state = state
 	c.transcript = transcript
 	c.reply = reply
 	c.ttsEngine = ttsEngine
 	c.status = status
+
+	if state == StateSpeaking {
+		if c.speakingTimer != nil {
+			c.speakingTimer.Stop()
+		}
+		timeout := c.speakingTimeout
+		if timeout <= 0 {
+			timeout = defaultSpeakingWatchdogTimeout
+		}
+		var timer *time.Timer
+		timer = time.AfterFunc(timeout, func() {
+			c.mu.Lock()
+			if c.speakingTimer != timer || c.state != StateSpeaking {
+				c.mu.Unlock()
+				return
+			}
+			c.mu.Unlock()
+			c.Reset()
+		})
+		c.speakingTimer = timer
+	} else {
+		if c.speakingTimer != nil {
+			c.speakingTimer.Stop()
+			c.speakingTimer = nil
+		}
+	}
+
 	data := events.VoiceStateData{
 		State:      c.state,
 		Transcript: c.transcript,
