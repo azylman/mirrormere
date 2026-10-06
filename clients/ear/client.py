@@ -186,7 +186,24 @@ class VoiceDaemon:
 
         if model is not None:
             self.model = model
-            self.active_models = list(cfg.wake_models)
+            if hasattr(model, "models") and isinstance(model.models, dict):
+                available = list(model.models.keys())
+                configured_targets = self.cfg.wake_models
+                configured_names = (
+                    {os.path.basename(os.path.splitext(t)[0]) for t in configured_targets}
+                    | {os.path.splitext(t)[0] for t in configured_targets}
+                    | set(configured_targets)
+                )
+                self.active_models = [m for m in available if m in configured_names]
+                if not self.active_models:
+                    logger.error(
+                        "No configured wake models %s matched loaded openWakeWord models %s; "
+                        "failing closed (wake word triggers disabled)",
+                        configured_targets,
+                        available,
+                    )
+            else:
+                self.active_models = list(cfg.wake_models)
         elif cfg.wake_mode == "ambient":
             # Ambient-only mode never needs openWakeWord: skip loading its
             # models entirely to keep CPU usage low.
@@ -223,9 +240,19 @@ class VoiceDaemon:
         logger.info("Loaded openWakeWord models: %s", available)
 
         configured_targets = self.cfg.wake_models
-        active = [m for m in available if any(tgt in m for tgt in configured_targets)]
+        configured_names = (
+            {os.path.basename(os.path.splitext(t)[0]) for t in configured_targets}
+            | {os.path.splitext(t)[0] for t in configured_targets}
+            | set(configured_targets)
+        )
+        active = [m for m in available if m in configured_names]
         if not active:
-            active = available
+            logger.error(
+                "No configured wake models %s matched loaded openWakeWord models %s; "
+                "failing closed (wake word triggers disabled)",
+                configured_targets,
+                available,
+            )
 
         logger.info("Active wake word triggers: %s (threshold=%.2f)", active, self.cfg.threshold)
         return model, active
@@ -270,13 +297,15 @@ class VoiceDaemon:
         return 20.0 * math.log10(rms / 32768.0) if rms > 0 else -100.0
 
     def wake_mode_uses_openwakeword(self) -> bool:
-        return self.cfg.wake_mode in ("openwakeword", "both") and self.model is not None
+        return self.cfg.wake_mode in ("openwakeword", "both") and self.model is not None and bool(self.active_models)
 
     def wake_mode_uses_ambient(self) -> bool:
         return self.cfg.wake_mode in ("ambient", "both")
 
     def _check_wake_word(self, raw_bytes: bytes) -> Optional[str]:
         """Runs one openWakeWord prediction pass and returns the triggered model name, if any."""
+        if not self.active_models:
+            return None
         t0 = time.perf_counter()
         chunk = np.frombuffer(raw_bytes, dtype=np.int16) if np is not None else raw_bytes
         preds = self.model.predict(chunk)

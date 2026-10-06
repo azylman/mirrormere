@@ -124,6 +124,7 @@ class TestAmbientMode(unittest.TestCase):
             cooldown_seconds=1.0,
             mirrormere_url="http://test-core/kiosk",
             hub_url="http://test-hub/api/voice/interact",
+            wake_models=["hey_jarvis", "hey_aerial"],
         )
         kwargs.update(overrides)
         return VoiceConfig(**kwargs)

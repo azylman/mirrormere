@@ -30,11 +30,8 @@ ear:
   # Timeout (seconds) for the ambient classification request.
   ambient_timeout_seconds: 6.0
 
-  # Target wake words to activate on (matches built-ins or custom models)
+  # Target wake words to activate on (matches custom model name or built-in)
   wake_models:
-    - "alexa"
-    - "hey_jarvis"
-    - "hey_mycroft"
     - "hey_aerial"
 
   # Confidence threshold for wake word activation (0.0 to 1.0)

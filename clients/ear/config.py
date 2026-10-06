@@ -15,7 +15,7 @@ class VoiceConfig:
     node_id: str = "touch-kiosk-kitchen"
     mirrormere_url: str = "http://192.168.1.14/kiosk"
     hub_url: str = "http://192.168.1.14:9000/api/voice/interact"
-    wake_models: List[str] = field(default_factory=lambda: ["alexa", "hey_jarvis", "hey_mycroft", "hey_aerial"])
+    wake_models: List[str] = field(default_factory=lambda: ["hey_aerial"])
     threshold: float = 0.35
     silence_ms: int = 400
     max_record_seconds: float = 10.0
