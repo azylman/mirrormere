@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"syscall"
 	"time"
@@ -247,6 +248,11 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 		configPath = ""
 	}
 
+	customCSSPath := render.DefaultCustomCSSPath
+	if configPath != "" {
+		customCSSPath = filepath.Join(filepath.Dir(configPath), "custom.css")
+	}
+
 	// 3. Initialize LKGC Configuration Manager
 	configManager, err := config.NewManager(initialYAML, loader, os.Getenv, logger)
 	if err != nil {
@@ -343,7 +349,7 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 		render.WithNowFunc(householdNowFunc(stateProvider)),
 		render.WithNodeDataFunc(chatLogNodeData(stateProvider, chatStore)),
 	)
-	renderHandler := render.NewHandler(renderEngine, loader)
+	renderHandler := render.NewHandler(renderEngine, loader, render.WithCustomCSSPath(customCSSPath))
 	displayHandler := display.NewHandler(
 		display.WithTimezoneProvider(func() string {
 			if snap := stateProvider.CurrentSnapshot(); snap != nil && snap.Config != nil {
@@ -352,6 +358,7 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 			return "UTC"
 		}),
 	)
+	assetReloader := NewAssetReloader(customCSSPath, loader, builtinDir, customDir, renderEngine, configManager, hub, logger)
 
 	// 12. SIGHUP Signal Listener for Live Configuration Reloads
 	var hupChan <-chan os.Signal
@@ -370,20 +377,20 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 		defer stopHup()
 	}
 
-	if configPath != "" {
-		hupCtx, hupCancel := context.WithCancel(ctx)
-		defer hupCancel()
-		go func() {
-			for {
-				select {
-				case <-hupCtx.Done():
+	hupCtx, hupCancel := context.WithCancel(ctx)
+	defer hupCancel()
+	go func() {
+		for {
+			select {
+			case <-hupCtx.Done():
+				return
+			case sig, ok := <-hupChan:
+				if !ok {
 					return
-				case sig, ok := <-hupChan:
-					if !ok {
-						return
-					}
-					if sig == syscall.SIGHUP {
-						logger.Info("received SIGHUP, reloading configuration", "path", configPath)
+				}
+				if sig == syscall.SIGHUP {
+					logger.Info("received SIGHUP, reloading configuration and assets", "path", configPath)
+					if configPath != "" {
 						data, err := os.ReadFile(configPath)
 						if err != nil {
 							logger.Error("failed to read configuration file on SIGHUP", "path", configPath, "error", err)
@@ -391,37 +398,35 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 							if serr := hub.DispatchStatus(configManager.Status()); serr != nil {
 								logger.Error("failed to dispatch status on SIGHUP read failure", "error", serr)
 							}
-							if rcfg.onReload != nil {
-								rcfg.onReload()
+						} else {
+							snap, diff, err := configManager.Reload(data)
+							if err != nil {
+								logger.Error("failed to validate configuration on SIGHUP; retaining LKGC", "error", err)
+								if serr := hub.DispatchStatus(configManager.Status()); serr != nil {
+									logger.Error("failed to dispatch status on SIGHUP validation failure", "error", serr)
+								}
+							} else {
+								if err := hub.DispatchConfigReload(snap, diff); err != nil {
+									logger.Error("failed to dispatch config reload on SIGHUP", "error", err)
+								}
+								if err := hub.DispatchStatus(configManager.Status()); err != nil {
+									logger.Error("failed to dispatch status on SIGHUP", "error", err)
+								}
+								logger.Info("configuration reloaded successfully on SIGHUP", "widgets", len(snap.Config.Display.Widgets))
 							}
-							continue
 						}
-						snap, diff, err := configManager.Reload(data)
-						if err != nil {
-							logger.Error("failed to validate configuration on SIGHUP; retaining LKGC", "error", err)
-							if serr := hub.DispatchStatus(configManager.Status()); serr != nil {
-								logger.Error("failed to dispatch status on SIGHUP validation failure", "error", serr)
-							}
-							if rcfg.onReload != nil {
-								rcfg.onReload()
-							}
-							continue
-						}
-						if err := hub.DispatchConfigReload(snap, diff); err != nil {
-							logger.Error("failed to dispatch config reload on SIGHUP", "error", err)
-						}
-						if err := hub.DispatchStatus(configManager.Status()); err != nil {
-							logger.Error("failed to dispatch status on SIGHUP", "error", err)
-						}
-						logger.Info("configuration reloaded successfully on SIGHUP", "widgets", len(snap.Config.Display.Widgets))
-						if rcfg.onReload != nil {
-							rcfg.onReload()
-						}
+					}
+					if assetReloader != nil {
+						cssReloaded, widgetsReloaded := assetReloader.Reload()
+						logger.Info("asset reload on SIGHUP complete", "css_reloaded", cssReloaded, "widgets_reloaded", widgetsReloaded)
+					}
+					if rcfg.onReload != nil {
+						rcfg.onReload()
 					}
 				}
 			}
-		}()
-	}
+		}
+	}()
 
 	// 13. Assemble Server Configuration
 	portVal := *portFlag
