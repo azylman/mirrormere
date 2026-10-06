@@ -126,7 +126,7 @@ docker run -d \
   -e PULSE_SERVER=unix:/run/user/1000/pulse/native \
   -v /run/user/1000/pulse/native:/run/user/1000/pulse/native:ro \
   -v /etc/mirrormere/voice.yaml:/config/voice.yaml:ro \
-  -v /opt/mirrormere/voice/models:/opt/mirrormere/voice/models \
+  -v /opt/mirrormere/voice/models:/opt/mirrormere/voice/models:ro \
   ghcr.io/azylman/mirrormere-ear:latest
 ```
 

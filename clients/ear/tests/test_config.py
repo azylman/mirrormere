@@ -141,6 +141,16 @@ voice:
             del os.environ["MIRRORMERE_VAD"]
             del os.environ["MIRRORMERE_VAD_THRESHOLD"]
 
+    def test_client_compose_models_volume_bind_mount(self):
+        compose_path = os.path.join(
+            os.path.dirname(__file__), "..", "..", "..", "deploy", "examples", "compose.client.yaml"
+        )
+        self.assertTrue(os.path.exists(compose_path), f"compose file missing: {compose_path}")
+        with open(compose_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        self.assertIn("/opt/mirrormere/voice/models:/opt/mirrormere/voice/models:ro", content)
+        self.assertNotIn("ear-models", content)
+
 
 if __name__ == "__main__":
     unittest.main()
