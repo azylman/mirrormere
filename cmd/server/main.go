@@ -456,7 +456,8 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 	srv := server.New(cfg)
 
 	bindAddr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
-	listener, err := net.Listen("tcp", bindAddr)
+	var lc net.ListenConfig
+	listener, err := lc.Listen(context.Background(), "tcp", bindAddr)
 	if err != nil {
 		return fmt.Errorf("failed to bind address %s: %w", bindAddr, err)
 	}

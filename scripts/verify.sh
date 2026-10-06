@@ -72,21 +72,16 @@ run_go_vet() {
 run_golangci_lint() {
     echo "   [golangci-lint] Running strict linters..."
     lint_bin=""
-    if [ -x "$(go env GOPATH 2>/dev/null)/bin/golangci-lint" ]; then
+    if has_cmd golangci-lint; then
+        lint_bin="golangci-lint"
+    elif [ -x "$(go env GOPATH 2>/dev/null)/bin/golangci-lint" ]; then
         lint_bin="$(go env GOPATH)/bin/golangci-lint"
     elif [ -x "$HOME/go/bin/golangci-lint" ]; then
         lint_bin="$HOME/go/bin/golangci-lint"
-    elif has_cmd golangci-lint; then
-        lint_bin="golangci-lint"
     fi
 
     if [ -n "$lint_bin" ]; then
-        go_mod_ver=$(sed -n 's/^go \([0-9.]*\)/\1/p' "$REPO_ROOT/go.mod" 2>/dev/null || true)
-        if [ -n "$go_mod_ver" ] && [ -z "${GOTOOLCHAIN:-}" ]; then
-            GOTOOLCHAIN="go${go_mod_ver}" "$lint_bin" run --allow-parallel-runners ./...
-        else
-            "$lint_bin" run --allow-parallel-runners ./...
-        fi
+        "$lint_bin" run --allow-parallel-runners ./...
     else
         echo "🚨 [Mirrormere Verify] Error: golangci-lint not found in PATH." >&2
         exit 1

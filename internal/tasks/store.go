@@ -64,7 +64,8 @@ func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
 	PRAGMA foreign_keys = ON;
 	PRAGMA temp_store = MEMORY;
 	`
-	if _, err := db.Exec(initSQL); err != nil {
+	ctx := context.Background()
+	if _, err := db.ExecContext(ctx, initSQL); err != nil {
 		_ = db.Close() //nolint:errcheck
 		return nil, fmt.Errorf("failed to execute pragmas: %w", err)
 	}
@@ -87,6 +88,8 @@ func (s *SQLiteStore) migrate() error {
 	if s.db == nil {
 		return errors.New("database is closed")
 	}
+
+	ctx := context.Background()
 
 	ddl := `
 	CREATE TABLE IF NOT EXISTS lists (
@@ -118,12 +121,12 @@ func (s *SQLiteStore) migrate() error {
 	CREATE INDEX IF NOT EXISTS idx_list_items_list_done_updated ON list_items(list_id, done, updated_at DESC);
 	`
 
-	if _, err := s.db.Exec(ddl); err != nil {
+	if _, err := s.db.ExecContext(ctx, ddl); err != nil {
 		return err
 	}
 
 	// Check if list_items has legacy primary key (id only instead of composite (list_id, id))
-	rows, err := s.db.Query(`PRAGMA table_info(list_items)`)
+	rows, err := s.db.QueryContext(ctx, `PRAGMA table_info(list_items)`)
 	if err != nil {
 		return fmt.Errorf("failed to inspect list_items schema: %w", err)
 	}
@@ -142,23 +145,23 @@ func (s *SQLiteStore) migrate() error {
 
 	// Check if list_items_migrated exists from an older non-transactional run interrupted after DROP list_items but before RENAME
 	var migratedTableExists bool
-	if err := s.db.QueryRow(`SELECT count(*) > 0 FROM sqlite_master WHERE type='table' AND name='list_items_migrated'`).Scan(&migratedTableExists); err == nil && migratedTableExists {
+	if err := s.db.QueryRowContext(ctx, `SELECT count(*) > 0 FROM sqlite_master WHERE type='table' AND name='list_items_migrated'`).Scan(&migratedTableExists); err == nil && migratedTableExists {
 		var itemsCount int
-		_ = s.db.QueryRow(`SELECT count(*) FROM list_items`).Scan(&itemsCount) //nolint:errcheck
+		_ = s.db.QueryRowContext(ctx, `SELECT count(*) FROM list_items`).Scan(&itemsCount) //nolint:errcheck
 		if itemsCount == 0 {
 			// Orphaned recovery: copy rows from list_items_migrated into list_items
-			if _, err := s.db.Exec(`INSERT OR REPLACE INTO list_items (id, list_id, title, done, section, position, assignee, due_date, created_at, updated_at)
+			if _, err := s.db.ExecContext(ctx, `INSERT OR REPLACE INTO list_items (id, list_id, title, done, section, position, assignee, due_date, created_at, updated_at)
 				SELECT id, list_id, title, done, section, position, assignee, due_date, created_at, updated_at FROM list_items_migrated;`); err != nil {
 				return fmt.Errorf("failed to recover orphaned list_items_migrated rows: %w", err)
 			}
 		}
-		if _, err := s.db.Exec(`DROP TABLE IF EXISTS list_items_migrated;`); err != nil {
+		if _, err := s.db.ExecContext(ctx, `DROP TABLE IF EXISTS list_items_migrated;`); err != nil {
 			return fmt.Errorf("failed to drop leftover list_items_migrated table: %w", err)
 		}
 	}
 
 	if !listIDIsPK {
-		tx, err := s.db.Begin()
+		tx, err := s.db.BeginTx(ctx, nil)
 		if err != nil {
 			return fmt.Errorf("failed to begin migration transaction: %w", err)
 		}
@@ -194,7 +197,7 @@ func (s *SQLiteStore) migrate() error {
 		}
 
 		for _, stmt := range migrationStatements {
-			if _, err := tx.Exec(stmt); err != nil {
+			if _, err := tx.ExecContext(ctx, stmt); err != nil {
 				return fmt.Errorf("failed to execute migration statement: %w", err)
 			}
 		}

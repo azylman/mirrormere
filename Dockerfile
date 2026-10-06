@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
-# Build stage: compile static Go binary using official Go 1.24 toolchain
-FROM --platform=$BUILDPLATFORM golang:1.24-alpine AS builder
+# Build stage: compile static Go binary using official Go 1.27 toolchain
+FROM --platform=$BUILDPLATFORM golang:1.27.1-alpine AS builder
 
 WORKDIR /src
 
