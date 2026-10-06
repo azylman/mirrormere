@@ -806,6 +806,16 @@ class TestVoiceDaemon(unittest.TestCase):
         daemon = VoiceDaemon(cfg, model=mock_model)
         self.assertEqual(daemon.active_models, ["hey_jarvis"])
 
+        # OpenWakeWord built-in versioned model names must be specified explicitly
+        mock_model.models = {"hey_jarvis_v0.1": None, "alexa_v0.1": None, "timer_v0.1": None}
+        cfg = VoiceConfig(wake_models=["alexa"])
+        daemon = VoiceDaemon(cfg, model=mock_model)
+        self.assertEqual(daemon.active_models, [])
+
+        cfg = VoiceConfig(wake_models=["alexa_v0.1"])
+        daemon = VoiceDaemon(cfg, model=mock_model)
+        self.assertEqual(daemon.active_models, ["alexa_v0.1"])
+
     @patch("clients.ear.client.glob.glob", return_value=[])
     def test_init_openwakeword_fails_closed_without_falling_back_to_available(self, mock_glob):
         mock_oww_cls = MagicMock()

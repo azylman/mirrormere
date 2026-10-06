@@ -30,7 +30,9 @@ ear:
   # Timeout (seconds) for the ambient classification request.
   ambient_timeout_seconds: 6.0
 
-  # Target wake words to activate on (matches custom model name or built-in)
+  # Target wake words to activate on. Each entry must match a loaded model
+  # name explicitly (built-in openWakeWord models require their versioned name,
+  # e.g. "alexa_v0.1" or "hey_jarvis_v0.1").
   wake_models:
     - "hey_aerial"
 
