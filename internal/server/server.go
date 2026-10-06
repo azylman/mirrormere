@@ -764,7 +764,8 @@ func (s *Server) Serve(l net.Listener) error {
 // ListenAndServe binds to cfg.Host:cfg.Port and serves requests.
 func (s *Server) ListenAndServe() error {
 	bindAddr := fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port)
-	l, err := net.Listen("tcp", bindAddr)
+	var lc net.ListenConfig
+	l, err := lc.Listen(context.Background(), "tcp", bindAddr)
 	if err != nil {
 		return fmt.Errorf("failed to bind address %s: %w", bindAddr, err)
 	}

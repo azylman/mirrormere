@@ -2,11 +2,13 @@ package kiosk
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // SystemdUnit represents a parsed systemd configuration file.
@@ -178,15 +180,18 @@ func CheckShellScriptSyntax(scriptPath string) error {
 		return fmt.Errorf("script does not exist: %w", err)
 	}
 
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
 	// 1. Check syntax via bash -n
-	cmd := exec.Command("bash", "-n", scriptPath)
+	cmd := exec.CommandContext(ctx, "bash", "-n", scriptPath)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("bash syntax validation failed for %s: %s (%w)", filepath.Base(scriptPath), string(out), err)
 	}
 
 	// 2. Run shellcheck if installed on the host
 	if shellcheckPath, err := exec.LookPath("shellcheck"); err == nil && shellcheckPath != "" {
-		scCmd := exec.Command(shellcheckPath, scriptPath)
+		scCmd := exec.CommandContext(ctx, shellcheckPath, scriptPath)
 		if out, scErr := scCmd.CombinedOutput(); scErr != nil {
 			return fmt.Errorf("shellcheck failed for %s: %s (%w)", filepath.Base(scriptPath), string(out), scErr)
 		}
