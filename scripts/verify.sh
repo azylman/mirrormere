@@ -109,7 +109,7 @@ ensure_deadcode() {
     fi
     if has_cmd go; then
         echo "   [deadcode] Installing deadcode via go install..."
-        go install golang.org/x/tools/cmd/deadcode@v0.30.0
+        go install golang.org/x/tools/cmd/deadcode@v0.51.0
         if [ -n "$gopath" ] && [ -x "$gopath/bin/deadcode" ]; then
             DEADCODE_BIN="$gopath/bin/deadcode"
             return 0
