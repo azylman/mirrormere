@@ -36,14 +36,18 @@ Stop the voice service on the voice node temporarily so it releases the ALSA cap
 
 ```bash
 # On the voice node / ear device:
-# Stop the voice client so it releases the audio device:
-sudo systemctl stop mirrormere-voice
+# Stop the voice container so it releases the audio device:
+docker stop mirrormere-ear
+# Or if running via Docker Compose:
+# docker compose -f deploy/examples/compose.client.yaml stop mirrormere-ear
 
 # Record 50s calibration audio:
 arecord -D <audio_device> -f S16_LE -r 16000 -c 1 -d 50 /tmp/enroll-<speaker_id>.wav
 
-# Restart the voice client:
-sudo systemctl start mirrormere-voice
+# Restart the voice container:
+docker start mirrormere-ear
+# Or if running via Docker Compose:
+# docker compose -f deploy/examples/compose.client.yaml start mirrormere-ear
 ```
 
 > [!NOTE]
