@@ -939,6 +939,65 @@ display:
 	}
 }
 
+func TestConfig_HideCursor(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		yaml       string
+		wantHidden bool
+	}{
+		{
+			name: "omitted defaults to false",
+			yaml: `
+timezone: America/New_York
+display:
+  widgets:
+    - id: spacer-1
+      type: spacer
+`,
+			wantHidden: false,
+		},
+		{
+			name: "explicitly true",
+			yaml: `
+timezone: America/New_York
+display:
+  hide_cursor: true
+  widgets:
+    - id: spacer-1
+      type: spacer
+`,
+			wantHidden: true,
+		},
+		{
+			name: "explicitly false",
+			yaml: `
+timezone: America/New_York
+display:
+  hide_cursor: false
+  widgets:
+    - id: spacer-1
+      type: spacer
+`,
+			wantHidden: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cfg, err := config.ParseWithEnv([]byte(tc.yaml), mockGetenv(nil))
+			if err != nil {
+				t.Fatalf("unexpected parse error: %v", err)
+			}
+			if cfg.Display.HideCursor != tc.wantHidden {
+				t.Errorf("expected HideCursor=%v, got %v", tc.wantHidden, cfg.Display.HideCursor)
+			}
+		})
+	}
+}
+
 func TestConfig_LocationFallback(t *testing.T) {
 	t.Parallel()
 

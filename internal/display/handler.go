@@ -83,16 +83,32 @@ func WithTimezoneProvider(provider func() string) HandlerOption {
 	}
 }
 
+// WithHideCursor sets the static fallback cursor suppression state.
+func WithHideCursor(hide bool) HandlerOption {
+	return func(h *Handler) {
+		h.hideCursor = hide
+	}
+}
+
+// WithHideCursorProvider sets a dynamic function returning the current cursor suppression state.
+func WithHideCursorProvider(provider func() bool) HandlerOption {
+	return func(h *Handler) {
+		h.hideCursorProvider = provider
+	}
+}
+
 // Handler serves the web display HUD shell and static web runtime assets.
 type Handler struct {
-	templatePath      string
-	localTemplatePath string
-	staticDir         string
-	localStaticDir    string
-	templateContent   []byte
-	mu                sync.RWMutex
-	timezone          string
-	timezoneProvider  func() string
+	templatePath       string
+	localTemplatePath  string
+	staticDir          string
+	localStaticDir     string
+	templateContent    []byte
+	mu                 sync.RWMutex
+	timezone           string
+	timezoneProvider   func() string
+	hideCursor         bool
+	hideCursorProvider func() bool
 }
 
 // SetTimezone updates the household timezone dynamically.
@@ -117,9 +133,27 @@ func (h *Handler) Timezone() string {
 	return "UTC"
 }
 
+// SetHideCursor updates the cursor suppression state dynamically.
+func (h *Handler) SetHideCursor(hide bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.hideCursor = hide
+}
+
+// HideCursor returns whether cursor suppression is enabled, defaulting to false.
+func (h *Handler) HideCursor() bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	if h.hideCursorProvider != nil {
+		return h.hideCursorProvider()
+	}
+	return h.hideCursor
+}
+
 // DisplayTemplateData holds context parameters passed to display.html template.
 type DisplayTemplateData struct {
-	Timezone string
+	Timezone   string
+	HideCursor bool
 }
 
 // NewHandler constructs a Handler with default filesystem paths.
@@ -209,7 +243,8 @@ func (h *Handler) GetDisplay(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		var buf bytes.Buffer
 		data := DisplayTemplateData{
-			Timezone: h.Timezone(),
+			Timezone:   h.Timezone(),
+			HideCursor: h.HideCursor(),
 		}
 		if err := tmpl.Execute(&buf, data); err == nil {
 			out = buf.Bytes()
