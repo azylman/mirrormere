@@ -2,7 +2,7 @@
 #
 # Topology Split:
 # - deploy/compose.server.yaml: Standalone server deployment (Core, Voice Fingerprinter, E-Ink Renderer)
-# - deploy/compose.client.yaml: Standalone client deployment (Ear voice edge, go2rtc, Cast Watcher)
+# - deploy/examples/compose.client.yaml: Reference client deployment (Ear voice edge, go2rtc, Cast Watcher)
 # - deploy/compose.yml: Unified all-in-one manifest for single-host development and bench testing
 
 services:
@@ -41,13 +41,13 @@ services:
     container_name: mirrormere-go2rtc
     restart: unless-stopped
     ports:
-      - "1984:1984"       # WebRTC & HTTP REST API
+      - "127.0.0.1:1984:1984"       # WebRTC & HTTP REST API (loopback only - prevents unauthenticated LAN API access)
       - "8555:8555/tcp"  # WebRTC TCP candidates
       - "8555:8555/udp"  # WebRTC UDP candidates
     volumes:
       - ./go2rtc.yaml:/config/go2rtc.yaml:ro
     devices:
-      - /dev/video0:/dev/video0  # MacroSilicon MS2130 USB capture card video
+      - /dev/video0:/dev/video0  # UVC USB capture card video (e.g. Elgato Cam Link 4K, MS2130)
       - /dev/dri:/dev/dri        # Intel VAAPI/QSV hardware transcoding
       - /dev/snd:/dev/snd        # ALSA stereo audio capture
     group_add:
