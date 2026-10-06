@@ -74,9 +74,8 @@ def load_config_file(path: str | None = None) -> dict:
     if os.environ.get("CONFIG_PATH"):
         candidates.append(os.environ["CONFIG_PATH"])
     candidates.extend([
-        "/config/config.yaml",
-        "/config/config.yml",
-        "/share/aerial-config/services/mirrormere/voice-fingerprinter.yaml",
+        "/config/voice-fingerprinter.yaml",
+        "/config/voice-fingerprinter.yml",
         "/app/config.yaml",
     ])
     for c in candidates:

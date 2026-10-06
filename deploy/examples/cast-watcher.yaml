@@ -1,0 +1,12 @@
+# deploy/examples/cast-watcher.yaml - Mirrormere Cast Watcher Configuration
+#
+# Monitors Chromecast CastV2 socket state and notifies Mirrormere Core to auto-switch
+# display between dashboard HUD and WebRTC live stream.
+#
+# NOTE: Hardware IPs and endpoints are examples. Adjust to match your network.
+
+chromecast_addr: "10.0.0.50:8009"
+core_url: "http://mirrormere-core:8080"
+stream_url: "http://localhost:1984/api/webrtc?src=cast"
+control_port: 8090
+control_url: "http://cast-watcher:8090/action"

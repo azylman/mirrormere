@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"log/slog"
@@ -11,7 +10,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -62,8 +60,8 @@ func loadConfigFile(path string) (*Config, error) {
 		candidates = append(candidates, envPath)
 	}
 	candidates = append(candidates,
-		"/config/config.yaml",
-		"/share/aerial-config/services/kiosk/cast-watcher.yaml",
+		"/config/cast-watcher.yaml",
+		"/config/cast-watcher.yml",
 		"/app/config.yaml",
 	)
 
@@ -88,113 +86,52 @@ func RunWithReady(
 	readyChan chan<- struct{},
 	clientOverride *CastClient,
 ) error {
-	fs := flag.NewFlagSet("cast-watcher", flag.ContinueOnError)
-	fs.SetOutput(stderr)
+	var configPath string
+	for _, arg := range args {
+		if arg == "-h" || arg == "-help" || arg == "--help" {
+			if _, err := fmt.Fprintln(stderr, "Usage: cast-watcher [config-path]"); err != nil {
+				return err
+			}
+			return nil
+		}
+		if strings.HasPrefix(arg, "-") {
+			return fmt.Errorf("flags are not supported; configure via config file: %s", arg)
+		}
+		if configPath == "" {
+			configPath = arg
+		}
+	}
 
-	fileCfg, err := loadConfigFile("")
+	cfg, err := loadConfigFile(configPath)
 	if err != nil {
 		return err
 	}
 
-	defaultChromecast := os.Getenv("CHROMECAST_ADDR")
-	if defaultChromecast == "" {
-		defaultChromecast = os.Getenv("CHROMECAST_IP")
-	}
-	if defaultChromecast == "" && fileCfg != nil && fileCfg.ChromecastAddr != "" {
-		defaultChromecast = fileCfg.ChromecastAddr
-	}
-	if defaultChromecast == "" {
-		defaultChromecast = "192.168.1.50:8009"
-	}
-	if !strings.Contains(defaultChromecast, ":") {
-		defaultChromecast += ":8009"
+	if cfg == nil || strings.TrimSpace(cfg.ControlURL) == "" {
+		return errors.New("control_url is required in configuration")
 	}
 
-	defaultCoreURL := os.Getenv("CORE_URL")
-	if defaultCoreURL == "" && fileCfg != nil && fileCfg.CoreURL != "" {
-		defaultCoreURL = fileCfg.CoreURL
+	chromecastAddr := strings.TrimSpace(cfg.ChromecastAddr)
+	if chromecastAddr == "" {
+		chromecastAddr = "10.0.0.50:8009"
 	}
-	if defaultCoreURL == "" {
-		defaultCoreURL = "http://mirrormere-core:8080"
-	}
-
-	defaultStreamURL := os.Getenv("STREAM_URL")
-	if defaultStreamURL == "" && fileCfg != nil && fileCfg.StreamURL != "" {
-		defaultStreamURL = fileCfg.StreamURL
-	}
-	if defaultStreamURL == "" {
-		defaultStreamURL = "http://localhost:1984/api/webrtc?src=cast"
-	}
-
-	defaultPort := 8090
-	if envPort := os.Getenv("CONTROL_PORT"); envPort != "" {
-		if p, err := strconv.Atoi(envPort); err == nil && p >= 0 {
-			defaultPort = p
-		}
-	} else if envPort := os.Getenv("PORT"); envPort != "" {
-		if p, err := strconv.Atoi(envPort); err == nil && p >= 0 {
-			defaultPort = p
-		}
-	} else if fileCfg != nil && fileCfg.ControlPort != nil {
-		defaultPort = *fileCfg.ControlPort
-	}
-
-	defaultControlURL := os.Getenv("CONTROL_URL")
-	if defaultControlURL == "" {
-		defaultControlURL = os.Getenv("CAST_WATCHER_CONTROL_URL")
-	}
-	if defaultControlURL == "" && fileCfg != nil && fileCfg.ControlURL != "" {
-		defaultControlURL = fileCfg.ControlURL
-	}
-	if defaultControlURL == "" {
-		defaultControlURL = fmt.Sprintf("http://cast-watcher:%d/action", defaultPort)
-	}
-
-	defaultConfigPath := os.Getenv("CONFIG_PATH")
-	configFlag := fs.String("config", defaultConfigPath, "Path to YAML configuration file")
-	chromecastFlag := fs.String("chromecast", defaultChromecast, "Chromecast LAN host:port")
-	coreURLFlag := fs.String("core-url", defaultCoreURL, "Mirrormere Core API base URL")
-	streamURLFlag := fs.String("stream-url", defaultStreamURL, "Stream URL for WebRTC playback")
-	controlURLFlag := fs.String("control-url", defaultControlURL, "Webhook control URL forwarded to Core")
-	portFlag := fs.Int("port", defaultPort, "HTTP server bind port")
-
-	if err := fs.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return nil
-		}
-		return err
-	}
-
-	flagsSet := make(map[string]bool)
-	fs.Visit(func(f *flag.Flag) {
-		flagsSet[f.Name] = true
-	})
-
-	if *configFlag != "" && *configFlag != defaultConfigPath {
-		if flagCfg, err := loadConfigFile(*configFlag); err == nil && flagCfg != nil {
-			if !flagsSet["chromecast"] && flagCfg.ChromecastAddr != "" {
-				*chromecastFlag = flagCfg.ChromecastAddr
-			}
-			if !flagsSet["core-url"] && flagCfg.CoreURL != "" {
-				*coreURLFlag = flagCfg.CoreURL
-			}
-			if !flagsSet["stream-url"] && flagCfg.StreamURL != "" {
-				*streamURLFlag = flagCfg.StreamURL
-			}
-			if !flagsSet["control-url"] && flagCfg.ControlURL != "" {
-				*controlURLFlag = flagCfg.ControlURL
-			}
-			if !flagsSet["port"] && flagCfg.ControlPort != nil {
-				*portFlag = *flagCfg.ControlPort
-			}
-		} else if err != nil {
-			return err
-		}
-	}
-
-	chromecastAddr := *chromecastFlag
 	if !strings.Contains(chromecastAddr, ":") {
 		chromecastAddr += ":8009"
+	}
+
+	coreURL := strings.TrimSpace(cfg.CoreURL)
+	if coreURL == "" {
+		coreURL = "http://mirrormere-core:8080"
+	}
+
+	streamURL := strings.TrimSpace(cfg.StreamURL)
+	if streamURL == "" {
+		streamURL = "http://localhost:1984/api/webrtc?src=cast"
+	}
+
+	controlPort := 8090
+	if cfg.ControlPort != nil {
+		controlPort = *cfg.ControlPort
 	}
 
 	logger := slog.New(slog.NewTextHandler(stderr, &slog.HandlerOptions{
@@ -207,9 +144,9 @@ func RunWithReady(
 	} else {
 		client = NewCastClient(ClientConfig{
 			ChromecastAddr: chromecastAddr,
-			CoreURL:        *coreURLFlag,
-			StreamURL:      *streamURLFlag,
-			ControlURL:     *controlURLFlag,
+			CoreURL:        coreURL,
+			StreamURL:      streamURL,
+			ControlURL:     cfg.ControlURL,
 			Logger:         logger,
 		})
 	}
@@ -219,7 +156,7 @@ func RunWithReady(
 
 	serverCfg := ServerConfig{
 		Host:   "0.0.0.0",
-		Port:   *portFlag,
+		Port:   controlPort,
 		Logger: logger,
 	}
 	server := NewActionServer(serverCfg, client)
