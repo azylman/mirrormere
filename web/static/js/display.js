@@ -430,14 +430,14 @@
   let clockTimer = null;
 
   /**
-   * Resolve cursor suppression query overrides (?kiosk=true, ?cursor=none/visible).
+   * Resolve cursor suppression query overrides (?hide_cursor=true/false, ?cursor=none/visible).
    */
   function resolveCursorSuppression() {
     if (typeof window !== 'undefined' && window.location && window.location.search && typeof document !== 'undefined' && document.body) {
       const urlParams = new URLSearchParams(window.location.search);
-      if (urlParams.get('kiosk') === 'true' || urlParams.get('cursor') === 'none' || urlParams.get('hide_cursor') === 'true') {
+      if (urlParams.get('hide_cursor') === 'true' || urlParams.get('cursor') === 'none') {
         document.body.classList.add('mm-touch-kiosk');
-      } else if (urlParams.get('kiosk') === 'false' || urlParams.get('cursor') === 'visible' || urlParams.get('hide_cursor') === 'false') {
+      } else if (urlParams.get('hide_cursor') === 'false' || urlParams.get('cursor') === 'visible') {
         document.body.classList.remove('mm-touch-kiosk');
       }
     }

@@ -242,9 +242,15 @@ func (h *Handler) GetDisplay(w http.ResponseWriter, r *http.Request) {
 	tmpl, err := template.New("display.html").Parse(string(raw))
 	if err == nil {
 		var buf bytes.Buffer
+		hideCursor := h.HideCursor()
+		if q := r.URL.Query().Get("hide_cursor"); q == "true" {
+			hideCursor = true
+		} else if q == "false" {
+			hideCursor = false
+		}
 		data := DisplayTemplateData{
 			Timezone:   h.Timezone(),
-			HideCursor: h.HideCursor(),
+			HideCursor: hideCursor,
 		}
 		if err := tmpl.Execute(&buf, data); err == nil {
 			out = buf.Bytes()

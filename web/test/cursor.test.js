@@ -96,13 +96,13 @@ describe('Touch Kiosk Cursor Suppression', () => {
         },
       };
 
-      // ?kiosk=true adds mm-touch-kiosk
+      // ?hide_cursor=true adds mm-touch-kiosk
       global.window = {
-        location: { search: '?kiosk=true' },
+        location: { search: '?hide_cursor=true' },
       };
       const display = require('../static/js/display.js');
       display.resolveCursorSuppression();
-      assert.ok(global.document.body.classList.contains('mm-touch-kiosk'), '?kiosk=true must add mm-touch-kiosk');
+      assert.ok(global.document.body.classList.contains('mm-touch-kiosk'), '?hide_cursor=true must add mm-touch-kiosk');
 
       // ?cursor=visible removes mm-touch-kiosk
       global.window.location.search = '?cursor=visible';
@@ -118,6 +118,12 @@ describe('Touch Kiosk Cursor Suppression', () => {
       global.window.location.search = '?hide_cursor=false';
       display.resolveCursorSuppression();
       assert.ok(!global.document.body.classList.contains('mm-touch-kiosk'), '?hide_cursor=false must remove mm-touch-kiosk');
+
+      // ?kiosk=true is ignored (not used for cursor suppression)
+      classList.clear();
+      global.window.location.search = '?kiosk=true';
+      display.resolveCursorSuppression();
+      assert.ok(!global.document.body.classList.contains('mm-touch-kiosk'), '?kiosk=true must not add mm-touch-kiosk');
     } finally {
       global.window = originalWindow;
       global.document = originalDocument;

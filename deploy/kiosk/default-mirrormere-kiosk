@@ -4,6 +4,9 @@
 # Target display URL for Chromium
 MIRRORMERE_DISPLAY_URL=http://localhost:8080/display
 
+# Touch kiosk cursor suppression (appends ?hide_cursor=true to display URL when true)
+MIRRORMERE_HIDE_CURSOR=true
+
 # Voice node id of this device (same as node_id in the ear's voice.yaml).
 # Leave empty to read it from /etc/mirrormere/voice.yaml. It is appended to the
 # display URL as ?node=<id> so the chat-log widget shows this device's conversation.
