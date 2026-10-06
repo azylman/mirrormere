@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -123,7 +124,7 @@ func TestRun_CompositionRootSmoke(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET /healthz failed: %v", err)
 	}
-	defer resp.Body.Close()
+	t.Cleanup(func() { _ = resp.Body.Close() })
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("GET /healthz status = %d, want 200", resp.StatusCode)
 	}
@@ -133,7 +134,7 @@ func TestRun_CompositionRootSmoke(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET /api/audio failed: %v", err)
 	}
-	defer resp.Body.Close()
+	t.Cleanup(func() { _ = resp.Body.Close() })
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("GET /api/audio status = %d, want 200", resp.StatusCode)
 	}
@@ -147,7 +148,7 @@ func TestRun_CompositionRootSmoke(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET /api/video/state failed: %v", err)
 	}
-	defer resp.Body.Close()
+	t.Cleanup(func() { _ = resp.Body.Close() })
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("GET /api/video/state status = %d, want 200", resp.StatusCode)
 	}
@@ -161,7 +162,7 @@ func TestRun_CompositionRootSmoke(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET /display failed: %v", err)
 	}
-	defer resp.Body.Close()
+	t.Cleanup(func() { _ = resp.Body.Close() })
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("GET /display status = %d, want 200", resp.StatusCode)
 	}
@@ -175,7 +176,7 @@ func TestRun_CompositionRootSmoke(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET /style.css failed: %v", err)
 	}
-	defer resp.Body.Close()
+	t.Cleanup(func() { _ = resp.Body.Close() })
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("GET /style.css status = %d, want 200", resp.StatusCode)
 	}
@@ -185,7 +186,7 @@ func TestRun_CompositionRootSmoke(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET /api/lists/test/items failed: %v", err)
 	}
-	defer resp.Body.Close()
+	t.Cleanup(func() { _ = resp.Body.Close() })
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("GET /api/lists/test/items status = %d, want 404", resp.StatusCode)
 	}
@@ -205,7 +206,7 @@ func TestRun_CompositionRootSmoke(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET /api/events failed: %v", err)
 	}
-	defer resp.Body.Close()
+	t.Cleanup(func() { _ = resp.Body.Close() })
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("GET /api/events status = %d, want 200", resp.StatusCode)
 	}
@@ -741,4 +742,343 @@ display:
 	cancel()
 	<-errChan
 }
+
+func TestRun_SIGHUP_StyleReload(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	customCSSPath := filepath.Join(tmpDir, "custom.css")
+
+	initialYAML := `
+timezone: "UTC"
+display:
+  widgets:
+    - id: spacer-1
+      type: spacer
+      dimensions: [6, 2]
+`
+	if err := os.WriteFile(configPath, []byte(initialYAML), 0644); err != nil {
+		t.Fatalf("failed to write initial config: %v", err)
+	}
+	if err := os.WriteFile(customCSSPath, []byte("body { background: #000; }"), 0644); err != nil {
+		t.Fatalf("failed to write initial custom.css: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	readyChan := make(chan struct{}, 1)
+	hupChan := make(chan os.Signal, 1)
+	reloadedChan := make(chan struct{}, 1)
+	addrChan := make(chan string, 1)
+	var stdout, stderr bytes.Buffer
+
+	errChan := make(chan error, 1)
+	go func() {
+		errChan <- RunWithReady(
+			ctx,
+			[]string{"-config", configPath, "-port", "0", "-host", "127.0.0.1"},
+			&stdout,
+			&stderr,
+			readyChan,
+			WithAddrChan(addrChan),
+			WithHupChan(hupChan),
+			WithOnReload(func() {
+				select {
+				case reloadedChan <- struct{}{}:
+				default:
+				}
+			}),
+		)
+	}()
+
+	select {
+	case <-readyChan:
+	case err := <-errChan:
+		t.Fatalf("RunWithReady failed: %v", err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for ready signal")
+	}
+
+	addr := <-addrChan
+	baseURL := "http://" + addr
+
+	// Connect to /api/events SSE
+	sseCtx, sseCancel := context.WithCancel(context.Background())
+	defer sseCancel()
+
+	req, err := http.NewRequestWithContext(sseCtx, http.MethodGet, baseURL+"/api/events", nil)
+	if err != nil {
+		t.Fatalf("failed to create SSE request: %v", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("failed to connect to /api/events: %v", err)
+	}
+	t.Cleanup(func() { _ = resp.Body.Close() })
+
+	sseEvents := make(chan struct {
+		eventType string
+		data      string
+	}, 20)
+
+	go func() {
+		scanner := bufio.NewScanner(resp.Body)
+		var currentEvent string
+		for scanner.Scan() {
+			line := scanner.Text()
+			if strings.HasPrefix(line, "event: ") {
+				currentEvent = strings.TrimPrefix(line, "event: ")
+			} else if strings.HasPrefix(line, "data: ") {
+				select {
+				case sseEvents <- struct {
+					eventType string
+					data      string
+				}{eventType: currentEvent, data: strings.TrimPrefix(line, "data: ")}:
+				case <-sseCtx.Done():
+					return
+				}
+			}
+		}
+	}()
+
+	// Wait for initial hydration to start flowing
+	select {
+	case <-sseEvents:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for initial SSE event")
+	}
+
+	// Update custom.css
+	updatedCSS := "body { background: #9b59b6; }"
+	if err := os.WriteFile(customCSSPath, []byte(updatedCSS), 0644); err != nil {
+		t.Fatalf("failed to update custom.css: %v", err)
+	}
+
+	// Send SIGHUP
+	hupChan <- syscall.SIGHUP
+
+	select {
+	case <-reloadedChan:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for SIGHUP reload completion")
+	}
+
+	// Verify style.reload SSE event received
+	var receivedStyleReload bool
+	timeout := time.After(2 * time.Second)
+	for !receivedStyleReload {
+		select {
+		case evt := <-sseEvents:
+			if evt.eventType == "style.reload" && strings.Contains(evt.data, "custom.css") {
+				receivedStyleReload = true
+			}
+		case <-timeout:
+			t.Fatal("timed out waiting for style.reload SSE event")
+		}
+	}
+
+	// Verify GET /style.css serves updated stylesheet
+	cssResp, err := http.Get(baseURL + "/style.css")
+	if err != nil {
+		t.Fatalf("failed to fetch /style.css: %v", err)
+	}
+	cssBody, err := io.ReadAll(cssResp.Body)
+	_ = cssResp.Body.Close()
+	if err != nil {
+		t.Fatalf("failed to read /style.css body: %v", err)
+	}
+	if string(cssBody) != updatedCSS {
+		t.Errorf("expected updated CSS %q, got %q", updatedCSS, string(cssBody))
+	}
+
+	sseCancel()
+	cancel()
+	<-errChan
+}
+
+func TestRun_SIGHUP_WidgetReload(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	customWidgetsDir := filepath.Join(tmpDir, "widgets")
+
+	widgetDir := filepath.Join(customWidgetsDir, "custom-clock")
+	if err := os.MkdirAll(filepath.Join(widgetDir, "views"), 0755); err != nil {
+		t.Fatalf("failed to create custom widget views dir: %v", err)
+	}
+	manifestContent := `name: custom-clock
+version: "1.0.0"
+provider: spacer
+default_dimensions: [6, 2]
+`
+	if err := os.WriteFile(filepath.Join(widgetDir, "manifest.yaml"), []byte(manifestContent), 0644); err != nil {
+		t.Fatalf("failed to write widget manifest: %v", err)
+	}
+	viewPath := filepath.Join(widgetDir, "views", "widget.html")
+	if err := os.WriteFile(viewPath, []byte("<div>Initial Clock View</div>"), 0644); err != nil {
+		t.Fatalf("failed to write widget view: %v", err)
+	}
+
+	initialYAML := `
+timezone: "UTC"
+display:
+  widgets:
+    - id: clock-instance
+      type: custom-clock
+      dimensions: [6, 2]
+`
+	if err := os.WriteFile(configPath, []byte(initialYAML), 0644); err != nil {
+		t.Fatalf("failed to write initial config: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	readyChan := make(chan struct{}, 1)
+	hupChan := make(chan os.Signal, 1)
+	reloadedChan := make(chan struct{}, 1)
+	addrChan := make(chan string, 1)
+	var stdout, stderr bytes.Buffer
+
+	errChan := make(chan error, 1)
+	go func() {
+		errChan <- RunWithReady(
+			ctx,
+			[]string{
+				"-config", configPath,
+				"-custom-widgets", customWidgetsDir,
+				"-port", "0",
+				"-host", "127.0.0.1",
+			},
+			&stdout,
+			&stderr,
+			readyChan,
+			WithAddrChan(addrChan),
+			WithHupChan(hupChan),
+			WithOnReload(func() {
+				select {
+				case reloadedChan <- struct{}{}:
+				default:
+				}
+			}),
+		)
+	}()
+
+	select {
+	case <-readyChan:
+	case err := <-errChan:
+		t.Fatalf("RunWithReady failed: %v", err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for ready signal")
+	}
+
+	addr := <-addrChan
+	baseURL := "http://" + addr
+
+	// Connect to /api/events SSE
+	sseCtx, sseCancel := context.WithCancel(context.Background())
+	defer sseCancel()
+
+	req, err := http.NewRequestWithContext(sseCtx, http.MethodGet, baseURL+"/api/events", nil)
+	if err != nil {
+		t.Fatalf("failed to create SSE request: %v", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("failed to connect to /api/events: %v", err)
+	}
+	t.Cleanup(func() { _ = resp.Body.Close() })
+
+	sseEvents := make(chan struct {
+		eventType string
+		data      string
+	}, 20)
+
+	go func() {
+		scanner := bufio.NewScanner(resp.Body)
+		var currentEvent string
+		for scanner.Scan() {
+			line := scanner.Text()
+			if strings.HasPrefix(line, "event: ") {
+				currentEvent = strings.TrimPrefix(line, "event: ")
+			} else if strings.HasPrefix(line, "data: ") {
+				select {
+				case sseEvents <- struct {
+					eventType string
+					data      string
+				}{eventType: currentEvent, data: strings.TrimPrefix(line, "data: ")}:
+				case <-sseCtx.Done():
+					return
+				}
+			}
+		}
+	}()
+
+	// Wait for initial SSE hydration
+	select {
+	case <-sseEvents:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for initial SSE event")
+	}
+
+	// Verify initial render
+	renderResp, err := http.Get(baseURL + "/api/widgets/clock-instance/render")
+	if err != nil {
+		t.Fatalf("failed to render initial widget: %v", err)
+	}
+	renderBody, err := io.ReadAll(renderResp.Body)
+	_ = renderResp.Body.Close()
+	if err != nil {
+		t.Fatalf("failed to read render body: %v", err)
+	}
+	if string(renderBody) != "<div>Initial Clock View</div>" {
+		t.Fatalf("unexpected initial render: %s", string(renderBody))
+	}
+
+	// Update widget template
+	if err := os.WriteFile(viewPath, []byte("<div>Hot Reloaded Clock View</div>"), 0644); err != nil {
+		t.Fatalf("failed to update widget.html: %v", err)
+	}
+
+	// Send SIGHUP
+	hupChan <- syscall.SIGHUP
+
+	select {
+	case <-reloadedChan:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for SIGHUP reload completion")
+	}
+
+	// Verify widget.reload SSE event received
+	var receivedWidgetReload bool
+	timeout := time.After(2 * time.Second)
+	for !receivedWidgetReload {
+		select {
+		case evt := <-sseEvents:
+			if evt.eventType == "widget.reload" && strings.Contains(evt.data, "custom-clock") {
+				receivedWidgetReload = true
+			}
+		case <-timeout:
+			t.Fatal("timed out waiting for widget.reload SSE event")
+		}
+	}
+
+	// Verify updated render without server restart
+	renderResp2, err := http.Get(baseURL + "/api/widgets/clock-instance/render")
+	if err != nil {
+		t.Fatalf("failed to render updated widget: %v", err)
+	}
+	renderBody2, err := io.ReadAll(renderResp2.Body)
+	_ = renderResp2.Body.Close()
+	if err != nil {
+		t.Fatalf("failed to read updated render body: %v", err)
+	}
+	if string(renderBody2) != "<div>Hot Reloaded Clock View</div>" {
+		t.Fatalf("expected hot reloaded HTML, got: %s", string(renderBody2))
+	}
+
+	sseCancel()
+	cancel()
+	<-errChan
+}
+
 
