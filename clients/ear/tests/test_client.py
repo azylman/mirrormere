@@ -45,6 +45,7 @@ class TestVoiceDaemon(unittest.TestCase):
             cooldown_seconds=1.0,
             mirrormere_url="http://test-core/kiosk",
             hub_url="http://test-hub/api/voice/interact",
+            wake_models=["hey_jarvis", "hey_aerial"],
         )
 
     def tearDown(self):
@@ -773,6 +774,52 @@ class TestVoiceDaemon(unittest.TestCase):
         self.assertTrue(daemon.running)
         daemon.stop()
         self.assertFalse(daemon.running)
+
+    def test_wake_word_fail_closed_on_unmatched_models(self):
+        cfg = VoiceConfig(wake_models=["hey_unmatched"])
+        mock_model = MockModel(score_map={"hey_jarvis": 0.99, "hey_aerial": 0.99})
+        daemon = VoiceDaemon(cfg, model=mock_model)
+        self.assertEqual(daemon.active_models, [])
+        self.assertFalse(daemon.wake_mode_uses_openwakeword())
+
+        dummy_frame = struct.pack("<1280h", *([1000] * 1280))
+        result = daemon.process_frame(dummy_frame)
+        self.assertIsNone(result)
+        self.assertEqual(daemon.state, "idle")
+
+    def test_wake_word_exact_match_no_substring(self):
+        mock_model = MockModel()
+        mock_model.models = {"hey_jarvis": None, "alexa": None, "timer": None}
+
+        # Substrings must not match
+        cfg = VoiceConfig(wake_models=["jarvis", "a", "time"])
+        daemon = VoiceDaemon(cfg, model=mock_model)
+        self.assertEqual(daemon.active_models, [])
+
+        # Exact match
+        cfg = VoiceConfig(wake_models=["hey_jarvis"])
+        daemon = VoiceDaemon(cfg, model=mock_model)
+        self.assertEqual(daemon.active_models, ["hey_jarvis"])
+
+        # Path and extension normalization
+        cfg = VoiceConfig(wake_models=["/opt/models/hey_jarvis.onnx"])
+        daemon = VoiceDaemon(cfg, model=mock_model)
+        self.assertEqual(daemon.active_models, ["hey_jarvis"])
+
+    @patch("clients.ear.client.glob.glob", return_value=[])
+    def test_init_openwakeword_fails_closed_without_falling_back_to_available(self, mock_glob):
+        mock_oww_cls = MagicMock()
+        mock_oww_instance = MagicMock()
+        mock_oww_instance.models = {"alexa": None, "hey_jarvis": None, "timer": None}
+        mock_oww_cls.return_value = mock_oww_instance
+
+        with patch.dict("sys.modules", {"openwakeword.model": MagicMock(Model=mock_oww_cls)}):
+            cfg = VoiceConfig(wake_models=["hey_aerial"])
+            daemon = VoiceDaemon.__new__(VoiceDaemon)
+            daemon.cfg = cfg
+            model, active = daemon._init_openwakeword()
+            self.assertEqual(active, [])
+            self.assertEqual(model, mock_oww_instance)
 
 
 if __name__ == "__main__":

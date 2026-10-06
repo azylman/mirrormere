@@ -12,7 +12,10 @@ class TestVoiceConfig(unittest.TestCase):
         self.assertEqual(cfg.silence_ms, 400)
         self.assertEqual(cfg.sample_rate, 16000)
         self.assertEqual(cfg.chunk_samples, 1280)
-        self.assertIn("hey_jarvis", cfg.wake_models)
+        self.assertEqual(cfg.wake_models, ["hey_aerial"])
+        self.assertNotIn("alexa", cfg.wake_models)
+        self.assertNotIn("hey_jarvis", cfg.wake_models)
+        self.assertNotIn("hey_mycroft", cfg.wake_models)
 
     def test_load_from_yaml(self):
         yaml_content = """

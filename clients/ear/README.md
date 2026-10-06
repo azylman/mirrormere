@@ -25,8 +25,6 @@ ear:
   mirrormere_url: "http://192.168.1.14/kiosk"
   hub_url: "http://192.168.1.14:9000/api/voice/interact"
   wake_models:
-    - "alexa"
-    - "hey_jarvis"
     - "hey_aerial"
   threshold: 0.35
   models_dir: "/opt/mirrormere/voice/models"
