@@ -130,7 +130,29 @@ docker run -d \
 
 ## Custom Wake Word Models
 
-To add custom wake word models (e.g. `hey_aerial.onnx`):
+### openWakeWord Models
+To add custom openWakeWord models (e.g. `hey_aerial.onnx`):
 1. Place the `.onnx` file into `/opt/mirrormere/voice/models/`.
 2. Add the model base name to `wake_models` in `/etc/mirrormere/voice.yaml`.
 3. Restart the `mirrormere-ear` container (`docker restart mirrormere-ear`). The daemon auto-scans the directory and loads the model into its active evaluation graph.
+
+### Sherpa-ONNX Keyword Spotting
+To use Sherpa-ONNX with the bundled pre-trained Zipformer KWS model:
+1. Set `wake_engine: "sherpa-onnx"` and `vad: "silero"` in `/etc/mirrormere/voice.yaml`.
+2. By default, the image includes a pre-tokenized `keywords.txt` for `"Hey Aerial"` (`▁HE Y ▁A E RI AL @hey_aerial`) at `/opt/mirrormere/voice/sherpa/keywords.txt`.
+3. To supply custom keywords, generate a tokenized `keywords.txt` using `sherpa-onnx-cli text2token` with the bundled `tokens.txt` and `bpe.model`:
+
+```bash
+# Prepare raw keywords (UPPERCASE with optional :score #threshold @tag)
+echo "HEY AERIAL @hey_aerial" > keywords_raw.txt
+
+# Generate tokenized keywords.txt
+sherpa-onnx-cli text2token \
+  --tokens /opt/mirrormere/voice/sherpa/tokens.txt \
+  --tokens-type bpe \
+  --bpe-model /opt/mirrormere/voice/sherpa/bpe.model \
+  keywords_raw.txt \
+  keywords.txt
+```
+
+Mount `keywords.txt` into `/config/keywords.txt:ro` and restart the container.
