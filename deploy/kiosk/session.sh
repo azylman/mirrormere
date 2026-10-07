@@ -186,7 +186,7 @@ CHROME_FLAGS=(
     --kiosk
     --noerrdialogs
     --ozone-platform=wayland
-    --enable-features=UseOzonePlatform,OverlayScrollbar
+    "--enable-features=UseOzonePlatform,OverlayScrollbar"
     --force-device-scale-factor="${SCALE_FACTOR}"
     --no-first-run
     --no-default-browser-check
