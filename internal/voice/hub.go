@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"mime"
 	"mime/multipart"
 	"net"
@@ -36,8 +37,12 @@ var (
 	ErrSTTFailed = errors.New("speech-to-text transcription failed")
 	// ErrBrainFailed is returned when agent brain deliberation fails.
 	ErrBrainFailed = errors.New("agent brain deliberation failed")
+	// ErrBrainTimeout is returned when agent brain deliberation exceeds its timeout.
+	ErrBrainTimeout = fmt.Errorf("%w: agent brain deliberation timed out", ErrBrainFailed)
 	// ErrTTSFailed is returned when text-to-speech synthesis fails.
 	ErrTTSFailed = errors.New("text-to-speech synthesis failed")
+	// ErrTTSTimeout is returned when text-to-speech synthesis exceeds its timeout.
+	ErrTTSTimeout = fmt.Errorf("%w: text-to-speech synthesis timed out", ErrTTSFailed)
 	// ErrMixedAudioStream is returned when a streaming turn mixes brain audio and TTS synthesis.
 	ErrMixedAudioStream = errors.New("mixed audio stream: turn cannot mix brain audio and TTS synthesis")
 	// ErrUnsupportedAudioFormat is returned when audio is not raw 16-bit PCM (s16le). The hub
@@ -128,17 +133,20 @@ type TTSClient interface {
 
 // Hub coordinates the end-to-end voice pipeline (STT -> Brain -> TTS).
 type Hub struct {
-	mu       sync.Mutex
-	inFlight bool
-	cfg      *config.VoiceHubConfig
-	coord    *Coordinator
-	stt      STTClient
-	brain    BrainClient
-	tts      TTSClient
-	speaker  SpeakerIdentifier
-	metrics  *Metrics
-	chatLog  *chatlog.Store
-	onChat   func()
+	mu                sync.Mutex
+	inFlight          bool
+	cfg               *config.VoiceHubConfig
+	coord             *Coordinator
+	stt               STTClient
+	brain             BrainClient
+	tts               TTSClient
+	speaker           SpeakerIdentifier
+	metrics           *Metrics
+	chatLog           *chatlog.Store
+	onChat            func()
+	brainTimeout      time.Duration
+	ttsTimeout        time.Duration
+	heartbeatInterval time.Duration
 }
 
 // HubOption configures optional Hub overrides (e.g. for testing).
@@ -169,6 +177,21 @@ func WithMetrics(m *Metrics) HubOption {
 	return func(h *Hub) { h.metrics = m }
 }
 
+// WithBrainTimeout overrides the brain deliberation timeout.
+func WithBrainTimeout(d time.Duration) HubOption {
+	return func(h *Hub) { h.brainTimeout = d }
+}
+
+// WithTTSTimeout overrides the TTS synthesis timeout.
+func WithTTSTimeout(d time.Duration) HubOption {
+	return func(h *Hub) { h.ttsTimeout = d }
+}
+
+// WithThinkingHeartbeatInterval overrides the thinking heartbeat interval.
+func WithThinkingHeartbeatInterval(d time.Duration) HubOption {
+	return func(h *Hub) { h.heartbeatInterval = d }
+}
+
 // WithChatLog makes the hub record every turn (the transcribed user text and
 // the brain's final reply) into store, keyed by voice node, for the chat-log
 // widget. onChange (optional) runs after each recorded message; the server
@@ -189,11 +212,33 @@ func (h *Hub) recordChat(nodeID, role, author, text string) {
 	}
 }
 
+// isTimeoutError reports whether an error or context deadline was caused by a timeout,
+// explicitly ignoring client-side parent context cancellations.
+func isTimeoutError(err error, timeoutCtx, parentCtx context.Context) bool {
+	if parentCtx != nil && errors.Is(parentCtx.Err(), context.Canceled) {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	if timeoutCtx != nil && errors.Is(timeoutCtx.Err(), context.DeadlineExceeded) {
+		return true
+	}
+	return false
+}
+
 // NewHub constructs a Voice Hub coordinator.
 func NewHub(cfg *config.VoiceHubConfig, coord *Coordinator, opts ...HubOption) *Hub {
 	h := &Hub{
-		cfg:   cfg,
-		coord: coord,
+		cfg:               cfg,
+		coord:             coord,
+		brainTimeout:      30 * time.Second,
+		ttsTimeout:        10 * time.Second,
+		heartbeatInterval: 5 * time.Second,
+	}
+	if cfg != nil {
+		h.brainTimeout = time.Duration(cfg.GetBrainTimeoutSeconds()) * time.Second
+		h.ttsTimeout = time.Duration(cfg.GetTTSTimeoutSeconds()) * time.Second
 	}
 	if cfg != nil && cfg.Enabled {
 		h.stt = NewDefaultSTTClient(cfg.STTURL)
@@ -211,7 +256,6 @@ func NewHub(cfg *config.VoiceHubConfig, coord *Coordinator, opts ...HubOption) *
 	}
 	return h
 }
-
 
 // IsEnabled reports whether the voice hub is enabled.
 func (h *Hub) IsEnabled() bool {
@@ -400,6 +444,61 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 		SpeakerScore: match.Score,
 	}
 
+	brainTimeout := h.brainTimeout
+	if brainTimeout <= 0 {
+		brainTimeout = 30 * time.Second
+	}
+	heartbeatInterval := h.heartbeatInterval
+	if heartbeatInterval <= 0 {
+		heartbeatInterval = 5 * time.Second
+	}
+
+	brainCtx, brainCancel := context.WithTimeout(ctx, brainTimeout)
+	defer brainCancel()
+
+	var heartbeatMu sync.Mutex
+	heartbeatActive := true
+	stopHeartbeat := make(chan struct{})
+	var stopOnce sync.Once
+	stopThinking := func() {
+		stopOnce.Do(func() {
+			heartbeatMu.Lock()
+			heartbeatActive = false
+			heartbeatMu.Unlock()
+			close(stopHeartbeat)
+		})
+	}
+	defer stopThinking()
+
+	go func() {
+		ticker := time.NewTicker(heartbeatInterval)
+		defer ticker.Stop()
+		tickerStart := time.Now()
+		for {
+			select {
+			case <-stopHeartbeat:
+				return
+			case <-brainCtx.Done():
+				return
+			case tick := <-ticker.C:
+				heartbeatMu.Lock()
+				active := heartbeatActive
+				heartbeatMu.Unlock()
+				if !active {
+					return
+				}
+				elapsedSec := int(math.Round(tick.Sub(tickerStart).Seconds()))
+				if elapsedSec <= 0 {
+					elapsedSec = 1
+				}
+				if sinkErr := safeSink("thinking", map[string]int{"elapsed_seconds": elapsedSec}); sinkErr != nil {
+					slog.Debug("thinking heartbeat sink error", "error", sinkErr)
+					return
+				}
+			}
+		}
+	}()
+
 	engine := h.cfg.GetTTSModel()
 
 	var reply string
@@ -436,7 +535,7 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 			streamCh     = 1
 		)
 
-		streamCtx, cancelStream := context.WithCancel(ctx)
+		streamCtx, cancelStream := context.WithCancel(brainCtx)
 		defer cancelStream()
 
 		const pcmChunkFloor = 4800 // ~100ms at 24kHz 16-bit mono
@@ -487,6 +586,7 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 		}
 
 		onAudio := func(chunk BrainAudioChunk) {
+			stopThinking()
 			if streamErr != nil {
 				return
 			}
@@ -558,7 +658,13 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 					return
 				}
 				var streamedTTSAny bool
-				ttsErr := h.tts.Synthesize(ctx, chunk.Text, func(tc TTSAudioChunk) error {
+				ttsTimeout := h.ttsTimeout
+				if ttsTimeout <= 0 {
+					ttsTimeout = 10 * time.Second
+				}
+				ttsCtx, ttsCancel := context.WithTimeout(ctx, ttsTimeout)
+				defer ttsCancel()
+				ttsErr := h.tts.Synthesize(ttsCtx, chunk.Text, func(tc TTSAudioChunk) error {
 					if len(tc.Data) == 0 {
 						return nil
 					}
@@ -601,20 +707,27 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 		brainStart := time.Now()
 		reply, err = streamingBrain.AskStreaming(streamCtx, askReq, onStatus, onAudio)
 		brainDuration := time.Since(brainStart).Seconds()
+		stopThinking()
 		if streamErr != nil {
 			err = streamErr
 		}
 		if err != nil {
 			finalStatus = "error"
 			h.metrics.RecordStageDuration(nodeID, "brain", "error", brainDuration)
-			h.metrics.RecordError(nodeID, "brain", "brain_error")
+			errType := "brain_error"
+			retErr := fmt.Errorf("%w: %w", ErrBrainFailed, err)
+			if isTimeoutError(err, brainCtx, ctx) {
+				errType = "brain_timeout"
+				retErr = fmt.Errorf("%w: %w", ErrBrainTimeout, err)
+			}
+			h.metrics.RecordError(nodeID, "brain", errType)
 			if h.coord != nil {
 				h.coord.Transition(StateError, nil, nil, nil, nil)
 			}
-			if sinkErr := safeSink("error", map[string]string{"error": "brain_error", "message": err.Error()}); sinkErr != nil {
+			if sinkErr := safeSink("error", map[string]string{"error": errType, "message": err.Error()}); sinkErr != nil {
 				return sinkErr
 			}
-			return fmt.Errorf("%w: %w", ErrBrainFailed, err)
+			return retErr
 		}
 		h.metrics.RecordStageDuration(nodeID, "brain", "success", brainDuration)
 		h.recordChat(nodeID, chatlog.RoleAgent, "", reply)
@@ -688,19 +801,26 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 		}
 	} else {
 		brainStart := time.Now()
-		reply, err = h.brain.Ask(ctx, askReq, onStatus)
+		reply, err = h.brain.Ask(brainCtx, askReq, onStatus)
 		brainDuration := time.Since(brainStart).Seconds()
+		stopThinking()
 		if err != nil {
 			finalStatus = "error"
 			h.metrics.RecordStageDuration(nodeID, "brain", "error", brainDuration)
-			h.metrics.RecordError(nodeID, "brain", "brain_error")
+			errType := "brain_error"
+			retErr := fmt.Errorf("%w: %w", ErrBrainFailed, err)
+			if isTimeoutError(err, brainCtx, ctx) {
+				errType = "brain_timeout"
+				retErr = fmt.Errorf("%w: %w", ErrBrainTimeout, err)
+			}
+			h.metrics.RecordError(nodeID, "brain", errType)
 			if h.coord != nil {
 				h.coord.Transition(StateError, nil, nil, nil, nil)
 			}
-			if sinkErr := safeSink("error", map[string]string{"error": "brain_error", "message": err.Error()}); sinkErr != nil {
+			if sinkErr := safeSink("error", map[string]string{"error": errType, "message": err.Error()}); sinkErr != nil {
 				return sinkErr
 			}
-			return fmt.Errorf("%w: %w", ErrBrainFailed, err)
+			return retErr
 		}
 		h.metrics.RecordStageDuration(nodeID, "brain", "success", brainDuration)
 		h.recordChat(nodeID, chatlog.RoleAgent, "", reply)
@@ -751,6 +871,13 @@ func (h *Hub) synthesizeAndEmitReply(
 		return "success", nil
 	}
 
+	ttsTimeout := h.ttsTimeout
+	if ttsTimeout <= 0 {
+		ttsTimeout = 10 * time.Second
+	}
+	ttsCtx, ttsCancel := context.WithTimeout(ctx, ttsTimeout)
+	defer ttsCancel()
+
 	ttsStart := time.Now()
 	finalStatus := "success"
 
@@ -763,7 +890,7 @@ func (h *Hub) synthesizeAndEmitReply(
 	streamCh := 1
 	pcmSeen := false
 
-	ttsErr := h.tts.Synthesize(ctx, reply, func(tc TTSAudioChunk) error {
+	ttsErr := h.tts.Synthesize(ttsCtx, reply, func(tc TTSAudioChunk) error {
 		if len(tc.Data) == 0 {
 			return nil
 		}
@@ -848,10 +975,29 @@ func (h *Hub) synthesizeAndEmitReply(
 		slog.Warn("TTS synthesis failed", "node_id", nodeID, "error", ttsErr)
 		finalStatus = "error"
 		h.metrics.RecordStageDuration(nodeID, "tts", "error", ttsDuration)
-		h.metrics.RecordError(nodeID, "tts", "tts_error")
-		if sinkErr := safeSink("error", map[string]string{"error": "tts_error", "message": ttsErr.Error()}); sinkErr != nil {
+		errType := "tts_error"
+		if isTimeoutError(ttsErr, ttsCtx, ctx) {
+			errType = "tts_timeout"
+		}
+		h.metrics.RecordError(nodeID, "tts", errType)
+		if sinkErr := safeSink("error", map[string]string{"error": errType, "message": ttsErr.Error()}); sinkErr != nil {
 			return "error", sinkErr
 		}
+	} else if ttsErr != nil && anySent {
+		slog.Warn("TTS synthesis failed mid-stream", "node_id", nodeID, "error", ttsErr)
+		h.metrics.RecordStageDuration(nodeID, "tts", "error", ttsDuration)
+		errType := "tts_error"
+		if isTimeoutError(ttsErr, ttsCtx, ctx) {
+			errType = "tts_timeout"
+		}
+		h.metrics.RecordError(nodeID, "tts", errType)
+		if h.coord != nil {
+			h.coord.Transition(StateError, nil, nil, nil, nil)
+		}
+		if sinkErr := safeSink("error", map[string]string{"error": errType, "message": ttsErr.Error()}); sinkErr != nil {
+			return "error", sinkErr
+		}
+		return "error", ttsErr
 	} else {
 		h.metrics.RecordStageDuration(nodeID, "tts", "success", ttsDuration)
 		if ttsDuration > 0.001 && len(reply) > 0 {
@@ -861,7 +1007,6 @@ func (h *Hub) synthesizeAndEmitReply(
 	}
 	return finalStatus, nil
 }
-
 
 // --- Default STT Client ---
 

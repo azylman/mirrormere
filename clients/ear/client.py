@@ -766,6 +766,9 @@ class VoiceDaemon:
                         if current_event == "transcript":
                             transcript = payload.get("transcript", "")
                             logger.info("Received transcript: '%s'", transcript)
+                        elif current_event == "thinking":
+                            elapsed = payload.get("elapsed_seconds")
+                            logger.debug("Received thinking keep-alive from Hub (elapsed: %ss)", elapsed)
                         elif current_event == "status":
                             status_text = payload.get("status", "")
                             logger.info("Agent tool status: %s", status_text)

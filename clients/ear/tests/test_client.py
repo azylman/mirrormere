@@ -745,6 +745,40 @@ class TestVoiceDaemon(unittest.TestCase):
         mock_sleep.assert_called_once_with(15.0)
         mock_post_state.assert_called_once_with(self.cfg.mirrormere_url, "idle", timeout=2.0)
 
+    @patch("clients.ear.client.post_voice_state")
+    @patch("clients.ear.client.urllib.request.urlopen")
+    def test_hub_stream_worker_handles_thinking_heartbeat(self, mock_urlopen, mock_post_state):
+        sse_lines = [
+            b"event: transcript\r\n",
+            b'data: {"transcript": "what time is it"}\r\n',
+            b"\r\n",
+            b"event: thinking\r\n",
+            b'data: {"elapsed_seconds": 5}\r\n',
+            b"\r\n",
+            b"event: thinking\r\n",
+            b'data: {"elapsed_seconds": 10}\r\n',
+            b"\r\n",
+            b"event: reply\r\n",
+            b'data: {"reply": "It is noon."}\r\n',
+            b"\r\n",
+            b"event: done\r\n",
+            b"data: {}\r\n",
+            b"\r\n",
+        ]
+        mock_resp = MagicMock()
+        mock_resp.status = 200
+        mock_resp.__iter__.return_value = iter(sse_lines)
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        with open(self.save_path, "wb") as f:
+            f.write(b"RIFFdummyWAVE")
+
+        daemon = VoiceDaemon(self.cfg, model=MockModel())
+        daemon._hub_stream_worker(self.save_path)
+
+        mock_post_state.assert_called_once_with(self.cfg.mirrormere_url, "idle", timeout=2.0)
+        self.assertFalse(daemon.busy)
+
     @patch("clients.ear.client.urllib.request.urlopen")
     def test_heartbeat_payload_and_exception_handling(self, mock_urlopen):
         mock_resp = MagicMock()
