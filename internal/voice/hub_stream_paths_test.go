@@ -153,7 +153,7 @@ func TestHub_Streaming_AudioChunkSinkErrorDoesNotAbortTurn(t *testing.T) {
 	t.Parallel()
 	brain := &mockStreamingBrain{
 		reply:     "One.",
-		sentences: []BrainAudioChunk{{Text: "One.", Format: "pcm", Data: []byte("a")}},
+		sentences: []BrainAudioChunk{{Text: "One."}},
 	}
 	var got []string
 	sink := func(event string, _ any) error {
@@ -212,10 +212,10 @@ func TestDefaultBrainClient_AskStreaming_EdgeCases(t *testing.T) {
 		}
 	})
 
-	t.Run("malformed data, nil onAudio, bad base64, no done", func(t *testing.T) {
+	t.Run("malformed data, nil onAudio, text sentence, no done", func(t *testing.T) {
 		t.Parallel()
 		body := "event: status\ndata: not-json\n\n" +
-			"event: sentence\ndata: {\"text\":\"A.\",\"audio_b64\":\"!!!\"}\n\n" +
+			"event: sentence\ndata: {\"text\":\"A.\"}\n\n" +
 			"event: reply\ndata: {\"reply\":\"  A.  \"}\n\n"
 		srv := sseServer(t, "text/event-stream", body)
 		defer srv.Close()
@@ -227,15 +227,15 @@ func TestDefaultBrainClient_AskStreaming_EdgeCases(t *testing.T) {
 			t.Fatalf("nil onAudio: got %q, %v", reply, err)
 		}
 
-		// bad base64: onAudio still fires, with empty Data.
+		// onAudio fires with text.
 		var chunks []BrainAudioChunk
 		reply, err = b.AskStreaming(context.Background(), AskRequest{Prompt: "hi"}, nil,
 			func(c BrainAudioChunk) { chunks = append(chunks, c) })
 		if err != nil || reply != "A." {
 			t.Fatalf("got %q, %v", reply, err)
 		}
-		if len(chunks) != 1 || chunks[0].Text != "A." || len(chunks[0].Data) != 0 {
-			t.Fatalf("expected one text-only chunk, got %+v", chunks)
+		if len(chunks) != 1 || chunks[0].Text != "A." {
+			t.Fatalf("expected one text chunk, got %+v", chunks)
 		}
 	})
 }

@@ -43,21 +43,11 @@ var (
 	ErrTTSFailed = errors.New("text-to-speech synthesis failed")
 	// ErrTTSTimeout is returned when text-to-speech synthesis exceeds its timeout.
 	ErrTTSTimeout = fmt.Errorf("%w: text-to-speech synthesis timed out", ErrTTSFailed)
-	// ErrMixedAudioStream is returned when a streaming turn mixes brain audio and TTS synthesis.
-	ErrMixedAudioStream = errors.New("mixed audio stream: turn cannot mix brain audio and TTS synthesis")
 	// ErrUnsupportedAudioFormat is returned when audio is not raw 16-bit PCM (s16le). The hub
 	// only plays PCM; wav/mp3 chunks and non-PCM TTS responses abort the turn.
 	ErrUnsupportedAudioFormat = errors.New("unsupported audio format: only raw s16le PCM is supported")
 	// ErrMixedPCMFormat is returned when PCM audio changes sample rate or channel count mid-turn.
-	// It wraps ErrMixedAudioStream: one response must keep one audio format (#347).
-	ErrMixedPCMFormat = fmt.Errorf("%w: PCM sample rate or channel count changed mid-turn", ErrMixedAudioStream)
-)
-
-const (
-	// StreamModeBrainAudio indicates the streaming turn provides upstream audio chunks directly from the brain.
-	StreamModeBrainAudio = "brain-audio"
-	// StreamModeRemoteTTS indicates the streaming turn delivers text chunks from the brain, synthesized via TTS.
-	StreamModeRemoteTTS = "remote-tts"
+	ErrMixedPCMFormat = errors.New("PCM sample rate or channel count changed mid-turn")
 )
 
 // speakerGrace is how long the hub waits for speaker matching after STT has
@@ -90,19 +80,11 @@ type BrainClient interface {
 	Ask(ctx context.Context, req AskRequest, onStatus func(status string)) (string, error)
 }
 
-// BrainAudioChunk is one sentence's worth of pre-synthesized audio delivered
-// by a brain that streams TTS as it goes (MANDOS,  "Sentence
-// Streaming" — the karakos gateway's POST /ask/stream). Format is the audio
-// container (e.g. "wav"); Data is raw decoded bytes. An empty/undecodable
-// Data (len(Data) == 0) signals that sentence's audio failed upstream —
-// Text is still populated so the hub can synthesize a local fallback for
-// just that sentence rather than dropping it.
+// BrainAudioChunk is one sentence's worth of text delivered by an
+// AudioStreamingBrainClient as each sentence finishes generation,
+// to be synthesized via TTS.
 type BrainAudioChunk struct {
-	Text       string
-	Format     string
-	Data       []byte
-	SampleRate int
-	Channels   int
+	Text string
 }
 
 // AudioStreamingBrainClient is an optional capability a BrainClient may
@@ -590,26 +572,24 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 		// and once the brain call returns, one extra marker audio_chunk
 		// (empty data, is_final:true) tells the dock playback is complete.
 		var (
-			chunkIdx        int
-			streamedAny     bool
-			anyChunkSent    bool
-			streamAudioMode string
-			streamErr       error
+			chunkIdx     int
+			streamedAny  bool
+			anyChunkSent bool
+			streamErr    error
 			// caption accumulates the text of every sentence actually sent,
 			// so the kiosk HUD (fed by the coordinator's voice.state, not by
 			// this SSE stream) shows a live caption that grows sentence by
 			// sentence.
 			caption strings.Builder
 
-			streamChars   int
-			streamStart   time.Time
-			hasStreamTime bool
+			streamChars      int
+			totalTTSDuration float64
 
 			pcmBuf       []byte
 			pcmLatched   bool // first PCM chunk latches the turn's rate/channels
 			latchRate    int
 			latchCh      int
-			streamFormat = "wav"
+			streamFormat = "pcm"
 			streamRate   = 24000
 			streamCh     = 1
 		)
@@ -673,64 +653,17 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 
 		onAudio := func(chunk BrainAudioChunk) {
 			stopThinking()
-			if len(chunk.Data) > 0 || chunk.Text != "" {
+			if chunk.Text != "" {
 				streamCtx.Reset()
 			}
 			if streamErr != nil {
 				return
 			}
-			streamedAny = true
-			if !hasStreamTime {
-				streamStart = time.Now()
-				hasStreamTime = true
-			}
-			streamChars += len(chunk.Text)
-
-			hasAudio := len(chunk.Data) > 0
-			if streamAudioMode == "" {
-				if hasAudio {
-					streamAudioMode = StreamModeBrainAudio
-				} else {
-					streamAudioMode = StreamModeRemoteTTS
-				}
-				slog.Debug("latched stream audio mode", "mode", streamAudioMode)
-			} else {
-				if streamAudioMode == StreamModeBrainAudio && !hasAudio {
-					streamErr = fmt.Errorf("%w: turn latched to %s but received text-only sentence: %q", ErrMixedAudioStream, streamAudioMode, chunk.Text)
-					slog.Error("mixed audio stream detected", "mode", streamAudioMode, "error", streamErr)
-					cancelStream()
-					return
-				}
-				if streamAudioMode != StreamModeBrainAudio && hasAudio {
-					streamErr = fmt.Errorf("%w: turn latched to %s but received audio chunk for sentence: %q", ErrMixedAudioStream, streamAudioMode, chunk.Text)
-					slog.Error("mixed audio stream detected", "mode", streamAudioMode, "error", streamErr)
-					cancelStream()
-					return
-				}
-			}
-
-			data := chunk.Data
-			format := chunk.Format
-			if format == "" {
-				format = "wav"
-			}
-			if hasAudio && format != "pcm" {
-				streamErr = fmt.Errorf("%w: brain sent %q audio for sentence %q", ErrUnsupportedAudioFormat, format, chunk.Text)
-				slog.Error("unsupported brain audio format", "format", format, "error", streamErr)
-				cancelStream()
+			if strings.TrimSpace(chunk.Text) == "" {
 				return
 			}
-			streamFormat = format
-			rate := chunk.SampleRate
-			if rate <= 0 {
-				rate = 24000
-			}
-			streamRate = rate
-			ch := chunk.Channels
-			if ch <= 0 {
-				ch = 1
-			}
-			streamCh = ch
+			streamedAny = true
+			streamChars += len(chunk.Text)
 
 			if caption.Len() > 0 && chunk.Text != "" {
 				caption.WriteString(" ")
@@ -741,57 +674,51 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 				h.coord.Transition(StateSpeaking, &transcript, &captionSoFar, &engine, nil)
 			}
 
-			if len(data) == 0 {
-				if h.tts == nil {
-					slog.Warn("no TTS client configured; dropping streamed sentence", "text", chunk.Text)
-					return
-				}
-				var streamedTTSAny bool
-				ttsTimeout := h.ttsTimeout
-				if ttsTimeout <= 0 {
-					ttsTimeout = 10 * time.Second
-				}
-				ttsCtx, stopTTS := newInactivityContext(ctx, ttsTimeout)
-				defer stopTTS()
-				ttsErr := h.tts.Synthesize(ttsCtx, chunk.Text, func(tc TTSAudioChunk) error {
-					if len(tc.Data) == 0 {
-						return nil
-					}
-					ttsCtx.Reset()
-					streamedTTSAny = true
-					if tc.Format != "pcm" {
-						streamErr = fmt.Errorf("%w: TTS returned %q audio for sentence %q", ErrUnsupportedAudioFormat, tc.Format, chunk.Text)
-						slog.Error("unsupported TTS audio format", "format", tc.Format, "error", streamErr)
-						cancelStream()
-						return streamErr
-					}
-					if !checkPCMFormat(tc.SampleRate, tc.Channels) {
-						return streamErr
-					}
-					appendPCM(tc.Data, tc.SampleRate, tc.Channels)
-					streamFormat = "pcm"
-					streamRate = tc.SampleRate
-					streamCh = tc.Channels
+			if h.tts == nil {
+				slog.Warn("no TTS client configured; dropping streamed sentence", "text", chunk.Text)
+				return
+			}
+			var streamedTTSAny bool
+			ttsTimeout := h.ttsTimeout
+			if ttsTimeout <= 0 {
+				ttsTimeout = 10 * time.Second
+			}
+			ttsCtx, stopTTS := newInactivityContext(ctx, ttsTimeout)
+			defer stopTTS()
+			t0 := time.Now()
+			ttsErr := h.tts.Synthesize(ttsCtx, chunk.Text, func(tc TTSAudioChunk) error {
+				if len(tc.Data) == 0 {
 					return nil
-				})
-				if errors.Is(ttsErr, ErrUnsupportedAudioFormat) && streamErr == nil {
-					// DefaultTTSClient rejected the response itself.
-					streamErr = fmt.Errorf("%w (sentence %q)", ttsErr, chunk.Text)
+				}
+				ttsCtx.Reset()
+				streamedTTSAny = true
+				if tc.Format != "pcm" {
+					streamErr = fmt.Errorf("%w: TTS returned %q audio for sentence %q", ErrUnsupportedAudioFormat, tc.Format, chunk.Text)
+					slog.Error("unsupported TTS audio format", "format", tc.Format, "error", streamErr)
 					cancelStream()
-					return
+					return streamErr
 				}
-				if ttsErr != nil || !streamedTTSAny {
-					slog.Warn("TTS synthesis for streamed sentence failed; dropping sentence", "text", chunk.Text, "error", ttsErr)
-					return
+				if !checkPCMFormat(tc.SampleRate, tc.Channels) {
+					return streamErr
 				}
-				slog.Debug("synthesized text-only streamed sentence via remote TTS", "text", chunk.Text)
+				appendPCM(tc.Data, tc.SampleRate, tc.Channels)
+				streamFormat = "pcm"
+				streamRate = tc.SampleRate
+				streamCh = tc.Channels
+				return nil
+			})
+			totalTTSDuration += time.Since(t0).Seconds()
+			if errors.Is(ttsErr, ErrUnsupportedAudioFormat) && streamErr == nil {
+				// DefaultTTSClient rejected the response itself.
+				streamErr = fmt.Errorf("%w (sentence %q)", ttsErr, chunk.Text)
+				cancelStream()
 				return
 			}
-
-			if !checkPCMFormat(rate, ch) {
+			if ttsErr != nil || !streamedTTSAny {
+				slog.Warn("TTS synthesis for streamed sentence failed; dropping sentence", "text", chunk.Text, "error", ttsErr)
 				return
 			}
-			appendPCM(data, rate, ch)
+			slog.Debug("synthesized streamed sentence via TTS", "text", chunk.Text)
 		}
 
 		brainStart := time.Now()
@@ -835,10 +762,9 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 					pcmBuf = nil
 				}
 
-				streamTTSDuration := time.Since(streamStart).Seconds()
-				h.metrics.RecordStageDuration(nodeID, "tts", "success", streamTTSDuration)
-				if streamTTSDuration > 0.001 && streamChars > 0 {
-					cps := float64(streamChars) / streamTTSDuration
+				h.metrics.RecordStageDuration(nodeID, "tts", "success", totalTTSDuration)
+				if totalTTSDuration > 0.001 && streamChars > 0 {
+					cps := float64(streamChars) / totalTTSDuration
 					h.metrics.RecordTTSCPS(nodeID, engine, cps)
 				}
 
@@ -1028,7 +954,7 @@ func (h *Hub) synthesizeAndEmitReply(
 		return nil
 	})
 
-	if errors.Is(ttsErr, ErrMixedAudioStream) || errors.Is(ttsErr, ErrUnsupportedAudioFormat) {
+	if errors.Is(ttsErr, ErrMixedPCMFormat) || errors.Is(ttsErr, ErrUnsupportedAudioFormat) {
 		// Fail fast: one response must keep one audio format (#347).
 		slog.Error("TTS audio rejected mid-response", "node_id", nodeID, "error", ttsErr)
 		h.metrics.RecordStageDuration(nodeID, "tts", "error", time.Since(ttsStart).Seconds())
@@ -1450,17 +1376,12 @@ func (b *DefaultBrainClient) consumeSSE(r io.Reader, onStatus func(status string
 }
 
 // sseScannerMaxLine is the max single SSE `data:` line consumeSSEStreaming
-// will accept. A `sentence` event's line carries a whole sentence's base64
-// WAV audio inline (no chunked transfer within one line), which easily
-// exceeds bufio.Scanner's 64KB default — a few seconds of 16kHz mono PCM,
-// base64-inflated, is already past that.
-const sseScannerMaxLine = 16 * 1024 * 1024
+// will accept. Sentence events deliver text sentences inline.
+const sseScannerMaxLine = 1024 * 1024
 
-// consumeSSEStreaming is consumeSSE plus a `sentence` event: sentence-level
-// pre-synthesized audio (karakos gateway's POST /ask/stream, MANDOS). A
-// sentence event with missing or undecodable audio_b64 still calls onAudio,
-// with an empty Data, so the hub can decide how to fall back — it is not
-// silently dropped here.
+// consumeSSEStreaming is consumeSSE plus sentence-level events for low-latency
+// playback. Sentence events deliver text as each sentence is generated, which
+// the hub synthesizes via its configured TTS client.
 func (b *DefaultBrainClient) consumeSSEStreaming(r io.Reader, onStatus func(status string), onAudio func(chunk BrainAudioChunk)) (string, error) {
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 64*1024), sseScannerMaxLine)
@@ -1484,43 +1405,25 @@ func (b *DefaultBrainClient) consumeSSEStreaming(r io.Reader, onStatus func(stat
 				continue
 			}
 
-			switch currentEvent {
-			case "status":
-				if statusVal, ok := payload["status"].(string); ok && onStatus != nil {
-					onStatus(statusVal)
-				}
-			case "sentence":
-				if onAudio == nil {
-					continue
-				}
-				chunk := BrainAudioChunk{Format: "wav", SampleRate: 24000, Channels: 1}
-				if fmtVal, ok := payload["format"].(string); ok && fmtVal != "" {
-					chunk.Format = fmtVal
-				}
-				if rateVal, ok := payload["sample_rate"].(float64); ok && rateVal > 0 {
-					chunk.SampleRate = int(rateVal)
-				}
-				if chVal, ok := payload["channels"].(float64); ok && chVal > 0 {
-					chunk.Channels = int(chVal)
-				}
-				if textVal, ok := payload["text"].(string); ok {
-					chunk.Text = textVal
-				}
-				if b64Val, ok := payload["audio_b64"].(string); ok && b64Val != "" {
-					if decoded, decErr := base64.StdEncoding.DecodeString(b64Val); decErr == nil {
-						chunk.Data = decoded
-					} else {
-						slog.Warn("sentence event audio_b64 failed to decode", "error", decErr)
-					}
-				}
-				onAudio(chunk)
-			case "reply":
-				if replyVal, ok := payload["reply"].(string); ok {
-					reply = replyVal
-				}
-			case "done":
-				return strings.TrimSpace(reply), nil
+		switch currentEvent {
+		case "status":
+			if statusVal, ok := payload["status"].(string); ok && onStatus != nil {
+				onStatus(statusVal)
 			}
+		case "sentence":
+			if onAudio == nil {
+				continue
+			}
+			if textVal, ok := payload["text"].(string); ok && strings.TrimSpace(textVal) != "" {
+				onAudio(BrainAudioChunk{Text: textVal})
+			}
+		case "reply":
+			if replyVal, ok := payload["reply"].(string); ok {
+				reply = replyVal
+			}
+		case "done":
+			return strings.TrimSpace(reply), nil
+		}
 		}
 	}
 

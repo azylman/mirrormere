@@ -1804,8 +1804,8 @@ func TestHub_MetricsRecording_StreamingBrain(t *testing.T) {
 	baseBrain := &mockStreamingBrain{
 		reply: "It's sunny today. Enjoy the warmth.",
 		sentences: []BrainAudioChunk{
-			{Text: "It's sunny today.", Format: "pcm", Data: []byte("chunk-1")},
-			{Text: "Enjoy the warmth.", Format: "pcm", Data: []byte("chunk-2")},
+			{Text: "It's sunny today."},
+			{Text: "Enjoy the warmth."},
 		},
 	}
 	brain := &delayStreamingBrain{
@@ -1816,6 +1816,7 @@ func TestHub_MetricsRecording_StreamingBrain(t *testing.T) {
 	h := NewHub(cfg, nil,
 		WithSTTClient(stt),
 		WithBrainClient(brain),
+		WithTTSClient(&mockTTS{delay: 2 * time.Millisecond, audio: makeValidWAV(1600), format: "pcm"}),
 		WithMetrics(m),
 	)
 

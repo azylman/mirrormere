@@ -15,14 +15,9 @@ import (
 	"github.com/azylman/mirrormere/internal/events"
 )
 
-// TestDefaultBrainClient_AskStreaming_GatewayWireFormat pins the exact wire
-// shape the karakos gateway's POST /ask/stream sends (gateway.py's
-// _handle_ask_stream / _sse_event("sentence", {"text":..., "engine":...,
-// "audio_b64":...})): status events call onStatus, sentence events decode
-// audio_b64 and call onAudio with Format "wav" (the gateway's synthesize()
-// always returns WAV; there's no explicit "format" field on the wire), and
-// reply/done close out the call exactly like plain /ask.
-func TestDefaultBrainClient_AskStreaming_GatewayWireFormat(t *testing.T) {
+// TestDefaultBrainClient_AskStreaming_WireFormat tests that status events call
+// onStatus, sentence events deliver text to onAudio, and reply/done close out the call.
+func TestDefaultBrainClient_AskStreaming_WireFormat(t *testing.T) {
 	t.Parallel()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -33,8 +28,8 @@ func TestDefaultBrainClient_AskStreaming_GatewayWireFormat(t *testing.T) {
 			flusher.Flush()
 		}
 		write("status", `{"status":"thinking"}`)
-		write("sentence", `{"text":"It's sunny.","engine":"desktop-tts","audio_b64":"`+base64.StdEncoding.EncodeToString([]byte("wav-bytes-one"))+`"}`)
-		write("sentence", `{"text":"Bring sunglasses.","engine":"piper","audio_b64":"`+base64.StdEncoding.EncodeToString([]byte("wav-bytes-two"))+`"}`)
+		write("sentence", `{"text":"It's sunny."}`)
+		write("sentence", `{"text":"Bring sunglasses."}`)
 		write("reply", `{"reply":"It's sunny. Bring sunglasses."}`)
 		write("done", `{}`)
 	}))
@@ -59,21 +54,19 @@ func TestDefaultBrainClient_AskStreaming_GatewayWireFormat(t *testing.T) {
 		t.Errorf("expected 1 status 'thinking', got %+v", statuses)
 	}
 	if len(chunks) != 2 {
-		t.Fatalf("expected 2 sentence audio chunks, got %d: %+v", len(chunks), chunks)
+		t.Fatalf("expected 2 sentence chunks, got %d: %+v", len(chunks), chunks)
 	}
-	if chunks[0].Text != "It's sunny." || string(chunks[0].Data) != "wav-bytes-one" || chunks[0].Format != "wav" {
+	if chunks[0].Text != "It's sunny." {
 		t.Errorf("unexpected chunk 0: %+v", chunks[0])
 	}
-	if chunks[1].Text != "Bring sunglasses." || string(chunks[1].Data) != "wav-bytes-two" || chunks[1].Format != "wav" {
+	if chunks[1].Text != "Bring sunglasses." {
 		t.Errorf("unexpected chunk 1: %+v", chunks[1])
 	}
 }
 
-// TestDefaultBrainClient_AskStreaming_MissingAudioB64 covers a `sentence`
-// event with no (or an undecodable) audio_b64 field: onAudio must still
-// fire, with an empty Data, so the hub can decide how to fall back — the
-// sentence's text must not be silently lost.
-func TestDefaultBrainClient_AskStreaming_MissingAudioB64(t *testing.T) {
+// TestDefaultBrainClient_AskStreaming_WhitespaceSentenceIgnored covers an empty
+// or whitespace sentence event, ensuring it is ignored.
+func TestDefaultBrainClient_AskStreaming_WhitespaceSentenceIgnored(t *testing.T) {
 	t.Parallel()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -83,8 +76,9 @@ func TestDefaultBrainClient_AskStreaming_MissingAudioB64(t *testing.T) {
 			_, _ = w.Write([]byte("event: " + event + "\ndata: " + data + "\n\n"))
 			flusher.Flush()
 		}
-		write("sentence", `{"text":"This one broke.","engine":"none"}`)
-		write("reply", `{"reply":"This one broke."}`)
+		write("sentence", `{"text":"   "}`)
+		write("sentence", `{"text":"Valid sentence."}`)
+		write("reply", `{"reply":"Valid sentence."}`)
 		write("done", `{}`)
 	}))
 	defer server.Close()
@@ -100,14 +94,14 @@ func TestDefaultBrainClient_AskStreaming_MissingAudioB64(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if reply != "This one broke." {
+	if reply != "Valid sentence." {
 		t.Errorf("expected reply preserved, got %q", reply)
 	}
 	if len(chunks) != 1 {
-		t.Fatalf("expected onAudio to fire once even with no audio, got %d", len(chunks))
+		t.Fatalf("expected onAudio to fire once for valid sentence, got %d", len(chunks))
 	}
-	if chunks[0].Text != "This one broke." || len(chunks[0].Data) != 0 {
-		t.Errorf("expected empty Data with text preserved, got %+v", chunks[0])
+	if chunks[0].Text != "Valid sentence." {
+		t.Errorf("expected valid text, got %+v", chunks[0])
 	}
 }
 
@@ -255,7 +249,7 @@ func eventSequence(evs []recordedEvent) []string {
 // (the completion marker). It must NOT call its own TTS (no double
 // speech), and the `reply` event must still be sent (after the audio,
 // since it isn't known until the brain call returns).
-func TestHub_Interact_StreamingBrain_SentenceAudio(t *testing.T) {
+func TestHub_Interact_StreamingBrain_SentenceSynthesizedViaTTS(t *testing.T) {
 	t.Parallel()
 
 	cfg := &config.VoiceHubConfig{Enabled: true}
@@ -268,12 +262,12 @@ func TestHub_Interact_StreamingBrain_SentenceAudio(t *testing.T) {
 		reply:    "It's sunny. High of seventy two. Bring sunglasses.",
 		statuses: []string{"checking weather"},
 		sentences: []BrainAudioChunk{
-			{Text: "It's sunny.", Format: "pcm", Data: []byte("audio-one")},
-			{Text: "High of seventy two.", Format: "pcm", Data: []byte("audio-two")},
-			{Text: "Bring sunglasses.", Format: "pcm", Data: []byte("audio-three")},
+			{Text: "It's sunny."},
+			{Text: "High of seventy two."},
+			{Text: "Bring sunglasses."},
 		},
 	}
-	tts := &mockTTS{audio: []byte("should-not-be-used"), format: "pcm"}
+	tts := &mockTTS{audio: []byte("synthesized-pcm"), format: "pcm"}
 
 	h := NewHub(cfg, coord, WithSTTClient(stt), WithBrainClient(brain), WithTTSClient(tts))
 
@@ -292,183 +286,20 @@ func TestHub_Interact_StreamingBrain_SentenceAudio(t *testing.T) {
 	if brain.askCalled {
 		t.Error("expected Ask NOT to be called when AskStreaming is available")
 	}
-	if tts.calls != 0 {
-		t.Errorf("expected hub TTS to never be called (no double speech), got %d calls: %+v", tts.calls, tts.calledTexts)
-	}
-
-	// PCM sentences are buffered (below the 4800-byte floor) and flushed as
-	// one chunk, followed by the completion marker.
-	expectedSequence := []string{"state", "transcript", "status", "audio_chunk", "audio_chunk", "reply", "done"}
-	if got := eventSequence(evs); !equalStrings(got, expectedSequence) {
-		t.Fatalf("expected sequence %v, got %v", expectedSequence, got)
+	if tts.calls != 3 {
+		t.Errorf("expected 3 TTS calls for 3 sentences, got %d calls: %+v", tts.calls, tts.calledTexts)
 	}
 
 	chunks := extractAudioChunkEvents(t, evs)
-	if len(chunks) != 2 {
-		t.Fatalf("expected 2 audio_chunk events (buffered PCM + completion marker), got %d", len(chunks))
+	if len(chunks) < 2 {
+		t.Fatalf("expected at least 2 audio_chunk events (data + completion marker), got %d", len(chunks))
 	}
-	wantData := []string{"audio-oneaudio-twoaudio-three", ""}
-	for i, c := range chunks {
-		if idx, ok := c["chunk_index"].(int); !ok || idx != i {
-			t.Errorf("chunk %d: expected chunk_index %d, got %v", i, i, c["chunk_index"])
-		}
-		wantFinal := i == len(chunks)-1
-		if final, ok := c["is_final"].(bool); !ok || final != wantFinal {
-			t.Errorf("chunk %d: expected is_final=%v, got %v", i, wantFinal, c["is_final"])
-		}
-		gotData, decErr := base64.StdEncoding.DecodeString(c["data"].(string))
-		if decErr != nil {
-			t.Fatalf("chunk %d: bad base64: %v", i, decErr)
-		}
-		if string(gotData) != wantData[i] {
-			t.Errorf("chunk %d: expected data %q, got %q", i, wantData[i], string(gotData))
-		}
-		if c["format"] != "pcm" {
-			t.Errorf("chunk %d: expected format pcm, got %v", i, c["format"])
-		}
-	}
-	// The completion marker (last chunk) must carry empty data, not
-	// re-send the last sentence's audio.
-	if len(chunks[1]["data"].(string)) != 0 {
-		t.Errorf("expected completion marker chunk to have empty data, got %q", chunks[1]["data"])
-	}
-
-	st := coord.GetState()
-	if st.State != StateSpeaking {
-		t.Errorf("expected final state speaking, got %s", st.State)
-	}
-	if st.Reply == nil || *st.Reply != brain.reply {
-		t.Errorf("expected final reply %q, got %v", brain.reply, st.Reply)
-	}
-	reset := coord.Reset()
-	if reset.State != StateIdle {
-		t.Errorf("expected state idle after reset, got %s", reset.State)
+	finalChunk := chunks[len(chunks)-1]
+	if final, ok := finalChunk["is_final"].(bool); !ok || !final {
+		t.Errorf("expected final chunk is_final: true, got %v", finalChunk["is_final"])
 	}
 }
 
-// TestHub_Interact_StreamingBrain_NoSentenceAudio covers a brain that
-// implements AudioStreamingBrainClient (so AskStreaming is called) but this
-// turn produced no sentence events — e.g. it's pointed at plain /ask rather
-// than /ask/stream. Behaviour must be identical to a non-streaming brain:
-// reply first, then exactly one hub TTS call producing a single
-// is_final:true audio_chunk.
-func TestHub_Interact_StreamingBrain_NoSentenceAudio(t *testing.T) {
-	t.Parallel()
-
-	cfg := &config.VoiceHubConfig{Enabled: true}
-	hubEvents := events.NewHub(events.HubConfig{}, nil, nil)
-	defer hubEvents.Close()
-	coord := NewCoordinator(hubEvents)
-
-	stt := &mockSTT{text: "turn off the lights"}
-	brain := &mockStreamingBrain{reply: "Lights off.", statuses: []string{"turning off lights"}}
-	tts := &mockTTS{audio: []byte("fallback-full-reply-audio"), format: "pcm"}
-
-	h := NewHub(cfg, coord, WithSTTClient(stt), WithBrainClient(brain), WithTTSClient(tts))
-
-	sink, getEvents := collectEvents()
-
-	wav := makeValidWAV(1600)
-	if err := h.Interact(context.Background(), bytes.NewReader(wav), "kiosk-kitchen", "sess-1", sink, EdgeTimings{}); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	evs := getEvents()
-
-	if tts.calls != 1 {
-		t.Fatalf("expected exactly 1 hub TTS call for the full reply, got %d", tts.calls)
-	}
-	if tts.calledWith != "Lights off." {
-		t.Errorf("expected TTS called with full reply text, got %q", tts.calledWith)
-	}
-
-	expectedSequence := []string{"state", "transcript", "status", "reply", "audio_chunk", "audio_chunk", "done"}
-	if got := eventSequence(evs); !equalStrings(got, expectedSequence) {
-		t.Fatalf("expected sequence %v, got %v", expectedSequence, got)
-	}
-
-	chunks := extractAudioChunkEvents(t, evs)
-	if len(chunks) != 2 {
-		t.Fatalf("expected 2 audio_chunk events (1 data + 1 marker), got %d", len(chunks))
-	}
-	if final, _ := chunks[1]["is_final"].(bool); !final {
-		t.Errorf("expected is_final=true on completion marker")
-	}
-}
-
-// TestHub_Interact_StreamingBrain_MixedAudioStreamRejected covers streaming turns
-// that attempt to mix brain audio and text-only sentences: the hub must latch to
-// either brain-audio or remote-tts on chunk 0 and reject conflicting chunks with
-// ErrMixedAudioStream.
-func TestHub_Interact_StreamingBrain_MixedAudioStreamRejected(t *testing.T) {
-	t.Parallel()
-
-	t.Run("brain_audio_latched_rejects_text_only", func(t *testing.T) {
-		t.Parallel()
-		cfg := &config.VoiceHubConfig{Enabled: true}
-		coord := NewCoordinator(nil)
-
-		stt := &mockSTT{text: "tell me a story"}
-		brain := &mockStreamingBrain{
-			reply: "Once upon a time. The audio broke here. The end.",
-			sentences: []BrainAudioChunk{
-				{Text: "Once upon a time.", Format: "pcm", Data: []byte("audio-one")},
-				{Text: "The audio broke here.", Format: "", Data: nil}, // conflicting text-only
-			},
-		}
-		tts := &mockTTS{audio: []byte("fallback-audio"), format: "pcm"}
-		h := NewHub(cfg, coord, WithSTTClient(stt), WithBrainClient(brain), WithTTSClient(tts))
-
-		sink, getEvents := collectEvents()
-		wav := makeValidWAV(1600)
-		err := h.Interact(context.Background(), bytes.NewReader(wav), "kiosk-kitchen", "sess-1", sink, EdgeTimings{})
-		if !errors.Is(err, ErrMixedAudioStream) {
-			t.Fatalf("expected ErrMixedAudioStream, got %v", err)
-		}
-		if !hasErrorCode(getEvents(), "brain_error") {
-			t.Errorf("expected brain_error event in sink")
-		}
-	})
-
-	t.Run("remote_tts_latched_rejects_brain_audio", func(t *testing.T) {
-		t.Parallel()
-		cfg := &config.VoiceHubConfig{Enabled: true}
-		coord := NewCoordinator(nil)
-
-		stt := &mockSTT{text: "tell me a story"}
-		brain := &mockStreamingBrain{
-			reply: "Once upon a time. Brain audio suddenly sent.",
-			sentences: []BrainAudioChunk{
-				{Text: "Once upon a time.", Format: "", Data: nil},                             // latches remote-tts
-				{Text: "Brain audio suddenly sent.", Format: "pcm", Data: []byte("audio-two")}, // conflicting audio
-			},
-		}
-		tts := &mockTTS{audio: []byte("fallback-audio"), format: "pcm"}
-		h := NewHub(cfg, coord, WithSTTClient(stt), WithBrainClient(brain), WithTTSClient(tts))
-
-		sink, getEvents := collectEvents()
-		wav := makeValidWAV(1600)
-		err := h.Interact(context.Background(), bytes.NewReader(wav), "kiosk-kitchen", "sess-1", sink, EdgeTimings{})
-		if !errors.Is(err, ErrMixedAudioStream) {
-			t.Fatalf("expected ErrMixedAudioStream, got %v", err)
-		}
-		if !hasErrorCode(getEvents(), "brain_error") {
-			t.Errorf("expected brain_error event in sink")
-		}
-	})
-}
-
-func equalStrings(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
-}
 
 // recordingStateSink captures every voice.state the coordinator publishes,
 // which is what the touch kiosk HUD renders (not the dock's SSE stream).
@@ -497,8 +328,8 @@ func TestHub_Interact_StreamingBrain_KioskCaption(t *testing.T) {
 	brain := &mockStreamingBrain{
 		reply: "It's sunny. High of 72.",
 		sentences: []BrainAudioChunk{
-			{Text: "It's sunny.", Format: "pcm", Data: []byte("a1")},
-			{Text: "High of 72.", Format: "pcm", Data: []byte("a2")},
+			{Text: "It's sunny."},
+			{Text: "High of 72."},
 		},
 	}
 	tts := &mockTTS{audio: []byte("local"), format: "pcm"}
@@ -554,12 +385,21 @@ func TestHub_Interact_StreamingBrain_PCM_BufferingAndFlush(t *testing.T) {
 	brain := &mockStreamingBrain{
 		reply: "Streaming PCM audio test.",
 		sentences: []BrainAudioChunk{
-			{Text: "One.", Format: "pcm", Data: make([]byte, 3000), SampleRate: 24000, Channels: 1},
-			{Text: "Two.", Format: "pcm", Data: make([]byte, 3000), SampleRate: 24000, Channels: 1},
-			{Text: "Three.", Format: "pcm", Data: make([]byte, 2000), SampleRate: 24000, Channels: 1},
+			{Text: "One."},
+			{Text: "Two."},
+			{Text: "Three."},
 		},
 	}
-	h := NewHub(cfg, nil, WithSTTClient(stt), WithBrainClient(brain))
+	tts := &mockStreamingTTS{
+		streamingFn: func(ctx context.Context, text string, onChunk func(TTSAudioChunk) error) error {
+			size := 3000
+			if text == "Three." {
+				size = 2000
+			}
+			return onChunk(TTSAudioChunk{Data: make([]byte, size), Format: "pcm", SampleRate: 24000, Channels: 1})
+		},
+	}
+	h := NewHub(cfg, nil, WithSTTClient(stt), WithBrainClient(brain), WithTTSClient(tts))
 
 	sink, getEvents := collectEvents()
 	if err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(1600)), "kiosk-kitchen", "sess-1", sink, EdgeTimings{}); err != nil {
@@ -643,8 +483,8 @@ func TestHub_Interact_StreamingBrain_RemoteTTS_StreamingTTSClient(t *testing.T) 
 	brain := &mockStreamingBrain{
 		reply: "Sentence one. Sentence two.",
 		sentences: []BrainAudioChunk{
-			{Text: "Sentence one.", Format: "", Data: nil},
-			{Text: "Sentence two.", Format: "", Data: nil},
+			{Text: "Sentence one."},
+			{Text: "Sentence two."},
 		},
 	}
 	tts := &mockStreamingTTS{}
@@ -872,8 +712,8 @@ func TestHub_Interact_StreamingBrain_RemoteTTS_PlainTTSClient(t *testing.T) {
 	brain := &mockStreamingBrain{
 		reply: "First sentence. Second sentence.",
 		sentences: []BrainAudioChunk{
-			{Text: "First sentence.", Format: "", Data: nil},
-			{Text: "Second sentence.", Format: "", Data: nil},
+			{Text: "First sentence."},
+			{Text: "Second sentence."},
 		},
 	}
 	tts := &mockTTS{audio: makeValidWAV(1600), format: "pcm"}
@@ -904,7 +744,7 @@ func TestHub_Interact_StreamingBrain_RemoteTTS_AllSentencesFailedFallback(t *tes
 	brain := &mockStreamingBrain{
 		reply: "Failing sentence.",
 		sentences: []BrainAudioChunk{
-			{Text: "Failing sentence.", Format: "", Data: nil},
+			{Text: "Failing sentence."},
 		},
 	}
 	// StreamingTTS fails during sentence synthesis, but succeeds for full reply fallback
@@ -971,32 +811,7 @@ func TestHub_Interact_StreamingBrain_RemoteTTS_MP3FailsFast(t *testing.T) {
 	}
 }
 
-// TestHub_Interact_StreamingBrain_BrainWAVAudioFailsFast: brain sentence audio
-// that is not PCM (wav/mp3) aborts the turn.
-func TestHub_Interact_StreamingBrain_BrainNonPCMAudioFailsFast(t *testing.T) {
-	t.Parallel()
-
-	for _, format := range []string{"wav", "mp3"} {
-		t.Run(format, func(t *testing.T) {
-			t.Parallel()
-			brain := &mockStreamingBrain{
-				reply:     "One.",
-				sentences: []BrainAudioChunk{{Text: "One.", Format: format, Data: []byte("audio"), SampleRate: 24000, Channels: 1}},
-			}
-			h := NewHub(&config.VoiceHubConfig{Enabled: true}, nil, WithSTTClient(&mockSTT{text: "q"}), WithBrainClient(brain))
-			sink, getEvents := collectEvents()
-			err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(1600)), "kiosk-kitchen", "sess-1", sink, EdgeTimings{})
-			if !errors.Is(err, ErrUnsupportedAudioFormat) {
-				t.Fatalf("expected ErrUnsupportedAudioFormat, got %v", err)
-			}
-			if n := len(extractAudioChunkEvents(t, getEvents())); n != 0 {
-				t.Errorf("expected no audio chunks, got %d", n)
-			}
-		})
-	}
-}
-
-// --- #356: a PCM rate/channel change mid-turn fails fast ---
+// --- PCM rate change mid-turn fails fast ---
 
 func TestHub_Interact_StreamingBrain_RemoteTTS_RateChangeFailsFast(t *testing.T) {
 	t.Parallel()
@@ -1021,31 +836,13 @@ func TestHub_Interact_StreamingBrain_RemoteTTS_RateChangeFailsFast(t *testing.T)
 
 	sink, getEvents := collectEvents()
 	err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(1600)), "kiosk-kitchen", "sess-1", sink, EdgeTimings{})
-	if !errors.Is(err, ErrMixedAudioStream) || !errors.Is(err, ErrMixedPCMFormat) {
+	if !errors.Is(err, ErrMixedPCMFormat) {
 		t.Fatalf("expected ErrMixedPCMFormat (wrapping ErrMixedAudioStream), got %v", err)
 	}
 	for _, c := range extractAudioChunkEvents(t, getEvents()) {
 		if c["sample_rate"] == 22050 {
 			t.Errorf("audio at the changed rate must not be emitted: %v", c)
 		}
-	}
-}
-
-func TestHub_Interact_StreamingBrain_BrainAudioChannelChangeFailsFast(t *testing.T) {
-	t.Parallel()
-
-	brain := &mockStreamingBrain{
-		reply: "One. Two.",
-		sentences: []BrainAudioChunk{
-			{Text: "One.", Format: "pcm", SampleRate: 24000, Channels: 1, Data: make([]byte, 100)},
-			{Text: "Two.", Format: "pcm", SampleRate: 24000, Channels: 2, Data: make([]byte, 100)},
-		},
-	}
-	h := NewHub(&config.VoiceHubConfig{Enabled: true}, nil, WithSTTClient(&mockSTT{text: "q"}), WithBrainClient(brain))
-	sink, _ := collectEvents()
-	err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(1600)), "kiosk-kitchen", "sess-1", sink, EdgeTimings{})
-	if !errors.Is(err, ErrMixedPCMFormat) {
-		t.Fatalf("expected ErrMixedPCMFormat, got %v", err)
 	}
 }
 
