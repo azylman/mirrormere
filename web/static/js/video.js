@@ -309,7 +309,7 @@
       const type = (stream.type || 'webrtc').toLowerCase();
 
       if (type === 'mjpeg') {
-        return this.mountMJPEG(stream, container);
+        return this.mountMJPEG(stream, container, isPip);
       }
 
       if (type === 'hls') {
@@ -321,16 +321,60 @@
     }
 
     /**
+     * Attaches cyberpunk stream loading spinner to primary video stage container.
+     */
+    attachStreamSpinner(session, container, mediaElement, isPip) {
+      if (isPip || !container || typeof document === 'undefined') return;
+
+      const spinner = document.createElement('div');
+      spinner.className = 'video-stream-spinner';
+      spinner.innerHTML = '<div class="video-spinner-ring"></div><span class="video-spinner-text">Waking Stream...</span>';
+      container.appendChild(spinner);
+      session.spinner = spinner;
+
+      const dismissSpinner = () => {
+        if (session.spinnerSafetyTimer) {
+          clearTimeout(session.spinnerSafetyTimer);
+          session.spinnerSafetyTimer = null;
+        }
+        if (!session.spinner || session.spinner.classList.contains('fade-out')) return;
+        session.spinner.classList.add('fade-out');
+        setTimeout(() => {
+          if (session.spinner && session.spinner.parentNode) {
+            session.spinner.parentNode.removeChild(session.spinner);
+          }
+        }, 400);
+      };
+      session.dismissSpinner = dismissSpinner;
+
+      if (mediaElement && typeof mediaElement.addEventListener === 'function') {
+        if (session.type === 'mjpeg') {
+          mediaElement.addEventListener('load', dismissSpinner);
+          mediaElement.addEventListener('error', dismissSpinner);
+        } else {
+          mediaElement.addEventListener('playing', dismissSpinner);
+          mediaElement.addEventListener('loadeddata', dismissSpinner);
+        }
+      }
+
+      session.spinnerSafetyTimer = setTimeout(dismissSpinner, 12000);
+    }
+
+    /**
      * Mounts MJPEG stream via responsive <img> element.
      */
-    mountMJPEG(stream, container) {
+    mountMJPEG(stream, container, isPip = false) {
       const img = document.createElement('img');
       img.className = 'video-stream-media';
       img.alt = `Stream ${stream.id}`;
       img.src = stream.stream_url;
 
       container.appendChild(img);
-      return { stream, element: img, type: 'mjpeg', token: ++this.sessionTokenSeq, cancelled: false };
+      const session = { stream, container, isPip: Boolean(isPip), element: img, type: 'mjpeg', token: ++this.sessionTokenSeq, cancelled: false };
+
+      this.attachStreamSpinner(session, container, img, isPip);
+
+      return session;
     }
 
     /**
@@ -367,7 +411,11 @@
       container.appendChild(video);
       this.safePlay(video);
 
-      return { stream, element: video, hls: hlsInstance, type: 'hls', token: ++this.sessionTokenSeq, cancelled: false };
+      const session = { stream, container, isPip, element: video, hls: hlsInstance, type: 'hls', token: ++this.sessionTokenSeq, cancelled: false };
+
+      this.attachStreamSpinner(session, container, video, isPip);
+
+      return session;
     }
 
     /**
@@ -397,6 +445,8 @@
         disconnectTimer: null,
       };
 
+      this.attachStreamSpinner(session, container, video, isPip);
+
       if (this.PeerConnectionClass) {
         try {
           const pc = new this.PeerConnectionClass();
@@ -422,7 +472,18 @@
             }
           };
 
-          const onConnChange = () => this.handleWebRTCConnectionChange(session);
+          const onConnChange = () => {
+            if (session.pc) {
+              const cs = session.pc.connectionState;
+              const ics = session.pc.iceConnectionState;
+              if (cs === 'failed' || cs === 'disconnected' || ics === 'failed' || ics === 'disconnected') {
+                if (typeof session.dismissSpinner === 'function') {
+                  session.dismissSpinner();
+                }
+              }
+            }
+            this.handleWebRTCConnectionChange(session);
+          };
           if (typeof pc.addEventListener === 'function') {
             pc.addEventListener('iceconnectionstatechange', onConnChange);
             pc.addEventListener('connectionstatechange', onConnChange);
@@ -580,6 +641,9 @@
 
       // 3. Definite failure: trigger reconnect immediately
       if (connState === 'failed' || iceState === 'failed') {
+        if (typeof session.dismissSpinner === 'function') {
+          session.dismissSpinner();
+        }
         if (session.disconnectTimer) {
           clearTimeout(session.disconnectTimer);
           session.disconnectTimer = null;
@@ -590,6 +654,9 @@
 
       // 4. Transient disconnect: arm grace period before tearing down
       if (connState === 'disconnected' || iceState === 'disconnected') {
+        if (typeof session.dismissSpinner === 'function') {
+          session.dismissSpinner();
+        }
         if (!session.disconnectTimer) {
           const timeout = (typeof this.options.disconnectTimeout === 'number') ? this.options.disconnectTimeout : 2000;
           session.disconnectTimer = setTimeout(() => {
@@ -761,6 +828,16 @@
     teardownSession(session) {
       if (!session) return;
       session.cancelled = true;
+
+      if (session.spinnerSafetyTimer) {
+        clearTimeout(session.spinnerSafetyTimer);
+        session.spinnerSafetyTimer = null;
+      }
+
+      if (session.spinner && session.spinner.parentNode) {
+        session.spinner.parentNode.removeChild(session.spinner);
+        session.spinner = null;
+      }
 
       if (session.reconnectTimer) {
         clearTimeout(session.reconnectTimer);

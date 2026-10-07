@@ -135,6 +135,18 @@
           payload.timeout_seconds = Number(this.config.timeout_seconds);
         }
 
+        if (this.config.controllable && this.config.control_url) {
+          const wakeUrl = this.config.control_url;
+          const wakeId = payload.id;
+          if (this.fetchFn) {
+            this.fetchFn(wakeUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ id: wakeId, action: 'wake' }),
+            }).catch((err) => console.warn('[MirrormereLiveView] Wake action failed:', err));
+          }
+        }
+
         try {
           if (this.fetchFn) {
             await this.fetchFn('api/video/trigger', {

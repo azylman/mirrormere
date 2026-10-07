@@ -55,6 +55,7 @@ type ClientConfig struct {
 	WatchdogTimeout   time.Duration
 	ReconnectBase     time.Duration
 	ReconnectMax      time.Duration
+	WakeDelay         time.Duration
 	Logger            *slog.Logger
 }
 
@@ -80,6 +81,9 @@ type CastClient struct {
 	lastMessageTime        time.Time
 	closed                 bool
 	cancelFunc             context.CancelFunc
+
+	wakeMu       sync.Mutex
+	lastWakeTime time.Time
 
 	dispatchCh chan func()
 	stopOnce   sync.Once
@@ -122,6 +126,9 @@ func NewCastClient(cfg ClientConfig) *CastClient {
 	}
 	if cfg.ReconnectMax <= 0 {
 		cfg.ReconnectMax = 30 * time.Second
+	}
+	if cfg.WakeDelay <= 0 {
+		cfg.WakeDelay = 1500 * time.Millisecond
 	}
 
 	return &CastClient{
@@ -250,6 +257,86 @@ func (c *CastClient) SendMediaAction(ctx context.Context, action string) error {
 	}
 
 	return c.sendMessage(msg)
+}
+
+// Wake sends an on-demand HDMI wake pulse by launching the default media player and stopping it.
+func (c *CastClient) Wake(ctx context.Context) error {
+	c.mu.RLock()
+	if !c.connected || c.conn == nil {
+		c.mu.RUnlock()
+		return ErrNotConnected
+	}
+	c.mu.RUnlock()
+
+	c.wakeMu.Lock()
+	defer c.wakeMu.Unlock()
+
+	if !c.lastWakeTime.IsZero() && time.Since(c.lastWakeTime) < 5*time.Second {
+		return nil
+	}
+	c.lastWakeTime = time.Now()
+
+	reqID := atomic.AddUint64(&c.reqCounter, 1)
+	launchPayload := map[string]any{
+		"type":      "LAUNCH",
+		"appId":     "CC1AD845",
+		"requestId": reqID,
+	}
+	launchBytes, err := json.Marshal(launchPayload)
+	if err != nil {
+		return err
+	}
+
+	launchMsg := CastMessage{
+		ProtocolVersion: ProtocolVersion0,
+		SourceID:        SourceSender,
+		DestinationID:   DestinationReceiver,
+		Namespace:       NamespaceReceiver,
+		PayloadType:     PayloadTypeString,
+		PayloadUTF8:     string(launchBytes),
+	}
+	if err := c.sendMessage(launchMsg); err != nil {
+		return err
+	}
+
+	wakeDelay := c.cfg.WakeDelay
+	if wakeDelay <= 0 {
+		wakeDelay = 1500 * time.Millisecond
+	}
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(wakeDelay):
+	}
+
+	stopCtx, stopCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer stopCancel()
+
+	stopReqID := atomic.AddUint64(&c.reqCounter, 1)
+	stopPayload := map[string]any{
+		"type":      "STOP",
+		"requestId": stopReqID,
+	}
+	stopBytes, err := json.Marshal(stopPayload)
+	if err != nil {
+		return err
+	}
+
+	stopMsg := CastMessage{
+		ProtocolVersion: ProtocolVersion0,
+		SourceID:        SourceSender,
+		DestinationID:   DestinationReceiver,
+		Namespace:       NamespaceReceiver,
+		PayloadType:     PayloadTypeString,
+		PayloadUTF8:     string(stopBytes),
+	}
+	if err := c.sendMessageContext(stopCtx, stopMsg); err != nil {
+		return err
+	}
+
+	c.logger.Info("[CastWatcher] Triggered on-demand Chromecast HDMI wake pulse")
+	return nil
 }
 
 func (c *CastClient) supervisorLoop(ctx context.Context) {
@@ -570,6 +657,14 @@ func (c *CastClient) handleMediaMessage(msg CastMessage) {
 }
 
 func (c *CastClient) sendMessage(msg CastMessage) error {
+	return c.sendMessageContext(context.Background(), msg)
+}
+
+func (c *CastClient) sendMessageContext(ctx context.Context, msg CastMessage) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
 	frame, err := EncodeCastMessage(msg)
 	if err != nil {
 		return err
@@ -585,7 +680,11 @@ func (c *CastClient) sendMessage(msg CastMessage) error {
 
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
-	if err := conn.SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil {
+	deadline := time.Now().Add(5 * time.Second)
+	if d, ok := ctx.Deadline(); ok {
+		deadline = d
+	}
+	if err := conn.SetWriteDeadline(deadline); err != nil {
 		c.logger.Debug("[CastWatcher] Failed to set write deadline", "error", err)
 	}
 	_, err = conn.Write(frame)

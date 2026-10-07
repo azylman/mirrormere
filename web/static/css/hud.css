@@ -377,6 +377,57 @@ button, .touch-target {
   text-align: center;
 }
 
+/* Video Stream Loading Spinner & Wake Animation */
+.video-stream-spinner {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  background: rgba(9, 5, 20, 0.85);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  z-index: 20;
+  pointer-events: none;
+  transition: opacity 0.4s ease, visibility 0.4s ease;
+}
+
+.video-stream-spinner.fade-out {
+  opacity: 0;
+  visibility: hidden;
+}
+
+.video-spinner-ring {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  border: 3px solid rgba(168, 85, 247, 0.2);
+  border-top-color: var(--mm-accent-purple, #a855f7);
+  box-shadow: 0 0 16px var(--mm-accent-purple-glow, rgba(168, 85, 247, 0.4));
+  will-change: transform;
+  animation: mm-spin 0.8s linear infinite;
+}
+
+.video-spinner-text {
+  font-family: var(--mm-font-family, sans-serif);
+  font-size: 0.85rem;
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  color: var(--mm-text-secondary, #c084fc);
+  text-shadow: 0 0 8px rgba(168, 85, 247, 0.5);
+}
+
+@keyframes mm-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 /* ==========================================================================
    Touch HUD Video Controls Overlay
    ========================================================================== */

@@ -18,6 +18,7 @@ import (
 // MediaActionSender abstracts media transport execution for the HTTP server.
 type MediaActionSender interface {
 	SendMediaAction(ctx context.Context, action string) error
+	Wake(ctx context.Context) error
 	GetStatus() StatusSnapshot
 }
 
@@ -121,8 +122,17 @@ func (s *ActionServer) Shutdown(ctx context.Context) error {
 }
 
 func (s *ActionServer) handleAction(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
 	if r.Method != http.MethodPost {
-		w.Header().Set("Allow", "POST")
+		w.Header().Set("Allow", "POST, OPTIONS")
 		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
@@ -140,6 +150,23 @@ func (s *ActionServer) handleAction(w http.ResponseWriter, r *http.Request) {
 
 	if req.ID != "chromecast" {
 		writeJSONError(w, http.StatusNotFound, "stream not active")
+		return
+	}
+
+	if req.Action == "wake" {
+		err := s.client.Wake(r.Context())
+		if err != nil {
+			if errors.Is(err, ErrNotConnected) {
+				writeJSONError(w, http.StatusBadGateway, err.Error())
+				return
+			}
+			writeJSONError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+
+		writeJSON(w, http.StatusOK, map[string]string{
+			"status": "ok",
+		})
 		return
 	}
 
