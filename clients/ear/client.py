@@ -225,10 +225,7 @@ class VoiceDaemon:
 
         custom_models = []
         if os.path.exists(self.cfg.models_dir):
-            custom_models = (
-                glob.glob(os.path.join(self.cfg.models_dir, "*.onnx"))
-                + glob.glob(os.path.join(self.cfg.models_dir, "*.tflite"))
-            )
+            custom_models = glob.glob(os.path.join(self.cfg.models_dir, "*.onnx"))
 
         if custom_models:
             logger.info("Discovered custom wake models: %s", custom_models)

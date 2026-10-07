@@ -39,7 +39,7 @@ ear:
   # Confidence threshold for wake word activation (0.0 to 1.0)
   threshold: 0.35
 
-  # Directory scanned for custom .onnx / .tflite wake word models
+  # Directory scanned for custom .onnx wake word models
   models_dir: "/opt/mirrormere/voice/models"
 
   # VAD Silence detection: how many ms of silence after speech ends an utterance
