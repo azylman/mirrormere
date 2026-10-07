@@ -727,6 +727,55 @@ func TestCastClient_Wake_SuccessAndDebounce(t *testing.T) {
 	}
 }
 
+func TestCastClient_Wake_AppActiveSkipped(t *testing.T) {
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+	defer serverConn.Close()
+
+	client := NewCastClient(ClientConfig{
+		WakeDelay: 10 * time.Millisecond,
+	})
+	client.conn = clientConn
+	client.connected = true
+	client.appID = "CC1AD845"
+
+	ctx := context.Background()
+
+	// 1. Wake with active appID should return nil immediately and send no messages
+	if err := client.Wake(ctx); err != nil {
+		t.Fatalf("expected Wake with active appID to return nil, got: %v", err)
+	}
+
+	// Verify no messages sent on serverConn
+	done := make(chan struct{})
+	go func() {
+		var buf [1]byte
+		_ = serverConn.SetReadDeadline(time.Now().Add(50 * time.Millisecond))
+		_, _ = serverConn.Read(buf[:])
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("timed out waiting for read deadline check")
+	}
+
+	// 2. Wake with playing playerState should also return nil immediately without messages
+	client.appID = ""
+	client.playerState = "playing"
+
+	if err := client.Wake(ctx); err != nil {
+		t.Fatalf("expected Wake with playing state to return nil, got: %v", err)
+	}
+
+	// 3. Wake with buffering playerState should also return nil immediately
+	client.playerState = "buffering"
+
+	if err := client.Wake(ctx); err != nil {
+		t.Fatalf("expected Wake with buffering state to return nil, got: %v", err)
+	}
+}
+
 func TestCastClient_Wake_ContextCanceled(t *testing.T) {
 	clientConn, serverConn := net.Pipe()
 	defer clientConn.Close()

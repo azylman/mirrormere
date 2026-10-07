@@ -266,10 +266,21 @@ func (c *CastClient) Wake(ctx context.Context) error {
 		c.mu.RUnlock()
 		return ErrNotConnected
 	}
+	if c.appID != "" || strings.EqualFold(c.playerState, "playing") || strings.EqualFold(c.playerState, "buffering") {
+		c.mu.RUnlock()
+		return nil
+	}
 	c.mu.RUnlock()
 
 	c.wakeMu.Lock()
 	defer c.wakeMu.Unlock()
+
+	c.mu.RLock()
+	if c.appID != "" || strings.EqualFold(c.playerState, "playing") || strings.EqualFold(c.playerState, "buffering") {
+		c.mu.RUnlock()
+		return nil
+	}
+	c.mu.RUnlock()
 
 	if !c.lastWakeTime.IsZero() && time.Since(c.lastWakeTime) < 5*time.Second {
 		return nil
