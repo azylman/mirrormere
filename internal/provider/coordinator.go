@@ -374,11 +374,10 @@ func (c *ProviderCoordinator) startSingleWorkerLocked(w *config.WidgetConfig, sn
 		pkg = snap.Packages[w.Type]
 	}
 
-	// Native Spacer Optimization: Zero-overhead padding, no polling ticker needed
-	// The chat-log widget takes the same path: its data lives in the in-memory
-	// chatlog store, the voice hub and push webhook update it, and nothing polls
-	// (so nothing can overwrite the cache).
-	if w.Type == "spacer" || providerName == "spacer" || providerName == "chat-log" {
+	// Native Spacer and Live View Optimization: Zero-overhead padding/streaming, no polling ticker needed
+	// The chat-log and live-view widgets take the same path: live-view streams directly via WebRTC/MJPEG/HLS
+	// on the client, and chat-log lives in the in-memory chatlog store, so nothing polls on the backend.
+	if w.Type == "spacer" || providerName == "spacer" || providerName == "chat-log" || providerName == "live-view" || w.Type == "live-view" {
 		now := c.nowFunc()
 		payload, _ := c.cache.RecordSuccess(w.ID, map[string]any{}, now)
 		if c.stateSink != nil {

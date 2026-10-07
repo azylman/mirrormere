@@ -278,6 +278,75 @@ func TestProviderCoordinator_SpacerOptimization(t *testing.T) {
 	}
 }
 
+func TestProviderCoordinator_LiveViewOptimization(t *testing.T) {
+	t.Parallel()
+
+	interval := 30
+	snap := &config.Snapshot{
+		Config: &config.Config{
+			Display: config.DisplayConfig{
+				Widgets: []config.WidgetConfig{
+					{
+						ID:                     "chromecast-tile",
+						Type:                   "live-view",
+						Dimensions:             []int{2, 1},
+						RefreshIntervalSeconds: &interval,
+					},
+				},
+			},
+		},
+		Packages: map[string]*domain.Package{
+			"live-view": {
+				Type: "live-view",
+				Manifest: domain.WidgetManifest{
+					Name:     "live-view",
+					Provider: "live-view",
+				},
+			},
+		},
+	}
+
+	broadcaster := &mockBroadcaster{}
+	stateSink := newMockStateSink()
+
+	coord := provider.NewCoordinator(provider.CoordinatorConfig{
+		Broadcaster: broadcaster,
+		StateSink:   stateSink,
+	}, snap)
+	defer func() { _ = coord.Stop() }()
+
+	// 1. Live-view must be initialized in cache as healthy with empty map
+	payload, ok := coord.Cache().Get("chromecast-tile")
+	if !ok {
+		t.Fatal("expected chromecast-tile in cache")
+	}
+	if payload.State != provider.StateHealthy {
+		t.Fatalf("expected healthy state, got %s", payload.State)
+	}
+	dataMap, ok := payload.Data.(map[string]any)
+	if !ok || len(dataMap) != 0 {
+		t.Fatalf("expected empty map for live-view, got %v", payload.Data)
+	}
+
+	// 2. StateSink must be updated
+	d, st, _, ok := stateSink.getState("chromecast-tile")
+	if !ok || st != provider.StateHealthy || len(d.(map[string]any)) != 0 {
+		t.Fatalf("expected StateSink updated for chromecast-tile, got %v, %s, %v", d, st, ok)
+	}
+
+	// 3. Broadcast must have emitted widget.update
+	evts := broadcaster.getEvents()
+	if len(evts) != 1 || evts[0].Type != events.EventWidgetUpdate {
+		t.Fatalf("expected 1 widget.update event, got %d", len(evts))
+	}
+
+	// 4. Live-view has no polling worker goroutine; RefreshWidget returns error
+	err := coord.RefreshWidget("chromecast-tile")
+	if err == nil {
+		t.Fatal("expected error refreshing chromecast-tile because live-view has no worker")
+	}
+}
+
 func TestProviderCoordinator_LifecycleAndManualRefresh(t *testing.T) {
 	t.Parallel()
 

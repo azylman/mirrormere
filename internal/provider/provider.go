@@ -85,6 +85,9 @@ func NewRegistry() *DefaultRegistry {
 	r.Register("spacer", func() Provider {
 		return NewSpacerProvider()
 	})
+	r.Register("live-view", func() Provider {
+		return NewLiveViewProvider()
+	})
 	r.Register("http", func() Provider {
 		return NewHTTPProvider()
 	})
