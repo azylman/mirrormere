@@ -206,16 +206,16 @@ def load_sherpa_silero_vad(sherpa_model_dir: str, vad_threshold: float):
         raise RuntimeError(f"Sherpa Silero VAD model missing or unreadable at {model_path}")
 
     try:
-        config = sherpa_onnx.VoiceActivityDetectorConfig(
+        config = sherpa_onnx.VadModelConfig(
             silero_vad=sherpa_onnx.SileroVadModelConfig(
                 model=model_path,
                 threshold=vad_threshold,
                 min_silence_duration=0.05,
                 min_speech_duration=0.1,
             ),
-            buffer_size_in_seconds=5,
+            sample_rate=16000,
         )
-        return sherpa_onnx.VoiceActivityDetector(config)
+        return sherpa_onnx.VoiceActivityDetector(config, buffer_size_in_seconds=5)
     except Exception as e:
         raise RuntimeError(f"Failed to initialize Sherpa Silero VAD: {e}") from e
 
