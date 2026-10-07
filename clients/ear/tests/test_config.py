@@ -231,6 +231,17 @@ voice:
         self.assertIn("/opt/mirrormere/voice/models:/opt/mirrormere/voice/models:ro", content)
         self.assertNotIn("ear-models", content)
 
+    def test_ear_requirements_include_sherpa_token_tools(self):
+        req_path = os.path.join(
+            os.path.dirname(__file__), "..", "requirements.txt"
+        )
+        self.assertTrue(os.path.exists(req_path), f"requirements file missing: {req_path}")
+        with open(req_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        self.assertIn("click", content)
+        self.assertIn("sentencepiece", content)
+
 
 if __name__ == "__main__":
     unittest.main()
+
