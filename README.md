@@ -24,7 +24,7 @@ Mirrormere supports two distinct reference hardware profiles:
 - **Primary Role**: Interactive family calendar, chore management, smart home control, and video streaming.
 - **Compute**: Intel N100 Mini PC (e.g. Beelink Mini S12 Pro, 16GB DDR4, 500GB NVMe SSD, ~6W idle).
 - **Display**: 15.6" 1080p capacitive touchscreen monitor with rear 75×75mm VESA mount (UPERFECT).
-- **Runtime Environment**: Minimal bare-metal Linux under Wayland kiosk mode (`cage` compositor) running Chromium in `--kiosk` mode.
+- **Runtime Environment**: Minimal bare-metal Linux under Wayland kiosk mode (`cage` compositor) running Google Chrome (amd64, with Chromium fallback) in `--kiosk` mode.
 - **Audio & Media**:
   - Nano USB microphone dongle for room-wide voice pickup behind the drywall.
   - USB 3.0 UVC HDMI capture card inline with a physical Google Chromecast for hardware-negotiated DRM casting and picture-in-picture (PIP) streaming.

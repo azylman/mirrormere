@@ -143,9 +143,10 @@ if command -v wlr-randr >/dev/null 2>&1; then
     wlr-randr --output "$OUTPUT" --scale "$SCALE_FACTOR" 2>/dev/null || true
 fi
 
-# Wake and set DDC brightness if hardware tool is available
+# Wake and set DDC brightness if hardware tool is available (VCP 0x10 is display luminance)
+DDC_BRIGHTNESS="${MIRRORMERE_DDC_BRIGHTNESS:-100}"
 if command -v ddcutil >/dev/null 2>&1; then
-    ddcutil setvcp 62 100 2>/dev/null &
+    ddcutil setvcp 10 "$DDC_BRIGHTNESS" 2>/dev/null &
 fi
 
 # Start swayidle supervisor loop for daytime inactivity blanking with strict FD isolation
