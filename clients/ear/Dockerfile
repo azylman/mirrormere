@@ -24,11 +24,12 @@ RUN mkdir -p /opt/mirrormere/voice/sherpa && \
     curl -SL -o /tmp/sherpa-kws.tar.bz2 \
       https://github.com/k2-fsa/sherpa-onnx/releases/download/kws-models/sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01.tar.bz2 && \
     tar -xjf /tmp/sherpa-kws.tar.bz2 -C /tmp && \
-    cp /tmp/sherpa-kws-zipformer-gigaspeech-3.3M-2024-01-01/tokens.txt /opt/mirrormere/voice/sherpa/ && \
-    cp /tmp/sherpa-kws-zipformer-gigaspeech-3.3M-2024-01-01/encoder.int8.onnx /opt/mirrormere/voice/sherpa/ && \
-    cp /tmp/sherpa-kws-zipformer-gigaspeech-3.3M-2024-01-01/decoder.int8.onnx /opt/mirrormere/voice/sherpa/ && \
-    cp /tmp/sherpa-kws-zipformer-gigaspeech-3.3M-2024-01-01/joiner.int8.onnx /opt/mirrormere/voice/sherpa/ && \
-    rm -rf /tmp/sherpa-kws* && \
+    cp /tmp/sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01/tokens.txt /opt/mirrormere/voice/sherpa/ && \
+    cp /tmp/sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01/bpe.model /opt/mirrormere/voice/sherpa/ && \
+    cp /tmp/sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01/encoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx /opt/mirrormere/voice/sherpa/encoder.int8.onnx && \
+    cp /tmp/sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01/decoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx /opt/mirrormere/voice/sherpa/decoder.int8.onnx && \
+    cp /tmp/sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01/joiner-epoch-12-avg-2-chunk-16-left-64.int8.onnx /opt/mirrormere/voice/sherpa/joiner.int8.onnx && \
+    rm -rf /tmp/sherpa-kws* /tmp/sherpa-onnx-kws* && \
     curl -SL -o /opt/mirrormere/voice/sherpa/silero_vad.onnx \
       https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx
 
