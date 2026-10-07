@@ -1322,6 +1322,7 @@ class TestVoiceDaemon(unittest.TestCase):
         with open(kw_path, "r", encoding="utf-8") as f:
             content = f.read()
         self.assertIn("\u2581HE Y \u2581A E RI AL", content)
+        self.assertIn("\u2581HE Y \u2581A RI EL", content)
         self.assertIn("@hey_aerial", content)
 
 
