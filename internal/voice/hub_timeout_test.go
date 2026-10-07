@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -632,4 +633,422 @@ type funcBrain func(ctx context.Context, req AskRequest, onStatus func(status st
 
 func (f funcBrain) Ask(ctx context.Context, req AskRequest, onStatus func(status string)) (string, error) {
 	return f(ctx, req, onStatus)
+}
+
+func TestInactivityContext_ExpiresOnTimeout(t *testing.T) {
+	t.Parallel()
+
+	ctx, stop := newInactivityContext(context.Background(), 50*time.Millisecond)
+	defer stop()
+
+	select {
+	case <-ctx.Done():
+		if !errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			t.Fatalf("expected context.DeadlineExceeded, got %v", ctx.Err())
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("timed out waiting for inactivity context expiration")
+	}
+}
+
+func TestInactivityContext_ResetExtendsDeadline(t *testing.T) {
+	t.Parallel()
+
+	timeout := 80 * time.Millisecond
+	ctx, stop := newInactivityContext(context.Background(), timeout)
+	defer stop()
+
+	// Wait 45ms and reset. Without reset, timeout would fire at 80ms.
+	time.Sleep(45 * time.Millisecond)
+	ctx.Reset()
+
+	// At 90ms total (45ms + 45ms), the original 80ms deadline has passed,
+	// but context must still be active due to the reset extending it to 45ms + 80ms = 125ms.
+	time.Sleep(45 * time.Millisecond)
+	select {
+	case <-ctx.Done():
+		t.Fatalf("context was cancelled prematurely at 90ms: %v", ctx.Err())
+	default:
+	}
+
+	// Wait for the rescheduled timeout to expire (expected at ~125ms total).
+	select {
+	case <-ctx.Done():
+		if !errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			t.Fatalf("expected context.DeadlineExceeded, got %v", ctx.Err())
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("timed out waiting for rescheduled inactivity context expiration")
+	}
+}
+
+func TestInactivityContext_ParentCancellation(t *testing.T) {
+	t.Parallel()
+
+	parent, parentCancel := context.WithCancel(context.Background())
+	ctx, stop := newInactivityContext(parent, 200*time.Millisecond)
+	defer stop()
+
+	parentCancel()
+
+	select {
+	case <-ctx.Done():
+		if !errors.Is(ctx.Err(), context.Canceled) {
+			t.Fatalf("expected context.Canceled, got %v", ctx.Err())
+		}
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			t.Fatalf("did not expect context.DeadlineExceeded, got %v", ctx.Err())
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("timed out waiting for parent context cancellation")
+	}
+}
+
+func TestInactivityContext_StopCancelsContext(t *testing.T) {
+	t.Parallel()
+
+	ctx, stop := newInactivityContext(context.Background(), 500*time.Millisecond)
+	stop()
+
+	select {
+	case <-ctx.Done():
+		if !errors.Is(ctx.Err(), context.Canceled) {
+			t.Fatalf("expected context.Canceled, got %v", ctx.Err())
+		}
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			t.Fatalf("did not expect context.DeadlineExceeded, got %v", ctx.Err())
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("context not canceled after calling stop")
+	}
+}
+
+func TestInactivityContext_ZeroDuration(t *testing.T) {
+	t.Parallel()
+
+	for _, timeout := range []time.Duration{0, -1 * time.Second} {
+		ctx, stop := newInactivityContext(context.Background(), timeout)
+		select {
+		case <-ctx.Done():
+			t.Fatalf("zero/negative duration context (%v) unexpectedly cancelled: %v", timeout, ctx.Err())
+		case <-time.After(30 * time.Millisecond):
+		}
+
+		ctx.Reset() // Reset on zero duration should be safe and a no-op
+
+		select {
+		case <-ctx.Done():
+			t.Fatalf("zero/negative duration context (%v) unexpectedly cancelled after reset: %v", timeout, ctx.Err())
+		case <-time.After(30 * time.Millisecond):
+		}
+
+		stop()
+
+		select {
+		case <-ctx.Done():
+			if !errors.Is(ctx.Err(), context.Canceled) {
+				t.Fatalf("expected context.Canceled after stop, got %v", ctx.Err())
+			}
+		case <-time.After(50 * time.Millisecond):
+			t.Fatal("context not canceled after calling stop")
+		}
+	}
+}
+
+
+type periodicStreamingBrain struct {
+	chunkCount int
+	interval   time.Duration
+	reply      string
+}
+
+func (b *periodicStreamingBrain) Ask(ctx context.Context, req AskRequest, onStatus func(status string)) (string, error) {
+	return b.AskStreaming(ctx, req, onStatus, nil)
+}
+
+func (b *periodicStreamingBrain) AskStreaming(ctx context.Context, req AskRequest, onStatus func(status string), onAudio func(chunk BrainAudioChunk)) (string, error) {
+	ticker := time.NewTicker(b.interval)
+	defer ticker.Stop()
+	for i := 0; i < b.chunkCount; i++ {
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-ticker.C:
+			if onAudio != nil {
+				onAudio(BrainAudioChunk{
+					Text:       fmt.Sprintf("part-%d", i),
+					Data:       make([]byte, 4800),
+					Format:     "pcm",
+					SampleRate: 24000,
+					Channels:   1,
+				})
+			}
+		}
+	}
+	return b.reply, nil
+}
+
+func TestHub_BrainStreaming_InactivityTimeout_LongReply(t *testing.T) {
+	t.Parallel()
+
+	brain := &periodicStreamingBrain{
+		chunkCount: 6,
+		interval:   10 * time.Millisecond,
+		reply:      "full reply text",
+	}
+	stt := &mockSTT{text: "stream long reply"}
+	sink, getEvents := collectEvents()
+
+	cfg := &config.VoiceHubConfig{Enabled: true}
+	h := NewHub(
+		cfg,
+		nil,
+		WithSTTClient(stt),
+		WithBrainClient(brain),
+		WithBrainTimeout(25 * time.Millisecond),
+	)
+
+	wav := makeValidWAV(1600)
+	err := h.Interact(context.Background(), bytes.NewReader(wav), "kiosk-kitchen", "sess-long", sink, EdgeTimings{})
+	if err != nil {
+		t.Fatalf("expected turn to complete successfully, got err: %v", err)
+	}
+
+	if hasErrorCode(getEvents(), "brain_timeout") {
+		t.Errorf("did not expect brain_timeout event, got %v", eventNames(getEvents()))
+	}
+
+	events := getEvents()
+	var foundReply bool
+	for _, ev := range events {
+		if ev.Event == "reply" {
+			foundReply = true
+			if m, ok := ev.Data.(map[string]string); ok {
+			if m["reply"] != "full reply text" {
+				t.Errorf("expected reply %q, got %q", "full reply text", m["reply"])
+			}
+		}
+		}
+	}
+	if !foundReply {
+		t.Errorf("expected reply event, got %v", eventNames(events))
+	}
+}
+
+type stallingStreamingBrain struct {
+	stallDuration time.Duration
+}
+
+func (b *stallingStreamingBrain) Ask(ctx context.Context, req AskRequest, onStatus func(status string)) (string, error) {
+	return b.AskStreaming(ctx, req, onStatus, nil)
+}
+
+func (b *stallingStreamingBrain) AskStreaming(ctx context.Context, req AskRequest, onStatus func(status string), onAudio func(chunk BrainAudioChunk)) (string, error) {
+	if onAudio != nil {
+		onAudio(BrainAudioChunk{
+			Text:       "start chunk",
+			Data:       make([]byte, 4800),
+			Format:     "pcm",
+			SampleRate: 24000,
+			Channels:   1,
+		})
+	}
+	select {
+	case <-ctx.Done():
+		return "", ctx.Err()
+	case <-time.After(b.stallDuration):
+		return "should have timed out", nil
+	}
+}
+
+func TestHub_BrainStreaming_InactivityTimeout_MidStreamStall(t *testing.T) {
+	t.Parallel()
+
+	brain := &stallingStreamingBrain{
+		stallDuration: 50 * time.Millisecond,
+	}
+	stt := &mockSTT{text: "stream stall"}
+	sink, getEvents := collectEvents()
+
+	cfg := &config.VoiceHubConfig{Enabled: true}
+	h := NewHub(
+		cfg,
+		nil,
+		WithSTTClient(stt),
+		WithBrainClient(brain),
+		WithBrainTimeout(20 * time.Millisecond),
+	)
+
+	wav := makeValidWAV(1600)
+	err := h.Interact(context.Background(), bytes.NewReader(wav), "kiosk-kitchen", "sess-stall", sink, EdgeTimings{})
+	if err == nil {
+		t.Fatalf("expected error due to inactivity timeout stall, got nil")
+	}
+	if !errors.Is(err, ErrBrainTimeout) {
+		t.Errorf("expected ErrBrainTimeout, got %v", err)
+	}
+	if !hasErrorCode(getEvents(), "brain_timeout") {
+		t.Errorf("expected brain_timeout event, got %v", eventNames(getEvents()))
+	}
+}
+
+type statusResetStreamingBrain struct{}
+
+func (b *statusResetStreamingBrain) Ask(ctx context.Context, req AskRequest, onStatus func(status string)) (string, error) {
+	return b.AskStreaming(ctx, req, onStatus, nil)
+}
+
+func (b *statusResetStreamingBrain) AskStreaming(ctx context.Context, req AskRequest, onStatus func(status string), onAudio func(chunk BrainAudioChunk)) (string, error) {
+	select {
+	case <-ctx.Done():
+		return "", ctx.Err()
+	case <-time.After(15 * time.Millisecond):
+	}
+	if onStatus != nil {
+		onStatus("tool executing: web search")
+	}
+	select {
+	case <-ctx.Done():
+		return "", ctx.Err()
+	case <-time.After(15 * time.Millisecond):
+	}
+	if onAudio != nil {
+		onAudio(BrainAudioChunk{
+			Text:       "done answer",
+			Data:       make([]byte, 4800),
+			Format:     "pcm",
+			SampleRate: 24000,
+			Channels:   1,
+		})
+	}
+	return "done answer", nil
+}
+
+func TestHub_BrainStreaming_StatusEvent_ResetsTimeout(t *testing.T) {
+	t.Parallel()
+
+	brain := &statusResetStreamingBrain{}
+	stt := &mockSTT{text: "stream status reset"}
+	sink, getEvents := collectEvents()
+
+	cfg := &config.VoiceHubConfig{Enabled: true}
+	h := NewHub(
+		cfg,
+		nil,
+		WithSTTClient(stt),
+		WithBrainClient(brain),
+		WithBrainTimeout(25 * time.Millisecond),
+	)
+
+	wav := makeValidWAV(1600)
+	err := h.Interact(context.Background(), bytes.NewReader(wav), "kiosk-kitchen", "sess-status", sink, EdgeTimings{})
+	if err != nil {
+		t.Fatalf("expected turn to complete cleanly after status reset, got err: %v", err)
+	}
+	if hasErrorCode(getEvents(), "brain_timeout") {
+		t.Errorf("did not expect brain_timeout event, got %v", eventNames(getEvents()))
+	}
+}
+
+type periodicTTSClient struct {
+	chunkCount int
+	interval   time.Duration
+}
+
+func (t *periodicTTSClient) Synthesize(ctx context.Context, text string, onChunk func(chunk TTSAudioChunk) error) error {
+	ticker := time.NewTicker(t.interval)
+	defer ticker.Stop()
+	for i := 0; i < t.chunkCount; i++ {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			if err := onChunk(TTSAudioChunk{
+				Data:       make([]byte, 4800),
+				Format:     "pcm",
+				SampleRate: 24000,
+				Channels:   1,
+			}); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func TestHub_TTS_InactivityTimeout_LongReply(t *testing.T) {
+	t.Parallel()
+
+	tts := &periodicTTSClient{
+		chunkCount: 5,
+		interval:   10 * time.Millisecond,
+	}
+	sink, getEvents := collectEvents()
+
+	cfg := &config.VoiceHubConfig{Enabled: true}
+	h := NewHub(
+		cfg,
+		nil,
+		WithTTSClient(tts),
+		WithTTSTimeout(25 * time.Millisecond),
+	)
+
+	tr := "transcript"
+	status, err := h.synthesizeAndEmitReply(context.Background(), "a longer reply for TTS", "node-tts", "kokoro", &tr, sink)
+	if err != nil {
+		t.Fatalf("expected synthesizeAndEmitReply to succeed, got err: %v", err)
+	}
+	if status != "success" {
+		t.Fatalf("expected status %q, got %q", "success", status)
+	}
+	if hasErrorCode(getEvents(), "tts_timeout") {
+		t.Errorf("did not expect tts_timeout event, got %v", eventNames(getEvents()))
+	}
+}
+
+type stallingTTSClient struct {
+	stallDuration time.Duration
+}
+
+func (t *stallingTTSClient) Synthesize(ctx context.Context, text string, onChunk func(chunk TTSAudioChunk) error) error {
+	if err := onChunk(TTSAudioChunk{
+		Data:       make([]byte, 4800),
+		Format:     "pcm",
+		SampleRate: 24000,
+		Channels:   1,
+	}); err != nil {
+		return err
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(t.stallDuration):
+		return nil
+	}
+}
+
+func TestHub_TTS_InactivityTimeout_MidStreamStall(t *testing.T) {
+	t.Parallel()
+
+	tts := &stallingTTSClient{
+		stallDuration: 50 * time.Millisecond,
+	}
+	sink, getEvents := collectEvents()
+
+	cfg := &config.VoiceHubConfig{Enabled: true}
+	h := NewHub(
+		cfg,
+		nil,
+		WithTTSClient(tts),
+		WithTTSTimeout(20 * time.Millisecond),
+	)
+
+	tr := "transcript"
+	status, err := h.synthesizeAndEmitReply(context.Background(), "mid-stream stalling reply", "node-tts", "kokoro", &tr, sink)
+	if status != "error" || err == nil {
+		t.Fatalf("expected error status and non-nil err, got status=%q, err=%v", status, err)
+	}
+	if !hasErrorCode(getEvents(), "tts_timeout") {
+		t.Errorf("expected tts_timeout event, got %v", eventNames(getEvents()))
+	}
 }
