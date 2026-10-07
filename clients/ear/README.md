@@ -131,6 +131,6 @@ docker run -d \
 ## Custom Wake Word Models
 
 To add custom wake word models (e.g. `hey_aerial.onnx`):
-1. Place the `.onnx` or `.tflite` file into `/opt/mirrormere/voice/models/`.
+1. Place the `.onnx` file into `/opt/mirrormere/voice/models/`.
 2. Add the model base name to `wake_models` in `/etc/mirrormere/voice.yaml`.
 3. Restart the `mirrormere-ear` container (`docker restart mirrormere-ear`). The daemon auto-scans the directory and loads the model into its active evaluation graph.

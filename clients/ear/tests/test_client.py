@@ -971,6 +971,28 @@ class TestVoiceDaemon(unittest.TestCase):
             self.assertEqual(active, [])
             self.assertEqual(model, mock_oww_instance)
 
+    def test_init_openwakeword_only_globs_onnx(self):
+        mock_oww_cls = MagicMock()
+        mock_oww_instance = MagicMock()
+        mock_oww_instance.models = {"hey_aerial": None}
+        mock_oww_cls.return_value = mock_oww_instance
+
+        with patch("clients.ear.client.os.path.exists", return_value=True), \
+             patch("clients.ear.client.glob.glob") as mock_glob, \
+             patch.dict("sys.modules", {"openwakeword.model": MagicMock(Model=mock_oww_cls)}):
+            mock_glob.return_value = ["/models/hey_aerial.onnx"]
+            cfg = VoiceConfig(models_dir="/models", wake_models=["hey_aerial"])
+            daemon = VoiceDaemon.__new__(VoiceDaemon)
+            daemon.cfg = cfg
+            model, active = daemon._init_openwakeword()
+
+            self.assertEqual(mock_glob.call_count, 1)
+            mock_glob.assert_called_once_with(os.path.join("/models", "*.onnx"))
+            mock_oww_cls.assert_called_once_with(
+                wakeword_model_paths=["/models/hey_aerial.onnx"], vad_threshold=0.5
+            )
+            self.assertEqual(active, ["hey_aerial"])
+
 
 if __name__ == "__main__":
     unittest.main()
