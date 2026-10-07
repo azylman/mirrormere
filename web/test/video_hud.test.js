@@ -693,3 +693,63 @@ test('VideoHUDController: default fetch binds window context without Illegal inv
   }
 });
 
+test('VideoHUDController: touch/pointer tap-to-wake and gesture debouncing on video stage', async () => {
+  const dom = createHUDDOM();
+  const hud = new VideoHUDController({
+    overlayElement: dom.overlay,
+    titleElement: dom.title,
+    dismissBtn: dom.dismissBtn,
+    stageElement: dom.stage,
+  });
+
+  assert.equal(hud.isVisible, false);
+
+  // 1. pointerup wakes the HUD
+  dom.stage.dispatchEvent('pointerup', { target: dom.stage });
+  assert.equal(hud.isVisible, true);
+  assert.equal(dom.overlay.classList.contains('visible'), true);
+
+  // 2. Synthetic click immediately following pointerup within debounce window is ignored (stays visible)
+  dom.stage.dispatchEvent('click', { target: dom.stage });
+  assert.equal(hud.isVisible, true);
+  assert.equal(dom.overlay.classList.contains('visible'), true);
+
+  // 3. Duplicate event arriving immediately within debounce window is also ignored
+  dom.stage.dispatchEvent('pointerup', { target: dom.stage });
+  assert.equal(hud.isVisible, true);
+
+  // 4. After debounce cooldown (>350ms), pointerup toggles HUD to hidden
+  await new Promise((r) => setTimeout(r, 360));
+  dom.stage.dispatchEvent('pointerup', { target: dom.stage });
+  assert.equal(hud.isVisible, false);
+  assert.equal(dom.overlay.classList.contains('visible'), false);
+
+  // 5. After debounce cooldown, click toggles HUD back to visible
+  await new Promise((r) => setTimeout(r, 360));
+  dom.stage.dispatchEvent('click', { target: dom.stage });
+  assert.equal(hud.isVisible, true);
+
+  // 6. Tapping interactive header/controls on touch does not hide HUD
+  dom.header.dispatchEvent('pointerup', { target: dom.header });
+  assert.equal(hud.isVisible, true);
+
+  // 7. Corner PiP dock does not toggle HUD on touch/pointerup
+  hud.hideHUD();
+  assert.equal(hud.isVisible, false);
+  await new Promise((r) => setTimeout(r, 360));
+  dom.stage.dispatchEvent('pointerup', { target: dom.pipSlot });
+  assert.equal(hud.isVisible, false);
+
+  // 8. Drag/swipe gestures (movement >= 15px) do NOT toggle HUD, and suppress immediate ghost click
+  await new Promise((r) => setTimeout(r, 360));
+  dom.stage.dispatchEvent('pointerdown', { clientX: 50, clientY: 50 });
+  dom.stage.dispatchEvent('pointerup', { clientX: 100, clientY: 100, target: dom.stage });
+  assert.equal(hud.isVisible, false); // Stays hidden
+  // Immediate synthetic click from drag release is also debounced/eaten
+  dom.stage.dispatchEvent('click', { target: dom.stage });
+  assert.equal(hud.isVisible, false); // Stays hidden
+
+  hud.destroy();
+});
+
+
