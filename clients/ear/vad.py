@@ -128,16 +128,96 @@ class SileroDetector(SpeechDetector):
         return mean_ms, count
 
 
+class SherpaSileroDetector(SpeechDetector):
+    """Silero VAD end-of-speech detection using sherpa-onnx.
+
+    Converts raw 16kHz int16 PCM into float32 normalized to [-1.0, 1.0], passes
+    to sherpa-onnx VoiceActivityDetector, and drains internal detected segments
+    to prevent memory growth.
+    """
+
+    def __init__(self, vad_model) -> None:
+        self._vad = vad_model
+        self._infer_ms_sum = 0.0
+        self._infer_count = 0
+
+    def reset(self) -> None:
+        if hasattr(self._vad, "clear"):
+            self._vad.clear()
+        elif hasattr(self._vad, "reset"):
+            self._vad.reset()
+
+    def is_speech(self, raw_bytes: bytes) -> bool:
+        if not raw_bytes:
+            return False
+
+        if np is not None:
+            chunk = np.frombuffer(raw_bytes, dtype=np.int16).astype(np.float32) / 32768.0
+        else:
+            import array
+            import struct
+            n_samples = len(raw_bytes) // 2
+            samples = struct.unpack(f"<{n_samples}h", raw_bytes)
+            chunk = array.array("f", (s / 32768.0 for s in samples))
+
+        t0 = time.perf_counter()
+        self._vad.accept_waveform(chunk)
+        speech = self._vad.is_speech_detected()
+        self._infer_ms_sum += (time.perf_counter() - t0) * 1000.0
+        self._infer_count += 1
+
+        # Drain detected segment queue to eliminate memory leak
+        while hasattr(self._vad, "empty") and not self._vad.empty():
+            self._vad.pop()
+
+        return speech
+
+    def drain_inference_stats(self) -> Tuple[float, int]:
+        count = self._infer_count
+        mean_ms = (self._infer_ms_sum / count) if count else 0.0
+        self._infer_ms_sum = 0.0
+        self._infer_count = 0
+        return mean_ms, count
+
+
 def load_silero_vad_model():
     """Loads a fresh ``openwakeword.vad.VAD`` instance from openWakeWord's bundled ONNX model.
 
     Raises whatever openwakeword/onnxruntime raise on failure (import error,
-    missing model file, onnxruntime session errors, ...); callers should
-    catch and fall back to energy mode.
+    missing model file, onnxruntime session errors, ...).
     """
     from openwakeword.vad import VAD
 
     return VAD()
+
+
+def load_sherpa_silero_vad(sherpa_model_dir: str, vad_threshold: float):
+    """Loads a fresh ``sherpa_onnx.VoiceActivityDetector`` using silero_vad.onnx.
+
+    Raises RuntimeError if sherpa_onnx is not installed or model file is missing/unreadable.
+    """
+    try:
+        import sherpa_onnx
+    except ImportError as e:
+        raise RuntimeError(f"sherpa_onnx is not installed: {e}") from e
+
+    model_path = os.path.join(sherpa_model_dir, "silero_vad.onnx")
+    if not os.path.exists(model_path) or not os.access(model_path, os.R_OK):
+        raise RuntimeError(f"Sherpa Silero VAD model missing or unreadable at {model_path}")
+
+    try:
+        config = sherpa_onnx.VoiceActivityDetectorConfig(
+            silero_vad=sherpa_onnx.SileroVadModelConfig(
+                model=model_path,
+                threshold=vad_threshold,
+                min_silence_duration=0.05,
+                min_speech_duration=0.1,
+            ),
+            buffer_size_in_seconds=5,
+        )
+        return sherpa_onnx.VoiceActivityDetector(config)
+    except Exception as e:
+        raise RuntimeError(f"Failed to initialize Sherpa Silero VAD: {e}") from e
 
 
 def build_detector(
@@ -145,18 +225,36 @@ def build_detector(
     vad_threshold: float,
     speech_threshold_db: float,
     compute_db,
+    wake_engine: str = "openwakeword",
+    sherpa_model_dir: str = "/opt/mirrormere/voice/sherpa",
 ) -> SpeechDetector:
-    """Builds the configured SpeechDetector, falling back to energy mode on any load failure."""
+    """Builds the configured SpeechDetector.
+
+    If vad_mode == "silero", loads the appropriate model for the active wake engine
+    and raises RuntimeError if dependencies or model files cannot be loaded.
+    """
     if vad_mode == "silero":
-        try:
-            vad_model = load_silero_vad_model()
-            logger.info("VAD: silero (threshold=%.2f)", vad_threshold)
-            return SileroDetector(vad_model, vad_threshold)
-        except Exception as e:
-            logger.warning(
-                "Silero VAD failed to load (%s); falling back to energy VAD (threshold=%.1f dBFS).",
-                e,
-                speech_threshold_db,
-            )
+        if wake_engine == "openwakeword":
+            try:
+                vad_model = load_silero_vad_model()
+                logger.info("VAD: silero (openwakeword, threshold=%.2f)", vad_threshold)
+                return SileroDetector(vad_model, vad_threshold)
+            except Exception as e:
+                raise RuntimeError(
+                    f"Silero VAD failed to load for openwakeword: {e}"
+                ) from e
+        elif wake_engine == "sherpa-onnx":
+            try:
+                vad_model = load_sherpa_silero_vad(sherpa_model_dir, vad_threshold)
+                logger.info("VAD: silero (sherpa-onnx, threshold=%.2f)", vad_threshold)
+                return SherpaSileroDetector(vad_model)
+            except Exception as e:
+                raise RuntimeError(
+                    f"Silero VAD failed to load for sherpa-onnx: {e}"
+                ) from e
+        else:
+            raise RuntimeError(f"Unknown wake engine '{wake_engine}' for silero VAD")
+
     logger.info("VAD: energy (threshold=%.1f dBFS)", speech_threshold_db)
     return EnergyDetector(speech_threshold_db, compute_db)
+

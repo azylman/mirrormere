@@ -34,6 +34,58 @@ class MockModel:
         self.reset_called = True
 
 
+class MockSherpaStream:
+    """Mock stream for sherpa-onnx KeywordSpotter."""
+
+    def __init__(self):
+        self.accepted_waveforms = []
+        self.reset_called = False
+
+    def accept_waveform(self, sample_rate, samples):
+        self.accepted_waveforms.append((sample_rate, samples))
+
+    def reset(self):
+        self.reset_called = True
+
+
+class MockSherpaSpotter:
+    """Mock sherpa-onnx KeywordSpotter for deterministic unit testing."""
+
+    def __init__(self, keyword=""):
+        self.keyword = keyword
+        self.created_streams = []
+        self.reset_streams = []
+        self._ready_count = 1
+
+    def create_stream(self):
+        s = MockSherpaStream()
+        self.created_streams.append(s)
+        return s
+
+    def is_ready(self, stream):
+        if self._ready_count > 0:
+            self._ready_count -= 1
+            return True
+        return False
+
+    def decode_stream(self, stream):
+        pass
+
+    def get_result(self, stream):
+        if self.keyword:
+            res = MagicMock()
+            res.keyword = self.keyword
+            return res
+        return None
+
+    def reset_stream(self, stream):
+        self.reset_streams.append(stream)
+        self._ready_count = 1
+        stream.reset()
+
+
+
+
 class TestVoiceDaemon(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.mkdtemp()
@@ -1027,6 +1079,106 @@ class TestVoiceDaemon(unittest.TestCase):
             )
             self.assertEqual(active, ["hey_aerial"])
 
+    @patch("clients.ear.client.urllib.request.urlopen")
+    def test_sherpa_wake_detection_and_reset(self, mock_urlopen):
+        mock_resp = MagicMock()
+        mock_resp.status = 200
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        mock_spotter = MockSherpaSpotter(keyword="")
+        cfg = VoiceConfig(
+            wake_engine="sherpa-onnx",
+            save_path=self.save_path,
+            mirrormere_url="http://test-core/kiosk",
+            hub_url="http://test-hub/api/voice/interact",
+        )
+        daemon = VoiceDaemon(cfg, model=mock_spotter)
+        self.assertEqual(daemon.active_models, ["sherpa"])
+        self.assertIsNotNone(daemon.sherpa_stream)
+
+        silent_frame = struct.pack("<1280h", *([0] * 1280))
+        # Idle frame: no keyword
+        event = daemon.process_frame(silent_frame)
+        self.assertIsNone(event)
+        self.assertEqual(daemon.state, "idle")
+
+        # Verify float32 normalization in accept_waveform
+        stream = daemon.sherpa_stream
+        self.assertEqual(len(stream.accepted_waveforms), 1)
+        sr, samples = stream.accepted_waveforms[0]
+        self.assertEqual(sr, 16000)
+        try:
+            import numpy as np
+            self.assertEqual(samples.dtype, np.float32)
+        except ImportError:
+            self.assertEqual(getattr(samples, "typecode", None), "f")
+        self.assertAlmostEqual(float(samples[0]), 0.0, places=2)
+
+
+        # Trigger keyword
+        mock_spotter.keyword = "Hey Aerial"
+        event = daemon.process_frame(silent_frame)
+        self.assertEqual(event, "wake_detected")
+        self.assertEqual(daemon.state, "listening")
+        self.assertIn(stream, mock_spotter.reset_streams)
+
+    @patch("clients.ear.client.urllib.request.urlopen")
+    def test_sherpa_false_wake_abort(self, mock_urlopen):
+        mock_resp = MagicMock()
+        mock_resp.status = 200
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        mock_spotter = MockSherpaSpotter(keyword="Hey Aerial")
+        cfg = VoiceConfig(
+            wake_engine="sherpa-onnx",
+            save_path=self.save_path,
+            mirrormere_url="http://test-core/kiosk",
+            hub_url="http://test-hub/api/voice/interact",
+        )
+        daemon = VoiceDaemon(cfg, model=mock_spotter)
+        silent_frame = struct.pack("<1280h", *([0] * 1280))
+
+        # 1. Trigger wake
+        event = daemon.process_frame(silent_frame)
+        self.assertEqual(event, "wake_detected")
+        self.assertEqual(daemon.state, "listening")
+
+        # 2. Simulate 3.2 seconds without speech
+        mock_spotter.reset_streams.clear()
+        daemon.record_start = time.time() - 3.2
+        event = daemon.process_frame(silent_frame)
+
+        self.assertEqual(event, "wake_aborted")
+        self.assertEqual(daemon.state, "idle")
+        self.assertIn(daemon.sherpa_stream, mock_spotter.reset_streams)
+
+    def test_sherpa_lazy_import_does_not_call_init_openwakeword(self):
+        with patch.object(VoiceDaemon, "_init_openwakeword") as mock_oww, \
+             patch.object(VoiceDaemon, "_init_sherpa") as mock_sherpa:
+            mock_spotter = MockSherpaSpotter()
+            mock_sherpa.return_value = (mock_spotter, mock_spotter.create_stream())
+
+            cfg = VoiceConfig(wake_engine="sherpa-onnx")
+            daemon = VoiceDaemon(cfg)
+
+            mock_sherpa.assert_called_once()
+            mock_oww.assert_not_called()
+            self.assertEqual(daemon.active_models, ["sherpa"])
+
+    def test_init_sherpa_raises_on_missing_model_directory(self):
+        cfg = VoiceConfig(
+            wake_engine="sherpa-onnx",
+            sherpa_model_dir="/nonexistent/sherpa/path",
+        )
+        daemon = VoiceDaemon.__new__(VoiceDaemon)
+        daemon.cfg = cfg
+        with patch.dict("sys.modules", {"sherpa_onnx": MagicMock()}):
+            with self.assertRaises(RuntimeError) as ctx:
+                daemon._init_sherpa()
+            self.assertIn("Sherpa model directory not found", str(ctx.exception))
+
+
 
 if __name__ == "__main__":
     unittest.main()
+

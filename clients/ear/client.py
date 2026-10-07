@@ -184,9 +184,14 @@ class VoiceDaemon:
         self.busy_lock = threading.Lock()
         self.reply_ended_at = 0.0
 
+        self.sherpa_stream = None
         if model is not None:
             self.model = model
-            if hasattr(model, "models") and isinstance(model.models, dict):
+            if self.cfg.wake_engine == "sherpa-onnx":
+                self.active_models = ["sherpa"]
+                if hasattr(model, "create_stream"):
+                    self.sherpa_stream = model.create_stream()
+            elif hasattr(model, "models") and isinstance(model.models, dict):
                 available = list(model.models.keys())
                 configured_targets = self.cfg.wake_models
                 configured_names = (
@@ -204,11 +209,14 @@ class VoiceDaemon:
                     )
             else:
                 self.active_models = list(cfg.wake_models)
-        elif cfg.wake_mode == "ambient":
-            # Ambient-only mode never needs openWakeWord: skip loading its
-            # models entirely to keep CPU usage low.
+        elif not cfg.wake_mode_uses_wake_word():
+            # Ambient-only mode never needs any wake engine: skip loading its
+            # models entirely to keep CPU and memory usage low.
             self.model = None
             self.active_models = []
+        elif cfg.wake_engine == "sherpa-onnx":
+            self.model, self.sherpa_stream = self._init_sherpa()
+            self.active_models = ["sherpa"]
         else:
             self.model, self.active_models = self._init_openwakeword()
 
@@ -216,7 +224,12 @@ class VoiceDaemon:
             self.max_seen[m] = 0.0
 
         self.speech_detector = build_detector(
-            cfg.vad, cfg.vad_threshold, cfg.speech_threshold_db, self.compute_db
+            cfg.vad,
+            cfg.vad_threshold,
+            cfg.speech_threshold_db,
+            self.compute_db,
+            wake_engine=cfg.wake_engine,
+            sherpa_model_dir=cfg.sherpa_model_dir,
         )
 
     def _init_openwakeword(self):
@@ -254,10 +267,88 @@ class VoiceDaemon:
         logger.info("Active wake word triggers: %s (threshold=%.2f)", active, self.cfg.threshold)
         return model, active
 
+    def _init_sherpa(self):
+        """Discovers base Zipformer model and instantiates sherpa-onnx KeywordSpotter."""
+        try:
+            import sherpa_onnx
+        except ImportError as e:
+            raise RuntimeError(f"sherpa_onnx is not installed: {e}") from e
+
+        model_dir = self.cfg.sherpa_model_dir
+        if not os.path.exists(model_dir):
+            raise RuntimeError(f"Sherpa model directory not found: {model_dir}")
+
+        tokens = os.path.join(model_dir, "tokens.txt")
+        # Check encoder (int8 preferred, fallback to fp32)
+        encoder = os.path.join(model_dir, "encoder.int8.onnx")
+        if not os.path.exists(encoder):
+            encoder = os.path.join(model_dir, "encoder.onnx")
+        decoder = os.path.join(model_dir, "decoder.int8.onnx")
+        if not os.path.exists(decoder):
+            decoder = os.path.join(model_dir, "decoder.onnx")
+        joiner = os.path.join(model_dir, "joiner.int8.onnx")
+        if not os.path.exists(joiner):
+            joiner = os.path.join(model_dir, "joiner.onnx")
+
+        for p in (tokens, encoder, decoder, joiner):
+            if not os.path.exists(p) or not os.access(p, os.R_OK):
+                raise RuntimeError(f"Sherpa model file missing or unreadable: {p}")
+
+        num_threads = max(1, min(int(self.cfg.sherpa_num_threads), 2))
+
+        keywords_file = self.cfg.keywords_file
+        keywords_buf = ""
+        if os.path.exists(keywords_file) and os.access(keywords_file, os.R_OK):
+            logger.info("Using Sherpa keywords file: %s", keywords_file)
+        elif self.cfg.keyword:
+            keywords_buf = self.cfg.keyword
+            logger.info("Using Sherpa inline keyword: %s", keywords_buf)
+        else:
+            raise RuntimeError(
+                f"No wake keywords configured for Sherpa (keywords_file '{keywords_file}' not found and cfg.keyword is empty)"
+            )
+
+        kwargs = {
+            "tokens": tokens,
+            "encoder": encoder,
+            "decoder": decoder,
+            "joiner": joiner,
+            "num_threads": num_threads,
+            "keywords_score": self.cfg.keywords_score,
+            "keywords_threshold": self.cfg.keywords_threshold,
+            "provider": "cpu",
+        }
+        if keywords_buf:
+            kwargs["keywords_buf"] = keywords_buf
+        else:
+            kwargs["keywords_file"] = keywords_file
+
+        try:
+            spotter = sherpa_onnx.KeywordSpotter(**kwargs)
+            stream = spotter.create_stream()
+            logger.info("Sherpa-ONNX KeywordSpotter initialized successfully (threads=%d)", num_threads)
+            return spotter, stream
+        except Exception as e:
+            raise RuntimeError(f"Failed to initialize Sherpa KeywordSpotter: {e}") from e
+
     def stop(self, signum=None, frame=None) -> None:
         """Signal handler to stop main loop gracefully."""
         logger.info("Shutdown signal received, stopping voice daemon...")
         self.running = False
+
+    def reset_wake_engine(self) -> None:
+        """Flushes/resets internal decoder state for the active wake engine."""
+        if self.cfg.wake_engine == "sherpa-onnx":
+            if self.model is not None and self.sherpa_stream is not None:
+                try:
+                    if hasattr(self.model, "reset_stream"):
+                        self.model.reset_stream(self.sherpa_stream)
+                    elif hasattr(self.sherpa_stream, "reset"):
+                        self.sherpa_stream.reset()
+                except Exception as e:
+                    logger.debug("Error resetting Sherpa stream: %s", e)
+        else:
+            self.flush_openwakeword()
 
     def flush_openwakeword(self) -> None:
         """Flushes feature buffers and prediction histories in openWakeWord."""
@@ -293,16 +384,67 @@ class VoiceDaemon:
             rms = math.sqrt(sum_sq / n_samples)
         return 20.0 * math.log10(rms / 32768.0) if rms > 0 else -100.0
 
-    def wake_mode_uses_openwakeword(self) -> bool:
-        return self.cfg.wake_mode in ("openwakeword", "both") and self.model is not None and bool(self.active_models)
+    def wake_mode_uses_wake_word(self) -> bool:
+        return self.cfg.wake_mode_uses_wake_word() and self.model is not None and bool(self.active_models)
+
+    # Backward-compatible alias
+    wake_mode_uses_openwakeword = wake_mode_uses_wake_word
 
     def wake_mode_uses_ambient(self) -> bool:
         return self.cfg.wake_mode in ("ambient", "both")
 
     def _check_wake_word(self, raw_bytes: bytes) -> Optional[str]:
-        """Runs one openWakeWord prediction pass and returns the triggered model name, if any."""
-        if not self.active_models:
+        """Runs wake word prediction pass on the configured engine."""
+        if not self.active_models or self.model is None:
             return None
+        if self.cfg.wake_engine == "sherpa-onnx":
+            return self._check_sherpa_wake_word(raw_bytes)
+        return self._check_oww_wake_word(raw_bytes)
+
+    def _check_sherpa_wake_word(self, raw_bytes: bytes) -> Optional[str]:
+        if self.sherpa_stream is None or not raw_bytes:
+            return None
+        t0 = time.perf_counter()
+        # Sherpa accept_waveform strictly requires 1-D float32 normalized to [-1.0, 1.0]
+        if np is not None:
+            float_samples = np.frombuffer(raw_bytes, dtype=np.int16).astype(np.float32) / 32768.0
+        else:
+            import array
+            n_samples = len(raw_bytes) // 2
+            samples = struct.unpack(f"<{n_samples}h", raw_bytes)
+            float_samples = array.array("f", (s / 32768.0 for s in samples))
+
+        self.sherpa_stream.accept_waveform(self.cfg.sample_rate, float_samples)
+
+        decode_steps = 0
+        while (
+            hasattr(self.model, "is_ready")
+            and self.model.is_ready(self.sherpa_stream)
+            and decode_steps < 10
+        ):
+            if hasattr(self.model, "decode_stream"):
+                self.model.decode_stream(self.sherpa_stream)
+            elif hasattr(self.model, "decode"):
+                self.model.decode(self.sherpa_stream)
+            decode_steps += 1
+
+
+        result = self.model.get_result(self.sherpa_stream) if hasattr(self.model, "get_result") else None
+        self.last_wake_eval_ms = (time.perf_counter() - t0) * 1000.0
+
+        detected_keyword = None
+        if result:
+            kw = getattr(result, "keyword", result) if not isinstance(result, str) else result
+            if kw:
+                detected_keyword = str(kw)
+                logger.info("*** WAKE WORD DETECTED (sherpa): %s ***", detected_keyword)
+                self.reset_wake_engine()
+
+        return detected_keyword
+
+
+    def _check_oww_wake_word(self, raw_bytes: bytes) -> Optional[str]:
+        """Runs one openWakeWord prediction pass and returns the triggered model name, if any."""
         t0 = time.perf_counter()
         chunk = np.frombuffer(raw_bytes, dtype=np.int16) if np is not None else raw_bytes
         preds = self.model.predict(chunk)
@@ -321,6 +463,7 @@ class VoiceDaemon:
                 break
 
         return triggered_model
+
 
     def _start_listening(self, now: float) -> None:
         """Transitions into wake-triggered recording, mirroring the wake-word flow."""
@@ -375,7 +518,7 @@ class VoiceDaemon:
         if self.state == "idle":
             self.pre_roll.append(raw_bytes)
 
-            if self.wake_mode_uses_openwakeword() and self._wake_ready(now):
+            if self.wake_mode_uses_wake_word() and self._wake_ready(now):
                 if self._check_wake_word(raw_bytes):
                     self._start_listening(now)
                     return "wake_detected"
@@ -388,7 +531,7 @@ class VoiceDaemon:
             return None
 
         elif self.state == "ambient_listening":
-            if self.wake_mode_uses_openwakeword() and self._wake_ready(now) and self._check_wake_word(raw_bytes):
+            if self.wake_mode_uses_wake_word() and self._wake_ready(now) and self._check_wake_word(raw_bytes):
                 # Wake word fired mid-segment ("both" mode): hand off to the
                 # normal wake-triggered flow and discard the ambient buffer
                 # so this segment never reaches the classifier.
@@ -443,7 +586,7 @@ class VoiceDaemon:
             # False wake abort: If wake fired but zero speech occurred within 3.0s, abort back to idle
             if not self.has_spoken and elapsed >= 3.0:
                 logger.info("False wake trigger (no speech detected after 3.0s). Aborting to idle...")
-                self.flush_openwakeword()
+                self.reset_wake_engine()
                 self.cooldown_until = now + 1.0
                 self.state = "idle"
                 post_voice_state(self.cfg.mirrormere_url, "idle")
@@ -476,7 +619,7 @@ class VoiceDaemon:
                 else:
                     post_voice_state(self.cfg.mirrormere_url, "idle")
 
-                self.flush_openwakeword()
+                self.reset_wake_engine()
                 self.cooldown_until = time.time() + self.cfg.cooldown_seconds
                 self.max_seen = {m: 0.0 for m in self.active_models}
                 self.state = "idle"
@@ -822,7 +965,7 @@ class VoiceDaemon:
             close_pcm_proc()
             self.busy = False
             self.reply_ended_at = time.time()
-            self.flush_openwakeword()
+            self.reset_wake_engine()
             self.pre_roll.clear()
             if reply_received and turn_playback_start is None:
                 # Text-only reply (quiet hours or disabled TTS): hold caption toast

@@ -26,21 +26,33 @@ class VoiceConfig:
     sample_rate: int = 16000
     chunk_samples: int = 1280
     models_dir: str = "/opt/mirrormere/voice/models"
-    # Wake mode: "openwakeword" (default, today's behavior), "ambient" (no
-    # wake word - every VAD-cut speech segment is classified by ambient_url),
-    # or "both" (wake word triggers directly; segments without one go
-    # through the ambient gate).
+    # Wake engine: "openwakeword" (default) or "sherpa-onnx".
+    wake_engine: str = "openwakeword"
+    # Wake mode: "openwakeword" (default, today's behavior), "wake_word" (engine-agnostic
+    # alias for openwakeword), "ambient" (no wake word - every VAD-cut speech segment
+    # is classified by ambient_url), or "both" (wake word triggers directly; segments
+    # without one go through the ambient gate).
     wake_mode: str = "openwakeword"
     ambient_url: str = ""
     ambient_timeout_seconds: float = 6.0
     # End-of-speech detection: "energy" (default, today's dBFS gate against
-    # speech_threshold_db) or "silero" (Silero VAD neural speech
-    # probability, reusing openWakeWord's bundled ONNX model). silence_ms
-    # still governs the trailing-silence window in either mode.
+    # speech_threshold_db) or "silero" (Silero VAD neural speech probability).
+    # silence_ms still governs the trailing-silence window in either mode.
     vad: str = "energy"
     # Silero speech-probability threshold (0.0-1.0) at or above which a
     # window counts as speech. Only used when vad == "silero".
     vad_threshold: float = 0.5
+    # Sherpa-ONNX KWS settings (used when wake_engine == "sherpa-onnx")
+    sherpa_model_dir: str = "/opt/mirrormere/voice/sherpa"
+    keywords_file: str = "/config/keywords.txt"
+    keyword: str = ""
+    keywords_score: float = 1.0
+    keywords_threshold: float = 0.25
+    sherpa_num_threads: int = 2
+
+    def wake_mode_uses_wake_word(self) -> bool:
+        """Returns True if the current wake mode evaluates a wake phrase."""
+        return self.wake_mode in ("openwakeword", "wake_word", "both")
 
 
 DEFAULT_CONFIG_PATH = os.environ.get("MIRRORMERE_VOICE_CONFIG", "/etc/mirrormere/voice.yaml")
@@ -106,7 +118,25 @@ def load_config(path: Optional[str] = None) -> VoiceConfig:
                 else:
                     voice_data = data
                 if isinstance(voice_data, dict):
+                    # Handle nested "sherpa" mapping if provided
+                    sherpa_sub = voice_data.get("sherpa")
+                    if isinstance(sherpa_sub, dict):
+                        if "model_dir" in sherpa_sub:
+                            cfg.sherpa_model_dir = str(sherpa_sub["model_dir"])
+                        if "keywords_file" in sherpa_sub:
+                            cfg.keywords_file = str(sherpa_sub["keywords_file"])
+                        if "keyword" in sherpa_sub:
+                            cfg.keyword = str(sherpa_sub["keyword"])
+                        if "keywords_score" in sherpa_sub and isinstance(sherpa_sub["keywords_score"], (int, float)):
+                            cfg.keywords_score = float(sherpa_sub["keywords_score"])
+                        if "keywords_threshold" in sherpa_sub and isinstance(sherpa_sub["keywords_threshold"], (int, float)):
+                            cfg.keywords_threshold = float(sherpa_sub["keywords_threshold"])
+                        if "num_threads" in sherpa_sub and isinstance(sherpa_sub["num_threads"], int):
+                            cfg.sherpa_num_threads = int(sherpa_sub["num_threads"])
+
                     for k, v in voice_data.items():
+                        if k == "sherpa":
+                            continue
                         if hasattr(cfg, k):
                             field_type = type(getattr(cfg, k))
                             if field_type == float and isinstance(v, (int, float)):
@@ -142,6 +172,29 @@ def load_config(path: Optional[str] = None) -> VoiceConfig:
             cfg.vad_threshold = float(os.environ["MIRRORMERE_VAD_THRESHOLD"])
         except ValueError:
             pass
+    if "MIRRORMERE_WAKE_ENGINE" in os.environ:
+        cfg.wake_engine = os.environ["MIRRORMERE_WAKE_ENGINE"]
+    if "MIRRORMERE_SHERPA_MODEL_DIR" in os.environ:
+        cfg.sherpa_model_dir = os.environ["MIRRORMERE_SHERPA_MODEL_DIR"]
+    if "MIRRORMERE_KEYWORDS_FILE" in os.environ:
+        cfg.keywords_file = os.environ["MIRRORMERE_KEYWORDS_FILE"]
+    if "MIRRORMERE_KEYWORD" in os.environ:
+        cfg.keyword = os.environ["MIRRORMERE_KEYWORD"]
+    if "MIRRORMERE_KEYWORDS_SCORE" in os.environ:
+        try:
+            cfg.keywords_score = float(os.environ["MIRRORMERE_KEYWORDS_SCORE"])
+        except ValueError:
+            pass
+    if "MIRRORMERE_KEYWORDS_THRESHOLD" in os.environ:
+        try:
+            cfg.keywords_threshold = float(os.environ["MIRRORMERE_KEYWORDS_THRESHOLD"])
+        except ValueError:
+            pass
+    if "MIRRORMERE_SHERPA_NUM_THREADS" in os.environ:
+        try:
+            cfg.sherpa_num_threads = int(os.environ["MIRRORMERE_SHERPA_NUM_THREADS"])
+        except ValueError:
+            pass
 
     _validate(cfg)
     return cfg
@@ -149,9 +202,28 @@ def load_config(path: Optional[str] = None) -> VoiceConfig:
 
 def _validate(cfg: VoiceConfig) -> None:
     """Clamps/normalizes fields that can't be trusted to arbitrary YAML input."""
+    if cfg.wake_engine not in ("openwakeword", "sherpa-onnx"):
+        cfg.wake_engine = "openwakeword"
+    if cfg.wake_mode not in ("openwakeword", "wake_word", "ambient", "both"):
+        cfg.wake_mode = "wake_word"
     if cfg.vad not in ("energy", "silero"):
         cfg.vad = "energy"
     if not isinstance(cfg.vad_threshold, (int, float)) or not (0.0 <= float(cfg.vad_threshold) <= 1.0):
         cfg.vad_threshold = 0.5
     else:
         cfg.vad_threshold = float(cfg.vad_threshold)
+
+    try:
+        cfg.sherpa_num_threads = max(1, min(int(cfg.sherpa_num_threads), 2))
+    except (ValueError, TypeError):
+        cfg.sherpa_num_threads = 2
+
+    if not isinstance(cfg.keywords_score, (int, float)):
+        cfg.keywords_score = 1.0
+    else:
+        cfg.keywords_score = float(cfg.keywords_score)
+
+    if not isinstance(cfg.keywords_threshold, (int, float)):
+        cfg.keywords_threshold = 0.25
+    else:
+        cfg.keywords_threshold = float(cfg.keywords_threshold)
