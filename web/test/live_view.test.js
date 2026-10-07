@@ -330,4 +330,66 @@ test('Live View Client Controller', async (t) => {
     global.window.MirrormereLiveView.unmount('cam-tile');
     assert.equal(sseOffCalled, true, 'unmount should remove SSE listener');
   });
+
+  await t.test('touch/pointer tap-to-expand, drag rejection, and debouncing on widget tile', async () => {
+    let triggerCount = 0;
+    const fetchMock = async (url) => {
+      if (url === 'api/video/trigger') {
+        triggerCount++;
+        return { ok: true, status: 200, text: () => Promise.resolve('{"status":"ok"}') };
+      }
+      return { ok: true, status: 200, text: () => Promise.resolve('{}') };
+    };
+
+    const el = createMockElement({
+      stream_url: 'http://127.0.0.1:1984/api/webrtc?src=cast',
+      stream_type: 'webrtc',
+      stream_id: 'chromecast',
+    });
+
+    const inst = global.window.MirrormereLiveView.mount(el, {
+      fetch: fetchMock,
+      RTCPeerConnection: MockPeerConnection,
+    });
+
+    // 1. pointerup triggers expansion
+    el.dispatchEvent({ type: 'pointerup' });
+    assert.equal(triggerCount, 1);
+    assert.equal(inst.isLoading, true);
+
+    // 2. Synthetic click immediately following pointerup within 350ms is debounced/ignored
+    el.dispatchEvent({ type: 'click' });
+    assert.equal(triggerCount, 1);
+
+    // 3. Clear loading state to test cooldown and drag rejection
+    inst.isLoading = false;
+    el.classList.remove('loading');
+
+    // 4. Drag gesture (movement >= 15px) is rejected and does NOT trigger expansion
+    await new Promise((r) => setTimeout(r, 360));
+    el.dispatchEvent({ type: 'pointerdown', clientX: 100, clientY: 100 });
+    el.dispatchEvent({ type: 'pointerup', clientX: 150, clientY: 150 });
+    assert.equal(triggerCount, 1, 'drag gesture should be rejected');
+
+    // Synthetic click immediately following drag release is also eaten
+    el.dispatchEvent({ type: 'click' });
+    assert.equal(triggerCount, 1, 'synthetic click after drag should be suppressed');
+
+    // 5. Stationary tap after cooldown triggers expansion
+    await new Promise((r) => setTimeout(r, 360));
+    el.dispatchEvent({ type: 'pointerdown', clientX: 200, clientY: 200 });
+    el.dispatchEvent({ type: 'pointerup', clientX: 205, clientY: 205 });
+    assert.equal(triggerCount, 2, 'stationary tap should trigger expansion');
+
+    // 6. Regression test: pure keyboard click (Enter key with clientX: 0, clientY: 0)
+    // must NOT inherit stale startX/startY coordinates from previous pointer interaction
+    inst.isLoading = false;
+    el.classList.remove('loading');
+    await new Promise((r) => setTimeout(r, 360));
+    el.dispatchEvent({ type: 'click', clientX: 0, clientY: 0 });
+    assert.equal(triggerCount, 3, 'keyboard click should trigger expansion and not be treated as drag');
+
+    global.window.MirrormereLiveView.unmount('cam-tile');
+    assert.equal(global.window.MirrormereLiveView.getInstance('cam-tile'), null);
+  });
 });

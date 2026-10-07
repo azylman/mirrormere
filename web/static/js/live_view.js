@@ -64,9 +64,53 @@
     }
 
     bindClickGesture() {
+      let lastTriggerTime = 0;
+      let startX = null;
+      let startY = null;
+
+      const getCoords = (e) => {
+        if (e && e.changedTouches && e.changedTouches.length > 0) {
+          return { x: e.changedTouches[0].clientX, y: e.changedTouches[0].clientY };
+        }
+        if (e && typeof e.clientX === 'number' && typeof e.clientY === 'number') {
+          return { x: e.clientX, y: e.clientY };
+        }
+        return null;
+      };
+
+      this.pointerDownHandler = (e) => {
+        const coords = getCoords(e);
+        if (coords) {
+          startX = coords.x;
+          startY = coords.y;
+        } else {
+          startX = null;
+          startY = null;
+        }
+      };
+
       this.clickHandler = async (e) => {
         if (this.config.expand_on_click === false) return;
         if (this.isLoading) return;
+
+        const now = Date.now();
+        const coords = getCoords(e);
+        if (startX !== null && startY !== null && coords) {
+          const dist = Math.hypot(coords.x - startX, coords.y - startY);
+          startX = null;
+          startY = null;
+          if (dist >= 15) {
+            lastTriggerTime = now;
+            return;
+          }
+        }
+        startX = null;
+        startY = null;
+
+        if (now - lastTriggerTime < 350) {
+          return;
+        }
+        lastTriggerTime = now;
 
         this.isLoading = true;
         this.element.classList.add('loading');
@@ -106,6 +150,8 @@
         }
       };
 
+      this.element.addEventListener('pointerdown', this.pointerDownHandler);
+      this.element.addEventListener('pointerup', this.clickHandler);
       this.element.addEventListener('click', this.clickHandler);
     }
 
@@ -334,8 +380,14 @@
     destroy() {
       this.pauseStream();
       if (this.safetyTimer) clearTimeout(this.safetyTimer);
-      if (this.element && this.clickHandler) {
-        this.element.removeEventListener('click', this.clickHandler);
+      if (this.element) {
+        if (this.pointerDownHandler) {
+          this.element.removeEventListener('pointerdown', this.pointerDownHandler);
+        }
+        if (this.clickHandler) {
+          this.element.removeEventListener('pointerup', this.clickHandler);
+          this.element.removeEventListener('click', this.clickHandler);
+        }
       }
       if (this.observer) {
         this.observer.disconnect();
