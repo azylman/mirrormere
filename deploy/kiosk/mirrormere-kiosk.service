@@ -1,26 +1,35 @@
 [Unit]
 Description=Mirrormere Wayland Touch Kiosk
-After=network-online.target systemd-user-sessions.service
-Wants=network-online.target
+After=network-online.target sound.target seatd.service systemd-user-sessions.service
+Wants=network-online.target sound.target seatd.service
 Conflicts=getty@tty1.service
 
 [Service]
 Type=simple
 User=kiosk
 Group=kiosk
-SupplementaryGroups=video input audio render
+SupplementaryGroups=video input audio render seat
 PAMName=login
 TTYPath=/dev/tty1
 StandardInput=tty
 StandardOutput=journal
 StandardError=journal
+TTYReset=yes
+TTYVHangup=yes
 Environment="WAYLAND_DISPLAY=wayland-0"
 Environment="XDG_SESSION_TYPE=wayland"
-Environment="XDG_CURRENT_DESKTOP=cage"
+Environment="XDG_CURRENT_DESKTOP=Wayland"
+Environment="LIBSEAT_BACKEND=seatd"
+Environment="XCURSOR_THEME=transparent"
+Environment="XCURSOR_SIZE=24"
 EnvironmentFile=-/etc/default/mirrormere-kiosk
+ExecStartPre=-/bin/sh -c "pkill -u $(id -u) -f 'mirrormere-chrome|chrome' 2>/dev/null || true"
+ExecStartPre=-/bin/sh -c "rm -f /home/*/.config/mirrormere-chrome/Singleton* /home/*/.config/google-chrome/Singleton* 2>/dev/null || true"
 ExecStart=/opt/mirrormere/kiosk/launch.sh
 Restart=always
 RestartSec=3
+TimeoutStopSec=5
+KillMode=control-group
 
 [Install]
-WantedBy=graphical.target
+WantedBy=multi-user.target graphical.target
