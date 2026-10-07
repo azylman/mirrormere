@@ -77,24 +77,75 @@
     bindControls() {
       // 1. Stage tap-to-wake / tap-to-toggle
       if (this.stageElement) {
-        const onStageClick = (e) => {
+        let lastToggleTime = 0;
+        let startX = null;
+        let startY = null;
+
+        const getCoords = (e) => {
+          if (e && e.changedTouches && e.changedTouches.length > 0) {
+            return { x: e.changedTouches[0].clientX, y: e.changedTouches[0].clientY };
+          }
+          if (e && typeof e.clientX === 'number' && typeof e.clientY === 'number') {
+            return { x: e.clientX, y: e.clientY };
+          }
+          return null;
+        };
+
+        const onStagePointerDown = (e) => {
+          const coords = getCoords(e);
+          if (coords) {
+            startX = coords.x;
+            startY = coords.y;
+          } else {
+            startX = null;
+            startY = null;
+          }
+        };
+
+        const onStageToggle = (e) => {
+          const now = Date.now();
+
+          // Ignore drag/swipe gestures (movement >= 15px)
+          const coords = getCoords(e);
+          if (startX !== null && startY !== null && coords) {
+            const dist = Math.hypot(coords.x - startX, coords.y - startY);
+            if (dist >= 15) {
+              lastToggleTime = now; // Suppress ghost events following drag release
+              return;
+            }
+          }
+
           // Identify which slot is currently rendered as the corner PiP dock
           const isSwapped = (this.videoManager && this.videoManager.isSwapped) ||
             (this.stageElement && this.stageElement.dataset && this.stageElement.dataset.swapped === 'true');
           const cornerDockSelector = isSwapped ? '.video-primary-slot' : '.video-pip-slot';
 
-          // If click was inside the active corner PiP dock, let PiP handler process the swap
+          // If event was inside the active corner PiP dock, let PiP handler process the swap
           if (e.target && e.target.closest && e.target.closest(cornerDockSelector)) {
             return;
           }
-          // If click was on interactive HUD elements, let them handle it
+          // If event was on interactive HUD elements, let them handle it
           if (e.target && e.target.closest && (e.target.closest('.video-hud-controls') || e.target.closest('.video-hud-header'))) {
             return;
           }
+
+          // Debounce rapid duplicate pointerup / click events from the same tap gesture
+          if (now - lastToggleTime < 350) {
+            return;
+          }
+          lastToggleTime = now;
+
           this.toggleHUD();
         };
-        this.stageElement.addEventListener('click', onStageClick);
-        this.boundHandlers.push({ el: this.stageElement, ev: 'click', fn: onStageClick });
+
+        this.stageElement.addEventListener('pointerdown', onStagePointerDown);
+        this.boundHandlers.push({ el: this.stageElement, ev: 'pointerdown', fn: onStagePointerDown });
+
+        const stageEvents = ['pointerup', 'click'];
+        stageEvents.forEach((ev) => {
+          this.stageElement.addEventListener(ev, onStageToggle);
+          this.boundHandlers.push({ el: this.stageElement, ev, fn: onStageToggle });
+        });
       }
 
       // 2. Dismiss button
