@@ -3,6 +3,7 @@ import io
 import json
 import math
 import os
+import shutil
 import struct
 import subprocess
 import tempfile
@@ -12,7 +13,13 @@ import urllib.error
 from unittest.mock import MagicMock, call, patch
 
 from clients.ear.config import VoiceConfig
-from clients.ear.client import VoiceDaemon, post_voice_state, post_voice_heartbeat
+from clients.ear.client import (
+    VoiceDaemon,
+    post_voice_state,
+    post_voice_heartbeat,
+    tokenize_keyword_phrase,
+    format_sherpa_keyword_line,
+)
 
 
 class MockModel:
@@ -1176,6 +1183,48 @@ class TestVoiceDaemon(unittest.TestCase):
             with self.assertRaises(RuntimeError) as ctx:
                 daemon._init_sherpa()
             self.assertIn("Sherpa model directory not found", str(ctx.exception))
+
+    def test_tokenize_keyword_phrase(self):
+        self.assertEqual(tokenize_keyword_phrase("▁HE LL O ▁WORLD"), "▁HE LL O ▁WORLD")
+        self.assertEqual(tokenize_keyword_phrase(""), "")
+        with self.assertRaises(RuntimeError):
+            tokenize_keyword_phrase("hey aerial", bpe_model_path="/nonexistent/bpe.model")
+
+        mock_spm = MagicMock()
+        mock_sp = MagicMock()
+        mock_sp.encode_as_pieces.return_value = ["▁HE", "Y", "▁A", "E", "R", "I", "AL"]
+        mock_spm.SentencePieceProcessor.return_value = mock_sp
+        with tempfile.NamedTemporaryFile(suffix=".model") as tf, patch.dict("sys.modules", {"sentencepiece": mock_spm}):
+            self.assertEqual(tokenize_keyword_phrase("hey aerial", bpe_model_path=tf.name), "▁HE Y ▁A E R I AL")
+
+    def test_format_sherpa_keyword_line(self):
+        with patch("clients.ear.client.tokenize_keyword_phrase", return_value="▁HE LL O ▁WORLD"):
+            self.assertEqual(format_sherpa_keyword_line("hello world"), "▁HE LL O ▁WORLD :1.0 #0.25")
+            self.assertEqual(format_sherpa_keyword_line("hello world :2.0 #0.45 @hello_world"), "▁HE LL O ▁WORLD :2.0 #0.45")
+            self.assertEqual(format_sherpa_keyword_line(""), "")
+            self.assertEqual(format_sherpa_keyword_line("# comment"), "")
+
+    def test_init_sherpa_tokenizes_and_creates_keyword_spotter(self):
+        model_dir = tempfile.mkdtemp()
+        try:
+            for name in ("tokens.txt", "bpe.model", "encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx"):
+                with open(os.path.join(model_dir, name), "w") as f:
+                    f.write("mock")
+            cfg = VoiceConfig(wake_engine="sherpa-onnx", sherpa_model_dir=model_dir, keyword="hey aerial", keywords_score=1.5, keywords_threshold=0.35)
+            daemon = VoiceDaemon.__new__(VoiceDaemon)
+            daemon.cfg = cfg
+            mock_spotter, mock_stream, mock_sherpa = MagicMock(), MagicMock(), MagicMock()
+            mock_spotter.create_stream.return_value = mock_stream
+            mock_sherpa.KeywordSpotter.return_value = mock_spotter
+            with patch.dict("sys.modules", {"sherpa_onnx": mock_sherpa}), patch("clients.ear.client.tokenize_keyword_phrase", return_value="▁HE Y ▁A E R I AL"):
+                spotter, stream = daemon._init_sherpa()
+                self.assertEqual(spotter, mock_spotter)
+                self.assertEqual(stream, mock_stream)
+                kwargs = mock_sherpa.KeywordSpotter.call_args[1]
+                with open(kwargs["keywords_file"]) as f:
+                    self.assertEqual(f.read().strip(), "▁HE Y ▁A E R I AL :1.5 #0.35")
+        finally:
+            shutil.rmtree(model_dir, ignore_errors=True)
 
 
 

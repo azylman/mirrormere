@@ -22,6 +22,7 @@ import shutil
 import signal
 import struct
 import subprocess
+import tempfile
 import threading
 import time
 import urllib.error
@@ -139,6 +140,60 @@ def post_voice_heartbeat(
     except (urllib.error.URLError, Exception) as e:
         logger.warning("Failed to post voice heartbeat to %s: %s", url, e)
         return False
+
+
+def tokenize_keyword_phrase(
+    phrase: str,
+    bpe_model_path: str = "/opt/mirrormere/voice/sherpa/bpe.model",
+    tokens_path: Optional[str] = None,
+) -> str:
+    """Encodes a plain text wake phrase into Sherpa BPE tokens."""
+    phrase = phrase.strip()
+    if not phrase or "▁" in phrase:
+        return phrase
+    if not os.path.exists(bpe_model_path) or not os.access(bpe_model_path, os.R_OK):
+        raise RuntimeError(f"Sherpa BPE tokenizer model missing or unreadable at {bpe_model_path}")
+    try:
+        import sentencepiece as spm
+        sp = spm.SentencePieceProcessor()
+        sp.load(bpe_model_path)
+        return " ".join(sp.encode_as_pieces(phrase.upper()))
+    except ImportError:
+        try:
+            import sherpa_onnx
+            if hasattr(sherpa_onnx, "SentencePieceTokenizer"):
+                return " ".join(sherpa_onnx.SentencePieceTokenizer(bpe_model_path).encode(phrase.upper()))
+        except Exception as e:
+            raise RuntimeError(f"Failed to tokenize wake phrase '{phrase}': {e}") from e
+    raise RuntimeError(f"No SentencePiece tokenizer available to tokenize keyword '{phrase}'")
+
+
+def format_sherpa_keyword_line(
+    raw_line: str,
+    default_score: float = 1.0,
+    default_threshold: float = 0.25,
+    bpe_model_path: str = "/opt/mirrormere/voice/sherpa/bpe.model",
+    tokens_path: Optional[str] = None,
+) -> str:
+    """Parses a raw keyword line, strips score/threshold annotations, tokenizes to BPE, and re-attaches annotations."""
+    line = raw_line.strip()
+    if not line or line.startswith("#"):
+        return ""
+    tokens, score, threshold = [], default_score, default_threshold
+    for tok in line.split():
+        if tok.startswith(":"):
+            try: score = float(tok[1:])
+            except ValueError: tokens.append(tok)
+        elif tok.startswith("#"):
+            try: threshold = float(tok[1:])
+            except ValueError: tokens.append(tok)
+        elif not tok.startswith("@"):
+            tokens.append(tok)
+    text = " ".join(tokens)
+    if not text:
+        return ""
+    tokenized = tokenize_keyword_phrase(text, bpe_model_path=bpe_model_path, tokens_path=tokens_path)
+    return f"{tokenized} :{score} #{threshold}"
 
 
 class VoiceDaemon:
@@ -268,7 +323,7 @@ class VoiceDaemon:
         return model, active
 
     def _init_sherpa(self):
-        """Discovers base Zipformer model and instantiates sherpa-onnx KeywordSpotter."""
+        """Discovers base Zipformer model, tokenizes keywords, and instantiates sherpa-onnx KeywordSpotter."""
         try:
             import sherpa_onnx
         except ImportError as e:
@@ -279,16 +334,15 @@ class VoiceDaemon:
             raise RuntimeError(f"Sherpa model directory not found: {model_dir}")
 
         tokens = os.path.join(model_dir, "tokens.txt")
-        # Check encoder (int8 preferred, fallback to fp32)
-        encoder = os.path.join(model_dir, "encoder.int8.onnx")
-        if not os.path.exists(encoder):
-            encoder = os.path.join(model_dir, "encoder.onnx")
-        decoder = os.path.join(model_dir, "decoder.int8.onnx")
-        if not os.path.exists(decoder):
-            decoder = os.path.join(model_dir, "decoder.onnx")
-        joiner = os.path.join(model_dir, "joiner.int8.onnx")
-        if not os.path.exists(joiner):
-            joiner = os.path.join(model_dir, "joiner.onnx")
+        bpe_model = os.path.join(model_dir, "bpe.model")
+
+        def _find_model(prefix):
+            p = os.path.join(model_dir, f"{prefix}.int8.onnx")
+            if os.path.exists(p): return p
+            c = glob.glob(os.path.join(model_dir, f"{prefix}*.int8.onnx")) + glob.glob(os.path.join(model_dir, f"{prefix}*.onnx"))
+            return c[0] if c else os.path.join(model_dir, f"{prefix}.onnx")
+
+        encoder, decoder, joiner = _find_model("encoder"), _find_model("decoder"), _find_model("joiner")
 
         for p in (tokens, encoder, decoder, joiner):
             if not os.path.exists(p) or not os.access(p, os.R_OK):
@@ -296,17 +350,53 @@ class VoiceDaemon:
 
         num_threads = max(1, min(int(self.cfg.sherpa_num_threads), 2))
 
-        keywords_file = self.cfg.keywords_file
-        keywords_buf = ""
-        if os.path.exists(keywords_file) and os.access(keywords_file, os.R_OK):
-            logger.info("Using Sherpa keywords file: %s", keywords_file)
+        # Collect raw keywords from file, cfg.keyword, or cfg.wake_models fallback
+        raw_keywords = []
+        if os.path.exists(self.cfg.keywords_file) and os.access(self.cfg.keywords_file, os.R_OK):
+            logger.info("Using Sherpa keywords file: %s", self.cfg.keywords_file)
+            with open(self.cfg.keywords_file, "r", encoding="utf-8") as f:
+                for line in f:
+                    s = line.strip()
+                    if s and not s.startswith("#"):
+                        raw_keywords.append(s)
         elif self.cfg.keyword:
-            keywords_buf = self.cfg.keyword
-            logger.info("Using Sherpa inline keyword: %s", keywords_buf)
+            logger.info("Using Sherpa inline keyword: %s", self.cfg.keyword)
+            raw_keywords.append(self.cfg.keyword)
+        elif self.cfg.wake_models:
+            for m in self.cfg.wake_models:
+                raw_keywords.append(" ".join(m.replace("-", "_").split("_")))
+            logger.info("Using Sherpa keywords from wake_models fallback: %s", raw_keywords)
         else:
             raise RuntimeError(
-                f"No wake keywords configured for Sherpa (keywords_file '{keywords_file}' not found and cfg.keyword is empty)"
+                f"No wake keywords configured for Sherpa (keywords_file '{self.cfg.keywords_file}' not found and cfg.keyword is empty)"
             )
+
+        formatted_lines = []
+        for raw in raw_keywords:
+            line = format_sherpa_keyword_line(
+                raw,
+                default_score=self.cfg.keywords_score,
+                default_threshold=self.cfg.keywords_threshold,
+                bpe_model_path=bpe_model,
+                tokens_path=tokens,
+            )
+            if line:
+                formatted_lines.append(line)
+
+        if not formatted_lines:
+            raise RuntimeError("No valid wake keywords could be formatted for Sherpa")
+
+        # Materialize tokenized keywords into a file for KeywordSpotter (compatible across all sherpa versions)
+        kw_file = os.path.join(model_dir, "generated_keywords.txt")
+        try:
+            with open(kw_file, "w", encoding="utf-8") as f:
+                f.write("\n".join(formatted_lines) + "\n")
+        except OSError:
+            with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False, encoding="utf-8") as tf:
+                tf.write("\n".join(formatted_lines) + "\n")
+                kw_file = tf.name
+
+        self._sherpa_keywords_file = kw_file
 
         kwargs = {
             "tokens": tokens,
@@ -314,19 +404,16 @@ class VoiceDaemon:
             "decoder": decoder,
             "joiner": joiner,
             "num_threads": num_threads,
+            "keywords_file": kw_file,
             "keywords_score": self.cfg.keywords_score,
             "keywords_threshold": self.cfg.keywords_threshold,
             "provider": "cpu",
         }
-        if keywords_buf:
-            kwargs["keywords_buf"] = keywords_buf
-        else:
-            kwargs["keywords_file"] = keywords_file
 
         try:
             spotter = sherpa_onnx.KeywordSpotter(**kwargs)
             stream = spotter.create_stream()
-            logger.info("Sherpa-ONNX KeywordSpotter initialized successfully (threads=%d)", num_threads)
+            logger.info("Sherpa-ONNX KeywordSpotter initialized successfully (threads=%d, keywords=%d)", num_threads, len(formatted_lines))
             return spotter, stream
         except Exception as e:
             raise RuntimeError(f"Failed to initialize Sherpa KeywordSpotter: {e}") from e

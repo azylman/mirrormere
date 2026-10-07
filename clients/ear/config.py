@@ -121,8 +121,6 @@ def load_config(path: Optional[str] = None) -> VoiceConfig:
                     # Handle nested "sherpa" mapping if provided
                     sherpa_sub = voice_data.get("sherpa")
                     if isinstance(sherpa_sub, dict):
-                        if "model_dir" in sherpa_sub:
-                            cfg.sherpa_model_dir = str(sherpa_sub["model_dir"])
                         if "keywords_file" in sherpa_sub:
                             cfg.keywords_file = str(sherpa_sub["keywords_file"])
                         if "keyword" in sherpa_sub:
@@ -135,7 +133,7 @@ def load_config(path: Optional[str] = None) -> VoiceConfig:
                             cfg.sherpa_num_threads = int(sherpa_sub["num_threads"])
 
                     for k, v in voice_data.items():
-                        if k == "sherpa":
+                        if k in ("sherpa", "sherpa_model_dir", "model_dir"):
                             continue
                         if hasattr(cfg, k):
                             field_type = type(getattr(cfg, k))
@@ -174,8 +172,6 @@ def load_config(path: Optional[str] = None) -> VoiceConfig:
             pass
     if "MIRRORMERE_WAKE_ENGINE" in os.environ:
         cfg.wake_engine = os.environ["MIRRORMERE_WAKE_ENGINE"]
-    if "MIRRORMERE_SHERPA_MODEL_DIR" in os.environ:
-        cfg.sherpa_model_dir = os.environ["MIRRORMERE_SHERPA_MODEL_DIR"]
     if "MIRRORMERE_KEYWORDS_FILE" in os.environ:
         cfg.keywords_file = os.environ["MIRRORMERE_KEYWORDS_FILE"]
     if "MIRRORMERE_KEYWORD" in os.environ:

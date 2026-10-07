@@ -44,7 +44,8 @@ ear:
             cfg = load_config(temp_path)
             self.assertEqual(cfg.wake_engine, "sherpa-onnx")
             self.assertEqual(cfg.wake_mode, "wake_word")
-            self.assertEqual(cfg.sherpa_model_dir, "/custom/sherpa")
+            # Model directory override is forbidden; must remain bundled default
+            self.assertEqual(cfg.sherpa_model_dir, "/opt/mirrormere/voice/sherpa")
             self.assertEqual(cfg.keywords_file, "/custom/keywords.txt")
             self.assertEqual(cfg.keyword, "hey aerial")
             self.assertEqual(cfg.keywords_score, 1.5)
@@ -198,7 +199,7 @@ voice:
             self.assertEqual(cfg.vad, "silero")
             self.assertEqual(cfg.vad_threshold, 0.65)
             self.assertEqual(cfg.wake_engine, "sherpa-onnx")
-            self.assertEqual(cfg.sherpa_model_dir, "/env/sherpa")
+            self.assertEqual(cfg.sherpa_model_dir, "/opt/mirrormere/voice/sherpa")
             self.assertEqual(cfg.keywords_file, "/env/keywords.txt")
             self.assertEqual(cfg.keyword, "env keyword")
             self.assertEqual(cfg.keywords_score, 2.0)
