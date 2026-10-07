@@ -328,26 +328,19 @@ func TestCoordinator_StatusAndFullState(t *testing.T) {
 		t.Fatalf("expected state unchanged, got %q", st2.State)
 	}
 
-	// Late-idle suppression: Reset while in StateThinking does NOT clobber active input state
-	suppressedReset := c.Reset()
-	if suppressedReset.State != StateThinking {
-		t.Fatalf("expected late-idle reset to be suppressed while thinking, got %q", suppressedReset.State)
-	}
-
-	// Transition to speaking, then Reset clears status and returns to idle
-	c.Transition(StateSpeaking, &transcript, nil, nil, nil)
+	// Reset while in StateThinking clears status and returns to idle
 	resetState := c.Reset()
 	if resetState.State != StateIdle || resetState.Status != nil {
 		t.Fatalf("expected idle with nil status, got %+v", resetState)
 	}
 }
 
-func TestCoordinator_LateIdleSuppression(t *testing.T) {
+func TestCoordinator_IdleTransitionFromActiveStates(t *testing.T) {
 	t.Parallel()
 
 	activeInputStates := []string{StateListening, StateTranscribing, StateThinking}
 	for _, activeState := range activeInputStates {
-		t.Run("suppresses idle when in "+activeState, func(t *testing.T) {
+		t.Run("allows idle when in "+activeState, func(t *testing.T) {
 			t.Parallel()
 			c := NewCoordinator(nil)
 			q := "query"
@@ -361,38 +354,41 @@ func TestCoordinator_LateIdleSuppression(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if st.State != activeState {
-				t.Fatalf("expected SetState(StateIdle) to be ignored, got %q", st.State)
+			if st.State != StateIdle {
+				t.Fatalf("expected SetState(StateIdle) to transition to idle from %s, got %q", activeState, st.State)
 			}
-			if c.GetState().State != activeState {
-				t.Fatalf("expected GetState() to remain %q, got %q", activeState, c.GetState().State)
+			if c.GetState().State != StateIdle {
+				t.Fatalf("expected GetState() to be %q, got %q", StateIdle, c.GetState().State)
 			}
+
+			// Reset back to activeState
+			_, _ = c.SetState(activeState, &q, nil, nil)
 
 			// Try SetFullState(StateIdle)
 			stFull, err := c.SetFullState(StateIdle, nil, nil, nil, nil)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if stFull.State != activeState {
-				t.Fatalf("expected SetFullState(StateIdle) to be ignored, got %q", stFull.State)
+			if stFull.State != StateIdle {
+				t.Fatalf("expected SetFullState(StateIdle) to transition to idle from %s, got %q", activeState, stFull.State)
 			}
+
+			// Reset back to activeState
+			_, _ = c.SetState(activeState, &q, nil, nil)
 
 			// Try Reset()
 			stReset := c.Reset()
-			if stReset.State != activeState {
-				t.Fatalf("expected Reset() to be ignored, got %q", stReset.State)
+			if stReset.State != StateIdle {
+				t.Fatalf("expected Reset() to transition to idle from %s, got %q", activeState, stReset.State)
 			}
-			if c.GetState().State != activeState {
-				t.Fatalf("expected GetState() to remain %q, got %q", activeState, c.GetState().State)
-			}
+
+			// Reset back to activeState
+			_, _ = c.SetState(activeState, &q, nil, nil)
 
 			// Try Transition(StateIdle)
 			stTrans := c.Transition(StateIdle, nil, nil, nil, nil)
-			if stTrans.State != activeState {
-				t.Fatalf("expected Transition(StateIdle) to be ignored, got %q", stTrans.State)
-			}
-			if c.GetState().State != activeState {
-				t.Fatalf("expected GetState() to remain %q, got %q", activeState, c.GetState().State)
+			if stTrans.State != StateIdle {
+				t.Fatalf("expected Transition(StateIdle) to transition to idle from %s, got %q", activeState, stTrans.State)
 			}
 		})
 	}
