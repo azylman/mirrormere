@@ -212,6 +212,86 @@ func (h *Hub) recordChat(nodeID, role, author, text string) {
 	}
 }
 
+// inactivityContext provides a sliding window inactivity timeout.
+// When no activity occurs for the specified duration, the context is canceled
+// with context.DeadlineExceeded. Calls to Reset() advance the deadline.
+type inactivityContext struct {
+	context.Context
+	cancel       context.CancelFunc
+	timer        *time.Timer
+	d            time.Duration
+	mu           sync.Mutex
+	lastActivity time.Time
+	err          error
+	done         bool
+}
+
+func newInactivityContext(parent context.Context, timeout time.Duration) (*inactivityContext, func()) {
+	ctx, cancel := context.WithCancel(parent)
+	ic := &inactivityContext{
+		Context:      ctx,
+		cancel:       cancel,
+		d:            timeout,
+		lastActivity: time.Now(),
+	}
+
+	if timeout > 0 {
+		var onTimeout func()
+		onTimeout = func() {
+			ic.mu.Lock()
+			defer ic.mu.Unlock()
+
+			if ic.done || ic.Context.Err() != nil {
+				return
+			}
+
+			elapsed := time.Since(ic.lastActivity)
+			if elapsed < ic.d {
+				remaining := ic.d - elapsed
+				ic.timer = time.AfterFunc(remaining, onTimeout)
+				return
+			}
+
+			ic.err = context.DeadlineExceeded
+			ic.done = true
+			ic.cancel()
+		}
+		ic.mu.Lock()
+		ic.timer = time.AfterFunc(timeout, onTimeout)
+		ic.mu.Unlock()
+	}
+
+	stop := func() {
+		ic.mu.Lock()
+		defer ic.mu.Unlock()
+		ic.done = true
+		if ic.timer != nil {
+			ic.timer.Stop()
+		}
+		ic.cancel()
+	}
+
+	return ic, stop
+}
+
+func (ic *inactivityContext) Err() error {
+	ic.mu.Lock()
+	defer ic.mu.Unlock()
+	if ic.err != nil {
+		return ic.err
+	}
+	return ic.Context.Err()
+}
+
+func (ic *inactivityContext) Reset() {
+	ic.mu.Lock()
+	defer ic.mu.Unlock()
+	if ic.done || ic.Context.Err() != nil {
+		return
+	}
+	ic.lastActivity = time.Now()
+}
+
 // isTimeoutError reports whether an error or context deadline was caused by a timeout,
 // explicitly ignoring client-side parent context cancellations.
 func isTimeoutError(err error, timeoutCtx, parentCtx context.Context) bool {
@@ -453,9 +533,6 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 		heartbeatInterval = 5 * time.Second
 	}
 
-	brainCtx, brainCancel := context.WithTimeout(ctx, brainTimeout)
-	defer brainCancel()
-
 	var heartbeatMu sync.Mutex
 	heartbeatActive := true
 	stopHeartbeat := make(chan struct{})
@@ -470,34 +547,36 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 	}
 	defer stopThinking()
 
-	go func() {
-		ticker := time.NewTicker(heartbeatInterval)
-		defer ticker.Stop()
-		tickerStart := time.Now()
-		for {
-			select {
-			case <-stopHeartbeat:
-				return
-			case <-brainCtx.Done():
-				return
-			case tick := <-ticker.C:
-				heartbeatMu.Lock()
-				active := heartbeatActive
-				heartbeatMu.Unlock()
-				if !active {
+	startHeartbeat := func(doneCtx context.Context) {
+		go func() {
+			ticker := time.NewTicker(heartbeatInterval)
+			defer ticker.Stop()
+			tickerStart := time.Now()
+			for {
+				select {
+				case <-stopHeartbeat:
 					return
-				}
-				elapsedSec := int(math.Round(tick.Sub(tickerStart).Seconds()))
-				if elapsedSec <= 0 {
-					elapsedSec = 1
-				}
-				if sinkErr := safeSink("thinking", map[string]int{"elapsed_seconds": elapsedSec}); sinkErr != nil {
-					slog.Debug("thinking heartbeat sink error", "error", sinkErr)
+				case <-doneCtx.Done():
 					return
+				case tick := <-ticker.C:
+					heartbeatMu.Lock()
+					active := heartbeatActive
+					heartbeatMu.Unlock()
+					if !active {
+						return
+					}
+					elapsedSec := int(math.Round(tick.Sub(tickerStart).Seconds()))
+					if elapsedSec <= 0 {
+						elapsedSec = 1
+					}
+					if sinkErr := safeSink("thinking", map[string]int{"elapsed_seconds": elapsedSec}); sinkErr != nil {
+						slog.Debug("thinking heartbeat sink error", "error", sinkErr)
+						return
+					}
 				}
 			}
-		}
-	}()
+		}()
+	}
 
 	engine := h.cfg.GetTTSModel()
 
@@ -535,8 +614,15 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 			streamCh     = 1
 		)
 
-		streamCtx, cancelStream := context.WithCancel(brainCtx)
-		defer cancelStream()
+		streamCtx, stopStream := newInactivityContext(ctx, brainTimeout)
+		defer stopStream()
+		cancelStream := stopStream
+		startHeartbeat(streamCtx)
+
+		streamOnStatus := func(status string) {
+			streamCtx.Reset()
+			onStatus(status)
+		}
 
 		const pcmChunkFloor = 4800 // ~100ms at 24kHz 16-bit mono
 
@@ -587,6 +673,9 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 
 		onAudio := func(chunk BrainAudioChunk) {
 			stopThinking()
+			if len(chunk.Data) > 0 || chunk.Text != "" {
+				streamCtx.Reset()
+			}
 			if streamErr != nil {
 				return
 			}
@@ -662,12 +751,13 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 				if ttsTimeout <= 0 {
 					ttsTimeout = 10 * time.Second
 				}
-				ttsCtx, ttsCancel := context.WithTimeout(ctx, ttsTimeout)
-				defer ttsCancel()
+				ttsCtx, stopTTS := newInactivityContext(ctx, ttsTimeout)
+				defer stopTTS()
 				ttsErr := h.tts.Synthesize(ttsCtx, chunk.Text, func(tc TTSAudioChunk) error {
 					if len(tc.Data) == 0 {
 						return nil
 					}
+					ttsCtx.Reset()
 					streamedTTSAny = true
 					if tc.Format != "pcm" {
 						streamErr = fmt.Errorf("%w: TTS returned %q audio for sentence %q", ErrUnsupportedAudioFormat, tc.Format, chunk.Text)
@@ -705,7 +795,7 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 		}
 
 		brainStart := time.Now()
-		reply, err = streamingBrain.AskStreaming(streamCtx, askReq, onStatus, onAudio)
+		reply, err = streamingBrain.AskStreaming(streamCtx, askReq, streamOnStatus, onAudio)
 		brainDuration := time.Since(brainStart).Seconds()
 		stopThinking()
 		if streamErr != nil {
@@ -716,7 +806,7 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 			h.metrics.RecordStageDuration(nodeID, "brain", "error", brainDuration)
 			errType := "brain_error"
 			retErr := fmt.Errorf("%w: %w", ErrBrainFailed, err)
-			if isTimeoutError(err, brainCtx, ctx) {
+			if isTimeoutError(err, streamCtx, ctx) {
 				errType = "brain_timeout"
 				retErr = fmt.Errorf("%w: %w", ErrBrainTimeout, err)
 			}
@@ -800,8 +890,17 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 			}
 		}
 	} else {
+		brainCtx, stopBrain := newInactivityContext(ctx, brainTimeout)
+		defer stopBrain()
+		startHeartbeat(brainCtx)
+
+		unaryOnStatus := func(status string) {
+			brainCtx.Reset()
+			onStatus(status)
+		}
+
 		brainStart := time.Now()
-		reply, err = h.brain.Ask(brainCtx, askReq, onStatus)
+		reply, err = h.brain.Ask(brainCtx, askReq, unaryOnStatus)
 		brainDuration := time.Since(brainStart).Seconds()
 		stopThinking()
 		if err != nil {
@@ -875,8 +974,8 @@ func (h *Hub) synthesizeAndEmitReply(
 	if ttsTimeout <= 0 {
 		ttsTimeout = 10 * time.Second
 	}
-	ttsCtx, ttsCancel := context.WithTimeout(ctx, ttsTimeout)
-	defer ttsCancel()
+	ttsCtx, stopTTS := newInactivityContext(ctx, ttsTimeout)
+	defer stopTTS()
 
 	ttsStart := time.Now()
 	finalStatus := "success"
@@ -894,6 +993,7 @@ func (h *Hub) synthesizeAndEmitReply(
 		if len(tc.Data) == 0 {
 			return nil
 		}
+		ttsCtx.Reset()
 		if h.coord != nil && !anySent {
 			h.coord.Transition(StateSpeaking, transcript, &reply, &engine, nil)
 		}
