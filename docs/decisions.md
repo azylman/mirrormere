@@ -4,7 +4,7 @@ This document records key architectural decisions and engineering invariants est
 Normative API schemas and event payloads are governed by `api/openapi.yaml` and `api/schemas/*.json`.
 
 ## 1. Hardware Profiles & Deployment Topology
-- **Profile A (Touch Kiosk)**: Intel N100 Mini PC, 15.6" 1080p capacitive touchscreen, Wayland `cage` compositor running Chromium in `--kiosk` mode, UVC HDMI capture card (Elgato Cam Link 4K primary, MS2130/MS2109 fallbacks), hardware-accelerated WebRTC via `go2rtc`.
+- **Profile A (Touch Kiosk)**: Intel N100 Mini PC, 15.6" 1080p capacitive touchscreen, Wayland `cage` compositor running Google Chrome (amd64, with Chromium fallback) in `--kiosk` mode, UVC HDMI capture card (Elgato Cam Link 4K primary, MS2130/MS2109 fallbacks), hardware-accelerated WebRTC via `go2rtc`. Kiosks standardize on official Google Chrome deb packages instead of Ubuntu snap Chromium to prevent AppArmor/sandbox hangs and loop mount leaks.
 - **Profile B (Ambient E-Ink)**: Raspberry Pi 4 Model B, Waveshare 7.5" black & white e-paper HAT (800x480), Python SPI driver, reSpeaker XVF3800 mic array.
 - **Independent Local Instances**: Alex and Mike each run independent local instances on their home LANs. Zero multi-tenant runtime switching.
 

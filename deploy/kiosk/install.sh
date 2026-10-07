@@ -17,14 +17,16 @@ if command -v snap >/dev/null 2>&1; then
 fi
 
 # Configure official Google Chrome APT repository
+echo "[Mirrormere Install] Bootstrapping repository prerequisites (curl, gnupg, ca-certificates)..."
+apt-get update -y
+apt-get install -y curl gnupg ca-certificates
+
 echo "[Mirrormere Install] Configuring Google Chrome official APT repository..."
 install -m 0755 -d /etc/apt/keyrings
-if command -v curl >/dev/null 2>&1 && command -v gpg >/dev/null 2>&1; then
-    curl -fsSL https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor --yes -o /etc/apt/keyrings/google-chrome.gpg
-    cat <<'EOF' > /etc/apt/sources.list.d/google-chrome.list
+curl -fsSL https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor --yes -o /etc/apt/keyrings/google-chrome.gpg
+cat <<'EOF' > /etc/apt/sources.list.d/google-chrome.list
 deb [arch=amd64 signed-by=/etc/apt/keyrings/google-chrome.gpg] https://dl.google.com/linux/chrome-stable/deb/ stable main
 EOF
-fi
 
 echo "[Mirrormere Install] Updating package index..."
 apt-get update -y
@@ -43,9 +45,7 @@ apt-get install -y \
     intel-media-va-driver \
     seatd \
     kanshi \
-    ddcutil \
-    curl \
-    gnupg
+    ddcutil
 
 echo "[Mirrormere Install] Configuring system hardware access groups..."
 for grp in render video input audio seat; do
