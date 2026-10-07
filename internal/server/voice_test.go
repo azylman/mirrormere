@@ -277,6 +277,28 @@ func TestDefaultVoiceHandler_PostVoiceState(t *testing.T) {
 			t.Fatalf("expected tts_engine 'kokoro', got %+v", coord.ttsEngine)
 		}
 	})
+
+	t.Run("post idle transitions coordinator from listening to idle", func(t *testing.T) {
+		t.Parallel()
+		coord := voice.NewCoordinator(nil)
+		h := server.NewDefaultVoiceHandler(coord, nil)
+
+		q := "hey mirrormere"
+		if _, err := coord.SetState(voice.StateListening, &q, nil, nil); err != nil {
+			t.Fatalf("failed to set listening state: %v", err)
+		}
+
+		req := httptest.NewRequest(http.MethodPost, "/api/voice/state", strings.NewReader(`{"state":"idle"}`))
+		rec := httptest.NewRecorder()
+		h.PostVoiceState(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200 OK, got %d", rec.Code)
+		}
+		if coord.GetState().State != voice.StateIdle {
+			t.Fatalf("expected coordinator state 'idle', got %q", coord.GetState().State)
+		}
+	})
 }
 
 func TestDefaultVoiceHandler_PostVoiceInteract(t *testing.T) {

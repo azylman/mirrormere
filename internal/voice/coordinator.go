@@ -156,21 +156,6 @@ func (c *Coordinator) Reset() events.VoiceStateData {
 func (c *Coordinator) updateState(state string, transcript, reply, ttsEngine, status *string) events.VoiceStateData {
 	c.mu.Lock()
 
-	// Prevent late-idle race condition:
-	// If incoming state is StateIdle, but current state is StateListening,
-	// StateTranscribing, or StateThinking, do NOT clobber the active input state with StateIdle.
-	if state == StateIdle && (c.state == StateListening || c.state == StateTranscribing || c.state == StateThinking) {
-		data := events.VoiceStateData{
-			State:      c.state,
-			Transcript: c.transcript,
-			Reply:      c.reply,
-			TTSEngine:  c.ttsEngine,
-			Status:     c.status,
-		}
-		c.mu.Unlock()
-		return data
-	}
-
 	c.state = state
 	c.transcript = transcript
 	c.reply = reply
