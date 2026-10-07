@@ -78,3 +78,16 @@ ear:
 # ear:
 #   wake_mode: ambient
 #   ambient_url: "http://192.168.1.77:9098/ambient"
+
+# --- Example: Sherpa-ONNX edge wake word config -------------------------
+# ear:
+#   wake_engine: "sherpa-onnx"
+#   vad: "silero"
+#   # By default, uses bundled /opt/mirrormere/voice/sherpa/keywords.txt ("Hey Aerial").
+#   # To supply a custom keywords file (generated via sherpa-onnx-cli text2token):
+#   keywords_file: "/config/keywords.txt"
+#   # Or inline tokenized keywords:
+#   # keyword: " ▁HE Y ▁A E RI AL @hey_aerial"
+#   # Tuning parameters:
+#   keywords_score: 1.0
+#   keywords_threshold: 0.25

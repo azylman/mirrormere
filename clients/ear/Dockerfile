@@ -60,6 +60,7 @@ ENV PATH="/opt/venv/bin:$PATH" \
     MIRRORMERE_HEARTBEAT_FILE="/tmp/ear.heartbeat"
 
 COPY --link client.py config.py vad.py ./
+COPY --chown=mirrormere:mirrormere keywords.txt /opt/mirrormere/voice/sherpa/keywords.txt
 
 RUN python -m compileall -b -q /app
 
