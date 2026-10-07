@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Mirrormere Touch Kiosk Stage 1 Launcher (Host -> Cage Compositor)
-# Runs as unprivileged 'kiosk' user under systemd mirrormere-kiosk.service.
+# Runs as unprivileged kiosk user under systemd mirrormere-kiosk.service.
 set -euo pipefail
 
 # Source configuration overrides if present
@@ -18,7 +18,17 @@ fi
 
 export WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-0}"
 export XDG_SESSION_TYPE="wayland"
-export XDG_CURRENT_DESKTOP="cage"
+export XDG_CURRENT_DESKTOP="Wayland"
+export LIBSEAT_BACKEND="${LIBSEAT_BACKEND:-seatd}"
+export XCURSOR_THEME="${XCURSOR_THEME:-transparent}"
+export XCURSOR_SIZE="${XCURSOR_SIZE:-24}"
+
+if [[ -n "${WLR_DRM_DEVICES:-}" ]]; then
+    export WLR_DRM_DEVICES
+fi
+if [[ -n "${WLR_LIBINPUT_NO_DEVICES:-}" ]]; then
+    export WLR_LIBINPUT_NO_DEVICES
+fi
 
 # Resolve session runner path
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -30,4 +40,4 @@ if [[ ! -x "$SESSION_SCRIPT" ]]; then
 fi
 
 echo "[Mirrormere Kiosk] Launching Cage compositor on seat0..."
-exec cage -s -- "$SESSION_SCRIPT"
+exec cage -d -s -- "$SESSION_SCRIPT"
