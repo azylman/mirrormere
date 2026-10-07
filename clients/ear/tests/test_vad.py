@@ -204,6 +204,33 @@ class TestBuildDetector(unittest.TestCase):
             build_detector("silero", 0.5, -31.0, VoiceDaemon.compute_db, wake_engine="sherpa-onnx")
         self.assertIn("Silero VAD failed to load for sherpa-onnx", str(ctx.exception))
 
+    def test_load_sherpa_silero_vad_invokes_correct_classes(self):
+        import os
+        import tempfile
+        import shutil
+        tmp_dir = tempfile.mkdtemp()
+        try:
+            model_path = os.path.join(tmp_dir, "silero_vad.onnx")
+            with open(model_path, "w") as f:
+                f.write("mock")
+            mock_sherpa = MagicMock()
+            mock_detector = MagicMock()
+            mock_sherpa.VoiceActivityDetector.return_value = mock_detector
+            mock_vad_config = MagicMock()
+            mock_sherpa.VadModelConfig.return_value = mock_vad_config
+            mock_silero_config = MagicMock()
+            mock_sherpa.SileroVadModelConfig.return_value = mock_silero_config
+
+            with patch.dict("sys.modules", {"sherpa_onnx": mock_sherpa}):
+                from clients.ear.vad import load_sherpa_silero_vad
+                det = load_sherpa_silero_vad(tmp_dir, 0.5)
+                self.assertEqual(det, mock_detector)
+                mock_sherpa.VadModelConfig.assert_called_once()
+                self.assertEqual(mock_sherpa.VadModelConfig.call_args[1]["sample_rate"], 16000)
+                mock_sherpa.VoiceActivityDetector.assert_called_once_with(mock_vad_config, buffer_size_in_seconds=5)
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
 
 
 class TestVoiceDaemonAmbientNoSpeechNotSent(unittest.TestCase):
