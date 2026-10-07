@@ -34,7 +34,7 @@ ear:
   # name explicitly (built-in openWakeWord models require their versioned name,
   # e.g. "alexa_v0.1" or "hey_jarvis_v0.1").
   wake_models:
-    - "hey_aerial"
+    - "hey_jarvis_v0.1"
 
   # Confidence threshold for wake word activation (0.0 to 1.0)
   threshold: 0.35
@@ -83,11 +83,11 @@ ear:
 # ear:
 #   wake_engine: "sherpa-onnx"
 #   vad: "silero"
-#   # By default, uses bundled /opt/mirrormere/voice/sherpa/keywords.txt ("Hey Aerial").
+#   # By default, uses bundled /opt/mirrormere/voice/sherpa/keywords.txt.
 #   # To supply a custom keywords file (generated via sherpa-onnx-cli text2token):
 #   keywords_file: "/config/keywords.txt"
 #   # Or inline tokenized keywords:
-#   # keyword: " ▁HE Y ▁A E RI AL @hey_aerial"
+#   # keyword: " ▁HE Y ▁S I RI @hey_siri"
 #   # Tuning parameters:
 #   keywords_score: 1.0
 #   keywords_threshold: 0.25

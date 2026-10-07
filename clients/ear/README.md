@@ -9,7 +9,7 @@ The ear implements the "Dumb Edge Audio Terminal & HUD Presenter" tier of Mirror
 1. **Ambient Wake Word Detection**: Continuously ingests 16 kHz 16-bit mono PCM from PipeWire/ALSA and runs local openWakeWord neural inference entirely on the edge CPU (<5% CPU load).
 2. **State & Event Relay**: Relays interaction states (`listening`, `transcribing`, `thinking`, `speaking`, `idle`, `error`) to Mirrormere Core (`POST /api/voice/state`) to update visual indicators, header transcripts, and caption toasts on interactive touch kiosks.
 3. **Utterance Capture**: Once triggered, records speech through an energy-calibrated VAD gate and saves the resulting audio to a temporary 16 kHz WAV file.
-4. **Hub Forwarding**: Forwards captured utterances to the LAN Voice Hub (`POST /api/voice/interact`) for GPU-accelerated STT (Whisper), agent deliberation (Aerial/Amos), and neural TTS (Kokoro/ElevenLabs).
+4. **Hub Forwarding**: Forwards captured utterances to the LAN Voice Hub (`POST /api/voice/interact`) for GPU-accelerated STT (Whisper), agent deliberation (e.g. LLM / assistant daemon), and neural TTS (Kokoro/ElevenLabs).
 5. **Buffer Flushing & Refractory Cooldown**: Flushes model feature buffers and enforces a refractory cooldown period after recording to eliminate echo re-triggers.
 
 ## Configuration
@@ -25,7 +25,7 @@ ear:
   mirrormere_url: "http://192.168.1.14/kiosk"
   hub_url: "http://192.168.1.14:9000/api/voice/interact"
   wake_models:
-    - "hey_aerial"
+    - "hey_jarvis_v0.1"
   threshold: 0.35
   models_dir: "/opt/mirrormere/voice/models"
   silence_ms: 400
@@ -131,7 +131,7 @@ docker run -d \
 ## Custom Wake Word Models
 
 ### openWakeWord Models
-To add custom openWakeWord models (e.g. `hey_aerial.onnx`):
+To add custom openWakeWord models (e.g. `custom_wake_word.onnx`):
 1. Place the `.onnx` file into `/opt/mirrormere/voice/models/`.
 2. Add the model base name to `wake_models` in `/etc/mirrormere/voice.yaml`.
 3. Restart the `mirrormere-ear` container (`docker restart mirrormere-ear`). The daemon auto-scans the directory and loads the model into its active evaluation graph.
@@ -139,12 +139,12 @@ To add custom openWakeWord models (e.g. `hey_aerial.onnx`):
 ### Sherpa-ONNX Keyword Spotting
 To use Sherpa-ONNX with the bundled pre-trained Zipformer KWS model:
 1. Set `wake_engine: "sherpa-onnx"` and `vad: "silero"` in `/etc/mirrormere/voice.yaml`.
-2. By default, the image includes a pre-tokenized `keywords.txt` for `"Hey Aerial"` with both `AERIAL` and `ARIEL` homophones (`▁HE Y ▁A E RI AL @hey_aerial` and `▁HE Y ▁A RI EL @hey_aerial`) at `/opt/mirrormere/voice/sherpa/keywords.txt`.
+2. By default, the image includes example pre-tokenized keywords (e.g. `▁HE Y ▁S I RI @hey_siri`, `▁HE LL O ▁WORLD @hello_world`) at `/opt/mirrormere/voice/sherpa/keywords.txt`. For production deployments, supply a custom tokenized `keywords.txt` mounted to `/config/keywords.txt`.
 3. To supply custom keywords, generate a tokenized `keywords.txt` using `sherpa-onnx-cli text2token` with the bundled `tokens.txt` and `bpe.model` via the container:
 
 ```bash
 # Prepare raw keywords (UPPERCASE with optional :score #threshold @tag)
-echo "HEY AERIAL @hey_aerial" > keywords_raw.txt
+echo "HEY JARVIS @hey_jarvis" > keywords_raw.txt
 
 # Generate tokenized keywords.txt inside the container
 docker run --rm \

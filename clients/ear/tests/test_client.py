@@ -1315,15 +1315,15 @@ class TestVoiceDaemon(unittest.TestCase):
         finally:
             shutil.rmtree(model_dir, ignore_errors=True)
 
-    def test_bundled_hey_aerial_keywords_file_exists_and_valid(self):
+    def test_bundled_keywords_file_exists_and_valid(self):
         root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         kw_path = os.path.join(root_dir, "keywords.txt")
         self.assertTrue(os.path.exists(kw_path), f"keywords.txt not found at {kw_path}")
         with open(kw_path, "r", encoding="utf-8") as f:
             content = f.read()
-        self.assertIn("\u2581HE Y \u2581A E RI AL", content)
-        self.assertIn("\u2581HE Y \u2581A RI EL", content)
-        self.assertIn("@hey_aerial", content)
+        self.assertIn("\u2581HE Y \u2581S I RI", content)
+        self.assertIn("@hey_siri", content)
+        self.assertIn("\u2581HE LL O \u2581WORLD", content)
 
 
 

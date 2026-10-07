@@ -20,9 +20,8 @@ class TestVoiceConfig(unittest.TestCase):
         self.assertEqual(cfg.silence_ms, 400)
         self.assertEqual(cfg.sample_rate, 16000)
         self.assertEqual(cfg.chunk_samples, 1280)
-        self.assertEqual(cfg.wake_models, ["hey_aerial"])
+        self.assertEqual(cfg.wake_models, ["hey_jarvis_v0.1"])
         self.assertNotIn("alexa", cfg.wake_models)
-        self.assertNotIn("hey_jarvis", cfg.wake_models)
         self.assertNotIn("hey_mycroft", cfg.wake_models)
 
     def test_sherpa_config_from_yaml(self):
@@ -32,7 +31,7 @@ ear:
   wake_mode: "wake_word"
   sherpa_model_dir: "/custom/sherpa"
   keywords_file: "/custom/keywords.txt"
-  keyword: "hey aerial"
+  keyword: "hey jarvis"
   keywords_score: 1.5
   keywords_threshold: 0.30
   sherpa_num_threads: 1
@@ -47,7 +46,7 @@ ear:
             # Model directory override is forbidden; must remain bundled default
             self.assertEqual(cfg.sherpa_model_dir, "/opt/mirrormere/voice/sherpa")
             self.assertEqual(cfg.keywords_file, "/custom/keywords.txt")
-            self.assertEqual(cfg.keyword, "hey aerial")
+            self.assertEqual(cfg.keyword, "hey jarvis")
             self.assertEqual(cfg.keywords_score, 1.5)
             self.assertEqual(cfg.keywords_threshold, 0.30)
             self.assertEqual(cfg.sherpa_num_threads, 1)
@@ -81,7 +80,7 @@ voice:
   silence_ms: 1200
   speech_threshold_db: -28.0
   wake_models:
-    - "hey_aerial"
+    - "hey_jarvis"
 """
         with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
             f.write(yaml_content)
@@ -93,7 +92,7 @@ voice:
             self.assertEqual(cfg.threshold, 0.45)
             self.assertEqual(cfg.silence_ms, 1200)
             self.assertEqual(cfg.speech_threshold_db, -28.0)
-            self.assertEqual(cfg.wake_models, ["hey_aerial"])
+            self.assertEqual(cfg.wake_models, ["hey_jarvis"])
         finally:
             if os.path.exists(temp_path):
                 os.unlink(temp_path)

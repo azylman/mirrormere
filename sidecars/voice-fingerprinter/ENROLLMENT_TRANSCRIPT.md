@@ -25,7 +25,7 @@ This combined script provides approximately **45–50 seconds of clean speech (~
 
 > When the sunlight strikes raindrops in the air, they act as a prism and form a rainbow. The rainbow is a division of white light into many beautiful colors. These take the shape of a long round arch, with its path high above, and its two ends apparently beyond the horizon.
 >
-> Hey Aerial, good morning. What’s on the family calendar for today, and how is the weather looking in Oakland? Add dark roast coffee and oat milk to the grocery list, check if the hallway lights are still on, and pull up the commute traffic. Set a timer for the oven in twenty minutes, and play some chill music on the kitchen speakers.
+> Hey Mirror, good morning. What’s on the family calendar for today, and how is the weather looking outside? Add dark roast coffee and oat milk to the grocery list, check if the hallway lights are still on, and pull up the commute traffic. Set a timer for the oven in twenty minutes, and play some chill music on the kitchen speakers.
 
 ---
 
