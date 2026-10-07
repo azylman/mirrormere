@@ -93,7 +93,7 @@ func (b *streamingHeartbeatWaitingBrain) AskStreaming(ctx context.Context, req A
 	select {
 	case <-b.heartbeatSeen:
 		if onAudio != nil {
-			onAudio(BrainAudioChunk{Format: "pcm", SampleRate: 24000, Channels: 1, Data: make([]byte, 4800)})
+			onAudio(BrainAudioChunk{Text: "chunk"})
 		}
 		return "stream done", nil
 	case <-ctx.Done():
@@ -133,6 +133,7 @@ func TestHub_ThinkingHeartbeat_UnaryBrain(t *testing.T) {
 		nil,
 		WithSTTClient(stt),
 		WithBrainClient(brain),
+		WithTTSClient(&mockTTS{audio: makeValidWAV(1600), format: "pcm"}),
 		WithThinkingHeartbeatInterval(10*time.Millisecond),
 		WithBrainTimeout(2*time.Second),
 	)
@@ -183,6 +184,7 @@ func TestHub_ThinkingHeartbeat_StreamingBrain(t *testing.T) {
 		nil,
 		WithSTTClient(stt),
 		WithBrainClient(brain),
+		WithTTSClient(&mockTTS{audio: make([]byte, 4800), format: "pcm"}),
 		WithThinkingHeartbeatInterval(10*time.Millisecond),
 		WithBrainTimeout(2*time.Second),
 	)
@@ -776,11 +778,7 @@ func (b *periodicStreamingBrain) AskStreaming(ctx context.Context, req AskReques
 		case <-ticker.C:
 			if onAudio != nil {
 				onAudio(BrainAudioChunk{
-					Text:       fmt.Sprintf("part-%d", i),
-					Data:       make([]byte, 4800),
-					Format:     "pcm",
-					SampleRate: 24000,
-					Channels:   1,
+					Text: fmt.Sprintf("part-%d", i),
 				})
 			}
 		}
@@ -846,11 +844,7 @@ func (b *stallingStreamingBrain) Ask(ctx context.Context, req AskRequest, onStat
 func (b *stallingStreamingBrain) AskStreaming(ctx context.Context, req AskRequest, onStatus func(status string), onAudio func(chunk BrainAudioChunk)) (string, error) {
 	if onAudio != nil {
 		onAudio(BrainAudioChunk{
-			Text:       "start chunk",
-			Data:       make([]byte, 4800),
-			Format:     "pcm",
-			SampleRate: 24000,
-			Channels:   1,
+			Text: "start chunk",
 		})
 	}
 	select {
@@ -914,11 +908,7 @@ func (b *statusResetStreamingBrain) AskStreaming(ctx context.Context, req AskReq
 	}
 	if onAudio != nil {
 		onAudio(BrainAudioChunk{
-			Text:       "done answer",
-			Data:       make([]byte, 4800),
-			Format:     "pcm",
-			SampleRate: 24000,
-			Channels:   1,
+			Text: "done answer",
 		})
 	}
 	return "done answer", nil
