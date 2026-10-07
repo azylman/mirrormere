@@ -123,10 +123,51 @@ class MockRTCPeerConnection {
     this.transceivers = [];
     this.ontrack = null;
     this.onicecandidate = null;
+    this.oniceconnectionstatechange = null;
+    this.onconnectionstatechange = null;
     this.iceGatheringState = 'complete';
+    this.connectionState = 'new';
+    this.iceConnectionState = 'new';
     this.localDescription = null;
     this.remoteDescription = null;
     this.closed = false;
+    this._listeners = new Map();
+  }
+
+  addEventListener(event, fn) {
+    if (!this._listeners.has(event)) this._listeners.set(event, []);
+    this._listeners.get(event).push(fn);
+  }
+
+  removeEventListener(event, fn) {
+    if (this._listeners.has(event)) {
+      const arr = this._listeners.get(event).filter((f) => f !== fn);
+      this._listeners.set(event, arr);
+    }
+  }
+
+  dispatchEvent(event, payload = {}) {
+    const ev = { type: event, ...payload };
+    const handlers = this._listeners.get(event) || [];
+    for (const h of handlers) {
+      h(ev);
+    }
+  }
+
+  setConnectionState(state) {
+    this.connectionState = state;
+    if (typeof this.onconnectionstatechange === 'function') {
+      this.onconnectionstatechange({ type: 'connectionstatechange' });
+    }
+    this.dispatchEvent('connectionstatechange');
+  }
+
+  setIceConnectionState(state) {
+    this.iceConnectionState = state;
+    if (typeof this.oniceconnectionstatechange === 'function') {
+      this.oniceconnectionstatechange({ type: 'iceconnectionstatechange' });
+    }
+    this.dispatchEvent('iceconnectionstatechange');
   }
 
   addTransceiver(kind, init) {
@@ -149,6 +190,8 @@ class MockRTCPeerConnection {
 
   close() {
     this.closed = true;
+    this.connectionState = 'closed';
+    this.iceConnectionState = 'closed';
   }
 }
 
@@ -716,5 +759,410 @@ test('Video Presentation Mode & Multi-Stream Player with PiP', async (t) => {
 
     mgr.exitVideoMode();
     assert.strictEqual(pc2.closed, true);
+  });
+
+  await t.test('WebRTC Stream Watchdog, Auto-Reconnect & Widget Fallback', async (t2) => {
+    await t2.test('auto-reconnects with backoff when connectionState transitions to failed', async () => {
+      const stage = createMockElement('div', 'video-stage');
+      const primarySlot = createMockElement('div', 'video-primary-slot');
+
+      const pcs = [];
+      class MultiPC extends MockRTCPeerConnection {
+        constructor() {
+          super();
+          pcs.push(this);
+        }
+      }
+
+      const mgr = new VideoPlayerManager({
+        stageElement: stage,
+        primarySlot,
+        RTCPeerConnection: MultiPC,
+        reconnectBaseDelay: 20,
+        reconnectBackoffFactor: 1.0,
+        fetch: async () => ({ ok: true, status: 200, text: async () => 'v=0\r\ns=answer' }),
+      });
+
+      mgr.handleVideoState({
+        mode: 'video',
+        primary: { id: 'stream1', stream_url: 'http://cast/webrtc', type: 'webrtc' },
+      });
+
+      await new Promise((r) => setImmediate(r));
+      assert.strictEqual(pcs.length, 1);
+      const pc1 = pcs[0];
+
+      // Simulate go2rtc crash mid-stream: connection fails
+      pc1.setConnectionState('failed');
+
+      // Wait for backoff timer and reconnection
+      await new Promise((r) => setTimeout(r, 60));
+
+      assert.strictEqual(pc1.closed, true);
+      assert.strictEqual(pcs.length, 2);
+      const pc2 = pcs[1];
+      assert.strictEqual(pc2.closed, false);
+      assert.strictEqual(mgr.primarySession.pc, pc2);
+      assert.strictEqual(pc2.remoteDescription.sdp, 'v=0\r\ns=answer');
+
+      mgr.exitVideoMode();
+    });
+
+    await t2.test('reconnection resets reconnectAttempts back to 0 on connected/completed', async () => {
+      const stage = createMockElement('div', 'video-stage');
+      const primarySlot = createMockElement('div', 'video-primary-slot');
+
+      const pcs = [];
+      class MultiPC extends MockRTCPeerConnection {
+        constructor() {
+          super();
+          pcs.push(this);
+        }
+      }
+
+      const mgr = new VideoPlayerManager({
+        stageElement: stage,
+        primarySlot,
+        RTCPeerConnection: MultiPC,
+        reconnectBaseDelay: 20,
+        reconnectBackoffFactor: 1.0,
+        fetch: async () => ({ ok: true, status: 200, text: async () => 'v=0\r\ns=answer' }),
+      });
+
+      mgr.handleVideoState({
+        mode: 'video',
+        primary: { id: 'stream1', stream_url: 'http://cast/webrtc', type: 'webrtc' },
+      });
+
+      await new Promise((r) => setImmediate(r));
+      const pc1 = pcs[0];
+
+      pc1.setConnectionState('failed');
+      await new Promise((r) => setTimeout(r, 60));
+
+      const pc2 = pcs[1];
+      assert.strictEqual(mgr.primarySession.reconnectAttempts, 1);
+
+      // pc2 successfully establishes and transitions to connected
+      pc2.setConnectionState('connected');
+      assert.strictEqual(mgr.primarySession.reconnectAttempts, 0);
+
+      mgr.exitVideoMode();
+    });
+
+    await t2.test('transient disconnected state uses grace period and cancels if reconnected before timeout', async () => {
+      const stage = createMockElement('div', 'video-stage');
+      const primarySlot = createMockElement('div', 'video-primary-slot');
+
+      const pcs = [];
+      class MultiPC extends MockRTCPeerConnection {
+        constructor() {
+          super();
+          pcs.push(this);
+        }
+      }
+
+      const mgr = new VideoPlayerManager({
+        stageElement: stage,
+        primarySlot,
+        RTCPeerConnection: MultiPC,
+        disconnectTimeout: 50,
+        reconnectBaseDelay: 20,
+        fetch: async () => ({ ok: true, status: 200, text: async () => 'v=0\r\ns=answer' }),
+      });
+
+      mgr.handleVideoState({
+        mode: 'video',
+        primary: { id: 'stream1', stream_url: 'http://cast/webrtc', type: 'webrtc' },
+      });
+
+      await new Promise((r) => setImmediate(r));
+      const pc1 = pcs[0];
+
+      // Disconnect starts grace period
+      pc1.setConnectionState('disconnected');
+      assert.strictEqual(pcs.length, 1);
+
+      // Reconnects quickly after 15ms before grace timer expires
+      await new Promise((r) => setTimeout(r, 15));
+      pc1.setConnectionState('connected');
+
+      // Wait beyond the original 50ms disconnectTimeout
+      await new Promise((r) => setTimeout(r, 60));
+
+      // No new connection created; pc1 is still alive
+      assert.strictEqual(pcs.length, 1);
+      assert.strictEqual(pc1.closed, false);
+      assert.strictEqual(mgr.primarySession.pc, pc1);
+
+      mgr.exitVideoMode();
+    });
+
+    await t2.test('transient disconnected state triggers reconnect if timeout expires', async () => {
+      const stage = createMockElement('div', 'video-stage');
+      const primarySlot = createMockElement('div', 'video-primary-slot');
+
+      const pcs = [];
+      class MultiPC extends MockRTCPeerConnection {
+        constructor() {
+          super();
+          pcs.push(this);
+        }
+      }
+
+      const mgr = new VideoPlayerManager({
+        stageElement: stage,
+        primarySlot,
+        RTCPeerConnection: MultiPC,
+        disconnectTimeout: 20,
+        reconnectBaseDelay: 20,
+        reconnectBackoffFactor: 1.0,
+        fetch: async () => ({ ok: true, status: 200, text: async () => 'v=0\r\ns=answer' }),
+      });
+
+      mgr.handleVideoState({
+        mode: 'video',
+        primary: { id: 'stream1', stream_url: 'http://cast/webrtc', type: 'webrtc' },
+      });
+
+      await new Promise((r) => setImmediate(r));
+      const pc1 = pcs[0];
+
+      pc1.setIceConnectionState('disconnected');
+
+      // Wait for 20ms disconnect timeout + 20ms reconnect delay
+      await new Promise((r) => setTimeout(r, 70));
+
+      assert.strictEqual(pc1.closed, true);
+      assert.strictEqual(pcs.length, 2);
+      assert.strictEqual(mgr.primarySession.pc, pcs[1]);
+
+      mgr.exitVideoMode();
+    });
+
+    await t2.test('cleanly drops back to widgets mode when reconnect attempts are exhausted', async () => {
+      const stage = createMockElement('div', 'video-stage');
+      const primarySlot = createMockElement('div', 'video-primary-slot');
+      const carousel = createMockCarousel();
+
+      const pcs = [];
+      class MultiPC extends MockRTCPeerConnection {
+        constructor() {
+          super();
+          pcs.push(this);
+        }
+      }
+
+      let fetchCallCount = 0;
+      const mockFetch = async () => {
+        fetchCallCount++;
+        if (fetchCallCount === 1) {
+          return { ok: true, status: 200, text: async () => 'v=0\r\ns=answer' };
+        }
+        // Subsequent reconnect attempts fail (go2rtc down)
+        return { ok: false, status: 502, text: async () => 'Bad Gateway' };
+      };
+
+      let fallbackNotified = null;
+      const mgr = new VideoPlayerManager({
+        stageElement: stage,
+        primarySlot,
+        carousel,
+        RTCPeerConnection: MultiPC,
+        maxReconnectAttempts: 2,
+        reconnectBaseDelay: 15,
+        reconnectBackoffFactor: 1.0,
+        fetch: mockFetch,
+        onFallback: (session, reason) => {
+          fallbackNotified = { session, reason };
+        },
+      });
+
+      mgr.handleVideoState({
+        mode: 'video',
+        primary: { id: 'chromecast', stream_url: 'http://127.0.0.1:1984/cast', type: 'webrtc' },
+      });
+
+      await new Promise((r) => setImmediate(r));
+      assert.strictEqual(mgr.currentMode, 'video');
+      assert.strictEqual(carousel.paused, true);
+      assert.strictEqual(gridCanvas.style.display, 'none');
+
+      const pc1 = pcs[0];
+      // Mid-stream go2rtc process dies
+      pc1.setConnectionState('failed');
+
+      // Wait for 2 retries (15ms * 2 + overhead)
+      await new Promise((r) => setTimeout(r, 100));
+
+      // Must have cleanly dropped back to widgets mode!
+      assert.strictEqual(mgr.currentMode, 'widgets');
+      assert.strictEqual(mgr.getState().hasPrimarySession, false);
+      assert.strictEqual(primarySlot.children.length, 0);
+      assert.strictEqual(stage.style.display, 'none');
+      assert.strictEqual(gridCanvas.style.display, '');
+      assert.strictEqual(carousel.paused, false);
+      assert.ok(fallbackNotified);
+      assert.strictEqual(fallbackNotified.reason, 'widgets');
+    });
+
+    await t2.test('PiP stream failure tears down only PiP without disrupting primary presentation', async () => {
+      const stage = createMockElement('div', 'video-stage');
+      const primarySlot = createMockElement('div', 'video-primary-slot');
+      const pipSlot = createMockElement('div', 'video-pip-slot');
+      const audioMgr = createMockAudioManager();
+
+      const pcs = [];
+      class MultiPC extends MockRTCPeerConnection {
+        constructor() {
+          super();
+          pcs.push(this);
+        }
+      }
+
+      let pipFetches = 0;
+      const mockFetch = async (url) => {
+        if (url.includes('doorbell')) {
+          pipFetches++;
+          if (pipFetches > 1) {
+            return { ok: false, status: 503, text: async () => 'Unavailable' };
+          }
+        }
+        return { ok: true, status: 200, text: async () => 'v=0\r\ns=answer' };
+      };
+
+      const mgr = new VideoPlayerManager({
+        stageElement: stage,
+        primarySlot,
+        pipSlot,
+        audioManager: audioMgr,
+        RTCPeerConnection: MultiPC,
+        maxReconnectAttempts: 1,
+        reconnectBaseDelay: 15,
+        fetch: mockFetch,
+      });
+
+      mgr.handleVideoState({
+        mode: 'video',
+        primary: { id: 'chromecast', stream_url: 'http://cast/webrtc', type: 'webrtc' },
+        pip: { id: 'doorbell', stream_url: 'http://doorbell/webrtc', type: 'webrtc' },
+      });
+
+      await new Promise((r) => setImmediate(r));
+      assert.strictEqual(pcs.length, 2);
+      const pipPC = pcs[1];
+
+      // PiP connection fails
+      pipPC.setConnectionState('failed');
+
+      // Wait for retry to exhaust
+      await new Promise((r) => setTimeout(r, 60));
+
+      // Video presentation remains active for primary
+      assert.strictEqual(mgr.currentMode, 'video');
+      assert.strictEqual(mgr.getState().hasPrimarySession, true);
+      assert.strictEqual(mgr.getState().hasPipSession, false);
+      assert.strictEqual(pipSlot.style.display, 'none');
+      assert.strictEqual(pipSlot.children.length, 0);
+
+      // Primary stream remains registered and unmuted
+      const primaryVideo = primarySlot.children[0];
+      assert.strictEqual(primaryVideo.muted, false);
+      assert.strictEqual(audioMgr.registered.has(primaryVideo), true);
+
+      mgr.exitVideoMode();
+    });
+
+    await t2.test('teardownSession cancels active reconnect and disconnect timers immediately', async () => {
+      const stage = createMockElement('div', 'video-stage');
+      const primarySlot = createMockElement('div', 'video-primary-slot');
+
+      const pcs = [];
+      class MultiPC extends MockRTCPeerConnection {
+        constructor() {
+          super();
+          pcs.push(this);
+        }
+      }
+
+      const mgr = new VideoPlayerManager({
+        stageElement: stage,
+        primarySlot,
+        RTCPeerConnection: MultiPC,
+        reconnectBaseDelay: 50,
+        fetch: async () => ({ ok: true, status: 200, text: async () => 'v=0\r\ns=answer' }),
+      });
+
+      mgr.handleVideoState({
+        mode: 'video',
+        primary: { id: 'stream1', stream_url: 'http://cast/webrtc', type: 'webrtc' },
+      });
+
+      await new Promise((r) => setImmediate(r));
+      const pc1 = pcs[0];
+
+      // Trigger failure to schedule reconnect
+      pc1.setConnectionState('failed');
+
+      // Immediately exit video mode before reconnect timer fires
+      mgr.exitVideoMode();
+      assert.strictEqual(pc1.closed, true);
+
+      // Wait beyond the 50ms reconnectBaseDelay
+      await new Promise((r) => setTimeout(r, 80));
+
+      // No new peer connection should have been created!
+      assert.strictEqual(pcs.length, 1);
+      assert.strictEqual(mgr.currentMode, 'widgets');
+      assert.strictEqual(primarySlot.children.length, 0);
+    });
+
+    await t2.test('aborts and triggers reconnect if initial SDP negotiation fails with HTTP error', async () => {
+      const stage = createMockElement('div', 'video-stage');
+      const primarySlot = createMockElement('div', 'video-primary-slot');
+
+      const pcs = [];
+      class MultiPC extends MockRTCPeerConnection {
+        constructor() {
+          super();
+          pcs.push(this);
+        }
+      }
+
+      let fetchCount = 0;
+      const mockFetch = async () => {
+        fetchCount++;
+        if (fetchCount === 1) {
+          // Initial negotiation fails (e.g. go2rtc starting up)
+          return { ok: false, status: 502, text: async () => 'Bad Gateway' };
+        }
+        return { ok: true, status: 200, text: async () => 'v=0\r\ns=recovered-answer' };
+      };
+
+      const mgr = new VideoPlayerManager({
+        stageElement: stage,
+        primarySlot,
+        RTCPeerConnection: MultiPC,
+        maxReconnectAttempts: 2,
+        reconnectBaseDelay: 20,
+        reconnectBackoffFactor: 1.0,
+        fetch: mockFetch,
+      });
+
+      mgr.handleVideoState({
+        mode: 'video',
+        primary: { id: 'stream1', stream_url: 'http://cast/webrtc', type: 'webrtc' },
+      });
+
+      // Wait for initial failure + 20ms reconnect
+      await new Promise((r) => setTimeout(r, 60));
+
+      assert.strictEqual(pcs.length, 2);
+      const pc2 = pcs[1];
+      assert.strictEqual(pc2.closed, false);
+      assert.strictEqual(pc2.remoteDescription.sdp, 'v=0\r\ns=recovered-answer');
+
+      mgr.exitVideoMode();
+    });
   });
 });

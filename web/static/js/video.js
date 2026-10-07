@@ -385,11 +385,16 @@
 
       const session = {
         stream,
+        container,
+        isPip,
         element: video,
         pc: null,
         type: 'webrtc',
         token: ++this.sessionTokenSeq,
         cancelled: false,
+        reconnectAttempts: 0,
+        reconnectTimer: null,
+        disconnectTimer: null,
       };
 
       if (this.PeerConnectionClass) {
@@ -417,9 +422,20 @@
             }
           };
 
+          const onConnChange = () => this.handleWebRTCConnectionChange(session);
+          if (typeof pc.addEventListener === 'function') {
+            pc.addEventListener('iceconnectionstatechange', onConnChange);
+            pc.addEventListener('connectionstatechange', onConnChange);
+          }
+          pc.oniceconnectionstatechange = onConnChange;
+          pc.onconnectionstatechange = onConnChange;
+
           this.negotiateWebRTC(session, stream.stream_url, video);
         } catch (err) {
           console.warn('[MirrormereVideo] RTCPeerConnection initialization error:', err);
+          if (!session.cancelled) {
+            this.scheduleWebRTCReconnect(session);
+          }
         }
       }
 
@@ -434,6 +450,7 @@
       const pc = session ? session.pc : null;
       if (!pc) return;
 
+      let timeoutId = null;
       try {
         const offer = await pc.createOffer();
         if (session.cancelled) {
@@ -472,11 +489,23 @@
         const sdpPayload = pc.localDescription ? pc.localDescription.sdp : offer.sdp;
         const fetchFn = this.fetchFn || fetch;
 
+        const controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+        const timeoutMs = (typeof this.options.negotiationTimeout === 'number') ? this.options.negotiationTimeout : 5000;
+        if (controller) {
+          timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+        }
+
         const res = await fetchFn(streamUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/sdp' },
           body: sdpPayload,
+          signal: controller ? controller.signal : undefined,
         });
+
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+          timeoutId = null;
+        }
 
         if (session.cancelled) {
           if (typeof pc.close === 'function') pc.close();
@@ -505,10 +534,207 @@
 
         await pc.setRemoteDescription({ type: 'answer', sdp: answerSDP });
       } catch (err) {
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+          timeoutId = null;
+        }
         if (!session.cancelled) {
           console.warn('[MirrormereVideo] WebRTC SDP negotiation failed:', err);
+          if (typeof pc.close === 'function') pc.close();
+          this.scheduleWebRTCReconnect(session);
         }
-        if (typeof pc.close === 'function') pc.close();
+      }
+    }
+
+    /**
+     * Watches RTCPeerConnection and ICE connection state changes for stream health.
+     */
+    handleWebRTCConnectionChange(session) {
+      if (!session || session.cancelled || !session.pc) return;
+
+      const connState = session.pc.connectionState;
+      const iceState = session.pc.iceConnectionState;
+
+      // 1. Healthy connected state: reset retry count and cancel active timers
+      if (connState === 'connected' || iceState === 'connected' || iceState === 'completed') {
+        if (session.disconnectTimer) {
+          clearTimeout(session.disconnectTimer);
+          session.disconnectTimer = null;
+        }
+        if (session.reconnectTimer) {
+          clearTimeout(session.reconnectTimer);
+          session.reconnectTimer = null;
+        }
+        session.reconnectAttempts = 0;
+        return;
+      }
+
+      // 2. Active renegotiation in progress: clear disconnect timer to avoid racing
+      if (connState === 'connecting' || iceState === 'checking') {
+        if (session.disconnectTimer) {
+          clearTimeout(session.disconnectTimer);
+          session.disconnectTimer = null;
+        }
+        return;
+      }
+
+      // 3. Definite failure: trigger reconnect immediately
+      if (connState === 'failed' || iceState === 'failed') {
+        if (session.disconnectTimer) {
+          clearTimeout(session.disconnectTimer);
+          session.disconnectTimer = null;
+        }
+        this.scheduleWebRTCReconnect(session);
+        return;
+      }
+
+      // 4. Transient disconnect: arm grace period before tearing down
+      if (connState === 'disconnected' || iceState === 'disconnected') {
+        if (!session.disconnectTimer) {
+          const timeout = (typeof this.options.disconnectTimeout === 'number') ? this.options.disconnectTimeout : 2000;
+          session.disconnectTimer = setTimeout(() => {
+            session.disconnectTimer = null;
+            if (session.cancelled) return;
+            this.scheduleWebRTCReconnect(session);
+          }, timeout);
+        }
+        return;
+      }
+
+      // 5. Unexpected close
+      if ((connState === 'closed' || iceState === 'closed') && !session.cancelled) {
+        this.scheduleWebRTCReconnect(session);
+      }
+    }
+
+    /**
+     * Schedules auto-reconnection with exponential backoff or triggers fallback if retries exhausted.
+     */
+    scheduleWebRTCReconnect(session) {
+      if (!session || session.cancelled || session.reconnectTimer) return;
+
+      const maxAttempts = (typeof this.options.maxReconnectAttempts === 'number') ? this.options.maxReconnectAttempts : 3;
+      if (session.reconnectAttempts >= maxAttempts) {
+        console.warn(`[MirrormereVideo] WebRTC stream ${session.stream?.id} reconnect attempts exhausted (${maxAttempts}). Falling back.`);
+        this.handleStreamFallback(session);
+        return;
+      }
+
+      session.reconnectAttempts++;
+      const baseDelay = (typeof this.options.reconnectBaseDelay === 'number') ? this.options.reconnectBaseDelay : 1000;
+      const factor = (typeof this.options.reconnectBackoffFactor === 'number') ? this.options.reconnectBackoffFactor : 1.5;
+      const delay = Math.round(baseDelay * Math.pow(factor, session.reconnectAttempts - 1));
+
+      session.reconnectTimer = setTimeout(async () => {
+        session.reconnectTimer = null;
+        if (session.cancelled) return;
+        await this.reconnectWebRTC(session);
+      }, delay);
+    }
+
+    /**
+     * Closes dead peer connection, flushes hardware decode buffer, and establishes fresh WebRTC session.
+     */
+    async reconnectWebRTC(session) {
+      if (!session || session.cancelled) return;
+
+      // 1. Tear down old peer connection and unbind handlers to avoid leaks
+      if (session.pc) {
+        session.pc.oniceconnectionstatechange = null;
+        session.pc.onconnectionstatechange = null;
+        session.pc.ontrack = null;
+        session.pc.onicecandidate = null;
+        if (typeof session.pc.close === 'function') {
+          session.pc.close();
+        }
+        session.pc = null;
+      }
+
+      // 2. Explicitly flush hardware decode frame buffer to prevent VAAPI/EGL kernel D-state lockup
+      if (session.element) {
+        session.element.srcObject = null;
+        if (typeof session.element.load === 'function') {
+          session.element.load();
+        }
+      }
+
+      if (session.cancelled || !this.PeerConnectionClass) return;
+
+      // 3. Create fresh RTCPeerConnection and re-bind event listeners
+      try {
+        const pc = new this.PeerConnectionClass();
+        session.pc = pc;
+
+        if (typeof pc.addTransceiver === 'function') {
+          pc.addTransceiver('video', { direction: 'recvonly' });
+          pc.addTransceiver('audio', { direction: 'recvonly' });
+        }
+
+        pc.ontrack = (event) => {
+          if (session.cancelled) return;
+          if (event.streams && event.streams[0]) {
+            session.element.srcObject = event.streams[0];
+          } else {
+            const MediaStreamConstructor = typeof MediaStream !== 'undefined' ? MediaStream : (typeof window !== 'undefined' ? window.MediaStream : null);
+            if (!session.element.srcObject && MediaStreamConstructor) {
+              session.element.srcObject = new MediaStreamConstructor();
+            }
+            if (session.element.srcObject && typeof session.element.srcObject.addTrack === 'function' && event.track) {
+              session.element.srcObject.addTrack(event.track);
+            }
+          }
+        };
+
+        const onConnChange = () => this.handleWebRTCConnectionChange(session);
+        if (typeof pc.addEventListener === 'function') {
+          pc.addEventListener('iceconnectionstatechange', onConnChange);
+          pc.addEventListener('connectionstatechange', onConnChange);
+        }
+        pc.oniceconnectionstatechange = onConnChange;
+        pc.onconnectionstatechange = onConnChange;
+
+        await this.negotiateWebRTC(session, session.stream.stream_url, session.element);
+      } catch (err) {
+        console.warn('[MirrormereVideo] WebRTC reconnection cycle error:', err);
+        if (!session.cancelled) {
+          this.scheduleWebRTCReconnect(session);
+        }
+      }
+    }
+
+    /**
+     * Handles stream failure when reconnect retries are exhausted.
+     * Drops cleanly back to widgets mode if primary stream fails, or dismisses PiP slot.
+     */
+    handleStreamFallback(session) {
+      if (!session || session.cancelled) return;
+
+      const isPrimary = (session === this.primarySession);
+      const isPip = (session === this.pipSession);
+      const isVisualPrimary = this.isSwapped ? isPip : isPrimary;
+
+      if (isVisualPrimary) {
+        console.warn('[MirrormereVideo] Primary presentation stream lost. Falling back to widgets mode.');
+        this.exitVideoMode();
+      } else {
+        console.warn('[MirrormereVideo] PiP stream lost. Tearing down PiP slot.');
+        if (this.isSwapped) {
+          this.isSwapped = false;
+          if (this.stage) this.stage.dataset.swapped = 'false';
+        }
+        if (this.pipSession) {
+          this.teardownSession(this.pipSession);
+          this.pipSession = null;
+        }
+        this.serverPip = null;
+        if (this.pipSlot) {
+          this.pipSlot.style.display = 'none';
+        }
+        this.syncAudioFocus();
+      }
+
+      if (typeof this.options.onFallback === 'function') {
+        this.options.onFallback(session, isVisualPrimary ? 'widgets' : 'pip_dismissed');
       }
     }
 
@@ -536,6 +762,15 @@
       if (!session) return;
       session.cancelled = true;
 
+      if (session.reconnectTimer) {
+        clearTimeout(session.reconnectTimer);
+        session.reconnectTimer = null;
+      }
+      if (session.disconnectTimer) {
+        clearTimeout(session.disconnectTimer);
+        session.disconnectTimer = null;
+      }
+
       if (this.audioManager && session.element && typeof this.audioManager.unregisterMediaElement === 'function') {
         this.audioManager.unregisterMediaElement(session.element);
       }
@@ -559,6 +794,8 @@
       }
 
       if (session.pc) {
+        session.pc.oniceconnectionstatechange = null;
+        session.pc.onconnectionstatechange = null;
         session.pc.ontrack = null;
         session.pc.onicecandidate = null;
         if (typeof session.pc.close === 'function') {
