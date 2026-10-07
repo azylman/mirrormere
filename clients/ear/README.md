@@ -147,8 +147,12 @@ To use Sherpa-ONNX with the bundled pre-trained Zipformer KWS model:
 echo "HEY AERIAL @hey_aerial" > keywords_raw.txt
 
 # Generate tokenized keywords.txt inside the container
-docker run --rm -v "$(pwd):/work" -w /work ghcr.io/azylman/mirrormere-ear:latest \
-  sherpa-onnx-cli text2token \
+docker run --rm \
+  --entrypoint sherpa-onnx-cli \
+  --user "$(id -u):$(id -g)" \
+  -v "$(pwd):/work" -w /work \
+  ghcr.io/azylman/mirrormere-ear:latest \
+  text2token \
   --tokens /opt/mirrormere/voice/sherpa/tokens.txt \
   --tokens-type bpe \
   --bpe-model /opt/mirrormere/voice/sherpa/bpe.model \
