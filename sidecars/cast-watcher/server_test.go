@@ -14,12 +14,20 @@ import (
 
 type mockMediaActionSender struct {
 	sendFunc   func(ctx context.Context, action string) error
+	wakeFunc   func(ctx context.Context) error
 	statusFunc func() StatusSnapshot
 }
 
 func (m *mockMediaActionSender) SendMediaAction(ctx context.Context, action string) error {
 	if m.sendFunc != nil {
 		return m.sendFunc(ctx, action)
+	}
+	return nil
+}
+
+func (m *mockMediaActionSender) Wake(ctx context.Context) error {
+	if m.wakeFunc != nil {
+		return m.wakeFunc(ctx)
 	}
 	return nil
 }
@@ -66,6 +74,95 @@ func TestActionServer_HandleAction_Success(t *testing.T) {
 	}
 	if resp["status"] != "ok" {
 		t.Errorf("expected status 'ok', got '%s'", resp["status"])
+	}
+}
+
+func TestActionServer_HandleAction_Wake(t *testing.T) {
+	var wakeCalled bool
+	mockClient := &mockMediaActionSender{
+		wakeFunc: func(ctx context.Context) error {
+			wakeCalled = true
+			return nil
+		},
+	}
+
+	server := NewActionServer(ServerConfig{}, mockClient)
+
+	payload := `{"id":"chromecast","action":"wake"}`
+	req := httptest.NewRequest(http.MethodPost, "/action", bytes.NewBufferString(payload))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	server.mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !wakeCalled {
+		t.Error("expected Wake to be called on client")
+	}
+
+	var resp map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if resp["status"] != "ok" {
+		t.Errorf("expected status 'ok', got '%s'", resp["status"])
+	}
+	if rec.Header().Get("Access-Control-Allow-Origin") != "*" {
+		t.Errorf("expected CORS header, got %s", rec.Header().Get("Access-Control-Allow-Origin"))
+	}
+}
+
+func TestActionServer_HandleAction_WakeErrors(t *testing.T) {
+	mockClient := &mockMediaActionSender{
+		wakeFunc: func(ctx context.Context) error {
+			return ErrNotConnected
+		},
+	}
+
+	server := NewActionServer(ServerConfig{}, mockClient)
+
+	// ErrNotConnected -> 502 Bad Gateway
+	req := httptest.NewRequest(http.MethodPost, "/action", bytes.NewBufferString(`{"id":"chromecast","action":"wake"}`))
+	rec := httptest.NewRecorder()
+	server.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadGateway {
+		t.Errorf("expected 502 Bad Gateway, got %d", rec.Code)
+	}
+
+	// Internal error -> 500
+	mockClient.wakeFunc = func(ctx context.Context) error {
+		return errors.New("wake internal error")
+	}
+	req2 := httptest.NewRequest(http.MethodPost, "/action", bytes.NewBufferString(`{"id":"chromecast","action":"wake"}`))
+	rec2 := httptest.NewRecorder()
+	server.mux.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500 Internal Server Error, got %d", rec2.Code)
+	}
+}
+
+func TestActionServer_HandleAction_OptionsPreflight(t *testing.T) {
+	mockClient := &mockMediaActionSender{}
+	server := NewActionServer(ServerConfig{}, mockClient)
+
+	req := httptest.NewRequest(http.MethodOptions, "/action", nil)
+	rec := httptest.NewRecorder()
+
+	server.mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for OPTIONS, got %d", rec.Code)
+	}
+	if rec.Header().Get("Access-Control-Allow-Origin") != "*" {
+		t.Errorf("expected Access-Control-Allow-Origin: *, got '%s'", rec.Header().Get("Access-Control-Allow-Origin"))
+	}
+	if rec.Header().Get("Access-Control-Allow-Methods") != "POST, OPTIONS" {
+		t.Errorf("expected Access-Control-Allow-Methods: POST, OPTIONS, got '%s'", rec.Header().Get("Access-Control-Allow-Methods"))
+	}
+	if rec.Header().Get("Access-Control-Allow-Headers") != "Content-Type" {
+		t.Errorf("expected Access-Control-Allow-Headers: Content-Type, got '%s'", rec.Header().Get("Access-Control-Allow-Headers"))
 	}
 }
 

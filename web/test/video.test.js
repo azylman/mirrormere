@@ -256,11 +256,12 @@ test('Video Presentation Mode & Multi-Stream Player with PiP', async (t) => {
         },
       });
 
-      assert.strictEqual(primarySlot.children.length, 1);
+      assert.strictEqual(primarySlot.children.length, 2);
       const img = primarySlot.children[0];
       assert.strictEqual(img.tagName, 'IMG');
       assert.strictEqual(img.src, 'http://cam.lan/mjpeg');
       assert.strictEqual(img.className, 'video-stream-media');
+      assert.strictEqual(primarySlot.children[1].className, 'video-stream-spinner');
       // MJPEG image should never register with AudioManager
       assert.strictEqual(audioMgr.registered.size, 0);
 
@@ -290,10 +291,11 @@ test('Video Presentation Mode & Multi-Stream Player with PiP', async (t) => {
         },
       });
 
-      assert.strictEqual(primarySlot.children.length, 1);
+      assert.strictEqual(primarySlot.children.length, 2);
       const video = primarySlot.children[0];
       assert.strictEqual(video.tagName, 'VIDEO');
       assert.strictEqual(video.src, 'http://video.lan/stream.m3u8');
+      assert.strictEqual(primarySlot.children[1].className, 'video-stream-spinner');
       assert.strictEqual(video.muted, false);
       assert.strictEqual(audioMgr.registered.has(video), true);
       assert.strictEqual(video.volume, 0.60);
@@ -336,9 +338,10 @@ test('Video Presentation Mode & Multi-Stream Player with PiP', async (t) => {
         },
       });
 
-      assert.strictEqual(primarySlot.children.length, 1);
+      assert.strictEqual(primarySlot.children.length, 2);
       const video = primarySlot.children[0];
       assert.strictEqual(video.tagName, 'VIDEO');
+      assert.strictEqual(primarySlot.children[1].className, 'video-stream-spinner');
       assert.strictEqual(video.muted, false);
       assert.strictEqual(audioMgr.registered.has(video), true);
 
@@ -1161,6 +1164,119 @@ test('Video Presentation Mode & Multi-Stream Player with PiP', async (t) => {
       const pc2 = pcs[1];
       assert.strictEqual(pc2.closed, false);
       assert.strictEqual(pc2.remoteDescription.sdp, 'v=0\r\ns=recovered-answer');
+
+      mgr.exitVideoMode();
+    });
+  });
+  await t.test('Video Stream Loading Spinner & Wake Animation Lifecycle', async (t2) => {
+    await t2.test('creates spinner DOM element when mounting primary stream but not PiP', () => {
+      const stage = createMockElement('div', 'video-stage');
+      const primarySlot = createMockElement('div', 'video-primary-slot');
+      const pipSlot = createMockElement('div', 'video-pip-slot');
+
+      const mgr = new VideoPlayerManager({
+        stageElement: stage,
+        primarySlot,
+        pipSlot,
+        RTCPeerConnection: MockRTCPeerConnection,
+      });
+
+      mgr.handleVideoState({
+        mode: 'video',
+        primary: { id: 'stream-primary', stream_url: 'http://cast/webrtc', type: 'webrtc' },
+        pip: { id: 'stream-pip', stream_url: 'http://pip/webrtc', type: 'webrtc' },
+      });
+
+      // Primary stream container has media + spinner
+      assert.strictEqual(primarySlot.children.length, 2);
+      const spinner = primarySlot.children[1];
+      assert.strictEqual(spinner.className, 'video-stream-spinner');
+      assert.ok(mgr.primarySession.spinner);
+      assert.strictEqual(mgr.primarySession.spinner, spinner);
+
+      // PiP container has media ONLY (no spinner)
+      assert.strictEqual(pipSlot.children.length, 1);
+      assert.strictEqual(mgr.pipSession.spinner, undefined);
+
+      mgr.exitVideoMode();
+    });
+
+    await t2.test('dismisses spinner on playing and loadeddata events', async () => {
+      const stage = createMockElement('div', 'video-stage');
+      const primarySlot = createMockElement('div', 'video-primary-slot');
+
+      const mgr = new VideoPlayerManager({
+        stageElement: stage,
+        primarySlot,
+        RTCPeerConnection: MockRTCPeerConnection,
+      });
+
+      mgr.handleVideoState({
+        mode: 'video',
+        primary: { id: 'stream-primary', stream_url: 'http://cast/webrtc', type: 'webrtc' },
+      });
+
+      const video = primarySlot.children[0];
+      const spinner = primarySlot.children[1];
+      assert.strictEqual(spinner.classList.contains('fade-out'), false);
+
+      // Fire playing event
+      video.dispatchEvent('playing');
+      assert.strictEqual(spinner.classList.contains('fade-out'), true);
+
+      // Wait 450ms for fade-out timeout removal
+      await new Promise((r) => setTimeout(r, 450));
+      assert.strictEqual(primarySlot.children.length, 1);
+      assert.strictEqual(primarySlot.children[0], video);
+
+      mgr.exitVideoMode();
+    });
+
+    await t2.test('cleans up spinner and safety timer on session teardown', () => {
+      const stage = createMockElement('div', 'video-stage');
+      const primarySlot = createMockElement('div', 'video-primary-slot');
+
+      const mgr = new VideoPlayerManager({
+        stageElement: stage,
+        primarySlot,
+        RTCPeerConnection: MockRTCPeerConnection,
+      });
+
+      mgr.handleVideoState({
+        mode: 'video',
+        primary: { id: 'stream-primary', stream_url: 'http://cast/webrtc', type: 'webrtc' },
+      });
+
+      assert.ok(mgr.primarySession.spinnerSafetyTimer);
+      assert.strictEqual(primarySlot.children.length, 2);
+
+      // Teardown session directly
+      mgr.teardownSession(mgr.primarySession);
+
+      assert.strictEqual(primarySlot.children.length, 0);
+    });
+
+    await t2.test('dismisses spinner on WebRTC connection failure or disconnect', () => {
+      const stage = createMockElement('div', 'video-stage');
+      const primarySlot = createMockElement('div', 'video-primary-slot');
+
+      const mgr = new VideoPlayerManager({
+        stageElement: stage,
+        primarySlot,
+        RTCPeerConnection: MockRTCPeerConnection,
+      });
+
+      mgr.handleVideoState({
+        mode: 'video',
+        primary: { id: 'stream-primary', stream_url: 'http://cast/webrtc', type: 'webrtc' },
+      });
+
+      const spinner = mgr.primarySession.spinner;
+      assert.strictEqual(spinner.classList.contains('fade-out'), false);
+
+      // Transition connection state to failed
+      mgr.primarySession.pc.setConnectionState('failed');
+      assert.strictEqual(spinner.classList.contains('fade-out'), true);
 
       mgr.exitVideoMode();
     });

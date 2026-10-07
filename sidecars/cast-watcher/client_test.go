@@ -315,9 +315,7 @@ func TestCastClient_HeartbeatPingAndPong(t *testing.T) {
 }
 
 func TestCastClient_MediaActionsAndErrors(t *testing.T) {
-	client := NewCastClient(ClientConfig{
-		ChromecastAddr: "127.0.0.1:8009",
-	})
+	client := NewCastClient(ClientConfig{})
 	ctx := context.Background()
 
 	// 1. Not connected
@@ -609,7 +607,6 @@ func TestCastClient_CloseAndHeartbeatErrors(t *testing.T) {
 	})
 }
 
-
 func TestCastClient_SupervisorBackoffMax(t *testing.T) {
 	client := NewCastClient(ClientConfig{
 		ReconnectBase:  10 * time.Millisecond,
@@ -621,10 +618,187 @@ func TestCastClient_SupervisorBackoffMax(t *testing.T) {
 	client.Start(ctx)
 }
 
-
 func TestCastClient_PostToCoreFail(t *testing.T) {
 	client := NewCastClient(ClientConfig{
 		CoreURL: "http://127.0.0.1:65534",
 	})
 	client.postToCore("http://127.0.0.1:65534", []byte("{}"), "trigger")
+}
+
+func TestCastClient_Wake_NotConnected(t *testing.T) {
+	client := NewCastClient(ClientConfig{})
+	ctx := context.Background()
+
+	// 1. Initial state: not connected
+	err := client.Wake(ctx)
+	if !errors.Is(err, ErrNotConnected) {
+		t.Fatalf("expected ErrNotConnected, got: %v", err)
+	}
+
+	// 2. Fake conn but connected = false
+	c1, s1 := net.Pipe()
+	defer c1.Close()
+	defer s1.Close()
+	client.conn = c1
+	client.connected = false
+	err = client.Wake(ctx)
+	if !errors.Is(err, ErrNotConnected) {
+		t.Fatalf("expected ErrNotConnected when connected=false, got: %v", err)
+	}
+}
+
+func TestCastClient_Wake_SuccessAndDebounce(t *testing.T) {
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+	defer serverConn.Close()
+
+	client := NewCastClient(ClientConfig{
+		WakeDelay: 10 * time.Millisecond,
+	})
+	client.conn = clientConn
+	client.connected = true
+
+	ctx := context.Background()
+	errChan := make(chan error, 1)
+
+	// 1. Trigger successful wake
+	go func() {
+		errChan <- client.Wake(ctx)
+	}()
+
+	// Expect LAUNCH message
+	launchMsg, err := DecodeCastMessage(serverConn)
+	if err != nil {
+		t.Fatalf("failed to decode LAUNCH message: %v", err)
+	}
+	if launchMsg.Namespace != NamespaceReceiver {
+		t.Errorf("expected namespace %s, got %s", NamespaceReceiver, launchMsg.Namespace)
+	}
+	if launchMsg.DestinationID != DestinationReceiver {
+		t.Errorf("expected destination %s, got %s", DestinationReceiver, launchMsg.DestinationID)
+	}
+	if !strings.Contains(launchMsg.PayloadUTF8, `"LAUNCH"`) || !strings.Contains(launchMsg.PayloadUTF8, `"CC1AD845"`) {
+		t.Errorf("unexpected LAUNCH payload: %s", launchMsg.PayloadUTF8)
+	}
+
+	// Expect STOP message
+	stopMsg, err := DecodeCastMessage(serverConn)
+	if err != nil {
+		t.Fatalf("failed to decode STOP message: %v", err)
+	}
+	if stopMsg.Namespace != NamespaceReceiver {
+		t.Errorf("expected namespace %s, got %s", NamespaceReceiver, stopMsg.Namespace)
+	}
+	if stopMsg.DestinationID != DestinationReceiver {
+		t.Errorf("expected destination %s, got %s", DestinationReceiver, stopMsg.DestinationID)
+	}
+	if !strings.Contains(stopMsg.PayloadUTF8, `"STOP"`) {
+		t.Errorf("unexpected STOP payload: %s", stopMsg.PayloadUTF8)
+	}
+
+	select {
+	case err := <-errChan:
+		if err != nil {
+			t.Fatalf("Wake returned error: %v", err)
+		}
+	case <-time.After(1 * time.Second):
+		t.Fatal("timed out waiting for Wake to complete")
+	}
+
+	// 2. Debounce: immediately trigger wake again within 5 seconds
+	// Should return nil immediately without sending additional messages
+	debouncedErr := client.Wake(ctx)
+	if debouncedErr != nil {
+		t.Fatalf("expected debounced Wake to return nil, got: %v", debouncedErr)
+	}
+
+	// Verify no messages sent on serverConn
+	done := make(chan struct{})
+	go func() {
+		var buf [1]byte
+		_ = serverConn.SetReadDeadline(time.Now().Add(50 * time.Millisecond))
+		_, _ = serverConn.Read(buf[:])
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("timed out waiting for read deadline check")
+	}
+}
+
+func TestCastClient_Wake_ContextCanceled(t *testing.T) {
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+	defer serverConn.Close()
+
+	client := NewCastClient(ClientConfig{
+		WakeDelay: 500 * time.Millisecond,
+	})
+	client.conn = clientConn
+	client.connected = true
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	errChan := make(chan error, 1)
+	go func() {
+		errChan <- client.Wake(ctx)
+	}()
+
+	// Read LAUNCH message
+	_, err := DecodeCastMessage(serverConn)
+	if err != nil {
+		t.Fatalf("failed to read LAUNCH message: %v", err)
+	}
+
+	// Cancel context while waiting
+	cancel()
+
+	select {
+	case err := <-errChan:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("expected context.Canceled, got: %v", err)
+		}
+	case <-time.After(1 * time.Second):
+		t.Fatal("timed out waiting for Wake to abort on canceled context")
+	}
+}
+
+func TestCastClient_Wake_SendErrors(t *testing.T) {
+	// Error on LAUNCH
+	c1, s1 := net.Pipe()
+	_ = s1.Close() // closed immediately so Write fails
+	defer c1.Close()
+
+	client := NewCastClient(ClientConfig{
+		WakeDelay: 10 * time.Millisecond,
+	})
+	client.conn = c1
+	client.connected = true
+
+	err := client.Wake(context.Background())
+	if err == nil {
+		t.Error("expected error when connection is closed on LAUNCH, got nil")
+	}
+
+	// Error on STOP
+	c2, s2 := net.Pipe()
+	defer c2.Close()
+
+	client2 := NewCastClient(ClientConfig{
+		WakeDelay: 10 * time.Millisecond,
+	})
+	client2.conn = c2
+	client2.connected = true
+
+	go func() {
+		// Read LAUNCH then close server conn
+		_, _ = DecodeCastMessage(s2)
+		_ = s2.Close()
+	}()
+
+	err = client2.Wake(context.Background())
+	if err == nil {
+		t.Error("expected error when connection is closed on STOP, got nil")
+	}
 }

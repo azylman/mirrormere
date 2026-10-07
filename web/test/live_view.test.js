@@ -392,4 +392,76 @@ test('Live View Client Controller', async (t) => {
     global.window.MirrormereLiveView.unmount('cam-tile');
     assert.equal(global.window.MirrormereLiveView.getInstance('cam-tile'), null);
   });
+
+  await t.test('dispatches concurrent wake action on click when controllable and control_url configured', async () => {
+    const wakeCalls = [];
+    let triggerCall = null;
+    const mockFetch = async (url, opts) => {
+      if (url === 'http://device-control.lan/wake') {
+        wakeCalls.push({ url, opts, body: JSON.parse(opts.body) });
+      } else if (url === 'api/video/trigger') {
+        triggerCall = { url, opts, body: JSON.parse(opts.body) };
+      }
+      return { ok: true, status: 200, text: () => Promise.resolve('{"status":"ok"}') };
+    };
+
+    const el = createMockElement({
+      stream_url: 'http://127.0.0.1:1984/api/webrtc?src=cam',
+      stream_id: 'doorbell',
+      controllable: true,
+      control_url: 'http://device-control.lan/wake',
+    });
+
+    const inst = global.window.MirrormereLiveView.mount(el, {
+      fetch: mockFetch,
+      RTCPeerConnection: MockPeerConnection,
+    });
+
+    el.dispatchEvent({ type: 'click' });
+
+    await new Promise((r) => setTimeout(r, 20));
+
+    assert.equal(wakeCalls.length, 1);
+    assert.equal(wakeCalls[0].opts.method, 'POST');
+    assert.deepEqual(wakeCalls[0].body, { id: 'doorbell', action: 'wake' });
+
+    assert.ok(triggerCall, 'trigger must be dispatched to api/video/trigger');
+    assert.equal(triggerCall.body.id, 'doorbell');
+
+    global.window.MirrormereLiveView.unmount('cam-tile');
+  });
+
+  await t.test('does not dispatch wake action when controllable is false or control_url is absent', async () => {
+    const wakeCalls = [];
+    let triggerCall = null;
+    const mockFetch = async (url, opts) => {
+      if (url === 'http://device-control.lan/wake') {
+        wakeCalls.push({ url, opts, body: JSON.parse(opts.body) });
+      } else if (url === 'api/video/trigger') {
+        triggerCall = { url, opts, body: JSON.parse(opts.body) };
+      }
+      return { ok: true, status: 200, text: () => Promise.resolve('{"status":"ok"}') };
+    };
+
+    const el = createMockElement({
+      stream_url: 'http://127.0.0.1:1984/api/webrtc?src=cam',
+      stream_id: 'passive-cam',
+      controllable: false,
+      control_url: 'http://device-control.lan/wake',
+    });
+
+    const inst = global.window.MirrormereLiveView.mount(el, {
+      fetch: mockFetch,
+      RTCPeerConnection: MockPeerConnection,
+    });
+
+    el.dispatchEvent({ type: 'click' });
+    await new Promise((r) => setTimeout(r, 20));
+
+    assert.equal(wakeCalls.length, 0);
+    assert.ok(triggerCall, 'trigger must still be dispatched');
+    assert.equal(triggerCall.body.id, 'passive-cam');
+
+    global.window.MirrormereLiveView.unmount('cam-tile');
+  });
 });
