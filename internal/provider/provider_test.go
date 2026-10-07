@@ -72,6 +72,47 @@ func TestRegistry_BuiltInSpacer(t *testing.T) {
 	}
 }
 
+func TestRegistry_BuiltInLiveView(t *testing.T) {
+	t.Parallel()
+
+	reg := provider.NewRegistry()
+	if !reg.Has("live-view") {
+		t.Fatal("expected registry to have 'live-view' provider")
+	}
+
+	p, err := reg.Create("live-view")
+	if err != nil {
+		t.Fatalf("failed to create live-view provider: %v", err)
+	}
+	if p == nil {
+		t.Fatal("expected non-nil live-view provider")
+	}
+
+	// Verify live-view provider contract
+	ctx := context.Background()
+	if err := p.Init(ctx, nil, provider.InitOptions{}); err != nil {
+		t.Fatalf("live-view Init failed: %v", err)
+	}
+
+	data, err := p.Fetch(ctx)
+	if err != nil {
+		t.Fatalf("live-view Fetch failed: %v", err)
+	}
+	dataMap, ok := data.(map[string]any)
+	if !ok || len(dataMap) != 0 {
+		t.Errorf("expected empty map from live-view Fetch, got %v", data)
+	}
+
+	sink := make(chan provider.WidgetPayload, 1)
+	if err := p.Subscribe(ctx, sink); err != nil {
+		t.Fatalf("live-view Subscribe failed: %v", err)
+	}
+
+	if err := p.Shutdown(ctx); err != nil {
+		t.Fatalf("live-view Shutdown failed: %v", err)
+	}
+}
+
 func TestRegistry_CustomProviderRegistration(t *testing.T) {
 	t.Parallel()
 
