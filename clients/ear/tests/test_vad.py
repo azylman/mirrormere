@@ -11,6 +11,7 @@ except ImportError:
 from clients.ear.vad import (
     EnergyDetector,
     SileroDetector,
+    SherpaSileroDetector,
     build_detector,
     SILERO_WINDOW_SAMPLES,
 )
@@ -113,6 +114,67 @@ class TestSileroDetector(unittest.TestCase):
         self.assertEqual(count2, 0)
 
 
+class MockSherpaVAD:
+    """Deterministic stand-in for sherpa_onnx.VoiceActivityDetector."""
+
+    def __init__(self, speech_detected: bool = False):
+        self._speech_detected = speech_detected
+        self.accept_calls = []
+        self.clear_calls = 0
+        self.queue = []
+
+    def accept_waveform(self, samples):
+        self.accept_calls.append(samples)
+
+    def is_speech_detected(self) -> bool:
+        return self._speech_detected
+
+    def empty(self) -> bool:
+        return len(self.queue) == 0
+
+    def pop(self):
+        if self.queue:
+            return self.queue.pop(0)
+
+    def clear(self):
+        self.clear_calls += 1
+        self.queue.clear()
+
+
+@unittest.skipUnless(HAS_NUMPY, "numpy not installed")
+class TestSherpaSileroDetector(unittest.TestCase):
+    def test_float32_normalization_and_speech_detection(self):
+        mock_vad = MockSherpaVAD(speech_detected=True)
+        mock_vad.queue = ["seg1", "seg2"]
+        det = SherpaSileroDetector(mock_vad)
+
+        raw_frame = _frame(16384, n_samples=1280)
+        is_speech = det.is_speech(raw_frame)
+        self.assertTrue(is_speech)
+        self.assertEqual(len(mock_vad.accept_calls), 1)
+
+        samples = mock_vad.accept_calls[0]
+        # Must be float32 normalized [-1.0, 1.0]
+        self.assertEqual(samples.dtype, numpy.float32)
+        self.assertAlmostEqual(float(samples[0]), 0.5, places=2)
+        # Segments queue must be drained
+        self.assertEqual(len(mock_vad.queue), 0)
+
+    def test_reset_clears_vad(self):
+        mock_vad = MockSherpaVAD()
+        det = SherpaSileroDetector(mock_vad)
+        det.reset()
+        self.assertEqual(mock_vad.clear_calls, 1)
+
+    def test_drain_inference_stats(self):
+        mock_vad = MockSherpaVAD()
+        det = SherpaSileroDetector(mock_vad)
+        det.is_speech(_frame(100, n_samples=1280))
+        mean_ms, count = det.drain_inference_stats()
+        self.assertGreaterEqual(mean_ms, 0.0)
+        self.assertEqual(count, 1)
+
+
 class TestBuildDetector(unittest.TestCase):
     def test_energy_mode_builds_energy_detector(self):
         det = build_detector("energy", 0.5, -31.0, VoiceDaemon.compute_db)
@@ -121,13 +183,27 @@ class TestBuildDetector(unittest.TestCase):
     @patch("clients.ear.vad.load_silero_vad_model")
     def test_silero_mode_builds_silero_detector(self, mock_load):
         mock_load.return_value = MockSileroVAD()
-        det = build_detector("silero", 0.5, -31.0, VoiceDaemon.compute_db)
+        det = build_detector("silero", 0.5, -31.0, VoiceDaemon.compute_db, wake_engine="openwakeword")
         self.assertIsInstance(det, SileroDetector)
 
     @patch("clients.ear.vad.load_silero_vad_model", side_effect=RuntimeError("onnx load failed"))
-    def test_silero_load_failure_falls_back_to_energy(self, mock_load):
-        det = build_detector("silero", 0.5, -31.0, VoiceDaemon.compute_db)
-        self.assertIsInstance(det, EnergyDetector)
+    def test_silero_load_failure_raises_runtime_error_for_oww(self, mock_load):
+        with self.assertRaises(RuntimeError) as ctx:
+            build_detector("silero", 0.5, -31.0, VoiceDaemon.compute_db, wake_engine="openwakeword")
+        self.assertIn("Silero VAD failed to load for openwakeword", str(ctx.exception))
+
+    @patch("clients.ear.vad.load_sherpa_silero_vad")
+    def test_sherpa_silero_mode_builds_sherpa_detector(self, mock_load):
+        mock_load.return_value = MockSherpaVAD()
+        det = build_detector("silero", 0.5, -31.0, VoiceDaemon.compute_db, wake_engine="sherpa-onnx")
+        self.assertIsInstance(det, SherpaSileroDetector)
+
+    @patch("clients.ear.vad.load_sherpa_silero_vad", side_effect=RuntimeError("missing silero_vad.onnx"))
+    def test_sherpa_silero_load_failure_raises_runtime_error(self, mock_load):
+        with self.assertRaises(RuntimeError) as ctx:
+            build_detector("silero", 0.5, -31.0, VoiceDaemon.compute_db, wake_engine="sherpa-onnx")
+        self.assertIn("Silero VAD failed to load for sherpa-onnx", str(ctx.exception))
+
 
 
 class TestVoiceDaemonAmbientNoSpeechNotSent(unittest.TestCase):
