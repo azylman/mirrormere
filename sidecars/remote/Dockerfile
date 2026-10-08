@@ -24,12 +24,7 @@ RUN pip install --no-cache-dir -r requirements.txt \
 # Copy application files
 COPY . /app/
 
-ENV HTTP_PORT=8092 \
-    CHROMECAST_HOST="" \
-    CERT_DIR=/data/certs \
-    TOUCH_DEVICE=/dev/input/event3 \
-    ADVERT_NAME="Mirrormere Remote" \
-    AUTO_CONFIRM_PAIRING=true
+ENV CONFIG_PATH=/local/config/remote.yaml
 
 
 EXPOSE 8092

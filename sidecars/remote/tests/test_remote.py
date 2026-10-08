@@ -140,5 +140,91 @@ class TestDaemonComponents(unittest.TestCase):
     def test_advert_name_default(self):
         self.assertEqual(daemon.ADVERT_NAME, "Mirrormere Remote")
 
+    def test_remote_daemon_custom_config(self):
+        from config import RemoteConfig
+        cfg = RemoteConfig(
+            chromecast_host="10.0.0.50",
+            advert_name="Test Remote",
+            http_port=8095,
+        )
+        d = daemon.RemoteDaemon(config=cfg)
+        self.assertEqual(d.config.chromecast_host, "10.0.0.50")
+        self.assertEqual(d.config.advert_name, "Test Remote")
+        self.assertEqual(d.config.http_port, 8095)
+
+
+class TestConfig(unittest.TestCase):
+    def test_default_config(self):
+        from config import load_config
+        cfg = load_config("/nonexistent/path/to/config.yaml")
+        self.assertEqual(cfg.chromecast_host, "chromecast.lan")
+        self.assertEqual(cfg.cert_dir, "/data/certs")
+        self.assertEqual(cfg.touch_device, "/dev/input/event3")
+        self.assertEqual(cfg.http_port, 8092)
+        self.assertEqual(cfg.advert_name, "Mirrormere Remote")
+        self.assertTrue(cfg.auto_confirm_pairing)
+
+    def test_load_from_yaml(self):
+        from config import load_config
+        import tempfile
+        content = """
+chromecast_host: 10.0.0.50
+cert_dir: /custom/certs
+touch_device: /dev/input/event5
+http_port: 8099
+advert_name: Custom Remote
+auto_confirm_pairing: false
+"""
+        with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
+            f.write(content)
+            temp_path = f.name
+        try:
+            cfg = load_config(temp_path)
+            self.assertEqual(cfg.chromecast_host, "10.0.0.50")
+            self.assertEqual(cfg.cert_dir, "/custom/certs")
+            self.assertEqual(cfg.touch_device, "/dev/input/event5")
+            self.assertEqual(cfg.http_port, 8099)
+            self.assertEqual(cfg.advert_name, "Custom Remote")
+            self.assertFalse(cfg.auto_confirm_pairing)
+        finally:
+            os.remove(temp_path)
+
+    def test_load_from_scoped_yaml(self):
+        from config import load_config
+        import tempfile
+        content = """
+remote:
+  chromecast_addr: 10.0.0.50:8009
+  cert_dir: /kiosk/certs
+  touch_device: /dev/input/event3
+  http_port: 8092
+  advert_name: Mirrormere Remote
+  auto_confirm_pairing: true
+"""
+        with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
+            f.write(content)
+            temp_path = f.name
+        try:
+            cfg = load_config(temp_path)
+            self.assertEqual(cfg.chromecast_host, "10.0.0.50")
+            self.assertEqual(cfg.cert_dir, "/kiosk/certs")
+            self.assertTrue(cfg.auto_confirm_pairing)
+        finally:
+            os.remove(temp_path)
+
+    def test_no_env_fallback(self):
+        # In accordance with system invariants, environment variables must not override config values
+        from config import load_config
+        with patch.dict(os.environ, {
+            "CHROMECAST_HOST": "malicious-host.lan",
+            "ADVERT_NAME": "Ignored Advert",
+            "HTTP_PORT": "9999",
+        }):
+            cfg = load_config("/nonexistent/file.yaml")
+            self.assertEqual(cfg.chromecast_host, "chromecast.lan")
+            self.assertEqual(cfg.advert_name, "Mirrormere Remote")
+            self.assertEqual(cfg.http_port, 8092)
+
+
 if __name__ == "__main__":
     unittest.main()

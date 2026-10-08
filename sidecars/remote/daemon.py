@@ -25,24 +25,26 @@ except ImportError:
 
 # Import local pure helper modules
 try:
+    from config import RemoteConfig, load_config
     from coords import normalize_coordinates, to_hid_digitizer
     from keycodes import lookup_consumer_key, lookup_remote_key, resolve_key_dispatch
 except ImportError:
+    from .config import RemoteConfig, load_config
     from .coords import normalize_coordinates, to_hid_digitizer
     from .keycodes import lookup_consumer_key, lookup_remote_key, resolve_key_dispatch
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("mirrormere-remote")
 
-# Configuration from environment
-CHROMECAST_HOST = os.environ.get("CHROMECAST_HOST", "chromecast.lan")
-CERT_DIR = os.environ.get("CERT_DIR", "/data/certs")
-
+# Declarative YAML configuration (no env fallbacks for config values)
+_default_config = load_config()
+CHROMECAST_HOST = _default_config.chromecast_host
+CERT_DIR = _default_config.cert_dir
 CERT_FALLBACK_DIR = "/var/lib/kiosk-touch"
-TOUCH_DEVICE_PATH = os.environ.get("TOUCH_DEVICE", "/dev/input/event3")
-HTTP_PORT = int(os.environ.get("HTTP_PORT", "8092"))
-ADVERT_NAME = os.environ.get("ADVERT_NAME", "Mirrormere Remote")
-AUTO_CONFIRM_PAIRING = os.environ.get("AUTO_CONFIRM_PAIRING", "true").lower() in ("true", "1", "yes")
+TOUCH_DEVICE_PATH = _default_config.touch_device
+HTTP_PORT = _default_config.http_port
+ADVERT_NAME = _default_config.advert_name
+AUTO_CONFIRM_PAIRING = _default_config.auto_confirm_pairing
 
 # Multi-Report HID Descriptor (Mouse + Touch + Consumer Control)
 REPORT_MAP = bytes([
@@ -328,8 +330,9 @@ try:
             pass
 
     class PairingAgent(BaseAgent):
-        def __init__(self, remote_helper: AndroidRemoteHelper):
+        def __init__(self, remote_helper: AndroidRemoteHelper, auto_confirm: bool = True):
             self.remote_helper = remote_helper
+            self.auto_confirm = auto_confirm
             super().__init__(AgentCapability.DISPLAY_YES_NO)
 
         @method()
@@ -355,7 +358,7 @@ try:
             logger.info("Auto-confirming pairing request for %s (passkey %06d)", device, passkey)
             mac = device.split("/")[-1].replace("dev_", "").replace("_", ":").upper()
             asyncio.create_task(self._trust_device(mac))
-            if AUTO_CONFIRM_PAIRING:
+            if self.auto_confirm:
                 asyncio.create_task(self.remote_helper.auto_approve_pairing())
 
         @method()
@@ -447,10 +450,11 @@ class TouchReader:
 
 
 class RemoteDaemon:
-    def __init__(self):
-        self.remote_helper = AndroidRemoteHelper(CHROMECAST_HOST, CERT_DIR)
+    def __init__(self, config: Optional[RemoteConfig] = None):
+        self.config = config or load_config()
+        self.remote_helper = AndroidRemoteHelper(self.config.chromecast_host, self.config.cert_dir)
         self.hid = HIDService() if HIDService else None
-        self.touch_reader = TouchReader(self.hid, TOUCH_DEVICE_PATH)
+        self.touch_reader = TouchReader(self.hid, self.config.touch_device)
         self.bus = None
         self.adapter = None
         self.agent = None
@@ -467,7 +471,7 @@ class RemoteDaemon:
             },
             "bluetooth": {
                 "active": self.hid is not None,
-                "advert_name": ADVERT_NAME,
+                "advert_name": self.config.advert_name,
             },
         })
 
@@ -543,7 +547,7 @@ class RemoteDaemon:
             try:
                 self.bus = await get_message_bus()
                 self.adapter = await Adapter.get_first(self.bus)
-                self.agent = PairingAgent(self.remote_helper)
+                self.agent = PairingAgent(self.remote_helper, auto_confirm=self.config.auto_confirm_pairing)
                 await self.agent.register(self.bus)
 
                 dev_info = DeviceInfoService()
@@ -552,14 +556,14 @@ class RemoteDaemon:
                 await collection.register(self.bus, path="/com/mirrormere/gatt", adapter=self.adapter)
 
                 self.advert = KioskAdvertisement(
-                    localName=ADVERT_NAME,
+                    localName=self.config.advert_name,
                     serviceUUIDs=["1812", "180F", "180A"],
                     appearance=0x03C2,
                     timeout=0,
                     includes=AdvertisingIncludes.LOCAL_NAME | AdvertisingIncludes.APPEARANCE,
                 )
                 await self.advert.register(self.bus, adapter=self.adapter)
-                logger.info("BLE peripheral & advertisement registered as '%s' (0x03C2)", ADVERT_NAME)
+                logger.info("BLE peripheral & advertisement registered as '%s' (0x03C2)", self.config.advert_name)
             except Exception as e:
                 logger.error("Failed to register BlueZ peripheral (check D-Bus mount / permissions): %s", e)
 
@@ -576,9 +580,9 @@ class RemoteDaemon:
 
         runner = web.AppRunner(app)
         await runner.setup()
-        site = web.TCPSite(runner, "0.0.0.0", HTTP_PORT)
+        site = web.TCPSite(runner, "0.0.0.0", self.config.http_port)
         await site.start()
-        logger.info("Mirrormere Remote HTTP API listening on http://0.0.0.0:%d", HTTP_PORT)
+        logger.info("Mirrormere Remote HTTP API listening on http://0.0.0.0:%d", self.config.http_port)
 
         # Keep server running until shutdown signal
         stop_event = asyncio.Event()
@@ -604,7 +608,14 @@ class RemoteDaemon:
 
 
 def main():
-    daemon = RemoteDaemon()
+    config_path = os.environ.get("CONFIG_PATH")
+    if len(sys.argv) > 1:
+        if sys.argv[1] in ("-c", "--config") and len(sys.argv) > 2:
+            config_path = sys.argv[2]
+        elif not sys.argv[1].startswith("-"):
+            config_path = sys.argv[1]
+    config = load_config(config_path)
+    daemon = RemoteDaemon(config=config)
     asyncio.run(daemon.start())
 
 
