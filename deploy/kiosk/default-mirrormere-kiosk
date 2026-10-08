@@ -34,5 +34,5 @@ MIRRORMERE_REMOTE_DEBUGGING_PORT=9222
 # Optional DRM device override for wlroots (e.g. /dev/dri/card1)
 # WLR_DRM_DEVICES=
 
-# Suppress libinput devices for wlroots compositor (1 enables seatd handling)
-WLR_LIBINPUT_NO_DEVICES=1
+# Optional libinput suppression for headless testing (WARNING: setting to 1 disables all touchscreens, keyboards, and mice)
+# WLR_LIBINPUT_NO_DEVICES=
