@@ -22,10 +22,12 @@ function createMockElement(tagName = 'div', id = '', className = '') {
     value: '75',
     title: '',
 
+    _innerHTML: '',
     get innerHTML() {
-      return '';
+      return this._innerHTML || '';
     },
     set innerHTML(val) {
+      this._innerHTML = String(val);
       children.length = 0;
     },
 
@@ -253,7 +255,8 @@ test('VideoHUDController: stream state sync and controllable gating', () => {
   assert.equal(dom.title.textContent, 'Driveway Camera');
   assert.equal(dom.playBtn.style.display, '');
   assert.equal(dom.playBtn.hasAttribute('hidden'), false);
-  assert.equal(dom.playIcon.textContent, '⏸');
+  assert.equal(dom.playIcon.dataset.icon, 'pause');
+  assert.ok(dom.playIcon.innerHTML.includes('<svg'));
   assert.equal(dom.playBtn.getAttribute('aria-label'), 'Pause');
 
   // 2. Stream paused
@@ -266,7 +269,8 @@ test('VideoHUDController: stream state sync and controllable gating', () => {
       player_state: 'paused',
     },
   });
-  assert.equal(dom.playIcon.textContent, '▶');
+  assert.equal(dom.playIcon.dataset.icon, 'play');
+  assert.ok(dom.playIcon.innerHTML.includes('<svg'));
   assert.equal(dom.playBtn.getAttribute('aria-label'), 'Play');
 
   // 3. Uncontrollable stream (e.g. live CCTV)
@@ -373,7 +377,8 @@ test('VideoHUDController: audio state updates and mute toggle', async () => {
 
   // Unmuted state update
   hud.handleAudioState({ volume: 65, muted: false });
-  assert.equal(dom.muteIcon.textContent, '🔊');
+  assert.equal(dom.muteIcon.dataset.icon, 'unmuted');
+  assert.ok(dom.muteIcon.innerHTML.includes('<svg'));
   assert.equal(dom.muteBtn.getAttribute('aria-label'), 'Mute');
   assert.equal(dom.volumeSlider.value, '65');
   assert.equal(dom.muteBtn.classList.contains('muted'), false);
@@ -387,7 +392,8 @@ test('VideoHUDController: audio state updates and mute toggle', async () => {
 
   // Incoming muted state update
   hud.handleAudioState({ volume: 65, muted: true });
-  assert.equal(dom.muteIcon.textContent, '🔇');
+  assert.equal(dom.muteIcon.dataset.icon, 'muted');
+  assert.ok(dom.muteIcon.innerHTML.includes('<svg'));
   assert.equal(dom.muteBtn.getAttribute('aria-label'), 'Unmute');
   assert.equal(dom.muteBtn.classList.contains('muted'), true);
   assert.equal(dom.volumeSlider.classList.contains('muted'), true);

@@ -5,6 +5,13 @@
  * volume slider network mutations.
  */
 (() => {
+  const HUD_ICONS = {
+    play: '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true"><polygon points="6 4 20 12 6 20 6 4"></polygon></svg>',
+    pause: '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true"><rect x="6" y="4" width="4" height="16" rx="1"></rect><rect x="14" y="4" width="4" height="16" rx="1"></rect></svg>',
+    mute: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" fill="currentColor"></polygon><line x1="23" y1="9" x2="17" y2="15"></line><line x1="17" y1="9" x2="23" y2="15"></line></svg>',
+    unmute: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" fill="currentColor"></polygon><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path></svg>',
+  };
+
   /**
    * VideoHUDController coordinates the HUD overlay lifecycle, transport actions,
    * and audio controls over live video streams.
@@ -303,15 +310,12 @@
 
       // Update Play/Pause icon based on player_state
       if (this.playIcon && this.playBtn) {
-        if (stream.player_state === 'paused') {
-          this.playIcon.textContent = '▶';
-          this.playBtn.setAttribute('aria-label', 'Play');
-          this.playBtn.title = 'Play';
-        } else {
-          this.playIcon.textContent = '⏸';
-          this.playBtn.setAttribute('aria-label', 'Pause');
-          this.playBtn.title = 'Pause';
-        }
+        const isPaused = stream.player_state === 'paused';
+        const iconType = isPaused ? 'play' : 'pause';
+        this.playIcon.innerHTML = HUD_ICONS[iconType];
+        if (this.playIcon.dataset) this.playIcon.dataset.icon = iconType;
+        this.playBtn.setAttribute('aria-label', isPaused ? 'Play' : 'Pause');
+        this.playBtn.title = isPaused ? 'Play' : 'Pause';
       }
     }
 
@@ -335,7 +339,9 @@
 
       // Update Mute button icon and styling
       if (this.muteIcon) {
-        this.muteIcon.textContent = this.currentMuted ? '🔇' : '🔊';
+        const iconType = this.currentMuted ? 'mute' : 'unmute';
+        this.muteIcon.innerHTML = HUD_ICONS[iconType];
+        if (this.muteIcon.dataset) this.muteIcon.dataset.icon = this.currentMuted ? 'muted' : 'unmuted';
       }
       if (this.muteBtn) {
         this.muteBtn.setAttribute('aria-label', this.currentMuted ? 'Unmute' : 'Mute');
