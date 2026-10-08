@@ -199,7 +199,9 @@ class AndroidRemoteHelper:
     async def auto_approve_pairing(self):
         """Debounced auto-approval for Bluetooth pairing modal on Google TV."""
         await asyncio.sleep(0.3)
-        logger.info("Auto-confirming Bluetooth pairing dialog via Wi-Fi remote (DPAD_CENTER)...")
+        logger.info("Auto-confirming Bluetooth pairing dialog via Wi-Fi remote (DPAD_RIGHT -> DPAD_CENTER)...")
+        self.send_key("DPAD_RIGHT")
+        await asyncio.sleep(0.15)
         self.send_key("DPAD_CENTER")
 
     def launch_app(self, app_link: str) -> bool:
@@ -324,7 +326,7 @@ try:
         def __init__(self, remote_helper: AndroidRemoteHelper, auto_confirm: bool = True):
             self.remote_helper = remote_helper
             self.auto_confirm = auto_confirm
-            super().__init__(AgentCapability.DISPLAY_YES_NO)
+            super().__init__(AgentCapability.NO_INPUT_NO_OUTPUT)
 
         @method()
         def Release(self):
@@ -361,6 +363,8 @@ try:
         @method()
         def AuthorizeService(self, device: "o", uuid: "s"):
             logger.info("Auto-authorizing service %s for device %s", uuid, device)
+            mac = device.split("/")[-1].replace("dev_", "").replace("_", ":").upper()
+            asyncio.create_task(self._trust_device(mac))
 
         @method()
         def Cancel(self):
