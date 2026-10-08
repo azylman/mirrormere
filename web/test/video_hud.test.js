@@ -758,4 +758,135 @@ test('VideoHUDController: touch/pointer tap-to-wake and gesture debouncing on vi
   hud.destroy();
 });
 
+/**
+ * Helper to build modern HUD DOM tree with right-aligned vertical side rail.
+ */
+function createSideRailHUDDOM() {
+  const stage = createMockElement('div', 'video-stage');
+  const overlay = createMockElement('div', 'video-hud-overlay');
+  const header = createMockElement('div', '', 'video-hud-header');
+  const title = createMockElement('span', 'video-hud-title');
+  header.appendChild(title);
+
+  const sideRail = createMockElement('div', 'video-hud-side-rail', 'video-hud-side-rail');
+  const dismissBtn = createMockElement('button', 'video-hud-dismiss-btn', 'video-hud-btn video-hud-dismiss');
+  const muteBtn = createMockElement('button', 'video-hud-mute-btn', 'video-hud-btn video-hud-mute');
+  const muteIcon = createMockElement('span', 'video-hud-mute-icon');
+  muteBtn.appendChild(muteIcon);
+
+  const volumeSlider = createMockElement('input', 'video-hud-volume-slider', 'video-hud-volume-slider');
+  volumeSlider.value = '75';
+
+  sideRail.appendChild(dismissBtn);
+  sideRail.appendChild(muteBtn);
+  sideRail.appendChild(volumeSlider);
+
+  overlay.appendChild(header);
+  overlay.appendChild(sideRail);
+
+  const primarySlot = createMockElement('div', 'video-primary-slot', 'video-primary-slot');
+  const pipSlot = createMockElement('div', 'video-pip-slot', 'video-pip-slot');
+  stage.appendChild(primarySlot);
+  stage.appendChild(pipSlot);
+  stage.appendChild(overlay);
+
+  return {
+    stage,
+    overlay,
+    header,
+    title,
+    sideRail,
+    dismissBtn,
+    muteBtn,
+    muteIcon,
+    volumeSlider,
+    primarySlot,
+    pipSlot,
+  };
+}
+
+test('VideoHUDController: vertical side rail DOM without play button works cleanly', async () => {
+  const dom = createSideRailHUDDOM();
+  const hud = new VideoHUDController({
+    overlayElement: dom.overlay,
+    titleElement: dom.title,
+    dismissBtn: dom.dismissBtn,
+    muteBtn: dom.muteBtn,
+    muteIcon: dom.muteIcon,
+    volumeSlider: dom.volumeSlider,
+    stageElement: dom.stage,
+    sideRailElement: dom.sideRail,
+    autoFadeTimeout: 40,
+  });
+
+  assert.equal(hud.playBtn, null);
+  assert.equal(hud.isVisible, false);
+
+  // Sync stream without error when controllable is true
+  hud.handleVideoState({
+    mode: 'video',
+    primary: { id: 'cast', controllable: true, player_state: 'playing' },
+  });
+  assert.equal(hud.isVisible, true);
+
+  // Tapping side rail does not toggle or dismiss HUD
+  dom.sideRail.dispatchEvent('pointerup', { target: dom.sideRail });
+  assert.equal(hud.isVisible, true);
+
+  // Mute toggle works
+  let mutePosted = null;
+  hud.fetchFn = async (url, opts) => {
+    if (url === 'api/audio/mute') {
+      mutePosted = JSON.parse(opts.body);
+      return { ok: true };
+    }
+  };
+  dom.muteBtn.click();
+  assert.deepEqual(mutePosted, { muted: true });
+
+  // Dismiss button works
+  let dismissPosted = null;
+  hud.fetchFn = async (url, opts) => {
+    if (url === 'api/video/dismiss') {
+      dismissPosted = JSON.parse(opts.body);
+      return { ok: true };
+    }
+  };
+  dom.dismissBtn.click();
+  assert.deepEqual(dismissPosted, { id: 'cast' });
+
+  hud.destroy();
+});
+
+test('VideoHUDController: side rail stops pointer event propagation to video stage', async () => {
+  const dom = createSideRailHUDDOM();
+  const hud = new VideoHUDController({
+    overlayElement: dom.overlay,
+    titleElement: dom.title,
+    dismissBtn: dom.dismissBtn,
+    muteBtn: dom.muteBtn,
+    muteIcon: dom.muteIcon,
+    volumeSlider: dom.volumeSlider,
+    stageElement: dom.stage,
+    sideRailElement: dom.sideRail,
+  });
+
+  let stoppedEvents = [];
+  const fakeEvent = (type) => ({
+    type,
+    stopPropagation: () => {
+      stoppedEvents.push(type);
+    },
+  });
+
+  dom.sideRail.dispatchEvent('pointerdown', fakeEvent('pointerdown'));
+  dom.sideRail.dispatchEvent('pointerup', fakeEvent('pointerup'));
+  dom.sideRail.dispatchEvent('touchstart', fakeEvent('touchstart'));
+  dom.sideRail.dispatchEvent('touchend', fakeEvent('touchend'));
+
+  assert.deepEqual(stoppedEvents, ['pointerdown', 'pointerup', 'touchstart', 'touchend']);
+
+  hud.destroy();
+});
+
 

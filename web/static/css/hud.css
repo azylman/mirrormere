@@ -472,19 +472,16 @@ button, .touch-target {
   letter-spacing: -0.02em;
 }
 
-/* Centered Bottom Controls Bar */
-.video-hud-controls {
+/* Right-Aligned Vertical Controls Side Rail */
+.video-hud-side-rail {
   position: absolute;
-  bottom: 32px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: calc(100% - 64px);
-  max-width: 600px;
+  top: 24px;
+  right: 24px;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: center;
-  gap: 16px;
-  padding: 12px 20px;
+  gap: 12px;
+  padding: 12px 8px;
   background: rgba(26, 16, 48, 0.88);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
@@ -493,6 +490,13 @@ button, .touch-target {
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6), 0 0 16px var(--mm-accent-purple-glow);
   pointer-events: auto;
   box-sizing: border-box;
+  z-index: 85;
+}
+
+/* Backwards compatibility selector for tests */
+.video-hud-controls {
+  display: flex;
+  align-items: center;
 }
 
 /* Touch Action Buttons */
@@ -550,24 +554,29 @@ button, .touch-target {
   border-color: rgba(139, 92, 246, 0.4);
 }
 
-/* Volume Slider Container */
+/* Vertical Volume Slider Container */
 .video-hud-volume-container {
   display: flex;
   align-items: center;
-  flex: 1;
-  min-width: 140px;
-  max-width: 280px;
-  height: 48px;
+  justify-content: center;
+  width: 48px;
+  height: 160px;
+  padding: 4px 0;
+  box-sizing: border-box;
 }
 
 .video-hud-volume-slider {
+  writing-mode: vertical-lr;
+  direction: rtl;
+  width: 48px;
+  height: 150px;
+  margin: 0;
+  cursor: pointer;
+  touch-action: manipulation;
+  accent-color: var(--mm-accent-purple);
   -webkit-appearance: none;
   appearance: none;
-  width: 100%;
-  height: 36px;
   background: transparent;
-  touch-action: none;
-  margin: 0;
   transition: opacity 0.2s ease;
 }
 
@@ -581,7 +590,8 @@ button, .touch-target {
 
 /* Slider Track (WebKit) */
 .video-hud-volume-slider::-webkit-slider-runnable-track {
-  height: 8px;
+  width: 8px;
+  height: 100%;
   border-radius: 4px;
   background: rgba(168, 85, 247, 0.25);
   border: 1px solid rgba(168, 85, 247, 0.4);
@@ -591,14 +601,15 @@ button, .touch-target {
 .video-hud-volume-slider::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
   background: var(--mm-accent-purple);
   box-shadow: 0 0 12px var(--mm-accent-purple-glow);
   border: 2px solid #fff;
-  margin-top: -12px;
+  cursor: pointer;
   transition: transform 0.1s ease;
+  margin-left: -10px;
 }
 
 .video-hud-volume-slider::-webkit-slider-thumb:active {
@@ -607,7 +618,8 @@ button, .touch-target {
 
 /* Slider Track (Firefox) */
 .video-hud-volume-slider::-moz-range-track {
-  height: 8px;
+  width: 8px;
+  height: 100%;
   border-radius: 4px;
   background: rgba(168, 85, 247, 0.25);
   border: 1px solid rgba(168, 85, 247, 0.4);
@@ -615,12 +627,14 @@ button, .touch-target {
 
 /* Slider Thumb (Firefox) */
 .video-hud-volume-slider::-moz-range-thumb {
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
   background: var(--mm-accent-purple);
   box-shadow: 0 0 12px var(--mm-accent-purple-glow);
   border: 2px solid #fff;
+  cursor: pointer;
+  border: none;
 }
 
 /* ==========================================================================
