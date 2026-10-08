@@ -132,7 +132,7 @@
             return;
           }
           // If event was on interactive HUD elements, let them handle it
-          if (e.target && e.target.closest && (e.target.closest('.video-hud-controls') || e.target.closest('.video-hud-header'))) {
+          if (e.target && e.target.closest && (e.target.closest('.video-hud-controls') || e.target.closest('.video-hud-header') || e.target.closest('.video-hud-side-rail'))) {
             return;
           }
 
@@ -155,7 +155,20 @@
         });
       }
 
-      // 2. Dismiss button
+      // 2. Side rail pointer event isolation
+      const sideRail = this.options.sideRailElement || (typeof document !== 'undefined' ? document.getElementById('video-hud-side-rail') : null);
+      if (sideRail) {
+        const onRailPointer = (e) => {
+          if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+        };
+        const railEvents = ['pointerdown', 'pointerup', 'touchstart', 'touchend'];
+        railEvents.forEach((ev) => {
+          sideRail.addEventListener(ev, onRailPointer);
+          this.boundHandlers.push({ el: sideRail, ev, fn: onRailPointer });
+        });
+      }
+
+      // 3. Dismiss button
       if (this.dismissBtn) {
         const onDismiss = (e) => {
           if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
@@ -166,7 +179,7 @@
         this.boundHandlers.push({ el: this.dismissBtn, ev: 'click', fn: onDismiss });
       }
 
-      // 3. Play/Pause button
+      // 4. Play/Pause button
       if (this.playBtn) {
         const onPlayToggle = (e) => {
           if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
@@ -177,7 +190,7 @@
         this.boundHandlers.push({ el: this.playBtn, ev: 'click', fn: onPlayToggle });
       }
 
-      // 4. Mute button
+      // 5. Mute button
       if (this.muteBtn) {
         const onMuteToggle = (e) => {
           if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
@@ -188,7 +201,7 @@
         this.boundHandlers.push({ el: this.muteBtn, ev: 'click', fn: onMuteToggle });
       }
 
-      // 5. Volume slider interactions
+      // 6. Volume slider interactions
       if (this.volumeSlider) {
         const onSliderInput = (e) => {
           if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
