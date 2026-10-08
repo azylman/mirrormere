@@ -326,7 +326,7 @@ try:
         def __init__(self, remote_helper: AndroidRemoteHelper, auto_confirm: bool = True):
             self.remote_helper = remote_helper
             self.auto_confirm = auto_confirm
-            super().__init__(AgentCapability.NO_INPUT_NO_OUTPUT)
+            super().__init__(AgentCapability.DISPLAY_YES_NO)
 
         @method()
         def Release(self):
@@ -533,6 +533,23 @@ class RemoteDaemon:
             "ble_active": self.hid is not None,
         })
 
+    async def handle_bluetooth_remove(self, request):
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({"status": "error", "message": "invalid json"}, status=400)
+        mac = str(data.get("mac", "")).strip().upper()
+        if not mac:
+            return web.json_response({"status": "error", "message": "missing mac parameter"}, status=400)
+        try:
+            proc = await asyncio.create_subprocess_exec("bluetoothctl", "remove", mac)
+            await proc.wait()
+            logger.info("Successfully removed/unpaired bluetooth device %s", mac)
+            return web.json_response({"status": "ok", "action": "remove", "mac": mac})
+        except Exception as e:
+            logger.warning("Failed to remove bluetooth device %s: %s", mac, e)
+            return web.json_response({"status": "error", "message": str(e)}, status=500)
+
     async def start(self):
         # Start Wi-Fi remote background worker
         asyncio.create_task(self.remote_helper.start())
@@ -571,6 +588,7 @@ class RemoteDaemon:
         app.router.add_post("/key", self.handle_key)
         app.router.add_post("/remote/app", self.handle_remote_app)
         app.router.add_get("/remote/status", self.handle_remote_status)
+        app.router.add_post("/bluetooth/remove", self.handle_bluetooth_remove)
 
         runner = web.AppRunner(app)
         await runner.setup()
