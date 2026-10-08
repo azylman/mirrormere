@@ -37,6 +37,11 @@ REMOTE_KEYCODES: dict[str, str] = {
     "volup": "VOLUME_UP",
     "voldown": "VOLUME_DOWN",
     "mute": "VOLUME_MUTE",
+    "dpad_up": "DPAD_UP",
+    "dpad_down": "DPAD_DOWN",
+    "dpad_left": "DPAD_LEFT",
+    "dpad_right": "DPAD_RIGHT",
+    "dpad_center": "DPAD_CENTER",
     "power": "POWER",
 }
 
