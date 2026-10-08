@@ -74,6 +74,8 @@ jobs:
               - 'sidecars/voice-fingerprinter/**'
             mirrormere-ear:
               - 'clients/ear/**'
+            mirrormere-remote:
+              - 'sidecars/remote/**'
 
       - name: Compute Dynamic Build Matrix
         id: set-matrix
@@ -84,7 +86,8 @@ jobs:
               "mirrormere-cast-watcher": "${{ steps.filter.outputs.mirrormere-cast-watcher }}",
               "mirrormere-eink-renderer": "${{ steps.filter.outputs.mirrormere-eink-renderer }}",
               "mirrormere-voice-fingerprinter": "${{ steps.filter.outputs.mirrormere-voice-fingerprinter }}",
-              "mirrormere-ear": "${{ steps.filter.outputs.mirrormere-ear }}"
+              "mirrormere-ear": "${{ steps.filter.outputs.mirrormere-ear }}",
+              "mirrormere-remote": "${{ steps.filter.outputs.mirrormere-remote }}"
             };
 
             const catalog = [
@@ -92,7 +95,8 @@ jobs:
               { name: "mirrormere-cast-watcher", context: ".", file: "./sidecars/cast-watcher/Dockerfile" },
               { name: "mirrormere-eink-renderer", context: "./sidecars/eink-renderer", file: "./sidecars/eink-renderer/Dockerfile" },
               { name: "mirrormere-voice-fingerprinter", context: "./sidecars/voice-fingerprinter", file: "./sidecars/voice-fingerprinter/Dockerfile" },
-              { name: "mirrormere-ear", context: "./clients/ear", file: "./clients/ear/Dockerfile" }
+              { name: "mirrormere-ear", context: "./clients/ear", file: "./clients/ear/Dockerfile" },
+              { name: "mirrormere-remote", context: "./sidecars/remote", file: "./sidecars/remote/Dockerfile" }
             ];
 
             const matrix = catalog.filter(c => filter[c.name] === "true");
