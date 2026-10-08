@@ -1,0 +1,5 @@
+aiohttp>=3.9.0
+androidtvremote2>=0.1.0
+bluez-peripheral>=0.1.7
+cryptography>=41.0.0
+evdev>=1.7.0

@@ -209,6 +209,8 @@ run_python_tests() {
         PYTHONPATH="clients/eink-node" python3 -m unittest discover -s clients/eink-node/tests -p "test_*.py"
         echo "   [python test] Running edge ear (voice) daemon test suite..."
         PYTHONPATH="." python3 -m unittest discover -s clients/ear/tests -p "test_*.py"
+        echo "   [python test] Running remote (bluetooth/chromecast) sidecar test suite..."
+        PYTHONPATH="sidecars/remote" python3 -m unittest discover -s sidecars/remote/tests -p "test_*.py"
     fi
 }
 
