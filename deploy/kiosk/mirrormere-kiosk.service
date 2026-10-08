@@ -22,6 +22,8 @@ Environment="XDG_CURRENT_DESKTOP=Wayland"
 Environment="LIBSEAT_BACKEND=seatd"
 Environment="XCURSOR_THEME=transparent"
 Environment="XCURSOR_SIZE=24"
+Environment="WLR_SCENE_DISABLE_DIRECT_SCANOUT=1"
+Environment="WLR_DRM_NO_ATOMIC=1"
 EnvironmentFile=-/etc/default/mirrormere-kiosk
 ExecStartPre=-/bin/sh -c "pkill -u $(id -u) -f 'mirrormere-chrome|chrome' 2>/dev/null || true"
 ExecStartPre=-/bin/sh -c "rm -f /home/*/.config/mirrormere-chrome/Singleton* /home/*/.config/google-chrome/Singleton* 2>/dev/null || true"

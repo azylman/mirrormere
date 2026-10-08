@@ -36,3 +36,10 @@ MIRRORMERE_REMOTE_DEBUGGING_PORT=9222
 
 # Optional libinput suppression for headless testing (WARNING: setting to 1 disables all touchscreens, keyboards, and mice)
 # WLR_LIBINPUT_NO_DEVICES=
+
+# Wlroots compositor stability overrides (prevents Intel KMS deadlocks and GPU fence collisions)
+# Disable direct scanout to force GLES composition and prevent KMS plane fence lockups
+WLR_SCENE_DISABLE_DIRECT_SCANOUT=1
+
+# Disable atomic modesetting to bypass wlroots EBUSY deadlock on atomic commits
+WLR_DRM_NO_ATOMIC=1
