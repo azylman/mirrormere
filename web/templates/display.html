@@ -48,14 +48,20 @@
     <div id="video-hud-overlay" class="video-hud-overlay">
       <div class="video-hud-header">
         <span id="video-hud-title" class="video-hud-title">Live Video</span>
-        <button id="video-hud-dismiss-btn" class="video-hud-btn video-hud-dismiss" aria-label="Dismiss Video" title="Dismiss Video">✕</button>
+        <button id="video-hud-dismiss-btn" class="video-hud-btn video-hud-dismiss" aria-label="Dismiss Video" title="Dismiss Video">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
       </div>
       <div class="video-hud-controls">
         <button id="video-hud-play-btn" class="video-hud-btn video-hud-play" aria-label="Play / Pause" title="Play / Pause">
-          <span class="video-hud-icon" id="video-hud-play-icon">⏸</span>
+          <span class="video-hud-icon" id="video-hud-play-icon" data-icon="pause">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true"><rect x="6" y="4" width="4" height="16" rx="1"></rect><rect x="14" y="4" width="4" height="16" rx="1"></rect></svg>
+          </span>
         </button>
         <button id="video-hud-mute-btn" class="video-hud-btn video-hud-mute" aria-label="Mute / Unmute" title="Mute / Unmute">
-          <span class="video-hud-icon" id="video-hud-mute-icon">🔊</span>
+          <span class="video-hud-icon" id="video-hud-mute-icon" data-icon="unmuted">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" fill="currentColor"></polygon><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path></svg>
+          </span>
         </button>
         <div class="video-hud-volume-container">
           <input type="range" id="video-hud-volume-slider" class="video-hud-volume-slider" min="0" max="100" value="75" aria-label="Master Volume">
