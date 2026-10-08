@@ -100,6 +100,11 @@ class TestKeycodes(unittest.TestCase):
         self.assertEqual(lookup_remote_key("select"), "DPAD_CENTER")
         self.assertEqual(lookup_remote_key("enter"), "DPAD_CENTER")
         self.assertEqual(lookup_remote_key("ok"), "DPAD_CENTER")
+        self.assertEqual(lookup_remote_key("dpad_center"), "DPAD_CENTER")
+        self.assertEqual(lookup_remote_key("dpad_up"), "DPAD_UP")
+        self.assertEqual(lookup_remote_key("dpad_down"), "DPAD_DOWN")
+        self.assertEqual(lookup_remote_key("dpad_left"), "DPAD_LEFT")
+        self.assertEqual(lookup_remote_key("dpad_right"), "DPAD_RIGHT")
         self.assertEqual(lookup_remote_key("back"), "BACK")
         self.assertEqual(lookup_remote_key("home"), "HOME")
         self.assertIsNone(lookup_remote_key("nonexistent_command"))
@@ -131,11 +136,19 @@ class TestDaemonComponents(unittest.TestCase):
         helper.connected = True
         helper.remote = MagicMock()
         asyncio.run(helper.auto_approve_pairing())
-        self.assertEqual(helper.remote.send_key_command.call_count, 2)
-        helper.remote.send_key_command.assert_has_calls([
-            unittest.mock.call("DPAD_RIGHT"),
-            unittest.mock.call("DPAD_CENTER"),
-        ])
+        self.assertEqual(helper.remote.send_key_command.call_count, 0)
+
+    def test_configure_adapter(self):
+        d = daemon.RemoteDaemon()
+        d.adapter = AsyncMock()
+        with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_exec:
+            proc = AsyncMock()
+            proc.wait = AsyncMock(return_value=0)
+            mock_exec.return_value = proc
+            asyncio.run(d._configure_adapter())
+            d.adapter.set_powered.assert_awaited_once_with(True)
+            d.adapter.set_alias.assert_awaited_once_with(d.config.advert_name)
+            self.assertEqual(mock_exec.call_count, 3)
 
     def test_touch_reader_resolve_device(self):
         reader = daemon.TouchReader(None, "/tmp/nonexistent-input-event")

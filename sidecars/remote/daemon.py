@@ -3,7 +3,7 @@
 Manages:
 1. Android TV Remote v2 (Wi-Fi mTLS) connection on port 6466.
 2. Bluetooth LE HID Peripheral (Mirrormere Remote) with multi-report touch, mouse, and consumer keys.
-3. Automated BLE pairing confirmation via Wi-Fi remote.
+3. Automated BLE pairing confirmation via BlueZ PairingAgent.
 4. Physical touch event forwarding from /dev/input.
 5. HTTP Control API on port 8092.
 """
@@ -197,12 +197,8 @@ class AndroidRemoteHelper:
             return False
 
     async def auto_approve_pairing(self):
-        """Debounced auto-approval for Bluetooth pairing modal on Google TV."""
-        await asyncio.sleep(0.3)
-        logger.info("Auto-confirming Bluetooth pairing dialog via Wi-Fi remote (DPAD_RIGHT -> DPAD_CENTER)...")
-        self.send_key("DPAD_RIGHT")
-        await asyncio.sleep(0.15)
-        self.send_key("DPAD_CENTER")
+        """Deprecated: No-op. Bluetooth pairing confirmation is handled via BlueZ PairingAgent."""
+        logger.debug("auto_approve_pairing skipped (pairing confirmation handled via D-Bus Agent)")
 
     def launch_app(self, app_link: str) -> bool:
         """Launch an app intent or deep link."""
@@ -360,8 +356,6 @@ try:
             logger.info("Auto-confirming pairing request for %s (passkey %06d)", device, passkey)
             mac = device.split("/")[-1].replace("dev_", "").replace("_", ":").upper()
             asyncio.create_task(self._trust_device(mac))
-            if self.auto_confirm:
-                asyncio.create_task(self.remote_helper.auto_approve_pairing())
 
         @method()
         def RequestAuthorization(self, device: "o"):
@@ -560,6 +554,26 @@ class RemoteDaemon:
             logger.warning("Failed to remove bluetooth device %s: %s", mac, e)
             return web.json_response({"status": "error", "message": str(e)}, status=500)
 
+    async def _configure_adapter(self):
+        """Ensure adapter is powered, named, discoverable, and pairable on startup."""
+        if self.adapter:
+            try:
+                await self.adapter.set_powered(True)
+                await self.adapter.set_alias(self.config.advert_name)
+            except Exception as e:
+                logger.warning("Failed to configure adapter alias/power: %s", e)
+
+        for cmd in [
+            ["bluetoothctl", "discoverable-timeout", "0"],
+            ["bluetoothctl", "discoverable", "on"],
+            ["bluetoothctl", "pairable", "on"],
+        ]:
+            try:
+                proc = await asyncio.create_subprocess_exec(*cmd)
+                await proc.wait()
+            except Exception as e:
+                logger.debug("bluetoothctl config '%s' skipped/failed: %s", " ".join(cmd), e)
+
     async def start(self):
         # Start Wi-Fi remote background worker
         asyncio.create_task(self.remote_helper.start())
@@ -577,6 +591,7 @@ class RemoteDaemon:
                 collection = ServiceCollection([dev_info, battery, self.hid])
                 await collection.register(self.bus, path="/com/mirrormere/gatt", adapter=self.adapter)
 
+                await self._configure_adapter()
                 self.advert = KioskAdvertisement(
                     localName=self.config.advert_name,
                     serviceUUIDs=["1812", "180F", "180A"],
