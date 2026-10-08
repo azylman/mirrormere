@@ -126,6 +126,17 @@ class TestDaemonComponents(unittest.TestCase):
         self.assertFalse(helper.send_key("DPAD_CENTER"))
         self.assertFalse(helper.launch_app("https://youtube.com"))
 
+    def test_auto_approve_pairing_sequence(self):
+        helper = daemon.AndroidRemoteHelper("127.0.0.1", "/tmp/nonexistent-certs-dir")
+        helper.connected = True
+        helper.remote = MagicMock()
+        asyncio.run(helper.auto_approve_pairing())
+        self.assertEqual(helper.remote.send_key_command.call_count, 2)
+        helper.remote.send_key_command.assert_has_calls([
+            unittest.mock.call("DPAD_RIGHT"),
+            unittest.mock.call("DPAD_CENTER"),
+        ])
+
     def test_touch_reader_resolve_device(self):
         reader = daemon.TouchReader(None, "/tmp/nonexistent-input-event")
         # When device does not exist, resolve_device safely returns None or existing match
