@@ -166,6 +166,37 @@ class TestDaemonComponents(unittest.TestCase):
         self.assertEqual(d.config.advert_name, "Test Remote")
         self.assertEqual(d.config.http_port, 8095)
 
+    def test_handle_bluetooth_remove(self):
+        d = daemon.RemoteDaemon()
+        req = MagicMock()
+        async def mock_json():
+            return {"mac": "DC:E5:5B:A6:30:8B"}
+        req.json = mock_json
+        with patch.object(daemon, "web") as mock_web, patch("asyncio.create_subprocess_exec") as mock_exec:
+            mock_web.json_response = lambda data, status=200: MagicMock(status=status, data=data)
+            mock_proc = MagicMock()
+            async def mock_wait():
+                return 0
+            mock_proc.wait = mock_wait
+            mock_exec.return_value = mock_proc
+            resp = asyncio.run(d.handle_bluetooth_remove(req))
+            self.assertEqual(resp.status, 200)
+
+    def test_handle_bluetooth_remove_missing_mac(self):
+        d = daemon.RemoteDaemon()
+        req = MagicMock()
+        async def mock_json():
+            return {}
+        req.json = mock_json
+        with patch.object(daemon, "web") as mock_web:
+            mock_web.json_response = lambda data, status=200: MagicMock(status=status, data=data)
+            resp = asyncio.run(d.handle_bluetooth_remove(req))
+            self.assertEqual(resp.status, 400)
+
+    def test_pairing_agent_capability_display_yes_no(self):
+        if daemon.PairingAgent is not None and daemon.AgentCapability is not None:
+            self.assertEqual(daemon.PairingAgent.capability, daemon.AgentCapability.DISPLAY_YES_NO)
+
 
 class TestConfig(unittest.TestCase):
     def test_default_config(self):
