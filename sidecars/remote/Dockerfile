@@ -28,7 +28,7 @@ ENV HTTP_PORT=8092 \
     CHROMECAST_HOST="" \
     CERT_DIR=/data/certs \
     TOUCH_DEVICE=/dev/input/event3 \
-    ADVERT_NAME="Cockpit Touch" \
+    ADVERT_NAME="Mirrormere Remote" \
     AUTO_CONFIRM_PAIRING=true
 
 

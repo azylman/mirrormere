@@ -2,7 +2,7 @@
 
 Manages:
 1. Android TV Remote v2 (Wi-Fi mTLS) connection on port 6466.
-2. Bluetooth LE HID Peripheral (Cockpit Touch) with multi-report touch, mouse, and consumer keys.
+2. Bluetooth LE HID Peripheral (Mirrormere Remote) with multi-report touch, mouse, and consumer keys.
 3. Automated BLE pairing confirmation via Wi-Fi remote.
 4. Physical touch event forwarding from /dev/input.
 5. HTTP Control API on port 8092.
@@ -41,7 +41,7 @@ CERT_DIR = os.environ.get("CERT_DIR", "/data/certs")
 CERT_FALLBACK_DIR = "/var/lib/kiosk-touch"
 TOUCH_DEVICE_PATH = os.environ.get("TOUCH_DEVICE", "/dev/input/event3")
 HTTP_PORT = int(os.environ.get("HTTP_PORT", "8092"))
-ADVERT_NAME = os.environ.get("ADVERT_NAME", "Cockpit Touch")
+ADVERT_NAME = os.environ.get("ADVERT_NAME", "Mirrormere Remote")
 AUTO_CONFIRM_PAIRING = os.environ.get("AUTO_CONFIRM_PAIRING", "true").lower() in ("true", "1", "yes")
 
 # Multi-Report HID Descriptor (Mouse + Touch + Consumer Control)

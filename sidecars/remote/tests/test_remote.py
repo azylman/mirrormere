@@ -137,5 +137,8 @@ class TestDaemonComponents(unittest.TestCase):
         self.assertIsNotNone(d.remote_helper)
         self.assertIsNotNone(d.touch_reader)
 
+    def test_advert_name_default(self):
+        self.assertEqual(daemon.ADVERT_NAME, "Mirrormere Remote")
+
 if __name__ == "__main__":
     unittest.main()
