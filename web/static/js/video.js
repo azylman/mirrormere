@@ -46,7 +46,11 @@
       this.primarySession = null;
       this.pipSession = null;
 
+      this.paintFlushTimer = null;
+      this.heartbeatElement = null;
+
       this.bindSlotGestures();
+      this.ensureCompositorHeartbeat();
     }
 
     /**
@@ -252,7 +256,7 @@
     /**
      * Transition back to widgets mode and clean up all video sessions.
      */
-    exitVideoMode() {
+    exitVideoMode(flushPaint = true) {
       this.currentMode = 'widgets';
       this.isSwapped = false;
 
@@ -293,6 +297,85 @@
       if (this.carousel && typeof this.carousel.resume === 'function') {
         this.carousel.resume();
       }
+
+      // 4. Explicit paint flush to release any pending Wayland wl_surface.frame callbacks
+      if (flushPaint) {
+        this.flushCompositorPaint();
+      }
+    }
+
+    /**
+     * Ensures the compositor keep-alive heartbeat DOM element exists.
+     * Prevents Wayland/Cage output frame starvation on static views.
+     */
+    ensureCompositorHeartbeat() {
+      if (typeof document === 'undefined') return null;
+      let el = document.getElementById('mm-compositor-heartbeat');
+      if (!el && document.body && typeof document.body.appendChild === 'function') {
+        el = document.createElement('div');
+        el.id = 'mm-compositor-heartbeat';
+        el.className = 'mm-compositor-heartbeat';
+        if (typeof el.setAttribute === 'function') {
+          el.setAttribute('aria-hidden', 'true');
+        }
+        document.body.appendChild(el);
+      }
+      this.heartbeatElement = el;
+      return el;
+    }
+
+    /**
+     * Explicitly forces a layout reflow and multi-frame damage commit.
+     * Guarantees that Chromium Ozone Wayland commits a buffer with damage
+     * to satisfy wlroots/Cage frame callback expectations on stream teardown.
+     */
+    flushCompositorPaint() {
+      if (typeof document === 'undefined') return;
+
+      // 1. Force synchronous layout reflow pass
+      if (document.body && typeof document.body.offsetHeight === 'number') {
+        void document.body.offsetHeight;
+      }
+
+      const hb = this.heartbeatElement || this.ensureCompositorHeartbeat();
+
+      // 2. Schedule multi-frame compositor damage burst
+      const rAF = (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function')
+        ? window.requestAnimationFrame.bind(window)
+        : (typeof requestAnimationFrame === 'function' ? requestAnimationFrame : (cb) => setTimeout(cb, 16));
+
+      const cancelRAF = (typeof window !== 'undefined' && typeof window.cancelAnimationFrame === 'function')
+        ? window.cancelAnimationFrame.bind(window)
+        : (typeof cancelAnimationFrame === 'function' ? cancelAnimationFrame : clearTimeout);
+
+      if (this.paintFlushTimer) {
+        cancelRAF(this.paintFlushTimer);
+        this.paintFlushTimer = null;
+      }
+
+      let frameCount = 0;
+      const step = () => {
+        frameCount++;
+        if (hb) {
+          if (hb.dataset) {
+            hb.dataset.flush = String(frameCount);
+          }
+          if (hb.style) {
+            hb.style.transform = (frameCount % 2 === 1) ? 'translateZ(0) scale(1.001)' : 'translateZ(0) scale(1)';
+          }
+        }
+        if (document.body && typeof document.body.offsetHeight === 'number') {
+          void document.body.offsetHeight;
+        }
+
+        if (frameCount < 2) {
+          this.paintFlushTimer = rAF(step);
+        } else {
+          this.paintFlushTimer = null;
+        }
+      };
+
+      this.paintFlushTimer = rAF(step);
     }
 
     /**
@@ -903,7 +986,14 @@
      * Complete teardown of manager instance.
      */
     destroy() {
-      this.exitVideoMode();
+      if (this.paintFlushTimer) {
+        const cancelRAF = (typeof window !== 'undefined' && typeof window.cancelAnimationFrame === 'function')
+          ? window.cancelAnimationFrame.bind(window)
+          : (typeof cancelAnimationFrame === 'function' ? cancelAnimationFrame : clearTimeout);
+        cancelRAF(this.paintFlushTimer);
+        this.paintFlushTimer = null;
+      }
+      this.exitVideoMode(false);
     }
   }
 

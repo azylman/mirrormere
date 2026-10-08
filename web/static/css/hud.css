@@ -849,3 +849,28 @@ button, .touch-target {
   text-shadow: 0 1px 4px rgba(0, 0, 0, 0.6);
   word-break: break-word;
 }
+
+/* Compositor Keep-Alive Micro-Damage Heartbeat (Wayland / Cage Deadlock Prevention) */
+.mm-compositor-heartbeat {
+  position: fixed;
+  bottom: 0;
+  right: 0;
+  width: 1px;
+  height: 1px;
+  opacity: 0.999;
+  pointer-events: none;
+  z-index: 99999;
+  contain: strict;
+  overflow: hidden;
+  user-select: none;
+  clip-path: inset(50%);
+  will-change: transform, opacity;
+  animation: mm-compositor-pulse 2s infinite linear;
+}
+
+@keyframes mm-compositor-pulse {
+  0% { transform: translateZ(0) scale(1); opacity: 0.999; }
+  50% { transform: translateZ(0) scale(1.001); opacity: 1; }
+  100% { transform: translateZ(0) scale(1); opacity: 0.999; }
+}
+

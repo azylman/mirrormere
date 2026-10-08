@@ -225,15 +225,21 @@ function createMockCarousel() {
 
 test('Video Presentation Mode & Multi-Stream Player with PiP', async (t) => {
   // Setup mock DOM environment
+  const gridCanvas = createMockElement('main', 'grid-canvas');
+  const mockBody = createMockElement('body');
+  mockBody.offsetHeight = 1080;
+
   global.document = {
+    body: mockBody,
     createElement(tag) { return createMockElement(tag); },
     getElementById(id) {
       if (id === 'grid-canvas') return gridCanvas;
+      if (id === 'mm-compositor-heartbeat') {
+        return mockBody.children.find((c) => c.id === 'mm-compositor-heartbeat') || null;
+      }
       return null;
     },
   };
-
-  const gridCanvas = createMockElement('main', 'grid-canvas');
 
   await t.test('Multi-Stream Protocol Triad', async (t2) => {
     await t2.test('mounts MJPEG stream via responsive img element without audio', () => {
@@ -1279,6 +1285,121 @@ test('Video Presentation Mode & Multi-Stream Player with PiP', async (t) => {
       assert.strictEqual(spinner.classList.contains('fade-out'), true);
 
       mgr.exitVideoMode();
+    });
+  });
+
+  await t.test('Wayland/Cage Compositor Deadlock Prevention & Micro-Damage Heartbeat', async (t2) => {
+    await t2.test('creates and appends compositor heartbeat element to document.body when missing', () => {
+      mockBody.children.length = 0;
+      const stage = createMockElement('div', 'video-stage');
+      const mgr = new VideoPlayerManager({ stageElement: stage });
+
+      const hb = mgr.ensureCompositorHeartbeat();
+      assert.ok(hb);
+      assert.strictEqual(hb.id, 'mm-compositor-heartbeat');
+      assert.strictEqual(hb.className, 'mm-compositor-heartbeat');
+      assert.strictEqual(hb.getAttribute('aria-hidden'), 'true');
+      assert.strictEqual(mockBody.children.includes(hb), true);
+
+      // Subsequent call strictly reuses element without duplicate append
+      const hb2 = mgr.ensureCompositorHeartbeat();
+      assert.strictEqual(hb, hb2);
+      assert.strictEqual(mockBody.children.filter((c) => c.id === 'mm-compositor-heartbeat').length, 1);
+      mgr.destroy();
+    });
+
+    await t2.test('flushCompositorPaint forces layout reflow and schedules multi-frame damage style toggles', async () => {
+      mockBody.children.length = 0;
+      const rAFCallbacks = [];
+      const origRAF = global.requestAnimationFrame;
+      global.requestAnimationFrame = (cb) => {
+        rAFCallbacks.push(cb);
+        return rAFCallbacks.length;
+      };
+
+      try {
+        const stage = createMockElement('div', 'video-stage');
+        const mgr = new VideoPlayerManager({ stageElement: stage });
+        const hb = mgr.ensureCompositorHeartbeat();
+
+        mgr.flushCompositorPaint();
+        assert.ok(mgr.paintFlushTimer);
+
+        // Frame 1
+        assert.strictEqual(rAFCallbacks.length, 1);
+        rAFCallbacks[0]();
+        assert.strictEqual(hb.dataset.flush, '1');
+        assert.strictEqual(hb.style.transform, 'translateZ(0) scale(1.001)');
+
+        // Frame 2
+        assert.strictEqual(rAFCallbacks.length, 2);
+        rAFCallbacks[1]();
+        assert.strictEqual(hb.dataset.flush, '2');
+        assert.strictEqual(hb.style.transform, 'translateZ(0) scale(1)');
+
+        // Settle
+        assert.strictEqual(mgr.paintFlushTimer, null);
+        mgr.destroy();
+      } finally {
+        global.requestAnimationFrame = origRAF;
+      }
+    });
+
+    await t2.test('exitVideoMode triggers flushCompositorPaint to release pending Wayland frame callbacks', () => {
+      mockBody.children.length = 0;
+      const stage = createMockElement('div', 'video-stage');
+      const primarySlot = createMockElement('div', 'video-primary-slot');
+      const mgr = new VideoPlayerManager({
+        stageElement: stage,
+        primarySlot,
+      });
+
+      let flushCalled = false;
+      mgr.flushCompositorPaint = () => { flushCalled = true; };
+
+      mgr.handleVideoState({
+        mode: 'video',
+        primary: { id: 'stream-primary', stream_url: 'http://cam/mjpeg', type: 'mjpeg' },
+      });
+      assert.strictEqual(mgr.currentMode, 'video');
+
+      mgr.exitVideoMode();
+      assert.strictEqual(mgr.currentMode, 'widgets');
+      assert.strictEqual(flushCalled, true);
+      mgr.destroy();
+    });
+
+    await t2.test('destroy cleanly cancels active paintFlushTimer', () => {
+      mockBody.children.length = 0;
+      const stage = createMockElement('div', 'video-stage');
+      let cancelledTimer = null;
+      const origCancelRAF = global.cancelAnimationFrame;
+      global.cancelAnimationFrame = (id) => { cancelledTimer = id; };
+
+      try {
+        const mgr = new VideoPlayerManager({ stageElement: stage });
+        mgr.paintFlushTimer = 999;
+        mgr.destroy();
+        assert.strictEqual(cancelledTimer, 999);
+        assert.strictEqual(mgr.paintFlushTimer, null);
+      } finally {
+        global.cancelAnimationFrame = origCancelRAF;
+      }
+    });
+
+    await t2.test('gracefully handles SSR or headless environment without document or document.body', () => {
+      const origDoc = global.document;
+      try {
+        global.document = undefined;
+        const mgr = new VideoPlayerManager({});
+        assert.doesNotThrow(() => {
+          mgr.ensureCompositorHeartbeat();
+          mgr.flushCompositorPaint();
+          mgr.destroy();
+        });
+      } finally {
+        global.document = origDoc;
+      }
     });
   });
 });
