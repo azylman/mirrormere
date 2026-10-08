@@ -140,6 +140,9 @@ class TestDaemonComponents(unittest.TestCase):
     def test_advert_name_default(self):
         self.assertEqual(daemon.ADVERT_NAME, "Mirrormere Remote")
 
+    def test_advertisement_fallback(self):
+        self.assertIsNone(daemon.Advertisement)
+
     def test_remote_daemon_custom_config(self):
         from config import RemoteConfig
         cfg = RemoteConfig(
