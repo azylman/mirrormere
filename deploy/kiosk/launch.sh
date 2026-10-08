@@ -23,6 +23,10 @@ export LIBSEAT_BACKEND="${LIBSEAT_BACKEND:-seatd}"
 export XCURSOR_THEME="${XCURSOR_THEME:-transparent}"
 export XCURSOR_SIZE="${XCURSOR_SIZE:-24}"
 
+# Wlroots compositor stability flags (prevents Intel KMS deadlocks and direct scanout fence collisions)
+export WLR_SCENE_DISABLE_DIRECT_SCANOUT="${WLR_SCENE_DISABLE_DIRECT_SCANOUT:-1}"
+export WLR_DRM_NO_ATOMIC="${WLR_DRM_NO_ATOMIC:-1}"
+
 if [[ -n "${WLR_DRM_DEVICES:-}" ]]; then
     export WLR_DRM_DEVICES
 fi

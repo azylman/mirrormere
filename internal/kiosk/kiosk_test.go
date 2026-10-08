@@ -3,6 +3,7 @@ package kiosk_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/azylman/mirrormere/internal/kiosk"
@@ -368,6 +369,44 @@ func TestDeployKioskFiles(t *testing.T) {
 		}
 		if err := kiosk.ValidateSessionScript(string(data)); err != nil {
 			t.Fatalf("session.sh validation failed: %v", err)
+		}
+	})
+
+	t.Run("WlrootsCompositorStabilityFlags", func(t *testing.T) {
+		defaultData, err := os.ReadFile(filepath.Join(kioskDir, "default-mirrormere-kiosk"))
+		if err != nil {
+			t.Fatalf("failed to read default-mirrormere-kiosk: %v", err)
+		}
+		defaults := string(defaultData)
+		if !strings.Contains(defaults, "WLR_SCENE_DISABLE_DIRECT_SCANOUT=1") {
+			t.Error("expected WLR_SCENE_DISABLE_DIRECT_SCANOUT=1 in default-mirrormere-kiosk")
+		}
+		if !strings.Contains(defaults, "WLR_DRM_NO_ATOMIC=1") {
+			t.Error("expected WLR_DRM_NO_ATOMIC=1 in default-mirrormere-kiosk")
+		}
+
+		launchData, err := os.ReadFile(filepath.Join(kioskDir, "launch.sh"))
+		if err != nil {
+			t.Fatalf("failed to read launch.sh: %v", err)
+		}
+		launch := string(launchData)
+		if !strings.Contains(launch, "export WLR_SCENE_DISABLE_DIRECT_SCANOUT=") {
+			t.Error("expected export WLR_SCENE_DISABLE_DIRECT_SCANOUT in launch.sh")
+		}
+		if !strings.Contains(launch, "export WLR_DRM_NO_ATOMIC=") {
+			t.Error("expected export WLR_DRM_NO_ATOMIC in launch.sh")
+		}
+
+		serviceData, err := os.ReadFile(filepath.Join(kioskDir, "mirrormere-kiosk.service"))
+		if err != nil {
+			t.Fatalf("failed to read mirrormere-kiosk.service: %v", err)
+		}
+		svc := string(serviceData)
+		if !strings.Contains(svc, `Environment="WLR_SCENE_DISABLE_DIRECT_SCANOUT=1"`) {
+			t.Error("expected WLR_SCENE_DISABLE_DIRECT_SCANOUT=1 in mirrormere-kiosk.service")
+		}
+		if !strings.Contains(svc, `Environment="WLR_DRM_NO_ATOMIC=1"`) {
+			t.Error("expected WLR_DRM_NO_ATOMIC=1 in mirrormere-kiosk.service")
 		}
 	})
 }
