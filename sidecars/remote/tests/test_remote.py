@@ -153,6 +153,7 @@ class TestDaemonComponents(unittest.TestCase):
 
     def test_advertisement_fallback(self):
         self.assertIsNone(daemon.Advertisement)
+        self.assertIsNone(daemon.KioskAdvertisement)
 
     def test_remote_daemon_custom_config(self):
         from config import RemoteConfig
