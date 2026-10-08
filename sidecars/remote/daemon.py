@@ -218,7 +218,7 @@ class AndroidRemoteHelper:
 # Initialize BlueZ GATT and Agent if bluez-peripheral is installed
 try:
     from bluez_peripheral.util import get_message_bus, Adapter
-    from bluez_peripheral.advert import Advertisement, AdvertisingIncludes
+    from bluez_peripheral.advert import Advertisement
     from bluez_peripheral.agent import BaseAgent, AgentCapability
     from bluez_peripheral.gatt.service import Service, ServiceCollection
     from bluez_peripheral.gatt.characteristic import characteristic, CharacteristicFlags
@@ -392,7 +392,6 @@ except ImportError:
     HIDService = None
     Advertisement = None
     KioskAdvertisement = None
-    AdvertisingIncludes = None
     PairingAgent = None
 
 
@@ -583,7 +582,6 @@ class RemoteDaemon:
                     serviceUUIDs=["1812", "180F", "180A"],
                     appearance=0x03C2,
                     timeout=0,
-                    includes=AdvertisingIncludes.LOCAL_NAME | AdvertisingIncludes.APPEARANCE,
                 )
                 await self.advert.register(self.bus, adapter=self.adapter)
                 logger.info("BLE peripheral & advertisement registered as '%s' (0x03C2)", self.config.advert_name)
