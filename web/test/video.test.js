@@ -171,9 +171,14 @@ class MockRTCPeerConnection {
   }
 
   addTransceiver(kind, init) {
-    const t = { kind, direction: init ? init.direction : 'sendrecv' };
+    const receiver = { playoutDelayHint: null, track: { kind } };
+    const t = { kind, direction: init ? init.direction : 'sendrecv', receiver };
     this.transceivers.push(t);
     return t;
+  }
+
+  getReceivers() {
+    return this.transceivers.map((t) => t.receiver);
   }
 
   async createOffer() {
@@ -365,6 +370,79 @@ test('Video Presentation Mode & Multi-Stream Player with PiP', async (t) => {
       mgr.exitVideoMode();
       assert.strictEqual(mgr.getState().hasPrimarySession, false);
       assert.strictEqual(audioMgr.registered.has(video), false);
+    });
+
+    await t2.test('enforces zero jitter-buffer playoutDelayHint strictly on video transceivers and receivers', async () => {
+      const stage = createMockElement('div', 'video-stage');
+      const primarySlot = createMockElement('div', 'video-primary-slot');
+
+      let capturedPc = null;
+      class DelayTestingPeerConnection extends MockRTCPeerConnection {
+        constructor() {
+          super();
+          capturedPc = this;
+        }
+      }
+
+      const mockFetch = async () => ({
+        ok: true,
+        status: 200,
+        text: async () => 'v=0\r\ns=answer',
+      });
+
+      const mgr = new VideoPlayerManager({
+        stageElement: stage,
+        primarySlot,
+        RTCPeerConnection: DelayTestingPeerConnection,
+        fetch: mockFetch,
+      });
+
+      mgr.handleVideoState({
+        mode: 'video',
+        primary: {
+          id: 'chromecast',
+          stream_url: 'http://127.0.0.1:1984/cast',
+          type: 'webrtc',
+        },
+      });
+
+      assert.ok(capturedPc);
+      assert.strictEqual(capturedPc.transceivers.length, 2);
+      const videoTransceiver = capturedPc.transceivers.find((t) => t.kind === 'video');
+      const audioTransceiver = capturedPc.transceivers.find((t) => t.kind === 'audio');
+      assert.ok(videoTransceiver);
+      assert.ok(audioTransceiver);
+      // Video gets zero playout delay for interactive touch
+      assert.strictEqual(videoTransceiver.receiver.playoutDelayHint, 0);
+      // Audio retains default buffer to prevent packet starvation and robotic crackling
+      assert.strictEqual(audioTransceiver.receiver.playoutDelayHint, null);
+
+      // Simulate ontrack with video receiver
+      const dummyVideoReceiver = { playoutDelayHint: 0.5 };
+      capturedPc.ontrack({
+        receiver: dummyVideoReceiver,
+        track: { kind: 'video' },
+        streams: [],
+      });
+      assert.strictEqual(dummyVideoReceiver.playoutDelayHint, 0);
+
+      // Simulate ontrack with audio receiver (must NOT be zeroed out)
+      const dummyAudioReceiver = { playoutDelayHint: null };
+      capturedPc.ontrack({
+        receiver: dummyAudioReceiver,
+        track: { kind: 'audio' },
+        streams: [],
+      });
+      assert.strictEqual(dummyAudioReceiver.playoutDelayHint, null);
+
+      // Yield event loop for SDP negotiation
+      await new Promise((r) => setImmediate(r));
+
+      // After negotiation, video receivers remain 0, audio remains untouched
+      assert.strictEqual(videoTransceiver.receiver.playoutDelayHint, 0);
+      assert.strictEqual(audioTransceiver.receiver.playoutDelayHint, null);
+
+      mgr.exitVideoMode();
     });
 
     await t2.test('parses JSON SDP answer payload from go2rtc endpoints', async () => {

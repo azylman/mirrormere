@@ -549,12 +549,18 @@
           session.pc = pc;
 
           if (typeof pc.addTransceiver === 'function') {
-            pc.addTransceiver('video', { direction: 'recvonly' });
+            const videoTransceiver = pc.addTransceiver('video', { direction: 'recvonly' });
             pc.addTransceiver('audio', { direction: 'recvonly' });
+            if (videoTransceiver && videoTransceiver.receiver) {
+              this.applyZeroLatencyPlayoutDelay(videoTransceiver.receiver, 'video');
+            }
           }
 
           pc.ontrack = (event) => {
             if (session.cancelled) return;
+            if (event.receiver && event.track && event.track.kind === 'video') {
+              this.applyZeroLatencyPlayoutDelay(event.receiver, 'video');
+            }
             if (event.streams && event.streams[0]) {
               video.srcObject = event.streams[0];
             } else {
@@ -598,6 +604,23 @@
 
       this.safePlay(video);
       return session;
+    }
+
+    /**
+     * Minimizes WebRTC receiver jitter buffer delay for ultra-low latency interactive streaming.
+     * Restricts zero-delay hint strictly to video streams to prevent audio buffer starvation/crackling.
+     * @param {RTCRtpReceiver} receiver
+     * @param {'video'|'audio'} [kind='video']
+     */
+    applyZeroLatencyPlayoutDelay(receiver, kind = 'video') {
+      if (!receiver || kind !== 'video') return;
+      try {
+        if ('playoutDelayHint' in receiver) {
+          receiver.playoutDelayHint = 0;
+        }
+      } catch {
+        // Non-fatal if browser blocks or throws on playoutDelayHint
+      }
     }
 
     /**
@@ -690,6 +713,13 @@
         }
 
         await pc.setRemoteDescription({ type: 'answer', sdp: answerSDP });
+        if (typeof pc.getReceivers === 'function') {
+          for (const receiver of pc.getReceivers()) {
+            if (receiver && receiver.track && receiver.track.kind === 'video') {
+              this.applyZeroLatencyPlayoutDelay(receiver, 'video');
+            }
+          }
+        }
       } catch (err) {
         if (timeoutId) {
           clearTimeout(timeoutId);
@@ -829,12 +859,18 @@
         session.pc = pc;
 
         if (typeof pc.addTransceiver === 'function') {
-          pc.addTransceiver('video', { direction: 'recvonly' });
+          const videoTransceiver = pc.addTransceiver('video', { direction: 'recvonly' });
           pc.addTransceiver('audio', { direction: 'recvonly' });
+          if (videoTransceiver && videoTransceiver.receiver) {
+            this.applyZeroLatencyPlayoutDelay(videoTransceiver.receiver, 'video');
+          }
         }
 
         pc.ontrack = (event) => {
           if (session.cancelled) return;
+          if (event.receiver && event.track && event.track.kind === 'video') {
+            this.applyZeroLatencyPlayoutDelay(event.receiver, 'video');
+          }
           if (event.streams && event.streams[0]) {
             session.element.srcObject = event.streams[0];
           } else {
