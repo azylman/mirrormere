@@ -1,5 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const { VideoHUDController } = require('../static/js/video_hud.js');
 
 /**
@@ -887,6 +889,25 @@ test('VideoHUDController: side rail stops pointer event propagation to video sta
   assert.deepEqual(stoppedEvents, ['pointerdown', 'pointerup', 'touchstart', 'touchend']);
 
   hud.destroy();
+});
+
+test('VideoHUDController: video-hud-overlay defines transparent background without border shadow gradients in hud.css', () => {
+  const hudCSSPath = path.resolve(__dirname, '../static/css/hud.css');
+  assert.ok(fs.existsSync(hudCSSPath), 'hud.css must exist');
+  const content = fs.readFileSync(hudCSSPath, 'utf8');
+
+  const overlayMatch = content.match(/\.video-hud-overlay\s*\{([^}]+)\}/);
+  assert.ok(overlayMatch, '.video-hud-overlay rule must exist');
+  assert.doesNotMatch(
+    overlayMatch[1],
+    /linear-gradient/,
+    '.video-hud-overlay must not define linear-gradient border shadow background'
+  );
+  assert.match(
+    overlayMatch[1],
+    /background:\s*transparent;/,
+    '.video-hud-overlay must define background: transparent;'
+  );
 });
 
 
