@@ -27,6 +27,8 @@
       this.audioManager = options.audioManager || (typeof window !== 'undefined' ? window.audioManager : null);
       this.carousel = options.carousel || (typeof window !== 'undefined' ? window.carousel : null);
       this.hud = options.hud || null;
+      this.remoteUrl = options.remoteUrl || (typeof window !== 'undefined' && window.MIRRORMERE_REMOTE_URL) || 'http://localhost:8092';
+      this.touchForwardingEnabled = options.touchForwardingEnabled !== undefined ? options.touchForwardingEnabled : true;
       const defaultFetch = (typeof window !== 'undefined' && typeof window.fetch === 'function')
         ? window.fetch.bind(window)
         : (typeof fetch === 'function' ? fetch : null);
@@ -390,17 +392,22 @@
       container.innerHTML = '';
 
       const type = (stream.type || 'webrtc').toLowerCase();
+      let session = null;
 
       if (type === 'mjpeg') {
-        return this.mountMJPEG(stream, container, isPip);
+        session = this.mountMJPEG(stream, container, isPip);
+      } else if (type === 'hls') {
+        session = this.mountHLS(stream, container, isPip);
+      } else {
+        // Default to WebRTC
+        session = this.mountWebRTC(stream, container, isPip);
       }
 
-      if (type === 'hls') {
-        return this.mountHLS(stream, container, isPip);
+      if (session) {
+        this.bindTouchForwarding(session);
       }
 
-      // Default to WebRTC
-      return this.mountWebRTC(stream, container, isPip);
+      return session;
     }
 
     /**
@@ -469,6 +476,7 @@
       video.autoplay = true;
       video.playsInline = true;
       video.muted = isPip;
+      video.style.touchAction = 'none';
       if (isPip) video.volume = 0;
 
       let hlsInstance = null;
@@ -510,6 +518,7 @@
       video.autoplay = true;
       video.playsInline = true;
       video.muted = isPip;
+      video.style.touchAction = 'none';
       if (isPip) video.volume = 0;
 
       container.appendChild(video);
@@ -931,6 +940,11 @@
         session.disconnectTimer = null;
       }
 
+      if (session.touchCleanups) {
+        session.touchCleanups.forEach(cleanup => cleanup());
+        session.touchCleanups = [];
+      }
+
       if (this.audioManager && session.element && typeof this.audioManager.unregisterMediaElement === 'function') {
         this.audioManager.unregisterMediaElement(session.element);
       }
@@ -966,6 +980,217 @@
       if (session.hls && typeof session.hls.destroy === 'function') {
         session.hls.destroy();
       }
+    }
+
+    /**
+     * Maps DOM pointer/touch event coordinates into normalized [0.0, 1.0] video space,
+     * accounting for letterboxing/pillarboxing with object-fit: contain.
+     * @param {PointerEvent|MouseEvent|TouchEvent} e
+     * @param {HTMLVideoElement|HTMLImageElement} videoEl
+     * @returns {{x: number, y: number}|null}
+     */
+    getNormalizedVideoCoordinates(e, videoEl) {
+      if (!videoEl || typeof videoEl.getBoundingClientRect !== 'function') return null;
+      const rect = videoEl.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return null;
+
+      let clientX = null;
+      let clientY = null;
+      if (e.touches && e.touches.length > 0) {
+        clientX = e.touches[0].clientX;
+        clientY = e.touches[0].clientY;
+      } else if (e.changedTouches && e.changedTouches.length > 0) {
+        clientX = e.changedTouches[0].clientX;
+        clientY = e.changedTouches[0].clientY;
+      } else if (typeof e.clientX === 'number' && typeof e.clientY === 'number') {
+        clientX = e.clientX;
+        clientY = e.clientY;
+      }
+
+      if (clientX === null || clientY === null) return null;
+
+      let contentWidth = rect.width;
+      let contentHeight = rect.height;
+      let contentLeft = rect.left;
+      let contentTop = rect.top;
+
+      // Compensate for letterboxing or pillarboxing with object-fit: contain
+      if (videoEl.videoWidth > 0 && videoEl.videoHeight > 0) {
+        const videoRatio = videoEl.videoWidth / videoEl.videoHeight;
+        const elementRatio = rect.width / rect.height;
+
+        if (elementRatio > videoRatio) {
+          // Pillarboxed: black bars on left and right
+          contentWidth = rect.height * videoRatio;
+          contentLeft = rect.left + (rect.width - contentWidth) / 2;
+        } else {
+          // Letterboxed: black bars on top and bottom
+          contentHeight = rect.width / videoRatio;
+          contentTop = rect.top + (rect.height - contentHeight) / 2;
+        }
+      }
+
+      const relX = (clientX - contentLeft) / contentWidth;
+      const relY = (clientY - contentTop) / contentHeight;
+
+      // Clamp coordinates to [0.0, 1.0]
+      return {
+        x: Math.max(0.0, Math.min(1.0, relX)),
+        y: Math.max(0.0, Math.min(1.0, relY)),
+      };
+    }
+
+    /**
+     * Binds pointer event handlers to the video element for browser-level touch forwarding.
+     * @param {Object} session - Active video stream session.
+     */
+    bindTouchForwarding(session) {
+      if (!this.touchForwardingEnabled || !session || !session.element) return;
+      const videoEl = session.element;
+
+      let isDown = false;
+      let startX = 0;
+      let startY = 0;
+      let lastMoveTime = 0;
+      let hasMoved = false;
+
+      const isPresentationPrimary = () => {
+        return (session === this.primarySession && !this.isSwapped) ||
+               (session === this.pipSession && this.isSwapped);
+      };
+
+      const onPointerDown = (e) => {
+        if (!isPresentationPrimary()) return;
+        if (e.button !== undefined && e.button !== 0) return;
+
+        const coords = this.getNormalizedVideoCoordinates(e, videoEl);
+        if (!coords) return;
+
+        isDown = true;
+        hasMoved = false;
+        startX = e.clientX !== undefined ? e.clientX : 0;
+        startY = e.clientY !== undefined ? e.clientY : 0;
+        lastMoveTime = Date.now();
+
+        if (typeof e.preventDefault === 'function') e.preventDefault();
+        if (typeof e.stopPropagation === 'function') e.stopPropagation();
+
+        this.sendTouchEvent('down', coords.x, coords.y);
+      };
+
+      const onPointerMove = (e) => {
+        if (!isDown) return;
+        if (!isPresentationPrimary()) return;
+
+        const currentX = e.clientX !== undefined ? e.clientX : 0;
+        const currentY = e.clientY !== undefined ? e.clientY : 0;
+        const dist = Math.hypot(currentX - startX, currentY - startY);
+        if (dist > 10) {
+          hasMoved = true;
+        }
+
+        const now = Date.now();
+        if (now - lastMoveTime < 30) return; // ~33Hz throttle
+        lastMoveTime = now;
+
+        const coords = this.getNormalizedVideoCoordinates(e, videoEl);
+        if (!coords) return;
+
+        if (typeof e.preventDefault === 'function') e.preventDefault();
+        if (typeof e.stopPropagation === 'function') e.stopPropagation();
+
+        this.sendTouchEvent('move', coords.x, coords.y);
+      };
+
+      const onPointerUp = (e) => {
+        if (!isDown) return;
+        isDown = false;
+        if (!isPresentationPrimary()) return;
+
+        const coords = this.getNormalizedVideoCoordinates(e, videoEl);
+
+        if (typeof e.preventDefault === 'function') e.preventDefault();
+        if (typeof e.stopPropagation === 'function') e.stopPropagation();
+
+        if (!hasMoved && coords) {
+          this.sendTouchEvent('tap', coords.x, coords.y);
+        } else if (coords) {
+          this.sendTouchEvent('up', coords.x, coords.y);
+        }
+      };
+
+      const onPointerCancel = (e) => {
+        if (!isDown) return;
+        isDown = false;
+        if (!isPresentationPrimary()) return;
+
+        const coords = this.getNormalizedVideoCoordinates(e, videoEl);
+        const x = coords ? coords.x : 0.5;
+        const y = coords ? coords.y : 0.5;
+        this.sendTouchEvent('up', x, y);
+      };
+
+      const onWindowBlur = () => {
+        if (!isDown) return;
+        isDown = false;
+        const coords = this.getNormalizedVideoCoordinates({ clientX: startX, clientY: startY }, videoEl);
+        const x = coords ? coords.x : 0.5;
+        const y = coords ? coords.y : 0.5;
+        this.sendTouchEvent('up', x, y);
+      };
+
+      videoEl.addEventListener('pointerdown', onPointerDown);
+      videoEl.addEventListener('pointermove', onPointerMove);
+      videoEl.addEventListener('pointerup', onPointerUp);
+      videoEl.addEventListener('pointercancel', onPointerCancel);
+      videoEl.addEventListener('pointerleave', onPointerCancel);
+
+      if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+        window.addEventListener('blur', onWindowBlur);
+      }
+
+      session.touchCleanups = [
+        () => videoEl.removeEventListener('pointerdown', onPointerDown),
+        () => videoEl.removeEventListener('pointermove', onPointerMove),
+        () => videoEl.removeEventListener('pointerup', onPointerUp),
+        () => videoEl.removeEventListener('pointercancel', onPointerCancel),
+        () => videoEl.removeEventListener('pointerleave', onPointerCancel),
+        () => {
+          if (typeof window !== 'undefined' && typeof window.removeEventListener === 'function') {
+            window.removeEventListener('blur', onWindowBlur);
+          }
+        },
+      ];
+    }
+
+    /**
+     * Dispatches normalized touch actions to the remote sidecar via HTTP POST.
+     * @param {'down'|'move'|'up'|'tap'} action
+     * @param {number} x
+     * @param {number} y
+     * @returns {Promise<any>}
+     */
+    sendTouchEvent(action, x, y) {
+      const fetchFn = this.fetchFn || (typeof fetch === 'function' ? fetch : null);
+      if (!fetchFn || !this.remoteUrl) return Promise.resolve();
+
+      const payload = { action, x, y };
+      return fetchFn(`${this.remoteUrl}/touch`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        keepalive: true,
+      }).catch(() => {
+        // Fallback to /tap for older sidecar versions
+        if (action === 'tap') {
+          return fetchFn(`${this.remoteUrl}/tap`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ x, y }),
+            keepalive: true,
+          }).catch(() => {});
+        }
+      });
     }
 
     /**

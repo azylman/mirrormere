@@ -22,6 +22,23 @@ try:
 except ImportError:
     web = None
 
+if web:
+    @web.middleware
+    async def cors_middleware(request, handler):
+        if request.method == "OPTIONS":
+            resp = web.Response(status=204)
+        else:
+            try:
+                resp = await handler(request)
+            except web.HTTPException as ex:
+                resp = ex
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        resp.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+        resp.headers["Access-Control-Allow-Headers"] = "Content-Type, Accept"
+        return resp
+else:
+    cors_middleware = None
+
 
 # Import local pure helper modules
 try:
@@ -494,6 +511,9 @@ class RemoteDaemon:
         self.adapter = None
         self.agent = None
         self.advert = None
+        self.bluetooth_lock = asyncio.Lock()
+        self.last_known_paired_devices = []
+        self.keepalive_task = None
 
     async def handle_healthz(self, request):
         return web.json_response({
@@ -507,6 +527,8 @@ class RemoteDaemon:
             "bluetooth": {
                 "active": self.hid is not None,
                 "advert_name": self.config.advert_name,
+                "keepalive": self.config.bluetooth_keepalive,
+                "paired_devices": self.last_known_paired_devices,
             },
         })
 
@@ -516,8 +538,14 @@ class RemoteDaemon:
         except Exception:
             return web.json_response({"status": "error", "message": "invalid json"}, status=400)
 
-        x_ratio = float(data.get("x", 0.5))
-        y_ratio = float(data.get("y", 0.5))
+        try:
+            raw_x = float(data.get("x", 0.5))
+            raw_y = float(data.get("y", 0.5))
+        except (ValueError, TypeError):
+            return web.json_response({"status": "error", "message": "invalid coordinates"}, status=400)
+
+        x_ratio = max(0.0, min(1.0, raw_x))
+        y_ratio = max(0.0, min(1.0, raw_y))
         logger.info("Synthetic tap at (%.4f, %.4f)", x_ratio, y_ratio)
 
         if self.hid:
@@ -526,6 +554,38 @@ class RemoteDaemon:
             self.hid.send_touch(False, x_ratio, y_ratio)
             return web.json_response({"status": "ok", "action": "tap", "x": x_ratio, "y": y_ratio})
         return web.json_response({"status": "error", "message": "BLE HID not initialized"}, status=503)
+
+    async def handle_touch(self, request):
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({"status": "error", "message": "invalid json"}, status=400)
+
+        action = str(data.get("action", "tap")).lower()
+        try:
+            raw_x = float(data.get("x", 0.5))
+            raw_y = float(data.get("y", 0.5))
+        except (ValueError, TypeError):
+            return web.json_response({"status": "error", "message": "invalid coordinates"}, status=400)
+
+        x_ratio = max(0.0, min(1.0, raw_x))
+        y_ratio = max(0.0, min(1.0, raw_y))
+
+        if not self.hid:
+            return web.json_response({"status": "error", "message": "BLE HID not initialized"}, status=503)
+
+        if action in ("down", "move"):
+            self.hid.send_touch(True, x_ratio, y_ratio)
+        elif action == "up":
+            self.hid.send_touch(False, x_ratio, y_ratio)
+        elif action == "tap":
+            self.hid.send_touch(True, x_ratio, y_ratio)
+            await asyncio.sleep(0.05)
+            self.hid.send_touch(False, x_ratio, y_ratio)
+        else:
+            return web.json_response({"status": "error", "message": f"unknown action: {action}"}, status=400)
+
+        return web.json_response({"status": "ok", "action": action, "x": x_ratio, "y": y_ratio})
 
     async def handle_key(self, request):
         try:
@@ -571,7 +631,33 @@ class RemoteDaemon:
             "has_credentials": self.remote_helper.has_credentials(),
             "chromecast_host": self.remote_helper.host,
             "ble_active": self.hid is not None,
+            "bluetooth_keepalive": self.config.bluetooth_keepalive,
+            "paired_devices": self.last_known_paired_devices,
         })
+
+    async def _run_bluetoothctl(self, *args: str, timeout: float = 5.0) -> tuple[int, bytes, bytes]:
+        """Runs a bluetoothctl command safely with a timeout, killing and reaping any hanging process to prevent zombie leaks."""
+        proc = await asyncio.create_subprocess_exec(
+            "bluetoothctl",
+            *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+            return (proc.returncode if proc.returncode is not None else 0), stdout, stderr
+        except asyncio.TimeoutError:
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
+            except Exception as kill_err:
+                logger.debug("Error killing timed-out bluetoothctl process: %s", kill_err)
+            try:
+                await proc.wait()
+            except Exception as wait_err:
+                logger.debug("Error awaiting timed-out bluetoothctl process: %s", wait_err)
+            raise
 
     async def handle_bluetooth_remove(self, request):
         try:
@@ -582,13 +668,88 @@ class RemoteDaemon:
         if not mac:
             return web.json_response({"status": "error", "message": "missing mac parameter"}, status=400)
         try:
-            proc = await asyncio.create_subprocess_exec("bluetoothctl", "remove", mac)
-            await proc.wait()
-            logger.info("Successfully removed/unpaired bluetooth device %s", mac)
-            return web.json_response({"status": "ok", "action": "remove", "mac": mac})
+            code, stdout, stderr = await self._run_bluetoothctl("remove", mac, timeout=5.0)
+            if code == 0:
+                logger.info("Successfully removed/unpaired bluetooth device %s", mac)
+                return web.json_response({"status": "ok", "action": "remove", "mac": mac})
+            else:
+                logger.warning("bluetoothctl remove %s failed with code %d: %s", mac, code, stderr.decode())
+                return web.json_response({"status": "error", "message": f"bluetoothctl exit code {code}"}, status=500)
         except Exception as e:
             logger.warning("Failed to remove bluetooth device %s: %s", mac, e)
             return web.json_response({"status": "error", "message": str(e)}, status=500)
+
+    async def handle_bluetooth_reconnect(self, request):
+        try:
+            data = await request.json()
+        except Exception:
+            data = {}
+        target_mac = data.get("mac")
+        results = await self._check_and_reconnect_bluetooth(target_mac=target_mac)
+        return web.json_response({"status": "ok", "reconnected": results})
+
+    async def _check_and_reconnect_bluetooth(self, target_mac: Optional[str] = None) -> list[dict]:
+        """Inspects paired Bluetooth devices and attempts reconnection for disconnected devices."""
+        reconnect_results = []
+        async with self.bluetooth_lock:
+            try:
+                _, stdout, _ = await self._run_bluetoothctl("devices", "Paired", timeout=5.0)
+                lines = stdout.decode().splitlines()
+            except Exception as e:
+                logger.debug("Failed to list paired devices via bluetoothctl: %s", e)
+                return reconnect_results
+
+            current_devices = []
+            for line in lines:
+                parts = line.strip().split(maxsplit=2)
+                if len(parts) >= 2 and parts[0] == "Device":
+                    mac = parts[1].upper()
+                    name = parts[2] if len(parts) > 2 else "Unknown"
+                    if target_mac and mac != target_mac.upper():
+                        continue
+
+                    is_connected = False
+                    try:
+                        _, info_out, _ = await self._run_bluetoothctl("info", mac, timeout=5.0)
+                        for info_line in info_out.decode().splitlines():
+                            if "Connected: yes" in info_line:
+                                is_connected = True
+                                break
+                    except Exception as e:
+                        logger.debug("Failed to check info for %s: %s", mac, e)
+
+                    current_devices.append({"mac": mac, "name": name, "connected": is_connected})
+
+                    if not is_connected:
+                        logger.info("Paired Bluetooth device %s (%s) is disconnected; attempting auto-reconnect...", mac, name)
+                        success = False
+                        try:
+                            code, _, _ = await self._run_bluetoothctl("connect", mac, timeout=5.0)
+                            success = (code == 0)
+                            if success:
+                                logger.info("Successfully reconnected to Bluetooth device %s (%s)", mac, name)
+                                is_connected = True
+                            else:
+                                logger.debug("Auto-reconnect to %s returned non-zero code (%s)", mac, str(code))
+                        except Exception as conn_err:
+                            logger.debug("Auto-reconnect attempt to %s timed out or failed: %s", mac, conn_err)
+
+                        reconnect_results.append({"mac": mac, "name": name, "reconnected": success})
+
+            self.last_known_paired_devices = current_devices
+            return reconnect_results
+
+    async def _bluetooth_keepalive_loop(self):
+        """Background loop to periodically ensure paired devices stay connected."""
+        logger.info("Bluetooth keepalive monitor active (interval=%.1fs)", self.config.bluetooth_keepalive_interval)
+        while True:
+            try:
+                await asyncio.sleep(self.config.bluetooth_keepalive_interval)
+                await self._check_and_reconnect_bluetooth()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.warning("Error in bluetooth keepalive worker: %s", e)
 
     async def _configure_adapter(self):
         """Ensure adapter is powered, named, discoverable, and pairable on startup."""
@@ -639,17 +800,27 @@ class RemoteDaemon:
             except Exception as e:
                 logger.error("Failed to register BlueZ peripheral (check D-Bus mount / permissions): %s", e)
 
-        # Start Touch Reader
-        asyncio.create_task(self.touch_reader.run())
+        # Start Touch Reader if evdev is explicitly enabled
+        if self.config.enable_evdev and self.config.touch_device:
+            asyncio.create_task(self.touch_reader.run())
+        else:
+            logger.info("Physical evdev touch reader disabled (browser-level touch forwarding active)")
+
+        # Start Bluetooth keepalive worker
+        if self.config.bluetooth_keepalive:
+            self.keepalive_task = asyncio.create_task(self._bluetooth_keepalive_loop())
 
         # Start HTTP API
-        app = web.Application()
+        middlewares = [cors_middleware] if cors_middleware else []
+        app = web.Application(middlewares=middlewares)
         app.router.add_get("/healthz", self.handle_healthz)
         app.router.add_post("/tap", self.handle_tap)
+        app.router.add_post("/touch", self.handle_touch)
         app.router.add_post("/key", self.handle_key)
         app.router.add_post("/remote/app", self.handle_remote_app)
         app.router.add_get("/remote/status", self.handle_remote_status)
         app.router.add_post("/bluetooth/remove", self.handle_bluetooth_remove)
+        app.router.add_post("/bluetooth/reconnect", self.handle_bluetooth_reconnect)
 
         runner = web.AppRunner(app)
         await runner.setup()
@@ -668,6 +839,8 @@ class RemoteDaemon:
 
         await stop_event.wait()
         logger.info("Shutting down mirrormere-remote...")
+        if self.keepalive_task:
+            self.keepalive_task.cancel()
         if self.advert and self.adapter:
             try:
                 await self.advert.unregister(self.bus, adapter=self.adapter)

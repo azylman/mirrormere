@@ -230,9 +230,9 @@ class TestDaemonComponents(unittest.TestCase):
         with patch.object(daemon, "web") as mock_web, patch("asyncio.create_subprocess_exec") as mock_exec:
             mock_web.json_response = lambda data, status=200: MagicMock(status=status, data=data)
             mock_proc = MagicMock()
-            async def mock_wait():
-                return 0
-            mock_proc.wait = mock_wait
+            mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+            mock_proc.wait = AsyncMock(return_value=0)
+            mock_proc.returncode = 0
             mock_exec.return_value = mock_proc
             resp = asyncio.run(d.handle_bluetooth_remove(req))
             self.assertEqual(resp.status, 200)
@@ -347,6 +347,228 @@ class TestHIDDescriptor(unittest.TestCase):
         self.assertIn(bytes([0x85, 0x02]), daemon.REPORT_MAP)
         # Old Report ID 3 should not exist
         self.assertNotIn(bytes([0x85, 0x03]), daemon.REPORT_MAP)
+
+
+class TestTouchEndpoint(unittest.TestCase):
+    def setUp(self):
+        self.daemon = daemon.RemoteDaemon()
+        self.daemon.hid = MagicMock()
+
+    def test_handle_touch_tap(self):
+        req = MagicMock()
+        async def mock_json():
+            return {"action": "tap", "x": 0.25, "y": 0.75}
+        req.json = mock_json
+
+        with patch.object(daemon, "web") as mock_web:
+            mock_web.json_response = lambda data, status=200: MagicMock(status=status, data=data)
+            resp = asyncio.run(self.daemon.handle_touch(req))
+            self.assertEqual(resp.status, 200)
+            self.assertEqual(resp.data["action"], "tap")
+            self.assertEqual(resp.data["x"], 0.25)
+            self.assertEqual(resp.data["y"], 0.75)
+            self.assertEqual(self.daemon.hid.send_touch.call_count, 2)
+            self.daemon.hid.send_touch.assert_any_call(True, 0.25, 0.75)
+            self.daemon.hid.send_touch.assert_any_call(False, 0.25, 0.75)
+
+    def test_handle_touch_down_move_up(self):
+        for action, tip_down in [("down", True), ("move", True), ("up", False)]:
+            self.daemon.hid.reset_mock()
+            req = MagicMock()
+            async def make_json(act=action):
+                return {"action": act, "x": 0.4, "y": 0.6}
+            req.json = make_json
+
+            with patch.object(daemon, "web") as mock_web:
+                mock_web.json_response = lambda data, status=200: MagicMock(status=status, data=data)
+                resp = asyncio.run(self.daemon.handle_touch(req))
+                self.assertEqual(resp.status, 200)
+                self.assertEqual(resp.data["action"], action)
+                self.daemon.hid.send_touch.assert_called_once_with(tip_down, 0.4, 0.6)
+
+    def test_handle_touch_clamping(self):
+        req = MagicMock()
+        async def mock_json():
+            return {"action": "tap", "x": -0.5, "y": 1.5}
+        req.json = mock_json
+
+        with patch.object(daemon, "web") as mock_web:
+            mock_web.json_response = lambda data, status=200: MagicMock(status=status, data=data)
+            resp = asyncio.run(self.daemon.handle_touch(req))
+            self.assertEqual(resp.status, 200)
+            self.assertEqual(resp.data["x"], 0.0)
+            self.assertEqual(resp.data["y"], 1.0)
+
+    def test_handle_touch_unknown_action(self):
+        req = MagicMock()
+        async def mock_json():
+            return {"action": "wiggle", "x": 0.5, "y": 0.5}
+        req.json = mock_json
+
+        with patch.object(daemon, "web") as mock_web:
+            mock_web.json_response = lambda data, status=200: MagicMock(status=status, data=data)
+            resp = asyncio.run(self.daemon.handle_touch(req))
+            self.assertEqual(resp.status, 400)
+
+    def test_handle_touch_no_hid(self):
+        self.daemon.hid = None
+        req = MagicMock()
+        async def mock_json():
+            return {"action": "tap", "x": 0.5, "y": 0.5}
+        req.json = mock_json
+
+        with patch.object(daemon, "web") as mock_web:
+            mock_web.json_response = lambda data, status=200: MagicMock(status=status, data=data)
+            resp = asyncio.run(self.daemon.handle_touch(req))
+            self.assertEqual(resp.status, 503)
+
+
+class TestBluetoothKeepalive(unittest.TestCase):
+    def setUp(self):
+        self.daemon = daemon.RemoteDaemon()
+
+    def test_reconnect_disconnected_paired_device(self):
+        paired_stdout = b"Device DC:E5:5B:A6:30:8B Chromecast\n"
+        info_stdout = b"Device DC:E5:5B:A6:30:8B (public)\n\tName: Chromecast\n\tConnected: no\n\tPaired: yes\n"
+
+        async def mock_create_subprocess_exec(*cmd, **kwargs):
+            proc = MagicMock()
+            if cmd == ("bluetoothctl", "devices", "Paired"):
+                async def mock_communicate():
+                    return paired_stdout, b""
+                proc.communicate = mock_communicate
+                proc.returncode = 0
+            elif len(cmd) == 3 and cmd[:2] == ("bluetoothctl", "info"):
+                async def mock_communicate():
+                    return info_stdout, b""
+                proc.communicate = mock_communicate
+                proc.returncode = 0
+            elif len(cmd) == 3 and cmd[:2] == ("bluetoothctl", "connect"):
+                async def mock_communicate():
+                    return b"Connection successful\n", b""
+                proc.communicate = mock_communicate
+                proc.returncode = 0
+            return proc
+
+        with patch("asyncio.create_subprocess_exec", side_effect=mock_create_subprocess_exec):
+            results = asyncio.run(self.daemon._check_and_reconnect_bluetooth())
+            self.assertEqual(len(results), 1)
+            self.assertEqual(results[0]["mac"], "DC:E5:5B:A6:30:8B")
+            self.assertTrue(results[0]["reconnected"])
+
+    def test_already_connected_device_no_reconnect_attempt(self):
+        paired_stdout = b"Device DC:E5:5B:A6:30:8B Chromecast\n"
+        info_stdout = b"Device DC:E5:5B:A6:30:8B (public)\n\tName: Chromecast\n\tConnected: yes\n\tPaired: yes\n"
+
+        connect_called = False
+        async def mock_create_subprocess_exec(*cmd, **kwargs):
+            nonlocal connect_called
+            proc = MagicMock()
+            if cmd == ("bluetoothctl", "devices", "Paired"):
+                async def mock_communicate():
+                    return paired_stdout, b""
+                proc.communicate = mock_communicate
+                proc.returncode = 0
+            elif len(cmd) == 3 and cmd[:2] == ("bluetoothctl", "info"):
+                async def mock_communicate():
+                    return info_stdout, b""
+                proc.communicate = mock_communicate
+                proc.returncode = 0
+            elif len(cmd) == 3 and cmd[:2] == ("bluetoothctl", "connect"):
+                connect_called = True
+            return proc
+
+        with patch("asyncio.create_subprocess_exec", side_effect=mock_create_subprocess_exec):
+            results = asyncio.run(self.daemon._check_and_reconnect_bluetooth())
+            self.assertEqual(len(results), 0)
+            self.assertFalse(connect_called)
+
+    def test_handle_bluetooth_reconnect_endpoint(self):
+        req = MagicMock()
+        async def mock_json():
+            return {"mac": "DC:E5:5B:A6:30:8B"}
+        req.json = mock_json
+
+        with patch.object(self.daemon, "_check_and_reconnect_bluetooth", new_callable=AsyncMock) as mock_recon, \
+             patch.object(daemon, "web") as mock_web:
+            mock_recon.return_value = [{"mac": "DC:E5:5B:A6:30:8B", "reconnected": True}]
+            mock_web.json_response = lambda data, status=200: MagicMock(status=status, data=data)
+            resp = asyncio.run(self.daemon.handle_bluetooth_reconnect(req))
+            self.assertEqual(resp.status, 200)
+            self.assertTrue(resp.data["reconnected"][0]["reconnected"])
+
+    def test_run_bluetoothctl_timeout_kills_and_reaps(self):
+        mock_proc = MagicMock()
+        mock_proc.kill = MagicMock()
+        mock_proc.wait = AsyncMock(return_value=0)
+
+        async def hanging_communicate():
+            await asyncio.sleep(10.0)
+            return b"", b""
+
+        mock_proc.communicate = hanging_communicate
+
+        with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)):
+            with self.assertRaises(asyncio.TimeoutError):
+                asyncio.run(self.daemon._run_bluetoothctl("test", timeout=0.05))
+
+            mock_proc.kill.assert_called_once()
+            mock_proc.wait.assert_awaited_once()
+
+
+class TestConfigKeepalive(unittest.TestCase):
+    def test_defaults(self):
+        from config import RemoteConfig
+        cfg = RemoteConfig()
+        self.assertFalse(cfg.enable_evdev)
+        self.assertTrue(cfg.bluetooth_keepalive)
+        self.assertEqual(cfg.bluetooth_keepalive_interval, 10.0)
+
+    def test_load_keepalive_overrides(self):
+        from config import load_config
+        import tempfile
+        content = """
+enable_evdev: true
+bluetooth_keepalive: false
+bluetooth_keepalive_interval: 20.0
+"""
+        with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
+            f.write(content)
+            temp_path = f.name
+        try:
+            cfg = load_config(temp_path)
+            self.assertTrue(cfg.enable_evdev)
+            self.assertFalse(cfg.bluetooth_keepalive)
+            self.assertEqual(cfg.bluetooth_keepalive_interval, 20.0)
+        finally:
+            os.remove(temp_path)
+
+
+class TestCorsMiddleware(unittest.TestCase):
+    def test_cors_options(self):
+        if not daemon.cors_middleware:
+            self.skipTest("aiohttp not installed")
+        req = MagicMock()
+        req.method = "OPTIONS"
+        handler = AsyncMock()
+
+        resp = asyncio.run(daemon.cors_middleware(req, handler))
+        self.assertEqual(resp.status, 204)
+        self.assertEqual(resp.headers["Access-Control-Allow-Origin"], "*")
+        self.assertIn("OPTIONS", resp.headers["Access-Control-Allow-Methods"])
+
+    def test_cors_get_or_post(self):
+        if not daemon.cors_middleware:
+            self.skipTest("aiohttp not installed")
+        req = MagicMock()
+        req.method = "POST"
+        mock_resp = MagicMock()
+        mock_resp.headers = {}
+        handler = AsyncMock(return_value=mock_resp)
+
+        resp = asyncio.run(daemon.cors_middleware(req, handler))
+        self.assertEqual(resp.headers["Access-Control-Allow-Origin"], "*")
+        self.assertIn("POST", resp.headers["Access-Control-Allow-Methods"])
 
 
 if __name__ == "__main__":

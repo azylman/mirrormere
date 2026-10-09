@@ -18,6 +18,9 @@ class RemoteConfig:
     http_port: int = 8092
     advert_name: str = "Mirrormere Remote"
     auto_confirm_pairing: bool = True
+    enable_evdev: bool = False
+    bluetooth_keepalive: bool = True
+    bluetooth_keepalive_interval: float = 10.0
 
 
 DEFAULT_CONFIG_PATHS = [
@@ -108,6 +111,23 @@ def load_config(path: Optional[str] = None) -> RemoteConfig:
                         cfg.auto_confirm_pairing = v
                     else:
                         cfg.auto_confirm_pairing = str(v).lower() in ("true", "1", "yes")
+                if "enable_evdev" in data:
+                    v = data["enable_evdev"]
+                    if isinstance(v, bool):
+                        cfg.enable_evdev = v
+                    else:
+                        cfg.enable_evdev = str(v).lower() in ("true", "1", "yes")
+                if "bluetooth_keepalive" in data:
+                    v = data["bluetooth_keepalive"]
+                    if isinstance(v, bool):
+                        cfg.bluetooth_keepalive = v
+                    else:
+                        cfg.bluetooth_keepalive = str(v).lower() in ("true", "1", "yes")
+                if "bluetooth_keepalive_interval" in data:
+                    try:
+                        cfg.bluetooth_keepalive_interval = float(data["bluetooth_keepalive_interval"])
+                    except ValueError:
+                        pass
         except Exception as e:
             if path:
                 raise ValueError(f"Failed to parse config from {path}: {e}") from e
