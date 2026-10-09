@@ -2,7 +2,7 @@
 
 Manages:
 1. Android TV Remote v2 (Wi-Fi mTLS) connection on port 6466.
-2. Bluetooth LE HID Peripheral (Mirrormere Remote) with multi-report touch, mouse, and consumer keys.
+2. Bluetooth LE HID Peripheral (Mirrormere Remote) with direct touch digitizer and consumer keys.
 3. Automated BLE pairing confirmation via BlueZ PairingAgent.
 4. Physical touch event forwarding from /dev/input.
 5. HTTP Control API on port 8092.
@@ -46,42 +46,13 @@ HTTP_PORT = _default_config.http_port
 ADVERT_NAME = _default_config.advert_name
 AUTO_CONFIRM_PAIRING = _default_config.auto_confirm_pairing
 
-# Multi-Report HID Descriptor (Mouse + Touch + Consumer Control)
+# Multi-Report HID Descriptor (Touch Digitizer + Consumer Control)
 REPORT_MAP = bytes([
-    # Report 1: Relative Mouse
-    0x05, 0x01,        # Usage Page (Generic Desktop)
-    0x09, 0x02,        # Usage (Mouse)
-    0xa1, 0x01,        # Collection (Application)
-    0x85, 0x01,        #   Report ID (1)
-    0x09, 0x01,        #   Usage (Pointer)
-    0xa1, 0x00,        #   Collection (Physical)
-    0x05, 0x09,        #     Usage Page (Button)
-    0x19, 0x01,        #     Usage Minimum (1)
-    0x29, 0x03,        #     Usage Maximum (3)
-    0x15, 0x00,        #     Logical Minimum (0)
-    0x25, 0x01,        #     Logical Maximum (1)
-    0x95, 0x03,        #     Report Count (3)
-    0x75, 0x01,        #     Report Size (1)
-    0x81, 0x02,        #     Input (Data,Var,Abs)
-    0x95, 0x01,        #     Report Count (1)
-    0x75, 0x05,        #     Report Size (5)
-    0x81, 0x03,        #     Input (Cnst,Var,Abs)
-    0x05, 0x01,        #     Usage Page (Generic Desktop)
-    0x09, 0x30,        #     Usage (X)
-    0x09, 0x31,        #     Usage (Y)
-    0x15, 0x81,        #     Logical Minimum (-127)
-    0x25, 0x7f,        #     Logical Maximum (127)
-    0x75, 0x08,        #     Report Size (8)
-    0x95, 0x02,        #     Report Count (2)
-    0x81, 0x06,        #     Input (Data,Var,Rel)
-    0xc0,              #   End Collection
-    0xc0,              # End Collection
-
-    # Report 2: Absolute Touch Screen (Digitizer)
+    # Report 1: Absolute Touch Screen (Digitizer)
     0x05, 0x0d,        # Usage Page (Digitizer)
     0x09, 0x04,        # Usage (Touch Screen)
     0xa1, 0x01,        # Collection (Application)
-    0x85, 0x02,        #   Report ID (2)
+    0x85, 0x01,        #   Report ID (1)
     0x09, 0x22,        #   Usage (Finger)
     0xa1, 0x02,        #   Collection (Logical)
     0x09, 0x42,        #     Usage (Tip Switch)
@@ -110,11 +81,11 @@ REPORT_MAP = bytes([
     0xc0,              #   End Collection
     0xc0,              # End Collection
 
-    # Report 3: Consumer Keys (Back, Home, Media, Volume)
+    # Report 2: Consumer Keys (Back, Home, Media, Volume)
     0x05, 0x0c,        # Usage Page (Consumer)
     0x09, 0x01,        # Usage (Consumer Control)
     0xa1, 0x01,        # Collection (Application)
-    0x85, 0x03,        #   Report ID (3)
+    0x85, 0x02,        #   Report ID (2)
     0x19, 0x00,        #   Usage Minimum (0)
     0x2a, 0x9c, 0x02,  #   Usage Maximum (0x029C)
     0x15, 0x00,        #   Logical Minimum (0)
@@ -244,7 +215,6 @@ try:
 
     class HIDService(Service):
         def __init__(self):
-            self._mouse_val = bytes([0, 0, 0])
             self._touch_val = bytes([0, 0, 0, 0, 0])
             self._consumer_val = bytes([0, 0])
             self._protocol_mode = bytes([1])
@@ -275,20 +245,12 @@ try:
             self._protocol_mode = value
 
         @characteristic("2A4D", CharacteristicFlags.READ | CharacteristicFlags.NOTIFY)
-        def report_mouse(self, options):
-            return self._mouse_val
-
-        @descriptor("2908", report_mouse)
-        def report_mouse_ref(self, options):
-            return bytes([1, 1])
-
-        @characteristic("2A4D", CharacteristicFlags.READ | CharacteristicFlags.NOTIFY)
         def report_touch(self, options):
             return self._touch_val
 
         @descriptor("2908", report_touch)
         def report_touch_ref(self, options):
-            return bytes([2, 1])
+            return bytes([1, 1])
 
         @characteristic("2A4D", CharacteristicFlags.READ | CharacteristicFlags.NOTIFY)
         def report_consumer(self, options):
@@ -296,13 +258,7 @@ try:
 
         @descriptor("2908", report_consumer)
         def report_consumer_ref(self, options):
-            return bytes([3, 1])
-
-        def send_mouse(self, buttons: int, dx: int, dy: int):
-            val = bytes([buttons & 0x07, dx & 0xFF, dy & 0xFF])
-            self._mouse_val = val
-            if hasattr(self, "report_mouse") and hasattr(self.report_mouse, "changed"):
-                self.report_mouse.changed(val)
+            return bytes([2, 1])
 
         def send_touch(self, tip_down: bool, x_ratio: float, y_ratio: float):
             flags = 0x03 if tip_down else 0x00
@@ -595,11 +551,11 @@ class RemoteDaemon:
                 self.advert = KioskAdvertisement(
                     localName=self.config.advert_name,
                     serviceUUIDs=["1812", "180F", "180A"],
-                    appearance=0x03C2,
+                    appearance=0x03C5,
                     timeout=0,
                 )
                 await self.advert.register(self.bus, adapter=self.adapter)
-                logger.info("BLE peripheral & advertisement registered as '%s' (0x03C2)", self.config.advert_name)
+                logger.info("BLE peripheral & advertisement registered as '%s' (0x03C5)", self.config.advert_name)
             except Exception as e:
                 logger.error("Failed to register BlueZ peripheral (check D-Bus mount / permissions): %s", e)
 

@@ -285,5 +285,28 @@ remote:
             self.assertEqual(cfg.http_port, 8092)
 
 
+class TestHIDDescriptor(unittest.TestCase):
+    def test_report_map_pure_digitizer(self):
+        # REPORT_MAP should not contain generic mouse usage (0x05, 0x01, 0x09, 0x02)
+        mouse_usage = bytes([0x05, 0x01, 0x09, 0x02])
+        self.assertNotIn(mouse_usage, daemon.REPORT_MAP)
+
+        # REPORT_MAP must contain Touch Screen digitizer usage (0x05, 0x0d, 0x09, 0x04)
+        touch_usage = bytes([0x05, 0x0d, 0x09, 0x04])
+        self.assertIn(touch_usage, daemon.REPORT_MAP)
+
+        # REPORT_MAP must contain Consumer Control usage (0x05, 0x0c, 0x09, 0x01)
+        consumer_usage = bytes([0x05, 0x0c, 0x09, 0x01])
+        self.assertIn(consumer_usage, daemon.REPORT_MAP)
+
+    def test_digitizer_and_consumer_report_ids(self):
+        # Report 1 must be Digitizer Touch Screen (Report ID 1)
+        self.assertIn(bytes([0x85, 0x01]), daemon.REPORT_MAP)
+        # Report 2 must be Consumer Control (Report ID 2)
+        self.assertIn(bytes([0x85, 0x02]), daemon.REPORT_MAP)
+        # Old Report ID 3 should not exist
+        self.assertNotIn(bytes([0x85, 0x03]), daemon.REPORT_MAP)
+
+
 if __name__ == "__main__":
     unittest.main()
