@@ -27,7 +27,11 @@
       this.audioManager = options.audioManager || (typeof window !== 'undefined' ? window.audioManager : null);
       this.carousel = options.carousel || (typeof window !== 'undefined' ? window.carousel : null);
       this.hud = options.hud || null;
-      this.remoteUrl = options.remoteUrl || (typeof window !== 'undefined' && window.MIRRORMERE_REMOTE_URL) || 'http://localhost:8092';
+      const win = options.window || (typeof window !== 'undefined' ? window : null);
+      const defaultRemoteUrl = (win && win.MIRRORMERE_REMOTE_URL)
+        || (typeof document !== 'undefined' && document.body && document.body.dataset && document.body.dataset.remoteUrl)
+        || '';
+      this.remoteUrl = options.remoteUrl !== undefined ? options.remoteUrl : defaultRemoteUrl;
       this.touchForwardingEnabled = options.touchForwardingEnabled !== undefined ? options.touchForwardingEnabled : true;
       const defaultFetch = (typeof window !== 'undefined' && typeof window.fetch === 'function')
         ? window.fetch.bind(window)

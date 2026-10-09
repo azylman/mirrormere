@@ -97,6 +97,20 @@ func WithHideCursorProvider(provider func() bool) HandlerOption {
 	}
 }
 
+// WithRemoteURL sets the static fallback remote URL for touch event forwarding.
+func WithRemoteURL(url string) HandlerOption {
+	return func(h *Handler) {
+		h.remoteURL = url
+	}
+}
+
+// WithRemoteURLProvider sets a dynamic function returning the remote URL for touch forwarding.
+func WithRemoteURLProvider(provider func() string) HandlerOption {
+	return func(h *Handler) {
+		h.remoteURLProvider = provider
+	}
+}
+
 // Handler serves the web display HUD shell and static web runtime assets.
 type Handler struct {
 	templatePath       string
@@ -109,6 +123,8 @@ type Handler struct {
 	timezoneProvider   func() string
 	hideCursor         bool
 	hideCursorProvider func() bool
+	remoteURL          string
+	remoteURLProvider  func() string
 }
 
 // SetTimezone updates the household timezone dynamically.
@@ -150,10 +166,30 @@ func (h *Handler) HideCursor() bool {
 	return h.hideCursor
 }
 
+// SetRemoteURL updates the fallback remote URL dynamically.
+func (h *Handler) SetRemoteURL(url string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.remoteURL = url
+}
+
+// RemoteURL returns the effective remote URL for touch forwarding.
+func (h *Handler) RemoteURL() string {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	if h.remoteURLProvider != nil {
+		if url := h.remoteURLProvider(); url != "" {
+			return url
+		}
+	}
+	return h.remoteURL
+}
+
 // DisplayTemplateData holds context parameters passed to display.html template.
 type DisplayTemplateData struct {
 	Timezone   string
 	HideCursor bool
+	RemoteURL  string
 }
 
 // NewHandler constructs a Handler with default filesystem paths.
@@ -251,6 +287,7 @@ func (h *Handler) GetDisplay(w http.ResponseWriter, r *http.Request) {
 		data := DisplayTemplateData{
 			Timezone:   h.Timezone(),
 			HideCursor: hideCursor,
+			RemoteURL:  h.RemoteURL(),
 		}
 		if err := tmpl.Execute(&buf, data); err == nil {
 			out = buf.Bytes()

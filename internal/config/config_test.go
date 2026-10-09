@@ -998,6 +998,53 @@ display:
 	}
 }
 
+func TestConfig_RemoteURL(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		yaml    string
+		wantURL string
+	}{
+		{
+			name: "explicit remote_url",
+			yaml: `
+timezone: "UTC"
+display:
+  remote_url: "http://mirrormere-remote.aerial"
+  widgets:
+    - id: spacer-1
+      type: spacer
+`,
+			wantURL: "http://mirrormere-remote.aerial",
+		},
+		{
+			name: "omitted remote_url defaults to empty",
+			yaml: `
+timezone: "UTC"
+display:
+  widgets:
+    - id: spacer-1
+      type: spacer
+`,
+			wantURL: "",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cfg, err := config.ParseWithEnv([]byte(tc.yaml), mockGetenv(nil))
+			if err != nil {
+				t.Fatalf("unexpected parse error: %v", err)
+			}
+			if cfg.Display.RemoteURL != tc.wantURL {
+				t.Errorf("expected RemoteURL=%q, got %q", tc.wantURL, cfg.Display.RemoteURL)
+			}
+		})
+	}
+}
+
 func TestConfig_LocationFallback(t *testing.T) {
 	t.Parallel()
 

@@ -10,7 +10,7 @@
   <base href="./">
   <link rel="stylesheet" id="hud-stylesheet" href="style.css">
 </head>
-<body data-timezone="{{ .Timezone }}"{{ if .HideCursor }} class="mm-touch-kiosk"{{ end }}>
+<body data-timezone="{{ .Timezone }}"{{ if .HideCursor }} class="mm-touch-kiosk"{{ end }}{{ if .RemoteURL }} data-remote-url="{{ .RemoteURL }}"{{ end }}>
   <div id="mirrormere-app" data-timezone="{{ .Timezone }}">
     <header class="header-zone">
       <div class="header-time-block">
@@ -74,6 +74,11 @@
 
   <div id="mm-compositor-heartbeat" class="mm-compositor-heartbeat" aria-hidden="true"></div>
 
+  {{ if .RemoteURL }}
+  <script>
+    window.MIRRORMERE_REMOTE_URL = {{ .RemoteURL }};
+  </script>
+  {{ end }}
   <script src="static/js/sse.js"></script>
   <script src="static/js/audio.js"></script>
   <script src="static/js/carousel.js"></script>

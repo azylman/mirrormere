@@ -608,4 +608,88 @@ func TestGetDisplay_HideCursor(t *testing.T) {
 	})
 }
 
+func TestGetDisplay_RemoteURL(t *testing.T) {
+	t.Parallel()
+
+	tmplContent := []byte(`<!DOCTYPE html><html><body data-timezone="{{ .Timezone }}"{{ if .HideCursor }} class="mm-touch-kiosk"{{ end }}{{ if .RemoteURL }} data-remote-url="{{ .RemoteURL }}"{{ end }}>{{ if .RemoteURL }}<script>window.MIRRORMERE_REMOTE_URL = {{ .RemoteURL }};</script>{{ end }}</body></html>`)
+
+	t.Run("DefaultEmptyRemoteURL", func(t *testing.T) {
+		t.Parallel()
+		h := display.NewHandler(
+			display.WithEmbeddedTemplate(tmplContent),
+		)
+		if h.RemoteURL() != "" {
+			t.Errorf("expected empty RemoteURL by default, got %q", h.RemoteURL())
+		}
+
+		req := httptest.NewRequest(http.MethodGet, "/display", nil)
+		rec := httptest.NewRecorder()
+		h.GetDisplay(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rec.Code)
+		}
+		if strings.Contains(rec.Body.String(), "data-remote-url") {
+			t.Errorf("expected body without data-remote-url, got %s", rec.Body.String())
+		}
+		if strings.Contains(rec.Body.String(), "MIRRORMERE_REMOTE_URL") {
+			t.Errorf("expected body without MIRRORMERE_REMOTE_URL script, got %s", rec.Body.String())
+		}
+	})
+
+	t.Run("StaticWithRemoteURL", func(t *testing.T) {
+		t.Parallel()
+		target := "http://mirrormere-remote.aerial"
+		h := display.NewHandler(
+			display.WithRemoteURL(target),
+			display.WithEmbeddedTemplate(tmplContent),
+		)
+		if h.RemoteURL() != target {
+			t.Errorf("expected RemoteURL %q, got %q", target, h.RemoteURL())
+		}
+
+		req := httptest.NewRequest(http.MethodGet, "/display", nil)
+		rec := httptest.NewRecorder()
+		h.GetDisplay(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rec.Code)
+		}
+		if !strings.Contains(rec.Body.String(), `data-remote-url="`+target+`"`) {
+			t.Errorf("expected body with data-remote-url, got %s", rec.Body.String())
+		}
+		if !strings.Contains(rec.Body.String(), `window.MIRRORMERE_REMOTE_URL = "`+target+`"`) {
+			t.Errorf("expected body with MIRRORMERE_REMOTE_URL script, got %s", rec.Body.String())
+		}
+	})
+
+	t.Run("DynamicRemoteURLProviderAndSet", func(t *testing.T) {
+		t.Parallel()
+		current := "http://initial.lan"
+		h := display.NewHandler(
+			display.WithRemoteURLProvider(func() string {
+				return current
+			}),
+			display.WithEmbeddedTemplate(tmplContent),
+		)
+
+		if h.RemoteURL() != current {
+			t.Errorf("expected %q, got %q", current, h.RemoteURL())
+		}
+
+		current = "http://dynamic.lan"
+		if h.RemoteURL() != current {
+			t.Errorf("expected updated %q, got %q", current, h.RemoteURL())
+		}
+
+		// Direct setter fallback test
+		h2 := display.NewHandler(display.WithEmbeddedTemplate(tmplContent))
+		h2.SetRemoteURL("http://setter.lan")
+		if h2.RemoteURL() != "http://setter.lan" {
+			t.Errorf("expected 'http://setter.lan', got %q", h2.RemoteURL())
+		}
+	})
+}
+
+
 
