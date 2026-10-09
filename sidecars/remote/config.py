@@ -21,6 +21,8 @@ class RemoteConfig:
     enable_evdev: bool = False
     bluetooth_keepalive: bool = True
     bluetooth_keepalive_interval: float = 10.0
+    advert_min_interval: int = 30
+    advert_max_interval: int = 50
 
 
 DEFAULT_CONFIG_PATHS = [
@@ -126,6 +128,16 @@ def load_config(path: Optional[str] = None) -> RemoteConfig:
                 if "bluetooth_keepalive_interval" in data:
                     try:
                         cfg.bluetooth_keepalive_interval = float(data["bluetooth_keepalive_interval"])
+                    except ValueError:
+                        pass
+                if "advert_min_interval" in data:
+                    try:
+                        cfg.advert_min_interval = int(data["advert_min_interval"])
+                    except ValueError:
+                        pass
+                if "advert_max_interval" in data:
+                    try:
+                        cfg.advert_max_interval = int(data["advert_max_interval"])
                     except ValueError:
                         pass
         except Exception as e:
