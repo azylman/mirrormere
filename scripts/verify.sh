@@ -6,6 +6,7 @@ set -eu
 
 # Prevent MSYS2 from mangling path conversions on Windows
 export MSYS_NO_PATHCONV=1
+export GOMEMLIMIT="${GOMEMLIMIT:-1200MiB}"
 
 # Ensure MinGit / MSYS binaries (/usr/bin, /mingw64/bin, /cmd) are in PATH
 for p in /usr/bin /mingw64/bin /cmd; do

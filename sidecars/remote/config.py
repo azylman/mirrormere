@@ -23,6 +23,7 @@ class RemoteConfig:
     bluetooth_keepalive_interval: float = 10.0
     advert_min_interval: int = 30
     advert_max_interval: int = 50
+    tap_duration: float = 0.015
 
 
 DEFAULT_CONFIG_PATHS = [
@@ -63,7 +64,10 @@ def _parse_simple_yaml(text: str) -> dict:
                     try:
                         current_dict[k] = int(clean_v)
                     except ValueError:
-                        current_dict[k] = clean_v
+                        try:
+                            current_dict[k] = float(clean_v)
+                        except ValueError:
+                            current_dict[k] = clean_v
     return data
 
 
@@ -138,6 +142,11 @@ def load_config(path: Optional[str] = None) -> RemoteConfig:
                 if "advert_max_interval" in data:
                     try:
                         cfg.advert_max_interval = int(data["advert_max_interval"])
+                    except ValueError:
+                        pass
+                if "tap_duration" in data:
+                    try:
+                        cfg.tap_duration = float(data["tap_duration"])
                     except ValueError:
                         pass
         except Exception as e:

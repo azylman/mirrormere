@@ -270,6 +270,7 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(cfg.http_port, 8092)
         self.assertEqual(cfg.advert_name, "Mirrormere Remote")
         self.assertTrue(cfg.auto_confirm_pairing)
+        self.assertEqual(cfg.tap_duration, 0.015)
 
     def test_load_from_yaml(self):
         from config import load_config
@@ -281,6 +282,7 @@ touch_device: /dev/input/event5
 http_port: 8099
 advert_name: Custom Remote
 auto_confirm_pairing: false
+tap_duration: 0.02
 """
         with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
             f.write(content)
@@ -293,6 +295,7 @@ auto_confirm_pairing: false
             self.assertEqual(cfg.http_port, 8099)
             self.assertEqual(cfg.advert_name, "Custom Remote")
             self.assertFalse(cfg.auto_confirm_pairing)
+            self.assertEqual(cfg.tap_duration, 0.02)
         finally:
             os.remove(temp_path)
 
@@ -307,6 +310,7 @@ remote:
   http_port: 8092
   advert_name: Mirrormere Remote
   auto_confirm_pairing: true
+  tap_duration: 0.01
 """
         with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
             f.write(content)
@@ -316,6 +320,7 @@ remote:
             self.assertEqual(cfg.chromecast_host, "10.0.0.50")
             self.assertEqual(cfg.cert_dir, "/kiosk/certs")
             self.assertTrue(cfg.auto_confirm_pairing)
+            self.assertEqual(cfg.tap_duration, 0.01)
         finally:
             os.remove(temp_path)
 
@@ -440,6 +445,32 @@ class TestTouchEndpoint(unittest.TestCase):
         # Mouse and touch release should still have been called in finally
         self.daemon.hid.send_mouse.assert_any_call(0, 0, 0)
         self.daemon.hid.send_touch.assert_any_call(False, 0.5, 0.5)
+
+    def test_handle_touch_tap_duration(self):
+        self.daemon.config.tap_duration = 0.012
+        req = MagicMock()
+        async def mock_json():
+            return {"action": "tap", "x": 0.5, "y": 0.5}
+        req.json = mock_json
+
+        with patch.object(daemon, "web") as mock_web, patch("asyncio.sleep") as mock_sleep:
+            mock_web.json_response = lambda data, status=200: MagicMock(status=status, data=data)
+            resp = asyncio.run(self.daemon.handle_touch(req))
+            self.assertEqual(resp.status, 200)
+            mock_sleep.assert_called_once_with(0.012)
+
+    def test_handle_tap_duration(self):
+        self.daemon.config.tap_duration = 0.018
+        req = MagicMock()
+        async def mock_json():
+            return {"x": 0.5, "y": 0.5}
+        req.json = mock_json
+
+        with patch.object(daemon, "web") as mock_web, patch("asyncio.sleep") as mock_sleep:
+            mock_web.json_response = lambda data, status=200: MagicMock(status=status, data=data)
+            resp = asyncio.run(self.daemon.handle_tap(req))
+            self.assertEqual(resp.status, 200)
+            mock_sleep.assert_called_once_with(0.018)
 
     def test_handle_touch_clamping(self):
         req = MagicMock()

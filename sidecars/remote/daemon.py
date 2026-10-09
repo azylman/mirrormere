@@ -651,7 +651,7 @@ class RemoteDaemon:
             try:
                 self.hid.send_mouse(1, 0, 0)
                 self.hid.send_touch(True, x_ratio, y_ratio)
-                await asyncio.sleep(0.05)
+                await asyncio.sleep(self.config.tap_duration)
             finally:
                 try:
                     self.hid.send_mouse(0, 0, 0)
@@ -694,7 +694,7 @@ class RemoteDaemon:
             try:
                 self.hid.send_mouse(1, 0, 0)
                 self.hid.send_touch(True, x_ratio, y_ratio)
-                await asyncio.sleep(0.05)
+                await asyncio.sleep(self.config.tap_duration)
             finally:
                 try:
                     self.hid.send_mouse(0, 0, 0)
