@@ -67,17 +67,23 @@ class TestCoords(unittest.TestCase):
         self.assertEqual(x, 0)
         self.assertEqual(y, 0)
 
+        # 16:9 Widescreen aspect ratio (32767 x 18431)
         x, y = to_hid_digitizer(1.0, 1.0)
         self.assertEqual(x, 32767)
-        self.assertEqual(y, 32767)
+        self.assertEqual(y, 18431)
 
         x, y = to_hid_digitizer(0.5, 0.5)
         self.assertEqual(x, 16383)
-        self.assertEqual(y, 16383)
+        self.assertEqual(y, 9215)
 
         # Clamping
         x, y = to_hid_digitizer(-0.2, 1.5)
         self.assertEqual(x, 0)
+        self.assertEqual(y, 18431)
+
+        # Legacy explicit max_logical override
+        x, y = to_hid_digitizer(1.0, 1.0, max_logical=32767)
+        self.assertEqual(x, 32767)
         self.assertEqual(y, 32767)
 
     def test_to_hid_mouse_delta(self):
@@ -346,6 +352,8 @@ class TestHIDDescriptor(unittest.TestCase):
         self.assertIn(bytes([0x85, 0x01]), daemon.REPORT_MAP)
         # Report 2 must be Digitizer Touch Screen (Report ID 2)
         self.assertIn(bytes([0x85, 0x02]), daemon.REPORT_MAP)
+        # Report 2 Y axis Logical Maximum must be 18431 (0x47FF little-endian: 0xFF, 0x47)
+        self.assertIn(bytes([0x09, 0x31, 0x15, 0x00, 0x26, 0xff, 0x47]), daemon.REPORT_MAP)
         # Report 3 must be Consumer Control (Report ID 3)
         self.assertIn(bytes([0x85, 0x03]), daemon.REPORT_MAP)
 

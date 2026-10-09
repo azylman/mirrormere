@@ -120,7 +120,7 @@ REPORT_MAP = bytes([
     0x81, 0x02,        #     Input (Data,Var,Abs)
     0x09, 0x31,        #     Usage (Y)
     0x15, 0x00,        #     Logical Minimum (0)
-    0x26, 0xff, 0x7f,  #     Logical Maximum (32767)
+    0x26, 0xff, 0x47,  #     Logical Maximum (18431) - 16:9 Aspect Ratio (32768 x 18432)
     0x75, 0x10,        #     Report Size (16)
     0x95, 0x01,        #     Report Count (1)
     0x81, 0x02,        #     Input (Data,Var,Abs)
