@@ -356,6 +356,12 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 			}
 			return false
 		}),
+		display.WithRemoteURLProvider(func() string {
+			if snap := stateProvider.CurrentSnapshot(); snap != nil && snap.Config != nil {
+				return snap.Config.Display.RemoteURL
+			}
+			return ""
+		}),
 	)
 	assetReloader := NewAssetReloader(customCSSPath, loader, builtinDir, customDir, renderEngine, configManager, hub, logger)
 

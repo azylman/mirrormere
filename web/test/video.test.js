@@ -1608,5 +1608,44 @@ test('Video Presentation Mode & Multi-Stream Player with PiP', async (t) => {
       mgr.exitVideoMode();
       assert.strictEqual(session.touchCleanups.length, 0);
     });
+
+    await t2.test('resolves remoteUrl dynamically from options.window.MIRRORMERE_REMOTE_URL', () => {
+      const mgr = new VideoPlayerManager({
+        window: { MIRRORMERE_REMOTE_URL: 'http://dynamic-window.remote' },
+      });
+      assert.strictEqual(mgr.remoteUrl, 'http://dynamic-window.remote');
+      mgr.destroy();
+    });
+
+    await t2.test('resolves remoteUrl from document.body.dataset.remoteUrl when window absent', () => {
+      const prevDataset = global.document.body ? global.document.body.dataset : undefined;
+      if (!global.document.body) global.document.body = createMockElement('body');
+      global.document.body.dataset = { remoteUrl: 'http://body-dataset.remote' };
+      try {
+        const mgr = new VideoPlayerManager({ window: null });
+        assert.strictEqual(mgr.remoteUrl, 'http://body-dataset.remote');
+        mgr.destroy();
+      } finally {
+        if (global.document.body) global.document.body.dataset = prevDataset;
+      }
+    });
+
+    await t2.test('no-ops touch event dispatch when no remoteUrl is configured', async () => {
+      let called = false;
+      const mockFetch = async () => {
+        called = true;
+        return { ok: true };
+      };
+      const mgr = new VideoPlayerManager({
+        fetch: mockFetch,
+        window: null,
+      });
+
+      assert.strictEqual(mgr.remoteUrl, '');
+
+      await mgr.sendTouchEvent('tap', 0.5, 0.5);
+      assert.strictEqual(called, false);
+      mgr.destroy();
+    });
   });
 });
