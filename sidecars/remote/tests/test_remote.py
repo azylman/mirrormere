@@ -328,10 +328,10 @@ remote:
 
 
 class TestHIDDescriptor(unittest.TestCase):
-    def test_report_map_pure_digitizer(self):
-        # REPORT_MAP should not contain generic mouse usage (0x05, 0x01, 0x09, 0x02)
+    def test_report_map_multi_report(self):
+        # REPORT_MAP must contain generic mouse usage (0x05, 0x01, 0x09, 0x02)
         mouse_usage = bytes([0x05, 0x01, 0x09, 0x02])
-        self.assertNotIn(mouse_usage, daemon.REPORT_MAP)
+        self.assertIn(mouse_usage, daemon.REPORT_MAP)
 
         # REPORT_MAP must contain Touch Screen digitizer usage (0x05, 0x0d, 0x09, 0x04)
         touch_usage = bytes([0x05, 0x0d, 0x09, 0x04])
@@ -341,13 +341,13 @@ class TestHIDDescriptor(unittest.TestCase):
         consumer_usage = bytes([0x05, 0x0c, 0x09, 0x01])
         self.assertIn(consumer_usage, daemon.REPORT_MAP)
 
-    def test_digitizer_and_consumer_report_ids(self):
-        # Report 1 must be Digitizer Touch Screen (Report ID 1)
+    def test_multi_report_ids(self):
+        # Report 1 must be Relative Mouse (Report ID 1)
         self.assertIn(bytes([0x85, 0x01]), daemon.REPORT_MAP)
-        # Report 2 must be Consumer Control (Report ID 2)
+        # Report 2 must be Digitizer Touch Screen (Report ID 2)
         self.assertIn(bytes([0x85, 0x02]), daemon.REPORT_MAP)
-        # Old Report ID 3 should not exist
-        self.assertNotIn(bytes([0x85, 0x03]), daemon.REPORT_MAP)
+        # Report 3 must be Consumer Control (Report ID 3)
+        self.assertIn(bytes([0x85, 0x03]), daemon.REPORT_MAP)
 
 
 class TestTouchEndpoint(unittest.TestCase):
@@ -368,12 +368,19 @@ class TestTouchEndpoint(unittest.TestCase):
             self.assertEqual(resp.data["action"], "tap")
             self.assertEqual(resp.data["x"], 0.25)
             self.assertEqual(resp.data["y"], 0.75)
+            self.assertEqual(self.daemon.hid.send_mouse.call_count, 2)
+            self.daemon.hid.send_mouse.assert_any_call(1, 0, 0)
+            self.daemon.hid.send_mouse.assert_any_call(0, 0, 0)
             self.assertEqual(self.daemon.hid.send_touch.call_count, 2)
             self.daemon.hid.send_touch.assert_any_call(True, 0.25, 0.75)
             self.daemon.hid.send_touch.assert_any_call(False, 0.25, 0.75)
 
     def test_handle_touch_down_move_up(self):
-        for action, tip_down in [("down", True), ("move", True), ("up", False)]:
+        for action, tip_down, expect_mouse, mouse_args in [
+            ("down", True, True, (1, 0, 0)),
+            ("move", True, False, None),
+            ("up", False, True, (0, 0, 0)),
+        ]:
             self.daemon.hid.reset_mock()
             req = MagicMock()
             async def make_json(act=action):
@@ -386,6 +393,45 @@ class TestTouchEndpoint(unittest.TestCase):
                 self.assertEqual(resp.status, 200)
                 self.assertEqual(resp.data["action"], action)
                 self.daemon.hid.send_touch.assert_called_once_with(tip_down, 0.4, 0.6)
+                if expect_mouse:
+                    self.daemon.hid.send_mouse.assert_called_once_with(*mouse_args)
+                else:
+                    self.daemon.hid.send_mouse.assert_not_called()
+
+    def test_handle_tap_endpoint(self):
+        req = MagicMock()
+        async def mock_json():
+            return {"x": 0.3, "y": 0.7}
+        req.json = mock_json
+
+        with patch.object(daemon, "web") as mock_web:
+            mock_web.json_response = lambda data, status=200: MagicMock(status=status, data=data)
+            resp = asyncio.run(self.daemon.handle_tap(req))
+            self.assertEqual(resp.status, 200)
+            self.assertEqual(resp.data["action"], "tap")
+            self.assertEqual(resp.data["x"], 0.3)
+            self.assertEqual(resp.data["y"], 0.7)
+            self.assertEqual(self.daemon.hid.send_mouse.call_count, 2)
+            self.daemon.hid.send_mouse.assert_any_call(1, 0, 0)
+            self.daemon.hid.send_mouse.assert_any_call(0, 0, 0)
+            self.assertEqual(self.daemon.hid.send_touch.call_count, 2)
+            self.daemon.hid.send_touch.assert_any_call(True, 0.3, 0.7)
+            self.daemon.hid.send_touch.assert_any_call(False, 0.3, 0.7)
+
+    def test_handle_tap_finally_releases_on_error(self):
+        req = MagicMock()
+        async def mock_json():
+            return {"x": 0.5, "y": 0.5}
+        req.json = mock_json
+
+        # Simulate sleep raising an exception mid-tap
+        with patch("asyncio.sleep", side_effect=RuntimeError("simulated mid-tap error")):
+            with self.assertRaises(RuntimeError):
+                asyncio.run(self.daemon.handle_tap(req))
+
+        # Mouse and touch release should still have been called in finally
+        self.daemon.hid.send_mouse.assert_any_call(0, 0, 0)
+        self.daemon.hid.send_touch.assert_any_call(False, 0.5, 0.5)
 
     def test_handle_touch_clamping(self):
         req = MagicMock()
