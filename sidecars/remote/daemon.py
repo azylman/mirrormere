@@ -365,12 +365,12 @@ try:
             return self._max_interval
 
     class PairingAgent(BaseAgent):
-        capability = AgentCapability.NO_INPUT_NO_OUTPUT
+        capability = AgentCapability.DISPLAY_YES_NO
 
         def __init__(self, remote_helper: AndroidRemoteHelper, auto_confirm: bool = True):
             self.remote_helper = remote_helper
             self.auto_confirm = auto_confirm
-            super().__init__(AgentCapability.NO_INPUT_NO_OUTPUT)
+            super().__init__(AgentCapability.DISPLAY_YES_NO)
 
         @method()
         def Release(self):
