@@ -208,6 +208,7 @@ class TestDaemonComponents(unittest.TestCase):
     def test_advertisement_fallback(self):
         self.assertIsNone(daemon.Advertisement)
         self.assertIsNone(daemon.KioskAdvertisement)
+        self.assertIsNone(daemon.FastKioskAdvertisement)
 
     def test_remote_daemon_custom_config(self):
         from config import RemoteConfig
@@ -515,6 +516,58 @@ class TestBluetoothKeepalive(unittest.TestCase):
             mock_proc.kill.assert_called_once()
             mock_proc.wait.assert_awaited_once()
 
+    def test_cleanup_stale_connections(self):
+        cmd_log = []
+        async def mock_exec(*cmd, **kwargs):
+            cmd_log.append(cmd)
+            proc = MagicMock(returncode=0)
+            if cmd == ("bluetoothctl", "devices", "Paired"):
+                proc.communicate = AsyncMock(return_value=(b"Device DC:E5:5B:A6:30:8B TV\nDevice 11:22:33:44:55:66 Other\n", b""))
+            elif cmd[:2] == ("bluetoothctl", "info"):
+                proc.communicate = AsyncMock(return_value=(b"Connected: yes\n" if "DC:E5" in cmd[2] else b"Connected: no\n", b""))
+            else:
+                proc.communicate = AsyncMock(return_value=(b"", b""))
+            return proc
+
+        with patch("asyncio.create_subprocess_exec", side_effect=mock_exec):
+            asyncio.run(self.daemon._cleanup_stale_connections())
+            self.assertIn(("bluetoothctl", "disconnect", "DC:E5:5B:A6:30:8B"), cmd_log)
+            self.assertNotIn(("bluetoothctl", "disconnect", "11:22:33:44:55:66"), cmd_log)
+
+    def test_reconnect_force_flag_disconnects_first(self):
+        cmd_log = []
+        async def mock_exec(*cmd, **kwargs):
+            cmd_log.append(cmd)
+            proc = MagicMock(returncode=0)
+            if cmd == ("bluetoothctl", "devices", "Paired"):
+                proc.communicate = AsyncMock(return_value=(b"Device DC:E5:5B:A6:30:8B TV\n", b""))
+            elif cmd[:2] == ("bluetoothctl", "info"):
+                proc.communicate = AsyncMock(return_value=(b"Connected: yes\nServicesResolved: yes\n", b""))
+            else:
+                proc.communicate = AsyncMock(return_value=(b"", b""))
+            return proc
+
+        with patch("asyncio.create_subprocess_exec", side_effect=mock_exec):
+            results = asyncio.run(self.daemon._check_and_reconnect_bluetooth(force=True))
+            self.assertTrue(results[0]["reconnected"])
+            disconnect_idx = cmd_log.index(("bluetoothctl", "disconnect", "DC:E5:5B:A6:30:8B"))
+            connect_idx = cmd_log.index(("bluetoothctl", "connect", "DC:E5:5B:A6:30:8B"))
+            self.assertLess(disconnect_idx, connect_idx)
+
+    def test_handle_bluetooth_reconnect_passes_force(self):
+        req = MagicMock()
+        async def mock_json():
+            return {"mac": "DC:E5:5B:A6:30:8B", "force": True}
+        req.json = mock_json
+
+        with patch.object(self.daemon, "_check_and_reconnect_bluetooth", new_callable=AsyncMock) as mock_recon, \
+             patch.object(daemon, "web") as mock_web:
+            mock_recon.return_value = [{"mac": "DC:E5:5B:A6:30:8B", "reconnected": True}]
+            mock_web.json_response = lambda data, status=200: MagicMock(status=status, data=data)
+            resp = asyncio.run(self.daemon.handle_bluetooth_reconnect(req))
+            self.assertEqual(resp.status, 200)
+            mock_recon.assert_awaited_once_with(target_mac="DC:E5:5B:A6:30:8B", force=True)
+
 
 class TestConfigKeepalive(unittest.TestCase):
     def test_defaults(self):
@@ -523,6 +576,25 @@ class TestConfigKeepalive(unittest.TestCase):
         self.assertFalse(cfg.enable_evdev)
         self.assertTrue(cfg.bluetooth_keepalive)
         self.assertEqual(cfg.bluetooth_keepalive_interval, 10.0)
+        self.assertEqual(cfg.advert_min_interval, 30)
+        self.assertEqual(cfg.advert_max_interval, 50)
+
+    def test_advert_interval_defaults_and_overrides(self):
+        from config import RemoteConfig, load_config
+        import tempfile
+        content = """
+advert_min_interval: 25
+advert_max_interval: 45
+"""
+        with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
+            f.write(content)
+            temp_path = f.name
+        try:
+            cfg = load_config(temp_path)
+            self.assertEqual(cfg.advert_min_interval, 25)
+            self.assertEqual(cfg.advert_max_interval, 45)
+        finally:
+            os.remove(temp_path)
 
     def test_load_keepalive_overrides(self):
         from config import load_config

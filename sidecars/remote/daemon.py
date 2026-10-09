@@ -300,6 +300,26 @@ try:
         def TxPower(self, val: "n"):
             pass
 
+    class FastKioskAdvertisement(KioskAdvertisement):
+        def __init__(
+            self,
+            *args,
+            min_interval: int = 30,
+            max_interval: int = 50,
+            **kwargs,
+        ):
+            self._min_interval = int(min_interval)
+            self._max_interval = int(max_interval)
+            super().__init__(*args, **kwargs)
+
+        @dbus_property(PropertyAccess.READ)
+        def MinInterval(self) -> "u":
+            return self._min_interval
+
+        @dbus_property(PropertyAccess.READ)
+        def MaxInterval(self) -> "u":
+            return self._max_interval
+
     class PairingAgent(BaseAgent):
         def __init__(self, remote_helper: AndroidRemoteHelper, auto_confirm: bool = True):
             self.remote_helper = remote_helper
@@ -359,6 +379,7 @@ except ImportError:
     HIDService = None
     Advertisement = None
     KioskAdvertisement = None
+    FastKioskAdvertisement = None
     PairingAgent = None
 
 
@@ -685,10 +706,37 @@ class RemoteDaemon:
         except Exception:
             data = {}
         target_mac = data.get("mac")
-        results = await self._check_and_reconnect_bluetooth(target_mac=target_mac)
+        force = bool(data.get("force", False))
+        results = await self._check_and_reconnect_bluetooth(target_mac=target_mac, force=force)
         return web.json_response({"status": "ok", "reconnected": results})
 
-    async def _check_and_reconnect_bluetooth(self, target_mac: Optional[str] = None) -> list[dict]:
+    async def _cleanup_stale_connections(self):
+        """Disconnects paired devices that BlueZ still holds from a previous container lifecycle.
+
+        This clears ghost ACL connections and forces client devices (like Android TV) to
+        re-establish the link against our freshly exported GATT table and re-subscribe to notifications.
+        """
+        async with self.bluetooth_lock:
+            try:
+                _, stdout, _ = await self._run_bluetoothctl("devices", "Paired", timeout=5.0)
+                lines = stdout.decode().splitlines()
+            except Exception as e:
+                logger.debug("Could not query paired devices for startup cleanup: %s", e)
+                return
+
+            for line in lines:
+                parts = line.strip().split(maxsplit=2)
+                if len(parts) >= 2 and parts[0] == "Device":
+                    mac = parts[1].upper()
+                    try:
+                        _, info_out, _ = await self._run_bluetoothctl("info", mac, timeout=5.0)
+                        if any(l.strip() == "Connected: yes" for l in info_out.decode().splitlines()):
+                            logger.info("Found pre-existing/stale connection to %s on startup; resetting link...", mac)
+                            await self._run_bluetoothctl("disconnect", mac, timeout=5.0)
+                    except Exception as e:
+                        logger.debug("Failed checking/resetting stale connection for %s: %s", mac, e)
+
+    async def _check_and_reconnect_bluetooth(self, target_mac: Optional[str] = None, force: bool = False) -> list[dict]:
         """Inspects paired Bluetooth devices and attempts reconnection for disconnected devices."""
         reconnect_results = []
         async with self.bluetooth_lock:
@@ -709,16 +757,32 @@ class RemoteDaemon:
                         continue
 
                     is_connected = False
+                    services_resolved = False
                     try:
                         _, info_out, _ = await self._run_bluetoothctl("info", mac, timeout=5.0)
                         for info_line in info_out.decode().splitlines():
-                            if "Connected: yes" in info_line:
+                            stripped = info_line.strip()
+                            if stripped == "Connected: yes":
                                 is_connected = True
-                                break
+                            elif stripped == "ServicesResolved: yes":
+                                services_resolved = True
                     except Exception as e:
                         logger.debug("Failed to check info for %s: %s", mac, e)
 
-                    current_devices.append({"mac": mac, "name": name, "connected": is_connected})
+                    if force and is_connected:
+                        logger.info("Forced reconnect requested for %s (%s); disconnecting first...", mac, name)
+                        try:
+                            await self._run_bluetoothctl("disconnect", mac, timeout=5.0)
+                            is_connected = False
+                        except Exception as e:
+                            logger.debug("Failed to disconnect %s during forced reconnect: %s", mac, e)
+
+                    current_devices.append({
+                        "mac": mac,
+                        "name": name,
+                        "connected": is_connected,
+                        "services_resolved": services_resolved,
+                    })
 
                     if not is_connected:
                         logger.info("Paired Bluetooth device %s (%s) is disconnected; attempting auto-reconnect...", mac, name)
@@ -742,6 +806,14 @@ class RemoteDaemon:
     async def _bluetooth_keepalive_loop(self):
         """Background loop to periodically ensure paired devices stay connected."""
         logger.info("Bluetooth keepalive monitor active (interval=%.1fs)", self.config.bluetooth_keepalive_interval)
+        try:
+            await asyncio.sleep(min(2.0, self.config.bluetooth_keepalive_interval))
+            await self._check_and_reconnect_bluetooth()
+        except asyncio.CancelledError:
+            return
+        except Exception as e:
+            logger.warning("Error in initial bluetooth keepalive check: %s", e)
+
         while True:
             try:
                 await asyncio.sleep(self.config.bluetooth_keepalive_interval)
@@ -789,14 +861,35 @@ class RemoteDaemon:
                 await collection.register(self.bus, path="/com/mirrormere/gatt", adapter=self.adapter)
 
                 await self._configure_adapter()
-                self.advert = KioskAdvertisement(
-                    localName=self.config.advert_name,
-                    serviceUUIDs=["1812", "180F", "180A"],
-                    appearance=0x03C5,
-                    timeout=0,
-                )
-                await self.advert.register(self.bus, adapter=self.adapter)
-                logger.info("BLE peripheral & advertisement registered as '%s' (0x03C5)", self.config.advert_name)
+                try:
+                    self.advert = FastKioskAdvertisement(
+                        localName=self.config.advert_name,
+                        serviceUUIDs=["1812", "180F", "180A"],
+                        appearance=0x03C5,
+                        timeout=0,
+                        min_interval=self.config.advert_min_interval,
+                        max_interval=self.config.advert_max_interval,
+                    )
+                    await self.advert.register(self.bus, adapter=self.adapter)
+                    logger.info(
+                        "BLE peripheral & fast advertisement registered as '%s' (0x03C5, interval=%d-%dms)",
+                        self.config.advert_name,
+                        self.config.advert_min_interval,
+                        self.config.advert_max_interval,
+                    )
+                except Exception as adv_err:
+                    logger.warning("Fast interval advertisement registration failed (%s); falling back to standard advertisement", adv_err)
+                    self.advert = KioskAdvertisement(
+                        localName=self.config.advert_name,
+                        serviceUUIDs=["1812", "180F", "180A"],
+                        appearance=0x03C5,
+                        timeout=0,
+                    )
+                    await self.advert.register(self.bus, adapter=self.adapter)
+                    logger.info("BLE peripheral & standard advertisement registered as '%s' (0x03C5)", self.config.advert_name)
+
+                # Reset any stale host connections from prior container lifecycles so peers reconnect fresh
+                await self._cleanup_stale_connections()
             except Exception as e:
                 logger.error("Failed to register BlueZ peripheral (check D-Bus mount / permissions): %s", e)
 
