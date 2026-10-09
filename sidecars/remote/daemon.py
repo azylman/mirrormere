@@ -2,7 +2,7 @@
 
 Manages:
 1. Android TV Remote v2 (Wi-Fi mTLS) connection on port 6466.
-2. Bluetooth LE HID Peripheral (Mirrormere Remote) with direct touch digitizer and consumer keys.
+2. Bluetooth LE HID Peripheral (Mirrormere Remote) with multi-report touch, mouse, and consumer keys.
 3. Automated BLE pairing confirmation via BlueZ PairingAgent.
 4. Physical touch event forwarding from /dev/input.
 5. HTTP Control API on port 8092.
@@ -63,13 +63,42 @@ HTTP_PORT = _default_config.http_port
 ADVERT_NAME = _default_config.advert_name
 AUTO_CONFIRM_PAIRING = _default_config.auto_confirm_pairing
 
-# Multi-Report HID Descriptor (Touch Digitizer + Consumer Control)
+# Multi-Report HID Descriptor (Mouse + Touch + Consumer Control)
 REPORT_MAP = bytes([
-    # Report 1: Absolute Touch Screen (Digitizer)
+    # Report 1: Relative Mouse
+    0x05, 0x01,        # Usage Page (Generic Desktop)
+    0x09, 0x02,        # Usage (Mouse)
+    0xa1, 0x01,        # Collection (Application)
+    0x85, 0x01,        #   Report ID (1)
+    0x09, 0x01,        #   Usage (Pointer)
+    0xa1, 0x00,        #   Collection (Physical)
+    0x05, 0x09,        #     Usage Page (Button)
+    0x19, 0x01,        #     Usage Minimum (1)
+    0x29, 0x03,        #     Usage Maximum (3)
+    0x15, 0x00,        #     Logical Minimum (0)
+    0x25, 0x01,        #     Logical Maximum (1)
+    0x95, 0x03,        #     Report Count (3)
+    0x75, 0x01,        #     Report Size (1)
+    0x81, 0x02,        #     Input (Data,Var,Abs)
+    0x95, 0x01,        #     Report Count (1)
+    0x75, 0x05,        #     Report Size (5)
+    0x81, 0x03,        #     Input (Cnst,Var,Abs)
+    0x05, 0x01,        #     Usage Page (Generic Desktop)
+    0x09, 0x30,        #     Usage (X)
+    0x09, 0x31,        #     Usage (Y)
+    0x15, 0x81,        #     Logical Minimum (-127)
+    0x25, 0x7f,        #     Logical Maximum (127)
+    0x75, 0x08,        #     Report Size (8)
+    0x95, 0x02,        #     Report Count (2)
+    0x81, 0x06,        #     Input (Data,Var,Rel)
+    0xc0,              #   End Collection
+    0xc0,              # End Collection
+
+    # Report 2: Absolute Touch Screen (Digitizer)
     0x05, 0x0d,        # Usage Page (Digitizer)
     0x09, 0x04,        # Usage (Touch Screen)
     0xa1, 0x01,        # Collection (Application)
-    0x85, 0x01,        #   Report ID (1)
+    0x85, 0x02,        #   Report ID (2)
     0x09, 0x22,        #   Usage (Finger)
     0xa1, 0x02,        #   Collection (Logical)
     0x09, 0x42,        #     Usage (Tip Switch)
@@ -98,11 +127,11 @@ REPORT_MAP = bytes([
     0xc0,              #   End Collection
     0xc0,              # End Collection
 
-    # Report 2: Consumer Keys (Back, Home, Media, Volume)
+    # Report 3: Consumer Keys (Back, Home, Media, Volume)
     0x05, 0x0c,        # Usage Page (Consumer)
     0x09, 0x01,        # Usage (Consumer Control)
     0xa1, 0x01,        # Collection (Application)
-    0x85, 0x02,        #   Report ID (2)
+    0x85, 0x03,        #   Report ID (3)
     0x19, 0x00,        #   Usage Minimum (0)
     0x2a, 0x9c, 0x02,  #   Usage Maximum (0x029C)
     0x15, 0x00,        #   Logical Minimum (0)
@@ -232,6 +261,7 @@ try:
 
     class HIDService(Service):
         def __init__(self):
+            self._mouse_val = bytes([0, 0, 0])
             self._touch_val = bytes([0, 0, 0, 0, 0])
             self._consumer_val = bytes([0, 0])
             self._protocol_mode = bytes([1])
@@ -262,12 +292,20 @@ try:
             self._protocol_mode = value
 
         @characteristic("2A4D", CharacteristicFlags.READ | CharacteristicFlags.NOTIFY)
+        def report_mouse(self, options):
+            return self._mouse_val
+
+        @descriptor("2908", report_mouse)
+        def report_mouse_ref(self, options):
+            return bytes([1, 1])
+
+        @characteristic("2A4D", CharacteristicFlags.READ | CharacteristicFlags.NOTIFY)
         def report_touch(self, options):
             return self._touch_val
 
         @descriptor("2908", report_touch)
         def report_touch_ref(self, options):
-            return bytes([1, 1])
+            return bytes([2, 1])
 
         @characteristic("2A4D", CharacteristicFlags.READ | CharacteristicFlags.NOTIFY)
         def report_consumer(self, options):
@@ -275,7 +313,13 @@ try:
 
         @descriptor("2908", report_consumer)
         def report_consumer_ref(self, options):
-            return bytes([2, 1])
+            return bytes([3, 1])
+
+        def send_mouse(self, buttons: int, dx: int = 0, dy: int = 0):
+            val = bytes([buttons & 0x07, dx & 0xFF, dy & 0xFF])
+            self._mouse_val = val
+            if hasattr(self, "report_mouse") and hasattr(self.report_mouse, "changed"):
+                self.report_mouse.changed(val)
 
         def send_touch(self, tip_down: bool, x_ratio: float, y_ratio: float):
             flags = 0x03 if tip_down else 0x00
@@ -497,6 +541,7 @@ class TouchReader:
                 dev = evdev.InputDevice(dev_path)
                 logger.info("Opened physical touch device: %s (%s)", dev.path, dev.name)
                 self.update_absinfo(dev)
+                prev_touch_active = False
                 async for ev in dev.async_read_loop():
                     if ev.type == evdev.ecodes.EV_ABS:
                         if ev.code in (evdev.ecodes.ABS_MT_POSITION_X, evdev.ecodes.ABS_X):
@@ -505,20 +550,41 @@ class TouchReader:
                             self.cur_y = ev.value
                         elif ev.code == evdev.ecodes.ABS_MT_TRACKING_ID:
                             self.touch_active = (ev.value >= 0)
-                            if not self.touch_active and self.hid:
-                                x_r, y_r = self._normalize()
-                                self.hid.send_touch(False, x_r, y_r)
+                            if not self.touch_active:
+                                prev_touch_active = False
+                                if self.hid:
+                                    x_r, y_r = self._normalize()
+                                    self.hid.send_mouse(0, 0, 0)
+                                    self.hid.send_touch(False, x_r, y_r)
                     elif ev.type == evdev.ecodes.EV_KEY and ev.code == evdev.ecodes.BTN_TOUCH:
                         self.touch_active = bool(ev.value)
-                        if not self.touch_active and self.hid:
-                            x_r, y_r = self._normalize()
-                            self.hid.send_touch(False, x_r, y_r)
+                        if not self.touch_active:
+                            prev_touch_active = False
+                            if self.hid:
+                                x_r, y_r = self._normalize()
+                                self.hid.send_mouse(0, 0, 0)
+                                self.hid.send_touch(False, x_r, y_r)
                     elif ev.type == evdev.ecodes.EV_SYN and ev.code == evdev.ecodes.SYN_REPORT:
                         if self.touch_active and self.hid:
                             x_r, y_r = self._normalize()
+                            if not prev_touch_active:
+                                self.hid.send_mouse(1, 0, 0)
+                                prev_touch_active = True
                             self.hid.send_touch(True, x_r, y_r)
             except Exception as e:
                 logger.warning("Touch reader disconnected or errored (%s); re-opening in 3s...", e)
+                if self.touch_active and self.hid:
+                    try:
+                        self.hid.send_mouse(0, 0, 0)
+                    except Exception:
+                        pass
+                    try:
+                        x_r, y_r = self._normalize()
+                        self.hid.send_touch(False, x_r, y_r)
+                    except Exception:
+                        pass
+                self.touch_active = False
+                prev_touch_active = False
                 await asyncio.sleep(3)
 
 
@@ -570,9 +636,19 @@ class RemoteDaemon:
         logger.info("Synthetic tap at (%.4f, %.4f)", x_ratio, y_ratio)
 
         if self.hid:
-            self.hid.send_touch(True, x_ratio, y_ratio)
-            await asyncio.sleep(0.05)
-            self.hid.send_touch(False, x_ratio, y_ratio)
+            try:
+                self.hid.send_mouse(1, 0, 0)
+                self.hid.send_touch(True, x_ratio, y_ratio)
+                await asyncio.sleep(0.05)
+            finally:
+                try:
+                    self.hid.send_mouse(0, 0, 0)
+                except Exception:
+                    pass
+                try:
+                    self.hid.send_touch(False, x_ratio, y_ratio)
+                except Exception:
+                    pass
             return web.json_response({"status": "ok", "action": "tap", "x": x_ratio, "y": y_ratio})
         return web.json_response({"status": "error", "message": "BLE HID not initialized"}, status=503)
 
@@ -596,13 +672,26 @@ class RemoteDaemon:
             return web.json_response({"status": "error", "message": "BLE HID not initialized"}, status=503)
 
         if action in ("down", "move"):
+            if action == "down":
+                self.hid.send_mouse(1, 0, 0)
             self.hid.send_touch(True, x_ratio, y_ratio)
         elif action == "up":
+            self.hid.send_mouse(0, 0, 0)
             self.hid.send_touch(False, x_ratio, y_ratio)
         elif action == "tap":
-            self.hid.send_touch(True, x_ratio, y_ratio)
-            await asyncio.sleep(0.05)
-            self.hid.send_touch(False, x_ratio, y_ratio)
+            try:
+                self.hid.send_mouse(1, 0, 0)
+                self.hid.send_touch(True, x_ratio, y_ratio)
+                await asyncio.sleep(0.05)
+            finally:
+                try:
+                    self.hid.send_mouse(0, 0, 0)
+                except Exception:
+                    pass
+                try:
+                    self.hid.send_touch(False, x_ratio, y_ratio)
+                except Exception:
+                    pass
         else:
             return web.json_response({"status": "error", "message": f"unknown action: {action}"}, status=400)
 
@@ -865,14 +954,14 @@ class RemoteDaemon:
                     self.advert = FastKioskAdvertisement(
                         localName=self.config.advert_name,
                         serviceUUIDs=["1812", "180F", "180A"],
-                        appearance=0x03C5,
+                        appearance=0x03C2,
                         timeout=0,
                         min_interval=self.config.advert_min_interval,
                         max_interval=self.config.advert_max_interval,
                     )
                     await self.advert.register(self.bus, adapter=self.adapter)
                     logger.info(
-                        "BLE peripheral & fast advertisement registered as '%s' (0x03C5, interval=%d-%dms)",
+                        "BLE peripheral & fast advertisement registered as '%s' (0x03C2, interval=%d-%dms)",
                         self.config.advert_name,
                         self.config.advert_min_interval,
                         self.config.advert_max_interval,
@@ -882,11 +971,11 @@ class RemoteDaemon:
                     self.advert = KioskAdvertisement(
                         localName=self.config.advert_name,
                         serviceUUIDs=["1812", "180F", "180A"],
-                        appearance=0x03C5,
+                        appearance=0x03C2,
                         timeout=0,
                     )
                     await self.advert.register(self.bus, adapter=self.adapter)
-                    logger.info("BLE peripheral & standard advertisement registered as '%s' (0x03C5)", self.config.advert_name)
+                    logger.info("BLE peripheral & standard advertisement registered as '%s' (0x03C2)", self.config.advert_name)
 
                 # Reset any stale host connections from prior container lifecycles so peers reconnect fresh
                 await self._cleanup_stale_connections()
