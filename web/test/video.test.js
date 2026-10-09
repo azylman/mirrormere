@@ -1402,4 +1402,211 @@ test('Video Presentation Mode & Multi-Stream Player with PiP', async (t) => {
       }
     });
   });
+
+  await t.test('Browser-Level Touch Forwarding & Aspect Ratio Calibration', async (t2) => {
+    await t2.test('calculates normalized coordinates correctly with standard 16:9 display', () => {
+      const mgr = new VideoPlayerManager({});
+      const mockVideo = {
+        videoWidth: 1920,
+        videoHeight: 1080,
+        getBoundingClientRect: () => ({ left: 0, top: 0, width: 1920, height: 1080 }),
+      };
+
+      const coords = mgr.getNormalizedVideoCoordinates({ clientX: 960, clientY: 540 }, mockVideo);
+      assert.strictEqual(coords.x, 0.5);
+      assert.strictEqual(coords.y, 0.5);
+    });
+
+    await t2.test('compensates for pillarboxing when 16:9 video is rendered inside ultrawide container', () => {
+      const mgr = new VideoPlayerManager({});
+      // 16:9 video in 2560x1080 container: content width is 1920, offset left is 320
+      const mockVideo = {
+        videoWidth: 1920,
+        videoHeight: 1080,
+        getBoundingClientRect: () => ({ left: 0, top: 0, width: 2560, height: 1080 }),
+      };
+
+      // Center of container (1280, 540) is also center of video content
+      const centerCoords = mgr.getNormalizedVideoCoordinates({ clientX: 1280, clientY: 540 }, mockVideo);
+      assert.strictEqual(centerCoords.x, 0.5);
+      assert.strictEqual(centerCoords.y, 0.5);
+
+      // Left edge of video content (clientX = 320)
+      const leftCoords = mgr.getNormalizedVideoCoordinates({ clientX: 320, clientY: 540 }, mockVideo);
+      assert.strictEqual(leftCoords.x, 0);
+
+      // Right edge of video content (clientX = 2240)
+      const rightCoords = mgr.getNormalizedVideoCoordinates({ clientX: 2240, clientY: 540 }, mockVideo);
+      assert.strictEqual(rightCoords.x, 1);
+    });
+
+    await t2.test('compensates for letterboxing when 16:9 video is rendered inside 4:3 container', () => {
+      const mgr = new VideoPlayerManager({});
+      // 16:9 video in 1920x1440 container: content height is 1080, offset top is 180
+      const mockVideo = {
+        videoWidth: 1920,
+        videoHeight: 1080,
+        getBoundingClientRect: () => ({ left: 0, top: 0, width: 1920, height: 1440 }),
+      };
+
+      const centerCoords = mgr.getNormalizedVideoCoordinates({ clientX: 960, clientY: 720 }, mockVideo);
+      assert.strictEqual(centerCoords.x, 0.5);
+      assert.strictEqual(centerCoords.y, 0.5);
+
+      // Top edge of video content (clientY = 180)
+      const topCoords = mgr.getNormalizedVideoCoordinates({ clientX: 960, clientY: 180 }, mockVideo);
+      assert.strictEqual(topCoords.y, 0);
+    });
+
+    await t2.test('dispatches tap touch action on pointerdown and pointerup without move', async () => {
+      const dispatched = [];
+      const mockFetch = async (url, options) => {
+        dispatched.push({ url, body: JSON.parse(options.body) });
+        return { ok: true, status: 200, json: async () => ({ status: 'ok' }) };
+      };
+
+      const primarySlot = createMockElement('div', 'video-primary-slot');
+      const pipSlot = createMockElement('div', 'video-pip-slot');
+      const stage = createMockElement('div', 'video-stage');
+
+      const mgr = new VideoPlayerManager({
+        stageElement: stage,
+        primarySlot,
+        pipSlot,
+        fetch: mockFetch,
+        remoteUrl: 'http://localhost:8092',
+      });
+
+      mgr.enterVideoMode({
+        primary: { id: 'chromecast', stream_url: 'webrtc://cast', type: 'webrtc' },
+      });
+
+      const videoEl = mgr.primarySession.element;
+      videoEl.getBoundingClientRect = () => ({ left: 0, top: 0, width: 1920, height: 1080 });
+      videoEl.videoWidth = 1920;
+      videoEl.videoHeight = 1080;
+
+      let stoppedPropagation = false;
+      let preventedDefault = false;
+
+      // Simulate pointerdown
+      videoEl.dispatchEvent('pointerdown', {
+        clientX: 960,
+        clientY: 540,
+        button: 0,
+        stopPropagation: () => { stoppedPropagation = true; },
+        preventDefault: () => { preventedDefault = true; },
+      });
+      assert.strictEqual(stoppedPropagation, true);
+      assert.strictEqual(preventedDefault, true);
+
+      // Simulate pointerup
+      videoEl.dispatchEvent('pointerup', {
+        clientX: 960,
+        clientY: 540,
+        stopPropagation: () => {},
+        preventDefault: () => {},
+      });
+
+      assert.strictEqual(dispatched.length, 2);
+      assert.strictEqual(dispatched[0].body.action, 'down');
+      assert.strictEqual(dispatched[1].body.action, 'tap');
+      assert.strictEqual(dispatched[1].body.x, 0.5);
+      assert.strictEqual(dispatched[1].body.y, 0.5);
+
+      mgr.destroy();
+    });
+
+    await t2.test('dispatches move and up touch actions on drag gesture', async () => {
+      const dispatched = [];
+      const mockFetch = async (url, options) => {
+        dispatched.push({ url, body: JSON.parse(options.body) });
+        return { ok: true, status: 200, json: async () => ({ status: 'ok' }) };
+      };
+
+      const primarySlot = createMockElement('div', 'video-primary-slot');
+      const mgr = new VideoPlayerManager({
+        primarySlot,
+        fetch: mockFetch,
+        remoteUrl: 'http://localhost:8092',
+      });
+
+      mgr.enterVideoMode({
+        primary: { id: 'chromecast', stream_url: 'webrtc://cast', type: 'webrtc' },
+      });
+
+      const videoEl = mgr.primarySession.element;
+      videoEl.getBoundingClientRect = () => ({ left: 0, top: 0, width: 1000, height: 1000 });
+      videoEl.videoWidth = 1000;
+      videoEl.videoHeight = 1000;
+
+      // Pointerdown at (100, 100)
+      videoEl.dispatchEvent('pointerdown', { clientX: 100, clientY: 100, button: 0 });
+
+      // Wait 35ms to clear move throttle
+      await new Promise((r) => setTimeout(r, 35));
+
+      // Pointermove to (300, 300) (>10px drag)
+      videoEl.dispatchEvent('pointermove', { clientX: 300, clientY: 300 });
+
+      // Pointerup at (300, 300)
+      videoEl.dispatchEvent('pointerup', { clientX: 300, clientY: 300 });
+
+      assert.strictEqual(dispatched.length, 3);
+      assert.strictEqual(dispatched[0].body.action, 'down');
+      assert.strictEqual(dispatched[1].body.action, 'move');
+      assert.strictEqual(dispatched[2].body.action, 'up');
+
+      mgr.destroy();
+    });
+
+    await t2.test('releases sticky touch on pointercancel or pointerleave', async () => {
+      const dispatched = [];
+      const mockFetch = async (url, options) => {
+        dispatched.push({ url, body: JSON.parse(options.body) });
+        return { ok: true, status: 200, json: async () => ({ status: 'ok' }) };
+      };
+
+      const primarySlot = createMockElement('div', 'video-primary-slot');
+      const mgr = new VideoPlayerManager({
+        primarySlot,
+        fetch: mockFetch,
+        remoteUrl: 'http://localhost:8092',
+      });
+
+      mgr.enterVideoMode({
+        primary: { id: 'chromecast', stream_url: 'webrtc://cast', type: 'webrtc' },
+      });
+
+      const videoEl = mgr.primarySession.element;
+      videoEl.getBoundingClientRect = () => ({ left: 0, top: 0, width: 1000, height: 1000 });
+
+      // Pointerdown
+      videoEl.dispatchEvent('pointerdown', { clientX: 500, clientY: 500, button: 0 });
+
+      // Pointerleave (finger slipped off glass)
+      videoEl.dispatchEvent('pointerleave', {});
+
+      assert.strictEqual(dispatched.length, 2);
+      assert.strictEqual(dispatched[0].body.action, 'down');
+      assert.strictEqual(dispatched[1].body.action, 'up');
+
+      mgr.destroy();
+    });
+
+    await t2.test('cleans up touch listeners on session teardown', () => {
+      const primarySlot = createMockElement('div', 'video-primary-slot');
+      const mgr = new VideoPlayerManager({ primarySlot });
+
+      mgr.enterVideoMode({
+        primary: { id: 'chromecast', stream_url: 'webrtc://cast', type: 'webrtc' },
+      });
+
+      const session = mgr.primarySession;
+      assert.strictEqual(session.touchCleanups.length, 6);
+
+      mgr.exitVideoMode();
+      assert.strictEqual(session.touchCleanups.length, 0);
+    });
+  });
 });
