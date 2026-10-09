@@ -52,6 +52,16 @@ class TestCoords(unittest.TestCase):
         x, y = normalize_coordinates(100.0, 100.0, width=0, height=0)
         self.assertEqual((x, y), (0.0, 0.0))
 
+        # Dynamic absinfo range (e.g. 1080p panel: 0..1920, 0..1080)
+        x, y = normalize_coordinates(960.0, 540.0, min_x=0.0, max_x=1920.0, min_y=0.0, max_y=1080.0)
+        self.assertAlmostEqual(x, 0.5)
+        self.assertAlmostEqual(y, 0.5)
+
+        # Offset range (e.g. digitizer with non-zero min: 100..1100)
+        x, y = normalize_coordinates(600.0, 600.0, min_x=100.0, max_x=1100.0, min_y=100.0, max_y=1100.0)
+        self.assertAlmostEqual(x, 0.5)
+        self.assertAlmostEqual(y, 0.5)
+
     def test_to_hid_digitizer(self):
         x, y = to_hid_digitizer(0.0, 0.0)
         self.assertEqual(x, 0)
@@ -155,6 +165,37 @@ class TestDaemonComponents(unittest.TestCase):
         # When device does not exist, resolve_device safely returns None or existing match
         dev = reader.resolve_device()
         self.assertTrue(dev is None or os.path.exists(dev))
+
+    def test_touch_reader_update_absinfo(self):
+        reader = daemon.TouchReader(None, "/tmp/test-event")
+        mock_dev = MagicMock()
+        mock_x = MagicMock()
+        mock_x.min = 0
+        mock_x.max = 1920
+        mock_y = MagicMock()
+        mock_y.min = 0
+        mock_y.max = 1080
+
+        def mock_absinfo(code):
+            # Assuming EV_ABS codes: X is 0x35 (ABS_MT_POSITION_X) or 0x00 (ABS_X), Y is 0x36 or 0x01
+            if code in (0x35, 0x00):
+                return mock_x
+            if code in (0x36, 0x01):
+                return mock_y
+            return None
+
+        mock_dev.absinfo.side_effect = mock_absinfo
+        reader.update_absinfo(mock_dev)
+        self.assertEqual(reader.min_x, 0.0)
+        self.assertEqual(reader.max_x, 1920.0)
+        self.assertEqual(reader.min_y, 0.0)
+        self.assertEqual(reader.max_y, 1080.0)
+
+        reader.cur_x = 960
+        reader.cur_y = 540
+        x_r, y_r = reader._normalize()
+        self.assertAlmostEqual(x_r, 0.5)
+        self.assertAlmostEqual(y_r, 0.5)
 
     def test_remote_daemon_initialization(self):
         d = daemon.RemoteDaemon()

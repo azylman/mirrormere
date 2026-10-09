@@ -354,13 +354,92 @@ class TouchReader:
         self.touch_active = False
         self.cur_x = 0
         self.cur_y = 0
+        self.min_x = 0.0
+        self.max_x = 2880.0
+        self.min_y = 0.0
+        self.max_y = 1620.0
 
     def resolve_device(self) -> Optional[str]:
-        if os.path.exists(self.target_path):
+        if self.target_path and os.path.exists(self.target_path):
             return self.target_path
-        # Search by-id or event devices
-        matches = glob.glob("/dev/input/by-id/*touch*") or glob.glob("/dev/input/event*")
-        return matches[0] if matches else None
+        # Search by-id or by touch capability
+        matches = glob.glob("/dev/input/by-id/*touch*")
+        if matches:
+            return matches[0]
+        try:
+            import evdev
+            for p in sorted(glob.glob("/dev/input/event*")):
+                try:
+                    d = evdev.InputDevice(p)
+                    caps = d.capabilities()
+                    has_key = evdev.ecodes.EV_KEY in caps
+                    has_touch = has_key and (evdev.ecodes.BTN_TOUCH in caps[evdev.ecodes.EV_KEY])
+                    has_abs = evdev.ecodes.EV_ABS in caps
+                    if has_abs:
+                        abs_codes = caps[evdev.ecodes.EV_ABS]
+                        if isinstance(abs_codes, dict):
+                            keys = list(abs_codes.keys())
+                        elif isinstance(abs_codes, list):
+                            keys = [c[0] if isinstance(c, (list, tuple)) else c for c in abs_codes]
+                        else:
+                            keys = []
+                        has_x = (evdev.ecodes.ABS_MT_POSITION_X in keys) or (evdev.ecodes.ABS_X in keys)
+                        has_y = (evdev.ecodes.ABS_MT_POSITION_Y in keys) or (evdev.ecodes.ABS_Y in keys)
+                        if has_touch and has_x and has_y:
+                            return p
+                except Exception:
+                    continue
+        except ImportError:
+            pass
+        return None
+
+    def update_absinfo(self, dev):
+        """Query hardware axis limits from evdev absinfo to calibrate scaling."""
+        try:
+            try:
+                import evdev
+                x_codes = (evdev.ecodes.ABS_MT_POSITION_X, evdev.ecodes.ABS_X)
+                y_codes = (evdev.ecodes.ABS_MT_POSITION_Y, evdev.ecodes.ABS_Y)
+            except ImportError:
+                x_codes = (0x35, 0x00)
+                y_codes = (0x36, 0x01)
+
+            x_info = None
+            y_info = None
+            if hasattr(dev, "absinfo"):
+                for code in x_codes:
+                    try:
+                        x_info = dev.absinfo(code)
+                        if x_info:
+                            break
+                    except Exception:
+                        pass
+                for code in y_codes:
+                    try:
+                        y_info = dev.absinfo(code)
+                        if y_info:
+                            break
+                    except Exception:
+                        pass
+            if x_info and getattr(x_info, "max", 0) > getattr(x_info, "min", 0):
+                self.min_x = float(x_info.min)
+                self.max_x = float(x_info.max)
+            if y_info and getattr(y_info, "max", 0) > getattr(y_info, "min", 0):
+                self.min_y = float(y_info.min)
+                self.max_y = float(y_info.max)
+            logger.info("TouchReader calibrated: X=[%.1f, %.1f], Y=[%.1f, %.1f]", self.min_x, self.max_x, self.min_y, self.max_y)
+        except Exception as e:
+            logger.warning("Failed to calibrate touch device absinfo: %s", e)
+
+    def _normalize(self) -> tuple[float, float]:
+        return normalize_coordinates(
+            self.cur_x,
+            self.cur_y,
+            min_x=self.min_x,
+            max_x=self.max_x,
+            min_y=self.min_y,
+            max_y=self.max_y,
+        )
 
     async def run(self):
         try:
@@ -379,6 +458,7 @@ class TouchReader:
             try:
                 dev = evdev.InputDevice(dev_path)
                 logger.info("Opened physical touch device: %s (%s)", dev.path, dev.name)
+                self.update_absinfo(dev)
                 async for ev in dev.async_read_loop():
                     if ev.type == evdev.ecodes.EV_ABS:
                         if ev.code in (evdev.ecodes.ABS_MT_POSITION_X, evdev.ecodes.ABS_X):
@@ -388,16 +468,16 @@ class TouchReader:
                         elif ev.code == evdev.ecodes.ABS_MT_TRACKING_ID:
                             self.touch_active = (ev.value >= 0)
                             if not self.touch_active and self.hid:
-                                x_r, y_r = normalize_coordinates(self.cur_x, self.cur_y)
+                                x_r, y_r = self._normalize()
                                 self.hid.send_touch(False, x_r, y_r)
                     elif ev.type == evdev.ecodes.EV_KEY and ev.code == evdev.ecodes.BTN_TOUCH:
                         self.touch_active = bool(ev.value)
                         if not self.touch_active and self.hid:
-                            x_r, y_r = normalize_coordinates(self.cur_x, self.cur_y)
+                            x_r, y_r = self._normalize()
                             self.hid.send_touch(False, x_r, y_r)
                     elif ev.type == evdev.ecodes.EV_SYN and ev.code == evdev.ecodes.SYN_REPORT:
                         if self.touch_active and self.hid:
-                            x_r, y_r = normalize_coordinates(self.cur_x, self.cur_y)
+                            x_r, y_r = self._normalize()
                             self.hid.send_touch(True, x_r, y_r)
             except Exception as e:
                 logger.warning("Touch reader disconnected or errored (%s); re-opening in 3s...", e)
