@@ -249,9 +249,9 @@ class TestDaemonComponents(unittest.TestCase):
             resp = asyncio.run(d.handle_bluetooth_remove(req))
             self.assertEqual(resp.status, 400)
 
-    def test_pairing_agent_capability_display_yes_no(self):
+    def test_pairing_agent_capability_no_input_no_output(self):
         if daemon.PairingAgent is not None and daemon.AgentCapability is not None:
-            self.assertEqual(daemon.PairingAgent.capability, daemon.AgentCapability.DISPLAY_YES_NO)
+            self.assertEqual(daemon.PairingAgent.capability, daemon.AgentCapability.NO_INPUT_NO_OUTPUT)
 
 
 class TestConfig(unittest.TestCase):

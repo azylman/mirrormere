@@ -365,10 +365,12 @@ try:
             return self._max_interval
 
     class PairingAgent(BaseAgent):
+        capability = AgentCapability.NO_INPUT_NO_OUTPUT
+
         def __init__(self, remote_helper: AndroidRemoteHelper, auto_confirm: bool = True):
             self.remote_helper = remote_helper
             self.auto_confirm = auto_confirm
-            super().__init__(AgentCapability.DISPLAY_YES_NO)
+            super().__init__(AgentCapability.NO_INPUT_NO_OUTPUT)
 
         @method()
         def Release(self):
@@ -411,12 +413,21 @@ try:
             logger.info("Pairing cancelled by peer")
 
         async def _trust_device(self, mac: str):
-            try:
-                proc = await asyncio.create_subprocess_exec("bluetoothctl", "trust", mac)
-                await proc.wait()
-                logger.info("Successfully trusted device %s", mac)
-            except Exception as e:
-                logger.warning("Failed to auto-trust %s: %s", mac, e)
+            for attempt in range(5):
+                await asyncio.sleep(0.5)
+                try:
+                    proc = await asyncio.create_subprocess_exec(
+                        "bluetoothctl", "trust", mac,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                    )
+                    stdout, _ = await proc.communicate()
+                    if proc.returncode == 0:
+                        logger.info("Successfully trusted device %s", mac)
+                        return
+                    logger.debug("bluetoothctl trust %s (attempt %d) output: %s", mac, attempt + 1, stdout.decode().strip())
+                except Exception as e:
+                    logger.warning("Failed to auto-trust %s (attempt %d): %s", mac, attempt + 1, e)
 
 except ImportError:
     logger.warning("bluez-peripheral not installed; running in mock/test mode.")
@@ -425,6 +436,7 @@ except ImportError:
     KioskAdvertisement = None
     FastKioskAdvertisement = None
     PairingAgent = None
+    AgentCapability = None
 
 
 class TouchReader:
