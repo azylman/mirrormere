@@ -49,6 +49,18 @@ func StandardFuncMap(nowFunc func() time.Time) template.FuncMap {
 		"calendarFamilyDayView": func(data any, cfg map[string]any, dims domain.Dimension) (*FamilyDayViewModel, error) {
 			return BuildFamilyDayView(data, cfg, dims, nowFunc())
 		},
+		"dayView": func(data any, cfg map[string]any, dims domain.Dimension) (*FamilyDayViewModel, error) {
+			return BuildFamilyDayView(data, cfg, dims, nowFunc())
+		},
+		"isDayView": func(cfg map[string]any) bool {
+			return strings.EqualFold(stringOr(cfg, "default_view", "week"), "day")
+		},
+		"add": func(a, b int) int {
+			return a + b
+		},
+		"sub": func(a, b int) int {
+			return a - b
+		},
 	}
 }
 
