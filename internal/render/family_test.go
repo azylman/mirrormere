@@ -1,6 +1,7 @@
 package render
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -576,5 +577,319 @@ func TestBuildFamilyView_RangeLabelCrossesMonth(t *testing.T) {
 	}
 	if view.RangeLabel != "Sep 27 – Oct 3" {
 		t.Fatalf("expected cross-month range label, got %q", view.RangeLabel)
+	}
+}
+
+
+func TestParseHoursBand(t *testing.T) {
+	t.Run("defaults when nil or empty", func(t *testing.T) {
+		band := ParseHoursBand(nil)
+		if band.StartStr != "07:00" || band.EndStr != "21:00" || band.StartHour != 7 || band.EndHour != 21 {
+			t.Fatalf("expected 07:00-21:00 default, got %+v", band)
+		}
+		band2 := ParseHoursBand(map[string]any{"hours": []any{}})
+		if band2.StartStr != "07:00" || band2.EndStr != "21:00" {
+			t.Fatalf("expected default on empty hours array, got %+v", band2)
+		}
+	})
+
+	t.Run("valid custom []any and []string", func(t *testing.T) {
+		band := ParseHoursBand(map[string]any{"hours": []any{"08:30", "19:45"}})
+		if band.StartHour != 8 || band.StartMinute != 30 || band.EndHour != 19 || band.EndMinute != 45 {
+			t.Fatalf("unexpected parsed hours: %+v", band)
+		}
+		if band.StartStr != "08:30" || band.EndStr != "19:45" {
+			t.Fatalf("unexpected strings: %+v", band)
+		}
+
+		bandStr := ParseHoursBand(map[string]any{"hours": []string{"06:00", "22:00"}})
+		if bandStr.StartHour != 6 || bandStr.EndHour != 22 {
+			t.Fatalf("expected []string support, got %+v", bandStr)
+		}
+	})
+
+	t.Run("hour without minutes supported", func(t *testing.T) {
+		band := ParseHoursBand(map[string]any{"hours": []any{"8", "20"}})
+		if band.StartHour != 8 || band.EndHour != 20 {
+			t.Fatalf("expected 8 to 20, got %+v", band)
+		}
+	})
+
+	t.Run("invalid formats fall back to default", func(t *testing.T) {
+		cases := []any{
+			[]any{"invalid", "21:00"},
+			[]any{"07:00", "invalid"},
+			[]any{"-1:00", "20:00"},
+			[]any{"07:00", "25:00"},
+			[]any{"24:01", "24:00"},
+			[]any{"07:65", "20:00"},
+			[]any{"07:00:00", "20:00"},
+			[]any{"", "21:00"},
+			[]any{"22:00", "06:00"}, // inverted
+			[]any{"10:00", "10:00"}, // equal
+			[]any{123, 456},          // non-string
+		}
+		for _, c := range cases {
+			b := ParseHoursBand(map[string]any{"hours": c})
+			if b.StartStr != "07:00" || b.EndStr != "21:00" {
+				t.Fatalf("expected default for %v, got %+v", c, b)
+			}
+		}
+	})
+
+	t.Run("hour markers generation with fractional starts and ends", func(t *testing.T) {
+		band := ParseHoursBand(map[string]any{"hours": []any{"07:30", "10:15"}})
+		want := []string{"07:30", "08:00", "09:00", "10:00", "10:15"}
+		if len(band.Markers) != len(want) {
+			t.Fatalf("expected %d markers %v, got %d markers %v", len(want), want, len(band.Markers), band.Markers)
+		}
+		for i, m := range want {
+			if band.Markers[i] != m {
+				t.Errorf("marker %d: want %s, got %s", i, m, band.Markers[i])
+			}
+		}
+	})
+}
+
+func TestComputeDayEventPosition(t *testing.T) {
+	day := testNow // 2026-09-27
+	band := defaultHoursBand() // 07:00 to 21:00 (14 hours = 840 mins)
+
+	t.Run("normal event fully inside window", func(t *testing.T) {
+		start := mustTimeStatic("2006-01-02 15:04", "2026-09-27 09:00")
+		end := mustTimeStatic("2006-01-02 15:04", "2026-09-27 10:30") // 90 min duration, offset 120 min
+		top, height, early, late := ComputeDayEventPosition(start, end, day, band)
+		if early || late {
+			t.Fatalf("expected in-window event to not be edge, early=%v late=%v", early, late)
+		}
+		wantTop := roundToTwoDecimals((120.0 / 840.0) * 100.0)
+		wantHeight := roundToTwoDecimals((90.0 / 840.0) * 100.0)
+		if top != wantTop || height != wantHeight {
+			t.Fatalf("want top=%v height=%v, got top=%v height=%v", wantTop, wantHeight, top, height)
+		}
+	})
+
+	t.Run("out of bounds early collapses to early edge band", func(t *testing.T) {
+		start := mustTimeStatic("2006-01-02 15:04", "2026-09-27 05:00")
+		end := mustTimeStatic("2006-01-02 15:04", "2026-09-27 06:30")
+		top, height, early, late := ComputeDayEventPosition(start, end, day, band)
+		if !early || late {
+			t.Fatalf("expected early edge only, got early=%v late=%v", early, late)
+		}
+		if top != 0.0 || height != 0.0 {
+			t.Fatalf("expected 0 top/height for completely out of bounds, got top=%v height=%v", top, height)
+		}
+	})
+
+	t.Run("out of bounds late collapses to late edge band", func(t *testing.T) {
+		start := mustTimeStatic("2006-01-02 15:04", "2026-09-27 21:30")
+		end := mustTimeStatic("2006-01-02 15:04", "2026-09-27 23:00")
+		top, height, early, late := ComputeDayEventPosition(start, end, day, band)
+		if early || !late {
+			t.Fatalf("expected late edge only, got early=%v late=%v", early, late)
+		}
+		if top != 100.0 || height != 0.0 {
+			t.Fatalf("expected top=100 height=0, got top=%v height=%v", top, height)
+		}
+	})
+
+	t.Run("early event spanning into window is clamped to top 0", func(t *testing.T) {
+		start := mustTimeStatic("2006-01-02 15:04", "2026-09-27 06:00")
+		end := mustTimeStatic("2006-01-02 15:04", "2026-09-27 08:30") // 90 min inside window (07:00-08:30)
+		top, height, early, late := ComputeDayEventPosition(start, end, day, band)
+		if !early || late {
+			t.Fatalf("expected early edge, got early=%v late=%v", early, late)
+		}
+		wantHeight := roundToTwoDecimals((90.0 / 840.0) * 100.0)
+		if top != 0.0 || height != wantHeight {
+			t.Fatalf("expected top=0 height=%v, got top=%v height=%v", wantHeight, top, height)
+		}
+	})
+
+	t.Run("late event spanning out of window is clamped to bottom", func(t *testing.T) {
+		start := mustTimeStatic("2006-01-02 15:04", "2026-09-27 20:00") // 60 min inside window (20:00-21:00)
+		end := mustTimeStatic("2006-01-02 15:04", "2026-09-27 23:00")
+		top, height, early, late := ComputeDayEventPosition(start, end, day, band)
+		if early || !late {
+			t.Fatalf("expected late edge, got early=%v late=%v", early, late)
+		}
+		wantTop := roundToTwoDecimals((780.0 / 840.0) * 100.0)
+		wantHeight := roundToTwoDecimals((60.0 / 840.0) * 100.0)
+		if top != wantTop || height != wantHeight {
+			t.Fatalf("expected top=%v height=%v, got top=%v height=%v", wantTop, wantHeight, top, height)
+		}
+	})
+
+	t.Run("midnight crossing: event spans across 2 days", func(t *testing.T) {
+		start := mustTimeStatic("2006-01-02 15:04", "2026-09-27 22:00")
+		end := mustTimeStatic("2006-01-02 15:04", "2026-09-28 02:00")
+
+		// On Day 1 (2026-09-27): starts after 21:00, collapses into late edge
+		top1, height1, early1, late1 := ComputeDayEventPosition(start, end, day, band)
+		if early1 || !late1 || top1 != 100.0 || height1 != 0.0 {
+			t.Fatalf("Day 1: expected late edge collapse, got early=%v late=%v top=%v height=%v", early1, late1, top1, height1)
+		}
+
+		// On Day 2 (2026-09-28): ends at 02:00, collapses into early edge
+		day2 := day.AddDate(0, 0, 1)
+		top2, height2, early2, late2 := ComputeDayEventPosition(start, end, day2, band)
+		if !early2 || late2 || top2 != 0.0 || height2 != 0.0 {
+			t.Fatalf("Day 2: expected early edge collapse, got early=%v late=%v top=%v height=%v", early2, late2, top2, height2)
+		}
+	})
+
+	t.Run("short event minimum height and clamping", func(t *testing.T) {
+		start := mustTimeStatic("2006-01-02 15:04", "2026-09-27 09:00")
+		end := mustTimeStatic("2006-01-02 15:04", "2026-09-27 09:02") // 2 min
+		_, height, _, _ := ComputeDayEventPosition(start, end, day, band)
+		if height < 2.0 {
+			t.Fatalf("expected minimum height >= 2.0%%, got %v", height)
+		}
+
+		// Edge clamping near bottom
+		startNearBottom := mustTimeStatic("2006-01-02 15:04", "2026-09-27 20:59")
+		endNearBottom := mustTimeStatic("2006-01-02 15:04", "2026-09-27 21:00")
+		topNear, heightNear, _, _ := ComputeDayEventPosition(startNearBottom, endNearBottom, day, band)
+		if topNear+heightNear > 100.0 {
+			t.Fatalf("expected top + height <= 100%%, got %v", topNear+heightNear)
+		}
+	})
+
+	t.Run("fallback on inverted or zero band duration", func(t *testing.T) {
+		start := mustTimeStatic("2006-01-02 15:04", "2026-09-27 09:00")
+		end := mustTimeStatic("2006-01-02 15:04", "2026-09-27 10:00")
+		badBand := HoursBand{StartHour: 20, EndHour: 10}
+		top, height, _, _ := ComputeDayEventPosition(start, end, day, badBand)
+		if top == 0.0 && height == 0.0 {
+			t.Fatalf("expected fallback to 07:00-21:00 on invalid band duration")
+		}
+	})
+
+	t.Run("end before start defaults to 30 min duration", func(t *testing.T) {
+		start := mustTimeStatic("2006-01-02 15:04", "2026-09-27 09:00")
+		end := mustTimeStatic("2006-01-02 15:04", "2026-09-27 08:00")
+		_, height, _, _ := ComputeDayEventPosition(start, end, day, band)
+		wantHeight := roundToTwoDecimals((30.0 / 840.0) * 100.0)
+		if height != wantHeight {
+			t.Fatalf("expected 30m default duration height %v, got %v", wantHeight, height)
+		}
+	})
+}
+
+func TestTruncateString(t *testing.T) {
+	if got := truncateString("short", 10); got != "short" {
+		t.Fatalf("expected unchanged short string, got %q", got)
+	}
+	long := strings.Repeat("a", 300)
+	got := truncateString(long, 280)
+	if len([]rune(got)) != 280 || !strings.HasSuffix(got, "…") {
+		t.Fatalf("expected 280 runes ending in ellipsis, got len=%d, val=%q", len([]rune(got)), got)
+	}
+	emojis := strings.Repeat("🎉", 10)
+	gotEmoji := truncateString(emojis, 5)
+	if len([]rune(gotEmoji)) != 5 || !strings.HasSuffix(gotEmoji, "…") {
+		t.Fatalf("expected 5 runes of emojis, got len=%d, val=%q", len([]rune(gotEmoji)), gotEmoji)
+	}
+	if got1 := truncateString("abc", 1); got1 != "a" {
+		t.Fatalf("expected maxRunes=1 to return single rune, got %q", got1)
+	}
+}
+
+func TestBuildFamilyDayView_Comprehensive(t *testing.T) {
+	snap := provider.CalendarSnapshot{Events: []provider.CalendarEvent{
+		{ID: "evt_timed_alex", CalendarName: "alex-personal", Title: "Alex Meeting", Description: "Discuss Q4 architecture goals", Start: "2026-09-27T10:00:00Z", End: "2026-09-27T11:00:00Z"},
+		{ID: "evt_shared_holiday", CalendarName: "holidays", Title: "Rosh Hashanah", AllDay: true, Start: "2026-09-27", End: "2026-09-27"},
+		{ID: "evt_unclaimed_timed", CalendarName: "holidays", Title: "Town Parade", Start: "2026-09-27T14:00:00Z", End: "2026-09-27T15:30:00Z"},
+		{ID: "evt_private", CalendarName: "secret-work", Title: "Confidential 1:1", Description: "Secret notes", Start: "2026-09-27T16:00:00Z", End: "2026-09-27T17:00:00Z"},
+		{ID: "evt_early", CalendarName: "alex-personal", Title: "Dawn Run", Start: "2026-09-27T05:30:00Z", End: "2026-09-27T06:30:00Z"},
+		{ID: "evt_late", CalendarName: "alex-personal", Title: "Late Movie", Start: "2026-09-27T22:00:00Z", End: "2026-09-27T23:30:00Z"},
+	}}
+
+	cfg := baseFamilyConfig()
+	cfg["hours"] = []any{"07:00", "21:00"}
+	cfg["date"] = "2026-09-27"
+	dims := domain.NewDimension(6, 2)
+
+	view, err := BuildFamilyDayView(snap, cfg, dims, testNow)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if view.Date != "2026-09-27" || view.WeekdayAbbr != "Sun" || view.DayOfMonth != 27 {
+		t.Fatalf("unexpected day metadata: %+v", view)
+	}
+	if !view.IsToday || !view.IsWeekend {
+		t.Fatalf("expected IsToday and IsWeekend to be true")
+	}
+	if len(view.AllDayEvents) != 1 || view.AllDayEvents[0].Title != "Rosh Hashanah" {
+		t.Fatalf("expected Rosh Hashanah in all-day events, got %+v", view.AllDayEvents)
+	}
+
+	// Columns should include Alex, Kid, plus Shared (since unclaimed event exists)
+	if len(view.Columns) != 3 {
+		t.Fatalf("expected 3 columns (Alex, Kid, Shared), got %d", len(view.Columns))
+	}
+
+	alexCol := view.Columns[0]
+	if alexCol.Name != "Alex" {
+		t.Fatalf("expected Alex column first, got %q", alexCol.Name)
+	}
+	if len(alexCol.Events) == 0 {
+		t.Fatalf("expected timed events in Alex column")
+	}
+	if alexCol.Events[0].Description != "Discuss Q4 architecture goals" {
+		t.Fatalf("expected description preserved on Alex event, got %q", alexCol.Events[0].Description)
+	}
+	if len(alexCol.EarlyEvents) != 1 || alexCol.EarlyEvents[0].Title != "Dawn Run" {
+		t.Fatalf("expected Dawn Run in EarlyEvents, got %+v", alexCol.EarlyEvents)
+	}
+	if len(alexCol.LateEvents) != 1 || alexCol.LateEvents[0].Title != "Late Movie" {
+		t.Fatalf("expected Late Movie in LateEvents, got %+v", alexCol.LateEvents)
+	}
+
+	sharedCol := view.Columns[2]
+	if !sharedCol.IsShared || sharedCol.Name != "Shared" {
+		t.Fatalf("expected third column to be Shared, got %+v", sharedCol)
+	}
+	if len(sharedCol.Events) != 2 || sharedCol.Events[0].Title != "Town Parade" || sharedCol.Events[1].Title != "Busy" {
+		t.Fatalf("expected Town Parade and Busy in shared column, got %+v", sharedCol.Events)
+	}
+
+	// Verify private calendar redaction
+	var privEvent *FamilyDayEvent
+	for _, col := range view.Columns {
+		for _, ev := range col.Events {
+			if ev.ID == "evt_private" {
+				privEvent = &ev
+			}
+		}
+	}
+	if privEvent == nil {
+		t.Fatalf("expected private event in view")
+	}
+	if privEvent.Title != "Busy" || privEvent.Description != "Busy" || privEvent.Location != "" {
+		t.Fatalf("expected private event fully redacted, got %+v", privEvent)
+	}
+
+	// Error on invalid members config
+	badCfg := map[string]any{"members": []any{"not-a-map"}}
+	_, err = BuildFamilyDayView(snap, badCfg, dims, testNow)
+	if err == nil {
+		t.Fatalf("expected error on invalid config")
+	}
+}
+
+func TestHelpers_CalendarFamilyDayView(t *testing.T) {
+	fm := StandardFuncMap(time.Now)
+	fn, ok := fm["calendarFamilyDayView"].(func(any, map[string]any, domain.Dimension) (*FamilyDayViewModel, error))
+	if !ok {
+		t.Fatalf("expected calendarFamilyDayView in funcMap")
+	}
+	view, err := fn(provider.CalendarSnapshot{}, baseFamilyConfig(), domain.NewDimension(6, 2))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if view == nil {
+		t.Fatalf("expected non-nil view")
 	}
 }
