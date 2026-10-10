@@ -1582,3 +1582,42 @@ func weekdayHeaders(mondayStart bool) []string {
 	}
 	return []string{"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"}
 }
+
+// BuildFamilyCombinedData merges resolved day, week, and month view models into a unified JSON
+// data payload for client-side view switching, event detail modal indexing, and swipe paging.
+func BuildFamilyCombinedData(dayView *FamilyDayViewModel, weekView *FamilyViewModel, monthView *FamilyMonthViewModel, cfg map[string]any) map[string]any {
+	res := map[string]any{
+		"config": cfg,
+	}
+	if dayView != nil {
+		res["date"] = dayView.Date
+		res["columns"] = dayView.Columns
+		if len(dayView.AllDayEvents) > 0 {
+			res["day_all_day_events"] = dayView.AllDayEvents
+			if _, ok := res["all_day_events"]; !ok {
+				res["all_day_events"] = dayView.AllDayEvents
+			}
+		}
+	}
+	if weekView != nil {
+		res["today"] = weekView.Today
+		res["range_start"] = weekView.RangeStart
+		res["range_end"] = weekView.RangeEnd
+		res["days"] = weekView.Days
+		if len(weekView.AllDayEvents) > 0 {
+			res["all_day_events"] = weekView.AllDayEvents
+		}
+	}
+	if monthView != nil {
+		res["month_range_start"] = monthView.RangeStart
+		res["month_range_end"] = monthView.RangeEnd
+		res["month_days"] = monthView.Days
+		if monthView.RangeStart != "" {
+			res["cached_range_start"] = monthView.RangeStart
+		}
+		if monthView.RangeEnd != "" {
+			res["cached_range_end"] = monthView.RangeEnd
+		}
+	}
+	return res
+}

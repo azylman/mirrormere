@@ -73,6 +73,12 @@ func StandardFuncMap(nowFunc func() time.Time) template.FuncMap {
 		"isMonthView": func(cfg map[string]any) bool {
 			return strings.EqualFold(stringOr(cfg, "default_view", "week"), "month")
 		},
+		"calendarGridData": func(dayView *FamilyDayViewModel, weekView *FamilyViewModel, monthView *FamilyMonthViewModel, cfg map[string]any) map[string]any {
+			return BuildFamilyCombinedData(dayView, weekView, monthView, cfg)
+		},
+		"calendarFamilyData": func(dayView *FamilyDayViewModel, weekView *FamilyViewModel, monthView *FamilyMonthViewModel, cfg map[string]any) map[string]any {
+			return BuildFamilyCombinedData(dayView, weekView, monthView, cfg)
+		},
 		"add": func(a, b int) int {
 			return a + b
 		},

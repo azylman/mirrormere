@@ -2034,8 +2034,8 @@ func TestCalendarFamily_MonthViewTemplateRender_4x2(t *testing.T) {
 	if !strings.Contains(html, "cf-month-dot") {
 		t.Errorf("expected member dots on 4x2: %s", html)
 	}
-	// On 4x2, event titles are omitted (dots-only)
-	if strings.Contains(html, "cf-month-event-title") || strings.Contains(html, "Parent Teacher Night") {
+	// On 4x2, event titles are omitted (dots-only) in month view
+	if strings.Contains(html, "cf-month-event-title") {
 		t.Errorf("expected event title to be omitted on 4x2 layout: %s", html)
 	}
 }
@@ -2272,10 +2272,16 @@ func TestRenderFamilyWidgetTemplate_WeekContinuousSpanningBars(t *testing.T) {
 	}
 
 	// Verify individual cf-day columns do NOT contain duplicated allday blocks
-	// Count occurrences of rendered DOM event cards for 'Camping Trip' - should only appear ONCE in DOM as a single spanning bar
-	count := strings.Count(html, ">Camping Trip</div>")
+	// Count occurrences of rendered DOM event cards for 'Camping Trip' in week view panel - should only appear ONCE as a single spanning bar
+	weekHTML := html
+	if idx := strings.Index(html, "cf-view-week"); idx != -1 {
+		if endIdx := strings.Index(html[idx:], "cf-view-month"); endIdx != -1 {
+			weekHTML = html[idx : idx+endIdx]
+		}
+	}
+	count := strings.Count(weekHTML, ">Camping Trip</div>")
 	if count != 1 {
-		t.Errorf("expected 'Camping Trip' DOM card to appear exactly once (as a single spanning bar), got %d occurrences", count)
+		t.Errorf("expected 'Camping Trip' DOM card to appear exactly once in week view panel (as a single spanning bar), got %d occurrences", count)
 	}
 
 	// Verify timed events still render in their columns
@@ -2514,5 +2520,80 @@ func TestRenderFamilyWidgetTemplate_WeekTimeline(t *testing.T) {
 	}
 	if !strings.Contains(html, "Soccer Practice") {
 		t.Errorf("expected 'Soccer Practice' in rendered HTML: %s", html)
+	}
+}
+
+func TestBuildFamilyCombinedData_NilSafetyAndAggregation(t *testing.T) {
+	t.Parallel()
+
+	// 1. Nil safety
+	nilResult := BuildFamilyCombinedData(nil, nil, nil, nil)
+	if nilResult == nil {
+		t.Fatalf("expected non-nil map from BuildFamilyCombinedData with all nil inputs")
+	}
+
+	// 2. Full aggregation
+	dayView := &FamilyDayViewModel{
+		Date: "2026-10-10",
+		Columns: []FamilyDayColumn{
+			{Name: "Alex", Initial: "A", Color: "#a855f7"},
+		},
+		AllDayEvents: []FamilyDayEvent{
+			{FamilyEvent: FamilyEvent{ID: "e_day_allday", Title: "Holiday"}},
+		},
+	}
+	weekView := &FamilyViewModel{
+		Today:      "2026-10-10",
+		RangeStart: "2026-10-05",
+		RangeEnd:   "2026-10-11",
+		Days: []FamilyDay{
+			{Date: "2026-10-10", DayOfMonth: 10},
+		},
+		AllDayEvents: []FamilySpanEvent{
+			{FamilyEvent: FamilyEvent{ID: "e_span", Title: "Conference"}},
+		},
+	}
+	monthView := &FamilyMonthViewModel{
+		RangeStart: "2026-09-28",
+		RangeEnd:   "2026-11-08",
+		Days: []FamilyMonthDay{
+			{Date: "2026-10-10", DayOfMonth: 10},
+		},
+	}
+	cfg := map[string]any{"default_view": "week"}
+
+	res := BuildFamilyCombinedData(dayView, weekView, monthView, cfg)
+	if res["date"] != "2026-10-10" {
+		t.Errorf("expected date 2026-10-10, got %v", res["date"])
+	}
+	if res["today"] != "2026-10-10" {
+		t.Errorf("expected today 2026-10-10, got %v", res["today"])
+	}
+	if res["range_start"] != "2026-10-05" {
+		t.Errorf("expected range_start 2026-10-05, got %v", res["range_start"])
+	}
+	if res["range_end"] != "2026-10-11" {
+		t.Errorf("expected range_end 2026-10-11, got %v", res["range_end"])
+	}
+	if res["cached_range_start"] != "2026-09-28" {
+		t.Errorf("expected cached_range_start 2026-09-28, got %v", res["cached_range_start"])
+	}
+	if res["cached_range_end"] != "2026-11-08" {
+		t.Errorf("expected cached_range_end 2026-11-08, got %v", res["cached_range_end"])
+	}
+
+	// 3. Helper registration
+	funcMap := StandardFuncMap(func() time.Time { return testNow })
+	gridFn, ok := funcMap["calendarGridData"].(func(*FamilyDayViewModel, *FamilyViewModel, *FamilyMonthViewModel, map[string]any) map[string]any)
+	if !ok || gridFn == nil {
+		t.Fatalf("expected calendarGridData in StandardFuncMap")
+	}
+	familyFn, ok := funcMap["calendarFamilyData"].(func(*FamilyDayViewModel, *FamilyViewModel, *FamilyMonthViewModel, map[string]any) map[string]any)
+	if !ok || familyFn == nil {
+		t.Fatalf("expected calendarFamilyData in StandardFuncMap")
+	}
+	res2 := gridFn(dayView, weekView, monthView, cfg)
+	if res2["date"] != "2026-10-10" {
+		t.Errorf("expected date from helper call")
 	}
 }

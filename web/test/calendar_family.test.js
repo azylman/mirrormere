@@ -1057,5 +1057,32 @@ test('Calendar Family Client Controller', async (t) => {
 
     global.window.MirrormereCalendarFamily.unmount('ghost-click-cal');
   });
+
+  await t.test('indexes combined data from month_days, day_all_day_events, and events list', () => {
+    const el = createMockElement({
+      widgetId: 'combined-data-cal',
+      data: {
+        events: [{ id: 'ev-flat', title: 'Flat Event' }],
+        day_all_day_events: [{ id: 'ev-day-allday', title: 'Day All Day' }],
+        month_days: [{
+          date: '2026-10-15',
+          events: [{ id: 'ev-month-1', title: 'Month Gala' }],
+        }],
+      }
+    });
+    const inst = global.window.MirrormereCalendarFamily.mount(el);
+
+    assert.ok(inst.eventIndex.has('ev-flat'), 'should index flat events list');
+    assert.ok(inst.eventIndex.has('ev-day-allday'), 'should index day_all_day_events');
+    assert.ok(inst.eventIndex.has('ev-month-1'), 'should index events in month_days');
+
+    const evData = inst.resolveEventData({
+      dataset: { date: '2026-10-15' },
+    });
+    assert.ok(evData, 'should resolve event data from month_days date cell');
+    assert.equal(evData.id, 'ev-month-1');
+
+    global.window.MirrormereCalendarFamily.unmount('combined-data-cal');
+  });
 });
 
