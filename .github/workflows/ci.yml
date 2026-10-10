@@ -76,8 +76,8 @@ jobs:
               - 'clients/ear/**'
             mirrormere-remote:
               - 'sidecars/remote/**'
-            mirrormere-proxy:
-              - 'sidecars/proxy/**'
+            mirrormere-hass-proxy:
+              - 'sidecars/hass-proxy/**'
 
       - name: Compute Dynamic Build Matrix
         id: set-matrix
@@ -90,7 +90,7 @@ jobs:
               "mirrormere-voice-fingerprinter": "${{ steps.filter.outputs.mirrormere-voice-fingerprinter }}",
               "mirrormere-ear": "${{ steps.filter.outputs.mirrormere-ear }}",
               "mirrormere-remote": "${{ steps.filter.outputs.mirrormere-remote }}",
-              "mirrormere-proxy": "${{ steps.filter.outputs.mirrormere-proxy }}"
+              "mirrormere-hass-proxy": "${{ steps.filter.outputs.mirrormere-hass-proxy }}"
             };
 
             const catalog = [
@@ -100,7 +100,7 @@ jobs:
               { name: "mirrormere-voice-fingerprinter", context: "./sidecars/voice-fingerprinter", file: "./sidecars/voice-fingerprinter/Dockerfile" },
               { name: "mirrormere-ear", context: "./clients/ear", file: "./clients/ear/Dockerfile" },
               { name: "mirrormere-remote", context: "./sidecars/remote", file: "./sidecars/remote/Dockerfile" },
-              { name: "mirrormere-proxy", context: "./sidecars/proxy", file: "./sidecars/proxy/Dockerfile" }
+              { name: "mirrormere-hass-proxy", context: ".", file: "./sidecars/hass-proxy/Dockerfile" }
             ];
 
             const matrix = catalog.filter(c => filter[c.name] === "true");

@@ -1,0 +1,24 @@
+# sidecars/hass-proxy/config.example.yaml
+# Home Assistant Fast-Path Voice Intent Proxy Configuration
+# All service configuration is defined declaratively in YAML. Secrets may be injected via environment.
+
+server:
+  host: "0.0.0.0"
+  port: 8095
+  read_timeout_seconds: 10
+  write_timeout_seconds: 10
+
+homeassistant:
+  # Home Assistant base URL (without trailing slash)
+  url: "http://homeassistant.local:8123"
+  # Long-lived access token. If omitted or empty here, hass-proxy automatically reads
+  # from HASS_TOKEN or HOMEASSISTANT_TOKEN environment variables.
+  token: ""
+  # Optional conversation agent entity ID (e.g. "conversation.home_assistant")
+  agent_id: ""
+  # Conversation language
+  language: "en"
+  # Outbound HTTP request timeout in milliseconds
+  timeout_ms: 2000
+  # Path to conversation process endpoint
+  conversation_path: "/api/conversation/process"

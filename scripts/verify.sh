@@ -212,8 +212,6 @@ run_python_tests() {
         PYTHONPATH="." python3 -m unittest discover -s clients/ear/tests -p "test_*.py"
         echo "   [python test] Running remote (bluetooth/chromecast) sidecar test suite..."
         PYTHONPATH="sidecars/remote" python3 -m unittest discover -s sidecars/remote/tests -p "test_*.py"
-        echo "   [python test] Running proxy sidecar test suite..."
-        PYTHONPATH="sidecars/proxy" python3 -m unittest discover -s sidecars/proxy/test -p "test_*.py"
     fi
 }
 
