@@ -531,3 +531,203 @@ func TestTodayPrecipProb(t *testing.T) {
 		}
 	})
 }
+
+func TestCalendarFeedEvents(t *testing.T) {
+	t.Parallel()
+
+	refTime := time.Date(2026, 10, 10, 15, 30, 0, 0, time.UTC)
+
+	tests := []struct {
+		name       string
+		data       any
+		refTime    time.Time
+		wantTitles []string
+	}{
+		{
+			name:       "nil data",
+			data:       nil,
+			refTime:    refTime,
+			wantTitles: nil,
+		},
+		{
+			name:       "empty events slice",
+			data:       provider.CalendarSnapshot{Events: []provider.CalendarEvent{}},
+			refTime:    refTime,
+			wantTitles: nil,
+		},
+		{
+			name: "filters out past events from 86 days ago, yesterday, and earlier today",
+			data: provider.CalendarSnapshot{
+				Events: []provider.CalendarEvent{
+					{
+						Title:  "Past 86 Days Ago Timed",
+						Start:  "2026-07-16T10:00:00Z",
+						End:    "2026-07-16T11:00:00Z",
+						AllDay: false,
+					},
+					{
+						Title:  "Past 86 Days Ago All-Day",
+						Start:  "2026-07-16",
+						End:    "2026-07-16",
+						AllDay: true,
+					},
+					{
+						Title:  "Yesterday Timed",
+						Start:  "2026-10-09T20:00:00Z",
+						End:    "2026-10-09T21:00:00Z",
+						AllDay: false,
+					},
+					{
+						Title:  "Yesterday All-Day",
+						Start:  "2026-10-09",
+						End:    "2026-10-09",
+						AllDay: true,
+					},
+					{
+						Title:  "Earlier Today Finished Timed",
+						Start:  "2026-10-10T13:00:00Z",
+						End:    "2026-10-10T14:00:00Z",
+						AllDay: false,
+					},
+					{
+						Title:  "Currently Ongoing Timed",
+						Start:  "2026-10-10T15:00:00Z",
+						End:    "2026-10-10T16:00:00Z",
+						AllDay: false,
+					},
+					{
+						Title:  "Starting Exactly Now Timed",
+						Start:  "2026-10-10T15:30:00Z",
+						End:    "2026-10-10T16:30:00Z",
+						AllDay: false,
+					},
+					{
+						Title:  "Later Today Timed",
+						Start:  "2026-10-10T18:00:00Z",
+						End:    "2026-10-10T19:00:00Z",
+						AllDay: false,
+					},
+					{
+						Title:  "Today All-Day",
+						Start:  "2026-10-10",
+						End:    "2026-10-10",
+						AllDay: true,
+					},
+					{
+						Title:  "Multi-Day All-Day Spanning Today",
+						Start:  "2026-10-08",
+						End:    "2026-10-12",
+						AllDay: true,
+					},
+					{
+						Title:  "Tomorrow All-Day",
+						Start:  "2026-10-11",
+						End:    "2026-10-11",
+						AllDay: true,
+					},
+					{
+						Title:  "Future Timed",
+						Start:  "2026-10-12T09:00:00Z",
+						End:    "2026-10-12T10:00:00Z",
+						AllDay: false,
+					},
+				},
+			},
+			refTime: refTime,
+			wantTitles: []string{
+				"Currently Ongoing Timed",
+				"Starting Exactly Now Timed",
+				"Later Today Timed",
+				"Today All-Day",
+				"Multi-Day All-Day Spanning Today",
+				"Tomorrow All-Day",
+				"Future Timed",
+			},
+		},
+		{
+			name: "fallback when End time is missing",
+			data: &provider.CalendarSnapshot{
+				Events: []provider.CalendarEvent{
+					{
+						Title:  "Past Missing End",
+						Start:  "2026-10-10T13:00:00Z",
+						AllDay: false,
+					},
+					{
+						Title:  "Future Missing End",
+						Start:  "2026-10-10T16:00:00Z",
+						AllDay: false,
+					},
+				},
+			},
+			refTime:    refTime,
+			wantTitles: []string{"Future Missing End"},
+		},
+		{
+			name: "supports map[string]any payload",
+			data: map[string]any{
+				"events": []any{
+					map[string]any{
+						"title":   "Map Past",
+						"start":   "2026-07-01T10:00:00Z",
+						"end":     "2026-07-01T11:00:00Z",
+						"all_day": false,
+					},
+					map[string]any{
+						"title":   "Map Future",
+						"start":   "2026-10-10T17:00:00Z",
+						"end":     "2026-10-10T18:00:00Z",
+						"all_day": false,
+					},
+				},
+			},
+			refTime:    refTime,
+			wantTitles: []string{"Map Future"},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := render.CalendarFeedEvents(tc.data, tc.refTime)
+			var gotTitles []string
+			for _, ev := range got {
+				gotTitles = append(gotTitles, ev.Title)
+			}
+			if len(gotTitles) != len(tc.wantTitles) {
+				t.Fatalf("CalendarFeedEvents() got %d events (%v), want %d (%v)",
+					len(gotTitles), gotTitles, len(tc.wantTitles), tc.wantTitles)
+			}
+			for i := range gotTitles {
+				if gotTitles[i] != tc.wantTitles[i] {
+					t.Errorf("at index %d: got title %q, want %q", i, gotTitles[i], tc.wantTitles[i])
+				}
+			}
+		})
+	}
+
+	t.Run("template execution via StandardFuncMap", func(t *testing.T) {
+		t.Parallel()
+		fnMap := render.StandardFuncMap(func() time.Time { return refTime })
+		tmpl, err := template.New("feed-test").Funcs(fnMap).Parse(`{{ range (calendarFeedEvents .) }}{{ .Title }};{{ end }}`)
+		if err != nil {
+			t.Fatalf("failed to parse template: %v", err)
+		}
+
+		snap := provider.CalendarSnapshot{
+			Events: []provider.CalendarEvent{
+				{Title: "Old", Start: "2026-07-01T10:00:00Z", End: "2026-07-01T11:00:00Z"},
+				{Title: "Upcoming", Start: "2026-10-10T16:00:00Z", End: "2026-10-10T17:00:00Z"},
+			},
+		}
+
+		var sb strings.Builder
+		if err := tmpl.Execute(&sb, snap); err != nil {
+			t.Fatalf("failed to execute template: %v", err)
+		}
+		if sb.String() != "Upcoming;" {
+			t.Errorf("expected 'Upcoming;', got %q", sb.String())
+		}
+	})
+}
+

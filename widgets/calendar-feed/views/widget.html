@@ -1,9 +1,10 @@
 <div class="widget-card widget-calendar widget-calendar-feed" data-widget-id="{{ .ID }}" data-widget-type="{{ .Type }}" style="grid-column: span {{ .Dimensions.Cols }}; grid-row: span {{ .Dimensions.Rows }};">
   {{ if .Data }}
-    {{ if and .Data.Events (gt (len .Data.Events) 0) }}
+    {{ $events := calendarFeedEvents .Data }}
+    {{ if and $events (gt (len $events) 0) }}
     <div class="calendar-feed-container calendar-agenda-container" style="display: flex; flex-direction: column; height: 100%; overflow-y: auto; gap: 8px; padding-right: 4px; touch-action: pan-y; -webkit-overflow-scrolling: touch;">
       {{ $prevDate := "" }}
-      {{ range .Data.Events }}
+      {{ range $events }}
         {{ $date := formatDate "2006-01-02" .Start }}
         {{ if ne $date $prevDate }}
           {{ $prevDate = $date }}

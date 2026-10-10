@@ -81,6 +81,9 @@ func StandardFuncMap(nowFunc func() time.Time) template.FuncMap {
 		"calendarFamilyData": func(dayView *FamilyDayViewModel, weekView *FamilyViewModel, monthView *FamilyMonthViewModel, cfg map[string]any) map[string]any {
 			return BuildFamilyCombinedData(dayView, weekView, monthView, cfg)
 		},
+		"calendarFeedEvents": func(data any, args ...any) []provider.CalendarEvent {
+			return CalendarFeedEvents(data, nowFunc())
+		},
 		"add": func(a, b int) int {
 			return a + b
 		},
@@ -624,4 +627,79 @@ func TodayPrecipProb(arg any) int {
 	}
 
 	return 0
+}
+
+func extractCalendarSnapshot(data any) provider.CalendarSnapshot {
+	switch v := data.(type) {
+	case provider.CalendarSnapshot:
+		return v
+	case *provider.CalendarSnapshot:
+		if v != nil {
+			return *v
+		}
+	case map[string]any:
+		b, err := json.Marshal(v)
+		if err == nil {
+			var snap provider.CalendarSnapshot
+			if err := json.Unmarshal(b, &snap); err == nil {
+				return snap
+			}
+		}
+	}
+	return provider.CalendarSnapshot{}
+}
+
+// CalendarFeedEvents filters a CalendarSnapshot (or equivalent payload) down to events starting
+// at or after the reference time (i.e. currently ongoing events and upcoming events).
+// All-day events for today and future days are included; past all-day events are excluded.
+// Timed events ending at or after refTime are included; events ending before refTime are excluded.
+func CalendarFeedEvents(data any, refTime time.Time) []provider.CalendarEvent {
+	snapshot := extractCalendarSnapshot(data)
+	if len(snapshot.Events) == 0 {
+		return nil
+	}
+
+	todayStr := refTime.Format("2006-01-02")
+	filtered := make([]provider.CalendarEvent, 0, len(snapshot.Events))
+
+	for _, ev := range snapshot.Events {
+		if ev.AllDay {
+			endDateStr := ev.End
+			if endDateStr == "" {
+				endDateStr = ev.Start
+			}
+			// In RFC 5545 formatEventRange, End is an inclusive date formatted as YYYY-MM-DD.
+			// If End < todayStr, the event has already concluded before today.
+			if endDateStr < todayStr {
+				continue
+			}
+			filtered = append(filtered, ev)
+			continue
+		}
+
+		// Timed event: parse End first, falling back to Start
+		var endTime time.Time
+		if ev.End != "" {
+			if t, ok := ParseTime(ev.End); ok {
+				endTime = t
+			}
+		}
+
+		if !endTime.IsZero() {
+			if endTime.Before(refTime) {
+				continue
+			}
+		} else if ev.Start != "" {
+			if t, ok := ParseTime(ev.Start); ok {
+				// Default 1-hour duration if end time is omitted
+				if t.Add(time.Hour).Before(refTime) {
+					continue
+				}
+			}
+		}
+
+		filtered = append(filtered, ev)
+	}
+
+	return filtered
 }
