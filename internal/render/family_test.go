@@ -2065,3 +2065,63 @@ func TestCalendarFamily_MonthViewTemplateRender_Empty(t *testing.T) {
 	}
 }
 
+func TestCalendarFamily_ViewSwitcherAndBootstrap(t *testing.T) {
+	t.Parallel()
+
+	snap := provider.CalendarSnapshot{
+		LastSync: "2026-09-27T12:00:00Z",
+		Events: []provider.CalendarEvent{
+			{ID: "e1", CalendarName: "alex-personal", Title: "Soccer Practice", Start: "2026-09-27T16:00:00Z", End: "2026-09-27T17:00:00Z"},
+		},
+	}
+
+	testViews := []struct {
+		view      string
+		activeBtn string
+		inactiveA string
+		inactiveB string
+		rootClass string
+	}{
+		{"day", `data-view="day" role="tab" aria-selected="true">Day</button>`, `data-view="week" role="tab" aria-selected="false">Week</button>`, `data-view="month" role="tab" aria-selected="false">Month</button>`, "cf-view-day"},
+		{"week", `data-view="week" role="tab" aria-selected="true">Week</button>`, `data-view="day" role="tab" aria-selected="false">Day</button>`, `data-view="month" role="tab" aria-selected="false">Month</button>`, "cf-view-week"},
+		{"month", `data-view="month" role="tab" aria-selected="true">Month</button>`, `data-view="day" role="tab" aria-selected="false">Day</button>`, `data-view="week" role="tab" aria-selected="false">Week</button>`, "cf-view-month"},
+	}
+
+	for _, tc := range testViews {
+		t.Run(tc.view, func(t *testing.T) {
+			t.Parallel()
+			cfg := baseFamilyConfig()
+			cfg["default_view"] = tc.view
+			cfg["date"] = "2026-09-27"
+
+			ctx := Context{
+				ID:         "test-switcher-" + tc.view,
+				Type:       "calendar-family",
+				Dimensions: domain.NewDimension(6, 2),
+				Data:       snap,
+				Config:     cfg,
+			}
+
+			html := renderFamilyWidgetTemplate(t, ctx, testNow)
+
+			if !strings.Contains(html, "cf-view-switcher") {
+				t.Errorf("[%s] expected cf-view-switcher in html: %s", tc.view, html)
+			}
+			if !strings.Contains(html, tc.rootClass) {
+				t.Errorf("[%s] expected root class %s in html", tc.view, tc.rootClass)
+			}
+			if !strings.Contains(html, tc.activeBtn) {
+				t.Errorf("[%s] expected active button %s in html", tc.view, tc.activeBtn)
+			}
+			if !strings.Contains(html, tc.inactiveA) || !strings.Contains(html, tc.inactiveB) {
+				t.Errorf("[%s] expected inactive buttons %s and %s in html", tc.view, tc.inactiveA, tc.inactiveB)
+			}
+			if !strings.Contains(html, "calendar-family-data") {
+				t.Errorf("[%s] expected embedded calendar-family-data JSON script in html", tc.view)
+			}
+			if !strings.Contains(html, "MirrormereCalendarFamily.mount") {
+				t.Errorf("[%s] expected MirrormereCalendarFamily self-mount hook in html", tc.view)
+			}
+		})
+	}
+}
