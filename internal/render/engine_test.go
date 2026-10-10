@@ -967,8 +967,8 @@ func TestEngine_RenderWidget_CalendarAgendaPackage(t *testing.T) {
 	if !strings.Contains(htmlStr, "Soccer Practice") {
 		t.Errorf("expected 'Soccer Practice' in output: %s", htmlStr)
 	}
-	if !strings.Contains(htmlStr, "Community Park Field 2") {
-		t.Errorf("expected 'Community Park Field 2' in output: %s", htmlStr)
+	if strings.Contains(htmlStr, "Community Park Field 2") {
+		t.Errorf("expected location/description 'Community Park Field 2' to be removed from view, got: %s", htmlStr)
 	}
 	if !strings.Contains(htmlStr, "Family Calendar") {
 		t.Errorf("expected 'Family Calendar' in output: %s", htmlStr)
