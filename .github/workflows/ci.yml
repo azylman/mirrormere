@@ -115,7 +115,7 @@ jobs:
 
   docker:
     name: Build & Publish Container Image (${{ matrix.name }})
-    needs: [verify, changes]
+    needs: changes
     if: needs.changes.outputs.has_builds == 'true'
     runs-on: ubuntu-latest
     permissions:
@@ -176,3 +176,43 @@ jobs:
             org.opencontainers.image.licenses=MIT
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && format('type=gha,mode=max,scope={0}', matrix.name) || '' }}
+
+  build-gate:
+    name: Container Builds Gate
+    needs: [verify, changes, docker]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify Container Builds
+        run: |
+          VERIFY_RES="${{ needs.verify.result }}"
+          CHANGES_RES="${{ needs.changes.result }}"
+          DOCKER_RES="${{ needs.docker.result }}"
+          HAS_BUILDS="${{ needs.changes.outputs.has_builds }}"
+
+          echo "Verify status: $VERIFY_RES"
+          echo "Changes status: $CHANGES_RES"
+          echo "Has builds: $HAS_BUILDS"
+          echo "Docker builds status: $DOCKER_RES"
+
+          if [ "$VERIFY_RES" != "success" ]; then
+            echo "::error::Codebase verification failed"
+            exit 1
+          fi
+
+          if [ "$CHANGES_RES" != "success" ]; then
+            echo "::error::Changes detection failed"
+            exit 1
+          fi
+
+          if [ "$HAS_BUILDS" = "false" ]; then
+            echo "No container builds required for this change. Gate passed."
+            exit 0
+          fi
+
+          if [ "$DOCKER_RES" != "success" ]; then
+            echo "::error::One or more container builds failed or were cancelled"
+            exit 1
+          fi
+
+          echo "All required checks and container builds passed successfully."
