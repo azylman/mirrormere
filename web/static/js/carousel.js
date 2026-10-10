@@ -116,7 +116,14 @@ class MirrormereCarousel {
       const { widget, html } = item;
       const temp = document.createElement('div');
       temp.innerHTML = html.trim();
-      const node = temp.firstElementChild || document.createElement('div');
+      const node = (temp.querySelector && temp.querySelector('.widget-card')) || temp.firstElementChild || document.createElement('div');
+      if (temp.children) {
+        for (const child of Array.from(temp.children)) {
+          if (child !== node && (child.tagName === 'STYLE' || child.tagName === 'SCRIPT')) {
+            node.appendChild(child);
+          }
+        }
+      }
 
       // Enforce 6x2 grid cell positioning (1-indexed CSS grid lines)
       const colStart = (widget.origin && widget.origin[0] !== undefined) ? widget.origin[0] + 1 : 1;
@@ -187,8 +194,15 @@ class MirrormereCarousel {
       if (existing) {
         const temp = document.createElement('div');
         temp.innerHTML = html.trim();
-        const newNode = temp.firstElementChild;
+        const newNode = (temp.querySelector && temp.querySelector('.widget-card')) || temp.firstElementChild;
         if (newNode) {
+          if (temp.children) {
+            for (const child of Array.from(temp.children)) {
+              if (child !== newNode && (child.tagName === 'STYLE' || child.tagName === 'SCRIPT')) {
+                newNode.appendChild(child);
+              }
+            }
+          }
           newNode.style.gridColumn = existing.style.gridColumn;
           newNode.style.gridRow = existing.style.gridRow;
           newNode.dataset.widgetId = widgetID;

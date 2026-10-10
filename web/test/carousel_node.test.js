@@ -29,3 +29,71 @@ test('carousel forwards the display node id on widget render requests', async (t
     assert.equal(c.renderURL('voice-chat'), 'api/widgets/voice-chat/render');
   });
 });
+
+test('carousel handleScreenRotate extracts .widget-card and adopts sibling style tag', async () => {
+  const win = { location: { search: '' } };
+  const styleEl = { tagName: 'STYLE' };
+  const cardEl = {
+    tagName: 'DIV',
+    isWidgetCard: true,
+    style: {},
+    dataset: {},
+    children: [],
+    appendChild(n) { this.children.push(n); },
+  };
+
+  const doc = {
+    createDocumentFragment: () => ({ children: [], appendChild(n) { this.children.push(n); } }),
+    createElement: (tag) => {
+      if (tag === 'div') {
+        return {
+          tagName: 'DIV',
+          style: {},
+          dataset: {},
+          set innerHTML(html) {
+            this.children = [styleEl, cardEl];
+            this.firstElementChild = styleEl;
+          },
+          querySelector(sel) {
+            if (sel === '.widget-card') return cardEl;
+            return null;
+          },
+        };
+      }
+      return { style: {}, dataset: {}, appendChild() {} };
+    },
+  };
+
+  const fn = new Function('window', 'document', 'requestAnimationFrame', 'setTimeout', 'setInterval', 'clearInterval', 'clearTimeout', carouselCode);
+  fn(win, doc, () => {}, () => {}, setInterval, clearInterval, clearTimeout);
+  const Carousel = win.MirrormereCarousel;
+
+  const canvas = {
+    dataset: {},
+    classList: { add() {}, remove() {} },
+    appendChild(fragment) { this.fragment = fragment; },
+    addEventListener() {},
+  };
+  const c = new Carousel(canvas);
+
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({
+    ok: true,
+    text: async () => '<style>.foo{}</style><div class="widget-card">Card</div>',
+  });
+
+  try {
+    await c.handleScreenRotate({
+      widgets: [{ widget_id: 'cal', origin: [0, 0], dimensions: [4, 2] }],
+      current_screen: 0,
+      total_screens: 1,
+    });
+
+    assert.equal(c.activeWidgets.get('cal').element, cardEl);
+    assert.equal(cardEl.children.includes(styleEl), true, 'should adopt style sibling into .widget-card');
+    assert.equal(cardEl.style.gridColumn, '1 / span 4');
+    assert.equal(cardEl.style.gridRow, '1 / span 2');
+  } finally {
+    globalThis.fetch = origFetch;
+  }
+});
