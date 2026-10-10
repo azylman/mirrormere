@@ -45,18 +45,19 @@ type CalendarSnapshot struct {
 
 // CalendarSource defines configuration for a single upstream calendar feed.
 type CalendarSource struct {
-	Name        string `json:"name" yaml:"name"`
-	Type        string `json:"type,omitempty" yaml:"type,omitempty"` // "ical" (default) or "caldav"
-	URL         string `json:"url,omitempty" yaml:"url,omitempty"`
-	URLEnv      string `json:"url_env,omitempty" yaml:"url_env,omitempty"`
-	Color       string `json:"color,omitempty" yaml:"color,omitempty"`
-	Enabled     bool   `json:"enabled" yaml:"enabled"`
-	Username    string `json:"username,omitempty" yaml:"username,omitempty"`
-	UsernameEnv string `json:"username_env,omitempty" yaml:"username_env,omitempty"`
-	Password    string `json:"password,omitempty" yaml:"password,omitempty"`
-	PasswordEnv string `json:"password_env,omitempty" yaml:"password_env,omitempty"`
-	Token       string `json:"token,omitempty" yaml:"token,omitempty"`
-	TokenEnv    string `json:"token_env,omitempty" yaml:"token_env,omitempty"`
+	Name           string `json:"name" yaml:"name"`
+	Type           string `json:"type,omitempty" yaml:"type,omitempty"` // "ical" (default) or "caldav"
+	URL            string `json:"url,omitempty" yaml:"url,omitempty"`
+	URLEnv         string `json:"url_env,omitempty" yaml:"url_env,omitempty"`
+	Color          string `json:"color,omitempty" yaml:"color,omitempty"`
+	Enabled        bool   `json:"enabled" yaml:"enabled"`
+	StripRecurring bool   `json:"strip_recurring,omitempty" yaml:"strip_recurring,omitempty"`
+	Username       string `json:"username,omitempty" yaml:"username,omitempty"`
+	UsernameEnv    string `json:"username_env,omitempty" yaml:"username_env,omitempty"`
+	Password       string `json:"password,omitempty" yaml:"password,omitempty"`
+	PasswordEnv    string `json:"password_env,omitempty" yaml:"password_env,omitempty"`
+	Token          string `json:"token,omitempty" yaml:"token,omitempty"`
+	TokenEnv       string `json:"token_env,omitempty" yaml:"token_env,omitempty"`
 }
 
 const (
@@ -71,6 +72,7 @@ type CalendarConfig struct {
 	WindowDaysPast   int              `json:"window_days_past,omitempty" yaml:"window_days_past,omitempty"`
 	WindowDaysFuture int              `json:"window_days_future,omitempty" yaml:"window_days_future,omitempty"`
 	View             string           `json:"view" yaml:"view"`
+	StripRecurring   bool             `json:"strip_recurring,omitempty" yaml:"strip_recurring,omitempty"`
 	Calendars        []CalendarSource `json:"calendars" yaml:"calendars"`
 }
 
@@ -124,6 +126,12 @@ func parseCalendarConfig(raw map[string]any, opts InitOptions) (*CalendarConfig,
 
 	if v, ok := raw["view"].(string); ok && strings.TrimSpace(v) != "" {
 		cfg.View = strings.TrimSpace(v)
+	}
+
+	if sr, ok := raw["strip_recurring"].(bool); ok {
+		cfg.StripRecurring = sr
+	} else if er, ok := raw["exclude_recurring"].(bool); ok {
+		cfg.StripRecurring = er
 	}
 
 	var rawSources []map[string]any
@@ -296,19 +304,27 @@ func parseCalendarConfig(raw map[string]any, opts InitOptions) (*CalendarConfig,
 			enabled = e
 		}
 
+		stripRecurring := cfg.StripRecurring
+		if sr, ok := m["strip_recurring"].(bool); ok {
+			stripRecurring = sr
+		} else if er, ok := m["exclude_recurring"].(bool); ok {
+			stripRecurring = er
+		}
+
 		cfg.Calendars = append(cfg.Calendars, CalendarSource{
-			Name:        name,
-			Type:        sourceType,
-			URL:         resolvedURL,
-			URLEnv:      urlEnv,
-			Color:       color,
-			Enabled:     enabled,
-			Username:    resolvedUsername,
-			UsernameEnv: usernameEnv,
-			Password:    resolvedPassword,
-			PasswordEnv: passwordEnv,
-			Token:       resolvedToken,
-			TokenEnv:    tokenEnv,
+			Name:           name,
+			Type:           sourceType,
+			URL:            resolvedURL,
+			URLEnv:         urlEnv,
+			Color:          color,
+			Enabled:        enabled,
+			StripRecurring: stripRecurring,
+			Username:       resolvedUsername,
+			UsernameEnv:    usernameEnv,
+			Password:       resolvedPassword,
+			PasswordEnv:    passwordEnv,
+			Token:          resolvedToken,
+			TokenEnv:       tokenEnv,
 		})
 	}
 
@@ -493,6 +509,12 @@ func parseCalendarEvents(cal *ical.Calendar, source CalendarSource, windowStart,
 
 		rruleProp := e.GetProperty(ical.ComponentPropertyRrule)
 		recIDProp := e.GetProperty(ical.ComponentPropertyRecurrenceId)
+		rdateProp := e.GetProperty(ical.ComponentProperty("RDATE"))
+
+		isRecurring := rruleProp != nil || recIDProp != nil || rdateProp != nil
+		if source.StripRecurring && isRecurring {
+			continue
+		}
 
 		if rruleProp != nil && recIDProp == nil {
 			// Recurring master event

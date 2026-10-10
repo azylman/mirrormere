@@ -23,6 +23,10 @@ config_schema:
   properties:
     view:
       type: string
+    strip_recurring:
+      type: boolean
+    exclude_recurring:
+      type: boolean
     calendars:
       type: array
       items:
@@ -44,6 +48,10 @@ config_schema:
           color:
             type: string
           enabled:
+            type: boolean
+          strip_recurring:
+            type: boolean
+          exclude_recurring:
             type: boolean
           username:
             type: string
