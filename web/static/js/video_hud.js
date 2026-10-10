@@ -24,11 +24,15 @@
      * @param {HTMLElement} [options.dismissBtn] - The #video-hud-dismiss-btn element.
      * @param {HTMLElement} [options.playBtn] - The #video-hud-play-btn element.
      * @param {HTMLElement} [options.playIcon] - The #video-hud-play-icon element.
+     * @param {HTMLElement} [options.rewindBtn] - The #video-hud-rewind-btn element.
+     * @param {HTMLElement} [options.forwardBtn] - The #video-hud-forward-btn element.
+     * @param {HTMLElement} [options.bottomBarElement] - The #video-hud-bottom-bar element.
      * @param {HTMLElement} [options.muteBtn] - The #video-hud-mute-btn element.
      * @param {HTMLElement} [options.muteIcon] - The #video-hud-mute-icon element.
      * @param {HTMLInputElement} [options.volumeSlider] - The #video-hud-volume-slider element.
      * @param {HTMLElement} [options.stageElement] - The #video-stage root container.
      * @param {Object} [options.videoManager] - VideoPlayerManager instance.
+     * @param {string} [options.remoteUrl] - Remote sidecar base URL.
      * @param {Function} [options.fetch] - Custom fetch function for tests.
      * @param {number} [options.autoFadeTimeout=5000] - Auto-fade timeout in ms.
      * @param {number} [options.throttleInterval=200] - Volume network throttle interval in ms.
@@ -39,6 +43,15 @@
       this.overlay = options.overlayElement || (typeof document !== 'undefined' ? document.getElementById('video-hud-overlay') : null);
       this.titleEl = options.titleElement || (typeof document !== 'undefined' ? document.getElementById('video-hud-title') : null);
       this.dismissBtn = options.dismissBtn || (typeof document !== 'undefined' ? document.getElementById('video-hud-dismiss-btn') : null);
+      this.bottomBar = options.bottomBarElement ||
+        (this.overlay?.children?.find ? this.overlay.children.find((c) => c.id === 'video-hud-bottom-bar') : null) ||
+        (typeof document !== 'undefined' ? document.getElementById('video-hud-bottom-bar') : null);
+      this.rewindBtn = options.rewindBtn ||
+        (this.bottomBar?.children?.find ? this.bottomBar.children.find((c) => c.id === 'video-hud-rewind-btn') : null) ||
+        (typeof document !== 'undefined' ? document.getElementById('video-hud-rewind-btn') : null);
+      this.forwardBtn = options.forwardBtn ||
+        (this.bottomBar?.children?.find ? this.bottomBar.children.find((c) => c.id === 'video-hud-forward-btn') : null) ||
+        (typeof document !== 'undefined' ? document.getElementById('video-hud-forward-btn') : null);
       this.playBtn = options.playBtn || (typeof document !== 'undefined' ? document.getElementById('video-hud-play-btn') : null);
       this.playIcon = options.playIcon || (typeof document !== 'undefined' ? document.getElementById('video-hud-play-icon') : null);
       this.muteBtn = options.muteBtn || (typeof document !== 'undefined' ? document.getElementById('video-hud-mute-btn') : null);
@@ -46,6 +59,8 @@
       this.volumeSlider = options.volumeSlider || (typeof document !== 'undefined' ? document.getElementById('video-hud-volume-slider') : null);
       this.stageElement = options.stageElement || (typeof document !== 'undefined' ? document.getElementById('video-stage') : null);
       this.videoManager = options.videoManager || null;
+      this._remoteUrl = options.remoteUrl || '';
+
       const defaultFetch = (typeof window !== 'undefined' && typeof window.fetch === 'function')
         ? window.fetch.bind(window)
         : (typeof fetch === 'function' ? fetch : null);
@@ -66,6 +81,13 @@
       this.isActionPending = false;
       this.isMutePending = false;
 
+      // Gesture and double-tap state
+      this.lastTapTime = 0;
+      this.lastTapCoords = null;
+      this.singleTapTimer = null;
+      this.doubleTapCooldownUntil = 0;
+      this.lastPointerUpTime = 0;
+
       // Volume slider debounce state
       this.isDragging = false;
       this.throttleTimer = null;
@@ -78,13 +100,24 @@
       this.bindControls();
     }
 
+    get remoteUrl() {
+      return this._remoteUrl ||
+        this.videoManager?.remoteUrl ||
+        (typeof document !== 'undefined' && document.body && document.body.dataset && document.body.dataset.remoteUrl) ||
+        (typeof window !== 'undefined' && window.MIRRORMERE_REMOTE_URL) ||
+        '';
+    }
+
+    set remoteUrl(val) {
+      this._remoteUrl = val;
+    }
+
     /**
      * Bind DOM event listeners.
      */
     bindControls() {
-      // 1. Stage tap-to-wake / tap-to-toggle
+      // 1. Stage tap-to-wake / tap-to-toggle & double-tap play/pause
       if (this.stageElement) {
-        let lastToggleTime = 0;
         let startX = null;
         let startY = null;
 
@@ -112,12 +145,26 @@
         const onStageToggle = (e) => {
           const now = Date.now();
 
+          // Filter out synthetic duplicate click events using 350ms suppression
+          if (e.type === 'click') {
+            if (now - this.lastPointerUpTime < 350) {
+              return;
+            }
+          } else if (e.type === 'pointerup') {
+            this.lastPointerUpTime = now;
+          }
+
+          // Ignore events if in 300ms double-tap cooldown to avoid 3rd-tap pairing
+          if (now < this.doubleTapCooldownUntil) {
+            return;
+          }
+
           // Ignore drag/swipe gestures (movement >= 15px)
           const coords = getCoords(e);
           if (startX !== null && startY !== null && coords) {
             const dist = Math.hypot(coords.x - startX, coords.y - startY);
             if (dist >= 15) {
-              lastToggleTime = now; // Suppress ghost events following drag release
+              this.lastPointerUpTime = now; // Suppress ghost events following drag release
               return;
             }
           }
@@ -132,17 +179,72 @@
             return;
           }
           // If event was on interactive HUD elements, let them handle it
-          if (e.target && e.target.closest && (e.target.closest('.video-hud-controls') || e.target.closest('.video-hud-header') || e.target.closest('.video-hud-side-rail'))) {
+          if (e.target && e.target.closest && (
+            e.target.closest('.video-hud-controls') ||
+            e.target.closest('.video-hud-header') ||
+            e.target.closest('.video-hud-side-rail') ||
+            e.target.closest('.video-hud-bottom-bar')
+          )) {
             return;
           }
 
-          // Debounce rapid duplicate pointerup / click events from the same tap gesture
-          if (now - lastToggleTime < 350) {
+          // Check if this tap pairs with previous tap for double-tap (<300ms, <30px movement)
+          const timeDiff = now - this.lastTapTime;
+          let isDoubleTap = false;
+          if (this.lastTapTime > 0 && timeDiff < 300) {
+            if (coords && this.lastTapCoords) {
+              const moveDist = Math.hypot(coords.x - this.lastTapCoords.x, coords.y - this.lastTapCoords.y);
+              if (moveDist < 30) {
+                isDoubleTap = true;
+              }
+            } else {
+              isDoubleTap = true;
+            }
+          }
+
+          const stream = this.getActiveStream();
+          const isMedia = Boolean(stream && (stream.controllable === true || (stream.priority === 'persistent' && Boolean(this.remoteUrl))));
+
+          if (isDoubleTap) {
+            // Clear tap timers and state, set 300ms cooldown
+            if (this.singleTapTimer) {
+              clearTimeout(this.singleTapTimer);
+              this.singleTapTimer = null;
+            }
+            this.lastTapTime = 0;
+            this.lastTapCoords = null;
+            this.doubleTapCooldownUntil = now + 300;
+
+            if (isMedia) {
+              this.handlePlayPauseToggle();
+              this.showHUD();
+            }
             return;
           }
-          lastToggleTime = now;
 
-          this.toggleHUD();
+          // Single-tap handling
+          this.lastTapTime = now;
+          this.lastTapCoords = coords;
+
+          if (!this.isVisible) {
+            // If HUD hidden: show HUD immediately
+            this.showHUD();
+          } else if (isMedia) {
+            // If HUD visible and media active: delay hideHUD by 250ms so a rapid second tap can cancel it and register as double-tap
+            if (this.singleTapTimer) {
+              clearTimeout(this.singleTapTimer);
+            }
+            this.singleTapTimer = setTimeout(() => {
+              this.singleTapTimer = null;
+              this.hideHUD();
+            }, 250);
+            if (this.singleTapTimer && typeof this.singleTapTimer.unref === 'function') {
+              this.singleTapTimer.unref();
+            }
+          } else {
+            // If HUD visible and no media active: toggle HUD immediately
+            this.hideHUD();
+          }
         };
 
         this.stageElement.addEventListener('pointerdown', onStagePointerDown);
@@ -168,7 +270,41 @@
         });
       }
 
-      // 3. Dismiss button
+      // 3. Bottom bar pointer event isolation & button handlers
+      if (this.bottomBar) {
+        const onBottomBarPointer = (e) => {
+          if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+        };
+        const barEvents = ['pointerdown', 'pointerup', 'touchstart', 'touchend', 'click'];
+        barEvents.forEach((ev) => {
+          this.bottomBar.addEventListener(ev, onBottomBarPointer);
+          this.boundHandlers.push({ el: this.bottomBar, ev, fn: onBottomBarPointer });
+        });
+      }
+
+      // 4. Rewind button
+      if (this.rewindBtn) {
+        const onRewind = (e) => {
+          if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+          this.resetAutoFade();
+          this.handleRewind();
+        };
+        this.rewindBtn.addEventListener('click', onRewind);
+        this.boundHandlers.push({ el: this.rewindBtn, ev: 'click', fn: onRewind });
+      }
+
+      // 5. Fast Forward button
+      if (this.forwardBtn) {
+        const onForward = (e) => {
+          if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+          this.resetAutoFade();
+          this.handleFastForward();
+        };
+        this.forwardBtn.addEventListener('click', onForward);
+        this.boundHandlers.push({ el: this.forwardBtn, ev: 'click', fn: onForward });
+      }
+
+      // 6. Dismiss button
       if (this.dismissBtn) {
         const onDismiss = (e) => {
           if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
@@ -179,7 +315,7 @@
         this.boundHandlers.push({ el: this.dismissBtn, ev: 'click', fn: onDismiss });
       }
 
-      // 4. Play/Pause button
+      // 7. Play/Pause button
       if (this.playBtn) {
         const onPlayToggle = (e) => {
           if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
@@ -190,7 +326,7 @@
         this.boundHandlers.push({ el: this.playBtn, ev: 'click', fn: onPlayToggle });
       }
 
-      // 5. Mute button
+      // 8. Mute button
       if (this.muteBtn) {
         const onMuteToggle = (e) => {
           if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
@@ -201,7 +337,7 @@
         this.boundHandlers.push({ el: this.muteBtn, ev: 'click', fn: onMuteToggle });
       }
 
-      // 6. Volume slider interactions
+      // 9. Volume slider interactions
       if (this.volumeSlider) {
         const onSliderInput = (e) => {
           if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
@@ -298,6 +434,10 @@
 
       if (!stream) {
         this.hideHUD();
+        if (this.bottomBar) {
+          this.bottomBar.style.display = 'none';
+          this.bottomBar.setAttribute('hidden', 'true');
+        }
         return;
       }
 
@@ -310,9 +450,21 @@
         this.titleEl.textContent = stream.title || (stream.id ? `Stream: ${stream.id}` : 'Live Video');
       }
 
-      // Update Play/Pause visibility based on controllable gating
+      // Gate bottom bar visibility
+      const isMedia = Boolean(stream && (stream.controllable === true || (stream.priority === 'persistent' && Boolean(this.remoteUrl))));
+      if (this.bottomBar) {
+        if (isMedia) {
+          this.bottomBar.style.display = '';
+          this.bottomBar.removeAttribute('hidden');
+        } else {
+          this.bottomBar.style.display = 'none';
+          this.bottomBar.setAttribute('hidden', 'true');
+        }
+      }
+
+      // Update Play/Pause visibility based on controllable gating / isMedia
       if (this.playBtn) {
-        if (stream.controllable === true) {
+        if (isMedia) {
           this.playBtn.style.display = '';
           this.playBtn.removeAttribute('hidden');
         } else {
@@ -322,11 +474,13 @@
       }
 
       // Update Play/Pause icon based on player_state
-      if (this.playIcon && this.playBtn) {
-        const isPaused = stream.player_state === 'paused';
-        const iconType = isPaused ? 'play' : 'pause';
+      const isPaused = stream.player_state === 'paused';
+      const iconType = isPaused ? 'play' : 'pause';
+      if (this.playIcon) {
         this.playIcon.innerHTML = HUD_ICONS[iconType];
         if (this.playIcon.dataset) this.playIcon.dataset.icon = iconType;
+      }
+      if (this.playBtn) {
         this.playBtn.setAttribute('aria-label', isPaused ? 'Play' : 'Pause');
         this.playBtn.title = isPaused ? 'Play' : 'Pause';
       }
@@ -386,19 +540,99 @@
      * Dispatch play/pause toggle action with in-flight lock.
      */
     handlePlayPauseToggle() {
-      if (this.isActionPending || !this.activeStream || !this.activeStream.id) {
+      if (this.isActionPending) {
+        return;
+      }
+      const stream = this.getActiveStream();
+      if (!stream || !stream.id) {
         return;
       }
 
       this.isActionPending = true;
-      setTimeout(() => {
+      const timer = setTimeout(() => {
         this.isActionPending = false;
       }, 300);
+      if (timer && typeof timer.unref === 'function') timer.unref();
 
-      this.postAction({
-        id: this.activeStream.id,
-        action: 'toggle_playback',
-      });
+      if (stream.controllable && stream.control_url) {
+        this.postAction({
+          id: stream.id,
+          action: 'toggle_playback',
+        });
+      } else if (this.remoteUrl) {
+        this.postRemoteKey('play_pause');
+      } else if (stream.controllable) {
+        this.postAction({
+          id: stream.id,
+          action: 'toggle_playback',
+        });
+      }
+    }
+
+    /**
+     * Dispatch rewind action with in-flight lock.
+     */
+    handleRewind() {
+      if (this.isActionPending) {
+        return;
+      }
+      const stream = this.getActiveStream();
+      if (!stream || !stream.id) {
+        return;
+      }
+
+      this.isActionPending = true;
+      const timer = setTimeout(() => {
+        this.isActionPending = false;
+      }, 300);
+      if (timer && typeof timer.unref === 'function') timer.unref();
+
+      if (stream.controllable && stream.control_url) {
+        this.postAction({
+          id: stream.id,
+          action: 'rewind',
+        });
+      } else if (this.remoteUrl) {
+        this.postRemoteKey('rewind');
+      } else if (stream.controllable) {
+        this.postAction({
+          id: stream.id,
+          action: 'rewind',
+        });
+      }
+    }
+
+    /**
+     * Dispatch fast forward action with in-flight lock.
+     */
+    handleFastForward() {
+      if (this.isActionPending) {
+        return;
+      }
+      const stream = this.getActiveStream();
+      if (!stream || !stream.id) {
+        return;
+      }
+
+      this.isActionPending = true;
+      const timer = setTimeout(() => {
+        this.isActionPending = false;
+      }, 300);
+      if (timer && typeof timer.unref === 'function') timer.unref();
+
+      if (stream.controllable && stream.control_url) {
+        this.postAction({
+          id: stream.id,
+          action: 'fast_forward',
+        });
+      } else if (this.remoteUrl) {
+        this.postRemoteKey('fast_forward');
+      } else if (stream.controllable) {
+        this.postAction({
+          id: stream.id,
+          action: 'fast_forward',
+        });
+      }
     }
 
     /**
@@ -418,9 +652,10 @@
       }
 
       this.isActionPending = true;
-      setTimeout(() => {
+      const timer = setTimeout(() => {
         this.isActionPending = false;
       }, 300);
+      if (timer && typeof timer.unref === 'function') timer.unref();
 
       if (primaryId && pipId && primaryId !== pipId) {
         // When multiple streams are present (primary and PiP), dismiss all streams
@@ -441,9 +676,10 @@
       }
 
       this.isMutePending = true;
-      setTimeout(() => {
+      const timer = setTimeout(() => {
         this.isMutePending = false;
       }, 300);
+      if (timer && typeof timer.unref === 'function') timer.unref();
 
       const targetMuted = !this.currentMuted;
       this.postMute({
@@ -522,6 +758,17 @@
       });
     }
 
+    postRemoteKey(key) {
+      if (!this.fetchFn || !this.remoteUrl) return Promise.resolve();
+      return (0, this.fetchFn)(`${this.remoteUrl}/key`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key }),
+      }).catch((err) => {
+        console.warn('[MirrormereHUD] Remote key failed:', err);
+      });
+    }
+
     postDismiss(body) {
       if (!this.fetchFn) return Promise.resolve();
       return (0, this.fetchFn)('api/video/dismiss', {
@@ -560,6 +807,11 @@
      */
     destroy() {
       this.hideHUD();
+
+      if (this.singleTapTimer) {
+        clearTimeout(this.singleTapTimer);
+        this.singleTapTimer = null;
+      }
 
       if (this.throttleTimer) {
         clearTimeout(this.throttleTimer);

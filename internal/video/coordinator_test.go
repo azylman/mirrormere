@@ -454,8 +454,28 @@ func TestCoordinator_ForwardAction(t *testing.T) {
 	}
 	mu.Unlock()
 
+	// Success (rewind)
+	if err := coord.ForwardAction(context.Background(), "cast", ActionRewind, nil); err != nil {
+		t.Fatalf("expected success for rewind, got %v", err)
+	}
+	mu.Lock()
+	if receivedAction.ID != "cast" || receivedAction.Action != ActionRewind {
+		t.Fatalf("unexpected sidecar action received for rewind: %+v", receivedAction)
+	}
+	mu.Unlock()
+
+	// Success (fast_forward)
+	if err := coord.ForwardAction(context.Background(), "cast", ActionFastForward, nil); err != nil {
+		t.Fatalf("expected success for fast_forward, got %v", err)
+	}
+	mu.Lock()
+	if receivedAction.ID != "cast" || receivedAction.Action != ActionFastForward {
+		t.Fatalf("unexpected sidecar action received for fast_forward: %+v", receivedAction)
+	}
+	mu.Unlock()
+
 	// Invalid action
-	if err := coord.ForwardAction(context.Background(), "cast", "rewind", nil); !errors.Is(err, ErrInvalidAction) {
+	if err := coord.ForwardAction(context.Background(), "cast", "unknown_action", nil); !errors.Is(err, ErrInvalidAction) {
 		t.Fatalf("expected ErrInvalidAction, got %v", err)
 	}
 	if err := coord.ForwardAction(context.Background(), "", ActionPlay, nil); !errors.Is(err, ErrInvalidStream) {

@@ -336,7 +336,7 @@ func (c *Coordinator) ForwardAction(ctx context.Context, id, action string, valu
 		return ErrInvalidStream
 	}
 
-	if action != ActionTogglePlayback && action != ActionPlay && action != ActionPause {
+	if action != ActionTogglePlayback && action != ActionPlay && action != ActionPause && action != ActionRewind && action != ActionFastForward {
 		return ErrInvalidAction
 	}
 

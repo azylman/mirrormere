@@ -12,6 +12,12 @@ CONSUMER_KEYCODES: dict[str, int] = {
     "play": 0x00CD,      # Play/Pause
     "pause": 0x00CD,     # Play/Pause
     "playpause": 0x00CD, # Play/Pause
+    "play_pause": 0x00CD,# Play/Pause
+    "rewind": 0x00B4,
+    "fast_forward": 0x00B3,
+    "fastforward": 0x00B3,
+    "skip_backward": 0x00B6,
+    "skip_forward": 0x00B5,
     "volup": 0x00E9,     # Volume Increment
     "volume_up": 0x00E9,
     "voldown": 0x00EA,   # Volume Decrement
@@ -34,6 +40,13 @@ REMOTE_KEYCODES: dict[str, str] = {
     "home": "HOME",
     "play": "MEDIA_PLAY_PAUSE",
     "pause": "MEDIA_PLAY_PAUSE",
+    "playpause": "MEDIA_PLAY_PAUSE",
+    "play_pause": "MEDIA_PLAY_PAUSE",
+    "rewind": "MEDIA_REWIND",
+    "fast_forward": "MEDIA_FAST_FORWARD",
+    "fastforward": "MEDIA_FAST_FORWARD",
+    "media_rewind": "MEDIA_REWIND",
+    "media_fast_forward": "MEDIA_FAST_FORWARD",
     "volup": "VOLUME_UP",
     "voldown": "VOLUME_DOWN",
     "mute": "VOLUME_MUTE",

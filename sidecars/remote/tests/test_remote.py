@@ -104,6 +104,11 @@ class TestKeycodes(unittest.TestCase):
         self.assertEqual(lookup_consumer_key("home"), 0x0223)
         self.assertEqual(lookup_consumer_key("play"), 0x00CD)
         self.assertEqual(lookup_consumer_key("pause"), 0x00CD)
+        self.assertEqual(lookup_consumer_key("rewind"), 0x00B4)
+        self.assertEqual(lookup_consumer_key("fast_forward"), 0x00B3)
+        self.assertEqual(lookup_consumer_key("fastforward"), 0x00B3)
+        self.assertEqual(lookup_consumer_key("skip_backward"), 0x00B6)
+        self.assertEqual(lookup_consumer_key("skip_forward"), 0x00B5)
         self.assertEqual(lookup_consumer_key("volup"), 0x00E9)
         self.assertEqual(lookup_consumer_key("voldown"), 0x00EA)
         self.assertIsNone(lookup_consumer_key("unknown_key_xyz"))
@@ -123,12 +128,25 @@ class TestKeycodes(unittest.TestCase):
         self.assertEqual(lookup_remote_key("dpad_right"), "DPAD_RIGHT")
         self.assertEqual(lookup_remote_key("back"), "BACK")
         self.assertEqual(lookup_remote_key("home"), "HOME")
+        self.assertEqual(lookup_remote_key("rewind"), "MEDIA_REWIND")
+        self.assertEqual(lookup_remote_key("fast_forward"), "MEDIA_FAST_FORWARD")
+        self.assertEqual(lookup_remote_key("fastforward"), "MEDIA_FAST_FORWARD")
+        self.assertEqual(lookup_remote_key("media_rewind"), "MEDIA_REWIND")
+        self.assertEqual(lookup_remote_key("media_fast_forward"), "MEDIA_FAST_FORWARD")
         self.assertIsNone(lookup_remote_key("nonexistent_command"))
 
     def test_resolve_key_dispatch(self):
         hid, remote = resolve_key_dispatch("back")
         self.assertEqual(hid, 0x0224)
         self.assertEqual(remote, "BACK")
+
+        hid, remote = resolve_key_dispatch("rewind")
+        self.assertEqual(hid, 0x00B4)
+        self.assertEqual(remote, "MEDIA_REWIND")
+
+        hid, remote = resolve_key_dispatch("fast_forward")
+        self.assertEqual(hid, 0x00B3)
+        self.assertEqual(remote, "MEDIA_FAST_FORWARD")
 
         hid, remote = resolve_key_dispatch("up")
         self.assertIsNone(hid)

@@ -512,10 +512,19 @@
       if (window.MirrormereHUD && window.MirrormereHUD.VideoHUDController) {
         const overlayEl = document.getElementById('video-hud-overlay');
         const stageEl = document.getElementById('video-stage');
+        const bottomBarEl = document.getElementById('video-hud-bottom-bar');
+        const rewindBtn = document.getElementById('video-hud-rewind-btn');
+        const forwardBtn = document.getElementById('video-hud-forward-btn');
+        const playBtn = document.getElementById('video-hud-play-btn');
         window.videoHUD = new window.MirrormereHUD.VideoHUDController({
           overlayElement: overlayEl,
           stageElement: stageEl,
+          bottomBarElement: bottomBarEl,
+          rewindBtn: rewindBtn,
+          forwardBtn: forwardBtn,
+          playBtn: playBtn,
           videoManager: window.videoManager,
+          remoteUrl: window.videoManager?.remoteUrl,
         });
 
         if (window.videoManager && typeof window.videoManager.setHUD === 'function') {

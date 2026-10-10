@@ -22,8 +22,10 @@ const (
 
 // Defines values for VideoActionRequestAction.
 const (
+	FastForward    VideoActionRequestAction = "fast_forward"
 	Pause          VideoActionRequestAction = "pause"
 	Play           VideoActionRequestAction = "play"
+	Rewind         VideoActionRequestAction = "rewind"
 	TogglePlayback VideoActionRequestAction = "toggle_playback"
 )
 
