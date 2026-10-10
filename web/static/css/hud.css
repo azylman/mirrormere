@@ -132,33 +132,68 @@ html, body {
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
   border: var(--mm-border-hud);
-  border-radius: var(--mm-border-radius-md);
+  border-radius: var(--mm-border-radius-lg);
   box-shadow: var(--mm-card-shadow);
   position: relative;
   overflow: hidden;
   box-sizing: border-box;
 }
 
+/* Left Time Block: Side-by-side Clock & Two-Line Date */
 .header-time-block {
   display: flex;
-  flex-direction: column;
-  justify-content: center;
+  flex-direction: row;
+  align-items: center;
+  gap: 16px;
 }
 
 .header-clock {
   font-family: var(--mm-font-display);
-  font-size: 2.25rem;
+  font-size: 2.35rem;
   font-weight: 800;
   letter-spacing: -0.03em;
   color: var(--mm-text-title);
-  line-height: 1.1;
+  line-height: 1;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 2px;
 }
 
+.header-clock-ampm {
+  font-size: 1.05rem;
+  font-weight: 800;
+  color: var(--mm-coral);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  margin-left: 2px;
+}
+
+.header-date-stack,
 .header-date {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  line-height: 1.25;
+}
+
+.header-date-weekday {
   font-size: 0.95rem;
+  font-weight: 800;
+  color: var(--mm-text-title);
+  letter-spacing: -0.01em;
+}
+
+.header-date-full {
+  font-size: 0.8rem;
   font-weight: 700;
   color: var(--mm-text-dim);
-  margin-top: 2px;
+}
+
+/* Right Cluster: Weather Pill & System Health Jewel */
+.header-right-cluster {
+  display: flex;
+  align-items: center;
+  gap: 14px;
 }
 
 .header-weather {
@@ -170,20 +205,21 @@ html, body {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 16px;
+  padding: 6px 14px;
   background: var(--mm-bg-surface);
-  border: var(--mm-border-hud);
+  border: 1px solid var(--mm-card-border);
   border-radius: 9999px;
   font-size: 1.05rem;
   font-weight: 700;
   color: var(--mm-text-title);
-  box-shadow: 0 2px 8px rgba(90, 60, 30, 0.05);
+  box-shadow: 0 2px 6px rgba(90, 60, 30, 0.04);
 }
 
 .weather-temp {
   font-family: var(--mm-font-display);
   font-weight: 800;
   color: var(--mm-text-title);
+  letter-spacing: -0.01em;
 }
 
 .weather-condition {
@@ -194,19 +230,35 @@ html, body {
   line-height: 1;
 }
 
+.weather-condition svg,
 .weather-condition .mm-weather-icon {
+  width: 20px;
+  height: 20px;
+  stroke: var(--mm-coral);
   display: block;
 }
 
 .header-status {
   display: flex;
   align-items: center;
-  gap: 12px;
+}
+
+.status-jewel {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: #ecfdf5;
+  border: 1px solid #a7f3d0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 1px 3px rgba(16, 185, 129, 0.1);
+  transition: background 0.2s ease, border-color 0.2s ease;
 }
 
 .status-dot {
-  width: 12px;
-  height: 12px;
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
   background-color: var(--mm-status-ok);
   box-shadow: 0 0 6px rgba(56, 178, 143, 0.4);
@@ -216,6 +268,11 @@ html, body {
 .status-dot.status-degraded {
   background-color: var(--mm-status-degraded);
   box-shadow: 0 0 6px rgba(245, 158, 11, 0.4);
+}
+
+.status-dot.status-error {
+  background-color: var(--mm-status-error);
+  box-shadow: 0 0 6px rgba(244, 63, 122, 0.4);
 }
 
 .status-dot.status-error {
@@ -751,7 +808,7 @@ button, .touch-target {
   padding: 0 24px;
   background: linear-gradient(90deg, #fff7ed 0%, #ffffff 50%, #fdf2f8 100%);
   border: 2px solid var(--mm-coral);
-  border-radius: var(--mm-border-radius-md);
+  border-radius: var(--mm-border-radius-lg);
   box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.04);
   opacity: 0;
   visibility: hidden;
@@ -777,37 +834,53 @@ button, .touch-target {
   position: relative;
   flex-shrink: 0;
   box-shadow: 0 2px 8px rgba(255, 111, 89, 0.2);
+  transition: background-color 0.25s ease;
+}
+
+.voice-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--mm-coral);
+  z-index: 2;
+  position: relative;
+}
+
+.voice-icon svg,
+.voice-icon .mm-voice-icon-svg {
+  width: 24px;
+  height: 24px;
+  stroke: currentColor;
+  display: block;
+}
+
+.voice-indicator.speaking .voice-icon {
+  color: var(--mm-mint);
+}
+
+.voice-indicator.thinking .voice-icon,
+.voice-indicator.transcribing .voice-icon {
+  color: var(--mm-honey);
 }
 
 .voice-dot {
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  background-color: var(--mm-coral);
-  position: relative;
-  z-index: 2;
-  transition: background-color 0.2s ease, box-shadow 0.2s ease;
+  display: none;
 }
 
 .voice-pulse-ring {
   position: absolute;
   top: 50%;
   left: 50%;
-  width: 24px;
-  height: 24px;
-  margin-top: -12px;
-  margin-left: -12px;
+  width: 36px;
+  height: 36px;
+  margin-top: -18px;
+  margin-left: -18px;
   border-radius: 50%;
-  background: radial-gradient(circle, rgba(255, 111, 89, 0.6) 0%, rgba(255, 111, 89, 0.2) 60%, transparent 100%);
+  background: radial-gradient(circle, rgba(255, 111, 89, 0.5) 0%, rgba(255, 111, 89, 0.15) 60%, transparent 100%);
   z-index: 1;
   pointer-events: none;
   opacity: 0;
-  transform: scale(0.5);
-}
-
-.voice-indicator.listening .voice-dot {
-  background-color: var(--mm-coral);
-  box-shadow: 0 0 10px rgba(255, 111, 89, 0.6);
+  transform: scale(0.6);
 }
 
 .voice-indicator.listening .voice-pulse-ring {
@@ -820,19 +893,23 @@ button, .touch-target {
   100% { transform: scale(2.2); opacity: 0; }
 }
 
-.voice-indicator.thinking .voice-dot,
-.voice-indicator.transcribing .voice-dot {
-  background-color: var(--mm-honey);
-  box-shadow: 0 0 8px rgba(245, 158, 11, 0.5);
+.voice-indicator.thinking {
+  background: var(--mm-honey-light);
+}
+
+.voice-indicator.thinking .voice-pulse-ring,
+.voice-indicator.transcribing .voice-pulse-ring {
+  background: radial-gradient(circle, rgba(245, 158, 11, 0.5) 0%, rgba(245, 158, 11, 0.15) 60%, transparent 100%);
+  animation: voicePulse 1.6s cubic-bezier(0.25, 1, 0.5, 1) infinite;
 }
 
 .voice-indicator.speaking {
   background: var(--mm-mint-light);
 }
 
-.voice-indicator.speaking .voice-dot {
-  background-color: var(--mm-mint);
-  box-shadow: 0 0 8px rgba(56, 178, 143, 0.5);
+.voice-indicator.speaking .voice-pulse-ring {
+  background: radial-gradient(circle, rgba(56, 178, 143, 0.5) 0%, rgba(56, 178, 143, 0.15) 60%, transparent 100%);
+  animation: voicePulse 2s cubic-bezier(0.25, 1, 0.5, 1) infinite;
 }
 
 /* User asked to omit verbose labels like "listening..." */
@@ -852,10 +929,45 @@ button, .touch-target {
   font-style: italic;
   flex: 1;
   margin: 0 24px;
-  text-align: center;
+  text-align: left;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.header-voice-dismiss {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: #ffffff;
+  border: 1px solid rgba(90, 60, 30, 0.1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.95rem;
+  font-weight: 800;
+  color: var(--mm-text-title);
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(90, 60, 30, 0.06);
+  transition: background 0.15s ease, transform 0.1s ease;
+  flex-shrink: 0;
+}
+
+.header-voice-dismiss:hover {
+  background: #f5f1e8;
+}
+
+.header-voice-dismiss:active {
+  transform: scale(0.95);
+}
+
+.voice-audio-progress {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, var(--mm-coral) 0%, var(--mm-honey) 50%, var(--mm-mint) 100%);
 }
 
 /* Voice Toast Dock (User strongly disliked bottom toast; replaced by full-header takeover) */

@@ -12,6 +12,10 @@
     'speaking',
   ]);
 
+  const VOICE_SVG_MIC = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="mm-voice-icon-svg"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="22"></line></svg>';
+  const VOICE_SVG_THINK = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="mm-voice-icon-svg"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"></path></svg>';
+  const VOICE_SVG_SPARKLE = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="mm-voice-icon-svg"><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"></path></svg>';
+
   /**
    * VoiceHUDController coordinates voice UI indicators, caption toasts, and video audio ducking.
    */
@@ -232,6 +236,9 @@
         this.voiceIndicator.classList.add('listening');
       }
 
+      const voiceIcon = typeof document !== 'undefined' ? document.getElementById('voice-icon') : null;
+      if (voiceIcon) voiceIcon.innerHTML = VOICE_SVG_MIC;
+
       if (this.voiceLabel) {
         this.voiceLabel.textContent = 'Listening...';
       }
@@ -262,6 +269,9 @@
         this.voiceIndicator.classList.add('transcribing');
       }
 
+      const voiceIconTrans = typeof document !== 'undefined' ? document.getElementById('voice-icon') : null;
+      if (voiceIconTrans) voiceIconTrans.innerHTML = VOICE_SVG_MIC;
+
       if (this.voiceLabel) {
         this.voiceLabel.textContent = 'Transcribing...';
       }
@@ -284,6 +294,9 @@
         this.voiceIndicator.classList.remove('listening', 'transcribing', 'speaking');
         this.voiceIndicator.classList.add('thinking');
       }
+
+      const voiceIconThinking = typeof document !== 'undefined' ? document.getElementById('voice-icon') : null;
+      if (voiceIconThinking) voiceIconThinking.innerHTML = VOICE_SVG_THINK;
 
       if (this.voiceLabel) {
         this.voiceLabel.textContent = 'Thinking...';
@@ -316,6 +329,9 @@
         this.voiceIndicator.classList.add('thinking');
       }
 
+      const voiceIconSynth = typeof document !== 'undefined' ? document.getElementById('voice-icon') : null;
+      if (voiceIconSynth) voiceIconSynth.innerHTML = VOICE_SVG_THINK;
+
       if (this.voiceLabel) {
         this.voiceLabel.textContent = 'Synthesizing...';
       }
@@ -344,6 +360,12 @@
         this.voiceIndicator.classList.remove('listening', 'transcribing', 'thinking');
         this.voiceIndicator.classList.add('speaking');
       }
+
+      const voiceIconSpeaking = typeof document !== 'undefined' ? document.getElementById('voice-icon') : null;
+      if (voiceIconSpeaking) voiceIconSpeaking.innerHTML = VOICE_SVG_SPARKLE;
+
+      const audioProgress = typeof document !== 'undefined' ? document.getElementById('voice-audio-progress') : null;
+      if (audioProgress) audioProgress.style.display = 'block';
 
       if (this.voiceLabel) {
         this.voiceLabel.textContent = 'Speaking...';
@@ -439,6 +461,11 @@
       if (this.voiceLabel) {
         this.voiceLabel.textContent = '';
       }
+      const voiceIcon = typeof document !== 'undefined' ? document.getElementById('voice-icon') : null;
+      if (voiceIcon) voiceIcon.innerHTML = VOICE_SVG_MIC;
+      const audioProgress = typeof document !== 'undefined' ? document.getElementById('voice-audio-progress') : null;
+      if (audioProgress) audioProgress.style.display = 'none';
+
       if (this.voiceTranscript) {
         this.voiceTranscript.textContent = '';
         this.voiceTranscript.style.display = 'none';
