@@ -1928,3 +1928,140 @@ func TestHelpers_CalendarFamilyMonthView(t *testing.T) {
 	}
 }
 
+func TestCalendarFamily_MonthViewTemplateRender_6x2(t *testing.T) {
+	t.Parallel()
+
+	snap := provider.CalendarSnapshot{
+		LastSync: "2026-09-27T12:00:00Z",
+		Events: []provider.CalendarEvent{
+			{ID: "e1", CalendarName: "alex-personal", Title: "Parent Teacher Night", Start: "2026-09-27T18:00:00Z", End: "2026-09-27T19:00:00Z"},
+			{ID: "e2", CalendarName: "school", Title: "Fall Break", Start: "2026-09-15", End: "2026-09-18", AllDay: true},
+			{ID: "e3", CalendarName: "holidays", Title: "Town Fair", Start: "2026-09-20T10:00:00Z", End: "2026-09-20T12:00:00Z"},
+		},
+	}
+
+	cfg := baseFamilyConfig()
+	cfg["default_view"] = "month"
+	cfg["date"] = "2026-09-27"
+
+	ctx := Context{
+		ID:         "test-family-month-6x2",
+		Type:       "calendar-family",
+		Dimensions: domain.NewDimension(6, 2),
+		Data:       snap,
+		Config:     cfg,
+	}
+
+	html := renderFamilyWidgetTemplate(t, ctx, testNow)
+
+	// Verify root container & class
+	if !strings.Contains(html, "cf-view-month") {
+		t.Errorf("expected 'cf-view-month' in rendered output: %s", html)
+	}
+	// Verify CSS variable declarations for members
+	if !strings.Contains(html, "--mm-member-0: #E07A5F") {
+		t.Errorf("expected --mm-member-0 in html: %s", html)
+	}
+	// Verify Month label
+	if !strings.Contains(html, "September 2026") {
+		t.Errorf("expected 'September 2026' in html: %s", html)
+	}
+	// Verify Weekday headers
+	if !strings.Contains(html, "cf-month-weekdays") || !strings.Contains(html, "cf-weekday-header") {
+		t.Errorf("expected weekday headers in html: %s", html)
+	}
+	if !strings.Contains(html, ">Sun<") || !strings.Contains(html, ">Sat<") {
+		t.Errorf("expected Sunday and Saturday in weekday headers: %s", html)
+	}
+	// Verify Month grid container
+	if !strings.Contains(html, "cf-month-grid") {
+		t.Errorf("expected cf-month-grid in html: %s", html)
+	}
+	// Verify current day styling & outline
+	if !strings.Contains(html, "cf-today") || !strings.Contains(html, "cf-today-num") {
+		t.Errorf("expected cf-today and cf-today-num in html: %s", html)
+	}
+	// Verify other month dimming
+	if !strings.Contains(html, "cf-other-month") {
+		t.Errorf("expected cf-other-month in html: %s", html)
+	}
+	// Verify member dot chips colored with --mm-member-N
+	if !strings.Contains(html, "cf-month-dot") || !strings.Contains(html, "var(--mm-member-0") {
+		t.Errorf("expected cf-month-dot and var(--mm-member-0) in html: %s", html)
+	}
+	// Verify unclaimed/shared dot uses shared color variable
+	if !strings.Contains(html, "var(--mm-cf-shared") {
+		t.Errorf("expected var(--mm-cf-shared) in html: %s", html)
+	}
+	// Verify primary event title rendered on 6x2
+	if !strings.Contains(html, "cf-month-event-title") || !strings.Contains(html, "Parent Teacher Night") {
+		t.Errorf("expected event title 'Parent Teacher Night' in html: %s", html)
+	}
+}
+
+func TestCalendarFamily_MonthViewTemplateRender_4x2(t *testing.T) {
+	t.Parallel()
+
+	snap := provider.CalendarSnapshot{
+		LastSync: "2026-09-27T12:00:00Z",
+		Events: []provider.CalendarEvent{
+			{ID: "e1", CalendarName: "alex-personal", Title: "Parent Teacher Night", Start: "2026-09-27T18:00:00Z", End: "2026-09-27T19:00:00Z"},
+		},
+	}
+
+	cfg := baseFamilyConfig()
+	cfg["default_view"] = "month"
+	cfg["date"] = "2026-09-27"
+
+	ctx := Context{
+		ID:         "test-family-month-4x2",
+		Type:       "calendar-family",
+		Dimensions: domain.NewDimension(4, 2),
+		Data:       snap,
+		Config:     cfg,
+	}
+
+	html := renderFamilyWidgetTemplate(t, ctx, testNow)
+
+	if !strings.Contains(html, "cf-view-month") {
+		t.Errorf("expected 'cf-view-month' in rendered output: %s", html)
+	}
+	// On 4x2, member dots are present
+	if !strings.Contains(html, "cf-month-dot") {
+		t.Errorf("expected member dots on 4x2: %s", html)
+	}
+	// On 4x2, event titles are omitted (dots-only)
+	if strings.Contains(html, "cf-month-event-title") || strings.Contains(html, "Parent Teacher Night") {
+		t.Errorf("expected event title to be omitted on 4x2 layout: %s", html)
+	}
+}
+
+func TestCalendarFamily_MonthViewTemplateRender_Empty(t *testing.T) {
+	t.Parallel()
+
+	cfg := baseFamilyConfig()
+	cfg["default_view"] = "month"
+	cfg["date"] = "2026-09-27"
+
+	ctx := Context{
+		ID:         "test-family-month-empty",
+		Type:       "calendar-family",
+		Dimensions: domain.NewDimension(6, 2),
+		Data:       provider.CalendarSnapshot{},
+		Config:     cfg,
+	}
+
+	html := renderFamilyWidgetTemplate(t, ctx, testNow)
+
+	if !strings.Contains(html, "cf-view-month") {
+		t.Errorf("expected 'cf-view-month' in rendered output: %s", html)
+	}
+	if !strings.Contains(html, "September 2026") {
+		t.Errorf("expected 'September 2026' in html: %s", html)
+	}
+	// Should render 42 day cells even when empty of events
+	if !strings.Contains(html, "cf-month-day") {
+		t.Errorf("expected cf-month-day in html: %s", html)
+	}
+}
+
