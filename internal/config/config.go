@@ -59,6 +59,7 @@ type HeaderWeatherConfig struct {
 	Latitude               float64 `yaml:"latitude"`
 	Longitude              float64 `yaml:"longitude"`
 	Units                  string  `yaml:"units,omitempty"`
+	Location               string  `yaml:"location,omitempty"`
 }
 
 // GetRefreshIntervalSeconds returns the weather polling cadence in seconds (default: 900).

@@ -8,6 +8,9 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>Mirrormere</title>
   <base href="./">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Comfortaa:wght@600;700&family=Nunito:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" id="hud-stylesheet" href="style.css">
 </head>
 <body data-timezone="{{ .Timezone }}"{{ if .HideCursor }} class="mm-touch-display"{{ end }}{{ if .RemoteURL }} data-remote-url="{{ .RemoteURL }}"{{ end }}>
@@ -21,10 +24,18 @@
       </div>
       <div class="header-right-cluster">
         <div class="header-weather" id="header-weather">
-          <span class="pill-badge weather-pill" id="weather-pill">
-            <span class="weather-condition" id="weather-condition"></span>
-            <span class="weather-temp" id="weather-temp">--°</span>
-          </span>
+          <div class="pill-badge weather-pill" id="weather-pill">
+            <span class="weather-condition" id="weather-condition">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" class="mm-weather-icon mm-icon-weather-partly-cloudy"><circle cx="16" cy="9" r="4" fill="#f59e0b"/><g stroke="#f59e0b" stroke-width="1.8" stroke-linecap="round"><line x1="16" y1="2" x2="16" y2="3.5"/><line x1="21.5" y1="6" x2="20" y2="7"/><line x1="21.5" y1="12" x2="20" y2="11"/><line x1="11.5" y1="4" x2="12.5" y2="5"/></g><path d="M15.5 19H7a4.5 4.5 0 0 1-.8-8.9A5.5 5.5 0 0 1 16.8 11 3.5 3.5 0 0 1 15.5 19z" fill="#ffffff" stroke="#94a3b8" stroke-width="1.6" stroke-linejoin="round"/></svg>
+            </span>
+            <div class="weather-details" id="weather-details">
+              <div class="weather-primary-row">
+                <span class="weather-temp" id="weather-temp">--°</span>
+                <span class="weather-location" id="weather-location">Oakland</span>
+              </div>
+              <span class="weather-desc" id="weather-desc">Sunny &amp; Mild</span>
+            </div>
+          </div>
         </div>
         <div class="header-status">
           <div class="status-jewel" title="System: Connected &amp; Synced">

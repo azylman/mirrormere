@@ -25,6 +25,7 @@ display:
     # Autonomous header weather poller hydrating header.update
     weather:
       refresh_interval_seconds: 900
+      location: "Oakland"
       latitude: 37.8044
       longitude: -122.2712
       units: imperial

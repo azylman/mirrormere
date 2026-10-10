@@ -31,6 +31,12 @@
         },
         "icon": {
           "type": "string"
+        },
+        "condition": {
+          "type": "string"
+        },
+        "location": {
+          "type": "string"
         }
       },
       "additionalProperties": false

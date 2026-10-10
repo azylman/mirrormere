@@ -215,13 +215,19 @@ func (p *HeaderWeatherPoller) FetchOnce(ctx context.Context) (*events.HeaderWeat
 		return nil, fmt.Errorf("failed to decode header Open-Meteo response: %w", err)
 	}
 
-	_, iconToken := MapWMOCode(data.Current.WeatherCode)
+	condText, iconToken := MapWMOCode(data.Current.WeatherCode)
+	loc := cfg.Location
+	if loc == "" {
+		loc = "Oakland"
+	}
 
 	hw := &events.HeaderWeather{
 		Temperature: data.Current.Temperature2m,
 		Units:       unitLabel,
 		WeatherCode: data.Current.WeatherCode,
 		Icon:        iconToken,
+		Condition:   condText,
+		Location:    loc,
 	}
 
 	if p.stateSink != nil {

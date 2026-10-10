@@ -1,3 +1,5 @@
+@import url('https://fonts.googleapis.com/css2?family=Comfortaa:wght@600;700&family=Nunito:wght@400;500;600;700;800&display=swap');
+
 /* ==========================================================================
    Mirrormere Default Stylesheet: Pastel Bento Theme (Touch Kiosk / Desktop)
    Complies with SPEC-001, SPEC-003, SPEC-004, SPEC-007, SPEC-010, SPEC-011
@@ -215,27 +217,68 @@ html, body {
   box-shadow: 0 2px 6px rgba(90, 60, 30, 0.04);
 }
 
-.weather-temp {
-  font-family: var(--mm-font-display);
-  font-weight: 800;
-  color: var(--mm-text-title);
-  letter-spacing: -0.01em;
+.weather-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 16px 6px 12px;
+  background: var(--mm-bg-surface);
+  border: 1.5px solid rgba(90, 60, 30, 0.09);
+  border-radius: 9999px;
+  box-shadow: 0 4px 12px -2px rgba(130, 100, 70, 0.08);
 }
 
 .weather-condition {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: var(--mm-coral);
   line-height: 1;
+  flex-shrink: 0;
 }
 
 .weather-condition svg,
 .weather-condition .mm-weather-icon {
-  width: 20px;
-  height: 20px;
-  stroke: var(--mm-coral);
+  width: 24px;
+  height: 24px;
   display: block;
+}
+
+.weather-details {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  line-height: 1.15;
+}
+
+.weather-primary-row {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+}
+
+.weather-temp {
+  font-family: var(--mm-font-display);
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--mm-text-title);
+  letter-spacing: -0.01em;
+  line-height: 1;
+}
+
+.weather-location {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--mm-text-dim);
+  line-height: 1;
+}
+
+.weather-desc {
+  font-size: 0.65rem;
+  font-weight: 800;
+  color: var(--mm-mint);
+  letter-spacing: 0.01em;
+  line-height: 1.2;
+  text-transform: capitalize;
 }
 
 .header-status {
