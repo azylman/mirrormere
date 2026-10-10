@@ -10,7 +10,7 @@
   <base href="./">
   <link rel="stylesheet" id="hud-stylesheet" href="style.css">
 </head>
-<body data-timezone="{{ .Timezone }}"{{ if .HideCursor }} class="mm-touch-kiosk"{{ end }}{{ if .RemoteURL }} data-remote-url="{{ .RemoteURL }}"{{ end }}>
+<body data-timezone="{{ .Timezone }}"{{ if .HideCursor }} class="mm-touch-display"{{ end }}{{ if .RemoteURL }} data-remote-url="{{ .RemoteURL }}"{{ end }}>
   <div id="mirrormere-app" data-timezone="{{ .Timezone }}">
     <header class="header-zone">
       <div class="header-time-block">

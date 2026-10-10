@@ -14,7 +14,7 @@
 services:
   mirrormere-ear:
     build:
-      context: ../../clients/ear
+      context: ../../client/ear
       dockerfile: Dockerfile
     image: ghcr.io/azylman/mirrormere-ear:latest
     container_name: mirrormere-ear
@@ -33,12 +33,12 @@ services:
     group_add:
       - "29" # audio (adjust to host audio GID: `getent group audio`)
     environment:
-      - MIRRORMERE_NODE_ID=${MIRRORMERE_NODE_ID:-touch-kiosk-kitchen}
-      - MIRRORMERE_URL=${MIRRORMERE_URL:-http://192.168.1.14/kiosk}
-      - MIRRORMERE_HUB_URL=${MIRRORMERE_HUB_URL:-http://192.168.1.14/kiosk/api/voice/interact}
+      - MIRRORMERE_NODE_ID=${MIRRORMERE_NODE_ID:-display-1}
+      - MIRRORMERE_URL=${MIRRORMERE_URL:-http://localhost:8080}
+      - MIRRORMERE_HUB_URL=${MIRRORMERE_HUB_URL:-http://localhost:9000/api/voice/interact}
       - MIRRORMERE_VOICE_CONFIG=/config/voice.yaml
       - MIRRORMERE_HEARTBEAT_FILE=/tmp/ear.heartbeat
-      - MIRRORMERE_AUDIO_DEVICE=${MIRRORMERE_AUDIO_DEVICE:-plughw:CARD=SF558,DEV=0} # Example mic (check `arecord -l`)
+      - MIRRORMERE_AUDIO_DEVICE=${MIRRORMERE_AUDIO_DEVICE:-default} # Example mic (check `arecord -l`)
       - PULSE_SERVER=${PULSE_SERVER:-unix:/run/user/1000/pulse/native}
     volumes:
       - ./config/voice.yaml:/config/voice.yaml:ro
@@ -81,7 +81,7 @@ services:
   cast-watcher:
     build:
       context: ../..
-      dockerfile: sidecars/cast-watcher/Dockerfile
+      dockerfile: client/cast-watcher/Dockerfile
     image: ghcr.io/azylman/mirrormere-cast-watcher:latest
     container_name: mirrormere-cast-watcher
     restart: unless-stopped

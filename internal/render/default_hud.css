@@ -66,7 +66,11 @@ html, body {
   touch-action: pan-x pan-y;
 }
 
-/* Appliance-Grade Kiosk Cursor Suppression (Touch Kiosks Only) */
+/* Appliance-Grade Display Cursor Suppression (Touch Displays Only) */
+.mm-touch-display,
+.mm-touch-display *,
+.mm-touch-display *::before,
+.mm-touch-display *::after,
 .mm-touch-kiosk,
 .mm-touch-kiosk *,
 .mm-touch-kiosk *::before,

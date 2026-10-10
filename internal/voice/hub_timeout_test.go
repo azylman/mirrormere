@@ -139,7 +139,7 @@ func TestHub_ThinkingHeartbeat_UnaryBrain(t *testing.T) {
 	)
 
 	wav := makeValidWAV(1600)
-	err := h.Interact(context.Background(), bytes.NewReader(wav), "kiosk-1", "sess-1", sink, EdgeTimings{})
+	err := h.Interact(context.Background(), bytes.NewReader(wav), "display-1", "sess-1", sink, EdgeTimings{})
 	if err != nil {
 		t.Fatalf("expected successful interaction, got: %v", err)
 	}
@@ -190,7 +190,7 @@ func TestHub_ThinkingHeartbeat_StreamingBrain(t *testing.T) {
 	)
 
 	wav := makeValidWAV(1600)
-	err := h.Interact(context.Background(), bytes.NewReader(wav), "kiosk-1", "sess-1", sink, EdgeTimings{})
+	err := h.Interact(context.Background(), bytes.NewReader(wav), "display-1", "sess-1", sink, EdgeTimings{})
 	if err != nil {
 		t.Fatalf("expected successful interaction, got: %v", err)
 	}
@@ -246,7 +246,7 @@ func TestHub_BrainDeliberation_Timeout_Unary(t *testing.T) {
 	)
 
 	wav := makeValidWAV(1600)
-	err := h.Interact(context.Background(), bytes.NewReader(wav), "kiosk-kitchen", "sess-1", sink, EdgeTimings{})
+	err := h.Interact(context.Background(), bytes.NewReader(wav), "display-kitchen", "sess-1", sink, EdgeTimings{})
 	if err == nil {
 		t.Fatalf("expected timeout error, got nil")
 	}
@@ -310,7 +310,7 @@ func TestHub_BrainDeliberation_Timeout_Streaming(t *testing.T) {
 	)
 
 	wav := makeValidWAV(1600)
-	err := h.Interact(context.Background(), bytes.NewReader(wav), "kiosk-kitchen", "sess-1", sink, EdgeTimings{})
+	err := h.Interact(context.Background(), bytes.NewReader(wav), "display-kitchen", "sess-1", sink, EdgeTimings{})
 	if err == nil {
 		t.Fatalf("expected timeout error, got nil")
 	}
@@ -346,7 +346,7 @@ func TestHub_TTS_Timeout(t *testing.T) {
 	)
 
 	wav := makeValidWAV(1600)
-	err := h.Interact(context.Background(), bytes.NewReader(wav), "kiosk-kitchen", "sess-1", sink, EdgeTimings{})
+	err := h.Interact(context.Background(), bytes.NewReader(wav), "display-kitchen", "sess-1", sink, EdgeTimings{})
 	if err != nil {
 		t.Fatalf("expected graceful degradation on TTS timeout, got err: %v", err)
 	}
@@ -421,7 +421,7 @@ func TestHub_ClientCancellation_DoesNotReportBrainTimeout(t *testing.T) {
 	}
 
 	wav := makeValidWAV(1600)
-	_ = h.Interact(ctx, bytes.NewReader(wav), "kiosk-kitchen", "sess-1", wrappedSink, EdgeTimings{})
+	_ = h.Interact(ctx, bytes.NewReader(wav), "display-kitchen", "sess-1", wrappedSink, EdgeTimings{})
 
 	if hasErrorCode(getEvents(), "brain_timeout") {
 		t.Errorf("client cancellation must not report brain_timeout error")
@@ -807,7 +807,7 @@ func TestHub_BrainStreaming_InactivityTimeout_LongReply(t *testing.T) {
 	)
 
 	wav := makeValidWAV(1600)
-	err := h.Interact(context.Background(), bytes.NewReader(wav), "kiosk-kitchen", "sess-long", sink, EdgeTimings{})
+	err := h.Interact(context.Background(), bytes.NewReader(wav), "display-kitchen", "sess-long", sink, EdgeTimings{})
 	if err != nil {
 		t.Fatalf("expected turn to complete successfully, got err: %v", err)
 	}
@@ -874,7 +874,7 @@ func TestHub_BrainStreaming_InactivityTimeout_MidStreamStall(t *testing.T) {
 	)
 
 	wav := makeValidWAV(1600)
-	err := h.Interact(context.Background(), bytes.NewReader(wav), "kiosk-kitchen", "sess-stall", sink, EdgeTimings{})
+	err := h.Interact(context.Background(), bytes.NewReader(wav), "display-kitchen", "sess-stall", sink, EdgeTimings{})
 	if err == nil {
 		t.Fatalf("expected error due to inactivity timeout stall, got nil")
 	}
@@ -931,7 +931,7 @@ func TestHub_BrainStreaming_StatusEvent_ResetsTimeout(t *testing.T) {
 	)
 
 	wav := makeValidWAV(1600)
-	err := h.Interact(context.Background(), bytes.NewReader(wav), "kiosk-kitchen", "sess-status", sink, EdgeTimings{})
+	err := h.Interact(context.Background(), bytes.NewReader(wav), "display-kitchen", "sess-status", sink, EdgeTimings{})
 	if err != nil {
 		t.Fatalf("expected turn to complete cleanly after status reset, got err: %v", err)
 	}

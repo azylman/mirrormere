@@ -549,7 +549,7 @@ func TestDefaultVoiceHandler_PostVoiceInteract(t *testing.T) {
 		h := server.NewDefaultVoiceHandler(nil, hub)
 
 		req, err := createMultipartAudioRequest(http.MethodPost, "/api/voice/interact", "audio", "sample.wav", dummyWAV, map[string]string{
-			"node_id":    "kiosk-1",
+			"node_id":    "display-1",
 			"session_id": "sess-xyz",
 		})
 		if err != nil {
@@ -567,8 +567,8 @@ func TestDefaultVoiceHandler_PostVoiceInteract(t *testing.T) {
 		if accel := rec.Header().Get("X-Accel-Buffering"); accel != "no" {
 			t.Errorf("expected X-Accel-Buffering no, got %q", accel)
 		}
-		if capturedNodeID != "kiosk-1" {
-			t.Errorf("expected node_id kiosk-1, got %q", capturedNodeID)
+		if capturedNodeID != "display-1" {
+			t.Errorf("expected node_id display-1, got %q", capturedNodeID)
 		}
 		if capturedSessionID != "sess-xyz" {
 			t.Errorf("expected session_id sess-xyz, got %q", capturedSessionID)
@@ -631,7 +631,7 @@ func TestDefaultVoiceHandler_PostVoiceInteract(t *testing.T) {
 		h := server.NewDefaultVoiceHandler(nil, hub)
 
 		req, err := createMultipartAudioRequest(http.MethodPost, "/api/voice/interact", "audio", "sample.wav", dummyWAV, map[string]string{
-			"node_id":    "touch-kiosk-kitchen",
+			"node_id":    "display-kitchen",
 			"session_id": "custom-sess-123",
 		})
 		if err != nil {
@@ -643,8 +643,8 @@ func TestDefaultVoiceHandler_PostVoiceInteract(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Fatalf("expected 200 OK, got %d: %s", rec.Code, rec.Body.String())
 		}
-		if capturedNodeID != "touch-kiosk-kitchen" {
-			t.Errorf("expected node_id touch-kiosk-kitchen, got %q", capturedNodeID)
+		if capturedNodeID != "display-kitchen" {
+			t.Errorf("expected node_id display-kitchen, got %q", capturedNodeID)
 		}
 		if capturedSessionID != "custom-sess-123" {
 			t.Errorf("expected session_id custom-sess-123, got %q", capturedSessionID)

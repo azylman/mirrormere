@@ -64,7 +64,7 @@ services:
     profiles: ["video"]
     build:
       context: ..
-      dockerfile: sidecars/cast-watcher/Dockerfile
+      dockerfile: client/cast-watcher/Dockerfile
     image: ghcr.io/azylman/mirrormere-cast-watcher:latest
     container_name: mirrormere-cast-watcher
     restart: unless-stopped

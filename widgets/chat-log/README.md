@@ -39,7 +39,7 @@ request.
 
 | Device | Display URL |
 |---|---|
-| Wall kiosk | `deploy/kiosk/session.sh` appends `?node=<id>` itself, taking the id from `MIRRORMERE_NODE_ID` or the ear config (`/etc/mirrormere/voice.yaml`), so it is set once per device |
+| Wall display | `deploy/display/session.sh` appends `?node=<id>` itself, taking the id from `MIRRORMERE_NODE_ID` or the ear config (`/etc/mirrormere/voice.yaml`), so it is set once per device |
 | E-ink renderer | `DISPLAY_URL=http://mirrormere-core:8080/display?node=eink-display-livingroom` |
 
 With no `node` parameter the widget shows the most recently active node's

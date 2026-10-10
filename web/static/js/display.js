@@ -436,9 +436,9 @@
     if (typeof window !== 'undefined' && window.location && window.location.search && typeof document !== 'undefined' && document.body) {
       const urlParams = new URLSearchParams(window.location.search);
       if (urlParams.get('hide_cursor') === 'true' || urlParams.get('cursor') === 'none') {
-        document.body.classList.add('mm-touch-kiosk');
+        document.body.classList.add('mm-touch-display', 'mm-touch-kiosk');
       } else if (urlParams.get('hide_cursor') === 'false' || urlParams.get('cursor') === 'visible') {
-        document.body.classList.remove('mm-touch-kiosk');
+        document.body.classList.remove('mm-touch-display', 'mm-touch-kiosk');
       }
     }
   }

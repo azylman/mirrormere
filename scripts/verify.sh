@@ -203,15 +203,15 @@ run_node_tests() {
     fi
 }
 
-# 8. Python Client Tests (E-Ink & Voice)
+# 8. Python Client Tests (E-Ink, Voice & Remote)
 run_python_tests() {
     if has_cmd python3; then
         echo "   [python test] Running e-ink node client test suite..."
-        PYTHONPATH="clients/eink-node" python3 -m unittest discover -s clients/eink-node/tests -p "test_*.py"
+        PYTHONPATH="client/eink-node" python3 -m unittest discover -s client/eink-node/tests -p "test_*.py"
         echo "   [python test] Running edge ear (voice) daemon test suite..."
-        PYTHONPATH="." python3 -m unittest discover -s clients/ear/tests -p "test_*.py"
-        echo "   [python test] Running remote (bluetooth/chromecast) sidecar test suite..."
-        PYTHONPATH="sidecars/remote" python3 -m unittest discover -s sidecars/remote/tests -p "test_*.py"
+        PYTHONPATH="." python3 -m unittest discover -s client/ear/tests -p "test_*.py"
+        echo "   [python test] Running remote (bluetooth/chromecast) client test suite..."
+        PYTHONPATH="client/remote" python3 -m unittest discover -s client/remote/tests -p "test_*.py"
     fi
 }
 
