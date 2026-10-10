@@ -176,6 +176,19 @@
     word-break: break-word;
     white-space: pre-wrap;
   }
+  .cf-sync-indicator {
+    display: inline-flex;
+    align-items: center;
+    font-size: 0.65rem;
+    font-weight: 700;
+    padding: 1px 6px;
+    border-radius: 4px;
+    background: rgba(168, 85, 247, 0.18);
+    border: 1px solid var(--mm-accent-purple, #a855f7);
+    color: #e9d5ff;
+    letter-spacing: 0.02em;
+    animation: cfModalFadeIn 0.15s ease-out;
+  }
 </style>
 {{ if isDayView .Config }}
   {{ $dayView := dayView .Data .Config .Dimensions }}
@@ -340,7 +353,9 @@
   {{ $view := calendarFamilyView .Data .Config .Dimensions }}
   <div class="widget-card widget-calendar-family cf-view-week" data-widget-id="{{ .ID }}" data-widget-type="{{ .Type }}" data-default-view="week" data-active-view="week" style="grid-column: span {{ .Dimensions.Cols }}; grid-row: span {{ .Dimensions.Rows }}; display: flex; flex-direction: column; position: relative; overflow: hidden; --mm-cf-shared: {{ $view.SharedColor }};{{ range $i, $m := $view.Members }} --mm-member-{{ $i }}: {{ $m.Color }}; --mm-member-{{ $i }}-text: {{ $m.TextColor }};{{ end }}">
     <div class="cf-header" style="display: flex; align-items: center; justify-content: space-between; padding-bottom: 8px; margin-bottom: 6px; border-bottom: 1px solid rgba(168, 85, 247, 0.2);">
-      <span class="cf-range-label" style="font-size: 0.95rem; font-weight: 700; color: var(--mm-text-primary);">{{ $view.RangeLabel }}</span>
+      <div class="cf-date-heading" style="display: flex; align-items: center; gap: 8px;">
+        <span class="cf-range-label" style="font-size: 0.95rem; font-weight: 700; color: var(--mm-text-primary);">{{ $view.RangeLabel }}</span>
+      </div>
       <div class="cf-header-actions" style="display: flex; align-items: center; gap: 8px;">
         <div class="cf-view-switcher" role="tablist" aria-label="Calendar view">
           <button type="button" class="cf-view-btn" data-view="day" role="tab" aria-selected="false">Day</button>
