@@ -52,16 +52,24 @@ type FamilyDay struct {
 	Overflow   int           `json:"overflow"`
 }
 
+// FamilySpanEvent represents an all-day event positioned across columns in the week view.
+type FamilySpanEvent struct {
+	FamilyEvent
+	StartCol int `json:"start_col"`
+	ColSpan  int `json:"col_span"`
+}
+
 // FamilyViewModel is the fully resolved server-side view model consumed by the calendar-family
 // week view template "View model".
 type FamilyViewModel struct {
-	RangeStart  string         `json:"range_start"`
-	RangeEnd    string         `json:"range_end"`
-	RangeLabel  string         `json:"range_label"`
-	Today       string         `json:"today"`
-	Members     []FamilyMember `json:"members"`
-	Days        []FamilyDay    `json:"days"`
-	SharedColor string         `json:"shared_color"`
+	RangeStart   string            `json:"range_start"`
+	RangeEnd     string            `json:"range_end"`
+	RangeLabel   string            `json:"range_label"`
+	Today        string            `json:"today"`
+	Members      []FamilyMember    `json:"members"`
+	Days         []FamilyDay       `json:"days"`
+	AllDayEvents []FamilySpanEvent `json:"all_day_events"`
+	SharedColor  string            `json:"shared_color"`
 }
 
 // FamilyDayEvent represents a resolved event positioned within a day view column or edge band.
@@ -276,6 +284,48 @@ func BuildFamilyView(data any, cfg map[string]any, dims domain.Dimension, now ti
 		}
 	}
 
+	var allDayEvents []FamilySpanEvent
+	for _, id := range mergedOrder {
+		fe := merged[id]
+		if !fe.AllDay {
+			continue
+		}
+		dates := mergedDates[id]
+		if len(dates) == 0 {
+			continue
+		}
+		minIdx := len(days)
+		maxIdx := -1
+		for _, d := range dates {
+			if idx, ok := dayIndex[d]; ok {
+				if idx < minIdx {
+					minIdx = idx
+				}
+				if idx > maxIdx {
+					maxIdx = idx
+				}
+			}
+		}
+		if minIdx <= maxIdx {
+			spanEv := FamilySpanEvent{
+				FamilyEvent: *fe,
+				StartCol:    minIdx + 1,
+				ColSpan:     maxIdx - minIdx + 1,
+			}
+			allDayEvents = append(allDayEvents, spanEv)
+		}
+	}
+
+	sort.SliceStable(allDayEvents, func(i, j int) bool {
+		if allDayEvents[i].StartCol != allDayEvents[j].StartCol {
+			return allDayEvents[i].StartCol < allDayEvents[j].StartCol
+		}
+		if allDayEvents[i].ColSpan != allDayEvents[j].ColSpan {
+			return allDayEvents[i].ColSpan > allDayEvents[j].ColSpan
+		}
+		return allDayEvents[i].Title < allDayEvents[j].Title
+	})
+
 	for i := range days {
 		sort.SliceStable(days[i].Timed, func(a, b int) bool {
 			return days[i].Timed[a].Start < days[i].Timed[b].Start
@@ -287,13 +337,14 @@ func BuildFamilyView(data any, cfg map[string]any, dims domain.Dimension, now ti
 	}
 
 	return &FamilyViewModel{
-		RangeStart:  rangeStart.Format("2006-01-02"),
-		RangeEnd:    rangeEnd.Format("2006-01-02"),
-		RangeLabel:  formatFamilyRangeLabel(rangeStart, rangeEnd),
-		Today:       today.Format("2006-01-02"),
-		Members:     members,
-		Days:        days,
-		SharedColor: sharedColor,
+		RangeStart:   rangeStart.Format("2006-01-02"),
+		RangeEnd:     rangeEnd.Format("2006-01-02"),
+		RangeLabel:   formatFamilyRangeLabel(rangeStart, rangeEnd),
+		Today:        today.Format("2006-01-02"),
+		Members:      members,
+		Days:         days,
+		AllDayEvents: allDayEvents,
+		SharedColor:  sharedColor,
 	}, nil
 }
 

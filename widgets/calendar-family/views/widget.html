@@ -371,6 +371,14 @@
     </div>
 
     {{ if $view.Days }}
+    {{ if $view.AllDayEvents }}
+    <div class="cf-allday-band cf-week-allday-grid" style="display: grid; grid-template-columns: repeat({{ len $view.Days }}, 1fr); grid-auto-flow: dense; gap: 4px; padding-bottom: 4px; margin-bottom: 4px; border-bottom: 1px dashed rgba(255, 255, 255, 0.1);">
+      {{ range $view.AllDayEvents }}
+      <div class="cf-event cf-allday cf-event-clickable{{ if .Pattern }} cf-pattern-{{ .Pattern }}{{ end }}" data-event-id="{{ .ID }}" style="grid-column: {{ .StartCol }} / span {{ .ColSpan }}; font-size: 0.65rem; font-weight: 600; border-radius: 3px; padding: 1px 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: {{ .TextColor }}; background: {{ .Color }}; cursor: pointer; touch-action: manipulation;">{{ .Title }}</div>
+      {{ end }}
+    </div>
+    {{ end }}
+
     <div class="cf-week-grid" style="display: grid; grid-template-columns: repeat({{ len $view.Days }}, 1fr); gap: 4px; flex: 1; min-height: 0;">
       {{ range $view.Days }}
       <div class="cf-day{{ if .IsToday }} cf-today{{ end }}{{ if .IsWeekend }} cf-weekend{{ end }}" style="display: flex; flex-direction: column; min-width: 0; background: {{ if .IsWeekend }}rgba(255,255,255,0.03){{ else }}transparent{{ end }}; border-radius: 6px; overflow: hidden;{{ if .IsToday }} outline: 2px solid var(--mm-accent-purple);{{ end }}">
@@ -378,14 +386,6 @@
           <span class="cf-day-weekday">{{ .WeekdayAbb }}</span>
           <span class="cf-day-num">{{ .DayOfMonth }}</span>
         </div>
-
-        {{ if .AllDay }}
-        <div class="cf-allday-band" style="display: flex; flex-direction: column; gap: 2px; padding: 2px 0;">
-          {{ range .AllDay }}
-          <div class="cf-event cf-allday cf-event-clickable{{ if .Pattern }} cf-pattern-{{ .Pattern }}{{ end }}" data-event-id="{{ .ID }}" style="font-size: 0.65rem; font-weight: 600; border-radius: 3px; padding: 1px 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: {{ .TextColor }}; background: {{ .Color }}; cursor: pointer; touch-action: manipulation;">{{ .Title }}</div>
-          {{ end }}
-        </div>
-        {{ end }}
 
         <div class="cf-timed-list" style="display: flex; flex-direction: column; gap: 2px; padding: 2px 0; overflow: hidden;">
           {{ range .Timed }}
