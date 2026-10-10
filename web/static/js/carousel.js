@@ -352,12 +352,33 @@ class PhotoCarouselInstance {
 
   getSizedURL(rawURL) {
     if (!rawURL) return '';
-    const rect = this.element.getBoundingClientRect();
-    const dpr = window.devicePixelRatio || 1;
-    let targetWidth = Math.round((rect.width || 960) * dpr);
-    let targetHeight = Math.round((rect.height || 640) * dpr);
-    if (targetWidth <= 0) targetWidth = 960;
-    if (targetHeight <= 0) targetHeight = 640;
+    const dpr = (typeof window !== 'undefined' && window.devicePixelRatio) || 1;
+    const hardwareWidth = (typeof window !== 'undefined' && window.screen && window.screen.width) || (typeof window !== 'undefined' && window.innerWidth) || 1920;
+    const hardwareHeight = (typeof window !== 'undefined' && window.screen && window.screen.height) || (typeof window !== 'undefined' && window.innerHeight) || 1080;
+    const screenWidth = Math.round(hardwareWidth * dpr);
+    const screenHeight = Math.round(hardwareHeight * dpr);
+
+    let targetWidth;
+    let targetHeight;
+
+    if (this.element.dataset.imageWidth && this.element.dataset.imageHeight) {
+      targetWidth = parseInt(this.element.dataset.imageWidth, 10);
+      targetHeight = parseInt(this.element.dataset.imageHeight, 10);
+    } else if (this.fit === 'cover') {
+      const rect = this.element.getBoundingClientRect();
+      targetWidth = Math.round((rect.width || 0) * dpr);
+      targetHeight = Math.round((rect.height || 0) * dpr);
+      if (targetWidth <= 0) targetWidth = screenWidth;
+      if (targetHeight <= 0) targetHeight = screenHeight;
+    } else {
+      // Contain fit: pull display resolution from hardware to eliminate upscaling blur
+      const rect = this.element.getBoundingClientRect();
+      const rectWidth = Math.round((rect.width || 0) * dpr);
+      const rectHeight = Math.round((rect.height || 0) * dpr);
+      targetWidth = rectWidth > 0 ? Math.max(rectWidth, screenWidth) : screenWidth;
+      targetHeight = rectHeight > 0 ? Math.max(rectHeight, screenHeight) : screenHeight;
+    }
+
     const cropSuffix = this.fit === 'cover' ? '-c' : '';
     return `${rawURL}=w${targetWidth}-h${targetHeight}${cropSuffix}`;
   }

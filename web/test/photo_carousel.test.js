@@ -6,9 +6,10 @@ const path = require('node:path');
 // Mock window and document environment for Node test runner
 const carouselCode = fs.readFileSync(path.join(__dirname, '../static/js/carousel.js'), 'utf8');
 
-function setupDOMMock() {
+function setupDOMMock(screenConfig) {
   global.window = {
     devicePixelRatio: 2,
+    screen: screenConfig || { width: 1920, height: 1080 },
   };
   global.Image = class {
     constructor() {
@@ -25,7 +26,7 @@ function setupDOMMock() {
 test('Photo Carousel Client Controller', async (t) => {
   setupDOMMock();
 
-  await t.test('computes dynamic edge-sizing query parameters with dpr', () => {
+  await t.test('computes dynamic edge-sizing query parameters from hardware display with dpr', () => {
     const mockElement = {
       dataset: { widgetId: 'test-photos' },
       querySelector(selector) {
@@ -54,9 +55,9 @@ test('Photo Carousel Client Controller', async (t) => {
     const instance = window.MirrormerePhotoCarousel.instances.get('test-photos');
     assert.ok(instance, 'instance should be registered');
 
-    // 480 * 2 = 960, 320 * 2 = 640 (default fit: contain, no crop flag)
+    // Hardware display: 1920 * 2 = 3840, 1080 * 2 = 2160 (fit: contain)
     const sizedURL = instance.getSizedURL('https://lh3.googleusercontent.com/pw/ABC');
-    assert.equal(sizedURL, 'https://lh3.googleusercontent.com/pw/ABC=w960-h640');
+    assert.equal(sizedURL, 'https://lh3.googleusercontent.com/pw/ABC=w3840-h2160');
 
     window.MirrormerePhotoCarousel.unmount('test-photos');
     assert.equal(window.MirrormerePhotoCarousel.instances.has('test-photos'), false);
@@ -87,13 +88,14 @@ test('Photo Carousel Client Controller', async (t) => {
     const instance = window.MirrormerePhotoCarousel.instances.get('test-photos-cover');
     assert.ok(instance);
 
+    // 480 * 2 = 960, 320 * 2 = 640 (fit: cover with -c crop flag)
     const sizedURL = instance.getSizedURL('https://lh3.googleusercontent.com/pw/COVER');
     assert.equal(sizedURL, 'https://lh3.googleusercontent.com/pw/COVER=w960-h640-c');
 
     window.MirrormerePhotoCarousel.unmount('test-photos-cover');
   });
 
-  await t.test('falls back to default dimensions when container has 0 size', () => {
+  await t.test('falls back to hardware display dimensions when container has 0 size', () => {
     const mockElement = {
       dataset: { widgetId: 'test-photos-zero' },
       querySelector(selector) {
@@ -116,10 +118,38 @@ test('Photo Carousel Client Controller', async (t) => {
     assert.ok(instance);
 
     const sizedURL = instance.getSizedURL('https://lh3.googleusercontent.com/pw/XYZ');
-    // Defaults: 960 * 2 = 1920, 640 * 2 = 1280
-    assert.equal(sizedURL, 'https://lh3.googleusercontent.com/pw/XYZ=w1920-h1280');
+    // Defaults: 1920 * 2 = 3840, 1080 * 2 = 2160
+    assert.equal(sizedURL, 'https://lh3.googleusercontent.com/pw/XYZ=w3840-h2160');
 
     window.MirrormerePhotoCarousel.unmount('test-photos-zero');
+  });
+
+  await t.test('respects explicit data-image-width and data-image-height overrides', () => {
+    const mockElement = {
+      dataset: { widgetId: 'test-photos-override', imageWidth: '1280', imageHeight: '720' },
+      querySelector(selector) {
+        if (selector === '.photo-carousel-data') {
+          return {
+            textContent: JSON.stringify({
+              photos: [{ id: '1', url: 'https://lh3.googleusercontent.com/pw/OVERRIDE' }]
+            })
+          };
+        }
+        return { src: '', style: {} };
+      },
+      getBoundingClientRect() {
+        return { width: 480, height: 320 };
+      }
+    };
+
+    window.MirrormerePhotoCarousel.mount(mockElement);
+    const instance = window.MirrormerePhotoCarousel.instances.get('test-photos-override');
+    assert.ok(instance);
+
+    const sizedURL = instance.getSizedURL('https://lh3.googleusercontent.com/pw/OVERRIDE');
+    assert.equal(sizedURL, 'https://lh3.googleusercontent.com/pw/OVERRIDE=w1280-h720');
+
+    window.MirrormerePhotoCarousel.unmount('test-photos-override');
   });
 
   await t.test('handles empty or malformed carousel data gracefully', () => {
