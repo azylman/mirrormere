@@ -43,6 +43,8 @@ REMOTE_KEYCODES: dict[str, str] = {
     "dpad_right": "DPAD_RIGHT",
     "dpad_center": "DPAD_CENTER",
     "power": "POWER",
+    "wake": "WAKE",
+    "wakeup": "WAKE",
 }
 
 def lookup_consumer_key(name: str) -> Optional[int]:

@@ -259,6 +259,14 @@ try:
         def battery_level(self, options):
             return bytes([100])
 
+        def send_battery_level(self, level: int = 100):
+            val = bytes([max(0, min(100, level))])
+            if hasattr(self, "battery_level") and hasattr(self.battery_level, "changed"):
+                try:
+                    self.battery_level.changed(val)
+                except Exception as e:
+                    logger.debug("Battery notification skipped or failed: %s", e)
+
     class HIDService(Service):
         def __init__(self):
             self._mouse_val = bytes([0, 0, 0])
@@ -611,8 +619,37 @@ class RemoteDaemon:
         self.agent = None
         self.advert = None
         self.bluetooth_lock = asyncio.Lock()
+        self.touch_lock = asyncio.Lock()
+        self.battery_service = None
         self.last_known_paired_devices = []
         self.keepalive_task = None
+        self._last_wake_pulse = 0.0
+        self._last_heartbeat = 0.0
+
+    def send_heartbeat(self):
+        """Emit periodic battery notification over BLE to keep L2CAP connection warm."""
+        if self.battery_service and hasattr(self.battery_service, "send_battery_level"):
+            self.battery_service.send_battery_level(100)
+
+    async def _wake_via_wifi_if_needed(self):
+        """On-demand wake pulse sent via Wi-Fi remote when user interacts while BLE is disconnected."""
+        try:
+            loop = asyncio.get_running_loop()
+            now = loop.time()
+        except RuntimeError:
+            return
+
+        if (now - self._last_wake_pulse) < 5.0:
+            return
+
+        is_ble_connected = any(d.get("connected") for d in self.last_known_paired_devices)
+        if not is_ble_connected and self.remote_helper.connected:
+            self._last_wake_pulse = now
+            logger.info("On-demand Wi-Fi wake pulse sent to Android TV to trigger BLE reconnect")
+            try:
+                self.remote_helper.send_key("WAKE")
+            except Exception as e:
+                logger.debug("Failed sending Wi-Fi wake pulse: %s", e)
 
     async def handle_healthz(self, request):
         return web.json_response({
@@ -627,6 +664,7 @@ class RemoteDaemon:
                 "active": self.hid is not None,
                 "advert_name": self.config.advert_name,
                 "keepalive": self.config.bluetooth_keepalive,
+                "heartbeat": self.config.bluetooth_heartbeat,
                 "paired_devices": self.last_known_paired_devices,
             },
         })
@@ -647,7 +685,15 @@ class RemoteDaemon:
         y_ratio = max(0.0, min(1.0, raw_y))
         logger.info("Synthetic tap at (%.4f, %.4f)", x_ratio, y_ratio)
 
+        if not any(d.get("connected") for d in self.last_known_paired_devices):
+            asyncio.create_task(self._wake_via_wifi_if_needed())
+
         if self.hid:
+            try:
+                await asyncio.wait_for(self.touch_lock.acquire(), timeout=0.5)
+            except asyncio.TimeoutError:
+                logger.warning("Dropping tap event: touch_lock acquisition timed out (D-Bus congestion)")
+                return web.json_response({"status": "error", "message": "touch dispatch timeout"}, status=503)
             try:
                 self.hid.send_mouse(1, 0, 0)
                 self.hid.send_touch(True, x_ratio, y_ratio)
@@ -661,6 +707,7 @@ class RemoteDaemon:
                     self.hid.send_touch(False, x_ratio, y_ratio)
                 except Exception:
                     pass
+                self.touch_lock.release()
             return web.json_response({"status": "ok", "action": "tap", "x": x_ratio, "y": y_ratio})
         return web.json_response({"status": "error", "message": "BLE HID not initialized"}, status=503)
 
@@ -680,32 +727,44 @@ class RemoteDaemon:
         x_ratio = max(0.0, min(1.0, raw_x))
         y_ratio = max(0.0, min(1.0, raw_y))
 
+        if not any(d.get("connected") for d in self.last_known_paired_devices):
+            asyncio.create_task(self._wake_via_wifi_if_needed())
+
         if not self.hid:
             return web.json_response({"status": "error", "message": "BLE HID not initialized"}, status=503)
 
-        if action in ("down", "move"):
-            if action == "down":
-                self.hid.send_mouse(1, 0, 0)
-            self.hid.send_touch(True, x_ratio, y_ratio)
-        elif action == "up":
-            self.hid.send_mouse(0, 0, 0)
-            self.hid.send_touch(False, x_ratio, y_ratio)
-        elif action == "tap":
-            try:
-                self.hid.send_mouse(1, 0, 0)
+        try:
+            await asyncio.wait_for(self.touch_lock.acquire(), timeout=0.5)
+        except asyncio.TimeoutError:
+            logger.warning("Dropping touch event: touch_lock acquisition timed out (D-Bus congestion)")
+            return web.json_response({"status": "error", "message": "touch dispatch timeout"}, status=503)
+
+        try:
+            if action in ("down", "move"):
+                if action == "down":
+                    self.hid.send_mouse(1, 0, 0)
                 self.hid.send_touch(True, x_ratio, y_ratio)
-                await asyncio.sleep(self.config.tap_duration)
-            finally:
+            elif action == "up":
+                self.hid.send_mouse(0, 0, 0)
+                self.hid.send_touch(False, x_ratio, y_ratio)
+            elif action == "tap":
                 try:
-                    self.hid.send_mouse(0, 0, 0)
-                except Exception:
-                    pass
-                try:
-                    self.hid.send_touch(False, x_ratio, y_ratio)
-                except Exception:
-                    pass
-        else:
-            return web.json_response({"status": "error", "message": f"unknown action: {action}"}, status=400)
+                    self.hid.send_mouse(1, 0, 0)
+                    self.hid.send_touch(True, x_ratio, y_ratio)
+                    await asyncio.sleep(self.config.tap_duration)
+                finally:
+                    try:
+                        self.hid.send_mouse(0, 0, 0)
+                    except Exception:
+                        pass
+                    try:
+                        self.hid.send_touch(False, x_ratio, y_ratio)
+                    except Exception:
+                        pass
+            else:
+                return web.json_response({"status": "error", "message": f"unknown action: {action}"}, status=400)
+        finally:
+            self.touch_lock.release()
 
         return web.json_response({"status": "ok", "action": action, "x": x_ratio, "y": y_ratio})
 
@@ -808,6 +867,8 @@ class RemoteDaemon:
             data = {}
         target_mac = data.get("mac")
         force = bool(data.get("force", False))
+        if data.get("wake_wifi"):
+            await self._wake_via_wifi_if_needed()
         results = await self._check_and_reconnect_bluetooth(target_mac=target_mac, force=force)
         return web.json_response({"status": "ok", "reconnected": results})
 
@@ -919,6 +980,13 @@ class RemoteDaemon:
             try:
                 await asyncio.sleep(self.config.bluetooth_keepalive_interval)
                 await self._check_and_reconnect_bluetooth()
+
+                if self.config.bluetooth_heartbeat and any(d.get("connected") for d in self.last_known_paired_devices):
+                    loop = asyncio.get_running_loop()
+                    now = loop.time()
+                    if (now - self._last_heartbeat) >= self.config.bluetooth_heartbeat_interval:
+                        self.send_heartbeat()
+                        self._last_heartbeat = now
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -958,6 +1026,7 @@ class RemoteDaemon:
 
                 dev_info = DeviceInfoService()
                 battery = BatteryService()
+                self.battery_service = battery
                 collection = ServiceCollection([dev_info, battery, self.hid])
                 await collection.register(self.bus, path="/com/mirrormere/gatt", adapter=self.adapter)
 
