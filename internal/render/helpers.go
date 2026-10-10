@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/azylman/mirrormere/internal/domain"
+	"github.com/azylman/mirrormere/internal/provider"
 )
 
 var timeLayouts = []string{
@@ -43,6 +44,7 @@ func StandardFuncMap(nowFunc func() time.Time) template.FuncMap {
 		"jsonJS":             JSONJSHelper,
 		"weatherIcon":        WeatherIcon,
 		"weatherHourlyGraph": WeatherHourlyGraph,
+		"todayPrecipProb":    TodayPrecipProb,
 		"calendarGridView": func(data any, cfg map[string]any, dims domain.Dimension) (*FamilyViewModel, error) {
 			return BuildFamilyView(data, cfg, dims, nowFunc())
 		},
@@ -562,4 +564,64 @@ func WeatherHourlyGraph(args ...any) template.HTML {
 
 	sb.WriteString("</svg>")
 	return template.HTML(sb.String())
+}
+
+// TodayPrecipProb extracts today's maximum precipitation probability percentage (0-100)
+// from WeatherSnapshot, WeatherCurrent, map data, or slices.
+func TodayPrecipProb(arg any) int {
+	if arg == nil {
+		return 0
+	}
+
+	switch v := arg.(type) {
+	case provider.WeatherSnapshot:
+		return v.TodayPrecipProbMax()
+	case *provider.WeatherSnapshot:
+		if v != nil {
+			return v.TodayPrecipProbMax()
+		}
+	case provider.WeatherCurrent:
+		return v.PrecipProbMax
+	case *provider.WeatherCurrent:
+		if v != nil {
+			return v.PrecipProbMax
+		}
+	case []provider.WeatherDaily:
+		if len(v) > 0 {
+			return v[0].PrecipProbMax
+		}
+	case map[string]any:
+		if daily, ok := v["daily"].([]any); ok && len(daily) > 0 {
+			if first, ok := daily[0].(map[string]any); ok {
+				if p, ok := first["precip_prob_max"].(int); ok {
+					return p
+				}
+				if p, ok := first["precip_prob_max"].(float64); ok {
+					return int(p)
+				}
+			}
+		}
+		if daily, ok := v["daily"].([]provider.WeatherDaily); ok && len(daily) > 0 {
+			return daily[0].PrecipProbMax
+		}
+		if cur, ok := v["current"].(map[string]any); ok {
+			if p, ok := cur["precip_prob_max"].(int); ok {
+				return p
+			}
+			if p, ok := cur["precip_prob_max"].(float64); ok {
+				return int(p)
+			}
+		}
+		if cur, ok := v["current"].(provider.WeatherCurrent); ok {
+			return cur.PrecipProbMax
+		}
+		if p, ok := v["precip_prob_max"].(int); ok {
+			return p
+		}
+		if p, ok := v["precip_prob_max"].(float64); ok {
+			return int(p)
+		}
+	}
+
+	return 0
 }

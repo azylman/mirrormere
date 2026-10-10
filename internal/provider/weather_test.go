@@ -315,6 +315,12 @@ func TestWeatherProvider_Fetch_Imperial(t *testing.T) {
 	if snap.Current.Units.Temperature != "°F" || snap.Current.Units.WindSpeed != "mph" {
 		t.Errorf("unexpected imperial units: %+v", snap.Current.Units)
 	}
+	if snap.Current.PrecipProbMax != 10 {
+		t.Errorf("expected Current.PrecipProbMax 10, got %d", snap.Current.PrecipProbMax)
+	}
+	if snap.TodayPrecipProbMax() != 10 {
+		t.Errorf("expected TodayPrecipProbMax() 10, got %d", snap.TodayPrecipProbMax())
+	}
 
 	// Verify hourly
 	if len(snap.Hourly) != 3 {

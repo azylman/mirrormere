@@ -768,6 +768,7 @@ func TestRenderBuiltinWeatherForecastWidget(t *testing.T) {
 			FeelsLike:     70.5,
 			Humidity:      45,
 			WindSpeed:     5.5,
+			PrecipProbMax: 10,
 			Units:         provider.WeatherUnits{Temperature: "°F", WindSpeed: "mph"},
 			ConditionCode: 1,
 			ConditionText: "Mainly Clear",
@@ -808,6 +809,24 @@ func TestRenderBuiltinWeatherForecastWidget(t *testing.T) {
 	}
 	if !strings.Contains(string(htmlLoaded), "weather-partly-cloudy") {
 		t.Errorf("expected icon token in rendered output, got: %s", htmlLoaded)
+	}
+	if !strings.Contains(string(htmlLoaded), "weather-meta-precip") {
+		t.Errorf("expected weather-meta-precip in rendered output, got: %s", htmlLoaded)
+	}
+	if !strings.Contains(string(htmlLoaded), "Precipitation: 10%") {
+		t.Errorf("expected 'Precipitation: 10%%' in rendered output, got: %s", htmlLoaded)
+	}
+	if !strings.Contains(string(htmlLoaded), "10%") {
+		t.Errorf("expected '10%%' in rendered output, got: %s", htmlLoaded)
+	}
+	if !strings.Contains(string(htmlLoaded), "weather-meta-humidity") {
+		t.Errorf("expected weather-meta-humidity in rendered output, got: %s", htmlLoaded)
+	}
+	if !strings.Contains(string(htmlLoaded), "Humidity: 45%") {
+		t.Errorf("expected 'Humidity: 45%%' in rendered output, got: %s", htmlLoaded)
+	}
+	if !strings.Contains(string(htmlLoaded), "weather-meta-wind") {
+		t.Errorf("expected weather-meta-wind in rendered output, got: %s", htmlLoaded)
 	}
 	if !strings.Contains(string(htmlLoaded), "Now") {
 		t.Errorf("expected 'Now' badge in rendered hourly timeline, got: %s", htmlLoaded)
