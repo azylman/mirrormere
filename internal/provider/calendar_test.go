@@ -130,6 +130,41 @@ func TestCalendarProvider_Init_Validations(t *testing.T) {
 				},
 			},
 		},
+		{
+			name: "valid calendars with strip_recurring and exclude_recurring",
+			cfg: map[string]any{
+				"view":            "week",
+				"strip_recurring": true,
+				"calendars": []map[string]any{
+					{
+						"name":            "Work",
+						"url":             "https://example.com/work.ics",
+						"color":           "#10b981",
+						"enabled":         true,
+						"strip_recurring": false,
+					},
+					{
+						"name":              "Personal",
+						"url":               "https://example.com/personal.ics",
+						"color":             "#3b82f6",
+						"enabled":           true,
+						"exclude_recurring": true,
+					},
+				},
+			},
+		},
+		{
+			name: "valid calendars with exclude_recurring at root",
+			cfg: map[string]any{
+				"exclude_recurring": true,
+				"calendars": []any{
+					map[string]any{
+						"name": "Chores",
+						"url":  "https://example.com/chores.ics",
+					},
+				},
+			},
+		},
 	}
 
 	for _, tc := range tests {
@@ -212,7 +247,7 @@ END:VCALENDAR`
 		w.Header().Set("Content-Type", "text/calendar")
 		_, _ = w.Write([]byte(icsPayload))
 	}))
-	defer server.Close()
+	t.Cleanup(server.Close)
 
 	p := provider.NewCalendarProviderWithClient(server.Client(), func() time.Time {
 		return refTime
@@ -783,5 +818,214 @@ END:VCALENDAR`
 	}
 }
 
+func TestCalendarProvider_Fetch_StripRecurring(t *testing.T) {
+	t.Parallel()
 
+	// Fixed reference instant: 2026-09-20 00:00:00 UTC (Sunday)
+	refTime := time.Date(2026, 9, 20, 0, 0, 0, 0, time.UTC)
 
+	icsPayload := `BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Mirrormere//Recurring Cal//EN
+BEGIN:VEVENT
+UID:one-off-dentist@mirrormere
+DTSTART:20260921T140000Z
+DTEND:20260921T150000Z
+SUMMARY:Dentist Appointment
+END:VEVENT
+BEGIN:VEVENT
+UID:daily-standup@mirrormere
+DTSTART:20260921T090000Z
+DTEND:20260921T093000Z
+RRULE:FREQ=DAILY;COUNT=3
+SUMMARY:Team Standup
+END:VEVENT
+BEGIN:VEVENT
+UID:daily-standup@mirrormere
+RECURRENCE-ID:20260922T090000Z
+DTSTART:20260922T100000Z
+DTEND:20260922T103000Z
+SUMMARY:Team Standup (Rescheduled)
+END:VEVENT
+BEGIN:VEVENT
+UID:rdate-event@mirrormere
+DTSTART:20260921T110000Z
+DTEND:20260921T120000Z
+RDATE:20260923T110000Z
+SUMMARY:Ad-hoc Sync
+END:VEVENT
+BEGIN:VEVENT
+UID:one-off-dinner@mirrormere
+DTSTART:20260922T180000Z
+DTEND:20260922T200000Z
+SUMMARY:Dinner with Friends
+END:VEVENT
+END:VCALENDAR`
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/calendar")
+		_, _ = w.Write([]byte(icsPayload))
+	}))
+	t.Cleanup(server.Close)
+
+	t.Run("default keeps recurring events", func(t *testing.T) {
+		t.Parallel()
+		p := provider.NewCalendarProviderWithClient(server.Client(), func() time.Time {
+			return refTime
+		})
+		cfg := map[string]any{
+			"calendars": []any{
+				map[string]any{
+					"name": "All Events",
+					"url":  server.URL,
+				},
+			},
+		}
+		if err := p.Init(context.Background(), cfg, provider.InitOptions{}); err != nil {
+			t.Fatalf("Init failed: %v", err)
+		}
+		res, err := p.Fetch(context.Background())
+		if err != nil {
+			t.Fatalf("Fetch failed: %v", err)
+		}
+		snap := res.(provider.CalendarSnapshot)
+		// Standup has 3 occurrences + RDATE (1) + 2 one-offs = 6 total events
+		if len(snap.Events) <= 2 {
+			t.Fatalf("expected recurring events included by default, got %d", len(snap.Events))
+		}
+	})
+
+	t.Run("strip_recurring true at root filters out recurring events", func(t *testing.T) {
+		t.Parallel()
+		p := provider.NewCalendarProviderWithClient(server.Client(), func() time.Time {
+			return refTime
+		})
+		cfg := map[string]any{
+			"strip_recurring": true,
+			"calendars": []any{
+				map[string]any{
+					"name": "One-Offs Only",
+					"url":  server.URL,
+				},
+			},
+		}
+		if err := p.Init(context.Background(), cfg, provider.InitOptions{}); err != nil {
+			t.Fatalf("Init failed: %v", err)
+		}
+		res, err := p.Fetch(context.Background())
+		if err != nil {
+			t.Fatalf("Fetch failed: %v", err)
+		}
+		snap := res.(provider.CalendarSnapshot)
+		if len(snap.Events) != 2 {
+			t.Fatalf("expected exactly 2 one-off events, got %d: %+v", len(snap.Events), snap.Events)
+		}
+		titles := map[string]bool{}
+		for _, ev := range snap.Events {
+			titles[ev.Title] = true
+		}
+		if !titles["Dentist Appointment"] || !titles["Dinner with Friends"] {
+			t.Fatalf("unexpected events returned: %+v", titles)
+		}
+	})
+
+	t.Run("exclude_recurring alias at root filters out recurring events", func(t *testing.T) {
+		t.Parallel()
+		p := provider.NewCalendarProviderWithClient(server.Client(), func() time.Time {
+			return refTime
+		})
+		cfg := map[string]any{
+			"exclude_recurring": true,
+			"calendars": []any{
+				map[string]any{
+					"name": "One-Offs Only",
+					"url":  server.URL,
+				},
+			},
+		}
+		if err := p.Init(context.Background(), cfg, provider.InitOptions{}); err != nil {
+			t.Fatalf("Init failed: %v", err)
+		}
+		res, err := p.Fetch(context.Background())
+		if err != nil {
+			t.Fatalf("Fetch failed: %v", err)
+		}
+		snap := res.(provider.CalendarSnapshot)
+		if len(snap.Events) != 2 {
+			t.Fatalf("expected exactly 2 one-off events, got %d: %+v", len(snap.Events), snap.Events)
+		}
+	})
+
+	t.Run("per-source override overrides root strip_recurring", func(t *testing.T) {
+		t.Parallel()
+		p := provider.NewCalendarProviderWithClient(server.Client(), func() time.Time {
+			return refTime
+		})
+		cfg := map[string]any{
+			"strip_recurring": true,
+			"calendars": []any{
+				map[string]any{
+					"name":            "Stripped",
+					"url":             server.URL,
+					"strip_recurring": true,
+				},
+				map[string]any{
+					"name":            "Included",
+					"url":             server.URL,
+					"strip_recurring": false,
+				},
+			},
+		}
+		if err := p.Init(context.Background(), cfg, provider.InitOptions{}); err != nil {
+			t.Fatalf("Init failed: %v", err)
+		}
+		res, err := p.Fetch(context.Background())
+		if err != nil {
+			t.Fatalf("Fetch failed: %v", err)
+		}
+		snap := res.(provider.CalendarSnapshot)
+		strippedCount := 0
+		includedCount := 0
+		for _, ev := range snap.Events {
+			if ev.CalendarName == "Stripped" {
+				strippedCount++
+			} else if ev.CalendarName == "Included" {
+				includedCount++
+			}
+		}
+		if strippedCount != 2 {
+			t.Errorf("expected 2 events for Stripped calendar, got %d", strippedCount)
+		}
+		if includedCount <= 2 {
+			t.Errorf("expected >2 events for Included calendar, got %d", includedCount)
+		}
+	})
+
+	t.Run("per-source exclude_recurring alias enables stripping when root is false", func(t *testing.T) {
+		t.Parallel()
+		p := provider.NewCalendarProviderWithClient(server.Client(), func() time.Time {
+			return refTime
+		})
+		cfg := map[string]any{
+			"strip_recurring": false,
+			"calendars": []any{
+				map[string]any{
+					"name":              "Stripped",
+					"url":               server.URL,
+					"exclude_recurring": true,
+				},
+			},
+		}
+		if err := p.Init(context.Background(), cfg, provider.InitOptions{}); err != nil {
+			t.Fatalf("Init failed: %v", err)
+		}
+		res, err := p.Fetch(context.Background())
+		if err != nil {
+			t.Fatalf("Fetch failed: %v", err)
+		}
+		snap := res.(provider.CalendarSnapshot)
+		if len(snap.Events) != 2 {
+			t.Fatalf("expected 2 events for Stripped calendar, got %d", len(snap.Events))
+		}
+	})
+}
