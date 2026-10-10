@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/azylman/mirrormere/internal/api"
 )
@@ -92,7 +93,26 @@ func (h *Handler) GetWidgetRender(w http.ResponseWriter, r *http.Request, widget
 		return
 	}
 
-	htmlBytes, err := h.engine.RenderWidgetForNode(r.Context(), widgetID, r.URL.Query().Get("node"))
+	overrides := make(map[string]any)
+	if dateParam := strings.TrimSpace(r.URL.Query().Get("date")); dateParam != "" {
+		if _, err := time.Parse("2006-01-02", dateParam); err == nil {
+			overrides["date"] = dateParam
+		} else {
+			writeJSONError(w, http.StatusBadRequest, "invalid date parameter: must be YYYY-MM-DD")
+			return
+		}
+	}
+	if viewParam := strings.TrimSpace(r.URL.Query().Get("view")); viewParam != "" {
+		lowerView := strings.ToLower(viewParam)
+		if lowerView == "day" || lowerView == "week" || lowerView == "month" {
+			overrides["default_view"] = lowerView
+		} else {
+			writeJSONError(w, http.StatusBadRequest, "invalid view parameter: must be day, week, or month")
+			return
+		}
+	}
+
+	htmlBytes, err := h.engine.RenderWidgetWithOverrides(r.Context(), widgetID, r.URL.Query().Get("node"), overrides)
 	if err != nil {
 		var notFound WidgetNotFoundError
 		if errors.As(err, &notFound) {

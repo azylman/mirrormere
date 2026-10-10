@@ -7,14 +7,16 @@
 {{ else if isMonthView .Config }}
   {{ $defaultView = "month" }}
 {{ end }}
-<div class="widget-card widget-calendar-grid widget-calendar-family cf-view-{{ $defaultView }}" data-widget-id="{{ .ID }}" data-widget-type="{{ .Type }}" data-default-view="{{ $defaultView }}" data-active-view="{{ $defaultView }}" style="grid-column: span {{ .Dimensions.Cols }}; grid-row: span {{ .Dimensions.Rows }}; display: flex; flex-direction: column; position: relative; overflow: hidden; --mm-cf-shared: {{ $view.SharedColor }};{{ range $i, $m := $view.Members }} --mm-member-{{ $i }}: {{ $m.Color }}; --mm-member-{{ $i }}-text: {{ $m.TextColor }};{{ end }}">
+<div class="widget-card widget-calendar-grid widget-calendar-family cf-view-{{ $defaultView }}" data-widget-id="{{ .ID }}" data-widget-type="{{ .Type }}" data-default-view="{{ $defaultView }}" data-active-view="{{ $defaultView }}" data-prevent-screen-swipe="true" style="grid-column: span {{ .Dimensions.Cols }}; grid-row: span {{ .Dimensions.Rows }}; display: flex; flex-direction: column; position: relative; overflow: hidden; --mm-cf-shared: {{ $view.SharedColor }};{{ range $i, $m := $view.Members }} --mm-member-{{ $i }}: {{ $m.Color }}; --mm-member-{{ $i }}-text: {{ $m.TextColor }};{{ end }}">
   {{ template "cf-styles" . }}
   <div class="cf-header" style="display: flex; align-items: center; justify-content: space-between; padding-bottom: 8px; margin-bottom: 6px; border-bottom: 1px solid rgba(168, 85, 247, 0.2);">
-    <div class="cf-date-heading" style="display: flex; align-items: center; gap: 8px;">
+    <div class="cf-date-heading" style="display: flex; align-items: center; gap: 6px;">
+      <button type="button" class="cf-nav-btn cf-prev-btn" aria-label="Previous date range" title="Previous">&#x2039;</button>
       <span class="cf-range-label cf-label-day" style="{{ if ne $defaultView "day" }}display: none;{{ end }}font-size: 0.95rem; font-weight: 700; color: var(--mm-text-primary);">{{ $dayView.WeekdayAbbr }}, {{ $dayView.Date }}</span>
       <span class="cf-range-label cf-label-week" style="{{ if ne $defaultView "week" }}display: none;{{ end }}font-size: 0.95rem; font-weight: 700; color: var(--mm-text-primary);">{{ $view.RangeLabel }}</span>
       <span class="cf-range-label cf-label-month" style="{{ if ne $defaultView "month" }}display: none;{{ end }}font-size: 0.95rem; font-weight: 700; color: var(--mm-text-primary);">{{ $monthView.MonthLabel }}</span>
-      <span class="cf-today-badge cf-today-day" style="{{ if or (ne $defaultView "day") (not $dayView.IsToday) }}display: none;{{ end }}font-size: 0.65rem; font-weight: 700; padding: 1px 6px; border-radius: 4px; background: var(--mm-accent-purple); color: #ffffff;">TODAY</span>
+      <button type="button" class="cf-nav-btn cf-next-btn" aria-label="Next date range" title="Next">&#x203A;</button>
+      <span class="cf-today-badge cf-today-day" style="{{ if or (ne $defaultView "day") (not $dayView.IsToday) }}display: none;{{ end }}font-size: 0.65rem; font-weight: 700; padding: 1px 6px; border-radius: 4px; background: var(--mm-accent-purple); color: #ffffff; cursor: pointer; touch-action: manipulation;" title="Return to today">TODAY</span>
     </div>
     <div class="cf-header-actions" style="display: flex; align-items: center; gap: 8px;">
       <div class="cf-view-switcher" role="tablist" aria-label="Calendar view">
@@ -229,6 +231,29 @@
 
 {{ define "cf-styles" }}
 <style>
+  .widget-calendar-grid, .widget-calendar-family {
+    touch-action: pan-y;
+  }
+  .cf-nav-btn {
+    background: transparent;
+    border: none;
+    color: var(--mm-text-muted);
+    cursor: pointer;
+    padding: 2px 6px;
+    font-size: 1.1rem;
+    line-height: 1;
+    border-radius: 4px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    touch-action: manipulation;
+    user-select: none;
+    transition: color 0.15s ease, background-color 0.15s ease;
+  }
+  .cf-nav-btn:hover, .cf-nav-btn:active {
+    color: var(--mm-text-primary);
+    background: rgba(255, 255, 255, 0.08);
+  }
   .cf-view-panel {
     flex: 1;
     min-height: 0;

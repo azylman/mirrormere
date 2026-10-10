@@ -2696,3 +2696,149 @@ func TestBuildFamilyCombinedData_NilSafetyAndAggregation(t *testing.T) {
 		t.Errorf("expected date from helper call")
 	}
 }
+
+func TestBuildFamilyView_DateOverrideAndIsToday(t *testing.T) {
+	t.Parallel()
+
+	snap := provider.CalendarSnapshot{
+		LastSync: "2026-09-27T12:00:00Z",
+		Events: []provider.CalendarEvent{
+			{ID: "e1", CalendarName: "alex-personal", Title: "Event on Oct 15", Start: "2026-10-15T10:00:00Z", End: "2026-10-15T11:00:00Z"},
+		},
+	}
+
+	// 1. cfg with date set to 2026-10-15 (Thursday) with week_starts sunday
+	cfg := baseFamilyConfig()
+	cfg["date"] = "2026-10-15"
+	dims := domain.NewDimension(6, 2)
+
+	// testNow is 2026-09-27 (Sunday)
+	view, err := BuildFamilyView(snap, cfg, dims, testNow)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// The week of 2026-10-15 starting Sunday is 2026-10-11 to 2026-10-17
+	if view.RangeStart != "2026-10-11" {
+		t.Errorf("expected RangeStart 2026-10-11, got %q", view.RangeStart)
+	}
+	if view.RangeEnd != "2026-10-17" {
+		t.Errorf("expected RangeEnd 2026-10-17, got %q", view.RangeEnd)
+	}
+	if view.Today != "2026-09-27" {
+		t.Errorf("expected Today to remain 2026-09-27, got %q", view.Today)
+	}
+
+	// Since 2026-09-27 is not in 2026-10-11..2026-10-17, no day should have IsToday = true
+	for _, day := range view.Days {
+		if day.IsToday {
+			t.Errorf("expected IsToday false for day %s, but got true", day.Date)
+		}
+	}
+
+	// 2. cfg with date set to 2026-09-29 (Tuesday of the current week containing testNow = 2026-09-27)
+	cfg2 := baseFamilyConfig()
+	cfg2["date"] = "2026-09-29"
+	view2, err := BuildFamilyView(snap, cfg2, dims, testNow)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if view2.RangeStart != "2026-09-27" {
+		t.Errorf("expected RangeStart 2026-09-27, got %q", view2.RangeStart)
+	}
+	if view2.RangeEnd != "2026-10-03" {
+		t.Errorf("expected RangeEnd 2026-10-03, got %q", view2.RangeEnd)
+	}
+	// Exactly Sunday (index 0, 2026-09-27) should have IsToday == true
+	todayFound := false
+	for _, day := range view2.Days {
+		if day.Date == "2026-09-27" {
+			if !day.IsToday {
+				t.Errorf("expected IsToday true for 2026-09-27")
+			}
+			todayFound = true
+		} else if day.IsToday {
+			t.Errorf("expected IsToday false for non-today date %s", day.Date)
+		}
+	}
+	if !todayFound {
+		t.Errorf("expected to find day 2026-09-27 in view2")
+	}
+
+	// 3. Week starts Monday with date override
+	cfg3 := baseFamilyConfig()
+	cfg3["week_starts"] = "monday"
+	cfg3["date"] = "2026-10-15" // Thursday
+	view3, err := BuildFamilyView(snap, cfg3, dims, testNow)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Week starting Monday for 2026-10-15 is 2026-10-12 to 2026-10-18
+	if view3.RangeStart != "2026-10-12" {
+		t.Errorf("expected RangeStart 2026-10-12, got %q", view3.RangeStart)
+	}
+	if view3.RangeEnd != "2026-10-18" {
+		t.Errorf("expected RangeEnd 2026-10-18, got %q", view3.RangeEnd)
+	}
+
+	// 4. Num days < 7 (e.g. 3 days)
+	cfg4 := baseFamilyConfig()
+	cfg4["days"] = 3
+	cfg4["date"] = "2026-10-15"
+	view4, err := BuildFamilyView(snap, cfg4, domain.NewDimension(3, 2), testNow)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if view4.RangeStart != "2026-10-15" {
+		t.Errorf("expected RangeStart 2026-10-15, got %q", view4.RangeStart)
+	}
+	if view4.RangeEnd != "2026-10-17" {
+		t.Errorf("expected RangeEnd 2026-10-17, got %q", view4.RangeEnd)
+	}
+}
+
+func TestBuildFamilyCombinedData_RollingWindowBounds(t *testing.T) {
+	t.Parallel()
+
+	weekView := &FamilyViewModel{
+		Today:      "2026-10-10",
+		RangeStart: "2026-10-05",
+		RangeEnd:   "2026-10-11",
+	}
+
+	// Case 1: no monthView and no explicit cfg - should default to -90d and +180d from Today
+	res := BuildFamilyCombinedData(nil, weekView, nil, nil)
+	expectedStart := "2026-07-12" // 2026-10-10 - 90 days
+	expectedEnd := "2027-04-08"   // 2026-10-10 + 180 days
+	if res["cached_range_start"] != expectedStart {
+		t.Errorf("expected cached_range_start %s, got %v", expectedStart, res["cached_range_start"])
+	}
+	if res["cached_range_end"] != expectedEnd {
+		t.Errorf("expected cached_range_end %s, got %v", expectedEnd, res["cached_range_end"])
+	}
+
+	// Case 2: explicit cfg bounds take precedence
+	cfgExplicit := map[string]any{
+		"cached_range_start": "2026-09-01",
+		"cached_range_end":   "2026-12-31",
+	}
+	resExplicit := BuildFamilyCombinedData(nil, weekView, nil, cfgExplicit)
+	if resExplicit["cached_range_start"] != "2026-09-01" {
+		t.Errorf("expected explicit cached_range_start 2026-09-01, got %v", resExplicit["cached_range_start"])
+	}
+	if resExplicit["cached_range_end"] != "2026-12-31" {
+		t.Errorf("expected explicit cached_range_end 2026-12-31, got %v", resExplicit["cached_range_end"])
+	}
+
+	// Case 3: dayView when weekView is nil
+	dayView := &FamilyDayViewModel{
+		Date: "2026-10-10",
+	}
+	resDay := BuildFamilyCombinedData(dayView, nil, nil, nil)
+	if resDay["cached_range_start"] != expectedStart {
+		t.Errorf("expected dayView cached_range_start %s, got %v", expectedStart, resDay["cached_range_start"])
+	}
+	if resDay["cached_range_end"] != expectedEnd {
+		t.Errorf("expected dayView cached_range_end %s, got %v", expectedEnd, resDay["cached_range_end"])
+	}
+}

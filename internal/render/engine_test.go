@@ -1096,3 +1096,50 @@ func TestEngine_RenderWidget_TasksPackage(t *testing.T) {
 	}
 }
 
+func TestEngine_RenderWidgetWithOverrides(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	pkg := createTestPackage(t, tmpDir, "sample", `<div>{{.Config.title}} ({{.Config.count}})</div>`)
+
+	origConfig := map[string]any{"title": "Original", "count": 1}
+	snap := &config.Snapshot{
+		Config: &config.Config{
+			Display: config.DisplayConfig{
+				Widgets: []config.WidgetConfig{
+					{
+						ID:     "sample-1",
+						Type:   "sample",
+						Config: origConfig,
+					},
+				},
+			},
+		},
+		Packages: map[string]*domain.Package{
+			"sample": pkg,
+		},
+	}
+
+	provider := &mockSnapshotProvider{
+		snapshot: snap,
+		states:   map[string]mockState{"sample-1": {data: map[string]any{}, state: "healthy"}},
+	}
+	resolver := &mockResolver{packages: map[string]*domain.Package{"sample": pkg}}
+	engine := render.NewEngine(resolver, provider)
+
+	// Render with overrides
+	overrides := map[string]any{"title": "Overridden", "count": 42}
+	html, err := engine.RenderWidgetWithOverrides(context.Background(), "sample-1", "", overrides)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(string(html), "Overridden (42)") {
+		t.Errorf("expected overridden content, got %s", string(html))
+	}
+
+	// Verify original config in snapshot was NOT mutated
+	if origConfig["title"] != "Original" || origConfig["count"] != 1 {
+		t.Errorf("original widget config was mutated: %+v", origConfig)
+	}
+}
+

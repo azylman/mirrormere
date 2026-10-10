@@ -28,6 +28,11 @@
       this.cachedRange = this.resolveCachedRange();
       this.syncIndicatorTimer = null;
 
+      this.fetchFn = options.fetch || (typeof window !== 'undefined' && window.fetch ? window.fetch.bind(window) : (typeof fetch !== 'undefined' ? fetch : null));
+      this.renderCache = new Map();
+      this.renderSeq = 0;
+      this.abortController = null;
+
       // Touch swipe configuration & state
       this.touchStartX = 0;
       this.touchStartY = 0;
@@ -39,6 +44,8 @@
       this.swipeDistanceThreshold = typeof options.swipeDistanceThreshold === 'number' ? options.swipeDistanceThreshold : 40;
       this.swipeVelocityThreshold = typeof options.swipeVelocityThreshold === 'number' ? options.swipeVelocityThreshold : 0.15;
 
+      this.prevBtn = element.querySelector('.cf-nav-btn.cf-prev-btn');
+      this.nextBtn = element.querySelector('.cf-nav-btn.cf-next-btn');
       this.viewButtons = Array.from(element.querySelectorAll('.cf-view-btn'));
       this.viewPanels = {
         day: element.querySelector('.cf-view-panel.cf-view-day') || element.querySelector('.cf-view-day'),
@@ -341,7 +348,9 @@
       const absDeltaY = Math.abs(deltaY);
       const velocity = absDeltaX / duration;
 
-      if (absDeltaX >= this.swipeDistanceThreshold && velocity >= this.swipeVelocityThreshold && absDeltaX > absDeltaY * 1.2) {
+      const isFlick = absDeltaX >= this.swipeDistanceThreshold && velocity >= this.swipeVelocityThreshold && absDeltaX > absDeltaY * 1.5;
+      const isDrag = absDeltaX >= 50 && duration < 800 && absDeltaX > absDeltaY * 1.5;
+      if (isFlick || isDrag) {
         this.justSwiped = true;
         setTimeout(() => { this.justSwiped = false; }, 120);
 
@@ -365,6 +374,34 @@
         return;
       }
       this.resetInactivityTimer();
+
+      // Check navigation buttons & today badge
+      const prevBtn = e.target && e.target.closest && e.target.closest('.cf-nav-btn.cf-prev-btn');
+      if (prevBtn) {
+        if (typeof e.stopPropagation === 'function') {
+          e.stopPropagation();
+        }
+        this.pagePrev();
+        return;
+      }
+
+      const nextBtn = e.target && e.target.closest && e.target.closest('.cf-nav-btn.cf-next-btn');
+      if (nextBtn) {
+        if (typeof e.stopPropagation === 'function') {
+          e.stopPropagation();
+        }
+        this.pageNext();
+        return;
+      }
+
+      const todayBadge = e.target && e.target.closest && e.target.closest('.cf-today-badge');
+      if (todayBadge) {
+        if (typeof e.stopPropagation === 'function') {
+          e.stopPropagation();
+        }
+        this.resetDate();
+        return;
+      }
 
       // 1. Check view switcher button click
       const btn = e.target && e.target.closest && e.target.closest('.cf-view-btn');
@@ -664,6 +701,16 @@
 
     pageNext() {
       const cached = this.resolveCachedRange();
+      const prevDate = new Date(this.currentDate.getTime());
+      const prevWeekStart = new Date(this.currentWeekStart.getTime());
+      const prevOffset = this.pageOffset;
+
+      const rollbackFn = () => {
+        this.currentDate = prevDate;
+        this.currentWeekStart = prevWeekStart;
+        this.pageOffset = prevOffset;
+        this.updateDateUI();
+      };
 
       if (this.activeView === 'day') {
         const nextDay = new Date(this.currentDate.getTime());
@@ -680,6 +727,7 @@
         if (typeof this.options.onPageChange === 'function') {
           this.options.onPageChange('next', this.currentDate, this);
         }
+        this.loadDateView(this.currentDate, this.activeView, rollbackFn);
         return true;
       }
 
@@ -700,6 +748,7 @@
         if (typeof this.options.onPageChange === 'function') {
           this.options.onPageChange('next', this.currentWeekStart, this);
         }
+        this.loadDateView(this.currentWeekStart, this.activeView, rollbackFn);
         return true;
       }
 
@@ -719,6 +768,7 @@
         if (typeof this.options.onPageChange === 'function') {
           this.options.onPageChange('next', this.currentDate, this);
         }
+        this.loadDateView(this.currentDate, this.activeView, rollbackFn);
         return true;
       }
 
@@ -727,6 +777,16 @@
 
     pagePrev() {
       const cached = this.resolveCachedRange();
+      const prevDate = new Date(this.currentDate.getTime());
+      const prevWeekStart = new Date(this.currentWeekStart.getTime());
+      const prevOffset = this.pageOffset;
+
+      const rollbackFn = () => {
+        this.currentDate = prevDate;
+        this.currentWeekStart = prevWeekStart;
+        this.pageOffset = prevOffset;
+        this.updateDateUI();
+      };
 
       if (this.activeView === 'day') {
         const prevDay = new Date(this.currentDate.getTime());
@@ -743,6 +803,7 @@
         if (typeof this.options.onPageChange === 'function') {
           this.options.onPageChange('prev', this.currentDate, this);
         }
+        this.loadDateView(this.currentDate, this.activeView, rollbackFn);
         return true;
       }
 
@@ -765,6 +826,7 @@
         if (typeof this.options.onPageChange === 'function') {
           this.options.onPageChange('prev', this.currentWeekStart, this);
         }
+        this.loadDateView(this.currentWeekStart, this.activeView, rollbackFn);
         return true;
       }
 
@@ -784,6 +846,7 @@
         if (typeof this.options.onPageChange === 'function') {
           this.options.onPageChange('prev', this.currentDate, this);
         }
+        this.loadDateView(this.currentDate, this.activeView, rollbackFn);
         return true;
       }
 
@@ -795,6 +858,132 @@
       this.currentWeekStart = new Date(this.baseWeekStart.getTime());
       this.pageOffset = 0;
       this.hideSyncIndicator();
+      this.updateDateUI();
+      this.loadDateView(this.baseDate, this.defaultView);
+    }
+
+    async loadDateView(targetDate, targetView, rollbackFn) {
+      this.renderSeq++;
+      const seq = this.renderSeq;
+
+      if (this.abortController) {
+        try {
+          this.abortController.abort();
+        } catch (_) {}
+      }
+      this.abortController = typeof AbortController !== 'undefined' ? new AbortController() : null;
+
+      const dateStr = this.formatDateISO(targetDate);
+      const viewStr = targetView || this.activeView;
+      const cacheKey = `${dateStr}:${viewStr}`;
+
+      if (this.renderCache.has(cacheKey)) {
+        this.applyRenderedHTML(this.renderCache.get(cacheKey));
+        return;
+      }
+
+      if (!this.fetchFn || !this.widgetId) {
+        return;
+      }
+
+      try {
+        const url = `api/widgets/${encodeURIComponent(this.widgetId)}/render?date=${encodeURIComponent(dateStr)}&view=${encodeURIComponent(viewStr)}`;
+        const options = this.abortController ? { signal: this.abortController.signal } : {};
+        const res = await this.fetchFn(url, options);
+
+        if (seq !== this.renderSeq) return;
+
+        if (!res || (typeof res.ok === 'boolean' && !res.ok)) {
+          throw new Error(`Fetch failed with status ${res && res.status}`);
+        }
+
+        const html = typeof res.text === 'function' ? await res.text() : String(res);
+
+        if (seq !== this.renderSeq) return;
+
+        if (this.renderCache.size >= 20) {
+          const oldestKey = this.renderCache.keys().next().value;
+          this.renderCache.delete(oldestKey);
+        }
+        this.renderCache.set(cacheKey, html);
+
+        this.applyRenderedHTML(html);
+      } catch (err) {
+        if ((err && err.name === 'AbortError') || seq !== this.renderSeq) {
+          return;
+        }
+        this.showSyncIndicator('Sync failed');
+        if (typeof rollbackFn === 'function') {
+          rollbackFn();
+        }
+      } finally {
+        if (seq === this.renderSeq) {
+          this.abortController = null;
+        }
+      }
+    }
+
+    applyRenderedHTML(html) {
+      let temp;
+      if (typeof html === 'string') {
+        temp = typeof document !== 'undefined' && document.createElement ? document.createElement('div') : null;
+        if (!temp) return;
+        temp.innerHTML = html;
+      } else if (html && typeof html.querySelector === 'function') {
+        temp = html;
+      } else {
+        return;
+      }
+
+      const views = ['day', 'week', 'month'];
+      for (const v of views) {
+        const newPanel = temp.querySelector(`.cf-view-panel.cf-view-${v}`) || temp.querySelector(`.cf-view-${v}`);
+        const curPanel = this.viewPanels[v];
+        if (newPanel && curPanel) {
+          const display = curPanel.style.display;
+          if (typeof curPanel.replaceWith === 'function') {
+            curPanel.replaceWith(newPanel);
+            newPanel.style.display = display;
+            this.viewPanels[v] = newPanel;
+          } else if (curPanel.parentNode && typeof curPanel.parentNode.replaceChild === 'function') {
+            curPanel.parentNode.replaceChild(newPanel, curPanel);
+            newPanel.style.display = display;
+            this.viewPanels[v] = newPanel;
+          } else {
+            curPanel.innerHTML = newPanel.innerHTML;
+          }
+        }
+      }
+
+      for (const v of views) {
+        const newLabel = temp.querySelector(`.cf-range-label.cf-label-${v}`);
+        const curLabel = this.labels[v];
+        if (newLabel && curLabel) {
+          curLabel.textContent = newLabel.textContent;
+        }
+      }
+
+      const newBadge = temp.querySelector('.cf-today-badge.cf-today-day') || temp.querySelector('.cf-today-badge');
+      if (newBadge && this.todayBadge) {
+        this.todayBadge.textContent = newBadge.textContent;
+        if (newBadge.style && newBadge.style.display !== undefined) {
+          this.todayBadge.style.display = newBadge.style.display;
+        }
+      }
+
+      const newDataEl = temp.querySelector('.calendar-grid-data, .calendar-family-data');
+      const curDataEl = this.element.querySelector('.calendar-grid-data, .calendar-family-data');
+      if (newDataEl && curDataEl) {
+        curDataEl.textContent = newDataEl.textContent;
+      } else if (newDataEl && !curDataEl) {
+        this.element.appendChild(newDataEl);
+      }
+
+      this.data = this.parseData();
+      this.eventIndex = this.buildEventIndex();
+
+      this.element.dataset.currentDate = this.formatDateISO(this.currentDate);
+      this.element.dataset.pageOffset = String(this.pageOffset);
       this.updateDateUI();
     }
 
@@ -968,6 +1157,13 @@
     }
 
     destroy() {
+      if (this.abortController) {
+        try {
+          this.abortController.abort();
+        } catch (_) {}
+        this.abortController = null;
+      }
+      this.renderCache.clear();
       if (this.inactivityTimer) {
         clearTimeout(this.inactivityTimer);
         this.inactivityTimer = null;

@@ -5,6 +5,105 @@ const path = require('node:path');
 
 const scriptCode = fs.readFileSync(path.join(__dirname, '../static/js/calendar_family.js'), 'utf8');
 
+function parseHTMLFragment(html, rootNode) {
+  if (!html || typeof html !== 'string') return;
+  if (!html.includes('<')) {
+    rootNode._textContent = html;
+    return;
+  }
+
+  const tagRegex = /<!--[\s\S]*?-->|<(\/)?([a-zA-Z0-9-]+)([^>]*)>|([^<]+)/g;
+  const stack = [rootNode];
+  let match;
+
+  while ((match = tagRegex.exec(html)) !== null) {
+    const [fullMatch, isClosing, tagName, attrString, textContent] = match;
+
+    if (fullMatch.startsWith('<!--')) {
+      continue;
+    }
+
+    if (textContent !== undefined) {
+      const text = textContent.trim();
+      if (text) {
+        const cur = stack[stack.length - 1];
+        if (cur) {
+          cur._textContent = (cur._textContent ? cur._textContent + ' ' : '') + text;
+        }
+      }
+      continue;
+    }
+
+    if (isClosing) {
+      const lower = tagName.toLowerCase();
+      for (let i = stack.length - 1; i > 0; i--) {
+        if (stack[i].tagName.toLowerCase() === lower) {
+          stack.length = i;
+          break;
+        }
+      }
+      continue;
+    }
+
+    const lower = tagName.toLowerCase();
+    const attrs = {};
+    if (attrString) {
+      const attrRegex = /([a-zA-Z0-9_-]+)(?:=(?:"([^"]*)"|'([^']*)'|([^\s>]+)))?/g;
+      let aMatch;
+      while ((aMatch = attrRegex.exec(attrString)) !== null) {
+        const name = aMatch[1];
+        const val = aMatch[2] !== undefined ? aMatch[2] : (aMatch[3] !== undefined ? aMatch[3] : (aMatch[4] !== undefined ? aMatch[4] : ''));
+        attrs[name] = val;
+      }
+    }
+
+    const newNode = createMockDOMNode(lower, attrs);
+    if (attrs.style) {
+      attrs.style.split(';').forEach(rule => {
+        const idx = rule.indexOf(':');
+        if (idx !== -1) {
+          const k = rule.slice(0, idx).trim();
+          const v = rule.slice(idx + 1).trim();
+          if (k && v) {
+            const camel = k.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+            newNode.style[camel] = v;
+          }
+        }
+      });
+    }
+    for (const [k, v] of Object.entries(attrs)) {
+      if (k.startsWith('data-')) {
+        const camel = k.slice(5).replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+        newNode.dataset[camel] = v;
+      }
+      if (k === 'class') {
+        newNode.className = v;
+      }
+    }
+
+    const cur = stack[stack.length - 1];
+    if (cur) {
+      cur.appendChild(newNode);
+    }
+
+    const isSelfClosing = attrString.trim().endsWith('/') || ['br', 'hr', 'img', 'input', 'meta', 'link'].includes(lower);
+    if (!isSelfClosing) {
+      if (lower === 'script' || lower === 'style') {
+        const closeTag = `</${lower}>`;
+        const restIndex = html.indexOf(closeTag, tagRegex.lastIndex);
+        if (restIndex !== -1) {
+          const rawContent = html.slice(tagRegex.lastIndex, restIndex);
+          newNode._textContent = rawContent;
+          newNode._innerHTML = rawContent;
+          tagRegex.lastIndex = restIndex + closeTag.length;
+        }
+      } else {
+        stack.push(newNode);
+      }
+    }
+  }
+}
+
 function createMockDOMNode(tag = 'div', attributes = {}) {
   const classList = new Set();
   const children = [];
@@ -15,6 +114,12 @@ function createMockDOMNode(tag = 'div', attributes = {}) {
 
   if (attributes.className) {
     attributes.className.split(/\s+/).filter(Boolean).forEach(c => classList.add(c));
+  }
+  for (const [k, v] of Object.entries(attributes)) {
+    if (k.startsWith('data-')) {
+      const camel = k.slice(5).replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+      dataset[camel] = v;
+    }
   }
 
   const node = {
@@ -50,6 +155,11 @@ function createMockDOMNode(tag = 'div', attributes = {}) {
     set innerHTML(val) {
       this._innerHTML = String(val);
       this._textContent = String(val);
+      while (children.length > 0) {
+        const c = children.pop();
+        if (c) c.parentNode = null;
+      }
+      parseHTMLFragment(String(val), node);
     },
     setAttribute(k, v) {
       attrs[k] = String(v);
@@ -76,6 +186,25 @@ function createMockDOMNode(tag = 'div', attributes = {}) {
         child.parentNode = null;
       }
       return child;
+    },
+    replaceChild(newNode, oldNode) {
+      if (!newNode || !oldNode) return null;
+      const idx = children.indexOf(oldNode);
+      if (idx !== -1) {
+        if (newNode.parentNode) {
+          newNode.parentNode.removeChild(newNode);
+        }
+        newNode.parentNode = node;
+        oldNode.parentNode = null;
+        children[idx] = newNode;
+        return oldNode;
+      }
+      return null;
+    },
+    replaceWith(newNode) {
+      if (this.parentNode && typeof this.parentNode.replaceChild === 'function') {
+        this.parentNode.replaceChild(newNode, this);
+      }
     },
     remove() {
       if (this.parentNode) {
@@ -107,11 +236,32 @@ function createMockDOMNode(tag = 'div', attributes = {}) {
       for (const sel of selectors) {
         if (!sel) continue;
         if (sel.startsWith('[') && sel.endsWith(']')) {
-          const attr = sel.slice(1, -1);
-          if (attr === 'data-event-id' && this.dataset && this.dataset.eventId) return true;
-          if (attrs[attr] !== undefined) return true;
+          const inner = sel.slice(1, -1);
+          if (inner.includes('=')) {
+            let [attrName, attrVal] = inner.split('=');
+            if (attrVal.startsWith('"') && attrVal.endsWith('"')) attrVal = attrVal.slice(1, -1);
+            if (attrVal.startsWith("'") && attrVal.endsWith("'")) attrVal = attrVal.slice(1, -1);
+            if (attrName === 'data-event-id') return this.dataset && this.dataset.eventId === attrVal;
+            if (attrName.startsWith('data-')) {
+              const camel = attrName.slice(5).replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+              return this.dataset && this.dataset[camel] === attrVal;
+            }
+            return attrs[attrName] === attrVal;
+          }
+          if (inner === 'data-event-id' && this.dataset && this.dataset.eventId) return true;
+          if (inner.startsWith('data-')) {
+            const camel = inner.slice(5).replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+            if (this.dataset && this.dataset[camel] !== undefined) return true;
+          }
+          if (attrs[inner] !== undefined) return true;
         } else if (sel.includes('.')) {
-          const parts = sel.split('.').filter(Boolean);
+          const dotIdx = sel.indexOf('.');
+          const tagPart = sel.slice(0, dotIdx);
+          const classPart = sel.slice(dotIdx);
+          if (tagPart && tagPart.toLowerCase() !== this.tagName.toLowerCase()) {
+            continue;
+          }
+          const parts = classPart.split('.').filter(Boolean);
           if (parts.length > 0 && parts.every(c => classList.has(c))) {
             return true;
           }
@@ -301,6 +451,12 @@ function createMockElement(options = {}) {
   element.appendChild(btnWeek);
   element.appendChild(btnMonth);
 
+  // Nav buttons
+  const btnPrev = createMockDOMNode('button', { className: 'cf-nav-btn cf-prev-btn' });
+  const btnNext = createMockDOMNode('button', { className: 'cf-nav-btn cf-next-btn' });
+  element.appendChild(btnPrev);
+  element.appendChild(btnNext);
+
   // Panels
   const panelDay = createMockDOMNode('div', { className: 'cf-view-panel cf-view-day' });
   panelDay.style.display = activeView === 'day' ? 'flex' : 'none';
@@ -350,6 +506,9 @@ function createMockElement(options = {}) {
   panelMonth.appendChild(monthDay);
 
   element._buttons = [btnDay, btnWeek, btnMonth];
+  element._btnPrev = btnPrev;
+  element._btnNext = btnNext;
+  element._navButtons = { prev: btnPrev, next: btnNext };
   element._panels = { day: panelDay, week: panelWeek, month: panelMonth };
   element._labels = { day: lblDay, week: lblWeek, month: lblMonth };
   element._todayBadge = todayBadge;
@@ -1084,5 +1243,345 @@ test('Calendar Family Client Controller', async (t) => {
 
     global.window.MirrormereCalendarFamily.unmount('combined-data-cal');
   });
-});
 
+  await t.test('swiping left/right in week, day, and month views invokes fetch with ?date=...&view=... and replaces panel DOM with fresh event cards', async () => {
+    const fetchCalls = [];
+    const mockFetch = async (url, opts) => {
+      fetchCalls.push({ url, signal: opts && opts.signal });
+      const parsedUrl = new URL('http://localhost/' + url);
+      const date = parsedUrl.searchParams.get('date');
+      const view = parsedUrl.searchParams.get('view');
+      const html = `
+        <div class="cf-view-panel cf-view-day">
+          <div class="cf-day-event cf-event-clickable" data-event-id="ev-fresh-${date}-day">
+            <div class="cf-event-title">Fresh Day Event ${date}</div>
+          </div>
+        </div>
+        <div class="cf-view-panel cf-view-week">
+          <div class="cf-event cf-timed cf-event-clickable" data-event-id="ev-fresh-${date}-week">
+            <div class="cf-event-title">Fresh Week Event ${date}</div>
+          </div>
+        </div>
+        <div class="cf-view-panel cf-view-month">
+          <div class="cf-month-day cf-has-events" data-date="${date}">
+            <div class="cf-month-event-title cf-event-clickable" data-event-id="ev-fresh-${date}-month">Fresh Month Event ${date}</div>
+          </div>
+        </div>
+        <span class="cf-range-label cf-label-day">Day ${date}</span>
+        <span class="cf-range-label cf-label-week">Week ${date}</span>
+        <span class="cf-range-label cf-label-month">Month ${date}</span>
+        <script class="calendar-family-data">${JSON.stringify({
+          days: [{
+            date,
+            timed: [{ id: `ev-fresh-${date}-week`, title: `Fresh Week Event ${date}` }],
+            all_day: [{ id: `ev-fresh-${date}-day`, title: `Fresh Day Event ${date}` }],
+            events: [{ id: `ev-fresh-${date}-month`, title: `Fresh Month Event ${date}` }]
+          }],
+          month_days: [{
+            date,
+            events: [{ id: `ev-fresh-${date}-month`, title: `Fresh Month Event ${date}` }]
+          }]
+        })}</script>
+      `;
+      return { ok: true, text: async () => html };
+    };
+
+    const el = createMockElement({
+      widgetId: 'paging-swipe-cal',
+      defaultView: 'week',
+    });
+    const inst = global.window.MirrormereCalendarFamily.mount(el, {
+      fetch: mockFetch,
+      cachedRange: { start: '2026-09-01', end: '2026-11-30' },
+    });
+
+    // 1. Week view swipe left (forward)
+    el.dispatchEvent({
+      type: 'touchstart',
+      touches: [{ clientX: 200, clientY: 50 }],
+    });
+    el.dispatchEvent({
+      type: 'touchend',
+      changedTouches: [{ clientX: 50, clientY: 50 }],
+    });
+
+    await new Promise(r => setTimeout(r, 10));
+
+    assert.equal(fetchCalls.length, 1);
+    assert.ok(fetchCalls[0].url.includes('date=2026-10-17'));
+    assert.ok(fetchCalls[0].url.includes('view=week'));
+
+    // Check DOM replacement: week panel should have the fresh event card
+    const freshWeekCard = inst.viewPanels.week.querySelector('[data-event-id="ev-fresh-2026-10-17-week"]');
+    assert.ok(freshWeekCard, 'week panel should be replaced with fresh event card');
+
+    // Wait for justSwiped cooldown (120ms) then tap fresh card
+    await new Promise(r => setTimeout(r, 130));
+    freshWeekCard.click();
+    assert.ok(inst.activeModal, 'tapping fresh event opens modal');
+    assert.equal(inst.activeModal.querySelector('.cf-modal-title').textContent, 'Fresh Week Event 2026-10-17');
+    inst.closeModal();
+
+    // 2. Day view swipe left
+    inst.switchView('day');
+    fetchCalls.length = 0;
+    el.dispatchEvent({
+      type: 'touchstart',
+      touches: [{ clientX: 200, clientY: 50 }],
+    });
+    el.dispatchEvent({
+      type: 'touchend',
+      changedTouches: [{ clientX: 50, clientY: 50 }],
+    });
+
+    await new Promise(r => setTimeout(r, 10));
+    assert.equal(fetchCalls.length, 1);
+    assert.ok(fetchCalls[0].url.includes('view=day'));
+    const freshDayCard = inst.viewPanels.day.querySelector('[data-event-id]');
+    assert.ok(freshDayCard, 'day panel should be replaced with fresh day event card');
+
+    // 3. Month view swipe left
+    inst.switchView('month');
+    fetchCalls.length = 0;
+    el.dispatchEvent({
+      type: 'touchstart',
+      touches: [{ clientX: 200, clientY: 50 }],
+    });
+    el.dispatchEvent({
+      type: 'touchend',
+      changedTouches: [{ clientX: 50, clientY: 50 }],
+    });
+
+    await new Promise(r => setTimeout(r, 10));
+    assert.equal(fetchCalls.length, 1);
+    assert.ok(fetchCalls[0].url.includes('view=month'));
+    const freshMonthCard = inst.viewPanels.month.querySelector('[data-event-id]');
+    assert.ok(freshMonthCard, 'month panel should be replaced with fresh month event card');
+
+    global.window.MirrormereCalendarFamily.unmount('paging-swipe-cal');
+  });
+
+  await t.test('tapping .cf-prev-btn and .cf-next-btn triggers paging and DOM replacement', async () => {
+    const fetchCalls = [];
+    const mockFetch = async (url) => {
+      fetchCalls.push(url);
+      const parsedUrl = new URL('http://localhost/' + url);
+      const date = parsedUrl.searchParams.get('date');
+      const html = `
+        <div class="cf-view-panel cf-view-week">
+          <div class="cf-event cf-timed cf-event-clickable" data-event-id="ev-btn-${date}">
+            <div class="cf-event-title">Button Event ${date}</div>
+          </div>
+        </div>
+        <script class="calendar-family-data">${JSON.stringify({
+          days: [{ date, timed: [{ id: `ev-btn-${date}`, title: `Button Event ${date}` }] }]
+        })}</script>
+      `;
+      return { ok: true, text: async () => html };
+    };
+
+    const el = createMockElement({ widgetId: 'btn-paging-cal' });
+    const inst = global.window.MirrormereCalendarFamily.mount(el, {
+      fetch: mockFetch,
+      cachedRange: { start: '2026-09-01', end: '2026-11-30' },
+    });
+
+    // Tap next button
+    el._btnNext.click();
+    await new Promise(r => setTimeout(r, 10));
+
+    assert.equal(fetchCalls.length, 1);
+    assert.ok(fetchCalls[0].includes('date=2026-10-17'));
+    assert.equal(inst.pageOffset, 1);
+    const cardNext = inst.viewPanels.week.querySelector('[data-event-id="ev-btn-2026-10-17"]');
+    assert.ok(cardNext, 'next button replaces week panel with paged content');
+
+    // Tap prev button
+    el._btnPrev.click();
+    await new Promise(r => setTimeout(r, 10));
+
+    assert.equal(fetchCalls.length, 2);
+    assert.ok(fetchCalls[1].includes('date=2026-10-10'));
+    assert.equal(inst.pageOffset, 0);
+
+    global.window.MirrormereCalendarFamily.unmount('btn-paging-cal');
+  });
+
+  await t.test('tapping .cf-today-badge resets date back to base date', async () => {
+    let fetchCount = 0;
+    const mockFetch = async (url) => {
+      fetchCount++;
+      return { ok: true, text: async () => `<div class="cf-view-panel cf-view-day"></div>` };
+    };
+
+    const el = createMockElement({ widgetId: 'today-badge-cal', defaultView: 'day' });
+    const inst = global.window.MirrormereCalendarFamily.mount(el, {
+      fetch: mockFetch,
+      cachedRange: { start: '2026-09-01', end: '2026-11-30' },
+    });
+
+    // Advance 2 days forward
+    el._btnNext.click();
+    el._btnNext.click();
+    assert.equal(inst.pageOffset, 2);
+    assert.equal(inst.currentDate.getDate(), 12);
+
+    // Tap TODAY badge
+    el._todayBadge.click();
+    assert.equal(inst.pageOffset, 0, 'pageOffset should reset to 0');
+    assert.equal(inst.currentDate.getDate(), 10, 'currentDate should reset to base date');
+
+    global.window.MirrormereCalendarFamily.unmount('today-badge-cal');
+  });
+
+  await t.test('cached date views are served from renderCache without additional fetch requests', async () => {
+    let fetchCount = 0;
+    const mockFetch = async (url) => {
+      fetchCount++;
+      const parsedUrl = new URL('http://localhost/' + url);
+      const date = parsedUrl.searchParams.get('date');
+      return {
+        ok: true,
+        text: async () => `
+          <div class="cf-view-panel cf-view-week">
+            <div class="cf-event cf-timed" data-event-id="cached-${date}">Event ${date}</div>
+          </div>
+          <script class="calendar-family-data">${JSON.stringify({
+            days: [{ date, events: [{ id: `cached-${date}`, title: `Event ${date}` }] }]
+          })}</script>
+        `
+      };
+    };
+
+    const el = createMockElement({ widgetId: 'render-cache-cal' });
+    const inst = global.window.MirrormereCalendarFamily.mount(el, {
+      fetch: mockFetch,
+      cachedRange: { start: '2026-09-01', end: '2026-11-30' },
+    });
+
+    // Page forward to 2026-10-17 -> fetch 1
+    el._btnNext.click();
+    await new Promise(r => setTimeout(r, 10));
+    assert.equal(fetchCount, 1);
+    assert.ok(inst.renderCache.has('2026-10-17:week'));
+
+    // Page backward to 2026-10-10 -> fetch 2
+    el._btnPrev.click();
+    await new Promise(r => setTimeout(r, 10));
+    assert.equal(fetchCount, 2);
+    assert.ok(inst.renderCache.has('2026-10-10:week'));
+
+    // Page forward again to 2026-10-17 -> should be served from renderCache!
+    el._btnNext.click();
+    await new Promise(r => setTimeout(r, 10));
+    assert.equal(fetchCount, 2, 'subsequent navigation to cached date view should not fetch');
+    const cachedCard = inst.viewPanels.week.querySelector('[data-event-id="cached-2026-10-17"]');
+    assert.ok(cachedCard, 'panel should display content from renderCache');
+
+    global.window.MirrormereCalendarFamily.unmount('render-cache-cal');
+  });
+
+  await t.test('rapid multi-swipes cancel in-flight fetches and ignore stale out-of-order responses', async () => {
+    const signals = [];
+    let resolveFirst;
+    let resolveSecond;
+
+    const mockFetch = (url, opts) => {
+      signals.push(opts.signal);
+      if (signals.length === 1) {
+        return new Promise(resolve => {
+          resolveFirst = () => resolve({
+            ok: true,
+            text: async () => `
+              <div class="cf-view-panel cf-view-week">
+                <div class="cf-event" data-event-id="stale-slow">Stale Slow Event</div>
+              </div>
+            `
+          });
+        });
+      }
+      return new Promise(resolve => {
+        resolveSecond = () => resolve({
+          ok: true,
+          text: async () => `
+            <div class="cf-view-panel cf-view-week">
+              <div class="cf-event" data-event-id="fresh-fast">Fresh Fast Event</div>
+            </div>
+          `
+        });
+      });
+    };
+
+    const el = createMockElement({ widgetId: 'race-defense-cal' });
+    const inst = global.window.MirrormereCalendarFamily.mount(el, {
+      fetch: mockFetch,
+      cachedRange: { start: '2026-09-01', end: '2026-11-30' },
+    });
+
+    // Swipe 1 (starts fetch 1)
+    el.dispatchEvent({ type: 'touchstart', touches: [{ clientX: 200, clientY: 50 }] });
+    el.dispatchEvent({ type: 'touchend', changedTouches: [{ clientX: 50, clientY: 50 }] });
+
+    assert.equal(signals.length, 1);
+    assert.equal(signals[0].aborted, false);
+
+    // Rapid Swipe 2 (cancels fetch 1, starts fetch 2)
+    el.dispatchEvent({ type: 'touchstart', touches: [{ clientX: 200, clientY: 50 }] });
+    el.dispatchEvent({ type: 'touchend', changedTouches: [{ clientX: 50, clientY: 50 }] });
+
+    assert.equal(signals.length, 2);
+    assert.equal(signals[0].aborted, true, 'first in-flight fetch should be aborted');
+
+    // Resolve second fetch first
+    resolveSecond();
+    await new Promise(r => setTimeout(r, 10));
+
+    const fastCard = inst.viewPanels.week.querySelector('[data-event-id="fresh-fast"]');
+    assert.ok(fastCard, 'second fetch response should be applied');
+
+    // Now resolve first stale fetch late
+    resolveFirst();
+    await new Promise(r => setTimeout(r, 10));
+
+    // Panel should STILL have fresh-fast, NOT stale-slow
+    const staleCard = inst.viewPanels.week.querySelector('[data-event-id="stale-slow"]');
+    assert.equal(staleCard, null, 'stale out-of-order response should be discarded');
+    assert.ok(inst.viewPanels.week.querySelector('[data-event-id="fresh-fast"]'));
+
+    global.window.MirrormereCalendarFamily.unmount('race-defense-cal');
+  });
+
+  await t.test('failed network response triggers rollback and displays sync failed indicator', async () => {
+    const mockFetch = async () => {
+      return { ok: false, status: 500 };
+    };
+
+    const el = createMockElement({ widgetId: 'rollback-cal' });
+    const inst = global.window.MirrormereCalendarFamily.mount(el, {
+      fetch: mockFetch,
+      cachedRange: { start: '2026-09-01', end: '2026-11-30' },
+    });
+
+    const initialDate = inst.formatDateISO(inst.currentDate);
+    const initialOffset = inst.pageOffset;
+
+    // Trigger swipe forward
+    el.dispatchEvent({ type: 'touchstart', touches: [{ clientX: 200, clientY: 50 }] });
+    el.dispatchEvent({ type: 'touchend', changedTouches: [{ clientX: 50, clientY: 50 }] });
+
+    await new Promise(r => setTimeout(r, 15));
+
+    // Should have rolled back
+    assert.equal(inst.pageOffset, initialOffset, 'pageOffset should roll back on fetch error');
+    assert.equal(inst.formatDateISO(inst.currentDate), initialDate, 'currentDate should roll back on fetch error');
+
+    // Should display sync failed indicator
+    const indicator = el.querySelector('.cf-sync-indicator');
+    assert.ok(indicator, 'sync indicator should be created');
+    assert.equal(indicator.textContent, 'Sync failed', 'sync indicator text should show failure');
+    assert.equal(indicator.style.display, '');
+
+    global.window.MirrormereCalendarFamily.unmount('rollback-cal');
+  });
+
+});
