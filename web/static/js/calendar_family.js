@@ -9,7 +9,7 @@
     constructor(element, options = {}) {
       this.element = element;
       this.options = options;
-      this.widgetId = element.dataset.widgetId || 'calendar-family';
+      this.widgetId = element.dataset.widgetId || element.dataset.widgetType || 'calendar-grid';
       this.data = this.parseData();
       this.config = this.parseConfig();
       this.eventIndex = this.buildEventIndex();
@@ -63,7 +63,7 @@
     }
 
     parseData() {
-      const dataEl = this.element.querySelector('.calendar-family-data');
+      const dataEl = this.element.querySelector('.calendar-grid-data, .calendar-family-data');
       if (dataEl && dataEl.textContent) {
         try {
           let parsed = JSON.parse(dataEl.textContent.trim());
@@ -982,7 +982,7 @@
     instances: new Map(),
     mount(element, options = {}) {
       if (!element) return null;
-      const widgetId = element.dataset.widgetId || 'calendar-family';
+      const widgetId = element.dataset.widgetId || element.dataset.widgetType || 'calendar-grid';
       if (this.instances.has(widgetId)) {
         this.unmount(widgetId);
       }
@@ -1004,8 +1004,9 @@
 
   if (typeof window !== 'undefined') {
     window.MirrormereCalendarFamily = api;
+    window.MirrormereCalendarGrid = api;
   }
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { CalendarFamilyInstance, MirrormereCalendarFamily: api };
+    module.exports = { CalendarFamilyInstance, MirrormereCalendarFamily: api, MirrormereCalendarGrid: api };
   }
 })();

@@ -1,6 +1,6 @@
 {{ if isDayView .Config }}
   {{ $dayView := dayView .Data .Config .Dimensions }}
-  <div class="widget-card widget-calendar-family cf-view-day" data-widget-id="{{ .ID }}" data-widget-type="{{ .Type }}" data-default-view="day" data-active-view="day" style="grid-column: span {{ .Dimensions.Cols }}; grid-row: span {{ .Dimensions.Rows }}; display: flex; flex-direction: column; position: relative; overflow: hidden; --mm-cf-shared: {{ $dayView.SharedColor }};{{ range $i, $m := $dayView.Members }} --mm-member-{{ $i }}: {{ $m.Color }}; --mm-member-{{ $i }}-text: {{ $m.TextColor }};{{ end }}">
+  <div class="widget-card widget-calendar-grid widget-calendar-family cf-view-day" data-widget-id="{{ .ID }}" data-widget-type="{{ .Type }}" data-default-view="day" data-active-view="day" style="grid-column: span {{ .Dimensions.Cols }}; grid-row: span {{ .Dimensions.Rows }}; display: flex; flex-direction: column; position: relative; overflow: hidden; --mm-cf-shared: {{ $dayView.SharedColor }};{{ range $i, $m := $dayView.Members }} --mm-member-{{ $i }}: {{ $m.Color }}; --mm-member-{{ $i }}-text: {{ $m.TextColor }};{{ end }}">
     {{ template "cf-styles" . }}
     <div class="cf-header" style="display: flex; align-items: center; justify-content: space-between; padding-bottom: 8px; margin-bottom: 6px; border-bottom: 1px solid rgba(168, 85, 247, 0.2);">
       <div class="cf-date-heading" style="display: flex; align-items: center; gap: 8px;">
@@ -93,14 +93,14 @@
     </div>
     {{ end }}
 
-    <script type="application/json" class="calendar-family-data">
+    <script type="application/json" class="calendar-grid-data calendar-family-data">
       {{ json $dayView }}
     </script>
-    <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E" style="display:none;" alt="" onload="window.MirrormereCalendarFamily &amp;&amp; window.MirrormereCalendarFamily.mount(this.closest('.widget-calendar-family'))" />
+    <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E" style="display:none;" alt="" onload="window.MirrormereCalendarGrid ? window.MirrormereCalendarGrid.mount(this.closest('.widget-calendar-grid, .widget-calendar-family')) : (window.MirrormereCalendarFamily &amp;&amp; window.MirrormereCalendarFamily.mount(this.closest('.widget-calendar-grid, .widget-calendar-family')))" />
   </div>
 {{ else if isMonthView .Config }}
   {{ $monthView := monthView .Data .Config .Dimensions }}
-  <div class="widget-card widget-calendar-family cf-view-month" data-widget-id="{{ .ID }}" data-widget-type="{{ .Type }}" data-default-view="month" data-active-view="month" style="grid-column: span {{ .Dimensions.Cols }}; grid-row: span {{ .Dimensions.Rows }}; display: flex; flex-direction: column; position: relative; overflow: hidden; --mm-cf-shared: {{ $monthView.SharedColor }};{{ range $i, $m := $monthView.Members }} --mm-member-{{ $i }}: {{ $m.Color }}; --mm-member-{{ $i }}-text: {{ $m.TextColor }};{{ end }}">
+  <div class="widget-card widget-calendar-grid widget-calendar-family cf-view-month" data-widget-id="{{ .ID }}" data-widget-type="{{ .Type }}" data-default-view="month" data-active-view="month" style="grid-column: span {{ .Dimensions.Cols }}; grid-row: span {{ .Dimensions.Rows }}; display: flex; flex-direction: column; position: relative; overflow: hidden; --mm-cf-shared: {{ $monthView.SharedColor }};{{ range $i, $m := $monthView.Members }} --mm-member-{{ $i }}: {{ $m.Color }}; --mm-member-{{ $i }}-text: {{ $m.TextColor }};{{ end }}">
     {{ template "cf-styles" . }}
     <div class="cf-header" style="display: flex; align-items: center; justify-content: space-between; padding-bottom: 8px; margin-bottom: 6px; border-bottom: 1px solid rgba(168, 85, 247, 0.2);">
       <div class="cf-date-heading" style="display: flex; align-items: center; gap: 8px;">
@@ -154,14 +154,14 @@
     </div>
     {{ end }}
 
-    <script type="application/json" class="calendar-family-data">
+    <script type="application/json" class="calendar-grid-data calendar-family-data">
       {{ json $monthView }}
     </script>
-    <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E" style="display:none;" alt="" onload="window.MirrormereCalendarFamily &amp;&amp; window.MirrormereCalendarFamily.mount(this.closest('.widget-calendar-family'))" />
+    <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E" style="display:none;" alt="" onload="window.MirrormereCalendarGrid ? window.MirrormereCalendarGrid.mount(this.closest('.widget-calendar-grid, .widget-calendar-family')) : (window.MirrormereCalendarFamily &amp;&amp; window.MirrormereCalendarFamily.mount(this.closest('.widget-calendar-grid, .widget-calendar-family')))" />
   </div>
 {{ else }}
-  {{ $view := calendarFamilyView .Data .Config .Dimensions }}
-  <div class="widget-card widget-calendar-family cf-view-week" data-widget-id="{{ .ID }}" data-widget-type="{{ .Type }}" data-default-view="week" data-active-view="week" style="grid-column: span {{ .Dimensions.Cols }}; grid-row: span {{ .Dimensions.Rows }}; display: flex; flex-direction: column; position: relative; overflow: hidden; --mm-cf-shared: {{ $view.SharedColor }};{{ range $i, $m := $view.Members }} --mm-member-{{ $i }}: {{ $m.Color }}; --mm-member-{{ $i }}-text: {{ $m.TextColor }};{{ end }}">
+  {{ $view := calendarGridView .Data .Config .Dimensions }}
+  <div class="widget-card widget-calendar-grid widget-calendar-family cf-view-week" data-widget-id="{{ .ID }}" data-widget-type="{{ .Type }}" data-default-view="week" data-active-view="week" style="grid-column: span {{ .Dimensions.Cols }}; grid-row: span {{ .Dimensions.Rows }}; display: flex; flex-direction: column; position: relative; overflow: hidden; --mm-cf-shared: {{ $view.SharedColor }};{{ range $i, $m := $view.Members }} --mm-member-{{ $i }}: {{ $m.Color }}; --mm-member-{{ $i }}-text: {{ $m.TextColor }};{{ end }}">
     {{ template "cf-styles" . }}
     <div class="cf-header" style="display: flex; align-items: center; justify-content: space-between; padding-bottom: 8px; margin-bottom: 6px; border-bottom: 1px solid rgba(168, 85, 247, 0.2);">
       <div class="cf-date-heading" style="display: flex; align-items: center; gap: 8px;">
@@ -251,10 +251,10 @@
     </div>
     {{ end }}
 
-    <script type="application/json" class="calendar-family-data">
+    <script type="application/json" class="calendar-grid-data calendar-family-data">
       {{ json $view }}
     </script>
-    <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E" style="display:none;" alt="" onload="window.MirrormereCalendarFamily &amp;&amp; window.MirrormereCalendarFamily.mount(this.closest('.widget-calendar-family'))" />
+    <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E" style="display:none;" alt="" onload="window.MirrormereCalendarGrid ? window.MirrormereCalendarGrid.mount(this.closest('.widget-calendar-grid, .widget-calendar-family')) : (window.MirrormereCalendarFamily &amp;&amp; window.MirrormereCalendarFamily.mount(this.closest('.widget-calendar-grid, .widget-calendar-family')))" />
   </div>
 {{ end }}
 

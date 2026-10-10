@@ -962,8 +962,8 @@ func TestEngine_RenderWidget_CalendarAgendaPackage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RenderWidget failed on loading calendar: %v", err)
 	}
-	if !strings.Contains(string(htmlLoading), "Loading calendar agenda...") {
-		t.Errorf("expected 'Loading calendar agenda...' in loading output: %s", htmlLoading)
+	if !strings.Contains(string(htmlLoading), "Loading calendar feed...") && !strings.Contains(string(htmlLoading), "Loading calendar agenda...") {
+		t.Errorf("expected 'Loading calendar feed...' in loading output: %s", htmlLoading)
 	}
 }
 

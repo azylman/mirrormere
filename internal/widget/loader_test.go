@@ -572,4 +572,57 @@ func TestBuiltinLiveViewPackage(t *testing.T) {
 	}
 }
 
+func TestBuiltinCalendarPackagesAndAliases(t *testing.T) {
+	t.Parallel()
+
+	repoWidgetsDir := filepath.Join("..", "..", "widgets")
+	loader := widget.NewLoader(repoWidgetsDir, t.TempDir())
+
+	// 1. Direct load of primary packages
+	feedPkg, err := loader.LoadPackage("calendar-feed")
+	if err != nil {
+		t.Fatalf("failed to load calendar-feed: %v", err)
+	}
+	if feedPkg.Type != "calendar-feed" || feedPkg.Manifest.Provider != "calendar-feed" {
+		t.Errorf("unexpected calendar-feed package: %+v", feedPkg)
+	}
+
+	gridPkg, err := loader.LoadPackage("calendar-grid")
+	if err != nil {
+		t.Fatalf("failed to load calendar-grid: %v", err)
+	}
+	if gridPkg.Type != "calendar-grid" || gridPkg.Manifest.Provider != "calendar-feed" {
+		t.Errorf("unexpected calendar-grid package: %+v", gridPkg)
+	}
+
+	// 2. Fallback aliases
+	legacyAgenda, err := loader.LoadPackage("calendar-agenda")
+	if err != nil {
+		t.Fatalf("failed to load calendar-agenda alias: %v", err)
+	}
+	if legacyAgenda.Type != "calendar-feed" {
+		t.Errorf("expected calendar-agenda alias to resolve to calendar-feed, got %q", legacyAgenda.Type)
+	}
+
+	legacyFamily, err := loader.LoadPackage("calendar-family")
+	if err != nil {
+		t.Fatalf("failed to load calendar-family alias: %v", err)
+	}
+	if legacyFamily.Type != "calendar-grid" {
+		t.Errorf("expected calendar-family alias to resolve to calendar-grid, got %q", legacyFamily.Type)
+	}
+
+	// 3. Discover registers both primary and aliases
+	registry, err := loader.Discover()
+	if err != nil {
+		t.Fatalf("failed to discover packages: %v", err)
+	}
+	if registry["calendar-feed"] == nil || registry["calendar-agenda"] == nil {
+		t.Errorf("expected both calendar-feed and calendar-agenda in registry")
+	}
+	if registry["calendar-grid"] == nil || registry["calendar-family"] == nil {
+		t.Errorf("expected both calendar-grid and calendar-family in registry")
+	}
+}
+
 

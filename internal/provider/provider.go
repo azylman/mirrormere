@@ -97,6 +97,9 @@ func NewRegistry() *DefaultRegistry {
 	r.Register("weather", func() Provider {
 		return NewWeatherProvider()
 	})
+	r.Register("calendar-feed", func() Provider {
+		return NewCalendarProvider()
+	})
 	r.Register("calendar-agenda", func() Provider {
 		return NewCalendarProvider()
 	})

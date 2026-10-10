@@ -60,6 +60,18 @@ func (l *Loader) Discover() (map[string]*domain.Package, error) {
 		return nil, err
 	}
 
+	// 3. Register legacy aliases for backward compatibility if not explicitly defined
+	if gridPkg, ok := registry["calendar-grid"]; ok {
+		if _, exists := registry["calendar-family"]; !exists {
+			registry["calendar-family"] = gridPkg
+		}
+	}
+	if feedPkg, ok := registry["calendar-feed"]; ok {
+		if _, exists := registry["calendar-agenda"]; !exists {
+			registry["calendar-agenda"] = feedPkg
+		}
+	}
+
 	return registry, nil
 }
 
@@ -110,6 +122,14 @@ func (l *Loader) LoadPackage(widgetType string) (*domain.Package, error) {
 	builtinPkgDir := filepath.Join(l.builtinDir, widgetType)
 	if fi, err := os.Stat(builtinPkgDir); err == nil && fi.IsDir() {
 		return l.loadPackageFromDir(builtinPkgDir, widgetType, "builtin")
+	}
+
+	// Fallback alias resolution for backward compatibility
+	if widgetType == "calendar-family" {
+		return l.LoadPackage("calendar-grid")
+	}
+	if widgetType == "calendar-agenda" {
+		return l.LoadPackage("calendar-feed")
 	}
 
 	return nil, fmt.Errorf("widget package '%s' not found", widgetType)

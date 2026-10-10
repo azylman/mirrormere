@@ -1,7 +1,7 @@
-name: calendar-family
+name: calendar-grid
 version: "1.0.0"
-description: Family wall calendar with per-member colour coding and week, day and month views.
-provider: calendar-agenda
+description: Interactive wall calendar with per-member colour coding and week, day and month views.
+provider: calendar-feed
 
 capabilities:
   - ambient-static
