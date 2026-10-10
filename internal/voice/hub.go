@@ -121,6 +121,7 @@ type Hub struct {
 	coord             *Coordinator
 	stt               STTClient
 	brain             BrainClient
+	fastPath          FastPathClient
 	tts               TTSClient
 	speaker           SpeakerIdentifier
 	metrics           *Metrics
@@ -157,6 +158,11 @@ func WithSpeakerIdentifier(id SpeakerIdentifier) HubOption {
 // WithMetrics overrides the voice metrics collector.
 func WithMetrics(m *Metrics) HubOption {
 	return func(h *Hub) { h.metrics = m }
+}
+
+// WithFastPathClient overrides the deterministic fast-path client (nil disables it).
+func WithFastPathClient(fp FastPathClient) HubOption {
+	return func(h *Hub) { h.fastPath = fp }
 }
 
 // WithBrainTimeout overrides the brain deliberation timeout.
@@ -309,6 +315,9 @@ func NewHub(cfg *config.VoiceHubConfig, coord *Coordinator, opts ...HubOption) *
 		if sid := NewSpeakerIdentifierFromConfig(cfg.SpeakerID); sid != nil {
 			h.speaker = sid
 		}
+	}
+	if cfg != nil && cfg.Enabled && cfg.FastPath.IsEnabled() {
+		h.fastPath = NewDefaultFastPathClient(cfg.FastPath.URL, time.Duration(cfg.FastPath.GetTimeoutMS())*time.Millisecond)
 	}
 	for _, opt := range opts {
 		opt(h)
@@ -562,8 +571,17 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 
 	engine := h.cfg.GetTTSModel()
 
+	// Optional LAMMAS fast path: wrap the brain for this turn so the
+	// deterministic endpoint is tried first and its sentences flow through
+	// the same streaming playback code as a brain reply. With no fast path
+	// configured the brain is used untouched.
+	turnBrain := h.brain
+	if h.fastPath != nil {
+		turnBrain = &fastPathBrain{inner: h.brain, fp: h.fastPath, metrics: h.metrics, nodeID: nodeID}
+	}
+
 	var reply string
-	if streamingBrain, ok := h.brain.(AudioStreamingBrainClient); ok {
+	if streamingBrain, ok := turnBrain.(AudioStreamingBrainClient); ok {
 		// Sentence audio is forwarded to the dock the instant it arrives —
 		// that head start (skip the wait for the whole reply) is the point
 		// of streaming at all. Since the Hub doesn't know in advance how
@@ -826,7 +844,7 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 		}
 
 		brainStart := time.Now()
-		reply, err = h.brain.Ask(brainCtx, askReq, unaryOnStatus)
+		reply, err = turnBrain.Ask(brainCtx, askReq, unaryOnStatus)
 		brainDuration := time.Since(brainStart).Seconds()
 		stopThinking()
 		if err != nil {
@@ -1383,6 +1401,13 @@ const sseScannerMaxLine = 1024 * 1024
 // playback. Sentence events deliver text as each sentence is generated, which
 // the hub synthesizes via its configured TTS client.
 func (b *DefaultBrainClient) consumeSSEStreaming(r io.Reader, onStatus func(status string), onAudio func(chunk BrainAudioChunk)) (string, error) {
+	return consumeStreamingSSE(r, onStatus, onAudio)
+}
+
+// consumeStreamingSSE parses the /ask/stream-shaped SSE event set (status,
+// sentence, reply, done). It is shared by the brain client and the fast-path
+// client, which speak the same events.
+func consumeStreamingSSE(r io.Reader, onStatus func(status string), onAudio func(chunk BrainAudioChunk)) (string, error) {
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 64*1024), sseScannerMaxLine)
 	var reply string

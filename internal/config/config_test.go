@@ -1558,3 +1558,56 @@ func TestVoiceHubSpeakerIDConfig(t *testing.T) {
 		t.Error("nil SpeakerIDConfig defaults wrong")
 	}
 }
+
+func TestVoiceHubFastPathConfig(t *testing.T) {
+	t.Parallel()
+
+	var nilFP *config.FastPathConfig
+	if nilFP.IsEnabled() || nilFP.GetTimeoutMS() != 800 {
+		t.Error("nil FastPathConfig must be disabled with an 800 ms default")
+	}
+	zero := 0
+	if (&config.FastPathConfig{URL: " ", TimeoutMS: &zero}).IsEnabled() {
+		t.Error("blank url must be disabled")
+	}
+	if (&config.FastPathConfig{URL: "http://x/intent", TimeoutMS: &zero}).GetTimeoutMS() != 800 {
+		t.Error("non-positive timeout must fall back to 800")
+	}
+
+	head := "timezone: UTC\ndisplay:\n  widgets:\n    - id: test\n      type: spacer\nvoice_hub:\n  enabled: true\n"
+	parse := func(extra string) (*config.Config, error) {
+		return config.ParseWithEnv([]byte(head+extra), mockGetenv(nil))
+	}
+
+	cfg, err := parse("")
+	if err != nil {
+		t.Fatalf("parse without fast_path: %v", err)
+	}
+	if cfg.VoiceHub.FastPath.IsEnabled() {
+		t.Error("fast path must be off when unset")
+	}
+
+	cfg, err = parse("  fast_path:\n    url: http://192.168.1.77:9098/intent\n")
+	if err != nil {
+		t.Fatalf("parse default timeout: %v", err)
+	}
+	fp := cfg.VoiceHub.FastPath
+	if !fp.IsEnabled() || fp.URL != "http://192.168.1.77:9098/intent" || fp.GetTimeoutMS() != 800 {
+		t.Errorf("unexpected fast_path %+v (timeout %d)", fp, fp.GetTimeoutMS())
+	}
+
+	cfg, err = parse("  fast_path:\n    url: http://h/intent\n    timeout_ms: 1200\n")
+	if err != nil || cfg.VoiceHub.FastPath.GetTimeoutMS() != 1200 {
+		t.Fatalf("explicit timeout: err=%v", err)
+	}
+
+	if _, err = parse("  fast_path:\n    timeout_ms: 500\n"); err != nil {
+		t.Errorf("timeout without url is allowed (feature off): %v", err)
+	}
+	if _, err = parse("  fast_path:\n    url: http://h/intent\n    timeout_ms: -5\n"); err == nil || !strings.Contains(err.Error(), "fast_path timeout_ms must be positive") {
+		t.Errorf("expected timeout_ms error, got %v", err)
+	}
+	if _, err = parse("  fast_path:\n    url: ftp://h/intent\n"); err == nil || !strings.Contains(err.Error(), "fast_path url must be an http(s) URL") {
+		t.Errorf("expected url error, got %v", err)
+	}
+}
