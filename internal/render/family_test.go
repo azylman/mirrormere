@@ -1,6 +1,7 @@
 package render
 
 import (
+	"os"
 	"bytes"
 	"html/template"
 	"path/filepath"
@@ -1217,7 +1218,10 @@ func TestBuildFamilyDayView_UnclaimedSharedColumnRouting(t *testing.T) {
 
 func renderFamilyWidgetTemplate(t *testing.T, ctx Context, now time.Time) string {
 	t.Helper()
-	tmplPath := filepath.Join("..", "..", "widgets", "calendar-family", "views", "widget.html")
+	tmplPath := filepath.Join("..", "..", "widgets", "calendar-grid", "views", "widget.html")
+	if _, err := os.Stat(tmplPath); os.IsNotExist(err) {
+		tmplPath = filepath.Join("..", "..", "widgets", "calendar-family", "views", "widget.html")
+	}
 	tmpl, err := template.New("widget.html").Funcs(StandardFuncMap(func() time.Time {
 		return now
 	})).ParseFiles(tmplPath)

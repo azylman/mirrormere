@@ -358,6 +358,34 @@ func TestGetStatic_Resolutions(t *testing.T) {
 			t.Errorf("expected JSON error response for 404, got %v", rec.Body.String())
 		}
 	})
+
+	t.Run("CalendarGridAlias", func(t *testing.T) {
+		t.Parallel()
+		tempDir := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(tempDir, "js"), 0755); err != nil {
+			t.Fatal(err)
+		}
+		expectedContent := []byte("console.log('calendar controller');")
+		if err := os.WriteFile(filepath.Join(tempDir, "js", "calendar_family.js"), expectedContent, 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		h := display.NewHandler(
+			display.WithStaticDir(tempDir),
+			display.WithLocalStaticDir(""),
+		)
+
+		req := httptest.NewRequest(http.MethodGet, "/static/js/calendar_grid.js", nil)
+		rec := httptest.NewRecorder()
+		h.GetStatic(rec, req, "js/calendar_grid.js")
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected status 200, got %d", rec.Code)
+		}
+		if rec.Body.String() != string(expectedContent) {
+			t.Errorf("expected calendar_grid.js to serve calendar_family.js content, got %s", rec.Body.String())
+		}
+	})
 }
 
 func TestGetDisplay_Timezone(t *testing.T) {

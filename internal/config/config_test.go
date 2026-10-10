@@ -83,7 +83,7 @@ func TestLoad_ExampleConfig(t *testing.T) {
 	}
 
 	calWidget := cfg.Display.Widgets[0]
-	if calWidget.ID != "family-calendar" || calWidget.Type != "calendar-agenda" {
+	if calWidget.ID != "family-calendar" || (calWidget.Type != "calendar-feed" && calWidget.Type != "calendar-agenda") {
 		t.Errorf("unexpected first widget: %+v", calWidget)
 	}
 	calendars, ok := calWidget.Config["calendars"].([]any)

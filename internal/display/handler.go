@@ -327,6 +327,11 @@ func (h *Handler) GetStatic(w http.ResponseWriter, r *http.Request, assetPath st
 		return
 	}
 
+	// 1b. Alias rewrites for backward compatibility
+	if clean == "js/calendar_grid.js" {
+		clean = "js/calendar_family.js"
+	}
+
 	// 2. Check primary container static dir on disk
 	if h.staticDir != "" {
 		fullPath := filepath.Join(h.staticDir, clean)

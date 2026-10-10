@@ -1,7 +1,7 @@
-<div class="widget-card widget-calendar" data-widget-id="{{ .ID }}" data-widget-type="{{ .Type }}" style="grid-column: span {{ .Dimensions.Cols }}; grid-row: span {{ .Dimensions.Rows }};">
+<div class="widget-card widget-calendar widget-calendar-feed" data-widget-id="{{ .ID }}" data-widget-type="{{ .Type }}" style="grid-column: span {{ .Dimensions.Cols }}; grid-row: span {{ .Dimensions.Rows }};">
   {{ if .Data }}
     {{ if and .Data.Events (gt (len .Data.Events) 0) }}
-    <div class="calendar-agenda-container" style="display: flex; flex-direction: column; height: 100%; overflow-y: auto; gap: 8px; padding-right: 4px; touch-action: pan-y; -webkit-overflow-scrolling: touch;">
+    <div class="calendar-feed-container calendar-agenda-container" style="display: flex; flex-direction: column; height: 100%; overflow-y: auto; gap: 8px; padding-right: 4px; touch-action: pan-y; -webkit-overflow-scrolling: touch;">
       {{ $prevDate := "" }}
       {{ range .Data.Events }}
         {{ $date := formatDate "2006-01-02" .Start }}
@@ -36,7 +36,7 @@
     {{ end }}
   {{ else }}
   <div class="calendar-loading" style="display: flex; align-items: center; justify-content: center; height: 100%; color: var(--mm-text-muted); font-size: 0.95rem;">
-    <span>Loading calendar agenda...</span>
+    <span>Loading calendar feed...</span>
   </div>
   {{ end }}
 </div>

@@ -43,6 +43,15 @@ func StandardFuncMap(nowFunc func() time.Time) template.FuncMap {
 		"jsonJS":             JSONJSHelper,
 		"weatherIcon":        WeatherIcon,
 		"weatherHourlyGraph": WeatherHourlyGraph,
+		"calendarGridView": func(data any, cfg map[string]any, dims domain.Dimension) (*FamilyViewModel, error) {
+			return BuildFamilyView(data, cfg, dims, nowFunc())
+		},
+		"calendarGridDayView": func(data any, cfg map[string]any, dims domain.Dimension) (*FamilyDayViewModel, error) {
+			return BuildFamilyDayView(data, cfg, dims, nowFunc())
+		},
+		"calendarGridMonthView": func(data any, cfg map[string]any, dims domain.Dimension) (*FamilyMonthViewModel, error) {
+			return BuildFamilyMonthView(data, cfg, dims, nowFunc())
+		},
 		"calendarFamilyView": func(data any, cfg map[string]any, dims domain.Dimension) (*FamilyViewModel, error) {
 			return BuildFamilyView(data, cfg, dims, nowFunc())
 		},

@@ -35,7 +35,7 @@ display:
   widgets:
     # Screen 1 Tiles (12 cells total: 4x2 + 2x1 + 2x1 = 12)
     - id: family-calendar
-      type: calendar-agenda
+      type: calendar-feed
       dimensions: [4, 2]
       pinned: false
       refresh_interval_seconds: 300

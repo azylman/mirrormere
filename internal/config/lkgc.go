@@ -514,9 +514,9 @@ func validateDomainRulesStage(cfg *Config, registry map[string]*domain.Package) 
 		}
 	}
 
-	// 1b. calendar-family member/calendar cross-field rules")
+	// 1b. calendar-grid (and legacy calendar-family) member/calendar cross-field rules
 	for _, w := range cfg.Display.Widgets {
-		if w.Type != "calendar-family" {
+		if w.Type != "calendar-grid" && w.Type != "calendar-family" {
 			continue
 		}
 		if err := validateFamilyCalendarConfig(w.ID, w.Config); err != nil {

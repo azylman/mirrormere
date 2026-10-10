@@ -1,7 +1,7 @@
-name: calendar-agenda
+name: calendar-feed
 version: "1.0.0"
-description: Chronological calendar agenda widget displaying upcoming events across synchronized iCal feeds.
-provider: calendar-agenda
+description: Chronological calendar feed widget displaying upcoming events across synchronized iCal feeds.
+provider: calendar-feed
 
 capabilities:
   - ambient-static
