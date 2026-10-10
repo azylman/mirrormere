@@ -1279,9 +1279,11 @@ func BuildFamilyMonthView(data any, cfg map[string]any, dims domain.Dimension, n
 		})
 
 		days[idx].EventsCount = len(evs)
-		days[idx].Events = evs
-		if len(evs) > 0 && showTitles {
-			days[idx].EventTitle = evs[0].Title
+		if showTitles {
+			days[idx].Events = evs
+			if len(evs) > 0 {
+				days[idx].EventTitle = evs[0].Title
+			}
 		}
 
 		memberSet := dayMembersMap[idx]
