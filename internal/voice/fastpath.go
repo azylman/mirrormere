@@ -99,7 +99,9 @@ func (c *DefaultFastPathClient) Try(ctx context.Context, ask AskRequest, onAudio
 	case resp.StatusCode == http.StatusNoContent:
 		return FastPathResult{Outcome: fastPathMiss, Reason: "no_match"}
 	case resp.StatusCode != http.StatusOK:
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1024))
+		if _, err := io.Copy(io.Discard, io.LimitReader(resp.Body, 1024)); err != nil {
+			slog.Debug("voice fast path: draining error body failed", "err", err)
+		}
 		return FastPathResult{Outcome: fastPathError, Reason: fmt.Sprintf("status_%d", resp.StatusCode)}
 	case !strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream"):
 		return FastPathResult{Outcome: fastPathError, Reason: "not_event_stream"}
