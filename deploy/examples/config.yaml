@@ -112,13 +112,11 @@ display:
 #     fingerprints_path: "/data/speakers.json"
 #     threshold: 0.70      # optional, (0, 1]
 #     timeout_seconds: 5   # optional
-#
-# Optional deterministic fast path: each transcript is POSTed as JSON
-# {text, speaker, node, turn_id, tts:"none"} to this URL before the brain is asked.
-# 204 (or any error/timeout) = no match, the brain answers as usual; 200
-# text/event-stream = already executed, the hub speaks the sentences with its own TTS.
-# Unset url = feature off (no call is made).
-# voice_hub:
+#   # Optional deterministic fast path: each transcript is POSTed as JSON
+#   # {text, speaker, node, turn_id, tts:"none"} to this URL before the brain is asked.
+#   # 204 (or any error/timeout) = no match, the brain answers as usual; 200
+#   # text/event-stream = already executed, the hub speaks the sentences with its own TTS.
+#   # Unset url = feature off (no call is made).
 #   fast_path:
 #     url: "http://voice-gateway:9098/intent"
 #     timeout_ms: 800      # optional, default 800

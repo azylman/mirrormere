@@ -4,12 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
-	"sync/atomic"
 	"time"
 )
 
@@ -51,7 +52,13 @@ type DefaultFastPathClient struct {
 // NewDefaultFastPathClient builds a client; timeout bounds the wait for the
 // response headers.
 func NewDefaultFastPathClient(url string, timeout time.Duration) *DefaultFastPathClient {
-	return &DefaultFastPathClient{url: strings.TrimSpace(url), timeout: timeout, httpClient: &http.Client{}}
+	// The header wait is bounded by the transport, not by cancelling the
+	// request context, so a timer can never sever a stream whose headers
+	// arrived just in time.
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.ResponseHeaderTimeout = timeout
+	transport.DialContext = (&net.Dialer{Timeout: timeout}).DialContext
+	return &DefaultFastPathClient{url: strings.TrimSpace(url), timeout: timeout, httpClient: &http.Client{Transport: transport}}
 }
 
 // Try posts the transcript. Any outcome other than a 200 event stream is
@@ -68,16 +75,7 @@ func (c *DefaultFastPathClient) Try(ctx context.Context, ask AskRequest, onAudio
 		return FastPathResult{Outcome: fastPathError, Reason: "marshal: " + err.Error()}
 	}
 
-	reqCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	var timedOut atomic.Bool
-	timer := time.AfterFunc(c.timeout, func() {
-		timedOut.Store(true)
-		cancel()
-	})
-	defer timer.Stop()
-
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, c.url, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.url, bytes.NewReader(body))
 	if err != nil {
 		return FastPathResult{Outcome: fastPathError, Reason: "request: " + err.Error()}
 	}
@@ -86,14 +84,14 @@ func (c *DefaultFastPathClient) Try(ctx context.Context, ask AskRequest, onAudio
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		if timedOut.Load() {
+		var netErr net.Error
+		if errors.As(err, &netErr) && netErr.Timeout() {
 			return FastPathResult{Outcome: fastPathError, Reason: "timeout"}
 		}
 		return FastPathResult{Outcome: fastPathError, Reason: "connect: " + err.Error()}
 	}
 	defer resp.Body.Close()
 	// Headers arrived in time; the stream itself is bounded by the turn context.
-	timer.Stop()
 
 	switch {
 	case resp.StatusCode == http.StatusNoContent:
@@ -145,6 +143,29 @@ type fastPathBrain struct {
 	fp      FastPathClient
 	metrics *Metrics
 	nodeID  string
+
+	// handled and elapsed are set by AskStreaming so the hub can keep the
+	// fast path out of its "brain" stage metric (one wrapper per turn).
+	handled bool
+	elapsed time.Duration
+}
+
+// brainStageSeconds returns the brain's own share of a turn's ask duration and
+// whether a "brain" stage should be recorded at all: a fast-path hit never
+// reached the brain, and a miss spent part of the duration on the fast path.
+func brainStageSeconds(b BrainClient, total time.Duration) (float64, bool) {
+	fp, ok := b.(*fastPathBrain)
+	if !ok {
+		return total.Seconds(), true
+	}
+	if fp.handled {
+		return 0, false
+	}
+	d := total - fp.elapsed
+	if d < 0 {
+		d = 0
+	}
+	return d.Seconds(), true
 }
 
 func (b *fastPathBrain) Ask(ctx context.Context, req AskRequest, onStatus func(status string)) (string, error) {
@@ -160,11 +181,12 @@ func (b *fastPathBrain) AskStreaming(ctx context.Context, req AskRequest, onStat
 	if res.Reason != "" {
 		attrs = append(attrs, "reason", res.Reason)
 	}
+	slog.Info("voice fast path", attrs...)
+	b.handled = res.Handled
+	b.elapsed = elapsed
 	if res.Handled {
-		slog.Info("voice fast path", attrs...)
 		return res.Reply, nil
 	}
-	slog.Info("voice fast path", attrs...)
 
 	if b.inner == nil {
 		return "", ErrBrainFailed

@@ -741,7 +741,7 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 
 		brainStart := time.Now()
 		reply, err = streamingBrain.AskStreaming(streamCtx, askReq, streamOnStatus, onAudio)
-		brainDuration := time.Since(brainStart).Seconds()
+		brainDuration, recordBrain := brainStageSeconds(turnBrain, time.Since(brainStart))
 		stopThinking()
 		if streamErr != nil {
 			err = streamErr
@@ -764,7 +764,9 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 			}
 			return retErr
 		}
-		h.metrics.RecordStageDuration(nodeID, "brain", "success", brainDuration)
+		if recordBrain {
+			h.metrics.RecordStageDuration(nodeID, "brain", "success", brainDuration)
+		}
 		h.recordChat(nodeID, chatlog.RoleAgent, "", reply)
 
 		if streamedAny {
@@ -845,7 +847,7 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 
 		brainStart := time.Now()
 		reply, err = turnBrain.Ask(brainCtx, askReq, unaryOnStatus)
-		brainDuration := time.Since(brainStart).Seconds()
+		brainDuration, recordBrain := brainStageSeconds(turnBrain, time.Since(brainStart))
 		stopThinking()
 		if err != nil {
 			finalStatus = "error"
@@ -865,7 +867,9 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 			}
 			return retErr
 		}
-		h.metrics.RecordStageDuration(nodeID, "brain", "success", brainDuration)
+		if recordBrain {
+			h.metrics.RecordStageDuration(nodeID, "brain", "success", brainDuration)
+		}
 		h.recordChat(nodeID, chatlog.RoleAgent, "", reply)
 
 		// Immediate transition to StateSpeaking with reply before safeSink("reply") and TTS synthesis

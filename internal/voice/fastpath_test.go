@@ -370,3 +370,29 @@ func TestFastPath_NilBrainOnMiss(t *testing.T) {
 		t.Error("expected error when there is no brain to fall through to")
 	}
 }
+
+func TestBrainStageSeconds(t *testing.T) {
+	if d, ok := brainStageSeconds(nil, 2*time.Second); !ok || d != 2 {
+		t.Fatalf("plain brain: got %v %v", d, ok)
+	}
+	hit := &fastPathBrain{handled: true, elapsed: 40 * time.Millisecond}
+	if _, ok := brainStageSeconds(hit, 50*time.Millisecond); ok {
+		t.Fatal("fast-path hit must not record a brain stage")
+	}
+	miss := &fastPathBrain{elapsed: 500 * time.Millisecond}
+	if d, ok := brainStageSeconds(miss, 2*time.Second); !ok || d != 1.5 {
+		t.Fatalf("miss: want 1.5s brain share, got %v %v", d, ok)
+	}
+}
+
+func TestDefaultFastPathClient_SlowHeadersAreTimeout(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(200 * time.Millisecond)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+	res := NewDefaultFastPathClient(srv.URL, 50*time.Millisecond).Try(context.Background(), AskRequest{Prompt: "x"}, nil)
+	if res.Handled || res.Reason != "timeout" {
+		t.Fatalf("want unhandled timeout, got %+v", res)
+	}
+}
