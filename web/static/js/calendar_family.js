@@ -97,9 +97,17 @@
         }
       };
 
+      // 0. Deduplicated flat event list if provided
+      if (Array.isArray(this.data.events)) {
+        for (const ev of this.data.events) addEv(ev);
+      }
+
       // 1. Day view:
       if (Array.isArray(this.data.all_day_events)) {
         for (const ev of this.data.all_day_events) addEv(ev);
+      }
+      if (Array.isArray(this.data.day_all_day_events)) {
+        for (const ev of this.data.day_all_day_events) addEv(ev);
       }
       if (Array.isArray(this.data.columns)) {
         for (const col of this.data.columns) {
@@ -117,6 +125,11 @@
           if (Array.isArray(day.events)) for (const ev of day.events) addEv(ev);
           if (Array.isArray(day.early_events)) for (const ev of day.early_events) addEv(ev);
           if (Array.isArray(day.late_events)) for (const ev of day.late_events) addEv(ev);
+        }
+      }
+      if (Array.isArray(this.data.month_days)) {
+        for (const day of this.data.month_days) {
+          if (Array.isArray(day.events)) for (const ev of day.events) addEv(ev);
         }
       }
 
@@ -356,6 +369,9 @@
       // 1. Check view switcher button click
       const btn = e.target && e.target.closest && e.target.closest('.cf-view-btn');
       if (btn && this.viewButtons.includes(btn)) {
+        if (typeof e.stopPropagation === 'function') {
+          e.stopPropagation();
+        }
         const targetView = (btn.dataset.view || '').toLowerCase();
         if (targetView && (targetView === 'day' || targetView === 'week' || targetView === 'month')) {
           this.switchView(targetView);
@@ -406,10 +422,13 @@
       }
 
       // 3. Check Month view day cell with events
-      if (eventEl.dataset && eventEl.dataset.date && Array.isArray(this.data.days)) {
-        const day = this.data.days.find(d => d.date === eventEl.dataset.date);
-        if (day && Array.isArray(day.events) && day.events.length > 0) {
-          return day.events[0];
+      if (eventEl.dataset && eventEl.dataset.date) {
+        const daysList = Array.isArray(this.data.month_days) ? this.data.month_days : (Array.isArray(this.data.days) ? this.data.days : null);
+        if (daysList) {
+          const day = daysList.find(d => d.date === eventEl.dataset.date);
+          if (day && Array.isArray(day.events) && day.events.length > 0) {
+            return day.events[0];
+          }
         }
       }
 

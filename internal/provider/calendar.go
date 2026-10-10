@@ -109,9 +109,25 @@ func (p *CalendarProvider) Init(ctx context.Context, rawConfig map[string]any, o
 }
 
 func parseCalendarConfig(raw map[string]any, opts InitOptions) (*CalendarConfig, error) {
+	var isGridOrMonth bool
+	if raw["members"] != nil {
+		isGridOrMonth = true
+	} else if v, ok := raw["view"].(string); ok && strings.EqualFold(strings.TrimSpace(v), "month") {
+		isGridOrMonth = true
+	} else if v, ok := raw["default_view"].(string); ok && strings.EqualFold(strings.TrimSpace(v), "month") {
+		isGridOrMonth = true
+	}
+
+	defaultPast := 1
+	defaultFuture := 14
+	if isGridOrMonth {
+		defaultPast = 7
+		defaultFuture = 42
+	}
+
 	cfg := &CalendarConfig{
-		WindowDaysPast:   1,
-		WindowDaysFuture: 14,
+		WindowDaysPast:   defaultPast,
+		WindowDaysFuture: defaultFuture,
 		View:             "agenda",
 	}
 
