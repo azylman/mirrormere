@@ -106,23 +106,15 @@ func (s *Server) handleIntent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Successful match: inspect Accept header
-	acceptHeader := r.Header.Get("Accept")
-	if strings.Contains(acceptHeader, "text/event-stream") {
-		s.writeSSE(w, r, req.TurnID, intentResp.Speech)
-		return
-	}
-
-	s.writeJSON(w, r, intentResp)
+	// Successful match: stream response strictly as Server-Sent Events per contract
+	s.writeSSE(w, r, req.TurnID, intentResp.Speech)
 }
 
 // writeSSE streams the matched intent response using Server-Sent Events.
 func (s *Server) writeSSE(w http.ResponseWriter, r *http.Request, turnID string, speech string) {
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		s.logger.WarnContext(r.Context(), "response writer does not support flushing; falling back to JSON")
-		s.writeJSON(w, r, &IntentResponse{Intent: "action_done", Speech: speech})
-		return
+	var flusher http.Flusher
+	if f, ok := w.(http.Flusher); ok {
+		flusher = f
 	}
 
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -141,7 +133,9 @@ func (s *Server) writeSSE(w http.ResponseWriter, r *http.Request, turnID string,
 		if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", eventType, jsonData); err != nil {
 			return false
 		}
-		flusher.Flush()
+		if flusher != nil {
+			flusher.Flush()
+		}
 		return true
 	}
 
@@ -156,15 +150,6 @@ func (s *Server) writeSSE(w http.ResponseWriter, r *http.Request, turnID string,
 		return
 	}
 	_ = writeEvent("done", map[string]string{"turn_id": turnID})
-}
-
-// writeJSON writes the matched intent response as JSON.
-func (s *Server) writeJSON(w http.ResponseWriter, r *http.Request, resp *IntentResponse) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(http.StatusOK)
-	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		s.logger.WarnContext(r.Context(), "failed to encode intent response JSON", "error", err)
-	}
 }
 
 // BuildHTTPServer constructs an http.Server with configured timeouts.
