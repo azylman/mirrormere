@@ -472,6 +472,7 @@
     const canvasEl = document.getElementById('grid-canvas');
     if (typeof window !== 'undefined' && window.MirrormereCarousel) {
       carousel = new window.MirrormereCarousel(canvasEl);
+      window.carousel = carousel;
     }
 
     // 3. Initialize SSE client

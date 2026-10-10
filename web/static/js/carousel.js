@@ -3,6 +3,20 @@
  * Manages 6x2 CSS grid canvas rendering, DOM pre-warming, hot-swapping, and touch swipe navigation.
  */
 class MirrormereCarousel {
+  static instances = new Set();
+
+  static pause() {
+    for (const inst of MirrormereCarousel.instances) {
+      inst.pause();
+    }
+  }
+
+  static resume() {
+    for (const inst of MirrormereCarousel.instances) {
+      inst.resume();
+    }
+  }
+
   constructor(canvasElement) {
     this.canvas = canvasElement || document.getElementById('grid-canvas');
     this.currentScreen = 0;
@@ -14,6 +28,8 @@ class MirrormereCarousel {
     this.isTransitioning = false;
     this.isPaused = false;
     this.pendingRotateData = null;
+
+    MirrormereCarousel.instances.add(this);
 
     this.bindTouchGestures();
   }
