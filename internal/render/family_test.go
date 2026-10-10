@@ -2311,3 +2311,204 @@ func TestBuildFamilyView_ContinuousSpanningBars_CustomDayCount(t *testing.T) {
 	}
 }
 
+
+func TestBuildFamilyView_WeekViewTimelinePositioning(t *testing.T) {
+	t.Parallel()
+
+	snap := provider.CalendarSnapshot{
+		LastSync: "2026-09-27T12:00:00Z",
+		Events: []provider.CalendarEvent{
+			{
+				ID:           "evt_morning",
+				CalendarName: "alex-personal",
+				Title:        "Morning Standup",
+				Start:        "2026-09-28T09:00:00Z",
+				End:          "2026-09-28T10:00:00Z",
+			},
+		},
+	}
+	cfg := baseFamilyConfig()
+	view, err := BuildFamilyView(snap, cfg, domain.NewDimension(6, 2), testNow)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if view.HoursStart != "07:00" || view.HoursEnd != "21:00" {
+		t.Errorf("unexpected hours window: %s to %s", view.HoursStart, view.HoursEnd)
+	}
+	if len(view.HourMarkers) == 0 {
+		t.Error("expected hour markers to be populated")
+	}
+
+	monDay := view.Days[1]
+	if len(monDay.Events) != 1 {
+		t.Fatalf("expected 1 canvas event on Monday, got %d", len(monDay.Events))
+	}
+	ev := monDay.Events[0]
+	if ev.Title != "Morning Standup" {
+		t.Errorf("expected title Morning Standup, got %s", ev.Title)
+	}
+	if ev.TopPct < 14.0 || ev.TopPct > 15.0 {
+		t.Errorf("expected TopPct ~14.29%%, got %f", ev.TopPct)
+	}
+	if ev.HeightPct < 7.0 || ev.HeightPct > 8.0 {
+		t.Errorf("expected HeightPct ~7.14%%, got %f", ev.HeightPct)
+	}
+	if ev.LeftPct != 0.0 || ev.WidthPct != 100.0 {
+		t.Errorf("expected LeftPct=0, WidthPct=100; got Left=%f, Width=%f", ev.LeftPct, ev.WidthPct)
+	}
+}
+
+func TestBuildFamilyView_WeekViewOverlappingEvents(t *testing.T) {
+	t.Parallel()
+
+	snap := provider.CalendarSnapshot{
+		LastSync: "2026-09-27T12:00:00Z",
+		Events: []provider.CalendarEvent{
+			{
+				ID:           "evt_a",
+				CalendarName: "alex-personal",
+				Title:        "Team Sync",
+				Start:        "2026-09-28T09:00:00Z",
+				End:          "2026-09-28T10:00:00Z",
+			},
+			{
+				ID:           "evt_b",
+				CalendarName: "alex-personal",
+				Title:        "Design Critique",
+				Start:        "2026-09-28T09:30:00Z",
+				End:          "2026-09-28T10:30:00Z",
+			},
+		},
+	}
+	cfg := baseFamilyConfig()
+	view, err := BuildFamilyView(snap, cfg, domain.NewDimension(6, 2), testNow)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	monDay := view.Days[1]
+	if len(monDay.Events) != 2 {
+		t.Fatalf("expected 2 canvas events on Monday, got %d", len(monDay.Events))
+	}
+	ev1 := monDay.Events[0]
+	ev2 := monDay.Events[1]
+
+	if ev1.LeftPct != 0.0 || ev1.WidthPct != 50.0 {
+		t.Errorf("ev1 expected LeftPct=0, WidthPct=50; got Left=%f, Width=%f", ev1.LeftPct, ev1.WidthPct)
+	}
+	if ev2.LeftPct != 50.0 || ev2.WidthPct != 50.0 {
+		t.Errorf("ev2 expected LeftPct=50, WidthPct=50; got Left=%f, Width=%f", ev2.LeftPct, ev2.WidthPct)
+	}
+}
+
+func TestBuildFamilyView_WeekViewEdgeBands(t *testing.T) {
+	t.Parallel()
+
+	snap := provider.CalendarSnapshot{
+		LastSync: "2026-09-27T12:00:00Z",
+		Events: []provider.CalendarEvent{
+			{
+				ID:           "evt_early",
+				CalendarName: "alex-personal",
+				Title:        "Early Flight",
+				Start:        "2026-09-28T05:00:00Z",
+				End:          "2026-09-28T06:30:00Z",
+			},
+			{
+				ID:           "evt_late",
+				CalendarName: "alex-personal",
+				Title:        "Late Concert",
+				Start:        "2026-09-28T22:00:00Z",
+				End:          "2026-09-28T23:30:00Z",
+			},
+		},
+	}
+	cfg := baseFamilyConfig()
+	view, err := BuildFamilyView(snap, cfg, domain.NewDimension(6, 2), testNow)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	monDay := view.Days[1]
+	if len(monDay.EarlyEvents) != 1 {
+		t.Fatalf("expected 1 EarlyEvent, got %d", len(monDay.EarlyEvents))
+	}
+	if monDay.EarlyEvents[0].Title != "Early Flight" {
+		t.Errorf("unexpected early event title: %s", monDay.EarlyEvents[0].Title)
+	}
+	if len(monDay.LateEvents) != 1 {
+		t.Fatalf("expected 1 LateEvent, got %d", len(monDay.LateEvents))
+	}
+	if monDay.LateEvents[0].Title != "Late Concert" {
+		t.Errorf("unexpected late event title: %s", monDay.LateEvents[0].Title)
+	}
+}
+
+func TestBuildFamilyView_MidnightCrossover(t *testing.T) {
+	t.Parallel()
+
+	snap := provider.CalendarSnapshot{
+		LastSync: "2026-09-27T12:00:00Z",
+		Events: []provider.CalendarEvent{
+			{
+				ID:           "evt_crossover",
+				CalendarName: "alex-personal",
+				Title:        "Overnight Hackathon",
+				Start:        "2026-09-28T22:00:00Z",
+				End:          "2026-09-29T04:00:00Z",
+			},
+		},
+	}
+	cfg := baseFamilyConfig()
+	view, err := BuildFamilyView(snap, cfg, domain.NewDimension(6, 2), testNow)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	monDay := view.Days[1]
+	tueDay := view.Days[2]
+
+	if len(monDay.LateEvents) != 1 {
+		t.Errorf("expected 1 late event on Monday, got %d", len(monDay.LateEvents))
+	}
+	if len(tueDay.EarlyEvents) != 1 {
+		t.Errorf("expected 1 early event on Tuesday, got %d", len(tueDay.EarlyEvents))
+	}
+}
+
+func TestRenderFamilyWidgetTemplate_WeekTimeline(t *testing.T) {
+	t.Parallel()
+
+	snap := provider.CalendarSnapshot{
+		LastSync: "2026-09-27T12:00:00Z",
+		Events: []provider.CalendarEvent{
+			{ID: "e_timed", CalendarName: "alex-personal", Title: "Soccer Practice", Start: "2026-09-28T16:00:00Z", End: "2026-09-28T17:30:00Z"},
+		},
+	}
+	cfg := baseFamilyConfig()
+	cfg["default_view"] = "week"
+
+	ctx := Context{
+		ID:         "test-family-week-timeline",
+		Type:       "calendar-family",
+		Dimensions: domain.NewDimension(6, 2),
+		Data:       snap,
+		Config:     cfg,
+	}
+
+	html := renderFamilyWidgetTemplate(t, ctx, testNow)
+
+	if !strings.Contains(html, "cf-week-body") {
+		t.Errorf("expected 'cf-week-body' in rendered HTML: %s", html)
+	}
+	if !strings.Contains(html, "cf-timeline-axis") {
+		t.Errorf("expected 'cf-timeline-axis' in rendered HTML: %s", html)
+	}
+	if !strings.Contains(html, "cf-day-canvas") {
+		t.Errorf("expected 'cf-day-canvas' in rendered HTML: %s", html)
+	}
+	if !strings.Contains(html, "Soccer Practice") {
+		t.Errorf("expected 'Soccer Practice' in rendered HTML: %s", html)
+	}
+}

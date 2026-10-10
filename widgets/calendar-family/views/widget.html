@@ -372,37 +372,67 @@
 
     {{ if $view.Days }}
     {{ if $view.AllDayEvents }}
-    <div class="cf-allday-band cf-week-allday-grid" style="display: grid; grid-template-columns: repeat({{ len $view.Days }}, 1fr); grid-auto-flow: dense; gap: 4px; padding-bottom: 4px; margin-bottom: 4px; border-bottom: 1px dashed rgba(255, 255, 255, 0.1);">
+    <div class="cf-allday-band cf-week-allday-grid" style="margin-left: 42px; display: grid; grid-template-columns: repeat({{ len $view.Days }}, 1fr); grid-auto-flow: dense; gap: 4px; padding-bottom: 4px; margin-bottom: 4px; border-bottom: 1px dashed rgba(255, 255, 255, 0.1);">
       {{ range $view.AllDayEvents }}
       <div class="cf-event cf-allday cf-event-clickable{{ if .Pattern }} cf-pattern-{{ .Pattern }}{{ end }}" data-event-id="{{ .ID }}" style="grid-column: {{ .StartCol }} / span {{ .ColSpan }}; font-size: 0.65rem; font-weight: 600; border-radius: 3px; padding: 1px 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: {{ .TextColor }}; background: {{ .Color }}; cursor: pointer; touch-action: manipulation;">{{ .Title }}</div>
       {{ end }}
     </div>
     {{ end }}
 
-    <div class="cf-week-grid" style="display: grid; grid-template-columns: repeat({{ len $view.Days }}, 1fr); gap: 4px; flex: 1; min-height: 0;">
-      {{ range $view.Days }}
-      <div class="cf-day{{ if .IsToday }} cf-today{{ end }}{{ if .IsWeekend }} cf-weekend{{ end }}" style="display: flex; flex-direction: column; min-width: 0; background: {{ if .IsWeekend }}rgba(255,255,255,0.03){{ else }}transparent{{ end }}; border-radius: 6px; overflow: hidden;{{ if .IsToday }} outline: 2px solid var(--mm-accent-purple);{{ end }}">
-        <div class="cf-day-header" style="display: flex; flex-direction: column; align-items: center; padding: 3px 2px; font-size: 0.72rem; font-weight: 700; color: var(--mm-text-primary); {{ if .IsToday }}background: var(--mm-accent-purple); border-radius: 4px;{{ end }}">
-          <span class="cf-day-weekday">{{ .WeekdayAbb }}</span>
-          <span class="cf-day-num">{{ .DayOfMonth }}</span>
-        </div>
+    <div class="cf-week-body" style="display: flex; flex: 1; min-height: 0; gap: 4px; position: relative;">
+      <div class="cf-timeline-axis" style="width: 38px; display: flex; flex-direction: column; justify-content: space-between; padding-top: 32px; padding-bottom: 4px; font-family: var(--mm-font-mono); font-size: 0.62rem; color: var(--mm-text-muted); text-align: right; padding-right: 4px; user-select: none;">
+        {{ range $view.HourMarkers }}
+        <span class="cf-hour-marker" style="line-height: 1;">{{ . }}</span>
+        {{ end }}
+      </div>
 
-        <div class="cf-timed-list" style="display: flex; flex-direction: column; gap: 2px; padding: 2px 0; overflow: hidden;">
-          {{ range .Timed }}
-          <div class="cf-event cf-timed cf-event-clickable{{ if .Pattern }} cf-pattern-{{ .Pattern }}{{ end }}" data-event-id="{{ .ID }}" style="font-size: 0.68rem; border-radius: 3px; padding: 2px 3px; overflow: hidden; color: {{ .TextColor }}; background: {{ .Color }}; cursor: pointer; touch-action: manipulation;">
-            <span class="cf-event-time" style="font-family: var(--mm-font-mono); font-weight: 700;">{{ .Start }}</span>
-            <span class="cf-event-title" style="margin-left: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ .Title }}</span>
-            {{ if .Initials }}
-            <span class="cf-event-initials" style="margin-left: 3px; font-weight: 700; opacity: 0.85;">{{ range .Initials }}{{ . }}{{ end }}</span>
+      <div class="cf-week-grid" style="display: grid; grid-template-columns: repeat({{ len $view.Days }}, 1fr); gap: 4px; flex: 1; min-height: 0;">
+        {{ range $view.Days }}
+        <div class="cf-day{{ if .IsToday }} cf-today{{ end }}{{ if .IsWeekend }} cf-weekend{{ end }}" style="display: flex; flex-direction: column; min-width: 0; position: relative; background: {{ if .IsWeekend }}rgba(255,255,255,0.03){{ else }}rgba(255,255,255,0.01){{ end }}; border-radius: 6px; overflow: hidden; border: 1px solid rgba(255, 255, 255, 0.05);{{ if .IsToday }} outline: 2px solid var(--mm-accent-purple);{{ end }}">
+          <div class="cf-day-header" style="display: flex; flex-direction: column; align-items: center; padding: 3px 2px; font-size: 0.72rem; font-weight: 700; color: var(--mm-text-primary); {{ if .IsToday }}background: var(--mm-accent-purple); border-radius: 4px;{{ end }}">
+            <span class="cf-day-weekday">{{ .WeekdayAbb }}</span>
+            <span class="cf-day-num">{{ .DayOfMonth }}</span>
+          </div>
+
+          {{ if .EarlyEvents }}
+          <div class="cf-edge-band cf-early-band" style="display: flex; flex-direction: column; gap: 2px; padding: 2px 3px; background: rgba(0, 0, 0, 0.25); border-bottom: 1px dashed rgba(255, 255, 255, 0.1);">
+            {{ range .EarlyEvents }}
+            <div class="cf-edge-event cf-event-clickable cf-pattern-{{ .Pattern }}" data-event-id="{{ .ID }}" title="{{ .Title }}" style="font-size: 0.60rem; font-weight: 600; padding: 1px 3px; border-radius: 3px; background: {{ .Color }}; color: {{ .TextColor }}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; touch-action: manipulation;">
+              ▲ {{ .Start }} {{ .Title }}
+            </div>
             {{ end }}
           </div>
           {{ end }}
-          {{ if gt .Overflow 0 }}
-          <div class="cf-overflow" style="font-size: 0.65rem; color: var(--mm-text-muted); padding: 1px 3px;">+{{ .Overflow }} more</div>
+
+          <div class="cf-day-canvas" style="flex: 1; position: relative; min-height: 0;">
+            {{ range .Events }}
+            <div class="cf-day-event cf-event-clickable cf-pattern-{{ .Pattern }}" data-event-id="{{ .ID }}" style="position: absolute; top: {{ .TopPct }}%; height: {{ .HeightPct }}%; left: calc({{ .LeftPct }}% + 1px); width: calc({{ .WidthPct }}% - 2px); min-height: 18px; padding: 2px 3px; border-radius: 3px; background: {{ .Color }}; color: {{ .TextColor }}; overflow: hidden; display: flex; flex-direction: column; box-sizing: border-box; border: 1px solid rgba(0, 0, 0, 0.2); cursor: pointer; touch-action: manipulation;">
+              <div class="cf-event-header" style="display: flex; align-items: center; gap: 2px; font-size: 0.60rem; font-weight: 700; line-height: 1.1;">
+                <span class="cf-event-time" style="font-family: var(--mm-font-mono);">{{ .Start }}</span>
+                {{ if .Initials }}
+                <span class="cf-event-initials" style="opacity: 0.85;">{{ range .Initials }}{{ . }}{{ end }}</span>
+                {{ end }}
+              </div>
+              <div class="cf-event-title" style="font-size: 0.65rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 1.2;">{{ .Title }}</div>
+              {{ if .Location }}
+              <div class="cf-event-location" style="font-size: 0.55rem; opacity: 0.8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ .Location }}</div>
+              {{ end }}
+            </div>
+            {{ end }}
+          </div>
+
+          {{ if .LateEvents }}
+          <div class="cf-edge-band cf-late-band" style="display: flex; flex-direction: column; gap: 2px; padding: 2px 3px; background: rgba(0, 0, 0, 0.25); border-top: 1px dashed rgba(255, 255, 255, 0.1);">
+            {{ range .LateEvents }}
+            <div class="cf-edge-event cf-event-clickable cf-pattern-{{ .Pattern }}" data-event-id="{{ .ID }}" title="{{ .Title }}" style="font-size: 0.60rem; font-weight: 600; padding: 1px 3px; border-radius: 3px; background: {{ .Color }}; color: {{ .TextColor }}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; touch-action: manipulation;">
+              ▼ {{ .Start }} {{ .Title }}
+            </div>
+            {{ end }}
+          </div>
           {{ end }}
         </div>
+        {{ end }}
       </div>
-      {{ end }}
     </div>
     {{ else }}
     <div class="cf-empty" style="display: flex; align-items: center; justify-content: center; flex: 1; color: var(--mm-text-muted); font-size: 0.9rem;">

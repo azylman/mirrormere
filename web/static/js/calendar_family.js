@@ -115,6 +115,8 @@
           if (Array.isArray(day.all_day)) for (const ev of day.all_day) addEv(ev);
           if (Array.isArray(day.timed)) for (const ev of day.timed) addEv(ev);
           if (Array.isArray(day.events)) for (const ev of day.events) addEv(ev);
+          if (Array.isArray(day.early_events)) for (const ev of day.early_events) addEv(ev);
+          if (Array.isArray(day.late_events)) for (const ev of day.late_events) addEv(ev);
         }
       }
 
