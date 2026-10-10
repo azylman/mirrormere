@@ -5,113 +5,355 @@ const path = require('node:path');
 
 const scriptCode = fs.readFileSync(path.join(__dirname, '../static/js/calendar_family.js'), 'utf8');
 
-function setupDOMMock() {
-  global.window = {};
-  const fn = new Function('window', 'document', 'setTimeout', 'clearTimeout', scriptCode);
-  fn(global.window, {}, global.setTimeout, global.clearTimeout);
-}
+function createMockDOMNode(tag = 'div', attributes = {}) {
+  const classList = new Set();
+  const children = [];
+  const listeners = {};
+  const style = {};
+  const dataset = {};
+  const attrs = { ...attributes };
 
-function createMockElement(options = {}) {
-  const widgetId = options.widgetId || 'family-cal-test';
-  const defaultView = options.defaultView || 'week';
-  const activeView = options.activeView || defaultView;
-  const data = options.data || null;
-
-  const classList = new Set(['widget-card', 'widget-calendar-family', `cf-view-${activeView}`]);
-
-  const btnListeners = {};
-  function makeButton(view) {
-    const btnClasses = new Set(['cf-view-btn']);
-    if (view === activeView) {
-      btnClasses.add('active');
-    }
-    const attributes = {
-      'role': 'tab',
-      'aria-selected': view === activeView ? 'true' : 'false',
-    };
-    const listeners = {};
-    return {
-      dataset: { view },
-      classList: {
-        add: (c) => btnClasses.add(c),
-        remove: (c) => btnClasses.delete(c),
-        contains: (c) => btnClasses.has(c),
-      },
-      setAttribute: (k, v) => { attributes[k] = String(v); },
-      getAttribute: (k) => attributes[k] || null,
-      addEventListener: (evt, handler) => {
-        if (!listeners[evt]) listeners[evt] = [];
-        listeners[evt].push(handler);
-      },
-      removeEventListener: (evt, handler) => {
-        if (listeners[evt]) {
-          listeners[evt] = listeners[evt].filter(h => h !== handler);
-        }
-      },
-      click() {
-        if (listeners['click']) {
-          for (const handler of listeners['click']) {
-            handler({ currentTarget: this, target: this });
-          }
-        }
-      }
-    };
+  if (attributes.className) {
+    attributes.className.split(/\s+/).filter(Boolean).forEach(c => classList.add(c));
   }
 
-  const buttons = [makeButton('day'), makeButton('week'), makeButton('month')];
-
-  const panels = {
-    day: { style: { display: activeView === 'day' ? 'flex' : 'none' }, classList: new Set(['cf-view-panel', 'cf-view-day']) },
-    week: { style: { display: activeView === 'week' ? 'flex' : 'none' }, classList: new Set(['cf-view-panel', 'cf-view-week']) },
-    month: { style: { display: activeView === 'month' ? 'flex' : 'none' }, classList: new Set(['cf-view-panel', 'cf-view-month']) },
-  };
-
-  const labels = {
-    day: { style: { display: activeView === 'day' ? '' : 'none' }, classList: new Set(['cf-range-label', 'cf-label-day']) },
-    week: { style: { display: activeView === 'week' ? '' : 'none' }, classList: new Set(['cf-range-label', 'cf-label-week']) },
-    month: { style: { display: activeView === 'month' ? '' : 'none' }, classList: new Set(['cf-range-label', 'cf-label-month']) },
-  };
-
-  const todayBadge = {
-    style: { display: activeView === 'day' ? '' : 'none' },
-    classList: new Set(['cf-today-badge', 'cf-today-day'])
-  };
-
-  const dataScript = data !== null ? {
-    textContent: typeof data === 'string' ? data : JSON.stringify(data),
-  } : null;
-
-  const element = {
-    dataset: {
-      widgetId,
-      defaultView,
-      activeView,
+  const node = {
+    tagName: tag.toUpperCase(),
+    style,
+    dataset,
+    children,
+    parentNode: null,
+    _listeners: listeners,
+    get className() {
+      return Array.from(classList).join(' ');
+    },
+    set className(val) {
+      classList.clear();
+      if (val) val.split(/\s+/).filter(Boolean).forEach(c => classList.add(c));
     },
     classList: {
       add: (...classes) => classes.forEach(c => classList.add(c)),
       remove: (...classes) => classes.forEach(c => classList.delete(c)),
       contains: (c) => classList.has(c),
     },
+    _textContent: '',
+    get textContent() {
+      return this._textContent;
+    },
+    set textContent(val) {
+      this._textContent = String(val);
+    },
+    _innerHTML: '',
+    get innerHTML() {
+      return this._innerHTML || this._textContent;
+    },
+    set innerHTML(val) {
+      this._innerHTML = String(val);
+      this._textContent = String(val);
+    },
+    setAttribute(k, v) {
+      attrs[k] = String(v);
+    },
+    getAttribute(k) {
+      return attrs[k] !== undefined ? attrs[k] : null;
+    },
+    removeAttribute(k) {
+      delete attrs[k];
+    },
+    appendChild(child) {
+      if (!child) return child;
+      if (child.parentNode) {
+        child.parentNode.removeChild(child);
+      }
+      child.parentNode = node;
+      children.push(child);
+      return child;
+    },
+    removeChild(child) {
+      const idx = children.indexOf(child);
+      if (idx !== -1) {
+        children.splice(idx, 1);
+        child.parentNode = null;
+      }
+      return child;
+    },
+    remove() {
+      if (this.parentNode) {
+        this.parentNode.removeChild(this);
+      }
+    },
+    contains(target) {
+      if (target === node) return true;
+      for (const child of children) {
+        if (child === target || (child.contains && child.contains(target))) {
+          return true;
+        }
+      }
+      return false;
+    },
+    closest(selector) {
+      let cur = this;
+      while (cur) {
+        if (cur.matches && cur.matches(selector)) {
+          return cur;
+        }
+        cur = cur.parentNode;
+      }
+      return null;
+    },
+    matches(selector) {
+      if (!selector) return false;
+      const selectors = selector.split(',').map(s => s.trim());
+      for (const sel of selectors) {
+        if (!sel) continue;
+        if (sel.startsWith('[') && sel.endsWith(']')) {
+          const attr = sel.slice(1, -1);
+          if (attr === 'data-event-id' && this.dataset && this.dataset.eventId) return true;
+          if (attrs[attr] !== undefined) return true;
+        } else if (sel.includes('.')) {
+          const parts = sel.split('.').filter(Boolean);
+          if (parts.length > 0 && parts.every(c => classList.has(c))) {
+            return true;
+          }
+        } else if (this.tagName.toLowerCase() === sel.toLowerCase()) {
+          return true;
+        }
+      }
+      return false;
+    },
     querySelector(selector) {
-      if (selector === '.calendar-family-data') return dataScript;
-      if (selector === '.cf-view-panel.cf-view-day' || selector === '.cf-view-day') return panels.day;
-      if (selector === '.cf-view-panel.cf-view-week' || selector === '.cf-view-week') return panels.week;
-      if (selector === '.cf-view-panel.cf-view-month' || selector === '.cf-view-month') return panels.month;
-      if (selector === '.cf-range-label.cf-label-day') return labels.day;
-      if (selector === '.cf-range-label.cf-label-week') return labels.week;
-      if (selector === '.cf-range-label.cf-label-month') return labels.month;
-      if (selector === '.cf-today-badge.cf-today-day' || selector === '.cf-today-badge') return todayBadge;
+      for (const child of children) {
+        if (child.matches && child.matches(selector)) {
+          return child;
+        }
+        if (child.querySelector) {
+          const res = child.querySelector(selector);
+          if (res) return res;
+        }
+      }
       return null;
     },
     querySelectorAll(selector) {
-      if (selector === '.cf-view-btn') return buttons;
-      return [];
+      const found = [];
+      function walk(n) {
+        for (const c of n.children) {
+          if (c.matches && c.matches(selector)) {
+            found.push(c);
+          }
+          if (c.children && c.children.length > 0) {
+            walk(c);
+          }
+        }
+      }
+      walk(this);
+      return found;
     },
-    _buttons: buttons,
-    _panels: panels,
-    _labels: labels,
-    _todayBadge: todayBadge,
+    addEventListener(evt, handler, _options) {
+      if (!listeners[evt]) listeners[evt] = [];
+      listeners[evt].push(handler);
+    },
+    removeEventListener(evt, handler) {
+      if (listeners[evt]) {
+        listeners[evt] = listeners[evt].filter(h => h !== handler);
+      }
+    },
+    dispatchEvent(evt) {
+      let cur = this;
+      while (cur) {
+        const handlers = cur._listeners[evt.type] ? [...cur._listeners[evt.type]] : [];
+        evt.currentTarget = cur;
+        for (const h of handlers) {
+          h(evt);
+        }
+        if (evt._stopped) break;
+        cur = cur.parentNode;
+      }
+    },
+    click() {
+      const evt = {
+        type: 'click',
+        target: this,
+        currentTarget: this,
+        _stopped: false,
+        preventDefault: () => {},
+        stopPropagation() { this._stopped = true; },
+      };
+      this.dispatchEvent(evt);
+    }
   };
+
+  return node;
+}
+
+function setupDOMMock() {
+  const documentListeners = {};
+  const mockDoc = {
+    createElement: (tag) => createMockDOMNode(tag),
+    addEventListener: (evt, handler) => {
+      if (!documentListeners[evt]) documentListeners[evt] = [];
+      documentListeners[evt].push(handler);
+    },
+    removeEventListener: (evt, handler) => {
+      if (documentListeners[evt]) {
+        documentListeners[evt] = documentListeners[evt].filter(h => h !== handler);
+      }
+    },
+    _dispatchKeydown: (key) => {
+      const handlers = documentListeners['keydown'] ? [...documentListeners['keydown']] : [];
+      for (const h of handlers) {
+        h({ key, preventDefault: () => {} });
+      }
+    }
+  };
+
+  global.document = mockDoc;
+  global.window = {
+    document: mockDoc,
+    MirrormereCarousel: {
+      pauseCount: 0,
+      resumeCount: 0,
+      pause() { this.pauseCount++; },
+      resume() { this.resumeCount++; },
+      reset() { this.pauseCount = 0; this.resumeCount = 0; },
+    },
+  };
+
+  const fn = new Function('window', 'document', 'setTimeout', 'clearTimeout', scriptCode);
+  fn(global.window, mockDoc, global.setTimeout, global.clearTimeout);
+}
+
+function createMockElement(options = {}) {
+  const widgetId = options.widgetId || 'family-cal-test';
+  const defaultView = options.defaultView || 'week';
+  const activeView = options.activeView || defaultView;
+  const data = options.data !== undefined ? options.data : {
+    config: { default_view: defaultView },
+    days: [
+      {
+        date: '2026-10-10',
+        all_day: [
+          {
+            id: 'ev-allday-1',
+            title: 'School Fall Break',
+            all_day: true,
+            start: '',
+            end: '',
+            location: 'Oakland High',
+            description: 'Annual fall semester vacation period for students and staff.',
+            owners: ['Alex'],
+            initials: ['A'],
+            color: '#E11D48',
+            pattern: 'solid',
+          }
+        ],
+        timed: [
+          {
+            id: 'ev-timed-1',
+            title: 'Soccer Practice',
+            all_day: false,
+            start: '16:00',
+            end: '17:30',
+            location: 'Montclair Park',
+            description: 'Drills, scrimmage and conditioning. Bring water bottle and shin guards.',
+            owners: ['Alex', 'Charlie'],
+            initials: ['A', 'C'],
+            colors: ['#E11D48', '#2563EB'],
+            patterns: ['solid', 'hatch'],
+            color: '#E11D48',
+            pattern: 'solid',
+          }
+        ],
+        events: [
+          {
+            id: 'ev-month-1',
+            title: 'Dentist Checkup',
+            all_day: false,
+            start: '09:00',
+            end: '10:00',
+            location: 'Grand Ave Dental',
+            description: 'Routine cleaning and checkup.',
+            owners: ['Alex'],
+            initials: ['A'],
+            color: '#E11D48',
+            pattern: 'solid',
+          }
+        ]
+      }
+    ]
+  };
+
+  const element = createMockDOMNode('div', {
+    className: `widget-card widget-calendar-family cf-view-${activeView}`
+  });
+  element.dataset.widgetId = widgetId;
+  element.dataset.defaultView = defaultView;
+  element.dataset.activeView = activeView;
+
+  // Buttons
+  const btnDay = createMockDOMNode('button', { className: 'cf-view-btn' + (activeView === 'day' ? ' active' : '') });
+  btnDay.dataset.view = 'day';
+  const btnWeek = createMockDOMNode('button', { className: 'cf-view-btn' + (activeView === 'week' ? ' active' : '') });
+  btnWeek.dataset.view = 'week';
+  const btnMonth = createMockDOMNode('button', { className: 'cf-view-btn' + (activeView === 'month' ? ' active' : '') });
+  btnMonth.dataset.view = 'month';
+
+  element.appendChild(btnDay);
+  element.appendChild(btnWeek);
+  element.appendChild(btnMonth);
+
+  // Panels
+  const panelDay = createMockDOMNode('div', { className: 'cf-view-panel cf-view-day' });
+  panelDay.style.display = activeView === 'day' ? 'flex' : 'none';
+  const panelWeek = createMockDOMNode('div', { className: 'cf-view-panel cf-view-week' });
+  panelWeek.style.display = activeView === 'week' ? 'flex' : 'none';
+  const panelMonth = createMockDOMNode('div', { className: 'cf-view-panel cf-view-month' });
+  panelMonth.style.display = activeView === 'month' ? 'flex' : 'none';
+
+  element.appendChild(panelDay);
+  element.appendChild(panelWeek);
+  element.appendChild(panelMonth);
+
+  // Labels
+  const lblDay = createMockDOMNode('span', { className: 'cf-range-label cf-label-day' });
+  const lblWeek = createMockDOMNode('span', { className: 'cf-range-label cf-label-week' });
+  const lblMonth = createMockDOMNode('span', { className: 'cf-range-label cf-label-month' });
+  element.appendChild(lblDay);
+  element.appendChild(lblWeek);
+  element.appendChild(lblMonth);
+
+  // Today Badge
+  const todayBadge = createMockDOMNode('span', { className: 'cf-today-badge cf-today-day' });
+  element.appendChild(todayBadge);
+
+  // Data script
+  if (data !== null) {
+    const dataScript = createMockDOMNode('script', { className: 'calendar-family-data' });
+    dataScript.textContent = typeof data === 'string' ? data : JSON.stringify(data);
+    element.appendChild(dataScript);
+  }
+
+  // Event elements inside panelWeek
+  const evAllDay = createMockDOMNode('div', { className: 'cf-event cf-allday cf-event-clickable' });
+  evAllDay.dataset.eventId = 'ev-allday-1';
+  panelWeek.appendChild(evAllDay);
+
+  const evTimed = createMockDOMNode('div', { className: 'cf-event cf-timed cf-event-clickable' });
+  evTimed.dataset.eventId = 'ev-timed-1';
+  panelWeek.appendChild(evTimed);
+
+  // Event element inside panelMonth
+  const monthDay = createMockDOMNode('div', { className: 'cf-month-day cf-has-events' });
+  monthDay.dataset.date = '2026-10-10';
+  const monthTitle = createMockDOMNode('div', { className: 'cf-month-event-title cf-event-clickable' });
+  monthTitle.dataset.eventId = 'ev-month-1';
+  monthDay.appendChild(monthTitle);
+  panelMonth.appendChild(monthDay);
+
+  element._buttons = [btnDay, btnWeek, btnMonth];
+  element._panels = { day: panelDay, week: panelWeek, month: panelMonth };
+  element._labels = { day: lblDay, week: lblWeek, month: lblMonth };
+  element._todayBadge = todayBadge;
+  element._events = { allDay: evAllDay, timed: evTimed, month: monthTitle, monthDay };
 
   return element;
 }
@@ -147,19 +389,16 @@ test('Calendar Family Client Controller', async (t) => {
   });
 
   await t.test('resolves defaultView from dataset and config', () => {
-    // 1. Explicit default_view: day
     const elDay = createMockElement({ defaultView: 'day' });
     const instDay = global.window.MirrormereCalendarFamily.mount(elDay);
     assert.equal(instDay.activeView, 'day');
     global.window.MirrormereCalendarFamily.unmount(elDay.dataset.widgetId);
 
-    // 2. Explicit default_view: month
     const elMonth = createMockElement({ defaultView: 'month' });
     const instMonth = global.window.MirrormereCalendarFamily.mount(elMonth);
     assert.equal(instMonth.activeView, 'month');
     global.window.MirrormereCalendarFamily.unmount(elMonth.dataset.widgetId);
 
-    // 3. Fallback when invalid or missing
     const elFallback = createMockElement({ defaultView: 'unknown' });
     const instFallback = global.window.MirrormereCalendarFamily.mount(elFallback);
     assert.equal(instFallback.activeView, 'week');
@@ -196,7 +435,7 @@ test('Calendar Family Client Controller', async (t) => {
     assert.equal(el._buttons[1].getAttribute('aria-selected'), 'false');
     assert.equal(notifiedView, 'day');
 
-    // Check panels and labels display
+    // Panels and labels display in day view
     assert.equal(el._panels.day.style.display, 'flex');
     assert.equal(el._panels.week.style.display, 'none');
     assert.equal(el._panels.month.style.display, 'none');
@@ -232,34 +471,259 @@ test('Calendar Family Client Controller', async (t) => {
   });
 
   await t.test('handles missing or malformed JSON data gracefully', () => {
-    // 1. Missing data element
     const elNoData = createMockElement({ data: null });
     const instNoData = global.window.MirrormereCalendarFamily.mount(elNoData);
     assert.ok(instNoData);
     assert.deepEqual(instNoData.data, {});
     global.window.MirrormereCalendarFamily.unmount(elNoData.dataset.widgetId);
 
-    // 2. Malformed JSON
     const elBadJSON = createMockElement({ data: '{bad json' });
     const instBadJSON = global.window.MirrormereCalendarFamily.mount(elBadJSON);
     assert.ok(instBadJSON);
     assert.deepEqual(instBadJSON.data, {});
     global.window.MirrormereCalendarFamily.unmount(elBadJSON.dataset.widgetId);
 
-    // 3. Double-encoded string JSON
     const elDoubleEncoded = createMockElement({ data: JSON.stringify(JSON.stringify({ range_label: 'Oct 2026' })) });
-    const instDouble = global.window.MirrormereCalendarFamily.mount(elDoubleEncoded);
-    assert.ok(instDouble);
-    assert.equal(instDouble.data.range_label, 'Oct 2026');
+    const instDoubleEncoded = global.window.MirrormereCalendarFamily.mount(elDoubleEncoded);
+    assert.ok(instDoubleEncoded);
+    assert.deepEqual(instDoubleEncoded.data, { range_label: 'Oct 2026' });
     global.window.MirrormereCalendarFamily.unmount(elDoubleEncoded.dataset.widgetId);
   });
 
   await t.test('safe no-ops on null element and unknown unmount', () => {
-    const instNull = global.window.MirrormereCalendarFamily.mount(null);
-    assert.equal(instNull, null);
-
+    assert.equal(global.window.MirrormereCalendarFamily.mount(null), null);
     assert.doesNotThrow(() => {
-      global.window.MirrormereCalendarFamily.unmount('nonexistent');
+      global.window.MirrormereCalendarFamily.unmount('non-existent-widget');
     });
+  });
+
+  // Chunk 7: Modal, Carousel, and Inactivity Tests
+  await t.test('tapping a timed event opens overlay detail modal card with formatted content', () => {
+    global.window.MirrormereCarousel.reset();
+    const el = createMockElement({ widgetId: 'modal-timed-cal' });
+    let modalOpenedEv = null;
+    const inst = global.window.MirrormereCalendarFamily.mount(el, {
+      onModalOpen: (ev) => { modalOpenedEv = ev; },
+    });
+
+    assert.equal(inst.activeModal, null);
+    assert.equal(global.window.MirrormereCarousel.pauseCount, 0);
+
+    // Tap timed event
+    el._events.timed.click();
+
+    assert.ok(inst.activeModal, 'modal overlay should be created');
+    assert.equal(el.querySelector('.cf-modal-overlay'), inst.activeModal);
+    assert.equal(global.window.MirrormereCarousel.pauseCount, 1, 'opening modal should pause carousel');
+    assert.equal(modalOpenedEv.id, 'ev-timed-1');
+
+    // Inspect modal card content
+    const card = inst.activeModal.querySelector('.cf-modal-card');
+    assert.ok(card, 'modal card should exist');
+
+    const titleEl = card.querySelector('.cf-modal-title');
+    assert.equal(titleEl.textContent, 'Soccer Practice');
+
+    const timeEl = card.querySelector('.cf-modal-time');
+    assert.ok(timeEl);
+    assert.ok(timeEl.textContent.includes('16:00 – 17:30'));
+
+    const locEl = card.querySelector('.cf-modal-location');
+    assert.ok(locEl);
+    assert.ok(locEl.textContent.includes('Montclair Park'));
+
+    const ownersEl = card.querySelector('.cf-modal-owners');
+    assert.ok(ownersEl);
+    const chips = ownersEl.querySelectorAll('.cf-modal-owner-chip');
+    assert.equal(chips.length, 2, 'should have 2 owner chips for Alex and Charlie');
+    assert.equal(chips[0].querySelector('.cf-modal-owner-name').textContent, 'Alex');
+    assert.equal(chips[1].querySelector('.cf-modal-owner-name').textContent, 'Charlie');
+
+    const descEl = card.querySelector('.cf-modal-description');
+    assert.ok(descEl);
+    assert.ok(descEl.textContent.includes('Drills, scrimmage and conditioning'));
+
+    // Close button dismisses modal and resumes carousel
+    const closeBtn = card.querySelector('.cf-modal-close');
+    assert.ok(closeBtn);
+    closeBtn.click();
+
+    assert.equal(inst.activeModal, null);
+    assert.equal(el.querySelector('.cf-modal-overlay'), null);
+    assert.equal(global.window.MirrormereCarousel.resumeCount, 1, 'closing modal should resume carousel');
+
+    global.window.MirrormereCalendarFamily.unmount('modal-timed-cal');
+  });
+
+  await t.test('tapping an all-day event formats time as "All Day"', () => {
+    global.window.MirrormereCarousel.reset();
+    const el = createMockElement({ widgetId: 'modal-allday-cal' });
+    const inst = global.window.MirrormereCalendarFamily.mount(el);
+
+    el._events.allDay.click();
+
+    assert.ok(inst.activeModal);
+    const card = inst.activeModal.querySelector('.cf-modal-card');
+    const timeEl = card.querySelector('.cf-modal-time');
+    assert.ok(timeEl);
+    assert.ok(timeEl.textContent.includes('All Day'), 'should display "All Day" for all day events');
+
+    // Dismiss by tapping overlay backdrop (target === overlay)
+    const overlay = inst.activeModal;
+    overlay.dispatchEvent({
+      type: 'click',
+      target: overlay,
+      currentTarget: overlay,
+    });
+
+    assert.equal(inst.activeModal, null);
+    assert.equal(global.window.MirrormereCarousel.resumeCount, 1);
+
+    global.window.MirrormereCalendarFamily.unmount('modal-allday-cal');
+  });
+
+  await t.test('tapping inside modal card does NOT dismiss modal', () => {
+    const el = createMockElement({ widgetId: 'modal-card-click' });
+    const inst = global.window.MirrormereCalendarFamily.mount(el);
+
+    el._events.timed.click();
+    assert.ok(inst.activeModal);
+
+    const card = inst.activeModal.querySelector('.cf-modal-card');
+    // Click on card element
+    card.click();
+    assert.ok(inst.activeModal, 'modal should remain open on card click');
+
+    // Dismiss via escape key
+    global.document._dispatchKeydown('Escape');
+    assert.equal(inst.activeModal, null, 'escape should dismiss modal');
+
+    global.window.MirrormereCalendarFamily.unmount('modal-card-click');
+  });
+
+  await t.test('truncates event description longer than 280 characters', () => {
+    const longDesc = 'A'.repeat(320);
+    const el = createMockElement({
+      widgetId: 'modal-trunc-cal',
+      data: {
+        days: [{
+          all_day: [{
+            id: 'ev-long',
+            title: 'Long Event',
+            description: longDesc,
+          }]
+        }]
+      }
+    });
+    const inst = global.window.MirrormereCalendarFamily.mount(el);
+    inst.openModal(inst.eventIndex.get('ev-long'));
+
+    const descEl = inst.activeModal.querySelector('.cf-modal-description');
+    assert.ok(descEl);
+    assert.equal(descEl.textContent.length, 280);
+    assert.ok(descEl.textContent.endsWith('...'));
+
+    inst.closeModal();
+    global.window.MirrormereCalendarFamily.unmount('modal-trunc-cal');
+  });
+
+  await t.test('opening a new modal while one is open replaces it without extra carousel resume', () => {
+    global.window.MirrormereCarousel.reset();
+    const el = createMockElement({ widgetId: 'modal-replace-cal' });
+    const inst = global.window.MirrormereCalendarFamily.mount(el);
+
+    el._events.allDay.click();
+    assert.equal(global.window.MirrormereCarousel.pauseCount, 1);
+    assert.equal(global.window.MirrormereCarousel.resumeCount, 0);
+
+    // Click second event
+    el._events.timed.click();
+    assert.equal(global.window.MirrormereCarousel.pauseCount, 2);
+    // resumeCount should still be 0 because the first modal was replaced, not dismissed to idle
+    assert.equal(global.window.MirrormereCarousel.resumeCount, 0);
+
+    inst.closeModal();
+    assert.equal(global.window.MirrormereCarousel.resumeCount, 1);
+
+    global.window.MirrormereCalendarFamily.unmount('modal-replace-cal');
+  });
+
+  await t.test('inactivity reset returns active view to default_view and closes modal after timeout', async () => {
+    const el = createMockElement({
+      widgetId: 'inactivity-cal',
+      defaultView: 'week',
+    });
+
+    let resetFired = false;
+    // Set a very short inactivity timeout (40ms) for fast unit test
+    const inst = global.window.MirrormereCalendarFamily.mount(el, {
+      inactivityTimeout: 40,
+      onInactivityReset: () => { resetFired = true; },
+    });
+
+    // 1. Switch to 'day' view
+    inst.switchView('day');
+    assert.equal(inst.activeView, 'day');
+
+    // 2. Open an event modal
+    el._events.timed.click();
+    assert.ok(inst.activeModal);
+
+    // 3. Wait for inactivity timeout (60ms > 40ms)
+    await new Promise(r => setTimeout(r, 60));
+
+    assert.equal(resetFired, true, 'onInactivityReset callback should be called');
+    assert.equal(inst.activeView, 'week', 'activeView should reset to defaultView (week)');
+    assert.equal(inst.activeModal, null, 'open modal should be dismissed on inactivity timeout');
+
+    global.window.MirrormereCalendarFamily.unmount('inactivity-cal');
+  });
+
+  await t.test('user activity touches reset the inactivity timer', async () => {
+    const el = createMockElement({
+      widgetId: 'inactivity-touch-cal',
+      defaultView: 'week',
+    });
+
+    let resetFired = false;
+    const inst = global.window.MirrormereCalendarFamily.mount(el, {
+      inactivityTimeout: 50,
+      onInactivityReset: () => { resetFired = true; },
+    });
+
+    inst.switchView('month');
+    assert.equal(inst.activeView, 'month');
+
+    // After 25ms, simulate user touch
+    await new Promise(r => setTimeout(r, 25));
+    el.dispatchEvent({ type: 'touchstart', preventDefault: () => {} });
+
+    // After another 30ms (total 55ms, but timer was reset at 25ms so 30ms < 50ms):
+    await new Promise(r => setTimeout(r, 30));
+    assert.equal(resetFired, false, 'inactivity should not have fired yet because touch reset it');
+    assert.equal(inst.activeView, 'month');
+
+    // Wait remaining 40ms (now 70ms > 50ms from touch)
+    await new Promise(r => setTimeout(r, 40));
+    assert.equal(resetFired, true, 'inactivity should now have fired');
+    assert.equal(inst.activeView, 'week');
+
+    global.window.MirrormereCalendarFamily.unmount('inactivity-touch-cal');
+  });
+
+  await t.test('unmount cleanly destroys timers, active modal and listeners', () => {
+    global.window.MirrormereCarousel.reset();
+    const el = createMockElement({ widgetId: 'destroy-cal' });
+    const inst = global.window.MirrormereCalendarFamily.mount(el);
+
+    el._events.timed.click();
+    assert.ok(inst.activeModal);
+    assert.ok(inst.inactivityTimer);
+
+    global.window.MirrormereCalendarFamily.unmount('destroy-cal');
+
+    assert.equal(inst.inactivityTimer, null);
+    assert.equal(inst.activeModal, null);
+    assert.equal(global.window.MirrormereCarousel.resumeCount, 1);
   });
 });

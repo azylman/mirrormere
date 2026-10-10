@@ -57,10 +57,129 @@
     font-weight: 700;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
   }
+  .cf-event-clickable {
+    cursor: pointer;
+    touch-action: manipulation;
+  }
+  .cf-event-clickable:active {
+    filter: brightness(1.2);
+  }
+  .cf-modal-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(10, 8, 18, 0.78);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 50;
+    padding: 16px;
+    box-sizing: border-box;
+    animation: cfModalFadeIn 0.15s ease-out;
+  }
+  @keyframes cfModalFadeIn {
+    from { opacity: 0; transform: scale(0.98); }
+    to { opacity: 1; transform: scale(1); }
+  }
+  .cf-modal-card {
+    background: var(--mm-bg-card, #13111c);
+    border: 1px solid var(--mm-accent-purple, #a855f7);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6), 0 0 20px rgba(168, 85, 247, 0.25);
+    border-radius: 8px;
+    padding: 16px;
+    width: 100%;
+    max-width: 440px;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    color: var(--mm-text-primary, #ffffff);
+    position: relative;
+  }
+  .cf-modal-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .cf-modal-title {
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: var(--mm-text-primary, #ffffff);
+    line-height: 1.3;
+    word-break: break-word;
+    margin: 0;
+  }
+  .cf-modal-close {
+    background: transparent;
+    border: none;
+    color: var(--mm-text-muted, #94a3b8);
+    font-size: 1.25rem;
+    line-height: 1;
+    padding: 2px 6px;
+    border-radius: 4px;
+    cursor: pointer;
+    touch-action: manipulation;
+  }
+  .cf-modal-close:hover {
+    color: var(--mm-text-primary, #ffffff);
+    background: rgba(255, 255, 255, 0.1);
+  }
+  .cf-modal-time, .cf-modal-location {
+    font-size: 0.8rem;
+    color: var(--mm-text-secondary, #cbd5e1);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .cf-modal-owners {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 2px;
+  }
+  .cf-modal-owner-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px 2px 4px;
+    border-radius: 12px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    background: rgba(255, 255, 255, 0.08);
+  }
+  .cf-modal-owner-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    font-size: 0.65rem;
+    font-weight: 800;
+  }
+  .cf-modal-description {
+    font-size: 0.78rem;
+    line-height: 1.4;
+    color: var(--mm-text-secondary, #cbd5e1);
+    background: rgba(0, 0, 0, 0.25);
+    border-radius: 6px;
+    padding: 8px 10px;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    max-height: 120px;
+    overflow-y: auto;
+    word-break: break-word;
+    white-space: pre-wrap;
+  }
 </style>
 {{ if isDayView .Config }}
   {{ $dayView := dayView .Data .Config .Dimensions }}
-  <div class="widget-card widget-calendar-family cf-view-day" data-widget-id="{{ .ID }}" data-widget-type="{{ .Type }}" data-default-view="day" data-active-view="day" style="grid-column: span {{ .Dimensions.Cols }}; grid-row: span {{ .Dimensions.Rows }}; display: flex; flex-direction: column; --mm-cf-shared: {{ $dayView.SharedColor }};{{ range $i, $m := $dayView.Members }} --mm-member-{{ $i }}: {{ $m.Color }}; --mm-member-{{ $i }}-text: {{ $m.TextColor }};{{ end }}">
+  <div class="widget-card widget-calendar-family cf-view-day" data-widget-id="{{ .ID }}" data-widget-type="{{ .Type }}" data-default-view="day" data-active-view="day" style="grid-column: span {{ .Dimensions.Cols }}; grid-row: span {{ .Dimensions.Rows }}; display: flex; flex-direction: column; position: relative; overflow: hidden; --mm-cf-shared: {{ $dayView.SharedColor }};{{ range $i, $m := $dayView.Members }} --mm-member-{{ $i }}: {{ $m.Color }}; --mm-member-{{ $i }}-text: {{ $m.TextColor }};{{ end }}">
     <div class="cf-header" style="display: flex; align-items: center; justify-content: space-between; padding-bottom: 8px; margin-bottom: 6px; border-bottom: 1px solid rgba(168, 85, 247, 0.2);">
       <div class="cf-date-heading" style="display: flex; align-items: center; gap: 8px;">
         <span class="cf-range-label" style="font-size: 0.95rem; font-weight: 700; color: var(--mm-text-primary);">{{ $dayView.WeekdayAbbr }}, {{ $dayView.Date }}</span>
@@ -85,7 +204,7 @@
     {{ if $dayView.AllDayEvents }}
     <div class="cf-allday-banner" style="display: flex; flex-wrap: wrap; gap: 4px; padding-bottom: 6px; margin-bottom: 6px; border-bottom: 1px dashed rgba(255, 255, 255, 0.1);">
       {{ range $dayView.AllDayEvents }}
-      <div class="cf-event cf-allday{{ if .Pattern }} cf-pattern-{{ .Pattern }}{{ end }}" style="font-size: 0.68rem; font-weight: 600; border-radius: 4px; padding: 2px 6px; color: {{ .TextColor }}; background: {{ .Color }};">{{ .Title }}</div>
+      <div class="cf-event cf-allday cf-event-clickable{{ if .Pattern }} cf-pattern-{{ .Pattern }}{{ end }}" data-event-id="{{ .ID }}" style="font-size: 0.68rem; font-weight: 600; border-radius: 4px; padding: 2px 6px; color: {{ .TextColor }}; background: {{ .Color }}; cursor: pointer; touch-action: manipulation;">{{ .Title }}</div>
       {{ end }}
     </div>
     {{ end }}
@@ -109,7 +228,7 @@
           {{ if .EarlyEvents }}
           <div class="cf-edge-band cf-early-band" style="display: flex; flex-direction: column; gap: 2px; padding: 2px 4px; background: rgba(0, 0, 0, 0.25); border-bottom: 1px dashed rgba(255, 255, 255, 0.1);">
             {{ range .EarlyEvents }}
-            <div class="cf-edge-event cf-pattern-{{ .Pattern }}" title="{{ .Title }}" style="font-size: 0.60rem; font-weight: 600; padding: 1px 4px; border-radius: 3px; background: {{ .Color }}; color: {{ .TextColor }}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+            <div class="cf-edge-event cf-event-clickable cf-pattern-{{ .Pattern }}" data-event-id="{{ .ID }}" title="{{ .Title }}" style="font-size: 0.60rem; font-weight: 600; padding: 1px 4px; border-radius: 3px; background: {{ .Color }}; color: {{ .TextColor }}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; touch-action: manipulation;">
               ▲ {{ .Start }} {{ .Title }}
             </div>
             {{ end }}
@@ -118,7 +237,7 @@
 
           <div class="cf-column-canvas" style="flex: 1; position: relative; min-height: 0;">
             {{ range .Events }}
-            <div class="cf-day-event cf-pattern-{{ .Pattern }}{{ if .IsLinked }} cf-linked{{ end }}" style="position: absolute; top: {{ .TopPct }}%; height: {{ .HeightPct }}%; left: 2px; {{ if gt .ColSpan 1 }}width: calc({{ .ColSpan }} * 100% + {{ sub .ColSpan 1 }} * 6px - 4px); z-index: 3;{{ else }}right: 2px;{{ end }} padding: 2px 4px; border-radius: 4px; background: {{ .Color }}; color: {{ .TextColor }}; overflow: hidden; display: flex; flex-direction: column; box-sizing: border-box; border: 1px solid rgba(0, 0, 0, 0.2);">
+            <div class="cf-day-event cf-event-clickable cf-pattern-{{ .Pattern }}{{ if .IsLinked }} cf-linked{{ end }}" data-event-id="{{ .ID }}" style="position: absolute; top: {{ .TopPct }}%; height: {{ .HeightPct }}%; left: 2px; {{ if gt .ColSpan 1 }}width: calc({{ .ColSpan }} * 100% + {{ sub .ColSpan 1 }} * 6px - 4px); z-index: 3;{{ else }}right: 2px;{{ end }} padding: 2px 4px; border-radius: 4px; background: {{ .Color }}; color: {{ .TextColor }}; overflow: hidden; display: flex; flex-direction: column; box-sizing: border-box; border: 1px solid rgba(0, 0, 0, 0.2); cursor: pointer; touch-action: manipulation;">
               <div class="cf-event-header" style="display: flex; align-items: center; gap: 3px; font-size: 0.62rem; font-weight: 700; line-height: 1.2;">
                 <span class="cf-event-time" style="font-family: var(--mm-font-mono);">{{ .Start }}</span>
                 {{ if .IsLinked }}
@@ -136,7 +255,7 @@
           {{ if .LateEvents }}
           <div class="cf-edge-band cf-late-band" style="display: flex; flex-direction: column; gap: 2px; padding: 2px 4px; background: rgba(0, 0, 0, 0.25); border-top: 1px dashed rgba(255, 255, 255, 0.1);">
             {{ range .LateEvents }}
-            <div class="cf-edge-event cf-pattern-{{ .Pattern }}" title="{{ .Title }}" style="font-size: 0.60rem; font-weight: 600; padding: 1px 4px; border-radius: 3px; background: {{ .Color }}; color: {{ .TextColor }}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+            <div class="cf-edge-event cf-event-clickable cf-pattern-{{ .Pattern }}" data-event-id="{{ .ID }}" title="{{ .Title }}" style="font-size: 0.60rem; font-weight: 600; padding: 1px 4px; border-radius: 3px; background: {{ .Color }}; color: {{ .TextColor }}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; touch-action: manipulation;">
               ▼ {{ .Start }} {{ .Title }}
             </div>
             {{ end }}
@@ -159,7 +278,7 @@
   </div>
 {{ else if isMonthView .Config }}
   {{ $monthView := monthView .Data .Config .Dimensions }}
-  <div class="widget-card widget-calendar-family cf-view-month" data-widget-id="{{ .ID }}" data-widget-type="{{ .Type }}" data-default-view="month" data-active-view="month" style="grid-column: span {{ .Dimensions.Cols }}; grid-row: span {{ .Dimensions.Rows }}; display: flex; flex-direction: column; --mm-cf-shared: {{ $monthView.SharedColor }};{{ range $i, $m := $monthView.Members }} --mm-member-{{ $i }}: {{ $m.Color }}; --mm-member-{{ $i }}-text: {{ $m.TextColor }};{{ end }}">
+  <div class="widget-card widget-calendar-family cf-view-month" data-widget-id="{{ .ID }}" data-widget-type="{{ .Type }}" data-default-view="month" data-active-view="month" style="grid-column: span {{ .Dimensions.Cols }}; grid-row: span {{ .Dimensions.Rows }}; display: flex; flex-direction: column; position: relative; overflow: hidden; --mm-cf-shared: {{ $monthView.SharedColor }};{{ range $i, $m := $monthView.Members }} --mm-member-{{ $i }}: {{ $m.Color }}; --mm-member-{{ $i }}-text: {{ $m.TextColor }};{{ end }}">
     <div class="cf-header" style="display: flex; align-items: center; justify-content: space-between; padding-bottom: 8px; margin-bottom: 6px; border-bottom: 1px solid rgba(168, 85, 247, 0.2);">
       <div class="cf-date-heading" style="display: flex; align-items: center; gap: 8px;">
         <span class="cf-range-label" style="font-size: 0.95rem; font-weight: 700; color: var(--mm-text-primary);">{{ $monthView.MonthLabel }}</span>
@@ -187,7 +306,7 @@
 
     <div class="cf-month-grid" style="display: grid; grid-template-columns: repeat(7, 1fr); grid-template-rows: repeat(6, 1fr); gap: 4px; flex: 1; min-height: 0; margin-top: 4px;">
       {{ range $monthView.Days }}
-      <div class="cf-month-day{{ if not .IsCurrentMonth }} cf-other-month{{ end }}{{ if .IsToday }} cf-today{{ end }}{{ if .IsWeekend }} cf-weekend{{ end }}" data-date="{{ .Date }}" style="display: flex; flex-direction: column; min-width: 0; min-height: 0; padding: 2px 4px; border-radius: 4px; background: {{ if .IsWeekend }}rgba(255, 255, 255, 0.02){{ else }}rgba(255, 255, 255, 0.04){{ end }}; border: 1px solid rgba(255, 255, 255, 0.05); overflow: hidden; position: relative; {{ if not .IsCurrentMonth }}opacity: 0.38;{{ end }}{{ if .IsToday }}outline: 2px solid var(--mm-accent-purple); z-index: 2;{{ end }}">
+      <div class="cf-month-day{{ if not .IsCurrentMonth }} cf-other-month{{ end }}{{ if .IsToday }} cf-today{{ end }}{{ if .IsWeekend }} cf-weekend{{ end }}{{ if gt .EventsCount 0 }} cf-has-events{{ end }}" data-date="{{ .Date }}" {{ if .Events }}data-event-id="{{ (index .Events 0).ID }}"{{ end }} style="display: flex; flex-direction: column; min-width: 0; min-height: 0; padding: 2px 4px; border-radius: 4px; background: {{ if .IsWeekend }}rgba(255, 255, 255, 0.02){{ else }}rgba(255, 255, 255, 0.04){{ end }}; border: 1px solid rgba(255, 255, 255, 0.05); overflow: hidden; position: relative; {{ if not .IsCurrentMonth }}opacity: 0.38;{{ end }}{{ if .IsToday }}outline: 2px solid var(--mm-accent-purple); z-index: 2;{{ end }}">
         <div class="cf-month-day-header" style="display: flex; align-items: center; justify-content: space-between; font-size: 0.68rem; font-weight: 700; line-height: 1.2;">
           <span class="cf-day-num{{ if .IsToday }} cf-today-num{{ end }}" style="{{ if .IsToday }}background: var(--mm-accent-purple); color: #ffffff; border-radius: 50%; width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center; font-size: 0.60rem;{{ else }}color: var(--mm-text-primary);{{ end }}">{{ .DayOfMonth }}</span>
         </div>
@@ -201,7 +320,7 @@
         {{ end }}
 
         {{ if .EventTitle }}
-        <div class="cf-month-event-title" title="{{ .EventTitle }}" style="font-size: 0.60rem; color: var(--mm-text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 2px; line-height: 1.2;">{{ .EventTitle }}</div>
+        <div class="cf-month-event-title cf-event-clickable" {{ if .Events }}data-event-id="{{ (index .Events 0).ID }}"{{ end }} title="{{ .EventTitle }}" style="font-size: 0.60rem; color: var(--mm-text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 2px; line-height: 1.2; cursor: pointer; touch-action: manipulation;">{{ .EventTitle }}</div>
         {{ end }}
       </div>
       {{ end }}
@@ -219,7 +338,7 @@
   </div>
 {{ else }}
   {{ $view := calendarFamilyView .Data .Config .Dimensions }}
-  <div class="widget-card widget-calendar-family cf-view-week" data-widget-id="{{ .ID }}" data-widget-type="{{ .Type }}" data-default-view="week" data-active-view="week" style="grid-column: span {{ .Dimensions.Cols }}; grid-row: span {{ .Dimensions.Rows }}; display: flex; flex-direction: column; --mm-cf-shared: {{ $view.SharedColor }};{{ range $i, $m := $view.Members }} --mm-member-{{ $i }}: {{ $m.Color }}; --mm-member-{{ $i }}-text: {{ $m.TextColor }};{{ end }}">
+  <div class="widget-card widget-calendar-family cf-view-week" data-widget-id="{{ .ID }}" data-widget-type="{{ .Type }}" data-default-view="week" data-active-view="week" style="grid-column: span {{ .Dimensions.Cols }}; grid-row: span {{ .Dimensions.Rows }}; display: flex; flex-direction: column; position: relative; overflow: hidden; --mm-cf-shared: {{ $view.SharedColor }};{{ range $i, $m := $view.Members }} --mm-member-{{ $i }}: {{ $m.Color }}; --mm-member-{{ $i }}-text: {{ $m.TextColor }};{{ end }}">
     <div class="cf-header" style="display: flex; align-items: center; justify-content: space-between; padding-bottom: 8px; margin-bottom: 6px; border-bottom: 1px solid rgba(168, 85, 247, 0.2);">
       <span class="cf-range-label" style="font-size: 0.95rem; font-weight: 700; color: var(--mm-text-primary);">{{ $view.RangeLabel }}</span>
       <div class="cf-header-actions" style="display: flex; align-items: center; gap: 8px;">
@@ -248,14 +367,14 @@
         {{ if .AllDay }}
         <div class="cf-allday-band" style="display: flex; flex-direction: column; gap: 2px; padding: 2px 0;">
           {{ range .AllDay }}
-          <div class="cf-event cf-allday{{ if .Pattern }} cf-pattern-{{ .Pattern }}{{ end }}" style="font-size: 0.65rem; font-weight: 600; border-radius: 3px; padding: 1px 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: {{ .TextColor }}; background: {{ .Color }};">{{ .Title }}</div>
+          <div class="cf-event cf-allday cf-event-clickable{{ if .Pattern }} cf-pattern-{{ .Pattern }}{{ end }}" data-event-id="{{ .ID }}" style="font-size: 0.65rem; font-weight: 600; border-radius: 3px; padding: 1px 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: {{ .TextColor }}; background: {{ .Color }}; cursor: pointer; touch-action: manipulation;">{{ .Title }}</div>
           {{ end }}
         </div>
         {{ end }}
 
         <div class="cf-timed-list" style="display: flex; flex-direction: column; gap: 2px; padding: 2px 0; overflow: hidden;">
           {{ range .Timed }}
-          <div class="cf-event cf-timed{{ if .Pattern }} cf-pattern-{{ .Pattern }}{{ end }}" style="font-size: 0.68rem; border-radius: 3px; padding: 2px 3px; overflow: hidden; color: {{ .TextColor }}; background: {{ .Color }};">
+          <div class="cf-event cf-timed cf-event-clickable{{ if .Pattern }} cf-pattern-{{ .Pattern }}{{ end }}" data-event-id="{{ .ID }}" style="font-size: 0.68rem; border-radius: 3px; padding: 2px 3px; overflow: hidden; color: {{ .TextColor }}; background: {{ .Color }}; cursor: pointer; touch-action: manipulation;">
             <span class="cf-event-time" style="font-family: var(--mm-font-mono); font-weight: 700;">{{ .Start }}</span>
             <span class="cf-event-title" style="margin-left: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ .Title }}</span>
             {{ if .Initials }}
