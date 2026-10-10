@@ -117,11 +117,9 @@ func TestCalendarProvider_Init_Validations(t *testing.T) {
 			},
 		},
 		{
-			name: "valid calendars with custom window and view",
+			name: "valid calendars with view",
 			cfg: map[string]any{
-				"window_days_past":   2,
-				"window_days_future": 21,
-				"view":               "week",
+				"view": "week",
 				"calendars": []map[string]any{
 					{
 						"name":    "Work",
@@ -192,9 +190,15 @@ LOCATION:Yosemite
 END:VEVENT
 BEGIN:VEVENT
 UID:evt-outside-past@mirrormere
-DTSTART:20260910T100000Z
-DTEND:20260910T110000Z
+DTSTART:20260501T100000Z
+DTEND:20260501T110000Z
 SUMMARY:Old Meeting
+END:VEVENT
+BEGIN:VEVENT
+UID:evt-outside-future@mirrormere
+DTSTART:20270501T100000Z
+DTEND:20270501T110000Z
+SUMMARY:Far Future Meeting
 END:VEVENT
 BEGIN:VEVENT
 UID:evt-duration-only@mirrormere
@@ -215,8 +219,6 @@ END:VCALENDAR`
 	})
 
 	cfg := map[string]any{
-		"window_days_past":   1,
-		"window_days_future": 7,
 		"calendars": []any{
 			map[string]any{
 				"name":  "Family Calendar",
@@ -323,8 +325,6 @@ END:VCALENDAR`
 	})
 
 	cfg := map[string]any{
-		"window_days_past":   1,
-		"window_days_future": 7,
 		"calendars": []any{
 			map[string]any{
 				"name": "Work",
@@ -586,8 +586,6 @@ END:VCALENDAR`
 	})
 
 	cfg := map[string]any{
-		"window_days_past":   float64(2),
-		"window_days_future": float64(10),
 		"calendars": []any{
 			map[string]any{
 				"name": "TZ Calendar",
