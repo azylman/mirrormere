@@ -1388,24 +1388,7 @@ func BuildFamilyMonthView(data any, cfg map[string]any, dims domain.Dimension, n
 		if ev.AllDay {
 			evDates = familyDateRange(ev.Start, ev.End)
 		} else {
-			tStart, ok1 := parseFamilyTime(ev.Start)
-			tEnd, ok2 := parseFamilyTime(ev.End)
-			if ok1 {
-				tStartLoc := tStart.In(loc)
-				d1 := tStartLoc.Format("2006-01-02")
-				if ok2 && tEnd.After(tStart) {
-					tEndLoc := tEnd.In(loc)
-					d2 := tEndLoc.Format("2006-01-02")
-					if tEndLoc.Hour() == 0 && tEndLoc.Minute() == 0 && tEndLoc.Second() == 0 && d2 > d1 {
-						d2 = tEndLoc.Add(-1 * time.Second).Format("2006-01-02")
-					}
-					evDates = familyDateRange(d1, d2)
-				} else {
-					evDates = []string{d1}
-				}
-			} else {
-				evDates = []string{ev.Start}
-			}
+			evDates = timedEventDateRange(ev, loc)
 		}
 
 		var matchedDates []string
@@ -1500,7 +1483,7 @@ func BuildFamilyMonthView(data any, cfg map[string]any, dims domain.Dimension, n
 		}
 	}
 
-	showTitles := dims.Cols >= 6
+	showTitles := dims.Cols >= 4
 	for idx := range days {
 		evs := dayEventsMap[idx]
 		sort.SliceStable(evs, func(a, b int) bool {
@@ -1514,11 +1497,9 @@ func BuildFamilyMonthView(data any, cfg map[string]any, dims domain.Dimension, n
 		})
 
 		days[idx].EventsCount = len(evs)
-		if showTitles {
-			days[idx].Events = evs
-			if len(evs) > 0 {
-				days[idx].EventTitle = evs[0].Title
-			}
+		days[idx].Events = evs
+		if len(evs) > 0 && showTitles {
+			days[idx].EventTitle = evs[0].Title
 		}
 
 		memberSet := dayMembersMap[idx]

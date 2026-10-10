@@ -1743,7 +1743,7 @@ func TestBuildFamilyMonthView_DensityAdaptation(t *testing.T) {
 		}
 	})
 
-	t.Run("4x2 dimension omits event titles (dots-only)", func(t *testing.T) {
+	t.Run("4x2 dimension resolves event titles", func(t *testing.T) {
 		t.Parallel()
 		dims4x2 := domain.NewDimension(4, 2)
 		view, err := BuildFamilyMonthView(snap, cfg, dims4x2, now)
@@ -1753,11 +1753,37 @@ func TestBuildFamilyMonthView_DensityAdaptation(t *testing.T) {
 
 		for _, d := range view.Days {
 			if d.Date == "2026-10-15" {
-				if d.EventTitle != "" {
-					t.Errorf("expected empty EventTitle on 4x2, got %q", d.EventTitle)
+				if d.EventTitle != "All Day Conference" {
+					t.Errorf("expected EventTitle 'All Day Conference' on 4x2, got %q", d.EventTitle)
+				}
+				if len(d.Events) != 3 {
+					t.Errorf("expected 2 events in Events slice on 4x2, got %d", len(d.Events))
 				}
 				if len(d.Dots) == 0 {
 					t.Errorf("expected dots to still be populated on 4x2")
+				}
+			}
+		}
+	})
+
+	t.Run("narrow dimension (< 4 cols) omits event titles (dots-only)", func(t *testing.T) {
+		t.Parallel()
+		dims2x2 := domain.NewDimension(2, 2)
+		view, err := BuildFamilyMonthView(snap, cfg, dims2x2, now)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		for _, d := range view.Days {
+			if d.Date == "2026-10-15" {
+				if d.EventTitle != "" {
+					t.Errorf("expected empty EventTitle on narrow dimension, got %q", d.EventTitle)
+				}
+				if len(d.Events) != 3 {
+					t.Errorf("expected events to still be populated on narrow dimension, got %d", len(d.Events))
+				}
+				if len(d.Dots) == 0 {
+					t.Errorf("expected dots to still be populated on narrow dimension")
 				}
 			}
 		}
@@ -2034,9 +2060,44 @@ func TestCalendarFamily_MonthViewTemplateRender_4x2(t *testing.T) {
 	if !strings.Contains(html, "cf-month-dot") {
 		t.Errorf("expected member dots on 4x2: %s", html)
 	}
-	// On 4x2, event titles are omitted (dots-only) in month view
+	// On 4x2, event titles are rendered
+	if !strings.Contains(html, "cf-month-event-title") {
+		t.Errorf("expected event title to be rendered on 4x2 layout: %s", html)
+	}
+	if !strings.Contains(html, "Parent Teacher Night") {
+		t.Errorf("expected Parent Teacher Night on 4x2 layout: %s", html)
+	}
+}
+
+func TestCalendarFamily_MonthViewTemplateRender_Narrow_DotsOnly(t *testing.T) {
+	t.Parallel()
+
+	snap := provider.CalendarSnapshot{
+		LastSync: "2026-09-27T12:00:00Z",
+		Events: []provider.CalendarEvent{
+			{ID: "e1", CalendarName: "alex-personal", Title: "Parent Teacher Night", Start: "2026-09-27T18:00:00Z", End: "2026-09-27T19:00:00Z"},
+		},
+	}
+
+	cfg := baseFamilyConfig()
+	cfg["default_view"] = "month"
+	cfg["date"] = "2026-09-27"
+
+	ctx := Context{
+		ID:         "test-family-month-narrow",
+		Type:       "calendar-family",
+		Dimensions: domain.NewDimension(2, 2),
+		Data:       snap,
+		Config:     cfg,
+	}
+
+	html := renderFamilyWidgetTemplate(t, ctx, testNow)
+
+	if !strings.Contains(html, "cf-month-dot") {
+		t.Errorf("expected member dots on narrow layout: %s", html)
+	}
 	if strings.Contains(html, "cf-month-event-title") {
-		t.Errorf("expected event title to be omitted on 4x2 layout: %s", html)
+		t.Errorf("expected event title to be omitted on narrow layout: %s", html)
 	}
 }
 
@@ -2066,6 +2127,44 @@ func TestCalendarFamily_MonthViewTemplateRender_Empty(t *testing.T) {
 	// Should render 42 day cells even when empty of events
 	if !strings.Contains(html, "cf-month-day") {
 		t.Errorf("expected cf-month-day in html: %s", html)
+	}
+}
+
+func TestCalendarFamily_MonthViewTemplateRender_4x2_Events(t *testing.T) {
+	t.Parallel()
+
+	cfg := baseFamilyConfig()
+	cfg["default_view"] = "month"
+	cfg["date"] = "2026-10-10"
+
+	snap := provider.CalendarSnapshot{
+		LastSync: "2026-10-10T12:00:00Z",
+		Events: []provider.CalendarEvent{
+			{ID: "e_dentist", CalendarName: "alex-personal", Title: "Dentist Visit", Start: "2026-10-10T14:00:00Z", End: "2026-10-10T15:00:00Z"},
+		},
+	}
+
+	ctx := Context{
+		ID:         "test-family-month-4x2-events",
+		Type:       "calendar-family",
+		Dimensions: domain.NewDimension(4, 2),
+		Data:       snap,
+		Config:     cfg,
+	}
+
+	html := renderFamilyWidgetTemplate(t, ctx, testNow)
+
+	if !strings.Contains(html, "cf-view-month") {
+		t.Errorf("expected 'cf-view-month' in rendered output")
+	}
+	if !strings.Contains(html, "Dentist Visit") {
+		t.Errorf("expected event title 'Dentist Visit' in rendered 4x2 month html: %s", html)
+	}
+	if !strings.Contains(html, "cf-month-event-title") {
+		t.Errorf("expected 'cf-month-event-title' class in rendered 4x2 month html")
+	}
+	if !strings.Contains(html, `data-event-id="e_dentist"`) {
+		t.Errorf("expected data-event-id='e_dentist' in rendered 4x2 month html")
 	}
 }
 
