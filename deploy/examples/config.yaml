@@ -41,8 +41,6 @@ display:
       refresh_interval_seconds: 300
       config:
         view: week
-        window_days_past: 1
-        window_days_future: 14
         show_relative_time: true
         calendars:
           - name: "Family Events"

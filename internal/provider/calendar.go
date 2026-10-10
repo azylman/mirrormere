@@ -59,10 +59,17 @@ type CalendarSource struct {
 	TokenEnv    string `json:"token_env,omitempty" yaml:"token_env,omitempty"`
 }
 
-// CalendarConfig defines the full instance configuration for calendar-agenda.
+const (
+	// DefaultWindowDaysPast is the default number of days in the past to fetch calendar events.
+	DefaultWindowDaysPast = 90
+	// DefaultWindowDaysFuture is the default number of days into the future to fetch calendar events.
+	DefaultWindowDaysFuture = 180
+)
+
+// CalendarConfig defines the full instance configuration for calendar providers.
 type CalendarConfig struct {
-	WindowDaysPast   int              `json:"window_days_past" yaml:"window_days_past"`
-	WindowDaysFuture int              `json:"window_days_future" yaml:"window_days_future"`
+	WindowDaysPast   int              `json:"window_days_past,omitempty" yaml:"window_days_past,omitempty"`
+	WindowDaysFuture int              `json:"window_days_future,omitempty" yaml:"window_days_future,omitempty"`
 	View             string           `json:"view" yaml:"view"`
 	Calendars        []CalendarSource `json:"calendars" yaml:"calendars"`
 }
@@ -109,38 +116,10 @@ func (p *CalendarProvider) Init(ctx context.Context, rawConfig map[string]any, o
 }
 
 func parseCalendarConfig(raw map[string]any, opts InitOptions) (*CalendarConfig, error) {
-	var isGridOrMonth bool
-	if raw["members"] != nil {
-		isGridOrMonth = true
-	} else if v, ok := raw["view"].(string); ok && strings.EqualFold(strings.TrimSpace(v), "month") {
-		isGridOrMonth = true
-	} else if v, ok := raw["default_view"].(string); ok && strings.EqualFold(strings.TrimSpace(v), "month") {
-		isGridOrMonth = true
-	}
-
-	defaultPast := 1
-	defaultFuture := 14
-	if isGridOrMonth {
-		defaultPast = 7
-		defaultFuture = 42
-	}
-
 	cfg := &CalendarConfig{
-		WindowDaysPast:   defaultPast,
-		WindowDaysFuture: defaultFuture,
+		WindowDaysPast:   DefaultWindowDaysPast,
+		WindowDaysFuture: DefaultWindowDaysFuture,
 		View:             "agenda",
-	}
-
-	if v, ok := raw["window_days_past"].(int); ok && v >= 0 {
-		cfg.WindowDaysPast = v
-	} else if v, ok := raw["window_days_past"].(float64); ok && v >= 0 {
-		cfg.WindowDaysPast = int(v)
-	}
-
-	if v, ok := raw["window_days_future"].(int); ok && v > 0 {
-		cfg.WindowDaysFuture = v
-	} else if v, ok := raw["window_days_future"].(float64); ok && v > 0 {
-		cfg.WindowDaysFuture = int(v)
 	}
 
 	if v, ok := raw["view"].(string); ok && strings.TrimSpace(v) != "" {
@@ -343,8 +322,16 @@ func (p *CalendarProvider) Fetch(ctx context.Context) (any, error) {
 	}
 
 	now := p.nowFunc()
-	windowStart := now.AddDate(0, 0, -p.config.WindowDaysPast)
-	windowEnd := now.AddDate(0, 0, p.config.WindowDaysFuture)
+	pastDays := p.config.WindowDaysPast
+	if pastDays <= 0 {
+		pastDays = DefaultWindowDaysPast
+	}
+	futureDays := p.config.WindowDaysFuture
+	if futureDays <= 0 {
+		futureDays = DefaultWindowDaysFuture
+	}
+	windowStart := now.AddDate(0, 0, -pastDays)
+	windowEnd := now.AddDate(0, 0, futureDays)
 
 	var enabledSources []CalendarSource
 	for _, source := range p.config.Calendars {
