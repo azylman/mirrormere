@@ -57,6 +57,8 @@
       this.muteBtn = options.muteBtn || (typeof document !== 'undefined' ? document.getElementById('video-hud-mute-btn') : null);
       this.muteIcon = options.muteIcon || (typeof document !== 'undefined' ? document.getElementById('video-hud-mute-icon') : null);
       this.volumeSlider = options.volumeSlider || (typeof document !== 'undefined' ? document.getElementById('video-hud-volume-slider') : null);
+      this.skipBackBtn = options.skipBackBtn || (typeof document !== 'undefined' ? document.getElementById('video-hud-skip-back-btn') : null);
+      this.skipFwdBtn = options.skipFwdBtn || (typeof document !== 'undefined' ? document.getElementById('video-hud-skip-fwd-btn') : null);
       this.stageElement = options.stageElement || (typeof document !== 'undefined' ? document.getElementById('video-stage') : null);
       this.videoManager = options.videoManager || null;
       this._remoteUrl = options.remoteUrl || '';
@@ -326,7 +328,28 @@
         this.boundHandlers.push({ el: this.playBtn, ev: 'click', fn: onPlayToggle });
       }
 
-      // 8. Mute button
+      // 8. Skip Back (-10s) and Skip Forward (+10s)
+      if (this.skipBackBtn) {
+        const onSkipBack = (e) => {
+          if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+          this.resetAutoFade();
+          this.handleRewind();
+        };
+        this.skipBackBtn.addEventListener('click', onSkipBack);
+        this.boundHandlers.push({ el: this.skipBackBtn, ev: 'click', fn: onSkipBack });
+      }
+
+      if (this.skipFwdBtn) {
+        const onSkipFwd = (e) => {
+          if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+          this.resetAutoFade();
+          this.handleFastForward();
+        };
+        this.skipFwdBtn.addEventListener('click', onSkipFwd);
+        this.boundHandlers.push({ el: this.skipFwdBtn, ev: 'click', fn: onSkipFwd });
+      }
+
+      // 9. Mute button
       if (this.muteBtn) {
         const onMuteToggle = (e) => {
           if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
@@ -470,6 +493,26 @@
         } else {
           this.playBtn.style.display = 'none';
           this.playBtn.setAttribute('hidden', 'true');
+        }
+      }
+
+      if (this.skipBackBtn) {
+        if (stream.controllable === true) {
+          this.skipBackBtn.style.display = '';
+          this.skipBackBtn.removeAttribute('hidden');
+        } else {
+          this.skipBackBtn.style.display = 'none';
+          this.skipBackBtn.setAttribute('hidden', 'true');
+        }
+      }
+
+      if (this.skipFwdBtn) {
+        if (stream.controllable === true) {
+          this.skipFwdBtn.style.display = '';
+          this.skipFwdBtn.removeAttribute('hidden');
+        } else {
+          this.skipFwdBtn.style.display = 'none';
+          this.skipFwdBtn.setAttribute('hidden', 'true');
         }
       }
 
@@ -632,6 +675,18 @@
           id: stream.id,
           action: 'fast_forward',
         });
+      }
+    }
+
+    /**
+     * Skip forward or backward by the specified number of seconds.
+     * @param {number} seconds
+     */
+    skipTime(seconds) {
+      if (!this.stageElement) return;
+      const videoEl = this.stageElement.querySelector('video');
+      if (videoEl && typeof videoEl.currentTime === 'number') {
+        videoEl.currentTime = Math.max(0, videoEl.currentTime + seconds);
       }
     }
 

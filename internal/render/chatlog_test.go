@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/azylman/mirrormere/internal/chatlog"
 	"github.com/azylman/mirrormere/internal/config"
@@ -117,7 +118,7 @@ func TestChatLogWidget_RendersFromProviderPerNode(t *testing.T) {
 	store := chatlog.NewStore()
 	store.Add(chatlog.NodeKey("kitchen"), chatlog.Message{Role: chatlog.RoleHuman, Author: "sam", Text: "kitchen question"})
 	store.Add(chatlog.NodeKey("kitchen"), chatlog.Message{Role: chatlog.RoleAgent, Text: "kitchen answer"})
-	store.Add(chatlog.NodeKey("office"), chatlog.Message{Role: chatlog.RoleHuman, Text: "office question <b>"})
+	store.Add(chatlog.NodeKey("office"), chatlog.Message{Role: chatlog.RoleHuman, Text: "office question <b>", At: time.Now().Add(time.Second)})
 
 	snap := &config.Snapshot{
 		Config: &config.Config{Display: config.DisplayConfig{Widgets: []config.WidgetConfig{
