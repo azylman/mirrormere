@@ -66,12 +66,21 @@ type WeatherSnapshot struct {
 	Daily    []WeatherDaily  `json:"daily"`
 }
 
+// TodayPrecipProbMax returns today's maximum precipitation probability percentage (0-100).
+func (s WeatherSnapshot) TodayPrecipProbMax() int {
+	if len(s.Daily) > 0 {
+		return s.Daily[0].PrecipProbMax
+	}
+	return s.Current.PrecipProbMax
+}
+
 // WeatherCurrent encapsulates current ambient observations.
 type WeatherCurrent struct {
 	Temperature   float64      `json:"temperature"`
 	FeelsLike     float64      `json:"feels_like"`
 	Humidity      int          `json:"humidity"`
 	WindSpeed     float64      `json:"wind_speed"`
+	PrecipProbMax int          `json:"precip_prob_max"`
 	Units         WeatherUnits `json:"units"`
 	ConditionCode int          `json:"condition_code"`
 	ConditionText string       `json:"condition_text"`
@@ -275,6 +284,11 @@ func (p *WeatherProvider) Fetch(ctx context.Context) (any, error) {
 
 	condText, iconToken := MapWMOCode(data.Current.WeatherCode)
 
+	var todayPrecipMax int
+	if len(data.Daily.PrecipitationProbabilityMax) > 0 {
+		todayPrecipMax = data.Daily.PrecipitationProbabilityMax[0]
+	}
+
 	snapshot := WeatherSnapshot{
 		Location: p.location,
 		Current: WeatherCurrent{
@@ -282,6 +296,7 @@ func (p *WeatherProvider) Fetch(ctx context.Context) (any, error) {
 			FeelsLike:     data.Current.ApparentTemperature,
 			Humidity:      data.Current.RelativeHumidity2m,
 			WindSpeed:     data.Current.WindSpeed10m,
+			PrecipProbMax: todayPrecipMax,
 			Units:         WeatherUnits{Temperature: tempLabel, WindSpeed: windLabel},
 			ConditionCode: data.Current.WeatherCode,
 			ConditionText: condText,

@@ -22,6 +22,14 @@
         {{ printf "%.0f" .Data.Current.Temperature }}{{ if .Data.Current.Units.Temperature }}{{ .Data.Current.Units.Temperature }}{{ else }}°{{ end }}
       </span>
       <span class="weather-condition-text" style="display: none;">{{ .Data.Current.ConditionText }}</span>
+      <span class="weather-meta-precip" style="display: inline-flex; align-items: center; gap: 4px; font-size: 0.82rem; color: var(--mm-text-muted);" title="Precipitation: {{ todayPrecipProb .Data }}%">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--mm-accent-cyan)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 13v7a2 2 0 0 0 4 0"/>
+          <path d="M12 2v2"/>
+          <path d="M20.992 13a1 1 0 0 0 .97-1.274 10.284 10.284 0 0 0-19.923 0A1 1 0 0 0 3 13z"/>
+        </svg>
+        <span>{{ todayPrecipProb .Data }}%</span>
+      </span>
       <span class="weather-meta-humidity" style="display: inline-flex; align-items: center; gap: 4px; font-size: 0.82rem; color: var(--mm-text-muted);" title="Humidity: {{ .Data.Current.Humidity }}%">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--mm-accent-cyan)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/>

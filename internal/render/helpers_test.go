@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/azylman/mirrormere/internal/provider"
 	"github.com/azylman/mirrormere/internal/render"
 )
 
@@ -474,6 +475,59 @@ func TestWeatherHourlyGraph(t *testing.T) {
 		}
 		if !strings.Contains(out, `68°`) || !strings.Contains(out, `71°`) {
 			t.Errorf("expected temp labels in output, got: %s", out)
+		}
+	})
+}
+
+func TestTodayPrecipProb(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		data any
+		want int
+	}{
+		{"nil data", nil, 0},
+		{"WeatherSnapshot with daily", provider.WeatherSnapshot{Daily: []provider.WeatherDaily{{PrecipProbMax: 65}}}, 65},
+		{"WeatherSnapshot with current only", provider.WeatherSnapshot{Current: provider.WeatherCurrent{PrecipProbMax: 40}}, 40},
+		{"*WeatherSnapshot pointer", &provider.WeatherSnapshot{Daily: []provider.WeatherDaily{{PrecipProbMax: 80}}}, 80},
+		{"nil *WeatherSnapshot pointer", (*provider.WeatherSnapshot)(nil), 0},
+		{"WeatherCurrent value", provider.WeatherCurrent{PrecipProbMax: 35}, 35},
+		{"*WeatherCurrent pointer", &provider.WeatherCurrent{PrecipProbMax: 45}, 45},
+		{"nil *WeatherCurrent pointer", (*provider.WeatherCurrent)(nil), 0},
+		{"[]WeatherDaily slice", []provider.WeatherDaily{{PrecipProbMax: 90}}, 90},
+		{"empty []WeatherDaily slice", []provider.WeatherDaily{}, 0},
+		{"map with daily slice", map[string]any{"daily": []any{map[string]any{"precip_prob_max": 50}}}, 50},
+		{"map with current map", map[string]any{"current": map[string]any{"precip_prob_max": 25}}, 25},
+		{"map with WeatherDaily slice", map[string]any{"daily": []provider.WeatherDaily{{PrecipProbMax: 70}}}, 70},
+		{"map with WeatherCurrent", map[string]any{"current": provider.WeatherCurrent{PrecipProbMax: 15}}, 15},
+		{"map with direct precip_prob_max", map[string]any{"precip_prob_max": 85}, 85},
+		{"map with direct float precip_prob_max", map[string]any{"precip_prob_max": float64(85)}, 85},
+		{"unrelated type", "not-weather-data", 0},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := render.TodayPrecipProb(tc.data); got != tc.want {
+				t.Errorf("TodayPrecipProb(%v) = %d, want %d", tc.name, got, tc.want)
+			}
+		})
+	}
+
+	t.Run("template execution via StandardFuncMap", func(t *testing.T) {
+		t.Parallel()
+		tmpl, err := template.New("precip-test").Funcs(render.StandardFuncMap(nil)).Parse(`{{todayPrecipProb .}}%`)
+		if err != nil {
+			t.Fatalf("failed to parse template: %v", err)
+		}
+		var sb strings.Builder
+		snap := provider.WeatherSnapshot{Daily: []provider.WeatherDaily{{PrecipProbMax: 42}}}
+		if err := tmpl.Execute(&sb, snap); err != nil {
+			t.Fatalf("failed to execute template: %v", err)
+		}
+		if sb.String() != "42%" {
+			t.Errorf("expected '42%%', got %q", sb.String())
 		}
 	})
 }
