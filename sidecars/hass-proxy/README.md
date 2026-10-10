@@ -44,7 +44,6 @@ homeassistant:
 
 **Headers:**
 - `Content-Type: application/json`
-- `Accept: application/json` (or `Accept: text/event-stream`)
 
 **Request Body:**
 ```json
@@ -59,13 +58,6 @@ homeassistant:
 
 **Responses:**
 - `204 No Content`: No intent matched in Home Assistant or upstream error (caller falls back to brain).
-- `200 OK (application/json)`:
-  ```json
-  {
-    "intent": "action_done",
-    "speech": "Turned off kitchen lights"
-  }
-  ```
 - `200 OK (text/event-stream)`:
   ```http
   event: turn

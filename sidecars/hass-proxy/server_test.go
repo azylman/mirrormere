@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -211,7 +210,7 @@ func TestServer_Intent_ClientCanceled(t *testing.T) {
 	}
 }
 
-func TestServer_Intent_JSON_Match(t *testing.T) {
+func TestServer_Intent_Match_AlwaysSSE(t *testing.T) {
 	mock := &mockHAClient{
 		processFunc: func(ctx context.Context, req IntentRequest) (*IntentResponse, bool, error) {
 			return &IntentResponse{
@@ -222,6 +221,7 @@ func TestServer_Intent_JSON_Match(t *testing.T) {
 	}
 	srv := NewServer(mock, nil)
 
+	// Even if Accept is application/json or omitted, server strictly returns text/event-stream
 	payload := `{"text": "turn on kitchen light", "turn_id": "t-100"}`
 	req := httptest.NewRequest(http.MethodPost, "/intent", strings.NewReader(payload))
 	req.Header.Set("Accept", "application/json")
@@ -231,16 +231,13 @@ func TestServer_Intent_JSON_Match(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200 OK, got %d", rec.Code)
 	}
-	if !strings.Contains(rec.Header().Get("Content-Type"), "application/json") {
-		t.Errorf("expected application/json content type, got %q", rec.Header().Get("Content-Type"))
+	if !strings.Contains(rec.Header().Get("Content-Type"), "text/event-stream") {
+		t.Errorf("expected text/event-stream content type, got %q", rec.Header().Get("Content-Type"))
 	}
 
-	var resp IntentResponse
-	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("failed to decode JSON response: %v", err)
-	}
-	if resp.Intent != "action_done" || resp.Speech != "Turned on the kitchen light" {
-		t.Errorf("unexpected response content: %+v", resp)
+	body := rec.Body.String()
+	if !strings.Contains(body, "event: reply") || !strings.Contains(body, `"reply":"Turned on the kitchen light"`) {
+		t.Errorf("missing reply event in SSE body: %s", body)
 	}
 }
 
@@ -304,8 +301,8 @@ func TestServer_Intent_SSE_NonFlusher(t *testing.T) {
 	if writer.code != http.StatusOK {
 		t.Errorf("expected 200, got %d", writer.code)
 	}
-	if !strings.Contains(string(writer.body), "Fallback response") {
-		t.Errorf("expected JSON fallback body, got %s", string(writer.body))
+	if !strings.Contains(string(writer.body), "event: reply") || !strings.Contains(string(writer.body), "Fallback response") {
+		t.Errorf("expected SSE body, got %s", string(writer.body))
 	}
 }
 
