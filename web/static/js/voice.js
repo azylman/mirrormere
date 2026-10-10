@@ -353,16 +353,21 @@
         this.currentTranscript = transcript;
       }
 
-      if (this.voiceTranscript && this.currentTranscript) {
-        this.voiceTranscript.textContent = `"${this.currentTranscript}"`;
-        this.voiceTranscript.style.display = '';
-      }
-
-      // Present caption toast if reply text is available and user hasn't dismissed this turn
       if (reply !== null) {
         this.currentReply = reply;
       }
       this.currentTTSEngine = ttsEngine;
+
+      // In the full header takeover: show the assistant reply when available
+      if (this.voiceTranscript) {
+        if (this.currentReply) {
+          this.voiceTranscript.textContent = `"${this.currentReply}"`;
+          this.voiceTranscript.style.display = '';
+        } else if (this.currentTranscript) {
+          this.voiceTranscript.textContent = `"${this.currentTranscript}"`;
+          this.voiceTranscript.style.display = '';
+        }
+      }
 
       if (this.currentReply && !this.turnDismissed && this.toast) {
         if (this.toastBody) {
