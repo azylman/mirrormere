@@ -731,3 +731,96 @@ func TestCalendarFeedEvents(t *testing.T) {
 	})
 }
 
+func TestCalendarFeedActiveCalendars(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		input     any
+		wantCount int
+		wantNames []string
+	}{
+		{
+			name:      "nil input",
+			input:     nil,
+			wantCount: 0,
+		},
+		{
+			name:      "empty map",
+			input:     map[string]any{},
+			wantCount: 0,
+		},
+		{
+			name: "config map with enabled and disabled feeds",
+			input: map[string]any{
+				"calendars": []any{
+					map[string]any{"name": "Alex", "color": "#ff6f59"},
+					map[string]any{"name": "Disabled Feed", "color": "#cccccc", "enabled": false},
+					map[string]any{"name": "Amelie", "color": "#9d8df1", "enabled": true},
+					map[string]any{"name": "Explicit False String", "color": "#000000", "enabled": "false"},
+				},
+			},
+			wantCount: 2,
+			wantNames: []string{"Alex", "Amelie"},
+		},
+		{
+			name: "slice of any directly",
+			input: []any{
+				map[string]any{"name": "Feed 1", "enabled": true},
+				map[string]any{"name": "Feed 2", "enabled": false},
+			},
+			wantCount: 1,
+			wantNames: []string{"Feed 1"},
+		},
+		{
+			name: "slice of map[string]any directly",
+			input: []map[string]any{
+				{"name": "Feed A", "enabled": true},
+				{"name": "Feed B", "enabled": false},
+			},
+			wantCount: 1,
+			wantNames: []string{"Feed A"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := render.CalendarFeedActiveCalendars(tt.input)
+			if len(got) != tt.wantCount {
+				t.Fatalf("CalendarFeedActiveCalendars() returned %d items, want %d", len(got), tt.wantCount)
+			}
+			for i, name := range tt.wantNames {
+				if got[i]["name"] != name {
+					t.Errorf("at index %d: got name %v, want %s", i, got[i]["name"], name)
+				}
+			}
+		})
+	}
+
+	t.Run("template execution via StandardFuncMap", func(t *testing.T) {
+		t.Parallel()
+		fnMap := render.StandardFuncMap(nil)
+		tmpl, err := template.New("active-test").Funcs(fnMap).Parse(`{{ $c := calendarFeedActiveCalendars . }}{{ len $c }}:{{ range $c }}{{ .name }};{{ end }}`)
+		if err != nil {
+			t.Fatalf("failed to parse template: %v", err)
+		}
+
+		cfg := map[string]any{
+			"calendars": []any{
+				map[string]any{"name": "Cal 1", "enabled": true},
+				map[string]any{"name": "Cal 2", "enabled": false},
+			},
+		}
+
+		var sb strings.Builder
+		if err := tmpl.Execute(&sb, cfg); err != nil {
+			t.Fatalf("failed to execute template: %v", err)
+		}
+		if sb.String() != "1:Cal 1;" {
+			t.Errorf("expected '1:Cal 1;', got %q", sb.String())
+		}
+	})
+}
+
+

@@ -84,6 +84,12 @@ func StandardFuncMap(nowFunc func() time.Time) template.FuncMap {
 		"calendarFeedEvents": func(data any, args ...any) []provider.CalendarEvent {
 			return CalendarFeedEvents(data, nowFunc())
 		},
+		"calendarFeedActiveCalendars": func(cfg any) []map[string]any {
+			return CalendarFeedActiveCalendars(cfg)
+		},
+		"activeCalendars": func(cfg any) []map[string]any {
+			return CalendarFeedActiveCalendars(cfg)
+		},
 		"add": func(a, b int) int {
 			return a + b
 		},
@@ -702,4 +708,53 @@ func CalendarFeedEvents(data any, refTime time.Time) []provider.CalendarEvent {
 	}
 
 	return filtered
+}
+
+// CalendarFeedActiveCalendars filters widget configuration calendars down to those that are enabled.
+// If a calendar does not specify an 'enabled' field, it defaults to true. Feeds with enabled explicitly
+// set to false are excluded so header chips and count badges accurately reflect active synchronized calendars.
+func CalendarFeedActiveCalendars(config any) []map[string]any {
+	var rawCalendars []any
+
+	switch v := config.(type) {
+	case map[string]any:
+		if c, ok := v["calendars"]; ok {
+			return CalendarFeedActiveCalendars(c)
+		}
+		return nil
+	case []any:
+		rawCalendars = v
+	case []map[string]any:
+		var result []map[string]any
+		for _, item := range v {
+			if isCalendarItemEnabled(item) {
+				result = append(result, item)
+			}
+		}
+		return result
+	default:
+		return nil
+	}
+
+	var result []map[string]any
+	for _, item := range rawCalendars {
+		if m, ok := item.(map[string]any); ok {
+			if isCalendarItemEnabled(m) {
+				result = append(result, m)
+			}
+		}
+	}
+	return result
+}
+
+func isCalendarItemEnabled(m map[string]any) bool {
+	if enabledVal, ok := m["enabled"]; ok {
+		switch b := enabledVal.(type) {
+		case bool:
+			return b
+		case string:
+			return !strings.EqualFold(b, "false")
+		}
+	}
+	return true
 }
