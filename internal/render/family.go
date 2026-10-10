@@ -1034,3 +1034,311 @@ func dispatchDayEvent(col *FamilyDayColumn, ev FamilyDayEvent) {
 		col.LateEvents = append(col.LateEvents, ev)
 	}
 }
+
+// FamilyMonthDot represents a colored dot indicator for a member with events on a day in Month view.
+type FamilyMonthDot struct {
+	Name      string `json:"name"`
+	Initial   string `json:"initial"`
+	Color     string `json:"color"`
+	TextColor string `json:"text_color"`
+	Pattern   string `json:"pattern"`
+	IsShared  bool   `json:"is_shared"`
+}
+
+// FamilyMonthDay represents a single calendar cell in the 42-day Month view grid.
+type FamilyMonthDay struct {
+	Date           string           `json:"date"`
+	DayOfMonth     int              `json:"day_of_month"`
+	WeekdayAbbr    string           `json:"weekday_abbr"`
+	IsCurrentMonth bool             `json:"is_current_month"`
+	IsToday        bool             `json:"is_today"`
+	IsWeekend      bool             `json:"is_weekend"`
+	Dots           []FamilyMonthDot `json:"dots"`
+	EventTitle     string           `json:"event_title,omitempty"`
+	EventsCount    int              `json:"events_count"`
+	Events         []FamilyEvent    `json:"events,omitempty"`
+}
+
+// FamilyMonthWeek represents one 7-day row of the 42-day Month view grid.
+type FamilyMonthWeek struct {
+	WeekNumber int              `json:"week_number"`
+	Days       []FamilyMonthDay `json:"days"`
+}
+
+// FamilyMonthViewModel is the fully resolved server-side view model consumed by the calendar-family
+// month view template.
+type FamilyMonthViewModel struct {
+	MonthLabel     string            `json:"month_label"`
+	MonthName      string            `json:"month_name"`
+	Year           int               `json:"year"`
+	Month          int               `json:"month"`
+	RangeStart     string            `json:"range_start"`
+	RangeEnd       string            `json:"range_end"`
+	Today          string            `json:"today"`
+	WeekdayHeaders []string          `json:"weekday_headers"`
+	Members        []FamilyMember    `json:"members"`
+	Weeks          []FamilyMonthWeek `json:"weeks"`
+	Days           []FamilyMonthDay  `json:"days"`
+	SharedColor    string            `json:"shared_color"`
+}
+
+// BuildFamilyMonthView resolves the calendar-agenda provider's CalendarSnapshot payload plus the
+// calendar-family widget instance config into the 42-day month view model.
+func BuildFamilyMonthView(data any, cfg map[string]any, dims domain.Dimension, now time.Time) (*FamilyMonthViewModel, error) {
+	members, err := parseFamilyMembers(cfg)
+	if err != nil {
+		return nil, err
+	}
+	calendars := parseFamilyCalendarSources(cfg)
+	sharedColor := stringOr(cfg, "shared_color", defaultSharedColor)
+	weekStartsMonday := strings.EqualFold(stringOr(cfg, "week_starts", "sunday"), "monday")
+
+	loc := now.Location()
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
+	target := today
+	if mStr, ok := cfg["month"].(string); ok && strings.TrimSpace(mStr) != "" {
+		mStr = strings.TrimSpace(mStr)
+		if t, err := time.ParseInLocation("2006-01", mStr, loc); err == nil {
+			target = t
+		} else if t, err := time.ParseInLocation("2006-01-02", mStr, loc); err == nil {
+			target = t
+		}
+	} else if dStr, ok := cfg["date"].(string); ok && strings.TrimSpace(dStr) != "" {
+		dStr = strings.TrimSpace(dStr)
+		if t, err := time.ParseInLocation("2006-01-02", dStr, loc); err == nil {
+			target = t
+		} else if t, err := time.ParseInLocation("2006-01", dStr, loc); err == nil {
+			target = t
+		}
+	}
+
+	firstOfMonth := time.Date(target.Year(), target.Month(), 1, 0, 0, 0, 0, loc)
+	targetMonth := firstOfMonth.Month()
+	targetYear := firstOfMonth.Year()
+
+	windowStart := startOfWeek(firstOfMonth, weekStartsMonday)
+	const (
+		monthGridDays = 42
+		daysPerWeek   = 7
+		numWeeks      = 6
+	)
+	windowEnd := windowStart.AddDate(0, 0, monthGridDays-1)
+
+	dayIndex := make(map[string]int, monthGridDays)
+	days := make([]FamilyMonthDay, monthGridDays)
+	for i := 0; i < monthGridDays; i++ {
+		d := windowStart.AddDate(0, 0, i)
+		dStr := d.Format("2006-01-02")
+		dayIndex[dStr] = i
+		days[i] = FamilyMonthDay{
+			Date:           dStr,
+			DayOfMonth:     d.Day(),
+			WeekdayAbbr:    d.Format("Mon"),
+			IsCurrentMonth: d.Year() == targetYear && d.Month() == targetMonth,
+			IsToday:        d.Year() == today.Year() && d.YearDay() == today.YearDay(),
+			IsWeekend:      d.Weekday() == time.Saturday || d.Weekday() == time.Sunday,
+			Dots:           make([]FamilyMonthDot, 0),
+		}
+	}
+
+	snapshot := extractCalendarSnapshot(data)
+	merged := make(map[string]*FamilyEvent)
+	mergedOrder := make([]string, 0)
+	mergedDates := make(map[string][]string)
+	mergedOwnerSet := make(map[string]map[string]bool)
+
+	for _, ev := range snapshot.Events {
+		var evDates []string
+		if ev.AllDay {
+			evDates = familyDateRange(ev.Start, ev.End)
+		} else {
+			tStart, ok1 := parseFamilyTime(ev.Start)
+			tEnd, ok2 := parseFamilyTime(ev.End)
+			if ok1 {
+				tStartLoc := tStart.In(loc)
+				d1 := tStartLoc.Format("2006-01-02")
+				if ok2 && tEnd.After(tStart) {
+					tEndLoc := tEnd.In(loc)
+					d2 := tEndLoc.Format("2006-01-02")
+					if tEndLoc.Hour() == 0 && tEndLoc.Minute() == 0 && tEndLoc.Second() == 0 && d2 > d1 {
+						d2 = tEndLoc.Add(-1 * time.Second).Format("2006-01-02")
+					}
+					evDates = familyDateRange(d1, d2)
+				} else {
+					evDates = []string{d1}
+				}
+			} else {
+				evDates = []string{ev.Start}
+			}
+		}
+
+		var matchedDates []string
+		for _, d := range evDates {
+			if _, ok := dayIndex[d]; ok {
+				matchedDates = append(matchedDates, d)
+			}
+		}
+		if len(matchedDates) == 0 {
+			continue
+		}
+
+		fe, exists := merged[ev.ID]
+		if !exists {
+			fe = &FamilyEvent{
+				ID:          ev.ID,
+				Title:       ev.Title,
+				Location:    ev.Location,
+				Description: truncateString(ev.Description, 280),
+				AllDay:      ev.AllDay,
+			}
+			if !ev.AllDay {
+				if t, ok := parseFamilyTime(ev.Start); ok {
+					fe.Start = t.In(loc).Format("15:04")
+				}
+				if t, ok := parseFamilyTime(ev.End); ok {
+					fe.End = t.In(loc).Format("15:04")
+				}
+			}
+			merged[ev.ID] = fe
+			mergedOrder = append(mergedOrder, ev.ID)
+			mergedDates[ev.ID] = matchedDates
+			mergedOwnerSet[ev.ID] = make(map[string]bool)
+		}
+
+		if src, ok := calendars[ev.CalendarName]; ok && src.private {
+			fe.Title = "Busy"
+			fe.Location = ""
+			fe.Description = "Busy"
+		}
+
+		for _, m := range members {
+			if calendarClaimedBy(m, ev.CalendarName) {
+				mergedOwnerSet[ev.ID][m.Name] = true
+			}
+		}
+	}
+
+	for _, id := range mergedOrder {
+		fe := merged[id]
+		claimed := mergedOwnerSet[id]
+		for _, m := range members {
+			if claimed[m.Name] {
+				fe.Owners = append(fe.Owners, m.Name)
+				fe.Initials = append(fe.Initials, m.Initial)
+				fe.Colors = append(fe.Colors, m.Color)
+				fe.Patterns = append(fe.Patterns, m.Pattern)
+			}
+		}
+		if len(fe.Colors) > 0 {
+			fe.Color = fe.Colors[0]
+		} else {
+			fe.Color = sharedColor
+		}
+		if len(fe.Patterns) > 0 {
+			fe.Pattern = fe.Patterns[0]
+		} else {
+			fe.Pattern = "solid"
+		}
+		fe.TextColor = contrastTextColor(fe.Color)
+	}
+
+	dayEventsMap := make(map[int][]FamilyEvent, monthGridDays)
+	dayMembersMap := make(map[int]map[string]bool, monthGridDays)
+	dayUnclaimedMap := make(map[int]bool, monthGridDays)
+
+	for _, id := range mergedOrder {
+		fe := merged[id]
+		for _, dStr := range mergedDates[id] {
+			idx := dayIndex[dStr]
+			dayEventsMap[idx] = append(dayEventsMap[idx], *fe)
+			if dayMembersMap[idx] == nil {
+				dayMembersMap[idx] = make(map[string]bool)
+			}
+			if len(fe.Owners) == 0 {
+				dayUnclaimedMap[idx] = true
+			} else {
+				for _, owner := range fe.Owners {
+					dayMembersMap[idx][owner] = true
+				}
+			}
+		}
+	}
+
+	showTitles := dims.Cols >= 6
+	for idx := range days {
+		evs := dayEventsMap[idx]
+		sort.SliceStable(evs, func(a, b int) bool {
+			if evs[a].AllDay != evs[b].AllDay {
+				return evs[a].AllDay && !evs[b].AllDay
+			}
+			if evs[a].Start != evs[b].Start {
+				return evs[a].Start < evs[b].Start
+			}
+			return evs[a].Title < evs[b].Title
+		})
+
+		days[idx].EventsCount = len(evs)
+		days[idx].Events = evs
+		if len(evs) > 0 && showTitles {
+			days[idx].EventTitle = evs[0].Title
+		}
+
+		memberSet := dayMembersMap[idx]
+		var dots []FamilyMonthDot
+		for _, m := range members {
+			if memberSet != nil && memberSet[m.Name] {
+				dots = append(dots, FamilyMonthDot{
+					Name:      m.Name,
+					Initial:   m.Initial,
+					Color:     m.Color,
+					TextColor: m.TextColor,
+					Pattern:   m.Pattern,
+					IsShared:  false,
+				})
+			}
+		}
+		if dayUnclaimedMap[idx] {
+			dots = append(dots, FamilyMonthDot{
+				Name:      "Shared",
+				Initial:   "S",
+				Color:     sharedColor,
+				TextColor: contrastTextColor(sharedColor),
+				Pattern:   "solid",
+				IsShared:  true,
+			})
+		}
+		days[idx].Dots = dots
+	}
+
+	weeks := make([]FamilyMonthWeek, numWeeks)
+	for w := 0; w < numWeeks; w++ {
+		weekDays := make([]FamilyMonthDay, daysPerWeek)
+		copy(weekDays, days[w*daysPerWeek:(w+1)*daysPerWeek])
+		weeks[w] = FamilyMonthWeek{
+			WeekNumber: w + 1,
+			Days:       weekDays,
+		}
+	}
+
+	return &FamilyMonthViewModel{
+		MonthLabel:     firstOfMonth.Format("January 2006"),
+		MonthName:      firstOfMonth.Format("January"),
+		Year:           targetYear,
+		Month:          int(targetMonth),
+		RangeStart:     windowStart.Format("2006-01-02"),
+		RangeEnd:       windowEnd.Format("2006-01-02"),
+		Today:          today.Format("2006-01-02"),
+		WeekdayHeaders: weekdayHeaders(weekStartsMonday),
+		Members:        members,
+		Weeks:          weeks,
+		Days:           days,
+		SharedColor:    sharedColor,
+	}, nil
+}
+
+func weekdayHeaders(mondayStart bool) []string {
+	if mondayStart {
+		return []string{"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"}
+	}
+	return []string{"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"}
+}
