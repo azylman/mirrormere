@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -226,6 +227,60 @@ func (p *TasksProvider) Init(ctx context.Context, config map[string]any, opts In
 			if token == "" {
 				token = opts.Token
 			}
+
+			parseCreds := func(filePath string) {
+				if filePath == "" {
+					return
+				}
+				data, err := os.ReadFile(filePath)
+				if err != nil {
+					return
+				}
+				var uCreds struct {
+					ClientID     string `json:"client_id"`
+					ClientSecret string `json:"client_secret"`
+					RefreshToken string `json:"refresh_token"`
+					Token        string `json:"token"`
+					Installed    struct {
+						ClientID     string `json:"client_id"`
+						ClientSecret string `json:"client_secret"`
+					} `json:"installed"`
+					Web struct {
+						ClientID     string `json:"client_id"`
+						ClientSecret string `json:"client_secret"`
+					} `json:"web"`
+				}
+				if err := json.Unmarshal(data, &uCreds); err != nil {
+					return
+				}
+				if clientID == "" {
+					if uCreds.ClientID != "" {
+						clientID = uCreds.ClientID
+					} else if uCreds.Installed.ClientID != "" {
+						clientID = uCreds.Installed.ClientID
+					} else if uCreds.Web.ClientID != "" {
+						clientID = uCreds.Web.ClientID
+					}
+				}
+				if clientSecret == "" {
+					if uCreds.ClientSecret != "" {
+						clientSecret = uCreds.ClientSecret
+					} else if uCreds.Installed.ClientSecret != "" {
+						clientSecret = uCreds.Installed.ClientSecret
+					} else if uCreds.Web.ClientSecret != "" {
+						clientSecret = uCreds.Web.ClientSecret
+					}
+				}
+				if refreshToken == "" && uCreds.RefreshToken != "" {
+					refreshToken = uCreds.RefreshToken
+				}
+				if token == "" && uCreds.Token != "" {
+					token = uCreds.Token
+				}
+			}
+
+			parseCreds(resolveSecret("credentials_file", "credentials_file_env"))
+			parseCreds(resolveSecret("client_secret_file", "client_secret_file_env"))
 
 			ad, err := adapters.NewGTasksAdapter(adapters.GTasksAdapterConfig{
 				TaskListID:   taskListID,

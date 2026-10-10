@@ -46,6 +46,14 @@ config_schema:
           type: string
         refresh_token_env:
           type: string
+        credentials_file:
+          type: string
+        credentials_file_env:
+          type: string
+        client_secret_file:
+          type: string
+        client_secret_file_env:
+          type: string
         token:
           type: string
         token_env:
