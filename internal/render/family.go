@@ -72,6 +72,8 @@ type FamilyDayEvent struct {
 	IsEarlyEdge bool    `json:"is_early_edge"`
 	IsLateEdge  bool    `json:"is_late_edge"`
 	ColSpan     int     `json:"col_span"`
+	LinkGlyph   string  `json:"link_glyph"`
+	IsLinked    bool    `json:"is_linked"`
 }
 
 // FamilyDayColumn represents a single member column (or shared column) in the day view.
@@ -117,6 +119,7 @@ type HoursBand struct {
 const (
 	defaultSharedColor = "#3D405B"
 	maxFamilyMembers   = 8
+	defaultLinkGlyph   = "🔗"
 )
 
 // familyCalendarSource mirrors the subset of the calendar-family config_schema `calendars[]`
@@ -398,6 +401,13 @@ func resolveFamilyDayCount(cfg map[string]any, dims domain.Dimension) int {
 func maxVisibleTimedRows(dims domain.Dimension) int {
 	if dims.Cols >= 6 {
 		return 4
+	}
+	return 3
+}
+
+func maxMemberColumns(dims domain.Dimension) int {
+	if dims.Cols >= 6 {
+		return 8
 	}
 	return 3
 }
@@ -758,8 +768,18 @@ func BuildFamilyDayView(data any, cfg map[string]any, dims domain.Dimension, now
 	dayStart := today
 	dayEnd := today.AddDate(0, 0, 1)
 
-	columns := make([]FamilyDayColumn, len(members))
-	for i, m := range members {
+	maxCols := maxMemberColumns(dims)
+	activeCount := len(members)
+	if activeCount > maxCols {
+		activeCount = maxCols
+	}
+
+	activeMembers := members[:activeCount]
+	collapsedMembers := members[activeCount:]
+
+	columns := make([]FamilyDayColumn, len(activeMembers))
+	memberColMap := make(map[string]int, len(activeMembers))
+	for i, m := range activeMembers {
 		columns[i] = FamilyDayColumn{
 			Name:        m.Name,
 			Initial:     m.Initial,
@@ -771,6 +791,12 @@ func BuildFamilyDayView(data any, cfg map[string]any, dims domain.Dimension, now
 			EarlyEvents: make([]FamilyDayEvent, 0),
 			LateEvents:  make([]FamilyDayEvent, 0),
 		}
+		memberColMap[m.Name] = i
+	}
+
+	collapsedMemberMap := make(map[string]bool, len(collapsedMembers))
+	for _, m := range collapsedMembers {
+		collapsedMemberMap[m.Name] = true
 	}
 
 	sharedCol := FamilyDayColumn{
@@ -908,15 +934,56 @@ func BuildFamilyDayView(data any, cfg map[string]any, dims domain.Dimension, now
 
 		if len(fe.Owners) == 0 {
 			dispatchDayEvent(&sharedCol, dayEv)
-		} else {
-			for _, ownerName := range fe.Owners {
-				for colIdx := range columns {
-					if columns[colIdx].Name == ownerName {
-						dispatchDayEvent(&columns[colIdx], dayEv)
-						break
-					}
-				}
+			continue
+		}
+
+		var activeCols []int
+		var hasCollapsed bool
+		for _, ownerName := range fe.Owners {
+			if colIdx, ok := memberColMap[ownerName]; ok {
+				activeCols = append(activeCols, colIdx)
+			} else if collapsedMemberMap[ownerName] {
+				hasCollapsed = true
 			}
+		}
+
+		if len(activeCols) == 0 {
+			// All claiming members are collapsed into the Shared column
+			dispatchDayEvent(&sharedCol, dayEv)
+			continue
+		}
+
+		if !hasCollapsed {
+			if len(activeCols) == 1 {
+				dispatchDayEvent(&columns[activeCols[0]], dayEv)
+				continue
+			}
+
+			// Check if active columns are contiguous/adjacent
+			isAdjacent := (activeCols[len(activeCols)-1] - activeCols[0]) == (len(activeCols) - 1)
+			if isAdjacent {
+				dayEv.ColSpan = len(activeCols)
+				dispatchDayEvent(&columns[activeCols[0]], dayEv)
+				continue
+			}
+		}
+
+		// Non-adjacent columns or mixed active and collapsed members:
+		// Duplicate event block into each claiming column with link indicator glyph.
+		dayEv.ColSpan = 1
+		dayEv.IsLinked = true
+		dayEv.LinkGlyph = defaultLinkGlyph
+
+		for _, colIdx := range activeCols {
+			copyEv := dayEv
+			copyEv.Color = columns[colIdx].Color
+			copyEv.TextColor = columns[colIdx].TextColor
+			copyEv.Pattern = columns[colIdx].Pattern
+			dispatchDayEvent(&columns[colIdx], copyEv)
+		}
+
+		if hasCollapsed {
+			dispatchDayEvent(&sharedCol, dayEv)
 		}
 	}
 
@@ -930,6 +997,12 @@ func BuildFamilyDayView(data any, cfg map[string]any, dims domain.Dimension, now
 				return columns[i].Events[a].TopPct < columns[i].Events[b].TopPct
 			}
 			return columns[i].Events[a].Start < columns[i].Events[b].Start
+		})
+		sort.SliceStable(columns[i].EarlyEvents, func(a, b int) bool {
+			return columns[i].EarlyEvents[a].Start < columns[i].EarlyEvents[b].Start
+		})
+		sort.SliceStable(columns[i].LateEvents, func(a, b int) bool {
+			return columns[i].LateEvents[a].Start < columns[i].LateEvents[b].Start
 		})
 	}
 
