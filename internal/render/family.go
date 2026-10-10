@@ -42,14 +42,17 @@ type FamilyEvent struct {
 
 // FamilyDay represents one column of the week view "Week (default)".
 type FamilyDay struct {
-	Date       string        `json:"date"`
-	WeekdayAbb string        `json:"weekday_abbr"`
-	DayOfMonth int           `json:"day_of_month"`
-	IsToday    bool          `json:"is_today"`
-	IsWeekend  bool          `json:"is_weekend"`
-	AllDay     []FamilyEvent `json:"all_day"`
-	Timed      []FamilyEvent `json:"timed"`
-	Overflow   int           `json:"overflow"`
+	Date        string           `json:"date"`
+	WeekdayAbb  string           `json:"weekday_abbr"`
+	DayOfMonth  int              `json:"day_of_month"`
+	IsToday     bool             `json:"is_today"`
+	IsWeekend   bool             `json:"is_weekend"`
+	AllDay      []FamilyEvent    `json:"all_day"`
+	Timed       []FamilyEvent    `json:"timed"`
+	Overflow    int              `json:"overflow"`
+	Events      []FamilyDayEvent `json:"events"`
+	EarlyEvents []FamilyDayEvent `json:"early_events"`
+	LateEvents  []FamilyDayEvent `json:"late_events"`
 }
 
 // FamilySpanEvent represents an all-day event positioned across columns in the week view.
@@ -66,6 +69,9 @@ type FamilyViewModel struct {
 	RangeEnd     string            `json:"range_end"`
 	RangeLabel   string            `json:"range_label"`
 	Today        string            `json:"today"`
+	HoursStart   string            `json:"hours_start"`
+	HoursEnd     string            `json:"hours_end"`
+	HourMarkers  []string          `json:"hour_markers"`
 	Members      []FamilyMember    `json:"members"`
 	Days         []FamilyDay       `json:"days"`
 	AllDayEvents []FamilySpanEvent `json:"all_day_events"`
@@ -77,6 +83,8 @@ type FamilyDayEvent struct {
 	FamilyEvent
 	TopPct      float64 `json:"top_pct"`
 	HeightPct   float64 `json:"height_pct"`
+	LeftPct     float64 `json:"left_pct"`
+	WidthPct    float64 `json:"width_pct"`
 	IsEarlyEdge bool    `json:"is_early_edge"`
 	IsLateEdge  bool    `json:"is_late_edge"`
 	ColSpan     int     `json:"col_span"`
@@ -185,6 +193,8 @@ func BuildFamilyView(data any, cfg map[string]any, dims domain.Dimension, now ti
 
 	maxVisible := maxVisibleTimedRows(dims)
 
+	hours := ParseHoursBand(cfg)
+
 	// Merge shared events by id: an event id seen on multiple member calendars is one event
 	// owned by every claiming member, "Shared events".
 	merged := make(map[string]*FamilyEvent)
@@ -193,13 +203,15 @@ func BuildFamilyView(data any, cfg map[string]any, dims domain.Dimension, now ti
 	// a timed event, or one entry per spanned day for a multi-day all-day event.
 	mergedDates := make(map[string][]string)
 	mergedOwnerSet := make(map[string]map[string]bool)
+	mergedRawEvents := make(map[string]provider.CalendarEvent)
 
 	for _, ev := range snapshot.Events {
+		mergedRawEvents[ev.ID] = ev
 		var evDates []string
 		if ev.AllDay {
 			evDates = familyDateRange(ev.Start, ev.End)
 		} else {
-			evDates = []string{eventDateKey(ev, now.Location())}
+			evDates = timedEventDateRange(ev, now.Location())
 		}
 
 		var matchedDates []string
@@ -334,6 +346,58 @@ func BuildFamilyView(data any, cfg map[string]any, dims domain.Dimension, now ti
 			days[i].Overflow = len(days[i].Timed) - maxVisible
 			days[i].Timed = days[i].Timed[:maxVisible]
 		}
+
+		days[i].Events = make([]FamilyDayEvent, 0, len(days[i].Timed))
+		days[i].EarlyEvents = make([]FamilyDayEvent, 0)
+		days[i].LateEvents = make([]FamilyDayEvent, 0)
+		d := rangeStart.AddDate(0, 0, i)
+		dStr := days[i].Date
+
+		for _, id := range mergedOrder {
+			fe := merged[id]
+			if fe.AllDay {
+				continue
+			}
+			hasDay := false
+			for _, dateKey := range mergedDates[id] {
+				if dateKey == dStr {
+					hasDay = true
+					break
+				}
+			}
+			if !hasDay {
+				continue
+			}
+
+			rawEv := mergedRawEvents[id]
+			tStart, ok1 := parseFamilyTime(rawEv.Start)
+			tEnd, ok2 := parseFamilyTime(rawEv.End)
+			if ok1 {
+				if !ok2 || tEnd.Before(tStart) || tEnd.Equal(tStart) {
+					tEnd = tStart.Add(30 * time.Minute)
+				}
+				topPct, heightPct, isEarly, isLate := ComputeDayEventPosition(tStart, tEnd, d, hours)
+				dayEv := FamilyDayEvent{
+					FamilyEvent: *fe,
+					TopPct:      topPct,
+					HeightPct:   heightPct,
+					IsEarlyEdge: isEarly,
+					IsLateEdge:  isLate,
+					ColSpan:     1,
+				}
+				if heightPct > 0 {
+					days[i].Events = append(days[i].Events, dayEv)
+				}
+				if isEarly {
+					days[i].EarlyEvents = append(days[i].EarlyEvents, dayEv)
+				}
+				if isLate {
+					days[i].LateEvents = append(days[i].LateEvents, dayEv)
+				}
+			}
+		}
+
+		days[i].Events = layoutDayEvents(days[i].Events)
 	}
 
 	return &FamilyViewModel{
@@ -341,6 +405,9 @@ func BuildFamilyView(data any, cfg map[string]any, dims domain.Dimension, now ti
 		RangeEnd:     rangeEnd.Format("2006-01-02"),
 		RangeLabel:   formatFamilyRangeLabel(rangeStart, rangeEnd),
 		Today:        today.Format("2006-01-02"),
+		HoursStart:   hours.StartStr,
+		HoursEnd:     hours.EndStr,
+		HourMarkers:  hours.Markers,
 		Members:      members,
 		Days:         days,
 		AllDayEvents: allDayEvents,
@@ -372,6 +439,123 @@ func eventDateKey(ev provider.CalendarEvent, loc *time.Location) string {
 		return t.In(loc).Format("2006-01-02")
 	}
 	return ev.Start
+}
+
+// timedEventDateRange returns every date key (inclusive, "2006-01-02") that a timed event
+// touches in the household's local timezone. For events spanning across midnight, it returns
+// multiple date keys so each affected day column can render its visible portion.
+func timedEventDateRange(ev provider.CalendarEvent, loc *time.Location) []string {
+	if tStart, ok := parseFamilyTime(ev.Start); ok {
+		s := tStart.In(loc)
+		e := s
+		if tEnd, ok2 := parseFamilyTime(ev.End); ok2 {
+			e = tEnd.In(loc)
+		}
+		if e.Before(s) {
+			e = s
+		}
+		startDate := time.Date(s.Year(), s.Month(), s.Day(), 0, 0, 0, 0, loc)
+		endDate := time.Date(e.Year(), e.Month(), e.Day(), 0, 0, 0, 0, loc)
+		if e.Equal(endDate) && endDate.After(startDate) {
+			endDate = endDate.AddDate(0, 0, -1)
+		}
+		var dates []string
+		for cur := startDate; !cur.After(endDate); cur = cur.AddDate(0, 0, 1) {
+			dates = append(dates, cur.Format("2006-01-02"))
+			if len(dates) >= 30 {
+				break
+			}
+		}
+		return dates
+	}
+	return []string{eventDateKey(ev, loc)}
+}
+
+const maxDayLanes = 4
+
+// layoutDayEvents partitions overlapping canvas events into parallel horizontal lanes,
+// calculating LeftPct and WidthPct so concurrent events don't obscure each other.
+func layoutDayEvents(events []FamilyDayEvent) []FamilyDayEvent {
+	if len(events) == 0 {
+		return events
+	}
+	if len(events) == 1 {
+		events[0].LeftPct = 0
+		events[0].WidthPct = 100
+		return events
+	}
+
+	sort.SliceStable(events, func(i, j int) bool {
+		if events[i].TopPct != events[j].TopPct {
+			return events[i].TopPct < events[j].TopPct
+		}
+		return events[i].HeightPct > events[j].HeightPct
+	})
+
+	type clusterRange struct {
+		startIdx int
+		endIdx   int
+	}
+	var clusters []clusterRange
+	cStart := 0
+	cMaxBottom := events[0].TopPct + events[0].HeightPct
+
+	for i := 1; i < len(events); i++ {
+		evStart := events[i].TopPct
+		evEnd := events[i].TopPct + events[i].HeightPct
+		if evStart < cMaxBottom {
+			if evEnd > cMaxBottom {
+				cMaxBottom = evEnd
+			}
+		} else {
+			clusters = append(clusters, clusterRange{startIdx: cStart, endIdx: i})
+			cStart = i
+			cMaxBottom = evEnd
+		}
+	}
+	clusters = append(clusters, clusterRange{startIdx: cStart, endIdx: len(events)})
+
+	for _, c := range clusters {
+		var lanes []float64
+		assignedLanes := make([]int, c.endIdx-c.startIdx)
+
+		for k := c.startIdx; k < c.endIdx; k++ {
+			idx := k - c.startIdx
+			evStart := events[k].TopPct
+			evEnd := events[k].TopPct + events[k].HeightPct
+			assigned := false
+			for laneIdx, laneEnd := range lanes {
+				if evStart >= laneEnd {
+					lanes[laneIdx] = evEnd
+					assignedLanes[idx] = laneIdx
+					assigned = true
+					break
+				}
+			}
+			if !assigned {
+				assignedLanes[idx] = len(lanes)
+				lanes = append(lanes, evEnd)
+			}
+		}
+
+		numLanes := len(lanes)
+		if numLanes > maxDayLanes {
+			numLanes = maxDayLanes
+		}
+		laneWidth := roundToTwoDecimals(100.0 / float64(numLanes))
+
+		for k := c.startIdx; k < c.endIdx; k++ {
+			idx := k - c.startIdx
+			lane := assignedLanes[idx]
+			if lane >= maxDayLanes {
+				lane = maxDayLanes - 1
+			}
+			events[k].LeftPct = roundToTwoDecimals(float64(lane) * (100.0 / float64(numLanes)))
+			events[k].WidthPct = laneWidth
+		}
+	}
+
+	return events
 }
 
 // familyDateRange returns every date key (inclusive, "2006-01-02") from startDate through
