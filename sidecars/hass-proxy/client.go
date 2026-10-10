@@ -35,6 +35,7 @@ type HAConversationRequest struct {
 	ConversationID string `json:"conversation_id,omitempty"`
 	AgentID        string `json:"agent_id,omitempty"`
 	Language       string `json:"language,omitempty"`
+	DeviceID       string `json:"device_id,omitempty"`
 }
 
 // HAConversationResponse represents the response returned by Home Assistant's conversation API.
@@ -89,24 +90,37 @@ func NewHAClient(cfg HomeAssistantConfig, logger *slog.Logger) *HAClientInstance
 		Timeout:   timeout,
 	}
 
+	nodeDevs := make(map[string]string)
+	for k, v := range cfg.NodeDevices {
+		normKey := strings.ToLower(strings.TrimSpace(k))
+		normVal := strings.TrimSpace(v)
+		if normKey != "" && normVal != "" {
+			nodeDevs[normKey] = normVal
+		}
+	}
+
 	return &HAClientInstance{
-		endpoint:   endpoint,
-		token:      cfg.Token,
-		agentID:    cfg.AgentID,
-		language:   cfg.Language,
-		httpClient: client,
-		logger:     logger,
+		endpoint:        endpoint,
+		token:           cfg.Token,
+		agentID:         cfg.AgentID,
+		language:        cfg.Language,
+		defaultDeviceID: strings.TrimSpace(cfg.DeviceID),
+		nodeDevices:     nodeDevs,
+		httpClient:      client,
+		logger:          logger,
 	}
 }
 
 // HAClientInstance is the concrete implementation of HAClient.
 type HAClientInstance struct {
-	endpoint   string
-	token      string
-	agentID    string
-	language   string
-	httpClient *http.Client
-	logger     *slog.Logger
+	endpoint        string
+	token           string
+	agentID         string
+	language        string
+	defaultDeviceID string
+	nodeDevices     map[string]string
+	httpClient      *http.Client
+	logger          *slog.Logger
 }
 
 // ProcessIntent transforms and forwards an IntentRequest to Home Assistant.
@@ -118,11 +132,20 @@ func (c *HAClientInstance) ProcessIntent(ctx context.Context, req IntentRequest)
 		return nil, false, nil
 	}
 
+	deviceID := c.defaultDeviceID
+	normNode := strings.ToLower(strings.TrimSpace(req.Node))
+	if normNode != "" {
+		if mappedID, ok := c.nodeDevices[normNode]; ok && mappedID != "" {
+			deviceID = mappedID
+		}
+	}
+
 	haReq := HAConversationRequest{
 		Text:           trimmedText,
 		ConversationID: req.TurnID,
 		AgentID:        c.agentID,
 		Language:       c.language,
+		DeviceID:       deviceID,
 	}
 
 	reqBody, err := json.Marshal(haReq)

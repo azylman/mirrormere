@@ -269,6 +269,53 @@ func TestConfig_StringRedaction(t *testing.T) {
 	}
 }
 
+func TestLoadConfig_DeviceIDAndNodeDevices(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+
+	content := `
+server:
+  host: "127.0.0.1"
+  port: 8095
+
+homeassistant:
+  url: "http://ha.local:8123"
+  device_id: "fallback-dev-999"
+  node_devices:
+    touch-kiosk-kitchen: "kiosk-dev-123"
+    office-ear: "office-dev-456"
+`
+	if err := os.WriteFile(configPath, []byte(content), 0600); err != nil {
+		t.Fatalf("failed to write test config: %v", err)
+	}
+
+	cfg, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("unexpected error loading config with node_devices: %v", err)
+	}
+
+	if cfg.HomeAssistant.DeviceID != "fallback-dev-999" {
+		t.Errorf("expected device_id fallback-dev-999, got %q", cfg.HomeAssistant.DeviceID)
+	}
+	if len(cfg.HomeAssistant.NodeDevices) != 2 {
+		t.Fatalf("expected 2 node_devices, got %d", len(cfg.HomeAssistant.NodeDevices))
+	}
+	if cfg.HomeAssistant.NodeDevices["touch-kiosk-kitchen"] != "kiosk-dev-123" {
+		t.Errorf("expected touch-kiosk-kitchen to map to kiosk-dev-123, got %q", cfg.HomeAssistant.NodeDevices["touch-kiosk-kitchen"])
+	}
+	if cfg.HomeAssistant.NodeDevices["office-ear"] != "office-dev-456" {
+		t.Errorf("expected office-ear to map to office-dev-456, got %q", cfg.HomeAssistant.NodeDevices["office-ear"])
+	}
+
+	s := cfg.String()
+	if !strings.Contains(s, "DeviceID: fallback-dev-999") {
+		t.Errorf("expected DeviceID in cfg.String(), got: %s", s)
+	}
+	if !strings.Contains(s, "NodeDevices: 2 entries") {
+		t.Errorf("expected NodeDevices count in cfg.String(), got: %s", s)
+	}
+}
+
 func TestResolveConfigPath_Candidates(t *testing.T) {
 	// Calling with empty path when candidates don't exist
 	_, err := resolveConfigPath("")

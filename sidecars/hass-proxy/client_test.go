@@ -350,3 +350,75 @@ func TestClient_ProcessIntent_TruncatedResponse(t *testing.T) {
 		t.Errorf("expected nil response, got %+v", resp)
 	}
 }
+
+func TestClient_ProcessIntent_DeviceIDRouting(t *testing.T) {
+	tests := []struct {
+		name            string
+		defaultDeviceID string
+		nodeDevices     map[string]string
+		reqNode         string
+		expectedDevice  string
+		expectKeyInJSON bool
+	}{
+		{"mapped node exact match", "fallback-dev", map[string]string{"touch-kiosk-kitchen": "kiosk-dev-123"}, "touch-kiosk-kitchen", "kiosk-dev-123", true},
+		{"mapped node case and whitespace normalization", "fallback-dev", map[string]string{"  Touch-Kiosk-Kitchen  ": "kiosk-dev-123"}, "  TOUCH-KIOSK-KITCHEN  ", "kiosk-dev-123", true},
+		{"unmapped node falls back to default", "fallback-dev", map[string]string{"touch-kiosk-kitchen": "kiosk-dev-123"}, "living-room-display", "fallback-dev", true},
+		{"empty node falls back to default", "fallback-dev", map[string]string{"touch-kiosk-kitchen": "kiosk-dev-123"}, "", "fallback-dev", true},
+		{"empty mapped value falls back to default", "fallback-dev", map[string]string{"bad-node": "   "}, "bad-node", "fallback-dev", true},
+		{"no default and unmapped node omits device_id in json", "", map[string]string{"touch-kiosk-kitchen": "kiosk-dev-123"}, "unmapped-node", "", false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var capturedRaw map[string]any
+			var capturedReq HAConversationRequest
+
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				bodyBytes, _ := io.ReadAll(r.Body)
+				_ = json.Unmarshal(bodyBytes, &capturedRaw)
+				_ = json.Unmarshal(bodyBytes, &capturedReq)
+
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`{
+					"response": {
+						"speech": {
+							"plain": {
+								"speech": "Done"
+							}
+						},
+						"response_type": "action_done"
+					}
+				}`))
+			}))
+			defer server.Close()
+
+			client := NewHAClient(HomeAssistantConfig{
+				URL:         server.URL,
+				DeviceID:    tc.defaultDeviceID,
+				NodeDevices: tc.nodeDevices,
+			}, nil)
+
+			resp, matched, err := client.ProcessIntent(context.Background(), IntentRequest{
+				Text: "pause",
+				Node: tc.reqNode,
+			})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !matched || resp == nil {
+				t.Fatalf("expected matched=true, got matched=%v, resp=%+v", matched, resp)
+			}
+
+			if capturedReq.DeviceID != tc.expectedDevice {
+				t.Errorf("expected DeviceID %q, got %q", tc.expectedDevice, capturedReq.DeviceID)
+			}
+
+			_, hasKey := capturedRaw["device_id"]
+			if hasKey != tc.expectKeyInJSON {
+				t.Errorf("expected device_id in raw JSON to be %v, got %v (json: %+v)", tc.expectKeyInJSON, hasKey, capturedRaw)
+			}
+		})
+	}
+}
+

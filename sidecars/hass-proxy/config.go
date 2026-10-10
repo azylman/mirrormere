@@ -36,12 +36,14 @@ type ServerConfig struct {
 
 // HomeAssistantConfig configures communication with Home Assistant.
 type HomeAssistantConfig struct {
-	URL              string `yaml:"url"`
-	Token            string `yaml:"token"` // May be loaded from HASS_TOKEN or HOMEASSISTANT_TOKEN env vars
-	AgentID          string `yaml:"agent_id"`
-	Language         string `yaml:"language"`
-	TimeoutMS        int    `yaml:"timeout_ms"`
-	ConversationPath string `yaml:"conversation_path"`
+	URL              string            `yaml:"url"`
+	Token            string            `yaml:"token"` // May be loaded from HASS_TOKEN or HOMEASSISTANT_TOKEN env vars
+	AgentID          string            `yaml:"agent_id"`
+	Language         string            `yaml:"language"`
+	TimeoutMS        int               `yaml:"timeout_ms"`
+	ConversationPath string            `yaml:"conversation_path"`
+	DeviceID         string            `yaml:"device_id"`
+	NodeDevices      map[string]string `yaml:"node_devices"`
 }
 
 // String returns a sanitized representation of the configuration, ensuring secrets are never logged.
@@ -50,7 +52,7 @@ func (c Config) String() string {
 	if c.HomeAssistant.Token != "" {
 		tokenStatus = "<redacted>"
 	}
-	return fmt.Sprintf("Config{Server: %s:%d, HA_URL: %s, HA_Token: %s, AgentID: %s, Language: %s, TimeoutMS: %d, ConversationPath: %s}",
+	return fmt.Sprintf("Config{Server: %s:%d, HA_URL: %s, HA_Token: %s, AgentID: %s, Language: %s, TimeoutMS: %d, ConversationPath: %s, DeviceID: %s, NodeDevices: %d entries}",
 		c.Server.Host,
 		c.Server.Port,
 		c.HomeAssistant.URL,
@@ -59,6 +61,8 @@ func (c Config) String() string {
 		c.HomeAssistant.Language,
 		c.HomeAssistant.TimeoutMS,
 		c.HomeAssistant.ConversationPath,
+		c.HomeAssistant.DeviceID,
+		len(c.HomeAssistant.NodeDevices),
 	)
 }
 

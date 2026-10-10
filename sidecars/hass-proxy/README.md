@@ -32,6 +32,9 @@ homeassistant:
   language: "en"        # Language code
   timeout_ms: 2000      # Outbound timeout to Home Assistant
   conversation_path: "/api/conversation/process"
+  device_id: ""         # Optional default fallback device ID
+  node_devices:         # Optional voice node ID -> Home Assistant device ID mapping
+    touch-kiosk-kitchen: "cafe12ae312787229430f9f0bc02ab5c"
 ```
 
 ### CLI Flags
