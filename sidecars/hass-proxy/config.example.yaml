@@ -22,3 +22,8 @@ homeassistant:
   timeout_ms: 2000
   # Path to conversation process endpoint
   conversation_path: "/api/conversation/process"
+  # Optional default fallback Home Assistant device ID for conversation context
+  device_id: ""
+  # Optional map of voice node IDs to Home Assistant device IDs for room/device-aware Assist routing
+  node_devices:
+    touch-kiosk-kitchen: "cafe12ae312787229430f9f0bc02ab5c"
