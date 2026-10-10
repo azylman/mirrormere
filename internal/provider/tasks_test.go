@@ -3,6 +3,7 @@ package provider_test
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -780,6 +781,108 @@ func TestTasksProvider_Init_TokenEnv_SecretResolution(t *testing.T) {
 	}, optsOAuth)
 	if err != nil {
 		t.Fatalf("GTasks Init with OAuth credentials failed: %v", err)
+	}
+}
+
+func TestTasksProvider_Init_GTasks_CredentialsFile(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	// 1. Authorized user credentials JSON file
+	credsFile := filepath.Join(t.TempDir(), "authorized_user.json")
+	credsContent := `{"client_id":"file-client-id","client_secret":"file-client-secret","refresh_token":"file-refresh-token","token":"file-token"}`
+	if err := os.WriteFile(credsFile, []byte(credsContent), 0o600); err != nil {
+		t.Fatalf("failed to write test creds: %v", err)
+	}
+
+	p := provider.NewTasksProvider()
+	opts := provider.InitOptions{
+		ID: "gtasks-file-widget",
+	}
+	err := p.Init(ctx, map[string]any{
+		"source":  "gtasks",
+		"db_path": filepath.Join(t.TempDir(), "gtasks_file.db"),
+		"gtasks": map[string]any{
+			"tasklist_id":      "list-file",
+			"credentials_file": credsFile,
+			"token_url":        "https://example.com/oauth/token",
+		},
+	}, opts)
+	if err != nil {
+		t.Fatalf("GTasks Init with credentials_file failed: %v", err)
+	}
+
+	// 2. Client secret file with "installed" Google OAuth format + env refresh token
+	secretFile := filepath.Join(t.TempDir(), "client_secret.json")
+	secretContent := `{"installed":{"client_id":"installed-id","client_secret":"installed-secret"}}`
+	if err := os.WriteFile(secretFile, []byte(secretContent), 0o600); err != nil {
+		t.Fatalf("failed to write test secret: %v", err)
+	}
+
+	pInstalled := provider.NewTasksProvider()
+	optsInstalled := provider.InitOptions{
+		ID: "gtasks-installed-widget",
+		Secrets: map[string]string{
+			"G_REFRESH": "vault-installed-refresh",
+		},
+	}
+	err = pInstalled.Init(ctx, map[string]any{
+		"source":  "gtasks",
+		"db_path": filepath.Join(t.TempDir(), "gtasks_installed.db"),
+		"gtasks": map[string]any{
+			"tasklist_id":        "list-installed",
+			"client_secret_file": secretFile,
+			"refresh_token_env":  "G_REFRESH",
+			"token_url":          "https://example.com/oauth/token",
+		},
+	}, optsInstalled)
+	if err != nil {
+		t.Fatalf("GTasks Init with client_secret_file failed: %v", err)
+	}
+
+	// 3. Client secret file with "web" Google OAuth format
+	webSecretFile := filepath.Join(t.TempDir(), "web_secret.json")
+	webContent := `{"web":{"client_id":"web-id","client_secret":"web-secret"}}`
+	if err := os.WriteFile(webSecretFile, []byte(webContent), 0o600); err != nil {
+		t.Fatalf("failed to write test web secret: %v", err)
+	}
+
+	pWeb := provider.NewTasksProvider()
+	optsWeb := provider.InitOptions{
+		ID: "gtasks-web-widget",
+		Secrets: map[string]string{
+			"MY_REFRESH_FILE": webSecretFile,
+		},
+	}
+	err = pWeb.Init(ctx, map[string]any{
+		"source":  "gtasks",
+		"db_path": filepath.Join(t.TempDir(), "gtasks_web.db"),
+		"gtasks": map[string]any{
+			"tasklist_id":            "list-web",
+			"client_secret_file_env": "MY_REFRESH_FILE",
+			"refresh_token":          "web-refresh",
+			"token_url":              "https://example.com/oauth/token",
+		},
+	}, optsWeb)
+	if err != nil {
+		t.Fatalf("GTasks Init with client_secret_file_env failed: %v", err)
+	}
+
+	// 4. Non-existent and malformed files are ignored gracefully
+	pBad := provider.NewTasksProvider()
+	badFile := filepath.Join(t.TempDir(), "bad.json")
+	_ = os.WriteFile(badFile, []byte("not-json"), 0o600)
+	err = pBad.Init(ctx, map[string]any{
+		"source":  "gtasks",
+		"db_path": filepath.Join(t.TempDir(), "gtasks_bad.db"),
+		"gtasks": map[string]any{
+			"tasklist_id":      "list-bad",
+			"credentials_file": badFile,
+			"token":            "fallback-token",
+		},
+	}, provider.InitOptions{ID: "gtasks-bad"})
+	if err != nil {
+		t.Fatalf("GTasks Init with bad file should fall back to explicit token: %v", err)
 	}
 }
 
