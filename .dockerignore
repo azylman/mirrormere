@@ -13,7 +13,9 @@ docs/
 *.md
 
 # Clients & local deployment configs
-client/
+client/ear/
+client/eink-node/
+client/remote/
 deploy/
 
 # Developer tooling & configurations
