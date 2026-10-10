@@ -1,7 +1,8 @@
 /**
  * Mirrormere Calendar Family Widget Controller
  * Manages 3-way view switching (Day | Week | Month), active view state synchronization,
- * tap-to-expand event detail modal, carousel rotation pausing, and inactivity reset timer.
+ * tap-to-expand event detail modal, carousel rotation pausing, 60-second inactivity reset timer,
+ * and horizontal touch swipe gesture navigation with window bounds paging.
  */
 (() => {
   class CalendarFamilyInstance {
@@ -17,6 +18,26 @@
       this.activeModal = null;
       this.inactivityTimeout = typeof options.inactivityTimeout === 'number' ? options.inactivityTimeout : 60000;
       this.inactivityTimer = null;
+
+      // Date state & window bounds
+      this.baseDate = this.initBaseDate();
+      this.currentDate = new Date(this.baseDate.getTime());
+      this.baseWeekStart = this.initBaseWeekStart();
+      this.currentWeekStart = new Date(this.baseWeekStart.getTime());
+      this.pageOffset = 0;
+      this.cachedRange = this.resolveCachedRange();
+      this.syncIndicatorTimer = null;
+
+      // Touch swipe configuration & state
+      this.touchStartX = 0;
+      this.touchStartY = 0;
+      this.touchCurrentX = 0;
+      this.touchCurrentY = 0;
+      this.touchStartTime = 0;
+      this.isSwiping = false;
+      this.justSwiped = false;
+      this.swipeDistanceThreshold = typeof options.swipeDistanceThreshold === 'number' ? options.swipeDistanceThreshold : 40;
+      this.swipeVelocityThreshold = typeof options.swipeVelocityThreshold === 'number' ? options.swipeVelocityThreshold : 0.15;
 
       this.viewButtons = Array.from(element.querySelectorAll('.cf-view-btn'));
       this.viewPanels = {
@@ -34,6 +55,10 @@
       this.clickHandler = this.handleClick.bind(this);
       this.activityHandler = this.handleUserActivity.bind(this);
       this.keydownHandler = this.handleKeyDown.bind(this);
+      this.touchStartHandler = this.handleTouchStart.bind(this);
+      this.touchMoveHandler = this.handleTouchMove.bind(this);
+      this.touchEndHandler = this.handleTouchEnd.bind(this);
+
       this.init();
     }
 
@@ -112,10 +137,86 @@
       return 'week';
     }
 
+    initBaseDate() {
+      let dateStr = (this.data && this.data.date) ||
+                    (this.data && this.data.today) ||
+                    (this.data && this.data.range_start) ||
+                    (this.config && this.config.date);
+      if (!dateStr && Array.isArray(this.data && this.data.days) && this.data.days.length > 0) {
+        dateStr = this.data.days[0].date;
+      }
+      const parts = this.parseDateParts(dateStr);
+      if (parts) {
+        return this.createLocalDate(parts.year, parts.month, parts.day);
+      }
+      const now = new Date();
+      return this.createLocalDate(now.getFullYear(), now.getMonth() + 1, now.getDate());
+    }
+
+    initBaseWeekStart() {
+      let startStr = (this.data && this.data.range_start);
+      if (!startStr && Array.isArray(this.data && this.data.days) && this.data.days.length > 0) {
+        startStr = this.data.days[0].date;
+      }
+      const parts = this.parseDateParts(startStr);
+      if (parts) {
+        return this.createLocalDate(parts.year, parts.month, parts.day);
+      }
+      return new Date(this.baseDate.getTime());
+    }
+
+    resolveDaysCount() {
+      if (this.config && typeof this.config.days === 'number' && this.config.days > 0) {
+        return this.config.days;
+      }
+      if (this.config && typeof this.config.num_days === 'number' && this.config.num_days > 0) {
+        return this.config.num_days;
+      }
+      return 7;
+    }
+
+    resolveCachedRange() {
+      if (this.options.cachedRange) {
+        return {
+          start: typeof this.options.cachedRange.start === 'string'
+            ? this.options.cachedRange.start
+            : this.formatDateISO(this.options.cachedRange.start),
+          end: typeof this.options.cachedRange.end === 'string'
+            ? this.options.cachedRange.end
+            : this.formatDateISO(this.options.cachedRange.end),
+        };
+      }
+      let start = this.options.cachedRangeStart ||
+                  (this.data && (this.data.cached_range_start || this.data.range_start)) ||
+                  (this.config && this.config.cached_range_start);
+      let end = this.options.cachedRangeEnd ||
+                (this.data && (this.data.cached_range_end || this.data.range_end)) ||
+                (this.config && this.config.cached_range_end);
+
+      if (!start && Array.isArray(this.data && this.data.days) && this.data.days.length > 0) {
+        start = this.data.days[0].date;
+        end = this.data.days[this.data.days.length - 1].date;
+      }
+      if (!start && this.data && this.data.date) {
+        start = this.data.date;
+        end = this.data.date;
+      }
+
+      if (start && end) {
+        return { start: String(start), end: String(end) };
+      }
+      return null;
+    }
+
+    getCachedDateRange() {
+      return this.resolveCachedRange();
+    }
+
     init() {
       this.bindViewSwitcher();
       this.bindInteractions();
       this.updateViewUI(this.activeView);
+      this.updateDateUI();
       this.resetInactivityTimer();
     }
 
@@ -127,7 +228,11 @@
 
     bindInteractions() {
       this.element.addEventListener('click', this.clickHandler);
-      const activityEvents = ['touchstart', 'touchmove', 'touchend', 'pointerdown', 'mousedown'];
+      this.element.addEventListener('touchstart', this.touchStartHandler, { passive: true });
+      this.element.addEventListener('touchmove', this.touchMoveHandler, { passive: true });
+      this.element.addEventListener('touchend', this.touchEndHandler, { passive: true });
+
+      const activityEvents = ['pointerdown', 'mousedown'];
       for (const evt of activityEvents) {
         this.element.addEventListener(evt, this.activityHandler, { passive: true });
       }
@@ -165,6 +270,11 @@
         this.switchView(this.defaultView);
       }
 
+      // 3. Reset date window to current/base date
+      if (this.pageOffset !== 0) {
+        this.resetDate();
+      }
+
       if (typeof this.options.onInactivityReset === 'function') {
         this.options.onInactivityReset(this);
       }
@@ -176,7 +286,69 @@
       }
     }
 
+    handleTouchStart(e) {
+      this.resetInactivityTimer();
+      if (this.activeModal) return;
+
+      const touch = (e.touches && e.touches[0]) || (e.changedTouches && e.changedTouches[0]) || e;
+      this.touchStartX = touch.clientX !== undefined ? touch.clientX : (touch.pageX || 0);
+      this.touchStartY = touch.clientY !== undefined ? touch.clientY : (touch.pageY || 0);
+      this.touchCurrentX = this.touchStartX;
+      this.touchCurrentY = this.touchStartY;
+      this.touchStartTime = Date.now();
+      this.isSwiping = true;
+    }
+
+    handleTouchMove(e) {
+      this.resetInactivityTimer();
+      if (!this.isSwiping || this.activeModal) return;
+
+      const touch = (e.touches && e.touches[0]) || (e.changedTouches && e.changedTouches[0]) || e;
+      this.touchCurrentX = touch.clientX !== undefined ? touch.clientX : (touch.pageX || 0);
+      this.touchCurrentY = touch.clientY !== undefined ? touch.clientY : (touch.pageY || 0);
+    }
+
+    handleTouchEnd(e) {
+      this.resetInactivityTimer();
+      if (!this.isSwiping || this.activeModal) {
+        this.isSwiping = false;
+        return;
+      }
+      this.isSwiping = false;
+
+      const touch = (e.changedTouches && e.changedTouches[0]) || (e.touches && e.touches[0]) || e;
+      const touchEndX = touch.clientX !== undefined ? touch.clientX : (this.touchCurrentX || 0);
+      const touchEndY = touch.clientY !== undefined ? touch.clientY : (this.touchCurrentY || 0);
+      const deltaX = touchEndX - this.touchStartX;
+      const deltaY = touchEndY - this.touchStartY;
+      const duration = Math.max(Date.now() - this.touchStartTime, 1);
+      const absDeltaX = Math.abs(deltaX);
+      const absDeltaY = Math.abs(deltaY);
+      const velocity = absDeltaX / duration;
+
+      if (absDeltaX >= this.swipeDistanceThreshold && velocity >= this.swipeVelocityThreshold && absDeltaX > absDeltaY * 1.2) {
+        this.justSwiped = true;
+        setTimeout(() => { this.justSwiped = false; }, 120);
+
+        if (typeof e.stopPropagation === 'function') {
+          e.stopPropagation();
+        }
+
+        if (deltaX < 0) {
+          // Swipe Left -> next / forward
+          this.pageNext();
+        } else {
+          // Swipe Right -> prev / backward
+          this.pagePrev();
+        }
+      }
+    }
+
     handleClick(e) {
+      if (this.justSwiped) {
+        this.justSwiped = false;
+        return;
+      }
       this.resetInactivityTimer();
 
       // 1. Check view switcher button click
@@ -459,6 +631,278 @@
       }
     }
 
+    page(direction) {
+      if (direction === 'next' || direction === 'forward') {
+        return this.pageNext();
+      }
+      if (direction === 'prev' || direction === 'backward') {
+        return this.pagePrev();
+      }
+      return false;
+    }
+
+    pageNext() {
+      const cached = this.resolveCachedRange();
+
+      if (this.activeView === 'day') {
+        const nextDay = new Date(this.currentDate.getTime());
+        nextDay.setDate(nextDay.getDate() + 1);
+        const nextDayStr = this.formatDateISO(nextDay);
+        if (cached && cached.end && nextDayStr > cached.end) {
+          this.showSyncIndicator('Not synced yet');
+          return false;
+        }
+        this.currentDate = nextDay;
+        this.pageOffset += 1;
+        this.hideSyncIndicator();
+        this.updateDateUI();
+        if (typeof this.options.onPageChange === 'function') {
+          this.options.onPageChange('next', this.currentDate, this);
+        }
+        return true;
+      }
+
+      if (this.activeView === 'week') {
+        const step = this.resolveDaysCount();
+        const nextStart = new Date(this.currentWeekStart.getTime());
+        nextStart.setDate(nextStart.getDate() + step);
+        const nextStartStr = this.formatDateISO(nextStart);
+        if (cached && cached.end && nextStartStr > cached.end) {
+          this.showSyncIndicator('Not synced yet');
+          return false;
+        }
+        this.currentWeekStart = nextStart;
+        this.currentDate = new Date(nextStart.getTime());
+        this.pageOffset += 1;
+        this.hideSyncIndicator();
+        this.updateDateUI();
+        if (typeof this.options.onPageChange === 'function') {
+          this.options.onPageChange('next', this.currentWeekStart, this);
+        }
+        return true;
+      }
+
+      if (this.activeView === 'month') {
+        const nextMonth = new Date(this.currentDate.getTime());
+        nextMonth.setDate(1);
+        nextMonth.setMonth(nextMonth.getMonth() + 1);
+        const nextMonthStr = this.formatDateISO(nextMonth).slice(0, 7);
+        if (cached && cached.end && nextMonthStr > cached.end.slice(0, 7)) {
+          this.showSyncIndicator('Not synced yet');
+          return false;
+        }
+        this.currentDate = nextMonth;
+        this.pageOffset += 1;
+        this.hideSyncIndicator();
+        this.updateDateUI();
+        if (typeof this.options.onPageChange === 'function') {
+          this.options.onPageChange('next', this.currentDate, this);
+        }
+        return true;
+      }
+
+      return false;
+    }
+
+    pagePrev() {
+      const cached = this.resolveCachedRange();
+
+      if (this.activeView === 'day') {
+        const prevDay = new Date(this.currentDate.getTime());
+        prevDay.setDate(prevDay.getDate() - 1);
+        const prevDayStr = this.formatDateISO(prevDay);
+        if (cached && cached.start && prevDayStr < cached.start) {
+          this.showSyncIndicator('Not synced yet');
+          return false;
+        }
+        this.currentDate = prevDay;
+        this.pageOffset -= 1;
+        this.hideSyncIndicator();
+        this.updateDateUI();
+        if (typeof this.options.onPageChange === 'function') {
+          this.options.onPageChange('prev', this.currentDate, this);
+        }
+        return true;
+      }
+
+      if (this.activeView === 'week') {
+        const step = this.resolveDaysCount();
+        const prevStart = new Date(this.currentWeekStart.getTime());
+        prevStart.setDate(prevStart.getDate() - step);
+        const prevEnd = new Date(prevStart.getTime());
+        prevEnd.setDate(prevEnd.getDate() + step - 1);
+        const prevEndStr = this.formatDateISO(prevEnd);
+        if (cached && cached.start && prevEndStr < cached.start) {
+          this.showSyncIndicator('Not synced yet');
+          return false;
+        }
+        this.currentWeekStart = prevStart;
+        this.currentDate = new Date(prevStart.getTime());
+        this.pageOffset -= 1;
+        this.hideSyncIndicator();
+        this.updateDateUI();
+        if (typeof this.options.onPageChange === 'function') {
+          this.options.onPageChange('prev', this.currentWeekStart, this);
+        }
+        return true;
+      }
+
+      if (this.activeView === 'month') {
+        const prevMonth = new Date(this.currentDate.getTime());
+        prevMonth.setDate(1);
+        prevMonth.setMonth(prevMonth.getMonth() - 1);
+        const prevMonthStr = this.formatDateISO(prevMonth).slice(0, 7);
+        if (cached && cached.start && prevMonthStr < cached.start.slice(0, 7)) {
+          this.showSyncIndicator('Not synced yet');
+          return false;
+        }
+        this.currentDate = prevMonth;
+        this.pageOffset -= 1;
+        this.hideSyncIndicator();
+        this.updateDateUI();
+        if (typeof this.options.onPageChange === 'function') {
+          this.options.onPageChange('prev', this.currentDate, this);
+        }
+        return true;
+      }
+
+      return false;
+    }
+
+    resetDate() {
+      this.currentDate = new Date(this.baseDate.getTime());
+      this.currentWeekStart = new Date(this.baseWeekStart.getTime());
+      this.pageOffset = 0;
+      this.hideSyncIndicator();
+      this.updateDateUI();
+    }
+
+    showSyncIndicator(message = 'Not synced yet') {
+      let indicator = this.element.querySelector('.cf-sync-indicator');
+      if (!indicator) {
+        indicator = document.createElement('div');
+        indicator.className = 'cf-sync-indicator';
+        indicator.setAttribute('role', 'status');
+        indicator.setAttribute('aria-live', 'polite');
+        const header = this.element.querySelector('.cf-header');
+        if (header) {
+          const heading = header.querySelector('.cf-date-heading') || header;
+          heading.appendChild(indicator);
+        } else {
+          this.element.appendChild(indicator);
+        }
+      }
+      indicator.textContent = message;
+      indicator.style.display = '';
+
+      if (this.syncIndicatorTimer) {
+        clearTimeout(this.syncIndicatorTimer);
+      }
+      this.syncIndicatorTimer = setTimeout(() => {
+        this.hideSyncIndicator();
+      }, 2500);
+      if (this.syncIndicatorTimer && typeof this.syncIndicatorTimer.unref === 'function') {
+        this.syncIndicatorTimer.unref();
+      }
+    }
+
+    hideSyncIndicator() {
+      if (this.syncIndicatorTimer) {
+        clearTimeout(this.syncIndicatorTimer);
+        this.syncIndicatorTimer = null;
+      }
+      const indicator = this.element.querySelector('.cf-sync-indicator');
+      if (indicator) {
+        indicator.style.display = 'none';
+      }
+    }
+
+    updateDateUI() {
+      this.element.dataset.currentDate = this.formatDateISO(this.currentDate);
+      this.element.dataset.pageOffset = String(this.pageOffset);
+
+      if (this.activeView === 'day') {
+        const label = this.labels.day || this.element.querySelector('.cf-range-label.cf-label-day') || this.element.querySelector('.cf-range-label');
+        if (label) {
+          label.textContent = this.formatDayLabel(this.currentDate);
+        }
+        if (this.todayBadge) {
+          const isToday = this.formatDateISO(this.currentDate) === this.formatDateISO(this.baseDate);
+          this.todayBadge.style.display = isToday ? '' : 'none';
+        }
+      } else if (this.activeView === 'week') {
+        const label = this.labels.week || this.element.querySelector('.cf-range-label.cf-label-week') || this.element.querySelector('.cf-range-label');
+        if (label) {
+          const step = this.resolveDaysCount();
+          const weekEnd = new Date(this.currentWeekStart.getTime());
+          weekEnd.setDate(weekEnd.getDate() + step - 1);
+          label.textContent = this.formatWeekLabel(this.currentWeekStart, weekEnd);
+        }
+        if (this.todayBadge) {
+          this.todayBadge.style.display = 'none';
+        }
+      } else if (this.activeView === 'month') {
+        const label = this.labels.month || this.element.querySelector('.cf-range-label.cf-label-month') || this.element.querySelector('.cf-range-label');
+        if (label) {
+          label.textContent = this.formatMonthLabel(this.currentDate);
+        }
+        if (this.todayBadge) {
+          this.todayBadge.style.display = 'none';
+        }
+      }
+    }
+
+    formatDayLabel(d) {
+      const weekdays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+      const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      return `${weekdays[d.getDay()]}, ${months[d.getMonth()]} ${d.getDate()}`;
+    }
+
+    formatWeekLabel(start, end) {
+      const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      if (start.getFullYear() === end.getFullYear()) {
+        if (start.getMonth() === end.getMonth()) {
+          return `${months[start.getMonth()]} ${start.getDate()} – ${end.getDate()}, ${start.getFullYear()}`;
+        }
+        return `${months[start.getMonth()]} ${start.getDate()} – ${months[end.getMonth()]} ${end.getDate()}, ${start.getFullYear()}`;
+      }
+      return `${months[start.getMonth()]} ${start.getDate()}, ${start.getFullYear()} – ${months[end.getMonth()]} ${end.getDate()}, ${end.getFullYear()}`;
+    }
+
+    formatMonthLabel(d) {
+      const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+      return `${months[d.getMonth()]} ${d.getFullYear()}`;
+    }
+
+    formatDateISO(d) {
+      if (!d) return '';
+      const year = d.getFullYear();
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    }
+
+    parseDateParts(str) {
+      if (!str) return null;
+      if (str instanceof Date) {
+        return { year: str.getFullYear(), month: str.getMonth() + 1, day: str.getDate() };
+      }
+      const parts = String(str).split('T')[0].split('-');
+      if (parts.length >= 3) {
+        const y = parseInt(parts[0], 10);
+        const m = parseInt(parts[1], 10);
+        const d = parseInt(parts[2], 10);
+        if (!isNaN(y) && !isNaN(m) && !isNaN(d)) {
+          return { year: y, month: m, day: d };
+        }
+      }
+      return null;
+    }
+
+    createLocalDate(year, month, day) {
+      return new Date(year, month - 1, day, 12, 0, 0);
+    }
+
     updateViewUI(view) {
       // 1. Update root container view classes
       this.element.classList.remove('cf-view-day');
@@ -492,10 +936,14 @@
         }
       }
 
-      // 5. Update TODAY badge visibility (visible only in Day view)
+      // 5. Update TODAY badge visibility (visible only in Day view on today's date)
       if (this.todayBadge) {
-        this.todayBadge.style.display = (view === 'day' ? '' : 'none');
+        const isToday = this.formatDateISO(this.currentDate) === this.formatDateISO(this.baseDate);
+        this.todayBadge.style.display = (view === 'day' && isToday) ? '' : 'none';
       }
+
+      // 6. Refresh date labels for active view
+      this.updateDateUI();
     }
 
     destroy() {
@@ -503,11 +951,18 @@
         clearTimeout(this.inactivityTimer);
         this.inactivityTimer = null;
       }
+      if (this.syncIndicatorTimer) {
+        clearTimeout(this.syncIndicatorTimer);
+        this.syncIndicatorTimer = null;
+      }
       for (const btn of this.viewButtons) {
         btn.removeEventListener('click', this.clickHandler);
       }
       this.element.removeEventListener('click', this.clickHandler);
-      const activityEvents = ['touchstart', 'touchmove', 'touchend', 'pointerdown', 'mousedown'];
+      this.element.removeEventListener('touchstart', this.touchStartHandler);
+      this.element.removeEventListener('touchmove', this.touchMoveHandler);
+      this.element.removeEventListener('touchend', this.touchEndHandler);
+      const activityEvents = ['pointerdown', 'mousedown'];
       for (const evt of activityEvents) {
         this.element.removeEventListener(evt, this.activityHandler);
       }

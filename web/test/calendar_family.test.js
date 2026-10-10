@@ -726,4 +726,336 @@ test('Calendar Family Client Controller', async (t) => {
     assert.equal(inst.activeModal, null);
     assert.equal(global.window.MirrormereCarousel.resumeCount, 1);
   });
+
+  // Chunk 8: Touch swipe gesture navigation and window bounds paging
+  await t.test('swiping left in week view pages forward by 7 days', () => {
+    const el = createMockElement({
+      widgetId: 'swipe-week-cal',
+      defaultView: 'week',
+      data: {
+        range_start: '2026-10-04',
+        range_end: '2026-10-25',
+        cached_range_start: '2026-10-04',
+        cached_range_end: '2026-10-25',
+        days: [
+          { date: '2026-10-04' },
+          { date: '2026-10-10' }
+        ]
+      }
+    });
+    const inst = global.window.MirrormereCalendarFamily.mount(el);
+
+    assert.equal(inst.activeView, 'week');
+    assert.equal(inst.pageOffset, 0);
+    assert.equal(inst.formatDateISO(inst.currentWeekStart), '2026-10-04');
+
+    // Swipe left (next): start at 200, end at 80 (deltaX = -120)
+    el.dispatchEvent({
+      type: 'touchstart',
+      touches: [{ clientX: 200, clientY: 100 }],
+    });
+    el.dispatchEvent({
+      type: 'touchmove',
+      touches: [{ clientX: 140, clientY: 100 }],
+    });
+    el.dispatchEvent({
+      type: 'touchend',
+      changedTouches: [{ clientX: 80, clientY: 100 }],
+    });
+
+    assert.equal(inst.pageOffset, 1, 'pageOffset should increment on swipe left');
+    assert.equal(inst.formatDateISO(inst.currentWeekStart), '2026-10-11', 'weekStart should advance by 7 days');
+    assert.ok(el._labels.week.textContent.includes('Oct 11 – 17, 2026'), 'range label should reflect next week');
+
+    // Swipe right (prev): start at 80, end at 200 (deltaX = +120)
+    el.dispatchEvent({
+      type: 'touchstart',
+      touches: [{ clientX: 80, clientY: 100 }],
+    });
+    el.dispatchEvent({
+      type: 'touchend',
+      changedTouches: [{ clientX: 200, clientY: 100 }],
+    });
+
+    assert.equal(inst.pageOffset, 0, 'pageOffset should return to 0');
+    assert.equal(inst.formatDateISO(inst.currentWeekStart), '2026-10-04', 'weekStart should return to initial week');
+    assert.ok(el._labels.week.textContent.includes('Oct 4 – 10, 2026'));
+
+    global.window.MirrormereCalendarFamily.unmount('swipe-week-cal');
+  });
+
+  await t.test('swiping in day view pages forward and backward by 1 day', () => {
+    const el = createMockElement({
+      widgetId: 'swipe-day-cal',
+      defaultView: 'day',
+      data: {
+        date: '2026-10-10',
+        cached_range_start: '2026-10-01',
+        cached_range_end: '2026-10-20',
+      }
+    });
+    const inst = global.window.MirrormereCalendarFamily.mount(el);
+
+    assert.equal(inst.activeView, 'day');
+    assert.equal(inst.formatDateISO(inst.currentDate), '2026-10-10');
+    assert.equal(el._todayBadge.style.display, '');
+
+    // Swipe left (next): deltaX = -100
+    el.dispatchEvent({
+      type: 'touchstart',
+      touches: [{ clientX: 180, clientY: 50 }],
+    });
+    el.dispatchEvent({
+      type: 'touchend',
+      changedTouches: [{ clientX: 80, clientY: 50 }],
+    });
+
+    assert.equal(inst.pageOffset, 1);
+    assert.equal(inst.formatDateISO(inst.currentDate), '2026-10-11');
+    assert.equal(el._labels.day.textContent, 'Sun, Oct 11');
+    assert.equal(el._todayBadge.style.display, 'none', 'today badge should hide when viewing future date');
+
+    // Swipe right (prev): deltaX = +100
+    el.dispatchEvent({
+      type: 'touchstart',
+      touches: [{ clientX: 80, clientY: 50 }],
+    });
+    el.dispatchEvent({
+      type: 'touchend',
+      changedTouches: [{ clientX: 180, clientY: 50 }],
+    });
+
+    assert.equal(inst.pageOffset, 0);
+    assert.equal(inst.formatDateISO(inst.currentDate), '2026-10-10');
+    assert.equal(el._labels.day.textContent, 'Sat, Oct 10');
+    assert.equal(el._todayBadge.style.display, '', 'today badge should show when viewing today');
+
+    global.window.MirrormereCalendarFamily.unmount('swipe-day-cal');
+  });
+
+  await t.test('swiping in month view pages forward and backward by 1 month', () => {
+    const el = createMockElement({
+      widgetId: 'swipe-month-cal',
+      defaultView: 'month',
+      data: {
+        date: '2026-10-10',
+        cached_range_start: '2026-08-01',
+        cached_range_end: '2026-12-31',
+      }
+    });
+    const inst = global.window.MirrormereCalendarFamily.mount(el);
+
+    assert.equal(inst.activeView, 'month');
+
+    // Swipe left: deltaX = -120 -> Nov 2026
+    el.dispatchEvent({
+      type: 'touchstart',
+      touches: [{ clientX: 200, clientY: 50 }],
+    });
+    el.dispatchEvent({
+      type: 'touchend',
+      changedTouches: [{ clientX: 80, clientY: 50 }],
+    });
+
+    assert.equal(inst.pageOffset, 1);
+    assert.equal(inst.formatDateISO(inst.currentDate).slice(0, 7), '2026-11');
+    assert.equal(el._labels.month.textContent, 'November 2026');
+
+    // Swipe right: deltaX = +120 -> Oct 2026
+    el.dispatchEvent({
+      type: 'touchstart',
+      touches: [{ clientX: 80, clientY: 50 }],
+    });
+    el.dispatchEvent({
+      type: 'touchend',
+      changedTouches: [{ clientX: 200, clientY: 50 }],
+    });
+
+    assert.equal(inst.pageOffset, 0);
+    assert.equal(inst.formatDateISO(inst.currentDate).slice(0, 7), '2026-10');
+    assert.equal(el._labels.month.textContent, 'October 2026');
+
+    global.window.MirrormereCalendarFamily.unmount('swipe-month-cal');
+  });
+
+  await t.test('swiping beyond cached date range blocks paging and displays inline "Not synced yet" indicator', () => {
+    const el = createMockElement({
+      widgetId: 'bounds-cal',
+      defaultView: 'day',
+      data: {
+        date: '2026-10-10',
+        cached_range_start: '2026-10-10',
+        cached_range_end: '2026-10-10',
+      }
+    });
+    const inst = global.window.MirrormereCalendarFamily.mount(el);
+
+    assert.equal(el.querySelector('.cf-sync-indicator'), null);
+
+    // Swipe left (next day: 2026-10-11 > cached_range_end)
+    el.dispatchEvent({
+      type: 'touchstart',
+      touches: [{ clientX: 200, clientY: 50 }],
+    });
+    el.dispatchEvent({
+      type: 'touchend',
+      changedTouches: [{ clientX: 80, clientY: 50 }],
+    });
+
+    assert.equal(inst.pageOffset, 0, 'page offset should remain 0 when beyond bounds');
+    assert.equal(inst.formatDateISO(inst.currentDate), '2026-10-10', 'date should not change');
+
+    // Indicator should be displayed
+    const indicator = el.querySelector('.cf-sync-indicator');
+    assert.ok(indicator, 'inline sync indicator should be created');
+    assert.equal(indicator.textContent, 'Not synced yet');
+    assert.equal(indicator.style.display, '');
+
+    // Swipe right (prev day: 2026-10-09 < cached_range_start)
+    el.dispatchEvent({
+      type: 'touchstart',
+      touches: [{ clientX: 80, clientY: 50 }],
+    });
+    el.dispatchEvent({
+      type: 'touchend',
+      changedTouches: [{ clientX: 200, clientY: 50 }],
+    });
+
+    assert.equal(inst.pageOffset, 0);
+    assert.equal(inst.formatDateISO(inst.currentDate), '2026-10-10');
+    assert.equal(indicator.textContent, 'Not synced yet');
+
+    global.window.MirrormereCalendarFamily.unmount('bounds-cal');
+  });
+
+  await t.test('inactivity timeout resets both activeView and paged date window', async () => {
+    const el = createMockElement({
+      widgetId: 'inactivity-page-cal',
+      defaultView: 'week',
+      data: {
+        date: '2026-10-10',
+        cached_range_start: '2026-10-01',
+        cached_range_end: '2026-10-31',
+      }
+    });
+    let resetNotified = false;
+    const inst = global.window.MirrormereCalendarFamily.mount(el, {
+      inactivityTimeout: 40,
+      onInactivityReset: () => { resetNotified = true; },
+    });
+
+    // Switch to day view and page forward by 2 days
+    inst.switchView('day');
+    inst.pageNext();
+    inst.pageNext();
+    assert.equal(inst.activeView, 'day');
+    assert.equal(inst.pageOffset, 2);
+    assert.equal(inst.formatDateISO(inst.currentDate), '2026-10-12');
+
+    // Wait for inactivity timeout (60ms > 40ms)
+    await new Promise(r => setTimeout(r, 60));
+
+    assert.equal(resetNotified, true);
+    assert.equal(inst.activeView, 'week', 'activeView should reset to defaultView (week)');
+    assert.equal(inst.pageOffset, 0, 'pageOffset should reset to 0');
+    assert.equal(inst.formatDateISO(inst.currentDate), '2026-10-10', 'currentDate should reset to today');
+
+    global.window.MirrormereCalendarFamily.unmount('inactivity-page-cal');
+  });
+
+  await t.test('rejects non-swipe gestures: vertical scroll, short distance, slow drag, and open modal', () => {
+    const el = createMockElement({
+      widgetId: 'gesture-reject-cal',
+      defaultView: 'week',
+    });
+    const inst = global.window.MirrormereCalendarFamily.mount(el, {
+      cachedRangeStart: '2026-09-01',
+      cachedRangeEnd: '2026-11-30',
+    });
+
+    // 1. Dominant vertical scroll (deltaX = -45, deltaY = 120)
+    el.dispatchEvent({
+      type: 'touchstart',
+      touches: [{ clientX: 100, clientY: 50 }],
+    });
+    el.dispatchEvent({
+      type: 'touchend',
+      changedTouches: [{ clientX: 55, clientY: 170 }],
+    });
+    assert.equal(inst.pageOffset, 0, 'vertical gesture should not trigger paging');
+
+    // 2. Short distance (deltaX = -15 < swipeDistanceThreshold 40)
+    el.dispatchEvent({
+      type: 'touchstart',
+      touches: [{ clientX: 100, clientY: 50 }],
+    });
+    el.dispatchEvent({
+      type: 'touchend',
+      changedTouches: [{ clientX: 85, clientY: 50 }],
+    });
+    assert.equal(inst.pageOffset, 0, 'short gesture should not trigger paging');
+
+    // 3. Slow drag (velocity < threshold)
+    el.dispatchEvent({
+      type: 'touchstart',
+      touches: [{ clientX: 200, clientY: 50 }],
+    });
+    // Artificially simulate 2000ms duration for slow drag
+    inst.touchStartTime = Date.now() - 2000;
+    el.dispatchEvent({
+      type: 'touchend',
+      changedTouches: [{ clientX: 80, clientY: 50 }],
+    });
+    assert.equal(inst.pageOffset, 0, 'slow drag should not trigger paging');
+
+    // 4. Swipe ignored while detail modal is open
+    el._events.timed.click();
+    assert.ok(inst.activeModal);
+
+    el.dispatchEvent({
+      type: 'touchstart',
+      touches: [{ clientX: 200, clientY: 50 }],
+    });
+    el.dispatchEvent({
+      type: 'touchend',
+      changedTouches: [{ clientX: 80, clientY: 50 }],
+    });
+    assert.equal(inst.pageOffset, 0, 'swipe while modal is open should be ignored');
+
+    inst.closeModal();
+    global.window.MirrormereCalendarFamily.unmount('gesture-reject-cal');
+  });
+
+  await t.test('swiping does not trigger accidental event click modal', () => {
+    const el = createMockElement({
+      widgetId: 'ghost-click-cal',
+      defaultView: 'week',
+      data: {
+        date: '2026-10-10',
+        cached_range_start: '2026-10-01',
+        cached_range_end: '2026-10-31',
+      }
+    });
+    const inst = global.window.MirrormereCalendarFamily.mount(el);
+
+    // Perform a valid swipe on an event element
+    el._events.timed.dispatchEvent({
+      type: 'touchstart',
+      touches: [{ clientX: 200, clientY: 50 }],
+    });
+    el._events.timed.dispatchEvent({
+      type: 'touchend',
+      changedTouches: [{ clientX: 80, clientY: 50 }],
+    });
+
+    assert.equal(inst.pageOffset, 1, 'swipe should advance page');
+
+    // Simulate trailing click event on the same element right after touchend
+    el._events.timed.click();
+
+    assert.equal(inst.activeModal, null, 'ghost click after swipe should NOT open modal');
+
+    global.window.MirrormereCalendarFamily.unmount('ghost-click-cal');
+  });
 });
+
