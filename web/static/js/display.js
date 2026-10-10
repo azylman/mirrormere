@@ -99,8 +99,24 @@
     const tz = getTimezone();
 
     try {
-      clockEl.textContent = formatTime(now, tz);
-      dateEl.textContent = formatDate(now, tz);
+      const timeStr = formatTime(now, tz);
+      clockEl.textContent = timeStr;
+      const m = timeStr.match(/^(\d{1,2}:\d{2})\s*([AP]M)?$/i);
+      if (m && m[2]) {
+        clockEl.innerHTML = `${m[1]}<span class="header-clock-ampm">${m[2]}</span>`;
+      }
+
+      const dateStr = formatDate(now, tz);
+      dateEl.textContent = dateStr;
+      const dayOpts = { weekday: 'long' };
+      if (isValidTimezone(tz)) dayOpts.timeZone = tz;
+      const weekday = new Intl.DateTimeFormat(undefined, dayOpts).format(now);
+
+      const fullOpts = { month: 'short', day: 'numeric' };
+      if (isValidTimezone(tz)) fullOpts.timeZone = tz;
+      const shortDate = new Intl.DateTimeFormat(undefined, fullOpts).format(now);
+
+      dateEl.innerHTML = `<span class="header-date-weekday">${weekday}</span><span class="header-date-full">${shortDate}</span>`;
     } catch {
       // Graceful fallback to unzoned locale format if timezone is invalid
       clockEl.textContent = formatTime(now, undefined);

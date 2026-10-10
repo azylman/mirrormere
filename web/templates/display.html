@@ -15,26 +15,34 @@
     <header class="header-zone">
       <div class="header-time-block">
         <div class="header-clock" id="header-clock" data-timezone="{{ .Timezone }}">--:--</div>
-        <div class="header-date" id="header-date">------</div>
+        <div class="header-date-stack" id="header-date-stack">
+          <div class="header-date" id="header-date">------</div>
+        </div>
       </div>
-      <div class="header-weather" id="header-weather">
-        <span class="pill-badge" id="weather-pill">
-          <span class="weather-temp" id="weather-temp">--°</span>
-          <span class="weather-condition" id="weather-condition"></span>
-        </span>
+      <div class="header-right-cluster">
+        <div class="header-weather" id="header-weather">
+          <span class="pill-badge weather-pill" id="weather-pill">
+            <span class="weather-condition" id="weather-condition"></span>
+            <span class="weather-temp" id="weather-temp">--°</span>
+          </span>
+        </div>
+        <div class="header-status">
+          <div class="status-jewel" title="System: Connected &amp; Synced">
+            <span class="status-dot status-ok" id="system-status-dot"></span>
+          </div>
+        </div>
       </div>
       <div class="header-voice" id="header-voice">
         <div class="voice-indicator" id="voice-indicator">
           <span class="voice-pulse-ring" id="voice-pulse-ring"></span>
-          <span class="voice-dot" id="voice-dot"></span>
+          <span class="voice-dot" id="voice-dot" style="display: none;"></span>
+          <span class="voice-icon" id="voice-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="mm-voice-icon-svg"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="22"></line></svg></span>
           <span class="voice-label" id="voice-label"></span>
         </div>
         <span class="voice-status" id="voice-status" style="display: none;"></span>
         <div class="voice-transcript" id="voice-transcript" style="display: none;"></div>
         <button id="header-voice-dismiss-btn" class="header-voice-dismiss" aria-label="Dismiss Voice" title="Dismiss Voice" onclick="window.MirrormereVoice &amp;&amp; window.MirrormereVoice.resetHUD &amp;&amp; window.MirrormereVoice.resetHUD()">✕</button>
-      </div>
-      <div class="header-status">
-        <span class="status-dot status-ok" id="system-status-dot" title="System Status: Healthy"></span>
+        <div class="voice-audio-progress" id="voice-audio-progress" style="display: none;"></div>
       </div>
     </header>
 
