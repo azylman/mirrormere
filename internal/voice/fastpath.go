@@ -55,9 +55,13 @@ func NewDefaultFastPathClient(url string, timeout time.Duration) *DefaultFastPat
 	// The header wait is bounded by the transport, not by cancelling the
 	// request context, so a timer can never sever a stream whose headers
 	// arrived just in time.
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.ResponseHeaderTimeout = timeout
-	transport.DialContext = (&net.Dialer{Timeout: timeout}).DialContext
+	transport := &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
+		DialContext:           (&net.Dialer{Timeout: timeout}).DialContext,
+		ResponseHeaderTimeout: timeout,
+		MaxIdleConns:          4,
+		IdleConnTimeout:       90 * time.Second,
+	}
 	return &DefaultFastPathClient{url: strings.TrimSpace(url), timeout: timeout, httpClient: &http.Client{Transport: transport}}
 }
 
