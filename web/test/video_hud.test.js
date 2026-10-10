@@ -157,8 +157,19 @@ function createHUDDOM() {
   controls.appendChild(muteBtn);
   controls.appendChild(volumeSlider);
 
+  const bottomBar = createMockElement('div', 'video-hud-bottom-bar', 'video-hud-bottom-bar');
+  bottomBar.style.display = 'none';
+
+  const rewindBtn = createMockElement('button', 'video-hud-rewind-btn', 'video-hud-btn video-hud-media-btn');
+  const forwardBtn = createMockElement('button', 'video-hud-forward-btn', 'video-hud-btn video-hud-media-btn');
+
+  bottomBar.appendChild(rewindBtn);
+  bottomBar.appendChild(playBtn);
+  bottomBar.appendChild(forwardBtn);
+
   overlay.appendChild(header);
   overlay.appendChild(controls);
+  overlay.appendChild(bottomBar);
 
   const primarySlot = createMockElement('div', 'video-primary-slot', 'video-primary-slot');
   const pipSlot = createMockElement('div', 'video-pip-slot', 'video-pip-slot');
@@ -178,6 +189,9 @@ function createHUDDOM() {
     muteBtn,
     muteIcon,
     volumeSlider,
+    bottomBar,
+    rewindBtn,
+    forwardBtn,
     primarySlot,
     pipSlot,
   };
@@ -908,6 +922,348 @@ test('VideoHUDController: video-hud-overlay defines transparent background witho
     /background:\s*transparent;/,
     '.video-hud-overlay must define background: transparent;'
   );
+});
+
+test('VideoHUDController: bottom bar is displayed for controllable or persistent media streams, and hidden for non-media/doorbell streams', () => {
+  const dom = createHUDDOM();
+  const hud = new VideoHUDController({
+    overlayElement: dom.overlay,
+    titleElement: dom.title,
+    dismissBtn: dom.dismissBtn,
+    bottomBarElement: dom.bottomBar,
+    rewindBtn: dom.rewindBtn,
+    forwardBtn: dom.forwardBtn,
+    playBtn: dom.playBtn,
+    playIcon: dom.playIcon,
+    muteBtn: dom.muteBtn,
+    muteIcon: dom.muteIcon,
+    volumeSlider: dom.volumeSlider,
+    stageElement: dom.stage,
+    remoteUrl: 'http://chromecast.lan:8080',
+  });
+
+  // 1. Initial state: bottom bar is hidden
+  assert.equal(dom.bottomBar.style.display, 'none');
+
+  // 2. Controllable stream (e.g. Plex / YouTube via sidecar)
+  hud.handleVideoState({
+    mode: 'video',
+    primary: {
+      id: 'stream_plex',
+      title: 'Plex Media',
+      controllable: true,
+      player_state: 'playing',
+    },
+  });
+  assert.equal(dom.bottomBar.style.display, '');
+  assert.equal(dom.bottomBar.hasAttribute('hidden'), false);
+  assert.equal(dom.playBtn.style.display, '');
+
+  // 3. Non-controllable, persistent stream with remoteUrl
+  hud.handleVideoState({
+    mode: 'video',
+    primary: {
+      id: 'stream_chromecast',
+      title: 'Chromecast Ambient',
+      controllable: false,
+      priority: 'persistent',
+      player_state: 'playing',
+    },
+  });
+  assert.equal(dom.bottomBar.style.display, '');
+  assert.equal(dom.bottomBar.hasAttribute('hidden'), false);
+
+  // 4. Non-media temporary stream (e.g. doorbell camera alert)
+  hud.handleVideoState({
+    mode: 'video',
+    primary: {
+      id: 'cam_doorbell',
+      title: 'Front Doorbell',
+      controllable: false,
+      priority: 'temporary',
+      player_state: 'playing',
+    },
+  });
+  assert.equal(dom.bottomBar.style.display, 'none');
+  assert.equal(dom.bottomBar.getAttribute('hidden'), 'true');
+  assert.equal(dom.playBtn.style.display, 'none');
+
+  // 5. Stream torn down (mode: widgets)
+  hud.handleVideoState({ mode: 'widgets', primary: null });
+  assert.equal(dom.bottomBar.style.display, 'none');
+
+  hud.destroy();
+});
+
+test('VideoHUDController: rewind and fast forward dispatch actions and remote keys with in-flight lock', async () => {
+  const dom = createHUDDOM();
+  const networkCalls = [];
+
+  const mockFetch = async (url, opts) => {
+    networkCalls.push({ url, body: JSON.parse(opts.body) });
+    return { ok: true, status: 200, json: async () => ({ status: 'ok' }) };
+  };
+
+  const hud = new VideoHUDController({
+    overlayElement: dom.overlay,
+    titleElement: dom.title,
+    dismissBtn: dom.dismissBtn,
+    bottomBarElement: dom.bottomBar,
+    rewindBtn: dom.rewindBtn,
+    forwardBtn: dom.forwardBtn,
+    playBtn: dom.playBtn,
+    playIcon: dom.playIcon,
+    muteBtn: dom.muteBtn,
+    muteIcon: dom.muteIcon,
+    volumeSlider: dom.volumeSlider,
+    stageElement: dom.stage,
+    remoteUrl: 'http://tv.lan:8080',
+    fetch: mockFetch,
+  });
+
+  // 1. Controllable stream with control_url
+  hud.handleVideoState({
+    mode: 'video',
+    primary: {
+      id: 'stream_controllable',
+      controllable: true,
+      control_url: 'http://control.lan',
+      player_state: 'playing',
+    },
+  });
+
+  // Rewind click
+  dom.rewindBtn.click();
+  assert.equal(networkCalls.length, 1);
+  assert.equal(networkCalls[0].url, 'api/video/action');
+  assert.deepEqual(networkCalls[0].body, { id: 'stream_controllable', action: 'rewind' });
+
+  // Rapid second click during lock is dropped
+  dom.rewindBtn.click();
+  assert.equal(networkCalls.length, 1);
+
+  // Wait out lock (300ms)
+  await new Promise((r) => setTimeout(r, 320));
+
+  // Fast forward click
+  dom.forwardBtn.click();
+  assert.equal(networkCalls.length, 2);
+  assert.equal(networkCalls[1].url, 'api/video/action');
+  assert.deepEqual(networkCalls[1].body, { id: 'stream_controllable', action: 'fast_forward' });
+
+  // Wait out lock
+  await new Promise((r) => setTimeout(r, 320));
+
+  // 2. Persistent stream without control_url -> dispatches to remoteUrl/key
+  hud.handleVideoState({
+    mode: 'video',
+    primary: {
+      id: 'stream_persistent',
+      controllable: false,
+      priority: 'persistent',
+      player_state: 'playing',
+    },
+  });
+
+  dom.rewindBtn.click();
+  assert.equal(networkCalls.length, 3);
+  assert.equal(networkCalls[2].url, 'http://tv.lan:8080/key');
+  assert.deepEqual(networkCalls[2].body, { key: 'rewind' });
+
+  await new Promise((r) => setTimeout(r, 320));
+
+  dom.forwardBtn.click();
+  assert.equal(networkCalls.length, 4);
+  assert.equal(networkCalls[3].url, 'http://tv.lan:8080/key');
+  assert.deepEqual(networkCalls[3].body, { key: 'fast_forward' });
+
+  await new Promise((r) => setTimeout(r, 320));
+
+  dom.playBtn.click();
+  assert.equal(networkCalls.length, 5);
+  assert.equal(networkCalls[4].url, 'http://tv.lan:8080/key');
+  assert.deepEqual(networkCalls[4].body, { key: 'play_pause' });
+
+  hud.destroy();
+});
+
+test('VideoHUDController: bottom bar stops pointer event propagation to video stage', () => {
+  const dom = createHUDDOM();
+  const hud = new VideoHUDController({
+    overlayElement: dom.overlay,
+    titleElement: dom.title,
+    dismissBtn: dom.dismissBtn,
+    bottomBarElement: dom.bottomBar,
+    rewindBtn: dom.rewindBtn,
+    forwardBtn: dom.forwardBtn,
+    playBtn: dom.playBtn,
+    muteBtn: dom.muteBtn,
+    volumeSlider: dom.volumeSlider,
+    stageElement: dom.stage,
+  });
+
+  let stoppedEvents = [];
+  const fakeEvent = (type) => ({
+    type,
+    stopPropagation: () => {
+      stoppedEvents.push(type);
+    },
+  });
+
+  dom.bottomBar.dispatchEvent('pointerdown', fakeEvent('pointerdown'));
+  dom.bottomBar.dispatchEvent('pointerup', fakeEvent('pointerup'));
+  dom.bottomBar.dispatchEvent('touchstart', fakeEvent('touchstart'));
+  dom.bottomBar.dispatchEvent('touchend', fakeEvent('touchend'));
+  dom.bottomBar.dispatchEvent('click', fakeEvent('click'));
+
+  assert.deepEqual(stoppedEvents, ['pointerdown', 'pointerup', 'touchstart', 'touchend', 'click']);
+
+  hud.destroy();
+});
+
+test('VideoHUDController: double-tap on video stage toggles play/pause on media streams and does nothing on non-media', async () => {
+  const dom = createHUDDOM();
+  const networkCalls = [];
+
+  const mockFetch = async (url, opts) => {
+    networkCalls.push({ url, body: JSON.parse(opts.body) });
+    return { ok: true, status: 200, json: async () => ({ status: 'ok' }) };
+  };
+
+  const hud = new VideoHUDController({
+    overlayElement: dom.overlay,
+    titleElement: dom.title,
+    dismissBtn: dom.dismissBtn,
+    bottomBarElement: dom.bottomBar,
+    rewindBtn: dom.rewindBtn,
+    forwardBtn: dom.forwardBtn,
+    playBtn: dom.playBtn,
+    playIcon: dom.playIcon,
+    muteBtn: dom.muteBtn,
+    muteIcon: dom.muteIcon,
+    volumeSlider: dom.volumeSlider,
+    stageElement: dom.stage,
+    fetch: mockFetch,
+    autoFadeTimeout: 5000,
+  });
+
+  // 1. Controllable media stream active
+  hud.handleVideoState({
+    mode: 'video',
+    primary: {
+      id: 'stream_media',
+      controllable: true,
+      control_url: 'http://control.lan',
+      player_state: 'playing',
+    },
+  });
+
+  // Ensure HUD is hidden initially to test reveal + double-tap
+  hud.hideHUD();
+  assert.equal(hud.isVisible, false);
+
+  // First tap: reveals HUD
+  dom.stage.dispatchEvent('pointerdown', { clientX: 100, clientY: 100 });
+  dom.stage.dispatchEvent('pointerup', { clientX: 100, clientY: 100, target: dom.stage });
+  assert.equal(hud.isVisible, true);
+  assert.equal(networkCalls.length, 0);
+
+  // Second tap within 100ms and <30px: triggers double-tap play/pause!
+  await new Promise((r) => setTimeout(r, 50));
+  dom.stage.dispatchEvent('pointerdown', { clientX: 105, clientY: 102 });
+  dom.stage.dispatchEvent('pointerup', { clientX: 105, clientY: 102, target: dom.stage });
+
+  assert.equal(networkCalls.length, 1);
+  assert.equal(networkCalls[0].url, 'api/video/action');
+  assert.deepEqual(networkCalls[0].body, { id: 'stream_media', action: 'toggle_playback' });
+  assert.equal(hud.isVisible, true);
+
+  // 3rd tap within 300ms cooldown: ignored (does not trigger toggle or pairing)
+  await new Promise((r) => setTimeout(r, 50));
+  dom.stage.dispatchEvent('pointerdown', { clientX: 105, clientY: 102 });
+  dom.stage.dispatchEvent('pointerup', { clientX: 105, clientY: 102, target: dom.stage });
+  assert.equal(networkCalls.length, 1);
+
+  // Wait out lock and cooldown
+  await new Promise((r) => setTimeout(r, 400));
+
+  // 2. Non-media stream (doorbell camera)
+  hud.handleVideoState({
+    mode: 'video',
+    primary: {
+      id: 'stream_doorbell',
+      controllable: false,
+      priority: 'temporary',
+      player_state: 'playing',
+    },
+  });
+
+  // Double-tap on non-media stream does NOT trigger play/pause
+  dom.stage.dispatchEvent('pointerdown', { clientX: 100, clientY: 100 });
+  dom.stage.dispatchEvent('pointerup', { clientX: 100, clientY: 100, target: dom.stage });
+  await new Promise((r) => setTimeout(r, 50));
+  dom.stage.dispatchEvent('pointerdown', { clientX: 102, clientY: 101 });
+  dom.stage.dispatchEvent('pointerup', { clientX: 102, clientY: 101, target: dom.stage });
+
+  // networkCalls remains 1 (no new action was sent)
+  assert.equal(networkCalls.length, 1);
+
+  hud.destroy();
+});
+
+test('VideoHUDController: single-tap reveals HUD immediately when hidden and hides with 250ms delay when visible', async () => {
+  const dom = createHUDDOM();
+  const hud = new VideoHUDController({
+    overlayElement: dom.overlay,
+    titleElement: dom.title,
+    dismissBtn: dom.dismissBtn,
+    bottomBarElement: dom.bottomBar,
+    rewindBtn: dom.rewindBtn,
+    forwardBtn: dom.forwardBtn,
+    playBtn: dom.playBtn,
+    muteBtn: dom.muteBtn,
+    volumeSlider: dom.volumeSlider,
+    stageElement: dom.stage,
+    autoFadeTimeout: 5000,
+  });
+
+  hud.handleVideoState({
+    mode: 'video',
+    primary: {
+      id: 'stream_media',
+      controllable: true,
+      player_state: 'playing',
+    },
+  });
+  hud.hideHUD();
+
+  assert.equal(hud.isVisible, false);
+
+  // 1. Single-tap when hidden reveals HUD immediately
+  dom.stage.dispatchEvent('pointerdown', { clientX: 50, clientY: 50 });
+  dom.stage.dispatchEvent('pointerup', { clientX: 50, clientY: 50, target: dom.stage });
+  assert.equal(hud.isVisible, true);
+
+  // Synthetic click from browser is suppressed
+  dom.stage.dispatchEvent('click', { target: dom.stage });
+  assert.equal(hud.isVisible, true);
+
+  // Wait 350ms so cooldown expires and single tap is settled
+  await new Promise((r) => setTimeout(r, 360));
+  assert.equal(hud.isVisible, true);
+
+  // 2. Single-tap when visible initiates 250ms delayed hide
+  dom.stage.dispatchEvent('pointerdown', { clientX: 50, clientY: 50 });
+  dom.stage.dispatchEvent('pointerup', { clientX: 50, clientY: 50, target: dom.stage });
+
+  // Still visible immediately after tap
+  assert.equal(hud.isVisible, true);
+
+  // After 270ms, hideHUD executes
+  await new Promise((r) => setTimeout(r, 270));
+  assert.equal(hud.isVisible, false);
+
+  hud.destroy();
 });
 
 

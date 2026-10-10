@@ -33,6 +33,10 @@ const (
 	ActionPlay = "play"
 	// ActionPause pauses playback on controllable streams.
 	ActionPause = "pause"
+	// ActionRewind skips media backwards on controllable streams.
+	ActionRewind = "rewind"
+	// ActionFastForward skips media forwards on controllable streams.
+	ActionFastForward = "fast_forward"
 
 	// DefaultTemporaryTimeoutSeconds is the fallback auto-dismiss timeout for temporary streams.
 	DefaultTemporaryTimeoutSeconds = 45
@@ -48,7 +52,7 @@ var (
 	// ErrInvalidStream indicates missing or malformed stream parameters.
 	ErrInvalidStream = errors.New("invalid stream: id and stream_url are required")
 	// ErrInvalidAction indicates an unsupported transport action.
-	ErrInvalidAction = errors.New("invalid action: must be toggle_playback, play, or pause")
+	ErrInvalidAction = errors.New("invalid action: must be toggle_playback, play, pause, rewind, or fast_forward")
 	// ErrInvalidPlayerState indicates an unsupported player transport state.
 	ErrInvalidPlayerState = errors.New("invalid player_state: must be playing, paused, or buffering")
 )
