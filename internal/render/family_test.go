@@ -2674,11 +2674,11 @@ func TestBuildFamilyCombinedData_NilSafetyAndAggregation(t *testing.T) {
 	if res["range_end"] != "2026-10-11" {
 		t.Errorf("expected range_end 2026-10-11, got %v", res["range_end"])
 	}
-	if res["cached_range_start"] != "2026-09-28" {
-		t.Errorf("expected cached_range_start 2026-09-28, got %v", res["cached_range_start"])
+	if res["cached_range_start"] != "2026-07-12" {
+		t.Errorf("expected cached_range_start 2026-07-12, got %v", res["cached_range_start"])
 	}
-	if res["cached_range_end"] != "2026-11-08" {
-		t.Errorf("expected cached_range_end 2026-11-08, got %v", res["cached_range_end"])
+	if res["cached_range_end"] != "2027-04-08" {
+		t.Errorf("expected cached_range_end 2027-04-08, got %v", res["cached_range_end"])
 	}
 
 	// 3. Helper registration
@@ -2840,5 +2840,24 @@ func TestBuildFamilyCombinedData_RollingWindowBounds(t *testing.T) {
 	}
 	if resDay["cached_range_end"] != expectedEnd {
 		t.Errorf("expected dayView cached_range_end %s, got %v", expectedEnd, resDay["cached_range_end"])
+	}
+
+	// Case 4: monthView present alongside weekView does not shrink rolling window bounds
+	monthView := &FamilyMonthViewModel{
+		RangeStart: "2026-09-28",
+		RangeEnd:   "2026-11-08",
+	}
+	resWithMonth := BuildFamilyCombinedData(nil, weekView, monthView, nil)
+	if resWithMonth["cached_range_start"] != expectedStart {
+		t.Errorf("expected monthView cached_range_start %s, got %v", expectedStart, resWithMonth["cached_range_start"])
+	}
+	if resWithMonth["cached_range_end"] != expectedEnd {
+		t.Errorf("expected monthView cached_range_end %s, got %v", expectedEnd, resWithMonth["cached_range_end"])
+	}
+	if resWithMonth["month_range_start"] != "2026-09-28" {
+		t.Errorf("expected month_range_start 2026-09-28, got %v", resWithMonth["month_range_start"])
+	}
+	if resWithMonth["month_range_end"] != "2026-11-08" {
+		t.Errorf("expected month_range_end 2026-11-08, got %v", resWithMonth["month_range_end"])
 	}
 }
