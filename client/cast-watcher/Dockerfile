@@ -1,4 +1,5 @@
 # syntax=docker/dockerfile:1
+# Cast-watcher daemon for Mirrormere display clients
 # Build stage: compile static Go binary using official Go 1.27 toolchain
 FROM --platform=$BUILDPLATFORM golang:1.27.1-alpine AS builder
 

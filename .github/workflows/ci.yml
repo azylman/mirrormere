@@ -59,6 +59,7 @@ jobs:
           filters: |
             mirrormere:
               - 'Dockerfile'
+              - '.dockerignore'
               - 'go.mod'
               - 'go.sum'
               - 'cmd/**'
@@ -67,6 +68,9 @@ jobs:
               - 'web/**'
               - 'Makefile'
             mirrormere-cast-watcher:
+              - '.dockerignore'
+              - 'go.mod'
+              - 'go.sum'
               - 'client/cast-watcher/**'
             mirrormere-eink-renderer:
               - 'sidecars/eink-renderer/**'
@@ -77,6 +81,9 @@ jobs:
             mirrormere-remote:
               - 'client/remote/**'
             mirrormere-hass-proxy:
+              - '.dockerignore'
+              - 'go.mod'
+              - 'go.sum'
               - 'sidecars/hass-proxy/**'
 
       - name: Compute Dynamic Build Matrix
