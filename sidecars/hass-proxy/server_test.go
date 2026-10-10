@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -211,7 +210,7 @@ func TestServer_Intent_ClientCanceled(t *testing.T) {
 	}
 }
 
-func TestServer_Intent_JSON_Match(t *testing.T) {
+func TestServer_Intent_JSONAccept_ReturnsSSE(t *testing.T) {
 	mock := &mockHAClient{
 		processFunc: func(ctx context.Context, req IntentRequest) (*IntentResponse, bool, error) {
 			return &IntentResponse{
@@ -224,6 +223,7 @@ func TestServer_Intent_JSON_Match(t *testing.T) {
 
 	payload := `{"text": "turn on kitchen light", "turn_id": "t-100"}`
 	req := httptest.NewRequest(http.MethodPost, "/intent", strings.NewReader(payload))
+	// Even with Accept: application/json, proxy returns SSE only per LAMMAS contract
 	req.Header.Set("Accept", "application/json")
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
@@ -231,16 +231,22 @@ func TestServer_Intent_JSON_Match(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200 OK, got %d", rec.Code)
 	}
-	if !strings.Contains(rec.Header().Get("Content-Type"), "application/json") {
-		t.Errorf("expected application/json content type, got %q", rec.Header().Get("Content-Type"))
+	if !strings.Contains(rec.Header().Get("Content-Type"), "text/event-stream") {
+		t.Errorf("expected text/event-stream content type, got %q", rec.Header().Get("Content-Type"))
 	}
 
-	var resp IntentResponse
-	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("failed to decode JSON response: %v", err)
+	body := rec.Body.String()
+	if !strings.Contains(body, "event: turn") || !strings.Contains(body, `"turn_id":"t-100"`) {
+		t.Errorf("missing turn event in SSE body: %s", body)
 	}
-	if resp.Intent != "action_done" || resp.Speech != "Turned on the kitchen light" {
-		t.Errorf("unexpected response content: %+v", resp)
+	if !strings.Contains(body, "event: sentence") || !strings.Contains(body, `"text":"Turned on the kitchen light"`) {
+		t.Errorf("missing sentence event in SSE body: %s", body)
+	}
+	if !strings.Contains(body, "event: reply") || !strings.Contains(body, `"reply":"Turned on the kitchen light"`) {
+		t.Errorf("missing reply event in SSE body: %s", body)
+	}
+	if !strings.Contains(body, "event: done") {
+		t.Errorf("missing done event in SSE body: %s", body)
 	}
 }
 
@@ -294,9 +300,8 @@ func TestServer_Intent_SSE_NonFlusher(t *testing.T) {
 	}
 	srv := NewServer(mock, nil)
 
-	payload := `{"text": "test fallback", "turn_id": "turn-nonflush"}`
+	payload := `{"text": "test nonflusher", "turn_id": "turn-nonflush"}`
 	req := httptest.NewRequest(http.MethodPost, "/intent", strings.NewReader(payload))
-	req.Header.Set("Accept", "text/event-stream")
 
 	writer := &nonFlusherResponseWriter{}
 	srv.ServeHTTP(writer, req)
@@ -304,8 +309,11 @@ func TestServer_Intent_SSE_NonFlusher(t *testing.T) {
 	if writer.code != http.StatusOK {
 		t.Errorf("expected 200, got %d", writer.code)
 	}
-	if !strings.Contains(string(writer.body), "Fallback response") {
-		t.Errorf("expected JSON fallback body, got %s", string(writer.body))
+	if !strings.Contains(writer.Header().Get("Content-Type"), "text/event-stream") {
+		t.Errorf("expected text/event-stream content type, got %q", writer.Header().Get("Content-Type"))
+	}
+	if !strings.Contains(string(writer.body), "event: sentence") || !strings.Contains(string(writer.body), "Fallback response") {
+		t.Errorf("expected SSE body with sentence event, got %s", string(writer.body))
 	}
 }
 

@@ -11,7 +11,7 @@ This sidecar acts as a high-performance adapter between the Mirrormere voice hub
 - Maps inbound payloads to Home Assistant's `/api/conversation/process` endpoint.
 - Evaluates Home Assistant responses:
   - If Home Assistant returns an error or `no_intent_match`, returns **HTTP 204 No Content** (prompting the hub to seamlessly fall back to the brain).
-  - If Home Assistant executes the intent, returns **HTTP 200 OK** with JSON `{intent, speech}` or streams Server-Sent Events (`turn`, `sentence`, `reply`, `done`) if `Accept: text/event-stream` is requested.
+  - If Home Assistant executes the intent, returns **HTTP 200 OK** streaming Server-Sent Events (`turn`, `sentence`, `reply`, `done`).
 - Exposes `GET /healthz` returning HTTP 200 for Docker, Compose, and Nomad health probes.
 
 ## Configuration
@@ -44,7 +44,7 @@ homeassistant:
 
 **Headers:**
 - `Content-Type: application/json`
-- `Accept: application/json` (or `Accept: text/event-stream`)
+- `Accept: text/event-stream` (optional; proxy streams SSE on match regardless of Accept header)
 
 **Request Body:**
 ```json
@@ -59,13 +59,6 @@ homeassistant:
 
 **Responses:**
 - `204 No Content`: No intent matched in Home Assistant or upstream error (caller falls back to brain).
-- `200 OK (application/json)`:
-  ```json
-  {
-    "intent": "action_done",
-    "speech": "Turned off kitchen lights"
-  }
-  ```
 - `200 OK (text/event-stream)`:
   ```http
   event: turn
