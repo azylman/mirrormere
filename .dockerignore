@@ -13,7 +13,7 @@ docs/
 *.md
 
 # Clients & local deployment configs
-clients/
+client/
 deploy/
 
 # Developer tooling & configurations

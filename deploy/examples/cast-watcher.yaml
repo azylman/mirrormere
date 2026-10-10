@@ -4,7 +4,7 @@
 # display between dashboard HUD and WebRTC live stream.
 # NOTE: Hardware IPs and endpoints are examples for single-host Docker bridge topology
 # (deploy/compose.yml) where container service names resolve via Docker DNS.
-# For client kiosk host networking (deploy/examples/compose.client.yaml), see cast-watcher.client.yaml.
+# For client display host networking (deploy/examples/compose.client.yaml), see cast-watcher.client.yaml.
 
 chromecast_addr: "10.0.0.50:8009"
 core_url: "http://mirrormere-core:8080"

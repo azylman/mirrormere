@@ -1,0 +1,7 @@
+[Unit]
+Description=Mirrormere Display Nightly Memory Refresh (Issue #257)
+After=mirrormere-display.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/mirrormere/display/dpms.sh night-restart

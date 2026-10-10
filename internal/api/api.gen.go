@@ -311,7 +311,7 @@ type PostVoiceInteractMultipartBody struct {
 	// Audio Recorded 16 kHz mono PCM WAV audio file
 	Audio openapi_types.File `json:"audio"`
 
-	// NodeId Originating kiosk node identifier
+	// NodeId Originating display node identifier
 	NodeId *string `json:"node_id,omitempty"`
 
 	// SessionId Optional session or interaction correlation ID

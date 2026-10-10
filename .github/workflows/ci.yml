@@ -67,15 +67,15 @@ jobs:
               - 'web/**'
               - 'Makefile'
             mirrormere-cast-watcher:
-              - 'sidecars/cast-watcher/**'
+              - 'client/cast-watcher/**'
             mirrormere-eink-renderer:
               - 'sidecars/eink-renderer/**'
             mirrormere-voice-fingerprinter:
               - 'sidecars/voice-fingerprinter/**'
             mirrormere-ear:
-              - 'clients/ear/**'
+              - 'client/ear/**'
             mirrormere-remote:
-              - 'sidecars/remote/**'
+              - 'client/remote/**'
             mirrormere-hass-proxy:
               - 'sidecars/hass-proxy/**'
 
@@ -95,11 +95,11 @@ jobs:
 
             const catalog = [
               { name: "mirrormere", context: ".", file: "./Dockerfile" },
-              { name: "mirrormere-cast-watcher", context: ".", file: "./sidecars/cast-watcher/Dockerfile" },
+              { name: "mirrormere-cast-watcher", context: ".", file: "./client/cast-watcher/Dockerfile" },
               { name: "mirrormere-eink-renderer", context: "./sidecars/eink-renderer", file: "./sidecars/eink-renderer/Dockerfile" },
               { name: "mirrormere-voice-fingerprinter", context: "./sidecars/voice-fingerprinter", file: "./sidecars/voice-fingerprinter/Dockerfile" },
-              { name: "mirrormere-ear", context: "./clients/ear", file: "./clients/ear/Dockerfile" },
-              { name: "mirrormere-remote", context: "./sidecars/remote", file: "./sidecars/remote/Dockerfile" },
+              { name: "mirrormere-ear", context: "./client/ear", file: "./client/ear/Dockerfile" },
+              { name: "mirrormere-remote", context: "./client/remote", file: "./client/remote/Dockerfile" },
               { name: "mirrormere-hass-proxy", context: ".", file: "./sidecars/hass-proxy/Dockerfile" }
             ];
 

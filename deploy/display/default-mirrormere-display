@@ -1,0 +1,45 @@
+# /etc/default/mirrormere-display
+# Configuration overrides for the Mirrormere Wayland Touch Display
+
+# Target display URL for Google Chrome
+MIRRORMERE_DISPLAY_URL=http://localhost:8080/display
+
+# Touch display cursor suppression (appends ?hide_cursor=true to display URL when true)
+MIRRORMERE_HIDE_CURSOR=true
+
+# Voice node id of this device (same as node_id in the ear's voice.yaml).
+# Leave empty to read it from /etc/mirrormere/voice.yaml. It is appended to the
+# display URL as ?node=<id> so the chat-log widget shows this device's conversation.
+MIRRORMERE_NODE_ID=
+
+# Active display output (leave empty for automatic detection)
+# Examples: HDMI-A-1, DP-1
+MIRRORMERE_OUTPUT=
+
+# Display scaling factor (default: 1.0; set to 2.0 for HiDPI 4K displays)
+MIRRORMERE_SCALE_FACTOR=1.0
+
+# Target display brightness level for ddcutil (0-100, default: 100)
+MIRRORMERE_DDC_BRIGHTNESS=100
+
+# Daytime idle timeout in seconds before blanking (default: 600 = 10 minutes)
+MIRRORMERE_IDLE_TIMEOUT=600
+
+# Display username (supports MIRRORMERE_KIOSK_USER as backward-compatible fallback)
+MIRRORMERE_DISPLAY_USER=display
+
+# Chrome remote debugging port (default: 9222, set empty to disable)
+MIRRORMERE_REMOTE_DEBUGGING_PORT=9222
+
+# Optional DRM device override for wlroots (e.g. /dev/dri/card1)
+# WLR_DRM_DEVICES=
+
+# Optional libinput suppression for headless testing (WARNING: setting to 1 disables all touchscreens, keyboards, and mice)
+# WLR_LIBINPUT_NO_DEVICES=
+
+# Wlroots compositor stability overrides (prevents Intel KMS deadlocks and GPU fence collisions)
+# Disable direct scanout to force GLES composition and prevent KMS plane fence lockups
+WLR_SCENE_DISABLE_DIRECT_SCANOUT=1
+
+# Disable atomic modesetting to bypass wlroots EBUSY deadlock on atomic commits
+WLR_DRM_NO_ATOMIC=1
