@@ -1459,3 +1459,472 @@ func TestHelpers_DayViewAndAddSub(t *testing.T) {
 	}
 }
 
+func TestBuildFamilyMonthView_WindowComputationAndWeekStarts(t *testing.T) {
+	t.Parallel()
+	dims := domain.NewDimension(6, 2)
+	now := time.Date(2026, 10, 10, 14, 0, 0, 0, time.UTC)
+
+	t.Run("sunday start default (October 2026)", func(t *testing.T) {
+		t.Parallel()
+		cfg := baseFamilyConfig()
+		cfg["week_starts"] = "sunday"
+
+		view, err := BuildFamilyMonthView(provider.CalendarSnapshot{}, cfg, dims, now)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if len(view.Days) != 42 {
+			t.Fatalf("expected 42 days in month grid, got %d", len(view.Days))
+		}
+		if len(view.Weeks) != 6 {
+			t.Fatalf("expected 6 weeks in month grid, got %d", len(view.Weeks))
+		}
+		for i, w := range view.Weeks {
+			if w.WeekNumber != i+1 {
+				t.Errorf("expected week number %d, got %d", i+1, w.WeekNumber)
+			}
+			if len(w.Days) != 7 {
+				t.Fatalf("expected 7 days in week %d, got %d", i+1, len(w.Days))
+			}
+		}
+
+		// Oct 1, 2026 is Thursday. Sunday start means window starts on Sunday Sep 27, 2026.
+		if view.RangeStart != "2026-09-27" {
+			t.Errorf("expected RangeStart 2026-09-27, got %s", view.RangeStart)
+		}
+		// 42 days from Sep 27 ends on Saturday Nov 7, 2026.
+		if view.RangeEnd != "2026-11-07" {
+			t.Errorf("expected RangeEnd 2026-11-07, got %s", view.RangeEnd)
+		}
+		if view.MonthLabel != "October 2026" {
+			t.Errorf("expected MonthLabel 'October 2026', got %s", view.MonthLabel)
+		}
+		if view.MonthName != "October" || view.Year != 2026 || view.Month != 10 {
+			t.Errorf("unexpected month/year fields: %+v", view)
+		}
+
+		expectedHeaders := []string{"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"}
+		if len(view.WeekdayHeaders) != 7 {
+			t.Fatalf("expected 7 headers, got %d", len(view.WeekdayHeaders))
+		}
+		for i, h := range expectedHeaders {
+			if view.WeekdayHeaders[i] != h {
+				t.Errorf("header %d: expected %s, got %s", i, h, view.WeekdayHeaders[i])
+			}
+		}
+
+		// Verify first day is Sunday Sep 27
+		firstDay := view.Days[0]
+		if firstDay.Date != "2026-09-27" || firstDay.WeekdayAbbr != "Sun" || firstDay.IsCurrentMonth {
+			t.Errorf("unexpected first day: %+v", firstDay)
+		}
+	})
+
+	t.Run("monday start (October 2026)", func(t *testing.T) {
+		t.Parallel()
+		cfg := baseFamilyConfig()
+		cfg["week_starts"] = "monday"
+
+		view, err := BuildFamilyMonthView(provider.CalendarSnapshot{}, cfg, dims, now)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if len(view.Days) != 42 {
+			t.Fatalf("expected 42 days in month grid, got %d", len(view.Days))
+		}
+		// Oct 1, 2026 is Thursday. Monday start means window starts on Monday Sep 28, 2026.
+		if view.RangeStart != "2026-09-28" {
+			t.Errorf("expected RangeStart 2026-09-28, got %s", view.RangeStart)
+		}
+		// 42 days from Sep 28 ends on Sunday Nov 8, 2026.
+		if view.RangeEnd != "2026-11-08" {
+			t.Errorf("expected RangeEnd 2026-11-08, got %s", view.RangeEnd)
+		}
+
+		expectedHeaders := []string{"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"}
+		for i, h := range expectedHeaders {
+			if view.WeekdayHeaders[i] != h {
+				t.Errorf("header %d: expected %s, got %s", i, h, view.WeekdayHeaders[i])
+			}
+		}
+
+		// First day is Monday Sep 28
+		firstDay := view.Days[0]
+		if firstDay.Date != "2026-09-28" || firstDay.WeekdayAbbr != "Mon" || firstDay.IsCurrentMonth {
+			t.Errorf("unexpected first day: %+v", firstDay)
+		}
+	})
+}
+
+func TestBuildFamilyMonthView_LeapYearAndMonthBoundaries(t *testing.T) {
+	t.Parallel()
+	dims := domain.NewDimension(6, 2)
+	now := time.Date(2024, 2, 15, 10, 0, 0, 0, time.UTC)
+
+	t.Run("february 2024 leap year 29 days", func(t *testing.T) {
+		t.Parallel()
+		cfg := baseFamilyConfig()
+		cfg["month"] = "2024-02"
+		cfg["week_starts"] = "sunday"
+
+		view, err := BuildFamilyMonthView(provider.CalendarSnapshot{}, cfg, dims, now)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if len(view.Days) != 42 {
+			t.Fatalf("expected 42 days, got %d", len(view.Days))
+		}
+
+		currentMonthCount := 0
+		var feb29 *FamilyMonthDay
+		var mar1 *FamilyMonthDay
+		for i := range view.Days {
+			d := &view.Days[i]
+			if d.IsCurrentMonth {
+				currentMonthCount++
+			}
+			if d.Date == "2024-02-29" {
+				feb29 = d
+			}
+			if d.Date == "2024-03-01" {
+				mar1 = d
+			}
+		}
+
+		if currentMonthCount != 29 {
+			t.Errorf("expected 29 current month days for Feb 2024, got %d", currentMonthCount)
+		}
+		if feb29 == nil || !feb29.IsCurrentMonth {
+			t.Errorf("expected Feb 29 to be present and marked as IsCurrentMonth: %+v", feb29)
+		}
+		if mar1 == nil || mar1.IsCurrentMonth {
+			t.Errorf("expected Mar 1 to be marked as NOT IsCurrentMonth: %+v", mar1)
+		}
+	})
+
+	t.Run("year boundary transition (January 2025)", func(t *testing.T) {
+		t.Parallel()
+		cfg := baseFamilyConfig()
+		cfg["date"] = "2025-01-10"
+		cfg["week_starts"] = "sunday"
+
+		view, err := BuildFamilyMonthView(provider.CalendarSnapshot{}, cfg, dims, now)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if view.RangeStart != "2024-12-29" {
+			t.Errorf("expected RangeStart 2024-12-29, got %s", view.RangeStart)
+		}
+		if view.Days[0].Date != "2024-12-29" || view.Days[0].IsCurrentMonth {
+			t.Errorf("expected Dec 29 to be IsCurrentMonth false, got %+v", view.Days[0])
+		}
+		if view.MonthLabel != "January 2025" {
+			t.Errorf("expected January 2025, got %s", view.MonthLabel)
+		}
+	})
+}
+
+func TestBuildFamilyMonthView_MemberDotLists(t *testing.T) {
+	t.Parallel()
+	dims := domain.NewDimension(6, 2)
+	now := time.Date(2026, 10, 10, 10, 0, 0, 0, time.UTC)
+
+	cfg := map[string]any{
+		"shared_color": "#123456",
+		"members": []any{
+			map[string]any{"name": "Alice", "color": "#E11D48", "initial": "A", "calendars": []any{"alice-cal"}},
+			map[string]any{"name": "Bob", "color": "#2563EB", "initial": "B", "calendars": []any{"bob-cal"}},
+			map[string]any{"name": "Charlie", "color": "#16A34A", "initial": "C", "calendars": []any{"charlie-cal"}},
+		},
+		"calendars": []any{
+			map[string]any{"name": "alice-cal"},
+			map[string]any{"name": "bob-cal"},
+			map[string]any{"name": "charlie-cal"},
+			map[string]any{"name": "shared-family"},
+			map[string]any{"name": "unclaimed-cal"},
+		},
+	}
+
+	snap := provider.CalendarSnapshot{
+		Events: []provider.CalendarEvent{
+			{ID: "e1", CalendarName: "alice-cal", Title: "Alice Event 1", Start: "2026-10-10T09:00:00Z", End: "2026-10-10T10:00:00Z"},
+			{ID: "e2", CalendarName: "alice-cal", Title: "Alice Event 2", Start: "2026-10-10T14:00:00Z", End: "2026-10-10T15:00:00Z"},
+			{ID: "e3", CalendarName: "charlie-cal", Title: "Charlie Soccer", Start: "2026-10-10T11:00:00Z", End: "2026-10-10T12:00:00Z"},
+			{ID: "e4", CalendarName: "alice-cal", Title: "Family Brunch", Start: "2026-10-11T10:00:00Z", End: "2026-10-11T12:00:00Z"},
+			{ID: "e4", CalendarName: "bob-cal", Title: "Family Brunch", Start: "2026-10-11T10:00:00Z", End: "2026-10-11T12:00:00Z"},
+			{ID: "e5", CalendarName: "unclaimed-cal", Title: "Public Holiday", AllDay: true, Start: "2026-10-12", End: "2026-10-12"},
+		},
+	}
+
+	view, err := BuildFamilyMonthView(snap, cfg, dims, now)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	dayMap := make(map[string]FamilyMonthDay)
+	for _, d := range view.Days {
+		dayMap[d.Date] = d
+	}
+
+	d10 := dayMap["2026-10-10"]
+	if d10.EventsCount != 3 {
+		t.Errorf("expected 3 events on Oct 10, got %d", d10.EventsCount)
+	}
+	if len(d10.Dots) != 2 {
+		t.Fatalf("expected 2 dots on Oct 10 (Alice, Charlie), got %d: %+v", len(d10.Dots), d10.Dots)
+	}
+	if d10.Dots[0].Name != "Alice" || d10.Dots[0].Color != "#E11D48" {
+		t.Errorf("expected first dot to be Alice, got %+v", d10.Dots[0])
+	}
+	if d10.Dots[1].Name != "Charlie" || d10.Dots[1].Color != "#16A34A" {
+		t.Errorf("expected second dot to be Charlie, got %+v", d10.Dots[1])
+	}
+
+	d11 := dayMap["2026-10-11"]
+	if len(d11.Dots) != 2 {
+		t.Fatalf("expected 2 dots on Oct 11, got %d: %+v", len(d11.Dots), d11.Dots)
+	}
+	if d11.Dots[0].Name != "Alice" || d11.Dots[1].Name != "Bob" {
+		t.Errorf("expected dots [Alice, Bob], got [%s, %s]", d11.Dots[0].Name, d11.Dots[1].Name)
+	}
+
+	d12 := dayMap["2026-10-12"]
+	if len(d12.Dots) != 1 {
+		t.Fatalf("expected 1 dot on Oct 12, got %d: %+v", len(d12.Dots), d12.Dots)
+	}
+	if !d12.Dots[0].IsShared || d12.Dots[0].Name != "Shared" || d12.Dots[0].Color != "#123456" {
+		t.Errorf("expected Shared dot with #123456, got %+v", d12.Dots[0])
+	}
+
+	d13 := dayMap["2026-10-13"]
+	if len(d13.Dots) != 0 || d13.EventsCount != 0 {
+		t.Errorf("expected 0 dots on empty day Oct 13, got %d dots, %d events", len(d13.Dots), d13.EventsCount)
+	}
+}
+
+func TestBuildFamilyMonthView_DensityAdaptation(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 10, 10, 10, 0, 0, 0, time.UTC)
+	cfg := baseFamilyConfig()
+
+	snap := provider.CalendarSnapshot{
+		Events: []provider.CalendarEvent{
+			{ID: "e_timed", CalendarName: "alex-cal", Title: "Later Timed Event", Start: "2026-10-15T15:00:00Z", End: "2026-10-15T16:00:00Z"},
+			{ID: "e_early", CalendarName: "alex-cal", Title: "Earlier Timed Event", Start: "2026-10-15T09:00:00Z", End: "2026-10-15T10:00:00Z"},
+			{ID: "e_allday", CalendarName: "alex-cal", Title: "All Day Conference", AllDay: true, Start: "2026-10-15", End: "2026-10-15"},
+		},
+	}
+
+	t.Run("6x2 dimension resolves first event title (all-day takes priority)", func(t *testing.T) {
+		t.Parallel()
+		dims6x2 := domain.NewDimension(6, 2)
+		view, err := BuildFamilyMonthView(snap, cfg, dims6x2, now)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		for _, d := range view.Days {
+			if d.Date == "2026-10-15" {
+				if d.EventTitle != "All Day Conference" {
+					t.Errorf("expected EventTitle 'All Day Conference', got %q", d.EventTitle)
+				}
+				if d.EventsCount != 3 {
+					t.Errorf("expected 3 events, got %d", d.EventsCount)
+				}
+			}
+		}
+	})
+
+	t.Run("4x2 dimension omits event titles (dots-only)", func(t *testing.T) {
+		t.Parallel()
+		dims4x2 := domain.NewDimension(4, 2)
+		view, err := BuildFamilyMonthView(snap, cfg, dims4x2, now)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		for _, d := range view.Days {
+			if d.Date == "2026-10-15" {
+				if d.EventTitle != "" {
+					t.Errorf("expected empty EventTitle on 4x2, got %q", d.EventTitle)
+				}
+				if len(d.Dots) == 0 {
+					t.Errorf("expected dots to still be populated on 4x2")
+				}
+			}
+		}
+	})
+}
+
+func TestBuildFamilyMonthView_TodayAndWeekendFlags(t *testing.T) {
+	t.Parallel()
+	dims := domain.NewDimension(6, 2)
+	now := time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)
+	cfg := baseFamilyConfig()
+
+	view, err := BuildFamilyMonthView(provider.CalendarSnapshot{}, cfg, dims, now)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	for _, d := range view.Days {
+		if d.Date == "2026-10-10" {
+			if !d.IsToday {
+				t.Errorf("expected Oct 10 to have IsToday == true")
+			}
+			if !d.IsWeekend {
+				t.Errorf("expected Saturday Oct 10 to have IsWeekend == true")
+			}
+		} else {
+			if d.IsToday {
+				t.Errorf("expected date %s to have IsToday == false", d.Date)
+			}
+		}
+
+		if d.WeekdayAbbr == "Sat" || d.WeekdayAbbr == "Sun" {
+			if !d.IsWeekend {
+				t.Errorf("expected %s (%s) to have IsWeekend == true", d.Date, d.WeekdayAbbr)
+			}
+		} else {
+			if d.IsWeekend {
+				t.Errorf("expected %s (%s) to have IsWeekend == false", d.Date, d.WeekdayAbbr)
+			}
+		}
+	}
+}
+
+func TestBuildFamilyMonthView_ErrorAndEdgeCases(t *testing.T) {
+	t.Parallel()
+	dims := domain.NewDimension(6, 2)
+	now := time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)
+
+	t.Run("invalid member config returns error", func(t *testing.T) {
+		t.Parallel()
+		badCfg := map[string]any{
+			"members": []any{
+				map[string]any{"name": "NoColor"},
+			},
+		}
+		if _, err := BuildFamilyMonthView(provider.CalendarSnapshot{}, badCfg, dims, now); err == nil {
+			t.Fatalf("expected error on missing member color")
+		}
+	})
+
+	t.Run("private calendar redaction in month view", func(t *testing.T) {
+		t.Parallel()
+		cfg := baseFamilyConfig()
+		cfg["calendars"] = []any{
+			map[string]any{"name": "alex-cal", "private": true},
+		}
+		snap := provider.CalendarSnapshot{
+			Events: []provider.CalendarEvent{
+				{ID: "e_priv", CalendarName: "alex-cal", Title: "Secret Meeting", Start: "2026-10-10T10:00:00Z", End: "2026-10-10T11:00:00Z"},
+			},
+		}
+		view, err := BuildFamilyMonthView(snap, cfg, dims, now)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		for _, d := range view.Days {
+			if d.Date == "2026-10-10" {
+				if d.EventTitle != "Busy" {
+					t.Errorf("expected redacted title 'Busy', got %q", d.EventTitle)
+				}
+			}
+		}
+	})
+
+	t.Run("multi-day event spanning across month window", func(t *testing.T) {
+		t.Parallel()
+		cfg := baseFamilyConfig()
+		snap := provider.CalendarSnapshot{
+			Events: []provider.CalendarEvent{
+				{ID: "e_vacation", CalendarName: "alex-personal", Title: "Fall Break", AllDay: true, Start: "2026-10-05", End: "2026-10-08"},
+			},
+		}
+		view, err := BuildFamilyMonthView(snap, cfg, dims, now)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		spannedDates := []string{"2026-10-05", "2026-10-06", "2026-10-07", "2026-10-08"}
+		dayMap := make(map[string]FamilyMonthDay)
+		for _, d := range view.Days {
+			dayMap[d.Date] = d
+		}
+		for _, dateStr := range spannedDates {
+			d := dayMap[dateStr]
+			if d.EventsCount != 1 || d.EventTitle != "Fall Break" {
+				t.Errorf("expected Fall Break on %s, got %+v", dateStr, d)
+			}
+			if len(d.Dots) != 1 || d.Dots[0].Name != "Alex" {
+				t.Errorf("expected Alex dot on %s, got %+v", dateStr, d.Dots)
+			}
+		}
+	})
+
+	t.Run("event outside window is ignored", func(t *testing.T) {
+		t.Parallel()
+		cfg := baseFamilyConfig()
+		snap := provider.CalendarSnapshot{
+			Events: []provider.CalendarEvent{
+				{ID: "e_far_future", CalendarName: "alex-cal", Title: "Far Future", Start: "2027-10-10T10:00:00Z", End: "2027-10-10T11:00:00Z"},
+			},
+		}
+		view, err := BuildFamilyMonthView(snap, cfg, dims, now)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		for _, d := range view.Days {
+			if d.EventsCount > 0 {
+				t.Errorf("expected 0 events in window, got %d on %s", d.EventsCount, d.Date)
+			}
+		}
+	})
+}
+
+func TestHelpers_CalendarFamilyMonthView(t *testing.T) {
+	t.Parallel()
+	fm := StandardFuncMap(time.Now)
+
+	fn, ok := fm["calendarFamilyMonthView"].(func(any, map[string]any, domain.Dimension) (*FamilyMonthViewModel, error))
+	if !ok {
+		t.Fatalf("expected calendarFamilyMonthView in funcMap")
+	}
+	view, err := fn(provider.CalendarSnapshot{}, baseFamilyConfig(), domain.NewDimension(6, 2))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if view == nil || len(view.Days) != 42 {
+		t.Fatalf("expected 42 days in month view, got %+v", view)
+	}
+
+	monthViewFn, ok := fm["monthView"].(func(any, map[string]any, domain.Dimension) (*FamilyMonthViewModel, error))
+	if !ok {
+		t.Fatalf("expected monthView in funcMap")
+	}
+	if _, err := monthViewFn(provider.CalendarSnapshot{}, baseFamilyConfig(), domain.NewDimension(6, 2)); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	isMonthViewFn, ok := fm["isMonthView"].(func(map[string]any) bool)
+	if !ok {
+		t.Fatalf("expected isMonthView in funcMap")
+	}
+	if !isMonthViewFn(map[string]any{"default_view": "month"}) {
+		t.Errorf("expected isMonthView to return true for 'month'")
+	}
+	if !isMonthViewFn(map[string]any{"default_view": "MONTH"}) {
+		t.Errorf("expected isMonthView to return true for 'MONTH'")
+	}
+	if isMonthViewFn(map[string]any{"default_view": "week"}) {
+		t.Errorf("expected isMonthView to return false for 'week'")
+	}
+	if isMonthViewFn(nil) {
+		t.Errorf("expected isMonthView to return false for nil config")
+	}
+}
+
