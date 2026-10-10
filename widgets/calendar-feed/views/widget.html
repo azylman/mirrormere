@@ -1,4 +1,28 @@
 <div class="widget-card widget-calendar widget-calendar-feed" data-widget-id="{{ .ID }}" data-widget-type="{{ .Type }}" style="grid-column: span {{ .Dimensions.Cols }}; grid-row: span {{ .Dimensions.Rows }};">
+  <div class="calendar-feed-header">
+    <div class="calendar-header-title-row">
+      <div class="calendar-header-icon-box">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="calendar-header-icon">
+          <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+          <line x1="16" y1="2" x2="16" y2="6"></line>
+          <line x1="8" y1="2" x2="8" y2="6"></line>
+          <line x1="3" y1="10" x2="21" y2="10"></line>
+        </svg>
+      </div>
+      <h2 class="calendar-header-title">{{ if .Config.title }}{{ .Config.title }}{{ else if .Config.name }}{{ .Config.name }}{{ else }}Household Agenda{{ end }}</h2>
+    </div>
+    {{ if .Config.calendars }}
+    <div class="calendar-header-chips">
+      <div class="calendar-avatar-stack">
+        {{ range .Config.calendars }}
+          <span class="calendar-avatar-dot" title="{{ .name }}" style="background-color: {{ if .color }}{{ .color }}{{ else }}var(--mm-coral){{ end }};"></span>
+        {{ end }}
+      </div>
+      <span class="calendar-count-badge">{{ len .Config.calendars }} {{ if eq (len .Config.calendars) 1 }}Calendar{{ else }}Calendars{{ end }}</span>
+    </div>
+    {{ end }}
+  </div>
+
   {{ if .Data }}
     {{ $events := calendarFeedEvents .Data }}
     {{ if and $events (gt (len $events) 0) }}
@@ -8,25 +32,38 @@
         {{ $date := formatDate "2006-01-02" .Start }}
         {{ if ne $date $prevDate }}
           {{ $prevDate = $date }}
-          <div class="calendar-day-header">
-            <span class="day-rel">{{ relDate .Start }}</span>
-            <span class="day-full">{{ formatDate "Monday, Jan 2" .Start }}</span>
+          {{ $rel := relDate .Start }}
+          <div class="calendar-day-divider">
+            <span class="day-pill-badge {{ if eq $rel "Today" }}day-pill-today{{ else if eq $rel "Tomorrow" }}day-pill-tomorrow{{ else }}day-pill-future{{ end }}">
+              {{ if eq $rel "Today" }}
+                TODAY • {{ formatDate "Jan 2" .Start }}
+              {{ else if eq $rel "Tomorrow" }}
+                TOMORROW • {{ formatDate "Jan 2" .Start }}
+              {{ else }}
+                {{ formatDate "Monday • Jan 2" .Start }}
+              {{ end }}
+            </span>
+            <div class="day-divider-line"></div>
           </div>
         {{ end }}
         <div class="calendar-event-item">
           <div class="event-time-col">
-            <span class="event-time-chip">
-              {{ if .AllDay }}All Day{{ else }}{{ formatTime "15:04" .Start }}{{ end }}
-            </span>
+            {{ if .AllDay }}
+              <span class="event-time-chip event-time-allday">All Day</span>
+            {{ else }}
+              <span class="event-time-val">{{ formatTime "3:04" .Start }}</span>
+              <span class="event-time-ampm">{{ formatTime "PM" .Start }}</span>
+            {{ end }}
           </div>
           <div class="event-details-col">
-            <span class="event-title">{{ .Title }}</span>
-            <div class="event-meta-row">
-              {{ if .CalendarName }}<span>{{ .CalendarName }}</span>{{ end }}
-              {{ if and .CalendarName .Location }}<span>•</span>{{ end }}
-              {{ if .Location }}<span>{{ .Location }}</span>{{ end }}
+            <div class="event-title-row">
+              <span class="event-title" title="{{ .Title }}">{{ .Title }}</span>
+              {{ if .CalendarName }}
+                <span class="event-calendar-pill" {{ if .Color }}style="--pill-color: {{ .Color }}; background: color-mix(in srgb, {{ .Color }} 12%, white); color: {{ .Color }};"{{ end }}>{{ .CalendarName }}</span>
+              {{ end }}
             </div>
           </div>
+          <span class="event-accent-dot" {{ if .Color }}style="background-color: {{ .Color }};"{{ end }}></span>
         </div>
       {{ end }}
     </div>
