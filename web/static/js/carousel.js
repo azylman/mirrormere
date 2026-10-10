@@ -340,6 +340,7 @@ class PhotoCarouselInstance {
 
     this.currentImg = element.querySelector('.photo-current');
     this.nextImg = element.querySelector('.photo-next');
+    this.fit = element.dataset.fit || 'contain';
 
     // Update first image with dynamic DOM sizing if container is measured
     this.updateCurrentSizing();
@@ -357,7 +358,8 @@ class PhotoCarouselInstance {
     let targetHeight = Math.round((rect.height || 640) * dpr);
     if (targetWidth <= 0) targetWidth = 960;
     if (targetHeight <= 0) targetHeight = 640;
-    return `${rawURL}=w${targetWidth}-h${targetHeight}-c`;
+    const cropSuffix = this.fit === 'cover' ? '-c' : '';
+    return `${rawURL}=w${targetWidth}-h${targetHeight}${cropSuffix}`;
   }
 
   updateCurrentSizing() {

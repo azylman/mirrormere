@@ -1,9 +1,9 @@
-<div class="widget-card widget-photo-carousel dither" data-widget-id="{{ .ID }}" data-widget-type="{{ .Type }}" style="grid-column: span {{ .Dimensions.Cols }}; grid-row: span {{ .Dimensions.Rows }};">
+<div class="widget-card widget-photo-carousel dither" data-widget-id="{{ .ID }}" data-widget-type="{{ .Type }}" data-fit="{{ if eq .Config.fit "cover" }}cover{{ else }}contain{{ end }}" style="grid-column: span {{ .Dimensions.Cols }}; grid-row: span {{ .Dimensions.Rows }};">
   {{ if .Data }}
     {{ if and .Data.Photos (gt (len .Data.Photos) 0) }}
       {{ $first := index .Data.Photos 0 }}
       <div class="photo-viewport dither">
-        <img class="photo-layer photo-current dither" src="{{ $first.URL }}=w960-h640-c" alt="Photo" />
+        <img class="photo-layer photo-current dither" src="{{ $first.URL }}=w960-h640{{ if eq .Config.fit "cover" }}-c{{ end }}" alt="Photo" />
         <img class="photo-layer photo-next dither" src="" alt="Photo" style="opacity: 0;" />
       </div>
       <script type="application/json" class="photo-carousel-data">

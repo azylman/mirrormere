@@ -34,6 +34,9 @@ config_schema:
       maximum: 500
     shuffle:
       type: boolean
+    fit:
+      type: string
+      enum: ["contain", "cover"]
     image_size:
       type: array
       items:
