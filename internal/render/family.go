@@ -1037,12 +1037,13 @@ func dispatchDayEvent(col *FamilyDayColumn, ev FamilyDayEvent) {
 
 // FamilyMonthDot represents a colored dot indicator for a member with events on a day in Month view.
 type FamilyMonthDot struct {
-	Name      string `json:"name"`
-	Initial   string `json:"initial"`
-	Color     string `json:"color"`
-	TextColor string `json:"text_color"`
-	Pattern   string `json:"pattern"`
-	IsShared  bool   `json:"is_shared"`
+	Name        string `json:"name"`
+	Initial     string `json:"initial"`
+	Color       string `json:"color"`
+	TextColor   string `json:"text_color"`
+	Pattern     string `json:"pattern"`
+	IsShared    bool   `json:"is_shared"`
+	MemberIndex int    `json:"member_index"`
 }
 
 // FamilyMonthDay represents a single calendar cell in the 42-day Month view grid.
@@ -1285,26 +1286,28 @@ func BuildFamilyMonthView(data any, cfg map[string]any, dims domain.Dimension, n
 
 		memberSet := dayMembersMap[idx]
 		var dots []FamilyMonthDot
-		for _, m := range members {
+		for mIdx, m := range members {
 			if memberSet != nil && memberSet[m.Name] {
 				dots = append(dots, FamilyMonthDot{
-					Name:      m.Name,
-					Initial:   m.Initial,
-					Color:     m.Color,
-					TextColor: m.TextColor,
-					Pattern:   m.Pattern,
-					IsShared:  false,
+					Name:        m.Name,
+					Initial:     m.Initial,
+					Color:       m.Color,
+					TextColor:   m.TextColor,
+					Pattern:     m.Pattern,
+					IsShared:    false,
+					MemberIndex: mIdx,
 				})
 			}
 		}
 		if dayUnclaimedMap[idx] {
 			dots = append(dots, FamilyMonthDot{
-				Name:      "Shared",
-				Initial:   "S",
-				Color:     sharedColor,
-				TextColor: contrastTextColor(sharedColor),
-				Pattern:   "solid",
-				IsShared:  true,
+				Name:        "Shared",
+				Initial:     "S",
+				Color:       sharedColor,
+				TextColor:   contrastTextColor(sharedColor),
+				Pattern:     "solid",
+				IsShared:    true,
+				MemberIndex: -1,
 			})
 		}
 		days[idx].Dots = dots

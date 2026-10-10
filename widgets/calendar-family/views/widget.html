@@ -13,6 +13,19 @@
     border: 2px dashed rgba(255, 255, 255, 0.7) !important;
     box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.4) !important;
   }
+  .cf-month-day.cf-other-month {
+    opacity: 0.38;
+  }
+  .cf-month-day.cf-today {
+    outline: 2px solid var(--mm-accent-purple);
+  }
+  .cf-month-dot {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
 </style>
 {{ if isDayView .Config }}
   {{ $dayView := dayView .Data .Config .Dimensions }}
@@ -94,6 +107,54 @@
         </div>
         {{ end }}
       </div>
+    </div>
+    {{ else }}
+    <div class="cf-empty" style="display: flex; align-items: center; justify-content: center; flex: 1; color: var(--mm-text-muted); font-size: 0.9rem;">
+      <span>No calendar data yet</span>
+    </div>
+    {{ end }}
+  </div>
+{{ else if isMonthView .Config }}
+  {{ $monthView := monthView .Data .Config .Dimensions }}
+  <div class="widget-card widget-calendar-family cf-view-month" data-widget-id="{{ .ID }}" data-widget-type="{{ .Type }}" style="grid-column: span {{ .Dimensions.Cols }}; grid-row: span {{ .Dimensions.Rows }}; display: flex; flex-direction: column; --mm-cf-shared: {{ $monthView.SharedColor }};{{ range $i, $m := $monthView.Members }} --mm-member-{{ $i }}: {{ $m.Color }}; --mm-member-{{ $i }}-text: {{ $m.TextColor }};{{ end }}">
+    <div class="cf-header" style="display: flex; align-items: center; justify-content: space-between; padding-bottom: 8px; margin-bottom: 6px; border-bottom: 1px solid rgba(168, 85, 247, 0.2);">
+      <div class="cf-date-heading" style="display: flex; align-items: center; gap: 8px;">
+        <span class="cf-range-label" style="font-size: 0.95rem; font-weight: 700; color: var(--mm-text-primary);">{{ $monthView.MonthLabel }}</span>
+      </div>
+      <div class="cf-legend" style="display: flex; gap: 6px;">
+        {{ range $i, $m := $monthView.Members }}
+        <span class="cf-owner-chip cf-pattern-{{ $m.Pattern }}" title="{{ $m.Name }}" style="display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: 50%; font-size: 0.65rem; font-weight: 700; background: var(--mm-member-{{ $i }}); color: var(--mm-member-{{ $i }}-text);">{{ $m.Initial }}</span>
+        {{ end }}
+      </div>
+    </div>
+
+    {{ if $monthView.Days }}
+    <div class="cf-month-weekdays" style="display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; padding-bottom: 4px; border-bottom: 1px solid rgba(255, 255, 255, 0.08); text-align: center; font-size: 0.70rem; font-weight: 700; color: var(--mm-text-muted);">
+      {{ range $monthView.WeekdayHeaders }}
+      <span class="cf-weekday-header">{{ . }}</span>
+      {{ end }}
+    </div>
+
+    <div class="cf-month-grid" style="display: grid; grid-template-columns: repeat(7, 1fr); grid-template-rows: repeat(6, 1fr); gap: 4px; flex: 1; min-height: 0; margin-top: 4px;">
+      {{ range $monthView.Days }}
+      <div class="cf-month-day{{ if not .IsCurrentMonth }} cf-other-month{{ end }}{{ if .IsToday }} cf-today{{ end }}{{ if .IsWeekend }} cf-weekend{{ end }}" data-date="{{ .Date }}" style="display: flex; flex-direction: column; min-width: 0; min-height: 0; padding: 2px 4px; border-radius: 4px; background: {{ if .IsWeekend }}rgba(255, 255, 255, 0.02){{ else }}rgba(255, 255, 255, 0.04){{ end }}; border: 1px solid rgba(255, 255, 255, 0.05); overflow: hidden; position: relative; {{ if not .IsCurrentMonth }}opacity: 0.38;{{ end }}{{ if .IsToday }}outline: 2px solid var(--mm-accent-purple); z-index: 2;{{ end }}">
+        <div class="cf-month-day-header" style="display: flex; align-items: center; justify-content: space-between; font-size: 0.68rem; font-weight: 700; line-height: 1.2;">
+          <span class="cf-day-num{{ if .IsToday }} cf-today-num{{ end }}" style="{{ if .IsToday }}background: var(--mm-accent-purple); color: #ffffff; border-radius: 50%; width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center; font-size: 0.60rem;{{ else }}color: var(--mm-text-primary);{{ end }}">{{ .DayOfMonth }}</span>
+        </div>
+
+        {{ if .Dots }}
+        <div class="cf-month-dots" style="display: flex; flex-wrap: wrap; gap: 3px; align-items: center; margin-top: 2px;">
+          {{ range .Dots }}
+          <span class="cf-month-dot cf-pattern-{{ .Pattern }}{{ if .IsShared }} cf-dot-shared{{ else }} cf-member-{{ .MemberIndex }}{{ end }}" title="{{ .Name }}" style="display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: {{ if .IsShared }}var(--mm-cf-shared, {{ .Color }}){{ else }}var(--mm-member-{{ .MemberIndex }}, {{ .Color }}){{ end }}; flex-shrink: 0;"></span>
+          {{ end }}
+        </div>
+        {{ end }}
+
+        {{ if .EventTitle }}
+        <div class="cf-month-event-title" title="{{ .EventTitle }}" style="font-size: 0.60rem; color: var(--mm-text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 2px; line-height: 1.2;">{{ .EventTitle }}</div>
+        {{ end }}
+      </div>
+      {{ end }}
     </div>
     {{ else }}
     <div class="cf-empty" style="display: flex; align-items: center; justify-content: center; flex: 1; color: var(--mm-text-muted); font-size: 0.9rem;">
