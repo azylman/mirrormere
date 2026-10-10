@@ -97,3 +97,128 @@ test('carousel handleScreenRotate extracts .widget-card and adopts sibling style
     globalThis.fetch = origFetch;
   }
 });
+
+test('carousel touch gesture navigation and isolation', async (t) => {
+  const win = { location: { search: '' } };
+  const doc = {
+    createDocumentFragment: () => ({ children: [], appendChild() {} }),
+    createElement: () => ({ style: {}, dataset: {}, appendChild() {} }),
+  };
+
+  const fn = new Function('window', 'document', 'requestAnimationFrame', 'setTimeout', 'setInterval', 'clearInterval', 'clearTimeout', carouselCode);
+  fn(win, doc, () => {}, () => {}, setInterval, clearInterval, clearTimeout);
+  const Carousel = win.MirrormereCarousel;
+
+  function createMockCanvas() {
+    const listeners = {};
+    return {
+      dataset: {},
+      classList: { add() {}, remove() {} },
+      appendChild() {},
+      addEventListener(event, handler) {
+        listeners[event] = handler;
+      },
+      trigger(event, ev) {
+        if (listeners[event]) listeners[event](ev);
+      },
+    };
+  }
+
+  function createMockElement(selectors = []) {
+    return {
+      closest(sel) {
+        const parts = sel.split(',').map(s => s.trim());
+        for (const part of parts) {
+          if (selectors.includes(part)) return this;
+        }
+        return null;
+      },
+    };
+  }
+
+  await t.test('horizontal swipe starting on .widget-calendar-grid does not trigger advanceScreen even if touchend occurs outside', () => {
+    const canvas = createMockCanvas();
+    const c = new Carousel(canvas);
+    const advanceCalls = [];
+    c.advanceScreen = async (dir) => { advanceCalls.push(dir); };
+
+    const calendarElement = createMockElement(['.widget-calendar-grid']);
+    const canvasOutside = createMockElement([]);
+
+    // Touchstart inside calendar widget
+    canvas.trigger('touchstart', {
+      target: calendarElement,
+      touches: [{ clientX: 300, clientY: 100 }],
+    });
+    assert.equal(c.touchIgnored, true);
+
+    // Touchend outside on canvas
+    canvas.trigger('touchend', {
+      target: canvasOutside,
+      changedTouches: [{ clientX: 100, clientY: 100 }],
+    });
+
+    assert.equal(advanceCalls.length, 0, 'advanceScreen should not be called');
+    assert.equal(c.touchIgnored, false, 'touchIgnored should be reset after touchend');
+  });
+
+  await t.test('horizontal swipe starting on [data-prevent-screen-swipe] does not trigger advanceScreen', () => {
+    const canvas = createMockCanvas();
+    const c = new Carousel(canvas);
+    const advanceCalls = [];
+    c.advanceScreen = async (dir) => { advanceCalls.push(dir); };
+
+    const preventElement = createMockElement(['[data-prevent-screen-swipe]']);
+    const canvasOutside = createMockElement([]);
+
+    canvas.trigger('touchstart', {
+      target: preventElement,
+      touches: [{ clientX: 300, clientY: 100 }],
+    });
+    assert.equal(c.touchIgnored, true);
+
+    canvas.trigger('touchend', {
+      target: canvasOutside,
+      changedTouches: [{ clientX: 100, clientY: 100 }],
+    });
+
+    assert.equal(advanceCalls.length, 0, 'advanceScreen should not be called');
+    assert.equal(c.touchIgnored, false, 'touchIgnored should be reset after touchend');
+  });
+
+  await t.test('normal horizontal swipe outside calendar widgets triggers advanceScreen', () => {
+    const canvas = createMockCanvas();
+    const c = new Carousel(canvas);
+    const advanceCalls = [];
+    c.advanceScreen = async (dir) => { advanceCalls.push(dir); };
+
+    const normalElement = createMockElement([]);
+
+    // Swipe left (next)
+    canvas.trigger('touchstart', {
+      target: normalElement,
+      touches: [{ clientX: 300, clientY: 100 }],
+    });
+    assert.equal(c.touchIgnored, false);
+
+    canvas.trigger('touchend', {
+      target: normalElement,
+      changedTouches: [{ clientX: 100, clientY: 100 }],
+    });
+    assert.deepEqual(advanceCalls, ['next']);
+
+    // Swipe right (prev)
+    canvas.trigger('touchstart', {
+      target: normalElement,
+      touches: [{ clientX: 100, clientY: 100 }],
+    });
+    assert.equal(c.touchIgnored, false);
+
+    canvas.trigger('touchend', {
+      target: normalElement,
+      changedTouches: [{ clientX: 300, clientY: 100 }],
+    });
+    assert.deepEqual(advanceCalls, ['next', 'prev']);
+  });
+});
+

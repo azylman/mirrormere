@@ -163,12 +163,18 @@ func BuildFamilyView(data any, cfg map[string]any, dims domain.Dimension, now ti
 
 	numDays := resolveFamilyDayCount(cfg, dims)
 
-	var rangeStart time.Time
 	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	anchor := today
+	if dateStr, ok := cfg["date"].(string); ok && strings.TrimSpace(dateStr) != "" {
+		if t, err := time.ParseInLocation("2006-01-02", strings.TrimSpace(dateStr), now.Location()); err == nil {
+			anchor = t
+		}
+	}
+	var rangeStart time.Time
 	if numDays >= 7 {
-		rangeStart = startOfWeek(today, weekStartsMonday)
+		rangeStart = startOfWeek(anchor, weekStartsMonday)
 	} else {
-		rangeStart = today
+		rangeStart = anchor
 	}
 	rangeEnd := rangeStart.AddDate(0, 0, numDays-1)
 
@@ -1570,6 +1576,14 @@ func BuildFamilyCombinedData(dayView *FamilyDayViewModel, weekView *FamilyViewMo
 	res := map[string]any{
 		"config": cfg,
 	}
+	if cfg != nil {
+		if startStr, ok := cfg["cached_range_start"].(string); ok && strings.TrimSpace(startStr) != "" {
+			res["cached_range_start"] = strings.TrimSpace(startStr)
+		}
+		if endStr, ok := cfg["cached_range_end"].(string); ok && strings.TrimSpace(endStr) != "" {
+			res["cached_range_end"] = strings.TrimSpace(endStr)
+		}
+	}
 	if dayView != nil {
 		res["date"] = dayView.Date
 		res["columns"] = dayView.Columns
@@ -1594,10 +1608,32 @@ func BuildFamilyCombinedData(dayView *FamilyDayViewModel, weekView *FamilyViewMo
 		res["month_range_end"] = monthView.RangeEnd
 		res["month_days"] = monthView.Days
 		if monthView.RangeStart != "" {
-			res["cached_range_start"] = monthView.RangeStart
+			if _, ok := res["cached_range_start"]; !ok {
+				res["cached_range_start"] = monthView.RangeStart
+			}
 		}
 		if monthView.RangeEnd != "" {
-			res["cached_range_end"] = monthView.RangeEnd
+			if _, ok := res["cached_range_end"]; !ok {
+				res["cached_range_end"] = monthView.RangeEnd
+			}
+		}
+	}
+	var baseTime time.Time
+	if weekView != nil && weekView.Today != "" {
+		if t, err := time.Parse("2006-01-02", weekView.Today); err == nil {
+			baseTime = t
+		}
+	} else if dayView != nil && dayView.Date != "" {
+		if t, err := time.Parse("2006-01-02", dayView.Date); err == nil {
+			baseTime = t
+		}
+	}
+	if !baseTime.IsZero() {
+		if _, ok := res["cached_range_start"]; !ok {
+			res["cached_range_start"] = baseTime.AddDate(0, 0, -provider.DefaultWindowDaysPast).Format("2006-01-02")
+		}
+		if _, ok := res["cached_range_end"]; !ok {
+			res["cached_range_end"] = baseTime.AddDate(0, 0, provider.DefaultWindowDaysFuture).Format("2006-01-02")
 		}
 	}
 	return res

@@ -25,6 +25,7 @@ class MirrormereCarousel {
     this.touchStartX = 0;
     this.touchStartY = 0;
     this.touchStartTime = 0;
+    this.touchIgnored = false;
     this.isTransitioning = false;
     this.isPaused = false;
     this.pendingRotateData = null;
@@ -245,6 +246,11 @@ class MirrormereCarousel {
 
     target.addEventListener('touchstart', (e) => {
       if (this.isPaused) return;
+      if (e.target && e.target.closest && e.target.closest('.widget-calendar-grid, .widget-calendar-family, [data-prevent-screen-swipe]')) {
+        this.touchIgnored = true;
+        return;
+      }
+      this.touchIgnored = false;
       if (e.touches && e.touches.length === 1) {
         this.touchStartX = e.touches[0].clientX;
         this.touchStartY = e.touches[0].clientY;
@@ -254,6 +260,13 @@ class MirrormereCarousel {
 
     target.addEventListener('touchend', (e) => {
       if (this.isPaused) return;
+      if (this.touchIgnored) {
+        this.touchIgnored = false;
+        return;
+      }
+      if (e.target && e.target.closest && e.target.closest('.widget-calendar-grid, .widget-calendar-family, [data-prevent-screen-swipe]')) {
+        return;
+      }
       if (!e.changedTouches || e.changedTouches.length !== 1) {
         return;
       }

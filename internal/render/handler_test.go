@@ -385,3 +385,111 @@ func TestHandler_ServeStyle(t *testing.T) {
 		t.Fatalf("expected 405 for POST, got %d", recPost.Code)
 	}
 }
+
+func TestHandler_GetWidgetRender_DateAndViewOverrides(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	pkg := createTestPackage(t, tmpDir, "cal", `<div class="cal" data-date="{{.Config.date}}" data-view="{{.Config.default_view}}">OK</div>`)
+
+	snap := &config.Snapshot{
+		Config: &config.Config{
+			Display: config.DisplayConfig{
+				Widgets: []config.WidgetConfig{
+					{
+						ID:     "cal-1",
+						Type:   "cal",
+						Config: map[string]any{"default_view": "week"},
+					},
+				},
+			},
+		},
+		Packages: map[string]*domain.Package{
+			"cal": pkg,
+		},
+	}
+
+	provider := &mockSnapshotProvider{
+		snapshot: snap,
+		states: map[string]mockState{
+			"cal-1": {data: map[string]any{}, state: "healthy"},
+		},
+	}
+
+	resolver := &mockResolver{packages: map[string]*domain.Package{"cal": pkg}}
+	engine := render.NewEngine(resolver, provider)
+	handler := render.NewHandler(engine, resolver)
+
+	// 1. Valid date override
+	req := httptest.NewRequest(http.MethodGet, "/api/widgets/cal-1/render?date=2026-10-15", nil)
+	rec := httptest.NewRecorder()
+	handler.GetWidgetRender(rec, req, "cal-1")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200 for valid date, got %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), `data-date="2026-10-15"`) {
+		t.Errorf("expected rendered HTML to contain data-date=\"2026-10-15\", got: %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `data-view="week"`) {
+		t.Errorf("expected rendered HTML to preserve default view \"week\", got: %s", rec.Body.String())
+	}
+
+	// 2. Valid view override (day, week, month, case-insensitive)
+	for _, v := range []string{"day", "week", "month", "DAY", "Month"} {
+		req := httptest.NewRequest(http.MethodGet, "/api/widgets/cal-1/render?view="+v, nil)
+		rec := httptest.NewRecorder()
+		handler.GetWidgetRender(rec, req, "cal-1")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected status 200 for view %s, got %d", v, rec.Code)
+		}
+		expectedView := strings.ToLower(v)
+		if !strings.Contains(rec.Body.String(), `data-view="`+expectedView+`"`) {
+			t.Errorf("expected rendered HTML to contain data-view=%q, got: %s", expectedView, rec.Body.String())
+		}
+	}
+
+	// 3. Valid date and view overrides combined
+	reqComb := httptest.NewRequest(http.MethodGet, "/api/widgets/cal-1/render?date=2026-11-20&view=month", nil)
+	recComb := httptest.NewRecorder()
+	handler.GetWidgetRender(recComb, reqComb, "cal-1")
+	if recComb.Code != http.StatusOK {
+		t.Fatalf("expected status 200 for combined params, got %d", recComb.Code)
+	}
+	if !strings.Contains(recComb.Body.String(), `data-date="2026-11-20"`) || !strings.Contains(recComb.Body.String(), `data-view="month"`) {
+		t.Errorf("expected rendered HTML to have both date and view, got: %s", recComb.Body.String())
+	}
+
+	// 4. Invalid date parameter -> 400 Bad Request
+	for _, badDate := range []string{"invalid", "2026-13-01", "2026-02-30", "10-15-2026", "2026/10/15"} {
+		reqBad := httptest.NewRequest(http.MethodGet, "/api/widgets/cal-1/render?date="+badDate, nil)
+		recBad := httptest.NewRecorder()
+		handler.GetWidgetRender(recBad, reqBad, "cal-1")
+		if recBad.Code != http.StatusBadRequest {
+			t.Fatalf("expected status 400 for bad date %q, got %d", badDate, recBad.Code)
+		}
+		var errResp api.ErrorResponse
+		if err := json.Unmarshal(recBad.Body.Bytes(), &errResp); err != nil {
+			t.Fatalf("failed to decode error json: %v", err)
+		}
+		if errResp.Error != "invalid date parameter: must be YYYY-MM-DD" {
+			t.Errorf("expected error 'invalid date parameter: must be YYYY-MM-DD', got %q", errResp.Error)
+		}
+	}
+
+	// 5. Invalid view parameter -> 400 Bad Request
+	for _, badView := range []string{"year", "agenda", "list", "invalid"} {
+		reqBad := httptest.NewRequest(http.MethodGet, "/api/widgets/cal-1/render?view="+badView, nil)
+		recBad := httptest.NewRecorder()
+		handler.GetWidgetRender(recBad, reqBad, "cal-1")
+		if recBad.Code != http.StatusBadRequest {
+			t.Fatalf("expected status 400 for bad view %q, got %d", badView, recBad.Code)
+		}
+		var errResp api.ErrorResponse
+		if err := json.Unmarshal(recBad.Body.Bytes(), &errResp); err != nil {
+			t.Fatalf("failed to decode error json: %v", err)
+		}
+		if errResp.Error != "invalid view parameter: must be day, week, or month" {
+			t.Errorf("expected error 'invalid view parameter: must be day, week, or month', got %q", errResp.Error)
+		}
+	}
+}

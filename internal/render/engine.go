@@ -101,6 +101,11 @@ func (e *Engine) RenderWidget(ctx context.Context, widgetID string) ([]byte, err
 // WithNodeDataFunc) get that display's data; every other widget renders from
 // the shared state exactly as RenderWidget does.
 func (e *Engine) RenderWidgetForNode(ctx context.Context, widgetID, nodeID string) ([]byte, error) {
+	return e.RenderWidgetWithOverrides(ctx, widgetID, nodeID, nil)
+}
+
+// RenderWidgetWithOverrides renders a widget instance for one display with optional runtime configuration overrides.
+func (e *Engine) RenderWidgetWithOverrides(ctx context.Context, widgetID, nodeID string, overrides map[string]any) ([]byte, error) {
 	if widgetID == "" {
 		return nil, WidgetNotFoundError{WidgetID: ""}
 	}
@@ -150,6 +155,16 @@ func (e *Engine) RenderWidgetForNode(ctx context.Context, widgetID, nodeID strin
 
 	// 4. Build execution context
 	tmplCtx := e.buildContext(widgetID, targetWidget, pkg, snap)
+	if len(overrides) > 0 {
+		mergedConfig := make(map[string]any, len(tmplCtx.Config)+len(overrides))
+		for k, v := range tmplCtx.Config {
+			mergedConfig[k] = v
+		}
+		for k, v := range overrides {
+			mergedConfig[k] = v
+		}
+		tmplCtx.Config = mergedConfig
+	}
 	if e.nodeData != nil {
 		if d, ok := e.nodeData(widgetID, nodeID); ok {
 			tmplCtx.Data = d
