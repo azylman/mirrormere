@@ -24,6 +24,8 @@ class RemoteConfig:
     advert_min_interval: int = 30
     advert_max_interval: int = 50
     tap_duration: float = 0.015
+    bluetooth_heartbeat: bool = True
+    bluetooth_heartbeat_interval: float = 30.0
 
 
 DEFAULT_CONFIG_PATHS = [
@@ -147,6 +149,17 @@ def load_config(path: Optional[str] = None) -> RemoteConfig:
                 if "tap_duration" in data:
                     try:
                         cfg.tap_duration = float(data["tap_duration"])
+                    except ValueError:
+                        pass
+                if "bluetooth_heartbeat" in data:
+                    v = data["bluetooth_heartbeat"]
+                    if isinstance(v, bool):
+                        cfg.bluetooth_heartbeat = v
+                    else:
+                        cfg.bluetooth_heartbeat = str(v).lower() in ("true", "1", "yes")
+                if "bluetooth_heartbeat_interval" in data:
+                    try:
+                        cfg.bluetooth_heartbeat_interval = float(data["bluetooth_heartbeat_interval"])
                     except ValueError:
                         pass
         except Exception as e:

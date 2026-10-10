@@ -728,5 +728,134 @@ class TestCorsMiddleware(unittest.TestCase):
         self.assertIn("POST", resp.headers["Access-Control-Allow-Methods"])
 
 
+class TestBleBulletproofing(unittest.TestCase):
+    def test_wake_keycodes(self):
+        self.assertEqual(lookup_remote_key("wake"), "WAKE")
+        self.assertEqual(lookup_remote_key("WAKEUP"), "WAKE")
+        hid, remote = resolve_key_dispatch("wake")
+        self.assertIsNone(hid)
+        self.assertEqual(remote, "WAKE")
+
+    def test_remote_config_heartbeat(self):
+        from config import RemoteConfig, load_config
+        cfg = RemoteConfig()
+        self.assertTrue(cfg.bluetooth_heartbeat)
+        self.assertEqual(cfg.bluetooth_heartbeat_interval, 30.0)
+
+        import tempfile
+        yaml_content = """
+remote:
+  bluetooth_heartbeat: false
+  bluetooth_heartbeat_interval: 45.5
+"""
+        with tempfile.NamedTemporaryFile("w", delete=False) as f:
+            f.write(yaml_content)
+            temp_path = f.name
+        try:
+            parsed = load_config(temp_path)
+            self.assertFalse(parsed.bluetooth_heartbeat)
+            self.assertEqual(parsed.bluetooth_heartbeat_interval, 45.5)
+        finally:
+            os.remove(temp_path)
+
+    def test_battery_service_send_level(self):
+        if not daemon.HIDService:
+            d = daemon.RemoteDaemon()
+            d.send_heartbeat()
+            return
+
+        service = daemon.BatteryService()
+        mock_changed = MagicMock()
+        service.battery_level.changed = mock_changed
+        service.send_battery_level(85)
+        mock_changed.assert_called_once_with(bytes([85]))
+
+        service.battery_level.changed.side_effect = Exception("D-Bus error")
+        service.send_battery_level(100)
+
+    def test_wake_via_wifi_if_needed(self):
+        d = daemon.RemoteDaemon()
+        d.remote_helper.connected = True
+        d.remote_helper.remote = MagicMock()
+        d.last_known_paired_devices = [{"mac": "DC:E5:5B:A6:30:8B", "connected": False}]
+
+        async def run_test():
+            await d._wake_via_wifi_if_needed()
+            d.remote_helper.remote.send_key_command.assert_called_with("WAKE")
+
+            d.remote_helper.remote.send_key_command.reset_mock()
+            await d._wake_via_wifi_if_needed()
+            d.remote_helper.remote.send_key_command.assert_not_called()
+
+            d._last_wake_pulse = 0.0
+            d.last_known_paired_devices = [{"mac": "DC:E5:5B:A6:30:8B", "connected": True}]
+            await d._wake_via_wifi_if_needed()
+            d.remote_helper.remote.send_key_command.assert_not_called()
+
+        asyncio.run(run_test())
+
+    def test_touch_lock_serialization(self):
+        d = daemon.RemoteDaemon()
+        d.hid = MagicMock()
+        d.last_known_paired_devices = [{"mac": "DC:E5:5B:A6:30:8B", "connected": True}]
+
+        order = []
+        async def fake_tap(val, x, y):
+            req = MagicMock()
+            async def mock_json():
+                return {"x": x, "y": y}
+            req.json = mock_json
+            def recorded_touch(*args):
+                order.append(val)
+            d.hid.send_touch = recorded_touch
+            await d.handle_tap(req)
+
+        async def run_concurrent():
+            with patch.object(daemon, "web") as mock_web:
+                mock_web.json_response = lambda data, status=200: MagicMock(status=status, data=data)
+                await asyncio.gather(fake_tap("tap1", 0.5, 0.5), fake_tap("tap2", 0.3, 0.7))
+
+        asyncio.run(run_concurrent())
+        self.assertTrue(len(order) >= 2)
+
+    def test_touch_lock_timeout(self):
+        d = daemon.RemoteDaemon()
+        d.hid = MagicMock()
+        d.last_known_paired_devices = [{"mac": "DC:E5:5B:A6:30:8B", "connected": True}]
+
+        async def run_timeout():
+            req = MagicMock()
+            async def mock_json():
+                return {"action": "tap", "x": 0.5, "y": 0.5}
+            req.json = mock_json
+
+            with patch.object(daemon, "web") as mock_web, patch("asyncio.wait_for", side_effect=asyncio.TimeoutError):
+                mock_web.json_response = lambda data, status=200: MagicMock(status=status, data=data)
+                d.touch_lock = MagicMock()
+                resp = await d.handle_touch(req)
+                self.assertEqual(resp.status, 503)
+                self.assertIn("timeout", resp.data.get("message", ""))
+
+        asyncio.run(run_timeout())
+
+    def test_reconnect_endpoint_wake_wifi(self):
+        d = daemon.RemoteDaemon()
+        d.remote_helper.connected = True
+        d.remote_helper.remote = MagicMock()
+        d.last_known_paired_devices = [{"mac": "DC:E5:5B:A6:30:8B", "connected": False}]
+
+        req = MagicMock()
+        async def mock_json():
+            return {"mac": "DC:E5:5B:A6:30:8B", "wake_wifi": True}
+        req.json = mock_json
+
+        with patch.object(daemon, "web") as mock_web, patch.object(d, "_check_and_reconnect_bluetooth", new_callable=AsyncMock) as mock_reconnect:
+            mock_web.json_response = lambda data, status=200: MagicMock(status=status, data=data)
+            mock_reconnect.return_value = [{"mac": "DC:E5:5B:A6:30:8B", "reconnected": True}]
+            resp = asyncio.run(d.handle_bluetooth_reconnect(req))
+            self.assertEqual(resp.status, 200)
+            d.remote_helper.remote.send_key_command.assert_called_with("WAKE")
+
+
 if __name__ == "__main__":
     unittest.main()
