@@ -54,12 +54,43 @@ test('Photo Carousel Client Controller', async (t) => {
     const instance = window.MirrormerePhotoCarousel.instances.get('test-photos');
     assert.ok(instance, 'instance should be registered');
 
-    // 480 * 2 = 960, 320 * 2 = 640
+    // 480 * 2 = 960, 320 * 2 = 640 (default fit: contain, no crop flag)
     const sizedURL = instance.getSizedURL('https://lh3.googleusercontent.com/pw/ABC');
-    assert.equal(sizedURL, 'https://lh3.googleusercontent.com/pw/ABC=w960-h640-c');
+    assert.equal(sizedURL, 'https://lh3.googleusercontent.com/pw/ABC=w960-h640');
 
     window.MirrormerePhotoCarousel.unmount('test-photos');
     assert.equal(window.MirrormerePhotoCarousel.instances.has('test-photos'), false);
+  });
+
+  await t.test('appends crop flag when fit is cover', () => {
+    const mockElement = {
+      dataset: { widgetId: 'test-photos-cover', fit: 'cover' },
+      querySelector(selector) {
+        if (selector === '.photo-carousel-data') {
+          return {
+            textContent: JSON.stringify({
+              photos: [{ id: '1', url: 'https://lh3.googleusercontent.com/pw/COVER' }]
+            })
+          };
+        }
+        if (selector === '.photo-current' || selector === '.photo-next') {
+          return { src: '', style: {} };
+        }
+        return null;
+      },
+      getBoundingClientRect() {
+        return { width: 480, height: 320 };
+      }
+    };
+
+    window.MirrormerePhotoCarousel.mount(mockElement);
+    const instance = window.MirrormerePhotoCarousel.instances.get('test-photos-cover');
+    assert.ok(instance);
+
+    const sizedURL = instance.getSizedURL('https://lh3.googleusercontent.com/pw/COVER');
+    assert.equal(sizedURL, 'https://lh3.googleusercontent.com/pw/COVER=w960-h640-c');
+
+    window.MirrormerePhotoCarousel.unmount('test-photos-cover');
   });
 
   await t.test('falls back to default dimensions when container has 0 size', () => {
@@ -86,7 +117,7 @@ test('Photo Carousel Client Controller', async (t) => {
 
     const sizedURL = instance.getSizedURL('https://lh3.googleusercontent.com/pw/XYZ');
     // Defaults: 960 * 2 = 1920, 640 * 2 = 1280
-    assert.equal(sizedURL, 'https://lh3.googleusercontent.com/pw/XYZ=w1920-h1280-c');
+    assert.equal(sizedURL, 'https://lh3.googleusercontent.com/pw/XYZ=w1920-h1280');
 
     window.MirrormerePhotoCarousel.unmount('test-photos-zero');
   });
