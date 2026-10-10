@@ -2125,3 +2125,189 @@ func TestCalendarFamily_ViewSwitcherAndBootstrap(t *testing.T) {
 		})
 	}
 }
+
+func TestBuildFamilyView_ContinuousSpanningBars(t *testing.T) {
+	t.Parallel()
+
+	// testNow is Sunday 2026-09-27. Window for 6x2 (7 days, Sunday start) is 2026-09-27 through 2026-10-03:
+	// Col 1: 2026-09-27 (Sun)
+	// Col 2: 2026-09-28 (Mon)
+	// Col 3: 2026-09-29 (Tue)
+	// Col 4: 2026-09-30 (Wed)
+	// Col 5: 2026-10-01 (Thu)
+	// Col 6: 2026-10-02 (Fri)
+	// Col 7: 2026-10-03 (Sat)
+	snap := provider.CalendarSnapshot{
+		Events: []provider.CalendarEvent{
+			// 1. Single-day all-day event on Wednesday (Col 4)
+			{ID: "e_single", CalendarName: "alex-personal", Title: "Town Hall", AllDay: true, Start: "2026-09-30", End: "2026-09-30"},
+			// 2. Multi-day all-day event Mon-Wed (Cols 2..4, span 3)
+			{ID: "e_camp", CalendarName: "alex-personal", Title: "Camping Trip", AllDay: true, Start: "2026-09-28", End: "2026-09-30"},
+			// 3. Event entering window from before rangeStart (Sep 20..Sep 28 -> Cols 1..2, span 2)
+			{ID: "e_early", CalendarName: "alex-personal", Title: "Early Vacation", AllDay: true, Start: "2026-09-20", End: "2026-09-28"},
+			// 4. Event extending past window end (Oct 02..Oct 06 -> Cols 6..7, span 2)
+			{ID: "e_late", CalendarName: "alex-personal", Title: "Late Conference", AllDay: true, Start: "2026-10-02", End: "2026-10-06"},
+			// 5. Event spanning entire window (Sep 20..Oct 10 -> Cols 1..7, span 7)
+			{ID: "e_full", CalendarName: "alex-personal", Title: "Autumn Festival", AllDay: true, Start: "2026-09-20", End: "2026-10-10"},
+			// 6. Event completely outside window (Sep 10..Sep 15)
+			{ID: "e_outside", CalendarName: "alex-personal", Title: "Past Trip", AllDay: true, Start: "2026-09-10", End: "2026-09-15"},
+		},
+	}
+
+	view, err := BuildFamilyView(snap, baseFamilyConfig(), domain.NewDimension(6, 2), testNow)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify events outside window are omitted
+	for _, ev := range view.AllDayEvents {
+		if ev.ID == "e_outside" {
+			t.Fatalf("event outside window should not be in AllDayEvents")
+		}
+	}
+
+	// Index by ID
+	byID := make(map[string]FamilySpanEvent)
+	for _, ev := range view.AllDayEvents {
+		byID[ev.ID] = ev
+	}
+
+	// Check single day event
+	single, ok := byID["e_single"]
+	if !ok {
+		t.Fatalf("e_single missing from AllDayEvents")
+	}
+	if single.StartCol != 4 || single.ColSpan != 1 {
+		t.Errorf("e_single: want StartCol=4, ColSpan=1; got StartCol=%d, ColSpan=%d", single.StartCol, single.ColSpan)
+	}
+
+	// Check multi-day event inside window (Mon-Wed)
+	camp, ok := byID["e_camp"]
+	if !ok {
+		t.Fatalf("e_camp missing from AllDayEvents")
+	}
+	if camp.StartCol != 2 || camp.ColSpan != 3 {
+		t.Errorf("e_camp: want StartCol=2, ColSpan=3; got StartCol=%d, ColSpan=%d", camp.StartCol, camp.ColSpan)
+	}
+
+	// Check event entering window from before rangeStart
+	early, ok := byID["e_early"]
+	if !ok {
+		t.Fatalf("e_early missing from AllDayEvents")
+	}
+	if early.StartCol != 1 || early.ColSpan != 2 {
+		t.Errorf("e_early: want StartCol=1, ColSpan=2; got StartCol=%d, ColSpan=%d", early.StartCol, early.ColSpan)
+	}
+
+	// Check event extending past window end
+	late, ok := byID["e_late"]
+	if !ok {
+		t.Fatalf("e_late missing from AllDayEvents")
+	}
+	if late.StartCol != 6 || late.ColSpan != 2 {
+		t.Errorf("e_late: want StartCol=6, ColSpan=2; got StartCol=%d, ColSpan=%d", late.StartCol, late.ColSpan)
+	}
+
+	// Check event spanning full window
+	full, ok := byID["e_full"]
+	if !ok {
+		t.Fatalf("e_full missing from AllDayEvents")
+	}
+	if full.StartCol != 1 || full.ColSpan != 7 {
+		t.Errorf("e_full: want StartCol=1, ColSpan=7; got StartCol=%d, ColSpan=%d", full.StartCol, full.ColSpan)
+	}
+
+	// Check sorting: StartCol asc, ColSpan desc, Title asc
+	// At StartCol=1, we have e_full (span 7) and e_early (span 2) -> e_full must precede e_early
+	if len(view.AllDayEvents) < 2 {
+		t.Fatalf("expected at least 2 events")
+	}
+	if view.AllDayEvents[0].ID != "e_full" {
+		t.Errorf("expected first event to be e_full (StartCol=1, ColSpan=7), got %s", view.AllDayEvents[0].ID)
+	}
+	if view.AllDayEvents[1].ID != "e_early" {
+		t.Errorf("expected second event to be e_early (StartCol=1, ColSpan=2), got %s", view.AllDayEvents[1].ID)
+	}
+}
+
+func TestRenderFamilyWidgetTemplate_WeekContinuousSpanningBars(t *testing.T) {
+	t.Parallel()
+
+	snap := provider.CalendarSnapshot{
+		LastSync: "2026-09-27T12:00:00Z",
+		Events: []provider.CalendarEvent{
+			{ID: "e_multi", CalendarName: "alex-personal", Title: "Camping Trip", AllDay: true, Start: "2026-09-28", End: "2026-09-30"},
+			{ID: "e_timed", CalendarName: "alex-personal", Title: "Morning Standup", Start: "2026-09-28T09:00:00Z", End: "2026-09-28T09:30:00Z"},
+		},
+	}
+	cfg := baseFamilyConfig()
+	cfg["default_view"] = "week"
+
+	ctx := Context{
+		ID:         "test-family-week-spanning",
+		Type:       "calendar-family",
+		Dimensions: domain.NewDimension(6, 2),
+		Data:       snap,
+		Config:     cfg,
+	}
+
+	html := renderFamilyWidgetTemplate(t, ctx, testNow)
+
+	// Verify all-day grid exists and has the spanning bar
+	if !strings.Contains(html, "cf-week-allday-grid") {
+		t.Errorf("expected 'cf-week-allday-grid' in rendered week HTML: %s", html)
+	}
+	if !strings.Contains(html, "grid-column: 2 / span 3") {
+		t.Errorf("expected 'grid-column: 2 / span 3' for Camping Trip in week HTML: %s", html)
+	}
+	if !strings.Contains(html, "Camping Trip") {
+		t.Errorf("expected 'Camping Trip' in rendered week HTML: %s", html)
+	}
+	if !strings.Contains(html, `data-event-id="e_multi"`) {
+		t.Errorf("expected data-event-id='e_multi' in rendered week HTML: %s", html)
+	}
+
+	// Verify individual cf-day columns do NOT contain duplicated allday blocks
+	// Count occurrences of rendered DOM event cards for 'Camping Trip' - should only appear ONCE in DOM as a single spanning bar
+	count := strings.Count(html, ">Camping Trip</div>")
+	if count != 1 {
+		t.Errorf("expected 'Camping Trip' DOM card to appear exactly once (as a single spanning bar), got %d occurrences", count)
+	}
+
+	// Verify timed events still render in their columns
+	if !strings.Contains(html, "Morning Standup") {
+		t.Errorf("expected 'Morning Standup' timed event in week HTML: %s", html)
+	}
+}
+
+func TestBuildFamilyView_ContinuousSpanningBars_CustomDayCount(t *testing.T) {
+	t.Parallel()
+
+	// 4x2 dimension defaults to 5 days starting from today (2026-09-27):
+	// Col 1: Sep 27, Col 2: Sep 28, Col 3: Sep 29, Col 4: Sep 30, Col 5: Oct 01
+	snap := provider.CalendarSnapshot{
+		Events: []provider.CalendarEvent{
+			{ID: "e_span5", CalendarName: "alex-personal", Title: "Long Weekend", AllDay: true, Start: "2026-09-28", End: "2026-10-04"},
+		},
+	}
+
+	view, err := BuildFamilyView(snap, baseFamilyConfig(), domain.NewDimension(4, 2), testNow)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(view.Days) != 5 {
+		t.Fatalf("expected 5 days, got %d", len(view.Days))
+	}
+	if len(view.AllDayEvents) != 1 {
+		t.Fatalf("expected 1 all-day event, got %d", len(view.AllDayEvents))
+	}
+
+	ev := view.AllDayEvents[0]
+	// Starts Sep 28 (Col 2). Extends to Oct 04, but window ends Oct 01 (Col 5).
+	// Spanned visible cols: 2, 3, 4, 5 -> StartCol=2, ColSpan=4
+	if ev.StartCol != 2 || ev.ColSpan != 4 {
+		t.Errorf("want StartCol=2, ColSpan=4; got StartCol=%d, ColSpan=%d", ev.StartCol, ev.ColSpan)
+	}
+}
+
