@@ -21,6 +21,8 @@ supported_dimensions:
 config_schema:
   type: object
   properties:
+    title:
+      type: string
     view:
       type: string
     strip_recurring:
