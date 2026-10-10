@@ -893,3 +893,321 @@ func TestHelpers_CalendarFamilyDayView(t *testing.T) {
 		t.Fatalf("expected non-nil view")
 	}
 }
+
+func TestMaxMemberColumns(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		cols int
+		rows int
+		want int
+	}{
+		{cols: 6, rows: 2, want: 8},
+		{cols: 8, rows: 2, want: 8},
+		{cols: 4, rows: 2, want: 3},
+		{cols: 3, rows: 2, want: 3},
+		{cols: 0, rows: 0, want: 3},
+	}
+	for _, tc := range tests {
+		got := maxMemberColumns(domain.NewDimension(tc.cols, tc.rows))
+		if got != tc.want {
+			t.Errorf("maxMemberColumns(%dx%d) = %d; want %d", tc.cols, tc.rows, got, tc.want)
+		}
+	}
+}
+
+func fiveMemberConfig() map[string]any {
+	return map[string]any{
+		"members": []any{
+			map[string]any{"name": "Alex", "color": "#e11d48", "pattern": "solid", "calendars": []any{"alex-cal"}},
+			map[string]any{"name": "Kid", "color": "#81B29A", "pattern": "hatch", "calendars": []any{"kid-cal"}},
+			map[string]any{"name": "Partner", "color": "#3B82F6", "pattern": "dots", "calendars": []any{"partner-cal"}},
+			map[string]any{"name": "Grandma", "color": "#F59E0B", "pattern": "outline", "calendars": []any{"grandma-cal"}},
+			map[string]any{"name": "Grandpa", "color": "#10B981", "pattern": "solid", "calendars": []any{"grandpa-cal"}},
+		},
+		"calendars": []any{
+			map[string]any{"name": "alex-cal"},
+			map[string]any{"name": "kid-cal"},
+			map[string]any{"name": "partner-cal"},
+			map[string]any{"name": "grandma-cal"},
+			map[string]any{"name": "grandpa-cal"},
+			map[string]any{"name": "unclaimed-cal"},
+		},
+		"hours": []any{"08:00", "20:00"},
+		"date":  "2026-09-27",
+	}
+}
+
+func TestBuildFamilyDayView_ColumnCapacityAndAdaptation(t *testing.T) {
+	t.Parallel()
+
+	// 1. 6x2: all 5 members get their own column.
+	t.Run("6x2 allows all 5 member columns", func(t *testing.T) {
+		t.Parallel()
+		cfg := fiveMemberConfig()
+		snap := provider.CalendarSnapshot{Events: []provider.CalendarEvent{
+			{ID: "e1", CalendarName: "alex-cal", Title: "Alex Job", Start: "2026-09-27T10:00:00Z", End: "2026-09-27T11:00:00Z"},
+			{ID: "e2", CalendarName: "grandma-cal", Title: "Knitting", Start: "2026-09-27T14:00:00Z", End: "2026-09-27T15:00:00Z"},
+		}}
+		view, err := BuildFamilyDayView(snap, cfg, domain.NewDimension(6, 2), testNow)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(view.Columns) != 5 {
+			t.Fatalf("expected 5 columns on 6x2, got %d", len(view.Columns))
+		}
+		expectedNames := []string{"Alex", "Kid", "Partner", "Grandma", "Grandpa"}
+		for i, name := range expectedNames {
+			if view.Columns[i].Name != name || view.Columns[i].IsShared {
+				t.Errorf("column %d expected %s, got %+v", i, name, view.Columns[i])
+			}
+		}
+		// Grandma is column 3, knitting event should be in Grandma's column
+		if len(view.Columns[3].Events) != 1 || view.Columns[3].Events[0].Title != "Knitting" {
+			t.Fatalf("expected Knitting event in Grandma's column (idx 3), got %+v", view.Columns[3].Events)
+		}
+	})
+
+	// 2. 4x2: only 3 member columns (Alex, Kid, Partner). Grandma and Grandpa collapse.
+	t.Run("4x2 collapses remaining members into shared column with colored initials", func(t *testing.T) {
+		t.Parallel()
+		cfg := fiveMemberConfig()
+		snap := provider.CalendarSnapshot{Events: []provider.CalendarEvent{
+			{ID: "e1", CalendarName: "alex-cal", Title: "Alex Job", Start: "2026-09-27T10:00:00Z", End: "2026-09-27T11:00:00Z"},
+			{ID: "e2", CalendarName: "grandma-cal", Title: "Knitting", Start: "2026-09-27T14:00:00Z", End: "2026-09-27T15:00:00Z"},
+		}}
+		view, err := BuildFamilyDayView(snap, cfg, domain.NewDimension(4, 2), testNow)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		// Expect 3 member columns + 1 Shared column (total 4)
+		if len(view.Columns) != 4 {
+			t.Fatalf("expected 4 columns on 4x2 (3 members + 1 shared), got %d", len(view.Columns))
+		}
+		expectedNames := []string{"Alex", "Kid", "Partner", "Shared"}
+		for i, name := range expectedNames {
+			if view.Columns[i].Name != name {
+				t.Errorf("column %d expected %s, got %s", i, name, view.Columns[i].Name)
+			}
+		}
+
+		sharedCol := view.Columns[3]
+		if !sharedCol.IsShared {
+			t.Errorf("expected 4th column to be IsShared=true")
+		}
+		if len(sharedCol.Events) != 1 {
+			t.Fatalf("expected 1 event in shared column, got %d", len(sharedCol.Events))
+		}
+		gEvent := sharedCol.Events[0]
+		if gEvent.Title != "Knitting" {
+			t.Errorf("expected Knitting in shared column, got %s", gEvent.Title)
+		}
+		// Check that colored owner initials are preserved for collapsed member
+		if len(gEvent.Initials) != 1 || gEvent.Initials[0] != "G" {
+			t.Errorf("expected initial 'G' on collapsed event, got %+v", gEvent.Initials)
+		}
+		if gEvent.Color != "#F59E0B" {
+			t.Errorf("expected Grandma color #F59E0B on event, got %s", gEvent.Color)
+		}
+		if gEvent.ColSpan != 1 || gEvent.IsLinked {
+			t.Errorf("expected ColSpan=1 and IsLinked=false for collapsed single member event, got span=%d linked=%v", gEvent.ColSpan, gEvent.IsLinked)
+		}
+	})
+
+	// 3. 4x2 with no events for collapsed members and no unclaimed events -> Shared column omitted
+	t.Run("4x2 omits shared column when no collapsed member events and no unclaimed events", func(t *testing.T) {
+		t.Parallel()
+		cfg := fiveMemberConfig()
+		snap := provider.CalendarSnapshot{Events: []provider.CalendarEvent{
+			{ID: "e1", CalendarName: "alex-cal", Title: "Alex Job", Start: "2026-09-27T10:00:00Z", End: "2026-09-27T11:00:00Z"},
+			{ID: "e2", CalendarName: "kid-cal", Title: "Soccer Practice", Start: "2026-09-27T15:00:00Z", End: "2026-09-27T16:00:00Z"},
+		}}
+		view, err := BuildFamilyDayView(snap, cfg, domain.NewDimension(4, 2), testNow)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(view.Columns) != 3 {
+			t.Fatalf("expected exactly 3 columns (Shared omitted), got %d", len(view.Columns))
+		}
+		for _, col := range view.Columns {
+			if col.IsShared {
+				t.Errorf("unexpected shared column in view: %+v", col)
+			}
+		}
+	})
+}
+
+func TestBuildFamilyDayView_AdjacentColumnSpanning(t *testing.T) {
+	t.Parallel()
+
+	cfg := fiveMemberConfig()
+	dims := domain.NewDimension(6, 2)
+
+	// Event 1: Shared by Alex (col 0) and Kid (col 1) -> adjacent, ColSpan=2
+	// Event 2: Shared by Kid (col 1), Partner (col 2), and Grandma (col 3) -> adjacent, ColSpan=3
+	snap := provider.CalendarSnapshot{Events: []provider.CalendarEvent{
+		{ID: "ev_adj_2", CalendarName: "alex-cal", Title: "Family Breakfast", Start: "2026-09-27T08:30:00Z", End: "2026-09-27T09:30:00Z"},
+		{ID: "ev_adj_2", CalendarName: "kid-cal", Title: "Family Breakfast", Start: "2026-09-27T08:30:00Z", End: "2026-09-27T09:30:00Z"},
+		{ID: "ev_adj_3", CalendarName: "kid-cal", Title: "Park Trip", Start: "2026-09-27T13:00:00Z", End: "2026-09-27T15:00:00Z"},
+		{ID: "ev_adj_3", CalendarName: "partner-cal", Title: "Park Trip", Start: "2026-09-27T13:00:00Z", End: "2026-09-27T15:00:00Z"},
+		{ID: "ev_adj_3", CalendarName: "grandma-cal", Title: "Park Trip", Start: "2026-09-27T13:00:00Z", End: "2026-09-27T15:00:00Z"},
+	}}
+
+	view, err := BuildFamilyDayView(snap, cfg, dims, testNow)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	alexCol := view.Columns[0]
+	kidCol := view.Columns[1]
+	partnerCol := view.Columns[2]
+	grandmaCol := view.Columns[3]
+
+	// Alex column should have "Family Breakfast" with ColSpan: 2, IsLinked: false
+	if len(alexCol.Events) != 1 {
+		t.Fatalf("expected 1 event in Alex column, got %d", len(alexCol.Events))
+	}
+	evBreakfast := alexCol.Events[0]
+	if evBreakfast.Title != "Family Breakfast" || evBreakfast.ColSpan != 2 || evBreakfast.IsLinked || evBreakfast.LinkGlyph != "" {
+		t.Fatalf("expected ColSpan=2, IsLinked=false, LinkGlyph='' on Breakfast, got %+v", evBreakfast)
+	}
+
+	// Kid column should NOT have "Family Breakfast", but SHOULD have "Park Trip" with ColSpan: 3
+	if len(kidCol.Events) != 1 {
+		t.Fatalf("expected 1 event in Kid column, got %d", len(kidCol.Events))
+	}
+	evPark := kidCol.Events[0]
+	if evPark.Title != "Park Trip" || evPark.ColSpan != 3 || evPark.IsLinked || evPark.LinkGlyph != "" {
+		t.Fatalf("expected ColSpan=3, IsLinked=false on Park Trip in Kid col, got %+v", evPark)
+	}
+
+	// Partner and Grandma columns should have 0 events because Park Trip spans from Kid's column
+	if len(partnerCol.Events) != 0 {
+		t.Errorf("expected 0 events in Partner column (spanned from Kid), got %d", len(partnerCol.Events))
+	}
+	if len(grandmaCol.Events) != 0 {
+		t.Errorf("expected 0 events in Grandma column (spanned from Kid), got %d", len(grandmaCol.Events))
+	}
+}
+
+func TestBuildFamilyDayView_NonAdjacentSharedEvents(t *testing.T) {
+	t.Parallel()
+
+	t.Run("6x2 non-adjacent members duplicate with link glyph", func(t *testing.T) {
+		t.Parallel()
+		cfg := fiveMemberConfig()
+		dims := domain.NewDimension(6, 2)
+		// Event shared by Alex (col 0) and Partner (col 2) - Kid (col 1) is not involved
+		snap := provider.CalendarSnapshot{Events: []provider.CalendarEvent{
+			{ID: "ev_nonadj", CalendarName: "alex-cal", Title: "Parent Teacher Meeting", Start: "2026-09-27T11:00:00Z", End: "2026-09-27T12:00:00Z"},
+			{ID: "ev_nonadj", CalendarName: "partner-cal", Title: "Parent Teacher Meeting", Start: "2026-09-27T11:00:00Z", End: "2026-09-27T12:00:00Z"},
+		}}
+
+		view, err := BuildFamilyDayView(snap, cfg, dims, testNow)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		alexCol := view.Columns[0]
+		kidCol := view.Columns[1]
+		partnerCol := view.Columns[2]
+
+		if len(alexCol.Events) != 1 {
+			t.Fatalf("expected 1 event in Alex column, got %d", len(alexCol.Events))
+		}
+		if len(kidCol.Events) != 0 {
+			t.Fatalf("expected 0 events in Kid column, got %d", len(kidCol.Events))
+		}
+		if len(partnerCol.Events) != 1 {
+			t.Fatalf("expected 1 event in Partner column, got %d", len(partnerCol.Events))
+		}
+
+		evAlex := alexCol.Events[0]
+		evPartner := partnerCol.Events[0]
+
+		if !evAlex.IsLinked || evAlex.LinkGlyph != "🔗" || evAlex.ColSpan != 1 {
+			t.Errorf("Alex event should have IsLinked=true, LinkGlyph='🔗', ColSpan=1, got %+v", evAlex)
+		}
+		if !evPartner.IsLinked || evPartner.LinkGlyph != "🔗" || evPartner.ColSpan != 1 {
+			t.Errorf("Partner event should have IsLinked=true, LinkGlyph='🔗', ColSpan=1, got %+v", evPartner)
+		}
+		if evAlex.Color != alexCol.Color {
+			t.Errorf("expected Alex event to use Alex column color %s, got %s", alexCol.Color, evAlex.Color)
+		}
+		if evPartner.Color != partnerCol.Color {
+			t.Errorf("expected Partner event to use Partner column color %s, got %s", partnerCol.Color, evPartner.Color)
+		}
+	})
+
+	t.Run("4x2 mixed active member and collapsed member duplicates into member and shared with link glyph", func(t *testing.T) {
+		t.Parallel()
+		cfg := fiveMemberConfig()
+		dims := domain.NewDimension(4, 2)
+		// On 4x2: Alex (col 0), Kid (col 1), Partner (col 2). Grandma is collapsed into Shared.
+		// Event shared by Alex and Grandma:
+		snap := provider.CalendarSnapshot{Events: []provider.CalendarEvent{
+			{ID: "ev_mixed", CalendarName: "alex-cal", Title: "Lunch with Grandma", Start: "2026-09-27T12:00:00Z", End: "2026-09-27T13:00:00Z"},
+			{ID: "ev_mixed", CalendarName: "grandma-cal", Title: "Lunch with Grandma", Start: "2026-09-27T12:00:00Z", End: "2026-09-27T13:00:00Z"},
+		}}
+
+		view, err := BuildFamilyDayView(snap, cfg, dims, testNow)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		// 3 active member columns + 1 shared column
+		if len(view.Columns) != 4 {
+			t.Fatalf("expected 4 columns, got %d", len(view.Columns))
+		}
+
+		alexCol := view.Columns[0]
+		sharedCol := view.Columns[3]
+
+		if len(alexCol.Events) != 1 {
+			t.Fatalf("expected 1 event in Alex column, got %d", len(alexCol.Events))
+		}
+		if len(sharedCol.Events) != 1 {
+			t.Fatalf("expected 1 event in Shared column, got %d", len(sharedCol.Events))
+		}
+
+		evAlex := alexCol.Events[0]
+		evShared := sharedCol.Events[0]
+
+		if !evAlex.IsLinked || evAlex.LinkGlyph != "🔗" || evAlex.ColSpan != 1 {
+			t.Errorf("Alex event should be linked with glyph, got %+v", evAlex)
+		}
+		if !evShared.IsLinked || evShared.LinkGlyph != "🔗" || evShared.ColSpan != 1 {
+			t.Errorf("Shared event should be linked with glyph, got %+v", evShared)
+		}
+	})
+}
+
+func TestBuildFamilyDayView_UnclaimedSharedColumnRouting(t *testing.T) {
+	t.Parallel()
+
+	t.Run("unclaimed event routes to shared column", func(t *testing.T) {
+		t.Parallel()
+		cfg := fiveMemberConfig()
+		dims := domain.NewDimension(6, 2)
+		snap := provider.CalendarSnapshot{Events: []provider.CalendarEvent{
+			{ID: "e_unclaimed", CalendarName: "unclaimed-cal", Title: "Town Marathon", Start: "2026-09-27T09:00:00Z", End: "2026-09-27T11:00:00Z"},
+		}}
+		view, err := BuildFamilyDayView(snap, cfg, dims, testNow)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		// 5 members + 1 shared column = 6 columns
+		if len(view.Columns) != 6 {
+			t.Fatalf("expected 6 columns (5 members + shared), got %d", len(view.Columns))
+		}
+		sharedCol := view.Columns[5]
+		if !sharedCol.IsShared || sharedCol.Name != "Shared" {
+			t.Fatalf("expected last column to be Shared, got %+v", sharedCol)
+		}
+		if len(sharedCol.Events) != 1 || sharedCol.Events[0].Title != "Town Marathon" {
+			t.Fatalf("expected Town Marathon in shared column, got %+v", sharedCol.Events)
+		}
+		if sharedCol.Events[0].IsLinked || sharedCol.Events[0].ColSpan != 1 {
+			t.Errorf("unclaimed event should not be linked: %+v", sharedCol.Events[0])
+		}
+	})
+}
