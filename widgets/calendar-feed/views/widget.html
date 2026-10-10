@@ -9,16 +9,17 @@
           <line x1="3" y1="10" x2="21" y2="10"></line>
         </svg>
       </div>
-      <h2 class="calendar-header-title">{{ if .Config.title }}{{ .Config.title }}{{ else if .Config.name }}{{ .Config.name }}{{ else }}Household Agenda{{ end }}</h2>
+      <h2 class="calendar-header-title">{{ if .Config.title }}{{ .Config.title }}{{ else }}Household Agenda{{ end }}</h2>
     </div>
-    {{ if .Config.calendars }}
+    {{ $activeCalendars := calendarFeedActiveCalendars .Config }}
+    {{ if $activeCalendars }}
     <div class="calendar-header-chips">
       <div class="calendar-avatar-stack">
-        {{ range .Config.calendars }}
+        {{ range $activeCalendars }}
           <span class="calendar-avatar-dot" title="{{ .name }}" style="background-color: {{ if .color }}{{ .color }}{{ else }}var(--mm-coral){{ end }};"></span>
         {{ end }}
       </div>
-      <span class="calendar-count-badge">{{ len .Config.calendars }} {{ if eq (len .Config.calendars) 1 }}Calendar{{ else }}Calendars{{ end }}</span>
+      <span class="calendar-count-badge">{{ len $activeCalendars }} {{ if eq (len $activeCalendars) 1 }}Calendar{{ else }}Calendars{{ end }}</span>
     </div>
     {{ end }}
   </div>

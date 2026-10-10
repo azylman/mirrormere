@@ -892,7 +892,18 @@ func TestEngine_RenderWidget_CalendarAgendaPackage(t *testing.T) {
 		Config: &config.Config{
 			Display: config.DisplayConfig{
 				Widgets: []config.WidgetConfig{
-					{ID: "w-cal-loaded", Type: "calendar-agenda", Dimensions: []int{4, 2}},
+					{
+						ID:         "w-cal-loaded",
+						Type:       "calendar-agenda",
+						Dimensions: []int{4, 2},
+						Config: map[string]any{
+							"title": "Family Schedule",
+							"calendars": []any{
+								map[string]any{"name": "Active Family", "color": "#3b82f6", "enabled": true},
+								map[string]any{"name": "Disabled Work", "color": "#ef4444", "enabled": false},
+							},
+						},
+					},
 					{ID: "w-cal-empty", Type: "calendar-agenda", Dimensions: []int{4, 2}},
 					{ID: "w-cal-loading", Type: "calendar-agenda", Dimensions: []int{4, 2}},
 				},
@@ -979,6 +990,21 @@ func TestEngine_RenderWidget_CalendarAgendaPackage(t *testing.T) {
 	if !strings.Contains(htmlStr, "All Day") {
 		t.Errorf("expected 'All Day' in output: %s", htmlStr)
 	}
+	if !strings.Contains(htmlStr, "Family Schedule") {
+		t.Errorf("expected custom title 'Family Schedule' in output: %s", htmlStr)
+	}
+	if strings.Contains(htmlStr, "Household Agenda") {
+		t.Errorf("expected default title 'Household Agenda' to be overridden by custom title: %s", htmlStr)
+	}
+	if !strings.Contains(htmlStr, "Active Family") {
+		t.Errorf("expected enabled calendar 'Active Family' in avatar dots: %s", htmlStr)
+	}
+	if strings.Contains(htmlStr, "Disabled Work") {
+		t.Errorf("expected disabled calendar 'Disabled Work' to be excluded from avatar dots: %s", htmlStr)
+	}
+	if !strings.Contains(htmlStr, "1 Calendar") {
+		t.Errorf("expected '1 Calendar' badge for single active calendar, got: %s", htmlStr)
+	}
 
 	// 2. Render empty calendar
 	htmlEmpty, err := engine.RenderWidget(context.Background(), "w-cal-empty")
@@ -987,6 +1013,12 @@ func TestEngine_RenderWidget_CalendarAgendaPackage(t *testing.T) {
 	}
 	if !strings.Contains(string(htmlEmpty), "No upcoming events") {
 		t.Errorf("expected 'No upcoming events' in empty output: %s", htmlEmpty)
+	}
+	if !strings.Contains(string(htmlEmpty), "Household Agenda") {
+		t.Errorf("expected default fallback title 'Household Agenda' in empty output: %s", htmlEmpty)
+	}
+	if strings.Contains(string(htmlEmpty), "calendar-header-chips") {
+		t.Errorf("expected calendar header chips to be omitted when no calendars configured: %s", htmlEmpty)
 	}
 
 	// 3. Render loading calendar
