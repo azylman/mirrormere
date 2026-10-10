@@ -730,11 +730,11 @@ class TestCorsMiddleware(unittest.TestCase):
 
 class TestBleBulletproofing(unittest.TestCase):
     def test_wake_keycodes(self):
-        self.assertEqual(lookup_remote_key("wake"), "WAKE")
-        self.assertEqual(lookup_remote_key("WAKEUP"), "WAKE")
+        self.assertEqual(lookup_remote_key("wake"), "WAKEUP")
+        self.assertEqual(lookup_remote_key("WAKEUP"), "WAKEUP")
         hid, remote = resolve_key_dispatch("wake")
         self.assertIsNone(hid)
-        self.assertEqual(remote, "WAKE")
+        self.assertEqual(remote, "WAKEUP")
 
     def test_remote_config_heartbeat(self):
         from config import RemoteConfig, load_config
@@ -781,7 +781,7 @@ remote:
 
         async def run_test():
             await d._wake_via_wifi_if_needed()
-            d.remote_helper.remote.send_key_command.assert_called_with("WAKE")
+            d.remote_helper.remote.send_key_command.assert_called_with("WAKEUP")
 
             d.remote_helper.remote.send_key_command.reset_mock()
             await d._wake_via_wifi_if_needed()
@@ -854,7 +854,7 @@ remote:
             mock_reconnect.return_value = [{"mac": "DC:E5:5B:A6:30:8B", "reconnected": True}]
             resp = asyncio.run(d.handle_bluetooth_reconnect(req))
             self.assertEqual(resp.status, 200)
-            d.remote_helper.remote.send_key_command.assert_called_with("WAKE")
+            d.remote_helper.remote.send_key_command.assert_called_with("WAKEUP")
 
 
 if __name__ == "__main__":

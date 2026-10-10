@@ -647,7 +647,7 @@ class RemoteDaemon:
             self._last_wake_pulse = now
             logger.info("On-demand Wi-Fi wake pulse sent to Android TV to trigger BLE reconnect")
             try:
-                self.remote_helper.send_key("WAKE")
+                self.remote_helper.send_key("WAKEUP")
             except Exception as e:
                 logger.debug("Failed sending Wi-Fi wake pulse: %s", e)
 
