@@ -130,6 +130,33 @@ type VoiceHubConfig struct {
 	// fingerprints. Optional: when absent,
 	// every turn carries an empty speaker.
 	SpeakerID *SpeakerIDConfig `yaml:"speaker_id,omitempty"`
+
+	// FastPath optionally routes each transcript to a deterministic intent
+	// endpoint (POST /intent) before the brain. Absent or an empty url means
+	// the feature is off and the hub never calls out.
+	FastPath *FastPathConfig `yaml:"fast_path,omitempty"`
+}
+
+// FastPathConfig configures the optional deterministic voice fast path.
+type FastPathConfig struct {
+	// URL is the full POST /intent endpoint. Empty disables the fast path.
+	URL string `yaml:"url,omitempty"`
+	// TimeoutMS bounds the wait for the response headers (default 800). A
+	// slower answer counts as no match and the turn goes to the brain.
+	TimeoutMS *int `yaml:"timeout_ms,omitempty"`
+}
+
+// IsEnabled reports whether a fast-path URL is configured.
+func (f *FastPathConfig) IsEnabled() bool {
+	return f != nil && strings.TrimSpace(f.URL) != ""
+}
+
+// GetTimeoutMS returns the fast-path response timeout in milliseconds (default: 800).
+func (f *FastPathConfig) GetTimeoutMS() int {
+	if f == nil || f.TimeoutMS == nil || *f.TimeoutMS <= 0 {
+		return 800
+	}
+	return *f.TimeoutMS
 }
 
 // SpeakerIDConfig configures voice-fingerprint speaker matching.
@@ -554,6 +581,17 @@ func (c *Config) Validate() error {
 		}
 		if vh.TTSTimeoutSeconds != nil && *vh.TTSTimeoutSeconds <= 0 {
 			return fmt.Errorf("voice_hub tts_timeout_seconds must be positive (got %d)", *vh.TTSTimeoutSeconds)
+		}
+		if fp := vh.FastPath; fp != nil {
+			if fp.TimeoutMS != nil && *fp.TimeoutMS <= 0 {
+				return fmt.Errorf("voice_hub fast_path timeout_ms must be positive (got %d)", *fp.TimeoutMS)
+			}
+			if fp.IsEnabled() {
+				u, perr := url.Parse(strings.TrimSpace(fp.URL))
+				if perr != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+					return fmt.Errorf("voice_hub fast_path url must be an http(s) URL (got %q)", fp.URL)
+				}
+			}
 		}
 		if sid := vh.SpeakerID; sid != nil {
 			if strings.TrimSpace(sid.EmbedURL) == "" || strings.TrimSpace(sid.FingerprintsPath) == "" {
