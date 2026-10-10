@@ -198,7 +198,18 @@
         {{ end }}
 
         {{ if .EventTitle }}
-        <div class="cf-month-event-title cf-event-clickable" {{ if .Events }}data-event-id="{{ (index .Events 0).ID }}"{{ end }} title="{{ .EventTitle }}" style="font-size: 0.60rem; color: var(--mm-text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 2px; line-height: 1.2; cursor: pointer; touch-action: manipulation;">{{ .EventTitle }}</div>
+        {{ if .Events }}
+        {{ range $eIdx, $ev := .Events }}
+        {{ if lt $eIdx 2 }}
+        <div class="cf-month-event-title cf-event-clickable" data-event-id="{{ $ev.ID }}" title="{{ $ev.Title }}" style="font-size: 0.60rem; color: var(--mm-text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 2px; line-height: 1.2; cursor: pointer; touch-action: manipulation;">{{ $ev.Title }}</div>
+        {{ end }}
+        {{ end }}
+        {{ if gt (len .Events) 2 }}
+        <div class="cf-month-more" style="font-size: 0.55rem; color: var(--mm-text-muted); line-height: 1.1; margin-top: 1px;">+{{ sub (len .Events) 2 }} more</div>
+        {{ end }}
+        {{ else }}
+        <div class="cf-month-event-title cf-event-clickable" title="{{ .EventTitle }}" style="font-size: 0.60rem; color: var(--mm-text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 2px; line-height: 1.2; cursor: pointer; touch-action: manipulation;">{{ .EventTitle }}</div>
+        {{ end }}
         {{ end }}
       </div>
       {{ end }}
