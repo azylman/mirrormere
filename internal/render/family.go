@@ -100,6 +100,7 @@ type FamilyDayViewModel struct {
 	HoursStart   string            `json:"hours_start"`
 	HoursEnd     string            `json:"hours_end"`
 	HourMarkers  []string          `json:"hour_markers"`
+	Members      []FamilyMember    `json:"members"`
 	Columns      []FamilyDayColumn `json:"columns"`
 	AllDayEvents []FamilyDayEvent  `json:"all_day_events"`
 	SharedColor  string            `json:"shared_color"`
@@ -1015,6 +1016,7 @@ func BuildFamilyDayView(data any, cfg map[string]any, dims domain.Dimension, now
 		HoursStart:   hours.StartStr,
 		HoursEnd:     hours.EndStr,
 		HourMarkers:  hours.Markers,
+		Members:      members,
 		Columns:      columns,
 		AllDayEvents: allDayEvents,
 		SharedColor:  sharedColor,

@@ -1,6 +1,9 @@
 package render
 
 import (
+	"bytes"
+	"html/template"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -1211,3 +1214,248 @@ func TestBuildFamilyDayView_UnclaimedSharedColumnRouting(t *testing.T) {
 		}
 	})
 }
+
+func renderFamilyWidgetTemplate(t *testing.T, ctx Context, now time.Time) string {
+	t.Helper()
+	tmplPath := filepath.Join("..", "..", "widgets", "calendar-family", "views", "widget.html")
+	tmpl, err := template.New("widget.html").Funcs(StandardFuncMap(func() time.Time {
+		return now
+	})).ParseFiles(tmplPath)
+	if err != nil {
+		t.Fatalf("failed to parse calendar-family widget template: %v", err)
+	}
+
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, ctx); err != nil {
+		t.Fatalf("failed to execute calendar-family widget template: %v", err)
+	}
+	return buf.String()
+}
+
+func TestCalendarFamily_DayViewTemplateRender_6x2(t *testing.T) {
+	t.Parallel()
+
+	snap := provider.CalendarSnapshot{
+		LastSync: "2026-09-27T12:00:00Z",
+		Events: []provider.CalendarEvent{
+			{ID: "e1", CalendarName: "alex-personal", Title: "Design Review", Start: "2026-09-27T10:00:00Z", End: "2026-09-27T11:00:00Z", Location: "War Room A"},
+			{ID: "e2", CalendarName: "school", Title: "All Day Holiday", Start: "2026-09-27", End: "2026-09-27", AllDay: true},
+			{ID: "e3", CalendarName: "alex-personal", Title: "Dawn Run", Start: "2026-09-27T05:30:00Z", End: "2026-09-27T06:30:00Z"},
+			{ID: "e4", CalendarName: "alex-personal", Title: "Late Movie", Start: "2026-09-27T22:00:00Z", End: "2026-09-27T23:30:00Z"},
+			{ID: "e5", CalendarName: "unclaimed-cal", Title: "Town Marathon", Start: "2026-09-27T14:00:00Z", End: "2026-09-27T15:30:00Z"},
+		},
+	}
+
+	cfg := baseFamilyConfig()
+	cfg["default_view"] = "day"
+	cfg["date"] = "2026-09-27"
+	cfg["hours"] = []any{"07:00", "21:00"}
+
+	ctx := Context{
+		ID:         "test-family-day",
+		Type:       "calendar-family",
+		Dimensions: domain.NewDimension(6, 2),
+		Data:       snap,
+		Config:     cfg,
+	}
+
+	html := renderFamilyWidgetTemplate(t, ctx, testNow)
+
+	// Verify root container & class
+	if !strings.Contains(html, "cf-view-day") {
+		t.Errorf("expected 'cf-view-day' in rendered output: %s", html)
+	}
+	// Verify CSS variable declarations
+	if !strings.Contains(html, "--mm-member-0: #E07A5F") {
+		t.Errorf("expected --mm-member-0 in html: %s", html)
+	}
+	// Verify date header
+	if !strings.Contains(html, "Sun, 2026-09-27") {
+		t.Errorf("expected date header 'Sun, 2026-09-27' in html: %s", html)
+	}
+	// Verify all-day banner
+	if !strings.Contains(html, "cf-allday-banner") || !strings.Contains(html, "All Day Holiday") {
+		t.Errorf("expected all-day event 'All Day Holiday' in html: %s", html)
+	}
+	// Verify timeline axis with hour markers
+	if !strings.Contains(html, "cf-timeline-axis") || !strings.Contains(html, "07:00") || !strings.Contains(html, "21:00") {
+		t.Errorf("expected timeline axis with 07:00 and 21:00 markers: %s", html)
+	}
+	// Verify member column headers and avatars
+	if !strings.Contains(html, ">Alex</span>") || !strings.Contains(html, ">Kid</span>") {
+		t.Errorf("expected column headers for Alex and Kid: %s", html)
+	}
+	// Verify early and late edge bands
+	if !strings.Contains(html, "cf-early-band") || !strings.Contains(html, "Dawn Run") {
+		t.Errorf("expected early edge band with Dawn Run: %s", html)
+	}
+	if !strings.Contains(html, "cf-late-band") || !strings.Contains(html, "Late Movie") {
+		t.Errorf("expected late edge band with Late Movie: %s", html)
+	}
+	// Verify timed event positioning
+	if !strings.Contains(html, "Design Review") || !strings.Contains(html, "top:") || !strings.Contains(html, "height:") {
+		t.Errorf("expected Design Review with top and height styles: %s", html)
+	}
+	if !strings.Contains(html, "War Room A") {
+		t.Errorf("expected event location 'War Room A': %s", html)
+	}
+	// Verify pattern classes
+	if !strings.Contains(html, "cf-pattern-solid") || !strings.Contains(html, "cf-pattern-hatch") {
+		t.Errorf("expected pattern classes cf-pattern-solid and cf-pattern-hatch in output: %s", html)
+	}
+}
+
+func TestCalendarFamily_DayViewTemplateRender_4x2(t *testing.T) {
+	t.Parallel()
+
+	snap := provider.CalendarSnapshot{
+		LastSync: "2026-09-27T12:00:00Z",
+		Events: []provider.CalendarEvent{
+			{ID: "e_shared", CalendarName: "alex-personal", Title: "Family Dinner", Start: "2026-09-27T18:00:00Z", End: "2026-09-27T19:30:00Z"},
+			{ID: "e_grandma", CalendarName: "grandma-cal", Title: "Knitting", Start: "2026-09-27T10:00:00Z", End: "2026-09-27T11:00:00Z"},
+		},
+	}
+
+	cfg := fiveMemberConfig()
+	cfg["default_view"] = "day"
+	cfg["date"] = "2026-09-27"
+	cfg["hours"] = []any{"07:00", "21:00"}
+
+	ctx := Context{
+		ID:         "test-family-day-4x2",
+		Type:       "calendar-family",
+		Dimensions: domain.NewDimension(4, 2),
+		Data:       snap,
+		Config:     cfg,
+	}
+
+	html := renderFamilyWidgetTemplate(t, ctx, testNow)
+
+	if !strings.Contains(html, "cf-view-day") {
+		t.Errorf("expected cf-view-day in 4x2 html: %s", html)
+	}
+	// 4x2 renders 3 member columns + 1 shared column for collapsed grandma
+	if !strings.Contains(html, ">Shared</span>") {
+		t.Errorf("expected Shared column in 4x2: %s", html)
+	}
+	if !strings.Contains(html, "Knitting") {
+		t.Errorf("expected Knitting in 4x2 html: %s", html)
+	}
+	// Pattern classes for dots and outline
+	if !strings.Contains(html, "cf-pattern-dots") || !strings.Contains(html, "cf-pattern-outline") {
+		t.Errorf("expected cf-pattern-dots and cf-pattern-outline in 4x2 html: %s", html)
+	}
+}
+
+func TestCalendarFamily_DayViewTemplateRender_EmptyAndNoData(t *testing.T) {
+	t.Parallel()
+
+	// 1. Members configured but no events
+	cfg := baseFamilyConfig()
+	cfg["default_view"] = "day"
+	cfg["date"] = "2026-09-27"
+
+	ctxEmpty := Context{
+		ID:         "test-day-empty-events",
+		Type:       "calendar-family",
+		Dimensions: domain.NewDimension(6, 2),
+		Data:       provider.CalendarSnapshot{},
+		Config:     cfg,
+	}
+	htmlEmpty := renderFamilyWidgetTemplate(t, ctxEmpty, testNow)
+	if !strings.Contains(htmlEmpty, "cf-view-day") || !strings.Contains(htmlEmpty, "Alex") {
+		t.Errorf("expected day columns even with 0 events: %s", htmlEmpty)
+	}
+
+	// 2. No members configured -> cf-empty
+	cfgNoMembers := map[string]any{"default_view": "day"}
+	ctxNoMembers := Context{
+		ID:         "test-day-no-members",
+		Type:       "calendar-family",
+		Dimensions: domain.NewDimension(6, 2),
+		Data:       nil,
+		Config:     cfgNoMembers,
+	}
+	htmlNoMembers := renderFamilyWidgetTemplate(t, ctxNoMembers, testNow)
+	if !strings.Contains(htmlNoMembers, "No calendar data yet") {
+		t.Errorf("expected 'No calendar data yet' when no members: %s", htmlNoMembers)
+	}
+}
+
+func TestCalendarFamily_WeekViewTemplateRender(t *testing.T) {
+	t.Parallel()
+
+	snap := provider.CalendarSnapshot{
+		Events: []provider.CalendarEvent{
+			{ID: "e_week", CalendarName: "alex-personal", Title: "Team Standup", Start: "2026-09-28T09:00:00Z", End: "2026-09-28T09:30:00Z"},
+		},
+	}
+	cfg := baseFamilyConfig()
+	cfg["default_view"] = "week"
+
+	ctx := Context{
+		ID:         "test-family-week",
+		Type:       "calendar-family",
+		Dimensions: domain.NewDimension(6, 2),
+		Data:       snap,
+		Config:     cfg,
+	}
+
+	html := renderFamilyWidgetTemplate(t, ctx, testNow)
+	if !strings.Contains(html, "cf-view-week") {
+		t.Errorf("expected 'cf-view-week' in rendered output: %s", html)
+	}
+	if !strings.Contains(html, "cf-week-grid") {
+		t.Errorf("expected 'cf-week-grid' in rendered output: %s", html)
+	}
+	if !strings.Contains(html, "Team Standup") {
+		t.Errorf("expected 'Team Standup' in rendered output: %s", html)
+	}
+}
+
+func TestHelpers_DayViewAndAddSub(t *testing.T) {
+	t.Parallel()
+
+	funcMap := StandardFuncMap(func() time.Time { return testNow })
+
+	// Test dayView
+	dayViewFn, ok := funcMap["dayView"].(func(data any, cfg map[string]any, dims domain.Dimension) (*FamilyDayViewModel, error))
+	if !ok {
+		t.Fatalf("expected dayView helper in funcMap")
+	}
+	cfg := baseFamilyConfig()
+	cfg["date"] = "2026-09-27"
+	v, err := dayViewFn(provider.CalendarSnapshot{}, cfg, domain.NewDimension(6, 2))
+	if err != nil || v == nil || v.Date != "2026-09-27" {
+		t.Fatalf("dayView helper failed: v=%+v, err=%v", v, err)
+	}
+
+	// Test isDayView
+	isDayViewFn, ok := funcMap["isDayView"].(func(cfg map[string]any) bool)
+	if !ok {
+		t.Fatalf("expected isDayView helper in funcMap")
+	}
+	if !isDayViewFn(map[string]any{"default_view": "day"}) {
+		t.Errorf("expected isDayView to return true for 'day'")
+	}
+	if !isDayViewFn(map[string]any{"default_view": "DAY"}) {
+		t.Errorf("expected isDayView to return true for 'DAY' (case-insensitive)")
+	}
+	if isDayViewFn(map[string]any{"default_view": "week"}) {
+		t.Errorf("expected isDayView to return false for 'week'")
+	}
+	if isDayViewFn(nil) {
+		t.Errorf("expected isDayView to return false for nil config")
+	}
+
+	// Test add and sub
+	addFn, ok := funcMap["add"].(func(a, b int) int)
+	if !ok || addFn(3, 4) != 7 {
+		t.Errorf("add helper failed")
+	}
+	subFn, ok := funcMap["sub"].(func(a, b int) int)
+	if !ok || subFn(5, 2) != 3 {
+		t.Errorf("sub helper failed")
+	}
+}
+
