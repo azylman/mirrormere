@@ -421,17 +421,7 @@ func BuildFamilyView(data any, cfg map[string]any, dims domain.Dimension, now ti
 	}, nil
 }
 
-func extractCalendarSnapshot(data any) provider.CalendarSnapshot {
-	switch v := data.(type) {
-	case provider.CalendarSnapshot:
-		return v
-	case *provider.CalendarSnapshot:
-		if v != nil {
-			return *v
-		}
-	}
-	return provider.CalendarSnapshot{}
-}
+
 
 // eventDateKey resolves the local calendar date a timed event's start falls on,
 // "Timezones" - the provider emits RFC3339 timestamps, which must be converted to the

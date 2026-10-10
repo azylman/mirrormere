@@ -906,6 +906,15 @@ func TestEngine_RenderWidget_CalendarAgendaPackage(t *testing.T) {
 		SyncStatus: "ok",
 		Events: []provider.CalendarEvent{
 			{
+				ID:           "evt_past_86d",
+				CalendarName: "Old Calendar",
+				Color:        "#ef4444",
+				Title:        "Ancient Practice 86 Days Ago",
+				Start:        "2026-07-02T10:00:00Z",
+				End:          "2026-07-02T11:00:00Z",
+				AllDay:       false,
+			},
+			{
 				ID:           "evt_1",
 				CalendarName: "Family Calendar",
 				Color:        "#3b82f6",
@@ -943,7 +952,8 @@ func TestEngine_RenderWidget_CalendarAgendaPackage(t *testing.T) {
 	}
 
 	resolver := &mockResolver{packages: map[string]*domain.Package{"calendar-agenda": pkg}}
-	engine := render.NewEngine(resolver, p)
+	mockNow := time.Date(2026, 9, 26, 12, 0, 0, 0, time.UTC)
+	engine := render.NewEngine(resolver, p, render.WithNowFunc(func() time.Time { return mockNow }))
 
 	// 1. Render loaded calendar
 	htmlLoaded, err := engine.RenderWidget(context.Background(), "w-cal-loaded")
@@ -951,6 +961,9 @@ func TestEngine_RenderWidget_CalendarAgendaPackage(t *testing.T) {
 		t.Fatalf("RenderWidget failed on loaded calendar: %v", err)
 	}
 	htmlStr := string(htmlLoaded)
+	if strings.Contains(htmlStr, "Ancient Practice") {
+		t.Errorf("expected past event 'Ancient Practice' to be filtered out, got: %s", htmlStr)
+	}
 	if !strings.Contains(htmlStr, "Soccer Practice") {
 		t.Errorf("expected 'Soccer Practice' in output: %s", htmlStr)
 	}
