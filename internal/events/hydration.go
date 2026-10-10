@@ -39,6 +39,8 @@ type HeaderWeather struct {
 	Units       string  `json:"units"`
 	WeatherCode int     `json:"weather_code"`
 	Icon        string  `json:"icon"`
+	Condition   string  `json:"condition,omitempty"`
+	Location    string  `json:"location,omitempty"`
 }
 
 // HeaderUpdateData matches .B and .
