@@ -2,6 +2,7 @@ package render
 
 import (
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -25,8 +26,9 @@ type FamilyMember struct {
 type FamilyEvent struct {
 	ID        string   `json:"id"`
 	Title     string   `json:"title"`
-	Location  string   `json:"location"`
-	Start     string   `json:"start"`
+	Location    string   `json:"location"`
+	Description string   `json:"description"`
+	Start       string   `json:"start"`
 	End       string   `json:"end"`
 	AllDay    bool     `json:"all_day"`
 	Owners    []string `json:"owners"`
@@ -60,6 +62,56 @@ type FamilyViewModel struct {
 	Members     []FamilyMember `json:"members"`
 	Days        []FamilyDay    `json:"days"`
 	SharedColor string         `json:"shared_color"`
+}
+
+// FamilyDayEvent represents a resolved event positioned within a day view column or edge band.
+type FamilyDayEvent struct {
+	FamilyEvent
+	TopPct      float64 `json:"top_pct"`
+	HeightPct   float64 `json:"height_pct"`
+	IsEarlyEdge bool    `json:"is_early_edge"`
+	IsLateEdge  bool    `json:"is_late_edge"`
+	ColSpan     int     `json:"col_span"`
+}
+
+// FamilyDayColumn represents a single member column (or shared column) in the day view.
+type FamilyDayColumn struct {
+	Name        string           `json:"name"`
+	Initial     string           `json:"initial"`
+	Color       string           `json:"color"`
+	TextColor   string           `json:"text_color"`
+	Pattern     string           `json:"pattern"`
+	IsShared    bool             `json:"is_shared"`
+	Events      []FamilyDayEvent `json:"events"`
+	EarlyEvents []FamilyDayEvent `json:"early_events"`
+	LateEvents  []FamilyDayEvent `json:"late_events"`
+}
+
+// FamilyDayViewModel is the fully resolved server-side view model consumed by the calendar-family
+// day view template.
+type FamilyDayViewModel struct {
+	Date         string            `json:"date"`
+	WeekdayAbbr  string            `json:"weekday_abbr"`
+	DayOfMonth   int               `json:"day_of_month"`
+	IsToday      bool              `json:"is_today"`
+	IsWeekend    bool              `json:"is_weekend"`
+	HoursStart   string            `json:"hours_start"`
+	HoursEnd     string            `json:"hours_end"`
+	HourMarkers  []string          `json:"hour_markers"`
+	Columns      []FamilyDayColumn `json:"columns"`
+	AllDayEvents []FamilyDayEvent  `json:"all_day_events"`
+	SharedColor  string            `json:"shared_color"`
+}
+
+// HoursBand represents the parsed visible hours window for the day view.
+type HoursBand struct {
+	StartHour   int      `json:"start_hour"`
+	StartMinute int      `json:"start_minute"`
+	EndHour     int      `json:"end_hour"`
+	EndMinute   int      `json:"end_minute"`
+	StartStr    string   `json:"start_str"`
+	EndStr      string   `json:"end_str"`
+	Markers     []string `json:"markers"`
 }
 
 const (
@@ -151,10 +203,11 @@ func BuildFamilyView(data any, cfg map[string]any, dims domain.Dimension, now ti
 		fe, exists := merged[ev.ID]
 		if !exists {
 			fe = &FamilyEvent{
-				ID:       ev.ID,
-				Title:    ev.Title,
-				Location: ev.Location,
-				AllDay:   ev.AllDay,
+				ID:          ev.ID,
+				Title:       ev.Title,
+				Location:    ev.Location,
+				Description: truncateString(ev.Description, 280),
+				AllDay:      ev.AllDay,
 			}
 			if !ev.AllDay {
 				if t, ok := parseFamilyTime(ev.Start); ok {
@@ -173,6 +226,7 @@ func BuildFamilyView(data any, cfg map[string]any, dims domain.Dimension, now ti
 		if src, ok := calendars[ev.CalendarName]; ok && src.private {
 			fe.Title = "Busy"
 			fe.Location = ""
+			fe.Description = "Busy"
 		}
 
 		for _, m := range members {
@@ -488,4 +542,420 @@ func parseHexColor(hex string) (r, g, b int, ok bool) {
 		return 0, 0, 0, false
 	}
 	return int(rv), int(gv), int(bv), true
+}
+
+// ParseHoursBand parses the `hours` array from config, validating that start < end.
+// Defaults to 07:00–21:00 if absent, invalid, or inverted.
+func ParseHoursBand(cfg map[string]any) HoursBand {
+	defaultBand := defaultHoursBand()
+	if cfg == nil {
+		return defaultBand
+	}
+	var rawItems []string
+	switch v := cfg["hours"].(type) {
+	case []any:
+		for _, item := range v {
+			if s, ok := item.(string); ok {
+				rawItems = append(rawItems, s)
+			}
+		}
+	case []string:
+		rawItems = v
+	}
+	if len(rawItems) < 2 {
+		return defaultBand
+	}
+
+	hStart, mStart, ok1 := parseClockTime(rawItems[0])
+	hEnd, mEnd, ok2 := parseClockTime(rawItems[1])
+	if !ok1 || !ok2 {
+		return defaultBand
+	}
+
+	totalStart := hStart*60 + mStart
+	totalEnd := hEnd*60 + mEnd
+	if totalStart >= totalEnd {
+		return defaultBand
+	}
+
+	markers := generateHourMarkers(hStart, mStart, hEnd, mEnd)
+	return HoursBand{
+		StartHour:   hStart,
+		StartMinute: mStart,
+		EndHour:     hEnd,
+		EndMinute:   mEnd,
+		StartStr:    fmt.Sprintf("%02d:%02d", hStart, mStart),
+		EndStr:      fmt.Sprintf("%02d:%02d", hEnd, mEnd),
+		Markers:     markers,
+	}
+}
+
+func defaultHoursBand() HoursBand {
+	return HoursBand{
+		StartHour:   7,
+		StartMinute: 0,
+		EndHour:     21,
+		EndMinute:   0,
+		StartStr:    "07:00",
+		EndStr:      "21:00",
+		Markers:     generateHourMarkers(7, 0, 21, 0),
+	}
+}
+
+func generateHourMarkers(hStart, mStart, hEnd, mEnd int) []string {
+	var markers []string
+	firstHour := hStart
+	if mStart > 0 {
+		markers = append(markers, fmt.Sprintf("%02d:%02d", hStart, mStart))
+		firstHour = hStart + 1
+	}
+	for h := firstHour; h <= hEnd; h++ {
+		if h == hEnd && mEnd > 0 {
+			markers = append(markers, fmt.Sprintf("%02d:00", h))
+			markers = append(markers, fmt.Sprintf("%02d:%02d", hEnd, mEnd))
+			break
+		}
+		markers = append(markers, fmt.Sprintf("%02d:00", h))
+	}
+	return markers
+}
+
+func parseClockTime(v string) (hour, minute int, ok bool) {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return 0, 0, false
+	}
+	if strings.Contains(v, ":") {
+		parts := strings.Split(v, ":")
+		if len(parts) != 2 {
+			return 0, 0, false
+		}
+		h, err1 := strconv.Atoi(strings.TrimSpace(parts[0]))
+		m, err2 := strconv.Atoi(strings.TrimSpace(parts[1]))
+		if err1 != nil || err2 != nil {
+			return 0, 0, false
+		}
+		if h < 0 || h > 24 || m < 0 || m > 59 {
+			return 0, 0, false
+		}
+		if h == 24 && m > 0 {
+			return 0, 0, false
+		}
+		return h, m, true
+	}
+
+	h, err := strconv.Atoi(v)
+	if err != nil || h < 0 || h > 24 {
+		return 0, 0, false
+	}
+	return h, 0, true
+}
+
+// ComputeDayEventPosition calculates the vertical TopPct and HeightPct for an event on a given day
+// relative to the visible HoursBand, along with flags for early/late edge collapsing.
+//
+// day is the reference date for the column/view (time of day is ignored, local midnight used).
+//
+// If event starts before the visible hours window, isEarlyEdge is true.
+// If event ends after the visible hours window, isLateEdge is true.
+// For events crossing midnight or multi-day events, the event bounds are evaluated relative
+// to the target day's hours window.
+func ComputeDayEventPosition(eventStart, eventEnd time.Time, day time.Time, hours HoursBand) (topPct, heightPct float64, isEarlyEdge, isLateEdge bool) {
+	loc := day.Location()
+	wStart := time.Date(day.Year(), day.Month(), day.Day(), hours.StartHour, hours.StartMinute, 0, 0, loc)
+	wEnd := time.Date(day.Year(), day.Month(), day.Day(), hours.EndHour, hours.EndMinute, 0, 0, loc)
+
+	wDuration := wEnd.Sub(wStart).Seconds()
+	if wDuration <= 0 {
+		wStart = time.Date(day.Year(), day.Month(), day.Day(), 7, 0, 0, 0, loc)
+		wEnd = time.Date(day.Year(), day.Month(), day.Day(), 21, 0, 0, 0, loc)
+		wDuration = wEnd.Sub(wStart).Seconds()
+	}
+
+	start := eventStart.In(loc)
+	end := eventEnd.In(loc)
+	if end.Before(start) || end.Equal(start) {
+		end = start.Add(30 * time.Minute)
+	}
+
+	if start.Before(wStart) {
+		isEarlyEdge = true
+	}
+	if end.After(wEnd) {
+		isLateEdge = true
+	}
+
+	effStart := start
+	if effStart.Before(wStart) {
+		effStart = wStart
+	}
+	effEnd := end
+	if effEnd.After(wEnd) {
+		effEnd = wEnd
+	}
+
+	if effEnd.After(effStart) && !start.After(wEnd) && !end.Before(wStart) {
+		topPct = (effStart.Sub(wStart).Seconds() / wDuration) * 100.0
+		heightPct = (effEnd.Sub(effStart).Seconds() / wDuration) * 100.0
+		// Ensure visible events have at least 2.0% height for legibility and tap targets
+		if heightPct < 2.0 {
+			heightPct = 2.0
+		}
+		if topPct+heightPct > 100.0 {
+			topPct = 100.0 - heightPct
+		}
+	} else {
+		if start.After(wEnd) || start.Equal(wEnd) {
+			topPct = 100.0
+			heightPct = 0.0
+		} else {
+			topPct = 0.0
+			heightPct = 0.0
+		}
+	}
+
+	topPct = roundToTwoDecimals(topPct)
+	heightPct = roundToTwoDecimals(heightPct)
+	return
+}
+
+func roundToTwoDecimals(val float64) float64 {
+	return math.Round(val*100) / 100
+}
+
+func truncateString(s string, maxRunes int) string {
+	runes := []rune(s)
+	if len(runes) > maxRunes {
+		if maxRunes > 1 {
+			return string(runes[:maxRunes-1]) + "…"
+		}
+		return string(runes[:maxRunes])
+	}
+	return s
+}
+
+// BuildFamilyDayView resolves the calendar-agenda provider's CalendarSnapshot payload plus the
+// calendar-family widget instance config into the single-day view model.
+func BuildFamilyDayView(data any, cfg map[string]any, dims domain.Dimension, now time.Time) (*FamilyDayViewModel, error) {
+	members, err := parseFamilyMembers(cfg)
+	if err != nil {
+		return nil, err
+	}
+	calendars := parseFamilyCalendarSources(cfg)
+	sharedColor := stringOr(cfg, "shared_color", defaultSharedColor)
+	hours := ParseHoursBand(cfg)
+
+	loc := now.Location()
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
+	if dateStr, ok := cfg["date"].(string); ok && strings.TrimSpace(dateStr) != "" {
+		if t, err := time.ParseInLocation("2006-01-02", strings.TrimSpace(dateStr), loc); err == nil {
+			today = t
+		}
+	}
+
+	snapshot := extractCalendarSnapshot(data)
+	dayDateStr := today.Format("2006-01-02")
+	dayStart := today
+	dayEnd := today.AddDate(0, 0, 1)
+
+	columns := make([]FamilyDayColumn, len(members))
+	for i, m := range members {
+		columns[i] = FamilyDayColumn{
+			Name:        m.Name,
+			Initial:     m.Initial,
+			Color:       m.Color,
+			TextColor:   m.TextColor,
+			Pattern:     m.Pattern,
+			IsShared:    false,
+			Events:      make([]FamilyDayEvent, 0),
+			EarlyEvents: make([]FamilyDayEvent, 0),
+			LateEvents:  make([]FamilyDayEvent, 0),
+		}
+	}
+
+	sharedCol := FamilyDayColumn{
+		Name:        "Shared",
+		Initial:     "S",
+		Color:       sharedColor,
+		TextColor:   contrastTextColor(sharedColor),
+		Pattern:     "solid",
+		IsShared:    true,
+		Events:      make([]FamilyDayEvent, 0),
+		EarlyEvents: make([]FamilyDayEvent, 0),
+		LateEvents:  make([]FamilyDayEvent, 0),
+	}
+
+	var allDayEvents []FamilyDayEvent
+
+	merged := make(map[string]*FamilyEvent)
+	mergedOrder := make([]string, 0)
+	mergedOwnerSet := make(map[string]map[string]bool)
+	mergedRawEvents := make(map[string]provider.CalendarEvent)
+
+	for _, ev := range snapshot.Events {
+		var touchesDay bool
+		if ev.AllDay {
+			for _, d := range familyDateRange(ev.Start, ev.End) {
+				if d == dayDateStr {
+					touchesDay = true
+					break
+				}
+			}
+		} else {
+			tStart, ok1 := parseFamilyTime(ev.Start)
+			tEnd, ok2 := parseFamilyTime(ev.End)
+			if ok1 {
+				tStartLoc := tStart.In(loc)
+				tEndLoc := tStartLoc.Add(30 * time.Minute)
+				if ok2 {
+					tEndLoc = tEnd.In(loc)
+				}
+				if tStartLoc.Before(dayEnd) && tEndLoc.After(dayStart) {
+					touchesDay = true
+				}
+			}
+		}
+
+		if !touchesDay {
+			continue
+		}
+
+		fe, exists := merged[ev.ID]
+		if !exists {
+			fe = &FamilyEvent{
+				ID:          ev.ID,
+				Title:       ev.Title,
+				Location:    ev.Location,
+				Description: truncateString(ev.Description, 280),
+				AllDay:      ev.AllDay,
+			}
+			if !ev.AllDay {
+				if t, ok := parseFamilyTime(ev.Start); ok {
+					fe.Start = t.In(loc).Format("15:04")
+				}
+				if t, ok := parseFamilyTime(ev.End); ok {
+					fe.End = t.In(loc).Format("15:04")
+				}
+			}
+			merged[ev.ID] = fe
+			mergedOrder = append(mergedOrder, ev.ID)
+			mergedOwnerSet[ev.ID] = make(map[string]bool)
+			mergedRawEvents[ev.ID] = ev
+		}
+
+		if src, ok := calendars[ev.CalendarName]; ok && src.private {
+			fe.Title = "Busy"
+			fe.Location = ""
+			fe.Description = "Busy"
+		}
+
+		for _, m := range members {
+			if calendarClaimedBy(m, ev.CalendarName) {
+				mergedOwnerSet[ev.ID][m.Name] = true
+			}
+		}
+	}
+
+	for _, id := range mergedOrder {
+		fe := merged[id]
+		claimed := mergedOwnerSet[id]
+		for _, m := range members {
+			if claimed[m.Name] {
+				fe.Owners = append(fe.Owners, m.Name)
+				fe.Initials = append(fe.Initials, m.Initial)
+				fe.Colors = append(fe.Colors, m.Color)
+				fe.Patterns = append(fe.Patterns, m.Pattern)
+			}
+		}
+		if len(fe.Colors) > 0 {
+			fe.Color = fe.Colors[0]
+		} else {
+			fe.Color = sharedColor
+		}
+		if len(fe.Patterns) > 0 {
+			fe.Pattern = fe.Patterns[0]
+		} else {
+			fe.Pattern = "solid"
+		}
+		fe.TextColor = contrastTextColor(fe.Color)
+
+		rawEv := mergedRawEvents[id]
+		if fe.AllDay {
+			dayEv := FamilyDayEvent{
+				FamilyEvent: *fe,
+				ColSpan:     1,
+			}
+			allDayEvents = append(allDayEvents, dayEv)
+			continue
+		}
+
+		tStart, _ := parseFamilyTime(rawEv.Start)
+		tEnd, okEnd := parseFamilyTime(rawEv.End)
+		tStartLoc := tStart.In(loc)
+		tEndLoc := tStartLoc.Add(30 * time.Minute)
+		if okEnd {
+			tEndLoc = tEnd.In(loc)
+		}
+		topPct, heightPct, isEarly, isLate := ComputeDayEventPosition(tStartLoc, tEndLoc, today, hours)
+		dayEv := FamilyDayEvent{
+			FamilyEvent: *fe,
+			TopPct:      topPct,
+			HeightPct:   heightPct,
+			IsEarlyEdge: isEarly,
+			IsLateEdge:  isLate,
+			ColSpan:     1,
+		}
+
+		if len(fe.Owners) == 0 {
+			dispatchDayEvent(&sharedCol, dayEv)
+		} else {
+			for _, ownerName := range fe.Owners {
+				for colIdx := range columns {
+					if columns[colIdx].Name == ownerName {
+						dispatchDayEvent(&columns[colIdx], dayEv)
+						break
+					}
+				}
+			}
+		}
+	}
+
+	if len(sharedCol.Events) > 0 || len(sharedCol.EarlyEvents) > 0 || len(sharedCol.LateEvents) > 0 {
+		columns = append(columns, sharedCol)
+	}
+
+	for i := range columns {
+		sort.SliceStable(columns[i].Events, func(a, b int) bool {
+			if columns[i].Events[a].TopPct != columns[i].Events[b].TopPct {
+				return columns[i].Events[a].TopPct < columns[i].Events[b].TopPct
+			}
+			return columns[i].Events[a].Start < columns[i].Events[b].Start
+		})
+	}
+
+	return &FamilyDayViewModel{
+		Date:         dayDateStr,
+		WeekdayAbbr:  today.Format("Mon"),
+		DayOfMonth:   today.Day(),
+		IsToday:      today.Year() == now.Year() && today.YearDay() == now.YearDay(),
+		IsWeekend:    today.Weekday() == time.Saturday || today.Weekday() == time.Sunday,
+		HoursStart:   hours.StartStr,
+		HoursEnd:     hours.EndStr,
+		HourMarkers:  hours.Markers,
+		Columns:      columns,
+		AllDayEvents: allDayEvents,
+		SharedColor:  sharedColor,
+	}, nil
+}
+
+func dispatchDayEvent(col *FamilyDayColumn, ev FamilyDayEvent) {
+	if ev.HeightPct > 0 {
+		col.Events = append(col.Events, ev)
+	}
+	if ev.IsEarlyEdge {
+		col.EarlyEvents = append(col.EarlyEvents, ev)
+	}
+	if ev.IsLateEdge {
+		col.LateEvents = append(col.LateEvents, ev)
+	}
 }
