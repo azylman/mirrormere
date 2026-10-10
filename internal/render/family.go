@@ -1607,16 +1607,6 @@ func BuildFamilyCombinedData(dayView *FamilyDayViewModel, weekView *FamilyViewMo
 		res["month_range_start"] = monthView.RangeStart
 		res["month_range_end"] = monthView.RangeEnd
 		res["month_days"] = monthView.Days
-		if monthView.RangeStart != "" {
-			if _, ok := res["cached_range_start"]; !ok {
-				res["cached_range_start"] = monthView.RangeStart
-			}
-		}
-		if monthView.RangeEnd != "" {
-			if _, ok := res["cached_range_end"]; !ok {
-				res["cached_range_end"] = monthView.RangeEnd
-			}
-		}
 	}
 	var baseTime time.Time
 	if weekView != nil && weekView.Today != "" {
@@ -1634,6 +1624,13 @@ func BuildFamilyCombinedData(dayView *FamilyDayViewModel, weekView *FamilyViewMo
 		}
 		if _, ok := res["cached_range_end"]; !ok {
 			res["cached_range_end"] = baseTime.AddDate(0, 0, provider.DefaultWindowDaysFuture).Format("2006-01-02")
+		}
+	} else if monthView != nil {
+		if _, ok := res["cached_range_start"]; !ok && monthView.RangeStart != "" {
+			res["cached_range_start"] = monthView.RangeStart
+		}
+		if _, ok := res["cached_range_end"]; !ok && monthView.RangeEnd != "" {
+			res["cached_range_end"] = monthView.RangeEnd
 		}
 	}
 	return res

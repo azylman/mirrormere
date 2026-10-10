@@ -65,6 +65,7 @@
       this.touchStartHandler = this.handleTouchStart.bind(this);
       this.touchMoveHandler = this.handleTouchMove.bind(this);
       this.touchEndHandler = this.handleTouchEnd.bind(this);
+      this.touchCancelHandler = this.handleTouchCancel.bind(this);
 
       this.init();
     }
@@ -198,6 +199,9 @@
     }
 
     resolveCachedRange() {
+      if (this.cachedRange && this.cachedRange.start && this.cachedRange.end) {
+        return this.cachedRange;
+      }
       if (this.options.cachedRange) {
         return {
           start: typeof this.options.cachedRange.start === 'string'
@@ -253,6 +257,7 @@
       this.element.addEventListener('touchstart', this.touchStartHandler, { passive: true });
       this.element.addEventListener('touchmove', this.touchMoveHandler, { passive: true });
       this.element.addEventListener('touchend', this.touchEndHandler, { passive: true });
+      this.element.addEventListener('touchcancel', this.touchCancelHandler, { passive: true });
 
       const activityEvents = ['pointerdown', 'mousedown'];
       for (const evt of activityEvents) {
@@ -261,6 +266,11 @@
       if (typeof document !== 'undefined' && document.addEventListener) {
         document.addEventListener('keydown', this.keydownHandler);
       }
+    }
+
+    handleTouchCancel() {
+      this.isSwiping = false;
+      this.justSwiped = false;
     }
 
     handleUserActivity() {
@@ -405,7 +415,7 @@
 
       // 1. Check view switcher button click
       const btn = e.target && e.target.closest && e.target.closest('.cf-view-btn');
-      if (btn && this.viewButtons.includes(btn)) {
+      if (btn && this.element.contains(btn)) {
         if (typeof e.stopPropagation === 'function') {
           e.stopPropagation();
         }
@@ -887,7 +897,15 @@
       }
 
       try {
-        const url = `api/widgets/${encodeURIComponent(this.widgetId)}/render?date=${encodeURIComponent(dateStr)}&view=${encodeURIComponent(viewStr)}`;
+        let url = `api/widgets/${encodeURIComponent(this.widgetId)}/render?date=${encodeURIComponent(dateStr)}&view=${encodeURIComponent(viewStr)}`;
+        try {
+          if (typeof window !== 'undefined' && window.location && window.location.search) {
+            const node = new URLSearchParams(window.location.search).get('node');
+            if (node) {
+              url += `&node=${encodeURIComponent(node)}`;
+            }
+          }
+        } catch (_) {}
         const options = this.abortController ? { signal: this.abortController.signal } : {};
         const res = await this.fetchFn(url, options);
 
@@ -926,9 +944,19 @@
     applyRenderedHTML(html) {
       let temp;
       if (typeof html === 'string') {
-        temp = typeof document !== 'undefined' && document.createElement ? document.createElement('div') : null;
+        const cleanHTML = html.replace(/<img\b([^>]*)\bonload=("[^"]*"|'[^']*'|[^\s>]*)/gi, '<img$1 data-disabled-onload=$2');
+        if (typeof DOMParser !== 'undefined') {
+          try {
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(cleanHTML, 'text/html');
+            temp = doc.body;
+          } catch (_) {}
+        }
+        if (!temp && typeof document !== 'undefined' && document.createElement) {
+          temp = document.createElement('div');
+          temp.innerHTML = cleanHTML;
+        }
         if (!temp) return;
-        temp.innerHTML = html;
       } else if (html && typeof html.querySelector === 'function') {
         temp = html;
       } else {
@@ -981,6 +1009,14 @@
 
       this.data = this.parseData();
       this.eventIndex = this.buildEventIndex();
+      this.viewButtons = Array.from(this.element.querySelectorAll('.cf-view-btn'));
+
+      if (this.data && this.data.cached_range_start && this.data.cached_range_end) {
+        this.cachedRange = {
+          start: String(this.data.cached_range_start),
+          end: String(this.data.cached_range_end),
+        };
+      }
 
       this.element.dataset.currentDate = this.formatDateISO(this.currentDate);
       this.element.dataset.pageOffset = String(this.pageOffset);
@@ -1179,6 +1215,7 @@
       this.element.removeEventListener('touchstart', this.touchStartHandler);
       this.element.removeEventListener('touchmove', this.touchMoveHandler);
       this.element.removeEventListener('touchend', this.touchEndHandler);
+      this.element.removeEventListener('touchcancel', this.touchCancelHandler);
       const activityEvents = ['pointerdown', 'mousedown'];
       for (const evt of activityEvents) {
         this.element.removeEventListener(evt, this.activityHandler);
@@ -1197,8 +1234,15 @@
     instances: new Map(),
     mount(element, options = {}) {
       if (!element) return null;
+      if (typeof element.isConnected === 'boolean' && !element.isConnected) {
+        return null;
+      }
       const widgetId = element.dataset.widgetId || element.dataset.widgetType || 'calendar-grid';
-      if (this.instances.has(widgetId)) {
+      const existing = this.instances.get(widgetId);
+      if (existing) {
+        if (existing.element === element) {
+          return existing;
+        }
         this.unmount(widgetId);
       }
       const instance = new CalendarFamilyInstance(element, options);

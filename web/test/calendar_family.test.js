@@ -1584,4 +1584,87 @@ test('Calendar Family Client Controller', async (t) => {
     global.window.MirrormereCalendarFamily.unmount('rollback-cal');
   });
 
+  await t.test('successive multi-swipes advance across weeks with full HTML template containing auto-mount img tag', async () => {
+    const fetchCalls = [];
+    const mockFetch = async (url) => {
+      fetchCalls.push(url);
+      const parsed = new URL('http://localhost/' + url);
+      const date = parsed.searchParams.get('date');
+      return {
+        ok: true,
+        text: async () => `
+          <div class="widget-card widget-calendar-grid widget-calendar-family" data-widget-id="multi-swipe-cal">
+            <div class="cf-view-panel cf-view-week">
+              <div class="cf-event" data-event-id="ev-${date}">Event ${date}</div>
+            </div>
+            <span class="cf-range-label cf-label-week">Week of ${date}</span>
+            <script class="calendar-grid-data">${JSON.stringify({
+              date,
+              range_start: date,
+              cached_range_start: '2026-07-12',
+              cached_range_end: '2027-04-08'
+            })}</script>
+            <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E" style="display:none;" onload="window.MirrormereCalendarGrid.mount(this.closest('.widget-calendar-grid'))" />
+          </div>
+        `
+      };
+    };
+
+    const el = createMockElement({ widgetId: 'multi-swipe-cal', defaultView: 'week' });
+    el.isConnected = true;
+    const inst = global.window.MirrormereCalendarFamily.mount(el, {
+      fetch: mockFetch,
+      cachedRange: { start: '2026-07-12', end: '2027-04-08' },
+    });
+
+    // Swipe 1: Left -> Week 1 (2026-10-17)
+    el.dispatchEvent({ type: 'touchstart', touches: [{ clientX: 200, clientY: 50 }] });
+    el.dispatchEvent({ type: 'touchend', changedTouches: [{ clientX: 50, clientY: 50 }] });
+    await new Promise(r => setTimeout(r, 15));
+
+    assert.equal(inst.pageOffset, 1, 'first swipe should advance to pageOffset 1');
+    assert.equal(inst.formatDateISO(inst.currentWeekStart), '2026-10-17');
+    assert.equal(fetchCalls.length, 1);
+
+    // Verify instance is still alive and registered on the live DOM element
+    assert.equal(global.window.MirrormereCalendarFamily.getInstance('multi-swipe-cal'), inst);
+
+    // Swipe 2: Left -> Week 2 (2026-10-24)
+    el.dispatchEvent({ type: 'touchstart', touches: [{ clientX: 200, clientY: 50 }] });
+    el.dispatchEvent({ type: 'touchend', changedTouches: [{ clientX: 50, clientY: 50 }] });
+    await new Promise(r => setTimeout(r, 130));
+
+    assert.equal(inst.pageOffset, 2, 'second swipe should advance to pageOffset 2');
+    assert.equal(inst.formatDateISO(inst.currentWeekStart), '2026-10-24');
+    assert.equal(fetchCalls.length, 2);
+
+    // Tap Prev button: -> Week 1 (2026-10-17)
+    el._btnPrev.click();
+    await new Promise(r => setTimeout(r, 130));
+
+    assert.equal(inst.pageOffset, 1, 'prev button after multi-swipe should step back to pageOffset 1');
+    assert.equal(inst.formatDateISO(inst.currentWeekStart), '2026-10-17');
+
+    // Tap Next button: -> Week 2 (2026-10-24)
+    el._btnNext.click();
+    await new Promise(r => setTimeout(r, 15));
+
+    assert.equal(inst.pageOffset, 2, 'next button after multi-swipe should step forward to pageOffset 2');
+    assert.equal(inst.formatDateISO(inst.currentWeekStart), '2026-10-24');
+
+    // Switch view to day
+    el._buttons[0].click();
+    assert.equal(inst.activeView, 'day', 'view switcher should work after multiple swipes');
+
+    global.window.MirrormereCalendarFamily.unmount('multi-swipe-cal');
+  });
+
+  await t.test('mount rejects detached elements with isConnected === false', () => {
+    const detached = createMockDOMNode('div', { 'data-widget-id': 'detached-cal' });
+    detached.isConnected = false;
+    const res = global.window.MirrormereCalendarFamily.mount(detached);
+    assert.equal(res, null, 'mount should return null for detached element');
+    assert.equal(global.window.MirrormereCalendarFamily.getInstance('detached-cal'), null);
+  });
+
 });
