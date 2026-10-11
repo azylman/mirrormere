@@ -12,6 +12,7 @@ const (
 	EventWidgetUpdate = "widget.update"
 	EventHeaderUpdate = "header.update"
 	EventScreenRotate = "screen.rotate"
+	EventThemeUpdate  = "theme.update"
 	EventSystemStatus = "system.status"
 	EventVideoState   = "video.state"
 	EventAudioState   = "audio.state"

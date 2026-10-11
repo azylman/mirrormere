@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -24,6 +25,7 @@ import (
 	"github.com/azylman/mirrormere/internal/render"
 	"github.com/azylman/mirrormere/internal/rotation"
 	"github.com/azylman/mirrormere/internal/server"
+	"github.com/azylman/mirrormere/internal/solar"
 	"github.com/azylman/mirrormere/internal/tasks"
 	"github.com/azylman/mirrormere/internal/video"
 	"github.com/azylman/mirrormere/internal/voice"
@@ -148,6 +150,63 @@ func householdNowFunc(sp render.StateSnapshotProvider) func() time.Time {
 	}
 }
 
+func householdThemeFunc(sp render.StateSnapshotProvider) func() string {
+	return func() string {
+		if sp == nil {
+			return "day"
+		}
+		snap := sp.CurrentSnapshot()
+		if snap == nil || snap.Config == nil {
+			return "day"
+		}
+		mode := snap.Config.Display.Theme.GetMode()
+		if mode == "night" {
+			return "night"
+		}
+		if mode == "day" {
+			return "day"
+		}
+		// mode == "auto"
+		loc := snap.Config.GetLocationConfig()
+		if loc != nil && loc.Latitude != nil && loc.Longitude != nil {
+			now := time.Now()
+			if snap.Config.Location() != nil {
+				now = now.In(snap.Config.Location())
+			}
+			if solar.IsNight(loc.GetLatitude(), loc.GetLongitude(), now) {
+				return "night"
+			}
+			return "day"
+		}
+		return "day"
+	}
+}
+
+// evaluateThemeTransition checks if the active theme changed and dispatches theme.update.
+func evaluateThemeTransition(currentTheme func() string, sp interface {
+	GetTheme() string
+	SetTheme(string)
+}, hub *events.Hub, logger *slog.Logger) bool {
+	if currentTheme == nil || sp == nil {
+		return false
+	}
+	newTheme := currentTheme()
+	if sp.GetTheme() != newTheme {
+		if logger != nil {
+			logger.Info("theme mode transition detected", "previous", sp.GetTheme(), "new", newTheme)
+		}
+		sp.SetTheme(newTheme)
+		if hub != nil {
+			data, err := json.Marshal(events.ThemeUpdateData{Theme: newTheme})
+			if err == nil {
+				hub.Publish(events.EventThemeUpdate, data)
+			}
+		}
+		return true
+	}
+	return false
+}
+
 // Run executes the server application with the supplied arguments and context.
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	return RunWithReady(ctx, args, stdout, stderr, nil)
@@ -252,6 +311,8 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 
 	// 4. State Provider & Event Hub
 	stateProvider := events.NewInMemoryStateProvider(configManager)
+	currentTheme := householdThemeFunc(stateProvider)
+	stateProvider.SetTheme(currentTheme())
 	hub := events.NewHub(events.HubConfig{}, stateProvider, logger)
 	defer hub.Close()
 	eventsHandler := events.Handler(hub)
@@ -344,6 +405,7 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 	)
 	renderHandler := render.NewHandler(renderEngine, loader, render.WithCustomCSSPath(customCSSPath))
 	displayHandler := display.NewHandler(
+		display.WithThemeProvider(currentTheme),
 		display.WithTimezoneProvider(func() string {
 			if snap := stateProvider.CurrentSnapshot(); snap != nil && snap.Config != nil {
 				return snap.Config.Timezone
@@ -379,6 +441,20 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 		}),
 	)
 	assetReloader := NewAssetReloader(customCSSPath, loader, builtinDir, customDir, renderEngine, configManager, hub, logger)
+
+	// Background solar/theme evaluation loop
+	themeTicker := time.NewTicker(30 * time.Second)
+	defer themeTicker.Stop()
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-themeTicker.C:
+				evaluateThemeTransition(currentTheme, stateProvider, hub, logger)
+			}
+		}
+	}()
 
 	// 12. SIGHUP Signal Listener for Live Configuration Reloads
 	var hupChan <-chan os.Signal
@@ -433,6 +509,7 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 									logger.Error("failed to dispatch status on SIGHUP", "error", err)
 								}
 								logger.Info("configuration reloaded successfully on SIGHUP", "widgets", len(snap.Config.Display.Widgets))
+								evaluateThemeTransition(currentTheme, stateProvider, hub, logger)
 
 								if snap != nil && snap.Config != nil {
 									newHost := server.DefaultHost

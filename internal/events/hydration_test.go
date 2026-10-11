@@ -130,6 +130,19 @@ func TestInMemoryStateProvider_GettersAndSetters(t *testing.T) {
 	if provider.GetScreenRotateData() != nil {
 		t.Error("expected nil ScreenRotateData after nil reset")
 	}
+
+	// Theme
+	if provider.GetTheme() != "day" {
+		t.Errorf("expected initial theme 'day', got %q", provider.GetTheme())
+	}
+	provider.SetTheme("night")
+	if provider.GetTheme() != "night" {
+		t.Errorf("expected theme 'night', got %q", provider.GetTheme())
+	}
+	provider.SetTheme("")
+	if provider.GetTheme() != "day" {
+		t.Errorf("expected empty theme reset to 'day', got %q", provider.GetTheme())
+	}
 }
 
 func TestBuildHydrationBatch_OrderingAndPayloads(t *testing.T) {
@@ -199,8 +212,9 @@ func TestBuildHydrationBatch_OrderingAndPayloads(t *testing.T) {
 	// 6: audio.state
 	// 7: voice.state
 	// 8: system.status
-	if len(batch) != 8 {
-		t.Fatalf("expected 8 hydration events (1 screen + 2 widgets + 5 subsystems), got %d", len(batch))
+	// 9: theme.update
+	if len(batch) != 9 {
+		t.Fatalf("expected 9 hydration events (1 screen + 2 widgets + 6 subsystems), got %d", len(batch))
 	}
 
 	// 1. screen.rotate
@@ -270,6 +284,18 @@ func TestBuildHydrationBatch_OrderingAndPayloads(t *testing.T) {
 	if sys.BootID == "" || sys.BootID != provider.BootID() {
 		t.Errorf("expected BootID %s, got %s", provider.BootID(), sys.BootID)
 	}
+
+	// 9. theme.update
+	if batch[8].Type != EventThemeUpdate {
+		t.Fatalf("expected item 8 to be %s, got %s", EventThemeUpdate, batch[8].Type)
+	}
+	var thm ThemeUpdateData
+	if err := json.Unmarshal(batch[8].Data, &thm); err != nil {
+		t.Fatalf("failed to unmarshal theme.update: %v", err)
+	}
+	if thm.Theme != "day" {
+		t.Errorf("expected default theme 'day', got %q", thm.Theme)
+	}
 }
 
 func TestBuildHydrationBatch_NilProvider(t *testing.T) {
@@ -279,9 +305,9 @@ func TestBuildHydrationBatch_NilProvider(t *testing.T) {
 	idGen := NewIDGenerator()
 
 	batch := BuildHydrationBatch(nil, idGen, now)
-	// Without widgets, we expect: screen.rotate, header.update, video.state, audio.state, voice.state, system.status (6 events)
-	if len(batch) != 6 {
-		t.Fatalf("expected 6 events for nil provider, got %d", len(batch))
+	// Without widgets, we expect: screen.rotate, header.update, video.state, audio.state, voice.state, system.status, theme.update (7 events)
+	if len(batch) != 7 {
+		t.Fatalf("expected 7 events for nil provider, got %d", len(batch))
 	}
 
 	expectedTypes := []string{
@@ -291,6 +317,7 @@ func TestBuildHydrationBatch_NilProvider(t *testing.T) {
 		EventAudioState,
 		EventVoiceState,
 		EventSystemStatus,
+		EventThemeUpdate,
 	}
 
 	for i, exp := range expectedTypes {

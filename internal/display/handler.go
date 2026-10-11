@@ -125,22 +125,30 @@ func WithHeaderVideoProvider(provider func() *HeaderVideoTemplateData) HandlerOp
 	}
 }
 
+// WithThemeProvider sets a dynamic function returning the current active theme ("day" or "night").
+func WithThemeProvider(provider func() string) HandlerOption {
+	return func(h *Handler) {
+		h.themeProvider = provider
+	}
+}
+
 // Handler serves the web display HUD shell and static web runtime assets.
 type Handler struct {
-	templatePath       string
-	localTemplatePath  string
-	staticDir          string
-	localStaticDir     string
-	templateContent    []byte
-	mu                 sync.RWMutex
-	timezone           string
-	timezoneProvider   func() string
-	hideCursor         bool
-	hideCursorProvider func() bool
-	remoteURL          string
-	remoteURLProvider  func() string
-	headerVideo        *HeaderVideoTemplateData
+	templatePath        string
+	localTemplatePath   string
+	staticDir           string
+	localStaticDir      string
+	templateContent     []byte
+	mu                  sync.RWMutex
+	timezone            string
+	timezoneProvider    func() string
+	hideCursor          bool
+	hideCursorProvider  func() bool
+	remoteURL           string
+	remoteURLProvider   func() string
+	headerVideo         *HeaderVideoTemplateData
 	headerVideoProvider func() *HeaderVideoTemplateData
+	themeProvider       func() string
 }
 
 // SetTimezone updates the household timezone dynamically.
@@ -211,6 +219,18 @@ func (h *Handler) HeaderVideo() *HeaderVideoTemplateData {
 	return h.headerVideo
 }
 
+// Theme returns the current active theme mode ("day" or "night").
+func (h *Handler) Theme() string {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	if h.themeProvider != nil {
+		if t := h.themeProvider(); t != "" {
+			return t
+		}
+	}
+	return "day"
+}
+
 // HeaderVideoTemplateData holds parameters for the fullscreen video TV button in the header.
 type HeaderVideoTemplateData struct {
 	Enabled    bool
@@ -226,6 +246,7 @@ type DisplayTemplateData struct {
 	HideCursor  bool
 	RemoteURL   string
 	HeaderVideo *HeaderVideoTemplateData
+	Theme       string
 }
 
 // NewHandler constructs a Handler with default filesystem paths.
@@ -325,6 +346,7 @@ func (h *Handler) GetDisplay(w http.ResponseWriter, r *http.Request) {
 			HideCursor:  hideCursor,
 			RemoteURL:   h.RemoteURL(),
 			HeaderVideo: h.HeaderVideo(),
+			Theme:       h.Theme(),
 		}
 		if err := tmpl.Execute(&buf, data); err == nil {
 			out = buf.Bytes()
@@ -365,8 +387,8 @@ func (h *Handler) GetStatic(w http.ResponseWriter, r *http.Request, assetPath st
 	}
 
 	// 1b. Alias rewrites for backward compatibility
-	if clean == "js/calendar_grid.js" {
-		clean = "js/calendar_family.js"
+	if filepath.ToSlash(clean) == "js/calendar_grid.js" {
+		clean = filepath.FromSlash("js/calendar_family.js")
 	}
 
 	// 2. Check primary container static dir on disk

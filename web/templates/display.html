@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="{{ if .Theme }}{{ .Theme }}{{ else }}day{{ end }}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
@@ -13,7 +13,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Comfortaa:wght@600;700&family=Nunito:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" id="hud-stylesheet" href="style.css">
 </head>
-<body data-timezone="{{ .Timezone }}"{{ if .HideCursor }} class="mm-touch-display"{{ end }}{{ if .RemoteURL }} data-remote-url="{{ .RemoteURL }}"{{ end }}>
+<body data-timezone="{{ .Timezone }}" data-theme="{{ if .Theme }}{{ .Theme }}{{ else }}day{{ end }}"{{ if .HideCursor }} class="mm-touch-display"{{ end }}{{ if .RemoteURL }} data-remote-url="{{ .RemoteURL }}"{{ end }}>
   <div id="mirrormere-app" data-timezone="{{ .Timezone }}">
     <header class="header-zone">
       <div class="header-time-block">
