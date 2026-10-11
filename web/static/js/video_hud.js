@@ -59,6 +59,24 @@
       this.volumeSlider = options.volumeSlider || (typeof document !== 'undefined' ? document.getElementById('video-hud-volume-slider') : null);
       this.skipBackBtn = options.skipBackBtn || (typeof document !== 'undefined' ? document.getElementById('video-hud-skip-back-btn') : null);
       this.skipFwdBtn = options.skipFwdBtn || (typeof document !== 'undefined' ? document.getElementById('video-hud-skip-fwd-btn') : null);
+      this.navBar = options.navBarElement ||
+        (this.overlay?.children?.find ? this.overlay.children.find((c) => c.id === 'video-hud-nav-bar') : null) ||
+        (typeof document !== 'undefined' ? document.getElementById('video-hud-nav-bar') : null);
+      this.backBtn = options.backBtn ||
+        (this.navBar?.children?.find ? this.navBar.children.find((c) => c.id === 'video-hud-back-btn') : null) ||
+        (typeof document !== 'undefined' ? document.getElementById('video-hud-back-btn') : null);
+      this.homeBtn = options.homeBtn ||
+        (this.navBar?.children?.find ? this.navBar.children.find((c) => c.id === 'video-hud-home-btn') : null) ||
+        (typeof document !== 'undefined' ? document.getElementById('video-hud-home-btn') : null);
+      this.ccBtn = options.ccBtn ||
+        (this.bottomBar?.children?.find ? this.bottomBar.children.find((c) => c.id === 'video-hud-cc-btn') : null) ||
+        (typeof document !== 'undefined' ? document.getElementById('video-hud-cc-btn') : null);
+      this.prevBtn = options.prevBtn ||
+        (this.bottomBar?.children?.find ? this.bottomBar.children.find((c) => c.id === 'video-hud-prev-btn') : null) ||
+        (typeof document !== 'undefined' ? document.getElementById('video-hud-prev-btn') : null);
+      this.nextBtn = options.nextBtn ||
+        (this.bottomBar?.children?.find ? this.bottomBar.children.find((c) => c.id === 'video-hud-next-btn') : null) ||
+        (typeof document !== 'undefined' ? document.getElementById('video-hud-next-btn') : null);
       this.stageElement = options.stageElement || (typeof document !== 'undefined' ? document.getElementById('video-stage') : null);
       this.videoManager = options.videoManager || null;
       this._remoteUrl = options.remoteUrl || '';
@@ -272,6 +290,40 @@
         });
       }
 
+      // 2b. Nav bar pointer event isolation & navigation handlers
+      if (this.navBar) {
+        const onNavPointer = (e) => {
+          if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+        };
+        const navEvents = ['pointerdown', 'pointerup', 'touchstart', 'touchend'];
+        navEvents.forEach((ev) => {
+          this.navBar.addEventListener(ev, onNavPointer);
+          this.boundHandlers.push({ el: this.navBar, ev, fn: onNavPointer });
+        });
+      }
+
+      // Back button
+      if (this.backBtn) {
+        const onBack = (e) => {
+          if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+          this.resetAutoFade();
+          this.handleBack();
+        };
+        this.backBtn.addEventListener('click', onBack);
+        this.boundHandlers.push({ el: this.backBtn, ev: 'click', fn: onBack });
+      }
+
+      // Home button
+      if (this.homeBtn) {
+        const onHome = (e) => {
+          if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+          this.resetAutoFade();
+          this.handleHome();
+        };
+        this.homeBtn.addEventListener('click', onHome);
+        this.boundHandlers.push({ el: this.homeBtn, ev: 'click', fn: onHome });
+      }
+
       // 3. Bottom bar pointer event isolation & button handlers
       if (this.bottomBar) {
         const onBottomBarPointer = (e) => {
@@ -282,6 +334,28 @@
           this.bottomBar.addEventListener(ev, onBottomBarPointer);
           this.boundHandlers.push({ el: this.bottomBar, ev, fn: onBottomBarPointer });
         });
+      }
+
+      // CC button
+      if (this.ccBtn) {
+        const onCC = (e) => {
+          if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+          this.resetAutoFade();
+          this.handleCaptions();
+        };
+        this.ccBtn.addEventListener('click', onCC);
+        this.boundHandlers.push({ el: this.ccBtn, ev: 'click', fn: onCC });
+      }
+
+      // Previous button
+      if (this.prevBtn) {
+        const onPrev = (e) => {
+          if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+          this.resetAutoFade();
+          this.handlePrevious();
+        };
+        this.prevBtn.addEventListener('click', onPrev);
+        this.boundHandlers.push({ el: this.prevBtn, ev: 'click', fn: onPrev });
       }
 
       // 4. Rewind button
@@ -304,6 +378,17 @@
         };
         this.forwardBtn.addEventListener('click', onForward);
         this.boundHandlers.push({ el: this.forwardBtn, ev: 'click', fn: onForward });
+      }
+
+      // Next button
+      if (this.nextBtn) {
+        const onNext = (e) => {
+          if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+          this.resetAutoFade();
+          this.handleNext();
+        };
+        this.nextBtn.addEventListener('click', onNext);
+        this.boundHandlers.push({ el: this.nextBtn, ev: 'click', fn: onNext });
       }
 
       // 6. Dismiss button
@@ -461,6 +546,10 @@
           this.bottomBar.style.display = 'none';
           this.bottomBar.setAttribute('hidden', 'true');
         }
+        if (this.navBar) {
+          this.navBar.style.display = 'none';
+          this.navBar.setAttribute('hidden', 'true');
+        }
         return;
       }
 
@@ -473,7 +562,7 @@
         this.titleEl.textContent = stream.title || (stream.id ? `Stream: ${stream.id}` : 'Live Video');
       }
 
-      // Gate bottom bar visibility
+      // Gate bottom bar and nav bar visibility
       const isMedia = Boolean(stream && (stream.controllable === true || (stream.priority === 'persistent' && Boolean(this.remoteUrl))));
       if (this.bottomBar) {
         if (isMedia) {
@@ -482,6 +571,15 @@
         } else {
           this.bottomBar.style.display = 'none';
           this.bottomBar.setAttribute('hidden', 'true');
+        }
+      }
+      if (this.navBar) {
+        if (isMedia) {
+          this.navBar.style.display = '';
+          this.navBar.removeAttribute('hidden');
+        } else {
+          this.navBar.style.display = 'none';
+          this.navBar.setAttribute('hidden', 'true');
         }
       }
 
@@ -580,102 +678,102 @@
     }
 
     /**
-     * Dispatch play/pause toggle action with in-flight lock.
+     * Dispatch a video action with in-flight lock and guaranteed finally release.
+     * @param {string} actionName - Video API action name
+     * @param {string} [remoteKeyName] - Remote key name (defaults to actionName)
      */
-    handlePlayPauseToggle() {
+    executeAction(actionName, remoteKeyName) {
       if (this.isActionPending) {
-        return;
+        return Promise.resolve();
       }
       const stream = this.getActiveStream();
       if (!stream || !stream.id) {
-        return;
+        return Promise.resolve();
       }
 
       this.isActionPending = true;
-      const timer = setTimeout(() => {
+      let timer = setTimeout(() => {
+        timer = null;
         this.isActionPending = false;
       }, 300);
       if (timer && typeof timer.unref === 'function') timer.unref();
 
+      let p = null;
       if (stream.controllable && stream.control_url) {
-        this.postAction({
+        p = this.postAction({
           id: stream.id,
-          action: 'toggle_playback',
+          action: actionName,
         });
       } else if (this.remoteUrl) {
-        this.postRemoteKey('play_pause');
+        p = this.postRemoteKey(remoteKeyName || actionName);
       } else if (stream.controllable) {
-        this.postAction({
+        p = this.postAction({
           id: stream.id,
-          action: 'toggle_playback',
+          action: actionName,
         });
       }
+
+      return Promise.resolve(p).finally(() => {
+        if (!timer) {
+          this.isActionPending = false;
+        }
+      });
+    }
+
+    /**
+     * Dispatch play/pause toggle action with in-flight lock.
+     */
+    handlePlayPauseToggle() {
+      return this.executeAction('toggle_playback', 'play_pause');
     }
 
     /**
      * Dispatch rewind action with in-flight lock.
      */
     handleRewind() {
-      if (this.isActionPending) {
-        return;
-      }
-      const stream = this.getActiveStream();
-      if (!stream || !stream.id) {
-        return;
-      }
-
-      this.isActionPending = true;
-      const timer = setTimeout(() => {
-        this.isActionPending = false;
-      }, 300);
-      if (timer && typeof timer.unref === 'function') timer.unref();
-
-      if (stream.controllable && stream.control_url) {
-        this.postAction({
-          id: stream.id,
-          action: 'rewind',
-        });
-      } else if (this.remoteUrl) {
-        this.postRemoteKey('rewind');
-      } else if (stream.controllable) {
-        this.postAction({
-          id: stream.id,
-          action: 'rewind',
-        });
-      }
+      return this.executeAction('rewind', 'rewind');
     }
 
     /**
      * Dispatch fast forward action with in-flight lock.
      */
     handleFastForward() {
-      if (this.isActionPending) {
-        return;
-      }
-      const stream = this.getActiveStream();
-      if (!stream || !stream.id) {
-        return;
-      }
+      return this.executeAction('fast_forward', 'fast_forward');
+    }
 
-      this.isActionPending = true;
-      const timer = setTimeout(() => {
-        this.isActionPending = false;
-      }, 300);
-      if (timer && typeof timer.unref === 'function') timer.unref();
+    /**
+     * Dispatch back action with in-flight lock.
+     */
+    handleBack() {
+      return this.executeAction('back', 'back');
+    }
 
-      if (stream.controllable && stream.control_url) {
-        this.postAction({
-          id: stream.id,
-          action: 'fast_forward',
-        });
-      } else if (this.remoteUrl) {
-        this.postRemoteKey('fast_forward');
-      } else if (stream.controllable) {
-        this.postAction({
-          id: stream.id,
-          action: 'fast_forward',
-        });
-      }
+    /**
+     * Dispatch home action with in-flight lock.
+     */
+    handleHome() {
+      return this.executeAction('home', 'home');
+    }
+
+    /**
+     * Dispatch captions toggle action with in-flight lock.
+     */
+    handleCaptions() {
+      return this.executeAction('captions', 'cc');
+    }
+
+    /**
+     * Dispatch previous episode/track action with in-flight lock.
+     */
+    handlePrevious() {
+      return this.executeAction('previous', 'prev');
+    }
+
+    /**
+     * Dispatch next episode/track action with in-flight lock.
+     */
+    handleNext() {
+      return this.executeAction('next', 'next');
     }
 
     /**

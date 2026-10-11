@@ -140,6 +140,22 @@ class TestKeycodes(unittest.TestCase):
         self.assertEqual(hid, 0x0224)
         self.assertEqual(remote, "BACK")
 
+        hid, remote = resolve_key_dispatch("home")
+        self.assertEqual(hid, 0x0223)
+        self.assertEqual(remote, "HOME")
+
+        hid, remote = resolve_key_dispatch("cc")
+        self.assertEqual(hid, 0x0061)
+        self.assertEqual(remote, "CAPTIONS")
+
+        hid, remote = resolve_key_dispatch("next")
+        self.assertEqual(hid, 0x00B5)
+        self.assertEqual(remote, "MEDIA_NEXT")
+
+        hid, remote = resolve_key_dispatch("prev")
+        self.assertEqual(hid, 0x00B6)
+        self.assertEqual(remote, "MEDIA_PREVIOUS")
+
         hid, remote = resolve_key_dispatch("rewind")
         self.assertEqual(hid, 0x00B4)
         self.assertEqual(remote, "MEDIA_REWIND")

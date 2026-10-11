@@ -867,6 +867,12 @@
         const rewindBtn = document.getElementById('video-hud-rewind-btn');
         const forwardBtn = document.getElementById('video-hud-forward-btn');
         const playBtn = document.getElementById('video-hud-play-btn');
+        const navBarEl = document.getElementById('video-hud-nav-bar');
+        const backBtn = document.getElementById('video-hud-back-btn');
+        const homeBtn = document.getElementById('video-hud-home-btn');
+        const ccBtn = document.getElementById('video-hud-cc-btn');
+        const prevBtn = document.getElementById('video-hud-prev-btn');
+        const nextBtn = document.getElementById('video-hud-next-btn');
         window.videoHUD = new window.MirrormereHUD.VideoHUDController({
           overlayElement: overlayEl,
           stageElement: stageEl,
@@ -874,6 +880,12 @@
           rewindBtn: rewindBtn,
           forwardBtn: forwardBtn,
           playBtn: playBtn,
+          navBarElement: navBarEl,
+          backBtn: backBtn,
+          homeBtn: homeBtn,
+          ccBtn: ccBtn,
+          prevBtn: prevBtn,
+          nextBtn: nextBtn,
           videoManager: window.videoManager,
           remoteUrl: window.videoManager?.remoteUrl,
         });

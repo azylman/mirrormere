@@ -953,6 +953,10 @@ button, .touch-target {
 }
 
 .video-hud-title {
+  position: absolute;
+  top: 24px;
+  left: 50%;
+  transform: translateX(-50%);
   font-family: var(--mm-font-display);
   font-size: 1.35rem;
   font-weight: 700;
@@ -963,6 +967,50 @@ button, .touch-target {
   backdrop-filter: blur(12px);
   border-radius: 9999px;
   border: 1px solid rgba(255, 255, 255, 0.2);
+  white-space: nowrap;
+  max-width: 50vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Unified Frosted Pill in Upper Left: Back + Home */
+.video-hud-nav-bar,
+.video-hud-capsule-top-left {
+  position: absolute;
+  top: 24px;
+  left: 24px;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  padding: 6px;
+  border-radius: 28px;
+  background: rgba(255, 255, 255, 0.94);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1.5px solid rgba(90, 60, 30, 0.08);
+  box-shadow: 0 12px 28px -4px rgba(0, 0, 0, 0.25);
+  pointer-events: auto;
+  box-sizing: border-box;
+  z-index: 85;
+}
+
+.video-hud-nav-bar .video-hud-nav-btn,
+.video-hud-capsule-top-left .video-hud-nav-btn {
+  width: 42px;
+  height: 42px;
+  min-width: 42px;
+  min-height: 42px;
+  padding: 0;
+  border-radius: 50%;
+  background: #faf7f2;
+  border: 1px solid rgba(90, 60, 30, 0.08);
+  color: var(--mm-text-title);
+  font-size: 1.25rem;
+  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 /* Unified Frosted Pill in Upper Right: Dismiss + Vertical Volume + Mute */
@@ -1027,7 +1075,7 @@ button, .touch-target {
   font-size: 1rem;
 }
 
-/* Centered Bottom Transport Controls Dock: Skip Back + Play/Pause + Skip Forward */
+/* Centered Bottom Transport Controls Dock: CC + Prev + Skip Back + Play/Pause + Skip Forward + Next */
 .video-hud-controls,
 .video-hud-bottom-bar {
   position: absolute;
@@ -1037,8 +1085,9 @@ button, .touch-target {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 16px;
-  padding: 10px 24px;
+  flex-wrap: nowrap;
+  gap: 12px;
+  padding: 8px 20px;
   background: rgba(255, 255, 255, 0.94);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
@@ -1100,6 +1149,17 @@ button, .touch-target {
   font-size: 0.85rem;
   font-weight: 800;
   color: var(--mm-coral);
+}
+
+.video-hud-cc {
+  font-size: 0.95rem;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+}
+
+.video-hud-prev,
+.video-hud-next {
+  font-size: 1.1rem;
 }
 
 .video-hud-icon {

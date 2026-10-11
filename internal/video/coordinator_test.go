@@ -474,6 +474,18 @@ func TestCoordinator_ForwardAction(t *testing.T) {
 	}
 	mu.Unlock()
 
+	// Success (back, home, captions, next, previous)
+	for _, act := range []string{ActionBack, ActionHome, ActionCaptions, ActionNext, ActionPrevious} {
+		if err := coord.ForwardAction(context.Background(), "cast", act, nil); err != nil {
+			t.Fatalf("expected success for %s, got %v", act, err)
+		}
+		mu.Lock()
+		if receivedAction.ID != "cast" || receivedAction.Action != act {
+			t.Fatalf("unexpected sidecar action received for %s: %+v", act, receivedAction)
+		}
+		mu.Unlock()
+	}
+
 	// Invalid action
 	if err := coord.ForwardAction(context.Background(), "cast", "unknown_action", nil); !errors.Is(err, ErrInvalidAction) {
 		t.Fatalf("expected ErrInvalidAction, got %v", err)

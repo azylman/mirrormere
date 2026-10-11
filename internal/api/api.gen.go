@@ -16,17 +16,22 @@ import (
 
 // Defines values for ScreenAdvanceRequestDirection.
 const (
-	Next ScreenAdvanceRequestDirection = "next"
-	Prev ScreenAdvanceRequestDirection = "prev"
+	ScreenAdvanceRequestDirectionNext ScreenAdvanceRequestDirection = "next"
+	ScreenAdvanceRequestDirectionPrev ScreenAdvanceRequestDirection = "prev"
 )
 
 // Defines values for VideoActionRequestAction.
 const (
-	FastForward    VideoActionRequestAction = "fast_forward"
-	Pause          VideoActionRequestAction = "pause"
-	Play           VideoActionRequestAction = "play"
-	Rewind         VideoActionRequestAction = "rewind"
-	TogglePlayback VideoActionRequestAction = "toggle_playback"
+	VideoActionRequestActionBack           VideoActionRequestAction = "back"
+	VideoActionRequestActionCaptions       VideoActionRequestAction = "captions"
+	VideoActionRequestActionFastForward    VideoActionRequestAction = "fast_forward"
+	VideoActionRequestActionHome           VideoActionRequestAction = "home"
+	VideoActionRequestActionNext           VideoActionRequestAction = "next"
+	VideoActionRequestActionPause          VideoActionRequestAction = "pause"
+	VideoActionRequestActionPlay           VideoActionRequestAction = "play"
+	VideoActionRequestActionPrevious       VideoActionRequestAction = "previous"
+	VideoActionRequestActionRewind         VideoActionRequestAction = "rewind"
+	VideoActionRequestActionTogglePlayback VideoActionRequestAction = "toggle_playback"
 )
 
 // Defines values for VideoPlayerStateRequestPlayerState.
