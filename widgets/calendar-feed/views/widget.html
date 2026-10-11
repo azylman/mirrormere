@@ -25,20 +25,16 @@
   </div>
 
   {{ if .Data }}
-    {{ $events := calendarFeedEvents .Data }}
-    {{ if and $events (gt (len $events) 0) }}
+    {{ $groups := calendarFeedDayGroups .Data }}
+    {{ if and $groups (gt (len $groups) 0) }}
     <div class="calendar-feed-container calendar-agenda-container">
-      {{ $prevDate := "" }}
-      {{ range $events }}
-        {{ $date := formatDate "2006-01-02" .Start }}
-        {{ if ne $date $prevDate }}
-          {{ $prevDate = $date }}
-          {{ $rel := relDate .Start }}
+      {{ range $groups }}
+        <div class="calendar-day-group">
           <div class="calendar-day-divider">
-            <span class="day-pill-badge {{ if eq $rel "Today" }}day-pill-today{{ else if eq $rel "Tomorrow" }}day-pill-tomorrow{{ else }}day-pill-future{{ end }}">
-              {{ if eq $rel "Today" }}
+            <span class="day-pill-badge {{ if eq .Rel "Today" }}day-pill-today{{ else if eq .Rel "Tomorrow" }}day-pill-tomorrow{{ else }}day-pill-future{{ end }}">
+              {{ if eq .Rel "Today" }}
                 TODAY • {{ formatDate "Jan 2" .Start }}
-              {{ else if eq $rel "Tomorrow" }}
+              {{ else if eq .Rel "Tomorrow" }}
                 TOMORROW • {{ formatDate "Jan 2" .Start }}
               {{ else }}
                 {{ formatDate "Monday • Jan 2" .Start }}
@@ -46,31 +42,35 @@
             </span>
             <div class="day-divider-line"></div>
           </div>
-        {{ end }}
-        <div class="calendar-event-item">
-          <div class="event-time-col">
-            {{ if .AllDay }}
-              <span class="event-time-chip event-time-allday">All Day</span>
-            {{ else }}
-              <span class="event-time-val">{{ formatTime "3:04" .Start }}</span>
-              <span class="event-time-ampm">{{ formatTime "PM" .Start }}</span>
+          <div class="calendar-day-card">
+            {{ range .Events }}
+              <div class="calendar-event-item">
+                <div class="event-time-col">
+                  {{ if .AllDay }}
+                    <span class="event-time-chip event-time-allday">All Day</span>
+                  {{ else }}
+                    <span class="event-time-val">{{ formatTime "3:04" .Start }}</span>
+                    <span class="event-time-ampm">{{ formatTime "PM" .Start }}</span>
+                  {{ end }}
+                </div>
+                <div class="event-details-col">
+                  <div class="event-title-row">
+                    <span class="event-title" title="{{ .Title }}">{{ .Title }}</span>
+                  </div>
+                  {{ if .Location }}
+                  <div class="event-location-row" title="{{ .Location }}">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" class="event-location-icon" aria-hidden="true"><path d="M12 2C7.8 2 4.5 5.3 4.5 9.5C4.5 14.8 12 22 12 22C12 22 19.5 14.8 19.5 9.5C19.5 5.3 16.2 2 12 2Z" fill="#ff4365"/><circle cx="12" cy="9.5" r="3.2" fill="#ffffff"/></svg>
+                    <span class="event-location-text">{{ .Location }}</span>
+                  </div>
+                  {{ end }}
+                </div>
+                {{ if .CalendarName }}
+                  <span class="event-calendar-pill" {{ if .Color }}style="--pill-color: {{ .Color }}; background: color-mix(in srgb, {{ .Color }} 12%, white); color: {{ .Color }};"{{ end }}>{{ .CalendarName }}</span>
+                {{ end }}
+                <span class="event-accent-dot" {{ if .Color }}style="background-color: {{ .Color }};"{{ end }}></span>
+              </div>
             {{ end }}
           </div>
-          <div class="event-details-col">
-            <div class="event-title-row">
-              <span class="event-title" title="{{ .Title }}">{{ .Title }}</span>
-            </div>
-            {{ if .Location }}
-            <div class="event-location-row" title="{{ .Location }}">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" class="event-location-icon" aria-hidden="true"><path d="M12 2C7.8 2 4.5 5.3 4.5 9.5C4.5 14.8 12 22 12 22C12 22 19.5 14.8 19.5 9.5C19.5 5.3 16.2 2 12 2Z" fill="#ff4365"/><circle cx="12" cy="9.5" r="3.2" fill="#ffffff"/></svg>
-              <span class="event-location-text">{{ .Location }}</span>
-            </div>
-            {{ end }}
-          </div>
-          {{ if .CalendarName }}
-            <span class="event-calendar-pill" {{ if .Color }}style="--pill-color: {{ .Color }}; background: color-mix(in srgb, {{ .Color }} 12%, white); color: {{ .Color }};"{{ end }}>{{ .CalendarName }}</span>
-          {{ end }}
-          <span class="event-accent-dot" {{ if .Color }}style="background-color: {{ .Color }};"{{ end }}></span>
         </div>
       {{ end }}
     </div>

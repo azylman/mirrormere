@@ -269,6 +269,27 @@ body[data-theme="night"],
   border-color: #3b364c;
 }
 
+[data-theme="night"] .calendar-day-card {
+  background: var(--mm-bg-surface);
+  border: 1px solid rgba(197, 163, 255, 0.15);
+  box-shadow: 0 2px 8px rgba(20, 16, 32, 0.3);
+}
+
+[data-theme="night"] .calendar-day-card .calendar-event-item {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+
+[data-theme="night"] .calendar-day-card .calendar-event-item:hover {
+  background: rgba(197, 163, 255, 0.05);
+  border-color: transparent;
+}
+
+[data-theme="night"] .calendar-day-card .calendar-event-item + .calendar-event-item {
+  border-top: 1px solid rgba(197, 163, 255, 0.12);
+}
+
 [data-theme="night"] .calendar-event-item {
   background: var(--mm-bg-surface);
   border: 1px solid rgba(197, 163, 255, 0.15);
@@ -1404,6 +1425,13 @@ button, .touch-target {
   -webkit-overflow-scrolling: touch;
 }
 
+/* Calendar Day Group */
+.calendar-day-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
 /* Day Divider */
 .calendar-day-divider,
 .calendar-day-header {
@@ -1484,6 +1512,35 @@ button, .touch-target {
 
 .calendar-event-item:hover {
   border-color: rgba(255, 111, 89, 0.3);
+}
+
+/* Unified Day Card Pill Container & Nested Event Items */
+.calendar-day-card {
+  display: flex;
+  flex-direction: column;
+  border-radius: 16px;
+  background: #faf7f2;
+  border: 1px solid rgba(90, 60, 30, 0.05);
+  box-shadow: 0 1px 3px rgba(90, 60, 30, 0.03);
+  overflow: hidden;
+}
+
+.calendar-day-card .calendar-event-item {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 8px 12px;
+  transition: background 0.15s ease;
+}
+
+.calendar-day-card .calendar-event-item:hover {
+  background: rgba(90, 60, 30, 0.02);
+  border-color: transparent;
+}
+
+.calendar-day-card .calendar-event-item + .calendar-event-item {
+  border-top: 1px solid var(--mm-divider);
 }
 
 /* Time Column Mini-Card */

@@ -89,6 +89,9 @@ func StandardFuncMap(nowFunc func() time.Time) template.FuncMap {
 		"calendarFeedEvents": func(data any, args ...any) []provider.CalendarEvent {
 			return CalendarFeedEvents(data, nowFunc())
 		},
+		"calendarFeedDayGroups": func(data any, args ...any) []CalendarFeedDayGroup {
+			return CalendarFeedDayGroups(data, nowFunc())
+		},
 		"calendarFeedActiveCalendars": func(cfg any) []map[string]any {
 			return CalendarFeedActiveCalendars(cfg)
 		},
@@ -1025,6 +1028,46 @@ func CalendarFeedEvents(data any, refTime time.Time) []provider.CalendarEvent {
 	}
 
 	return filtered
+}
+
+// CalendarFeedDayGroup groups calendar feed events occurring on the same local calendar day.
+type CalendarFeedDayGroup struct {
+	Date   string                   `json:"date"`
+	Rel    string                   `json:"rel"`
+	Start  string                   `json:"start"`
+	Events []provider.CalendarEvent `json:"events"`
+}
+
+// CalendarFeedDayGroups groups filtered calendar feed events by local calendar date so that
+// all events for a given day can be presented together in a unified day pill/card.
+func CalendarFeedDayGroups(data any, refTime time.Time) []CalendarFeedDayGroup {
+	events := CalendarFeedEvents(data, refTime)
+	if len(events) == 0 {
+		return nil
+	}
+
+	loc := refTime.Location()
+	if loc == nil {
+		loc = time.UTC
+	}
+
+	var groups []CalendarFeedDayGroup
+	for _, ev := range events {
+		dateStr := FormatDateInLocation(loc, "2006-01-02", ev.Start)
+		if len(groups) == 0 || groups[len(groups)-1].Date != dateStr {
+			rel := RelDate(refTime, ev.Start)
+			groups = append(groups, CalendarFeedDayGroup{
+				Date:   dateStr,
+				Rel:    rel,
+				Start:  ev.Start,
+				Events: []provider.CalendarEvent{ev},
+			})
+		} else {
+			groups[len(groups)-1].Events = append(groups[len(groups)-1].Events, ev)
+		}
+	}
+
+	return groups
 }
 
 // CalendarFeedActiveCalendars filters widget configuration calendars down to those that are enabled.

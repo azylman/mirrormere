@@ -129,6 +129,23 @@ func TestCalendarFeedWidget_AlignmentAndHierarchy(t *testing.T) {
 	if !strings.Contains(e3Snippet, `class="event-accent-dot"`) {
 		t.Errorf("event e3 should still have event-accent-dot")
 	}
+
+	// 6. Verify all 3 events on 2026-10-10 are combined into a single calendar-day-card pill
+	dayCardsCount := strings.Count(html, `class="calendar-day-card"`)
+	if dayCardsCount != 1 {
+		t.Errorf("expected exactly 1 calendar-day-card for single day, got %d", dayCardsCount)
+	}
+
+	cardStart := strings.Index(html, `<div class="calendar-day-card">`)
+	if cardStart == -1 {
+		t.Fatalf("expected calendar-day-card in rendered output")
+	}
+	cardContent := html[cardStart:]
+	if !strings.Contains(cardContent, "Doctor Appointment") ||
+		!strings.Contains(cardContent, "Team Sync") ||
+		!strings.Contains(cardContent, "No-Calendar Event") {
+		t.Errorf("expected all events to be contained within the calendar-day-card")
+	}
 }
 
 
@@ -231,5 +248,18 @@ func TestCalendarFeedWidget_AllDaySortingAcrossTimezones(t *testing.T) {
 	// 3. Verify All Day badge for the party
 	if !strings.Contains(html, "event-time-allday") {
 		t.Errorf("expected event-time-allday class in HTML output")
+	}
+
+	// 4. Verify day cards: exactly 3 calendar-day-card pills (Monday, Wednesday, Thursday)
+	dayCardsCount := strings.Count(html, `class="calendar-day-card"`)
+	if dayCardsCount != 3 {
+		t.Errorf("expected exactly 3 calendar-day-card pills for the 3 days, got %d", dayCardsCount)
+	}
+	cards := strings.Split(html, `<div class="calendar-day-card">`)
+	if len(cards) >= 4 {
+		thursCard := cards[3]
+		if !strings.Contains(thursCard, "Weekend Bachelorette Party") || !strings.Contains(thursCard, "Brunch with Bridesmaids") {
+			t.Errorf("expected Thursday day-card to contain both Thursday events, got: %s", thursCard)
+		}
 	}
 }

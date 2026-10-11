@@ -84,6 +84,7 @@ describe('Fairyfloss Theme Mode Switching', () => {
       assert.match(content, /\[data-theme=["']?night["']?\]\s+\.status-jewel/, `${path.basename(cssPath)} must include [data-theme="night"] .status-jewel`);
       assert.match(content, /\[data-theme=["']?night["']?\]\s+\.status-dot/, `${path.basename(cssPath)} must include [data-theme="night"] .status-dot`);
       assert.match(content, /\[data-theme=["']?night["']?\]\s+\.calendar-event-item/, `${path.basename(cssPath)} must include [data-theme="night"] .calendar-event-item`);
+      assert.match(content, /\[data-theme=["']?night["']?\]\s+\.calendar-day-card/, `${path.basename(cssPath)} must include [data-theme="night"] .calendar-day-card`);
       assert.match(content, /\[data-theme=["']?night["']?\]\s+\.event-time-col/, `${path.basename(cssPath)} must include [data-theme="night"] .event-time-col`);
       assert.match(content, /\[data-theme=["']?night["']?\]\s+\.calendar-header-chips/, `${path.basename(cssPath)} must include [data-theme="night"] .calendar-header-chips`);
     }
