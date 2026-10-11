@@ -78,7 +78,7 @@
   --mm-touch-target-min: 48px;
 
   /* Layout Constants */
-  --mm-header-height: 80px;
+  --mm-header-height: 88px;
   --mm-grid-gap: 16px;
 }
 
@@ -382,7 +382,7 @@ html, body {
   align-items: center;
   justify-content: space-between;
   height: var(--mm-header-height);
-  padding: 0 24px;
+  padding: 0 28px;
   margin-bottom: var(--mm-grid-gap);
   background: var(--mm-bg-glass);
   backdrop-filter: blur(16px);
@@ -400,7 +400,7 @@ html, body {
   display: flex;
   flex-direction: row;
   align-items: center;
-  gap: 16px;
+  gap: 20px;
 }
 
 .header-clock {
@@ -449,14 +449,14 @@ html, body {
 .header-right-cluster {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 18px;
 }
 
 /* Header Video Action Button */
 .header-video { display: flex; align-items: center; }
 .header-video-btn {
   display: inline-flex; align-items: center; justify-content: center; position: relative;
-  min-width: 44px; min-height: 44px; width: 44px; height: 44px; padding: 0;
+  min-width: 48px; min-height: 48px; width: 48px; height: 48px; padding: 0;
   background: var(--mm-bg-surface); border: 1.5px solid rgba(90, 60, 30, 0.09); border-radius: 9999px;
   box-shadow: 0 4px 12px -2px rgba(130, 100, 70, 0.08); color: var(--mm-text-title);
   cursor: pointer; touch-action: manipulation; user-select: none; -webkit-user-select: none;
@@ -499,8 +499,8 @@ html, body {
 .weather-pill {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
-  padding: 6px 16px 6px 12px;
+  gap: 12px;
+  padding: 8px 18px 8px 14px;
   background: var(--mm-bg-surface);
   border: 1.5px solid rgba(90, 60, 30, 0.09);
   border-radius: 9999px;
@@ -526,13 +526,13 @@ html, body {
   display: flex;
   flex-direction: column;
   justify-content: center;
-  line-height: 1.15;
+  line-height: 1.2;
 }
 
 .weather-primary-row {
   display: flex;
   align-items: baseline;
-  gap: 5px;
+  gap: 6px;
 }
 
 .weather-temp {
@@ -1321,7 +1321,7 @@ button, .touch-target {
   align-items: center;
   justify-content: space-between;
   padding-bottom: 12px;
-  margin-bottom: 10px;
+  margin-bottom: 14px;
   border-bottom: 1px solid var(--mm-divider);
   flex-shrink: 0;
 }
@@ -1646,21 +1646,21 @@ button, .touch-target {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding-bottom: 8px;
+  padding-bottom: 12px;
   border-bottom: 1px solid var(--mm-divider);
-  margin-bottom: 8px;
+  margin-bottom: 14px;
 }
 
 .tasks-header-left {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   min-width: 0;
 }
 
 .tasks-icon-box {
-  width: 30px;
-  height: 30px;
+  width: 32px;
+  height: 32px;
   border-radius: 10px;
   background: var(--mm-mint-light);
   color: var(--mm-mint);
@@ -1689,7 +1689,7 @@ button, .touch-target {
   font-weight: 800;
   background: var(--mm-mint-light);
   color: var(--mm-mint);
-  padding: 3px 10px;
+  padding: 4px 11px;
   border-radius: 9999px;
   letter-spacing: 0.01em;
   flex-shrink: 0;
@@ -1717,7 +1717,9 @@ button, .touch-target {
 .tasks-items-container {
   display: flex;
   flex-direction: column;
-  height: calc(100% - 46px);
+  flex: 1;
+  min-height: 0;
+  height: calc(100% - 58px);
   overflow-y: auto;
   gap: 6px;
   padding-right: 4px;
@@ -1871,19 +1873,19 @@ button, .touch-target {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 2px;
+  margin-bottom: 14px;
 }
 
 .weather-header-left {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   min-width: 0;
 }
 
 .weather-icon-badge {
-  width: 36px;
-  height: 36px;
+  width: 38px;
+  height: 38px;
   border-radius: 12px;
   background: rgba(245, 158, 11, 0.12);
   color: var(--mm-honey, #f59e0b);
