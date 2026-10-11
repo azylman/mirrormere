@@ -1925,21 +1925,21 @@ button, .touch-target {
 .weather-container {
   display: flex;
   flex-direction: column;
-  flex: 1;
   min-height: 0;
   width: 100%;
   justify-content: center;
   align-items: stretch;
-  margin: 4px 0;
+  margin: 2px 0;
   overflow: hidden;
+  flex-shrink: 0;
 }
 
 .weather-hourly-timeline {
   display: flex;
-  flex: 1;
   min-height: 0;
   width: 100%;
-  height: 100%;
+  height: 110px;
+  flex-shrink: 0;
   align-items: center;
   overflow-x: auto;
   overflow-y: hidden;
@@ -1960,6 +1960,91 @@ button, .touch-target {
   height: 100%;
   flex-shrink: 0;
   display: block;
+}
+
+.weather-daily-forecast {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+  min-height: 0;
+  justify-content: space-between;
+  margin: 8px 0;
+  overflow: hidden;
+}
+
+.weather-daily-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.82rem;
+  line-height: 1;
+}
+
+.weather-daily-day {
+  width: 76px;
+  font-weight: 700;
+  color: var(--mm-text-title);
+  white-space: nowrap;
+  font-size: 0.82rem;
+}
+
+.weather-daily-condition {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 72px;
+  flex-shrink: 0;
+  color: var(--mm-honey, #f59e0b);
+}
+
+.weather-daily-precip {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--mm-sky, #3b9edd);
+}
+
+.weather-daily-temp-bar-container {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
+.weather-daily-temp-min {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--mm-text-dim);
+  width: 26px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.weather-temp-track {
+  flex: 1;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--mm-divider, rgba(90, 60, 30, 0.08));
+  position: relative;
+  overflow: hidden;
+}
+
+.weather-temp-bar {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 3px;
+  background: linear-gradient(90deg, var(--mm-sky, #3b9edd), var(--mm-coral, #ff6f59));
+}
+
+.weather-daily-temp-max {
+  font-size: 0.78rem;
+  font-weight: 800;
+  color: var(--mm-text-title);
+  width: 26px;
+  text-align: left;
+  flex-shrink: 0;
 }
 
 .weather-micro-stats {

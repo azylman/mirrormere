@@ -522,6 +522,329 @@ func TestWeatherHourlyGraph(t *testing.T) {
 			t.Errorf("expected temp labels in output, got: %s", out)
 		}
 	})
+
+	t.Run("tightened vertical coordinates", func(t *testing.T) {
+		t.Parallel()
+		items := []testHourlyItem{
+			{Time: "2026-09-26T12:00", Temp: 80.0, PrecipProb: 40, Icon: "weather-rainy"},
+			{Time: "2026-09-26T13:00", Temp: 50.0, PrecipProb: 0, Icon: "weather-cloudy"},
+		}
+		got := string(render.WeatherHourlyGraph(items))
+		// Check svg height 124.0 in viewBox
+		if !strings.Contains(got, `viewBox="0 0 560.0 124.0"`) {
+			t.Errorf("expected viewBox with height 124.0, got: %s", got)
+		}
+		// Check baseline axis y = 96.0
+		if !strings.Contains(got, `y1="96.0"`) || !strings.Contains(got, `y2="96.0"`) {
+			t.Errorf("expected baseline axis at y=96.0, got: %s", got)
+		}
+		// Check precip label at y = 13, font-size 10
+		if !strings.Contains(got, `y="13" text-anchor="middle" font-size="10"`) {
+			t.Errorf("expected precip text at y=13 with font-size 10, got: %s", got)
+		}
+		// Check icon transform at y=22 scale(1.0)
+		if !strings.Contains(got, `, 22) scale(1.0)`) {
+			t.Errorf("expected icon transform at y=22 scale(1.0), got: %s", got)
+		}
+		// Check circle r=3.5
+		if !strings.Contains(got, `r="3.5"`) {
+			t.Errorf("expected point circle with r=3.5, got: %s", got)
+		}
+		// Check time label at y = 114, font-size 11
+		if !strings.Contains(got, `y="114" text-anchor="middle" font-size="11"`) {
+			t.Errorf("expected time label at y=114 with font-size 11, got: %s", got)
+		}
+		// High temp y-coord is minY = 52.0. Temp label y = pt.y - 7.0 = 45.0.
+		if !strings.Contains(got, `y="45.0" text-anchor="middle" font-size="12" font-weight="800"`) {
+			t.Errorf("expected high temp label at y=45.0 with font-size 12, got: %s", got)
+		}
+		// Low temp y-coord is maxY = 82.0. Temp label y = pt.y - 7.0 = 75.0.
+		if !strings.Contains(got, `y="75.0" text-anchor="middle" font-size="12" font-weight="800"`) {
+			t.Errorf("expected low temp label at y=75.0 with font-size 12, got: %s", got)
+		}
+	})
+}
+
+func TestWeatherDailyForecast(t *testing.T) {
+	t.Parallel()
+
+	t.Run("nil and empty inputs", func(t *testing.T) {
+		t.Parallel()
+		if got := render.WeatherDailyForecast(nil); got != nil {
+			t.Errorf("expected nil for nil input, got: %v", got)
+		}
+		if got := render.WeatherDailyForecast([]provider.WeatherDaily{}); got != nil {
+			t.Errorf("expected nil for empty slice, got: %v", got)
+		}
+		if got := render.WeatherDailyForecast("not-a-slice"); got != nil {
+			t.Errorf("expected nil for non-slice, got: %v", got)
+		}
+	})
+
+	t.Run("single item slice returns nil", func(t *testing.T) {
+		t.Parallel()
+		single := []provider.WeatherDaily{
+			{Date: "2026-10-11", TempMin: 50, TempMax: 70, ConditionText: "Clear", Icon: "weather-sunny"},
+		}
+		if got := render.WeatherDailyForecast(single); got != nil {
+			t.Errorf("expected nil when slice has <= 1 item (today only), got: %v", got)
+		}
+	})
+
+	t.Run("multi-day forecast with day names and default maxDays", func(t *testing.T) {
+		t.Parallel()
+		daily := []provider.WeatherDaily{
+			{Date: "2026-10-11", TempMin: 55, TempMax: 75, PrecipProbMax: 0},
+			{Date: "2026-10-12", TempMin: 50, TempMax: 70, PrecipProbMax: 20, ConditionText: "Sunny", Icon: "weather-sunny"},
+			{Date: "2026-10-13", TempMin: 45, TempMax: 65, PrecipProbMax: 0, ConditionText: "Cloudy", Icon: "weather-cloudy"},
+			{Date: "2026-10-14", TempMin: 40, TempMax: 60, PrecipProbMax: 80, ConditionText: "Rain", Icon: "weather-rainy"},
+			{Date: "2026-10-15", TempMin: 42, TempMax: 62, PrecipProbMax: 10, ConditionText: "Partly Cloudy", Icon: "weather-partly-cloudy"},
+			{Date: "2026-10-16", TempMin: 48, TempMax: 68, PrecipProbMax: 0, ConditionText: "Clear", Icon: "weather-sunny"},
+			{Date: "2026-10-17", TempMin: 52, TempMax: 72, PrecipProbMax: 0, ConditionText: "Sunny", Icon: "weather-sunny"},
+		}
+
+		got := render.WeatherDailyForecast(daily)
+		if len(got) != 5 {
+			t.Fatalf("expected 5 days, got %d", len(got))
+		}
+
+		if got[0].DayName != "Tomorrow" {
+			t.Errorf("expected index 0 day name 'Tomorrow', got %q", got[0].DayName)
+		}
+		if got[1].DayName != "Tue" {
+			t.Errorf("expected index 1 day name 'Tue', got %q", got[1].DayName)
+		}
+		if got[2].DayName != "Wed" {
+			t.Errorf("expected index 2 day name 'Wed', got %q", got[2].DayName)
+		}
+		if got[3].DayName != "Thu" {
+			t.Errorf("expected index 3 day name 'Thu', got %q", got[3].DayName)
+		}
+		if got[4].DayName != "Fri" {
+			t.Errorf("expected index 4 day name 'Fri', got %q", got[4].DayName)
+		}
+
+		if !got[0].HasPrecip || got[0].PrecipProbMax != 20 {
+			t.Errorf("expected HasPrecip=true with 20%%, got %v (%d)", got[0].HasPrecip, got[0].PrecipProbMax)
+		}
+		if got[1].HasPrecip {
+			t.Errorf("expected HasPrecip=false for 0%%, got true")
+		}
+		if !got[2].HasPrecip || got[2].PrecipProbMax != 80 {
+			t.Errorf("expected HasPrecip=true with 80%%, got %v (%d)", got[2].HasPrecip, got[2].PrecipProbMax)
+		}
+
+		if math.Abs(got[2].BarLeft-0.0) > 0.01 {
+			t.Errorf("expected barLeft ~0.0%% for overallMin, got %f", got[2].BarLeft)
+		}
+		if math.Abs(got[2].BarWidth-66.666) > 0.1 {
+			t.Errorf("expected barWidth ~66.67%%, got %f", got[2].BarWidth)
+		}
+		for i, item := range got {
+			if item.BarLeft < 0 || item.BarLeft > 95 {
+				t.Errorf("at index %d: barLeft %f out of bounds [0, 95]", i, item.BarLeft)
+			}
+			if item.BarWidth < 5 {
+				t.Errorf("at index %d: barWidth %f less than minimum 5%%", i, item.BarWidth)
+			}
+			if item.BarLeft+item.BarWidth > 100.001 {
+				t.Errorf("at index %d: barLeft + barWidth (%f + %f = %f) exceeds 100%%", i, item.BarLeft, item.BarWidth, item.BarLeft+item.BarWidth)
+			}
+		}
+	})
+
+	t.Run("flatline temperatures with span < 2", func(t *testing.T) {
+		t.Parallel()
+		daily := []provider.WeatherDaily{
+			{Date: "2026-10-11", TempMin: 68, TempMax: 68},
+			{Date: "2026-10-12", TempMin: 68, TempMax: 68},
+			{Date: "2026-10-13", TempMin: 68, TempMax: 68},
+		}
+		got := render.WeatherDailyForecast(daily)
+		if len(got) != 2 {
+			t.Fatalf("expected 2 days, got %d", len(got))
+		}
+		for i, item := range got {
+			if math.IsNaN(item.BarLeft) || math.IsNaN(item.BarWidth) {
+				t.Errorf("index %d: geometry contains NaN", i)
+			}
+			if item.BarWidth < 5.0 {
+				t.Errorf("index %d: expected minimum 5%% barWidth on flat temps, got %f", i, item.BarWidth)
+			}
+			if item.BarLeft+item.BarWidth > 100.0 {
+				t.Errorf("index %d: bar exceeds 100%%", i)
+			}
+		}
+	})
+
+	t.Run("negative temperatures and inverted min max", func(t *testing.T) {
+		t.Parallel()
+		daily := []provider.WeatherDaily{
+			{Date: "2026-01-01", TempMin: 10, TempMax: 20},
+			{Date: "2026-01-02", TempMin: -5, TempMax: -15, Icon: "weather-snowy"},
+			{Date: "2026-01-03", TempMin: -20, TempMax: -10, Icon: "weather-snowy"},
+		}
+		got := render.WeatherDailyForecast(daily)
+		if len(got) != 2 {
+			t.Fatalf("expected 2 items, got %d", len(got))
+		}
+		if got[0].TempMin != -15 || got[0].TempMax != -5 {
+			t.Errorf("expected inverted temperatures to be normalized to min -15, max -5; got min %f, max %f", got[0].TempMin, got[0].TempMax)
+		}
+		if got[0].DayName != "Tomorrow" {
+			t.Errorf("expected Tomorrow, got %s", got[0].DayName)
+		}
+		if got[1].DayName != "Sat" {
+			t.Errorf("expected Sat, got %s", got[1].DayName)
+		}
+		if math.IsNaN(got[0].BarLeft) || math.IsNaN(got[0].BarWidth) {
+			t.Errorf("negative temp geometry contains NaN")
+		}
+	})
+
+	t.Run("unparseable date fallback and custom maxDays", func(t *testing.T) {
+		t.Parallel()
+		daily := []provider.WeatherDaily{
+			{Date: "today", TempMin: 50, TempMax: 60},
+			{Date: "unparseable-date-1", TempMin: 50, TempMax: 60},
+			{Date: "unparseable-date-2", TempMin: 52, TempMax: 62},
+			{Date: "unparseable-date-3", TempMin: 54, TempMax: 64},
+		}
+		got := render.WeatherDailyForecast(daily, 2)
+		if len(got) != 2 {
+			t.Fatalf("expected 2 items, got %d", len(got))
+		}
+		if got[0].DayName != "Tomorrow" {
+			t.Errorf("expected Tomorrow for first upcoming, got %s", got[0].DayName)
+		}
+		if got[1].DayName != "unparseable-date-2" {
+			t.Errorf("expected fallback to raw Date, got %s", got[1].DayName)
+		}
+	})
+
+	t.Run("pointer and map slice support", func(t *testing.T) {
+		t.Parallel()
+		slice := []provider.WeatherDaily{
+			{Date: "2026-10-11", TempMin: 50, TempMax: 60},
+			{Date: "2026-10-12", TempMin: 52, TempMax: 62, Icon: "weather-sunny", ConditionText: "Sunny"},
+		}
+		gotPtr := render.WeatherDailyForecast(&slice)
+		if len(gotPtr) != 1 {
+			t.Fatalf("expected 1 item from pointer slice, got %d", len(gotPtr))
+		}
+
+		mapSlice := []map[string]any{
+			{"date": "2026-10-11", "temp_min": 50, "temp_max": 60},
+			{"date": "2026-10-12", "temp_min": 45.0, "temp_max": 65.0, "precip_prob_max": 30, "condition_text": "Rain", "icon": "weather-rainy"},
+		}
+		gotMap := render.WeatherDailyForecast(mapSlice)
+		if len(gotMap) != 1 {
+			t.Fatalf("expected 1 item from map slice, got %d", len(gotMap))
+		}
+		if gotMap[0].DayName != "Tomorrow" || gotMap[0].ConditionText != "Rain" || gotMap[0].Icon != "weather-rainy" || !gotMap[0].HasPrecip {
+			t.Errorf("unexpected map slice item: %+v", gotMap[0])
+		}
+	})
+
+	t.Run("template execution via StandardFuncMap", func(t *testing.T) {
+		t.Parallel()
+		data := map[string]any{
+			"Daily": []provider.WeatherDaily{
+				{Date: "2026-10-11", TempMin: 50, TempMax: 60},
+				{Date: "2026-10-12", TempMin: 55, TempMax: 65, PrecipProbMax: 20, Icon: "weather-sunny", ConditionText: "Sunny"},
+				{Date: "2026-10-13", TempMin: 52, TempMax: 62, PrecipProbMax: 0, Icon: "weather-cloudy", ConditionText: "Cloudy"},
+			},
+		}
+		tmplStr := `{{ $f := weatherDailyForecast .Daily 5 }}{{ range $f }}{{ .DayName }}: {{ printf "%.0f" .TempMin }}°-{{ printf "%.0f" .TempMax }}° ({{ printf "%.1f" .BarLeft }}%, {{ printf "%.1f" .BarWidth }}%) {{ end }}`
+		tmpl, err := template.New("forecast-test").Funcs(render.StandardFuncMap(nil)).Parse(tmplStr)
+		if err != nil {
+			t.Fatalf("template parse error: %v", err)
+		}
+		var sb strings.Builder
+		if err := tmpl.Execute(&sb, data); err != nil {
+			t.Fatalf("template exec error: %v", err)
+		}
+		out := sb.String()
+		if !strings.Contains(out, "Tomorrow: 55°-65°") || !strings.Contains(out, "Tue: 52°-62°") {
+			t.Errorf("unexpected template output: %s", out)
+		}
+	})
+
+	t.Run("nil pointer and invalid slice elements", func(t *testing.T) {
+		t.Parallel()
+		var nilPtr *[]provider.WeatherDaily
+		if got := render.WeatherDailyForecast(nilPtr); got != nil {
+			t.Errorf("expected nil for nil pointer, got %v", got)
+		}
+
+		type customDaily struct {
+			Date          string
+			TempMax       float32
+			TempMin       float32
+			PrecipProbMax int64
+			ConditionText string
+			Icon          string
+		}
+		type customDailyInt struct {
+			Date          string
+			TempMax       int
+			TempMin       int
+			PrecipProbMax float32
+			ConditionText string
+			Icon          string
+		}
+
+		mixedSlice := []any{
+			nil,
+			(*customDaily)(nil),
+			&customDaily{Date: "2026-10-11", TempMin: 50, TempMax: 60, PrecipProbMax: 0, ConditionText: "Clear", Icon: "weather-sunny"},
+			customDailyInt{Date: "2026-10-12", TempMin: 40, TempMax: 65, PrecipProbMax: 30, ConditionText: "Rain", Icon: ""},
+			&provider.WeatherDaily{Date: "2026-10-13", TempMin: 45, TempMax: math.NaN(), PrecipProbMax: 10, ConditionText: "Cloudy"},
+		}
+		got := render.WeatherDailyForecast(mixedSlice)
+		if len(got) < 2 {
+			t.Fatalf("expected at least 2 items from mixed slice, got %d", len(got))
+		}
+		if got[0].DayName != "Tomorrow" || got[0].Icon != "weather-cloudy" {
+			t.Errorf("expected default weather-cloudy icon on empty icon item, got %s", got[0].Icon)
+		}
+	})
+
+	t.Run("barLeft clamping to 95 and non-positive maxDays", func(t *testing.T) {
+		t.Parallel()
+		daily := []provider.WeatherDaily{
+			{Date: "2026-10-11", TempMin: 50, TempMax: 60}, // today
+			{Date: "2026-10-12", TempMin: 0, TempMax: 10},  // upcoming 1 (overallMin = 0)
+			{Date: "2026-10-13", TempMin: 98, TempMax: 100}, // upcoming 2 (overallMax = 100, barLeft = 98% -> clamped to 95%)
+		}
+		got := render.WeatherDailyForecast(daily, 0)
+		if len(got) != 2 {
+			t.Fatalf("expected 2 items, got %d", len(got))
+		}
+		if got[1].BarLeft != 95.0 {
+			t.Errorf("expected barLeft to clamp to 95.0, got %f", got[1].BarLeft)
+		}
+
+		gotNeg := render.WeatherDailyForecast(daily, -5)
+		if len(gotNeg) != 2 {
+			t.Fatalf("expected 2 items with negative maxDays, got %d", len(gotNeg))
+		}
+	})
+
+	t.Run("map slice with integer temps and float precip", func(t *testing.T) {
+		t.Parallel()
+		maps := []map[string]any{
+			{"date": "2026-10-11", "temp_min": 50, "temp_max": 70, "precip_prob_max": 10},
+			{"date": "2026-10-12", "temp_min": 45, "temp_max": 65, "precip_prob_max": 50.0},
+		}
+		got := render.WeatherDailyForecast(maps)
+		if len(got) != 1 {
+			t.Fatalf("expected 1 item, got %d", len(got))
+		}
+		if got[0].PrecipProbMax != 50 || got[0].TempMin != 45 || got[0].TempMax != 65 {
+			t.Errorf("unexpected parsed values from int map: %+v", got[0])
+		}
+	})
 }
 
 func TestTodayPrecipProb(t *testing.T) {
@@ -958,5 +1281,3 @@ func TestTasksStats(t *testing.T) {
 		}
 	})
 }
-
-

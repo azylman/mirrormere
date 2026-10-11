@@ -49,6 +49,30 @@
     {{ end }}
   </div>
 
+  {{ $dailyForecast := weatherDailyForecast .Data.Daily 5 }}
+  {{ if $dailyForecast }}
+  <div class="weather-daily-forecast">
+    {{ range $dailyForecast }}
+    <div class="weather-daily-row">
+      <span class="weather-daily-day">{{ .DayName }}</span>
+      <div class="weather-daily-condition" title="{{ .ConditionText }}">
+        {{ weatherIcon .Icon 18 }}
+        {{ if .HasPrecip }}
+        <span class="weather-daily-precip">☂ {{ .PrecipProbMax }}%</span>
+        {{ end }}
+      </div>
+      <div class="weather-daily-temp-bar-container">
+        <span class="weather-daily-temp-min">{{ printf "%.0f" .TempMin }}°</span>
+        <div class="weather-temp-track">
+          <div class="weather-temp-bar" style="left: {{ printf "%.1f" .BarLeft }}%; width: {{ printf "%.1f" .BarWidth }}%;"></div>
+        </div>
+        <span class="weather-daily-temp-max">{{ printf "%.0f" .TempMax }}°</span>
+      </div>
+    </div>
+    {{ end }}
+  </div>
+  {{ end }}
+
   <div class="weather-micro-stats">
     <span class="weather-meta-stat weather-meta-humidity" title="Humidity: {{ .Data.Current.Humidity }}%">
       <svg class="weather-meta-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/></svg>
