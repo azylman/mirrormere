@@ -73,4 +73,18 @@ config_schema:
         token_env:
           type: string
       additionalProperties: false
+    todoist:
+      type: object
+      properties:
+        project_id:
+          type: string
+        project_name:
+          type: string
+        token:
+          type: string
+        token_env:
+          type: string
+        base_url:
+          type: string
+      additionalProperties: false
   additionalProperties: false
