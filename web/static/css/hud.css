@@ -1799,7 +1799,7 @@ button, .touch-target {
 
 .cf-day.cf-today {
   outline: 2px solid var(--mm-coral);
-  background: #ffffff;
+  background: var(--mm-cal-today-bg, rgba(254, 243, 199, 0.08));
 }
 
 .cf-day-header {
@@ -1813,9 +1813,7 @@ button, .touch-target {
 }
 
 .cf-today .cf-day-header {
-  background: var(--mm-coral);
-  color: #ffffff;
-  border-radius: 6px;
+  border-bottom: 1px solid rgba(255, 111, 89, 0.25);
 }
 
 .cf-event {

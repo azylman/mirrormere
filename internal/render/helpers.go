@@ -34,9 +34,13 @@ func StandardFuncMap(nowFunc func() time.Time) template.FuncMap {
 	}
 
 	return template.FuncMap{
-		"seq":        Seq,
-		"formatDate": FormatDate,
-		"formatTime": FormatTime,
+		"seq": Seq,
+		"formatDate": func(args ...any) string {
+			return FormatDateInLocation(nowFunc().Location(), args...)
+		},
+		"formatTime": func(args ...any) string {
+			return FormatTimeInLocation(nowFunc().Location(), args...)
+		},
 		"relDate": func(args ...any) string {
 			return RelDate(nowFunc(), args...)
 		},
@@ -91,6 +95,7 @@ func StandardFuncMap(nowFunc func() time.Time) template.FuncMap {
 			return CalendarFeedActiveCalendars(cfg)
 		},
 		"tasksStats": TasksStats,
+		"stringOr":   stringOr,
 		"add": func(a, b int) int {
 			return a + b
 		},
@@ -169,9 +174,27 @@ func ParseTime(v any) (time.Time, bool) {
 	}
 }
 
+func isDateOnly(v any) bool {
+	if s, ok := v.(string); ok {
+		s = strings.TrimSpace(s)
+		if len(s) == 10 && s[4] == '-' && s[7] == '-' {
+			_, err := time.Parse("2006-01-02", s)
+			return err == nil
+		}
+	}
+	return false
+}
+
 // FormatDate formats a time value with the specified date layout.
 // If layout is omitted, defaults to "2006-01-02".
 func FormatDate(args ...any) string {
+	return FormatDateInLocation(nil, args...)
+}
+
+// FormatDateInLocation formats a time value with the specified date layout in the given location.
+// If layout is omitted, defaults to "2006-01-02".
+// If loc is nil, UTC/original location is preserved.
+func FormatDateInLocation(loc *time.Location, args ...any) string {
 	if len(args) == 0 {
 		return ""
 	}
@@ -188,9 +211,21 @@ func FormatDate(args ...any) string {
 		val = args[1]
 	}
 
+	if isDateOnly(val) {
+		s := strings.TrimSpace(fmt.Sprint(val))
+		t, err := time.Parse("2006-01-02", s)
+		if err != nil {
+			return s
+		}
+		return t.Format(layout)
+	}
+
 	t, ok := ParseTime(val)
 	if !ok {
 		return fmt.Sprint(val)
+	}
+	if loc != nil {
+		t = t.In(loc)
 	}
 	return t.Format(layout)
 }
@@ -198,6 +233,13 @@ func FormatDate(args ...any) string {
 // FormatTime formats a time value with the specified time layout.
 // If layout is omitted, defaults to "15:04".
 func FormatTime(args ...any) string {
+	return FormatTimeInLocation(nil, args...)
+}
+
+// FormatTimeInLocation formats a time value with the specified time layout in the given location.
+// If layout is omitted, defaults to "15:04".
+// If loc is nil, UTC/original location is preserved.
+func FormatTimeInLocation(loc *time.Location, args ...any) string {
 	if len(args) == 0 {
 		return ""
 	}
@@ -214,9 +256,16 @@ func FormatTime(args ...any) string {
 		val = args[1]
 	}
 
+	if isDateOnly(val) {
+		return ""
+	}
+
 	t, ok := ParseTime(val)
 	if !ok {
 		return fmt.Sprint(val)
+	}
+	if loc != nil {
+		t = t.In(loc)
 	}
 	return t.Format(layout)
 }
@@ -227,25 +276,54 @@ func RelDate(refTime time.Time, args ...any) string {
 		return ""
 	}
 	val := args[0]
-	t, ok := ParseTime(val)
-	if !ok {
-		return fmt.Sprint(val)
-	}
-
 	if len(args) >= 2 {
 		if customRef, refOk := ParseTime(args[1]); refOk {
 			refTime = customRef
 		}
 	}
 
-	loc := t.Location()
-	refInLoc := refTime.In(loc)
+	refLoc := refTime.Location()
+	if refLoc == nil {
+		refLoc = time.UTC
+	}
 
-	tDate := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, loc)
-	refDate := time.Date(refInLoc.Year(), refInLoc.Month(), refInLoc.Day(), 0, 0, 0, 0, loc)
+	if isDateOnly(val) {
+		s := strings.TrimSpace(fmt.Sprint(val))
+		t, err := time.Parse("2006-01-02", s)
+		if err != nil {
+			return s
+		}
+		tDate := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, refLoc)
+		refDate := time.Date(refTime.Year(), refTime.Month(), refTime.Day(), 0, 0, 0, 0, refLoc)
+
+		diffHours := tDate.Sub(refDate).Hours()
+		diffDays := int(math.Round(diffHours / 24))
+
+		switch {
+		case diffDays == 0:
+			return "Today"
+		case diffDays == 1:
+			return "Tomorrow"
+		case diffDays == -1:
+			return "Yesterday"
+		case diffDays > 1:
+			return fmt.Sprintf("in %d days", diffDays)
+		default:
+			return fmt.Sprintf("%d days ago", -diffDays)
+		}
+	}
+
+	t, ok := ParseTime(val)
+	if !ok {
+		return fmt.Sprint(val)
+	}
+
+	tInLoc := t.In(refLoc)
+	tDate := time.Date(tInLoc.Year(), tInLoc.Month(), tInLoc.Day(), 0, 0, 0, 0, refLoc)
+	refDate := time.Date(refTime.Year(), refTime.Month(), refTime.Day(), 0, 0, 0, 0, refLoc)
 
 	diffHours := tDate.Sub(refDate).Hours()
-	diffDays := int(diffHours / 24)
+	diffDays := int(math.Round(diffHours / 24))
 
 	switch {
 	case diffDays == 0:

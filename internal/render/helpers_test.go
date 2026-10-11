@@ -185,6 +185,50 @@ func TestRelDate(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("timezone conversion", func(t *testing.T) {
+		t.Parallel()
+		laLoc, err := time.LoadLocation("America/Los_Angeles")
+		if err != nil {
+			t.Fatalf("failed to load America/Los_Angeles: %v", err)
+		}
+
+		// Event on Sunday night Oct 11 at 8:30 PM PDT is 2026-10-12T03:30:00Z in UTC
+		eventUTC := "2026-10-12T03:30:00Z"
+
+		// On Saturday Oct 10 at 7:00 PM PDT, the event is tomorrow (Sunday Oct 11)
+		satNow := time.Date(2026, 10, 10, 19, 0, 0, 0, laLoc)
+		if got := render.RelDate(satNow, eventUTC); got != "Tomorrow" {
+			t.Errorf("expected Tomorrow on Saturday night, got %q", got)
+		}
+
+		// On Sunday Oct 11 at 2:00 PM PDT, the event is today
+		sunNow := time.Date(2026, 10, 11, 14, 0, 0, 0, laLoc)
+		if got := render.RelDate(sunNow, eventUTC); got != "Today" {
+			t.Errorf("expected Today on Sunday afternoon, got %q", got)
+		}
+
+		// FormatDateInLocation converts UTC event to local date
+		if got := render.FormatDateInLocation(laLoc, "2006-01-02", eventUTC); got != "2026-10-11" {
+			t.Errorf("expected 2026-10-11, got %q", got)
+		}
+		if got := render.FormatDateInLocation(laLoc, "Jan 2", eventUTC); got != "Oct 11" {
+			t.Errorf("expected Oct 11, got %q", got)
+		}
+
+		// Date-only string is preserved and not shifted
+		if got := render.FormatDateInLocation(laLoc, "2006-01-02", "2026-10-12"); got != "2026-10-12" {
+			t.Errorf("expected date-only 2026-10-12 to remain 2026-10-12, got %q", got)
+		}
+
+		// FormatTimeInLocation converts UTC event to local time
+		if got := render.FormatTimeInLocation(laLoc, "3:04", eventUTC); got != "8:30" {
+			t.Errorf("expected 8:30, got %q", got)
+		}
+		if got := render.FormatTimeInLocation(laLoc, "PM", eventUTC); got != "PM" {
+			t.Errorf("expected PM, got %q", got)
+		}
+	})
 }
 
 func TestJSONHelpers(t *testing.T) {

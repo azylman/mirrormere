@@ -440,14 +440,11 @@ function createMockElement(options = {}) {
   element.dataset.activeView = activeView;
 
   // Buttons
-  const btnDay = createMockDOMNode('button', { className: 'cf-view-btn' + (activeView === 'day' ? ' active' : '') });
-  btnDay.dataset.view = 'day';
   const btnWeek = createMockDOMNode('button', { className: 'cf-view-btn' + (activeView === 'week' ? ' active' : '') });
   btnWeek.dataset.view = 'week';
   const btnMonth = createMockDOMNode('button', { className: 'cf-view-btn' + (activeView === 'month' ? ' active' : '') });
   btnMonth.dataset.view = 'month';
 
-  element.appendChild(btnDay);
   element.appendChild(btnWeek);
   element.appendChild(btnMonth);
 
@@ -458,27 +455,22 @@ function createMockElement(options = {}) {
   element.appendChild(btnNext);
 
   // Panels
-  const panelDay = createMockDOMNode('div', { className: 'cf-view-panel cf-view-day' });
-  panelDay.style.display = activeView === 'day' ? 'flex' : 'none';
   const panelWeek = createMockDOMNode('div', { className: 'cf-view-panel cf-view-week' });
   panelWeek.style.display = activeView === 'week' ? 'flex' : 'none';
   const panelMonth = createMockDOMNode('div', { className: 'cf-view-panel cf-view-month' });
   panelMonth.style.display = activeView === 'month' ? 'flex' : 'none';
 
-  element.appendChild(panelDay);
   element.appendChild(panelWeek);
   element.appendChild(panelMonth);
 
   // Labels
-  const lblDay = createMockDOMNode('span', { className: 'cf-range-label cf-label-day' });
   const lblWeek = createMockDOMNode('span', { className: 'cf-range-label cf-label-week' });
   const lblMonth = createMockDOMNode('span', { className: 'cf-range-label cf-label-month' });
-  element.appendChild(lblDay);
   element.appendChild(lblWeek);
   element.appendChild(lblMonth);
 
   // Today Badge
-  const todayBadge = createMockDOMNode('span', { className: 'cf-today-badge cf-today-day' });
+  const todayBadge = createMockDOMNode('span', { className: 'cf-today-badge' });
   element.appendChild(todayBadge);
 
   // Data script
@@ -505,12 +497,12 @@ function createMockElement(options = {}) {
   monthDay.appendChild(monthTitle);
   panelMonth.appendChild(monthDay);
 
-  element._buttons = [btnDay, btnWeek, btnMonth];
+  element._buttons = [btnWeek, btnMonth];
   element._btnPrev = btnPrev;
   element._btnNext = btnNext;
   element._navButtons = { prev: btnPrev, next: btnNext };
-  element._panels = { day: panelDay, week: panelWeek, month: panelMonth };
-  element._labels = { day: lblDay, week: lblWeek, month: lblMonth };
+  element._panels = { week: panelWeek, month: panelMonth };
+  element._labels = { week: lblWeek, month: lblMonth };
   element._todayBadge = todayBadge;
   element._events = { allDay: evAllDay, timed: evTimed, month: monthTitle, monthDay };
 
@@ -550,7 +542,7 @@ test('Calendar Family Client Controller', async (t) => {
   await t.test('resolves defaultView from dataset and config', () => {
     const elDay = createMockElement({ defaultView: 'day' });
     const instDay = global.window.MirrormereCalendarFamily.mount(elDay);
-    assert.equal(instDay.activeView, 'day');
+    assert.equal(instDay.activeView, 'week', 'day default_view falls back to week');
     global.window.MirrormereCalendarFamily.unmount(elDay.dataset.widgetId);
 
     const elMonth = createMockElement({ defaultView: 'month' });
@@ -564,7 +556,7 @@ test('Calendar Family Client Controller', async (t) => {
     global.window.MirrormereCalendarFamily.unmount(elFallback.dataset.widgetId);
   });
 
-  await t.test('switches view on 3-way view switcher button clicks', () => {
+  await t.test('switches view between week and month on switcher button clicks', () => {
     let notifiedView = null;
     const el = createMockElement({
       widgetId: 'switcher-cal',
@@ -576,55 +568,49 @@ test('Calendar Family Client Controller', async (t) => {
     });
 
     assert.equal(inst.activeView, 'week');
-    assert.equal(el._buttons[1].classList.contains('active'), true);
-    assert.equal(el._buttons[1].getAttribute('aria-selected'), 'true');
-    assert.equal(el._buttons[0].classList.contains('active'), false);
-    assert.equal(el._buttons[0].getAttribute('aria-selected'), 'false');
-
-    // Click 'Day' button (index 0)
-    el._buttons[0].click();
-
-    assert.equal(inst.activeView, 'day');
-    assert.equal(el.dataset.activeView, 'day');
-    assert.equal(el.classList.contains('cf-view-day'), true);
-    assert.equal(el.classList.contains('cf-view-week'), false);
     assert.equal(el._buttons[0].classList.contains('active'), true);
     assert.equal(el._buttons[0].getAttribute('aria-selected'), 'true');
     assert.equal(el._buttons[1].classList.contains('active'), false);
     assert.equal(el._buttons[1].getAttribute('aria-selected'), 'false');
-    assert.equal(notifiedView, 'day');
 
-    // Panels and labels display in day view
-    assert.equal(el._panels.day.style.display, 'flex');
-    assert.equal(el._panels.week.style.display, 'none');
-    assert.equal(el._panels.month.style.display, 'none');
-    assert.equal(el._labels.day.style.display, '');
-    assert.equal(el._labels.week.style.display, 'none');
-    assert.equal(el._todayBadge.style.display, '');
-
-    // Click 'Month' button (index 2)
-    el._buttons[2].click();
+    // Click 'Month' button (index 1)
+    el._buttons[1].click();
 
     assert.equal(inst.activeView, 'month');
     assert.equal(el.dataset.activeView, 'month');
     assert.equal(el.classList.contains('cf-view-month'), true);
-    assert.equal(el.classList.contains('cf-view-day'), false);
-    assert.equal(el._buttons[2].classList.contains('active'), true);
-    assert.equal(el._buttons[2].getAttribute('aria-selected'), 'true');
+    assert.equal(el.classList.contains('cf-view-week'), false);
+    assert.equal(el._buttons[1].classList.contains('active'), true);
+    assert.equal(el._buttons[1].getAttribute('aria-selected'), 'true');
     assert.equal(el._buttons[0].classList.contains('active'), false);
     assert.equal(el._buttons[0].getAttribute('aria-selected'), 'false');
     assert.equal(notifiedView, 'month');
 
     // Panels and labels display in month view
     assert.equal(el._panels.month.style.display, 'flex');
-    assert.equal(el._panels.day.style.display, 'none');
+    assert.equal(el._panels.week.style.display, 'none');
     assert.equal(el._labels.month.style.display, '');
-    assert.equal(el._labels.day.style.display, 'none');
+    assert.equal(el._labels.week.style.display, 'none');
     assert.equal(el._todayBadge.style.display, 'none');
+
+    // Click 'Week' button (index 0)
+    el._buttons[0].click();
+
+    assert.equal(inst.activeView, 'week');
+    assert.equal(el.dataset.activeView, 'week');
+    assert.equal(el.classList.contains('cf-view-week'), true);
+    assert.equal(el.classList.contains('cf-view-month'), false);
+    assert.equal(el._buttons[0].classList.contains('active'), true);
+    assert.equal(el._buttons[0].getAttribute('aria-selected'), 'true');
+    assert.equal(el._buttons[1].classList.contains('active'), false);
+    assert.equal(el._buttons[1].getAttribute('aria-selected'), 'false');
+    assert.equal(notifiedView, 'week');
 
     // Ignore invalid switchView input
     inst.switchView('invalid-view');
-    assert.equal(inst.activeView, 'month');
+    assert.equal(inst.activeView, 'week');
+    inst.switchView('day');
+    assert.equal(inst.activeView, 'week', 'day view should be ignored');
 
     global.window.MirrormereCalendarFamily.unmount('switcher-cal');
   });
@@ -820,9 +806,9 @@ test('Calendar Family Client Controller', async (t) => {
       onInactivityReset: () => { resetFired = true; },
     });
 
-    // 1. Switch to 'day' view
-    inst.switchView('day');
-    assert.equal(inst.activeView, 'day');
+    // 1. Switch to 'month' view
+    inst.switchView('month');
+    assert.equal(inst.activeView, 'month');
 
     // 2. Open an event modal
     el._events.timed.click();
@@ -943,36 +929,21 @@ test('Calendar Family Client Controller', async (t) => {
     global.window.MirrormereCalendarFamily.unmount('swipe-week-cal');
   });
 
-  await t.test('swiping in day view pages forward and backward by 1 day', () => {
+  await t.test('swiping right in week view pages backward by 7 days', () => {
     const el = createMockElement({
-      widgetId: 'swipe-day-cal',
-      defaultView: 'day',
+      widgetId: 'swipe-week-cal',
+      defaultView: 'week',
       data: {
-        date: '2026-10-10',
-        cached_range_start: '2026-10-01',
+        range_start: '2026-10-10',
+        cached_range_start: '2026-09-01',
         cached_range_end: '2026-10-20',
       }
     });
     const inst = global.window.MirrormereCalendarFamily.mount(el);
 
-    assert.equal(inst.activeView, 'day');
-    assert.equal(inst.formatDateISO(inst.currentDate), '2026-10-10');
-    assert.equal(el._todayBadge.style.display, '');
-
-    // Swipe left (next): deltaX = -100
-    el.dispatchEvent({
-      type: 'touchstart',
-      touches: [{ clientX: 180, clientY: 50 }],
-    });
-    el.dispatchEvent({
-      type: 'touchend',
-      changedTouches: [{ clientX: 80, clientY: 50 }],
-    });
-
-    assert.equal(inst.pageOffset, 1);
-    assert.equal(inst.formatDateISO(inst.currentDate), '2026-10-11');
-    assert.equal(el._labels.day.textContent, 'Sun, Oct 11');
-    assert.equal(el._todayBadge.style.display, 'none', 'today badge should hide when viewing future date');
+    assert.equal(inst.activeView, 'week');
+    assert.equal(inst.formatDateISO(inst.currentWeekStart), '2026-10-10');
+    assert.equal(el._todayBadge.style.display, 'none');
 
     // Swipe right (prev): deltaX = +100
     el.dispatchEvent({
@@ -984,12 +955,25 @@ test('Calendar Family Client Controller', async (t) => {
       changedTouches: [{ clientX: 180, clientY: 50 }],
     });
 
-    assert.equal(inst.pageOffset, 0);
-    assert.equal(inst.formatDateISO(inst.currentDate), '2026-10-10');
-    assert.equal(el._labels.day.textContent, 'Sat, Oct 10');
-    assert.equal(el._todayBadge.style.display, '', 'today badge should show when viewing today');
+    assert.equal(inst.pageOffset, -1);
+    assert.equal(inst.formatDateISO(inst.currentWeekStart), '2026-10-03');
+    assert.equal(el._todayBadge.style.display, '', 'today badge should show when paged away from today');
 
-    global.window.MirrormereCalendarFamily.unmount('swipe-day-cal');
+    // Swipe left (next): deltaX = -100
+    el.dispatchEvent({
+      type: 'touchstart',
+      touches: [{ clientX: 180, clientY: 50 }],
+    });
+    el.dispatchEvent({
+      type: 'touchend',
+      changedTouches: [{ clientX: 80, clientY: 50 }],
+    });
+
+    assert.equal(inst.pageOffset, 0);
+    assert.equal(inst.formatDateISO(inst.currentWeekStart), '2026-10-10');
+    assert.equal(el._todayBadge.style.display, 'none', 'today badge should hide when on current week');
+
+    global.window.MirrormereCalendarFamily.unmount('swipe-week-cal');
   });
 
   await t.test('swiping in month view pages forward and backward by 1 month', () => {
@@ -1094,7 +1078,7 @@ test('Calendar Family Client Controller', async (t) => {
       data: {
         date: '2026-10-10',
         cached_range_start: '2026-10-01',
-        cached_range_end: '2026-10-31',
+        cached_range_end: '2026-12-31',
       }
     });
     let resetNotified = false;
@@ -1103,13 +1087,12 @@ test('Calendar Family Client Controller', async (t) => {
       onInactivityReset: () => { resetNotified = true; },
     });
 
-    // Switch to day view and page forward by 2 days
-    inst.switchView('day');
+    // Switch to month view and page forward by 1 month
+    inst.switchView('month');
     inst.pageNext();
-    inst.pageNext();
-    assert.equal(inst.activeView, 'day');
-    assert.equal(inst.pageOffset, 2);
-    assert.equal(inst.formatDateISO(inst.currentDate), '2026-10-12');
+    assert.equal(inst.activeView, 'month');
+    assert.equal(inst.pageOffset, 1);
+    assert.equal(inst.formatDateISO(inst.currentDate).slice(0, 7), '2026-11');
 
     // Wait for inactivity timeout (60ms > 40ms)
     await new Promise(r => setTimeout(r, 60));
@@ -1244,7 +1227,7 @@ test('Calendar Family Client Controller', async (t) => {
     global.window.MirrormereCalendarFamily.unmount('combined-data-cal');
   });
 
-  await t.test('swiping left/right in week, day, and month views invokes fetch with ?date=...&view=... and replaces panel DOM with fresh event cards', async () => {
+  await t.test('swiping left/right in week and month views invokes fetch with ?date=...&view=... and replaces panel DOM with fresh event cards', async () => {
     const fetchCalls = [];
     const mockFetch = async (url, opts) => {
       fetchCalls.push({ url, signal: opts && opts.signal });
@@ -1252,11 +1235,6 @@ test('Calendar Family Client Controller', async (t) => {
       const date = parsedUrl.searchParams.get('date');
       const view = parsedUrl.searchParams.get('view');
       const html = `
-        <div class="cf-view-panel cf-view-day">
-          <div class="cf-day-event cf-event-clickable" data-event-id="ev-fresh-${date}-day">
-            <div class="cf-event-title">Fresh Day Event ${date}</div>
-          </div>
-        </div>
         <div class="cf-view-panel cf-view-week">
           <div class="cf-event cf-timed cf-event-clickable" data-event-id="ev-fresh-${date}-week">
             <div class="cf-event-title">Fresh Week Event ${date}</div>
@@ -1267,14 +1245,12 @@ test('Calendar Family Client Controller', async (t) => {
             <div class="cf-month-event-title cf-event-clickable" data-event-id="ev-fresh-${date}-month">Fresh Month Event ${date}</div>
           </div>
         </div>
-        <span class="cf-range-label cf-label-day">Day ${date}</span>
         <span class="cf-range-label cf-label-week">Week ${date}</span>
         <span class="cf-range-label cf-label-month">Month ${date}</span>
         <script class="calendar-family-data">${JSON.stringify({
           days: [{
             date,
             timed: [{ id: `ev-fresh-${date}-week`, title: `Fresh Week Event ${date}` }],
-            all_day: [{ id: `ev-fresh-${date}-day`, title: `Fresh Day Event ${date}` }],
             events: [{ id: `ev-fresh-${date}-month`, title: `Fresh Month Event ${date}` }]
           }],
           month_days: [{
@@ -1322,25 +1298,7 @@ test('Calendar Family Client Controller', async (t) => {
     assert.equal(inst.activeModal.querySelector('.cf-modal-title').textContent, 'Fresh Week Event 2026-10-17');
     inst.closeModal();
 
-    // 2. Day view swipe left
-    inst.switchView('day');
-    fetchCalls.length = 0;
-    el.dispatchEvent({
-      type: 'touchstart',
-      touches: [{ clientX: 200, clientY: 50 }],
-    });
-    el.dispatchEvent({
-      type: 'touchend',
-      changedTouches: [{ clientX: 50, clientY: 50 }],
-    });
-
-    await new Promise(r => setTimeout(r, 10));
-    assert.equal(fetchCalls.length, 1);
-    assert.ok(fetchCalls[0].url.includes('view=day'));
-    const freshDayCard = inst.viewPanels.day.querySelector('[data-event-id]');
-    assert.ok(freshDayCard, 'day panel should be replaced with fresh day event card');
-
-    // 3. Month view swipe left
+    // 2. Month view swipe left
     inst.switchView('month');
     fetchCalls.length = 0;
     el.dispatchEvent({
@@ -1411,25 +1369,25 @@ test('Calendar Family Client Controller', async (t) => {
     let fetchCount = 0;
     const mockFetch = async (url) => {
       fetchCount++;
-      return { ok: true, text: async () => `<div class="cf-view-panel cf-view-day"></div>` };
+      return { ok: true, text: async () => `<div class="cf-view-panel cf-view-week"></div>` };
     };
 
-    const el = createMockElement({ widgetId: 'today-badge-cal', defaultView: 'day' });
+    const el = createMockElement({ widgetId: 'today-badge-cal', defaultView: 'week' });
     const inst = global.window.MirrormereCalendarFamily.mount(el, {
       fetch: mockFetch,
       cachedRange: { start: '2026-09-01', end: '2026-11-30' },
     });
 
-    // Advance 2 days forward
+    // Advance 2 weeks forward
     el._btnNext.click();
     el._btnNext.click();
     assert.equal(inst.pageOffset, 2);
-    assert.equal(inst.currentDate.getDate(), 12);
+    assert.equal(inst.currentWeekStart.getDate(), 24);
 
     // Tap TODAY badge
     el._todayBadge.click();
     assert.equal(inst.pageOffset, 0, 'pageOffset should reset to 0');
-    assert.equal(inst.currentDate.getDate(), 10, 'currentDate should reset to base date');
+    assert.equal(inst.currentWeekStart.getDate(), 10, 'currentDate should reset to base date');
 
     global.window.MirrormereCalendarFamily.unmount('today-badge-cal');
   });
@@ -1652,9 +1610,9 @@ test('Calendar Family Client Controller', async (t) => {
     assert.equal(inst.pageOffset, 2, 'next button after multi-swipe should step forward to pageOffset 2');
     assert.equal(inst.formatDateISO(inst.currentWeekStart), '2026-10-24');
 
-    // Switch view to day
-    el._buttons[0].click();
-    assert.equal(inst.activeView, 'day', 'view switcher should work after multiple swipes');
+    // Switch view to month
+    el._buttons[1].click();
+    assert.equal(inst.activeView, 'month', 'view switcher should work after multiple swipes');
 
     global.window.MirrormereCalendarFamily.unmount('multi-swipe-cal');
   });

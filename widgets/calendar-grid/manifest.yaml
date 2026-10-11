@@ -1,6 +1,6 @@
 name: calendar-grid
 version: "1.0.0"
-description: Interactive wall calendar with per-member colour coding and week, day and month views.
+description: Interactive wall calendar with per-member colour coding and week and month views.
 provider: calendar-feed
 
 capabilities:
@@ -23,7 +23,6 @@ config_schema:
       type: string
       enum:
         - week
-        - day
         - month
     days:
       type:

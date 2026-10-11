@@ -61,7 +61,13 @@ func TestEngine_RenderWidget_ChatLogPackage(t *testing.T) {
 		},
 	}
 
-	engine := render.NewEngine(&mockResolver{packages: map[string]*domain.Package{"chat-log": pkg}}, p)
+	engine := render.NewEngine(
+		&mockResolver{packages: map[string]*domain.Package{"chat-log": pkg}},
+		p,
+		render.WithNowFunc(func() time.Time {
+			return time.Date(2026, 1, 2, 18, 42, 0, 0, time.UTC)
+		}),
+	)
 
 	html, err := engine.RenderWidget(context.Background(), "w-chat-loaded")
 	if err != nil {
