@@ -9,6 +9,7 @@ import (
 
 	"github.com/azylman/mirrormere/internal/provider"
 	"github.com/azylman/mirrormere/internal/render"
+	"github.com/azylman/mirrormere/internal/tasks"
 )
 
 func TestSeq(t *testing.T) {
@@ -819,6 +820,97 @@ func TestCalendarFeedActiveCalendars(t *testing.T) {
 		}
 		if sb.String() != "1:Cal 1;" {
 			t.Errorf("expected '1:Cal 1;', got %q", sb.String())
+		}
+	})
+}
+
+func TestTasksStats(t *testing.T) {
+	t.Parallel()
+
+	t.Run("nil input", func(t *testing.T) {
+		t.Parallel()
+		stats := render.TasksStats(nil)
+		if stats.Total != 0 || stats.Done != 0 || stats.Summary != "" {
+			t.Errorf("unexpected stats for nil: %+v", stats)
+		}
+	})
+
+	t.Run("typed ListItem slice", func(t *testing.T) {
+		t.Parallel()
+		items := []tasks.ListItem{
+			{Title: "Task 1", Done: true},
+			{Title: "Task 2", Done: true},
+			{Title: "Task 3", Done: true},
+			{Title: "Task 4", Done: false},
+		}
+		stats := render.TasksStats(items)
+		if stats.Total != 4 {
+			t.Errorf("expected Total 4, got %d", stats.Total)
+		}
+		if stats.Done != 3 {
+			t.Errorf("expected Done 3, got %d", stats.Done)
+		}
+		if stats.Remaining != 1 {
+			t.Errorf("expected Remaining 1, got %d", stats.Remaining)
+		}
+		if stats.Summary != "1 to do" {
+			t.Errorf("expected Summary '1 to do', got %q", stats.Summary)
+		}
+	})
+
+	t.Run("multiple remaining tasks", func(t *testing.T) {
+		t.Parallel()
+		items := []tasks.ListItem{
+			{Title: "Task 1", Done: true},
+			{Title: "Task 2", Done: false},
+			{Title: "Task 3", Done: false},
+		}
+		stats := render.TasksStats(items)
+		if stats.Summary != "2 to do" {
+			t.Errorf("expected '2 to do', got %q", stats.Summary)
+		}
+	})
+
+	t.Run("all tasks completed", func(t *testing.T) {
+		t.Parallel()
+		items := []tasks.ListItem{
+			{Title: "Task 1", Done: true},
+			{Title: "Task 2", Done: true},
+		}
+		stats := render.TasksStats(items)
+		if stats.Summary != "All done" {
+			t.Errorf("expected 'All done', got %q", stats.Summary)
+		}
+	})
+
+	t.Run("zero tasks completed", func(t *testing.T) {
+		t.Parallel()
+		items := []tasks.ListItem{
+			{Title: "Task 1", Done: false},
+		}
+		stats := render.TasksStats(items)
+		if stats.Summary != "1 to do" {
+			t.Errorf("expected '1 to do', got %q", stats.Summary)
+		}
+	})
+
+	t.Run("template execution via StandardFuncMap", func(t *testing.T) {
+		t.Parallel()
+		fnMap := render.StandardFuncMap(nil)
+		tmpl, err := template.New("tasks-test").Funcs(fnMap).Parse(`{{ $s := tasksStats . }}{{ $s.Summary }}`)
+		if err != nil {
+			t.Fatalf("failed to parse template: %v", err)
+		}
+		items := []map[string]any{
+			{"done": true},
+			{"done": false},
+		}
+		var sb strings.Builder
+		if err := tmpl.Execute(&sb, items); err != nil {
+			t.Fatalf("failed to execute template: %v", err)
+		}
+		if sb.String() != "1 to do" {
+			t.Errorf("expected '1 to do', got %q", sb.String())
 		}
 	})
 }

@@ -1369,31 +1369,68 @@ button, .touch-target {
   justify-content: space-between;
   padding-bottom: 8px;
   border-bottom: 1px solid var(--mm-divider);
-  margin-bottom: 10px;
+  margin-bottom: 8px;
+}
+
+.tasks-header-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.tasks-icon-box {
+  width: 30px;
+  height: 30px;
+  border-radius: 10px;
+  background: var(--mm-mint-light);
+  color: var(--mm-mint);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  box-shadow: 0 1px 3px rgba(56, 178, 143, 0.12);
+}
+
+.tasks-title-stack {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
 }
 
 .tasks-title, .weather-header-title, .cf-range-label {
-  font-size: 1rem;
+  font-size: 0.95rem;
   font-weight: 800;
   color: var(--mm-text-title);
+  line-height: 1.2;
+}
+
+.tasks-progress {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--mm-mint);
+  line-height: 1.1;
+  margin-top: 2px;
 }
 
 .tasks-source-badge {
   font-size: 0.72rem;
   font-weight: 800;
-  text-transform: uppercase;
+  text-transform: capitalize;
   background: var(--mm-mint-light);
   color: var(--mm-mint);
-  padding: 3px 8px;
+  padding: 3px 10px;
   border-radius: 9999px;
+  letter-spacing: 0.01em;
+  flex-shrink: 0;
 }
 
 .tasks-items-container {
   display: flex;
   flex-direction: column;
-  height: calc(100% - 36px);
+  height: calc(100% - 46px);
   overflow-y: auto;
-  gap: 8px;
+  gap: 6px;
   padding-right: 4px;
   touch-action: pan-y;
   -webkit-overflow-scrolling: touch;
@@ -1401,23 +1438,70 @@ button, .touch-target {
 
 .task-item {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 10px;
-  padding: 8px 10px;
-  border-radius: var(--mm-border-radius-sm);
-  background: #faf7f2;
-  border: 1px solid rgba(90, 60, 30, 0.04);
+  padding: 7px 10px;
+  border-radius: 14px;
+  transition: all 0.15s ease;
+}
+
+.task-item-active {
+  background: #ffffff;
+  border: 1.5px solid rgba(255, 111, 89, 0.35);
+  box-shadow: 0 2px 6px rgba(130, 100, 70, 0.04);
 }
 
 .task-item-done {
-  opacity: 0.6;
-  background: rgba(250, 247, 242, 0.5);
+  background: #faf7f2;
+  border: 1px solid rgba(90, 60, 30, 0.05);
+  opacity: 0.62;
+}
+
+.task-check-glyph {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.task-checkbox-done {
+  width: 19px;
+  height: 19px;
+  border-radius: 50%;
+  background: var(--mm-mint);
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 1px 3px rgba(56, 178, 143, 0.25);
+}
+
+.task-checkbox-ring {
+  width: 19px;
+  height: 19px;
+  border-radius: 50%;
+  border: 2px solid var(--mm-coral);
+  background: #ffffff;
+  box-shadow: 0 1px 3px rgba(255, 111, 89, 0.15);
+}
+
+.task-body {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  flex: 1;
+  min-width: 0;
+  gap: 2px;
 }
 
 .task-title {
-  font-size: 0.92rem;
+  font-size: 0.82rem;
   font-weight: 700;
   color: var(--mm-text-title);
+  line-height: 1.25;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .task-item-done .task-title {
@@ -1429,10 +1513,10 @@ button, .touch-target {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  font-size: 0.72rem;
+  font-size: 0.68rem;
   font-weight: 700;
   align-items: center;
-  margin-top: 2px;
+  margin-top: 1px;
 }
 
 .task-tag-section {
@@ -1444,7 +1528,46 @@ button, .touch-target {
 }
 
 .task-tag-due {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 9999px;
+  background: var(--mm-coral-light);
   color: var(--mm-coral);
+  font-size: 0.68rem;
+  font-weight: 800;
+}
+
+.tasks-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  text-align: center;
+  gap: 4px;
+  padding: 12px;
+}
+
+.tasks-empty-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--mm-mint-light);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 4px;
+}
+
+.tasks-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--mm-text-dim);
+  font-size: 0.85rem;
+  font-weight: 600;
 }
 
 /* Weather Forecast Widget */

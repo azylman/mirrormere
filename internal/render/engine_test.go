@@ -1052,6 +1052,7 @@ func TestEngine_RenderWidget_TasksPackage(t *testing.T) {
 					{ID: "w-tasks-loaded", Type: "tasks", Dimensions: []int{2, 1}},
 					{ID: "w-tasks-empty", Type: "tasks", Dimensions: []int{2, 1}},
 					{ID: "w-tasks-loading", Type: "tasks", Dimensions: []int{2, 1}},
+					{ID: "w-tasks-unnamed", Type: "tasks", Dimensions: []int{2, 1}},
 				},
 			},
 		},
@@ -1108,12 +1109,33 @@ func TestEngine_RenderWidget_TasksPackage(t *testing.T) {
 		Items: []tasks.ListItem{},
 	}
 
+	unnamedTasksData := tasks.TasksSnapshot{
+		List: tasks.List{
+			ID:        "unnamed-list",
+			Name:      "",
+			Source:    "",
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+		Items: []tasks.ListItem{
+			{
+				ID:        "u1",
+				ListID:    "unnamed-list",
+				Title:     "Thing to do",
+				Done:      false,
+				CreatedAt: now,
+				UpdatedAt: now,
+			},
+		},
+	}
+
 	p := &mockSnapshotProvider{
 		snapshot: snap,
 		states: map[string]mockState{
 			"w-tasks-loaded":  {data: tasksData, state: "healthy", timestamp: "2026-09-26T12:00:00Z"},
 			"w-tasks-empty":   {data: emptyTasksData, state: "healthy", timestamp: "2026-09-26T12:00:00Z"},
 			"w-tasks-loading": {data: nil, state: "healthy"},
+			"w-tasks-unnamed": {data: unnamedTasksData, state: "healthy", timestamp: "2026-09-26T12:00:00Z"},
 		},
 	}
 
@@ -1141,8 +1163,17 @@ func TestEngine_RenderWidget_TasksPackage(t *testing.T) {
 	if !strings.Contains(htmlStr, "@Alex") {
 		t.Errorf("expected '@Alex' in output: %s", htmlStr)
 	}
-	if !strings.Contains(htmlStr, "#Dairy") {
-		t.Errorf("expected '#Dairy' in output: %s", htmlStr)
+	if !strings.Contains(htmlStr, "1 to do") {
+		t.Errorf("expected '1 to do' in output: %s", htmlStr)
+	}
+	if !strings.Contains(htmlStr, "tasks-sparkle-icon") {
+		t.Errorf("expected 'tasks-sparkle-icon' in output: %s", htmlStr)
+	}
+	if !strings.Contains(htmlStr, "tasks-icon-box") {
+		t.Errorf("expected 'tasks-icon-box' in output: %s", htmlStr)
+	}
+	if strings.Contains(htmlStr, "✅") {
+		t.Errorf("expected raw emoji '✅' to be replaced by vector icon in output: %s", htmlStr)
 	}
 
 	// 2. Render empty tasks
@@ -1161,6 +1192,15 @@ func TestEngine_RenderWidget_TasksPackage(t *testing.T) {
 	}
 	if !strings.Contains(string(htmlLoading), "Loading checklist...") {
 		t.Errorf("expected 'Loading checklist...' in loading output: %s", htmlLoading)
+	}
+
+	// 4. Render unnamed list without source
+	htmlUnnamed, err := engine.RenderWidget(context.Background(), "w-tasks-unnamed")
+	if err != nil {
+		t.Fatalf("RenderWidget failed on unnamed tasks: %v", err)
+	}
+	if strings.Count(string(htmlUnnamed), "Checklist") != 1 {
+		t.Errorf("expected 'Checklist' to appear exactly once, got %d times: %s", strings.Count(string(htmlUnnamed), "Checklist"), htmlUnnamed)
 	}
 }
 
