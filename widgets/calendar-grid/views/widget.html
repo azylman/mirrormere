@@ -6,10 +6,10 @@
 {{ end }}
 <div class="widget-card widget-calendar-grid widget-calendar-family cf-view-{{ $defaultView }}" data-widget-id="{{ .ID }}" data-widget-type="{{ .Type }}" data-default-view="{{ $defaultView }}" data-active-view="{{ $defaultView }}" data-prevent-screen-swipe="true" style="grid-column: span {{ .Dimensions.Cols }}; grid-row: span {{ .Dimensions.Rows }}; display: flex; flex-direction: column; position: relative; overflow: hidden; --mm-cf-shared: {{ $view.SharedColor }};{{ range $i, $m := $view.Members }} --mm-member-{{ $i }}: {{ $m.Color }}; --mm-member-{{ $i }}-text: {{ $m.TextColor }};{{ end }}">
   {{ template "cf-styles" . }}
-  <div class="cf-header" style="display: flex; flex-direction: column; gap: 6px; padding-bottom: 8px; margin-bottom: 8px; border-bottom: 1px solid var(--mm-divider, rgba(255, 255, 255, 0.08));">
-    <div class="cf-header-top" style="display: flex; align-items: center; justify-content: space-between; gap: 10px;">
+  <div class="cf-header" style="display: flex; flex-direction: column; width: 100%; gap: 6px; padding-bottom: 8px; margin-bottom: 8px; border-bottom: 1px solid var(--mm-divider, rgba(90, 60, 30, 0.08));">
+    <div class="cf-header-top" style="display: flex; align-items: center; justify-content: space-between; width: 100%; gap: 10px;">
       <div class="cf-header-left" style="display: flex; align-items: center; gap: 8px;">
-        <div class="cf-title-badge" style="width: 30px; height: 30px; border-radius: 9px; background: rgba(139, 92, 246, 0.15); color: var(--mm-lavender, #c4b5fd); display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+        <div class="cf-title-badge" style="width: 30px; height: 30px; border-radius: 9px; background: rgba(139, 92, 246, 0.15); color: var(--mm-lavender, #8b60ed); display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
           <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
             <line x1="16" y1="2" x2="16" y2="6"></line>
@@ -17,24 +17,24 @@
             <line x1="3" y1="10" x2="21" y2="10"></line>
           </svg>
         </div>
-        <h2 class="cf-title" style="margin: 0; font-size: 1.05rem; font-weight: 800; color: var(--mm-text-title, #ffffff); line-height: 1.2;">{{ stringOr .Config "title" "Calendar" }}</h2>
+        <h2 class="cf-title" style="margin: 0; font-size: 1.05rem; font-weight: 800; color: var(--mm-text-title, #2a2338); line-height: 1.2;">{{ stringOr .Config "title" "Calendar" }}</h2>
       </div>
 
       <div class="cf-legend" style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
         {{ range $i, $m := $view.Members }}
-        <div class="cf-member-chip cf-pattern-{{ $m.Pattern }}" title="{{ $m.Name }}" style="display: inline-flex; align-items: center; gap: 5px; background: rgba(255, 255, 255, 0.05); padding: 2px 8px; border-radius: 9999px; border: 1px solid rgba(255, 255, 255, 0.08);">
+        <div class="cf-member-chip cf-pattern-{{ $m.Pattern }}" title="{{ $m.Name }}" style="display: inline-flex; align-items: center; gap: 5px; background: rgba(90, 60, 30, 0.04); padding: 2px 8px; border-radius: 9999px; border: 1px solid var(--mm-card-border, rgba(90, 60, 30, 0.08));">
           <span class="cf-member-dot" style="display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--mm-member-{{ $i }}); flex-shrink: 0;"></span>
-          <span class="cf-member-name" style="font-size: 0.68rem; font-weight: 700; color: var(--mm-text-primary, #ffffff); line-height: 1;">{{ $m.Name }}</span>
+          <span class="cf-member-name" style="font-size: 0.68rem; font-weight: 700; color: var(--mm-text-primary, #2a2338); line-height: 1;">{{ $m.Name }}</span>
         </div>
         {{ end }}
       </div>
     </div>
 
-    <div class="cf-header-bottom" style="display: flex; align-items: center; justify-content: space-between; gap: 10px;">
+    <div class="cf-header-bottom" style="display: flex; align-items: center; justify-content: space-between; width: 100%; gap: 10px;">
       <div class="cf-date-row" style="display: flex; align-items: center; gap: 8px;">
-        <div class="cf-subtitle" style="display: flex; align-items: center; font-size: 0.80rem; font-weight: 700;">
-          <span class="cf-range-label cf-label-week" style="{{ if ne $defaultView "week" }}display: none;{{ end }}font-weight: 700; color: var(--mm-text-dim, #cbd5e1);">{{ $view.RangeLabel }}</span>
-          <span class="cf-range-label cf-label-month" style="{{ if ne $defaultView "month" }}display: none;{{ end }}font-weight: 700; color: var(--mm-text-dim, #cbd5e1);">{{ $monthView.MonthLabel }}</span>
+        <div class="cf-subtitle" style="display: flex; align-items: center; font-size: 0.82rem; font-weight: 700;">
+          <span class="cf-range-label cf-label-week" style="{{ if ne $defaultView "week" }}display: none;{{ end }}font-weight: 700; color: var(--mm-text-secondary, #4e465f);">{{ $view.RangeLabel }}</span>
+          <span class="cf-range-label cf-label-month" style="{{ if ne $defaultView "month" }}display: none;{{ end }}font-weight: 700; color: var(--mm-text-secondary, #4e465f);">{{ $monthView.MonthLabel }}</span>
         </div>
         <div class="cf-nav-group" style="display: inline-flex; align-items: center; gap: 3px;">
           <button type="button" class="cf-nav-btn cf-prev-btn" aria-label="Previous date range" title="Previous">&#x2039;</button>
@@ -53,7 +53,7 @@
   <div class="cf-view-panel cf-view-week" style="display: {{ if eq $defaultView "week" }}flex{{ else }}none{{ end }}; flex: 1; min-height: 0; flex-direction: column;">
     {{ if and $view.Days $view.Members }}
     {{ if $view.AllDayEvents }}
-    <div class="cf-allday-band cf-week-allday-grid" style="display: grid; grid-template-columns: repeat({{ len $view.Days }}, 1fr); grid-auto-flow: dense; gap: 6px; padding-bottom: 6px; margin-bottom: 6px; border-bottom: 1px dashed var(--mm-divider, rgba(255, 255, 255, 0.1));">
+    <div class="cf-allday-band cf-week-allday-grid" style="display: grid; grid-template-columns: repeat({{ len $view.Days }}, 1fr); grid-auto-flow: dense; gap: 6px; padding-bottom: 6px; margin-bottom: 6px; border-bottom: 1px dashed var(--mm-divider, rgba(90, 60, 30, 0.1));">
       {{ range $view.AllDayEvents }}
       <div class="cf-event cf-allday cf-event-clickable{{ if .Pattern }} cf-pattern-{{ .Pattern }}{{ end }}" data-event-id="{{ .ID }}" data-event-title="{{ .Title }}" style="grid-column: {{ .StartCol }} / span {{ .ColSpan }}; font-size: 0.68rem; font-weight: 700; border-radius: 6px; padding: 3px 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: {{ .TextColor }}; background: {{ .Color }}; cursor: pointer; touch-action: manipulation;">{{ .Title }}</div>
       {{ end }}
@@ -63,13 +63,13 @@
     <div class="cf-week-body" style="display: flex; flex: 1; min-height: 0; position: relative;">
       <div class="cf-week-grid" style="display: grid; grid-template-columns: repeat({{ len $view.Days }}, 1fr); gap: 6px; flex: 1; min-height: 0;">
         {{ range $view.Days }}
-        <div class="cf-day{{ if .IsToday }} cf-today{{ end }}{{ if .IsWeekend }} cf-weekend{{ end }}" style="display: flex; flex-direction: column; min-width: 0; min-height: 0; border-radius: 14px; padding: 6px; background: {{ if .IsToday }}var(--mm-cal-today-bg, rgba(254, 243, 199, 0.08)){{ else if .IsWeekend }}var(--mm-cal-weekend-bg, rgba(255, 255, 255, 0.03)){{ else }}var(--mm-cal-day-bg, rgba(255, 255, 255, 0.05)){{ end }}; border: {{ if .IsToday }}2px solid var(--mm-coral, #ff6f59){{ else }}1px solid var(--mm-cal-day-border, rgba(255, 255, 255, 0.06)){{ end }}; overflow: hidden; position: relative;">
+        <div class="cf-day{{ if .IsToday }} cf-today{{ end }}{{ if .IsWeekend }} cf-weekend{{ end }}" style="display: flex; flex-direction: column; min-width: 0; min-height: 0; border-radius: 14px; padding: 6px; background: {{ if .IsToday }}var(--mm-cal-today-bg, var(--mm-honey-light, rgba(254, 243, 199, 0.4))){{ else if .IsWeekend }}var(--mm-cal-weekend-bg, rgba(90, 60, 30, 0.02)){{ else }}var(--mm-cal-day-bg, rgba(90, 60, 30, 0.03)){{ end }}; border: {{ if .IsToday }}2px solid var(--mm-coral, #ff6f59){{ else }}1px solid var(--mm-card-border, rgba(90, 60, 30, 0.08)){{ end }}; overflow: hidden; position: relative;">
           
-          <div class="cf-day-header" style="text-align: center; padding-bottom: 6px; border-bottom: 1px solid {{ if .IsToday }}rgba(255, 111, 89, 0.25){{ else }}var(--mm-divider, rgba(255, 255, 255, 0.06)){{ end }}; flex-shrink: 0; background: transparent;">
-            <div class="cf-day-weekday" style="font-size: 0.68rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em; color: {{ if .IsToday }}var(--mm-coral, #ff6f59){{ else }}var(--mm-text-dim, #94a3b8){{ end }};">
+          <div class="cf-day-header" style="text-align: center; padding-bottom: 6px; border-bottom: 1px solid {{ if .IsToday }}rgba(255, 111, 89, 0.25){{ else }}var(--mm-divider, rgba(90, 60, 30, 0.07)){{ end }}; flex-shrink: 0; background: transparent;">
+            <div class="cf-day-weekday" style="font-size: 0.68rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em; color: {{ if .IsToday }}var(--mm-coral, #ff6f59){{ else }}var(--mm-text-dim, #8b819f){{ end }};">
               {{ if .IsToday }}Today{{ else }}{{ .WeekdayAbb }}{{ end }}
             </div>
-            <div class="cf-day-num" style="font-size: 0.95rem; font-weight: 900; line-height: 1.1; color: var(--mm-text-title, #ffffff);">
+            <div class="cf-day-num" style="font-size: 1.15rem; font-weight: 900; line-height: 1.1; color: {{ if .IsToday }}var(--mm-coral, #ff6f59){{ else }}var(--mm-text-title, #2a2338){{ end }};">
               {{ .DayOfMonth }}
             </div>
           </div>
@@ -180,7 +180,7 @@
   .cf-nav-btn {
     background: transparent;
     border: none;
-    color: var(--mm-text-dim, #94a3b8);
+    color: var(--mm-text-dim, #8b819f);
     cursor: pointer;
     padding: 2px 6px;
     font-size: 1.1rem;
@@ -194,8 +194,8 @@
     transition: color 0.15s ease, background-color 0.15s ease;
   }
   .cf-nav-btn:hover, .cf-nav-btn:active {
-    color: var(--mm-text-title, #ffffff);
-    background: rgba(255, 255, 255, 0.08);
+    color: var(--mm-text-title, #2a2338);
+    background: rgba(90, 60, 30, 0.08);
   }
   .cf-today-badge {
     font-size: 0.65rem;
@@ -250,16 +250,16 @@
   .cf-view-switcher {
     display: inline-flex;
     align-items: center;
-    background: rgba(255, 255, 255, 0.06);
+    background: var(--mm-bg-surface, rgba(90, 60, 30, 0.05));
     border-radius: 8px;
     padding: 2px;
     gap: 2px;
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    border: 1px solid var(--mm-card-border, rgba(90, 60, 30, 0.08));
   }
   .cf-view-btn {
     background: transparent;
     border: none;
-    color: var(--mm-text-dim, #94a3b8);
+    color: var(--mm-text-dim, #8b819f);
     font-size: 0.70rem;
     font-weight: 700;
     padding: 3px 10px;
@@ -270,13 +270,13 @@
     transition: background-color 0.15s ease, color 0.15s ease;
   }
   .cf-view-btn:hover {
-    color: var(--mm-text-title, #ffffff);
+    color: var(--mm-text-title, #2a2338);
   }
   .cf-view-btn.active {
     background: var(--mm-lavender, #8b60ed);
     color: #ffffff;
     font-weight: 800;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
   }
   .cf-event-clickable {
     cursor: pointer;
