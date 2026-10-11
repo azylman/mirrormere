@@ -741,6 +741,42 @@ display:
 		t.Fatalf("expected missing tasklist_id error, got %v", err)
 	}
 
+	// 5b. Tasks source: todoist missing todoist block
+	yamlTodoistMissingBlock := `
+timezone: America/New_York
+display:
+  widgets:
+    - id: my-todo
+      type: tasks
+      dimensions: [6, 2]
+      config:
+        list_id: "test"
+        source: "todoist"
+`
+	_, _, err = m.Reload([]byte(yamlTodoistMissingBlock))
+	if err == nil || !strings.Contains(err.Error(), "requires 'todoist' config block") {
+		t.Fatalf("expected missing todoist block error, got %v", err)
+	}
+
+	// 5c. Tasks source: todoist with valid config
+	yamlTodoistValid := `
+timezone: America/New_York
+display:
+  widgets:
+    - id: my-todo
+      type: tasks
+      dimensions: [6, 2]
+      config:
+        list_id: "test"
+        source: "todoist"
+        todoist:
+          project_id: "proj-123"
+`
+	_, _, err = m.Reload([]byte(yamlTodoistValid))
+	if err != nil {
+		t.Fatalf("expected valid todoist config reload to succeed, got %v", err)
+	}
+
 	// 6. Conflicting primary sources for same list_id
 	yamlConflictingSources := `
 timezone: America/New_York
