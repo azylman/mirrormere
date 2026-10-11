@@ -2,7 +2,10 @@ package provider_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -111,7 +114,7 @@ func TestTasksProvider_Init_DefaultsAndCustom(t *testing.T) {
 	cfg := map[string]any{
 		"list_id":        "groceries",
 		"list_name":      "Family Groceries",
-		"source":         "todoist",
+		"source":         "custom",
 		"show_completed": 5,
 		"db_path":        dbPath,
 	}
@@ -130,7 +133,7 @@ func TestTasksProvider_Init_DefaultsAndCustom(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected *tasks.TasksSnapshot, got %T", val)
 	}
-	if snap.List.ID != "groceries" || snap.List.Name != "Family Groceries" || snap.List.Source != "todoist" {
+	if snap.List.ID != "groceries" || snap.List.Name != "Family Groceries" || snap.List.Source != "custom" {
 		t.Errorf("list mismatch: %+v", snap.List)
 	}
 	if len(snap.Items) != 0 {
@@ -929,5 +932,208 @@ func TestTasksProvider_Subscribe_CancelledContextUnblocking(t *testing.T) {
 		t.Fatal("Subscribe deadlocked on cancelled context with unread eventSink")
 	}
 }
+
+func TestTasksProvider_Init_TodoistValidation(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	p := provider.NewTasksProvider()
+
+	// 1. Missing todoist config block
+	err := p.Init(ctx, map[string]any{
+		"source": "todoist",
+	}, provider.InitOptions{ID: "w-todoist-bad"})
+	if err == nil || !strings.Contains(err.Error(), "requires 'todoist' config block") {
+		t.Fatalf("expected error for missing todoist block, got %v", err)
+	}
+
+	// 2. Missing token
+	err = p.Init(ctx, map[string]any{
+		"source":  "todoist",
+		"todoist": map[string]any{"project_id": "123"},
+	}, provider.InitOptions{ID: "w-todoist-no-tok"})
+	if err == nil || !strings.Contains(err.Error(), "requires a valid token") {
+		t.Fatalf("expected error for missing token, got %v", err)
+	}
+}
+
+func TestTasksProvider_Init_Todoist_TokenResolution(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	// 1. Token in inline config
+	p1 := provider.NewTasksProvider()
+	err := p1.Init(ctx, map[string]any{
+		"source":  "todoist",
+		"db_path": filepath.Join(t.TempDir(), "t1.db"),
+		"todoist": map[string]any{
+			"token": "inline-tok",
+		},
+	}, provider.InitOptions{ID: "w1"})
+	if err != nil {
+		t.Fatalf("expected success with inline token: %v", err)
+	}
+	defer p1.Shutdown(ctx)
+
+	// 2. Token in token_env via opts.Secrets
+	p2 := provider.NewTasksProvider()
+	err = p2.Init(ctx, map[string]any{
+		"source":  "todoist",
+		"db_path": filepath.Join(t.TempDir(), "t2.db"),
+		"todoist": map[string]any{
+			"token_env": "CUSTOM_TODOIST_KEY",
+		},
+	}, provider.InitOptions{
+		ID: "w2",
+		Secrets: map[string]string{
+			"CUSTOM_TODOIST_KEY": "env-secret-tok",
+		},
+	})
+	if err != nil {
+		t.Fatalf("expected success with token_env in secrets: %v", err)
+	}
+	defer p2.Shutdown(ctx)
+
+	// 3. Token in opts.Token
+	p3 := provider.NewTasksProvider()
+	err = p3.Init(ctx, map[string]any{
+		"source":  "todoist",
+		"db_path": filepath.Join(t.TempDir(), "t3.db"),
+		"todoist": map[string]any{},
+	}, provider.InitOptions{
+		ID:    "w3",
+		Token: "opts-token",
+	})
+	if err != nil {
+		t.Fatalf("expected success with opts.Token: %v", err)
+	}
+	defer p3.Shutdown(ctx)
+
+	// 4. Token in opts.Secrets["todoist.token"]
+	p4 := provider.NewTasksProvider()
+	err = p4.Init(ctx, map[string]any{
+		"source":  "todoist",
+		"db_path": filepath.Join(t.TempDir(), "t4.db"),
+		"todoist": map[string]any{},
+	}, provider.InitOptions{
+		ID: "w4",
+		Secrets: map[string]string{
+			"todoist.token": "namespaced-secret-tok",
+		},
+	})
+	if err != nil {
+		t.Fatalf("expected success with todoist.token secret: %v", err)
+	}
+	defer p4.Shutdown(ctx)
+}
+
+func TestTasksProvider_Init_Todoist_EnvFallback(t *testing.T) {
+	ctx := context.Background()
+
+	// 1. TODOIST_API_TOKEN environment variable fallback
+	t.Setenv("TODOIST_API_TOKEN", "api-token-from-env")
+	pEnv := provider.NewTasksProvider()
+	err := pEnv.Init(ctx, map[string]any{
+		"source":  "todoist",
+		"db_path": filepath.Join(t.TempDir(), "env1.db"),
+		"todoist": map[string]any{},
+	}, provider.InitOptions{ID: "w-env1"})
+	if err != nil {
+		t.Fatalf("expected success with TODOIST_API_TOKEN in env: %v", err)
+	}
+	defer pEnv.Shutdown(ctx)
+
+	// 2. TODOIST_TOKEN environment variable fallback
+	t.Setenv("TODOIST_API_TOKEN", "")
+	t.Setenv("TODOIST_TOKEN", "token-from-env")
+	pEnv2 := provider.NewTasksProvider()
+	err = pEnv2.Init(ctx, map[string]any{
+		"source":  "todoist",
+		"db_path": filepath.Join(t.TempDir(), "env2.db"),
+		"todoist": map[string]any{},
+	}, provider.InitOptions{ID: "w-env2"})
+	if err != nil {
+		t.Fatalf("expected success with TODOIST_TOKEN in env: %v", err)
+	}
+	defer pEnv2.Shutdown(ctx)
+}
+
+func TestTasksProvider_Fetch_TodoistIntegration(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/rest/v2/projects/p-family":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id":   "p-family",
+				"name": "Family Checklist",
+			})
+		case "/rest/v2/sections":
+			_ = json.NewEncoder(w).Encode([]map[string]any{
+				{"id": "sec-1", "name": "Chores", "order": 1},
+			})
+		case "/rest/v2/tasks":
+			_ = json.NewEncoder(w).Encode([]map[string]any{
+				{
+					"id":         "task-101",
+					"section_id": "sec-1",
+					"content":    "Figure out halloween costumes",
+					"order":      1,
+				},
+			})
+		case "/sync/v9/completed/get_all":
+			_ = json.NewEncoder(w).Encode(map[string]any{"items": []any{}})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	ctx := context.Background()
+	p := provider.NewTasksProvider()
+	dbPath := filepath.Join(t.TempDir(), "integration.db")
+
+	err := p.Init(ctx, map[string]any{
+		"list_id": "family-tasks",
+		"source":  "todoist",
+		"db_path": dbPath,
+		"todoist": map[string]any{
+			"project_id": "p-family",
+			"token":      "mock-bearer-token",
+			"base_url":   server.URL,
+		},
+	}, provider.InitOptions{ID: "family-tasks"})
+	if err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+	defer p.Shutdown(ctx)
+
+	res, err := p.Fetch(ctx)
+	if err != nil {
+		t.Fatalf("Fetch failed: %v", err)
+	}
+
+	snap, ok := res.(*tasks.TasksSnapshot)
+	if !ok || snap == nil {
+		t.Fatalf("expected *tasks.TasksSnapshot, got %T", res)
+	}
+
+	if snap.List.ID != "family-tasks" {
+		t.Errorf("expected list ID 'family-tasks', got %q", snap.List.ID)
+	}
+	if snap.List.Name != "Family Checklist" {
+		t.Errorf("expected list name 'Family Checklist', got %q", snap.List.Name)
+	}
+	if len(snap.Items) != 1 {
+		t.Fatalf("expected 1 task item, got %d", len(snap.Items))
+	}
+	if snap.Items[0].Title != "Figure out halloween costumes" {
+		t.Errorf("unexpected task title: %q", snap.Items[0].Title)
+	}
+	if snap.Items[0].Section != "Chores" {
+		t.Errorf("expected Section 'Chores', got %q", snap.Items[0].Section)
+	}
+}
+
 
 

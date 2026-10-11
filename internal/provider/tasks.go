@@ -296,6 +296,84 @@ func (p *TasksProvider) Init(ctx context.Context, config map[string]any, opts In
 				return fmt.Errorf("failed to create gtasks adapter: %w", err)
 			}
 			p.adapter = ad
+
+		case "todoist":
+			todoistCfg, ok := config["todoist"].(map[string]any)
+			if !ok || todoistCfg == nil {
+				return errors.New("tasks provider with source 'todoist' requires 'todoist' config block")
+			}
+
+			resolveSecret := func(field, envField string) string {
+				val := opts.GetSecret("todoist." + field)
+				if val == "" {
+					val = opts.GetSecret(field)
+				}
+				if val == "" {
+					if raw, ok := todoistCfg[field].(string); ok {
+						val = raw
+					}
+				}
+				if val == "" {
+					if envKey, ok := todoistCfg[envField].(string); ok && envKey != "" {
+						val = opts.GetSecret(envKey)
+						if val == "" {
+							val = os.Getenv(envKey)
+						}
+					}
+				}
+				return strings.TrimSpace(val)
+			}
+
+			token := resolveSecret("token", "token_env")
+			if token == "" {
+				token = opts.Token
+			}
+			if token == "" {
+				token = opts.GetSecret("TODOIST_API_TOKEN")
+				if token == "" {
+					token = os.Getenv("TODOIST_API_TOKEN")
+				}
+			}
+			if token == "" {
+				token = opts.GetSecret("TODOIST_TOKEN")
+				if token == "" {
+					token = os.Getenv("TODOIST_TOKEN")
+				}
+			}
+			token = strings.TrimSpace(token)
+			if token == "" {
+				return errors.New("tasks provider with source 'todoist' requires a valid token (via 'token', 'token_env', or environment)")
+			}
+
+			projectID := ""
+			if raw, ok := todoistCfg["project_id"].(string); ok {
+				projectID = strings.TrimSpace(raw)
+			}
+			projectName := ""
+			if raw, ok := todoistCfg["project_name"].(string); ok {
+				projectName = strings.TrimSpace(raw)
+			}
+			baseURL := ""
+			if raw, ok := todoistCfg["base_url"].(string); ok {
+				baseURL = strings.TrimSpace(raw)
+			}
+
+			explicitListName := ""
+			if raw, ok := config["list_name"].(string); ok {
+				explicitListName = strings.TrimSpace(raw)
+			}
+
+			ad, err := adapters.NewTodoistAdapter(adapters.TodoistAdapterConfig{
+				ProjectID:   projectID,
+				ProjectName: projectName,
+				Token:       token,
+				BaseURL:     baseURL,
+				ListName:    explicitListName,
+			})
+			if err != nil {
+				return fmt.Errorf("failed to create todoist adapter: %w", err)
+			}
+			p.adapter = ad
 		}
 	}
 
