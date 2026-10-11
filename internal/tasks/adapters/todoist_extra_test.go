@@ -38,9 +38,9 @@ func TestTodoistAdapter_ExtraCoverage(t *testing.T) {
 		t.Parallel()
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			switch r.URL.Path {
-			case "/rest/v2/projects/p-1":
+			case "/api/v1/projects/p-1":
 				_ = json.NewEncoder(w).Encode(map[string]any{"id": "p-1", "name": "P1"})
-			case "/rest/v2/sections":
+			case "/api/v1/sections":
 				http.Error(w, "server error", http.StatusInternalServerError)
 			default:
 				http.NotFound(w, r)
@@ -65,15 +65,15 @@ func TestTodoistAdapter_ExtraCoverage(t *testing.T) {
 		t.Parallel()
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			switch r.URL.Path {
-			case "/rest/v2/projects/p-bool":
+			case "/api/v1/projects/p-bool":
 				_ = json.NewEncoder(w).Encode(map[string]any{"id": "p-bool", "name": "Bool"})
-			case "/rest/v2/sections":
+			case "/api/v1/sections":
 				_ = json.NewEncoder(w).Encode([]any{})
-			case "/rest/v2/tasks":
+			case "/api/v1/tasks":
 				_ = json.NewEncoder(w).Encode([]map[string]any{
 					{"id": true, "content": "Bool ID", "order": 1},
 				})
-			case "/sync/v9/completed/get_all":
+			case "/api/v1/tasks/completed":
 				_ = json.NewEncoder(w).Encode(map[string]any{"items": []any{}})
 			default:
 				http.NotFound(w, r)
@@ -101,11 +101,11 @@ func TestTodoistAdapter_ExtraCoverage(t *testing.T) {
 		t.Parallel()
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			switch r.URL.Path {
-			case "/rest/v2/projects/p-tasks-err":
+			case "/api/v1/projects/p-tasks-err":
 				_ = json.NewEncoder(w).Encode(map[string]any{"id": "p-tasks-err", "name": "Tasks Err"})
-			case "/rest/v2/sections":
+			case "/api/v1/sections":
 				_ = json.NewEncoder(w).Encode([]any{})
-			case "/rest/v2/tasks":
+			case "/api/v1/tasks":
 				http.Error(w, "server error", http.StatusInternalServerError)
 			default:
 				http.NotFound(w, r)

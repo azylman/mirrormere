@@ -1063,16 +1063,16 @@ func TestTasksProvider_Fetch_TodoistIntegration(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
-		case "/rest/v2/projects/p-family":
+		case "/api/v1/projects/p-family":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"id":   "p-family",
 				"name": "Family Checklist",
 			})
-		case "/rest/v2/sections":
+		case "/api/v1/sections":
 			_ = json.NewEncoder(w).Encode([]map[string]any{
 				{"id": "sec-1", "name": "Chores", "order": 1},
 			})
-		case "/rest/v2/tasks":
+		case "/api/v1/tasks":
 			_ = json.NewEncoder(w).Encode([]map[string]any{
 				{
 					"id":         "task-101",
@@ -1081,7 +1081,7 @@ func TestTasksProvider_Fetch_TodoistIntegration(t *testing.T) {
 					"order":      1,
 				},
 			})
-		case "/sync/v9/completed/get_all":
+		case "/api/v1/tasks/completed":
 			_ = json.NewEncoder(w).Encode(map[string]any{"items": []any{}})
 		default:
 			http.NotFound(w, r)
