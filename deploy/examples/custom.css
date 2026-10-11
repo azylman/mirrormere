@@ -82,6 +82,131 @@
   --mm-grid-gap: 16px;
 }
 
+/* ==========================================================================
+   Sailor HG Fairyfloss Theme (Night Mode)
+   Palette: https://sailorhg.github.io/fairyfloss/
+   ========================================================================== */
+:root[data-theme="night"],
+body[data-theme="night"],
+#mirrormere-app[data-theme="night"] {
+  /* Surface & Canvas Palette (Sailor HG Fairyfloss Theme) */
+  --mm-bg-canvas: #3b364c;
+  --mm-bg-surface: #47415e;
+  --mm-bg-card: #5a5475;
+  --mm-bg-card-hover: #676084;
+  --mm-bg-glass: rgba(90, 84, 117, 0.94);
+
+  /* Card Shadows & Night Borders */
+  --mm-card-border: rgba(197, 163, 255, 0.16);
+  --mm-card-shadow: 0 12px 28px -6px rgba(20, 16, 32, 0.45), 0 3px 8px -2px rgba(20, 16, 32, 0.3);
+  --mm-card-shadow-hover: 0 16px 36px -6px rgba(20, 16, 32, 0.55), 0 4px 12px -2px rgba(20, 16, 32, 0.35);
+
+  /* Fairyfloss Accents */
+  --mm-coral: #ff857f;
+  --mm-coral-light: rgba(255, 133, 127, 0.18);
+  --mm-mint: #c2ffdf;
+  --mm-mint-light: rgba(194, 255, 223, 0.16);
+  --mm-honey: #fff352;
+  --mm-honey-light: rgba(255, 243, 82, 0.16);
+  --mm-lavender: #c5a3ff;
+  --mm-lavender-light: rgba(197, 163, 255, 0.18);
+  --mm-sky: #84fff8;
+  --mm-sky-light: rgba(132, 255, 248, 0.16);
+  --mm-rose: #f92672;
+  --mm-rose-light: rgba(249, 38, 114, 0.18);
+
+  /* Ink & Typography */
+  --mm-text-title: #f8f8f2;
+  --mm-text-body: #f8f8f0;
+  --mm-text-dim: #c5a3ff;
+  --mm-divider: rgba(197, 163, 255, 0.15);
+
+  /* Member Colors */
+  --mm-member-0: #ff857f;
+  --mm-member-1: #c2ffdf;
+  --mm-member-2: #fff352;
+  --mm-member-3: #c5a3ff;
+  --mm-member-4: #84fff8;
+
+  /* Status Colors */
+  --mm-status-ok: #c2ffdf;
+  --mm-status-degraded: #fff352;
+  --mm-status-error: #ff857f;
+}
+
+/* Night Mode Component Overrides */
+[data-theme="night"] .header-pill,
+[data-theme="night"] .weather-pill,
+[data-theme="night"] .status-pill,
+[data-theme="night"] .header-clock-pill {
+  background: rgba(71, 65, 94, 0.85);
+  border-color: rgba(197, 163, 255, 0.2);
+  color: var(--mm-text-body);
+}
+
+[data-theme="night"] .header-date {
+  color: var(--mm-lavender);
+}
+
+[data-theme="night"] .calendar-family-card,
+[data-theme="night"] .calendar-feed-container,
+[data-theme="night"] .tasks-card,
+[data-theme="night"] .weather-forecast-card,
+[data-theme="night"] .photo-frame-card {
+  background: var(--mm-bg-card);
+  border-color: var(--mm-card-border);
+}
+
+[data-theme="night"] .calendar-day-header {
+  color: var(--mm-lavender);
+  background: transparent;
+}
+
+[data-theme="night"] .calendar-grid-cell {
+  background: var(--mm-bg-surface);
+  border-color: var(--mm-divider);
+}
+
+[data-theme="night"] .calendar-grid-cell.other-month {
+  opacity: 0.35;
+}
+
+[data-theme="night"] .calendar-grid-cell.today {
+  border-color: var(--mm-honey);
+  box-shadow: inset 0 0 0 1px var(--mm-honey);
+}
+
+[data-theme="night"] .view-toggle-btn {
+  background: var(--mm-bg-surface);
+  border-color: var(--mm-card-border);
+  color: var(--mm-text-title);
+}
+
+[data-theme="night"] .view-toggle-btn.active {
+  background: var(--mm-coral);
+  color: #3b364c;
+  font-weight: 700;
+}
+
+[data-theme="night"] .nav-arrow-btn {
+  background: var(--mm-bg-surface);
+  border-color: var(--mm-card-border);
+  color: var(--mm-text-title);
+}
+
+[data-theme="night"] .nav-today-btn {
+  background: var(--mm-bg-surface);
+  border-color: var(--mm-card-border);
+  color: var(--mm-lavender);
+}
+
+[data-theme="night"] .upcoming-event-item,
+[data-theme="night"] .task-item,
+[data-theme="night"] .forecast-day-card {
+  background: var(--mm-bg-surface);
+  border-color: var(--mm-card-border);
+}
+
 /* Base Body & Reset */
 html, body {
   margin: 0;
@@ -92,6 +217,7 @@ html, body {
   background-color: var(--mm-bg-canvas);
   color: var(--mm-text-body);
   font-family: var(--mm-font-family);
+  transition: background-color 0.6s ease, color 0.6s ease;
   user-select: none;
   -webkit-user-select: none;
   -webkit-touch-callout: none;

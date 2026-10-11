@@ -8,8 +8,18 @@ port: 8080
 # Authoritative household IANA timezone
 timezone: "America/Los_Angeles"
 
+# Device physical location (used for weather and day/night sunrise/sunset calculations)
+location:
+  name: "Oakland"
+  latitude: 37.8044
+  longitude: -122.2712
+
 # Display and layout configuration
 display:
+  # Visual theme mode: "auto" (switches at local sunrise/sunset), "day", or "night" (Sailor HG Fairyfloss)
+  theme:
+    mode: "auto"
+
   rotation:
     interval_seconds: 30
     transition: "slide"
@@ -22,12 +32,9 @@ display:
       - date
       - weather_badge
       - sync_status
-    # Autonomous header weather poller hydrating header.update
+    # Autonomous header weather poller hydrating header.update (inherits coordinates from location)
     weather:
       refresh_interval_seconds: 900
-      location: "Oakland"
-      latitude: 37.8044
-      longitude: -122.2712
       units: imperial
     # Optional fullscreen video expansion action button in header
     video:

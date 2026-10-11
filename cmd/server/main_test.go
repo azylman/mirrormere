@@ -312,7 +312,11 @@ display:
       type: spacer
       dimensions: [6, 2]
 `)
-	t.Setenv("DB_PATH", "/proc/impossible/dir/lists.db")
+	blockingFile := filepath.Join(tmpDir, "blocking_file")
+	if err := os.WriteFile(blockingFile, []byte("x"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DB_PATH", filepath.Join(blockingFile, "impossible", "lists.db"))
 
 	readyChan := make(chan struct{}, 1)
 	var stdout, stderr bytes.Buffer

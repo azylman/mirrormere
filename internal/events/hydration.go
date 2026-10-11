@@ -72,6 +72,11 @@ type VoiceStateData struct {
 	Status     *string `json:"status"`
 }
 
+// ThemeUpdateData matches theme.update event payload.
+type ThemeUpdateData struct {
+	Theme string `json:"theme"`
+}
+
 // SystemStatusData matches api/schemas/system.status.json and .D.
 type SystemStatusData struct {
 	Online       bool              `json:"online"`
@@ -91,6 +96,7 @@ type StateProvider interface {
 	GetVideoState() *VideoStateData
 	GetAudioState() *AudioStateData
 	GetVoiceState() *VoiceStateData
+	GetTheme() string
 	GetProvidersStatus() map[string]string
 	GetScreenRotateData() *ScreenRotateData
 	BootID() string
@@ -113,6 +119,7 @@ type InMemoryStateProvider struct {
 	videoState   *VideoStateData
 	audioState   *AudioStateData
 	voiceState   *VoiceStateData
+	theme        string
 	providers    map[string]string
 	screenRotate *ScreenRotateData
 	bootID       string
@@ -125,6 +132,7 @@ func NewInMemoryStateProvider(mgr *config.Manager) *InMemoryStateProvider {
 		bootID:       fmt.Sprintf("%d", time.Now().UnixNano()),
 		widgetStates: make(map[string]widgetStateEntry),
 		providers:    make(map[string]string),
+		theme:        "day",
 		videoState: &VideoStateData{
 			Mode:    "widgets",
 			Primary: nil,
@@ -282,6 +290,23 @@ func (p *InMemoryStateProvider) GetVoiceState() *VoiceStateData {
 		return &VoiceStateData{State: "idle"}
 	}
 	return p.voiceState
+}
+
+// SetTheme updates the active theme ("day" or "night").
+func (p *InMemoryStateProvider) SetTheme(theme string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.theme = theme
+}
+
+// GetTheme returns the active theme ("day" or "night").
+func (p *InMemoryStateProvider) GetTheme() string {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	if p.theme == "" {
+		return "day"
+	}
+	return p.theme
 }
 
 // SetProvidersStatus updates the operational status summary map for providers.
@@ -549,6 +574,23 @@ func BuildHydrationBatch(provider StateProvider, idGen *IDGenerator, now time.Ti
 			ID:        idGen.Next(now),
 			Type:      EventSystemStatus,
 			Data:      statusBytes,
+			Timestamp: now,
+		})
+	}
+
+	// 8. Active Theme (theme.update)
+	theme := "day"
+	if provider != nil {
+		if t := provider.GetTheme(); t != "" {
+			theme = t
+		}
+	}
+	themeBytes, err := json.Marshal(ThemeUpdateData{Theme: theme})
+	if err == nil {
+		events = append(events, &Event{
+			ID:        idGen.Next(now),
+			Type:      EventThemeUpdate,
+			Data:      themeBytes,
 			Timestamp: now,
 		})
 	}

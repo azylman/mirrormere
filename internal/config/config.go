@@ -18,12 +18,13 @@ var interpolationRegex = regexp.MustCompile(`\$\{([^}]+)\}`)
 
 // Config represents the root configuration schema of Mirrormere.
 type Config struct {
-	Host     string          `yaml:"host,omitempty"`
-	Port     *int            `yaml:"port,omitempty"`
-	Timezone string          `yaml:"timezone"`
-	Display  DisplayConfig   `yaml:"display"`
-	VoiceHub *VoiceHubConfig `yaml:"voice_hub,omitempty"`
-	ChatLog  *ChatLogConfig  `yaml:"chat_log,omitempty"`
+	Host           string          `yaml:"host,omitempty"`
+	Port           *int            `yaml:"port,omitempty"`
+	Timezone       string          `yaml:"timezone"`
+	LocationConfig *LocationConfig `yaml:"location,omitempty"`
+	Display        DisplayConfig   `yaml:"display"`
+	VoiceHub       *VoiceHubConfig `yaml:"voice_hub,omitempty"`
+	ChatLog        *ChatLogConfig  `yaml:"chat_log,omitempty"`
 
 	location *time.Location
 }
@@ -36,6 +37,64 @@ type DisplayConfig struct {
 	Header     HeaderConfig   `yaml:"header"`
 	Grid       GridConfig     `yaml:"grid"`
 	Widgets    []WidgetConfig `yaml:"widgets"`
+	Theme      *ThemeConfig   `yaml:"theme,omitempty"`
+}
+
+// LocationConfig defines physical coordinates and location name for the device/household.
+type LocationConfig struct {
+	Name      string   `yaml:"name,omitempty"`
+	Latitude  *float64 `yaml:"latitude,omitempty"`
+	Longitude *float64 `yaml:"longitude,omitempty"`
+}
+
+// GetLatitude returns the latitude, or 0 if unset or nil.
+func (lc *LocationConfig) GetLatitude() float64 {
+	if lc == nil || lc.Latitude == nil {
+		return 0
+	}
+	return *lc.Latitude
+}
+
+// GetLongitude returns the longitude, or 0 if unset or nil.
+func (lc *LocationConfig) GetLongitude() float64 {
+	if lc == nil || lc.Longitude == nil {
+		return 0
+	}
+	return *lc.Longitude
+}
+
+// ThemeConfig defines visual theme mode and Day/Night switching behavior.
+type ThemeConfig struct {
+	Mode string `yaml:"mode,omitempty"` // "auto", "day", "night"
+}
+
+// GetMode returns the configured theme mode, defaulting to "day" if unspecified.
+func (tc *ThemeConfig) GetMode() string {
+	if tc == nil || strings.TrimSpace(tc.Mode) == "" {
+		return "day"
+	}
+	return strings.ToLower(strings.TrimSpace(tc.Mode))
+}
+
+// GetLocationConfig returns the device location configuration, falling back to header weather coordinates if present.
+func (c *Config) GetLocationConfig() *LocationConfig {
+	if c == nil {
+		return nil
+	}
+	if c.LocationConfig != nil {
+		return c.LocationConfig
+	}
+	// Backwards compatibility: fallback to display.header.weather if set
+	if c.Display.Header.Weather != nil && (c.Display.Header.Weather.Latitude != 0 || c.Display.Header.Weather.Longitude != 0) {
+		lat := c.Display.Header.Weather.Latitude
+		lon := c.Display.Header.Weather.Longitude
+		return &LocationConfig{
+			Name:      c.Display.Header.Weather.Location,
+			Latitude:  &lat,
+			Longitude: &lon,
+		}
+	}
+	return nil
 }
 
 // RotationConfig configures screen advance intervals and transition visual hints.
@@ -432,7 +491,7 @@ func validateStructuralKeys(root *yaml.Node) error {
 			return fmt.Errorf("line %d: configuration contains disallowed top-level key 'header': header must be configured under display.header", keyNode.Line)
 		case "timezone", "host", "port":
 			// Canonical top-level keys
-		case "voice_hub", "chat_log":
+		case "voice_hub", "chat_log", "location":
 			// Canonical top-level keys
 		case "display":
 			if valNode.Kind == yaml.MappingNode {
@@ -458,7 +517,7 @@ func validateDisplayKeys(displayNode *yaml.Node) error {
 			return fmt.Errorf("line %d: display contains disallowed key 'screens': screens are dynamically computed by the 6x2 layout solver", keyNode.Line)
 		case "providers":
 			return fmt.Errorf("line %d: display contains disallowed key 'providers': widget instances configure their own data sources under display.widgets", keyNode.Line)
-		case "rotation", "grid", "header", "widgets", "hide_cursor", "remote_url":
+		case "rotation", "grid", "header", "widgets", "hide_cursor", "remote_url", "theme":
 			// Canonical keys
 		default:
 			return fmt.Errorf("line %d: unknown key '%s' under display", keyNode.Line, key)
@@ -479,6 +538,68 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Display.Grid.Rows == 0 {
 		c.Display.Grid.Rows = 2
+	}
+
+	// Location and Header Weather propagation
+	if c.LocationConfig != nil && c.LocationConfig.Latitude != nil && c.LocationConfig.Longitude != nil {
+		if c.Display.Header.Weather != nil {
+			if c.Display.Header.Weather.Latitude == 0 && c.Display.Header.Weather.Longitude == 0 {
+				c.Display.Header.Weather.Latitude = *c.LocationConfig.Latitude
+				c.Display.Header.Weather.Longitude = *c.LocationConfig.Longitude
+			}
+			if c.Display.Header.Weather.Location == "" && c.LocationConfig.Name != "" {
+				c.Display.Header.Weather.Location = c.LocationConfig.Name
+			}
+		}
+		for i := range c.Display.Widgets {
+			w := &c.Display.Widgets[i]
+			if w.Type == "weather-forecast" {
+				if w.Config == nil {
+					w.Config = make(map[string]any)
+				}
+				if w.Config["latitude"] == nil {
+					w.Config["latitude"] = *c.LocationConfig.Latitude
+				}
+				if w.Config["longitude"] == nil {
+					w.Config["longitude"] = *c.LocationConfig.Longitude
+				}
+				if w.Config["name"] == nil && w.Config["location_name"] == nil && c.LocationConfig.Name != "" {
+					w.Config["location_name"] = c.LocationConfig.Name
+				}
+			}
+		}
+	} else if c.Display.Header.Weather != nil && (c.Display.Header.Weather.Latitude != 0 || c.Display.Header.Weather.Longitude != 0) {
+		// Backwards compatibility: populate LocationConfig from display.header.weather if set
+		lat := c.Display.Header.Weather.Latitude
+		lon := c.Display.Header.Weather.Longitude
+		name := c.Display.Header.Weather.Location
+		if c.LocationConfig == nil {
+			c.LocationConfig = &LocationConfig{
+				Name:      name,
+				Latitude:  &lat,
+				Longitude: &lon,
+			}
+		} else {
+			if c.LocationConfig.Latitude == nil {
+				c.LocationConfig.Latitude = &lat
+			}
+			if c.LocationConfig.Longitude == nil {
+				c.LocationConfig.Longitude = &lon
+			}
+			if c.LocationConfig.Name == "" {
+				c.LocationConfig.Name = name
+			}
+		}
+	}
+
+	if c.Display.Header.Weather != nil && c.Display.Header.Weather.Units == "" {
+		c.Display.Header.Weather.Units = "imperial"
+	}
+
+	if c.Display.Theme == nil {
+		c.Display.Theme = &ThemeConfig{Mode: "day"}
+	} else if c.Display.Theme.Mode == "" {
+		c.Display.Theme.Mode = "day"
 	}
 
 	// Header defaults
@@ -530,6 +651,37 @@ func (c *Config) Validate() error {
 		// valid
 	default:
 		return fmt.Errorf("invalid rotation transition '%s': must be one of slide, fade, instant, none", c.Display.Rotation.Transition)
+	}
+
+	// 3b. Location validation
+	if lc := c.LocationConfig; lc != nil {
+		if lc.Latitude != nil {
+			if *lc.Latitude < -90.0 || *lc.Latitude > 90.0 {
+				return fmt.Errorf("location latitude must be between -90 and 90 (got %f)", *lc.Latitude)
+			}
+		}
+		if lc.Longitude != nil {
+			if *lc.Longitude < -180.0 || *lc.Longitude > 180.0 {
+				return fmt.Errorf("location longitude must be between -180 and 180 (got %f)", *lc.Longitude)
+			}
+		}
+	}
+
+	// 3c. Theme validation
+	if tc := c.Display.Theme; tc != nil {
+		mode := tc.GetMode()
+		switch mode {
+		case "auto", "day", "night":
+			// valid
+		default:
+			return fmt.Errorf("invalid theme mode '%s': must be one of auto, day, night", tc.Mode)
+		}
+		if mode == "auto" {
+			locCfg := c.GetLocationConfig()
+			if locCfg == nil || locCfg.Latitude == nil || locCfg.Longitude == nil {
+				return fmt.Errorf("theme mode 'auto' requires location coordinates (latitude and longitude) to be configured")
+			}
+		}
 	}
 
 	// 4. Header Weather validation

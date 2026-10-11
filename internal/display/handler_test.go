@@ -798,5 +798,60 @@ func TestGetDisplay_HeaderVideo(t *testing.T) {
 	})
 }
 
+func TestGetDisplay_Theme(t *testing.T) {
+	t.Parallel()
+
+	tmplContent := []byte(`<html data-theme="{{ if .Theme }}{{ .Theme }}{{ else }}day{{ end }}"><body data-theme="{{ if .Theme }}{{ .Theme }}{{ else }}day{{ end }}"></body></html>`)
+
+	t.Run("DefaultThemeDay", func(t *testing.T) {
+		t.Parallel()
+		h := display.NewHandler(
+			display.WithEmbeddedTemplate(tmplContent),
+		)
+		if h.Theme() != "day" {
+			t.Errorf("expected default theme 'day', got %q", h.Theme())
+		}
+
+		req := httptest.NewRequest(http.MethodGet, "/display", nil)
+		rec := httptest.NewRecorder()
+		h.GetDisplay(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rec.Code)
+		}
+		if !strings.Contains(rec.Body.String(), `data-theme="day"`) {
+			t.Errorf("expected data-theme=\"day\", got %s", rec.Body.String())
+		}
+	})
+
+	t.Run("DynamicThemeProvider", func(t *testing.T) {
+		t.Parallel()
+		currentTheme := "night"
+		h := display.NewHandler(
+			display.WithEmbeddedTemplate(tmplContent),
+			display.WithThemeProvider(func() string {
+				return currentTheme
+			}),
+		)
+
+		if h.Theme() != "night" {
+			t.Errorf("expected theme 'night', got %q", h.Theme())
+		}
+
+		req := httptest.NewRequest(http.MethodGet, "/display", nil)
+		rec := httptest.NewRecorder()
+		h.GetDisplay(rec, req)
+
+		if !strings.Contains(rec.Body.String(), `data-theme="night"`) {
+			t.Errorf("expected data-theme=\"night\", got %s", rec.Body.String())
+		}
+
+		currentTheme = "day"
+		if h.Theme() != "day" {
+			t.Errorf("expected theme 'day', got %q", h.Theme())
+		}
+	})
+}
+
 
 

@@ -235,6 +235,13 @@ func (h *Hub) PublishEvent(evt *Event) {
 					isp.SetVoiceState(&vs)
 				}
 			}
+		} else if evt.Type == EventThemeUpdate {
+			var td ThemeUpdateData
+			if err := json.Unmarshal(evt.Data, &td); err == nil {
+				if isp, ok := h.stateProvider.(*InMemoryStateProvider); ok {
+					isp.SetTheme(td.Theme)
+				}
+			}
 		}
 	}
 

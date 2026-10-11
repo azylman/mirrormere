@@ -209,6 +209,26 @@
     }
   }
 
+  /**
+   * Update active theme ("day" vs "night") on HTML, body, and app container.
+   */
+  function handleThemeUpdate(data) {
+    if (!data || !data.theme) return;
+    const theme = (data.theme === 'night') ? 'night' : 'day';
+    if (typeof document !== 'undefined') {
+      if (document.documentElement && document.documentElement.dataset) {
+        document.documentElement.dataset.theme = theme;
+      }
+      if (document.body && document.body.dataset) {
+        document.body.dataset.theme = theme;
+      }
+      const appEl = document.getElementById('mirrormere-app');
+      if (appEl && appEl.dataset) {
+        appEl.dataset.theme = theme;
+      }
+    }
+  }
+
   let currentBootId = null;
   let lastReloadTimestamp = 0;
   let lastDailyReloadDate = '';
@@ -810,6 +830,10 @@
         handleHeaderUpdate(data);
       });
 
+      sseClient.on('theme.update', (data) => {
+        handleThemeUpdate(data);
+      });
+
       sseClient.on('system.status', (data) => {
         handleSystemStatus(data);
       });
@@ -836,6 +860,7 @@
   const api = {
     updateClock,
     handleHeaderUpdate,
+    handleThemeUpdate,
     handleSystemStatus,
     handleSystemReload,
     checkDailyMaintenanceReload,
