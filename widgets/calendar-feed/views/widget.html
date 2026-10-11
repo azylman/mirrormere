@@ -65,7 +65,7 @@
             </div>
             {{ if .Location }}
             <div class="event-location-row" title="{{ .Location }}">
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" class="event-location-icon"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"></path><circle cx="12" cy="10" r="3"></circle></svg>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" class="event-location-icon" aria-hidden="true"><path d="M12 2C7.8 2 4.5 5.3 4.5 9.5C4.5 14.8 12 22 12 22C12 22 19.5 14.8 19.5 9.5C19.5 5.3 16.2 2 12 2Z" fill="#ff4365"/><circle cx="12" cy="9.5" r="3.2" fill="#ffffff"/></svg>
               <span class="event-location-text">{{ .Location }}</span>
             </div>
             {{ end }}
