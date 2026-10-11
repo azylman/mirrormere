@@ -851,12 +851,12 @@ func TasksStats(input any) TasksStatsResult {
 
 	summary := ""
 	if total > 0 {
-		if done == total {
+		if rem == 0 {
 			summary = "All done"
-		} else if done == 0 {
-			summary = fmt.Sprintf("0 of %d done", total)
+		} else if rem == 1 {
+			summary = "1 to do"
 		} else {
-			summary = fmt.Sprintf("%d of %d done", done, total)
+			summary = fmt.Sprintf("%d to do", rem)
 		}
 	}
 

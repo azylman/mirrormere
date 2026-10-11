@@ -853,8 +853,21 @@ func TestTasksStats(t *testing.T) {
 		if stats.Remaining != 1 {
 			t.Errorf("expected Remaining 1, got %d", stats.Remaining)
 		}
-		if stats.Summary != "3 of 4 done" {
-			t.Errorf("expected Summary '3 of 4 done', got %q", stats.Summary)
+		if stats.Summary != "1 to do" {
+			t.Errorf("expected Summary '1 to do', got %q", stats.Summary)
+		}
+	})
+
+	t.Run("multiple remaining tasks", func(t *testing.T) {
+		t.Parallel()
+		items := []tasks.ListItem{
+			{Title: "Task 1", Done: true},
+			{Title: "Task 2", Done: false},
+			{Title: "Task 3", Done: false},
+		}
+		stats := render.TasksStats(items)
+		if stats.Summary != "2 to do" {
+			t.Errorf("expected '2 to do', got %q", stats.Summary)
 		}
 	})
 
@@ -876,8 +889,8 @@ func TestTasksStats(t *testing.T) {
 			{Title: "Task 1", Done: false},
 		}
 		stats := render.TasksStats(items)
-		if stats.Summary != "0 of 1 done" {
-			t.Errorf("expected '0 of 1 done', got %q", stats.Summary)
+		if stats.Summary != "1 to do" {
+			t.Errorf("expected '1 to do', got %q", stats.Summary)
 		}
 	})
 
@@ -896,8 +909,8 @@ func TestTasksStats(t *testing.T) {
 		if err := tmpl.Execute(&sb, items); err != nil {
 			t.Fatalf("failed to execute template: %v", err)
 		}
-		if sb.String() != "1 of 2 done" {
-			t.Errorf("expected '1 of 2 done', got %q", sb.String())
+		if sb.String() != "1 to do" {
+			t.Errorf("expected '1 to do', got %q", sb.String())
 		}
 	})
 }
