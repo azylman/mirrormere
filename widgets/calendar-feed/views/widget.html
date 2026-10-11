@@ -63,6 +63,12 @@
                 <span class="event-calendar-pill" {{ if .Color }}style="--pill-color: {{ .Color }}; background: color-mix(in srgb, {{ .Color }} 12%, white); color: {{ .Color }};"{{ end }}>{{ .CalendarName }}</span>
               {{ end }}
             </div>
+            {{ if .Location }}
+            <div class="event-location-row" title="{{ .Location }}">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" class="event-location-icon" aria-hidden="true"><path d="M12 2C7.8 2 4.5 5.3 4.5 9.5C4.5 14.8 12 22 12 22C12 22 19.5 14.8 19.5 9.5C19.5 5.3 16.2 2 12 2Z" fill="#ff4365"/><circle cx="12" cy="9.5" r="3.2" fill="#ffffff"/></svg>
+              <span class="event-location-text">{{ .Location }}</span>
+            </div>
+            {{ end }}
           </div>
           <span class="event-accent-dot" {{ if .Color }}style="background-color: {{ .Color }};"{{ end }}></span>
         </div>
