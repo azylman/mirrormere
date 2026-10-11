@@ -135,9 +135,17 @@ function createHUDDOM() {
   const stage = createMockElement('div', 'video-stage');
   const overlay = createMockElement('div', 'video-hud-overlay');
   const header = createMockElement('div', '', 'video-hud-header');
+  const navBar = createMockElement('div', 'video-hud-nav-bar', 'video-hud-capsule-top-left video-hud-nav-bar');
+  navBar.style.display = 'none';
+  const backBtn = createMockElement('button', 'video-hud-back-btn', 'video-hud-btn video-hud-nav-btn');
+  const homeBtn = createMockElement('button', 'video-hud-home-btn', 'video-hud-btn video-hud-nav-btn');
+  navBar.appendChild(backBtn);
+  navBar.appendChild(homeBtn);
+
   const title = createMockElement('span', 'video-hud-title');
   const dismissBtn = createMockElement('button', 'video-hud-dismiss-btn', 'video-hud-btn video-hud-dismiss');
 
+  header.appendChild(navBar);
   header.appendChild(title);
   header.appendChild(dismissBtn);
 
@@ -160,12 +168,18 @@ function createHUDDOM() {
   const bottomBar = createMockElement('div', 'video-hud-bottom-bar', 'video-hud-bottom-bar');
   bottomBar.style.display = 'none';
 
+  const ccBtn = createMockElement('button', 'video-hud-cc-btn', 'video-hud-btn video-hud-media-btn');
+  const prevBtn = createMockElement('button', 'video-hud-prev-btn', 'video-hud-btn video-hud-media-btn');
   const rewindBtn = createMockElement('button', 'video-hud-rewind-btn', 'video-hud-btn video-hud-media-btn');
   const forwardBtn = createMockElement('button', 'video-hud-forward-btn', 'video-hud-btn video-hud-media-btn');
+  const nextBtn = createMockElement('button', 'video-hud-next-btn', 'video-hud-btn video-hud-media-btn');
 
+  bottomBar.appendChild(ccBtn);
+  bottomBar.appendChild(prevBtn);
   bottomBar.appendChild(rewindBtn);
   bottomBar.appendChild(playBtn);
   bottomBar.appendChild(forwardBtn);
+  bottomBar.appendChild(nextBtn);
 
   overlay.appendChild(header);
   overlay.appendChild(controls);
@@ -181,6 +195,9 @@ function createHUDDOM() {
     stage,
     overlay,
     header,
+    navBar,
+    backBtn,
+    homeBtn,
     title,
     dismissBtn,
     controls,
@@ -190,8 +207,11 @@ function createHUDDOM() {
     muteIcon,
     volumeSlider,
     bottomBar,
+    ccBtn,
+    prevBtn,
     rewindBtn,
     forwardBtn,
+    nextBtn,
     primarySlot,
     pipSlot,
   };
@@ -1267,3 +1287,296 @@ test('VideoHUDController: single-tap reveals HUD immediately when hidden and hid
 });
 
 
+
+test('VideoHUDController: back and home buttons dispatch actions and remote keys with in-flight lock', async () => {
+  const dom = createHUDDOM();
+  const networkCalls = [];
+
+  const mockFetch = async (url, opts) => {
+    networkCalls.push({ url, body: JSON.parse(opts.body) });
+    return { ok: true, status: 200, json: async () => ({ status: 'ok' }) };
+  };
+
+  const hud = new VideoHUDController({
+    overlayElement: dom.overlay,
+    titleElement: dom.title,
+    dismissBtn: dom.dismissBtn,
+    navBarElement: dom.navBar,
+    backBtn: dom.backBtn,
+    homeBtn: dom.homeBtn,
+    bottomBarElement: dom.bottomBar,
+    fetch: mockFetch,
+    remoteUrl: 'http://remote.lan:8080',
+  });
+
+  // 1. Controllable stream with control_url dispatches api/video/action
+  hud.handleVideoState({
+    mode: 'video',
+    primary: {
+      id: 'stream_tv',
+      controllable: true,
+      control_url: 'http://control.lan',
+      player_state: 'playing',
+    },
+  });
+
+  dom.backBtn.click();
+  assert.equal(networkCalls.length, 1);
+  assert.equal(networkCalls[0].url, 'api/video/action');
+  assert.deepEqual(networkCalls[0].body, { id: 'stream_tv', action: 'back' });
+
+  // Rapid second click blocked by in-flight lock
+  dom.backBtn.click();
+  assert.equal(networkCalls.length, 1);
+
+  // Wait out 300ms debounce lock
+  await new Promise((r) => setTimeout(r, 320));
+
+  dom.homeBtn.click();
+  assert.equal(networkCalls.length, 2);
+  assert.equal(networkCalls[1].url, 'api/video/action');
+  assert.deepEqual(networkCalls[1].body, { id: 'stream_tv', action: 'home' });
+
+  // 2. Non-controllable persistent stream dispatches remoteUrl/key
+  hud.handleVideoState({
+    mode: 'video',
+    primary: {
+      id: 'stream_chromecast',
+      controllable: false,
+      priority: 'persistent',
+      player_state: 'playing',
+    },
+  });
+
+  await new Promise((r) => setTimeout(r, 320));
+
+  dom.backBtn.click();
+  assert.equal(networkCalls.length, 3);
+  assert.equal(networkCalls[2].url, 'http://remote.lan:8080/key');
+  assert.deepEqual(networkCalls[2].body, { key: 'back' });
+
+  await new Promise((r) => setTimeout(r, 320));
+
+  dom.homeBtn.click();
+  assert.equal(networkCalls.length, 4);
+  assert.equal(networkCalls[3].url, 'http://remote.lan:8080/key');
+  assert.deepEqual(networkCalls[3].body, { key: 'home' });
+
+  hud.destroy();
+});
+
+test('VideoHUDController: cc, prev, and next buttons dispatch actions and remote keys with in-flight lock', async () => {
+  const dom = createHUDDOM();
+  const networkCalls = [];
+
+  const mockFetch = async (url, opts) => {
+    networkCalls.push({ url, body: JSON.parse(opts.body) });
+    return { ok: true, status: 200, json: async () => ({ status: 'ok' }) };
+  };
+
+  const hud = new VideoHUDController({
+    overlayElement: dom.overlay,
+    titleElement: dom.title,
+    dismissBtn: dom.dismissBtn,
+    bottomBarElement: dom.bottomBar,
+    ccBtn: dom.ccBtn,
+    prevBtn: dom.prevBtn,
+    nextBtn: dom.nextBtn,
+    fetch: mockFetch,
+    remoteUrl: 'http://remote.lan:8080',
+  });
+
+  // 1. Controllable stream dispatches to api/video/action
+  hud.handleVideoState({
+    mode: 'video',
+    primary: {
+      id: 'stream_plex',
+      controllable: true,
+      control_url: 'http://plex.lan',
+      player_state: 'playing',
+    },
+  });
+
+  dom.ccBtn.click();
+  assert.equal(networkCalls.length, 1);
+  assert.equal(networkCalls[0].url, 'api/video/action');
+  assert.deepEqual(networkCalls[0].body, { id: 'stream_plex', action: 'captions' });
+
+  // Rapid second click blocked by lock
+  dom.ccBtn.click();
+  assert.equal(networkCalls.length, 1);
+
+  await new Promise((r) => setTimeout(r, 320));
+
+  dom.prevBtn.click();
+  assert.equal(networkCalls.length, 2);
+  assert.equal(networkCalls[1].url, 'api/video/action');
+  assert.deepEqual(networkCalls[1].body, { id: 'stream_plex', action: 'previous' });
+
+  await new Promise((r) => setTimeout(r, 320));
+
+  dom.nextBtn.click();
+  assert.equal(networkCalls.length, 3);
+  assert.equal(networkCalls[2].url, 'api/video/action');
+  assert.deepEqual(networkCalls[2].body, { id: 'stream_plex', action: 'next' });
+
+  // 2. Persistent stream dispatches to remoteUrl/key
+  hud.handleVideoState({
+    mode: 'video',
+    primary: {
+      id: 'stream_cast',
+      controllable: false,
+      priority: 'persistent',
+      player_state: 'playing',
+    },
+  });
+
+  await new Promise((r) => setTimeout(r, 320));
+
+  dom.ccBtn.click();
+  assert.equal(networkCalls.length, 4);
+  assert.equal(networkCalls[3].url, 'http://remote.lan:8080/key');
+  assert.deepEqual(networkCalls[3].body, { key: 'cc' });
+
+  await new Promise((r) => setTimeout(r, 320));
+
+  dom.prevBtn.click();
+  assert.equal(networkCalls.length, 5);
+  assert.equal(networkCalls[4].url, 'http://remote.lan:8080/key');
+  assert.deepEqual(networkCalls[4].body, { key: 'prev' });
+
+  await new Promise((r) => setTimeout(r, 320));
+
+  dom.nextBtn.click();
+  assert.equal(networkCalls.length, 6);
+  assert.equal(networkCalls[5].url, 'http://remote.lan:8080/key');
+  assert.deepEqual(networkCalls[5].body, { key: 'next' });
+
+  hud.destroy();
+});
+
+test('VideoHUDController: nav bar stops pointer event propagation to video stage', () => {
+  const dom = createHUDDOM();
+  const hud = new VideoHUDController({
+    overlayElement: dom.overlay,
+    titleElement: dom.title,
+    dismissBtn: dom.dismissBtn,
+    navBarElement: dom.navBar,
+    backBtn: dom.backBtn,
+    homeBtn: dom.homeBtn,
+    stageElement: dom.stage,
+  });
+
+  const stoppedEvents = [];
+  const fakeEvent = (type) => ({
+    type,
+    stopPropagation: () => { stoppedEvents.push(type); },
+  });
+
+  dom.navBar.dispatchEvent('pointerdown', fakeEvent('pointerdown'));
+  dom.navBar.dispatchEvent('pointerup', fakeEvent('pointerup'));
+  dom.navBar.dispatchEvent('touchstart', fakeEvent('touchstart'));
+  dom.navBar.dispatchEvent('touchend', fakeEvent('touchend'));
+
+  assert.deepEqual(stoppedEvents, ['pointerdown', 'pointerup', 'touchstart', 'touchend']);
+
+  hud.destroy();
+});
+
+test('VideoHUDController: in-flight lock is released via finally even when network fetch fails', async () => {
+  const dom = createHUDDOM();
+  let failFetch = true;
+
+  const mockFetch = async () => {
+    if (failFetch) {
+      throw new Error('Network connection timeout');
+    }
+    return { ok: true, status: 200, json: async () => ({ status: 'ok' }) };
+  };
+
+  const hud = new VideoHUDController({
+    overlayElement: dom.overlay,
+    titleElement: dom.title,
+    dismissBtn: dom.dismissBtn,
+    navBarElement: dom.navBar,
+    backBtn: dom.backBtn,
+    homeBtn: dom.homeBtn,
+    fetch: mockFetch,
+    remoteUrl: 'http://remote.lan',
+  });
+
+  hud.handleVideoState({
+    mode: 'video',
+    primary: {
+      id: 'stream_test',
+      controllable: true,
+      player_state: 'playing',
+    },
+  });
+
+  // Action fails network call
+  dom.backBtn.click();
+  assert.equal(hud.isActionPending, true);
+
+  // Wait for 300ms timer and finally block to resolve
+  await new Promise((r) => setTimeout(r, 320));
+  assert.equal(hud.isActionPending, false);
+
+  // Subsequent call succeeds
+  failFetch = false;
+  dom.homeBtn.click();
+  assert.equal(hud.isActionPending, true);
+
+  await new Promise((r) => setTimeout(r, 320));
+  assert.equal(hud.isActionPending, false);
+
+  hud.destroy();
+});
+
+test('VideoHUDController: nav bar is displayed for media streams and hidden for non-media streams', () => {
+  const dom = createHUDDOM();
+  const hud = new VideoHUDController({
+    overlayElement: dom.overlay,
+    titleElement: dom.title,
+    dismissBtn: dom.dismissBtn,
+    navBarElement: dom.navBar,
+    bottomBarElement: dom.bottomBar,
+    remoteUrl: 'http://remote.lan',
+  });
+
+  // 1. Initial state: navBar is hidden
+  assert.equal(dom.navBar.style.display, 'none');
+
+  // 2. Persistent media stream: navBar is shown
+  hud.handleVideoState({
+    mode: 'video',
+    primary: {
+      id: 'stream_cast',
+      priority: 'persistent',
+      controllable: false,
+      player_state: 'playing',
+    },
+  });
+  assert.equal(dom.navBar.style.display, '');
+
+  // 3. Non-media temporary stream (doorbell): navBar is hidden
+  hud.handleVideoState({
+    mode: 'video',
+    primary: {
+      id: 'cam_doorbell',
+      priority: 'temporary',
+      controllable: false,
+      player_state: 'playing',
+    },
+  });
+  assert.equal(dom.navBar.style.display, 'none');
+
+  // 4. Teardown (null stream): navBar is hidden
+  hud.handleVideoState({
+    mode: 'widgets',
+    primary: null,
+  });
+  assert.equal(dom.navBar.style.display, 'none');
+
+  hud.destroy();
+});

@@ -126,11 +126,19 @@ ensure_deadcode() {
 run_deadcode() {
     echo "   [deadcode] Checking for unreachable code..."
     ensure_deadcode
-    dead_output=$(GOMEMLIMIT="${GOMEMLIMIT:-512MiB}" GOGC="${GOGC:-50}" "$DEADCODE_BIN" -test ./... 2>&1) || {
-        echo "🚨 [Mirrormere Verify] Error: deadcode execution failed:" >&2
+    set +e
+    dead_output=$(GOMEMLIMIT="${DEADCODE_GOMEMLIMIT:-384MiB}" GOGC="${DEADCODE_GOGC:-20}" "$DEADCODE_BIN" -test ./... 2>&1)
+    rc=$?
+    set -e
+    if [ "$rc" -ne 0 ]; then
+        if [ "$rc" -eq 137 ] && [ "$MODE" = "staged" ]; then
+            echo "   [deadcode] Warning: deadcode killed by cgroup OOM in local pre-flight (exit 137), deferred to CI." >&2
+            return 0
+        fi
+        echo "🚨 [Mirrormere Verify] Error: deadcode execution failed (exit $rc):" >&2
         echo "$dead_output" >&2
         exit 1
-    }
+    fi
     if [ -n "$dead_output" ]; then
         echo "🚨 [Mirrormere Verify] Dead code detected:" >&2
         echo "$dead_output" | sed 's/^/   • /' >&2

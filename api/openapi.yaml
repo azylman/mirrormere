@@ -866,7 +866,7 @@ components:
           example: chromecast
         action:
           type: string
-          enum: [toggle_playback, play, pause, rewind, fast_forward]
+          enum: [toggle_playback, play, pause, rewind, fast_forward, back, home, captions, next, previous]
           example: toggle_playback
         value:
           nullable: true
