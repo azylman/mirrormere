@@ -1011,8 +1011,8 @@ func TestEngine_RenderWidget_CalendarAgendaPackage(t *testing.T) {
 	if !strings.Contains(htmlStr, "Family Schedule") {
 		t.Errorf("expected custom title 'Family Schedule' in output: %s", htmlStr)
 	}
-	if strings.Contains(htmlStr, "Household Agenda") {
-		t.Errorf("expected default title 'Household Agenda' to be overridden by custom title: %s", htmlStr)
+	if strings.Contains(htmlStr, "Upcoming") {
+		t.Errorf("expected default title 'Upcoming' to be overridden by custom title: %s", htmlStr)
 	}
 	if !strings.Contains(htmlStr, "Active Family") {
 		t.Errorf("expected enabled calendar 'Active Family' in avatar dots: %s", htmlStr)
@@ -1032,8 +1032,8 @@ func TestEngine_RenderWidget_CalendarAgendaPackage(t *testing.T) {
 	if !strings.Contains(string(htmlEmpty), "No upcoming events") {
 		t.Errorf("expected 'No upcoming events' in empty output: %s", htmlEmpty)
 	}
-	if !strings.Contains(string(htmlEmpty), "Household Agenda") {
-		t.Errorf("expected default fallback title 'Household Agenda' in empty output: %s", htmlEmpty)
+	if !strings.Contains(string(htmlEmpty), "Upcoming") {
+		t.Errorf("expected default fallback title 'Upcoming' in empty output: %s", htmlEmpty)
 	}
 	if strings.Contains(string(htmlEmpty), "calendar-header-chips") {
 		t.Errorf("expected calendar header chips to be omitted when no calendars configured: %s", htmlEmpty)
