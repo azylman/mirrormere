@@ -3,8 +3,14 @@
     {{ if and .Data.Photos (gt (len .Data.Photos) 0) }}
       {{ $first := index .Data.Photos 0 }}
       <div class="photo-viewport dither">
-        <img class="photo-layer photo-current dither" src="{{ $first.URL }}=w{{ if and .Config.image_size (eq (len .Config.image_size) 2) }}{{ index .Config.image_size 0 }}-h{{ index .Config.image_size 1 }}{{ else }}3840-h2160{{ end }}{{ if eq .Config.fit "cover" }}-c{{ end }}" alt="Photo" />
-        <img class="photo-layer photo-next dither" src="" alt="Photo" style="opacity: 0;" />
+        <div class="photo-backdrop-container" aria-hidden="true">
+          <img class="photo-backdrop-layer photo-backdrop-current" src="{{ $first.URL }}=w{{ if and .Config.image_size (eq (len .Config.image_size) 2) }}{{ index .Config.image_size 0 }}-h{{ index .Config.image_size 1 }}{{ else }}3840-h2160{{ end }}-c" alt="" />
+          <img class="photo-backdrop-layer photo-backdrop-next" src="" alt="" style="opacity: 0;" />
+        </div>
+        <div class="photo-foreground-container">
+          <img class="photo-layer photo-current dither" src="{{ $first.URL }}=w{{ if and .Config.image_size (eq (len .Config.image_size) 2) }}{{ index .Config.image_size 0 }}-h{{ index .Config.image_size 1 }}{{ else }}3840-h2160{{ end }}{{ if eq .Config.fit "cover" }}-c{{ end }}" alt="Photo" />
+          <img class="photo-layer photo-next dither" src="" alt="Photo" style="opacity: 0;" />
+        </div>
       </div>
       <script type="application/json" class="photo-carousel-data">
         {{ jsonJS .Data }}
@@ -17,7 +23,7 @@
       </div>
     {{ end }}
   {{ else }}
-    <div class="photo-loading" style="display: flex; align-items: center; justify-content: center; height: 100%; color: var(--mm-text-dim); font-size: 0.95rem;">
+    <div class="photo-loading" style="display: flex; align-items: center; justify-content: center; height: 100%; color: var(--mm-text-dim, #8b819f); font-size: 0.95rem; font-weight: 700;">
       <span>Loading photos...</span>
     </div>
   {{ end }}
