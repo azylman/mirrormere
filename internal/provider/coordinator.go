@@ -17,6 +17,7 @@ import (
 	"github.com/azylman/mirrormere/internal/config"
 	"github.com/azylman/mirrormere/internal/domain"
 	"github.com/azylman/mirrormere/internal/events"
+	"github.com/azylman/mirrormere/internal/tasks"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
@@ -202,6 +203,27 @@ func (c *ProviderCoordinator) RefreshWidget(widgetID string) error {
 		// Refresh already queued
 	}
 	return nil
+}
+
+// CompleteListItem marks a task item complete on the matching tasks provider worker, or returns ErrListNotFound.
+func (c *ProviderCoordinator) CompleteListItem(ctx context.Context, listID, itemID string) error {
+	c.mu.RLock()
+	var targetProvider *TasksProvider
+	for _, w := range c.workers {
+		if tp, ok := w.provider.(*TasksProvider); ok {
+			if w.widgetID == listID || tp.ListID() == listID {
+				targetProvider = tp
+				break
+			}
+		}
+	}
+	c.mu.RUnlock()
+
+	if targetProvider == nil {
+		return tasks.ErrListNotFound
+	}
+
+	return targetProvider.CompleteItem(ctx, itemID)
 }
 
 // PushUpdate records an unsolicited domain data update (e.g. from inbound webhook)

@@ -521,6 +521,9 @@ func TestSQLiteStore_ConcurrencyAndClosed(t *testing.T) {
 	if err := store.DeleteItem(ctx, "stress", "x"); err == nil {
 		t.Error("expected error deleting item on closed store")
 	}
+	if err := store.CompleteItem(ctx, "stress", "x"); err == nil {
+		t.Error("expected error completing item on closed store")
+	}
 }
 
 func TestParseTime(t *testing.T) {
@@ -576,6 +579,9 @@ func TestSQLiteStore_ContextCancellationErrors(t *testing.T) {
 	}
 	if err := store.DeleteItem(ctx, "c1", "i1"); err == nil {
 		t.Error("expected error with canceled context on DeleteItem")
+	}
+	if err := store.CompleteItem(ctx, "c1", "i1"); err == nil {
+		t.Error("expected error with canceled context on CompleteItem")
 	}
 }
 
@@ -1300,3 +1306,72 @@ func TestSQLiteStore_MigrateErrors(t *testing.T) {
 	}
 }
 
+
+func TestSQLiteStore_CompleteItem(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "complete.db")
+	store, err := NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatalf("failed to open store: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	list := List{
+		ID:        "list-1",
+		Name:      "Test List",
+		Source:    "local",
+		Sections:  []string{"General"},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := store.UpsertList(ctx, list); err != nil {
+		t.Fatalf("failed to upsert list: %v", err)
+	}
+
+	item := ListItem{
+		ID:        "item-1",
+		ListID:    "list-1",
+		Title:     "Buy Groceries",
+		Done:      false,
+		Position:  0,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := store.UpsertItem(ctx, item); err != nil {
+		t.Fatalf("failed to upsert item: %v", err)
+	}
+
+	// 1. Complete item successfully
+	if err := store.CompleteItem(ctx, "list-1", "item-1"); err != nil {
+		t.Fatalf("failed to complete item: %v", err)
+	}
+
+	// Verify item is now done
+	items, err := store.GetListItems(ctx, "list-1", true)
+	if err != nil {
+		t.Fatalf("failed to get items: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(items))
+	}
+	if !items[0].Done {
+		t.Errorf("expected item to be done, got %+v", items[0])
+	}
+
+	// 2. Repeat completion is idempotent (returns nil)
+	if err := store.CompleteItem(ctx, "list-1", "item-1"); err != nil {
+		t.Fatalf("expected repeat completion to be idempotent, got: %v", err)
+	}
+
+	// 3. Complete non-existent item returns ErrItemNotFound
+	if err := store.CompleteItem(ctx, "list-1", "item-999"); !errors.Is(err, ErrItemNotFound) {
+		t.Fatalf("expected ErrItemNotFound, got: %v", err)
+	}
+	if err := store.CompleteItem(ctx, "non-existent-list", "item-1"); !errors.Is(err, ErrItemNotFound) {
+		t.Fatalf("expected ErrItemNotFound, got: %v", err)
+	}
+}

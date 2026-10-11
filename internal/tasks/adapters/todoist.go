@@ -21,7 +21,10 @@ const (
 	defaultTodoistBaseURL = "https://api.todoist.com"
 )
 
-var _ Adapter = (*TodoistAdapter)(nil)
+var (
+	_ Adapter   = (*TodoistAdapter)(nil)
+	_ Completer = (*TodoistAdapter)(nil)
+)
 
 // TodoistAdapterConfig holds configuration for the Todoist tasks adapter.
 type TodoistAdapterConfig struct {
@@ -573,4 +576,48 @@ func parseTimeFlexible(raw string) time.Time {
 		return t.UTC()
 	}
 	return time.Now().UTC()
+}
+
+// CompleteItem closes a task in Todoist via POST /api/v1/tasks/{itemID}/close.
+func (a *TodoistAdapter) CompleteItem(ctx context.Context, itemID string) error {
+	itemID = strings.TrimSpace(itemID)
+	if itemID == "" {
+		return errors.New("item ID is required")
+	}
+	if strings.Contains(itemID, "/") || strings.Contains(itemID, "..") {
+		return errors.New("invalid item ID")
+	}
+
+	targetURL := fmt.Sprintf("%s/api/v1/tasks/%s/close", a.baseURL, url.PathEscape(itemID))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create http request: %w", err)
+	}
+
+	req.Header.Set("Accept", "application/json")
+	if a.token != "" {
+		req.Header.Set("Authorization", "Bearer "+a.token)
+	}
+
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("todoist close request failed: %w", err)
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
+	// Read small error body with limit reader to drain socket safely
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096)) //nolint:errcheck
+
+	switch resp.StatusCode {
+	case http.StatusOK, http.StatusNoContent:
+		return nil
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return ErrUnauthorized
+	case http.StatusNotFound:
+		return ErrUpstreamNotFound
+	default:
+		return UpstreamHTTPError{Code: resp.StatusCode, URL: targetURL}
+	}
 }

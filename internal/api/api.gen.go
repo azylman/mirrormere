@@ -371,6 +371,9 @@ type ServerInterface interface {
 	// Get household list items
 	// (GET /api/lists/{list_id}/items)
 	GetListItems(w http.ResponseWriter, r *http.Request, listId string, params GetListItemsParams)
+	// Complete a household list item
+	// (POST /api/lists/{list_id}/items/{item_id}/complete)
+	CompleteListItem(w http.ResponseWriter, r *http.Request, listId string, itemId string)
 	// Advance screen sequentially
 	// (POST /api/screen/advance)
 	PostScreenAdvance(w http.ResponseWriter, r *http.Request)
@@ -496,6 +499,40 @@ func (siw *ServerInterfaceWrapper) GetListItems(w http.ResponseWriter, r *http.R
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetListItems(w, r, listId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CompleteListItem operation middleware
+func (siw *ServerInterfaceWrapper) CompleteListItem(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "list_id" -------------
+	var listId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "list_id", r.PathValue("list_id"), &listId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "list_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "item_id" -------------
+	var itemId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "item_id", r.PathValue("item_id"), &itemId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "item_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CompleteListItem(w, r, listId, itemId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -881,6 +918,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc("POST "+options.BaseURL+"/api/audio/mute", wrapper.PostAudioMute)
 	m.HandleFunc("POST "+options.BaseURL+"/api/audio/volume", wrapper.PostAudioVolume)
 	m.HandleFunc("GET "+options.BaseURL+"/api/lists/{list_id}/items", wrapper.GetListItems)
+	m.HandleFunc("POST "+options.BaseURL+"/api/lists/{list_id}/items/{item_id}/complete", wrapper.CompleteListItem)
 	m.HandleFunc("POST "+options.BaseURL+"/api/screen/advance", wrapper.PostScreenAdvance)
 	m.HandleFunc("POST "+options.BaseURL+"/api/screen/pause", wrapper.PostScreenPause)
 	m.HandleFunc("POST "+options.BaseURL+"/api/screen/select", wrapper.PostScreenSelect)

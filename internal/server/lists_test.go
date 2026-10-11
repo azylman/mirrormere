@@ -12,6 +12,7 @@ import (
 	"github.com/azylman/mirrormere/internal/api"
 	"github.com/azylman/mirrormere/internal/server"
 	"github.com/azylman/mirrormere/internal/tasks"
+	"github.com/azylman/mirrormere/internal/tasks/adapters"
 )
 
 type mockListStore struct {
@@ -269,4 +270,210 @@ func TestDefaultListsHandler_Success(t *testing.T) {
 	if recHead.Body.Len() != 0 {
 		t.Errorf("expected empty body for HEAD, got %d bytes", recHead.Body.Len())
 	}
+}
+
+type mockItemCompleter struct {
+	calls      int
+	lastListID string
+	lastItemID string
+	err        error
+}
+
+func (m *mockItemCompleter) CompleteListItem(ctx context.Context, listID, itemID string) error {
+	m.calls++
+	m.lastListID = listID
+	m.lastItemID = itemID
+	return m.err
+}
+
+type mockStoreWithComplete struct {
+	mockListStore
+	completeCalls int
+	lastItemID    string
+	completeErr   error
+}
+
+func (m *mockStoreWithComplete) CompleteItem(ctx context.Context, listID, itemID string) error {
+	m.completeCalls++
+	m.lastItemID = itemID
+	return m.completeErr
+}
+
+func TestDefaultListsHandler_CompleteListItem(t *testing.T) {
+	t.Parallel()
+
+	// 1. OPTIONS preflight
+	t.Run("OPTIONS returns 204 with CORS", func(t *testing.T) {
+		t.Parallel()
+		h := server.NewDefaultListsHandler(&mockListStore{})
+		req := httptest.NewRequest(http.MethodOptions, "/api/lists/groceries/items/i1/complete", nil)
+		rec := httptest.NewRecorder()
+
+		h.CompleteListItem(rec, req, "groceries", "i1")
+
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("expected 204, got %d", rec.Code)
+		}
+		if rec.Header().Get("Access-Control-Allow-Origin") != "*" {
+			t.Errorf("expected CORS origin '*', got %q", rec.Header().Get("Access-Control-Allow-Origin"))
+		}
+	})
+
+	// 2. Method Not Allowed
+	t.Run("Method Not Allowed for GET, PUT, DELETE", func(t *testing.T) {
+		t.Parallel()
+		h := server.NewDefaultListsHandler(&mockListStore{})
+		for _, m := range []string{http.MethodGet, http.MethodPut, http.MethodDelete} {
+			req := httptest.NewRequest(m, "/api/lists/groceries/items/i1/complete", nil)
+			rec := httptest.NewRecorder()
+
+			h.CompleteListItem(rec, req, "groceries", "i1")
+
+			if rec.Code != http.StatusMethodNotAllowed {
+				t.Errorf("expected 405 for %s, got %d", m, rec.Code)
+			}
+		}
+	})
+
+	// 3. Validation errors
+	t.Run("Validation errors on empty or path traversal IDs", func(t *testing.T) {
+		t.Parallel()
+		h := server.NewDefaultListsHandler(&mockListStore{})
+
+		badPairs := [][2]string{
+			{"", "item1"},
+			{"list1", ""},
+			{"../list", "item1"},
+			{"list1", "../item"},
+			{"list/sub", "item1"},
+			{"list1", "item/sub"},
+		}
+
+		for _, pair := range badPairs {
+			req := httptest.NewRequest(http.MethodPost, "/api/lists/x/items/y/complete", nil)
+			rec := httptest.NewRecorder()
+
+			h.CompleteListItem(rec, req, pair[0], pair[1])
+
+			if rec.Code != http.StatusBadRequest {
+				t.Errorf("expected 400 for pair %v, got %d", pair, rec.Code)
+			}
+		}
+	})
+
+	// 4. Success via ItemCompleter
+	t.Run("Success via ItemCompleter", func(t *testing.T) {
+		t.Parallel()
+		completer := &mockItemCompleter{}
+		h := server.NewDefaultListsHandler(&mockListStore{}, server.WithItemCompleter(completer))
+
+		req := httptest.NewRequest(http.MethodPost, "/api/lists/groceries/items/item-1/complete", nil)
+		rec := httptest.NewRecorder()
+
+		h.CompleteListItem(rec, req, "groceries", "item-1")
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rec.Code)
+		}
+		if completer.calls != 1 || completer.lastListID != "groceries" || completer.lastItemID != "item-1" {
+			t.Errorf("completer not called properly: %+v", completer)
+		}
+		var resp api.ActionResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("failed to decode response: %v", err)
+		}
+		if resp.Status != "ok" {
+			t.Errorf("expected status ok, got %q", resp.Status)
+		}
+	})
+
+	// 5. Error mappings via ItemCompleter
+	t.Run("Error mappings: 404, 401, 502, 500", func(t *testing.T) {
+		t.Parallel()
+
+		errCases := []struct {
+			name     string
+			err      error
+			wantCode int
+		}{
+			{"list not found", tasks.ErrListNotFound, http.StatusNotFound},
+			{"item not found", tasks.ErrItemNotFound, http.StatusNotFound},
+			{"upstream not found", adapters.ErrUpstreamNotFound, http.StatusNotFound},
+			{"unauthorized", adapters.ErrUnauthorized, http.StatusUnauthorized},
+			{"upstream 429", adapters.UpstreamHTTPError{Code: 429, URL: "http://api"}, http.StatusBadGateway},
+			{"upstream 500", adapters.UpstreamHTTPError{Code: 500, URL: "http://api"}, http.StatusBadGateway},
+			{"internal error", errors.New("db crash"), http.StatusInternalServerError},
+		}
+
+		for _, tc := range errCases {
+			completer := &mockItemCompleter{err: tc.err}
+			h := server.NewDefaultListsHandler(&mockListStore{}, server.WithItemCompleter(completer))
+
+			req := httptest.NewRequest(http.MethodPost, "/api/lists/groceries/items/item-1/complete", nil)
+			rec := httptest.NewRecorder()
+
+			h.CompleteListItem(rec, req, "groceries", "item-1")
+
+			if rec.Code != tc.wantCode {
+				t.Errorf("%s: expected code %d, got %d (body: %s)", tc.name, tc.wantCode, rec.Code, rec.Body.String())
+			}
+		}
+	})
+
+	// 6. Fallback to StoreCompleter and SetItemCompleter dynamic update
+	t.Run("Fallback to StoreCompleter and SetItemCompleter", func(t *testing.T) {
+		t.Parallel()
+		store := &mockStoreWithComplete{}
+		notifier := tasks.NewChangeNotifier()
+		ch := make(chan struct{}, 1)
+		unsub := notifier.RegisterListener("groceries", ch)
+		defer unsub()
+
+		h := server.NewDefaultListsHandler(store, server.WithChangeNotifier(notifier))
+
+		req := httptest.NewRequest(http.MethodPost, "/api/lists/groceries/items/item-1/complete", nil)
+		rec := httptest.NewRecorder()
+
+		h.CompleteListItem(rec, req, "groceries", "item-1")
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rec.Code)
+		}
+		if store.completeCalls != 1 || store.lastItemID != "item-1" {
+			t.Errorf("store not called properly: %+v", store)
+		}
+		select {
+		case <-ch:
+			// Notified
+		default:
+			t.Error("expected change notification on store fallback")
+		}
+
+		// Dynamically set completer
+		completer := &mockItemCompleter{}
+		h.SetItemCompleter(completer)
+
+		rec2 := httptest.NewRecorder()
+		h.CompleteListItem(rec2, req, "groceries", "item-2")
+		if rec2.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rec2.Code)
+		}
+		if completer.calls != 1 || completer.lastItemID != "item-2" {
+			t.Errorf("dynamically set completer not called: %+v", completer)
+		}
+	})
+
+	// 7. Nil completer and store without StoreCompleter returns 500
+	t.Run("Store without StoreCompleter returns 500", func(t *testing.T) {
+		t.Parallel()
+		h := server.NewDefaultListsHandler(&mockListStore{})
+		req := httptest.NewRequest(http.MethodPost, "/api/lists/groceries/items/item-1/complete", nil)
+		rec := httptest.NewRecorder()
+
+		h.CompleteListItem(rec, req, "groceries", "item-1")
+
+		if rec.Code != http.StatusInternalServerError {
+			t.Fatalf("expected 500, got %d", rec.Code)
+		}
+	})
 }

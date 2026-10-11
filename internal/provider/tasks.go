@@ -527,3 +527,52 @@ func (p *TasksProvider) Shutdown(ctx context.Context) error {
 	}
 	return nil
 }
+
+// CompleteItem completes a task item both upstream (if an adapter implementing Completer is present)
+// and locally in the SQLite store, then dispatches a real-time change notification.
+func (p *TasksProvider) CompleteItem(ctx context.Context, itemID string) error {
+	p.mu.RLock()
+	adapter := p.adapter
+	store := p.store
+	listID := p.cfg.ListID
+	notifier := p.notifier
+	p.mu.RUnlock()
+
+	if store == nil {
+		return errors.New("tasks provider not initialized: nil store")
+	}
+
+	// 1. Upstream completion
+	if completer, ok := adapter.(adapters.Completer); ok {
+		if err := completer.CompleteItem(ctx, itemID); err != nil {
+			if errors.Is(err, adapters.ErrUpstreamNotFound) {
+				// Upstream task was deleted externally; purge from local store to prevent ghost item
+				_ = store.DeleteItem(ctx, listID, itemID) //nolint:errcheck
+				if notifier != nil {
+					notifier.NotifyChange(listID)
+				}
+				return tasks.ErrItemNotFound
+			}
+			return fmt.Errorf("upstream task completion failed: %w", err)
+		}
+	}
+
+	// 2. Local SQLite store completion
+	if err := store.CompleteItem(ctx, listID, itemID); err != nil {
+		return fmt.Errorf("failed to complete task in local store: %w", err)
+	}
+
+	// 3. Notify real-time listeners for instant SSE dispatch
+	if notifier != nil {
+		notifier.NotifyChange(listID)
+	}
+
+	return nil
+}
+
+// ListID returns the configured list ID for this tasks provider.
+func (p *TasksProvider) ListID() string {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.cfg.ListID
+}

@@ -14,19 +14,25 @@ import (
 
 	"github.com/azylman/mirrormere/internal/provider"
 	"github.com/azylman/mirrormere/internal/tasks"
+	"github.com/azylman/mirrormere/internal/tasks/adapters"
 )
 
 type mockTasksStore struct {
-	list        *tasks.List
-	items       []tasks.ListItem
-	snapshot    *tasks.TasksSnapshot
-	getSnapErr  error
-	upsertErr   error
-	closeErr    error
-	closed      bool
-	upsertCalls int
-	lastListID  string
-	lastShow    int
+	list            *tasks.List
+	items           []tasks.ListItem
+	snapshot        *tasks.TasksSnapshot
+	getSnapErr      error
+	upsertErr       error
+	closeErr        error
+	closed          bool
+	upsertCalls     int
+	lastListID      string
+	lastShow        int
+	completeCalls   int
+	lastCompletedID string
+	completeErr     error
+	deleteCalls     int
+	lastDeletedID   string
 }
 
 func (m *mockTasksStore) GetList(ctx context.Context, id string) (*tasks.List, error) {
@@ -76,6 +82,17 @@ func (m *mockTasksStore) DeleteList(ctx context.Context, id string) error {
 }
 
 func (m *mockTasksStore) DeleteItem(ctx context.Context, listID, itemID string) error {
+	m.deleteCalls++
+	m.lastDeletedID = itemID
+	return nil
+}
+
+func (m *mockTasksStore) CompleteItem(ctx context.Context, listID, itemID string) error {
+	m.completeCalls++
+	m.lastCompletedID = itemID
+	if m.completeErr != nil {
+		return m.completeErr
+	}
 	return nil
 }
 
@@ -1137,3 +1154,115 @@ func TestTasksProvider_Fetch_TodoistIntegration(t *testing.T) {
 
 
 
+
+type mockCompleterAdapter struct {
+	name        string
+	calls       int
+	lastItem    string
+	err         error
+	fetchListFn func(ctx context.Context) (*tasks.List, []tasks.ListItem, error)
+}
+
+func (m *mockCompleterAdapter) Name() string {
+	if m.name != "" {
+		return m.name
+	}
+	return "mock-completer"
+}
+
+func (m *mockCompleterAdapter) FetchList(ctx context.Context) (*tasks.List, []tasks.ListItem, error) {
+	if m.fetchListFn != nil {
+		return m.fetchListFn(ctx)
+	}
+	return &tasks.List{ID: "test"}, nil, nil
+}
+
+func (m *mockCompleterAdapter) CompleteItem(ctx context.Context, itemID string) error {
+	m.calls++
+	m.lastItem = itemID
+	return m.err
+}
+
+func TestTasksProvider_CompleteItem(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	// Case 1: Nil store returns error
+	pNil := provider.NewTasksProvider()
+	if err := pNil.CompleteItem(ctx, "i1"); err == nil {
+		t.Fatal("expected error with nil store")
+	}
+
+	// Case 2: Adapter with Completer succeeds
+	adapter := &mockCompleterAdapter{}
+	store := &mockTasksStore{}
+	notifier := tasks.NewChangeNotifier()
+
+	ch := make(chan struct{}, 1)
+	unsub := notifier.RegisterListener("list-1", ch)
+	defer unsub()
+
+	p := provider.NewTasksProviderWithAdapter(store, adapter, notifier)
+	_ = p.Init(ctx, map[string]any{"list_id": "list-1", "source": "todoist"}, provider.InitOptions{ID: "w-tasks"})
+
+	if err := p.CompleteItem(ctx, "item-100"); err != nil {
+		t.Fatalf("unexpected complete error: %v", err)
+	}
+	if adapter.calls != 1 || adapter.lastItem != "item-100" {
+		t.Errorf("expected 1 adapter call with item-100, got %d, %s", adapter.calls, adapter.lastItem)
+	}
+	if store.completeCalls != 1 || store.lastCompletedID != "item-100" {
+		t.Errorf("expected 1 store complete call with item-100, got %d, %s", store.completeCalls, store.lastCompletedID)
+	}
+	select {
+	case <-ch:
+		// Notified successfully
+	default:
+		t.Error("expected change notification on completion")
+	}
+
+	// Case 3: Adapter returns ErrUpstreamNotFound -> purges item from store and returns tasks.ErrItemNotFound
+	adapter404 := &mockCompleterAdapter{err: adapters.ErrUpstreamNotFound}
+	store404 := &mockTasksStore{}
+	p404 := provider.NewTasksProviderWithAdapter(store404, adapter404, notifier)
+	_ = p404.Init(ctx, map[string]any{"list_id": "list-1"}, provider.InitOptions{ID: "w-tasks"})
+
+	if err := p404.CompleteItem(ctx, "item-ghost"); !errors.Is(err, tasks.ErrItemNotFound) {
+		t.Fatalf("expected ErrItemNotFound, got: %v", err)
+	}
+	if store404.deleteCalls != 1 || store404.lastDeletedID != "item-ghost" {
+		t.Errorf("expected ghost item to be deleted from store, got calls=%d", store404.deleteCalls)
+	}
+	if store404.completeCalls != 0 {
+		t.Errorf("expected 0 store complete calls on 404, got %d", store404.completeCalls)
+	}
+
+	// Case 4: Adapter returns other upstream error -> aborts without store modification
+	adapterErr := &mockCompleterAdapter{err: errors.New("upstream timeout")}
+	storeErr := &mockTasksStore{}
+	pErr := provider.NewTasksProviderWithAdapter(storeErr, adapterErr, notifier)
+	_ = pErr.Init(ctx, map[string]any{"list_id": "list-1"}, provider.InitOptions{ID: "w-tasks"})
+
+	if err := pErr.CompleteItem(ctx, "item-fail"); err == nil {
+		t.Fatal("expected error when adapter fails")
+	}
+	if storeErr.completeCalls != 0 {
+		t.Errorf("expected 0 store complete calls on upstream error, got %d", storeErr.completeCalls)
+	}
+
+	// Case 5: Local store without adapter succeeds
+	storeLocal := &mockTasksStore{}
+	pLocal := provider.NewTasksProviderWithStoreAndNotifier(storeLocal, notifier)
+	_ = pLocal.Init(ctx, map[string]any{"list_id": "local-list"}, provider.InitOptions{ID: "w-tasks"})
+
+	if err := pLocal.CompleteItem(ctx, "item-local"); err != nil {
+		t.Fatalf("unexpected error on local complete: %v", err)
+	}
+	if storeLocal.completeCalls != 1 || storeLocal.lastCompletedID != "item-local" {
+		t.Errorf("expected local store complete call, got %d", storeLocal.completeCalls)
+	}
+	if pLocal.ListID() != "local-list" {
+		t.Errorf("expected ListID 'local-list', got %q", pLocal.ListID())
+	}
+}

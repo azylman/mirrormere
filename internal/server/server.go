@@ -61,6 +61,7 @@ type DisplayHandler interface {
 // ListsHandler handles task and checklist inspection endpoints matching OpenAPI specifications.
 type ListsHandler interface {
 	GetListItems(w http.ResponseWriter, r *http.Request, listID string)
+	CompleteListItem(w http.ResponseWriter, r *http.Request, listID, itemID string)
 }
 
 // AudioHandler handles master audio volume and mute endpoints matching OpenAPI specifications.
@@ -348,6 +349,7 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/api/screen/advance", s.handleScreenAdvance)
 	s.mux.HandleFunc("/api/screen/pause", s.handleScreenPause)
 	s.mux.HandleFunc("/api/lists/{list_id}/items", s.handleListItems)
+	s.mux.HandleFunc("/api/lists/{list_id}/items/{item_id}/complete", s.handleCompleteListItem)
 	s.mux.HandleFunc("/api/audio", s.handleAudio)
 	s.mux.HandleFunc("/api/audio/volume", s.handleAudioVolume)
 	s.mux.HandleFunc("/api/audio/mute", s.handleAudioMute)
@@ -421,6 +423,19 @@ func (s *Server) handleListItems(w http.ResponseWriter, r *http.Request) {
 	}
 	listID := r.PathValue("list_id")
 	h.GetListItems(w, r, listID)
+}
+
+func (s *Server) handleCompleteListItem(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	h := s.listsHandler
+	s.mu.RUnlock()
+	if h == nil {
+		http.NotFound(w, r)
+		return
+	}
+	listID := r.PathValue("list_id")
+	itemID := r.PathValue("item_id")
+	h.CompleteListItem(w, r, listID, itemID)
 }
 
 func (s *Server) handleAudio(w http.ResponseWriter, r *http.Request) {

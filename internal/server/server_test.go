@@ -728,13 +728,22 @@ func TestServer_PushHandler(t *testing.T) {
 }
 
 type mockListsHandler struct {
-	calls      int
-	lastListID string
+	calls         int
+	lastListID    string
+	completeCalls int
+	lastItemID    string
 }
 
 func (m *mockListsHandler) GetListItems(w http.ResponseWriter, r *http.Request, listID string) {
 	m.calls++
 	m.lastListID = listID
+	w.WriteHeader(http.StatusOK)
+}
+
+func (m *mockListsHandler) CompleteListItem(w http.ResponseWriter, r *http.Request, listID, itemID string) {
+	m.completeCalls++
+	m.lastListID = listID
+	m.lastItemID = itemID
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -754,6 +763,14 @@ func TestServer_ListsHandler(t *testing.T) {
 		t.Fatalf("expected 404 when ListsHandler unset, got %d", rec.Code)
 	}
 
+	// Case 1b: Unset CompleteListItem returns 404
+	recCompleteUnset := httptest.NewRecorder()
+	reqCompleteUnset := httptest.NewRequest(http.MethodPost, "/api/lists/groceries/items/i1/complete", nil)
+	srv.Routes().ServeHTTP(recCompleteUnset, reqCompleteUnset)
+	if recCompleteUnset.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 when ListsHandler unset on complete, got %d", recCompleteUnset.Code)
+	}
+
 	// Case 2: Config.ListsHandler set at creation
 	mockH := &mockListsHandler{}
 	srvWithHandler := server.New(server.Config{ListsHandler: mockH})
@@ -768,6 +785,18 @@ func TestServer_ListsHandler(t *testing.T) {
 	}
 	if mockH.calls != 1 || mockH.lastListID != "groceries" {
 		t.Fatalf("expected 1 list call with listID 'groceries', got calls=%d id=%q", mockH.calls, mockH.lastListID)
+	}
+
+	// Case 2b: CompleteListItem dispatches correctly
+	recComplete := httptest.NewRecorder()
+	reqComplete := httptest.NewRequest(http.MethodPost, "/api/lists/groceries/items/item-42/complete", nil)
+	srvWithHandler.Routes().ServeHTTP(recComplete, reqComplete)
+	if recComplete.Code != http.StatusOK {
+		t.Fatalf("expected 200 on complete, got %d", recComplete.Code)
+	}
+	if mockH.completeCalls != 1 || mockH.lastListID != "groceries" || mockH.lastItemID != "item-42" {
+		t.Fatalf("expected 1 complete call with listID 'groceries' and itemID 'item-42', got calls=%d listID=%q itemID=%q",
+			mockH.completeCalls, mockH.lastListID, mockH.lastItemID)
 	}
 
 	// Case 3: RegisterListsHandler dynamically updates handler

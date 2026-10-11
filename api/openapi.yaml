@@ -242,6 +242,49 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+  /api/lists/{list_id}/items/{item_id}/complete:
+    post:
+      summary: Complete a household list item
+      description: Closes or marks a list item as completed both locally and upstream in the backing provider if supported.
+      operationId: completeListItem
+      parameters:
+        - name: list_id
+          in: path
+          required: true
+          description: Canonical list identifier
+          schema:
+            type: string
+        - name: item_id
+          in: path
+          required: true
+          description: Identifier of the task or item to complete
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Item completed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActionResponse'
+        '404':
+          description: List or item not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Server error completing item
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '502':
+          description: Upstream provider failure
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /api/audio:
     get:
       summary: Get master audio state

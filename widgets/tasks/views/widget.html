@@ -23,7 +23,7 @@
     {{ if and .Data.Items (gt (len .Data.Items) 0) }}
     <div class="tasks-items-container">
       {{ range .Data.Items }}
-        <div class="task-item {{ if .Done }}task-item-done{{ else }}task-item-active{{ end }}">
+        <div class="task-item {{ if .Done }}task-item-done{{ else }}task-item-active{{ end }}" data-task-id="{{ .ID }}" data-list-id="{{ if .ListID }}{{ .ListID }}{{ else }}{{ $.ID }}{{ end }}">
           <div class="task-check-glyph">
             {{ if .Done }}
               <div class="task-checkbox-done" aria-hidden="true">
