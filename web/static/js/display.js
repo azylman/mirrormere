@@ -477,6 +477,140 @@
   }
 
   let clockTimer = null;
+  let headerVideoController = null;
+
+  /**
+   * Initialize and bind header video action button.
+   */
+  function setupHeaderVideo(options = {}) {
+    const doc = options.document || (typeof document !== 'undefined' ? document : null);
+    const btn = options.button || (doc ? doc.getElementById('header-video-btn') : null);
+    if (!btn) return null;
+
+    if (headerVideoController && !options.forceNew) {
+      if (options.sseClient && !headerVideoController.hasSSE) headerVideoController.attachSSE(options.sseClient);
+      return headerVideoController;
+    }
+    if (headerVideoController && options.forceNew) headerVideoController.destroy();
+
+    const fetchFn = options.fetch || (typeof window !== 'undefined' && typeof window.fetch === 'function' ? window.fetch.bind(window) : (typeof fetch === 'function' ? fetch : null));
+    const sse = options.sseClient || sseClient || (typeof window !== 'undefined' ? window.sseClient : null);
+    const win = options.window || (typeof window !== 'undefined' ? window : null);
+    let isLoading = false, safetyTimer = null, lastTriggerTime = 0, startX = null, startY = null, sseAttached = false;
+
+    const getCoords = (e) => {
+      const t = (e && e.changedTouches && e.changedTouches[0]) || e;
+      return t && typeof t.clientX === 'number' ? { x: t.clientX, y: t.clientY } : null;
+    };
+    const pointerDownHandler = (e) => {
+      const c = getCoords(e);
+      startX = c ? c.x : null;
+      startY = c ? c.y : null;
+    };
+    const clearLoading = () => {
+      if (safetyTimer) { clearTimeout(safetyTimer); safetyTimer = null; }
+      isLoading = false;
+      btn.classList.remove('loading');
+    };
+
+    const triggerVideo = async (e) => {
+      if (isLoading) return;
+      const now = Date.now(), c = getCoords(e);
+      if (startX !== null && startY !== null && c) {
+        const dist = Math.hypot(c.x - startX, c.y - startY);
+        startX = null; startY = null;
+        if (dist >= 15) { lastTriggerTime = now; return; }
+      }
+      startX = null; startY = null;
+      if (now - lastTriggerTime < 350) return;
+      lastTriggerTime = now;
+
+      if (win && win.videoManager && win.videoManager.currentMode === 'video') {
+        if (win.videoHUD && typeof win.videoHUD.showHUD === 'function') win.videoHUD.showHUD();
+        return;
+      }
+
+      isLoading = true;
+      btn.classList.add('loading');
+      btn.classList.remove('error');
+      safetyTimer = setTimeout(clearLoading, 4000);
+
+      const defaultHost = (win && win.location && win.location.hostname) ? win.location.hostname : 'localhost';
+      const streamUrl = options.streamUrl || (win && win.MIRRORMERE_CAST_STREAM_URL) || (btn.dataset && btn.dataset.streamUrl) || `http://${defaultHost}:1984/api/webrtc?src=cast`;
+      const controlUrl = options.controlUrl || (win && win.MIRRORMERE_CAST_CONTROL_URL) || (btn.dataset && btn.dataset.controlUrl) || 'http://mirrormere-cast-watcher.aerial/action';
+      const streamId = options.streamId || (btn.dataset && btn.dataset.streamId) || 'chromecast';
+
+      if (controlUrl && fetchFn) {
+        fetchFn(controlUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: streamId, action: 'wake' }),
+        }).catch((err) => console.warn('[MirrormereDisplay] Header video wake failed:', err));
+      }
+
+      const payload = {
+        id: streamId,
+        stream_url: streamUrl,
+        type: options.type || 'webrtc',
+        priority: options.priority || 'persistent',
+        controllable: options.controllable !== undefined ? options.controllable : true,
+        control_url: controlUrl,
+      };
+
+      try {
+        if (fetchFn) {
+          const resp = await fetchFn('api/video/trigger', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+          if (resp && resp.ok === false) throw new Error(`HTTP ${resp.status}`);
+        }
+      } catch (err) {
+        console.warn('[MirrormereDisplay] Header video trigger failed:', err);
+        clearLoading();
+        btn.classList.add('error');
+        setTimeout(() => btn.classList.remove('error'), 1500);
+      }
+    };
+
+    btn.addEventListener('pointerdown', pointerDownHandler);
+    btn.addEventListener('pointerup', triggerVideo);
+    btn.addEventListener('click', triggerVideo);
+
+    const onVideoState = (data) => {
+      const mode = data && (data.mode || (data.primary ? 'video' : 'widgets'));
+      if (mode === 'video') clearLoading();
+    };
+    const attachSSE = (client) => {
+      if (!client || sseAttached) return;
+      if (typeof client.on === 'function') { client.on('video.state', onVideoState); sseAttached = true; }
+      else if (typeof client.addEventListener === 'function') { client.addEventListener('video.state', onVideoState); sseAttached = true; }
+    };
+    if (sse) attachSSE(sse);
+
+    const controller = {
+      button: btn,
+      get isLoading() { return isLoading; },
+      get hasSSE() { return sseAttached; },
+      attachSSE,
+      triggerVideo,
+      clearLoading,
+      destroy() {
+        btn.removeEventListener('pointerdown', pointerDownHandler);
+        btn.removeEventListener('pointerup', triggerVideo);
+        btn.removeEventListener('click', triggerVideo);
+        if (sse) {
+          if (typeof sse.off === 'function') sse.off('video.state', onVideoState);
+          else if (typeof sse.removeEventListener === 'function') sse.removeEventListener('video.state', onVideoState);
+        }
+        clearLoading();
+        if (headerVideoController === controller) headerVideoController = null;
+      },
+    };
+    headerVideoController = controller;
+    return controller;
+  }
 
   /**
    * Resolve cursor suppression query overrides (?hide_cursor=true/false, ?cursor=none/visible).
@@ -602,6 +736,11 @@
         });
       }
 
+      // 8. Initialize Header Video Action Button
+      setupHeaderVideo({
+        sseClient: sseClient,
+      });
+
       sseClient.on('screen.rotate', (data) => {
         if (carousel) carousel.handleScreenRotate(data);
       });
@@ -634,6 +773,9 @@
       });
 
       sseClient.connect();
+    } else {
+      // Standalone or pre-SSE header video initialization
+      setupHeaderVideo();
     }
   }
 
@@ -664,6 +806,8 @@
     formatDate,
     isValidTimezone,
     resolveCursorSuppression,
+    setupHeaderVideo,
+    getHeaderVideoController: () => headerVideoController,
     init,
   };
 
