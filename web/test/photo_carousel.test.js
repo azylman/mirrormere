@@ -248,12 +248,12 @@ test('Photo Carousel Client Controller', async (t) => {
     const instance = window.MirrormerePhotoCarousel.instances.get('test-backdrop');
     assert.ok(instance);
 
-    // Backdrop URL uses container bounding rect with dpr: 600 * 2 = 1200, 400 * 2 = 800 with -c
+    // Backdrop URL uses lightweight 96x54 thumbnail with -c crop flag for 32px Gaussian blur
     const backdropURL = instance.getBackdropURL('https://lh3.googleusercontent.com/pw/BACKDROP1');
-    assert.equal(backdropURL, 'https://lh3.googleusercontent.com/pw/BACKDROP1=w1200-h800-c');
+    assert.equal(backdropURL, 'https://lh3.googleusercontent.com/pw/BACKDROP1=w96-h54-c');
 
-    // On mount, both current foreground and current backdrop are sized
-    assert.equal(currentBackdrop.src, 'https://lh3.googleusercontent.com/pw/BACKDROP1=w1200-h800-c');
+    // On mount, current foreground is high-res and current backdrop is low-res thumbnail
+    assert.equal(currentBackdrop.src, 'https://lh3.googleusercontent.com/pw/BACKDROP1=w96-h54-c');
     assert.equal(currentImg.src, 'https://lh3.googleusercontent.com/pw/BACKDROP1=w3840-h2160');
 
     // Tap to advance triggers cycle
@@ -262,6 +262,65 @@ test('Photo Carousel Client Controller', async (t) => {
 
     window.MirrormerePhotoCarousel.unmount('test-backdrop');
     assert.equal(clickHandler, null, 'click listener should be detached on unmount');
+  });
+
+  await t.test('skips backdrop URL generation and leaves backdrop layers unpopulated in cover fit mode', () => {
+    const currentImg = { src: '', style: {} };
+    const nextImg = { src: '', style: {} };
+    const currentBackdrop = { src: '', style: {} };
+    const nextBackdrop = { src: '', style: {} };
+    let clickHandler = null;
+
+    const mockElement = {
+      dataset: { widgetId: 'test-backdrop-cover', fit: 'cover' },
+      querySelector(selector) {
+        if (selector === '.photo-carousel-data') {
+          return {
+            textContent: JSON.stringify({
+              photos: [
+                { id: 'c1', url: 'https://lh3.googleusercontent.com/pw/COVER1' },
+                { id: 'c2', url: 'https://lh3.googleusercontent.com/pw/COVER2' }
+              ]
+            })
+          };
+        }
+        if (selector === '.photo-current') return currentImg;
+        if (selector === '.photo-next') return nextImg;
+        if (selector === '.photo-backdrop-current') return currentBackdrop;
+        if (selector === '.photo-backdrop-next') return nextBackdrop;
+        return null;
+      },
+      getBoundingClientRect() {
+        return { width: 600, height: 400 };
+      },
+      addEventListener(event, fn) {
+        if (event === 'click') clickHandler = fn;
+      },
+      removeEventListener(event, fn) {
+        if (event === 'click' && clickHandler === fn) clickHandler = null;
+      }
+    };
+
+    window.MirrormerePhotoCarousel.mount(mockElement);
+    const instance = window.MirrormerePhotoCarousel.instances.get('test-backdrop-cover');
+    assert.ok(instance);
+
+    // In cover fit mode, getBackdropURL returns empty string to prevent duplicate downloads
+    const backdropURL = instance.getBackdropURL('https://lh3.googleusercontent.com/pw/COVER1');
+    assert.equal(backdropURL, '');
+
+    // Current backdrop src remains empty on mount
+    assert.equal(currentBackdrop.src, '');
+    assert.equal(currentImg.src, 'https://lh3.googleusercontent.com/pw/COVER1=w1200-h800-c');
+
+    // Tap to advance should advance foreground without touching backdrop
+    assert.ok(clickHandler, 'click listener should be attached');
+    clickHandler();
+
+    assert.equal(currentBackdrop.src, '');
+    assert.equal(nextBackdrop.src, '');
+
+    window.MirrormerePhotoCarousel.unmount('test-backdrop-cover');
   });
 });
 

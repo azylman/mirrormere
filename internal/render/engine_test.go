@@ -1320,9 +1320,14 @@ func TestEngine_RenderWidget_PhotoCarouselPackage(t *testing.T) {
 
 	htmlStr := string(htmlBytes)
 
-	// Assert SSR 4K baseline
+	// Assert SSR 4K baseline for foreground
 	if !strings.Contains(htmlStr, "=w3840-h2160") {
 		t.Errorf("expected 4K baseline URL =w3840-h2160, got: %s", htmlStr)
+	}
+
+	// Assert lightweight 96x54 thumbnail for blurred backdrop in contain mode
+	if !strings.Contains(htmlStr, `photo-backdrop-current" src="https://lh3.googleusercontent.com/pw/TEST=w96-h54-c"`) {
+		t.Errorf("expected low-res backdrop thumbnail =w96-h54-c, got: %s", htmlStr)
 	}
 
 	// Assert raw unescaped JSON in script tag (no leading quote)
@@ -1331,6 +1336,38 @@ func TestEngine_RenderWidget_PhotoCarouselPackage(t *testing.T) {
 	}
 	if !strings.Contains(htmlStr, `{"album_name":"Family Memories"`) {
 		t.Errorf("expected unescaped JSON object in photo-carousel-data, got: %s", htmlStr)
+	}
+
+	// Test fit: cover mode leaves backdrop src empty
+	snapCover := &config.Snapshot{
+		Config: &config.Config{
+			Display: config.DisplayConfig{
+				Widgets: []config.WidgetConfig{
+					{
+						ID:         "w-photos-cover",
+						Type:       "photo-carousel",
+						Dimensions: []int{3, 2},
+						Config:     map[string]any{"fit": "cover"},
+					},
+				},
+			},
+		},
+		Packages: map[string]*domain.Package{"photo-carousel": pkg},
+	}
+	mockProvCover := &mockSnapshotProvider{
+		snapshot: snapCover,
+		states: map[string]mockState{
+			"w-photos-cover": {data: photoData, state: "healthy"},
+		},
+	}
+	engCover := render.NewEngine(nil, mockProvCover)
+	coverHTMLBytes, err := engCover.RenderWidget(context.Background(), "w-photos-cover")
+	if err != nil {
+		t.Fatalf("RenderWidget cover failed: %v", err)
+	}
+	coverHTML := string(coverHTMLBytes)
+	if !strings.Contains(coverHTML, `photo-backdrop-current" src=""`) {
+		t.Errorf("expected empty backdrop src in cover mode, got: %s", coverHTML)
 	}
 }
 
