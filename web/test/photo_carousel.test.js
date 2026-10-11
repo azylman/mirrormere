@@ -152,6 +152,42 @@ test('Photo Carousel Client Controller', async (t) => {
     window.MirrormerePhotoCarousel.unmount('test-photos-override');
   });
 
+  await t.test('handles double-encoded JSON string data from legacy or SSR templates', () => {
+    const rawData = {
+      cycle_interval_seconds: 45,
+      photos: [
+        { id: 'p1', url: 'https://lh3.googleusercontent.com/pw/DOUBLE' }
+      ]
+    };
+    const mockElement = {
+      dataset: { widgetId: 'test-double-encoded' },
+      querySelector(selector) {
+        if (selector === '.photo-carousel-data') {
+          // Double JSON-encoded string (e.g. "{\"photos\":[...]}")
+          return {
+            textContent: JSON.stringify(JSON.stringify(rawData))
+          };
+        }
+        if (selector === '.photo-current' || selector === '.photo-next') {
+          return { src: '', style: {} };
+        }
+        return null;
+      },
+      getBoundingClientRect() {
+        return { width: 480, height: 320 };
+      }
+    };
+
+    window.MirrormerePhotoCarousel.mount(mockElement);
+    const instance = window.MirrormerePhotoCarousel.instances.get('test-double-encoded');
+    assert.ok(instance);
+    assert.equal(instance.photos.length, 1);
+    assert.equal(instance.photos[0].id, 'p1');
+    assert.equal(instance.cycleIntervalSeconds, 45);
+
+    window.MirrormerePhotoCarousel.unmount('test-double-encoded');
+  });
+
   await t.test('handles empty or malformed carousel data gracefully', () => {
     const mockElement = {
       dataset: { widgetId: 'test-empty' },

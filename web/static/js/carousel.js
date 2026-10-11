@@ -326,7 +326,12 @@ class PhotoCarouselInstance {
     const dataScript = element.querySelector('.photo-carousel-data');
     if (dataScript) {
       try {
-        const data = JSON.parse(dataScript.textContent);
+        let data = JSON.parse(dataScript.textContent);
+        if (typeof data === 'string') {
+          try {
+            data = JSON.parse(data);
+          } catch (_) {}
+        }
         if (data && Array.isArray(data.photos)) {
           this.photos = data.photos;
         }

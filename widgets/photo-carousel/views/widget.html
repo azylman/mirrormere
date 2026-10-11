@@ -3,11 +3,11 @@
     {{ if and .Data.Photos (gt (len .Data.Photos) 0) }}
       {{ $first := index .Data.Photos 0 }}
       <div class="photo-viewport dither">
-        <img class="photo-layer photo-current dither" src="{{ $first.URL }}=w{{ if and .Config.image_size (eq (len .Config.image_size) 2) }}{{ index .Config.image_size 0 }}-h{{ index .Config.image_size 1 }}{{ else }}1920-h1080{{ end }}{{ if eq .Config.fit "cover" }}-c{{ end }}" alt="Photo" />
+        <img class="photo-layer photo-current dither" src="{{ $first.URL }}=w{{ if and .Config.image_size (eq (len .Config.image_size) 2) }}{{ index .Config.image_size 0 }}-h{{ index .Config.image_size 1 }}{{ else }}3840-h2160{{ end }}{{ if eq .Config.fit "cover" }}-c{{ end }}" alt="Photo" />
         <img class="photo-layer photo-next dither" src="" alt="Photo" style="opacity: 0;" />
       </div>
       <script type="application/json" class="photo-carousel-data">
-        {{ json .Data }}
+        {{ jsonJS .Data }}
       </script>
       <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E" style="display:none;" alt="" onload="window.MirrormerePhotoCarousel &amp;&amp; window.MirrormerePhotoCarousel.mount(this.closest('.widget-photo-carousel'))" />
     {{ else }}

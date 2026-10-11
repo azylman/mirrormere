@@ -1207,3 +1207,67 @@ func TestEngine_RenderWidgetWithOverrides(t *testing.T) {
 	}
 }
 
+func TestEngine_RenderWidget_PhotoCarouselPackage(t *testing.T) {
+	t.Parallel()
+
+	repoWidgetsDir := filepath.Join("..", "..", "widgets")
+	loader := widget.NewLoader(repoWidgetsDir, t.TempDir())
+	pkg, err := loader.LoadPackage("photo-carousel")
+	if err != nil {
+		t.Fatalf("failed to load photo-carousel package: %v", err)
+	}
+
+	snap := &config.Snapshot{
+		Config: &config.Config{
+			Display: config.DisplayConfig{
+				Widgets: []config.WidgetConfig{
+					{ID: "w-photos", Type: "photo-carousel", Dimensions: []int{3, 2}},
+				},
+			},
+		},
+		Packages: map[string]*domain.Package{"photo-carousel": pkg},
+	}
+
+	photoData := provider.PhotoSnapshot{
+		AlbumName:            "Family Memories",
+		TotalPhotos:          1,
+		CycleIntervalSeconds: 30,
+		Photos: []provider.PhotoItem{
+			{
+				ID:          "p1",
+				URL:         "https://lh3.googleusercontent.com/pw/TEST",
+				AspectRatio: 1.33,
+			},
+		},
+	}
+
+	mockProv := &mockSnapshotProvider{
+		snapshot: snap,
+		states: map[string]mockState{
+			"w-photos": {data: photoData, state: "healthy"},
+		},
+	}
+
+	eng := render.NewEngine(nil, mockProv)
+	htmlBytes, err := eng.RenderWidget(context.Background(), "w-photos")
+	if err != nil {
+		t.Fatalf("RenderWidget failed: %v", err)
+	}
+
+	htmlStr := string(htmlBytes)
+
+	// Assert SSR 4K baseline
+	if !strings.Contains(htmlStr, "=w3840-h2160") {
+		t.Errorf("expected 4K baseline URL =w3840-h2160, got: %s", htmlStr)
+	}
+
+	// Assert raw unescaped JSON in script tag (no leading quote)
+	if strings.Contains(htmlStr, `<script type="application/json" class="photo-carousel-data">"`) {
+		t.Errorf("photo-carousel-data contains double-encoded JSON string: %s", htmlStr)
+	}
+	if !strings.Contains(htmlStr, `{"album_name":"Family Memories"`) {
+		t.Errorf("expected unescaped JSON object in photo-carousel-data, got: %s", htmlStr)
+	}
+}
+
+
