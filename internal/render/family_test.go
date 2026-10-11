@@ -1352,6 +1352,15 @@ func TestCalendarFamily_WeekViewTemplateRender(t *testing.T) {
 	if !strings.Contains(html, "Team Standup") {
 		t.Errorf("expected 'Team Standup' in rendered output: %s", html)
 	}
+	if !strings.Contains(html, "cf-today") {
+		t.Errorf("expected 'cf-today' in rendered output: %s", html)
+	}
+	if !strings.Contains(html, "var(--mm-cal-today-border") {
+		t.Errorf("expected 'var(--mm-cal-today-border' in rendered output: %s", html)
+	}
+	if strings.Contains(html, "var(--mm-coral, #ff6f59)") {
+		t.Errorf("did not expect orange/coral highlight in rendered output: %s", html)
+	}
 }
 
 func TestHelpers_DayViewAndAddSub(t *testing.T) {
@@ -1947,6 +1956,12 @@ func TestCalendarFamily_MonthViewTemplateRender_6x2(t *testing.T) {
 	// Verify current day styling & outline
 	if !strings.Contains(html, "cf-today") || !strings.Contains(html, "cf-today-num") {
 		t.Errorf("expected cf-today and cf-today-num in html: %s", html)
+	}
+	if !strings.Contains(html, "var(--mm-cal-today-border") {
+		t.Errorf("expected var(--mm-cal-today-border in html: %s", html)
+	}
+	if !strings.Contains(html, "var(--mm-cal-today-badge") {
+		t.Errorf("expected var(--mm-cal-today-badge in html: %s", html)
 	}
 	// Verify other month dimming
 	if !strings.Contains(html, "cf-other-month") {
