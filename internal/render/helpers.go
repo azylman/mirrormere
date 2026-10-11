@@ -90,6 +90,7 @@ func StandardFuncMap(nowFunc func() time.Time) template.FuncMap {
 		"activeCalendars": func(cfg any) []map[string]any {
 			return CalendarFeedActiveCalendars(cfg)
 		},
+		"tasksStats": TasksStats,
 		"add": func(a, b int) int {
 			return a + b
 		},
@@ -759,4 +760,110 @@ func isCalendarItemEnabled(m map[string]any) bool {
 		}
 	}
 	return true
+}
+
+// TasksStatsResult contains summary completion statistics for a tasks list.
+type TasksStatsResult struct {
+	Total     int    `json:"total"`
+	Done      int    `json:"done"`
+	Remaining int    `json:"remaining"`
+	Summary   string `json:"summary"`
+}
+
+// TasksStats inspects a tasks list or slice of items and calculates completion metrics.
+func TasksStats(input any) TasksStatsResult {
+	if input == nil {
+		return TasksStatsResult{}
+	}
+
+	var total, done int
+
+	inspectItem := func(v reflect.Value) {
+		for v.Kind() == reflect.Pointer || v.Kind() == reflect.Interface {
+			if v.IsNil() {
+				return
+			}
+			v = v.Elem()
+		}
+		total++
+		switch v.Kind() {
+		case reflect.Struct:
+			f := v.FieldByName("Done")
+			if f.IsValid() && f.Kind() == reflect.Bool && f.Bool() {
+				done++
+			}
+		case reflect.Map:
+			for _, key := range v.MapKeys() {
+				if strings.EqualFold(fmt.Sprint(key.Interface()), "done") {
+					val := v.MapIndex(key)
+					for val.Kind() == reflect.Pointer || val.Kind() == reflect.Interface {
+						val = val.Elem()
+					}
+					if val.Kind() == reflect.Bool && val.Bool() {
+						done++
+					}
+					break
+				}
+			}
+		}
+	}
+
+	val := reflect.ValueOf(input)
+	for val.Kind() == reflect.Pointer || val.Kind() == reflect.Interface {
+		if val.IsNil() {
+			return TasksStatsResult{}
+		}
+		val = val.Elem()
+	}
+
+	if val.Kind() == reflect.Struct {
+		itemsField := val.FieldByName("Items")
+		if itemsField.IsValid() {
+			val = itemsField
+		}
+	} else if val.Kind() == reflect.Map {
+		for _, key := range val.MapKeys() {
+			if strings.EqualFold(fmt.Sprint(key.Interface()), "items") {
+				val = val.MapIndex(key)
+				break
+			}
+		}
+	}
+
+	for val.Kind() == reflect.Pointer || val.Kind() == reflect.Interface {
+		if val.IsNil() {
+			return TasksStatsResult{}
+		}
+		val = val.Elem()
+	}
+
+	if val.Kind() == reflect.Slice || val.Kind() == reflect.Array {
+		n := val.Len()
+		for i := 0; i < n; i++ {
+			inspectItem(val.Index(i))
+		}
+	}
+
+	rem := total - done
+	if rem < 0 {
+		rem = 0
+	}
+
+	summary := ""
+	if total > 0 {
+		if done == total {
+			summary = "All done"
+		} else if done == 0 {
+			summary = fmt.Sprintf("0 of %d done", total)
+		} else {
+			summary = fmt.Sprintf("%d of %d done", done, total)
+		}
+	}
+
+	return TasksStatsResult{
+		Total:     total,
+		Done:      done,
+		Remaining: rem,
+		Summary:   summary,
+	}
 }

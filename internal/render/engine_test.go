@@ -1141,8 +1141,17 @@ func TestEngine_RenderWidget_TasksPackage(t *testing.T) {
 	if !strings.Contains(htmlStr, "@Alex") {
 		t.Errorf("expected '@Alex' in output: %s", htmlStr)
 	}
-	if !strings.Contains(htmlStr, "#Dairy") {
-		t.Errorf("expected '#Dairy' in output: %s", htmlStr)
+	if !strings.Contains(htmlStr, "1 of 2 done") {
+		t.Errorf("expected '1 of 2 done' in output: %s", htmlStr)
+	}
+	if !strings.Contains(htmlStr, "tasks-sparkle-icon") {
+		t.Errorf("expected 'tasks-sparkle-icon' in output: %s", htmlStr)
+	}
+	if !strings.Contains(htmlStr, "tasks-icon-box") {
+		t.Errorf("expected 'tasks-icon-box' in output: %s", htmlStr)
+	}
+	if strings.Contains(htmlStr, "✅") {
+		t.Errorf("expected raw emoji '✅' to be replaced by vector icon in output: %s", htmlStr)
 	}
 
 	// 2. Render empty tasks
