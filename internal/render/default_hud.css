@@ -1829,12 +1829,13 @@ button, .touch-target {
 .cf-nav-btn {
   background: transparent;
   border: none;
-  color: var(--mm-text-dim, #8b819f);
+  color: var(--mm-text-secondary, #4e465f);
   cursor: pointer;
-  width: 24px;
-  height: 24px;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  width: 22px;
+  height: 22px;
   padding: 0;
-  font-size: 1.15rem;
   line-height: 1;
   border-radius: 50%;
   display: inline-flex;
@@ -1845,6 +1846,10 @@ button, .touch-target {
   transition: color 0.15s ease, background-color 0.15s ease, transform 0.1s ease;
 }
 
+.cf-nav-btn svg {
+  display: block;
+}
+
 .cf-nav-btn:hover, .cf-nav-btn:active {
   color: var(--mm-text-title, #2a2338);
   background: rgba(90, 60, 30, 0.08);
@@ -1852,6 +1857,16 @@ button, .touch-target {
 
 .cf-nav-btn:active {
   transform: scale(0.92);
+}
+
+.cf-date-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  background: rgba(90, 60, 30, 0.04);
+  border: 1px solid var(--mm-card-border, rgba(90, 60, 30, 0.08));
+  border-radius: 9999px;
+  padding: 2px 4px;
 }
 
 .cf-today-badge {
