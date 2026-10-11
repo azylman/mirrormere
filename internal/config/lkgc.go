@@ -79,6 +79,7 @@ type ConfigDiff struct {
 	Modified        []InstanceDiff
 	LayoutModified  []WidgetConfig // Instances whose dimensions or pinned status changed without worker modifications
 	TimezoneChanged bool           // Household IANA timezone updated
+	ShellChanged    bool           // Top-level display shell (header, hide_cursor, remote_url) changed
 }
 
 // Manager coordinates live configuration reloads and enforces LKGC resilience.
@@ -724,6 +725,13 @@ func DiffConfigs(oldCfg, newCfg *Config) *ConfigDiff {
 	diff := &ConfigDiff{}
 	if oldCfg != nil && newCfg != nil && oldCfg.Timezone != newCfg.Timezone {
 		diff.TimezoneChanged = true
+	}
+	if oldCfg != nil && newCfg != nil {
+		if !reflect.DeepEqual(oldCfg.Display.Header, newCfg.Display.Header) ||
+			oldCfg.Display.HideCursor != newCfg.Display.HideCursor ||
+			oldCfg.Display.RemoteURL != newCfg.Display.RemoteURL {
+			diff.ShellChanged = true
+		}
 	}
 	oldMap := make(map[string]WidgetConfig)
 	if oldCfg != nil {

@@ -295,4 +295,32 @@ describe('Display Deployment and Daily Maintenance Reload', () => {
 
     assert.equal(reloadedCount, 1);
   });
+
+  test('handleSystemReload triggers immediate reload when delay is 0', () => {
+    const display = require('../static/js/display.js');
+    display.resetBootIdState();
+
+    display.handleSystemReload({ reason: 'shell_change' }, 0);
+    assert.equal(reloadedCount, 1, 'immediate reload executes synchronously');
+  });
+
+  test('handleSystemReload debounces rapid reload events', async () => {
+    const display = require('../static/js/display.js');
+    display.resetBootIdState();
+
+    display.handleSystemReload({ reason: 'shell_change' }, 50);
+    display.handleSystemReload({ reason: 'shell_change' }, 50);
+    assert.equal(reloadedCount, 0, 'reload deferred by debounce timer');
+
+    await new Promise((resolve) => setTimeout(resolve, 90));
+    assert.equal(reloadedCount, 1, 'debounced reload fires once after delay');
+  });
+
+  test('handleSystemReload handles missing or empty data gracefully', () => {
+    const display = require('../static/js/display.js');
+    display.resetBootIdState();
+
+    display.handleSystemReload(undefined, 0);
+    assert.equal(reloadedCount, 1);
+  });
 });

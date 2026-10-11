@@ -191,6 +191,77 @@ func TestHub_DispatchStyleAndWidgetReload(t *testing.T) {
 	case <-time.After(1 * time.Second):
 		t.Fatal("timeout waiting for widget.reload")
 	}
+
+	// 3. System reload
+	sysReloadEvt := SystemReloadEvent{
+		Reason:    "manual_reload",
+		Timestamp: "2026-09-25T20:00:00Z",
+	}
+	if err := hub.DispatchSystemReload(sysReloadEvt); err != nil {
+		t.Fatalf("DispatchSystemReload failed: %v", err)
+	}
+
+	select {
+	case evt := <-ch:
+		if evt.Type != EventSystemReload {
+			t.Errorf("expected %s, got %s", EventSystemReload, evt.Type)
+		}
+		var received SystemReloadEvent
+		if err := json.Unmarshal(evt.Data, &received); err != nil {
+			t.Fatalf("failed to unmarshal SystemReloadEvent: %v", err)
+		}
+		if received.Reason != "manual_reload" {
+			t.Errorf("expected reason manual_reload, got %s", received.Reason)
+		}
+	case <-time.After(1 * time.Second):
+		t.Fatal("timeout waiting for system.reload")
+	}
+}
+
+func TestHub_DispatchConfigReload_ShellChanged(t *testing.T) {
+	t.Parallel()
+
+	hub := NewHub(HubConfig{}, nil, nil)
+	defer hub.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ch, unsub := hub.Subscribe(ctx)
+	defer unsub()
+
+	snap := &config.Snapshot{
+		Config: &config.Config{
+			Timezone: "America/Chicago",
+		},
+	}
+
+	diff := &config.ConfigDiff{
+		ShellChanged: true,
+	}
+
+	if err := hub.DispatchConfigReload(snap, diff); err != nil {
+		t.Fatalf("DispatchConfigReload failed: %v", err)
+	}
+
+	select {
+	case evt := <-ch:
+		if evt.Type != EventSystemReload {
+			t.Fatalf("expected EventSystemReload, got %s", evt.Type)
+		}
+		var reload SystemReloadEvent
+		if err := json.Unmarshal(evt.Data, &reload); err != nil {
+			t.Fatalf("failed to unmarshal SystemReloadEvent: %v", err)
+		}
+		if reload.Reason != "shell_change" {
+			t.Errorf("expected reason shell_change, got %s", reload.Reason)
+		}
+		if reload.Timestamp == "" {
+			t.Errorf("expected non-empty timestamp")
+		}
+	case <-time.After(1 * time.Second):
+		t.Fatal("timeout waiting for system.reload")
+	}
 }
 
 func TestHub_DispatchStatus(t *testing.T) {
