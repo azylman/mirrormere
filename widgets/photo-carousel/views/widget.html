@@ -4,7 +4,7 @@
       {{ $first := index .Data.Photos 0 }}
       <div class="photo-viewport dither">
         <div class="photo-backdrop-container" aria-hidden="true">
-          <img class="photo-backdrop-layer photo-backdrop-current" src="{{ $first.URL }}=w{{ if and .Config.image_size (eq (len .Config.image_size) 2) }}{{ index .Config.image_size 0 }}-h{{ index .Config.image_size 1 }}{{ else }}3840-h2160{{ end }}-c" alt="" />
+          <img class="photo-backdrop-layer photo-backdrop-current" src="{{ if ne .Config.fit "cover" }}{{ $first.URL }}=w96-h54-c{{ end }}" alt="" />
           <img class="photo-backdrop-layer photo-backdrop-next" src="" alt="" style="opacity: 0;" />
         </div>
         <div class="photo-foreground-container">

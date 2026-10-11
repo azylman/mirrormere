@@ -369,28 +369,8 @@ window.PhotoCarouselInstance = class PhotoCarouselInstance {
   }
 
   getBackdropURL(rawURL) {
-    if (!rawURL) return '';
-    const dpr = (typeof window !== 'undefined' && window.devicePixelRatio) || 1;
-    const hardwareWidth = (typeof window !== 'undefined' && window.screen && window.screen.width) || (typeof window !== 'undefined' && window.innerWidth) || 1920;
-    const hardwareHeight = (typeof window !== 'undefined' && window.screen && window.screen.height) || (typeof window !== 'undefined' && window.innerHeight) || 1080;
-    const screenWidth = Math.round(hardwareWidth * dpr);
-    const screenHeight = Math.round(hardwareHeight * dpr);
-
-    let targetWidth;
-    let targetHeight;
-
-    if (this.element && this.element.dataset && this.element.dataset.imageWidth && this.element.dataset.imageHeight) {
-      targetWidth = parseInt(this.element.dataset.imageWidth, 10);
-      targetHeight = parseInt(this.element.dataset.imageHeight, 10);
-    } else {
-      const rect = this.element && typeof this.element.getBoundingClientRect === 'function' ? this.element.getBoundingClientRect() : { width: 0, height: 0 };
-      targetWidth = Math.round((rect.width || 0) * dpr);
-      targetHeight = Math.round((rect.height || 0) * dpr);
-      if (targetWidth <= 0) targetWidth = screenWidth;
-      if (targetHeight <= 0) targetHeight = screenHeight;
-    }
-
-    return `${rawURL}=w${targetWidth}-h${targetHeight}-c`;
+    if (!rawURL || this.fit === 'cover') return '';
+    return `${rawURL}=w96-h54-c`;
   }
 
   getSizedURL(rawURL) {
@@ -436,7 +416,7 @@ window.PhotoCarouselInstance = class PhotoCarouselInstance {
           this.currentImg.src = sized;
         }
       }
-      if (this.currentBackdrop) {
+      if (this.currentBackdrop && this.fit !== 'cover') {
         const backdropSized = this.getBackdropURL(first.url);
         if (backdropSized && !this.currentBackdrop.src.includes(backdropSized)) {
           this.currentBackdrop.src = backdropSized;
@@ -481,7 +461,7 @@ window.PhotoCarouselInstance = class PhotoCarouselInstance {
       this.nextImg.style.opacity = '1';
       this.currentImg.style.opacity = '0';
 
-      if (this.nextBackdrop && this.currentBackdrop) {
+      if (this.nextBackdrop && this.currentBackdrop && this.fit !== 'cover' && nextBackdropURL) {
         this.nextBackdrop.src = nextBackdropURL;
         this.nextBackdrop.style.opacity = '1';
         this.currentBackdrop.style.opacity = '0';
@@ -493,7 +473,7 @@ window.PhotoCarouselInstance = class PhotoCarouselInstance {
         this.nextImg.style.opacity = '0';
         this.nextImg.src = '';
 
-        if (this.nextBackdrop && this.currentBackdrop) {
+        if (this.nextBackdrop && this.currentBackdrop && this.fit !== 'cover' && nextBackdropURL) {
           this.currentBackdrop.src = nextBackdropURL;
           this.currentBackdrop.style.opacity = '1';
           this.nextBackdrop.style.opacity = '0';
