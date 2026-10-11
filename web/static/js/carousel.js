@@ -314,7 +314,7 @@ window.MirrormereCarousel = MirrormereCarousel;
  * Manages photo carousel instances, dynamic edge-resizing parameter injection (=w{w}-h{h}-c),
  * background image preloading, and smooth CSS cross-fade transitions.
  */
-class PhotoCarouselInstance {
+window.PhotoCarouselInstance = class PhotoCarouselInstance {
   constructor(element) {
     this.element = element;
     this.widgetId = element.dataset.widgetId;
@@ -345,14 +345,52 @@ class PhotoCarouselInstance {
 
     this.currentImg = element.querySelector('.photo-current');
     this.nextImg = element.querySelector('.photo-next');
+    this.currentBackdrop = element.querySelector('.photo-backdrop-current');
+    this.nextBackdrop = element.querySelector('.photo-backdrop-next');
     this.fit = element.dataset.fit || 'contain';
 
     // Update first image with dynamic DOM sizing if container is measured
     this.updateCurrentSizing();
 
+    // Tap/click to advance to next photo
+    this._clickHandler = () => {
+      if (this.photos.length > 1) {
+        this.cycleNext();
+        this.startCycling(); // reset interval timer on user interaction
+      }
+    };
+    if (typeof this.element.addEventListener === 'function') {
+      this.element.addEventListener('click', this._clickHandler);
+    }
+
     if (this.photos.length > 1) {
       this.startCycling();
     }
+  }
+
+  getBackdropURL(rawURL) {
+    if (!rawURL) return '';
+    const dpr = (typeof window !== 'undefined' && window.devicePixelRatio) || 1;
+    const hardwareWidth = (typeof window !== 'undefined' && window.screen && window.screen.width) || (typeof window !== 'undefined' && window.innerWidth) || 1920;
+    const hardwareHeight = (typeof window !== 'undefined' && window.screen && window.screen.height) || (typeof window !== 'undefined' && window.innerHeight) || 1080;
+    const screenWidth = Math.round(hardwareWidth * dpr);
+    const screenHeight = Math.round(hardwareHeight * dpr);
+
+    let targetWidth;
+    let targetHeight;
+
+    if (this.element && this.element.dataset && this.element.dataset.imageWidth && this.element.dataset.imageHeight) {
+      targetWidth = parseInt(this.element.dataset.imageWidth, 10);
+      targetHeight = parseInt(this.element.dataset.imageHeight, 10);
+    } else {
+      const rect = this.element && typeof this.element.getBoundingClientRect === 'function' ? this.element.getBoundingClientRect() : { width: 0, height: 0 };
+      targetWidth = Math.round((rect.width || 0) * dpr);
+      targetHeight = Math.round((rect.height || 0) * dpr);
+      if (targetWidth <= 0) targetWidth = screenWidth;
+      if (targetHeight <= 0) targetHeight = screenHeight;
+    }
+
+    return `${rawURL}=w${targetWidth}-h${targetHeight}-c`;
   }
 
   getSizedURL(rawURL) {
@@ -389,12 +427,20 @@ class PhotoCarouselInstance {
   }
 
   updateCurrentSizing() {
-    if (!this.currentImg || this.photos.length === 0) return;
+    if (this.photos.length === 0) return;
     const first = this.photos[this.currentIndex];
     if (first && first.url) {
-      const sized = this.getSizedURL(first.url);
-      if (sized && !this.currentImg.src.includes(sized)) {
-        this.currentImg.src = sized;
+      if (this.currentImg) {
+        const sized = this.getSizedURL(first.url);
+        if (sized && !this.currentImg.src.includes(sized)) {
+          this.currentImg.src = sized;
+        }
+      }
+      if (this.currentBackdrop) {
+        const backdropSized = this.getBackdropURL(first.url);
+        if (backdropSized && !this.currentBackdrop.src.includes(backdropSized)) {
+          this.currentBackdrop.src = backdropSized;
+        }
       }
     }
   }
@@ -426,6 +472,7 @@ class PhotoCarouselInstance {
     if (!nextPhoto || !nextPhoto.url) return;
 
     const nextSizedURL = this.getSizedURL(nextPhoto.url);
+    const nextBackdropURL = this.getBackdropURL(nextPhoto.url);
 
     // Preload next image in memory
     const preloader = new Image();
@@ -434,11 +481,25 @@ class PhotoCarouselInstance {
       this.nextImg.style.opacity = '1';
       this.currentImg.style.opacity = '0';
 
+      if (this.nextBackdrop && this.currentBackdrop) {
+        this.nextBackdrop.src = nextBackdropURL;
+        this.nextBackdrop.style.opacity = '1';
+        this.currentBackdrop.style.opacity = '0';
+      }
+
       setTimeout(() => {
         this.currentImg.src = nextSizedURL;
         this.currentImg.style.opacity = '1';
         this.nextImg.style.opacity = '0';
         this.nextImg.src = '';
+
+        if (this.nextBackdrop && this.currentBackdrop) {
+          this.currentBackdrop.src = nextBackdropURL;
+          this.currentBackdrop.style.opacity = '1';
+          this.nextBackdrop.style.opacity = '0';
+          this.nextBackdrop.src = '';
+        }
+
         this.currentIndex = nextIndex;
       }, 850);
     };
@@ -447,6 +508,10 @@ class PhotoCarouselInstance {
 
   destroy() {
     this.stopCycling();
+    if (this._clickHandler && this.element && typeof this.element.removeEventListener === 'function') {
+      this.element.removeEventListener('click', this._clickHandler);
+      this._clickHandler = null;
+    }
   }
 }
 
@@ -460,7 +525,7 @@ window.MirrormerePhotoCarousel = {
       this.instances.get(id).destroy();
       this.instances.delete(id);
     }
-    const instance = new PhotoCarouselInstance(element);
+    const instance = new window.PhotoCarouselInstance(element);
     this.instances.set(id, instance);
   },
   unmount(id) {
