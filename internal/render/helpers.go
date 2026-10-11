@@ -44,11 +44,12 @@ func StandardFuncMap(nowFunc func() time.Time) template.FuncMap {
 		"relDate": func(args ...any) string {
 			return RelDate(nowFunc(), args...)
 		},
-		"json":               JSONHelper,
-		"jsonJS":             JSONJSHelper,
-		"weatherIcon":        WeatherIcon,
-		"weatherHourlyGraph": WeatherHourlyGraph,
-		"todayPrecipProb":    TodayPrecipProb,
+		"json":                 JSONHelper,
+		"jsonJS":               JSONJSHelper,
+		"weatherIcon":          WeatherIcon,
+		"weatherHourlyGraph":   WeatherHourlyGraph,
+		"weatherDailyForecast": WeatherDailyForecast,
+		"todayPrecipProb":      TodayPrecipProb,
 		"calendarGridView": func(data any, cfg map[string]any, dims domain.Dimension) (*FamilyViewModel, error) {
 			return BuildFamilyView(data, cfg, dims, nowFunc())
 		},
@@ -545,12 +546,12 @@ func WeatherHourlyGraph(args ...any) template.HTML {
 	}
 
 	const (
-		baseColWidth  = 68.0
+		baseColWidth  = 64.0
 		minGraphWidth = 560.0
-		svgHeight     = 260.0
-		minY          = 92.0  // High temp y-coord (leaving room for temp label at y = 80, icon at y = 28..56, precip at y = 18)
-		maxY          = 180.0 // Low temp y-coord
-		baseY         = 208.0 // Baseline axis y-coord
+		svgHeight     = 124.0
+		minY          = 52.0 // High temp y-coord
+		maxY          = 82.0 // Low temp y-coord (amplitude 30px)
+		baseY         = 96.0 // Baseline axis y-coord
 	)
 
 	n := len(pts)
@@ -626,19 +627,19 @@ func WeatherHourlyGraph(args ...any) template.HTML {
 			pt.x, pt.y+6.0, pt.x, baseY)
 
 		if pt.precipProb > 0 {
-			fmt.Fprintf(&sb, `<text x="%.1f" y="18" text-anchor="middle" font-size="11" font-weight="700" fill="var(--mm-sky, #3b9edd)" style="user-select: none; pointer-events: none;">☂ %d%%</text>`,
+			fmt.Fprintf(&sb, `<text x="%.1f" y="13" text-anchor="middle" font-size="10" font-weight="700" fill="var(--mm-sky, #3b9edd)" style="user-select: none; pointer-events: none;">☂ %d%%</text>`,
 				pt.x, pt.precipProb)
 		}
 
 		iconPath := weatherIconPath(pt.icon)
-		fmt.Fprintf(&sb, `<g transform="translate(%.1f, 28) scale(1.15)" fill="none" stroke="var(--mm-honey, #f59e0b)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">%s</g>`,
-			pt.x-14.0, iconPath)
+		fmt.Fprintf(&sb, `<g transform="translate(%.1f, 22) scale(1.0)" fill="none" stroke="var(--mm-honey, #f59e0b)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">%s</g>`,
+			pt.x-10.0, iconPath)
 
 		tempRound := int(math.Round(pt.temp))
-		fmt.Fprintf(&sb, `<text x="%.1f" y="%.1f" text-anchor="middle" font-size="14" font-weight="800" fill="var(--mm-text-title, #2a2338)" style="user-select: none; pointer-events: none;">%d°</text>`,
-			pt.x, pt.y-10.0, tempRound)
+		fmt.Fprintf(&sb, `<text x="%.1f" y="%.1f" text-anchor="middle" font-size="12" font-weight="800" fill="var(--mm-text-title, #2a2338)" style="user-select: none; pointer-events: none;">%d°</text>`,
+			pt.x, pt.y-7.0, tempRound)
 
-		fmt.Fprintf(&sb, `<circle cx="%.1f" cy="%.1f" r="4.5" fill="#ffffff" stroke="var(--mm-coral, #ff6f59)" stroke-width="2"/>`,
+		fmt.Fprintf(&sb, `<circle cx="%.1f" cy="%.1f" r="3.5" fill="#ffffff" stroke="var(--mm-coral, #ff6f59)" stroke-width="2"/>`,
 			pt.x, pt.y)
 
 		timeLabel := "Now"
@@ -653,12 +654,242 @@ func WeatherHourlyGraph(args ...any) template.HTML {
 				timeLabel = pt.timeStr
 			}
 		}
-		fmt.Fprintf(&sb, `<text x="%.1f" y="236" text-anchor="middle" font-size="12" font-weight="%s" fill="%s" style="user-select: none; pointer-events: none;">%s</text>`,
+		fmt.Fprintf(&sb, `<text x="%.1f" y="114" text-anchor="middle" font-size="11" font-weight="%s" fill="%s" style="user-select: none; pointer-events: none;">%s</text>`,
 			pt.x, timeWeight, timeColor, template.HTMLEscapeString(timeLabel))
 	}
 
 	sb.WriteString("</svg>")
 	return template.HTML(sb.String())
+}
+
+// WeatherDailyItem represents a formatted daily forecast row for the weather widget.
+type WeatherDailyItem struct {
+	Date          string
+	DayName       string
+	Icon          string
+	ConditionText string
+	TempMin       float64
+	TempMax       float64
+	PrecipProbMax int
+	HasPrecip     bool
+	BarLeft       float64
+	BarWidth      float64
+}
+
+func extractDailyPoints(arg any) []provider.WeatherDaily {
+	if arg == nil {
+		return nil
+	}
+
+	val := reflect.ValueOf(arg)
+	if val.Kind() == reflect.Pointer {
+		if val.IsNil() {
+			return nil
+		}
+		val = val.Elem()
+	}
+
+	if val.Kind() != reflect.Slice && val.Kind() != reflect.Array {
+		return nil
+	}
+
+	n := val.Len()
+	if n == 0 {
+		return nil
+	}
+
+	pts := make([]provider.WeatherDaily, 0, n)
+	for i := 0; i < n; i++ {
+		itemVal := val.Index(i)
+		if !itemVal.IsValid() {
+			continue
+		}
+		item := itemVal.Interface()
+		if item == nil {
+			continue
+		}
+
+		var pt provider.WeatherDaily
+		if d, ok := item.(provider.WeatherDaily); ok {
+			pt = d
+		} else if dp, ok := item.(*provider.WeatherDaily); ok && dp != nil {
+			pt = *dp
+		} else if m, ok := item.(map[string]any); ok {
+			if s, ok := m["date"].(string); ok {
+				pt.Date = s
+			}
+			if v, ok := m["temp_max"].(float64); ok {
+				pt.TempMax = v
+			} else if v, ok := m["temp_max"].(int); ok {
+				pt.TempMax = float64(v)
+			}
+			if v, ok := m["temp_min"].(float64); ok {
+				pt.TempMin = v
+			} else if v, ok := m["temp_min"].(int); ok {
+				pt.TempMin = float64(v)
+			}
+			if v, ok := m["precip_prob_max"].(int); ok {
+				pt.PrecipProbMax = v
+			} else if v, ok := m["precip_prob_max"].(float64); ok {
+				pt.PrecipProbMax = int(v)
+			}
+			if s, ok := m["condition_text"].(string); ok {
+				pt.ConditionText = s
+			}
+			if s, ok := m["icon"].(string); ok {
+				pt.Icon = s
+			}
+		} else {
+			v := reflect.ValueOf(item)
+			if v.Kind() == reflect.Pointer {
+				if v.IsNil() {
+					continue
+				}
+				v = v.Elem()
+			}
+			if v.Kind() == reflect.Struct {
+				if f := v.FieldByName("Date"); f.IsValid() && f.Kind() == reflect.String {
+					pt.Date = f.String()
+				}
+				if f := v.FieldByName("TempMax"); f.IsValid() {
+					if f.Kind() == reflect.Float64 || f.Kind() == reflect.Float32 {
+						pt.TempMax = f.Float()
+					} else if f.Kind() == reflect.Int || f.Kind() == reflect.Int64 {
+						pt.TempMax = float64(f.Int())
+					}
+				}
+				if f := v.FieldByName("TempMin"); f.IsValid() {
+					if f.Kind() == reflect.Float64 || f.Kind() == reflect.Float32 {
+						pt.TempMin = f.Float()
+					} else if f.Kind() == reflect.Int || f.Kind() == reflect.Int64 {
+						pt.TempMin = float64(f.Int())
+					}
+				}
+				if f := v.FieldByName("PrecipProbMax"); f.IsValid() {
+					if f.Kind() == reflect.Int || f.Kind() == reflect.Int64 {
+						pt.PrecipProbMax = int(f.Int())
+					} else if f.Kind() == reflect.Float64 || f.Kind() == reflect.Float32 {
+						pt.PrecipProbMax = int(f.Float())
+					}
+				}
+				if f := v.FieldByName("ConditionText"); f.IsValid() && f.Kind() == reflect.String {
+					pt.ConditionText = f.String()
+				}
+				if f := v.FieldByName("Icon"); f.IsValid() && f.Kind() == reflect.String {
+					pt.Icon = f.String()
+				}
+			}
+		}
+
+		if math.IsNaN(pt.TempMin) || math.IsInf(pt.TempMin, 0) {
+			pt.TempMin = 0.0
+		}
+		if math.IsNaN(pt.TempMax) || math.IsInf(pt.TempMax, 0) {
+			pt.TempMax = 0.0
+		}
+		if pt.Icon == "" {
+			pt.Icon = "weather-cloudy"
+		}
+		pts = append(pts, pt)
+	}
+
+	return pts
+}
+
+// WeatherDailyForecast extracts upcoming daily forecast items (excluding today, index 0),
+// formats day names, and computes normalized temperature bar ranges.
+func WeatherDailyForecast(arg any, maxDaysOpt ...int) []WeatherDailyItem {
+	pts := extractDailyPoints(arg)
+	if len(pts) <= 1 {
+		return nil
+	}
+
+	maxDays := 5
+	if len(maxDaysOpt) > 0 && maxDaysOpt[0] > 0 {
+		maxDays = maxDaysOpt[0]
+	}
+
+	end := 1 + maxDays
+	if end > len(pts) {
+		end = len(pts)
+	}
+
+	upcoming := pts[1:end]
+	if len(upcoming) == 0 {
+		return nil
+	}
+
+	items := make([]WeatherDailyItem, len(upcoming))
+	var overallMin, overallMax float64
+
+	for i, raw := range upcoming {
+		dayName := "Tomorrow"
+		if i > 0 {
+			if t, err := time.Parse("2006-01-02", strings.TrimSpace(raw.Date)); err == nil {
+				dayName = t.Format("Mon")
+			} else {
+				dayName = raw.Date
+			}
+		}
+
+		tMin := raw.TempMin
+		tMax := raw.TempMax
+		if tMin > tMax {
+			tMin, tMax = tMax, tMin
+		}
+
+		if i == 0 {
+			overallMin = tMin
+			overallMax = tMax
+		} else {
+			if tMin < overallMin {
+				overallMin = tMin
+			}
+			if tMax > overallMax {
+				overallMax = tMax
+			}
+		}
+
+		items[i] = WeatherDailyItem{
+			Date:          raw.Date,
+			DayName:       dayName,
+			Icon:          raw.Icon,
+			ConditionText: raw.ConditionText,
+			TempMin:       tMin,
+			TempMax:       tMax,
+			PrecipProbMax: raw.PrecipProbMax,
+			HasPrecip:     raw.PrecipProbMax > 0,
+		}
+	}
+
+	span := overallMax - overallMin
+	if span < 2.0 {
+		span = 2.0
+	}
+
+	for i := range items {
+		barLeft := ((items[i].TempMin - overallMin) / span) * 100.0
+		barWidth := ((items[i].TempMax - items[i].TempMin) / span) * 100.0
+
+		if barLeft < 0.0 {
+			barLeft = 0.0
+		} else if barLeft > 95.0 {
+			barLeft = 95.0
+		}
+
+		if barWidth < 5.0 {
+			barWidth = 5.0
+		}
+		if barLeft+barWidth > 100.0 {
+			barWidth = 100.0 - barLeft
+		}
+
+		items[i].BarLeft = barLeft
+		items[i].BarWidth = barWidth
+		items[i].HasPrecip = items[i].PrecipProbMax > 0
+	}
+
+	return items
 }
 
 // TodayPrecipProb extracts today's maximum precipitation probability percentage (0-100)
