@@ -1159,6 +1159,10 @@ button, .touch-target {
 
 .video-hud-prev,
 .video-hud-next {
+  width: 48px;
+  min-width: 48px;
+  padding: 0;
+  border-radius: 50%;
   font-size: 1.1rem;
 }
 
