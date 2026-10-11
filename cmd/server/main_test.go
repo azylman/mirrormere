@@ -102,7 +102,22 @@ func TestRun_CompositionRootSmoke(t *testing.T) {
 	defer cancel()
 
 	cfgDir := t.TempDir()
-	cfgContent := "host: \"127.0.0.1\"\nport: 0\ntimezone: America/New_York\ndisplay:\n  widgets:\n    - id: default-spacer\n      type: spacer\n      dimensions: [6, 2]\n"
+	cfgContent := `host: "127.0.0.1"
+port: 0
+timezone: America/New_York
+display:
+  header:
+    video:
+      enabled: true
+      stream_id: "test-cam"
+      stream_url: "http://camera.example.com/stream.m3u8"
+      control_url: "http://controller.example.com/wake"
+      type: "webrtc"
+  widgets:
+    - id: default-spacer
+      type: spacer
+      dimensions: [6, 2]
+`
 	cfgPath := writeTestServerYAML(t, cfgDir, "config.yaml", cfgContent)
 
 	readyChan := make(chan struct{}, 1)
@@ -182,6 +197,9 @@ func TestRun_CompositionRootSmoke(t *testing.T) {
 	body, _ = io.ReadAll(resp.Body)
 	if !strings.Contains(string(body), "mirrormere-app") {
 		t.Errorf("GET /display body does not contain mirrormere-app: %s", string(body))
+	}
+	if !strings.Contains(string(body), `data-stream-id="test-cam"`) {
+		t.Errorf("GET /display body does not contain data-stream-id: %s", string(body))
 	}
 
 	// 5. GET /style.css -> 200 OK

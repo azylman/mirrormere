@@ -29,6 +29,13 @@ display:
       latitude: 37.8044
       longitude: -122.2712
       units: imperial
+    # Optional fullscreen video expansion action button in header
+    video:
+      enabled: false
+      stream_id: "chromecast"
+      stream_url: "http://localhost:1984/api/webrtc?src=cast"
+      control_url: "http://cast-watcher:8090/action"
+      type: "webrtc"
 
   # Active widget instances
   # Widgets are automatically packed across minimal rotation screens via the 6x2 bitmask solver.

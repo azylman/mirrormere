@@ -719,5 +719,84 @@ func TestGetDisplay_RemoteURL(t *testing.T) {
 	})
 }
 
+func TestGetDisplay_HeaderVideo(t *testing.T) {
+	t.Parallel()
+
+	// 1. When HeaderVideo is nil or disabled -> button is omitted from HTML
+	t.Run("DisabledOrNil_OmittedFromHTML", func(t *testing.T) {
+		t.Parallel()
+		h := display.NewHandler()
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		rec := httptest.NewRecorder()
+		h.GetDisplay(rec, req)
+
+		body := rec.Body.String()
+		if strings.Contains(body, "id=\"header-video\"") {
+			t.Errorf("expected no header-video container when HeaderVideo is nil, got: %s", body)
+		}
+		if strings.Contains(body, "id=\"header-video-btn\"") {
+			t.Errorf("expected no header-video-btn when HeaderVideo is nil, got: %s", body)
+		}
+	})
+
+	// 2. When HeaderVideo is enabled -> button is rendered with data attributes
+	t.Run("Enabled_RenderedWithDataAttributes", func(t *testing.T) {
+		t.Parallel()
+		videoData := &display.HeaderVideoTemplateData{
+			Enabled:    true,
+			StreamID:   "custom-tv",
+			StreamURL:  "http://localhost:1984/api/webrtc?src=tv",
+			ControlURL: "http://cast-watcher:8090/action",
+			Type:       "webrtc",
+		}
+		h := display.NewHandler(
+			display.WithHeaderVideoTemplateData(videoData),
+		)
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		rec := httptest.NewRecorder()
+		h.GetDisplay(rec, req)
+
+		body := rec.Body.String()
+		if !strings.Contains(body, "id=\"header-video\"") {
+			t.Errorf("expected header-video container in HTML, got: %s", body)
+		}
+		if !strings.Contains(body, "id=\"header-video-btn\"") {
+			t.Errorf("expected header-video-btn in HTML, got: %s", body)
+		}
+		if !strings.Contains(body, `data-stream-id="custom-tv"`) {
+			t.Errorf("expected data-stream-id in HTML, got: %s", body)
+		}
+		if !strings.Contains(body, `data-stream-url="http://localhost:1984/api/webrtc?src=tv"`) {
+			t.Errorf("expected data-stream-url in HTML, got: %s", body)
+		}
+		if !strings.Contains(body, `data-control-url="http://cast-watcher:8090/action"`) {
+			t.Errorf("expected data-control-url in HTML, got: %s", body)
+		}
+		if !strings.Contains(body, `data-type="webrtc"`) {
+			t.Errorf("expected data-type in HTML, got: %s", body)
+		}
+	})
+
+	// 3. Dynamic provider
+	t.Run("DynamicProvider", func(t *testing.T) {
+		t.Parallel()
+		current := &display.HeaderVideoTemplateData{Enabled: false}
+		h := display.NewHandler(
+			display.WithHeaderVideoProvider(func() *display.HeaderVideoTemplateData {
+				return current
+			}),
+		)
+
+		if h.HeaderVideo() != current {
+			t.Errorf("expected %v, got %v", current, h.HeaderVideo())
+		}
+
+		current = &display.HeaderVideoTemplateData{Enabled: true, StreamID: "live-cam"}
+		if h.HeaderVideo().StreamID != "live-cam" {
+			t.Errorf("expected 'live-cam', got %q", h.HeaderVideo().StreamID)
+		}
+	})
+}
+
 
 

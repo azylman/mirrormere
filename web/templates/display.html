@@ -23,8 +23,9 @@
         </div>
       </div>
       <div class="header-right-cluster">
+        {{ if and .HeaderVideo .HeaderVideo.Enabled }}
         <div class="header-video" id="header-video">
-          <button id="header-video-btn" class="header-video-btn" aria-label="Open Fullscreen Video" title="Open Fullscreen Video">
+          <button id="header-video-btn" class="header-video-btn" aria-label="Open Fullscreen Video" title="Open Fullscreen Video"{{ if .HeaderVideo.StreamID }} data-stream-id="{{ .HeaderVideo.StreamID }}"{{ end }}{{ if .HeaderVideo.StreamURL }} data-stream-url="{{ .HeaderVideo.StreamURL }}"{{ end }}{{ if .HeaderVideo.ControlURL }} data-control-url="{{ .HeaderVideo.ControlURL }}"{{ end }}{{ if .HeaderVideo.Type }} data-type="{{ .HeaderVideo.Type }}"{{ end }}>
             <svg class="header-video-icon" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
               <rect width="20" height="15" x="2" y="7" rx="2" ry="2"></rect>
               <polyline points="17 2 12 7 7 2"></polyline>
@@ -32,6 +33,7 @@
             <span class="header-video-spinner" id="header-video-spinner" aria-hidden="true"></span>
           </button>
         </div>
+        {{ end }}
         <div class="header-weather" id="header-weather">
           <div class="pill-badge weather-pill" id="weather-pill">
             <span class="weather-condition" id="weather-condition">

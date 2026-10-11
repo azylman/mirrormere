@@ -111,6 +111,20 @@ func WithRemoteURLProvider(provider func() string) HandlerOption {
 	}
 }
 
+// WithHeaderVideoTemplateData sets static HeaderVideoTemplateData for the display.
+func WithHeaderVideoTemplateData(data *HeaderVideoTemplateData) HandlerOption {
+	return func(h *Handler) {
+		h.headerVideo = data
+	}
+}
+
+// WithHeaderVideoProvider sets a dynamic function returning HeaderVideoTemplateData.
+func WithHeaderVideoProvider(provider func() *HeaderVideoTemplateData) HandlerOption {
+	return func(h *Handler) {
+		h.headerVideoProvider = provider
+	}
+}
+
 // Handler serves the web display HUD shell and static web runtime assets.
 type Handler struct {
 	templatePath       string
@@ -125,6 +139,8 @@ type Handler struct {
 	hideCursorProvider func() bool
 	remoteURL          string
 	remoteURLProvider  func() string
+	headerVideo        *HeaderVideoTemplateData
+	headerVideoProvider func() *HeaderVideoTemplateData
 }
 
 // SetTimezone updates the household timezone dynamically.
@@ -185,11 +201,31 @@ func (h *Handler) RemoteURL() string {
 	return h.remoteURL
 }
 
+// HeaderVideo returns the current header video template data.
+func (h *Handler) HeaderVideo() *HeaderVideoTemplateData {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	if h.headerVideoProvider != nil {
+		return h.headerVideoProvider()
+	}
+	return h.headerVideo
+}
+
+// HeaderVideoTemplateData holds parameters for the fullscreen video TV button in the header.
+type HeaderVideoTemplateData struct {
+	Enabled    bool
+	StreamID   string
+	StreamURL  string
+	ControlURL string
+	Type       string
+}
+
 // DisplayTemplateData holds context parameters passed to display.html template.
 type DisplayTemplateData struct {
-	Timezone   string
-	HideCursor bool
-	RemoteURL  string
+	Timezone    string
+	HideCursor  bool
+	RemoteURL   string
+	HeaderVideo *HeaderVideoTemplateData
 }
 
 // NewHandler constructs a Handler with default filesystem paths.
@@ -285,9 +321,10 @@ func (h *Handler) GetDisplay(w http.ResponseWriter, r *http.Request) {
 			hideCursor = false
 		}
 		data := DisplayTemplateData{
-			Timezone:   h.Timezone(),
-			HideCursor: hideCursor,
-			RemoteURL:  h.RemoteURL(),
+			Timezone:    h.Timezone(),
+			HideCursor:  hideCursor,
+			RemoteURL:   h.RemoteURL(),
+			HeaderVideo: h.HeaderVideo(),
 		}
 		if err := tmpl.Execute(&buf, data); err == nil {
 			out = buf.Bytes()

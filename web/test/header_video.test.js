@@ -75,7 +75,11 @@ describe('Header Video Action Button', () => {
     delete require.cache[require.resolve('../static/js/display.js')];
     const display = require('../static/js/display.js');
 
-    const btn = createMockButton();
+    const btn = createMockButton({
+      streamUrl: 'http://192.168.1.147:1984/api/webrtc?src=cast',
+      controlUrl: 'http://cast-watcher:8090/action',
+      streamId: 'chromecast',
+    });
     const sse = createMockSSE();
     const fetchCalls = [];
 
@@ -89,7 +93,6 @@ describe('Header Video Action Button', () => {
       sseClient: sse,
       fetch: fetchMock,
       forceNew: true,
-      window: { location: { hostname: '192.168.1.147' } },
     });
 
     assert.ok(ctrl, 'controller must be initialized');
@@ -120,11 +123,41 @@ describe('Header Video Action Button', () => {
     assert.equal(triggerCall.body.type, 'webrtc');
     assert.equal(triggerCall.body.priority, 'persistent');
     assert.equal(triggerCall.body.controllable, true);
+    assert.equal(triggerCall.body.control_url, 'http://cast-watcher:8090/action');
 
     // SSE video.state event with mode: 'video' clears loading state
     sse.emit('video.state', { mode: 'video', primary: { id: 'chromecast' } });
     assert.equal(btn.classList.contains('loading'), false);
     assert.equal(ctrl.isLoading, false);
+
+    ctrl.destroy();
+  });
+
+  test('skips wake action call when controlUrl is not configured', async () => {
+    delete require.cache[require.resolve('../static/js/display.js')];
+    const display = require('../static/js/display.js');
+
+    const btn = createMockButton({
+      streamUrl: 'http://192.168.1.147:1984/api/webrtc?src=cast',
+    });
+    const fetchCalls = [];
+    const fetchMock = async (url, opts) => {
+      fetchCalls.push({ url, opts, body: opts && opts.body ? JSON.parse(opts.body) : null });
+      return { ok: true, status: 200, json: () => Promise.resolve({ status: 'ok' }) };
+    };
+
+    const ctrl = display.setupHeaderVideo({
+      button: btn,
+      fetch: fetchMock,
+      forceNew: true,
+    });
+
+    btn.dispatchEvent({ type: 'click' });
+    await new Promise((r) => setTimeout(r, 20));
+
+    assert.equal(fetchCalls.length, 1, 'must issue only video trigger without wake call');
+    assert.equal(fetchCalls[0].url, 'api/video/trigger');
+    assert.equal(fetchCalls[0].body.control_url, undefined);
 
     ctrl.destroy();
   });
