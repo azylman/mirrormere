@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"github.com/azylman/mirrormere/internal/config"
+	"github.com/azylman/mirrormere/internal/events"
 )
 
 func init() {
@@ -614,6 +616,122 @@ func TestHouseholdNowFunc_FallsBackToProcessLocalWithoutASnapshot(t *testing.T) 
 	}
 	if got := householdNowFunc(nil)(); got.IsZero() {
 		t.Fatal("expected a non-zero time for a nil provider")
+	}
+}
+
+type fakeThemeStateProvider struct {
+	theme string
+}
+
+func (f *fakeThemeStateProvider) GetTheme() string {
+	if f.theme == "" {
+		return "day"
+	}
+	return f.theme
+}
+
+func (f *fakeThemeStateProvider) SetTheme(th string) {
+	f.theme = th
+}
+
+func TestHouseholdThemeFunc(t *testing.T) {
+	// 1. Nil provider
+	if got := householdThemeFunc(nil)(); got != "day" {
+		t.Errorf("expected 'day' for nil provider, got %q", got)
+	}
+
+	// 2. Nil snapshot / nil config
+	if got := householdThemeFunc(&fakeSnapshotProvider{snap: nil})(); got != "day" {
+		t.Errorf("expected 'day' for nil snapshot, got %q", got)
+	}
+	if got := householdThemeFunc(&fakeSnapshotProvider{snap: &config.Snapshot{Config: nil}})(); got != "day" {
+		t.Errorf("expected 'day' for nil config, got %q", got)
+	}
+
+	// 3. Explicit mode = night
+	nightSnap := &config.Snapshot{
+		Config: &config.Config{
+			Display: config.DisplayConfig{
+				Theme: &config.ThemeConfig{Mode: "night"},
+			},
+		},
+	}
+	if got := householdThemeFunc(&fakeSnapshotProvider{snap: nightSnap})(); got != "night" {
+		t.Errorf("expected 'night' for mode=night, got %q", got)
+	}
+
+	// 4. Explicit mode = day
+	daySnap := &config.Snapshot{
+		Config: &config.Config{
+			Display: config.DisplayConfig{
+				Theme: &config.ThemeConfig{Mode: "day"},
+			},
+		},
+	}
+	if got := householdThemeFunc(&fakeSnapshotProvider{snap: daySnap})(); got != "day" {
+		t.Errorf("expected 'day' for mode=day, got %q", got)
+	}
+
+	// 5. Auto mode without coordinates -> defaults to day
+	autoNoCoords := &config.Snapshot{
+		Config: &config.Config{
+			Display: config.DisplayConfig{
+				Theme: &config.ThemeConfig{Mode: "auto"},
+			},
+		},
+	}
+	if got := householdThemeFunc(&fakeSnapshotProvider{snap: autoNoCoords})(); got != "day" {
+		t.Errorf("expected 'day' for auto without coords, got %q", got)
+	}
+
+	// 6. Auto mode with coordinates
+	lat := 37.8044
+	lon := -122.2712
+	autoWithCoords := &config.Snapshot{
+		Config: &config.Config{
+			Timezone: "America/Los_Angeles",
+			LocationConfig: &config.LocationConfig{
+				Latitude:  &lat,
+				Longitude: &lon,
+			},
+			Display: config.DisplayConfig{
+				Theme: &config.ThemeConfig{Mode: "auto"},
+			},
+		},
+	}
+	themeGot := householdThemeFunc(&fakeSnapshotProvider{snap: autoWithCoords})()
+	if themeGot != "day" && themeGot != "night" {
+		t.Errorf("expected 'day' or 'night' for auto with coords, got %q", themeGot)
+	}
+}
+
+func TestEvaluateThemeTransition(t *testing.T) {
+	// 1. Nil safety
+	if evaluateThemeTransition(nil, nil, nil, nil) {
+		t.Error("expected false for nil arguments")
+	}
+
+	sp := &fakeThemeStateProvider{theme: "day"}
+
+	// 2. Unchanged theme
+	if evaluateThemeTransition(func() string { return "day" }, sp, nil, nil) {
+		t.Error("expected false when theme did not change")
+	}
+	if sp.GetTheme() != "day" {
+		t.Errorf("expected theme to remain 'day', got %q", sp.GetTheme())
+	}
+
+	// 3. Theme changed: "day" -> "night"
+	hub := events.NewHub(events.HubConfig{}, nil, nil)
+	defer hub.Close()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	changed := evaluateThemeTransition(func() string { return "night" }, sp, hub, logger)
+	if !changed {
+		t.Error("expected true when theme changed")
+	}
+	if sp.GetTheme() != "night" {
+		t.Errorf("expected updated theme 'night', got %q", sp.GetTheme())
 	}
 }
 

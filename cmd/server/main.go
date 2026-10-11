@@ -182,6 +182,31 @@ func householdThemeFunc(sp render.StateSnapshotProvider) func() string {
 	}
 }
 
+// evaluateThemeTransition checks if the active theme changed and dispatches theme.update.
+func evaluateThemeTransition(currentTheme func() string, sp interface {
+	GetTheme() string
+	SetTheme(string)
+}, hub *events.Hub, logger *slog.Logger) bool {
+	if currentTheme == nil || sp == nil {
+		return false
+	}
+	newTheme := currentTheme()
+	if sp.GetTheme() != newTheme {
+		if logger != nil {
+			logger.Info("theme mode transition detected", "previous", sp.GetTheme(), "new", newTheme)
+		}
+		sp.SetTheme(newTheme)
+		if hub != nil {
+			data, err := json.Marshal(events.ThemeUpdateData{Theme: newTheme})
+			if err == nil {
+				hub.Publish(events.EventThemeUpdate, data)
+			}
+		}
+		return true
+	}
+	return false
+}
+
 // Run executes the server application with the supplied arguments and context.
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	return RunWithReady(ctx, args, stdout, stderr, nil)
@@ -426,15 +451,7 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 			case <-ctx.Done():
 				return
 			case <-themeTicker.C:
-				newTheme := currentTheme()
-				if stateProvider.GetTheme() != newTheme {
-					logger.Info("theme mode transition detected", "previous", stateProvider.GetTheme(), "new", newTheme)
-					stateProvider.SetTheme(newTheme)
-					data, err := json.Marshal(events.ThemeUpdateData{Theme: newTheme})
-					if err == nil {
-						hub.Publish(events.EventThemeUpdate, data)
-					}
-				}
+				evaluateThemeTransition(currentTheme, stateProvider, hub, logger)
 			}
 		}
 	}()
@@ -492,16 +509,7 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 									logger.Error("failed to dispatch status on SIGHUP", "error", err)
 								}
 								logger.Info("configuration reloaded successfully on SIGHUP", "widgets", len(snap.Config.Display.Widgets))
-
-								newTheme := currentTheme()
-								if stateProvider.GetTheme() != newTheme {
-									logger.Info("theme mode changed on config reload", "previous", stateProvider.GetTheme(), "new", newTheme)
-									stateProvider.SetTheme(newTheme)
-									data, err := json.Marshal(events.ThemeUpdateData{Theme: newTheme})
-									if err == nil {
-										hub.Publish(events.EventThemeUpdate, data)
-									}
-								}
+								evaluateThemeTransition(currentTheme, stateProvider, hub, logger)
 
 								if snap != nil && snap.Config != nil {
 									newHost := server.DefaultHost

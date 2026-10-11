@@ -170,3 +170,54 @@ display:
 		t.Fatalf("expected longitude bounds error, got %v", err)
 	}
 }
+
+func TestLocationAndTheme_Getters(t *testing.T) {
+	t.Parallel()
+
+	// 1. Nil LocationConfig
+	var nilLoc *config.LocationConfig
+	if nilLoc.GetLatitude() != 0 || nilLoc.GetLongitude() != 0 {
+		t.Errorf("expected 0 for nil LocationConfig, got %f, %f", nilLoc.GetLatitude(), nilLoc.GetLongitude())
+	}
+
+	// 2. Non-nil LocationConfig with nil fields
+	partialLoc := &config.LocationConfig{Name: "Nowhere"}
+	if partialLoc.GetLatitude() != 0 || partialLoc.GetLongitude() != 0 {
+		t.Errorf("expected 0 for partial LocationConfig, got %f, %f", partialLoc.GetLatitude(), partialLoc.GetLongitude())
+	}
+
+	// 3. Valid LocationConfig
+	lat := 37.8044
+	lon := -122.2712
+	validLoc := &config.LocationConfig{Latitude: &lat, Longitude: &lon}
+	if validLoc.GetLatitude() != 37.8044 || validLoc.GetLongitude() != -122.2712 {
+		t.Errorf("unexpected coordinates: %f, %f", validLoc.GetLatitude(), validLoc.GetLongitude())
+	}
+
+	// 4. ThemeConfig GetMode edge cases
+	var nilTheme *config.ThemeConfig
+	if nilTheme.GetMode() != "day" {
+		t.Errorf("expected 'day' for nil ThemeConfig, got %q", nilTheme.GetMode())
+	}
+	emptyTheme := &config.ThemeConfig{Mode: "   "}
+	if emptyTheme.GetMode() != "day" {
+		t.Errorf("expected 'day' for whitespace ThemeConfig, got %q", emptyTheme.GetMode())
+	}
+	nightTheme := &config.ThemeConfig{Mode: "NIGHT"}
+	if nightTheme.GetMode() != "night" {
+		t.Errorf("expected 'night' for uppercase ThemeConfig, got %q", nightTheme.GetMode())
+	}
+
+	// 5. Config GetLocationConfig nil receiver
+	var nilCfg *config.Config
+	if nilCfg.GetLocationConfig() != nil {
+		t.Errorf("expected nil for nil Config.GetLocationConfig")
+	}
+
+	// 6. Config without location or header weather
+	emptyCfg := &config.Config{}
+	if emptyCfg.GetLocationConfig() != nil {
+		t.Errorf("expected nil for empty Config.GetLocationConfig")
+	}
+}
+
