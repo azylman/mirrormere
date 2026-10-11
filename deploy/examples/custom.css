@@ -142,6 +142,20 @@ body[data-theme="night"],
   background: rgba(71, 65, 94, 0.85);
   border-color: rgba(197, 163, 255, 0.2);
   color: var(--mm-text-body);
+  box-shadow: 0 4px 14px -2px rgba(20, 16, 32, 0.4);
+}
+
+[data-theme="night"] .header-video-btn {
+  background: rgba(71, 65, 94, 0.85);
+  border-color: rgba(197, 163, 255, 0.2);
+  box-shadow: 0 4px 14px -2px rgba(20, 16, 32, 0.4);
+  color: var(--mm-text-title);
+}
+
+[data-theme="night"] .header-video-btn:hover {
+  border-color: rgba(197, 163, 255, 0.5);
+  box-shadow: 0 4px 16px -1px rgba(197, 163, 255, 0.3);
+  color: var(--mm-lavender);
 }
 
 [data-theme="night"] .status-jewel {
@@ -449,8 +463,33 @@ html, body {
 .header-right-cluster {
   display: flex;
   align-items: center;
-  gap: 18px;
+  gap: 20px;
 }
+
+/* Header Video Action Button */
+.header-video { display: flex; align-items: center; }
+.header-video-btn {
+  display: inline-flex; align-items: center; justify-content: center; position: relative;
+  min-width: 52px; min-height: 52px; width: 52px; height: 52px; padding: 0;
+  background: var(--mm-bg-surface); border: 1.5px solid rgba(90, 60, 30, 0.09); border-radius: 9999px;
+  box-shadow: 0 4px 12px -2px rgba(130, 100, 70, 0.08); color: var(--mm-text-title);
+  cursor: pointer; touch-action: manipulation; user-select: none; -webkit-user-select: none;
+  transition: transform 0.15s ease, border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease;
+}
+.header-video-btn:hover { border-color: rgba(168, 85, 247, 0.5); box-shadow: 0 4px 14px -1px rgba(168, 85, 247, 0.25); color: #a855f7; }
+.header-video-btn:active { transform: scale(0.92); border-color: #a855f7; }
+.header-video-btn:focus-visible { outline: 2px solid #a855f7; outline-offset: 2px; }
+.header-video-icon { width: 24px; height: 24px; display: block; stroke: currentColor; transition: opacity 0.2s ease; }
+.header-video-spinner {
+  display: none; position: absolute; width: 20px; height: 20px;
+  border: 2px solid rgba(168, 85, 247, 0.25); border-top-color: #a855f7; border-radius: 50%;
+  animation: mm-spin 0.75s linear infinite;
+}
+.header-video-btn.loading { pointer-events: none; border-color: rgba(168, 85, 247, 0.6); box-shadow: 0 0 12px rgba(168, 85, 247, 0.3); }
+.header-video-btn.loading .header-video-icon { opacity: 0.15; }
+.header-video-btn.loading .header-video-spinner { display: block; }
+.header-video-btn.error { border-color: var(--mm-status-error, #f43f5e); color: var(--mm-status-error, #f43f5e); animation: mm-video-shake 0.35s ease; }
+@keyframes mm-video-shake { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-3px); } 75% { transform: translateX(3px); } }
 
 .header-weather {
   display: flex;
@@ -460,8 +499,8 @@ html, body {
 .pill-badge {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 14px;
+  gap: 10px;
+  padding: 8px 18px;
   background: var(--mm-bg-surface);
   border: 1px solid var(--mm-card-border);
   border-radius: 9999px;
@@ -474,12 +513,14 @@ html, body {
 .weather-pill {
   display: inline-flex;
   align-items: center;
-  gap: 12px;
-  padding: 8px 18px 8px 14px;
+  gap: 14px;
+  min-height: 52px;
+  padding: 8px 20px 8px 16px;
   background: var(--mm-bg-surface);
   border: 1.5px solid rgba(90, 60, 30, 0.09);
   border-radius: 9999px;
   box-shadow: 0 4px 12px -2px rgba(130, 100, 70, 0.08);
+  box-sizing: border-box;
 }
 
 .weather-condition {
@@ -492,8 +533,8 @@ html, body {
 
 .weather-condition svg,
 .weather-condition .mm-weather-icon {
-  width: 24px;
-  height: 24px;
+  width: 26px;
+  height: 26px;
   display: block;
 }
 
@@ -501,33 +542,33 @@ html, body {
   display: flex;
   flex-direction: column;
   justify-content: center;
-  line-height: 1.2;
+  line-height: 1.25;
 }
 
 .weather-primary-row {
   display: flex;
   align-items: baseline;
-  gap: 6px;
+  gap: 7px;
 }
 
 .weather-temp {
   font-family: var(--mm-font-display);
-  font-size: 1.05rem;
-  font-weight: 700;
+  font-size: 1.15rem;
+  font-weight: 800;
   color: var(--mm-text-title);
   letter-spacing: -0.01em;
   line-height: 1;
 }
 
 .weather-location {
-  font-size: 0.75rem;
+  font-size: 0.8rem;
   font-weight: 700;
   color: var(--mm-text-dim);
   line-height: 1;
 }
 
 .weather-desc {
-  font-size: 0.65rem;
+  font-size: 0.7rem;
   font-weight: 800;
   color: var(--mm-mint);
   letter-spacing: 0.01em;
@@ -541,8 +582,8 @@ html, body {
 }
 
 .status-jewel {
-  width: 32px;
-  height: 32px;
+  width: 36px;
+  height: 36px;
   border-radius: 50%;
   background: #ecfdf5;
   border: 1px solid #a7f3d0;
@@ -554,8 +595,8 @@ html, body {
 }
 
 .status-dot {
-  width: 10px;
-  height: 10px;
+  width: 11px;
+  height: 11px;
   border-radius: 50%;
   background-color: var(--mm-status-ok);
   box-shadow: 0 0 6px rgba(56, 178, 143, 0.4);
