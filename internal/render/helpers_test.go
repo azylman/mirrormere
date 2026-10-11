@@ -523,44 +523,44 @@ func TestWeatherHourlyGraph(t *testing.T) {
 		}
 	})
 
-	t.Run("tightened vertical coordinates", func(t *testing.T) {
+	t.Run("scaled vertical coordinates", func(t *testing.T) {
 		t.Parallel()
 		items := []testHourlyItem{
 			{Time: "2026-09-26T12:00", Temp: 80.0, PrecipProb: 40, Icon: "weather-rainy"},
 			{Time: "2026-09-26T13:00", Temp: 50.0, PrecipProb: 0, Icon: "weather-cloudy"},
 		}
 		got := string(render.WeatherHourlyGraph(items))
-		// Check svg height 124.0 in viewBox
-		if !strings.Contains(got, `viewBox="0 0 560.0 124.0"`) {
-			t.Errorf("expected viewBox with height 124.0, got: %s", got)
+		// Check svg height 300.0 in viewBox
+		if !strings.Contains(got, `viewBox="0 0 560.0 300.0"`) {
+			t.Errorf("expected viewBox with height 300.0, got: %s", got)
 		}
-		// Check baseline axis y = 96.0
-		if !strings.Contains(got, `y1="96.0"`) || !strings.Contains(got, `y2="96.0"`) {
-			t.Errorf("expected baseline axis at y=96.0, got: %s", got)
+		// Check baseline axis y = 240.0
+		if !strings.Contains(got, `y1="240.0"`) || !strings.Contains(got, `y2="240.0"`) {
+			t.Errorf("expected baseline axis at y=240.0, got: %s", got)
 		}
-		// Check precip label at y = 13, font-size 10
-		if !strings.Contains(got, `y="13" text-anchor="middle" font-size="10"`) {
-			t.Errorf("expected precip text at y=13 with font-size 10, got: %s", got)
+		// Check precip label at y = 20, font-size 11
+		if !strings.Contains(got, `y="20" text-anchor="middle" font-size="11"`) {
+			t.Errorf("expected precip text at y=20 with font-size 11, got: %s", got)
 		}
-		// Check icon transform at y=22 scale(1.0)
-		if !strings.Contains(got, `, 22) scale(1.0)`) {
-			t.Errorf("expected icon transform at y=22 scale(1.0), got: %s", got)
+		// Check icon transform at y=32 scale(1.2)
+		if !strings.Contains(got, `, 32) scale(1.2)`) {
+			t.Errorf("expected icon transform at y=32 scale(1.2), got: %s", got)
 		}
-		// Check circle r=3.5
-		if !strings.Contains(got, `r="3.5"`) {
-			t.Errorf("expected point circle with r=3.5, got: %s", got)
+		// Check circle r=4.0
+		if !strings.Contains(got, `r="4.0"`) {
+			t.Errorf("expected point circle with r=4.0, got: %s", got)
 		}
-		// Check time label at y = 114, font-size 11
-		if !strings.Contains(got, `y="114" text-anchor="middle" font-size="11"`) {
-			t.Errorf("expected time label at y=114 with font-size 11, got: %s", got)
+		// Check time label at y = 275, font-size 13
+		if !strings.Contains(got, `y="275" text-anchor="middle" font-size="13"`) {
+			t.Errorf("expected time label at y=275 with font-size 13, got: %s", got)
 		}
-		// High temp y-coord is minY = 52.0. Temp label y = pt.y - 7.0 = 45.0.
-		if !strings.Contains(got, `y="45.0" text-anchor="middle" font-size="12" font-weight="800"`) {
-			t.Errorf("expected high temp label at y=45.0 with font-size 12, got: %s", got)
+		// High temp y-coord is minY = 90.0. Temp label y = pt.y - 10.0 = 80.0.
+		if !strings.Contains(got, `y="80.0" text-anchor="middle" font-size="14" font-weight="800"`) {
+			t.Errorf("expected high temp label at y=80.0 with font-size 14, got: %s", got)
 		}
-		// Low temp y-coord is maxY = 82.0. Temp label y = pt.y - 7.0 = 75.0.
-		if !strings.Contains(got, `y="75.0" text-anchor="middle" font-size="12" font-weight="800"`) {
-			t.Errorf("expected low temp label at y=75.0 with font-size 12, got: %s", got)
+		// Low temp y-coord is maxY = 205.0. Temp label y = pt.y - 10.0 = 195.0.
+		if !strings.Contains(got, `y="195.0" text-anchor="middle" font-size="14" font-weight="800"`) {
+			t.Errorf("expected low temp label at y=195.0 with font-size 14, got: %s", got)
 		}
 	})
 }

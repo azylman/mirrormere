@@ -1842,13 +1842,15 @@ button, .touch-target {
   flex-direction: column;
   justify-content: space-between;
   overflow: hidden;
+  height: 100%;
 }
 
 .weather-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 14px;
+  margin-bottom: 10px;
+  flex-shrink: 0;
 }
 
 .weather-header-left {
@@ -1859,9 +1861,9 @@ button, .touch-target {
 }
 
 .weather-icon-badge {
-  width: 38px;
-  height: 38px;
-  border-radius: 12px;
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
   background: rgba(245, 158, 11, 0.12);
   color: var(--mm-honey, #f59e0b);
   display: flex;
@@ -1878,7 +1880,7 @@ button, .touch-target {
 
 .weather-header-title,
 .weather-location-name {
-  font-size: 0.95rem;
+  font-size: 1.05rem;
   font-weight: 800;
   color: var(--mm-text-title);
   letter-spacing: -0.01em;
@@ -1890,7 +1892,7 @@ button, .touch-target {
 }
 
 .weather-condition-text {
-  font-size: 0.72rem;
+  font-size: 0.8rem;
   font-weight: 600;
   color: var(--mm-text-dim);
   line-height: 1.2;
@@ -1910,38 +1912,38 @@ button, .touch-target {
 
 .weather-temp-main {
   font-family: var(--mm-font-bubbly, Comfortaa, sans-serif);
-  font-size: 1.55rem;
+  font-size: 1.95rem;
   font-weight: 900;
   color: var(--mm-text-title);
   line-height: 1;
 }
 
 .weather-temp-range {
-  font-size: 0.68rem;
+  font-size: 0.76rem;
   font-weight: 800;
   color: var(--mm-text-dim);
-  margin-top: 2px;
+  margin-top: 3px;
   letter-spacing: 0.02em;
 }
 
 .weather-container {
   display: flex;
   flex-direction: column;
+  flex: 1;
   min-height: 0;
   width: 100%;
   justify-content: center;
   align-items: stretch;
-  margin: 2px 0;
+  margin: 4px 0;
   overflow: hidden;
-  flex-shrink: 0;
 }
 
 .weather-hourly-timeline {
   display: flex;
+  flex: 1;
   min-height: 0;
   width: 100%;
-  height: 110px;
-  flex-shrink: 0;
+  height: 100%;
   align-items: center;
   overflow-x: auto;
   overflow-y: hidden;
@@ -1958,102 +1960,18 @@ button, .touch-target {
 }
 
 .weather-hourly-graph {
-  width: 100%;
   height: 100%;
+  width: auto;
+  min-width: 100%;
   flex-shrink: 0;
   display: block;
-}
-
-.weather-daily-forecast {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  flex: 1;
-  min-height: 0;
-  justify-content: space-between;
-  margin: 8px 0;
-  overflow: hidden;
-}
-
-.weather-daily-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 0.82rem;
-  line-height: 1;
-}
-
-.weather-daily-day {
-  width: 76px;
-  font-weight: 700;
-  color: var(--mm-text-title);
-  white-space: nowrap;
-  font-size: 0.82rem;
-}
-
-.weather-daily-condition {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  width: 72px;
-  flex-shrink: 0;
-  color: var(--mm-honey, #f59e0b);
-}
-
-.weather-daily-precip {
-  font-size: 0.72rem;
-  font-weight: 700;
-  color: var(--mm-sky, #3b9edd);
-}
-
-.weather-daily-temp-bar-container {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex: 1;
-  min-width: 0;
-}
-
-.weather-daily-temp-min {
-  font-size: 0.78rem;
-  font-weight: 700;
-  color: var(--mm-text-dim);
-  width: 26px;
-  text-align: right;
-  flex-shrink: 0;
-}
-
-.weather-temp-track {
-  flex: 1;
-  height: 6px;
-  border-radius: 3px;
-  background: var(--mm-divider, rgba(90, 60, 30, 0.08));
-  position: relative;
-  overflow: hidden;
-}
-
-.weather-temp-bar {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  border-radius: 3px;
-  background: linear-gradient(90deg, var(--mm-sky, #3b9edd), var(--mm-coral, #ff6f59));
-}
-
-.weather-daily-temp-max {
-  font-size: 0.78rem;
-  font-weight: 800;
-  color: var(--mm-text-title);
-  width: 26px;
-  text-align: left;
-  flex-shrink: 0;
 }
 
 .weather-micro-stats {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding-top: 10px;
+  padding-top: 12px;
   border-top: 1px solid var(--mm-divider);
   margin-top: auto;
   flex-shrink: 0;
@@ -2062,15 +1980,15 @@ button, .touch-target {
 .weather-meta-stat {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  font-size: 0.78rem;
+  gap: 6px;
+  font-size: 0.82rem;
   font-weight: 800;
   color: var(--mm-text-dim);
 }
 
 .weather-meta-icon {
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
   flex-shrink: 0;
   opacity: 0.85;
 }
