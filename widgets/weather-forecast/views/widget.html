@@ -1,56 +1,70 @@
 <div class="widget-card widget-weather" data-widget-id="{{ .ID }}" data-widget-type="{{ .Type }}" style="grid-column: span {{ .Dimensions.Cols }}; grid-row: span {{ .Dimensions.Rows }};">
   {{ if or .Config.name .Config.location_name (and .Data .Data.Location) .Data }}
   <div class="weather-header">
-    <div style="display: flex; align-items: center; gap: 6px;">
-      {{ if or .Config.name .Config.location_name (and .Data .Data.Location) }}
-      <span class="weather-location-icon" style="color: var(--mm-coral); font-size: 1rem;">📍</span>
-      <span class="weather-location-name" style="font-size: 0.95rem; font-weight: 800; color: var(--mm-text-title); letter-spacing: 0.02em;">
-        {{ if .Config.name }}{{ .Config.name }}{{ else if .Config.location_name }}{{ .Config.location_name }}{{ else if and .Data .Data.Location }}{{ .Data.Location }}{{ end }}
-      </span>
-      {{ else if and .Data .Data.Current }}
-      <span class="weather-header-icon" title="{{ .Data.Current.ConditionText }}" style="color: var(--mm-coral); display: inline-flex; align-items: center;">{{ weatherIcon .Data.Current.Icon 18 }}</span>
-      <span class="weather-header-title">Weather</span>
-      {{ end }}
+    <div class="weather-header-left">
+      <div class="weather-icon-badge" title="{{ if and .Data .Data.Current }}{{ .Data.Current.ConditionText }}{{ end }}">
+        {{ if and .Data .Data.Current }}
+        {{ weatherIcon .Data.Current.Icon 20 }}
+        {{ else }}
+        {{ weatherIcon "weather-partly-cloudy" 20 }}
+        {{ end }}
+      </div>
+      <div class="weather-header-titles">
+        {{ if or .Config.name .Config.location_name (and .Data .Data.Location) }}
+        <h2 class="weather-location-name">{{ if .Config.name }}{{ .Config.name }}{{ else if .Config.location_name }}{{ .Config.location_name }}{{ else if and .Data .Data.Location }}{{ .Data.Location }}{{ end }}</h2>
+        {{ else }}
+        <h2 class="weather-header-title">Weather</h2>
+        {{ end }}
+        <span class="weather-condition-text">{{ if and .Data .Data.Current .Data.Current.ConditionText }}{{ .Data.Current.ConditionText }}{{ else }}Forecast{{ end }}</span>
+      </div>
     </div>
 
     {{ if and .Data .Data.Current }}
-    <div class="weather-header-meta">
-      <span class="weather-temp-main" title="{{ .Data.Current.ConditionText }}">
+    <div class="weather-header-right">
+      <div class="weather-temp-main bubbly-font" title="{{ .Data.Current.ConditionText }}">
         {{ printf "%.0f" .Data.Current.Temperature }}{{ if .Data.Current.Units.Temperature }}{{ .Data.Current.Units.Temperature }}{{ else }}°{{ end }}
-      </span>
-      {{ if todayPrecipProb .Data }}
-      <span class="weather-meta-stat weather-meta-precip" title="Precipitation: {{ todayPrecipProb .Data }}%">
-        <span>☂️</span>
-        <span>{{ todayPrecipProb .Data }}%</span>
-      </span>
+      </div>
+      {{ if and .Data .Data.Daily (gt (len .Data.Daily) 0) }}
+      {{ $today := index .Data.Daily 0 }}
+      <div class="weather-temp-range">
+        H: {{ printf "%.0f" $today.TempMax }}° • L: {{ printf "%.0f" $today.TempMin }}°
+      </div>
       {{ end }}
-      <span class="weather-meta-stat weather-meta-humidity" title="Humidity: {{ .Data.Current.Humidity }}%">
-        <span>💧</span>
-        <span>{{ .Data.Current.Humidity }}%</span>
-      </span>
-      <span class="weather-meta-stat weather-meta-wind" title="Wind: {{ printf "%.0f" .Data.Current.WindSpeed }} {{ if .Data.Current.Units.WindSpeed }}{{ .Data.Current.Units.WindSpeed }}{{ else }}mph{{ end }}">
-        <span>🍃</span>
-        <span>{{ printf "%.0f" .Data.Current.WindSpeed }} {{ if .Data.Current.Units.WindSpeed }}{{ .Data.Current.Units.WindSpeed }}{{ else }}mph{{ end }}</span>
-      </span>
     </div>
     {{ end }}
   </div>
   {{ end }}
+
   {{ if and .Data .Data.Current }}
-  <div class="weather-container" style="display: flex; flex-direction: column; flex: 1; min-height: 0; justify-content: center;">
+  <div class="weather-container">
     {{ if .Data.Hourly }}
     <div class="weather-hourly-timeline">
       {{ weatherHourlyGraph .Data.Hourly .ID }}
     </div>
     {{ else }}
-    <div class="calendar-empty">
-      <span class="empty-icon">🌤️</span>
+    <div class="weather-empty">
+      <span class="empty-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg></span>
       <span class="empty-title">No hourly forecast available</span>
     </div>
     {{ end }}
   </div>
+
+  <div class="weather-micro-stats">
+    <span class="weather-meta-stat weather-meta-humidity" title="Humidity: {{ .Data.Current.Humidity }}%">
+      <svg class="weather-meta-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/></svg>
+      <span>{{ .Data.Current.Humidity }}%</span>
+    </span>
+    <span class="weather-meta-stat weather-meta-wind" title="Wind: {{ printf "%.0f" .Data.Current.WindSpeed }} {{ if .Data.Current.Units.WindSpeed }}{{ .Data.Current.Units.WindSpeed }}{{ else }}mph{{ end }}">
+      <svg class="weather-meta-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.7 7.7a2.5 2.5 0 1 1 1.8 4.3H2"/><path d="M9.6 4.6A2 2 0 1 1 11 8H2"/><path d="M12.6 19.4A2 2 0 1 0 14 16H2"/></svg>
+      <span>{{ printf "%.0f" .Data.Current.WindSpeed }} {{ if .Data.Current.Units.WindSpeed }}{{ .Data.Current.Units.WindSpeed }}{{ else }}mph{{ end }}</span>
+    </span>
+    <span class="weather-meta-stat weather-meta-precip" title="Precipitation: {{ todayPrecipProb .Data }}%">
+      <svg class="weather-meta-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12a10.06 10.06 0 0 0-20 0Z"/><path d="M12 12v8a2 2 0 0 0 4 0"/><path d="M12 2v1"/></svg>
+      <span>{{ todayPrecipProb .Data }}%</span>
+    </span>
+  </div>
   {{ else }}
-  <div class="weather-loading" style="display: flex; align-items: center; justify-content: center; flex: 1; color: var(--mm-text-dim); font-size: 0.95rem;">
+  <div class="weather-loading">
     <span>Loading weather forecast...</span>
   </div>
   {{ end }}

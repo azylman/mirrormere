@@ -1580,35 +1580,116 @@ button, .touch-target {
   font-weight: 600;
 }
 
-/* Weather Forecast Widget */
-.weather-header-meta {
+/* Weather Forecast Widget (Pastel Bento) */
+.widget-weather {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  overflow: hidden;
+}
+
+.weather-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 2px;
+}
+
+.weather-header-left {
   display: flex;
   align-items: center;
   gap: 10px;
+  min-width: 0;
+}
+
+.weather-icon-badge {
+  width: 36px;
+  height: 36px;
+  border-radius: 12px;
+  background: rgba(245, 158, 11, 0.12);
+  color: var(--mm-honey, #f59e0b);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.weather-header-titles {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.weather-header-title,
+.weather-location-name {
+  font-size: 0.95rem;
+  font-weight: 800;
+  color: var(--mm-text-title);
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.weather-condition-text {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--mm-text-dim);
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.weather-header-right {
+  text-align: right;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  flex-shrink: 0;
+  line-height: 1.1;
 }
 
 .weather-temp-main {
-  font-family: var(--mm-font-display);
-  font-size: 1.35rem;
-  font-weight: 800;
+  font-family: var(--mm-font-bubbly, Comfortaa, sans-serif);
+  font-size: 1.55rem;
+  font-weight: 900;
   color: var(--mm-text-title);
+  line-height: 1;
 }
 
-.weather-meta-stat {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 0.85rem;
-  font-weight: 700;
+.weather-temp-range {
+  font-size: 0.68rem;
+  font-weight: 800;
   color: var(--mm-text-dim);
+  margin-top: 2px;
+  letter-spacing: 0.02em;
+}
+
+.weather-container {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  justify-content: center;
+  align-items: stretch;
+  margin: 4px 0;
+  overflow: hidden;
 }
 
 .weather-hourly-timeline {
   display: flex;
   flex: 1;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
   align-items: center;
   overflow-x: auto;
-  padding: 4px 0;
+  overflow-y: hidden;
+  padding: 0;
   scrollbar-width: none;
   -ms-overflow-style: none;
   -webkit-overflow-scrolling: touch;
@@ -1618,6 +1699,59 @@ button, .touch-target {
 
 .weather-hourly-timeline::-webkit-scrollbar {
   display: none;
+}
+
+.weather-hourly-graph {
+  width: 100%;
+  height: 100%;
+  flex-shrink: 0;
+  display: block;
+}
+
+.weather-micro-stats {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 10px;
+  border-top: 1px solid var(--mm-divider);
+  margin-top: auto;
+  flex-shrink: 0;
+}
+
+.weather-meta-stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.78rem;
+  font-weight: 800;
+  color: var(--mm-text-dim);
+}
+
+.weather-meta-icon {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  opacity: 0.85;
+}
+
+.weather-meta-precip {
+  color: var(--mm-sky);
+}
+
+.weather-meta-precip .weather-meta-icon {
+  color: var(--mm-sky);
+}
+
+.weather-loading,
+.weather-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  color: var(--mm-text-dim);
+  font-size: 0.9rem;
+  gap: 6px;
 }
 
 /* Family Calendar Widget (Skylight Style) */

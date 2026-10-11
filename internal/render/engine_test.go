@@ -831,8 +831,22 @@ func TestRenderBuiltinWeatherForecastWidget(t *testing.T) {
 	if !strings.Contains(string(htmlLoaded), "Now") {
 		t.Errorf("expected 'Now' badge in rendered hourly timeline, got: %s", htmlLoaded)
 	}
-	if !strings.Contains(string(htmlLoaded), "mm-weather-icon") {
-		t.Errorf("expected mm-weather-icon SVG in rendered output, got: %s", htmlLoaded)
+	if !strings.Contains(string(htmlLoaded), "weather-micro-stats") {
+		t.Errorf("expected weather-micro-stats bar in rendered output, got: %s", htmlLoaded)
+	}
+	if !strings.Contains(string(htmlLoaded), "weather-icon-badge") {
+		t.Errorf("expected weather-icon-badge squircle tile in rendered output, got: %s", htmlLoaded)
+	}
+	if !strings.Contains(string(htmlLoaded), "weather-condition-text") {
+		t.Errorf("expected weather-condition-text subtitle in rendered output, got: %s", htmlLoaded)
+	}
+	if !strings.Contains(string(htmlLoaded), "weather-temp-range") || !strings.Contains(string(htmlLoaded), "H: 75° • L: 55°") {
+		t.Errorf("expected weather-temp-range with 'H: 75° • L: 55°' in rendered output, got: %s", htmlLoaded)
+	}
+	for _, emoji := range []string{"💧", "🍃", "📍"} {
+		if strings.Contains(string(htmlLoaded), emoji) {
+			t.Errorf("expected no raw unicode emoji %q in rendered output (use inline vector SVG), got: %s", emoji, htmlLoaded)
+		}
 	}
 	if strings.Contains(string(htmlLoaded), "weather-location-name") {
 		t.Errorf("expected no weather-location-name when unconfigured, got: %s", htmlLoaded)
