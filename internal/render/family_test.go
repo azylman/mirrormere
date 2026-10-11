@@ -1236,7 +1236,7 @@ func renderFamilyWidgetTemplate(t *testing.T, ctx Context, now time.Time) string
 	return buf.String()
 }
 
-func TestCalendarFamily_DayViewTemplateRender_6x2(t *testing.T) {
+func TestCalendarFamily_DayViewFallbackToWeek_6x2(t *testing.T) {
 	t.Parallel()
 
 	snap := provider.CalendarSnapshot{
@@ -1253,7 +1253,6 @@ func TestCalendarFamily_DayViewTemplateRender_6x2(t *testing.T) {
 	cfg := baseFamilyConfig()
 	cfg["default_view"] = "day"
 	cfg["date"] = "2026-09-27"
-	cfg["hours"] = []any{"07:00", "21:00"}
 
 	ctx := Context{
 		ID:         "test-family-day",
@@ -1265,89 +1264,27 @@ func TestCalendarFamily_DayViewTemplateRender_6x2(t *testing.T) {
 
 	html := renderFamilyWidgetTemplate(t, ctx, testNow)
 
-	// Verify root container & class
-	if !strings.Contains(html, "cf-view-day") {
-		t.Errorf("expected 'cf-view-day' in rendered output: %s", html)
+	// Verify root container & class falls back to week view
+	if !strings.Contains(html, "cf-view-week") {
+		t.Errorf("expected 'cf-view-week' in rendered output: %s", html)
+	}
+	if strings.Contains(html, "cf-view-day") {
+		t.Errorf("expected day view to be dropped from rendered output: %s", html)
 	}
 	// Verify CSS variable declarations
 	if !strings.Contains(html, "--mm-member-0: #E07A5F") {
 		t.Errorf("expected --mm-member-0 in html: %s", html)
 	}
-	// Verify date header
-	if !strings.Contains(html, "Sun, 2026-09-27") {
-		t.Errorf("expected date header 'Sun, 2026-09-27' in html: %s", html)
-	}
-	// Verify all-day banner
-	if !strings.Contains(html, "cf-allday-banner") || !strings.Contains(html, "All Day Holiday") {
-		t.Errorf("expected all-day event 'All Day Holiday' in html: %s", html)
-	}
-	// Verify timeline axis with hour markers
-	if !strings.Contains(html, "cf-timeline-axis") || !strings.Contains(html, "07:00") || !strings.Contains(html, "21:00") {
-		t.Errorf("expected timeline axis with 07:00 and 21:00 markers: %s", html)
-	}
-	// Verify member column headers and avatars
+	// Verify member chips in header
 	if !strings.Contains(html, ">Alex</span>") || !strings.Contains(html, ">Kid</span>") {
-		t.Errorf("expected column headers for Alex and Kid: %s", html)
+		t.Errorf("expected member chips for Alex and Kid: %s", html)
 	}
-	// Verify early and late edge bands
-	if !strings.Contains(html, "cf-early-band") || !strings.Contains(html, "Dawn Run") {
-		t.Errorf("expected early edge band with Dawn Run: %s", html)
+	// Verify week grid exists with event cards
+	if !strings.Contains(html, "cf-week-grid") {
+		t.Errorf("expected cf-week-grid in html: %s", html)
 	}
-	if !strings.Contains(html, "cf-late-band") || !strings.Contains(html, "Late Movie") {
-		t.Errorf("expected late edge band with Late Movie: %s", html)
-	}
-	// Verify timed event positioning
-	if !strings.Contains(html, "Design Review") || !strings.Contains(html, "top:") || !strings.Contains(html, "height:") {
-		t.Errorf("expected Design Review with top and height styles: %s", html)
-	}
-	if !strings.Contains(html, "War Room A") {
-		t.Errorf("expected event location 'War Room A': %s", html)
-	}
-	// Verify pattern classes
-	if !strings.Contains(html, "cf-pattern-solid") || !strings.Contains(html, "cf-pattern-hatch") {
-		t.Errorf("expected pattern classes cf-pattern-solid and cf-pattern-hatch in output: %s", html)
-	}
-}
-
-func TestCalendarFamily_DayViewTemplateRender_4x2(t *testing.T) {
-	t.Parallel()
-
-	snap := provider.CalendarSnapshot{
-		LastSync: "2026-09-27T12:00:00Z",
-		Events: []provider.CalendarEvent{
-			{ID: "e_shared", CalendarName: "alex-personal", Title: "Family Dinner", Start: "2026-09-27T18:00:00Z", End: "2026-09-27T19:30:00Z"},
-			{ID: "e_grandma", CalendarName: "grandma-cal", Title: "Knitting", Start: "2026-09-27T10:00:00Z", End: "2026-09-27T11:00:00Z"},
-		},
-	}
-
-	cfg := fiveMemberConfig()
-	cfg["default_view"] = "day"
-	cfg["date"] = "2026-09-27"
-	cfg["hours"] = []any{"07:00", "21:00"}
-
-	ctx := Context{
-		ID:         "test-family-day-4x2",
-		Type:       "calendar-family",
-		Dimensions: domain.NewDimension(4, 2),
-		Data:       snap,
-		Config:     cfg,
-	}
-
-	html := renderFamilyWidgetTemplate(t, ctx, testNow)
-
-	if !strings.Contains(html, "cf-view-day") {
-		t.Errorf("expected cf-view-day in 4x2 html: %s", html)
-	}
-	// 4x2 renders 3 member columns + 1 shared column for collapsed grandma
-	if !strings.Contains(html, ">Shared</span>") {
-		t.Errorf("expected Shared column in 4x2: %s", html)
-	}
-	if !strings.Contains(html, "Knitting") {
-		t.Errorf("expected Knitting in 4x2 html: %s", html)
-	}
-	// Pattern classes for dots and outline
-	if !strings.Contains(html, "cf-pattern-dots") || !strings.Contains(html, "cf-pattern-outline") {
-		t.Errorf("expected cf-pattern-dots and cf-pattern-outline in 4x2 html: %s", html)
+	if !strings.Contains(html, "Design Review") {
+		t.Errorf("expected Design Review event in html: %s", html)
 	}
 }
 
@@ -1367,8 +1304,8 @@ func TestCalendarFamily_DayViewTemplateRender_EmptyAndNoData(t *testing.T) {
 		Config:     cfg,
 	}
 	htmlEmpty := renderFamilyWidgetTemplate(t, ctxEmpty, testNow)
-	if !strings.Contains(htmlEmpty, "cf-view-day") || !strings.Contains(htmlEmpty, "Alex") {
-		t.Errorf("expected day columns even with 0 events: %s", htmlEmpty)
+	if !strings.Contains(htmlEmpty, "cf-view-week") || !strings.Contains(htmlEmpty, "cf-week-grid") {
+		t.Errorf("expected week grid even with 0 events: %s", htmlEmpty)
 	}
 
 	// 2. No members configured -> cf-empty
@@ -2181,13 +2118,11 @@ func TestCalendarFamily_ViewSwitcherAndBootstrap(t *testing.T) {
 	testViews := []struct {
 		view      string
 		activeBtn string
-		inactiveA string
-		inactiveB string
+		inactive  string
 		rootClass string
 	}{
-		{"day", `data-view="day" role="tab" aria-selected="true">Day</button>`, `data-view="week" role="tab" aria-selected="false">Week</button>`, `data-view="month" role="tab" aria-selected="false">Month</button>`, "cf-view-day"},
-		{"week", `data-view="week" role="tab" aria-selected="true">Week</button>`, `data-view="day" role="tab" aria-selected="false">Day</button>`, `data-view="month" role="tab" aria-selected="false">Month</button>`, "cf-view-week"},
-		{"month", `data-view="month" role="tab" aria-selected="true">Month</button>`, `data-view="day" role="tab" aria-selected="false">Day</button>`, `data-view="week" role="tab" aria-selected="false">Week</button>`, "cf-view-month"},
+		{"week", `data-view="week" role="tab" aria-selected="true">Week</button>`, `data-view="month" role="tab" aria-selected="false">Month</button>`, "cf-view-week"},
+		{"month", `data-view="month" role="tab" aria-selected="true">Month</button>`, `data-view="week" role="tab" aria-selected="false">Week</button>`, "cf-view-month"},
 	}
 
 	for _, tc := range testViews {
@@ -2216,8 +2151,11 @@ func TestCalendarFamily_ViewSwitcherAndBootstrap(t *testing.T) {
 			if !strings.Contains(html, tc.activeBtn) {
 				t.Errorf("[%s] expected active button %s in html", tc.view, tc.activeBtn)
 			}
-			if !strings.Contains(html, tc.inactiveA) || !strings.Contains(html, tc.inactiveB) {
-				t.Errorf("[%s] expected inactive buttons %s and %s in html", tc.view, tc.inactiveA, tc.inactiveB)
+			if !strings.Contains(html, tc.inactive) {
+				t.Errorf("[%s] expected inactive button %s in html", tc.view, tc.inactive)
+			}
+			if strings.Contains(html, `data-view="day"`) {
+				t.Errorf("[%s] expected day view to be dropped from switcher in html", tc.view)
 			}
 			if !strings.Contains(html, "calendar-family-data") {
 				t.Errorf("[%s] expected embedded calendar-family-data JSON script in html", tc.view)
@@ -2227,6 +2165,29 @@ func TestCalendarFamily_ViewSwitcherAndBootstrap(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("day_fallback_to_week", func(t *testing.T) {
+		t.Parallel()
+		cfg := baseFamilyConfig()
+		cfg["default_view"] = "day"
+		cfg["date"] = "2026-09-27"
+
+		ctx := Context{
+			ID:         "test-switcher-day-fallback",
+			Type:       "calendar-family",
+			Dimensions: domain.NewDimension(6, 2),
+			Data:       snap,
+			Config:     cfg,
+		}
+
+		html := renderFamilyWidgetTemplate(t, ctx, testNow)
+		if !strings.Contains(html, "cf-view-week") {
+			t.Errorf("expected fallback to cf-view-week in html")
+		}
+		if strings.Contains(html, `data-view="day"`) {
+			t.Errorf("day view button should not be present in html")
+		}
+	})
 }
 
 func TestBuildFamilyView_ContinuousSpanningBars(t *testing.T) {
@@ -2611,8 +2572,8 @@ func TestRenderFamilyWidgetTemplate_WeekTimeline(t *testing.T) {
 	if !strings.Contains(html, "cf-week-body") {
 		t.Errorf("expected 'cf-week-body' in rendered HTML: %s", html)
 	}
-	if !strings.Contains(html, "cf-timeline-axis") {
-		t.Errorf("expected 'cf-timeline-axis' in rendered HTML: %s", html)
+	if !strings.Contains(html, "cf-week-grid") {
+		t.Errorf("expected 'cf-week-grid' in rendered HTML: %s", html)
 	}
 	if !strings.Contains(html, "cf-day-canvas") {
 		t.Errorf("expected 'cf-day-canvas' in rendered HTML: %s", html)

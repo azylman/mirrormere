@@ -91,6 +91,7 @@ func StandardFuncMap(nowFunc func() time.Time) template.FuncMap {
 			return CalendarFeedActiveCalendars(cfg)
 		},
 		"tasksStats": TasksStats,
+		"stringOr":   stringOr,
 		"add": func(a, b int) int {
 			return a + b
 		},

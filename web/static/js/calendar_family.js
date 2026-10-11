@@ -48,16 +48,14 @@
       this.nextBtn = element.querySelector('.cf-nav-btn.cf-next-btn');
       this.viewButtons = Array.from(element.querySelectorAll('.cf-view-btn'));
       this.viewPanels = {
-        day: element.querySelector('.cf-view-panel.cf-view-day') || element.querySelector('.cf-view-day'),
         week: element.querySelector('.cf-view-panel.cf-view-week') || element.querySelector('.cf-view-week'),
         month: element.querySelector('.cf-view-panel.cf-view-month') || element.querySelector('.cf-view-month'),
       };
       this.labels = {
-        day: element.querySelector('.cf-range-label.cf-label-day'),
         week: element.querySelector('.cf-range-label.cf-label-week'),
         month: element.querySelector('.cf-range-label.cf-label-month'),
       };
-      this.todayBadge = element.querySelector('.cf-today-badge.cf-today-day') || element.querySelector('.cf-today-badge');
+      this.todayBadge = element.querySelector('.cf-today-badge');
 
       this.clickHandler = this.handleClick.bind(this);
       this.activityHandler = this.handleUserActivity.bind(this);
@@ -146,16 +144,16 @@
 
     resolveDefaultView() {
       const raw = (this.element.dataset.defaultView || (this.config && this.config.default_view) || 'week').toLowerCase();
-      if (raw === 'day' || raw === 'month') {
-        return raw;
+      if (raw === 'month') {
+        return 'month';
       }
       return 'week';
     }
 
     resolveActiveView() {
       const raw = (this.element.dataset.activeView || this.defaultView).toLowerCase();
-      if (raw === 'day' || raw === 'month') {
-        return raw;
+      if (raw === 'month') {
+        return 'month';
       }
       return 'week';
     }
@@ -420,7 +418,7 @@
           e.stopPropagation();
         }
         const targetView = (btn.dataset.view || '').toLowerCase();
-        if (targetView && (targetView === 'day' || targetView === 'week' || targetView === 'month')) {
+        if (targetView && (targetView === 'week' || targetView === 'month')) {
           this.switchView(targetView);
         }
         return;
@@ -687,7 +685,7 @@
 
     switchView(targetView) {
       const view = (targetView || '').toLowerCase();
-      if (view !== 'day' && view !== 'week' && view !== 'month') {
+      if (view !== 'week' && view !== 'month') {
         return;
       }
       this.activeView = view;
@@ -721,25 +719,6 @@
         this.pageOffset = prevOffset;
         this.updateDateUI();
       };
-
-      if (this.activeView === 'day') {
-        const nextDay = new Date(this.currentDate.getTime());
-        nextDay.setDate(nextDay.getDate() + 1);
-        const nextDayStr = this.formatDateISO(nextDay);
-        if (cached && cached.end && nextDayStr > cached.end) {
-          this.showSyncIndicator('Not synced yet');
-          return false;
-        }
-        this.currentDate = nextDay;
-        this.pageOffset += 1;
-        this.hideSyncIndicator();
-        this.updateDateUI();
-        if (typeof this.options.onPageChange === 'function') {
-          this.options.onPageChange('next', this.currentDate, this);
-        }
-        this.loadDateView(this.currentDate, this.activeView, rollbackFn);
-        return true;
-      }
 
       if (this.activeView === 'week') {
         const step = this.resolveDaysCount();
@@ -797,25 +776,6 @@
         this.pageOffset = prevOffset;
         this.updateDateUI();
       };
-
-      if (this.activeView === 'day') {
-        const prevDay = new Date(this.currentDate.getTime());
-        prevDay.setDate(prevDay.getDate() - 1);
-        const prevDayStr = this.formatDateISO(prevDay);
-        if (cached && cached.start && prevDayStr < cached.start) {
-          this.showSyncIndicator('Not synced yet');
-          return false;
-        }
-        this.currentDate = prevDay;
-        this.pageOffset -= 1;
-        this.hideSyncIndicator();
-        this.updateDateUI();
-        if (typeof this.options.onPageChange === 'function') {
-          this.options.onPageChange('prev', this.currentDate, this);
-        }
-        this.loadDateView(this.currentDate, this.activeView, rollbackFn);
-        return true;
-      }
 
       if (this.activeView === 'week') {
         const step = this.resolveDaysCount();
@@ -963,7 +923,7 @@
         return;
       }
 
-      const views = ['day', 'week', 'month'];
+      const views = ['week', 'month'];
       for (const v of views) {
         const newPanel = temp.querySelector(`.cf-view-panel.cf-view-${v}`) || temp.querySelector(`.cf-view-${v}`);
         const curPanel = this.viewPanels[v];
@@ -1067,16 +1027,7 @@
       this.element.dataset.currentDate = this.formatDateISO(this.currentDate);
       this.element.dataset.pageOffset = String(this.pageOffset);
 
-      if (this.activeView === 'day') {
-        const label = this.labels.day || this.element.querySelector('.cf-range-label.cf-label-day') || this.element.querySelector('.cf-range-label');
-        if (label) {
-          label.textContent = this.formatDayLabel(this.currentDate);
-        }
-        if (this.todayBadge) {
-          const isToday = this.formatDateISO(this.currentDate) === this.formatDateISO(this.baseDate);
-          this.todayBadge.style.display = isToday ? '' : 'none';
-        }
-      } else if (this.activeView === 'week') {
+      if (this.activeView === 'week') {
         const label = this.labels.week || this.element.querySelector('.cf-range-label.cf-label-week') || this.element.querySelector('.cf-range-label');
         if (label) {
           const step = this.resolveDaysCount();
@@ -1084,17 +1035,14 @@
           weekEnd.setDate(weekEnd.getDate() + step - 1);
           label.textContent = this.formatWeekLabel(this.currentWeekStart, weekEnd);
         }
-        if (this.todayBadge) {
-          this.todayBadge.style.display = 'none';
-        }
       } else if (this.activeView === 'month') {
         const label = this.labels.month || this.element.querySelector('.cf-range-label.cf-label-month') || this.element.querySelector('.cf-range-label');
         if (label) {
           label.textContent = this.formatMonthLabel(this.currentDate);
         }
-        if (this.todayBadge) {
-          this.todayBadge.style.display = 'none';
-        }
+      }
+      if (this.todayBadge) {
+        this.todayBadge.style.display = (this.pageOffset !== 0) ? '' : 'none';
       }
     }
 
@@ -1182,10 +1130,9 @@
         }
       }
 
-      // 5. Update TODAY badge visibility (visible only in Day view on today's date)
+      // 5. Update TODAY badge visibility
       if (this.todayBadge) {
-        const isToday = this.formatDateISO(this.currentDate) === this.formatDateISO(this.baseDate);
-        this.todayBadge.style.display = (view === 'day' && isToday) ? '' : 'none';
+        this.todayBadge.style.display = (this.pageOffset !== 0) ? '' : 'none';
       }
 
       // 6. Refresh date labels for active view
