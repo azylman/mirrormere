@@ -753,7 +753,7 @@
     applyTaskDoneState(taskItem);
 
     try {
-      const resp = await fetch(`/api/lists/${encodeURIComponent(listId)}/items/${encodeURIComponent(taskId)}/complete`, {
+      const resp = await fetch(`api/lists/${encodeURIComponent(listId)}/items/${encodeURIComponent(taskId)}/complete`, {
         method: 'POST',
         headers: {
           'Accept': 'application/json',
