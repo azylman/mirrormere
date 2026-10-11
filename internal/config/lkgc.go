@@ -556,10 +556,10 @@ func validateDomainRulesStage(cfg *Config, registry map[string]*domain.Package) 
 
 		if source != "" {
 			switch source {
-			case "local", "gtasks", "http":
+			case "local", "gtasks", "http", "todoist":
 				// Valid source adapter
 			default:
-				return fmt.Errorf("[Mirrormere Config Error] tasks widget '%s' declares invalid source '%s' (must be 'local', 'gtasks', or 'http')", w.ID, source)
+				return fmt.Errorf("[Mirrormere Config Error] tasks widget '%s' declares invalid source '%s' (must be 'local', 'gtasks', 'http', or 'todoist')", w.ID, source)
 			}
 
 			var sourceCfg any
@@ -587,6 +587,18 @@ func validateDomainRulesStage(cfg *Config, registry map[string]*domain.Package) 
 					return fmt.Errorf("[Mirrormere Config Error] tasks widget '%s' with source 'gtasks' requires non-empty 'gtasks.tasklist_id'", w.ID)
 				}
 				sourceCfg = gtasksCfg
+			} else if source == "todoist" {
+				todoistCfg, ok := w.Config["todoist"].(map[string]any)
+				if !ok || todoistCfg == nil {
+					return fmt.Errorf("[Mirrormere Config Error] tasks widget '%s' with source 'todoist' requires 'todoist' config block", w.ID)
+				}
+				if baseURL, ok := todoistCfg["base_url"].(string); ok && baseURL != "" {
+					u, err := url.ParseRequestURI(baseURL)
+					if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+						return fmt.Errorf("[Mirrormere Config Error] tasks widget '%s': invalid todoist.base_url '%s' (must be http:// or https:// with host)", w.ID, baseURL)
+					}
+				}
+				sourceCfg = todoistCfg
 			}
 
 			if existing, exists := primarySources[listID]; exists {
