@@ -287,10 +287,26 @@ body[data-theme="night"],
   border: 1px solid rgba(197, 163, 255, 0.1);
 }
 
+[data-theme="night"] .task-item-active {
+  border-color: rgba(197, 163, 255, 0.35);
+}
+
 [data-theme="night"] .task-checkbox-ring {
   background: rgba(59, 54, 76, 0.6);
-  border: 2px solid var(--mm-coral);
+  border: 2px solid var(--mm-lavender);
   box-shadow: 0 1px 4px rgba(20, 16, 32, 0.3);
+}
+
+[data-theme="night"] .task-tag-due {
+  background: rgba(197, 163, 255, 0.18);
+  color: var(--mm-lavender);
+  border: 1px solid rgba(197, 163, 255, 0.25);
+}
+
+[data-theme="night"] .weather-icon-badge {
+  background: rgba(197, 163, 255, 0.15);
+  color: var(--mm-lavender);
+  border: 1px solid rgba(197, 163, 255, 0.25);
 }
 
 [data-theme="night"] .task-checkbox-done {
@@ -492,7 +508,7 @@ html, body {
 .header-clock-ampm {
   font-size: 1.05rem;
   font-weight: 800;
-  color: var(--mm-coral);
+  color: var(--mm-lavender);
   text-transform: uppercase;
   letter-spacing: 0.02em;
   margin-left: 2px;
@@ -1850,7 +1866,7 @@ button, .touch-target {
 
 .task-item-active {
   background: #ffffff;
-  border: 1.5px solid rgba(255, 111, 89, 0.35);
+  border: 1.5px solid rgba(139, 96, 237, 0.35);
   box-shadow: 0 2px 6px rgba(130, 100, 70, 0.04);
 }
 
@@ -1883,9 +1899,9 @@ button, .touch-target {
   width: 19px;
   height: 19px;
   border-radius: 50%;
-  border: 2px solid var(--mm-coral);
+  border: 2px solid var(--mm-lavender);
   background: #ffffff;
-  box-shadow: 0 1px 3px rgba(255, 111, 89, 0.15);
+  box-shadow: 0 1px 3px rgba(139, 96, 237, 0.15);
 }
 
 .task-body {
@@ -1935,8 +1951,8 @@ button, .touch-target {
   align-items: center;
   padding: 1px 6px;
   border-radius: 9999px;
-  background: var(--mm-coral-light);
-  color: var(--mm-coral);
+  background: var(--mm-lavender-light);
+  color: var(--mm-lavender);
   font-size: 0.68rem;
   font-weight: 800;
 }
@@ -2001,8 +2017,8 @@ button, .touch-target {
   width: 44px;
   height: 44px;
   border-radius: 14px;
-  background: rgba(245, 158, 11, 0.12);
-  color: var(--mm-honey, #f59e0b);
+  background: var(--mm-lavender-light, #f3effe);
+  color: var(--mm-lavender, #8b60ed);
   display: flex;
   align-items: center;
   justify-content: center;

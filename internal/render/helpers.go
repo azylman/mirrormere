@@ -595,8 +595,8 @@ func WeatherHourlyGraph(args ...any) template.HTML {
 		totalWidth, svgHeight, totalWidth)
 
 	fmt.Fprintf(&sb, `<defs><linearGradient id="%s" x1="0" y1="0" x2="0" y2="1">`+
-		`<stop offset="0%%" stop-color="#ff6f59" stop-opacity="0.25"/>`+
-		`<stop offset="100%%" stop-color="#ff6f59" stop-opacity="0.0"/>`+
+		`<stop offset="0%%" stop-color="var(--mm-lavender, #8b60ed)" stop-opacity="0.25"/>`+
+		`<stop offset="100%%" stop-color="var(--mm-lavender, #8b60ed)" stop-opacity="0.0"/>`+
 		`</linearGradient></defs>`, gradientID)
 
 	fmt.Fprintf(&sb, `<line x1="0" y1="%.1f" x2="%.1f" y2="%.1f" stroke="rgba(90, 60, 30, 0.08)" stroke-width="1"/>`,
@@ -621,7 +621,7 @@ func WeatherHourlyGraph(args ...any) template.HTML {
 		fmt.Fprintf(&areaPath, " L %.1f %.1f Z", pts[n-1].x, baseY)
 
 		fmt.Fprintf(&sb, `<path d="%s" fill="url(#%s)"/>`, areaPath.String(), gradientID)
-		fmt.Fprintf(&sb, `<path d="%s" fill="none" stroke="var(--mm-coral, #ff6f59)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>`,
+		fmt.Fprintf(&sb, `<path d="%s" fill="none" stroke="var(--mm-lavender, #8b60ed)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>`,
 			curvePath.String())
 	}
 
@@ -642,12 +642,12 @@ func WeatherHourlyGraph(args ...any) template.HTML {
 		fmt.Fprintf(&sb, `<text x="%.1f" y="%.1f" text-anchor="middle" font-size="14" font-weight="800" fill="var(--mm-text-title, #2a2338)" style="user-select: none; pointer-events: none;">%d°</text>`,
 			pt.x, pt.y-10.0, tempRound)
 
-		fmt.Fprintf(&sb, `<circle cx="%.1f" cy="%.1f" r="4.0" fill="#ffffff" stroke="var(--mm-coral, #ff6f59)" stroke-width="2.5"/>`,
+		fmt.Fprintf(&sb, `<circle cx="%.1f" cy="%.1f" r="4.0" fill="#ffffff" stroke="var(--mm-lavender, #8b60ed)" stroke-width="2.5"/>`,
 			pt.x, pt.y)
 
 		timeLabel := "Now"
 		timeWeight := "800"
-		timeColor := "var(--mm-coral, #ff6f59)"
+		timeColor := "var(--mm-lavender, #8b60ed)"
 		if i > 0 {
 			timeWeight = "600"
 			timeColor = "var(--mm-text-dim, #8b819f)"
