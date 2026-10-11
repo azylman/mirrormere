@@ -1407,10 +1407,20 @@ button, .touch-target {
 
 .tasks-progress {
   font-size: 0.72rem;
-  font-weight: 700;
+  font-weight: 800;
+  background: var(--mm-mint-light);
   color: var(--mm-mint);
-  line-height: 1.1;
-  margin-top: 2px;
+  padding: 3px 10px;
+  border-radius: 9999px;
+  letter-spacing: 0.01em;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.tasks-sparkle-icon {
+  flex-shrink: 0;
 }
 
 .tasks-source-badge {

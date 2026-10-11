@@ -1172,6 +1172,12 @@ func TestEngine_RenderWidget_TasksPackage(t *testing.T) {
 	if !strings.Contains(htmlStr, "tasks-icon-box") {
 		t.Errorf("expected 'tasks-icon-box' in output: %s", htmlStr)
 	}
+	if !strings.Contains(htmlStr, "tasks-progress") {
+		t.Errorf("expected 'tasks-progress' in output: %s", htmlStr)
+	}
+	if strings.Contains(htmlStr, "tasks-source-badge") {
+		t.Errorf("expected 'tasks-source-badge' to be removed from header: %s", htmlStr)
+	}
 	if strings.Contains(htmlStr, "✅") {
 		t.Errorf("expected raw emoji '✅' to be replaced by vector icon in output: %s", htmlStr)
 	}

@@ -8,21 +8,14 @@
             <polyline points="20 6 9 17 4 12"></polyline>
           </svg>
         </div>
-        <div class="tasks-title-stack">
-          <span class="tasks-title">
-            {{ if .Data.List.Name }}{{ .Data.List.Name }}{{ else }}Checklist{{ end }}
-          </span>
-          {{ if $stats.Summary }}
-            <span class="tasks-progress">
-              {{ $stats.Summary }}
-              <svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor" class="tasks-sparkle-icon" aria-hidden="true" style="display: inline-block; vertical-align: middle; margin-left: 2px;"><path d="M12 2L14.5 9.5L22 12L14.5 14.5L12 22L9.5 14.5L2 12L9.5 9.5L12 2Z"/></svg>
-            </span>
-          {{ end }}
-        </div>
+        <span class="tasks-title">
+          {{ if .Data.List.Name }}{{ .Data.List.Name }}{{ else }}Checklist{{ end }}
+        </span>
       </div>
-      {{ if .Data.List.Source }}
-        <span class="tasks-source-badge">
-          {{ .Data.List.Source }}
+      {{ if $stats.Summary }}
+        <span class="tasks-progress">
+          {{ $stats.Summary }}
+          <svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor" class="tasks-sparkle-icon" aria-hidden="true"><path d="M12 2L14.5 9.5L22 12L14.5 14.5L12 22L9.5 14.5L2 12L9.5 9.5L12 2Z"/></svg>
         </span>
       {{ end }}
     </div>
