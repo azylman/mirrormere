@@ -6,40 +6,41 @@
 {{ end }}
 <div class="widget-card widget-calendar-grid widget-calendar-family cf-view-{{ $defaultView }}" data-widget-id="{{ .ID }}" data-widget-type="{{ .Type }}" data-default-view="{{ $defaultView }}" data-active-view="{{ $defaultView }}" data-prevent-screen-swipe="true" style="grid-column: span {{ .Dimensions.Cols }}; grid-row: span {{ .Dimensions.Rows }}; display: flex; flex-direction: column; position: relative; overflow: hidden; --mm-cf-shared: {{ $view.SharedColor }};{{ range $i, $m := $view.Members }} --mm-member-{{ $i }}: {{ $m.Color }}; --mm-member-{{ $i }}-text: {{ $m.TextColor }};{{ end }}">
   {{ template "cf-styles" . }}
-  <div class="cf-header" style="display: flex; align-items: center; justify-content: space-between; padding-bottom: 10px; margin-bottom: 8px; border-bottom: 1px solid var(--mm-divider, rgba(255, 255, 255, 0.08));">
-    <div class="cf-header-left" style="display: flex; align-items: center; gap: 10px;">
-      <div class="cf-title-badge" style="width: 36px; height: 36px; border-radius: 12px; background: rgba(139, 92, 246, 0.15); color: var(--mm-lavender, #c4b5fd); display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
-        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
-          <line x1="16" y1="2" x2="16" y2="6"></line>
-          <line x1="8" y1="2" x2="8" y2="6"></line>
-          <line x1="3" y1="10" x2="21" y2="10"></line>
-        </svg>
+  <div class="cf-header" style="display: flex; flex-direction: column; gap: 6px; padding-bottom: 8px; margin-bottom: 8px; border-bottom: 1px solid var(--mm-divider, rgba(255, 255, 255, 0.08));">
+    <div class="cf-header-top" style="display: flex; align-items: center; justify-content: space-between; gap: 10px;">
+      <div class="cf-header-left" style="display: flex; align-items: center; gap: 8px;">
+        <div class="cf-title-badge" style="width: 30px; height: 30px; border-radius: 9px; background: rgba(139, 92, 246, 0.15); color: var(--mm-lavender, #c4b5fd); display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+            <line x1="16" y1="2" x2="16" y2="6"></line>
+            <line x1="8" y1="2" x2="8" y2="6"></line>
+            <line x1="3" y1="10" x2="21" y2="10"></line>
+          </svg>
+        </div>
+        <h2 class="cf-title" style="margin: 0; font-size: 1.05rem; font-weight: 800; color: var(--mm-text-title, #ffffff); line-height: 1.2;">{{ stringOr .Config "title" "Calendar" }}</h2>
       </div>
-      <div>
-        <div style="display: flex; align-items: center; gap: 8px;">
-          <h2 class="cf-title" style="margin: 0; font-size: 1rem; font-weight: 800; color: var(--mm-text-title, #ffffff); line-height: 1.2;">{{ stringOr .Config "title" "Family Week-at-a-Glance" }}</h2>
-          <div class="cf-nav-group" style="display: inline-flex; align-items: center; gap: 4px;">
-            <button type="button" class="cf-nav-btn cf-prev-btn" aria-label="Previous date range" title="Previous">&#x2039;</button>
-            <button type="button" class="cf-nav-btn cf-next-btn" aria-label="Next date range" title="Next">&#x203A;</button>
-            <button type="button" class="cf-today-badge" title="Return to today">TODAY</button>
-          </div>
+
+      <div class="cf-legend" style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
+        {{ range $i, $m := $view.Members }}
+        <div class="cf-member-chip cf-pattern-{{ $m.Pattern }}" title="{{ $m.Name }}" style="display: inline-flex; align-items: center; gap: 5px; background: rgba(255, 255, 255, 0.05); padding: 2px 8px; border-radius: 9999px; border: 1px solid rgba(255, 255, 255, 0.08);">
+          <span class="cf-member-dot" style="display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--mm-member-{{ $i }}); flex-shrink: 0;"></span>
+          <span class="cf-member-name" style="font-size: 0.68rem; font-weight: 700; color: var(--mm-text-primary, #ffffff); line-height: 1;">{{ $m.Name }}</span>
         </div>
-        <div class="cf-subtitle" style="display: flex; align-items: center; gap: 6px; font-size: 0.72rem; color: var(--mm-text-dim, #94a3b8); margin-top: 2px;">
-          <span class="cf-range-label cf-label-week" style="{{ if ne $defaultView "week" }}display: none;{{ end }}font-weight: 600;">{{ $view.RangeLabel }}</span>
-          <span class="cf-range-label cf-label-month" style="{{ if ne $defaultView "month" }}display: none;{{ end }}font-weight: 600;">{{ $monthView.MonthLabel }}</span>
-        </div>
+        {{ end }}
       </div>
     </div>
 
-    <div class="cf-header-right" style="display: flex; align-items: center; gap: 10px;">
-      <div class="cf-legend" style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
-        {{ range $i, $m := $view.Members }}
-        <div class="cf-member-chip cf-pattern-{{ $m.Pattern }}" title="{{ $m.Name }}" style="display: inline-flex; align-items: center; gap: 5px; background: rgba(255, 255, 255, 0.05); padding: 3px 8px; border-radius: 9999px; border: 1px solid rgba(255, 255, 255, 0.08);">
-          <span class="cf-member-dot" style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--mm-member-{{ $i }}); flex-shrink: 0;"></span>
-          <span class="cf-member-name" style="font-size: 0.70rem; font-weight: 700; color: var(--mm-text-primary, #ffffff); line-height: 1;">{{ $m.Name }}</span>
+    <div class="cf-header-bottom" style="display: flex; align-items: center; justify-content: space-between; gap: 10px;">
+      <div class="cf-date-row" style="display: flex; align-items: center; gap: 8px;">
+        <div class="cf-subtitle" style="display: flex; align-items: center; font-size: 0.80rem; font-weight: 700;">
+          <span class="cf-range-label cf-label-week" style="{{ if ne $defaultView "week" }}display: none;{{ end }}font-weight: 700; color: var(--mm-text-dim, #cbd5e1);">{{ $view.RangeLabel }}</span>
+          <span class="cf-range-label cf-label-month" style="{{ if ne $defaultView "month" }}display: none;{{ end }}font-weight: 700; color: var(--mm-text-dim, #cbd5e1);">{{ $monthView.MonthLabel }}</span>
         </div>
-        {{ end }}
+        <div class="cf-nav-group" style="display: inline-flex; align-items: center; gap: 3px;">
+          <button type="button" class="cf-nav-btn cf-prev-btn" aria-label="Previous date range" title="Previous">&#x2039;</button>
+          <button type="button" class="cf-nav-btn cf-next-btn" aria-label="Next date range" title="Next">&#x203A;</button>
+          <button type="button" class="cf-today-badge" title="Return to today" style="display: none;">TODAY</button>
+        </div>
       </div>
 
       <div class="cf-view-switcher" role="tablist" aria-label="Calendar view">
