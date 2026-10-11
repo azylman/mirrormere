@@ -1580,3 +1580,37 @@ test('VideoHUDController: nav bar is displayed for media streams and hidden for 
 
   hud.destroy();
 });
+
+test('VideoHUDController: prev and next buttons render vector SVG icons instead of unicode tofu', () => {
+  const dom = createHUDDOM();
+  const hud = new VideoHUDController({
+    overlayElement: dom.overlay,
+    prevBtn: dom.prevBtn,
+    nextBtn: dom.nextBtn,
+  });
+
+  assert.ok(dom.prevBtn.innerHTML.includes('<svg'), 'prevBtn must render inline SVG');
+  assert.ok(dom.prevBtn.innerHTML.includes('polygon'), 'prevBtn SVG must contain polygon');
+  assert.ok(dom.nextBtn.innerHTML.includes('<svg'), 'nextBtn must render inline SVG');
+  assert.ok(dom.nextBtn.innerHTML.includes('polygon'), 'nextBtn SVG must contain polygon');
+
+  hud.destroy();
+});
+
+test('VideoHUD: display.html defines vector SVGs for prev and next buttons', () => {
+  const html = fs.readFileSync(path.resolve(__dirname, '../templates/display.html'), 'utf8');
+
+  assert.ok(html.includes('id="video-hud-prev-btn"'), 'display.html must contain video-hud-prev-btn');
+  assert.ok(html.includes('id="video-hud-next-btn"'), 'display.html must contain video-hud-next-btn');
+
+  // Verify neither contains raw unicode tofu characters
+  assert.ok(!html.includes('⏮'), 'display.html must not use unicode ⏮');
+  assert.ok(!html.includes('⏭'), 'display.html must not use unicode ⏭');
+
+  // Verify both contain SVG tags
+  const prevBtnHtml = html.match(/<button id="video-hud-prev-btn"[^>]*>([\s\S]*?)<\/button>/);
+  assert.ok(prevBtnHtml && prevBtnHtml[1].includes('<svg'), 'video-hud-prev-btn must contain svg in template');
+
+  const nextBtnHtml = html.match(/<button id="video-hud-next-btn"[^>]*>([\s\S]*?)<\/button>/);
+  assert.ok(nextBtnHtml && nextBtnHtml[1].includes('<svg'), 'video-hud-next-btn must contain svg in template');
+});

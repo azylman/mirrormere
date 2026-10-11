@@ -10,6 +10,8 @@
     pause: '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true"><rect x="6" y="4" width="4" height="16" rx="1"></rect><rect x="14" y="4" width="4" height="16" rx="1"></rect></svg>',
     mute: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" fill="currentColor"></polygon><line x1="23" y1="9" x2="17" y2="15"></line><line x1="17" y1="9" x2="23" y2="15"></line></svg>',
     unmute: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" fill="currentColor"></polygon><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path></svg>',
+    prev: '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><rect x="5" y="4" width="2.5" height="16" rx="1"></rect><polygon points="19 4 8.5 12 19 20"></polygon></svg>',
+    next: '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><polygon points="5 4 15.5 12 5 20"></polygon><rect x="16.5" y="4" width="2.5" height="16" rx="1"></rect></svg>',
   };
 
   /**
@@ -77,6 +79,13 @@
       this.nextBtn = options.nextBtn ||
         (this.bottomBar?.children?.find ? this.bottomBar.children.find((c) => c.id === 'video-hud-next-btn') : null) ||
         (typeof document !== 'undefined' ? document.getElementById('video-hud-next-btn') : null);
+
+      if (this.prevBtn && (!this.prevBtn.innerHTML || !this.prevBtn.innerHTML.includes('<svg'))) {
+        this.prevBtn.innerHTML = HUD_ICONS.prev;
+      }
+      if (this.nextBtn && (!this.nextBtn.innerHTML || !this.nextBtn.innerHTML.includes('<svg'))) {
+        this.nextBtn.innerHTML = HUD_ICONS.next;
+      }
       this.stageElement = options.stageElement || (typeof document !== 'undefined' ? document.getElementById('video-stage') : null);
       this.videoManager = options.videoManager || null;
       this._remoteUrl = options.remoteUrl || '';
