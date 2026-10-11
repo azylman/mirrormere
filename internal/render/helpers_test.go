@@ -562,6 +562,16 @@ func TestWeatherHourlyGraph(t *testing.T) {
 		if !strings.Contains(got, `y="195.0" text-anchor="middle" font-size="14" font-weight="800"`) {
 			t.Errorf("expected low temp label at y=195.0 with font-size 14, got: %s", got)
 		}
+		// Verify stroke and gradient use lavender instead of coral/orange
+		if !strings.Contains(got, `stroke="var(--mm-lavender, #8b60ed)"`) {
+			t.Errorf("expected stroke using var(--mm-lavender, #8b60ed), got: %s", got)
+		}
+		if !strings.Contains(got, `stop-color="var(--mm-lavender, #8b60ed)"`) {
+			t.Errorf("expected stop-color using var(--mm-lavender, #8b60ed), got: %s", got)
+		}
+		if strings.Contains(got, `#ff6f59`) || strings.Contains(got, `var(--mm-coral`) {
+			t.Errorf("did not expect coral/orange #ff6f59 in weather graph output, got: %s", got)
+		}
 	})
 }
 

@@ -121,5 +121,25 @@ describe('Fairyfloss Theme Mode Switching', () => {
       assert.match(content, /\[data-theme=["']?night["']?\]\s+\.cf-today-badge/, `${path.basename(cssPath)} must include [data-theme="night"] .cf-today-badge`);
     }
   });
+
+  test('CSS stylesheets contain lavender styling for header clock ampm, tasks, and weather widget', () => {
+    for (const cssPath of [hudCSSPath, defaultHudCSSPath, customCSSPath]) {
+      const content = fs.readFileSync(cssPath, 'utf8');
+
+      // Header clock AM/PM
+      assert.match(content, /\.header-clock-ampm\s*\{[^}]*color:\s*var\(--mm-lavender\)/, `${path.basename(cssPath)} must style .header-clock-ampm with var(--mm-lavender)`);
+
+      // Tasks
+      assert.match(content, /\.task-checkbox-ring\s*\{[^}]*border:\s*2px solid var\(--mm-lavender\)/, `${path.basename(cssPath)} must style .task-checkbox-ring with var(--mm-lavender)`);
+      assert.match(content, /\[data-theme=["']?night["']?\]\s+\.task-checkbox-ring\s*\{[^}]*border:\s*2px solid var\(--mm-lavender\)/, `${path.basename(cssPath)} must style night mode .task-checkbox-ring with var(--mm-lavender)`);
+      assert.match(content, /\.task-tag-due\s*\{[^}]*color:\s*var\(--mm-lavender\)/, `${path.basename(cssPath)} must style .task-tag-due with var(--mm-lavender)`);
+      assert.match(content, /\[data-theme=["']?night["']?\]\s+\.task-tag-due\s*\{[^}]*color:\s*var\(--mm-lavender\)/, `${path.basename(cssPath)} must style night mode .task-tag-due with var(--mm-lavender)`);
+
+      // Weather widget
+      assert.match(content, /\.weather-icon-badge\s*\{[^}]*color:\s*var\(--mm-lavender/, `${path.basename(cssPath)} must style .weather-icon-badge with var(--mm-lavender)`);
+      assert.match(content, /\[data-theme=["']?night["']?\]\s+\.weather-icon-badge\s*\{[^}]*color:\s*var\(--mm-lavender\)/, `${path.basename(cssPath)} must style night mode .weather-icon-badge with var(--mm-lavender)`);
+    }
+  });
 });
+
 
