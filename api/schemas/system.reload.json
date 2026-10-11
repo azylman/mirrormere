@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "system.reload",
+  "description": "System or shell reload event broadcast over SSE instructing clients to reload the display shell",
+  "type": "object",
+  "required": [
+    "reason",
+    "timestamp"
+  ],
+  "properties": {
+    "reason": {
+      "type": "string",
+      "description": "Reason for client reload (e.g. shell_change, manual, deployment)"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "UTC timestamp of the reload event in ISO 8601 / RFC 3339 format"
+    }
+  },
+  "additionalProperties": false
+}

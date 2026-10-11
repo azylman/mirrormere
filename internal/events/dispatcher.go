@@ -18,6 +18,12 @@ type WidgetReloadEvent struct {
 	Type string `json:"type"`
 }
 
+// SystemReloadEvent matches api/schemas/system.reload.json.
+type SystemReloadEvent struct {
+	Reason    string `json:"reason"`
+	Timestamp string `json:"timestamp"`
+}
+
 // DispatchConfigReload handles configuration updates, layout changes, and domain state resets.
 func (h *Hub) DispatchConfigReload(snapshot *config.Snapshot, diff *config.ConfigDiff) error {
 	if snapshot == nil {
@@ -100,6 +106,17 @@ func (h *Hub) DispatchConfigReload(snapshot *config.Snapshot, diff *config.Confi
 				h.Publish(EventHeaderUpdate, headerBytes)
 			}
 		}
+
+		// 5. If top-level display shell changed, broadcast system.reload
+		if diff.ShellChanged {
+			reloadEvent := SystemReloadEvent{
+				Reason:    "shell_change",
+				Timestamp: nowStr,
+			}
+			if err := h.DispatchSystemReload(reloadEvent); err != nil {
+				h.logger.Error("failed to dispatch system reload on shell change", "error", err)
+			}
+		}
 	}
 
 	return nil
@@ -122,6 +139,16 @@ func (h *Hub) DispatchWidgetReload(event WidgetReloadEvent) error {
 		return err
 	}
 	h.Publish(EventWidgetReload, data)
+	return nil
+}
+
+// DispatchSystemReload broadcasts system.reload notifications to connected clients.
+func (h *Hub) DispatchSystemReload(event SystemReloadEvent) error {
+	data, err := json.Marshal(event)
+	if err != nil {
+		return err
+	}
+	h.Publish(EventSystemReload, data)
 	return nil
 }
 

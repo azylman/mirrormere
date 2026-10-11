@@ -194,6 +194,7 @@ class MirrormereSSE {
       'style.reload',
       'header.update',
       'system.status',
+      'system.reload',
       'video.state',
       'audio.state',
       'voice.state'

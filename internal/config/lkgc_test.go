@@ -1083,6 +1083,167 @@ func TestLKGC_DiffConfigs(t *testing.T) {
 	}
 }
 
+func TestLKGC_DiffConfigs_ShellChanged(t *testing.T) {
+	t.Parallel()
+
+	trueVal := true
+	falseVal := false
+
+	tests := []struct {
+		name         string
+		oldCfg       *config.Config
+		newCfg       *config.Config
+		wantShellMod bool
+	}{
+		{
+			name:         "nil old config produces false",
+			oldCfg:       nil,
+			newCfg:       &config.Config{},
+			wantShellMod: false,
+		},
+		{
+			name:         "nil new config produces false",
+			oldCfg:       &config.Config{},
+			newCfg:       nil,
+			wantShellMod: false,
+		},
+		{
+			name:         "identical empty configs produce false",
+			oldCfg:       &config.Config{},
+			newCfg:       &config.Config{},
+			wantShellMod: false,
+		},
+		{
+			name: "widget change only produces false",
+			oldCfg: &config.Config{
+				Display: config.DisplayConfig{
+					Widgets: []config.WidgetConfig{{ID: "w1", Type: "clock"}},
+				},
+			},
+			newCfg: &config.Config{
+				Display: config.DisplayConfig{
+					Widgets: []config.WidgetConfig{{ID: "w1", Type: "clock"}, {ID: "w2", Type: "weather"}},
+				},
+			},
+			wantShellMod: false,
+		},
+		{
+			name: "timezone change only produces false",
+			oldCfg: &config.Config{
+				Timezone: "America/Los_Angeles",
+			},
+			newCfg: &config.Config{
+				Timezone: "America/New_York",
+			},
+			wantShellMod: false,
+		},
+		{
+			name: "header video enabled added produces true",
+			oldCfg: &config.Config{
+				Display: config.DisplayConfig{
+					Header: config.HeaderConfig{},
+				},
+			},
+			newCfg: &config.Config{
+				Display: config.DisplayConfig{
+					Header: config.HeaderConfig{
+						Video: &config.HeaderVideoConfig{
+							Enabled:   &trueVal,
+							StreamID:  "chromecast",
+							StreamURL: "http://localhost:1984/stream",
+						},
+					},
+				},
+			},
+			wantShellMod: true,
+		},
+		{
+			name: "header video enabled flipped produces true",
+			oldCfg: &config.Config{
+				Display: config.DisplayConfig{
+					Header: config.HeaderConfig{
+						Video: &config.HeaderVideoConfig{
+							Enabled: &trueVal,
+						},
+					},
+				},
+			},
+			newCfg: &config.Config{
+				Display: config.DisplayConfig{
+					Header: config.HeaderConfig{
+						Video: &config.HeaderVideoConfig{
+							Enabled: &falseVal,
+						},
+					},
+				},
+			},
+			wantShellMod: true,
+		},
+		{
+			name: "header video stream URL changed produces true",
+			oldCfg: &config.Config{
+				Display: config.DisplayConfig{
+					Header: config.HeaderConfig{
+						Video: &config.HeaderVideoConfig{
+							Enabled:   &trueVal,
+							StreamURL: "http://localhost:1984/old",
+						},
+					},
+				},
+			},
+			newCfg: &config.Config{
+				Display: config.DisplayConfig{
+					Header: config.HeaderConfig{
+						Video: &config.HeaderVideoConfig{
+							Enabled:   &trueVal,
+							StreamURL: "http://localhost:1984/new",
+						},
+					},
+				},
+			},
+			wantShellMod: true,
+		},
+		{
+			name: "hide cursor changed produces true",
+			oldCfg: &config.Config{
+				Display: config.DisplayConfig{
+					HideCursor: false,
+				},
+			},
+			newCfg: &config.Config{
+				Display: config.DisplayConfig{
+					HideCursor: true,
+				},
+			},
+			wantShellMod: true,
+		},
+		{
+			name: "remote URL changed produces true",
+			oldCfg: &config.Config{
+				Display: config.DisplayConfig{
+					RemoteURL: "",
+				},
+			},
+			newCfg: &config.Config{
+				Display: config.DisplayConfig{
+					RemoteURL: "http://192.168.1.50:8080",
+				},
+			},
+			wantShellMod: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			d := config.DiffConfigs(tc.oldCfg, tc.newCfg)
+			if d.ShellChanged != tc.wantShellMod {
+				t.Errorf("DiffConfigs() ShellChanged = %v, want %v", d.ShellChanged, tc.wantShellMod)
+			}
+		})
+	}
+}
+
 func TestLKGC_RecoveryAndTelemetry(t *testing.T) {
 	t.Parallel()
 

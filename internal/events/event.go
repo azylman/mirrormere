@@ -18,6 +18,7 @@ const (
 	EventVoiceState   = "voice.state"
 	EventWidgetReload = "widget.reload"
 	EventStyleReload  = "style.reload"
+	EventSystemReload = "system.reload"
 )
 
 // Event represents an individual SSE message formatted per WHATWG specifications.

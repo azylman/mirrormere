@@ -214,6 +214,7 @@
   let lastDailyReloadDate = '';
   let pendingReloadTimer = null;
   let pendingBootId = null;
+  let pendingSystemReloadTimer = null;
 
   const STORAGE_KEY_DAILY_RELOAD = 'mm_last_daily_reload_date';
   const STORAGE_KEY_DEPLOY_RELOAD = 'mm_last_reload_timestamp';
@@ -365,6 +366,41 @@
     }
   }
 
+  /**
+   * Handle server-instructed page reload (system.reload event, e.g. shell configuration change).
+   * Debounces multiple rapid reload events (1000ms by default) to prevent reload storms.
+   */
+  function handleSystemReload(data, delayMs = 1000) {
+    if (typeof document === 'undefined') return;
+    const reason = (data && data.reason) ? data.reason : 'shell_change';
+    console.log(`[MirrormereDisplay] Server-instructed reload received (reason: ${reason}), scheduling reload...`);
+
+    if (pendingSystemReloadTimer) {
+      clearTimeout(pendingSystemReloadTimer);
+      pendingSystemReloadTimer = null;
+    }
+
+    if (delayMs <= 0) {
+      console.log(`[MirrormereDisplay] Executing immediate server-instructed reload (${reason})...`);
+      if (typeof window !== 'undefined' && window.location && typeof window.location.reload === 'function') {
+        window.location.reload();
+      }
+      return;
+    }
+
+    pendingSystemReloadTimer = setTimeout(() => {
+      pendingSystemReloadTimer = null;
+      console.log(`[MirrormereDisplay] Executing server-instructed reload (${reason})...`);
+      if (typeof window !== 'undefined' && window.location && typeof window.location.reload === 'function') {
+        window.location.reload();
+      }
+    }, delayMs);
+
+    if (pendingSystemReloadTimer && typeof pendingSystemReloadTimer.unref === 'function') {
+      pendingSystemReloadTimer.unref();
+    }
+  }
+
   function getBootIdState() {
     const storedDailyDate = getSessionStorageItem(STORAGE_KEY_DAILY_RELOAD);
     const storedTs = parseInt(getSessionStorageItem(STORAGE_KEY_DEPLOY_RELOAD) || '0', 10);
@@ -397,6 +433,10 @@
     if (pendingReloadTimer) {
       clearTimeout(pendingReloadTimer);
       pendingReloadTimer = null;
+    }
+    if (pendingSystemReloadTimer) {
+      clearTimeout(pendingSystemReloadTimer);
+      pendingSystemReloadTimer = null;
     }
     pendingBootId = null;
     try {
@@ -774,6 +814,10 @@
         handleSystemStatus(data);
       });
 
+      sseClient.on('system.reload', (data) => {
+        handleSystemReload(data);
+      });
+
       sseClient.connect();
     } else {
       // Standalone or pre-SSE header video initialization
@@ -793,6 +837,7 @@
     updateClock,
     handleHeaderUpdate,
     handleSystemStatus,
+    handleSystemReload,
     checkDailyMaintenanceReload,
     getBootIdState,
     setBootIdState,
