@@ -64,13 +64,13 @@
     <div class="cf-week-body" style="display: flex; flex: 1; min-height: 0; position: relative;">
       <div class="cf-week-grid" style="display: grid; grid-template-columns: repeat({{ len $view.Days }}, 1fr); gap: 6px; flex: 1; min-height: 0;">
         {{ range $view.Days }}
-        <div class="cf-day{{ if .IsToday }} cf-today{{ end }}{{ if .IsWeekend }} cf-weekend{{ end }}" style="display: flex; flex-direction: column; min-width: 0; min-height: 0; border-radius: 14px; padding: 6px; background: {{ if .IsToday }}var(--mm-cal-today-bg, var(--mm-honey-light, rgba(254, 243, 199, 0.4))){{ else if .IsWeekend }}var(--mm-cal-weekend-bg, rgba(90, 60, 30, 0.02)){{ else }}var(--mm-cal-day-bg, rgba(90, 60, 30, 0.03)){{ end }}; border: {{ if .IsToday }}2px solid var(--mm-coral, #ff6f59){{ else }}1px solid var(--mm-card-border, rgba(90, 60, 30, 0.08)){{ end }}; overflow: hidden; position: relative;">
+        <div class="cf-day{{ if .IsToday }} cf-today{{ end }}{{ if .IsWeekend }} cf-weekend{{ end }}" style="display: flex; flex-direction: column; min-width: 0; min-height: 0; border-radius: 14px; padding: 6px; background: {{ if .IsToday }}var(--mm-cal-today-bg, var(--mm-lavender-light, #f3effe)){{ else if .IsWeekend }}var(--mm-cal-weekend-bg, rgba(90, 60, 30, 0.02)){{ else }}var(--mm-cal-day-bg, rgba(90, 60, 30, 0.03)){{ end }}; border: {{ if .IsToday }}2px solid var(--mm-cal-today-border, var(--mm-lavender, #8b60ed)){{ else }}1px solid var(--mm-card-border, rgba(90, 60, 30, 0.08)){{ end }}; overflow: hidden; position: relative;">
           
-          <div class="cf-day-header" style="text-align: center; padding-bottom: 6px; border-bottom: 1px solid {{ if .IsToday }}rgba(255, 111, 89, 0.25){{ else }}var(--mm-divider, rgba(90, 60, 30, 0.07)){{ end }}; flex-shrink: 0; background: transparent;">
-            <div class="cf-day-weekday" style="font-size: 0.68rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em; color: {{ if .IsToday }}var(--mm-coral, #ff6f59){{ else }}var(--mm-text-dim, #8b819f){{ end }};">
+          <div class="cf-day-header" style="text-align: center; padding-bottom: 6px; border-bottom: 1px solid {{ if .IsToday }}var(--mm-cal-today-header-border, rgba(139, 96, 237, 0.25)){{ else }}var(--mm-divider, rgba(90, 60, 30, 0.07)){{ end }}; flex-shrink: 0; background: transparent;">
+            <div class="cf-day-weekday" style="font-size: 0.68rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em; color: {{ if .IsToday }}var(--mm-cal-today-text, var(--mm-lavender, #8b60ed)){{ else }}var(--mm-text-dim, #8b819f){{ end }};">
               {{ if .IsToday }}Today{{ else }}{{ .WeekdayAbb }}{{ end }}
             </div>
-            <div class="cf-day-num" style="font-size: 1.15rem; font-weight: 900; line-height: 1.1; color: {{ if .IsToday }}var(--mm-coral, #ff6f59){{ else }}var(--mm-text-title, #2a2338){{ end }};">
+            <div class="cf-day-num" style="font-size: 1.15rem; font-weight: 900; line-height: 1.1; color: {{ if .IsToday }}var(--mm-cal-today-text, var(--mm-lavender, #8b60ed)){{ else }}var(--mm-text-title, #2a2338){{ end }};">
               {{ .DayOfMonth }}
             </div>
           </div>
@@ -125,9 +125,9 @@
 
     <div class="cf-month-grid" style="display: grid; grid-template-columns: repeat(7, 1fr); grid-template-rows: repeat(6, 1fr); gap: 4px; flex: 1; min-height: 0; margin-top: 4px;">
       {{ range $monthView.Days }}
-      <div class="cf-month-day{{ if not .IsCurrentMonth }} cf-other-month{{ end }}{{ if .IsToday }} cf-today{{ end }}{{ if .IsWeekend }} cf-weekend{{ end }}{{ if gt .EventsCount 0 }} cf-has-events{{ end }}" data-date="{{ .Date }}" {{ if .Events }}data-event-id="{{ (index .Events 0).ID }}"{{ end }} style="display: flex; flex-direction: column; min-width: 0; min-height: 0; padding: 3px 4px; border-radius: 6px; background: {{ if .IsWeekend }}rgba(255, 255, 255, 0.02){{ else }}rgba(255, 255, 255, 0.04){{ end }}; border: 1px solid rgba(255, 255, 255, 0.05); overflow: hidden; position: relative; {{ if not .IsCurrentMonth }}opacity: 0.38;{{ end }}{{ if .IsToday }}outline: 2px solid var(--mm-coral, #ff6f59); z-index: 2;{{ end }}">
+      <div class="cf-month-day{{ if not .IsCurrentMonth }} cf-other-month{{ end }}{{ if .IsToday }} cf-today{{ end }}{{ if .IsWeekend }} cf-weekend{{ end }}{{ if gt .EventsCount 0 }} cf-has-events{{ end }}" data-date="{{ .Date }}" {{ if .Events }}data-event-id="{{ (index .Events 0).ID }}"{{ end }} style="display: flex; flex-direction: column; min-width: 0; min-height: 0; padding: 3px 4px; border-radius: 6px; background: {{ if .IsWeekend }}rgba(255, 255, 255, 0.02){{ else }}rgba(255, 255, 255, 0.04){{ end }}; border: 1px solid rgba(255, 255, 255, 0.05); overflow: hidden; position: relative; {{ if not .IsCurrentMonth }}opacity: 0.38;{{ end }}{{ if .IsToday }}outline: 2px solid var(--mm-cal-today-border, var(--mm-lavender, #8b60ed)); z-index: 2;{{ end }}">
         <div class="cf-month-day-header" style="display: flex; align-items: center; justify-content: space-between; font-size: 0.68rem; font-weight: 700; line-height: 1.2;">
-          <span class="cf-day-num{{ if .IsToday }} cf-today-num{{ end }}" style="{{ if .IsToday }}background: var(--mm-coral, #ff6f59); color: #ffffff; border-radius: 50%; width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center; font-size: 0.60rem; font-weight: 800;{{ else }}color: var(--mm-text-title, #ffffff);{{ end }}">{{ .DayOfMonth }}</span>
+          <span class="cf-day-num{{ if .IsToday }} cf-today-num{{ end }}" style="{{ if .IsToday }}background: var(--mm-cal-today-badge, var(--mm-lavender, #8b60ed)); color: var(--mm-cal-today-badge-text, #ffffff); border-radius: 50%; width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center; font-size: 0.60rem; font-weight: 800;{{ else }}color: var(--mm-text-title, #ffffff);{{ end }}">{{ .DayOfMonth }}</span>
         </div>
 
         {{ if .Dots }}
@@ -221,8 +221,8 @@
     font-weight: 800;
     padding: 2px 7px;
     border-radius: 9999px;
-    background: var(--mm-coral, #ff6f59);
-    color: #ffffff;
+    background: var(--mm-cal-today-badge, var(--mm-lavender, #8b60ed));
+    color: var(--mm-cal-today-badge-text, #ffffff);
     cursor: pointer;
     border: none;
     touch-action: manipulation;
@@ -257,7 +257,7 @@
     opacity: 0.38;
   }
   .cf-month-day.cf-today {
-    outline: 2px solid var(--mm-coral, #ff6f59);
+    outline: 2px solid var(--mm-cal-today-border, var(--mm-lavender, #8b60ed));
   }
   .cf-month-dot {
     display: inline-block;
