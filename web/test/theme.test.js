@@ -88,4 +88,16 @@ describe('Fairyfloss Theme Mode Switching', () => {
       assert.match(content, /\[data-theme=["']?night["']?\]\s+\.calendar-header-chips/, `${path.basename(cssPath)} must include [data-theme="night"] .calendar-header-chips`);
     }
   });
+
+  test('CSS stylesheets contain night mode overrides for calendar view switcher and task checkboxes', () => {
+    for (const cssPath of [hudCSSPath, defaultHudCSSPath, customCSSPath]) {
+      const content = fs.readFileSync(cssPath, 'utf8');
+
+      assert.match(content, /\.cf-view-switcher/, `${path.basename(cssPath)} must include .cf-view-switcher`);
+      assert.match(content, /\.cf-view-btn\.active/, `${path.basename(cssPath)} must include .cf-view-btn.active`);
+      assert.match(content, /\[data-theme=["']?night["']?\]\s+\.task-checkbox-ring/, `${path.basename(cssPath)} must include [data-theme="night"] .task-checkbox-ring`);
+      assert.match(content, /\[data-theme=["']?night["']?\]\s+\.task-checkbox-done/, `${path.basename(cssPath)} must include [data-theme="night"] .task-checkbox-done`);
+      assert.match(content, /\[data-theme=["']?night["']?\]\s+\.tasks-icon-box/, `${path.basename(cssPath)} must include [data-theme="night"] .tasks-icon-box`);
+    }
+  });
 });
