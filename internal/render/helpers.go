@@ -467,10 +467,10 @@ func WeatherHourlyGraph(args ...any) template.HTML {
 
 	const (
 		colWidth  = 64.0
-		svgHeight = 220.0
-		minY      = 76.0  // High temp y-coord (leaving room for temp label at y = 68, icon at y = 26..50)
-		maxY      = 155.0 // Low temp y-coord
-		baseY     = 175.0 // Baseline axis y-coord
+		svgHeight = 148.0
+		minY      = 56.0  // High temp y-coord (leaving room for temp label at y = 49, icon at y = 18..38)
+		maxY      = 96.0  // Low temp y-coord
+		baseY     = 114.0 // Baseline axis y-coord
 	)
 
 	n := len(pts)
@@ -542,19 +542,19 @@ func WeatherHourlyGraph(args ...any) template.HTML {
 			pt.x, pt.y+5.0, pt.x, baseY)
 
 		if pt.precipProb > 0 {
-			fmt.Fprintf(&sb, `<text x="%.1f" y="18" text-anchor="middle" font-size="11" font-weight="700" fill="var(--mm-sky, #3b9edd)" style="user-select: none; pointer-events: none;">☂ %d%%</text>`,
+			fmt.Fprintf(&sb, `<text x="%.1f" y="11" text-anchor="middle" font-size="10" font-weight="700" fill="var(--mm-sky, #3b9edd)" style="user-select: none; pointer-events: none;">☂ %d%%</text>`,
 				pt.x, pt.precipProb)
 		}
 
 		iconPath := weatherIconPath(pt.icon)
-		fmt.Fprintf(&sb, `<g transform="translate(%.1f, 26)" fill="none" stroke="var(--mm-honey, #f59e0b)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">%s</g>`,
-			pt.x-12.0, iconPath)
+		fmt.Fprintf(&sb, `<g transform="translate(%.1f, 16)" fill="none" stroke="var(--mm-honey, #f59e0b)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">%s</g>`,
+			pt.x-10.0, iconPath)
 
 		tempRound := int(math.Round(pt.temp))
-		fmt.Fprintf(&sb, `<text x="%.1f" y="%.1f" text-anchor="middle" font-size="13" font-weight="800" fill="var(--mm-text-title, #2a2338)" style="user-select: none; pointer-events: none;">%d°</text>`,
-			pt.x, pt.y-8.0, tempRound)
+		fmt.Fprintf(&sb, `<text x="%.1f" y="%.1f" text-anchor="middle" font-size="12" font-weight="800" fill="var(--mm-text-title, #2a2338)" style="user-select: none; pointer-events: none;">%d°</text>`,
+			pt.x, pt.y-7.0, tempRound)
 
-		fmt.Fprintf(&sb, `<circle cx="%.1f" cy="%.1f" r="4.0" fill="#ffffff" stroke="var(--mm-coral, #ff6f59)" stroke-width="2"/>`,
+		fmt.Fprintf(&sb, `<circle cx="%.1f" cy="%.1f" r="3.5" fill="#ffffff" stroke="var(--mm-coral, #ff6f59)" stroke-width="2"/>`,
 			pt.x, pt.y)
 
 		timeLabel := "Now"
@@ -569,7 +569,7 @@ func WeatherHourlyGraph(args ...any) template.HTML {
 				timeLabel = pt.timeStr
 			}
 		}
-		fmt.Fprintf(&sb, `<text x="%.1f" y="200" text-anchor="middle" font-size="12" font-weight="%s" fill="%s" style="user-select: none; pointer-events: none;">%s</text>`,
+		fmt.Fprintf(&sb, `<text x="%.1f" y="134" text-anchor="middle" font-size="11" font-weight="%s" fill="%s" style="user-select: none; pointer-events: none;">%s</text>`,
 			pt.x, timeWeight, timeColor, template.HTMLEscapeString(timeLabel))
 	}
 
