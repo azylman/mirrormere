@@ -51,6 +51,40 @@ type HeaderConfig struct {
 	Enabled  *bool                `yaml:"enabled,omitempty"`
 	Elements []string             `yaml:"elements,omitempty"`
 	Weather  *HeaderWeatherConfig `yaml:"weather,omitempty"`
+	Video    *HeaderVideoConfig   `yaml:"video,omitempty"`
+}
+
+// HeaderVideoConfig configures the header action button for expanding fullscreen video streams.
+type HeaderVideoConfig struct {
+	Enabled    *bool  `yaml:"enabled,omitempty"`
+	StreamID   string `yaml:"stream_id,omitempty"`
+	StreamURL  string `yaml:"stream_url,omitempty"`
+	ControlURL string `yaml:"control_url,omitempty"`
+	Type       string `yaml:"type,omitempty"`
+}
+
+// IsEnabled returns true if the header video button is explicitly enabled.
+func (hv *HeaderVideoConfig) IsEnabled() bool {
+	if hv == nil || hv.Enabled == nil {
+		return false
+	}
+	return *hv.Enabled
+}
+
+// GetStreamID returns the configured stream identifier (default: "chromecast").
+func (hv *HeaderVideoConfig) GetStreamID() string {
+	if hv == nil || strings.TrimSpace(hv.StreamID) == "" {
+		return "chromecast"
+	}
+	return strings.TrimSpace(hv.StreamID)
+}
+
+// GetType returns the configured stream type (default: "webrtc").
+func (hv *HeaderVideoConfig) GetType() string {
+	if hv == nil || strings.TrimSpace(hv.Type) == "" {
+		return "webrtc"
+	}
+	return strings.TrimSpace(hv.Type)
 }
 
 // HeaderWeatherConfig configures the autonomous top-banner weather poller.

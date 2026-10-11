@@ -1611,3 +1611,71 @@ func TestVoiceHubFastPathConfig(t *testing.T) {
 		t.Errorf("expected url error, got %v", err)
 	}
 }
+
+func TestHeaderVideoConfig(t *testing.T) {
+	t.Parallel()
+
+	// Nil receiver tests
+	var nilHV *config.HeaderVideoConfig
+	if nilHV.IsEnabled() {
+		t.Error("expected false for nil HeaderVideoConfig.IsEnabled()")
+	}
+	if nilHV.GetStreamID() != "chromecast" {
+		t.Errorf("expected default 'chromecast', got %q", nilHV.GetStreamID())
+	}
+	if nilHV.GetType() != "webrtc" {
+		t.Errorf("expected default 'webrtc', got %q", nilHV.GetType())
+	}
+
+	// Empty struct defaults
+	emptyHV := &config.HeaderVideoConfig{}
+	if emptyHV.IsEnabled() {
+		t.Error("expected false for unset Enabled pointer")
+	}
+	if emptyHV.GetStreamID() != "chromecast" {
+		t.Errorf("expected default 'chromecast', got %q", emptyHV.GetStreamID())
+	}
+	if emptyHV.GetType() != "webrtc" {
+		t.Errorf("expected default 'webrtc', got %q", emptyHV.GetType())
+	}
+
+	// Explicit parsing from YAML
+	yamlContent := `
+timezone: America/Los_Angeles
+display:
+  header:
+    video:
+      enabled: true
+      stream_id: custom-tv
+      stream_url: http://localhost:1984/api/webrtc?src=tv
+      control_url: http://cast-watcher:8090/action
+      type: webrtc
+  widgets:
+    - id: test
+      type: spacer
+`
+	cfg, err := config.Parse([]byte(yamlContent))
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+
+	v := cfg.Display.Header.Video
+	if v == nil {
+		t.Fatal("expected Header.Video to be parsed")
+	}
+	if !v.IsEnabled() {
+		t.Error("expected Header.Video.IsEnabled() to be true")
+	}
+	if v.GetStreamID() != "custom-tv" {
+		t.Errorf("expected 'custom-tv', got %q", v.GetStreamID())
+	}
+	if v.StreamURL != "http://localhost:1984/api/webrtc?src=tv" {
+		t.Errorf("unexpected StreamURL %q", v.StreamURL)
+	}
+	if v.ControlURL != "http://cast-watcher:8090/action" {
+		t.Errorf("unexpected ControlURL %q", v.ControlURL)
+	}
+	if v.GetType() != "webrtc" {
+		t.Errorf("expected 'webrtc', got %q", v.GetType())
+	}
+}

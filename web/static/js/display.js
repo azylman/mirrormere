@@ -535,10 +535,10 @@
       btn.classList.remove('error');
       safetyTimer = setTimeout(clearLoading, 4000);
 
-      const defaultHost = (win && win.location && win.location.hostname) ? win.location.hostname : 'localhost';
-      const streamUrl = options.streamUrl || (win && win.MIRRORMERE_CAST_STREAM_URL) || (btn.dataset && btn.dataset.streamUrl) || `http://${defaultHost}:1984/api/webrtc?src=cast`;
-      const controlUrl = options.controlUrl || (win && win.MIRRORMERE_CAST_CONTROL_URL) || (btn.dataset && btn.dataset.controlUrl) || 'http://mirrormere-cast-watcher.aerial/action';
+      const streamUrl = options.streamUrl || (win && win.MIRRORMERE_CAST_STREAM_URL) || (btn.dataset && btn.dataset.streamUrl) || '';
+      const controlUrl = options.controlUrl || (win && win.MIRRORMERE_CAST_CONTROL_URL) || (btn.dataset && btn.dataset.controlUrl) || '';
       const streamId = options.streamId || (btn.dataset && btn.dataset.streamId) || 'chromecast';
+      const streamType = options.type || (btn.dataset && btn.dataset.type) || 'webrtc';
 
       if (controlUrl && fetchFn) {
         fetchFn(controlUrl, {
@@ -551,11 +551,13 @@
       const payload = {
         id: streamId,
         stream_url: streamUrl,
-        type: options.type || 'webrtc',
+        type: streamType,
         priority: options.priority || 'persistent',
         controllable: options.controllable !== undefined ? options.controllable : true,
-        control_url: controlUrl,
       };
+      if (controlUrl) {
+        payload.control_url = controlUrl;
+      }
 
       try {
         if (fetchFn) {

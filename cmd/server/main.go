@@ -362,6 +362,21 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 			}
 			return ""
 		}),
+		display.WithHeaderVideoProvider(func() *display.HeaderVideoTemplateData {
+			if snap := stateProvider.CurrentSnapshot(); snap != nil && snap.Config != nil {
+				v := snap.Config.Display.Header.Video
+				if v != nil && v.IsEnabled() {
+					return &display.HeaderVideoTemplateData{
+						Enabled:    true,
+						StreamID:   v.GetStreamID(),
+						StreamURL:  v.StreamURL,
+						ControlURL: v.ControlURL,
+						Type:       v.GetType(),
+					}
+				}
+			}
+			return nil
+		}),
 	)
 	assetReloader := NewAssetReloader(customCSSPath, loader, builtinDir, customDir, renderEngine, configManager, hub, logger)
 
