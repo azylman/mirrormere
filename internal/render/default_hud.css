@@ -144,6 +144,17 @@ body[data-theme="night"],
   color: var(--mm-text-body);
 }
 
+[data-theme="night"] .status-jewel {
+  background: rgba(71, 65, 94, 0.85);
+  border-color: rgba(197, 163, 255, 0.2);
+  box-shadow: 0 2px 8px rgba(20, 16, 32, 0.35);
+}
+
+[data-theme="night"] .status-dot {
+  background-color: var(--mm-status-ok);
+  box-shadow: 0 0 8px rgba(194, 255, 223, 0.6);
+}
+
 [data-theme="night"] .header-date {
   color: var(--mm-lavender);
 }
@@ -200,11 +211,86 @@ body[data-theme="night"],
   color: var(--mm-lavender);
 }
 
-[data-theme="night"] .upcoming-event-item,
 [data-theme="night"] .task-item,
 [data-theme="night"] .forecast-day-card {
   background: var(--mm-bg-surface);
   border-color: var(--mm-card-border);
+}
+
+/* Upcoming Calendar Feed in Night Mode */
+[data-theme="night"] .calendar-header-chips {
+  background: rgba(59, 54, 76, 0.85);
+  border: 1px solid rgba(197, 163, 255, 0.15);
+}
+
+[data-theme="night"] .calendar-avatar-dot {
+  border-color: #3b364c;
+}
+
+[data-theme="night"] .calendar-event-item {
+  background: var(--mm-bg-surface);
+  border: 1px solid rgba(197, 163, 255, 0.15);
+  box-shadow: 0 2px 8px rgba(20, 16, 32, 0.3);
+}
+
+[data-theme="night"] .calendar-event-item:hover {
+  border-color: rgba(255, 133, 127, 0.4);
+}
+
+[data-theme="night"] .event-time-col {
+  background: rgba(59, 54, 76, 0.9);
+  border: 1px solid rgba(197, 163, 255, 0.15);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+[data-theme="night"] .event-time-val {
+  color: var(--mm-coral);
+}
+
+[data-theme="night"] .event-time-ampm {
+  color: rgba(197, 163, 255, 0.7);
+}
+
+[data-theme="night"] .event-time-chip {
+  color: var(--mm-text-title);
+}
+
+[data-theme="night"] .event-time-allday {
+  color: var(--mm-coral);
+}
+
+[data-theme="night"] .event-title {
+  color: var(--mm-text-title);
+}
+
+[data-theme="night"] .event-location-text {
+  color: rgba(197, 163, 255, 0.8);
+}
+
+[data-theme="night"] .event-calendar-pill {
+  background: color-mix(in srgb, var(--pill-color, var(--mm-lavender)) 22%, #3b364c) !important;
+  color: color-mix(in srgb, var(--pill-color, var(--mm-lavender)) 80%, white) !important;
+  border: 1px solid color-mix(in srgb, var(--pill-color, var(--mm-lavender)) 30%, transparent) !important;
+}
+
+[data-theme="night"] .day-pill-future {
+  background: rgba(59, 54, 76, 0.9);
+  color: var(--mm-lavender);
+  border: 1px solid rgba(197, 163, 255, 0.15);
+}
+
+[data-theme="night"] .day-pill-today {
+  background: rgba(255, 133, 127, 0.2);
+  color: var(--mm-coral);
+}
+
+[data-theme="night"] .day-pill-tomorrow {
+  background: rgba(197, 163, 255, 0.2);
+  color: var(--mm-lavender);
+}
+
+[data-theme="night"] .day-divider-line {
+  background: rgba(197, 163, 255, 0.15);
 }
 
 /* Base Body & Reset */

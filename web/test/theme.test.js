@@ -76,4 +76,16 @@ describe('Fairyfloss Theme Mode Switching', () => {
       assert.match(content, /#ff857f/i, `${path.basename(cssPath)} must include coral accent #ff857f`);
     }
   });
+
+  test('CSS stylesheets contain night mode overrides for status-jewel, status-dot, and calendar feed event items', () => {
+    for (const cssPath of [hudCSSPath, defaultHudCSSPath, customCSSPath]) {
+      const content = fs.readFileSync(cssPath, 'utf8');
+
+      assert.match(content, /\[data-theme=["']?night["']?\]\s+\.status-jewel/, `${path.basename(cssPath)} must include [data-theme="night"] .status-jewel`);
+      assert.match(content, /\[data-theme=["']?night["']?\]\s+\.status-dot/, `${path.basename(cssPath)} must include [data-theme="night"] .status-dot`);
+      assert.match(content, /\[data-theme=["']?night["']?\]\s+\.calendar-event-item/, `${path.basename(cssPath)} must include [data-theme="night"] .calendar-event-item`);
+      assert.match(content, /\[data-theme=["']?night["']?\]\s+\.event-time-col/, `${path.basename(cssPath)} must include [data-theme="night"] .event-time-col`);
+      assert.match(content, /\[data-theme=["']?night["']?\]\s+\.calendar-header-chips/, `${path.basename(cssPath)} must include [data-theme="night"] .calendar-header-chips`);
+    }
+  });
 });
