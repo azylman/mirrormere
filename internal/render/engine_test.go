@@ -934,6 +934,7 @@ func TestEngine_RenderWidget_CalendarAgendaPackage(t *testing.T) {
 				End:          "2026-09-26T19:30:00Z",
 				AllDay:       false,
 				Location:     "Community Park Field 2",
+				Description:  "Bring soccer balls and water bottles",
 			},
 			{
 				ID:           "evt_2",
@@ -978,8 +979,11 @@ func TestEngine_RenderWidget_CalendarAgendaPackage(t *testing.T) {
 	if !strings.Contains(htmlStr, "Soccer Practice") {
 		t.Errorf("expected 'Soccer Practice' in output: %s", htmlStr)
 	}
-	if strings.Contains(htmlStr, "Community Park Field 2") {
-		t.Errorf("expected location/description 'Community Park Field 2' to be removed from view, got: %s", htmlStr)
+	if !strings.Contains(htmlStr, "Community Park Field 2") {
+		t.Errorf("expected location 'Community Park Field 2' in output: %s", htmlStr)
+	}
+	if strings.Contains(htmlStr, "Bring soccer balls and water bottles") {
+		t.Errorf("expected description 'Bring soccer balls and water bottles' to be excluded from view, got: %s", htmlStr)
 	}
 	if !strings.Contains(htmlStr, "Family Calendar") {
 		t.Errorf("expected 'Family Calendar' in output: %s", htmlStr)
