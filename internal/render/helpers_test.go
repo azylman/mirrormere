@@ -1099,6 +1099,102 @@ func TestCalendarFeedEvents(t *testing.T) {
 	})
 }
 
+func TestCalendarFeedDayGroups(t *testing.T) {
+	t.Parallel()
+
+	refTime := time.Date(2026, 10, 10, 8, 0, 0, 0, time.UTC)
+
+	t.Run("nil and empty data", func(t *testing.T) {
+		t.Parallel()
+		if got := render.CalendarFeedDayGroups(nil, refTime); got != nil {
+			t.Errorf("expected nil for nil input, got %+v", got)
+		}
+		if got := render.CalendarFeedDayGroups(provider.CalendarSnapshot{}, refTime); got != nil {
+			t.Errorf("expected nil for empty snapshot, got %+v", got)
+		}
+	})
+
+	t.Run("groups multiple events occurring on the same day into single group", func(t *testing.T) {
+		t.Parallel()
+		snap := provider.CalendarSnapshot{
+			Events: []provider.CalendarEvent{
+				{
+					ID:    "e1",
+					Title: "Morning Meeting",
+					Start: "2026-10-10T09:00:00Z",
+					End:   "2026-10-10T10:00:00Z",
+				},
+				{
+					ID:    "e2",
+					Title: "Afternoon Sync",
+					Start: "2026-10-10T14:00:00Z",
+					End:   "2026-10-10T15:00:00Z",
+				},
+				{
+					ID:    "e3",
+					Title: "Tomorrow Coffee",
+					Start: "2026-10-11T10:00:00Z",
+					End:   "2026-10-11T11:00:00Z",
+				},
+			},
+		}
+
+		groups := render.CalendarFeedDayGroups(snap, refTime)
+		if len(groups) != 2 {
+			t.Fatalf("expected 2 day groups, got %d", len(groups))
+		}
+
+		// Group 1 (Today)
+		if groups[0].Date != "2026-10-10" {
+			t.Errorf("expected group 0 date 2026-10-10, got %s", groups[0].Date)
+		}
+		if groups[0].Rel != "Today" {
+			t.Errorf("expected group 0 Rel 'Today', got %q", groups[0].Rel)
+		}
+		if len(groups[0].Events) != 2 {
+			t.Fatalf("expected 2 events in today's group, got %d", len(groups[0].Events))
+		}
+		if groups[0].Events[0].Title != "Morning Meeting" || groups[0].Events[1].Title != "Afternoon Sync" {
+			t.Errorf("unexpected events in today's group: %+v", groups[0].Events)
+		}
+
+		// Group 2 (Tomorrow)
+		if groups[1].Date != "2026-10-11" {
+			t.Errorf("expected group 1 date 2026-10-11, got %s", groups[1].Date)
+		}
+		if groups[1].Rel != "Tomorrow" {
+			t.Errorf("expected group 1 Rel 'Tomorrow', got %q", groups[1].Rel)
+		}
+		if len(groups[1].Events) != 1 {
+			t.Fatalf("expected 1 event in tomorrow's group, got %d", len(groups[1].Events))
+		}
+	})
+
+	t.Run("template execution via StandardFuncMap", func(t *testing.T) {
+		t.Parallel()
+		fnMap := render.StandardFuncMap(func() time.Time { return refTime })
+		tmpl, err := template.New("groups-test").Funcs(fnMap).Parse(`{{ range (calendarFeedDayGroups .) }}{{ .Date }}:{{ len .Events }};{{ end }}`)
+		if err != nil {
+			t.Fatalf("failed to parse template: %v", err)
+		}
+
+		snap := provider.CalendarSnapshot{
+			Events: []provider.CalendarEvent{
+				{Title: "E1", Start: "2026-10-10T14:00:00Z", End: "2026-10-10T15:00:00Z"},
+				{Title: "E2", Start: "2026-10-10T16:00:00Z", End: "2026-10-10T17:00:00Z"},
+			},
+		}
+
+		var sb strings.Builder
+		if err := tmpl.Execute(&sb, snap); err != nil {
+			t.Fatalf("failed to execute template: %v", err)
+		}
+		if sb.String() != "2026-10-10:2;" {
+			t.Errorf("expected '2026-10-10:2;', got %q", sb.String())
+		}
+	})
+}
+
 func TestCalendarFeedActiveCalendars(t *testing.T) {
 	t.Parallel()
 
