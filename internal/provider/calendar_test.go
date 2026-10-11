@@ -1029,3 +1029,168 @@ END:VCALENDAR`
 		}
 	})
 }
+
+
+func TestCalendarProvider_SortCalendarEvents_TimezoneAndAllDay(t *testing.T) {
+	t.Parallel()
+
+	laLoc, err := time.LoadLocation("America/Los_Angeles")
+	if err != nil {
+		t.Fatalf("failed to load America/Los_Angeles location: %v", err)
+	}
+
+	// In America/Los_Angeles (PDT, UTC-7):
+	// - 10/12 19:00 PDT is 2026-10-13 02:00 UTC
+	// - 10/14 19:00 PDT is 2026-10-15 02:00 UTC
+	// - 10/15 All-Day is local date 2026-10-15
+	// - 10/15 10:00 PDT is 2026-10-15 17:00 UTC
+	//
+	// Naive string sorting sorted:
+	//   "2026-10-13T02:00:00Z" (10/12 evening)
+	//   < "2026-10-15" (10/15 all-day party)
+	//   < "2026-10-15T02:00:00Z" (10/14 evening!)
+	//   < "2026-10-15T17:00:00Z" (10/15 morning)
+	// causing the all-day 10/15 event to appear between 10/12 and 10/14!
+
+	ev1012 := provider.CalendarEvent{
+		ID:     "e-1012",
+		Title:  "Monday Evening Dinner",
+		Start:  "2026-10-13T02:00:00Z",
+		End:    "2026-10-13T03:00:00Z",
+		AllDay: false,
+	}
+	ev1014 := provider.CalendarEvent{
+		ID:     "e-1014",
+		Title:  "Wednesday Game Night",
+		Start:  "2026-10-15T02:00:00Z",
+		End:    "2026-10-15T04:00:00Z",
+		AllDay: false,
+	}
+	ev1015AllDay := provider.CalendarEvent{
+		ID:     "e-1015-party",
+		Title:  "Weekend Bachelorette Party",
+		Start:  "2026-10-15",
+		End:    "2026-10-15",
+		AllDay: true,
+	}
+	ev1015Timed := provider.CalendarEvent{
+		ID:     "e-1015-brunch",
+		Title:  "Brunch with Bridesmaids",
+		Start:  "2026-10-15T17:00:00Z",
+		End:    "2026-10-15T18:30:00Z",
+		AllDay: false,
+	}
+
+	events := []provider.CalendarEvent{
+		ev1015AllDay,
+		ev1014,
+		ev1012,
+		ev1015Timed,
+	}
+
+	provider.SortCalendarEvents(events, laLoc)
+
+	expectedOrder := []string{
+		"Monday Evening Dinner",
+		"Wednesday Game Night",
+		"Weekend Bachelorette Party",
+		"Brunch with Bridesmaids",
+	}
+
+	for i, expected := range expectedOrder {
+		if events[i].Title != expected {
+			t.Errorf("at index %d: expected %q, got %q", i, expected, events[i].Title)
+		}
+	}
+}
+
+
+func TestCalendarProvider_Fetch_TimezoneAwareSorting(t *testing.T) {
+	t.Parallel()
+
+	refTime := time.Date(2026, 10, 10, 0, 0, 0, 0, time.UTC)
+
+	// iCal feed containing:
+	// 1. Monday evening dinner (Oct 12 19:00 PDT -> Oct 13 02:00 UTC)
+	// 2. Wednesday game night (Oct 14 19:00 PDT -> Oct 15 02:00 UTC)
+	// 3. Thursday all day bachelorette party (Oct 15 VALUE=DATE)
+	// 4. Thursday morning brunch (Oct 15 10:00 PDT -> Oct 15 17:00 UTC)
+	icsPayload := `BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Mirrormere//Sorting Test//EN
+BEGIN:VEVENT
+UID:evt-party@mirrormere
+DTSTART;VALUE=DATE:20261015
+DTEND;VALUE=DATE:20261016
+SUMMARY:Weekend Bachelorette Party
+END:VEVENT
+BEGIN:VEVENT
+UID:evt-wed@mirrormere
+DTSTART:20261015T020000Z
+DTEND:20261015T040000Z
+SUMMARY:Wednesday Game Night
+END:VEVENT
+BEGIN:VEVENT
+UID:evt-mon@mirrormere
+DTSTART:20261013T020000Z
+DTEND:20261013T030000Z
+SUMMARY:Monday Evening Dinner
+END:VEVENT
+BEGIN:VEVENT
+UID:evt-brunch@mirrormere
+DTSTART:20261015T170000Z
+DTEND:20261015T183000Z
+SUMMARY:Brunch with Bridesmaids
+END:VEVENT
+END:VCALENDAR`
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/calendar")
+		_, _ = w.Write([]byte(icsPayload))
+	}))
+	defer server.Close()
+
+	p := provider.NewCalendarProviderWithClient(server.Client(), func() time.Time {
+		return refTime
+	})
+
+	cfg := map[string]any{
+		"calendars": []any{
+			map[string]any{
+				"name": "Social",
+				"url":  server.URL,
+			},
+		},
+	}
+
+	opts := provider.InitOptions{
+		Timezone: "America/Los_Angeles",
+	}
+
+	if err := p.Init(context.Background(), cfg, opts); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+
+	res, err := p.Fetch(context.Background())
+	if err != nil {
+		t.Fatalf("Fetch failed: %v", err)
+	}
+
+	snap := res.(provider.CalendarSnapshot)
+	if len(snap.Events) != 4 {
+		t.Fatalf("expected 4 events, got %d", len(snap.Events))
+	}
+
+	expectedOrder := []string{
+		"Monday Evening Dinner",
+		"Wednesday Game Night",
+		"Weekend Bachelorette Party",
+		"Brunch with Bridesmaids",
+	}
+
+	for i, expected := range expectedOrder {
+		if snap.Events[i].Title != expected {
+			t.Errorf("at index %d: expected %q, got %q", i, expected, snap.Events[i].Title)
+		}
+	}
+}
