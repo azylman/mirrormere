@@ -53,12 +53,12 @@ func TestTodoistAdapter_FetchList_Success_WithProjectID(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 
 		switch r.URL.Path {
-		case "/rest/v2/projects/proj-123":
+		case "/api/v1/projects/proj-123":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"id":   "proj-123",
 				"name": "Family Errands",
 			})
-		case "/rest/v2/sections":
+		case "/api/v1/sections":
 			if r.URL.Query().Get("project_id") != "proj-123" {
 				http.Error(w, "invalid project_id query", http.StatusBadRequest)
 				return
@@ -67,7 +67,7 @@ func TestTodoistAdapter_FetchList_Success_WithProjectID(t *testing.T) {
 				{"id": "sec-2", "project_id": "proj-123", "order": 2, "name": "Hardware"},
 				{"id": "sec-1", "project_id": "proj-123", "order": 1, "name": "Groceries"},
 			})
-		case "/rest/v2/tasks":
+		case "/api/v1/tasks":
 			if r.URL.Query().Get("project_id") != "proj-123" {
 				http.Error(w, "invalid project_id query", http.StatusBadRequest)
 				return
@@ -91,7 +91,7 @@ func TestTodoistAdapter_FetchList_Success_WithProjectID(t *testing.T) {
 					"created_at": "2026-10-10T12:05:00Z",
 				},
 			})
-		case "/sync/v9/completed/get_all":
+		case "/api/v1/tasks/completed":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"items": []map[string]any{
 					{
@@ -167,18 +167,18 @@ func TestTodoistAdapter_FetchList_ByProjectName(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
-		case "/rest/v2/projects":
+		case "/api/v1/projects":
 			_ = json.NewEncoder(w).Encode([]map[string]any{
 				{"id": "p-inbox", "name": "Inbox", "is_inbox_project": true},
 				{"id": "p-fam", "name": "Family Tasks", "is_inbox_project": false},
 			})
-		case "/rest/v2/sections":
+		case "/api/v1/sections":
 			_ = json.NewEncoder(w).Encode([]map[string]any{})
-		case "/rest/v2/tasks":
+		case "/api/v1/tasks":
 			_ = json.NewEncoder(w).Encode([]map[string]any{
 				{"id": "t-1", "content": "Costume ideas", "order": 1},
 			})
-		case "/sync/v9/completed/get_all":
+		case "/api/v1/tasks/completed":
 			_ = json.NewEncoder(w).Encode(map[string]any{"items": []any{}})
 		default:
 			http.NotFound(w, r)
@@ -218,17 +218,17 @@ func TestTodoistAdapter_FetchList_InboxFallback(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
-		case "/rest/v2/projects":
+		case "/api/v1/projects":
 			_ = json.NewEncoder(w).Encode([]map[string]any{
 				{"id": "p-def-inbox", "name": "Inbox", "is_inbox_project": true},
 			})
-		case "/rest/v2/sections":
+		case "/api/v1/sections":
 			_ = json.NewEncoder(w).Encode([]map[string]any{})
-		case "/rest/v2/tasks":
+		case "/api/v1/tasks":
 			_ = json.NewEncoder(w).Encode([]map[string]any{
 				{"id": "t-inbox-1", "content": "Inbox Item", "order": 1},
 			})
-		case "/sync/v9/completed/get_all":
+		case "/api/v1/tasks/completed":
 			_ = json.NewEncoder(w).Encode(map[string]any{"items": []any{}})
 		default:
 			http.NotFound(w, r)
@@ -268,13 +268,13 @@ func TestTodoistAdapter_FetchList_HierarchyAndSections(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
-		case "/rest/v2/projects/proj-hier":
+		case "/api/v1/projects/proj-hier":
 			_ = json.NewEncoder(w).Encode(map[string]any{"id": "proj-hier", "name": "Hierarchical"})
-		case "/rest/v2/sections":
+		case "/api/v1/sections":
 			_ = json.NewEncoder(w).Encode([]map[string]any{
 				{"id": "sec-kitchen", "name": "Kitchen", "order": 1},
 			})
-		case "/rest/v2/tasks":
+		case "/api/v1/tasks":
 			_ = json.NewEncoder(w).Encode([]map[string]any{
 				{
 					"id":         "p-1",
@@ -301,7 +301,7 @@ func TestTodoistAdapter_FetchList_HierarchyAndSections(t *testing.T) {
 					"order":     2,
 				},
 			})
-		case "/sync/v9/completed/get_all":
+		case "/api/v1/tasks/completed":
 			_ = json.NewEncoder(w).Encode(map[string]any{"items": []any{}})
 		default:
 			http.NotFound(w, r)
@@ -349,11 +349,11 @@ func TestTodoistAdapter_FetchList_DueDates(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
-		case "/rest/v2/projects/p-due":
+		case "/api/v1/projects/p-due":
 			_ = json.NewEncoder(w).Encode(map[string]any{"id": "p-due", "name": "Due Project"})
-		case "/rest/v2/sections":
+		case "/api/v1/sections":
 			_ = json.NewEncoder(w).Encode([]any{})
-		case "/rest/v2/tasks":
+		case "/api/v1/tasks":
 			_ = json.NewEncoder(w).Encode([]map[string]any{
 				{
 					"id":      "d-1",
@@ -366,7 +366,7 @@ func TestTodoistAdapter_FetchList_DueDates(t *testing.T) {
 					"due":     map[string]any{"datetime": "2026-11-05T14:30:00Z"},
 				},
 			})
-		case "/sync/v9/completed/get_all":
+		case "/api/v1/tasks/completed":
 			_ = json.NewEncoder(w).Encode(map[string]any{"items": []any{}})
 		default:
 			http.NotFound(w, r)
@@ -404,15 +404,15 @@ func TestTodoistAdapter_FetchList_SyncDegradation(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
-		case "/rest/v2/projects/p-degrade":
+		case "/api/v1/projects/p-degrade":
 			_ = json.NewEncoder(w).Encode(map[string]any{"id": "p-degrade", "name": "Degrade Test"})
-		case "/rest/v2/sections":
+		case "/api/v1/sections":
 			_ = json.NewEncoder(w).Encode([]any{})
-		case "/rest/v2/tasks":
+		case "/api/v1/tasks":
 			_ = json.NewEncoder(w).Encode([]map[string]any{
 				{"id": "t-act", "content": "Still Works", "order": 1},
 			})
-		case "/sync/v9/completed/get_all":
+		case "/api/v1/tasks/completed":
 			http.Error(w, "internal sync error", http.StatusInternalServerError)
 		default:
 			http.NotFound(w, r)
@@ -564,13 +564,13 @@ func TestTodoistAdapter_FetchList_ListNameOverride(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
-		case "/rest/v2/projects/p-1":
+		case "/api/v1/projects/p-1":
 			_ = json.NewEncoder(w).Encode(map[string]any{"id": "p-1", "name": "API Name"})
-		case "/rest/v2/sections":
+		case "/api/v1/sections":
 			_ = json.NewEncoder(w).Encode([]any{})
-		case "/rest/v2/tasks":
+		case "/api/v1/tasks":
 			_ = json.NewEncoder(w).Encode([]any{})
-		case "/sync/v9/completed/get_all":
+		case "/api/v1/tasks/completed":
 			_ = json.NewEncoder(w).Encode(map[string]any{"items": []any{}})
 		default:
 			http.NotFound(w, r)
@@ -604,15 +604,15 @@ func TestTodoistAdapter_FetchList_NumericIDsAndFlexibleString(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
-		case "/rest/v2/projects":
+		case "/api/v1/projects":
 			_ = json.NewEncoder(w).Encode([]map[string]any{
 				{"id": 2203306141, "name": "Numeric Project", "is_inbox_project": false, "order": 1},
 			})
-		case "/rest/v2/sections":
+		case "/api/v1/sections":
 			_ = json.NewEncoder(w).Encode([]map[string]any{
 				{"id": 998877, "project_id": 2203306141, "name": "Numeric Section", "order": 1},
 			})
-		case "/rest/v2/tasks":
+		case "/api/v1/tasks":
 			_ = json.NewEncoder(w).Encode([]map[string]any{
 				{
 					"id":         11223344,
@@ -622,7 +622,7 @@ func TestTodoistAdapter_FetchList_NumericIDsAndFlexibleString(t *testing.T) {
 					"order":      1,
 				},
 			})
-		case "/sync/v9/completed/get_all":
+		case "/api/v1/tasks/completed":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"items": []map[string]any{
 					{
@@ -676,17 +676,17 @@ func TestTodoistAdapter_FetchList_CycleProtection(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
-		case "/rest/v2/projects/p-cycle":
+		case "/api/v1/projects/p-cycle":
 			_ = json.NewEncoder(w).Encode(map[string]any{"id": "p-cycle", "name": "Cycle Project"})
-		case "/rest/v2/sections":
+		case "/api/v1/sections":
 			_ = json.NewEncoder(w).Encode([]any{})
-		case "/rest/v2/tasks":
+		case "/api/v1/tasks":
 			// Mutual circular parent references
 			_ = json.NewEncoder(w).Encode([]map[string]any{
 				{"id": "t-1", "parent_id": "t-2", "content": "Cycle A", "order": 1},
 				{"id": "t-2", "parent_id": "t-1", "content": "Cycle B", "order": 2},
 			})
-		case "/sync/v9/completed/get_all":
+		case "/api/v1/tasks/completed":
 			_ = json.NewEncoder(w).Encode(map[string]any{"items": []any{}})
 		default:
 			http.NotFound(w, r)
@@ -719,13 +719,13 @@ func TestTodoistAdapter_FetchList_EmptyProjectsFallback(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
-		case "/rest/v2/projects":
+		case "/api/v1/projects":
 			_ = json.NewEncoder(w).Encode([]any{})
-		case "/rest/v2/sections":
+		case "/api/v1/sections":
 			_ = json.NewEncoder(w).Encode([]any{})
-		case "/rest/v2/tasks":
+		case "/api/v1/tasks":
 			_ = json.NewEncoder(w).Encode([]any{})
-		case "/sync/v9/completed/get_all":
+		case "/api/v1/tasks/completed":
 			_ = json.NewEncoder(w).Encode(map[string]any{"items": []any{}})
 		default:
 			http.NotFound(w, r)
@@ -808,15 +808,15 @@ func TestTodoist_CoverageGaps(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			switch r.URL.Path {
-			case "/rest/v2/projects":
+			case "/api/v1/projects":
 				_ = json.NewEncoder(w).Encode([]map[string]any{
 					{"id": "p-first", "name": "First Project", "is_inbox_project": false},
 				})
-			case "/rest/v2/sections":
+			case "/api/v1/sections":
 				_ = json.NewEncoder(w).Encode([]any{})
-			case "/rest/v2/tasks":
+			case "/api/v1/tasks":
 				_ = json.NewEncoder(w).Encode([]any{})
-			case "/sync/v9/completed/get_all":
+			case "/api/v1/tasks/completed":
 				_ = json.NewEncoder(w).Encode(map[string]any{"items": []any{}})
 			default:
 				http.NotFound(w, r)
@@ -844,9 +844,9 @@ func TestTodoist_CoverageGaps(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			switch r.URL.Path {
-			case "/rest/v2/projects/p-1":
+			case "/api/v1/projects/p-1":
 				_ = json.NewEncoder(w).Encode(map[string]any{"id": "p-1", "name": "P1"})
-			case "/rest/v2/sections":
+			case "/api/v1/sections":
 				_, _ = w.Write([]byte("{invalid-sections"))
 			default:
 				http.NotFound(w, r)
@@ -872,11 +872,11 @@ func TestTodoist_CoverageGaps(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			switch r.URL.Path {
-			case "/rest/v2/projects/p-1":
+			case "/api/v1/projects/p-1":
 				_ = json.NewEncoder(w).Encode(map[string]any{"id": "p-1", "name": "P1"})
-			case "/rest/v2/sections":
+			case "/api/v1/sections":
 				_ = json.NewEncoder(w).Encode([]any{})
-			case "/rest/v2/tasks":
+			case "/api/v1/tasks":
 				_, _ = w.Write([]byte("{invalid-tasks"))
 			default:
 				http.NotFound(w, r)
@@ -902,17 +902,17 @@ func TestTodoist_CoverageGaps(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			switch r.URL.Path {
-			case "/rest/v2/projects/12345":
+			case "/api/v1/projects/12345":
 				_ = json.NewEncoder(w).Encode(map[string]any{"id": 12345, "name": "Numeric Project"})
-			case "/rest/v2/sections":
+			case "/api/v1/sections":
 				_ = json.NewEncoder(w).Encode([]map[string]any{
 					{"id": 999, "name": "Num Sec", "order": 1},
 				})
-			case "/rest/v2/tasks":
+			case "/api/v1/tasks":
 				_ = json.NewEncoder(w).Encode([]map[string]any{
 					{"id": 555, "section_id": 999, "content": "Numeric ID Task", "parent_id": nil, "order": 1, "due": nil, "created_at": "invalid-date"},
 				})
-			case "/sync/v9/completed/get_all":
+			case "/api/v1/tasks/completed":
 				_ = json.NewEncoder(w).Encode(map[string]any{
 					"items": []map[string]any{
 						{"id": 777, "task_id": 777, "content": "Comp Num", "completed_date": "invalid-date", "section_id": 999},

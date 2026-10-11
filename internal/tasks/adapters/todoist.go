@@ -33,7 +33,7 @@ type TodoistAdapterConfig struct {
 	Client      *http.Client
 }
 
-// TodoistAdapter ingests task lists and items from the Todoist REST API v2 and Sync API v9.
+// TodoistAdapter ingests task lists and items from the Todoist REST and Sync APIs.
 type TodoistAdapter struct {
 	projectID   string
 	projectName string
@@ -111,8 +111,13 @@ func (f flexibleString) String() string {
 type todoistProject struct {
 	ID             flexibleString `json:"id"`
 	Name           string         `json:"name"`
+	InboxProject   bool           `json:"inbox_project"`
 	IsInboxProject bool           `json:"is_inbox_project"`
 	Order          int            `json:"order"`
+}
+
+func (p todoistProject) IsInbox() bool {
+	return p.InboxProject || p.IsInboxProject
 }
 
 type todoistSection struct {
@@ -133,12 +138,33 @@ type todoistTask struct {
 	SectionID   flexibleString `json:"section_id"`
 	Content     string         `json:"content"`
 	Description string         `json:"description"`
+	Checked     bool           `json:"checked"`
 	IsCompleted bool           `json:"is_completed"`
+	ChildOrder  int            `json:"child_order"`
 	Order       int            `json:"order"`
 	ParentID    flexibleString `json:"parent_id"`
 	Priority    int            `json:"priority"`
 	Due         *todoistDue    `json:"due"`
 	CreatedAt   string         `json:"created_at"`
+	AddedAt     string         `json:"added_at"`
+}
+
+func (t todoistTask) EffectiveDone() bool {
+	return t.Checked || t.IsCompleted
+}
+
+func (t todoistTask) EffectiveOrder() int {
+	if t.ChildOrder != 0 {
+		return t.ChildOrder
+	}
+	return t.Order
+}
+
+func (t todoistTask) EffectiveCreatedAt() string {
+	if t.CreatedAt != "" {
+		return t.CreatedAt
+	}
+	return t.AddedAt
 }
 
 type todoistCompletedItem struct {
@@ -155,6 +181,20 @@ type todoistCompletedResponse struct {
 	Items []todoistCompletedItem `json:"items"`
 }
 
+func unmarshalResultsOrSlice[T any](body []byte) ([]T, error) {
+	var envelope struct {
+		Results []T `json:"results"`
+	}
+	if err := json.Unmarshal(body, &envelope); err == nil && envelope.Results != nil {
+		return envelope.Results, nil
+	}
+	var direct []T
+	if err := json.Unmarshal(body, &direct); err == nil {
+		return direct, nil
+	}
+	return nil, errors.New("failed to decode response as results envelope or slice")
+}
+
 // FetchList retrieves task list metadata and items from the Todoist API.
 func (a *TodoistAdapter) FetchList(ctx context.Context) (*tasks.List, []tasks.ListItem, error) {
 	// 1. Resolve Project
@@ -164,7 +204,7 @@ func (a *TodoistAdapter) FetchList(ctx context.Context) (*tasks.List, []tasks.Li
 	)
 
 	if a.projectID != "" {
-		projectURL := fmt.Sprintf("%s/rest/v2/projects/%s", a.baseURL, url.PathEscape(a.projectID))
+		projectURL := fmt.Sprintf("%s/api/v1/projects/%s", a.baseURL, url.PathEscape(a.projectID))
 		body, err := a.doGet(ctx, projectURL)
 		if err != nil {
 			return nil, nil, err
@@ -179,13 +219,13 @@ func (a *TodoistAdapter) FetchList(ctx context.Context) (*tasks.List, []tasks.Li
 		}
 		resolvedProjectTitle = p.Name
 	} else if a.projectName != "" {
-		projectsURL := fmt.Sprintf("%s/rest/v2/projects", a.baseURL)
+		projectsURL := fmt.Sprintf("%s/api/v1/projects", a.baseURL)
 		body, err := a.doGet(ctx, projectsURL)
 		if err != nil {
 			return nil, nil, err
 		}
-		var projects []todoistProject
-		if err := json.Unmarshal(body, &projects); err != nil {
+		projects, err := unmarshalResultsOrSlice[todoistProject](body)
+		if err != nil {
 			return nil, nil, fmt.Errorf("failed to parse todoist projects from %s: %w", sanitizeURL(projectsURL), err)
 		}
 		var match *todoistProject
@@ -201,17 +241,17 @@ func (a *TodoistAdapter) FetchList(ctx context.Context) (*tasks.List, []tasks.Li
 		resolvedProjectID = string(match.ID)
 		resolvedProjectTitle = match.Name
 	} else {
-		projectsURL := fmt.Sprintf("%s/rest/v2/projects", a.baseURL)
+		projectsURL := fmt.Sprintf("%s/api/v1/projects", a.baseURL)
 		body, err := a.doGet(ctx, projectsURL)
 		if err != nil {
 			return nil, nil, err
 		}
-		var projects []todoistProject
-		if err := json.Unmarshal(body, &projects); err != nil {
+		projects, err := unmarshalResultsOrSlice[todoistProject](body)
+		if err != nil {
 			return nil, nil, fmt.Errorf("failed to parse todoist projects from %s: %w", sanitizeURL(projectsURL), err)
 		}
 		for i := range projects {
-			if projects[i].IsInboxProject {
+			if projects[i].IsInbox() {
 				resolvedProjectID = string(projects[i].ID)
 				resolvedProjectTitle = projects[i].Name
 				break
@@ -252,13 +292,13 @@ func (a *TodoistAdapter) FetchList(ctx context.Context) (*tasks.List, []tasks.Li
 	sections := []string{}
 	sectionMap := make(map[string]string)
 	if resolvedProjectID != "" {
-		sectionsURL := fmt.Sprintf("%s/rest/v2/sections?project_id=%s", a.baseURL, url.QueryEscape(resolvedProjectID))
+		sectionsURL := fmt.Sprintf("%s/api/v1/sections?project_id=%s", a.baseURL, url.QueryEscape(resolvedProjectID))
 		secBody, err := a.doGet(ctx, sectionsURL)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to fetch todoist sections: %w", err)
 		}
-		var rawSections []todoistSection
-		if err := json.Unmarshal(secBody, &rawSections); err != nil {
+		rawSections, err := unmarshalResultsOrSlice[todoistSection](secBody)
+		if err != nil {
 			return nil, nil, fmt.Errorf("failed to parse todoist sections from %s: %w", sanitizeURL(sectionsURL), err)
 		}
 		sort.SliceStable(rawSections, func(i, j int) bool {
@@ -276,23 +316,23 @@ func (a *TodoistAdapter) FetchList(ctx context.Context) (*tasks.List, []tasks.Li
 	// 3. Fetch Active Tasks
 	var tasksURL string
 	if resolvedProjectID != "" {
-		tasksURL = fmt.Sprintf("%s/rest/v2/tasks?project_id=%s", a.baseURL, url.QueryEscape(resolvedProjectID))
+		tasksURL = fmt.Sprintf("%s/api/v1/tasks?project_id=%s", a.baseURL, url.QueryEscape(resolvedProjectID))
 	} else {
-		tasksURL = fmt.Sprintf("%s/rest/v2/tasks", a.baseURL)
+		tasksURL = fmt.Sprintf("%s/api/v1/tasks", a.baseURL)
 	}
 	tasksBody, err := a.doGet(ctx, tasksURL)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to fetch todoist tasks: %w", err)
 	}
-	var rawTasks []todoistTask
-	if err := json.Unmarshal(tasksBody, &rawTasks); err != nil {
+	rawTasks, err := unmarshalResultsOrSlice[todoistTask](tasksBody)
+	if err != nil {
 		return nil, nil, fmt.Errorf("failed to parse todoist tasks from %s: %w", sanitizeURL(tasksURL), err)
 	}
 
 	// 4. Fetch Completed Tasks (Soft Enhancement)
 	var completedTasks []tasks.ListItem
 	if resolvedProjectID != "" {
-		completedURL := fmt.Sprintf("%s/sync/v9/completed/get_all?project_id=%s&limit=30", a.baseURL, url.QueryEscape(resolvedProjectID))
+		completedURL := fmt.Sprintf("%s/api/v1/tasks/completed?project_id=%s&limit=30", a.baseURL, url.QueryEscape(resolvedProjectID))
 		if completedBody, cErr := a.doGet(ctx, completedURL); cErr == nil {
 			var completedResp todoistCompletedResponse
 			if jsonErr := json.Unmarshal(completedBody, &completedResp); jsonErr == nil {
@@ -356,45 +396,40 @@ func (a *TodoistAdapter) FetchList(ctx context.Context) (*tasks.List, []tasks.Li
 
 		var dueDate *string
 		if t.Due != nil {
-			rawDate := t.Due.Date
-			if rawDate == "" {
-				rawDate = t.Due.Datetime
-			}
-			rawDate = strings.TrimSpace(rawDate)
-			if len(rawDate) >= 10 {
-				datePart := rawDate[:10]
+			if len(t.Due.Date) >= 10 {
+				datePart := t.Due.Date[:10]
+				if _, parseErr := time.Parse("2006-01-02", datePart); parseErr == nil {
+					dueDate = &datePart
+				}
+			} else if len(t.Due.Datetime) >= 10 {
+				datePart := t.Due.Datetime[:10]
 				if _, parseErr := time.Parse("2006-01-02", datePart); parseErr == nil {
 					dueDate = &datePart
 				}
 			}
 		}
 
-		createdAt := parseTimeFlexible(t.CreatedAt)
-		updatedAt := createdAt
-		if updatedAt.IsZero() {
-			updatedAt = now
-		}
+		createdAt := parseTimeFlexible(t.EffectiveCreatedAt())
 
 		items = append(items, tasks.ListItem{
 			ID:        id,
 			ListID:    listID,
 			Title:     t.Content,
-			Done:      t.IsCompleted,
+			Done:      t.EffectiveDone(),
 			Section:   section,
 			Position:  len(items),
 			DueDate:   dueDate,
 			CreatedAt: createdAt,
-			UpdatedAt: updatedAt,
+			UpdatedAt: createdAt,
 		})
 	}
 
-	for _, c := range completedTasks {
-		if seenIDs[c.ID] {
-			continue
+	for _, ct := range completedTasks {
+		if !seenIDs[ct.ID] {
+			ct.Position = len(items)
+			items = append(items, ct)
+			seenIDs[ct.ID] = true
 		}
-		seenIDs[c.ID] = true
-		c.Position = len(items)
-		items = append(items, c)
 	}
 
 	list := &tasks.List{
@@ -408,12 +443,9 @@ func (a *TodoistAdapter) FetchList(ctx context.Context) (*tasks.List, []tasks.Li
 	return list, items, nil
 }
 
-// orderTodoistTasks orders tasks hierarchically:
-// top-level tasks sorted by Order ascending, children placed immediately after their parent
-// sorted by Order ascending, circular references protected via visited map, and orphaned
-// subtasks treated as top-level. Subtasks inherit the parent's SectionID if empty.
+// orderTodoistTasks sorts tasks hierarchically: root tasks in order, each immediately followed by their children.
 func orderTodoistTasks(items []todoistTask) []todoistTask {
-	if len(items) == 0 {
+	if len(items) <= 1 {
 		return items
 	}
 
@@ -422,9 +454,7 @@ func orderTodoistTasks(items []todoistTask) []todoistTask {
 	var topLevel []todoistTask
 
 	for _, item := range items {
-		if string(item.ID) != "" {
-			itemByID[string(item.ID)] = item
-		}
+		itemByID[string(item.ID)] = item
 	}
 
 	for _, item := range items {
@@ -434,14 +464,14 @@ func orderTodoistTasks(items []todoistTask) []todoistTask {
 		} else if _, exists := itemByID[parentID]; exists {
 			childrenByParent[parentID] = append(childrenByParent[parentID], item)
 		} else {
-			// Orphaned subtask with non-existent parent; treat as top-level
+			// Orphaned subtask whose parent is not in the list; treat as top-level
 			topLevel = append(topLevel, item)
 		}
 	}
 
 	sortTasks := func(slice []todoistTask) {
 		sort.SliceStable(slice, func(i, j int) bool {
-			return slice[i].Order < slice[j].Order
+			return slice[i].EffectiveOrder() < slice[j].EffectiveOrder()
 		})
 	}
 
@@ -456,34 +486,29 @@ func orderTodoistTasks(items []todoistTask) []todoistTask {
 	var traverse func(item todoistTask, parentSectionID string)
 	traverse = func(item todoistTask, parentSectionID string) {
 		id := string(item.ID)
-		if id != "" {
-			if visited[id] {
-				return
-			}
-			visited[id] = true
+		if id == "" || visited[id] {
+			return
 		}
-
+		visited[id] = true
 		if item.SectionID == "" && parentSectionID != "" {
 			item.SectionID = flexibleString(parentSectionID)
 		}
-
 		ordered = append(ordered, item)
-		if id != "" {
-			for _, child := range childrenByParent[id] {
-				traverse(child, string(item.SectionID))
-			}
+		for _, child := range childrenByParent[id] {
+			traverse(child, string(item.SectionID))
 		}
 	}
 
-	for _, item := range topLevel {
-		traverse(item, "")
+	for _, top := range topLevel {
+		traverse(top, "")
 	}
 
-	// Safeguard against cyclic or unvisited items
+	// Defensive pass for any unreachable items (cycles)
 	for _, item := range items {
 		id := string(item.ID)
 		if id != "" && !visited[id] {
-			traverse(item, "")
+			ordered = append(ordered, item)
+			visited[id] = true
 		}
 	}
 
@@ -503,7 +528,7 @@ func (a *TodoistAdapter) doGet(ctx context.Context, targetURL string) ([]byte, e
 
 	resp, err := a.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("http request failed for %s: %w", sanitizeURL(targetURL), err)
+		return nil, fmt.Errorf("todoist request failed: %w", err)
 	}
 	defer func() {
 		_ = resp.Body.Close()
@@ -520,35 +545,32 @@ func (a *TodoistAdapter) doGet(ctx context.Context, targetURL string) ([]byte, e
 		return nil, UpstreamHTTPError{Code: resp.StatusCode, URL: targetURL}
 	}
 
-	// Slowloris defense: read at most MaxPayloadBytes + 1
-	limitReader := io.LimitReader(resp.Body, MaxPayloadBytes+1)
-	buf := bytes.NewBuffer(make([]byte, 0, 16*1024))
-	n, readErr := buf.ReadFrom(limitReader)
-	if readErr != nil {
-		return nil, fmt.Errorf("failed to read response body: %w", readErr)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, MaxPayloadBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
-	if n > MaxPayloadBytes {
+	if len(body) > MaxPayloadBytes {
 		return nil, ErrPayloadTooLarge
 	}
 
-	return buf.Bytes(), nil
+	return bytes.TrimSpace(body), nil
 }
 
-func parseTimeFlexible(s string) time.Time {
-	s = strings.TrimSpace(s)
-	if s == "" {
+func parseTimeFlexible(raw string) time.Time {
+	if raw == "" {
 		return time.Now().UTC()
 	}
-	formats := []string{
-		time.RFC3339Nano,
-		time.RFC3339,
-		"2006-01-02T15:04:05",
-		"2006-01-02",
+	if t, err := time.Parse(time.RFC3339Nano, raw); err == nil {
+		return t.UTC()
 	}
-	for _, f := range formats {
-		if t, err := time.Parse(f, s); err == nil {
-			return t.UTC()
-		}
+	if t, err := time.Parse(time.RFC3339, raw); err == nil {
+		return t.UTC()
+	}
+	if t, err := time.Parse("2006-01-02 15:04:05", raw); err == nil {
+		return t.UTC()
+	}
+	if t, err := time.Parse("2006-01-02", raw); err == nil {
+		return t.UTC()
 	}
 	return time.Now().UTC()
 }

@@ -126,7 +126,7 @@ ensure_deadcode() {
 run_deadcode() {
     echo "   [deadcode] Checking for unreachable code..."
     ensure_deadcode
-    dead_output=$(GOMEMLIMIT="${GOMEMLIMIT:-1024MiB}" "$DEADCODE_BIN" -test ./... 2>&1) || {
+    dead_output=$(GOMEMLIMIT="${GOMEMLIMIT:-512MiB}" GOGC="${GOGC:-50}" "$DEADCODE_BIN" -test ./... 2>&1) || {
         echo "🚨 [Mirrormere Verify] Error: deadcode execution failed:" >&2
         echo "$dead_output" >&2
         exit 1
