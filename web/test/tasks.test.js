@@ -82,7 +82,7 @@ describe('Tasks Widget Touch Completion & Optimistic UI', () => {
 
     // Verify request
     assert.equal(fetchCalls.length, 1);
-    assert.equal(fetchCalls[0].url, '/api/lists/chores/items/task-abc/complete');
+    assert.equal(fetchCalls[0].url, 'api/lists/chores/items/task-abc/complete');
     assert.equal(fetchCalls[0].options.method, 'POST');
 
     // Verify final state
@@ -158,6 +158,6 @@ describe('Tasks Widget Touch Completion & Optimistic UI', () => {
     await display.completeTask(element);
 
     assert.equal(fetchCalls.length, 1);
-    assert.equal(fetchCalls[0].url, '/api/lists/my%20list/items/task%20123/complete');
+    assert.equal(fetchCalls[0].url, 'api/lists/my%20list/items/task%20123/complete');
   });
 });
