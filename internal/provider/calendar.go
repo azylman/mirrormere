@@ -80,6 +80,7 @@ type CalendarConfig struct {
 type CalendarProvider struct {
 	client       *http.Client
 	config       *CalendarConfig
+	location     *time.Location
 	nowFunc      func() time.Time
 	logger       *slog.Logger
 	caldavClient *CalDAVClient
@@ -101,6 +102,7 @@ func NewCalendarProviderWithClient(client *http.Client, nowFunc func() time.Time
 	logger := slog.Default()
 	return &CalendarProvider{
 		client:       client,
+		location:     time.UTC,
 		nowFunc:      nowFunc,
 		logger:       logger,
 		caldavClient: NewCalDAVClient(client, logger),
@@ -114,6 +116,23 @@ func (p *CalendarProvider) Init(ctx context.Context, rawConfig map[string]any, o
 		return fmt.Errorf("calendar provider init failed: %w", err)
 	}
 	p.config = cfg
+
+	tzStr := opts.Timezone
+	if tz, ok := rawConfig["timezone"].(string); ok && strings.TrimSpace(tz) != "" {
+		tzStr = strings.TrimSpace(tz)
+	}
+	if tzStr != "" {
+		if loc, err := time.LoadLocation(tzStr); err == nil {
+			p.location = loc
+		} else {
+			p.logger.Warn("invalid timezone in calendar provider, falling back to UTC", "timezone", tzStr, "error", err)
+			p.location = time.UTC
+		}
+	}
+	if p.location == nil {
+		p.location = time.UTC
+	}
+
 	return nil
 }
 
@@ -392,8 +411,8 @@ func (p *CalendarProvider) Fetch(ctx context.Context) (any, error) {
 		return nil, fmt.Errorf("all calendar feeds failed: %s", strings.Join(fetchErrors, "; "))
 	}
 
-	// Sort chronologically ascending
-	sortCalendarEvents(allEvents)
+	// Sort chronologically ascending in effective timezone
+	sortCalendarEvents(allEvents, p.location)
 
 	syncStatus := "ok"
 	if len(fetchErrors) > 0 {
@@ -777,17 +796,77 @@ func formatEventRange(start, end time.Time, isAllDay bool) (string, string) {
 	return start.Format(time.RFC3339), end.Format(time.RFC3339)
 }
 
-func sortCalendarEvents(events []CalendarEvent) {
+// SortCalendarEvents sorts events chronologically ascending taking the target timezone into account.
+// Events are grouped by their calendar date in loc. For events occurring on the same local date,
+// all-day events are placed first (sorted by title), followed by timed events ordered by their start time.
+func SortCalendarEvents(events []CalendarEvent, loc *time.Location) {
+	if loc == nil {
+		loc = time.UTC
+	}
 	sort.SliceStable(events, func(i, j int) bool {
 		a, b := events[i], events[j]
-		if a.Start != b.Start {
-			return a.Start < b.Start
+		dateA := eventLocalDate(a, loc)
+		dateB := eventLocalDate(b, loc)
+		if dateA != dateB {
+			return dateA < dateB
 		}
 		if a.AllDay != b.AllDay {
-			return a.AllDay // all-day events first
+			return a.AllDay // all-day events first on the same local date
+		}
+		if !a.AllDay && !b.AllDay {
+			tA, okA := parseCalendarDateTime(a.Start)
+			tB, okB := parseCalendarDateTime(b.Start)
+			if okA && okB && !tA.Equal(tB) {
+				return tA.Before(tB)
+			}
 		}
 		return a.Title < b.Title
 	})
+}
+
+func sortCalendarEvents(events []CalendarEvent, loc *time.Location) {
+	SortCalendarEvents(events, loc)
+}
+
+func eventLocalDate(ev CalendarEvent, loc *time.Location) string {
+	if ev.AllDay {
+		if len(ev.Start) == 10 && ev.Start[4] == '-' && ev.Start[7] == '-' {
+			return ev.Start
+		}
+		if t, err := time.Parse("2006-01-02", ev.Start); err == nil {
+			return t.Format("2006-01-02")
+		}
+	}
+	if t, ok := parseCalendarDateTime(ev.Start); ok {
+		return t.In(loc).Format("2006-01-02")
+	}
+	return ev.Start
+}
+
+func parseCalendarDateTime(s string) (time.Time, bool) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return time.Time{}, false
+	}
+	layouts := []string{
+		time.RFC3339Nano,
+		time.RFC3339,
+		"2006-01-02T15:04:05Z",
+		"2006-01-02T15:04:05",
+		"20060102T150405Z",
+		"20060102T150405",
+		"2006-01-02",
+		"20060102",
+	}
+	for _, layout := range layouts {
+		if strings.HasSuffix(layout, "Z") && !strings.HasSuffix(s, "Z") {
+			continue
+		}
+		if t, err := time.Parse(layout, s); err == nil {
+			return t, true
+		}
+	}
+	return time.Time{}, false
 }
 
 func sanitizeID(uid string) string {

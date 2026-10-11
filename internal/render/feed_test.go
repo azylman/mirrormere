@@ -130,3 +130,106 @@ func TestCalendarFeedWidget_AlignmentAndHierarchy(t *testing.T) {
 		t.Errorf("event e3 should still have event-accent-dot")
 	}
 }
+
+
+func TestCalendarFeedWidget_AllDaySortingAcrossTimezones(t *testing.T) {
+	t.Parallel()
+
+	laLoc, err := time.LoadLocation("America/Los_Angeles")
+	if err != nil {
+		t.Fatalf("failed to load America/Los_Angeles location: %v", err)
+	}
+
+	testNow := time.Date(2026, 10, 10, 12, 0, 0, 0, laLoc)
+
+	snap := provider.CalendarSnapshot{
+		LastSync: "2026-10-10T12:00:00Z",
+		Events: func() []provider.CalendarEvent {
+			// Input with party listed before Wednesday game night
+			evs := []provider.CalendarEvent{
+				{
+					ID:           "e-mon",
+					Title:        "Monday Evening Dinner",
+					CalendarName: "Family",
+					Color:        "#3b82f6",
+					Start:        "2026-10-13T02:00:00Z", // Oct 12 19:00 PDT
+					End:          "2026-10-13T03:00:00Z",
+				},
+				{
+					ID:           "e-party",
+					Title:        "Weekend Bachelorette Party",
+					CalendarName: "Family",
+					Color:        "#a855f7",
+					Start:        "2026-10-15",
+					End:          "2026-10-15",
+					AllDay:       true,
+				},
+				{
+					ID:           "e-wed",
+					Title:        "Wednesday Game Night",
+					CalendarName: "Family",
+					Color:        "#3b82f6",
+					Start:        "2026-10-15T02:00:00Z", // Oct 14 19:00 PDT
+					End:          "2026-10-15T04:00:00Z",
+				},
+				{
+					ID:           "e-brunch",
+					Title:        "Brunch with Bridesmaids",
+					CalendarName: "Family",
+					Color:        "#a855f7",
+					Start:        "2026-10-15T17:00:00Z", // Oct 15 10:00 PDT
+					End:          "2026-10-15T18:30:00Z",
+				},
+			}
+			provider.SortCalendarEvents(evs, laLoc)
+			return evs
+		}(),
+	}
+
+	ctx := Context{
+		ID:         "test-cal-feed",
+		Type:       "calendar-feed",
+		Dimensions: domain.NewDimension(4, 3),
+		Data:       snap,
+		Config: map[string]any{
+			"title": "Upcoming",
+		},
+	}
+
+	html := renderFeedWidgetTemplate(t, ctx, testNow)
+
+	// 1. Verify "Monday Evening Dinner" appears before "Wednesday Game Night"
+	monIdx := strings.Index(html, "Monday Evening Dinner")
+	wedIdx := strings.Index(html, "Wednesday Game Night")
+	partyIdx := strings.Index(html, "Weekend Bachelorette Party")
+	if partyIdx == -1 {
+		partyIdx = strings.Index(html, "Weekend Bachelorette Party")
+	}
+	brunchIdx := strings.Index(html, "Brunch with Bridesmaids")
+
+	if monIdx == -1 || wedIdx == -1 || partyIdx == -1 || brunchIdx == -1 {
+		t.Fatalf("expected all 4 events in HTML output; got mon=%d, wed=%d, party=%d, brunch=%d",
+			monIdx, wedIdx, partyIdx, brunchIdx)
+	}
+
+	if monIdx > wedIdx {
+		t.Errorf("expected Monday dinner before Wednesday game night, got monIdx=%d, wedIdx=%d", monIdx, wedIdx)
+	}
+	if wedIdx > partyIdx {
+		t.Errorf("expected Wednesday game night before Thursday bachelorette party, got wedIdx=%d, partyIdx=%d", wedIdx, partyIdx)
+	}
+	if partyIdx > brunchIdx {
+		t.Errorf("expected Thursday bachelorette party before Thursday brunch, got partyIdx=%d, brunchIdx=%d", partyIdx, brunchIdx)
+	}
+
+	// 2. Verify Day Divider for Thursday Oct 15 appears only once
+	day15Matches := strings.Count(html, "Thursday • Oct 15")
+	if day15Matches != 1 {
+		t.Errorf("expected exactly 1 day divider for 'Thursday • Oct 15', got %d", day15Matches)
+	}
+
+	// 3. Verify All Day badge for the party
+	if !strings.Contains(html, "event-time-allday") {
+		t.Errorf("expected event-time-allday class in HTML output")
+	}
+}
