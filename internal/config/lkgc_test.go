@@ -741,6 +741,60 @@ display:
 		t.Fatalf("expected missing tasklist_id error, got %v", err)
 	}
 
+	// 5a. Tasks source: todoist missing todoist block
+	yamlTodoistMissingBlock := `
+timezone: America/New_York
+display:
+  widgets:
+    - id: my-todo
+      type: tasks
+      dimensions: [6, 2]
+      config:
+        list_id: "test"
+        source: "todoist"
+`
+	_, _, err = m.Reload([]byte(yamlTodoistMissingBlock))
+	if err == nil || !strings.Contains(err.Error(), "requires 'todoist' config block") {
+		t.Fatalf("expected missing todoist block error, got %v", err)
+	}
+
+	// 5b. Tasks source: todoist with invalid base_url
+	yamlTodoistBadURL := `
+timezone: America/New_York
+display:
+  widgets:
+    - id: my-todo
+      type: tasks
+      dimensions: [6, 2]
+      config:
+        list_id: "test"
+        source: "todoist"
+        todoist:
+          base_url: "ftp://example.com"
+`
+	_, _, err = m.Reload([]byte(yamlTodoistBadURL))
+	if err == nil || !strings.Contains(err.Error(), "invalid todoist.base_url") {
+		t.Fatalf("expected invalid todoist.base_url error, got %v", err)
+	}
+
+	// 5c. Tasks source: todoist valid configuration
+	yamlTodoistValid := `
+timezone: America/New_York
+display:
+  widgets:
+    - id: my-todo
+      type: tasks
+      dimensions: [6, 2]
+      config:
+        list_id: "test"
+        source: "todoist"
+        todoist:
+          project_id: "proj-123"
+`
+	if _, _, err = m.Reload([]byte(yamlTodoistValid)); err != nil {
+		t.Fatalf("expected valid todoist config to succeed, got %v", err)
+	}
+
 	// 6. Conflicting primary sources for same list_id
 	yamlConflictingSources := `
 timezone: America/New_York
