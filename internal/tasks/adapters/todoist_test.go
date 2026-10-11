@@ -942,3 +942,156 @@ func TestTodoist_CoverageGaps(t *testing.T) {
 		}
 	})
 }
+
+func TestTodoistAdapter_CompleteItem(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name       string
+		statusCode int
+		itemID     string
+		cancelCtx  bool
+		wantErr    error
+		wantCode   int
+		expectErr  bool
+	}{
+		{
+			name:       "204 No Content success",
+			statusCode: http.StatusNoContent,
+			itemID:     "task-123",
+			expectErr:  false,
+		},
+		{
+			name:       "200 OK success",
+			statusCode: http.StatusOK,
+			itemID:     "task-456",
+			expectErr:  false,
+		},
+		{
+			name:       "401 Unauthorized",
+			statusCode: http.StatusUnauthorized,
+			itemID:     "task-123",
+			wantErr:    adapters.ErrUnauthorized,
+			expectErr:  true,
+		},
+		{
+			name:       "403 Forbidden",
+			statusCode: http.StatusForbidden,
+			itemID:     "task-123",
+			wantErr:    adapters.ErrUnauthorized,
+			expectErr:  true,
+		},
+		{
+			name:       "404 Not Found",
+			statusCode: http.StatusNotFound,
+			itemID:     "task-123",
+			wantErr:    adapters.ErrUpstreamNotFound,
+			expectErr:  true,
+		},
+		{
+			name:       "429 Too Many Requests",
+			statusCode: http.StatusTooManyRequests,
+			itemID:     "task-123",
+			wantCode:   429,
+			expectErr:  true,
+		},
+		{
+			name:       "500 Internal Server Error",
+			statusCode: http.StatusInternalServerError,
+			itemID:     "task-123",
+			wantCode:   500,
+			expectErr:  true,
+		},
+		{
+			name:      "empty item ID",
+			itemID:    "",
+			expectErr: true,
+		},
+		{
+			name:      "path traversal item ID with slashes",
+			itemID:    "task/sub",
+			expectErr: true,
+		},
+		{
+			name:      "path traversal item ID with dotdot",
+			itemID:    "../evil",
+			expectErr: true,
+		},
+		{
+			name:      "canceled context",
+			itemID:    "task-123",
+			cancelCtx: true,
+			expectErr: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			var capturedAuth string
+			var capturedMethod string
+			var capturedPath string
+
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				capturedAuth = r.Header.Get("Authorization")
+				capturedMethod = r.Method
+				capturedPath = r.URL.Path
+
+				w.WriteHeader(tc.statusCode)
+			}))
+			defer srv.Close()
+
+			ad, err := adapters.NewTodoistAdapter(adapters.TodoistAdapterConfig{
+				Token:   "secret-token",
+				BaseURL: srv.URL,
+				Client:  srv.Client(),
+			})
+			if err != nil {
+				t.Fatalf("failed to create adapter: %v", err)
+			}
+
+			ctx := context.Background()
+			if tc.cancelCtx {
+				cctx, cancel := context.WithCancel(ctx)
+				cancel()
+				ctx = cctx
+			}
+
+			err = ad.CompleteItem(ctx, tc.itemID)
+
+			if tc.expectErr {
+				if err == nil {
+					t.Fatalf("expected error, got nil")
+				}
+				if tc.wantErr != nil && !errors.Is(err, tc.wantErr) {
+					t.Fatalf("expected error %v, got %v", tc.wantErr, err)
+				}
+				if tc.wantCode != 0 {
+					var httpErr adapters.UpstreamHTTPError
+					if errors.As(err, &httpErr) {
+						if httpErr.Code != tc.wantCode {
+							t.Errorf("expected code %d, got %d", tc.wantCode, httpErr.Code)
+						}
+					} else {
+						t.Errorf("expected UpstreamHTTPError, got %T: %v", err, err)
+					}
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				if capturedMethod != http.MethodPost {
+					t.Errorf("expected method POST, got %q", capturedMethod)
+				}
+				if capturedAuth != "Bearer secret-token" {
+					t.Errorf("expected auth 'Bearer secret-token', got %q", capturedAuth)
+				}
+				expectedPath := "/api/v1/tasks/" + tc.itemID + "/close"
+				if capturedPath != expectedPath {
+					t.Errorf("expected path %q, got %q", expectedPath, capturedPath)
+				}
+			}
+		})
+	}
+}

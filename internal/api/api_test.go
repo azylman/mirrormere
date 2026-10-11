@@ -178,6 +178,21 @@ func (m *mockServer) GetListItems(w http.ResponseWriter, r *http.Request, listId
 	_ = json.NewEncoder(w).Encode(items)
 }
 
+func (m *mockServer) CompleteListItem(w http.ResponseWriter, r *http.Request, listId string, itemId string) {
+	if listId == "not-found" || itemId == "not-found" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_ = json.NewEncoder(w).Encode(ErrorResponse{
+			Status: "error",
+			Error:  "not found",
+		})
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(ActionResponse{Status: "ok"})
+}
+
 func (m *mockServer) GetAudio(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -1360,6 +1375,39 @@ func TestServerInterfaceWrapper_ParameterErrors(t *testing.T) {
 		h := HandlerWithOptions(mock, StdHTTPServerOptions{})
 		if h == nil {
 			t.Fatalf("expected non-nil handler")
+		}
+	})
+
+	t.Run("CompleteListItem success and not found", func(t *testing.T) {
+		t.Parallel()
+		mock := &mockServer{}
+		wrapper := ServerInterfaceWrapper{
+			Handler: mock,
+			ErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+			},
+		}
+
+		// Success
+		req := httptest.NewRequest(http.MethodPost, "/api/lists/groceries/items/item-1/complete", nil)
+		req.SetPathValue("list_id", "groceries")
+		req.SetPathValue("item_id", "item-1")
+		rec := httptest.NewRecorder()
+		wrapper.CompleteListItem(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rec.Code)
+		}
+
+		// Not found
+		req404 := httptest.NewRequest(http.MethodPost, "/api/lists/not-found/items/item-1/complete", nil)
+		req404.SetPathValue("list_id", "not-found")
+		req404.SetPathValue("item_id", "item-1")
+		rec404 := httptest.NewRecorder()
+		wrapper.CompleteListItem(rec404, req404)
+
+		if rec404.Code != http.StatusNotFound {
+			t.Fatalf("expected 404, got %d", rec404.Code)
 		}
 	})
 }

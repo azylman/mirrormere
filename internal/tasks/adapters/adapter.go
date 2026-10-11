@@ -45,3 +45,8 @@ type Adapter interface {
 	Name() string
 	FetchList(ctx context.Context) (*tasks.List, []tasks.ListItem, error)
 }
+
+// Completer is an optional interface for adapters that support closing/completing items upstream.
+type Completer interface {
+	CompleteItem(ctx context.Context, itemID string) error
+}

@@ -396,6 +396,7 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 		}
 	}()
 	hub.SetProviderCoordinator(providerCoord)
+	listsHandler.SetItemCompleter(providerCoord)
 	pushHandler := provider.NewPushHandler(providerCoord, logger)
 
 	// 11. Render & Display Handlers

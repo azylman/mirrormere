@@ -7,6 +7,7 @@
   let sseClient = null;
   let carousel = null;
   let currentTimezone = null;
+  const inFlightCompletions = new Set();
 
   /**
    * Validate IANA timezone string.
@@ -689,6 +690,110 @@
   }
 
   /**
+   * Apply optimistic completed styling to a task item DOM element.
+   */
+  function applyTaskDoneState(taskItem) {
+    if (!taskItem) return;
+    taskItem.classList.remove('task-item-active');
+    taskItem.classList.add('task-item-done');
+    const ring = taskItem.querySelector('.task-checkbox-ring');
+    if (ring) {
+      ring.className = 'task-checkbox-done';
+      ring.setAttribute('aria-hidden', 'true');
+      ring.innerHTML = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
+    }
+  }
+
+  /**
+   * Revert optimistic completed styling back to active on a task item DOM element.
+   */
+  function revertTaskDoneState(taskItem) {
+    if (!taskItem) return;
+    taskItem.classList.remove('task-item-done');
+    taskItem.classList.add('task-item-active');
+    const doneBox = taskItem.querySelector('.task-checkbox-done');
+    if (doneBox) {
+      doneBox.className = 'task-checkbox-ring';
+      doneBox.setAttribute('aria-hidden', 'true');
+      doneBox.innerHTML = '';
+    }
+  }
+
+  /**
+   * Re-apply optimistic styling to any tasks currently in-flight across SSE DOM updates.
+   */
+  function syncInFlightTasks(container) {
+    const root = container || (typeof document !== 'undefined' ? document : null);
+    if (!root || inFlightCompletions.size === 0) return;
+    const items = root.querySelectorAll('.task-item');
+    items.forEach((item) => {
+      const tid = item.dataset.taskId;
+      if (tid && inFlightCompletions.has(tid)) {
+        item.dataset.completing = 'true';
+        applyTaskDoneState(item);
+      }
+    });
+  }
+
+  /**
+   * Complete task action handler with optimistic UI updates and network rollback.
+   */
+  async function completeTask(taskItem) {
+    if (!taskItem) return;
+    if (taskItem.classList.contains('task-item-done') || taskItem.dataset.completing === 'true') {
+      return;
+    }
+
+    const taskId = taskItem.dataset.taskId;
+    const listId = taskItem.dataset.listId || taskItem.closest('.widget-tasks')?.dataset?.widgetId;
+    if (!taskId || !listId) return;
+
+    taskItem.dataset.completing = 'true';
+    inFlightCompletions.add(taskId);
+    applyTaskDoneState(taskItem);
+
+    try {
+      const resp = await fetch(`/api/lists/${encodeURIComponent(listId)}/items/${encodeURIComponent(taskId)}/complete`, {
+        method: 'POST',
+        headers: {
+          'Accept': 'application/json',
+        },
+      });
+      if (!resp.ok) {
+        throw new Error(`HTTP ${resp.status}`);
+      }
+    } catch (err) {
+      inFlightCompletions.delete(taskId);
+      delete taskItem.dataset.completing;
+      revertTaskDoneState(taskItem);
+      if (typeof console !== 'undefined' && console.error) {
+        console.error('Failed to complete task:', err);
+      }
+      throw err;
+    } finally {
+      inFlightCompletions.delete(taskId);
+      delete taskItem.dataset.completing;
+    }
+  }
+
+  let tasksInteractionInitialized = false;
+
+  /**
+   * Initialize delegated touch and click handlers for tasks widget completion.
+   */
+  function initTasksInteraction() {
+    if (typeof document === 'undefined' || tasksInteractionInitialized) return;
+    tasksInteractionInitialized = true;
+
+    document.addEventListener('click', (e) => {
+      const taskItem = e.target.closest('.task-item');
+      if (taskItem) {
+        completeTask(taskItem).catch(() => {});
+      }
+    });
+  }
+
+  /**
    * Initialize display client application.
    */
   function init() {
@@ -798,6 +903,9 @@
         });
       }
 
+      // 7b. Initialize Tasks Widget Interaction
+      initTasksInteraction();
+
       // 8. Initialize Header Video Action Button
       setupHeaderVideo({
         sseClient: sseClient,
@@ -809,6 +917,7 @@
 
       sseClient.on('widget.update', (data) => {
         if (carousel) carousel.handleWidgetUpdate(data);
+        syncInFlightTasks();
       });
 
       sseClient.on('widget.reload', (data) => {
@@ -844,8 +953,9 @@
 
       sseClient.connect();
     } else {
-      // Standalone or pre-SSE header video initialization
+      // Standalone or pre-SSE header video & tasks initialization
       setupHeaderVideo();
+      initTasksInteraction();
     }
   }
 
@@ -880,6 +990,10 @@
     resolveCursorSuppression,
     setupHeaderVideo,
     getHeaderVideoController: () => headerVideoController,
+    completeTask,
+    initTasksInteraction,
+    syncInFlightTasks,
+    getInFlightCompletions: () => inFlightCompletions,
     init,
   };
 

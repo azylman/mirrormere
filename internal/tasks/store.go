@@ -25,6 +25,7 @@ type Store interface {
 	SyncList(ctx context.Context, list List, items []ListItem) (bool, error)
 	DeleteList(ctx context.Context, id string) error
 	DeleteItem(ctx context.Context, listID, itemID string) error
+	CompleteItem(ctx context.Context, listID, itemID string) error
 	Close() error
 }
 
@@ -750,6 +751,40 @@ func (s *SQLiteStore) DeleteItem(ctx context.Context, listID, itemID string) err
 	rows, err := res.RowsAffected()
 	if err != nil || rows == 0 {
 		return ErrItemNotFound
+	}
+	return nil
+}
+
+// CompleteItem marks an item as done in listID. Returns ErrItemNotFound if not found.
+// If the item is already marked done, it returns nil idempotently.
+func (s *SQLiteStore) CompleteItem(ctx context.Context, listID, itemID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.db == nil {
+		return errors.New("database is closed")
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	res, err := s.db.ExecContext(ctx, `UPDATE list_items SET done = 1, updated_at = ? WHERE list_id = ? AND id = ?`, now, listID, itemID)
+	if err != nil {
+		return fmt.Errorf("failed to complete list item: %w", err)
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+	if rows == 0 {
+		var doneVal int
+		err := s.db.QueryRowContext(ctx, `SELECT done FROM list_items WHERE list_id = ? AND id = ?`, listID, itemID).Scan(&doneVal)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrItemNotFound
+		}
+		if err != nil {
+			return fmt.Errorf("failed to check item status: %w", err)
+		}
+		if doneVal == 1 {
+			return nil
+		}
 	}
 	return nil
 }
