@@ -59,9 +59,6 @@
           <div class="event-details-col">
             <div class="event-title-row">
               <span class="event-title" title="{{ .Title }}">{{ .Title }}</span>
-              {{ if .CalendarName }}
-                <span class="event-calendar-pill" {{ if .Color }}style="--pill-color: {{ .Color }}; background: color-mix(in srgb, {{ .Color }} 12%, white); color: {{ .Color }};"{{ end }}>{{ .CalendarName }}</span>
-              {{ end }}
             </div>
             {{ if .Location }}
             <div class="event-location-row" title="{{ .Location }}">
@@ -70,6 +67,9 @@
             </div>
             {{ end }}
           </div>
+          {{ if .CalendarName }}
+            <span class="event-calendar-pill" {{ if .Color }}style="--pill-color: {{ .Color }}; background: color-mix(in srgb, {{ .Color }} 12%, white); color: {{ .Color }};"{{ end }}>{{ .CalendarName }}</span>
+          {{ end }}
           <span class="event-accent-dot" {{ if .Color }}style="background-color: {{ .Color }};"{{ end }}></span>
         </div>
       {{ end }}
