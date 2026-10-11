@@ -6,46 +6,45 @@
 {{ end }}
 <div class="widget-card widget-calendar-grid widget-calendar-family cf-view-{{ $defaultView }}" data-widget-id="{{ .ID }}" data-widget-type="{{ .Type }}" data-default-view="{{ $defaultView }}" data-active-view="{{ $defaultView }}" data-prevent-screen-swipe="true" style="grid-column: span {{ .Dimensions.Cols }}; grid-row: span {{ .Dimensions.Rows }}; display: flex; flex-direction: column; position: relative; overflow: hidden; --mm-cf-shared: {{ $view.SharedColor }};{{ range $i, $m := $view.Members }} --mm-member-{{ $i }}: {{ $m.Color }}; --mm-member-{{ $i }}-text: {{ $m.TextColor }};{{ end }}">
   {{ template "cf-styles" . }}
-  <div class="cf-header" style="display: flex; flex-direction: column; width: 100%; gap: 6px; padding-bottom: 8px; margin-bottom: 8px; border-bottom: 1px solid var(--mm-divider, rgba(90, 60, 30, 0.08));">
-    <div class="cf-header-top" style="display: flex; align-items: center; justify-content: space-between; width: 100%; gap: 10px;">
-      <div class="cf-header-left" style="display: flex; align-items: center; gap: 8px;">
-        <div class="cf-title-badge" style="width: 30px; height: 30px; border-radius: 9px; background: rgba(139, 92, 246, 0.15); color: var(--mm-lavender, #8b60ed); display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
-          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
-            <line x1="16" y1="2" x2="16" y2="6"></line>
-            <line x1="8" y1="2" x2="8" y2="6"></line>
-            <line x1="3" y1="10" x2="21" y2="10"></line>
-          </svg>
-        </div>
-        <h2 class="cf-title" style="margin: 0; font-size: 1.05rem; font-weight: 800; color: var(--mm-text-title, #2a2338); line-height: 1.2;">{{ stringOr .Config "title" "Calendar" }}</h2>
-      </div>
-
-      <div class="cf-legend" style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
-        {{ range $i, $m := $view.Members }}
-        <div class="cf-member-chip cf-pattern-{{ $m.Pattern }}" title="{{ $m.Name }}" style="display: inline-flex; align-items: center; gap: 5px; background: rgba(90, 60, 30, 0.04); padding: 2px 8px; border-radius: 9999px; border: 1px solid var(--mm-card-border, rgba(90, 60, 30, 0.08));">
-          <span class="cf-member-dot" style="display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--mm-member-{{ $i }}); flex-shrink: 0;"></span>
-          <span class="cf-member-name" style="font-size: 0.68rem; font-weight: 700; color: var(--mm-text-primary, #2a2338); line-height: 1;">{{ $m.Name }}</span>
-        </div>
-        {{ end }}
-      </div>
+  <div class="cf-header" style="display: flex; align-items: center; width: 100%; gap: 12px; padding-bottom: 8px; margin-bottom: 8px; border-bottom: 1px solid var(--mm-divider, rgba(90, 60, 30, 0.08));">
+    <div class="cf-title-badge" style="width: 38px; height: 38px; border-radius: 11px; background: rgba(139, 92, 246, 0.12); color: var(--mm-lavender, #8b60ed); display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+        <line x1="16" y1="2" x2="16" y2="6"></line>
+        <line x1="8" y1="2" x2="8" y2="6"></line>
+        <line x1="3" y1="10" x2="21" y2="10"></line>
+      </svg>
     </div>
 
-    <div class="cf-header-bottom" style="display: flex; align-items: center; justify-content: space-between; width: 100%; gap: 10px;">
-      <div class="cf-date-row" style="display: flex; align-items: center; gap: 8px;">
-        <div class="cf-subtitle" style="display: flex; align-items: center; font-size: 0.82rem; font-weight: 700;">
-          <span class="cf-range-label cf-label-week" style="{{ if ne $defaultView "week" }}display: none;{{ end }}font-weight: 700; color: var(--mm-text-secondary, #4e465f);">{{ $view.RangeLabel }}</span>
-          <span class="cf-range-label cf-label-month" style="{{ if ne $defaultView "month" }}display: none;{{ end }}font-weight: 700; color: var(--mm-text-secondary, #4e465f);">{{ $monthView.MonthLabel }}</span>
+    <div class="cf-header-content" style="display: flex; flex-direction: column; flex: 1; min-width: 0; gap: 4px;">
+      <div class="cf-header-top" style="display: flex; align-items: center; justify-content: space-between; width: 100%; gap: 10px;">
+        <h2 class="cf-title" style="margin: 0; font-size: 1.05rem; font-weight: 800; color: var(--mm-text-title, #2a2338); line-height: 1.2;">{{ stringOr .Config "title" "Calendar" }}</h2>
+
+        <div class="cf-legend" style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
+          {{ range $i, $m := $view.Members }}
+          <div class="cf-member-chip cf-pattern-{{ $m.Pattern }}" title="{{ $m.Name }}" style="display: inline-flex; align-items: center; gap: 5px; background: rgba(90, 60, 30, 0.04); padding: 2px 8px; border-radius: 9999px; border: 1px solid var(--mm-card-border, rgba(90, 60, 30, 0.08));">
+            <span class="cf-member-dot" style="display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--mm-member-{{ $i }}); flex-shrink: 0;"></span>
+            <span class="cf-member-name" style="font-size: 0.68rem; font-weight: 700; color: var(--mm-text-primary, #2a2338); line-height: 1;">{{ $m.Name }}</span>
+          </div>
+          {{ end }}
         </div>
-        <div class="cf-nav-group" style="display: inline-flex; align-items: center; gap: 3px;">
+      </div>
+
+      <div class="cf-header-bottom" style="display: flex; align-items: center; justify-content: space-between; width: 100%; gap: 10px;">
+        <div class="cf-date-row" style="display: flex; align-items: center; gap: 6px;">
           <button type="button" class="cf-nav-btn cf-prev-btn" aria-label="Previous date range" title="Previous">&#x2039;</button>
+          <div class="cf-subtitle" style="display: flex; align-items: center; font-size: 0.82rem; font-weight: 700;">
+            <span class="cf-range-label cf-label-week" style="{{ if ne $defaultView "week" }}display: none;{{ end }}font-weight: 700; color: var(--mm-text-secondary, #4e465f);">{{ $view.RangeLabel }}</span>
+            <span class="cf-range-label cf-label-month" style="{{ if ne $defaultView "month" }}display: none;{{ end }}font-weight: 700; color: var(--mm-text-secondary, #4e465f);">{{ $monthView.MonthLabel }}</span>
+          </div>
           <button type="button" class="cf-nav-btn cf-next-btn" aria-label="Next date range" title="Next">&#x203A;</button>
           <button type="button" class="cf-today-badge" title="Return to today" style="display: none;">TODAY</button>
         </div>
-      </div>
 
-      <div class="cf-view-switcher" role="tablist" aria-label="Calendar view">
-        <button type="button" class="cf-view-btn{{ if eq $defaultView "week" }} active{{ end }}" data-view="week" role="tab" aria-selected="{{ if eq $defaultView "week" }}true{{ else }}false{{ end }}">Week</button>
-        <button type="button" class="cf-view-btn{{ if eq $defaultView "month" }} active{{ end }}" data-view="month" role="tab" aria-selected="{{ if eq $defaultView "month" }}true{{ else }}false{{ end }}">Month</button>
+        <div class="cf-view-switcher" role="tablist" aria-label="Calendar view">
+          <button type="button" class="cf-view-btn{{ if eq $defaultView "week" }} active{{ end }}" data-view="week" role="tab" aria-selected="{{ if eq $defaultView "week" }}true{{ else }}false{{ end }}">Week</button>
+          <button type="button" class="cf-view-btn{{ if eq $defaultView "month" }} active{{ end }}" data-view="month" role="tab" aria-selected="{{ if eq $defaultView "month" }}true{{ else }}false{{ end }}">Month</button>
+        </div>
       </div>
     </div>
   </div>
@@ -182,33 +181,38 @@
     border: none;
     color: var(--mm-text-dim, #8b819f);
     cursor: pointer;
-    padding: 2px 6px;
-    font-size: 1.1rem;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    font-size: 1.15rem;
     line-height: 1;
-    border-radius: 4px;
+    border-radius: 50%;
     display: inline-flex;
     align-items: center;
     justify-content: center;
     touch-action: manipulation;
     user-select: none;
-    transition: color 0.15s ease, background-color 0.15s ease;
+    transition: color 0.15s ease, background-color 0.15s ease, transform 0.1s ease;
   }
   .cf-nav-btn:hover, .cf-nav-btn:active {
     color: var(--mm-text-title, #2a2338);
     background: rgba(90, 60, 30, 0.08);
   }
+  .cf-nav-btn:active {
+    transform: scale(0.92);
+  }
   .cf-today-badge {
-    font-size: 0.65rem;
+    font-size: 0.62rem;
     font-weight: 800;
     padding: 2px 7px;
-    border-radius: 6px;
+    border-radius: 9999px;
     background: var(--mm-coral, #ff6f59);
     color: #ffffff;
     cursor: pointer;
     border: none;
     touch-action: manipulation;
     user-select: none;
-    letter-spacing: 0.03em;
+    letter-spacing: 0.04em;
     transition: transform 0.1s ease, filter 0.15s ease;
   }
   .cf-today-badge:active {
@@ -250,33 +254,34 @@
   .cf-view-switcher {
     display: inline-flex;
     align-items: center;
-    background: var(--mm-bg-surface, rgba(90, 60, 30, 0.05));
-    border-radius: 8px;
-    padding: 2px;
+    background: var(--mm-bg-surface, #f5f1e8);
+    border-radius: 9999px;
+    padding: 2px 3px;
     gap: 2px;
     border: 1px solid var(--mm-card-border, rgba(90, 60, 30, 0.08));
+    box-shadow: inset 0 1px 2px rgba(90, 60, 30, 0.04);
   }
   .cf-view-btn {
     background: transparent;
     border: none;
     color: var(--mm-text-dim, #8b819f);
-    font-size: 0.70rem;
+    font-size: 0.72rem;
     font-weight: 700;
-    padding: 3px 10px;
-    border-radius: 6px;
+    padding: 3px 11px;
+    border-radius: 9999px;
     cursor: pointer;
     touch-action: manipulation;
     user-select: none;
-    transition: background-color 0.15s ease, color 0.15s ease;
+    transition: background-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
   }
   .cf-view-btn:hover {
     color: var(--mm-text-title, #2a2338);
   }
   .cf-view-btn.active {
-    background: var(--mm-lavender, #8b60ed);
-    color: #ffffff;
+    background: #ffffff;
+    color: var(--mm-text-title, #2a2338);
     font-weight: 800;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+    box-shadow: 0 2px 6px rgba(90, 60, 30, 0.08), 0 1px 2px rgba(90, 60, 30, 0.04);
   }
   .cf-event-clickable {
     cursor: pointer;
