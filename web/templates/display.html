@@ -26,7 +26,7 @@
         {{ if and .HeaderVideo .HeaderVideo.Enabled }}
         <div class="header-video" id="header-video">
           <button id="header-video-btn" class="header-video-btn" aria-label="Open Fullscreen Video" title="Open Fullscreen Video"{{ if .HeaderVideo.StreamID }} data-stream-id="{{ .HeaderVideo.StreamID }}"{{ end }}{{ if .HeaderVideo.StreamURL }} data-stream-url="{{ .HeaderVideo.StreamURL }}"{{ end }}{{ if .HeaderVideo.ControlURL }} data-control-url="{{ .HeaderVideo.ControlURL }}"{{ end }}{{ if .HeaderVideo.Type }} data-type="{{ .HeaderVideo.Type }}"{{ end }}>
-            <svg class="header-video-icon" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <svg class="header-video-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
               <rect width="20" height="15" x="2" y="7" rx="2" ry="2"></rect>
               <polyline points="17 2 12 7 7 2"></polyline>
             </svg>
@@ -37,7 +37,7 @@
         <div class="header-weather" id="header-weather">
           <div class="pill-badge weather-pill" id="weather-pill">
             <span class="weather-condition" id="weather-condition">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" class="mm-weather-icon mm-icon-weather-partly-cloudy"><circle cx="16" cy="9" r="4" fill="#f59e0b"/><g stroke="#f59e0b" stroke-width="1.8" stroke-linecap="round"><line x1="16" y1="2" x2="16" y2="3.5"/><line x1="21.5" y1="6" x2="20" y2="7"/><line x1="21.5" y1="12" x2="20" y2="11"/><line x1="11.5" y1="4" x2="12.5" y2="5"/></g><path d="M15.5 19H7a4.5 4.5 0 0 1-.8-8.9A5.5 5.5 0 0 1 16.8 11 3.5 3.5 0 0 1 15.5 19z" fill="#ffffff" stroke="#94a3b8" stroke-width="1.6" stroke-linejoin="round"/></svg>
+              <svg width="26" height="26" viewBox="0 0 24 24" fill="none" class="mm-weather-icon mm-icon-weather-partly-cloudy"><circle cx="16" cy="9" r="4" fill="#f59e0b"/><g stroke="#f59e0b" stroke-width="1.8" stroke-linecap="round"><line x1="16" y1="2" x2="16" y2="3.5"/><line x1="21.5" y1="6" x2="20" y2="7"/><line x1="21.5" y1="12" x2="20" y2="11"/><line x1="11.5" y1="4" x2="12.5" y2="5"/></g><path d="M15.5 19H7a4.5 4.5 0 0 1-.8-8.9A5.5 5.5 0 0 1 16.8 11 3.5 3.5 0 0 1 15.5 19z" fill="#ffffff" stroke="#94a3b8" stroke-width="1.6" stroke-linejoin="round"/></svg>
             </span>
             <div class="weather-details" id="weather-details">
               <div class="weather-primary-row">
