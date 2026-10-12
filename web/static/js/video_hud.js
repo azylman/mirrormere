@@ -69,7 +69,7 @@
 
       this.rewindBtn = options.rewindBtn || findInBottomBar('video-hud-rewind-btn');
       this.forwardBtn = options.forwardBtn || findInBottomBar('video-hud-forward-btn');
-      this.playBtn = options.playBtn || findInBottomBar('video-hud-play-btn') || (typeof document !== 'undefined' ? document.getElementById('video-hud-play-btn') : null);
+      this.playBtn = options.playBtn || (typeof document !== 'undefined' ? document.getElementById('video-hud-play-btn') : null) || findInBottomBar('video-hud-play-btn') || (this.overlay?.children?.find ? this.overlay.children.find((c) => c.id === 'video-hud-play-btn') : null) || null;
       this.playIcon = options.playIcon || (this.playBtn?.children?.find ? this.playBtn.children.find((c) => c.id === 'video-hud-play-icon') : null) || (typeof document !== 'undefined' ? document.getElementById('video-hud-play-icon') : null);
       this.muteBtn = options.muteBtn || (typeof document !== 'undefined' ? document.getElementById('video-hud-mute-btn') : null);
       this.muteIcon = options.muteIcon || (typeof document !== 'undefined' ? document.getElementById('video-hud-mute-icon') : null);
@@ -235,7 +235,9 @@
             e.target.closest('.video-hud-controls') ||
             e.target.closest('.video-hud-header') ||
             e.target.closest('.video-hud-side-rail') ||
-            e.target.closest('.video-hud-bottom-bar')
+            e.target.closest('.video-hud-bottom-bar') ||
+            e.target.closest('.video-hud-play-center') ||
+            e.target.closest('#video-hud-play-btn')
           )) {
             return;
           }
@@ -434,8 +436,17 @@
         this.boundHandlers.push({ el: this.dismissBtn, ev: 'click', fn: onDismiss });
       }
 
-      // 7. Play/Pause button
+      // 7. Play/Pause button and pointer isolation
       if (this.playBtn) {
+        const onPlayPointer = (e) => {
+          if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+        };
+        const playEvents = ['pointerdown', 'pointerup', 'touchstart', 'touchend'];
+        playEvents.forEach((ev) => {
+          this.playBtn.addEventListener(ev, onPlayPointer);
+          this.boundHandlers.push({ el: this.playBtn, ev, fn: onPlayPointer });
+        });
+
         const onPlayToggle = (e) => {
           if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
           this.resetAutoFade();
@@ -665,16 +676,18 @@
     formatStreamTitle(stream) {
       if (!stream) return 'Live Video';
 
-      const series = (stream.series || stream.series_title || '').trim();
+      const series = (stream.series || stream.series_title || stream.show_title || '').trim();
       const title = (stream.title || stream.episode_name || '').trim();
       let annotation = (stream.annotation || '').trim();
 
       if (!annotation) {
-        const s = stream.season !== undefined && stream.season !== null && String(stream.season).trim() !== ''
-          ? String(stream.season).trim()
+        const rawSeason = stream.season !== undefined && stream.season !== null ? stream.season : stream.season_number;
+        const s = rawSeason !== undefined && rawSeason !== null && String(rawSeason).trim() !== ''
+          ? String(rawSeason).trim()
           : '';
-        const ep = stream.episode !== undefined && stream.episode !== null && String(stream.episode).trim() !== ''
-          ? String(stream.episode).trim()
+        const rawEp = stream.episode !== undefined && stream.episode !== null ? stream.episode : stream.episode_number;
+        const ep = rawEp !== undefined && rawEp !== null && String(rawEp).trim() !== ''
+          ? String(rawEp).trim()
           : '';
 
         if (s && ep) {
@@ -696,6 +709,9 @@
       }
       if (series && annotation) {
         return `${series} ${annotation}`;
+      }
+      if (annotation && title) {
+        return `${annotation}: ${title}`;
       }
       if (title) {
         return title;

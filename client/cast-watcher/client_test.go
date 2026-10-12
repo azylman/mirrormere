@@ -1146,3 +1146,207 @@ func TestCastClient_MediaMetadataAndThrottling(t *testing.T) {
 		t.Errorf("expected dispatchTrigger to include metadata, got %+v", p7)
 	}
 }
+
+func TestExtractMediaMetadata(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       map[string]any
+		wantTitle   string
+		wantSeries  string
+		wantSeason  string
+		wantEpisode string
+	}{
+		{
+			name:        "nil metadata",
+			input:       nil,
+			wantTitle:   "",
+			wantSeries:  "",
+			wantSeason:  "",
+			wantEpisode: "",
+		},
+		{
+			name: "standard TvShowMediaMetadata",
+			input: map[string]any{
+				"title":       "If You Don't Like It, I'll Just Run",
+				"seriesTitle": "Trapped in a Dating Sim",
+				"season":      2,
+				"episode":     4,
+			},
+			wantTitle:   "If You Don't Like It, I'll Just Run",
+			wantSeries:  "Trapped in a Dating Sim",
+			wantSeason:  "2",
+			wantEpisode: "4",
+		},
+		{
+			name: "alternate field variations",
+			input: map[string]any{
+				"episode_title":  "The Pilot",
+				"series_title":   "Breaking Bad",
+				"season_number":  "1",
+				"episode_number": "1",
+			},
+			wantTitle:   "The Pilot",
+			wantSeries:  "Breaking Bad",
+			wantSeason:  "1",
+			wantEpisode: "1",
+		},
+		{
+			name: "title containing episode in parentheses",
+			input: map[string]any{
+				"title":       "If You Don't Like It, I'll Just Run (Episode 4)",
+				"seriesTitle": "Trapped in a Dating Sim",
+			},
+			wantTitle:   "If You Don't Like It, I'll Just Run",
+			wantSeries:  "Trapped in a Dating Sim",
+			wantSeason:  "",
+			wantEpisode: "4",
+		},
+		{
+			name: "title containing series and SXXEXX",
+			input: map[string]any{
+				"title": "Trapped in a Dating Sim S02E04: If You Don't Like It, I'll Just Run",
+			},
+			wantTitle:   "If You Don't Like It, I'll Just Run",
+			wantSeries:  "Trapped in a Dating Sim",
+			wantSeason:  "02",
+			wantEpisode: "04",
+		},
+		{
+			name: "title containing episode lead",
+			input: map[string]any{
+				"title":    "Episode 4: If You Don't Like It, I'll Just Run",
+				"subtitle": "Trapped in a Dating Sim",
+			},
+			wantTitle:   "If You Don't Like It, I'll Just Run",
+			wantSeries:  "Trapped in a Dating Sim",
+			wantSeason:  "",
+			wantEpisode: "4",
+		},
+		{
+			name: "generic movie",
+			input: map[string]any{
+				"title": "Inception",
+			},
+			wantTitle:   "Inception",
+			wantSeries:  "",
+			wantSeason:  "",
+			wantEpisode: "",
+		},
+		{
+			name: "title with series colon season and episode",
+			input: map[string]any{
+				"title": "Spy x Family: Season 1, Episode 5 - Mission Start",
+			},
+			wantTitle:   "Mission Start",
+			wantSeries:  "Spy x Family",
+			wantSeason:  "1",
+			wantEpisode: "5",
+		},
+		{
+			name: "title with series colon episode only",
+			input: map[string]any{
+				"title": "Spy x Family: Episode 5: Mission Start",
+			},
+			wantTitle:   "Mission Start",
+			wantSeries:  "Spy x Family",
+			wantSeason:  "",
+			wantEpisode: "5",
+		},
+		{
+			name: "subtitle with season and episode",
+			input: map[string]any{
+				"title":    "Some Episode",
+				"subtitle": "Season 2, Episode 3",
+			},
+			wantTitle:   "Some Episode",
+			wantSeries:  "",
+			wantSeason:  "2",
+			wantEpisode: "3",
+		},
+		{
+			name: "subtitle with episode only",
+			input: map[string]any{
+				"title":    "Some Episode",
+				"subtitle": "Episode 7",
+			},
+			wantTitle:   "Some Episode",
+			wantSeries:  "",
+			wantSeason:  "",
+			wantEpisode: "7",
+		},
+		{
+			name: "title with paren season and episode",
+			input: map[string]any{
+				"title": "The Big Match (Season 3, Episode 9)",
+			},
+			wantTitle:   "The Big Match",
+			wantSeries:  "",
+			wantSeason:  "3",
+			wantEpisode: "9",
+		},
+		{
+			name: "parseStringOrInt types",
+			input: map[string]any{
+				"title":          "Types Test",
+				"series":         json.Number("42"),
+				"season_index":   float64(3),
+				"episode_number": int(12),
+			},
+			wantTitle:   "Types Test",
+			wantSeries:  "42",
+			wantSeason:  "3",
+			wantEpisode: "12",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotTitle, gotSeries, gotSeason, gotEpisode := extractMediaMetadata(tt.input)
+			if gotTitle != tt.wantTitle {
+				t.Errorf("title mismatch: got %q, want %q", gotTitle, tt.wantTitle)
+			}
+			if gotSeries != tt.wantSeries {
+				t.Errorf("series mismatch: got %q, want %q", gotSeries, tt.wantSeries)
+			}
+			if gotSeason != tt.wantSeason {
+				t.Errorf("season mismatch: got %q, want %q", gotSeason, tt.wantSeason)
+			}
+			if gotEpisode != tt.wantEpisode {
+				t.Errorf("episode mismatch: got %q, want %q", gotEpisode, tt.wantEpisode)
+			}
+		})
+	}
+}
+
+func TestCastClient_CoreWebhookFailureResetsState(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte("502 Bad Gateway"))
+	}))
+	defer ts.Close()
+
+	client := NewCastClient(ClientConfig{
+		CoreURL:    ts.URL,
+		HTTPClient: ts.Client(),
+	})
+
+	client.lastReportedPlayerState = "playing"
+	client.lastReportedTitle = "Episode 1"
+	client.lastTriggered = true
+
+	client.postToCore(ts.URL+"/api/video/state", []byte(`{}`), "state")
+	client.mu.RLock()
+	if client.lastReportedPlayerState != "" || client.lastReportedTitle != "" {
+		t.Errorf("expected lastReportedPlayerState and Title reset on 502, got state=%q title=%q",
+			client.lastReportedPlayerState, client.lastReportedTitle)
+	}
+	client.mu.RUnlock()
+
+	client.postToCore(ts.URL+"/api/video/trigger", []byte(`{}`), "trigger")
+	client.mu.RLock()
+	if client.lastTriggered {
+		t.Errorf("expected lastTriggered reset to false on 502")
+	}
+	client.mu.RUnlock()
+}
+

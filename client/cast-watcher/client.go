@@ -13,6 +13,7 @@ import (
 	"math/rand"
 	"net"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -91,6 +92,9 @@ type CastClient struct {
 	lastEpisode                string
 	lastPositionTime           time.Time
 	lastReportedTitle          string
+	lastReportedSeries         string
+	lastReportedSeason         string
+	lastReportedEpisode        string
 	lastReportedMediaSessionID int
 
 	wakeMu       sync.Mutex
@@ -677,6 +681,9 @@ func (c *CastClient) handleReceiverMessage(msg CastMessage) {
 			c.playerState = ""
 			c.lastReportedPlayerState = ""
 			c.lastReportedTitle = ""
+			c.lastReportedSeries = ""
+			c.lastReportedSeason = ""
+			c.lastReportedEpisode = ""
 			c.lastReportedMediaSessionID = 0
 			c.lastTriggered = false
 			c.lastPosition = 0
@@ -698,17 +705,12 @@ func (c *CastClient) handleReceiverMessage(msg CastMessage) {
 }
 
 type mediaStatusItem struct {
-	MediaSessionID int     `json:"mediaSessionId"`
-	PlayerState    string  `json:"playerState"`
-	CurrentTime    float64 `json:"currentTime"`
+	MediaSessionID int            `json:"mediaSessionId"`
+	PlayerState    string         `json:"playerState"`
+	CurrentTime    float64        `json:"currentTime"`
 	Media          struct {
-		Duration float64 `json:"duration"`
-		Metadata struct {
-			Title       string `json:"title"`
-			SeriesTitle string `json:"seriesTitle"`
-			Season      any    `json:"season"`
-			Episode     any    `json:"episode"`
-		} `json:"metadata"`
+		Duration float64        `json:"duration"`
+		Metadata map[string]any `json:"metadata"`
 	} `json:"media"`
 }
 
@@ -735,6 +737,98 @@ func parseStringOrInt(v any) string {
 	}
 }
 
+var (
+	rxParenEpisode = regexp.MustCompile(`(?i)^(.+?)\s*\((?:Season\s*(\d+)[,\s]*)?Episode\s*(\d+)\)$`)
+	rxSeriesSXXEXX = regexp.MustCompile(`(?i)^(.+?)\s*(?:[-:]|\s)\s*S(\d+)\s*E(\d+)(?:\s*[:\-]\s*(.+))?$`)
+	rxSeriesEpNum  = regexp.MustCompile(`(?i)^(.+?)\s*:\s*(?:Season\s*(\d+)[,\s]*)?Episode\s*(\d+)(?:\s*(?:-|:)\s*(.+))?$`)
+	rxEpNumLead    = regexp.MustCompile(`(?i)^(?:Season\s*(\d+)[,\s]*)?Episode\s*(\d+)\s*[:\-]\s*(.+)$`)
+	rxSubEpOnly    = regexp.MustCompile(`(?i)^(?:Season\s*(\d+)[,\s]*)?Episode\s*(\d+)$`)
+)
+
+func extractMediaMetadata(meta map[string]any) (title, series, season, episode string) {
+	if meta == nil {
+		return "", "", "", ""
+	}
+
+	getAny := func(keys ...string) string {
+		for _, k := range keys {
+			if v, ok := meta[k]; ok && v != nil {
+				s := parseStringOrInt(v)
+				if s != "" {
+					return s
+				}
+			}
+		}
+		return ""
+	}
+
+	title = getAny("title", "name", "episodeTitle", "episode_title", "episodeName")
+	series = getAny("seriesTitle", "series_title", "seriesName", "series_name", "series", "showTitle", "show_title", "tvShowTitle", "tv_show_title")
+	season = getAny("season", "seasonNumber", "season_number", "season_index")
+	episode = getAny("episode", "episodeNumber", "episode_number", "episode_index")
+	subtitle := getAny("subtitle")
+
+	if series == "" && subtitle != "" && !strings.EqualFold(subtitle, title) {
+		if subMatches := rxSubEpOnly.FindStringSubmatch(subtitle); len(subMatches) > 0 {
+			if season == "" && subMatches[1] != "" {
+				season = subMatches[1]
+			}
+			if episode == "" && subMatches[2] != "" {
+				episode = subMatches[2]
+			}
+		} else {
+			series = subtitle
+		}
+	}
+
+	// Refine title and metadata heuristics
+	if m := rxParenEpisode.FindStringSubmatch(title); len(m) > 0 {
+		title = strings.TrimSpace(m[1])
+		if season == "" && m[2] != "" {
+			season = m[2]
+		}
+		if episode == "" && m[3] != "" {
+			episode = m[3]
+		}
+	} else if m := rxSeriesSXXEXX.FindStringSubmatch(title); len(m) > 0 {
+		if series == "" {
+			series = strings.TrimSpace(m[1])
+		}
+		if season == "" && m[2] != "" {
+			season = m[2]
+		}
+		if episode == "" && m[3] != "" {
+			episode = m[3]
+		}
+		if m[4] != "" {
+			title = strings.TrimSpace(m[4])
+		}
+	} else if m := rxSeriesEpNum.FindStringSubmatch(title); len(m) > 0 {
+		if series == "" {
+			series = strings.TrimSpace(m[1])
+		}
+		if season == "" && m[2] != "" {
+			season = m[2]
+		}
+		if episode == "" && m[3] != "" {
+			episode = m[3]
+		}
+		if m[4] != "" {
+			title = strings.TrimSpace(m[4])
+		}
+	} else if m := rxEpNumLead.FindStringSubmatch(title); len(m) > 0 {
+		if season == "" && m[1] != "" {
+			season = m[1]
+		}
+		if episode == "" && m[2] != "" {
+			episode = m[2]
+		}
+		title = strings.TrimSpace(m[3])
+	}
+
+	return title, series, season, episode
+}
+
 func (c *CastClient) handleMediaMessage(msg CastMessage) {
 	var payload mediaStatusPayload
 	if err := json.Unmarshal([]byte(msg.PayloadUTF8), &payload); err != nil {
@@ -756,10 +850,7 @@ func (c *CastClient) handleMediaMessage(msg CastMessage) {
 
 	c.mediaSessionID = item.MediaSessionID
 
-	title := strings.TrimSpace(item.Media.Metadata.Title)
-	series := strings.TrimSpace(item.Media.Metadata.SeriesTitle)
-	season := parseStringOrInt(item.Media.Metadata.Season)
-	episode := parseStringOrInt(item.Media.Metadata.Episode)
+	title, series, season, episode := extractMediaMetadata(item.Media.Metadata)
 	duration := item.Media.Duration
 	currentTime := item.CurrentTime
 
@@ -796,7 +887,7 @@ func (c *CastClient) handleMediaMessage(msg CastMessage) {
 		shouldDispatch := false
 		if normalizedState != prevPlayerState {
 			shouldDispatch = true
-		} else if c.lastTitle != prevTitle {
+		} else if c.lastTitle != prevTitle || c.lastSeries != c.lastReportedSeries || c.lastSeason != c.lastReportedSeason || c.lastEpisode != c.lastReportedEpisode {
 			shouldDispatch = true
 		} else if item.MediaSessionID != 0 && item.MediaSessionID != c.lastReportedMediaSessionID {
 			shouldDispatch = true
@@ -816,6 +907,9 @@ func (c *CastClient) handleMediaMessage(msg CastMessage) {
 		if shouldDispatch {
 			c.lastReportedPlayerState = normalizedState
 			c.lastReportedTitle = c.lastTitle
+			c.lastReportedSeries = c.lastSeries
+			c.lastReportedSeason = c.lastSeason
+			c.lastReportedEpisode = c.lastEpisode
 			c.lastReportedMediaSessionID = c.mediaSessionID
 			c.lastPosition = currentTime
 			c.lastPositionTime = time.Now()
@@ -1007,6 +1101,17 @@ func (c *CastClient) postToCore(targetURL string, payload []byte, operation stri
 	resp, err := c.client.Do(req)
 	if err != nil {
 		c.logger.Warn("[CastWatcher] Core webhook dispatch failed", "operation", operation, "error", err)
+		c.mu.Lock()
+		if operation == "state" {
+			c.lastReportedPlayerState = ""
+			c.lastReportedTitle = ""
+			c.lastReportedSeries = ""
+			c.lastReportedSeason = ""
+			c.lastReportedEpisode = ""
+		} else if operation == "trigger" {
+			c.lastTriggered = false
+		}
+		c.mu.Unlock()
 		return
 	}
 	defer resp.Body.Close()
@@ -1017,6 +1122,17 @@ func (c *CastClient) postToCore(targetURL string, payload []byte, operation stri
 			body = []byte("<read error>")
 		}
 		c.logger.Warn("[CastWatcher] Core rejected webhook", "operation", operation, "status", resp.StatusCode, "response", string(body))
+		c.mu.Lock()
+		if operation == "state" {
+			c.lastReportedPlayerState = ""
+			c.lastReportedTitle = ""
+			c.lastReportedSeries = ""
+			c.lastReportedSeason = ""
+			c.lastReportedEpisode = ""
+		} else if operation == "trigger" {
+			c.lastTriggered = false
+		}
+		c.mu.Unlock()
 	} else {
 		c.logger.Debug("[CastWatcher] Core webhook accepted", "operation", operation, "status", resp.StatusCode)
 	}

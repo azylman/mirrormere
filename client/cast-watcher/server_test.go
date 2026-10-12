@@ -528,3 +528,58 @@ func TestActionServer_HandleAction_Seek(t *testing.T) {
 		t.Errorf("expected 400 for ErrInvalidAction seek, got %d", rec.Code)
 	}
 }
+
+func TestExtractTargetTime(t *testing.T) {
+	// nil
+	if _, err := extractTargetTime(nil); err == nil {
+		t.Errorf("expected error for nil")
+	}
+
+	// float32
+	if v, err := extractTargetTime(float32(12.5)); err != nil || v != 12.5 {
+		t.Errorf("got %v, %v, want 12.5, nil", v, err)
+	}
+
+	// int64
+	if v, err := extractTargetTime(int64(42)); err != nil || v != 42.0 {
+		t.Errorf("got %v, %v, want 42.0, nil", v, err)
+	}
+
+	// int32
+	if v, err := extractTargetTime(int32(10)); err != nil || v != 10.0 {
+		t.Errorf("got %v, %v, want 10.0, nil", v, err)
+	}
+
+	// json.Number
+	if v, err := extractTargetTime(json.Number("99.5")); err != nil || v != 99.5 {
+		t.Errorf("got %v, %v, want 99.5, nil", v, err)
+	}
+
+	// string
+	if v, err := extractTargetTime(" 123.4 "); err != nil || v != 123.4 {
+		t.Errorf("got %v, %v, want 123.4, nil", v, err)
+	}
+
+	// pointer to interface
+	var inner any = float64(50.0)
+	var ptr *any = &inner
+	if v, err := extractTargetTime(ptr); err != nil || v != 50.0 {
+		t.Errorf("got %v, %v, want 50.0, nil", v, err)
+	}
+
+	// nil pointer
+	var nilPtr *any = nil
+	if _, err := extractTargetTime(nilPtr); err == nil {
+		t.Errorf("expected error for nil pointer")
+	}
+	var nilInner *any = new(any)
+	if _, err := extractTargetTime(nilInner); err == nil {
+		t.Errorf("expected error for pointer to nil")
+	}
+
+	// unsupported type
+	if _, err := extractTargetTime(true); err == nil {
+		t.Errorf("expected error for bool")
+	}
+}
+
