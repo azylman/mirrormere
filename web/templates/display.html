@@ -95,7 +95,15 @@
           </button>
         </div>
       </div>
+      <button id="video-hud-play-btn" class="video-hud-btn video-hud-play video-hud-play-center" aria-label="Play / Pause" title="Play / Pause">
+        <span class="video-hud-icon" id="video-hud-play-icon" data-icon="pause">⏸</span>
+      </button>
       <div class="video-hud-controls video-hud-bottom-bar" id="video-hud-bottom-bar">
+        <button id="video-hud-cc-btn" class="video-hud-btn video-hud-cc video-hud-media-btn" aria-label="Closed Captions" title="Closed Captions">CC</button>
+        <button id="video-hud-prev-btn" class="video-hud-btn video-hud-prev video-hud-media-btn" aria-label="Previous Episode" title="Previous Episode">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><rect x="5" y="4" width="2.5" height="16" rx="1"></rect><polygon points="19 4 8.5 12 19 20"></polygon></svg>
+        </button>
+        <button id="video-hud-rewind-btn" class="video-hud-btn video-hud-skip video-hud-media-btn" aria-label="Rewind 10 Seconds" title="Rewind 10 Seconds">↺ 10s</button>
         <div class="video-hud-progress-container" id="video-hud-progress-container" style="display: none;">
           <span class="video-hud-time video-hud-time-current" id="video-hud-time-current">0:00</span>
           <div class="video-hud-progress-track" id="video-hud-progress-track">
@@ -105,20 +113,10 @@
           </div>
           <span class="video-hud-time video-hud-time-total" id="video-hud-time-total">0:00</span>
         </div>
-        <div class="video-hud-button-row" id="video-hud-button-row">
-          <button id="video-hud-cc-btn" class="video-hud-btn video-hud-cc video-hud-media-btn" aria-label="Closed Captions" title="Closed Captions">CC</button>
-          <button id="video-hud-prev-btn" class="video-hud-btn video-hud-prev video-hud-media-btn" aria-label="Previous Episode" title="Previous Episode">
-            <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><rect x="5" y="4" width="2.5" height="16" rx="1"></rect><polygon points="19 4 8.5 12 19 20"></polygon></svg>
-          </button>
-          <button id="video-hud-rewind-btn" class="video-hud-btn video-hud-skip video-hud-media-btn" aria-label="Rewind 10 Seconds" title="Rewind 10 Seconds">↺ 10s</button>
-          <button id="video-hud-play-btn" class="video-hud-btn video-hud-play video-hud-media-btn video-hud-play-primary" aria-label="Play / Pause" title="Play / Pause">
-            <span class="video-hud-icon" id="video-hud-play-icon" data-icon="pause">⏸</span>
-          </button>
-          <button id="video-hud-forward-btn" class="video-hud-btn video-hud-skip video-hud-media-btn" aria-label="Fast Forward 10 Seconds" title="Fast Forward 10 Seconds">↻ 10s</button>
-          <button id="video-hud-next-btn" class="video-hud-btn video-hud-next video-hud-media-btn" aria-label="Next Episode" title="Next Episode">
-            <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><polygon points="5 4 15.5 12 5 20"></polygon><rect x="16.5" y="4" width="2.5" height="16" rx="1"></rect></svg>
-          </button>
-        </div>
+        <button id="video-hud-forward-btn" class="video-hud-btn video-hud-skip video-hud-media-btn" aria-label="Fast Forward 10 Seconds" title="Fast Forward 10 Seconds">↻ 10s</button>
+        <button id="video-hud-next-btn" class="video-hud-btn video-hud-next video-hud-media-btn" aria-label="Next Episode" title="Next Episode">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><polygon points="5 4 15.5 12 5 20"></polygon><rect x="16.5" y="4" width="2.5" height="16" rx="1"></rect></svg>
+        </button>
       </div>
     </div>
   </div>

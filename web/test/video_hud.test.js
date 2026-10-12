@@ -189,7 +189,6 @@ function createHUDDOM() {
   progressContainer.appendChild(timeCurrent);
   progressContainer.appendChild(progressTrack);
   progressContainer.appendChild(timeTotal);
-  bottomBar.appendChild(progressContainer);
 
   const ccBtn = createMockElement('button', 'video-hud-cc-btn', 'video-hud-btn video-hud-media-btn');
   const prevBtn = createMockElement('button', 'video-hud-prev-btn', 'video-hud-btn video-hud-media-btn');
@@ -200,11 +199,12 @@ function createHUDDOM() {
   bottomBar.appendChild(ccBtn);
   bottomBar.appendChild(prevBtn);
   bottomBar.appendChild(rewindBtn);
-  bottomBar.appendChild(playBtn);
+  bottomBar.appendChild(progressContainer);
   bottomBar.appendChild(forwardBtn);
   bottomBar.appendChild(nextBtn);
 
   overlay.appendChild(header);
+  overlay.appendChild(playBtn);
   overlay.appendChild(controls);
   overlay.appendChild(bottomBar);
 
@@ -2162,3 +2162,117 @@ test('VideoHUDController: rapid successive seek actions bypass isActionPending l
   hud.isScrubbing = false;
   hud.destroy();
 });
+
+test('VideoHUD: display.html defines center play button and single-row bottom bar ordering', () => {
+  const htmlPath = path.resolve(__dirname, '../templates/display.html');
+  const html = fs.readFileSync(htmlPath, 'utf8');
+
+  // Verify center play button outside bottom bar
+  assert.ok(
+    html.includes('id="video-hud-play-btn"') && html.includes('video-hud-play-center'),
+    'display.html must contain #video-hud-play-btn with .video-hud-play-center'
+  );
+
+  // Extract content between id="video-hud-bottom-bar" and id="voice-toast-dock"
+  const startIdx = html.indexOf('id="video-hud-bottom-bar"');
+  assert.ok(startIdx !== -1, 'display.html must contain id="video-hud-bottom-bar"');
+  const endIdx = html.indexOf('id="voice-toast-dock"');
+  const bottomBarInner = html.substring(startIdx, endIdx);
+
+  // Play button must NOT be in bottom bar
+  assert.ok(!bottomBarInner.includes('id="video-hud-play-btn"'), 'play button must not be inside bottom bar');
+
+  const ccIdx = bottomBarInner.indexOf('id="video-hud-cc-btn"');
+  const prevIdx = bottomBarInner.indexOf('id="video-hud-prev-btn"');
+  const rewindIdx = bottomBarInner.indexOf('id="video-hud-rewind-btn"');
+  const progressIdx = bottomBarInner.indexOf('id="video-hud-progress-container"');
+  const fwdIdx = bottomBarInner.indexOf('id="video-hud-forward-btn"');
+  const nextIdx = bottomBarInner.indexOf('id="video-hud-next-btn"');
+
+  assert.ok(ccIdx !== -1 && prevIdx !== -1 && rewindIdx !== -1 && progressIdx !== -1 && fwdIdx !== -1 && nextIdx !== -1,
+    'all bottom bar controls must exist in bottom bar');
+  assert.ok(ccIdx < prevIdx, 'cc must precede prev');
+  assert.ok(prevIdx < rewindIdx, 'prev must precede rewind');
+  assert.ok(rewindIdx < progressIdx, 'rewind must precede progress');
+  assert.ok(progressIdx < fwdIdx, 'progress must precede forward');
+  assert.ok(fwdIdx < nextIdx, 'forward must precede next');
+});
+
+test('VideoHUD: hud.css defines single-row bottom bar flex and center play button styles', () => {
+  const cssPath = path.resolve(__dirname, '../static/css/hud.css');
+  const css = fs.readFileSync(cssPath, 'utf8');
+
+  assert.ok(
+    /\.video-hud-play-center\s*\{[^}]*position:\s*absolute;[^}]*top:\s*50%;[^}]*left:\s*50%;[^}]*transform:\s*translate\(-50%,\s*-50%\)/.test(css),
+    'hud.css must define centered .video-hud-play-center'
+  );
+  assert.ok(
+    /\.video-hud-play-center\s*\{[^}]*width:\s*104px;[^}]*height:\s*104px;/.test(css),
+    'hud.css must define 104px size for .video-hud-play-center'
+  );
+  assert.ok(
+    /\.video-hud-bottom-bar\s*\{[^}]*flex-direction:\s*row;/.test(css) ||
+    /\.video-hud-controls,\s*\.video-hud-bottom-bar\s*\{[^}]*flex-direction:\s*row;/.test(css),
+    'hud.css must define flex-direction: row for .video-hud-bottom-bar'
+  );
+  assert.ok(
+    /\[data-theme=["']?night["']?\]\s+\.video-hud-play-center/.test(css),
+    'hud.css must define night mode styles for .video-hud-play-center'
+  );
+});
+
+test('VideoHUDController: center play button toggles playback and isolates pointer events from stage', async () => {
+  const dom = createHUDDOM();
+  const hud = new VideoHUDController({
+    overlayElement: dom.overlay,
+    titleElement: dom.title,
+    dismissBtn: dom.dismissBtn,
+    playBtn: dom.playBtn,
+    playIcon: dom.playIcon,
+    bottomBarElement: dom.bottomBar,
+    progressContainer: dom.progressContainer,
+    progressTrackElement: dom.progressTrack,
+    progressFillElement: dom.progressFill,
+    timeCurrentElement: dom.timeCurrent,
+    timeTotalElement: dom.timeTotal,
+    stageElement: dom.stage,
+    autoFadeTimeout: 40,
+  });
+
+  hud.handleVideoState({
+    mode: 'video',
+    primary: {
+      id: 'chromecast',
+      controllable: true,
+      player_state: 'playing',
+    },
+  });
+
+  let toggleTriggered = false;
+  hud.handlePlayPauseToggle = () => {
+    toggleTriggered = true;
+  };
+
+  let stoppedEvents = [];
+  const fakeEvent = (type) => ({
+    type,
+    target: dom.playBtn,
+    stopPropagation: () => {
+      stoppedEvents.push(type);
+    },
+  });
+
+  // Center button pointer events stop propagation
+  dom.playBtn.dispatchEvent('pointerdown', fakeEvent('pointerdown'));
+  dom.playBtn.dispatchEvent('pointerup', fakeEvent('pointerup'));
+  dom.playBtn.dispatchEvent('touchstart', fakeEvent('touchstart'));
+  dom.playBtn.dispatchEvent('touchend', fakeEvent('touchend'));
+  assert.deepEqual(stoppedEvents, ['pointerdown', 'pointerup', 'touchstart', 'touchend']);
+
+  // Click on play button triggers toggle
+  dom.playBtn.dispatchEvent('click', fakeEvent('click'));
+  assert.equal(toggleTriggered, true, 'playBtn click must trigger toggle');
+
+  hud.destroy();
+});
+

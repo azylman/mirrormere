@@ -423,6 +423,22 @@ body[data-theme="night"],
   box-shadow: 0 12px 32px rgba(20, 16, 32, 0.6);
 }
 
+[data-theme="night"] .video-hud-play-center {
+  background: rgba(71, 65, 94, 0.55);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-color: rgba(197, 163, 255, 0.35);
+  color: var(--mm-text-title, #f4effc);
+  box-shadow: 0 12px 36px rgba(20, 16, 32, 0.65), 0 0 24px rgba(197, 163, 255, 0.25);
+}
+
+[data-theme="night"] .video-hud-play-center:hover {
+  background: rgba(90, 84, 117, 0.75);
+  border-color: rgba(197, 163, 255, 0.65);
+  color: var(--mm-lavender, #c5a3ff);
+  box-shadow: 0 12px 36px rgba(20, 16, 32, 0.75), 0 0 32px rgba(197, 163, 255, 0.45);
+}
+
 [data-theme="night"] .video-hud-title {
   background: rgba(71, 65, 94, 0.75);
   backdrop-filter: blur(12px);
