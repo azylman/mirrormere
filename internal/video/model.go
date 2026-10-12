@@ -47,6 +47,8 @@ const (
 	ActionNext = "next"
 	// ActionPrevious skips to previous episode/track on controllable streams.
 	ActionPrevious = "previous"
+	// ActionSeek sets playback position on controllable streams.
+	ActionSeek = "seek"
 
 	// DefaultTemporaryTimeoutSeconds is the fallback auto-dismiss timeout for temporary streams.
 	DefaultTemporaryTimeoutSeconds = 45
@@ -62,22 +64,29 @@ var (
 	// ErrInvalidStream indicates missing or malformed stream parameters.
 	ErrInvalidStream = errors.New("invalid stream: id and stream_url are required")
 	// ErrInvalidAction indicates an unsupported transport action.
-	ErrInvalidAction = errors.New("invalid action: must be toggle_playback, play, pause, rewind, fast_forward, back, home, captions, next, or previous")
+	ErrInvalidAction = errors.New("invalid action: must be toggle_playback, play, pause, rewind, fast_forward, back, home, captions, next, previous, or seek")
 	// ErrInvalidPlayerState indicates an unsupported player transport state.
 	ErrInvalidPlayerState = errors.New("invalid player_state: must be playing, paused, or buffering")
 )
 
 // VideoStream defines an active video stream within the priority stack.
 type VideoStream struct {
-	ID             string `json:"id"`
-	StreamURL      string `json:"stream_url"`
-	Type           string `json:"type"`
-	Priority       string `json:"priority,omitempty"`
-	TimeoutSeconds int    `json:"timeout_seconds,omitempty"`
-	Controllable   bool   `json:"controllable,omitempty"`
-	ControlURL     string `json:"control_url,omitempty"`
-	PlayerState    string `json:"player_state,omitempty"`
-	Muted          bool   `json:"muted,omitempty"`
+	ID                string  `json:"id"`
+	StreamURL         string  `json:"stream_url"`
+	Type              string  `json:"type"`
+	Priority          string  `json:"priority,omitempty"`
+	TimeoutSeconds    int     `json:"timeout_seconds,omitempty"`
+	Controllable      bool    `json:"controllable,omitempty"`
+	ControlURL        string  `json:"control_url,omitempty"`
+	PlayerState       string  `json:"player_state,omitempty"`
+	Muted             bool    `json:"muted,omitempty"`
+	Title             string  `json:"title,omitempty"`
+	Series            string  `json:"series,omitempty"`
+	Season            string  `json:"season,omitempty"`
+	Episode           string  `json:"episode,omitempty"`
+	Position          float64 `json:"position,omitempty"`
+	Duration          float64 `json:"duration,omitempty"`
+	PositionUpdatedAt int64   `json:"position_updated_at,omitempty"`
 }
 
 // VideoState defines the authoritative video presentation snapshot matching .E and .

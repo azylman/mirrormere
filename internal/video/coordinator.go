@@ -153,6 +153,10 @@ func (c *Coordinator) Trigger(stream VideoStream) (VideoState, error) {
 	if c.primary != nil && c.primary.ID == stream.ID {
 		c.stopTimerLocked(stream.ID)
 		stream.Muted = false
+		preserveMetadata(&stream, c.primary)
+		if stream.PositionUpdatedAt == 0 && stream.Position > 0 {
+			stream.PositionUpdatedAt = time.Now().UnixMilli()
+		}
 		c.primary = &stream
 		if stream.Priority == PriorityTemporary {
 			c.startTimerLocked(stream.ID, time.Duration(stream.TimeoutSeconds)*time.Second)
@@ -166,6 +170,10 @@ func (c *Coordinator) Trigger(stream VideoStream) (VideoState, error) {
 	if c.pip != nil && c.pip.ID == stream.ID {
 		c.stopTimerLocked(stream.ID)
 		stream.Muted = true
+		preserveMetadata(&stream, c.pip)
+		if stream.PositionUpdatedAt == 0 && stream.Position > 0 {
+			stream.PositionUpdatedAt = time.Now().UnixMilli()
+		}
 		c.pip = &stream
 		if stream.Priority == PriorityTemporary {
 			c.startTimerLocked(stream.ID, time.Duration(stream.TimeoutSeconds)*time.Second)
@@ -174,6 +182,10 @@ func (c *Coordinator) Trigger(stream VideoStream) (VideoState, error) {
 		c.mu.Unlock()
 		c.publishState(snap)
 		return snap, nil
+	}
+
+	if stream.PositionUpdatedAt == 0 && stream.Position > 0 {
+		stream.PositionUpdatedAt = time.Now().UnixMilli()
 	}
 
 	// Case 2: Persistent Stream Trigger
@@ -291,15 +303,25 @@ func (c *Coordinator) DismissAll() (VideoState, error) {
 	return c.Dismiss("all")
 }
 
-// SetPlayerState updates the transport state on an active stream.4.
+// SetPlayerState updates the transport state on an active stream.
 func (c *Coordinator) SetPlayerState(id string, playerState string) (VideoState, error) {
+	if playerState != PlayerStatePlaying && playerState != PlayerStatePaused && playerState != PlayerStateBuffering {
+		return VideoState{}, ErrInvalidPlayerState
+	}
+	return c.UpdatePlayerState(id, VideoStream{PlayerState: playerState})
+}
+
+// UpdatePlayerState updates transport state and optional stream metadata without wiping existing data.
+func (c *Coordinator) UpdatePlayerState(id string, update VideoStream) (VideoState, error) {
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return VideoState{}, ErrInvalidStream
 	}
 
-	if playerState != PlayerStatePlaying && playerState != PlayerStatePaused && playerState != PlayerStateBuffering {
-		return VideoState{}, ErrInvalidPlayerState
+	if update.PlayerState != "" {
+		if update.PlayerState != PlayerStatePlaying && update.PlayerState != PlayerStatePaused && update.PlayerState != PlayerStateBuffering {
+			return VideoState{}, ErrInvalidPlayerState
+		}
 	}
 
 	c.mu.Lock()
@@ -308,18 +330,46 @@ func (c *Coordinator) SetPlayerState(id string, playerState string) (VideoState,
 		return VideoState{}, ErrStreamNotFound
 	}
 
-	found := false
+	var target *VideoStream
 	if c.primary != nil && c.primary.ID == id {
-		c.primary.PlayerState = playerState
-		found = true
+		target = c.primary
 	} else if c.pip != nil && c.pip.ID == id {
-		c.pip.PlayerState = playerState
-		found = true
+		target = c.pip
 	}
 
-	if !found {
+	if target == nil {
 		c.mu.Unlock()
 		return VideoState{}, ErrStreamNotFound
+	}
+
+	if update.PlayerState != "" {
+		target.PlayerState = update.PlayerState
+	}
+	if update.Title != "" {
+		target.Title = update.Title
+	}
+	if update.Series != "" {
+		target.Series = update.Series
+	}
+	if update.Season != "" {
+		target.Season = update.Season
+	}
+	if update.Episode != "" {
+		target.Episode = update.Episode
+	}
+	if update.Duration > 0 {
+		target.Duration = update.Duration
+	}
+	if update.Position > 0 {
+		target.Position = update.Position
+		if update.PositionUpdatedAt > 0 {
+			target.PositionUpdatedAt = update.PositionUpdatedAt
+		} else {
+			target.PositionUpdatedAt = time.Now().UnixMilli()
+		}
+	} else if update.Position == 0 && update.PositionUpdatedAt > 0 {
+		target.Position = 0
+		target.PositionUpdatedAt = update.PositionUpdatedAt
 	}
 
 	snap := c.snapshotLocked()
@@ -327,6 +377,31 @@ func (c *Coordinator) SetPlayerState(id string, playerState string) (VideoState,
 
 	c.publishState(snap)
 	return snap, nil
+}
+
+func preserveMetadata(target *VideoStream, existing *VideoStream) {
+	if existing == nil {
+		return
+	}
+	if target.Title == "" {
+		target.Title = existing.Title
+	}
+	if target.Series == "" {
+		target.Series = existing.Series
+	}
+	if target.Season == "" {
+		target.Season = existing.Season
+	}
+	if target.Episode == "" {
+		target.Episode = existing.Episode
+	}
+	if target.Duration == 0 {
+		target.Duration = existing.Duration
+	}
+	if target.Position == 0 && existing.Position > 0 {
+		target.Position = existing.Position
+		target.PositionUpdatedAt = existing.PositionUpdatedAt
+	}
 }
 
 // ForwardAction proxies playback control commands to a controllable stream's sidecar webhook.
@@ -338,7 +413,7 @@ func (c *Coordinator) ForwardAction(ctx context.Context, id, action string, valu
 
 	switch action {
 	case ActionTogglePlayback, ActionPlay, ActionPause, ActionRewind, ActionFastForward,
-		ActionBack, ActionHome, ActionCaptions, ActionNext, ActionPrevious:
+		ActionBack, ActionHome, ActionCaptions, ActionNext, ActionPrevious, ActionSeek:
 	default:
 		return ErrInvalidAction
 	}

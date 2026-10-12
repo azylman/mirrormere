@@ -486,6 +486,19 @@ func TestCoordinator_ForwardAction(t *testing.T) {
 		mu.Unlock()
 	}
 
+	// Success (seek with float64 value)
+	if err := coord.ForwardAction(context.Background(), "cast", ActionSeek, 128.5); err != nil {
+		t.Fatalf("expected success for ActionSeek, got %v", err)
+	}
+	mu.Lock()
+	if receivedAction.ID != "cast" || receivedAction.Action != ActionSeek {
+		t.Fatalf("unexpected sidecar action received for seek: %+v", receivedAction)
+	}
+	if v, ok := receivedAction.Value.(float64); !ok || v != 128.5 {
+		t.Fatalf("expected seek value 128.5, got %v (%T)", receivedAction.Value, receivedAction.Value)
+	}
+	mu.Unlock()
+
 	// Invalid action
 	if err := coord.ForwardAction(context.Background(), "cast", "unknown_action", nil); !errors.Is(err, ErrInvalidAction) {
 		t.Fatalf("expected ErrInvalidAction, got %v", err)
@@ -833,6 +846,167 @@ func TestCoordinator_Trigger_DefaultPriorityPersistent(t *testing.T) {
 	}
 	if state.Primary.TimeoutSeconds != 0 {
 		t.Errorf("expected TimeoutSeconds for persistent stream to be 0, got %d", state.Primary.TimeoutSeconds)
+	}
+}
+
+func TestCoordinator_MetadataAndPreserve(t *testing.T) {
+	t.Parallel()
+
+	coord := NewCoordinator(nil)
+	defer coord.Close()
+
+	// 1. Trigger stream with metadata and Position > 0, PositionUpdatedAt == 0
+	s1, err := coord.Trigger(VideoStream{
+		ID:        "chromecast",
+		StreamURL: "http://127.0.0.1:1984/cast",
+		Title:     "Episode 1",
+		Series:    "Show A",
+		Season:    "1",
+		Episode:   "1",
+		Position:  10.5,
+		Duration:  3600,
+	})
+	if err != nil {
+		t.Fatalf("unexpected trigger error: %v", err)
+	}
+	if s1.Primary.Title != "Episode 1" || s1.Primary.Series != "Show A" || s1.Primary.Season != "1" || s1.Primary.Episode != "1" {
+		t.Fatalf("metadata not populated: %+v", s1.Primary)
+	}
+	if s1.Primary.Position != 10.5 || s1.Primary.Duration != 3600 {
+		t.Fatalf("position/duration not populated: %+v", s1.Primary)
+	}
+	if s1.Primary.PositionUpdatedAt == 0 {
+		t.Fatalf("expected PositionUpdatedAt to be auto-populated")
+	}
+
+	// 2. UpdatePlayerState patches stream metadata without wiping existing
+	s2, err := coord.UpdatePlayerState("chromecast", VideoStream{
+		PlayerState: PlayerStatePaused,
+		Position:    25.0,
+	})
+	if err != nil {
+		t.Fatalf("unexpected UpdatePlayerState error: %v", err)
+	}
+	if s2.Primary.PlayerState != PlayerStatePaused {
+		t.Fatalf("expected paused player state, got %s", s2.Primary.PlayerState)
+	}
+	if s2.Primary.Title != "Episode 1" || s2.Primary.Series != "Show A" {
+		t.Fatalf("expected existing title and series preserved, got title=%s series=%s", s2.Primary.Title, s2.Primary.Series)
+	}
+	if s2.Primary.Position != 25.0 {
+		t.Fatalf("expected updated position 25.0, got %f", s2.Primary.Position)
+	}
+
+	// 3. Re-trigger stream with same ID preserves existing metadata when omitted
+	s3, err := coord.Trigger(VideoStream{
+		ID:        "chromecast",
+		StreamURL: "http://127.0.0.1:1984/cast-hd",
+	})
+	if err != nil {
+		t.Fatalf("unexpected re-trigger error: %v", err)
+	}
+	if s3.Primary.StreamURL != "http://127.0.0.1:1984/cast-hd" {
+		t.Fatalf("stream URL not updated")
+	}
+	if s3.Primary.Title != "Episode 1" || s3.Primary.Series != "Show A" {
+		t.Fatalf("metadata lost on re-trigger: %+v", s3.Primary)
+	}
+	if s3.Primary.Position != 25.0 {
+		t.Fatalf("position lost on re-trigger: %+v", s3.Primary)
+	}
+
+	// 4. UpdatePlayerState validation
+	if _, err := coord.UpdatePlayerState("", VideoStream{PlayerState: PlayerStatePlaying}); !errors.Is(err, ErrInvalidStream) {
+		t.Fatalf("expected ErrInvalidStream for empty id, got %v", err)
+	}
+	if _, err := coord.UpdatePlayerState("missing", VideoStream{PlayerState: PlayerStatePlaying}); !errors.Is(err, ErrStreamNotFound) {
+		t.Fatalf("expected ErrStreamNotFound for missing stream, got %v", err)
+	}
+	if _, err := coord.UpdatePlayerState("chromecast", VideoStream{PlayerState: "invalid"}); !errors.Is(err, ErrInvalidPlayerState) {
+		t.Fatalf("expected ErrInvalidPlayerState for invalid state, got %v", err)
+	}
+}
+
+func TestCoordinator_UpdatePlayerStateAndPipMetadata(t *testing.T) {
+	t.Parallel()
+
+	coord := NewCoordinator(nil)
+	defer coord.Close()
+
+	// Trigger primary persistent
+	_, _ = coord.Trigger(VideoStream{
+		ID:        "primary-1",
+		StreamURL: "http://primary",
+		Priority:  PriorityPersistent,
+	})
+
+	// Trigger pip temporary with position > 0 and position_updated_at == 0
+	_, err := coord.Trigger(VideoStream{
+		ID:             "pip-1",
+		StreamURL:      "http://pip",
+		Priority:       PriorityTemporary,
+		TimeoutSeconds: 45,
+		Position:       50.0,
+	})
+	if err != nil {
+		t.Fatalf("failed to trigger pip: %v", err)
+	}
+
+	// Re-trigger pip-1 with position == 0 to test preserveMetadata in pip re-trigger
+	sPipRetrigger, err := coord.Trigger(VideoStream{
+		ID:             "pip-1",
+		StreamURL:      "http://pip-updated",
+		Priority:       PriorityTemporary,
+		TimeoutSeconds: 45,
+	})
+	if err != nil {
+		t.Fatalf("failed to re-trigger pip: %v", err)
+	}
+	if sPipRetrigger.Pip.Position != 50.0 {
+		t.Fatalf("expected preserved position on pip retrigger, got %f", sPipRetrigger.Pip.Position)
+	}
+
+	// UpdatePlayerState on PiP stream with full fields
+	sUpdate, err := coord.UpdatePlayerState("pip-1", VideoStream{
+		PlayerState:       PlayerStatePlaying,
+		Title:             "New Pip Title",
+		Series:            "New Pip Series",
+		Season:            "S02",
+		Episode:           "E04",
+		Duration:          1200.0,
+		Position:          60.0,
+		PositionUpdatedAt: 123456789,
+	})
+	if err != nil {
+		t.Fatalf("failed to update pip player state: %v", err)
+	}
+	if sUpdate.Pip.Title != "New Pip Title" || sUpdate.Pip.Series != "New Pip Series" || sUpdate.Pip.Season != "S02" || sUpdate.Pip.Episode != "E04" || sUpdate.Pip.Duration != 1200.0 || sUpdate.Pip.Position != 60.0 || sUpdate.Pip.PositionUpdatedAt != 123456789 {
+		t.Fatalf("unexpected pip stream fields: %+v", sUpdate.Pip)
+	}
+
+	// UpdatePlayerState with position == 0 and position_updated_at > 0 (e.g. rewind to start)
+	sZero, err := coord.UpdatePlayerState("pip-1", VideoStream{
+		Position:          0,
+		PositionUpdatedAt: 987654321,
+	})
+	if err != nil {
+		t.Fatalf("failed to update position to zero: %v", err)
+	}
+	if sZero.Pip.Position != 0 || sZero.Pip.PositionUpdatedAt != 987654321 {
+		t.Fatalf("unexpected zero position update: %+v", sZero.Pip)
+	}
+
+	// preserveMetadata edge cases: nil existing
+	target := &VideoStream{Title: "Keep"}
+	preserveMetadata(target, nil)
+	if target.Title != "Keep" {
+		t.Fatalf("preserveMetadata mutated target on nil existing")
+	}
+
+	// Closed coordinator returns ErrStreamNotFound
+	coord.Close()
+	if _, err := coord.UpdatePlayerState("pip-1", VideoStream{PlayerState: PlayerStatePlaying}); !errors.Is(err, ErrStreamNotFound) {
+		t.Fatalf("expected ErrStreamNotFound on closed coordinator, got %v", err)
 	}
 }
 

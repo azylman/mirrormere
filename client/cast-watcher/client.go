@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"math/rand"
 	"net"
 	"net/http"
@@ -81,6 +82,16 @@ type CastClient struct {
 	lastMessageTime        time.Time
 	closed                 bool
 	cancelFunc             context.CancelFunc
+
+	lastPosition               float64
+	lastDuration               float64
+	lastTitle                  string
+	lastSeries                 string
+	lastSeason                 string
+	lastEpisode                string
+	lastPositionTime           time.Time
+	lastReportedTitle          string
+	lastReportedMediaSessionID int
 
 	wakeMu       sync.Mutex
 	lastWakeTime time.Time
@@ -257,6 +268,59 @@ func (c *CastClient) SendMediaAction(ctx context.Context, action string) error {
 	}
 
 	return c.sendMessage(msg)
+}
+
+// Seek commands the active Chromecast media session to jump to targetTime in seconds.
+func (c *CastClient) Seek(ctx context.Context, targetTime float64) error {
+	if targetTime < 0 {
+		return fmt.Errorf("%w: target time must be >= 0", ErrInvalidAction)
+	}
+
+	c.mu.RLock()
+	if !c.connected || c.conn == nil {
+		c.mu.RUnlock()
+		return ErrNotConnected
+	}
+	if c.transportID == "" || c.mediaSessionID == 0 {
+		c.mu.RUnlock()
+		return ErrNoActiveMediaSession
+	}
+
+	transportID := c.transportID
+	mediaSessionID := c.mediaSessionID
+	c.mu.RUnlock()
+
+	reqID := atomic.AddUint64(&c.reqCounter, 1)
+	payload := map[string]any{
+		"type":           "SEEK",
+		"requestId":      reqID,
+		"mediaSessionId": mediaSessionID,
+		"currentTime":    targetTime,
+	}
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+
+	msg := CastMessage{
+		ProtocolVersion: ProtocolVersion0,
+		SourceID:        SourceSender,
+		DestinationID:   transportID,
+		Namespace:       NamespaceMedia,
+		PayloadType:     PayloadTypeString,
+		PayloadUTF8:     string(payloadBytes),
+	}
+
+	if err := c.sendMessage(msg); err != nil {
+		return err
+	}
+
+	c.mu.Lock()
+	c.lastPosition = targetTime
+	c.lastPositionTime = time.Now()
+	c.mu.Unlock()
+
+	return nil
 }
 
 // Wake sends an on-demand HDMI wake pulse by launching the default media player and stopping it.
@@ -612,7 +676,16 @@ func (c *CastClient) handleReceiverMessage(msg CastMessage) {
 			c.mediaSessionID = 0
 			c.playerState = ""
 			c.lastReportedPlayerState = ""
+			c.lastReportedTitle = ""
+			c.lastReportedMediaSessionID = 0
 			c.lastTriggered = false
+			c.lastPosition = 0
+			c.lastDuration = 0
+			c.lastTitle = ""
+			c.lastSeries = ""
+			c.lastSeason = ""
+			c.lastEpisode = ""
+			c.lastPositionTime = time.Time{}
 			c.mu.Unlock()
 
 			c.queueDispatch(func() {
@@ -624,12 +697,42 @@ func (c *CastClient) handleReceiverMessage(msg CastMessage) {
 	c.mu.Unlock()
 }
 
+type mediaStatusItem struct {
+	MediaSessionID int     `json:"mediaSessionId"`
+	PlayerState    string  `json:"playerState"`
+	CurrentTime    float64 `json:"currentTime"`
+	Media          struct {
+		Duration float64 `json:"duration"`
+		Metadata struct {
+			Title       string `json:"title"`
+			SeriesTitle string `json:"seriesTitle"`
+			Season      any    `json:"season"`
+			Episode     any    `json:"episode"`
+		} `json:"metadata"`
+	} `json:"media"`
+}
+
 type mediaStatusPayload struct {
-	Type   string `json:"type"`
-	Status []struct {
-		MediaSessionID int    `json:"mediaSessionId"`
-		PlayerState    string `json:"playerState"`
-	} `json:"status"`
+	Type   string            `json:"type"`
+	Status []mediaStatusItem `json:"status"`
+}
+
+func parseStringOrInt(v any) string {
+	if v == nil {
+		return ""
+	}
+	switch val := v.(type) {
+	case string:
+		return strings.TrimSpace(val)
+	case float64:
+		return fmt.Sprintf("%d", int(val))
+	case int:
+		return fmt.Sprintf("%d", val)
+	case json.Number:
+		return val.String()
+	default:
+		return fmt.Sprintf("%v", val)
+	}
 }
 
 func (c *CastClient) handleMediaMessage(msg CastMessage) {
@@ -647,13 +750,75 @@ func (c *CastClient) handleMediaMessage(msg CastMessage) {
 	normalizedState := strings.ToLower(rawState)
 
 	c.mu.Lock()
+	prevMediaSessionID := c.mediaSessionID
+	prevPlayerState := c.lastReportedPlayerState
+	prevTitle := c.lastReportedTitle
+
 	c.mediaSessionID = item.MediaSessionID
+
+	title := strings.TrimSpace(item.Media.Metadata.Title)
+	series := strings.TrimSpace(item.Media.Metadata.SeriesTitle)
+	season := parseStringOrInt(item.Media.Metadata.Season)
+	episode := parseStringOrInt(item.Media.Metadata.Episode)
+	duration := item.Media.Duration
+	currentTime := item.CurrentTime
+
+	if item.MediaSessionID != 0 && item.MediaSessionID != prevMediaSessionID {
+		c.lastTitle = title
+		c.lastSeries = series
+		c.lastSeason = season
+		c.lastEpisode = episode
+		c.lastDuration = duration
+		c.lastPosition = currentTime
+		c.lastPositionTime = time.Now()
+	} else {
+		if title != "" {
+			c.lastTitle = title
+		}
+		if series != "" {
+			c.lastSeries = series
+		}
+		if season != "" {
+			c.lastSeason = season
+		}
+		if episode != "" {
+			c.lastEpisode = episode
+		}
+		if duration > 0 {
+			c.lastDuration = duration
+		}
+	}
 
 	// Core strictly accepts "playing", "paused", "buffering"
 	if normalizedState == "playing" || normalizedState == "paused" || normalizedState == "buffering" {
 		c.playerState = normalizedState
-		if c.lastReportedPlayerState != normalizedState {
+
+		shouldDispatch := false
+		if normalizedState != prevPlayerState {
+			shouldDispatch = true
+		} else if c.lastTitle != prevTitle {
+			shouldDispatch = true
+		} else if item.MediaSessionID != 0 && item.MediaSessionID != c.lastReportedMediaSessionID {
+			shouldDispatch = true
+		} else {
+			var expectedTime float64
+			if prevPlayerState == "playing" && !c.lastPositionTime.IsZero() {
+				elapsed := time.Since(c.lastPositionTime).Seconds()
+				expectedTime = c.lastPosition + elapsed
+			} else {
+				expectedTime = c.lastPosition
+			}
+			if math.Abs(currentTime-expectedTime) > 5.0 {
+				shouldDispatch = true
+			}
+		}
+
+		if shouldDispatch {
 			c.lastReportedPlayerState = normalizedState
+			c.lastReportedTitle = c.lastTitle
+			c.lastReportedMediaSessionID = c.mediaSessionID
+			c.lastPosition = currentTime
+			c.lastPositionTime = time.Now()
 			c.mu.Unlock()
 
 			c.queueDispatch(func() {
@@ -742,6 +907,40 @@ func (c *CastClient) dispatchTrigger() {
 		"control_url":  controlURL,
 	}
 
+	c.mu.RLock()
+	title := c.lastTitle
+	series := c.lastSeries
+	season := c.lastSeason
+	episode := c.lastEpisode
+	duration := c.lastDuration
+	position := c.lastPosition
+	posTime := c.lastPositionTime
+	c.mu.RUnlock()
+
+	if title != "" {
+		payload["title"] = title
+	}
+	if series != "" {
+		payload["series"] = series
+	}
+	if season != "" {
+		payload["season"] = season
+	}
+	if episode != "" {
+		payload["episode"] = episode
+	}
+	if duration > 0 {
+		payload["duration"] = duration
+	}
+	if position > 0 {
+		payload["position"] = position
+		if !posTime.IsZero() {
+			payload["position_updated_at"] = posTime.UnixMilli()
+		} else {
+			payload["position_updated_at"] = time.Now().UnixMilli()
+		}
+	}
+
 	if data, err := json.Marshal(payload); err == nil {
 		c.postToCore(triggerURL, data, "trigger")
 	}
@@ -760,9 +959,32 @@ func (c *CastClient) dispatchDismiss() {
 
 func (c *CastClient) dispatchPlayerState(state string) {
 	stateURL := strings.TrimRight(c.cfg.CoreURL, "/") + "/api/video/state"
+
+	c.mu.RLock()
+	title := c.lastTitle
+	series := c.lastSeries
+	season := c.lastSeason
+	episode := c.lastEpisode
+	duration := c.lastDuration
+	position := c.lastPosition
+	posTime := c.lastPositionTime
+	c.mu.RUnlock()
+
+	posUpdatedAt := time.Now().UnixMilli()
+	if !posTime.IsZero() {
+		posUpdatedAt = posTime.UnixMilli()
+	}
+
 	payload := map[string]any{
-		"id":           "chromecast",
-		"player_state": state,
+		"id":                  "chromecast",
+		"player_state":        state,
+		"title":               title,
+		"series":              series,
+		"season":              season,
+		"episode":             episode,
+		"position":            position,
+		"duration":            duration,
+		"position_updated_at": posUpdatedAt,
 	}
 
 	if data, err := json.Marshal(payload); err == nil {

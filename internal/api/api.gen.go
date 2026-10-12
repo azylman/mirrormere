@@ -31,6 +31,7 @@ const (
 	VideoActionRequestActionPlay           VideoActionRequestAction = "play"
 	VideoActionRequestActionPrevious       VideoActionRequestAction = "previous"
 	VideoActionRequestActionRewind         VideoActionRequestAction = "rewind"
+	VideoActionRequestActionSeek           VideoActionRequestAction = "seek"
 	VideoActionRequestActionTogglePlayback VideoActionRequestAction = "toggle_playback"
 )
 
@@ -208,8 +209,15 @@ type VideoDismissRequest struct {
 
 // VideoPlayerStateRequest defines model for VideoPlayerStateRequest.
 type VideoPlayerStateRequest struct {
-	Id          string                             `json:"id"`
-	PlayerState VideoPlayerStateRequestPlayerState `json:"player_state"`
+	Duration          *float32                           `json:"duration,omitempty"`
+	Episode           *string                            `json:"episode,omitempty"`
+	Id                string                             `json:"id"`
+	PlayerState       VideoPlayerStateRequestPlayerState `json:"player_state"`
+	Position          *float32                           `json:"position,omitempty"`
+	PositionUpdatedAt *int64                             `json:"position_updated_at,omitempty"`
+	Season            *string                            `json:"season,omitempty"`
+	Series            *string                            `json:"series,omitempty"`
+	Title             *string                            `json:"title,omitempty"`
 }
 
 // VideoPlayerStateRequestPlayerState defines model for VideoPlayerStateRequest.PlayerState.
@@ -238,15 +246,22 @@ type VideoStateResponseMode string
 
 // VideoStream defines model for VideoStream.
 type VideoStream struct {
-	ControlUrl     *string                 `json:"control_url,omitempty"`
-	Controllable   *bool                   `json:"controllable,omitempty"`
-	Id             string                  `json:"id"`
-	Muted          *bool                   `json:"muted,omitempty"`
-	PlayerState    *VideoStreamPlayerState `json:"player_state,omitempty"`
-	Priority       *VideoStreamPriority    `json:"priority,omitempty"`
-	StreamUrl      string                  `json:"stream_url"`
-	TimeoutSeconds *int                    `json:"timeout_seconds,omitempty"`
-	Type           VideoStreamType         `json:"type"`
+	ControlUrl        *string                 `json:"control_url,omitempty"`
+	Controllable      *bool                   `json:"controllable,omitempty"`
+	Duration          *float32                `json:"duration,omitempty"`
+	Episode           *string                 `json:"episode,omitempty"`
+	Id                string                  `json:"id"`
+	Muted             *bool                   `json:"muted,omitempty"`
+	PlayerState       *VideoStreamPlayerState `json:"player_state,omitempty"`
+	Position          *float32                `json:"position,omitempty"`
+	PositionUpdatedAt *int64                  `json:"position_updated_at,omitempty"`
+	Priority          *VideoStreamPriority    `json:"priority,omitempty"`
+	Season            *string                 `json:"season,omitempty"`
+	Series            *string                 `json:"series,omitempty"`
+	StreamUrl         string                  `json:"stream_url"`
+	TimeoutSeconds    *int                    `json:"timeout_seconds,omitempty"`
+	Title             *string                 `json:"title,omitempty"`
+	Type              VideoStreamType         `json:"type"`
 }
 
 // VideoStreamPlayerState defines model for VideoStream.PlayerState.
@@ -260,16 +275,23 @@ type VideoStreamType string
 
 // VideoTriggerRequest defines model for VideoTriggerRequest.
 type VideoTriggerRequest struct {
-	ControlUrl   *string `json:"control_url,omitempty"`
-	Controllable *bool   `json:"controllable,omitempty"`
+	ControlUrl   *string  `json:"control_url,omitempty"`
+	Controllable *bool    `json:"controllable,omitempty"`
+	Duration     *float32 `json:"duration,omitempty"`
+	Episode      *string  `json:"episode,omitempty"`
 
 	// Id Unique stream identifier ("all" and "*" are reserved sentinels).
-	Id             string                          `json:"id"`
-	PlayerState    *VideoTriggerRequestPlayerState `json:"player_state,omitempty"`
-	Priority       *VideoTriggerRequestPriority    `json:"priority,omitempty"`
-	StreamUrl      string                          `json:"stream_url"`
-	TimeoutSeconds *int                            `json:"timeout_seconds,omitempty"`
-	Type           *VideoTriggerRequestType        `json:"type,omitempty"`
+	Id                string                          `json:"id"`
+	PlayerState       *VideoTriggerRequestPlayerState `json:"player_state,omitempty"`
+	Position          *float32                        `json:"position,omitempty"`
+	PositionUpdatedAt *int64                          `json:"position_updated_at,omitempty"`
+	Priority          *VideoTriggerRequestPriority    `json:"priority,omitempty"`
+	Season            *string                         `json:"season,omitempty"`
+	Series            *string                         `json:"series,omitempty"`
+	StreamUrl         string                          `json:"stream_url"`
+	TimeoutSeconds    *int                            `json:"timeout_seconds,omitempty"`
+	Title             *string                         `json:"title,omitempty"`
+	Type              *VideoTriggerRequestType        `json:"type,omitempty"`
 }
 
 // VideoTriggerRequestPlayerState defines model for VideoTriggerRequest.PlayerState.

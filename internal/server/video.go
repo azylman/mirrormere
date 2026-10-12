@@ -17,6 +17,7 @@ type VideoCoordinator interface {
 	Trigger(stream video.VideoStream) (video.VideoState, error)
 	Dismiss(id string) (video.VideoState, error)
 	SetPlayerState(id string, playerState string) (video.VideoState, error)
+	UpdatePlayerState(id string, update video.VideoStream) (video.VideoState, error)
 	ForwardAction(ctx context.Context, id, action string, value any) error
 }
 
@@ -136,6 +137,27 @@ func (h *DefaultVideoHandler) PostVideoTrigger(w http.ResponseWriter, r *http.Re
 		Controllable:   vControllable,
 		ControlURL:     vControlURL,
 		PlayerState:    vPlayerState,
+	}
+	if req.Title != nil {
+		stream.Title = *req.Title
+	}
+	if req.Series != nil {
+		stream.Series = *req.Series
+	}
+	if req.Season != nil {
+		stream.Season = *req.Season
+	}
+	if req.Episode != nil {
+		stream.Episode = *req.Episode
+	}
+	if req.Position != nil {
+		stream.Position = float64(*req.Position)
+	}
+	if req.Duration != nil {
+		stream.Duration = float64(*req.Duration)
+	}
+	if req.PositionUpdatedAt != nil {
+		stream.PositionUpdatedAt = *req.PositionUpdatedAt
 	}
 
 	newState, err := h.coord.Trigger(stream)
@@ -292,7 +314,33 @@ func (h *DefaultVideoHandler) PostVideoState(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	_, err := h.coord.SetPlayerState(req.Id, string(req.PlayerState))
+	update := video.VideoStream{
+		ID:          req.Id,
+		PlayerState: string(req.PlayerState),
+	}
+	if req.Title != nil {
+		update.Title = *req.Title
+	}
+	if req.Series != nil {
+		update.Series = *req.Series
+	}
+	if req.Season != nil {
+		update.Season = *req.Season
+	}
+	if req.Episode != nil {
+		update.Episode = *req.Episode
+	}
+	if req.Position != nil {
+		update.Position = float64(*req.Position)
+	}
+	if req.Duration != nil {
+		update.Duration = float64(*req.Duration)
+	}
+	if req.PositionUpdatedAt != nil {
+		update.PositionUpdatedAt = *req.PositionUpdatedAt
+	}
+
+	_, err := h.coord.UpdatePlayerState(req.Id, update)
 	if err != nil {
 		if errors.Is(err, video.ErrStreamNotFound) {
 			writeVideoError(w, http.StatusNotFound, "stream not active")
@@ -344,6 +392,34 @@ func toAPIVideoStream(s *video.VideoStream) *api.VideoStream {
 	}
 	m := s.Muted
 	apiStream.Muted = &m
+	if s.Title != "" {
+		t := s.Title
+		apiStream.Title = &t
+	}
+	if s.Series != "" {
+		ser := s.Series
+		apiStream.Series = &ser
+	}
+	if s.Season != "" {
+		sea := s.Season
+		apiStream.Season = &sea
+	}
+	if s.Episode != "" {
+		ep := s.Episode
+		apiStream.Episode = &ep
+	}
+	if s.Position > 0 || s.PositionUpdatedAt > 0 {
+		pos := float32(s.Position)
+		apiStream.Position = &pos
+	}
+	if s.Duration > 0 {
+		dur := float32(s.Duration)
+		apiStream.Duration = &dur
+	}
+	if s.PositionUpdatedAt > 0 {
+		pu := s.PositionUpdatedAt
+		apiStream.PositionUpdatedAt = &pu
+	}
 	return apiStream
 }
 

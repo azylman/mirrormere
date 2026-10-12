@@ -123,6 +123,18 @@ function createMockElement(tagName = 'div', id = '', className = '') {
     click() {
       element.dispatchEvent('click');
     },
+
+    getBoundingClientRect() {
+      return { left: 0, top: 0, width: 200, height: 10, right: 200, bottom: 10 };
+    },
+
+    setPointerCapture(id) {
+      this._capturedPointerId = id;
+    },
+
+    releasePointerCapture(id) {
+      if (this._capturedPointerId === id) this._capturedPointerId = null;
+    },
   };
 
   return element;
@@ -168,6 +180,17 @@ function createHUDDOM() {
   const bottomBar = createMockElement('div', 'video-hud-bottom-bar', 'video-hud-bottom-bar');
   bottomBar.style.display = 'none';
 
+  const progressContainer = createMockElement('div', 'video-hud-progress-container', 'video-hud-progress-container');
+  const timeCurrent = createMockElement('span', 'video-hud-time-current', 'video-hud-time-current');
+  const progressTrack = createMockElement('div', 'video-hud-progress-track', 'video-hud-progress-track');
+  const progressFill = createMockElement('div', 'video-hud-progress-fill', 'video-hud-progress-fill');
+  progressTrack.appendChild(progressFill);
+  const timeTotal = createMockElement('span', 'video-hud-time-total', 'video-hud-time-total');
+  progressContainer.appendChild(timeCurrent);
+  progressContainer.appendChild(progressTrack);
+  progressContainer.appendChild(timeTotal);
+  bottomBar.appendChild(progressContainer);
+
   const ccBtn = createMockElement('button', 'video-hud-cc-btn', 'video-hud-btn video-hud-media-btn');
   const prevBtn = createMockElement('button', 'video-hud-prev-btn', 'video-hud-btn video-hud-media-btn');
   const rewindBtn = createMockElement('button', 'video-hud-rewind-btn', 'video-hud-btn video-hud-media-btn');
@@ -207,6 +230,11 @@ function createHUDDOM() {
     muteIcon,
     volumeSlider,
     bottomBar,
+    progressContainer,
+    timeCurrent,
+    progressTrack,
+    progressFill,
+    timeTotal,
     ccBtn,
     prevBtn,
     rewindBtn,
@@ -1613,4 +1641,524 @@ test('VideoHUD: display.html defines vector SVGs for prev and next buttons', () 
 
   const nextBtnHtml = html.match(/<button id="video-hud-next-btn"[^>]*>([\s\S]*?)<\/button>/);
   assert.ok(nextBtnHtml && nextBtnHtml[1].includes('<svg'), 'video-hud-next-btn must contain svg in template');
+});
+
+test('VideoHUDController: formatStreamTitle formats series, season, episode, title, and fallbacks', () => {
+  const dom = createHUDDOM();
+  const hud = new VideoHUDController({
+    overlayElement: dom.overlay,
+    titleElement: dom.title,
+    bottomBar: dom.bottomBar,
+  });
+
+  // Full metadata with integer season/episode
+  assert.equal(
+    hud.formatStreamTitle({
+      series: 'Trapped in a Dating Sim',
+      season: 2,
+      episode: 3,
+      title: 'Hey, Brat',
+    }),
+    'Trapped in a Dating Sim S2E3: Hey, Brat'
+  );
+
+  // String season/episode with S/E prefixes already
+  assert.equal(
+    hud.formatStreamTitle({
+      series: 'Sousou no Frieren',
+      season: 'S01',
+      episode: 'E08',
+      title: 'Frieren the Slayer',
+    }),
+    'Sousou no Frieren S01E08: Frieren the Slayer'
+  );
+
+  // Series + title without season/episode
+  assert.equal(
+    hud.formatStreamTitle({
+      series: 'Trapped in a Dating Sim',
+      title: 'Hey, Brat',
+    }),
+    'Trapped in a Dating Sim: Hey, Brat'
+  );
+
+  // Series + season/episode annotation without episode title
+  assert.equal(
+    hud.formatStreamTitle({
+      series: 'Sousou no Frieren',
+      season: 1,
+      episode: 5,
+    }),
+    'Sousou no Frieren S1E5'
+  );
+
+  // Standalone episode/video title (e.g. YouTube video or generic file)
+  assert.equal(
+    hud.formatStreamTitle({
+      title: 'Chainsaw Man Episode 12',
+    }),
+    'Chainsaw Man Episode 12'
+  );
+
+  // Standalone series name
+  assert.equal(
+    hud.formatStreamTitle({
+      series: 'Crunchyroll Live',
+    }),
+    'Crunchyroll Live'
+  );
+
+  // Fallback to stream id
+  assert.equal(
+    hud.formatStreamTitle({
+      id: 'chromecast',
+    }),
+    'Stream: chromecast'
+  );
+
+  // Null or missing stream fallback
+  assert.equal(hud.formatStreamTitle(null), 'Live Video');
+  assert.equal(hud.formatStreamTitle({}), 'Live Video');
+
+  hud.destroy();
+});
+
+test('VideoHUDController: formatTime formats seconds to M:SS and H:MM:SS with zero padding', () => {
+  const dom = createHUDDOM();
+  const hud = new VideoHUDController({
+    overlayElement: dom.overlay,
+  });
+
+  assert.equal(hud.formatTime(0), '0:00');
+  assert.equal(hud.formatTime(5), '0:05');
+  assert.equal(hud.formatTime(65), '1:05');
+  assert.equal(hud.formatTime(1217.89), '20:17');
+  assert.equal(hud.formatTime(3600), '1:00:00');
+  assert.equal(hud.formatTime(3665), '1:01:05');
+  assert.equal(hud.formatTime(7325), '2:02:05');
+
+  // Edge cases
+  assert.equal(hud.formatTime(-10), '0:00');
+  assert.equal(hud.formatTime(NaN), '0:00');
+  assert.equal(hud.formatTime(Infinity), '0:00');
+  assert.equal(hud.formatTime(null), '0:00');
+
+  hud.destroy();
+});
+
+test('VideoHUDController: progress bar updates fill percentage, time labels, and hides for live streams', () => {
+  const dom = createHUDDOM();
+  const hud = new VideoHUDController({
+    overlayElement: dom.overlay,
+    titleElement: dom.title,
+    bottomBar: dom.bottomBar,
+    progressContainer: dom.progressContainer,
+    timeCurrentElement: dom.timeCurrent,
+    timeTotalElement: dom.timeTotal,
+    progressFillElement: dom.progressFill,
+  });
+
+  // Active stream with duration and position
+  hud.handleVideoState({
+    mode: 'video',
+    primary: {
+      id: 'chromecast',
+      stream_url: 'http://127.0.0.1:1984/cast',
+      priority: 'persistent',
+      player_state: 'playing',
+      title: 'Hey, Brat',
+      series: 'Trapped in a Dating Sim',
+      season: 2,
+      episode: 3,
+      position: 120,
+      duration: 1420,
+      position_updated_at: Date.now(),
+    },
+  });
+
+  assert.equal(dom.title.textContent, 'Trapped in a Dating Sim S2E3: Hey, Brat');
+  assert.equal(dom.progressContainer.style.display, '');
+  assert.equal(dom.progressContainer.hasAttribute('hidden'), false);
+  assert.equal(dom.timeCurrent.textContent, '2:00');
+  assert.equal(dom.timeTotal.textContent, '23:40');
+  // 120 / 1420 * 100 = 8.45% -> 8.5%
+  assert.equal(dom.progressFill.style.width, '8.5%');
+
+  // Live doorbell stream with duration 0 -> progress hidden
+  hud.handleVideoState({
+    mode: 'video',
+    primary: {
+      id: 'doorbell',
+      stream_url: 'http://127.0.0.1:1984/doorbell',
+      priority: 'temporary',
+      timeout_seconds: 45,
+      title: 'Front Door Camera',
+      duration: 0,
+      position: 0,
+    },
+  });
+
+  assert.equal(dom.title.textContent, 'Front Door Camera');
+  assert.equal(dom.progressContainer.style.display, 'none');
+  assert.equal(dom.progressContainer.getAttribute('hidden'), 'true');
+
+  hud.destroy();
+});
+
+test('VideoHUDController: progress ticker advances with timestamp drift compensation', async () => {
+  const dom = createHUDDOM();
+  const hud = new VideoHUDController({
+    overlayElement: dom.overlay,
+    titleElement: dom.title,
+    bottomBar: dom.bottomBar,
+    progressContainer: dom.progressContainer,
+    timeCurrentElement: dom.timeCurrent,
+    timeTotalElement: dom.timeTotal,
+    progressFillElement: dom.progressFill,
+  });
+
+  const now = Date.now();
+  hud.handleVideoState({
+    mode: 'video',
+    primary: {
+      id: 'chromecast',
+      stream_url: 'http://127.0.0.1:1984/cast',
+      priority: 'persistent',
+      player_state: 'playing',
+      position: 100,
+      duration: 1000,
+      position_updated_at: now - 5000, // 5 seconds elapsed since anchor
+    },
+  });
+
+  // renderProgressTick should drift by ~5s
+  hud.renderProgressTick();
+  assert.equal(dom.timeCurrent.textContent, '1:45');
+  assert.equal(dom.progressFill.style.width, '10.5%');
+
+  // When paused, drift compensation does not advance past base position
+  hud.handleVideoState({
+    mode: 'video',
+    primary: {
+      id: 'chromecast',
+      stream_url: 'http://127.0.0.1:1984/cast',
+      priority: 'persistent',
+      player_state: 'paused',
+      position: 100,
+      duration: 1000,
+      position_updated_at: now - 5000,
+    },
+  });
+  hud.renderProgressTick();
+  assert.equal(dom.timeCurrent.textContent, '1:40');
+  assert.equal(dom.progressFill.style.width, '10.0%');
+
+  hud.destroy();
+});
+
+test('VideoHUD: display.html and hud.css define progress elements and night mode styling', () => {
+  const html = fs.readFileSync(path.resolve(__dirname, '../templates/display.html'), 'utf8');
+  const css = fs.readFileSync(path.resolve(__dirname, '../static/css/hud.css'), 'utf8');
+
+  // Verify display.html structure
+  assert.ok(html.includes('id="video-hud-progress-container"'));
+  assert.ok(html.includes('id="video-hud-time-current"'));
+  assert.ok(html.includes('id="video-hud-progress-track"'));
+  assert.ok(html.includes('id="video-hud-progress-fill"'));
+  assert.ok(html.includes('id="video-hud-time-total"'));
+
+  // Verify hud.css classes and fairyfloss night mode styles
+  assert.ok(css.includes('.video-hud-progress-container'));
+  assert.ok(css.includes('.video-hud-progress-track'));
+  assert.ok(css.includes('.video-hud-progress-fill'));
+  assert.ok(css.includes('.video-hud-time'));
+  assert.ok(css.includes('[data-theme="night"] .video-hud-progress-fill'));
+  assert.ok(css.includes('[data-theme="night"] .video-hud-progress-track'));
+  assert.ok(css.includes('[data-theme="night"] .video-hud-time'));
+});
+
+test('VideoHUDController: click-to-seek updates position and dispatches seek action payload with value', async () => {
+  const dom = createHUDDOM();
+  const networkCalls = [];
+
+  const mockFetch = async (url, opts) => {
+    networkCalls.push({ url, body: JSON.parse(opts.body) });
+    return { ok: true, status: 200, json: async () => ({ status: 'ok' }) };
+  };
+
+  const hud = new VideoHUDController({
+    overlayElement: dom.overlay,
+    titleElement: dom.title,
+    bottomBarElement: dom.bottomBar,
+    progressContainer: dom.progressContainer,
+    progressTrackElement: dom.progressTrack,
+    progressFillElement: dom.progressFill,
+    timeCurrentElement: dom.timeCurrent,
+    timeTotalElement: dom.timeTotal,
+    fetch: mockFetch,
+  });
+
+  hud.handleVideoState({
+    mode: 'video',
+    primary: {
+      id: 'chromecast',
+      controllable: true,
+      control_url: 'http://127.0.0.1:8009/action',
+      player_state: 'playing',
+      position: 100,
+      duration: 1000,
+    },
+  });
+
+  // Track width is 200px (left: 0). Click at clientX: 100 is 50% = 500s.
+  dom.progressTrack.dispatchEvent('pointerdown', { clientX: 100, pointerId: 1 });
+  assert.equal(hud.isScrubbing, true);
+  assert.equal(dom.progressTrack.classList.contains('is-scrubbing'), true);
+  assert.equal(dom.progressFill.style.width, '50.0%');
+  assert.equal(dom.timeCurrent.textContent, '8:20');
+
+  dom.progressTrack.dispatchEvent('pointerup', { clientX: 100, pointerId: 1 });
+  assert.equal(hud.isScrubbing, false);
+  assert.equal(dom.progressTrack.classList.contains('is-scrubbing'), false);
+  assert.equal(hud.basePosition, 500);
+
+  assert.equal(networkCalls.length, 1);
+  assert.equal(networkCalls[0].url, 'api/video/action');
+  assert.deepEqual(networkCalls[0].body, {
+    id: 'chromecast',
+    action: 'seek',
+    value: 500,
+  });
+
+  hud.destroy();
+});
+
+test('VideoHUDController: drag scrubbing tracks pointermove and releases on pointerup / pointercancel', async () => {
+  const dom = createHUDDOM();
+  const networkCalls = [];
+
+  const mockFetch = async (url, opts) => {
+    networkCalls.push({ url, body: JSON.parse(opts.body) });
+    return { ok: true, status: 200, json: async () => ({ status: 'ok' }) };
+  };
+
+  const hud = new VideoHUDController({
+    overlayElement: dom.overlay,
+    titleElement: dom.title,
+    bottomBarElement: dom.bottomBar,
+    progressContainer: dom.progressContainer,
+    progressTrackElement: dom.progressTrack,
+    progressFillElement: dom.progressFill,
+    timeCurrentElement: dom.timeCurrent,
+    timeTotalElement: dom.timeTotal,
+    fetch: mockFetch,
+  });
+
+  hud.handleVideoState({
+    mode: 'video',
+    primary: {
+      id: 'chromecast',
+      controllable: true,
+      control_url: 'http://127.0.0.1:8009/action',
+      player_state: 'playing',
+      position: 50,
+      duration: 600,
+    },
+  });
+
+  // 1. Pointerdown at clientX: 50 (25% = 150s)
+  dom.progressTrack.dispatchEvent('pointerdown', { clientX: 50, pointerId: 2 });
+  assert.equal(hud.isScrubbing, true);
+  assert.equal(dom.progressFill.style.width, '25.0%');
+  assert.equal(dom.timeCurrent.textContent, '2:30');
+
+  // 2. Drag pointermove to clientX: 150 (75% = 450s)
+  dom.progressTrack.dispatchEvent('pointermove', { clientX: 150, pointerId: 2 });
+  assert.equal(dom.progressFill.style.width, '75.0%');
+  assert.equal(dom.timeCurrent.textContent, '7:30');
+
+  // 3. Drag out of bounds clamped (>200px -> 100% = 600s)
+  dom.progressTrack.dispatchEvent('pointermove', { clientX: 250, pointerId: 2 });
+  assert.equal(dom.progressFill.style.width, '100.0%');
+  assert.equal(dom.timeCurrent.textContent, '10:00');
+
+  // 4. Drag out of bounds clamped (<0px -> 0% = 0s)
+  dom.progressTrack.dispatchEvent('pointermove', { clientX: -20, pointerId: 2 });
+  assert.equal(dom.progressFill.style.width, '0.0%');
+  assert.equal(dom.timeCurrent.textContent, '0:00');
+
+  // 5. Release via pointerup
+  dom.progressTrack.dispatchEvent('pointerup', { pointerId: 2 });
+  assert.equal(hud.isScrubbing, false);
+  assert.equal(networkCalls.length, 1);
+  assert.equal(networkCalls[0].url, 'api/video/action');
+  assert.deepEqual(networkCalls[0].body, {
+    id: 'chromecast',
+    action: 'seek',
+    value: 0,
+  });
+
+  // Reset in-flight lock for second test action
+  hud.isActionPending = false;
+
+  // 6. Test pointercancel scrubbing abort / release
+  dom.progressTrack.dispatchEvent('pointerdown', { clientX: 100, pointerId: 3 });
+  assert.equal(hud.isScrubbing, true);
+  dom.progressTrack.dispatchEvent('pointermove', { clientX: 160, pointerId: 3 }); // 160/200 = 80% = 480s
+  assert.equal(dom.progressFill.style.width, '80.0%');
+  dom.progressTrack.dispatchEvent('pointercancel', { pointerId: 3 });
+  assert.equal(hud.isScrubbing, false);
+  assert.equal(networkCalls.length, 2);
+  assert.equal(networkCalls[1].url, 'api/video/action');
+  assert.deepEqual(networkCalls[1].body, {
+    id: 'chromecast',
+    action: 'seek',
+    value: 480,
+  });
+
+  hud.destroy();
+});
+
+test('VideoHUDController: renderProgressTick is suppressed during active scrubbing', async () => {
+  const dom = createHUDDOM();
+  const hud = new VideoHUDController({
+    overlayElement: dom.overlay,
+    titleElement: dom.title,
+    bottomBarElement: dom.bottomBar,
+    progressContainer: dom.progressContainer,
+    progressTrackElement: dom.progressTrack,
+    progressFillElement: dom.progressFill,
+    timeCurrentElement: dom.timeCurrent,
+    timeTotalElement: dom.timeTotal,
+    fetch: async () => ({ ok: true, status: 200, json: async () => ({ status: 'ok' }) }),
+  });
+
+  const now = Date.now();
+  hud.handleVideoState({
+    mode: 'video',
+    primary: {
+      id: 'chromecast',
+      controllable: true,
+      player_state: 'playing',
+      position: 100,
+      duration: 1000,
+      position_updated_at: now - 10000,
+    },
+  });
+
+  // Active scrub to 300s (clientX: 60 / 200 = 30%)
+  dom.progressTrack.dispatchEvent('pointerdown', { clientX: 60 });
+  assert.equal(hud.isScrubbing, true);
+  assert.equal(dom.progressFill.style.width, '30.0%');
+  assert.equal(dom.timeCurrent.textContent, '5:00');
+
+  // Trigger renderProgressTick while scrubbing
+  hud.renderProgressTick();
+  // Fill and time label should NOT be updated by ticker drift!
+  assert.equal(dom.progressFill.style.width, '30.0%');
+  assert.equal(dom.timeCurrent.textContent, '5:00');
+
+  // Release scrub
+  dom.progressTrack.dispatchEvent('pointerup', {});
+  assert.equal(hud.isScrubbing, false);
+
+  hud.destroy();
+});
+
+test('VideoHUDController: handleSeek dispatches seek action and handles remote keys fallback', async () => {
+  const dom = createHUDDOM();
+  const networkCalls = [];
+
+  const mockFetch = async (url, opts) => {
+    networkCalls.push({ url, body: JSON.parse(opts.body) });
+    return { ok: true, status: 200, json: async () => ({ status: 'ok' }) };
+  };
+
+  const hud = new VideoHUDController({
+    overlayElement: dom.overlay,
+    titleElement: dom.title,
+    bottomBarElement: dom.bottomBar,
+    progressContainer: dom.progressContainer,
+    fetch: mockFetch,
+    remoteUrl: 'http://remote.lan:8080',
+  });
+
+  // Controllable stream without control_url forwards to api/video/action with value
+  hud.handleVideoState({
+    mode: 'video',
+    primary: {
+      id: 'stream_plex',
+      controllable: true,
+      duration: 500,
+      player_state: 'playing',
+    },
+  });
+
+  await hud.handleSeek(250.5);
+  assert.equal(networkCalls.length, 1);
+  assert.equal(networkCalls[0].url, 'api/video/action');
+  assert.deepEqual(networkCalls[0].body, {
+    id: 'stream_plex',
+    action: 'seek',
+    value: 250.5,
+  });
+
+  hud.destroy();
+});
+
+test('VideoHUDController: rapid successive seek actions bypass isActionPending lock and updateProgress protects mid-scrub', async () => {
+  const dom = createHUDDOM();
+  const networkCalls = [];
+  const mockFetch = async (url, options) => {
+    networkCalls.push({ url, body: JSON.parse(options.body) });
+    return { ok: true, json: async () => ({ status: 'ok' }) };
+  };
+
+  const hud = new VideoHUDController({
+    overlayElement: dom.overlay,
+    titleElement: dom.title,
+    bottomBarElement: dom.bottomBar,
+    progressContainer: dom.progressContainer,
+    progressTrackElement: dom.progressTrack,
+    progressFillElement: dom.progressFill,
+    timeCurrentElement: dom.timeCurrent,
+    timeTotalElement: dom.timeTotal,
+    fetch: mockFetch,
+  });
+
+  hud.handleVideoState({
+    mode: 'video',
+    primary: {
+      id: 'chromecast',
+      controllable: true,
+      control_url: 'http://cast-watcher:8090/action',
+      duration: 1000,
+      position: 100,
+      player_state: 'playing',
+    },
+  });
+
+  // 1. Rapid successive seek calls should both dispatch
+  hud.handleSeek(200);
+  assert.equal(hud.isActionPending, true);
+  await hud.handleSeek(300);
+  assert.equal(networkCalls.length, 2);
+  assert.equal(networkCalls[0].body.value, 200);
+  assert.equal(networkCalls[1].body.value, 300);
+
+  // 2. updateProgress is a no-op while isScrubbing is true
+  hud.isScrubbing = true;
+  hud.handleVideoState({
+    mode: 'video',
+    primary: {
+      id: 'chromecast',
+      duration: 5000,
+      position: 4000,
+    },
+  });
+  // baseDuration remains protected from mid-gesture mutation
+  assert.equal(hud.baseDuration, 1000);
+
+  hud.isScrubbing = false;
+  hud.destroy();
 });

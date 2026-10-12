@@ -432,6 +432,31 @@ body[data-theme="night"],
   text-shadow: 0 2px 8px rgba(20, 16, 32, 0.7);
 }
 
+[data-theme="night"] .video-hud-time {
+  color: var(--mm-text-muted, #c5a3ff);
+}
+
+[data-theme="night"] .video-hud-progress-track {
+  background: rgba(197, 163, 255, 0.2);
+}
+
+[data-theme="night"] .video-hud-progress-track:hover,
+[data-theme="night"] .video-hud-progress-track.is-scrubbing {
+  background: rgba(197, 163, 255, 0.35);
+  background-clip: content-box;
+}
+
+[data-theme="night"] .video-hud-progress-fill {
+  background: linear-gradient(90deg, #c5a3ff, #ff857f);
+  box-shadow: 0 0 8px rgba(197, 163, 255, 0.5);
+}
+
+[data-theme="night"] .video-hud-progress-thumb,
+[data-theme="night"] .video-hud-progress-track.is-scrubbing .video-hud-progress-fill::after {
+  background: var(--mm-lavender, #c5a3ff);
+  box-shadow: 0 0 10px rgba(197, 163, 255, 0.8);
+}
+
 [data-theme="night"] .video-hud-btn {
   transition: transform 0.15s ease, background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
 }
@@ -1182,7 +1207,7 @@ button, .touch-target {
   font-size: 1rem;
 }
 
-/* Centered Bottom Transport Controls Dock: CC + Prev + Skip Back + Play/Pause + Skip Forward + Next */
+/* Centered Bottom Transport Controls Dock: CC + Prev + Skip Back + Play/Pause + Skip Forward + Next + Progress */
 .video-hud-controls,
 .video-hud-bottom-bar {
   position: absolute;
@@ -1190,20 +1215,115 @@ button, .touch-target {
   left: 50%;
   transform: translateX(-50%);
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  flex-wrap: nowrap;
-  gap: 12px;
-  padding: 8px 20px;
+  gap: 10px;
+  padding: 12px 24px;
   background: rgba(255, 255, 255, 0.94);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
   border: 1.5px solid rgba(90, 60, 30, 0.08);
-  border-radius: 9999px;
+  border-radius: 36px;
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.25);
   pointer-events: auto;
   box-sizing: border-box;
   z-index: 85;
+}
+
+.video-hud-progress-container {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  min-width: 340px;
+  max-width: 500px;
+  gap: 12px;
+  padding: 0 6px;
+  box-sizing: border-box;
+}
+
+.video-hud-time {
+  font-family: 'Nunito', monospace;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--mm-text-muted, #71717a);
+  min-width: 38px;
+  text-align: center;
+  user-select: none;
+}
+
+.video-hud-progress-track {
+  flex: 1;
+  height: 6px;
+  background: rgba(0, 0, 0, 0.12);
+  border-radius: 3px;
+  position: relative;
+  cursor: pointer;
+  touch-action: none;
+  padding: 12px 0;
+  margin: -12px 0;
+  background-clip: content-box;
+}
+
+.video-hud-progress-track::before {
+  content: '';
+  position: absolute;
+  top: -12px;
+  bottom: -12px;
+  left: 0;
+  right: 0;
+  cursor: pointer;
+}
+
+.video-hud-progress-track:hover,
+.video-hud-progress-track.is-scrubbing {
+  background: rgba(0, 0, 0, 0.22);
+  background-clip: content-box;
+}
+
+.video-hud-progress-track.is-scrubbing .video-hud-progress-fill {
+  transition: none;
+}
+
+.video-hud-progress-fill {
+  height: 100%;
+  width: 0%;
+  background: var(--mm-coral);
+  border-radius: 3px;
+  transition: width 0.25s linear;
+  position: relative;
+}
+
+.video-hud-progress-fill::after,
+.video-hud-progress-thumb {
+  content: '';
+  position: absolute;
+  right: -6px;
+  top: 50%;
+  transform: translateY(-50%) scale(0);
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  transition: transform 0.15s ease;
+  pointer-events: none;
+}
+
+.video-hud-progress-track:hover .video-hud-progress-fill::after,
+.video-hud-progress-track.is-scrubbing .video-hud-progress-fill::after,
+.video-hud-progress-track:hover .video-hud-progress-thumb,
+.video-hud-progress-track.is-scrubbing .video-hud-progress-thumb {
+  transform: translateY(-50%) scale(1);
+}
+
+.video-hud-button-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: nowrap;
+  gap: 12px;
 }
 
 .video-hud-play-primary {

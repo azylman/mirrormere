@@ -22,9 +22,10 @@ type mockVideoCoordinator struct {
 	lastStream     video.VideoStream
 	lastDismissID  string
 	lastStateID    string
-	lastStateVal   string
-	lastActionID   string
-	lastActionVal  string
+	lastStateVal    string
+	lastActionID    string
+	lastActionVal   string
+	lastActionValue any
 }
 
 func (m *mockVideoCoordinator) GetState() video.VideoState {
@@ -63,9 +64,20 @@ func (m *mockVideoCoordinator) SetPlayerState(id string, playerState string) (vi
 	return m.state, nil
 }
 
+func (m *mockVideoCoordinator) UpdatePlayerState(id string, update video.VideoStream) (video.VideoState, error) {
+	if m.playerStateErr != nil {
+		return video.VideoState{}, m.playerStateErr
+	}
+	m.lastStateID = id
+	m.lastStateVal = update.PlayerState
+	m.lastStream = update
+	return m.state, nil
+}
+
 func (m *mockVideoCoordinator) ForwardAction(ctx context.Context, id, action string, value any) error {
 	m.lastActionID = id
 	m.lastActionVal = action
+	m.lastActionValue = value
 	return m.actionErr
 }
 
@@ -370,6 +382,30 @@ func TestDefaultVideoHandler_PostVideoAction(t *testing.T) {
 		t.Fatalf("unexpected action: id=%s action=%s", mock.lastActionID, mock.lastActionVal)
 	}
 
+	// 1b. Success POST seek action with value
+	reqSeek := httptest.NewRequest(http.MethodPost, "/api/video/action", strings.NewReader(`{"id":"chromecast","action":"seek","value":45.5}`))
+	recSeek := httptest.NewRecorder()
+	h.PostVideoAction(recSeek, reqSeek)
+
+	if recSeek.Code != http.StatusOK {
+		t.Fatalf("expected 200 on seek, got %d", recSeek.Code)
+	}
+	if mock.lastActionID != "chromecast" || mock.lastActionVal != "seek" {
+		t.Fatalf("unexpected seek action: id=%s action=%s", mock.lastActionID, mock.lastActionVal)
+	}
+	valPtr, ok := mock.lastActionValue.(*interface{})
+	if ok && valPtr != nil {
+		if v, ok := (*valPtr).(float64); !ok || v != 45.5 {
+			t.Fatalf("expected seek value 45.5, got %v (%T)", *valPtr, *valPtr)
+		}
+	} else if v, ok := mock.lastActionValue.(float64); ok {
+		if v != 45.5 {
+			t.Fatalf("expected seek value 45.5, got %v", v)
+		}
+	} else {
+		t.Fatalf("expected seek value 45.5, got %v (%T)", mock.lastActionValue, mock.lastActionValue)
+	}
+
 	// 2. Stream not found (404)
 	mock.actionErr = video.ErrStreamNotFound
 	req404 := httptest.NewRequest(http.MethodPost, "/api/video/action", strings.NewReader(`{"id":"missing","action":"play"}`))
@@ -521,5 +557,38 @@ func TestDefaultVideoHandler_PostVideoState(t *testing.T) {
 	hNil.PostVideoState(recNil, req)
 	if recNil.Code != http.StatusInternalServerError {
 		t.Fatalf("expected 500 when coord is nil, got %d", recNil.Code)
+	}
+}
+
+func TestDefaultVideoHandler_Metadata(t *testing.T) {
+	t.Parallel()
+
+	mock := &mockVideoCoordinator{}
+	h := NewDefaultVideoHandler(mock)
+
+	// Trigger with metadata
+	bodyTrigger := `{"id":"chromecast","stream_url":"http://127.0.0.1:1984/cast","type":"webrtc","priority":"persistent","title":"The Mandalorian","series":"Star Wars","season":"2","episode":"1","position":124.5,"duration":3600,"position_updated_at":1712880000000}`
+	reqTrigger := httptest.NewRequest(http.MethodPost, "/api/video/trigger", strings.NewReader(bodyTrigger))
+	recTrigger := httptest.NewRecorder()
+	h.PostVideoTrigger(recTrigger, reqTrigger)
+
+	if recTrigger.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", recTrigger.Code)
+	}
+	if mock.lastStream.Title != "The Mandalorian" || mock.lastStream.Series != "Star Wars" || mock.lastStream.Season != "2" || mock.lastStream.Episode != "1" || mock.lastStream.Position != 124.5 || mock.lastStream.Duration != 3600 || mock.lastStream.PositionUpdatedAt != 1712880000000 {
+		t.Fatalf("unexpected stream metadata in trigger: %+v", mock.lastStream)
+	}
+
+	// State update with metadata
+	bodyState := `{"id":"chromecast","player_state":"paused","title":"Chapter 10","series":"Star Wars","position":250.0,"duration":3600}`
+	reqState := httptest.NewRequest(http.MethodPost, "/api/video/state", strings.NewReader(bodyState))
+	recState := httptest.NewRecorder()
+	h.PostVideoState(recState, reqState)
+
+	if recState.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", recState.Code)
+	}
+	if mock.lastStream.Title != "Chapter 10" || mock.lastStream.PlayerState != "paused" || mock.lastStream.Position != 250.0 {
+		t.Fatalf("unexpected stream metadata in state update: %+v", mock.lastStream)
 	}
 }

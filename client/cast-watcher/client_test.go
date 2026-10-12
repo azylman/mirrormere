@@ -147,14 +147,11 @@ func TestCastClient_HandshakeActiveAndMedia(t *testing.T) {
 	// 5. Send MEDIA_STATUS with PLAYING
 	mediaStatus := mediaStatusPayload{
 		Type: "MEDIA_STATUS",
-	}
-	mediaStatus.Status = []struct {
-		MediaSessionID int    `json:"mediaSessionId"`
-		PlayerState    string `json:"playerState"`
-	}{
-		{
-			MediaSessionID: 99,
-			PlayerState:    "PLAYING",
+		Status: []mediaStatusItem{
+			{
+				MediaSessionID: 99,
+				PlayerState:    "PLAYING",
+			},
 		},
 	}
 	mBytes, _ := json.Marshal(mediaStatus)
@@ -367,6 +364,88 @@ func TestCastClient_MediaActionsAndErrors(t *testing.T) {
 	}
 	if !strings.Contains(msg.PayloadUTF8, `"PLAY"`) {
 		t.Errorf("expected PLAY on play action, got %s", msg.PayloadUTF8)
+	}
+}
+
+func TestCastClient_Seek(t *testing.T) {
+	client := NewCastClient(ClientConfig{})
+	ctx := context.Background()
+
+	// 1. Not connected
+	err := client.Seek(ctx, 42.0)
+	if !errors.Is(err, ErrNotConnected) {
+		t.Errorf("expected ErrNotConnected, got: %v", err)
+	}
+
+	// 2. Connected but no media session
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+	defer serverConn.Close()
+	client.conn = clientConn
+	client.connected = true
+
+	err = client.Seek(ctx, 42.0)
+	if !errors.Is(err, ErrNoActiveMediaSession) {
+		t.Errorf("expected ErrNoActiveMediaSession, got: %v", err)
+	}
+
+	// 3. Negative target time
+	client.transportID = "transport-123"
+	client.mediaSessionID = 456
+	err = client.Seek(ctx, -10.0)
+	if !errors.Is(err, ErrInvalidAction) {
+		t.Errorf("expected ErrInvalidAction for negative target time, got: %v", err)
+	}
+
+	// 4. Successful seek protocol message
+	seekErrCh := make(chan error, 1)
+	go func() {
+		seekErrCh <- client.Seek(ctx, 128.5)
+	}()
+
+	msg, err := DecodeCastMessage(serverConn)
+	if err != nil {
+		t.Fatalf("failed to decode seek message: %v", err)
+	}
+	if err := <-seekErrCh; err != nil {
+		t.Fatalf("client.Seek returned error: %v", err)
+	}
+
+	if msg.DestinationID != "transport-123" {
+		t.Errorf("expected DestinationID 'transport-123', got '%s'", msg.DestinationID)
+	}
+	if msg.Namespace != NamespaceMedia {
+		t.Errorf("expected Namespace '%s', got '%s'", NamespaceMedia, msg.Namespace)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(msg.PayloadUTF8), &payload); err != nil {
+		t.Fatalf("failed to unmarshal seek payload: %v", err)
+	}
+
+	if payload["type"] != "SEEK" {
+		t.Errorf("expected type 'SEEK', got '%v'", payload["type"])
+	}
+	if reqID, ok := payload["requestId"].(float64); !ok || reqID == 0 {
+		t.Errorf("expected valid non-zero requestId, got %v", payload["requestId"])
+	}
+	if sessID, ok := payload["mediaSessionId"].(float64); !ok || int(sessID) != 456 {
+		t.Errorf("expected mediaSessionId 456, got %v", payload["mediaSessionId"])
+	}
+	if curTime, ok := payload["currentTime"].(float64); !ok || curTime != 128.5 {
+		t.Errorf("expected currentTime 128.5, got %v", payload["currentTime"])
+	}
+
+	client.mu.RLock()
+	lastPos := client.lastPosition
+	lastPosTime := client.lastPositionTime
+	client.mu.RUnlock()
+
+	if lastPos != 128.5 {
+		t.Errorf("expected client.lastPosition 128.5, got %v", lastPos)
+	}
+	if lastPosTime.IsZero() {
+		t.Errorf("expected non-zero lastPositionTime after seek")
 	}
 }
 
@@ -849,5 +928,221 @@ func TestCastClient_Wake_SendErrors(t *testing.T) {
 	err = client2.Wake(context.Background())
 	if err == nil {
 		t.Error("expected error when connection is closed on STOP, got nil")
+	}
+}
+
+func TestCastClient_MediaMetadataAndThrottling(t *testing.T) {
+	var mu sync.Mutex
+	var receivedPayloads []map[string]any
+
+	coreServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		mu.Lock()
+		receivedPayloads = append(receivedPayloads, body)
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer coreServer.Close()
+
+	client := NewCastClient(ClientConfig{
+		CoreURL: coreServer.URL,
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go client.dispatchWorker(ctx)
+
+	// 1. Initial MEDIA_STATUS with rich metadata and int season/episode
+	msg1 := CastMessage{
+		PayloadUTF8: `{
+			"type": "MEDIA_STATUS",
+			"status": [{
+				"mediaSessionId": 1,
+				"playerState": "PLAYING",
+				"currentTime": 10.0,
+				"media": {
+					"duration": 3600.0,
+					"metadata": {
+						"title": "Chapter 1",
+						"seriesTitle": "Mando",
+						"season": 2,
+						"episode": 3
+					}
+				}
+			}]
+		}`,
+	}
+	client.handleMediaMessage(msg1)
+
+	// Wait for dispatch
+	time.Sleep(50 * time.Millisecond)
+	mu.Lock()
+	if len(receivedPayloads) != 1 {
+		t.Fatalf("expected 1 dispatch for initial media message, got %d", len(receivedPayloads))
+	}
+	p1 := receivedPayloads[0]
+	mu.Unlock()
+
+	if p1["id"] != "chromecast" || p1["player_state"] != "playing" {
+		t.Errorf("unexpected id or player_state: %+v", p1)
+	}
+	if p1["title"] != "Chapter 1" || p1["series"] != "Mando" || p1["season"] != "2" || p1["episode"] != "3" {
+		t.Errorf("unexpected metadata in payload: %+v", p1)
+	}
+	if p1["position"] != 10.0 || p1["duration"] != 3600.0 {
+		t.Errorf("unexpected position/duration: %+v", p1)
+	}
+	if _, ok := p1["position_updated_at"]; !ok {
+		t.Errorf("expected position_updated_at in payload")
+	}
+
+	// 2. Normal playback progress (advance by 1s: currentTime = 11.0, elapsed ~0.05s, drift < 5s)
+	// Should be throttled (no new dispatch)
+	msg2 := CastMessage{
+		PayloadUTF8: `{
+			"type": "MEDIA_STATUS",
+			"status": [{
+				"mediaSessionId": 1,
+				"playerState": "PLAYING",
+				"currentTime": 11.0
+			}]
+		}`,
+	}
+	client.handleMediaMessage(msg2)
+	time.Sleep(50 * time.Millisecond)
+
+	mu.Lock()
+	if len(receivedPayloads) != 1 {
+		t.Fatalf("expected 1 dispatch (throttled normal progress), got %d", len(receivedPayloads))
+	}
+	mu.Unlock()
+
+	// 3. User seeks by > 5 seconds (currentTime jumps to 50.0) -> Drift > 5.0 -> Should dispatch
+	msg3 := CastMessage{
+		PayloadUTF8: `{
+			"type": "MEDIA_STATUS",
+			"status": [{
+				"mediaSessionId": 1,
+				"playerState": "PLAYING",
+				"currentTime": 50.0
+			}]
+		}`,
+	}
+	client.handleMediaMessage(msg3)
+	time.Sleep(50 * time.Millisecond)
+
+	mu.Lock()
+	if len(receivedPayloads) != 2 {
+		t.Fatalf("expected 2 dispatches after seek drift, got %d", len(receivedPayloads))
+	}
+	p3 := receivedPayloads[1]
+	mu.Unlock()
+	if p3["position"] != 50.0 {
+		t.Errorf("expected position 50.0 after seek, got %v", p3["position"])
+	}
+	// Title/series should be preserved from session
+	if p3["title"] != "Chapter 1" || p3["series"] != "Mando" {
+		t.Errorf("expected preserved title/series, got %+v", p3)
+	}
+
+	// 4. State change: Paused -> Should dispatch
+	msg4 := CastMessage{
+		PayloadUTF8: `{
+			"type": "MEDIA_STATUS",
+			"status": [{
+				"mediaSessionId": 1,
+				"playerState": "PAUSED",
+				"currentTime": 50.0
+			}]
+		}`,
+	}
+	client.handleMediaMessage(msg4)
+	time.Sleep(50 * time.Millisecond)
+
+	mu.Lock()
+	if len(receivedPayloads) != 3 {
+		t.Fatalf("expected 3 dispatches after pause, got %d", len(receivedPayloads))
+	}
+	p4 := receivedPayloads[2]
+	mu.Unlock()
+	if p4["player_state"] != "paused" {
+		t.Errorf("expected paused player_state, got %v", p4["player_state"])
+	}
+
+	// 5. Title change on next episode -> Should dispatch
+	msg5 := CastMessage{
+		PayloadUTF8: `{
+			"type": "MEDIA_STATUS",
+			"status": [{
+				"mediaSessionId": 1,
+				"playerState": "PAUSED",
+				"currentTime": 0.0,
+				"media": {
+					"duration": 3600.0,
+					"metadata": {
+						"title": "Chapter 2",
+						"seriesTitle": "Mando",
+						"season": "2",
+						"episode": "4"
+					}
+				}
+			}]
+		}`,
+	}
+	client.handleMediaMessage(msg5)
+	time.Sleep(50 * time.Millisecond)
+
+	mu.Lock()
+	if len(receivedPayloads) != 4 {
+		t.Fatalf("expected 4 dispatches after title change, got %d", len(receivedPayloads))
+	}
+	p5 := receivedPayloads[3]
+	mu.Unlock()
+	if p5["title"] != "Chapter 2" || p5["episode"] != "4" {
+		t.Errorf("expected Chapter 2, got %+v", p5)
+	}
+
+	// 6. MediaSessionID change -> Should dispatch
+	msg6 := CastMessage{
+		PayloadUTF8: `{
+			"type": "MEDIA_STATUS",
+			"status": [{
+				"mediaSessionId": 2,
+				"playerState": "PLAYING",
+				"currentTime": 0.0,
+				"media": {
+					"duration": 1800.0,
+					"metadata": {
+						"title": "New Session",
+						"seriesTitle": "Show B"
+					}
+				}
+			}]
+		}`,
+	}
+	client.handleMediaMessage(msg6)
+	time.Sleep(50 * time.Millisecond)
+
+	mu.Lock()
+	if len(receivedPayloads) != 5 {
+		t.Fatalf("expected 5 dispatches after mediaSessionId change, got %d", len(receivedPayloads))
+	}
+	p6 := receivedPayloads[4]
+	mu.Unlock()
+	if p6["title"] != "New Session" || p6["duration"] != 1800.0 {
+		t.Errorf("expected New Session, got %+v", p6)
+	}
+
+	// 7. Verify dispatchTrigger includes metadata
+	client.dispatchTrigger()
+	time.Sleep(50 * time.Millisecond)
+	mu.Lock()
+	if len(receivedPayloads) != 6 {
+		t.Fatalf("expected 6 dispatches after dispatchTrigger, got %d", len(receivedPayloads))
+	}
+	p7 := receivedPayloads[5]
+	mu.Unlock()
+	if p7["title"] != "New Session" || p7["series"] != "Show B" {
+		t.Errorf("expected dispatchTrigger to include metadata, got %+v", p7)
 	}
 }
