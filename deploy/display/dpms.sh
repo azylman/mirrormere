@@ -92,6 +92,8 @@ case "$cmd" in
             output="$(get_output)"
             echo "[Mirrormere DPMS] Powering on output: ${output}"
             run_display_wayland wlr-randr --output "${output}" --on
+            scale="${MIRRORMERE_SCALE_FACTOR:-1.0}"
+            run_display_wayland wlr-randr --output "${output}" --scale "${scale}" 2>/dev/null || true
             reset_swayidle_active
         fi
         ;;

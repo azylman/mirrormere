@@ -51,6 +51,7 @@ CHROME_PID=""
 WATCHDOG_PID=""
 SWAYIDLE_PID=""
 KANSHI_PID=""
+SCALE_WATCHDOG_PID=""
 
 # Helper: close inherited file descriptors > 2 in background subshells to prevent
 # leaking Cage's internal pipe and causing compositor hangs on exit.
@@ -83,6 +84,10 @@ cleanup() {
         kill "$KANSHI_PID" 2>/dev/null || true
     fi
     pkill -u "$(id -u)" kanshi 2>/dev/null || true
+
+    if [[ -n "${SCALE_WATCHDOG_PID:-}" ]] && kill -0 "$SCALE_WATCHDOG_PID" 2>/dev/null; then
+        kill "$SCALE_WATCHDOG_PID" 2>/dev/null || true
+    fi
 
     # 3. Ensure browser is terminated if Cage exited first or we received a signal
     if [[ -n "${CHROME_PID:-}" ]] && kill -0 "$CHROME_PID" 2>/dev/null; then
@@ -166,6 +171,30 @@ run_swayidle() {
 if [[ "$IDLE_TIMEOUT_SECONDS" -gt 0 ]] && command -v swayidle >/dev/null 2>&1; then
     run_swayidle &
     SWAYIDLE_PID=$!
+fi
+
+# Start display scale watchdog to handle hotplug reconnects and prevent resolution drift
+run_scale_watchdog() {
+    isolate_fds
+    local target="${SCALE_FACTOR:-1.0}"
+    while kill -0 "$CAGE_PID" 2>/dev/null; do
+        sleep 2.0 2>/dev/null || python3 -c "import time; time.sleep(2.0)" 2>/dev/null || true
+        if command -v wlr-randr >/dev/null 2>&1; then
+            local current
+            current="$(wlr-randr --output "$OUTPUT" 2>/dev/null | awk '/Scale:/ { print ($2 + 0); exit }' || true)"
+            if [[ -n "$current" ]] && awk -v c="$current" -v t="$target" 'BEGIN { diff = c - t; if (diff < 0) diff = -diff; exit !(diff > 0.01) }'; then
+                echo "[Mirrormere Session] Display scale drift detected (current: ${current}, target: ${target}). Restoring..."
+                wlr-randr --output "$OUTPUT" --scale "$target" 2>/dev/null || true
+                if [[ -n "${KANSHI_PID:-}" ]] && kill -0 "$KANSHI_PID" 2>/dev/null; then
+                    kill -HUP "$KANSHI_PID" 2>/dev/null || true
+                fi
+            fi
+        fi
+    done
+}
+if command -v wlr-randr >/dev/null 2>&1; then
+    run_scale_watchdog &
+    SCALE_WATCHDOG_PID=$!
 fi
 
 # Clean up any stale Chrome singleton locks from past crashes
