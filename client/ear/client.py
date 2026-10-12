@@ -161,6 +161,7 @@ class VoiceDaemon:
         self.silence_start: Optional[float] = None
         self.record_start: Optional[float] = None
         self.has_spoken = False
+        self.current_wake_word: str = ""
         self.max_seen = {}
         self.current_worker: Optional[threading.Thread] = None
 
@@ -473,9 +474,18 @@ class VoiceDaemon:
         return triggered_model
 
 
-    def _start_listening(self, now: float) -> None:
+    @staticmethod
+    def is_google_wake(keyword: Optional[str]) -> bool:
+        """Determines if a detected wake word matches Google Assistant wake triggers."""
+        if not keyword:
+            return False
+        kw = keyword.strip().lower()
+        return "@hey_google" in kw or "@hi_google" in kw or "google" in kw
+
+    def _start_listening(self, now: float, wake_word: Optional[str] = None) -> None:
         """Transitions into wake-triggered recording, mirroring the wake-word flow."""
         self.state = "listening"
+        self.current_wake_word = str(wake_word) if wake_word else ""
         post_voice_state(self.cfg.mirrormere_url, "listening")
         # Prepend pre-roll buffer so starting speech phonemes are never clipped
         self.utterance_buffer = list(self.pre_roll)
@@ -527,8 +537,9 @@ class VoiceDaemon:
             self.pre_roll.append(raw_bytes)
 
             if self.wake_mode_uses_wake_word() and self._wake_ready(now):
-                if self._check_wake_word(raw_bytes):
-                    self._start_listening(now)
+                wake_word = self._check_wake_word(raw_bytes)
+                if wake_word:
+                    self._start_listening(now, wake_word=wake_word)
                     return "wake_detected"
 
             if self.wake_mode_uses_ambient() and self._ambient_ready(now):
@@ -539,12 +550,13 @@ class VoiceDaemon:
             return None
 
         elif self.state == "ambient_listening":
-            if self.wake_mode_uses_wake_word() and self._wake_ready(now) and self._check_wake_word(raw_bytes):
+            wake_word = self._check_wake_word(raw_bytes) if (self.wake_mode_uses_wake_word() and self._wake_ready(now)) else None
+            if wake_word:
                 # Wake word fired mid-segment ("both" mode): hand off to the
                 # normal wake-triggered flow and discard the ambient buffer
                 # so this segment never reaches the classifier.
                 self._reset_ambient_state()
-                self._start_listening(now)
+                self._start_listening(now, wake_word=wake_word)
                 return "wake_detected"
 
             self.ambient_buffer.append(raw_bytes)
@@ -597,6 +609,7 @@ class VoiceDaemon:
                 self.reset_wake_engine()
                 self.cooldown_until = now + 1.0
                 self.state = "idle"
+                self.current_wake_word = ""
                 post_voice_state(self.cfg.mirrormere_url, "idle")
                 self.utterance_buffer = []
                 self.false_wakes_count += 1
@@ -618,7 +631,12 @@ class VoiceDaemon:
                     silence_duration,
                 )
                 self.save_utterance(self.utterance_buffer)
-                if self.cfg.hub_url:
+                is_google = self.is_google_wake(self.current_wake_word)
+                if is_google and self.cfg.google_voice_url:
+                    with self.busy_lock:
+                        self.busy = True
+                    self.dispatch_google_voice(self.cfg.save_path)
+                elif self.cfg.hub_url:
                     # Claim busy now, not when the worker thread starts, so
                     # an ambient engage can't slip into the gap.
                     with self.busy_lock:
@@ -632,6 +650,7 @@ class VoiceDaemon:
                 self.max_seen = {m: 0.0 for m in self.active_models}
                 self.state = "idle"
                 self.utterance_buffer = []
+                self.current_wake_word = ""
                 return "utterance_saved"
 
         return None
@@ -817,6 +836,50 @@ class VoiceDaemon:
         except Exception as e:
             logger.debug("Audio playback failed: %s", e)
         return False
+
+    def dispatch_google_voice(self, wav_path: str) -> None:
+        """Dispatches Google Voice utterance to Chromecast voice bridge on a background worker thread."""
+        t = threading.Thread(target=self._google_voice_worker, args=(wav_path,), daemon=True)
+        t.start()
+        self.current_worker = t
+
+    def _google_voice_worker(self, wav_path: str) -> None:
+        """Reads utterance WAV and POSTs to google_voice_url."""
+        if not os.path.exists(wav_path):
+            self.busy = False
+            self.reply_ended_at = time.time()
+            post_voice_state(self.cfg.mirrormere_url, "idle", timeout=2.0)
+            return
+
+        self.busy = True
+        try:
+            with open(wav_path, "rb") as f:
+                wav_bytes = f.read()
+
+            post_voice_state(self.cfg.mirrormere_url, "thinking")
+            req = urllib.request.Request(
+                self.cfg.google_voice_url,
+                data=wav_bytes,
+                headers={
+                    "Content-Type": "audio/wav",
+                    "Accept": "application/json",
+                    "X-Target-Sample-Rate": "8000",
+                },
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=self.cfg.google_voice_timeout_seconds) as resp:
+                status = getattr(resp, "status", 200)
+                logger.info("Dispatched voice utterance to Google Voice bridge: HTTP %d", status)
+        except Exception as e:
+            logger.warning(
+                "Failed to dispatch voice utterance to Google Voice bridge (%s): %s",
+                self.cfg.google_voice_url,
+                e,
+            )
+        finally:
+            post_voice_state(self.cfg.mirrormere_url, "idle")
+            self.busy = False
+            self.reply_ended_at = time.time()
 
     def dispatch_hub_interaction(self, wav_path: str) -> None:
         """Dispatches hub streaming interaction on a background worker thread."""

@@ -1321,10 +1321,109 @@ class TestVoiceDaemon(unittest.TestCase):
         self.assertTrue(os.path.exists(kw_path), f"keywords.txt not found at {kw_path}")
         with open(kw_path, "r", encoding="utf-8") as f:
             content = f.read()
-        self.assertIn("\u2581HE Y \u2581S I RI", content)
-        self.assertIn("@hey_siri", content)
-        self.assertIn("\u2581HE LL O \u2581WORLD", content)
+        self.assertIn("@hey_aerial", content)
+        self.assertIn("@hey_google", content)
 
+    def test_is_google_wake(self):
+        self.assertTrue(VoiceDaemon.is_google_wake("@hey_google"))
+        self.assertTrue(VoiceDaemon.is_google_wake("@hi_google"))
+        self.assertTrue(VoiceDaemon.is_google_wake("▁HE Y ▁GO O G LE @hey_google"))
+        self.assertTrue(VoiceDaemon.is_google_wake("google"))
+        self.assertFalse(VoiceDaemon.is_google_wake("@hey_aerial"))
+        self.assertFalse(VoiceDaemon.is_google_wake("@hey_siri"))
+        self.assertFalse(VoiceDaemon.is_google_wake("alexa"))
+        self.assertFalse(VoiceDaemon.is_google_wake(None))
+        self.assertFalse(VoiceDaemon.is_google_wake(""))
+
+    def test_process_frame_routes_google_wake_to_google_voice(self):
+        cfg = VoiceConfig(
+            wake_engine="sherpa-onnx",
+            wake_mode="wake_word",
+            silence_ms=100,
+            save_path=self.save_path,
+            google_voice_url="http://localhost:8092/voice",
+        )
+        mock_spotter = MockSherpaSpotter(keyword="@hey_google")
+        daemon = VoiceDaemon(cfg, model=mock_spotter)
+
+        # Trigger wake frame
+        silent_frame = struct.pack("<1280h", *([0] * 1280))
+        event = daemon.process_frame(silent_frame)
+        self.assertEqual(event, "wake_detected")
+        self.assertEqual(daemon.state, "listening")
+        self.assertEqual(daemon.current_wake_word, "@hey_google")
+
+        # Speech frame
+        speech_frame = struct.pack("<1280h", *([10000] * 1280))
+        daemon.process_frame(speech_frame)
+        self.assertTrue(daemon.has_spoken)
+
+        # Silence frame ending utterance
+        daemon.silence_start = time.time() - 0.2
+        with patch.object(daemon, "dispatch_google_voice") as mock_google, patch.object(daemon, "dispatch_hub_interaction") as mock_hub:
+            event = daemon.process_frame(silent_frame)
+            self.assertEqual(event, "utterance_saved")
+            mock_google.assert_called_once_with(self.save_path)
+            mock_hub.assert_not_called()
+
+        self.assertEqual(daemon.state, "idle")
+        self.assertEqual(daemon.current_wake_word, "")
+
+    def test_process_frame_routes_aerial_wake_to_hub_interaction(self):
+        cfg = VoiceConfig(
+            wake_engine="sherpa-onnx",
+            wake_mode="wake_word",
+            silence_ms=100,
+            save_path=self.save_path,
+            hub_url="http://hub:9000/api/voice/interact",
+            google_voice_url="http://localhost:8092/voice",
+        )
+        mock_spotter = MockSherpaSpotter(keyword="@hey_aerial")
+        daemon = VoiceDaemon(cfg, model=mock_spotter)
+
+        silent_frame = struct.pack("<1280h", *([0] * 1280))
+        event = daemon.process_frame(silent_frame)
+        self.assertEqual(event, "wake_detected")
+        self.assertEqual(daemon.state, "listening")
+        self.assertEqual(daemon.current_wake_word, "@hey_aerial")
+
+        speech_frame = struct.pack("<1280h", *([10000] * 1280))
+        daemon.process_frame(speech_frame)
+
+        daemon.silence_start = time.time() - 0.2
+        with patch.object(daemon, "dispatch_google_voice") as mock_google, patch.object(daemon, "dispatch_hub_interaction") as mock_hub:
+            event = daemon.process_frame(silent_frame)
+            self.assertEqual(event, "utterance_saved")
+            mock_hub.assert_called_once_with(self.save_path)
+            mock_google.assert_not_called()
+
+    def test_google_voice_worker_posts_wav(self):
+        cfg = VoiceConfig(
+            google_voice_url="http://test-bridge:8092/voice",
+            mirrormere_url="http://test-mirrormere:8080",
+        )
+        daemon = VoiceDaemon(cfg, model=MockModel())
+
+        wav_bytes = b"RIFF....WAVEfmt ...."
+        with open(self.save_path, "wb") as f:
+            f.write(wav_bytes)
+
+        with patch("urllib.request.urlopen") as mock_urlopen, patch("client.ear.client.post_voice_state") as mock_post_state:
+            mock_resp = MagicMock()
+            mock_resp.status = 200
+            mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+            daemon._google_voice_worker(self.save_path)
+
+            self.assertFalse(daemon.busy)
+            mock_post_state.assert_any_call("http://test-mirrormere:8080", "thinking")
+            mock_post_state.assert_any_call("http://test-mirrormere:8080", "idle")
+            mock_urlopen.assert_called_once()
+            req = mock_urlopen.call_args[0][0]
+            self.assertEqual(req.full_url, "http://test-bridge:8092/voice")
+            self.assertEqual(req.data, wav_bytes)
+            self.assertEqual(req.headers.get("Content-type"), "audio/wav")
+            self.assertEqual(req.headers.get("X-target-sample-rate"), "8000")
 
 
 if __name__ == "__main__":

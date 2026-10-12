@@ -242,6 +242,39 @@ voice:
         self.assertIn("click", content)
         self.assertIn("sentencepiece", content)
 
+    def test_google_voice_config_defaults(self):
+        cfg = VoiceConfig()
+        self.assertEqual(cfg.google_voice_url, "http://localhost:8092/voice")
+        self.assertEqual(cfg.google_voice_timeout_seconds, 3.0)
+
+    def test_google_voice_config_from_yaml(self):
+        yaml_content = """
+ear:
+  google_voice_url: "http://kiosk-remote.local:8092/voice"
+  google_voice_timeout_seconds: 4.5
+"""
+        with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
+            f.write(yaml_content)
+            temp_path = f.name
+        try:
+            cfg = load_config(temp_path)
+            self.assertEqual(cfg.google_voice_url, "http://kiosk-remote.local:8092/voice")
+            self.assertEqual(cfg.google_voice_timeout_seconds, 4.5)
+        finally:
+            if os.path.exists(temp_path):
+                os.unlink(temp_path)
+
+    def test_google_voice_config_env_overrides(self):
+        os.environ["MIRRORMERE_GOOGLE_VOICE_URL"] = "http://custom-bridge:8092/voice"
+        os.environ["MIRRORMERE_GOOGLE_VOICE_TIMEOUT_SECONDS"] = "5.0"
+        try:
+            cfg = load_config("/path/to/nonexistent.yaml")
+            self.assertEqual(cfg.google_voice_url, "http://custom-bridge:8092/voice")
+            self.assertEqual(cfg.google_voice_timeout_seconds, 5.0)
+        finally:
+            del os.environ["MIRRORMERE_GOOGLE_VOICE_URL"]
+            del os.environ["MIRRORMERE_GOOGLE_VOICE_TIMEOUT_SECONDS"]
+
 
 if __name__ == "__main__":
     unittest.main()

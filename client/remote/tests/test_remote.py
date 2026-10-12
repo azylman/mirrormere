@@ -890,6 +890,163 @@ remote:
             self.assertEqual(resp.status, 200)
             d.remote_helper.remote.send_key_command.assert_called_with("WAKEUP")
 
+    def test_android_remote_helper_send_voice(self):
+        helper = daemon.AndroidRemoteHelper("127.0.0.1", "/tmp/nonexistent-certs-dir")
+        # Disconnected
+        self.assertFalse(asyncio.run(helper.send_voice(b"pcm-data")))
+
+        # Connected with valid voice stream
+        helper.connected = True
+        mock_remote = MagicMock()
+        mock_stream = AsyncMock()
+        mock_stream.__aenter__.return_value = mock_stream
+        mock_stream.send_chunk = MagicMock(return_value=True)
+        mock_remote.start_voice = AsyncMock(return_value=mock_stream)
+        helper.remote = mock_remote
+
+        success = asyncio.run(helper.send_voice(b"pcm-data", timeout=1.5))
+        self.assertTrue(success)
+        mock_remote.start_voice.assert_awaited_once_with(timeout=1.5)
+        mock_stream.send_chunk.assert_called_once_with(b"pcm-data")
+
+        # start_voice error handling
+        mock_remote.start_voice = AsyncMock(side_effect=RuntimeError("connection error"))
+        self.assertFalse(asyncio.run(helper.send_voice(b"pcm-data")))
+
+
+class TestVoiceEndpoint(unittest.TestCase):
+    def setUp(self):
+        self.daemon = daemon.RemoteDaemon()
+        self.daemon.remote_helper.connected = True
+        self.daemon.remote_helper.send_voice = AsyncMock(return_value=True)
+
+    def test_handle_voice_empty_body(self):
+        req = MagicMock()
+        req.headers = {"Content-Type": "audio/wav"}
+        req.query = {}
+        async def mock_read():
+            return b""
+        req.read = mock_read
+
+        with patch.object(daemon, "web") as mock_web:
+            mock_web.json_response = lambda data, status=200: MagicMock(status=status, data=data)
+            resp = asyncio.run(self.daemon.handle_voice(req))
+            self.assertEqual(resp.status, 400)
+            self.assertIn("no audio payload", resp.data["message"])
+
+    def test_handle_voice_raw_pcm_success(self):
+        raw_pcm = b"\x00\x01\x00\x02" * 4000  # 16000 bytes (16kHz 16-bit mono)
+        req = MagicMock()
+        req.headers = {"Content-Type": "audio/l16"}
+        req.query = {}
+        async def mock_read():
+            return raw_pcm
+        req.read = mock_read
+
+        with patch.object(daemon, "web") as mock_web:
+            mock_web.json_response = lambda data, status=200: MagicMock(status=status, data=data)
+            resp = asyncio.run(self.daemon.handle_voice(req))
+            self.assertEqual(resp.status, 200)
+            self.assertEqual(resp.data["status"], "ok")
+            # Auto-decimated 2:1 to 8000 Hz
+            self.assertEqual(resp.data["bytes_sent"], 8000)
+            self.assertEqual(resp.data["sample_rate"], 8000)
+            expected_decimated = b"".join([raw_pcm[i:i+2] for i in range(0, len(raw_pcm), 4)])
+            self.daemon.remote_helper.send_voice.assert_awaited_once_with(expected_decimated)
+
+    def test_handle_voice_explicit_16000(self):
+        raw_pcm = b"\x00\x01" * 8000  # 16000 bytes
+        req = MagicMock()
+        req.headers = {"Content-Type": "audio/l16"}
+        req.query = {"resample": "16000"}
+        async def mock_read():
+            return raw_pcm
+        req.read = mock_read
+
+        with patch.object(daemon, "web") as mock_web:
+            mock_web.json_response = lambda data, status=200: MagicMock(status=status, data=data)
+            resp = asyncio.run(self.daemon.handle_voice(req))
+            self.assertEqual(resp.status, 200)
+            self.assertEqual(resp.data["bytes_sent"], 16000)
+            self.assertEqual(resp.data["sample_rate"], 16000)
+            self.daemon.remote_helper.send_voice.assert_awaited_once_with(raw_pcm)
+
+    def test_handle_voice_wav_unwrapping(self):
+        import io, wave
+        raw_pcm = b"\x10\x00\x20\x00" * 2000
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(16000)
+            wf.writeframes(raw_pcm)
+        wav_bytes = buf.getvalue()
+
+        req = MagicMock()
+        req.headers = {"Content-Type": "audio/wav"}
+        req.query = {}
+        async def mock_read():
+            return wav_bytes
+        req.read = mock_read
+
+        with patch.object(daemon, "web") as mock_web:
+            mock_web.json_response = lambda data, status=200: MagicMock(status=status, data=data)
+            resp = asyncio.run(self.daemon.handle_voice(req))
+            self.assertEqual(resp.status, 200)
+            # Default auto-decimated to 8000 Hz
+            self.assertEqual(resp.data["bytes_sent"], 4000)
+            self.assertEqual(resp.data["sample_rate"], 8000)
+            expected_decimated = b"".join([raw_pcm[i:i+2] for i in range(0, len(raw_pcm), 4)])
+            self.daemon.remote_helper.send_voice.assert_awaited_once_with(expected_decimated)
+
+    def test_handle_voice_resample_8000(self):
+        raw_pcm = b"\x00\x01\x00\x02" * 2000  # 8000 bytes of 16-bit samples
+        req = MagicMock()
+        req.headers = {"Content-Type": "audio/l16"}
+        req.query = {"resample": "8000"}
+        async def mock_read():
+            return raw_pcm
+        req.read = mock_read
+
+        with patch.object(daemon, "web") as mock_web:
+            mock_web.json_response = lambda data, status=200: MagicMock(status=status, data=data)
+            resp = asyncio.run(self.daemon.handle_voice(req))
+            self.assertEqual(resp.status, 200)
+            self.assertEqual(resp.data["sample_rate"], 8000)
+            self.assertEqual(resp.data["bytes_sent"], 4000)
+            expected_decimated = b"".join([raw_pcm[i:i+2] for i in range(0, len(raw_pcm), 4)])
+            self.daemon.remote_helper.send_voice.assert_awaited_once_with(expected_decimated)
+
+    def test_handle_voice_disconnected_503(self):
+        self.daemon.remote_helper.connected = False
+        req = MagicMock()
+        req.headers = {"Content-Type": "audio/l16"}
+        req.query = {}
+        async def mock_read():
+            return b"some-pcm-audio"
+        req.read = mock_read
+
+        with patch.object(daemon, "web") as mock_web:
+            mock_web.json_response = lambda data, status=200: MagicMock(status=status, data=data)
+            resp = asyncio.run(self.daemon.handle_voice(req))
+            self.assertEqual(resp.status, 503)
+            self.assertEqual(resp.data["connected"], False)
+
+    def test_handle_voice_delivery_failure_502(self):
+        self.daemon.remote_helper.send_voice = AsyncMock(return_value=False)
+        req = MagicMock()
+        req.headers = {"Content-Type": "audio/l16"}
+        req.query = {}
+        async def mock_read():
+            return b"some-pcm-audio"
+        req.read = mock_read
+
+        with patch.object(daemon, "web") as mock_web:
+            mock_web.json_response = lambda data, status=200: MagicMock(status=status, data=data)
+            resp = asyncio.run(self.daemon.handle_voice(req))
+            self.assertEqual(resp.status, 502)
+
 
 if __name__ == "__main__":
     unittest.main()
+
