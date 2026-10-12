@@ -184,6 +184,7 @@ class AndroidRemoteHelper:
                 certfile=self.cert_file,
                 keyfile=self.key_file,
                 host=self.host,
+                enable_voice=True,
             )
         except Exception as e:
             logger.error("Failed to initialize AndroidTVRemote client: %s", e)
