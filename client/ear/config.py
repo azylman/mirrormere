@@ -49,6 +49,8 @@ class VoiceConfig:
     keywords_score: float = 1.0
     keywords_threshold: float = 0.25
     sherpa_num_threads: int = 2
+    google_voice_url: str = "http://localhost:8092/voice"
+    google_voice_timeout_seconds: float = 3.0
 
     def wake_mode_uses_wake_word(self) -> bool:
         """Returns True if the current wake mode evaluates a wake phrase."""
@@ -191,6 +193,13 @@ def load_config(path: Optional[str] = None) -> VoiceConfig:
             cfg.sherpa_num_threads = int(os.environ["MIRRORMERE_SHERPA_NUM_THREADS"])
         except ValueError:
             pass
+    if "MIRRORMERE_GOOGLE_VOICE_URL" in os.environ:
+        cfg.google_voice_url = os.environ["MIRRORMERE_GOOGLE_VOICE_URL"]
+    if "MIRRORMERE_GOOGLE_VOICE_TIMEOUT_SECONDS" in os.environ:
+        try:
+            cfg.google_voice_timeout_seconds = float(os.environ["MIRRORMERE_GOOGLE_VOICE_TIMEOUT_SECONDS"])
+        except ValueError:
+            pass
 
     _validate(cfg)
     return cfg
@@ -223,3 +232,8 @@ def _validate(cfg: VoiceConfig) -> None:
         cfg.keywords_threshold = 0.25
     else:
         cfg.keywords_threshold = float(cfg.keywords_threshold)
+
+    if not isinstance(cfg.google_voice_timeout_seconds, (int, float)) or float(cfg.google_voice_timeout_seconds) <= 0.0:
+        cfg.google_voice_timeout_seconds = 3.0
+    else:
+        cfg.google_voice_timeout_seconds = float(cfg.google_voice_timeout_seconds)

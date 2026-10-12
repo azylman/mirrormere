@@ -234,6 +234,23 @@ class AndroidRemoteHelper:
             logger.error("Failed to launch app %s: %s", app_link, e)
             return False
 
+    async def send_voice(self, pcm_bytes: bytes, timeout: float = 2.0) -> bool:
+        """Stream 16-bit mono PCM audio to Android TV Remote voice session."""
+        if not self.connected or not self.remote:
+            logger.warning("Cannot send voice: Android TV Remote disconnected")
+            return False
+        try:
+            if not hasattr(self.remote, "start_voice"):
+                logger.error("Active AndroidTVRemote client does not support start_voice")
+                return False
+            voice_stream = await self.remote.start_voice(timeout=timeout)
+            async with voice_stream:
+                voice_stream.send_chunk(pcm_bytes)
+            return True
+        except Exception as e:
+            logger.error("Failed to stream voice to Android TV Remote: %s", e)
+            return False
+
 # Initialize BlueZ GATT and Agent if bluez-peripheral is installed
 try:
     from bluez_peripheral.util import get_message_bus, Adapter
@@ -878,6 +895,76 @@ class RemoteDaemon:
         results = await self._check_and_reconnect_bluetooth(target_mac=target_mac, force=force)
         return web.json_response({"status": "ok", "reconnected": results})
 
+    async def handle_voice(self, request):
+        """Accepts audio/wav or raw PCM audio and streams to Android TV Voice session."""
+        content_type = request.headers.get("Content-Type", "").lower()
+        pcm_bytes = None
+        sample_rate = 16000
+
+        if "multipart/form-data" in content_type:
+            reader = await request.multipart()
+            while True:
+                part = await reader.next()
+                if part is None:
+                    break
+                if part.name in ("audio", "file", "voice"):
+                    pcm_bytes = await part.read(decode=False)
+                    break
+        else:
+            pcm_bytes = await request.read()
+
+        if not pcm_bytes:
+            return web.json_response({"status": "error", "message": "no audio payload provided"}, status=400)
+
+        # If WAV header detected, extract raw PCM frames
+        if pcm_bytes.startswith(b"RIFF") and len(pcm_bytes) > 44:
+            try:
+                import io
+                import wave
+                with wave.open(io.BytesIO(pcm_bytes), "rb") as wf:
+                    channels = wf.getnchannels()
+                    sampwidth = wf.getsampwidth()
+                    sample_rate = wf.getframerate()
+                    frames = wf.readframes(wf.getnframes())
+
+                    # Downmix stereo to mono if needed
+                    if channels == 2 and sampwidth == 2:
+                        import struct
+                        n_samples = len(frames) // 4
+                        stereo = struct.unpack(f"<{n_samples * 2}h", frames)
+                        mono_samples = [stereo[i * 2] for i in range(n_samples)]
+                        frames = struct.pack(f"<{n_samples}h", *mono_samples)
+                    pcm_bytes = frames
+            except Exception as e:
+                logger.warning("Failed to parse WAV header, fallback to raw bytes: %s", e)
+
+        # Target sample rate: Android TV Remote protocol v2 expects 8000 Hz 16-bit mono PCM.
+        # Auto-decimate 16kHz -> 8kHz by default unless caller explicitly requested 16000.
+        target_rate = request.query.get("resample") or request.headers.get("X-Target-Sample-Rate") or "8000"
+        if target_rate not in ("16000", "16k") and sample_rate == 16000:
+            # 2x decimate 16-bit PCM (stride 4 bytes -> take first 2 bytes)
+            pcm_bytes = b"".join([pcm_bytes[i:i+2] for i in range(0, len(pcm_bytes), 4)])
+            sample_rate = 8000
+
+        if not self.remote_helper.connected:
+            return web.json_response(
+                {"status": "error", "message": "Android TV Remote disconnected", "connected": False},
+                status=503,
+            )
+
+        success = await self.remote_helper.send_voice(pcm_bytes)
+        if not success:
+            return web.json_response(
+                {"status": "error", "message": "voice stream delivery failed"},
+                status=502,
+            )
+
+        return web.json_response({
+            "status": "ok",
+            "bytes_sent": len(pcm_bytes),
+            "sample_rate": sample_rate,
+        })
+
     async def _cleanup_stale_connections(self):
         """Disconnects paired devices that BlueZ still holds from a previous container lifecycle.
 
@@ -1090,6 +1177,7 @@ class RemoteDaemon:
         app.router.add_get("/remote/status", self.handle_remote_status)
         app.router.add_post("/bluetooth/remove", self.handle_bluetooth_remove)
         app.router.add_post("/bluetooth/reconnect", self.handle_bluetooth_reconnect)
+        app.router.add_post("/voice", self.handle_voice)
 
         runner = web.AppRunner(app)
         await runner.setup()
