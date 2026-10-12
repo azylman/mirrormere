@@ -415,12 +415,14 @@ body[data-theme="night"],
 [data-theme="night"] .video-hud-side-rail,
 [data-theme="night"] .video-hud-capsule-top-right,
 [data-theme="night"] .video-hud-controls,
-[data-theme="night"] .video-hud-bottom-bar {
+[data-theme="night"] .video-hud-bottom-bar,
+[data-theme="night"] .video-hud-title {
   background: rgba(71, 65, 94, 0.90);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
   border-color: rgba(197, 163, 255, 0.25);
   box-shadow: 0 12px 32px rgba(20, 16, 32, 0.6);
+  color: var(--mm-text-title);
 }
 
 [data-theme="night"] .video-hud-play-center {
@@ -437,15 +439,6 @@ body[data-theme="night"],
   border-color: rgba(197, 163, 255, 0.65);
   color: var(--mm-lavender, #c5a3ff);
   box-shadow: 0 12px 36px rgba(20, 16, 32, 0.75), 0 0 32px rgba(197, 163, 255, 0.45);
-}
-
-[data-theme="night"] .video-hud-title {
-  background: rgba(71, 65, 94, 0.75);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border-color: rgba(197, 163, 255, 0.25);
-  color: var(--mm-text-title);
-  text-shadow: 0 2px 8px rgba(20, 16, 32, 0.7);
 }
 
 [data-theme="night"] .video-hud-time {
@@ -1105,20 +1098,29 @@ button, .touch-target {
   top: 24px;
   left: 50%;
   transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 54px;
+  min-height: 54px;
+  padding: 0 24px;
+  border-radius: 28px;
+  background: rgba(255, 255, 255, 0.94);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1.5px solid rgba(90, 60, 30, 0.08);
+  box-shadow: 0 12px 28px -4px rgba(0, 0, 0, 0.25);
   font-family: var(--mm-font-display);
-  font-size: 1.35rem;
+  font-size: 1.15rem;
   font-weight: 700;
-  color: #ffffff;
-  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.6);
-  padding: 8px 16px;
-  background: rgba(255, 255, 255, 0.15);
-  backdrop-filter: blur(12px);
-  border-radius: 9999px;
-  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: var(--mm-text-title);
   white-space: nowrap;
   max-width: 50vw;
   overflow: hidden;
   text-overflow: ellipsis;
+  pointer-events: auto;
+  box-sizing: border-box;
+  z-index: 85;
 }
 
 /* Unified Frosted Pill in Upper Left: Back + Home */

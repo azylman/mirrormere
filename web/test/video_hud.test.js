@@ -2276,3 +2276,30 @@ test('VideoHUDController: center play button toggles playback and isolates point
   hud.destroy();
 });
 
+test('VideoHUD: hud.css defines consistent pill styling and 54px size for .video-hud-title', () => {
+  const cssPath = path.resolve(__dirname, '../static/css/hud.css');
+  const css = fs.readFileSync(cssPath, 'utf8');
+
+  // Verify .video-hud-title has 54px height, frosted glass styling, and matching border radius
+  assert.ok(
+    /\.video-hud-title\s*\{[^}]*height:\s*54px;/.test(css),
+    'hud.css must define 54px height for .video-hud-title'
+  );
+  assert.ok(
+    /\.video-hud-title\s*\{[^}]*border-radius:\s*28px;/.test(css),
+    'hud.css must define 28px border-radius for .video-hud-title'
+  );
+  assert.ok(
+    /\.video-hud-title\s*\{[^}]*background:\s*rgba\(255,\s*255,\s*255,\s*0\.94\);/.test(css),
+    'hud.css must define rgba(255, 255, 255, 0.94) frosted background for .video-hud-title'
+  );
+  assert.ok(
+    /\.video-hud-title\s*\{[^}]*box-shadow:\s*0\s+12px\s+28px\s+-4px\s+rgba\(0,\s*0,\s*0,\s*0\.25\);/.test(css),
+    'hud.css must define box-shadow matching overlay capsules for .video-hud-title'
+  );
+  assert.ok(
+    /\[data-theme=["']?night["']?\]\s+\.video-hud-title/.test(css),
+    'hud.css must include night mode styling for .video-hud-title matching overlay'
+  );
+});
+
