@@ -788,6 +788,21 @@ components:
         muted:
           type: boolean
           example: false
+        title:
+          type: string
+        series:
+          type: string
+        season:
+          type: string
+        episode:
+          type: string
+        position:
+          type: number
+        duration:
+          type: number
+        position_updated_at:
+          type: integer
+          format: int64
     VideoStateResponse:
       type: object
       required:
@@ -846,6 +861,21 @@ components:
           enum: [playing, paused, buffering]
           default: playing
           example: playing
+        title:
+          type: string
+        series:
+          type: string
+        season:
+          type: string
+        episode:
+          type: string
+        position:
+          type: number
+        duration:
+          type: number
+        position_updated_at:
+          type: integer
+          format: int64
     VideoDismissRequest:
       type: object
       required:
@@ -866,7 +896,7 @@ components:
           example: chromecast
         action:
           type: string
-          enum: [toggle_playback, play, pause, rewind, fast_forward, back, home, captions, next, previous]
+          enum: [toggle_playback, play, pause, rewind, fast_forward, back, home, captions, next, previous, seek]
           example: toggle_playback
         value:
           nullable: true
@@ -883,6 +913,21 @@ components:
           type: string
           enum: [playing, paused, buffering]
           example: playing
+        title:
+          type: string
+        series:
+          type: string
+        season:
+          type: string
+        episode:
+          type: string
+        position:
+          type: number
+        duration:
+          type: number
+        position_updated_at:
+          type: integer
+          format: int64
     VideoPlayerStateResponse:
       type: object
       required:

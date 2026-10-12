@@ -48,14 +48,29 @@
       this.bottomBar = options.bottomBarElement ||
         (this.overlay?.children?.find ? this.overlay.children.find((c) => c.id === 'video-hud-bottom-bar') : null) ||
         (typeof document !== 'undefined' ? document.getElementById('video-hud-bottom-bar') : null);
-      this.rewindBtn = options.rewindBtn ||
-        (this.bottomBar?.children?.find ? this.bottomBar.children.find((c) => c.id === 'video-hud-rewind-btn') : null) ||
-        (typeof document !== 'undefined' ? document.getElementById('video-hud-rewind-btn') : null);
-      this.forwardBtn = options.forwardBtn ||
-        (this.bottomBar?.children?.find ? this.bottomBar.children.find((c) => c.id === 'video-hud-forward-btn') : null) ||
-        (typeof document !== 'undefined' ? document.getElementById('video-hud-forward-btn') : null);
-      this.playBtn = options.playBtn || (typeof document !== 'undefined' ? document.getElementById('video-hud-play-btn') : null);
-      this.playIcon = options.playIcon || (typeof document !== 'undefined' ? document.getElementById('video-hud-play-icon') : null);
+
+      const findInBottomBar = (id) => {
+        if (typeof document !== 'undefined') {
+          const docEl = document.getElementById(id);
+          if (docEl) return docEl;
+        }
+        if (this.bottomBar && this.bottomBar.children) {
+          const direct = this.bottomBar.children.find((c) => c.id === id);
+          if (direct) return direct;
+          for (const child of this.bottomBar.children) {
+            if (child.children && child.children.find) {
+              const nested = child.children.find((c) => c.id === id);
+              if (nested) return nested;
+            }
+          }
+        }
+        return null;
+      };
+
+      this.rewindBtn = options.rewindBtn || findInBottomBar('video-hud-rewind-btn');
+      this.forwardBtn = options.forwardBtn || findInBottomBar('video-hud-forward-btn');
+      this.playBtn = options.playBtn || findInBottomBar('video-hud-play-btn') || (typeof document !== 'undefined' ? document.getElementById('video-hud-play-btn') : null);
+      this.playIcon = options.playIcon || (this.playBtn?.children?.find ? this.playBtn.children.find((c) => c.id === 'video-hud-play-icon') : null) || (typeof document !== 'undefined' ? document.getElementById('video-hud-play-icon') : null);
       this.muteBtn = options.muteBtn || (typeof document !== 'undefined' ? document.getElementById('video-hud-mute-btn') : null);
       this.muteIcon = options.muteIcon || (typeof document !== 'undefined' ? document.getElementById('video-hud-mute-icon') : null);
       this.volumeSlider = options.volumeSlider || (typeof document !== 'undefined' ? document.getElementById('video-hud-volume-slider') : null);
@@ -70,15 +85,16 @@
       this.homeBtn = options.homeBtn ||
         (this.navBar?.children?.find ? this.navBar.children.find((c) => c.id === 'video-hud-home-btn') : null) ||
         (typeof document !== 'undefined' ? document.getElementById('video-hud-home-btn') : null);
-      this.ccBtn = options.ccBtn ||
-        (this.bottomBar?.children?.find ? this.bottomBar.children.find((c) => c.id === 'video-hud-cc-btn') : null) ||
-        (typeof document !== 'undefined' ? document.getElementById('video-hud-cc-btn') : null);
-      this.prevBtn = options.prevBtn ||
-        (this.bottomBar?.children?.find ? this.bottomBar.children.find((c) => c.id === 'video-hud-prev-btn') : null) ||
-        (typeof document !== 'undefined' ? document.getElementById('video-hud-prev-btn') : null);
-      this.nextBtn = options.nextBtn ||
-        (this.bottomBar?.children?.find ? this.bottomBar.children.find((c) => c.id === 'video-hud-next-btn') : null) ||
-        (typeof document !== 'undefined' ? document.getElementById('video-hud-next-btn') : null);
+      this.ccBtn = options.ccBtn || findInBottomBar('video-hud-cc-btn');
+      this.prevBtn = options.prevBtn || findInBottomBar('video-hud-prev-btn');
+      this.nextBtn = options.nextBtn || findInBottomBar('video-hud-next-btn');
+
+      // Progress bar elements
+      this.progressContainer = options.progressContainer || findInBottomBar('video-hud-progress-container');
+      this.timeCurrentEl = options.timeCurrentElement || findInBottomBar('video-hud-time-current');
+      this.timeTotalEl = options.timeTotalElement || findInBottomBar('video-hud-time-total');
+      this.progressFillEl = options.progressFillElement || findInBottomBar('video-hud-progress-fill');
+      this.progressTrackEl = options.progressTrackElement || findInBottomBar('video-hud-progress-track');
 
       if (this.prevBtn && (!this.prevBtn.innerHTML || !this.prevBtn.innerHTML.includes('<svg'))) {
         this.prevBtn.innerHTML = HUD_ICONS.prev;
@@ -105,6 +121,13 @@
       this.activeStream = null;
       this.lastVideoState = null;
       this.currentMuted = false;
+
+      // Progress and ticker state
+      this.progressTicker = null;
+      this.basePosition = 0;
+      this.baseDuration = 0;
+      this.basePositionTime = 0;
+      this.isScrubbing = false;
 
       // In-flight action locks
       this.isActionPending = false;
@@ -474,6 +497,95 @@
           this.boundHandlers.push({ el: this.volumeSlider, ev: ev, fn: onSliderCommit });
         });
       }
+
+      // 10. Progress track click-and-drag seeking
+      if (this.progressTrackEl) {
+        let currentSeekTime = 0;
+
+        const updateScrub = (clientX) => {
+          if (this.baseDuration <= 0) return 0;
+          const rect = (typeof this.progressTrackEl.getBoundingClientRect === 'function')
+            ? this.progressTrackEl.getBoundingClientRect()
+            : { left: 0, width: 100 };
+          const width = rect.width > 0 ? rect.width : 1;
+          const pct = Math.max(0, Math.min(1, (clientX - rect.left) / width));
+          const targetTime = pct * this.baseDuration;
+          currentSeekTime = targetTime;
+
+          if (this.progressFillEl) {
+            this.progressFillEl.style.width = `${(pct * 100).toFixed(1)}%`;
+          }
+          if (this.timeCurrentEl) {
+            this.timeCurrentEl.textContent = this.formatTime(targetTime);
+          }
+          return targetTime;
+        };
+
+        const onTrackPointerDown = (e) => {
+          if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+          this.resetAutoFade();
+
+          if (this.baseDuration <= 0) return;
+          const stream = this.getActiveStream();
+          if (!stream || (stream.duration !== undefined && stream.duration <= 0)) return;
+
+          if (typeof this.progressTrackEl.setPointerCapture === 'function' && e && e.pointerId !== undefined) {
+            try {
+              this.progressTrackEl.setPointerCapture(e.pointerId);
+            } catch (_) {}
+          }
+
+          this.isScrubbing = true;
+          if (this.progressTrackEl.classList) {
+            this.progressTrackEl.classList.add('is-scrubbing');
+          }
+
+          const clientX = (e && typeof e.clientX === 'number') ? e.clientX : 0;
+          updateScrub(clientX);
+        };
+
+        const onTrackPointerMove = (e) => {
+          if (!this.isScrubbing) return;
+          if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+          this.resetAutoFade();
+
+          const clientX = (e && typeof e.clientX === 'number') ? e.clientX : 0;
+          updateScrub(clientX);
+        };
+
+        const onTrackPointerEnd = (e) => {
+          if (!this.isScrubbing) return;
+          if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+          this.resetAutoFade();
+
+          if (typeof this.progressTrackEl.releasePointerCapture === 'function' && e && e.pointerId !== undefined) {
+            try {
+              this.progressTrackEl.releasePointerCapture(e.pointerId);
+            } catch (_) {}
+          }
+
+          this.isScrubbing = false;
+          if (this.progressTrackEl.classList) {
+            this.progressTrackEl.classList.remove('is-scrubbing');
+          }
+
+          const targetTime = currentSeekTime;
+          this.handleSeek(targetTime);
+          this.basePosition = targetTime;
+          this.basePositionTime = Date.now();
+        };
+
+        const trackEvents = [
+          { ev: 'pointerdown', fn: onTrackPointerDown },
+          { ev: 'pointermove', fn: onTrackPointerMove },
+          { ev: 'pointerup', fn: onTrackPointerEnd },
+          { ev: 'pointercancel', fn: onTrackPointerEnd },
+        ];
+        trackEvents.forEach(({ ev, fn }) => {
+          this.progressTrackEl.addEventListener(ev, fn);
+          this.boundHandlers.push({ el: this.progressTrackEl, ev, fn });
+        });
+      }
     }
 
     /**
@@ -484,6 +596,8 @@
       if (this.overlay) {
         this.overlay.classList.add('visible');
       }
+      this.renderProgressTick();
+      this.startProgressTicker();
       this.resetAutoFade();
     }
 
@@ -492,6 +606,7 @@
      */
     hideHUD() {
       this.isVisible = false;
+      this.stopProgressTicker();
       if (this.autoFadeTimer) {
         clearTimeout(this.autoFadeTimer);
         this.autoFadeTimer = null;
@@ -542,6 +657,158 @@
     }
 
     /**
+     * Format stream presentation title: "<Series Name> <season + episode annotation>: <episode name>"
+     * with graceful fallbacks.
+     * @param {Object} [stream]
+     * @returns {string}
+     */
+    formatStreamTitle(stream) {
+      if (!stream) return 'Live Video';
+
+      const series = (stream.series || stream.series_title || '').trim();
+      const title = (stream.title || stream.episode_name || '').trim();
+      let annotation = (stream.annotation || '').trim();
+
+      if (!annotation) {
+        const s = stream.season !== undefined && stream.season !== null && String(stream.season).trim() !== ''
+          ? String(stream.season).trim()
+          : '';
+        const ep = stream.episode !== undefined && stream.episode !== null && String(stream.episode).trim() !== ''
+          ? String(stream.episode).trim()
+          : '';
+
+        if (s && ep) {
+          const sNorm = s.toUpperCase().startsWith('S') ? s.toUpperCase() : `S${s}`;
+          const epNorm = ep.toUpperCase().startsWith('E') ? ep.toUpperCase() : `E${ep}`;
+          annotation = `${sNorm}${epNorm}`;
+        } else if (s) {
+          annotation = s.toUpperCase().startsWith('S') ? s.toUpperCase() : `S${s}`;
+        } else if (ep) {
+          annotation = ep.toUpperCase().startsWith('E') ? ep.toUpperCase() : `E${ep}`;
+        }
+      }
+
+      if (series && annotation && title) {
+        return `${series} ${annotation}: ${title}`;
+      }
+      if (series && title) {
+        return `${series}: ${title}`;
+      }
+      if (series && annotation) {
+        return `${series} ${annotation}`;
+      }
+      if (title) {
+        return title;
+      }
+      if (series) {
+        return series;
+      }
+      return stream.id ? `Stream: ${stream.id}` : 'Live Video';
+    }
+
+    /**
+     * Format time in seconds to M:SS or H:MM:SS string.
+     * @param {number} seconds
+     * @returns {string}
+     */
+    formatTime(seconds) {
+      if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds < 0) {
+        return '0:00';
+      }
+      const totalSecs = Math.floor(seconds);
+      const hrs = Math.floor(totalSecs / 3600);
+      const mins = Math.floor((totalSecs % 3600) / 60);
+      const secs = totalSecs % 60;
+      const padSecs = String(secs).padStart(2, '0');
+      if (hrs > 0) {
+        const padMins = String(mins).padStart(2, '0');
+        return `${hrs}:${padMins}:${padSecs}`;
+      }
+      return `${mins}:${padSecs}`;
+    }
+
+    /**
+     * Update progress state, visibility, and labels.
+     * @param {Object} [stream]
+     */
+    updateProgress(stream) {
+      if (!this.progressContainer) return;
+      if (this.isScrubbing) return;
+
+      const duration = typeof stream?.duration === 'number' && Number.isFinite(stream.duration) ? stream.duration : 0;
+      const position = typeof stream?.position === 'number' && Number.isFinite(stream.position) ? stream.position : 0;
+      const positionUpdatedAt = typeof stream?.position_updated_at === 'number' && Number.isFinite(stream.position_updated_at)
+        ? stream.position_updated_at
+        : Date.now();
+
+      this.baseDuration = duration;
+      this.basePosition = position;
+      this.basePositionTime = positionUpdatedAt;
+
+      if (duration > 0) {
+        this.progressContainer.style.display = '';
+        this.progressContainer.removeAttribute('hidden');
+        this.renderProgressTick();
+        this.startProgressTicker();
+      } else {
+        this.stopProgressTicker();
+        this.progressContainer.style.display = 'none';
+        this.progressContainer.setAttribute('hidden', 'true');
+      }
+    }
+
+    /**
+     * Advance progress by 1 tick using timestamp drift compensation.
+     */
+    renderProgressTick() {
+      if (!this.progressContainer || this.baseDuration <= 0) return;
+      if (this.isScrubbing) return;
+
+      let currentPos = this.basePosition;
+      const stream = this.activeStream;
+      if (stream && stream.player_state === 'playing') {
+        const elapsed = Math.max(0, (Date.now() - this.basePositionTime) / 1000);
+        currentPos = Math.min(this.baseDuration, this.basePosition + elapsed);
+      }
+
+      const pct = Math.min(100, Math.max(0, (currentPos / this.baseDuration) * 100));
+      if (this.progressFillEl) {
+        this.progressFillEl.style.width = `${pct.toFixed(1)}%`;
+      }
+      if (this.timeCurrentEl) {
+        this.timeCurrentEl.textContent = this.formatTime(currentPos);
+      }
+      if (this.timeTotalEl) {
+        this.timeTotalEl.textContent = this.formatTime(this.baseDuration);
+      }
+    }
+
+    /**
+     * Start the 1-second progress ticker if HUD is visible and playing.
+     */
+    startProgressTicker() {
+      if (this.progressTicker) return;
+      if (!this.isVisible || this.baseDuration <= 0) return;
+
+      this.progressTicker = setInterval(() => {
+        this.renderProgressTick();
+      }, 1000);
+      if (this.progressTicker && typeof this.progressTicker.unref === 'function') {
+        this.progressTicker.unref();
+      }
+    }
+
+    /**
+     * Stop active progress ticker timer.
+     */
+    stopProgressTicker() {
+      if (this.progressTicker) {
+        clearInterval(this.progressTicker);
+        this.progressTicker = null;
+      }
+    }
+
+    /**
      * Synchronize stream presentation, title, transport controls, and visibility.
      */
     syncStream() {
@@ -568,8 +835,11 @@
 
       // Update stream title
       if (this.titleEl) {
-        this.titleEl.textContent = stream.title || (stream.id ? `Stream: ${stream.id}` : 'Live Video');
+        this.titleEl.textContent = this.formatStreamTitle(stream);
       }
+
+      // Update progress bar & time labels
+      this.updateProgress(stream);
 
       // Gate bottom bar and nav bar visibility
       const isMedia = Boolean(stream && (stream.controllable === true || (stream.priority === 'persistent' && Boolean(this.remoteUrl))));
@@ -690,9 +960,10 @@
      * Dispatch a video action with in-flight lock and guaranteed finally release.
      * @param {string} actionName - Video API action name
      * @param {string} [remoteKeyName] - Remote key name (defaults to actionName)
+     * @param {*} [value] - Optional action payload value (e.g. seek position in seconds)
      */
-    executeAction(actionName, remoteKeyName) {
-      if (this.isActionPending) {
+    executeAction(actionName, remoteKeyName, value) {
+      if (this.isActionPending && actionName !== 'seek') {
         return Promise.resolve();
       }
       const stream = this.getActiveStream();
@@ -707,19 +978,21 @@
       }, 300);
       if (timer && typeof timer.unref === 'function') timer.unref();
 
+      const payload = {
+        id: stream.id,
+        action: actionName,
+      };
+      if (value !== undefined) {
+        payload.value = value;
+      }
+
       let p = null;
-      if (stream.controllable && stream.control_url) {
-        p = this.postAction({
-          id: stream.id,
-          action: actionName,
-        });
+      if (value !== undefined || actionName === 'seek' || (stream.controllable && stream.control_url)) {
+        p = this.postAction(payload);
       } else if (this.remoteUrl) {
         p = this.postRemoteKey(remoteKeyName || actionName);
       } else if (stream.controllable) {
-        p = this.postAction({
-          id: stream.id,
-          action: actionName,
-        });
+        p = this.postAction(payload);
       }
 
       return Promise.resolve(p).finally(() => {
@@ -727,6 +1000,14 @@
           this.isActionPending = false;
         }
       });
+    }
+
+    /**
+     * Dispatch seek action with in-flight lock.
+     * @param {number} positionSeconds - Seek target in seconds
+     */
+    handleSeek(positionSeconds) {
+      return this.executeAction('seek', 'seek', positionSeconds);
     }
 
     /**

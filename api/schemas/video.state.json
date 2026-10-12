@@ -67,6 +67,36 @@
         },
         "muted": {
           "type": "boolean"
+        },
+        "title": {
+          "type": "string"
+        },
+        "series": {
+          "type": "string"
+        },
+        "season": {
+          "type": [
+            "string",
+            "integer"
+          ]
+        },
+        "episode": {
+          "type": [
+            "string",
+            "integer"
+          ]
+        },
+        "position": {
+          "type": "number",
+          "minimum": 0
+        },
+        "duration": {
+          "type": "number",
+          "minimum": 0
+        },
+        "position_updated_at": {
+          "type": "integer",
+          "minimum": 0
         }
       },
       "additionalProperties": false
@@ -123,6 +153,36 @@
         },
         "muted": {
           "type": "boolean"
+        },
+        "title": {
+          "type": "string"
+        },
+        "series": {
+          "type": "string"
+        },
+        "season": {
+          "type": [
+            "string",
+            "integer"
+          ]
+        },
+        "episode": {
+          "type": [
+            "string",
+            "integer"
+          ]
+        },
+        "position": {
+          "type": "number",
+          "minimum": 0
+        },
+        "duration": {
+          "type": "number",
+          "minimum": 0
+        },
+        "position_updated_at": {
+          "type": "integer",
+          "minimum": 0
         }
       },
       "additionalProperties": false

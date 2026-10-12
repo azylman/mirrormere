@@ -16,11 +16,19 @@ type mockMediaActionSender struct {
 	sendFunc   func(ctx context.Context, action string) error
 	wakeFunc   func(ctx context.Context) error
 	statusFunc func() StatusSnapshot
+	seekFunc   func(ctx context.Context, targetTime float64) error
 }
 
 func (m *mockMediaActionSender) SendMediaAction(ctx context.Context, action string) error {
 	if m.sendFunc != nil {
 		return m.sendFunc(ctx, action)
+	}
+	return nil
+}
+
+func (m *mockMediaActionSender) Seek(ctx context.Context, targetTime float64) error {
+	if m.seekFunc != nil {
+		return m.seekFunc(ctx, targetTime)
 	}
 	return nil
 }
@@ -408,4 +416,115 @@ func TestActionServer_HandleCoverageFlush(t *testing.T) {
 			t.Fatalf("expected 500 Internal Server Error, got %d", rec.Code)
 		}
 	})
+}
+
+func TestActionServer_HandleAction_Seek(t *testing.T) {
+	var receivedTime float64
+	var seekErr error
+
+	mockClient := &mockMediaActionSender{
+		seekFunc: func(ctx context.Context, targetTime float64) error {
+			receivedTime = targetTime
+			return seekErr
+		},
+	}
+
+	server := NewActionServer(ServerConfig{}, mockClient)
+
+	// 1. Success seek with float64
+	payload := `{"id":"chromecast","action":"seek","value":42.5}`
+	req := httptest.NewRequest(http.MethodPost, "/action", bytes.NewBufferString(payload))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	server.mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if receivedTime != 42.5 {
+		t.Errorf("expected targetTime 42.5, got %v", receivedTime)
+	}
+
+	// 2. Success seek with string value
+	payload = `{"id":"chromecast","action":"seek","value":"150.25"}`
+	req = httptest.NewRequest(http.MethodPost, "/action", bytes.NewBufferString(payload))
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	server.mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if receivedTime != 150.25 {
+		t.Errorf("expected targetTime 150.25, got %v", receivedTime)
+	}
+
+	// 3. Success seek with integer value
+	payload = `{"id":"chromecast","action":"seek","value":60}`
+	req = httptest.NewRequest(http.MethodPost, "/action", bytes.NewBufferString(payload))
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	server.mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if receivedTime != 60.0 {
+		t.Errorf("expected targetTime 60.0, got %v", receivedTime)
+	}
+
+	// 4. Invalid value: negative
+	payload = `{"id":"chromecast","action":"seek","value":-5}`
+	req = httptest.NewRequest(http.MethodPost, "/action", bytes.NewBufferString(payload))
+	rec = httptest.NewRecorder()
+	server.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for negative seek value, got %d", rec.Code)
+	}
+
+	// 5. Invalid value: missing
+	payload = `{"id":"chromecast","action":"seek"}`
+	req = httptest.NewRequest(http.MethodPost, "/action", bytes.NewBufferString(payload))
+	rec = httptest.NewRecorder()
+	server.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for missing seek value, got %d", rec.Code)
+	}
+
+	// 6. Invalid value: non-numeric string
+	payload = `{"id":"chromecast","action":"seek","value":"abc"}`
+	req = httptest.NewRequest(http.MethodPost, "/action", bytes.NewBufferString(payload))
+	rec = httptest.NewRecorder()
+	server.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for non-numeric seek value, got %d", rec.Code)
+	}
+
+	// 7. Disconnected: 502
+	seekErr = ErrNotConnected
+	payload = `{"id":"chromecast","action":"seek","value":10}`
+	req = httptest.NewRequest(http.MethodPost, "/action", bytes.NewBufferString(payload))
+	rec = httptest.NewRecorder()
+	server.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadGateway {
+		t.Errorf("expected 502 for disconnected seek, got %d", rec.Code)
+	}
+
+	// 8. No media session: 502
+	seekErr = ErrNoActiveMediaSession
+	req = httptest.NewRequest(http.MethodPost, "/action", bytes.NewBufferString(payload))
+	rec = httptest.NewRecorder()
+	server.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadGateway {
+		t.Errorf("expected 502 for no session seek, got %d", rec.Code)
+	}
+
+	// 9. Invalid action: 400
+	seekErr = ErrInvalidAction
+	req = httptest.NewRequest(http.MethodPost, "/action", bytes.NewBufferString(payload))
+	rec = httptest.NewRecorder()
+	server.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for ErrInvalidAction seek, got %d", rec.Code)
+	}
 }

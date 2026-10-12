@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"runtime/coverage"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -18,6 +19,7 @@ import (
 // MediaActionSender abstracts media transport execution for the HTTP server.
 type MediaActionSender interface {
 	SendMediaAction(ctx context.Context, action string) error
+	Seek(ctx context.Context, targetTime float64) error
 	Wake(ctx context.Context) error
 	GetStatus() StatusSnapshot
 }
@@ -170,6 +172,33 @@ func (s *ActionServer) handleAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if req.Action == "seek" {
+		targetTime, err := extractTargetTime(req.Value)
+		if err != nil || targetTime < 0 {
+			writeJSONError(w, http.StatusBadRequest, "invalid seek target time: must be a non-negative number")
+			return
+		}
+
+		err = s.client.Seek(r.Context(), targetTime)
+		if err != nil {
+			if errors.Is(err, ErrInvalidAction) {
+				writeJSONError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			if errors.Is(err, ErrNotConnected) || errors.Is(err, ErrNoActiveMediaSession) {
+				writeJSONError(w, http.StatusBadGateway, err.Error())
+				return
+			}
+			writeJSONError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+
+		writeJSON(w, http.StatusOK, map[string]string{
+			"status": "ok",
+		})
+		return
+	}
+
 	err := s.client.SendMediaAction(r.Context(), req.Action)
 	if err != nil {
 		if errors.Is(err, ErrInvalidAction) {
@@ -262,4 +291,33 @@ func writeJSONError(w http.ResponseWriter, status int, msg string) {
 		"status": "error",
 		"error":  msg,
 	})
+}
+
+func extractTargetTime(val any) (float64, error) {
+	if val == nil {
+		return 0, errors.New("missing seek value")
+	}
+	switch v := val.(type) {
+	case float64:
+		return v, nil
+	case float32:
+		return float64(v), nil
+	case int:
+		return float64(v), nil
+	case int64:
+		return float64(v), nil
+	case int32:
+		return float64(v), nil
+	case json.Number:
+		return v.Float64()
+	case string:
+		return strconv.ParseFloat(strings.TrimSpace(v), 64)
+	case *interface{}:
+		if v == nil || *v == nil {
+			return 0, errors.New("missing seek value")
+		}
+		return extractTargetTime(*v)
+	default:
+		return 0, fmt.Errorf("unsupported seek value type: %T", val)
+	}
 }
