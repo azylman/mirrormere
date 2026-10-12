@@ -188,6 +188,31 @@ class TestDaemonComponents(unittest.TestCase):
         asyncio.run(helper.auto_approve_pairing())
         self.assertEqual(helper.remote.send_key_command.call_count, 0)
 
+    def test_android_remote_helper_start_initializes_with_voice(self):
+        helper = daemon.AndroidRemoteHelper("127.0.0.1", "/tmp/fake-certs")
+        mock_module = MagicMock()
+        mock_remote_cls = MagicMock()
+        mock_module.AndroidTVRemote = mock_remote_cls
+        mock_instance = MagicMock()
+        mock_instance.async_connect = AsyncMock(side_effect=RuntimeError("test stop"))
+        mock_remote_cls.return_value = mock_instance
+
+        with patch.object(helper, "has_credentials", return_value=True), \
+             patch.dict(sys.modules, {"androidtvremote2": mock_module, "androidtvremote2.androidtv_remote": mock_module}), \
+             patch("asyncio.sleep", side_effect=asyncio.CancelledError):
+            try:
+                asyncio.run(helper.start())
+            except asyncio.CancelledError:
+                pass
+
+        mock_remote_cls.assert_called_once_with(
+            client_name="Mirrormere Remote",
+            certfile=helper.cert_file,
+            keyfile=helper.key_file,
+            host=helper.host,
+            enable_voice=True,
+        )
+
     def test_configure_adapter(self):
         d = daemon.RemoteDaemon()
         d.adapter = AsyncMock()
