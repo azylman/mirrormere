@@ -121,5 +121,52 @@ describe('Fairyfloss Theme Mode Switching', () => {
       assert.match(content, /\[data-theme=["']?night["']?\]\s+\.cf-today-badge/, `${path.basename(cssPath)} must include [data-theme="night"] .cf-today-badge`);
     }
   });
+
+  test('CSS stylesheets contain night mode overrides for fullscreen video overlay and presentation controls', () => {
+    for (const cssPath of [hudCSSPath, defaultHudCSSPath, customCSSPath]) {
+      const content = fs.readFileSync(cssPath, 'utf8');
+
+      assert.ok(
+        /\[data-theme=["']?night["']?\]\s+\.video-hud-nav-bar/.test(content) ||
+        /\[data-theme=["']?night["']?\]\s+\.video-hud-capsule-top-left/.test(content),
+        `${path.basename(cssPath)} must include [data-theme="night"] .video-hud-nav-bar or .video-hud-capsule-top-left`
+      );
+      assert.ok(
+        /\[data-theme=["']?night["']?\]\s+\.video-hud-side-rail/.test(content) ||
+        /\[data-theme=["']?night["']?\]\s+\.video-hud-capsule-top-right/.test(content),
+        `${path.basename(cssPath)} must include [data-theme="night"] .video-hud-side-rail or .video-hud-capsule-top-right`
+      );
+      assert.ok(
+        /\[data-theme=["']?night["']?\]\s+\.video-hud-controls/.test(content) ||
+        /\[data-theme=["']?night["']?\]\s+\.video-hud-bottom-bar/.test(content),
+        `${path.basename(cssPath)} must include [data-theme="night"] .video-hud-controls or .video-hud-bottom-bar`
+      );
+      assert.match(
+        content,
+        /\[data-theme=["']?night["']?\]\s+\.video-hud-title/,
+        `${path.basename(cssPath)} must include [data-theme="night"] .video-hud-title`
+      );
+      assert.match(
+        content,
+        /\[data-theme=["']?night["']?\]\s+\.video-hud-btn/,
+        `${path.basename(cssPath)} must include [data-theme="night"] .video-hud-btn`
+      );
+      assert.match(
+        content,
+        /\[data-theme=["']?night["']?\]\s+\.video-hud-play-primary/,
+        `${path.basename(cssPath)} must include [data-theme="night"] .video-hud-play-primary`
+      );
+      assert.match(
+        content,
+        /\[data-theme=["']?night["']?\]\s+\.video-hud-volume-slider/,
+        `${path.basename(cssPath)} must include [data-theme="night"] .video-hud-volume-slider`
+      );
+      assert.match(
+        content,
+        /\[data-theme=["']?night["']?\]\s+\.video-pip-slot/,
+        `${path.basename(cssPath)} must include [data-theme="night"] .video-pip-slot`
+      );
+    }
+  });
 });
 
