@@ -65,17 +65,18 @@ type FamilySpanEvent struct {
 // FamilyViewModel is the fully resolved server-side view model consumed by the calendar-family
 // week view template "View model".
 type FamilyViewModel struct {
-	RangeStart   string            `json:"range_start"`
-	RangeEnd     string            `json:"range_end"`
-	RangeLabel   string            `json:"range_label"`
-	Today        string            `json:"today"`
-	HoursStart   string            `json:"hours_start"`
-	HoursEnd     string            `json:"hours_end"`
-	HourMarkers  []string          `json:"hour_markers"`
-	Members      []FamilyMember    `json:"members"`
-	Days         []FamilyDay       `json:"days"`
-	AllDayEvents []FamilySpanEvent `json:"all_day_events"`
-	SharedColor  string            `json:"shared_color"`
+	RangeStart      string            `json:"range_start"`
+	RangeEnd        string            `json:"range_end"`
+	RangeLabel      string            `json:"range_label"`
+	Today           string            `json:"today"`
+	HoursStart      string            `json:"hours_start"`
+	HoursEnd        string            `json:"hours_end"`
+	HourMarkers     []string          `json:"hour_markers"`
+	TimelineMarkers []TimelineMarker  `json:"timeline_markers,omitempty"`
+	Members         []FamilyMember    `json:"members"`
+	Days            []FamilyDay       `json:"days"`
+	AllDayEvents    []FamilySpanEvent `json:"all_day_events"`
+	SharedColor     string            `json:"shared_color"`
 }
 
 // FamilyDayEvent represents a resolved event positioned within a day view column or edge band.
@@ -108,29 +109,39 @@ type FamilyDayColumn struct {
 // FamilyDayViewModel is the fully resolved server-side view model consumed by the calendar-family
 // day view template.
 type FamilyDayViewModel struct {
-	Date         string            `json:"date"`
-	WeekdayAbbr  string            `json:"weekday_abbr"`
-	DayOfMonth   int               `json:"day_of_month"`
-	IsToday      bool              `json:"is_today"`
-	IsWeekend    bool              `json:"is_weekend"`
-	HoursStart   string            `json:"hours_start"`
-	HoursEnd     string            `json:"hours_end"`
-	HourMarkers  []string          `json:"hour_markers"`
-	Members      []FamilyMember    `json:"members"`
-	Columns      []FamilyDayColumn `json:"columns"`
-	AllDayEvents []FamilyDayEvent  `json:"all_day_events"`
-	SharedColor  string            `json:"shared_color"`
+	Date            string            `json:"date"`
+	WeekdayAbbr     string            `json:"weekday_abbr"`
+	DayOfMonth      int               `json:"day_of_month"`
+	IsToday         bool              `json:"is_today"`
+	IsWeekend       bool              `json:"is_weekend"`
+	HoursStart      string            `json:"hours_start"`
+	HoursEnd        string            `json:"hours_end"`
+	HourMarkers     []string          `json:"hour_markers"`
+	TimelineMarkers []TimelineMarker  `json:"timeline_markers,omitempty"`
+	Members         []FamilyMember    `json:"members"`
+	Columns         []FamilyDayColumn `json:"columns"`
+	AllDayEvents    []FamilyDayEvent  `json:"all_day_events"`
+	SharedColor     string            `json:"shared_color"`
+}
+
+// TimelineMarker represents a resolved time marker with normalized canvas positioning.
+type TimelineMarker struct {
+	Label   string  `json:"label"`
+	TopPct  float64 `json:"top_pct"`
+	IsStart bool    `json:"is_start,omitempty"`
+	IsEnd   bool    `json:"is_end,omitempty"`
 }
 
 // HoursBand represents the parsed visible hours window for the day view.
 type HoursBand struct {
-	StartHour   int      `json:"start_hour"`
-	StartMinute int      `json:"start_minute"`
-	EndHour     int      `json:"end_hour"`
-	EndMinute   int      `json:"end_minute"`
-	StartStr    string   `json:"start_str"`
-	EndStr      string   `json:"end_str"`
-	Markers     []string `json:"markers"`
+	StartHour       int              `json:"start_hour"`
+	StartMinute     int              `json:"start_minute"`
+	EndHour         int              `json:"end_hour"`
+	EndMinute       int              `json:"end_minute"`
+	StartStr        string           `json:"start_str"`
+	EndStr          string           `json:"end_str"`
+	Markers         []string         `json:"markers"`
+	TimelineMarkers []TimelineMarker `json:"timeline_markers,omitempty"`
 }
 
 const (
@@ -411,10 +422,11 @@ func BuildFamilyView(data any, cfg map[string]any, dims domain.Dimension, now ti
 		RangeEnd:     rangeEnd.Format("2006-01-02"),
 		RangeLabel:   formatFamilyRangeLabel(rangeStart, rangeEnd),
 		Today:        today.Format("2006-01-02"),
-		HoursStart:   hours.StartStr,
-		HoursEnd:     hours.EndStr,
-		HourMarkers:  hours.Markers,
-		Members:      members,
+		HoursStart:      hours.StartStr,
+		HoursEnd:        hours.EndStr,
+		HourMarkers:     hours.Markers,
+		TimelineMarkers: hours.TimelineMarkers,
+		Members:         members,
 		Days:         days,
 		AllDayEvents: allDayEvents,
 		SharedColor:  sharedColor,
@@ -821,26 +833,29 @@ func ParseHoursBand(cfg map[string]any) HoursBand {
 	}
 
 	markers := generateHourMarkers(hStart, mStart, hEnd, mEnd)
+	timelineMarkers := generateTimelineMarkers(hStart, mStart, hEnd, mEnd)
 	return HoursBand{
-		StartHour:   hStart,
-		StartMinute: mStart,
-		EndHour:     hEnd,
-		EndMinute:   mEnd,
-		StartStr:    fmt.Sprintf("%02d:%02d", hStart, mStart),
-		EndStr:      fmt.Sprintf("%02d:%02d", hEnd, mEnd),
-		Markers:     markers,
+		StartHour:       hStart,
+		StartMinute:     mStart,
+		EndHour:         hEnd,
+		EndMinute:       mEnd,
+		StartStr:        fmt.Sprintf("%02d:%02d", hStart, mStart),
+		EndStr:          fmt.Sprintf("%02d:%02d", hEnd, mEnd),
+		Markers:         markers,
+		TimelineMarkers: timelineMarkers,
 	}
 }
 
 func defaultHoursBand() HoursBand {
 	return HoursBand{
-		StartHour:   7,
-		StartMinute: 0,
-		EndHour:     21,
-		EndMinute:   0,
-		StartStr:    "07:00",
-		EndStr:      "21:00",
-		Markers:     generateHourMarkers(7, 0, 21, 0),
+		StartHour:       7,
+		StartMinute:     0,
+		EndHour:         21,
+		EndMinute:       0,
+		StartStr:        "07:00",
+		EndStr:          "21:00",
+		Markers:         generateHourMarkers(7, 0, 21, 0),
+		TimelineMarkers: generateTimelineMarkers(7, 0, 21, 0),
 	}
 }
 
@@ -874,7 +889,7 @@ func hasExplicitHours(cfg map[string]any) bool {
 // resolveFamilyHoursBand resolves the timeline hours band for the week view.
 // If cfg specifies an explicit valid hours band, that configuration is respected.
 // Otherwise, the timeline starts at the earliest start time of timed events for the week
-// (floored to the full hour for consistent 60-minute marker spacing), with a minimum 4-hour
+// (floored to 30-minute intervals for clean timeline alignment), with a minimum 4-hour
 // window and a fallback to 07:00–21:00 when no events or only late events exist.
 func resolveFamilyHoursBand(cfg map[string]any, events []provider.CalendarEvent, dayIndex map[string]int, loc *time.Location) HoursBand {
 	if hasExplicitHours(cfg) {
@@ -914,20 +929,65 @@ func resolveFamilyHoursBand(cfg map[string]any, events []provider.CalendarEvent,
 	// fall back to default 07:00.
 	startH := defaultBand.StartHour
 	startM := defaultBand.StartMinute
-	if earliestMinutes >= 0 && (endTotal-earliestMinutes >= 240) {
-		startH = earliestMinutes / 60
-		startM = 0
+	if earliestMinutes >= 0 {
+		floorMins := (earliestMinutes / 30) * 30
+		if endTotal-floorMins >= 240 {
+			startH = floorMins / 60
+			startM = floorMins % 60
+		}
 	}
 
 	return HoursBand{
-		StartHour:   startH,
-		StartMinute: startM,
-		EndHour:     endH,
-		EndMinute:   endM,
-		StartStr:    fmt.Sprintf("%02d:%02d", startH, startM),
-		EndStr:      fmt.Sprintf("%02d:%02d", endH, endM),
-		Markers:     generateHourMarkers(startH, startM, endH, endM),
+		StartHour:       startH,
+		StartMinute:     startM,
+		EndHour:         endH,
+		EndMinute:       endM,
+		StartStr:        fmt.Sprintf("%02d:%02d", startH, startM),
+		EndStr:          fmt.Sprintf("%02d:%02d", endH, endM),
+		Markers:         generateHourMarkers(startH, startM, endH, endM),
+		TimelineMarkers: generateTimelineMarkers(startH, startM, endH, endM),
 	}
+}
+
+func generateTimelineMarkers(hStart, mStart, hEnd, mEnd int) []TimelineMarker {
+	startTotal := hStart*60 + mStart
+	endTotal := hEnd*60 + mEnd
+	duration := float64(endTotal - startTotal)
+	if duration <= 0 {
+		return nil
+	}
+
+	markers := make([]TimelineMarker, 0, (hEnd-hStart)+2)
+	markers = append(markers, TimelineMarker{
+		Label:   fmt.Sprintf("%02d:%02d", hStart, mStart),
+		TopPct:  0.0,
+		IsStart: true,
+	})
+
+	firstHour := hStart + 1
+	for h := firstHour; h < hEnd; h++ {
+		pct := float64(h*60-startTotal) / duration * 100.0
+		markers = append(markers, TimelineMarker{
+			Label:  fmt.Sprintf("%02d:00", h),
+			TopPct: roundToTwoDecimals(pct),
+		})
+	}
+
+	if mEnd > 0 && hEnd*60 > startTotal {
+		pct := float64(hEnd*60-startTotal) / duration * 100.0
+		markers = append(markers, TimelineMarker{
+			Label:  fmt.Sprintf("%02d:00", hEnd),
+			TopPct: roundToTwoDecimals(pct),
+		})
+	}
+
+	markers = append(markers, TimelineMarker{
+		Label:  fmt.Sprintf("%02d:%02d", hEnd, mEnd),
+		TopPct: 100.0,
+		IsEnd:  true,
+	})
+
+	return markers
 }
 
 func generateHourMarkers(hStart, mStart, hEnd, mEnd int) []string {
@@ -1330,10 +1390,11 @@ func BuildFamilyDayView(data any, cfg map[string]any, dims domain.Dimension, now
 		DayOfMonth:   today.Day(),
 		IsToday:      today.Year() == now.Year() && today.YearDay() == now.YearDay(),
 		IsWeekend:    today.Weekday() == time.Saturday || today.Weekday() == time.Sunday,
-		HoursStart:   hours.StartStr,
-		HoursEnd:     hours.EndStr,
-		HourMarkers:  hours.Markers,
-		Members:      members,
+		HoursStart:      hours.StartStr,
+		HoursEnd:        hours.EndStr,
+		HourMarkers:     hours.Markers,
+		TimelineMarkers: hours.TimelineMarkers,
+		Members:         members,
 		Columns:      columns,
 		AllDayEvents: allDayEvents,
 		SharedColor:  sharedColor,

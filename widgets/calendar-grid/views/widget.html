@@ -54,7 +54,7 @@
   <div class="cf-view-panel cf-view-week" style="display: {{ if eq $defaultView "week" }}flex{{ else }}none{{ end }}; flex: 1; min-height: 0; flex-direction: column;">
     {{ if and $view.Days $view.Members }}
     {{ if $view.AllDayEvents }}
-    <div class="cf-allday-band cf-week-allday-grid" style="{{ if $view.HourMarkers }}margin-left: 44px;{{ end }} display: grid; grid-template-columns: repeat({{ len $view.Days }}, 1fr); grid-auto-flow: dense; gap: 6px; padding-bottom: 6px; margin-bottom: 6px; border-bottom: 1px dashed var(--mm-divider, rgba(90, 60, 30, 0.1));">
+    <div class="cf-allday-band cf-week-allday-grid" style="{{ if or $view.TimelineMarkers $view.HourMarkers }}margin-left: 44px;{{ end }} display: grid; grid-template-columns: repeat({{ len $view.Days }}, 1fr); grid-auto-flow: dense; gap: 6px; padding-bottom: 6px; margin-bottom: 6px; border-bottom: 1px dashed var(--mm-divider, rgba(90, 60, 30, 0.1));">
       {{ range $view.AllDayEvents }}
       <div class="cf-event cf-allday cf-event-clickable{{ if .Pattern }} cf-pattern-{{ .Pattern }}{{ end }}" data-event-id="{{ .ID }}" data-event-title="{{ .Title }}" data-event-allday="true" data-event-location="{{ .Location }}" data-event-description="{{ .Description }}" style="grid-column: {{ .StartCol }} / span {{ .ColSpan }}; font-size: 0.68rem; font-weight: 700; border-radius: 6px; padding: 3px 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: {{ .TextColor }}; background: {{ .Color }}; cursor: pointer; touch-action: manipulation;">{{ .Title }}</div>
       {{ end }}
@@ -62,12 +62,20 @@
     {{ end }}
 
     <div class="cf-week-body" style="display: flex; flex: 1; min-height: 0; gap: 6px; position: relative;">
-      {{ if $view.HourMarkers }}
+      {{ if or $view.TimelineMarkers $view.HourMarkers }}
       <div class="cf-timeline-axis" style="width: 38px; display: flex; flex-direction: column; flex-shrink: 0; user-select: none;">
         <div class="cf-timeline-spacer" style="height: 48px; flex-shrink: 0;"></div>
-        <div class="cf-timeline-markers" style="flex: 1; display: flex; flex-direction: column; justify-content: space-between; padding-bottom: 6px; font-family: var(--mm-font-mono, monospace); font-size: 0.60rem; font-weight: 700; color: var(--mm-text-dim, #8b819f); text-align: right; padding-right: 6px;">
-          {{ range $view.HourMarkers }}
-          <span class="cf-hour-marker" style="line-height: 1;">{{ . }}</span>
+        <div class="cf-timeline-markers" style="flex: 1; position: relative; min-height: 0; margin-bottom: 6px; font-family: var(--mm-font-mono, monospace); font-size: 0.60rem; font-weight: 700; color: var(--mm-text-dim, #8b819f);">
+          {{ if $view.TimelineMarkers }}
+            {{ range $view.TimelineMarkers }}
+            <span class="cf-hour-marker" style="position: absolute; right: 6px; top: {{ .TopPct }}%; transform: {{ if .IsStart }}translateY(0){{ else if .IsEnd }}translateY(-100%){{ else }}translateY(-50%){{ end }}; line-height: 1; white-space: nowrap; pointer-events: none;">{{ .Label }}</span>
+            {{ end }}
+          {{ else }}
+            <div style="height: 100%; display: flex; flex-direction: column; justify-content: space-between; text-align: right; padding-right: 6px;">
+              {{ range $view.HourMarkers }}
+              <span class="cf-hour-marker" style="line-height: 1;">{{ . }}</span>
+              {{ end }}
+            </div>
           {{ end }}
         </div>
       </div>

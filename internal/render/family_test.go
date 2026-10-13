@@ -2941,15 +2941,63 @@ func TestResolveFamilyHoursBand(t *testing.T) {
 			wantStartM: 0,
 		},
 		{
-			name: "timed event at 08:30 floors start to 08:00 for grid alignment",
+			name: "timed event at 08:30 floors start to 08:30 for 30-min snapping",
 			cfg:  map[string]any{},
 			events: []provider.CalendarEvent{
 				{ID: "e1", Start: "2026-09-28T08:30:00Z", End: "2026-09-28T09:30:00Z"},
 			},
 			loc:        loc,
-			wantStart:  "08:00",
+			wantStart:  "08:30",
 			wantEnd:    "21:00",
 			wantStartH: 8,
+			wantStartM: 30,
+		},
+		{
+			name: "timed event at 09:45 floors start to 09:30",
+			cfg:  map[string]any{},
+			events: []provider.CalendarEvent{
+				{ID: "e1", Start: "2026-09-28T09:45:00Z", End: "2026-09-28T10:30:00Z"},
+			},
+			loc:        loc,
+			wantStart:  "09:30",
+			wantEnd:    "21:00",
+			wantStartH: 9,
+			wantStartM: 30,
+		},
+		{
+			name: "timed event at 09:15 floors start to 09:00",
+			cfg:  map[string]any{},
+			events: []provider.CalendarEvent{
+				{ID: "e1", Start: "2026-09-28T09:15:00Z", End: "2026-09-28T10:00:00Z"},
+			},
+			loc:        loc,
+			wantStart:  "09:00",
+			wantEnd:    "21:00",
+			wantStartH: 9,
+			wantStartM: 0,
+		},
+		{
+			name: "timed event at 17:15 floors to 17:00 and satisfies 240-min minimum window",
+			cfg:  map[string]any{},
+			events: []provider.CalendarEvent{
+				{ID: "e1", Start: "2026-09-28T17:15:00Z", End: "2026-09-28T18:00:00Z"},
+			},
+			loc:        loc,
+			wantStart:  "17:00",
+			wantEnd:    "21:00",
+			wantStartH: 17,
+			wantStartM: 0,
+		},
+		{
+			name: "timed event at 17:35 floors to 17:30 but violates 240-min window falling back to 07:00",
+			cfg:  map[string]any{},
+			events: []provider.CalendarEvent{
+				{ID: "e1", Start: "2026-09-28T17:35:00Z", End: "2026-09-28T18:30:00Z"},
+			},
+			loc:        loc,
+			wantStart:  "07:00",
+			wantEnd:    "21:00",
+			wantStartH: 7,
 			wantStartM: 0,
 		},
 		{
@@ -3104,6 +3152,76 @@ func TestResolveFamilyHoursBand(t *testing.T) {
 			if band.StartHour != tc.wantStartH || band.StartMinute != tc.wantStartM {
 				t.Errorf("start time mismatch: got %02d:%02d, want %02d:%02d", band.StartHour, band.StartMinute, tc.wantStartH, tc.wantStartM)
 			}
+			if len(band.TimelineMarkers) == 0 {
+				t.Errorf("expected timeline markers to be populated")
+			}
 		})
 	}
+}
+
+func TestGenerateTimelineMarkers(t *testing.T) {
+	t.Parallel()
+
+	t.Run("standard 07:00 to 21:00", func(t *testing.T) {
+		t.Parallel()
+		markers := generateTimelineMarkers(7, 0, 21, 0)
+		if len(markers) != 15 {
+			t.Fatalf("expected 15 markers, got %d", len(markers))
+		}
+		if markers[0].Label != "07:00" || markers[0].TopPct != 0.0 || !markers[0].IsStart {
+			t.Errorf("unexpected first marker: %+v", markers[0])
+		}
+		last := markers[len(markers)-1]
+		if last.Label != "21:00" || last.TopPct != 100.0 || !last.IsEnd {
+			t.Errorf("unexpected last marker: %+v", last)
+		}
+		if markers[1].Label != "08:00" || markers[1].TopPct != 7.14 {
+			t.Errorf("unexpected second marker: %+v", markers[1])
+		}
+	})
+
+	t.Run("half-hour start 09:30 to 21:00", func(t *testing.T) {
+		t.Parallel()
+		markers := generateTimelineMarkers(9, 30, 21, 0)
+		if len(markers) != 13 {
+			t.Fatalf("expected 13 markers, got %d", len(markers))
+		}
+		if markers[0].Label != "09:30" || markers[0].TopPct != 0.0 || !markers[0].IsStart {
+			t.Errorf("unexpected first marker: %+v", markers[0])
+		}
+		if markers[1].Label != "10:00" || markers[1].TopPct != 4.35 {
+			t.Errorf("unexpected 10:00 marker: %+v", markers[1])
+		}
+		last := markers[len(markers)-1]
+		if last.Label != "21:00" || last.TopPct != 100.0 || !last.IsEnd {
+			t.Errorf("unexpected last marker: %+v", last)
+		}
+	})
+
+	t.Run("non-zero end minute 08:30 to 19:45", func(t *testing.T) {
+		t.Parallel()
+		markers := generateTimelineMarkers(8, 30, 19, 45)
+		if len(markers) == 0 {
+			t.Fatalf("expected markers, got empty")
+		}
+		if markers[0].Label != "08:30" || markers[0].TopPct != 0.0 || !markers[0].IsStart {
+			t.Errorf("unexpected first marker: %+v", markers[0])
+		}
+		last := markers[len(markers)-1]
+		if last.Label != "19:45" || last.TopPct != 100.0 || !last.IsEnd {
+			t.Errorf("unexpected last marker: %+v", last)
+		}
+		secondLast := markers[len(markers)-2]
+		if secondLast.Label != "19:00" {
+			t.Errorf("expected 19:00 before 19:45, got %+v", secondLast)
+		}
+	})
+
+	t.Run("invalid duration returns nil", func(t *testing.T) {
+		t.Parallel()
+		markers := generateTimelineMarkers(21, 0, 7, 0)
+		if markers != nil {
+			t.Errorf("expected nil for inverted band, got %+v", markers)
+		}
+	})
 }
