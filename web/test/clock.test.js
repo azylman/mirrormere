@@ -114,4 +114,52 @@ describe('Header Clock Household Timezone', () => {
     assert.ok(conditionEl.innerHTML.includes('mm-icon-weather-partly-cloudy'));
     assert.equal(conditionEl.title, 'weather-partly-cloudy');
   });
+
+  test('updates nighttime weather condition icon and description in header.update', () => {
+    const elements = setupMockDOM();
+
+    delete require.cache[require.resolve('../static/js/display.js')];
+    const display = require('../static/js/display.js');
+
+    // Test clear night helper directly
+    const clearNightSvg = display.getWeatherIconSVG('weather-clear-night', 24);
+    assert.ok(clearNightSvg.includes('width="24"'));
+    assert.ok(clearNightSvg.includes('mm-icon-weather-clear-night'));
+
+    // Test night partly cloudy helper directly
+    const nightCloudySvg = display.getWeatherIconSVG('weather-night-partly-cloudy', 24);
+    assert.ok(nightCloudySvg.includes('width="24"'));
+    assert.ok(nightCloudySvg.includes('mm-icon-weather-night-partly-cloudy'));
+
+    // Test handleHeaderUpdate with clear night
+    display.handleHeaderUpdate({
+      weather: {
+        temperature: 58.2,
+        units: '°F',
+        icon: 'weather-clear-night',
+        condition: 'Clear',
+      },
+    });
+
+    const tempEl = elements['weather-temp'];
+    const conditionEl = elements['weather-condition'];
+    const descEl = elements['weather-desc'];
+
+    assert.equal(tempEl.textContent, '58°F');
+    assert.ok(conditionEl.innerHTML.includes('<svg'));
+    assert.ok(conditionEl.innerHTML.includes('mm-icon-weather-clear-night'));
+    assert.equal(conditionEl.title, 'weather-clear-night');
+    assert.equal(descEl.textContent, 'Clear');
+
+    // Test fallback for nighttime tokens does not produce 'Sunny & Mild'
+    display.handleHeaderUpdate({
+      weather: {
+        temperature: 55.0,
+        units: '°F',
+        icon: 'weather-night-unknown',
+      },
+    });
+    assert.equal(descEl.textContent, 'Clear');
+    assert.notEqual(descEl.textContent, 'Sunny & Mild');
+  });
 });

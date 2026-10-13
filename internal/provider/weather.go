@@ -20,8 +20,24 @@ const (
 )
 
 // MapWMOCode maps a WMO 4501 weather code to human-readable condition text and vector icon token.
-// Conforms to .
+// Defaults to daytime mapping for backward compatibility.
 func MapWMOCode(code int) (string, string) {
+	return MapWMOCodeWithDay(code, 1)
+}
+
+// MapWMOCodeWithDay maps a WMO 4501 weather code and day/night solar flag (1 for day, 0 for night)
+// to human-readable condition text and vector icon token.
+func MapWMOCodeWithDay(code int, isDay int) (string, string) {
+	if isDay == 0 {
+		switch code {
+		case 0:
+			return "Clear", "weather-clear-night"
+		case 1:
+			return "Mainly Clear", "weather-night-partly-cloudy"
+		case 2:
+			return "Partly Cloudy", "weather-night-partly-cloudy"
+		}
+	}
 	switch code {
 	case 0:
 		return "Clear Sky", "weather-sunny"
@@ -123,12 +139,14 @@ type openMeteoResponse struct {
 		Precipitation       float64 `json:"precipitation"`
 		WeatherCode         int     `json:"weather_code"`
 		WindSpeed10m        float64 `json:"wind_speed_10m"`
+		IsDay               *int    `json:"is_day"`
 	} `json:"current"`
 	Hourly struct {
 		Time                     []string  `json:"time"`
 		Temperature2m            []float64 `json:"temperature_2m"`
 		PrecipitationProbability []int     `json:"precipitation_probability"`
 		WeatherCode              []int     `json:"weather_code"`
+		IsDay                    []int     `json:"is_day"`
 	} `json:"hourly"`
 	Daily struct {
 		Time                        []string  `json:"time"`
@@ -247,8 +265,8 @@ func (p *WeatherProvider) Fetch(ctx context.Context) (any, error) {
 	q := parsedURL.Query()
 	q.Set("latitude", fmt.Sprintf("%.4f", p.latitude))
 	q.Set("longitude", fmt.Sprintf("%.4f", p.longitude))
-	q.Set("current", "temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m")
-	q.Set("hourly", "temperature_2m,precipitation_probability,weather_code")
+	q.Set("current", "temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m,is_day")
+	q.Set("hourly", "temperature_2m,precipitation_probability,weather_code,is_day")
 	q.Set("daily", "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max")
 	q.Set("temperature_unit", tempUnit)
 	q.Set("wind_speed_unit", windUnit)
@@ -282,7 +300,11 @@ func (p *WeatherProvider) Fetch(ctx context.Context) (any, error) {
 		return nil, fmt.Errorf("failed to decode Open-Meteo response: %w", err)
 	}
 
-	condText, iconToken := MapWMOCode(data.Current.WeatherCode)
+	currentIsDay := 1
+	if data.Current.IsDay != nil {
+		currentIsDay = *data.Current.IsDay
+	}
+	condText, iconToken := MapWMOCodeWithDay(data.Current.WeatherCode, currentIsDay)
 
 	var todayPrecipMax int
 	if len(data.Daily.PrecipitationProbabilityMax) > 0 {
@@ -339,7 +361,11 @@ func (p *WeatherProvider) Fetch(ctx context.Context) (any, error) {
 	}
 
 	for i := startIndex; i < endIndex; i++ {
-		_, hIcon := MapWMOCode(data.Hourly.WeatherCode[i])
+		hIsDay := 1
+		if i < len(data.Hourly.IsDay) {
+			hIsDay = data.Hourly.IsDay[i]
+		}
+		_, hIcon := MapWMOCodeWithDay(data.Hourly.WeatherCode[i], hIsDay)
 		snapshot.Hourly = append(snapshot.Hourly, WeatherHourly{
 			Time:       data.Hourly.Time[i],
 			Temp:       data.Hourly.Temperature2m[i],

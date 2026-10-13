@@ -313,7 +313,9 @@ func TestWeatherIcon(t *testing.T) {
 
 	tokens := []string{
 		"weather-sunny",
+		"weather-clear-night",
 		"weather-partly-cloudy",
+		"weather-night-partly-cloudy",
 		"weather-cloudy",
 		"weather-fog",
 		"weather-rainy",

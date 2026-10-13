@@ -35,6 +35,7 @@ type headerOpenMeteoResponse struct {
 	Current struct {
 		Temperature2m float64 `json:"temperature_2m"`
 		WeatherCode   int     `json:"weather_code"`
+		IsDay         *int    `json:"is_day"`
 	} `json:"current"`
 }
 
@@ -180,7 +181,7 @@ func (p *HeaderWeatherPoller) FetchOnce(ctx context.Context) (*events.HeaderWeat
 	q := parsedURL.Query()
 	q.Set("latitude", fmt.Sprintf("%.4f", cfg.Latitude))
 	q.Set("longitude", fmt.Sprintf("%.4f", cfg.Longitude))
-	q.Set("current", "temperature_2m,weather_code")
+	q.Set("current", "temperature_2m,weather_code,is_day")
 	q.Set("temperature_unit", tempUnit)
 	if tz != "" {
 		q.Set("timezone", tz)
@@ -215,7 +216,11 @@ func (p *HeaderWeatherPoller) FetchOnce(ctx context.Context) (*events.HeaderWeat
 		return nil, fmt.Errorf("failed to decode header Open-Meteo response: %w", err)
 	}
 
-	condText, iconToken := MapWMOCode(data.Current.WeatherCode)
+	isDay := 1
+	if data.Current.IsDay != nil {
+		isDay = *data.Current.IsDay
+	}
+	condText, iconToken := MapWMOCodeWithDay(data.Current.WeatherCode, isDay)
 	loc := cfg.Location
 	if loc == "" {
 		loc = "Oakland"

@@ -457,3 +457,53 @@ func TestHeaderWeatherPoller_EmptyTimezoneAndZeroInterval(t *testing.T) {
 		t.Fatalf("FetchOnce failed: %v", err)
 	}
 }
+
+func TestHeaderWeatherPoller_FetchOnce_Nighttime(t *testing.T) {
+	t.Parallel()
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{
+			"current": {
+				"temperature_2m": 58.2,
+				"weather_code": 0,
+				"is_day": 0
+			}
+		}`))
+	}))
+	defer ts.Close()
+
+	sink := &mockHeaderSink{}
+	broadcaster := &mockBroadcaster{}
+
+	poller := provider.NewHeaderWeatherPoller(provider.HeaderWeatherPollerConfig{
+		Client:      ts.Client(),
+		BaseURL:     ts.URL,
+		Broadcaster: broadcaster,
+		StateSink:   sink,
+	})
+
+	weatherCfg := &config.HeaderWeatherConfig{
+		Latitude:  37.8044,
+		Longitude: -122.2712,
+		Units:     "imperial",
+	}
+	poller.Start(context.Background(), weatherCfg, "America/Los_Angeles")
+	defer poller.Stop()
+
+	hw, err := poller.FetchOnce(context.Background())
+	if err != nil {
+		t.Fatalf("FetchOnce failed: %v", err)
+	}
+
+	if hw.WeatherCode != 0 {
+		t.Errorf("expected weather_code 0, got %d", hw.WeatherCode)
+	}
+	if hw.Condition != "Clear" {
+		t.Errorf("expected condition 'Clear', got %q", hw.Condition)
+	}
+	if hw.Icon != "weather-clear-night" {
+		t.Errorf("expected icon 'weather-clear-night', got %q", hw.Icon)
+	}
+}
