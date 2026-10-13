@@ -165,11 +165,6 @@ body[data-theme="night"],
   box-shadow: 0 4px 14px -2px rgba(20, 16, 32, 0.4);
 }
 
-[data-theme="night"] .next-event-icon {
-  background: rgba(197, 163, 255, 0.15);
-  color: var(--mm-lavender, #c5a5f9);
-}
-
 [data-theme="night"] .next-event-label {
   color: var(--mm-lavender, #c5a5f9);
 }
@@ -188,11 +183,6 @@ body[data-theme="night"],
 }
 
 [data-theme="night"] .next-event-pill.status-now .next-event-label {
-  color: var(--mm-coral, #ffb8d1);
-}
-
-[data-theme="night"] .next-event-pill.status-now .next-event-icon {
-  background: rgba(255, 184, 209, 0.2);
   color: var(--mm-coral, #ffb8d1);
 }
 
@@ -716,15 +706,17 @@ html, body {
 .next-event-pill {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
-  min-height: 48px;
+  gap: 12px;
+  min-height: 52px;
+  height: 52px;
   max-width: min(480px, 42vw);
   min-width: 0;
-  padding: 6px 18px 6px 14px;
+  padding: 8px 20px 8px 18px;
   background: var(--mm-bg-surface);
-  border: 1px solid var(--mm-card-border);
+  border: 1.5px solid rgba(90, 60, 30, 0.09);
   border-radius: 9999px;
   box-shadow: 0 4px 12px -2px rgba(130, 100, 70, 0.08);
+  box-sizing: border-box;
   color: var(--mm-text-title);
   cursor: pointer;
   touch-action: manipulation;
@@ -741,22 +733,6 @@ html, body {
 
 .next-event-pill:active {
   transform: scale(0.97);
-}
-
-.next-event-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  background: var(--mm-lavender-light, #f3effe);
-  color: var(--mm-lavender, #8b60ed);
-  flex-shrink: 0;
-}
-
-.next-event-icon svg {
-  display: block;
 }
 
 .next-event-label {
@@ -804,11 +780,6 @@ html, body {
   color: var(--mm-coral, #ff6f59);
 }
 
-.next-event-pill.status-now .next-event-icon {
-  background: var(--mm-coral-light, #fff0ed);
-  color: var(--mm-coral, #ff6f59);
-}
-
 .next-event-pill.status-now .next-event-countdown {
   color: #ffffff;
   background: var(--mm-coral, #ff6f59);
@@ -820,10 +791,6 @@ html, body {
   align-items: center;
   gap: 20px;
   flex-shrink: 0;
-}
-  display: flex;
-  align-items: center;
-  gap: 20px;
 }
 
 /* Header Video Action Button */
