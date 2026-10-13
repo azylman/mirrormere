@@ -882,3 +882,136 @@ func TestWeatherProvider_Fetch_CurrentHourAlignment(t *testing.T) {
 		t.Errorf("expected 10 hourly items for short time fallback, got %d", len(snap3.Hourly))
 	}
 }
+
+func TestMapWMOCodeWithDay(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		code         int
+		isDay        int
+		expectedText string
+		expectedIcon string
+	}{
+		{"day clear sky", 0, 1, "Clear Sky", "weather-sunny"},
+		{"night clear", 0, 0, "Clear", "weather-clear-night"},
+		{"day mainly clear", 1, 1, "Mainly Clear", "weather-partly-cloudy"},
+		{"night mainly clear", 1, 0, "Mainly Clear", "weather-night-partly-cloudy"},
+		{"day partly cloudy", 2, 1, "Partly Cloudy", "weather-partly-cloudy"},
+		{"night partly cloudy", 2, 0, "Partly Cloudy", "weather-night-partly-cloudy"},
+		{"day overcast", 3, 1, "Overcast", "weather-cloudy"},
+		{"night overcast", 3, 0, "Overcast", "weather-cloudy"},
+		{"day rain", 61, 1, "Rain", "weather-rainy"},
+		{"night rain", 61, 0, "Rain", "weather-rainy"},
+		{"day thunderstorm", 95, 1, "Thunderstorm", "weather-lightning"},
+		{"night thunderstorm", 95, 0, "Thunderstorm", "weather-lightning"},
+		{"unknown code", 999, 0, "Unknown", "weather-cloudy"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			text, icon := provider.MapWMOCodeWithDay(tc.code, tc.isDay)
+			if text != tc.expectedText || icon != tc.expectedIcon {
+				t.Errorf("MapWMOCodeWithDay(%d, %d) = (%q, %q), want (%q, %q)",
+					tc.code, tc.isDay, text, icon, tc.expectedText, tc.expectedIcon)
+			}
+		})
+	}
+}
+
+func TestWeatherProvider_Fetch_NighttimeAndSliceResilience(t *testing.T) {
+	t.Parallel()
+
+	jsonNight := map[string]any{
+		"latitude":  37.8044,
+		"longitude": -122.2712,
+		"current": map[string]any{
+			"time":                 "2026-10-12T20:00",
+			"temperature_2m":       62.5,
+			"relative_humidity_2m": 75,
+			"apparent_temperature": 61.0,
+			"precipitation":        0.0,
+			"weather_code":         0,
+			"wind_speed_10m":       5.0,
+			"is_day":               0,
+		},
+		"hourly": map[string]any{
+			"time": []string{
+				"2026-10-12T20:00",
+				"2026-10-12T21:00",
+				"2026-10-12T22:00",
+				"2026-10-13T08:00",
+			},
+			"temperature_2m":            []float64{62.5, 60.0, 58.0, 65.0},
+			"precipitation_probability": []int{0, 0, 0, 10},
+			"weather_code":              []int{0, 1, 2, 0},
+			// is_day slice intentionally shorter (length 2 vs 4) to verify bounds protection
+			"is_day": []int{0, 0},
+		},
+		"daily": map[string]any{
+			"time":                           []string{"2026-10-12"},
+			"weather_code":                   []int{0},
+			"temperature_2m_max":             []float64{70.0},
+			"temperature_2m_min":             []float64{55.0},
+			"precipitation_probability_max": []int{0},
+		},
+	}
+	payload, err := json.Marshal(jsonNight)
+	if err != nil {
+		t.Fatalf("failed to marshal night json: %v", err)
+	}
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(payload)
+	}))
+	defer ts.Close()
+
+	p := provider.NewWeatherProviderWithClient(ts.Client(), ts.URL)
+	err = p.Init(context.Background(), map[string]any{
+		"latitude":  37.8044,
+		"longitude": -122.2712,
+		"units":     "imperial",
+	}, provider.InitOptions{Timezone: "America/Los_Angeles"})
+	if err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+
+	res, err := p.Fetch(context.Background())
+	if err != nil {
+		t.Fatalf("Fetch failed: %v", err)
+	}
+	snap := res.(provider.WeatherSnapshot)
+
+	// Verify current nighttime weather
+	if snap.Current.ConditionText != "Clear" {
+		t.Errorf("expected current condition 'Clear', got %q", snap.Current.ConditionText)
+	}
+	if snap.Current.Icon != "weather-clear-night" {
+		t.Errorf("expected current icon 'weather-clear-night', got %q", snap.Current.Icon)
+	}
+
+	// Verify hourly night vs day transitions with safe bounds
+	if len(snap.Hourly) != 4 {
+		t.Fatalf("expected 4 hourly items, got %d", len(snap.Hourly))
+	}
+	if snap.Hourly[0].Icon != "weather-clear-night" {
+		t.Errorf("hourly[0] icon: expected 'weather-clear-night', got %q", snap.Hourly[0].Icon)
+	}
+	if snap.Hourly[1].Icon != "weather-night-partly-cloudy" {
+		t.Errorf("hourly[1] icon: expected 'weather-night-partly-cloudy', got %q", snap.Hourly[1].Icon)
+	}
+	// Hourly[2] and [3] exceed the length of is_day slice, so they safely default to day (1)
+	if snap.Hourly[2].Icon != "weather-partly-cloudy" {
+		t.Errorf("hourly[2] icon: expected 'weather-partly-cloudy', got %q", snap.Hourly[2].Icon)
+	}
+	if snap.Hourly[3].Icon != "weather-sunny" {
+		t.Errorf("hourly[3] icon: expected 'weather-sunny', got %q", snap.Hourly[3].Icon)
+	}
+
+	// Daily forecast should remain standard daytime mapping
+	if snap.Daily[0].Icon != "weather-sunny" {
+		t.Errorf("daily[0] icon: expected 'weather-sunny', got %q", snap.Daily[0].Icon)
+	}
+}
