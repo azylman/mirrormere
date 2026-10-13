@@ -123,6 +123,12 @@
       clockEl.textContent = formatTime(now, undefined);
       dateEl.textContent = formatDate(now, undefined);
     }
+
+    try {
+      updateNextUpEvent(now);
+    } catch {
+      // Ignore next event update errors during clock ticks
+    }
   }
 
   const WEATHER_ICON_PATHS = {
@@ -740,6 +746,482 @@
     });
   }
 
+  const calendarEventStore = new Map();
+  let headerNextEventInitialized = false;
+
+  /**
+   * Format relative countdown string (e.g. "in 1h 30m", "in 45m", "ends in 15m").
+   */
+  function formatRelativeCountdown(ms, isEnding = false) {
+    const totalMinutes = Math.round(ms / 60000);
+    const prefix = isEnding ? 'ends in ' : 'in ';
+    if (totalMinutes <= 0) return `${prefix}<1m`;
+    if (totalMinutes < 60) return `${prefix}${totalMinutes}m`;
+    const hours = Math.floor(totalMinutes / 60);
+    const mins = totalMinutes % 60;
+    if (mins === 0) return `${prefix}${hours}h`;
+    return `${prefix}${hours}h ${mins}m`;
+  }
+
+  /**
+   * Resolve timezone offset string for a given date in IANA timezone.
+   */
+  function getTimezoneOffsetString(date, tz) {
+    if (!isValidTimezone(tz)) return '';
+    try {
+      const formatter = new Intl.DateTimeFormat('en-US', {
+        timeZone: tz,
+        timeZoneName: 'longOffset',
+      });
+      const parts = formatter.formatToParts(date);
+      const tzPart = parts.find((p) => p.type === 'timeZoneName');
+      if (tzPart && tzPart.value) {
+        const m = tzPart.value.match(/GMT([+-]\d{2}:\d{2})/);
+        if (m) return m[1];
+        if (tzPart.value === 'GMT' || tzPart.value === 'UTC') return 'Z';
+      }
+    } catch {}
+    return '';
+  }
+
+  /**
+   * Resolve year, month, day components of a Date in the given timezone.
+   */
+  function getDatePartsInTimezone(date, tz) {
+    if (!isValidTimezone(tz)) {
+      return {
+        year: date.getFullYear(),
+        month: date.getMonth() + 1,
+        day: date.getDate(),
+      };
+    }
+    try {
+      const formatter = new Intl.DateTimeFormat('en-US', {
+        timeZone: tz,
+        year: 'numeric',
+        month: 'numeric',
+        day: 'numeric',
+      });
+      const parts = formatter.formatToParts(date);
+      let year = date.getFullYear();
+      let month = date.getMonth() + 1;
+      let day = date.getDate();
+      for (const p of parts) {
+        if (p.type === 'year') year = parseInt(p.value, 10);
+        if (p.type === 'month') month = parseInt(p.value, 10);
+        if (p.type === 'day') day = parseInt(p.value, 10);
+      }
+      return { year, month, day };
+    } catch {
+      return {
+        year: date.getFullYear(),
+        month: date.getMonth() + 1,
+        day: date.getDate(),
+      };
+    }
+  }
+
+  /**
+   * Parse raw calendar event dates into normalized Date objects.
+   */
+  function parseEventDates(raw, referenceNow, tz) {
+    if (!raw || typeof raw !== 'object') return null;
+    const offsetStr = getTimezoneOffsetString(referenceNow, tz);
+    const isAllDay = Boolean(
+      raw.allDay ||
+      raw.all_day ||
+      (typeof raw.start === 'string' && raw.start.length === 10 && !raw.start.includes(':'))
+    );
+    let startDate = null;
+    let endDate = null;
+
+    if (isAllDay) {
+      let dateStr = typeof raw.start === 'string' ? raw.start.substring(0, 10) : '';
+      if (!dateStr && raw.date) dateStr = raw.date;
+      if (!dateStr && raw.dayDate) dateStr = raw.dayDate;
+      if (dateStr && dateStr.match(/^\d{4}-\d{2}-\d{2}$/)) {
+        startDate = new Date(`${dateStr}T00:00:00${offsetStr}`);
+        let endDateStr = typeof raw.end === 'string' ? raw.end.substring(0, 10) : dateStr;
+        if (!endDateStr || !endDateStr.match(/^\d{4}-\d{2}-\d{2}$/)) endDateStr = dateStr;
+        endDate = new Date(`${endDateStr}T23:59:59.999${offsetStr}`);
+      } else if (raw.start instanceof Date) {
+        startDate = new Date(raw.start);
+        endDate = raw.end instanceof Date ? new Date(raw.end) : new Date(startDate.getTime() + 24 * 3600 * 1000 - 1);
+      }
+    } else {
+      if (typeof raw.start === 'string' && raw.start.match(/^\d{1,2}:\d{2}$/)) {
+        let dateStr = raw.date || raw.dayDate;
+        if (!dateStr || !dateStr.match(/^\d{4}-\d{2}-\d{2}$/)) {
+          const np = getDatePartsInTimezone(referenceNow, tz);
+          dateStr = `${np.year}-${String(np.month).padStart(2, '0')}-${String(np.day).padStart(2, '0')}`;
+        }
+        const [sh, sm] = raw.start.split(':').map((s) => s.padStart(2, '0'));
+        startDate = new Date(`${dateStr}T${sh}:${sm}:00${offsetStr}`);
+
+        if (typeof raw.end === 'string' && raw.end.match(/^\d{1,2}:\d{2}$/)) {
+          const [eh, em] = raw.end.split(':').map((s) => s.padStart(2, '0'));
+          endDate = new Date(`${dateStr}T${eh}:${em}:00${offsetStr}`);
+        } else {
+          endDate = new Date(startDate.getTime() + 60 * 60 * 1000);
+        }
+      } else if (typeof raw.start === 'string') {
+        startDate = new Date(raw.start);
+        if (typeof raw.end === 'string') {
+          endDate = new Date(raw.end);
+        } else {
+          endDate = new Date(startDate.getTime() + 60 * 60 * 1000);
+        }
+      } else if (raw.start instanceof Date) {
+        startDate = new Date(raw.start);
+        endDate = raw.end instanceof Date ? new Date(raw.end) : new Date(startDate.getTime() + 60 * 60 * 1000);
+      }
+    }
+
+    if (!startDate || isNaN(startDate.getTime()) || !endDate || isNaN(endDate.getTime())) {
+      return null;
+    }
+
+    return {
+      raw,
+      id: raw.id || `${raw.title}-${raw.start}`,
+      title: raw.title || 'Event',
+      startDate,
+      endDate,
+      isAllDay,
+    };
+  }
+
+  /**
+   * Resolve earliest next up or ongoing event across candidates.
+   */
+  function resolveNextUpEvent(events, now, tz) {
+    if (!Array.isArray(events) || events.length === 0) return null;
+    const activeTz = tz || getTimezone();
+
+    const normalized = [];
+    for (const raw of events) {
+      const parsed = parseEventDates(raw, now, activeTz);
+      if (!parsed) continue;
+      if (parsed.endDate <= now) continue;
+      normalized.push(parsed);
+    }
+
+    if (normalized.length === 0) return null;
+
+    const ongoingTimed = [];
+    const upcomingTimed = [];
+    const allDayToday = [];
+    const upcomingAllDay = [];
+
+    for (const ev of normalized) {
+      if (ev.isAllDay) {
+        if (ev.startDate <= now && ev.endDate >= now) {
+          allDayToday.push(ev);
+        } else if (ev.startDate > now) {
+          upcomingAllDay.push(ev);
+        }
+      } else {
+        if (ev.startDate <= now && ev.endDate > now) {
+          ongoingTimed.push(ev);
+        } else if (ev.startDate > now) {
+          upcomingTimed.push(ev);
+        }
+      }
+    }
+
+    ongoingTimed.sort((a, b) => a.endDate.getTime() - b.endDate.getTime());
+    upcomingTimed.sort((a, b) => a.startDate.getTime() - b.startDate.getTime());
+    allDayToday.sort((a, b) => a.startDate.getTime() - b.startDate.getTime());
+    upcomingAllDay.sort((a, b) => a.startDate.getTime() - b.startDate.getTime());
+
+    // 1. Ongoing timed event takes top priority
+    if (ongoingTimed.length > 0) {
+      const ev = ongoingTimed[0];
+      const remainingMs = ev.endDate.getTime() - now.getTime();
+      return {
+        event: ev.raw,
+        title: ev.title,
+        label: 'NOW',
+        timeStr: formatTime(ev.startDate, activeTz),
+        countdown: formatRelativeCountdown(remainingMs, true),
+        isNow: true,
+      };
+    }
+
+    // 2. Upcoming timed event today takes precedence over all-day event
+    const nowParts = getDatePartsInTimezone(now, activeTz);
+    const todayUpcoming = upcomingTimed.filter((e) => {
+      const ep = getDatePartsInTimezone(e.startDate, activeTz);
+      return ep.year === nowParts.year && ep.month === nowParts.month && ep.day === nowParts.day;
+    });
+
+    if (todayUpcoming.length > 0) {
+      const ev = todayUpcoming[0];
+      const untilMs = ev.startDate.getTime() - now.getTime();
+      return {
+        event: ev.raw,
+        title: ev.title,
+        label: 'NEXT',
+        timeStr: formatTime(ev.startDate, activeTz),
+        countdown: formatRelativeCountdown(untilMs, false),
+        isNow: false,
+      };
+    }
+
+    // 3. All-day event today
+    if (allDayToday.length > 0) {
+      const ev = allDayToday[0];
+      return {
+        event: ev.raw,
+        title: ev.title,
+        label: 'TODAY',
+        timeStr: 'All Day',
+        countdown: '',
+        isNow: false,
+      };
+    }
+
+    // 4. Upcoming timed event on a future day
+    if (upcomingTimed.length > 0) {
+      const ev = upcomingTimed[0];
+      const untilMs = ev.startDate.getTime() - now.getTime();
+      const dayOpts = { weekday: 'short' };
+      if (isValidTimezone(activeTz)) dayOpts.timeZone = activeTz;
+      const weekday = new Intl.DateTimeFormat(undefined, dayOpts).format(ev.startDate);
+      return {
+        event: ev.raw,
+        title: ev.title,
+        label: 'NEXT',
+        timeStr: `${weekday} ${formatTime(ev.startDate, activeTz)}`,
+        countdown: formatRelativeCountdown(untilMs, false),
+        isNow: false,
+      };
+    }
+
+    // 5. Upcoming all-day event on a future day
+    if (upcomingAllDay.length > 0) {
+      const ev = upcomingAllDay[0];
+      const dayOpts = { weekday: 'short' };
+      if (isValidTimezone(activeTz)) dayOpts.timeZone = activeTz;
+      const weekday = new Intl.DateTimeFormat(undefined, dayOpts).format(ev.startDate);
+      return {
+        event: ev.raw,
+        title: ev.title,
+        label: weekday.toUpperCase(),
+        timeStr: 'All Day',
+        countdown: '',
+        isNow: false,
+      };
+    }
+
+    return null;
+  }
+
+  /**
+   * Scan DOM for calendar-feed and calendar-grid data and ingest into calendarEventStore.
+   */
+  function scanAndIngestCalendarWidgets(root) {
+    const doc = root || (typeof document !== 'undefined' ? document : null);
+    if (!doc || typeof doc.querySelectorAll !== 'function') return;
+
+    // Ingest calendar-feed data
+    const feedScripts = doc.querySelectorAll('.calendar-feed-data');
+    if (feedScripts && feedScripts.length > 0) {
+      feedScripts.forEach((script, idx) => {
+        try {
+          const data = JSON.parse(script.textContent || '[]');
+          if (Array.isArray(data)) {
+            const events = data.map((item, i) => ({
+              id: item.id || `feed-${idx}-${i}`,
+              title: item.title,
+              start: item.start,
+              end: item.end,
+              allDay: Boolean(item.all_day || item.allDay),
+              location: item.location,
+            }));
+            calendarEventStore.set(`feed-${idx}`, events);
+          }
+        } catch {}
+      });
+    }
+
+    // Fallback: ingest calendar-feed DOM elements
+    const feedItems = doc.querySelectorAll('.calendar-event-item');
+    if (feedItems && feedItems.length > 0 && (!feedScripts || feedScripts.length === 0)) {
+      const events = [];
+      feedItems.forEach((el, idx) => {
+        const id = el.dataset?.eventId || el.getAttribute?.('data-event-id') || `feed-item-${idx}`;
+        const title = el.dataset?.eventTitle || el.getAttribute?.('data-event-title') || el.querySelector?.('.event-title')?.textContent?.trim() || el.textContent.trim();
+        const start = el.dataset?.eventStart || el.getAttribute?.('data-event-start');
+        const end = el.dataset?.eventEnd || el.getAttribute?.('data-event-end');
+        const allDay = el.dataset?.eventAllday === 'true' || el.getAttribute?.('data-event-allday') === 'true';
+        if (title && (start || allDay)) {
+          events.push({ id, title, start, end, allDay });
+        }
+      });
+      if (events.length > 0) {
+        calendarEventStore.set('feed-dom', events);
+      }
+    }
+
+    // Ingest calendar-grid data
+    const gridScripts = doc.querySelectorAll('.calendar-grid-data, .calendar-family-data');
+    if (gridScripts && gridScripts.length > 0) {
+      gridScripts.forEach((script, idx) => {
+        try {
+          const data = JSON.parse(script.textContent || '{}');
+          const days = Array.isArray(data.days) ? data.days : Array.isArray(data) ? data : [];
+          const events = [];
+          for (const day of days) {
+            const dayDate = day.date;
+            if (Array.isArray(day.events)) {
+              for (const ev of day.events) {
+                const isAllDay = Boolean(ev.all_day || ev.allDay || !ev.start);
+                events.push({
+                  id: ev.id || `grid-${dayDate}-${ev.start}-${ev.title}`,
+                  title: ev.title,
+                  start: ev.start,
+                  end: ev.end,
+                  allDay: isAllDay,
+                  date: dayDate,
+                  dayDate: dayDate,
+                });
+              }
+            }
+          }
+          if (events.length > 0) {
+            calendarEventStore.set(`grid-${idx}`, events);
+          }
+        } catch {}
+      });
+    }
+
+    // Fallback: ingest calendar-grid DOM elements
+    const gridDays = doc.querySelectorAll('.cf-day');
+    if (gridDays && gridDays.length > 0 && (!gridScripts || gridScripts.length === 0)) {
+      const events = [];
+      gridDays.forEach((dayEl, dIdx) => {
+        const dayDate = dayEl.dataset?.date || dayEl.getAttribute?.('data-date');
+        const dayEvents = dayEl.querySelectorAll?.('.cf-day-event, .cf-allday, .cf-edge-event') || [];
+        dayEvents.forEach((evEl, eIdx) => {
+          const id = evEl.dataset?.eventId || evEl.getAttribute?.('data-event-id') || `grid-dom-${dIdx}-${eIdx}`;
+          const title = evEl.dataset?.eventTitle || evEl.getAttribute?.('data-event-title') || evEl.textContent.trim();
+          const start = evEl.dataset?.start || evEl.getAttribute?.('data-start');
+          const end = evEl.dataset?.end || evEl.getAttribute?.('data-end');
+          const allDay = evEl.classList?.contains?.('cf-allday') || evEl.dataset?.allday === 'true';
+          if (title) {
+            events.push({ id, title, start, end, allDay, date: dayDate, dayDate });
+          }
+        });
+      });
+      if (events.length > 0) {
+        calendarEventStore.set('grid-dom', events);
+      }
+    }
+  }
+
+  /**
+   * Get all cached calendar events across all ingested widgets.
+   */
+  function getAllStoredCalendarEvents() {
+    const deduped = new Map();
+    for (const events of calendarEventStore.values()) {
+      if (!Array.isArray(events)) continue;
+      for (const ev of events) {
+        if (!ev) continue;
+        const key = ev.id || `${ev.title}-${ev.start}`;
+        if (!deduped.has(key)) {
+          deduped.set(key, ev);
+        }
+      }
+    }
+    return Array.from(deduped.values());
+  }
+
+  /**
+   * Update header next up event pill in DOM.
+   */
+  function updateNextUpEvent(customInstant, explicitEvents) {
+    if (typeof document === 'undefined') return;
+    const now = customInstant instanceof Date ? customInstant : new Date();
+    const tz = getTimezone();
+
+    let events = explicitEvents;
+    if (!events) {
+      let stored = getAllStoredCalendarEvents();
+      if (!stored || stored.length === 0) {
+        scanAndIngestCalendarWidgets();
+        stored = getAllStoredCalendarEvents();
+      }
+      events = stored;
+    }
+
+    const container = document.getElementById('header-next-event');
+    if (!container) return;
+
+    if (!events || events.length === 0) {
+      container.style.display = 'none';
+      return;
+    }
+
+    const resolved = resolveNextUpEvent(events, now, tz);
+    if (!resolved) {
+      container.style.display = 'none';
+      return;
+    }
+
+    container.style.display = '';
+
+    const pillEl = document.getElementById('next-event-pill');
+    const labelEl = document.getElementById('next-event-label');
+    const timeEl = document.getElementById('next-event-time');
+    const titleEl = document.getElementById('next-event-title');
+    const countdownEl = document.getElementById('next-event-countdown');
+
+    if (labelEl) labelEl.textContent = resolved.label;
+    if (timeEl) timeEl.textContent = resolved.timeStr;
+    if (titleEl) {
+      titleEl.textContent = resolved.title;
+      titleEl.title = resolved.title;
+    }
+    if (countdownEl) countdownEl.textContent = resolved.countdown;
+
+    if (pillEl) {
+      if (resolved.isNow) {
+        pillEl.classList.add('status-now');
+      } else {
+        pillEl.classList.remove('status-now');
+      }
+      pillEl.title = `${resolved.label}: ${resolved.title} (${resolved.timeStr})`;
+    }
+  }
+
+  /**
+   * Setup header next up event pill interaction and accessibility.
+   */
+  function setupHeaderNextEvent() {
+    if (typeof document === 'undefined' || headerNextEventInitialized) return;
+    headerNextEventInitialized = true;
+
+    const pillEl = document.getElementById('next-event-pill');
+    if (!pillEl) return;
+
+    pillEl.addEventListener('click', () => {
+      const target = document.querySelector('.widget-calendar-feed, .widget-calendar-grid, .calendar-event-item, .cf-day');
+      if (target && typeof target.scrollIntoView === 'function') {
+        target.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+    });
+
+    pillEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        pillEl.click();
+      }
+    });
+  }
+
+
   /**
    * Complete task action handler with optimistic UI updates and network rollback.
    */
@@ -928,13 +1410,22 @@
         sseClient: sseClient,
       });
 
+      // 8b. Initialize Header Next Up Event Pill
+      setupHeaderNextEvent();
+      scanAndIngestCalendarWidgets();
+      updateNextUpEvent();
+
       sseClient.on('screen.rotate', (data) => {
         if (carousel) carousel.handleScreenRotate(data);
+        scanAndIngestCalendarWidgets();
+        updateNextUpEvent();
       });
 
       sseClient.on('widget.update', (data) => {
         if (carousel) carousel.handleWidgetUpdate(data);
         syncInFlightTasks();
+        scanAndIngestCalendarWidgets();
+        updateNextUpEvent();
       });
 
       sseClient.on('widget.reload', (data) => {
@@ -973,6 +1464,9 @@
       // Standalone or pre-SSE header video & tasks initialization
       setupHeaderVideo();
       initTasksInteraction();
+      setupHeaderNextEvent();
+      scanAndIngestCalendarWidgets();
+      updateNextUpEvent();
     }
   }
 
@@ -1011,6 +1505,14 @@
     initTasksInteraction,
     syncInFlightTasks,
     getInFlightCompletions: () => inFlightCompletions,
+    updateNextUpEvent,
+    resolveNextUpEvent,
+    scanAndIngestCalendarWidgets,
+    getAllStoredCalendarEvents,
+    calendarEventStore,
+    clearCalendarEventStore: () => calendarEventStore.clear(),
+    formatRelativeCountdown,
+    setupHeaderNextEvent,
     init,
   };
 

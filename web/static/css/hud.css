@@ -157,11 +157,48 @@ body[data-theme="night"],
 [data-theme="night"] .header-pill,
 [data-theme="night"] .weather-pill,
 [data-theme="night"] .status-pill,
+[data-theme="night"] .next-event-pill,
 [data-theme="night"] .header-clock-pill {
   background: rgba(71, 65, 94, 0.85);
   border-color: rgba(197, 163, 255, 0.2);
   color: var(--mm-text-body);
   box-shadow: 0 4px 14px -2px rgba(20, 16, 32, 0.4);
+}
+
+[data-theme="night"] .next-event-icon {
+  background: rgba(197, 163, 255, 0.15);
+  color: var(--mm-lavender, #c5a5f9);
+}
+
+[data-theme="night"] .next-event-label {
+  color: var(--mm-lavender, #c5a5f9);
+}
+
+[data-theme="night"] .next-event-time {
+  color: var(--mm-text-secondary);
+}
+
+[data-theme="night"] .next-event-title {
+  color: var(--mm-text-title);
+}
+
+[data-theme="night"] .next-event-countdown {
+  color: var(--mm-coral, #ffb8d1);
+  background: rgba(255, 184, 209, 0.15);
+}
+
+[data-theme="night"] .next-event-pill.status-now .next-event-label {
+  color: var(--mm-coral, #ffb8d1);
+}
+
+[data-theme="night"] .next-event-pill.status-now .next-event-icon {
+  background: rgba(255, 184, 209, 0.2);
+  color: var(--mm-coral, #ffb8d1);
+}
+
+[data-theme="night"] .next-event-pill.status-now .next-event-countdown {
+  color: #2b2038;
+  background: var(--mm-coral, #ffb8d1);
 }
 
 [data-theme="night"] .header-video-btn {
@@ -620,6 +657,7 @@ html, body {
   flex-direction: row;
   align-items: center;
   gap: 20px;
+  flex-shrink: 0;
 }
 
 .header-clock {
@@ -664,8 +702,125 @@ html, body {
   color: var(--mm-text-dim);
 }
 
+/* Center: Next Up Event Pill (SPEC-011, Header Event Indicator) */
+.header-next-event {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0 16px;
+  overflow: hidden;
+}
+
+.next-event-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  max-width: min(480px, 42vw);
+  min-width: 0;
+  padding: 6px 18px 6px 14px;
+  background: var(--mm-bg-surface);
+  border: 1px solid var(--mm-card-border);
+  border-radius: 9999px;
+  box-shadow: 0 4px 12px -2px rgba(130, 100, 70, 0.08);
+  color: var(--mm-text-title);
+  cursor: pointer;
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: transform 0.15s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+  overflow: hidden;
+}
+
+.next-event-pill:hover {
+  border-color: rgba(139, 92, 246, 0.4);
+  box-shadow: 0 4px 14px -1px rgba(139, 92, 246, 0.2);
+}
+
+.next-event-pill:active {
+  transform: scale(0.97);
+}
+
+.next-event-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--mm-lavender-light, #f3effe);
+  color: var(--mm-lavender, #8b60ed);
+  flex-shrink: 0;
+}
+
+.next-event-icon svg {
+  display: block;
+}
+
+.next-event-label {
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  color: var(--mm-lavender, #8b60ed);
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+
+.next-event-time {
+  font-family: var(--mm-font-mono, monospace);
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--mm-text-secondary, #4e465f);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.next-event-title {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--mm-text-title, #2a2338);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 220px;
+}
+
+.next-event-countdown {
+  font-size: 0.72rem;
+  font-weight: 800;
+  color: var(--mm-coral, #ff6f59);
+  background: var(--mm-coral-light, #fff0ed);
+  padding: 2px 7px;
+  border-radius: 9999px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.next-event-pill.status-now .next-event-label {
+  color: var(--mm-coral, #ff6f59);
+}
+
+.next-event-pill.status-now .next-event-icon {
+  background: var(--mm-coral-light, #fff0ed);
+  color: var(--mm-coral, #ff6f59);
+}
+
+.next-event-pill.status-now .next-event-countdown {
+  color: #ffffff;
+  background: var(--mm-coral, #ff6f59);
+}
+
 /* Right Cluster: Weather Pill & System Health Jewel */
 .header-right-cluster {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  flex-shrink: 0;
+}
   display: flex;
   align-items: center;
   gap: 20px;
