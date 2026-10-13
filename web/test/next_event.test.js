@@ -279,4 +279,25 @@ describe('Header Next Up Event Pill', () => {
     // Grid event at 15:00 is earlier than feed event at 16:00
     assert.equal(titleEl.textContent, 'Grid Event');
   });
+
+  test('next-event-pill is styled at 52px height matching weather pill with no glowing icon', () => {
+    const fs = require('node:fs');
+    const path = require('node:path');
+
+    const templatePath = path.resolve(__dirname, '../templates/display.html');
+    const templateContent = fs.readFileSync(templatePath, 'utf8');
+    assert.doesNotMatch(templateContent, /next-event-icon/, 'display.html must not contain next-event-icon');
+    assert.doesNotMatch(templateContent, /mm-next-event-icon-svg/, 'display.html must not contain mm-next-event-icon-svg');
+
+    const hudCSSPath = path.resolve(__dirname, '../static/css/hud.css');
+    const defaultHudCSSPath = path.resolve(__dirname, '../../internal/render/default_hud.css');
+
+    for (const cssPath of [hudCSSPath, defaultHudCSSPath]) {
+      const cssContent = fs.readFileSync(cssPath, 'utf8');
+      assert.match(cssContent, /\.next-event-pill\s*\{[^}]*height:\s*52px;/s, `${path.basename(cssPath)} must define height: 52px`);
+      assert.match(cssContent, /\.next-event-pill\s*\{[^}]*min-height:\s*52px;/s, `${path.basename(cssPath)} must define min-height: 52px`);
+      assert.match(cssContent, /\.next-event-pill\s*\{[^}]*box-sizing:\s*border-box;/s, `${path.basename(cssPath)} must define box-sizing: border-box`);
+      assert.doesNotMatch(cssContent, /\.next-event-icon\b/, `${path.basename(cssPath)} must not define .next-event-icon`);
+    }
+  });
 });
