@@ -22,6 +22,20 @@
           <div class="header-date" id="header-date">------</div>
         </div>
       </div>
+      <div class="header-next-event" id="header-next-event" style="display: none;">
+        <div class="pill-badge next-event-pill" id="next-event-pill" role="button" tabindex="0" title="Next upcoming event">
+          <span class="next-event-icon" id="next-event-icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="mm-next-event-icon-svg">
+              <circle cx="12" cy="12" r="10"></circle>
+              <polyline points="12 6 12 12 16 14"></polyline>
+            </svg>
+          </span>
+          <span class="next-event-label" id="next-event-label">NEXT</span>
+          <span class="next-event-time" id="next-event-time">--:--</span>
+          <span class="next-event-title" id="next-event-title">--</span>
+          <span class="next-event-countdown" id="next-event-countdown"></span>
+        </div>
+      </div>
       <div class="header-right-cluster">
         {{ if and .HeaderVideo .HeaderVideo.Enabled }}
         <div class="header-video" id="header-video">

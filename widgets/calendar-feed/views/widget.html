@@ -44,7 +44,7 @@
           </div>
           <div class="calendar-day-card">
             {{ range .Events }}
-              <div class="calendar-event-item">
+              <div class="calendar-event-item" data-event-id="{{ .ID }}" data-event-start="{{ .Start }}" data-event-end="{{ .End }}" data-event-allday="{{ .AllDay }}">
                 <div class="event-time-col">
                   {{ if .AllDay }}
                     <span class="event-time-chip event-time-allday">All Day</span>
