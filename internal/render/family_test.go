@@ -1333,6 +1333,7 @@ func TestCalendarFamily_WeekViewTemplateRender(t *testing.T) {
 	}
 	cfg := baseFamilyConfig()
 	cfg["default_view"] = "week"
+	cfg["hours"] = []any{"07:00", "21:00"}
 
 	ctx := Context{
 		ID:         "test-family-week",
@@ -2418,7 +2419,8 @@ func TestBuildFamilyView_WeekViewTimelinePositioning(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if view.HoursStart != "07:00" || view.HoursEnd != "21:00" {
+	// Dynamic start time matches earliest event (09:00) instead of fixed 07:00
+	if view.HoursStart != "09:00" || view.HoursEnd != "21:00" {
 		t.Errorf("unexpected hours window: %s to %s", view.HoursStart, view.HoursEnd)
 	}
 	if len(view.HourMarkers) == 0 {
@@ -2433,14 +2435,30 @@ func TestBuildFamilyView_WeekViewTimelinePositioning(t *testing.T) {
 	if ev.Title != "Morning Standup" {
 		t.Errorf("expected title Morning Standup, got %s", ev.Title)
 	}
-	if ev.TopPct < 14.0 || ev.TopPct > 15.0 {
-		t.Errorf("expected TopPct ~14.29%%, got %f", ev.TopPct)
+	// With 09:00 start, event at 09:00 begins at TopPct = 0% and 1hr/12hr = 8.33%
+	if ev.TopPct != 0.0 {
+		t.Errorf("expected TopPct 0.0%%, got %f", ev.TopPct)
 	}
-	if ev.HeightPct < 7.0 || ev.HeightPct > 8.0 {
-		t.Errorf("expected HeightPct ~7.14%%, got %f", ev.HeightPct)
+	if ev.HeightPct < 8.3 || ev.HeightPct > 8.4 {
+		t.Errorf("expected HeightPct ~8.33%%, got %f", ev.HeightPct)
 	}
 	if ev.LeftPct != 0.0 || ev.WidthPct != 100.0 {
 		t.Errorf("expected LeftPct=0, WidthPct=100; got Left=%f, Width=%f", ev.LeftPct, ev.WidthPct)
+	}
+
+	// Explicit hours config overrides dynamic start
+	cfgExplicit := baseFamilyConfig()
+	cfgExplicit["hours"] = []any{"07:00", "21:00"}
+	viewExplicit, err := BuildFamilyView(snap, cfgExplicit, domain.NewDimension(6, 2), testNow)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if viewExplicit.HoursStart != "07:00" || viewExplicit.HoursEnd != "21:00" {
+		t.Errorf("expected explicit 07:00 to 21:00, got %s to %s", viewExplicit.HoursStart, viewExplicit.HoursEnd)
+	}
+	evExplicit := viewExplicit.Days[1].Events[0]
+	if evExplicit.TopPct < 14.0 || evExplicit.TopPct > 15.0 {
+		t.Errorf("expected TopPct ~14.29%% with explicit hours, got %f", evExplicit.TopPct)
 	}
 }
 
@@ -2510,6 +2528,7 @@ func TestBuildFamilyView_WeekViewEdgeBands(t *testing.T) {
 		},
 	}
 	cfg := baseFamilyConfig()
+	cfg["hours"] = []any{"07:00", "21:00"}
 	view, err := BuildFamilyView(snap, cfg, domain.NewDimension(6, 2), testNow)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -2575,6 +2594,7 @@ func TestRenderFamilyWidgetTemplate_WeekTimeline(t *testing.T) {
 	}
 	cfg := baseFamilyConfig()
 	cfg["default_view"] = "week"
+	cfg["hours"] = []any{"07:00", "21:00"}
 
 	ctx := Context{
 		ID:         "test-family-week-timeline",
@@ -2858,5 +2878,232 @@ func TestBuildFamilyCombinedData_RollingWindowBounds(t *testing.T) {
 	}
 	if resWithMonth["month_range_end"] != "2026-11-08" {
 		t.Errorf("expected month_range_end 2026-11-08, got %v", resWithMonth["month_range_end"])
+	}
+}
+
+func TestResolveFamilyHoursBand(t *testing.T) {
+	t.Parallel()
+
+	loc := time.UTC
+
+	dayIndex := map[string]int{
+		"2026-09-27": 0,
+		"2026-09-28": 1,
+		"2026-09-29": 2,
+		"2026-09-30": 3,
+		"2026-10-01": 4,
+		"2026-10-02": 5,
+		"2026-10-03": 6,
+	}
+
+	tests := []struct {
+		name       string
+		cfg        map[string]any
+		events     []provider.CalendarEvent
+		loc        *time.Location
+		wantStart  string
+		wantEnd    string
+		wantStartH int
+		wantStartM int
+	}{
+		{
+			name:       "nil cfg and no events defaults to 07:00-21:00",
+			cfg:        nil,
+			events:     nil,
+			loc:        loc,
+			wantStart:  "07:00",
+			wantEnd:    "21:00",
+			wantStartH: 7,
+			wantStartM: 0,
+		},
+		{
+			name: "all-day events only defaults to 07:00-21:00",
+			cfg:  map[string]any{},
+			events: []provider.CalendarEvent{
+				{ID: "e1", AllDay: true, Start: "2026-09-28", End: "2026-09-28"},
+			},
+			loc:        loc,
+			wantStart:  "07:00",
+			wantEnd:    "21:00",
+			wantStartH: 7,
+			wantStartM: 0,
+		},
+		{
+			name: "timed event at 09:00 sets start to 09:00",
+			cfg:  map[string]any{},
+			events: []provider.CalendarEvent{
+				{ID: "e1", Start: "2026-09-28T09:00:00Z", End: "2026-09-28T10:00:00Z"},
+			},
+			loc:        loc,
+			wantStart:  "09:00",
+			wantEnd:    "21:00",
+			wantStartH: 9,
+			wantStartM: 0,
+		},
+		{
+			name: "timed event at 08:30 floors start to 08:00 for grid alignment",
+			cfg:  map[string]any{},
+			events: []provider.CalendarEvent{
+				{ID: "e1", Start: "2026-09-28T08:30:00Z", End: "2026-09-28T09:30:00Z"},
+			},
+			loc:        loc,
+			wantStart:  "08:00",
+			wantEnd:    "21:00",
+			wantStartH: 8,
+			wantStartM: 0,
+		},
+		{
+			name: "timed event at 05:15 floors start to 05:00",
+			cfg:  map[string]any{},
+			events: []provider.CalendarEvent{
+				{ID: "e1", Start: "2026-09-28T05:15:00Z", End: "2026-09-28T06:30:00Z"},
+			},
+			loc:        loc,
+			wantStart:  "05:00",
+			wantEnd:    "21:00",
+			wantStartH: 5,
+			wantStartM: 0,
+		},
+		{
+			name: "multiple events across week picks earliest",
+			cfg:  map[string]any{},
+			events: []provider.CalendarEvent{
+				{ID: "e1", Start: "2026-09-28T11:00:00Z", End: "2026-09-28T12:00:00Z"},
+				{ID: "e2", Start: "2026-09-29T08:15:00Z", End: "2026-09-29T09:00:00Z"},
+				{ID: "e3", Start: "2026-09-30T14:00:00Z", End: "2026-09-30T15:00:00Z"},
+			},
+			loc:        loc,
+			wantStart:  "08:00",
+			wantEnd:    "21:00",
+			wantStartH: 8,
+			wantStartM: 0,
+		},
+		{
+			name: "event outside displayed week is ignored",
+			cfg:  map[string]any{},
+			events: []provider.CalendarEvent{
+				{ID: "e1", Start: "2026-10-15T06:00:00Z", End: "2026-10-15T07:00:00Z"},
+			},
+			loc:        loc,
+			wantStart:  "07:00",
+			wantEnd:    "21:00",
+			wantStartH: 7,
+			wantStartM: 0,
+		},
+		{
+			name: "event with invalid start format is ignored",
+			cfg:  map[string]any{},
+			events: []provider.CalendarEvent{
+				{ID: "e1", Start: "invalid-time", End: "2026-09-28T10:00:00Z"},
+			},
+			loc:        loc,
+			wantStart:  "07:00",
+			wantEnd:    "21:00",
+			wantStartH: 7,
+			wantStartM: 0,
+		},
+		{
+			name: "late event violating 4-hour window guardrail falls back to 07:00",
+			cfg:  map[string]any{},
+			events: []provider.CalendarEvent{
+				{ID: "e1", Start: "2026-09-28T19:00:00Z", End: "2026-09-28T20:00:00Z"},
+			},
+			loc:        loc,
+			wantStart:  "07:00",
+			wantEnd:    "21:00",
+			wantStartH: 7,
+			wantStartM: 0,
+		},
+		{
+			name: "late evening event after 21:00 falls back to 07:00",
+			cfg:  map[string]any{},
+			events: []provider.CalendarEvent{
+				{ID: "e1", Start: "2026-09-28T22:00:00Z", End: "2026-09-28T23:00:00Z"},
+			},
+			loc:        loc,
+			wantStart:  "07:00",
+			wantEnd:    "21:00",
+			wantStartH: 7,
+			wantStartM: 0,
+		},
+		{
+			name: "explicit hours []any overrides dynamic calculation",
+			cfg: map[string]any{
+				"hours": []any{"06:00", "22:00"},
+			},
+			events: []provider.CalendarEvent{
+				{ID: "e1", Start: "2026-09-28T09:00:00Z", End: "2026-09-28T10:00:00Z"},
+			},
+			loc:        loc,
+			wantStart:  "06:00",
+			wantEnd:    "22:00",
+			wantStartH: 6,
+			wantStartM: 0,
+		},
+		{
+			name: "explicit hours []string overrides dynamic calculation",
+			cfg: map[string]any{
+				"hours": []string{"08:00", "20:00"},
+			},
+			events: []provider.CalendarEvent{
+				{ID: "e1", Start: "2026-09-28T06:00:00Z", End: "2026-09-28T07:00:00Z"},
+			},
+			loc:        loc,
+			wantStart:  "08:00",
+			wantEnd:    "20:00",
+			wantStartH: 8,
+			wantStartM: 0,
+		},
+		{
+			name: "invalid explicit hours falls back to dynamic or default",
+			cfg: map[string]any{
+				"hours": []any{"invalid", "21:00"},
+			},
+			events: []provider.CalendarEvent{
+				{ID: "e1", Start: "2026-09-28T09:00:00Z", End: "2026-09-28T10:00:00Z"},
+			},
+			loc:        loc,
+			wantStart:  "09:00",
+			wantEnd:    "21:00",
+			wantStartH: 9,
+			wantStartM: 0,
+		},
+		{
+			name: "inverted explicit hours falls back to dynamic or default",
+			cfg: map[string]any{
+				"hours": []any{"22:00", "06:00"},
+			},
+			events:     nil,
+			loc:        loc,
+			wantStart:  "07:00",
+			wantEnd:    "21:00",
+			wantStartH: 7,
+			wantStartM: 0,
+		},
+		{
+			name: "nil loc defaults safely without panicking",
+			cfg:  map[string]any{},
+			events: []provider.CalendarEvent{
+				{ID: "e1", Start: "2026-09-28T10:00:00Z", End: "2026-09-28T11:00:00Z"},
+			},
+			loc:        nil,
+			wantStart:  "10:00",
+			wantEnd:    "21:00",
+			wantStartH: 10,
+			wantStartM: 0,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			band := resolveFamilyHoursBand(tc.cfg, tc.events, dayIndex, tc.loc)
+			if band.StartStr != tc.wantStart || band.EndStr != tc.wantEnd {
+				t.Errorf("hours string mismatch: got %s–%s, want %s–%s", band.StartStr, band.EndStr, tc.wantStart, tc.wantEnd)
+			}
+			if band.StartHour != tc.wantStartH || band.StartMinute != tc.wantStartM {
+				t.Errorf("start time mismatch: got %02d:%02d, want %02d:%02d", band.StartHour, band.StartMinute, tc.wantStartH, tc.wantStartM)
+			}
+		})
 	}
 }
