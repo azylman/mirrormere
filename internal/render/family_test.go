@@ -2568,7 +2568,9 @@ func TestRenderFamilyWidgetTemplate_WeekTimeline(t *testing.T) {
 	snap := provider.CalendarSnapshot{
 		LastSync: "2026-09-27T12:00:00Z",
 		Events: []provider.CalendarEvent{
+			{ID: "e_early", CalendarName: "alex-personal", Title: "Early Flight", Start: "2026-09-28T05:00:00Z", End: "2026-09-28T06:00:00Z"},
 			{ID: "e_timed", CalendarName: "alex-personal", Title: "Soccer Practice", Start: "2026-09-28T16:00:00Z", End: "2026-09-28T17:30:00Z"},
+			{ID: "e_late", CalendarName: "alex-personal", Title: "Late Movie", Start: "2026-09-28T22:00:00Z", End: "2026-09-28T23:30:00Z"},
 		},
 	}
 	cfg := baseFamilyConfig()
@@ -2590,11 +2592,32 @@ func TestRenderFamilyWidgetTemplate_WeekTimeline(t *testing.T) {
 	if !strings.Contains(html, "cf-week-grid") {
 		t.Errorf("expected 'cf-week-grid' in rendered HTML: %s", html)
 	}
+	if !strings.Contains(html, "cf-timeline-axis") {
+		t.Errorf("expected 'cf-timeline-axis' in rendered HTML: %s", html)
+	}
+	if !strings.Contains(html, "cf-timeline-markers") {
+		t.Errorf("expected 'cf-timeline-markers' in rendered HTML: %s", html)
+	}
+	if !strings.Contains(html, "cf-hour-marker") {
+		t.Errorf("expected 'cf-hour-marker' in rendered HTML: %s", html)
+	}
 	if !strings.Contains(html, "cf-day-canvas") {
 		t.Errorf("expected 'cf-day-canvas' in rendered HTML: %s", html)
 	}
 	if !strings.Contains(html, "Soccer Practice") {
 		t.Errorf("expected 'Soccer Practice' in rendered HTML: %s", html)
+	}
+	if !strings.Contains(html, "top: 64.29%") {
+		t.Errorf("expected 'top: 64.29%%' in rendered HTML: %s", html)
+	}
+	if !strings.Contains(html, "height: 10.71%") {
+		t.Errorf("expected 'height: 10.71%%' in rendered HTML: %s", html)
+	}
+	if !strings.Contains(html, "cf-early-band") || !strings.Contains(html, "Early Flight") {
+		t.Errorf("expected 'cf-early-band' with Early Flight in rendered HTML: %s", html)
+	}
+	if !strings.Contains(html, "cf-late-band") || !strings.Contains(html, "Late Movie") {
+		t.Errorf("expected 'cf-late-band' with Late Movie in rendered HTML: %s", html)
 	}
 }
 
