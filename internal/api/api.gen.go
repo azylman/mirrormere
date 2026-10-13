@@ -38,6 +38,7 @@ const (
 // Defines values for VideoPlayerStateRequestPlayerState.
 const (
 	VideoPlayerStateRequestPlayerStateBuffering VideoPlayerStateRequestPlayerState = "buffering"
+	VideoPlayerStateRequestPlayerStateIdle      VideoPlayerStateRequestPlayerState = "idle"
 	VideoPlayerStateRequestPlayerStatePaused    VideoPlayerStateRequestPlayerState = "paused"
 	VideoPlayerStateRequestPlayerStatePlaying   VideoPlayerStateRequestPlayerState = "playing"
 )
@@ -45,6 +46,7 @@ const (
 // Defines values for VideoPlayerStateResponsePlayerState.
 const (
 	VideoPlayerStateResponsePlayerStateBuffering VideoPlayerStateResponsePlayerState = "buffering"
+	VideoPlayerStateResponsePlayerStateIdle      VideoPlayerStateResponsePlayerState = "idle"
 	VideoPlayerStateResponsePlayerStatePaused    VideoPlayerStateResponsePlayerState = "paused"
 	VideoPlayerStateResponsePlayerStatePlaying   VideoPlayerStateResponsePlayerState = "playing"
 )
@@ -58,6 +60,7 @@ const (
 // Defines values for VideoStreamPlayerState.
 const (
 	VideoStreamPlayerStateBuffering VideoStreamPlayerState = "buffering"
+	VideoStreamPlayerStateIdle      VideoStreamPlayerState = "idle"
 	VideoStreamPlayerStatePaused    VideoStreamPlayerState = "paused"
 	VideoStreamPlayerStatePlaying   VideoStreamPlayerState = "playing"
 )
@@ -78,6 +81,7 @@ const (
 // Defines values for VideoTriggerRequestPlayerState.
 const (
 	VideoTriggerRequestPlayerStateBuffering VideoTriggerRequestPlayerState = "buffering"
+	VideoTriggerRequestPlayerStateIdle      VideoTriggerRequestPlayerState = "idle"
 	VideoTriggerRequestPlayerStatePaused    VideoTriggerRequestPlayerState = "paused"
 	VideoTriggerRequestPlayerStatePlaying   VideoTriggerRequestPlayerState = "playing"
 )

@@ -880,8 +880,32 @@ func (c *CastClient) handleMediaMessage(msg CastMessage) {
 		}
 	}
 
-	// Core strictly accepts "playing", "paused", "buffering"
-	if normalizedState == "playing" || normalizedState == "paused" || normalizedState == "buffering" {
+	// Core accepts "playing", "paused", "buffering", and "idle"
+	if normalizedState == "idle" {
+		c.playerState = "idle"
+		if prevPlayerState != "idle" {
+			c.lastTitle = ""
+			c.lastSeries = ""
+			c.lastSeason = ""
+			c.lastEpisode = ""
+			c.lastDuration = 0
+			c.lastPosition = 0
+			c.lastPositionTime = time.Time{}
+			c.mediaSessionID = 0
+			c.lastReportedPlayerState = "idle"
+			c.lastReportedTitle = ""
+			c.lastReportedSeries = ""
+			c.lastReportedSeason = ""
+			c.lastReportedEpisode = ""
+			c.lastReportedMediaSessionID = 0
+			c.mu.Unlock()
+
+			c.queueDispatch(func() {
+				c.dispatchPlayerState("idle")
+			})
+			return
+		}
+	} else if normalizedState == "playing" || normalizedState == "paused" || normalizedState == "buffering" {
 		c.playerState = normalizedState
 
 		shouldDispatch := false
@@ -920,8 +944,6 @@ func (c *CastClient) handleMediaMessage(msg CastMessage) {
 			})
 			return
 		}
-	} else if strings.ToUpper(rawState) == "IDLE" {
-		c.playerState = "idle"
 	}
 	c.mu.Unlock()
 }

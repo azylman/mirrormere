@@ -1066,6 +1066,12 @@ button, .touch-target {
   visibility: visible;
 }
 
+.video-hud-overlay[data-player-state="idle"] .video-hud-bottom-bar,
+.video-hud-overlay[data-player-state="idle"] .video-hud-play-center {
+  display: none !important;
+  pointer-events: none !important;
+}
+
 .video-hud-header {
   display: flex;
   align-items: flex-start;

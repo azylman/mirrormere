@@ -367,6 +367,15 @@ func TestCoordinator_SetPlayerState(t *testing.T) {
 		t.Fatalf("expected buffering player state on pip")
 	}
 
+	// Update primary player state to idle
+	sIdle, err := coord.SetPlayerState("cast", PlayerStateIdle)
+	if err != nil {
+		t.Fatalf("set player state idle error: %v", err)
+	}
+	if sIdle.Primary.PlayerState != PlayerStateIdle {
+		t.Fatalf("expected idle player state on primary, got %s", sIdle.Primary.PlayerState)
+	}
+
 	// Errors
 	if _, err := coord.SetPlayerState("cast", "unknown"); !errors.Is(err, ErrInvalidPlayerState) {
 		t.Fatalf("expected ErrInvalidPlayerState, got %v", err)
@@ -915,7 +924,22 @@ func TestCoordinator_MetadataAndPreserve(t *testing.T) {
 		t.Fatalf("position lost on re-trigger: %+v", s3.Primary)
 	}
 
-	// 4. UpdatePlayerState validation
+	// 4. UpdatePlayerState with PlayerStateIdle purges position, duration, and stale show metadata
+	sIdle, err := coord.UpdatePlayerState("chromecast", VideoStream{PlayerState: PlayerStateIdle})
+	if err != nil {
+		t.Fatalf("unexpected UpdatePlayerState idle error: %v", err)
+	}
+	if sIdle.Primary.PlayerState != PlayerStateIdle {
+		t.Fatalf("expected idle player state, got %s", sIdle.Primary.PlayerState)
+	}
+	if sIdle.Primary.Position != 0 || sIdle.Primary.Duration != 0 {
+		t.Fatalf("expected zeroed position and duration on idle, got pos=%f dur=%f", sIdle.Primary.Position, sIdle.Primary.Duration)
+	}
+	if sIdle.Primary.Title != "" || sIdle.Primary.Series != "" {
+		t.Fatalf("expected purged title and series on idle, got title=%s series=%s", sIdle.Primary.Title, sIdle.Primary.Series)
+	}
+
+	// 5. UpdatePlayerState validation
 	if _, err := coord.UpdatePlayerState("", VideoStream{PlayerState: PlayerStatePlaying}); !errors.Is(err, ErrInvalidStream) {
 		t.Fatalf("expected ErrInvalidStream for empty id, got %v", err)
 	}

@@ -26,6 +26,8 @@ const (
 	PlayerStatePaused = "paused"
 	// PlayerStateBuffering indicates media buffering.
 	PlayerStateBuffering = "buffering"
+	// PlayerStateIdle indicates idle / ambient display state.
+	PlayerStateIdle = "idle"
 
 	// ActionTogglePlayback toggles play/pause on controllable streams.
 	ActionTogglePlayback = "toggle_playback"
@@ -66,7 +68,7 @@ var (
 	// ErrInvalidAction indicates an unsupported transport action.
 	ErrInvalidAction = errors.New("invalid action: must be toggle_playback, play, pause, rewind, fast_forward, back, home, captions, next, previous, or seek")
 	// ErrInvalidPlayerState indicates an unsupported player transport state.
-	ErrInvalidPlayerState = errors.New("invalid player_state: must be playing, paused, or buffering")
+	ErrInvalidPlayerState = errors.New("invalid player_state: must be playing, paused, buffering, or idle")
 )
 
 // VideoStream defines an active video stream within the priority stack.

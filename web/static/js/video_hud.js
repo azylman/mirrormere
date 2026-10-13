@@ -258,6 +258,8 @@
 
           const stream = this.getActiveStream();
           const isMedia = Boolean(stream && (stream.controllable === true || (stream.priority === 'persistent' && Boolean(this.remoteUrl))));
+          const isIdle = Boolean(stream && stream.player_state === 'idle');
+          const isPlaybackActive = Boolean(isMedia && !isIdle);
 
           if (isDoubleTap) {
             // Clear tap timers and state, set 300ms cooldown
@@ -269,7 +271,7 @@
             this.lastTapCoords = null;
             this.doubleTapCooldownUntil = now + 300;
 
-            if (isMedia) {
+            if (isPlaybackActive) {
               this.handlePlayPauseToggle();
               this.showHUD();
             }
@@ -283,8 +285,8 @@
           if (!this.isVisible) {
             // If HUD hidden: show HUD immediately
             this.showHUD();
-          } else if (isMedia) {
-            // If HUD visible and media active: delay hideHUD by 250ms so a rapid second tap can cancel it and register as double-tap
+          } else if (isPlaybackActive) {
+            // If HUD visible and active media playback: delay hideHUD by 250ms so a rapid second tap can cancel it and register as double-tap
             if (this.singleTapTimer) {
               clearTimeout(this.singleTapTimer);
             }
@@ -296,7 +298,9 @@
               this.singleTapTimer.unref();
             }
           } else {
-            // If HUD visible and no media active: toggle HUD immediately
+            // If HUD visible and no playback active (idle or non-media): toggle HUD immediately without 250ms delay
+            this.lastTapTime = 0;
+            this.lastTapCoords = null;
             this.hideHUD();
           }
         };
@@ -751,6 +755,15 @@
       if (!this.progressContainer) return;
       if (this.isScrubbing) return;
 
+      if (stream?.player_state === 'idle') {
+        this.stopProgressTicker();
+        this.baseDuration = 0;
+        this.basePosition = 0;
+        this.progressContainer.style.display = 'none';
+        this.progressContainer.setAttribute('hidden', 'true');
+        return;
+      }
+
       const duration = typeof stream?.duration === 'number' && Number.isFinite(stream.duration) ? stream.duration : 0;
       const position = typeof stream?.position === 'number' && Number.isFinite(stream.position) ? stream.position : 0;
       const positionUpdatedAt = typeof stream?.position_updated_at === 'number' && Number.isFinite(stream.position_updated_at)
@@ -834,8 +847,12 @@
 
       if (!stream) {
         this.hideHUD();
+        if (this.overlay && this.overlay.dataset) {
+          delete this.overlay.dataset.playerState;
+        }
         if (this.bottomBar) {
           this.bottomBar.style.display = 'none';
+          this.bottomBar.style.pointerEvents = 'none';
           this.bottomBar.setAttribute('hidden', 'true');
         }
         if (this.navBar) {
@@ -857,14 +874,23 @@
       // Update progress bar & time labels
       this.updateProgress(stream);
 
-      // Gate bottom bar and nav bar visibility
+      // Gate bottom bar and nav bar visibility respecting media and idle state
       const isMedia = Boolean(stream && (stream.controllable === true || (stream.priority === 'persistent' && Boolean(this.remoteUrl))));
+      const isIdle = Boolean(stream && stream.player_state === 'idle');
+      const isPlaybackActive = Boolean(isMedia && !isIdle);
+
+      if (this.overlay && this.overlay.dataset) {
+        this.overlay.dataset.playerState = stream.player_state || (isIdle ? 'idle' : 'playing');
+      }
+
       if (this.bottomBar) {
-        if (isMedia) {
+        if (isPlaybackActive) {
           this.bottomBar.style.display = '';
+          this.bottomBar.style.pointerEvents = '';
           this.bottomBar.removeAttribute('hidden');
         } else {
           this.bottomBar.style.display = 'none';
+          this.bottomBar.style.pointerEvents = 'none';
           this.bottomBar.setAttribute('hidden', 'true');
         }
       }
@@ -878,13 +904,15 @@
         }
       }
 
-      // Update Play/Pause visibility based on controllable gating / isMedia
+      // Update Play/Pause visibility based on controllable gating / isMedia and idle state
       if (this.playBtn) {
-        if (isMedia) {
+        if (isPlaybackActive) {
           this.playBtn.style.display = '';
+          this.playBtn.style.pointerEvents = '';
           this.playBtn.removeAttribute('hidden');
         } else {
           this.playBtn.style.display = 'none';
+          this.playBtn.style.pointerEvents = 'none';
           this.playBtn.setAttribute('hidden', 'true');
         }
       }
