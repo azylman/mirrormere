@@ -199,7 +199,7 @@ func BuildFamilyView(data any, cfg map[string]any, dims domain.Dimension, now ti
 
 	maxVisible := maxVisibleTimedRows(dims)
 
-	hours := ParseHoursBand(cfg)
+	hours := resolveFamilyHoursBand(cfg, snapshot.Events, dayIndex, now.Location())
 
 	// Merge shared events by id: an event id seen on multiple member calendars is one event
 	// owned by every claiming member, "Shared events".
@@ -841,6 +841,92 @@ func defaultHoursBand() HoursBand {
 		StartStr:    "07:00",
 		EndStr:      "21:00",
 		Markers:     generateHourMarkers(7, 0, 21, 0),
+	}
+}
+
+// hasExplicitHours returns true if cfg["hours"] is a valid two-element slice with start < end.
+func hasExplicitHours(cfg map[string]any) bool {
+	if cfg == nil {
+		return false
+	}
+	var rawItems []string
+	switch v := cfg["hours"].(type) {
+	case []any:
+		for _, item := range v {
+			if s, ok := item.(string); ok {
+				rawItems = append(rawItems, s)
+			}
+		}
+	case []string:
+		rawItems = v
+	}
+	if len(rawItems) < 2 {
+		return false
+	}
+	hStart, mStart, ok1 := parseClockTime(rawItems[0])
+	hEnd, mEnd, ok2 := parseClockTime(rawItems[1])
+	if !ok1 || !ok2 {
+		return false
+	}
+	return hStart*60+mStart < hEnd*60+mEnd
+}
+
+// resolveFamilyHoursBand resolves the timeline hours band for the week view.
+// If cfg specifies an explicit valid hours band, that configuration is respected.
+// Otherwise, the timeline starts at the earliest start time of timed events for the week
+// (floored to the full hour for consistent 60-minute marker spacing), with a minimum 4-hour
+// window and a fallback to 07:00–21:00 when no events or only late events exist.
+func resolveFamilyHoursBand(cfg map[string]any, events []provider.CalendarEvent, dayIndex map[string]int, loc *time.Location) HoursBand {
+	if hasExplicitHours(cfg) {
+		return ParseHoursBand(cfg)
+	}
+
+	if loc == nil {
+		loc = time.UTC
+	}
+
+	defaultBand := defaultHoursBand()
+	endH := defaultBand.EndHour
+	endM := defaultBand.EndMinute
+	endTotal := endH*60 + endM
+
+	earliestMinutes := -1
+	for _, ev := range events {
+		if ev.AllDay {
+			continue
+		}
+		tStart, ok := parseFamilyTime(ev.Start)
+		if !ok {
+			continue
+		}
+		startLocal := tStart.In(loc)
+		dateStr := startLocal.Format("2006-01-02")
+		if _, inWeek := dayIndex[dateStr]; !inWeek {
+			continue
+		}
+		mins := startLocal.Hour()*60 + startLocal.Minute()
+		if earliestMinutes == -1 || mins < earliestMinutes {
+			earliestMinutes = mins
+		}
+	}
+
+	// If no timed events start in the week, or if the window would be less than 4 hours (240 mins),
+	// fall back to default 07:00.
+	startH := defaultBand.StartHour
+	startM := defaultBand.StartMinute
+	if earliestMinutes >= 0 && (endTotal-earliestMinutes >= 240) {
+		startH = earliestMinutes / 60
+		startM = 0
+	}
+
+	return HoursBand{
+		StartHour:   startH,
+		StartMinute: startM,
+		EndHour:     endH,
+		EndMinute:   endM,
+		StartStr:    fmt.Sprintf("%02d:%02d", startH, startM),
+		EndStr:      fmt.Sprintf("%02d:%02d", endH, endM),
+		Markers:     generateHourMarkers(startH, startM, endH, endM),
 	}
 }
 
