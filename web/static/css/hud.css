@@ -88,6 +88,9 @@
   /* Layout Constants */
   --mm-header-height: 88px;
   --mm-grid-gap: 16px;
+  --mm-indicator-height: 16px;
+  --mm-indicator-margin-top: 8px;
+  --mm-indicator-space: calc(var(--mm-indicator-height) + var(--mm-indicator-margin-top));
 }
 
 /* ==========================================================================
@@ -608,6 +611,7 @@ html, body {
   position: relative;
   overflow: hidden;
   box-sizing: border-box;
+  flex-shrink: 0;
 }
 
 /* Left Time Block: Side-by-side Clock & Two-Line Date */
@@ -823,13 +827,20 @@ html, body {
 .grid-canvas {
   display: grid;
   flex: 1;
+  min-height: 0;
   grid-template-columns: repeat(6, 1fr);
   grid-template-rows: repeat(2, 1fr);
   gap: var(--mm-grid-gap);
   width: 100%;
-  height: calc(100% - var(--mm-header-height) - var(--mm-grid-gap));
+  height: calc(100% - var(--mm-header-height) - var(--mm-grid-gap) - var(--mm-indicator-space));
   position: relative;
   transition: opacity 0.3s cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+#mirrormere-app:has(.screen-indicator[style*="display: none"]) .grid-canvas,
+#mirrormere-app:has(.screen-indicator.paused) .grid-canvas,
+#mirrormere-app:has(.screen-indicator[hidden]) .grid-canvas {
+  height: calc(100% - var(--mm-header-height) - var(--mm-grid-gap));
 }
 
 .grid-canvas.transitioning {
@@ -838,26 +849,23 @@ html, body {
 
 /* Bottom Screen Pagination Indicator */
 .screen-indicator {
-  position: fixed;
-  bottom: 14px;
-  left: 50%;
-  transform: translateX(-50%);
   display: inline-flex;
+  align-self: center;
   align-items: center;
   justify-content: center;
-  gap: 2px;
-  padding: 2px 10px;
-  background: var(--mm-bg-glass);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border: var(--mm-border-hud);
-  border-radius: 9999px;
-  box-shadow: var(--mm-card-shadow);
-  z-index: 40;
+  gap: 6px;
+  height: var(--mm-indicator-height, 16px);
+  margin-top: var(--mm-indicator-margin-top, 8px);
+  margin-bottom: 0;
+  padding: 0;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  z-index: 20;
   touch-action: manipulation;
   user-select: none;
   -webkit-user-select: none;
-  transition: opacity 0.25s ease, transform 0.25s ease;
+  transition: opacity 0.25s ease;
 }
 
 .screen-indicator.paused,
@@ -866,11 +874,12 @@ html, body {
 }
 
 .screen-indicator-dot {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: var(--mm-touch-target-min, 48px);
-  min-height: var(--mm-touch-target-min, 48px);
+  min-width: 36px;
+  height: 100%;
   padding: 0;
   margin: 0;
   background: transparent;
@@ -878,6 +887,16 @@ html, body {
   cursor: pointer;
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
+}
+
+/* Invisible extended hit area for touch targets on kiosk display */
+.screen-indicator-dot::before {
+  content: '';
+  position: absolute;
+  top: -8px;
+  bottom: -8px;
+  left: 0;
+  right: 0;
 }
 
 .screen-indicator-dot::after {

@@ -499,4 +499,46 @@ test('carousel screen indicator and touch navigation', async (t) => {
   });
 });
 
+test('carousel layout and indicator styling in hud.css', () => {
+  const cssPath = path.resolve(__dirname, '../static/css/hud.css');
+  assert.ok(fs.existsSync(cssPath), 'hud.css must exist');
+  const css = fs.readFileSync(cssPath, 'utf8');
+
+  // Must define layout variables for indicator space
+  assert.match(css, /--mm-indicator-height:\s*16px;/, 'hud.css must define --mm-indicator-height: 16px');
+  assert.match(css, /--mm-indicator-margin-top:\s*8px;/, 'hud.css must define --mm-indicator-margin-top: 8px');
+  assert.match(css, /--mm-indicator-space:\s*calc\(/, 'hud.css must define --mm-indicator-space calculation');
+
+  // Must bump grid-canvas up by subtracting indicator space
+  assert.match(
+    css,
+    /height:\s*calc\(100% - var\(--mm-header-height\) - var\(--mm-grid-gap\) - var\(--mm-indicator-space\)\);/,
+    'hud.css must bump grid-canvas up by subtracting --mm-indicator-space'
+  );
+
+  // Must not be a floating fixed pill
+  assert.doesNotMatch(
+    css,
+    /\.screen-indicator\s*\{[^}]*position:\s*fixed/s,
+    'screen-indicator must not be position: fixed'
+  );
+  assert.match(
+    css,
+    /\.screen-indicator\s*\{[^}]*background:\s*transparent;/s,
+    'screen-indicator must define background: transparent'
+  );
+  assert.match(
+    css,
+    /\.screen-indicator\s*\{[^}]*border:\s*none;/s,
+    'screen-indicator must define border: none'
+  );
+
+  // Must retain dot symbols with active pill
+  assert.match(
+    css,
+    /\.screen-indicator-dot\.active::after\s*\{[^}]*width:\s*26px;/s,
+    'screen-indicator-dot.active must define 26px wide active pill'
+  );
+});
+
 
