@@ -17,8 +17,9 @@ class MirrormereCarousel {
     }
   }
 
-  constructor(canvasElement) {
-    this.canvas = canvasElement || document.getElementById('grid-canvas');
+  constructor(canvasElement, indicatorElement) {
+    this.canvas = canvasElement || (typeof document !== 'undefined' && typeof document.getElementById === 'function' ? document.getElementById('grid-canvas') : null);
+    this.indicator = indicatorElement || (typeof document !== 'undefined' && typeof document.getElementById === 'function' ? document.getElementById('screen-indicator') : null);
     this.currentScreen = 0;
     this.totalScreens = 1;
     this.activeWidgets = new Map(); // widget_id -> { element, origin, dimensions }
@@ -28,11 +29,24 @@ class MirrormereCarousel {
     this.touchIgnored = false;
     this.isTransitioning = false;
     this.isPaused = false;
+    this.isNavigating = false;
+    this.navLockTimeout = null;
+    this._isDragging = false;
     this.pendingRotateData = null;
 
     MirrormereCarousel.instances.add(this);
 
     this.bindTouchGestures();
+    this.bindIndicatorGestures();
+  }
+
+  /**
+   * Set or re-bind the screen indicator element.
+   */
+  setIndicator(element) {
+    this.indicator = element;
+    this.bindIndicatorGestures();
+    this.updateIndicator();
   }
 
   /**
@@ -58,6 +72,14 @@ class MirrormereCarousel {
    */
   pause() {
     this.isPaused = true;
+    if (this.indicator) {
+      if (this.indicator.classList && typeof this.indicator.classList.add === 'function') {
+        this.indicator.classList.add('paused');
+      }
+      if (this.indicator.style) {
+        this.indicator.style.display = 'none';
+      }
+    }
   }
 
   /**
@@ -65,10 +87,15 @@ class MirrormereCarousel {
    */
   resume() {
     this.isPaused = false;
+    if (this.indicator && this.indicator.classList && typeof this.indicator.classList.remove === 'function') {
+      this.indicator.classList.remove('paused');
+    }
     if (this.pendingRotateData) {
       const data = this.pendingRotateData;
       this.pendingRotateData = null;
       this.handleScreenRotate(data);
+    } else {
+      this.updateIndicator();
     }
   }
 
@@ -81,6 +108,8 @@ class MirrormereCarousel {
       return;
     }
 
+    this.releaseNavLock();
+
     if (this.isPaused) {
       this.pendingRotateData = data;
       return;
@@ -88,6 +117,7 @@ class MirrormereCarousel {
 
     this.currentScreen = data.current_screen ?? 0;
     this.totalScreens = data.total_screens ?? 1;
+    this.updateIndicator();
 
     // 1. Pre-warm: fetch all widget fragments in parallel before touching the active DOM
     const fetchPromises = data.widgets.map(async (widget) => {
@@ -291,9 +321,35 @@ class MirrormereCarousel {
   }
 
   /**
+   * Acquire navigation lock to debounce rapid swipes and taps.
+   */
+  acquireNavLock() {
+    this.isNavigating = true;
+    if (this.navLockTimeout) {
+      clearTimeout(this.navLockTimeout);
+    }
+    this.navLockTimeout = setTimeout(() => {
+      this.releaseNavLock();
+    }, 600);
+  }
+
+  /**
+   * Release navigation lock and clear debounce timer.
+   */
+  releaseNavLock() {
+    if (this.navLockTimeout) {
+      clearTimeout(this.navLockTimeout);
+      this.navLockTimeout = null;
+    }
+    this.isNavigating = false;
+  }
+
+  /**
    * Dispatch screen advance navigation request.
    */
   async advanceScreen(direction = 'next') {
+    if (this.isPaused || this.isNavigating || this.totalScreens <= 1) return;
+    this.acquireNavLock();
     try {
       await fetch('api/screen/advance', {
         method: 'POST',
@@ -302,6 +358,168 @@ class MirrormereCarousel {
       });
     } catch (err) {
       console.error('[MirrormereCarousel] Failed to advance screen:', err);
+    }
+  }
+
+  /**
+   * Dispatch screen select navigation request.
+   */
+  async selectScreen(screenIndex) {
+    if (this.isPaused || this.isNavigating || this.totalScreens <= 1 || screenIndex === this.currentScreen) return;
+    this.acquireNavLock();
+
+    // Optimistic dot highlight
+    if (this.indicator && this.indicator.children) {
+      Array.from(this.indicator.children).forEach((dot, idx) => {
+        if (dot.classList && typeof dot.classList.toggle === 'function') {
+          dot.classList.toggle('active', idx === screenIndex);
+        }
+        if (typeof dot.setAttribute === 'function') {
+          dot.setAttribute('aria-current', idx === screenIndex ? 'step' : 'false');
+        }
+      });
+    }
+
+    try {
+      await fetch('api/screen/select', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ screen_index: screenIndex }),
+      });
+    } catch (err) {
+      console.error('[MirrormereCarousel] Failed to select screen:', err);
+      this.updateIndicator(); // Revert on failure
+    }
+  }
+
+  /**
+   * Bind touch swipe gestures on the bottom screen indicator pill.
+   */
+  bindIndicatorGestures() {
+    if (!this.indicator || typeof this.indicator.addEventListener !== 'function') return;
+    let startX = 0;
+    let startY = 0;
+    let startTime = 0;
+
+    this.indicator.addEventListener('touchstart', (e) => {
+      if (this.isPaused) return;
+      if (e.stopPropagation) e.stopPropagation();
+      this._isDragging = false;
+      if (e.touches && e.touches.length === 1) {
+        startX = e.touches[0].clientX;
+        startY = e.touches[0].clientY;
+        startTime = Date.now();
+      }
+    }, { passive: true });
+
+    this.indicator.addEventListener('touchmove', (e) => {
+      if (this.isPaused) return;
+      if (e.touches && e.touches.length === 1) {
+        const dx = e.touches[0].clientX - startX;
+        const dy = e.touches[0].clientY - startY;
+        if (Math.abs(dx) > 10 || Math.abs(dy) > 10) {
+          this._isDragging = true;
+        }
+      }
+    }, { passive: true });
+
+    this.indicator.addEventListener('touchend', (e) => {
+      if (this.isPaused) return;
+      if (e.stopPropagation) e.stopPropagation();
+      if (!e.changedTouches || e.changedTouches.length !== 1) return;
+
+      const endX = e.changedTouches[0].clientX;
+      const endY = e.changedTouches[0].clientY;
+      const deltaX = endX - startX;
+      const deltaY = endY - startY;
+      const duration = Date.now() - startTime;
+
+      if (duration < 800 && Math.abs(deltaX) > 40 && Math.abs(deltaX) > Math.abs(deltaY) * 1.2) {
+        this._isDragging = true;
+        if (deltaX < 0) {
+          this.advanceScreen('next');
+        } else {
+          this.advanceScreen('prev');
+        }
+        if (typeof e.preventDefault === 'function') {
+          try { e.preventDefault(); } catch (_) {}
+        }
+        setTimeout(() => { this._isDragging = false; }, 200);
+      } else {
+        setTimeout(() => { this._isDragging = false; }, 50);
+      }
+    });
+  }
+
+  /**
+   * Update or render screen indicator dots based on totalScreens and currentScreen.
+   */
+  updateIndicator() {
+    if (!this.indicator && typeof document !== 'undefined' && typeof document.getElementById === 'function') {
+      this.indicator = document.getElementById('screen-indicator');
+      if (this.indicator) {
+        this.bindIndicatorGestures();
+      }
+    }
+    if (!this.indicator) {
+      return;
+    }
+
+    if (this.totalScreens <= 1) {
+      this.indicator.style.display = 'none';
+      if (typeof this.indicator.replaceChildren === 'function') {
+        this.indicator.replaceChildren();
+      } else {
+        this.indicator.innerHTML = '';
+      }
+      return;
+    }
+
+    this.indicator.style.display = 'inline-flex';
+
+    // If existing child dot count matches totalScreens, reuse them without DOM recreation
+    const existingDots = this.indicator.children ? Array.from(this.indicator.children) : [];
+    if (existingDots.length === this.totalScreens) {
+      existingDots.forEach((dot, idx) => {
+        const isActive = idx === this.currentScreen;
+        if (dot.classList && typeof dot.classList.toggle === 'function') {
+          dot.classList.toggle('active', isActive);
+        }
+        if (typeof dot.setAttribute === 'function') {
+          dot.setAttribute('aria-current', isActive ? 'step' : 'false');
+          dot.setAttribute('aria-label', `Screen ${idx + 1} of ${this.totalScreens}`);
+        }
+      });
+      return;
+    }
+
+    // Rebuild dots
+    if (typeof this.indicator.replaceChildren === 'function') {
+      this.indicator.replaceChildren();
+    } else {
+      this.indicator.innerHTML = '';
+    }
+
+    for (let i = 0; i < this.totalScreens; i++) {
+      if (typeof document === 'undefined' || typeof document.createElement !== 'function') break;
+      const dot = document.createElement('button');
+      dot.type = 'button';
+      dot.className = 'screen-indicator-dot' + (i === this.currentScreen ? ' active' : '');
+      dot.setAttribute('aria-label', `Screen ${i + 1} of ${this.totalScreens}`);
+      dot.setAttribute('aria-current', i === this.currentScreen ? 'step' : 'false');
+      if (dot.dataset) {
+        dot.dataset.screenIndex = String(i);
+      }
+      dot.addEventListener('click', (e) => {
+        if (e && typeof e.stopPropagation === 'function') {
+          e.stopPropagation();
+        }
+        if (this._isDragging) return;
+        if (this.currentScreen !== i) {
+          this.selectScreen(i);
+        }
+      });
+      this.indicator.appendChild(dot);
     }
   }
 }
