@@ -501,6 +501,17 @@ func TestDefaultVideoHandler_PostVideoState(t *testing.T) {
 		t.Fatalf("unexpected state update: id=%s val=%s", mock.lastStateID, mock.lastStateVal)
 	}
 
+	// 1b. Success POST with player_state: "idle"
+	reqIdle := httptest.NewRequest(http.MethodPost, "/api/video/state", strings.NewReader(`{"id":"chromecast","player_state":"idle"}`))
+	recIdle := httptest.NewRecorder()
+	h.PostVideoState(recIdle, reqIdle)
+	if recIdle.Code != http.StatusOK {
+		t.Fatalf("expected 200 for idle state, got %d", recIdle.Code)
+	}
+	if mock.lastStateID != "chromecast" || mock.lastStateVal != "idle" {
+		t.Fatalf("unexpected state update for idle: id=%s val=%s", mock.lastStateID, mock.lastStateVal)
+	}
+
 	// 2. Stream not found (404)
 	mock.playerStateErr = video.ErrStreamNotFound
 	req404 := httptest.NewRequest(http.MethodPost, "/api/video/state", strings.NewReader(`{"id":"missing","player_state":"paused"}`))

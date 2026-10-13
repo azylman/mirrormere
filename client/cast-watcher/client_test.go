@@ -1145,6 +1145,35 @@ func TestCastClient_MediaMetadataAndThrottling(t *testing.T) {
 	if p7["title"] != "New Session" || p7["series"] != "Show B" {
 		t.Errorf("expected dispatchTrigger to include metadata, got %+v", p7)
 	}
+
+	// 8. Transition to IDLE: should purge cached metadata and dispatch idle state
+	msg8 := CastMessage{
+		PayloadUTF8: `{
+			"type": "MEDIA_STATUS",
+			"status": [{
+				"mediaSessionId": 0,
+				"playerState": "IDLE"
+			}]
+		}`,
+	}
+	client.handleMediaMessage(msg8)
+	time.Sleep(50 * time.Millisecond)
+
+	mu.Lock()
+	if len(receivedPayloads) != 7 {
+		t.Fatalf("expected 7 dispatches after IDLE transition, got %d", len(receivedPayloads))
+	}
+	p8 := receivedPayloads[6]
+	mu.Unlock()
+	if p8["player_state"] != "idle" {
+		t.Errorf("expected player_state idle, got %v", p8["player_state"])
+	}
+	if p8["title"] != "" || p8["series"] != "" || p8["season"] != "" || p8["episode"] != "" {
+		t.Errorf("expected purged metadata on IDLE transition, got %+v", p8)
+	}
+	if p8["duration"] != 0.0 || p8["position"] != 0.0 {
+		t.Errorf("expected zero duration and position on IDLE, got %+v", p8)
+	}
 }
 
 func TestExtractMediaMetadata(t *testing.T) {

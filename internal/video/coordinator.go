@@ -139,7 +139,7 @@ func (c *Coordinator) Trigger(stream VideoStream) (VideoState, error) {
 
 	if stream.PlayerState == "" {
 		stream.PlayerState = PlayerStatePlaying
-	} else if stream.PlayerState != PlayerStatePlaying && stream.PlayerState != PlayerStatePaused && stream.PlayerState != PlayerStateBuffering {
+	} else if stream.PlayerState != PlayerStatePlaying && stream.PlayerState != PlayerStatePaused && stream.PlayerState != PlayerStateBuffering && stream.PlayerState != PlayerStateIdle {
 		return VideoState{}, ErrInvalidPlayerState
 	}
 
@@ -305,7 +305,7 @@ func (c *Coordinator) DismissAll() (VideoState, error) {
 
 // SetPlayerState updates the transport state on an active stream.
 func (c *Coordinator) SetPlayerState(id string, playerState string) (VideoState, error) {
-	if playerState != PlayerStatePlaying && playerState != PlayerStatePaused && playerState != PlayerStateBuffering {
+	if playerState != PlayerStatePlaying && playerState != PlayerStatePaused && playerState != PlayerStateBuffering && playerState != PlayerStateIdle {
 		return VideoState{}, ErrInvalidPlayerState
 	}
 	return c.UpdatePlayerState(id, VideoStream{PlayerState: playerState})
@@ -319,7 +319,7 @@ func (c *Coordinator) UpdatePlayerState(id string, update VideoStream) (VideoSta
 	}
 
 	if update.PlayerState != "" {
-		if update.PlayerState != PlayerStatePlaying && update.PlayerState != PlayerStatePaused && update.PlayerState != PlayerStateBuffering {
+		if update.PlayerState != PlayerStatePlaying && update.PlayerState != PlayerStatePaused && update.PlayerState != PlayerStateBuffering && update.PlayerState != PlayerStateIdle {
 			return VideoState{}, ErrInvalidPlayerState
 		}
 	}
@@ -344,6 +344,17 @@ func (c *Coordinator) UpdatePlayerState(id string, update VideoStream) (VideoSta
 
 	if update.PlayerState != "" {
 		target.PlayerState = update.PlayerState
+		if update.PlayerState == PlayerStateIdle {
+			target.Position = 0
+			target.Duration = 0
+			target.PositionUpdatedAt = 0
+			if update.Title == "" {
+				target.Title = ""
+				target.Series = ""
+				target.Season = ""
+				target.Episode = ""
+			}
+		}
 	}
 	if update.Title != "" {
 		target.Title = update.Title

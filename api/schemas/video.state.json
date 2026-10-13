@@ -62,7 +62,8 @@
           "enum": [
             "playing",
             "paused",
-            "buffering"
+            "buffering",
+            "idle"
           ]
         },
         "muted": {
@@ -148,7 +149,8 @@
           "enum": [
             "playing",
             "paused",
-            "buffering"
+            "buffering",
+            "idle"
           ]
         },
         "muted": {

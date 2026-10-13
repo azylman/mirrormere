@@ -783,7 +783,7 @@ components:
           example: http://cast-watcher:8090/action
         player_state:
           type: string
-          enum: [playing, paused, buffering]
+          enum: [playing, paused, buffering, idle]
           example: playing
         muted:
           type: boolean
@@ -858,7 +858,7 @@ components:
           example: http://cast-watcher:8090/action
         player_state:
           type: string
-          enum: [playing, paused, buffering]
+          enum: [playing, paused, buffering, idle]
           default: playing
           example: playing
         title:
@@ -911,7 +911,7 @@ components:
           example: chromecast
         player_state:
           type: string
-          enum: [playing, paused, buffering]
+          enum: [playing, paused, buffering, idle]
           example: playing
         title:
           type: string
@@ -943,7 +943,7 @@ components:
           example: chromecast
         player_state:
           type: string
-          enum: [playing, paused, buffering]
+          enum: [playing, paused, buffering, idle]
           example: playing
     ActionResponse:
       type: object

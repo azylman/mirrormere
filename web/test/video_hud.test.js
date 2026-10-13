@@ -2303,3 +2303,180 @@ test('VideoHUD: hud.css defines consistent pill styling and 54px size for .video
   );
 });
 
+test('VideoHUDController: idle state hides bottom bar, play button, and scrubber while preserving ambient navigation', () => {
+  const dom = createHUDDOM();
+  const hud = new VideoHUDController({
+    overlayElement: dom.overlay,
+    titleElement: dom.title,
+    dismissBtn: dom.dismissBtn,
+    navBarElement: dom.navBar,
+    bottomBarElement: dom.bottomBar,
+    playBtn: dom.playBtn,
+    progressContainer: dom.progressContainer,
+    remoteUrl: 'http://chromecast.lan:8080',
+  });
+
+  // 1. Enter idle stream state
+  hud.handleVideoState({
+    mode: 'video',
+    primary: {
+      id: 'chromecast',
+      title: 'Chromecast Ambient',
+      priority: 'persistent',
+      controllable: true,
+      player_state: 'idle',
+      duration: 0,
+      position: 0,
+    },
+  });
+
+  // Overlay state attribute
+  assert.equal(dom.overlay.dataset.playerState, 'idle', 'overlay dataset.playerState must be idle');
+
+  // Playback controls must be tucked away and unclickable
+  assert.equal(dom.bottomBar.style.display, 'none', 'bottomBar must be display: none in idle state');
+  assert.equal(dom.bottomBar.style.pointerEvents, 'none', 'bottomBar pointerEvents must be none');
+  assert.equal(dom.bottomBar.getAttribute('hidden'), 'true', 'bottomBar must have hidden attribute');
+  assert.equal(dom.playBtn.style.display, 'none', 'playBtn must be display: none in idle state');
+  assert.equal(dom.playBtn.style.pointerEvents, 'none', 'playBtn pointerEvents must be none');
+  assert.equal(dom.playBtn.getAttribute('hidden'), 'true', 'playBtn must have hidden attribute');
+  assert.equal(dom.progressContainer.style.display, 'none', 'progressContainer must be hidden');
+
+  // Ambient navigation must remain visible and accessible
+  assert.equal(dom.navBar.style.display, '', 'navBar (back, home) must remain visible');
+  assert.equal(dom.navBar.hasAttribute('hidden'), false, 'navBar must not be hidden');
+  assert.equal(dom.title.textContent, 'Chromecast Ambient', 'title must display ambient title');
+
+  hud.destroy();
+});
+
+test('VideoHUDController: stage double-tap is disabled and single-tap dismisses immediately during idle state', async () => {
+  const dom = createHUDDOM();
+  let toggleCalled = false;
+  const hud = new VideoHUDController({
+    overlayElement: dom.overlay,
+    stageElement: dom.stage,
+    bottomBarElement: dom.bottomBar,
+    playBtn: dom.playBtn,
+    remoteUrl: 'http://chromecast.lan:8080',
+  });
+  hud.handlePlayPauseToggle = () => { toggleCalled = true; };
+
+  // Set idle state
+  hud.handleVideoState({
+    mode: 'video',
+    primary: {
+      id: 'chromecast',
+      priority: 'persistent',
+      player_state: 'idle',
+    },
+  });
+
+  // 1. Initial presentation reveals HUD
+  assert.equal(hud.isVisible, true, 'HUD should be visible initially');
+
+  // 2. Single tap dismisses immediately without waiting for 250ms double-tap timer
+  const pointerDown = { clientX: 100, clientY: 100 };
+  const pointerUp = { clientX: 100, clientY: 100 };
+  dom.stage.dispatchEvent('pointerdown', pointerDown);
+  dom.stage.dispatchEvent('pointerup', pointerUp);
+
+  assert.equal(hud.isVisible, false, 'single tap during idle must dismiss HUD immediately');
+  assert.equal(hud.singleTapTimer, null, 'no singleTapTimer delay should be scheduled during idle');
+
+  // 3. Tap to re-show
+  dom.stage.dispatchEvent('pointerdown', pointerDown);
+  dom.stage.dispatchEvent('pointerup', pointerUp);
+  assert.equal(hud.isVisible, true, 'tap when hidden reveals HUD');
+
+  // 4. Double tap does not trigger play/pause in idle state
+  await new Promise((r) => setTimeout(r, 400));
+  dom.stage.dispatchEvent('pointerdown', pointerDown);
+  dom.stage.dispatchEvent('pointerup', pointerUp);
+  dom.stage.dispatchEvent('pointerdown', pointerDown);
+  dom.stage.dispatchEvent('pointerup', pointerUp);
+
+  assert.equal(toggleCalled, false, 'double tap must not trigger handlePlayPauseToggle during idle');
+
+  hud.destroy();
+});
+
+test('VideoHUDController: dynamic transitions between playing, idle, and playing restore controls cleanly', () => {
+  const dom = createHUDDOM();
+  const hud = new VideoHUDController({
+    overlayElement: dom.overlay,
+    bottomBarElement: dom.bottomBar,
+    playBtn: dom.playBtn,
+    progressContainer: dom.progressContainer,
+    remoteUrl: 'http://chromecast.lan:8080',
+  });
+
+  // 1. Active playback
+  hud.handleVideoState({
+    mode: 'video',
+    primary: {
+      id: 'chromecast',
+      priority: 'persistent',
+      player_state: 'playing',
+      duration: 3600,
+      position: 120,
+    },
+  });
+
+  assert.equal(dom.bottomBar.style.display, '', 'bottomBar shown during playing');
+  assert.equal(dom.playBtn.style.display, '', 'playBtn shown during playing');
+  assert.equal(dom.overlay.dataset.playerState, 'playing');
+
+  // 2. Transition to idle
+  hud.handleVideoState({
+    mode: 'video',
+    primary: {
+      id: 'chromecast',
+      priority: 'persistent',
+      player_state: 'idle',
+    },
+  });
+
+  assert.equal(dom.bottomBar.style.display, 'none', 'bottomBar hidden during idle');
+  assert.equal(dom.playBtn.style.display, 'none', 'playBtn hidden during idle');
+  assert.equal(dom.progressContainer.style.display, 'none', 'progressContainer hidden during idle');
+  assert.equal(dom.overlay.dataset.playerState, 'idle');
+  assert.equal(hud.progressTicker, null, 'progressTicker must be stopped in idle');
+
+  // 3. Transition back to playing
+  hud.handleVideoState({
+    mode: 'video',
+    primary: {
+      id: 'chromecast',
+      priority: 'persistent',
+      player_state: 'playing',
+      duration: 1800,
+      position: 5,
+    },
+  });
+
+  assert.equal(dom.bottomBar.style.display, '', 'bottomBar restored during playing');
+  assert.equal(dom.playBtn.style.display, '', 'playBtn restored during playing');
+  assert.equal(dom.overlay.dataset.playerState, 'playing');
+
+  hud.destroy();
+});
+
+test('VideoHUD: hud.css and default_hud.css define [data-player-state="idle"] rules', () => {
+  const cssPath = path.resolve(__dirname, '../static/css/hud.css');
+  const defaultHudPath = path.resolve(__dirname, '../../internal/render/default_hud.css');
+  const css = fs.readFileSync(cssPath, 'utf8');
+  const defaultHud = fs.readFileSync(defaultHudPath, 'utf8');
+
+  for (const [name, content] of [['hud.css', css], ['default_hud.css', defaultHud]]) {
+    assert.ok(
+      /\.video-hud-overlay\[data-player-state=["']?idle["']?\]\s+\.video-hud-bottom-bar/.test(content),
+      `${name} must suppress .video-hud-bottom-bar when data-player-state="idle"`
+    );
+    assert.ok(
+      /\.video-hud-overlay\[data-player-state=["']?idle["']?\]\s+\.video-hud-play-center/.test(content),
+      `${name} must suppress .video-hud-play-center when data-player-state="idle"`
+    );
+  }
+});
+
