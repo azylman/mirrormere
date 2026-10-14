@@ -290,9 +290,8 @@ describe('Header Next Up Event Pill', () => {
     assert.doesNotMatch(templateContent, /mm-next-event-icon-svg/, 'display.html must not contain mm-next-event-icon-svg');
 
     const hudCSSPath = path.resolve(__dirname, '../static/css/hud.css');
-    const defaultHudCSSPath = path.resolve(__dirname, '../../internal/render/default_hud.css');
 
-    for (const cssPath of [hudCSSPath, defaultHudCSSPath]) {
+    for (const cssPath of [hudCSSPath]) {
       const cssContent = fs.readFileSync(cssPath, 'utf8');
       assert.match(cssContent, /\.next-event-pill\s*\{[^}]*height:\s*52px;/s, `${path.basename(cssPath)} must define height: 52px`);
       assert.match(cssContent, /\.next-event-pill\s*\{[^}]*min-height:\s*52px;/s, `${path.basename(cssPath)} must define min-height: 52px`);

@@ -79,7 +79,7 @@ func TestWalkingSkeleton_EndToEnd(t *testing.T) {
 
 	// 2. Wire rendering, display, and server
 	renderEngine := render.NewEngine(loader, provider)
-	renderH := render.NewHandler(renderEngine, loader)
+	renderH := render.NewHandler(renderEngine, loader, render.WithCSSPath(filepath.Join("..", "..", render.DefaultCSSPath)))
 	displayH := display.NewHandler(
 		display.WithTimezoneProvider(func() string {
 			if snap := provider.CurrentSnapshot(); snap != nil && snap.Config != nil {

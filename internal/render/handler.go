@@ -1,74 +1,69 @@
 package render
 
 import (
-	_ "embed"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/azylman/mirrormere/internal/api"
 )
 
-//go:embed default_hud.css
-var defaultEmbeddedHUDCSS []byte
-
 const (
-	// DefaultCustomCSSPath is the standard volume mount location for custom CSS.
+	// DefaultCSSPath is the standard filesystem path for the core HUD stylesheet.
+	DefaultCSSPath = "web/static/css/hud.css"
+
+	// DefaultCustomCSSPath is the standard volume mount location for custom CSS (for backward compatibility).
 	DefaultCustomCSSPath = "/config/custom.css"
-	// DefaultCoreCSSPath is the standard container location for default hud.css.
-	DefaultCoreCSSPath = "/app/web/static/css/hud.css"
 )
 
 // HandlerOption configures Handler instances.
 type HandlerOption func(*Handler)
 
-// WithCustomCSSPath overrides the custom stylesheet disk path.
-func WithCustomCSSPath(path string) HandlerOption {
+// WithCSSPath sets the stylesheet disk path.
+func WithCSSPath(path string) HandlerOption {
 	return func(h *Handler) {
-		h.customCSSPath = path
-	}
-}
-
-// WithDefaultCSSPath overrides the default core stylesheet disk path.
-func WithDefaultCSSPath(path string) HandlerOption {
-	return func(h *Handler) {
-		h.defaultCSSPath = path
-	}
-}
-
-// WithDefaultCSSContent overrides the fallback embedded CSS content.
-func WithDefaultCSSContent(content []byte) HandlerOption {
-	return func(h *Handler) {
-		h.defaultCSS = content
+		h.cssPath = path
 	}
 }
 
 // Handler serves HTTP endpoints for widget rendering, static package assets, and stylesheets.
 type Handler struct {
-	engine         *Engine
-	resolver       PackageResolver
-	customCSSPath  string
-	defaultCSSPath string
-	defaultCSS     []byte
+	mu       sync.RWMutex
+	engine   *Engine
+	resolver PackageResolver
+	cssPath  string
 }
 
 // NewHandler constructs a Handler.
 func NewHandler(engine *Engine, resolver PackageResolver, opts ...HandlerOption) *Handler {
 	h := &Handler{
-		engine:         engine,
-		resolver:       resolver,
-		customCSSPath:  DefaultCustomCSSPath,
-		defaultCSSPath: DefaultCoreCSSPath,
-		defaultCSS:     defaultEmbeddedHUDCSS,
+		engine:   engine,
+		resolver: resolver,
+		cssPath:  DefaultCSSPath,
 	}
 	for _, opt := range opts {
 		opt(h)
 	}
 	return h
+}
+
+// SetCSSPath dynamically updates the stylesheet path (e.g. on configuration reload).
+func (h *Handler) SetCSSPath(path string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.cssPath = path
+}
+
+// CSSPath returns the currently configured stylesheet path.
+func (h *Handler) CSSPath() string {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.cssPath
 }
 
 // GetWidgetRender handles GET /api/widgets/{widget_id}/render requests. The optional
@@ -189,7 +184,7 @@ func (h *Handler) GetWidgetAsset(w http.ResponseWriter, r *http.Request, widgetT
 	http.ServeFile(w, r, target)
 }
 
-// ServeStyle handles GET /style.css requests, serving custom.css if present or hud.css fallback.
+// ServeStyle handles GET /style.css requests, serving the configured stylesheet from disk.
 func (h *Handler) ServeStyle(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
@@ -208,29 +203,22 @@ func (h *Handler) ServeStyle(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/css; charset=utf-8")
 	w.Header().Set("Cache-Control", "public, max-age=0, must-revalidate")
 
-	// 1. Check volume-mounted custom stylesheet
-	if h.customCSSPath != "" {
-		if fi, err := os.Stat(h.customCSSPath); err == nil && !fi.IsDir() {
-			http.ServeFile(w, r, h.customCSSPath)
-			return
-		}
+	h.mu.RLock()
+	cssPath := h.cssPath
+	h.mu.RUnlock()
+
+	if cssPath == "" {
+		writeJSONError(w, http.StatusNotFound, "stylesheet not configured")
+		return
 	}
 
-	// 2. Check default core stylesheet on disk
-	if h.defaultCSSPath != "" {
-		if fi, err := os.Stat(h.defaultCSSPath); err == nil && !fi.IsDir() {
-			http.ServeFile(w, r, h.defaultCSSPath)
-			return
-		}
+	fi, err := os.Stat(cssPath)
+	if err != nil || fi.IsDir() {
+		writeJSONError(w, http.StatusNotFound, "stylesheet not found")
+		return
 	}
 
-	// 3. Serve embedded default CSS
-	w.WriteHeader(http.StatusOK)
-	if r.Method == http.MethodGet {
-		if _, err := w.Write(h.defaultCSS); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-		}
-	}
+	http.ServeFile(w, r, cssPath)
 }
 
 func writeJSONError(w http.ResponseWriter, status int, msg string) {
