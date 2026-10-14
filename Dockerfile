@@ -31,8 +31,9 @@ RUN --mount=type=cache,target=/etc/apk/cache,sharing=locked \
 
 WORKDIR /app
 
-# Copy compiled executable from builder stage
+# Copy compiled executable and static web assets from builder stage
 COPY --from=builder --link --chown=10001:10001 /app/server /app/server
+COPY --from=builder --link --chown=10001:10001 /src/web /app/web
 
 # Switch to unprivileged non-root user
 USER 10001:10001

@@ -5,8 +5,6 @@ const path = require('node:path');
 
 describe('Fairyfloss Theme Mode Switching', () => {
   const hudCSSPath = path.resolve(__dirname, '../static/css/hud.css');
-  const defaultHudCSSPath = path.resolve(__dirname, '../../internal/render/default_hud.css');
-  const customCSSPath = path.resolve(__dirname, '../../deploy/examples/custom.css');
 
   function setupMockDOM(initialTheme = 'day') {
     const elements = {
@@ -62,7 +60,7 @@ describe('Fairyfloss Theme Mode Switching', () => {
   });
 
   test('CSS stylesheets contain Sailor HG Fairyfloss night mode tokens', () => {
-    for (const cssPath of [hudCSSPath, defaultHudCSSPath, customCSSPath]) {
+    for (const cssPath of [hudCSSPath]) {
       assert.ok(fs.existsSync(cssPath), `${path.basename(cssPath)} must exist`);
       const content = fs.readFileSync(cssPath, 'utf8');
 
@@ -78,7 +76,7 @@ describe('Fairyfloss Theme Mode Switching', () => {
   });
 
   test('CSS stylesheets contain night mode overrides for status-jewel, status-dot, and calendar feed event items', () => {
-    for (const cssPath of [hudCSSPath, defaultHudCSSPath, customCSSPath]) {
+    for (const cssPath of [hudCSSPath]) {
       const content = fs.readFileSync(cssPath, 'utf8');
 
       assert.match(content, /\[data-theme=["']?night["']?\]\s+\.status-jewel/, `${path.basename(cssPath)} must include [data-theme="night"] .status-jewel`);
@@ -93,7 +91,7 @@ describe('Fairyfloss Theme Mode Switching', () => {
   });
 
   test('CSS stylesheets contain night mode overrides for calendar view switcher and task checkboxes', () => {
-    for (const cssPath of [hudCSSPath, defaultHudCSSPath, customCSSPath]) {
+    for (const cssPath of [hudCSSPath]) {
       const content = fs.readFileSync(cssPath, 'utf8');
 
       assert.match(content, /\.cf-view-switcher/, `${path.basename(cssPath)} must include .cf-view-switcher`);
@@ -105,7 +103,7 @@ describe('Fairyfloss Theme Mode Switching', () => {
   });
 
   test('CSS stylesheets contain day and night mode tokens and overrides for calendar grid today highlight', () => {
-    for (const cssPath of [hudCSSPath, defaultHudCSSPath, customCSSPath]) {
+    for (const cssPath of [hudCSSPath]) {
       const content = fs.readFileSync(cssPath, 'utf8');
 
       // Day mode tokens & styles
@@ -123,7 +121,7 @@ describe('Fairyfloss Theme Mode Switching', () => {
   });
 
   test('CSS stylesheets contain night mode overrides for fullscreen video overlay and presentation controls', () => {
-    for (const cssPath of [hudCSSPath, defaultHudCSSPath, customCSSPath]) {
+    for (const cssPath of [hudCSSPath]) {
       const content = fs.readFileSync(cssPath, 'utf8');
 
       assert.ok(
@@ -169,4 +167,3 @@ describe('Fairyfloss Theme Mode Switching', () => {
     }
   });
 });
-

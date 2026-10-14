@@ -5,7 +5,6 @@ const path = require('node:path');
 
 describe('Touch Display Cursor Suppression', () => {
   const hudCSSPath = path.resolve(__dirname, '../static/css/hud.css');
-  const defaultHudCSSPath = path.resolve(__dirname, '../../internal/render/default_hud.css');
   const customCSSPath = path.resolve(__dirname, '../../deploy/examples/custom.css');
 
   test('hud.css scopes cursor suppression to .mm-touch-display and .mm-touch-kiosk', () => {
@@ -36,34 +35,6 @@ describe('Touch Display Cursor Suppression', () => {
       content,
       /\.mm-touch-kiosk,\s*\.mm-touch-kiosk\s*\*,/s,
       'hud.css must define cursor: none !important scoped to .mm-touch-kiosk'
-    );
-  });
-
-  test('default_hud.css fallback scopes cursor suppression to .mm-touch-display and .mm-touch-kiosk', () => {
-    assert.ok(fs.existsSync(defaultHudCSSPath), 'default_hud.css must exist');
-    const content = fs.readFileSync(defaultHudCSSPath, 'utf8');
-
-    assert.doesNotMatch(
-      content,
-      /html,\s*body\s*\{[^}]*cursor:\s*none/s,
-      'default_hud.css must not define cursor: none on html, body'
-    );
-
-    assert.doesNotMatch(
-      content,
-      /(?:^|\n)\*,\s*\*::before,\s*\*::after\s*\{[^}]*cursor:\s*none/m,
-      'default_hud.css must not define unconditional universal cursor: none'
-    );
-
-    assert.match(
-      content,
-      /\.mm-touch-display,\s*\.mm-touch-display\s*\*,/s,
-      'default_hud.css must define cursor: none !important scoped to .mm-touch-display'
-    );
-    assert.match(
-      content,
-      /\.mm-touch-kiosk,\s*\.mm-touch-kiosk\s*\*,/s,
-      'default_hud.css must define cursor: none !important scoped to .mm-touch-kiosk'
     );
   });
 

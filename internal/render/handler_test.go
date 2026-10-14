@@ -67,15 +67,12 @@ func setupTestServer(t *testing.T) (*render.Handler, string, *domain.Package) {
 	resolver := &mockResolver{packages: map[string]*domain.Package{"sensor": pkg}}
 	engine := render.NewEngine(resolver, provider)
 
-	customCSS := filepath.Join(tmpDir, "custom.css")
 	defaultCSS := filepath.Join(tmpDir, "hud.css")
 
 	handler := render.NewHandler(
 		engine,
 		resolver,
-		render.WithCustomCSSPath(customCSS),
-		render.WithDefaultCSSPath(defaultCSS),
-		render.WithDefaultCSSContent([]byte("/* embedded test css */")),
+		render.WithCSSPath(defaultCSS),
 	)
 
 	return handler, tmpDir, pkg
@@ -307,60 +304,61 @@ func TestHandler_ServeStyle(t *testing.T) {
 	t.Parallel()
 
 	tmpDir := t.TempDir()
-	customPath := filepath.Join(tmpDir, "custom.css")
-	defaultPath := filepath.Join(tmpDir, "hud.css")
+	cssPath := filepath.Join(tmpDir, "hud.css")
 
-	embeddedContent := []byte("/* embedded fallback */")
-
-	// Phase 1: Both files absent -> Serves embedded content
 	h := render.NewHandler(
 		nil, nil,
-		render.WithCustomCSSPath(customPath),
-		render.WithDefaultCSSPath(defaultPath),
-		render.WithDefaultCSSContent(embeddedContent),
+		render.WithCSSPath(cssPath),
 	)
 
 	req := httptest.NewRequest(http.MethodGet, "/style.css", nil)
+
+	// Phase 1: CSS file absent -> 404 Not Found
 	rec := httptest.NewRecorder()
 	h.ServeStyle(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected status 200, got %d", rec.Code)
-	}
-	if rec.Header().Get("Content-Type") != "text/css; charset=utf-8" {
-		t.Errorf("expected text/css; charset=utf-8, got %q", rec.Header().Get("Content-Type"))
-	}
-	if rec.Header().Get("Cache-Control") != "public, max-age=0, must-revalidate" {
-		t.Errorf("expected Cache-Control header, got %q", rec.Header().Get("Cache-Control"))
-	}
-	if rec.Body.String() != string(embeddedContent) {
-		t.Errorf("expected embedded fallback content, got %s", rec.Body.String())
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected status 404 when stylesheet absent, got %d", rec.Code)
 	}
 
-	// Phase 2: Default hud.css created -> Serves default hud.css
-	if err := os.WriteFile(defaultPath, []byte("/* disk hud.css */"), 0644); err != nil {
-		t.Fatalf("failed to write hud.css: %v", err)
+	// Phase 2: CSS file created -> Serves stylesheet
+	cssContent := "/* test stylesheet */"
+	if err := os.WriteFile(cssPath, []byte(cssContent), 0644); err != nil {
+		t.Fatalf("failed to write stylesheet: %v", err)
 	}
+
 	rec2 := httptest.NewRecorder()
 	h.ServeStyle(rec2, req)
 	if rec2.Code != http.StatusOK {
 		t.Fatalf("expected status 200, got %d", rec2.Code)
 	}
-	if rec2.Body.String() != "/* disk hud.css */" {
-		t.Errorf("expected disk hud.css content, got %s", rec2.Body.String())
+	if rec2.Header().Get("Content-Type") != "text/css; charset=utf-8" {
+		t.Errorf("expected text/css; charset=utf-8, got %q", rec2.Header().Get("Content-Type"))
+	}
+	if rec2.Header().Get("Cache-Control") != "public, max-age=0, must-revalidate" {
+		t.Errorf("expected Cache-Control header, got %q", rec2.Header().Get("Cache-Control"))
+	}
+	if rec2.Body.String() != cssContent {
+		t.Errorf("expected %q, got %q", cssContent, rec2.Body.String())
 	}
 
-	// Phase 3: Custom custom.css created -> Serves custom.css overriding default
-	if err := os.WriteFile(customPath, []byte("/* user custom.css */"), 0644); err != nil {
-		t.Fatalf("failed to write custom.css: %v", err)
+	// Phase 3: SetCSSPath updates stylesheet location
+	customPath := filepath.Join(tmpDir, "custom.css")
+	customContent := "/* custom stylesheet */"
+	if err := os.WriteFile(customPath, []byte(customContent), 0644); err != nil {
+		t.Fatalf("failed to write custom stylesheet: %v", err)
 	}
+	h.SetCSSPath(customPath)
+	if h.CSSPath() != customPath {
+		t.Fatalf("expected CSSPath %q, got %q", customPath, h.CSSPath())
+	}
+
 	rec3 := httptest.NewRecorder()
 	h.ServeStyle(rec3, req)
 	if rec3.Code != http.StatusOK {
-		t.Fatalf("expected status 200, got %d", rec3.Code)
+		t.Fatalf("expected status 200 after SetCSSPath, got %d", rec3.Code)
 	}
-	if rec3.Body.String() != "/* user custom.css */" {
-		t.Errorf("expected user custom.css content, got %s", rec3.Body.String())
+	if rec3.Body.String() != customContent {
+		t.Errorf("expected %q, got %q", customContent, rec3.Body.String())
 	}
 
 	// Phase 4: OPTIONS, HEAD, POST

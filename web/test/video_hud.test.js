@@ -2462,13 +2462,11 @@ test('VideoHUDController: dynamic transitions between playing, idle, and playing
   hud.destroy();
 });
 
-test('VideoHUD: hud.css and default_hud.css define [data-player-state="idle"] rules', () => {
+test('VideoHUD: hud.css defines [data-player-state="idle"] rules', () => {
   const cssPath = path.resolve(__dirname, '../static/css/hud.css');
-  const defaultHudPath = path.resolve(__dirname, '../../internal/render/default_hud.css');
   const css = fs.readFileSync(cssPath, 'utf8');
-  const defaultHud = fs.readFileSync(defaultHudPath, 'utf8');
 
-  for (const [name, content] of [['hud.css', css], ['default_hud.css', defaultHud]]) {
+  for (const [name, content] of [['hud.css', css]]) {
     assert.ok(
       /\.video-hud-overlay\[data-player-state=["']?idle["']?\]\s+\.video-hud-bottom-bar/.test(content),
       `${name} must suppress .video-hud-bottom-bar when data-player-state="idle"`
