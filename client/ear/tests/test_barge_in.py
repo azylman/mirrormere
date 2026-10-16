@@ -103,8 +103,9 @@ class TestBargeInDisabled(BargeInTestCase):
         self.cfg.barge_in = False
         daemon = VoiceDaemon(self.cfg, model=MockModel())
         self.start_playback(daemon)
-        with patch.object(daemon, "_do_barge_in") as mock_do:
+        with patch.object(daemon, "_check_barge_in") as mock_check, patch.object(daemon, "_do_barge_in") as mock_do:
             results = self.feed(daemon, 30)
+        mock_check.assert_not_called()
         mock_do.assert_not_called()
         self.assertNotIn("barge_in", results)
         self.assertEqual(daemon.state, "idle")
