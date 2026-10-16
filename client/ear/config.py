@@ -42,6 +42,15 @@ class VoiceConfig:
     # Silero speech-probability threshold (0.0-1.0) at or above which a
     # window counts as speech. Only used when vad == "silero".
     vad_threshold: float = 0.5
+    # Barge-in (default OFF): while reply audio is playing, keep running a
+    # dedicated Silero VAD on the echo-cancelled mic; sustained speech stops
+    # playback and starts a new turn. Needs Silero (falls back to disabled).
+    barge_in: bool = False
+    # Continuous speech required (ms) before playback is cut.
+    barge_in_min_speech_ms: int = 300
+    # Silero threshold used only during playback; higher than vad_threshold
+    # because residual echo leaks through the AEC.
+    barge_in_vad_threshold: float = 0.7
     # Sherpa-ONNX KWS settings (used when wake_engine == "sherpa-onnx")
     sherpa_model_dir: str = "/opt/mirrormere/voice/sherpa"
     keywords_file: str = "/config/keywords.txt"
@@ -139,7 +148,10 @@ def load_config(path: Optional[str] = None) -> VoiceConfig:
                             continue
                         if hasattr(cfg, k):
                             field_type = type(getattr(cfg, k))
-                            if field_type == float and isinstance(v, (int, float)):
+                            if field_type == bool:
+                                if isinstance(v, bool):
+                                    setattr(cfg, k, v)
+                            elif field_type == float and isinstance(v, (int, float)):
                                 setattr(cfg, k, float(v))
                             elif field_type == int and isinstance(v, int):
                                 setattr(cfg, k, int(v))
@@ -217,6 +229,12 @@ def _validate(cfg: VoiceConfig) -> None:
         cfg.vad_threshold = 0.5
     else:
         cfg.vad_threshold = float(cfg.vad_threshold)
+    if not isinstance(cfg.barge_in_vad_threshold, (int, float)) or not (0.0 <= float(cfg.barge_in_vad_threshold) <= 1.0):
+        cfg.barge_in_vad_threshold = 0.7
+    else:
+        cfg.barge_in_vad_threshold = float(cfg.barge_in_vad_threshold)
+    if not isinstance(cfg.barge_in_min_speech_ms, int) or cfg.barge_in_min_speech_ms < 0:
+        cfg.barge_in_min_speech_ms = 300
 
     try:
         cfg.sherpa_num_threads = max(1, min(int(cfg.sherpa_num_threads), 2))

@@ -60,6 +60,33 @@ ear:
   vad_threshold: 0.5
 ```
 
+## Barge-in
+
+With `barge_in: true`, speaking over a reply stops playback and starts a new
+turn. While reply audio is playing, a dedicated Silero detector (separate from
+the end-of-speech VAD, threshold `barge_in_vad_threshold`) watches the mic;
+once `barge_in_min_speech_ms` of continuous speech is heard, the player is
+killed, the Voice Hub stream is abandoned, and the daemon goes straight to
+listening, seeded with the buffered frames that contain the interrupting
+speech. The next utterance is sent to the hub with a `barge_in=true` form field.
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `barge_in` | `false` | Enable barge-in. Off by default; no detector is built when off. |
+| `barge_in_min_speech_ms` | `300` | Continuous speech required before playback is cut. One non-speech frame inside a word is tolerated. |
+| `barge_in_vad_threshold` | `0.7` | Silero threshold used only during playback (0.0-1.0). |
+
+Requirements: Silero VAD must load (if it cannot, the daemon logs a warning
+and runs with barge-in disabled), and the mic must be echo-cancelled. Without
+echo cancellation the daemon hears its own reply and interrupts itself.
+
+```yaml
+ear:
+  barge_in: true
+  barge_in_min_speech_ms: 300
+  barge_in_vad_threshold: 0.7
+```
+
 ## Wake Mode
 
 `wake_mode` controls how an utterance gets triggered Wake Mode" for the full contract):

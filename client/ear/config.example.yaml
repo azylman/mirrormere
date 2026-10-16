@@ -61,6 +61,21 @@ ear:
   # Silero speech-probability threshold (0.0-1.0). Only used when vad: "silero".
   vad_threshold: 0.5
 
+  # Barge-in (default off): while a reply is playing, stop playback and start
+  # a new turn when you speak over it. Requires Silero (the daemon logs a
+  # warning and leaves barge-in disabled if it cannot load) and an
+  # echo-cancelled mic; without echo cancellation the daemon hears its own
+  # reply and cuts itself off.
+  barge_in: false
+
+  # Continuous speech (ms) required before playback is cut. A single
+  # non-speech frame inside a word is tolerated; two in a row reset the count.
+  barge_in_min_speech_ms: 300
+
+  # Silero speech-probability threshold (0.0-1.0) used only during playback.
+  # Higher than vad_threshold because residual echo leaks through the AEC.
+  barge_in_vad_threshold: 0.7
+
   # Refractory cooldown period after utterance to prevent echo re-triggers (seconds)
   cooldown_seconds: 2.5
 
