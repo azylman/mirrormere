@@ -205,3 +205,19 @@ test('Amos state word overlay', async (t) => {
     assert.deepEqual(mockWindow.MirrormereFace.WORDS, WORDS);
   });
 });
+
+test('mounts first inside .header-status when the header exists', () => {
+  const doc = createMockDocument();
+  const header = createMockElement('div');
+  header.insertBefore = (child, ref) => {
+    child.parentNode = header;
+    header.children.unshift(child);
+    header.insertedBefore = ref;
+    return child;
+  };
+  doc.querySelector = (sel) => (sel === '.header-status' ? header : null);
+  const ctl = withSearch('?face=1', () => new FaceController({ document: doc, sseClient: null }));
+  assert.equal(header.children[0], ctl.element);
+  assert.equal(doc.body.children.length, 0);
+  assert.equal(ctl.element.textContent, 'IDLE');
+});

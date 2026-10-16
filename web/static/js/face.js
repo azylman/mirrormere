@@ -1,6 +1,6 @@
 /**
  * Mirrormere Amos State Word overlay (prototype).
- * Shows the current voice state as one uppercase word, centred above all layers.
+ * Shows the current voice state as one uppercase word in the header bar, beside the status light.
  * Mounted only when the page URL carries ?face=1; otherwise nothing is added to the DOM.
  */
 (() => {
@@ -44,7 +44,16 @@
       el.setAttribute('aria-live', 'polite');
       el.dataset.state = 'idle';
       el.textContent = WORDS.idle;
-      this.document.body.appendChild(el);
+      // Header bar, right side, just before the system status light; when the
+      // header is absent (a page without it) fall back to the body.
+      const header = typeof this.document.querySelector === 'function'
+        ? this.document.querySelector('.header-status')
+        : null;
+      if (header && typeof header.insertBefore === 'function') {
+        header.insertBefore(el, header.firstChild || null);
+      } else {
+        this.document.body.appendChild(el);
+      }
       this.element = el;
 
       if (this.sseClient && typeof this.sseClient.on === 'function') {
