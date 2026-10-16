@@ -1402,6 +1402,10 @@
         });
       }
 
+      if (window.MirrormereFace && window.MirrormereFace.FaceController) {
+        window.amosFace = new window.MirrormereFace.FaceController({ sseClient: sseClient });
+      }
+
       // 7b. Initialize Tasks Widget Interaction
       initTasksInteraction();
 
