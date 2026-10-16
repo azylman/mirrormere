@@ -19,6 +19,7 @@ import logging
 import math
 import os
 import shutil
+import socket
 import signal
 import struct
 import subprocess
@@ -38,10 +39,10 @@ except ImportError:
 
 try:
     from .config import VoiceConfig, load_config
-    from .vad import build_detector
+    from .vad import build_detector, SileroDetector, load_silero_vad_model
 except (ImportError, ValueError):
     from config import VoiceConfig, load_config
-    from vad import build_detector
+    from vad import build_detector, SileroDetector, load_silero_vad_model
 
 logger = logging.getLogger("mirrormere-voice")
 
@@ -151,7 +152,7 @@ class VoiceDaemon:
     # before it's worth POSTing to the classifier.
     AMBIENT_MIN_SPEECH_SECONDS = 0.4
 
-    def __init__(self, cfg: VoiceConfig, model: Optional[Any] = None) -> None:
+    def __init__(self, cfg: VoiceConfig, model: Optional[Any] = None, barge_detector: Optional[Any] = None) -> None:
         self.cfg = cfg
         self.running = True
         self.state = "idle"
@@ -235,6 +236,38 @@ class VoiceDaemon:
             wake_engine=cfg.wake_engine,
             sherpa_model_dir=cfg.sherpa_model_dir,
         )
+
+        # Barge-in state (inert unless cfg.barge_in). The detector is a
+        # separate Silero instance so its recurrent state and threshold never
+        # interfere with end-of-speech detection.
+        self.playing = False  # True while reply audio is audible
+        self._player_lock = threading.Lock()
+        self._player_procs: List[subprocess.Popen] = []
+        self._active_resp: Optional[Any] = None
+        self._turn_abort: Optional[threading.Event] = None
+        self._barge_speech_ms = 0.0
+        self._barge_gap_frames = 0
+        self._barge_watching = False
+        self._barge_pending = False   # next utterance was seeded by a barge-in
+        self._turn_barge_in = False   # telemetry for the turn being dispatched
+        self.barge_in_count = 0
+        self.barge_detector = None
+        if cfg.barge_in:
+            self.barge_detector = barge_detector if barge_detector is not None else self._build_barge_detector()
+
+    def _build_barge_detector(self):
+        """Dedicated Silero detector for barge-in; None (feature disabled) if Silero cannot load."""
+        try:
+            det = SileroDetector(load_silero_vad_model(), self.cfg.barge_in_vad_threshold)
+            logger.info(
+                "Barge-in enabled (min_speech=%dms, vad_threshold=%.2f)",
+                self.cfg.barge_in_min_speech_ms,
+                self.cfg.barge_in_vad_threshold,
+            )
+            return det
+        except Exception as e:
+            logger.warning("Barge-in disabled: Silero VAD unavailable (%s)", e)
+            return None
 
     def _init_openwakeword(self):
         """Discovers custom models and instantiates the openWakeWord Model."""
@@ -361,6 +394,8 @@ class VoiceDaemon:
 
     def flush_openwakeword(self) -> None:
         """Flushes feature buffers and prediction histories in openWakeWord."""
+        if self.model is None:
+            return
         try:
             if hasattr(self.model, "reset"):
                 self.model.reset()
@@ -482,6 +517,86 @@ class VoiceDaemon:
         kw = keyword.strip().lower()
         return "@hey_google" in kw or "@hi_google" in kw or "google" in kw
 
+    def _check_barge_in(self, raw_bytes: bytes, now: float) -> bool:
+        """While reply audio plays, watch the AEC'd mic; stop playback on sustained speech.
+
+        Returns True if a barge-in fired (state is then "listening").
+        """
+        if not (self.playing and self.busy):
+            self._barge_watching = False
+            return False
+        if not self._barge_watching:
+            # Playback just started: fresh VAD state and counters.
+            self._barge_watching = True
+            self._barge_speech_ms = 0.0
+            self._barge_gap_frames = 0
+            self.barge_detector.reset()
+
+        frame_ms = self.cfg.chunk_samples * 1000.0 / self.cfg.sample_rate
+        if self.barge_detector.is_speech(raw_bytes):
+            self._barge_speech_ms += frame_ms
+            self._barge_gap_frames = 0
+        else:
+            # Tolerate a single non-speech frame inside a word.
+            self._barge_gap_frames += 1
+            if self._barge_gap_frames >= 2:
+                self._barge_speech_ms = 0.0
+
+        if self._barge_speech_ms < self.cfg.barge_in_min_speech_ms:
+            return False
+
+        speech_ms = self._barge_speech_ms
+        self._barge_watching = False
+        self._barge_speech_ms = 0.0
+        self._do_barge_in(now, speech_ms)
+        return True
+
+    def _abort_response(self, resp: Any) -> None:
+        """Best-effort: shut down the SSE socket so a worker blocked on read wakes up, then close it."""
+        try:
+            raw = getattr(getattr(resp, "fp", None), "raw", None)
+            sock = getattr(raw, "_sock", None)
+            if sock is not None:
+                sock.shutdown(socket.SHUT_RDWR)
+        except Exception:
+            pass
+        try:
+            resp.close()
+        except Exception:
+            pass
+
+    def _do_barge_in(self, now: float, speech_ms: float) -> None:
+        """Stops playback and abandons the reply, then starts a new turn seeded with the triggering speech."""
+        logger.info("barge-in: stopped playback after %d ms of speech", int(speech_ms))
+        self.barge_in_count += 1
+        abort = self._turn_abort
+        if abort is not None:
+            abort.set()
+        with self._player_lock:
+            procs = list(self._player_procs)
+            self._player_procs.clear()
+            resp = self._active_resp
+            self._active_resp = None
+        for p in procs:
+            try:
+                p.kill()
+            except Exception:
+                pass
+        if resp is not None:
+            self._abort_response(resp)
+
+        self.playing = False
+        with self.busy_lock:
+            self.busy = False
+        self.reply_ended_at = now
+        self.reset_wake_engine()
+
+        # New turn exactly like a wake-triggered one, but already speaking and
+        # seeded with the buffered frames (they include the triggering speech).
+        self._start_listening(now)
+        self.has_spoken = True
+        self._barge_pending = True
+
     def _start_listening(self, now: float, wake_word: Optional[str] = None) -> None:
         """Transitions into wake-triggered recording, mirroring the wake-word flow."""
         self.state = "listening"
@@ -535,6 +650,10 @@ class VoiceDaemon:
 
         if self.state == "idle":
             self.pre_roll.append(raw_bytes)
+
+            if self.barge_detector is not None:
+                if self._check_barge_in(raw_bytes, now):
+                    return "barge_in"
 
             if self.wake_mode_uses_wake_word() and self._wake_ready(now):
                 wake_word = self._check_wake_word(raw_bytes)
@@ -631,6 +750,8 @@ class VoiceDaemon:
                     silence_duration,
                 )
                 self.save_utterance(self.utterance_buffer)
+                self._turn_barge_in = self._barge_pending
+                self._barge_pending = False
                 is_google = self.is_google_wake(self.current_wake_word)
                 if is_google and self.cfg.google_voice_url:
                     with self.busy_lock:
@@ -830,7 +951,16 @@ class VoiceDaemon:
             player = shutil.which("pw-play") or shutil.which("aplay") or shutil.which("mpv")
             if player:
                 p = subprocess.Popen([player, "-"], stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
-                p.communicate(input=audio_data, timeout=30)
+                with self._player_lock:
+                    self._player_procs.append(p)
+                self.playing = True
+                try:
+                    p.communicate(input=audio_data, timeout=30)
+                finally:
+                    with self._player_lock:
+                        if p in self._player_procs:
+                            self._player_procs.remove(p)
+                        self.playing = bool(self._player_procs)
                 self.last_playback_sec = time.perf_counter() - t0
                 return p.returncode == 0
         except Exception as e:
@@ -898,6 +1028,8 @@ class VoiceDaemon:
         # so ambient mode never sends the daemon's own reply audio back to
         # the classifier.
         self.busy = True
+        abort = threading.Event()
+        self._turn_abort = abort
         pcm_proc = None
         turn_playback_start = None
         turn_playback_total = 0.0
@@ -926,6 +1058,10 @@ class VoiceDaemon:
                 finally:
                     if turn_playback_start is not None:
                         self.last_playback_sec = max(0.0, time.perf_counter() - turn_playback_start)
+                    with self._player_lock:
+                        if pcm_proc in self._player_procs:
+                            self._player_procs.remove(pcm_proc)
+                        self.playing = bool(self._player_procs)
                     pcm_proc = None
 
         try:
@@ -944,6 +1080,9 @@ class VoiceDaemon:
             add_field("wake_eval_ms", f"{self.last_wake_eval_ms:.1f}")
             add_field("speech_duration_ms", f"{self.last_speech_duration_ms:.1f}")
             add_field("silence_duration_ms", f"{self.last_silence_duration_ms:.1f}")
+            if self._turn_barge_in:
+                add_field("barge_in", "true")
+                self._turn_barge_in = False
 
             body.extend(f"--{boundary}\r\n".encode("utf-8"))
             body.extend(b'Content-Disposition: form-data; name="audio"; filename="utterance.wav"\r\n')
@@ -963,8 +1102,12 @@ class VoiceDaemon:
             )
             logger.info("Streaming utterance to Voice Hub at %s...", self.cfg.hub_url)
             with urllib.request.urlopen(req, timeout=120.0) as resp:
+                with self._player_lock:
+                    self._active_resp = resp
                 current_event = None
                 for raw_line in resp:
+                    if abort.is_set():
+                        break
                     line = raw_line.decode("utf-8").strip()
                     if not line:
                         continue
@@ -1003,11 +1146,17 @@ class VoiceDaemon:
 
                             if fmt == "pcm":
                                 if audio_bytes:
+                                    if abort.is_set():
+                                        break
                                     if pcm_proc is None:
                                         sample_rate = int(payload.get("sample_rate") or 24000)
                                         channels = int(payload.get("channels") or 1)
                                         pcm_proc = self._start_pcm_stream(sample_rate, channels)
                                         turn_playback_start = time.perf_counter()
+                                        if pcm_proc:
+                                            with self._player_lock:
+                                                self._player_procs.append(pcm_proc)
+                                            self.playing = True
                                     if pcm_proc and pcm_proc.stdin:
                                         try:
                                             pcm_proc.stdin.write(audio_bytes)
@@ -1031,22 +1180,33 @@ class VoiceDaemon:
                             logger.warning("Hub returned error: %s", payload.get("error"))
                             break
         except Exception as e:
-            logger.info("Voice Hub stream connection failed: %s", e)
+            if abort.is_set():
+                logger.debug("Voice Hub stream abandoned after barge-in: %s", e)
+            else:
+                logger.info("Voice Hub stream connection failed: %s", e)
         finally:
-            close_pcm_proc()
-            self.busy = False
-            self.reply_ended_at = time.time()
-            self.reset_wake_engine()
-            self.pre_roll.clear()
-            if reply_received and turn_playback_start is None:
-                # Text-only reply (quiet hours or disabled TTS): hold caption toast
-                # on screen so user can read it, but allow new wake-words to interrupt.
-                words = len(reply_text.split())
-                reading_delay = min(max(float(words) * 0.3, 5.0), 15.0)
-                time.sleep(reading_delay)
-            # Only post idle if a new wake word has not already started a new turn
-            if self.state == "idle":
-                post_voice_state(self.cfg.mirrormere_url, "idle", timeout=2.0)
+            with self._player_lock:
+                if self._active_resp is not None and self._turn_abort is abort:
+                    self._active_resp = None
+            if abort.is_set():
+                # Barge-in already killed the player and handed the daemon to a
+                # new turn; touching busy/pre_roll/the wake engine here would race it.
+                close_pcm_proc()
+            else:
+                close_pcm_proc()
+                self.busy = False
+                self.reply_ended_at = time.time()
+                self.reset_wake_engine()
+                self.pre_roll.clear()
+                if reply_received and turn_playback_start is None:
+                    # Text-only reply (quiet hours or disabled TTS): hold caption toast
+                    # on screen so user can read it, but allow new wake-words to interrupt.
+                    words = len(reply_text.split())
+                    reading_delay = min(max(float(words) * 0.3, 5.0), 15.0)
+                    time.sleep(reading_delay)
+                # Only post idle if a new wake word has not already started a new turn
+                if self.state == "idle":
+                    post_voice_state(self.cfg.mirrormere_url, "idle", timeout=2.0)
 
     def _send_heartbeat(self, hub_url: str, payload: Dict[str, Any]) -> None:
         """Dispatches heartbeat payload to Voice Hub asynchronously."""
