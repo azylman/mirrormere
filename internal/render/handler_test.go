@@ -19,10 +19,8 @@ import (
 func setupTestServer(t *testing.T) (*render.Handler, string, *domain.Package) {
 	t.Helper()
 	tmpDir := t.TempDir()
-
 	pkg := createTestPackage(t, tmpDir, "sensor", `<div class="sensor">{{.Data.temp}}</div>`)
-	assetsDir := filepath.Join(pkg.Dir, "assets")
-	subDir := filepath.Join(assetsDir, "sub")
+	subDir := filepath.Join(pkg.Dir, "assets", "sub")
 	if err := os.MkdirAll(subDir, 0755); err != nil {
 		t.Fatalf("failed to create sub assets dir: %v", err)
 	}
@@ -32,72 +30,29 @@ func setupTestServer(t *testing.T) (*render.Handler, string, *domain.Package) {
 
 	brokenPkg := createTestPackage(t, tmpDir, "broken", `{{.Data.Bad.Property}}`)
 	calPkg := createTestPackage(t, tmpDir, "cal", `<div class="cal" data-date="{{.Config.date}}" data-view="{{.Config.default_view}}">OK</div>`)
-	noAssetsPkg := &domain.Package{
-		Type:      "no-assets",
-		AssetsDir: "",
-	}
+	pkgs := map[string]*domain.Package{"sensor": pkg, "broken": brokenPkg, "cal": calPkg, "no-assets": {Type: "no-assets"}}
 
 	snap := &config.Snapshot{
-		Config: &config.Config{
-			Display: config.DisplayConfig{
-				Widgets: []config.WidgetConfig{
-					{ID: "sensor-1", Type: "sensor"},
-					{ID: "b1", Type: "broken"},
-					{ID: "cal-1", Type: "cal", Config: map[string]any{"default_view": "week"}},
-				},
-			},
-		},
-		Layout: &layout.Layout{
-			Screens: []layout.Screen{
-				{
-					Index: 0,
-					Widgets: []layout.PlacedWidget{
-						{WidgetID: "sensor-1", Type: "sensor", Dimensions: domain.NewDimension(2, 1)},
-						{WidgetID: "b1", Type: "broken", Dimensions: domain.NewDimension(2, 1)},
-						{WidgetID: "cal-1", Type: "cal", Dimensions: domain.NewDimension(2, 1)},
-					},
-				},
-			},
-		},
-		Packages: map[string]*domain.Package{
-			"sensor":    pkg,
-			"broken":    brokenPkg,
-			"cal":       calPkg,
-			"no-assets": noAssetsPkg,
-		},
+		Config: &config.Config{Display: config.DisplayConfig{Widgets: []config.WidgetConfig{
+			{ID: "sensor-1", Type: "sensor"}, {ID: "b1", Type: "broken"}, {ID: "cal-1", Type: "cal", Config: map[string]any{"default_view": "week"}},
+		}}},
+		Layout: &layout.Layout{Screens: []layout.Screen{{Index: 0, Widgets: []layout.PlacedWidget{
+			{WidgetID: "sensor-1", Type: "sensor", Dimensions: domain.NewDimension(2, 1)},
+			{WidgetID: "b1", Type: "broken", Dimensions: domain.NewDimension(2, 1)},
+			{WidgetID: "cal-1", Type: "cal", Dimensions: domain.NewDimension(2, 1)},
+		}}}},
+		Packages: pkgs,
 	}
-
 	provider := &mockSnapshotProvider{
 		snapshot: snap,
-		states: map[string]mockState{
-			"sensor-1": {data: map[string]any{"temp": "68F"}, state: "healthy"},
-			"b1":       {data: "string-not-map", state: "healthy"},
-			"cal-1":    {data: map[string]any{}, state: "healthy"},
-		},
+		states:   map[string]mockState{"sensor-1": {data: map[string]any{"temp": "68F"}, state: "healthy"}, "b1": {data: "string-not-map", state: "healthy"}, "cal-1": {data: map[string]any{}, state: "healthy"}},
 	}
-
-	resolver := &mockResolver{packages: map[string]*domain.Package{
-		"sensor":    pkg,
-		"broken":    brokenPkg,
-		"cal":       calPkg,
-		"no-assets": noAssetsPkg,
-	}}
-	engine := render.NewEngine(resolver, provider)
-
-	defaultCSS := filepath.Join(tmpDir, "hud.css")
-
-	handler := render.NewHandler(
-		engine,
-		resolver,
-		render.WithCSSPath(defaultCSS),
-	)
-
-	return handler, tmpDir, pkg
+	resolver := &mockResolver{packages: pkgs}
+	return render.NewHandler(render.NewEngine(resolver, provider), resolver, render.WithCSSPath(filepath.Join(tmpDir, "hud.css"))), tmpDir, pkg
 }
 
 func TestHandler_GetWidgetRender(t *testing.T) {
 	t.Parallel()
-
 	handler, _, _ := setupTestServer(t)
 
 	tests := []struct {
@@ -113,85 +68,20 @@ func TestHandler_GetWidgetRender(t *testing.T) {
 		checkCORS  bool
 		wantAllow  string
 	}{
-		{
-			name:       "success GET 200",
-			method:     http.MethodGet,
-			path:       "/api/widgets/sensor-1/render",
-			widgetID:   "sensor-1",
-			wantStatus: http.StatusOK,
-			wantBody:   []string{`<div class="sensor">68F</div>`},
-			checkCORS:  true,
-		},
-		{
-			name:       "HEAD 200 empty body",
-			method:     http.MethodHead,
-			path:       "/api/widgets/sensor-1/render",
-			widgetID:   "sensor-1",
-			wantStatus: http.StatusOK,
-			wantEmpty:  true,
-		},
-		{
-			name:       "OPTIONS 204",
-			method:     http.MethodOptions,
-			path:       "/api/widgets/sensor-1/render",
-			widgetID:   "sensor-1",
-			wantStatus: http.StatusNoContent,
-		},
-		{
-			name:       "POST 405 method not allowed",
-			method:     http.MethodPost,
-			path:       "/api/widgets/sensor-1/render",
-			widgetID:   "sensor-1",
-			wantStatus: http.StatusMethodNotAllowed,
-			wantAllow:  "GET, HEAD, OPTIONS",
-			wantErrMsg: "method not allowed",
-		},
-		{
-			name:       "404 widget not found",
-			method:     http.MethodGet,
-			path:       "/api/widgets/missing-widget/render",
-			widgetID:   "missing-widget",
-			wantStatus: http.StatusNotFound,
-			wantErrMsg: "widget 'missing-widget' not found",
-		},
-		{
-			name:       "500 nil engine",
-			method:     http.MethodGet,
-			path:       "/api/widgets/sensor-1/render",
-			widgetID:   "sensor-1",
-			nilEngine:  true,
-			wantStatus: http.StatusInternalServerError,
-			wantErrMsg: "rendering engine not configured",
-		},
-		{
-			name:       "500 template execution error",
-			method:     http.MethodGet,
-			path:       "/api/widgets/b1/render",
-			widgetID:   "b1",
-			wantStatus: http.StatusInternalServerError,
-			wantErrMsg: "failed to render widget",
-		},
-		{
-			name:       "valid date override",
-			method:     http.MethodGet,
-			path:       "/api/widgets/cal-1/render?date=2026-10-15",
-			widgetID:   "cal-1",
-			wantStatus: http.StatusOK,
-			wantBody:   []string{`data-date="2026-10-15"`, `data-view="week"`},
-		},
+		{name: "success GET 200", method: http.MethodGet, path: "/api/widgets/sensor-1/render", widgetID: "sensor-1", wantStatus: http.StatusOK, wantBody: []string{`<div class="sensor">68F</div>`}, checkCORS: true},
+		{name: "HEAD 200 empty body", method: http.MethodHead, path: "/api/widgets/sensor-1/render", widgetID: "sensor-1", wantStatus: http.StatusOK, wantEmpty: true},
+		{name: "OPTIONS 204", method: http.MethodOptions, path: "/api/widgets/sensor-1/render", widgetID: "sensor-1", wantStatus: http.StatusNoContent},
+		{name: "POST 405 method not allowed", method: http.MethodPost, path: "/api/widgets/sensor-1/render", widgetID: "sensor-1", wantStatus: http.StatusMethodNotAllowed, wantAllow: "GET, HEAD, OPTIONS", wantErrMsg: "method not allowed"},
+		{name: "404 widget not found", method: http.MethodGet, path: "/api/widgets/missing-widget/render", widgetID: "missing-widget", wantStatus: http.StatusNotFound, wantErrMsg: "widget 'missing-widget' not found"},
+		{name: "500 nil engine", method: http.MethodGet, path: "/api/widgets/sensor-1/render", widgetID: "sensor-1", nilEngine: true, wantStatus: http.StatusInternalServerError, wantErrMsg: "rendering engine not configured"},
+		{name: "500 template execution error", method: http.MethodGet, path: "/api/widgets/b1/render", widgetID: "b1", wantStatus: http.StatusInternalServerError, wantErrMsg: "failed to render widget"},
+		{name: "valid date override", method: http.MethodGet, path: "/api/widgets/cal-1/render?date=2026-10-15", widgetID: "cal-1", wantStatus: http.StatusOK, wantBody: []string{`data-date="2026-10-15"`, `data-view="week"`}},
 		{name: "valid view override day", method: http.MethodGet, path: "/api/widgets/cal-1/render?view=day", widgetID: "cal-1", wantStatus: http.StatusOK, wantBody: []string{`data-view="day"`}},
 		{name: "valid view override week", method: http.MethodGet, path: "/api/widgets/cal-1/render?view=week", widgetID: "cal-1", wantStatus: http.StatusOK, wantBody: []string{`data-view="week"`}},
 		{name: "valid view override month", method: http.MethodGet, path: "/api/widgets/cal-1/render?view=month", widgetID: "cal-1", wantStatus: http.StatusOK, wantBody: []string{`data-view="month"`}},
 		{name: "valid view override DAY uppercase", method: http.MethodGet, path: "/api/widgets/cal-1/render?view=DAY", widgetID: "cal-1", wantStatus: http.StatusOK, wantBody: []string{`data-view="day"`}},
 		{name: "valid view override Month mixed case", method: http.MethodGet, path: "/api/widgets/cal-1/render?view=Month", widgetID: "cal-1", wantStatus: http.StatusOK, wantBody: []string{`data-view="month"`}},
-		{
-			name:       "valid date and view combined",
-			method:     http.MethodGet,
-			path:       "/api/widgets/cal-1/render?date=2026-11-20&view=month",
-			widgetID:   "cal-1",
-			wantStatus: http.StatusOK,
-			wantBody:   []string{`data-date="2026-11-20"`, `data-view="month"`},
-		},
+		{name: "valid date and view combined", method: http.MethodGet, path: "/api/widgets/cal-1/render?date=2026-11-20&view=month", widgetID: "cal-1", wantStatus: http.StatusOK, wantBody: []string{`data-date="2026-11-20"`, `data-view="month"`}},
 		{name: "invalid date bad text", method: http.MethodGet, path: "/api/widgets/cal-1/render?date=invalid", widgetID: "cal-1", wantStatus: http.StatusBadRequest, wantErrMsg: "invalid date parameter: must be YYYY-MM-DD"},
 		{name: "invalid date bad month", method: http.MethodGet, path: "/api/widgets/cal-1/render?date=2026-13-01", widgetID: "cal-1", wantStatus: http.StatusBadRequest, wantErrMsg: "invalid date parameter: must be YYYY-MM-DD"},
 		{name: "invalid date leap day nonleap", method: http.MethodGet, path: "/api/widgets/cal-1/render?date=2026-02-30", widgetID: "cal-1", wantStatus: http.StatusBadRequest, wantErrMsg: "invalid date parameter: must be YYYY-MM-DD"},
@@ -210,28 +100,13 @@ func TestHandler_GetWidgetRender(t *testing.T) {
 			if tc.nilEngine {
 				h = render.NewHandler(nil, nil)
 			}
-			req := httptest.NewRequest(tc.method, tc.path, nil)
 			rec := httptest.NewRecorder()
-			h.GetWidgetRender(rec, req, tc.widgetID)
-
-			if rec.Code != tc.wantStatus {
-				t.Fatalf("status = %d, want %d", rec.Code, tc.wantStatus)
+			h.GetWidgetRender(rec, httptest.NewRequest(tc.method, tc.path, nil), tc.widgetID)
+			if rec.Code != tc.wantStatus || (tc.wantEmpty && rec.Body.Len() != 0) || (tc.wantAllow != "" && rec.Header().Get("Allow") != tc.wantAllow) {
+				t.Fatalf("status=%d (want %d), len=%d, allow=%q", rec.Code, tc.wantStatus, rec.Body.Len(), rec.Header().Get("Allow"))
 			}
-			if tc.wantEmpty && rec.Body.Len() != 0 {
-				t.Errorf("expected empty body, got %d bytes", rec.Body.Len())
-			}
-			if tc.checkCORS {
-				if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "*" {
-					t.Errorf("CORS origin = %q, want *", got)
-				}
-				if got := rec.Header().Get("Content-Type"); got != "text/html; charset=utf-8" {
-					t.Errorf("Content-Type = %q, want text/html; charset=utf-8", got)
-				}
-			}
-			if tc.wantAllow != "" {
-				if got := rec.Header().Get("Allow"); got != tc.wantAllow {
-					t.Errorf("Allow header = %q, want %q", got, tc.wantAllow)
-				}
+			if tc.checkCORS && (rec.Header().Get("Access-Control-Allow-Origin") != "*" || rec.Header().Get("Content-Type") != "text/html; charset=utf-8") {
+				t.Errorf("headers mismatch: %v", rec.Header())
 			}
 			for _, s := range tc.wantBody {
 				if !strings.Contains(rec.Body.String(), s) {
@@ -240,11 +115,8 @@ func TestHandler_GetWidgetRender(t *testing.T) {
 			}
 			if tc.wantErrMsg != "" {
 				var errResp api.ErrorResponse
-				if err := json.Unmarshal(rec.Body.Bytes(), &errResp); err != nil {
-					t.Fatalf("failed to decode error json: %v", err)
-				}
-				if !strings.Contains(errResp.Error, tc.wantErrMsg) {
-					t.Errorf("error msg = %q, want substring %q", errResp.Error, tc.wantErrMsg)
+				if err := json.Unmarshal(rec.Body.Bytes(), &errResp); err != nil || !strings.Contains(errResp.Error, tc.wantErrMsg) {
+					t.Errorf("error = %v (%+v), want %q", err, errResp, tc.wantErrMsg)
 				}
 			}
 		})
@@ -253,7 +125,6 @@ func TestHandler_GetWidgetRender(t *testing.T) {
 
 func TestHandler_GetWidgetAsset(t *testing.T) {
 	t.Parallel()
-
 	handler, _, _ := setupTestServer(t)
 
 	tests := []struct {
@@ -291,23 +162,15 @@ func TestHandler_GetWidgetAsset(t *testing.T) {
 			if tc.nilResolver {
 				h = render.NewHandler(nil, nil)
 			}
-			req := httptest.NewRequest(tc.method, "/widget-types/"+tc.widgetType+"/assets/"+tc.assetPath, nil)
 			rec := httptest.NewRecorder()
-			h.GetWidgetAsset(rec, req, tc.widgetType, tc.assetPath)
-
-			if rec.Code != tc.wantStatus {
-				t.Fatalf("status = %d, want %d", rec.Code, tc.wantStatus)
-			}
-			if tc.wantBody != "" && !strings.Contains(rec.Body.String(), tc.wantBody) {
-				t.Errorf("body missing %q: %s", tc.wantBody, rec.Body.String())
+			h.GetWidgetAsset(rec, httptest.NewRequest(tc.method, "/widget-types/"+tc.widgetType+"/assets/"+tc.assetPath, nil), tc.widgetType, tc.assetPath)
+			if rec.Code != tc.wantStatus || (tc.wantBody != "" && !strings.Contains(rec.Body.String(), tc.wantBody)) {
+				t.Fatalf("status = %d (want %d), body = %q", rec.Code, tc.wantStatus, rec.Body.String())
 			}
 			if tc.wantErrMsg != "" {
 				var errResp api.ErrorResponse
-				if err := json.Unmarshal(rec.Body.Bytes(), &errResp); err != nil {
-					t.Fatalf("failed to decode error json: %v", err)
-				}
-				if !strings.Contains(errResp.Error, tc.wantErrMsg) {
-					t.Errorf("error msg = %q, want substring %q", errResp.Error, tc.wantErrMsg)
+				if err := json.Unmarshal(rec.Body.Bytes(), &errResp); err != nil || !strings.Contains(errResp.Error, tc.wantErrMsg) {
+					t.Errorf("error = %v (%+v), want %q", err, errResp, tc.wantErrMsg)
 				}
 			}
 		})
@@ -316,16 +179,11 @@ func TestHandler_GetWidgetAsset(t *testing.T) {
 
 func TestHandler_ServeStyle(t *testing.T) {
 	t.Parallel()
-
 	tmpDir := t.TempDir()
 	validCSS := filepath.Join(tmpDir, "valid.css")
-	if err := os.WriteFile(validCSS, []byte("/* test stylesheet */"), 0644); err != nil {
-		t.Fatalf("failed to write valid css: %v", err)
-	}
 	customCSS := filepath.Join(tmpDir, "custom.css")
-	if err := os.WriteFile(customCSS, []byte("/* custom stylesheet */"), 0644); err != nil {
-		t.Fatalf("failed to write custom css: %v", err)
-	}
+	_ = os.WriteFile(validCSS, []byte("/* test stylesheet */"), 0644)
+	_ = os.WriteFile(customCSS, []byte("/* custom stylesheet */"), 0644)
 	missingCSS := filepath.Join(tmpDir, "nonexistent.css")
 
 	tests := []struct {
@@ -357,41 +215,21 @@ func TestHandler_ServeStyle(t *testing.T) {
 			if tc.setPath != "" {
 				h.SetCSSPath(tc.setPath)
 			}
-			if tc.checkPath != "" {
-				if got := h.CSSPath(); got != tc.checkPath {
-					t.Fatalf("CSSPath() = %q, want %q", got, tc.checkPath)
-				}
+			if tc.checkPath != "" && h.CSSPath() != tc.checkPath {
+				t.Fatalf("CSSPath() = %q, want %q", h.CSSPath(), tc.checkPath)
 			}
 			rec := httptest.NewRecorder()
-			req := httptest.NewRequest(tc.method, "/style.css", nil)
-			h.ServeStyle(rec, req)
-
-			if rec.Code != tc.wantStatus {
-				t.Fatalf("status = %d, want %d", rec.Code, tc.wantStatus)
+			h.ServeStyle(rec, httptest.NewRequest(tc.method, "/style.css", nil))
+			if rec.Code != tc.wantStatus || (tc.wantEmpty && rec.Body.Len() != 0) || (tc.wantBody != "" && rec.Body.String() != tc.wantBody) {
+				t.Fatalf("status=%d (want %d), body=%q", rec.Code, tc.wantStatus, rec.Body.String())
 			}
-			if tc.wantEmpty && rec.Body.Len() != 0 {
-				t.Errorf("expected empty body, got %d bytes", rec.Body.Len())
-			}
-			if tc.wantContentType != "" {
-				if got := rec.Header().Get("Content-Type"); got != tc.wantContentType {
-					t.Errorf("Content-Type = %q, want %q", got, tc.wantContentType)
-				}
-			}
-			if tc.wantCacheCtrl != "" {
-				if got := rec.Header().Get("Cache-Control"); got != tc.wantCacheCtrl {
-					t.Errorf("Cache-Control = %q, want %q", got, tc.wantCacheCtrl)
-				}
-			}
-			if tc.wantBody != "" && rec.Body.String() != tc.wantBody {
-				t.Errorf("body = %q, want %q", rec.Body.String(), tc.wantBody)
+			if (tc.wantContentType != "" && rec.Header().Get("Content-Type") != tc.wantContentType) || (tc.wantCacheCtrl != "" && rec.Header().Get("Cache-Control") != tc.wantCacheCtrl) {
+				t.Errorf("headers = %v", rec.Header())
 			}
 			if tc.wantErrMsg != "" {
 				var errResp api.ErrorResponse
-				if err := json.Unmarshal(rec.Body.Bytes(), &errResp); err != nil {
-					t.Fatalf("failed to decode error json: %v", err)
-				}
-				if !strings.Contains(errResp.Error, tc.wantErrMsg) {
-					t.Errorf("error msg = %q, want substring %q", errResp.Error, tc.wantErrMsg)
+				if err := json.Unmarshal(rec.Body.Bytes(), &errResp); err != nil || !strings.Contains(errResp.Error, tc.wantErrMsg) {
+					t.Errorf("error = %v (%+v), want %q", err, errResp, tc.wantErrMsg)
 				}
 			}
 		})

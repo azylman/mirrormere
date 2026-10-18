@@ -24,20 +24,20 @@ type FamilyMember struct {
 
 // FamilyEvent represents a resolved, presentation-ready event within a single day column.
 type FamilyEvent struct {
-	ID        string   `json:"id"`
-	Title     string   `json:"title"`
+	ID          string   `json:"id"`
+	Title       string   `json:"title"`
 	Location    string   `json:"location"`
 	Description string   `json:"description"`
 	Start       string   `json:"start"`
-	End       string   `json:"end"`
-	AllDay    bool     `json:"all_day"`
-	Owners    []string `json:"owners"`
-	Initials  []string `json:"initials"`
-	Colors    []string `json:"colors"`
-	Color     string   `json:"color"`
-	TextColor string   `json:"text_color"`
-	Patterns  []string `json:"patterns"`
-	Pattern   string   `json:"pattern"`
+	End         string   `json:"end"`
+	AllDay      bool     `json:"all_day"`
+	Owners      []string `json:"owners"`
+	Initials    []string `json:"initials"`
+	Colors      []string `json:"colors"`
+	Color       string   `json:"color"`
+	TextColor   string   `json:"text_color"`
+	Patterns    []string `json:"patterns"`
+	Pattern     string   `json:"pattern"`
 }
 
 // FamilyDay represents one column of the week view "Week (default)".
@@ -315,22 +315,7 @@ func BuildFamilyView(data any, cfg map[string]any, dims domain.Dimension, now ti
 		calendars,
 		sharedColor,
 		now.Location(),
-		func(ev provider.CalendarEvent) []string {
-			var evDates []string
-			if ev.AllDay {
-				evDates = familyDateRange(ev.Start, ev.End)
-			} else {
-				evDates = timedEventDateRange(ev, now.Location())
-			}
-
-			var matchedDates []string
-			for _, d := range evDates {
-				if _, ok := dayIndex[d]; ok {
-					matchedDates = append(matchedDates, d)
-				}
-			}
-			return matchedDates
-		},
+		matchWindowDates(dayIndex, now.Location()),
 	)
 
 	for _, id := range mergedData.order {
@@ -442,22 +427,38 @@ func BuildFamilyView(data any, cfg map[string]any, dims domain.Dimension, now ti
 	}
 
 	return &FamilyViewModel{
-		RangeStart:   rangeStart.Format("2006-01-02"),
-		RangeEnd:     rangeEnd.Format("2006-01-02"),
-		RangeLabel:   formatFamilyRangeLabel(rangeStart, rangeEnd),
-		Today:        today.Format("2006-01-02"),
+		RangeStart:      rangeStart.Format("2006-01-02"),
+		RangeEnd:        rangeEnd.Format("2006-01-02"),
+		RangeLabel:      formatFamilyRangeLabel(rangeStart, rangeEnd),
+		Today:           today.Format("2006-01-02"),
 		HoursStart:      hours.StartStr,
 		HoursEnd:        hours.EndStr,
 		HourMarkers:     hours.Markers,
 		TimelineMarkers: hours.TimelineMarkers,
 		Members:         members,
-		Days:         days,
-		AllDayEvents: allDayEvents,
-		SharedColor:  sharedColor,
+		Days:            days,
+		AllDayEvents:    allDayEvents,
+		SharedColor:     sharedColor,
 	}, nil
 }
 
-
+func matchWindowDates(dayIndex map[string]int, loc *time.Location) func(provider.CalendarEvent) []string {
+	return func(ev provider.CalendarEvent) []string {
+		var evDates []string
+		if ev.AllDay {
+			evDates = familyDateRange(ev.Start, ev.End)
+		} else {
+			evDates = timedEventDateRange(ev, loc)
+		}
+		var matchedDates []string
+		for _, d := range evDates {
+			if _, ok := dayIndex[d]; ok {
+				matchedDates = append(matchedDates, d)
+			}
+		}
+		return matchedDates
+	}
+}
 
 // eventDateKey resolves the local calendar date a timed event's start falls on,
 // "Timezones" - the provider emits RFC3339 timestamps, which must be converted to the
@@ -1314,19 +1315,19 @@ func BuildFamilyDayView(data any, cfg map[string]any, dims domain.Dimension, now
 	}
 
 	return &FamilyDayViewModel{
-		Date:         dayDateStr,
-		WeekdayAbbr:  today.Format("Mon"),
-		DayOfMonth:   today.Day(),
-		IsToday:      today.Year() == now.Year() && today.YearDay() == now.YearDay(),
-		IsWeekend:    today.Weekday() == time.Saturday || today.Weekday() == time.Sunday,
+		Date:            dayDateStr,
+		WeekdayAbbr:     today.Format("Mon"),
+		DayOfMonth:      today.Day(),
+		IsToday:         today.Year() == now.Year() && today.YearDay() == now.YearDay(),
+		IsWeekend:       today.Weekday() == time.Saturday || today.Weekday() == time.Sunday,
 		HoursStart:      hours.StartStr,
 		HoursEnd:        hours.EndStr,
 		HourMarkers:     hours.Markers,
 		TimelineMarkers: hours.TimelineMarkers,
 		Members:         members,
-		Columns:      columns,
-		AllDayEvents: allDayEvents,
-		SharedColor:  sharedColor,
+		Columns:         columns,
+		AllDayEvents:    allDayEvents,
+		SharedColor:     sharedColor,
 	}, nil
 }
 
@@ -1460,22 +1461,7 @@ func BuildFamilyMonthView(data any, cfg map[string]any, dims domain.Dimension, n
 		calendars,
 		sharedColor,
 		loc,
-		func(ev provider.CalendarEvent) []string {
-			var evDates []string
-			if ev.AllDay {
-				evDates = familyDateRange(ev.Start, ev.End)
-			} else {
-			evDates = timedEventDateRange(ev, loc)
-			}
-
-			var matchedDates []string
-			for _, d := range evDates {
-				if _, ok := dayIndex[d]; ok {
-					matchedDates = append(matchedDates, d)
-				}
-			}
-			return matchedDates
-		},
+		matchWindowDates(dayIndex, loc),
 	)
 
 	dayEventsMap := make(map[int][]FamilyEvent, monthGridDays)

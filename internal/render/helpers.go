@@ -57,28 +57,28 @@ func StandardFuncMap(nowFunc func() time.Time) template.FuncMap {
 		"relDate": func(args ...any) string {
 			return RelDate(nowFunc(), args...)
 		},
-		"json":                        JSONHelper,
-		"jsonJS":                      JSONJSHelper,
-		"weatherIcon":                 WeatherIcon,
-		"weatherHourlyGraph":          WeatherHourlyGraph,
-		"weatherDailyForecast":        WeatherDailyForecast,
-		"todayPrecipProb":             TodayPrecipProb,
-		"calendarGridView":            weekViewFn,
-		"calendarGridDayView":         dayViewFn,
-		"calendarGridMonthView":       monthViewFn,
-		"calendarFamilyView":          weekViewFn,
-		"calendarFamilyDayView":       dayViewFn,
-		"dayView":                     dayViewFn,
+		"json":                  JSONHelper,
+		"jsonJS":                JSONJSHelper,
+		"weatherIcon":           WeatherIcon,
+		"weatherHourlyGraph":    WeatherHourlyGraph,
+		"weatherDailyForecast":  WeatherDailyForecast,
+		"todayPrecipProb":       TodayPrecipProb,
+		"calendarGridView":      weekViewFn,
+		"calendarGridDayView":   dayViewFn,
+		"calendarGridMonthView": monthViewFn,
+		"calendarFamilyView":    weekViewFn,
+		"calendarFamilyDayView": dayViewFn,
+		"dayView":               dayViewFn,
 		"isDayView": func(cfg map[string]any) bool {
 			return strings.EqualFold(stringOr(cfg, "default_view", "week"), "day")
 		},
-		"calendarFamilyMonthView":     monthViewFn,
-		"monthView":                   monthViewFn,
+		"calendarFamilyMonthView": monthViewFn,
+		"monthView":               monthViewFn,
 		"isMonthView": func(cfg map[string]any) bool {
 			return strings.EqualFold(stringOr(cfg, "default_view", "week"), "month")
 		},
-		"calendarGridData":            combinedDataFn,
-		"calendarFamilyData":          combinedDataFn,
+		"calendarGridData":   combinedDataFn,
+		"calendarFamilyData": combinedDataFn,
 		"calendarFeedEvents": func(data any, args ...any) []provider.CalendarEvent {
 			return CalendarFeedEvents(data, nowFunc())
 		},
@@ -883,11 +883,8 @@ func TodayPrecipProb(arg any) int {
 	case map[string]any:
 		if daily, ok := v["daily"].([]any); ok && len(daily) > 0 {
 			if first, ok := daily[0].(map[string]any); ok {
-				if p, ok := first["precip_prob_max"].(int); ok {
+				if p, ok := mapInt(first, "precip_prob_max"); ok {
 					return p
-				}
-				if p, ok := first["precip_prob_max"].(float64); ok {
-					return int(p)
 				}
 			}
 		}
@@ -895,21 +892,15 @@ func TodayPrecipProb(arg any) int {
 			return daily[0].PrecipProbMax
 		}
 		if cur, ok := v["current"].(map[string]any); ok {
-			if p, ok := cur["precip_prob_max"].(int); ok {
+			if p, ok := mapInt(cur, "precip_prob_max"); ok {
 				return p
-			}
-			if p, ok := cur["precip_prob_max"].(float64); ok {
-				return int(p)
 			}
 		}
 		if cur, ok := v["current"].(provider.WeatherCurrent); ok {
 			return cur.PrecipProbMax
 		}
-		if p, ok := v["precip_prob_max"].(int); ok {
+		if p, ok := mapInt(v, "precip_prob_max"); ok {
 			return p
-		}
-		if p, ok := v["precip_prob_max"].(float64); ok {
-			return int(p)
 		}
 	}
 
