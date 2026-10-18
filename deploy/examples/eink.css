@@ -1,10 +1,10 @@
 /* ==========================================================================
    Mirrormere Reference Stylesheet: High-Contrast 1-Bit Monochrome (E-Ink)
-   Mount target: copy to ./config/custom.css (mounted via directory mount ./config:/config:ro
+   Mount target: copy to ./config/custom.css (layered on top of web/static/css/hud.css)
 
-   Replaces the touch-kiosk stylesheet entirely, so this
-   file carries its own base layout and tokens rather than only overriding
-   selectors from deploy/examples/custom.css. own framing of the e-ink profile: "high-contrast 1-bit
+   Layers on top of the base touch-kiosk stylesheet (web/static/css/hud.css)
+   with its own 1-bit monochrome layout and tokens rather than only overriding
+   selectors from deploy/examples/custom.css. Framing of the e-ink profile: "high-contrast 1-bit
    monochrome, bold typography, zero animations, 2px solid borders." The
    `eink-renderer` sidecar captures this page and dithers it down
    to a true 1-bit PNG, so colors here only need to read as unambiguously
@@ -20,14 +20,28 @@
    `!important`.
    ========================================================================== */
 
-:root {
+:root,
+:root[data-theme="night"],
+body[data-theme="night"],
+#mirrormere-app[data-theme="night"] {
   --mm-bg-canvas: #ffffff;
   --mm-bg-surface: #ffffff;
   --mm-bg-card: #ffffff;
   --mm-bg-card-hover: #ffffff;
   --mm-bg-glass: #ffffff;
+  --mm-card-border: #000000;
+  --mm-card-shadow: none;
+  --mm-card-shadow-hover: none;
 
   /* No color accents on e-ink: "accent" here just means black-on-white. */
+  --mm-coral: #000000;
+  --mm-coral-light: #ffffff;
+  --mm-mint: #000000;
+  --mm-mint-light: #ffffff;
+  --mm-honey: #000000;
+  --mm-honey-light: #ffffff;
+  --mm-lavender: #000000;
+  --mm-lavender-light: #ffffff;
   --mm-accent-purple: #000000;
   --mm-accent-purple-glow: transparent;
   --mm-accent-cyan: #000000;
@@ -35,10 +49,13 @@
   --mm-accent-pink: #000000;
   --mm-accent-pink-glow: transparent;
 
+  --mm-text-title: #000000;
+  --mm-text-body: #000000;
   --mm-text-primary: #000000;
   --mm-text-secondary: #000000;
   --mm-text-muted: #333333;
   --mm-text-dim: #555555;
+  --mm-divider: #000000;
 
   --mm-status-ok: #000000;
   --mm-status-degraded: #000000;
@@ -51,6 +68,7 @@
   --mm-border-radius-lg: 0px;
 
   --mm-font-family: "Helvetica Neue", Arial, sans-serif;
+  --mm-font-display: "Helvetica Neue", Arial, sans-serif;
   --mm-font-mono: "Liberation Mono", Consolas, monospace;
 
   --mm-touch-target-min: 48px;
@@ -78,6 +96,7 @@ html, body {
 
 *, *::before, *::after {
   cursor: none !important;
+  background-image: none !important;
   transition: none !important;
   animation: none !important;
   box-shadow: none !important;
