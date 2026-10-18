@@ -472,18 +472,18 @@ func TestProviderCoordinator_SWRDegradedAndRecovery(t *testing.T) {
 	}, snap)
 	defer func() { _ = coord.Stop() }()
 
-	// Wait for initial fetch
+	// Wait for initial fetch and healthy state broadcast
 	select {
 	case <-mockP.fetchSignal:
 	case <-time.After(2 * time.Second):
 		t.Fatal("timeout waiting for initial fetch")
 	}
 
-	p1, _ := coord.Cache().Get("stock-tile")
-	lkgTimestamp := p1.Timestamp
-	if p1.State != provider.StateHealthy {
-		t.Fatalf("expected healthy initial state, got %s", p1.State)
+	p1 := waitForState(t, coord.Cache(), "stock-tile", provider.StateHealthy)
+	if _, ok := broadcaster.waitForPublish(2 * time.Second); !ok {
+		t.Fatal("timeout waiting for initial healthy broadcast")
 	}
+	lkgTimestamp := p1.Timestamp
 
 	// Configure mock to fail with 502 Bad Gateway
 	mockP.mu.Lock()
@@ -496,9 +496,17 @@ func TestProviderCoordinator_SWRDegradedAndRecovery(t *testing.T) {
 	if err := coord.RefreshWidget("stock-tile"); err != nil {
 		t.Fatalf("failed to refresh: %v", err)
 	}
+	select {
+	case <-mockP.fetchSignal:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for first failure fetch")
+	}
 
-	// Verify degraded state and LKG timestamp preservation
+	// Verify degraded state, broadcast, and LKG timestamp preservation
 	p2 := waitForState(t, coord.Cache(), "stock-tile", provider.StateDegraded)
+	if _, ok := broadcaster.waitForPublish(2 * time.Second); !ok {
+		t.Fatal("timeout waiting for degraded transition broadcast")
+	}
 	if p2.Timestamp != lkgTimestamp {
 		t.Fatalf("expected LKG timestamp %s, got %s", lkgTimestamp, p2.Timestamp)
 	}
@@ -518,6 +526,15 @@ func TestProviderCoordinator_SWRDegradedAndRecovery(t *testing.T) {
 	case <-mockP.fetchSignal:
 	case <-time.After(2 * time.Second):
 		t.Fatal("timeout waiting for consecutive failure fetch")
+	}
+	ticker := time.NewTicker(time.Millisecond)
+	defer ticker.Stop()
+	deadline := time.Now().Add(2 * time.Second)
+	for coord.Cache().GetConsecutiveFailures("stock-tile") < 2 {
+		if !time.Now().Before(deadline) {
+			t.Fatal("timeout waiting for consecutive failure record")
+		}
+		<-ticker.C
 	}
 
 	// Ensure no redundant widget.update was emitted
@@ -1186,10 +1203,7 @@ func TestProviderCoordinator_PushDoesNotResurrectPurgedCacheAfterDomainChange(t 
 	}
 
 	// Verify initial cache entry is healthy
-	p1, ok := coord.Cache().Get("tile-dyn")
-	if !ok || p1.State != provider.StateHealthy {
-		t.Fatalf("expected healthy cache entry, got state %q, ok=%v", p1.State, ok)
-	}
+	_ = waitForState(t, coord.Cache(), "tile-dyn", provider.StateHealthy)
 
 	// Prepare mockP2 to fail on initial fetch (so state remains degraded/error until new push)
 	mockP2.fetchFunc = func(ctx context.Context) (any, error) {
@@ -1478,10 +1492,7 @@ func TestProviderCoordinator_PushInterleavedWithDomainChangeReload_Atomic(t *tes
 	}
 
 	// Verify the cache has the new instance's data and not the stale push data
-	p, ok := coord.Cache().Get("tile-atomic")
-	if !ok {
-		t.Fatal("expected tile-atomic entry in cache after mockP2 fetch")
-	}
+	p := waitForState(t, coord.Cache(), "tile-atomic", provider.StateHealthy)
 	if d, ok := p.Data.(map[string]any); ok && d["city"] == "Old-Tokyo-Data" {
 		t.Fatal("UpdateConfig failed to purge stale push data!")
 	}
