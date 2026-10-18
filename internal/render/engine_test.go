@@ -2,13 +2,17 @@ package render_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/azylman/mirrormere/internal/chatlog"
 	"github.com/azylman/mirrormere/internal/config"
 	"github.com/azylman/mirrormere/internal/domain"
 	"github.com/azylman/mirrormere/internal/layout"
@@ -19,9 +23,10 @@ import (
 )
 
 type mockSnapshotProvider struct {
-	snapshot *config.Snapshot
-	states   map[string]mockState
-	status   config.Status
+	snapshot           *config.Snapshot
+	states             map[string]mockState
+	status             config.Status
+	fallbackTimestamps map[string]string
 }
 
 type mockState struct {
@@ -47,6 +52,14 @@ func (m *mockSnapshotProvider) GetWidgetState(widgetID string) (any, string, str
 
 func (m *mockSnapshotProvider) CurrentStatus() config.Status {
 	return m.status
+}
+
+func (m *mockSnapshotProvider) GetWidgetTimestamp(widgetID string) (string, bool) {
+	if m.fallbackTimestamps == nil {
+		return "", false
+	}
+	ts, ok := m.fallbackTimestamps[widgetID]
+	return ts, ok
 }
 
 type mockResolver struct {
@@ -96,7 +109,6 @@ default_dimensions:
 		t.Fatalf("failed to write view: %v", err)
 	}
 
-	// Write a sample asset
 	if err := os.WriteFile(filepath.Join(assetsDir, "icon.svg"), []byte("<svg>icon</svg>"), 0644); err != nil {
 		t.Fatalf("failed to write asset: %v", err)
 	}
@@ -117,7 +129,146 @@ default_dimensions:
 	}
 }
 
-func TestEngine_RenderWidget_Success(t *testing.T) {
+func sampleWeatherData() provider.WeatherSnapshot {
+	return provider.WeatherSnapshot{
+		Current: provider.WeatherCurrent{
+			Temperature:   72.4,
+			FeelsLike:     70.5,
+			Humidity:      45,
+			WindSpeed:     5.5,
+			PrecipProbMax: 10,
+			Units:         provider.WeatherUnits{Temperature: "°F", WindSpeed: "mph"},
+			ConditionCode: 1,
+			ConditionText: "Mainly Clear",
+			Icon:          "weather-partly-cloudy",
+		},
+		Hourly: []provider.WeatherHourly{
+			{Time: "2026-09-26T12:00:00Z", Temp: 72.4, PrecipProb: 0, Icon: "weather-partly-cloudy"},
+		},
+		Daily: []provider.WeatherDaily{
+			{Date: "2026-09-26", TempMax: 75.0, TempMin: 55.0, PrecipProbMax: 10, ConditionText: "Mainly Clear", Icon: "weather-partly-cloudy"},
+		},
+	}
+}
+
+func sampleCalendarData() provider.CalendarSnapshot {
+	return provider.CalendarSnapshot{
+		LastSync:   "2026-09-26T12:00:00Z",
+		SyncStatus: "ok",
+		Events: []provider.CalendarEvent{
+			{
+				ID:           "evt_past_86d",
+				CalendarName: "Old Calendar",
+				Color:        "#ef4444",
+				Title:        "Ancient Practice 86 Days Ago",
+				Start:        "2026-07-02T10:00:00Z",
+				End:          "2026-07-02T11:00:00Z",
+			},
+			{
+				ID:           "evt_1",
+				CalendarName: "Family Calendar",
+				Color:        "#3b82f6",
+				Title:        "Soccer Practice",
+				Start:        "2026-09-26T18:30:00Z",
+				End:          "2026-09-26T19:30:00Z",
+				Location:     "Community Park Field 2",
+				Description:  "Bring soccer balls and water bottles",
+			},
+			{
+				ID:           "evt_2",
+				CalendarName: "Home",
+				Color:        "#10b981",
+				Title:        "Trash & Recycling",
+				Start:        "2026-09-27",
+				End:          "2026-09-27",
+				AllDay:       true,
+			},
+		},
+	}
+}
+
+func sampleTasksData(now time.Time) (tasks.TasksSnapshot, tasks.TasksSnapshot, tasks.TasksSnapshot) {
+	alex := "Alex"
+	dueDate := now.Add(24 * time.Hour).Format(time.RFC3339)
+	loaded := tasks.TasksSnapshot{
+		List: tasks.List{
+			ID:        "groceries",
+			Name:      "Groceries",
+			Source:    "todoist",
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+		Items: []tasks.ListItem{
+			{
+				ID:        "i1",
+				ListID:    "groceries",
+				Title:     "Oat Milk",
+				Done:      false,
+				Section:   "Dairy",
+				Position:  0,
+				Assignee:  &alex,
+				DueDate:   &dueDate,
+				CreatedAt: now,
+				UpdatedAt: now,
+			},
+			{
+				ID:        "i2",
+				ListID:    "groceries",
+				Title:     "Coffee Beans",
+				Done:      true,
+				Section:   "Pantry",
+				Position:  1,
+				CreatedAt: now,
+				UpdatedAt: now,
+			},
+		},
+	}
+	empty := tasks.TasksSnapshot{
+		List: tasks.List{
+			ID:        "empty-list",
+			Name:      "Chores",
+			Source:    "local",
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+		Items: []tasks.ListItem{},
+	}
+	unnamed := tasks.TasksSnapshot{
+		List: tasks.List{
+			ID:        "unnamed-list",
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+		Items: []tasks.ListItem{
+			{
+				ID:        "u1",
+				ListID:    "unnamed-list",
+				Title:     "Thing to do",
+				Done:      false,
+				CreatedAt: now,
+				UpdatedAt: now,
+			},
+		},
+	}
+	return loaded, empty, unnamed
+}
+
+func samplePhotoData() provider.PhotoSnapshot {
+	return provider.PhotoSnapshot{
+		AlbumName:            "Family Memories",
+		TotalPhotos:          1,
+		CycleIntervalSeconds: 30,
+		Photos: []provider.PhotoItem{
+			{
+				ID:          "p1",
+				URL:         "https://lh3.googleusercontent.com/pw/TEST",
+				AspectRatio: 1.33,
+			},
+		},
+	}
+}
+
+func TestEngine_RenderWidget(t *testing.T) {
 	t.Parallel()
 
 	tmpDir := t.TempDir()
@@ -128,27 +279,45 @@ func TestEngine_RenderWidget_Success(t *testing.T) {
   <span class="assets">{{.Assets}}</span>
   <span class="data">{{.Data.temperature}}</span>
   <span class="config-title">{{.Config.title}}</span>
+  <span class="author">{{.Config.author}}</span>
+  <span class="show-passed">{{.Config.show_passed}}</span>
+  <span class="bypass-cache">{{.Config.bypass_cache}}</span>
+  <span class="max-tokens">{{.Config.max_tokens}}</span>
+  <span class="timestamp">{{.Timestamp}}</span>
+  <span class="count">{{.Config.count}}</span>
 </div>`
 
-	pkg := createTestPackage(t, tmpDir, "weather", viewTmpl)
+	pkg := createTestPackage(t, tmpDir, "generic", viewTmpl)
+	origConfig := map[string]any{"title": "Original", "count": 1}
 
 	snap := &config.Snapshot{
 		Config: &config.Config{
 			Display: config.DisplayConfig{
 				Widgets: []config.WidgetConfig{
 					{
-						ID:   "living-room-weather",
-						Type: "weather",
+						ID:   "w-placed",
+						Type: "generic",
 						Config: map[string]any{
-							"title":     "Living Room",
-							"token_env": "SECRET_KEY",
-							"password":  "secret123",
+							"title":        "Living Room",
+							"author":       "J.R.R. Tolkien",
+							"show_passed":  true,
+							"bypass_cache": true,
+							"max_tokens":   500,
+							"token_env":    "SECRET_KEY",
+							"password":     "secret123",
 							"nested": map[string]any{
 								"auth_token": "bearer123",
 								"safe_label": "Sensors",
 							},
 						},
 					},
+					{ID: "w-cached", Type: "generic"},
+					{ID: "w-uncached", Type: "generic"},
+					{ID: "w-fallback-ts", Type: "generic"},
+					{ID: "w-unplaced-dims", Type: "generic", Dimensions: []int{2, 1}},
+					{ID: "w-unplaced-nodims", Type: "generic"},
+					{ID: "w-offline", Type: "generic"},
+					{ID: "w-overrides", Type: "generic", Config: origConfig},
 				},
 			},
 		},
@@ -158,8 +327,8 @@ func TestEngine_RenderWidget_Success(t *testing.T) {
 					Index: 0,
 					Widgets: []layout.PlacedWidget{
 						{
-							WidgetID:   "living-room-weather",
-							Type:       "weather",
+							WidgetID:   "w-placed",
+							Type:       "generic",
 							Origin:     [2]int{2, 1},
 							Dimensions: domain.NewDimension(3, 1),
 						},
@@ -167,232 +336,221 @@ func TestEngine_RenderWidget_Success(t *testing.T) {
 				},
 			},
 		},
-		Packages: map[string]*domain.Package{
-			"weather": pkg,
-		},
+		Packages: map[string]*domain.Package{"generic": pkg},
 	}
 
-	provider := &mockSnapshotProvider{
-		snapshot: snap,
-		states: map[string]mockState{
-			"living-room-weather": {
-				data:  map[string]any{"temperature": 72.5},
-				state: "healthy",
+	states := map[string]mockState{
+		"w-placed":      {data: map[string]any{"temperature": 72.5}, state: "healthy", timestamp: "2026-09-25T11:00:00Z"},
+		"w-cached":      {data: map[string]any{"temperature": 42.0}, state: "healthy", timestamp: "2026-09-25T11:00:00Z"},
+		"w-uncached":    {data: map[string]any{"temperature": 42.0}, state: "healthy", timestamp: ""},
+		"w-fallback-ts": {data: map[string]any{"temperature": 42.0}, state: "healthy", timestamp: ""},
+		"w-overrides":   {data: map[string]any{}, state: "healthy"},
+	}
+
+	fallbackTS := map[string]string{
+		"w-fallback-ts": "2026-09-25T10:30:00Z",
+	}
+
+	resolver := &mockResolver{packages: map[string]*domain.Package{"generic": pkg}}
+	fixedNow := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+
+	tests := []struct {
+		name            string
+		widgetID        string
+		overrides       map[string]any
+		providerStatus  config.Status
+		wantContains    []string
+		wantNotContains []string
+		checkUnmutated  bool
+	}{
+		{
+			name:     "placed widget full rendering",
+			widgetID: "w-placed",
+			wantContains: []string{
+				`id="w-placed"`,
+				`class="widget-generic"`,
+				`data-theme="dark"`,
+				`data-online=" true "`,
+				`class="state">healthy<`,
+				`class="dim">3x1<`,
+				`class="origin">2,1<`,
+				`class="assets">widget-types/generic/assets<`,
+				`class="data">72.5<`,
+				`class="config-title">Living Room<`,
+				`class="author">J.R.R. Tolkien<`,
+				`class="show-passed">true<`,
+				`class="bypass-cache">true<`,
+				`class="max-tokens">500<`,
+				`<span class="timestamp">2026-09-25T11:00:00Z</span>`,
 			},
+			wantNotContains: []string{"SECRET_KEY", "secret123", "bearer123"},
 		},
-		status: config.Status{ConfigStatus: config.ConfigStatusOK},
+		{
+			name:            "cached timestamp staleness",
+			widgetID:        "w-cached",
+			wantContains:    []string{`<span class="timestamp">2026-09-25T11:00:00Z</span>`},
+			wantNotContains: []string{"2026-09-25T12:00:00Z"},
+		},
+		{
+			name:            "uncached timestamp staleness",
+			widgetID:        "w-uncached",
+			wantContains:    []string{`<span class="timestamp"></span>`},
+			wantNotContains: []string{"2026-09-25T12:00:00Z"},
+		},
+		{
+			name:         "fallback GetWidgetTimestamp interface",
+			widgetID:     "w-fallback-ts",
+			wantContains: []string{`<span class="timestamp">2026-09-25T10:30:00Z</span>`},
+		},
+		{
+			name:         "unplaced widget explicit dimensions",
+			widgetID:     "w-unplaced-dims",
+			wantContains: []string{`<span class="dim">2x1</span>`, `<span class="origin">0,0</span>`},
+		},
+		{
+			name:         "unplaced widget default dimensions",
+			widgetID:     "w-unplaced-nodims",
+			wantContains: []string{`<span class="dim">2x1</span>`, `<span class="origin">0,0</span>`},
+		},
+		{
+			name:           "offline status when config error",
+			widgetID:       "w-offline",
+			providerStatus: config.Status{ConfigStatus: config.ConfigStatusError},
+			wantContains:   []string{`data-online=" false "`},
+		},
+		{
+			name:           "overrides without mutating snapshot",
+			widgetID:       "w-overrides",
+			overrides:      map[string]any{"title": "Overridden", "count": 42},
+			wantContains:   []string{`<span class="config-title">Overridden</span>`, `<span class="count">42</span>`},
+			checkUnmutated: true,
+		},
 	}
 
-	resolver := &mockResolver{packages: map[string]*domain.Package{"weather": pkg}}
-	fixedTime := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
-
-	engine := render.NewEngine(resolver, provider, render.WithNowFunc(func() time.Time { return fixedTime }))
-
-	out, err := engine.RenderWidget(context.Background(), "living-room-weather")
-	if err != nil {
-		t.Fatalf("unexpected render error: %v", err)
-	}
-
-	htmlStr := string(out)
-	if !strings.Contains(htmlStr, `id="living-room-weather"`) {
-		t.Errorf("missing widget ID in output: %s", htmlStr)
-	}
-	if !strings.Contains(htmlStr, `class="widget-weather"`) {
-		t.Errorf("missing widget type class: %s", htmlStr)
-	}
-	if !strings.Contains(htmlStr, `data-theme="dark"`) {
-		t.Errorf("missing theme: %s", htmlStr)
-	}
-	if !strings.Contains(htmlStr, `data-online=`) || !strings.Contains(htmlStr, `true`) {
-		t.Errorf("missing online flag: %s", htmlStr)
-	}
-	if !strings.Contains(htmlStr, `class="state">healthy<`) {
-		t.Errorf("missing state: %s", htmlStr)
-	}
-	if !strings.Contains(htmlStr, `class="dim">3x1<`) {
-		t.Errorf("missing placed dimensions: %s", htmlStr)
-	}
-	if !strings.Contains(htmlStr, `class="origin">2,1<`) {
-		t.Errorf("missing placed origin: %s", htmlStr)
-	}
-	if !strings.Contains(htmlStr, `class="assets">widget-types/weather/assets<`) {
-		t.Errorf("missing assets path: %s", htmlStr)
-	}
-	if !strings.Contains(htmlStr, `class="data">72.5<`) {
-		t.Errorf("missing domain data: %s", htmlStr)
-	}
-	if !strings.Contains(htmlStr, `class="config-title">Living Room<`) {
-		t.Errorf("missing config title: %s", htmlStr)
-	}
-	if strings.Contains(htmlStr, "SECRET_KEY") || strings.Contains(htmlStr, "secret123") || strings.Contains(htmlStr, "bearer123") {
-		t.Errorf("secrets leaked in output: %s", htmlStr)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			status := config.Status{ConfigStatus: config.ConfigStatusOK}
+			if tc.providerStatus.ConfigStatus != "" {
+				status = tc.providerStatus
+			}
+			p := &mockSnapshotProvider{
+				snapshot:           snap,
+				states:             states,
+				status:             status,
+				fallbackTimestamps: fallbackTS,
+			}
+			eng := render.NewEngine(resolver, p, render.WithNowFunc(func() time.Time { return fixedNow }))
+			htmlBytes, err := eng.RenderWidgetWithOverrides(context.Background(), tc.widgetID, "", tc.overrides)
+			if err != nil {
+				t.Fatalf("RenderWidgetWithOverrides failed: %v", err)
+			}
+			out := string(htmlBytes)
+			for _, want := range tc.wantContains {
+				if !strings.Contains(out, want) {
+					t.Errorf("output missing %q: %s", want, out)
+				}
+			}
+			for _, notWant := range tc.wantNotContains {
+				if strings.Contains(out, notWant) {
+					t.Errorf("output unexpectedly contains %q: %s", notWant, out)
+				}
+			}
+			if tc.checkUnmutated {
+				if origConfig["title"] != "Original" || origConfig["count"] != 1 {
+					t.Errorf("original config mutated: %v", origConfig)
+				}
+			}
+		})
 	}
 }
 
-func TestEngine_RenderWidget_CachedTimestampStaleness(t *testing.T) {
+func TestEngine_RenderWidget_Errors(t *testing.T) {
 	t.Parallel()
 
 	tmpDir := t.TempDir()
-	viewTmpl := `<div id="{{.ID}}"><span class="timestamp">{{.Timestamp}}</span></div>`
-	pkg := createTestPackage(t, tmpDir, "sensor", viewTmpl)
-
-	cachedTimeStr := "2026-09-25T11:00:00Z"
-	nowTime := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+	syntaxPkg := createTestPackage(t, tmpDir, "syntax-pkg", `{{.InvalidField | nonExistentFunc}}`)
+	missingFilePkg := createTestPackage(t, tmpDir, "missing-file-pkg", `test`)
+	_ = os.Remove(missingFilePkg.ViewPath)
+	execErrPkg := createTestPackage(t, tmpDir, "exec-err-pkg", `{{.Data.NonExistentField.SubField}}`)
 
 	snap := &config.Snapshot{
 		Config: &config.Config{
 			Display: config.DisplayConfig{
 				Widgets: []config.WidgetConfig{
-					{
-						ID:   "cached-sensor",
-						Type: "sensor",
-					},
-					{
-						ID:   "uncached-sensor",
-						Type: "sensor",
-					},
-				},
-			},
-		},
-		Layout:   &layout.Layout{Screens: []layout.Screen{}},
-		Packages: map[string]*domain.Package{"sensor": pkg},
-	}
-
-	provider := &mockSnapshotProvider{
-		snapshot: snap,
-		states: map[string]mockState{
-			"cached-sensor": {
-				data:      map[string]any{"val": 42},
-				state:     "healthy",
-				timestamp: cachedTimeStr,
-			},
-		},
-		status: config.Status{ConfigStatus: config.ConfigStatusOK},
-	}
-	resolver := &mockResolver{packages: map[string]*domain.Package{"sensor": pkg}}
-	engine := render.NewEngine(resolver, provider, render.WithNowFunc(func() time.Time { return nowTime }))
-
-	// 1. Cached widget renders cached timestamp from 1 hour ago, NOT nowTime
-	outCached, err := engine.RenderWidget(context.Background(), "cached-sensor")
-	if err != nil {
-		t.Fatalf("failed to render cached widget: %v", err)
-	}
-	if !strings.Contains(string(outCached), `<span class="timestamp">2026-09-25T11:00:00Z</span>`) {
-		t.Errorf("expected cached timestamp %s, got: %s", cachedTimeStr, outCached)
-	}
-	if strings.Contains(string(outCached), "2026-09-25T12:00:00Z") {
-		t.Errorf("cached widget incorrectly rendered current render time instead of cached timestamp: %s", outCached)
-	}
-
-	// 2. Uncached widget renders empty string for .Timestamp
-	outUncached, err := engine.RenderWidget(context.Background(), "uncached-sensor")
-	if err != nil {
-		t.Fatalf("failed to render uncached widget: %v", err)
-	}
-	if !strings.Contains(string(outUncached), `<span class="timestamp"></span>`) {
-		t.Errorf("expected empty timestamp for uncached widget, got: %s", outUncached)
-	}
-	if strings.Contains(string(outUncached), "2026-09-25T12:00:00Z") {
-		t.Errorf("uncached widget incorrectly rendered current render time instead of empty string: %s", outUncached)
-	}
-}
-
-func TestEngine_UnplacedWidget_Fallback(t *testing.T) {
-	t.Parallel()
-
-	tmpDir := t.TempDir()
-	viewTmpl := `<div>{{.Dimensions.Cols}}x{{.Dimensions.Rows}} at {{index .Origin 0}},{{index .Origin 1}}</div>`
-	pkg := createTestPackage(t, tmpDir, "spacer", viewTmpl)
-
-	snap := &config.Snapshot{
-		Config: &config.Config{
-			Display: config.DisplayConfig{
-				Widgets: []config.WidgetConfig{
-					{
-						ID:         "offscreen-spacer",
-						Type:       "spacer",
-						Dimensions: []int{2, 1},
-					},
-				},
-			},
-		},
-		Layout: &layout.Layout{
-			Screens: []layout.Screen{}, // empty screens
-		},
-		Packages: map[string]*domain.Package{
-			"spacer": pkg,
-		},
-	}
-
-	provider := &mockSnapshotProvider{snapshot: snap}
-	resolver := &mockResolver{packages: map[string]*domain.Package{"spacer": pkg}}
-	engine := render.NewEngine(resolver, provider)
-
-	out, err := engine.RenderWidget(context.Background(), "offscreen-spacer")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !strings.Contains(string(out), "2x1 at 0,0") {
-		t.Errorf("unexpected fallback geometry output: %s", out)
-	}
-}
-
-func TestEngine_ErrorsAndEdgeCases(t *testing.T) {
-	t.Parallel()
-
-	tmpDir := t.TempDir()
-	pkg := createTestPackage(t, tmpDir, "broken", `{{.InvalidField | nonExistentFunc}}`)
-
-	snap := &config.Snapshot{
-		Config: &config.Config{
-			Display: config.DisplayConfig{
-				Widgets: []config.WidgetConfig{
-					{ID: "w-broken", Type: "broken"},
+					{ID: "w-syntax", Type: "syntax-pkg"},
+					{ID: "w-missing-file", Type: "missing-file-pkg"},
+					{ID: "w-exec-err", Type: "exec-err-pkg"},
 					{ID: "w-missing-pkg", Type: "nonexistent"},
 				},
 			},
 		},
+		Packages: map[string]*domain.Package{
+			"syntax-pkg":       syntaxPkg,
+			"missing-file-pkg": missingFilePkg,
+			"exec-err-pkg":     execErrPkg,
+		},
 	}
 
-	provider := &mockSnapshotProvider{snapshot: snap}
-	resolver := &mockResolver{packages: map[string]*domain.Package{"broken": pkg}}
-	engine := render.NewEngine(resolver, provider)
-
-	// 1. Empty widget ID
-	if _, err := engine.RenderWidget(context.Background(), ""); err == nil {
-		t.Error("expected error for empty widget ID")
+	provider := &mockSnapshotProvider{
+		snapshot: snap,
+		states: map[string]mockState{
+			"w-exec-err": {data: 12345, state: "healthy"},
+		},
+	}
+	resolver := &mockResolver{
+		packages: map[string]*domain.Package{
+			"syntax-pkg":       syntaxPkg,
+			"missing-file-pkg": missingFilePkg,
+			"exec-err-pkg":     execErrPkg,
+		},
 	}
 
-	// 2. Unconfigured provider
-	engineNilProvider := render.NewEngine(resolver, nil)
-	if _, err := engineNilProvider.RenderWidget(context.Background(), "w-broken"); err == nil {
-		t.Error("expected error when provider is nil")
+	tests := []struct {
+		name        string
+		widgetID    string
+		nilProvider bool
+		nilSnapshot bool
+		wantErr     string
+		isNotFound  bool
+	}{
+		{name: "empty widget ID", widgetID: "", wantErr: "widget '' not found in active configuration", isNotFound: true},
+		{name: "nil provider", widgetID: "w-syntax", nilProvider: true, wantErr: "state snapshot provider is unconfigured"},
+		{name: "nil snapshot", widgetID: "w-syntax", nilSnapshot: true, wantErr: "no active configuration snapshot available"},
+		{name: "unknown widget ID", widgetID: "unknown-widget", wantErr: "widget 'unknown-widget' not found in active configuration", isNotFound: true},
+		{name: "missing package in resolver", widgetID: "w-missing-pkg", wantErr: "failed to load package for widget type"},
+		{name: "template syntax error", widgetID: "w-syntax", wantErr: "template syntax error"},
+		{name: "missing template file on disk", widgetID: "w-missing-file", wantErr: "no such file or directory"},
+		{name: "template execution error", widgetID: "w-exec-err", wantErr: "failed to execute template"},
 	}
 
-	// 3. Provider with nil snapshot
-	engineNilSnap := render.NewEngine(resolver, &mockSnapshotProvider{snapshot: nil})
-	if _, err := engineNilSnap.RenderWidget(context.Background(), "w-broken"); err == nil {
-		t.Error("expected error when snapshot is nil")
-	}
-
-	// 4. Widget not declared in config
-	_, err := engine.RenderWidget(context.Background(), "unknown-widget")
-	if err == nil {
-		t.Fatal("expected error for unknown widget")
-	}
-	var notFound render.WidgetNotFoundError
-	if !errors.As(err, &notFound) {
-		t.Errorf("expected WidgetNotFoundError, got %T: %v", err, err)
-	}
-
-	// 5. Package not found
-	if _, err := engine.RenderWidget(context.Background(), "w-missing-pkg"); err == nil {
-		t.Error("expected error for missing package")
-	}
-
-	// 6. Template parse/syntax error
-	if _, err := engine.RenderWidget(context.Background(), "w-broken"); err == nil {
-		t.Error("expected error for broken template syntax")
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var p render.StateSnapshotProvider = provider
+			if tc.nilProvider {
+				p = nil
+			} else if tc.nilSnapshot {
+				p = &mockSnapshotProvider{snapshot: nil}
+			}
+			eng := render.NewEngine(resolver, p)
+			_, err := eng.RenderWidget(context.Background(), tc.widgetID)
+			if err == nil {
+				t.Fatalf("expected error, got nil")
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("err = %q, want substring %q", err.Error(), tc.wantErr)
+			}
+			if tc.isNotFound {
+				var notFound render.WidgetNotFoundError
+				if !errors.As(err, &notFound) {
+					t.Errorf("expected WidgetNotFoundError, got %T: %v", err, err)
+				}
+				if notFound.Error() != tc.wantErr {
+					t.Errorf("notFound.Error() = %q, want %q", notFound.Error(), tc.wantErr)
+				}
+			}
+		})
 	}
 }
 
@@ -417,7 +575,6 @@ func TestEngine_CacheAndInvalidation(t *testing.T) {
 	resolver := &mockResolver{packages: map[string]*domain.Package{"cached-w": pkg}}
 	engine := render.NewEngine(resolver, provider)
 
-	// First render: compiles and caches
 	out1, err := engine.RenderWidget(context.Background(), "instance-1")
 	if err != nil {
 		t.Fatalf("first render failed: %v", err)
@@ -426,12 +583,10 @@ func TestEngine_CacheAndInvalidation(t *testing.T) {
 		t.Errorf("unexpected output: %s", out1)
 	}
 
-	// Modify template file on disk
 	if err := os.WriteFile(pkg.ViewPath, []byte(`<span>v2: {{.ID}}</span>`), 0644); err != nil {
 		t.Fatalf("failed to update template: %v", err)
 	}
 
-	// Second render without invalidation: serves cached v1
 	out2, err := engine.RenderWidget(context.Background(), "instance-1")
 	if err != nil {
 		t.Fatalf("second render failed: %v", err)
@@ -440,10 +595,8 @@ func TestEngine_CacheAndInvalidation(t *testing.T) {
 		t.Errorf("expected cached v1 output, got %s", out2)
 	}
 
-	// Invalidate specific widget type
 	engine.Invalidate("cached-w")
 
-	// Third render: picks up v2
 	out3, err := engine.RenderWidget(context.Background(), "instance-1")
 	if err != nil {
 		t.Fatalf("third render failed: %v", err)
@@ -452,7 +605,6 @@ func TestEngine_CacheAndInvalidation(t *testing.T) {
 		t.Errorf("expected updated v2 output after Invalidate, got %s", out3)
 	}
 
-	// Test InvalidateAll
 	engine.InvalidateAll()
 	out4, err := engine.RenderWidget(context.Background(), "instance-1")
 	if err != nil {
@@ -463,910 +615,461 @@ func TestEngine_CacheAndInvalidation(t *testing.T) {
 	}
 }
 
-func TestEngine_OnlineStatus(t *testing.T) {
-	t.Parallel()
-
-	tmpDir := t.TempDir()
-	pkg := createTestPackage(t, tmpDir, "status-w", `online: {{.Online}}`)
-
-	snap := &config.Snapshot{
-		Config: &config.Config{
-			Display: config.DisplayConfig{
-				Widgets: []config.WidgetConfig{
-					{ID: "w-status", Type: "status-w"},
-				},
-			},
-		},
-		Packages: map[string]*domain.Package{"status-w": pkg},
-	}
-
-	provider := &mockSnapshotProvider{
-		snapshot: snap,
-		status:   config.Status{ConfigStatus: config.ConfigStatusError},
-	}
-	resolver := &mockResolver{packages: map[string]*domain.Package{"status-w": pkg}}
-	engine := render.NewEngine(resolver, provider)
-
-	out, err := engine.RenderWidget(context.Background(), "w-status")
-	if err != nil {
-		t.Fatalf("render error: %v", err)
-	}
-	if !strings.Contains(string(out), "online: false") {
-		t.Errorf("expected online: false when system status is error, got %s", out)
-	}
-}
-
 func TestSanitizeConfig(t *testing.T) {
 	t.Parallel()
 
-	// 1. Nil config
-	if res := render.SanitizeConfig(nil); len(res) != 0 {
-		t.Errorf("expected empty map for nil config, got %v", res)
-	}
-
-	// 2. Complex nested structure verifying domain keys preserved and sensitive keys stripped
-	cfg := map[string]any{
-		"title":        "Safe",
-		"author":       "J.R.R. Tolkien",
-		"authors":      []any{"Frodo", "Sam"},
-		"show_passed":  true,
-		"passengers":   4,
-		"bypass_cache": true,
-		"compass":      "north",
-		"max_tokens":   100,
-		"token":        "leak1",
-		"secret":       "leak2",
-		"password":     "leak3",
-		"api_key":      "leak4",
-		"apikey":       "leak5",
-		"auth":         "leak6",
-		"auth_token":   "leak7",
-		"access_token": "leak8",
-		"token_env":    "TOKEN_VAR",
-		"my_env":       "MY_VAR",
-		"list": []any{
-			"simple-string",
-			map[string]any{
-				"safe_item":   "ok",
-				"show_passed": false,
-				"author":      "Nested Author",
-				"secret":      "hide",
-				"nested_env":  "ENV_VAR",
+	tests := []struct {
+		name          string
+		cfg           map[string]any
+		wantEmpty     bool
+		wantPreserved map[string]any
+		wantStripped  []string
+	}{
+		{
+			name:      "nil map",
+			cfg:       nil,
+			wantEmpty: true,
+		},
+		{
+			name: "deep map and slice sanitization",
+			cfg: map[string]any{
+				"title":        "Safe",
+				"author":       "J.R.R. Tolkien",
+				"authors":      []any{"Frodo", "Sam"},
+				"show_passed":  true,
+				"passengers":   4,
+				"bypass_cache": true,
+				"compass":      "north",
+				"max_tokens":   100,
+				"token":        "leak1",
+				"secret":       "leak2",
+				"password":     "leak3",
+				"api_key":      "leak4",
+				"apikey":       "leak5",
+				"auth":         "leak6",
+				"auth_token":   "leak7",
+				"access_token": "leak8",
+				"token_env":    "TOKEN_VAR",
+				"my_env":       "MY_VAR",
+				"list": []any{
+					"simple-string",
+					map[string]any{
+						"safe_item":   "ok",
+						"show_passed": false,
+						"author":      "Nested Author",
+						"secret":      "hide",
+						"nested_env":  "ENV_VAR",
+					},
+				},
+				"nested": map[string]any{
+					"public":        "show",
+					"bypass_cache":  true,
+					"secret":        "hide",
+					"sub_token_env": "SUB_VAR",
+				},
+			},
+			wantPreserved: map[string]any{
+				"title":        "Safe",
+				"author":       "J.R.R. Tolkien",
+				"show_passed":  true,
+				"passengers":   4,
+				"bypass_cache": true,
+				"compass":      "north",
+				"max_tokens":   100,
+			},
+			wantStripped: []string{
+				"token", "secret", "password", "api_key", "apikey",
+				"auth", "auth_token", "access_token", "token_env", "my_env",
 			},
 		},
-		"nested": map[string]any{
-			"public":        "show",
-			"bypass_cache":  true,
-			"secret":        "hide",
-			"sub_token_env": "SUB_VAR",
-		},
 	}
 
-	sanitized := render.SanitizeConfig(cfg)
-
-	// Domain keys preserved
-	if sanitized["title"] != "Safe" {
-		t.Errorf("expected title preserved, got %v", sanitized["title"])
-	}
-	if sanitized["author"] != "J.R.R. Tolkien" {
-		t.Errorf("expected author preserved, got %v", sanitized["author"])
-	}
-	if sanitized["show_passed"] != true {
-		t.Errorf("expected show_passed preserved, got %v", sanitized["show_passed"])
-	}
-	if sanitized["passengers"] != 4 {
-		t.Errorf("expected passengers preserved, got %v", sanitized["passengers"])
-	}
-	if sanitized["bypass_cache"] != true {
-		t.Errorf("expected bypass_cache preserved, got %v", sanitized["bypass_cache"])
-	}
-	if sanitized["compass"] != "north" {
-		t.Errorf("expected compass preserved, got %v", sanitized["compass"])
-	}
-	if sanitized["max_tokens"] != 100 {
-		t.Errorf("expected max_tokens preserved, got %v", sanitized["max_tokens"])
-	}
-
-	// Sensitive keys stripped
-	sensitiveKeys := []string{
-		"token", "secret", "password", "api_key", "apikey",
-		"auth", "auth_token", "access_token", "token_env", "my_env",
-	}
-	for _, k := range sensitiveKeys {
-		if _, exists := sanitized[k]; exists {
-			t.Errorf("sensitive key %q leaked in sanitized config", k)
-		}
-	}
-
-	// Nested list verification
-	list, ok := sanitized["list"].([]any)
-	if !ok || len(list) != 2 {
-		t.Fatalf("expected list of length 2")
-	}
-	subMap, ok := list[1].(map[string]any)
-	if !ok {
-		t.Fatalf("expected subMap in list")
-	}
-	if subMap["safe_item"] != "ok" || subMap["show_passed"] != false || subMap["author"] != "Nested Author" {
-		t.Errorf("expected nested domain keys preserved in slice map, got: %v", subMap)
-	}
-	if _, exists := subMap["secret"]; exists {
-		t.Errorf("secret leaked in slice map")
-	}
-	if _, exists := subMap["nested_env"]; exists {
-		t.Errorf("nested_env leaked in slice map")
-	}
-
-	// Nested map verification
-	nestedMap, ok := sanitized["nested"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected nested map")
-	}
-	if nestedMap["public"] != "show" || nestedMap["bypass_cache"] != true {
-		t.Errorf("expected nested domain keys preserved in map, got: %v", nestedMap)
-	}
-	if _, exists := nestedMap["secret"]; exists {
-		t.Errorf("secret leaked in nested map")
-	}
-	if _, exists := nestedMap["sub_token_env"]; exists {
-		t.Errorf("sub_token_env leaked in nested map")
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := render.SanitizeConfig(tc.cfg)
+			if tc.wantEmpty {
+				if len(got) != 0 {
+					t.Fatalf("expected empty map, got %v", got)
+				}
+				return
+			}
+			for k, wantVal := range tc.wantPreserved {
+				if got[k] != wantVal {
+					t.Errorf("key %q = %v, want %v", k, got[k], wantVal)
+				}
+			}
+			for _, k := range tc.wantStripped {
+				if _, exists := got[k]; exists {
+					t.Errorf("sensitive key %q leaked in result", k)
+				}
+			}
+			if list, ok := got["list"].([]any); ok && len(list) == 2 {
+				if subMap, ok := list[1].(map[string]any); ok {
+					if subMap["safe_item"] != "ok" || subMap["show_passed"] != false || subMap["author"] != "Nested Author" {
+						t.Errorf("nested slice domain keys corrupted: %v", subMap)
+					}
+					if _, exists := subMap["secret"]; exists {
+						t.Errorf("secret leaked in slice map")
+					}
+					if _, exists := subMap["nested_env"]; exists {
+						t.Errorf("nested_env leaked in slice map")
+					}
+				} else {
+					t.Fatalf("expected subMap in list[1]")
+				}
+			} else {
+				t.Fatalf("expected list of length 2")
+			}
+			if nestedMap, ok := got["nested"].(map[string]any); ok {
+				if nestedMap["public"] != "show" || nestedMap["bypass_cache"] != true {
+					t.Errorf("nested map domain keys corrupted: %v", nestedMap)
+				}
+				if _, exists := nestedMap["secret"]; exists {
+					t.Errorf("secret leaked in nested map")
+				}
+				if _, exists := nestedMap["sub_token_env"]; exists {
+					t.Errorf("sub_token_env leaked in nested map")
+				}
+			} else {
+				t.Fatalf("expected nested map")
+			}
+		})
 	}
 }
 
-func TestEngine_RenderWidget_DomainConfigKeysReachTemplate(t *testing.T) {
+func TestEngine_BuiltinWidgetPackages(t *testing.T) {
 	t.Parallel()
 
-	tmpDir := t.TempDir()
-	viewTmpl := `<div id="{{.ID}}">` +
-		`<span class="author">{{.Config.author}}</span>` +
-		`<span class="show-passed">{{.Config.show_passed}}</span>` +
-		`<span class="bypass-cache">{{.Config.bypass_cache}}</span>` +
-		`<span class="max-tokens">{{.Config.max_tokens}}</span>` +
-		`</div>`
-	pkg := createTestPackage(t, tmpDir, "book-widget", viewTmpl)
-
-	snap := &config.Snapshot{
-		Config: &config.Config{
-			Display: config.DisplayConfig{
-				Widgets: []config.WidgetConfig{
-					{
-						ID:   "book-info",
-						Type: "book-widget",
-						Config: map[string]any{
-							"author":       "J.R.R. Tolkien",
-							"show_passed":  true,
-							"bypass_cache": true,
-							"max_tokens":   500,
-							"token_env":    "SECRET_VAR_NAME",
-							"password":     "raw-secret-leak",
-						},
-					},
-				},
-			},
-		},
-		Layout:   &layout.Layout{Screens: []layout.Screen{}},
-		Packages: map[string]*domain.Package{"book-widget": pkg},
+	repoWidgetsDir := filepath.Join("..", "..", "widgets")
+	loader := widget.NewLoader(repoWidgetsDir, t.TempDir())
+	pkgNames := []string{"weather-forecast", "calendar-agenda", "tasks", "photo-carousel", "chat-log"}
+	packages := make(map[string]*domain.Package)
+	for _, name := range pkgNames {
+		pkg, err := loader.LoadPackage(name)
+		if err != nil {
+			t.Fatalf("failed to load package %q: %v", name, err)
+		}
+		packages[name] = pkg
 	}
 
-	provider := &mockSnapshotProvider{
-		snapshot: snap,
-		states: map[string]mockState{
-			"book-info": {
-				data:      map[string]any{},
+	raw, err := os.ReadFile(filepath.Join(repoWidgetsDir, "chat-log", "testdata", "sample.json"))
+	if err != nil {
+		t.Fatalf("failed to read sample payload: %v", err)
+	}
+	var chatSample map[string]any
+	if err := json.Unmarshal(raw, &chatSample); err != nil {
+		t.Fatalf("invalid sample payload: %v", err)
+	}
+
+	fixedNow := time.Date(2026, 9, 26, 12, 0, 0, 0, time.UTC)
+	weatherData := sampleWeatherData()
+	calData := sampleCalendarData()
+	emptyCalData := provider.CalendarSnapshot{LastSync: "2026-09-26T12:00:00Z", SyncStatus: "ok", Events: []provider.CalendarEvent{}}
+	tasksLoaded, tasksEmpty, tasksUnnamed := sampleTasksData(fixedNow)
+	photoData := samplePhotoData()
+
+	tests := []struct {
+		name            string
+		widgetType      string
+		dims            []int
+		cfg             map[string]any
+		state           mockState
+		nilResolver     bool
+		wantContains    []string
+		wantNotContains []string
+	}{
+		// Weather Forecast
+		{
+			name:       "weather-forecast loaded without name",
+			widgetType: "weather-forecast",
+			dims:       []int{2, 1},
+			state:      mockState{data: weatherData, state: "healthy", timestamp: "2026-09-26T12:00:00Z"},
+			wantContains: []string{
+				"72", "Mainly Clear", "weather-partly-cloudy", "weather-meta-precip",
+				"Precipitation: 10%", "10%", "weather-meta-humidity", "Humidity: 45%",
+				"weather-meta-wind", "Now", "weather-micro-stats", "weather-icon-badge",
+				"weather-condition-text", "weather-temp-range", "H: 75° • L: 55°",
+			},
+			wantNotContains: []string{"💧", "🍃", "📍", "weather-location-name"},
+		},
+		{
+			name:         "weather-forecast loading",
+			widgetType:   "weather-forecast",
+			dims:         []int{2, 1},
+			state:        mockState{data: nil, state: "healthy"},
+			wantContains: []string{"Loading weather forecast..."},
+		},
+		{
+			name:         "weather-forecast named",
+			widgetType:   "weather-forecast",
+			dims:         []int{2, 1},
+			cfg:          map[string]any{"name": "Home"},
+			state:        mockState{data: weatherData, state: "healthy", timestamp: "2026-09-26T12:00:00Z"},
+			wantContains: []string{"weather-location-name", "Home"},
+		},
+		{
+			name:         "weather-forecast loc-named",
+			widgetType:   "weather-forecast",
+			dims:         []int{2, 1},
+			cfg:          map[string]any{"location_name": "Ayda's School"},
+			state:        mockState{data: weatherData, state: "healthy", timestamp: "2026-09-26T12:00:00Z"},
+			wantContains: []string{"weather-location-name", "Ayda"},
+		},
+		{
+			name:         "weather-forecast loading named",
+			widgetType:   "weather-forecast",
+			dims:         []int{2, 1},
+			cfg:          map[string]any{"name": "Home"},
+			state:        mockState{data: nil, state: "healthy"},
+			wantContains: []string{"Home", "Loading weather forecast..."},
+		},
+		// Calendar Agenda
+		{
+			name:       "calendar-agenda loaded",
+			widgetType: "calendar-agenda",
+			dims:       []int{4, 2},
+			cfg: map[string]any{
+				"title": "Family Schedule",
+				"calendars": []any{
+					map[string]any{"name": "Active Family", "color": "#3b82f6", "enabled": true},
+					map[string]any{"name": "Disabled Work", "color": "#ef4444", "enabled": false},
+				},
+			},
+			state: mockState{data: calData, state: "healthy", timestamp: "2026-09-26T12:00:00Z"},
+			wantContains: []string{
+				"Soccer Practice", "Community Park Field 2", "Family Calendar",
+				"Trash", "All Day", "Family Schedule", "Active Family", "1 Calendar",
+			},
+			wantNotContains: []string{"Ancient Practice", "Bring soccer balls and water bottles", "Upcoming", "Disabled Work"},
+		},
+		{
+			name:            "calendar-agenda empty",
+			widgetType:      "calendar-agenda",
+			dims:            []int{4, 2},
+			state:           mockState{data: emptyCalData, state: "healthy", timestamp: "2026-09-26T12:00:00Z"},
+			wantContains:    []string{"No upcoming events", "Upcoming"},
+			wantNotContains: []string{"calendar-header-chips"},
+		},
+		{
+			name:         "calendar-agenda loading",
+			widgetType:   "calendar-agenda",
+			dims:         []int{4, 2},
+			state:        mockState{data: nil, state: "healthy"},
+			wantContains: []string{"Loading calendar"},
+		},
+		// Tasks
+		{
+			name:       "tasks loaded",
+			widgetType: "tasks",
+			dims:       []int{3, 2},
+			state:      mockState{data: tasksLoaded, state: "healthy", timestamp: "2026-09-26T12:00:00Z"},
+			wantContains: []string{
+				"Groceries", "Oat Milk", "Coffee Beans", "task-item-done",
+				"@Alex", "1 to do", "tasks-sparkle-icon", "tasks-icon-box", "tasks-progress",
+			},
+			wantNotContains: []string{"tasks-source-badge", "✅"},
+		},
+		{
+			name:         "tasks empty",
+			widgetType:   "tasks",
+			dims:         []int{3, 2},
+			state:        mockState{data: tasksEmpty, state: "healthy", timestamp: "2026-09-26T12:00:00Z"},
+			wantContains: []string{"All tasks completed"},
+		},
+		{
+			name:         "tasks loading",
+			widgetType:   "tasks",
+			dims:         []int{3, 2},
+			state:        mockState{data: nil, state: "healthy"},
+			wantContains: []string{"Loading checklist..."},
+		},
+		{
+			name:         "tasks unnamed",
+			widgetType:   "tasks",
+			dims:         []int{3, 2},
+			state:        mockState{data: tasksUnnamed, state: "healthy", timestamp: "2026-09-26T12:00:00Z"},
+			wantContains: []string{"Checklist"},
+		},
+		// Photo Carousel
+		{
+			name:        "photo-carousel contain",
+			widgetType:  "photo-carousel",
+			dims:        []int{3, 2},
+			state:       mockState{data: photoData, state: "healthy"},
+			nilResolver: true,
+			wantContains: []string{
+				"=w3840-h2160",
+				`photo-backdrop-current" src="https://lh3.googleusercontent.com/pw/TEST=w96-h54-c"`,
+				`{"album_name":"Family Memories"`,
+			},
+			wantNotContains: []string{`<script type="application/json" class="photo-carousel-data">"`},
+		},
+		{
+			name:         "photo-carousel cover",
+			widgetType:   "photo-carousel",
+			dims:         []int{3, 2},
+			cfg:          map[string]any{"fit": "cover"},
+			state:        mockState{data: photoData, state: "healthy"},
+			nilResolver:  true,
+			wantContains: []string{`photo-backdrop-current" src=""`},
+		},
+		// Chat Log
+		{
+			name:       "chat-log loaded",
+			widgetType: "chat-log",
+			dims:       []int{3, 2},
+			state:      mockState{data: chatSample, state: "healthy", timestamp: "2026-01-02T18:42:00Z"},
+			wantContains: []string{
+				"Kitchen assistant", "18:42", "sam", "What is on the calendar tomorrow?",
+				"Dentist at 9:00 and soccer practice at 4:30.", "chat-log-human", "chat-log-agent",
+			},
+		},
+		{
+			name:         "chat-log empty",
+			widgetType:   "chat-log",
+			dims:         []int{3, 2},
+			state:        mockState{data: map[string]any{}, state: "healthy", timestamp: "2026-01-02T18:42:00Z"},
+			wantContains: []string{"No messages yet"},
+		},
+		{
+			name:       "chat-log escape",
+			widgetType: "chat-log",
+			dims:       []int{3, 2},
+			state: mockState{
+				data: map[string]any{
+					"messages": []any{map[string]any{"role": "agent", "text": "<script>alert(1)</script>"}},
+				},
 				state:     "healthy",
-				timestamp: "2026-09-25T12:00:00Z",
+				timestamp: "2026-01-02T18:42:00Z",
 			},
-		},
-		status: config.Status{ConfigStatus: config.ConfigStatusOK},
-	}
-	resolver := &mockResolver{packages: map[string]*domain.Package{"book-widget": pkg}}
-	engine := render.NewEngine(resolver, provider)
-
-	out, err := engine.RenderWidget(context.Background(), "book-info")
-	if err != nil {
-		t.Fatalf("failed to render widget: %v", err)
-	}
-
-	outStr := string(out)
-	if !strings.Contains(outStr, `<span class="author">J.R.R. Tolkien</span>`) {
-		t.Errorf("missing .Config.author in rendered HTML: %s", outStr)
-	}
-	if !strings.Contains(outStr, `<span class="show-passed">true</span>`) {
-		t.Errorf("missing .Config.show_passed in rendered HTML: %s", outStr)
-	}
-	if !strings.Contains(outStr, `<span class="bypass-cache">true</span>`) {
-		t.Errorf("missing .Config.bypass_cache in rendered HTML: %s", outStr)
-	}
-	if !strings.Contains(outStr, `<span class="max-tokens">500</span>`) {
-		t.Errorf("missing .Config.max_tokens in rendered HTML: %s", outStr)
-	}
-	if strings.Contains(outStr, "SECRET_VAR_NAME") || strings.Contains(outStr, "raw-secret-leak") {
-		t.Errorf("sensitive credentials leaked into rendered HTML: %s", outStr)
-	}
-}
-
-func TestEngine_MissingTemplateFileAndExecutionError(t *testing.T) {
-	t.Parallel()
-
-	tmpDir := t.TempDir()
-	pkg := createTestPackage(t, tmpDir, "missing-view", `test`)
-	// Remove view file
-	_ = os.Remove(pkg.ViewPath)
-
-	snap := &config.Snapshot{
-		Config: &config.Config{
-			Display: config.DisplayConfig{
-				Widgets: []config.WidgetConfig{
-					{ID: "w-missing-view", Type: "missing-view"},
-				},
-			},
-		},
-		Packages: map[string]*domain.Package{"missing-view": pkg},
-	}
-	provider := &mockSnapshotProvider{snapshot: snap}
-	resolver := &mockResolver{packages: map[string]*domain.Package{"missing-view": pkg}}
-	engine := render.NewEngine(resolver, provider)
-
-	if _, err := engine.RenderWidget(context.Background(), "w-missing-view"); err == nil {
-		t.Error("expected error when view file is missing from disk")
-	}
-
-	// Test Execution Error: template with bad execution call
-	pkgExecErr := createTestPackage(t, tmpDir, "exec-err", `{{.Data.NonExistentField.SubField}}`)
-	snap2 := &config.Snapshot{
-		Config: &config.Config{
-			Display: config.DisplayConfig{
-				Widgets: []config.WidgetConfig{
-					{ID: "w-exec-err", Type: "exec-err"},
-				},
-			},
-		},
-		Packages: map[string]*domain.Package{"exec-err": pkgExecErr},
-	}
-	provider2 := &mockSnapshotProvider{
-		snapshot: snap2,
-		states: map[string]mockState{
-			"w-exec-err": {data: "not-a-map", state: "healthy"},
-		},
-	}
-	resolver2 := &mockResolver{packages: map[string]*domain.Package{"exec-err": pkgExecErr}}
-	engine2 := render.NewEngine(resolver2, provider2)
-
-	if _, err := engine2.RenderWidget(context.Background(), "w-exec-err"); err == nil {
-		t.Error("expected error when template execution fails")
-	}
-}
-
-func TestRenderBuiltinWeatherForecastWidget(t *testing.T) {
-	t.Parallel()
-
-	repoWidgetsDir := filepath.Join("..", "..", "widgets")
-	loader := widget.NewLoader(repoWidgetsDir, t.TempDir())
-	pkg, err := loader.LoadPackage("weather-forecast")
-	if err != nil {
-		t.Fatalf("failed to load weather-forecast package: %v", err)
-	}
-
-	snap := &config.Snapshot{
-		Config: &config.Config{
-			Display: config.DisplayConfig{
-				Widgets: []config.WidgetConfig{
-					{ID: "w-weather-loaded", Type: "weather-forecast", Dimensions: []int{2, 1}},
-					{ID: "w-weather-loading", Type: "weather-forecast", Dimensions: []int{2, 1}},
-					{ID: "w-weather-named", Type: "weather-forecast", Dimensions: []int{2, 1}, Config: map[string]any{"name": "Home"}},
-					{ID: "w-weather-loc-named", Type: "weather-forecast", Dimensions: []int{2, 1}, Config: map[string]any{"location_name": "Ayda's School"}},
-					{ID: "w-weather-loading-named", Type: "weather-forecast", Dimensions: []int{2, 1}, Config: map[string]any{"name": "Home"}},
-				},
-			},
-		},
-		Packages: map[string]*domain.Package{"weather-forecast": pkg},
-	}
-
-	weatherData := provider.WeatherSnapshot{
-		Current: provider.WeatherCurrent{
-			Temperature:   72.4,
-			FeelsLike:     70.5,
-			Humidity:      45,
-			WindSpeed:     5.5,
-			PrecipProbMax: 10,
-			Units:         provider.WeatherUnits{Temperature: "°F", WindSpeed: "mph"},
-			ConditionCode: 1,
-			ConditionText: "Mainly Clear",
-			Icon:          "weather-partly-cloudy",
-		},
-		Hourly: []provider.WeatherHourly{
-			{Time: "2026-09-26T12:00:00Z", Temp: 72.4, PrecipProb: 0, Icon: "weather-partly-cloudy"},
-		},
-		Daily: []provider.WeatherDaily{
-			{Date: "2026-09-26", TempMax: 75.0, TempMin: 55.0, PrecipProbMax: 10, ConditionText: "Mainly Clear", Icon: "weather-partly-cloudy"},
+			wantContains:    []string{"Chat"},
+			wantNotContains: []string{"<script>alert"},
 		},
 	}
 
-	p := &mockSnapshotProvider{
-		snapshot: snap,
-		states: map[string]mockState{
-			"w-weather-loaded":        {data: weatherData, state: "healthy", timestamp: "2026-09-26T12:00:00Z"},
-			"w-weather-loading":       {data: nil, state: "healthy"},
-			"w-weather-named":         {data: weatherData, state: "healthy", timestamp: "2026-09-26T12:00:00Z"},
-			"w-weather-loc-named":     {data: weatherData, state: "healthy", timestamp: "2026-09-26T12:00:00Z"},
-			"w-weather-loading-named": {data: nil, state: "healthy"},
-		},
-	}
-
-	resolver := &mockResolver{packages: map[string]*domain.Package{"weather-forecast": pkg}}
-	engine := render.NewEngine(resolver, p)
-
-	// 1. Render loaded widget without name
-	htmlLoaded, err := engine.RenderWidget(context.Background(), "w-weather-loaded")
-	if err != nil {
-		t.Fatalf("RenderWidget failed on loaded weather: %v", err)
-	}
-	if !strings.Contains(string(htmlLoaded), "72°F") && !strings.Contains(string(htmlLoaded), "72") {
-		t.Errorf("expected 72 in rendered output, got: %s", htmlLoaded)
-	}
-	if !strings.Contains(string(htmlLoaded), "Mainly Clear") {
-		t.Errorf("expected 'Mainly Clear' in rendered output, got: %s", htmlLoaded)
-	}
-	if !strings.Contains(string(htmlLoaded), "weather-partly-cloudy") {
-		t.Errorf("expected icon token in rendered output, got: %s", htmlLoaded)
-	}
-	if !strings.Contains(string(htmlLoaded), "weather-meta-precip") {
-		t.Errorf("expected weather-meta-precip in rendered output, got: %s", htmlLoaded)
-	}
-	if !strings.Contains(string(htmlLoaded), "Precipitation: 10%") {
-		t.Errorf("expected 'Precipitation: 10%%' in rendered output, got: %s", htmlLoaded)
-	}
-	if !strings.Contains(string(htmlLoaded), "10%") {
-		t.Errorf("expected '10%%' in rendered output, got: %s", htmlLoaded)
-	}
-	if !strings.Contains(string(htmlLoaded), "weather-meta-humidity") {
-		t.Errorf("expected weather-meta-humidity in rendered output, got: %s", htmlLoaded)
-	}
-	if !strings.Contains(string(htmlLoaded), "Humidity: 45%") {
-		t.Errorf("expected 'Humidity: 45%%' in rendered output, got: %s", htmlLoaded)
-	}
-	if !strings.Contains(string(htmlLoaded), "weather-meta-wind") {
-		t.Errorf("expected weather-meta-wind in rendered output, got: %s", htmlLoaded)
-	}
-	if !strings.Contains(string(htmlLoaded), "Now") {
-		t.Errorf("expected 'Now' badge in rendered hourly timeline, got: %s", htmlLoaded)
-	}
-	if !strings.Contains(string(htmlLoaded), "weather-micro-stats") {
-		t.Errorf("expected weather-micro-stats bar in rendered output, got: %s", htmlLoaded)
-	}
-	if !strings.Contains(string(htmlLoaded), "weather-icon-badge") {
-		t.Errorf("expected weather-icon-badge squircle tile in rendered output, got: %s", htmlLoaded)
-	}
-	if !strings.Contains(string(htmlLoaded), "weather-condition-text") {
-		t.Errorf("expected weather-condition-text subtitle in rendered output, got: %s", htmlLoaded)
-	}
-	if !strings.Contains(string(htmlLoaded), "weather-temp-range") || !strings.Contains(string(htmlLoaded), "H: 75° • L: 55°") {
-		t.Errorf("expected weather-temp-range with 'H: 75° • L: 55°' in rendered output, got: %s", htmlLoaded)
-	}
-	for _, emoji := range []string{"💧", "🍃", "📍"} {
-		if strings.Contains(string(htmlLoaded), emoji) {
-			t.Errorf("expected no raw unicode emoji %q in rendered output (use inline vector SVG), got: %s", emoji, htmlLoaded)
-		}
-	}
-	if strings.Contains(string(htmlLoaded), "weather-location-name") {
-		t.Errorf("expected no weather-location-name when unconfigured, got: %s", htmlLoaded)
-	}
-
-	// 2. Render loading widget (data: nil)
-	htmlLoading, err := engine.RenderWidget(context.Background(), "w-weather-loading")
-	if err != nil {
-		t.Fatalf("RenderWidget failed on loading weather: %v", err)
-	}
-	if !strings.Contains(string(htmlLoading), "Loading weather forecast...") {
-		t.Errorf("expected loading message in rendered output, got: %s", htmlLoading)
-	}
-
-	// 3. Render widget with "name: Home"
-	htmlNamed, err := engine.RenderWidget(context.Background(), "w-weather-named")
-	if err != nil {
-		t.Fatalf("RenderWidget failed on named weather: %v", err)
-	}
-	if !strings.Contains(string(htmlNamed), "weather-location-name") || !strings.Contains(string(htmlNamed), "Home") {
-		t.Errorf("expected 'Home' location name in rendered output, got: %s", htmlNamed)
-	}
-
-	// 4. Render widget with "location_name: Ayda's School"
-	htmlLocNamed, err := engine.RenderWidget(context.Background(), "w-weather-loc-named")
-	if err != nil {
-		t.Fatalf("RenderWidget failed on loc-named weather: %v", err)
-	}
-	if !strings.Contains(string(htmlLocNamed), "weather-location-name") || !strings.Contains(string(htmlLocNamed), "Ayda&#39;s School") && !strings.Contains(string(htmlLocNamed), "Ayda's School") {
-		t.Errorf("expected 'Ayda's School' location name in rendered output, got: %s", htmlLocNamed)
-	}
-
-	// 5. Render loading widget with name
-	htmlLoadingNamed, err := engine.RenderWidget(context.Background(), "w-weather-loading-named")
-	if err != nil {
-		t.Fatalf("RenderWidget failed on loading named weather: %v", err)
-	}
-	if !strings.Contains(string(htmlLoadingNamed), "Home") {
-		t.Errorf("expected 'Home' in loading named weather, got: %s", htmlLoadingNamed)
-	}
-	if !strings.Contains(string(htmlLoadingNamed), "Loading weather forecast...") {
-		t.Errorf("expected loading text in loading named weather, got: %s", htmlLoadingNamed)
-	}
-}
-
-func TestEngine_RenderWidget_CalendarAgendaPackage(t *testing.T) {
-	t.Parallel()
-
-	repoWidgetsDir := filepath.Join("..", "..", "widgets")
-	loader := widget.NewLoader(repoWidgetsDir, t.TempDir())
-	pkg, err := loader.LoadPackage("calendar-agenda")
-	if err != nil {
-		t.Fatalf("failed to load calendar-agenda package: %v", err)
-	}
-
-	snap := &config.Snapshot{
-		Config: &config.Config{
-			Display: config.DisplayConfig{
-				Widgets: []config.WidgetConfig{
-					{
-						ID:         "w-cal-loaded",
-						Type:       "calendar-agenda",
-						Dimensions: []int{4, 2},
-						Config: map[string]any{
-							"title": "Family Schedule",
-							"calendars": []any{
-								map[string]any{"name": "Active Family", "color": "#3b82f6", "enabled": true},
-								map[string]any{"name": "Disabled Work", "color": "#ef4444", "enabled": false},
-							},
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			widgetID := "w-" + tc.widgetType
+			snap := &config.Snapshot{
+				Config: &config.Config{
+					Display: config.DisplayConfig{
+						Widgets: []config.WidgetConfig{
+							{ID: widgetID, Type: tc.widgetType, Dimensions: tc.dims, Config: tc.cfg},
 						},
 					},
-					{ID: "w-cal-empty", Type: "calendar-agenda", Dimensions: []int{4, 2}},
-					{ID: "w-cal-loading", Type: "calendar-agenda", Dimensions: []int{4, 2}},
 				},
-			},
-		},
-		Packages: map[string]*domain.Package{"calendar-agenda": pkg},
-	}
-
-	calData := provider.CalendarSnapshot{
-		LastSync:   "2026-09-26T12:00:00Z",
-		SyncStatus: "ok",
-		Events: []provider.CalendarEvent{
-			{
-				ID:           "evt_past_86d",
-				CalendarName: "Old Calendar",
-				Color:        "#ef4444",
-				Title:        "Ancient Practice 86 Days Ago",
-				Start:        "2026-07-02T10:00:00Z",
-				End:          "2026-07-02T11:00:00Z",
-				AllDay:       false,
-			},
-			{
-				ID:           "evt_1",
-				CalendarName: "Family Calendar",
-				Color:        "#3b82f6",
-				Title:        "Soccer Practice",
-				Start:        "2026-09-26T18:30:00Z",
-				End:          "2026-09-26T19:30:00Z",
-				AllDay:       false,
-				Location:     "Community Park Field 2",
-				Description:  "Bring soccer balls and water bottles",
-			},
-			{
-				ID:           "evt_2",
-				CalendarName: "Home",
-				Color:        "#10b981",
-				Title:        "Trash & Recycling",
-				Start:        "2026-09-27",
-				End:          "2026-09-27",
-				AllDay:       true,
-			},
-		},
-	}
-
-	emptyCalData := provider.CalendarSnapshot{
-		LastSync:   "2026-09-26T12:00:00Z",
-		SyncStatus: "ok",
-		Events:     []provider.CalendarEvent{},
-	}
-
-	p := &mockSnapshotProvider{
-		snapshot: snap,
-		states: map[string]mockState{
-			"w-cal-loaded":  {data: calData, state: "healthy", timestamp: "2026-09-26T12:00:00Z"},
-			"w-cal-empty":   {data: emptyCalData, state: "healthy", timestamp: "2026-09-26T12:00:00Z"},
-			"w-cal-loading": {data: nil, state: "healthy"},
-		},
-	}
-
-	resolver := &mockResolver{packages: map[string]*domain.Package{"calendar-agenda": pkg}}
-	mockNow := time.Date(2026, 9, 26, 12, 0, 0, 0, time.UTC)
-	engine := render.NewEngine(resolver, p, render.WithNowFunc(func() time.Time { return mockNow }))
-
-	// 1. Render loaded calendar
-	htmlLoaded, err := engine.RenderWidget(context.Background(), "w-cal-loaded")
-	if err != nil {
-		t.Fatalf("RenderWidget failed on loaded calendar: %v", err)
-	}
-	htmlStr := string(htmlLoaded)
-	if strings.Contains(htmlStr, "Ancient Practice") {
-		t.Errorf("expected past event 'Ancient Practice' to be filtered out, got: %s", htmlStr)
-	}
-	if !strings.Contains(htmlStr, "Soccer Practice") {
-		t.Errorf("expected 'Soccer Practice' in output: %s", htmlStr)
-	}
-	if !strings.Contains(htmlStr, "Community Park Field 2") {
-		t.Errorf("expected location 'Community Park Field 2' in output: %s", htmlStr)
-	}
-	if strings.Contains(htmlStr, "Bring soccer balls and water bottles") {
-		t.Errorf("expected description 'Bring soccer balls and water bottles' to be excluded from view, got: %s", htmlStr)
-	}
-	if !strings.Contains(htmlStr, "Family Calendar") {
-		t.Errorf("expected 'Family Calendar' in output: %s", htmlStr)
-	}
-	if !strings.Contains(htmlStr, "Trash") {
-		t.Errorf("expected 'Trash' in output: %s", htmlStr)
-	}
-	if !strings.Contains(htmlStr, "All Day") {
-		t.Errorf("expected 'All Day' in output: %s", htmlStr)
-	}
-	if !strings.Contains(htmlStr, "Family Schedule") {
-		t.Errorf("expected custom title 'Family Schedule' in output: %s", htmlStr)
-	}
-	if strings.Contains(htmlStr, "Upcoming") {
-		t.Errorf("expected default title 'Upcoming' to be overridden by custom title: %s", htmlStr)
-	}
-	if !strings.Contains(htmlStr, "Active Family") {
-		t.Errorf("expected enabled calendar 'Active Family' in avatar dots: %s", htmlStr)
-	}
-	if strings.Contains(htmlStr, "Disabled Work") {
-		t.Errorf("expected disabled calendar 'Disabled Work' to be excluded from avatar dots: %s", htmlStr)
-	}
-	if !strings.Contains(htmlStr, "1 Calendar") {
-		t.Errorf("expected '1 Calendar' badge for single active calendar, got: %s", htmlStr)
-	}
-
-	// 2. Render empty calendar
-	htmlEmpty, err := engine.RenderWidget(context.Background(), "w-cal-empty")
-	if err != nil {
-		t.Fatalf("RenderWidget failed on empty calendar: %v", err)
-	}
-	if !strings.Contains(string(htmlEmpty), "No upcoming events") {
-		t.Errorf("expected 'No upcoming events' in empty output: %s", htmlEmpty)
-	}
-	if !strings.Contains(string(htmlEmpty), "Upcoming") {
-		t.Errorf("expected default fallback title 'Upcoming' in empty output: %s", htmlEmpty)
-	}
-	if strings.Contains(string(htmlEmpty), "calendar-header-chips") {
-		t.Errorf("expected calendar header chips to be omitted when no calendars configured: %s", htmlEmpty)
-	}
-
-	// 3. Render loading calendar
-	htmlLoading, err := engine.RenderWidget(context.Background(), "w-cal-loading")
-	if err != nil {
-		t.Fatalf("RenderWidget failed on loading calendar: %v", err)
-	}
-	if !strings.Contains(string(htmlLoading), "Loading calendar feed...") && !strings.Contains(string(htmlLoading), "Loading calendar agenda...") {
-		t.Errorf("expected 'Loading calendar feed...' in loading output: %s", htmlLoading)
+				Packages: packages,
+			}
+			p := &mockSnapshotProvider{
+				snapshot: snap,
+				states:   map[string]mockState{widgetID: tc.state},
+			}
+			var res render.PackageResolver
+			if !tc.nilResolver {
+				res = &mockResolver{packages: packages}
+			}
+			eng := render.NewEngine(res, p, render.WithNowFunc(func() time.Time { return fixedNow }))
+			htmlBytes, err := eng.RenderWidget(context.Background(), widgetID)
+			if err != nil {
+				t.Fatalf("RenderWidget failed: %v", err)
+			}
+			out := string(htmlBytes)
+			for _, want := range tc.wantContains {
+				if !strings.Contains(out, want) {
+					t.Errorf("output missing %q: %s", want, out)
+				}
+			}
+			for _, notWant := range tc.wantNotContains {
+				if strings.Contains(out, notWant) {
+					t.Errorf("output unexpectedly contains %q: %s", notWant, out)
+				}
+			}
+			if strings.Contains(out, "What is on the calendar") && strings.Contains(out, "Done. Milk and eggs") {
+				if strings.Index(out, "What is on the calendar") > strings.Index(out, "Done. Milk and eggs") {
+					t.Errorf("expected messages rendered oldest first")
+				}
+			}
+		})
 	}
 }
 
-func TestEngine_RenderWidget_TasksPackage(t *testing.T) {
+func TestChatLogWidget_RendersFromProviderPerNode(t *testing.T) {
 	t.Parallel()
 
 	repoWidgetsDir := filepath.Join("..", "..", "widgets")
 	loader := widget.NewLoader(repoWidgetsDir, t.TempDir())
-	pkg, err := loader.LoadPackage("tasks")
+	pkg, err := loader.LoadPackage("chat-log")
 	if err != nil {
-		t.Fatalf("failed to load tasks package: %v", err)
+		t.Fatalf("failed to load chat-log package: %v", err)
 	}
+	if pkg.Manifest.Provider != "chat-log" {
+		t.Fatalf("manifest should use the endpoint-less chat-log provider, got %q", pkg.Manifest.Provider)
+	}
+
+	store := chatlog.NewStore()
+	store.Add(chatlog.NodeKey("kitchen"), chatlog.Message{Role: chatlog.RoleHuman, Author: "sam", Text: "kitchen question"})
+	store.Add(chatlog.NodeKey("kitchen"), chatlog.Message{Role: chatlog.RoleAgent, Text: "kitchen answer"})
+	store.Add(chatlog.NodeKey("office"), chatlog.Message{Role: chatlog.RoleHuman, Text: "office question <b>", At: time.Now().Add(time.Second)})
 
 	snap := &config.Snapshot{
-		Config: &config.Config{
-			Display: config.DisplayConfig{
-				Widgets: []config.WidgetConfig{
-					{ID: "w-tasks-loaded", Type: "tasks", Dimensions: []int{2, 1}},
-					{ID: "w-tasks-empty", Type: "tasks", Dimensions: []int{2, 1}},
-					{ID: "w-tasks-loading", Type: "tasks", Dimensions: []int{2, 1}},
-					{ID: "w-tasks-unnamed", Type: "tasks", Dimensions: []int{2, 1}},
-				},
-			},
-		},
-		Packages: map[string]*domain.Package{"tasks": pkg},
+		Config: &config.Config{Display: config.DisplayConfig{Widgets: []config.WidgetConfig{
+			{ID: "chat", Type: "chat-log", Dimensions: []int{3, 2}, Config: map[string]any{"title": "Home"}},
+		}}},
+		Packages: map[string]*domain.Package{"chat-log": pkg},
 	}
+	state := &mockSnapshotProvider{snapshot: snap, states: map[string]mockState{}}
+	engine := render.NewEngine(&mockResolver{packages: map[string]*domain.Package{"chat-log": pkg}}, state,
+		render.WithNodeDataFunc(func(widgetID, nodeID string) (any, bool) {
+			if widgetID != "chat" {
+				return nil, false
+			}
+			return store.View(widgetID, nodeID), true
+		}),
+	)
 
-	assignee := "Alex"
-	dueDate := "2026-09-26"
-	now := time.Now().UTC()
-
-	tasksData := tasks.TasksSnapshot{
-		List: tasks.List{
-			ID:        "groceries",
-			Name:      "Groceries",
-			Source:    "local",
-			Sections:  []string{"Produce", "Dairy"},
-			CreatedAt: now,
-			UpdatedAt: now,
-		},
-		Items: []tasks.ListItem{
-			{
-				ID:        "i1",
-				ListID:    "groceries",
-				Title:     "Oat Milk",
-				Done:      false,
-				Section:   "Dairy",
-				Position:  0,
-				Assignee:  &assignee,
-				DueDate:   &dueDate,
-				CreatedAt: now,
-				UpdatedAt: now,
-			},
-			{
-				ID:        "i2",
-				ListID:    "groceries",
-				Title:     "Coffee Beans",
-				Done:      true,
-				Section:   "Pantry",
-				Position:  1,
-				CreatedAt: now,
-				UpdatedAt: now,
-			},
-		},
-	}
-
-	emptyTasksData := tasks.TasksSnapshot{
-		List: tasks.List{
-			ID:        "empty-list",
-			Name:      "Chores",
-			Source:    "local",
-			CreatedAt: now,
-			UpdatedAt: now,
-		},
-		Items: []tasks.ListItem{},
-	}
-
-	unnamedTasksData := tasks.TasksSnapshot{
-		List: tasks.List{
-			ID:        "unnamed-list",
-			Name:      "",
-			Source:    "",
-			CreatedAt: now,
-			UpdatedAt: now,
-		},
-		Items: []tasks.ListItem{
-			{
-				ID:        "u1",
-				ListID:    "unnamed-list",
-				Title:     "Thing to do",
-				Done:      false,
-				CreatedAt: now,
-				UpdatedAt: now,
-			},
-		},
-	}
-
-	p := &mockSnapshotProvider{
-		snapshot: snap,
-		states: map[string]mockState{
-			"w-tasks-loaded":  {data: tasksData, state: "healthy", timestamp: "2026-09-26T12:00:00Z"},
-			"w-tasks-empty":   {data: emptyTasksData, state: "healthy", timestamp: "2026-09-26T12:00:00Z"},
-			"w-tasks-loading": {data: nil, state: "healthy"},
-			"w-tasks-unnamed": {data: unnamedTasksData, state: "healthy", timestamp: "2026-09-26T12:00:00Z"},
-		},
-	}
-
-	resolver := &mockResolver{packages: map[string]*domain.Package{"tasks": pkg}}
-	engine := render.NewEngine(resolver, p)
-
-	// 1. Render loaded tasks
-	htmlLoaded, err := engine.RenderWidget(context.Background(), "w-tasks-loaded")
+	kitchen, err := engine.RenderWidgetForNode(context.Background(), "chat", "kitchen")
 	if err != nil {
-		t.Fatalf("RenderWidget failed on loaded tasks: %v", err)
+		t.Fatalf("render kitchen: %v", err)
 	}
-	htmlStr := string(htmlLoaded)
-	if !strings.Contains(htmlStr, "Groceries") {
-		t.Errorf("expected 'Groceries' in output: %s", htmlStr)
+	for _, want := range []string{"Home", "kitchen question", "kitchen answer", "sam", "chat-log-human", "chat-log-agent"} {
+		if !strings.Contains(string(kitchen), want) {
+			t.Errorf("kitchen render missing %q: %s", want, kitchen)
+		}
 	}
-	if !strings.Contains(htmlStr, "Oat Milk") {
-		t.Errorf("expected 'Oat Milk' in output: %s", htmlStr)
-	}
-	if !strings.Contains(htmlStr, "Coffee Beans") {
-		t.Errorf("expected 'Coffee Beans' in output: %s", htmlStr)
-	}
-	if !strings.Contains(htmlStr, "task-item-done") {
-		t.Errorf("expected 'task-item-done' in output: %s", htmlStr)
-	}
-	if !strings.Contains(htmlStr, "@Alex") {
-		t.Errorf("expected '@Alex' in output: %s", htmlStr)
-	}
-	if !strings.Contains(htmlStr, "1 to do") {
-		t.Errorf("expected '1 to do' in output: %s", htmlStr)
-	}
-	if !strings.Contains(htmlStr, "tasks-sparkle-icon") {
-		t.Errorf("expected 'tasks-sparkle-icon' in output: %s", htmlStr)
-	}
-	if !strings.Contains(htmlStr, "tasks-icon-box") {
-		t.Errorf("expected 'tasks-icon-box' in output: %s", htmlStr)
-	}
-	if !strings.Contains(htmlStr, "tasks-progress") {
-		t.Errorf("expected 'tasks-progress' in output: %s", htmlStr)
-	}
-	if strings.Contains(htmlStr, "tasks-source-badge") {
-		t.Errorf("expected 'tasks-source-badge' to be removed from header: %s", htmlStr)
-	}
-	if strings.Contains(htmlStr, "✅") {
-		t.Errorf("expected raw emoji '✅' to be replaced by vector icon in output: %s", htmlStr)
+	if strings.Contains(string(kitchen), "office question") {
+		t.Errorf("kitchen render leaked the office conversation")
 	}
 
-	// 2. Render empty tasks
-	htmlEmpty, err := engine.RenderWidget(context.Background(), "w-tasks-empty")
+	office, err := engine.RenderWidgetForNode(context.Background(), "chat", "office")
 	if err != nil {
-		t.Fatalf("RenderWidget failed on empty tasks: %v", err)
+		t.Fatalf("render office: %v", err)
 	}
-	if !strings.Contains(string(htmlEmpty), "All tasks completed") {
-		t.Errorf("expected 'All tasks completed' in empty output: %s", htmlEmpty)
+	if !strings.Contains(string(office), "office question &lt;b&gt;") || strings.Contains(string(office), "kitchen question") {
+		t.Errorf("unexpected office render: %s", office)
 	}
 
-	// 3. Render loading tasks
-	htmlLoading, err := engine.RenderWidget(context.Background(), "w-tasks-loading")
+	// No node: the most recently active node (office).
+	fallback, err := engine.RenderWidget(context.Background(), "chat")
 	if err != nil {
-		t.Fatalf("RenderWidget failed on loading tasks: %v", err)
+		t.Fatalf("render fallback: %v", err)
 	}
-	if !strings.Contains(string(htmlLoading), "Loading checklist...") {
-		t.Errorf("expected 'Loading checklist...' in loading output: %s", htmlLoading)
-	}
-
-	// 4. Render unnamed list without source
-	htmlUnnamed, err := engine.RenderWidget(context.Background(), "w-tasks-unnamed")
-	if err != nil {
-		t.Fatalf("RenderWidget failed on unnamed tasks: %v", err)
-	}
-	if strings.Count(string(htmlUnnamed), "Checklist") != 1 {
-		t.Errorf("expected 'Checklist' to appear exactly once, got %d times: %s", strings.Count(string(htmlUnnamed), "Checklist"), htmlUnnamed)
-	}
-}
-
-func TestEngine_RenderWidgetWithOverrides(t *testing.T) {
-	t.Parallel()
-
-	tmpDir := t.TempDir()
-	pkg := createTestPackage(t, tmpDir, "sample", `<div>{{.Config.title}} ({{.Config.count}})</div>`)
-
-	origConfig := map[string]any{"title": "Original", "count": 1}
-	snap := &config.Snapshot{
-		Config: &config.Config{
-			Display: config.DisplayConfig{
-				Widgets: []config.WidgetConfig{
-					{
-						ID:     "sample-1",
-						Type:   "sample",
-						Config: origConfig,
-					},
-				},
-			},
-		},
-		Packages: map[string]*domain.Package{
-			"sample": pkg,
-		},
+	if !strings.Contains(string(fallback), "office question") {
+		t.Errorf("fallback should show the most recent node: %s", fallback)
 	}
 
-	provider := &mockSnapshotProvider{
-		snapshot: snap,
-		states:   map[string]mockState{"sample-1": {data: map[string]any{}, state: "healthy"}},
-	}
-	resolver := &mockResolver{packages: map[string]*domain.Package{"sample": pkg}}
-	engine := render.NewEngine(resolver, provider)
-
-	// Render with overrides
-	overrides := map[string]any{"title": "Overridden", "count": 42}
-	html, err := engine.RenderWidgetWithOverrides(context.Background(), "sample-1", "", overrides)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !strings.Contains(string(html), "Overridden (42)") {
-		t.Errorf("expected overridden content, got %s", string(html))
+	// Never-spoken node: empty state, not an error.
+	empty, err := engine.RenderWidgetForNode(context.Background(), "chat", "garage")
+	if err != nil || !strings.Contains(string(empty), "No messages yet") {
+		t.Errorf("garage render: err=%v out=%s", err, empty)
 	}
 
-	// Verify original config in snapshot was NOT mutated
-	if origConfig["title"] != "Original" || origConfig["count"] != 1 {
-		t.Errorf("original widget config was mutated: %+v", origConfig)
-	}
-}
-
-func TestEngine_RenderWidget_PhotoCarouselPackage(t *testing.T) {
-	t.Parallel()
-
-	repoWidgetsDir := filepath.Join("..", "..", "widgets")
-	loader := widget.NewLoader(repoWidgetsDir, t.TempDir())
-	pkg, err := loader.LoadPackage("photo-carousel")
-	if err != nil {
-		t.Fatalf("failed to load photo-carousel package: %v", err)
-	}
-
-	snap := &config.Snapshot{
-		Config: &config.Config{
-			Display: config.DisplayConfig{
-				Widgets: []config.WidgetConfig{
-					{ID: "w-photos", Type: "photo-carousel", Dimensions: []int{3, 2}},
-				},
-			},
-		},
-		Packages: map[string]*domain.Package{"photo-carousel": pkg},
-	}
-
-	photoData := provider.PhotoSnapshot{
-		AlbumName:            "Family Memories",
-		TotalPhotos:          1,
-		CycleIntervalSeconds: 30,
-		Photos: []provider.PhotoItem{
-			{
-				ID:          "p1",
-				URL:         "https://lh3.googleusercontent.com/pw/TEST",
-				AspectRatio: 1.33,
-			},
-		},
-	}
-
-	mockProv := &mockSnapshotProvider{
-		snapshot: snap,
-		states: map[string]mockState{
-			"w-photos": {data: photoData, state: "healthy"},
-		},
-	}
-
-	eng := render.NewEngine(nil, mockProv)
-	htmlBytes, err := eng.RenderWidget(context.Background(), "w-photos")
-	if err != nil {
-		t.Fatalf("RenderWidget failed: %v", err)
-	}
-
-	htmlStr := string(htmlBytes)
-
-	// Assert SSR 4K baseline for foreground
-	if !strings.Contains(htmlStr, "=w3840-h2160") {
-		t.Errorf("expected 4K baseline URL =w3840-h2160, got: %s", htmlStr)
-	}
-
-	// Assert lightweight 96x54 thumbnail for blurred backdrop in contain mode
-	if !strings.Contains(htmlStr, `photo-backdrop-current" src="https://lh3.googleusercontent.com/pw/TEST=w96-h54-c"`) {
-		t.Errorf("expected low-res backdrop thumbnail =w96-h54-c, got: %s", htmlStr)
-	}
-
-	// Assert raw unescaped JSON in script tag (no leading quote)
-	if strings.Contains(htmlStr, `<script type="application/json" class="photo-carousel-data">"`) {
-		t.Errorf("photo-carousel-data contains double-encoded JSON string: %s", htmlStr)
-	}
-	if !strings.Contains(htmlStr, `{"album_name":"Family Memories"`) {
-		t.Errorf("expected unescaped JSON object in photo-carousel-data, got: %s", htmlStr)
-	}
-
-	// Test fit: cover mode leaves backdrop src empty
-	snapCover := &config.Snapshot{
-		Config: &config.Config{
-			Display: config.DisplayConfig{
-				Widgets: []config.WidgetConfig{
-					{
-						ID:         "w-photos-cover",
-						Type:       "photo-carousel",
-						Dimensions: []int{3, 2},
-						Config:     map[string]any{"fit": "cover"},
-					},
-				},
-			},
-		},
-		Packages: map[string]*domain.Package{"photo-carousel": pkg},
-	}
-	mockProvCover := &mockSnapshotProvider{
-		snapshot: snapCover,
-		states: map[string]mockState{
-			"w-photos-cover": {data: photoData, state: "healthy"},
-		},
-	}
-	engCover := render.NewEngine(nil, mockProvCover)
-	coverHTMLBytes, err := engCover.RenderWidget(context.Background(), "w-photos-cover")
-	if err != nil {
-		t.Fatalf("RenderWidget cover failed: %v", err)
-	}
-	coverHTML := string(coverHTMLBytes)
-	if !strings.Contains(coverHTML, `photo-backdrop-current" src=""`) {
-		t.Errorf("expected empty backdrop src in cover mode, got: %s", coverHTML)
+	// The HTTP handler forwards ?node= to the engine.
+	h := render.NewHandler(engine, &mockResolver{packages: map[string]*domain.Package{"chat-log": pkg}})
+	rec := httptest.NewRecorder()
+	h.GetWidgetRender(rec, httptest.NewRequest(http.MethodGet, "/api/widgets/chat/render?node=kitchen", nil), "chat")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "kitchen answer") {
+		t.Errorf("handler render: %d %s", rec.Code, rec.Body.String())
 	}
 }

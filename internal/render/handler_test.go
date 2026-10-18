@@ -21,7 +21,6 @@ func setupTestServer(t *testing.T) (*render.Handler, string, *domain.Package) {
 	tmpDir := t.TempDir()
 
 	pkg := createTestPackage(t, tmpDir, "sensor", `<div class="sensor">{{.Data.temp}}</div>`)
-	// Write extra assets
 	assetsDir := filepath.Join(pkg.Dir, "assets")
 	subDir := filepath.Join(assetsDir, "sub")
 	if err := os.MkdirAll(subDir, 0755); err != nil {
@@ -31,14 +30,20 @@ func setupTestServer(t *testing.T) (*render.Handler, string, *domain.Package) {
 		t.Fatalf("failed to write nested asset: %v", err)
 	}
 
+	brokenPkg := createTestPackage(t, tmpDir, "broken", `{{.Data.Bad.Property}}`)
+	calPkg := createTestPackage(t, tmpDir, "cal", `<div class="cal" data-date="{{.Config.date}}" data-view="{{.Config.default_view}}">OK</div>`)
+	noAssetsPkg := &domain.Package{
+		Type:      "no-assets",
+		AssetsDir: "",
+	}
+
 	snap := &config.Snapshot{
 		Config: &config.Config{
 			Display: config.DisplayConfig{
 				Widgets: []config.WidgetConfig{
-					{
-						ID:   "sensor-1",
-						Type: "sensor",
-					},
+					{ID: "sensor-1", Type: "sensor"},
+					{ID: "b1", Type: "broken"},
+					{ID: "cal-1", Type: "cal", Config: map[string]any{"default_view": "week"}},
 				},
 			},
 		},
@@ -48,12 +53,17 @@ func setupTestServer(t *testing.T) (*render.Handler, string, *domain.Package) {
 					Index: 0,
 					Widgets: []layout.PlacedWidget{
 						{WidgetID: "sensor-1", Type: "sensor", Dimensions: domain.NewDimension(2, 1)},
+						{WidgetID: "b1", Type: "broken", Dimensions: domain.NewDimension(2, 1)},
+						{WidgetID: "cal-1", Type: "cal", Dimensions: domain.NewDimension(2, 1)},
 					},
 				},
 			},
 		},
 		Packages: map[string]*domain.Package{
-			"sensor": pkg,
+			"sensor":    pkg,
+			"broken":    brokenPkg,
+			"cal":       calPkg,
+			"no-assets": noAssetsPkg,
 		},
 	}
 
@@ -61,10 +71,17 @@ func setupTestServer(t *testing.T) (*render.Handler, string, *domain.Package) {
 		snapshot: snap,
 		states: map[string]mockState{
 			"sensor-1": {data: map[string]any{"temp": "68F"}, state: "healthy"},
+			"b1":       {data: "string-not-map", state: "healthy"},
+			"cal-1":    {data: map[string]any{}, state: "healthy"},
 		},
 	}
 
-	resolver := &mockResolver{packages: map[string]*domain.Package{"sensor": pkg}}
+	resolver := &mockResolver{packages: map[string]*domain.Package{
+		"sensor":    pkg,
+		"broken":    brokenPkg,
+		"cal":       calPkg,
+		"no-assets": noAssetsPkg,
+	}}
 	engine := render.NewEngine(resolver, provider)
 
 	defaultCSS := filepath.Join(tmpDir, "hud.css")
@@ -83,102 +100,154 @@ func TestHandler_GetWidgetRender(t *testing.T) {
 
 	handler, _, _ := setupTestServer(t)
 
-	// Case 1: Success 200 GET
-	req := httptest.NewRequest(http.MethodGet, "/api/widgets/sensor-1/render", nil)
-	rec := httptest.NewRecorder()
-	handler.GetWidgetRender(rec, req, "sensor-1")
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected status 200, got %d", rec.Code)
-	}
-	if ct := rec.Header().Get("Content-Type"); ct != "text/html; charset=utf-8" {
-		t.Errorf("expected Content-Type text/html; charset=utf-8, got %q", ct)
-	}
-	if !strings.Contains(rec.Body.String(), `<div class="sensor">68F</div>`) {
-		t.Errorf("unexpected render body: %s", rec.Body.String())
-	}
-	if rec.Header().Get("Access-Control-Allow-Origin") != "*" {
-		t.Errorf("expected CORS origin '*', got %q", rec.Header().Get("Access-Control-Allow-Origin"))
-	}
-
-	// Case 2: HEAD 200 with empty body
-	reqHead := httptest.NewRequest(http.MethodHead, "/api/widgets/sensor-1/render", nil)
-	recHead := httptest.NewRecorder()
-	handler.GetWidgetRender(recHead, reqHead, "sensor-1")
-	if recHead.Code != http.StatusOK {
-		t.Fatalf("expected HEAD status 200, got %d", recHead.Code)
-	}
-	if recHead.Body.Len() != 0 {
-		t.Errorf("expected empty body for HEAD, got %d bytes", recHead.Body.Len())
-	}
-
-	// Case 3: OPTIONS 204 No Content
-	reqOptions := httptest.NewRequest(http.MethodOptions, "/api/widgets/sensor-1/render", nil)
-	recOptions := httptest.NewRecorder()
-	handler.GetWidgetRender(recOptions, reqOptions, "sensor-1")
-	if recOptions.Code != http.StatusNoContent {
-		t.Fatalf("expected status 204 for OPTIONS, got %d", recOptions.Code)
-	}
-
-	// Case 4: Method Not Allowed (POST)
-	reqPost := httptest.NewRequest(http.MethodPost, "/api/widgets/sensor-1/render", nil)
-	recPost := httptest.NewRecorder()
-	handler.GetWidgetRender(recPost, reqPost, "sensor-1")
-	if recPost.Code != http.StatusMethodNotAllowed {
-		t.Fatalf("expected status 405 for POST, got %d", recPost.Code)
-	}
-
-	// Case 5: 404 Widget Not Found
-	req404 := httptest.NewRequest(http.MethodGet, "/api/widgets/missing-widget/render", nil)
-	rec404 := httptest.NewRecorder()
-	handler.GetWidgetRender(rec404, req404, "missing-widget")
-	if rec404.Code != http.StatusNotFound {
-		t.Fatalf("expected status 404, got %d", rec404.Code)
-	}
-	var errResp api.ErrorResponse
-	if err := json.Unmarshal(rec404.Body.Bytes(), &errResp); err != nil {
-		t.Fatalf("failed to decode error json: %v", err)
-	}
-	if !strings.Contains(errResp.Error, "widget 'missing-widget' not found") {
-		t.Errorf("unexpected error message: %q", errResp.Error)
-	}
-
-	// Case 6: Unconfigured Engine returns 500
-	unconfiguredHandler := render.NewHandler(nil, nil)
-	rec500 := httptest.NewRecorder()
-	unconfiguredHandler.GetWidgetRender(rec500, req, "sensor-1")
-	if rec500.Code != http.StatusInternalServerError {
-		t.Fatalf("expected status 500 for unconfigured engine, got %d", rec500.Code)
-	}
-
-	// Case 7: Rendering execution failure returns 500
-	tmpDir := t.TempDir()
-	brokenPkg := createTestPackage(t, tmpDir, "broken", `{{.Data.Bad.Property}}`)
-	snapBroken := &config.Snapshot{
-		Config: &config.Config{
-			Display: config.DisplayConfig{
-				Widgets: []config.WidgetConfig{{ID: "b1", Type: "broken"}},
-			},
+	tests := []struct {
+		name       string
+		method     string
+		path       string
+		widgetID   string
+		nilEngine  bool
+		wantStatus int
+		wantBody   []string
+		wantEmpty  bool
+		wantErrMsg string
+		checkCORS  bool
+		wantAllow  string
+	}{
+		{
+			name:       "success GET 200",
+			method:     http.MethodGet,
+			path:       "/api/widgets/sensor-1/render",
+			widgetID:   "sensor-1",
+			wantStatus: http.StatusOK,
+			wantBody:   []string{`<div class="sensor">68F</div>`},
+			checkCORS:  true,
 		},
-		Packages: map[string]*domain.Package{"broken": brokenPkg},
+		{
+			name:       "HEAD 200 empty body",
+			method:     http.MethodHead,
+			path:       "/api/widgets/sensor-1/render",
+			widgetID:   "sensor-1",
+			wantStatus: http.StatusOK,
+			wantEmpty:  true,
+		},
+		{
+			name:       "OPTIONS 204",
+			method:     http.MethodOptions,
+			path:       "/api/widgets/sensor-1/render",
+			widgetID:   "sensor-1",
+			wantStatus: http.StatusNoContent,
+		},
+		{
+			name:       "POST 405 method not allowed",
+			method:     http.MethodPost,
+			path:       "/api/widgets/sensor-1/render",
+			widgetID:   "sensor-1",
+			wantStatus: http.StatusMethodNotAllowed,
+			wantAllow:  "GET, HEAD, OPTIONS",
+			wantErrMsg: "method not allowed",
+		},
+		{
+			name:       "404 widget not found",
+			method:     http.MethodGet,
+			path:       "/api/widgets/missing-widget/render",
+			widgetID:   "missing-widget",
+			wantStatus: http.StatusNotFound,
+			wantErrMsg: "widget 'missing-widget' not found",
+		},
+		{
+			name:       "500 nil engine",
+			method:     http.MethodGet,
+			path:       "/api/widgets/sensor-1/render",
+			widgetID:   "sensor-1",
+			nilEngine:  true,
+			wantStatus: http.StatusInternalServerError,
+			wantErrMsg: "rendering engine not configured",
+		},
+		{
+			name:       "500 template execution error",
+			method:     http.MethodGet,
+			path:       "/api/widgets/b1/render",
+			widgetID:   "b1",
+			wantStatus: http.StatusInternalServerError,
+			wantErrMsg: "failed to render widget",
+		},
+		{
+			name:       "valid date override",
+			method:     http.MethodGet,
+			path:       "/api/widgets/cal-1/render?date=2026-10-15",
+			widgetID:   "cal-1",
+			wantStatus: http.StatusOK,
+			wantBody:   []string{`data-date="2026-10-15"`, `data-view="week"`},
+		},
+		{name: "valid view override day", method: http.MethodGet, path: "/api/widgets/cal-1/render?view=day", widgetID: "cal-1", wantStatus: http.StatusOK, wantBody: []string{`data-view="day"`}},
+		{name: "valid view override week", method: http.MethodGet, path: "/api/widgets/cal-1/render?view=week", widgetID: "cal-1", wantStatus: http.StatusOK, wantBody: []string{`data-view="week"`}},
+		{name: "valid view override month", method: http.MethodGet, path: "/api/widgets/cal-1/render?view=month", widgetID: "cal-1", wantStatus: http.StatusOK, wantBody: []string{`data-view="month"`}},
+		{name: "valid view override DAY uppercase", method: http.MethodGet, path: "/api/widgets/cal-1/render?view=DAY", widgetID: "cal-1", wantStatus: http.StatusOK, wantBody: []string{`data-view="day"`}},
+		{name: "valid view override Month mixed case", method: http.MethodGet, path: "/api/widgets/cal-1/render?view=Month", widgetID: "cal-1", wantStatus: http.StatusOK, wantBody: []string{`data-view="month"`}},
+		{
+			name:       "valid date and view combined",
+			method:     http.MethodGet,
+			path:       "/api/widgets/cal-1/render?date=2026-11-20&view=month",
+			widgetID:   "cal-1",
+			wantStatus: http.StatusOK,
+			wantBody:   []string{`data-date="2026-11-20"`, `data-view="month"`},
+		},
+		{name: "invalid date bad text", method: http.MethodGet, path: "/api/widgets/cal-1/render?date=invalid", widgetID: "cal-1", wantStatus: http.StatusBadRequest, wantErrMsg: "invalid date parameter: must be YYYY-MM-DD"},
+		{name: "invalid date bad month", method: http.MethodGet, path: "/api/widgets/cal-1/render?date=2026-13-01", widgetID: "cal-1", wantStatus: http.StatusBadRequest, wantErrMsg: "invalid date parameter: must be YYYY-MM-DD"},
+		{name: "invalid date leap day nonleap", method: http.MethodGet, path: "/api/widgets/cal-1/render?date=2026-02-30", widgetID: "cal-1", wantStatus: http.StatusBadRequest, wantErrMsg: "invalid date parameter: must be YYYY-MM-DD"},
+		{name: "invalid date US format", method: http.MethodGet, path: "/api/widgets/cal-1/render?date=10-15-2026", widgetID: "cal-1", wantStatus: http.StatusBadRequest, wantErrMsg: "invalid date parameter: must be YYYY-MM-DD"},
+		{name: "invalid date slash format", method: http.MethodGet, path: "/api/widgets/cal-1/render?date=2026/10/15", widgetID: "cal-1", wantStatus: http.StatusBadRequest, wantErrMsg: "invalid date parameter: must be YYYY-MM-DD"},
+		{name: "invalid view year", method: http.MethodGet, path: "/api/widgets/cal-1/render?view=year", widgetID: "cal-1", wantStatus: http.StatusBadRequest, wantErrMsg: "invalid view parameter: must be day, week, or month"},
+		{name: "invalid view agenda", method: http.MethodGet, path: "/api/widgets/cal-1/render?view=agenda", widgetID: "cal-1", wantStatus: http.StatusBadRequest, wantErrMsg: "invalid view parameter: must be day, week, or month"},
+		{name: "invalid view list", method: http.MethodGet, path: "/api/widgets/cal-1/render?view=list", widgetID: "cal-1", wantStatus: http.StatusBadRequest, wantErrMsg: "invalid view parameter: must be day, week, or month"},
+		{name: "invalid view random", method: http.MethodGet, path: "/api/widgets/cal-1/render?view=invalid", widgetID: "cal-1", wantStatus: http.StatusBadRequest, wantErrMsg: "invalid view parameter: must be day, week, or month"},
 	}
-	provBroken := &mockSnapshotProvider{
-		snapshot: snapBroken,
-		states:   map[string]mockState{"b1": {data: "string-not-map"}},
-	}
-	engBroken := render.NewEngine(&mockResolver{packages: map[string]*domain.Package{"broken": brokenPkg}}, provBroken)
-	hBroken := render.NewHandler(engBroken, nil)
-	recBroken := httptest.NewRecorder()
-	hBroken.GetWidgetRender(recBroken, req, "b1")
-	if recBroken.Code != http.StatusInternalServerError {
-		t.Fatalf("expected status 500 on template failure, got %d", recBroken.Code)
-	}
-	var err500 api.ErrorResponse
-	if err := json.Unmarshal(recBroken.Body.Bytes(), &err500); err != nil {
-		t.Fatalf("failed to decode 500 error json: %v", err)
-	}
-	if !strings.Contains(err500.Error, "failed to render widget") {
-		t.Errorf("expected 'failed to render widget' in error, got %q", err500.Error)
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			h := handler
+			if tc.nilEngine {
+				h = render.NewHandler(nil, nil)
+			}
+			req := httptest.NewRequest(tc.method, tc.path, nil)
+			rec := httptest.NewRecorder()
+			h.GetWidgetRender(rec, req, tc.widgetID)
+
+			if rec.Code != tc.wantStatus {
+				t.Fatalf("status = %d, want %d", rec.Code, tc.wantStatus)
+			}
+			if tc.wantEmpty && rec.Body.Len() != 0 {
+				t.Errorf("expected empty body, got %d bytes", rec.Body.Len())
+			}
+			if tc.checkCORS {
+				if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "*" {
+					t.Errorf("CORS origin = %q, want *", got)
+				}
+				if got := rec.Header().Get("Content-Type"); got != "text/html; charset=utf-8" {
+					t.Errorf("Content-Type = %q, want text/html; charset=utf-8", got)
+				}
+			}
+			if tc.wantAllow != "" {
+				if got := rec.Header().Get("Allow"); got != tc.wantAllow {
+					t.Errorf("Allow header = %q, want %q", got, tc.wantAllow)
+				}
+			}
+			for _, s := range tc.wantBody {
+				if !strings.Contains(rec.Body.String(), s) {
+					t.Errorf("body missing %q: %s", s, rec.Body.String())
+				}
+			}
+			if tc.wantErrMsg != "" {
+				var errResp api.ErrorResponse
+				if err := json.Unmarshal(rec.Body.Bytes(), &errResp); err != nil {
+					t.Fatalf("failed to decode error json: %v", err)
+				}
+				if !strings.Contains(errResp.Error, tc.wantErrMsg) {
+					t.Errorf("error msg = %q, want substring %q", errResp.Error, tc.wantErrMsg)
+				}
+			}
+		})
 	}
 }
 
@@ -187,116 +256,61 @@ func TestHandler_GetWidgetAsset(t *testing.T) {
 
 	handler, _, _ := setupTestServer(t)
 
-	// Case 1: Valid asset GET
-	req := httptest.NewRequest(http.MethodGet, "/widget-types/sensor/assets/icon.svg", nil)
-	rec := httptest.NewRecorder()
-	handler.GetWidgetAsset(rec, req, "sensor", "icon.svg")
+	tests := []struct {
+		name        string
+		method      string
+		widgetType  string
+		assetPath   string
+		nilResolver bool
+		wantStatus  int
+		wantBody    string
+		wantErrMsg  string
+	}{
+		{name: "valid svg asset GET", method: http.MethodGet, widgetType: "sensor", assetPath: "icon.svg", wantStatus: http.StatusOK, wantBody: "<svg>icon</svg>"},
+		{name: "nested png asset GET", method: http.MethodGet, widgetType: "sensor", assetPath: "sub/nested.png", wantStatus: http.StatusOK, wantBody: "pngdata"},
+		{name: "traversal dot dot prefix", method: http.MethodGet, widgetType: "sensor", assetPath: "../icon.svg", wantStatus: http.StatusBadRequest, wantErrMsg: "path traversal detected"},
+		{name: "traversal nested escape", method: http.MethodGet, widgetType: "sensor", assetPath: "sub/../../manifest.yaml", wantStatus: http.StatusBadRequest, wantErrMsg: "path traversal detected"},
+		{name: "traversal absolute path", method: http.MethodGet, widgetType: "sensor", assetPath: "/etc/passwd", wantStatus: http.StatusBadRequest, wantErrMsg: "path traversal detected"},
+		{name: "traversal suffix escape", method: http.MethodGet, widgetType: "sensor", assetPath: "icon.svg/../..", wantStatus: http.StatusBadRequest, wantErrMsg: "path traversal detected"},
+		{name: "traversal bare dot dot", method: http.MethodGet, widgetType: "sensor", assetPath: "..", wantStatus: http.StatusBadRequest, wantErrMsg: "path traversal detected"},
+		{name: "traversal bare dot", method: http.MethodGet, widgetType: "sensor", assetPath: ".", wantStatus: http.StatusBadRequest, wantErrMsg: "path traversal detected"},
+		{name: "traversal empty string", method: http.MethodGet, widgetType: "sensor", assetPath: "", wantStatus: http.StatusBadRequest, wantErrMsg: "path traversal detected"},
+		{name: "unknown package 404", method: http.MethodGet, widgetType: "unknown", assetPath: "icon.svg", wantStatus: http.StatusNotFound, wantErrMsg: "asset not found"},
+		{name: "missing file 404", method: http.MethodGet, widgetType: "sensor", assetPath: "nonexistent.png", wantStatus: http.StatusNotFound, wantErrMsg: "asset not found"},
+		{name: "directory path 404", method: http.MethodGet, widgetType: "sensor", assetPath: "sub", wantStatus: http.StatusNotFound, wantErrMsg: "asset not found"},
+		{name: "OPTIONS preflight 204", method: http.MethodOptions, widgetType: "sensor", assetPath: "icon.svg", wantStatus: http.StatusNoContent},
+		{name: "POST method not allowed 405", method: http.MethodPost, widgetType: "sensor", assetPath: "icon.svg", wantStatus: http.StatusMethodNotAllowed, wantErrMsg: "method not allowed"},
+		{name: "nil resolver 500", method: http.MethodGet, widgetType: "sensor", assetPath: "icon.svg", nilResolver: true, wantStatus: http.StatusInternalServerError, wantErrMsg: "package resolver not configured"},
+		{name: "empty assets dir 404", method: http.MethodGet, widgetType: "no-assets", assetPath: "any.png", wantStatus: http.StatusNotFound, wantErrMsg: "asset not found"},
+	}
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200 for valid asset, got %d", rec.Code)
-	}
-	if !strings.Contains(rec.Body.String(), "<svg>icon</svg>") {
-		t.Errorf("unexpected asset body: %s", rec.Body.String())
-	}
-
-	// Case 2: Nested sub-asset GET
-	reqSub := httptest.NewRequest(http.MethodGet, "/widget-types/sensor/assets/sub/nested.png", nil)
-	recSub := httptest.NewRecorder()
-	handler.GetWidgetAsset(recSub, reqSub, "sensor", "sub/nested.png")
-	if recSub.Code != http.StatusOK {
-		t.Fatalf("expected 200 for nested asset, got %d", recSub.Code)
-	}
-	if recSub.Body.String() != "pngdata" {
-		t.Errorf("unexpected nested asset body: %s", recSub.Body.String())
-	}
-
-	// Case 3: Path Traversal defense tests (all should return 400 Bad Request)
-	traversalPaths := []string{
-		"../icon.svg",
-		"sub/../../manifest.yaml",
-		"/etc/passwd",
-		"icon.svg/../..",
-		"..",
-		".",
-		"",
-	}
-	for _, p := range traversalPaths {
-		t.Run("traversal_"+p, func(t *testing.T) {
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			r := httptest.NewRequest(http.MethodGet, "/widget-types/sensor/assets/"+p, nil)
-			w := httptest.NewRecorder()
-			handler.GetWidgetAsset(w, r, "sensor", p)
-			if w.Code != http.StatusBadRequest {
-				t.Errorf("expected 400 for traversal path %q, got %d", p, w.Code)
+			h := handler
+			if tc.nilResolver {
+				h = render.NewHandler(nil, nil)
 			}
-			var errResp api.ErrorResponse
-			if err := json.Unmarshal(w.Body.Bytes(), &errResp); err != nil {
-				t.Fatalf("failed to decode error json: %v", err)
+			req := httptest.NewRequest(tc.method, "/widget-types/"+tc.widgetType+"/assets/"+tc.assetPath, nil)
+			rec := httptest.NewRecorder()
+			h.GetWidgetAsset(rec, req, tc.widgetType, tc.assetPath)
+
+			if rec.Code != tc.wantStatus {
+				t.Fatalf("status = %d, want %d", rec.Code, tc.wantStatus)
 			}
-			if !strings.Contains(errResp.Error, "path traversal detected") {
-				t.Errorf("expected traversal error message, got %q", errResp.Error)
+			if tc.wantBody != "" && !strings.Contains(rec.Body.String(), tc.wantBody) {
+				t.Errorf("body missing %q: %s", tc.wantBody, rec.Body.String())
+			}
+			if tc.wantErrMsg != "" {
+				var errResp api.ErrorResponse
+				if err := json.Unmarshal(rec.Body.Bytes(), &errResp); err != nil {
+					t.Fatalf("failed to decode error json: %v", err)
+				}
+				if !strings.Contains(errResp.Error, tc.wantErrMsg) {
+					t.Errorf("error msg = %q, want substring %q", errResp.Error, tc.wantErrMsg)
+				}
 			}
 		})
-	}
-
-	// Case 4: Unknown package returns 404
-	reqNoPkg := httptest.NewRequest(http.MethodGet, "/widget-types/unknown/assets/icon.svg", nil)
-	recNoPkg := httptest.NewRecorder()
-	handler.GetWidgetAsset(recNoPkg, reqNoPkg, "unknown", "icon.svg")
-	if recNoPkg.Code != http.StatusNotFound {
-		t.Fatalf("expected 404 for unknown package, got %d", recNoPkg.Code)
-	}
-
-	// Case 5: Non-existent asset file in valid package returns 404
-	reqMissingFile := httptest.NewRequest(http.MethodGet, "/widget-types/sensor/assets/nonexistent.png", nil)
-	recMissingFile := httptest.NewRecorder()
-	handler.GetWidgetAsset(recMissingFile, reqMissingFile, "sensor", "nonexistent.png")
-	if recMissingFile.Code != http.StatusNotFound {
-		t.Fatalf("expected 404 for non-existent file, got %d", recMissingFile.Code)
-	}
-
-	// Case 6: Directory path requested returns 404
-	reqDir := httptest.NewRequest(http.MethodGet, "/widget-types/sensor/assets/sub", nil)
-	recDir := httptest.NewRecorder()
-	handler.GetWidgetAsset(recDir, reqDir, "sensor", "sub")
-	if recDir.Code != http.StatusNotFound {
-		t.Fatalf("expected 404 when requesting directory, got %d", recDir.Code)
-	}
-
-	// Case 7: OPTIONS and HEAD
-	reqOptions := httptest.NewRequest(http.MethodOptions, "/widget-types/sensor/assets/icon.svg", nil)
-	recOptions := httptest.NewRecorder()
-	handler.GetWidgetAsset(recOptions, reqOptions, "sensor", "icon.svg")
-	if recOptions.Code != http.StatusNoContent {
-		t.Fatalf("expected 204 for OPTIONS, got %d", recOptions.Code)
-	}
-
-	reqPost := httptest.NewRequest(http.MethodPost, "/widget-types/sensor/assets/icon.svg", nil)
-	recPost := httptest.NewRecorder()
-	handler.GetWidgetAsset(recPost, reqPost, "sensor", "icon.svg")
-	if recPost.Code != http.StatusMethodNotAllowed {
-		t.Fatalf("expected 405 for POST, got %d", recPost.Code)
-	}
-
-	// Case 8: Package resolver unset returns 500
-	noResolverHandler := render.NewHandler(nil, nil)
-	recNoRes := httptest.NewRecorder()
-	noResolverHandler.GetWidgetAsset(recNoRes, req, "sensor", "icon.svg")
-	if recNoRes.Code != http.StatusInternalServerError {
-		t.Fatalf("expected 500 when resolver is unset, got %d", recNoRes.Code)
-	}
-
-	// Case 9: Package without assets directory returns 404
-	pkgNoAssets := &domain.Package{
-		Type:      "no-assets",
-		AssetsDir: "",
-	}
-	resolverNoAssets := &mockResolver{packages: map[string]*domain.Package{"no-assets": pkgNoAssets}}
-	handlerNoAssets := render.NewHandler(nil, resolverNoAssets)
-	recNoAssets := httptest.NewRecorder()
-	handlerNoAssets.GetWidgetAsset(recNoAssets, req, "no-assets", "any.png")
-	if recNoAssets.Code != http.StatusNotFound {
-		t.Fatalf("expected 404 when package has no assets, got %d", recNoAssets.Code)
 	}
 }
 
@@ -304,190 +318,82 @@ func TestHandler_ServeStyle(t *testing.T) {
 	t.Parallel()
 
 	tmpDir := t.TempDir()
-	cssPath := filepath.Join(tmpDir, "hud.css")
-
-	h := render.NewHandler(
-		nil, nil,
-		render.WithCSSPath(cssPath),
-	)
-
-	req := httptest.NewRequest(http.MethodGet, "/style.css", nil)
-
-	// Phase 1: CSS file absent -> 404 Not Found
-	rec := httptest.NewRecorder()
-	h.ServeStyle(rec, req)
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("expected status 404 when stylesheet absent, got %d", rec.Code)
+	validCSS := filepath.Join(tmpDir, "valid.css")
+	if err := os.WriteFile(validCSS, []byte("/* test stylesheet */"), 0644); err != nil {
+		t.Fatalf("failed to write valid css: %v", err)
 	}
+	customCSS := filepath.Join(tmpDir, "custom.css")
+	if err := os.WriteFile(customCSS, []byte("/* custom stylesheet */"), 0644); err != nil {
+		t.Fatalf("failed to write custom css: %v", err)
+	}
+	missingCSS := filepath.Join(tmpDir, "nonexistent.css")
 
-	// Phase 2: CSS file created -> Serves stylesheet
-	cssContent := "/* test stylesheet */"
-	if err := os.WriteFile(cssPath, []byte(cssContent), 0644); err != nil {
-		t.Fatalf("failed to write stylesheet: %v", err)
-	}
-
-	rec2 := httptest.NewRecorder()
-	h.ServeStyle(rec2, req)
-	if rec2.Code != http.StatusOK {
-		t.Fatalf("expected status 200, got %d", rec2.Code)
-	}
-	if rec2.Header().Get("Content-Type") != "text/css; charset=utf-8" {
-		t.Errorf("expected text/css; charset=utf-8, got %q", rec2.Header().Get("Content-Type"))
-	}
-	if rec2.Header().Get("Cache-Control") != "public, max-age=0, must-revalidate" {
-		t.Errorf("expected Cache-Control header, got %q", rec2.Header().Get("Cache-Control"))
-	}
-	if rec2.Body.String() != cssContent {
-		t.Errorf("expected %q, got %q", cssContent, rec2.Body.String())
+	tests := []struct {
+		name            string
+		method          string
+		cssPath         string
+		setPath         string
+		checkPath       string
+		wantStatus      int
+		wantBody        string
+		wantEmpty       bool
+		wantContentType string
+		wantCacheCtrl   string
+		wantErrMsg      string
+	}{
+		{name: "missing stylesheet 404", method: http.MethodGet, cssPath: missingCSS, wantStatus: http.StatusNotFound, wantErrMsg: "stylesheet not found"},
+		{name: "empty stylesheet path 404", method: http.MethodGet, cssPath: "", wantStatus: http.StatusNotFound, wantErrMsg: "stylesheet not configured"},
+		{name: "valid stylesheet GET 200", method: http.MethodGet, cssPath: validCSS, wantStatus: http.StatusOK, wantBody: "/* test stylesheet */", wantContentType: "text/css; charset=utf-8", wantCacheCtrl: "public, max-age=0, must-revalidate"},
+		{name: "custom stylesheet SetCSSPath 200", method: http.MethodGet, cssPath: validCSS, setPath: customCSS, checkPath: customCSS, wantStatus: http.StatusOK, wantBody: "/* custom stylesheet */"},
+		{name: "OPTIONS preflight 204", method: http.MethodOptions, cssPath: validCSS, wantStatus: http.StatusNoContent},
+		{name: "HEAD request 200", method: http.MethodHead, cssPath: validCSS, wantStatus: http.StatusOK, wantEmpty: true},
+		{name: "POST method not allowed 405", method: http.MethodPost, cssPath: validCSS, wantStatus: http.StatusMethodNotAllowed, wantErrMsg: "method not allowed"},
 	}
 
-	// Phase 3: SetCSSPath updates stylesheet location
-	customPath := filepath.Join(tmpDir, "custom.css")
-	customContent := "/* custom stylesheet */"
-	if err := os.WriteFile(customPath, []byte(customContent), 0644); err != nil {
-		t.Fatalf("failed to write custom stylesheet: %v", err)
-	}
-	h.SetCSSPath(customPath)
-	if h.CSSPath() != customPath {
-		t.Fatalf("expected CSSPath %q, got %q", customPath, h.CSSPath())
-	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			h := render.NewHandler(nil, nil, render.WithCSSPath(tc.cssPath))
+			if tc.setPath != "" {
+				h.SetCSSPath(tc.setPath)
+			}
+			if tc.checkPath != "" {
+				if got := h.CSSPath(); got != tc.checkPath {
+					t.Fatalf("CSSPath() = %q, want %q", got, tc.checkPath)
+				}
+			}
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(tc.method, "/style.css", nil)
+			h.ServeStyle(rec, req)
 
-	rec3 := httptest.NewRecorder()
-	h.ServeStyle(rec3, req)
-	if rec3.Code != http.StatusOK {
-		t.Fatalf("expected status 200 after SetCSSPath, got %d", rec3.Code)
-	}
-	if rec3.Body.String() != customContent {
-		t.Errorf("expected %q, got %q", customContent, rec3.Body.String())
-	}
-
-	// Phase 4: OPTIONS, HEAD, POST
-	reqOptions := httptest.NewRequest(http.MethodOptions, "/style.css", nil)
-	recOptions := httptest.NewRecorder()
-	h.ServeStyle(recOptions, reqOptions)
-	if recOptions.Code != http.StatusNoContent {
-		t.Fatalf("expected 204 for OPTIONS, got %d", recOptions.Code)
-	}
-
-	reqHead := httptest.NewRequest(http.MethodHead, "/style.css", nil)
-	recHead := httptest.NewRecorder()
-	h.ServeStyle(recHead, reqHead)
-	if recHead.Code != http.StatusOK {
-		t.Fatalf("expected 200 for HEAD, got %d", recHead.Code)
-	}
-
-	reqPost := httptest.NewRequest(http.MethodPost, "/style.css", nil)
-	recPost := httptest.NewRecorder()
-	h.ServeStyle(recPost, reqPost)
-	if recPost.Code != http.StatusMethodNotAllowed {
-		t.Fatalf("expected 405 for POST, got %d", recPost.Code)
-	}
-}
-
-func TestHandler_GetWidgetRender_DateAndViewOverrides(t *testing.T) {
-	t.Parallel()
-
-	tmpDir := t.TempDir()
-	pkg := createTestPackage(t, tmpDir, "cal", `<div class="cal" data-date="{{.Config.date}}" data-view="{{.Config.default_view}}">OK</div>`)
-
-	snap := &config.Snapshot{
-		Config: &config.Config{
-			Display: config.DisplayConfig{
-				Widgets: []config.WidgetConfig{
-					{
-						ID:     "cal-1",
-						Type:   "cal",
-						Config: map[string]any{"default_view": "week"},
-					},
-				},
-			},
-		},
-		Packages: map[string]*domain.Package{
-			"cal": pkg,
-		},
-	}
-
-	provider := &mockSnapshotProvider{
-		snapshot: snap,
-		states: map[string]mockState{
-			"cal-1": {data: map[string]any{}, state: "healthy"},
-		},
-	}
-
-	resolver := &mockResolver{packages: map[string]*domain.Package{"cal": pkg}}
-	engine := render.NewEngine(resolver, provider)
-	handler := render.NewHandler(engine, resolver)
-
-	// 1. Valid date override
-	req := httptest.NewRequest(http.MethodGet, "/api/widgets/cal-1/render?date=2026-10-15", nil)
-	rec := httptest.NewRecorder()
-	handler.GetWidgetRender(rec, req, "cal-1")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected status 200 for valid date, got %d", rec.Code)
-	}
-	if !strings.Contains(rec.Body.String(), `data-date="2026-10-15"`) {
-		t.Errorf("expected rendered HTML to contain data-date=\"2026-10-15\", got: %s", rec.Body.String())
-	}
-	if !strings.Contains(rec.Body.String(), `data-view="week"`) {
-		t.Errorf("expected rendered HTML to preserve default view \"week\", got: %s", rec.Body.String())
-	}
-
-	// 2. Valid view override (day, week, month, case-insensitive)
-	for _, v := range []string{"day", "week", "month", "DAY", "Month"} {
-		req := httptest.NewRequest(http.MethodGet, "/api/widgets/cal-1/render?view="+v, nil)
-		rec := httptest.NewRecorder()
-		handler.GetWidgetRender(rec, req, "cal-1")
-		if rec.Code != http.StatusOK {
-			t.Fatalf("expected status 200 for view %s, got %d", v, rec.Code)
-		}
-		expectedView := strings.ToLower(v)
-		if !strings.Contains(rec.Body.String(), `data-view="`+expectedView+`"`) {
-			t.Errorf("expected rendered HTML to contain data-view=%q, got: %s", expectedView, rec.Body.String())
-		}
-	}
-
-	// 3. Valid date and view overrides combined
-	reqComb := httptest.NewRequest(http.MethodGet, "/api/widgets/cal-1/render?date=2026-11-20&view=month", nil)
-	recComb := httptest.NewRecorder()
-	handler.GetWidgetRender(recComb, reqComb, "cal-1")
-	if recComb.Code != http.StatusOK {
-		t.Fatalf("expected status 200 for combined params, got %d", recComb.Code)
-	}
-	if !strings.Contains(recComb.Body.String(), `data-date="2026-11-20"`) || !strings.Contains(recComb.Body.String(), `data-view="month"`) {
-		t.Errorf("expected rendered HTML to have both date and view, got: %s", recComb.Body.String())
-	}
-
-	// 4. Invalid date parameter -> 400 Bad Request
-	for _, badDate := range []string{"invalid", "2026-13-01", "2026-02-30", "10-15-2026", "2026/10/15"} {
-		reqBad := httptest.NewRequest(http.MethodGet, "/api/widgets/cal-1/render?date="+badDate, nil)
-		recBad := httptest.NewRecorder()
-		handler.GetWidgetRender(recBad, reqBad, "cal-1")
-		if recBad.Code != http.StatusBadRequest {
-			t.Fatalf("expected status 400 for bad date %q, got %d", badDate, recBad.Code)
-		}
-		var errResp api.ErrorResponse
-		if err := json.Unmarshal(recBad.Body.Bytes(), &errResp); err != nil {
-			t.Fatalf("failed to decode error json: %v", err)
-		}
-		if errResp.Error != "invalid date parameter: must be YYYY-MM-DD" {
-			t.Errorf("expected error 'invalid date parameter: must be YYYY-MM-DD', got %q", errResp.Error)
-		}
-	}
-
-	// 5. Invalid view parameter -> 400 Bad Request
-	for _, badView := range []string{"year", "agenda", "list", "invalid"} {
-		reqBad := httptest.NewRequest(http.MethodGet, "/api/widgets/cal-1/render?view="+badView, nil)
-		recBad := httptest.NewRecorder()
-		handler.GetWidgetRender(recBad, reqBad, "cal-1")
-		if recBad.Code != http.StatusBadRequest {
-			t.Fatalf("expected status 400 for bad view %q, got %d", badView, recBad.Code)
-		}
-		var errResp api.ErrorResponse
-		if err := json.Unmarshal(recBad.Body.Bytes(), &errResp); err != nil {
-			t.Fatalf("failed to decode error json: %v", err)
-		}
-		if errResp.Error != "invalid view parameter: must be day, week, or month" {
-			t.Errorf("expected error 'invalid view parameter: must be day, week, or month', got %q", errResp.Error)
-		}
+			if rec.Code != tc.wantStatus {
+				t.Fatalf("status = %d, want %d", rec.Code, tc.wantStatus)
+			}
+			if tc.wantEmpty && rec.Body.Len() != 0 {
+				t.Errorf("expected empty body, got %d bytes", rec.Body.Len())
+			}
+			if tc.wantContentType != "" {
+				if got := rec.Header().Get("Content-Type"); got != tc.wantContentType {
+					t.Errorf("Content-Type = %q, want %q", got, tc.wantContentType)
+				}
+			}
+			if tc.wantCacheCtrl != "" {
+				if got := rec.Header().Get("Cache-Control"); got != tc.wantCacheCtrl {
+					t.Errorf("Cache-Control = %q, want %q", got, tc.wantCacheCtrl)
+				}
+			}
+			if tc.wantBody != "" && rec.Body.String() != tc.wantBody {
+				t.Errorf("body = %q, want %q", rec.Body.String(), tc.wantBody)
+			}
+			if tc.wantErrMsg != "" {
+				var errResp api.ErrorResponse
+				if err := json.Unmarshal(rec.Body.Bytes(), &errResp); err != nil {
+					t.Fatalf("failed to decode error json: %v", err)
+				}
+				if !strings.Contains(errResp.Error, tc.wantErrMsg) {
+					t.Errorf("error msg = %q, want substring %q", errResp.Error, tc.wantErrMsg)
+				}
+			}
+		})
 	}
 }

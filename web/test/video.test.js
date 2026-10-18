@@ -865,7 +865,7 @@ test('Video Presentation Mode & Multi-Stream Player with PiP', async (t) => {
         stageElement: stage,
         primarySlot,
         RTCPeerConnection: MultiPC,
-        reconnectBaseDelay: 20,
+        reconnectBaseDelay: 5,
         reconnectBackoffFactor: 1.0,
         fetch: async () => ({ ok: true, status: 200, text: async () => 'v=0\r\ns=answer' }),
       });
@@ -911,7 +911,7 @@ test('Video Presentation Mode & Multi-Stream Player with PiP', async (t) => {
         stageElement: stage,
         primarySlot,
         RTCPeerConnection: MultiPC,
-        reconnectBaseDelay: 20,
+        reconnectBaseDelay: 5,
         reconnectBackoffFactor: 1.0,
         fetch: async () => ({ ok: true, status: 200, text: async () => 'v=0\r\ns=answer' }),
       });
@@ -954,7 +954,7 @@ test('Video Presentation Mode & Multi-Stream Player with PiP', async (t) => {
         primarySlot,
         RTCPeerConnection: MultiPC,
         disconnectTimeout: 50,
-        reconnectBaseDelay: 20,
+        reconnectBaseDelay: 10,
         fetch: async () => ({ ok: true, status: 200, text: async () => 'v=0\r\ns=answer' }),
       });
 
@@ -1001,8 +1001,8 @@ test('Video Presentation Mode & Multi-Stream Player with PiP', async (t) => {
         stageElement: stage,
         primarySlot,
         RTCPeerConnection: MultiPC,
-        disconnectTimeout: 20,
-        reconnectBaseDelay: 20,
+        disconnectTimeout: 10,
+        reconnectBaseDelay: 5,
         reconnectBackoffFactor: 1.0,
         fetch: async () => ({ ok: true, status: 200, text: async () => 'v=0\r\ns=answer' }),
       });
@@ -1017,7 +1017,7 @@ test('Video Presentation Mode & Multi-Stream Player with PiP', async (t) => {
 
       pc1.setIceConnectionState('disconnected');
 
-      // Wait for 20ms disconnect timeout + 20ms reconnect delay
+      // Wait for 10ms disconnect timeout + 5ms reconnect delay
       await new Promise((r) => setTimeout(r, 70));
 
       assert.strictEqual(pc1.closed, true);
@@ -1051,17 +1051,20 @@ test('Video Presentation Mode & Multi-Stream Player with PiP', async (t) => {
       };
 
       let fallbackNotified = null;
+      let resolveFallback = null;
+      const fallbackDone = new Promise((r) => { resolveFallback = r; });
       const mgr = new VideoPlayerManager({
         stageElement: stage,
         primarySlot,
         carousel,
         RTCPeerConnection: MultiPC,
         maxReconnectAttempts: 2,
-        reconnectBaseDelay: 15,
+        reconnectBaseDelay: 5,
         reconnectBackoffFactor: 1.0,
         fetch: mockFetch,
         onFallback: (session, reason) => {
           fallbackNotified = { session, reason };
+          resolveFallback();
         },
       });
 
@@ -1079,8 +1082,8 @@ test('Video Presentation Mode & Multi-Stream Player with PiP', async (t) => {
       // Mid-stream go2rtc process dies
       pc1.setConnectionState('failed');
 
-      // Wait for 2 retries (15ms * 2 + overhead)
-      await new Promise((r) => setTimeout(r, 100));
+      // Wait deterministically for fallback callback (with safety timeout)
+      await Promise.race([fallbackDone, new Promise((r) => setTimeout(r, 500))]);
 
       // Must have cleanly dropped back to widgets mode!
       assert.strictEqual(mgr.currentMode, 'widgets');
@@ -1118,6 +1121,8 @@ test('Video Presentation Mode & Multi-Stream Player with PiP', async (t) => {
         return { ok: true, status: 200, text: async () => 'v=0\r\ns=answer' };
       };
 
+      let resolveFallback = null;
+      const fallbackDone = new Promise((r) => { resolveFallback = r; });
       const mgr = new VideoPlayerManager({
         stageElement: stage,
         primarySlot,
@@ -1125,8 +1130,11 @@ test('Video Presentation Mode & Multi-Stream Player with PiP', async (t) => {
         audioManager: audioMgr,
         RTCPeerConnection: MultiPC,
         maxReconnectAttempts: 1,
-        reconnectBaseDelay: 15,
+        reconnectBaseDelay: 5,
         fetch: mockFetch,
+        onFallback: () => {
+          resolveFallback();
+        },
       });
 
       mgr.handleVideoState({
@@ -1142,8 +1150,8 @@ test('Video Presentation Mode & Multi-Stream Player with PiP', async (t) => {
       // PiP connection fails
       pipPC.setConnectionState('failed');
 
-      // Wait for retry to exhaust
-      await new Promise((r) => setTimeout(r, 60));
+      // Wait deterministically for retry to exhaust
+      await Promise.race([fallbackDone, new Promise((r) => setTimeout(r, 500))]);
 
       // Video presentation remains active for primary
       assert.strictEqual(mgr.currentMode, 'video');
@@ -1231,7 +1239,7 @@ test('Video Presentation Mode & Multi-Stream Player with PiP', async (t) => {
         primarySlot,
         RTCPeerConnection: MultiPC,
         maxReconnectAttempts: 2,
-        reconnectBaseDelay: 20,
+        reconnectBaseDelay: 5,
         reconnectBackoffFactor: 1.0,
         fetch: mockFetch,
       });
@@ -1241,7 +1249,7 @@ test('Video Presentation Mode & Multi-Stream Player with PiP', async (t) => {
         primary: { id: 'stream1', stream_url: 'http://cast/webrtc', type: 'webrtc' },
       });
 
-      // Wait for initial failure + 20ms reconnect
+      // Wait for initial failure + 5ms reconnect
       await new Promise((r) => setTimeout(r, 60));
 
       assert.strictEqual(pcs.length, 2);
@@ -1253,6 +1261,8 @@ test('Video Presentation Mode & Multi-Stream Player with PiP', async (t) => {
     });
   });
   await t.test('Video Stream Loading Spinner & Wake Animation Lifecycle', async (t2) => {
+    const mockSpinnerFetch = async () => ({ ok: true, status: 200, text: async () => 'v=0\r\ns=answer' });
+
     await t2.test('creates spinner DOM element when mounting primary stream but not PiP', () => {
       const stage = createMockElement('div', 'video-stage');
       const primarySlot = createMockElement('div', 'video-primary-slot');
@@ -1263,6 +1273,7 @@ test('Video Presentation Mode & Multi-Stream Player with PiP', async (t) => {
         primarySlot,
         pipSlot,
         RTCPeerConnection: MockRTCPeerConnection,
+        fetch: mockSpinnerFetch,
       });
 
       mgr.handleVideoState({
@@ -1293,6 +1304,7 @@ test('Video Presentation Mode & Multi-Stream Player with PiP', async (t) => {
         stageElement: stage,
         primarySlot,
         RTCPeerConnection: MockRTCPeerConnection,
+        fetch: mockSpinnerFetch,
       });
 
       mgr.handleVideoState({
@@ -1324,6 +1336,7 @@ test('Video Presentation Mode & Multi-Stream Player with PiP', async (t) => {
         stageElement: stage,
         primarySlot,
         RTCPeerConnection: MockRTCPeerConnection,
+        fetch: mockSpinnerFetch,
       });
 
       mgr.handleVideoState({
@@ -1348,6 +1361,7 @@ test('Video Presentation Mode & Multi-Stream Player with PiP', async (t) => {
         stageElement: stage,
         primarySlot,
         RTCPeerConnection: MockRTCPeerConnection,
+        fetch: mockSpinnerFetch,
       });
 
       mgr.handleVideoState({

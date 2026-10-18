@@ -69,17 +69,7 @@ func (h *Handler) CSSPath() string {
 // GetWidgetRender handles GET /api/widgets/{widget_id}/render requests. The optional
 // "node" query parameter is the requesting display's voice node_id.
 func (h *Handler) GetWidgetRender(w http.ResponseWriter, r *http.Request, widgetID string) {
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Accept")
-
-	if r.Method == http.MethodOptions {
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
-	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		w.Header().Set("Allow", "GET, HEAD, OPTIONS")
-		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+	if !handleCORSAndMethod(w, r) {
 		return
 	}
 
@@ -129,17 +119,7 @@ func (h *Handler) GetWidgetRender(w http.ResponseWriter, r *http.Request, widget
 
 // GetWidgetAsset handles GET /widget-types/{type}/assets/{path} requests with path traversal protection.
 func (h *Handler) GetWidgetAsset(w http.ResponseWriter, r *http.Request, widgetType string, assetPath string) {
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Accept")
-
-	if r.Method == http.MethodOptions {
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
-	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		w.Header().Set("Allow", "GET, HEAD, OPTIONS")
-		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+	if !handleCORSAndMethod(w, r) {
 		return
 	}
 
@@ -186,17 +166,7 @@ func (h *Handler) GetWidgetAsset(w http.ResponseWriter, r *http.Request, widgetT
 
 // ServeStyle handles GET /style.css requests, serving the configured stylesheet from disk.
 func (h *Handler) ServeStyle(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Accept")
-
-	if r.Method == http.MethodOptions {
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
-	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		w.Header().Set("Allow", "GET, HEAD, OPTIONS")
-		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+	if !handleCORSAndMethod(w, r) {
 		return
 	}
 
@@ -219,6 +189,22 @@ func (h *Handler) ServeStyle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	http.ServeFile(w, r, cssPath)
+}
+
+func handleCORSAndMethod(w http.ResponseWriter, r *http.Request) bool {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Accept")
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return false
+	}
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.Header().Set("Allow", "GET, HEAD, OPTIONS")
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return false
+	}
+	return true
 }
 
 func writeJSONError(w http.ResponseWriter, status int, msg string) {
