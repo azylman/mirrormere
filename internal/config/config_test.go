@@ -5,13 +5,38 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/azylman/mirrormere/internal/config"
 )
 
 func mockGetenv(vars map[string]string) func(string) string {
-	return func(key string) string {
-		return vars[key]
+	return func(k string) string {
+		if vars == nil {
+			return ""
+		}
+		return vars[k]
+	}
+}
+
+func withBaseYAML(extra string) string {
+	return "timezone: America/Los_Angeles\ndisplay:\n  widgets:\n    - id: w1\n      type: spacer\n" + extra
+}
+
+func mkWidgetConfig(tokenEnv string, cfg map[string]any) *config.Config {
+	return &config.Config{
+		Timezone: "UTC",
+		Display: config.DisplayConfig{
+			Grid: config.GridConfig{Columns: 6, Rows: 2},
+			Widgets: []config.WidgetConfig{
+				{
+					ID:       "w1",
+					Type:     "custom",
+					TokenEnv: tokenEnv,
+					Config:   cfg,
+				},
+			},
+		},
 	}
 }
 
@@ -38,15 +63,12 @@ func TestLoad_ExampleConfig(t *testing.T) {
 		t.Fatalf("unexpected error loading example config: %v", err)
 	}
 
-	// Validate top-level timezone
 	if cfg.Timezone != "America/Los_Angeles" {
 		t.Errorf("expected timezone America/Los_Angeles, got %s", cfg.Timezone)
 	}
 	if cfg.Location() == nil || cfg.Location().String() != "America/Los_Angeles" {
 		t.Errorf("expected location America/Los_Angeles, got %v", cfg.Location())
 	}
-
-	// Validate rotation
 	if cfg.Display.Rotation.GetIntervalSeconds() != 30 {
 		t.Errorf("expected rotation interval 30, got %d", cfg.Display.Rotation.GetIntervalSeconds())
 	}
@@ -59,8 +81,6 @@ func TestLoad_ExampleConfig(t *testing.T) {
 	if cfg.Display.Rotation.GetPauseDurationSeconds() != 120 {
 		t.Errorf("expected pause_duration_seconds 120, got %d", cfg.Display.Rotation.GetPauseDurationSeconds())
 	}
-
-	// Validate fixed header
 	if !cfg.Display.Header.IsEnabled() {
 		t.Error("expected header to be enabled")
 	}
@@ -77,11 +97,9 @@ func TestLoad_ExampleConfig(t *testing.T) {
 		t.Errorf("expected units imperial, got %s", cfg.Display.Header.Weather.Units)
 	}
 
-	// Validate widgets
 	if len(cfg.Display.Widgets) != 5 {
 		t.Fatalf("expected 5 widgets, got %d", len(cfg.Display.Widgets))
 	}
-
 	calWidget := cfg.Display.Widgets[0]
 	if calWidget.ID != "family-calendar" || (calWidget.Type != "calendar-feed" && calWidget.Type != "calendar-agenda") {
 		t.Errorf("unexpected first widget: %+v", calWidget)
@@ -102,1580 +120,654 @@ func TestLoad_ExampleConfig(t *testing.T) {
 	}
 }
 
-func TestLoad_DefaultConfigPath(t *testing.T) {
-	t.Parallel()
-
-	// Calling Load("") targets /config/config.yaml which should fail cleanly if nonexistent
-	_, err := config.Load("")
-	if err == nil {
-		t.Fatal("expected error reading non-existent default config path")
-	}
-	if !strings.Contains(err.Error(), "/config/config.yaml") {
-		t.Fatalf("expected error mentioning /config/config.yaml, got %v", err)
-	}
-}
-
-func TestLoad_NonExistentFile(t *testing.T) {
-	t.Parallel()
-
-	_, err := config.LoadWithEnv("/non/existent/path/config.yaml", mockGetenv(nil))
-	if err == nil {
-		t.Fatal("expected error loading non-existent file, got nil")
-	}
-}
-
-func TestParse_Empty(t *testing.T) {
-	t.Parallel()
-
-	cases := [][]byte{
-		nil,
-		{},
-		[]byte("   \n\t  "),
-	}
-
-	for _, c := range cases {
-		_, err := config.ParseWithEnv(c, mockGetenv(nil))
-		if err == nil {
-			t.Errorf("expected error parsing empty bytes, got nil")
-		}
-	}
-}
-
-func TestParse_InvalidYAML(t *testing.T) {
-	t.Parallel()
-
-	raw := []byte(`
-timezone: America/Los_Angeles
-display:
-  widgets: [unclosed bracket
-`)
-	_, err := config.ParseWithEnv(raw, mockGetenv(nil))
-	if err == nil {
-		t.Fatal("expected yaml syntax error, got nil")
-	}
-	if !strings.Contains(err.Error(), "yaml syntax error") {
-		t.Fatalf("expected yaml syntax error prefix, got %v", err)
-	}
-}
-
-func TestParse_RootNotMapping(t *testing.T) {
-	t.Parallel()
-
-	raw := []byte(`
-- item1
-- item2
-`)
-	_, err := config.ParseWithEnv(raw, mockGetenv(nil))
-	if err == nil {
-		t.Fatal("expected error when root is not a mapping, got nil")
-	}
-	if !strings.Contains(err.Error(), "YAML mapping") {
-		t.Fatalf("expected YAML mapping error, got %v", err)
-	}
-}
-
-func TestParse_DisallowedScreens_TopLevel(t *testing.T) {
-	t.Parallel()
-
-	raw := []byte(`
-timezone: America/Los_Angeles
-screens:
-  - id: screen-1
-display:
-  widgets:
-    - id: test
-      type: spacer
-`)
-	_, err := config.ParseWithEnv(raw, mockGetenv(nil))
-	if err == nil {
-		t.Fatal("expected error for top-level screens, got nil")
-	}
-	if !strings.Contains(err.Error(), "disallowed top-level key 'screens'") {
-		t.Fatalf("expected disallowed top-level key 'screens' error, got %v", err)
-	}
-}
-
-func TestParse_DisallowedProviders_TopLevel(t *testing.T) {
-	t.Parallel()
-
-	raw := []byte(`
-timezone: America/Los_Angeles
-providers:
-  weather:
-    api: open-meteo
-display:
-  widgets:
-    - id: test
-      type: spacer
-`)
-	_, err := config.ParseWithEnv(raw, mockGetenv(nil))
-	if err == nil {
-		t.Fatal("expected error for top-level providers, got nil")
-	}
-	if !strings.Contains(err.Error(), "disallowed top-level key 'providers'") {
-		t.Fatalf("expected disallowed top-level key 'providers' error, got %v", err)
-	}
-}
-
-func TestParse_DisallowedScreens_Display(t *testing.T) {
-	t.Parallel()
-
-	raw := []byte(`
-timezone: America/Los_Angeles
-display:
-  screens:
-    - id: screen-1
-  widgets:
-    - id: test
-      type: spacer
-`)
-	_, err := config.ParseWithEnv(raw, mockGetenv(nil))
-	if err == nil {
-		t.Fatal("expected error for display.screens, got nil")
-	}
-	if !strings.Contains(err.Error(), "display contains disallowed key 'screens'") {
-		t.Fatalf("expected disallowed display screens error, got %v", err)
-	}
-}
-
-func TestParse_DisallowedProviders_Display(t *testing.T) {
-	t.Parallel()
-
-	raw := []byte(`
-timezone: America/Los_Angeles
-display:
-  providers:
-    calendar: google
-  widgets:
-    - id: test
-      type: spacer
-`)
-	_, err := config.ParseWithEnv(raw, mockGetenv(nil))
-	if err == nil {
-		t.Fatal("expected error for display.providers, got nil")
-	}
-	if !strings.Contains(err.Error(), "display contains disallowed key 'providers'") {
-		t.Fatalf("expected disallowed display providers error, got %v", err)
-	}
-}
-
-func TestParse_UnknownTopLevelKey(t *testing.T) {
-	t.Parallel()
-
-	raw := []byte(`
-timezone: America/Los_Angeles
-theme: purple-cyberpunk
-display:
-  widgets:
-    - id: test
-      type: spacer
-`)
-	_, err := config.ParseWithEnv(raw, mockGetenv(nil))
-	if err == nil {
-		t.Fatal("expected error for unknown top-level key, got nil")
-	}
-	if !strings.Contains(err.Error(), "unknown or disallowed top-level key 'theme'") {
-		t.Fatalf("expected unknown top-level key error, got %v", err)
-	}
-}
-
-func TestParse_UnknownDisplayKey(t *testing.T) {
-	t.Parallel()
-
-	raw := []byte(`
-timezone: America/Los_Angeles
-display:
-  unrecognized_key: value
-  widgets:
-    - id: test
-      type: spacer
-`)
-	_, err := config.ParseWithEnv(raw, mockGetenv(nil))
-	if err == nil {
-		t.Fatal("expected error for unknown display key, got nil")
-	}
-	if !strings.Contains(err.Error(), "unknown key 'unrecognized_key' under display") {
-		t.Fatalf("expected unknown display key error, got %v", err)
-	}
-}
-
-func TestParse_InterpolationProhibited(t *testing.T) {
-	t.Parallel()
-
-	raw := []byte(`
-timezone: America/Los_Angeles
-display:
-  widgets:
-    - id: test-widget
-      type: sensor-card
-      endpoint: "http://${SERVER_HOST}:8080/api"
-`)
-	_, err := config.ParseWithEnv(raw, mockGetenv(nil))
-	if err == nil {
-		t.Fatal("expected error for ${VAR} interpolation, got nil")
-	}
-	if !strings.Contains(err.Error(), "arbitrary '${...}' string interpolation is prohibited") {
-		t.Fatalf("expected interpolation prohibited error, got %v", err)
-	}
-}
-
-func TestParse_InterpolationInCommentAllowed(t *testing.T) {
-	t.Parallel()
-
-	raw := []byte(`
-# This comment mentions ${VAR} but should not trigger an error
-timezone: America/Los_Angeles
-display:
-  widgets:
-    - id: test-widget
-      type: spacer
-`)
-	cfg, err := config.ParseWithEnv(raw, mockGetenv(nil))
-	if err != nil {
-		t.Fatalf("unexpected error with comment interpolation: %v", err)
-	}
-	if cfg.Timezone != "America/Los_Angeles" {
-		t.Errorf("expected timezone America/Los_Angeles, got %s", cfg.Timezone)
-	}
-}
-
-func TestValidate_MissingTimezone(t *testing.T) {
-	t.Parallel()
-
-	raw := []byte(`
-display:
-  widgets:
-    - id: test
-      type: spacer
-`)
-	_, err := config.ParseWithEnv(raw, mockGetenv(nil))
-	if err == nil {
-		t.Fatal("expected error for missing timezone, got nil")
-	}
-	if !strings.Contains(err.Error(), "missing required configuration field 'timezone'") {
-		t.Fatalf("expected missing timezone error, got %v", err)
-	}
-}
-
-func TestValidate_InvalidTimezone(t *testing.T) {
-	t.Parallel()
-
-	raw := []byte(`
-timezone: "Mars/Olympus_Mons"
-display:
-  widgets:
-    - id: test
-      type: spacer
-`)
-	_, err := config.ParseWithEnv(raw, mockGetenv(nil))
-	if err == nil {
-		t.Fatal("expected error for invalid timezone, got nil")
-	}
-	if !strings.Contains(err.Error(), "invalid timezone") {
-		t.Fatalf("expected invalid timezone error, got %v", err)
-	}
-}
-
-func TestValidate_GridDimensions(t *testing.T) {
-	t.Parallel()
-
-	// Invalid columns
-	rawCols := []byte(`
-timezone: UTC
-display:
-  grid:
-    columns: 4
-    rows: 2
-  widgets:
-    - id: test
-      type: spacer
-`)
-	_, err := config.ParseWithEnv(rawCols, mockGetenv(nil))
-	if err == nil || !strings.Contains(err.Error(), "grid columns must be 6") {
-		t.Fatalf("expected grid columns error, got %v", err)
-	}
-
-	// Invalid rows
-	rawRows := []byte(`
-timezone: UTC
-display:
-  grid:
-    columns: 6
-    rows: 3
-  widgets:
-    - id: test
-      type: spacer
-`)
-	_, err = config.ParseWithEnv(rawRows, mockGetenv(nil))
-	if err == nil || !strings.Contains(err.Error(), "grid rows must be 2") {
-		t.Fatalf("expected grid rows error, got %v", err)
-	}
-}
-
-func TestValidate_Rotation(t *testing.T) {
-	t.Parallel()
-
-	// Negative interval
-	rawNegInterval := []byte(`
-timezone: UTC
-display:
-  rotation:
-    interval_seconds: -5
-  widgets:
-    - id: test
-      type: spacer
-`)
-	_, err := config.ParseWithEnv(rawNegInterval, mockGetenv(nil))
-	if err == nil || !strings.Contains(err.Error(), "rotation interval_seconds must be non-negative") {
-		t.Fatalf("expected negative interval error, got %v", err)
-	}
-
-	// Negative pause duration
-	rawNegPause := []byte(`
-timezone: UTC
-display:
-  rotation:
-    pause_duration_seconds: -10
-  widgets:
-    - id: test
-      type: spacer
-`)
-	_, err = config.ParseWithEnv(rawNegPause, mockGetenv(nil))
-	if err == nil || !strings.Contains(err.Error(), "rotation pause_duration_seconds must be non-negative") {
-		t.Fatalf("expected negative pause duration error, got %v", err)
-	}
-
-	// Invalid transition
-	rawTransition := []byte(`
-timezone: UTC
-display:
-  rotation:
-    transition: "zoom-in"
-  widgets:
-    - id: test
-      type: spacer
-`)
-	_, err = config.ParseWithEnv(rawTransition, mockGetenv(nil))
-	if err == nil || !strings.Contains(err.Error(), "invalid rotation transition 'zoom-in'") {
-		t.Fatalf("expected invalid transition error, got %v", err)
-	}
-
-	// Valid transitions
-	for _, tr := range []string{"slide", "fade", "instant", "none"} {
-		raw := []byte(`
-timezone: UTC
-display:
-  rotation:
-    transition: "` + tr + `"
-  widgets:
-    - id: test
-      type: spacer
-`)
-		cfg, err := config.ParseWithEnv(raw, mockGetenv(nil))
-		if err != nil {
-			t.Fatalf("unexpected error for transition %s: %v", tr, err)
-		}
-		if cfg.Display.Rotation.GetTransition() != tr {
-			t.Errorf("expected transition %s, got %s", tr, cfg.Display.Rotation.GetTransition())
-		}
-	}
-}
-
-func TestValidate_HeaderWeather(t *testing.T) {
-	t.Parallel()
-
-	// Non-positive refresh interval
-	rawInterval := []byte(`
-timezone: UTC
-display:
-  header:
-    weather:
-      refresh_interval_seconds: 0
-      latitude: 37.8
-      longitude: -122.2
-  widgets:
-    - id: test
-      type: spacer
-`)
-	_, err := config.ParseWithEnv(rawInterval, mockGetenv(nil))
-	if err == nil || !strings.Contains(err.Error(), "header weather refresh_interval_seconds must be positive") {
-		t.Fatalf("expected non-positive interval error, got %v", err)
-	}
-
-	// Latitude out of bounds
-	rawLat := []byte(`
-timezone: UTC
-display:
-  header:
-    weather:
-      refresh_interval_seconds: 300
-      latitude: 95.0
-      longitude: -122.2
-  widgets:
-    - id: test
-      type: spacer
-`)
-	_, err = config.ParseWithEnv(rawLat, mockGetenv(nil))
-	if err == nil || !strings.Contains(err.Error(), "latitude must be between -90 and 90") {
-		t.Fatalf("expected latitude bounds error, got %v", err)
-	}
-
-	// Longitude out of bounds
-	rawLon := []byte(`
-timezone: UTC
-display:
-  header:
-    weather:
-      refresh_interval_seconds: 300
-      latitude: 37.8
-      longitude: -190.0
-  widgets:
-    - id: test
-      type: spacer
-`)
-	_, err = config.ParseWithEnv(rawLon, mockGetenv(nil))
-	if err == nil || !strings.Contains(err.Error(), "longitude must be between -180 and 180") {
-		t.Fatalf("expected longitude bounds error, got %v", err)
-	}
-
-	// Invalid units
-	rawUnits := []byte(`
-timezone: UTC
-display:
-  header:
-    weather:
-      refresh_interval_seconds: 300
-      latitude: 37.8
-      longitude: -122.2
-      units: kelvin
-  widgets:
-    - id: test
-      type: spacer
-`)
-	_, err = config.ParseWithEnv(rawUnits, mockGetenv(nil))
-	if err == nil || !strings.Contains(err.Error(), "invalid header weather units 'kelvin'") {
-		t.Fatalf("expected units error, got %v", err)
-	}
-
-	// Metric units valid
-	rawMetric := []byte(`
-timezone: UTC
-display:
-  header:
-    weather:
-      refresh_interval_seconds: 300
-      latitude: 37.8
-      longitude: -122.2
-      units: metric
-  widgets:
-    - id: test
-      type: spacer
-`)
-	cfg, err := config.ParseWithEnv(rawMetric, mockGetenv(nil))
-	if err != nil {
-		t.Fatalf("unexpected error for metric units: %v", err)
-	}
-	if cfg.Display.Header.Weather.Units != "metric" {
-		t.Errorf("expected units metric, got %s", cfg.Display.Header.Weather.Units)
-	}
-}
-
-func TestValidate_DisallowedRootHeader(t *testing.T) {
-	t.Parallel()
-
-	raw := []byte(`
-timezone: UTC
-header:
-  enabled: true
-  elements:
-    - clock
-    - date
-display:
-  widgets:
-    - id: test
-      type: spacer
-`)
-	_, err := config.ParseWithEnv(raw, mockGetenv(nil))
-	if err == nil || !strings.Contains(err.Error(), "configuration contains disallowed top-level key 'header': header must be configured under display.header") {
-		t.Fatalf("expected disallowed root header error, got %v", err)
-	}
-}
-
-func TestValidate_Widgets(t *testing.T) {
-	t.Parallel()
-
-	// Missing ID
-	rawMissingID := []byte(`
-timezone: UTC
-display:
-  widgets:
-    - type: spacer
-`)
-	_, err := config.ParseWithEnv(rawMissingID, mockGetenv(nil))
-	if err == nil || !strings.Contains(err.Error(), "missing required field 'id'") {
-		t.Fatalf("expected missing id error, got %v", err)
-	}
-
-	// Duplicate ID
-	rawDuplicateID := []byte(`
-timezone: UTC
-display:
-  widgets:
-    - id: my-widget
-      type: spacer
-    - id: my-widget
-      type: spacer
-`)
-	_, err = config.ParseWithEnv(rawDuplicateID, mockGetenv(nil))
-	if err == nil || !strings.Contains(err.Error(), "duplicate widget id 'my-widget'") {
-		t.Fatalf("expected duplicate id error, got %v", err)
-	}
-
-	// Missing Type
-	rawMissingType := []byte(`
-timezone: UTC
-display:
-  widgets:
-    - id: my-widget
-`)
-	_, err = config.ParseWithEnv(rawMissingType, mockGetenv(nil))
-	if err == nil || !strings.Contains(err.Error(), "missing required field 'type'") {
-		t.Fatalf("expected missing type error, got %v", err)
-	}
-
-	// Invalid dimensions length
-	rawDimLen := []byte(`
-timezone: UTC
-display:
-  widgets:
-    - id: my-widget
-      type: spacer
-      dimensions: [4, 2, 1]
-`)
-	_, err = config.ParseWithEnv(rawDimLen, mockGetenv(nil))
-	if err == nil || !strings.Contains(err.Error(), "dimensions must contain exactly 2 integers") {
-		t.Fatalf("expected dimensions length error, got %v", err)
-	}
-
-	// Dimensions out of bounds (cols > 6)
-	rawDimCols := []byte(`
-timezone: UTC
-display:
-  widgets:
-    - id: my-widget
-      type: spacer
-      dimensions: [7, 2]
-`)
-	_, err = config.ParseWithEnv(rawDimCols, mockGetenv(nil))
-	if err == nil || !strings.Contains(err.Error(), "cols must be 1..6") {
-		t.Fatalf("expected cols bound error, got %v", err)
-	}
-
-	// Dimensions out of bounds (rows > 2)
-	rawDimRows := []byte(`
-timezone: UTC
-display:
-  widgets:
-    - id: my-widget
-      type: spacer
-      dimensions: [4, 3]
-`)
-	_, err = config.ParseWithEnv(rawDimRows, mockGetenv(nil))
-	if err == nil || !strings.Contains(err.Error(), "rows must be 1..2") {
-		t.Fatalf("expected rows bound error, got %v", err)
-	}
-
-	// Dimensions out of bounds (cols < 1)
-	rawDimZero := []byte(`
-timezone: UTC
-display:
-  widgets:
-    - id: my-widget
-      type: spacer
-      dimensions: [0, 1]
-`)
-	_, err = config.ParseWithEnv(rawDimZero, mockGetenv(nil))
-	if err == nil || !strings.Contains(err.Error(), "cols must be 1..6") {
-		t.Fatalf("expected zero col bound error, got %v", err)
-	}
-
-	// Non-positive refresh interval
-	rawRefresh := []byte(`
-timezone: UTC
-display:
-  widgets:
-    - id: my-widget
-      type: spacer
-      refresh_interval_seconds: 0
-`)
-	_, err = config.ParseWithEnv(rawRefresh, mockGetenv(nil))
-	if err == nil || !strings.Contains(err.Error(), "refresh_interval_seconds must be positive") {
-		t.Fatalf("expected non-positive refresh error, got %v", err)
-	}
-
-	// Invalid HTTP method
-	rawMethod := []byte(`
-timezone: UTC
-display:
-  widgets:
-    - id: my-widget
-      type: sensor-card
-      endpoint: "http://ha-bridge:8095/data"
-      method: "DELETE"
-`)
-	_, err = config.ParseWithEnv(rawMethod, mockGetenv(nil))
-	if err == nil || !strings.Contains(err.Error(), "invalid http method 'DELETE'") {
-		t.Fatalf("expected invalid method error, got %v", err)
-	}
-
-	// HTTP method normalization and default POST
-	rawDefaultMethod := []byte(`
-timezone: UTC
-display:
-  widgets:
-    - id: widget-1
-      type: sensor-card
-      endpoint: "http://ha-bridge:8095/data"
-    - id: widget-2
-      type: sensor-card
-      endpoint: "http://ha-bridge:8095/data"
-      method: "get"
-`)
-	cfg, err := config.ParseWithEnv(rawDefaultMethod, mockGetenv(nil))
-	if err != nil {
-		t.Fatalf("unexpected error parsing methods: %v", err)
-	}
-	if cfg.Display.Widgets[0].Method != "POST" {
-		t.Errorf("expected default method POST, got %s", cfg.Display.Widgets[0].Method)
-	}
-	if cfg.Display.Widgets[1].Method != "GET" {
-		t.Errorf("expected normalized method GET, got %s", cfg.Display.Widgets[1].Method)
-	}
-}
-
-func TestResolveEnv_TokenEnv(t *testing.T) {
-	t.Parallel()
-
-	raw := []byte(`
-timezone: UTC
-display:
-  widgets:
-    - id: living-room-temp
-      type: sensor-card
-      endpoint: "http://ha-bridge:8095/data"
-      token_env: SENSOR_HUD_TOKEN
-`)
-
-	// Missing env var
-	_, err := config.ParseWithEnv(raw, mockGetenv(nil))
-	if err == nil {
-		t.Fatal("expected error for unset token_env, got nil")
-	}
-	expected := "widget 'living-room-temp': environment variable 'SENSOR_HUD_TOKEN' defined in token_env is unset or empty"
-	if err.Error() != expected {
-		t.Fatalf("expected exact error %q, got %q", expected, err.Error())
-	}
-
-	// Present env var
-	env := map[string]string{
-		"SENSOR_HUD_TOKEN": "secret-token-12345",
-	}
-	cfg, err := config.ParseWithEnv(raw, mockGetenv(env))
-	if err != nil {
-		t.Fatalf("unexpected error resolving token_env: %v", err)
-	}
-	if cfg.Display.Widgets[0].Token != "secret-token-12345" {
-		t.Errorf("expected token secret-token-12345, got %s", cfg.Display.Widgets[0].Token)
-	}
-}
-
-func TestResolveEnv_NestedConfig(t *testing.T) {
-	t.Parallel()
-
-	raw := []byte(`
-timezone: UTC
-display:
-  widgets:
-    - id: calendar
-      type: calendar-agenda
-      config:
-        calendars:
-          - name: "Personal"
-            url_env: PERSONAL_CAL_URL
-`)
-
-	// Missing nested env var
-	_, err := config.ParseWithEnv(raw, mockGetenv(nil))
-	if err == nil {
-		t.Fatal("expected error for unset url_env, got nil")
-	}
-	if !strings.Contains(err.Error(), "PERSONAL_CAL_URL") {
-		t.Fatalf("expected error mentioning PERSONAL_CAL_URL, got %v", err)
-	}
-
-	// Present nested env var
-	env := map[string]string{
-		"PERSONAL_CAL_URL": "https://calendar.google.com/feed.ics",
-	}
-	cfg, err := config.ParseWithEnv(raw, mockGetenv(env))
-	if err != nil {
-		t.Fatalf("unexpected error resolving nested url_env: %v", err)
-	}
-	cals := cfg.Display.Widgets[0].Config["calendars"].([]any)
-	calMap := cals[0].(map[string]any)
-	if _, exists := calMap["url"]; exists {
-		t.Errorf("expected secret key 'url' NOT to be written into Config map, got %v", calMap["url"])
-	}
-	if calMap["url_env"] != "PERSONAL_CAL_URL" {
-		t.Errorf("expected 'url_env' to remain in Config map, got %v", calMap["url_env"])
-	}
-	expectedSecret := "https://calendar.google.com/feed.ics"
-	if cfg.Display.Widgets[0].Secrets["calendars[0].url"] != expectedSecret {
-		t.Errorf("expected secret at 'calendars[0].url' to be %q, got %q", expectedSecret, cfg.Display.Widgets[0].Secrets["calendars[0].url"])
-	}
-
-	// Invalid: non-string value for *_env
-	rawNonString := []byte(`
-timezone: UTC
-display:
-  widgets:
-    - id: calendar
-      type: calendar-agenda
-      config:
-        url_env: 12345
-`)
-	_, err = config.ParseWithEnv(rawNonString, mockGetenv(nil))
-	if err == nil || !strings.Contains(err.Error(), "must specify a non-empty environment variable name") {
-		t.Fatalf("expected error for non-string env var name, got %v", err)
-	}
-
-	// Invalid: both base key and *_env key specified
-	rawBoth := []byte(`
-timezone: UTC
-display:
-  widgets:
-    - id: calendar
-      type: calendar-agenda
-      config:
-        url: "http://public.feed"
-        url_env: PERSONAL_CAL_URL
-`)
-	_, err = config.ParseWithEnv(rawBoth, mockGetenv(env))
-	if err == nil || !strings.Contains(err.Error(), "cannot specify both 'url' and 'url_env'") {
-		t.Fatalf("expected cannot specify both error, got %v", err)
-	}
-}
-
-func TestConfig_AccessorsAndDefaults(t *testing.T) {
-	t.Parallel()
-
-	// Default rotation and header elements
-	raw := []byte(`
-timezone: America/New_York
-display:
-  widgets:
-    - id: spacer-1
-      type: spacer
-`)
-	cfg, err := config.ParseWithEnv(raw, mockGetenv(nil))
-	if err != nil {
-		t.Fatalf("unexpected error parsing minimal config: %v", err)
-	}
-
-	if cfg.Display.Rotation.GetIntervalSeconds() != 30 {
-		t.Errorf("expected default interval 30, got %d", cfg.Display.Rotation.GetIntervalSeconds())
-	}
-	if cfg.Display.Rotation.GetTransition() != "slide" {
-		t.Errorf("expected default transition slide, got %s", cfg.Display.Rotation.GetTransition())
-	}
-	if !cfg.Display.Rotation.GetPauseOnTouch() {
-		t.Error("expected default pause_on_touch true")
-	}
-	if cfg.Display.Rotation.GetPauseDurationSeconds() != 120 {
-		t.Errorf("expected default pause_duration_seconds 120, got %d", cfg.Display.Rotation.GetPauseDurationSeconds())
-	}
-	if !cfg.Display.Header.IsEnabled() {
-		t.Error("expected default header enabled true")
-	}
-	defaultElements := config.DefaultHeaderElements()
-	if len(defaultElements) != 4 || defaultElements[0] != "clock" {
-		t.Errorf("unexpected default elements: %v", defaultElements)
-	}
-
-	// Custom rotation with interval_seconds: 0 (disabled rotation)
-	zero := 0
-	pause := false
-	pauseDur := 60
-	enabled := false
-	customRot := config.Config{
-		Timezone: "UTC",
-		Display: config.DisplayConfig{
-			Grid: config.GridConfig{Columns: 6, Rows: 2},
-			Rotation: config.RotationConfig{
-				IntervalSeconds:      &zero,
-				Transition:           "fade",
-				PauseOnTouch:         &pause,
-				PauseDurationSeconds: &pauseDur,
-			},
-			Header: config.HeaderConfig{
-				Enabled: &enabled,
-			},
-		},
-	}
-	if customRot.Display.Rotation.GetIntervalSeconds() != 0 {
-		t.Errorf("expected explicit interval 0, got %d", customRot.Display.Rotation.GetIntervalSeconds())
-	}
-	if customRot.Display.Rotation.GetTransition() != "fade" {
-		t.Errorf("expected explicit transition fade, got %s", customRot.Display.Rotation.GetTransition())
-	}
-	if customRot.Display.Rotation.GetPauseOnTouch() {
-		t.Error("expected explicit pause_on_touch false")
-	}
-	if customRot.Display.Rotation.GetPauseDurationSeconds() != 60 {
-		t.Errorf("expected explicit pause_duration_seconds 60, got %d", customRot.Display.Rotation.GetPauseDurationSeconds())
-	}
-	if customRot.Display.Header.IsEnabled() {
-		t.Error("expected explicit header enabled false")
-	}
-}
-
-func TestConfig_HideCursor(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name       string
-		yaml       string
-		wantHidden bool
-	}{
-		{
-			name: "omitted defaults to false",
-			yaml: `
-timezone: America/New_York
-display:
-  widgets:
-    - id: spacer-1
-      type: spacer
-`,
-			wantHidden: false,
-		},
-		{
-			name: "explicitly true",
-			yaml: `
-timezone: America/New_York
-display:
-  hide_cursor: true
-  widgets:
-    - id: spacer-1
-      type: spacer
-`,
-			wantHidden: true,
-		},
-		{
-			name: "explicitly false",
-			yaml: `
-timezone: America/New_York
-display:
-  hide_cursor: false
-  widgets:
-    - id: spacer-1
-      type: spacer
-`,
-			wantHidden: false,
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			cfg, err := config.ParseWithEnv([]byte(tc.yaml), mockGetenv(nil))
-			if err != nil {
-				t.Fatalf("unexpected parse error: %v", err)
-			}
-			if cfg.Display.HideCursor != tc.wantHidden {
-				t.Errorf("expected HideCursor=%v, got %v", tc.wantHidden, cfg.Display.HideCursor)
-			}
-		})
-	}
-}
-
-func TestConfig_RemoteURL(t *testing.T) {
+func TestParseWithEnv_ValidationErrors(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
 		name    string
 		yaml    string
-		wantURL string
+		wantErr string
+	}{
+		{name: "empty input", yaml: "", wantErr: "configuration file is empty"},
+		{name: "whitespace only", yaml: "   \n\t  \n", wantErr: "configuration file is empty"},
+		{name: "comments only", yaml: "# Just a comment\n# Another comment\n", wantErr: "configuration file is empty"},
+		{name: "syntax error", yaml: "display: [unclosed", wantErr: "YAML syntax error"},
+		{name: "root not mapping", yaml: "- item 1\n- item 2\n", wantErr: "configuration root must be a YAML mapping"},
+		{name: "decode error", yaml: "timezone: UTC\ndisplay:\n  rotation: \"scalar-not-mapping\"\n  widgets:\n    - id: w1\n      type: spacer\n", wantErr: "failed to decode configuration"},
+		{name: "interpolation prohibited", yaml: "timezone: ${TZ}\ndisplay:\n  widgets:\n    - id: w1\n      type: spacer\n", wantErr: "arbitrary '${...}' string interpolation is prohibited"},
+		{name: "disallowed screens top-level", yaml: "screens:\n  - id: s1\n" + withBaseYAML(""), wantErr: "disallowed top-level key 'screens'"},
+		{name: "disallowed providers top-level", yaml: "providers:\n  p1: {}\n" + withBaseYAML(""), wantErr: "disallowed top-level key 'providers'"},
+		{name: "disallowed header top-level", yaml: "header:\n  enabled: true\n" + withBaseYAML(""), wantErr: "disallowed top-level key 'header'"},
+		{name: "unknown top-level key", yaml: "bogus_key: 123\n" + withBaseYAML(""), wantErr: "unknown or disallowed top-level key 'bogus_key'"},
+		{name: "disallowed screens under display", yaml: "timezone: UTC\ndisplay:\n  screens: []\n  widgets:\n    - id: w1\n      type: spacer\n", wantErr: "display contains disallowed key 'screens'"},
+		{name: "disallowed providers under display", yaml: "timezone: UTC\ndisplay:\n  providers: {}\n  widgets:\n    - id: w1\n      type: spacer\n", wantErr: "display contains disallowed key 'providers'"},
+		{name: "unknown display key", yaml: "timezone: UTC\ndisplay:\n  bogus_display: 1\n  widgets:\n    - id: w1\n      type: spacer\n", wantErr: "unknown key 'bogus_display' under display"},
+		{name: "missing timezone", yaml: "display:\n  widgets:\n    - id: w1\n      type: spacer\n", wantErr: "missing required configuration field 'timezone'"},
+		{name: "invalid timezone", yaml: "timezone: Invalid/Zone_Name\ndisplay:\n  widgets:\n    - id: w1\n      type: spacer\n", wantErr: "invalid timezone 'Invalid/Zone_Name'"},
+		{name: "grid columns invalid", yaml: withBaseYAML("  grid:\n    columns: 5\n    rows: 2\n"), wantErr: "grid columns must be 6"},
+		{name: "grid rows invalid", yaml: withBaseYAML("  grid:\n    columns: 6\n    rows: 3\n"), wantErr: "grid rows must be 2"},
+		{name: "negative rotation interval", yaml: withBaseYAML("  rotation:\n    interval_seconds: -5\n"), wantErr: "rotation interval_seconds must be non-negative"},
+		{name: "negative rotation pause", yaml: withBaseYAML("  rotation:\n    pause_duration_seconds: -1\n"), wantErr: "rotation pause_duration_seconds must be non-negative"},
+		{name: "invalid rotation transition", yaml: withBaseYAML("  rotation:\n    transition: zoom\n"), wantErr: "invalid rotation transition 'zoom'"},
+		{name: "location lat out of bounds", yaml: withBaseYAML("location:\n  latitude: 95.0\n  longitude: -122.2\n"), wantErr: "location latitude must be between -90 and 90"},
+		{name: "location lon out of bounds", yaml: withBaseYAML("location:\n  latitude: 37.8\n  longitude: -195.0\n"), wantErr: "location longitude must be between -180 and 180"},
+		{name: "theme invalid mode", yaml: withBaseYAML("  theme:\n    mode: cyberpunk\n"), wantErr: "invalid theme mode 'cyberpunk'"},
+		{name: "theme auto without coordinates", yaml: withBaseYAML("  theme:\n    mode: auto\n"), wantErr: "theme mode 'auto' requires location coordinates"},
+		{name: "header weather non-positive interval", yaml: withBaseYAML("  header:\n    weather:\n      refresh_interval_seconds: 0\n      latitude: 37.0\n      longitude: -122.0\n      units: imperial\n"), wantErr: "header weather refresh_interval_seconds must be positive"},
+		{name: "header weather lat out of bounds", yaml: "location:\n  latitude: 0\n  longitude: 0\n" + withBaseYAML("  header:\n    weather:\n      latitude: -95.0\n      longitude: -122.0\n      units: imperial\n"), wantErr: "header weather latitude must be between -90 and 90"},
+		{name: "header weather lon out of bounds", yaml: "location:\n  latitude: 0\n  longitude: 0\n" + withBaseYAML("  header:\n    weather:\n      latitude: 37.0\n      longitude: 200.0\n      units: imperial\n"), wantErr: "header weather longitude must be between -180 and 180"},
+		{name: "header weather invalid units", yaml: withBaseYAML("  header:\n    weather:\n      latitude: 37.0\n      longitude: -122.0\n      units: kelvin\n"), wantErr: "invalid header weather units 'kelvin'"},
+		{name: "widget missing id", yaml: "timezone: UTC\ndisplay:\n  widgets:\n    - type: spacer\n", wantErr: "missing required field 'id'"},
+		{name: "widget duplicate id", yaml: "timezone: UTC\ndisplay:\n  widgets:\n    - id: dup\n      type: spacer\n    - id: dup\n      type: spacer\n", wantErr: "duplicate widget id 'dup'"},
+		{name: "widget missing type", yaml: "timezone: UTC\ndisplay:\n  widgets:\n    - id: w1\n", wantErr: "widget 'w1' is missing required field 'type'"},
+		{name: "widget invalid dimensions count", yaml: "timezone: UTC\ndisplay:\n  widgets:\n    - id: w1\n      type: spacer\n      dimensions: [1, 2, 3]\n", wantErr: "dimensions must contain exactly 2 integers"},
+		{name: "widget dimensions cols out of range", yaml: "timezone: UTC\ndisplay:\n  widgets:\n    - id: w1\n      type: spacer\n      dimensions: [7, 1]\n", wantErr: "cols must be 1..6, rows must be 1..2"},
+		{name: "widget dimensions rows out of range", yaml: "timezone: UTC\ndisplay:\n  widgets:\n    - id: w1\n      type: spacer\n      dimensions: [1, 3]\n", wantErr: "cols must be 1..6, rows must be 1..2"},
+		{name: "widget dimensions zero", yaml: "timezone: UTC\ndisplay:\n  widgets:\n    - id: w1\n      type: spacer\n      dimensions: [0, 1]\n", wantErr: "cols must be 1..6, rows must be 1..2"},
+		{name: "widget non-positive refresh", yaml: "timezone: UTC\ndisplay:\n  widgets:\n    - id: w1\n      type: spacer\n      refresh_interval_seconds: 0\n", wantErr: "refresh_interval_seconds must be positive"},
+		{name: "widget invalid http method", yaml: "timezone: UTC\ndisplay:\n  widgets:\n    - id: w1\n      type: spacer\n      method: DELETE\n", wantErr: "invalid http method 'DELETE'"},
+		{name: "widget invalid endpoint url", yaml: "timezone: UTC\ndisplay:\n  widgets:\n    - id: w1\n      type: spacer\n      endpoint: ftp://example.com/api\n", wantErr: "invalid endpoint URL 'ftp://example.com/api'"},
+		{name: "chat_log non-positive ttl", yaml: withBaseYAML("chat_log:\n  ttl_minutes: 0\n"), wantErr: "chat_log ttl_minutes must be positive"},
+		{name: "chat_log non-positive max_messages", yaml: withBaseYAML("chat_log:\n  max_messages_per_node: -1\n"), wantErr: "chat_log max_messages_per_node must be positive"},
+		{name: "voice_hub brain timeout non-positive", yaml: withBaseYAML("voice_hub:\n  enabled: true\n  brain_timeout_seconds: 0\n"), wantErr: "voice_hub brain_timeout_seconds must be positive"},
+		{name: "voice_hub tts timeout non-positive", yaml: withBaseYAML("voice_hub:\n  enabled: true\n  tts_timeout_seconds: -2\n"), wantErr: "voice_hub tts_timeout_seconds must be positive"},
+		{name: "fast_path timeout_ms non-positive", yaml: withBaseYAML("voice_hub:\n  enabled: true\n  fast_path:\n    url: http://127.0.0.1:8000/intent\n    timeout_ms: 0\n"), wantErr: "voice_hub fast_path timeout_ms must be positive"},
+		{name: "fast_path invalid url", yaml: withBaseYAML("voice_hub:\n  enabled: true\n  fast_path:\n    url: not-a-valid-url\n"), wantErr: "voice_hub fast_path url must be an http(s) URL"},
+		{name: "speaker_id missing embed_url", yaml: withBaseYAML("voice_hub:\n  enabled: true\n  speaker_id:\n    fingerprints_path: /path/to/fp.json\n"), wantErr: "voice_hub speaker_id requires both embed_url and fingerprints_path"},
+		{name: "speaker_id missing fingerprints_path", yaml: withBaseYAML("voice_hub:\n  enabled: true\n  speaker_id:\n    embed_url: http://127.0.0.1:8080/embed\n"), wantErr: "voice_hub speaker_id requires both embed_url and fingerprints_path"},
+		{name: "speaker_id threshold zero", yaml: withBaseYAML("voice_hub:\n  enabled: true\n  speaker_id:\n    embed_url: http://127.0.0.1:8080/embed\n    fingerprints_path: /path/to/fp.json\n    threshold: 0.0\n"), wantErr: "voice_hub speaker_id threshold must be in (0, 1]"},
+		{name: "speaker_id threshold greater than 1", yaml: withBaseYAML("voice_hub:\n  enabled: true\n  speaker_id:\n    embed_url: http://127.0.0.1:8080/embed\n    fingerprints_path: /path/to/fp.json\n    threshold: 1.5\n"), wantErr: "voice_hub speaker_id threshold must be in (0, 1]"},
+		{name: "speaker_id timeout_seconds non-positive", yaml: withBaseYAML("voice_hub:\n  enabled: true\n  speaker_id:\n    embed_url: http://127.0.0.1:8080/embed\n    fingerprints_path: /path/to/fp.json\n    timeout_seconds: -1\n"), wantErr: "voice_hub speaker_id timeout_seconds must be positive"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := config.ParseWithEnv([]byte(tc.yaml), mockGetenv(nil))
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("ParseWithEnv() err = %v, want substring %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestParseWithEnv_ValidConfigsAndDefaults(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name                string
+		yaml                string
+		getenv              func(string) string
+		wantTransition      string
+		wantWeatherUnits    string
+		wantWeatherInterval int
+		wantMethod          string
+		wantHideCursor      bool
+		wantRemoteURL       string
+		wantVoiceHub        bool
+		wantSpeakerID       bool
+		wantFastPath        bool
+		wantVideoEnabled    bool
+		wantVideoStream     string
+		wantChatTTL         time.Duration
+		wantChatMax         int
+		wantLocName         string
+		wantLat             float64
+		wantThemeMode       string
+		wantForecastLoc     string
 	}{
 		{
-			name: "explicit remote_url",
-			yaml: `
-timezone: "UTC"
-display:
-  remote_url: "http://mirrormere-remote.aerial"
-  widgets:
-    - id: spacer-1
-      type: spacer
-`,
-			wantURL: "http://mirrormere-remote.aerial",
+			name:           "comment interpolation allowed and default transition",
+			yaml:           "# ${VAR} in comment is allowed\n" + withBaseYAML(""),
+			wantTransition: "slide",
 		},
 		{
-			name: "omitted remote_url defaults to empty",
-			yaml: `
-timezone: "UTC"
+			name:           "rotation transition fade",
+			yaml:           withBaseYAML("  rotation:\n    transition: fade\n"),
+			wantTransition: "fade",
+		},
+		{
+			name:           "rotation transition instant",
+			yaml:           withBaseYAML("  rotation:\n    transition: instant\n"),
+			wantTransition: "instant",
+		},
+		{
+			name:           "rotation transition none",
+			yaml:           withBaseYAML("  rotation:\n    transition: none\n"),
+			wantTransition: "none",
+		},
+		{
+			name:                "header weather metric and omitted refresh interval",
+			yaml:                withBaseYAML("  header:\n    weather:\n      units: metric\n      latitude: 37.0\n      longitude: -122.0\n"),
+			wantWeatherUnits:    "metric",
+			wantWeatherInterval: 900,
+		},
+		{
+			name:       "widget http method get normalization",
+			yaml:       "timezone: UTC\ndisplay:\n  widgets:\n    - id: w1\n      type: spacer\n      method: get\n",
+			wantMethod: "GET",
+		},
+		{
+			name:       "widget default method POST with endpoint",
+			yaml:       "timezone: UTC\ndisplay:\n  widgets:\n    - id: w1\n      type: spacer\n      endpoint: http://example.com/api\n",
+			wantMethod: "POST",
+		},
+		{
+			name:           "hide_cursor and remote_url",
+			yaml:           withBaseYAML("  hide_cursor: true\n  remote_url: http://localhost:8080/display\n"),
+			wantHideCursor: true,
+			wantRemoteURL:  "http://localhost:8080/display",
+		},
+		{
+			name:           "nil getenv fallback",
+			yaml:           withBaseYAML(""),
+			getenv:         nil,
+			wantTransition: "slide",
+		},
+		{
+			name: "voice hub speaker id and fast path valid",
+			yaml: withBaseYAML("voice_hub:\n  enabled: true\n  fast_path:\n    url: http://127.0.0.1:8000/intent\n  speaker_id:\n    embed_url: http://127.0.0.1:8080/embed\n    fingerprints_path: /path/to/fp.json\n"),
+			wantVoiceHub:  true,
+			wantFastPath:   true,
+			wantSpeakerID:  true,
+		},
+		{
+			name:             "header video valid config",
+			yaml:             withBaseYAML("  header:\n    video:\n      enabled: true\n      stream_id: frontdoor\n      type: webrtc\n"),
+			wantVideoEnabled: true,
+			wantVideoStream:  "frontdoor",
+		},
+		{
+			name:        "chat log defaults when omitted",
+			yaml:        withBaseYAML(""),
+			wantChatTTL: 20 * time.Minute,
+			wantChatMax: 50,
+		},
+		{
+			name:        "chat log custom values",
+			yaml:        withBaseYAML("chat_log:\n  ttl_minutes: 5\n  max_messages_per_node: 12\n"),
+			wantChatTTL: 5 * time.Minute,
+			wantChatMax: 12,
+		},
+		{
+			name: "location and theme propagation",
+			yaml: `timezone: America/Los_Angeles
+location:
+  name: Oakland Hills
+  latitude: 37.8044
+  longitude: -122.2712
 display:
+  theme:
+    mode: auto
+  header:
+    weather:
+      units: imperial
   widgets:
-    - id: spacer-1
+    - id: forecast-1
+      type: weather-forecast
+`,
+			wantLocName:     "Oakland Hills",
+			wantLat:         37.8044,
+			wantThemeMode:   "auto",
+			wantForecastLoc: "Oakland Hills",
+		},
+		{
+			name: "legacy header weather to location propagation",
+			yaml: `timezone: America/Los_Angeles
+display:
+  theme:
+    mode: auto
+  header:
+    weather:
+      location: Oakland
+      latitude: 37.8
+      longitude: -122.2
+  widgets:
+    - id: w1
       type: spacer
 `,
-			wantURL: "",
+			wantLocName:   "Oakland",
+			wantLat:       37.8,
+			wantThemeMode: "auto",
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			cfg, err := config.ParseWithEnv([]byte(tc.yaml), mockGetenv(nil))
-			if err != nil {
-				t.Fatalf("unexpected parse error: %v", err)
+			getenv := tc.getenv
+			if getenv == nil && tc.name != "nil getenv fallback" {
+				getenv = mockGetenv(nil)
 			}
-			if cfg.Display.RemoteURL != tc.wantURL {
-				t.Errorf("expected RemoteURL=%q, got %q", tc.wantURL, cfg.Display.RemoteURL)
+			cfg, err := config.ParseWithEnv([]byte(tc.yaml), getenv)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if tc.wantTransition != "" && cfg.Display.Rotation.GetTransition() != tc.wantTransition {
+				t.Errorf("transition = %q, want %q", cfg.Display.Rotation.GetTransition(), tc.wantTransition)
+			}
+			if tc.wantWeatherUnits != "" && (cfg.Display.Header.Weather == nil || cfg.Display.Header.Weather.Units != tc.wantWeatherUnits) {
+				t.Errorf("weather units = %v, want %q", cfg.Display.Header.Weather, tc.wantWeatherUnits)
+			}
+			if tc.wantWeatherInterval != 0 && (cfg.Display.Header.Weather == nil || cfg.Display.Header.Weather.GetRefreshIntervalSeconds() != tc.wantWeatherInterval) {
+				t.Errorf("weather interval = %v, want %d", cfg.Display.Header.Weather, tc.wantWeatherInterval)
+			}
+			if tc.wantMethod != "" && (len(cfg.Display.Widgets) == 0 || cfg.Display.Widgets[0].Method != tc.wantMethod) {
+				t.Errorf("widget method = %v, want %q", cfg.Display.Widgets, tc.wantMethod)
+			}
+			if tc.wantHideCursor && !cfg.Display.HideCursor {
+				t.Errorf("hide_cursor = false, want true")
+			}
+			if tc.wantRemoteURL != "" && cfg.Display.RemoteURL != tc.wantRemoteURL {
+				t.Errorf("remote_url = %q, want %q", cfg.Display.RemoteURL, tc.wantRemoteURL)
+			}
+			if tc.wantVoiceHub && !cfg.VoiceHub.IsEnabled() {
+				t.Errorf("voice_hub is_enabled = false, want true")
+			}
+			if tc.wantFastPath && (cfg.VoiceHub == nil || !cfg.VoiceHub.FastPath.IsEnabled()) {
+				t.Errorf("fast_path is_enabled = false, want true")
+			}
+			if tc.wantSpeakerID && (cfg.VoiceHub == nil || !cfg.VoiceHub.SpeakerID.IsEnabled()) {
+				t.Errorf("speaker_id is_enabled = false, want true")
+			}
+			if tc.wantVideoEnabled && (cfg.Display.Header.Video == nil || !cfg.Display.Header.Video.IsEnabled()) {
+				t.Errorf("header video is_enabled = false, want true")
+			}
+			if tc.wantVideoStream != "" && (cfg.Display.Header.Video == nil || cfg.Display.Header.Video.GetStreamID() != tc.wantVideoStream) {
+				t.Errorf("header video stream = %v, want %q", cfg.Display.Header.Video, tc.wantVideoStream)
+			}
+			if tc.wantChatTTL != 0 && cfg.ChatLog.GetTTL() != tc.wantChatTTL {
+				t.Errorf("chat_log TTL = %v, want %v", cfg.ChatLog.GetTTL(), tc.wantChatTTL)
+			}
+			if tc.wantChatMax != 0 && cfg.ChatLog.GetMaxMessagesPerNode() != tc.wantChatMax {
+				t.Errorf("chat_log max = %v, want %d", cfg.ChatLog.GetMaxMessagesPerNode(), tc.wantChatMax)
+			}
+			if tc.wantLocName != "" && (cfg.GetLocationConfig() == nil || cfg.GetLocationConfig().Name != tc.wantLocName) {
+				t.Errorf("location name = %v, want %q", cfg.GetLocationConfig(), tc.wantLocName)
+			}
+			if tc.wantLat != 0 && (cfg.GetLocationConfig() == nil || cfg.GetLocationConfig().GetLatitude() != tc.wantLat) {
+				t.Errorf("latitude = %v, want %f", cfg.GetLocationConfig(), tc.wantLat)
+			}
+			if tc.wantThemeMode != "" && (cfg.Display.Theme == nil || cfg.Display.Theme.GetMode() != tc.wantThemeMode) {
+				t.Errorf("theme mode = %v, want %q", cfg.Display.Theme, tc.wantThemeMode)
+			}
+			if tc.wantForecastLoc != "" {
+				found := false
+				for _, w := range cfg.Display.Widgets {
+					if w.Type == "weather-forecast" {
+						found = true
+						if w.Config["location_name"] != tc.wantForecastLoc {
+							t.Errorf("forecast location_name = %v, want %q", w.Config["location_name"], tc.wantForecastLoc)
+						}
+					}
+				}
+				if !found {
+					t.Errorf("expected weather-forecast widget, none found")
+				}
 			}
 		})
 	}
 }
 
-func TestConfig_LocationFallback(t *testing.T) {
+func TestResolveEnv(t *testing.T) {
 	t.Parallel()
 
-	// Location when invalid timezone manually injected
-	badCfg := config.Config{Timezone: "Invalid/Zone"}
-	loc := badCfg.Location()
-	if loc.String() != "UTC" {
-		t.Errorf("expected fallback to UTC on invalid timezone, got %v", loc)
+	tests := []struct {
+		name         string
+		cfg          *config.Config
+		env          map[string]string
+		useNilGetenv bool
+		wantToken    string
+		wantSecrets  map[string]string
+		wantErr      string
+	}{
+		{
+			name:        "token_env valid",
+			cfg:         mkWidgetConfig("MY_TOKEN", nil),
+			env:         map[string]string{"MY_TOKEN": "secret-123"},
+			wantToken:   "secret-123",
+			wantSecrets: map[string]string{"token": "secret-123"},
+		},
+		{
+			name:    "token_env unset error",
+			cfg:     mkWidgetConfig("UNSET_TOKEN", nil),
+			wantErr: "environment variable 'UNSET_TOKEN' defined in token_env is unset or empty",
+		},
+		{
+			name:        "nested map valid",
+			cfg:         mkWidgetConfig("", map[string]any{"sub": map[string]any{"secret_env": "SUB_SECRET"}}),
+			env:         map[string]string{"SUB_SECRET": "nested-val"},
+			wantSecrets: map[string]string{"sub.secret": "nested-val"},
+		},
+		{
+			name:        "nested slice valid",
+			cfg:         mkWidgetConfig("", map[string]any{"items": []any{map[string]any{"url_env": "ITEM_URL"}}}),
+			env:         map[string]string{"ITEM_URL": "http://api.example.com"},
+			wantSecrets: map[string]string{"items[0].url": "http://api.example.com"},
+		},
+		{
+			name:        "nested slice of slices matrix valid",
+			cfg:         mkWidgetConfig("", map[string]any{"matrix": []any{[]any{map[string]any{"m_env": "M_VAL"}}}}),
+			env:         map[string]string{"M_VAL": "matrix-ok"},
+			wantSecrets: map[string]string{"matrix[0][0].m": "matrix-ok"},
+		},
+		{
+			name: "map[any]any in map and slice valid",
+			cfg: mkWidgetConfig("", map[string]any{
+				"sub":   map[any]any{"token_env": "ANY_TOK"},
+				"slice": []any{map[any]any{"url_env": "SLICE_URL"}},
+			}),
+			env: map[string]string{
+				"ANY_TOK":   "token-123",
+				"SLICE_URL": "http://example.org",
+			},
+			wantSecrets: map[string]string{
+				"sub.token":    "token-123",
+				"slice[0].url": "http://example.org",
+			},
+		},
+		{
+			name:    "error unset env in nested map",
+			cfg:     mkWidgetConfig("", map[string]any{"sub": map[string]any{"secret_env": "MISSING_VAR"}}),
+			wantErr: "environment variable 'MISSING_VAR' defined in secret_env is unset or empty",
+		},
+		{
+			name:    "error non-string *_env",
+			cfg:     mkWidgetConfig("", map[string]any{"sub_env": 123}),
+			wantErr: "key 'sub_env' must specify a non-empty environment variable name",
+		},
+		{
+			name:    "error conflicting key and key_env",
+			cfg:     mkWidgetConfig("", map[string]any{"api_key": "val", "api_key_env": "ENV_VAR"}),
+			wantErr: "cannot specify both 'api_key' and 'api_key_env'",
+		},
+		{
+			name:    "error map[any]any unset var",
+			cfg:     mkWidgetConfig("", map[string]any{"sub": map[any]any{"token_env": "UNSET_ANY"}}),
+			wantErr: "environment variable 'UNSET_ANY' defined in token_env is unset or empty",
+		},
+		{
+			name:    "error slice map[any]any unset var",
+			cfg:     mkWidgetConfig("", map[string]any{"slice": []any{map[any]any{"token_env": "UNSET_SLICE"}}}),
+			wantErr: "environment variable 'UNSET_SLICE' defined in token_env is unset or empty",
+		},
+		{
+			name:         "ResolveEnv nil getenv defaults to os.Getenv",
+			cfg:          mkWidgetConfig("", nil),
+			useNilGetenv: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			getenv := mockGetenv(tc.env)
+			if tc.useNilGetenv {
+				getenv = nil
+			}
+			err := tc.cfg.ResolveEnv(getenv)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("ResolveEnv() err = %v, want substring %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ResolveEnv() unexpected error: %v", err)
+			}
+			w := tc.cfg.Display.Widgets[0]
+			if tc.wantToken != "" && w.Token != tc.wantToken {
+				t.Errorf("Token = %q, want %q", w.Token, tc.wantToken)
+			}
+			for k, wantV := range tc.wantSecrets {
+				if gotV := w.Secrets[k]; gotV != wantV {
+					t.Errorf("Secrets[%q] = %q, want %q", k, gotV, wantV)
+				}
+			}
+		})
 	}
 }
 
-func TestParse_SystemGetenv(t *testing.T) {
-	t.Setenv("TEST_WIDGET_TOKEN", "system-token-xyz")
+func TestLoad(t *testing.T) {
+	// 1. Load("") uses DefaultConfigPath and errors if not present
+	if _, err := config.Load(""); err == nil {
+		t.Fatal("expected error reading DefaultConfigPath, got nil")
+	}
 
-	raw := []byte(`
-timezone: UTC
-display:
-  widgets:
-    - id: test-widget
-      type: sensor-card
-      endpoint: "http://test:8080"
-      token_env: TEST_WIDGET_TOKEN
-`)
+	// 2. LoadWithEnv nonexistent file error
+	if _, err := config.LoadWithEnv("/nonexistent/path/never/exists.yaml", os.Getenv); err == nil {
+		t.Fatal("expected error loading nonexistent file, got nil")
+	}
+
+	// 3. Parse with t.Setenv
+	t.Setenv("MIRRORMERE_TEST_TOKEN", "sys-token-val")
+	raw := []byte("timezone: UTC\ndisplay:\n  widgets:\n    - id: w1\n      type: spacer\n      token_env: MIRRORMERE_TEST_TOKEN\n")
 	cfg, err := config.Parse(raw)
 	if err != nil {
-		t.Fatalf("unexpected error parsing with system env: %v", err)
+		t.Fatalf("Parse() unexpected error: %v", err)
 	}
-	if cfg.Display.Widgets[0].Token != "system-token-xyz" {
-		t.Errorf("expected token system-token-xyz, got %s", cfg.Display.Widgets[0].Token)
+	if cfg.Display.Widgets[0].Token != "sys-token-val" {
+		t.Errorf("Token = %q, want sys-token-val", cfg.Display.Widgets[0].Token)
 	}
-}
-
-func TestLoad_SystemGetenv(t *testing.T) {
-	t.Setenv("SYSTEM_CAL_URL", "https://system.calendar.url")
-
-	tmpDir := t.TempDir()
-	cfgPath := filepath.Join(tmpDir, "config.yaml")
-
-	content := `
-timezone: UTC
-display:
-  widgets:
-    - id: test-cal
-      type: calendar-agenda
-      config:
-        url_env: SYSTEM_CAL_URL
-`
-	if err := os.WriteFile(cfgPath, []byte(content), 0600); err != nil {
-		t.Fatalf("failed to write temp config: %v", err)
+	if cfg.Display.Widgets[0].Secrets["token"] != "sys-token-val" {
+		t.Errorf("Secrets[token] = %q, want sys-token-val", cfg.Display.Widgets[0].Secrets["token"])
 	}
 
-	cfg, err := config.Load(cfgPath)
+	// 4. Load from t.TempDir()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, raw, 0644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	loaded, err := config.Load(path)
 	if err != nil {
-		t.Fatalf("unexpected error with Load: %v", err)
+		t.Fatalf("Load() unexpected error: %v", err)
 	}
-	if _, exists := cfg.Display.Widgets[0].Config["url"]; exists {
-		t.Errorf("expected 'url' NOT to exist in Config map, got %v", cfg.Display.Widgets[0].Config["url"])
-	}
-	if cfg.Display.Widgets[0].Secrets["url"] != "https://system.calendar.url" {
-		t.Errorf("expected resolved secret in Secrets map, got %v", cfg.Display.Widgets[0].Secrets["url"])
+	if loaded.Timezone != "UTC" {
+		t.Errorf("Timezone = %q, want UTC", loaded.Timezone)
 	}
 }
 
-func TestResolveEnv_NestedStructuresAndErrors(t *testing.T) {
+func TestConfig_Accessors(t *testing.T) {
 	t.Parallel()
 
-	// 1. Error in nested map
-	rawNestedMapErr := []byte(`
-timezone: UTC
-display:
-  widgets:
-    - id: test-widget
-      type: tasks
-      config:
-        nested:
-          secret_env: MISSING_SECRET
-`)
-	_, err := config.ParseWithEnv(rawNestedMapErr, mockGetenv(nil))
-	if err == nil || !strings.Contains(err.Error(), "MISSING_SECRET") {
-		t.Fatalf("expected error for missing secret in nested map, got %v", err)
+	// 1. LocationConfig
+	var nilLoc *config.LocationConfig
+	if nilLoc.GetLatitude() != 0 || nilLoc.GetLongitude() != 0 {
+		t.Errorf("expected 0 for nil LocationConfig")
+	}
+	zeroLoc := &config.LocationConfig{}
+	if zeroLoc.GetLatitude() != 0 || zeroLoc.GetLongitude() != 0 {
+		t.Errorf("expected 0 for zero LocationConfig")
+	}
+	lat, lon := 37.8, -122.2
+	popLoc := &config.LocationConfig{Latitude: &lat, Longitude: &lon}
+	if popLoc.GetLatitude() != 37.8 || popLoc.GetLongitude() != -122.2 {
+		t.Errorf("unexpected coords for popLoc")
 	}
 
-	// 2. Error in nested slice of maps
-	rawNestedSliceErr := []byte(`
-timezone: UTC
-display:
-  widgets:
-    - id: test-widget
-      type: tasks
-      config:
-        items:
-          - secret_env: MISSING_IN_SLICE
-`)
-	_, err = config.ParseWithEnv(rawNestedSliceErr, mockGetenv(nil))
-	if err == nil || !strings.Contains(err.Error(), "MISSING_IN_SLICE") {
-		t.Fatalf("expected error for missing secret in slice of maps, got %v", err)
+	// 2. ThemeConfig
+	var nilTheme *config.ThemeConfig
+	if nilTheme.GetMode() != "day" {
+		t.Errorf("expected day for nil ThemeConfig")
+	}
+	if (&config.ThemeConfig{}).GetMode() != "day" {
+		t.Errorf("expected day for zero ThemeConfig")
+	}
+	if (&config.ThemeConfig{Mode: "   "}).GetMode() != "day" {
+		t.Errorf("expected day for whitespace ThemeConfig")
+	}
+	if (&config.ThemeConfig{Mode: "NIGHT"}).GetMode() != "night" {
+		t.Errorf("expected night for upper ThemeConfig")
 	}
 
-	// 3. Nested slice of slices
-	rawSliceOfSlices := []byte(`
-timezone: UTC
-display:
-  widgets:
-    - id: test-widget
-      type: tasks
-      config:
-        matrix:
-          - - secret_env: NESTED_SLICE_SECRET
-`)
-	_, err = config.ParseWithEnv(rawSliceOfSlices, mockGetenv(nil))
-	if err == nil || !strings.Contains(err.Error(), "NESTED_SLICE_SECRET") {
-		t.Fatalf("expected error for missing secret in slice of slices, got %v", err)
+	// 3. HeaderVideoConfig
+	var nilVideo *config.HeaderVideoConfig
+	if nilVideo.IsEnabled() || nilVideo.GetStreamID() != "chromecast" || nilVideo.GetType() != "webrtc" {
+		t.Errorf("unexpected nil VideoConfig")
+	}
+	zeroVideo := &config.HeaderVideoConfig{}
+	if zeroVideo.IsEnabled() || zeroVideo.GetStreamID() != "chromecast" || zeroVideo.GetType() != "webrtc" {
+		t.Errorf("unexpected zero VideoConfig")
+	}
+	trueVal := true
+	popVideo := &config.HeaderVideoConfig{Enabled: &trueVal, StreamID: "cam", Type: "hls"}
+	if !popVideo.IsEnabled() || popVideo.GetStreamID() != "cam" || popVideo.GetType() != "hls" {
+		t.Errorf("unexpected pop VideoConfig")
 	}
 
-	// 4. Valid nested map and slice of slices resolution
-	env := map[string]string{
-		"NESTED_SECRET": "nested-value",
-		"MATRIX_SECRET": "matrix-value",
+	// 4. HeaderWeatherConfig
+	var nilWeather *config.HeaderWeatherConfig
+	if nilWeather.GetRefreshIntervalSeconds() != 900 {
+		t.Errorf("expected 900 for nil HeaderWeatherConfig")
 	}
-	rawSuccess := []byte(`
-timezone: UTC
-display:
-  widgets:
-    - id: test-widget
-      type: tasks
-      config:
-        sub:
-          nested_secret_env: NESTED_SECRET
-        matrix:
-          - - matrix_secret_env: MATRIX_SECRET
-`)
-	cfg, err := config.ParseWithEnv(rawSuccess, mockGetenv(env))
-	if err != nil {
-		t.Fatalf("unexpected error resolving nested secrets: %v", err)
+	if (&config.HeaderWeatherConfig{}).GetRefreshIntervalSeconds() != 900 {
+		t.Errorf("expected 900 for zero HeaderWeatherConfig")
 	}
-	subMap := cfg.Display.Widgets[0].Config["sub"].(map[string]any)
-	if _, exists := subMap["nested_secret"]; exists {
-		t.Errorf("expected nested_secret NOT to be in Config, got %v", subMap["nested_secret"])
-	}
-	if cfg.Display.Widgets[0].Secrets["sub.nested_secret"] != "nested-value" {
-		t.Errorf("expected Secrets[sub.nested_secret] == 'nested-value', got %q", cfg.Display.Widgets[0].Secrets["sub.nested_secret"])
-	}
-	if cfg.Display.Widgets[0].Secrets["matrix[0][0].matrix_secret"] != "matrix-value" {
-		t.Errorf("expected Secrets[matrix[0][0].matrix_secret] == 'matrix-value', got %q", cfg.Display.Widgets[0].Secrets["matrix[0][0].matrix_secret"])
+	ten := 10
+	if (&config.HeaderWeatherConfig{RefreshIntervalSeconds: &ten}).GetRefreshIntervalSeconds() != 10 {
+		t.Errorf("expected 10 for pop HeaderWeatherConfig")
 	}
 
-	// 5. Handling map[any]any
-	customCfg := config.Config{
-		Timezone: "UTC",
-		Display: config.DisplayConfig{
-			Grid: config.GridConfig{Columns: 6, Rows: 2},
-			Widgets: []config.WidgetConfig{
-				{
-					ID:   "any-map-widget",
-					Type: "custom",
-					Config: map[string]any{
-						"sub": map[any]any{
-							"token_env": "MAP_ANY_TOKEN",
-						},
-						"slice": []any{
-							map[any]any{
-								"url_env": "SLICE_ANY_URL",
-							},
-						},
-					},
-				},
-			},
-		},
+	// 5. ChatLogConfig
+	var nilChat *config.ChatLogConfig
+	if nilChat.GetTTL() != 20*time.Minute || nilChat.GetMaxMessagesPerNode() != 50 {
+		t.Errorf("unexpected nil ChatLogConfig")
 	}
-	anyEnv := map[string]string{
-		"MAP_ANY_TOKEN": "token-123",
-		"SLICE_ANY_URL": "http://example.org",
+	zeroChat := &config.ChatLogConfig{}
+	if zeroChat.GetTTL() != 20*time.Minute || zeroChat.GetMaxMessagesPerNode() != 50 {
+		t.Errorf("unexpected zero ChatLogConfig")
 	}
-	if err := customCfg.ResolveEnv(mockGetenv(anyEnv)); err != nil {
-		t.Fatalf("unexpected error resolving map[any]any: %v", err)
+	zeroVal := 0
+	negVal := -5
+	nonPosChat := &config.ChatLogConfig{TTLMinutes: &zeroVal, MaxMessagesPerNode: &negVal}
+	if nonPosChat.GetTTL() != 20*time.Minute || nonPosChat.GetMaxMessagesPerNode() != 50 {
+		t.Errorf("unexpected nonPos ChatLogConfig")
 	}
-	if customCfg.Display.Widgets[0].Secrets["sub.token"] != "token-123" {
-		t.Errorf("expected Secrets[sub.token] == 'token-123', got %q", customCfg.Display.Widgets[0].Secrets["sub.token"])
-	}
-	if customCfg.Display.Widgets[0].Secrets["slice[0].url"] != "http://example.org" {
-		t.Errorf("expected Secrets[slice[0].url] == 'http://example.org', got %q", customCfg.Display.Widgets[0].Secrets["slice[0].url"])
+	five := 5
+	popChat := &config.ChatLogConfig{TTLMinutes: &five, MaxMessagesPerNode: &ten}
+	if popChat.GetTTL() != 5*time.Minute || popChat.GetMaxMessagesPerNode() != 10 {
+		t.Errorf("unexpected pop ChatLogConfig")
 	}
 
-	// 6. Error handling in map[any]any
-	badAnyCfg := config.Config{
-		Timezone: "UTC",
-		Display: config.DisplayConfig{
-			Grid: config.GridConfig{Columns: 6, Rows: 2},
-			Widgets: []config.WidgetConfig{
-				{
-					ID:   "bad-any-widget",
-					Type: "custom",
-					Config: map[string]any{
-						"sub": map[any]any{
-							"token_env": "UNSET_VAR",
-						},
-					},
-				},
-			},
-		},
-	}
-	if err := badAnyCfg.ResolveEnv(mockGetenv(nil)); err == nil {
-		t.Fatal("expected error resolving unset var in map[any]any, got nil")
-	}
-
-	badSliceAnyCfg := config.Config{
-		Timezone: "UTC",
-		Display: config.DisplayConfig{
-			Grid: config.GridConfig{Columns: 6, Rows: 2},
-			Widgets: []config.WidgetConfig{
-				{
-					ID:   "bad-slice-any-widget",
-					Type: "custom",
-					Config: map[string]any{
-						"slice": []any{
-							map[any]any{
-								"url_env": "UNSET_SLICE_VAR",
-							},
-						},
-					},
-				},
-			},
-		},
-	}
-	if err := badSliceAnyCfg.ResolveEnv(mockGetenv(nil)); err == nil {
-		t.Fatal("expected error resolving unset var in slice map[any]any, got nil")
-	}
-}
-
-func TestConfig_LocationCached(t *testing.T) {
-	t.Parallel()
-
-	raw := []byte(`
-timezone: America/Chicago
-display:
-  widgets:
-    - id: test
-      type: spacer
-`)
-	cfg, err := config.ParseWithEnv(raw, mockGetenv(nil))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	loc1 := cfg.Location()
-	loc2 := cfg.Location()
-	if loc1 != loc2 {
-		t.Errorf("expected cached location pointer, got %p and %p", loc1, loc2)
-	}
-}
-
-func TestHeaderWeatherConfig_NilHelpers(t *testing.T) {
-	t.Parallel()
-
-	var hw *config.HeaderWeatherConfig
-	if hw.GetRefreshIntervalSeconds() != 900 {
-		t.Errorf("expected 900 for nil HeaderWeatherConfig, got %d", hw.GetRefreshIntervalSeconds())
-	}
-
-	hwEmpty := &config.HeaderWeatherConfig{}
-	if hwEmpty.GetRefreshIntervalSeconds() != 900 {
-		t.Errorf("expected 900 for empty HeaderWeatherConfig, got %d", hwEmpty.GetRefreshIntervalSeconds())
-	}
-}
-
-func TestParseWithEnv_DecodeError(t *testing.T) {
-	t.Parallel()
-
-	raw := []byte(`
-timezone: UTC
-display: "should be a mapping not string"
-`)
-	_, err := config.ParseWithEnv(raw, mockGetenv(nil))
-	if err == nil {
-		t.Fatal("expected decode error, got nil")
-	}
-	if !strings.Contains(err.Error(), "failed to decode configuration") {
-		t.Fatalf("expected decode error prefix, got %v", err)
-	}
-}
-
-func TestParseWithEnv_CommentsOnly(t *testing.T) {
-	t.Parallel()
-
-	raw := []byte("# Just a comment\n# Another comment\n")
-	_, err := config.ParseWithEnv(raw, mockGetenv(nil))
-	if err == nil {
-		t.Fatal("expected error parsing comments-only config, got nil")
-	}
-	if !strings.Contains(err.Error(), "configuration is empty") {
-		t.Fatalf("expected empty configuration error, got %v", err)
-	}
-}
-
-func TestResolveEnv_NilGetenvDefaults(t *testing.T) {
-	cfg := &config.Config{
-		Display: config.DisplayConfig{
-			Widgets: []config.WidgetConfig{
-				{
-					ID:   "w1",
-					Type: "spacer",
-				},
-			},
-		},
-	}
-	// ResolveEnv with nil should default to os.Getenv without crashing
-	if err := cfg.ResolveEnv(nil); err != nil {
-		t.Fatalf("unexpected error with nil getenv: %v", err)
-	}
-}
-
-func TestConfig_LocationUnvalidatedLoad(t *testing.T) {
-	t.Parallel()
-
-	unvalCfg := config.Config{Timezone: "America/Denver"}
-	loc := unvalCfg.Location()
-	if loc.String() != "America/Denver" {
-		t.Errorf("expected America/Denver, got %v", loc)
-	}
-}
-
-func TestRotationConfig_EmptyTransition(t *testing.T) {
-	t.Parallel()
-
-	r := config.RotationConfig{}
-	if r.GetTransition() != "slide" {
-		t.Errorf("expected slide, got %s", r.GetTransition())
-	}
-}
-
-func TestParseWithEnv_NilGetenv(t *testing.T) {
-	raw := []byte(`
-timezone: UTC
-display:
-  widgets:
-    - id: test
-      type: spacer
-`)
-	cfg, err := config.ParseWithEnv(raw, nil)
-	if err != nil {
-		t.Fatalf("unexpected error with nil getenv in ParseWithEnv: %v", err)
-	}
-	if cfg.Timezone != "UTC" {
-		t.Errorf("expected UTC, got %s", cfg.Timezone)
-	}
-}
-
-func TestHeaderWeatherConfig_OmittedRefreshInterval(t *testing.T) {
-	t.Parallel()
-
-	raw := []byte(`
-timezone: UTC
-display:
-  header:
-    weather:
-      latitude: 37.8
-      longitude: -122.2
-  widgets:
-    - id: test
-      type: spacer
-`)
-	cfg, err := config.ParseWithEnv(raw, mockGetenv(nil))
-	if err != nil {
-		t.Fatalf("unexpected error with omitted weather interval: %v", err)
-	}
-	if cfg.Display.Header.Weather.GetRefreshIntervalSeconds() != 900 {
-		t.Errorf("expected default weather interval 900, got %d", cfg.Display.Header.Weather.GetRefreshIntervalSeconds())
-	}
-}
-
-func TestVoiceHubConfig(t *testing.T) {
-	t.Parallel()
-
-	// Nil receiver tests
-	var nilVH *config.VoiceHubConfig
-	if nilVH.IsEnabled() {
-		t.Error("expected nil VoiceHubConfig IsEnabled to be false")
-	}
-	if nilVH.GetBrainTimeoutSeconds() != 30 {
-		t.Errorf("expected default brain timeout 30, got %d", nilVH.GetBrainTimeoutSeconds())
-	}
-	if nilVH.GetTTSTimeoutSeconds() != 10 {
-		t.Errorf("expected default tts timeout 10, got %d", nilVH.GetTTSTimeoutSeconds())
-	}
-	if nilVH.GetTTSVoice() != "af_bella" {
-		t.Errorf("expected default voice af_bella, got %s", nilVH.GetTTSVoice())
-	}
-	if nilVH.GetTTSModel() != "kokoro" {
-		t.Errorf("expected default model kokoro, got %s", nilVH.GetTTSModel())
-	}
-
-	// Populated tests
-	timeout30 := 45
-	ttsTimeout := 15
-	vh := &config.VoiceHubConfig{
-		Enabled:             true,
-		BrainTimeoutSeconds: &timeout30,
-		TTSTimeoutSeconds:   &ttsTimeout,
-		TTSVoice:            "custom_voice",
-		TTSModel:            "piper",
-	}
-	if !vh.IsEnabled() {
-		t.Error("expected IsEnabled to be true")
-	}
-	if vh.GetBrainTimeoutSeconds() != 45 {
-		t.Errorf("expected 45, got %d", vh.GetBrainTimeoutSeconds())
-	}
-	if vh.GetTTSTimeoutSeconds() != 15 {
-		t.Errorf("expected 15, got %d", vh.GetTTSTimeoutSeconds())
-	}
-	if vh.GetTTSVoice() != "custom_voice" {
-		t.Errorf("expected custom_voice, got %s", vh.GetTTSVoice())
-	}
-	if vh.GetTTSModel() != "piper" {
-		t.Errorf("expected piper, got %s", vh.GetTTSModel())
-	}
-
-	// Parsing from YAML
-	raw := []byte(`
-timezone: UTC
-display:
-  widgets:
-    - id: test
-      type: spacer
-voice_hub:
-  enabled: true
-  stt_url: "tcp://192.168.1.70:10300"
-  brain_url: "http://aerial-brain:4000/api/voice/ask"
-  brain_timeout_seconds: 25
-  tts_url: "http://192.168.1.70:8880/v1/audio/speech"
-  tts_voice: "af_bella"
-  tts_model: "kokoro"
-  tts_timeout_seconds: 8
-`)
-	cfg, err := config.ParseWithEnv(raw, mockGetenv(nil))
-	if err != nil {
-		t.Fatalf("unexpected error parsing voice_hub: %v", err)
-	}
-	if cfg.VoiceHub == nil || !cfg.VoiceHub.Enabled {
-		t.Fatal("expected voice_hub to be enabled")
-	}
-	if cfg.VoiceHub.GetBrainTimeoutSeconds() != 25 {
-		t.Errorf("expected 25, got %d", cfg.VoiceHub.GetBrainTimeoutSeconds())
-	}
-	if cfg.VoiceHub.GetTTSTimeoutSeconds() != 8 {
-		t.Errorf("expected 8, got %d", cfg.VoiceHub.GetTTSTimeoutSeconds())
-	}
-
-	// Invalid timeouts in Validate
-	badRaw := []byte(`
-timezone: UTC
-display:
-  widgets:
-    - id: test
-      type: spacer
-voice_hub:
-  enabled: true
-  brain_timeout_seconds: -1
-`)
-	_, err = config.ParseWithEnv(badRaw, mockGetenv(nil))
-	if err == nil || !strings.Contains(err.Error(), "brain_timeout_seconds must be positive") {
-		t.Fatalf("expected error for negative brain_timeout_seconds, got: %v", err)
-	}
-
-	badTTSRaw := []byte(`
-timezone: UTC
-display:
-  widgets:
-    - id: test
-      type: spacer
-voice_hub:
-  enabled: true
-  tts_timeout_seconds: 0
-`)
-	_, err = config.ParseWithEnv(badTTSRaw, mockGetenv(nil))
-	if err == nil || !strings.Contains(err.Error(), "tts_timeout_seconds must be positive") {
-		t.Fatalf("expected error for zero tts_timeout_seconds, got: %v", err)
-	}
-}
-
-
-
-func TestVoiceHubSpeakerIDConfig(t *testing.T) {
-	t.Parallel()
-	head := "timezone: UTC\ndisplay:\n  widgets:\n    - id: test\n      type: spacer\nvoice_hub:\n  enabled: true\n  speaker_id:\n"
-	cases := []struct {
-		name    string
-		body    string
-		wantErr bool
-	}{
-		{"missing path", "    embed_url: http://x/embed\n", true},
-		{"missing url", "    fingerprints_path: /config/speakers.json\n", true},
-		{"threshold zero", "    embed_url: http://x/embed\n    fingerprints_path: /f.json\n    threshold: 0\n", true},
-		{"threshold above 1", "    embed_url: http://x/embed\n    fingerprints_path: /f.json\n    threshold: 1.5\n", true},
-		{"zero timeout", "    embed_url: http://x/embed\n    fingerprints_path: /f.json\n    timeout_seconds: 0\n", true},
-		{"valid", "    embed_url: http://x/embed\n    fingerprints_path: /f.json\n    threshold: 0.8\n", false},
-	}
-	for _, tc := range cases {
-		cfg, err := config.ParseWithEnv([]byte(head+tc.body), mockGetenv(nil))
-		if (err != nil) != tc.wantErr {
-			t.Errorf("%s: err=%v wantErr=%v", tc.name, err, tc.wantErr)
-		}
-		if tc.name == "valid" && err == nil {
-			sid := cfg.VoiceHub.SpeakerID
-			if !sid.IsEnabled() || sid.GetThreshold() != 0.8 || sid.GetTimeoutSeconds() != 5 {
-				t.Errorf("valid: unexpected parsed config %+v", sid)
-			}
-		}
-	}
-	var nilCfg *config.SpeakerIDConfig
-	if nilCfg.GetThreshold() != 0.70 || nilCfg.GetTimeoutSeconds() != 5 || nilCfg.IsEnabled() {
-		t.Error("nil SpeakerIDConfig defaults wrong")
-	}
-}
-
-func TestVoiceHubFastPathConfig(t *testing.T) {
-	t.Parallel()
-
+	// 6. FastPathConfig
 	var nilFP *config.FastPathConfig
 	if nilFP.IsEnabled() || nilFP.GetTimeoutMS() != 800 {
-		t.Error("nil FastPathConfig must be disabled with an 800 ms default")
+		t.Errorf("unexpected nil FastPathConfig")
 	}
-	zero := 0
-	if (&config.FastPathConfig{URL: " ", TimeoutMS: &zero}).IsEnabled() {
-		t.Error("blank url must be disabled")
+	zeroFP := &config.FastPathConfig{}
+	if zeroFP.IsEnabled() || zeroFP.GetTimeoutMS() != 800 {
+		t.Errorf("unexpected zero FastPathConfig")
 	}
-	if (&config.FastPathConfig{URL: "http://x/intent", TimeoutMS: &zero}).GetTimeoutMS() != 800 {
-		t.Error("non-positive timeout must fall back to 800")
+	nonPosFP := &config.FastPathConfig{URL: "http://intent", TimeoutMS: &negVal}
+	if !nonPosFP.IsEnabled() || nonPosFP.GetTimeoutMS() != 800 {
+		t.Errorf("unexpected nonPos FastPathConfig")
 	}
-
-	head := "timezone: UTC\ndisplay:\n  widgets:\n    - id: test\n      type: spacer\nvoice_hub:\n  enabled: true\n"
-	parse := func(extra string) (*config.Config, error) {
-		return config.ParseWithEnv([]byte(head+extra), mockGetenv(nil))
-	}
-
-	cfg, err := parse("")
-	if err != nil {
-		t.Fatalf("parse without fast_path: %v", err)
-	}
-	if cfg.VoiceHub.FastPath.IsEnabled() {
-		t.Error("fast path must be off when unset")
+	msVal := 500
+	popFP := &config.FastPathConfig{URL: "http://intent", TimeoutMS: &msVal}
+	if !popFP.IsEnabled() || popFP.GetTimeoutMS() != 500 {
+		t.Errorf("unexpected pop FastPathConfig")
 	}
 
-	cfg, err = parse("  fast_path:\n    url: http://192.168.1.77:9098/intent\n")
-	if err != nil {
-		t.Fatalf("parse default timeout: %v", err)
+	// 7. SpeakerIDConfig
+	var nilSID *config.SpeakerIDConfig
+	if nilSID.IsEnabled() || nilSID.GetThreshold() != 0.70 || nilSID.GetTimeoutSeconds() != 5 {
+		t.Errorf("unexpected nil SpeakerIDConfig")
 	}
-	fp := cfg.VoiceHub.FastPath
-	if !fp.IsEnabled() || fp.URL != "http://192.168.1.77:9098/intent" || fp.GetTimeoutMS() != 800 {
-		t.Errorf("unexpected fast_path %+v (timeout %d)", fp, fp.GetTimeoutMS())
+	zeroSID := &config.SpeakerIDConfig{}
+	if zeroSID.IsEnabled() || zeroSID.GetThreshold() != 0.70 || zeroSID.GetTimeoutSeconds() != 5 {
+		t.Errorf("unexpected zero SpeakerIDConfig")
 	}
-
-	cfg, err = parse("  fast_path:\n    url: http://h/intent\n    timeout_ms: 1200\n")
-	if err != nil || cfg.VoiceHub.FastPath.GetTimeoutMS() != 1200 {
-		t.Fatalf("explicit timeout: err=%v", err)
+	nonPosSID := &config.SpeakerIDConfig{TimeoutSeconds: &negVal}
+	if nonPosSID.GetTimeoutSeconds() != 5 {
+		t.Errorf("unexpected nonPos SpeakerIDConfig")
 	}
-
-	if _, err = parse("  fast_path:\n    timeout_ms: 500\n"); err != nil {
-		t.Errorf("timeout without url is allowed (feature off): %v", err)
-	}
-	if _, err = parse("  fast_path:\n    url: http://h/intent\n    timeout_ms: -5\n"); err == nil || !strings.Contains(err.Error(), "fast_path timeout_ms must be positive") {
-		t.Errorf("expected timeout_ms error, got %v", err)
-	}
-	if _, err = parse("  fast_path:\n    url: ftp://h/intent\n"); err == nil || !strings.Contains(err.Error(), "fast_path url must be an http(s) URL") {
-		t.Errorf("expected url error, got %v", err)
-	}
-}
-
-func TestHeaderVideoConfig(t *testing.T) {
-	t.Parallel()
-
-	// Nil receiver tests
-	var nilHV *config.HeaderVideoConfig
-	if nilHV.IsEnabled() {
-		t.Error("expected false for nil HeaderVideoConfig.IsEnabled()")
-	}
-	if nilHV.GetStreamID() != "chromecast" {
-		t.Errorf("expected default 'chromecast', got %q", nilHV.GetStreamID())
-	}
-	if nilHV.GetType() != "webrtc" {
-		t.Errorf("expected default 'webrtc', got %q", nilHV.GetType())
+	thresh := 0.85
+	popSID := &config.SpeakerIDConfig{EmbedURL: "http://embed", FingerprintsPath: "/fp.json", Threshold: &thresh, TimeoutSeconds: &ten}
+	if !popSID.IsEnabled() || popSID.GetThreshold() != 0.85 || popSID.GetTimeoutSeconds() != 10 {
+		t.Errorf("unexpected pop SpeakerIDConfig")
 	}
 
-	// Empty struct defaults
-	emptyHV := &config.HeaderVideoConfig{}
-	if emptyHV.IsEnabled() {
-		t.Error("expected false for unset Enabled pointer")
+	// 8. VoiceHubConfig
+	var nilVH *config.VoiceHubConfig
+	if nilVH.IsEnabled() || nilVH.GetBrainTimeoutSeconds() != 30 || nilVH.GetTTSTimeoutSeconds() != 10 || nilVH.GetTTSVoice() != "af_bella" || nilVH.GetTTSModel() != "kokoro" {
+		t.Errorf("unexpected nil VoiceHubConfig")
 	}
-	if emptyHV.GetStreamID() != "chromecast" {
-		t.Errorf("expected default 'chromecast', got %q", emptyHV.GetStreamID())
+	zeroVH := &config.VoiceHubConfig{}
+	if zeroVH.IsEnabled() || zeroVH.GetBrainTimeoutSeconds() != 30 || zeroVH.GetTTSTimeoutSeconds() != 10 || zeroVH.GetTTSVoice() != "af_bella" || zeroVH.GetTTSModel() != "kokoro" {
+		t.Errorf("unexpected zero VoiceHubConfig")
 	}
-	if emptyHV.GetType() != "webrtc" {
-		t.Errorf("expected default 'webrtc', got %q", emptyHV.GetType())
+	nonPosVH := &config.VoiceHubConfig{BrainTimeoutSeconds: &negVal, TTSTimeoutSeconds: &zeroVal}
+	if nonPosVH.GetBrainTimeoutSeconds() != 30 || nonPosVH.GetTTSTimeoutSeconds() != 10 {
+		t.Errorf("unexpected nonPos VoiceHubConfig")
 	}
-
-	// Explicit parsing from YAML
-	yamlContent := `
-timezone: America/Los_Angeles
-display:
-  header:
-    video:
-      enabled: true
-      stream_id: custom-tv
-      stream_url: http://localhost:1984/api/webrtc?src=tv
-      control_url: http://cast-watcher:8090/action
-      type: webrtc
-  widgets:
-    - id: test
-      type: spacer
-`
-	cfg, err := config.Parse([]byte(yamlContent))
-	if err != nil {
-		t.Fatalf("unexpected parse error: %v", err)
+	sixty := 60
+	twenty := 20
+	popVH := &config.VoiceHubConfig{Enabled: true, BrainTimeoutSeconds: &sixty, TTSTimeoutSeconds: &twenty, TTSVoice: "custom_v", TTSModel: "custom_m"}
+	if !popVH.IsEnabled() || popVH.GetBrainTimeoutSeconds() != 60 || popVH.GetTTSTimeoutSeconds() != 20 || popVH.GetTTSVoice() != "custom_v" || popVH.GetTTSModel() != "custom_m" {
+		t.Errorf("unexpected pop VoiceHubConfig")
 	}
 
-	v := cfg.Display.Header.Video
-	if v == nil {
-		t.Fatal("expected Header.Video to be parsed")
+	// 9. RotationConfig
+	zeroRot := config.RotationConfig{}
+	if zeroRot.GetIntervalSeconds() != 30 || zeroRot.GetTransition() != "slide" || !zeroRot.GetPauseOnTouch() || zeroRot.GetPauseDurationSeconds() != 120 {
+		t.Errorf("unexpected zero RotationConfig")
 	}
-	if !v.IsEnabled() {
-		t.Error("expected Header.Video.IsEnabled() to be true")
+	falseVal := false
+	popRot := config.RotationConfig{IntervalSeconds: &ten, Transition: "fade", PauseOnTouch: &falseVal, PauseDurationSeconds: &sixty}
+	if popRot.GetIntervalSeconds() != 10 || popRot.GetTransition() != "fade" || popRot.GetPauseOnTouch() || popRot.GetPauseDurationSeconds() != 60 {
+		t.Errorf("unexpected pop RotationConfig")
 	}
-	if v.GetStreamID() != "custom-tv" {
-		t.Errorf("expected 'custom-tv', got %q", v.GetStreamID())
+
+	// 10. HeaderConfig
+	zeroHdr := &config.HeaderConfig{}
+	if !zeroHdr.IsEnabled() {
+		t.Errorf("expected zero HeaderConfig to be enabled")
 	}
-	if v.StreamURL != "http://localhost:1984/api/webrtc?src=tv" {
-		t.Errorf("unexpected StreamURL %q", v.StreamURL)
+	popHdr := &config.HeaderConfig{Enabled: &falseVal}
+	if popHdr.IsEnabled() {
+		t.Errorf("expected pop HeaderConfig to be disabled")
 	}
-	if v.ControlURL != "http://cast-watcher:8090/action" {
-		t.Errorf("unexpected ControlURL %q", v.ControlURL)
+
+	// 11. DefaultHeaderElements
+	elems := config.DefaultHeaderElements()
+	if len(elems) != 4 || elems[0] != "clock" {
+		t.Errorf("unexpected DefaultHeaderElements: %v", elems)
 	}
-	if v.GetType() != "webrtc" {
-		t.Errorf("expected 'webrtc', got %q", v.GetType())
+
+	// 12. (*Config).Location() cached, lazy, UTC fallback
+	locCfg := &config.Config{Timezone: "America/Denver"}
+	loc1 := locCfg.Location()
+	loc2 := locCfg.Location()
+	if loc1 != loc2 || loc1.String() != "America/Denver" {
+		t.Errorf("unexpected cached Location: %v", loc1)
+	}
+	invalidLocCfg := &config.Config{Timezone: "Invalid/Zone_Name"}
+	if invalidLocCfg.Location() != time.UTC {
+		t.Errorf("expected UTC fallback for invalid location, got %v", invalidLocCfg.Location())
+	}
+
+	// 13. (*Config).GetLocationConfig()
+	var nilCfg *config.Config
+	if nilCfg.GetLocationConfig() != nil {
+		t.Errorf("expected nil for nil Config.GetLocationConfig()")
+	}
+	emptyCfg := &config.Config{}
+	if emptyCfg.GetLocationConfig() != nil {
+		t.Errorf("expected nil for empty Config.GetLocationConfig()")
+	}
+	directLocCfg := &config.Config{LocationConfig: &config.LocationConfig{Name: "Direct"}}
+	if dl := directLocCfg.GetLocationConfig(); dl == nil || dl.Name != "Direct" {
+		t.Errorf("expected direct location, got %v", dl)
+	}
+	weatherFallbackCfg := &config.Config{
+		Display: config.DisplayConfig{
+			Header: config.HeaderConfig{
+				Weather: &config.HeaderWeatherConfig{Location: "San Jose", Latitude: 37.33, Longitude: -121.88},
+			},
+		},
+	}
+	if fbLoc := weatherFallbackCfg.GetLocationConfig(); fbLoc == nil || fbLoc.Name != "San Jose" || *fbLoc.Latitude != 37.33 {
+		t.Errorf("expected weather fallback location, got %v", fbLoc)
 	}
 }

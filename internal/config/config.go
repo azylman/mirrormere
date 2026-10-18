@@ -16,6 +16,26 @@ const DefaultConfigPath = "/config/config.yaml"
 
 var interpolationRegex = regexp.MustCompile(`\$\{([^}]+)\}`)
 
+func isValidHTTPURL(raw string) bool {
+	u, err := url.ParseRequestURI(strings.TrimSpace(raw))
+	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
+}
+
+func positiveIntOr(p *int, def int) int {
+	if p == nil || *p <= 0 {
+		return def
+	}
+	return *p
+}
+
+func trimmedOr(s, def string) string {
+	t := strings.TrimSpace(s)
+	if t == "" {
+		return def
+	}
+	return t
+}
+
 // Config represents the root configuration schema of Mirrormere.
 type Config struct {
 	Host           string          `yaml:"host,omitempty"`
@@ -70,10 +90,10 @@ type ThemeConfig struct {
 
 // GetMode returns the configured theme mode, defaulting to "day" if unspecified.
 func (tc *ThemeConfig) GetMode() string {
-	if tc == nil || strings.TrimSpace(tc.Mode) == "" {
+	if tc == nil {
 		return "day"
 	}
-	return strings.ToLower(strings.TrimSpace(tc.Mode))
+	return strings.ToLower(trimmedOr(tc.Mode, "day"))
 }
 
 // GetLocationConfig returns the device location configuration, falling back to header weather coordinates if present.
@@ -132,18 +152,18 @@ func (hv *HeaderVideoConfig) IsEnabled() bool {
 
 // GetStreamID returns the configured stream identifier (default: "chromecast").
 func (hv *HeaderVideoConfig) GetStreamID() string {
-	if hv == nil || strings.TrimSpace(hv.StreamID) == "" {
+	if hv == nil {
 		return "chromecast"
 	}
-	return strings.TrimSpace(hv.StreamID)
+	return trimmedOr(hv.StreamID, "chromecast")
 }
 
 // GetType returns the configured stream type (default: "webrtc").
 func (hv *HeaderVideoConfig) GetType() string {
-	if hv == nil || strings.TrimSpace(hv.Type) == "" {
+	if hv == nil {
 		return "webrtc"
 	}
-	return strings.TrimSpace(hv.Type)
+	return trimmedOr(hv.Type, "webrtc")
 }
 
 // HeaderWeatherConfig configures the autonomous top-banner weather poller.
@@ -195,18 +215,18 @@ type ChatLogConfig struct {
 
 // GetTTL returns the message lifetime (default: 20 minutes).
 func (c *ChatLogConfig) GetTTL() time.Duration {
-	if c == nil || c.TTLMinutes == nil || *c.TTLMinutes <= 0 {
+	if c == nil {
 		return 20 * time.Minute
 	}
-	return time.Duration(*c.TTLMinutes) * time.Minute
+	return time.Duration(positiveIntOr(c.TTLMinutes, 20)) * time.Minute
 }
 
 // GetMaxMessagesPerNode returns the per-node message cap (default: 50).
 func (c *ChatLogConfig) GetMaxMessagesPerNode() int {
-	if c == nil || c.MaxMessagesPerNode == nil || *c.MaxMessagesPerNode <= 0 {
+	if c == nil {
 		return 50
 	}
-	return *c.MaxMessagesPerNode
+	return positiveIntOr(c.MaxMessagesPerNode, 50)
 }
 
 // VoiceHubConfig configures the LAN voice pipeline coordinator.
@@ -247,10 +267,10 @@ func (f *FastPathConfig) IsEnabled() bool {
 
 // GetTimeoutMS returns the fast-path response timeout in milliseconds (default: 800).
 func (f *FastPathConfig) GetTimeoutMS() int {
-	if f == nil || f.TimeoutMS == nil || *f.TimeoutMS <= 0 {
+	if f == nil {
 		return 800
 	}
-	return *f.TimeoutMS
+	return positiveIntOr(f.TimeoutMS, 800)
 }
 
 // SpeakerIDConfig configures voice-fingerprint speaker matching.
@@ -283,10 +303,10 @@ func (s *SpeakerIDConfig) GetThreshold() float64 {
 
 // GetTimeoutSeconds returns the embed timeout in seconds (default: 5).
 func (s *SpeakerIDConfig) GetTimeoutSeconds() int {
-	if s == nil || s.TimeoutSeconds == nil || *s.TimeoutSeconds <= 0 {
+	if s == nil {
 		return 5
 	}
-	return *s.TimeoutSeconds
+	return positiveIntOr(s.TimeoutSeconds, 5)
 }
 
 // IsEnabled reports whether the voice hub is enabled.
@@ -296,18 +316,18 @@ func (vh *VoiceHubConfig) IsEnabled() bool {
 
 // GetBrainTimeoutSeconds returns the brain deliberation timeout in seconds (default: 30).
 func (vh *VoiceHubConfig) GetBrainTimeoutSeconds() int {
-	if vh == nil || vh.BrainTimeoutSeconds == nil || *vh.BrainTimeoutSeconds <= 0 {
+	if vh == nil {
 		return 30
 	}
-	return *vh.BrainTimeoutSeconds
+	return positiveIntOr(vh.BrainTimeoutSeconds, 30)
 }
 
 // GetTTSTimeoutSeconds returns the TTS synthesis timeout in seconds (default: 10).
 func (vh *VoiceHubConfig) GetTTSTimeoutSeconds() int {
-	if vh == nil || vh.TTSTimeoutSeconds == nil || *vh.TTSTimeoutSeconds <= 0 {
+	if vh == nil {
 		return 10
 	}
-	return *vh.TTSTimeoutSeconds
+	return positiveIntOr(vh.TTSTimeoutSeconds, 10)
 }
 
 // GetTTSVoice returns the voice model identifier (default: "af_bella").
@@ -411,43 +431,17 @@ func Parse(data []byte) (*Config, error) {
 // ParseWithEnv parses raw configuration YAML bytes, applies defaults, validates constraints,
 // and resolves secrets through the provided environment lookup function.
 func ParseWithEnv(data []byte, getenv func(string) string) (*Config, error) {
-	if len(data) == 0 || len(strings.TrimSpace(string(data))) == 0 {
-		return nil, fmt.Errorf("configuration is empty")
-	}
-
 	if getenv == nil {
 		getenv = os.Getenv
 	}
-
-	var root yaml.Node
-	if err := yaml.Unmarshal(data, &root); err != nil {
-		return nil, fmt.Errorf("yaml syntax error: %w", err)
-	}
-
-	if err := checkNodeForInterpolation(&root); err != nil {
+	cfg, err := parseYAMLStage(data)
+	if err != nil {
 		return nil, err
 	}
-
-	if err := validateStructuralKeys(&root); err != nil {
+	if err := validateCoreInstancesStage(cfg, getenv); err != nil {
 		return nil, err
 	}
-
-	var cfg Config
-	if err := root.Decode(&cfg); err != nil {
-		return nil, fmt.Errorf("failed to decode configuration: %w", err)
-	}
-
-	cfg.applyDefaults()
-
-	if err := cfg.Validate(); err != nil {
-		return nil, err
-	}
-
-	if err := cfg.ResolveEnv(getenv); err != nil {
-		return nil, err
-	}
-
-	return &cfg, nil
+	return cfg, nil
 }
 
 func checkNodeForInterpolation(node *yaml.Node) error {
@@ -469,7 +463,7 @@ func checkNodeForInterpolation(node *yaml.Node) error {
 
 func validateStructuralKeys(root *yaml.Node) error {
 	if len(root.Content) == 0 {
-		return fmt.Errorf("configuration is empty")
+		return fmt.Errorf("configuration file is empty")
 	}
 
 	topNode := root.Content[0]
@@ -613,9 +607,6 @@ func (c *Config) applyDefaults() {
 			defaultInterval := 900
 			c.Display.Header.Weather.RefreshIntervalSeconds = &defaultInterval
 		}
-		if c.Display.Header.Weather.Units == "" {
-			c.Display.Header.Weather.Units = "imperial"
-		}
 	}
 }
 
@@ -744,8 +735,7 @@ func (c *Config) Validate() error {
 		}
 
 		if w.Endpoint != "" {
-			u, err := url.ParseRequestURI(w.Endpoint)
-			if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			if !isValidHTTPURL(w.Endpoint) {
 				return fmt.Errorf("widget '%s': invalid endpoint URL '%s' (must be http:// or https:// with host)", w.ID, w.Endpoint)
 			}
 		}
@@ -774,8 +764,7 @@ func (c *Config) Validate() error {
 				return fmt.Errorf("voice_hub fast_path timeout_ms must be positive (got %d)", *fp.TimeoutMS)
 			}
 			if fp.IsEnabled() {
-				u, perr := url.Parse(strings.TrimSpace(fp.URL))
-				if perr != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+				if !isValidHTTPURL(fp.URL) {
 					return fmt.Errorf("voice_hub fast_path url must be an http(s) URL (got %q)", fp.URL)
 				}
 			}
@@ -828,6 +817,32 @@ func (c *Config) ResolveEnv(getenv func(string) string) error {
 	return nil
 }
 
+func resolveEnvInValue(widgetID string, v any, prefix string, secrets map[string]string, getenv func(string) string) (any, error) {
+	switch val := v.(type) {
+	case map[string]any:
+		if err := resolveEnvInMap(widgetID, val, prefix, secrets, getenv); err != nil {
+			return nil, err
+		}
+		return val, nil
+	case map[any]any:
+		converted := make(map[string]any, len(val))
+		for subK, subV := range val {
+			converted[fmt.Sprint(subK)] = subV
+		}
+		if err := resolveEnvInMap(widgetID, converted, prefix, secrets, getenv); err != nil {
+			return nil, err
+		}
+		return converted, nil
+	case []any:
+		if err := resolveEnvInSlice(widgetID, val, prefix, secrets, getenv); err != nil {
+			return nil, err
+		}
+		return val, nil
+	default:
+		return v, nil
+	}
+}
+
 func resolveEnvInMap(widgetID string, m map[string]any, prefix string, secrets map[string]string, getenv func(string) string) error {
 	for k, v := range m {
 		if strings.HasSuffix(k, "_env") {
@@ -858,25 +873,11 @@ func resolveEnvInMap(widgetID string, m map[string]any, prefix string, secrets m
 			childPrefix = prefix + "." + k
 		}
 
-		switch val := v.(type) {
-		case map[string]any:
-			if err := resolveEnvInMap(widgetID, val, childPrefix, secrets, getenv); err != nil {
-				return err
-			}
-		case map[any]any:
-			converted := make(map[string]any, len(val))
-			for subK, subV := range val {
-				converted[fmt.Sprint(subK)] = subV
-			}
-			m[k] = converted
-			if err := resolveEnvInMap(widgetID, converted, childPrefix, secrets, getenv); err != nil {
-				return err
-			}
-		case []any:
-			if err := resolveEnvInSlice(widgetID, val, childPrefix, secrets, getenv); err != nil {
-				return err
-			}
+		updated, err := resolveEnvInValue(widgetID, v, childPrefix, secrets, getenv)
+		if err != nil {
+			return err
 		}
+		m[k] = updated
 	}
 	return nil
 }
@@ -884,25 +885,11 @@ func resolveEnvInMap(widgetID string, m map[string]any, prefix string, secrets m
 func resolveEnvInSlice(widgetID string, s []any, prefix string, secrets map[string]string, getenv func(string) string) error {
 	for i, item := range s {
 		childPrefix := fmt.Sprintf("%s[%d]", prefix, i)
-		switch elem := item.(type) {
-		case map[string]any:
-			if err := resolveEnvInMap(widgetID, elem, childPrefix, secrets, getenv); err != nil {
-				return err
-			}
-		case map[any]any:
-			converted := make(map[string]any, len(elem))
-			for subK, subV := range elem {
-				converted[fmt.Sprint(subK)] = subV
-			}
-			s[i] = converted
-			if err := resolveEnvInMap(widgetID, converted, childPrefix, secrets, getenv); err != nil {
-				return err
-			}
-		case []any:
-			if err := resolveEnvInSlice(widgetID, elem, childPrefix, secrets, getenv); err != nil {
-				return err
-			}
+		updated, err := resolveEnvInValue(widgetID, item, childPrefix, secrets, getenv)
+		if err != nil {
+			return err
 		}
+		s[i] = updated
 	}
 	return nil
 }
