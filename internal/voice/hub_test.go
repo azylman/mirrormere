@@ -1341,7 +1341,7 @@ func TestDefaultBrainClient_SSE_MalformedDataAndError(t *testing.T) {
 
 func TestDefaultBrainClient_SSE_ScannerError(t *testing.T) {
 	t.Parallel()
-	longLine := "data: " + strings.Repeat("A", 70000) + "\n\n"
+	longLine := "data: " + strings.Repeat("A", sseScannerMaxLine+1024) + "\n\n"
 	tsLong := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = w.Write([]byte(longLine))
