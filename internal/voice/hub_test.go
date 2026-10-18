@@ -17,11 +17,9 @@ import (
 	"time"
 
 	"github.com/azylman/mirrormere/internal/config"
-
 	"github.com/azylman/mirrormere/internal/events"
 	"github.com/prometheus/client_golang/prometheus"
 )
-
 
 type mockSTT struct {
 	mu         sync.Mutex
@@ -104,12 +102,16 @@ func (m *mockTTS) Synthesize(ctx context.Context, text string, onChunk func(chun
 	return nil
 }
 
+type mockBlockingSTT struct {
+	onTranscribe func()
+}
 
-// mockStreamingBrain (AudioStreamingBrainClient) lives in hub_stream_test.go
-// alongside the streaming-specific tests that use it.
+func (m *mockBlockingSTT) Transcribe(ctx context.Context, wavData []byte) (string, error) {
+	m.onTranscribe()
+	return "test", nil
+}
 
 func makeValidWAV(sampleCount int) []byte {
-	// 44-byte standard WAV header + PCM samples
 	buf := make([]byte, 44+sampleCount*2)
 	copy(buf[0:4], []byte("RIFF"))
 	copy(buf[8:12], []byte("WAVE"))
@@ -124,6 +126,63 @@ func makeValidWAV(sampleCount int) []byte {
 	return buf
 }
 
+func drainMockWyomingRequest(reader *bufio.Reader) {
+	for {
+		line, rErr := reader.ReadBytes('\n')
+		if rErr != nil {
+			break
+		}
+		var hdr struct {
+			Type          string `json:"type"`
+			DataLength    int    `json:"data_length"`
+			PayloadLength int    `json:"payload_length"`
+		}
+		_ = json.Unmarshal(line, &hdr)
+		if hdr.DataLength > 0 {
+			_, _ = io.CopyN(io.Discard, reader, int64(hdr.DataLength))
+		}
+		if hdr.PayloadLength > 0 {
+			_, _ = io.CopyN(io.Discard, reader, int64(hdr.PayloadLength))
+		}
+		if hdr.Type == "audio-stop" {
+			break
+		}
+	}
+}
+
+func mkSTT(text string, err error) *mockSTT {
+	return &mockSTT{text: text, err: err}
+}
+
+func wavRdr(n int) io.Reader {
+	return bytes.NewReader(makeValidWAV(n))
+}
+
+func wavWithZeroRateAndChannels(samples int) []byte {
+	b := makeValidWAV(samples)
+	copy(b[22:24], []byte{0, 0})
+	copy(b[24:28], []byte{0, 0, 0, 0})
+	return b
+}
+
+func startWyomingServer(t *testing.T, handler func(conn net.Conn, r *bufio.Reader)) string {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen failed: %v", err)
+	}
+	t.Cleanup(func() { _ = l.Close() })
+	go func() {
+		conn, err := l.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		handler(conn, bufio.NewReader(conn))
+	}()
+	return "tcp://" + l.Addr().String()
+}
+
 func TestHub_Interact_Success(t *testing.T) {
 	t.Parallel()
 
@@ -134,12 +193,12 @@ func TestHub_Interact_Success(t *testing.T) {
 	defer hubEvents.Close()
 	coord := NewCoordinator(hubEvents)
 
-	stt := &mockSTT{text: "Turn off office lights"}
+	stt := mkSTT("Turn off office lights", nil)
 	brain := &mockBrain{
 		reply:    "Turned off office lights.",
 		statuses: []string{"⚡ Checking devices...", "⚡ Turning off lights..."},
 	}
-	tts := &mockTTS{audio: []byte("fake-pcm-bytes"), format: "pcm"}
+	tts := mkTTS([]byte("fake-pcm-bytes"), "pcm", nil)
 
 	h := NewHub(cfg, coord,
 		WithSTTClient(stt),
@@ -185,7 +244,6 @@ func TestHub_Interact_Success(t *testing.T) {
 		}
 	}
 
-	// Coordinator must be left in StateSpeaking with reply
 	st := coord.GetState()
 	if st.State != StateSpeaking {
 		t.Errorf("expected final state speaking, got %s", st.State)
@@ -194,1586 +252,513 @@ func TestHub_Interact_Success(t *testing.T) {
 		t.Errorf("expected final reply %q, got %v", brain.reply, st.Reply)
 	}
 
-	// Calling Reset transitions it to idle
 	reset := coord.Reset()
 	if reset.State != StateIdle {
 		t.Errorf("expected state idle after reset, got %s", reset.State)
 	}
 }
 
-func TestHub_Interact_Disabled(t *testing.T) {
+func TestHub_Interact_Scenarios(t *testing.T) {
 	t.Parallel()
-	h := NewHub(&config.VoiceHubConfig{Enabled: false}, nil)
-	err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(100)), "", "", func(string, any) error { return nil }, EdgeTimings{})
-	if !errors.Is(err, ErrHubDisabled) {
-		t.Fatalf("expected ErrHubDisabled, got: %v", err)
-	}
-}
 
-func TestHub_Interact_InvalidAudio(t *testing.T) {
-	t.Parallel()
-	h := NewHub(&config.VoiceHubConfig{Enabled: true}, nil)
-
-	// Nil reader
-	err := h.Interact(context.Background(), nil, "", "", func(string, any) error { return nil }, EdgeTimings{})
-	if !errors.Is(err, ErrInvalidAudio) {
-		t.Fatalf("expected ErrInvalidAudio for nil, got: %v", err)
-	}
-
-	// Too short (< 44 bytes)
-	err = h.Interact(context.Background(), bytes.NewReader([]byte("RIFFshort")), "", "", func(string, any) error { return nil }, EdgeTimings{})
-	if !errors.Is(err, ErrInvalidAudio) {
-		t.Fatalf("expected ErrInvalidAudio for short, got: %v", err)
-	}
-
-	// Not RIFF
-	notWav := make([]byte, 50)
-	copy(notWav, []byte("NOT_A_WAV_FILE_HEADER"))
-	err = h.Interact(context.Background(), bytes.NewReader(notWav), "", "", func(string, any) error { return nil }, EdgeTimings{})
-	if !errors.Is(err, ErrInvalidAudio) {
-		t.Fatalf("expected ErrInvalidAudio for non-RIFF, got: %v", err)
-	}
-}
-
-func TestHub_Interact_ConcurrentBusy(t *testing.T) {
-	t.Parallel()
-	cfg := &config.VoiceHubConfig{Enabled: true}
-	stt := &mockSTT{text: "hello"}
-	sttStarted := make(chan struct{})
-	sttBlock := make(chan struct{})
-
-	blockingSTT := &mockBlockingSTT{
-		onTranscribe: func() {
-			close(sttStarted)
-			<-sttBlock
-		},
-	}
-	h := NewHub(cfg, nil, WithSTTClient(blockingSTT))
-
-	doneCh := make(chan error)
-	go func() {
-		wav := makeValidWAV(100)
-		doneCh <- h.Interact(context.Background(), bytes.NewReader(wav), "", "", func(string, any) error { return nil }, EdgeTimings{})
-	}()
-
-	<-sttStarted
-
-	// Second concurrent call must return ErrInteractionBusy
-	secondErr := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(100)), "", "", func(string, any) error { return nil }, EdgeTimings{})
-	if !errors.Is(secondErr, ErrInteractionBusy) {
-		t.Errorf("expected ErrInteractionBusy, got: %v", secondErr)
+	tests := []struct {
+		name         string
+		disabled     bool
+		noCoord      bool
+		audio        io.Reader
+		stt          STTClient
+		brain        BrainClient
+		tts          TTSClient
+		sinkErrEvent string
+		wantErr      error
+		wantErrStr   string
+		wantState    string
+		wantReply    string
+		wantEvents   []string
+	}{
+		{"disabled", true, false, wavRdr(100), nil, nil, nil, "", ErrHubDisabled, "", "", "", nil},
+		{"invalid_audio_nil", false, false, nil, nil, nil, nil, "", ErrInvalidAudio, "", "", "", nil},
+		{"invalid_audio_short", false, false, strings.NewReader("RIFFshort"), nil, nil, nil, "", ErrInvalidAudio, "", "", "", nil},
+		{"invalid_audio_non_riff", false, false, strings.NewReader(strings.Repeat("NOT_WAV_", 7)), nil, nil, nil, "", ErrInvalidAudio, "", "", "", nil},
+		{"stt_failure", false, false, wavRdr(100), mkSTT("", errors.New("whisper offline")), nil, nil, "", ErrSTTFailed, "", StateError, "", []string{"error"}},
+		{"brain_failure", false, false, wavRdr(100), mkSTT("hello", nil), mkBrain("", errors.New("aerial unreachable")), nil, "", ErrBrainFailed, "", StateError, "", nil},
+		{"tts_degradation", false, false, wavRdr(100), mkSTT("hello", nil), mkBrain("hi there", nil), mkTTS(nil, "", errors.New("kokoro timeout")), "", nil, "", StateSpeaking, "hi there", []string{"reply", "error", "done"}},
+		{"nil_tts_speaking", false, false, wavRdr(100), mkSTT("hello", nil), mkBrain("quiet hours response", nil), nil, "", nil, "", StateSpeaking, "quiet hours response", nil},
+		{"nil_stt_coord_error", false, false, wavRdr(100), nil, mkBrain("", nil), mkTTS(nil, "", nil), "", ErrSTTFailed, "", StateError, "", nil},
+		{"nil_brain_coord_error", false, false, wavRdr(100), mkSTT("hello", nil), nil, mkTTS(nil, "", nil), "", ErrBrainFailed, "", StateError, "", nil},
+		{"sink_state_coord_error", false, false, wavRdr(100), mkSTT("hello", nil), mkBrain("hi", nil), mkTTS(nil, "", nil), "state", nil, "sink error on state", StateError, "", nil},
+		{"sink_transcript_coord_error", false, false, wavRdr(100), mkSTT("hello", nil), mkBrain("hi", nil), mkTTS(nil, "", nil), "transcript", nil, "sink error on transcript", StateError, "", nil},
+		{"sink_reply_coord_error", false, false, wavRdr(100), mkSTT("hello", nil), mkBrain("hi", nil), mkTTS(nil, "", nil), "reply", nil, "sink error on reply", StateError, "", nil},
+		{"sink_done_coord_error", false, false, wavRdr(100), mkSTT("hello", nil), mkBrain("hi", nil), mkTTS(nil, "", nil), "done", nil, "sink error on done", StateError, "", nil},
+		{"nil_stt_no_coord", false, true, wavRdr(100), nil, mkBrain("", nil), mkTTS(nil, "", nil), "", ErrSTTFailed, "", "", "", nil},
+		{"nil_brain_no_coord", false, true, wavRdr(100), mkSTT("hello", nil), nil, mkTTS(nil, "", nil), "", ErrBrainFailed, "", "", "", nil},
+		{"sink_state_no_coord", false, true, wavRdr(100), mkSTT("hello", nil), mkBrain("hi", nil), mkTTS(nil, "", nil), "state", nil, "sink error on state", "", "", nil},
+		{"sink_transcript_no_coord", false, true, wavRdr(100), mkSTT("hello", nil), mkBrain("hi", nil), mkTTS(nil, "", nil), "transcript", nil, "sink error on transcript", "", "", nil},
+		{"sink_reply_no_coord", false, true, wavRdr(100), mkSTT("hello", nil), mkBrain("hi", nil), mkTTS(nil, "", nil), "reply", nil, "sink error on reply", "", "", nil},
 	}
 
-	close(sttBlock)
-	firstErr := <-doneCh
-	// First call should fail at Brain because brain is nil, but not ErrInteractionBusy
-	if errors.Is(firstErr, ErrInteractionBusy) {
-		t.Errorf("first call should not be busy: %v", firstErr)
-	}
-	_ = stt
-}
-
-type mockBlockingSTT struct {
-	onTranscribe func()
-}
-
-func (m *mockBlockingSTT) Transcribe(ctx context.Context, wavData []byte) (string, error) {
-	m.onTranscribe()
-	return "test", nil
-}
-
-func TestHub_Interact_STTFailure(t *testing.T) {
-	t.Parallel()
-	cfg := &config.VoiceHubConfig{Enabled: true}
-	coord := NewCoordinator(nil)
-	stt := &mockSTT{err: errors.New("whisper offline")}
-	h := NewHub(cfg, coord, WithSTTClient(stt))
-
-	var eventsEmitted []string
-	sink := func(event string, data any) error {
-		eventsEmitted = append(eventsEmitted, event)
-		return nil
-	}
-
-	err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(100)), "", "", sink, EdgeTimings{})
-	if !errors.Is(err, ErrSTTFailed) {
-		t.Fatalf("expected ErrSTTFailed, got: %v", err)
-	}
-	if coord.GetState().State != StateError {
-		t.Errorf("expected state error, got: %s", coord.GetState().State)
-	}
-	if len(eventsEmitted) < 2 || eventsEmitted[1] != "error" {
-		t.Errorf("expected error event emitted, got: %+v", eventsEmitted)
-	}
-}
-
-func TestHub_Interact_BrainFailure(t *testing.T) {
-	t.Parallel()
-	cfg := &config.VoiceHubConfig{Enabled: true}
-	coord := NewCoordinator(nil)
-	stt := &mockSTT{text: "hello"}
-	brain := &mockBrain{err: errors.New("aerial unreachable")}
-	h := NewHub(cfg, coord, WithSTTClient(stt), WithBrainClient(brain))
-
-	var eventsEmitted []string
-	sink := func(event string, data any) error {
-		eventsEmitted = append(eventsEmitted, event)
-		return nil
-	}
-
-	err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(100)), "", "", sink, EdgeTimings{})
-	if !errors.Is(err, ErrBrainFailed) {
-		t.Fatalf("expected ErrBrainFailed, got: %v", err)
-	}
-	if coord.GetState().State != StateError {
-		t.Errorf("expected state error, got: %s", coord.GetState().State)
-	}
-}
-
-func TestHub_Interact_TTSDegradation(t *testing.T) {
-	t.Parallel()
-	cfg := &config.VoiceHubConfig{Enabled: true}
-	coord := NewCoordinator(nil)
-	stt := &mockSTT{text: "hello"}
-	brain := &mockBrain{reply: "hi there"}
-	tts := &mockTTS{err: errors.New("kokoro timeout")}
-	h := NewHub(cfg, coord, WithSTTClient(stt), WithBrainClient(brain), WithTTSClient(tts))
-
-	var eventsEmitted []string
-	sink := func(event string, data any) error {
-		eventsEmitted = append(eventsEmitted, event)
-		return nil
-	}
-
-	err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(100)), "", "", sink, EdgeTimings{})
-	if err != nil {
-		t.Fatalf("expected success with degraded TTS, got: %v", err)
-	}
-
-	// Verify reply was still emitted before tts error
-	hasReply := false
-	hasError := false
-	hasDone := false
-	for _, e := range eventsEmitted {
-		if e == "reply" {
-			hasReply = true
-		}
-		if e == "error" {
-			hasError = true
-		}
-		if e == "done" {
-			hasDone = true
-		}
-	}
-	if !hasReply || !hasError || !hasDone {
-		t.Errorf("expected reply, error, and done events, got: %+v", eventsEmitted)
-	}
-
-	st := coord.GetState()
-	if st.State != StateSpeaking {
-		t.Errorf("expected state speaking with degraded TTS, got %s", st.State)
-	}
-	if st.Reply == nil || *st.Reply != "hi there" {
-		t.Errorf("expected reply 'hi there', got %v", st.Reply)
-	}
-}
-
-func TestHub_Interact_NilTTS_CoordinatorSpeaking(t *testing.T) {
-	t.Parallel()
-	cfg := &config.VoiceHubConfig{Enabled: true}
-	coord := NewCoordinator(nil)
-	stt := &mockSTT{text: "hello"}
-	brain := &mockBrain{reply: "quiet hours response"}
-	h := NewHub(cfg, coord, WithSTTClient(stt), WithBrainClient(brain), WithTTSClient(nil))
-
-	err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(100)), "", "", func(event string, data any) error {
-		return nil
-	}, EdgeTimings{})
-	if err != nil {
-		t.Fatalf("unexpected error with nil TTS: %v", err)
-	}
-
-	st := coord.GetState()
-	if st.State != StateSpeaking {
-		t.Errorf("expected state speaking with nil TTS, got %s", st.State)
-	}
-	if st.Reply == nil || *st.Reply != "quiet hours response" {
-		t.Errorf("expected reply 'quiet hours response', got %v", st.Reply)
-	}
-}
-
-func TestHub_Interact_ErrorTransitionsCoordinator(t *testing.T) {
-	t.Parallel()
-	cfg := &config.VoiceHubConfig{Enabled: true}
-
-	t.Run("nil STT transitions coordinator to error", func(t *testing.T) {
-		t.Parallel()
-		coord := NewCoordinator(nil)
-		h := NewHub(cfg, coord, WithSTTClient(nil), WithBrainClient(&mockBrain{}), WithTTSClient(&mockTTS{}))
-		err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(100)), "", "", func(event string, data any) error {
-			return nil
-		}, EdgeTimings{})
-		if !errors.Is(err, ErrSTTFailed) {
-			t.Fatalf("expected ErrSTTFailed, got: %v", err)
-		}
-		if coord.GetState().State != StateError {
-			t.Errorf("expected coordinator state error on nil STT, got: %s", coord.GetState().State)
-		}
-	})
-
-	t.Run("nil Brain transitions coordinator to error", func(t *testing.T) {
-		t.Parallel()
-		coord := NewCoordinator(nil)
-		h := NewHub(cfg, coord, WithSTTClient(&mockSTT{text: "hello"}), WithBrainClient(nil), WithTTSClient(&mockTTS{}))
-		err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(100)), "", "", func(event string, data any) error {
-			return nil
-		}, EdgeTimings{})
-		if !errors.Is(err, ErrBrainFailed) {
-			t.Fatalf("expected ErrBrainFailed, got: %v", err)
-		}
-		if coord.GetState().State != StateError {
-			t.Errorf("expected coordinator state error on nil Brain, got: %s", coord.GetState().State)
-		}
-	})
-
-	t.Run("sink error on state transitions coordinator to error", func(t *testing.T) {
-		t.Parallel()
-		coord := NewCoordinator(nil)
-		h := NewHub(cfg, coord, WithSTTClient(&mockSTT{text: "hello"}), WithBrainClient(&mockBrain{reply: "hi"}), WithTTSClient(&mockTTS{}))
-		err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(100)), "", "", func(event string, data any) error {
-			if event == "state" {
-				return errors.New("sink state disconnected")
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := &config.VoiceHubConfig{Enabled: !tc.disabled}
+			var coord *Coordinator
+			if !tc.noCoord {
+				coord = NewCoordinator(nil)
 			}
-			return nil
-		}, EdgeTimings{})
-		if err == nil {
-			t.Fatal("expected error from sink")
-		}
-		if coord.GetState().State != StateError {
-			t.Errorf("expected coordinator state error on sink state error, got: %s", coord.GetState().State)
-		}
-	})
+			h := NewHub(cfg, coord,
+				WithSTTClient(tc.stt),
+				WithBrainClient(tc.brain),
+				WithTTSClient(tc.tts),
+			)
 
-	t.Run("sink error on transcript transitions coordinator to error", func(t *testing.T) {
-		t.Parallel()
-		coord := NewCoordinator(nil)
-		h := NewHub(cfg, coord, WithSTTClient(&mockSTT{text: "hello"}), WithBrainClient(&mockBrain{reply: "hi"}), WithTTSClient(&mockTTS{}))
-		err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(100)), "", "", func(event string, data any) error {
-			if event == "transcript" {
-				return errors.New("sink transcript aborted")
+			var mu sync.Mutex
+			var emitted []string
+			sink := func(event string, data any) error {
+				mu.Lock()
+				defer mu.Unlock()
+				emitted = append(emitted, event)
+				if tc.sinkErrEvent != "" && event == tc.sinkErrEvent {
+					return fmt.Errorf("sink error on %s", event)
+				}
+				return nil
 			}
-			return nil
-		}, EdgeTimings{})
-		if err == nil {
-			t.Fatal("expected error from sink")
-		}
-		if coord.GetState().State != StateError {
-			t.Errorf("expected coordinator state error on sink transcript error, got: %s", coord.GetState().State)
-		}
-	})
 
-	t.Run("sink error on reply transitions coordinator to error", func(t *testing.T) {
-		t.Parallel()
-		coord := NewCoordinator(nil)
-		h := NewHub(cfg, coord, WithSTTClient(&mockSTT{text: "hello"}), WithBrainClient(&mockBrain{reply: "hi"}), WithTTSClient(&mockTTS{}))
-		err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(100)), "", "", func(event string, data any) error {
-			if event == "reply" {
-				return errors.New("sink reply broken")
+			err := h.Interact(context.Background(), tc.audio, "", "", sink, EdgeTimings{})
+			if tc.wantErr != nil && !errors.Is(err, tc.wantErr) {
+				t.Fatalf("expected error %v, got %v", tc.wantErr, err)
 			}
-			return nil
-		}, EdgeTimings{})
-		if err == nil {
-			t.Fatal("expected error from sink")
-		}
-		if coord.GetState().State != StateError {
-			t.Errorf("expected coordinator state error on sink reply error, got: %s", coord.GetState().State)
-		}
-	})
-
-	t.Run("sink error on done transitions coordinator to error", func(t *testing.T) {
-		t.Parallel()
-		coord := NewCoordinator(nil)
-		h := NewHub(cfg, coord, WithSTTClient(&mockSTT{text: "hello"}), WithBrainClient(&mockBrain{reply: "hi"}), WithTTSClient(&mockTTS{}))
-		err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(100)), "", "", func(event string, data any) error {
-			if event == "done" {
-				return errors.New("sink done timeout")
+			if tc.wantErrStr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErrStr)) {
+				t.Fatalf("expected error containing %q, got: %v", tc.wantErrStr, err)
 			}
-			return nil
-		}, EdgeTimings{})
-		if err == nil {
-			t.Fatal("expected error from sink")
-		}
-		if coord.GetState().State != StateError {
-			t.Errorf("expected coordinator state error on sink done error, got: %s", coord.GetState().State)
-		}
-	})
+			if tc.wantErr == nil && tc.wantErrStr == "" && err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if coord != nil && tc.wantState != "" && coord.GetState().State != tc.wantState {
+				t.Errorf("expected state %s, got %s", tc.wantState, coord.GetState().State)
+			}
+			if coord != nil && tc.wantReply != "" {
+				rep := coord.GetState().Reply
+				if rep == nil || *rep != tc.wantReply {
+					t.Errorf("expected reply %q, got %v", tc.wantReply, rep)
+				}
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			for _, exp := range tc.wantEvents {
+				found := false
+				for _, ev := range emitted {
+					if ev == exp {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("expected event %q in emitted: %v", exp, emitted)
+				}
+			}
+		})
+	}
 }
 
-func TestHub_Interact_PanicRecoversAndTransitionsCoordinator(t *testing.T) {
+func TestHub_Interact_SinkErrors(t *testing.T) {
 	t.Parallel()
-	cfg := &config.VoiceHubConfig{Enabled: true}
-	coord := NewCoordinator(nil)
-	panickingSTT := &mockBlockingSTT{
-		onTranscribe: func() {
-			panic("unexpected boom")
-		},
+
+	tests := []struct {
+		name       string
+		stt        STTClient
+		brain      BrainClient
+		tts        TTSClient
+		failEvent  string
+		wantErrStr string
+	}{
+		{"status_non_fatal", mkSTT("hello", nil), &mockBrain{reply: "hi", statuses: []string{"thinking..."}}, mkTTS([]byte("wav"), "pcm", nil), "status", ""},
+		{"audio_chunk_aborts", mkSTT("hello", nil), mkBrain("hi", nil), mkTTS([]byte("wav"), "pcm", nil), "audio_chunk", "audio sink error"},
+		{"done_aborts", mkSTT("hello", nil), mkBrain("hi", nil), mkTTS([]byte("wav"), "pcm", nil), "done", "done sink error"},
+		{"stt_error_propagates", mkSTT("", errors.New("stt failure")), nil, nil, "error", "sink error on stt failure"},
+		{"brain_error_propagates", mkSTT("hello", nil), mkBrain("", errors.New("brain failure")), nil, "error", "sink error on brain failure"},
+		{"tts_error_propagates", mkSTT("hello", nil), mkBrain("hi", nil), mkTTS(nil, "", errors.New("tts failure")), "error", "sink error on tts failure"},
 	}
-	h := NewHub(cfg, coord, WithSTTClient(panickingSTT))
 
-	defer func() {
-		r := recover()
-		if r == nil {
-			t.Fatal("expected panic, got none")
-		}
-		if coord.GetState().State != StateError {
-			t.Errorf("expected coordinator state error on panic, got %s", coord.GetState().State)
-		}
-	}()
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := &config.VoiceHubConfig{Enabled: true}
+			coord := NewCoordinator(nil)
+			h := NewHub(cfg, coord,
+				WithSTTClient(tc.stt),
+				WithBrainClient(tc.brain),
+				WithTTSClient(tc.tts),
+			)
 
-	_ = h.Interact(context.Background(), bytes.NewReader(makeValidWAV(100)), "", "", func(string, any) error { return nil }, EdgeTimings{})
+			sink := func(event string, data any) error {
+				if event == tc.failEvent {
+					if tc.wantErrStr != "" {
+						return errors.New(tc.wantErrStr)
+					}
+					return errors.New("status sink error")
+				}
+				return nil
+			}
+
+			err := h.Interact(context.Background(), wavRdr(100), "", "", sink, EdgeTimings{})
+			if tc.wantErrStr == "" {
+				if err != nil {
+					t.Fatalf("expected nil error, got: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErrStr) {
+				t.Fatalf("expected error containing %q, got: %v", tc.wantErrStr, err)
+			}
+		})
+	}
 }
 
-func drainMockWyomingRequest(reader *bufio.Reader) {
-	for {
-		line, rErr := reader.ReadBytes('\n')
-		if rErr != nil {
-			break
+func TestHub_Interact_ConcurrencyAndPanic(t *testing.T) {
+	t.Parallel()
+
+	t.Run("concurrent_busy", func(t *testing.T) {
+		t.Parallel()
+		cfg := &config.VoiceHubConfig{Enabled: true}
+		sttStarted := make(chan struct{})
+		sttBlock := make(chan struct{})
+		blockingSTT := &mockBlockingSTT{
+			onTranscribe: func() {
+				close(sttStarted)
+				<-sttBlock
+			},
 		}
-		var hdr struct {
-			Type          string `json:"type"`
-			DataLength    int    `json:"data_length"`
-			PayloadLength int    `json:"payload_length"`
+		h := NewHub(cfg, nil, WithSTTClient(blockingSTT))
+
+		doneCh := make(chan error)
+		go func() {
+			doneCh <- h.Interact(context.Background(), wavRdr(100), "", "", func(string, any) error { return nil }, EdgeTimings{})
+		}()
+
+		<-sttStarted
+		secondErr := h.Interact(context.Background(), wavRdr(100), "", "", func(string, any) error { return nil }, EdgeTimings{})
+		if !errors.Is(secondErr, ErrInteractionBusy) {
+			t.Errorf("expected ErrInteractionBusy, got: %v", secondErr)
 		}
-		_ = json.Unmarshal(line, &hdr)
-		if hdr.DataLength > 0 {
-			_, _ = io.CopyN(io.Discard, reader, int64(hdr.DataLength))
+		close(sttBlock)
+		firstErr := <-doneCh
+		if errors.Is(firstErr, ErrInteractionBusy) {
+			t.Errorf("first call should not be busy: %v", firstErr)
 		}
-		if hdr.PayloadLength > 0 {
-			_, _ = io.CopyN(io.Discard, reader, int64(hdr.PayloadLength))
+	})
+
+	t.Run("panic_recovers_and_transitions_coordinator", func(t *testing.T) {
+		t.Parallel()
+		cfg := &config.VoiceHubConfig{Enabled: true}
+		coord := NewCoordinator(nil)
+		panickingSTT := &mockBlockingSTT{
+			onTranscribe: func() {
+				panic("unexpected boom")
+			},
 		}
-		if hdr.Type == "audio-stop" {
-			break
-		}
-	}
+		h := NewHub(cfg, coord, WithSTTClient(panickingSTT))
+
+		defer func() {
+			r := recover()
+			if r == nil {
+				t.Fatal("expected panic, got none")
+			}
+			if coord.GetState().State != StateError {
+				t.Errorf("expected coordinator state error on panic, got %s", coord.GetState().State)
+			}
+		}()
+
+		_ = h.Interact(context.Background(), wavRdr(100), "", "", func(string, any) error { return nil }, EdgeTimings{})
+	})
 }
 
 func TestDefaultSTTClient_Wyoming(t *testing.T) {
 	t.Parallel()
 
-	// Launch mock Wyoming TCP server
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("failed to listen: %v", err)
+	tests := []struct {
+		name     string
+		drain    bool
+		resp     string
+		wantText string
+		wantErr  bool
+	}{
+		{"wyoming_success", true, fmt.Sprintf("{\"type\":\"transcript\",\"data_length\":%d}\n{\"text\":\"test transcript from wyoming\"}", len(`{"text":"test transcript from wyoming"}`)), "test transcript from wyoming", false},
+		{"wyoming_advanced", true, fmt.Sprintf("not-json-line\n{\"type\":\"ping\",\"payload_length\":4}\npong{\"type\":\"transcript\",\"data_length\":%d}\n{\"text\":\"advanced transcript\"}", len(`{"text":"advanced transcript"}`)), "advanced transcript", false},
+		{"server_early_close", false, "", "", true},
+		{"raw_text_fallback", true, "{\"type\":\"transcript\",\"data_length\":23}\nraw transcript fallback", "raw transcript fallback", false},
+		{"truncated_data_length", true, "{\"type\":\"event\",\"data_length\":100}\nshort", "", true},
+		{"truncated_payload_length", true, "{\"type\":\"event\",\"payload_length\":100}\nshort", "", true},
 	}
-	defer listener.Close()
 
-	go func() {
-		conn, err := listener.Accept()
-		if err != nil {
-			return
-		}
-		defer conn.Close()
-
-		// Read events until audio-stop
-		reader := bufio.NewReader(conn)
-		drainMockWyomingRequest(reader)
-
-		// Send transcript response
-		respJSON := `{"text":"test transcript from wyoming"}`
-		header := fmt.Sprintf("{\"type\":\"transcript\",\"data_length\":%d}\n", len(respJSON))
-		_, _ = conn.Write([]byte(header))
-		_, _ = conn.Write([]byte(respJSON))
-	}()
-
-	client := NewDefaultSTTClient("tcp://" + listener.Addr().String())
-	txt, err := client.Transcribe(context.Background(), makeValidWAV(100))
-	if err != nil {
-		t.Fatalf("unexpected wyoming error: %v", err)
-	}
-	if txt != "test transcript from wyoming" {
-		t.Fatalf("expected 'test transcript from wyoming', got %q", txt)
-	}
-}
-
-func TestDefaultSTTClient_HTTP(t *testing.T) {
-	t.Parallel()
-
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]string{
-			"text": "test transcript from http",
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			addr := startWyomingServer(t, func(conn net.Conn, r *bufio.Reader) {
+				if tc.drain {
+					drainMockWyomingRequest(r)
+				}
+				if len(tc.resp) > 0 {
+					_, _ = conn.Write([]byte(tc.resp))
+				}
+			})
+			client := NewDefaultSTTClient(addr)
+			txt, err := client.Transcribe(context.Background(), makeValidWAV(100))
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if txt != tc.wantText {
+				t.Fatalf("expected %q, got %q", tc.wantText, txt)
+			}
 		})
-	}))
-	defer ts.Close()
-
-	client := NewDefaultSTTClient(ts.URL)
-	txt, err := client.Transcribe(context.Background(), makeValidWAV(100))
-	if err != nil {
-		t.Fatalf("unexpected http stt error: %v", err)
-	}
-	if txt != "test transcript from http" {
-		t.Fatalf("expected 'test transcript from http', got %q", txt)
 	}
 }
 
-func TestDefaultSTTClient_Errors(t *testing.T) {
+func TestDefaultSTTClient_HTTPAndErrors(t *testing.T) {
 	t.Parallel()
 
-	// Empty URL
-	c := NewDefaultSTTClient("")
-	_, err := c.Transcribe(context.Background(), makeValidWAV(100))
-	if err == nil {
-		t.Fatal("expected error for empty URL")
+	tests := []struct {
+		name       string
+		status     int
+		respBody   string
+		rawURL     string
+		wantText   string
+		wantErr    bool
+		wantErrStr string
+	}{
+		{"http_success", http.StatusOK, `{"text":"test transcript from http"}`, "", "test transcript from http", false, ""},
+		{"transcript_fallback", http.StatusOK, `{"transcript":"fallback transcript"}`, "", "fallback transcript", false, ""},
+		{"malformed_json", http.StatusOK, `not valid json`, "", "", true, "stt decode error"},
+		{"empty_url", 0, "", "", "", true, "stt url is empty"},
+		{"tcp_dial_failure", 0, "", "tcp://127.0.0.1:59999", "", true, ""},
+		{"http_500", http.StatusInternalServerError, `internal server error`, "", "", true, "500"},
+		{"network_failure", 0, "", "http://127.0.0.1:59998/invalid", "", true, ""},
 	}
 
-	// Dial failure
-	c2 := NewDefaultSTTClient("tcp://127.0.0.1:59999")
-	_, err = c2.Transcribe(context.Background(), makeValidWAV(100))
-	if err == nil {
-		t.Fatal("expected dial error")
-	}
-
-	// HTTP error response
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "internal server error", http.StatusInternalServerError)
-	}))
-	defer ts.Close()
-
-	c3 := NewDefaultSTTClient(ts.URL)
-	_, err = c3.Transcribe(context.Background(), makeValidWAV(100))
-	if err == nil || !strings.Contains(err.Error(), "500") {
-		t.Fatalf("expected 500 error, got: %v", err)
-	}
-}
-
-func TestDefaultBrainClient_SSEAndJSON(t *testing.T) {
-	t.Parallel()
-
-	// SSE server
-	sseServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		flusher := w.(http.Flusher)
-		_, _ = w.Write([]byte("event: status\ndata: {\"status\":\"⚡ executing tool\"}\n\n"))
-		flusher.Flush()
-		_, _ = w.Write([]byte("event: reply\ndata: {\"reply\":\"The light is on\"}\n\n"))
-		flusher.Flush()
-		_, _ = w.Write([]byte("event: done\ndata: {}\n\n"))
-		flusher.Flush()
-	}))
-	defer sseServer.Close()
-
-	var statuses []string
-	b := NewDefaultBrainClient(sseServer.URL, 5)
-	reply, err := b.Ask(context.Background(), AskRequest{Prompt: "turn on light", SessionID: "s1"}, func(status string) {
-		statuses = append(statuses, status)
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if reply != "The light is on" {
-		t.Errorf("expected reply 'The light is on', got %q", reply)
-	}
-	if len(statuses) != 1 || statuses[0] != "⚡ executing tool" {
-		t.Errorf("expected status '⚡ executing tool', got %+v", statuses)
-	}
-
-	// JSON server
-	jsonServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]string{
-			"reply": "JSON reply",
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			targetURL := tc.rawURL
+			if tc.status > 0 {
+				ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(tc.status)
+					_, _ = w.Write([]byte(tc.respBody))
+				}))
+				defer ts.Close()
+				targetURL = ts.URL
+			}
+			client := NewDefaultSTTClient(targetURL)
+			txt, err := client.Transcribe(context.Background(), makeValidWAV(100))
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got nil")
+				}
+				if tc.wantErrStr != "" && !strings.Contains(err.Error(), tc.wantErrStr) {
+					t.Fatalf("expected error containing %q, got: %v", tc.wantErrStr, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if txt != tc.wantText {
+				t.Fatalf("expected %q, got %q", tc.wantText, txt)
+			}
 		})
-	}))
-	defer jsonServer.Close()
-
-	bJSON := NewDefaultBrainClient(jsonServer.URL, 5)
-	reply, err = bJSON.Ask(context.Background(), AskRequest{Prompt: "hello", SessionID: "s1"}, nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if reply != "JSON reply" {
-		t.Errorf("expected 'JSON reply', got %q", reply)
-	}
-
-	// Empty URL fallback
-	bEmpty := NewDefaultBrainClient("", 5)
-	reply, err = bEmpty.Ask(context.Background(), AskRequest{Prompt: "test prompt", SessionID: "s1"}, nil)
-	if err != nil || !strings.Contains(reply, "test prompt") {
-		t.Errorf("expected fallback containing test prompt, got: %q, err: %v", reply, err)
-	}
-
-	// Server error
-	errServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "bad gateway", http.StatusBadGateway)
-	}))
-	defer errServer.Close()
-	bErr := NewDefaultBrainClient(errServer.URL, 5)
-	_, err = bErr.Ask(context.Background(), AskRequest{Prompt: "fail", SessionID: "s1"}, nil)
-	if err == nil || !strings.Contains(err.Error(), "502") {
-		t.Errorf("expected 502 error, got: %v", err)
 	}
 }
 
-func TestDefaultBrainClient_TurnSessionGenerationAndNodeID(t *testing.T) {
+func TestDefaultBrainClient(t *testing.T) {
 	t.Parallel()
 
-	var receivedBody map[string]any
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewDecoder(r.Body).Decode(&receivedBody)
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]string{"reply": "ok"})
-	}))
-	defer server.Close()
+	tests := []struct {
+		name         string
+		contentType  string
+		status       int
+		rawURL       string
+		respBody     string
+		req          AskRequest
+		wantReply    string
+		wantStatuses []string
+		wantErr      bool
+		wantErrStr   string
+		wantNodeID   string
+	}{
+		{"sse_success", "text/event-stream", 200, "", "event: status\ndata: {\"status\":\"⚡ executing tool\"}\n\nevent: reply\ndata: {\"reply\":\"The light is on\"}\n\nevent: done\ndata: {}\n\n", AskRequest{Prompt: "turn on light", SessionID: "s1"}, "The light is on", []string{"⚡ executing tool"}, false, "", ""},
+		{"json_success", "application/json", 200, "", `{"reply":"JSON reply"}`, AskRequest{Prompt: "hello", SessionID: "s1"}, "JSON reply", nil, false, "", ""},
+		{"turn_session_and_node_id", "application/json", 200, "", `{"reply":"ok"}`, AskRequest{Prompt: "hello", NodeID: "touch-kiosk-kitchen"}, "ok", nil, false, "", "touch-kiosk-kitchen"},
+		{"empty_url_fallback", "", 0, "", "", AskRequest{Prompt: "test prompt", SessionID: "s1"}, "test prompt", nil, false, "", ""},
+		{"status_502", "text/plain", 502, "", "bad gateway", AskRequest{Prompt: "fail", SessionID: "s1"}, "", nil, true, "502", ""},
+		{"fallback_text", "application/json", 200, "", `{"text":"text fallback"}`, AskRequest{Prompt: "q", SessionID: "s"}, "text fallback", nil, false, "", ""},
+		{"fallback_content", "application/json", 200, "", `{"content":"content fallback"}`, AskRequest{Prompt: "q", SessionID: "s"}, "content fallback", nil, false, "", ""},
+		{"invalid_json", "application/json", 200, "", `invalid json`, AskRequest{Prompt: "q", SessionID: "s"}, "", nil, true, "", ""},
+		{"sse_without_done", "text/event-stream", 200, "", "event: reply\ndata: {\"reply\":\"streamed without done\"}\n\n", AskRequest{Prompt: "q", SessionID: "s"}, "streamed without done", nil, false, "", ""},
+		{"sse_malformed_data", "text/event-stream", 200, "", "event: status\ndata: {not-valid-json}\n\nevent: reply\ndata: {\"reply\":\"recovered\"}\n\nevent: done\ndata: {}\n\n", AskRequest{Prompt: "hi", SessionID: "s1"}, "recovered", nil, false, "", ""},
+		{"sse_scanner_overflow", "text/event-stream", 200, "", "data: " + strings.Repeat("a", sseScannerMaxLine+1024) + "\n\n", AskRequest{Prompt: "hi", SessionID: "s1"}, "", nil, true, "", ""},
+		{"network_failure", "", 0, "http://127.0.0.1:59998/invalid", "", AskRequest{Prompt: "hi", SessionID: "s1"}, "", nil, true, "", ""},
+	}
 
-	b := NewDefaultBrainClient(server.URL, 5)
-	_, err := b.Ask(context.Background(), AskRequest{Prompt: "hello", NodeID: "touch-kiosk-kitchen"}, nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	sessID, ok := receivedBody["session_id"].(string)
-	if !ok || !strings.HasPrefix(sessID, "turn-") {
-		t.Errorf("expected generated per-turn session_id starting with 'turn-', got %v", receivedBody["session_id"])
-	}
-	if receivedBody["node_id"] != "touch-kiosk-kitchen" {
-		t.Errorf("expected node_id 'touch-kiosk-kitchen', got %v", receivedBody["node_id"])
-	}
-	if _, exists := receivedBody["device_name"]; exists {
-		t.Errorf("expected no device_name in body, got %v", receivedBody["device_name"])
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			targetURL := tc.rawURL
+			var mu sync.Mutex
+			var lastBody map[string]any
+			if tc.status > 0 {
+				ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					mu.Lock()
+					_ = json.NewDecoder(r.Body).Decode(&lastBody)
+					mu.Unlock()
+					if tc.contentType != "" {
+						w.Header().Set("Content-Type", tc.contentType)
+					}
+					w.WriteHeader(tc.status)
+					_, _ = w.Write([]byte(tc.respBody))
+				}))
+				defer ts.Close()
+				targetURL = ts.URL
+			}
+
+			client := NewDefaultBrainClient(targetURL, 5)
+			var statuses []string
+			reply, err := client.Ask(context.Background(), tc.req, func(s string) {
+				statuses = append(statuses, s)
+			})
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got nil")
+				}
+				if tc.wantErrStr != "" && !strings.Contains(err.Error(), tc.wantErrStr) {
+					t.Fatalf("expected error containing %q, got: %v", tc.wantErrStr, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !strings.Contains(reply, tc.wantReply) {
+				t.Fatalf("expected reply containing %q, got %q", tc.wantReply, reply)
+			}
+			if len(tc.wantStatuses) > 0 {
+				if len(statuses) != len(tc.wantStatuses) {
+					t.Fatalf("expected statuses %v, got %v", tc.wantStatuses, statuses)
+				}
+				for i, wantS := range tc.wantStatuses {
+					if statuses[i] != wantS {
+						t.Errorf("at index %d: expected status %q, got %q", i, wantS, statuses[i])
+					}
+				}
+			}
+			if tc.wantNodeID != "" {
+				mu.Lock()
+				defer mu.Unlock()
+				if lastBody["node_id"] != tc.wantNodeID {
+					t.Errorf("expected node_id %q, got %v", tc.wantNodeID, lastBody["node_id"])
+				}
+				sess, _ := lastBody["session_id"].(string)
+				if !strings.HasPrefix(sess, "turn-") {
+					t.Errorf("expected session_id starting with 'turn-', got %v", sess)
+				}
+				if _, exists := lastBody["device_name"]; exists {
+					t.Errorf("expected no device_name, got %v", lastBody["device_name"])
+				}
+			}
+		})
 	}
 }
 
 func TestDefaultTTSClient(t *testing.T) {
 	t.Parallel()
 
-	t.Run("WAV stream parsed to PCM chunks", func(t *testing.T) {
-		t.Parallel()
-		wavData := makeValidWAV(4800) // 9600 bytes PCM at 16kHz mono
-		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "audio/wav")
-			_, _ = w.Write(wavData[:44+4800])
-			if flusher, ok := w.(http.Flusher); ok {
-				flusher.Flush()
-			}
-			_, _ = w.Write(wavData[44+4800:])
-		}))
-		defer ts.Close()
+	tests := []struct {
+		name           string
+		contentType    string
+		status         int
+		rawURL         string
+		body           []byte
+		text           string
+		sinkErr        error
+		wantErr        error
+		wantErrStr     string
+		wantFormat     string
+		wantTotalBytes int
+		wantRate       int
+		wantChannels   int
+	}{
+		{"wav_stream", "audio/wav", 200, "", makeValidWAV(4800), "hello world", nil, nil, "", "pcm", 9600, 16000, 1},
+		{"pcm_stream", "audio/pcm", 200, "", bytes.Repeat([]byte{0x01, 0x02}, 2400), "hello", nil, nil, "", "pcm", 4800, 0, 0},
+		{"mp3_unsupported", "audio/mpeg", 200, "", []byte("fake-mp3"), "hello", nil, ErrUnsupportedAudioFormat, "", "", 0, 0, 0},
+		{"empty_url", "", 0, "", nil, "hello", nil, nil, "", "", 0, 0, 0},
+		{"empty_text", "", 0, "http://127.0.0.1:9", nil, "   ", nil, nil, "", "", 0, 0, 0},
+		{"server_error", "text/plain", 500, "", []byte("server dead"), "hello", nil, nil, "500", "", 0, 0, 0},
+		{"wav_sink_error", "audio/wav", 200, "", makeValidWAV(4800), "hello", errors.New("sink abort"), nil, "sink abort", "", 0, 0, 0},
+		{"pcm_sink_error", "audio/pcm", 200, "", []byte("header-body-payload"), "hello", errors.New("pcm sink abort"), nil, "pcm sink abort", "", 0, 0, 0},
+		{"wav_zero_rate_channels", "audio/wav", 200, "", wavWithZeroRateAndChannels(2400), "hello", nil, nil, "", "pcm", 0, 24000, 1},
+		{"network_failure", "", 0, "http://127.0.0.1:59998/invalid", nil, "hi", nil, nil, "error", "", 0, 0, 0},
+	}
 
-		tts := NewDefaultTTSClient(ts.URL, "kokoro", "af_bella", 5)
-		var chunks []TTSAudioChunk
-		err := tts.Synthesize(context.Background(), "hello world", func(chunk TTSAudioChunk) error {
-			chunks = append(chunks, chunk)
-			return nil
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			targetURL := tc.rawURL
+			if tc.status > 0 {
+				ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if tc.contentType != "" {
+						w.Header().Set("Content-Type", tc.contentType)
+					}
+					w.WriteHeader(tc.status)
+					_, _ = w.Write(tc.body)
+				}))
+				defer ts.Close()
+				targetURL = ts.URL
+			}
+
+			tts := NewDefaultTTSClient(targetURL, "kokoro", "af_bella", 5)
+			var totalPCM int
+			var lastChunk TTSAudioChunk
+			err := tts.Synthesize(context.Background(), tc.text, func(chunk TTSAudioChunk) error {
+				if tc.sinkErr != nil {
+					return tc.sinkErr
+				}
+				lastChunk = chunk
+				totalPCM += len(chunk.Data)
+				return nil
+			})
+
+			if tc.wantErr != nil && !errors.Is(err, tc.wantErr) {
+				t.Fatalf("expected error %v, got %v", tc.wantErr, err)
+			}
+			if tc.wantErrStr != "" {
+				if err == nil {
+					t.Fatalf("expected error containing %q, got nil", tc.wantErrStr)
+				}
+				if tc.wantErrStr != "error" && !strings.Contains(err.Error(), tc.wantErrStr) {
+					t.Fatalf("expected error containing %q, got: %v", tc.wantErrStr, err)
+				}
+				return
+			}
+			if tc.wantErr == nil && err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if tc.wantFormat != "" && lastChunk.Format != tc.wantFormat {
+				t.Errorf("expected format %q, got %q", tc.wantFormat, lastChunk.Format)
+			}
+			if tc.wantRate > 0 && lastChunk.SampleRate != tc.wantRate {
+				t.Errorf("expected sample rate %d, got %d", tc.wantRate, lastChunk.SampleRate)
+			}
+			if tc.wantChannels > 0 && lastChunk.Channels != tc.wantChannels {
+				t.Errorf("expected channels %d, got %d", tc.wantChannels, lastChunk.Channels)
+			}
+			if tc.wantTotalBytes > 0 && totalPCM != tc.wantTotalBytes {
+				t.Errorf("expected %d total PCM bytes, got %d", tc.wantTotalBytes, totalPCM)
+			}
 		})
-		if err != nil {
-			t.Fatalf("unexpected streaming error: %v", err)
-		}
-		if len(chunks) == 0 {
-			t.Fatalf("expected at least 1 audio chunk, got 0")
-		}
-		var totalPCM int
-		for i, c := range chunks {
-			if c.Format != "pcm" {
-				t.Errorf("chunk %d: expected format pcm, got %s", i, c.Format)
-			}
-			if c.SampleRate != 16000 {
-				t.Errorf("chunk %d: expected sample rate 16000, got %d", i, c.SampleRate)
-			}
-			if c.Channels != 1 {
-				t.Errorf("chunk %d: expected channels 1, got %d", i, c.Channels)
-			}
-			totalPCM += len(c.Data)
-		}
-		if totalPCM != 9600 {
-			t.Errorf("expected 9600 bytes total PCM, got %d", totalPCM)
-		}
-	})
-
-	t.Run("raw PCM stream pass-through", func(t *testing.T) {
-		t.Parallel()
-		pcmData := bytes.Repeat([]byte{0x01, 0x02}, 2400)
-		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "audio/pcm")
-			_, _ = w.Write(pcmData)
-		}))
-		defer ts.Close()
-
-		tts := NewDefaultTTSClient(ts.URL, "kokoro", "af_bella", 5)
-		var chunks []TTSAudioChunk
-		err := tts.Synthesize(context.Background(), "hello", func(chunk TTSAudioChunk) error {
-			chunks = append(chunks, chunk)
-			return nil
-		})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if len(chunks) == 0 || chunks[0].Format != "pcm" {
-			t.Fatalf("expected pcm chunks, got %+v", chunks)
-		}
-	})
-
-	t.Run("MP3 response is unsupported", func(t *testing.T) {
-		t.Parallel()
-		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "audio/mpeg")
-			_, _ = w.Write([]byte("fake-streaming-mp3-bytes"))
-		}))
-		defer ts.Close()
-
-		tts := NewDefaultTTSClient(ts.URL, "kokoro", "af_bella", 5)
-		err := tts.Synthesize(context.Background(), "hello", func(chunk TTSAudioChunk) error {
-			t.Errorf("no chunk should be emitted for mp3, got %+v", chunk)
-			return nil
-		})
-		if !errors.Is(err, ErrUnsupportedAudioFormat) {
-			t.Fatalf("expected ErrUnsupportedAudioFormat, got: %v", err)
-		}
-	})
-
-	t.Run("empty URL and empty text return nil", func(t *testing.T) {
-		t.Parallel()
-		ttsEmpty := NewDefaultTTSClient("", "kokoro", "af_bella", 5)
-		if err := ttsEmpty.Synthesize(context.Background(), "hello", func(TTSAudioChunk) error {
-			t.Fatal("unexpected chunk emitted for empty URL")
-			return nil
-		}); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		ttsReal := NewDefaultTTSClient("http://127.0.0.1:9", "kokoro", "af_bella", 5)
-		if err := ttsReal.Synthesize(context.Background(), "   ", func(TTSAudioChunk) error {
-			t.Fatal("unexpected chunk emitted for empty text")
-			return nil
-		}); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-	})
-
-	t.Run("server error returns error", func(t *testing.T) {
-		t.Parallel()
-		errServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			http.Error(w, "server dead", http.StatusInternalServerError)
-		}))
-		defer errServer.Close()
-
-		ttsErr := NewDefaultTTSClient(errServer.URL, "kokoro", "af_bella", 5)
-		err := ttsErr.Synthesize(context.Background(), "hello", func(TTSAudioChunk) error { return nil })
-		if err == nil || !strings.Contains(err.Error(), "500") {
-			t.Fatalf("expected 500 error, got: %v", err)
-		}
-	})
-
-	t.Run("onChunk error in WAV stream terminates early", func(t *testing.T) {
-		t.Parallel()
-		wavData := makeValidWAV(4800)
-		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "audio/wav")
-			_, _ = w.Write(wavData)
-		}))
-		defer ts.Close()
-
-		tts := NewDefaultTTSClient(ts.URL, "kokoro", "af_bella", 5)
-		err := tts.Synthesize(context.Background(), "hello", func(chunk TTSAudioChunk) error {
-			return errors.New("sink abort")
-		})
-		if err == nil || !strings.Contains(err.Error(), "sink abort") {
-			t.Fatalf("expected sink abort error, got: %v", err)
-		}
-	})
-
-	t.Run("onChunk error in raw PCM stream terminates early", func(t *testing.T) {
-		t.Parallel()
-		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "audio/pcm")
-			_, _ = w.Write([]byte("some-initial-header-and-body-payload-for-pcm"))
-		}))
-		defer ts.Close()
-
-		tts := NewDefaultTTSClient(ts.URL, "kokoro", "af_bella", 5)
-		err := tts.Synthesize(context.Background(), "hello", func(chunk TTSAudioChunk) error {
-			return errors.New("pcm sink abort")
-		})
-		if err == nil || !strings.Contains(err.Error(), "pcm sink abort") {
-			t.Fatalf("expected pcm sink abort error, got: %v", err)
-		}
-	})
-
-	t.Run("WAV with zero sample rate and channels uses defaults", func(t *testing.T) {
-		t.Parallel()
-		wavData := makeValidWAV(2400)
-		copy(wavData[22:24], []byte{0, 0})
-		copy(wavData[24:28], []byte{0, 0, 0, 0})
-		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "audio/wav")
-			_, _ = w.Write(wavData)
-		}))
-		defer ts.Close()
-
-		tts := NewDefaultTTSClient(ts.URL, "kokoro", "af_bella", 5)
-		var chunk TTSAudioChunk
-		err := tts.Synthesize(context.Background(), "hello", func(c TTSAudioChunk) error {
-			chunk = c
-			return nil
-		})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if chunk.Channels != 1 || chunk.SampleRate != 24000 {
-			t.Errorf("expected defaults (1 ch, 24000 rate), got %d ch, %d rate", chunk.Channels, chunk.SampleRate)
-		}
-	})
-}
-
-func TestHub_Interact_EdgeCases(t *testing.T) {
-	t.Parallel()
-
-	cfg := &config.VoiceHubConfig{Enabled: true}
-
-	t.Run("nil STT returns ErrSTTFailed", func(t *testing.T) {
-		t.Parallel()
-		h := NewHub(cfg, nil, WithSTTClient(nil), WithBrainClient(&mockBrain{}), WithTTSClient(&mockTTS{}))
-		err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(100)), "", "", func(event string, data any) error {
-			return nil
-		}, EdgeTimings{})
-		if !errors.Is(err, ErrSTTFailed) {
-			t.Fatalf("expected ErrSTTFailed, got: %v", err)
-		}
-	})
-
-	t.Run("nil Brain returns ErrBrainFailed", func(t *testing.T) {
-		t.Parallel()
-		h := NewHub(cfg, nil, WithSTTClient(&mockSTT{text: "hello"}), WithBrainClient(nil), WithTTSClient(&mockTTS{}))
-		err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(100)), "", "", func(event string, data any) error {
-			return nil
-		}, EdgeTimings{})
-		if !errors.Is(err, ErrBrainFailed) {
-			t.Fatalf("expected ErrBrainFailed, got: %v", err)
-		}
-	})
-
-	t.Run("sink error on state aborts", func(t *testing.T) {
-		t.Parallel()
-		h := NewHub(cfg, nil, WithSTTClient(&mockSTT{text: "hello"}), WithBrainClient(&mockBrain{reply: "hi"}), WithTTSClient(&mockTTS{}))
-		err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(100)), "", "", func(event string, data any) error {
-			if event == "state" {
-				return errors.New("disconnected")
-			}
-			return nil
-		}, EdgeTimings{})
-		if err == nil || !strings.Contains(err.Error(), "disconnected") {
-			t.Fatalf("expected disconnected error, got: %v", err)
-		}
-	})
-
-	t.Run("sink error on transcript aborts", func(t *testing.T) {
-		t.Parallel()
-		h := NewHub(cfg, nil, WithSTTClient(&mockSTT{text: "hello"}), WithBrainClient(&mockBrain{reply: "hi"}), WithTTSClient(&mockTTS{}))
-		err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(100)), "", "", func(event string, data any) error {
-			if event == "transcript" {
-				return errors.New("aborted on transcript")
-			}
-			return nil
-		}, EdgeTimings{})
-		if err == nil || !strings.Contains(err.Error(), "aborted on transcript") {
-			t.Fatalf("expected aborted on transcript, got: %v", err)
-		}
-	})
-
-	t.Run("sink error on reply aborts", func(t *testing.T) {
-		t.Parallel()
-		h := NewHub(cfg, nil, WithSTTClient(&mockSTT{text: "hello"}), WithBrainClient(&mockBrain{reply: "hi"}), WithTTSClient(&mockTTS{}))
-		err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(100)), "", "", func(event string, data any) error {
-			if event == "reply" {
-				return errors.New("stream closed")
-			}
-			return nil
-		}, EdgeTimings{})
-		if err == nil || !strings.Contains(err.Error(), "stream closed") {
-			t.Fatalf("expected stream closed error, got: %v", err)
-		}
-	})
-}
-
-func TestDefaultSTTClient_Wyoming_Advanced(t *testing.T) {
-	t.Parallel()
-
-	// Server sending non-JSON line and payload before transcript
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen failed: %v", err)
-	}
-	defer listener.Close()
-
-	go func() {
-		conn, err := listener.Accept()
-		if err != nil {
-			return
-		}
-		defer conn.Close()
-
-		reader := bufio.NewReader(conn)
-		drainMockWyomingRequest(reader)
-
-		// Send non-json garbage line
-		_, _ = conn.Write([]byte("not-json-line\n"))
-		// Send event with payload_length > 0
-		_, _ = conn.Write([]byte("{\"type\":\"ping\",\"payload_length\":4}\npong"))
-		// Send transcript event with text
-		transcriptJSON := `{"text":"advanced transcript"}`
-		hdr := fmt.Sprintf("{\"type\":\"transcript\",\"data_length\":%d}\n", len(transcriptJSON))
-		_, _ = conn.Write([]byte(hdr))
-		_, _ = conn.Write([]byte(transcriptJSON))
-	}()
-
-
-	client := NewDefaultSTTClient("tcp://" + listener.Addr().String())
-	txt, err := client.Transcribe(context.Background(), makeValidWAV(100))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if txt != "advanced transcript" {
-		t.Fatalf("expected 'advanced transcript', got %q", txt)
-	}
-}
-
-func TestDefaultSTTClient_HTTP_Fallbacks(t *testing.T) {
-	t.Parallel()
-
-	// STT returning transcript key instead of text
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]string{
-			"transcript": "fallback transcript",
-		})
-	}))
-	defer ts.Close()
-
-	client := NewDefaultSTTClient(ts.URL)
-	txt, err := client.Transcribe(context.Background(), makeValidWAV(100))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if txt != "fallback transcript" {
-		t.Errorf("expected 'fallback transcript', got %q", txt)
-	}
-
-	// STT returning malformed JSON
-	badJSONServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte("not valid json"))
-	}))
-	defer badJSONServer.Close()
-
-	clientBad := NewDefaultSTTClient(badJSONServer.URL)
-	_, err = clientBad.Transcribe(context.Background(), makeValidWAV(100))
-	if err == nil || !strings.Contains(err.Error(), "stt decode error") {
-		t.Errorf("expected decode error, got: %v", err)
-	}
-}
-
-func TestDefaultBrainClient_Fallbacks(t *testing.T) {
-	t.Parallel()
-
-	// JSON response with "text"
-	tsText := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]string{"text": "text fallback"})
-	}))
-	defer tsText.Close()
-
-	b1 := NewDefaultBrainClient(tsText.URL, 5)
-	rep, err := b1.Ask(context.Background(), AskRequest{Prompt: "q", SessionID: "s"}, nil)
-	if err != nil || rep != "text fallback" {
-		t.Errorf("expected 'text fallback', got %q, err: %v", rep, err)
-	}
-
-	// JSON response with "content"
-	tsContent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]string{"content": "content fallback"})
-	}))
-	defer tsContent.Close()
-
-	b2 := NewDefaultBrainClient(tsContent.URL, 5)
-	rep, err = b2.Ask(context.Background(), AskRequest{Prompt: "q", SessionID: "s"}, nil)
-	if err != nil || rep != "content fallback" {
-		t.Errorf("expected 'content fallback', got %q, err: %v", rep, err)
-	}
-
-	// JSON decode error
-	tsBadJSON := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte("invalid json"))
-	}))
-	defer tsBadJSON.Close()
-
-	b3 := NewDefaultBrainClient(tsBadJSON.URL, 5)
-	_, err = b3.Ask(context.Background(), AskRequest{Prompt: "q", SessionID: "s"}, nil)
-	if err == nil {
-		t.Error("expected json decode error")
-	}
-
-	// SSE stream without "done" event returns reply on EOF
-	tsNoDone := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = w.Write([]byte("event: reply\ndata: {\"reply\":\"streamed without done\"}\n\n"))
-	}))
-	defer tsNoDone.Close()
-
-	b4 := NewDefaultBrainClient(tsNoDone.URL, 5)
-	rep, err = b4.Ask(context.Background(), AskRequest{Prompt: "q", SessionID: "s"}, nil)
-	if err != nil || rep != "streamed without done" {
-		t.Errorf("expected 'streamed without done', got %q, err: %v", rep, err)
-	}
-}
-
-func TestHub_Interact_SinkErrors(t *testing.T) {
-	t.Parallel()
-	cfg := &config.VoiceHubConfig{Enabled: true}
-	coord := NewCoordinator(nil)
-
-	t.Run("sink error on status is non-fatal", func(t *testing.T) {
-		t.Parallel()
-		stt := &mockSTT{text: "hello"}
-		brain := &mockBrain{reply: "hi", statuses: []string{"thinking..."}}
-		tts := &mockTTS{audio: []byte("wav"), format: "pcm"}
-		h := NewHub(cfg, coord, WithSTTClient(stt), WithBrainClient(brain), WithTTSClient(tts))
-
-		err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(100)), "", "", func(event string, data any) error {
-			if event == "status" {
-				return errors.New("status sink error")
-			}
-			return nil
-		}, EdgeTimings{})
-		if err != nil {
-			t.Fatalf("status sink error should be tolerated, got: %v", err)
-		}
-	})
-
-	t.Run("sink error on audio_chunk aborts", func(t *testing.T) {
-		t.Parallel()
-		stt := &mockSTT{text: "hello"}
-		brain := &mockBrain{reply: "hi"}
-		tts := &mockTTS{audio: []byte("wav"), format: "pcm"}
-		h := NewHub(cfg, coord, WithSTTClient(stt), WithBrainClient(brain), WithTTSClient(tts))
-
-		err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(100)), "", "", func(event string, data any) error {
-			if event == "audio_chunk" {
-				return errors.New("audio sink error")
-			}
-			return nil
-		}, EdgeTimings{})
-		if err == nil || !strings.Contains(err.Error(), "audio sink error") {
-			t.Fatalf("expected audio sink error, got: %v", err)
-		}
-	})
-
-	t.Run("sink error on done aborts", func(t *testing.T) {
-		t.Parallel()
-		stt := &mockSTT{text: "hello"}
-		brain := &mockBrain{reply: "hi"}
-		tts := &mockTTS{audio: []byte("wav"), format: "pcm"}
-		h := NewHub(cfg, coord, WithSTTClient(stt), WithBrainClient(brain), WithTTSClient(tts))
-
-		err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(100)), "", "", func(event string, data any) error {
-			if event == "done" {
-				return errors.New("done sink error")
-			}
-			return nil
-		}, EdgeTimings{})
-		if err == nil || !strings.Contains(err.Error(), "done sink error") {
-			t.Fatalf("expected done sink error, got: %v", err)
-		}
-	})
-
-	t.Run("sink error on stt error propagates sink error", func(t *testing.T) {
-		t.Parallel()
-		stt := &mockSTT{err: errors.New("stt failure")}
-		h := NewHub(cfg, coord, WithSTTClient(stt))
-
-		err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(100)), "", "", func(event string, data any) error {
-			if event == "error" {
-				return errors.New("sink error on stt failure")
-			}
-			return nil
-		}, EdgeTimings{})
-		if err == nil || !strings.Contains(err.Error(), "sink error on stt failure") {
-			t.Fatalf("expected sink error on stt failure, got: %v", err)
-		}
-	})
-
-	t.Run("sink error on brain error propagates sink error", func(t *testing.T) {
-		t.Parallel()
-		stt := &mockSTT{text: "hello"}
-		brain := &mockBrain{err: errors.New("brain failure")}
-		h := NewHub(cfg, coord, WithSTTClient(stt), WithBrainClient(brain))
-
-		err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(100)), "", "", func(event string, data any) error {
-			if event == "error" {
-				return errors.New("sink error on brain failure")
-			}
-			return nil
-		}, EdgeTimings{})
-		if err == nil || !strings.Contains(err.Error(), "sink error on brain failure") {
-			t.Fatalf("expected sink error on brain failure, got: %v", err)
-		}
-	})
-
-	t.Run("sink error on tts error propagates sink error", func(t *testing.T) {
-		t.Parallel()
-		stt := &mockSTT{text: "hello"}
-		brain := &mockBrain{reply: "hi"}
-		tts := &mockTTS{err: errors.New("tts failure")}
-		h := NewHub(cfg, coord, WithSTTClient(stt), WithBrainClient(brain), WithTTSClient(tts))
-
-		err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(100)), "", "", func(event string, data any) error {
-			if event == "error" {
-				return errors.New("sink error on tts failure")
-			}
-			return nil
-		}, EdgeTimings{})
-		if err == nil || !strings.Contains(err.Error(), "sink error on tts failure") {
-			t.Fatalf("expected sink error on tts failure, got: %v", err)
-		}
-	})
-}
-
-func TestDefaultSTTClient_Wyoming_ReadCloseAndRawText(t *testing.T) {
-	t.Parallel()
-
-	// Server closes immediately
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen failed: %v", err)
-	}
-	defer listener.Close()
-
-	go func() {
-		conn, acceptErr := listener.Accept()
-		if acceptErr != nil {
-			return
-		}
-		_ = conn.Close()
-	}()
-
-	client := NewDefaultSTTClient("tcp://" + listener.Addr().String())
-	_, err = client.Transcribe(context.Background(), makeValidWAV(100))
-	if err == nil {
-		t.Fatal("expected error when wyoming server closes early")
-	}
-
-	// Server returns raw string in dataBytes instead of valid JSON
-	listenerRaw, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen failed: %v", err)
-	}
-	defer listenerRaw.Close()
-
-	go func() {
-		conn, acceptErr := listenerRaw.Accept()
-		if acceptErr != nil {
-			return
-		}
-		defer conn.Close()
-
-		drainMockWyomingRequest(bufio.NewReader(conn))
-
-		rawString := "raw transcript fallback"
-		hdr := fmt.Sprintf("{\"type\":\"transcript\",\"data_length\":%d}\n", len(rawString))
-		_, _ = conn.Write([]byte(hdr))
-		_, _ = conn.Write([]byte(rawString))
-	}()
-
-
-	clientRaw := NewDefaultSTTClient("tcp://" + listenerRaw.Addr().String())
-	txt, err := clientRaw.Transcribe(context.Background(), makeValidWAV(100))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if txt != "raw transcript fallback" {
-		t.Errorf("expected 'raw transcript fallback', got %q", txt)
-	}
-}
-
-func TestClients_NetworkFailures(t *testing.T) {
-	t.Parallel()
-
-	// HTTP STT network failure
-	stt := NewDefaultSTTClient("http://127.0.0.1:59998/invalid")
-	_, err := stt.Transcribe(context.Background(), makeValidWAV(100))
-	if err == nil {
-		t.Error("expected network error for http stt")
-	}
-
-	// Brain client network failure
-	brain := NewDefaultBrainClient("http://127.0.0.1:59998/invalid", 1)
-	_, err = brain.Ask(context.Background(), AskRequest{Prompt: "hi", SessionID: "s1"}, nil)
-	if err == nil {
-		t.Error("expected network error for brain client")
-	}
-
-	// TTS client network failure
-	tts := NewDefaultTTSClient("http://127.0.0.1:59998/invalid", "k", "v", 1)
-	err = tts.Synthesize(context.Background(), "hi", func(chunk TTSAudioChunk) error { return nil })
-	if err == nil {
-		t.Error("expected network error for tts client")
-	}
-}
-
-func TestDefaultBrainClient_SSE_MalformedDataAndError(t *testing.T) {
-	t.Parallel()
-
-	// Server sending malformed JSON on data: line, followed by valid done
-	tsMalformed := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = w.Write([]byte("event: status\ndata: {not-valid-json}\n\nevent: reply\ndata: {\"reply\":\"recovered\"}\n\nevent: done\ndata: {}\n\n"))
-	}))
-	defer tsMalformed.Close()
-
-	brain := NewDefaultBrainClient(tsMalformed.URL, 5)
-	reply, err := brain.Ask(context.Background(), AskRequest{Prompt: "hi", SessionID: "s1"}, nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if reply != "recovered" {
-		t.Errorf("expected 'recovered', got %q", reply)
-	}
-}
-
-func TestDefaultBrainClient_SSE_ScannerError(t *testing.T) {
-	t.Parallel()
-	longLine := "data: " + strings.Repeat("A", sseScannerMaxLine+1024) + "\n\n"
-	tsLong := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = w.Write([]byte(longLine))
-	}))
-	defer tsLong.Close()
-
-	brain := NewDefaultBrainClient(tsLong.URL, 5)
-	_, err := brain.Ask(context.Background(), AskRequest{Prompt: "hi", SessionID: "s1"}, nil)
-	if err == nil {
-		t.Fatal("expected scanner error for line exceeding max scan token size")
-	}
-}
-
-func TestDefaultSTTClient_Wyoming_TruncatedDataAndPayload(t *testing.T) {
-	t.Parallel()
-
-	// Truncated dataLength
-	l1, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer l1.Close()
-	go func() {
-		conn, acceptErr := l1.Accept()
-		if acceptErr != nil {
-			return
-		}
-		defer conn.Close()
-		drainMockWyomingRequest(bufio.NewReader(conn))
-		_, _ = conn.Write([]byte("{\"type\":\"event\",\"data_length\":100}\nshort"))
-	}()
-	c1 := NewDefaultSTTClient("tcp://" + l1.Addr().String())
-	_, err = c1.Transcribe(context.Background(), makeValidWAV(100))
-	if err == nil {
-		t.Fatal("expected error on truncated data")
-	}
-
-	// Truncated payloadLength
-	l2, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer l2.Close()
-	go func() {
-		conn, acceptErr := l2.Accept()
-		if acceptErr != nil {
-			return
-		}
-		defer conn.Close()
-		drainMockWyomingRequest(bufio.NewReader(conn))
-		_, _ = conn.Write([]byte("{\"type\":\"event\",\"payload_length\":100}\nshort"))
-	}()
-	c2 := NewDefaultSTTClient("tcp://" + l2.Addr().String())
-	_, err = c2.Transcribe(context.Background(), makeValidWAV(100))
-	if err == nil {
-		t.Fatal("expected error on truncated payload")
-	}
-}
-
-func TestHub_MetricsRecording_Success(t *testing.T) {
-	t.Parallel()
-
-	reg := prometheus.NewRegistry()
-	m := NewMetrics(reg)
-
-	cfg := &config.VoiceHubConfig{
-		Enabled:  true,
-		TTSModel: "kokoro",
-	}
-	stt := &mockSTT{delay: 2 * time.Millisecond, text: "lights on"}
-	brain := &mockBrain{reply: "turning on lights"}
-	tts := &mockTTS{delay: 2 * time.Millisecond, audio: []byte("tts-audio-bytes"), format: "pcm"}
-
-
-	h := NewHub(cfg, nil,
-		WithSTTClient(stt),
-		WithBrainClient(brain),
-		WithTTSClient(tts),
-		WithMetrics(m),
-	)
-
-	// 16000 samples = 1 second of audio at 16kHz
-	wav := makeValidWAV(16000)
-	timings := EdgeTimings{
-		WakeEvalSec:         0.05,
-		UtteranceSpeechSec:  1.0,
-		UtteranceSilenceSec: 0.25,
-	}
-
-	sink := func(string, any) error { return nil }
-	err := h.Interact(context.Background(), bytes.NewReader(wav), "kiosk-kitchen", "sess-1", sink, timings)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	mfs, err := reg.Gather()
-	if err != nil {
-		t.Fatalf("failed to gather metrics: %v", err)
-	}
-
-	stagesFound := make(map[string]bool)
-	var turnsSuccessCount float64
-	var foundRTF, foundCPS bool
-
-	for _, mf := range mfs {
-		switch mf.GetName() {
-		case "mirrormere_voice_stage_duration_seconds":
-			for _, metric := range mf.GetMetric() {
-				var stage, status string
-				for _, lbl := range metric.GetLabel() {
-					if lbl.GetName() == "stage" {
-						stage = lbl.GetValue()
-					}
-					if lbl.GetName() == "status" {
-						status = lbl.GetValue()
-					}
-				}
-				if status == "success" {
-					stagesFound[stage] = true
-				}
-			}
-		case "mirrormere_voice_turns_total":
-			for _, metric := range mf.GetMetric() {
-				var status string
-				for _, lbl := range metric.GetLabel() {
-					if lbl.GetName() == "status" {
-						status = lbl.GetValue()
-					}
-				}
-				if status == "success" {
-					turnsSuccessCount += metric.GetCounter().GetValue()
-				}
-			}
-		case "mirrormere_voice_stt_rtf":
-			for _, metric := range mf.GetMetric() {
-				var engine string
-				for _, lbl := range metric.GetLabel() {
-					if lbl.GetName() == "engine" {
-						engine = lbl.GetValue()
-					}
-				}
-				if engine == "whisper" && metric.GetGauge().GetValue() >= 0 {
-					foundRTF = true
-				}
-			}
-		case "mirrormere_voice_tts_chars_per_second":
-			for _, metric := range mf.GetMetric() {
-				var voiceLbl string
-				for _, lbl := range metric.GetLabel() {
-					if lbl.GetName() == "voice" {
-						voiceLbl = lbl.GetValue()
-					}
-				}
-				if voiceLbl == "kokoro" && metric.GetGauge().GetValue() > 0 {
-					foundCPS = true
-				}
-			}
-		}
-	}
-
-	expectedStages := []string{"wake_eval", "utterance_speech", "utterance_silence", "stt", "brain", "tts"}
-	for _, s := range expectedStages {
-		if !stagesFound[s] {
-			t.Errorf("missing success stage duration metric for: %s", s)
-		}
-	}
-	if turnsSuccessCount != 1 {
-		t.Errorf("expected 1 successful turn, got %f", turnsSuccessCount)
-	}
-	if !foundRTF {
-		t.Errorf("expected valid RTF gauge for whisper")
-	}
-	if !foundCPS {
-		t.Errorf("expected valid CPS gauge for kokoro")
-	}
-}
-
-func TestHub_MetricsRecording_STTFailure(t *testing.T) {
-	t.Parallel()
-
-	reg := prometheus.NewRegistry()
-	m := NewMetrics(reg)
-
-	cfg := &config.VoiceHubConfig{Enabled: true}
-	stt := &mockSTT{err: errors.New("whisper down")}
-
-	h := NewHub(cfg, nil,
-		WithSTTClient(stt),
-		WithMetrics(m),
-	)
-
-	wav := makeValidWAV(1600)
-	sink := func(string, any) error { return nil }
-	err := h.Interact(context.Background(), bytes.NewReader(wav), "kiosk-kitchen", "sess-1", sink, EdgeTimings{})
-	if !errors.Is(err, ErrSTTFailed) {
-		t.Fatalf("expected ErrSTTFailed, got: %v", err)
-	}
-
-	mfs, err := reg.Gather()
-	if err != nil {
-		t.Fatalf("failed to gather metrics: %v", err)
-	}
-
-	var foundSTTErrorStage bool
-	var foundSTTErrorCounter bool
-	var foundErrorTurn bool
-
-	for _, mf := range mfs {
-		switch mf.GetName() {
-		case "mirrormere_voice_stage_duration_seconds":
-			for _, metric := range mf.GetMetric() {
-				var stage, status string
-				for _, lbl := range metric.GetLabel() {
-					if lbl.GetName() == "stage" {
-						stage = lbl.GetValue()
-					}
-					if lbl.GetName() == "status" {
-						status = lbl.GetValue()
-					}
-				}
-				if stage == "stt" && status == "error" {
-					foundSTTErrorStage = true
-				}
-			}
-		case "mirrormere_voice_errors_total":
-			for _, metric := range mf.GetMetric() {
-				var stage, errType string
-				for _, lbl := range metric.GetLabel() {
-					if lbl.GetName() == "stage" {
-						stage = lbl.GetValue()
-					}
-					if lbl.GetName() == "error_type" {
-						errType = lbl.GetValue()
-					}
-				}
-				if stage == "stt" && errType == "stt_error" && metric.GetCounter().GetValue() == 1 {
-					foundSTTErrorCounter = true
-				}
-			}
-		case "mirrormere_voice_turns_total":
-			for _, metric := range mf.GetMetric() {
-				for _, lbl := range metric.GetLabel() {
-					if lbl.GetName() == "status" && lbl.GetValue() == "error" && metric.GetCounter().GetValue() == 1 {
-						foundErrorTurn = true
-					}
-				}
-			}
-		}
-	}
-
-	if !foundSTTErrorStage {
-		t.Errorf("missing stt error stage duration metric")
-	}
-	if !foundSTTErrorCounter {
-		t.Errorf("missing stt error counter metric")
-	}
-	if !foundErrorTurn {
-		t.Errorf("missing turns_total error counter metric")
-	}
-}
-
-func TestHub_MetricsRecording_BrainFailure(t *testing.T) {
-	t.Parallel()
-
-	reg := prometheus.NewRegistry()
-	m := NewMetrics(reg)
-
-	cfg := &config.VoiceHubConfig{Enabled: true}
-	stt := &mockSTT{text: "hello"}
-	brain := &mockBrain{err: errors.New("brain failed")}
-
-	h := NewHub(cfg, nil,
-		WithSTTClient(stt),
-		WithBrainClient(brain),
-		WithMetrics(m),
-	)
-
-	wav := makeValidWAV(1600)
-	sink := func(string, any) error { return nil }
-	err := h.Interact(context.Background(), bytes.NewReader(wav), "kiosk-kitchen", "sess-1", sink, EdgeTimings{})
-	if !errors.Is(err, ErrBrainFailed) {
-		t.Fatalf("expected ErrBrainFailed, got: %v", err)
-	}
-
-	mfs, err := reg.Gather()
-	if err != nil {
-		t.Fatalf("failed to gather metrics: %v", err)
-	}
-
-	var foundBrainErrorStage bool
-	var foundBrainErrorCounter bool
-	var foundErrorTurn bool
-
-	for _, mf := range mfs {
-		switch mf.GetName() {
-		case "mirrormere_voice_stage_duration_seconds":
-			for _, metric := range mf.GetMetric() {
-				var stage, status string
-				for _, lbl := range metric.GetLabel() {
-					if lbl.GetName() == "stage" {
-						stage = lbl.GetValue()
-					}
-					if lbl.GetName() == "status" {
-						status = lbl.GetValue()
-					}
-				}
-				if stage == "brain" && status == "error" {
-					foundBrainErrorStage = true
-				}
-			}
-		case "mirrormere_voice_errors_total":
-			for _, metric := range mf.GetMetric() {
-				var stage, errType string
-				for _, lbl := range metric.GetLabel() {
-					if lbl.GetName() == "stage" {
-						stage = lbl.GetValue()
-					}
-					if lbl.GetName() == "error_type" {
-						errType = lbl.GetValue()
-					}
-				}
-				if stage == "brain" && errType == "brain_error" && metric.GetCounter().GetValue() == 1 {
-					foundBrainErrorCounter = true
-				}
-			}
-		case "mirrormere_voice_turns_total":
-			for _, metric := range mf.GetMetric() {
-				for _, lbl := range metric.GetLabel() {
-					if lbl.GetName() == "status" && lbl.GetValue() == "error" && metric.GetCounter().GetValue() == 1 {
-						foundErrorTurn = true
-					}
-				}
-			}
-		}
-	}
-
-	if !foundBrainErrorStage {
-		t.Errorf("missing brain error stage duration metric")
-	}
-	if !foundBrainErrorCounter {
-		t.Errorf("missing brain error counter metric")
-	}
-	if !foundErrorTurn {
-		t.Errorf("missing turns_total error counter metric")
-	}
-}
-
-func TestHub_MetricsRecording_TTSFailure(t *testing.T) {
-	t.Parallel()
-
-	reg := prometheus.NewRegistry()
-	m := NewMetrics(reg)
-
-	cfg := &config.VoiceHubConfig{Enabled: true}
-	stt := &mockSTT{text: "hello"}
-	brain := &mockBrain{reply: "hi there"}
-	tts := &mockTTS{err: errors.New("tts failed")}
-
-	h := NewHub(cfg, nil,
-		WithSTTClient(stt),
-		WithBrainClient(brain),
-		WithTTSClient(tts),
-		WithMetrics(m),
-	)
-
-	wav := makeValidWAV(1600)
-	sink := func(string, any) error { return nil }
-	err := h.Interact(context.Background(), bytes.NewReader(wav), "kiosk-kitchen", "sess-1", sink, EdgeTimings{})
-	if err != nil {
-		t.Fatalf("expected graceful degradation on TTS failure, got err: %v", err)
-	}
-
-	mfs, err := reg.Gather()
-	if err != nil {
-		t.Fatalf("failed to gather metrics: %v", err)
-	}
-
-	var foundTTSErrorStage bool
-	var foundTTSErrorCounter bool
-	var foundErrorTurn bool
-
-	for _, mf := range mfs {
-		switch mf.GetName() {
-		case "mirrormere_voice_stage_duration_seconds":
-			for _, metric := range mf.GetMetric() {
-				var stage, status string
-				for _, lbl := range metric.GetLabel() {
-					if lbl.GetName() == "stage" {
-						stage = lbl.GetValue()
-					}
-					if lbl.GetName() == "status" {
-						status = lbl.GetValue()
-					}
-				}
-				if stage == "tts" && status == "error" {
-					foundTTSErrorStage = true
-				}
-			}
-		case "mirrormere_voice_errors_total":
-			for _, metric := range mf.GetMetric() {
-				var stage, errType string
-				for _, lbl := range metric.GetLabel() {
-					if lbl.GetName() == "stage" {
-						stage = lbl.GetValue()
-					}
-					if lbl.GetName() == "error_type" {
-						errType = lbl.GetValue()
-					}
-				}
-				if stage == "tts" && errType == "tts_error" && metric.GetCounter().GetValue() == 1 {
-					foundTTSErrorCounter = true
-				}
-			}
-		case "mirrormere_voice_turns_total":
-			for _, metric := range mf.GetMetric() {
-				for _, lbl := range metric.GetLabel() {
-					if lbl.GetName() == "status" && lbl.GetValue() == "error" && metric.GetCounter().GetValue() == 1 {
-						foundErrorTurn = true
-					}
-				}
-			}
-		}
-	}
-
-	if !foundTTSErrorStage {
-		t.Errorf("missing tts error stage duration metric")
-	}
-	if !foundTTSErrorCounter {
-		t.Errorf("missing tts error counter metric")
-	}
-	if !foundErrorTurn {
-		t.Errorf("missing turns_total error counter metric on degraded TTS")
 	}
 }
 
@@ -1790,170 +775,127 @@ func (d *delayStreamingBrain) AskStreaming(ctx context.Context, req AskRequest, 
 	return reply, err
 }
 
-func TestHub_MetricsRecording_StreamingBrain(t *testing.T) {
+type metricExpectation struct {
+	name   string
+	labels []string
+	minVal float64
+}
+
+func mkExp(name string, minVal float64, kv ...string) metricExpectation {
+	return metricExpectation{name: name, minVal: minVal, labels: kv}
+}
+
+func TestHub_MetricsRecording(t *testing.T) {
 	t.Parallel()
 
-	reg := prometheus.NewRegistry()
-	m := NewMetrics(reg)
-
-	cfg := &config.VoiceHubConfig{
-		Enabled:  true,
-		TTSModel: "kokoro",
-	}
-	stt := &mockSTT{delay: 2 * time.Millisecond, text: "what is the weather"}
-	baseBrain := &mockStreamingBrain{
-		reply: "It's sunny today. Enjoy the warmth.",
-		sentences: []BrainAudioChunk{
-			{Text: "It's sunny today."},
-			{Text: "Enjoy the warmth."},
+	tests := []struct {
+		name    string
+		stt     STTClient
+		brain   BrainClient
+		tts     TTSClient
+		timings EdgeTimings
+		wantErr error
+		metrics []metricExpectation
+	}{
+		{
+			name:    "success",
+			stt:     &mockSTT{delay: 2 * time.Millisecond, text: "lights on"},
+			brain:   mkBrain("turning on lights", nil),
+			tts:     &mockTTS{delay: 2 * time.Millisecond, audio: []byte("tts-audio-bytes"), format: "pcm"},
+			timings: EdgeTimings{WakeEvalSec: 0.05, UtteranceSpeechSec: 1.0, UtteranceSilenceSec: 0.25},
+			metrics: []metricExpectation{
+				mkExp("mirrormere_voice_stage_duration_seconds", 1, "stage", "wake_eval", "status", "success"),
+				mkExp("mirrormere_voice_stage_duration_seconds", 1, "stage", "utterance_speech", "status", "success"),
+				mkExp("mirrormere_voice_stage_duration_seconds", 1, "stage", "utterance_silence", "status", "success"),
+				mkExp("mirrormere_voice_stage_duration_seconds", 1, "stage", "stt", "status", "success"),
+				mkExp("mirrormere_voice_stage_duration_seconds", 1, "stage", "brain", "status", "success"),
+				mkExp("mirrormere_voice_stage_duration_seconds", 1, "stage", "tts", "status", "success"),
+				mkExp("mirrormere_voice_turns_total", 1, "status", "success"),
+				mkExp("mirrormere_voice_stt_rtf", 0, "engine", "whisper"),
+				mkExp("mirrormere_voice_tts_chars_per_second", 0.001, "voice", "kokoro"),
+			},
+		},
+		{
+			name:    "stt_failure",
+			stt:     &mockSTT{err: errors.New("whisper down")},
+			wantErr: ErrSTTFailed,
+			metrics: []metricExpectation{
+				mkExp("mirrormere_voice_stage_duration_seconds", 1, "stage", "stt", "status", "error"),
+				mkExp("mirrormere_voice_errors_total", 1, "stage", "stt", "error_type", "stt_error"),
+				mkExp("mirrormere_voice_turns_total", 1, "status", "error"),
+			},
+		},
+		{
+			name:    "brain_failure",
+			stt:     &mockSTT{text: "hello"},
+			brain:   mkBrain("", errors.New("brain failed")),
+			wantErr: ErrBrainFailed,
+			metrics: []metricExpectation{
+				mkExp("mirrormere_voice_stage_duration_seconds", 1, "stage", "brain", "status", "error"),
+				mkExp("mirrormere_voice_errors_total", 1, "stage", "brain", "error_type", "brain_error"),
+				mkExp("mirrormere_voice_turns_total", 1, "status", "error"),
+			},
+		},
+		{
+			name:    "tts_failure",
+			stt:     &mockSTT{text: "hello"},
+			brain:   mkBrain("hi there", nil),
+			tts:     mkTTS(nil, "", errors.New("tts failed")),
+			metrics: []metricExpectation{
+				mkExp("mirrormere_voice_stage_duration_seconds", 1, "stage", "tts", "status", "error"),
+				mkExp("mirrormere_voice_errors_total", 1, "stage", "tts", "error_type", "tts_error"),
+				mkExp("mirrormere_voice_turns_total", 1, "status", "error"),
+			},
+		},
+		{
+			name: "streaming_brain",
+			stt:  &mockSTT{delay: 2 * time.Millisecond, text: "what is the weather"},
+			brain: &delayStreamingBrain{
+				mockStreamingBrain: &mockStreamingBrain{
+					reply:     "It's sunny today. Enjoy the warmth.",
+					sentences: []BrainAudioChunk{{Text: "It's sunny today."}, {Text: "Enjoy the warmth."}},
+				},
+				delay: 2 * time.Millisecond,
+			},
+			tts: &mockTTS{delay: 2 * time.Millisecond, audio: makeValidWAV(1600), format: "pcm"},
+			metrics: []metricExpectation{
+				mkExp("mirrormere_voice_stage_duration_seconds", 1, "stage", "tts", "status", "success"),
+				mkExp("mirrormere_voice_tts_chars_per_second", 0.001, "voice", "kokoro"),
+				mkExp("mirrormere_voice_turns_total", 1, "status", "success"),
+			},
 		},
 	}
-	brain := &delayStreamingBrain{
-		mockStreamingBrain: baseBrain,
-		delay:              2 * time.Millisecond,
-	}
 
-	h := NewHub(cfg, nil,
-		WithSTTClient(stt),
-		WithBrainClient(brain),
-		WithTTSClient(&mockTTS{delay: 2 * time.Millisecond, audio: makeValidWAV(1600), format: "pcm"}),
-		WithMetrics(m),
-	)
-
-
-	wav := makeValidWAV(16000)
-	sink := func(string, any) error { return nil }
-	err := h.Interact(context.Background(), bytes.NewReader(wav), "kiosk-kitchen", "sess-1", sink, EdgeTimings{})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	mfs, err := reg.Gather()
-	if err != nil {
-		t.Fatalf("failed to gather metrics: %v", err)
-	}
-
-	var foundTTSSuccessStage bool
-	var foundCPS bool
-	var foundSuccessTurn bool
-
-	for _, mf := range mfs {
-		switch mf.GetName() {
-		case "mirrormere_voice_stage_duration_seconds":
-			for _, metric := range mf.GetMetric() {
-				var stage, status string
-				for _, lbl := range metric.GetLabel() {
-					if lbl.GetName() == "stage" {
-						stage = lbl.GetValue()
-					}
-					if lbl.GetName() == "status" {
-						status = lbl.GetValue()
-					}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			reg := prometheus.NewRegistry()
+			m := NewMetrics(reg)
+			cfg := &config.VoiceHubConfig{Enabled: true, TTSModel: "kokoro"}
+			h := NewHub(cfg, nil,
+				WithSTTClient(tc.stt),
+				WithBrainClient(tc.brain),
+				WithTTSClient(tc.tts),
+				WithMetrics(m),
+			)
+			wav := makeValidWAV(16000)
+			err := h.Interact(context.Background(), bytes.NewReader(wav), "kiosk-kitchen", "sess-1", func(string, any) error { return nil }, tc.timings)
+			if tc.wantErr != nil && !errors.Is(err, tc.wantErr) {
+				t.Fatalf("expected error %v, got: %v", tc.wantErr, err)
+			}
+			if tc.wantErr == nil && err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			for _, exp := range tc.metrics {
+				val, ok := metricVal(t, reg, exp.name, lbl(exp.labels...))
+				if !ok {
+					t.Errorf("metric %s with labels %v not found", exp.name, exp.labels)
+					continue
 				}
-				if stage == "tts" && status == "success" {
-					foundTTSSuccessStage = true
+				if val < exp.minVal {
+					t.Errorf("metric %s with labels %v: got %f, want >= %f", exp.name, exp.labels, val, exp.minVal)
 				}
 			}
-		case "mirrormere_voice_tts_chars_per_second":
-			for _, metric := range mf.GetMetric() {
-				var voiceLbl string
-				for _, lbl := range metric.GetLabel() {
-					if lbl.GetName() == "voice" {
-						voiceLbl = lbl.GetValue()
-					}
-				}
-				if voiceLbl == "kokoro" && metric.GetGauge().GetValue() > 0 {
-					foundCPS = true
-				}
-			}
-		case "mirrormere_voice_turns_total":
-			for _, metric := range mf.GetMetric() {
-				for _, lbl := range metric.GetLabel() {
-					if lbl.GetName() == "status" && lbl.GetValue() == "success" && metric.GetCounter().GetValue() == 1 {
-						foundSuccessTurn = true
-					}
-				}
-			}
-		}
-	}
-
-	if !foundTTSSuccessStage {
-		t.Errorf("missing tts success stage duration metric for streaming brain")
-	}
-	if !foundCPS {
-		t.Errorf("missing tts_chars_per_second metric for streaming brain")
-	}
-	if !foundSuccessTurn {
-		t.Errorf("missing turns_total success counter metric for streaming brain")
+		})
 	}
 }
-
-func TestMetrics_RecordFalseWakes(t *testing.T) {
-	t.Parallel()
-	reg := prometheus.NewRegistry()
-	m := NewMetrics(reg)
-
-	m.RecordFalseWakes("kitchen-display", 3)
-	// <= 0 ignored
-	m.RecordFalseWakes("kitchen-display", 0)
-	m.RecordFalseWakes("kitchen-display", -2)
-	// clamped to 1000
-	m.RecordFalseWakes("kitchen-display", 1500)
-
-	mfs, err := reg.Gather()
-	if err != nil {
-		t.Fatalf("failed to gather metrics: %v", err)
-	}
-
-	var found bool
-	for _, mf := range mfs {
-		if mf.GetName() == "mirrormere_voice_false_wakes_total" {
-			found = true
-			val := mf.GetMetric()[0].GetCounter().GetValue()
-			if val != 1003 { // 3 + 1000
-				t.Fatalf("expected 1003 false wakes, got %f", val)
-			}
-		}
-	}
-	if !found {
-		t.Fatal("mirrormere_voice_false_wakes_total metric not found")
-	}
-
-	// Nil safety check
-	var mNil *Metrics
-	mNil.RecordFalseWakes("kitchen-display", 5)
-}
-
-func TestMetrics_RecordStageDuration_DeliberationClamp(t *testing.T) {
-	t.Parallel()
-	reg := prometheus.NewRegistry()
-	m := NewMetrics(reg)
-
-	// 120s deliberation turn accepted
-	m.RecordStageDuration("kitchen-display", "brain", "success", 120.0)
-	// > 300s deliberation turn rejected
-	m.RecordStageDuration("kitchen-display", "brain", "timeout", 305.0)
-
-	mfs, err := reg.Gather()
-	if err != nil {
-		t.Fatalf("failed to gather metrics: %v", err)
-	}
-
-	var foundBrainCount int
-	for _, mf := range mfs {
-		if mf.GetName() == "mirrormere_voice_stage_duration_seconds" {
-			for _, metric := range mf.GetMetric() {
-				for _, lbl := range metric.GetLabel() {
-					if lbl.GetName() == "stage" && lbl.GetValue() == "brain" {
-						foundBrainCount++
-					}
-				}
-			}
-		}
-	}
-	if foundBrainCount != 1 {
-		t.Fatalf("expected 1 brain metric observed (120s accepted, 305s ignored), got %d", foundBrainCount)
-	}
-}
-
-
