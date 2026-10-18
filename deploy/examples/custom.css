@@ -1,6 +1,6 @@
 /* ==========================================================================
    Mirrormere Example Custom Stylesheet: Custom Theme & Accent Overrides
-   Mount target: volume mount to ./config/custom.css (or over web/static/css/hud.css)
+   Mount target: volume mount to ./config/custom.css (layered on top of web/static/css/hud.css)
    Demonstrates custom palette variables and kiosk touch cursor suppression.
    ========================================================================== */
 

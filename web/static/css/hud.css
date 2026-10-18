@@ -3,7 +3,7 @@
 /* ==========================================================================
    Mirrormere Default Stylesheet: Pastel Bento Theme (Touch Kiosk / Desktop)
    Complies with SPEC-001, SPEC-003, SPEC-004, SPEC-007, SPEC-010, SPEC-011
-   Mount target: fallback when /config/custom.css is absent
+   Base stylesheet; /config/custom.css is layered on top when present
    ========================================================================== */
 
 :root {

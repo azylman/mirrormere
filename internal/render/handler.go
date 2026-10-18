@@ -1,6 +1,7 @@
 package render
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -31,12 +32,20 @@ func WithCSSPath(path string) HandlerOption {
 	}
 }
 
+// WithCustomCSSPath sets the optional custom override stylesheet path layered on top of the base stylesheet.
+func WithCustomCSSPath(path string) HandlerOption {
+	return func(h *Handler) {
+		h.override = path
+	}
+}
+
 // Handler serves HTTP endpoints for widget rendering, static package assets, and stylesheets.
 type Handler struct {
 	mu       sync.RWMutex
 	engine   *Engine
 	resolver PackageResolver
 	cssPath  string
+	override string
 }
 
 // NewHandler constructs a Handler.
@@ -174,7 +183,7 @@ func (h *Handler) ServeStyle(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "public, max-age=0, must-revalidate")
 
 	h.mu.RLock()
-	cssPath := h.cssPath
+	cssPath, customCSSPath := h.cssPath, h.override
 	h.mu.RUnlock()
 
 	if cssPath == "" {
@@ -186,6 +195,16 @@ func (h *Handler) ServeStyle(w http.ResponseWriter, r *http.Request) {
 	if err != nil || fi.IsDir() {
 		writeJSONError(w, http.StatusNotFound, "stylesheet not found")
 		return
+	}
+
+	if customFi, statErr := os.Stat(customCSSPath); customCSSPath != "" && statErr == nil && !customFi.IsDir() {
+		if baseBytes, baseErr := os.ReadFile(cssPath); baseErr == nil {
+			if customBytes, customErr := os.ReadFile(customCSSPath); customErr == nil {
+				combined := append(append(baseBytes[:len(baseBytes):len(baseBytes)], '\n'), customBytes...)
+				http.ServeContent(w, r, "style.css", customFi.ModTime(), bytes.NewReader(combined))
+				return
+			}
+		}
 	}
 
 	http.ServeFile(w, r, cssPath)

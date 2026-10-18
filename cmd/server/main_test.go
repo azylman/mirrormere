@@ -1152,8 +1152,8 @@ display:
 	if err != nil {
 		t.Fatalf("failed to read /style.css body: %v", err)
 	}
-	if string(cssBody) != updatedCSS {
-		t.Errorf("expected updated CSS %q, got %q", updatedCSS, string(cssBody))
+	if !strings.Contains(string(cssBody), "--mm-bg-canvas:") || !strings.HasSuffix(string(cssBody), "\n"+updatedCSS) {
+		t.Errorf("expected base hud.css with updated custom.css suffix %q, got %q", updatedCSS, string(cssBody))
 	}
 
 	sseCancel()

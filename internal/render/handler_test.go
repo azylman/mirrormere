@@ -190,6 +190,7 @@ func TestHandler_ServeStyle(t *testing.T) {
 		name            string
 		method          string
 		cssPath         string
+		customCSSPath   string
 		setPath         string
 		checkPath       string
 		wantStatus      int
@@ -202,6 +203,8 @@ func TestHandler_ServeStyle(t *testing.T) {
 		{name: "missing stylesheet 404", method: http.MethodGet, cssPath: missingCSS, wantStatus: http.StatusNotFound, wantErrMsg: "stylesheet not found"},
 		{name: "empty stylesheet path 404", method: http.MethodGet, cssPath: "", wantStatus: http.StatusNotFound, wantErrMsg: "stylesheet not configured"},
 		{name: "valid stylesheet GET 200", method: http.MethodGet, cssPath: validCSS, wantStatus: http.StatusOK, wantBody: "/* test stylesheet */", wantContentType: "text/css; charset=utf-8", wantCacheCtrl: "public, max-age=0, must-revalidate"},
+		{name: "custom override layered on base 200", method: http.MethodGet, cssPath: validCSS, customCSSPath: customCSS, wantStatus: http.StatusOK, wantBody: "/* test stylesheet */\n/* custom stylesheet */", wantContentType: "text/css; charset=utf-8"},
+		{name: "missing custom override falls back to base 200", method: http.MethodGet, cssPath: validCSS, customCSSPath: missingCSS, wantStatus: http.StatusOK, wantBody: "/* test stylesheet */"},
 		{name: "custom stylesheet SetCSSPath 200", method: http.MethodGet, cssPath: validCSS, setPath: customCSS, checkPath: customCSS, wantStatus: http.StatusOK, wantBody: "/* custom stylesheet */"},
 		{name: "OPTIONS preflight 204", method: http.MethodOptions, cssPath: validCSS, wantStatus: http.StatusNoContent},
 		{name: "HEAD request 200", method: http.MethodHead, cssPath: validCSS, wantStatus: http.StatusOK, wantEmpty: true},
@@ -211,7 +214,7 @@ func TestHandler_ServeStyle(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			h := render.NewHandler(nil, nil, render.WithCSSPath(tc.cssPath))
+			h := render.NewHandler(nil, nil, render.WithCSSPath(tc.cssPath), render.WithCustomCSSPath(tc.customCSSPath))
 			if tc.setPath != "" {
 				h.SetCSSPath(tc.setPath)
 			}
