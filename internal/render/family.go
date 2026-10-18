@@ -158,6 +158,103 @@ type familyCalendarSource struct {
 	private bool
 }
 
+type mergedFamilyEvents struct {
+	order     []string
+	events    map[string]*FamilyEvent
+	dates     map[string][]string
+	rawEvents map[string]provider.CalendarEvent
+}
+
+func mergeFamilyEvents(
+	raw []provider.CalendarEvent,
+	members []FamilyMember,
+	calendars map[string]familyCalendarSource,
+	sharedColor string,
+	loc *time.Location,
+	matchDates func(provider.CalendarEvent) []string,
+) mergedFamilyEvents {
+	if loc == nil {
+		loc = time.UTC
+	}
+	merged := make(map[string]*FamilyEvent)
+	var mergedOrder []string
+	mergedDates := make(map[string][]string)
+	mergedOwnerSet := make(map[string]map[string]bool)
+	mergedRawEvents := make(map[string]provider.CalendarEvent)
+
+	for _, ev := range raw {
+		matchedDates := matchDates(ev)
+		if len(matchedDates) == 0 {
+			continue
+		}
+
+		fe, exists := merged[ev.ID]
+		if !exists {
+			fe = &FamilyEvent{
+				ID:          ev.ID,
+				Title:       ev.Title,
+				Location:    ev.Location,
+				Description: truncateString(ev.Description, 280),
+				AllDay:      ev.AllDay,
+			}
+			if !ev.AllDay {
+				if t, ok := parseFamilyTime(ev.Start); ok {
+					fe.Start = t.In(loc).Format("15:04")
+				}
+				if t, ok := parseFamilyTime(ev.End); ok {
+					fe.End = t.In(loc).Format("15:04")
+				}
+			}
+			merged[ev.ID] = fe
+			mergedOrder = append(mergedOrder, ev.ID)
+			mergedDates[ev.ID] = matchedDates
+			mergedOwnerSet[ev.ID] = make(map[string]bool)
+			mergedRawEvents[ev.ID] = ev
+		}
+
+		if src, ok := calendars[ev.CalendarName]; ok && src.private {
+			fe.Title = "Busy"
+			fe.Location = ""
+			fe.Description = "Busy"
+		}
+
+		for _, m := range members {
+			if calendarClaimedBy(m, ev.CalendarName) {
+				mergedOwnerSet[ev.ID][m.Name] = true
+			}
+		}
+	}
+
+	for _, id := range mergedOrder {
+		fe := merged[id]
+		claimed := mergedOwnerSet[id]
+		for _, m := range members {
+			if claimed[m.Name] {
+				fe.Owners = append(fe.Owners, m.Name)
+				fe.Initials = append(fe.Initials, m.Initial)
+				fe.Colors = append(fe.Colors, m.Color)
+				fe.Patterns = append(fe.Patterns, m.Pattern)
+			}
+		}
+		if len(fe.Colors) > 0 {
+			fe.Color = fe.Colors[0]
+		} else {
+			fe.Color = sharedColor
+		}
+		if len(fe.Patterns) > 0 {
+			fe.Pattern = fe.Patterns[0]
+		}
+		fe.TextColor = contrastTextColor(fe.Color)
+	}
+
+	return mergedFamilyEvents{
+		order:     mergedOrder,
+		events:    merged,
+		dates:     mergedDates,
+		rawEvents: mergedRawEvents,
+	}
+}
+
 // BuildFamilyView resolves the calendar-agenda provider's CalendarSnapshot payload plus the
 // calendar-family widget instance config into the week-view model.
 //
@@ -212,98 +309,33 @@ func BuildFamilyView(data any, cfg map[string]any, dims domain.Dimension, now ti
 
 	hours := resolveFamilyHoursBand(cfg, snapshot.Events, dayIndex, now.Location())
 
-	// Merge shared events by id: an event id seen on multiple member calendars is one event
-	// owned by every claiming member, "Shared events".
-	merged := make(map[string]*FamilyEvent)
-	mergedOrder := make([]string, 0)
-	// mergedDates holds every in-window date key a merged event lands on: a single entry for
-	// a timed event, or one entry per spanned day for a multi-day all-day event.
-	mergedDates := make(map[string][]string)
-	mergedOwnerSet := make(map[string]map[string]bool)
-	mergedRawEvents := make(map[string]provider.CalendarEvent)
-
-	for _, ev := range snapshot.Events {
-		mergedRawEvents[ev.ID] = ev
-		var evDates []string
-		if ev.AllDay {
-			evDates = familyDateRange(ev.Start, ev.End)
-		} else {
-			evDates = timedEventDateRange(ev, now.Location())
-		}
-
-		var matchedDates []string
-		for _, d := range evDates {
-			if _, ok := dayIndex[d]; ok {
-				matchedDates = append(matchedDates, d)
+	mergedData := mergeFamilyEvents(
+		snapshot.Events,
+		members,
+		calendars,
+		sharedColor,
+		now.Location(),
+		func(ev provider.CalendarEvent) []string {
+			var evDates []string
+			if ev.AllDay {
+				evDates = familyDateRange(ev.Start, ev.End)
+			} else {
+				evDates = timedEventDateRange(ev, now.Location())
 			}
-		}
-		if len(matchedDates) == 0 {
-			continue // no day this event spans falls inside the displayed window
-		}
 
-		fe, exists := merged[ev.ID]
-		if !exists {
-			fe = &FamilyEvent{
-				ID:          ev.ID,
-				Title:       ev.Title,
-				Location:    ev.Location,
-				Description: truncateString(ev.Description, 280),
-				AllDay:      ev.AllDay,
-			}
-			if !ev.AllDay {
-				if t, ok := parseFamilyTime(ev.Start); ok {
-					fe.Start = t.In(now.Location()).Format("15:04")
-				}
-				if t, ok := parseFamilyTime(ev.End); ok {
-					fe.End = t.In(now.Location()).Format("15:04")
+			var matchedDates []string
+			for _, d := range evDates {
+				if _, ok := dayIndex[d]; ok {
+					matchedDates = append(matchedDates, d)
 				}
 			}
-			merged[ev.ID] = fe
-			mergedOrder = append(mergedOrder, ev.ID)
-			mergedDates[ev.ID] = matchedDates
-			mergedOwnerSet[ev.ID] = make(map[string]bool)
-		}
+			return matchedDates
+		},
+	)
 
-		if src, ok := calendars[ev.CalendarName]; ok && src.private {
-			fe.Title = "Busy"
-			fe.Location = ""
-			fe.Description = "Busy"
-		}
-
-		for _, m := range members {
-			if calendarClaimedBy(m, ev.CalendarName) {
-				mergedOwnerSet[ev.ID][m.Name] = true
-			}
-		}
-	}
-
-	// Resolve owners in member order, independent of the order in
-	// which each merged event's underlying per-calendar occurrences were fetched.
-	for _, id := range mergedOrder {
-		fe := merged[id]
-		claimed := mergedOwnerSet[id]
-		for _, m := range members {
-			if claimed[m.Name] {
-				fe.Owners = append(fe.Owners, m.Name)
-				fe.Initials = append(fe.Initials, m.Initial)
-				fe.Colors = append(fe.Colors, m.Color)
-				fe.Patterns = append(fe.Patterns, m.Pattern)
-			}
-		}
-	}
-
-	for _, id := range mergedOrder {
-		fe := merged[id]
-		if len(fe.Colors) > 0 {
-			fe.Color = fe.Colors[0]
-		} else {
-			fe.Color = sharedColor
-		}
-		if len(fe.Patterns) > 0 {
-			fe.Pattern = fe.Patterns[0]
-		}
-		fe.TextColor = contrastTextColor(fe.Color)
-		for _, d := range mergedDates[id] {
+	for _, id := range mergedData.order {
+		fe := mergedData.events[id]
+		for _, d := range mergedData.dates[id] {
 			idx := dayIndex[d]
 			if fe.AllDay {
 				days[idx].AllDay = append(days[idx].AllDay, *fe)
@@ -314,12 +346,12 @@ func BuildFamilyView(data any, cfg map[string]any, dims domain.Dimension, now ti
 	}
 
 	var allDayEvents []FamilySpanEvent
-	for _, id := range mergedOrder {
-		fe := merged[id]
+	for _, id := range mergedData.order {
+		fe := mergedData.events[id]
 		if !fe.AllDay {
 			continue
 		}
-		dates := mergedDates[id]
+		dates := mergedData.dates[id]
 		if len(dates) == 0 {
 			continue
 		}
@@ -370,13 +402,13 @@ func BuildFamilyView(data any, cfg map[string]any, dims domain.Dimension, now ti
 		d := rangeStart.AddDate(0, 0, i)
 		dStr := days[i].Date
 
-		for _, id := range mergedOrder {
-			fe := merged[id]
+		for _, id := range mergedData.order {
+			fe := mergedData.events[id]
 			if fe.AllDay {
 				continue
 			}
 			hasDay := false
-			for _, dateKey := range mergedDates[id] {
+			for _, dateKey := range mergedData.dates[id] {
 				if dateKey == dStr {
 					hasDay = true
 					break
@@ -386,7 +418,7 @@ func BuildFamilyView(data any, cfg map[string]any, dims domain.Dimension, now ti
 				continue
 			}
 
-			rawEv := mergedRawEvents[id]
+			rawEv := mergedData.rawEvents[id]
 			tStart, ok1 := parseFamilyTime(rawEv.Start)
 			tEnd, ok2 := parseFamilyTime(rawEv.End)
 			if ok1 {
@@ -402,15 +434,7 @@ func BuildFamilyView(data any, cfg map[string]any, dims domain.Dimension, now ti
 					IsLateEdge:  isLate,
 					ColSpan:     1,
 				}
-				if heightPct > 0 {
-					days[i].Events = append(days[i].Events, dayEv)
-				}
-				if isEarly {
-					days[i].EarlyEvents = append(days[i].EarlyEvents, dayEv)
-				}
-				if isLate {
-					days[i].LateEvents = append(days[i].LateEvents, dayEv)
-				}
+				appendDayEvent(&days[i].Events, &days[i].EarlyEvents, &days[i].LateEvents, dayEv)
 			}
 		}
 
@@ -798,42 +822,7 @@ func parseHexColor(hex string) (r, g, b int, ok bool) {
 	return int(rv), int(gv), int(bv), true
 }
 
-// ParseHoursBand parses the `hours` array from config, validating that start < end.
-// Defaults to 07:00–21:00 if absent, invalid, or inverted.
-func ParseHoursBand(cfg map[string]any) HoursBand {
-	defaultBand := defaultHoursBand()
-	if cfg == nil {
-		return defaultBand
-	}
-	var rawItems []string
-	switch v := cfg["hours"].(type) {
-	case []any:
-		for _, item := range v {
-			if s, ok := item.(string); ok {
-				rawItems = append(rawItems, s)
-			}
-		}
-	case []string:
-		rawItems = v
-	}
-	if len(rawItems) < 2 {
-		return defaultBand
-	}
-
-	hStart, mStart, ok1 := parseClockTime(rawItems[0])
-	hEnd, mEnd, ok2 := parseClockTime(rawItems[1])
-	if !ok1 || !ok2 {
-		return defaultBand
-	}
-
-	totalStart := hStart*60 + mStart
-	totalEnd := hEnd*60 + mEnd
-	if totalStart >= totalEnd {
-		return defaultBand
-	}
-
-	markers := generateHourMarkers(hStart, mStart, hEnd, mEnd)
-	timelineMarkers := generateTimelineMarkers(hStart, mStart, hEnd, mEnd)
+func newHoursBand(hStart, mStart, hEnd, mEnd int) HoursBand {
 	return HoursBand{
 		StartHour:       hStart,
 		StartMinute:     mStart,
@@ -841,28 +830,14 @@ func ParseHoursBand(cfg map[string]any) HoursBand {
 		EndMinute:       mEnd,
 		StartStr:        fmt.Sprintf("%02d:%02d", hStart, mStart),
 		EndStr:          fmt.Sprintf("%02d:%02d", hEnd, mEnd),
-		Markers:         markers,
-		TimelineMarkers: timelineMarkers,
+		Markers:         generateHourMarkers(hStart, mStart, hEnd, mEnd),
+		TimelineMarkers: generateTimelineMarkers(hStart, mStart, hEnd, mEnd),
 	}
 }
 
-func defaultHoursBand() HoursBand {
-	return HoursBand{
-		StartHour:       7,
-		StartMinute:     0,
-		EndHour:         21,
-		EndMinute:       0,
-		StartStr:        "07:00",
-		EndStr:          "21:00",
-		Markers:         generateHourMarkers(7, 0, 21, 0),
-		TimelineMarkers: generateTimelineMarkers(7, 0, 21, 0),
-	}
-}
-
-// hasExplicitHours returns true if cfg["hours"] is a valid two-element slice with start < end.
-func hasExplicitHours(cfg map[string]any) bool {
+func parseExplicitHoursBand(cfg map[string]any) (HoursBand, bool) {
 	if cfg == nil {
-		return false
+		return HoursBand{}, false
 	}
 	var rawItems []string
 	switch v := cfg["hours"].(type) {
@@ -876,14 +851,35 @@ func hasExplicitHours(cfg map[string]any) bool {
 		rawItems = v
 	}
 	if len(rawItems) < 2 {
-		return false
+		return HoursBand{}, false
 	}
+
 	hStart, mStart, ok1 := parseClockTime(rawItems[0])
 	hEnd, mEnd, ok2 := parseClockTime(rawItems[1])
 	if !ok1 || !ok2 {
-		return false
+		return HoursBand{}, false
 	}
-	return hStart*60+mStart < hEnd*60+mEnd
+
+	totalStart := hStart*60 + mStart
+	totalEnd := hEnd*60 + mEnd
+	if totalStart >= totalEnd {
+		return HoursBand{}, false
+	}
+
+	return newHoursBand(hStart, mStart, hEnd, mEnd), true
+}
+
+// ParseHoursBand parses the `hours` array from config, validating that start < end.
+// Defaults to 07:00–21:00 if absent, invalid, or inverted.
+func ParseHoursBand(cfg map[string]any) HoursBand {
+	if band, ok := parseExplicitHoursBand(cfg); ok {
+		return band
+	}
+	return defaultHoursBand()
+}
+
+func defaultHoursBand() HoursBand {
+	return newHoursBand(7, 0, 21, 0)
 }
 
 // resolveFamilyHoursBand resolves the timeline hours band for the week view.
@@ -892,8 +888,8 @@ func hasExplicitHours(cfg map[string]any) bool {
 // (floored to 30-minute intervals for clean timeline alignment), with a minimum 4-hour
 // window and a fallback to 07:00–21:00 when no events or only late events exist.
 func resolveFamilyHoursBand(cfg map[string]any, events []provider.CalendarEvent, dayIndex map[string]int, loc *time.Location) HoursBand {
-	if hasExplicitHours(cfg) {
-		return ParseHoursBand(cfg)
+	if band, ok := parseExplicitHoursBand(cfg); ok {
+		return band
 	}
 
 	if loc == nil {
@@ -937,16 +933,7 @@ func resolveFamilyHoursBand(cfg map[string]any, events []provider.CalendarEvent,
 		}
 	}
 
-	return HoursBand{
-		StartHour:       startH,
-		StartMinute:     startM,
-		EndHour:         endH,
-		EndMinute:       endM,
-		StartStr:        fmt.Sprintf("%02d:%02d", startH, startM),
-		EndStr:          fmt.Sprintf("%02d:%02d", endH, endM),
-		Markers:         generateHourMarkers(startH, startM, endH, endM),
-		TimelineMarkers: generateTimelineMarkers(startH, startM, endH, endM),
-	}
+	return newHoursBand(startH, startM, endH, endM)
 }
 
 func generateTimelineMarkers(hStart, mStart, hEnd, mEnd int) []TimelineMarker {
@@ -1191,99 +1178,41 @@ func BuildFamilyDayView(data any, cfg map[string]any, dims domain.Dimension, now
 
 	var allDayEvents []FamilyDayEvent
 
-	merged := make(map[string]*FamilyEvent)
-	mergedOrder := make([]string, 0)
-	mergedOwnerSet := make(map[string]map[string]bool)
-	mergedRawEvents := make(map[string]provider.CalendarEvent)
-
-	for _, ev := range snapshot.Events {
-		var touchesDay bool
-		if ev.AllDay {
-			for _, d := range familyDateRange(ev.Start, ev.End) {
-				if d == dayDateStr {
-					touchesDay = true
-					break
+	mergedData := mergeFamilyEvents(
+		snapshot.Events,
+		members,
+		calendars,
+		sharedColor,
+		loc,
+		func(ev provider.CalendarEvent) []string {
+			if ev.AllDay {
+				for _, d := range familyDateRange(ev.Start, ev.End) {
+					if d == dayDateStr {
+						return []string{dayDateStr}
+					}
 				}
+				return nil
 			}
-		} else {
 			tStart, ok1 := parseFamilyTime(ev.Start)
+			if !ok1 {
+				return nil
+			}
 			tEnd, ok2 := parseFamilyTime(ev.End)
-			if ok1 {
-				tStartLoc := tStart.In(loc)
-				tEndLoc := tStartLoc.Add(30 * time.Minute)
-				if ok2 {
-					tEndLoc = tEnd.In(loc)
-				}
-				if tStartLoc.Before(dayEnd) && tEndLoc.After(dayStart) {
-					touchesDay = true
-				}
+			tStartLoc := tStart.In(loc)
+			tEndLoc := tStartLoc.Add(30 * time.Minute)
+			if ok2 {
+				tEndLoc = tEnd.In(loc)
 			}
-		}
-
-		if !touchesDay {
-			continue
-		}
-
-		fe, exists := merged[ev.ID]
-		if !exists {
-			fe = &FamilyEvent{
-				ID:          ev.ID,
-				Title:       ev.Title,
-				Location:    ev.Location,
-				Description: truncateString(ev.Description, 280),
-				AllDay:      ev.AllDay,
+			if tStartLoc.Before(dayEnd) && tEndLoc.After(dayStart) {
+				return []string{dayDateStr}
 			}
-			if !ev.AllDay {
-				if t, ok := parseFamilyTime(ev.Start); ok {
-					fe.Start = t.In(loc).Format("15:04")
-				}
-				if t, ok := parseFamilyTime(ev.End); ok {
-					fe.End = t.In(loc).Format("15:04")
-				}
-			}
-			merged[ev.ID] = fe
-			mergedOrder = append(mergedOrder, ev.ID)
-			mergedOwnerSet[ev.ID] = make(map[string]bool)
-			mergedRawEvents[ev.ID] = ev
-		}
+			return nil
+		},
+	)
 
-		if src, ok := calendars[ev.CalendarName]; ok && src.private {
-			fe.Title = "Busy"
-			fe.Location = ""
-			fe.Description = "Busy"
-		}
-
-		for _, m := range members {
-			if calendarClaimedBy(m, ev.CalendarName) {
-				mergedOwnerSet[ev.ID][m.Name] = true
-			}
-		}
-	}
-
-	for _, id := range mergedOrder {
-		fe := merged[id]
-		claimed := mergedOwnerSet[id]
-		for _, m := range members {
-			if claimed[m.Name] {
-				fe.Owners = append(fe.Owners, m.Name)
-				fe.Initials = append(fe.Initials, m.Initial)
-				fe.Colors = append(fe.Colors, m.Color)
-				fe.Patterns = append(fe.Patterns, m.Pattern)
-			}
-		}
-		if len(fe.Colors) > 0 {
-			fe.Color = fe.Colors[0]
-		} else {
-			fe.Color = sharedColor
-		}
-		if len(fe.Patterns) > 0 {
-			fe.Pattern = fe.Patterns[0]
-		} else {
-			fe.Pattern = "solid"
-		}
-		fe.TextColor = contrastTextColor(fe.Color)
-
-		rawEv := mergedRawEvents[id]
+	for _, id := range mergedData.order {
+		fe := mergedData.events[id]
+		rawEv := mergedData.rawEvents[id]
 		if fe.AllDay {
 			dayEv := FamilyDayEvent{
 				FamilyEvent: *fe,
@@ -1401,16 +1330,20 @@ func BuildFamilyDayView(data any, cfg map[string]any, dims domain.Dimension, now
 	}, nil
 }
 
-func dispatchDayEvent(col *FamilyDayColumn, ev FamilyDayEvent) {
+func appendDayEvent(events, early, late *[]FamilyDayEvent, ev FamilyDayEvent) {
 	if ev.HeightPct > 0 {
-		col.Events = append(col.Events, ev)
+		*events = append(*events, ev)
 	}
 	if ev.IsEarlyEdge {
-		col.EarlyEvents = append(col.EarlyEvents, ev)
+		*early = append(*early, ev)
 	}
 	if ev.IsLateEdge {
-		col.LateEvents = append(col.LateEvents, ev)
+		*late = append(*late, ev)
 	}
+}
+
+func dispatchDayEvent(col *FamilyDayColumn, ev FamilyDayEvent) {
+	appendDayEvent(&col.Events, &col.EarlyEvents, &col.LateEvents, ev)
 }
 
 // FamilyMonthDot represents a colored dot indicator for a member with events on a day in Month view.
@@ -1521,96 +1454,37 @@ func BuildFamilyMonthView(data any, cfg map[string]any, dims domain.Dimension, n
 	}
 
 	snapshot := extractCalendarSnapshot(data)
-	merged := make(map[string]*FamilyEvent)
-	mergedOrder := make([]string, 0)
-	mergedDates := make(map[string][]string)
-	mergedOwnerSet := make(map[string]map[string]bool)
-
-	for _, ev := range snapshot.Events {
-		var evDates []string
-		if ev.AllDay {
-			evDates = familyDateRange(ev.Start, ev.End)
-		} else {
+	mergedData := mergeFamilyEvents(
+		snapshot.Events,
+		members,
+		calendars,
+		sharedColor,
+		loc,
+		func(ev provider.CalendarEvent) []string {
+			var evDates []string
+			if ev.AllDay {
+				evDates = familyDateRange(ev.Start, ev.End)
+			} else {
 			evDates = timedEventDateRange(ev, loc)
-		}
-
-		var matchedDates []string
-		for _, d := range evDates {
-			if _, ok := dayIndex[d]; ok {
-				matchedDates = append(matchedDates, d)
 			}
-		}
-		if len(matchedDates) == 0 {
-			continue
-		}
 
-		fe, exists := merged[ev.ID]
-		if !exists {
-			fe = &FamilyEvent{
-				ID:          ev.ID,
-				Title:       ev.Title,
-				Location:    ev.Location,
-				Description: truncateString(ev.Description, 280),
-				AllDay:      ev.AllDay,
-			}
-			if !ev.AllDay {
-				if t, ok := parseFamilyTime(ev.Start); ok {
-					fe.Start = t.In(loc).Format("15:04")
-				}
-				if t, ok := parseFamilyTime(ev.End); ok {
-					fe.End = t.In(loc).Format("15:04")
+			var matchedDates []string
+			for _, d := range evDates {
+				if _, ok := dayIndex[d]; ok {
+					matchedDates = append(matchedDates, d)
 				}
 			}
-			merged[ev.ID] = fe
-			mergedOrder = append(mergedOrder, ev.ID)
-			mergedDates[ev.ID] = matchedDates
-			mergedOwnerSet[ev.ID] = make(map[string]bool)
-		}
-
-		if src, ok := calendars[ev.CalendarName]; ok && src.private {
-			fe.Title = "Busy"
-			fe.Location = ""
-			fe.Description = "Busy"
-		}
-
-		for _, m := range members {
-			if calendarClaimedBy(m, ev.CalendarName) {
-				mergedOwnerSet[ev.ID][m.Name] = true
-			}
-		}
-	}
-
-	for _, id := range mergedOrder {
-		fe := merged[id]
-		claimed := mergedOwnerSet[id]
-		for _, m := range members {
-			if claimed[m.Name] {
-				fe.Owners = append(fe.Owners, m.Name)
-				fe.Initials = append(fe.Initials, m.Initial)
-				fe.Colors = append(fe.Colors, m.Color)
-				fe.Patterns = append(fe.Patterns, m.Pattern)
-			}
-		}
-		if len(fe.Colors) > 0 {
-			fe.Color = fe.Colors[0]
-		} else {
-			fe.Color = sharedColor
-		}
-		if len(fe.Patterns) > 0 {
-			fe.Pattern = fe.Patterns[0]
-		} else {
-			fe.Pattern = "solid"
-		}
-		fe.TextColor = contrastTextColor(fe.Color)
-	}
+			return matchedDates
+		},
+	)
 
 	dayEventsMap := make(map[int][]FamilyEvent, monthGridDays)
 	dayMembersMap := make(map[int]map[string]bool, monthGridDays)
 	dayUnclaimedMap := make(map[int]bool, monthGridDays)
 
-	for _, id := range mergedOrder {
-		fe := merged[id]
-		for _, dStr := range mergedDates[id] {
+	for _, id := range mergedData.order {
+		fe := mergedData.events[id]
+		for _, dStr := range mergedData.dates[id] {
 			idx := dayIndex[dStr]
 			dayEventsMap[idx] = append(dayEventsMap[idx], *fe)
 			if dayMembersMap[idx] == nil {
