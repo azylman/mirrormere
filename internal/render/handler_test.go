@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/azylman/mirrormere/internal/api"
 	"github.com/azylman/mirrormere/internal/config"
@@ -182,8 +183,16 @@ func TestHandler_ServeStyle(t *testing.T) {
 	tmpDir := t.TempDir()
 	validCSS := filepath.Join(tmpDir, "valid.css")
 	customCSS := filepath.Join(tmpDir, "custom.css")
+	olderCustomCSS := filepath.Join(tmpDir, "older_custom.css")
 	_ = os.WriteFile(validCSS, []byte("/* test stylesheet */"), 0644)
 	_ = os.WriteFile(customCSS, []byte("/* custom stylesheet */"), 0644)
+	_ = os.WriteFile(olderCustomCSS, []byte("/* older custom stylesheet */"), 0644)
+	baseTime := time.Date(2026, 10, 18, 12, 0, 0, 0, time.UTC)
+	newerTime := time.Date(2026, 10, 18, 13, 0, 0, 0, time.UTC)
+	olderTime := time.Date(2026, 10, 18, 11, 0, 0, 0, time.UTC)
+	_ = os.Chtimes(validCSS, baseTime, baseTime)
+	_ = os.Chtimes(customCSS, newerTime, newerTime)
+	_ = os.Chtimes(olderCustomCSS, olderTime, olderTime)
 	missingCSS := filepath.Join(tmpDir, "nonexistent.css")
 
 	tests := []struct {
@@ -198,12 +207,14 @@ func TestHandler_ServeStyle(t *testing.T) {
 		wantEmpty       bool
 		wantContentType string
 		wantCacheCtrl   string
+		wantLastMod     string
 		wantErrMsg      string
 	}{
 		{name: "missing stylesheet 404", method: http.MethodGet, cssPath: missingCSS, wantStatus: http.StatusNotFound, wantErrMsg: "stylesheet not found"},
 		{name: "empty stylesheet path 404", method: http.MethodGet, cssPath: "", wantStatus: http.StatusNotFound, wantErrMsg: "stylesheet not configured"},
-		{name: "valid stylesheet GET 200", method: http.MethodGet, cssPath: validCSS, wantStatus: http.StatusOK, wantBody: "/* test stylesheet */", wantContentType: "text/css; charset=utf-8", wantCacheCtrl: "public, max-age=0, must-revalidate"},
-		{name: "custom override layered on base 200", method: http.MethodGet, cssPath: validCSS, customCSSPath: customCSS, wantStatus: http.StatusOK, wantBody: "/* test stylesheet */\n/* custom stylesheet */", wantContentType: "text/css; charset=utf-8"},
+		{name: "valid stylesheet GET 200", method: http.MethodGet, cssPath: validCSS, wantStatus: http.StatusOK, wantBody: "/* test stylesheet */", wantContentType: "text/css; charset=utf-8", wantCacheCtrl: "public, max-age=0, must-revalidate", wantLastMod: baseTime.Format(http.TimeFormat)},
+		{name: "custom override layered on base 200 (custom newer)", method: http.MethodGet, cssPath: validCSS, customCSSPath: customCSS, wantStatus: http.StatusOK, wantBody: "/* test stylesheet */\n/* custom stylesheet */", wantContentType: "text/css; charset=utf-8", wantLastMod: newerTime.Format(http.TimeFormat)},
+		{name: "custom override layered on base 200 (base newer)", method: http.MethodGet, cssPath: validCSS, customCSSPath: olderCustomCSS, wantStatus: http.StatusOK, wantBody: "/* test stylesheet */\n/* older custom stylesheet */", wantContentType: "text/css; charset=utf-8", wantLastMod: baseTime.Format(http.TimeFormat)},
 		{name: "missing custom override falls back to base 200", method: http.MethodGet, cssPath: validCSS, customCSSPath: missingCSS, wantStatus: http.StatusOK, wantBody: "/* test stylesheet */"},
 		{name: "custom stylesheet SetCSSPath 200", method: http.MethodGet, cssPath: validCSS, setPath: customCSS, checkPath: customCSS, wantStatus: http.StatusOK, wantBody: "/* custom stylesheet */"},
 		{name: "OPTIONS preflight 204", method: http.MethodOptions, cssPath: validCSS, wantStatus: http.StatusNoContent},
@@ -226,7 +237,7 @@ func TestHandler_ServeStyle(t *testing.T) {
 			if rec.Code != tc.wantStatus || (tc.wantEmpty && rec.Body.Len() != 0) || (tc.wantBody != "" && rec.Body.String() != tc.wantBody) {
 				t.Fatalf("status=%d (want %d), body=%q", rec.Code, tc.wantStatus, rec.Body.String())
 			}
-			if (tc.wantContentType != "" && rec.Header().Get("Content-Type") != tc.wantContentType) || (tc.wantCacheCtrl != "" && rec.Header().Get("Cache-Control") != tc.wantCacheCtrl) {
+			if (tc.wantContentType != "" && rec.Header().Get("Content-Type") != tc.wantContentType) || (tc.wantCacheCtrl != "" && rec.Header().Get("Cache-Control") != tc.wantCacheCtrl) || (tc.wantLastMod != "" && rec.Header().Get("Last-Modified") != tc.wantLastMod) {
 				t.Errorf("headers = %v", rec.Header())
 			}
 			if tc.wantErrMsg != "" {

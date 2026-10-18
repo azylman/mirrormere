@@ -201,7 +201,11 @@ func (h *Handler) ServeStyle(w http.ResponseWriter, r *http.Request) {
 		if baseBytes, baseErr := os.ReadFile(cssPath); baseErr == nil {
 			if customBytes, customErr := os.ReadFile(customCSSPath); customErr == nil {
 				combined := append(append(baseBytes[:len(baseBytes):len(baseBytes)], '\n'), customBytes...)
-				http.ServeContent(w, r, "style.css", customFi.ModTime(), bytes.NewReader(combined))
+				modTime := customFi.ModTime()
+				if fi.ModTime().After(modTime) {
+					modTime = fi.ModTime()
+				}
+				http.ServeContent(w, r, "style.css", modTime, bytes.NewReader(combined))
 				return
 			}
 		}
