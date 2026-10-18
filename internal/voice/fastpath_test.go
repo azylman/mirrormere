@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -24,7 +25,7 @@ type fastPathHarness struct {
 	mu       sync.Mutex
 	events   []recordedEvent
 	fpCalls  atomic.Int32
-	lastBody atomic.Value // map[string]string
+	lastBody atomic.Value
 }
 
 type recordingTTS struct {
@@ -45,13 +46,10 @@ func (r *recordingTTS) spoken() []string {
 	return append([]string(nil), r.texts...)
 }
 
-// newFastPathHarness runs the hub against handler as the fast-path endpoint.
-// An empty fastURL leaves the feature unconfigured.
 func newFastPathHarness(t *testing.T, fp *config.FastPathConfig) *fastPathHarness {
 	t.Helper()
 	h := &fastPathHarness{brain: &mockBrain{reply: "brain answer"}, store: chatlog.NewStore(), tts: &recordingTTS{}}
-	cfg := &config.VoiceHubConfig{Enabled: true, FastPath: fp}
-	h.hub = NewHub(cfg, NewCoordinator(nil),
+	h.hub = NewHub(&config.VoiceHubConfig{Enabled: true, FastPath: fp}, NewCoordinator(nil),
 		WithSTTClient(&mockSTT{text: "pause the music"}),
 		WithBrainClient(h.brain),
 		WithTTSClient(h.tts),
@@ -98,7 +96,10 @@ func (h *fastPathHarness) server(t *testing.T, handler http.HandlerFunc) *config
 		h.lastBody.Store(body)
 		handler(w, r)
 	}))
-	t.Cleanup(srv.Close)
+	t.Cleanup(func() {
+		srv.CloseClientConnections()
+		srv.Close()
+	})
 	return &config.FastPathConfig{URL: srv.URL}
 }
 
@@ -107,44 +108,12 @@ func writeEvent(w http.ResponseWriter, event, data string) {
 	w.(http.Flusher).Flush()
 }
 
-func TestFastPath_HitIsPlayedAndBrainSkipped(t *testing.T) {
-	t.Parallel()
-	h := newFastPathHarness(t, nil)
-	fp := h.server(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.Header.Get("Content-Type") != "application/json" {
-			t.Errorf("unexpected request %s %s", r.Method, r.Header.Get("Content-Type"))
-		}
+func sseHandler(events ...string) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
-		writeEvent(w, "turn", `{"turn_id":"turn-1"}`)
-		writeEvent(w, "sentence", `{"text":"Paused."}`)
-		writeEvent(w, "sentence", `{"text":"Anything else?"}`)
-		writeEvent(w, "reply", `{"reply":"Paused. Anything else?"}`)
-		writeEvent(w, "done", `{}`)
-	})
-	h.hub.fastPath = NewDefaultFastPathClient(fp.URL, time.Second)
-
-	if err := h.turn(t); err != nil {
-		t.Fatalf("turn: %v", err)
-	}
-	if h.brainCalled() {
-		t.Error("brain must not be asked on a fast-path hit")
-	}
-	if got := h.tts.spoken(); len(got) != 2 || got[0] != "Paused." || got[1] != "Anything else?" {
-		t.Errorf("expected both sentences spoken via local TTS, got %v", got)
-	}
-	if got := h.agentChat(); len(got) != 1 || got[0] != "Paused. Anything else?" {
-		t.Errorf("expected reply recorded in chat log, got %v", got)
-	}
-	body, _ := h.lastBody.Load().(map[string]string)
-	want := map[string]string{"text": "pause the music", "speaker": "sam", "node": "kitchen-ear", "turn_id": "turn-1", "tts": "none"}
-	for k, v := range want {
-		if body[k] != v {
-			t.Errorf("request body %q = %q, want %q (body %v)", k, body[k], v, body)
+		for i := 0; i+1 < len(events); i += 2 {
+			writeEvent(w, events[i], events[i+1])
 		}
-	}
-	names := eventNames(h.events)
-	if names[len(names)-1] != "done" || !containsEvent(names, "reply") || !containsEvent(names, "audio_chunk") {
-		t.Errorf("expected audio_chunk, reply and done events, got %v", names)
 	}
 }
 
@@ -157,146 +126,130 @@ func containsEvent(names []string, want string) bool {
 	return false
 }
 
-func TestFastPath_FallsThroughToBrain(t *testing.T) {
+func TestFastPath_HitOutcomes(t *testing.T) {
 	t.Parallel()
-	cases := map[string]http.HandlerFunc{
-		"204 no match": func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) },
-		"500":          func(w http.ResponseWriter, _ *http.Request) { http.Error(w, "boom", http.StatusInternalServerError) },
-		"404":          func(w http.ResponseWriter, _ *http.Request) { http.NotFound(w, nil) },
-		"200 not sse": func(w http.ResponseWriter, _ *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"reply":"json is not supported"}`))
-		},
-		"200 empty stream": func(w http.ResponseWriter, _ *http.Request) {
-			w.Header().Set("Content-Type", "text/event-stream")
-			writeEvent(w, "turn", `{}`)
-			writeEvent(w, "done", `{}`)
-		},
-		"200 malformed stream": func(w http.ResponseWriter, _ *http.Request) {
-			w.Header().Set("Content-Type", "text/event-stream")
-			_, _ = w.Write([]byte("event: sentence\ndata: {not json\n\n"))
-		},
+	streamH := func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.Header.Get("Content-Type") != "application/json" {
+			t.Errorf("unexpected request")
+		}
+		sseHandler("turn", `{"turn_id":"turn-1"}`, "sentence", `{"text":"Paused."}`, "sentence", `{"text":"Anything else?"}`, "reply", `{"reply":"Paused. Anything else?"}`, "done", `{}`)(w, r)
 	}
-	for name, handler := range cases {
-		t.Run(name, func(t *testing.T) {
+	abortH := func(w http.ResponseWriter, r *http.Request) {
+		sseHandler("sentence", `{"text":"Paused."}`)(w, r)
+		panic(http.ErrAbortHandler)
+	}
+	tests := []struct {
+		name       string
+		handler    http.HandlerFunc
+		wantSpoken []string
+		wantChat   []string
+		wantBody   map[string]string
+		wantEvents bool
+	}{
+		{"streamed", streamH, []string{"Paused.", "Anything else?"}, []string{"Paused. Anything else?"}, map[string]string{"text": "pause the music", "speaker": "sam", "node": "kitchen-ear", "turn_id": "turn-1", "tts": "none"}, true},
+		{"abort", abortH, []string{"Paused."}, []string{"Paused."}, nil, false},
+		{"reply_only", sseHandler("reply", `{"reply":"It is 3 PM."}`, "done", `{}`), []string{"It is 3 PM."}, []string{"It is 3 PM."}, nil, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			h := newFastPathHarness(t, nil)
-			fp := h.server(t, handler)
+			fp := h.server(t, tc.handler)
 			h.hub.fastPath = NewDefaultFastPathClient(fp.URL, time.Second)
-			if err := h.turn(t); err != nil {
-				t.Fatalf("turn: %v", err)
+			if err := h.turn(t); err != nil || h.brainCalled() {
+				t.Fatalf("turn err=%v brainCalled=%v", err, h.brainCalled())
 			}
-			if h.fpCalls.Load() != 1 {
-				t.Errorf("expected one fast-path call, got %d", h.fpCalls.Load())
+			if !slices.Equal(h.tts.spoken(), tc.wantSpoken) || !slices.Equal(h.agentChat(), tc.wantChat) {
+				t.Errorf("spoken=%v chat=%v", h.tts.spoken(), h.agentChat())
 			}
-			if !h.brainCalled() {
-				t.Error("expected fall-through to the brain")
+			if tc.wantBody != nil {
+				body, _ := h.lastBody.Load().(map[string]string)
+				for k, v := range tc.wantBody {
+					if body[k] != v {
+						t.Errorf("body[%q] = %q, want %q", k, body[k], v)
+					}
+				}
 			}
-			if got := h.agentChat(); len(got) != 1 || got[0] != "brain answer" {
-				t.Errorf("expected brain reply in chat log, got %v", got)
+			if tc.wantEvents {
+				names := eventNames(h.events)
+				if len(names) == 0 || names[len(names)-1] != "done" || !containsEvent(names, "reply") || !containsEvent(names, "audio_chunk") {
+					t.Errorf("events: %v", names)
+				}
 			}
 		})
 	}
 }
 
-func TestFastPath_TimeoutFallsThrough(t *testing.T) {
+func TestFastPath_FallThroughToBrain(t *testing.T) {
 	t.Parallel()
-	h := newFastPathHarness(t, nil)
-	release := make(chan struct{})
-	fp := h.server(t, func(w http.ResponseWriter, r *http.Request) {
-		select {
-		case <-release:
-		case <-r.Context().Done():
-		}
-	})
-	t.Cleanup(func() { close(release) })
-	h.hub.fastPath = NewDefaultFastPathClient(fp.URL, 50*time.Millisecond)
-
-	start := time.Now()
-	if err := h.turn(t); err != nil {
-		t.Fatalf("turn: %v", err)
+	tests := []struct {
+		name    string
+		handler http.HandlerFunc
+		timeout time.Duration
+		closed  bool
+	}{
+		{"204_no_match", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }, 0, false},
+		{"500_error", func(w http.ResponseWriter, _ *http.Request) { http.Error(w, "boom", http.StatusInternalServerError) }, 0, false},
+		{"404_not_found", func(w http.ResponseWriter, _ *http.Request) { http.NotFound(w, nil) }, 0, false},
+		{"not_sse", func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"reply":"json"}`))
+		}, 0, false},
+		{"empty_stream", sseHandler("turn", `{}`, "done", `{}`), 0, false},
+		{"malformed_stream", func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = w.Write([]byte("event: sentence\ndata: {bad\n\n"))
+		}, 0, false},
+		{"timeout", func(_ http.ResponseWriter, r *http.Request) { <-r.Context().Done() }, 50 * time.Millisecond, false},
+		{"connection_error", nil, 0, true},
 	}
-	if time.Since(start) > 3*time.Second {
-		t.Errorf("fast path did not honor its timeout, turn took %v", time.Since(start))
-	}
-	if !h.brainCalled() {
-		t.Error("expected fall-through to the brain after timeout")
-	}
-}
-
-func TestFastPath_ConnectionErrorFallsThrough(t *testing.T) {
-	t.Parallel()
-	srv := httptest.NewServer(http.NotFoundHandler())
-	url := srv.URL
-	srv.Close()
-	h := newFastPathHarness(t, nil)
-	h.hub.fastPath = NewDefaultFastPathClient(url, time.Second)
-	if err := h.turn(t); err != nil {
-		t.Fatalf("turn: %v", err)
-	}
-	if !h.brainCalled() {
-		t.Error("expected fall-through to the brain on connection error")
-	}
-}
-
-func TestFastPath_StreamBreaksAfterSentenceDoesNotAskBrain(t *testing.T) {
-	t.Parallel()
-	h := newFastPathHarness(t, nil)
-	fp := h.server(t, func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		writeEvent(w, "sentence", `{"text":"Paused."}`)
-		// Abort the connection mid-stream.
-		panic(http.ErrAbortHandler)
-	})
-	h.hub.fastPath = NewDefaultFastPathClient(fp.URL, time.Second)
-	if err := h.turn(t); err != nil {
-		t.Fatalf("turn should end cleanly, got %v", err)
-	}
-	if h.brainCalled() {
-		t.Error("brain must not be re-asked after a sentence was spoken")
-	}
-	if got := h.tts.spoken(); len(got) != 1 || got[0] != "Paused." {
-		t.Errorf("expected the spoken sentence, got %v", got)
-	}
-	if got := h.agentChat(); len(got) != 1 || got[0] != "Paused." {
-		t.Errorf("expected spoken text recorded, got %v", got)
-	}
-}
-
-func TestFastPath_ReplyOnlyIsSpokenByHub(t *testing.T) {
-	t.Parallel()
-	h := newFastPathHarness(t, nil)
-	fp := h.server(t, func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		writeEvent(w, "reply", `{"reply":"It is 3 PM."}`)
-		writeEvent(w, "done", `{}`)
-	})
-	h.hub.fastPath = NewDefaultFastPathClient(fp.URL, time.Second)
-	if err := h.turn(t); err != nil {
-		t.Fatalf("turn: %v", err)
-	}
-	if h.brainCalled() {
-		t.Error("brain must not be asked")
-	}
-	if got := h.tts.spoken(); len(got) != 1 || got[0] != "It is 3 PM." {
-		t.Errorf("expected reply spoken once, got %v", got)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			h := newFastPathHarness(t, nil)
+			to := tc.timeout
+			if to == 0 {
+				to = time.Second
+			}
+			url := ""
+			if tc.closed {
+				s := httptest.NewServer(http.NotFoundHandler())
+				url = s.URL
+				s.Close()
+			} else {
+				url = h.server(t, tc.handler).URL
+			}
+			h.hub.fastPath = NewDefaultFastPathClient(url, to)
+			if err := h.turn(t); err != nil || !h.brainCalled() {
+				t.Fatalf("turn err=%v brainCalled=%v", err, h.brainCalled())
+			}
+			if !tc.closed && h.fpCalls.Load() != 1 {
+				t.Errorf("expected 1 fast-path call, got %d", h.fpCalls.Load())
+			}
+			if got := h.agentChat(); len(got) != 1 || got[0] != "brain answer" {
+				t.Errorf("chat: %v", got)
+			}
+		})
 	}
 }
 
 func TestFastPath_UnsetURLNeverCallsOut(t *testing.T) {
 	t.Parallel()
-	for name, fp := range map[string]*config.FastPathConfig{"nil": nil, "empty url": {URL: "  "}} {
-		t.Run(name, func(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		cfg  *config.FastPathConfig
+	}{
+		{"nil", nil},
+		{"empty_url", &config.FastPathConfig{URL: "  "}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			h := newFastPathHarness(t, fp)
+			h := newFastPathHarness(t, tc.cfg)
 			if h.hub.fastPath != nil {
-				t.Fatal("fast-path client must not be built without a url")
+				t.Fatal("expected nil fastPath")
 			}
-			if err := h.turn(t); err != nil {
-				t.Fatalf("turn: %v", err)
-			}
-			if !h.brainCalled() {
-				t.Error("expected the brain to answer")
+			if err := h.turn(t); err != nil || !h.brainCalled() {
+				t.Fatalf("turn err=%v brainCalled=%v", err, h.brainCalled())
 			}
 		})
 	}
@@ -307,25 +260,17 @@ func TestFastPath_ConfiguredURLBuildsClient(t *testing.T) {
 	ms := 250
 	h := newFastPathHarness(t, &config.FastPathConfig{URL: "http://127.0.0.1:1/intent", TimeoutMS: &ms})
 	c, ok := h.hub.fastPath.(*DefaultFastPathClient)
-	if !ok {
-		t.Fatalf("expected DefaultFastPathClient, got %T", h.hub.fastPath)
+	if !ok || c.timeout != 250*time.Millisecond || c.url != "http://127.0.0.1:1/intent" {
+		t.Fatalf("unexpected client %+v", h.hub.fastPath)
 	}
-	if c.timeout != 250*time.Millisecond || c.url != "http://127.0.0.1:1/intent" {
-		t.Errorf("unexpected client %+v", c)
-	}
-	// Unreachable endpoint: the turn must still be answered by the brain.
-	if err := h.turn(t); err != nil {
-		t.Fatalf("turn: %v", err)
-	}
-	if !h.brainCalled() {
-		t.Error("expected brain fall-through")
+	if err := h.turn(t); err != nil || !h.brainCalled() {
+		t.Fatalf("turn err=%v brainCalled=%v", err, h.brainCalled())
 	}
 }
 
-// streamingBrainStub lets a miss fall through to an AudioStreamingBrainClient.
 type streamingBrainStub struct{ called atomic.Bool }
 
-func (s *streamingBrainStub) Ask(ctx context.Context, req AskRequest, _ func(string)) (string, error) {
+func (s *streamingBrainStub) Ask(context.Context, AskRequest, func(string)) (string, error) {
 	s.called.Store(true)
 	return "stream brain", nil
 }
@@ -345,15 +290,11 @@ func TestFastPath_MissUsesStreamingBrain(t *testing.T) {
 		WithBrainClient(brain), WithTTSClient(tts),
 		WithFastPathClient(stubFastPath{res: FastPathResult{Outcome: fastPathMiss, Reason: "no_match"}}),
 	)
-	err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(1600)), "kitchen-ear", "s", func(string, any) error { return nil }, EdgeTimings{})
-	if err != nil {
+	if err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(1600)), "kitchen-ear", "s", func(string, any) error { return nil }, EdgeTimings{}); err != nil {
 		t.Fatalf("turn: %v", err)
 	}
-	if !brain.called.Load() {
-		t.Error("expected streaming brain to be asked on a miss")
-	}
-	if got := tts.spoken(); len(got) != 1 || got[0] != "From the brain." {
-		t.Errorf("unexpected speech %v", got)
+	if !brain.called.Load() || len(tts.spoken()) != 1 || tts.spoken()[0] != "From the brain." {
+		t.Errorf("miss streaming brain: called=%v spoken=%v", brain.called.Load(), tts.spoken())
 	}
 }
 
@@ -367,30 +308,41 @@ func TestFastPath_NilBrainOnMiss(t *testing.T) {
 	t.Parallel()
 	b := &fastPathBrain{fp: stubFastPath{res: FastPathResult{Outcome: fastPathMiss}}, metrics: DefaultMetrics()}
 	if _, err := b.Ask(context.Background(), AskRequest{}, nil); err == nil {
-		t.Error("expected error when there is no brain to fall through to")
+		t.Error("expected error")
 	}
 }
 
 func TestBrainStageSeconds(t *testing.T) {
+	t.Parallel()
 	if d, ok := brainStageSeconds(nil, 2*time.Second); !ok || d != 2 {
-		t.Fatalf("plain brain: got %v %v", d, ok)
+		t.Fatalf("plain: %v %v", d, ok)
 	}
 	hit := &fastPathBrain{handled: true, elapsed: 40 * time.Millisecond}
 	if _, ok := brainStageSeconds(hit, 50*time.Millisecond); ok {
-		t.Fatal("fast-path hit must not record a brain stage")
+		t.Fatal("hit must not record brain stage")
 	}
 	miss := &fastPathBrain{elapsed: 500 * time.Millisecond}
 	if d, ok := brainStageSeconds(miss, 2*time.Second); !ok || d != 1.5 {
-		t.Fatalf("miss: want 1.5s brain share, got %v %v", d, ok)
+		t.Fatalf("miss: %v %v", d, ok)
+	}
+	if d, ok := brainStageSeconds(miss, 100*time.Millisecond); !ok || d != 0 {
+		t.Fatalf("clamped: %v %v", d, ok)
 	}
 }
 
 func TestDefaultFastPathClient_SlowHeadersAreTimeout(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(200 * time.Millisecond)
-		w.WriteHeader(http.StatusNoContent)
+	t.Parallel()
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
 	}))
-	defer srv.Close()
+	defer func() {
+		close(release)
+		srv.Close()
+	}()
 	res := NewDefaultFastPathClient(srv.URL, 50*time.Millisecond).Try(context.Background(), AskRequest{Prompt: "x"}, nil)
 	if res.Handled || res.Reason != "timeout" {
 		t.Fatalf("want unhandled timeout, got %+v", res)

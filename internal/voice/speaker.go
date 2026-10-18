@@ -261,12 +261,8 @@ func (c *DefaultEmbedClient) Embed(ctx context.Context, wavData []byte) ([]float
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, readErr := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		if readErr != nil {
-			body = []byte("unknown error")
-		}
-		return nil, "", fmt.Errorf("embed http error %d: %s", resp.StatusCode, string(body))
+	if err := readHTTPError(resp, "embed"); err != nil {
+		return nil, "", err
 	}
 	var out struct {
 		Embedding []float64 `json:"embedding"`
@@ -279,4 +275,15 @@ func (c *DefaultEmbedClient) Embed(ctx context.Context, wavData []byte) ([]float
 		return nil, "", errors.New("embed response has an empty embedding")
 	}
 	return out.Embedding, out.Model, nil
+}
+
+func readHTTPError(resp *http.Response, prefix string) error {
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return nil
+	}
+	body, readErr := io.ReadAll(io.LimitReader(resp.Body, 1024))
+	if readErr != nil {
+		body = []byte("unknown error")
+	}
+	return fmt.Errorf("%s http error %d: %s", prefix, resp.StatusCode, string(body))
 }

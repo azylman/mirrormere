@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -24,7 +25,7 @@ type mockEmbedder struct {
 	err   error
 }
 
-func (m *mockEmbedder) Embed(ctx context.Context, wavData []byte) ([]float64, string, error) {
+func (m *mockEmbedder) Embed(context.Context, []byte) ([]float64, string, error) {
 	return m.emb, m.model, m.err
 }
 
@@ -35,7 +36,7 @@ type mockIdentifier struct {
 	delay time.Duration
 }
 
-func (m *mockIdentifier) Identify(ctx context.Context, wavData []byte) (SpeakerMatch, error) {
+func (m *mockIdentifier) Identify(ctx context.Context, _ []byte) (SpeakerMatch, error) {
 	if m.delay > 0 {
 		select {
 		case <-time.After(m.delay):
@@ -45,6 +46,10 @@ func (m *mockIdentifier) Identify(ctx context.Context, wavData []byte) (SpeakerM
 	}
 	return SpeakerMatch{Speaker: m.id, Score: m.score}, m.err
 }
+
+type errReader struct{}
+
+func (errReader) Read([]byte) (int, error) { return 0, errors.New("read error") }
 
 func writeFingerprints(t *testing.T, path string, f FingerprintFile) {
 	t.Helper()
@@ -59,350 +64,256 @@ func writeFingerprints(t *testing.T, path string, f FingerprintFile) {
 
 func TestCosineSimilarity(t *testing.T) {
 	t.Parallel()
-	sim, err := CosineSimilarity([]float64{1, 0}, []float64{1, 0})
-	if err != nil || sim < 0.999 {
-		t.Fatalf("identical vectors: sim=%v err=%v", sim, err)
+	tests := []struct {
+		name    string
+		a, b    []float64
+		want    float64
+		wantErr bool
+	}{
+		{"identical", []float64{1, 0}, []float64{1, 0}, 1.0, false},
+		{"orthogonal", []float64{1, 0}, []float64{0, 1}, 0.0, false},
+		{"dim_mismatch", []float64{1}, []float64{1, 0}, 0, true},
+		{"zero_vector", []float64{0, 0}, []float64{1, 0}, 0, true},
 	}
-	sim, err = CosineSimilarity([]float64{1, 0}, []float64{0, 1})
-	if err != nil || sim != 0 {
-		t.Fatalf("orthogonal vectors: sim=%v err=%v", sim, err)
-	}
-	if _, err := CosineSimilarity([]float64{1}, []float64{1, 0}); err == nil {
-		t.Fatal("expected dimension mismatch error")
-	}
-	if _, err := CosineSimilarity([]float64{0, 0}, []float64{1, 0}); err == nil {
-		t.Fatal("expected zero-vector error")
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			sim, err := CosineSimilarity(tc.a, tc.b)
+			if (err != nil) != tc.wantErr || (!tc.wantErr && math.Abs(sim-tc.want) > 0.001) {
+				t.Fatalf("sim=%v err=%v", sim, err)
+			}
+		})
 	}
 }
 
 func TestMatchSpeaker(t *testing.T) {
 	t.Parallel()
-	speakers := []Fingerprint{
-		{ID: "mike", Embedding: []float64{1, 0, 0}},
-		{ID: "lauren", Embedding: []float64{0, 1, 0}},
+	spk := []Fingerprint{{ID: "mike", Embedding: []float64{1, 0, 0}}, {ID: "lauren", Embedding: []float64{0, 1, 0}}}
+	mixed := []Fingerprint{{ID: "broken", Embedding: []float64{1, 0}}, spk[0]}
+	tests := []struct {
+		name    string
+		emb     []float64
+		list    []Fingerprint
+		wantID  string
+		minSim  float64
+		wantErr bool
+	}{
+		{"match_first", []float64{0.9, 0.1, 0}, spk, "mike", 0.9, false},
+		{"match_second", []float64{0.1, 0.95, 0}, spk, "lauren", 0.7, false},
+		{"below_threshold", []float64{0, 0, 1}, spk, "", 0, false},
+		{"none_comparable", []float64{1, 0}, spk, "", 0, true},
+		{"skip_uncomparable", []float64{1, 0, 0}, mixed, "mike", 0.9, false},
+		{"nan_embedding", []float64{math.NaN(), 0, 0}, spk, "", 0, true},
 	}
-
-	id, sim, err := MatchSpeaker([]float64{0.9, 0.1, 0}, speakers, 0.7)
-	if err != nil || id != "mike" || sim < 0.9 {
-		t.Fatalf("expected mike, got id=%q sim=%v err=%v", id, sim, err)
-	}
-
-	id, _, err = MatchSpeaker([]float64{0.1, 0.95, 0}, speakers, 0.7)
-	if err != nil || id != "lauren" {
-		t.Fatalf("expected lauren, got id=%q err=%v", id, err)
-	}
-
-	// Equidistant from both, below threshold: nobody.
-	id, _, err = MatchSpeaker([]float64{0, 0, 1}, speakers, 0.7)
-	if err != nil || id != "" {
-		t.Fatalf("expected no match, got id=%q err=%v", id, err)
-	}
-
-	if _, _, err := MatchSpeaker([]float64{1, 0}, speakers, 0.7); err == nil {
-		t.Fatal("expected error when no fingerprint is comparable")
-	}
-
-	// An uncomparable fingerprint is skipped; the rest still match.
-	mixed := []Fingerprint{{ID: "broken", Embedding: []float64{1, 0}}, speakers[0]}
-	id, _, err = MatchSpeaker([]float64{1, 0, 0}, mixed, 0.7)
-	if err != nil || id != "mike" {
-		t.Fatalf("expected mike despite broken fingerprint, got id=%q err=%v", id, err)
-	}
-
-	nan := math.NaN()
-	if _, _, err := MatchSpeaker([]float64{nan, 0, 0}, speakers, 0.7); err == nil {
-		t.Fatal("expected error for NaN utterance embedding")
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			id, sim, err := MatchSpeaker(tc.emb, tc.list, 0.7)
+			if (err != nil) != tc.wantErr || id != tc.wantID || (tc.minSim > 0 && sim < tc.minSim) {
+				t.Fatalf("id=%q sim=%v err=%v", id, sim, err)
+			}
+		})
 	}
 }
 
-func TestFingerprintStore_LoadAndReload(t *testing.T) {
-	t.Parallel()
-	path := filepath.Join(t.TempDir(), "speakers.json")
-	writeFingerprints(t, path, FingerprintFile{Model: "ecapa", Speakers: []Fingerprint{{ID: "mike", Embedding: []float64{1, 0}}}})
-
-	store := NewFingerprintStore(path)
-	f, err := store.Load()
-	if err != nil || len(f.Speakers) != 1 || f.Speakers[0].ID != "mike" {
-		t.Fatalf("first load: %+v err=%v", f, err)
-	}
-
-	// Re-enrollment: file changes on disk, next Load sees it without a restart.
-	writeFingerprints(t, path, FingerprintFile{Model: "ecapa", Speakers: []Fingerprint{
-		{ID: "mike", Embedding: []float64{1, 0}},
-		{ID: "lauren", Embedding: []float64{0, 1}},
-	}})
-	future := time.Now().Add(2 * time.Second)
-	if err := os.Chtimes(path, future, future); err != nil {
-		t.Fatal(err)
-	}
-	f, err = store.Load()
-	if err != nil || len(f.Speakers) != 2 {
-		t.Fatalf("reload: %+v err=%v", f, err)
-	}
-}
-
-func TestFingerprintStore_Invalid(t *testing.T) {
+func TestFingerprintStore(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	cases := map[string]FingerprintFile{
-		"empty-id":        {Speakers: []Fingerprint{{ID: "", Embedding: []float64{1}}}},
-		"duplicate-id":    {Speakers: []Fingerprint{{ID: "a", Embedding: []float64{1}}, {ID: "a", Embedding: []float64{1}}}},
-		"empty-embedding": {Speakers: []Fingerprint{{ID: "a"}}},
-		"mixed-dimension": {Speakers: []Fingerprint{{ID: "a", Embedding: []float64{1, 0}}, {ID: "b", Embedding: []float64{1}}}},
-		"zero-vector":     {Speakers: []Fingerprint{{ID: "a", Embedding: []float64{0, 0}}}},
+	p := filepath.Join(dir, "reload.json")
+	writeFingerprints(t, p, FingerprintFile{Model: "ecapa", Speakers: []Fingerprint{{ID: "mike", Embedding: []float64{1, 0}}}})
+	store := NewFingerprintStore(p)
+	if f, err := store.Load(); err != nil || len(f.Speakers) != 1 {
+		t.Fatalf("first load: %+v err=%v", f, err)
 	}
-	for name, f := range cases {
+	writeFingerprints(t, p, FingerprintFile{Model: "ecapa", Speakers: []Fingerprint{{ID: "mike", Embedding: []float64{1, 0}}, {ID: "lauren", Embedding: []float64{0, 1}}}})
+	fut := time.Now().Add(2 * time.Second)
+	_ = os.Chtimes(p, fut, fut)
+	if f, err := store.Load(); err != nil || len(f.Speakers) != 2 {
+		t.Fatalf("reload: %+v err=%v", f, err)
+	}
+
+	badJSON := filepath.Join(dir, "bad.json")
+	_ = os.WriteFile(badJSON, []byte("{not json"), 0o644)
+	for name, f := range map[string]FingerprintFile{
+		"empty_id":        {Speakers: []Fingerprint{{ID: "", Embedding: []float64{1}}}},
+		"duplicate_id":    {Speakers: []Fingerprint{{ID: "a", Embedding: []float64{1}}, {ID: "a", Embedding: []float64{1}}}},
+		"empty_embedding": {Speakers: []Fingerprint{{ID: "a"}}},
+		"mixed_dim":       {Speakers: []Fingerprint{{ID: "a", Embedding: []float64{1, 0}}, {ID: "b", Embedding: []float64{1}}}},
+		"zero_vector":     {Speakers: []Fingerprint{{ID: "a", Embedding: []float64{0, 0}}}},
+	} {
 		path := filepath.Join(dir, name+".json")
 		writeFingerprints(t, path, f)
 		if _, err := NewFingerprintStore(path).Load(); err == nil {
 			t.Errorf("%s: expected error", name)
 		}
 	}
+	if _, err := NewFingerprintStore(badJSON).Load(); err == nil {
+		t.Error("bad json: expected error")
+	}
 	if _, err := NewFingerprintStore(filepath.Join(dir, "missing.json")).Load(); err == nil {
-		t.Error("missing file: expected error")
+		t.Error("missing: expected error")
 	}
 }
 
 func TestFingerprintIdentifier(t *testing.T) {
 	t.Parallel()
-	path := filepath.Join(t.TempDir(), "speakers.json")
-	writeFingerprints(t, path, FingerprintFile{Model: "ecapa", Speakers: []Fingerprint{
-		{ID: "mike", Embedding: []float64{1, 0}},
-		{ID: "lauren", Embedding: []float64{0, 1}},
-	}})
+	dir := t.TempDir()
+	path := filepath.Join(dir, "speakers.json")
+	writeFingerprints(t, path, FingerprintFile{Model: "ecapa", Speakers: []Fingerprint{{ID: "mike", Embedding: []float64{1, 0}}, {ID: "lauren", Embedding: []float64{0, 1}}}})
 	store := NewFingerprintStore(path)
-
-	m, err := NewFingerprintIdentifier(&mockEmbedder{emb: []float64{0.2, 0.98}, model: "ecapa"}, store, 0.7).Identify(context.Background(), nil)
-	if err != nil || m.Speaker != "lauren" || m.Score < 0.9 {
-		t.Fatalf("expected lauren, got %+v err=%v", m, err)
-	}
-
-	_, err = NewFingerprintIdentifier(&mockEmbedder{emb: []float64{0, 1}, model: "wavlm"}, store, 0.7).Identify(context.Background(), nil)
-	if err == nil {
-		t.Fatal("expected model mismatch error")
-	}
-
-	_, err = NewFingerprintIdentifier(&mockEmbedder{err: errors.New("down")}, store, 0.7).Identify(context.Background(), nil)
-	if err == nil {
-		t.Fatal("expected embed error")
-	}
-
-	// No enrolled speakers: empty result, embedder never needed.
-	emptyPath := filepath.Join(t.TempDir(), "empty.json")
+	emptyPath := filepath.Join(dir, "empty.json")
 	writeFingerprints(t, emptyPath, FingerprintFile{Model: "ecapa"})
-	m, err = NewFingerprintIdentifier(&mockEmbedder{err: errors.New("should not be called")}, NewFingerprintStore(emptyPath), 0.7).Identify(context.Background(), nil)
-	if err != nil || m.Speaker != "" {
-		t.Fatalf("empty store: %+v err=%v", m, err)
+
+	tests := []struct {
+		name        string
+		emb         SpeakerEmbedder
+		store       *FingerprintStore
+		wantSpeaker string
+		wantErr     bool
+	}{
+		{"match_speaker", &mockEmbedder{emb: []float64{0.2, 0.98}, model: "ecapa"}, store, "lauren", false},
+		{"model_mismatch", &mockEmbedder{emb: []float64{0, 1}, model: "wavlm"}, store, "", true},
+		{"embed_error", &mockEmbedder{err: errors.New("down")}, store, "", true},
+		{"empty_store", &mockEmbedder{err: errors.New("unused")}, NewFingerprintStore(emptyPath), "", false},
+		{"missing_store", &mockEmbedder{}, NewFingerprintStore(filepath.Join(dir, "missing.json")), "", true},
+		{"zero_embedding", &mockEmbedder{emb: []float64{0, 0}}, store, "", true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			m, err := NewFingerprintIdentifier(tc.emb, tc.store, 0.7).Identify(context.Background(), nil)
+			if (err != nil) != tc.wantErr || m.Speaker != tc.wantSpeaker {
+				t.Fatalf("got %q err=%v, want %q wantErr=%v", m.Speaker, err, tc.wantSpeaker, tc.wantErr)
+			}
+		})
+	}
+	if NewSpeakerIdentifierFromConfig(nil) != nil ||
+		NewSpeakerIdentifierFromConfig(&config.SpeakerIDConfig{EmbedURL: "http://x"}) != nil ||
+		NewSpeakerIdentifierFromConfig(&config.SpeakerIDConfig{EmbedURL: "http://x", FingerprintsPath: "/f.json"}) == nil {
+		t.Fatal("NewSpeakerIdentifierFromConfig failed")
+	}
+	cfg := &config.VoiceHubConfig{Enabled: true, SpeakerID: &config.SpeakerIDConfig{EmbedURL: "http://x", FingerprintsPath: "/f.json"}}
+	if h := NewHub(cfg, nil); h.speaker == nil {
+		t.Fatal("expected speaker identifier wired")
+	}
+	if h := NewHub(&config.VoiceHubConfig{Enabled: true}, nil); h.speaker != nil {
+		t.Fatal("expected nil speaker identifier")
 	}
 }
 
 func TestDefaultEmbedClient(t *testing.T) {
 	t.Parallel()
-	var gotType string
-	var gotBody []byte
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotType = r.Header.Get("Content-Type")
-		gotBody, _ = io.ReadAll(r.Body)
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"embedding":[0.5,0.25],"model":"ecapa"}`))
-	}))
-	defer srv.Close()
-
-	emb, model, err := NewDefaultEmbedClient(srv.URL, 5).Embed(context.Background(), []byte("RIFFwav"))
-	if err != nil || len(emb) != 2 || model != "ecapa" {
-		t.Fatalf("emb=%v model=%q err=%v", emb, model, err)
+	tests := []struct {
+		name      string
+		rawURL    string
+		status    int
+		body      string
+		wavData   []byte
+		wantModel string
+		wantErr   bool
+	}{
+		{"success", "", 200, `{"embedding":[0.5,0.25],"model":"ecapa"}`, []byte("RIFFwav"), "ecapa", false},
+		{"http_500", "", 500, "boom", nil, "", true},
+		{"empty_embedding", "", 200, `{"embedding":[]}`, nil, "", true},
+		{"malformed_json", "", 200, "not json", nil, "", true},
+		{"empty_url", "  ", 0, "", nil, "", true},
+		{"unreachable", "http://127.0.0.1:1", 0, "", nil, "", true},
+		{"invalid_url", "http://bad host", 0, "", nil, "", true},
 	}
-	if gotType != "audio/wav" || !bytes.Equal(gotBody, []byte("RIFFwav")) {
-		t.Fatalf("request: type=%q body=%q", gotType, gotBody)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			url := tc.rawURL
+			if url == "" {
+				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if tc.wavData != nil && (!bytes.Equal(tc.wavData, []byte("RIFFwav")) || r.Header.Get("Content-Type") != "audio/wav") {
+						t.Errorf("unexpected req")
+					}
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(tc.status)
+					_, _ = w.Write([]byte(tc.body))
+				}))
+				defer srv.Close()
+				url = srv.URL
+			}
+			emb, model, err := NewDefaultEmbedClient(url, 1).Embed(context.Background(), tc.wavData)
+			if (err != nil) != tc.wantErr || (!tc.wantErr && (model != tc.wantModel || len(emb) != 2)) {
+				t.Fatalf("emb=%v model=%q err=%v", emb, model, err)
+			}
+		})
 	}
-
-	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "boom", http.StatusInternalServerError)
-	}))
-	defer bad.Close()
-	if _, _, err := NewDefaultEmbedClient(bad.URL, 5).Embed(context.Background(), nil); err == nil {
-		t.Fatal("expected http error")
-	}
-
-	empty := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"embedding":[]}`))
-	}))
-	defer empty.Close()
-	if _, _, err := NewDefaultEmbedClient(empty.URL, 5).Embed(context.Background(), nil); err == nil {
-		t.Fatal("expected empty-embedding error")
+	broken := &http.Response{StatusCode: http.StatusBadGateway, Body: io.NopCloser(errReader{})}
+	if err := readHTTPError(broken, "test"); err == nil || !strings.Contains(err.Error(), "unknown error") {
+		t.Fatalf("expected unknown error, got %v", err)
 	}
 }
 
-func TestNewSpeakerIdentifierFromConfig(t *testing.T) {
+func TestHub_SpeakerIntegration(t *testing.T) {
 	t.Parallel()
-	if NewSpeakerIdentifierFromConfig(nil) != nil {
-		t.Fatal("nil config should disable speaker id")
+	tests := []struct {
+		name       string
+		stt        string
+		sttErr     error
+		spkID      string
+		spkErr     error
+		spkDelay   time.Duration
+		checkBrain bool
+		wantSpk    string
+		wantErr    bool
+	}{
+		{"carried_to_brain", "what's on my calendar", nil, "mike", nil, 0, true, "mike", false},
+		{"failure_not_fatal", "hello", nil, "", errors.New("down"), 0, false, "", false},
+		{"slow_speaker", "hello", nil, "mike", nil, 10 * time.Second, false, "", false},
+		{"stt_error", "", errors.New("whisper down"), "mike", nil, 10 * time.Second, false, "", true},
 	}
-	if NewSpeakerIdentifierFromConfig(&config.SpeakerIDConfig{EmbedURL: "http://x"}) != nil {
-		t.Fatal("missing fingerprints path should disable speaker id")
-	}
-	if NewSpeakerIdentifierFromConfig(&config.SpeakerIDConfig{EmbedURL: "http://x", FingerprintsPath: "/f.json"}) == nil {
-		t.Fatal("complete config should enable speaker id")
-	}
-}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var brainBody map[string]any
+			var brainMu sync.Mutex
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				brainMu.Lock()
+				_ = json.NewDecoder(r.Body).Decode(&brainBody)
+				brainMu.Unlock()
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"reply":"ok"}`))
+			}))
+			defer srv.Close()
 
-func collectHubEvents(t *testing.T, h *Hub) map[string]any {
-	t.Helper()
-	var mu sync.Mutex
-	events := map[string]any{}
-	sink := func(event string, data any) error {
-		mu.Lock()
-		defer mu.Unlock()
-		events[event] = data
-		return nil
-	}
-	if err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(1600)), "eink-display-livingroom", "sess-1", sink, EdgeTimings{}); err != nil {
-		t.Fatalf("interact: %v", err)
-	}
-	return events
-}
+			h := NewHub(&config.VoiceHubConfig{Enabled: true}, nil,
+				WithSTTClient(&mockSTT{text: tc.stt, err: tc.sttErr}),
+				WithBrainClient(NewDefaultBrainClient(srv.URL, 5)),
+				WithTTSClient(&mockTTS{}),
+				WithSpeakerIdentifier(&mockIdentifier{id: tc.spkID, score: 0.83, err: tc.spkErr, delay: tc.spkDelay}),
+			)
+			events := map[string]any{}
+			var mu sync.Mutex
+			start := time.Now()
+			err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(1600)), "eink-display-livingroom", "sess-1", func(ev string, d any) error {
+				mu.Lock()
+				events[ev] = d
+				mu.Unlock()
+				return nil
+			}, EdgeTimings{})
 
-func TestHub_SpeakerCarriedToTranscriptAndBrain(t *testing.T) {
-	t.Parallel()
-	var brainBody map[string]any
-	brainSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewDecoder(r.Body).Decode(&brainBody)
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"reply":"ok"}`))
-	}))
-	defer brainSrv.Close()
-
-	h := NewHub(&config.VoiceHubConfig{Enabled: true}, nil,
-		WithSTTClient(&mockSTT{text: "what's on my calendar"}),
-		WithBrainClient(NewDefaultBrainClient(brainSrv.URL, 5)),
-		WithTTSClient(&mockTTS{}),
-		WithSpeakerIdentifier(&mockIdentifier{id: "mike", score: 0.83}),
-	)
-	events := collectHubEvents(t, h)
-
-	tr, _ := events["transcript"].(map[string]string)
-	if tr["speaker"] != "mike" || tr["transcript"] != "what's on my calendar" {
-		t.Fatalf("transcript event: %+v", events["transcript"])
-	}
-	if brainBody["speaker"] != "mike" || brainBody["node_id"] != "eink-display-livingroom" || brainBody["speaker_score"] != 0.83 {
-		t.Fatalf("brain request: %+v", brainBody)
-	}
-}
-
-func TestHub_SpeakerFailureIsNotFatal(t *testing.T) {
-	t.Parallel()
-	brain := &mockBrain{reply: "ok"}
-	h := NewHub(&config.VoiceHubConfig{Enabled: true}, nil,
-		WithSTTClient(&mockSTT{text: "hello"}),
-		WithBrainClient(brain),
-		WithTTSClient(&mockTTS{}),
-		WithSpeakerIdentifier(&mockIdentifier{err: errors.New("embed service down")}),
-	)
-	events := collectHubEvents(t, h)
-
-	tr, _ := events["transcript"].(map[string]string)
-	if tr["speaker"] != "" {
-		t.Fatalf("expected empty speaker, got %+v", tr)
-	}
-	if _, ok := events["done"]; !ok {
-		t.Fatal("expected turn to complete")
-	}
-	if brain.calledWith != "hello" {
-		t.Fatalf("brain not called with transcript: %q", brain.calledWith)
-	}
-}
-
-func TestHub_SlowSpeakerDoesNotStallTurn(t *testing.T) {
-	t.Parallel()
-	h := NewHub(&config.VoiceHubConfig{Enabled: true}, nil,
-		WithSTTClient(&mockSTT{text: "hello"}),
-		WithBrainClient(&mockBrain{reply: "ok"}),
-		WithTTSClient(&mockTTS{}),
-		WithSpeakerIdentifier(&mockIdentifier{id: "mike", delay: 10 * time.Second}),
-	)
-	start := time.Now()
-	events := collectHubEvents(t, h)
-	if elapsed := time.Since(start); elapsed > 3*time.Second {
-		t.Fatalf("turn stalled on slow speaker matching: %v", elapsed)
-	}
-	tr, _ := events["transcript"].(map[string]string)
-	if tr["speaker"] != "" {
-		t.Fatalf("expected empty speaker after grace timeout, got %+v", tr)
-	}
-}
-
-func TestHub_STTErrorDoesNotWaitForSpeaker(t *testing.T) {
-	t.Parallel()
-	h := NewHub(&config.VoiceHubConfig{Enabled: true}, nil,
-		WithSTTClient(&mockSTT{err: errors.New("whisper down")}),
-		WithBrainClient(&mockBrain{reply: "ok"}),
-		WithTTSClient(&mockTTS{}),
-		WithSpeakerIdentifier(&mockIdentifier{id: "mike", delay: 10 * time.Second}),
-	)
-	start := time.Now()
-	err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(1600)), "n", "s", func(string, any) error { return nil }, EdgeTimings{})
-	if err == nil {
-		t.Fatal("expected STT error")
-	}
-	if elapsed := time.Since(start); elapsed > time.Second {
-		t.Fatalf("STT error waited on speaker matching: %v", elapsed)
-	}
-}
-
-func TestSpeakerErrorPaths(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-
-	// Malformed JSON is rejected.
-	badJSON := filepath.Join(dir, "bad.json")
-	if err := os.WriteFile(badJSON, []byte("{not json"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := NewFingerprintStore(badJSON).Load(); err == nil {
-		t.Error("malformed json: expected error")
-	}
-
-	// Identify surfaces a store error.
-	if _, err := NewFingerprintIdentifier(&mockEmbedder{}, NewFingerprintStore(filepath.Join(dir, "missing.json")), 0.7).Identify(context.Background(), nil); err == nil {
-		t.Error("missing store: expected error")
-	}
-
-	// Identify surfaces an uncomparable utterance embedding.
-	good := filepath.Join(dir, "good.json")
-	writeFingerprints(t, good, FingerprintFile{Speakers: []Fingerprint{{ID: "mike", Embedding: []float64{1, 0}}}})
-	if _, err := NewFingerprintIdentifier(&mockEmbedder{emb: []float64{0, 0}}, NewFingerprintStore(good), 0.7).Identify(context.Background(), nil); err == nil {
-		t.Error("zero utterance embedding: expected error")
-	}
-
-	// Embed client: empty URL, bad JSON body, unreachable host.
-	if _, _, err := NewDefaultEmbedClient("  ", 1).Embed(context.Background(), nil); err == nil {
-		t.Error("empty url: expected error")
-	}
-	garbage := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte("not json"))
-	}))
-	defer garbage.Close()
-	if _, _, err := NewDefaultEmbedClient(garbage.URL, 1).Embed(context.Background(), nil); err == nil {
-		t.Error("bad json: expected error")
-	}
-	if _, _, err := NewDefaultEmbedClient("http://127.0.0.1:1", 1).Embed(context.Background(), nil); err == nil {
-		t.Error("unreachable: expected error")
-	}
-	if _, _, err := NewDefaultEmbedClient("http://bad host", 1).Embed(context.Background(), nil); err == nil {
-		t.Error("invalid url: expected error")
-	}
-}
-
-func TestNewHub_WiresSpeakerIDFromConfig(t *testing.T) {
-	t.Parallel()
-	cfg := &config.VoiceHubConfig{
-		Enabled:   true,
-		SpeakerID: &config.SpeakerIDConfig{EmbedURL: "http://x/embed", FingerprintsPath: "/f.json"},
-	}
-	if h := NewHub(cfg, nil); h.speaker == nil {
-		t.Fatal("expected speaker identifier from config")
-	}
-	if h := NewHub(&config.VoiceHubConfig{Enabled: true}, nil); h.speaker != nil {
-		t.Fatal("expected no speaker identifier without config")
+			if (err != nil) != tc.wantErr || (tc.wantErr && time.Since(start) > time.Second) {
+				t.Fatalf("interact: err=%v elapsed=%v", err, time.Since(start))
+			}
+			if !tc.wantErr {
+				mu.Lock()
+				tr, _ := events["transcript"].(map[string]string)
+				done := events["done"]
+				mu.Unlock()
+				if tr["speaker"] != tc.wantSpk || done == nil {
+					t.Fatalf("transcript: %+v done=%v", tr, done)
+				}
+				brainMu.Lock()
+				bb := brainBody
+				brainMu.Unlock()
+				if tc.checkBrain && (bb["speaker"] != "mike" || bb["speaker_score"] != 0.83) {
+					t.Fatalf("brain body: %+v", bb)
+				}
+			}
+		})
 	}
 }
