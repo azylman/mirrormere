@@ -17,17 +17,12 @@ import (
 type mockSink struct {
 	mu    sync.Mutex
 	state *events.AudioStateData
-	calls int
 }
 
 func (m *mockSink) SetAudioState(state *events.AudioStateData) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.calls++
-	m.state = &events.AudioStateData{
-		Volume: state.Volume,
-		Muted:  state.Muted,
-	}
+	m.state = &events.AudioStateData{Volume: state.Volume, Muted: state.Muted}
 }
 
 func (m *mockSink) LastState() *events.AudioStateData {
@@ -36,241 +31,127 @@ func (m *mockSink) LastState() *events.AudioStateData {
 	if m.state == nil {
 		return nil
 	}
-	return &events.AudioStateData{
-		Volume: m.state.Volume,
-		Muted:  m.state.Muted,
+	return &events.AudioStateData{Volume: m.state.Volume, Muted: m.state.Muted}
+}
+
+func assertAudioEvent(t *testing.T, sub <-chan *events.Event, wantVol int, wantMuted bool) {
+	t.Helper()
+	select {
+	case evt, ok := <-sub:
+		if !ok {
+			t.Fatal("subscription channel closed unexpectedly")
+		}
+		if evt.Type != events.EventAudioState {
+			t.Fatalf("expected event %q, got %q", events.EventAudioState, evt.Type)
+		}
+		var data events.AudioStateData
+		if err := json.Unmarshal(evt.Data, &data); err != nil {
+			t.Fatalf("failed to unmarshal audio state payload: %v", err)
+		}
+		if data.Volume != wantVol || data.Muted != wantMuted {
+			t.Fatalf("unexpected payload in event: got vol %d, muted %v; want vol %d, muted %v", data.Volume, data.Muted, wantVol, wantMuted)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for audio.state event")
 	}
 }
 
-func TestCoordinator_Defaults(t *testing.T) {
+func TestCoordinator_VolumeAndMute(t *testing.T) {
 	t.Parallel()
 
 	sink := &mockSink{}
-	coord := audio.NewCoordinator(nil, sink)
-
-	vol, muted := coord.GetState()
-	if vol != audio.DefaultVolume {
-		t.Fatalf("expected default volume %d, got %d", audio.DefaultVolume, vol)
+	if v, m := audio.NewCoordinator(nil, sink).GetState(); v != audio.DefaultVolume || m != audio.DefaultMuted {
+		t.Fatalf("defaults without hub: got vol %d, muted %v", v, m)
 	}
-	if muted != audio.DefaultMuted {
-		t.Fatalf("expected default muted %v, got %v", audio.DefaultMuted, muted)
+	if last := sink.LastState(); last == nil || last.Volume != audio.DefaultVolume || last.Muted != audio.DefaultMuted {
+		t.Fatalf("sink defaults: got %+v", last)
 	}
 
-	last := sink.LastState()
-	if last == nil || last.Volume != audio.DefaultVolume || last.Muted != audio.DefaultMuted {
-		t.Fatalf("expected sink primed with defaults, got %+v", last)
-	}
-}
-
-func TestCoordinator_SetVolume(t *testing.T) {
-	t.Parallel()
-
-	hub := events.NewHub(events.HubConfig{
-		RingCapacity: 10,
-		RingTTL:      time.Minute,
-	}, nil, nil)
+	hub := events.NewHub(events.HubConfig{RingCapacity: 10, RingTTL: time.Minute}, nil, nil)
 	t.Cleanup(func() { hub.Close() })
-
 	subCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-
 	sub, unsub := hub.Subscribe(subCtx)
 	defer unsub()
 
-	sink := &mockSink{}
 	coord := audio.NewCoordinator(hub, sink)
 
-	// Valid volume changes
-	tests := []int{0, 50, 80, 100}
-	for _, v := range tests {
+	for _, v := range []int{0, 50, 80, 100} {
 		vol, muted, err := coord.SetVolume(v)
-		if err != nil {
-			t.Fatalf("unexpected error setting volume %d: %v", v, err)
+		if err != nil || vol != v || muted {
+			t.Fatalf("SetVolume(%d): got (%d, %v, %v)", v, vol, muted, err)
 		}
-		if vol != v {
-			t.Fatalf("expected volume %d, got %d", v, vol)
-		}
-		if muted != false {
-			t.Fatalf("expected muted false, got %v", muted)
-		}
-
-		// Verify event published
-		select {
-		case evt, ok := <-sub:
-			if !ok {
-				t.Fatalf("subscription channel closed unexpectedly")
-			}
-			if evt.Type != events.EventAudioState {
-				t.Fatalf("expected event %q, got %q", events.EventAudioState, evt.Type)
-			}
-			var data events.AudioStateData
-			if err := json.Unmarshal(evt.Data, &data); err != nil {
-				t.Fatalf("failed to unmarshal audio state payload: %v", err)
-			}
-			if data.Volume != v || data.Muted != false {
-				t.Fatalf("unexpected payload in event: %+v", data)
-			}
-		case <-time.After(time.Second):
-			t.Fatalf("timed out waiting for audio.state event for volume %d", v)
-		}
-
-		// Verify sink updated
-		if last := sink.LastState(); last == nil || last.Volume != v || last.Muted != false {
-			t.Fatalf("expected sink volume %d, got %+v", v, last)
+		assertAudioEvent(t, sub, v, false)
+		if last := sink.LastState(); last == nil || last.Volume != v || last.Muted {
+			t.Fatalf("sink mismatch: %+v", last)
 		}
 	}
 
-	// Invalid volume out of bounds
-	invalidVolumes := []int{-10, -1, 101, 200}
-	for _, iv := range invalidVolumes {
-		_, _, err := coord.SetVolume(iv)
-		if err == nil {
-			t.Fatalf("expected error for volume %d, got nil", iv)
-		}
-		if !errors.Is(err, audio.ErrInvalidVolume) {
-			t.Fatalf("expected ErrInvalidVolume, got %v", err)
+	for _, iv := range []int{-10, -1, 101, 200} {
+		if _, _, err := coord.SetVolume(iv); !errors.Is(err, audio.ErrInvalidVolume) {
+			t.Fatalf("SetVolume(%d) error = %v, want ErrInvalidVolume", iv, err)
 		}
 	}
-}
 
-func TestCoordinator_SetMuteAndToggle(t *testing.T) {
-	t.Parallel()
-
-	hub := events.NewHub(events.HubConfig{
-		RingCapacity: 10,
-		RingTTL:      time.Minute,
-	}, nil, nil)
-	t.Cleanup(func() { hub.Close() })
-
-	subCtx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	sub, unsub := hub.Subscribe(subCtx)
-	defer unsub()
-
-	sink := &mockSink{}
-	coord := audio.NewCoordinator(hub, sink)
-
-	// Explicit mute true
-	trueVal := true
-	vol, muted, err := coord.SetMute(&trueVal)
-	if err != nil {
-		t.Fatalf("unexpected error setting mute true: %v", err)
+	trueVal, falseVal := true, false
+	muteOps := []struct {
+		op        func() (int, bool, error)
+		wantMuted bool
+	}{
+		{func() (int, bool, error) { return coord.SetMute(&trueVal) }, true},
+		{func() (int, bool, error) { return coord.SetMute(&falseVal) }, false},
+		{func() (int, bool, error) { return coord.SetMute(nil) }, true},
+		{coord.ToggleMute, false},
 	}
-	if !muted || vol != audio.DefaultVolume {
-		t.Fatalf("expected muted true, vol %d, got muted %v, vol %d", audio.DefaultVolume, muted, vol)
-	}
-
-	select {
-	case evt := <-sub:
-		var data events.AudioStateData
-		_ = json.Unmarshal(evt.Data, &data)
-		if !data.Muted {
-			t.Fatalf("expected event muted true, got false")
+	for i, tc := range muteOps {
+		vol, muted, err := tc.op()
+		if err != nil || vol != 100 || muted != tc.wantMuted {
+			t.Fatalf("mute op %d: got (%d, %v, %v), want vol 100, muted %v", i, vol, muted, err, tc.wantMuted)
 		}
-	case <-time.After(time.Second):
-		t.Fatalf("timeout waiting for mute event")
-	}
-
-	// Explicit mute false
-	falseVal := false
-	vol, muted, err = coord.SetMute(&falseVal)
-	if err != nil {
-		t.Fatalf("unexpected error setting mute false: %v", err)
-	}
-	if muted || vol != audio.DefaultVolume {
-		t.Fatalf("expected muted false, vol %d, got muted %v, vol %d", audio.DefaultVolume, muted, vol)
-	}
-
-	select {
-	case evt := <-sub:
-		var data events.AudioStateData
-		_ = json.Unmarshal(evt.Data, &data)
-		if data.Muted {
-			t.Fatalf("expected event muted false, got true")
+		assertAudioEvent(t, sub, 100, tc.wantMuted)
+		if last := sink.LastState(); last == nil || last.Volume != 100 || last.Muted != tc.wantMuted {
+			t.Fatalf("sink mismatch on mute op %d: %+v", i, last)
 		}
-	case <-time.After(time.Second):
-		t.Fatalf("timeout waiting for unmute event")
-	}
-
-	// Toggle mute with nil
-	vol, muted, err = coord.SetMute(nil)
-	if err != nil {
-		t.Fatalf("unexpected error toggling mute: %v", err)
-	}
-	if !muted {
-		t.Fatalf("expected toggled muted true, got false")
-	}
-
-	// ToggleMute helper
-	vol, muted, err = coord.ToggleMute()
-	if err != nil {
-		t.Fatalf("unexpected error with ToggleMute: %v", err)
-	}
-	if muted {
-		t.Fatalf("expected toggled muted false, got true")
-	}
-	if vol != audio.DefaultVolume {
-		t.Fatalf("expected volume %d, got %d", audio.DefaultVolume, vol)
 	}
 }
 
 func TestCoordinator_ConcurrentAccess(t *testing.T) {
 	t.Parallel()
 
-	hub := events.NewHub(events.HubConfig{
-		RingCapacity: 100,
-		RingTTL:      time.Minute,
-	}, nil, nil)
+	hub := events.NewHub(events.HubConfig{RingCapacity: 100, RingTTL: time.Minute}, nil, nil)
 	t.Cleanup(func() { hub.Close() })
-
 	sink := &mockSink{}
 	coord := audio.NewCoordinator(hub, sink)
 
 	var wg sync.WaitGroup
 	const iterations = 50
 
-	// Concurrent volume writers
 	for i := 0; i < 4; i++ {
-		wg.Add(1)
+		wg.Add(3)
 		go func(workerID int) {
 			defer wg.Done()
 			for j := 0; j < iterations; j++ {
-				target := (workerID*20 + j) % 101
-				_, _, _ = coord.SetVolume(target)
+				_, _, _ = coord.SetVolume((workerID*20 + j) % 101)
 			}
 		}(i)
-	}
-
-	// Concurrent mute togglers
-	for i := 0; i < 4; i++ {
-		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for j := 0; j < iterations; j++ {
 				_, _, _ = coord.ToggleMute()
 			}
 		}()
-	}
-
-	// Concurrent state readers
-	for i := 0; i < 4; i++ {
-		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for j := 0; j < iterations; j++ {
-				v, _ := coord.GetState()
-				if v < 0 || v > 100 {
+				if v, _ := coord.GetState(); v < 0 || v > 100 {
 					t.Errorf("read invalid volume: %d", v)
 				}
 			}
 		}()
 	}
-
 	wg.Wait()
 
-	finalVol, _ := coord.GetState()
-	if finalVol < 0 || finalVol > 100 {
+	if finalVol, _ := coord.GetState(); finalVol < 0 || finalVol > 100 {
 		t.Fatalf("final volume out of range: %d", finalVol)
 	}
 }
@@ -278,33 +159,23 @@ func TestCoordinator_ConcurrentAccess(t *testing.T) {
 func TestCoordinator_SchemaValidation(t *testing.T) {
 	t.Parallel()
 
-	// Verify that the payload emitted by Coordinator matches api/schemas/audio.state.json
-	schemaPath := filepath.Join("..", "..", "api", "schemas", "audio.state.json")
-	schemaBytes, err := os.ReadFile(schemaPath)
+	schemaBytes, err := os.ReadFile(filepath.Join("..", "..", "api", "schemas", "audio.state.json"))
 	if err != nil {
 		t.Skipf("skipping schema file test if not in root: %v", err)
 	}
-
 	var schema map[string]any
 	if err := json.Unmarshal(schemaBytes, &schema); err != nil {
 		t.Fatalf("failed to parse schema: %v", err)
 	}
 
-	data := events.AudioStateData{
-		Volume: 75,
-		Muted:  false,
-	}
-	payload, err := json.Marshal(data)
+	payload, err := json.Marshal(events.AudioStateData{Volume: 75, Muted: false})
 	if err != nil {
 		t.Fatalf("failed to marshal data: %v", err)
 	}
-
 	var parsed map[string]any
 	if err := json.Unmarshal(payload, &parsed); err != nil {
 		t.Fatalf("failed to unmarshal payload: %v", err)
 	}
-
-	// Schema requires "volume" and "muted"
 	if _, ok := parsed["volume"]; !ok {
 		t.Fatalf("missing volume in payload")
 	}

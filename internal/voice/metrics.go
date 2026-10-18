@@ -151,24 +151,27 @@ func newMetrics(reg prometheus.Registerer) *Metrics {
 	}
 }
 
+func validBoundedFloat(v, minVal, maxVal float64) bool {
+	return !math.IsNaN(v) && !math.IsInf(v, 0) && v >= minVal && v <= maxVal
+}
+
 // RecordStageDuration logs the duration of a voice pipeline stage.
 func (m *Metrics) RecordStageDuration(nodeID, stage, status string, durationSec float64) {
 	if m == nil || m.stageDuration == nil {
 		return
 	}
-	if math.IsNaN(durationSec) || math.IsInf(durationSec, 0) || durationSec < 0 || durationSec > 300.0 {
+	if !validBoundedFloat(durationSec, 0, 300.0) {
 		return
 	}
 	m.stageDuration.WithLabelValues(SanitizeNodeID(nodeID), stage, status).Observe(durationSec)
 }
-
 
 // RecordAmbientRMS updates the ambient RMS level gauge for a node.
 func (m *Metrics) RecordAmbientRMS(nodeID string, rmsDBFS float64) {
 	if m == nil || m.ambientRMS == nil {
 		return
 	}
-	if math.IsNaN(rmsDBFS) || math.IsInf(rmsDBFS, 0) {
+	if !validBoundedFloat(rmsDBFS, math.Inf(-1), math.Inf(1)) {
 		return
 	}
 	m.ambientRMS.WithLabelValues(SanitizeNodeID(nodeID)).Set(rmsDBFS)
@@ -201,13 +204,12 @@ func (m *Metrics) RecordFalseWakes(nodeID string, count int) {
 	m.falseWakes.WithLabelValues(SanitizeNodeID(nodeID)).Add(float64(count))
 }
 
-
 // RecordPlaybackDuration records audio playback duration on the edge.
 func (m *Metrics) RecordPlaybackDuration(nodeID string, durationSec float64) {
 	if m == nil || m.playbackDuration == nil {
 		return
 	}
-	if math.IsNaN(durationSec) || math.IsInf(durationSec, 0) || durationSec <= 0 || durationSec > 120.0 {
+	if durationSec <= 0 || !validBoundedFloat(durationSec, 0, 120.0) {
 		return
 	}
 	m.playbackDuration.WithLabelValues(SanitizeNodeID(nodeID)).Observe(durationSec)
@@ -234,7 +236,7 @@ func (m *Metrics) RecordSTTRTF(nodeID, engine string, rtf float64) {
 	if m == nil || m.sttRTF == nil {
 		return
 	}
-	if math.IsNaN(rtf) || math.IsInf(rtf, 0) || rtf < 0 {
+	if !validBoundedFloat(rtf, 0, math.Inf(1)) {
 		return
 	}
 	if engine == "" {
@@ -248,7 +250,7 @@ func (m *Metrics) RecordTTSCPS(nodeID, voice string, cps float64) {
 	if m == nil || m.ttsCPS == nil {
 		return
 	}
-	if math.IsNaN(cps) || math.IsInf(cps, 0) || cps < 0 {
+	if !validBoundedFloat(cps, 0, math.Inf(1)) {
 		return
 	}
 	if voice == "" {

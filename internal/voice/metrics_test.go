@@ -7,223 +7,158 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-func TestMetrics_RecordStageDuration(t *testing.T) {
+func lbl(kv ...string) map[string]string {
+	m := make(map[string]string, len(kv)/2)
+	for i := 0; i+1 < len(kv); i += 2 {
+		m[kv[i]] = kv[i+1]
+	}
+	return m
+}
+
+func metricVal(t *testing.T, reg *prometheus.Registry, name string, labels map[string]string) (float64, bool) {
+	t.Helper()
+	mfs, err := reg.Gather()
+	if err != nil {
+		t.Fatalf("gather metrics: %v", err)
+	}
+	for _, mf := range mfs {
+		if mf.GetName() != name {
+			continue
+		}
+		for _, m := range mf.GetMetric() {
+			matched := true
+			for k, want := range labels {
+				var got string
+				for _, lp := range m.GetLabel() {
+					if lp.GetName() == k {
+						got = lp.GetValue()
+						break
+					}
+				}
+				if !matched || got != want {
+					matched = false
+					break
+				}
+			}
+			if !matched {
+				continue
+			}
+			if c := m.GetCounter(); c != nil {
+				return c.GetValue(), true
+			}
+			if g := m.GetGauge(); g != nil {
+				return g.GetValue(), true
+			}
+			if h := m.GetHistogram(); h != nil {
+				return float64(h.GetSampleCount()), true
+			}
+		}
+	}
+	return 0, false
+}
+
+func TestMetrics_Collectors(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	m := NewMetrics(reg)
 
+	// Stage durations (normal, clamped/ignored > 300, negative, NaN, Inf)
 	m.RecordStageDuration("kitchen-display", "wake_eval", "success", 0.045)
 	m.RecordStageDuration("kitchen-display", "stt", "success", 0.320)
 	m.RecordStageDuration("kitchen-display", "brain", "success", 1.850)
 	m.RecordStageDuration("kitchen-display", "tts", "success", 0.410)
-
-	// Test boundary condition: durationSec > 300.0 ignored
+	m.RecordStageDuration("kitchen-display", "deliberation", "success", 120.0)
+	m.RecordStageDuration("kitchen-display", "deliberation", "timeout", 305.0)
 	m.RecordStageDuration("kitchen-display", "tts", "timeout", 350.0)
+	m.RecordStageDuration("kitchen-display", "stt", "fail", -1.0)
+	m.RecordStageDuration("kitchen-display", "stt", "fail", math.NaN())
+	m.RecordStageDuration("kitchen-display", "stt", "fail", math.Inf(1))
 
-	mfs, err := reg.Gather()
-	if err != nil {
-		t.Fatalf("failed to gather metrics: %v", err)
-	}
-
-	var found bool
-	for _, mf := range mfs {
-		if mf.GetName() == "mirrormere_voice_stage_duration_seconds" {
-			found = true
-			if len(mf.GetMetric()) != 4 {
-				t.Fatalf("expected 4 histogram metrics, got %d", len(mf.GetMetric()))
-			}
-		}
-	}
-	if !found {
-		t.Fatal("mirrormere_voice_stage_duration_seconds metric not found")
-	}
-}
-
-func TestMetrics_RecordAmbientAndHeartbeat(t *testing.T) {
-	reg := prometheus.NewRegistry()
-	m := NewMetrics(reg)
-
+	// Ambient RMS & Edge Heartbeat
 	m.RecordAmbientRMS("kitchen-display", -40.5)
-	// Invalid RMS float guards
 	m.RecordAmbientRMS("kitchen-display", math.NaN())
 	m.RecordAmbientRMS("kitchen-display", math.Inf(1))
-
 	m.RecordEdgeHeartbeat("kitchen-display")
-	m.RecordFalseWake("kitchen-display")
-	m.RecordPlaybackDuration("kitchen-display", 1.25)
 
-	// Playback duration boundaries: <= 0, > 120, NaN, Inf
+	// False wakes (single, bounded batch, ignored <= 0)
+	m.RecordFalseWake("kitchen-display")
+	m.RecordFalseWakes("kitchen-display", 0)
+	m.RecordFalseWakes("kitchen-display", -5)
+	m.RecordFalseWakes("kitchen-display", 5)
+	m.RecordFalseWakes("kitchen-display", 1500)
+
+	// Playback duration (normal, bounds: <= 0, > 120, NaN, Inf ignored)
+	m.RecordPlaybackDuration("kitchen-display", 1.25)
 	m.RecordPlaybackDuration("kitchen-display", -0.5)
 	m.RecordPlaybackDuration("kitchen-display", 0.0)
 	m.RecordPlaybackDuration("kitchen-display", 125.0)
 	m.RecordPlaybackDuration("kitchen-display", math.NaN())
 	m.RecordPlaybackDuration("kitchen-display", math.Inf(1))
 
-	mfs, err := reg.Gather()
-	if err != nil {
-		t.Fatalf("failed to gather metrics: %v", err)
-	}
-
-	metricNames := make(map[string]bool)
-	for _, mf := range mfs {
-		metricNames[mf.GetName()] = true
-	}
-
-	expected := []string{
-		"mirrormere_voice_ambient_rms_dbfs",
-		"mirrormere_voice_edge_last_seen_timestamp_seconds",
-		"mirrormere_voice_false_wakes_total",
-		"mirrormere_voice_playback_duration_seconds",
-	}
-	for _, name := range expected {
-		if !metricNames[name] {
-			t.Fatalf("missing expected metric: %s", name)
-		}
-	}
-}
-
-func TestMetrics_RecordEfficiencyAndZeroDivisions(t *testing.T) {
-	reg := prometheus.NewRegistry()
-	m := NewMetrics(reg)
-
+	// Turns and Errors
 	m.RecordTurn("kitchen-display", "success")
 	m.RecordError("kitchen-display", "stt", "network_timeout")
-	m.RecordSTTRTF("kitchen-display", "whisper_large_v3", 0.18)
-	m.RecordTTSCPS("kitchen-display", "kokoro_am_adam", 28.5)
 
-	// Zero division and invalid float protections
+	// STT RTF and TTS CPS (with default fallbacks and invalid float protections)
+	m.RecordSTTRTF("kitchen-display", "whisper_large_v3", 0.18)
+	m.RecordSTTRTF("kitchen-display", "", 0.22)
 	m.RecordSTTRTF("kitchen-display", "whisper_large_v3", math.NaN())
 	m.RecordSTTRTF("kitchen-display", "whisper_large_v3", math.Inf(1))
 	m.RecordSTTRTF("kitchen-display", "whisper_large_v3", -0.5)
-	m.RecordSTTRTF("kitchen-display", "", 0.22) // default engine to unknown
 
+	m.RecordTTSCPS("kitchen-display", "kokoro_am_adam", 28.5)
+	m.RecordTTSCPS("kitchen-display", "", 24.0)
 	m.RecordTTSCPS("kitchen-display", "kokoro_am_adam", math.NaN())
 	m.RecordTTSCPS("kitchen-display", "kokoro_am_adam", math.Inf(1))
 	m.RecordTTSCPS("kitchen-display", "kokoro_am_adam", -1.0)
-	m.RecordTTSCPS("kitchen-display", "", 24.0) // default voice to unknown
 
-	m.RecordStageDuration("kitchen-display", "stt", "success", math.NaN())
-	m.RecordStageDuration("kitchen-display", "stt", "success", math.Inf(1))
-	m.RecordStageDuration("kitchen-display", "stt", "success", -1.0)
+	tests := []struct {
+		name string
+		lbl  map[string]string
+		want float64
+	}{
+		{"mirrormere_voice_stage_duration_seconds", lbl("node_id", "kitchen-display", "stage", "wake_eval", "status", "success"), 1},
+		{"mirrormere_voice_stage_duration_seconds", lbl("node_id", "kitchen-display", "stage", "deliberation", "status", "success"), 1},
+		{"mirrormere_voice_ambient_rms_dbfs", lbl("node_id", "kitchen-display"), -40.5},
+		{"mirrormere_voice_false_wakes_total", lbl("node_id", "kitchen-display"), 1006},
+		{"mirrormere_voice_playback_duration_seconds", lbl("node_id", "kitchen-display"), 1},
+		{"mirrormere_voice_turns_total", lbl("node_id", "kitchen-display", "status", "success"), 1},
+		{"mirrormere_voice_errors_total", lbl("node_id", "kitchen-display", "stage", "stt", "error_type", "network_timeout"), 1},
+		{"mirrormere_voice_stt_rtf", lbl("node_id", "kitchen-display", "engine", "whisper_large_v3"), 0.18},
+		{"mirrormere_voice_stt_rtf", lbl("node_id", "kitchen-display", "engine", "unknown"), 0.22},
+		{"mirrormere_voice_tts_chars_per_second", lbl("node_id", "kitchen-display", "voice", "kokoro_am_adam"), 28.5},
+		{"mirrormere_voice_tts_chars_per_second", lbl("node_id", "kitchen-display", "voice", "unknown"), 24.0},
+	}
+	for _, tc := range tests {
+		val, ok := metricVal(t, reg, tc.name, tc.lbl)
+		if !ok || val != tc.want {
+			t.Errorf("metric %s %v = (%v, %v), want (%v, true)", tc.name, tc.lbl, val, ok, tc.want)
+		}
+	}
 
-	mfs, err := reg.Gather()
-	if err != nil {
-		t.Fatalf("failed to gather metrics: %v", err)
+	val, ok := metricVal(t, reg, "mirrormere_voice_edge_last_seen_timestamp_seconds", lbl("node_id", "kitchen-display"))
+	if !ok || val <= 0 {
+		t.Fatalf("expected last seen timestamp > 0, got %v (%v)", val, ok)
 	}
 
-	var foundRTF, foundCPS, foundTurns, foundErrors bool
-	for _, mf := range mfs {
-		if mf.GetName() == "mirrormere_voice_turns_total" {
-			for _, mMetric := range mf.GetMetric() {
-				var nodeID, status string
-				for _, label := range mMetric.GetLabel() {
-					if label.GetName() == "node_id" {
-						nodeID = label.GetValue()
-					}
-					if label.GetName() == "status" {
-						status = label.GetValue()
-					}
-				}
-				if nodeID == "kitchen-display" && status == "success" && mMetric.GetCounter().GetValue() == 1.0 {
-					foundTurns = true
-				}
-			}
-		}
-		if mf.GetName() == "mirrormere_voice_errors_total" {
-			for _, mMetric := range mf.GetMetric() {
-				var nodeID, stage, errType string
-				for _, label := range mMetric.GetLabel() {
-					if label.GetName() == "node_id" {
-						nodeID = label.GetValue()
-					}
-					if label.GetName() == "stage" {
-						stage = label.GetValue()
-					}
-					if label.GetName() == "error_type" {
-						errType = label.GetValue()
-					}
-				}
-				if nodeID == "kitchen-display" && stage == "stt" && errType == "network_timeout" && mMetric.GetCounter().GetValue() == 1.0 {
-					foundErrors = true
-				}
-			}
-		}
-		if mf.GetName() == "mirrormere_voice_stt_rtf" {
-			foundRTF = true
-			var foundLargeV3, foundUnknown bool
-			for _, mMetric := range mf.GetMetric() {
-				val := mMetric.GetGauge().GetValue()
-				for _, label := range mMetric.GetLabel() {
-					if label.GetName() == "engine" && label.GetValue() == "whisper_large_v3" {
-						foundLargeV3 = true
-						if val != 0.18 {
-							t.Fatalf("expected 0.18, got %f (NaN/Inf should be ignored)", val)
-						}
-					}
-					if label.GetName() == "engine" && label.GetValue() == "unknown" {
-						foundUnknown = true
-						if val != 0.22 {
-							t.Fatalf("expected 0.22, got %f", val)
-						}
-					}
-				}
-			}
-			if !foundLargeV3 || !foundUnknown {
-				t.Fatalf("missing expected RTF metric series")
-			}
-		}
-		if mf.GetName() == "mirrormere_voice_tts_chars_per_second" {
-			foundCPS = true
-			var foundKokoro, foundUnknown bool
-			for _, mMetric := range mf.GetMetric() {
-				val := mMetric.GetGauge().GetValue()
-				for _, label := range mMetric.GetLabel() {
-					if label.GetName() == "voice" && label.GetValue() == "kokoro_am_adam" {
-						foundKokoro = true
-						if val != 28.5 {
-							t.Fatalf("expected 28.5, got %f (NaN/Inf should be ignored)", val)
-						}
-					}
-					if label.GetName() == "voice" && label.GetValue() == "unknown" {
-						foundUnknown = true
-						if val != 24.0 {
-							t.Fatalf("expected 24.0, got %f", val)
-						}
-					}
-				}
-			}
-			if !foundKokoro || !foundUnknown {
-				t.Fatalf("missing expected CPS metric series")
-			}
-		}
+	if _, ok := metricVal(t, reg, "mirrormere_voice_stage_duration_seconds", lbl("node_id", "kitchen-display", "stage", "stt", "status", "fail")); ok {
+		t.Error("expected ignored stage duration not to be recorded")
 	}
-	if !foundRTF || !foundCPS {
-		t.Fatal("missing RTF or CPS metrics")
-	}
-	if !foundTurns {
-		t.Fatal("missing or incorrect mirrormere_voice_turns_total metric")
-	}
-	if !foundErrors {
-		t.Fatal("missing or incorrect mirrormere_voice_errors_total metric")
+	if _, ok := metricVal(t, reg, "nonexistent_metric", nil); ok {
+		t.Error("expected nonexistent metric to return false")
 	}
 }
 
 func TestMetrics_SanitizeNodeID(t *testing.T) {
-	cases := []struct {
-		input    string
-		expected string
-	}{
+	for _, tc := range []struct{ in, want string }{
 		{"kitchen-display", "kitchen-display"},
 		{"living_room_1", "living_room_1"},
 		{"", "unknown"},
 		{"   ", "unknown"},
 		{"node/../../evil", "unknown"},
 		{"bad node with spaces", "unknown"},
-	}
-
-	for _, tc := range cases {
-		actual := SanitizeNodeID(tc.input)
-		if actual != tc.expected {
-			t.Errorf("SanitizeNodeID(%q) = %q, want %q", tc.input, actual, tc.expected)
+	} {
+		if got := SanitizeNodeID(tc.in); got != tc.want {
+			t.Errorf("SanitizeNodeID(%q) = %q, want %q", tc.in, got, tc.want)
 		}
 	}
 }
@@ -234,6 +169,7 @@ func TestMetrics_NilSafe(t *testing.T) {
 	m.RecordAmbientRMS("node", -30.0)
 	m.RecordEdgeHeartbeat("node")
 	m.RecordFalseWake("node")
+	m.RecordFalseWakes("node", 5)
 	m.RecordPlaybackDuration("node", 1.0)
 	m.RecordTurn("node", "success")
 	m.RecordError("node", "tts", "error")
@@ -242,13 +178,7 @@ func TestMetrics_NilSafe(t *testing.T) {
 }
 
 func TestMetrics_DefaultAndNilReg(t *testing.T) {
-	dm := DefaultMetrics()
-	if dm == nil {
-		t.Fatal("expected DefaultMetrics() to return non-nil Metrics")
-	}
-
-	mNil := NewMetrics(nil)
-	if mNil == nil {
-		t.Fatal("expected NewMetrics(nil) to return non-nil Metrics")
+	if DefaultMetrics() == nil || NewMetrics(nil) == nil {
+		t.Fatal("expected non-nil Metrics")
 	}
 }
