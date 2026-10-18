@@ -580,36 +580,33 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 		turnBrain = &fastPathBrain{inner: h.brain, fp: h.fastPath, metrics: h.metrics, nodeID: nodeID}
 	}
 
+	emitNonStreamingReply := func(reply string) error {
+		if h.coord != nil {
+			h.coord.Transition(StateSpeaking, &transcript, &reply, &engine, nil)
+		}
+		if err := safeSink("reply", map[string]string{"reply": reply, "tts_engine": engine}); err != nil {
+			return err
+		}
+		if h.tts != nil {
+			status, ttsErr := h.synthesizeAndEmitReply(ctx, reply, nodeID, engine, &transcript, safeSink)
+			if ttsErr != nil {
+				return ttsErr
+			}
+			if status == "error" {
+				finalStatus = "error"
+			}
+		}
+		return nil
+	}
+
 	var reply string
 	if streamingBrain, ok := turnBrain.(AudioStreamingBrainClient); ok {
-		// Sentence audio is forwarded to the dock the instant it arrives —
-		// that head start (skip the wait for the whole reply) is the point
-		// of streaming at all. Since the Hub doesn't know in advance how
-		// many sentences there will be, it can't mark a chunk is_final as
-		// it sends it; instead every real chunk goes out as is_final:false,
-		// and once the brain call returns, one extra marker audio_chunk
-		// (empty data, is_final:true) tells the dock playback is complete.
 		var (
-			chunkIdx     int
-			streamedAny  bool
-			anyChunkSent bool
-			streamErr    error
-			// caption accumulates the text of every sentence actually sent,
-			// so the kiosk HUD (fed by the coordinator's voice.state, not by
-			// this SSE stream) shows a live caption that grows sentence by
-			// sentence.
-			caption strings.Builder
-
+			streamedAny      bool
+			streamErr        error
+			caption          strings.Builder
 			streamChars      int
 			totalTTSDuration float64
-
-			pcmBuf       []byte
-			pcmLatched   bool // first PCM chunk latches the turn's rate/channels
-			latchRate    int
-			latchCh      int
-			streamFormat = "pcm"
-			streamRate   = 24000
-			streamCh     = 1
 		)
 
 		streamCtx, stopStream := newInactivityContext(ctx, brainTimeout)
@@ -622,51 +619,9 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 			onStatus(status)
 		}
 
-		const pcmChunkFloor = 4800 // ~100ms at 24kHz 16-bit mono
-
-		emitChunk := func(format string, data []byte, sampleRate int, channels int, isFinal bool) {
-			payload := map[string]any{
-				"chunk_index": chunkIdx,
-				"format":      format,
-				"is_final":    isFinal,
-				"data":        base64.StdEncoding.EncodeToString(data),
-			}
-			if sampleRate > 0 {
-				payload["sample_rate"] = sampleRate
-			}
-			if channels > 0 {
-				payload["channels"] = channels
-			}
-			if sinkErr := safeSink("audio_chunk", payload); sinkErr != nil {
-				slog.Debug("streamed audio_chunk sink error", "error", sinkErr)
-			}
-			chunkIdx++
-		}
-
-		// checkPCMFormat latches the turn's PCM rate and channel count on the
-		// first PCM chunk and fails the turn if a later chunk differs.
-		checkPCMFormat := func(rate, ch int) bool {
-			if !pcmLatched {
-				pcmLatched = true
-				latchRate, latchCh = rate, ch
-				return true
-			}
-			if rate == latchRate && ch == latchCh {
-				return true
-			}
-			streamErr = fmt.Errorf("%w: latched %d Hz/%d ch, got %d Hz/%d ch", ErrMixedPCMFormat, latchRate, latchCh, rate, ch)
-			slog.Error("PCM format changed mid-turn", "error", streamErr)
-			cancelStream()
-			return false
-		}
-		appendPCM := func(data []byte, rate, ch int) {
-			pcmBuf = append(pcmBuf, data...)
-			for len(pcmBuf) >= pcmChunkFloor {
-				emitPiece := pcmBuf[:pcmChunkFloor]
-				pcmBuf = pcmBuf[pcmChunkFloor:]
-				anyChunkSent = true
-				emitChunk("pcm", emitPiece, rate, ch, false)
-			}
+		streamer := &pcmChunkStreamer{
+			sink:          safeSink,
+			ignoreSinkErr: true,
 		}
 
 		onAudio := func(chunk BrainAudioChunk) {
@@ -710,19 +665,12 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 				}
 				ttsCtx.Reset()
 				streamedTTSAny = true
-				if tc.Format != "pcm" {
-					streamErr = fmt.Errorf("%w: TTS returned %q audio for sentence %q", ErrUnsupportedAudioFormat, tc.Format, chunk.Text)
-					slog.Error("unsupported TTS audio format", "format", tc.Format, "error", streamErr)
+				if err := streamer.push(tc, chunk.Text); err != nil {
+					streamErr = err
+					slog.Error("TTS stream chunk rejected", "error", streamErr)
 					cancelStream()
 					return streamErr
 				}
-				if !checkPCMFormat(tc.SampleRate, tc.Channels) {
-					return streamErr
-				}
-				appendPCM(tc.Data, tc.SampleRate, tc.Channels)
-				streamFormat = "pcm"
-				streamRate = tc.SampleRate
-				streamCh = tc.Channels
 				return nil
 			})
 			totalTTSDuration += time.Since(t0).Seconds()
@@ -775,11 +723,9 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 			if h.coord != nil {
 				h.coord.Transition(StateSpeaking, &transcript, &reply, &engine, nil)
 			}
-			if anyChunkSent || len(pcmBuf) > 0 {
-				if len(pcmBuf) > 0 {
-					anyChunkSent = true
-					emitChunk("pcm", pcmBuf, latchRate, latchCh, false)
-					pcmBuf = nil
+			if streamer.anySent || len(streamer.pcmBuf) > 0 {
+				if finishErr := streamer.finish(); finishErr != nil {
+					return finishErr
 				}
 
 				h.metrics.RecordStageDuration(nodeID, "tts", "success", totalTTSDuration)
@@ -787,15 +733,6 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 					cps := float64(streamChars) / totalTTSDuration
 					h.metrics.RecordTTSCPS(nodeID, engine, cps)
 				}
-
-				// Every real chunk already went out as is_final:false above
-				// (immediately, as it arrived) — this marker chunk (empty
-				// data) is what tells the dock playback is complete now
-				// that the brain call has returned.
-				if pcmLatched {
-					streamRate, streamCh = latchRate, latchCh
-				}
-				emitChunk(streamFormat, nil, streamRate, streamCh, true)
 			} else if h.tts != nil {
 				// Every streamed sentence in remote-tts mode failed synthesis:
 				// last resort is one TTS call over the full reply
@@ -815,24 +752,8 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 				return err
 			}
 		} else {
-			// The brain implements AudioStreamingBrainClient but this turn
-			// streamed no sentence audio (e.g. it's pointed at plain /ask
-			// rather than /ask/stream) — behave exactly like a
-			// non-streaming brain: reply first, then one TTS call.
-			if h.coord != nil {
-				h.coord.Transition(StateSpeaking, &transcript, &reply, &engine, nil)
-			}
-			if err := safeSink("reply", map[string]string{"reply": reply, "tts_engine": engine}); err != nil {
+			if err := emitNonStreamingReply(reply); err != nil {
 				return err
-			}
-			if h.tts != nil {
-				status, ttsErr := h.synthesizeAndEmitReply(ctx, reply, nodeID, engine, &transcript, safeSink)
-				if ttsErr != nil {
-					return ttsErr
-				}
-				if status == "error" {
-					finalStatus = "error"
-				}
 			}
 		}
 	} else {
@@ -872,26 +793,8 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 		}
 		h.recordChat(nodeID, chatlog.RoleAgent, "", reply)
 
-		// Immediate transition to StateSpeaking with reply before safeSink("reply") and TTS synthesis
-		if h.coord != nil {
-			h.coord.Transition(StateSpeaking, &transcript, &reply, &engine, nil)
-		}
-
-		// Devil's Advocate catch: Always emit reply event so kiosk caption toast renders reply text,
-		// even if TTS synthesis subsequently fails!
-		if err := safeSink("reply", map[string]string{"reply": reply, "tts_engine": engine}); err != nil {
+		if err := emitNonStreamingReply(reply); err != nil {
 			return err
-		}
-
-		// Step 5: Speech synthesis (TTS)
-		if h.tts != nil {
-			status, ttsErr := h.synthesizeAndEmitReply(ctx, reply, nodeID, engine, &transcript, safeSink)
-			if ttsErr != nil {
-				return ttsErr
-			}
-			if status == "error" {
-				finalStatus = "error"
-			}
 		}
 	}
 
@@ -901,6 +804,101 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 		return err
 	}
 
+	return nil
+}
+
+const pcmChunkFloor = 4800
+
+type pcmChunkStreamer struct {
+	sink          SSEEventSink
+	ignoreSinkErr bool
+	pcmBuf        []byte
+	chunkIdx      int
+	latched       bool
+	rate          int
+	channels      int
+	anySent       bool
+}
+
+func (s *pcmChunkStreamer) emit(data []byte, isFinal bool) error {
+	rate := s.rate
+	if rate <= 0 {
+		rate = 24000
+	}
+	channels := s.channels
+	if channels <= 0 {
+		channels = 1
+	}
+	payload := map[string]any{
+		"chunk_index": s.chunkIdx,
+		"format":      "pcm",
+		"sample_rate": rate,
+		"channels":    channels,
+		"is_final":    isFinal,
+		"data":        base64.StdEncoding.EncodeToString(data),
+	}
+	s.chunkIdx++
+	if err := s.sink("audio_chunk", payload); err != nil {
+		if s.ignoreSinkErr {
+			slog.Debug("streamed audio_chunk sink error", "error", err)
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
+func (s *pcmChunkStreamer) push(tc TTSAudioChunk, sentenceContext string) error {
+	if len(tc.Data) == 0 {
+		return nil
+	}
+	if tc.Format != "pcm" {
+		if sentenceContext != "" {
+			return fmt.Errorf("%w: TTS returned %q audio for sentence %q", ErrUnsupportedAudioFormat, tc.Format, sentenceContext)
+		}
+		return fmt.Errorf("%w: TTS returned %q audio", ErrUnsupportedAudioFormat, tc.Format)
+	}
+	if tc.SampleRate > 0 || tc.Channels > 0 {
+		if !s.latched {
+			s.latched = true
+			s.rate = 24000
+			s.channels = 1
+			if tc.SampleRate > 0 {
+				s.rate = tc.SampleRate
+			}
+			if tc.Channels > 0 {
+				s.channels = tc.Channels
+			}
+		} else if (tc.SampleRate > 0 && tc.SampleRate != s.rate) || (tc.Channels > 0 && tc.Channels != s.channels) {
+			return fmt.Errorf("%w: latched %d Hz/%d ch, got %d Hz/%d ch", ErrMixedPCMFormat, s.rate, s.channels, tc.SampleRate, tc.Channels)
+		}
+	}
+	s.pcmBuf = append(s.pcmBuf, tc.Data...)
+	for len(s.pcmBuf) >= pcmChunkFloor {
+		piece := s.pcmBuf[:pcmChunkFloor]
+		s.pcmBuf = s.pcmBuf[pcmChunkFloor:]
+		s.anySent = true
+		if err := s.emit(piece, false); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *pcmChunkStreamer) finish() error {
+	if len(s.pcmBuf) > 0 {
+		s.anySent = true
+		piece := s.pcmBuf
+		s.pcmBuf = nil
+		if err := s.emit(piece, false); err != nil {
+			return err
+		}
+	}
+	if s.anySent {
+		if err := s.emit(nil, true); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -928,52 +926,20 @@ func (h *Hub) synthesizeAndEmitReply(
 	ttsStart := time.Now()
 	finalStatus := "success"
 
-	const pcmChunkFloor = 4800
-	var pcmBuf []byte
-	chunkIdx := 0
-	var anySent bool
-	streamFormat := "pcm"
-	streamRate := 24000
-	streamCh := 1
-	pcmSeen := false
+	streamer := &pcmChunkStreamer{
+		sink:          safeSink,
+		ignoreSinkErr: false,
+	}
 
 	ttsErr := h.tts.Synthesize(ttsCtx, reply, func(tc TTSAudioChunk) error {
 		if len(tc.Data) == 0 {
 			return nil
 		}
 		ttsCtx.Reset()
-		if h.coord != nil && !anySent {
+		if h.coord != nil && !streamer.anySent {
 			h.coord.Transition(StateSpeaking, transcript, &reply, &engine, nil)
 		}
-		if tc.Format != "pcm" {
-			return fmt.Errorf("%w: TTS returned %q audio", ErrUnsupportedAudioFormat, tc.Format)
-		}
-		if pcmSeen && (tc.SampleRate != streamRate || tc.Channels != streamCh) {
-			return fmt.Errorf("%w: latched %d Hz/%d ch, got %d Hz/%d ch", ErrMixedPCMFormat, streamRate, streamCh, tc.SampleRate, tc.Channels)
-		}
-		pcmSeen = true
-		streamFormat = "pcm"
-		streamRate = tc.SampleRate
-		streamCh = tc.Channels
-		pcmBuf = append(pcmBuf, tc.Data...)
-		for len(pcmBuf) >= pcmChunkFloor {
-			piece := pcmBuf[:pcmChunkFloor]
-			pcmBuf = pcmBuf[pcmChunkFloor:]
-			anySent = true
-			b64 := base64.StdEncoding.EncodeToString(piece)
-			if err := safeSink("audio_chunk", map[string]any{
-				"chunk_index": chunkIdx,
-				"format":      "pcm",
-				"sample_rate": streamRate,
-				"channels":    streamCh,
-				"is_final":    false,
-				"data":        b64,
-			}); err != nil {
-				return err
-			}
-			chunkIdx++
-		}
-		return nil
+		return streamer.push(tc, "")
 	})
 
 	if errors.Is(ttsErr, ErrMixedPCMFormat) || errors.Is(ttsErr, ErrUnsupportedAudioFormat) {
@@ -990,36 +956,12 @@ func (h *Hub) synthesizeAndEmitReply(
 		return "error", ttsErr
 	}
 
-	if len(pcmBuf) > 0 {
-		anySent = true
-		if err := safeSink("audio_chunk", map[string]any{
-			"chunk_index": chunkIdx,
-			"format":      "pcm",
-			"sample_rate": streamRate,
-			"channels":    streamCh,
-			"is_final":    false,
-			"data":        base64.StdEncoding.EncodeToString(pcmBuf),
-		}); err != nil {
-			return "error", err
-		}
-		chunkIdx++
-		pcmBuf = nil
-	}
-	if anySent {
-		if err := safeSink("audio_chunk", map[string]any{
-			"chunk_index": chunkIdx,
-			"format":      streamFormat,
-			"sample_rate": streamRate,
-			"channels":    streamCh,
-			"is_final":    true,
-			"data":        "",
-		}); err != nil {
-			return "error", err
-		}
+	if err := streamer.finish(); err != nil {
+		return "error", err
 	}
 
 	ttsDuration := time.Since(ttsStart).Seconds()
-	if ttsErr != nil && !anySent {
+	if ttsErr != nil && !streamer.anySent {
 		slog.Warn("TTS synthesis failed", "node_id", nodeID, "error", ttsErr)
 		finalStatus = "error"
 		h.metrics.RecordStageDuration(nodeID, "tts", "error", ttsDuration)
@@ -1031,7 +973,7 @@ func (h *Hub) synthesizeAndEmitReply(
 		if sinkErr := safeSink("error", map[string]string{"error": errType, "message": ttsErr.Error()}); sinkErr != nil {
 			return "error", sinkErr
 		}
-	} else if ttsErr != nil && anySent {
+	} else if ttsErr != nil && streamer.anySent {
 		slog.Warn("TTS synthesis failed mid-stream", "node_id", nodeID, "error", ttsErr)
 		h.metrics.RecordStageDuration(nodeID, "tts", "error", ttsDuration)
 		errType := "tts_error"
@@ -1205,12 +1147,8 @@ func (c *DefaultSTTClient) transcribeHTTP(ctx context.Context, wavData []byte) (
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		respBody, readErr := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		if readErr != nil {
-			respBody = []byte("unknown error")
-		}
-		return "", fmt.Errorf("stt http error %d: %s", resp.StatusCode, string(respBody))
+	if err := readHTTPError(resp, "stt"); err != nil {
+		return "", err
 	}
 
 	var res struct {
@@ -1321,13 +1259,9 @@ func (b *DefaultBrainClient) doAskRequest(ctx context.Context, ask AskRequest) (
 		return nil, "", err
 	}
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		defer resp.Body.Close()
-		respBytes, readErr := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		if readErr != nil {
-			respBytes = []byte("unknown error")
-		}
-		return nil, "", fmt.Errorf("brain http error %d: %s", resp.StatusCode, string(respBytes))
+	if err := readHTTPError(resp, "brain"); err != nil {
+		_ = resp.Body.Close()
+		return nil, "", err
 	}
 
 	contentType := resp.Header.Get("Content-Type")
@@ -1355,46 +1289,7 @@ func (b *DefaultBrainClient) doAskRequest(ctx context.Context, ask AskRequest) (
 }
 
 func (b *DefaultBrainClient) consumeSSE(r io.Reader, onStatus func(status string)) (string, error) {
-	scanner := bufio.NewScanner(r)
-	var reply string
-	var currentEvent string
-
-	for scanner.Scan() {
-		line := scanner.Text()
-		if line == "" {
-			currentEvent = ""
-			continue
-		}
-		if strings.HasPrefix(line, "event:") {
-			currentEvent = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
-			continue
-		}
-		if strings.HasPrefix(line, "data:") {
-			dataStr := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-			var payload map[string]any
-			if unmarshalErr := json.Unmarshal([]byte(dataStr), &payload); unmarshalErr != nil {
-				continue
-			}
-
-			switch currentEvent {
-			case "status":
-				if statusVal, ok := payload["status"].(string); ok && onStatus != nil {
-					onStatus(statusVal)
-				}
-			case "reply":
-				if replyVal, ok := payload["reply"].(string); ok {
-					reply = replyVal
-				}
-			case "done":
-				return strings.TrimSpace(reply), nil
-			}
-		}
-	}
-
-	if err := scanner.Err(); err != nil {
-		return reply, err
-	}
-	return strings.TrimSpace(reply), nil
+	return consumeStreamingSSE(r, onStatus, nil)
 }
 
 // sseScannerMaxLine is the max single SSE `data:` line consumeSSEStreaming
@@ -1434,25 +1329,25 @@ func consumeStreamingSSE(r io.Reader, onStatus func(status string), onAudio func
 				continue
 			}
 
-		switch currentEvent {
-		case "status":
-			if statusVal, ok := payload["status"].(string); ok && onStatus != nil {
-				onStatus(statusVal)
+			switch currentEvent {
+			case "status":
+				if statusVal, ok := payload["status"].(string); ok && onStatus != nil {
+					onStatus(statusVal)
+				}
+			case "sentence":
+				if onAudio == nil {
+					continue
+				}
+				if textVal, ok := payload["text"].(string); ok && strings.TrimSpace(textVal) != "" {
+					onAudio(BrainAudioChunk{Text: textVal})
+				}
+			case "reply":
+				if replyVal, ok := payload["reply"].(string); ok {
+					reply = replyVal
+				}
+			case "done":
+				return strings.TrimSpace(reply), nil
 			}
-		case "sentence":
-			if onAudio == nil {
-				continue
-			}
-			if textVal, ok := payload["text"].(string); ok && strings.TrimSpace(textVal) != "" {
-				onAudio(BrainAudioChunk{Text: textVal})
-			}
-		case "reply":
-			if replyVal, ok := payload["reply"].(string); ok {
-				reply = replyVal
-			}
-		case "done":
-			return strings.TrimSpace(reply), nil
-		}
 		}
 	}
 
@@ -1515,12 +1410,8 @@ func (t *DefaultTTSClient) Synthesize(ctx context.Context, text string, onChunk 
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		errBytes, readErr := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		if readErr != nil {
-			errBytes = []byte("unknown error")
-		}
-		return fmt.Errorf("tts http error %d: %s", resp.StatusCode, string(errBytes))
+	if err := readHTTPError(resp, "tts"); err != nil {
+		return err
 	}
 
 	ct := strings.ToLower(resp.Header.Get("Content-Type"))
