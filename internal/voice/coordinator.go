@@ -86,6 +86,10 @@ func NewCoordinator(hub *events.Hub, sink ...VoiceStateSink) *Coordinator {
 func (c *Coordinator) GetState() events.VoiceStateData {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
+	return c.snapshotLocked()
+}
+
+func (c *Coordinator) snapshotLocked() events.VoiceStateData {
 	return events.VoiceStateData{
 		State:      c.state,
 		Transcript: c.transcript,
@@ -135,13 +139,7 @@ func (c *Coordinator) Transition(state string, transcript, reply, ttsEngine, sta
 func (c *Coordinator) SetStatus(status *string) events.VoiceStateData {
 	c.mu.Lock()
 	c.status = status
-	data := events.VoiceStateData{
-		State:      c.state,
-		Transcript: c.transcript,
-		Reply:      c.reply,
-		TTSEngine:  c.ttsEngine,
-		Status:     c.status,
-	}
+	data := c.snapshotLocked()
 	c.mu.Unlock()
 
 	c.publishState(data)
@@ -188,13 +186,7 @@ func (c *Coordinator) updateState(state string, transcript, reply, ttsEngine, st
 		}
 	}
 
-	data := events.VoiceStateData{
-		State:      c.state,
-		Transcript: c.transcript,
-		Reply:      c.reply,
-		TTSEngine:  c.ttsEngine,
-		Status:     c.status,
-	}
+	data := c.snapshotLocked()
 	c.mu.Unlock()
 
 	c.publishState(data)
