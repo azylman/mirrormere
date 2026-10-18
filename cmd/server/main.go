@@ -404,8 +404,8 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 		render.WithNowFunc(householdNowFunc(stateProvider)),
 		render.WithNodeDataFunc(chatLogNodeData(stateProvider, chatStore)),
 	)
-	cssPath := resolveCSSPath(customCSSPath)
-	renderHandler := render.NewHandler(renderEngine, loader, render.WithCSSPath(cssPath))
+	cssPath := resolveCSSPath()
+	renderHandler := render.NewHandler(renderEngine, loader, render.WithCSSPath(cssPath), render.WithCustomCSSPath(customCSSPath))
 	displayHandler := display.NewHandler(
 		display.WithThemeProvider(currentTheme),
 		display.WithTimezoneProvider(func() string {
@@ -537,7 +537,7 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 					if assetReloader != nil {
 						cssReloaded, widgetsReloaded := assetReloader.Reload()
 						logger.Info("asset reload on SIGHUP complete", "css_reloaded", cssReloaded, "widgets_reloaded", widgetsReloaded)
-						renderHandler.SetCSSPath(resolveCSSPath(customCSSPath))
+						renderHandler.SetCSSPath(resolveCSSPath())
 					}
 					if rcfg.onReload != nil {
 						rcfg.onReload()
@@ -608,14 +608,8 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 	}
 }
 
-// resolveCSSPath determines the effective stylesheet path. If custom.css is present,
-// it is preferred; otherwise it resolves DefaultCSSPath relative to CWD or repo root.
-func resolveCSSPath(customPath string) string {
-	if customPath != "" {
-		if fi, err := os.Stat(customPath); err == nil && !fi.IsDir() {
-			return customPath
-		}
-	}
+// resolveCSSPath determines the base HUD stylesheet path relative to CWD or repo root.
+func resolveCSSPath() string {
 	candidates := []string{
 		render.DefaultCSSPath,
 		filepath.Join("..", "..", render.DefaultCSSPath),
