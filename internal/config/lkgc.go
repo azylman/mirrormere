@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"net/url"
 	"os"
 	"reflect"
 	"strings"
@@ -572,8 +571,7 @@ func validateDomainRulesStage(cfg *Config, registry map[string]*domain.Package) 
 				if !ok || baseURL == "" {
 					return fmt.Errorf("[Mirrormere Config Error] tasks widget '%s' with source 'http' requires non-empty 'http.base_url'", w.ID)
 				}
-				u, err := url.ParseRequestURI(baseURL)
-				if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+				if !isValidHTTPURL(baseURL) {
 					return fmt.Errorf("[Mirrormere Config Error] tasks widget '%s': invalid http.base_url '%s' (must be http:// or https:// with host)", w.ID, baseURL)
 				}
 				sourceCfg = httpCfg
@@ -593,8 +591,7 @@ func validateDomainRulesStage(cfg *Config, registry map[string]*domain.Package) 
 					return fmt.Errorf("[Mirrormere Config Error] tasks widget '%s' with source 'todoist' requires 'todoist' config block", w.ID)
 				}
 				if baseURL, ok := todoistCfg["base_url"].(string); ok && baseURL != "" {
-					u, err := url.ParseRequestURI(baseURL)
-					if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+					if !isValidHTTPURL(baseURL) {
 						return fmt.Errorf("[Mirrormere Config Error] tasks widget '%s': invalid todoist.base_url '%s' (must be http:// or https:// with host)", w.ID, baseURL)
 					}
 				}
