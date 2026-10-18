@@ -20,17 +20,17 @@ func TestSeq(t *testing.T) {
 		args []int
 		want []int
 	}{
-		{"empty args", []int{}, []int{}},
-		{"seq 0", []int{0}, []int{}},
-		{"seq negative", []int{-3}, []int{}},
-		{"seq 5", []int{5}, []int{0, 1, 2, 3, 4}},
-		{"seq 1 to 5", []int{1, 5}, []int{1, 2, 3, 4, 5}},
-		{"seq 5 to 5", []int{5, 5}, []int{5}},
-		{"seq 5 to 1 (descending)", []int{5, 1}, []int{}},
-		{"seq 0 to 10 step 2", []int{0, 10, 2}, []int{0, 2, 4, 6, 8, 10}},
-		{"seq 1 to 5 step 0", []int{1, 5, 0}, []int{}},
-		{"seq 1 to 5 negative step", []int{1, 5, -1}, []int{}},
-		{"seq 5 to 1 step 2", []int{5, 1, 2}, []int{}},
+		{name: "empty args", args: []int{}, want: []int{}},
+		{name: "seq 0", args: []int{0}, want: []int{}},
+		{name: "seq negative", args: []int{-3}, want: []int{}},
+		{name: "seq 5", args: []int{5}, want: []int{0, 1, 2, 3, 4}},
+		{name: "seq 1 to 5", args: []int{1, 5}, want: []int{1, 2, 3, 4, 5}},
+		{name: "seq 5 to 5", args: []int{5, 5}, want: []int{5}},
+		{name: "seq 5 to 1 (descending)", args: []int{5, 1}, want: []int{}},
+		{name: "seq 0 to 10 step 2", args: []int{0, 10, 2}, want: []int{0, 2, 4, 6, 8, 10}},
+		{name: "seq 1 to 5 step 0", args: []int{1, 5, 0}, want: []int{}},
+		{name: "seq 1 to 5 negative step", args: []int{1, 5, -1}, want: []int{}},
+		{name: "seq 5 to 1 step 2", args: []int{5, 1, 2}, want: []int{}},
 	}
 
 	for _, tc := range tests {
@@ -59,24 +59,24 @@ func TestParseTime(t *testing.T) {
 		val       any
 		wantValid bool
 	}{
-		{"time.Time", now, true},
-		{"*time.Time non-nil", &now, true},
-		{"*time.Time nil", (*time.Time)(nil), false},
-		{"RFC3339 string", "2026-09-25T20:00:00Z", true},
-		{"RFC3339Nano string", "2026-09-25T20:00:00.123456789Z", true},
-		{"DateTime string", "2026-09-25 20:00:00", true},
-		{"DateOnly string", "2026-09-25", true},
-		{"TimeOnly string", "20:00:00", true},
-		{"ShortTime string", "20:00", true},
-		{"OpenMeteo short ISO string", "2026-09-26T15:00", true},
-		{"OpenMeteo space short ISO string", "2026-09-26 15:00", true},
-		{"12h time string", "8:00 PM", true},
-		{"0-padded 12h time", "08:00 PM", true},
-		{"int64 unix", int64(1758830400), true},
-		{"int unix", int(1758830400), true},
-		{"float64 unix", float64(1758830400), true},
-		{"invalid string", "not-a-date", false},
-		{"unsupported type bool", true, false},
+		{name: "time.Time", val: now, wantValid: true},
+		{name: "*time.Time non-nil", val: &now, wantValid: true},
+		{name: "*time.Time nil", val: (*time.Time)(nil), wantValid: false},
+		{name: "RFC3339 string", val: "2026-09-25T20:00:00Z", wantValid: true},
+		{name: "RFC3339Nano string", val: "2026-09-25T20:00:00.123456789Z", wantValid: true},
+		{name: "DateTime string", val: "2026-09-25 20:00:00", wantValid: true},
+		{name: "DateOnly string", val: "2026-09-25", wantValid: true},
+		{name: "TimeOnly string", val: "20:00:00", wantValid: true},
+		{name: "ShortTime string", val: "20:00", wantValid: true},
+		{name: "OpenMeteo short ISO string", val: "2026-09-26T15:00", wantValid: true},
+		{name: "OpenMeteo space short ISO string", val: "2026-09-26 15:00", wantValid: true},
+		{name: "12h time string", val: "8:00 PM", wantValid: true},
+		{name: "0-padded 12h time", val: "08:00 PM", wantValid: true},
+		{name: "int64 unix", val: int64(1758830400), wantValid: true},
+		{name: "int unix", val: int(1758830400), wantValid: true},
+		{name: "float64 unix", val: float64(1758830400), wantValid: true},
+		{name: "invalid string", val: "not-a-date", wantValid: false},
+		{name: "unsupported type bool", val: true, wantValid: false},
 	}
 
 	for _, tc := range tests {
@@ -94,28 +94,42 @@ func TestFormatDate(t *testing.T) {
 	t.Parallel()
 
 	target := time.Date(2026, 9, 25, 14, 30, 0, 0, time.UTC)
+	laLoc, err := time.LoadLocation("America/Los_Angeles")
+	if err != nil {
+		t.Fatalf("failed to load America/Los_Angeles: %v", err)
+	}
+	eventUTC := "2026-10-12T03:30:00Z"
 
 	tests := []struct {
 		name string
+		loc  *time.Location
 		args []any
 		want string
 	}{
-		{"no args", []any{}, ""},
-		{"single arg time.Time", []any{target}, "2026-09-25"},
-		{"single arg string", []any{"2026-09-25T14:30:00Z"}, "2026-09-25"},
-		{"single arg invalid", []any{"not-a-date"}, "not-a-date"},
-		{"layout and time", []any{"Jan 02, 2006", target}, "Sep 25, 2026"},
-		{"empty layout defaults", []any{"", target}, "2026-09-25"},
-		{"default layout keyword", []any{"default", target}, "2026-09-25"},
-		{"custom layout with unparseable value", []any{"2006-01-02", "bad-date"}, "bad-date"},
+		{name: "no args", args: []any{}, want: ""},
+		{name: "single arg time.Time", args: []any{target}, want: "2026-09-25"},
+		{name: "single arg string", args: []any{"2026-09-25T14:30:00Z"}, want: "2026-09-25"},
+		{name: "single arg invalid", args: []any{"not-a-date"}, want: "not-a-date"},
+		{name: "layout and time", args: []any{"Jan 02, 2006", target}, want: "Sep 25, 2026"},
+		{name: "empty layout defaults", args: []any{"", target}, want: "2026-09-25"},
+		{name: "default layout keyword", args: []any{"default", target}, want: "2026-09-25"},
+		{name: "custom layout with unparseable value", args: []any{"2006-01-02", "bad-date"}, want: "bad-date"},
+		{name: "timezone conversion date", loc: laLoc, args: []any{"2006-01-02", eventUTC}, want: "2026-10-11"},
+		{name: "timezone conversion layout Jan 2", loc: laLoc, args: []any{"Jan 2", eventUTC}, want: "Oct 11"},
+		{name: "timezone conversion date-only preserved", loc: laLoc, args: []any{"2006-01-02", "2026-10-12"}, want: "2026-10-12"},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got := render.FormatDate(tc.args...)
+			got := render.FormatDateInLocation(tc.loc, tc.args...)
 			if got != tc.want {
-				t.Errorf("expected %q, got %q", tc.want, got)
+				t.Errorf("FormatDateInLocation(%v) = %q, want %q", tc.args, got, tc.want)
+			}
+			if tc.loc == nil {
+				if gotBase := render.FormatDate(tc.args...); gotBase != tc.want {
+					t.Errorf("FormatDate(%v) = %q, want %q", tc.args, gotBase, tc.want)
+				}
 			}
 		})
 	}
@@ -125,28 +139,42 @@ func TestFormatTime(t *testing.T) {
 	t.Parallel()
 
 	target := time.Date(2026, 9, 25, 14, 30, 0, 0, time.UTC)
+	laLoc, err := time.LoadLocation("America/Los_Angeles")
+	if err != nil {
+		t.Fatalf("failed to load America/Los_Angeles: %v", err)
+	}
+	eventUTC := "2026-10-12T03:30:00Z"
 
 	tests := []struct {
 		name string
+		loc  *time.Location
 		args []any
 		want string
 	}{
-		{"no args", []any{}, ""},
-		{"single arg time.Time", []any{target}, "14:30"},
-		{"single arg string", []any{"2026-09-25T14:30:00Z"}, "14:30"},
-		{"single arg invalid", []any{"bad-time"}, "bad-time"},
-		{"12h layout and time", []any{"3:04 PM", target}, "2:30 PM"},
-		{"empty layout defaults", []any{"", target}, "14:30"},
-		{"default layout keyword", []any{"default", target}, "14:30"},
-		{"custom layout with unparseable value", []any{"15:04", "bad-time"}, "bad-time"},
+		{name: "no args", args: []any{}, want: ""},
+		{name: "single arg time.Time", args: []any{target}, want: "14:30"},
+		{name: "single arg string", args: []any{"2026-09-25T14:30:00Z"}, want: "14:30"},
+		{name: "single arg invalid", args: []any{"bad-time"}, want: "bad-time"},
+		{name: "12h layout and time", args: []any{"3:04 PM", target}, want: "2:30 PM"},
+		{name: "empty layout defaults", args: []any{"", target}, want: "14:30"},
+		{name: "default layout keyword", args: []any{"default", target}, want: "14:30"},
+		{name: "custom layout with unparseable value", args: []any{"15:04", "bad-time"}, want: "bad-time"},
+		{name: "date-only returns empty", args: []any{"15:04", "2026-10-12"}, want: ""},
+		{name: "timezone conversion 3:04", loc: laLoc, args: []any{"3:04", eventUTC}, want: "8:30"},
+		{name: "timezone conversion PM", loc: laLoc, args: []any{"PM", eventUTC}, want: "PM"},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got := render.FormatTime(tc.args...)
+			got := render.FormatTimeInLocation(tc.loc, tc.args...)
 			if got != tc.want {
-				t.Errorf("expected %q, got %q", tc.want, got)
+				t.Errorf("FormatTimeInLocation(%v) = %q, want %q", tc.args, got, tc.want)
+			}
+			if tc.loc == nil {
+				if gotBase := render.FormatTime(tc.args...); gotBase != tc.want {
+					t.Errorf("FormatTime(%v) = %q, want %q", tc.args, gotBase, tc.want)
+				}
 			}
 		})
 	}
@@ -156,109 +184,86 @@ func TestRelDate(t *testing.T) {
 	t.Parallel()
 
 	ref := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+	laLoc, err := time.LoadLocation("America/Los_Angeles")
+	if err != nil {
+		t.Fatalf("failed to load America/Los_Angeles: %v", err)
+	}
+	eventUTC := "2026-10-12T03:30:00Z"
+	satNow := time.Date(2026, 10, 10, 19, 0, 0, 0, laLoc)
+	sunNow := time.Date(2026, 10, 11, 14, 0, 0, 0, laLoc)
 
 	tests := []struct {
-		name string
-		args []any
-		want string
+		name    string
+		refTime time.Time
+		args    []any
+		want    string
 	}{
-		{"no args", []any{}, ""},
-		{"unparseable", []any{"invalid"}, "invalid"},
-		{"today same hour", []any{ref}, "Today"},
-		{"today earlier hour", []any{time.Date(2026, 9, 25, 8, 0, 0, 0, time.UTC)}, "Today"},
-		{"tomorrow", []any{time.Date(2026, 9, 26, 9, 0, 0, 0, time.UTC)}, "Tomorrow"},
-		{"yesterday", []any{time.Date(2026, 9, 24, 23, 0, 0, 0, time.UTC)}, "Yesterday"},
-		{"in 3 days", []any{time.Date(2026, 9, 28, 10, 0, 0, 0, time.UTC)}, "in 3 days"},
-		{"4 days ago", []any{time.Date(2026, 9, 21, 10, 0, 0, 0, time.UTC)}, "4 days ago"},
-		{"custom reference parameter", []any{
+		{name: "no args", refTime: ref, args: []any{}, want: ""},
+		{name: "unparseable", refTime: ref, args: []any{"invalid"}, want: "invalid"},
+		{name: "today same hour", refTime: ref, args: []any{ref}, want: "Today"},
+		{name: "today earlier hour", refTime: ref, args: []any{time.Date(2026, 9, 25, 8, 0, 0, 0, time.UTC)}, want: "Today"},
+		{name: "tomorrow", refTime: ref, args: []any{time.Date(2026, 9, 26, 9, 0, 0, 0, time.UTC)}, want: "Tomorrow"},
+		{name: "yesterday", refTime: ref, args: []any{time.Date(2026, 9, 24, 23, 0, 0, 0, time.UTC)}, want: "Yesterday"},
+		{name: "in 3 days", refTime: ref, args: []any{time.Date(2026, 9, 28, 10, 0, 0, 0, time.UTC)}, want: "in 3 days"},
+		{name: "4 days ago", refTime: ref, args: []any{time.Date(2026, 9, 21, 10, 0, 0, 0, time.UTC)}, want: "4 days ago"},
+		{name: "custom reference parameter", refTime: ref, args: []any{
 			time.Date(2026, 10, 2, 10, 0, 0, 0, time.UTC),
 			"2026-10-01T00:00:00Z",
-		}, "Tomorrow"},
+		}, want: "Tomorrow"},
+		{name: "date-only today", refTime: ref, args: []any{"2026-09-25"}, want: "Today"},
+		{name: "timezone conversion tomorrow", refTime: satNow, args: []any{eventUTC}, want: "Tomorrow"},
+		{name: "timezone conversion today", refTime: sunNow, args: []any{eventUTC}, want: "Today"},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got := render.RelDate(ref, tc.args...)
+			got := render.RelDate(tc.refTime, tc.args...)
 			if got != tc.want {
-				t.Errorf("expected %q, got %q", tc.want, got)
+				t.Errorf("RelDate(%v) = %q, want %q", tc.args, got, tc.want)
 			}
 		})
 	}
-
-	t.Run("timezone conversion", func(t *testing.T) {
-		t.Parallel()
-		laLoc, err := time.LoadLocation("America/Los_Angeles")
-		if err != nil {
-			t.Fatalf("failed to load America/Los_Angeles: %v", err)
-		}
-
-		// Event on Sunday night Oct 11 at 8:30 PM PDT is 2026-10-12T03:30:00Z in UTC
-		eventUTC := "2026-10-12T03:30:00Z"
-
-		// On Saturday Oct 10 at 7:00 PM PDT, the event is tomorrow (Sunday Oct 11)
-		satNow := time.Date(2026, 10, 10, 19, 0, 0, 0, laLoc)
-		if got := render.RelDate(satNow, eventUTC); got != "Tomorrow" {
-			t.Errorf("expected Tomorrow on Saturday night, got %q", got)
-		}
-
-		// On Sunday Oct 11 at 2:00 PM PDT, the event is today
-		sunNow := time.Date(2026, 10, 11, 14, 0, 0, 0, laLoc)
-		if got := render.RelDate(sunNow, eventUTC); got != "Today" {
-			t.Errorf("expected Today on Sunday afternoon, got %q", got)
-		}
-
-		// FormatDateInLocation converts UTC event to local date
-		if got := render.FormatDateInLocation(laLoc, "2006-01-02", eventUTC); got != "2026-10-11" {
-			t.Errorf("expected 2026-10-11, got %q", got)
-		}
-		if got := render.FormatDateInLocation(laLoc, "Jan 2", eventUTC); got != "Oct 11" {
-			t.Errorf("expected Oct 11, got %q", got)
-		}
-
-		// Date-only string is preserved and not shifted
-		if got := render.FormatDateInLocation(laLoc, "2006-01-02", "2026-10-12"); got != "2026-10-12" {
-			t.Errorf("expected date-only 2026-10-12 to remain 2026-10-12, got %q", got)
-		}
-
-		// FormatTimeInLocation converts UTC event to local time
-		if got := render.FormatTimeInLocation(laLoc, "3:04", eventUTC); got != "8:30" {
-			t.Errorf("expected 8:30, got %q", got)
-		}
-		if got := render.FormatTimeInLocation(laLoc, "PM", eventUTC); got != "PM" {
-			t.Errorf("expected PM, got %q", got)
-		}
-	})
 }
 
 func TestJSONHelpers(t *testing.T) {
 	t.Parallel()
 
 	data := map[string]any{"key": "value", "count": 42}
-
-	htmlOut, err := render.JSONHelper(data)
-	if err != nil {
-		t.Fatalf("JSONHelper failed: %v", err)
-	}
-	if !strings.Contains(string(htmlOut), `"key":"value"`) {
-		t.Errorf("unexpected JSONHelper output: %s", htmlOut)
-	}
-
-	jsOut, err := render.JSONJSHelper(data)
-	if err != nil {
-		t.Fatalf("JSONJSHelper failed: %v", err)
-	}
-	if !strings.Contains(string(jsOut), `"count":42`) {
-		t.Errorf("unexpected JSONJSHelper output: %s", jsOut)
-	}
-
-	// Unserializable type (channel)
 	ch := make(chan int)
-	if _, err := render.JSONHelper(ch); err == nil {
-		t.Error("expected JSONHelper error for channel, got nil")
+
+	tests := []struct {
+		name     string
+		val      any
+		wantErr  bool
+		wantHTML string
+		wantJS   string
+	}{
+		{name: "valid map", val: data, wantHTML: `"key":"value"`, wantJS: `"count":42`},
+		{name: "unserializable channel", val: ch, wantErr: true},
 	}
-	if _, err := render.JSONJSHelper(ch); err == nil {
-		t.Error("expected JSONJSHelper error for channel, got nil")
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			htmlOut, htmlErr := render.JSONHelper(tc.val)
+			jsOut, jsErr := render.JSONJSHelper(tc.val)
+			if tc.wantErr {
+				if htmlErr == nil || jsErr == nil {
+					t.Fatalf("expected error for %s, got htmlErr=%v, jsErr=%v", tc.name, htmlErr, jsErr)
+				}
+				return
+			}
+			if htmlErr != nil || jsErr != nil {
+				t.Fatalf("unexpected error for %s: htmlErr=%v, jsErr=%v", tc.name, htmlErr, jsErr)
+			}
+			if !strings.Contains(string(htmlOut), tc.wantHTML) {
+				t.Errorf("JSONHelper output %q missing %q", htmlOut, tc.wantHTML)
+			}
+			if !strings.Contains(string(jsOut), tc.wantJS) {
+				t.Errorf("JSONJSHelper output %q missing %q", jsOut, tc.wantJS)
+			}
+		})
 	}
 }
 
@@ -268,117 +273,239 @@ func TestStandardFuncMap(t *testing.T) {
 	fixedNow := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
 	funcs := render.StandardFuncMap(func() time.Time { return fixedNow })
 
-	tmpl, err := template.New("test").Funcs(funcs).Parse(`
-{{range seq 3}}{{.}}{{end}}
-{{formatDate "2006" "2026-09-25"}}
-{{formatTime "15:04" "2026-09-25T14:30:00Z"}}
-{{relDate "2026-09-26T12:00:00Z"}}
-{{json .}}
-`)
-	if err != nil {
-		t.Fatalf("failed to parse template: %v", err)
+	tests := []struct {
+		name         string
+		funcMap      template.FuncMap
+		tmpl         string
+		data         any
+		wantContains []string
+	}{
+		{
+			name:         "seq",
+			funcMap:      funcs,
+			tmpl:         `{{range seq 3}}{{.}}{{end}}`,
+			wantContains: []string{"012"},
+		},
+		{
+			name:         "formatDate",
+			funcMap:      funcs,
+			tmpl:         `{{formatDate "2006" "2026-09-25"}}`,
+			wantContains: []string{"2026"},
+		},
+		{
+			name:         "formatTime",
+			funcMap:      funcs,
+			tmpl:         `{{formatTime "15:04" "2026-09-25T14:30:00Z"}}`,
+			wantContains: []string{"14:30"},
+		},
+		{
+			name:         "relDate",
+			funcMap:      funcs,
+			tmpl:         `{{relDate "2026-09-26T12:00:00Z"}}`,
+			wantContains: []string{"Tomorrow"},
+		},
+		{
+			name:         "json",
+			funcMap:      funcs,
+			tmpl:         `{{json .}}`,
+			data:         map[string]string{"foo": "bar"},
+			wantContains: []string{`"foo":"bar"`},
+		},
+		{
+			name:         "jsonJS",
+			funcMap:      funcs,
+			tmpl:         `<script>const data = {{jsonJS .}};</script>`,
+			data:         map[string]int{"count": 42},
+			wantContains: []string{`"count":42`},
+		},
+		{
+			name:         "weatherIcon",
+			funcMap:      funcs,
+			tmpl:         `{{weatherIcon "weather-partly-cloudy" 24}}`,
+			wantContains: []string{`width="24"`, `mm-icon-weather-partly-cloudy`},
+		},
+		{
+			name:    "weatherHourlyGraph",
+			funcMap: funcs,
+			tmpl:    `{{weatherHourlyGraph .Hourly .ID}}`,
+			data: map[string]any{
+				"Hourly": []testHourlyItem{
+					{Time: "2026-09-25T12:00", Temp: 68.0, PrecipProb: 0, Icon: "weather-sunny"},
+					{Time: "2026-09-25T13:00", Temp: 71.0, PrecipProb: 20, Icon: "weather-partly-cloudy"},
+				},
+				"ID": "widget-123",
+			},
+			wantContains: []string{`class="weather-hourly-graph"`, `id="mm-weather-grad-widget-123"`, `68°`, `71°`},
+		},
+		{
+			name:    "weatherDailyForecast",
+			funcMap: funcs,
+			tmpl:    `{{ $f := weatherDailyForecast .Daily 5 }}{{ range $f }}{{ .DayName }}: {{ printf "%.0f" .TempMin }}°-{{ printf "%.0f" .TempMax }}° {{ end }}`,
+			data: map[string]any{
+				"Daily": []provider.WeatherDaily{
+					{Date: "2026-09-25", TempMin: 50, TempMax: 60},
+					{Date: "2026-09-26", TempMin: 55, TempMax: 65, PrecipProbMax: 20, Icon: "weather-sunny", ConditionText: "Sunny"},
+					{Date: "2026-09-27", TempMin: 52, TempMax: 62, PrecipProbMax: 0, Icon: "weather-cloudy", ConditionText: "Cloudy"},
+				},
+			},
+			wantContains: []string{"Tomorrow: 55°-65°", "Sun: 52°-62°"},
+		},
+		{
+			name:         "todayPrecipProb",
+			funcMap:      funcs,
+			tmpl:         `{{todayPrecipProb .}}%`,
+			data:         provider.WeatherSnapshot{Daily: []provider.WeatherDaily{{PrecipProbMax: 42}}},
+			wantContains: []string{"42%"},
+		},
+		{
+			name:    "calendarFeedEvents",
+			funcMap: funcs,
+			tmpl:    `{{ range (calendarFeedEvents .) }}{{ .Title }};{{ end }}`,
+			data: provider.CalendarSnapshot{
+				Events: []provider.CalendarEvent{
+					{Title: "Old", Start: "2026-07-01T10:00:00Z", End: "2026-07-01T11:00:00Z"},
+					{Title: "Upcoming", Start: "2026-09-25T16:00:00Z", End: "2026-09-25T17:00:00Z"},
+				},
+			},
+			wantContains: []string{"Upcoming;"},
+		},
+		{
+			name:    "calendarFeedDayGroups",
+			funcMap: funcs,
+			tmpl:    `{{ range (calendarFeedDayGroups .) }}{{ .Date }}:{{ len .Events }};{{ end }}`,
+			data: provider.CalendarSnapshot{
+				Events: []provider.CalendarEvent{
+					{Title: "E1", Start: "2026-09-25T14:00:00Z", End: "2026-09-25T15:00:00Z"},
+					{Title: "E2", Start: "2026-09-25T16:00:00Z", End: "2026-09-25T17:00:00Z"},
+				},
+			},
+			wantContains: []string{"2026-09-25:2;"},
+		},
+		{
+			name:    "calendarFeedActiveCalendars",
+			funcMap: funcs,
+			tmpl:    `{{ $c := calendarFeedActiveCalendars . }}{{ len $c }}:{{ range $c }}{{ .name }};{{ end }}`,
+			data: map[string]any{
+				"calendars": []any{
+					map[string]any{"name": "Cal 1", "enabled": true},
+					map[string]any{"name": "Cal 2", "enabled": false},
+				},
+			},
+			wantContains: []string{"1:Cal 1;"},
+		},
+		{
+			name:    "activeCalendars alias",
+			funcMap: funcs,
+			tmpl:    `{{ $c := activeCalendars . }}{{ len $c }}:{{ range $c }}{{ .name }};{{ end }}`,
+			data: map[string]any{
+				"calendars": []any{
+					map[string]any{"name": "Cal 1", "enabled": true},
+					map[string]any{"name": "Cal 2", "enabled": false},
+				},
+			},
+			wantContains: []string{"1:Cal 1;"},
+		},
+		{
+			name:    "tasksStats",
+			funcMap: funcs,
+			tmpl:    `{{ $s := tasksStats . }}{{ $s.Summary }}`,
+			data: []map[string]any{
+				{"done": true},
+				{"done": false},
+			},
+			wantContains: []string{"1 to do"},
+		},
+		{
+			name:         "stringOr",
+			funcMap:      funcs,
+			tmpl:         `{{stringOr . "missing" "fallback"}}`,
+			data:         map[string]any{"exists": "value"},
+			wantContains: []string{"fallback"},
+		},
+		{
+			name:         "add",
+			funcMap:      funcs,
+			tmpl:         `{{add 5 3}}`,
+			wantContains: []string{"8"},
+		},
+		{
+			name:         "sub",
+			funcMap:      funcs,
+			tmpl:         `{{sub 5 3}}`,
+			wantContains: []string{"2"},
+		},
+		{
+			name:         "nil nowFunc fallback",
+			funcMap:      render.StandardFuncMap(nil),
+			tmpl:         `{{range seq 2}}{{.}}{{end}}`,
+			wantContains: []string{"01"},
+		},
 	}
 
-	var sb strings.Builder
-	if err := tmpl.Execute(&sb, map[string]string{"foo": "bar"}); err != nil {
-		t.Fatalf("failed to execute template: %v", err)
-	}
-
-	out := sb.String()
-	if !strings.Contains(out, "012") {
-		t.Errorf("expected sequence output '012', got %q", out)
-	}
-	if !strings.Contains(out, "2026") {
-		t.Errorf("expected date output '2026', got %q", out)
-	}
-	if !strings.Contains(out, "14:30") {
-		t.Errorf("expected time output '14:30', got %q", out)
-	}
-	if !strings.Contains(out, "Tomorrow") {
-		t.Errorf("expected relative date 'Tomorrow', got %q", out)
-	}
-
-	// Default nowFunc fallback
-	defaultFuncs := render.StandardFuncMap(nil)
-	if defaultFuncs["seq"] == nil {
-		t.Error("expected non-nil seq in defaultFuncs")
-	}
-	if defaultFuncs["weatherIcon"] == nil {
-		t.Error("expected non-nil weatherIcon in defaultFuncs")
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			tmpl, err := template.New(tc.name).Funcs(tc.funcMap).Parse(tc.tmpl)
+			if err != nil {
+				t.Fatalf("failed to parse template: %v", err)
+			}
+			var sb strings.Builder
+			if err := tmpl.Execute(&sb, tc.data); err != nil {
+				t.Fatalf("failed to execute template: %v", err)
+			}
+			out := sb.String()
+			for _, sub := range tc.wantContains {
+				if !strings.Contains(out, sub) {
+					t.Errorf("template output %q does not contain %q", out, sub)
+				}
+			}
+		})
 	}
 }
 
 func TestWeatherIcon(t *testing.T) {
 	t.Parallel()
 
-	tokens := []string{
-		"weather-sunny",
-		"weather-clear-night",
-		"weather-partly-cloudy",
-		"weather-night-partly-cloudy",
-		"weather-cloudy",
-		"weather-fog",
-		"weather-rainy",
-		"weather-pouring",
-		"weather-snowy",
-		"weather-snowy-rainy",
-		"weather-lightning",
-		"weather-lightning-rainy",
-		"unknown-token",
-	}
-
-	for _, token := range tokens {
-		t.Run(token, func(t *testing.T) {
-			t.Parallel()
-			svg := render.WeatherIcon(token)
-			if !strings.HasPrefix(string(svg), "<svg") || !strings.HasSuffix(string(svg), "</svg>") {
-				t.Fatalf("expected valid SVG element for %s, got: %s", token, svg)
-			}
-			if !strings.Contains(string(svg), `width="20"`) || !strings.Contains(string(svg), `height="20"`) {
-				t.Errorf("expected default 20px dimensions for %s, got: %s", token, svg)
-			}
-		})
-	}
-
-	// Sizing tests
-	sizeTests := []struct {
-		name     string
-		args     []any
-		wantSize string
+	tests := []struct {
+		name         string
+		args         []any
+		wantContains []string
 	}{
-		{"no args", []any{}, `width="20"`},
-		{"nil arg", []any{nil}, `width="20"`},
-		{"custom int", []any{"weather-sunny", 32}, `width="32"`},
-		{"custom int64", []any{"weather-sunny", int64(28)}, `width="28"`},
-		{"custom float64", []any{"weather-sunny", float64(24)}, `width="24"`},
-		{"custom string", []any{"weather-sunny", "36"}, `width="36"`},
-		{"invalid string", []any{"weather-sunny", "bad-size"}, `width="20"`},
-		{"clamp below min", []any{"weather-sunny", 5}, `width="12"`},
-		{"clamp above max", []any{"weather-sunny", 120}, `width="64"`},
-		{"negative int", []any{"weather-sunny", -10}, `width="20"`},
+		{name: "weather-sunny", args: []any{"weather-sunny"}, wantContains: []string{`<svg`, `</svg>`, `width="20"`, `height="20"`, `mm-icon-weather-sunny`}},
+		{name: "weather-clear-night", args: []any{"weather-clear-night"}, wantContains: []string{`<svg`, `</svg>`, `width="20"`, `height="20"`, `mm-icon-weather-clear-night`}},
+		{name: "weather-partly-cloudy", args: []any{"weather-partly-cloudy"}, wantContains: []string{`<svg`, `</svg>`, `width="20"`, `height="20"`, `mm-icon-weather-partly-cloudy`}},
+		{name: "weather-night-partly-cloudy", args: []any{"weather-night-partly-cloudy"}, wantContains: []string{`<svg`, `</svg>`, `width="20"`, `height="20"`, `mm-icon-weather-night-partly-cloudy`}},
+		{name: "weather-cloudy", args: []any{"weather-cloudy"}, wantContains: []string{`<svg`, `</svg>`, `width="20"`, `height="20"`, `mm-icon-weather-cloudy`}},
+		{name: "weather-fog", args: []any{"weather-fog"}, wantContains: []string{`<svg`, `</svg>`, `width="20"`, `height="20"`, `mm-icon-weather-fog`}},
+		{name: "weather-rainy", args: []any{"weather-rainy"}, wantContains: []string{`<svg`, `</svg>`, `width="20"`, `height="20"`, `mm-icon-weather-rainy`}},
+		{name: "weather-pouring", args: []any{"weather-pouring"}, wantContains: []string{`<svg`, `</svg>`, `width="20"`, `height="20"`, `mm-icon-weather-pouring`}},
+		{name: "weather-snowy", args: []any{"weather-snowy"}, wantContains: []string{`<svg`, `</svg>`, `width="20"`, `height="20"`, `mm-icon-weather-snowy`}},
+		{name: "weather-snowy-rainy", args: []any{"weather-snowy-rainy"}, wantContains: []string{`<svg`, `</svg>`, `width="20"`, `height="20"`, `mm-icon-weather-snowy-rainy`}},
+		{name: "weather-lightning", args: []any{"weather-lightning"}, wantContains: []string{`<svg`, `</svg>`, `width="20"`, `height="20"`, `mm-icon-weather-lightning`}},
+		{name: "weather-lightning-rainy", args: []any{"weather-lightning-rainy"}, wantContains: []string{`<svg`, `</svg>`, `width="20"`, `height="20"`, `mm-icon-weather-lightning-rainy`}},
+		{name: "unknown-token", args: []any{"unknown-token"}, wantContains: []string{`<svg`, `</svg>`, `width="20"`, `height="20"`, `mm-icon-unknown-token`}},
+		{name: "no args", args: []any{}, wantContains: []string{`width="20"`}},
+		{name: "nil arg", args: []any{nil}, wantContains: []string{`width="20"`}},
+		{name: "custom int", args: []any{"weather-sunny", 32}, wantContains: []string{`width="32"`}},
+		{name: "custom int64", args: []any{"weather-sunny", int64(28)}, wantContains: []string{`width="28"`}},
+		{name: "custom float64", args: []any{"weather-sunny", float64(24)}, wantContains: []string{`width="24"`}},
+		{name: "custom string", args: []any{"weather-sunny", "36"}, wantContains: []string{`width="36"`}},
+		{name: "invalid string", args: []any{"weather-sunny", "bad-size"}, wantContains: []string{`width="20"`}},
+		{name: "clamp below min", args: []any{"weather-sunny", 5}, wantContains: []string{`width="12"`}},
+		{name: "clamp above max", args: []any{"weather-sunny", 120}, wantContains: []string{`width="64"`}},
+		{name: "negative int", args: []any{"weather-sunny", -10}, wantContains: []string{`width="20"`}},
 	}
 
-	for _, tc := range sizeTests {
+	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			svg := render.WeatherIcon(tc.args...)
-			if !strings.Contains(string(svg), tc.wantSize) {
-				t.Errorf("expected %s in output, got: %s", tc.wantSize, svg)
+			svg := string(render.WeatherIcon(tc.args...))
+			for _, sub := range tc.wantContains {
+				if !strings.Contains(svg, sub) {
+					t.Errorf("WeatherIcon(%v) missing %q in %s", tc.args, sub, svg)
+				}
 			}
 		})
-	}
-
-	// Template execution test
-	tmpl, err := template.New("icon-test").Funcs(render.StandardFuncMap(nil)).Parse(`{{weatherIcon "weather-partly-cloudy" 24}}`)
-	if err != nil {
-		t.Fatalf("failed to parse template: %v", err)
-	}
-	var sb strings.Builder
-	if err := tmpl.Execute(&sb, nil); err != nil {
-		t.Fatalf("failed to execute template: %v", err)
-	}
-	if !strings.Contains(sb.String(), `width="24"`) || !strings.Contains(sb.String(), `mm-icon-weather-partly-cloudy`) {
-		t.Errorf("expected rendered SVG in template output, got: %s", sb.String())
 	}
 }
 
@@ -392,461 +519,337 @@ type testHourlyItem struct {
 func TestWeatherHourlyGraph(t *testing.T) {
 	t.Parallel()
 
-	// Empty and invalid inputs
-	emptyCases := []struct {
-		name string
-		args []any
+	tests := []struct {
+		name            string
+		args            []any
+		wantEmpty       bool
+		wantContains    []string
+		wantNotContains []string
 	}{
-		{"no args", []any{}},
-		{"nil arg", []any{nil}},
-		{"unsupported type string", []any{"invalid"}},
-		{"unsupported type int", []any{123}},
-		{"empty slice of any", []any{[]any{}}},
-		{"empty typed slice", []any{[]testHourlyItem{}}},
-		{"slice with all nil items", []any{[]any{nil, nil}}},
+		{name: "no args", args: []any{}, wantEmpty: true},
+		{name: "nil arg", args: []any{nil}, wantEmpty: true},
+		{name: "unsupported type string", args: []any{"invalid"}, wantEmpty: true},
+		{name: "unsupported type int", args: []any{123}, wantEmpty: true},
+		{name: "empty slice of any", args: []any{[]any{}}, wantEmpty: true},
+		{name: "empty typed slice", args: []any{[]testHourlyItem{}}, wantEmpty: true},
+		{name: "slice with all nil items", args: []any{[]any{nil, nil}}, wantEmpty: true},
+		{
+			name: "single item",
+			args: []any{[]testHourlyItem{
+				{Time: "2026-09-26T14:00", Temp: 72.0, PrecipProb: 0, Icon: "weather-sunny"},
+			}},
+			wantContains:    []string{"72°", "Now"},
+			wantNotContains: []string{`<path d="M`},
+		},
+		{
+			name: "flatline temperatures",
+			args: []any{[]testHourlyItem{
+				{Time: "2026-09-26T14:00", Temp: 65.0, PrecipProb: 10, Icon: "weather-cloudy"},
+				{Time: "2026-09-26T15:00", Temp: 65.0, PrecipProb: 10, Icon: "weather-cloudy"},
+				{Time: "2026-09-26T16:00", Temp: 65.0, PrecipProb: 0, Icon: "weather-cloudy"},
+			}},
+			wantContains: []string{`stroke-width="2.5"`, "10%", "3 PM", "4 PM"},
+		},
+		{
+			name: "negative and zero-crossing temperatures with custom gradient",
+			args: []any{
+				[]testHourlyItem{
+					{Time: "2026-09-26T00:00", Temp: -5.0, PrecipProb: 50, Icon: "weather-snowy"},
+					{Time: "2026-09-26T01:00", Temp: 0.0, PrecipProb: 30, Icon: "weather-snowy-rainy"},
+					{Time: "2026-09-26T02:00", Temp: 10.0, PrecipProb: 0, Icon: "weather-sunny"},
+				},
+				"custom-id",
+			},
+			wantContains: []string{`id="mm-weather-grad-custom-id"`, "-5°", "0°", "10°", "50%"},
+		},
+		{
+			name: "map slice with NaN Inf int temps and unparseable time",
+			args: []any{[]map[string]any{
+				{"time": "2026-09-26T14:00", "temp": math.NaN(), "precip_prob": 25.0, "icon": ""},
+				{"time": "custom-time-format", "temp": math.Inf(1), "precip_prob": 0, "icon": "weather-partly-cloudy"},
+				{"time": "2026-09-26T16:00", "temp": 70, "precip_prob": 40, "icon": "weather-rainy"},
+			}},
+			wantContains:    []string{"custom-time-format", "70°", "40%"},
+			wantNotContains: []string{"NaN", "Inf"},
+		},
+		{
+			name: "scaled vertical coordinates",
+			args: []any{[]testHourlyItem{
+				{Time: "2026-09-26T12:00", Temp: 80.0, PrecipProb: 40, Icon: "weather-rainy"},
+				{Time: "2026-09-26T13:00", Temp: 50.0, PrecipProb: 0, Icon: "weather-cloudy"},
+			}},
+			wantContains: []string{
+				`viewBox="0 0 560.0 300.0"`,
+				`y1="240.0"`, `y2="240.0"`,
+				`y="20" text-anchor="middle" font-size="11"`,
+				`, 32) scale(1.2)`,
+				`r="4.0"`,
+				`y="275" text-anchor="middle" font-size="13"`,
+				`y="80.0" text-anchor="middle" font-size="14" font-weight="800"`,
+				`y="195.0" text-anchor="middle" font-size="14" font-weight="800"`,
+			},
+		},
 	}
 
-	for _, tc := range emptyCases {
+	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got := render.WeatherHourlyGraph(tc.args...)
-			if got != "" {
-				t.Errorf("expected empty HTML, got: %s", got)
+			got := string(render.WeatherHourlyGraph(tc.args...))
+			if tc.wantEmpty {
+				if got != "" {
+					t.Fatalf("expected empty HTML, got: %s", got)
+				}
+				return
+			}
+			if !strings.HasPrefix(got, "<svg") || !strings.HasSuffix(got, "</svg>") {
+				t.Fatalf("expected valid SVG, got: %s", got)
+			}
+			for _, sub := range tc.wantContains {
+				if !strings.Contains(got, sub) {
+					t.Errorf("WeatherHourlyGraph() missing %q in %s", sub, got)
+				}
+			}
+			for _, sub := range tc.wantNotContains {
+				if strings.Contains(got, sub) {
+					t.Errorf("WeatherHourlyGraph() should not contain %q in %s", sub, got)
+				}
 			}
 		})
 	}
+}
 
-	// Single item
-	t.Run("single item", func(t *testing.T) {
-		t.Parallel()
-		items := []testHourlyItem{
-			{Time: "2026-09-26T14:00", Temp: 72.0, PrecipProb: 0, Icon: "weather-sunny"},
-		}
-		got := string(render.WeatherHourlyGraph(items))
-		if !strings.HasPrefix(got, "<svg") || !strings.HasSuffix(got, "</svg>") {
-			t.Fatalf("expected valid SVG, got: %s", got)
-		}
-		if !strings.Contains(got, `72°`) {
-			t.Errorf("expected temp label 72°, got: %s", got)
-		}
-		if !strings.Contains(got, `Now`) {
-			t.Errorf("expected Now time label, got: %s", got)
-		}
-		// Single item should not render multi-point curve stroke path
-		if strings.Contains(got, `<path d="M`) && strings.Contains(got, `stroke-width="2.5"`) {
-			t.Errorf("single item should not render multi-point curve path, got: %s", got)
-		}
-	})
+type customDaily struct {
+	Date          string
+	TempMax       float32
+	TempMin       float32
+	PrecipProbMax int64
+	ConditionText string
+	Icon          string
+}
 
-	// Flatline temperatures (max == min, span < 4)
-	t.Run("flatline temperatures", func(t *testing.T) {
-		t.Parallel()
-		items := []testHourlyItem{
-			{Time: "2026-09-26T14:00", Temp: 65.0, PrecipProb: 10, Icon: "weather-cloudy"},
-			{Time: "2026-09-26T15:00", Temp: 65.0, PrecipProb: 10, Icon: "weather-cloudy"},
-			{Time: "2026-09-26T16:00", Temp: 65.0, PrecipProb: 0, Icon: "weather-cloudy"},
-		}
-		got := string(render.WeatherHourlyGraph(items))
-		if !strings.Contains(got, `stroke-width="2.5"`) {
-			t.Errorf("expected curve path for multiple points, got: %s", got)
-		}
-		if !strings.Contains(got, `10%`) {
-			t.Errorf("expected precip label 10%%, got: %s", got)
-		}
-		if !strings.Contains(got, `3 PM`) || !strings.Contains(got, `4 PM`) {
-			t.Errorf("expected formatted times 3 PM and 4 PM, got: %s", got)
-		}
-	})
-
-	// Varied multi-hour with negative and zero-crossing temperatures
-	t.Run("negative and zero-crossing temperatures", func(t *testing.T) {
-		t.Parallel()
-		items := []testHourlyItem{
-			{Time: "2026-09-26T00:00", Temp: -5.0, PrecipProb: 50, Icon: "weather-snowy"},
-			{Time: "2026-09-26T01:00", Temp: 0.0, PrecipProb: 30, Icon: "weather-snowy-rainy"},
-			{Time: "2026-09-26T02:00", Temp: 10.0, PrecipProb: 0, Icon: "weather-sunny"},
-		}
-		got := string(render.WeatherHourlyGraph(items, "custom-id"))
-		if !strings.Contains(got, `id="mm-weather-grad-custom-id"`) {
-			t.Errorf("expected custom gradient ID in defs, got: %s", got)
-		}
-		if !strings.Contains(got, `-5°`) || !strings.Contains(got, `0°`) || !strings.Contains(got, `10°`) {
-			t.Errorf("expected negative and positive temp labels, got: %s", got)
-		}
-		if !strings.Contains(got, `50%`) {
-			t.Errorf("expected 50%% precip label, got: %s", got)
-		}
-	})
-
-	// Map slice and NaN/Inf handling
-	t.Run("map slice with NaN and unparseable time", func(t *testing.T) {
-		t.Parallel()
-		items := []map[string]any{
-			{"time": "2026-09-26T14:00", "temp": math.NaN(), "precip_prob": 25.0, "icon": ""},
-			{"time": "custom-time-format", "temp": math.Inf(1), "precip_prob": 0, "icon": "weather-partly-cloudy"},
-			{"time": "2026-09-26T16:00", "temp": 70, "precip_prob": 40, "icon": "weather-rainy"},
-		}
-		got := string(render.WeatherHourlyGraph(items))
-		if strings.Contains(got, "NaN") || strings.Contains(got, "Inf") {
-			t.Errorf("output should never contain literal NaN or Inf, got: %s", got)
-		}
-		if !strings.Contains(got, "custom-time-format") {
-			t.Errorf("expected unparseable time fallback, got: %s", got)
-		}
-	})
-
-	// Full template execution via StandardFuncMap
-	t.Run("template execution", func(t *testing.T) {
-		t.Parallel()
-		data := map[string]any{
-			"Hourly": []testHourlyItem{
-				{Time: "2026-09-26T12:00", Temp: 68.0, PrecipProb: 0, Icon: "weather-sunny"},
-				{Time: "2026-09-26T13:00", Temp: 71.0, PrecipProb: 20, Icon: "weather-partly-cloudy"},
-			},
-			"ID": "widget-123",
-		}
-		tmpl, err := template.New("graph-test").Funcs(render.StandardFuncMap(nil)).Parse(`{{weatherHourlyGraph .Hourly .ID}}`)
-		if err != nil {
-			t.Fatalf("failed to parse template: %v", err)
-		}
-		var sb strings.Builder
-		if err := tmpl.Execute(&sb, data); err != nil {
-			t.Fatalf("failed to execute template: %v", err)
-		}
-		out := sb.String()
-		if !strings.Contains(out, `class="weather-hourly-graph"`) {
-			t.Errorf("expected weather-hourly-graph class in template output, got: %s", out)
-		}
-		if !strings.Contains(out, `id="mm-weather-grad-widget-123"`) {
-			t.Errorf("expected namespaced gradient ID, got: %s", out)
-		}
-		if !strings.Contains(out, `68°`) || !strings.Contains(out, `71°`) {
-			t.Errorf("expected temp labels in output, got: %s", out)
-		}
-	})
-
-	t.Run("scaled vertical coordinates", func(t *testing.T) {
-		t.Parallel()
-		items := []testHourlyItem{
-			{Time: "2026-09-26T12:00", Temp: 80.0, PrecipProb: 40, Icon: "weather-rainy"},
-			{Time: "2026-09-26T13:00", Temp: 50.0, PrecipProb: 0, Icon: "weather-cloudy"},
-		}
-		got := string(render.WeatherHourlyGraph(items))
-		// Check svg height 300.0 in viewBox
-		if !strings.Contains(got, `viewBox="0 0 560.0 300.0"`) {
-			t.Errorf("expected viewBox with height 300.0, got: %s", got)
-		}
-		// Check baseline axis y = 240.0
-		if !strings.Contains(got, `y1="240.0"`) || !strings.Contains(got, `y2="240.0"`) {
-			t.Errorf("expected baseline axis at y=240.0, got: %s", got)
-		}
-		// Check precip label at y = 20, font-size 11
-		if !strings.Contains(got, `y="20" text-anchor="middle" font-size="11"`) {
-			t.Errorf("expected precip text at y=20 with font-size 11, got: %s", got)
-		}
-		// Check icon transform at y=32 scale(1.2)
-		if !strings.Contains(got, `, 32) scale(1.2)`) {
-			t.Errorf("expected icon transform at y=32 scale(1.2), got: %s", got)
-		}
-		// Check circle r=4.0
-		if !strings.Contains(got, `r="4.0"`) {
-			t.Errorf("expected point circle with r=4.0, got: %s", got)
-		}
-		// Check time label at y = 275, font-size 13
-		if !strings.Contains(got, `y="275" text-anchor="middle" font-size="13"`) {
-			t.Errorf("expected time label at y=275 with font-size 13, got: %s", got)
-		}
-		// High temp y-coord is minY = 90.0. Temp label y = pt.y - 10.0 = 80.0.
-		if !strings.Contains(got, `y="80.0" text-anchor="middle" font-size="14" font-weight="800"`) {
-			t.Errorf("expected high temp label at y=80.0 with font-size 14, got: %s", got)
-		}
-		// Low temp y-coord is maxY = 205.0. Temp label y = pt.y - 10.0 = 195.0.
-		if !strings.Contains(got, `y="195.0" text-anchor="middle" font-size="14" font-weight="800"`) {
-			t.Errorf("expected low temp label at y=195.0 with font-size 14, got: %s", got)
-		}
-	})
+type customDailyInt struct {
+	Date          string
+	TempMax       int
+	TempMin       int
+	PrecipProbMax float32
+	ConditionText string
+	Icon          string
 }
 
 func TestWeatherDailyForecast(t *testing.T) {
 	t.Parallel()
 
-	t.Run("nil and empty inputs", func(t *testing.T) {
-		t.Parallel()
-		if got := render.WeatherDailyForecast(nil); got != nil {
-			t.Errorf("expected nil for nil input, got: %v", got)
-		}
-		if got := render.WeatherDailyForecast([]provider.WeatherDaily{}); got != nil {
-			t.Errorf("expected nil for empty slice, got: %v", got)
-		}
-		if got := render.WeatherDailyForecast("not-a-slice"); got != nil {
-			t.Errorf("expected nil for non-slice, got: %v", got)
-		}
-	})
+	multiDay := []provider.WeatherDaily{
+		{Date: "2026-10-11", TempMin: 55, TempMax: 75, PrecipProbMax: 0},
+		{Date: "2026-10-12", TempMin: 50, TempMax: 70, PrecipProbMax: 20, ConditionText: "Sunny", Icon: "weather-sunny"},
+		{Date: "2026-10-13", TempMin: 45, TempMax: 65, PrecipProbMax: 0, ConditionText: "Cloudy", Icon: "weather-cloudy"},
+		{Date: "2026-10-14", TempMin: 40, TempMax: 60, PrecipProbMax: 80, ConditionText: "Rain", Icon: "weather-rainy"},
+		{Date: "2026-10-15", TempMin: 42, TempMax: 62, PrecipProbMax: 10, ConditionText: "Partly Cloudy", Icon: "weather-partly-cloudy"},
+		{Date: "2026-10-16", TempMin: 48, TempMax: 68, PrecipProbMax: 0, ConditionText: "Clear", Icon: "weather-sunny"},
+		{Date: "2026-10-17", TempMin: 52, TempMax: 72, PrecipProbMax: 0, ConditionText: "Sunny", Icon: "weather-sunny"},
+	}
+	sliceForPtr := []provider.WeatherDaily{
+		{Date: "2026-10-11", TempMin: 50, TempMax: 60},
+		{Date: "2026-10-12", TempMin: 52, TempMax: 62, Icon: "weather-sunny", ConditionText: "Sunny"},
+	}
+	var nilDailyPtr *[]provider.WeatherDaily
 
-	t.Run("single item slice returns nil", func(t *testing.T) {
-		t.Parallel()
-		single := []provider.WeatherDaily{
-			{Date: "2026-10-11", TempMin: 50, TempMax: 70, ConditionText: "Clear", Icon: "weather-sunny"},
-		}
-		if got := render.WeatherDailyForecast(single); got != nil {
-			t.Errorf("expected nil when slice has <= 1 item (today only), got: %v", got)
-		}
-	})
-
-	t.Run("multi-day forecast with day names and default maxDays", func(t *testing.T) {
-		t.Parallel()
-		daily := []provider.WeatherDaily{
-			{Date: "2026-10-11", TempMin: 55, TempMax: 75, PrecipProbMax: 0},
-			{Date: "2026-10-12", TempMin: 50, TempMax: 70, PrecipProbMax: 20, ConditionText: "Sunny", Icon: "weather-sunny"},
-			{Date: "2026-10-13", TempMin: 45, TempMax: 65, PrecipProbMax: 0, ConditionText: "Cloudy", Icon: "weather-cloudy"},
-			{Date: "2026-10-14", TempMin: 40, TempMax: 60, PrecipProbMax: 80, ConditionText: "Rain", Icon: "weather-rainy"},
-			{Date: "2026-10-15", TempMin: 42, TempMax: 62, PrecipProbMax: 10, ConditionText: "Partly Cloudy", Icon: "weather-partly-cloudy"},
-			{Date: "2026-10-16", TempMin: 48, TempMax: 68, PrecipProbMax: 0, ConditionText: "Clear", Icon: "weather-sunny"},
-			{Date: "2026-10-17", TempMin: 52, TempMax: 72, PrecipProbMax: 0, ConditionText: "Sunny", Icon: "weather-sunny"},
-		}
-
-		got := render.WeatherDailyForecast(daily)
-		if len(got) != 5 {
-			t.Fatalf("expected 5 days, got %d", len(got))
-		}
-
-		if got[0].DayName != "Tomorrow" {
-			t.Errorf("expected index 0 day name 'Tomorrow', got %q", got[0].DayName)
-		}
-		if got[1].DayName != "Tue" {
-			t.Errorf("expected index 1 day name 'Tue', got %q", got[1].DayName)
-		}
-		if got[2].DayName != "Wed" {
-			t.Errorf("expected index 2 day name 'Wed', got %q", got[2].DayName)
-		}
-		if got[3].DayName != "Thu" {
-			t.Errorf("expected index 3 day name 'Thu', got %q", got[3].DayName)
-		}
-		if got[4].DayName != "Fri" {
-			t.Errorf("expected index 4 day name 'Fri', got %q", got[4].DayName)
-		}
-
-		if !got[0].HasPrecip || got[0].PrecipProbMax != 20 {
-			t.Errorf("expected HasPrecip=true with 20%%, got %v (%d)", got[0].HasPrecip, got[0].PrecipProbMax)
-		}
-		if got[1].HasPrecip {
-			t.Errorf("expected HasPrecip=false for 0%%, got true")
-		}
-		if !got[2].HasPrecip || got[2].PrecipProbMax != 80 {
-			t.Errorf("expected HasPrecip=true with 80%%, got %v (%d)", got[2].HasPrecip, got[2].PrecipProbMax)
-		}
-
-		if math.Abs(got[2].BarLeft-0.0) > 0.01 {
-			t.Errorf("expected barLeft ~0.0%% for overallMin, got %f", got[2].BarLeft)
-		}
-		if math.Abs(got[2].BarWidth-66.666) > 0.1 {
-			t.Errorf("expected barWidth ~66.67%%, got %f", got[2].BarWidth)
-		}
-		for i, item := range got {
-			if item.BarLeft < 0 || item.BarLeft > 95 {
-				t.Errorf("at index %d: barLeft %f out of bounds [0, 95]", i, item.BarLeft)
-			}
-			if item.BarWidth < 5 {
-				t.Errorf("at index %d: barWidth %f less than minimum 5%%", i, item.BarWidth)
-			}
-			if item.BarLeft+item.BarWidth > 100.001 {
-				t.Errorf("at index %d: barLeft + barWidth (%f + %f = %f) exceeds 100%%", i, item.BarLeft, item.BarWidth, item.BarLeft+item.BarWidth)
-			}
-		}
-	})
-
-	t.Run("flatline temperatures with span < 2", func(t *testing.T) {
-		t.Parallel()
-		daily := []provider.WeatherDaily{
-			{Date: "2026-10-11", TempMin: 68, TempMax: 68},
-			{Date: "2026-10-12", TempMin: 68, TempMax: 68},
-			{Date: "2026-10-13", TempMin: 68, TempMax: 68},
-		}
-		got := render.WeatherDailyForecast(daily)
-		if len(got) != 2 {
-			t.Fatalf("expected 2 days, got %d", len(got))
-		}
-		for i, item := range got {
-			if math.IsNaN(item.BarLeft) || math.IsNaN(item.BarWidth) {
-				t.Errorf("index %d: geometry contains NaN", i)
-			}
-			if item.BarWidth < 5.0 {
-				t.Errorf("index %d: expected minimum 5%% barWidth on flat temps, got %f", i, item.BarWidth)
-			}
-			if item.BarLeft+item.BarWidth > 100.0 {
-				t.Errorf("index %d: bar exceeds 100%%", i)
-			}
-		}
-	})
-
-	t.Run("negative temperatures and inverted min max", func(t *testing.T) {
-		t.Parallel()
-		daily := []provider.WeatherDaily{
-			{Date: "2026-01-01", TempMin: 10, TempMax: 20},
-			{Date: "2026-01-02", TempMin: -5, TempMax: -15, Icon: "weather-snowy"},
-			{Date: "2026-01-03", TempMin: -20, TempMax: -10, Icon: "weather-snowy"},
-		}
-		got := render.WeatherDailyForecast(daily)
-		if len(got) != 2 {
-			t.Fatalf("expected 2 items, got %d", len(got))
-		}
-		if got[0].TempMin != -15 || got[0].TempMax != -5 {
-			t.Errorf("expected inverted temperatures to be normalized to min -15, max -5; got min %f, max %f", got[0].TempMin, got[0].TempMax)
-		}
-		if got[0].DayName != "Tomorrow" {
-			t.Errorf("expected Tomorrow, got %s", got[0].DayName)
-		}
-		if got[1].DayName != "Sat" {
-			t.Errorf("expected Sat, got %s", got[1].DayName)
-		}
-		if math.IsNaN(got[0].BarLeft) || math.IsNaN(got[0].BarWidth) {
-			t.Errorf("negative temp geometry contains NaN")
-		}
-	})
-
-	t.Run("unparseable date fallback and custom maxDays", func(t *testing.T) {
-		t.Parallel()
-		daily := []provider.WeatherDaily{
-			{Date: "today", TempMin: 50, TempMax: 60},
-			{Date: "unparseable-date-1", TempMin: 50, TempMax: 60},
-			{Date: "unparseable-date-2", TempMin: 52, TempMax: 62},
-			{Date: "unparseable-date-3", TempMin: 54, TempMax: 64},
-		}
-		got := render.WeatherDailyForecast(daily, 2)
-		if len(got) != 2 {
-			t.Fatalf("expected 2 items, got %d", len(got))
-		}
-		if got[0].DayName != "Tomorrow" {
-			t.Errorf("expected Tomorrow for first upcoming, got %s", got[0].DayName)
-		}
-		if got[1].DayName != "unparseable-date-2" {
-			t.Errorf("expected fallback to raw Date, got %s", got[1].DayName)
-		}
-	})
-
-	t.Run("pointer and map slice support", func(t *testing.T) {
-		t.Parallel()
-		slice := []provider.WeatherDaily{
-			{Date: "2026-10-11", TempMin: 50, TempMax: 60},
-			{Date: "2026-10-12", TempMin: 52, TempMax: 62, Icon: "weather-sunny", ConditionText: "Sunny"},
-		}
-		gotPtr := render.WeatherDailyForecast(&slice)
-		if len(gotPtr) != 1 {
-			t.Fatalf("expected 1 item from pointer slice, got %d", len(gotPtr))
-		}
-
-		mapSlice := []map[string]any{
-			{"date": "2026-10-11", "temp_min": 50, "temp_max": 60},
-			{"date": "2026-10-12", "temp_min": 45.0, "temp_max": 65.0, "precip_prob_max": 30, "condition_text": "Rain", "icon": "weather-rainy"},
-		}
-		gotMap := render.WeatherDailyForecast(mapSlice)
-		if len(gotMap) != 1 {
-			t.Fatalf("expected 1 item from map slice, got %d", len(gotMap))
-		}
-		if gotMap[0].DayName != "Tomorrow" || gotMap[0].ConditionText != "Rain" || gotMap[0].Icon != "weather-rainy" || !gotMap[0].HasPrecip {
-			t.Errorf("unexpected map slice item: %+v", gotMap[0])
-		}
-	})
-
-	t.Run("template execution via StandardFuncMap", func(t *testing.T) {
-		t.Parallel()
-		data := map[string]any{
-			"Daily": []provider.WeatherDaily{
-				{Date: "2026-10-11", TempMin: 50, TempMax: 60},
-				{Date: "2026-10-12", TempMin: 55, TempMax: 65, PrecipProbMax: 20, Icon: "weather-sunny", ConditionText: "Sunny"},
-				{Date: "2026-10-13", TempMin: 52, TempMax: 62, PrecipProbMax: 0, Icon: "weather-cloudy", ConditionText: "Cloudy"},
+	tests := []struct {
+		name          string
+		arg           any
+		maxDays       []int
+		wantNil       bool
+		wantCount     int
+		wantDayNames  []string
+		wantIcons     []string
+		wantConds     []string
+		wantMinMax    [][2]float64
+		wantPrecip    []int
+		wantBarLeft2  float64
+		wantBarWidth2 float64
+		checkBarLeft2 bool
+	}{
+		{name: "nil input", arg: nil, wantNil: true},
+		{name: "empty slice", arg: []provider.WeatherDaily{}, wantNil: true},
+		{name: "non-slice string", arg: "not-a-slice", wantNil: true},
+		{name: "nil slice pointer", arg: nilDailyPtr, wantNil: true},
+		{
+			name: "single item slice returns nil",
+			arg: []provider.WeatherDaily{
+				{Date: "2026-10-11", TempMin: 50, TempMax: 70, ConditionText: "Clear", Icon: "weather-sunny"},
 			},
-		}
-		tmplStr := `{{ $f := weatherDailyForecast .Daily 5 }}{{ range $f }}{{ .DayName }}: {{ printf "%.0f" .TempMin }}°-{{ printf "%.0f" .TempMax }}° ({{ printf "%.1f" .BarLeft }}%, {{ printf "%.1f" .BarWidth }}%) {{ end }}`
-		tmpl, err := template.New("forecast-test").Funcs(render.StandardFuncMap(nil)).Parse(tmplStr)
-		if err != nil {
-			t.Fatalf("template parse error: %v", err)
-		}
-		var sb strings.Builder
-		if err := tmpl.Execute(&sb, data); err != nil {
-			t.Fatalf("template exec error: %v", err)
-		}
-		out := sb.String()
-		if !strings.Contains(out, "Tomorrow: 55°-65°") || !strings.Contains(out, "Tue: 52°-62°") {
-			t.Errorf("unexpected template output: %s", out)
-		}
-	})
+			wantNil: true,
+		},
+		{
+			name:          "multi-day default 5-day cap and bar metrics",
+			arg:           multiDay,
+			wantCount:     5,
+			wantDayNames:  []string{"Tomorrow", "Tue", "Wed", "Thu", "Fri"},
+			wantPrecip:    []int{20, 0, 80, 10, 0},
+			checkBarLeft2: true,
+			wantBarLeft2:  0.0,
+			wantBarWidth2: 66.666,
+		},
+		{
+			name: "flatline temperatures with span < 2",
+			arg: []provider.WeatherDaily{
+				{Date: "2026-10-11", TempMin: 68, TempMax: 68},
+				{Date: "2026-10-12", TempMin: 68, TempMax: 68},
+				{Date: "2026-10-13", TempMin: 68, TempMax: 68},
+			},
+			wantCount: 2,
+		},
+		{
+			name: "negative temperatures and inverted min max swap",
+			arg: []provider.WeatherDaily{
+				{Date: "2026-01-01", TempMin: 10, TempMax: 20},
+				{Date: "2026-01-02", TempMin: -5, TempMax: -15, Icon: "weather-snowy"},
+				{Date: "2026-01-03", TempMin: -20, TempMax: -10, Icon: "weather-snowy"},
+			},
+			wantCount:    2,
+			wantDayNames: []string{"Tomorrow", "Sat"},
+			wantMinMax:   [][2]float64{{-15, -5}, {-20, -10}},
+		},
+		{
+			name: "unparseable date fallback and custom maxDays 2",
+			arg: []provider.WeatherDaily{
+				{Date: "today", TempMin: 50, TempMax: 60},
+				{Date: "unparseable-date-1", TempMin: 50, TempMax: 60},
+				{Date: "unparseable-date-2", TempMin: 52, TempMax: 62},
+				{Date: "unparseable-date-3", TempMin: 54, TempMax: 64},
+			},
+			maxDays:      []int{2},
+			wantCount:    2,
+			wantDayNames: []string{"Tomorrow", "unparseable-date-2"},
+		},
+		{
+			name:      "slice pointer non-nil",
+			arg:       &sliceForPtr,
+			wantCount: 1,
+			wantConds: []string{"Sunny"},
+		},
+		{
+			name: "map slice with precip and icon",
+			arg: []map[string]any{
+				{"date": "2026-10-11", "temp_min": 50, "temp_max": 60},
+				{"date": "2026-10-12", "temp_min": 45.0, "temp_max": 65.0, "precip_prob_max": 30, "condition_text": "Rain", "icon": "weather-rainy"},
+			},
+			wantCount:    1,
+			wantDayNames: []string{"Tomorrow"},
+			wantConds:    []string{"Rain"},
+			wantIcons:    []string{"weather-rainy"},
+			wantPrecip:   []int{30},
+		},
+		{
+			name: "mixed custom struct slice with reflection",
+			arg: []any{
+				nil,
+				(*customDaily)(nil),
+				&customDaily{Date: "2026-10-11", TempMin: 50, TempMax: 60, PrecipProbMax: 0, ConditionText: "Clear", Icon: "weather-sunny"},
+				customDailyInt{Date: "2026-10-12", TempMin: 40, TempMax: 65, PrecipProbMax: 30, ConditionText: "Rain", Icon: ""},
+				&provider.WeatherDaily{Date: "2026-10-13", TempMin: 45, TempMax: math.NaN(), PrecipProbMax: 10, ConditionText: "Cloudy"},
+			},
+			wantCount:    2,
+			wantDayNames: []string{"Tomorrow", "Tue"},
+			wantIcons:    []string{"weather-cloudy", "weather-cloudy"},
+		},
+		{
+			name: "barLeft clamping to 95 and non-positive maxDays zero",
+			arg: []provider.WeatherDaily{
+				{Date: "2026-10-11", TempMin: 50, TempMax: 60},
+				{Date: "2026-10-12", TempMin: 0, TempMax: 10},
+				{Date: "2026-10-13", TempMin: 98, TempMax: 100},
+			},
+			maxDays:       []int{0},
+			wantCount:     2,
+			checkBarLeft2: true,
+			wantBarLeft2:  95.0,
+		},
+		{
+			name: "negative maxDays fallback",
+			arg: []provider.WeatherDaily{
+				{Date: "2026-10-11", TempMin: 50, TempMax: 60},
+				{Date: "2026-10-12", TempMin: 0, TempMax: 10},
+				{Date: "2026-10-13", TempMin: 98, TempMax: 100},
+			},
+			maxDays:   []int{-5},
+			wantCount: 2,
+		},
+		{
+			name: "map slice with int temps and float precip",
+			arg: []map[string]any{
+				{"date": "2026-10-11", "temp_min": 50, "temp_max": 70, "precip_prob_max": 10},
+				{"date": "2026-10-12", "temp_min": 45, "temp_max": 65, "precip_prob_max": 50.0},
+			},
+			wantCount:  1,
+			wantMinMax: [][2]float64{{45, 65}},
+			wantPrecip: []int{50},
+		},
+	}
 
-	t.Run("nil pointer and invalid slice elements", func(t *testing.T) {
-		t.Parallel()
-		var nilPtr *[]provider.WeatherDaily
-		if got := render.WeatherDailyForecast(nilPtr); got != nil {
-			t.Errorf("expected nil for nil pointer, got %v", got)
-		}
-
-		type customDaily struct {
-			Date          string
-			TempMax       float32
-			TempMin       float32
-			PrecipProbMax int64
-			ConditionText string
-			Icon          string
-		}
-		type customDailyInt struct {
-			Date          string
-			TempMax       int
-			TempMin       int
-			PrecipProbMax float32
-			ConditionText string
-			Icon          string
-		}
-
-		mixedSlice := []any{
-			nil,
-			(*customDaily)(nil),
-			&customDaily{Date: "2026-10-11", TempMin: 50, TempMax: 60, PrecipProbMax: 0, ConditionText: "Clear", Icon: "weather-sunny"},
-			customDailyInt{Date: "2026-10-12", TempMin: 40, TempMax: 65, PrecipProbMax: 30, ConditionText: "Rain", Icon: ""},
-			&provider.WeatherDaily{Date: "2026-10-13", TempMin: 45, TempMax: math.NaN(), PrecipProbMax: 10, ConditionText: "Cloudy"},
-		}
-		got := render.WeatherDailyForecast(mixedSlice)
-		if len(got) < 2 {
-			t.Fatalf("expected at least 2 items from mixed slice, got %d", len(got))
-		}
-		if got[0].DayName != "Tomorrow" || got[0].Icon != "weather-cloudy" {
-			t.Errorf("expected default weather-cloudy icon on empty icon item, got %s", got[0].Icon)
-		}
-	})
-
-	t.Run("barLeft clamping to 95 and non-positive maxDays", func(t *testing.T) {
-		t.Parallel()
-		daily := []provider.WeatherDaily{
-			{Date: "2026-10-11", TempMin: 50, TempMax: 60}, // today
-			{Date: "2026-10-12", TempMin: 0, TempMax: 10},  // upcoming 1 (overallMin = 0)
-			{Date: "2026-10-13", TempMin: 98, TempMax: 100}, // upcoming 2 (overallMax = 100, barLeft = 98% -> clamped to 95%)
-		}
-		got := render.WeatherDailyForecast(daily, 0)
-		if len(got) != 2 {
-			t.Fatalf("expected 2 items, got %d", len(got))
-		}
-		if got[1].BarLeft != 95.0 {
-			t.Errorf("expected barLeft to clamp to 95.0, got %f", got[1].BarLeft)
-		}
-
-		gotNeg := render.WeatherDailyForecast(daily, -5)
-		if len(gotNeg) != 2 {
-			t.Fatalf("expected 2 items with negative maxDays, got %d", len(gotNeg))
-		}
-	})
-
-	t.Run("map slice with integer temps and float precip", func(t *testing.T) {
-		t.Parallel()
-		maps := []map[string]any{
-			{"date": "2026-10-11", "temp_min": 50, "temp_max": 70, "precip_prob_max": 10},
-			{"date": "2026-10-12", "temp_min": 45, "temp_max": 65, "precip_prob_max": 50.0},
-		}
-		got := render.WeatherDailyForecast(maps)
-		if len(got) != 1 {
-			t.Fatalf("expected 1 item, got %d", len(got))
-		}
-		if got[0].PrecipProbMax != 50 || got[0].TempMin != 45 || got[0].TempMax != 65 {
-			t.Errorf("unexpected parsed values from int map: %+v", got[0])
-		}
-	})
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := render.WeatherDailyForecast(tc.arg, tc.maxDays...)
+			if tc.wantNil {
+				if got != nil {
+					t.Fatalf("expected nil forecast, got %+v", got)
+				}
+				return
+			}
+			if len(got) != tc.wantCount {
+				t.Fatalf("expected %d items, got %d", tc.wantCount, len(got))
+			}
+			for i, item := range got {
+				if math.IsNaN(item.BarLeft) || math.IsNaN(item.BarWidth) {
+					t.Fatalf("item %d contains NaN: barLeft=%f, barWidth=%f", i, item.BarLeft, item.BarWidth)
+				}
+				if item.BarLeft < 0 || item.BarLeft > 95 {
+					t.Errorf("item %d: barLeft %f out of bounds [0, 95]", i, item.BarLeft)
+				}
+				if item.BarWidth < 5 {
+					t.Errorf("item %d: barWidth %f < min 5", i, item.BarWidth)
+				}
+				if item.BarLeft+item.BarWidth > 100.001 {
+					t.Errorf("item %d: barLeft + barWidth = %f > 100", i, item.BarLeft+item.BarWidth)
+				}
+				if i < len(tc.wantDayNames) && item.DayName != tc.wantDayNames[i] {
+					t.Errorf("item %d: dayName = %q, want %q", i, item.DayName, tc.wantDayNames[i])
+				}
+				if i < len(tc.wantIcons) && item.Icon != tc.wantIcons[i] {
+					t.Errorf("item %d: icon = %q, want %q", i, item.Icon, tc.wantIcons[i])
+				}
+				if i < len(tc.wantConds) && item.ConditionText != tc.wantConds[i] {
+					t.Errorf("item %d: conditionText = %q, want %q", i, item.ConditionText, tc.wantConds[i])
+				}
+				if i < len(tc.wantPrecip) {
+					if item.PrecipProbMax != tc.wantPrecip[i] {
+						t.Errorf("item %d: precip = %d, want %d", i, item.PrecipProbMax, tc.wantPrecip[i])
+					}
+					if item.HasPrecip != (tc.wantPrecip[i] > 0) {
+						t.Errorf("item %d: hasPrecip = %v, want %v", i, item.HasPrecip, tc.wantPrecip[i] > 0)
+					}
+				}
+				if i < len(tc.wantMinMax) {
+					if item.TempMin != tc.wantMinMax[i][0] || item.TempMax != tc.wantMinMax[i][1] {
+						t.Errorf("item %d: min/max = %f/%f, want %f/%f", i, item.TempMin, item.TempMax, tc.wantMinMax[i][0], tc.wantMinMax[i][1])
+					}
+				}
+			}
+			if tc.checkBarLeft2 && len(got) >= 2 {
+				targetIdx := len(got) - 1
+				if len(got) >= 3 {
+					targetIdx = 2
+				}
+				if math.Abs(got[targetIdx].BarLeft-tc.wantBarLeft2) > 0.01 {
+					t.Errorf("barLeft at index %d: got %f, want ~%f", targetIdx, got[targetIdx].BarLeft, tc.wantBarLeft2)
+				}
+				if tc.wantBarWidth2 > 0 && math.Abs(got[targetIdx].BarWidth-tc.wantBarWidth2) > 0.1 {
+					t.Errorf("barWidth at index %d: got %f, want ~%f", targetIdx, got[targetIdx].BarWidth, tc.wantBarWidth2)
+				}
+			}
+		})
+	}
 }
 
 func TestTodayPrecipProb(t *testing.T) {
@@ -868,7 +871,9 @@ func TestTodayPrecipProb(t *testing.T) {
 		{"[]WeatherDaily slice", []provider.WeatherDaily{{PrecipProbMax: 90}}, 90},
 		{"empty []WeatherDaily slice", []provider.WeatherDaily{}, 0},
 		{"map with daily slice", map[string]any{"daily": []any{map[string]any{"precip_prob_max": 50}}}, 50},
+		{"map with daily float precip", map[string]any{"daily": []any{map[string]any{"precip_prob_max": float64(50)}}}, 50},
 		{"map with current map", map[string]any{"current": map[string]any{"precip_prob_max": 25}}, 25},
+		{"map with current map float", map[string]any{"current": map[string]any{"precip_prob_max": float64(25)}}, 25},
 		{"map with WeatherDaily slice", map[string]any{"daily": []provider.WeatherDaily{{PrecipProbMax: 70}}}, 70},
 		{"map with WeatherCurrent", map[string]any{"current": provider.WeatherCurrent{PrecipProbMax: 15}}, 15},
 		{"map with direct precip_prob_max", map[string]any{"precip_prob_max": 85}, 85},
@@ -884,22 +889,6 @@ func TestTodayPrecipProb(t *testing.T) {
 			}
 		})
 	}
-
-	t.Run("template execution via StandardFuncMap", func(t *testing.T) {
-		t.Parallel()
-		tmpl, err := template.New("precip-test").Funcs(render.StandardFuncMap(nil)).Parse(`{{todayPrecipProb .}}%`)
-		if err != nil {
-			t.Fatalf("failed to parse template: %v", err)
-		}
-		var sb strings.Builder
-		snap := provider.WeatherSnapshot{Daily: []provider.WeatherDaily{{PrecipProbMax: 42}}}
-		if err := tmpl.Execute(&sb, snap); err != nil {
-			t.Fatalf("failed to execute template: %v", err)
-		}
-		if sb.String() != "42%" {
-			t.Errorf("expected '42%%', got %q", sb.String())
-		}
-	})
 }
 
 func TestCalendarFeedEvents(t *testing.T) {
@@ -1054,6 +1043,12 @@ func TestCalendarFeedEvents(t *testing.T) {
 			refTime:    refTime,
 			wantTitles: []string{"Map Future"},
 		},
+		{
+			name:       "nil snapshot pointer",
+			data:       (*provider.CalendarSnapshot)(nil),
+			refTime:    refTime,
+			wantTitles: nil,
+		},
 	}
 
 	for _, tc := range tests {
@@ -1065,8 +1060,7 @@ func TestCalendarFeedEvents(t *testing.T) {
 				gotTitles = append(gotTitles, ev.Title)
 			}
 			if len(gotTitles) != len(tc.wantTitles) {
-				t.Fatalf("CalendarFeedEvents() got %d events (%v), want %d (%v)",
-					len(gotTitles), gotTitles, len(tc.wantTitles), tc.wantTitles)
+				t.Fatalf("got %d events (%v), want %d (%v)", len(gotTitles), gotTitles, len(tc.wantTitles), tc.wantTitles)
 			}
 			for i := range gotTitles {
 				if gotTitles[i] != tc.wantTitles[i] {
@@ -1075,30 +1069,6 @@ func TestCalendarFeedEvents(t *testing.T) {
 			}
 		})
 	}
-
-	t.Run("template execution via StandardFuncMap", func(t *testing.T) {
-		t.Parallel()
-		fnMap := render.StandardFuncMap(func() time.Time { return refTime })
-		tmpl, err := template.New("feed-test").Funcs(fnMap).Parse(`{{ range (calendarFeedEvents .) }}{{ .Title }};{{ end }}`)
-		if err != nil {
-			t.Fatalf("failed to parse template: %v", err)
-		}
-
-		snap := provider.CalendarSnapshot{
-			Events: []provider.CalendarEvent{
-				{Title: "Old", Start: "2026-07-01T10:00:00Z", End: "2026-07-01T11:00:00Z"},
-				{Title: "Upcoming", Start: "2026-10-10T16:00:00Z", End: "2026-10-10T17:00:00Z"},
-			},
-		}
-
-		var sb strings.Builder
-		if err := tmpl.Execute(&sb, snap); err != nil {
-			t.Fatalf("failed to execute template: %v", err)
-		}
-		if sb.String() != "Upcoming;" {
-			t.Errorf("expected 'Upcoming;', got %q", sb.String())
-		}
-	})
 }
 
 func TestCalendarFeedDayGroups(t *testing.T) {
@@ -1106,95 +1076,61 @@ func TestCalendarFeedDayGroups(t *testing.T) {
 
 	refTime := time.Date(2026, 10, 10, 8, 0, 0, 0, time.UTC)
 
-	t.Run("nil and empty data", func(t *testing.T) {
-		t.Parallel()
-		if got := render.CalendarFeedDayGroups(nil, refTime); got != nil {
-			t.Errorf("expected nil for nil input, got %+v", got)
-		}
-		if got := render.CalendarFeedDayGroups(provider.CalendarSnapshot{}, refTime); got != nil {
-			t.Errorf("expected nil for empty snapshot, got %+v", got)
-		}
-	})
-
-	t.Run("groups multiple events occurring on the same day into single group", func(t *testing.T) {
-		t.Parallel()
-		snap := provider.CalendarSnapshot{
-			Events: []provider.CalendarEvent{
-				{
-					ID:    "e1",
-					Title: "Morning Meeting",
-					Start: "2026-10-10T09:00:00Z",
-					End:   "2026-10-10T10:00:00Z",
-				},
-				{
-					ID:    "e2",
-					Title: "Afternoon Sync",
-					Start: "2026-10-10T14:00:00Z",
-					End:   "2026-10-10T15:00:00Z",
-				},
-				{
-					ID:    "e3",
-					Title: "Tomorrow Coffee",
-					Start: "2026-10-11T10:00:00Z",
-					End:   "2026-10-11T11:00:00Z",
+	tests := []struct {
+		name       string
+		data       any
+		refTime    time.Time
+		wantNil    bool
+		wantGroups int
+		wantDates  []string
+		wantRels   []string
+		wantCounts []int
+	}{
+		{name: "nil data", data: nil, refTime: refTime, wantNil: true},
+		{name: "empty snapshot", data: provider.CalendarSnapshot{}, refTime: refTime, wantNil: true},
+		{
+			name: "groups multiple events occurring on the same day into single group",
+			data: provider.CalendarSnapshot{
+				Events: []provider.CalendarEvent{
+					{ID: "e1", Title: "Morning Meeting", Start: "2026-10-10T09:00:00Z", End: "2026-10-10T10:00:00Z"},
+					{ID: "e2", Title: "Afternoon Sync", Start: "2026-10-10T14:00:00Z", End: "2026-10-10T15:00:00Z"},
+					{ID: "e3", Title: "Tomorrow Coffee", Start: "2026-10-11T10:00:00Z", End: "2026-10-11T11:00:00Z"},
 				},
 			},
-		}
+			refTime:    refTime,
+			wantGroups: 2,
+			wantDates:  []string{"2026-10-10", "2026-10-11"},
+			wantRels:   []string{"Today", "Tomorrow"},
+			wantCounts: []int{2, 1},
+		},
+	}
 
-		groups := render.CalendarFeedDayGroups(snap, refTime)
-		if len(groups) != 2 {
-			t.Fatalf("expected 2 day groups, got %d", len(groups))
-		}
-
-		// Group 1 (Today)
-		if groups[0].Date != "2026-10-10" {
-			t.Errorf("expected group 0 date 2026-10-10, got %s", groups[0].Date)
-		}
-		if groups[0].Rel != "Today" {
-			t.Errorf("expected group 0 Rel 'Today', got %q", groups[0].Rel)
-		}
-		if len(groups[0].Events) != 2 {
-			t.Fatalf("expected 2 events in today's group, got %d", len(groups[0].Events))
-		}
-		if groups[0].Events[0].Title != "Morning Meeting" || groups[0].Events[1].Title != "Afternoon Sync" {
-			t.Errorf("unexpected events in today's group: %+v", groups[0].Events)
-		}
-
-		// Group 2 (Tomorrow)
-		if groups[1].Date != "2026-10-11" {
-			t.Errorf("expected group 1 date 2026-10-11, got %s", groups[1].Date)
-		}
-		if groups[1].Rel != "Tomorrow" {
-			t.Errorf("expected group 1 Rel 'Tomorrow', got %q", groups[1].Rel)
-		}
-		if len(groups[1].Events) != 1 {
-			t.Fatalf("expected 1 event in tomorrow's group, got %d", len(groups[1].Events))
-		}
-	})
-
-	t.Run("template execution via StandardFuncMap", func(t *testing.T) {
-		t.Parallel()
-		fnMap := render.StandardFuncMap(func() time.Time { return refTime })
-		tmpl, err := template.New("groups-test").Funcs(fnMap).Parse(`{{ range (calendarFeedDayGroups .) }}{{ .Date }}:{{ len .Events }};{{ end }}`)
-		if err != nil {
-			t.Fatalf("failed to parse template: %v", err)
-		}
-
-		snap := provider.CalendarSnapshot{
-			Events: []provider.CalendarEvent{
-				{Title: "E1", Start: "2026-10-10T14:00:00Z", End: "2026-10-10T15:00:00Z"},
-				{Title: "E2", Start: "2026-10-10T16:00:00Z", End: "2026-10-10T17:00:00Z"},
-			},
-		}
-
-		var sb strings.Builder
-		if err := tmpl.Execute(&sb, snap); err != nil {
-			t.Fatalf("failed to execute template: %v", err)
-		}
-		if sb.String() != "2026-10-10:2;" {
-			t.Errorf("expected '2026-10-10:2;', got %q", sb.String())
-		}
-	})
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			groups := render.CalendarFeedDayGroups(tc.data, tc.refTime)
+			if tc.wantNil {
+				if groups != nil {
+					t.Fatalf("expected nil groups, got %+v", groups)
+				}
+				return
+			}
+			if len(groups) != tc.wantGroups {
+				t.Fatalf("expected %d day groups, got %d", tc.wantGroups, len(groups))
+			}
+			for i := range groups {
+				if groups[i].Date != tc.wantDates[i] {
+					t.Errorf("group %d: date = %q, want %q", i, groups[i].Date, tc.wantDates[i])
+				}
+				if groups[i].Rel != tc.wantRels[i] {
+					t.Errorf("group %d: rel = %q, want %q", i, groups[i].Rel, tc.wantRels[i])
+				}
+				if len(groups[i].Events) != tc.wantCounts[i] {
+					t.Errorf("group %d: events count = %d, want %d", i, len(groups[i].Events), tc.wantCounts[i])
+				}
+			}
+		})
+	}
 }
 
 func TestCalendarFeedActiveCalendars(t *testing.T) {
@@ -1263,119 +1199,126 @@ func TestCalendarFeedActiveCalendars(t *testing.T) {
 			}
 		})
 	}
-
-	t.Run("template execution via StandardFuncMap", func(t *testing.T) {
-		t.Parallel()
-		fnMap := render.StandardFuncMap(nil)
-		tmpl, err := template.New("active-test").Funcs(fnMap).Parse(`{{ $c := calendarFeedActiveCalendars . }}{{ len $c }}:{{ range $c }}{{ .name }};{{ end }}`)
-		if err != nil {
-			t.Fatalf("failed to parse template: %v", err)
-		}
-
-		cfg := map[string]any{
-			"calendars": []any{
-				map[string]any{"name": "Cal 1", "enabled": true},
-				map[string]any{"name": "Cal 2", "enabled": false},
-			},
-		}
-
-		var sb strings.Builder
-		if err := tmpl.Execute(&sb, cfg); err != nil {
-			t.Fatalf("failed to execute template: %v", err)
-		}
-		if sb.String() != "1:Cal 1;" {
-			t.Errorf("expected '1:Cal 1;', got %q", sb.String())
-		}
-	})
 }
 
 func TestTasksStats(t *testing.T) {
 	t.Parallel()
 
-	t.Run("nil input", func(t *testing.T) {
-		t.Parallel()
-		stats := render.TasksStats(nil)
-		if stats.Total != 0 || stats.Done != 0 || stats.Summary != "" {
-			t.Errorf("unexpected stats for nil: %+v", stats)
-		}
-	})
+	trueVal := true
+	falseVal := false
 
-	t.Run("typed ListItem slice", func(t *testing.T) {
-		t.Parallel()
-		items := []tasks.ListItem{
-			{Title: "Task 1", Done: true},
-			{Title: "Task 2", Done: true},
-			{Title: "Task 3", Done: true},
-			{Title: "Task 4", Done: false},
-		}
-		stats := render.TasksStats(items)
-		if stats.Total != 4 {
-			t.Errorf("expected Total 4, got %d", stats.Total)
-		}
-		if stats.Done != 3 {
-			t.Errorf("expected Done 3, got %d", stats.Done)
-		}
-		if stats.Remaining != 1 {
-			t.Errorf("expected Remaining 1, got %d", stats.Remaining)
-		}
-		if stats.Summary != "1 to do" {
-			t.Errorf("expected Summary '1 to do', got %q", stats.Summary)
-		}
-	})
+	snapshot := &tasks.TasksSnapshot{
+		Items: []tasks.ListItem{
+			{Title: "T1", Done: true},
+			{Title: "T2", Done: false},
+		},
+	}
+	itemsSlice := []tasks.ListItem{
+		{Title: "Task 1", Done: true},
+		{Title: "Task 2", Done: true},
+		{Title: "Task 3", Done: true},
+		{Title: "Task 4", Done: false},
+	}
 
-	t.Run("multiple remaining tasks", func(t *testing.T) {
-		t.Parallel()
-		items := []tasks.ListItem{
-			{Title: "Task 1", Done: true},
-			{Title: "Task 2", Done: false},
-			{Title: "Task 3", Done: false},
-		}
-		stats := render.TasksStats(items)
-		if stats.Summary != "2 to do" {
-			t.Errorf("expected '2 to do', got %q", stats.Summary)
-		}
-	})
+	tests := []struct {
+		name          string
+		input         any
+		wantTotal     int
+		wantDone      int
+		wantRemaining int
+		wantSummary   string
+	}{
+		{name: "nil input", input: nil, wantTotal: 0, wantDone: 0, wantRemaining: 0, wantSummary: ""},
+		{name: "nil pointer snapshot", input: (*tasks.TasksSnapshot)(nil), wantTotal: 0, wantDone: 0, wantRemaining: 0, wantSummary: ""},
+		{name: "typed ListItem slice", input: itemsSlice, wantTotal: 4, wantDone: 3, wantRemaining: 1, wantSummary: "1 to do"},
+		{name: "pointer to ListItem slice", input: &itemsSlice, wantTotal: 4, wantDone: 3, wantRemaining: 1, wantSummary: "1 to do"},
+		{
+			name: "slice with nil item pointer and item pointer",
+			input: []*tasks.ListItem{
+				nil,
+				{Title: "Done Task", Done: true},
+				{Title: "Pending Task", Done: false},
+			},
+			wantTotal:     2,
+			wantDone:      1,
+			wantRemaining: 1,
+			wantSummary:   "1 to do",
+		},
+		{
+			name:          "tasks snapshot pointer",
+			input:         snapshot,
+			wantTotal:     2,
+			wantDone:      1,
+			wantRemaining: 1,
+			wantSummary:   "1 to do",
+		},
+		{
+			name: "map with items and pointer bool in done",
+			input: map[string]any{
+				"items": []any{
+					map[string]any{"title": "Map 1", "done": &trueVal},
+					map[string]any{"title": "Map 2", "done": &falseVal},
+					map[string]any{"title": "Map 3", "done": true},
+				},
+			},
+			wantTotal:     3,
+			wantDone:      2,
+			wantRemaining: 1,
+			wantSummary:   "1 to do",
+		},
+		{
+			name: "map with nil items pointer",
+			input: map[string]any{
+				"items": (*[]tasks.ListItem)(nil),
+			},
+			wantTotal:     0,
+			wantDone:      0,
+			wantRemaining: 0,
+			wantSummary:   "",
+		},
+		{
+			name: "multiple remaining tasks",
+			input: []tasks.ListItem{
+				{Title: "Task 1", Done: true},
+				{Title: "Task 2", Done: false},
+				{Title: "Task 3", Done: false},
+			},
+			wantTotal:     3,
+			wantDone:      1,
+			wantRemaining: 2,
+			wantSummary:   "2 to do",
+		},
+		{
+			name: "all tasks completed",
+			input: []tasks.ListItem{
+				{Title: "Task 1", Done: true},
+				{Title: "Task 2", Done: true},
+			},
+			wantTotal:     2,
+			wantDone:      2,
+			wantRemaining: 0,
+			wantSummary:   "All done",
+		},
+		{
+			name: "zero tasks completed",
+			input: []tasks.ListItem{
+				{Title: "Task 1", Done: false},
+			},
+			wantTotal:     1,
+			wantDone:      0,
+			wantRemaining: 1,
+			wantSummary:   "1 to do",
+		},
+	}
 
-	t.Run("all tasks completed", func(t *testing.T) {
-		t.Parallel()
-		items := []tasks.ListItem{
-			{Title: "Task 1", Done: true},
-			{Title: "Task 2", Done: true},
-		}
-		stats := render.TasksStats(items)
-		if stats.Summary != "All done" {
-			t.Errorf("expected 'All done', got %q", stats.Summary)
-		}
-	})
-
-	t.Run("zero tasks completed", func(t *testing.T) {
-		t.Parallel()
-		items := []tasks.ListItem{
-			{Title: "Task 1", Done: false},
-		}
-		stats := render.TasksStats(items)
-		if stats.Summary != "1 to do" {
-			t.Errorf("expected '1 to do', got %q", stats.Summary)
-		}
-	})
-
-	t.Run("template execution via StandardFuncMap", func(t *testing.T) {
-		t.Parallel()
-		fnMap := render.StandardFuncMap(nil)
-		tmpl, err := template.New("tasks-test").Funcs(fnMap).Parse(`{{ $s := tasksStats . }}{{ $s.Summary }}`)
-		if err != nil {
-			t.Fatalf("failed to parse template: %v", err)
-		}
-		items := []map[string]any{
-			{"done": true},
-			{"done": false},
-		}
-		var sb strings.Builder
-		if err := tmpl.Execute(&sb, items); err != nil {
-			t.Fatalf("failed to execute template: %v", err)
-		}
-		if sb.String() != "1 to do" {
-			t.Errorf("expected '1 to do', got %q", sb.String())
-		}
-	})
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			stats := render.TasksStats(tc.input)
+			if stats.Total != tc.wantTotal || stats.Done != tc.wantDone || stats.Remaining != tc.wantRemaining || stats.Summary != tc.wantSummary {
+				t.Fatalf("TasksStats(%v) = %+v, want Total=%d, Done=%d, Remaining=%d, Summary=%q",
+					tc.name, stats, tc.wantTotal, tc.wantDone, tc.wantRemaining, tc.wantSummary)
+			}
+		})
+	}
 }

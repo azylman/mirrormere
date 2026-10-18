@@ -33,6 +33,19 @@ func StandardFuncMap(nowFunc func() time.Time) template.FuncMap {
 		nowFunc = time.Now
 	}
 
+	weekViewFn := func(data any, cfg map[string]any, dims domain.Dimension) (*FamilyViewModel, error) {
+		return BuildFamilyView(data, cfg, dims, nowFunc())
+	}
+	dayViewFn := func(data any, cfg map[string]any, dims domain.Dimension) (*FamilyDayViewModel, error) {
+		return BuildFamilyDayView(data, cfg, dims, nowFunc())
+	}
+	monthViewFn := func(data any, cfg map[string]any, dims domain.Dimension) (*FamilyMonthViewModel, error) {
+		return BuildFamilyMonthView(data, cfg, dims, nowFunc())
+	}
+	combinedDataFn := func(dayView *FamilyDayViewModel, weekView *FamilyViewModel, monthView *FamilyMonthViewModel, cfg map[string]any) map[string]any {
+		return BuildFamilyCombinedData(dayView, weekView, monthView, cfg)
+	}
+
 	return template.FuncMap{
 		"seq": Seq,
 		"formatDate": func(args ...any) string {
@@ -44,62 +57,38 @@ func StandardFuncMap(nowFunc func() time.Time) template.FuncMap {
 		"relDate": func(args ...any) string {
 			return RelDate(nowFunc(), args...)
 		},
-		"json":                 JSONHelper,
-		"jsonJS":               JSONJSHelper,
-		"weatherIcon":          WeatherIcon,
-		"weatherHourlyGraph":   WeatherHourlyGraph,
-		"weatherDailyForecast": WeatherDailyForecast,
-		"todayPrecipProb":      TodayPrecipProb,
-		"calendarGridView": func(data any, cfg map[string]any, dims domain.Dimension) (*FamilyViewModel, error) {
-			return BuildFamilyView(data, cfg, dims, nowFunc())
-		},
-		"calendarGridDayView": func(data any, cfg map[string]any, dims domain.Dimension) (*FamilyDayViewModel, error) {
-			return BuildFamilyDayView(data, cfg, dims, nowFunc())
-		},
-		"calendarGridMonthView": func(data any, cfg map[string]any, dims domain.Dimension) (*FamilyMonthViewModel, error) {
-			return BuildFamilyMonthView(data, cfg, dims, nowFunc())
-		},
-		"calendarFamilyView": func(data any, cfg map[string]any, dims domain.Dimension) (*FamilyViewModel, error) {
-			return BuildFamilyView(data, cfg, dims, nowFunc())
-		},
-		"calendarFamilyDayView": func(data any, cfg map[string]any, dims domain.Dimension) (*FamilyDayViewModel, error) {
-			return BuildFamilyDayView(data, cfg, dims, nowFunc())
-		},
-		"dayView": func(data any, cfg map[string]any, dims domain.Dimension) (*FamilyDayViewModel, error) {
-			return BuildFamilyDayView(data, cfg, dims, nowFunc())
-		},
+		"json":                        JSONHelper,
+		"jsonJS":                      JSONJSHelper,
+		"weatherIcon":                 WeatherIcon,
+		"weatherHourlyGraph":          WeatherHourlyGraph,
+		"weatherDailyForecast":        WeatherDailyForecast,
+		"todayPrecipProb":             TodayPrecipProb,
+		"calendarGridView":            weekViewFn,
+		"calendarGridDayView":         dayViewFn,
+		"calendarGridMonthView":       monthViewFn,
+		"calendarFamilyView":          weekViewFn,
+		"calendarFamilyDayView":       dayViewFn,
+		"dayView":                     dayViewFn,
 		"isDayView": func(cfg map[string]any) bool {
 			return strings.EqualFold(stringOr(cfg, "default_view", "week"), "day")
 		},
-		"calendarFamilyMonthView": func(data any, cfg map[string]any, dims domain.Dimension) (*FamilyMonthViewModel, error) {
-			return BuildFamilyMonthView(data, cfg, dims, nowFunc())
-		},
-		"monthView": func(data any, cfg map[string]any, dims domain.Dimension) (*FamilyMonthViewModel, error) {
-			return BuildFamilyMonthView(data, cfg, dims, nowFunc())
-		},
+		"calendarFamilyMonthView":     monthViewFn,
+		"monthView":                   monthViewFn,
 		"isMonthView": func(cfg map[string]any) bool {
 			return strings.EqualFold(stringOr(cfg, "default_view", "week"), "month")
 		},
-		"calendarGridData": func(dayView *FamilyDayViewModel, weekView *FamilyViewModel, monthView *FamilyMonthViewModel, cfg map[string]any) map[string]any {
-			return BuildFamilyCombinedData(dayView, weekView, monthView, cfg)
-		},
-		"calendarFamilyData": func(dayView *FamilyDayViewModel, weekView *FamilyViewModel, monthView *FamilyMonthViewModel, cfg map[string]any) map[string]any {
-			return BuildFamilyCombinedData(dayView, weekView, monthView, cfg)
-		},
+		"calendarGridData":            combinedDataFn,
+		"calendarFamilyData":          combinedDataFn,
 		"calendarFeedEvents": func(data any, args ...any) []provider.CalendarEvent {
 			return CalendarFeedEvents(data, nowFunc())
 		},
 		"calendarFeedDayGroups": func(data any, args ...any) []CalendarFeedDayGroup {
 			return CalendarFeedDayGroups(data, nowFunc())
 		},
-		"calendarFeedActiveCalendars": func(cfg any) []map[string]any {
-			return CalendarFeedActiveCalendars(cfg)
-		},
-		"activeCalendars": func(cfg any) []map[string]any {
-			return CalendarFeedActiveCalendars(cfg)
-		},
-		"tasksStats": TasksStats,
-		"stringOr":   stringOr,
+		"calendarFeedActiveCalendars": CalendarFeedActiveCalendars,
+		"activeCalendars":             CalendarFeedActiveCalendars,
+		"tasksStats":                  TasksStats,
+		"stringOr":                    stringOr,
 		"add": func(a, b int) int {
 			return a + b
 		},
@@ -189,6 +178,23 @@ func isDateOnly(v any) bool {
 	return false
 }
 
+func resolveFormatArgs(defaultLayout string, args []any) (layout string, val any, ok bool) {
+	if len(args) == 0 {
+		return "", nil, false
+	}
+	layout = defaultLayout
+	if len(args) == 1 {
+		val = args[0]
+	} else {
+		layoutStr := fmt.Sprint(args[0])
+		if layoutStr != "" && layoutStr != "default" {
+			layout = layoutStr
+		}
+		val = args[1]
+	}
+	return layout, val, true
+}
+
 // FormatDate formats a time value with the specified date layout.
 // If layout is omitted, defaults to "2006-01-02".
 func FormatDate(args ...any) string {
@@ -199,20 +205,9 @@ func FormatDate(args ...any) string {
 // If layout is omitted, defaults to "2006-01-02".
 // If loc is nil, UTC/original location is preserved.
 func FormatDateInLocation(loc *time.Location, args ...any) string {
-	if len(args) == 0 {
+	layout, val, ok := resolveFormatArgs("2006-01-02", args)
+	if !ok {
 		return ""
-	}
-	layout := "2006-01-02"
-	var val any
-
-	if len(args) == 1 {
-		val = args[0]
-	} else {
-		layoutStr := fmt.Sprint(args[0])
-		if layoutStr != "" && layoutStr != "default" {
-			layout = layoutStr
-		}
-		val = args[1]
 	}
 
 	if isDateOnly(val) {
@@ -244,20 +239,9 @@ func FormatTime(args ...any) string {
 // If layout is omitted, defaults to "15:04".
 // If loc is nil, UTC/original location is preserved.
 func FormatTimeInLocation(loc *time.Location, args ...any) string {
-	if len(args) == 0 {
+	layout, val, ok := resolveFormatArgs("15:04", args)
+	if !ok {
 		return ""
-	}
-	layout := "15:04"
-	var val any
-
-	if len(args) == 1 {
-		val = args[0]
-	} else {
-		layoutStr := fmt.Sprint(args[0])
-		if layoutStr != "" && layoutStr != "default" {
-			layout = layoutStr
-		}
-		val = args[1]
 	}
 
 	if isDateOnly(val) {
@@ -291,41 +275,24 @@ func RelDate(refTime time.Time, args ...any) string {
 		refLoc = time.UTC
 	}
 
+	var tDate time.Time
 	if isDateOnly(val) {
 		s := strings.TrimSpace(fmt.Sprint(val))
 		t, err := time.Parse("2006-01-02", s)
 		if err != nil {
 			return s
 		}
-		tDate := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, refLoc)
-		refDate := time.Date(refTime.Year(), refTime.Month(), refTime.Day(), 0, 0, 0, 0, refLoc)
-
-		diffHours := tDate.Sub(refDate).Hours()
-		diffDays := int(math.Round(diffHours / 24))
-
-		switch {
-		case diffDays == 0:
-			return "Today"
-		case diffDays == 1:
-			return "Tomorrow"
-		case diffDays == -1:
-			return "Yesterday"
-		case diffDays > 1:
-			return fmt.Sprintf("in %d days", diffDays)
-		default:
-			return fmt.Sprintf("%d days ago", -diffDays)
+		tDate = time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, refLoc)
+	} else {
+		t, ok := ParseTime(val)
+		if !ok {
+			return fmt.Sprint(val)
 		}
+		tInLoc := t.In(refLoc)
+		tDate = time.Date(tInLoc.Year(), tInLoc.Month(), tInLoc.Day(), 0, 0, 0, 0, refLoc)
 	}
 
-	t, ok := ParseTime(val)
-	if !ok {
-		return fmt.Sprint(val)
-	}
-
-	tInLoc := t.In(refLoc)
-	tDate := time.Date(tInLoc.Year(), tInLoc.Month(), tInLoc.Day(), 0, 0, 0, 0, refLoc)
 	refDate := time.Date(refTime.Year(), refTime.Month(), refTime.Day(), 0, 0, 0, 0, refLoc)
-
 	diffHours := tDate.Sub(refDate).Hours()
 	diffDays := int(math.Round(diffHours / 24))
 
@@ -440,28 +407,81 @@ type hourlyPoint struct {
 	y          float64
 }
 
-func extractHourlyPoints(arg any) []hourlyPoint {
+func derefSlice(arg any) (reflect.Value, bool) {
 	if arg == nil {
-		return nil
+		return reflect.Value{}, false
 	}
-
 	val := reflect.ValueOf(arg)
 	if val.Kind() == reflect.Pointer {
 		if val.IsNil() {
-			return nil
+			return reflect.Value{}, false
 		}
 		val = val.Elem()
 	}
+	if (val.Kind() != reflect.Slice && val.Kind() != reflect.Array) || val.Len() == 0 {
+		return reflect.Value{}, false
+	}
+	return val, true
+}
 
-	if val.Kind() != reflect.Slice && val.Kind() != reflect.Array {
+func mapFloat(m map[string]any, key string) (float64, bool) {
+	if v, ok := m[key].(float64); ok {
+		return v, true
+	}
+	if v, ok := m[key].(int); ok {
+		return float64(v), true
+	}
+	return 0, false
+}
+
+func mapInt(m map[string]any, key string) (int, bool) {
+	if v, ok := m[key].(int); ok {
+		return v, true
+	}
+	if v, ok := m[key].(float64); ok {
+		return int(v), true
+	}
+	return 0, false
+}
+
+func structString(v reflect.Value, field string) string {
+	if f := v.FieldByName(field); f.IsValid() && f.Kind() == reflect.String {
+		return f.String()
+	}
+	return ""
+}
+
+func structFloat(v reflect.Value, field string) float64 {
+	if f := v.FieldByName(field); f.IsValid() {
+		if f.Kind() == reflect.Float64 || f.Kind() == reflect.Float32 {
+			return f.Float()
+		}
+		if f.Kind() == reflect.Int || f.Kind() == reflect.Int64 {
+			return float64(f.Int())
+		}
+	}
+	return 0
+}
+
+func structInt(v reflect.Value, field string) int {
+	if f := v.FieldByName(field); f.IsValid() {
+		if f.Kind() == reflect.Int || f.Kind() == reflect.Int64 {
+			return int(f.Int())
+		}
+		if f.Kind() == reflect.Float64 || f.Kind() == reflect.Float32 {
+			return int(f.Float())
+		}
+	}
+	return 0
+}
+
+func extractHourlyPoints(arg any) []hourlyPoint {
+	val, ok := derefSlice(arg)
+	if !ok {
 		return nil
 	}
 
 	n := val.Len()
-	if n == 0 {
-		return nil
-	}
-
 	pts := make([]hourlyPoint, 0, n)
 	for i := 0; i < n; i++ {
 		itemVal := val.Index(i)
@@ -478,15 +498,11 @@ func extractHourlyPoints(arg any) []hourlyPoint {
 			if t, ok := m["time"].(string); ok {
 				pt.timeStr = t
 			}
-			if tmp, ok := m["temp"].(float64); ok {
+			if tmp, ok := mapFloat(m, "temp"); ok {
 				pt.temp = tmp
-			} else if tmp, ok := m["temp"].(int); ok {
-				pt.temp = float64(tmp)
 			}
-			if p, ok := m["precip_prob"].(int); ok {
+			if p, ok := mapInt(m, "precip_prob"); ok {
 				pt.precipProb = p
-			} else if p, ok := m["precip_prob"].(float64); ok {
-				pt.precipProb = int(p)
 			}
 			if ic, ok := m["icon"].(string); ok {
 				pt.icon = ic
@@ -500,24 +516,10 @@ func extractHourlyPoints(arg any) []hourlyPoint {
 				v = v.Elem()
 			}
 			if v.Kind() == reflect.Struct {
-				if f := v.FieldByName("Time"); f.IsValid() && f.Kind() == reflect.String {
-					pt.timeStr = f.String()
-				}
-				if f := v.FieldByName("Temp"); f.IsValid() {
-					if f.Kind() == reflect.Float64 || f.Kind() == reflect.Float32 {
-						pt.temp = f.Float()
-					} else if f.Kind() == reflect.Int || f.Kind() == reflect.Int64 {
-						pt.temp = float64(f.Int())
-					}
-				}
-				if f := v.FieldByName("PrecipProb"); f.IsValid() {
-					if f.Kind() == reflect.Int || f.Kind() == reflect.Int64 {
-						pt.precipProb = int(f.Int())
-					}
-				}
-				if f := v.FieldByName("Icon"); f.IsValid() && f.Kind() == reflect.String {
-					pt.icon = f.String()
-				}
+				pt.timeStr = structString(v, "Time")
+				pt.temp = structFloat(v, "Temp")
+				pt.precipProb = structInt(v, "PrecipProb")
+				pt.icon = structString(v, "Icon")
 			}
 		}
 
@@ -684,27 +686,12 @@ type WeatherDailyItem struct {
 }
 
 func extractDailyPoints(arg any) []provider.WeatherDaily {
-	if arg == nil {
-		return nil
-	}
-
-	val := reflect.ValueOf(arg)
-	if val.Kind() == reflect.Pointer {
-		if val.IsNil() {
-			return nil
-		}
-		val = val.Elem()
-	}
-
-	if val.Kind() != reflect.Slice && val.Kind() != reflect.Array {
+	val, ok := derefSlice(arg)
+	if !ok {
 		return nil
 	}
 
 	n := val.Len()
-	if n == 0 {
-		return nil
-	}
-
 	pts := make([]provider.WeatherDaily, 0, n)
 	for i := 0; i < n; i++ {
 		itemVal := val.Index(i)
@@ -725,20 +712,14 @@ func extractDailyPoints(arg any) []provider.WeatherDaily {
 			if s, ok := m["date"].(string); ok {
 				pt.Date = s
 			}
-			if v, ok := m["temp_max"].(float64); ok {
+			if v, ok := mapFloat(m, "temp_max"); ok {
 				pt.TempMax = v
-			} else if v, ok := m["temp_max"].(int); ok {
-				pt.TempMax = float64(v)
 			}
-			if v, ok := m["temp_min"].(float64); ok {
+			if v, ok := mapFloat(m, "temp_min"); ok {
 				pt.TempMin = v
-			} else if v, ok := m["temp_min"].(int); ok {
-				pt.TempMin = float64(v)
 			}
-			if v, ok := m["precip_prob_max"].(int); ok {
+			if v, ok := mapInt(m, "precip_prob_max"); ok {
 				pt.PrecipProbMax = v
-			} else if v, ok := m["precip_prob_max"].(float64); ok {
-				pt.PrecipProbMax = int(v)
 			}
 			if s, ok := m["condition_text"].(string); ok {
 				pt.ConditionText = s
@@ -755,36 +736,12 @@ func extractDailyPoints(arg any) []provider.WeatherDaily {
 				v = v.Elem()
 			}
 			if v.Kind() == reflect.Struct {
-				if f := v.FieldByName("Date"); f.IsValid() && f.Kind() == reflect.String {
-					pt.Date = f.String()
-				}
-				if f := v.FieldByName("TempMax"); f.IsValid() {
-					if f.Kind() == reflect.Float64 || f.Kind() == reflect.Float32 {
-						pt.TempMax = f.Float()
-					} else if f.Kind() == reflect.Int || f.Kind() == reflect.Int64 {
-						pt.TempMax = float64(f.Int())
-					}
-				}
-				if f := v.FieldByName("TempMin"); f.IsValid() {
-					if f.Kind() == reflect.Float64 || f.Kind() == reflect.Float32 {
-						pt.TempMin = f.Float()
-					} else if f.Kind() == reflect.Int || f.Kind() == reflect.Int64 {
-						pt.TempMin = float64(f.Int())
-					}
-				}
-				if f := v.FieldByName("PrecipProbMax"); f.IsValid() {
-					if f.Kind() == reflect.Int || f.Kind() == reflect.Int64 {
-						pt.PrecipProbMax = int(f.Int())
-					} else if f.Kind() == reflect.Float64 || f.Kind() == reflect.Float32 {
-						pt.PrecipProbMax = int(f.Float())
-					}
-				}
-				if f := v.FieldByName("ConditionText"); f.IsValid() && f.Kind() == reflect.String {
-					pt.ConditionText = f.String()
-				}
-				if f := v.FieldByName("Icon"); f.IsValid() && f.Kind() == reflect.String {
-					pt.Icon = f.String()
-				}
+				pt.Date = structString(v, "Date")
+				pt.TempMax = structFloat(v, "TempMax")
+				pt.TempMin = structFloat(v, "TempMin")
+				pt.PrecipProbMax = structInt(v, "PrecipProbMax")
+				pt.ConditionText = structString(v, "ConditionText")
+				pt.Icon = structString(v, "Icon")
 			}
 		}
 
