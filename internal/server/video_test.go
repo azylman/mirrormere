@@ -1,4 +1,4 @@
-package server
+package server_test
 
 import (
 	"context"
@@ -10,596 +10,204 @@ import (
 	"testing"
 
 	"github.com/azylman/mirrormere/internal/api"
+	"github.com/azylman/mirrormere/internal/server"
 	"github.com/azylman/mirrormere/internal/video"
 )
 
 type mockVideoCoordinator struct {
-	state          video.VideoState
-	triggerErr     error
-	dismissErr     error
-	playerStateErr error
-	actionErr      error
-	lastStream     video.VideoStream
-	lastDismissID  string
-	lastStateID    string
-	lastStateVal    string
-	lastActionID    string
-	lastActionVal   string
-	lastActionValue any
+	state         video.VideoState
+	err           error
+	lastStream    video.VideoStream
+	lastDismissID string
+	lastActionID  string
+	lastActionVal string
 }
 
-func (m *mockVideoCoordinator) GetState() video.VideoState {
-	return m.state
+func (m *mockVideoCoordinator) GetState() video.VideoState { return m.state }
+func (m *mockVideoCoordinator) Trigger(s video.VideoStream) (video.VideoState, error) {
+	m.lastStream, m.state = s, video.VideoState{Mode: video.ModeVideo, Primary: &s}
+	return m.state, m.err
 }
-
-func (m *mockVideoCoordinator) Trigger(stream video.VideoStream) (video.VideoState, error) {
-	if m.triggerErr != nil {
-		return video.VideoState{}, m.triggerErr
-	}
-	m.lastStream = stream
-	m.state = video.VideoState{
-		Mode:    video.ModeVideo,
-		Primary: &stream,
-	}
-	return m.state, nil
-}
-
 func (m *mockVideoCoordinator) Dismiss(id string) (video.VideoState, error) {
-	if m.dismissErr != nil {
-		return video.VideoState{}, m.dismissErr
-	}
-	m.lastDismissID = id
-	m.state = video.VideoState{
-		Mode: video.ModeWidgets,
-	}
-	return m.state, nil
+	m.lastDismissID, m.state = id, video.VideoState{Mode: video.ModeWidgets}
+	return m.state, m.err
+}
+func (m *mockVideoCoordinator) SetPlayerState(id, ps string) (video.VideoState, error) {
+	return m.UpdatePlayerState(id, video.VideoStream{ID: id, PlayerState: ps})
+}
+func (m *mockVideoCoordinator) UpdatePlayerState(id string, u video.VideoStream) (video.VideoState, error) {
+	m.lastStream = u
+	return m.state, m.err
+}
+func (m *mockVideoCoordinator) ForwardAction(ctx context.Context, id, act string, val any) error {
+	m.lastActionID, m.lastActionVal = id, act
+	return m.err
 }
 
-func (m *mockVideoCoordinator) SetPlayerState(id string, playerState string) (video.VideoState, error) {
-	if m.playerStateErr != nil {
-		return video.VideoState{}, m.playerStateErr
-	}
-	m.lastStateID = id
-	m.lastStateVal = playerState
-	return m.state, nil
+type videoTC struct {
+	name, method, body string
+	nilCoord           bool
+	coordErr           error
+	wantCode           int
 }
 
-func (m *mockVideoCoordinator) UpdatePlayerState(id string, update video.VideoStream) (video.VideoState, error) {
-	if m.playerStateErr != nil {
-		return video.VideoState{}, m.playerStateErr
-	}
-	m.lastStateID = id
-	m.lastStateVal = update.PlayerState
-	m.lastStream = update
-	return m.state, nil
+func doVideoReq(h http.HandlerFunc, m, p, b string) *httptest.ResponseRecorder {
+	rec := httptest.NewRecorder()
+	h(rec, httptest.NewRequest(m, p, strings.NewReader(b)))
+	return rec
 }
 
-func (m *mockVideoCoordinator) ForwardAction(ctx context.Context, id, action string, value any) error {
-	m.lastActionID = id
-	m.lastActionVal = action
-	m.lastActionValue = value
-	return m.actionErr
+func videoHandler(nilCoord bool, err error, state video.VideoState) (*server.DefaultVideoHandler, *mockVideoCoordinator) {
+	if nilCoord {
+		return server.NewDefaultVideoHandler(nil), nil
+	}
+	mock := &mockVideoCoordinator{state: state, err: err}
+	return server.NewDefaultVideoHandler(mock), mock
 }
 
 func TestDefaultVideoHandler_GetVideoState(t *testing.T) {
 	t.Parallel()
-
-	// 1. Success GET
-	mock := &mockVideoCoordinator{
-		state: video.VideoState{
-			Mode: video.ModeVideo,
-			Primary: &video.VideoStream{
-				ID:             "cast",
-				StreamURL:      "http://stream",
-				Type:           video.TypeWebRTC,
-				Priority:       video.PriorityPersistent,
-				TimeoutSeconds: 0,
-				Controllable:   true,
-				ControlURL:     "http://ctrl",
-				PlayerState:    video.PlayerStatePlaying,
-				Muted:          false,
-			},
-			Pip: &video.VideoStream{
-				ID:             "doorbell",
-				StreamURL:      "http://doorbell",
-				Type:           video.TypeWebRTC,
-				Priority:       video.PriorityTemporary,
-				TimeoutSeconds: 45,
-				Controllable:   false,
-				Muted:          true,
-			},
-		},
+	tests := []struct {
+		name, method string
+		nilCoord     bool
+		wantCode     int
+	}{
+		{"ok_get", http.MethodGet, false, http.StatusOK},
+		{"ok_head", http.MethodHead, false, http.StatusOK},
+		{"options_cors", http.MethodOptions, false, http.StatusNoContent},
+		{"method_not_allowed", http.MethodPost, false, http.StatusMethodNotAllowed},
+		{"nil_coord", http.MethodGet, true, http.StatusInternalServerError},
 	}
-	h := NewDefaultVideoHandler(mock)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/video/state", nil)
-	rec := httptest.NewRecorder()
-	h.GetVideoState(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", rec.Code)
-	}
-	var resp api.VideoStateResponse
-	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
-	if resp.Mode != api.Video || resp.Primary == nil || resp.Primary.Id != "cast" {
-		t.Fatalf("unexpected response: %+v", resp)
-	}
-	if resp.Pip == nil || resp.Pip.Id != "doorbell" || !*resp.Pip.Muted {
-		t.Fatalf("unexpected pip in response: %+v", resp.Pip)
-	}
-
-	// 2. HEAD method
-	reqHead := httptest.NewRequest(http.MethodHead, "/api/video/state", nil)
-	recHead := httptest.NewRecorder()
-	h.GetVideoState(recHead, reqHead)
-	if recHead.Code != http.StatusOK {
-		t.Fatalf("expected 200 for HEAD, got %d", recHead.Code)
-	}
-	if recHead.Body.Len() != 0 {
-		t.Fatalf("expected empty body for HEAD, got %d bytes", recHead.Body.Len())
-	}
-
-	// 3. OPTIONS preflight
-	reqOptions := httptest.NewRequest(http.MethodOptions, "/api/video/state", nil)
-	recOptions := httptest.NewRecorder()
-	h.GetVideoState(recOptions, reqOptions)
-	if recOptions.Code != http.StatusNoContent {
-		t.Fatalf("expected 204 for OPTIONS, got %d", recOptions.Code)
-	}
-
-	// 4. Method Not Allowed
-	reqPost := httptest.NewRequest(http.MethodPost, "/api/video/state", nil)
-	recPost := httptest.NewRecorder()
-	h.GetVideoState(recPost, reqPost)
-	if recPost.Code != http.StatusMethodNotAllowed {
-		t.Fatalf("expected 405, got %d", recPost.Code)
-	}
-
-	// 5. Nil coordinator
-	hNil := NewDefaultVideoHandler(nil)
-	recNil := httptest.NewRecorder()
-	hNil.GetVideoState(recNil, req)
-	if recNil.Code != http.StatusInternalServerError {
-		t.Fatalf("expected 500 when coord is nil, got %d", recNil.Code)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			state := video.VideoState{
+				Mode:    video.ModeVideo,
+				Primary: &video.VideoStream{ID: "cast", StreamURL: "http://stream", Type: video.TypeWebRTC},
+				Pip:     &video.VideoStream{ID: "pip", StreamURL: "http://pip", Muted: true},
+			}
+			h, _ := videoHandler(tc.nilCoord, nil, state)
+			rec := doVideoReq(h.GetVideoState, tc.method, "/api/video/state", "")
+			if rec.Code != tc.wantCode {
+				t.Fatalf("code = %d, want %d", rec.Code, tc.wantCode)
+			}
+			if tc.wantCode == http.StatusOK && tc.method == http.MethodGet {
+				var resp api.VideoStateResponse
+				if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil || resp.Primary == nil || resp.Primary.Id != "cast" {
+					t.Fatalf("unexpected resp: %v, %+v", err, resp)
+				}
+			}
+		})
 	}
 }
 
 func TestDefaultVideoHandler_PostVideoTrigger(t *testing.T) {
 	t.Parallel()
-
-	mock := &mockVideoCoordinator{}
-	h := NewDefaultVideoHandler(mock)
-
-	// 1. Success POST
-	body := `{"id":"chromecast","stream_url":"http://127.0.0.1:1984/cast","type":"webrtc","priority":"persistent","controllable":true,"control_url":"http://ctrl","player_state":"playing"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/video/trigger", strings.NewReader(body))
-	rec := httptest.NewRecorder()
-	h.PostVideoTrigger(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", rec.Code)
+	bodyValid := `{"id":"cast","stream_url":"http://stream","type":"webrtc","priority":"persistent","title":"Show","series":"S1","position":10,"duration":100}`
+	tests := []videoTC{
+		{"ok_trigger", http.MethodPost, bodyValid, false, nil, http.StatusOK},
+		{"default_priority", http.MethodPost, `{"id":"c2","stream_url":"http://stream"}`, false, nil, http.StatusOK},
+		{"options_cors", http.MethodOptions, "", false, nil, http.StatusNoContent},
+		{"method_not_allowed", http.MethodGet, "", false, nil, http.StatusMethodNotAllowed},
+		{"bad_json", http.MethodPost, "{invalid", false, nil, http.StatusBadRequest},
+		{"missing_id", http.MethodPost, `{"id":"","stream_url":"http://s"}`, false, nil, http.StatusBadRequest},
+		{"sentinel_all", http.MethodPost, `{"id":"all","stream_url":"http://s"}`, false, nil, http.StatusBadRequest},
+		{"sentinel_wildcard", http.MethodPost, `{"id":"*","stream_url":"http://s"}`, false, nil, http.StatusBadRequest},
+		{"coord_err", http.MethodPost, bodyValid, false, video.ErrInvalidPlayerState, http.StatusBadRequest},
+		{"nil_coord", http.MethodPost, bodyValid, true, nil, http.StatusInternalServerError},
 	}
-	if mock.lastStream.ID != "chromecast" || mock.lastStream.Priority != video.PriorityPersistent {
-		t.Fatalf("unexpected stream triggered: %+v", mock.lastStream)
-	}
-
-	// 2. OPTIONS preflight
-	reqOptions := httptest.NewRequest(http.MethodOptions, "/api/video/trigger", nil)
-	recOptions := httptest.NewRecorder()
-	h.PostVideoTrigger(recOptions, reqOptions)
-	if recOptions.Code != http.StatusNoContent {
-		t.Fatalf("expected 204 for OPTIONS, got %d", recOptions.Code)
-	}
-
-	// 3. Method Not Allowed
-	reqGet := httptest.NewRequest(http.MethodGet, "/api/video/trigger", nil)
-	recGet := httptest.NewRecorder()
-	h.PostVideoTrigger(recGet, reqGet)
-	if recGet.Code != http.StatusMethodNotAllowed {
-		t.Fatalf("expected 405, got %d", recGet.Code)
-	}
-
-	// 4. Bad JSON
-	reqBad := httptest.NewRequest(http.MethodPost, "/api/video/trigger", strings.NewReader(`not-json`))
-	recBad := httptest.NewRecorder()
-	h.PostVideoTrigger(recBad, reqBad)
-	if recBad.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400 for bad json, got %d", recBad.Code)
-	}
-
-	// 5. Missing required fields
-	reqMissing := httptest.NewRequest(http.MethodPost, "/api/video/trigger", strings.NewReader(`{"id":""}`))
-	recMissing := httptest.NewRecorder()
-	h.PostVideoTrigger(recMissing, reqMissing)
-	if recMissing.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400 for missing fields, got %d", recMissing.Code)
-	}
-
-	// 5b. Reserved sentinels 'all' and '*'
-	reqAll := httptest.NewRequest(http.MethodPost, "/api/video/trigger", strings.NewReader(`{"id":"all","stream_url":"http://127.0.0.1:1984/cast"}`))
-	recAll := httptest.NewRecorder()
-	h.PostVideoTrigger(recAll, reqAll)
-	if recAll.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400 for reserved sentinel 'all', got %d", recAll.Code)
-	}
-
-	reqWildcardTrigger := httptest.NewRequest(http.MethodPost, "/api/video/trigger", strings.NewReader(`{"id":"*","stream_url":"http://127.0.0.1:1984/cast"}`))
-	recWildcardTrigger := httptest.NewRecorder()
-	h.PostVideoTrigger(recWildcardTrigger, reqWildcardTrigger)
-	if recWildcardTrigger.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400 for reserved sentinel '*', got %d", recWildcardTrigger.Code)
-	}
-
-	// 6. Coordinator Trigger Error
-	mock.triggerErr = video.ErrInvalidPlayerState
-	reqErr := httptest.NewRequest(http.MethodPost, "/api/video/trigger", strings.NewReader(body))
-	recErr := httptest.NewRecorder()
-	h.PostVideoTrigger(recErr, reqErr)
-	if recErr.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400 on coordinator error, got %d", recErr.Code)
-	}
-
-	// 7. Omitted priority defaults to video.PriorityPersistent (Issue #273, )
-	mock.triggerErr = nil
-	bodyDefaultPriority := `{"id":"chromecast-default","stream_url":"http://127.0.0.1:1984/cast"}`
-	reqDefaultPriority := httptest.NewRequest(http.MethodPost, "/api/video/trigger", strings.NewReader(bodyDefaultPriority))
-	recDefaultPriority := httptest.NewRecorder()
-	h.PostVideoTrigger(recDefaultPriority, reqDefaultPriority)
-	if recDefaultPriority.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", recDefaultPriority.Code)
-	}
-	if mock.lastStream.ID != "chromecast-default" || mock.lastStream.Priority != video.PriorityPersistent {
-		t.Fatalf("expected omitted priority to default to persistent, got: %+v", mock.lastStream)
-	}
-
-	// 8. Nil coordinator
-	hNil := NewDefaultVideoHandler(nil)
-	recNil := httptest.NewRecorder()
-	hNil.PostVideoTrigger(recNil, req)
-	if recNil.Code != http.StatusInternalServerError {
-		t.Fatalf("expected 500 when coord is nil, got %d", recNil.Code)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			h, mock := videoHandler(tc.nilCoord, tc.coordErr, video.VideoState{})
+			rec := doVideoReq(h.PostVideoTrigger, tc.method, "/api/video/trigger", tc.body)
+			if rec.Code != tc.wantCode {
+				t.Fatalf("code = %d, want %d", rec.Code, tc.wantCode)
+			}
+			if tc.name == "ok_trigger" && (mock.lastStream.Title != "Show" || mock.lastStream.Series != "S1" || mock.lastStream.Position != 10) {
+				t.Fatalf("unexpected stream metadata: %+v", mock.lastStream)
+			}
+		})
 	}
 }
 
 func TestDefaultVideoHandler_PostVideoDismiss(t *testing.T) {
 	t.Parallel()
-
-	mock := &mockVideoCoordinator{}
-	h := NewDefaultVideoHandler(mock)
-
-	// 1. Success POST
-	req := httptest.NewRequest(http.MethodPost, "/api/video/dismiss", strings.NewReader(`{"id":"chromecast"}`))
-	rec := httptest.NewRecorder()
-	h.PostVideoDismiss(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", rec.Code)
+	tests := []videoTC{
+		{"ok_dismiss", http.MethodPost, `{"id":"cast"}`, false, nil, http.StatusOK},
+		{"dismiss_all", http.MethodPost, `{"id":"all"}`, false, nil, http.StatusOK},
+		{"dismiss_wildcard", http.MethodPost, `{"id":"*"}`, false, nil, http.StatusOK},
+		{"options_cors", http.MethodOptions, "", false, nil, http.StatusNoContent},
+		{"method_not_allowed", http.MethodGet, "", false, nil, http.StatusMethodNotAllowed},
+		{"not_found", http.MethodPost, `{"id":"cast"}`, false, video.ErrStreamNotFound, http.StatusNotFound},
+		{"coord_err", http.MethodPost, `{"id":"cast"}`, false, errors.New("err"), http.StatusBadRequest},
+		{"bad_json", http.MethodPost, "{bad", false, nil, http.StatusBadRequest},
+		{"missing_id", http.MethodPost, `{"id":""}`, false, nil, http.StatusBadRequest},
+		{"nil_coord", http.MethodPost, `{"id":"cast"}`, true, nil, http.StatusInternalServerError},
 	}
-	if mock.lastDismissID != "chromecast" {
-		t.Fatalf("expected dismiss ID 'chromecast', got %s", mock.lastDismissID)
-	}
-
-	// 1b. Success POST with id: "all"
-	reqAll := httptest.NewRequest(http.MethodPost, "/api/video/dismiss", strings.NewReader(`{"id":"all"}`))
-	recAll := httptest.NewRecorder()
-	h.PostVideoDismiss(recAll, reqAll)
-
-	if recAll.Code != http.StatusOK {
-		t.Fatalf("expected 200 for id 'all', got %d", recAll.Code)
-	}
-	if mock.lastDismissID != "all" {
-		t.Fatalf("expected dismiss ID 'all', got %s", mock.lastDismissID)
-	}
-
-	// 1c. Success POST with id: "*"
-	reqWildcard := httptest.NewRequest(http.MethodPost, "/api/video/dismiss", strings.NewReader(`{"id":"*"}`))
-	recWildcard := httptest.NewRecorder()
-	h.PostVideoDismiss(recWildcard, reqWildcard)
-
-	if recWildcard.Code != http.StatusOK {
-		t.Fatalf("expected 200 for id '*', got %d", recWildcard.Code)
-	}
-	if mock.lastDismissID != "*" {
-		t.Fatalf("expected dismiss ID '*', got %s", mock.lastDismissID)
-	}
-
-	// 2. Stream not found (404)
-	mock.dismissErr = video.ErrStreamNotFound
-	req404 := httptest.NewRequest(http.MethodPost, "/api/video/dismiss", strings.NewReader(`{"id":"missing"}`))
-	rec404 := httptest.NewRecorder()
-	h.PostVideoDismiss(rec404, req404)
-	if rec404.Code != http.StatusNotFound {
-		t.Fatalf("expected 404, got %d", rec404.Code)
-	}
-
-	// 3. Other coordinator error (400)
-	mock.dismissErr = errors.New("other dismiss error")
-	reqOther := httptest.NewRequest(http.MethodPost, "/api/video/dismiss", strings.NewReader(`{"id":"other"}`))
-	recOther := httptest.NewRecorder()
-	h.PostVideoDismiss(recOther, reqOther)
-	if recOther.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d", recOther.Code)
-	}
-
-	// 4. Bad JSON
-	reqBad := httptest.NewRequest(http.MethodPost, "/api/video/dismiss", strings.NewReader(`not-json`))
-	recBad := httptest.NewRecorder()
-	h.PostVideoDismiss(recBad, reqBad)
-	if recBad.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400 for bad json, got %d", recBad.Code)
-	}
-
-	// 5. Missing ID
-	reqNoID := httptest.NewRequest(http.MethodPost, "/api/video/dismiss", strings.NewReader(`{"id":""}`))
-	recNoID := httptest.NewRecorder()
-	h.PostVideoDismiss(recNoID, reqNoID)
-	if recNoID.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400 for empty id, got %d", recNoID.Code)
-	}
-
-	// 6. OPTIONS preflight
-	reqOptions := httptest.NewRequest(http.MethodOptions, "/api/video/dismiss", nil)
-	recOptions := httptest.NewRecorder()
-	h.PostVideoDismiss(recOptions, reqOptions)
-	if recOptions.Code != http.StatusNoContent {
-		t.Fatalf("expected 204 for OPTIONS, got %d", recOptions.Code)
-	}
-
-	// 7. Method Not Allowed
-	reqGet := httptest.NewRequest(http.MethodGet, "/api/video/dismiss", nil)
-	recGet := httptest.NewRecorder()
-	h.PostVideoDismiss(recGet, reqGet)
-	if recGet.Code != http.StatusMethodNotAllowed {
-		t.Fatalf("expected 405, got %d", recGet.Code)
-	}
-
-	// 8. Nil coordinator
-	hNil := NewDefaultVideoHandler(nil)
-	recNil := httptest.NewRecorder()
-	hNil.PostVideoDismiss(recNil, req)
-	if recNil.Code != http.StatusInternalServerError {
-		t.Fatalf("expected 500 when coord is nil, got %d", recNil.Code)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			h, _ := videoHandler(tc.nilCoord, tc.coordErr, video.VideoState{})
+			rec := doVideoReq(h.PostVideoDismiss, tc.method, "/api/video/dismiss", tc.body)
+			if rec.Code != tc.wantCode {
+				t.Fatalf("code = %d, want %d", rec.Code, tc.wantCode)
+			}
+		})
 	}
 }
 
 func TestDefaultVideoHandler_PostVideoAction(t *testing.T) {
 	t.Parallel()
-
-	mock := &mockVideoCoordinator{}
-	h := NewDefaultVideoHandler(mock)
-
-	// 1. Success POST
-	req := httptest.NewRequest(http.MethodPost, "/api/video/action", strings.NewReader(`{"id":"chromecast","action":"toggle_playback"}`))
-	rec := httptest.NewRecorder()
-	h.PostVideoAction(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", rec.Code)
+	tests := []videoTC{
+		{"ok_action", http.MethodPost, `{"id":"cast","action":"toggle_playback"}`, false, nil, http.StatusOK},
+		{"ok_seek", http.MethodPost, `{"id":"cast","action":"seek","value":45.5}`, false, nil, http.StatusOK},
+		{"options_cors", http.MethodOptions, "", false, nil, http.StatusNoContent},
+		{"method_not_allowed", http.MethodGet, "", false, nil, http.StatusMethodNotAllowed},
+		{"not_found", http.MethodPost, `{"id":"cast","action":"play"}`, false, video.ErrStreamNotFound, http.StatusNotFound},
+		{"not_controllable", http.MethodPost, `{"id":"cast","action":"play"}`, false, video.ErrNotControllable, http.StatusUnprocessableEntity},
+		{"unreachable", http.MethodPost, `{"id":"cast","action":"play"}`, false, video.ErrControllerUnreachable, http.StatusBadGateway},
+		{"other_err", http.MethodPost, `{"id":"cast","action":"play"}`, false, errors.New("err"), http.StatusBadRequest},
+		{"bad_json", http.MethodPost, "{bad", false, nil, http.StatusBadRequest},
+		{"missing_fields", http.MethodPost, `{"id":""}`, false, nil, http.StatusBadRequest},
+		{"nil_coord", http.MethodPost, `{"id":"cast","action":"play"}`, true, nil, http.StatusInternalServerError},
 	}
-	if mock.lastActionID != "chromecast" || mock.lastActionVal != "toggle_playback" {
-		t.Fatalf("unexpected action: id=%s action=%s", mock.lastActionID, mock.lastActionVal)
-	}
-
-	// 1b. Success POST seek action with value
-	reqSeek := httptest.NewRequest(http.MethodPost, "/api/video/action", strings.NewReader(`{"id":"chromecast","action":"seek","value":45.5}`))
-	recSeek := httptest.NewRecorder()
-	h.PostVideoAction(recSeek, reqSeek)
-
-	if recSeek.Code != http.StatusOK {
-		t.Fatalf("expected 200 on seek, got %d", recSeek.Code)
-	}
-	if mock.lastActionID != "chromecast" || mock.lastActionVal != "seek" {
-		t.Fatalf("unexpected seek action: id=%s action=%s", mock.lastActionID, mock.lastActionVal)
-	}
-	valPtr, ok := mock.lastActionValue.(*interface{})
-	if ok && valPtr != nil {
-		if v, ok := (*valPtr).(float64); !ok || v != 45.5 {
-			t.Fatalf("expected seek value 45.5, got %v (%T)", *valPtr, *valPtr)
-		}
-	} else if v, ok := mock.lastActionValue.(float64); ok {
-		if v != 45.5 {
-			t.Fatalf("expected seek value 45.5, got %v", v)
-		}
-	} else {
-		t.Fatalf("expected seek value 45.5, got %v (%T)", mock.lastActionValue, mock.lastActionValue)
-	}
-
-	// 2. Stream not found (404)
-	mock.actionErr = video.ErrStreamNotFound
-	req404 := httptest.NewRequest(http.MethodPost, "/api/video/action", strings.NewReader(`{"id":"missing","action":"play"}`))
-	rec404 := httptest.NewRecorder()
-	h.PostVideoAction(rec404, req404)
-	if rec404.Code != http.StatusNotFound {
-		t.Fatalf("expected 404, got %d", rec404.Code)
-	}
-
-	// 3. Not controllable (422)
-	mock.actionErr = video.ErrNotControllable
-	req422 := httptest.NewRequest(http.MethodPost, "/api/video/action", strings.NewReader(`{"id":"doorbell","action":"play"}`))
-	rec422 := httptest.NewRecorder()
-	h.PostVideoAction(rec422, req422)
-	if rec422.Code != http.StatusUnprocessableEntity {
-		t.Fatalf("expected 422, got %d", rec422.Code)
-	}
-
-	// 4. Controller unreachable (502)
-	mock.actionErr = video.ErrControllerUnreachable
-	req502 := httptest.NewRequest(http.MethodPost, "/api/video/action", strings.NewReader(`{"id":"chromecast","action":"play"}`))
-	rec502 := httptest.NewRecorder()
-	h.PostVideoAction(rec502, req502)
-	if rec502.Code != http.StatusBadGateway {
-		t.Fatalf("expected 502, got %d", rec502.Code)
-	}
-
-	// 5. Other error (400)
-	mock.actionErr = errors.New("other action error")
-	reqOther := httptest.NewRequest(http.MethodPost, "/api/video/action", strings.NewReader(`{"id":"chromecast","action":"play"}`))
-	recOther := httptest.NewRecorder()
-	h.PostVideoAction(recOther, reqOther)
-	if recOther.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d", recOther.Code)
-	}
-
-	// 6. Bad JSON
-	reqBad := httptest.NewRequest(http.MethodPost, "/api/video/action", strings.NewReader(`not-json`))
-	recBad := httptest.NewRecorder()
-	h.PostVideoAction(recBad, reqBad)
-	if recBad.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d", recBad.Code)
-	}
-
-	// 7. Missing fields
-	reqMissing := httptest.NewRequest(http.MethodPost, "/api/video/action", strings.NewReader(`{"id":""}`))
-	recMissing := httptest.NewRecorder()
-	h.PostVideoAction(recMissing, reqMissing)
-	if recMissing.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d", recMissing.Code)
-	}
-
-	// 8. OPTIONS preflight
-	reqOptions := httptest.NewRequest(http.MethodOptions, "/api/video/action", nil)
-	recOptions := httptest.NewRecorder()
-	h.PostVideoAction(recOptions, reqOptions)
-	if recOptions.Code != http.StatusNoContent {
-		t.Fatalf("expected 204, got %d", recOptions.Code)
-	}
-
-	// 9. Method Not Allowed
-	reqGet := httptest.NewRequest(http.MethodGet, "/api/video/action", nil)
-	recGet := httptest.NewRecorder()
-	h.PostVideoAction(recGet, reqGet)
-	if recGet.Code != http.StatusMethodNotAllowed {
-		t.Fatalf("expected 405, got %d", recGet.Code)
-	}
-
-	// 10. Nil coordinator
-	hNil := NewDefaultVideoHandler(nil)
-	recNil := httptest.NewRecorder()
-	hNil.PostVideoAction(recNil, req)
-	if recNil.Code != http.StatusInternalServerError {
-		t.Fatalf("expected 500 when coord is nil, got %d", recNil.Code)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			h, _ := videoHandler(tc.nilCoord, tc.coordErr, video.VideoState{})
+			rec := doVideoReq(h.PostVideoAction, tc.method, "/api/video/action", tc.body)
+			if rec.Code != tc.wantCode {
+				t.Fatalf("code = %d, want %d", rec.Code, tc.wantCode)
+			}
+		})
 	}
 }
 
 func TestDefaultVideoHandler_PostVideoState(t *testing.T) {
 	t.Parallel()
-
-	mock := &mockVideoCoordinator{}
-	h := NewDefaultVideoHandler(mock)
-
-	// 1. Success POST
-	req := httptest.NewRequest(http.MethodPost, "/api/video/state", strings.NewReader(`{"id":"chromecast","player_state":"playing"}`))
-	rec := httptest.NewRecorder()
-	h.PostVideoState(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", rec.Code)
+	tests := []videoTC{
+		{"ok_state", http.MethodPost, `{"id":"cast","player_state":"playing","title":"Ep1","position":25.0}`, false, nil, http.StatusOK},
+		{"ok_idle", http.MethodPost, `{"id":"cast","player_state":"idle"}`, false, nil, http.StatusOK},
+		{"options_cors", http.MethodOptions, "", false, nil, http.StatusNoContent},
+		{"method_not_allowed", http.MethodDelete, "", false, nil, http.StatusMethodNotAllowed},
+		{"not_found", http.MethodPost, `{"id":"cast","player_state":"paused"}`, false, video.ErrStreamNotFound, http.StatusNotFound},
+		{"coord_err", http.MethodPost, `{"id":"cast","player_state":"paused"}`, false, video.ErrInvalidPlayerState, http.StatusBadRequest},
+		{"bad_json", http.MethodPost, "{bad", false, nil, http.StatusBadRequest},
+		{"missing_fields", http.MethodPost, `{"id":""}`, false, nil, http.StatusBadRequest},
+		{"nil_coord", http.MethodPost, `{"id":"cast","player_state":"paused"}`, true, nil, http.StatusInternalServerError},
 	}
-	if mock.lastStateID != "chromecast" || mock.lastStateVal != "playing" {
-		t.Fatalf("unexpected state update: id=%s val=%s", mock.lastStateID, mock.lastStateVal)
-	}
-
-	// 1b. Success POST with player_state: "idle"
-	reqIdle := httptest.NewRequest(http.MethodPost, "/api/video/state", strings.NewReader(`{"id":"chromecast","player_state":"idle"}`))
-	recIdle := httptest.NewRecorder()
-	h.PostVideoState(recIdle, reqIdle)
-	if recIdle.Code != http.StatusOK {
-		t.Fatalf("expected 200 for idle state, got %d", recIdle.Code)
-	}
-	if mock.lastStateID != "chromecast" || mock.lastStateVal != "idle" {
-		t.Fatalf("unexpected state update for idle: id=%s val=%s", mock.lastStateID, mock.lastStateVal)
-	}
-
-	// 2. Stream not found (404)
-	mock.playerStateErr = video.ErrStreamNotFound
-	req404 := httptest.NewRequest(http.MethodPost, "/api/video/state", strings.NewReader(`{"id":"missing","player_state":"paused"}`))
-	rec404 := httptest.NewRecorder()
-	h.PostVideoState(rec404, req404)
-	if rec404.Code != http.StatusNotFound {
-		t.Fatalf("expected 404, got %d", rec404.Code)
-	}
-
-	// 3. Other error (400)
-	mock.playerStateErr = video.ErrInvalidPlayerState
-	reqErr := httptest.NewRequest(http.MethodPost, "/api/video/state", strings.NewReader(`{"id":"chromecast","player_state":"invalid"}`))
-	recErr := httptest.NewRecorder()
-	h.PostVideoState(recErr, reqErr)
-	if recErr.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d", recErr.Code)
-	}
-
-	// 4. Bad JSON
-	reqBad := httptest.NewRequest(http.MethodPost, "/api/video/state", strings.NewReader(`not-json`))
-	recBad := httptest.NewRecorder()
-	h.PostVideoState(recBad, reqBad)
-	if recBad.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d", recBad.Code)
-	}
-
-	// 5. Missing fields
-	reqMissing := httptest.NewRequest(http.MethodPost, "/api/video/state", strings.NewReader(`{"id":""}`))
-	recMissing := httptest.NewRecorder()
-	h.PostVideoState(recMissing, reqMissing)
-	if recMissing.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d", recMissing.Code)
-	}
-
-	// 6. OPTIONS preflight
-	reqOptions := httptest.NewRequest(http.MethodOptions, "/api/video/state", nil)
-	recOptions := httptest.NewRecorder()
-	h.PostVideoState(recOptions, reqOptions)
-	if recOptions.Code != http.StatusNoContent {
-		t.Fatalf("expected 204, got %d", recOptions.Code)
-	}
-
-	// 7. Method Not Allowed
-	reqDelete := httptest.NewRequest(http.MethodDelete, "/api/video/state", nil)
-	recDelete := httptest.NewRecorder()
-	h.PostVideoState(recDelete, reqDelete)
-	if recDelete.Code != http.StatusMethodNotAllowed {
-		t.Fatalf("expected 405, got %d", recDelete.Code)
-	}
-
-	// 8. Nil coordinator
-	hNil := NewDefaultVideoHandler(nil)
-	recNil := httptest.NewRecorder()
-	hNil.PostVideoState(recNil, req)
-	if recNil.Code != http.StatusInternalServerError {
-		t.Fatalf("expected 500 when coord is nil, got %d", recNil.Code)
-	}
-}
-
-func TestDefaultVideoHandler_Metadata(t *testing.T) {
-	t.Parallel()
-
-	mock := &mockVideoCoordinator{}
-	h := NewDefaultVideoHandler(mock)
-
-	// Trigger with metadata
-	bodyTrigger := `{"id":"chromecast","stream_url":"http://127.0.0.1:1984/cast","type":"webrtc","priority":"persistent","title":"The Mandalorian","series":"Star Wars","season":"2","episode":"1","position":124.5,"duration":3600,"position_updated_at":1712880000000}`
-	reqTrigger := httptest.NewRequest(http.MethodPost, "/api/video/trigger", strings.NewReader(bodyTrigger))
-	recTrigger := httptest.NewRecorder()
-	h.PostVideoTrigger(recTrigger, reqTrigger)
-
-	if recTrigger.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", recTrigger.Code)
-	}
-	if mock.lastStream.Title != "The Mandalorian" || mock.lastStream.Series != "Star Wars" || mock.lastStream.Season != "2" || mock.lastStream.Episode != "1" || mock.lastStream.Position != 124.5 || mock.lastStream.Duration != 3600 || mock.lastStream.PositionUpdatedAt != 1712880000000 {
-		t.Fatalf("unexpected stream metadata in trigger: %+v", mock.lastStream)
-	}
-
-	// State update with metadata
-	bodyState := `{"id":"chromecast","player_state":"paused","title":"Chapter 10","series":"Star Wars","position":250.0,"duration":3600}`
-	reqState := httptest.NewRequest(http.MethodPost, "/api/video/state", strings.NewReader(bodyState))
-	recState := httptest.NewRecorder()
-	h.PostVideoState(recState, reqState)
-
-	if recState.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", recState.Code)
-	}
-	if mock.lastStream.Title != "Chapter 10" || mock.lastStream.PlayerState != "paused" || mock.lastStream.Position != 250.0 {
-		t.Fatalf("unexpected stream metadata in state update: %+v", mock.lastStream)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			h, mock := videoHandler(tc.nilCoord, tc.coordErr, video.VideoState{})
+			rec := doVideoReq(h.PostVideoState, tc.method, "/api/video/state", tc.body)
+			if rec.Code != tc.wantCode {
+				t.Fatalf("code = %d, want %d", rec.Code, tc.wantCode)
+			}
+			if tc.name == "ok_state" && (mock.lastStream.Title != "Ep1" || mock.lastStream.Position != 25.0) {
+				t.Fatalf("unexpected state metadata: %+v", mock.lastStream)
+			}
+		})
 	}
 }
