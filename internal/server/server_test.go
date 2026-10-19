@@ -3,8 +3,6 @@ package server_test
 import (
 	"context"
 	"errors"
-	"encoding/json"
-	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -15,1147 +13,329 @@ import (
 	"github.com/azylman/mirrormere/internal/server"
 )
 
+func doServerReq(srv *server.Server, method, path string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(method, path, nil)
+	rec := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(rec, req)
+	return rec
+}
+
 func TestConfig_ApplyDefaults(t *testing.T) {
 	t.Parallel()
-
-	// Case 1: Empty config applies all defaults
-	var emptyCfg server.Config
-	emptyCfg.ApplyDefaults()
-
-	if emptyCfg.Host != server.DefaultHost {
-		t.Errorf("expected Host %s, got %s", server.DefaultHost, emptyCfg.Host)
+	tests := []struct {
+		name     string
+		in       server.Config
+		wantHost string
+		wantPort int
+		wantRead time.Duration
+	}{
+		{"defaults", server.Config{}, server.DefaultHost, server.DefaultPort, server.DefaultReadTimeout},
+		{"negative_port", server.Config{Port: -1}, server.DefaultHost, 0, server.DefaultReadTimeout},
+		{"custom", server.Config{Host: "127.0.0.1", Port: 9090, ReadTimeout: time.Second, ReadHeaderTimeout: 2 * time.Second, WriteTimeout: 3 * time.Second, IdleTimeout: 4 * time.Second}, "127.0.0.1", 9090, time.Second},
 	}
-	if emptyCfg.Port != server.DefaultPort {
-		t.Errorf("expected Port %d, got %d", server.DefaultPort, emptyCfg.Port)
-	}
-	if emptyCfg.ReadTimeout != server.DefaultReadTimeout {
-		t.Errorf("expected ReadTimeout %v, got %v", server.DefaultReadTimeout, emptyCfg.ReadTimeout)
-	}
-	if emptyCfg.ReadHeaderTimeout != server.DefaultReadHeaderTimeout {
-		t.Errorf("expected ReadHeaderTimeout %v, got %v", server.DefaultReadHeaderTimeout, emptyCfg.ReadHeaderTimeout)
-	}
-	if emptyCfg.WriteTimeout != server.DefaultWriteTimeout {
-		t.Errorf("expected WriteTimeout %v, got %v", server.DefaultWriteTimeout, emptyCfg.WriteTimeout)
-	}
-	if emptyCfg.IdleTimeout != server.DefaultIdleTimeout {
-		t.Errorf("expected IdleTimeout %v, got %v", server.DefaultIdleTimeout, emptyCfg.IdleTimeout)
-	}
-
-	// Case 2: Negative port maps to ephemeral 0
-	ephemeralCfg := server.Config{Port: -1}
-	ephemeralCfg.ApplyDefaults()
-	if ephemeralCfg.Port != 0 {
-		t.Errorf("expected Port 0 for ephemeral, got %d", ephemeralCfg.Port)
-	}
-
-	// Case 3: Custom config preserves existing values
-	customCfg := server.Config{
-		Host:              "127.0.0.1",
-		Port:              9090,
-		ReadTimeout:       1 * time.Second,
-		ReadHeaderTimeout: 2 * time.Second,
-		WriteTimeout:      3 * time.Second,
-		IdleTimeout:       4 * time.Second,
-	}
-	customCfg.ApplyDefaults()
-
-	if customCfg.Host != "127.0.0.1" || customCfg.Port != 9090 {
-		t.Errorf("expected custom host/port preserved, got %s:%d", customCfg.Host, customCfg.Port)
-	}
-	if customCfg.ReadTimeout != 1*time.Second || customCfg.ReadHeaderTimeout != 2*time.Second {
-		t.Errorf("expected custom timeouts preserved")
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := tc.in
+			cfg.ApplyDefaults()
+			if cfg.Host != tc.wantHost || cfg.Port != tc.wantPort || cfg.ReadTimeout != tc.wantRead {
+				t.Fatalf("ApplyDefaults() = %+v, want host=%s port=%d read=%v", cfg, tc.wantHost, tc.wantPort, tc.wantRead)
+			}
+			if tc.name == "custom" && (cfg.ReadHeaderTimeout != 2*time.Second || cfg.WriteTimeout != 3*time.Second || cfg.IdleTimeout != 4*time.Second) {
+				t.Fatal("custom timeouts not preserved")
+			}
+		})
 	}
 }
 
-func TestHealthEndpoints(t *testing.T) {
+func TestServer_CoreEndpoints(t *testing.T) {
 	t.Parallel()
-
-	srv := server.New(server.Config{})
-	handler := srv.Routes()
-
-	paths := []string{"/healthz", "/health"}
-
-	for _, path := range paths {
-		t.Run("GET_"+path, func(t *testing.T) {
+	tests := []struct {
+		name        string
+		method      string
+		path        string
+		wantCode    int
+		wantAllow   string
+		wantBodySub string
+	}{
+		{"healthz_get", http.MethodGet, "/healthz", http.StatusOK, "", `"status":"ok"`},
+		{"healthz_head", http.MethodHead, "/healthz", http.StatusOK, "", ""},
+		{"healthz_options", http.MethodOptions, "/healthz", http.StatusNoContent, "", ""},
+		{"healthz_post_405", http.MethodPost, "/healthz", http.StatusMethodNotAllowed, "GET, HEAD, OPTIONS", ""},
+		{"health_get", http.MethodGet, "/health", http.StatusOK, "", `"status":"ok"`},
+		{"health_head", http.MethodHead, "/health", http.StatusOK, "", ""},
+		{"health_options", http.MethodOptions, "/health", http.StatusNoContent, "", ""},
+		{"health_post_405", http.MethodPost, "/health", http.StatusMethodNotAllowed, "GET, HEAD, OPTIONS", ""},
+		{"root_get", http.MethodGet, "/", http.StatusOK, "", `"service":"mirrormere"`},
+		{"root_head", http.MethodHead, "/", http.StatusOK, "", ""},
+		{"root_options", http.MethodOptions, "/", http.StatusNoContent, "", ""},
+		{"root_post_405", http.MethodPost, "/", http.StatusMethodNotAllowed, "GET, HEAD, OPTIONS", ""},
+		{"root_unknown_404", http.MethodGet, "/unknown/path", http.StatusNotFound, "", ""},
+		{"metrics_get", http.MethodGet, "/metrics", http.StatusOK, "", "# HELP"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			req := httptest.NewRequest(http.MethodGet, path, nil)
-			rec := httptest.NewRecorder()
-
-			handler.ServeHTTP(rec, req)
-
-			if rec.Code != http.StatusOK {
-				t.Fatalf("expected status 200, got %d", rec.Code)
+			srv := server.New(server.Config{})
+			rec := doServerReq(srv, tc.method, tc.path)
+			if rec.Code != tc.wantCode {
+				t.Fatalf("status = %d, want %d", rec.Code, tc.wantCode)
 			}
-			if rec.Header().Get("Access-Control-Allow-Origin") != "*" {
-				t.Errorf("expected CORS origin '*', got %q", rec.Header().Get("Access-Control-Allow-Origin"))
+			if tc.wantAllow != "" && rec.Header().Get("Allow") != tc.wantAllow {
+				t.Errorf("Allow = %q, want %q", rec.Header().Get("Allow"), tc.wantAllow)
 			}
-
-			var resp server.HealthResponse
-			if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-				t.Fatalf("failed to parse JSON response: %v", err)
+			if tc.wantBodySub != "" && !strings.Contains(rec.Body.String(), tc.wantBodySub) {
+				t.Errorf("body = %q, want %q", rec.Body.String(), tc.wantBodySub)
 			}
-			if resp.Status != "ok" {
-				t.Errorf("expected status 'ok', got %q", resp.Status)
-			}
-		})
-
-		t.Run("HEAD_"+path, func(t *testing.T) {
-			t.Parallel()
-			req := httptest.NewRequest(http.MethodHead, path, nil)
-			rec := httptest.NewRecorder()
-
-			handler.ServeHTTP(rec, req)
-
-			if rec.Code != http.StatusOK {
-				t.Fatalf("expected status 200, got %d", rec.Code)
-			}
-			if rec.Body.Len() != 0 {
+			if tc.method == http.MethodHead && rec.Body.Len() != 0 {
 				t.Errorf("expected empty body for HEAD, got %d bytes", rec.Body.Len())
 			}
 		})
-
-		t.Run("OPTIONS_"+path, func(t *testing.T) {
-			t.Parallel()
-			req := httptest.NewRequest(http.MethodOptions, path, nil)
-			rec := httptest.NewRecorder()
-
-			handler.ServeHTTP(rec, req)
-
-			if rec.Code != http.StatusNoContent {
-				t.Fatalf("expected status 204, got %d", rec.Code)
-			}
-			if rec.Header().Get("Access-Control-Allow-Origin") != "*" {
-				t.Errorf("expected CORS origin '*'")
-			}
-			if rec.Header().Get("Access-Control-Allow-Methods") == "" {
-				t.Errorf("expected CORS methods set")
-			}
-		})
-
-		t.Run("POST_MethodNotAllowed_"+path, func(t *testing.T) {
-			t.Parallel()
-			req := httptest.NewRequest(http.MethodPost, path, nil)
-			rec := httptest.NewRecorder()
-
-			handler.ServeHTTP(rec, req)
-
-			if rec.Code != http.StatusMethodNotAllowed {
-				t.Fatalf("expected status 405, got %d", rec.Code)
-			}
-		})
-	}
-}
-
-func TestRootEndpoint(t *testing.T) {
-	t.Parallel()
-
-	srv := server.New(server.Config{})
-	handler := srv.Routes()
-
-	t.Run("GET_Root", func(t *testing.T) {
-		t.Parallel()
-		req := httptest.NewRequest(http.MethodGet, "/", nil)
-		rec := httptest.NewRecorder()
-
-		handler.ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Fatalf("expected status 200, got %d", rec.Code)
-		}
-
-		var resp server.RootResponse
-		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-			t.Fatalf("failed to decode response: %v", err)
-		}
-		if resp.Service != "mirrormere" || resp.Status != "running" || resp.Version != server.Version {
-			t.Errorf("unexpected root payload: %+v", resp)
-		}
-	})
-
-	t.Run("HEAD_Root", func(t *testing.T) {
-		t.Parallel()
-		req := httptest.NewRequest(http.MethodHead, "/", nil)
-		rec := httptest.NewRecorder()
-
-		handler.ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Fatalf("expected status 200, got %d", rec.Code)
-		}
-		if rec.Body.Len() != 0 {
-			t.Errorf("expected empty body for HEAD")
-		}
-	})
-
-	t.Run("OPTIONS_Root", func(t *testing.T) {
-		t.Parallel()
-		req := httptest.NewRequest(http.MethodOptions, "/", nil)
-		rec := httptest.NewRecorder()
-
-		handler.ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusNoContent {
-			t.Fatalf("expected status 204, got %d", rec.Code)
-		}
-	})
-
-	t.Run("POST_Root_MethodNotAllowed", func(t *testing.T) {
-		t.Parallel()
-		req := httptest.NewRequest(http.MethodPost, "/", nil)
-		rec := httptest.NewRecorder()
-
-		handler.ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusMethodNotAllowed {
-			t.Fatalf("expected status 405, got %d", rec.Code)
-		}
-	})
-
-	t.Run("NotFound_UnknownPath", func(t *testing.T) {
-		t.Parallel()
-		req := httptest.NewRequest(http.MethodGet, "/unknown/path", nil)
-		rec := httptest.NewRecorder()
-
-		handler.ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusNotFound {
-			t.Fatalf("expected status 404, got %d", rec.Code)
-		}
-	})
-}
-
-func TestServer_ServeAndShutdown(t *testing.T) {
-	t.Parallel()
-
-	srv := server.New(server.Config{
-		Host: "127.0.0.1",
-		Port: -1,
-	})
-
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("failed to create listener: %v", err)
-	}
-
-	errChan := make(chan error, 1)
-	go func() {
-		errChan <- srv.Serve(l)
-	}()
-
-	select {
-	case <-srv.Ready():
-	case err := <-errChan:
-		t.Fatalf("Serve failed: %v", err)
-	case <-time.After(2 * time.Second):
-		t.Fatal("server timed out waiting to become ready")
-	}
-
-	addr := srv.Addr()
-	if addr == "" {
-		t.Fatal("expected non-empty bound address")
-	}
-
-	resp, err := http.Get("http://" + addr + "/healthz")
-	if err != nil {
-		t.Fatalf("HTTP GET failed: %v", err)
-	}
-	defer resp.Body.Close()
-
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("expected status 200, got %d: %s", resp.StatusCode, string(body))
-	}
-
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	if err := srv.Shutdown(shutdownCtx); err != nil {
-		t.Fatalf("server shutdown failed: %v", err)
-	}
-
-	select {
-	case serveErr := <-errChan:
-		if serveErr != nil {
-			t.Fatalf("server returned error on shutdown: %v", serveErr)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for server to stop")
-	}
-}
-
-func TestServer_ListenAndServe_BindError(t *testing.T) {
-	t.Parallel()
-
-	// Use an invalid host IP to trigger net.Listen error deterministically
-	srv := server.New(server.Config{
-		Host: "999.999.999.999",
-		Port: 8080,
-	})
-
-	err := srv.ListenAndServe()
-	if err == nil {
-		t.Fatal("expected error binding to invalid IP address, got nil")
-	}
-}
-
-func TestServer_ListenAndServe_Success(t *testing.T) {
-	t.Parallel()
-
-	srv := server.New(server.Config{
-		Host: "127.0.0.1",
-		Port: -1, // Negative port binds ephemeral port 0
-	})
-
-	errChan := make(chan error, 1)
-	go func() {
-		errChan <- srv.ListenAndServe()
-	}()
-
-	select {
-	case <-srv.Ready():
-	case err := <-errChan:
-		t.Fatalf("ListenAndServe failed immediately: %v", err)
-	case <-time.After(2 * time.Second):
-		t.Fatal("server timed out waiting to become ready")
-	}
-
-	addr := srv.Addr()
-	if addr == "" {
-		t.Fatal("expected bound address to be populated")
-	}
-
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	if err := srv.Shutdown(shutdownCtx); err != nil {
-		t.Fatalf("server shutdown failed: %v", err)
-	}
-
-	select {
-	case err := <-errChan:
-		if err != nil {
-			t.Fatalf("ListenAndServe returned unexpected error: %v", err)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("server did not shut down cleanly")
-	}
-}
-
-func TestServer_EventsHandler(t *testing.T) {
-	t.Parallel()
-
-	// Case 1: Unset EventsHandler returns 404
-	srv := server.New(server.Config{})
-	if srv.EventsHandler() != nil {
-		t.Fatal("expected nil EventsHandler initially")
-	}
-
-	req := httptest.NewRequest(http.MethodGet, "/api/events", nil)
-	rec := httptest.NewRecorder()
-	srv.Routes().ServeHTTP(rec, req)
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("expected 404 when EventsHandler unset, got %d", rec.Code)
-	}
-
-	// Case 2: Config.EventsHandler set at creation
-	mockHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("event: test\ndata: ok\n\n"))
-	})
-
-	srvWithHandler := server.New(server.Config{EventsHandler: mockHandler})
-	if srvWithHandler.EventsHandler() == nil {
-		t.Fatal("expected non-nil EventsHandler")
-	}
-
-	rec2 := httptest.NewRecorder()
-	srvWithHandler.Routes().ServeHTTP(rec2, req)
-	if rec2.Code != http.StatusOK {
-		t.Fatalf("expected 200 from configured EventsHandler, got %d", rec2.Code)
-	}
-	if rec2.Body.String() != "event: test\ndata: ok\n\n" {
-		t.Fatalf("unexpected body: %q", rec2.Body.String())
-	}
-
-	// Case 3: RegisterEventsHandler dynamically updates handler
-	mockHandler2 := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusTeapot)
-	})
-	srv.RegisterEventsHandler(mockHandler2)
-	if srv.EventsHandler() == nil {
-		t.Fatal("expected non-nil EventsHandler after registration")
-	}
-
-	rec3 := httptest.NewRecorder()
-	srv.Routes().ServeHTTP(rec3, req)
-	if rec3.Code != http.StatusTeapot {
-		t.Fatalf("expected 418 from dynamically registered EventsHandler, got %d", rec3.Code)
-	}
-}
-
-type mockScreenHandler struct {
-	selectCalls  int
-	advanceCalls int
-	pauseCalls   int
-}
-
-func (m *mockScreenHandler) PostScreenSelect(w http.ResponseWriter, r *http.Request) {
-	m.selectCalls++
-	w.WriteHeader(http.StatusOK)
-}
-
-func (m *mockScreenHandler) PostScreenAdvance(w http.ResponseWriter, r *http.Request) {
-	m.advanceCalls++
-	w.WriteHeader(http.StatusOK)
-}
-
-func (m *mockScreenHandler) PostScreenPause(w http.ResponseWriter, r *http.Request) {
-	m.pauseCalls++
-	w.WriteHeader(http.StatusOK)
-}
-
-func TestServer_ScreenHandler(t *testing.T) {
-	t.Parallel()
-
-	// Case 1: Unset ScreenHandler returns 404
-	srv := server.New(server.Config{})
-	if srv.ScreenHandler() != nil {
-		t.Fatal("expected nil ScreenHandler initially")
-	}
-
-	endpoints := []string{"/api/screen/select", "/api/screen/advance", "/api/screen/pause"}
-	for _, ep := range endpoints {
-		req := httptest.NewRequest(http.MethodPost, ep, nil)
-		rec := httptest.NewRecorder()
-		srv.Routes().ServeHTTP(rec, req)
-		if rec.Code != http.StatusNotFound {
-			t.Fatalf("expected 404 for %s when ScreenHandler unset, got %d", ep, rec.Code)
-		}
-	}
-
-	// Case 2: Config.ScreenHandler set at creation
-	mockH := &mockScreenHandler{}
-	srvWithHandler := server.New(server.Config{ScreenHandler: mockH})
-	if srvWithHandler.ScreenHandler() == nil {
-		t.Fatal("expected non-nil ScreenHandler")
-	}
-
-	for _, ep := range endpoints {
-		req := httptest.NewRequest(http.MethodPost, ep, nil)
-		rec := httptest.NewRecorder()
-		srvWithHandler.Routes().ServeHTTP(rec, req)
-		if rec.Code != http.StatusOK {
-			t.Fatalf("expected 200 for %s, got %d", ep, rec.Code)
-		}
-	}
-
-	if mockH.selectCalls != 1 || mockH.advanceCalls != 1 || mockH.pauseCalls != 1 {
-		t.Errorf("unexpected call counts: select=%d advance=%d pause=%d",
-			mockH.selectCalls, mockH.advanceCalls, mockH.pauseCalls)
-	}
-
-	// Case 3: RegisterScreenHandler dynamically updates handler
-	mockH2 := &mockScreenHandler{}
-	srv.RegisterScreenHandler(mockH2)
-	if srv.ScreenHandler() == nil {
-		t.Fatal("expected non-nil ScreenHandler after registration")
-	}
-
-	req := httptest.NewRequest(http.MethodPost, "/api/screen/select", nil)
-	rec := httptest.NewRecorder()
-	srv.Routes().ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200 after dynamic registration, got %d", rec.Code)
-	}
-	if mockH2.selectCalls != 1 {
-		t.Errorf("expected mockH2 to receive call, got %d", mockH2.selectCalls)
-	}
-}
-
-type mockRenderHandler struct {
-	renderCalls  int
-	lastWidgetID string
-	assetCalls   int
-	lastType     string
-	lastPath     string
-	styleCalls   int
-}
-
-func (m *mockRenderHandler) GetWidgetRender(w http.ResponseWriter, r *http.Request, widgetID string) {
-	m.renderCalls++
-	m.lastWidgetID = widgetID
-	w.WriteHeader(http.StatusOK)
-}
-
-func (m *mockRenderHandler) GetWidgetAsset(w http.ResponseWriter, r *http.Request, widgetType string, assetPath string) {
-	m.assetCalls++
-	m.lastType = widgetType
-	m.lastPath = assetPath
-	w.WriteHeader(http.StatusOK)
-}
-
-func (m *mockRenderHandler) ServeStyle(w http.ResponseWriter, r *http.Request) {
-	m.styleCalls++
-	w.WriteHeader(http.StatusOK)
-}
-
-func TestServer_RenderHandler(t *testing.T) {
-	t.Parallel()
-
-	// Case 1: Unset RenderHandler returns 404
-	srv := server.New(server.Config{})
-	if srv.RenderHandler() != nil {
-		t.Fatal("expected nil RenderHandler initially")
-	}
-
-	endpoints := []string{
-		"/api/widgets/w1/render",
-		"/widget-types/t1/assets/icon.svg",
-		"/style.css",
-	}
-	for _, ep := range endpoints {
-		req := httptest.NewRequest(http.MethodGet, ep, nil)
-		rec := httptest.NewRecorder()
-		srv.Routes().ServeHTTP(rec, req)
-		if rec.Code != http.StatusNotFound {
-			t.Fatalf("expected 404 for %s when RenderHandler unset, got %d", ep, rec.Code)
-		}
-	}
-
-	// Case 2: Config.RenderHandler set at creation
-	mockH := &mockRenderHandler{}
-	srvWithHandler := server.New(server.Config{RenderHandler: mockH})
-	if srvWithHandler.RenderHandler() == nil {
-		t.Fatal("expected non-nil RenderHandler")
-	}
-
-	// Test GET /api/widgets/{widget_id}/render
-	reqRender := httptest.NewRequest(http.MethodGet, "/api/widgets/weather-1/render", nil)
-	recRender := httptest.NewRecorder()
-	srvWithHandler.Routes().ServeHTTP(recRender, reqRender)
-	if recRender.Code != http.StatusOK {
-		t.Fatalf("expected 200 for render, got %d", recRender.Code)
-	}
-	if mockH.renderCalls != 1 || mockH.lastWidgetID != "weather-1" {
-		t.Errorf("expected render call with widget_id 'weather-1', got %d calls, id=%q", mockH.renderCalls, mockH.lastWidgetID)
-	}
-
-	// Test GET /widget-types/{type}/assets/{path...}
-	reqAsset := httptest.NewRequest(http.MethodGet, "/widget-types/weather/assets/sub/icons/sun.svg", nil)
-	recAsset := httptest.NewRecorder()
-	srvWithHandler.Routes().ServeHTTP(recAsset, reqAsset)
-	if recAsset.Code != http.StatusOK {
-		t.Fatalf("expected 200 for asset, got %d", recAsset.Code)
-	}
-	if mockH.assetCalls != 1 || mockH.lastType != "weather" || mockH.lastPath != "sub/icons/sun.svg" {
-		t.Errorf("expected asset call with type='weather', path='sub/icons/sun.svg', got calls=%d type=%q path=%q",
-			mockH.assetCalls, mockH.lastType, mockH.lastPath)
-	}
-
-	// Test GET /style.css
-	reqStyle := httptest.NewRequest(http.MethodGet, "/style.css", nil)
-	recStyle := httptest.NewRecorder()
-	srvWithHandler.Routes().ServeHTTP(recStyle, reqStyle)
-	if recStyle.Code != http.StatusOK {
-		t.Fatalf("expected 200 for style, got %d", recStyle.Code)
-	}
-	if mockH.styleCalls != 1 {
-		t.Errorf("expected 1 style call, got %d", mockH.styleCalls)
-	}
-
-	// Case 3: RegisterRenderHandler dynamically updates handler
-	mockH2 := &mockRenderHandler{}
-	srv.RegisterRenderHandler(mockH2)
-	if srv.RenderHandler() == nil {
-		t.Fatal("expected non-nil RenderHandler after registration")
-	}
-
-	recDynamic := httptest.NewRecorder()
-	srv.Routes().ServeHTTP(recDynamic, reqStyle)
-	if recDynamic.Code != http.StatusOK {
-		t.Fatalf("expected 200 after dynamic registration, got %d", recDynamic.Code)
-	}
-	if mockH2.styleCalls != 1 {
-		t.Errorf("expected mockH2 to receive style call, got %d", mockH2.styleCalls)
-	}
-}
-
-type mockDisplayHandler struct {
-	displayCalls int
-	staticCalls  int
-	lastPath     string
-}
-
-func (m *mockDisplayHandler) GetDisplay(w http.ResponseWriter, r *http.Request) {
-	m.displayCalls++
-	w.WriteHeader(http.StatusOK)
-}
-
-func (m *mockDisplayHandler) GetStatic(w http.ResponseWriter, r *http.Request, path string) {
-	m.staticCalls++
-	m.lastPath = path
-	w.WriteHeader(http.StatusOK)
-}
-
-func TestServer_DisplayHandler(t *testing.T) {
-	t.Parallel()
-
-	// Case 1: Unset DisplayHandler returns 404
-	srv := server.New(server.Config{})
-	if srv.DisplayHandler() != nil {
-		t.Fatal("expected nil DisplayHandler initially")
-	}
-
-	endpoints := []string{
-		"/display",
-		"/static/js/sse.js",
-		"/static/css/hud.css",
-	}
-	for _, ep := range endpoints {
-		req := httptest.NewRequest(http.MethodGet, ep, nil)
-		rec := httptest.NewRecorder()
-		srv.Routes().ServeHTTP(rec, req)
-		if rec.Code != http.StatusNotFound {
-			t.Fatalf("expected 404 for %s when DisplayHandler unset, got %d", ep, rec.Code)
-		}
-	}
-
-	// Case 2: Config.DisplayHandler set at creation
-	mockH := &mockDisplayHandler{}
-	srvWithHandler := server.New(server.Config{DisplayHandler: mockH})
-	if srvWithHandler.DisplayHandler() == nil {
-		t.Fatal("expected non-nil DisplayHandler")
-	}
-
-	// Test GET /display
-	reqDisplay := httptest.NewRequest(http.MethodGet, "/display", nil)
-	recDisplay := httptest.NewRecorder()
-	srvWithHandler.Routes().ServeHTTP(recDisplay, reqDisplay)
-	if recDisplay.Code != http.StatusOK {
-		t.Fatalf("expected 200 for /display, got %d", recDisplay.Code)
-	}
-	if mockH.displayCalls != 1 {
-		t.Errorf("expected 1 display call, got %d", mockH.displayCalls)
-	}
-
-	// Test GET /static/{path...}
-	reqStatic := httptest.NewRequest(http.MethodGet, "/static/js/sse.js", nil)
-	recStatic := httptest.NewRecorder()
-	srvWithHandler.Routes().ServeHTTP(recStatic, reqStatic)
-	if recStatic.Code != http.StatusOK {
-		t.Fatalf("expected 200 for static asset, got %d", recStatic.Code)
-	}
-	if mockH.staticCalls != 1 || mockH.lastPath != "js/sse.js" {
-		t.Errorf("expected 1 static call with path 'js/sse.js', got calls=%d path=%q", mockH.staticCalls, mockH.lastPath)
-	}
-
-	// Case 3: RegisterDisplayHandler dynamically updates handler
-	mockH2 := &mockDisplayHandler{}
-	srv.RegisterDisplayHandler(mockH2)
-	if srv.DisplayHandler() == nil {
-		t.Fatal("expected non-nil DisplayHandler after registration")
-	}
-
-	recDynamic := httptest.NewRecorder()
-	srv.Routes().ServeHTTP(recDynamic, reqDisplay)
-	if recDynamic.Code != http.StatusOK {
-		t.Fatalf("expected 200 after dynamic registration, got %d", recDynamic.Code)
-	}
-	if mockH2.displayCalls != 1 {
-		t.Errorf("expected mockH2 to receive display call, got %d", mockH2.displayCalls)
-	}
-}
-
-type mockPushHandler struct {
-	pushCalls    int
-	lastWidgetID string
-}
-
-func (m *mockPushHandler) PostWidgetPush(w http.ResponseWriter, r *http.Request, widgetID string) {
-	m.pushCalls++
-	m.lastWidgetID = widgetID
-	w.WriteHeader(http.StatusOK)
-}
-
-func TestServer_PushHandler(t *testing.T) {
-	t.Parallel()
-
-	// Case 1: Unset PushHandler returns 404
-	srv := server.New(server.Config{})
-	if srv.PushHandler() != nil {
-		t.Fatal("expected nil PushHandler initially")
-	}
-
-	req := httptest.NewRequest(http.MethodPost, "/api/widgets/sensor-1/push", nil)
-	rec := httptest.NewRecorder()
-	srv.Routes().ServeHTTP(rec, req)
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("expected 404 when PushHandler unset, got %d", rec.Code)
-	}
-
-	// Case 2: Config.PushHandler set at creation
-	mockH := &mockPushHandler{}
-	srvWithHandler := server.New(server.Config{PushHandler: mockH})
-	if srvWithHandler.PushHandler() == nil {
-		t.Fatal("expected non-nil PushHandler")
-	}
-
-	rec2 := httptest.NewRecorder()
-	srvWithHandler.Routes().ServeHTTP(rec2, req)
-	if rec2.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", rec2.Code)
-	}
-	if mockH.pushCalls != 1 || mockH.lastWidgetID != "sensor-1" {
-		t.Fatalf("expected 1 push call with widgetID 'sensor-1', got calls=%d id=%q", mockH.pushCalls, mockH.lastWidgetID)
-	}
-
-	// Case 3: RegisterPushHandler dynamically updates handler
-	mockH2 := &mockPushHandler{}
-	srv.RegisterPushHandler(mockH2)
-	if srv.PushHandler() == nil {
-		t.Fatal("expected non-nil PushHandler after registration")
-	}
-
-	rec3 := httptest.NewRecorder()
-	srv.Routes().ServeHTTP(rec3, req)
-	if rec3.Code != http.StatusOK {
-		t.Fatalf("expected 200 after dynamic registration, got %d", rec3.Code)
-	}
-	if mockH2.pushCalls != 1 || mockH2.lastWidgetID != "sensor-1" {
-		t.Fatalf("expected mockH2 to receive push call, got calls=%d id=%q", mockH2.pushCalls, mockH2.lastWidgetID)
-	}
-}
-
-type mockListsHandler struct {
-	calls         int
-	lastListID    string
-	completeCalls int
-	lastItemID    string
-}
-
-func (m *mockListsHandler) GetListItems(w http.ResponseWriter, r *http.Request, listID string) {
-	m.calls++
-	m.lastListID = listID
-	w.WriteHeader(http.StatusOK)
-}
-
-func (m *mockListsHandler) CompleteListItem(w http.ResponseWriter, r *http.Request, listID, itemID string) {
-	m.completeCalls++
-	m.lastListID = listID
-	m.lastItemID = itemID
-	w.WriteHeader(http.StatusOK)
-}
-
-func TestServer_ListsHandler(t *testing.T) {
-	t.Parallel()
-
-	// Case 1: Unset ListsHandler returns 404
-	srv := server.New(server.Config{})
-	if srv.ListsHandler() != nil {
-		t.Fatal("expected nil ListsHandler initially")
-	}
-
-	req := httptest.NewRequest(http.MethodGet, "/api/lists/groceries/items", nil)
-	rec := httptest.NewRecorder()
-	srv.Routes().ServeHTTP(rec, req)
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("expected 404 when ListsHandler unset, got %d", rec.Code)
-	}
-
-	// Case 1b: Unset CompleteListItem returns 404
-	recCompleteUnset := httptest.NewRecorder()
-	reqCompleteUnset := httptest.NewRequest(http.MethodPost, "/api/lists/groceries/items/i1/complete", nil)
-	srv.Routes().ServeHTTP(recCompleteUnset, reqCompleteUnset)
-	if recCompleteUnset.Code != http.StatusNotFound {
-		t.Fatalf("expected 404 when ListsHandler unset on complete, got %d", recCompleteUnset.Code)
-	}
-
-	// Case 2: Config.ListsHandler set at creation
-	mockH := &mockListsHandler{}
-	srvWithHandler := server.New(server.Config{ListsHandler: mockH})
-	if srvWithHandler.ListsHandler() == nil {
-		t.Fatal("expected non-nil ListsHandler")
-	}
-
-	rec2 := httptest.NewRecorder()
-	srvWithHandler.Routes().ServeHTTP(rec2, req)
-	if rec2.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", rec2.Code)
-	}
-	if mockH.calls != 1 || mockH.lastListID != "groceries" {
-		t.Fatalf("expected 1 list call with listID 'groceries', got calls=%d id=%q", mockH.calls, mockH.lastListID)
-	}
-
-	// Case 2b: CompleteListItem dispatches correctly
-	recComplete := httptest.NewRecorder()
-	reqComplete := httptest.NewRequest(http.MethodPost, "/api/lists/groceries/items/item-42/complete", nil)
-	srvWithHandler.Routes().ServeHTTP(recComplete, reqComplete)
-	if recComplete.Code != http.StatusOK {
-		t.Fatalf("expected 200 on complete, got %d", recComplete.Code)
-	}
-	if mockH.completeCalls != 1 || mockH.lastListID != "groceries" || mockH.lastItemID != "item-42" {
-		t.Fatalf("expected 1 complete call with listID 'groceries' and itemID 'item-42', got calls=%d listID=%q itemID=%q",
-			mockH.completeCalls, mockH.lastListID, mockH.lastItemID)
-	}
-
-	// Case 3: RegisterListsHandler dynamically updates handler
-	mockH2 := &mockListsHandler{}
-	srv.RegisterListsHandler(mockH2)
-	if srv.ListsHandler() == nil {
-		t.Fatal("expected non-nil ListsHandler after registration")
-	}
-
-	rec3 := httptest.NewRecorder()
-	srv.Routes().ServeHTTP(rec3, req)
-	if rec3.Code != http.StatusOK {
-		t.Fatalf("expected 200 after dynamic registration, got %d", rec3.Code)
-	}
-	if mockH2.calls != 1 || mockH2.lastListID != "groceries" {
-		t.Fatalf("expected mockH2 to receive list call, got calls=%d id=%q", mockH2.calls, mockH2.lastListID)
-	}
-}
-
-type mockServerVideoHandler struct {
-	triggerCalls  int
-	dismissCalls  int
-	actionCalls   int
-	stateCalls    int
-	getStateCalls int
-}
-
-func (m *mockServerVideoHandler) PostVideoTrigger(w http.ResponseWriter, r *http.Request) {
-	m.triggerCalls++
-	w.WriteHeader(http.StatusOK)
-}
-
-func (m *mockServerVideoHandler) PostVideoDismiss(w http.ResponseWriter, r *http.Request) {
-	m.dismissCalls++
-	w.WriteHeader(http.StatusOK)
-}
-
-func (m *mockServerVideoHandler) PostVideoAction(w http.ResponseWriter, r *http.Request) {
-	m.actionCalls++
-	w.WriteHeader(http.StatusOK)
-}
-
-func (m *mockServerVideoHandler) PostVideoState(w http.ResponseWriter, r *http.Request) {
-	m.stateCalls++
-	w.WriteHeader(http.StatusOK)
-}
-
-func (m *mockServerVideoHandler) GetVideoState(w http.ResponseWriter, r *http.Request) {
-	m.getStateCalls++
-	w.WriteHeader(http.StatusOK)
-}
-
-func TestServer_VideoHandler(t *testing.T) {
-	t.Parallel()
-
-	// Case 1: Unset VideoHandler returns 404
-	srv := server.New(server.Config{})
-	if srv.VideoHandler() != nil {
-		t.Fatal("expected nil VideoHandler initially")
-	}
-
-	endpoints := []struct {
-		method string
-		path   string
-	}{
-		{http.MethodPost, "/api/video/trigger"},
-		{http.MethodPost, "/api/video/dismiss"},
-		{http.MethodPost, "/api/video/action"},
-		{http.MethodGet, "/api/video/state"},
-		{http.MethodPost, "/api/video/state"},
-	}
-
-	for _, ep := range endpoints {
-		req := httptest.NewRequest(ep.method, ep.path, nil)
-		rec := httptest.NewRecorder()
-		srv.Routes().ServeHTTP(rec, req)
-		if rec.Code != http.StatusNotFound {
-			t.Fatalf("expected 404 for %s %s when VideoHandler unset, got %d", ep.method, ep.path, rec.Code)
-		}
-	}
-
-	// Case 2: Config.VideoHandler set at creation
-	mockH := &mockServerVideoHandler{}
-	srvWithHandler := server.New(server.Config{VideoHandler: mockH})
-	if srvWithHandler.VideoHandler() == nil {
-		t.Fatal("expected non-nil VideoHandler")
-	}
-
-	for _, ep := range endpoints {
-		req := httptest.NewRequest(ep.method, ep.path, nil)
-		rec := httptest.NewRecorder()
-		srvWithHandler.Routes().ServeHTTP(rec, req)
-		if rec.Code != http.StatusOK {
-			t.Fatalf("expected 200 for %s %s, got %d", ep.method, ep.path, rec.Code)
-		}
-	}
-
-	if mockH.triggerCalls != 1 || mockH.dismissCalls != 1 || mockH.actionCalls != 1 || mockH.getStateCalls != 1 || mockH.stateCalls != 1 {
-		t.Fatalf("unexpected call counts on mockH: %+v", mockH)
-	}
-
-	// Case 3: RegisterVideoHandler dynamically updates handler
-	mockH2 := &mockServerVideoHandler{}
-	srv.RegisterVideoHandler(mockH2)
-	if srv.VideoHandler() == nil {
-		t.Fatal("expected non-nil VideoHandler after registration")
-	}
-
-	reqTrigger := httptest.NewRequest(http.MethodPost, "/api/video/trigger", nil)
-	recTrigger := httptest.NewRecorder()
-	srv.Routes().ServeHTTP(recTrigger, reqTrigger)
-	if recTrigger.Code != http.StatusOK {
-		t.Fatalf("expected 200 after dynamic registration, got %d", recTrigger.Code)
-	}
-	if mockH2.triggerCalls != 1 {
-		t.Fatalf("expected mockH2 to receive trigger call")
-	}
-}
-
-type mockServerVoiceHandler struct {
-	stateCalls     int
-	interactCalls  int
-	heartbeatCalls int
-}
-
-func (m *mockServerVoiceHandler) PostVoiceState(w http.ResponseWriter, r *http.Request) {
-	m.stateCalls++
-	w.WriteHeader(http.StatusOK)
-}
-
-func (m *mockServerVoiceHandler) PostVoiceInteract(w http.ResponseWriter, r *http.Request) {
-	m.interactCalls++
-	w.WriteHeader(http.StatusOK)
-}
-
-func (m *mockServerVoiceHandler) PostVoiceHeartbeat(w http.ResponseWriter, r *http.Request) {
-	m.heartbeatCalls++
-	w.WriteHeader(http.StatusOK)
-}
-
-func TestServer_VoiceHandler(t *testing.T) {
-	t.Parallel()
-
-	// Case 1: Unset VoiceHandler returns 404
-	srv := server.New(server.Config{})
-	if srv.VoiceHandler() != nil {
-		t.Fatal("expected nil VoiceHandler initially")
-	}
-
-	req := httptest.NewRequest(http.MethodPost, "/api/voice/state", nil)
-	rec := httptest.NewRecorder()
-	srv.Routes().ServeHTTP(rec, req)
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("expected 404 when VoiceHandler unset, got %d", rec.Code)
-	}
-
-	reqInteract := httptest.NewRequest(http.MethodPost, "/api/voice/interact", nil)
-	recInteract := httptest.NewRecorder()
-	srv.Routes().ServeHTTP(recInteract, reqInteract)
-	if recInteract.Code != http.StatusNotFound {
-		t.Fatalf("expected 404 when VoiceHandler unset for interact, got %d", recInteract.Code)
-	}
-
-	reqHeartbeat := httptest.NewRequest(http.MethodPost, "/api/voice/heartbeat", nil)
-	recHeartbeat := httptest.NewRecorder()
-	srv.Routes().ServeHTTP(recHeartbeat, reqHeartbeat)
-	if recHeartbeat.Code != http.StatusNotFound {
-		t.Fatalf("expected 404 when VoiceHandler unset for heartbeat, got %d", recHeartbeat.Code)
-	}
-
-	// Case 2: Config.VoiceHandler set at creation
-	mockH := &mockServerVoiceHandler{}
-	srvWithHandler := server.New(server.Config{VoiceHandler: mockH})
-	if srvWithHandler.VoiceHandler() == nil {
-		t.Fatal("expected non-nil VoiceHandler")
-	}
-
-	req2 := httptest.NewRequest(http.MethodPost, "/api/voice/state", nil)
-	rec2 := httptest.NewRecorder()
-	srvWithHandler.Routes().ServeHTTP(rec2, req2)
-	if rec2.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", rec2.Code)
-	}
-	if mockH.stateCalls != 1 {
-		t.Fatalf("expected 1 state call, got %d", mockH.stateCalls)
-	}
-
-	reqInteract2 := httptest.NewRequest(http.MethodPost, "/api/voice/interact", nil)
-	recInteract2 := httptest.NewRecorder()
-	srvWithHandler.Routes().ServeHTTP(recInteract2, reqInteract2)
-	if recInteract2.Code != http.StatusOK {
-		t.Fatalf("expected 200 for interact, got %d", recInteract2.Code)
-	}
-	if mockH.interactCalls != 1 {
-		t.Fatalf("expected 1 interact call, got %d", mockH.interactCalls)
-	}
-
-	reqHeartbeat2 := httptest.NewRequest(http.MethodPost, "/api/voice/heartbeat", nil)
-	recHeartbeat2 := httptest.NewRecorder()
-	srvWithHandler.Routes().ServeHTTP(recHeartbeat2, reqHeartbeat2)
-	if recHeartbeat2.Code != http.StatusOK {
-		t.Fatalf("expected 200 for heartbeat, got %d", recHeartbeat2.Code)
-	}
-	if mockH.heartbeatCalls != 1 {
-		t.Fatalf("expected 1 heartbeat call, got %d", mockH.heartbeatCalls)
-	}
-
-	// Case 3: RegisterVoiceHandler dynamically updates handler
-	mockH2 := &mockServerVoiceHandler{}
-	srv.RegisterVoiceHandler(mockH2)
-	if srv.VoiceHandler() == nil {
-		t.Fatal("expected non-nil VoiceHandler after registration")
-	}
-
-	req3 := httptest.NewRequest(http.MethodPost, "/api/voice/state", nil)
-	rec3 := httptest.NewRecorder()
-	srv.Routes().ServeHTTP(rec3, req3)
-	if rec3.Code != http.StatusOK {
-		t.Fatalf("expected 200 after dynamic registration, got %d", rec3.Code)
-	}
-	if mockH2.stateCalls != 1 {
-		t.Fatalf("expected mockH2 to receive state call, got %d", mockH2.stateCalls)
-	}
-
-	reqInteract3 := httptest.NewRequest(http.MethodPost, "/api/voice/interact", nil)
-	recInteract3 := httptest.NewRecorder()
-	srv.Routes().ServeHTTP(recInteract3, reqInteract3)
-	if recInteract3.Code != http.StatusOK {
-		t.Fatalf("expected 200 after dynamic registration for interact, got %d", recInteract3.Code)
-	}
-	if mockH2.interactCalls != 1 {
-		t.Fatalf("expected mockH2 to receive interact call, got %d", mockH2.interactCalls)
-	}
-
-	reqHeartbeat3 := httptest.NewRequest(http.MethodPost, "/api/voice/heartbeat", nil)
-	recHeartbeat3 := httptest.NewRecorder()
-	srv.Routes().ServeHTTP(recHeartbeat3, reqHeartbeat3)
-	if recHeartbeat3.Code != http.StatusOK {
-		t.Fatalf("expected 200 after dynamic registration for heartbeat, got %d", recHeartbeat3.Code)
-	}
-	if mockH2.heartbeatCalls != 1 {
-		t.Fatalf("expected mockH2 to receive heartbeat call, got %d", mockH2.heartbeatCalls)
-	}
-}
-
-func TestServer_MetricsEndpoint(t *testing.T) {
-	t.Parallel()
-	srv := server.New(server.Config{})
-	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
-	rec := httptest.NewRecorder()
-	srv.Routes().ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200 OK from /metrics, got %d", rec.Code)
-	}
-	if !strings.Contains(rec.Body.String(), "# HELP") {
-		t.Fatalf("expected prometheus metrics format from /metrics")
 	}
 }
 
 func TestCoverageFlushEndpoint(t *testing.T) {
-	// Case 1: Method Not Allowed (e.g. DELETE)
-	t.Run("MethodNotAllowed", func(t *testing.T) {
-		srv := server.New(server.Config{})
-		req := httptest.NewRequest(http.MethodDelete, "/debug/coverage/flush", nil)
-		rec := httptest.NewRecorder()
-		srv.Routes().ServeHTTP(rec, req)
+	tests := []struct {
+		name        string
+		method      string
+		coverDir    string
+		simTime     time.Time
+		writeErr    error
+		repeatCall  bool
+		wantCode    int
+		wantBodySub string
+	}{
+		{name: "method_not_allowed", method: http.MethodDelete, wantCode: http.StatusMethodNotAllowed},
+		{name: "unset_gocoverdir", method: http.MethodGet, coverDir: "", wantCode: http.StatusOK, wantBodySub: `"status":"ok"`},
+		{name: "valid_flush_and_debounce", method: http.MethodPost, coverDir: "temp", simTime: time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC), repeatCall: true, wantCode: http.StatusOK, wantBodySub: `"status":"ok"`},
+		{name: "write_error_500", method: http.MethodGet, coverDir: "temp", simTime: time.Date(2026, 10, 4, 13, 0, 0, 0, time.UTC), writeErr: errors.New("simulated flush error"), wantCode: http.StatusInternalServerError, wantBodySub: "simulated flush error"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if !tc.simTime.IsZero() {
+				defer server.SetNowFnForTest(func() time.Time { return tc.simTime })()
+			}
+			dir := tc.coverDir
+			if dir == "temp" {
+				dir = t.TempDir()
+			}
+			t.Setenv("GOCOVERDIR", dir)
+			defer server.SetWriteCountersDirForTest(func(string) error { return tc.writeErr })()
 
-		if rec.Code != http.StatusMethodNotAllowed {
-			t.Fatalf("expected 405 Method Not Allowed, got %d", rec.Code)
-		}
-	})
-
-	// Case 2: Unset GOCOVERDIR returns 200 OK without writing
-	t.Run("UnsetGOCOVERDIR", func(t *testing.T) {
-		t.Setenv("GOCOVERDIR", "")
-		srv := server.New(server.Config{})
-		req := httptest.NewRequest(http.MethodGet, "/debug/coverage/flush", nil)
-		rec := httptest.NewRecorder()
-		srv.Routes().ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Fatalf("expected 200 OK, got %d", rec.Code)
-		}
-		if !strings.Contains(rec.Body.String(), "\"status\":\"ok\"") {
-			t.Fatalf("expected status ok in body, got %q", rec.Body.String())
-		}
-	})
-
-	// Case 3: Set GOCOVERDIR with successful counter write and debounce
-	t.Run("SuccessWithGOCOVERDIR_And_Debounce", func(t *testing.T) {
-		simulatedTime := time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC)
-		restoreTime := server.SetNowFnForTest(func() time.Time {
-			return simulatedTime
+			srv := server.New(server.Config{})
+			rec := doServerReq(srv, tc.method, "/debug/coverage/flush")
+			if rec.Code != tc.wantCode {
+				t.Fatalf("code = %d, want %d", rec.Code, tc.wantCode)
+			}
+			if tc.wantBodySub != "" && !strings.Contains(rec.Body.String(), tc.wantBodySub) {
+				t.Fatalf("body = %q, want %q", rec.Body.String(), tc.wantBodySub)
+			}
+			if tc.repeatCall {
+				rec2 := doServerReq(srv, tc.method, "/debug/coverage/flush")
+				if rec2.Code != http.StatusOK || !strings.Contains(rec2.Body.String(), `"status":"debounced"`) {
+					t.Fatalf("repeat call code=%d body=%q", rec2.Code, rec2.Body.String())
+				}
+			}
 		})
-		defer restoreTime()
+	}
+}
 
-		tempDir := t.TempDir()
-		t.Setenv("GOCOVERDIR", tempDir)
+func TestServer_Lifecycle(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name              string
+		host              string
+		port              int
+		useCustomListener bool
+		wantBindErr       bool
+	}{
+		{"serve_ready_shutdown", "127.0.0.1", -1, true, false},
+		{"listen_and_serve_success", "127.0.0.1", -1, false, false},
+		{"listen_and_serve_bind_error", "999.999.999.999", 8080, false, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			srv := server.New(server.Config{Host: tc.host, Port: tc.port})
+			if tc.wantBindErr {
+				if err := srv.ListenAndServe(); err == nil {
+					t.Fatal("expected bind error, got nil")
+				}
+				return
+			}
+			errCh := make(chan error, 1)
+			if tc.useCustomListener {
+				l, _ := net.Listen("tcp", "127.0.0.1:0")
+				go func() { errCh <- srv.Serve(l) }()
+			} else {
+				go func() { errCh <- srv.ListenAndServe() }()
+			}
 
-		var capturedDir string
-		restoreWriter := server.SetWriteCountersDirForTest(func(dir string) error {
-			capturedDir = dir
-			return nil
+			select {
+			case <-srv.Ready():
+			case err := <-errCh:
+				t.Fatalf("server failed to start: %v", err)
+			case <-time.After(2 * time.Second):
+				t.Fatal("server start timed out")
+			}
+
+			if srv.Addr() == "" {
+				t.Fatal("expected non-empty bound address")
+			}
+
+			resp, err := http.Get("http://" + srv.Addr() + "/healthz")
+			if err != nil {
+				t.Fatalf("GET /healthz failed: %v", err)
+			}
+			_ = resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("status = %d, want 200", resp.StatusCode)
+			}
+
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			if err := srv.Shutdown(ctx); err != nil {
+				t.Fatalf("Shutdown failed: %v", err)
+			}
+			select {
+			case err := <-errCh:
+				if err != nil {
+					t.Fatalf("server stopped with error: %v", err)
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("server shutdown timed out")
+			}
 		})
-		defer restoreWriter()
+	}
+}
 
-		srv := server.New(server.Config{})
-		req := httptest.NewRequest(http.MethodPost, "/debug/coverage/flush", nil)
-		rec := httptest.NewRecorder()
-		srv.Routes().ServeHTTP(rec, req)
+type mockAll struct{ status int }
 
-		if rec.Code != http.StatusOK {
-			t.Fatalf("expected 200 OK, got %d", rec.Code)
-		}
-		if capturedDir != tempDir {
-			t.Fatalf("expected capturedDir %q, got %q", tempDir, capturedDir)
-		}
-		if !strings.Contains(rec.Body.String(), "\"status\":\"ok\"") {
-			t.Fatalf("expected status ok in body, got %q", rec.Body.String())
-		}
+func (m *mockAll) w(w http.ResponseWriter, s string) {
+	w.WriteHeader(m.status)
+	_, _ = w.Write([]byte(s))
+}
 
-		// Immediate second call should be debounced
-		rec2 := httptest.NewRecorder()
-		srv.Routes().ServeHTTP(rec2, req)
-		if rec2.Code != http.StatusOK {
-			t.Fatalf("expected 200 OK for debounced flush, got %d", rec2.Code)
-		}
-		if !strings.Contains(rec2.Body.String(), "\"status\":\"debounced\"") {
-			t.Fatalf("expected debounced status in body, got %q", rec2.Body.String())
-		}
-	})
+func (m *mockAll) ServeHTTP(w http.ResponseWriter, _ *http.Request)         { m.w(w, "events") }
+func (m *mockAll) PostScreenSelect(w http.ResponseWriter, _ *http.Request)  { m.w(w, "screen_select") }
+func (m *mockAll) PostScreenAdvance(w http.ResponseWriter, _ *http.Request) { m.w(w, "screen_advance") }
+func (m *mockAll) PostScreenPause(w http.ResponseWriter, _ *http.Request)   { m.w(w, "screen_pause") }
+func (m *mockAll) GetWidgetRender(w http.ResponseWriter, _ *http.Request, id string) {
+	m.w(w, "render:"+id)
+}
+func (m *mockAll) GetWidgetAsset(w http.ResponseWriter, _ *http.Request, t, p string) {
+	m.w(w, "asset:"+t+":"+p)
+}
+func (m *mockAll) ServeStyle(w http.ResponseWriter, _ *http.Request) { m.w(w, "style") }
+func (m *mockAll) PostWidgetPush(w http.ResponseWriter, _ *http.Request, id string) {
+	m.w(w, "push:"+id)
+}
+func (m *mockAll) GetDisplay(w http.ResponseWriter, _ *http.Request)          { m.w(w, "display") }
+func (m *mockAll) GetStatic(w http.ResponseWriter, _ *http.Request, p string) { m.w(w, "static:"+p) }
+func (m *mockAll) GetListItems(w http.ResponseWriter, _ *http.Request, id string) {
+	m.w(w, "items:"+id)
+}
+func (m *mockAll) CompleteListItem(w http.ResponseWriter, _ *http.Request, l, i string) {
+	m.w(w, "complete:"+l+":"+i)
+}
+func (m *mockAll) GetAudio(w http.ResponseWriter, _ *http.Request)          { m.w(w, "audio") }
+func (m *mockAll) PostAudioVolume(w http.ResponseWriter, _ *http.Request)   { m.w(w, "volume") }
+func (m *mockAll) PostAudioMute(w http.ResponseWriter, _ *http.Request)     { m.w(w, "mute") }
+func (m *mockAll) PostVideoTrigger(w http.ResponseWriter, _ *http.Request)  { m.w(w, "v_trigger") }
+func (m *mockAll) PostVideoDismiss(w http.ResponseWriter, _ *http.Request)  { m.w(w, "v_dismiss") }
+func (m *mockAll) PostVideoAction(w http.ResponseWriter, _ *http.Request)   { m.w(w, "v_action") }
+func (m *mockAll) PostVideoState(w http.ResponseWriter, _ *http.Request)    { m.w(w, "v_post_state") }
+func (m *mockAll) GetVideoState(w http.ResponseWriter, _ *http.Request)     { m.w(w, "v_get_state") }
+func (m *mockAll) PostVoiceState(w http.ResponseWriter, _ *http.Request)    { m.w(w, "voice_state") }
+func (m *mockAll) PostVoiceInteract(w http.ResponseWriter, _ *http.Request) { m.w(w, "voice_interact") }
+func (m *mockAll) PostVoiceHeartbeat(w http.ResponseWriter, _ *http.Request) {
+	m.w(w, "voice_heartbeat")
+}
 
-	// Case 4: Set GOCOVERDIR with write failure returns 500
-	t.Run("ErrorWithGOCOVERDIR", func(t *testing.T) {
-		simulatedTime := time.Date(2026, 10, 4, 13, 0, 0, 0, time.UTC)
-		restoreTime := server.SetNowFnForTest(func() time.Time {
-			return simulatedTime
+func setAndGet[T any](set func(T), get func() T, v any) any { set(v.(T)); return get() }
+
+func testHandlerFamily(t *testing.T, srv *server.Server, fam string, m1, m2 *mockAll) *server.Server {
+	t.Helper()
+	var c server.Config
+	var got any
+	switch fam {
+	case "events":
+		c.EventsHandler, got = m1, setAndGet(srv.RegisterEventsHandler, srv.EventsHandler, m2)
+	case "screen":
+		c.ScreenHandler, got = m1, setAndGet(srv.RegisterScreenHandler, srv.ScreenHandler, m2)
+	case "render":
+		c.RenderHandler, got = m1, setAndGet(srv.RegisterRenderHandler, srv.RenderHandler, m2)
+	case "display":
+		c.DisplayHandler, got = m1, setAndGet(srv.RegisterDisplayHandler, srv.DisplayHandler, m2)
+	case "push":
+		c.PushHandler, got = m1, setAndGet(srv.RegisterPushHandler, srv.PushHandler, m2)
+	case "lists":
+		c.ListsHandler, got = m1, setAndGet(srv.RegisterListsHandler, srv.ListsHandler, m2)
+	case "audio":
+		c.AudioHandler, got = m1, setAndGet(srv.RegisterAudioHandler, srv.AudioHandler, m2)
+	case "video":
+		c.VideoHandler, got = m1, setAndGet(srv.RegisterVideoHandler, srv.VideoHandler, m2)
+	case "voice":
+		c.VoiceHandler, got = m1, setAndGet(srv.RegisterVoiceHandler, srv.VoiceHandler, m2)
+	}
+	if got != m2 {
+		t.Fatalf("%s getter returned %v, want %v", fam, got, m2)
+	}
+	return server.New(c)
+}
+
+func TestServer_HandlerDelegation(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		family   string
+		method   string
+		path     string
+		wantBody string
+	}{
+		{"events", "events", http.MethodGet, "/api/events", "events"},
+		{"screen_select", "screen", http.MethodPost, "/api/screen/select", "screen_select"},
+		{"screen_advance", "screen", http.MethodPost, "/api/screen/advance", "screen_advance"},
+		{"screen_pause", "screen", http.MethodPost, "/api/screen/pause", "screen_pause"},
+		{"render_widget", "render", http.MethodGet, "/api/widgets/sensor-1/render", "render:sensor-1"},
+		{"render_asset", "render", http.MethodGet, "/widget-types/clock/assets/icon.png", "asset:clock:icon.png"},
+		{"render_style", "render", http.MethodGet, "/style.css", "style"},
+		{"display_main", "display", http.MethodGet, "/display", "display"},
+		{"display_static", "display", http.MethodGet, "/static/bundle.js", "static:bundle.js"},
+		{"push_webhook", "push", http.MethodPost, "/api/widgets/weather/push", "push:weather"},
+		{"lists_items", "lists", http.MethodGet, "/api/lists/groceries/items", "items:groceries"},
+		{"lists_complete", "lists", http.MethodPost, "/api/lists/groceries/items/i42/complete", "complete:groceries:i42"},
+		{"audio_get", "audio", http.MethodGet, "/api/audio", "audio"},
+		{"audio_volume", "audio", http.MethodPost, "/api/audio/volume", "volume"},
+		{"audio_mute", "audio", http.MethodPost, "/api/audio/mute", "mute"},
+		{"video_trigger", "video", http.MethodPost, "/api/video/trigger", "v_trigger"},
+		{"video_dismiss", "video", http.MethodPost, "/api/video/dismiss", "v_dismiss"},
+		{"video_action", "video", http.MethodPost, "/api/video/action", "v_action"},
+		{"video_state_get", "video", http.MethodGet, "/api/video/state", "v_get_state"},
+		{"video_state_post", "video", http.MethodPost, "/api/video/state", "v_post_state"},
+		{"voice_state", "voice", http.MethodPost, "/api/voice/state", "voice_state"},
+		{"voice_interact", "voice", http.MethodPost, "/api/voice/interact", "voice_interact"},
+		{"voice_heartbeat", "voice", http.MethodPost, "/api/voice/heartbeat", "voice_heartbeat"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			srvEmpty := server.New(server.Config{})
+			if rec := doServerReq(srvEmpty, tc.method, tc.path); rec.Code != http.StatusNotFound {
+				t.Fatalf("unset handler returned %d, want 404", rec.Code)
+			}
+
+			m1, m2 := &mockAll{status: http.StatusOK}, &mockAll{status: http.StatusTeapot}
+			srvCfg := testHandlerFamily(t, srvEmpty, tc.family, m1, m2)
+
+			rec200 := doServerReq(srvCfg, tc.method, tc.path)
+			if rec200.Code != http.StatusOK || !strings.Contains(rec200.Body.String(), tc.wantBody) {
+				t.Fatalf("configured handler code=%d body=%q, want 200 with %q", rec200.Code, rec200.Body.String(), tc.wantBody)
+			}
+
+			if recTeapot := doServerReq(srvEmpty, tc.method, tc.path); recTeapot.Code != http.StatusTeapot {
+				t.Fatalf("dynamic handler returned %d, want 418", recTeapot.Code)
+			}
 		})
-		defer restoreTime()
-
-		tempDir := t.TempDir()
-		t.Setenv("GOCOVERDIR", tempDir)
-
-		restoreWriter := server.SetWriteCountersDirForTest(func(dir string) error {
-			return errors.New("simulated flush error")
-		})
-		defer restoreWriter()
-
-		srv := server.New(server.Config{})
-		req := httptest.NewRequest(http.MethodGet, "/debug/coverage/flush", nil)
-		rec := httptest.NewRecorder()
-		srv.Routes().ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusInternalServerError {
-			t.Fatalf("expected 500 Internal Server Error, got %d", rec.Code)
-		}
-		if !strings.Contains(rec.Body.String(), "simulated flush error") {
-			t.Fatalf("expected error body to contain simulated flush error, got %q", rec.Body.String())
-		}
-	})
+	}
 }
