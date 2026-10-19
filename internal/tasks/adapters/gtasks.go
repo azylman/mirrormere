@@ -1,7 +1,6 @@
 package adapters
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -18,40 +17,24 @@ import (
 )
 
 const (
-	defaultGoogleTasksBaseURL  = "https://tasks.googleapis.com"
-	defaultGoogleOAuthTokenURL = "https://oauth2.googleapis.com/token"
-	maxGoogleTasksPages        = 10
-	googleTasksPageSize        = 100
+	defaultGoogleTasksBaseURL                = "https://tasks.googleapis.com"
+	defaultGoogleOAuthTokenURL               = "https://oauth2.googleapis.com/token"
+	maxGoogleTasksPages, googleTasksPageSize = 10, 100
 )
 
 // GTasksAdapterConfig holds configuration for the Google Tasks API adapter.
 type GTasksAdapterConfig struct {
-	TaskListID   string
-	Token        string // static access token (test-only fallback)
-	ClientID     string
-	ClientSecret string
-	RefreshToken string
-	TokenURL     string // defaults to https://oauth2.googleapis.com/token
-	ListName     string
-	BaseURL      string
-	Client       *http.Client
+	TaskListID, Token, ClientID, ClientSecret, RefreshToken, TokenURL, ListName, BaseURL string
+	Client                                                                               *http.Client
 }
 
 // GTasksAdapter ingests task lists and items from the Google Tasks API.
 type GTasksAdapter struct {
-	taskListID   string
-	token        string
-	clientID     string
-	clientSecret string
-	refreshToken string
-	tokenURL     string
-	listName     string
-	baseURL      string
-	client       *http.Client
-
-	tokenMu     sync.Mutex
-	cachedToken string
-	tokenExpiry time.Time
+	taskListID, token, clientID, clientSecret, refreshToken, tokenURL, listName, baseURL string
+	client                                                                               *http.Client
+	tokenMu                                                                              sync.Mutex
+	cachedToken                                                                          string
+	tokenExpiry                                                                          time.Time
 }
 
 // NewGTasksAdapter creates a validated GTasksAdapter.
@@ -60,34 +43,13 @@ func NewGTasksAdapter(cfg GTasksAdapterConfig) (*GTasksAdapter, error) {
 	if taskListID == "" {
 		return nil, errors.New("tasklist_id is required")
 	}
-
-	baseURL := strings.TrimSpace(cfg.BaseURL)
-	if baseURL == "" {
-		baseURL = defaultGoogleTasksBaseURL
+	baseURL, err := validateHTTPURL(cfg.BaseURL, defaultGoogleTasksBaseURL, "base_url")
+	if err != nil {
+		return nil, err
 	}
-	baseURL = strings.TrimRight(baseURL, "/")
-
-	u, err := url.ParseRequestURI(baseURL)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		return nil, fmt.Errorf("invalid base_url %q: must be http:// or https:// with host", baseURL)
-	}
-
-	tokenURL := strings.TrimSpace(cfg.TokenURL)
-	if tokenURL == "" {
-		tokenURL = defaultGoogleOAuthTokenURL
-	}
-	tokenURL = strings.TrimRight(tokenURL, "/")
-
-	tu, err := url.ParseRequestURI(tokenURL)
-	if err != nil || (tu.Scheme != "http" && tu.Scheme != "https") || tu.Host == "" {
-		return nil, fmt.Errorf("invalid token_url %q: must be http:// or https:// with host", tokenURL)
-	}
-
-	client := cfg.Client
-	if client == nil {
-		client = &http.Client{
-			Timeout: 10 * time.Second,
-		}
+	tokenURL, err := validateHTTPURL(cfg.TokenURL, defaultGoogleOAuthTokenURL, "token_url")
+	if err != nil {
+		return nil, err
 	}
 
 	return &GTasksAdapter{
@@ -99,14 +61,11 @@ func NewGTasksAdapter(cfg GTasksAdapterConfig) (*GTasksAdapter, error) {
 		tokenURL:     tokenURL,
 		listName:     strings.TrimSpace(cfg.ListName),
 		baseURL:      baseURL,
-		client:       client,
+		client:       defaultHTTPClient(cfg.Client),
 	}, nil
 }
 
-// Name returns the adapter type name.
-func (a *GTasksAdapter) Name() string {
-	return "gtasks"
-}
+func (a *GTasksAdapter) Name() string { return "gtasks" }
 
 type gtasksListMetadata struct {
 	ID      string `json:"id"`
@@ -136,9 +95,7 @@ type gtasksListResponse struct {
 
 // FetchList retrieves task list metadata and items from the Google Tasks API.
 func (a *GTasksAdapter) FetchList(ctx context.Context) (*tasks.List, []tasks.ListItem, error) {
-	// 1. Fetch or resolve list metadata
-	listTitle := a.listName
-	listUpdatedAt := time.Now().UTC()
+	listTitle, listUpdatedAt := a.listName, time.Now().UTC()
 
 	metaURL := fmt.Sprintf("%s/tasks/v1/users/@me/lists/%s", a.baseURL, url.PathEscape(a.taskListID))
 	metaBody, metaErr := a.doGet(ctx, metaURL)
@@ -155,15 +112,12 @@ func (a *GTasksAdapter) FetchList(ctx context.Context) (*tasks.List, []tasks.Lis
 			}
 		}
 	} else if errors.Is(metaErr, ErrUnauthorized) || errors.Is(metaErr, ErrUpstreamNotFound) {
-		// Terminal errors on the list resource itself fail immediately
 		return nil, nil, metaErr
 	}
-
 	if listTitle == "" {
 		listTitle = a.taskListID
 	}
 
-	// 2. Fetch tasks items with pagination
 	allGTasks := make([]gtasksItem, 0, 64)
 	seenTokens := make(map[string]bool)
 	pageToken := ""
@@ -189,34 +143,27 @@ func (a *GTasksAdapter) FetchList(ctx context.Context) (*tasks.List, []tasks.Lis
 		if err := json.Unmarshal(body, &pageResp); err != nil {
 			return nil, nil, fmt.Errorf("failed to parse google tasks json response: %w", err)
 		}
-
 		allGTasks = append(allGTasks, pageResp.Items...)
 
-		pageToken = strings.TrimSpace(pageResp.NextPageToken)
-		if pageToken == "" || seenTokens[pageToken] {
+		if pageToken = strings.TrimSpace(pageResp.NextPageToken); pageToken == "" || seenTokens[pageToken] {
 			break
 		}
 		seenTokens[pageToken] = true
 	}
 
-	// 3. Filter soft-deleted items and sort hierarchically by parent and position
 	activeItems := make([]gtasksItem, 0, len(allGTasks))
 	for _, gt := range allGTasks {
-		// Skip soft-deleted items per Google Tasks protocol
-		if gt.Deleted {
-			continue
+		if !gt.Deleted {
+			activeItems = append(activeItems, gt)
 		}
-		activeItems = append(activeItems, gt)
 	}
 
 	orderedGTasks := orderGTasks(activeItems)
-
 	now := time.Now().UTC()
 	items := make([]tasks.ListItem, 0, len(orderedGTasks))
 
 	for _, gt := range orderedGTasks {
 		done := strings.EqualFold(gt.Status, "completed")
-
 		var dueDate *string
 		if len(gt.Due) >= 10 {
 			datePart := gt.Due[:10]
@@ -244,25 +191,19 @@ func (a *GTasksAdapter) FetchList(ctx context.Context) (*tasks.List, []tasks.Lis
 		})
 	}
 
-	list := &tasks.List{
+	return &tasks.List{
 		ID:        a.taskListID,
 		Name:      listTitle,
 		Source:    "gtasks",
 		Sections:  []string{},
 		UpdatedAt: listUpdatedAt,
-	}
-
-	return list, items, nil
+	}, items, nil
 }
 
-// orderGTasks sorts Google Tasks items according to their hierarchical structure:
-// top-level tasks are ordered by their Position key lexicographically, with direct subtasks
-// (items with Parent set) placed immediately after their parent task in sibling Position order.
 func orderGTasks(items []gtasksItem) []gtasksItem {
 	if len(items) <= 1 {
 		return items
 	}
-
 	itemByID := make(map[string]gtasksItem, len(items))
 	childrenByParent := make(map[string][]gtasksItem)
 	var topLevel []gtasksItem
@@ -270,24 +211,19 @@ func orderGTasks(items []gtasksItem) []gtasksItem {
 	for _, item := range items {
 		itemByID[item.ID] = item
 	}
-
 	for _, item := range items {
 		if item.Parent == "" {
 			topLevel = append(topLevel, item)
 		} else if _, exists := itemByID[item.Parent]; exists {
 			childrenByParent[item.Parent] = append(childrenByParent[item.Parent], item)
 		} else {
-			// Orphaned subtask with non-existent or deleted parent; treat as top-level
 			topLevel = append(topLevel, item)
 		}
 	}
 
 	sortGTasks := func(slice []gtasksItem) {
-		sort.SliceStable(slice, func(i, j int) bool {
-			return slice[i].Position < slice[j].Position
-		})
+		sort.SliceStable(slice, func(i, j int) bool { return slice[i].Position < slice[j].Position })
 	}
-
 	sortGTasks(topLevel)
 	for parentID := range childrenByParent {
 		sortGTasks(childrenByParent[parentID])
@@ -307,18 +243,14 @@ func orderGTasks(items []gtasksItem) []gtasksItem {
 			traverse(child)
 		}
 	}
-
 	for _, item := range topLevel {
 		traverse(item)
 	}
-
-	// Safeguard against cyclic or unvisited items
 	for _, item := range items {
 		if !visited[item.ID] {
 			traverse(item)
 		}
 	}
-
 	return ordered
 }
 
@@ -332,23 +264,19 @@ func (a *GTasksAdapter) getAccessToken(ctx context.Context, forceRefresh bool) (
 	a.tokenMu.Lock()
 	defer a.tokenMu.Unlock()
 
-	// If refresh token is not configured, fall back to static token (test-only)
 	if a.refreshToken == "" {
 		return a.token, nil
 	}
-
-	// Reuse cached token if valid and not forcing refresh
 	if !forceRefresh && a.cachedToken != "" && time.Now().Add(60*time.Second).Before(a.tokenExpiry) {
 		return a.cachedToken, nil
 	}
 
-	// Request new access token via refresh_token exchange
-	form := url.Values{}
-	form.Set("grant_type", "refresh_token")
-	form.Set("client_id", a.clientID)
-	form.Set("client_secret", a.clientSecret)
-	form.Set("refresh_token", a.refreshToken)
-
+	form := url.Values{
+		"grant_type":    {"refresh_token"},
+		"client_id":     {a.clientID},
+		"client_secret": {a.clientSecret},
+		"refresh_token": {a.refreshToken},
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.tokenURL, strings.NewReader(form.Encode()))
 	if err != nil {
 		return "", fmt.Errorf("failed to create oauth token request: %w", err)
@@ -360,15 +288,12 @@ func (a *GTasksAdapter) getAccessToken(ctx context.Context, forceRefresh bool) (
 	if err != nil {
 		return "", fmt.Errorf("oauth token request failed: %w", err)
 	}
-	defer func() {
-		_ = resp.Body.Close()
-	}()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, readErr := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 	if readErr != nil {
 		return "", fmt.Errorf("failed to read oauth token response: %w", readErr)
 	}
-
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("oauth token refresh failed with status %d: %s", resp.StatusCode, string(body))
 	}
@@ -377,7 +302,6 @@ func (a *GTasksAdapter) getAccessToken(ctx context.Context, forceRefresh bool) (
 	if err := json.Unmarshal(body, &tokenResp); err != nil {
 		return "", fmt.Errorf("failed to parse oauth token response: %w", err)
 	}
-
 	if tokenResp.AccessToken == "" {
 		return "", errors.New("oauth token response missing access_token")
 	}
@@ -386,10 +310,8 @@ func (a *GTasksAdapter) getAccessToken(ctx context.Context, forceRefresh bool) (
 	if expiresIn <= 0 {
 		expiresIn = 3600
 	}
-
 	a.cachedToken = tokenResp.AccessToken
 	a.tokenExpiry = time.Now().Add(time.Duration(expiresIn) * time.Second)
-
 	return a.cachedToken, nil
 }
 
@@ -403,51 +325,11 @@ func (a *GTasksAdapter) doGetWithRetry(ctx context.Context, targetURL string, is
 		return nil, fmt.Errorf("failed to obtain gtasks access token: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create http request: %w", err)
-	}
-
-	req.Header.Set("Accept", "application/json")
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
-	}
-
-	resp, err := a.client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("google tasks request failed: %w", err)
-	}
-	defer func() {
-		_ = resp.Body.Close()
-	}()
-
-	if resp.StatusCode == http.StatusUnauthorized && !isRetry && a.refreshToken != "" {
-		// Refresh token once on 401
+	body, status, err := doBearerGet(ctx, a.client, targetURL, token, "google tasks request")
+	if status == http.StatusUnauthorized && !isRetry && a.refreshToken != "" {
 		if _, refreshErr := a.getAccessToken(ctx, true); refreshErr == nil {
 			return a.doGetWithRetry(ctx, targetURL, true)
 		}
 	}
-
-	switch resp.StatusCode {
-	case http.StatusOK:
-		// success
-	case http.StatusUnauthorized, http.StatusForbidden:
-		return nil, ErrUnauthorized
-	case http.StatusNotFound:
-		return nil, ErrUpstreamNotFound
-	default:
-		return nil, UpstreamHTTPError{Code: resp.StatusCode, URL: targetURL}
-	}
-
-	limitReader := io.LimitReader(resp.Body, MaxPayloadBytes+1)
-	buf := bytes.NewBuffer(make([]byte, 0, 16*1024))
-	n, readErr := buf.ReadFrom(limitReader)
-	if readErr != nil {
-		return nil, fmt.Errorf("failed to read google tasks response: %w", readErr)
-	}
-	if n > MaxPayloadBytes {
-		return nil, ErrPayloadTooLarge
-	}
-
-	return buf.Bytes(), nil
+	return body, err
 }

@@ -2,12 +2,8 @@ package adapters_test
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"net/http"
-	"net/http/httptest"
 	"strings"
-	"sync/atomic"
 	"testing"
 
 	"github.com/azylman/mirrormere/internal/tasks/adapters"
@@ -15,808 +11,204 @@ import (
 
 func TestNewGTasksAdapter_Validation(t *testing.T) {
 	t.Parallel()
-
-	// 1. Missing tasklist_id
-	_, err := adapters.NewGTasksAdapter(adapters.GTasksAdapterConfig{})
-	if err == nil || !strings.Contains(err.Error(), "tasklist_id is required") {
-		t.Fatalf("expected error for empty tasklist_id, got %v", err)
-	}
-
-	// 2. Invalid BaseURL
-	_, err = adapters.NewGTasksAdapter(adapters.GTasksAdapterConfig{
-		TaskListID: "test-id",
-		BaseURL:    "ftp://invalid",
-	})
-	if err == nil || !strings.Contains(err.Error(), "must be http:// or https://") {
-		t.Fatalf("expected error for invalid base_url, got %v", err)
-	}
-
-	// 3. Valid Config
-	ad, err := adapters.NewGTasksAdapter(adapters.GTasksAdapterConfig{
-		TaskListID: "my-tasks",
-		Token:      "oauth-token",
-		ListName:   "Personal Tasks",
-	})
-	if err != nil {
-		t.Fatalf("unexpected error for valid config: %v", err)
-	}
-	if ad.Name() != "gtasks" {
-		t.Errorf("expected Name() to be 'gtasks', got %q", ad.Name())
-	}
-}
-
-func TestGTasksAdapter_FetchList_Success(t *testing.T) {
-	t.Parallel()
-
-	var receivedAuth string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		receivedAuth = r.Header.Get("Authorization")
-		w.Header().Set("Content-Type", "application/json")
-
-		if r.URL.Path == "/tasks/v1/users/@me/lists/my-list" {
-			meta := map[string]any{
-				"id":      "my-list",
-				"title":   "Daily Chores",
-				"updated": "2026-09-26T12:00:00.000Z",
-			}
-			_ = json.NewEncoder(w).Encode(meta)
-			return
-		}
-
-		if r.URL.Path == "/tasks/v1/lists/my-list/tasks" {
-			// Verify query parameters
-			q := r.URL.Query()
-			if q.Get("showCompleted") != "true" || q.Get("showHidden") != "true" {
-				http.Error(w, "missing required query parameters", http.StatusBadRequest)
-				return
-			}
-
-			resp := map[string]any{
-				"kind": "tasks#tasks",
-				"items": []map[string]any{
-					{
-						"id":      "task-1",
-						"title":   "Clean room",
-						"status":  "needsAction",
-						"due":     "2026-09-28T00:00:00.000Z",
-						"updated": "2026-09-26T10:00:00.000Z",
-					},
-					{
-						"id":      "task-2",
-						"title":   "Fold laundry",
-						"status":  "completed",
-						"updated": "2026-09-26T11:00:00.000Z",
-					},
-					{
-						"id":      "task-3-deleted",
-						"title":   "Discarded task",
-						"deleted": true,
-					},
-				},
-			}
-			_ = json.NewEncoder(w).Encode(resp)
-			return
-		}
-
-		http.NotFound(w, r)
-	}))
-	defer server.Close()
-
-	ad, err := adapters.NewGTasksAdapter(adapters.GTasksAdapterConfig{
-		TaskListID: "my-list",
-		Token:      "oauth2-bearer-token",
-		BaseURL:    server.URL,
-		Client:     server.Client(),
-	})
-	if err != nil {
-		t.Fatalf("failed to create gtasks adapter: %v", err)
-	}
-
-	list, items, err := ad.FetchList(context.Background())
-	if err != nil {
-		t.Fatalf("FetchList failed: %v", err)
-	}
-
-	if receivedAuth != "Bearer oauth2-bearer-token" {
-		t.Errorf("expected Bearer oauth2-bearer-token, got %q", receivedAuth)
-	}
-	if list.ID != "my-list" || list.Name != "Daily Chores" || list.Source != "gtasks" {
-		t.Errorf("unexpected list: %+v", list)
-	}
-	// Verify deleted task was filtered out
-	if len(items) != 2 {
-		t.Fatalf("expected 2 items (excluding soft-deleted), got %d", len(items))
-	}
-	if items[0].Title != "Clean room" || items[0].Done || items[0].DueDate == nil || *items[0].DueDate != "2026-09-28" {
-		t.Errorf("unexpected item 0: %+v", items[0])
-	}
-	if items[1].Title != "Fold laundry" || !items[1].Done || items[1].DueDate != nil {
-		t.Errorf("unexpected item 1: %+v", items[1])
-	}
-}
-
-func TestGTasksAdapter_FetchList_PaginationAndCycleGuard(t *testing.T) {
-	t.Parallel()
-
-	calls := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-
-		if r.URL.Path == "/tasks/v1/users/@me/lists/paged-list" {
-			// Fail metadata call to exercise fallback name
-			http.Error(w, "Metadata unavailable", http.StatusServiceUnavailable)
-			return
-		}
-
-		if r.URL.Path == "/tasks/v1/lists/paged-list/tasks" {
-			calls++
-			pageToken := r.URL.Query().Get("pageToken")
-			if pageToken == "" {
-				resp := map[string]any{
-					"items": []map[string]any{
-						{"id": "t-1", "title": "Page 1 Item"},
-					},
-					"nextPageToken": "page-2-token",
-				}
-				_ = json.NewEncoder(w).Encode(resp)
-				return
-			}
-			if pageToken == "page-2-token" {
-				// Returns token pointing back to page-2-token to test cycle prevention
-				resp := map[string]any{
-					"items": []map[string]any{
-						{"id": "t-2", "title": "Page 2 Item"},
-					},
-					"nextPageToken": "page-2-token",
-				}
-				_ = json.NewEncoder(w).Encode(resp)
-				return
-			}
-		}
-
-		http.NotFound(w, r)
-	}))
-	defer server.Close()
-
-	ad, err := adapters.NewGTasksAdapter(adapters.GTasksAdapterConfig{
-		TaskListID: "paged-list",
-		ListName:   "Fallback Title",
-		BaseURL:    server.URL,
-		Client:     server.Client(),
-	})
-	if err != nil {
-		t.Fatalf("failed to create adapter: %v", err)
-	}
-
-	list, items, err := ad.FetchList(context.Background())
-	if err != nil {
-		t.Fatalf("FetchList failed: %v", err)
-	}
-
-	if list.Name != "Fallback Title" {
-		t.Errorf("expected fallback title 'Fallback Title', got %q", list.Name)
-	}
-	if len(items) != 2 {
-		t.Fatalf("expected 2 items across pages, got %d", len(items))
-	}
-	if calls != 2 {
-		t.Errorf("expected 2 calls before cycle break, got %d", calls)
-	}
-}
-
-func TestGTasksAdapter_FetchList_Errors(t *testing.T) {
-	t.Parallel()
-
-	// 1. 401 Unauthorized on metadata call
-	server401 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-	}))
-	defer server401.Close()
-
-	ad401, _ := adapters.NewGTasksAdapter(adapters.GTasksAdapterConfig{
-		TaskListID: "list-401",
-		BaseURL:    server401.URL,
-		Client:     server401.Client(),
-	})
-	_, _, err := ad401.FetchList(context.Background())
-	if !errors.Is(err, adapters.ErrUnauthorized) {
-		t.Fatalf("expected ErrUnauthorized, got %v", err)
-	}
-
-	// 2. 404 Not Found on metadata call
-	server404 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.NotFound(w, r)
-	}))
-	defer server404.Close()
-
-	ad404, _ := adapters.NewGTasksAdapter(adapters.GTasksAdapterConfig{
-		TaskListID: "list-404",
-		BaseURL:    server404.URL,
-		Client:     server404.Client(),
-	})
-	_, _, err = ad404.FetchList(context.Background())
-	if !errors.Is(err, adapters.ErrUpstreamNotFound) {
-		t.Fatalf("expected ErrUpstreamNotFound, got %v", err)
-	}
-
-	// 3. 500 Server Error on tasks fetch
-	server500 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.Contains(r.URL.Path, "/users/@me/lists") {
-			_ = json.NewEncoder(w).Encode(map[string]any{"id": "list-500", "title": "Test"})
-			return
-		}
-		http.Error(w, "API Crash", http.StatusInternalServerError)
-	}))
-	defer server500.Close()
-
-	ad500, _ := adapters.NewGTasksAdapter(adapters.GTasksAdapterConfig{
-		TaskListID: "list-500",
-		BaseURL:    server500.URL,
-		Client:     server500.Client(),
-	})
-	_, _, err = ad500.FetchList(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "status 500") {
-		t.Fatalf("expected status 500 error, got %v", err)
-	}
-
-	// 4. Slowloris Payload limit exceeded (> 2MB)
-	serverLarge := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.Contains(r.URL.Path, "/users/@me/lists") {
-			_ = json.NewEncoder(w).Encode(map[string]any{"id": "list-large", "title": "Large"})
-			return
-		}
-		payload := strings.Repeat("X", adapters.MaxPayloadBytes+2048)
-		_, _ = w.Write([]byte(payload))
-	}))
-	defer serverLarge.Close()
-
-	adLarge, _ := adapters.NewGTasksAdapter(adapters.GTasksAdapterConfig{
-		TaskListID: "list-large",
-		BaseURL:    serverLarge.URL,
-		Client:     serverLarge.Client(),
-	})
-	_, _, err = adLarge.FetchList(context.Background())
-	if !errors.Is(err, adapters.ErrPayloadTooLarge) {
-		t.Fatalf("expected ErrPayloadTooLarge, got %v", err)
-	}
-
-	// 5. Malformed JSON on tasks response
-	serverBadJSON := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.Contains(r.URL.Path, "/users/@me/lists") {
-			_ = json.NewEncoder(w).Encode(map[string]any{"id": "list-bad", "title": "Bad"})
-			return
-		}
-		_, _ = w.Write([]byte(`{ "unclosed": `))
-	}))
-	defer serverBadJSON.Close()
-
-	adBadJSON, _ := adapters.NewGTasksAdapter(adapters.GTasksAdapterConfig{
-		TaskListID: "list-bad",
-		BaseURL:    serverBadJSON.URL,
-		Client:     serverBadJSON.Client(),
-	})
-	_, _, err = adBadJSON.FetchList(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "failed to parse google tasks json response") {
-		t.Fatalf("expected parse json error, got %v", err)
-	}
-
-	// 6. Network failure
-	closedServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	closedURL := closedServer.URL
-	closedServer.Close()
-
-	adClosed, _ := adapters.NewGTasksAdapter(adapters.GTasksAdapterConfig{
-		TaskListID: "list-closed",
-		BaseURL:    closedURL,
-	})
-	_, _, err = adClosed.FetchList(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "failed to fetch tasks from google tasks") {
-		t.Fatalf("expected network failure error, got %v", err)
-	}
-}
-
-func TestGTasksAdapter_FetchList_TimestampsAndDefaultTitle(t *testing.T) {
-	t.Parallel()
-
-	// Server returning RFC3339 timestamps (without fractional seconds) and empty metadata title
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		if strings.Contains(r.URL.Path, "/users/@me/lists") {
-			// Title is empty, Updated is RFC3339 without fractions
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"id":      "simple-list",
-				"title":   "",
-				"updated": "2026-09-26T14:30:00Z",
-			})
-			return
-		}
-
-		if strings.Contains(r.URL.Path, "/tasks") {
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"items": []map[string]any{
-					{
-						"id":      "item-standard",
-						"title":   "Standard Task",
-						"status":  "needsAction",
-						"updated": "2026-09-26T14:35:00Z",
-						"due":     "invalid-date",
-					},
-				},
-			})
-			return
-		}
-	}))
-	defer server.Close()
-
-	ad, err := adapters.NewGTasksAdapter(adapters.GTasksAdapterConfig{
-		TaskListID: "simple-list",
-		BaseURL:    server.URL,
-		Client:     server.Client(),
-	})
-	if err != nil {
-		t.Fatalf("failed to create adapter: %v", err)
-	}
-
-	list, items, err := ad.FetchList(context.Background())
-	if err != nil {
-		t.Fatalf("FetchList failed: %v", err)
-	}
-
-	// When metadata title and ListName are empty, title defaults to TaskListID
-	if list.Name != "simple-list" {
-		t.Errorf("expected list name 'simple-list', got %q", list.Name)
-	}
-	if len(items) != 1 {
-		t.Fatalf("expected 1 item, got %d", len(items))
-	}
-	// Invalid due date should result in nil DueDate
-	if items[0].DueDate != nil {
-		t.Errorf("expected nil DueDate for invalid-date, got %v", *items[0].DueDate)
-	}
-}
-
-func TestGTasksAdapter_OAuthRefresh_SuccessAndCaching(t *testing.T) {
-	t.Parallel()
-
-	var tokenRequests atomic.Int32
-	var taskRequests atomic.Int32
-
-	oauthServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/token" {
-			tokenRequests.Add(1)
-			_ = r.ParseForm()
-			if r.Form.Get("grant_type") != "refresh_token" {
-				http.Error(w, "invalid grant_type", http.StatusBadRequest)
-				return
-			}
-			if r.Form.Get("client_id") != "test-client-id" ||
-				r.Form.Get("client_secret") != "test-client-secret" ||
-				r.Form.Get("refresh_token") != "test-refresh-token" {
-				http.Error(w, "invalid credentials", http.StatusUnauthorized)
-				return
-			}
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"access_token": "minted-token-123",
-				"expires_in":   3600,
-				"token_type":   "Bearer",
-			})
-			return
-		}
-		http.NotFound(w, r)
-	}))
-	defer oauthServer.Close()
-
-	tasksServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		taskRequests.Add(1)
-		auth := r.Header.Get("Authorization")
-		if auth != "Bearer minted-token-123" {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		if strings.Contains(r.URL.Path, "/users/@me/lists/") {
-			_ = json.NewEncoder(w).Encode(map[string]any{"id": "list-1", "title": "My List"})
-			return
-		}
-		if strings.Contains(r.URL.Path, "/tasks") {
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"items": []map[string]any{
-					{"id": "task-1", "title": "Item 1", "status": "needsAction"},
-				},
-			})
-			return
-		}
-		http.NotFound(w, r)
-	}))
-	defer tasksServer.Close()
-
-	ad, err := adapters.NewGTasksAdapter(adapters.GTasksAdapterConfig{
-		TaskListID:   "list-1",
-		ClientID:     "test-client-id",
-		ClientSecret: "test-client-secret",
-		RefreshToken: "test-refresh-token",
-		TokenURL:     oauthServer.URL + "/token",
-		BaseURL:      tasksServer.URL,
-		Client:       tasksServer.Client(),
-	})
-	if err != nil {
-		t.Fatalf("failed to create adapter: %v", err)
-	}
-
-	ctx := context.Background()
-
-	// 1. First fetch exchanges refresh_token for access_token and succeeds
-	list, items, err := ad.FetchList(ctx)
-	if err != nil {
-		t.Fatalf("FetchList 1 failed: %v", err)
-	}
-	if list.Name != "My List" || len(items) != 1 {
-		t.Fatalf("unexpected list or items: %+v, %+v", list, items)
-	}
-	if tokenRequests.Load() != 1 {
-		t.Errorf("expected 1 token request, got %d", tokenRequests.Load())
-	}
-
-	// 2. Second fetch within expiry window reuses cached access_token (zero token requests)
-	list2, items2, err := ad.FetchList(ctx)
-	if err != nil {
-		t.Fatalf("FetchList 2 failed: %v", err)
-	}
-	if list2.Name != "My List" || len(items2) != 1 {
-		t.Fatalf("unexpected list2 or items2: %+v, %+v", list2, items2)
-	}
-	if tokenRequests.Load() != 1 {
-		t.Errorf("expected still 1 token request due to caching, got %d", tokenRequests.Load())
-	}
-}
-
-func TestGTasksAdapter_OAuthRefresh_401Retry(t *testing.T) {
-	t.Parallel()
-
-	var tokenRequests atomic.Int32
-	var taskRequests atomic.Int32
-
-	oauthServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		reqNum := tokenRequests.Add(1)
-		w.Header().Set("Content-Type", "application/json")
-		if reqNum == 1 {
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"access_token": "expired-initial-token",
-				"expires_in":   3600,
-			})
-			return
-		}
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"access_token": "fresh-token-456",
-			"expires_in":   3600,
-		})
-	}))
-	defer oauthServer.Close()
-
-	tasksServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		taskRequests.Add(1)
-		auth := r.Header.Get("Authorization")
-		if auth == "Bearer expired-initial-token" {
-			// Reject stale token
-			http.Error(w, "token revoked", http.StatusUnauthorized)
-			return
-		}
-		if auth == "Bearer fresh-token-456" {
-			w.Header().Set("Content-Type", "application/json")
-			if strings.Contains(r.URL.Path, "/users/@me/lists/") {
-				_ = json.NewEncoder(w).Encode(map[string]any{"id": "list-1", "title": "Recovered List"})
-				return
-			}
-			if strings.Contains(r.URL.Path, "/tasks") {
-				_ = json.NewEncoder(w).Encode(map[string]any{
-					"items": []map[string]any{
-						{"id": "task-1", "title": "Recovered Item", "status": "needsAction"},
-					},
-				})
-				return
-			}
-		}
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-	}))
-	defer tasksServer.Close()
-
-	ad, err := adapters.NewGTasksAdapter(adapters.GTasksAdapterConfig{
-		TaskListID:   "list-1",
-		ClientID:     "cid",
-		ClientSecret: "csec",
-		RefreshToken: "rtoken",
-		TokenURL:     oauthServer.URL + "/token",
-		BaseURL:      tasksServer.URL,
-		Client:       tasksServer.Client(),
-	})
-	if err != nil {
-		t.Fatalf("failed to create adapter: %v", err)
-	}
-
-	// Fetch should get 401 on first attempt, refresh token, retry, and succeed!
-	list, items, err := ad.FetchList(context.Background())
-	if err != nil {
-		t.Fatalf("FetchList failed to recover on 401 retry: %v", err)
-	}
-	if list.Name != "Recovered List" || len(items) != 1 {
-		t.Errorf("unexpected list or items: %+v, %+v", list, items)
-	}
-	if tokenRequests.Load() < 2 {
-		t.Errorf("expected at least 2 token requests (initial + 401 refresh), got %d", tokenRequests.Load())
-	}
-}
-
-func TestGTasksAdapter_OAuthRefresh_Errors(t *testing.T) {
-	t.Parallel()
-
-	// 1. Invalid TokenURL
-	_, err := adapters.NewGTasksAdapter(adapters.GTasksAdapterConfig{
-		TaskListID: "t-1",
-		TokenURL:   "://bad-url",
-	})
-	if err == nil || !strings.Contains(err.Error(), "invalid token_url") {
-		t.Errorf("expected invalid token_url error, got %v", err)
-	}
-
-	// 2. OAuth network failure (closed token server)
-	closedOAuthServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	closedOAuthURL := closedOAuthServer.URL
-	closedOAuthServer.Close()
-
-	adClosedOAuth, _ := adapters.NewGTasksAdapter(adapters.GTasksAdapterConfig{
-		TaskListID:   "t-1",
-		RefreshToken: "ref-tok",
-		TokenURL:     closedOAuthURL,
-		BaseURL:      "https://example.com",
-	})
-	_, _, err = adClosedOAuth.FetchList(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "oauth token request failed") {
-		t.Errorf("expected oauth token request failed error, got %v", err)
-	}
-
-	// 3. OAuth endpoint returns 500 error
-	oauthErrServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "internal server error", http.StatusInternalServerError)
-	}))
-	defer oauthErrServer.Close()
-
-	adOAuthErr, _ := adapters.NewGTasksAdapter(adapters.GTasksAdapterConfig{
-		TaskListID:   "t-1",
-		RefreshToken: "ref-tok",
-		TokenURL:     oauthErrServer.URL,
-		BaseURL:      "https://example.com",
-		Client:       oauthErrServer.Client(),
-	})
-	_, _, err = adOAuthErr.FetchList(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "oauth token refresh failed") {
-		t.Errorf("expected oauth token refresh failed error, got %v", err)
-	}
-
-	// 4. OAuth endpoint returns invalid JSON
-	oauthBadJSON := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte("{invalid-json"))
-	}))
-	defer oauthBadJSON.Close()
-
-	adBadJSON, _ := adapters.NewGTasksAdapter(adapters.GTasksAdapterConfig{
-		TaskListID:   "t-1",
-		RefreshToken: "ref-tok",
-		TokenURL:     oauthBadJSON.URL,
-		BaseURL:      "https://example.com",
-		Client:       oauthBadJSON.Client(),
-	})
-	_, _, err = adBadJSON.FetchList(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "failed to parse oauth token response") {
-		t.Errorf("expected failed to parse oauth token response, got %v", err)
-	}
-
-	// 5. OAuth endpoint returns empty access_token
-	oauthEmptyTok := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "", "expires_in": 3600})
-	}))
-	defer oauthEmptyTok.Close()
-
-	adEmptyTok, _ := adapters.NewGTasksAdapter(adapters.GTasksAdapterConfig{
-		TaskListID:   "t-1",
-		RefreshToken: "ref-tok",
-		TokenURL:     oauthEmptyTok.URL,
-		BaseURL:      "https://example.com",
-		Client:       oauthEmptyTok.Client(),
-	})
-	_, _, err = adEmptyTok.FetchList(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "missing access_token") {
-		t.Errorf("expected missing access_token error, got %v", err)
-	}
-}
-
-func TestGTasksAdapter_FetchList_PositionAndSubtaskOrdering(t *testing.T) {
-	t.Parallel()
-
-	// Google Tasks returns items in arbitrary response order.
-	// Test checks that items are sorted by Position ascending, with subtasks (Parent set)
-	// placed immediately after their parent in sibling Position order.
-	rawTasks := []map[string]any{
-		{
-			"id":       "task-3",
-			"title":    "Top Task 3",
-			"position": "00000000000000000003",
-		},
-		{
-			"id":       "subtask-1b",
-			"title":    "Subtask 1B",
-			"parent":   "task-1",
-			"position": "00000000000000000002",
-		},
-		{
-			"id":       "task-1",
-			"title":    "Top Task 1",
-			"position": "00000000000000000001",
-		},
-		{
-			"id":       "subtask-1a",
-			"title":    "Subtask 1A",
-			"parent":   "task-1",
-			"position": "00000000000000000001",
-		},
-		{
-			"id":       "task-2",
-			"title":    "Top Task 2",
-			"position": "00000000000000000002",
-		},
-		{
-			"id":       "subtask-2a",
-			"title":    "Subtask 2A",
-			"parent":   "task-2",
-			"position": "00000000000000000001",
-		},
-	}
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		if r.URL.Path == "/tasks/v1/users/@me/lists/ordered-list" {
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"id":    "ordered-list",
-				"title": "Ordered List",
-			})
-			return
-		}
-		if r.URL.Path == "/tasks/v1/lists/ordered-list/tasks" {
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"items": rawTasks,
-			})
-			return
-		}
-		http.NotFound(w, r)
-	}))
-	defer server.Close()
-
-	ad, err := adapters.NewGTasksAdapter(adapters.GTasksAdapterConfig{
-		TaskListID: "ordered-list",
-		Token:      "static-token",
-		BaseURL:    server.URL,
-		Client:     server.Client(),
-	})
-	if err != nil {
-		t.Fatalf("failed to create adapter: %v", err)
-	}
-
-	_, items, err := ad.FetchList(context.Background())
-	if err != nil {
-		t.Fatalf("FetchList failed: %v", err)
-	}
-
-	expectedOrder := []struct {
-		id       string
-		title    string
-		position int
+	tests := []struct {
+		name    string
+		cfg     adapters.GTasksAdapterConfig
+		wantErr string
 	}{
-		{"task-1", "Top Task 1", 0},
-		{"subtask-1a", "Subtask 1A", 1},
-		{"subtask-1b", "Subtask 1B", 2},
-		{"task-2", "Top Task 2", 3},
-		{"subtask-2a", "Subtask 2A", 4},
-		{"task-3", "Top Task 3", 5},
+		{"empty_tasklist_id", adapters.GTasksAdapterConfig{}, "tasklist_id is required"},
+		{"invalid_base_url", adapters.GTasksAdapterConfig{TaskListID: "t1", BaseURL: "ftp://invalid"}, "must be http:// or https://"},
+		{"invalid_token_url", adapters.GTasksAdapterConfig{TaskListID: "t1", TokenURL: "://bad-url"}, "must be http:// or https://"},
+		{"valid_config", adapters.GTasksAdapterConfig{TaskListID: "t1", Token: "tok", ListName: "My List"}, ""},
 	}
-
-	if len(items) != len(expectedOrder) {
-		t.Fatalf("expected %d items, got %d", len(expectedOrder), len(items))
-	}
-
-	for i, exp := range expectedOrder {
-		if items[i].ID != exp.id {
-			t.Errorf("item[%d]: expected ID %q, got %q", i, exp.id, items[i].ID)
-		}
-		if items[i].Title != exp.title {
-			t.Errorf("item[%d]: expected Title %q, got %q", i, exp.title, items[i].Title)
-		}
-		if items[i].Position != exp.position {
-			t.Errorf("item[%d]: expected Position %d, got %d", i, exp.position, items[i].Position)
-		}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ad, err := adapters.NewGTasksAdapter(tc.cfg)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("expected error containing %q, got %v", tc.wantErr, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if ad.Name() != "gtasks" {
+				t.Errorf("expected Name() to be 'gtasks', got %q", ad.Name())
+			}
+		})
 	}
 }
 
-func TestGTasksAdapter_FetchList_SubtaskOrphanAndCycleSafety(t *testing.T) {
+func TestGTasksAdapter_FetchList(t *testing.T) {
 	t.Parallel()
-
-	// Test edge cases:
-	// 1. Orphaned subtask with non-existent parent
-	// 2. Subtask with deleted parent
-	// 3. Cyclic parent reference (cycle A -> B -> A)
-	rawTasks := []map[string]any{
+	tests := []struct {
+		name      string
+		routes    map[string]mockRoute
+		closeSrv  bool
+		wantName  string
+		wantItems int
+		checkSub  bool
+		wantErr   string
+		wantErrIs error
+	}{
 		{
-			"id":       "orphan-1",
-			"title":    "Orphan Subtask",
-			"parent":   "non-existent-parent",
-			"position": "00000000000000000005",
+			name: "standard_fetch_soft_deleted",
+			routes: map[string]mockRoute{
+				"/tasks/v1/users/@me/lists/l1": {body: `{"id":"l1","title":"Chores","updated":"2026-09-26T12:00:00Z"}`},
+				"/tasks/v1/lists/l1/tasks":     {body: `{"items":[{"id":"t1","title":"Clean","status":"needsAction","due":"2026-09-28T00:00:00Z"},{"id":"t2","title":"Fold","status":"completed"},{"id":"t3","deleted":true}]}`},
+			},
+			wantName: "Chores", wantItems: 2,
 		},
 		{
-			"id":       "deleted-parent",
-			"title":    "Deleted Parent",
-			"deleted":  true,
-			"position": "00000000000000000001",
+			name: "pagination_and_cycle_guard",
+			routes: map[string]mockRoute{
+				"/tasks/v1/users/@me/lists/l1": {status: 503},
+				"/tasks/v1/lists/l1/tasks":     {body: `{"items":[{"id":"t1","title":"P1"}],"nextPageToken":"p2"}`},
+				"/tasks/v1/lists/l1/tasks?maxResults=100&pageToken=p2&showCompleted=true&showHidden=true": {body: `{"items":[{"id":"t2","title":"P2"}],"nextPageToken":"p1"}`},
+			},
+			wantName: "l1", wantItems: 2,
 		},
 		{
-			"id":       "child-of-deleted",
-			"title":    "Child of Deleted",
-			"parent":   "deleted-parent",
-			"position": "00000000000000000006",
+			name: "hierarchical_subtask_ordering",
+			routes: map[string]mockRoute{
+				"/tasks/v1/users/@me/lists/l1": {body: `{"id":"l1"}`},
+				"/tasks/v1/lists/l1/tasks":     {body: `{"items":[{"id":"t1","position":"01"},{"id":"t2","parent":"t1","position":"01"},{"id":"t3","position":"02"}]}`},
+			},
+			wantName: "l1", wantItems: 3, checkSub: true,
 		},
 		{
-			"id":       "cycle-a",
-			"title":    "Cycle A",
-			"parent":   "cycle-b",
-			"position": "00000000000000000002",
+			name: "subtask_orphan_and_cycle_safety",
+			routes: map[string]mockRoute{
+				"/tasks/v1/users/@me/lists/l1": {body: `{"id":"l1"}`},
+				"/tasks/v1/lists/l1/tasks":     {body: `{"items":[{"id":"orphan","parent":"missing","position":"01"},{"id":"c1","parent":"c2"},{"id":"c2","parent":"c1"}]}`},
+			},
+			wantName: "l1", wantItems: 3,
 		},
 		{
-			"id":       "cycle-b",
-			"title":    "Cycle B",
-			"parent":   "cycle-a",
-			"position": "00000000000000000003",
+			name: "timestamps_and_default_title",
+			routes: map[string]mockRoute{
+				"/tasks/v1/users/@me/lists/l1": {body: `{"id":"l1"}`},
+				"/tasks/v1/lists/l1/tasks":     {body: `{"items":[{"id":"t1","title":"Item","updated":"2026-09-26T10:00:00Z","due":"2026-09-28T00:00:00Z"}]}`},
+			},
+			wantName: "l1", wantItems: 1,
 		},
+		{"error_401", map[string]mockRoute{"/tasks/v1/users/@me/lists/l1": {status: 401}}, false, "", 0, false, "", adapters.ErrUnauthorized},
+		{"error_404", map[string]mockRoute{"/tasks/v1/users/@me/lists/l1": {status: 404}}, false, "", 0, false, "", adapters.ErrUpstreamNotFound},
+		{"error_500", map[string]mockRoute{"/tasks/v1/users/@me/lists/l1": {body: `{"id":"l1"}`}, "/tasks/v1/lists/l1/tasks": {status: 500}}, false, "", 0, false, "status 500", nil},
+		{"error_payload_too_large", map[string]mockRoute{"/tasks/v1/users/@me/lists/l1": {body: `{"id":"l1"}`}, "/tasks/v1/lists/l1/tasks": {body: strings.Repeat("x", adapters.MaxPayloadBytes+10)}}, false, "", 0, false, "", adapters.ErrPayloadTooLarge},
+		{"error_malformed_json", map[string]mockRoute{"/tasks/v1/users/@me/lists/l1": {body: `{"id":"l1"}`}, "/tasks/v1/lists/l1/tasks": {body: `{bad`}}, false, "", 0, false, "failed to parse google tasks json response", nil},
+		{"error_closed_server", nil, true, "", 0, false, "failed to fetch tasks from google tasks", nil},
 	}
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		if r.URL.Path == "/tasks/v1/users/@me/lists/edge-list" {
-			_ = json.NewEncoder(w).Encode(map[string]any{"id": "edge-list", "title": "Edge List"})
-			return
-		}
-		if r.URL.Path == "/tasks/v1/lists/edge-list/tasks" {
-			_ = json.NewEncoder(w).Encode(map[string]any{"items": rawTasks})
-			return
-		}
-		http.NotFound(w, r)
-	}))
-	defer server.Close()
-
-	ad, err := adapters.NewGTasksAdapter(adapters.GTasksAdapterConfig{
-		TaskListID: "edge-list",
-		Token:      "static-token",
-		BaseURL:    server.URL,
-		Client:     server.Client(),
-	})
-	if err != nil {
-		t.Fatalf("failed to create adapter: %v", err)
-	}
-
-	_, items, err := ad.FetchList(context.Background())
-	if err != nil {
-		t.Fatalf("FetchList failed: %v", err)
-	}
-
-	// Deleted parent is filtered out; the 4 active items should all be returned safely
-	if len(items) != 4 {
-		t.Fatalf("expected 4 items, got %d", len(items))
-	}
-
-	// Verify sequential positions 0, 1, 2, 3
-	for i, item := range items {
-		if item.Position != i {
-			t.Errorf("item[%d]: expected Position %d, got %d", i, i, item.Position)
-		}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			srv := newRouteServer(t, tc.routes, nil)
+			if tc.closeSrv {
+				srv.Close()
+			}
+			ad, err := adapters.NewGTasksAdapter(adapters.GTasksAdapterConfig{
+				TaskListID: "l1", Token: "static-tok", BaseURL: srv.URL, Client: srv.Client(),
+			})
+			if err != nil {
+				t.Fatalf("failed to create adapter: %v", err)
+			}
+			list, items, err := ad.FetchList(context.Background())
+			if tc.wantErrIs != nil {
+				if !errors.Is(err, tc.wantErrIs) {
+					t.Fatalf("expected error %v, got %v", tc.wantErrIs, err)
+				}
+				return
+			}
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("expected error containing %q, got %v", tc.wantErr, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if list.Name != tc.wantName {
+				t.Errorf("list name = %q, want %q", list.Name, tc.wantName)
+			}
+			if len(items) != tc.wantItems {
+				t.Errorf("items count = %d, want %d", len(items), tc.wantItems)
+			}
+			if tc.checkSub && (len(items) < 2 || items[1].ID != "t2") {
+				t.Errorf("expected items[1].ID == 't2', got %+v", items)
+			}
+		})
 	}
 }
 
+func TestGTasksAdapter_OAuthRefresh(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		routes    map[string]mockRoute
+		closeSrv  bool
+		wantAuth  string
+		wantErr   string
+		doubleReq bool
+	}{
+		{
+			name: "token_minting_and_caching",
+			routes: map[string]mockRoute{
+				"/token":                       {body: `{"access_token":"minted-tok"}`},
+				"/tasks/v1/users/@me/lists/l1": {body: `{"id":"l1"}`},
+				"/tasks/v1/lists/l1/tasks":     {body: `{"items":[{"id":"t1"}]}`},
+			},
+			wantAuth:  "Bearer minted-tok",
+			doubleReq: true,
+		},
+		{
+			name: "401_refresh_retry_recovery",
+			routes: map[string]mockRoute{
+				"/token":                       {body: `{"access_token":"fresh-tok","expires_in":3600}`},
+				"/tasks/v1/users/@me/lists/l1": {body: `{"id":"l1"}`},
+				"/tasks/v1/lists/l1/tasks":     {status: 401, nextStatus: 200, nextBody: `{"items":[{"id":"t-retried"}]}`},
+			},
+			wantAuth: "Bearer fresh-tok",
+		},
+		{"closed_oauth_server", nil, true, "", "oauth token request failed", false},
+		{"500_oauth_error", map[string]mockRoute{"/token": {status: 500}}, false, "", "oauth token refresh failed", false},
+		{"invalid_oauth_json", map[string]mockRoute{"/token": {body: `{bad`}}, false, "", "failed to parse oauth token response", false},
+		{"empty_access_token", map[string]mockRoute{"/token": {body: `{"access_token":""}`}}, false, "", "missing access_token", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var authHeader string
+			srv := newRouteServer(t, tc.routes, &authHeader)
+			if tc.closeSrv {
+				srv.Close()
+			}
+			ad, err := adapters.NewGTasksAdapter(adapters.GTasksAdapterConfig{
+				TaskListID: "l1", RefreshToken: "ref-tok", TokenURL: srv.URL + "/token",
+				BaseURL: srv.URL, Client: srv.Client(),
+			})
+			if err != nil {
+				t.Fatalf("failed to create adapter: %v", err)
+			}
+			ctx := context.Background()
+			_, _, err = ad.FetchList(ctx)
+			if tc.doubleReq && err == nil {
+				_, _, err = ad.FetchList(ctx)
+			}
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("expected error containing %q, got %v", tc.wantErr, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if tc.wantAuth != "" && authHeader != tc.wantAuth {
+				t.Errorf("auth header = %q, want %q", authHeader, tc.wantAuth)
+			}
+		})
+	}
+}

@@ -1,12 +1,9 @@
 package adapters
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -31,36 +28,19 @@ type HTTPAdapter struct {
 
 // NewHTTPAdapter creates a validated HTTPAdapter.
 func NewHTTPAdapter(cfg HTTPAdapterConfig) (*HTTPAdapter, error) {
-	baseURL := strings.TrimSpace(cfg.BaseURL)
-	if baseURL == "" {
-		return nil, errors.New("base_url is required")
+	baseURL, err := validateHTTPURL(cfg.BaseURL, "", "base_url")
+	if err != nil {
+		return nil, err
 	}
-
-	u, err := url.ParseRequestURI(baseURL)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		return nil, fmt.Errorf("invalid base_url %q: must be http:// or https:// with host", baseURL)
-	}
-
-	client := cfg.Client
-	if client == nil {
-		client = &http.Client{
-			Timeout: 10 * time.Second,
-		}
-	}
-
 	return &HTTPAdapter{
 		baseURL: baseURL,
 		token:   strings.TrimSpace(cfg.Token),
-		client:  client,
+		client:  defaultHTTPClient(cfg.Client),
 	}, nil
 }
 
-// Name returns the adapter type name.
-func (a *HTTPAdapter) Name() string {
-	return "http"
-}
+func (a *HTTPAdapter) Name() string { return "http" }
 
-// rawCombinedPayload represents a response that may contain list metadata and/or embedded items.
 type rawCombinedPayload struct {
 	ID        string            `json:"id"`
 	Name      string            `json:"name"`
@@ -71,15 +51,12 @@ type rawCombinedPayload struct {
 }
 
 // FetchList retrieves task list metadata and items from the configured HTTP endpoint.
-// Supports both combined payloads and split endpoints
-// GET {base_url} -> List and GET {base_url}/items -> []ListItem Protocol.
 func (a *HTTPAdapter) FetchList(ctx context.Context) (*tasks.List, []tasks.ListItem, error) {
-	baseBody, err := a.doGet(ctx, a.baseURL)
+	baseBody, _, err := doBearerGet(ctx, a.client, a.baseURL, a.token, "http request")
 	if err != nil {
 		return nil, nil, err
 	}
 
-	// 1. Try decoding as rawCombinedPayload
 	var combined rawCombinedPayload
 	if decErr := json.Unmarshal(baseBody, &combined); decErr == nil && (combined.ID != "" || combined.Name != "" || combined.Items != nil) {
 		listID := combined.ID
@@ -94,33 +71,23 @@ func (a *HTTPAdapter) FetchList(ctx context.Context) (*tasks.List, []tasks.ListI
 		if sections == nil {
 			sections = []string{}
 		}
-
 		updatedAt := time.Now().UTC()
 		if combined.UpdatedAt != nil && !combined.UpdatedAt.IsZero() {
 			updatedAt = combined.UpdatedAt.UTC()
 		}
+		list := &tasks.List{ID: listID, Name: listName, Source: "http", Sections: sections, UpdatedAt: updatedAt}
 
-		list := &tasks.List{
-			ID:        listID,
-			Name:      listName,
-			Source:    "http",
-			Sections:  sections,
-			UpdatedAt: updatedAt,
-		}
-
-		// If items were provided in the combined payload
 		if combined.Items != nil {
 			items := *combined.Items
 			a.normalizeItems(items, list.ID)
 			return list, items, nil
 		}
 
-		// Items not provided in base response: query secondary GET {baseURL}/items Protocol
 		itemsURL, buildErr := a.buildItemsURL()
 		if buildErr != nil {
 			return nil, nil, fmt.Errorf("failed to build items URL: %w", buildErr)
 		}
-		itemsBody, itemsErr := a.doGet(ctx, itemsURL)
+		itemsBody, _, itemsErr := doBearerGet(ctx, a.client, itemsURL, a.token, "http request")
 		if itemsErr != nil {
 			return nil, nil, fmt.Errorf("failed to fetch list items from %s: %w", sanitizeURL(itemsURL), itemsErr)
 		}
@@ -133,66 +100,15 @@ func (a *HTTPAdapter) FetchList(ctx context.Context) (*tasks.List, []tasks.ListI
 		return list, items, nil
 	}
 
-	// 2. Try decoding as raw []tasks.ListItem directly from base URL
 	var directItems []tasks.ListItem
 	if decErr := json.Unmarshal(baseBody, &directItems); decErr == nil {
 		listID := a.deriveListIDFromURL()
-		list := &tasks.List{
-			ID:        listID,
-			Name:      listID,
-			Source:    "http",
-			Sections:  []string{},
-			UpdatedAt: time.Now().UTC(),
-		}
+		list := &tasks.List{ID: listID, Name: listID, Source: "http", Sections: []string{}, UpdatedAt: time.Now().UTC()}
 		a.normalizeItems(directItems, list.ID)
 		return list, directItems, nil
 	}
 
 	return nil, nil, fmt.Errorf("unexpected json response structure from %s", sanitizeURL(a.baseURL))
-}
-
-func (a *HTTPAdapter) doGet(ctx context.Context, targetURL string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create http request: %w", err)
-	}
-
-	req.Header.Set("Accept", "application/json")
-	if a.token != "" {
-		req.Header.Set("Authorization", "Bearer "+a.token)
-	}
-
-	resp, err := a.client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("http request failed for %s: %w", sanitizeURL(targetURL), err)
-	}
-	defer func() {
-		_ = resp.Body.Close()
-	}()
-
-	switch resp.StatusCode {
-	case http.StatusOK:
-		// valid
-	case http.StatusUnauthorized, http.StatusForbidden:
-		return nil, ErrUnauthorized
-	case http.StatusNotFound:
-		return nil, ErrUpstreamNotFound
-	default:
-		return nil, UpstreamHTTPError{Code: resp.StatusCode, URL: targetURL}
-	}
-
-	// Slowloris defense: read at most MaxPayloadBytes + 1
-	limitReader := io.LimitReader(resp.Body, MaxPayloadBytes+1)
-	buf := bytes.NewBuffer(make([]byte, 0, 16*1024))
-	n, readErr := buf.ReadFrom(limitReader)
-	if readErr != nil {
-		return nil, fmt.Errorf("failed to read response body: %w", readErr)
-	}
-	if n > MaxPayloadBytes {
-		return nil, ErrPayloadTooLarge
-	}
-
-	return buf.Bytes(), nil
 }
 
 func (a *HTTPAdapter) deriveListIDFromURL() string {
@@ -238,15 +154,4 @@ func (a *HTTPAdapter) normalizeItems(items []tasks.ListItem, listID string) {
 			items[i].UpdatedAt = now
 		}
 	}
-}
-
-// sanitizeURL strips query parameters and userinfo from a URL string to avoid leaking secrets in errors.
-func sanitizeURL(rawURL string) string {
-	u, err := url.Parse(rawURL)
-	if err != nil || u == nil {
-		return rawURL
-	}
-	u.User = nil
-	u.RawQuery = ""
-	return u.String()
 }
