@@ -76,7 +76,7 @@ mirrormere/
 
 1. **Stage Configuration & Optional Stylesheet Overrides**:
    ```bash
-   mkdir -p deploy/config deploy/data
+   mkdir -p deploy/config
    cp deploy/examples/config.yaml deploy/config/config.yaml
    cp deploy/examples/custom.css deploy/config/custom.css # Optional: or deploy/examples/eink.css for 1-bit e-paper
    ```
@@ -84,7 +84,7 @@ mirrormere/
    ```bash
    docker compose -f deploy/compose.yml up -d mirrormere-core
    # Or standalone (web/ and widgets/ are volume-mounted so assets stay mutable without rebuilding the image):
-   # docker run -d --name mirrormere-core -p 8080:8080 -v ./deploy/config:/config:ro -v ./deploy/data:/data -v ./web:/app/web:ro -v ./widgets:/app/widgets:ro ghcr.io/azylman/mirrormere:latest
+   # docker run -d --name mirrormere-core -p 8080:8080 -v ./deploy/config:/config:ro -v mirrormere-data:/data -v ./web:/app/web:ro -v ./widgets:/app/widgets:ro ghcr.io/azylman/mirrormere:latest
    ```
 3. **Open the Display & Hot-Reload**:
    - Open `http://localhost:8080/display` (add `?hide_cursor=true` on touch kiosks or `?node=<node_id>` for per-node `chat-log` views).

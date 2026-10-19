@@ -52,24 +52,24 @@ docker start mirrormere-ear
 
 > [!NOTE]
 > **Single-Host vs. Split Deployment**:
-> - **Single-host (Hub and Ear on same machine)**: Move the file directly: `mv /tmp/enroll-<speaker_id>.wav deploy/data/enroll-<speaker_id>.wav`.
-> - **Split deployment (Ear on satellite Pi, Hub on server)**: Copy the recorded WAV from the voice node to the Hub host's data directory:
+> - **Single-host (Hub and Ear on same machine)**: Copy the recorded WAV into the `voice-fingerprinter` container's `/data` volume (`docker cp /tmp/enroll-<speaker_id>.wav mirrormere-voice-fingerprinter:/data/enroll-<speaker_id>.wav && rm /tmp/enroll-<speaker_id>.wav`).
+> - **Split deployment (Ear on satellite Pi, Hub on server)**: Copy the recorded WAV from the voice node to the Hub host, then into the container's `/data` volume:
 >   ```bash
->   scp /tmp/enroll-<speaker_id>.wav <hub-host>:/path/to/mirrormere/deploy/data/enroll-<speaker_id>.wav
+>   scp /tmp/enroll-<speaker_id>.wav <hub-host>:/tmp/enroll-<speaker_id>.wav
 >   rm /tmp/enroll-<speaker_id>.wav
 >   ```
 
 ### 2. Enroll Speaker Fingerprint
-On the Hub host, feed the recording to `enroll.py` targeting your Mirrormere `/data/speakers.json`, then delete the temporary recording:
+On the Hub host, feed the recording to `enroll.py` targeting `/data/speakers.json` in the shared `mirrormere-data` volume, then delete the temporary recording:
 
 ```bash
-# Running inside the sidecar container (with ./data mounted to /data):
+# Copy the WAV into the sidecar container's /data volume (if not already done):
+docker cp /tmp/enroll-<speaker_id>.wav mirrormere-voice-fingerprinter:/data/enroll-<speaker_id>.wav
+rm -f /tmp/enroll-<speaker_id>.wav
+
+# Running inside the sidecar container (with mirrormere-data mounted to /data):
 docker compose exec voice-fingerprinter python enroll.py <speaker_id> --wav /data/enroll-<speaker_id>.wav --output /data/speakers.json
 
-# Audio is never stored long-term; clean up the WAV on both hosts:
-rm deploy/data/enroll-<speaker_id>.wav
-
-# Or running standalone against the sidecar HTTP endpoint:
-python sidecars/voice-fingerprinter/enroll.py <speaker_id> --wav deploy/data/enroll-<speaker_id>.wav --embed-url http://localhost:9096/embed --output deploy/data/speakers.json
-rm deploy/data/enroll-<speaker_id>.wav
+# Audio is never stored long-term; clean up the WAV inside the volume:
+docker compose exec voice-fingerprinter rm /data/enroll-<speaker_id>.wav
 ```

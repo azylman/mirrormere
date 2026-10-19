@@ -22,7 +22,7 @@ services:
       - TZ=America/Los_Angeles
     volumes:
       - ./config:/config:ro # Contains config.yaml, custom.css, and optional widgets/
-      - ./data:/data
+      - mirrormere-data:/data
       - ../web:/app/web:ro
       - ../widgets:/app/widgets:ro
     healthcheck:
@@ -132,7 +132,7 @@ services:
       - MDE_DEVICE=cpu
     volumes:
       - voice-fingerprinter-models:/models  # ECAPA model cache, downloaded on first run (~80MB)
-      - ./data:/data                        # rw: shares mirrormere-core's fingerprints_path directory (/data),
+      - mirrormere-data:/data               # rw: shares mirrormere-core's fingerprints_path directory (/data),
                                              # so `enroll.py --output /data/speakers.json` writes
                                              # where the Hub reads
     healthcheck:
@@ -166,4 +166,5 @@ services:
       retries: 3
 
 volumes:
+  mirrormere-data:
   voice-fingerprinter-models:

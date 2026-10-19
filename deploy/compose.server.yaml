@@ -18,7 +18,7 @@ services:
       - TZ=America/Los_Angeles
     volumes:
       - ./config:/config:ro # Contains config.yaml, custom.css, and optional widgets/
-      - ./data:/data
+      - mirrormere-data:/data
       - ../web:/app/web:ro
       - ../widgets:/app/widgets:ro
     healthcheck:
@@ -44,7 +44,7 @@ services:
       - MDE_DEVICE=cpu
     volumes:
       - voice-fingerprinter-models:/models  # ECAPA model cache, downloaded on first run (~80MB)
-      - ./data:/data                        # rw: shares mirrormere-core's fingerprints_path directory (/data)
+      - mirrormere-data:/data               # rw: shares mirrormere-core's fingerprints_path directory (/data)
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:9096/health"]
       interval: 15s
@@ -99,4 +99,5 @@ services:
       retries: 3
 
 volumes:
+  mirrormere-data:
   voice-fingerprinter-models:
