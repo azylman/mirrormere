@@ -92,18 +92,6 @@ func (m *mockServer) PostScreenSelect(w http.ResponseWriter, r *http.Request) {
 	writeMockJSON(w, http.StatusOK, ScreenNavigationResponse{Status: "ok", CurrentScreen: 1, TotalScreens: 2})
 }
 
-func (m *mockServer) GetListItems(w http.ResponseWriter, r *http.Request, listId string, params GetListItemsParams) {
-	if listId == "not-found" {
-		writeMockErr(w, http.StatusNotFound, fmt.Sprintf("list '%s' not found", listId))
-		return
-	}
-	section, assignee, dueDate := "Dairy", "Alex", "2026-09-26"
-	writeMockJSON(w, http.StatusOK, []ListItem{{
-		Id: "i1", ListId: listId, Title: "Oat milk", Section: &section, Assignee: &assignee, DueDate: &dueDate,
-		CreatedAt: time.Date(2026, 9, 24, 22, 0, 0, 0, time.UTC), UpdatedAt: time.Date(2026, 9, 24, 22, 30, 0, 0, time.UTC),
-	}})
-}
-
 func (m *mockServer) CompleteListItem(w http.ResponseWriter, r *http.Request, listId, itemId string) {
 	if listId == "not-found" || itemId == "not-found" {
 		writeMockErr(w, http.StatusNotFound, "not found")
@@ -243,8 +231,6 @@ func TestHandler_Endpoints(t *testing.T) {
 		{"audio_mute_toggle", http.MethodPost, "/api/audio/mute", `{}`, false, http.StatusOK, `"muted":true`, "", "", "", "", "", "", "", ""},
 		{"audio_mute_explicit_false", http.MethodPost, "/api/audio/mute", `{"muted":false}`, true, http.StatusOK, `"muted":false`, "", "", "", "", "", "", "", ""},
 		{"audio_mute_bad_type", http.MethodPost, "/api/audio/mute", `{"muted":"notabool"}`, false, http.StatusBadRequest, "must be a boolean", "", "", "", "", "", "", "", ""},
-		{"lists_items_200", http.MethodGet, "/api/lists/groceries/items?include_done=false", "", false, http.StatusOK, `"i1"`, "", "", "", "", "", "", "", ""},
-		{"lists_items_404", http.MethodGet, "/api/lists/not-found/items", "", false, http.StatusNotFound, "not found", "", "", "", "", "", "", "", ""},
 		{"healthz", http.MethodGet, "/healthz", "", false, http.StatusOK, `"status":"ok"`, "", "", "", "", "", "", "", ""},
 		{"health", http.MethodGet, "/health", "", false, http.StatusOK, `"status":"ok"`, "", "", "", "", "", "", "", ""},
 		{"widget_render_200", http.MethodGet, "/api/widgets/clock-primary/render", "", false, http.StatusOK, "clock-primary", "clock-primary", "", "", "", "", "", "", ""},
@@ -379,8 +365,6 @@ func TestServerInterfaceWrapper_ParameterErrors(t *testing.T) {
 		{"video_trigger_mw", "post_video_trigger", http.MethodPost, "/api/video/trigger", nil, true, http.StatusOK},
 		{"asset_missing_type", "get_widget_asset", http.MethodGet, "/widget-types//assets/icon.svg", nil, false, http.StatusBadRequest},
 		{"asset_missing_path", "get_widget_asset", http.MethodGet, "/widget-types/clock/assets/", [][2]string{{"type", "clock"}}, false, http.StatusBadRequest},
-		{"list_items_bad_query", "get_list_items", http.MethodGet, "/api/lists/g/items?include_done=bad", [][2]string{{"list_id", "g"}}, false, http.StatusBadRequest},
-		{"list_items_missing_id", "get_list_items", http.MethodGet, "/api/lists//items", nil, false, http.StatusBadRequest},
 		{"complete_item_ok", "complete_list_item", http.MethodPost, "/api/lists/g/items/i1/complete", [][2]string{{"list_id", "g"}, {"item_id", "i1"}}, false, http.StatusOK},
 		{"complete_item_404", "complete_list_item", http.MethodPost, "/api/lists/not-found/items/i1/complete", [][2]string{{"list_id", "not-found"}, {"item_id", "i1"}}, false, http.StatusNotFound},
 		{"complete_item_missing_list", "complete_list_item", http.MethodPost, "/api/lists//items/i1/complete", [][2]string{{"item_id", "i1"}}, false, http.StatusBadRequest},
@@ -425,7 +409,6 @@ func dispatchWrapper(w *ServerInterfaceWrapper, target string, rec http.Response
 	case "get_widget_render": w.GetWidgetRender(rec, req)
 	case "post_widget_push": w.PostWidgetPush(rec, req)
 	case "get_widget_asset": w.GetWidgetAsset(rec, req)
-	case "get_list_items": w.GetListItems(rec, req)
 	case "complete_list_item": w.CompleteListItem(rec, req)
 	case "post_voice_interact": w.PostVoiceInteract(rec, req)
 	case "post_voice_state": w.PostVoiceState(rec, req)

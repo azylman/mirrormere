@@ -1,6 +1,6 @@
 name: tasks
 version: "1.0.0"
-description: Ambient household checklist and tasks widget backed by local SQLite storage.
+description: Ambient household checklist and tasks widget backed by upstream task providers.
 provider: tasks
 
 capabilities:
@@ -27,8 +27,6 @@ config_schema:
     show_completed:
       type: integer
       minimum: 0
-    db_path:
-      type: string
     gtasks:
       type: object
       properties:

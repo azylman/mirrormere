@@ -49,7 +49,7 @@ func createStandardPackages() map[string]*domain.Package {
 	}
 }
 
-const validBaseYAML = "timezone: America/New_York\ndisplay:\n  grid:\n    columns: 6\n    rows: 2\n  rotation:\n    interval_seconds: 30\n    transition: slide\n  widgets:\n    - id: cal-hero\n      type: calendar-agenda\n      dimensions: [4, 2]\n      pinned: true\n      config: {calendars: [{name: Family}]}\n    - id: weather-1\n      type: weather-forecast\n    - id: tasks-1\n      type: tasks\n      dimensions: [2, 1]\n      config: {list_id: chores, source: local}\n"
+const validBaseYAML = "timezone: America/New_York\ndisplay:\n  grid:\n    columns: 6\n    rows: 2\n  rotation:\n    interval_seconds: 30\n    transition: slide\n  widgets:\n    - id: cal-hero\n      type: calendar-agenda\n      dimensions: [4, 2]\n      pinned: true\n      config: {calendars: [{name: Family}]}\n    - id: weather-1\n      type: weather-forecast\n    - id: tasks-1\n      type: tasks\n      dimensions: [2, 1]\n      config: {list_id: chores, source: gtasks, gtasks: {tasklist_id: list-1}}\n"
 
 func buildFamilyYAML(membersBlock string) string { return buildFamilyWithHoursYAML("", membersBlock) }
 
@@ -248,17 +248,15 @@ func TestLKGC_ReloadValidationFailures(t *testing.T) {
 		{"Stage 5: sensor-http missing endpoint", withLKGCWidgets(mkWYAML("http-1", "sensor-http", "[2, 1]", "")), "widget 'http-1': provider 'http' requires non-empty 'endpoint' URL", nil},
 		{"Stage 5: sensor-http invalid endpoint", withLKGCWidgets(mkWYAML("http-1", "sensor-http", "[2, 1]", "      endpoint: \"ftp://not-supported\"\n")), "widget 'http-1': invalid endpoint URL", nil},
 		{"Stage 5: sensor-http hostless endpoint", withLKGCWidgets(mkWYAML("http-1", "sensor-http", "[2, 1]", "      endpoint: \"http://\"\n")), "widget 'http-1': invalid endpoint URL", nil},
-		{"Stage 5: tasks no primary source", withLKGCWidgets(mkTaskYAML("tasks-slave", "[2, 1]", "chores", "", "")), "tasks widget 'tasks-slave' references list_id 'chores' with no primary source definition", nil},
+		{"Stage 5: tasks missing source", withLKGCWidgets(mkTaskYAML("tasks-slave", "[2, 1]", "chores", "", "")), "tasks widget 'tasks-slave' requires non-empty 'source'", nil},
 		{"Stage 5: tasks invalid source", withLKGCWidgets(mkTaskYAML("tasks-1", "[2, 1]", "chores", "invalid_source_type", "")), "declares invalid source 'invalid_source_type'", nil},
+		{"Stage 5: tasks local source rejected", withLKGCWidgets(mkTaskYAML("tasks-1", "[2, 1]", "chores", "local", "")), "declares invalid source 'local'", nil},
 		{"Stage 5: tasks http missing http block", withLKGCWidgets(mkTaskYAML("tasks-1", "[2, 1]", "chores", "http", "")), "tasks widget 'tasks-1' with source 'http' requires 'http' config block", nil},
 		{"Stage 5: tasks http empty base_url", withLKGCWidgets(mkTaskYAML("tasks-1", "[2, 1]", "chores", "http", "        http: {base_url: \"\"}\n")), "tasks widget 'tasks-1' with source 'http' requires non-empty 'http.base_url'", nil},
 		{"Stage 5: tasks http invalid base_url", withLKGCWidgets(mkTaskYAML("tasks-1", "[2, 1]", "chores", "http", "        http: {base_url: \"ftp://not-http\"}\n")), "invalid http.base_url 'ftp://not-http'", nil},
 		{"Stage 5: tasks gtasks missing tasklist_id", withLKGCWidgets(mkTaskYAML("tasks-1", "[2, 1]", "chores", "gtasks", "        gtasks: {refresh_token: dummy}\n")), "tasks widget 'tasks-1' with source 'gtasks' requires non-empty 'gtasks.tasklist_id'", nil},
 		{"Stage 5: tasks todoist missing todoist block", withLKGCWidgets(mkTaskYAML("tasks-1", "[2, 1]", "chores", "todoist", "")), "tasks widget 'tasks-1' with source 'todoist' requires 'todoist' config block", nil},
 		{"Stage 5: tasks todoist invalid base_url", withLKGCWidgets(mkTaskYAML("tasks-1", "[2, 1]", "chores", "todoist", "        todoist: {base_url: \"not-a-valid-url\"}\n")), "invalid todoist.base_url 'not-a-valid-url'", nil},
-		{"Stage 5: conflicting primary sources type mismatch", withLKGCWidgets(mkTaskYAML("t1", "[2, 1]", "chores", "local", "") + mkTaskYAML("t2", "[2, 1]", "chores", "gtasks", "        gtasks: {tasklist_id: \"list1\"}\n")), "conflicting source definitions for list_id 'chores' between widget 't1' and widget 't2'", nil},
-		{"Stage 5: conflicting gtasks tasklist_id", withLKGCWidgets(mkTaskYAML("t1", "[2, 1]", "shared", "gtasks", "        gtasks: {tasklist_id: \"listA\"}\n") + mkTaskYAML("t2", "[2, 1]", "shared", "gtasks", "        gtasks: {tasklist_id: \"listB\"}\n")), "conflicting source definitions for list_id 'shared'", nil},
-		{"Stage 5: conflicting http base_url", withLKGCWidgets(mkTaskYAML("t1", "[2, 1]", "shared", "http", "        http: {base_url: \"http://api.one.internal\"}\n") + mkTaskYAML("t2", "[2, 1]", "shared", "http", "        http: {base_url: \"http://api.two.internal\"}\n")), "conflicting source definitions for list_id 'shared'", nil},
 		{"Stage 5: family more than 8 members", buildFamilyYAML(makeNineMembers()), "at most 8 members are supported, found 9", nil},
 		{"Stage 5: family duplicate member name", buildFamilyYAML(mkMemberYAML("Alex", "#E07A5F", "solid", "[alex-personal]") + mkMemberYAML("Alex", "#81B29A", "stripes", "[alex-personal]")), "duplicate member name \"Alex\"", nil},
 		{"Stage 5: family duplicate pattern", buildFamilyYAML(mkMemberYAML("Alex", "#E07A5F", "dots", "[alex-personal]") + mkMemberYAML("Taylor", "#81B29A", "dots", "[alex-personal]")), "member \"Alex\" and member \"Taylor\" both declare e-ink pattern \"dots\"", nil},
@@ -302,9 +300,8 @@ func TestLKGC_ReloadValidDomainConfigs(t *testing.T) {
 		yamlData string
 	}{
 		{"valid todoist source", withLKGCWidgets("    - id: my-todo\n      type: tasks\n      dimensions: [6, 2]\n      config:\n        list_id: test\n        source: todoist\n        todoist:\n          project_id: proj-123\n")},
-		{"matching local source with different show_completed", withLKGCWidgets("    - id: t1\n      type: tasks\n      dimensions: [3, 2]\n      config:\n        list_id: shared\n        source: local\n        show_completed: 3\n    - id: t2\n      type: tasks\n      dimensions: [3, 2]\n      config:\n        list_id: shared\n        source: local\n        show_completed: 0\n")},
+		{"valid http source", withLKGCWidgets("    - id: my-http\n      type: tasks\n      dimensions: [6, 2]\n      config:\n        list_id: test\n        source: http\n        http:\n          base_url: https://tasks.example.org\n")},
 		{"matching gtasks source with different show_completed", withLKGCWidgets("    - id: t1\n      type: tasks\n      dimensions: [3, 2]\n      config:\n        list_id: shared\n        source: gtasks\n        gtasks:\n          tasklist_id: list-123\n        show_completed: 5\n    - id: t2\n      type: tasks\n      dimensions: [3, 2]\n      config:\n        list_id: shared\n        source: gtasks\n        gtasks:\n          tasklist_id: list-123\n        show_completed: 1\n")},
-		{"valid secondary tasks consumer without source", withLKGCWidgets("    - id: primary-tasks\n      type: tasks\n      dimensions: [3, 2]\n      config:\n        list_id: chores\n        source: local\n    - id: secondary-tasks\n      type: tasks\n      dimensions: [3, 2]\n      config:\n        list_id: chores\n")},
 		{"valid calendar-family config", buildFamilyWithHoursYAML("[\"08:00\", \"18:00\"]", mkMemberYAML("Alex", "#E07A5F", "solid", "[alex-personal]")+mkMemberYAML("Taylor", "#81B29A", "dots", "[school]"))},
 		{"calendar-family with non-string hours elements skipped", buildFamilyWithHoursYAML("[7, 21]", mkMemberYAML("Alex", "#E07A5F", "solid", "[alex-personal]"))},
 	}
