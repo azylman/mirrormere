@@ -59,15 +59,10 @@ func loadConfigFile(path string) (*Config, error) {
 	if envPath := os.Getenv("CONFIG_PATH"); envPath != "" {
 		candidates = append(candidates, envPath)
 	}
-	candidates = append(candidates,
-		"/config/cast-watcher.yaml",
-		"/config/cast-watcher.yml",
-		"/app/config.yaml",
-	)
+	candidates = append(candidates, "/config/cast-watcher.yaml", "/config/cast-watcher.yml", "/app/config.yaml")
 
 	for _, c := range candidates {
-		data, err := os.ReadFile(c)
-		if err == nil {
+		if data, err := os.ReadFile(c); err == nil {
 			var cfg Config
 			if err := yaml.Unmarshal(data, &cfg); err != nil {
 				return nil, fmt.Errorf("failed to parse config %q: %w", c, err)
@@ -79,20 +74,12 @@ func loadConfigFile(path string) (*Config, error) {
 }
 
 // RunWithReady executes cast-watcher and signals readyChan when the HTTP listener is active.
-func RunWithReady(
-	ctx context.Context,
-	args []string,
-	stdout, stderr io.Writer,
-	readyChan chan<- struct{},
-	clientOverride *CastClient,
-) error {
+func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, readyChan chan<- struct{}, clientOverride *CastClient) error {
 	var configPath string
 	for _, arg := range args {
 		if arg == "-h" || arg == "-help" || arg == "--help" {
-			if _, err := fmt.Fprintln(stderr, "Usage: cast-watcher [config-path]"); err != nil {
-				return err
-			}
-			return nil
+			_, err := fmt.Fprintln(stderr, "Usage: cast-watcher [config-path]")
+			return err
 		}
 		if strings.HasPrefix(arg, "-") {
 			return fmt.Errorf("flags are not supported; configure via config file: %s", arg)
@@ -106,7 +93,6 @@ func RunWithReady(
 	if err != nil {
 		return err
 	}
-
 	if cfg == nil || strings.TrimSpace(cfg.ControlURL) == "" {
 		return errors.New("control_url is required in configuration")
 	}
@@ -114,8 +100,7 @@ func RunWithReady(
 	chromecastAddr := strings.TrimSpace(cfg.ChromecastAddr)
 	if chromecastAddr == "" {
 		chromecastAddr = "10.0.0.50:8009"
-	}
-	if !strings.Contains(chromecastAddr, ":") {
+	} else if !strings.Contains(chromecastAddr, ":") {
 		chromecastAddr += ":8009"
 	}
 
@@ -123,25 +108,18 @@ func RunWithReady(
 	if coreURL == "" {
 		coreURL = "http://mirrormere-core:8080"
 	}
-
 	streamURL := strings.TrimSpace(cfg.StreamURL)
 	if streamURL == "" {
 		streamURL = "http://localhost:1984/api/webrtc?src=cast"
 	}
-
 	controlPort := 8090
 	if cfg.ControlPort != nil {
 		controlPort = *cfg.ControlPort
 	}
 
-	logger := slog.New(slog.NewTextHandler(stderr, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	}))
-
-	var client *CastClient
-	if clientOverride != nil {
-		client = clientOverride
-	} else {
+	logger := slog.New(slog.NewTextHandler(stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	client := clientOverride
+	if client == nil {
 		client = NewCastClient(ClientConfig{
 			ChromecastAddr: chromecastAddr,
 			CoreURL:        coreURL,
@@ -151,19 +129,11 @@ func RunWithReady(
 		})
 	}
 	defer client.Close()
-
 	client.Start(ctx)
 
-	serverCfg := ServerConfig{
-		Host:   "0.0.0.0",
-		Port:   controlPort,
-		Logger: logger,
-	}
-	server := NewActionServer(serverCfg, client)
-
-	bindAddr := fmt.Sprintf("%s:%d", serverCfg.Host, serverCfg.Port)
-	var lc net.ListenConfig
-	listener, err := lc.Listen(context.Background(), "tcp", bindAddr)
+	server := NewActionServer(ServerConfig{Host: "0.0.0.0", Port: controlPort, Logger: logger}, client)
+	bindAddr := fmt.Sprintf("0.0.0.0:%d", controlPort)
+	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", bindAddr)
 	if err != nil {
 		return fmt.Errorf("failed to bind address %s: %w", bindAddr, err)
 	}
@@ -172,15 +142,12 @@ func RunWithReady(
 	if _, err := fmt.Fprintf(stdout, "Mirrormere Cast Watcher listening on %s (Chromecast: %s)\n", listener.Addr().String(), chromecastAddr); err != nil {
 		return err
 	}
-
 	if readyChan != nil {
 		readyChan <- struct{}{}
 	}
 
 	errChan := make(chan error, 1)
-	go func() {
-		errChan <- server.Serve(listener)
-	}()
+	go func() { errChan <- server.Serve(listener) }()
 
 	select {
 	case <-ctx.Done():
