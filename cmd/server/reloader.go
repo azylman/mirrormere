@@ -38,18 +38,12 @@ type AssetReloader struct {
 
 // NewAssetReloader constructs and seeds an AssetReloader instance.
 func NewAssetReloader(
-	customCSSPath string,
-	loader *widget.Loader,
-	builtinDir, customDir string,
-	renderEngine *render.Engine,
-	configManager *config.Manager,
-	hub *events.Hub,
-	logger *slog.Logger,
+	customCSSPath string, loader *widget.Loader, builtinDir, customDir string,
+	renderEngine *render.Engine, configManager *config.Manager, hub *events.Hub, logger *slog.Logger,
 ) *AssetReloader {
 	if logger == nil {
 		logger = slog.Default()
 	}
-
 	ar := &AssetReloader{
 		customCSSPath:  customCSSPath,
 		loader:         loader,
@@ -62,33 +56,33 @@ func NewAssetReloader(
 		pkgHashes:      make(map[string]string),
 		incompletePkgs: make(map[string]string),
 	}
-
 	ar.seedInitialState()
 	return ar
+}
+
+func (r *AssetReloader) readCSSHash(warnLog string) (string, bool) {
+	if r.customCSSPath == "" {
+		return "", false
+	}
+	data, err := os.ReadFile(r.customCSSPath)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			r.logger.Warn(warnLog, "path", r.customCSSPath, "error", err)
+		}
+		return "", true
+	}
+	return hashBytes(data), true
 }
 
 func (r *AssetReloader) seedInitialState() {
 	r.Lock()
 	defer r.Unlock()
-
-	// 1. Seed custom.css hash
-	if r.customCSSPath != "" {
-		if data, err := os.ReadFile(r.customCSSPath); err == nil {
-			r.lastCSSHash = hashBytes(data)
-		} else {
-			if !os.IsNotExist(err) {
-				r.logger.Warn("failed to read custom CSS file during initial seeding", "path", r.customCSSPath, "error", err)
-			}
-			r.lastCSSHash = ""
-		}
+	if hash, ok := r.readCSSHash("failed to read custom CSS file during initial seeding"); ok {
+		r.lastCSSHash = hash
 	}
-
-	// 2. Seed widget package hashes
 	if r.loader != nil {
-		types := r.discoverWidgetTypesLocked()
-		for _, widgetType := range types {
-			pkg, err := r.loader.LoadPackage(widgetType)
-			if err == nil {
+		for _, widgetType := range r.discoverWidgetTypesLocked() {
+			if pkg, err := r.loader.LoadPackage(widgetType); err == nil {
 				r.pkgHashes[widgetType] = r.computePackageHash(pkg)
 			}
 		}
@@ -96,37 +90,18 @@ func (r *AssetReloader) seedInitialState() {
 }
 
 // ReloadCSS re-checks custom.css on disk, updating internal hash state and broadcasting style.reload if modified.
-// Returns true if a style reload was dispatched.
 func (r *AssetReloader) ReloadCSS() bool {
 	r.Lock()
 	defer r.Unlock()
-
-	if r.customCSSPath == "" {
+	currentHash, ok := r.readCSSHash("failed to read custom CSS file on reload")
+	if !ok || currentHash == r.lastCSSHash {
 		return false
 	}
-
-	var currentHash string
-	data, err := os.ReadFile(r.customCSSPath)
-	if err == nil {
-		currentHash = hashBytes(data)
-	} else {
-		if !os.IsNotExist(err) {
-			r.logger.Warn("failed to read custom CSS file on reload", "path", r.customCSSPath, "error", err)
-		}
-		currentHash = ""
-	}
-
-	if currentHash == r.lastCSSHash {
-		return false
-	}
-
-	// Hash changed (modified, created, or deleted)
 	r.lastCSSHash = currentHash
 
-	nowStr := time.Now().UTC().Format(time.RFC3339)
 	evt := events.StyleReloadEvent{
 		File:      filepath.Base(r.customCSSPath),
-		Timestamp: nowStr,
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
 	}
 	if r.hub != nil {
 		if err := r.hub.DispatchStyleReload(evt); err != nil {
@@ -137,22 +112,18 @@ func (r *AssetReloader) ReloadCSS() bool {
 }
 
 // ReloadWidgets re-scans widget packages, invalidating template caches and broadcasting widget.reload or system.status.
-// Returns true if any widget packages or package error statuses were modified.
 func (r *AssetReloader) ReloadWidgets() bool {
 	r.Lock()
 	defer r.Unlock()
-
 	if r.loader == nil {
 		return false
 	}
 
 	types := r.discoverWidgetTypesLocked()
-	var widgetsChanged bool
-	var statusChanged bool
+	var widgetsChanged, statusChanged bool
 
 	for _, widgetType := range types {
 		if !r.packageDirExists(widgetType) {
-			// Package was deleted
 			if r.renderEngine != nil {
 				r.renderEngine.Invalidate(widgetType)
 			}
@@ -163,10 +134,7 @@ func (r *AssetReloader) ReloadWidgets() bool {
 				delete(r.incompletePkgs, widgetType)
 				statusChanged = true
 			}
-			_, hadHash := r.pkgHashes[widgetType]
-			if hadHash {
-				delete(r.pkgHashes, widgetType)
-			}
+			delete(r.pkgHashes, widgetType)
 			if r.hub != nil {
 				if err := r.hub.DispatchWidgetReload(events.WidgetReloadEvent{Type: widgetType}); err != nil {
 					r.logger.Error("failed to dispatch widget reload for deleted package", "type", widgetType, "error", err)
@@ -176,10 +144,8 @@ func (r *AssetReloader) ReloadWidgets() bool {
 			continue
 		}
 
-		// Package directory exists; attempt to load
 		pkg, err := r.loader.LoadPackage(widgetType)
 		if err != nil {
-			// Incomplete package
 			lastErr, hadErr := r.incompletePkgs[widgetType]
 			if !hadErr || lastErr != err.Error() {
 				if r.configManager != nil {
@@ -188,8 +154,6 @@ func (r *AssetReloader) ReloadWidgets() bool {
 				r.incompletePkgs[widgetType] = err.Error()
 				statusChanged = true
 			}
-
-			// If it was previously complete and is now broken, evict cache
 			if _, hadHash := r.pkgHashes[widgetType]; hadHash {
 				delete(r.pkgHashes, widgetType)
 				if r.renderEngine != nil {
@@ -199,8 +163,6 @@ func (r *AssetReloader) ReloadWidgets() bool {
 			continue
 		}
 
-		// Package is complete
-		// Clear any previous package error if present
 		if r.configManager != nil && r.configManager.ClearPackageError(widgetType) {
 			statusChanged = true
 		}
@@ -209,10 +171,8 @@ func (r *AssetReloader) ReloadWidgets() bool {
 			statusChanged = true
 		}
 
-		// Check hash
 		newHash := r.computePackageHash(pkg)
-		oldHash, hadHash := r.pkgHashes[widgetType]
-		if !hadHash || oldHash != newHash {
+		if oldHash, hadHash := r.pkgHashes[widgetType]; !hadHash || oldHash != newHash {
 			r.pkgHashes[widgetType] = newHash
 			if r.renderEngine != nil {
 				r.renderEngine.Invalidate(widgetType)
@@ -231,26 +191,20 @@ func (r *AssetReloader) ReloadWidgets() bool {
 			r.logger.Error("failed to dispatch status on widget reload", "error", err)
 		}
 	}
-
 	return widgetsChanged || statusChanged
 }
 
 // Reload executes both ReloadCSS and ReloadWidgets.
 func (r *AssetReloader) Reload() (cssReloaded bool, widgetsReloaded bool) {
-	cssReloaded = r.ReloadCSS()
-	widgetsReloaded = r.ReloadWidgets()
-	return cssReloaded, widgetsReloaded
+	return r.ReloadCSS(), r.ReloadWidgets()
 }
 
 func (r *AssetReloader) packageDirExists(widgetType string) bool {
-	if r.customDir != "" {
-		if fi, err := os.Stat(filepath.Join(r.customDir, widgetType)); err == nil && fi.IsDir() {
-			return true
-		}
-	}
-	if r.builtinDir != "" {
-		if fi, err := os.Stat(filepath.Join(r.builtinDir, widgetType)); err == nil && fi.IsDir() {
-			return true
+	for _, dir := range []string{r.customDir, r.builtinDir} {
+		if dir != "" {
+			if fi, err := os.Stat(filepath.Join(dir, widgetType)); err == nil && fi.IsDir() {
+				return true
+			}
 		}
 	}
 	return false
@@ -258,10 +212,11 @@ func (r *AssetReloader) packageDirExists(widgetType string) bool {
 
 func (r *AssetReloader) discoverWidgetTypesLocked() []string {
 	typeSet := make(map[string]bool)
-
-	// 1. Scan custom directory
-	if r.customDir != "" {
-		entries, err := os.ReadDir(r.customDir)
+	for _, src := range []struct{ dir, label string }{{r.customDir, "custom"}, {r.builtinDir, "builtin"}} {
+		if src.dir == "" {
+			continue
+		}
+		entries, err := os.ReadDir(src.dir)
 		if err == nil {
 			for _, entry := range entries {
 				if entry.IsDir() && !strings.HasPrefix(entry.Name(), ".") {
@@ -269,32 +224,15 @@ func (r *AssetReloader) discoverWidgetTypesLocked() []string {
 				}
 			}
 		} else if !os.IsNotExist(err) {
-			r.logger.Warn("failed to read custom widgets directory", "dir", r.customDir, "error", err)
+			r.logger.Warn("failed to read "+src.label+" widgets directory", "dir", src.dir, "error", err)
 		}
 	}
-
-	// 2. Scan builtin directory
-	if r.builtinDir != "" {
-		entries, err := os.ReadDir(r.builtinDir)
-		if err == nil {
-			for _, entry := range entries {
-				if entry.IsDir() && !strings.HasPrefix(entry.Name(), ".") {
-					typeSet[entry.Name()] = true
-				}
-			}
-		} else if !os.IsNotExist(err) {
-			r.logger.Warn("failed to read builtin widgets directory", "dir", r.builtinDir, "error", err)
-		}
-	}
-
-	// 3. Include any currently tracked packages (in case their directories were removed)
 	for t := range r.pkgHashes {
 		typeSet[t] = true
 	}
 	for t := range r.incompletePkgs {
 		typeSet[t] = true
 	}
-
 	types := make([]string, 0, len(typeSet))
 	for t := range typeSet {
 		types = append(types, t)
@@ -308,29 +246,19 @@ func (r *AssetReloader) computePackageHash(pkg *domain.Package) string {
 	hasher.Write([]byte(pkg.Source))
 	hasher.Write([]byte{0})
 
-	manifestData, err := os.ReadFile(pkg.ManifestPath)
-	if err != nil {
-		r.logger.Warn("failed to read package manifest for hash", "path", pkg.ManifestPath, "error", err)
-	} else {
-		hasher.Write(manifestData)
+	for _, f := range []struct{ path, desc string }{{pkg.ManifestPath, "manifest"}, {pkg.ViewPath, "view template"}} {
+		if data, err := os.ReadFile(f.path); err != nil {
+			r.logger.Warn("failed to read package "+f.desc+" for hash", "path", f.path, "error", err)
+		} else {
+			hasher.Write(data)
+		}
+		hasher.Write([]byte{0})
 	}
-	hasher.Write([]byte{0})
-
-	viewData, err := os.ReadFile(pkg.ViewPath)
-	if err != nil {
-		r.logger.Warn("failed to read package view template for hash", "path", pkg.ViewPath, "error", err)
-	} else {
-		hasher.Write(viewData)
-	}
-	hasher.Write([]byte{0})
 
 	if pkg.AssetsDir != "" {
 		if walkErr := filepath.Walk(pkg.AssetsDir, func(path string, info os.FileInfo, err error) error {
-			if err != nil {
+			if err != nil || info.IsDir() {
 				return err
-			}
-			if info.IsDir() {
-				return nil
 			}
 			rel, relErr := filepath.Rel(pkg.AssetsDir, path)
 			if relErr != nil {
@@ -345,7 +273,6 @@ func (r *AssetReloader) computePackageHash(pkg *domain.Package) string {
 			r.logger.Warn("failed to walk package assets for hash", "path", pkg.AssetsDir, "error", walkErr)
 		}
 	}
-
 	return hex.EncodeToString(hasher.Sum(nil))
 }
 

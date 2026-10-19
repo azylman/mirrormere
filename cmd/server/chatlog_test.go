@@ -11,11 +11,9 @@ import (
 
 type fakeSnapshots struct{ snap *config.Snapshot }
 
-func (f fakeSnapshots) CurrentSnapshot() *config.Snapshot { return f.snap }
-func (f fakeSnapshots) GetWidgetState(string) (any, string, string, bool) {
-	return nil, "", "", false
-}
-func (f fakeSnapshots) CurrentStatus() config.Status { return config.Status{} }
+func (f fakeSnapshots) CurrentSnapshot() *config.Snapshot                 { return f.snap }
+func (f fakeSnapshots) GetWidgetState(string) (any, string, string, bool) { return nil, "", "", false }
+func (f fakeSnapshots) CurrentStatus() config.Status                     { return config.Status{} }
 
 type fakePusher struct {
 	ids []string
@@ -33,47 +31,30 @@ func chatSnap() fakeSnapshots {
 	}}}}}
 }
 
-func TestPushChatLogUpdates_HitsOnlyChatLogWidgets(t *testing.T) {
-	p := &fakePusher{}
+func TestChatLogWiring(t *testing.T) {
+	p := &fakePusher{err: errors.New("boom")}
 	pushChatLogUpdates(chatSnap(), p, chatlog.NewStore())
+	pushChatLogUpdates(fakeSnapshots{}, p, chatlog.NewStore())
 	if len(p.ids) != 2 || p.ids[0] != "a" || p.ids[1] != "b" {
-		t.Fatalf("expected push to a and b only, got %v", p.ids)
+		t.Fatalf("pushChatLogUpdates ids = %v, want [a b]", p.ids)
 	}
-	pushChatLogUpdates(fakeSnapshots{}, p, chatlog.NewStore()) // no config: no-op, no panic
-}
-
-func TestChatLogNodeData(t *testing.T) {
 	store := chatlog.NewStore()
 	store.Add(chatlog.NodeKey("kitchen"), chatlog.Message{Role: chatlog.RoleHuman, Text: "hi"})
 	fn := chatLogNodeData(chatSnap(), store)
-
-	d, ok := fn("a", "kitchen")
-	if !ok || len(d.(map[string]any)["messages"].([]any)) != 1 {
-		t.Fatalf("chat-log widget should render the kitchen conversation: %v %v", d, ok)
+	if d, ok := fn("a", "kitchen"); !ok || len(d.(map[string]any)["messages"].([]any)) != 1 {
+		t.Fatalf("kitchen data mismatch: %v, %v", d, ok)
 	}
 	if d, _ := fn("a", "office"); len(d.(map[string]any)["messages"].([]any)) != 0 {
-		t.Fatalf("office must not see kitchen messages: %v", d)
+		t.Fatalf("office data leaked kitchen: %v", d)
 	}
 	if _, ok := fn("s", "kitchen"); ok {
-		t.Fatal("non chat-log widgets keep their shared data")
+		t.Fatal("expected ok=false for spacer widget")
 	}
-}
-
-func TestPushChatLogUpdates_ContinuesAfterPushError(t *testing.T) {
-	p := &fakePusher{err: errors.New("boom")}
-	pushChatLogUpdates(chatSnap(), p, chatlog.NewStore())
-	if len(p.ids) != 2 {
-		t.Fatalf("a failing push must not stop the other widgets, got %v", p.ids)
-	}
-}
-
-func TestNewChatLogHook_ResolvesPusherLazily(t *testing.T) {
-	var current chatLogPusher
-	hook := newChatLogHook(chatSnap(), func() chatLogPusher { return current }, chatlog.NewStore())
-	p := &fakePusher{}
-	current = p // assigned after the hook was built, as the coordinator is in main
+	var lazyPusher chatLogPusher
+	hook := newChatLogHook(chatSnap(), func() chatLogPusher { return lazyPusher }, chatlog.NewStore())
+	lazyPusher = &fakePusher{}
 	hook()
-	if len(p.ids) != 2 {
-		t.Fatalf("hook should push to both chat-log widgets, got %v", p.ids)
+	if len(lazyPusher.(*fakePusher).ids) != 2 {
+		t.Fatalf("lazy hook pushed to %v, want 2 widgets", lazyPusher.(*fakePusher).ids)
 	}
 }

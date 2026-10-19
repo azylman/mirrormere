@@ -33,8 +33,9 @@ import (
 )
 
 var (
-	exitFunc = os.Exit
-	argsHook []string
+	exitFunc      = os.Exit
+	argsHook      []string
+	defaultDBPath = "/data/lists.db"
 )
 
 func main() {
@@ -42,7 +43,6 @@ func main() {
 	if argsHook != nil {
 		args = argsHook
 	}
-
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
@@ -52,70 +52,39 @@ func main() {
 	}
 }
 
-// Option configures RunWithReady execution.
-type Option func(*runConfig)
-
-type runConfig struct {
-	addrChan chan<- string
-	hupChan  <-chan os.Signal
-	onReload func()
-}
-
-// WithAddrChan supplies a channel that receives the bound listener address.
-func WithAddrChan(ch chan<- string) Option {
-	return func(rc *runConfig) {
-		rc.addrChan = ch
+type (
+	// Option configures RunWithReady execution.
+	Option    func(*runConfig)
+	runConfig struct {
+		addrChan chan<- string
+		hupChan  <-chan os.Signal
+		onReload func()
 	}
-}
+)
 
-// WithHupChan injects a custom SIGHUP signal channel for testing.
-func WithHupChan(ch <-chan os.Signal) Option {
-	return func(rc *runConfig) {
-		rc.hupChan = ch
-	}
-}
+func WithAddrChan(ch chan<- string) Option   { return func(rc *runConfig) { rc.addrChan = ch } }
+func WithHupChan(ch <-chan os.Signal) Option { return func(rc *runConfig) { rc.hupChan = ch } }
+func WithOnReload(fn func()) Option          { return func(rc *runConfig) { rc.onReload = fn } }
 
-// WithOnReload injects a callback invoked after a SIGHUP reload attempt completes.
-func WithOnReload(fn func()) Option {
-	return func(rc *runConfig) {
-		rc.onReload = fn
-	}
-}
-
-// householdNowFunc returns a clock for the render engine that reports the current instant in
-// the household's configured timezone rather than the server process's own zone, which is
-// UTC in the production container. Without this, BuildFamilyView's t.In(now.Location()) calls
-// in internal/render/family.go are a no-op (now.Location() would already be UTC), so a UTC
-// event near local midnight would still land on the wrong day.
-// chatLogWidgetIDs lists the chat-log widget instances in the active configuration.
-func chatLogWidgetIDs(snap *config.Snapshot) []string {
-	if snap == nil || snap.Config == nil {
-		return nil
-	}
-	var ids []string
-	for _, w := range snap.Config.Display.Widgets {
-		if w.Type == "chat-log" {
-			ids = append(ids, w.ID)
+func chatLogWidgetIDs(snap *config.Snapshot) (ids []string) {
+	if snap != nil && snap.Config != nil {
+		for _, w := range snap.Config.Display.Widgets {
+			if w.Type == "chat-log" {
+				ids = append(ids, w.ID)
+			}
 		}
 	}
 	return ids
 }
 
-// chatLogPusher is the slice of the provider coordinator the chat-log hook needs.
 type chatLogPusher interface {
 	PushUpdate(widgetID string, data any) (provider.WidgetPayload, error)
 }
 
-// newChatLogHook returns the voice hub's on-change hook. The pusher is looked up
-// lazily because the provider coordinator is built after the hub.
 func newChatLogHook(sp render.StateSnapshotProvider, pusher func() chatLogPusher, store *chatlog.Store) func() {
 	return func() { pushChatLogUpdates(sp, pusher(), store) }
 }
 
-// pushChatLogUpdates runs every chat-log widget through the normal push path
-// (cache update + widget.update broadcast) after the voice hub records a turn.
-// Each display then re-renders through GET /api/widgets/{id}/render?node=<id>
-// and gets its own conversation. The cached copy is the most-recent-node view.
 func pushChatLogUpdates(sp render.StateSnapshotProvider, pusher chatLogPusher, store *chatlog.Store) {
 	for _, id := range chatLogWidgetIDs(sp.CurrentSnapshot()) {
 		if _, err := pusher.PushUpdate(id, store.View(id, "")); err != nil {
@@ -124,8 +93,6 @@ func pushChatLogUpdates(sp render.StateSnapshotProvider, pusher chatLogPusher, s
 	}
 }
 
-// chatLogNodeData supplies per-display render data for chat-log widgets: the
-// requesting display's own conversation, chosen from the ?node= it passed.
 func chatLogNodeData(sp render.StateSnapshotProvider, store *chatlog.Store) func(widgetID, nodeID string) (any, bool) {
 	return func(widgetID, nodeID string) (any, bool) {
 		for _, id := range chatLogWidgetIDs(sp.CurrentSnapshot()) {
@@ -140,11 +107,8 @@ func chatLogNodeData(sp render.StateSnapshotProvider, store *chatlog.Store) func
 func householdNowFunc(sp render.StateSnapshotProvider) func() time.Time {
 	return func() time.Time {
 		now := time.Now()
-		if sp == nil {
-			return now
-		}
-		if snap := sp.CurrentSnapshot(); snap != nil && snap.Config != nil {
-			return now.In(snap.Config.Location())
+		if sp != nil && sp.CurrentSnapshot() != nil && sp.CurrentSnapshot().Config != nil {
+			return now.In(sp.CurrentSnapshot().Config.Location())
 		}
 		return now
 	}
@@ -152,23 +116,14 @@ func householdNowFunc(sp render.StateSnapshotProvider) func() time.Time {
 
 func householdThemeFunc(sp render.StateSnapshotProvider) func() string {
 	return func() string {
-		if sp == nil {
+		if sp == nil || sp.CurrentSnapshot() == nil || sp.CurrentSnapshot().Config == nil {
 			return "day"
 		}
 		snap := sp.CurrentSnapshot()
-		if snap == nil || snap.Config == nil {
-			return "day"
+		if mode := snap.Config.Display.Theme.GetMode(); mode == "night" || mode == "day" {
+			return mode
 		}
-		mode := snap.Config.Display.Theme.GetMode()
-		if mode == "night" {
-			return "night"
-		}
-		if mode == "day" {
-			return "day"
-		}
-		// mode == "auto"
-		loc := snap.Config.GetLocationConfig()
-		if loc != nil && loc.Latitude != nil && loc.Longitude != nil {
+		if loc := snap.Config.GetLocationConfig(); loc != nil && loc.Latitude != nil && loc.Longitude != nil {
 			now := time.Now()
 			if snap.Config.Location() != nil {
 				now = now.In(snap.Config.Location())
@@ -176,13 +131,11 @@ func householdThemeFunc(sp render.StateSnapshotProvider) func() string {
 			if solar.IsNight(loc.GetLatitude(), loc.GetLongitude(), now) {
 				return "night"
 			}
-			return "day"
 		}
 		return "day"
 	}
 }
 
-// evaluateThemeTransition checks if the active theme changed and dispatches theme.update.
 func evaluateThemeTransition(currentTheme func() string, sp interface {
 	GetTheme() string
 	SetTheme(string)
@@ -197,14 +150,99 @@ func evaluateThemeTransition(currentTheme func() string, sp interface {
 		}
 		sp.SetTheme(newTheme)
 		if hub != nil {
-			data, err := json.Marshal(events.ThemeUpdateData{Theme: newTheme})
-			if err == nil {
+			if data, err := json.Marshal(events.ThemeUpdateData{Theme: newTheme}); err == nil {
 				hub.Publish(events.EventThemeUpdate, data)
 			}
 		}
 		return true
 	}
 	return false
+}
+
+func buildDisplayHandler(stateProvider render.StateSnapshotProvider, currentTheme func() string) *display.Handler {
+	cfg := func() *config.Config {
+		if snap := stateProvider.CurrentSnapshot(); snap != nil {
+			return snap.Config
+		}
+		return nil
+	}
+	return display.NewHandler(
+		display.WithThemeProvider(currentTheme),
+		display.WithTimezoneProvider(func() string {
+			if c := cfg(); c != nil && c.Timezone != "" {
+				return c.Timezone
+			}
+			return "UTC"
+		}),
+		display.WithHideCursorProvider(func() bool { return cfg() != nil && cfg().Display.HideCursor }),
+		display.WithRemoteURLProvider(func() string {
+			if c := cfg(); c != nil {
+				return c.Display.RemoteURL
+			}
+			return ""
+		}),
+		display.WithHeaderVideoProvider(func() *display.HeaderVideoTemplateData {
+			if c := cfg(); c != nil {
+				if v := c.Display.Header.Video; v != nil && v.IsEnabled() {
+					return &display.HeaderVideoTemplateData{
+						Enabled: true, StreamID: v.GetStreamID(), StreamURL: v.StreamURL,
+						ControlURL: v.ControlURL, Type: v.GetType(),
+					}
+				}
+			}
+			return nil
+		}),
+	)
+}
+
+func handleSIGHUP(
+	configPath string, configManager *config.Manager, hub *events.Hub,
+	stateProvider *events.InMemoryStateProvider, currentTheme func() string,
+	initialHost string, initialPort int, assetReloader *AssetReloader,
+	renderHandler *render.Handler, onReload func(), logger *slog.Logger,
+) {
+	logger.Info("received SIGHUP, reloading configuration and assets", "path", configPath)
+	if configPath != "" {
+		if data, err := os.ReadFile(configPath); err != nil {
+			logger.Error("failed to read configuration file on SIGHUP", "path", configPath, "error", err)
+			configManager.SetErrorStatus(err)
+			dispatchStatus(hub, configManager.Status(), logger)
+		} else if snap, diff, err := configManager.Reload(data); err != nil {
+			logger.Error("failed to validate configuration on SIGHUP; retaining LKGC", "error", err)
+			dispatchStatus(hub, configManager.Status(), logger)
+		} else {
+			if err := hub.DispatchConfigReload(snap, diff); err != nil {
+				logger.Error("failed to dispatch reload", "error", err)
+			}
+			dispatchStatus(hub, configManager.Status(), logger)
+			logger.Info("configuration reloaded successfully on SIGHUP", "widgets", len(snap.Config.Display.Widgets))
+			evaluateThemeTransition(currentTheme, stateProvider, hub, logger)
+
+			if snap != nil && snap.Config != nil {
+				newHost, newPort := server.DefaultHost, server.DefaultPort
+				if snap.Config.Host != "" { newHost = snap.Config.Host }
+				if snap.Config.Port != nil { newPort = *snap.Config.Port }
+				if newHost != initialHost || newPort != initialPort {
+					logger.Warn("host or port changed in configuration; server restart required for changes to take effect",
+						"bound_host", initialHost, "bound_port", initialPort, "new_host", newHost, "new_port", newPort)
+				}
+			}
+		}
+	}
+	if assetReloader != nil {
+		cssReloaded, widgetsReloaded := assetReloader.Reload()
+		logger.Info("asset reload on SIGHUP complete", "css_reloaded", cssReloaded, "widgets_reloaded", widgetsReloaded)
+		renderHandler.SetCSSPath(resolveCSSPath())
+	}
+	if onReload != nil {
+		onReload()
+	}
+}
+
+func dispatchStatus(hub *events.Hub, st config.Status, logger *slog.Logger) {
+	if err := hub.DispatchStatus(st); err != nil {
+		logger.Error("failed to dispatch status", "error", err)
+	}
 }
 
 // Run executes the server application with the supplied arguments and context.
@@ -219,17 +257,13 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 		opt(&rcfg)
 	}
 
-	logger := slog.New(slog.NewTextHandler(stderr, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	}))
+	logger := slog.New(slog.NewTextHandler(stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
 	var configPath string
 	for _, arg := range args {
 		if arg == "-h" || arg == "-help" || arg == "--help" {
-			if _, err := fmt.Fprintln(stderr, "Usage: mirrormere [config-path]"); err != nil {
-				return err
-			}
-			return nil
+			_, err := fmt.Fprintln(stderr, "Usage: mirrormere [config-path]")
+			return err
 		}
 		if strings.HasPrefix(arg, "-") {
 			return fmt.Errorf("flags are not supported; configure via config file: %s", arg)
@@ -240,44 +274,30 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 	}
 
 	if configPath == "" {
-		configPath = os.Getenv("CONFIG_PATH")
-	}
-	if configPath == "" {
-		configPath = config.DefaultConfigPath
-	}
-
-	// 1. Resolve widget directories and initialize loader
-	builtinDir := widget.DefaultBuiltinDir
-	candidates := []string{
-		"/app/widgets",
-		"widgets",
-		"../../widgets",
-	}
-	for _, c := range candidates {
-		if fi, err := os.Stat(c); err == nil && fi.IsDir() {
-			builtinDir = c
-			break
+		if configPath = os.Getenv("CONFIG_PATH"); configPath == "" {
+			configPath = config.DefaultConfigPath
 		}
 	}
 
+	builtinDir := widget.DefaultBuiltinDir
+	for _, c := range []string{"/app/widgets", "widgets", "../../widgets"} {
+		if fi, err := os.Stat(c); err == nil && fi.IsDir() {
+			builtinDir = c; break
+		}
+	}
 	customDir := widget.DefaultCustomDir
 	if configPath != "" {
-		candidateDir := filepath.Join(filepath.Dir(configPath), "widgets")
-		if fi, err := os.Stat(candidateDir); err == nil && fi.IsDir() {
-			customDir = candidateDir
+		if cDir := filepath.Join(filepath.Dir(configPath), "widgets"); cDir != "" {
+			if fi, err := os.Stat(cDir); err == nil && fi.IsDir() { customDir = cDir }
 		}
 	}
-
 	loader := widget.NewLoader(builtinDir, customDir)
 
-	// 2. Resolve configuration YAML
 	var initialYAML []byte
 	if configPath != "" {
 		if data, err := os.ReadFile(configPath); err == nil {
 			initialYAML = data
-		} else if len(args) > 0 && configPath == args[0] {
-			return fmt.Errorf("failed to read configuration file %q: %w", configPath, err)
-		} else if envPath := os.Getenv("CONFIG_PATH"); envPath != "" && configPath == envPath {
+		} else if (len(args) > 0 && configPath == args[0]) || (os.Getenv("CONFIG_PATH") != "" && configPath == os.Getenv("CONFIG_PATH")) {
 			return fmt.Errorf("failed to read configuration file %q: %w", configPath, err)
 		}
 	}
@@ -285,110 +305,68 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 		initialYAML = []byte("timezone: UTC\ndisplay:\n  widgets:\n    - id: default-spacer\n      type: spacer\n      dimensions: [6, 2]\n")
 		configPath = ""
 	}
-
 	customCSSPath := render.DefaultCustomCSSPath
 	if configPath != "" {
 		customCSSPath = filepath.Join(filepath.Dir(configPath), "custom.css")
 	}
 
-	// 3. Initialize LKGC Configuration Manager
 	configManager, err := config.NewManager(initialYAML, loader, os.Getenv, logger)
 	if err != nil {
 		return fmt.Errorf("failed to initialize configuration manager: %w", err)
 	}
 	snapshot := configManager.CurrentSnapshot()
 
-	initialHost := server.DefaultHost
-	initialPort := server.DefaultPort
+	initialHost, initialPort := server.DefaultHost, server.DefaultPort
 	if snapshot != nil && snapshot.Config != nil {
-		if snapshot.Config.Host != "" {
-			initialHost = snapshot.Config.Host
-		}
-		if snapshot.Config.Port != nil {
-			initialPort = *snapshot.Config.Port
-		}
+		if snapshot.Config.Host != "" { initialHost = snapshot.Config.Host }
+		if snapshot.Config.Port != nil { initialPort = *snapshot.Config.Port }
 	}
 
-	// 4. State Provider & Event Hub
 	stateProvider := events.NewInMemoryStateProvider(configManager)
 	currentTheme := householdThemeFunc(stateProvider)
 	stateProvider.SetTheme(currentTheme())
 	hub := events.NewHub(events.HubConfig{}, stateProvider, logger)
 	defer hub.Close()
-	eventsHandler := events.Handler(hub)
 
-	// 5. Initialize Tasks SQLite Store & Provider Registry
 	dbPath := os.Getenv("DB_PATH")
 	if dbPath == "" {
-		dbPath = "/data/lists.db"
+		dbPath = defaultDBPath
 	}
 	tasksStore, err := tasks.NewSQLiteStore(dbPath)
 	if err != nil {
 		logger.Warn("failed to initialize persistent tasks store; falling back to in-memory store", "path", dbPath, "error", err)
-		fallbackStore, fallbackErr := tasks.NewSQLiteStore(":memory:")
-		if fallbackErr != nil {
-			return fmt.Errorf("failed to initialize fallback in-memory tasks store: %w", fallbackErr)
+		if tasksStore, err = tasks.NewSQLiteStore(":memory:"); err != nil {
+			return fmt.Errorf("failed to initialize fallback in-memory tasks store: %w", err)
 		}
-		tasksStore = fallbackStore
 	}
 	defer func() {
 		if err := tasksStore.Close(); err != nil {
 			logger.Warn("failed to close tasks store", "error", err)
 		}
 	}()
-	listsHandler := server.NewDefaultListsHandler(tasksStore)
 
-	// In-memory conversation store shared by the voice hub (writer) and the
-	// chat-log provider (reader). Nothing is persisted.
 	var chatLogCfg *config.ChatLogConfig
-	if snapshot != nil && snapshot.Config != nil {
-		chatLogCfg = snapshot.Config.ChatLog
-	}
-	chatStore := chatlog.NewStore(
-		chatlog.WithTTL(chatLogCfg.GetTTL()),
-		chatlog.WithMaxPerKey(chatLogCfg.GetMaxMessagesPerNode()),
-	)
-
-	reg := provider.NewRegistry()
-	reg.Register("tasks", func() provider.Provider {
-		return provider.NewTasksProviderWithStore(tasksStore)
-	})
-
-	// 6. Audio Coordinator & Handler
-	audioCoord := audio.NewCoordinator(hub, stateProvider)
-	audioHandler := server.NewDefaultAudioHandler(audioCoord)
-
-	// 7. Video Coordinator & Handler
-	videoCoord := video.NewCoordinator(hub, video.WithSink(stateProvider))
-	defer videoCoord.Close()
-	videoHandler := server.NewDefaultVideoHandler(videoCoord)
-
-	// 8. Voice Coordinator, Hub & Handler
-	voiceCoord := voice.NewCoordinator(hub, stateProvider)
-	var providerCoord *provider.ProviderCoordinator // assigned in step 10; the chat-log hook only runs once turns arrive
 	var voiceHubCfg *config.VoiceHubConfig
 	if snapshot != nil && snapshot.Config != nil {
-		voiceHubCfg = snapshot.Config.VoiceHub
+		chatLogCfg, voiceHubCfg = snapshot.Config.ChatLog, snapshot.Config.VoiceHub
 	}
-	voiceHub := voice.NewHub(voiceHubCfg, voiceCoord, voice.WithChatLog(chatStore, newChatLogHook(stateProvider, func() chatLogPusher { return providerCoord }, chatStore)))
-	voiceHandler := server.NewDefaultVoiceHandler(voiceCoord, voiceHub, server.WithVoiceMetrics(voice.DefaultMetrics()))
+	chatStore := chatlog.NewStore(chatlog.WithTTL(chatLogCfg.GetTTL()), chatlog.WithMaxPerKey(chatLogCfg.GetMaxMessagesPerNode()))
 
-	// 9. Rotation Coordinator & Screen Handler
-	rotationCoord := rotation.NewCoordinator(rotation.Config{
-		Broadcaster: hub,
-		Logger:      logger,
-	}, snapshot)
+	reg := provider.NewRegistry()
+	reg.Register("tasks", func() provider.Provider { return provider.NewTasksProviderWithStore(tasksStore) })
+
+	videoCoord := video.NewCoordinator(hub, video.WithSink(stateProvider))
+	defer videoCoord.Close()
+
+	var providerCoord *provider.ProviderCoordinator
+	voiceHub := voice.NewHub(voiceHubCfg, voice.NewCoordinator(hub, stateProvider), voice.WithChatLog(chatStore, newChatLogHook(stateProvider, func() chatLogPusher { return providerCoord }, chatStore)))
+
+	rotationCoord := rotation.NewCoordinator(rotation.Config{Broadcaster: hub, Logger: logger}, snapshot)
 	defer rotationCoord.Stop()
 	hub.SetRotationCoordinator(rotationCoord)
-	screenHandler := rotation.NewHandler(rotationCoord)
 
-	// 10. Provider Coordinator & Push Handler
 	providerCoord = provider.NewCoordinator(provider.CoordinatorConfig{
-		Registry:    reg,
-		Broadcaster: hub,
-		StateSink:   stateProvider,
-		Logger:      logger,
-		ChatLog:     chatStore,
+		Registry: reg, Broadcaster: hub, StateSink: stateProvider, Logger: logger, ChatLog: chatStore,
 	}, snapshot)
 	defer func() {
 		if err := providerCoord.Stop(); err != nil {
@@ -396,55 +374,17 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 		}
 	}()
 	hub.SetProviderCoordinator(providerCoord)
-	listsHandler.SetItemCompleter(providerCoord)
-	pushHandler := provider.NewPushHandler(providerCoord, logger)
 
-	// 11. Render & Display Handlers
+	listsHandler := server.NewDefaultListsHandler(tasksStore)
+	listsHandler.SetItemCompleter(providerCoord)
+
 	renderEngine := render.NewEngine(loader, stateProvider,
 		render.WithNowFunc(householdNowFunc(stateProvider)),
 		render.WithNodeDataFunc(chatLogNodeData(stateProvider, chatStore)),
 	)
-	cssPath := resolveCSSPath()
-	renderHandler := render.NewHandler(renderEngine, loader, render.WithCSSPath(cssPath), render.WithCustomCSSPath(customCSSPath))
-	displayHandler := display.NewHandler(
-		display.WithThemeProvider(currentTheme),
-		display.WithTimezoneProvider(func() string {
-			if snap := stateProvider.CurrentSnapshot(); snap != nil && snap.Config != nil {
-				return snap.Config.Timezone
-			}
-			return "UTC"
-		}),
-		display.WithHideCursorProvider(func() bool {
-			if snap := stateProvider.CurrentSnapshot(); snap != nil && snap.Config != nil {
-				return snap.Config.Display.HideCursor
-			}
-			return false
-		}),
-		display.WithRemoteURLProvider(func() string {
-			if snap := stateProvider.CurrentSnapshot(); snap != nil && snap.Config != nil {
-				return snap.Config.Display.RemoteURL
-			}
-			return ""
-		}),
-		display.WithHeaderVideoProvider(func() *display.HeaderVideoTemplateData {
-			if snap := stateProvider.CurrentSnapshot(); snap != nil && snap.Config != nil {
-				v := snap.Config.Display.Header.Video
-				if v != nil && v.IsEnabled() {
-					return &display.HeaderVideoTemplateData{
-						Enabled:    true,
-						StreamID:   v.GetStreamID(),
-						StreamURL:  v.StreamURL,
-						ControlURL: v.ControlURL,
-						Type:       v.GetType(),
-					}
-				}
-			}
-			return nil
-		}),
-	)
+	renderHandler := render.NewHandler(renderEngine, loader, render.WithCSSPath(resolveCSSPath()), render.WithCustomCSSPath(customCSSPath))
 	assetReloader := NewAssetReloader(customCSSPath, loader, builtinDir, customDir, renderEngine, configManager, hub, logger)
 
-	// Background solar/theme evaluation loop
 	themeTicker := time.NewTicker(30 * time.Second)
 	defer themeTicker.Stop()
 	go func() {
@@ -458,21 +398,14 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 		}
 	}()
 
-	// 12. SIGHUP Signal Listener for Live Configuration Reloads
 	var hupChan <-chan os.Signal
-	var stopHup func()
 	if rcfg.hupChan != nil {
 		hupChan = rcfg.hupChan
 	} else {
 		ch := make(chan os.Signal, 1)
 		signal.Notify(ch, syscall.SIGHUP)
 		hupChan = ch
-		stopHup = func() {
-			signal.Stop(ch)
-		}
-	}
-	if stopHup != nil {
-		defer stopHup()
+		defer signal.Stop(ch)
 	}
 
 	hupCtx, hupCancel := context.WithCancel(ctx)
@@ -487,90 +420,32 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 					return
 				}
 				if sig == syscall.SIGHUP {
-					logger.Info("received SIGHUP, reloading configuration and assets", "path", configPath)
-					if configPath != "" {
-						data, err := os.ReadFile(configPath)
-						if err != nil {
-							logger.Error("failed to read configuration file on SIGHUP", "path", configPath, "error", err)
-							configManager.SetErrorStatus(err)
-							if serr := hub.DispatchStatus(configManager.Status()); serr != nil {
-								logger.Error("failed to dispatch status on SIGHUP read failure", "error", serr)
-							}
-						} else {
-							snap, diff, err := configManager.Reload(data)
-							if err != nil {
-								logger.Error("failed to validate configuration on SIGHUP; retaining LKGC", "error", err)
-								if serr := hub.DispatchStatus(configManager.Status()); serr != nil {
-									logger.Error("failed to dispatch status on SIGHUP validation failure", "error", serr)
-								}
-							} else {
-								if err := hub.DispatchConfigReload(snap, diff); err != nil {
-									logger.Error("failed to dispatch config reload on SIGHUP", "error", err)
-								}
-								if err := hub.DispatchStatus(configManager.Status()); err != nil {
-									logger.Error("failed to dispatch status on SIGHUP", "error", err)
-								}
-								logger.Info("configuration reloaded successfully on SIGHUP", "widgets", len(snap.Config.Display.Widgets))
-								evaluateThemeTransition(currentTheme, stateProvider, hub, logger)
-
-								if snap != nil && snap.Config != nil {
-									newHost := server.DefaultHost
-									if snap.Config.Host != "" {
-										newHost = snap.Config.Host
-									}
-									newPort := server.DefaultPort
-									if snap.Config.Port != nil {
-										newPort = *snap.Config.Port
-									}
-									if newHost != initialHost || newPort != initialPort {
-										logger.Warn("host or port changed in configuration; server restart required for changes to take effect",
-											"bound_host", initialHost,
-											"bound_port", initialPort,
-											"new_host", newHost,
-											"new_port", newPort,
-										)
-									}
-								}
-							}
-						}
-					}
-					if assetReloader != nil {
-						cssReloaded, widgetsReloaded := assetReloader.Reload()
-						logger.Info("asset reload on SIGHUP complete", "css_reloaded", cssReloaded, "widgets_reloaded", widgetsReloaded)
-						renderHandler.SetCSSPath(resolveCSSPath())
-					}
-					if rcfg.onReload != nil {
-						rcfg.onReload()
-					}
+					handleSIGHUP(configPath, configManager, hub, stateProvider, currentTheme, initialHost, initialPort, assetReloader, renderHandler, rcfg.onReload, logger)
 				}
 			}
 		}
 	}()
 
-	// 13. Assemble Server Configuration
-	hostVal := initialHost
 	portVal := initialPort
 	if portVal == 0 {
 		portVal = -1
 	}
-
 	cfg := server.Config{
-		Host:           hostVal,
+		Host:           initialHost,
 		Port:           portVal,
-		EventsHandler:  eventsHandler,
-		ScreenHandler:  screenHandler,
+		EventsHandler:  events.Handler(hub),
+		ScreenHandler:  rotation.NewHandler(rotationCoord),
 		RenderHandler:  renderHandler,
-		PushHandler:    pushHandler,
-		DisplayHandler: displayHandler,
+		PushHandler:    provider.NewPushHandler(providerCoord, logger),
+		DisplayHandler: buildDisplayHandler(stateProvider, currentTheme),
 		ListsHandler:   listsHandler,
-		AudioHandler:   audioHandler,
-		VideoHandler:   videoHandler,
-		VoiceHandler:   voiceHandler,
+		AudioHandler:   server.NewDefaultAudioHandler(audio.NewCoordinator(hub, stateProvider)),
+		VideoHandler:   server.NewDefaultVideoHandler(videoCoord),
+		VoiceHandler:   server.NewDefaultVoiceHandler(voice.NewCoordinator(hub, stateProvider), voiceHub, server.WithVoiceMetrics(voice.DefaultMetrics())),
 	}
 	cfg.ApplyDefaults()
 
 	srv := server.New(cfg)
-
 	bindAddr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
 	var lc net.ListenConfig
 	listener, err := lc.Listen(context.Background(), "tcp", bindAddr)
@@ -583,22 +458,14 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 		return err
 	}
 
-	if rcfg.addrChan != nil {
-		rcfg.addrChan <- listener.Addr().String()
-	}
-
-	if readyChan != nil {
-		readyChan <- struct{}{}
-	}
+	if rcfg.addrChan != nil { rcfg.addrChan <- listener.Addr().String() }
+	if readyChan != nil { readyChan <- struct{}{} }
 
 	errChan := make(chan error, 1)
-	go func() {
-		errChan <- srv.Serve(listener)
-	}()
+	go func() { errChan <- srv.Serve(listener) }()
 
 	select {
 	case <-ctx.Done():
-		// Close hub first to close subscriber channels and immediately unblock active SSE streaming loops
 		hub.Close()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -608,13 +475,8 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 	}
 }
 
-// resolveCSSPath determines the base HUD stylesheet path relative to CWD or repo root.
 func resolveCSSPath() string {
-	candidates := []string{
-		render.DefaultCSSPath,
-		filepath.Join("..", "..", render.DefaultCSSPath),
-	}
-	for _, c := range candidates {
+	for _, c := range []string{render.DefaultCSSPath, filepath.Join("..", "..", render.DefaultCSSPath)} {
 		if fi, err := os.Stat(c); err == nil && !fi.IsDir() {
 			return c
 		}
