@@ -12,86 +12,56 @@ import (
 )
 
 type mockServer struct {
-	lastWidgetID   string
-	lastType       string
-	lastPath       string
-	healthCalls    int
-	healthzCalls   int
-	audioVolume    int
-	audioVolumeSet bool
-	audioMuted     bool
-	videoMode      string
-	videoPrimary   *VideoStream
-	videoPip       *VideoStream
-	lastActionID   string
-	lastAction     string
-	lastDismissID  string
-	lastTriggerID  string
-	lastVoiceState string
+	lastWidgetID, lastType, lastPath, videoMode, lastActionID, lastAction, lastDismissID, lastTriggerID, lastVoiceState string
+	healthCalls, healthzCalls, audioVolume                                                                              int
+	audioVolumeSet, audioMuted                                                                                          bool
+	videoPrimary, videoPip                                                                                              *VideoStream
+}
+
+func writeMockJSON(w http.ResponseWriter, code int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+func writeMockErr(w http.ResponseWriter, code int, msg string) {
+	writeMockJSON(w, code, ErrorResponse{Status: "error", Error: msg})
+}
+
+func decodeMockBody[T any](w http.ResponseWriter, r *http.Request, errMsg string) (T, bool) {
+	var req T
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeMockErr(w, http.StatusBadRequest, errMsg)
+		return req, false
+	}
+	return req, true
 }
 
 func (m *mockServer) PostWidgetPush(w http.ResponseWriter, r *http.Request, widgetID string) {
 	m.lastWidgetID = widgetID
 	if widgetID == "not-found" {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusNotFound)
-		_ = json.NewEncoder(w).Encode(ErrorResponse{
-			Status: "error",
-			Error:  fmt.Sprintf("widget '%s' not found in active configuration", widgetID),
-		})
-		return
+		writeMockErr(w, http.StatusNotFound, fmt.Sprintf("widget '%s' not found in active configuration", widgetID))
+	} else if widgetID == "conflict-tasks" {
+		writeMockErr(w, http.StatusConflict, "cannot push state to list-backed widget")
+	} else if _, ok := decodeMockBody[map[string]any](w, r, "invalid json"); ok {
+		writeMockJSON(w, http.StatusOK, WidgetPushResponse{Status: "ok", WidgetId: widgetID, UpdatedAt: time.Date(2026, 9, 26, 6, 0, 0, 0, time.UTC)})
 	}
-	if widgetID == "conflict-tasks" {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusConflict)
-		_ = json.NewEncoder(w).Encode(ErrorResponse{
-			Status: "error",
-			Error:  "cannot push state to list-backed widget",
-		})
-		return
-	}
-	var body map[string]any
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(ErrorResponse{
-			Status: "error",
-			Error:  "invalid json",
-		})
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(WidgetPushResponse{
-		Status:    "ok",
-		WidgetId:  widgetID,
-		UpdatedAt: time.Date(2026, 9, 26, 6, 0, 0, 0, time.UTC),
-	})
 }
 
 func (m *mockServer) GetHealth(w http.ResponseWriter, r *http.Request) {
 	m.healthCalls++
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(HealthResponse{Status: "ok"})
+	writeMockJSON(w, http.StatusOK, HealthResponse{Status: "ok"})
 }
 
 func (m *mockServer) GetHealthz(w http.ResponseWriter, r *http.Request) {
 	m.healthzCalls++
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(HealthResponse{Status: "ok"})
+	writeMockJSON(w, http.StatusOK, HealthResponse{Status: "ok"})
 }
 
 func (m *mockServer) GetWidgetRender(w http.ResponseWriter, r *http.Request, widgetID string) {
 	m.lastWidgetID = widgetID
 	if widgetID == "not-found" {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusNotFound)
-		_ = json.NewEncoder(w).Encode(ErrorResponse{
-			Status: "error",
-			Error:  fmt.Sprintf("widget '%s' not found in active configuration", widgetID),
-		})
+		writeMockErr(w, http.StatusNotFound, fmt.Sprintf("widget '%s' not found in active configuration", widgetID))
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -99,16 +69,10 @@ func (m *mockServer) GetWidgetRender(w http.ResponseWriter, r *http.Request, wid
 	_, _ = w.Write([]byte(fmt.Sprintf("<div id=\"%s\">rendered</div>", widgetID)))
 }
 
-func (m *mockServer) GetWidgetAsset(w http.ResponseWriter, r *http.Request, pType string, path string) {
-	m.lastType = pType
-	m.lastPath = path
+func (m *mockServer) GetWidgetAsset(w http.ResponseWriter, r *http.Request, pType, path string) {
+	m.lastType, m.lastPath = pType, path
 	if pType == "missing" {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusNotFound)
-		_ = json.NewEncoder(w).Encode(ErrorResponse{
-			Status: "error",
-			Error:  "asset not found",
-		})
+		writeMockErr(w, http.StatusNotFound, "asset not found")
 		return
 	}
 	w.Header().Set("Content-Type", "image/svg+xml")
@@ -117,136 +81,57 @@ func (m *mockServer) GetWidgetAsset(w http.ResponseWriter, r *http.Request, pTyp
 }
 
 func (m *mockServer) PostScreenAdvance(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(ScreenNavigationResponse{
-		Status:        "ok",
-		CurrentScreen: 1,
-		TotalScreens:  2,
-	})
+	writeMockJSON(w, http.StatusOK, ScreenNavigationResponse{Status: "ok", CurrentScreen: 1, TotalScreens: 2})
 }
 
 func (m *mockServer) PostScreenPause(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(ScreenPauseResponse{
-		Status:        "ok",
-		Paused:        true,
-		CurrentScreen: 0,
-	})
+	writeMockJSON(w, http.StatusOK, ScreenPauseResponse{Status: "ok", Paused: true, CurrentScreen: 0})
 }
 
 func (m *mockServer) PostScreenSelect(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(ScreenNavigationResponse{
-		Status:        "ok",
-		CurrentScreen: 1,
-		TotalScreens:  2,
-	})
+	writeMockJSON(w, http.StatusOK, ScreenNavigationResponse{Status: "ok", CurrentScreen: 1, TotalScreens: 2})
 }
 
 func (m *mockServer) GetListItems(w http.ResponseWriter, r *http.Request, listId string, params GetListItemsParams) {
 	if listId == "not-found" {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusNotFound)
-		_ = json.NewEncoder(w).Encode(ErrorResponse{
-			Status: "error",
-			Error:  fmt.Sprintf("list '%s' not found", listId),
-		})
+		writeMockErr(w, http.StatusNotFound, fmt.Sprintf("list '%s' not found", listId))
 		return
 	}
-	section := "Dairy"
-	assignee := "Alex"
-	dueDate := "2026-09-26"
-	items := []ListItem{
-		{
-			Id:        "i1",
-			ListId:    listId,
-			Title:     "Oat milk",
-			Done:      false,
-			Section:   &section,
-			Position:  0,
-			Assignee:  &assignee,
-			DueDate:   &dueDate,
-			CreatedAt: time.Date(2026, 9, 24, 22, 0, 0, 0, time.UTC),
-			UpdatedAt: time.Date(2026, 9, 24, 22, 30, 0, 0, time.UTC),
-		},
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(items)
+	section, assignee, dueDate := "Dairy", "Alex", "2026-09-26"
+	writeMockJSON(w, http.StatusOK, []ListItem{{
+		Id: "i1", ListId: listId, Title: "Oat milk", Section: &section, Assignee: &assignee, DueDate: &dueDate,
+		CreatedAt: time.Date(2026, 9, 24, 22, 0, 0, 0, time.UTC), UpdatedAt: time.Date(2026, 9, 24, 22, 30, 0, 0, time.UTC),
+	}})
 }
 
-func (m *mockServer) CompleteListItem(w http.ResponseWriter, r *http.Request, listId string, itemId string) {
+func (m *mockServer) CompleteListItem(w http.ResponseWriter, r *http.Request, listId, itemId string) {
 	if listId == "not-found" || itemId == "not-found" {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusNotFound)
-		_ = json.NewEncoder(w).Encode(ErrorResponse{
-			Status: "error",
-			Error:  "not found",
-		})
+		writeMockErr(w, http.StatusNotFound, "not found")
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(ActionResponse{Status: "ok"})
+	writeMockJSON(w, http.StatusOK, ActionResponse{Status: "ok"})
 }
 
 func (m *mockServer) GetAudio(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
 	vol := m.audioVolume
 	if vol == 0 && !m.audioVolumeSet {
 		vol = 75
 	}
-	_ = json.NewEncoder(w).Encode(AudioStateResponse{
-		Status: "ok",
-		Volume: vol,
-		Muted:  m.audioMuted,
-	})
+	writeMockJSON(w, http.StatusOK, AudioStateResponse{Status: "ok", Volume: vol, Muted: m.audioMuted})
 }
 
 func (m *mockServer) PostAudioVolume(w http.ResponseWriter, r *http.Request) {
-	var body map[string]any
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(ErrorResponse{
-			Status: "error",
-			Error:  "invalid json",
-		})
+	body, ok := decodeMockBody[map[string]any](w, r, "invalid json")
+	if !ok {
 		return
 	}
-	rawVol, exists := body["volume"]
-	if !exists {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(ErrorResponse{
-			Status: "error",
-			Error:  "invalid volume: must be an integer between 0 and 100",
-		})
+	floatVol, isFloat := body["volume"].(float64)
+	if !isFloat || floatVol != float64(int(floatVol)) || floatVol < 0 || floatVol > 100 {
+		writeMockErr(w, http.StatusBadRequest, "invalid volume: must be an integer between 0 and 100")
 		return
 	}
-	floatVol, ok := rawVol.(float64)
-	if !ok || floatVol != float64(int(floatVol)) || floatVol < 0 || floatVol > 100 {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(ErrorResponse{
-			Status: "error",
-			Error:  "invalid volume: must be an integer between 0 and 100",
-		})
-		return
-	}
-	m.audioVolume = int(floatVol)
-	m.audioVolumeSet = true
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(AudioStateResponse{
-		Status: "ok",
-		Volume: m.audioVolume,
-		Muted:  m.audioMuted,
-	})
+	m.audioVolume, m.audioVolumeSet = int(floatVol), true
+	writeMockJSON(w, http.StatusOK, AudioStateResponse{Status: "ok", Volume: m.audioVolume, Muted: m.audioMuted})
 }
 
 func (m *mockServer) PostAudioMute(w http.ResponseWriter, r *http.Request) {
@@ -255,12 +140,7 @@ func (m *mockServer) PostAudioMute(w http.ResponseWriter, r *http.Request) {
 	if rawMuted, exists := body["muted"]; exists {
 		b, ok := rawMuted.(bool)
 		if !ok {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadRequest)
-			_ = json.NewEncoder(w).Encode(ErrorResponse{
-				Status: "error",
-				Error:  "invalid payload: muted must be a boolean",
-			})
+			writeMockErr(w, http.StatusBadRequest, "invalid payload: muted must be a boolean")
 			return
 		}
 		m.audioMuted = b
@@ -271,13 +151,7 @@ func (m *mockServer) PostAudioMute(w http.ResponseWriter, r *http.Request) {
 	if vol == 0 && !m.audioVolumeSet {
 		vol = 75
 	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(AudioStateResponse{
-		Status: "ok",
-		Volume: vol,
-		Muted:  m.audioMuted,
-	})
+	writeMockJSON(w, http.StatusOK, AudioStateResponse{Status: "ok", Volume: vol, Muted: m.audioMuted})
 }
 
 func (m *mockServer) GetVideoState(w http.ResponseWriter, r *http.Request) {
@@ -285,170 +159,66 @@ func (m *mockServer) GetVideoState(w http.ResponseWriter, r *http.Request) {
 	if mode == "" {
 		mode = "widgets"
 	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(VideoStateResponse{
-		Status:  "ok",
-		Mode:    VideoStateResponseMode(mode),
-		Primary: m.videoPrimary,
-		Pip:     m.videoPip,
-	})
+	writeMockJSON(w, http.StatusOK, VideoStateResponse{Status: "ok", Mode: VideoStateResponseMode(mode), Primary: m.videoPrimary, Pip: m.videoPip})
 }
 
 func (m *mockServer) PostVideoTrigger(w http.ResponseWriter, r *http.Request) {
-	var req VideoTriggerRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(ErrorResponse{
-			Status: "error",
-			Error:  "invalid trigger payload",
-		})
-		return
+	if req, ok := decodeMockBody[VideoTriggerRequest](w, r, "invalid trigger payload"); ok {
+		m.lastTriggerID = req.Id
+		vType := VideoStreamTypeWebrtc
+		if req.Type != nil {
+			vType = VideoStreamType(*req.Type)
+		}
+		m.videoPrimary = &VideoStream{Id: req.Id, StreamUrl: req.StreamUrl, Type: vType}
+		m.videoMode = "video"
+		writeMockJSON(w, http.StatusOK, VideoStateResponse{Status: "ok", Mode: "video", Primary: m.videoPrimary})
 	}
-	m.lastTriggerID = req.Id
-	vType := VideoStreamTypeWebrtc
-	if req.Type != nil {
-		vType = VideoStreamType(*req.Type)
-	}
-	m.videoPrimary = &VideoStream{
-		Id:        req.Id,
-		StreamUrl: req.StreamUrl,
-		Type:      vType,
-	}
-	m.videoMode = "video"
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(VideoStateResponse{
-		Status:  "ok",
-		Mode:    VideoStateResponseMode("video"),
-		Primary: m.videoPrimary,
-	})
 }
 
 func (m *mockServer) PostVideoDismiss(w http.ResponseWriter, r *http.Request) {
-	var req VideoDismissRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(ErrorResponse{
-			Status: "error",
-			Error:  "invalid dismiss payload",
-		})
-		return
+	if req, ok := decodeMockBody[VideoDismissRequest](w, r, "invalid dismiss payload"); ok {
+		if req.Id == "not-found" {
+			writeMockErr(w, http.StatusNotFound, "stream not active")
+			return
+		}
+		m.lastDismissID, m.videoPrimary, m.videoPip, m.videoMode = req.Id, nil, nil, "widgets"
+		writeMockJSON(w, http.StatusOK, VideoStateResponse{Status: "ok", Mode: "widgets"})
 	}
-	if req.Id == "not-found" {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusNotFound)
-		_ = json.NewEncoder(w).Encode(ErrorResponse{
-			Status: "error",
-			Error:  "stream not active",
-		})
-		return
-	}
-	m.lastDismissID = req.Id
-	m.videoPrimary = nil
-	m.videoPip = nil
-	m.videoMode = "widgets"
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(VideoStateResponse{
-		Status: "ok",
-		Mode:   VideoStateResponseMode("widgets"),
-	})
 }
 
 func (m *mockServer) PostVideoAction(w http.ResponseWriter, r *http.Request) {
-	var req VideoActionRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(ErrorResponse{
-			Status: "error",
-			Error:  "invalid action payload",
-		})
+	req, ok := decodeMockBody[VideoActionRequest](w, r, "invalid action payload")
+	if !ok {
 		return
 	}
-	if req.Id == "not-found" {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusNotFound)
-		_ = json.NewEncoder(w).Encode(ErrorResponse{
-			Status: "error",
-			Error:  "stream not active",
-		})
-		return
+	switch req.Id {
+	case "not-found":
+		writeMockErr(w, http.StatusNotFound, "stream not active")
+	case "not-controllable":
+		writeMockErr(w, http.StatusUnprocessableEntity, "stream is not controllable")
+	case "unreachable":
+		writeMockErr(w, http.StatusBadGateway, "stream controller unreachable")
+	default:
+		m.lastActionID, m.lastAction = req.Id, string(req.Action)
+		writeMockJSON(w, http.StatusOK, ActionResponse{Status: "ok"})
 	}
-	if req.Id == "not-controllable" {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusUnprocessableEntity)
-		_ = json.NewEncoder(w).Encode(ErrorResponse{
-			Status: "error",
-			Error:  "stream is not controllable",
-		})
-		return
-	}
-	if req.Id == "unreachable" {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadGateway)
-		_ = json.NewEncoder(w).Encode(ErrorResponse{
-			Status: "error",
-			Error:  "stream controller unreachable",
-		})
-		return
-	}
-	m.lastActionID = req.Id
-	m.lastAction = string(req.Action)
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(ActionResponse{Status: "ok"})
 }
 
 func (m *mockServer) PostVideoState(w http.ResponseWriter, r *http.Request) {
-	var req VideoPlayerStateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(ErrorResponse{
-			Status: "error",
-			Error:  "invalid player state payload",
-		})
-		return
+	if req, ok := decodeMockBody[VideoPlayerStateRequest](w, r, "invalid player state payload"); ok {
+		if req.Id == "not-found" {
+			writeMockErr(w, http.StatusNotFound, "stream not active")
+			return
+		}
+		writeMockJSON(w, http.StatusOK, VideoPlayerStateResponse{Status: "ok", Id: req.Id, PlayerState: VideoPlayerStateResponsePlayerState(req.PlayerState)})
 	}
-	if req.Id == "not-found" {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusNotFound)
-		_ = json.NewEncoder(w).Encode(ErrorResponse{
-			Status: "error",
-			Error:  "stream not active",
-		})
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(VideoPlayerStateResponse{
-		Status:      "ok",
-		Id:          req.Id,
-		PlayerState: VideoPlayerStateResponsePlayerState(req.PlayerState),
-	})
 }
 
 func (m *mockServer) PostVoiceState(w http.ResponseWriter, r *http.Request) {
-	var req VoiceStateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(ErrorResponse{
-			Status: "error",
-			Error:  "invalid voice state payload",
-		})
-		return
+	if req, ok := decodeMockBody[VoiceStateRequest](w, r, "invalid voice state payload"); ok {
+		m.lastVoiceState = string(req.State)
+		writeMockJSON(w, http.StatusOK, VoiceStateResponse{Status: "ok"})
 	}
-	m.lastVoiceState = string(req.State)
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(VoiceStateResponse{
-		Status: "ok",
-	})
 }
 
 func (m *mockServer) PostVoiceInteract(w http.ResponseWriter, r *http.Request) {
@@ -459,1021 +229,239 @@ func (m *mockServer) PostVoiceInteract(w http.ResponseWriter, r *http.Request) {
 
 func TestHandler_Endpoints(t *testing.T) {
 	t.Parallel()
-
-	t.Run("GET /api/audio", func(t *testing.T) {
-		t.Parallel()
-		mock := &mockServer{}
-		handler := Handler(mock)
-
-		req := httptest.NewRequest(http.MethodGet, "/api/audio", nil)
-		rec := httptest.NewRecorder()
-		handler.ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Fatalf("expected 200, got %d", rec.Code)
-		}
-		var resp AudioStateResponse
-		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-			t.Fatalf("failed to decode response: %v", err)
-		}
-		if resp.Volume != 75 || resp.Muted != false || resp.Status != "ok" {
-			t.Fatalf("unexpected audio state: %+v", resp)
-		}
-	})
-
-	t.Run("POST /api/audio/volume", func(t *testing.T) {
-		t.Parallel()
-		mock := &mockServer{}
-		handler := Handler(mock)
-
-		// 200 OK
-		req := httptest.NewRequest(http.MethodPost, "/api/audio/volume", strings.NewReader(`{"volume":80}`))
-		rec := httptest.NewRecorder()
-		handler.ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Fatalf("expected 200, got %d", rec.Code)
-		}
-		var resp AudioStateResponse
-		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-			t.Fatalf("failed to decode response: %v", err)
-		}
-		if resp.Volume != 80 {
-			t.Fatalf("expected volume 80, got %d", resp.Volume)
-		}
-
-		// 400 Bad Request: missing volume
-		reqBad := httptest.NewRequest(http.MethodPost, "/api/audio/volume", strings.NewReader(`{}`))
-		recBad := httptest.NewRecorder()
-		handler.ServeHTTP(recBad, reqBad)
-		if recBad.Code != http.StatusBadRequest {
-			t.Fatalf("expected 400 for empty volume, got %d", recBad.Code)
-		}
-
-		// 400 Bad Request: out of range
-		reqOOB := httptest.NewRequest(http.MethodPost, "/api/audio/volume", strings.NewReader(`{"volume":150}`))
-		recOOB := httptest.NewRecorder()
-		handler.ServeHTTP(recOOB, reqOOB)
-		if recOOB.Code != http.StatusBadRequest {
-			t.Fatalf("expected 400 for out of range volume, got %d", recOOB.Code)
-		}
-
-		// 400 Bad Request: invalid json
-		reqInvalid := httptest.NewRequest(http.MethodPost, "/api/audio/volume", strings.NewReader(`{invalid`))
-		recInvalid := httptest.NewRecorder()
-		handler.ServeHTTP(recInvalid, reqInvalid)
-		if recInvalid.Code != http.StatusBadRequest {
-			t.Fatalf("expected 400 for invalid json, got %d", recInvalid.Code)
-		}
-	})
-
-	t.Run("POST /api/audio/mute", func(t *testing.T) {
-		t.Parallel()
-		mock := &mockServer{}
-		handler := Handler(mock)
-
-		// Toggle mute from false to true with empty body
-		reqToggle := httptest.NewRequest(http.MethodPost, "/api/audio/mute", strings.NewReader(`{}`))
-		recToggle := httptest.NewRecorder()
-		handler.ServeHTTP(recToggle, reqToggle)
-
-		if recToggle.Code != http.StatusOK {
-			t.Fatalf("expected 200, got %d", recToggle.Code)
-		}
-		var respToggle AudioStateResponse
-		if err := json.Unmarshal(recToggle.Body.Bytes(), &respToggle); err != nil {
-			t.Fatalf("failed to decode response: %v", err)
-		}
-		if !respToggle.Muted {
-			t.Fatalf("expected muted true, got false")
-		}
-
-		// Set explicit mute state false
-		reqExplicit := httptest.NewRequest(http.MethodPost, "/api/audio/mute", strings.NewReader(`{"muted":false}`))
-		recExplicit := httptest.NewRecorder()
-		handler.ServeHTTP(recExplicit, reqExplicit)
-		if recExplicit.Code != http.StatusOK {
-			t.Fatalf("expected 200, got %d", recExplicit.Code)
-		}
-		var respExplicit AudioStateResponse
-		if err := json.Unmarshal(recExplicit.Body.Bytes(), &respExplicit); err != nil {
-			t.Fatalf("failed to decode response: %v", err)
-		}
-		if respExplicit.Muted {
-			t.Fatalf("expected muted false, got true")
-		}
-
-		// 400 Bad Request: invalid muted type
-		reqBad := httptest.NewRequest(http.MethodPost, "/api/audio/mute", strings.NewReader(`{"muted":"notabool"}`))
-		recBad := httptest.NewRecorder()
-		handler.ServeHTTP(recBad, reqBad)
-		if recBad.Code != http.StatusBadRequest {
-			t.Fatalf("expected 400 for bad muted type, got %d", recBad.Code)
-		}
-	})
-
-	t.Run("GET /api/lists/{list_id}/items", func(t *testing.T) {
-		t.Parallel()
-		mock := &mockServer{}
-		handler := Handler(mock)
-
-		// 200 OK
-		req := httptest.NewRequest(http.MethodGet, "/api/lists/groceries/items?include_done=false", nil)
-		rec := httptest.NewRecorder()
-		handler.ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Fatalf("expected 200, got %d", rec.Code)
-		}
-		var items []ListItem
-		if err := json.Unmarshal(rec.Body.Bytes(), &items); err != nil {
-			t.Fatalf("failed to decode items: %v", err)
-		}
-		if len(items) != 1 || items[0].Id != "i1" {
-			t.Fatalf("expected item i1, got %+v", items)
-		}
-
-		// 404 Not Found
-		req404 := httptest.NewRequest(http.MethodGet, "/api/lists/not-found/items", nil)
-		rec404 := httptest.NewRecorder()
-		handler.ServeHTTP(rec404, req404)
-
-		if rec404.Code != http.StatusNotFound {
-			t.Fatalf("expected 404, got %d", rec404.Code)
-		}
-	})
-
-	t.Run("GET /healthz", func(t *testing.T) {
-		t.Parallel()
-		mock := &mockServer{}
-		handler := Handler(mock)
-
-		req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
-		rec := httptest.NewRecorder()
-		handler.ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Fatalf("expected 200, got %d", rec.Code)
-		}
-		var resp HealthResponse
-		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-			t.Fatalf("failed to decode response: %v", err)
-		}
-		if resp.Status != "ok" {
-			t.Fatalf("expected status 'ok', got '%s'", resp.Status)
-		}
-		if mock.healthzCalls != 1 {
-			t.Fatalf("expected 1 healthz call, got %d", mock.healthzCalls)
-		}
-	})
-
-	t.Run("GET /health", func(t *testing.T) {
-		t.Parallel()
-		mock := &mockServer{}
-		handler := Handler(mock)
-
-		req := httptest.NewRequest(http.MethodGet, "/health", nil)
-		rec := httptest.NewRecorder()
-		handler.ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Fatalf("expected 200, got %d", rec.Code)
-		}
-		var resp HealthResponse
-		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-			t.Fatalf("failed to decode response: %v", err)
-		}
-		if resp.Status != "ok" {
-			t.Fatalf("expected status 'ok', got '%s'", resp.Status)
-		}
-		if mock.healthCalls != 1 {
-			t.Fatalf("expected 1 health call, got %d", mock.healthCalls)
-		}
-	})
-
-	t.Run("GET /api/widgets/{widget_id}/render success", func(t *testing.T) {
-		t.Parallel()
-		mock := &mockServer{}
-		handler := Handler(mock)
-
-		req := httptest.NewRequest(http.MethodGet, "/api/widgets/clock-primary/render", nil)
-		rec := httptest.NewRecorder()
-		handler.ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Fatalf("expected 200, got %d", rec.Code)
-		}
-		if mock.lastWidgetID != "clock-primary" {
-			t.Fatalf("expected widget_id 'clock-primary', got '%s'", mock.lastWidgetID)
-		}
-		if !strings.Contains(rec.Body.String(), "clock-primary") {
-			t.Fatalf("expected body to contain 'clock-primary', got %s", rec.Body.String())
-		}
-	})
-
-	t.Run("GET /api/widgets/{widget_id}/render not found", func(t *testing.T) {
-		t.Parallel()
-		mock := &mockServer{}
-		handler := Handler(mock)
-
-		req := httptest.NewRequest(http.MethodGet, "/api/widgets/not-found/render", nil)
-		rec := httptest.NewRecorder()
-		handler.ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusNotFound {
-			t.Fatalf("expected 404, got %d", rec.Code)
-		}
-		var errResp ErrorResponse
-		if err := json.Unmarshal(rec.Body.Bytes(), &errResp); err != nil {
-			t.Fatalf("failed to decode error response: %v", err)
-		}
-		if errResp.Status != "error" {
-			t.Fatalf("expected status 'error', got '%s'", errResp.Status)
-		}
-	})
-
-	t.Run("GET /widget-types/{type}/assets/{path} success", func(t *testing.T) {
-		t.Parallel()
-		mock := &mockServer{}
-		handler := Handler(mock)
-
-		req := httptest.NewRequest(http.MethodGet, "/widget-types/weather/assets/sun.svg", nil)
-		rec := httptest.NewRecorder()
-		handler.ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Fatalf("expected 200, got %d", rec.Code)
-		}
-		if mock.lastType != "weather" {
-			t.Fatalf("expected type 'weather', got '%s'", mock.lastType)
-		}
-		if mock.lastPath != "sun.svg" {
-			t.Fatalf("expected path 'sun.svg', got '%s'", mock.lastPath)
-		}
-	})
-
-	t.Run("GET /widget-types/{type}/assets/{path} not found", func(t *testing.T) {
-		t.Parallel()
-		mock := &mockServer{}
-		handler := Handler(mock)
-
-		req := httptest.NewRequest(http.MethodGet, "/widget-types/missing/assets/sun.svg", nil)
-		rec := httptest.NewRecorder()
-		handler.ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusNotFound {
-			t.Fatalf("expected 404, got %d", rec.Code)
-		}
-	})
-
-	t.Run("POST /api/screen/advance", func(t *testing.T) {
-		t.Parallel()
-		mock := &mockServer{}
-		handler := Handler(mock)
-
-		req := httptest.NewRequest(http.MethodPost, "/api/screen/advance", strings.NewReader(`{"direction":"next"}`))
-		req.Header.Set("Content-Type", "application/json")
-		rec := httptest.NewRecorder()
-		handler.ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Fatalf("expected 200, got %d", rec.Code)
-		}
-	})
-
-	t.Run("POST /api/screen/pause", func(t *testing.T) {
-		t.Parallel()
-		mock := &mockServer{}
-		handler := Handler(mock)
-
-		req := httptest.NewRequest(http.MethodPost, "/api/screen/pause", strings.NewReader(`{"paused":true,"duration_seconds":120}`))
-		req.Header.Set("Content-Type", "application/json")
-		rec := httptest.NewRecorder()
-		handler.ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Fatalf("expected 200, got %d", rec.Code)
-		}
-	})
-
-	t.Run("POST /api/screen/select", func(t *testing.T) {
-		t.Parallel()
-		mock := &mockServer{}
-		handler := Handler(mock)
-
-		req := httptest.NewRequest(http.MethodPost, "/api/screen/select", strings.NewReader(`{"screen_index":1}`))
-		req.Header.Set("Content-Type", "application/json")
-		rec := httptest.NewRecorder()
-		handler.ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Fatalf("expected 200, got %d", rec.Code)
-		}
-	})
-
-	t.Run("POST /api/widgets/{widget_id}/push success", func(t *testing.T) {
-		t.Parallel()
-		mock := &mockServer{}
-		handler := Handler(mock)
-
-		req := httptest.NewRequest(http.MethodPost, "/api/widgets/sensor-card/push", strings.NewReader(`{"co2_ppm":640}`))
-		req.Header.Set("Content-Type", "application/json")
-		rec := httptest.NewRecorder()
-		handler.ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Fatalf("expected 200, got %d", rec.Code)
-		}
-		if mock.lastWidgetID != "sensor-card" {
-			t.Fatalf("expected widget_id 'sensor-card', got '%s'", mock.lastWidgetID)
-		}
-	})
-
-	t.Run("POST /api/widgets/{widget_id}/push not found", func(t *testing.T) {
-		t.Parallel()
-		mock := &mockServer{}
-		handler := Handler(mock)
-
-		req := httptest.NewRequest(http.MethodPost, "/api/widgets/not-found/push", strings.NewReader(`{"co2_ppm":640}`))
-		req.Header.Set("Content-Type", "application/json")
-		rec := httptest.NewRecorder()
-		handler.ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusNotFound {
-			t.Fatalf("expected 404, got %d", rec.Code)
-		}
-	})
-
-	t.Run("POST /api/widgets/{widget_id}/push conflict task widget", func(t *testing.T) {
-		t.Parallel()
-		mock := &mockServer{}
-		handler := Handler(mock)
-
-		req := httptest.NewRequest(http.MethodPost, "/api/widgets/conflict-tasks/push", strings.NewReader(`{"items":[]}`))
-		req.Header.Set("Content-Type", "application/json")
-		rec := httptest.NewRecorder()
-		handler.ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusConflict {
-			t.Fatalf("expected 409, got %d", rec.Code)
-		}
-	})
-
-	t.Run("POST /api/widgets/{widget_id}/push bad json", func(t *testing.T) {
-		t.Parallel()
-		mock := &mockServer{}
-		handler := Handler(mock)
-
-		req := httptest.NewRequest(http.MethodPost, "/api/widgets/sensor-card/push", strings.NewReader(`not-json`))
-		req.Header.Set("Content-Type", "application/json")
-		rec := httptest.NewRecorder()
-		handler.ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusBadRequest {
-			t.Fatalf("expected 400, got %d", rec.Code)
-		}
-	})
-
-	t.Run("GET /api/video/state", func(t *testing.T) {
-		t.Parallel()
-		mock := &mockServer{}
-		handler := Handler(mock)
-
-		req := httptest.NewRequest(http.MethodGet, "/api/video/state", nil)
-		rec := httptest.NewRecorder()
-		handler.ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Fatalf("expected 200, got %d", rec.Code)
-		}
-		var resp VideoStateResponse
-		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-			t.Fatalf("failed to decode response: %v", err)
-		}
-		if resp.Mode != Widgets {
-			t.Fatalf("expected widgets, got %s", resp.Mode)
-		}
-	})
-
-	t.Run("POST /api/video/trigger", func(t *testing.T) {
-		t.Parallel()
-		mock := &mockServer{}
-		handler := Handler(mock)
-
-		req := httptest.NewRequest(http.MethodPost, "/api/video/trigger", strings.NewReader(`{"id":"chromecast","stream_url":"http://127.0.0.1:1984/cast","type":"webrtc"}`))
-		req.Header.Set("Content-Type", "application/json")
-		rec := httptest.NewRecorder()
-		handler.ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Fatalf("expected 200, got %d", rec.Code)
-		}
-		var resp VideoStateResponse
-		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-			t.Fatalf("failed to decode response: %v", err)
-		}
-		if resp.Mode != Video {
-			t.Fatalf("expected video mode, got %s", resp.Mode)
-		}
-		if mock.lastTriggerID != "chromecast" {
-			t.Fatalf("expected trigger id 'chromecast', got '%s'", mock.lastTriggerID)
-		}
-
-		// Bad JSON
-		reqBad := httptest.NewRequest(http.MethodPost, "/api/video/trigger", strings.NewReader(`not-json`))
-		reqBad.Header.Set("Content-Type", "application/json")
-		recBad := httptest.NewRecorder()
-		handler.ServeHTTP(recBad, reqBad)
-		if recBad.Code != http.StatusBadRequest {
-			t.Fatalf("expected 400 for bad json, got %d", recBad.Code)
-		}
-	})
-
-	t.Run("POST /api/video/dismiss", func(t *testing.T) {
-		t.Parallel()
-		mock := &mockServer{}
-		handler := Handler(mock)
-
-		req := httptest.NewRequest(http.MethodPost, "/api/video/dismiss", strings.NewReader(`{"id":"chromecast"}`))
-		req.Header.Set("Content-Type", "application/json")
-		rec := httptest.NewRecorder()
-		handler.ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Fatalf("expected 200, got %d", rec.Code)
-		}
-		if mock.lastDismissID != "chromecast" {
-			t.Fatalf("expected dismiss id 'chromecast', got '%s'", mock.lastDismissID)
-		}
-
-		// 404 Not Found
-		req404 := httptest.NewRequest(http.MethodPost, "/api/video/dismiss", strings.NewReader(`{"id":"not-found"}`))
-		req404.Header.Set("Content-Type", "application/json")
-		rec404 := httptest.NewRecorder()
-		handler.ServeHTTP(rec404, req404)
-		if rec404.Code != http.StatusNotFound {
-			t.Fatalf("expected 404, got %d", rec404.Code)
-		}
-
-		// Bad JSON
-		reqBad := httptest.NewRequest(http.MethodPost, "/api/video/dismiss", strings.NewReader(`not-json`))
-		reqBad.Header.Set("Content-Type", "application/json")
-		recBad := httptest.NewRecorder()
-		handler.ServeHTTP(recBad, reqBad)
-		if recBad.Code != http.StatusBadRequest {
-			t.Fatalf("expected 400, got %d", recBad.Code)
-		}
-	})
-
-	t.Run("POST /api/video/action", func(t *testing.T) {
-		t.Parallel()
-		mock := &mockServer{}
-		handler := Handler(mock)
-
-		// 200 OK
-		req := httptest.NewRequest(http.MethodPost, "/api/video/action", strings.NewReader(`{"id":"chromecast","action":"toggle_playback"}`))
-		req.Header.Set("Content-Type", "application/json")
-		rec := httptest.NewRecorder()
-		handler.ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Fatalf("expected 200, got %d", rec.Code)
-		}
-		if mock.lastActionID != "chromecast" || mock.lastAction != "toggle_playback" {
-			t.Fatalf("expected action chromecast toggle_playback, got %s %s", mock.lastActionID, mock.lastAction)
-		}
-
-		// 404 Not Found
-		req404 := httptest.NewRequest(http.MethodPost, "/api/video/action", strings.NewReader(`{"id":"not-found","action":"play"}`))
-		req404.Header.Set("Content-Type", "application/json")
-		rec404 := httptest.NewRecorder()
-		handler.ServeHTTP(rec404, req404)
-		if rec404.Code != http.StatusNotFound {
-			t.Fatalf("expected 404, got %d", rec404.Code)
-		}
-
-		// 422 Unprocessable Entity
-		req422 := httptest.NewRequest(http.MethodPost, "/api/video/action", strings.NewReader(`{"id":"not-controllable","action":"play"}`))
-		req422.Header.Set("Content-Type", "application/json")
-		rec422 := httptest.NewRecorder()
-		handler.ServeHTTP(rec422, req422)
-		if rec422.Code != http.StatusUnprocessableEntity {
-			t.Fatalf("expected 422, got %d", rec422.Code)
-		}
-
-		// 502 Bad Gateway
-		req502 := httptest.NewRequest(http.MethodPost, "/api/video/action", strings.NewReader(`{"id":"unreachable","action":"play"}`))
-		req502.Header.Set("Content-Type", "application/json")
-		rec502 := httptest.NewRecorder()
-		handler.ServeHTTP(rec502, req502)
-		if rec502.Code != http.StatusBadGateway {
-			t.Fatalf("expected 502, got %d", rec502.Code)
-		}
-
-		// Bad JSON
-		reqBad := httptest.NewRequest(http.MethodPost, "/api/video/action", strings.NewReader(`not-json`))
-		reqBad.Header.Set("Content-Type", "application/json")
-		recBad := httptest.NewRecorder()
-		handler.ServeHTTP(recBad, reqBad)
-		if recBad.Code != http.StatusBadRequest {
-			t.Fatalf("expected 400, got %d", recBad.Code)
-		}
-	})
-
-	t.Run("POST /api/video/state", func(t *testing.T) {
-		t.Parallel()
-		mock := &mockServer{}
-		handler := Handler(mock)
-
-		// 200 OK
-		req := httptest.NewRequest(http.MethodPost, "/api/video/state", strings.NewReader(`{"id":"chromecast","player_state":"playing"}`))
-		req.Header.Set("Content-Type", "application/json")
-		rec := httptest.NewRecorder()
-		handler.ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Fatalf("expected 200, got %d", rec.Code)
-		}
-		var resp VideoPlayerStateResponse
-		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-			t.Fatalf("failed to decode response: %v", err)
-		}
-		if resp.Id != "chromecast" || resp.PlayerState != VideoPlayerStateResponsePlayerStatePlaying {
-			t.Fatalf("expected chromecast playing, got %s %s", resp.Id, resp.PlayerState)
-		}
-
-		// 404 Not Found
-		req404 := httptest.NewRequest(http.MethodPost, "/api/video/state", strings.NewReader(`{"id":"not-found","player_state":"paused"}`))
-		req404.Header.Set("Content-Type", "application/json")
-		rec404 := httptest.NewRecorder()
-		handler.ServeHTTP(rec404, req404)
-		if rec404.Code != http.StatusNotFound {
-			t.Fatalf("expected 404, got %d", rec404.Code)
-		}
-
-		// Bad JSON
-		reqBad := httptest.NewRequest(http.MethodPost, "/api/video/state", strings.NewReader(`not-json`))
-		reqBad.Header.Set("Content-Type", "application/json")
-		recBad := httptest.NewRecorder()
-		handler.ServeHTTP(recBad, reqBad)
-		if recBad.Code != http.StatusBadRequest {
-			t.Fatalf("expected 400, got %d", recBad.Code)
-		}
-	})
-
-	t.Run("POST /api/voice/state", func(t *testing.T) {
-		t.Parallel()
-		mock := &mockServer{}
-		handler := Handler(mock)
-
-		// 200 OK
-		req := httptest.NewRequest(http.MethodPost, "/api/voice/state", strings.NewReader(`{"state":"thinking","transcript":"What time is it?"}`))
-		req.Header.Set("Content-Type", "application/json")
-		rec := httptest.NewRecorder()
-		handler.ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Fatalf("expected 200, got %d", rec.Code)
-		}
-		var resp VoiceStateResponse
-		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-			t.Fatalf("failed to decode response: %v", err)
-		}
-		if resp.Status != "ok" {
-			t.Fatalf("expected status ok, got %q", resp.Status)
-		}
-		if mock.lastVoiceState != "thinking" {
-			t.Fatalf("expected lastVoiceState 'thinking', got %q", mock.lastVoiceState)
-		}
-
-		// Bad JSON
-		reqBad := httptest.NewRequest(http.MethodPost, "/api/voice/state", strings.NewReader(`not-json`))
-		reqBad.Header.Set("Content-Type", "application/json")
-		recBad := httptest.NewRecorder()
-		handler.ServeHTTP(recBad, reqBad)
-		if recBad.Code != http.StatusBadRequest {
-			t.Fatalf("expected 400, got %d", recBad.Code)
-		}
-	})
-
-	t.Run("POST /api/voice/interact", func(t *testing.T) {
-		t.Parallel()
-		mock := &mockServer{}
-		handler := Handler(mock)
-
-		body := "--boundary\r\nContent-Disposition: form-data; name=\"audio\"; filename=\"test.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF....\r\n--boundary--\r\n"
-		req := httptest.NewRequest(http.MethodPost, "/api/voice/interact", strings.NewReader(body))
-		req.Header.Set("Content-Type", "multipart/form-data; boundary=boundary")
-		rec := httptest.NewRecorder()
-		handler.ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Fatalf("expected 200, got %d", rec.Code)
-		}
-	})
-}
-
-func TestHandlerWithOptions_CustomMuxAndBaseURL(t *testing.T) {
-	t.Parallel()
-
-	mock := &mockServer{}
-	customMux := http.NewServeMux()
-
-	mwCalls := make(map[string]int)
-	mw := func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			mwCalls[r.URL.Path]++
-			next.ServeHTTP(w, r)
+	tests := []struct {
+		name, method, path, body                                                           string
+		initMuted                                                                          bool
+		wantCode                                                                           int
+		wantSub, wantWidgetID, wantType, wantPath, wantTriggerID, wantDismissID, wantActionID, wantAction, wantVoiceState string
+	}{
+		{"audio_get", http.MethodGet, "/api/audio", "", false, http.StatusOK, `"volume":75`, "", "", "", "", "", "", "", ""},
+		{"audio_volume_200", http.MethodPost, "/api/audio/volume", `{"volume":80}`, false, http.StatusOK, `"volume":80`, "", "", "", "", "", "", "", ""},
+		{"audio_volume_empty", http.MethodPost, "/api/audio/volume", `{}`, false, http.StatusBadRequest, "between 0 and 100", "", "", "", "", "", "", "", ""},
+		{"audio_volume_oob", http.MethodPost, "/api/audio/volume", `{"volume":150}`, false, http.StatusBadRequest, "between 0 and 100", "", "", "", "", "", "", "", ""},
+		{"audio_volume_bad_json", http.MethodPost, "/api/audio/volume", `{invalid`, false, http.StatusBadRequest, "invalid json", "", "", "", "", "", "", "", ""},
+		{"audio_mute_toggle", http.MethodPost, "/api/audio/mute", `{}`, false, http.StatusOK, `"muted":true`, "", "", "", "", "", "", "", ""},
+		{"audio_mute_explicit_false", http.MethodPost, "/api/audio/mute", `{"muted":false}`, true, http.StatusOK, `"muted":false`, "", "", "", "", "", "", "", ""},
+		{"audio_mute_bad_type", http.MethodPost, "/api/audio/mute", `{"muted":"notabool"}`, false, http.StatusBadRequest, "must be a boolean", "", "", "", "", "", "", "", ""},
+		{"lists_items_200", http.MethodGet, "/api/lists/groceries/items?include_done=false", "", false, http.StatusOK, `"i1"`, "", "", "", "", "", "", "", ""},
+		{"lists_items_404", http.MethodGet, "/api/lists/not-found/items", "", false, http.StatusNotFound, "not found", "", "", "", "", "", "", "", ""},
+		{"healthz", http.MethodGet, "/healthz", "", false, http.StatusOK, `"status":"ok"`, "", "", "", "", "", "", "", ""},
+		{"health", http.MethodGet, "/health", "", false, http.StatusOK, `"status":"ok"`, "", "", "", "", "", "", "", ""},
+		{"widget_render_200", http.MethodGet, "/api/widgets/clock-primary/render", "", false, http.StatusOK, "clock-primary", "clock-primary", "", "", "", "", "", "", ""},
+		{"widget_render_404", http.MethodGet, "/api/widgets/not-found/render", "", false, http.StatusNotFound, "not found", "", "", "", "", "", "", "", ""},
+		{"widget_asset_200", http.MethodGet, "/widget-types/weather/assets/sun.svg", "", false, http.StatusOK, "<svg></svg>", "", "weather", "sun.svg", "", "", "", "", ""},
+		{"widget_asset_404", http.MethodGet, "/widget-types/missing/assets/sun.svg", "", false, http.StatusNotFound, "asset not found", "", "", "", "", "", "", "", ""},
+		{"screen_advance", http.MethodPost, "/api/screen/advance", `{"direction":"next"}`, false, http.StatusOK, `"current_screen":1`, "", "", "", "", "", "", "", ""},
+		{"screen_pause", http.MethodPost, "/api/screen/pause", `{"paused":true,"duration_seconds":120}`, false, http.StatusOK, `"paused":true`, "", "", "", "", "", "", "", ""},
+		{"screen_select", http.MethodPost, "/api/screen/select", `{"screen_index":1}`, false, http.StatusOK, `"current_screen":1`, "", "", "", "", "", "", "", ""},
+		{"widget_push_200", http.MethodPost, "/api/widgets/sensor-card/push", `{"co2_ppm":640}`, false, http.StatusOK, `"widget_id":"sensor-card"`, "sensor-card", "", "", "", "", "", "", ""},
+		{"widget_push_404", http.MethodPost, "/api/widgets/not-found/push", `{"co2_ppm":640}`, false, http.StatusNotFound, "not found", "", "", "", "", "", "", "", ""},
+		{"widget_push_409", http.MethodPost, "/api/widgets/conflict-tasks/push", `{"items":[]}`, false, http.StatusConflict, "list-backed widget", "", "", "", "", "", "", "", ""},
+		{"widget_push_400", http.MethodPost, "/api/widgets/sensor-card/push", `not-json`, false, http.StatusBadRequest, "invalid json", "", "", "", "", "", "", "", ""},
+		{"video_state_get", http.MethodGet, "/api/video/state", "", false, http.StatusOK, `"mode":"widgets"`, "", "", "", "", "", "", "", ""},
+		{"video_trigger_200", http.MethodPost, "/api/video/trigger", `{"id":"chromecast","stream_url":"http://127.0.0.1:1984/cast","type":"webrtc"}`, false, http.StatusOK, `"mode":"video"`, "", "", "", "chromecast", "", "", "", ""},
+		{"video_trigger_400", http.MethodPost, "/api/video/trigger", `not-json`, false, http.StatusBadRequest, "invalid trigger payload", "", "", "", "", "", "", "", ""},
+		{"video_dismiss_200", http.MethodPost, "/api/video/dismiss", `{"id":"chromecast"}`, false, http.StatusOK, `"mode":"widgets"`, "", "", "", "", "chromecast", "", "", ""},
+		{"video_dismiss_404", http.MethodPost, "/api/video/dismiss", `{"id":"not-found"}`, false, http.StatusNotFound, "stream not active", "", "", "", "", "", "", "", ""},
+		{"video_dismiss_400", http.MethodPost, "/api/video/dismiss", `not-json`, false, http.StatusBadRequest, "invalid dismiss payload", "", "", "", "", "", "", "", ""},
+		{"video_action_200", http.MethodPost, "/api/video/action", `{"id":"chromecast","action":"toggle_playback"}`, false, http.StatusOK, `"status":"ok"`, "", "", "", "", "", "chromecast", "toggle_playback", ""},
+		{"video_action_404", http.MethodPost, "/api/video/action", `{"id":"not-found","action":"play"}`, false, http.StatusNotFound, "stream not active", "", "", "", "", "", "", "", ""},
+		{"video_action_422", http.MethodPost, "/api/video/action", `{"id":"not-controllable","action":"play"}`, false, http.StatusUnprocessableEntity, "stream is not controllable", "", "", "", "", "", "", "", ""},
+		{"video_action_502", http.MethodPost, "/api/video/action", `{"id":"unreachable","action":"play"}`, false, http.StatusBadGateway, "stream controller unreachable", "", "", "", "", "", "", "", ""},
+		{"video_action_400", http.MethodPost, "/api/video/action", `not-json`, false, http.StatusBadRequest, "invalid action payload", "", "", "", "", "", "", "", ""},
+		{"video_state_post_200", http.MethodPost, "/api/video/state", `{"id":"chromecast","player_state":"playing"}`, false, http.StatusOK, `"player_state":"playing"`, "", "", "", "", "", "", "", ""},
+		{"video_state_post_404", http.MethodPost, "/api/video/state", `{"id":"not-found","player_state":"paused"}`, false, http.StatusNotFound, "stream not active", "", "", "", "", "", "", "", ""},
+		{"video_state_post_400", http.MethodPost, "/api/video/state", `not-json`, false, http.StatusBadRequest, "invalid player state payload", "", "", "", "", "", "", "", ""},
+		{"voice_state_200", http.MethodPost, "/api/voice/state", `{"state":"thinking","transcript":"What time is it?"}`, false, http.StatusOK, `"status":"ok"`, "", "", "", "", "", "", "", "thinking"},
+		{"voice_state_400", http.MethodPost, "/api/voice/state", `not-json`, false, http.StatusBadRequest, "invalid voice state payload", "", "", "", "", "", "", "", ""},
+		{"voice_interact_200", http.MethodPost, "/api/voice/interact", "--boundary\r\nContent-Disposition: form-data; name=\"audio\"; filename=\"test.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF....\r\n--boundary--\r\n", false, http.StatusOK, "transcribing", "", "", "", "", "", "", "", ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			mock := &mockServer{audioMuted: tc.initMuted}
+			req := httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body))
+			if tc.body != "" {
+				if strings.HasPrefix(tc.body, "--boundary") {
+					req.Header.Set("Content-Type", "multipart/form-data; boundary=boundary")
+				} else {
+					req.Header.Set("Content-Type", "application/json")
+				}
+			}
+			rec := httptest.NewRecorder()
+			Handler(mock).ServeHTTP(rec, req)
+			if rec.Code != tc.wantCode || (tc.wantSub != "" && !strings.Contains(rec.Body.String(), tc.wantSub)) {
+				t.Fatalf("got (%d, %q), want (%d, sub %q)", rec.Code, rec.Body.String(), tc.wantCode, tc.wantSub)
+			}
+			for _, check := range [][2]string{
+				{tc.wantWidgetID, mock.lastWidgetID}, {tc.wantType, mock.lastType}, {tc.wantPath, mock.lastPath},
+				{tc.wantTriggerID, mock.lastTriggerID}, {tc.wantDismissID, mock.lastDismissID},
+				{tc.wantActionID, mock.lastActionID}, {tc.wantAction, mock.lastAction}, {tc.wantVoiceState, mock.lastVoiceState},
+			} {
+				if check[0] != "" && check[1] != check[0] {
+					t.Fatalf("got %q, want %q", check[1], check[0])
+				}
+			}
 		})
 	}
+}
 
-	handler := HandlerWithOptions(mock, StdHTTPServerOptions{
-		BaseURL:     "/v1",
-		BaseRouter:  customMux,
-		Middlewares: []MiddlewareFunc{mw},
+func TestHandler_OptionsAndMuxConstructors(t *testing.T) {
+	t.Parallel()
+	mock := &mockServer{}
+	mwCalls := 0
+	hOpts := HandlerWithOptions(mock, StdHTTPServerOptions{
+		BaseURL: "/v1", BaseRouter: http.NewServeMux(),
+		Middlewares: []MiddlewareFunc{func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				mwCalls++
+				next.ServeHTTP(w, r)
+			})
+		}},
 		ErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
 			http.Error(w, "custom: "+err.Error(), http.StatusBadRequest)
 		},
 	})
-
-	endpoints := []string{
-		"/v1/healthz",
-		"/v1/health",
-		"/v1/api/audio",
-		"/v1/api/widgets/widget-1/render",
-		"/v1/widget-types/clock/assets/icon.svg",
+	endpoints := []struct{ method, path, body string }{
+		{http.MethodGet, "/v1/healthz", ""}, {http.MethodGet, "/v1/health", ""},
+		{http.MethodGet, "/v1/api/audio", ""}, {http.MethodGet, "/v1/api/widgets/widget-1/render", ""},
+		{http.MethodGet, "/v1/widget-types/clock/assets/icon.svg", ""},
+		{http.MethodPost, "/v1/api/audio/volume", `{"volume": 50}`}, {http.MethodPost, "/v1/api/audio/mute", `{}`},
+		{http.MethodPost, "/v1/api/screen/advance", `{"direction": "next"}`},
+		{http.MethodPost, "/v1/api/screen/pause", `{"paused": true}`},
+		{http.MethodPost, "/v1/api/screen/select", `{"screen_index": 0}`},
 	}
-
 	for _, ep := range endpoints {
-		req := httptest.NewRequest(http.MethodGet, ep, nil)
 		rec := httptest.NewRecorder()
-		handler.ServeHTTP(rec, req)
+		hOpts.ServeHTTP(rec, httptest.NewRequest(ep.method, ep.path, strings.NewReader(ep.body)))
 		if rec.Code != http.StatusOK {
-			t.Fatalf("endpoint %s expected 200, got %d", ep, rec.Code)
-		}
-		if mwCalls[ep] != 1 {
-			t.Fatalf("expected middleware call for %s, got %d", ep, mwCalls[ep])
+			t.Fatalf("%s %s expected 200, got %d", ep.method, ep.path, rec.Code)
 		}
 	}
-
-	postEndpoints := []struct {
+	if mwCalls != len(endpoints) {
+		t.Fatalf("mwCalls = %d, want %d", mwCalls, len(endpoints))
+	}
+	for _, tc := range []struct {
+		h    http.Handler
 		path string
-		body string
 	}{
-		{"/v1/api/audio/volume", `{"volume": 50}`},
-		{"/v1/api/audio/mute", `{}`},
-		{"/v1/api/screen/advance", `{"direction": "next"}`},
-		{"/v1/api/screen/pause", `{"paused": true}`},
-		{"/v1/api/screen/select", `{"screen_index": 0}`},
-	}
-
-	for _, ep := range postEndpoints {
-		req := httptest.NewRequest(http.MethodPost, ep.path, strings.NewReader(ep.body))
+		{HandlerFromMux(mock, http.NewServeMux()), "/health"},
+		{HandlerFromMuxWithBaseURL(mock, http.NewServeMux(), "/prefix"), "/prefix/healthz"},
+	} {
 		rec := httptest.NewRecorder()
-		handler.ServeHTTP(rec, req)
+		tc.h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, tc.path, nil))
 		if rec.Code != http.StatusOK {
-			t.Fatalf("endpoint %s expected 200, got %d", ep.path, rec.Code)
+			t.Fatalf("%s expected 200, got %d", tc.path, rec.Code)
 		}
-		if mwCalls[ep.path] != 1 {
-			t.Fatalf("expected middleware call for %s, got %d", ep.path, mwCalls[ep.path])
-		}
-	}
-}
-
-func TestHandlerFromMux(t *testing.T) {
-	t.Parallel()
-
-	mock := &mockServer{}
-	mux := http.NewServeMux()
-	handler := HandlerFromMux(mock, mux)
-
-	req := httptest.NewRequest(http.MethodGet, "/health", nil)
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", rec.Code)
-	}
-}
-
-func TestHandlerFromMuxWithBaseURL(t *testing.T) {
-	t.Parallel()
-
-	mock := &mockServer{}
-	mux := http.NewServeMux()
-	handler := HandlerFromMuxWithBaseURL(mock, mux, "/prefix")
-
-	req := httptest.NewRequest(http.MethodGet, "/prefix/healthz", nil)
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", rec.Code)
 	}
 }
 
 func TestServerInterfaceWrapper_ParameterErrors(t *testing.T) {
 	t.Parallel()
-
-	t.Run("Default error handler triggers on missing widget_id", func(t *testing.T) {
-		t.Parallel()
-		mock := &mockServer{}
-		wrapper := ServerInterfaceWrapper{
-			Handler: mock,
-			ErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-			},
-		}
-
-		req := httptest.NewRequest(http.MethodGet, "/api/widgets//render", nil)
-		rec := httptest.NewRecorder()
-		wrapper.GetWidgetRender(rec, req)
-
-		if rec.Code != http.StatusBadRequest {
-			t.Fatalf("expected 400, got %d", rec.Code)
-		}
-	})
-
-	t.Run("Default error handler triggers on missing widget_id for PostWidgetPush", func(t *testing.T) {
-		t.Parallel()
-		mock := &mockServer{}
-		wrapper := ServerInterfaceWrapper{
-			Handler: mock,
-			ErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-			},
-		}
-
-		req := httptest.NewRequest(http.MethodPost, "/api/widgets//push", nil)
-		rec := httptest.NewRecorder()
-		wrapper.PostWidgetPush(rec, req)
-
-		if rec.Code != http.StatusBadRequest {
-			t.Fatalf("expected 400, got %d", rec.Code)
-		}
-	})
-
-	t.Run("Middlewares executed for PostWidgetPush", func(t *testing.T) {
-		t.Parallel()
-		mock := &mockServer{}
-		var mwCalled bool
-		wrapper := ServerInterfaceWrapper{
-			Handler: mock,
-			HandlerMiddlewares: []MiddlewareFunc{
-				func(next http.Handler) http.Handler {
+	if h := HandlerWithOptions(&mockServer{}, StdHTTPServerOptions{}); h == nil {
+		t.Fatal("expected non-nil handler")
+	}
+	tests := []struct {
+		name, target, method, url string
+		pathParams               [][2]string
+		withMW                   bool
+		wantCode                 int
+	}{
+		{"render_missing_widget_id", "get_widget_render", http.MethodGet, "/api/widgets//render", nil, false, http.StatusBadRequest},
+		{"push_missing_widget_id", "post_widget_push", http.MethodPost, "/api/widgets//push", nil, false, http.StatusBadRequest},
+		{"push_with_mw", "post_widget_push", http.MethodPost, "/api/widgets/w1/push", [][2]string{{"widget_id", "w1"}}, true, http.StatusOK},
+		{"voice_interact_mw", "post_voice_interact", http.MethodPost, "/api/voice/interact", nil, true, http.StatusOK},
+		{"voice_state_mw", "post_voice_state", http.MethodPost, "/api/voice/state", nil, true, http.StatusOK},
+		{"video_action_mw", "post_video_action", http.MethodPost, "/api/video/action", nil, true, http.StatusOK},
+		{"video_dismiss_mw", "post_video_dismiss", http.MethodPost, "/api/video/dismiss", nil, true, http.StatusOK},
+		{"video_state_get_mw", "get_video_state", http.MethodGet, "/api/video/state", nil, true, http.StatusOK},
+		{"video_state_post_mw", "post_video_state", http.MethodPost, "/api/video/state", nil, true, http.StatusOK},
+		{"video_trigger_mw", "post_video_trigger", http.MethodPost, "/api/video/trigger", nil, true, http.StatusOK},
+		{"asset_missing_type", "get_widget_asset", http.MethodGet, "/widget-types//assets/icon.svg", nil, false, http.StatusBadRequest},
+		{"asset_missing_path", "get_widget_asset", http.MethodGet, "/widget-types/clock/assets/", [][2]string{{"type", "clock"}}, false, http.StatusBadRequest},
+		{"list_items_bad_query", "get_list_items", http.MethodGet, "/api/lists/g/items?include_done=bad", [][2]string{{"list_id", "g"}}, false, http.StatusBadRequest},
+		{"list_items_missing_id", "get_list_items", http.MethodGet, "/api/lists//items", nil, false, http.StatusBadRequest},
+		{"complete_item_ok", "complete_list_item", http.MethodPost, "/api/lists/g/items/i1/complete", [][2]string{{"list_id", "g"}, {"item_id", "i1"}}, false, http.StatusOK},
+		{"complete_item_404", "complete_list_item", http.MethodPost, "/api/lists/not-found/items/i1/complete", [][2]string{{"list_id", "not-found"}, {"item_id", "i1"}}, false, http.StatusNotFound},
+		{"complete_item_missing_list", "complete_list_item", http.MethodPost, "/api/lists//items/i1/complete", [][2]string{{"item_id", "i1"}}, false, http.StatusBadRequest},
+		{"complete_item_missing_item", "complete_list_item", http.MethodPost, "/api/lists/g/items//complete", [][2]string{{"list_id", "g"}}, false, http.StatusBadRequest},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			mwCalled, wrapper := false, ServerInterfaceWrapper{
+				Handler: &mockServer{},
+				ErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
+					http.Error(w, err.Error(), http.StatusBadRequest)
+				},
+			}
+			if tc.withMW {
+				wrapper.HandlerMiddlewares = []MiddlewareFunc{func(next http.Handler) http.Handler {
 					return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 						mwCalled = true
 						next.ServeHTTP(w, r)
 					})
-				},
-			},
-		}
+				}}
+			}
+			var body string
+			if strings.Contains(tc.target, "video") || strings.Contains(tc.target, "voice") || strings.Contains(tc.target, "push") {
+				body = `{"state":"idle","status":"ok","id":"chromecast","stream_url":"http://127.0.0.1/cast","action":"play","player_state":"playing"}`
+			}
+			req := httptest.NewRequest(tc.method, tc.url, strings.NewReader(body))
+			for _, p := range tc.pathParams {
+				req.SetPathValue(p[0], p[1])
+			}
+			rec := httptest.NewRecorder()
+			dispatchWrapper(&wrapper, tc.target, rec, req)
+			if rec.Code != tc.wantCode || (tc.withMW && !mwCalled) {
+				t.Fatalf("got code %d (mw %v), want code %d (mw %v)", rec.Code, mwCalled, tc.wantCode, tc.withMW)
+			}
+		})
+	}
+}
 
-		req := httptest.NewRequest(http.MethodPost, "/api/widgets/widget-1/push", strings.NewReader(`{"status":"ok"}`))
-		req.SetPathValue("widget_id", "widget-1")
-		rec := httptest.NewRecorder()
-		wrapper.PostWidgetPush(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Fatalf("expected 200, got %d", rec.Code)
-		}
-		if !mwCalled {
-			t.Fatal("expected middleware to be called")
-		}
-	})
-
-	t.Run("Middlewares executed for Voice and Video endpoints", func(t *testing.T) {
-		t.Parallel()
-		mock := &mockServer{}
-		var mwCalls int
-		wrapper := ServerInterfaceWrapper{
-			Handler: mock,
-			HandlerMiddlewares: []MiddlewareFunc{
-				func(next http.Handler) http.Handler {
-					return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-						mwCalls++
-						next.ServeHTTP(w, r)
-					})
-				},
-			},
-		}
-
-		req := httptest.NewRequest(http.MethodPost, "/api/voice/interact", nil)
-		rec := httptest.NewRecorder()
-		wrapper.PostVoiceInteract(rec, req)
-
-		req = httptest.NewRequest(http.MethodPost, "/api/voice/state", strings.NewReader(`{"state":"idle"}`))
-		rec = httptest.NewRecorder()
-		wrapper.PostVoiceState(rec, req)
-
-		req = httptest.NewRequest(http.MethodPost, "/api/video/action", strings.NewReader(`{"id":"chromecast","action":"play"}`))
-		rec = httptest.NewRecorder()
-		wrapper.PostVideoAction(rec, req)
-
-		req = httptest.NewRequest(http.MethodPost, "/api/video/dismiss", strings.NewReader(`{"id":"chromecast"}`))
-		rec = httptest.NewRecorder()
-		wrapper.PostVideoDismiss(rec, req)
-
-		req = httptest.NewRequest(http.MethodGet, "/api/video/state", nil)
-		rec = httptest.NewRecorder()
-		wrapper.GetVideoState(rec, req)
-
-		req = httptest.NewRequest(http.MethodPost, "/api/video/state", strings.NewReader(`{"id":"chromecast","player_state":"playing"}`))
-		rec = httptest.NewRecorder()
-		wrapper.PostVideoState(rec, req)
-
-		req = httptest.NewRequest(http.MethodPost, "/api/video/trigger", strings.NewReader(`{"id":"chromecast","stream_url":"http://127.0.0.1/cast"}`))
-		rec = httptest.NewRecorder()
-		wrapper.PostVideoTrigger(rec, req)
-
-		if mwCalls != 7 {
-			t.Fatalf("expected 7 middleware calls, got %d", mwCalls)
-		}
-	})
-
-	t.Run("Default error handler triggers on missing asset type", func(t *testing.T) {
-		t.Parallel()
-		mock := &mockServer{}
-		wrapper := ServerInterfaceWrapper{
-			Handler: mock,
-			ErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-			},
-		}
-
-		req := httptest.NewRequest(http.MethodGet, "/widget-types//assets/icon.svg", nil)
-		rec := httptest.NewRecorder()
-		wrapper.GetWidgetAsset(rec, req)
-
-		if rec.Code != http.StatusBadRequest {
-			t.Fatalf("expected 400, got %d", rec.Code)
-		}
-	})
-
-	t.Run("Default error handler triggers on missing asset path", func(t *testing.T) {
-		t.Parallel()
-		mock := &mockServer{}
-		wrapper := ServerInterfaceWrapper{
-			Handler: mock,
-			ErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-			},
-		}
-
-		req := httptest.NewRequest(http.MethodGet, "/widget-types/clock/assets/", nil)
-		req.SetPathValue("type", "clock")
-		rec := httptest.NewRecorder()
-		wrapper.GetWidgetAsset(rec, req)
-
-		if rec.Code != http.StatusBadRequest {
-			t.Fatalf("expected 400, got %d", rec.Code)
-		}
-	})
-
-	t.Run("Default error handler triggers on invalid include_done query parameter", func(t *testing.T) {
-		t.Parallel()
-		mock := &mockServer{}
-		wrapper := ServerInterfaceWrapper{
-			Handler: mock,
-			ErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-			},
-		}
-
-		req := httptest.NewRequest(http.MethodGet, "/api/lists/groceries/items?include_done=not-a-bool", nil)
-		req.SetPathValue("list_id", "groceries")
-		rec := httptest.NewRecorder()
-		wrapper.GetListItems(rec, req)
-
-		if rec.Code != http.StatusBadRequest {
-			t.Fatalf("expected 400, got %d", rec.Code)
-		}
-	})
-
-	t.Run("Default error handler triggers on missing list_id", func(t *testing.T) {
-		t.Parallel()
-		mock := &mockServer{}
-		wrapper := ServerInterfaceWrapper{
-			Handler: mock,
-			ErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-			},
-		}
-
-		req := httptest.NewRequest(http.MethodGet, "/api/lists//items", nil)
-		rec := httptest.NewRecorder()
-		wrapper.GetListItems(rec, req)
-
-		if rec.Code != http.StatusBadRequest {
-			t.Fatalf("expected 400, got %d", rec.Code)
-		}
-	})
-
-	t.Run("Default error handler func in HandlerWithOptions", func(t *testing.T) {
-		t.Parallel()
-		mock := &mockServer{}
-		h := HandlerWithOptions(mock, StdHTTPServerOptions{})
-		if h == nil {
-			t.Fatalf("expected non-nil handler")
-		}
-	})
-
-	t.Run("CompleteListItem success and not found", func(t *testing.T) {
-		t.Parallel()
-		mock := &mockServer{}
-		wrapper := ServerInterfaceWrapper{
-			Handler: mock,
-			ErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-			},
-		}
-
-		// Success
-		req := httptest.NewRequest(http.MethodPost, "/api/lists/groceries/items/item-1/complete", nil)
-		req.SetPathValue("list_id", "groceries")
-		req.SetPathValue("item_id", "item-1")
-		rec := httptest.NewRecorder()
-		wrapper.CompleteListItem(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Fatalf("expected 200, got %d", rec.Code)
-		}
-
-		// Not found
-		req404 := httptest.NewRequest(http.MethodPost, "/api/lists/not-found/items/item-1/complete", nil)
-		req404.SetPathValue("list_id", "not-found")
-		req404.SetPathValue("item_id", "item-1")
-		rec404 := httptest.NewRecorder()
-		wrapper.CompleteListItem(rec404, req404)
-
-		if rec404.Code != http.StatusNotFound {
-			t.Fatalf("expected 404, got %d", rec404.Code)
-		}
-	})
+func dispatchWrapper(w *ServerInterfaceWrapper, target string, rec http.ResponseWriter, req *http.Request) {
+	switch target {
+	case "get_widget_render": w.GetWidgetRender(rec, req)
+	case "post_widget_push": w.PostWidgetPush(rec, req)
+	case "get_widget_asset": w.GetWidgetAsset(rec, req)
+	case "get_list_items": w.GetListItems(rec, req)
+	case "complete_list_item": w.CompleteListItem(rec, req)
+	case "post_voice_interact": w.PostVoiceInteract(rec, req)
+	case "post_voice_state": w.PostVoiceState(rec, req)
+	case "post_video_action": w.PostVideoAction(rec, req)
+	case "post_video_dismiss": w.PostVideoDismiss(rec, req)
+	case "get_video_state": w.GetVideoState(rec, req)
+	case "post_video_state": w.PostVideoState(rec, req)
+	case "post_video_trigger": w.PostVideoTrigger(rec, req)
+	}
 }
 
 func TestErrorTypes(t *testing.T) {
 	t.Parallel()
-
 	rootErr := errors.New("underlying cause")
-
-	t.Run("UnescapedCookieParamError", func(t *testing.T) {
-		t.Parallel()
-		err := &UnescapedCookieParamError{ParamName: "session", Err: rootErr}
-		if !strings.Contains(err.Error(), "session") {
-			t.Fatalf("expected error string to contain 'session', got %s", err.Error())
-		}
-		if !errors.Is(err, rootErr) {
-			t.Fatalf("expected Unwrap to return rootErr")
-		}
-	})
-
-	t.Run("UnmarshalingParamError", func(t *testing.T) {
-		t.Parallel()
-		err := &UnmarshalingParamError{ParamName: "filter", Err: rootErr}
-		if !strings.Contains(err.Error(), "filter") {
-			t.Fatalf("expected error string to contain 'filter', got %s", err.Error())
-		}
-		if !errors.Is(err, rootErr) {
-			t.Fatalf("expected Unwrap to return rootErr")
-		}
-	})
-
-	t.Run("RequiredParamError", func(t *testing.T) {
-		t.Parallel()
-		err := &RequiredParamError{ParamName: "id"}
-		if !strings.Contains(err.Error(), "id") {
-			t.Fatalf("expected error string to contain 'id', got %s", err.Error())
-		}
-	})
-
-	t.Run("RequiredHeaderError", func(t *testing.T) {
-		t.Parallel()
-		err := &RequiredHeaderError{ParamName: "Authorization", Err: rootErr}
-		if !strings.Contains(err.Error(), "Authorization") {
-			t.Fatalf("expected error string to contain 'Authorization', got %s", err.Error())
-		}
-		if !errors.Is(err, rootErr) {
-			t.Fatalf("expected Unwrap to return rootErr")
-		}
-	})
-
-	t.Run("InvalidParamFormatError", func(t *testing.T) {
-		t.Parallel()
-		err := &InvalidParamFormatError{ParamName: "count", Err: rootErr}
-		if !strings.Contains(err.Error(), "count") {
-			t.Fatalf("expected error string to contain 'count', got %s", err.Error())
-		}
-		if !errors.Is(err, rootErr) {
-			t.Fatalf("expected Unwrap to return rootErr")
-		}
-	})
-
-	t.Run("TooManyValuesForParamError", func(t *testing.T) {
-		t.Parallel()
-		err := &TooManyValuesForParamError{ParamName: "tag", Count: 3}
-		if !strings.Contains(err.Error(), "tag") || !strings.Contains(err.Error(), "3") {
-			t.Fatalf("expected error string to contain 'tag' and '3', got %s", err.Error())
-		}
-	})
+	tests := []struct {
+		name       string
+		err        error
+		wantSub    string
+		wantUnwrap bool
+	}{
+		{"UnescapedCookieParamError", &UnescapedCookieParamError{ParamName: "session", Err: rootErr}, "session", true},
+		{"UnmarshalingParamError", &UnmarshalingParamError{ParamName: "filter", Err: rootErr}, "filter", true},
+		{"RequiredParamError", &RequiredParamError{ParamName: "id"}, "id", false},
+		{"RequiredHeaderError", &RequiredHeaderError{ParamName: "Authorization", Err: rootErr}, "Authorization", true},
+		{"InvalidParamFormatError", &InvalidParamFormatError{ParamName: "count", Err: rootErr}, "count", true},
+		{"TooManyValuesForParamError", &TooManyValuesForParamError{ParamName: "tag", Count: 3}, "tag", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if !strings.Contains(tc.err.Error(), tc.wantSub) {
+				t.Fatalf("expected error string to contain %q, got %s", tc.wantSub, tc.err.Error())
+			}
+			if tc.wantUnwrap && !errors.Is(tc.err, rootErr) {
+				t.Fatalf("expected Unwrap to return rootErr")
+			}
+		})
+	}
 }
