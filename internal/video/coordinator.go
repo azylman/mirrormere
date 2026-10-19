@@ -20,14 +20,7 @@ type VideoStateSink interface {
 // CoordinatorOption configures Coordinator instances.
 type CoordinatorOption func(*Coordinator)
 
-// WithSink registers a VideoStateSink for hydration synchronization.
-func WithSink(sink VideoStateSink) CoordinatorOption {
-	return func(c *Coordinator) {
-		c.sink = sink
-	}
-}
-
-// WithHTTPClient overrides the HTTP client used for sidecar action forwarding.
+func WithSink(sink VideoStateSink) CoordinatorOption { return func(c *Coordinator) { c.sink = sink } }
 func WithHTTPClient(client *http.Client) CoordinatorOption {
 	return func(c *Coordinator) {
 		if client != nil {
@@ -35,8 +28,6 @@ func WithHTTPClient(client *http.Client) CoordinatorOption {
 		}
 	}
 }
-
-// WithTimerFunc overrides the countdown timer constructor for deterministic testing.
 func WithTimerFunc(tf TimerFunc) CoordinatorOption {
 	return func(c *Coordinator) {
 		if tf != nil {
@@ -62,31 +53,16 @@ type Coordinator struct {
 
 // NewCoordinator constructs a VideoCoordinator initialized in widgets mode.
 func NewCoordinator(hub *events.Hub, opts ...CoordinatorOption) *Coordinator {
-	c := &Coordinator{
-		mode:       ModeWidgets,
-		timers:     make(map[string]Timer),
-		hub:        hub,
-		httpClient: &http.Client{Timeout: 2 * time.Second},
-		timerFunc:  defaultTimerFunc,
-	}
-
+	c := &Coordinator{mode: ModeWidgets, timers: make(map[string]Timer), hub: hub, httpClient: &http.Client{Timeout: 2 * time.Second}, timerFunc: defaultTimerFunc}
 	for _, opt := range opts {
 		opt(c)
 	}
-
-	// Seed hydration state sink on initialization
 	if c.sink != nil {
-		c.sink.SetVideoState(&events.VideoStateData{
-			Mode:    ModeWidgets,
-			Primary: nil,
-			Pip:     nil,
-		})
+		c.sink.SetVideoState(&events.VideoStateData{Mode: ModeWidgets})
 	}
-
 	return c
 }
 
-// GetState returns an isolated snapshot of the current video presentation state.
 func (c *Coordinator) GetState() VideoState {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -94,11 +70,7 @@ func (c *Coordinator) GetState() VideoState {
 }
 
 func (c *Coordinator) snapshotLocked() VideoState {
-	return VideoState{
-		Mode:    c.mode,
-		Primary: cloneStream(c.primary),
-		Pip:     cloneStream(c.pip),
-	}
+	return VideoState{Mode: c.mode, Primary: cloneStream(c.primary), Pip: cloneStream(c.pip)}
 }
 
 func cloneStream(s *VideoStream) *VideoStream {
@@ -109,37 +81,79 @@ func cloneStream(s *VideoStream) *VideoStream {
 	return &cp
 }
 
-// Trigger mounts or updates a video stream within the priority stack according to .
+func isValidPlayerState(ps string) bool {
+	return ps == PlayerStatePlaying || ps == PlayerStatePaused || ps == PlayerStateBuffering || ps == PlayerStateIdle
+}
+
+func streamID(s *VideoStream) string {
+	if s != nil {
+		return s.ID
+	}
+	return ""
+}
+
+func (c *Coordinator) findStreamLocked(id string) *VideoStream {
+	if streamID(c.primary) == id {
+		return c.primary
+	}
+	if streamID(c.pip) == id {
+		return c.pip
+	}
+	return nil
+}
+
+func (c *Coordinator) unlockAndPublish(snap VideoState) (VideoState, error) {
+	c.mu.Unlock()
+	c.publishState(snap)
+	return snap, nil
+}
+
+func (c *Coordinator) retriggerSlotLocked(slot **VideoStream, stream VideoStream, muted bool) VideoState {
+	c.stopTimerLocked(stream.ID)
+	stream.Muted = muted
+	preserveMetadata(&stream, *slot)
+	if stream.PositionUpdatedAt == 0 && stream.Position > 0 {
+		stream.PositionUpdatedAt = time.Now().UnixMilli()
+	}
+	*slot = &stream
+	if stream.Priority == PriorityTemporary {
+		c.startTimerLocked(stream.ID, time.Duration(stream.TimeoutSeconds)*time.Second)
+	}
+	return c.snapshotLocked()
+}
+
+func (c *Coordinator) promotePipOrResetLocked() {
+	if c.pip != nil {
+		c.pip.Muted = false
+		c.primary, c.pip = c.pip, nil
+	} else {
+		c.primary, c.mode = nil, ModeWidgets
+	}
+}
+
 func (c *Coordinator) Trigger(stream VideoStream) (VideoState, error) {
-	stream.ID = strings.TrimSpace(stream.ID)
-	stream.StreamURL = strings.TrimSpace(stream.StreamURL)
+	stream.ID, stream.StreamURL = strings.TrimSpace(stream.ID), strings.TrimSpace(stream.StreamURL)
 	if stream.ID == "" || stream.StreamURL == "" || stream.ID == "all" || stream.ID == "*" {
 		return VideoState{}, ErrInvalidStream
 	}
-
 	if stream.Type == "" {
 		stream.Type = TypeWebRTC
 	} else if stream.Type != TypeWebRTC && stream.Type != TypeHLS && stream.Type != TypeMJPEG {
 		return VideoState{}, ErrInvalidStream
 	}
-
 	if stream.Priority == "" {
 		stream.Priority = PriorityPersistent
 	} else if stream.Priority != PriorityPersistent && stream.Priority != PriorityTemporary {
 		return VideoState{}, ErrInvalidStream
 	}
-
-	if stream.Priority == PriorityTemporary {
-		if stream.TimeoutSeconds <= 0 {
-			stream.TimeoutSeconds = DefaultTemporaryTimeoutSeconds
-		}
-	} else {
+	if stream.Priority == PriorityTemporary && stream.TimeoutSeconds <= 0 {
+		stream.TimeoutSeconds = DefaultTemporaryTimeoutSeconds
+	} else if stream.Priority != PriorityTemporary {
 		stream.TimeoutSeconds = 0
 	}
-
 	if stream.PlayerState == "" {
 		stream.PlayerState = PlayerStatePlaying
-	} else if stream.PlayerState != PlayerStatePlaying && stream.PlayerState != PlayerStatePaused && stream.PlayerState != PlayerStateBuffering && stream.PlayerState != PlayerStateIdle {
+	} else if !isValidPlayerState(stream.PlayerState) {
 		return VideoState{}, ErrInvalidPlayerState
 	}
 
@@ -149,101 +163,48 @@ func (c *Coordinator) Trigger(stream VideoStream) (VideoState, error) {
 		return VideoState{}, ErrStreamNotFound
 	}
 
-	// Case 1: Stream re-trigger with same ID
-	if c.primary != nil && c.primary.ID == stream.ID {
-		c.stopTimerLocked(stream.ID)
-		stream.Muted = false
-		preserveMetadata(&stream, c.primary)
-		if stream.PositionUpdatedAt == 0 && stream.Position > 0 {
-			stream.PositionUpdatedAt = time.Now().UnixMilli()
-		}
-		c.primary = &stream
-		if stream.Priority == PriorityTemporary {
-			c.startTimerLocked(stream.ID, time.Duration(stream.TimeoutSeconds)*time.Second)
-		}
-		snap := c.snapshotLocked()
-		c.mu.Unlock()
-		c.publishState(snap)
-		return snap, nil
+	if streamID(c.primary) == stream.ID {
+		return c.unlockAndPublish(c.retriggerSlotLocked(&c.primary, stream, false))
 	}
-
-	if c.pip != nil && c.pip.ID == stream.ID {
-		c.stopTimerLocked(stream.ID)
-		stream.Muted = true
-		preserveMetadata(&stream, c.pip)
-		if stream.PositionUpdatedAt == 0 && stream.Position > 0 {
-			stream.PositionUpdatedAt = time.Now().UnixMilli()
-		}
-		c.pip = &stream
-		if stream.Priority == PriorityTemporary {
-			c.startTimerLocked(stream.ID, time.Duration(stream.TimeoutSeconds)*time.Second)
-		}
-		snap := c.snapshotLocked()
-		c.mu.Unlock()
-		c.publishState(snap)
-		return snap, nil
+	if streamID(c.pip) == stream.ID {
+		return c.unlockAndPublish(c.retriggerSlotLocked(&c.pip, stream, true))
 	}
 
 	if stream.PositionUpdatedAt == 0 && stream.Position > 0 {
 		stream.PositionUpdatedAt = time.Now().UnixMilli()
 	}
 
-	// Case 2: Persistent Stream Trigger
 	if stream.Priority == PriorityPersistent {
 		stream.Muted = false
 		if c.primary != nil {
 			if c.primary.Priority == PriorityTemporary {
-				// Demote existing temporary stream from Primary to PiP
-				if c.pip != nil {
-					c.stopTimerLocked(c.pip.ID) // Previous PiP evicted
-				}
-				c.primary.Muted = true
-				c.pip = c.primary
+				c.stopTimerLocked(streamID(c.pip))
+				c.primary.Muted, c.pip = true, c.primary
 			} else {
-				// Previous persistent stream in Primary is replaced
 				c.stopTimerLocked(c.primary.ID)
 			}
 		}
 		c.primary = &stream
-		c.mode = ModeVideo
+	} else if c.primary != nil && c.primary.Priority == PriorityPersistent {
+		c.stopTimerLocked(streamID(c.pip))
+		stream.Muted, c.pip = true, &stream
+		c.startTimerLocked(stream.ID, time.Duration(stream.TimeoutSeconds)*time.Second)
 	} else {
-		// Case 3: Temporary Stream Trigger
-		if c.primary != nil && c.primary.Priority == PriorityPersistent {
-			// Persistent media is active: incoming alert docks into PiP with muted audio
-			if c.pip != nil {
-				c.stopTimerLocked(c.pip.ID) // Evict previous PiP alert
-			}
-			stream.Muted = true
-			c.pip = &stream
-			c.startTimerLocked(stream.ID, time.Duration(stream.TimeoutSeconds)*time.Second)
-			c.mode = ModeVideo
-		} else {
-			// Idle or previous temporary alert in primary: take Primary fullscreen with audio
-			if c.primary != nil {
-				c.stopTimerLocked(c.primary.ID)
-			}
-			stream.Muted = false
-			c.primary = &stream
-			c.startTimerLocked(stream.ID, time.Duration(stream.TimeoutSeconds)*time.Second)
-			c.mode = ModeVideo
-		}
+		c.stopTimerLocked(streamID(c.primary))
+		stream.Muted, c.primary = false, &stream
+		c.startTimerLocked(stream.ID, time.Duration(stream.TimeoutSeconds)*time.Second)
 	}
+	c.mode = ModeVideo
 
-	snap := c.snapshotLocked()
-	c.mu.Unlock()
-
-	c.publishState(snap)
-	return snap, nil
+	return c.unlockAndPublish(c.snapshotLocked())
 }
 
 // Dismiss unmounts an active video stream by ID.
-// If id is "all" or "*", all active streams are unmounted and the mode returns to widgets.
 func (c *Coordinator) Dismiss(id string) (VideoState, error) {
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return VideoState{}, ErrInvalidStream
 	}
-
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
@@ -258,54 +219,25 @@ func (c *Coordinator) Dismiss(id string) (VideoState, error) {
 		for tid := range c.timers {
 			c.stopTimerLocked(tid)
 		}
-		c.primary = nil
-		c.pip = nil
-		c.mode = ModeWidgets
-		snap := c.snapshotLocked()
-		c.mu.Unlock()
-		c.publishState(snap)
-		return snap, nil
-	}
-
-	if c.pip != nil && c.pip.ID == id {
+		c.primary, c.pip, c.mode = nil, nil, ModeWidgets
+	} else if streamID(c.pip) == id {
 		c.stopTimerLocked(id)
 		c.pip = nil
-		snap := c.snapshotLocked()
-		c.mu.Unlock()
-		c.publishState(snap)
-		return snap, nil
-	}
-
-	if c.primary != nil && c.primary.ID == id {
+	} else if streamID(c.primary) == id {
 		c.stopTimerLocked(id)
-		if c.pip != nil {
-			// Promote PiP alert to Primary fullscreen with unmuted audio
-			c.primary = c.pip
-			c.pip = nil
-			c.primary.Muted = false
-			// Timer for promoted stream continues running unaffected
-		} else {
-			c.primary = nil
-			c.mode = ModeWidgets
-		}
-		snap := c.snapshotLocked()
+		c.promotePipOrResetLocked()
+	} else {
 		c.mu.Unlock()
-		c.publishState(snap)
-		return snap, nil
+		return VideoState{}, ErrStreamNotFound
 	}
 
-	c.mu.Unlock()
-	return VideoState{}, ErrStreamNotFound
+	return c.unlockAndPublish(c.snapshotLocked())
 }
 
-// DismissAll unmounts all active video streams and returns to widgets mode.
-func (c *Coordinator) DismissAll() (VideoState, error) {
-	return c.Dismiss("all")
-}
+func (c *Coordinator) DismissAll() (VideoState, error) { return c.Dismiss("all") }
 
-// SetPlayerState updates the transport state on an active stream.
-func (c *Coordinator) SetPlayerState(id string, playerState string) (VideoState, error) {
-	if playerState != PlayerStatePlaying && playerState != PlayerStatePaused && playerState != PlayerStateBuffering && playerState != PlayerStateIdle {
+func (c *Coordinator) SetPlayerState(id, playerState string) (VideoState, error) {
+	if !isValidPlayerState(playerState) {
 		return VideoState{}, ErrInvalidPlayerState
 	}
 	return c.UpdatePlayerState(id, VideoStream{PlayerState: playerState})
@@ -317,26 +249,16 @@ func (c *Coordinator) UpdatePlayerState(id string, update VideoStream) (VideoSta
 	if id == "" {
 		return VideoState{}, ErrInvalidStream
 	}
-
-	if update.PlayerState != "" {
-		if update.PlayerState != PlayerStatePlaying && update.PlayerState != PlayerStatePaused && update.PlayerState != PlayerStateBuffering && update.PlayerState != PlayerStateIdle {
-			return VideoState{}, ErrInvalidPlayerState
-		}
+	if update.PlayerState != "" && !isValidPlayerState(update.PlayerState) {
+		return VideoState{}, ErrInvalidPlayerState
 	}
-
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
 		return VideoState{}, ErrStreamNotFound
 	}
 
-	var target *VideoStream
-	if c.primary != nil && c.primary.ID == id {
-		target = c.primary
-	} else if c.pip != nil && c.pip.ID == id {
-		target = c.pip
-	}
-
+	target := c.findStreamLocked(id)
 	if target == nil {
 		c.mu.Unlock()
 		return VideoState{}, ErrStreamNotFound
@@ -345,75 +267,47 @@ func (c *Coordinator) UpdatePlayerState(id string, update VideoStream) (VideoSta
 	if update.PlayerState != "" {
 		target.PlayerState = update.PlayerState
 		if update.PlayerState == PlayerStateIdle {
-			target.Position = 0
-			target.Duration = 0
-			target.PositionUpdatedAt = 0
+			target.Position, target.Duration, target.PositionUpdatedAt = 0, 0, 0
 			if update.Title == "" {
-				target.Title = ""
-				target.Series = ""
-				target.Season = ""
-				target.Episode = ""
+				target.Title, target.Series, target.Season, target.Episode = "", "", "", ""
 			}
 		}
 	}
-	if update.Title != "" {
-		target.Title = update.Title
-	}
-	if update.Series != "" {
-		target.Series = update.Series
-	}
-	if update.Season != "" {
-		target.Season = update.Season
-	}
-	if update.Episode != "" {
-		target.Episode = update.Episode
-	}
-	if update.Duration > 0 {
-		target.Duration = update.Duration
-	}
+	copyMetadata(target, &update, true)
 	if update.Position > 0 {
-		target.Position = update.Position
-		if update.PositionUpdatedAt > 0 {
-			target.PositionUpdatedAt = update.PositionUpdatedAt
-		} else {
+		target.Position, target.PositionUpdatedAt = update.Position, update.PositionUpdatedAt
+		if target.PositionUpdatedAt == 0 {
 			target.PositionUpdatedAt = time.Now().UnixMilli()
 		}
 	} else if update.Position == 0 && update.PositionUpdatedAt > 0 {
-		target.Position = 0
-		target.PositionUpdatedAt = update.PositionUpdatedAt
+		target.Position, target.PositionUpdatedAt = 0, update.PositionUpdatedAt
 	}
 
-	snap := c.snapshotLocked()
-	c.mu.Unlock()
-
-	c.publishState(snap)
-	return snap, nil
+	return c.unlockAndPublish(c.snapshotLocked())
 }
 
-func preserveMetadata(target *VideoStream, existing *VideoStream) {
-	if existing == nil {
+func copyMetadata(target, src *VideoStream, overwrite bool) {
+	if src == nil {
 		return
 	}
-	if target.Title == "" {
-		target.Title = existing.Title
+	copyStr := func(dst *string, val string) {
+		if val != "" && (overwrite || *dst == "") {
+			*dst = val
+		}
 	}
-	if target.Series == "" {
-		target.Series = existing.Series
+	copyStr(&target.Title, src.Title)
+	copyStr(&target.Series, src.Series)
+	copyStr(&target.Season, src.Season)
+	copyStr(&target.Episode, src.Episode)
+	if src.Duration > 0 && (overwrite || target.Duration == 0) {
+		target.Duration = src.Duration
 	}
-	if target.Season == "" {
-		target.Season = existing.Season
-	}
-	if target.Episode == "" {
-		target.Episode = existing.Episode
-	}
-	if target.Duration == 0 {
-		target.Duration = existing.Duration
-	}
-	if target.Position == 0 && existing.Position > 0 {
-		target.Position = existing.Position
-		target.PositionUpdatedAt = existing.PositionUpdatedAt
+	if !overwrite && target.Position == 0 && src.Position > 0 {
+		target.Position, target.PositionUpdatedAt = src.Position, src.PositionUpdatedAt
 	}
 }
+
+func preserveMetadata(target, existing *VideoStream) { copyMetadata(target, existing, false) } // preserve
 
 // ForwardAction proxies playback control commands to a controllable stream's sidecar webhook.
 func (c *Coordinator) ForwardAction(ctx context.Context, id, action string, value any) error {
@@ -421,7 +315,6 @@ func (c *Coordinator) ForwardAction(ctx context.Context, id, action string, valu
 	if id == "" {
 		return ErrInvalidStream
 	}
-
 	switch action {
 	case ActionTogglePlayback, ActionPlay, ActionPause, ActionRewind, ActionFastForward,
 		ActionBack, ActionHome, ActionCaptions, ActionNext, ActionPrevious, ActionSeek:
@@ -430,39 +323,25 @@ func (c *Coordinator) ForwardAction(ctx context.Context, id, action string, valu
 	}
 
 	c.mu.RLock()
-	var targetStream *VideoStream
-	if c.primary != nil && c.primary.ID == id {
-		targetStream = c.primary
-	} else if c.pip != nil && c.pip.ID == id {
-		targetStream = c.pip
-	}
-
-	if targetStream == nil {
+	target := c.findStreamLocked(id)
+	if target == nil {
 		c.mu.RUnlock()
 		return ErrStreamNotFound
 	}
-
-	if !targetStream.Controllable || strings.TrimSpace(targetStream.ControlURL) == "" {
-		c.mu.RUnlock()
+	controlURL := strings.TrimSpace(target.ControlURL)
+	controllable := target.Controllable && controlURL != ""
+	c.mu.RUnlock()
+	if !controllable {
 		return ErrNotControllable
 	}
 
-	controlURL := targetStream.ControlURL
-	c.mu.RUnlock()
-
-	// Dispatch HTTP POST to control_url with strict 2-second timeout
 	reqCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 
-	payload, err := json.Marshal(ActionRequest{
-		ID:     id,
-		Action: action,
-		Value:  value,
-	})
+	payload, err := json.Marshal(ActionRequest{ID: id, Action: action, Value: value})
 	if err != nil {
 		return err
 	}
-
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, controlURL, bytes.NewReader(payload))
 	if err != nil {
 		return err
@@ -475,28 +354,25 @@ func (c *Coordinator) ForwardAction(ctx context.Context, id, action string, valu
 		return ErrControllerUnreachable
 	}
 	defer resp.Body.Close()
-
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return ErrControllerUnreachable
 	}
-
 	return nil
 }
 
 func (c *Coordinator) startTimerLocked(id string, d time.Duration) {
-	if d <= 0 {
-		return
+	if d > 0 {
+		c.stopTimerLocked(id)
+		c.timers[id] = c.timerFunc(d, func() { c.handleTimerExpired(id) })
 	}
-	c.stopTimerLocked(id)
-	c.timers[id] = c.timerFunc(d, func() {
-		c.handleTimerExpired(id)
-	})
 }
 
 func (c *Coordinator) stopTimerLocked(id string) {
-	if t, ok := c.timers[id]; ok {
-		t.Stop()
-		delete(c.timers, id)
+	if id != "" {
+		if t, ok := c.timers[id]; ok {
+			t.Stop()
+			delete(c.timers, id)
+		}
 	}
 }
 
@@ -506,56 +382,33 @@ func (c *Coordinator) handleTimerExpired(id string) {
 		c.mu.Unlock()
 		return
 	}
-
 	delete(c.timers, id)
-
 	var snap VideoState
 	shouldPublish := false
-
-	if c.pip != nil && c.pip.ID == id {
-		c.pip = nil
-		snap = c.snapshotLocked()
-		shouldPublish = true
-	} else if c.primary != nil && c.primary.ID == id {
-		if c.pip != nil {
-			c.primary = c.pip
-			c.pip = nil
-			c.primary.Muted = false
-		} else {
-			c.primary = nil
-			c.mode = ModeWidgets
-		}
-		snap = c.snapshotLocked()
-		shouldPublish = true
+	if streamID(c.pip) == id {
+		c.pip, snap, shouldPublish = nil, c.snapshotLocked(), true
+	} else if streamID(c.primary) == id {
+		c.promotePipOrResetLocked()
+		snap, shouldPublish = c.snapshotLocked(), true
 	}
-
 	c.mu.Unlock()
-
 	if shouldPublish {
 		c.publishState(snap)
 	}
 }
 
 func (c *Coordinator) publishState(state VideoState) {
-	data := events.VideoStateData{
-		Mode:    state.Mode,
-		Primary: state.Primary,
-		Pip:     state.Pip,
-	}
-
+	data := events.VideoStateData{Mode: state.Mode, Primary: state.Primary, Pip: state.Pip}
 	if c.sink != nil {
 		c.sink.SetVideoState(&data)
 	}
-
 	if c.hub != nil {
-		payload, err := json.Marshal(data)
-		if err == nil {
+		if payload, err := json.Marshal(data); err == nil {
 			c.hub.Publish(events.EventVideoState, payload)
 		}
 	}
 }
 
-// Close terminates all active timers and stops the coordinator.
 func (c *Coordinator) Close() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
