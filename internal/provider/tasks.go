@@ -152,23 +152,10 @@ func (p *TasksProvider) Init(ctx context.Context, config map[string]any, opts In
 
 			token := opts.GetSecret("http.token")
 			if token == "" {
-				token = opts.Token
+				token = strings.TrimSpace(opts.Token)
 			}
 			if token == "" {
-				if rawTok, tokOk := httpCfg["token"].(string); tokOk {
-					token = rawTok
-				}
-			}
-			if token == "" {
-				token = opts.GetSecret("token")
-			}
-			if token == "" {
-				if tokEnv, envOk := httpCfg["token_env"].(string); envOk && tokEnv != "" {
-					token = opts.GetSecret(tokEnv)
-					if token == "" {
-						token = os.Getenv(tokEnv)
-					}
-				}
+				token = resolveTaskSecret(opts, httpCfg, "http", "token", "token_env")
 			}
 
 			ad, err := adapters.NewHTTPAdapter(adapters.HTTPAdapterConfig{
@@ -198,34 +185,13 @@ func (p *TasksProvider) Init(ctx context.Context, config map[string]any, opts In
 				tokenURL = rawURL
 			}
 
-			resolveSecret := func(field, envField string) string {
-				val := opts.GetSecret("gtasks." + field)
-				if val == "" {
-					val = opts.GetSecret(field)
-				}
-				if val == "" {
-					if raw, ok := gtasksCfg[field].(string); ok {
-						val = raw
-					}
-				}
-				if val == "" {
-					if envKey, ok := gtasksCfg[envField].(string); ok && envKey != "" {
-						val = opts.GetSecret(envKey)
-						if val == "" {
-							val = os.Getenv(envKey)
-						}
-					}
-				}
-				return strings.TrimSpace(val)
-			}
+			clientID := resolveTaskSecret(opts, gtasksCfg, "gtasks", "client_id", "client_id_env")
+			clientSecret := resolveTaskSecret(opts, gtasksCfg, "gtasks", "client_secret", "client_secret_env")
+			refreshToken := resolveTaskSecret(opts, gtasksCfg, "gtasks", "refresh_token", "refresh_token_env")
 
-			clientID := resolveSecret("client_id", "client_id_env")
-			clientSecret := resolveSecret("client_secret", "client_secret_env")
-			refreshToken := resolveSecret("refresh_token", "refresh_token_env")
-
-			token := resolveSecret("token", "token_env")
+			token := resolveTaskSecret(opts, gtasksCfg, "gtasks", "token", "token_env")
 			if token == "" {
-				token = opts.Token
+				token = strings.TrimSpace(opts.Token)
 			}
 
 			parseCreds := func(filePath string) {
@@ -279,8 +245,8 @@ func (p *TasksProvider) Init(ctx context.Context, config map[string]any, opts In
 				}
 			}
 
-			parseCreds(resolveSecret("credentials_file", "credentials_file_env"))
-			parseCreds(resolveSecret("client_secret_file", "client_secret_file_env"))
+			parseCreds(resolveTaskSecret(opts, gtasksCfg, "gtasks", "credentials_file", "credentials_file_env"))
+			parseCreds(resolveTaskSecret(opts, gtasksCfg, "gtasks", "client_secret_file", "client_secret_file_env"))
 
 			ad, err := adapters.NewGTasksAdapter(adapters.GTasksAdapterConfig{
 				TaskListID:   taskListID,
@@ -303,30 +269,9 @@ func (p *TasksProvider) Init(ctx context.Context, config map[string]any, opts In
 				return errors.New("tasks provider with source 'todoist' requires 'todoist' config block")
 			}
 
-			resolveSecret := func(field, envField string) string {
-				val := opts.GetSecret("todoist." + field)
-				if val == "" {
-					val = opts.GetSecret(field)
-				}
-				if val == "" {
-					if raw, ok := todoistCfg[field].(string); ok {
-						val = raw
-					}
-				}
-				if val == "" {
-					if envKey, ok := todoistCfg[envField].(string); ok && envKey != "" {
-						val = opts.GetSecret(envKey)
-						if val == "" {
-							val = os.Getenv(envKey)
-						}
-					}
-				}
-				return strings.TrimSpace(val)
-			}
-
-			token := resolveSecret("token", "token_env")
+			token := resolveTaskSecret(opts, todoistCfg, "todoist", "token", "token_env")
 			if token == "" {
-				token = opts.Token
+				token = strings.TrimSpace(opts.Token)
 			}
 			if token == "" {
 				token = opts.GetSecret("TODOIST_API_TOKEN")
@@ -575,4 +520,25 @@ func (p *TasksProvider) ListID() string {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	return p.cfg.ListID
+}
+
+func resolveTaskSecret(opts InitOptions, subCfg map[string]any, prefix, field, envField string) string {
+	val := opts.GetSecret(prefix + "." + field)
+	if val == "" {
+		val = opts.GetSecret(field)
+	}
+	if val == "" {
+		if raw, ok := subCfg[field].(string); ok {
+			val = raw
+		}
+	}
+	if val == "" && envField != "" {
+		if envKey, ok := subCfg[envField].(string); ok && envKey != "" {
+			val = opts.GetSecret(envKey)
+			if val == "" {
+				val = os.Getenv(envKey)
+			}
+		}
+	}
+	return strings.TrimSpace(val)
 }
