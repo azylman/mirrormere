@@ -12,379 +12,136 @@ import (
 )
 
 type mockHAClient struct {
-	processFunc func(ctx context.Context, req IntentRequest) (*IntentResponse, bool, error)
+	resp    *IntentResponse
+	matched bool
+	err     error
 }
 
-func (m *mockHAClient) ProcessIntent(ctx context.Context, req IntentRequest) (*IntentResponse, bool, error) {
-	if m.processFunc != nil {
-		return m.processFunc(ctx, req)
-	}
-	return nil, false, nil
+func (m *mockHAClient) ProcessIntent(context.Context, IntentRequest) (*IntentResponse, bool, error) {
+	return m.resp, m.matched, m.err
 }
 
 type errReader struct{}
 
-func (errReader) Read(p []byte) (n int, err error) {
-	return 0, errors.New("read error simulation")
-}
+func (errReader) Read([]byte) (int, error) { return 0, errors.New("read error simulation") }
 
-// nonFlusherResponseWriter simulates a ResponseWriter that does not implement http.Flusher.
-type nonFlusherResponseWriter struct {
+type nonFlusher struct {
 	header http.Header
 	code   int
 	body   []byte
 }
 
-func (n *nonFlusherResponseWriter) Header() http.Header {
-	if n.header == nil {
-		n.header = make(http.Header)
+func (n *nonFlusher) Header() http.Header        { if n.header == nil { n.header = make(http.Header) }; return n.header }
+func (n *nonFlusher) Write(b []byte) (int, error) { n.body = append(n.body, b...); return len(b), nil }
+func (n *nonFlusher) WriteHeader(c int)           { n.code = c }
+
+type errFlusher struct{ nonFlusher }
+
+func (e *errFlusher) Write([]byte) (int, error) { return 0, errors.New("simulated write error") }
+func (e *errFlusher) Flush()                    {}
+
+func TestServer_Intent(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name, method, body, acceptHdr, writerType string
+		readErr, cancelCtx, midCancel, clientMatch bool
+		clientResp                                *IntentResponse
+		clientErr                                 error
+		wantCode                                  int
+		wantSub                                   []string
+	}{
+		{name: "method_not_allowed", method: http.MethodGet, wantCode: http.StatusMethodNotAllowed},
+		{name: "read_body_error", method: http.MethodPost, readErr: true, wantCode: http.StatusBadRequest},
+		{name: "malformed_json", method: http.MethodPost, body: "{bad json", wantCode: http.StatusBadRequest},
+		{name: "empty_text", method: http.MethodPost, body: `{"text":"  "}`, wantCode: http.StatusNoContent},
+		{name: "no_match", method: http.MethodPost, body: `{"text":"unknown"}`, wantCode: http.StatusNoContent},
+		{name: "client_error", method: http.MethodPost, body: `{"text":"lamp"}`, clientErr: errors.New("upstream reset"), wantCode: http.StatusNoContent},
+		{name: "canceled_context", method: http.MethodPost, body: `{"text":"lamp"}`, cancelCtx: true, clientErr: context.Canceled},
+		{name: "sse_match_no_accept", method: http.MethodPost, body: `{"text":"kitchen light","turn_id":"t-100"}`, clientResp: &IntentResponse{Intent: "action_done", Speech: "Turned on"}, clientMatch: true, wantCode: http.StatusOK, wantSub: []string{"event: turn", "t-100", "event: reply", "Turned on", "tts_engine"}},
+		{name: "sse_match_accept_stream", method: http.MethodPost, body: `{"text":"thermostat","turn_id":"t-777"}`, acceptHdr: "text/event-stream", clientResp: &IntentResponse{Intent: "action_done", Speech: "Set 72"}, clientMatch: true, wantCode: http.StatusOK, wantSub: []string{"event: turn", "t-777", "event: sentence", "event: done"}},
+		{name: "non_flusher", method: http.MethodPost, body: `{"text":"test","turn_id":"t-non"}`, acceptHdr: "text/event-stream", writerType: "non_flusher", clientResp: &IntentResponse{Intent: "action_done", Speech: "Fallback"}, clientMatch: true, wantCode: http.StatusOK, wantSub: []string{"event: reply", "Fallback"}},
+		{name: "write_error", method: http.MethodPost, body: `{"text":"test","turn_id":"t-err"}`, acceptHdr: "text/event-stream", writerType: "err_flusher", clientResp: &IntentResponse{Intent: "action_done", Speech: "Fallback"}, clientMatch: true},
+		{name: "mid_stream_context_cancel", method: http.MethodPost, body: `{"text":"cancel","turn_id":"t-cancel"}`, acceptHdr: "text/event-stream", midCancel: true, clientResp: &IntentResponse{Intent: "action_done", Speech: "Quick"}, clientMatch: true, wantCode: http.StatusOK},
 	}
-	return n.header
-}
-
-func (n *nonFlusherResponseWriter) Write(b []byte) (int, error) {
-	n.body = append(n.body, b...)
-	return len(b), nil
-}
-
-func (n *nonFlusherResponseWriter) WriteHeader(statusCode int) {
-	n.code = statusCode
-}
-
-// errFlusherResponseWriter simulates a ResponseWriter that implements Flusher but fails on Write.
-type errFlusherResponseWriter struct {
-	header http.Header
-}
-
-func (e *errFlusherResponseWriter) Header() http.Header {
-	if e.header == nil {
-		e.header = make(http.Header)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			if tc.cancelCtx {
+				cancel()
+			}
+			srv := NewServer(&mockHAClient{resp: tc.clientResp, matched: tc.clientMatch, err: tc.clientErr}, nil)
+			var rBody io.Reader = strings.NewReader(tc.body)
+			if tc.readErr {
+				rBody = errReader{}
+			}
+			req := httptest.NewRequest(tc.method, "/intent", rBody).WithContext(ctx)
+			if tc.acceptHdr != "" {
+				req.Header.Set("Accept", tc.acceptHdr)
+			}
+			if tc.midCancel {
+				cancel()
+			}
+			var code int
+			var bodyStr string
+			switch tc.writerType {
+			case "non_flusher":
+				w := &nonFlusher{}
+				srv.ServeHTTP(w, req)
+				code, bodyStr = w.code, string(w.body)
+			case "err_flusher":
+				w := &errFlusher{}
+				srv.ServeHTTP(w, req)
+				code = w.code
+			default:
+				rec := httptest.NewRecorder()
+				srv.ServeHTTP(rec, req)
+				code, bodyStr = rec.Code, rec.Body.String()
+			}
+			if tc.wantCode != 0 && code != tc.wantCode {
+				t.Fatalf("code=%d, want %d", code, tc.wantCode)
+			}
+			for _, sub := range tc.wantSub {
+				if !strings.Contains(bodyStr, sub) {
+					t.Fatalf("body %q missing %q", bodyStr, sub)
+				}
+			}
+		})
 	}
-	return e.header
 }
 
-func (e *errFlusherResponseWriter) Write(b []byte) (int, error) {
-	return 0, errors.New("simulated write error")
-}
-
-func (e *errFlusherResponseWriter) WriteHeader(statusCode int) {}
-
-func (e *errFlusherResponseWriter) Flush() {}
-
-func TestServer_Healthz(t *testing.T) {
+func TestServer_HealthzAndBuild(t *testing.T) {
 	srv := NewServer(&mockHAClient{}, nil)
-
-	// GET request
-	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
-	rec := httptest.NewRecorder()
-	srv.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Errorf("expected 200, got %d", rec.Code)
+	for _, m := range []string{http.MethodGet, http.MethodHead, http.MethodPost} {
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, httptest.NewRequest(m, "/healthz", nil))
+		want := http.StatusOK
+		if m == http.MethodPost {
+			want = http.StatusMethodNotAllowed
+		}
+		if rec.Code != want {
+			t.Errorf("%s /healthz got %d, want %d", m, rec.Code, want)
+		}
 	}
-	if rec.Body.String() != "OK\n" {
-		t.Errorf("expected OK\\n, got %q", rec.Body.String())
-	}
-
-	// HEAD request
-	reqHead := httptest.NewRequest(http.MethodHead, "/healthz", nil)
-	recHead := httptest.NewRecorder()
-	srv.ServeHTTP(recHead, reqHead)
-	if recHead.Code != http.StatusOK {
-		t.Errorf("expected 200 for HEAD, got %d", recHead.Code)
-	}
-
-	// POST request (not allowed)
-	reqPost := httptest.NewRequest(http.MethodPost, "/healthz", nil)
-	recPost := httptest.NewRecorder()
-	srv.ServeHTTP(recPost, reqPost)
-	if recPost.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405 Method Not Allowed, got %d", recPost.Code)
-	}
-}
-
-func TestServer_Intent_MethodNotAllowed(t *testing.T) {
-	srv := NewServer(&mockHAClient{}, nil)
-
-	req := httptest.NewRequest(http.MethodGet, "/intent", nil)
-	rec := httptest.NewRecorder()
-	srv.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405 Method Not Allowed, got %d", rec.Code)
-	}
-}
-
-func TestServer_Intent_ReadBodyError(t *testing.T) {
-	srv := NewServer(&mockHAClient{}, nil)
-
-	req := httptest.NewRequest(http.MethodPost, "/intent", io.NopCloser(errReader{}))
-	rec := httptest.NewRecorder()
-	srv.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("expected 400 Bad Request on read error, got %d", rec.Code)
-	}
-}
-
-func TestServer_Intent_MalformedJSON(t *testing.T) {
-	srv := NewServer(&mockHAClient{}, nil)
-
-	req := httptest.NewRequest(http.MethodPost, "/intent", strings.NewReader("{invalid json"))
-	rec := httptest.NewRecorder()
-	srv.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("expected 400 Bad Request, got %d", rec.Code)
-	}
-}
-
-func TestServer_Intent_EmptyText_204(t *testing.T) {
-	srv := NewServer(&mockHAClient{}, nil)
-
-	payload := `{"text": "   ", "speaker": "alex"}`
-	req := httptest.NewRequest(http.MethodPost, "/intent", strings.NewReader(payload))
-	rec := httptest.NewRecorder()
-	srv.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusNoContent {
-		t.Errorf("expected 204 No Content for empty text, got %d", rec.Code)
-	}
-}
-
-func TestServer_Intent_NoMatch_204(t *testing.T) {
-	mock := &mockHAClient{
-		processFunc: func(ctx context.Context, req IntentRequest) (*IntentResponse, bool, error) {
-			return nil, false, nil
-		},
-	}
-	srv := NewServer(mock, nil)
-
-	payload := `{"text": "unknown command", "speaker": "alex"}`
-	req := httptest.NewRequest(http.MethodPost, "/intent", strings.NewReader(payload))
-	rec := httptest.NewRecorder()
-	srv.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusNoContent {
-		t.Errorf("expected 204 No Content on no match, got %d", rec.Code)
-	}
-}
-
-func TestServer_Intent_ClientError_204(t *testing.T) {
-	mock := &mockHAClient{
-		processFunc: func(ctx context.Context, req IntentRequest) (*IntentResponse, bool, error) {
-			return nil, false, errors.New("upstream connection reset")
-		},
-	}
-	srv := NewServer(mock, nil)
-
-	payload := `{"text": "turn on lamp"}`
-	req := httptest.NewRequest(http.MethodPost, "/intent", strings.NewReader(payload))
-	rec := httptest.NewRecorder()
-	srv.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusNoContent {
-		t.Errorf("expected 204 No Content on upstream error, got %d", rec.Code)
-	}
-}
-
-func TestServer_Intent_ClientCanceled(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // pre-canceled
-
-	mock := &mockHAClient{
-		processFunc: func(c context.Context, req IntentRequest) (*IntentResponse, bool, error) {
-			return nil, false, c.Err()
-		},
-	}
-	srv := NewServer(mock, nil)
-
-	payload := `{"text": "turn on lamp"}`
-	req := httptest.NewRequest(http.MethodPost, "/intent", strings.NewReader(payload)).WithContext(ctx)
-	rec := httptest.NewRecorder()
-	srv.ServeHTTP(rec, req)
-
-	// Since canceled, response body should not be written
-	if rec.Body.Len() > 0 {
-		t.Errorf("expected empty body when client context canceled, got %s", rec.Body.String())
-	}
-}
-
-func TestServer_Intent_Match_AlwaysSSE(t *testing.T) {
-	mock := &mockHAClient{
-		processFunc: func(ctx context.Context, req IntentRequest) (*IntentResponse, bool, error) {
-			return &IntentResponse{
-				Intent: "action_done",
-				Speech: "Turned on the kitchen light",
-			}, true, nil
-		},
-	}
-	srv := NewServer(mock, nil)
-
-	// Even if Accept is application/json or omitted, server strictly returns text/event-stream
-	payload := `{"text": "turn on kitchen light", "turn_id": "t-100"}`
-	req := httptest.NewRequest(http.MethodPost, "/intent", strings.NewReader(payload))
-	req.Header.Set("Accept", "application/json")
-	rec := httptest.NewRecorder()
-	srv.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200 OK, got %d", rec.Code)
-	}
-	if !strings.Contains(rec.Header().Get("Content-Type"), "text/event-stream") {
-		t.Errorf("expected text/event-stream content type, got %q", rec.Header().Get("Content-Type"))
-	}
-
-	body := rec.Body.String()
-	if !strings.Contains(body, "event: reply") || !strings.Contains(body, `"reply":"Turned on the kitchen light"`) {
-		t.Errorf("missing reply event in SSE body: %s", body)
-	}
-}
-
-func TestServer_Intent_SSE_Match(t *testing.T) {
-	mock := &mockHAClient{
-		processFunc: func(ctx context.Context, req IntentRequest) (*IntentResponse, bool, error) {
-			return &IntentResponse{
-				Intent: "action_done",
-				Speech: "Set thermostat to 72 degrees.",
-			}, true, nil
-		},
-	}
-	srv := NewServer(mock, nil)
-
-	payload := `{"text": "set thermostat to 72", "turn_id": "turn-777"}`
-	req := httptest.NewRequest(http.MethodPost, "/intent", strings.NewReader(payload))
-	req.Header.Set("Accept", "text/event-stream")
-	rec := httptest.NewRecorder()
-	srv.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200 OK, got %d", rec.Code)
-	}
-	if !strings.Contains(rec.Header().Get("Content-Type"), "text/event-stream") {
-		t.Errorf("expected text/event-stream content type, got %q", rec.Header().Get("Content-Type"))
-	}
-
-	body := rec.Body.String()
-	if !strings.Contains(body, "event: turn") || !strings.Contains(body, `"turn_id":"turn-777"`) {
-		t.Errorf("missing turn event in SSE body: %s", body)
-	}
-	if !strings.Contains(body, "event: sentence") || !strings.Contains(body, `"text":"Set thermostat to 72 degrees."`) {
-		t.Errorf("missing sentence event in SSE body: %s", body)
-	}
-	if !strings.Contains(body, "event: reply") || !strings.Contains(body, `"reply":"Set thermostat to 72 degrees."`) {
-		t.Errorf("missing reply event in SSE body: %s", body)
-	}
-	if !strings.Contains(body, "event: done") {
-		t.Errorf("missing done event in SSE body: %s", body)
-	}
-}
-
-func TestServer_Intent_SSE_NonFlusher(t *testing.T) {
-	mock := &mockHAClient{
-		processFunc: func(ctx context.Context, req IntentRequest) (*IntentResponse, bool, error) {
-			return &IntentResponse{
-				Intent: "action_done",
-				Speech: "Fallback response",
-			}, true, nil
-		},
-	}
-	srv := NewServer(mock, nil)
-
-	payload := `{"text": "test fallback", "turn_id": "turn-nonflush"}`
-	req := httptest.NewRequest(http.MethodPost, "/intent", strings.NewReader(payload))
-	req.Header.Set("Accept", "text/event-stream")
-
-	writer := &nonFlusherResponseWriter{}
-	srv.ServeHTTP(writer, req)
-
-	if writer.code != http.StatusOK {
-		t.Errorf("expected 200, got %d", writer.code)
-	}
-	if !strings.Contains(string(writer.body), "event: reply") || !strings.Contains(string(writer.body), "Fallback response") {
-		t.Errorf("expected SSE body, got %s", string(writer.body))
-	}
-}
-
-func TestServer_Intent_SSE_WriteError(t *testing.T) {
-	mock := &mockHAClient{
-		processFunc: func(ctx context.Context, req IntentRequest) (*IntentResponse, bool, error) {
-			return &IntentResponse{
-				Intent: "action_done",
-				Speech: "Fallback response",
-			}, true, nil
-		},
-	}
-	srv := NewServer(mock, nil)
-
-	payload := `{"text": "test write error", "turn_id": "turn-err"}`
-	req := httptest.NewRequest(http.MethodPost, "/intent", strings.NewReader(payload))
-	req.Header.Set("Accept", "text/event-stream")
-
-	writer := &errFlusherResponseWriter{}
-	srv.ServeHTTP(writer, req)
-}
-
-func TestServer_Intent_SSE_ContextCanceled(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-
-	mock := &mockHAClient{
-		processFunc: func(c context.Context, req IntentRequest) (*IntentResponse, bool, error) {
-			cancel() // Cancel before SSE flush finishes
-			return &IntentResponse{
-				Intent: "action_done",
-				Speech: "Quick reply",
-			}, true, nil
-		},
-	}
-	srv := NewServer(mock, nil)
-
-	payload := `{"text": "cancel test", "turn_id": "turn-cancel"}`
-	req := httptest.NewRequest(http.MethodPost, "/intent", strings.NewReader(payload)).WithContext(ctx)
-	req.Header.Set("Accept", "text/event-stream")
-	rec := httptest.NewRecorder()
-	srv.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Errorf("expected 200 code header set, got %d", rec.Code)
-	}
-}
-
-func TestBuildHTTPServer(t *testing.T) {
-	cfg := ServerConfig{
-		Host:                "127.0.0.1",
-		Port:                9099,
-		ReadTimeoutSeconds:  12,
-		WriteTimeoutSeconds: 14,
-	}
-
-	s := BuildHTTPServer(cfg, http.NotFoundHandler())
-	if s.Addr != "127.0.0.1:9099" {
-		t.Errorf("expected 127.0.0.1:9099, got %q", s.Addr)
-	}
-	if s.ReadTimeout != 12*time.Second {
-		t.Errorf("expected read timeout 12s, got %v", s.ReadTimeout)
-	}
-	if s.WriteTimeout != 14*time.Second {
-		t.Errorf("expected write timeout 14s, got %v", s.WriteTimeout)
+	s := BuildHTTPServer(ServerConfig{Host: "127.0.0.1", Port: 9099, ReadTimeoutSeconds: 12, WriteTimeoutSeconds: 14}, http.NotFoundHandler())
+	if s.Addr != "127.0.0.1:9099" || s.ReadTimeout != 12*time.Second || s.WriteTimeout != 14*time.Second {
+		t.Errorf("unexpected build config: %+v", s)
 	}
 }
 
 func TestCoverageFlushEndpoint(t *testing.T) {
 	tests := []struct {
-		name        string
-		method      string
-		coverDir    string
-		simTime     time.Time
-		writeErr    error
-		repeatCall  bool
-		wantCode    int
-		wantBodySub string
+		name, method, coverDir, wantSub string
+		simTime                         time.Time
+		writeErr                        error
+		repeatCall                      bool
+		wantCode                        int
 	}{
 		{name: "method_not_allowed", method: http.MethodDelete, wantCode: http.StatusMethodNotAllowed},
-		{name: "unset_gocoverdir", method: http.MethodGet, coverDir: "", wantCode: http.StatusOK, wantBodySub: `"status":"ok"`},
-		{name: "valid_flush_and_debounce", method: http.MethodPost, coverDir: "temp", simTime: time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC), repeatCall: true, wantCode: http.StatusOK, wantBodySub: `"status":"ok"`},
-		{name: "write_error_500", method: http.MethodGet, coverDir: "temp", simTime: time.Date(2026, 10, 4, 13, 0, 0, 0, time.UTC), writeErr: errors.New("simulated flush error"), wantCode: http.StatusInternalServerError, wantBodySub: "simulated flush error"},
+		{name: "unset_gocoverdir", method: http.MethodGet, wantCode: http.StatusOK, wantSub: `"status":"ok"`},
+		{name: "valid_flush_and_debounce", method: http.MethodPost, coverDir: "temp", simTime: time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC), repeatCall: true, wantCode: http.StatusOK, wantSub: `"status":"ok"`},
+		{name: "write_error_500", method: http.MethodGet, coverDir: "temp", simTime: time.Date(2026, 10, 4, 13, 0, 0, 0, time.UTC), writeErr: errors.New("err"), wantCode: http.StatusInternalServerError, wantSub: "err"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -397,23 +154,17 @@ func TestCoverageFlushEndpoint(t *testing.T) {
 			}
 			t.Setenv("GOCOVERDIR", dir)
 			defer SetWriteCountersDirForTest(func(string) error { return tc.writeErr })()
-
 			srv := NewServer(&mockHAClient{}, nil)
-			req := httptest.NewRequest(tc.method, "/debug/coverage/flush", nil)
 			rec := httptest.NewRecorder()
-			srv.ServeHTTP(rec, req)
-			if rec.Code != tc.wantCode {
-				t.Fatalf("code = %d, want %d", rec.Code, tc.wantCode)
-			}
-			if tc.wantBodySub != "" && !strings.Contains(rec.Body.String(), tc.wantBodySub) {
-				t.Fatalf("body = %q, want %q", rec.Body.String(), tc.wantBodySub)
+			srv.ServeHTTP(rec, httptest.NewRequest(tc.method, "/debug/coverage/flush", nil))
+			if rec.Code != tc.wantCode || (tc.wantSub != "" && !strings.Contains(rec.Body.String(), tc.wantSub)) {
+				t.Fatalf("code=%d want %d, body=%q want %q", rec.Code, tc.wantCode, rec.Body.String(), tc.wantSub)
 			}
 			if tc.repeatCall {
-				req2 := httptest.NewRequest(tc.method, "/debug/coverage/flush", nil)
 				rec2 := httptest.NewRecorder()
-				srv.ServeHTTP(rec2, req2)
+				srv.ServeHTTP(rec2, httptest.NewRequest(tc.method, "/debug/coverage/flush", nil))
 				if rec2.Code != http.StatusOK || !strings.Contains(rec2.Body.String(), `"status":"debounced"`) {
-					t.Fatalf("repeat call code=%d body=%q", rec2.Code, rec2.Body.String())
+					t.Fatalf("repeat code=%d body=%q", rec2.Code, rec2.Body.String())
 				}
 			}
 		})

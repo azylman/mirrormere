@@ -25,7 +25,6 @@ func main() {
 	if argsHook != nil {
 		args = argsHook
 	}
-
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
@@ -50,32 +49,21 @@ func RunWithReady(
 	clientOverride HAClient,
 ) error {
 	var configPath string
-	for _, arg := range args {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
 		if arg == "-h" || arg == "-help" || arg == "--help" {
 			_, err := fmt.Fprintln(stderr, "Usage: hass-proxy [-config <path>]")
 			return err
 		}
-		if arg == "-config" || arg == "--config" {
-			continue
-		}
-		if strings.HasPrefix(arg, "-config=") {
-			configPath = strings.TrimPrefix(arg, "-config=")
-			continue
-		}
-		if strings.HasPrefix(arg, "--config=") {
-			configPath = strings.TrimPrefix(arg, "--config=")
-			continue
-		}
-		if !strings.HasPrefix(arg, "-") && configPath == "" {
-			configPath = arg
-		}
-	}
-
-	// Also support parsing flag pair like `-config /path/to/yaml`
-	for i := 0; i < len(args)-1; i++ {
-		if args[i] == "-config" || args[i] == "--config" {
+		if (arg == "-config" || arg == "--config") && i+1 < len(args) {
 			configPath = args[i+1]
-			break
+			i++
+		} else if strings.HasPrefix(arg, "-config=") {
+			configPath = strings.TrimPrefix(arg, "-config=")
+		} else if strings.HasPrefix(arg, "--config=") {
+			configPath = strings.TrimPrefix(arg, "--config=")
+		} else if !strings.HasPrefix(arg, "-") && configPath == "" {
+			configPath = arg
 		}
 	}
 
@@ -84,10 +72,7 @@ func RunWithReady(
 		return fmt.Errorf("failed to load configuration: %w", err)
 	}
 
-	logger := slog.New(slog.NewTextHandler(stderr, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	}))
-
+	logger := slog.New(slog.NewTextHandler(stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	logger.Info("starting home assistant fast-path proxy", "config", cfg.String())
 
 	var client HAClient
@@ -97,24 +82,17 @@ func RunWithReady(
 		client = NewHAClient(cfg.HomeAssistant, logger)
 	}
 
-	srvHandler := NewServer(client, logger)
-	httpServer := BuildHTTPServer(cfg.Server, srvHandler)
-
+	httpServer := BuildHTTPServer(cfg.Server, NewServer(client, logger))
 	if stdout != nil {
-		if _, err := fmt.Fprintln(stdout, "hass-proxy initialized"); err != nil {
-			logger.Warn("failed to write to stdout", "error", err)
-		}
+		_, _ = fmt.Fprintln(stdout, "hass-proxy initialized") //nolint:errcheck
 	}
 
 	var listener net.Listener
 	if listenerOverride != nil {
 		listener = listenerOverride
+	} else if l, err := (&net.ListenConfig{}).Listen(ctx, "tcp", httpServer.Addr); err != nil {
+		return fmt.Errorf("failed to listen on %s: %w", httpServer.Addr, err)
 	} else {
-		lc := net.ListenConfig{}
-		l, err := lc.Listen(ctx, "tcp", httpServer.Addr)
-		if err != nil {
-			return fmt.Errorf("failed to listen on %s: %w", httpServer.Addr, err)
-		}
 		listener = l
 	}
 	defer listener.Close()
