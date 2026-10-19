@@ -136,6 +136,33 @@ func (p *CalendarProvider) Init(ctx context.Context, rawConfig map[string]any, o
 	return nil
 }
 
+func resolveCalendarField(m map[string]any, opts InitOptions, idx int, name, field string) (string, string, error) {
+	var rawVal, envKey string
+	if v, ok := m[field].(string); ok {
+		rawVal = strings.TrimSpace(v)
+	}
+	if e, ok := m[field+"_env"].(string); ok {
+		envKey = strings.TrimSpace(e)
+	}
+	if rawVal != "" && envKey != "" {
+		return "", "", fmt.Errorf("calendar %q cannot specify both '%s' and '%s_env'", name, field, field)
+	}
+	resolved := rawVal
+	if envKey != "" {
+		resolved = opts.GetSecret(fmt.Sprintf("calendars[%d].%s", idx, field))
+		if resolved == "" {
+			resolved = opts.GetSecret(envKey)
+		}
+		if resolved == "" {
+			resolved = os.Getenv(envKey)
+		}
+		if resolved == "" {
+			return "", "", fmt.Errorf("calendar %q: environment variable %q is not set or empty", name, envKey)
+		}
+	}
+	return resolved, envKey, nil
+}
+
 func parseCalendarConfig(raw map[string]any, opts InitOptions) (*CalendarConfig, error) {
 	cfg := &CalendarConfig{
 		WindowDaysPast:   DefaultWindowDaysPast,
@@ -190,114 +217,27 @@ func parseCalendarConfig(raw map[string]any, opts InitOptions) (*CalendarConfig,
 			return nil, fmt.Errorf("calendar %q: invalid type %q (must be 'ical' or 'caldav')", name, sourceType)
 		}
 
-		var rawURL string
-		if u, ok := m["url"].(string); ok {
-			rawURL = strings.TrimSpace(u)
+		resolvedURL, urlEnv, err := resolveCalendarField(m, opts, idx, name, "url")
+		if err != nil {
+			return nil, err
 		}
-
-		var urlEnv string
-		if ue, ok := m["url_env"].(string); ok {
-			urlEnv = strings.TrimSpace(ue)
-		}
-
-		if rawURL == "" && urlEnv == "" {
+		if resolvedURL == "" && urlEnv == "" {
 			return nil, fmt.Errorf("calendar %q requires either 'url' or 'url_env'", name)
 		}
-		if rawURL != "" && urlEnv != "" {
-			return nil, fmt.Errorf("calendar %q cannot specify both 'url' and 'url_env'", name)
+
+		resolvedUsername, usernameEnv, err := resolveCalendarField(m, opts, idx, name, "username")
+		if err != nil {
+			return nil, err
 		}
 
-		resolvedURL := rawURL
-		if urlEnv != "" {
-			resolved := opts.GetSecret(fmt.Sprintf("calendars[%d].url", idx))
-			if resolved == "" {
-				resolved = opts.GetSecret(urlEnv)
-			}
-			if resolved == "" {
-				resolved = os.Getenv(urlEnv)
-			}
-			if resolved == "" {
-				return nil, fmt.Errorf("calendar %q: environment variable %q is not set or empty", name, urlEnv)
-			}
-			resolvedURL = resolved
+		resolvedPassword, passwordEnv, err := resolveCalendarField(m, opts, idx, name, "password")
+		if err != nil {
+			return nil, err
 		}
 
-		var rawUsername string
-		if u, ok := m["username"].(string); ok {
-			rawUsername = strings.TrimSpace(u)
-		}
-		var usernameEnv string
-		if ue, ok := m["username_env"].(string); ok {
-			usernameEnv = strings.TrimSpace(ue)
-		}
-		if rawUsername != "" && usernameEnv != "" {
-			return nil, fmt.Errorf("calendar %q cannot specify both 'username' and 'username_env'", name)
-		}
-		resolvedUsername := rawUsername
-		if usernameEnv != "" {
-			resolved := opts.GetSecret(fmt.Sprintf("calendars[%d].username", idx))
-			if resolved == "" {
-				resolved = opts.GetSecret(usernameEnv)
-			}
-			if resolved == "" {
-				resolved = os.Getenv(usernameEnv)
-			}
-			if resolved == "" {
-				return nil, fmt.Errorf("calendar %q: environment variable %q is not set or empty", name, usernameEnv)
-			}
-			resolvedUsername = resolved
-		}
-
-		var rawPassword string
-		if p, ok := m["password"].(string); ok {
-			rawPassword = strings.TrimSpace(p)
-		}
-		var passwordEnv string
-		if pe, ok := m["password_env"].(string); ok {
-			passwordEnv = strings.TrimSpace(pe)
-		}
-		if rawPassword != "" && passwordEnv != "" {
-			return nil, fmt.Errorf("calendar %q cannot specify both 'password' and 'password_env'", name)
-		}
-		resolvedPassword := rawPassword
-		if passwordEnv != "" {
-			resolved := opts.GetSecret(fmt.Sprintf("calendars[%d].password", idx))
-			if resolved == "" {
-				resolved = opts.GetSecret(passwordEnv)
-			}
-			if resolved == "" {
-				resolved = os.Getenv(passwordEnv)
-			}
-			if resolved == "" {
-				return nil, fmt.Errorf("calendar %q: environment variable %q is not set or empty", name, passwordEnv)
-			}
-			resolvedPassword = resolved
-		}
-
-		var rawToken string
-		if t, ok := m["token"].(string); ok {
-			rawToken = strings.TrimSpace(t)
-		}
-		var tokenEnv string
-		if te, ok := m["token_env"].(string); ok {
-			tokenEnv = strings.TrimSpace(te)
-		}
-		if rawToken != "" && tokenEnv != "" {
-			return nil, fmt.Errorf("calendar %q cannot specify both 'token' and 'token_env'", name)
-		}
-		resolvedToken := rawToken
-		if tokenEnv != "" {
-			resolved := opts.GetSecret(fmt.Sprintf("calendars[%d].token", idx))
-			if resolved == "" {
-				resolved = opts.GetSecret(tokenEnv)
-			}
-			if resolved == "" {
-				resolved = os.Getenv(tokenEnv)
-			}
-			if resolved == "" {
-				return nil, fmt.Errorf("calendar %q: environment variable %q is not set or empty", name, tokenEnv)
-			}
-			resolvedToken = resolved
+		resolvedToken, tokenEnv, err := resolveCalendarField(m, opts, idx, name, "token")
+		if err != nil {
+			return nil, err
 		}
 
 		// Auth exclusivity: Cannot specify both Basic Auth and Bearer Token
@@ -551,34 +491,37 @@ func parseCalendarEvents(cal *ical.Calendar, source CalendarSource, windowStart,
 	return events
 }
 
+func eventDuration(e *ical.VEvent, startTime time.Time, isAllDay bool) time.Duration {
+	var duration time.Duration
+	if dtEndProp := e.GetProperty(ical.ComponentPropertyDtEnd); dtEndProp != nil {
+		endTime, err := parseICalDateTime(dtEndProp, isAllDay)
+		if err == nil && endTime.After(startTime) {
+			duration = endTime.Sub(startTime)
+		}
+	} else if p := e.GetProperty(ical.ComponentPropertyDuration); p != nil {
+		dur := parseICalDuration(p.Value)
+		if dur > 0 {
+			duration = dur
+		}
+	}
+	if duration <= 0 {
+		if isAllDay {
+			duration = 24 * time.Hour
+		} else {
+			duration = time.Hour
+		}
+	}
+	return duration
+}
+
 func parseSingleEvent(e *ical.VEvent, source CalendarSource, uid, title, location, description string, isAllDay bool, windowStart, windowEnd time.Time) (CalendarEvent, bool) {
 	dtStartProp := e.GetProperty(ical.ComponentPropertyDtStart)
-	dtEndProp := e.GetProperty(ical.ComponentPropertyDtEnd)
-
 	startTime, err := parseICalDateTime(dtStartProp, isAllDay)
 	if err != nil {
 		return CalendarEvent{}, false
 	}
 
-	var endTime time.Time
-	if dtEndProp != nil {
-		if parsedEnd, err := parseICalDateTime(dtEndProp, isAllDay); err == nil {
-			endTime = parsedEnd
-		}
-	} else if p := e.GetProperty(ical.ComponentPropertyDuration); p != nil {
-		dur := parseICalDuration(p.Value)
-		if dur > 0 {
-			endTime = startTime.Add(dur)
-		}
-	}
-
-	if endTime.IsZero() || endTime.Before(startTime) {
-		if isAllDay {
-			endTime = startTime
-		} else {
-			endTime = startTime.Add(time.Hour)
-		}
-	}
+	endTime := startTime.Add(eventDuration(e, startTime, isAllDay))
 
 	// Check window intersection: [start, end] intersects [windowStart, windowEnd]
 	if endTime.Before(windowStart) || startTime.After(windowEnd) {
@@ -610,25 +553,7 @@ func expandRecurrence(e *ical.VEvent, source CalendarSource, uid, title, locatio
 		return nil
 	}
 
-	var duration time.Duration
-	if dtEndProp := e.GetProperty(ical.ComponentPropertyDtEnd); dtEndProp != nil {
-		endTime, err := parseICalDateTime(dtEndProp, isAllDay)
-		if err == nil && endTime.After(startTime) {
-			duration = endTime.Sub(startTime)
-		}
-	} else if p := e.GetProperty(ical.ComponentPropertyDuration); p != nil {
-		dur := parseICalDuration(p.Value)
-		if dur > 0 {
-			duration = dur
-		}
-	}
-	if duration <= 0 {
-		if isAllDay {
-			duration = 24 * time.Hour
-		} else {
-			duration = time.Hour
-		}
-	}
+	duration := eventDuration(e, startTime, isAllDay)
 
 	// Collect EXDATE exclusions
 	exdates := make(map[string]bool)

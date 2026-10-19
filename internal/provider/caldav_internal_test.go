@@ -7,54 +7,30 @@ import (
 
 func TestCalDAV_InternalHelpers(t *testing.T) {
 	t.Parallel()
-
-	t.Run("NewCalDAVClient nil defaults", func(t *testing.T) {
-		t.Parallel()
-		client := NewCalDAVClient(nil, nil)
-		if client == nil || client.client == nil || client.logger == nil {
-			t.Fatal("expected non-nil client and logger defaults")
+	if c := NewCalDAVClient(nil, nil); c == nil || c.client == nil || c.logger == nil {
+		t.Fatal("expected non-nil client and logger defaults")
+	}
+	for _, tc := range []struct{ in, want string }{
+		{"https://example.com/dav", "https://example.com/dav/"}, {"https://example.com/dav/", "https://example.com/dav/"},
+		{"https://example.com/dav/file.ics", "https://example.com/dav/file.ics"}, {"http:// invalid url", "http:// invalid url"},
+	} {
+		if got := ensureTrailingSlash(tc.in); got != tc.want {
+			t.Errorf("ensureTrailingSlash(%q) = %q, want %q", tc.in, got, tc.want)
 		}
-	})
-
-	t.Run("ensureTrailingSlash", func(t *testing.T) {
-		t.Parallel()
-		if got := ensureTrailingSlash("https://example.com/dav"); got != "https://example.com/dav/" {
-			t.Errorf("expected trailing slash, got %q", got)
+	}
+	for _, tc := range []struct{ in, wantSub, wantExact string }{
+		{"https://user:secret@example.com/dav", "xxxxx", ""}, {"http:// invalid url", "", "http:// invalid url"},
+	} {
+		if got := redactURL(tc.in); (tc.wantSub != "" && !strings.Contains(got, tc.wantSub)) || (tc.wantExact != "" && got != tc.wantExact) {
+			t.Errorf("redactURL(%q) = %q", tc.in, got)
 		}
-		if got := ensureTrailingSlash("https://example.com/dav/"); got != "https://example.com/dav/" {
-			t.Errorf("expected unchanged trailing slash, got %q", got)
+	}
+	for _, tc := range []struct{ base, ref, want string }{
+		{"https://example.com/dav/", "/cal/", "https://example.com/cal/"}, {"https://example.com/dav/", "cal/", "https://example.com/dav/cal/"},
+		{"http:// invalid base", "cal/", "cal/"}, {"https://example.com/dav/", "http:// invalid ref", "http:// invalid ref"},
+	} {
+		if got := resolveHRef(tc.base, tc.ref); got != tc.want {
+			t.Errorf("resolveHRef(%q, %q) = %q, want %q", tc.base, tc.ref, got, tc.want)
 		}
-		if got := ensureTrailingSlash("https://example.com/dav/file.ics"); got != "https://example.com/dav/file.ics" {
-			t.Errorf("expected unchanged file URL, got %q", got)
-		}
-		if got := ensureTrailingSlash("http:// invalid url"); got != "http:// invalid url" {
-			t.Errorf("expected unchanged invalid URL, got %q", got)
-		}
-	})
-
-	t.Run("redactURL", func(t *testing.T) {
-		t.Parallel()
-		if got := redactURL("https://user:secret@example.com/dav"); !strings.Contains(got, "xxxxx") {
-			t.Errorf("expected redacted password, got %q", got)
-		}
-		if got := redactURL("http:// invalid url"); got != "http:// invalid url" {
-			t.Errorf("expected unchanged invalid URL, got %q", got)
-		}
-	})
-
-	t.Run("resolveHRef", func(t *testing.T) {
-		t.Parallel()
-		if got := resolveHRef("https://example.com/dav/", "/cal/"); got != "https://example.com/cal/" {
-			t.Errorf("expected resolved absolute path, got %q", got)
-		}
-		if got := resolveHRef("https://example.com/dav/", "cal/"); got != "https://example.com/dav/cal/" {
-			t.Errorf("expected resolved relative path, got %q", got)
-		}
-		if got := resolveHRef("http:// invalid base", "cal/"); got != "cal/" {
-			t.Errorf("expected fallback on invalid base, got %q", got)
-		}
-		if got := resolveHRef("https://example.com/dav/", "http:// invalid ref"); got != "http:// invalid ref" {
-			t.Errorf("expected fallback on invalid ref, got %q", got)
-		}
-	})
+	}
 }
