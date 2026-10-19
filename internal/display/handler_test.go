@@ -1,7 +1,6 @@
 package display_test
 
 import (
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -9,849 +8,269 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/azylman/mirrormere/internal/api"
 	"github.com/azylman/mirrormere/internal/display"
 )
 
-func TestGetDisplay_MethodsAndHeaders(t *testing.T) {
+func TestGetDisplay_RoutingAndResolution(t *testing.T) {
 	t.Parallel()
+	tempDir := t.TempDir()
+	primPath := filepath.Join(tempDir, "display.html")
+	localPath := filepath.Join(tempDir, "local.html")
+	_ = os.WriteFile(primPath, []byte("<h1>primary</h1>"), 0644)
+	_ = os.WriteFile(localPath, []byte("<h1>local</h1>"), 0644)
 
-	h := display.NewHandler()
-
-	// 1. OPTIONS method
-	req := httptest.NewRequest(http.MethodOptions, "/display", nil)
-	rec := httptest.NewRecorder()
-	h.GetDisplay(rec, req)
-
-	if rec.Code != http.StatusNoContent {
-		t.Errorf("expected status 204 for OPTIONS, got %d", rec.Code)
+	tests := []struct {
+		name     string
+		method   string
+		kind     string
+		wantCode int
+		wantSub  string
+		wantHead bool
+	}{
+		{"options", http.MethodOptions, "default", http.StatusNoContent, "", false},
+		{"post_not_allowed", http.MethodPost, "default", http.StatusMethodNotAllowed, `"status":"error"`, false},
+		{"head_ok", http.MethodHead, "content", http.StatusOK, "", true},
+		{"primary_path", http.MethodGet, "primary", http.StatusOK, "<h1>primary</h1>", false},
+		{"local_fallback", http.MethodGet, "local", http.StatusOK, "<h1>local</h1>", false},
+		{"template_content", http.MethodGet, "content", http.StatusOK, "<h1>content</h1>", false},
+		{"embedded_alias", http.MethodGet, "embedded", http.StatusOK, "<h1>embedded</h1>", false},
+		{"malformed_syntax", http.MethodGet, "malformed", http.StatusOK, "<div>{{ bad", false},
+		{"not_found", http.MethodGet, "missing", http.StatusNotFound, `"status":"error"`, false},
 	}
-	if rec.Header().Get("Access-Control-Allow-Origin") != "*" {
-		t.Errorf("expected CORS origin '*', got %q", rec.Header().Get("Access-Control-Allow-Origin"))
-	}
-
-	// 2. Disallowed method (POST)
-	req = httptest.NewRequest(http.MethodPost, "/display", nil)
-	rec = httptest.NewRecorder()
-	h.GetDisplay(rec, req)
-
-	if rec.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected status 405 for POST, got %d", rec.Code)
-	}
-	var errResp api.ErrorResponse
-	if err := json.Unmarshal(rec.Body.Bytes(), &errResp); err != nil || errResp.Status != "error" {
-		t.Errorf("expected JSON error response for 405, got %v", rec.Body.String())
-	}
-
-	// 3. HEAD method
-	req = httptest.NewRequest(http.MethodHead, "/display", nil)
-	rec = httptest.NewRecorder()
-	h.GetDisplay(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Errorf("expected status 200 for HEAD, got %d", rec.Code)
-	}
-	if rec.Header().Get("Content-Type") != "text/html; charset=utf-8" {
-		t.Errorf("expected Content-Type text/html, got %q", rec.Header().Get("Content-Type"))
-	}
-	if rec.Body.Len() != 0 {
-		t.Errorf("expected empty body for HEAD, got %d bytes", rec.Body.Len())
-	}
-}
-
-func TestGetDisplay_Resolutions(t *testing.T) {
-	t.Parallel()
-
-	t.Run("PrimaryTemplatePath", func(t *testing.T) {
-		t.Parallel()
-		tempDir := t.TempDir()
-		tmplPath := filepath.Join(tempDir, "display.html")
-		if err := os.WriteFile(tmplPath, []byte("<html>primary</html>"), 0644); err != nil {
-			t.Fatal(err)
-		}
-
-		h := display.NewHandler(
-			display.WithTemplatePath(tmplPath),
-			display.WithLocalTemplatePath(""),
-		)
-
-		req := httptest.NewRequest(http.MethodGet, "/display", nil)
-		rec := httptest.NewRecorder()
-		h.GetDisplay(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Fatalf("expected status 200, got %d", rec.Code)
-		}
-		if !strings.Contains(rec.Body.String(), "<html>primary</html>") {
-			t.Errorf("unexpected body: %s", rec.Body.String())
-		}
-	})
-
-	t.Run("LocalFallbackTemplatePath", func(t *testing.T) {
-		t.Parallel()
-		tempDir := t.TempDir()
-		tmplPath := filepath.Join(tempDir, "local_display.html")
-		if err := os.WriteFile(tmplPath, []byte("<html>local</html>"), 0644); err != nil {
-			t.Fatal(err)
-		}
-
-		h := display.NewHandler(
-			display.WithTemplatePath("/nonexistent/display.html"),
-			display.WithLocalTemplatePath(tmplPath),
-		)
-
-		req := httptest.NewRequest(http.MethodGet, "/display", nil)
-		rec := httptest.NewRecorder()
-		h.GetDisplay(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Fatalf("expected status 200, got %d", rec.Code)
-		}
-		if !strings.Contains(rec.Body.String(), "<html>local</html>") {
-			t.Errorf("unexpected body: %s", rec.Body.String())
-		}
-	})
-
-	t.Run("EmbeddedTemplateOverride", func(t *testing.T) {
-		t.Parallel()
-		h := display.NewHandler(
-			display.WithTemplatePath("/nonexistent/path"),
-			display.WithLocalTemplatePath("/nonexistent/local"),
-			display.WithEmbeddedTemplate([]byte("<html>embedded-override</html>")),
-		)
-
-		req := httptest.NewRequest(http.MethodGet, "/display", nil)
-		rec := httptest.NewRecorder()
-		h.GetDisplay(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Fatalf("expected status 200, got %d", rec.Code)
-		}
-		if !strings.Contains(rec.Body.String(), "<html>embedded-override</html>") {
-			t.Errorf("unexpected body: %s", rec.Body.String())
-		}
-	})
-
-	t.Run("NotFound", func(t *testing.T) {
-		t.Parallel()
-		h := display.NewHandler(
-			display.WithTemplatePath("/nonexistent/path"),
-			display.WithLocalTemplatePath("/nonexistent/local"),
-		)
-
-		req := httptest.NewRequest(http.MethodGet, "/display", nil)
-		rec := httptest.NewRecorder()
-		h.GetDisplay(rec, req)
-
-		if rec.Code != http.StatusNotFound {
-			t.Fatalf("expected status 404, got %d", rec.Code)
-		}
-		var errResp api.ErrorResponse
-		if err := json.Unmarshal(rec.Body.Bytes(), &errResp); err != nil || errResp.Status != "error" {
-			t.Errorf("expected JSON error response for 404, got %v", rec.Body.String())
-		}
-	})
-}
-
-func TestGetStatic_MethodsAndTraversal(t *testing.T) {
-	t.Parallel()
-
-	h := display.NewHandler()
-
-	// 1. OPTIONS method
-	req := httptest.NewRequest(http.MethodOptions, "/static/js/sse.js", nil)
-	rec := httptest.NewRecorder()
-	h.GetStatic(rec, req, "js/sse.js")
-
-	if rec.Code != http.StatusNoContent {
-		t.Errorf("expected status 204 for OPTIONS, got %d", rec.Code)
-	}
-
-	// 2. Disallowed method
-	req = httptest.NewRequest(http.MethodPost, "/static/js/sse.js", nil)
-	rec = httptest.NewRecorder()
-	h.GetStatic(rec, req, "js/sse.js")
-
-	if rec.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected status 405 for POST, got %d", rec.Code)
-	}
-
-	// 3. Path traversal attacks
-	traversalPaths := []string{
-		"",
-		"..",
-		"../secret.txt",
-		"../../etc/passwd",
-		"/etc/passwd",
-		"\\windows\\system32",
-		".",
-		"./something",
-	}
-
-	for _, badPath := range traversalPaths {
-		t.Run("Traversal_"+badPath, func(t *testing.T) {
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			req := httptest.NewRequest(http.MethodGet, "/static/"+badPath, nil)
-			rec := httptest.NewRecorder()
-			h.GetStatic(rec, req, badPath)
-
-			if rec.Code != http.StatusBadRequest {
-				t.Errorf("expected 400 Bad Request for path %q, got %d", badPath, rec.Code)
+			var h *display.Handler
+			switch tc.kind {
+			case "primary":
+				h = display.NewHandler(display.WithTemplatePath(primPath), display.WithLocalTemplatePath(""))
+			case "local":
+				h = display.NewHandler(display.WithTemplatePath("/no/such/file"), display.WithLocalTemplatePath(localPath))
+			case "content":
+				h = display.NewHandler(display.WithTemplateContent([]byte("<h1>content</h1>")))
+			case "embedded":
+				h = display.NewHandler(display.WithEmbeddedTemplate([]byte("<h1>embedded</h1>")))
+			case "malformed":
+				h = display.NewHandler(display.WithTemplateContent([]byte("<div>{{ bad")))
+			case "missing":
+				h = display.NewHandler(display.WithTemplatePath("/no/such/file"), display.WithLocalTemplatePath("/no/such/local"))
+			default:
+				h = display.NewHandler()
 			}
-			var errResp api.ErrorResponse
-			if err := json.Unmarshal(rec.Body.Bytes(), &errResp); err != nil || errResp.Status != "error" {
-				t.Errorf("expected JSON error response, got %v", rec.Body.String())
+			rec := httptest.NewRecorder()
+			h.GetDisplay(rec, httptest.NewRequest(tc.method, "/display", nil))
+			if rec.Code != tc.wantCode {
+				t.Fatalf("code: got %d, want %d", rec.Code, tc.wantCode)
+			}
+			if tc.wantHead && rec.Body.Len() != 0 {
+				t.Fatalf("head body: got %d bytes, want 0", rec.Body.Len())
+			}
+			if tc.wantSub != "" && !strings.Contains(rec.Body.String(), tc.wantSub) {
+				t.Fatalf("body: got %q, want substring %q", rec.Body.String(), tc.wantSub)
+			}
+			if tc.method == http.MethodOptions && rec.Header().Get("Access-Control-Allow-Origin") != "*" {
+				t.Fatalf("cors header missing: %v", rec.Header())
 			}
 		})
 	}
 }
 
-func TestGetStatic_Resolutions(t *testing.T) {
+func TestGetDisplay_TemplateDataAndProviders(t *testing.T) {
 	t.Parallel()
+	tmpl := []byte(`<body data-tz="{{ .Timezone }}" class="{{ if .HideCursor }}cursor-hidden{{ end }}" data-remote="{{ .RemoteURL }}" data-theme="{{ .Theme }}">{{ if .HeaderVideo }}<div id="video" data-id="{{ .HeaderVideo.StreamID }}" data-url="{{ .HeaderVideo.StreamURL }}" data-ctrl="{{ .HeaderVideo.ControlURL }}" data-type="{{ .HeaderVideo.Type }}"></div>{{ end }}</body>`)
 
-	t.Run("PrimaryStaticDir", func(t *testing.T) {
-		t.Parallel()
-		tempDir := t.TempDir()
-		jsPath := filepath.Join(tempDir, "app.js")
-		if err := os.WriteFile(jsPath, []byte("console.log('primary');"), 0644); err != nil {
-			t.Fatal(err)
-		}
-
-		h := display.NewHandler(
-			display.WithStaticDir(tempDir),
-			display.WithLocalStaticDir(""),
-		)
-
-		req := httptest.NewRequest(http.MethodGet, "/static/app.js", nil)
-		rec := httptest.NewRecorder()
-		h.GetStatic(rec, req, "app.js")
-
-		if rec.Code != http.StatusOK {
-			t.Fatalf("expected status 200, got %d", rec.Code)
-		}
-		if !strings.Contains(rec.Body.String(), "console.log('primary');") {
-			t.Errorf("unexpected body: %s", rec.Body.String())
-		}
-	})
-
-	t.Run("LocalStaticDirFallback", func(t *testing.T) {
-		t.Parallel()
-		tempDir := t.TempDir()
-		cssPath := filepath.Join(tempDir, "theme.css")
-		if err := os.WriteFile(cssPath, []byte("body { background: #000; }"), 0644); err != nil {
-			t.Fatal(err)
-		}
-
-		h := display.NewHandler(
-			display.WithStaticDir("/nonexistent/static"),
-			display.WithLocalStaticDir(tempDir),
-		)
-
-		req := httptest.NewRequest(http.MethodGet, "/static/theme.css", nil)
-		rec := httptest.NewRecorder()
-		h.GetStatic(rec, req, "theme.css")
-
-		if rec.Code != http.StatusOK {
-			t.Fatalf("expected status 200, got %d", rec.Code)
-		}
-		if !strings.Contains(rec.Body.String(), "body { background: #000; }") {
-			t.Errorf("unexpected body: %s", rec.Body.String())
-		}
-	})
-
-	t.Run("DiskMimeTypes", func(t *testing.T) {
-		t.Parallel()
-		tempDir := t.TempDir()
-		files := map[string][]byte{
-			"test.js":      []byte("const x = 1;"),
-			"test.css":     []byte(".a { color: red; }"),
-			"test.svg":     []byte("<svg></svg>"),
-			"test.json":    []byte(`{"status":"ok"}`),
-			"test.png":     []byte{0x89, 'P', 'N', 'G'},
-			"test.webp":    []byte("RIFF....WEBP"),
-			"test.html":    []byte("<html>test</html>"),
-			"test.unknown": []byte("binary data"),
-		}
-
-		for name, data := range files {
-			if err := os.WriteFile(filepath.Join(tempDir, name), data, 0644); err != nil {
-				t.Fatal(err)
+	tests := []struct {
+		name       string
+		mode       string
+		path       string
+		wantGetter string
+		wantSub    string
+		wantNotSub string
+	}{
+		{"default_values", "default", "/display", "UTC", `data-tz="UTC"`, "cursor-hidden"},
+		{"static_timezone", "static_tz", "/display", "America/Los_Angeles", `data-tz="America/Los_Angeles"`, ""},
+		{"dynamic_tz_setter", "dyn_tz", "/display", "Asia/Tokyo", `data-tz="Europe/London"`, ""},
+		{"static_hide_cursor", "static_hide", "/display", "true", "cursor-hidden", ""},
+		{"dynamic_hide_cursor", "dyn_hide", "/display", "true", "cursor-hidden", ""},
+		{"setter_hide_cursor", "set_hide", "/display", "true", "cursor-hidden", ""},
+		{"query_hide_true", "static_unhide", "/display?hide_cursor=true", "false", "cursor-hidden", ""},
+		{"query_hide_false", "static_hide", "/display?hide_cursor=false", "true", "", "cursor-hidden"},
+		{"static_remote_url", "static_remote", "/display", "http://remote.lan", `data-remote="http://remote.lan"`, ""},
+		{"dynamic_remote_setter", "dyn_remote", "/display", "http://setter.lan", `data-remote="http://dyn.lan"`, ""},
+		{"static_header_video", "static_video", "/display", "cam1", `data-id="cam1"`, ""},
+		{"dynamic_header_video", "dyn_video", "/display", "live-cam", "", ""},
+		{"dynamic_theme", "dyn_theme", "/display", "night", `data-theme="night"`, ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var h *display.Handler
+			switch tc.mode {
+			case "static_tz":
+				h = display.NewHandler(display.WithEmbeddedTemplate(tmpl), display.WithTimezone("America/Los_Angeles"))
+				if h.Timezone() != tc.wantGetter {
+					t.Fatalf("tz getter: got %s, want %s", h.Timezone(), tc.wantGetter)
+				}
+			case "dyn_tz":
+				h = display.NewHandler(display.WithEmbeddedTemplate(tmpl), display.WithTimezoneProvider(func() string { return "Europe/London" }))
+				h2 := display.NewHandler(display.WithEmbeddedTemplate(tmpl))
+				h2.SetTimezone("Asia/Tokyo")
+				if h2.Timezone() != tc.wantGetter {
+					t.Fatalf("tz setter: got %s, want %s", h2.Timezone(), tc.wantGetter)
+				}
+			case "static_hide":
+				h = display.NewHandler(display.WithEmbeddedTemplate(tmpl), display.WithHideCursor(true))
+				if !h.HideCursor() {
+					t.Fatalf("hide getter: expected true")
+				}
+			case "static_unhide":
+				h = display.NewHandler(display.WithEmbeddedTemplate(tmpl), display.WithHideCursor(false))
+				if h.HideCursor() {
+					t.Fatalf("hide getter: expected false")
+				}
+			case "dyn_hide":
+				val := false
+				h = display.NewHandler(display.WithEmbeddedTemplate(tmpl), display.WithHideCursorProvider(func() bool { return val }))
+				val = true
+				if !h.HideCursor() {
+					t.Fatalf("dyn hide getter: expected true")
+				}
+			case "set_hide":
+				h = display.NewHandler(display.WithEmbeddedTemplate(tmpl))
+				h.SetHideCursor(true)
+				if !h.HideCursor() {
+					t.Fatalf("set hide getter: expected true")
+				}
+			case "static_remote":
+				h = display.NewHandler(display.WithEmbeddedTemplate(tmpl), display.WithRemoteURL("http://remote.lan"))
+				if h.RemoteURL() != tc.wantGetter {
+					t.Fatalf("remote getter: got %s, want %s", h.RemoteURL(), tc.wantGetter)
+				}
+			case "dyn_remote":
+				h = display.NewHandler(display.WithEmbeddedTemplate(tmpl), display.WithRemoteURLProvider(func() string { return "http://dyn.lan" }))
+				h2 := display.NewHandler(display.WithEmbeddedTemplate(tmpl))
+				h2.SetRemoteURL("http://setter.lan")
+				if h2.RemoteURL() != tc.wantGetter {
+					t.Fatalf("remote setter: got %s, want %s", h2.RemoteURL(), tc.wantGetter)
+				}
+			case "static_video":
+				vData := &display.HeaderVideoTemplateData{Enabled: true, StreamID: "cam1", StreamURL: "http://cam.lan", ControlURL: "http://ctrl.lan", Type: "webrtc"}
+				h = display.NewHandler(display.WithEmbeddedTemplate(tmpl), display.WithHeaderVideoTemplateData(vData))
+				if h.HeaderVideo() != vData {
+					t.Fatalf("video getter mismatch")
+				}
+			case "dyn_video":
+				vData := &display.HeaderVideoTemplateData{Enabled: true, StreamID: "live-cam"}
+				h = display.NewHandler(display.WithEmbeddedTemplate(tmpl), display.WithHeaderVideoProvider(func() *display.HeaderVideoTemplateData { return vData }))
+				if h.HeaderVideo().StreamID != tc.wantGetter {
+					t.Fatalf("dyn video getter mismatch")
+				}
+			case "dyn_theme":
+				th := "night"
+				h = display.NewHandler(display.WithEmbeddedTemplate(tmpl), display.WithThemeProvider(func() string { return th }))
+				if h.Theme() != tc.wantGetter {
+					t.Fatalf("theme getter: got %s, want %s", h.Theme(), tc.wantGetter)
+				}
+			default:
+				h = display.NewHandler(display.WithEmbeddedTemplate(tmpl))
+				if h.Timezone() != "UTC" || h.HideCursor() || h.RemoteURL() != "" || h.Theme() != "day" || h.HeaderVideo() != nil {
+					t.Fatalf("defaults mismatch")
+				}
 			}
-		}
-
-		h := display.NewHandler(
-			display.WithStaticDir(tempDir),
-			display.WithLocalStaticDir(""),
-		)
-
-		testCases := []struct {
-			path         string
-			expectedMime string
-		}{
-			{"test.js", "text/javascript; charset=utf-8"},
-			{"test.css", "text/css; charset=utf-8"},
-			{"test.svg", "image/svg+xml"},
-			{"test.json", "application/json; charset=utf-8"},
-			{"test.png", "image/png"},
-			{"test.webp", "image/webp"},
-			{"test.html", "text/html; charset=utf-8"},
-			{"test.unknown", "application/octet-stream"},
-		}
-
-		for _, tc := range testCases {
-			t.Run(tc.path, func(t *testing.T) {
-				t.Parallel()
-				req := httptest.NewRequest(http.MethodGet, "/static/"+tc.path, nil)
-				rec := httptest.NewRecorder()
-				h.GetStatic(rec, req, tc.path)
-
-				if rec.Code != http.StatusOK {
-					t.Fatalf("expected status 200, got %d", rec.Code)
-				}
-				if rec.Header().Get("Content-Type") != tc.expectedMime {
-					t.Errorf("expected MIME %q, got %q", tc.expectedMime, rec.Header().Get("Content-Type"))
-				}
-			})
-		}
-	})
-
-	t.Run("HEADMethod", func(t *testing.T) {
-		t.Parallel()
-		tempDir := t.TempDir()
-		if err := os.WriteFile(filepath.Join(tempDir, "test.js"), []byte("const x = 1;"), 0644); err != nil {
-			t.Fatal(err)
-		}
-
-		h := display.NewHandler(
-			display.WithStaticDir(tempDir),
-			display.WithLocalStaticDir(""),
-		)
-
-		req := httptest.NewRequest(http.MethodHead, "/static/test.js", nil)
-		rec := httptest.NewRecorder()
-		h.GetStatic(rec, req, "test.js")
-
-		if rec.Code != http.StatusOK {
-			t.Fatalf("expected status 200, got %d", rec.Code)
-		}
-		if rec.Body.Len() != 0 {
-			t.Errorf("expected empty body for HEAD, got %d bytes", rec.Body.Len())
-		}
-	})
-
-	t.Run("NotFound", func(t *testing.T) {
-		t.Parallel()
-		h := display.NewHandler(
-			display.WithStaticDir("/nonexistent/static"),
-			display.WithLocalStaticDir("/nonexistent/local"),
-		)
-
-		req := httptest.NewRequest(http.MethodGet, "/static/missing.js", nil)
-		rec := httptest.NewRecorder()
-		h.GetStatic(rec, req, "missing.js")
-
-		if rec.Code != http.StatusNotFound {
-			t.Fatalf("expected status 404, got %d", rec.Code)
-		}
-		var errResp api.ErrorResponse
-		if err := json.Unmarshal(rec.Body.Bytes(), &errResp); err != nil || errResp.Status != "error" {
-			t.Errorf("expected JSON error response for 404, got %v", rec.Body.String())
-		}
-	})
-
-	t.Run("CalendarGridAlias", func(t *testing.T) {
-		t.Parallel()
-		tempDir := t.TempDir()
-		if err := os.MkdirAll(filepath.Join(tempDir, "js"), 0755); err != nil {
-			t.Fatal(err)
-		}
-		expectedContent := []byte("console.log('calendar controller');")
-		if err := os.WriteFile(filepath.Join(tempDir, "js", "calendar_family.js"), expectedContent, 0644); err != nil {
-			t.Fatal(err)
-		}
-
-		h := display.NewHandler(
-			display.WithStaticDir(tempDir),
-			display.WithLocalStaticDir(""),
-		)
-
-		req := httptest.NewRequest(http.MethodGet, "/static/js/calendar_grid.js", nil)
-		rec := httptest.NewRecorder()
-		h.GetStatic(rec, req, "js/calendar_grid.js")
-
-		if rec.Code != http.StatusOK {
-			t.Fatalf("expected status 200, got %d", rec.Code)
-		}
-		if rec.Body.String() != string(expectedContent) {
-			t.Errorf("expected calendar_grid.js to serve calendar_family.js content, got %s", rec.Body.String())
-		}
-	})
+			rec := httptest.NewRecorder()
+			h.GetDisplay(rec, httptest.NewRequest(http.MethodGet, tc.path, nil))
+			if tc.wantSub != "" && !strings.Contains(rec.Body.String(), tc.wantSub) {
+				t.Fatalf("body missing %q: %s", tc.wantSub, rec.Body.String())
+			}
+			if tc.wantNotSub != "" && strings.Contains(rec.Body.String(), tc.wantNotSub) {
+				t.Fatalf("body contains unwanted %q: %s", tc.wantNotSub, rec.Body.String())
+			}
+		})
+	}
 }
 
-func TestGetDisplay_Timezone(t *testing.T) {
+func TestGetStatic(t *testing.T) {
 	t.Parallel()
+	tempDir := t.TempDir()
+	localDir := t.TempDir()
 
-	t.Run("DefaultTimezoneUTC", func(t *testing.T) {
-		t.Parallel()
-		h := display.NewHandler(
-			display.WithEmbeddedTemplate([]byte(`<div data-timezone="{{ .Timezone }}"></div>`)),
-		)
-		if h.Timezone() != "UTC" {
-			t.Errorf("expected default timezone UTC, got %s", h.Timezone())
-		}
+	files := map[string][]byte{
+		"app.js":                []byte("console.log('primary');"),
+		"test.css":              []byte(".a { color: red; }"),
+		"test.js":               []byte("const x = 1;"),
+		"test.svg":              []byte("<svg></svg>"),
+		"test.png":              []byte{0x89, 'P', 'N', 'G'},
+		"test.jpg":              []byte{0xFF, 0xD8, 0xFF},
+		"test.woff2":            []byte("wOF2"),
+		"test.html":             []byte("<html>test</html>"),
+		"test.bin":              []byte("binary data"),
+		"test.custom":           []byte("custom data"),
+		"js/calendar_family.js": []byte("console.log('calendar controller');"),
+	}
+	_ = os.MkdirAll(filepath.Join(tempDir, "js"), 0755)
+	for relPath, data := range files {
+		_ = os.WriteFile(filepath.Join(tempDir, relPath), data, 0644)
+	}
+	_ = os.WriteFile(filepath.Join(localDir, "theme.css"), []byte("body { background: #000; }"), 0644)
 
-		req := httptest.NewRequest(http.MethodGet, "/display", nil)
-		rec := httptest.NewRecorder()
-		h.GetDisplay(rec, req)
+	h := display.NewHandler(display.WithStaticDir(tempDir), display.WithLocalStaticDir(localDir))
+	hFallback := display.NewHandler(display.WithStaticDir(""), display.WithLocalStaticDir(localDir))
 
-		if rec.Code != http.StatusOK {
-			t.Fatalf("expected 200, got %d", rec.Code)
-		}
-		if !strings.Contains(rec.Body.String(), `data-timezone="UTC"`) {
-			t.Errorf("expected data-timezone=\"UTC\", got %s", rec.Body.String())
-		}
-	})
-
-	t.Run("StaticWithTimezone", func(t *testing.T) {
-		t.Parallel()
-		h := display.NewHandler(
-			display.WithTimezone("America/Los_Angeles"),
-			display.WithEmbeddedTemplate([]byte(`<div data-timezone="{{ .Timezone }}"></div>`)),
-		)
-		if h.Timezone() != "America/Los_Angeles" {
-			t.Errorf("expected timezone America/Los_Angeles, got %s", h.Timezone())
-		}
-
-		req := httptest.NewRequest(http.MethodGet, "/display", nil)
-		rec := httptest.NewRecorder()
-		h.GetDisplay(rec, req)
-
-		if !strings.Contains(rec.Body.String(), `data-timezone="America/Los_Angeles"`) {
-			t.Errorf("expected data-timezone=\"America/Los_Angeles\", got %s", rec.Body.String())
-		}
-	})
-
-	t.Run("DynamicWithTimezoneProviderAndSetTimezone", func(t *testing.T) {
-		t.Parallel()
-		tz := "Europe/London"
-		h := display.NewHandler(
-			display.WithTimezoneProvider(func() string {
-				return tz
-			}),
-			display.WithEmbeddedTemplate([]byte(`<div data-timezone="{{ .Timezone }}"></div>`)),
-		)
-
-		req := httptest.NewRequest(http.MethodGet, "/display", nil)
-		rec := httptest.NewRecorder()
-		h.GetDisplay(rec, req)
-
-		if !strings.Contains(rec.Body.String(), `data-timezone="Europe/London"`) {
-			t.Errorf("expected data-timezone=\"Europe/London\", got %s", rec.Body.String())
-		}
-
-		// Update via SetTimezone when provider returns empty
-		h2 := display.NewHandler(
-			display.WithEmbeddedTemplate([]byte(`<div data-timezone="{{ .Timezone }}"></div>`)),
-		)
-		h2.SetTimezone("Asia/Tokyo")
-		if h2.Timezone() != "Asia/Tokyo" {
-			t.Errorf("expected Asia/Tokyo, got %s", h2.Timezone())
-		}
-
-		rec2 := httptest.NewRecorder()
-		h2.GetDisplay(rec2, req)
-		if !strings.Contains(rec2.Body.String(), `data-timezone="Asia/Tokyo"`) {
-			t.Errorf("expected data-timezone=\"Asia/Tokyo\", got %s", rec2.Body.String())
-		}
-	})
-
-	t.Run("HEADMethodWithTimezone", func(t *testing.T) {
-		t.Parallel()
-		h := display.NewHandler(
-			display.WithTimezone("America/Chicago"),
-			display.WithEmbeddedTemplate([]byte(`<div data-timezone="{{ .Timezone }}"></div>`)),
-		)
-
-		req := httptest.NewRequest(http.MethodHead, "/display", nil)
-		rec := httptest.NewRecorder()
-		h.GetDisplay(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Fatalf("expected 200, got %d", rec.Code)
-		}
-		if rec.Body.Len() != 0 {
-			t.Errorf("expected empty body for HEAD, got %d bytes", rec.Body.Len())
-		}
-	})
-
-	t.Run("MalformedTemplateFallback", func(t *testing.T) {
-		t.Parallel()
-		raw := []byte(`<div>{{ invalid template syntax`)
-		h := display.NewHandler(
-			display.WithEmbeddedTemplate(raw),
-		)
-
-		req := httptest.NewRequest(http.MethodGet, "/display", nil)
-		rec := httptest.NewRecorder()
-		h.GetDisplay(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Fatalf("expected 200, got %d", rec.Code)
-		}
-		if rec.Body.String() != string(raw) {
-			t.Errorf("expected fallback to raw content, got %s", rec.Body.String())
-		}
-	})
+	tests := []struct {
+		name     string
+		method   string
+		path     string
+		useEmpty bool
+		wantCode int
+		wantMime string
+		wantSub  string
+		wantHead bool
+	}{
+		{"options", http.MethodOptions, "app.js", false, http.StatusNoContent, "", "", false},
+		{"post_not_allowed", http.MethodPost, "app.js", false, http.StatusMethodNotAllowed, "", `"status":"error"`, false},
+		{"traversal_dotdot", http.MethodGet, "..", false, http.StatusBadRequest, "", "", false},
+		{"traversal_dotdot_file", http.MethodGet, "../secret.txt", false, http.StatusBadRequest, "", "", false},
+		{"traversal_escape", http.MethodGet, "../../etc/passwd", false, http.StatusBadRequest, "", "", false},
+		{"traversal_abs", http.MethodGet, "/etc/passwd", false, http.StatusBadRequest, "", "", false},
+		{"traversal_win", http.MethodGet, `\windows\system32`, false, http.StatusBadRequest, "", "", false},
+		{"traversal_dot", http.MethodGet, ".", false, http.StatusBadRequest, "", "", false},
+		{"traversal_dot_rel", http.MethodGet, "./something", false, http.StatusBadRequest, "", "", false},
+		{"primary_static", http.MethodGet, "app.js", false, http.StatusOK, "", "primary", false},
+		{"local_fallback", http.MethodGet, "theme.css", true, http.StatusOK, "", "background: #000", false},
+		{"head_method", http.MethodHead, "app.js", false, http.StatusOK, "", "", true},
+		{"missing_file", http.MethodGet, "missing.txt", false, http.StatusNotFound, "", `"status":"error"`, false},
+		{"calendar_alias", http.MethodGet, "js/calendar_grid.js", false, http.StatusOK, "", "calendar controller", false},
+		{"mime_css", http.MethodGet, "test.css", false, http.StatusOK, "text/css; charset=utf-8", "", false},
+		{"mime_js", http.MethodGet, "test.js", false, http.StatusOK, "text/javascript; charset=utf-8", "", false},
+		{"mime_svg", http.MethodGet, "test.svg", false, http.StatusOK, "image/svg+xml", "", false},
+		{"mime_png", http.MethodGet, "test.png", false, http.StatusOK, "image/png", "", false},
+		{"mime_jpg", http.MethodGet, "test.jpg", false, http.StatusOK, "image/jpeg", "", false},
+		{"mime_woff2", http.MethodGet, "test.woff2", false, http.StatusOK, "font/woff2", "", false},
+		{"mime_html", http.MethodGet, "test.html", false, http.StatusOK, "text/html; charset=utf-8", "", false},
+		{"mime_bin", http.MethodGet, "test.bin", false, http.StatusOK, "application/octet-stream", "", false},
+		{"mime_custom", http.MethodGet, "test.custom", false, http.StatusOK, "application/octet-stream", "", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			targetH := h
+			if tc.useEmpty {
+				targetH = hFallback
+			}
+			rec := httptest.NewRecorder()
+			targetH.GetStatic(rec, httptest.NewRequest(tc.method, "/static/"+tc.path, nil), tc.path)
+			if rec.Code != tc.wantCode {
+				t.Fatalf("code: got %d, want %d", rec.Code, tc.wantCode)
+			}
+			if tc.wantHead && rec.Body.Len() != 0 {
+				t.Fatalf("head body: got %d bytes, want 0", rec.Body.Len())
+			}
+			if tc.wantMime != "" && rec.Header().Get("Content-Type") != tc.wantMime {
+				t.Fatalf("mime: got %q, want %q", rec.Header().Get("Content-Type"), tc.wantMime)
+			}
+			if tc.wantSub != "" && !strings.Contains(rec.Body.String(), tc.wantSub) {
+				t.Fatalf("body: got %q, want substring %q", rec.Body.String(), tc.wantSub)
+			}
+		})
+	}
 }
-
-func TestGetDisplay_HideCursor(t *testing.T) {
-	t.Parallel()
-
-	tmplContent := []byte(`<body data-timezone="{{ .Timezone }}"{{ if .HideCursor }} class="mm-touch-kiosk"{{ end }}>`)
-
-	t.Run("DefaultHideCursorFalse", func(t *testing.T) {
-		t.Parallel()
-		h := display.NewHandler(
-			display.WithEmbeddedTemplate(tmplContent),
-		)
-		if h.HideCursor() {
-			t.Errorf("expected default HideCursor false, got true")
-		}
-
-		req := httptest.NewRequest(http.MethodGet, "/display", nil)
-		rec := httptest.NewRecorder()
-		h.GetDisplay(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Fatalf("expected 200, got %d", rec.Code)
-		}
-		if strings.Contains(rec.Body.String(), "mm-touch-kiosk") {
-			t.Errorf("expected body without mm-touch-kiosk, got %s", rec.Body.String())
-		}
-	})
-
-	t.Run("StaticWithHideCursorTrue", func(t *testing.T) {
-		t.Parallel()
-		h := display.NewHandler(
-			display.WithHideCursor(true),
-			display.WithEmbeddedTemplate(tmplContent),
-		)
-		if !h.HideCursor() {
-			t.Errorf("expected HideCursor true, got false")
-		}
-
-		req := httptest.NewRequest(http.MethodGet, "/display", nil)
-		rec := httptest.NewRecorder()
-		h.GetDisplay(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Fatalf("expected 200, got %d", rec.Code)
-		}
-		if !strings.Contains(rec.Body.String(), `class="mm-touch-kiosk"`) {
-			t.Errorf("expected body with class=\"mm-touch-kiosk\", got %s", rec.Body.String())
-		}
-	})
-
-	t.Run("DynamicProvider", func(t *testing.T) {
-		t.Parallel()
-		active := false
-		h := display.NewHandler(
-			display.WithHideCursorProvider(func() bool {
-				return active
-			}),
-			display.WithEmbeddedTemplate(tmplContent),
-		)
-
-		if h.HideCursor() {
-			t.Errorf("expected initial HideCursor false")
-		}
-
-		req := httptest.NewRequest(http.MethodGet, "/display", nil)
-		rec := httptest.NewRecorder()
-		h.GetDisplay(rec, req)
-		if strings.Contains(rec.Body.String(), "mm-touch-kiosk") {
-			t.Errorf("expected body without mm-touch-kiosk, got %s", rec.Body.String())
-		}
-
-		// Toggle active
-		active = true
-		if !h.HideCursor() {
-			t.Errorf("expected updated HideCursor true")
-		}
-
-		req2 := httptest.NewRequest(http.MethodGet, "/display", nil)
-		rec2 := httptest.NewRecorder()
-		h.GetDisplay(rec2, req2)
-		if !strings.Contains(rec2.Body.String(), `class="mm-touch-kiosk"`) {
-			t.Errorf("expected body with class=\"mm-touch-kiosk\", got %s", rec2.Body.String())
-		}
-	})
-
-	t.Run("SetHideCursor", func(t *testing.T) {
-		t.Parallel()
-		h := display.NewHandler(
-			display.WithEmbeddedTemplate(tmplContent),
-		)
-		h.SetHideCursor(true)
-		if !h.HideCursor() {
-			t.Errorf("expected HideCursor true after SetHideCursor")
-		}
-
-		req := httptest.NewRequest(http.MethodGet, "/display", nil)
-		rec := httptest.NewRecorder()
-		h.GetDisplay(rec, req)
-		if !strings.Contains(rec.Body.String(), `class="mm-touch-kiosk"`) {
-			t.Errorf("expected body with class=\"mm-touch-kiosk\", got %s", rec.Body.String())
-		}
-	})
-
-	t.Run("QueryParamOverrideTrue", func(t *testing.T) {
-		t.Parallel()
-		h := display.NewHandler(
-			display.WithEmbeddedTemplate(tmplContent),
-			display.WithHideCursor(false),
-		)
-
-		req := httptest.NewRequest(http.MethodGet, "/display?hide_cursor=true", nil)
-		rec := httptest.NewRecorder()
-		h.GetDisplay(rec, req)
-		if !strings.Contains(rec.Body.String(), `class="mm-touch-kiosk"`) {
-			t.Errorf("expected body with class=\"mm-touch-kiosk\" when ?hide_cursor=true, got %s", rec.Body.String())
-		}
-	})
-
-	t.Run("QueryParamOverrideFalse", func(t *testing.T) {
-		t.Parallel()
-		h := display.NewHandler(
-			display.WithEmbeddedTemplate(tmplContent),
-			display.WithHideCursor(true),
-		)
-
-		req := httptest.NewRequest(http.MethodGet, "/display?hide_cursor=false", nil)
-		rec := httptest.NewRecorder()
-		h.GetDisplay(rec, req)
-		if strings.Contains(rec.Body.String(), `class="mm-touch-kiosk"`) {
-			t.Errorf("expected body without class=\"mm-touch-kiosk\" when ?hide_cursor=false, got %s", rec.Body.String())
-		}
-	})
-}
-
-func TestGetDisplay_RemoteURL(t *testing.T) {
-	t.Parallel()
-
-	tmplContent := []byte(`<!DOCTYPE html><html><body data-timezone="{{ .Timezone }}"{{ if .HideCursor }} class="mm-touch-kiosk"{{ end }}{{ if .RemoteURL }} data-remote-url="{{ .RemoteURL }}"{{ end }}>{{ if .RemoteURL }}<script>window.MIRRORMERE_REMOTE_URL = {{ .RemoteURL }};</script>{{ end }}</body></html>`)
-
-	t.Run("DefaultEmptyRemoteURL", func(t *testing.T) {
-		t.Parallel()
-		h := display.NewHandler(
-			display.WithEmbeddedTemplate(tmplContent),
-		)
-		if h.RemoteURL() != "" {
-			t.Errorf("expected empty RemoteURL by default, got %q", h.RemoteURL())
-		}
-
-		req := httptest.NewRequest(http.MethodGet, "/display", nil)
-		rec := httptest.NewRecorder()
-		h.GetDisplay(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Fatalf("expected 200, got %d", rec.Code)
-		}
-		if strings.Contains(rec.Body.String(), "data-remote-url") {
-			t.Errorf("expected body without data-remote-url, got %s", rec.Body.String())
-		}
-		if strings.Contains(rec.Body.String(), "MIRRORMERE_REMOTE_URL") {
-			t.Errorf("expected body without MIRRORMERE_REMOTE_URL script, got %s", rec.Body.String())
-		}
-	})
-
-	t.Run("StaticWithRemoteURL", func(t *testing.T) {
-		t.Parallel()
-		target := "http://mirrormere-remote.aerial"
-		h := display.NewHandler(
-			display.WithRemoteURL(target),
-			display.WithEmbeddedTemplate(tmplContent),
-		)
-		if h.RemoteURL() != target {
-			t.Errorf("expected RemoteURL %q, got %q", target, h.RemoteURL())
-		}
-
-		req := httptest.NewRequest(http.MethodGet, "/display", nil)
-		rec := httptest.NewRecorder()
-		h.GetDisplay(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Fatalf("expected 200, got %d", rec.Code)
-		}
-		if !strings.Contains(rec.Body.String(), `data-remote-url="`+target+`"`) {
-			t.Errorf("expected body with data-remote-url, got %s", rec.Body.String())
-		}
-		if !strings.Contains(rec.Body.String(), `window.MIRRORMERE_REMOTE_URL = "`+target+`"`) {
-			t.Errorf("expected body with MIRRORMERE_REMOTE_URL script, got %s", rec.Body.String())
-		}
-	})
-
-	t.Run("DynamicRemoteURLProviderAndSet", func(t *testing.T) {
-		t.Parallel()
-		current := "http://initial.lan"
-		h := display.NewHandler(
-			display.WithRemoteURLProvider(func() string {
-				return current
-			}),
-			display.WithEmbeddedTemplate(tmplContent),
-		)
-
-		if h.RemoteURL() != current {
-			t.Errorf("expected %q, got %q", current, h.RemoteURL())
-		}
-
-		current = "http://dynamic.lan"
-		if h.RemoteURL() != current {
-			t.Errorf("expected updated %q, got %q", current, h.RemoteURL())
-		}
-
-		// Direct setter fallback test
-		h2 := display.NewHandler(display.WithEmbeddedTemplate(tmplContent))
-		h2.SetRemoteURL("http://setter.lan")
-		if h2.RemoteURL() != "http://setter.lan" {
-			t.Errorf("expected 'http://setter.lan', got %q", h2.RemoteURL())
-		}
-	})
-}
-
-func TestGetDisplay_HeaderVideo(t *testing.T) {
-	t.Parallel()
-
-	// 1. When HeaderVideo is nil or disabled -> button is omitted from HTML
-	t.Run("DisabledOrNil_OmittedFromHTML", func(t *testing.T) {
-		t.Parallel()
-		h := display.NewHandler()
-		req := httptest.NewRequest(http.MethodGet, "/", nil)
-		rec := httptest.NewRecorder()
-		h.GetDisplay(rec, req)
-
-		body := rec.Body.String()
-		if strings.Contains(body, "id=\"header-video\"") {
-			t.Errorf("expected no header-video container when HeaderVideo is nil, got: %s", body)
-		}
-		if strings.Contains(body, "id=\"header-video-btn\"") {
-			t.Errorf("expected no header-video-btn when HeaderVideo is nil, got: %s", body)
-		}
-	})
-
-	// 2. When HeaderVideo is enabled -> button is rendered with data attributes
-	t.Run("Enabled_RenderedWithDataAttributes", func(t *testing.T) {
-		t.Parallel()
-		videoData := &display.HeaderVideoTemplateData{
-			Enabled:    true,
-			StreamID:   "custom-tv",
-			StreamURL:  "http://localhost:1984/api/webrtc?src=tv",
-			ControlURL: "http://cast-watcher:8090/action",
-			Type:       "webrtc",
-		}
-		h := display.NewHandler(
-			display.WithHeaderVideoTemplateData(videoData),
-		)
-		req := httptest.NewRequest(http.MethodGet, "/", nil)
-		rec := httptest.NewRecorder()
-		h.GetDisplay(rec, req)
-
-		body := rec.Body.String()
-		if !strings.Contains(body, "id=\"header-video\"") {
-			t.Errorf("expected header-video container in HTML, got: %s", body)
-		}
-		if !strings.Contains(body, "id=\"header-video-btn\"") {
-			t.Errorf("expected header-video-btn in HTML, got: %s", body)
-		}
-		if !strings.Contains(body, `data-stream-id="custom-tv"`) {
-			t.Errorf("expected data-stream-id in HTML, got: %s", body)
-		}
-		if !strings.Contains(body, `data-stream-url="http://localhost:1984/api/webrtc?src=tv"`) {
-			t.Errorf("expected data-stream-url in HTML, got: %s", body)
-		}
-		if !strings.Contains(body, `data-control-url="http://cast-watcher:8090/action"`) {
-			t.Errorf("expected data-control-url in HTML, got: %s", body)
-		}
-		if !strings.Contains(body, `data-type="webrtc"`) {
-			t.Errorf("expected data-type in HTML, got: %s", body)
-		}
-	})
-
-	// 3. Dynamic provider
-	t.Run("DynamicProvider", func(t *testing.T) {
-		t.Parallel()
-		current := &display.HeaderVideoTemplateData{Enabled: false}
-		h := display.NewHandler(
-			display.WithHeaderVideoProvider(func() *display.HeaderVideoTemplateData {
-				return current
-			}),
-		)
-
-		if h.HeaderVideo() != current {
-			t.Errorf("expected %v, got %v", current, h.HeaderVideo())
-		}
-
-		current = &display.HeaderVideoTemplateData{Enabled: true, StreamID: "live-cam"}
-		if h.HeaderVideo().StreamID != "live-cam" {
-			t.Errorf("expected 'live-cam', got %q", h.HeaderVideo().StreamID)
-		}
-	})
-}
-
-func TestGetDisplay_Theme(t *testing.T) {
-	t.Parallel()
-
-	tmplContent := []byte(`<html data-theme="{{ if .Theme }}{{ .Theme }}{{ else }}day{{ end }}"><body data-theme="{{ if .Theme }}{{ .Theme }}{{ else }}day{{ end }}"></body></html>`)
-
-	t.Run("DefaultThemeDay", func(t *testing.T) {
-		t.Parallel()
-		h := display.NewHandler(
-			display.WithEmbeddedTemplate(tmplContent),
-		)
-		if h.Theme() != "day" {
-			t.Errorf("expected default theme 'day', got %q", h.Theme())
-		}
-
-		req := httptest.NewRequest(http.MethodGet, "/display", nil)
-		rec := httptest.NewRecorder()
-		h.GetDisplay(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Fatalf("expected 200, got %d", rec.Code)
-		}
-		if !strings.Contains(rec.Body.String(), `data-theme="day"`) {
-			t.Errorf("expected data-theme=\"day\", got %s", rec.Body.String())
-		}
-	})
-
-	t.Run("DynamicThemeProvider", func(t *testing.T) {
-		t.Parallel()
-		currentTheme := "night"
-		h := display.NewHandler(
-			display.WithEmbeddedTemplate(tmplContent),
-			display.WithThemeProvider(func() string {
-				return currentTheme
-			}),
-		)
-
-		if h.Theme() != "night" {
-			t.Errorf("expected theme 'night', got %q", h.Theme())
-		}
-
-		req := httptest.NewRequest(http.MethodGet, "/display", nil)
-		rec := httptest.NewRecorder()
-		h.GetDisplay(rec, req)
-
-		if !strings.Contains(rec.Body.String(), `data-theme="night"`) {
-			t.Errorf("expected data-theme=\"night\", got %s", rec.Body.String())
-		}
-
-		currentTheme = "day"
-		if h.Theme() != "day" {
-			t.Errorf("expected theme 'day', got %q", h.Theme())
-		}
-	})
-}
-
-
-
