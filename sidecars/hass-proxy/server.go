@@ -8,9 +8,39 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
+	"runtime/coverage"
 	"strings"
+	"sync"
 	"time"
 )
+
+var (
+	flushMu            sync.Mutex
+	lastFlushTime      time.Time
+	nowFn              = time.Now
+	writeCountersDirMu sync.RWMutex
+	writeMetaDirFn     = coverage.WriteMetaDir
+	writeCountersDirFn = coverage.WriteCountersDir
+)
+
+// SetNowFnForTest overrides the time provider for testing debounce without sleeps.
+func SetNowFnForTest(fn func() time.Time) func() {
+	flushMu.Lock()
+	prev := nowFn
+	nowFn = fn
+	flushMu.Unlock()
+	return func() { flushMu.Lock(); nowFn = prev; flushMu.Unlock() }
+}
+
+// SetWriteCountersDirForTest overrides writeCountersDirFn for testing purposes.
+func SetWriteCountersDirForTest(fn func(string) error) func() {
+	writeCountersDirMu.Lock()
+	prev := writeCountersDirFn
+	writeCountersDirFn = fn
+	writeCountersDirMu.Unlock()
+	return func() { writeCountersDirMu.Lock(); writeCountersDirFn = prev; writeCountersDirMu.Unlock() }
+}
 
 // Server encapsulates the HTTP handler and dependencies for the Home Assistant Fast-Path Proxy.
 type Server struct {
@@ -39,6 +69,7 @@ func NewServer(client HAClient, logger *slog.Logger) *Server {
 func (s *Server) routes() {
 	s.mux.HandleFunc("/healthz", s.handleHealthz)
 	s.mux.HandleFunc("/intent", s.handleIntent)
+	s.mux.HandleFunc("/debug/coverage/flush", s.handleCoverageFlush)
 }
 
 // ServeHTTP delegates to the internal ServeMux.
@@ -58,6 +89,43 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	if _, err := w.Write([]byte("OK\n")); err != nil {
 		s.logger.WarnContext(r.Context(), "failed to write healthz response", "error", err)
 	}
+}
+
+func (s *Server) handleCoverageFlush(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
+		w.Header().Set("Allow", "GET, POST")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if dir := os.Getenv("GOCOVERDIR"); dir != "" {
+		flushMu.Lock()
+		now := nowFn()
+		if now.Sub(lastFlushTime) < time.Second {
+			flushMu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("{\"status\":\"debounced\"}\n")) //nolint:errcheck
+			return
+		}
+		lastFlushTime = now
+		writeCountersDirMu.RLock()
+		metaFn := writeMetaDirFn
+		fn := writeCountersDirFn
+		writeCountersDirMu.RUnlock()
+		_ = metaFn(dir) //nolint:errcheck
+		err := fn(dir)
+		flushMu.Unlock()
+
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte("{\"status\":\"ok\"}\n")) //nolint:errcheck
 }
 
 // handleIntent processes the inbound voice intent request.
