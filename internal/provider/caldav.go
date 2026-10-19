@@ -131,6 +131,38 @@ func (c *CalDAVClient) FetchCalendarEvents(ctx context.Context, source CalendarS
 	return allEvents, nil
 }
 
+func (c *CalDAVClient) doPropfind(ctx context.Context, targetURL, depth, xmlBody string, source CalendarSource) (*propfindMultiStatus, int, error) {
+	req, err := http.NewRequestWithContext(ctx, "PROPFIND", targetURL, strings.NewReader(xmlBody))
+	if err != nil {
+		return nil, 0, err
+	}
+	req.Header.Set("Depth", depth)
+	req.Header.Set("Content-Type", "application/xml; charset=utf-8")
+	req.Header.Set("User-Agent", "Mirrormere-CalDAV/1.0")
+	applyCalDAVAuth(req, source)
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusMultiStatus {
+		return nil, resp.StatusCode, nil
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxCalendarFeedBytes+1))
+	if err != nil || len(body) > maxCalendarFeedBytes {
+		return nil, resp.StatusCode, err
+	}
+
+	var ms propfindMultiStatus
+	if err := xml.Unmarshal(body, &ms); err != nil {
+		return nil, resp.StatusCode, err
+	}
+	return &ms, resp.StatusCode, nil
+}
+
 // DiscoverCalendarURL resolves the specific calendar collection URL from an endpoint, principal, or home-set.
 func (c *CalDAVClient) DiscoverCalendarURL(ctx context.Context, source CalendarSource) (string, error) {
 	endpoint := strings.TrimSpace(source.URL)
@@ -147,38 +179,13 @@ func (c *CalDAVClient) DiscoverCalendarURL(ctx context.Context, source CalendarS
   </d:prop>
 </d:propfind>`
 
-	req, err := http.NewRequestWithContext(ctx, "PROPFIND", endpoint, strings.NewReader(propfindBody))
-	if err != nil {
-		return endpoint, nil
+	ms, status, err := c.doPropfind(ctx, endpoint, "0", propfindBody, source)
+	if status == http.StatusUnauthorized || status == http.StatusForbidden {
+		return "", fmt.Errorf("caldav authentication failed (HTTP %d): invalid credentials for %s", status, redactURL(endpoint))
 	}
-	req.Header.Set("Depth", "0")
-	req.Header.Set("Content-Type", "application/xml; charset=utf-8")
-	req.Header.Set("User-Agent", "Mirrormere-CalDAV/1.0")
-	applyCalDAVAuth(req, source)
-
-	resp, err := c.client.Do(req)
-	if err != nil {
+	if err != nil || ms == nil {
 		// Fallback to configured endpoint directly if discovery request fails
-		return endpoint, nil
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		return "", fmt.Errorf("caldav authentication failed (HTTP %d): invalid credentials for %s", resp.StatusCode, redactURL(endpoint))
-	}
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusMultiStatus {
-		// Non-discovery status: fallback to endpoint directly
-		return endpoint, nil
-	}
-
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxCalendarFeedBytes+1))
-	if err != nil || len(body) > maxCalendarFeedBytes {
-		return endpoint, nil
-	}
-
-	var ms propfindMultiStatus
-	if err := xml.Unmarshal(body, &ms); err != nil {
-		return endpoint, nil
+		return endpoint, nil //nolint:nilerr
 	}
 
 	// 1. Fast-Path: Check if endpoint itself is already a calendar collection
@@ -227,32 +234,8 @@ func (c *CalDAVClient) findHomeSetFromPrincipal(ctx context.Context, principalUR
   </d:prop>
 </d:propfind>`
 
-	req, err := http.NewRequestWithContext(ctx, "PROPFIND", principalURL, strings.NewReader(propfindBody))
-	if err != nil {
-		return ""
-	}
-	req.Header.Set("Depth", "0")
-	req.Header.Set("Content-Type", "application/xml; charset=utf-8")
-	req.Header.Set("User-Agent", "Mirrormere-CalDAV/1.0")
-	applyCalDAVAuth(req, source)
-
-	resp, err := c.client.Do(req)
-	if err != nil {
-		return ""
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusMultiStatus {
-		return ""
-	}
-
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxCalendarFeedBytes+1))
-	if err != nil || len(body) > maxCalendarFeedBytes {
-		return ""
-	}
-
-	var ms propfindMultiStatus
-	if err := xml.Unmarshal(body, &ms); err != nil {
+	ms, _, err := c.doPropfind(ctx, principalURL, "0", propfindBody, source)
+	if err != nil || ms == nil {
 		return ""
 	}
 
@@ -276,32 +259,8 @@ func (c *CalDAVClient) findCalendarInHome(ctx context.Context, homeURL string, s
   </d:prop>
 </d:propfind>`
 
-	req, err := http.NewRequestWithContext(ctx, "PROPFIND", homeURL, strings.NewReader(propfindBody))
-	if err != nil {
-		return ""
-	}
-	req.Header.Set("Depth", "1")
-	req.Header.Set("Content-Type", "application/xml; charset=utf-8")
-	req.Header.Set("User-Agent", "Mirrormere-CalDAV/1.0")
-	applyCalDAVAuth(req, source)
-
-	resp, err := c.client.Do(req)
-	if err != nil {
-		return ""
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusMultiStatus {
-		return ""
-	}
-
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxCalendarFeedBytes+1))
-	if err != nil || len(body) > maxCalendarFeedBytes {
-		return ""
-	}
-
-	var ms propfindMultiStatus
-	if err := xml.Unmarshal(body, &ms); err != nil {
+	ms, _, err := c.doPropfind(ctx, homeURL, "1", propfindBody, source)
+	if err != nil || ms == nil {
 		return ""
 	}
 
@@ -346,7 +305,7 @@ func applyCalDAVAuth(req *http.Request, source CalendarSource) {
 
 func extractCalendarData(body []byte) []string {
 	var calDataList []string
-	var ms caldavReportMultiStatus
+	var ms propfindMultiStatus
 	if err := xml.Unmarshal(body, &ms); err == nil && len(ms.Responses) > 0 {
 		for _, resp := range ms.Responses {
 			for _, ps := range resp.Propstats {
@@ -402,27 +361,7 @@ func ensureTrailingSlash(u string) string {
 	return u
 }
 
-// XML unmarshaling structs for CalDAV REPORT responses
-type caldavReportMultiStatus struct {
-	XMLName   xml.Name               `xml:"multistatus"`
-	Responses []caldavReportResponse `xml:"response"`
-}
-
-type caldavReportResponse struct {
-	Href      string                 `xml:"href"`
-	Propstats []caldavReportPropstat `xml:"propstat"`
-}
-
-type caldavReportPropstat struct {
-	Prop   caldavReportProp `xml:"prop"`
-	Status string           `xml:"status"`
-}
-
-type caldavReportProp struct {
-	CalendarData string `xml:"calendar-data"`
-}
-
-// XML unmarshaling structs for WebDAV PROPFIND responses
+// XML unmarshaling structs for WebDAV/CalDAV responses
 type propfindMultiStatus struct {
 	XMLName   xml.Name           `xml:"multistatus"`
 	Responses []propfindResponse `xml:"response"`
@@ -443,6 +382,7 @@ type propfindProp struct {
 	CalendarHomeSet      caldavCalendarHomeSet      `xml:"calendar-home-set"`
 	CurrentUserPrincipal caldavCurrentUserPrincipal `xml:"current-user-principal"`
 	DisplayName          string                     `xml:"displayname"`
+	CalendarData         string                     `xml:"calendar-data"`
 }
 
 type caldavResourceType struct {

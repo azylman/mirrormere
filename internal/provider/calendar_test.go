@@ -11,160 +11,56 @@ import (
 	"github.com/azylman/mirrormere/internal/provider"
 )
 
+func icsDoc(events ...string) string {
+	return "BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//Mirrormere//Test//EN\n" + strings.Join(events, "\n") + "\nEND:VCALENDAR"
+}
+
+func fetchTestCalendar(t *testing.T, ics string, refTime time.Time, cfgOverrides map[string]any) (provider.CalendarSnapshot, error) {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/calendar")
+		_, _ = w.Write([]byte(ics))
+	}))
+	t.Cleanup(srv.Close)
+
+	p := provider.NewCalendarProviderWithClient(srv.Client(), func() time.Time { return refTime })
+	cfg := map[string]any{
+		"calendars": []any{map[string]any{"name": "Cal", "url": srv.URL, "color": "#3b82f6"}},
+	}
+	for k, v := range cfgOverrides {
+		cfg[k] = v
+	}
+	if err := p.Init(context.Background(), cfg, provider.InitOptions{}); err != nil {
+		return provider.CalendarSnapshot{}, err
+	}
+	res, err := p.Fetch(context.Background())
+	if err != nil {
+		return provider.CalendarSnapshot{}, err
+	}
+	return res.(provider.CalendarSnapshot), nil
+}
+
 func TestCalendarProvider_Init_Validations(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name      string
-		cfg       map[string]any
-		opts      provider.InitOptions
-		envKey    string
-		envVal    string
-		wantError string
+		name       string
+		cfg        map[string]any
+		opts       provider.InitOptions
+		wantErrSub string
 	}{
-		{
-			name:      "missing calendars",
-			cfg:       map[string]any{},
-			wantError: "requires at least one calendar",
-		},
-		{
-			name: "empty calendars list",
-			cfg: map[string]any{
-				"calendars": []any{},
-			},
-			wantError: "requires at least one calendar",
-		},
-		{
-			name: "calendar item not a map",
-			cfg: map[string]any{
-				"calendars": []any{"invalid"},
-			},
-			wantError: "not a map",
-		},
-		{
-			name: "missing name",
-			cfg: map[string]any{
-				"calendars": []any{
-					map[string]any{"url": "https://example.com/cal.ics"},
-				},
-			},
-			wantError: "requires non-empty 'name'",
-		},
-		{
-			name: "missing url and url_env",
-			cfg: map[string]any{
-				"calendars": []any{
-					map[string]any{"name": "Cal1"},
-				},
-			},
-			wantError: "requires either 'url' or 'url_env'",
-		},
-		{
-			name: "both url and url_env provided",
-			cfg: map[string]any{
-				"calendars": []any{
-					map[string]any{
-						"name":    "Cal1",
-						"url":     "https://example.com/cal.ics",
-						"url_env": "CAL_URL",
-					},
-				},
-			},
-			wantError: "cannot specify both 'url' and 'url_env'",
-		},
-		{
-			name: "url_env unset in environment and secrets",
-			cfg: map[string]any{
-				"calendars": []any{
-					map[string]any{
-						"name":    "Secret Cal",
-						"url_env": "UNSET_CAL_VAR_12345",
-					},
-				},
-			},
-			wantError: "environment variable \"UNSET_CAL_VAR_12345\" is not set",
-		},
-		{
-			name: "url_env resolved via secrets",
-			cfg: map[string]any{
-				"calendars": []any{
-					map[string]any{
-						"name":    "Secret Cal",
-						"url_env": "SECRET_CAL_URL",
-					},
-				},
-			},
-			opts: provider.InitOptions{
-				Secrets: map[string]string{
-					"SECRET_CAL_URL": "https://example.com/secret.ics",
-				},
-			},
-		},
-		{
-			name: "url_env resolved via structured secret path",
-			cfg: map[string]any{
-				"calendars": []any{
-					map[string]any{
-						"name":    "Structured Secret Cal",
-						"url_env": "FALLBACK_NAME",
-					},
-				},
-			},
-			opts: provider.InitOptions{
-				Secrets: map[string]string{
-					"calendars[0].url": "https://example.com/structured.ics",
-				},
-			},
-		},
-		{
-			name: "valid calendars with view",
-			cfg: map[string]any{
-				"view": "week",
-				"calendars": []map[string]any{
-					{
-						"name":    "Work",
-						"url":     "https://example.com/work.ics",
-						"color":   "#10b981",
-						"enabled": true,
-					},
-				},
-			},
-		},
-		{
-			name: "valid calendars with strip_recurring and exclude_recurring",
-			cfg: map[string]any{
-				"view":            "week",
-				"strip_recurring": true,
-				"calendars": []map[string]any{
-					{
-						"name":            "Work",
-						"url":             "https://example.com/work.ics",
-						"color":           "#10b981",
-						"enabled":         true,
-						"strip_recurring": false,
-					},
-					{
-						"name":              "Personal",
-						"url":               "https://example.com/personal.ics",
-						"color":             "#3b82f6",
-						"enabled":           true,
-						"exclude_recurring": true,
-					},
-				},
-			},
-		},
-		{
-			name: "valid calendars with exclude_recurring at root",
-			cfg: map[string]any{
-				"exclude_recurring": true,
-				"calendars": []any{
-					map[string]any{
-						"name": "Chores",
-						"url":  "https://example.com/chores.ics",
-					},
-				},
-			},
-		},
+		{"missing calendars", map[string]any{}, provider.InitOptions{}, "requires at least one calendar"},
+		{"empty calendars list", map[string]any{"calendars": []any{}}, provider.InitOptions{}, "requires at least one calendar"},
+		{"calendar item not a map", map[string]any{"calendars": []any{"invalid"}}, provider.InitOptions{}, "not a map"},
+		{"missing name", map[string]any{"calendars": []any{map[string]any{"url": "https://example.com/cal.ics"}}}, provider.InitOptions{}, "requires non-empty 'name'"},
+		{"missing url and url_env", map[string]any{"calendars": []any{map[string]any{"name": "Cal1"}}}, provider.InitOptions{}, "requires either 'url' or 'url_env'"},
+		{"both url and url_env provided", map[string]any{"calendars": []any{map[string]any{"name": "Cal1", "url": "https://x", "url_env": "E"}}}, provider.InitOptions{}, "cannot specify both 'url' and 'url_env'"},
+		{"url_env unset in environment and secrets", map[string]any{"calendars": []any{map[string]any{"name": "Cal1", "url_env": "UNSET_123"}}}, provider.InitOptions{}, "environment variable \"UNSET_123\" is not set"},
+		{"url_env resolved via secrets", map[string]any{"calendars": []any{map[string]any{"name": "Cal1", "url_env": "CAL_URL"}}}, provider.InitOptions{Secrets: map[string]string{"CAL_URL": "https://x"}}, ""},
+		{"url_env resolved via structured secret path", map[string]any{"calendars": []any{map[string]any{"name": "Cal1", "url_env": "F"}}}, provider.InitOptions{Secrets: map[string]string{"calendars[0].url": "https://x"}}, ""},
+		{"valid calendars with view", map[string]any{"view": "week", "calendars": []map[string]any{{"name": "Work", "url": "https://x", "color": "#10b981", "enabled": true}}}, provider.InitOptions{}, ""},
+		{"valid calendars with strip_recurring and exclude_recurring", map[string]any{"view": "week", "strip_recurring": true, "calendars": []map[string]any{{"name": "W", "url": "https://x", "strip_recurring": false}, {"name": "P", "url": "https://y", "exclude_recurring": true}}}, provider.InitOptions{}, ""},
+		{"valid calendars with exclude_recurring at root", map[string]any{"exclude_recurring": true, "calendars": []any{map[string]any{"name": "C", "url": "https://x"}}}, provider.InitOptions{}, ""},
 	}
 
 	for _, tc := range tests {
@@ -172,9 +68,9 @@ func TestCalendarProvider_Init_Validations(t *testing.T) {
 			t.Parallel()
 			p := provider.NewCalendarProvider()
 			err := p.Init(context.Background(), tc.cfg, tc.opts)
-			if tc.wantError != "" {
-				if err == nil || !strings.Contains(err.Error(), tc.wantError) {
-					t.Fatalf("expected error containing %q, got: %v", tc.wantError, err)
+			if tc.wantErrSub != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErrSub) {
+					t.Fatalf("expected error containing %q, got: %v", tc.wantErrSub, err)
 				}
 			} else if err != nil {
 				t.Fatalf("unexpected init error: %v", err)
@@ -183,1014 +79,318 @@ func TestCalendarProvider_Init_Validations(t *testing.T) {
 	}
 }
 
-func TestCalendarProvider_Fetch_Uninitialized(t *testing.T) {
+func TestCalendarProvider_Fetch_ParsingAndRecurrence(t *testing.T) {
 	t.Parallel()
 
-	p := provider.NewCalendarProvider()
-	_, err := p.Fetch(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "not initialized") {
-		t.Fatalf("expected not initialized error, got: %v", err)
-	}
-}
-
-func TestCalendarProvider_Fetch_SingleAndAllDayEvents(t *testing.T) {
-	t.Parallel()
-
-	// Fixed reference instant: 2026-09-25 12:00:00 UTC
-	refTime := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
-
-	icsPayload := `BEGIN:VCALENDAR
-VERSION:2.0
-PRODID:-//Mirrormere//Test Cal//EN
-BEGIN:VEVENT
-UID:evt-timed-1@mirrormere
-DTSTART:20260925T140000Z
-DTEND:20260925T150000Z
-SUMMARY:Soccer Practice
-LOCATION:Community Park Field 2
-DESCRIPTION:Bring water bottle
-END:VEVENT
-BEGIN:VEVENT
-UID:evt-allday-1@mirrormere
-DTSTART;VALUE=DATE:20260926
-DTEND;VALUE=DATE:20260927
-SUMMARY:Trash & Recycling
-END:VEVENT
-BEGIN:VEVENT
-UID:evt-multiday-allday@mirrormere
-DTSTART;VALUE=DATE:20260927
-DTEND;VALUE=DATE:20260930
-SUMMARY:Camping Trip
-LOCATION:Yosemite
-END:VEVENT
-BEGIN:VEVENT
-UID:evt-outside-past@mirrormere
-DTSTART:20260501T100000Z
-DTEND:20260501T110000Z
-SUMMARY:Old Meeting
-END:VEVENT
-BEGIN:VEVENT
-UID:evt-outside-future@mirrormere
-DTSTART:20270501T100000Z
-DTEND:20270501T110000Z
-SUMMARY:Far Future Meeting
-END:VEVENT
-BEGIN:VEVENT
-UID:evt-duration-only@mirrormere
-DTSTART:20260925T160000Z
-DURATION:PT1H30M
-SUMMARY:Duration Event
-END:VEVENT
-END:VCALENDAR`
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/calendar")
-		_, _ = w.Write([]byte(icsPayload))
-	}))
-	t.Cleanup(server.Close)
-
-	p := provider.NewCalendarProviderWithClient(server.Client(), func() time.Time {
-		return refTime
-	})
-
-	cfg := map[string]any{
-		"calendars": []any{
-			map[string]any{
-				"name":  "Family Calendar",
-				"url":   server.URL,
-				"color": "#3b82f6",
-			},
-		},
-	}
-
-	if err := p.Init(context.Background(), cfg, provider.InitOptions{}); err != nil {
-		t.Fatalf("Init failed: %v", err)
-	}
-
-	res, err := p.Fetch(context.Background())
-	if err != nil {
-		t.Fatalf("Fetch failed: %v", err)
-	}
-
-	snap, ok := res.(provider.CalendarSnapshot)
-	if !ok {
-		t.Fatalf("expected CalendarSnapshot, got %T", res)
-	}
-
-	if snap.SyncStatus != "ok" {
-		t.Errorf("expected sync_status 'ok', got %q", snap.SyncStatus)
-	}
-
-	// Should contain: Soccer Practice (timed), Duration Event (timed), Trash & Recycling (all-day), Camping Trip (all-day)
-	// Old Meeting should be excluded
-	if len(snap.Events) != 4 {
-		t.Fatalf("expected 4 events, got %d", len(snap.Events))
-	}
-
-	// Verify events are chronologically sorted
-	if snap.Events[0].Title != "Soccer Practice" {
-		t.Errorf("expected first event 'Soccer Practice', got %q", snap.Events[0].Title)
-	}
-	if snap.Events[0].AllDay {
-		t.Errorf("expected 'Soccer Practice' to not be all-day")
-	}
-	if snap.Events[0].Location != "Community Park Field 2" {
-		t.Errorf("expected location 'Community Park Field 2', got %q", snap.Events[0].Location)
-	}
-
-	if snap.Events[1].Title != "Duration Event" {
-		t.Errorf("expected second event 'Duration Event', got %q", snap.Events[1].Title)
-	}
-
-	// All-day single day check: 2026-09-26
-	if snap.Events[2].Title != "Trash & Recycling" {
-		t.Errorf("expected third event 'Trash & Recycling', got %q", snap.Events[2].Title)
-	}
-	if !snap.Events[2].AllDay {
-		t.Errorf("expected 'Trash & Recycling' to be all-day")
-	}
-	if snap.Events[2].Start != "2026-09-26" || snap.Events[2].End != "2026-09-26" {
-		t.Errorf("expected 2026-09-26 for start and end, got start=%q, end=%q", snap.Events[2].Start, snap.Events[2].End)
-	}
-
-	// Multi-day all-day check: 2026-09-27 to 2026-09-29 inclusive
-	if snap.Events[3].Title != "Camping Trip" {
-		t.Errorf("expected fourth event 'Camping Trip', got %q", snap.Events[3].Title)
-	}
-	if snap.Events[3].Start != "2026-09-27" || snap.Events[3].End != "2026-09-29" {
-		t.Errorf("expected 2026-09-27 to 2026-09-29, got start=%q, end=%q", snap.Events[3].Start, snap.Events[3].End)
-	}
-}
-
-func TestCalendarProvider_Fetch_RecurrenceAndExdatesAndOverrides(t *testing.T) {
-	t.Parallel()
-
-	// Fixed reference instant: 2026-09-20 00:00:00 UTC (Sunday)
-	refTime := time.Date(2026, 9, 20, 0, 0, 0, 0, time.UTC)
-
-	icsPayload := `BEGIN:VCALENDAR
-VERSION:2.0
-PRODID:-//Mirrormere//Recurring Cal//EN
-BEGIN:VEVENT
-UID:daily-standup@mirrormere
-DTSTART:20260921T090000Z
-DTEND:20260921T093000Z
-RRULE:FREQ=DAILY;COUNT=5
-EXDATE:20260923T090000Z
-SUMMARY:Team Standup
-END:VEVENT
-BEGIN:VEVENT
-UID:daily-standup@mirrormere
-RECURRENCE-ID:20260924T090000Z
-DTSTART:20260924T100000Z
-DTEND:20260924T104500Z
-SUMMARY:Team Standup (Delayed & Extended)
-LOCATION:Zoom Room A
-END:VEVENT
-END:VCALENDAR`
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/calendar")
-		_, _ = w.Write([]byte(icsPayload))
-	}))
-	defer server.Close()
-
-	p := provider.NewCalendarProviderWithClient(server.Client(), func() time.Time {
-		return refTime
-	})
-
-	cfg := map[string]any{
-		"calendars": []any{
-			map[string]any{
-				"name": "Work",
-				"url":  server.URL,
-			},
-		},
-	}
-
-	if err := p.Init(context.Background(), cfg, provider.InitOptions{}); err != nil {
-		t.Fatalf("Init failed: %v", err)
-	}
-
-	res, err := p.Fetch(context.Background())
-	if err != nil {
-		t.Fatalf("Fetch failed: %v", err)
-	}
-
-	snap := res.(provider.CalendarSnapshot)
-
-	// Daily for 5 days: Mon Sep 21, Tue Sep 22, Wed Sep 23 (EXDATE skipped), Thu Sep 24 (RECURRENCE-ID replaced), Fri Sep 25
-	// Total occurrences: 4 (Sep 21, Sep 22, Sep 24 modified, Sep 25)
-	if len(snap.Events) != 4 {
-		t.Fatalf("expected 4 events after exdate and override, got %d: %+v", len(snap.Events), snap.Events)
-	}
-
-	// Verify Wednesday Sep 23 is NOT in events
-	for _, ev := range snap.Events {
-		if strings.Contains(ev.Start, "2026-09-23") {
-			t.Fatalf("found excluded event on 2026-09-23: %+v", ev)
-		}
-	}
-
-	// Verify Thursday Sep 24 is replaced with overridden summary and location
-	foundOverride := false
-	for _, ev := range snap.Events {
-		if strings.Contains(ev.Start, "2026-09-24") {
-			foundOverride = true
-			if ev.Title != "Team Standup (Delayed & Extended)" {
-				t.Errorf("expected overridden title, got %q", ev.Title)
-			}
-			if ev.Location != "Zoom Room A" {
-				t.Errorf("expected location 'Zoom Room A', got %q", ev.Location)
-			}
-		}
-	}
-	if !foundOverride {
-		t.Errorf("overridden occurrence for Sep 24 was not found")
-	}
-}
-
-func TestCalendarProvider_Fetch_MultiCalendarMergeAndPartialFailure(t *testing.T) {
-	t.Parallel()
-
-	refTime := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
-
-	cal1Payload := `BEGIN:VCALENDAR
-VERSION:2.0
-BEGIN:VEVENT
-UID:work-1@mirrormere
-DTSTART:20260925T170000Z
-DTEND:20260925T180000Z
-SUMMARY:Work Meeting
-END:VEVENT
-END:VCALENDAR`
-
-	srv1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/calendar")
-		_, _ = w.Write([]byte(cal1Payload))
-	}))
-	defer srv1.Close()
-
-	srv2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "internal server error", http.StatusInternalServerError)
-	}))
-	defer srv2.Close()
-
-	p := provider.NewCalendarProviderWithClient(srv1.Client(), func() time.Time {
-		return refTime
-	})
-
-	cfg := map[string]any{
-		"calendars": []any{
-			map[string]any{
-				"name":    "Work",
-				"url":     srv1.URL,
-				"color":   "#10b981",
-				"enabled": true,
-			},
-			map[string]any{
-				"name":    "Broken",
-				"url":     srv2.URL,
-				"color":   "#ef4444",
-				"enabled": true,
-			},
-			map[string]any{
-				"name":    "Disabled",
-				"url":     "http://invalid.local/disabled.ics",
-				"enabled": false,
-			},
-		},
-	}
-
-	if err := p.Init(context.Background(), cfg, provider.InitOptions{}); err != nil {
-		t.Fatalf("Init failed: %v", err)
-	}
-
-	res, err := p.Fetch(context.Background())
-	if err != nil {
-		t.Fatalf("Fetch failed: %v", err)
-	}
-
-	snap := res.(provider.CalendarSnapshot)
-	if snap.SyncStatus != "partial" {
-		t.Errorf("expected 'partial' sync status due to srv2 failure, got %q", snap.SyncStatus)
-	}
-
-	if len(snap.Events) != 1 {
-		t.Fatalf("expected 1 event from Work calendar, got %d", len(snap.Events))
-	}
-	if snap.Events[0].Title != "Work Meeting" || snap.Events[0].Color != "#10b981" {
-		t.Errorf("unexpected event: %+v", snap.Events[0])
-	}
-}
-
-func TestCalendarProvider_Fetch_AllCalendarsFail(t *testing.T) {
-	t.Parallel()
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "service unavailable", http.StatusServiceUnavailable)
-	}))
-	defer srv.Close()
-
-	p := provider.NewCalendarProviderWithClient(srv.Client(), nil)
-
-	cfg := map[string]any{
-		"calendars": []any{
-			map[string]any{
-				"name": "Failing",
-				"url":  srv.URL,
-			},
-		},
-	}
-
-	if err := p.Init(context.Background(), cfg, provider.InitOptions{}); err != nil {
-		t.Fatalf("Init failed: %v", err)
-	}
-
-	_, err := p.Fetch(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "all calendar feeds failed") {
-		t.Fatalf("expected all calendar feeds failed error, got: %v", err)
-	}
-}
-
-func TestCalendarProvider_Fetch_WebcalAndInvalidICS(t *testing.T) {
-	t.Parallel()
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte("NOT A VALID ICS FILE"))
-	}))
-	defer srv.Close()
-
-	p := provider.NewCalendarProviderWithClient(srv.Client(), nil)
-
-	cfg := map[string]any{
-		"calendars": []any{
-			map[string]any{
-				"name": "Webcal Feed",
-				"url":  strings.Replace(srv.URL, "http://", "webcal://", 1),
-			},
-		},
-	}
-
-	if err := p.Init(context.Background(), cfg, provider.InitOptions{}); err != nil {
-		t.Fatalf("Init failed: %v", err)
-	}
-
-	_, err := p.Fetch(context.Background())
-	if err == nil {
-		t.Fatalf("expected error on malformed ics, got nil")
-	}
-}
-
-func TestCalendarProvider_RegistryAndLifecycle(t *testing.T) {
-	t.Parallel()
-
-	reg := provider.NewRegistry()
-	if !reg.Has("calendar-agenda") {
-		t.Error("expected registry to have 'calendar-agenda'")
-	}
-	if !reg.Has("calendar") {
-		t.Error("expected registry to have 'calendar'")
-	}
-
-	p, err := reg.Create("calendar-agenda")
-	if err != nil {
-		t.Fatalf("failed to create 'calendar-agenda': %v", err)
-	}
-
-	if err := p.Subscribe(context.Background(), nil); err != nil {
-		t.Errorf("Subscribe returned error: %v", err)
-	}
-	if err := p.Shutdown(context.Background()); err != nil {
-		t.Errorf("Shutdown returned error: %v", err)
-	}
-}
-
-func TestCalendarProvider_Fetch_TimezonesAndDurations(t *testing.T) {
-	t.Parallel()
-
-	refTime := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
-
-	icsPayload := `BEGIN:VCALENDAR
-VERSION:2.0
-BEGIN:VEVENT
-UID:tz-event-1@mirrormere
-DTSTART;TZID=America/New_York:20260925T090000
-DURATION:P1D
-SUMMARY:NY Full Day Event
-END:VEVENT
-BEGIN:VEVENT
-UID:tz-event-2@mirrormere
-DTSTART:20260925T140000Z
-DURATION:PT45S
-SUMMARY:Short Event
-END:VEVENT
-BEGIN:VEVENT
-UID:invalid-date-event@mirrormere
-DTSTART:INVALID_DATE_VALUE
-SUMMARY:Invalid Date
-END:VEVENT
-BEGIN:VEVENT
-SUMMARY:No DTSTART Event
-END:VEVENT
-BEGIN:VEVENT
-UID:very-long-uid-exceeding-thirty-two-characters-with-special-chars-@!#$%
-DTSTART:20260925T140000Z
-SUMMARY:Same Time Event A
-END:VEVENT
-BEGIN:VEVENT
-UID:same-time-b
-DTSTART:20260925T140000Z
-SUMMARY:Same Time Event B
-END:VEVENT
-BEGIN:VEVENT
-UID:
-DTSTART:20260925T140000Z
-SUMMARY:Empty UID Event
-END:VEVENT
-END:VCALENDAR`
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/calendar")
-		_, _ = w.Write([]byte(icsPayload))
-	}))
-	defer srv.Close()
-
-	p := provider.NewCalendarProviderWithClient(srv.Client(), func() time.Time {
-		return refTime
-	})
-
-	cfg := map[string]any{
-		"calendars": []any{
-			map[string]any{
-				"name": "TZ Calendar",
-				"url":  srv.URL,
-			},
-		},
-	}
-
-	if err := p.Init(context.Background(), cfg, provider.InitOptions{}); err != nil {
-		t.Fatalf("Init failed: %v", err)
-	}
-
-	res, err := p.Fetch(context.Background())
-	if err != nil {
-		t.Fatalf("Fetch failed: %v", err)
-	}
-
-	snap := res.(provider.CalendarSnapshot)
-	if len(snap.Events) < 3 {
-		t.Fatalf("expected at least 3 valid events, got %d", len(snap.Events))
-	}
-}
-
-func TestCalendarProvider_Fetch_InvalidRequestURL(t *testing.T) {
-	t.Parallel()
-
-	p := provider.NewCalendarProviderWithClient(nil, nil)
-	cfg := map[string]any{
-		"calendars": []any{
-			map[string]any{
-				"name": "Bad URL",
-				"url":  "http:// invalid url with spaces",
-			},
-		},
-	}
-
-	if err := p.Init(context.Background(), cfg, provider.InitOptions{}); err != nil {
-		t.Fatalf("Init failed: %v", err)
-	}
-
-	_, err := p.Fetch(context.Background())
-	if err == nil {
-		t.Fatalf("expected error on invalid request URL, got nil")
-	}
-}
-
-func TestCalendarProvider_Fetch_RecurrenceEdgeCases(t *testing.T) {
-	t.Parallel()
-
-	refTime := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
-
-	icsPayload := `BEGIN:VCALENDAR
-VERSION:2.0
-BEGIN:VEVENT
-UID:bad-rrule@mirrormere
-DTSTART:20260925T100000Z
-RRULE:INVALID_RRULE_SYNTAX
-SUMMARY:Bad RRULE
-END:VEVENT
-BEGIN:VEVENT
-UID:recur-duration@mirrormere
-DTSTART:20260925T110000Z
-DURATION:PT2H
-RRULE:FREQ=DAILY;COUNT=2
-SUMMARY:Recurring with Duration
-END:VEVENT
-BEGIN:VEVENT
-UID:recur-bad-dtstart@mirrormere
-DTSTART:INVALID_TIME
-RRULE:FREQ=DAILY;COUNT=2
-SUMMARY:Bad DTSTART
-END:VEVENT
-END:VCALENDAR`
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/calendar")
-		_, _ = w.Write([]byte(icsPayload))
-	}))
-	defer srv.Close()
-
-	p := provider.NewCalendarProviderWithClient(srv.Client(), func() time.Time {
-		return refTime
-	})
-
-	cfg := map[string]any{
-		"calendars": []any{
-			map[string]any{
-				"name": "Edge Recurrence",
-				"url":  srv.URL,
-			},
-		},
-	}
-
-	if err := p.Init(context.Background(), cfg, provider.InitOptions{}); err != nil {
-		t.Fatalf("Init failed: %v", err)
-	}
-
-	res, err := p.Fetch(context.Background())
-	if err != nil {
-		t.Fatalf("Fetch failed: %v", err)
-	}
-
-	snap := res.(provider.CalendarSnapshot)
-	if len(snap.Events) != 2 {
-		t.Fatalf("expected 2 recurring occurrences from recur-duration, got %d", len(snap.Events))
-	}
-}
-
-func TestCalendarProvider_Fetch_SlowlorisSizeLimit(t *testing.T) {
-	t.Parallel()
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/calendar")
-		chunk := make([]byte, 1024*1024)
-		for i := range chunk {
-			chunk[i] = 'A'
-		}
-		_, _ = w.Write(chunk)
-		_, _ = w.Write(chunk)
-		_, _ = w.Write([]byte("OVERFLOW_BYTES"))
-	}))
-	defer srv.Close()
-
-	p := provider.NewCalendarProviderWithClient(srv.Client(), nil)
-	cfg := map[string]any{
-		"calendars": []any{
-			map[string]any{
-				"name": "Huge Calendar",
-				"url":  srv.URL,
-			},
-		},
-	}
-
-	if err := p.Init(context.Background(), cfg, provider.InitOptions{}); err != nil {
-		t.Fatalf("Init failed: %v", err)
-	}
-
-	_, err := p.Fetch(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "exceeds size limit") {
-		t.Fatalf("expected size limit error, got: %v", err)
-	}
-}
-
-func TestCalendarProvider_Fetch_HighFrequencyRecurrenceIgnored(t *testing.T) {
-	t.Parallel()
-
-	refTime := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
-	icsPayload := `BEGIN:VCALENDAR
-VERSION:2.0
-BEGIN:VEVENT
-UID:secondly-recur@mirrormere
-DTSTART:20260925T100000Z
-RRULE:FREQ=SECONDLY;INTERVAL=1
-SUMMARY:Secondly Runaway
-END:VEVENT
-BEGIN:VEVENT
-UID:minutely-recur@mirrormere
-DTSTART:20260925T100000Z
-RRULE:FREQ=MINUTELY;INTERVAL=5
-SUMMARY:Minutely Runaway
-END:VEVENT
-END:VCALENDAR`
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/calendar")
-		_, _ = w.Write([]byte(icsPayload))
-	}))
-	defer srv.Close()
-
-	p := provider.NewCalendarProviderWithClient(srv.Client(), func() time.Time {
-		return refTime
-	})
-
-	cfg := map[string]any{
-		"calendars": []any{
-			map[string]any{
-				"name": "High Frequency",
-				"url":  srv.URL,
-			},
-		},
-	}
-
-	if err := p.Init(context.Background(), cfg, provider.InitOptions{}); err != nil {
-		t.Fatalf("Init failed: %v", err)
-	}
-
-	res, err := p.Fetch(context.Background())
-	if err != nil {
-		t.Fatalf("Fetch failed: %v", err)
-	}
-
-	snap := res.(provider.CalendarSnapshot)
-	if len(snap.Events) != 0 {
-		t.Fatalf("expected 0 events because high-frequency RRULEs are ignored, got %d", len(snap.Events))
-	}
-}
-
-func TestCalendarProvider_Fetch_StripRecurring(t *testing.T) {
-	t.Parallel()
-
-	// Fixed reference instant: 2026-09-20 00:00:00 UTC (Sunday)
-	refTime := time.Date(2026, 9, 20, 0, 0, 0, 0, time.UTC)
-
-	icsPayload := `BEGIN:VCALENDAR
-VERSION:2.0
-PRODID:-//Mirrormere//Recurring Cal//EN
-BEGIN:VEVENT
-UID:one-off-dentist@mirrormere
-DTSTART:20260921T140000Z
-DTEND:20260921T150000Z
-SUMMARY:Dentist Appointment
-END:VEVENT
-BEGIN:VEVENT
-UID:daily-standup@mirrormere
-DTSTART:20260921T090000Z
-DTEND:20260921T093000Z
-RRULE:FREQ=DAILY;COUNT=3
-SUMMARY:Team Standup
-END:VEVENT
-BEGIN:VEVENT
-UID:daily-standup@mirrormere
-RECURRENCE-ID:20260922T090000Z
-DTSTART:20260922T100000Z
-DTEND:20260922T103000Z
-SUMMARY:Team Standup (Rescheduled)
-END:VEVENT
-BEGIN:VEVENT
-UID:rdate-event@mirrormere
-DTSTART:20260921T110000Z
-DTEND:20260921T120000Z
-RDATE:20260923T110000Z
-SUMMARY:Ad-hoc Sync
-END:VEVENT
-BEGIN:VEVENT
-UID:one-off-dinner@mirrormere
-DTSTART:20260922T180000Z
-DTEND:20260922T200000Z
-SUMMARY:Dinner with Friends
-END:VEVENT
-END:VCALENDAR`
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/calendar")
-		_, _ = w.Write([]byte(icsPayload))
-	}))
-	t.Cleanup(server.Close)
-
-	t.Run("default keeps recurring events", func(t *testing.T) {
+	t.Run("single and all day", func(t *testing.T) {
 		t.Parallel()
-		p := provider.NewCalendarProviderWithClient(server.Client(), func() time.Time {
-			return refTime
-		})
-		cfg := map[string]any{
-			"calendars": []any{
-				map[string]any{
-					"name": "All Events",
-					"url":  server.URL,
-				},
-			},
+		ics := icsDoc(
+			"BEGIN:VEVENT\nUID:evt-timed\nDTSTART:20260925T140000Z\nDTEND:20260925T150000Z\nSUMMARY:Soccer Practice\nLOCATION:Field 2\nEND:VEVENT",
+			"BEGIN:VEVENT\nUID:evt-allday\nDTSTART;VALUE=DATE:20260926\nDTEND;VALUE=DATE:20260927\nSUMMARY:Trash & Recycling\nEND:VEVENT",
+			"BEGIN:VEVENT\nUID:evt-multiday\nDTSTART;VALUE=DATE:20260927\nDTEND;VALUE=DATE:20260930\nSUMMARY:Camping Trip\nLOCATION:Yosemite\nEND:VEVENT",
+			"BEGIN:VEVENT\nUID:evt-past\nDTSTART:20260501T100000Z\nDTEND:20260501T110000Z\nSUMMARY:Old Meeting\nEND:VEVENT",
+			"BEGIN:VEVENT\nUID:evt-future\nDTSTART:20270501T100000Z\nDTEND:20270501T110000Z\nSUMMARY:Far Future Meeting\nEND:VEVENT",
+			"BEGIN:VEVENT\nUID:evt-dur\nDTSTART:20260925T160000Z\nDURATION:PT1H30M\nSUMMARY:Duration Event\nEND:VEVENT",
+		)
+		ref := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+		snap, err := fetchTestCalendar(t, ics, ref, nil)
+		if err != nil || len(snap.Events) != 4 || snap.SyncStatus != "ok" {
+			t.Fatalf("fetch failed: err=%v len=%d", err, len(snap.Events))
 		}
-		if err := p.Init(context.Background(), cfg, provider.InitOptions{}); err != nil {
-			t.Fatalf("Init failed: %v", err)
+		if snap.Events[0].Title != "Soccer Practice" || snap.Events[0].Location != "Field 2" || snap.Events[0].AllDay {
+			t.Errorf("ev[0] mismatch: %+v", snap.Events[0])
 		}
-		res, err := p.Fetch(context.Background())
-		if err != nil {
-			t.Fatalf("Fetch failed: %v", err)
+		if snap.Events[1].Title != "Duration Event" {
+			t.Errorf("ev[1] mismatch: %+v", snap.Events[1])
 		}
-		snap := res.(provider.CalendarSnapshot)
-		// Standup has 3 occurrences + RDATE (1) + 2 one-offs = 6 total events
-		if len(snap.Events) <= 2 {
-			t.Fatalf("expected recurring events included by default, got %d", len(snap.Events))
+		if snap.Events[2].Start != "2026-09-26" || snap.Events[2].End != "2026-09-26" || !snap.Events[2].AllDay {
+			t.Errorf("ev[2] mismatch: %+v", snap.Events[2])
+		}
+		if snap.Events[3].Start != "2026-09-27" || snap.Events[3].End != "2026-09-29" {
+			t.Errorf("ev[3] mismatch: %+v", snap.Events[3])
 		}
 	})
 
-	t.Run("strip_recurring true at root filters out recurring events", func(t *testing.T) {
+	t.Run("recurrence exdates and overrides", func(t *testing.T) {
 		t.Parallel()
-		p := provider.NewCalendarProviderWithClient(server.Client(), func() time.Time {
-			return refTime
-		})
-		cfg := map[string]any{
-			"strip_recurring": true,
-			"calendars": []any{
-				map[string]any{
-					"name": "One-Offs Only",
-					"url":  server.URL,
-				},
-			},
+		ics := icsDoc(
+			"BEGIN:VEVENT\nUID:daily\nDTSTART:20260921T090000Z\nDTEND:20260921T093000Z\nRRULE:FREQ=DAILY;COUNT=5\nEXDATE:20260923T090000Z\nSUMMARY:Team Standup\nEND:VEVENT",
+			"BEGIN:VEVENT\nUID:daily\nRECURRENCE-ID:20260924T090000Z\nDTSTART:20260924T100000Z\nDTEND:20260924T104500Z\nSUMMARY:Team Standup (Delayed)\nLOCATION:Zoom Room A\nEND:VEVENT",
+		)
+		ref := time.Date(2026, 9, 20, 0, 0, 0, 0, time.UTC)
+		snap, err := fetchTestCalendar(t, ics, ref, nil)
+		if err != nil || len(snap.Events) != 4 {
+			t.Fatalf("fetch failed: err=%v len=%d", err, len(snap.Events))
 		}
-		if err := p.Init(context.Background(), cfg, provider.InitOptions{}); err != nil {
-			t.Fatalf("Init failed: %v", err)
-		}
-		res, err := p.Fetch(context.Background())
-		if err != nil {
-			t.Fatalf("Fetch failed: %v", err)
-		}
-		snap := res.(provider.CalendarSnapshot)
-		if len(snap.Events) != 2 {
-			t.Fatalf("expected exactly 2 one-off events, got %d: %+v", len(snap.Events), snap.Events)
-		}
-		titles := map[string]bool{}
 		for _, ev := range snap.Events {
-			titles[ev.Title] = true
-		}
-		if !titles["Dentist Appointment"] || !titles["Dinner with Friends"] {
-			t.Fatalf("unexpected events returned: %+v", titles)
-		}
-	})
-
-	t.Run("exclude_recurring alias at root filters out recurring events", func(t *testing.T) {
-		t.Parallel()
-		p := provider.NewCalendarProviderWithClient(server.Client(), func() time.Time {
-			return refTime
-		})
-		cfg := map[string]any{
-			"exclude_recurring": true,
-			"calendars": []any{
-				map[string]any{
-					"name": "One-Offs Only",
-					"url":  server.URL,
-				},
-			},
-		}
-		if err := p.Init(context.Background(), cfg, provider.InitOptions{}); err != nil {
-			t.Fatalf("Init failed: %v", err)
-		}
-		res, err := p.Fetch(context.Background())
-		if err != nil {
-			t.Fatalf("Fetch failed: %v", err)
-		}
-		snap := res.(provider.CalendarSnapshot)
-		if len(snap.Events) != 2 {
-			t.Fatalf("expected exactly 2 one-off events, got %d: %+v", len(snap.Events), snap.Events)
-		}
-	})
-
-	t.Run("per-source override overrides root strip_recurring", func(t *testing.T) {
-		t.Parallel()
-		p := provider.NewCalendarProviderWithClient(server.Client(), func() time.Time {
-			return refTime
-		})
-		cfg := map[string]any{
-			"strip_recurring": true,
-			"calendars": []any{
-				map[string]any{
-					"name":            "Stripped",
-					"url":             server.URL,
-					"strip_recurring": true,
-				},
-				map[string]any{
-					"name":            "Included",
-					"url":             server.URL,
-					"strip_recurring": false,
-				},
-			},
-		}
-		if err := p.Init(context.Background(), cfg, provider.InitOptions{}); err != nil {
-			t.Fatalf("Init failed: %v", err)
-		}
-		res, err := p.Fetch(context.Background())
-		if err != nil {
-			t.Fatalf("Fetch failed: %v", err)
-		}
-		snap := res.(provider.CalendarSnapshot)
-		strippedCount := 0
-		includedCount := 0
-		for _, ev := range snap.Events {
-			if ev.CalendarName == "Stripped" {
-				strippedCount++
-			} else if ev.CalendarName == "Included" {
-				includedCount++
+			if strings.Contains(ev.Start, "2026-09-23") {
+				t.Fatalf("found excluded exdate event: %+v", ev)
+			}
+			if strings.Contains(ev.Start, "2026-09-24") && (ev.Title != "Team Standup (Delayed)" || ev.Location != "Zoom Room A") {
+				t.Errorf("overridden event mismatch: %+v", ev)
 			}
 		}
-		if strippedCount != 2 {
-			t.Errorf("expected 2 events for Stripped calendar, got %d", strippedCount)
-		}
-		if includedCount <= 2 {
-			t.Errorf("expected >2 events for Included calendar, got %d", includedCount)
+	})
+
+	t.Run("timezones and durations", func(t *testing.T) {
+		t.Parallel()
+		ics := icsDoc(
+			"BEGIN:VEVENT\nUID:tz1\nDTSTART;TZID=America/New_York:20260925T090000\nDURATION:P1D\nSUMMARY:NY Full Day\nEND:VEVENT",
+			"BEGIN:VEVENT\nUID:tz2\nDTSTART:20260925T140000Z\nDURATION:PT45S\nSUMMARY:Short\nEND:VEVENT",
+			"BEGIN:VEVENT\nUID:inv\nDTSTART:INVALID_DATE\nSUMMARY:Inv\nEND:VEVENT",
+			"BEGIN:VEVENT\nSUMMARY:No DTSTART\nEND:VEVENT",
+			"BEGIN:VEVENT\nUID:long-uid-exceeding-thirty-two-chars-with-special-chars-@!#$%\nDTSTART:20260925T140000Z\nSUMMARY:Same Time A\nEND:VEVENT",
+			"BEGIN:VEVENT\nUID:same-b\nDTSTART:20260925T140000Z\nSUMMARY:Same Time B\nEND:VEVENT",
+			"BEGIN:VEVENT\nUID:\nDTSTART:20260925T140000Z\nSUMMARY:Empty UID\nEND:VEVENT",
+		)
+		ref := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+		snap, err := fetchTestCalendar(t, ics, ref, nil)
+		if err != nil || len(snap.Events) < 3 {
+			t.Fatalf("fetch failed: err=%v len=%d", err, len(snap.Events))
 		}
 	})
 
-	t.Run("per-source exclude_recurring alias enables stripping when root is false", func(t *testing.T) {
+	t.Run("recurrence edge cases", func(t *testing.T) {
 		t.Parallel()
-		p := provider.NewCalendarProviderWithClient(server.Client(), func() time.Time {
-			return refTime
-		})
-		cfg := map[string]any{
-			"strip_recurring": false,
-			"calendars": []any{
-				map[string]any{
-					"name":              "Stripped",
-					"url":               server.URL,
-					"exclude_recurring": true,
-				},
-			},
+		ics := icsDoc(
+			"BEGIN:VEVENT\nUID:bad-rrule\nDTSTART:20260925T100000Z\nRRULE:INVALID_RRULE\nSUMMARY:Bad\nEND:VEVENT",
+			"BEGIN:VEVENT\nUID:recur-dur\nDTSTART:20260925T110000Z\nDURATION:PT2H\nRRULE:FREQ=DAILY;COUNT=2\nSUMMARY:Recurring with Duration\nEND:VEVENT",
+			"BEGIN:VEVENT\nUID:recur-bad-start\nDTSTART:INVALID\nRRULE:FREQ=DAILY;COUNT=2\nSUMMARY:Bad Start\nEND:VEVENT",
+		)
+		ref := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+		snap, err := fetchTestCalendar(t, ics, ref, nil)
+		if err != nil || len(snap.Events) != 2 {
+			t.Fatalf("expected 2 recurring occurrences, got %d (err: %v)", len(snap.Events), err)
 		}
-		if err := p.Init(context.Background(), cfg, provider.InitOptions{}); err != nil {
-			t.Fatalf("Init failed: %v", err)
+	})
+
+	t.Run("high frequency recurrence ignored", func(t *testing.T) {
+		t.Parallel()
+		ics := icsDoc(
+			"BEGIN:VEVENT\nUID:sec\nDTSTART:20260925T100000Z\nRRULE:FREQ=SECONDLY;INTERVAL=1\nSUMMARY:Sec\nEND:VEVENT",
+			"BEGIN:VEVENT\nUID:min\nDTSTART:20260925T100000Z\nRRULE:FREQ=MINUTELY;INTERVAL=5\nSUMMARY:Min\nEND:VEVENT",
+		)
+		ref := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+		snap, err := fetchTestCalendar(t, ics, ref, nil)
+		if err != nil || len(snap.Events) != 0 {
+			t.Fatalf("expected 0 events, got %d (err: %v)", len(snap.Events), err)
 		}
-		res, err := p.Fetch(context.Background())
-		if err != nil {
-			t.Fatalf("Fetch failed: %v", err)
-		}
-		snap := res.(provider.CalendarSnapshot)
-		if len(snap.Events) != 2 {
-			t.Fatalf("expected 2 events for Stripped calendar, got %d", len(snap.Events))
+	})
+
+	t.Run("strip recurring", func(t *testing.T) {
+		t.Parallel()
+		ref := time.Date(2026, 9, 20, 0, 0, 0, 0, time.UTC)
+		ics := icsDoc(
+			"BEGIN:VEVENT\nUID:dentist\nDTSTART:20260921T140000Z\nDTEND:20260921T150000Z\nSUMMARY:Dentist\nEND:VEVENT",
+			"BEGIN:VEVENT\nUID:standup\nDTSTART:20260921T090000Z\nDTEND:20260921T093000Z\nRRULE:FREQ=DAILY;COUNT=3\nSUMMARY:Standup\nEND:VEVENT",
+			"BEGIN:VEVENT\nUID:standup\nRECURRENCE-ID:20260922T090000Z\nDTSTART:20260922T100000Z\nDTEND:20260922T103000Z\nSUMMARY:Standup (Rescheduled)\nEND:VEVENT",
+			"BEGIN:VEVENT\nUID:rdate\nDTSTART:20260921T110000Z\nDTEND:20260921T120000Z\nRDATE:20260923T110000Z\nSUMMARY:Ad-hoc\nEND:VEVENT",
+			"BEGIN:VEVENT\nUID:dinner\nDTSTART:20260922T180000Z\nDTEND:20260922T200000Z\nSUMMARY:Dinner\nEND:VEVENT",
+		)
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/calendar")
+			_, _ = w.Write([]byte(ics))
+		}))
+		t.Cleanup(srv.Close)
+
+		for _, tc := range []struct {
+			name      string
+			cfg       map[string]any
+			wantCount int
+		}{
+			{"default keeps recurring", map[string]any{"calendars": []any{map[string]any{"name": "A", "url": srv.URL}}}, 6},
+			{"root strip_recurring", map[string]any{"strip_recurring": true, "calendars": []any{map[string]any{"name": "A", "url": srv.URL}}}, 2},
+			{"root exclude_recurring alias", map[string]any{"exclude_recurring": true, "calendars": []any{map[string]any{"name": "A", "url": srv.URL}}}, 2},
+			{"per-source override", map[string]any{"strip_recurring": true, "calendars": []any{map[string]any{"name": "S", "url": srv.URL, "strip_recurring": true}, map[string]any{"name": "I", "url": srv.URL, "strip_recurring": false}}}, 8},
+			{"per-source exclude_recurring alias", map[string]any{"strip_recurring": false, "calendars": []any{map[string]any{"name": "S", "url": srv.URL, "exclude_recurring": true}}}, 2},
+		} {
+			p := provider.NewCalendarProviderWithClient(srv.Client(), func() time.Time { return ref })
+			if err := p.Init(context.Background(), tc.cfg, provider.InitOptions{}); err != nil {
+				t.Fatalf("%s init failed: %v", tc.name, err)
+			}
+			res, err := p.Fetch(context.Background())
+			if err != nil {
+				t.Fatalf("%s fetch failed: %v", tc.name, err)
+			}
+			snap := res.(provider.CalendarSnapshot)
+			if len(snap.Events) != tc.wantCount {
+				t.Errorf("%s: got %d events, want %d", tc.name, len(snap.Events), tc.wantCount)
+			}
 		}
 	})
 }
 
+func TestCalendarProvider_Fetch_MultiFeedAndErrors(t *testing.T) {
+	t.Parallel()
 
-func TestCalendarProvider_SortCalendarEvents_TimezoneAndAllDay(t *testing.T) {
+	t.Run("uninitialized error", func(t *testing.T) {
+		t.Parallel()
+		p := provider.NewCalendarProvider()
+		if _, err := p.Fetch(context.Background()); err == nil || !strings.Contains(err.Error(), "not initialized") {
+			t.Fatalf("expected not initialized error, got: %v", err)
+		}
+	})
+
+	t.Run("multi calendar merge and partial failure", func(t *testing.T) {
+		t.Parallel()
+		s1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/calendar")
+			_, _ = w.Write([]byte(icsDoc("BEGIN:VEVENT\nUID:w1\nDTSTART:20260925T170000Z\nDTEND:20260925T180000Z\nSUMMARY:Work Meeting\nEND:VEVENT")))
+		}))
+		defer s1.Close()
+		s2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "internal server error", http.StatusInternalServerError)
+		}))
+		defer s2.Close()
+
+		p := provider.NewCalendarProviderWithClient(s1.Client(), func() time.Time { return time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC) })
+		cfg := map[string]any{
+			"calendars": []any{
+				map[string]any{"name": "Work", "url": s1.URL, "color": "#10b981", "enabled": true},
+				map[string]any{"name": "Broken", "url": s2.URL, "color": "#ef4444", "enabled": true},
+				map[string]any{"name": "Disabled", "url": "http://invalid.local/disabled.ics", "enabled": false},
+			},
+		}
+		if err := p.Init(context.Background(), cfg, provider.InitOptions{}); err != nil {
+			t.Fatalf("init failed: %v", err)
+		}
+		res, err := p.Fetch(context.Background())
+		if err != nil {
+			t.Fatalf("fetch failed: %v", err)
+		}
+		snap := res.(provider.CalendarSnapshot)
+		if snap.SyncStatus != "partial" || len(snap.Events) != 1 || snap.Events[0].Title != "Work Meeting" {
+			t.Fatalf("unexpected snapshot: %+v", snap)
+		}
+	})
+
+	t.Run("all calendars fail", func(t *testing.T) {
+		t.Parallel()
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "unavailable", http.StatusServiceUnavailable)
+		}))
+		defer srv.Close()
+		p := provider.NewCalendarProviderWithClient(srv.Client(), nil)
+		_ = p.Init(context.Background(), map[string]any{"calendars": []any{map[string]any{"name": "F", "url": srv.URL}}}, provider.InitOptions{})
+		if _, err := p.Fetch(context.Background()); err == nil || !strings.Contains(err.Error(), "all calendar feeds failed") {
+			t.Fatalf("expected all failed error, got: %v", err)
+		}
+	})
+
+	t.Run("webcal and invalid ics", func(t *testing.T) {
+		t.Parallel()
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte("NOT A VALID ICS"))
+		}))
+		defer srv.Close()
+		p := provider.NewCalendarProviderWithClient(srv.Client(), nil)
+		_ = p.Init(context.Background(), map[string]any{"calendars": []any{map[string]any{"name": "W", "url": strings.Replace(srv.URL, "http://", "webcal://", 1)}}}, provider.InitOptions{})
+		if _, err := p.Fetch(context.Background()); err == nil {
+			t.Fatal("expected error on malformed ics")
+		}
+	})
+
+	t.Run("invalid request url", func(t *testing.T) {
+		t.Parallel()
+		p := provider.NewCalendarProviderWithClient(nil, nil)
+		_ = p.Init(context.Background(), map[string]any{"calendars": []any{map[string]any{"name": "B", "url": "http:// invalid url with spaces"}}}, provider.InitOptions{})
+		if _, err := p.Fetch(context.Background()); err == nil {
+			t.Fatal("expected error on invalid url")
+		}
+	})
+
+	t.Run("slowloris size limit", func(t *testing.T) {
+		t.Parallel()
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			chunk := make([]byte, 1024*1024)
+			for i := range chunk {
+				chunk[i] = 'A'
+			}
+			_, _ = w.Write(chunk)
+			_, _ = w.Write(chunk)
+			_, _ = w.Write([]byte("OVERFLOW"))
+		}))
+		defer srv.Close()
+		p := provider.NewCalendarProviderWithClient(srv.Client(), nil)
+		_ = p.Init(context.Background(), map[string]any{"calendars": []any{map[string]any{"name": "H", "url": srv.URL}}}, provider.InitOptions{})
+		if _, err := p.Fetch(context.Background()); err == nil || !strings.Contains(err.Error(), "exceeds size limit") {
+			t.Fatalf("expected size limit error, got: %v", err)
+		}
+	})
+
+	t.Run("registry and lifecycle", func(t *testing.T) {
+		t.Parallel()
+		reg := provider.NewRegistry()
+		if !reg.Has("calendar-agenda") || !reg.Has("calendar") {
+			t.Error("expected registry to have calendar")
+		}
+		p, err := reg.Create("calendar-agenda")
+		if err != nil {
+			t.Fatalf("failed create: %v", err)
+		}
+		if err := p.Subscribe(context.Background(), nil); err != nil {
+			t.Errorf("subscribe err: %v", err)
+		}
+		if err := p.Shutdown(context.Background()); err != nil {
+			t.Errorf("shutdown err: %v", err)
+		}
+	})
+}
+
+func TestCalendarProvider_Sorting(t *testing.T) {
 	t.Parallel()
 
 	laLoc, err := time.LoadLocation("America/Los_Angeles")
 	if err != nil {
-		t.Fatalf("failed to load America/Los_Angeles location: %v", err)
+		t.Fatalf("failed load location: %v", err)
 	}
 
-	// In America/Los_Angeles (PDT, UTC-7):
-	// - 10/12 19:00 PDT is 2026-10-13 02:00 UTC
-	// - 10/14 19:00 PDT is 2026-10-15 02:00 UTC
-	// - 10/15 All-Day is local date 2026-10-15
-	// - 10/15 10:00 PDT is 2026-10-15 17:00 UTC
-	//
-	// Naive string sorting sorted:
-	//   "2026-10-13T02:00:00Z" (10/12 evening)
-	//   < "2026-10-15" (10/15 all-day party)
-	//   < "2026-10-15T02:00:00Z" (10/14 evening!)
-	//   < "2026-10-15T17:00:00Z" (10/15 morning)
-	// causing the all-day 10/15 event to appear between 10/12 and 10/14!
-
-	ev1012 := provider.CalendarEvent{
-		ID:     "e-1012",
-		Title:  "Monday Evening Dinner",
-		Start:  "2026-10-13T02:00:00Z",
-		End:    "2026-10-13T03:00:00Z",
-		AllDay: false,
-	}
-	ev1014 := provider.CalendarEvent{
-		ID:     "e-1014",
-		Title:  "Wednesday Game Night",
-		Start:  "2026-10-15T02:00:00Z",
-		End:    "2026-10-15T04:00:00Z",
-		AllDay: false,
-	}
-	ev1015AllDay := provider.CalendarEvent{
-		ID:     "e-1015-party",
-		Title:  "Weekend Bachelorette Party",
-		Start:  "2026-10-15",
-		End:    "2026-10-15",
-		AllDay: true,
-	}
-	ev1015Timed := provider.CalendarEvent{
-		ID:     "e-1015-brunch",
-		Title:  "Brunch with Bridesmaids",
-		Start:  "2026-10-15T17:00:00Z",
-		End:    "2026-10-15T18:30:00Z",
-		AllDay: false,
-	}
-
-	events := []provider.CalendarEvent{
-		ev1015AllDay,
-		ev1014,
-		ev1012,
-		ev1015Timed,
-	}
-
-	provider.SortCalendarEvents(events, laLoc)
-
-	expectedOrder := []string{
-		"Monday Evening Dinner",
-		"Wednesday Game Night",
-		"Weekend Bachelorette Party",
-		"Brunch with Bridesmaids",
-	}
-
-	for i, expected := range expectedOrder {
-		if events[i].Title != expected {
-			t.Errorf("at index %d: expected %q, got %q", i, expected, events[i].Title)
+	t.Run("SortCalendarEvents timezone and all day", func(t *testing.T) {
+		t.Parallel()
+		events := []provider.CalendarEvent{
+			{ID: "e3", Title: "Weekend Bachelorette Party", Start: "2026-10-15", End: "2026-10-15", AllDay: true},
+			{ID: "e2", Title: "Wednesday Game Night", Start: "2026-10-15T02:00:00Z", End: "2026-10-15T04:00:00Z"},
+			{ID: "e1", Title: "Monday Evening Dinner", Start: "2026-10-13T02:00:00Z", End: "2026-10-13T03:00:00Z"},
+			{ID: "e4", Title: "Brunch with Bridesmaids", Start: "2026-10-15T17:00:00Z", End: "2026-10-15T18:30:00Z"},
 		}
-	}
-}
-
-
-func TestCalendarProvider_Fetch_TimezoneAwareSorting(t *testing.T) {
-	t.Parallel()
-
-	refTime := time.Date(2026, 10, 10, 0, 0, 0, 0, time.UTC)
-
-	// iCal feed containing:
-	// 1. Monday evening dinner (Oct 12 19:00 PDT -> Oct 13 02:00 UTC)
-	// 2. Wednesday game night (Oct 14 19:00 PDT -> Oct 15 02:00 UTC)
-	// 3. Thursday all day bachelorette party (Oct 15 VALUE=DATE)
-	// 4. Thursday morning brunch (Oct 15 10:00 PDT -> Oct 15 17:00 UTC)
-	icsPayload := `BEGIN:VCALENDAR
-VERSION:2.0
-PRODID:-//Mirrormere//Sorting Test//EN
-BEGIN:VEVENT
-UID:evt-party@mirrormere
-DTSTART;VALUE=DATE:20261015
-DTEND;VALUE=DATE:20261016
-SUMMARY:Weekend Bachelorette Party
-END:VEVENT
-BEGIN:VEVENT
-UID:evt-wed@mirrormere
-DTSTART:20261015T020000Z
-DTEND:20261015T040000Z
-SUMMARY:Wednesday Game Night
-END:VEVENT
-BEGIN:VEVENT
-UID:evt-mon@mirrormere
-DTSTART:20261013T020000Z
-DTEND:20261013T030000Z
-SUMMARY:Monday Evening Dinner
-END:VEVENT
-BEGIN:VEVENT
-UID:evt-brunch@mirrormere
-DTSTART:20261015T170000Z
-DTEND:20261015T183000Z
-SUMMARY:Brunch with Bridesmaids
-END:VEVENT
-END:VCALENDAR`
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/calendar")
-		_, _ = w.Write([]byte(icsPayload))
-	}))
-	defer server.Close()
-
-	p := provider.NewCalendarProviderWithClient(server.Client(), func() time.Time {
-		return refTime
+		provider.SortCalendarEvents(events, laLoc)
+		expected := []string{"Monday Evening Dinner", "Wednesday Game Night", "Weekend Bachelorette Party", "Brunch with Bridesmaids"}
+		for i, exp := range expected {
+			if events[i].Title != exp {
+				t.Errorf("[%d] got %q, want %q", i, events[i].Title, exp)
+			}
+		}
 	})
 
-	cfg := map[string]any{
-		"calendars": []any{
-			map[string]any{
-				"name": "Social",
-				"url":  server.URL,
-			},
-		},
-	}
+	t.Run("fetch timezone aware sorting", func(t *testing.T) {
+		t.Parallel()
+		ref := time.Date(2026, 10, 10, 0, 0, 0, 0, time.UTC)
+		ics := icsDoc(
+			"BEGIN:VEVENT\nUID:e3\nDTSTART;VALUE=DATE:20261015\nDTEND;VALUE=DATE:20261016\nSUMMARY:Weekend Bachelorette Party\nEND:VEVENT",
+			"BEGIN:VEVENT\nUID:e2\nDTSTART:20261015T020000Z\nDTEND:20261015T040000Z\nSUMMARY:Wednesday Game Night\nEND:VEVENT",
+			"BEGIN:VEVENT\nUID:e1\nDTSTART:20261013T020000Z\nDTEND:20261013T030000Z\nSUMMARY:Monday Evening Dinner\nEND:VEVENT",
+			"BEGIN:VEVENT\nUID:e4\nDTSTART:20261015T170000Z\nDTEND:20261015T183000Z\nSUMMARY:Brunch with Bridesmaids\nEND:VEVENT",
+		)
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/calendar")
+			_, _ = w.Write([]byte(ics))
+		}))
+		defer srv.Close()
 
-	opts := provider.InitOptions{
-		Timezone: "America/Los_Angeles",
-	}
-
-	if err := p.Init(context.Background(), cfg, opts); err != nil {
-		t.Fatalf("Init failed: %v", err)
-	}
-
-	res, err := p.Fetch(context.Background())
-	if err != nil {
-		t.Fatalf("Fetch failed: %v", err)
-	}
-
-	snap := res.(provider.CalendarSnapshot)
-	if len(snap.Events) != 4 {
-		t.Fatalf("expected 4 events, got %d", len(snap.Events))
-	}
-
-	expectedOrder := []string{
-		"Monday Evening Dinner",
-		"Wednesday Game Night",
-		"Weekend Bachelorette Party",
-		"Brunch with Bridesmaids",
-	}
-
-	for i, expected := range expectedOrder {
-		if snap.Events[i].Title != expected {
-			t.Errorf("at index %d: expected %q, got %q", i, expected, snap.Events[i].Title)
+		p := provider.NewCalendarProviderWithClient(srv.Client(), func() time.Time { return ref })
+		if err := p.Init(context.Background(), map[string]any{"calendars": []any{map[string]any{"name": "S", "url": srv.URL}}}, provider.InitOptions{Timezone: "America/Los_Angeles"}); err != nil {
+			t.Fatalf("init failed: %v", err)
 		}
-	}
+		res, err := p.Fetch(context.Background())
+		if err != nil {
+			t.Fatalf("fetch failed: %v", err)
+		}
+		snap := res.(provider.CalendarSnapshot)
+		expected := []string{"Monday Evening Dinner", "Wednesday Game Night", "Weekend Bachelorette Party", "Brunch with Bridesmaids"}
+		for i, exp := range expected {
+			if snap.Events[i].Title != exp {
+				t.Errorf("[%d] got %q, want %q", i, snap.Events[i].Title, exp)
+			}
+		}
+	})
 }
