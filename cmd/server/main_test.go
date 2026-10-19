@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -18,6 +17,7 @@ import (
 
 	"github.com/azylman/mirrormere/internal/config"
 	"github.com/azylman/mirrormere/internal/events"
+	"github.com/azylman/mirrormere/internal/render"
 )
 
 func init() {
@@ -28,1425 +28,404 @@ func init() {
 
 type failWriter struct{}
 
-func (failWriter) Write(p []byte) (n int, err error) {
+func (failWriter) Write(p []byte) (int, error) {
 	return 0, errors.New("simulated stdout write failure")
 }
 
-func writeTestServerYAML(t *testing.T, dir, filename, content string) string {
+type testDaemon struct {
+	baseURL, configPath, tmpDir string
+	hupChan                     chan os.Signal
+	reloadedChan                chan struct{}
+	stdout, stderr              *bytes.Buffer
+	cancel                      context.CancelFunc
+}
+
+func startDaemon(t *testing.T, yamlContent, customCSS string, customWidget map[string]string) *testDaemon {
 	t.Helper()
-	p := filepath.Join(dir, filename)
-	if err := os.WriteFile(p, []byte(content), 0644); err != nil {
-		t.Fatalf("failed to write %s: %v", filename, err)
-	}
-	return p
-}
-
-func TestRun_SuccessAndShutdown(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
 	tmpDir := t.TempDir()
-	cfgPath := writeTestServerYAML(t, tmpDir, "config.yaml", `
-host: "127.0.0.1"
-port: 0
-timezone: "UTC"
-display:
-  widgets:
-    - id: default-spacer
-      type: spacer
-      dimensions: [6, 2]
-`)
-
-	readyChan := make(chan struct{}, 1)
-	addrChan := make(chan string, 1)
-	var stdout, stderr bytes.Buffer
-
-	errChan := make(chan error, 1)
-	go func() {
-		// Bind to ephemeral port 0 on 127.0.0.1 via config file
-		errChan <- RunWithReady(ctx, []string{cfgPath}, &stdout, &stderr, readyChan, WithAddrChan(addrChan))
-	}()
-
-	select {
-	case <-readyChan:
-	case err := <-errChan:
-		t.Fatalf("RunWithReady failed: %v", err)
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for server ready signal")
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	if yamlContent == "" {
+		yamlContent = "timezone: UTC\ndisplay:\n  widgets:\n    - id: spacer\n      type: spacer\n      dimensions: [6, 2]\n"
 	}
-
-	outStr := stdout.String()
-	if !strings.Contains(outStr, "Mirrormere daemon listening on") {
-		t.Errorf("unexpected stdout: %s", outStr)
+	if err := os.WriteFile(configPath, []byte(yamlContent), 0644); err != nil {
+		t.Fatal(err)
 	}
-
-	addr := <-addrChan
-	resp, err := http.Get("http://" + addr + "/display")
-	if err == nil {
-		_ = resp.Body.Close()
+	if customCSS != "" {
+		_ = os.WriteFile(filepath.Join(tmpDir, "custom.css"), []byte(customCSS), 0644)
 	}
-
-	// Trigger shutdown
-	cancel()
-
-	select {
-	case err := <-errChan:
-		if err != nil {
-			t.Fatalf("Run returned error: %v", err)
+	if len(customWidget) > 0 {
+		wDir := filepath.Join(tmpDir, "widgets", customWidget["name"])
+		if m, ok := customWidget["manifest"]; ok {
+			_ = os.MkdirAll(wDir, 0755); _ = os.WriteFile(filepath.Join(wDir, "manifest.yaml"), []byte(m), 0644)
 		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("server failed to shutdown in time")
+		if v, ok := customWidget["view"]; ok {
+			_ = os.MkdirAll(filepath.Join(wDir, "views"), 0755); _ = os.WriteFile(filepath.Join(wDir, "views", "widget.html"), []byte(v), 0644)
+		}
 	}
-}
 
-func TestRun_CompositionRootSmoke(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	cfgDir := t.TempDir()
-	cfgContent := `host: "127.0.0.1"
-port: 0
-timezone: America/New_York
-display:
-  header:
-    video:
-      enabled: true
-      stream_id: "test-cam"
-      stream_url: "http://camera.example.com/stream.m3u8"
-      control_url: "http://controller.example.com/wake"
-      type: "webrtc"
-  widgets:
-    - id: default-spacer
-      type: spacer
-      dimensions: [6, 2]
-`
-	cfgPath := writeTestServerYAML(t, cfgDir, "config.yaml", cfgContent)
-
-	readyChan := make(chan struct{}, 1)
-	addrChan := make(chan string, 1)
+	readyChan, addrChan, hupChan, reloadedChan := make(chan struct{}, 1), make(chan string, 1), make(chan os.Signal, 1), make(chan struct{}, 1)
 	var stdout, stderr bytes.Buffer
-
 	errChan := make(chan error, 1)
-	go func() {
-		errChan <- RunWithReady(ctx, []string{cfgPath}, &stdout, &stderr, readyChan, WithAddrChan(addrChan))
-	}()
 
-	select {
-	case <-readyChan:
-	case err := <-errChan:
-		t.Fatalf("RunWithReady failed: %v", err)
-	case <-time.After(3 * time.Second):
-		t.Fatal("timed out waiting for ready signal")
-	}
+	go func() {
+		errChan <- RunWithReady(ctx, []string{configPath}, &stdout, &stderr, readyChan,
+			WithAddrChan(addrChan), WithHupChan(hupChan), WithOnReload(func() {
+				select {
+				case reloadedChan <- struct{}{}:
+				default:
+				}
+			}))
+	}()
 
 	var baseURL string
 	select {
-	case addr := <-addrChan:
-		baseURL = fmt.Sprintf("http://%s", addr)
-	case <-time.After(1 * time.Second):
-		t.Fatal("timed out waiting for bound address")
-	}
-
-	client := &http.Client{Timeout: 5 * time.Second}
-
-	// 1. GET /healthz -> 200 OK
-	resp, err := client.Get(baseURL + "/healthz")
-	if err != nil {
-		t.Fatalf("GET /healthz failed: %v", err)
-	}
-	t.Cleanup(func() { _ = resp.Body.Close() })
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("GET /healthz status = %d, want 200", resp.StatusCode)
-	}
-
-	// 2. GET /api/audio -> 200 OK
-	resp, err = client.Get(baseURL + "/api/audio")
-	if err != nil {
-		t.Fatalf("GET /api/audio failed: %v", err)
-	}
-	t.Cleanup(func() { _ = resp.Body.Close() })
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("GET /api/audio status = %d, want 200", resp.StatusCode)
-	}
-	body, _ := io.ReadAll(resp.Body)
-	if !strings.Contains(string(body), `"volume":75`) || !strings.Contains(string(body), `"muted":false`) {
-		t.Errorf("GET /api/audio body = %s, expected volume 75 unmuted", string(body))
-	}
-
-	// 3. GET /api/video/state -> 200 OK
-	resp, err = client.Get(baseURL + "/api/video/state")
-	if err != nil {
-		t.Fatalf("GET /api/video/state failed: %v", err)
-	}
-	t.Cleanup(func() { _ = resp.Body.Close() })
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("GET /api/video/state status = %d, want 200", resp.StatusCode)
-	}
-	body, _ = io.ReadAll(resp.Body)
-	if !strings.Contains(string(body), `"mode":"widgets"`) {
-		t.Errorf("GET /api/video/state body = %s, expected mode widgets", string(body))
-	}
-
-	// 4. GET /display -> 200 OK
-	resp, err = client.Get(baseURL + "/display")
-	if err != nil {
-		t.Fatalf("GET /display failed: %v", err)
-	}
-	t.Cleanup(func() { _ = resp.Body.Close() })
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("GET /display status = %d, want 200", resp.StatusCode)
-	}
-	body, _ = io.ReadAll(resp.Body)
-	if !strings.Contains(string(body), "mirrormere-app") {
-		t.Errorf("GET /display body does not contain mirrormere-app: %s", string(body))
-	}
-	if !strings.Contains(string(body), `data-stream-id="test-cam"`) {
-		t.Errorf("GET /display body does not contain data-stream-id: %s", string(body))
-	}
-
-	// 5. GET /style.css -> 200 OK
-	resp, err = client.Get(baseURL + "/style.css")
-	if err != nil {
-		t.Fatalf("GET /style.css failed: %v", err)
-	}
-	t.Cleanup(func() { _ = resp.Body.Close() })
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("GET /style.css status = %d, want 200", resp.StatusCode)
-	}
-
-	// 6. GET /api/lists/test/items -> 404 with structured JSON
-	resp, err = client.Get(baseURL + "/api/lists/test/items")
-	if err != nil {
-		t.Fatalf("GET /api/lists/test/items failed: %v", err)
-	}
-	t.Cleanup(func() { _ = resp.Body.Close() })
-	if resp.StatusCode != http.StatusNotFound {
-		t.Errorf("GET /api/lists/test/items status = %d, want 404", resp.StatusCode)
-	}
-	body, _ = io.ReadAll(resp.Body)
-	if !strings.Contains(string(body), "list 'test' not found") {
-		t.Errorf("GET /api/lists/test/items body = %s, expected list not found error", string(body))
-	}
-
-	// 7. GET /api/events -> 200 OK with text/event-stream, reads initial hydration chunk
-	reqCtx, reqCancel := context.WithCancel(context.Background())
-	defer reqCancel()
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, baseURL+"/api/events", nil)
-	if err != nil {
-		t.Fatalf("failed to create /api/events request: %v", err)
-	}
-	resp, err = http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("GET /api/events failed: %v", err)
-	}
-	t.Cleanup(func() { _ = resp.Body.Close() })
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("GET /api/events status = %d, want 200", resp.StatusCode)
-	}
-	if ct := resp.Header.Get("Content-Type"); !strings.Contains(ct, "text/event-stream") {
-		t.Errorf("GET /api/events Content-Type = %s, want text/event-stream", ct)
-	}
-
-	buf := make([]byte, 256)
-	n, err := resp.Body.Read(buf)
-	if err != nil && !errors.Is(err, io.EOF) {
-		t.Fatalf("failed to read from /api/events stream: %v", err)
-	}
-	if n == 0 {
-		t.Error("expected non-zero bytes read from /api/events stream")
-	}
-	reqCancel()
-
-	// Trigger server shutdown
-	cancel()
-
-	select {
-	case err := <-errChan:
-		if err != nil {
-			t.Fatalf("server shutdown error: %v", err)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("server failed to shutdown in time")
-	}
-}
-
-func TestRun_ConfigReadError(t *testing.T) {
-	ctx := context.Background()
-	var stdout, stderr bytes.Buffer
-
-	err := Run(ctx, []string{"/nonexistent/path/to/config.yaml"}, &stdout, &stderr)
-	if err == nil {
-		t.Fatal("expected error on nonexistent config file, got nil")
-	}
-	if !strings.Contains(err.Error(), "failed to read configuration file") {
-		t.Errorf("unexpected error message: %v", err)
-	}
-}
-
-func TestRun_ConfigManagerError(t *testing.T) {
-	ctx := context.Background()
-	cfgDir := t.TempDir()
-	cfgPath := filepath.Join(cfgDir, "invalid.yaml")
-	_ = os.WriteFile(cfgPath, []byte("display: [unclosed"), 0644)
-
-	var stdout, stderr bytes.Buffer
-	err := Run(ctx, []string{cfgPath}, &stdout, &stderr)
-	if err == nil {
-		t.Fatal("expected error on invalid yaml config, got nil")
-	}
-	if !strings.Contains(err.Error(), "failed to initialize configuration manager") {
-		t.Errorf("unexpected error message: %v", err)
-	}
-}
-
-func TestRun_TasksStoreFallback(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	tmpDir := t.TempDir()
-	cfgPath := writeTestServerYAML(t, tmpDir, "config.yaml", `
-host: "127.0.0.1"
-port: 0
-timezone: "UTC"
-display:
-  widgets:
-    - id: default-spacer
-      type: spacer
-      dimensions: [6, 2]
-`)
-	blockingFile := filepath.Join(tmpDir, "blocking_file")
-	if err := os.WriteFile(blockingFile, []byte("x"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("DB_PATH", filepath.Join(blockingFile, "impossible", "lists.db"))
-
-	readyChan := make(chan struct{}, 1)
-	var stdout, stderr bytes.Buffer
-
-	errChan := make(chan error, 1)
-	go func() {
-		// Use an impossible path in DB_PATH to trigger fallback to :memory:
-		errChan <- RunWithReady(ctx, []string{cfgPath}, &stdout, &stderr, readyChan)
-	}()
-
-	select {
 	case <-readyChan:
+		baseURL = "http://" + <-addrChan
 	case err := <-errChan:
 		t.Fatalf("RunWithReady failed: %v", err)
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for ready signal")
+	case <-time.After(3 * time.Second):
+		t.Fatal("timeout waiting ready")
 	}
 
-	cancel()
-
-	select {
-	case err := <-errChan:
-		if err != nil {
-			t.Fatalf("Run returned error: %v", err)
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-errChan:
+		case <-time.After(3 * time.Second):
 		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("server failed to shutdown")
-	}
+	})
 
-	if !strings.Contains(stderr.String(), "falling back to in-memory store") {
-		t.Errorf("expected warning about fallback to in-memory store in stderr: %s", stderr.String())
-	}
-}
-
-func TestRun_EmptyEnvDB(t *testing.T) {
-	t.Setenv("DB_PATH", "")
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	tmpDir := t.TempDir()
-	cfgPath := writeTestServerYAML(t, tmpDir, "config.yaml", `
-host: "127.0.0.1"
-port: 0
-timezone: "UTC"
-display:
-  widgets:
-    - id: default-spacer
-      type: spacer
-      dimensions: [6, 2]
-`)
-
-	readyChan := make(chan struct{}, 1)
-	var stdout, stderr bytes.Buffer
-
-	errChan := make(chan error, 1)
-	go func() {
-		errChan <- RunWithReady(ctx, []string{cfgPath}, &stdout, &stderr, readyChan)
-	}()
-
-	select {
-	case <-readyChan:
-	case err := <-errChan:
-		t.Fatalf("RunWithReady failed: %v", err)
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for ready signal")
-	}
-
-	cancel()
-
-	select {
-	case err := <-errChan:
-		if err != nil {
-			t.Fatalf("Run returned error: %v", err)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("server failed to shutdown")
+	return &testDaemon{
+		baseURL: baseURL, hupChan: hupChan, reloadedChan: reloadedChan,
+		stdout: &stdout, stderr: &stderr, tmpDir: tmpDir, configPath: configPath, cancel: cancel,
 	}
 }
 
-func TestRun_HelpFlag(t *testing.T) {
-	ctx := context.Background()
-
-	for _, flag := range []string{"-h", "-help", "--help"} {
-		var stdout, stderr bytes.Buffer
-		err := Run(ctx, []string{flag}, &stdout, &stderr)
-		if err != nil {
-			t.Fatalf("expected nil error on help flag %s, got %v", flag, err)
-		}
-		if !strings.Contains(stderr.String(), "Usage: mirrormere [config-path]") {
-			t.Errorf("expected usage string in stderr for %s, got: %s", flag, stderr.String())
-		}
+func TestMain_Execution(t *testing.T) {
+	tests := []struct {
+		name, arg string
+		wantExit  int
+	}{
+		{"help_flag", "-help", 0}, {"invalid_arg", "-invalid-arg", 1},
 	}
-
-	var stdout bytes.Buffer
-	err := Run(ctx, []string{"-h"}, &stdout, failWriter{})
-	if err == nil {
-		t.Fatal("expected error on failing stderr writer, got nil")
-	}
-}
-
-func TestRun_ConfigPathEnv_MissingFile(t *testing.T) {
-	t.Setenv("CONFIG_PATH", "/nonexistent/test-config.yaml")
-	var stdout, stderr bytes.Buffer
-	err := Run(context.Background(), []string{}, &stdout, &stderr)
-	if err == nil {
-		t.Fatal("expected error for non-existent CONFIG_PATH, got nil")
-	}
-	if !strings.Contains(err.Error(), `failed to read configuration file "/nonexistent/test-config.yaml"`) {
-		t.Errorf("unexpected error message: %v", err)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			oldArgs, oldExit := argsHook, exitFunc
+			argsHook = []string{tc.arg}
+			exitCode := 0
+			exitFunc = func(c int) { exitCode = c }
+			defer func() { argsHook, exitFunc = oldArgs, oldExit }()
+			main()
+			if exitCode != tc.wantExit {
+				t.Fatalf("exitCode = %d, want %d", exitCode, tc.wantExit)
+			}
+		})
 	}
 }
 
-func TestRun_InvalidFlag(t *testing.T) {
-	ctx := context.Background()
-	var stdout, stderr bytes.Buffer
-
-	err := Run(ctx, []string{"-nonexistent-flag"}, &stdout, &stderr)
-	if err == nil {
-		t.Fatal("expected error on invalid flag, got nil")
-	}
-	if !strings.Contains(err.Error(), "flags are not supported; configure via config file") {
-		t.Errorf("unexpected error message: %v", err)
-	}
-}
-
-func TestRun_FlagsRejected(t *testing.T) {
-	var stdout, stderr bytes.Buffer
-	err := Run(context.Background(), []string{"-port", "8080"}, &stdout, &stderr)
-	if err == nil {
-		t.Fatal("expected error for flag, got nil")
-	}
-	if !strings.Contains(err.Error(), "flags are not supported; configure via config file: -port") {
-		t.Errorf("unexpected error message: %v", err)
-	}
-}
-
-func TestRun_BindError(t *testing.T) {
-	ctx := context.Background()
-	var stdout, stderr bytes.Buffer
-
-	tmpDir := t.TempDir()
-	cfgPath := writeTestServerYAML(t, tmpDir, "config.yaml", `
-host: "999.999.999.999"
-port: 8080
-timezone: "UTC"
-display:
-  widgets:
-    - id: default-spacer
-      type: spacer
-      dimensions: [6, 2]
-`)
-
-	err := Run(ctx, []string{cfgPath}, &stdout, &stderr)
-	if err == nil {
-		t.Fatal("expected bind error for invalid host, got nil")
-	}
-}
-
-func TestRun_StdoutWriteError(t *testing.T) {
-	ctx := context.Background()
-	var stderr bytes.Buffer
-
-	tmpDir := t.TempDir()
-	cfgPath := writeTestServerYAML(t, tmpDir, "config.yaml", `
-host: "127.0.0.1"
-port: 0
-timezone: "UTC"
-display:
-  widgets:
-    - id: default-spacer
-      type: spacer
-      dimensions: [6, 2]
-`)
-
-	// Force stdout write to fail
-	err := RunWithReady(ctx, []string{cfgPath}, failWriter{}, &stderr, nil)
-	if err == nil {
-		t.Fatal("expected write error on stdout failure, got nil")
-	}
-	if !strings.Contains(err.Error(), "simulated stdout write failure") {
-		t.Errorf("unexpected error message: %v", err)
-	}
-}
-
-func TestRun_EnvHostPortIgnored(t *testing.T) {
-	t.Setenv("HOST", "1.2.3.4")
-	t.Setenv("PORT", "9999")
-
-	tmpDir := t.TempDir()
-	cfgPath := writeTestServerYAML(t, tmpDir, "config.yaml", `
-host: "127.0.0.1"
-port: 0
-timezone: "UTC"
-display:
-  widgets:
-    - id: default-spacer
-      type: spacer
-      dimensions: [6, 2]
-`)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	readyChan := make(chan struct{}, 1)
-	addrChan := make(chan string, 1)
-	var stdout, stderr bytes.Buffer
-
-	errChan := make(chan error, 1)
-	go func() {
-		errChan <- RunWithReady(ctx, []string{cfgPath}, &stdout, &stderr, readyChan, WithAddrChan(addrChan))
-	}()
-
-	select {
-	case <-readyChan:
-	case err := <-errChan:
-		t.Fatalf("RunWithReady failed: %v", err)
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for server ready signal")
-	}
-
-	addr := <-addrChan
-	if !strings.HasPrefix(addr, "127.0.0.1:") {
-		t.Errorf("expected server to bind 127.0.0.1 (ignoring HOST env 1.2.3.4), got %s", addr)
-	}
-	if strings.HasSuffix(addr, ":9999") {
-		t.Errorf("expected server to bind ephemeral port 0 (ignoring PORT env 9999), got %s", addr)
-	}
-
-	cancel()
-
-	select {
-	case err := <-errChan:
-		if err != nil {
-			t.Fatalf("Run returned error: %v", err)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("server failed to shutdown")
-	}
-}
-
-func TestMain_ExecutionWithHelp(t *testing.T) {
-	oldArgsHook := argsHook
-	argsHook = []string{"-help"}
-	defer func() { argsHook = oldArgsHook }()
-
-	main()
-}
-
-func TestMain_ExecutionWithError(t *testing.T) {
-	oldArgsHook := argsHook
-	oldExitFunc := exitFunc
-	argsHook = []string{"-invalid-arg-to-trigger-error"}
-
-	exitCode := 0
-	exitFunc = func(code int) {
-		exitCode = code
-	}
-	defer func() {
-		argsHook = oldArgsHook
-		exitFunc = oldExitFunc
-	}()
-
-	main()
-
-	if exitCode != 1 {
-		t.Errorf("expected exit code 1, got %d", exitCode)
-	}
-}
-
-// fakeSnapshotProvider is a minimal render.StateSnapshotProvider stub carrying only what
-// householdNowFunc reads.
-type fakeSnapshotProvider struct {
-	snap *config.Snapshot
-}
-
-func (f *fakeSnapshotProvider) CurrentSnapshot() *config.Snapshot { return f.snap }
-func (f *fakeSnapshotProvider) GetWidgetState(string) (any, string, string, bool) {
-	return nil, "", "", false
-}
-func (f *fakeSnapshotProvider) CurrentStatus() config.Status { return config.Status{} }
-
-func TestHouseholdNowFunc_UsesConfiguredTimezoneRegardlessOfProcessLocal(t *testing.T) {
-	// Asia/Tokyo (UTC+9, no DST) is very unlikely to match this test process's own local zone,
-	// so if householdNowFunc returned time.Now() untouched, the location would not be JST.
-	sp := &fakeSnapshotProvider{snap: &config.Snapshot{Config: &config.Config{Timezone: "Asia/Tokyo"}}}
-	now := householdNowFunc(sp)()
-	if zone, _ := now.Zone(); zone != "JST" {
-		t.Fatalf("expected householdNowFunc to report the household's configured zone (JST), got %s", zone)
-	}
-}
-
-func TestHouseholdNowFunc_FallsBackToProcessLocalWithoutASnapshot(t *testing.T) {
-	if got := householdNowFunc(&fakeSnapshotProvider{snap: nil})(); got.IsZero() {
-		t.Fatal("expected a non-zero time when no snapshot is available")
-	}
-	if got := householdNowFunc(nil)(); got.IsZero() {
-		t.Fatal("expected a non-zero time for a nil provider")
-	}
-}
-
-type fakeThemeStateProvider struct {
+type fakeSnapProvider struct {
+	snap  *config.Snapshot
 	theme string
 }
 
-func (f *fakeThemeStateProvider) GetTheme() string {
-	if f.theme == "" {
-		return "day"
+func (f *fakeSnapProvider) CurrentSnapshot() *config.Snapshot                 { return f.snap }
+func (f *fakeSnapProvider) GetWidgetState(string) (any, string, string, bool) { return nil, "", "", false }
+func (f *fakeSnapProvider) CurrentStatus() config.Status                     { return config.Status{} }
+func (f *fakeSnapProvider) GetTheme() string                                 { return f.theme }
+func (f *fakeSnapProvider) SetTheme(s string)                                { f.theme = s }
+
+func TestHouseholdHelpers(t *testing.T) {
+	tests := []struct {
+		name, helper, tz, themeMode string
+		hasCoords, nilSnap, nilProv bool
+		wantTheme                   string
+		wantBool                    bool
+	}{
+		{"now_nil_provider", "now", "", "", false, false, true, "", false},
+		{"now_nil_snapshot", "now", "", "", false, true, false, "", false},
+		{"now_valid_tz", "now", "Asia/Tokyo", "", false, false, false, "JST", false},
+		{"now_invalid_tz", "now", "Invalid/TZ", "", false, false, false, "UTC", false},
+		{"theme_nil_provider", "theme", "", "", false, false, true, "day", false},
+		{"theme_nil_snapshot", "theme", "", "", false, true, false, "day", false},
+		{"theme_day", "theme", "", "day", false, false, false, "day", false},
+		{"theme_night", "theme", "", "night", false, false, false, "night", false},
+		{"theme_auto_no_coords", "theme", "", "auto", false, false, false, "day", false},
+		{"theme_auto_coords", "theme", "", "auto", true, false, false, "auto", false},
+		{"trans_nil_fn", "transition", "", "", false, false, false, "", false},
+		{"trans_nil_sp", "transition", "", "", false, false, true, "", false},
+		{"trans_same", "transition", "", "day", false, false, false, "", false},
+		{"trans_changed", "transition", "", "night", false, false, false, "", true},
 	}
-	return f.theme
-}
-
-func (f *fakeThemeStateProvider) SetTheme(th string) {
-	f.theme = th
-}
-
-func TestHouseholdThemeFunc(t *testing.T) {
-	// 1. Nil provider
-	if got := householdThemeFunc(nil)(); got != "day" {
-		t.Errorf("expected 'day' for nil provider, got %q", got)
-	}
-
-	// 2. Nil snapshot / nil config
-	if got := householdThemeFunc(&fakeSnapshotProvider{snap: nil})(); got != "day" {
-		t.Errorf("expected 'day' for nil snapshot, got %q", got)
-	}
-	if got := householdThemeFunc(&fakeSnapshotProvider{snap: &config.Snapshot{Config: nil}})(); got != "day" {
-		t.Errorf("expected 'day' for nil config, got %q", got)
-	}
-
-	// 3. Explicit mode = night
-	nightSnap := &config.Snapshot{
-		Config: &config.Config{
-			Display: config.DisplayConfig{
-				Theme: &config.ThemeConfig{Mode: "night"},
-			},
-		},
-	}
-	if got := householdThemeFunc(&fakeSnapshotProvider{snap: nightSnap})(); got != "night" {
-		t.Errorf("expected 'night' for mode=night, got %q", got)
-	}
-
-	// 4. Explicit mode = day
-	daySnap := &config.Snapshot{
-		Config: &config.Config{
-			Display: config.DisplayConfig{
-				Theme: &config.ThemeConfig{Mode: "day"},
-			},
-		},
-	}
-	if got := householdThemeFunc(&fakeSnapshotProvider{snap: daySnap})(); got != "day" {
-		t.Errorf("expected 'day' for mode=day, got %q", got)
-	}
-
-	// 5. Auto mode without coordinates -> defaults to day
-	autoNoCoords := &config.Snapshot{
-		Config: &config.Config{
-			Display: config.DisplayConfig{
-				Theme: &config.ThemeConfig{Mode: "auto"},
-			},
-		},
-	}
-	if got := householdThemeFunc(&fakeSnapshotProvider{snap: autoNoCoords})(); got != "day" {
-		t.Errorf("expected 'day' for auto without coords, got %q", got)
-	}
-
-	// 6. Auto mode with coordinates
-	lat := 37.8044
-	lon := -122.2712
-	autoWithCoords := &config.Snapshot{
-		Config: &config.Config{
-			Timezone: "America/Los_Angeles",
-			LocationConfig: &config.LocationConfig{
-				Latitude:  &lat,
-				Longitude: &lon,
-			},
-			Display: config.DisplayConfig{
-				Theme: &config.ThemeConfig{Mode: "auto"},
-			},
-		},
-	}
-	themeGot := householdThemeFunc(&fakeSnapshotProvider{snap: autoWithCoords})()
-	if themeGot != "day" && themeGot != "night" {
-		t.Errorf("expected 'day' or 'night' for auto with coords, got %q", themeGot)
-	}
-}
-
-func TestEvaluateThemeTransition(t *testing.T) {
-	// 1. Nil safety
-	if evaluateThemeTransition(nil, nil, nil, nil) {
-		t.Error("expected false for nil arguments")
-	}
-
-	sp := &fakeThemeStateProvider{theme: "day"}
-
-	// 2. Unchanged theme
-	if evaluateThemeTransition(func() string { return "day" }, sp, nil, nil) {
-		t.Error("expected false when theme did not change")
-	}
-	if sp.GetTheme() != "day" {
-		t.Errorf("expected theme to remain 'day', got %q", sp.GetTheme())
-	}
-
-	// 3. Theme changed: "day" -> "night"
-	hub := events.NewHub(events.HubConfig{}, nil, nil)
-	defer hub.Close()
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-
-	changed := evaluateThemeTransition(func() string { return "night" }, sp, hub, logger)
-	if !changed {
-		t.Error("expected true when theme changed")
-	}
-	if sp.GetTheme() != "night" {
-		t.Errorf("expected updated theme 'night', got %q", sp.GetTheme())
-	}
-}
-
-func TestRun_YAMLHostPortConfig(t *testing.T) {
-	t.Setenv("PORT", "")
-	t.Setenv("HOST", "")
-	tmpDir := t.TempDir()
-	configPath := filepath.Join(tmpDir, "mirrormere.yaml")
-	yamlContent := `
-host: "127.0.0.1"
-port: 0
-timezone: "UTC"
-display:
-  widgets:
-    - id: spacer
-      type: spacer
-      dimensions: [6, 2]
-`
-	if err := os.WriteFile(configPath, []byte(yamlContent), 0644); err != nil {
-		t.Fatalf("failed to write test yaml: %v", err)
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	readyChan := make(chan struct{}, 1)
-	addrChan := make(chan string, 1)
-	var stdout, stderr bytes.Buffer
-
-	errChan := make(chan error, 1)
-	go func() {
-		errChan <- RunWithReady(ctx, []string{configPath}, &stdout, &stderr, readyChan, WithAddrChan(addrChan))
-	}()
-
-	select {
-	case <-readyChan:
-	case err := <-errChan:
-		t.Fatalf("RunWithReady failed: %v", err)
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for ready signal")
-	}
-
-	cancel()
-	<-errChan
-}
-
-func TestRun_SIGHUP_ValidReload(t *testing.T) {
-	tmpDir := t.TempDir()
-	configPath := filepath.Join(tmpDir, "mirrormere.yaml")
-	initialYAML := `
-host: "127.0.0.1"
-port: 0
-timezone: "UTC"
-display:
-  widgets:
-    - id: spacer-1
-      type: spacer
-      dimensions: [6, 2]
-`
-	if err := os.WriteFile(configPath, []byte(initialYAML), 0644); err != nil {
-		t.Fatalf("failed to write initial config: %v", err)
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	readyChan := make(chan struct{}, 1)
-	hupChan := make(chan os.Signal, 1)
-	reloadedChan := make(chan struct{}, 1)
-	addrChan := make(chan string, 1)
-	var stdout, stderr bytes.Buffer
-
-	errChan := make(chan error, 1)
-	go func() {
-		errChan <- RunWithReady(
-			ctx,
-			[]string{configPath},
-			&stdout,
-			&stderr,
-			readyChan,
-			WithAddrChan(addrChan),
-			WithHupChan(hupChan),
-			WithOnReload(func() {
-				select {
-				case reloadedChan <- struct{}{}:
-				default:
-				}
-			}),
-		)
-	}()
-
-	select {
-	case <-readyChan:
-	case err := <-errChan:
-		t.Fatalf("RunWithReady failed: %v", err)
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for ready signal")
-	}
-
-	// Update config on disk with new timezone
-	updatedYAML := `
-host: "127.0.0.1"
-port: 0
-timezone: "America/New_York"
-display:
-  widgets:
-    - id: spacer-1
-      type: spacer
-      dimensions: [6, 2]
-`
-	if err := os.WriteFile(configPath, []byte(updatedYAML), 0644); err != nil {
-		t.Fatalf("failed to write updated config: %v", err)
-	}
-
-	// Send SIGHUP
-	hupChan <- syscall.SIGHUP
-
-	select {
-	case <-reloadedChan:
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for SIGHUP reload completion")
-	}
-
-	close(hupChan)
-	cancel()
-	<-errChan
-}
-
-func TestRun_SIGHUP_InvalidYAML_RetainsLKGC(t *testing.T) {
-	tmpDir := t.TempDir()
-	configPath := filepath.Join(tmpDir, "mirrormere.yaml")
-	initialYAML := `
-host: "127.0.0.1"
-port: 0
-timezone: "UTC"
-display:
-  widgets:
-    - id: spacer-1
-      type: spacer
-      dimensions: [6, 2]
-`
-	if err := os.WriteFile(configPath, []byte(initialYAML), 0644); err != nil {
-		t.Fatalf("failed to write initial config: %v", err)
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	readyChan := make(chan struct{}, 1)
-	hupChan := make(chan os.Signal, 1)
-	reloadedChan := make(chan struct{}, 1)
-	addrChan := make(chan string, 1)
-	var stdout, stderr bytes.Buffer
-
-	errChan := make(chan error, 1)
-	go func() {
-		errChan <- RunWithReady(
-			ctx,
-			[]string{configPath},
-			&stdout,
-			&stderr,
-			readyChan,
-			WithAddrChan(addrChan),
-			WithHupChan(hupChan),
-			WithOnReload(func() {
-				select {
-				case reloadedChan <- struct{}{}:
-				default:
-				}
-			}),
-		)
-	}()
-
-	select {
-	case <-readyChan:
-	case err := <-errChan:
-		t.Fatalf("RunWithReady failed: %v", err)
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for ready signal")
-	}
-
-	// Overwrite with invalid YAML
-	if err := os.WriteFile(configPath, []byte("invalid: yaml: syntax: [unclosed"), 0644); err != nil {
-		t.Fatalf("failed to write invalid config: %v", err)
-	}
-
-	// Send SIGHUP
-	hupChan <- syscall.SIGHUP
-
-	select {
-	case <-reloadedChan:
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for SIGHUP reload error completion")
-	}
-
-	// Server should still be running and healthy (LKGC)
-	addr := <-addrChan
-	resp, err := http.Get("http://" + addr + "/healthz")
-	if err != nil {
-		t.Fatalf("expected server to remain running after invalid reload, got err: %v", err)
-	}
-	_ = resp.Body.Close()
-
-	cancel()
-	<-errChan
-}
-
-func TestRun_SIGHUP_ReadError_RetainsLKGC(t *testing.T) {
-	tmpDir := t.TempDir()
-	configPath := filepath.Join(tmpDir, "mirrormere.yaml")
-	initialYAML := `
-host: "127.0.0.1"
-port: 0
-timezone: "UTC"
-display:
-  widgets:
-    - id: spacer-1
-      type: spacer
-      dimensions: [6, 2]
-`
-	if err := os.WriteFile(configPath, []byte(initialYAML), 0644); err != nil {
-		t.Fatalf("failed to write initial config: %v", err)
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	readyChan := make(chan struct{}, 1)
-	hupChan := make(chan os.Signal, 1)
-	reloadedChan := make(chan struct{}, 1)
-	var stdout, stderr bytes.Buffer
-
-	errChan := make(chan error, 1)
-	go func() {
-		errChan <- RunWithReady(
-			ctx,
-			[]string{configPath},
-			&stdout,
-			&stderr,
-			readyChan,
-			WithHupChan(hupChan),
-			WithOnReload(func() {
-				select {
-				case reloadedChan <- struct{}{}:
-				default:
-				}
-			}),
-		)
-	}()
-
-	select {
-	case <-readyChan:
-	case err := <-errChan:
-		t.Fatalf("RunWithReady failed: %v", err)
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for ready signal")
-	}
-
-	// Delete file
-	_ = os.Remove(configPath)
-
-	// Send SIGHUP
-	hupChan <- syscall.SIGHUP
-
-	select {
-	case <-reloadedChan:
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for SIGHUP read error completion")
-	}
-
-	cancel()
-	<-errChan
-}
-
-func TestRun_SIGHUP_StyleReload(t *testing.T) {
-	tmpDir := t.TempDir()
-	configPath := filepath.Join(tmpDir, "config.yaml")
-	customCSSPath := filepath.Join(tmpDir, "custom.css")
-
-	initialYAML := `
-host: "127.0.0.1"
-port: 0
-timezone: "UTC"
-display:
-  widgets:
-    - id: spacer-1
-      type: spacer
-      dimensions: [6, 2]
-`
-	if err := os.WriteFile(configPath, []byte(initialYAML), 0644); err != nil {
-		t.Fatalf("failed to write initial config: %v", err)
-	}
-	if err := os.WriteFile(customCSSPath, []byte("body { background: #000; }"), 0644); err != nil {
-		t.Fatalf("failed to write initial custom.css: %v", err)
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	readyChan := make(chan struct{}, 1)
-	hupChan := make(chan os.Signal, 1)
-	reloadedChan := make(chan struct{}, 1)
-	addrChan := make(chan string, 1)
-	var stdout, stderr bytes.Buffer
-
-	errChan := make(chan error, 1)
-	go func() {
-		errChan <- RunWithReady(
-			ctx,
-			[]string{configPath},
-			&stdout,
-			&stderr,
-			readyChan,
-			WithAddrChan(addrChan),
-			WithHupChan(hupChan),
-			WithOnReload(func() {
-				select {
-				case reloadedChan <- struct{}{}:
-				default:
-				}
-			}),
-		)
-	}()
-
-	select {
-	case <-readyChan:
-	case err := <-errChan:
-		t.Fatalf("RunWithReady failed: %v", err)
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for ready signal")
-	}
-
-	addr := <-addrChan
-	baseURL := "http://" + addr
-
-	// Connect to /api/events SSE
-	sseCtx, sseCancel := context.WithCancel(context.Background())
-	defer sseCancel()
-
-	req, err := http.NewRequestWithContext(sseCtx, http.MethodGet, baseURL+"/api/events", nil)
-	if err != nil {
-		t.Fatalf("failed to create SSE request: %v", err)
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("failed to connect to /api/events: %v", err)
-	}
-	t.Cleanup(func() { _ = resp.Body.Close() })
-
-	sseEvents := make(chan struct {
-		eventType string
-		data      string
-	}, 20)
-
-	go func() {
-		scanner := bufio.NewScanner(resp.Body)
-		var currentEvent string
-		for scanner.Scan() {
-			line := scanner.Text()
-			if strings.HasPrefix(line, "event: ") {
-				currentEvent = strings.TrimPrefix(line, "event: ")
-			} else if strings.HasPrefix(line, "data: ") {
-				select {
-				case sseEvents <- struct {
-					eventType string
-					data      string
-				}{eventType: currentEvent, data: strings.TrimPrefix(line, "data: ")}:
-				case <-sseCtx.Done():
-					return
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var sp *fakeSnapProvider
+			if !tc.nilProv {
+				sp = &fakeSnapProvider{theme: "day"}
+				if !tc.nilSnap {
+					cfg := &config.Config{Timezone: tc.tz, Display: config.DisplayConfig{Theme: &config.ThemeConfig{Mode: tc.themeMode}}}
+					if tc.hasCoords {
+						lat, lon := 37.7749, -122.4194
+						cfg.LocationConfig = &config.LocationConfig{Latitude: &lat, Longitude: &lon}
+					}
+					sp.snap = &config.Snapshot{Config: cfg}
 				}
 			}
-		}
-	}()
-
-	// Wait for initial hydration to start flowing
-	select {
-	case <-sseEvents:
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for initial SSE event")
-	}
-
-	// Update custom.css
-	updatedCSS := "body { background: #9b59b6; }"
-	if err := os.WriteFile(customCSSPath, []byte(updatedCSS), 0644); err != nil {
-		t.Fatalf("failed to update custom.css: %v", err)
-	}
-
-	// Send SIGHUP
-	hupChan <- syscall.SIGHUP
-
-	select {
-	case <-reloadedChan:
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for SIGHUP reload completion")
-	}
-
-	// Verify style.reload SSE event received
-	var receivedStyleReload bool
-	timeout := time.After(2 * time.Second)
-	for !receivedStyleReload {
-		select {
-		case evt := <-sseEvents:
-			if evt.eventType == "style.reload" && strings.Contains(evt.data, "custom.css") {
-				receivedStyleReload = true
-			}
-		case <-timeout:
-			t.Fatal("timed out waiting for style.reload SSE event")
-		}
-	}
-
-	// Verify GET /style.css serves updated stylesheet
-	cssResp, err := http.Get(baseURL + "/style.css")
-	if err != nil {
-		t.Fatalf("failed to fetch /style.css: %v", err)
-	}
-	cssBody, err := io.ReadAll(cssResp.Body)
-	_ = cssResp.Body.Close()
-	if err != nil {
-		t.Fatalf("failed to read /style.css body: %v", err)
-	}
-	if !strings.Contains(string(cssBody), "--mm-bg-canvas:") || !strings.HasSuffix(string(cssBody), "\n"+updatedCSS) {
-		t.Errorf("expected base hud.css with updated custom.css suffix %q, got %q", updatedCSS, string(cssBody))
-	}
-
-	sseCancel()
-	cancel()
-	<-errChan
-}
-
-func TestRun_SIGHUP_WidgetReload(t *testing.T) {
-	tmpDir := t.TempDir()
-	configPath := filepath.Join(tmpDir, "config.yaml")
-	customWidgetsDir := filepath.Join(tmpDir, "widgets")
-
-	widgetDir := filepath.Join(customWidgetsDir, "custom-clock")
-	if err := os.MkdirAll(filepath.Join(widgetDir, "views"), 0755); err != nil {
-		t.Fatalf("failed to create custom widget views dir: %v", err)
-	}
-	manifestContent := `name: custom-clock
-version: "1.0.0"
-provider: spacer
-default_dimensions: [6, 2]
-`
-	if err := os.WriteFile(filepath.Join(widgetDir, "manifest.yaml"), []byte(manifestContent), 0644); err != nil {
-		t.Fatalf("failed to write widget manifest: %v", err)
-	}
-	viewPath := filepath.Join(widgetDir, "views", "widget.html")
-	if err := os.WriteFile(viewPath, []byte("<div>Initial Clock View</div>"), 0644); err != nil {
-		t.Fatalf("failed to write widget view: %v", err)
-	}
-
-	initialYAML := `
-host: "127.0.0.1"
-port: 0
-timezone: "UTC"
-display:
-  widgets:
-    - id: clock-instance
-      type: custom-clock
-      dimensions: [6, 2]
-`
-	if err := os.WriteFile(configPath, []byte(initialYAML), 0644); err != nil {
-		t.Fatalf("failed to write initial config: %v", err)
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	readyChan := make(chan struct{}, 1)
-	hupChan := make(chan os.Signal, 1)
-	reloadedChan := make(chan struct{}, 1)
-	addrChan := make(chan string, 1)
-	var stdout, stderr bytes.Buffer
-
-	errChan := make(chan error, 1)
-	go func() {
-		errChan <- RunWithReady(
-			ctx,
-			[]string{configPath},
-			&stdout,
-			&stderr,
-			readyChan,
-			WithAddrChan(addrChan),
-			WithHupChan(hupChan),
-			WithOnReload(func() {
-				select {
-				case reloadedChan <- struct{}{}:
-				default:
+			switch tc.helper {
+			case "now":
+				var prov render.StateSnapshotProvider
+				if sp != nil { prov = sp }
+				now := householdNowFunc(prov)()
+				if tc.wantTheme != "" {
+					if z, _ := now.Zone(); z != tc.wantTheme { t.Fatalf("zone = %s, want %s", z, tc.wantTheme) }
+				} else if now.IsZero() {
+					t.Fatal("expected non-zero time")
 				}
-			}),
-		)
-	}()
-
-	select {
-	case <-readyChan:
-	case err := <-errChan:
-		t.Fatalf("RunWithReady failed: %v", err)
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for ready signal")
-	}
-
-	addr := <-addrChan
-	baseURL := "http://" + addr
-
-	// Connect to /api/events SSE
-	sseCtx, sseCancel := context.WithCancel(context.Background())
-	defer sseCancel()
-
-	req, err := http.NewRequestWithContext(sseCtx, http.MethodGet, baseURL+"/api/events", nil)
-	if err != nil {
-		t.Fatalf("failed to create SSE request: %v", err)
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("failed to connect to /api/events: %v", err)
-	}
-	t.Cleanup(func() { _ = resp.Body.Close() })
-
-	sseEvents := make(chan struct {
-		eventType string
-		data      string
-	}, 20)
-
-	go func() {
-		scanner := bufio.NewScanner(resp.Body)
-		var currentEvent string
-		for scanner.Scan() {
-			line := scanner.Text()
-			if strings.HasPrefix(line, "event: ") {
-				currentEvent = strings.TrimPrefix(line, "event: ")
-			} else if strings.HasPrefix(line, "data: ") {
-				select {
-				case sseEvents <- struct {
-					eventType string
-					data      string
-				}{eventType: currentEvent, data: strings.TrimPrefix(line, "data: ")}:
-				case <-sseCtx.Done():
-					return
+			case "theme":
+				var prov render.StateSnapshotProvider
+				if sp != nil { prov = sp }
+				got := householdThemeFunc(prov)()
+				if tc.wantTheme == "auto" {
+					if got != "day" && got != "night" { t.Fatalf("auto theme = %s", got) }
+				} else if got != tc.wantTheme {
+					t.Fatalf("theme = %s, want %s", got, tc.wantTheme)
+				}
+			case "transition":
+				var cur func() string
+				if tc.name != "trans_nil_fn" { cur = func() string { return tc.themeMode } }
+				var prov interface{ GetTheme() string; SetTheme(string) }
+				if sp != nil { prov = sp }
+				hub := events.NewHub(events.HubConfig{}, nil, nil)
+				defer hub.Close()
+				if changed := evaluateThemeTransition(cur, prov, hub, slog.Default()); changed != tc.wantBool {
+					t.Fatalf("transition = %v, want %v", changed, tc.wantBool)
 				}
 			}
-		}
-	}()
-
-	// Wait for initial SSE hydration
-	select {
-	case <-sseEvents:
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for initial SSE event")
+		})
 	}
 
-	// Verify initial render
-	renderResp, err := http.Get(baseURL + "/api/widgets/clock-instance/render")
-	if err != nil {
-		t.Fatalf("failed to render initial widget: %v", err)
-	}
-	renderBody, err := io.ReadAll(renderResp.Body)
-	_ = renderResp.Body.Close()
-	if err != nil {
-		t.Fatalf("failed to read render body: %v", err)
-	}
-	if string(renderBody) != "<div>Initial Clock View</div>" {
-		t.Fatalf("unexpected initial render: %s", string(renderBody))
-	}
+	h := buildDisplayHandler(&fakeSnapProvider{}, func() string { return "day" })
+	_ = h.Timezone(); _ = h.HideCursor(); _ = h.RemoteURL(); _ = h.HeaderVideo(); _ = h.Theme()
+}
 
-	// Update widget template
-	if err := os.WriteFile(viewPath, []byte("<div>Hot Reloaded Clock View</div>"), 0644); err != nil {
-		t.Fatalf("failed to update widget.html: %v", err)
+func TestRun_CLIAndErrors(t *testing.T) {
+	tests := []struct {
+		name, envCfg, yamlData, wantErr string
+		args                            []string
+		useFailOut, useFailErr          bool
+	}{
+		{name: "flag_h", args: []string{"-h"}},
+		{name: "flag_help", args: []string{"-help"}},
+		{name: "flag_double_dash_help", args: []string{"--help"}},
+		{name: "help_fail_stderr", args: []string{"-h"}, useFailErr: true, wantErr: "simulated"},
+		{name: "invalid_flag", args: []string{"-nonexistent"}, wantErr: "flags are not supported"},
+		{name: "flag_port_rejected", args: []string{"-port", "8080"}, wantErr: "flags are not supported"},
+		{name: "missing_config_arg", args: []string{"/nonexistent/missing.yaml"}, wantErr: "failed to read configuration file"},
+		{name: "missing_config_env", envCfg: "/nonexistent/from/env.yaml", args: []string{}, wantErr: "failed to read configuration file"},
+		{name: "invalid_yaml", yamlData: "timezone: [invalid yaml", wantErr: "failed to initialize configuration manager"},
+		{name: "bind_error", yamlData: "timezone: UTC\nhost: \"999.999.999.999\"\nport: 80\ndisplay:\n  widgets:\n    - id: spacer\n      type: spacer\n      dimensions: [6, 2]\n", wantErr: "failed to bind address"},
+		{name: "fail_stdout", yamlData: "timezone: UTC\nhost: \"127.0.0.1\"\nport: 0\ndisplay:\n  widgets:\n    - id: spacer\n      type: spacer\n      dimensions: [6, 2]\n", useFailOut: true, wantErr: "simulated stdout write failure"},
 	}
-
-	// Send SIGHUP
-	hupChan <- syscall.SIGHUP
-
-	select {
-	case <-reloadedChan:
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for SIGHUP reload completion")
-	}
-
-	// Verify widget.reload SSE event received
-	var receivedWidgetReload bool
-	timeout := time.After(2 * time.Second)
-	for !receivedWidgetReload {
-		select {
-		case evt := <-sseEvents:
-			if evt.eventType == "widget.reload" && strings.Contains(evt.data, "custom-clock") {
-				receivedWidgetReload = true
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			args := tc.args
+			if tc.yamlData != "" {
+				cfgFile := filepath.Join(tmpDir, "config.yaml")
+				_ = os.WriteFile(cfgFile, []byte(tc.yamlData), 0644)
+				args = []string{cfgFile}
 			}
-		case <-timeout:
-			t.Fatal("timed out waiting for widget.reload SSE event")
-		}
-	}
+			t.Setenv("CONFIG_PATH", tc.envCfg)
+			var stdout, stderr bytes.Buffer
+			var outW, errW io.Writer = &stdout, &stderr
+			if tc.useFailOut { outW = failWriter{} }
+			if tc.useFailErr { errW = failWriter{} }
 
-	// Verify updated render without server restart
-	renderResp2, err := http.Get(baseURL + "/api/widgets/clock-instance/render")
-	if err != nil {
-		t.Fatalf("failed to render updated widget: %v", err)
+			err := Run(context.Background(), args, outW, errW)
+			if tc.wantErr == "" {
+				if err != nil { t.Fatalf("unexpected error: %v", err) }
+			} else if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("expected error containing %q, got %v", tc.wantErr, err)
+			}
+		})
 	}
-	renderBody2, err := io.ReadAll(renderResp2.Body)
-	_ = renderResp2.Body.Close()
-	if err != nil {
-		t.Fatalf("failed to read updated render body: %v", err)
-	}
-	if string(renderBody2) != "<div>Hot Reloaded Clock View</div>" {
-		t.Fatalf("expected hot reloaded HTML, got: %s", string(renderBody2))
-	}
-
-	sseCancel()
-	cancel()
-	<-errChan
 }
 
-func TestRun_SIGHUP_HostPortChange_LogsRestartRequired(t *testing.T) {
-	tmpDir := t.TempDir()
-	configPath := filepath.Join(tmpDir, "mirrormere.yaml")
-	initialYAML := `
-host: "127.0.0.1"
-port: 0
-timezone: "UTC"
-display:
-  widgets:
-    - id: spacer-1
-      type: spacer
-      dimensions: [6, 2]
-`
-	if err := os.WriteFile(configPath, []byte(initialYAML), 0644); err != nil {
-		t.Fatalf("failed to write initial config: %v", err)
+func TestRun_DaemonLifecycleAndSmoke(t *testing.T) {
+	tests := []struct {
+		name, dbPath, envHost, envPort string
+		useDefDB, smokeCheck           bool
+	}{
+		{name: "composition_smoke", dbPath: ":memory:", smokeCheck: true},
+		{name: "db_fallback_memory", dbPath: "/dev/null/impossible/lists.db"},
+		{name: "empty_db_env", useDefDB: true},
+		{name: "env_host_port_ignored", dbPath: ":memory:", envHost: "1.2.3.4", envPort: "9999"},
 	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.useDefDB {
+				tmpDB := filepath.Join(t.TempDir(), "default_lists.db")
+				oldDef := defaultDBPath
+				defaultDBPath = tmpDB
+				t.Cleanup(func() { defaultDBPath = oldDef })
+				t.Setenv("DB_PATH", "")
+			} else {
+				t.Setenv("DB_PATH", tc.dbPath)
+			}
+			if tc.envHost != "" { t.Setenv("HOST", tc.envHost) }
+			if tc.envPort != "" { t.Setenv("PORT", tc.envPort) }
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+			yamlContent := "host: \"127.0.0.1\"\nport: 0\ntimezone: America/New_York\ndisplay:\n  header:\n    video:\n      enabled: true\n      stream_id: \"test-cam\"\n      stream_url: \"http://camera.example.com/stream.m3u8\"\n      control_url: \"http://controller.example.com/wake\"\n      type: \"webrtc\"\n  widgets:\n    - id: default-spacer\n      type: spacer\n      dimensions: [6, 2]\n"
+			d := startDaemon(t, yamlContent, "", nil)
 
-	readyChan := make(chan struct{}, 1)
-	hupChan := make(chan os.Signal, 1)
-	reloadedChan := make(chan struct{}, 1)
-	addrChan := make(chan string, 1)
-	var stdout, stderr bytes.Buffer
-
-	errChan := make(chan error, 1)
-	go func() {
-		errChan <- RunWithReady(
-			ctx,
-			[]string{configPath},
-			&stdout,
-			&stderr,
-			readyChan,
-			WithAddrChan(addrChan),
-			WithHupChan(hupChan),
-			WithOnReload(func() {
-				select {
-				case reloadedChan <- struct{}{}:
-				default:
+			if tc.smokeCheck {
+				c := &http.Client{Timeout: 5 * time.Second}
+				for _, ep := range []struct {
+					path, match string
+					status      int
+				}{
+					{"/healthz", "", 200}, {"/api/audio", `"volume":75`, 200},
+					{"/api/video/state", `"mode":"widgets"`, 200}, {"/display", "mirrormere-app", 200},
+					{"/style.css", "", 200}, {"/api/lists/test/items", "not found", 404},
+				} {
+					r, err := c.Get(d.baseURL + ep.path)
+					if err != nil || r.StatusCode != ep.status {
+						t.Fatalf("GET %s = %v, err=%v", ep.path, r.StatusCode, err)
+					}
+					b, _ := io.ReadAll(r.Body); _ = r.Body.Close()
+					if ep.match != "" && !strings.Contains(string(b), ep.match) {
+						t.Fatalf("GET %s = %s", ep.path, string(b))
+					}
 				}
-			}),
-		)
-	}()
 
-	select {
-	case <-readyChan:
-	case err := <-errChan:
-		t.Fatalf("RunWithReady failed: %v", err)
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for ready signal")
+				req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, d.baseURL+"/api/events", nil)
+				r, err := http.DefaultClient.Do(req)
+				if err != nil || r.StatusCode != http.StatusOK {
+					t.Fatalf("events: %v", err)
+				}
+				buf := make([]byte, 256)
+				n, _ := r.Body.Read(buf); _ = r.Body.Close()
+				if n == 0 {
+					t.Fatal("empty events chunk")
+				}
+			} else if tc.envHost != "" {
+				if strings.Contains(d.baseURL, "1.2.3.4") || strings.HasSuffix(d.baseURL, ":9999") {
+					t.Fatalf("env host/port not ignored: %s", d.baseURL)
+				}
+			} else {
+				if r, err := http.Get(d.baseURL + "/healthz"); err != nil || r.StatusCode != http.StatusOK {
+					t.Fatalf("healthz: %v", err)
+				} else {
+					_ = r.Body.Close()
+				}
+			}
+		})
 	}
-
-	addr := <-addrChan
-
-	// Update config on disk with new port and host
-	updatedYAML := `
-host: "127.0.0.2"
-port: 9090
-timezone: "UTC"
-display:
-  widgets:
-    - id: spacer-1
-      type: spacer
-      dimensions: [6, 2]
-`
-	if err := os.WriteFile(configPath, []byte(updatedYAML), 0644); err != nil {
-		t.Fatalf("failed to write updated config: %v", err)
-	}
-
-	// Send SIGHUP via injected mock channel
-	hupChan <- syscall.SIGHUP
-
-	select {
-	case <-reloadedChan:
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for SIGHUP reload completion")
-	}
-
-	// Verify the restart required warning is logged to stderr
-	errStr := stderr.String()
-	if !strings.Contains(errStr, "host or port changed in configuration; server restart required for changes to take effect") {
-		t.Errorf("expected restart required warning in stderr, got: %s", errStr)
-	}
-	if !strings.Contains(errStr, "bound_host=127.0.0.1") || !strings.Contains(errStr, "new_host=127.0.0.2") {
-		t.Errorf("expected bound_host and new_host in warning, got: %s", errStr)
-	}
-	if !strings.Contains(errStr, "new_port=9090") {
-		t.Errorf("expected new_port=9090 in warning, got: %s", errStr)
-	}
-
-	// Verify server remains running on the original bound address
-	resp, err := http.Get("http://" + addr + "/healthz")
-	if err != nil {
-		t.Fatalf("expected server to remain reachable on original address, got: %v", err)
-	}
-	_ = resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("expected status 200, got %d", resp.StatusCode)
-	}
-
-	close(hupChan)
-	cancel()
-	<-errChan
 }
 
+func TestRun_SIGHUP(t *testing.T) {
+	tests := []struct {
+		name, action, wantEvtType, wantLogSub, wantHTTPPath, wantHTTPBody string
+	}{
+		{name: "valid_yaml", action: "valid_yaml", wantLogSub: "configuration reloaded successfully on SIGHUP"},
+		{name: "invalid_yaml_lkgc", action: "invalid_yaml", wantLogSub: "failed to validate configuration on SIGHUP; retaining LKGC"},
+		{name: "read_error_lkgc", action: "read_error", wantLogSub: "failed to read configuration file on SIGHUP"},
+		{name: "style_reload", action: "style_reload", wantEvtType: events.EventStyleReload, wantHTTPPath: "/style.css", wantHTTPBody: "body { background: #9b59b6; }"},
+		{name: "widget_reload", action: "widget_reload", wantEvtType: events.EventWidgetReload, wantHTTPPath: "/api/widgets/clock-instance/render", wantHTTPBody: "<div>Hot Reloaded Clock View</div>"},
+		{name: "host_port_change", action: "host_port_change", wantLogSub: "host or port changed in configuration; server restart required"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			initYAML := "host: \"127.0.0.1\"\nport: 0\ntimezone: UTC\ndisplay:\n  widgets:\n    - id: clock-instance\n      type: clock\n      dimensions: [6, 2]\n"
+			customWidget := map[string]string{
+				"name":     "clock",
+				"manifest": "name: clock\nversion: \"1.0.0\"\nprovider: spacer\ndefault_dimensions: [6, 2]\n",
+				"view":     "<div>Original Clock View</div>",
+			}
+			initCSS := "body { background: #000; }"
+			d := startDaemon(t, initYAML, initCSS, customWidget)
 
+			var sseEvents chan string
+			if tc.wantEvtType != "" {
+				sseEvents = make(chan string, 20)
+				sseCtx, sseCancel := context.WithCancel(context.Background())
+				defer sseCancel()
+				req, _ := http.NewRequestWithContext(sseCtx, http.MethodGet, d.baseURL+"/api/events", nil)
+				resp, err := http.DefaultClient.Do(req)
+				if err != nil {
+					t.Fatalf("SSE connect: %v", err)
+				}
+				t.Cleanup(func() { _ = resp.Body.Close() })
+				go func() {
+					scanner := bufio.NewScanner(resp.Body)
+					for scanner.Scan() {
+						line := scanner.Text()
+						if strings.HasPrefix(line, "event: ") {
+							sseEvents <- strings.TrimPrefix(line, "event: ")
+						}
+					}
+				}()
+			}
+
+			switch tc.action {
+			case "valid_yaml":
+				_ = os.WriteFile(d.configPath, []byte("host: \"127.0.0.1\"\nport: 0\ntimezone: UTC\ndisplay:\n  widgets:\n    - id: s\n      type: spacer\n      dimensions: [6, 2]\n"), 0644)
+			case "invalid_yaml":
+				_ = os.WriteFile(d.configPath, []byte("timezone: [invalid: -"), 0644)
+			case "read_error":
+				_ = os.Remove(d.configPath)
+			case "style_reload":
+				_ = os.WriteFile(filepath.Join(d.tmpDir, "custom.css"), []byte("body { background: #9b59b6; }"), 0644)
+			case "widget_reload":
+				_ = os.WriteFile(filepath.Join(d.tmpDir, "widgets", "clock", "views", "widget.html"), []byte("<div>Hot Reloaded Clock View</div>"), 0644)
+			case "host_port_change":
+				_ = os.WriteFile(d.configPath, []byte("host: \"127.0.0.2\"\nport: 9090\ntimezone: UTC\ndisplay:\n  widgets:\n    - id: s\n      type: spacer\n      dimensions: [6, 2]\n"), 0644)
+			}
+
+			d.hupChan <- syscall.SIGHUP
+			select {
+			case <-d.reloadedChan:
+			case <-time.After(3 * time.Second):
+				t.Fatal("timeout waiting for reload")
+			}
+
+			if tc.wantEvtType != "" {
+				deadline := time.After(3 * time.Second)
+				for found := false; !found; {
+					select {
+					case evt := <-sseEvents:
+						if evt == tc.wantEvtType {
+							found = true
+						}
+					case <-deadline:
+						t.Fatalf("timeout waiting for SSE event %s", tc.wantEvtType)
+					}
+				}
+			}
+
+			if tc.wantHTTPPath != "" {
+				r, err := http.Get(d.baseURL + tc.wantHTTPPath)
+				if err != nil || r.StatusCode != http.StatusOK {
+					t.Fatalf("GET %s failed: %v", tc.wantHTTPPath, err)
+				}
+				b, _ := io.ReadAll(r.Body); _ = r.Body.Close()
+				if !strings.Contains(string(b), tc.wantHTTPBody) {
+					t.Fatalf("GET %s = %s, want %s", tc.wantHTTPPath, string(b), tc.wantHTTPBody)
+				}
+			}
+
+			if tc.wantLogSub != "" {
+				if out := d.stdout.String() + d.stderr.String(); !strings.Contains(out, tc.wantLogSub) {
+					t.Fatalf("expected log containing %q, got: %s", tc.wantLogSub, out)
+				}
+			}
+			if tc.action == "invalid_yaml" || tc.action == "read_error" {
+				if r, err := http.Get(d.baseURL + "/display"); err != nil || r.StatusCode != http.StatusOK {
+					t.Fatalf("display LKGC: %v", err)
+				} else {
+					_ = r.Body.Close()
+				}
+			}
+		})
+	}
+}

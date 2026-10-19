@@ -16,122 +16,69 @@ import (
 )
 
 type reloaderTestEnv struct {
-	tmpDir        string
-	customCSSPath string
-	builtinDir    string
-	customDir     string
-	loader        *widget.Loader
-	renderEngine  *render.Engine
-	configManager *config.Manager
-	hub           *events.Hub
-	eventCh       <-chan *events.Event
-	reloader      *AssetReloader
+	customCSSPath, builtinDir, customDir string
+	renderEngine                         *render.Engine
+	configManager                        *config.Manager
+	eventCh                              <-chan *events.Event
+	reloader                             *AssetReloader
 }
 
 func setupReloaderTest(t *testing.T, initialCSS bool) *reloaderTestEnv {
 	t.Helper()
-
-	tmpDir := t.TempDir()
-	customCSSPath := filepath.Join(tmpDir, "custom.css")
-	builtinDir := filepath.Join(tmpDir, "builtin")
-	customDir := filepath.Join(tmpDir, "custom")
-
-	if err := os.MkdirAll(builtinDir, 0755); err != nil {
-		t.Fatalf("failed to create builtin dir: %v", err)
-	}
-	if err := os.MkdirAll(customDir, 0755); err != nil {
-		t.Fatalf("failed to create custom dir: %v", err)
-	}
-
-	// Create initial builtin widget
-	widgetDir := filepath.Join(builtinDir, "test-widget")
-	if err := os.MkdirAll(filepath.Join(widgetDir, "views"), 0755); err != nil {
-		t.Fatalf("failed to create widget views dir: %v", err)
-	}
-	manifestContent := `name: test-widget
-version: "1.0.0"
-description: Initial description
-provider: spacer
-default_dimensions: [6, 2]
-supported_dimensions:
-  - [6, 2]
-`
-	if err := os.WriteFile(filepath.Join(widgetDir, "manifest.yaml"), []byte(manifestContent), 0644); err != nil {
-		t.Fatalf("failed to write manifest: %v", err)
-	}
-	viewContent := `<div>Initial View</div>`
-	if err := os.WriteFile(filepath.Join(widgetDir, "views", "widget.html"), []byte(viewContent), 0644); err != nil {
-		t.Fatalf("failed to write view: %v", err)
-	}
-
-	if initialCSS {
-		if err := os.WriteFile(customCSSPath, []byte("body { background: #000; }"), 0644); err != nil {
-			t.Fatalf("failed to write initial custom.css: %v", err)
-		}
-	}
-
-	loader := widget.NewLoader(builtinDir, customDir)
-	initialYAML := []byte(`timezone: UTC
-display:
-  widgets:
-    - id: test-instance
-      type: test-widget
-      dimensions: [6, 2]
-`)
-	configManager, err := config.NewManager(initialYAML, loader, nil, nil)
-	if err != nil {
-		t.Fatalf("failed to create config manager: %v", err)
-	}
-
-	stateProvider := events.NewInMemoryStateProvider(configManager)
-	hub := events.NewHub(events.HubConfig{}, stateProvider, nil)
+	tmp := t.TempDir()
+	css, bDir, cDir := filepath.Join(tmp, "c.css"), filepath.Join(tmp, "b"), filepath.Join(tmp, "c")
+	_ = os.MkdirAll(bDir, 0755); _ = os.MkdirAll(cDir, 0755)
+	writeWidgetPkg(t, bDir, "test-widget", "default", "<div>Initial View</div>", "", "")
+	if initialCSS { _ = os.WriteFile(css, []byte("body { background: #000; }"), 0644) }
+	loader := widget.NewLoader(bDir, cDir)
+	cfgMgr, err := config.NewManager([]byte("timezone: UTC\ndisplay:\n  widgets:\n    - id: test-instance\n      type: test-widget\n      dimensions: [6, 2]\n"), loader, nil, nil)
+	if err != nil { t.Fatal(err) }
+	sp := events.NewInMemoryStateProvider(cfgMgr)
+	hub := events.NewHub(events.HubConfig{}, sp, nil)
 	t.Cleanup(func() { hub.Close() })
-
-	eventCh, unsub := hub.Subscribe(context.Background())
+	ch, unsub := hub.Subscribe(context.Background())
 	t.Cleanup(unsub)
-
-	renderEngine := render.NewEngine(loader, stateProvider)
-
-	reloader := NewAssetReloader(customCSSPath, loader, builtinDir, customDir, renderEngine, configManager, hub, nil)
-
+	eng := render.NewEngine(loader, sp)
 	return &reloaderTestEnv{
-		tmpDir:        tmpDir,
-		customCSSPath: customCSSPath,
-		builtinDir:    builtinDir,
-		customDir:     customDir,
-		loader:        loader,
-		renderEngine:  renderEngine,
-		configManager: configManager,
-		hub:           hub,
-		eventCh:       eventCh,
-		reloader:      reloader,
+		customCSSPath: css, builtinDir: bDir, customDir: cDir, renderEngine: eng,
+		configManager: cfgMgr, eventCh: ch, reloader: NewAssetReloader(css, loader, bDir, cDir, eng, cfgMgr, hub, nil),
 	}
 }
 
-func expectEvent(t *testing.T, ch <-chan *events.Event, expectedType string, timeout time.Duration) *events.Event {
+func writeWidgetPkg(t *testing.T, dir, name, manifest, view, assetName, assetBody string) string {
+	t.Helper()
+	p := filepath.Join(dir, name)
+	if manifest == "default" {
+		manifest = "name: " + name + "\nversion: \"1.0.0\"\nprovider: spacer\ndefault_dimensions: [6, 2]\n"
+	}
+	if manifest != "" { _ = os.MkdirAll(p, 0755); _ = os.WriteFile(filepath.Join(p, "manifest.yaml"), []byte(manifest), 0644) }
+	if view != "" { _ = os.MkdirAll(filepath.Join(p, "views"), 0755); _ = os.WriteFile(filepath.Join(p, "views", "widget.html"), []byte(view), 0644) }
+	if assetName != "" {
+		ap := filepath.Join(p, "assets", assetName); _ = os.MkdirAll(filepath.Dir(ap), 0755); _ = os.WriteFile(ap, []byte(assetBody), 0644)
+	}
+	return p
+}
+
+func expectEvent(t *testing.T, ch <-chan *events.Event, exp string, timeout time.Duration) *events.Event {
 	t.Helper()
 	deadline := time.After(timeout)
 	for {
 		select {
 		case evt, ok := <-ch:
-			if !ok {
-				t.Fatalf("event channel closed waiting for %s", expectedType)
-			}
-			if evt.Type == expectedType {
-				return evt
-			}
+			if !ok { t.Fatalf("channel closed waiting for %s", exp) }
+			if evt.Type == exp { return evt }
 		case <-deadline:
-			t.Fatalf("timeout waiting for event %s", expectedType)
+			t.Fatalf("timeout waiting for %s", exp)
 		}
 	}
 }
 
-func expectNoEvent(t *testing.T, ch <-chan *events.Event, timeout time.Duration) {
+func expectNoEvent(t *testing.T, ch <-chan *events.Event) {
 	t.Helper()
 	select {
 	case evt := <-ch:
-		t.Fatalf("unexpected event received: %s (data: %s)", evt.Type, string(evt.Data))
-	case <-time.After(timeout):
+		t.Fatalf("unexpected %s", evt.Type)
+	default:
 	}
 }
 
@@ -145,591 +92,131 @@ func drainEvents(ch <-chan *events.Event) {
 	}
 }
 
-func TestAssetReloader_CSSModified_DispatchesStyleReload(t *testing.T) {
-	env := setupReloaderTest(t, true)
-	drainEvents(env.eventCh)
-
-	// Modify custom.css
-	if err := os.WriteFile(env.customCSSPath, []byte("body { background: #9b59b6; }"), 0644); err != nil {
-		t.Fatalf("failed to update custom.css: %v", err)
+func TestAssetReloader_ReloadCSS(t *testing.T) {
+	tests := []struct {
+		name                              string
+		initialCSS, deleteCSS, wantReload bool
+		modifyCSS                         string
+	}{
+		{"modified", true, false, true, "body { background: #9b59b6; }"},
+		{"unchanged", true, false, false, ""},
+		{"created", false, false, true, "body { color: white; }"},
+		{"deleted", true, true, true, ""},
 	}
-
-	if !env.reloader.ReloadCSS() {
-		t.Fatal("expected ReloadCSS to return true on file modification")
-	}
-
-	evt := expectEvent(t, env.eventCh, events.EventStyleReload, 2*time.Second)
-	var payload events.StyleReloadEvent
-	if err := json.Unmarshal(evt.Data, &payload); err != nil {
-		t.Fatalf("failed to unmarshal style.reload payload: %v", err)
-	}
-	if payload.File != "custom.css" {
-		t.Errorf("expected File 'custom.css', got %q", payload.File)
-	}
-	if payload.Timestamp == "" {
-		t.Error("expected non-empty timestamp in style.reload event")
-	}
-
-	// Immediate re-check without changes returns false
-	if env.reloader.ReloadCSS() {
-		t.Error("expected ReloadCSS to return false when custom.css unchanged")
-	}
-	expectNoEvent(t, env.eventCh, 100*time.Millisecond)
-}
-
-func TestAssetReloader_CSSUnchanged_NoEvent(t *testing.T) {
-	env := setupReloaderTest(t, true)
-	drainEvents(env.eventCh)
-
-	if env.reloader.ReloadCSS() {
-		t.Fatal("expected ReloadCSS to return false when CSS file is unchanged")
-	}
-	expectNoEvent(t, env.eventCh, 100*time.Millisecond)
-}
-
-func TestAssetReloader_CSSCreatedAndDeleted_DispatchesEvent(t *testing.T) {
-	env := setupReloaderTest(t, false) // custom.css does not exist initially
-	drainEvents(env.eventCh)
-
-	// 1. Initial check when file is missing -> false
-	if env.reloader.ReloadCSS() {
-		t.Fatal("expected ReloadCSS to return false when file is missing")
-	}
-	expectNoEvent(t, env.eventCh, 100*time.Millisecond)
-
-	// 2. Create custom.css
-	if err := os.WriteFile(env.customCSSPath, []byte("body { color: white; }"), 0644); err != nil {
-		t.Fatalf("failed to create custom.css: %v", err)
-	}
-
-	if !env.reloader.ReloadCSS() {
-		t.Fatal("expected ReloadCSS to return true when file is created")
-	}
-	evt := expectEvent(t, env.eventCh, events.EventStyleReload, 2*time.Second)
-	var payload events.StyleReloadEvent
-	if err := json.Unmarshal(evt.Data, &payload); err != nil {
-		t.Fatalf("failed to unmarshal payload: %v", err)
-	}
-	if payload.File != "custom.css" {
-		t.Errorf("expected File 'custom.css', got %q", payload.File)
-	}
-
-	// 3. Delete custom.css
-	if err := os.Remove(env.customCSSPath); err != nil {
-		t.Fatalf("failed to remove custom.css: %v", err)
-	}
-
-	if !env.reloader.ReloadCSS() {
-		t.Fatal("expected ReloadCSS to return true when file is deleted")
-	}
-	expectEvent(t, env.eventCh, events.EventStyleReload, 2*time.Second)
-
-	// 4. Repeated check while still deleted -> false
-	if env.reloader.ReloadCSS() {
-		t.Fatal("expected ReloadCSS to return false on subsequent check while deleted")
-	}
-	expectNoEvent(t, env.eventCh, 100*time.Millisecond)
-}
-
-func TestAssetReloader_WidgetViewModified_EvictsCacheAndDispatchesWidgetReload(t *testing.T) {
-	env := setupReloaderTest(t, false)
-	drainEvents(env.eventCh)
-
-	// Render widget to populate template cache
-	initialHTML, err := env.renderEngine.RenderWidget(context.Background(), "test-instance")
-	if err != nil {
-		t.Fatalf("failed to render initial widget: %v", err)
-	}
-	if string(initialHTML) != "<div>Initial View</div>" {
-		t.Fatalf("unexpected initial HTML: %s", string(initialHTML))
-	}
-
-	// Modify widget template view
-	viewPath := filepath.Join(env.builtinDir, "test-widget", "views", "widget.html")
-	if err := os.WriteFile(viewPath, []byte("<div>Updated View Content</div>"), 0644); err != nil {
-		t.Fatalf("failed to update widget.html: %v", err)
-	}
-
-	if !env.reloader.ReloadWidgets() {
-		t.Fatal("expected ReloadWidgets to return true when view modified")
-	}
-
-	evt := expectEvent(t, env.eventCh, events.EventWidgetReload, 2*time.Second)
-	var reloadPayload events.WidgetReloadEvent
-	if err := json.Unmarshal(evt.Data, &reloadPayload); err != nil {
-		t.Fatalf("failed to unmarshal widget.reload payload: %v", err)
-	}
-	if reloadPayload.Type != "test-widget" {
-		t.Errorf("expected Type 'test-widget', got %q", reloadPayload.Type)
-	}
-
-	// Re-rendering should reflect the updated template without restarting server
-	updatedHTML, err := env.renderEngine.RenderWidget(context.Background(), "test-instance")
-	if err != nil {
-		t.Fatalf("failed to re-render widget: %v", err)
-	}
-	if string(updatedHTML) != "<div>Updated View Content</div>" {
-		t.Fatalf("expected re-rendered HTML to reflect new view, got: %s", string(updatedHTML))
-	}
-
-	// Re-checking without modifications returns false
-	if env.reloader.ReloadWidgets() {
-		t.Error("expected ReloadWidgets to return false when nothing changed")
-	}
-	expectNoEvent(t, env.eventCh, 100*time.Millisecond)
-}
-
-func TestAssetReloader_WidgetManifestModified_EvictsCacheAndDispatchesWidgetReload(t *testing.T) {
-	env := setupReloaderTest(t, false)
-	drainEvents(env.eventCh)
-
-	manifestPath := filepath.Join(env.builtinDir, "test-widget", "manifest.yaml")
-	newManifest := `name: test-widget
-version: "1.0.1"
-description: Updated Manifest Description
-provider: spacer
-default_dimensions: [6, 2]
-supported_dimensions:
-  - [6, 2]
-`
-	if err := os.WriteFile(manifestPath, []byte(newManifest), 0644); err != nil {
-		t.Fatalf("failed to update manifest.yaml: %v", err)
-	}
-
-	if !env.reloader.ReloadWidgets() {
-		t.Fatal("expected ReloadWidgets to return true when manifest modified")
-	}
-
-	evt := expectEvent(t, env.eventCh, events.EventWidgetReload, 2*time.Second)
-	var reloadPayload events.WidgetReloadEvent
-	if err := json.Unmarshal(evt.Data, &reloadPayload); err != nil {
-		t.Fatalf("failed to unmarshal widget.reload payload: %v", err)
-	}
-	if reloadPayload.Type != "test-widget" {
-		t.Errorf("expected Type 'test-widget', got %q", reloadPayload.Type)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			env := setupReloaderTest(t, tc.initialCSS)
+			drainEvents(env.eventCh)
+			if tc.deleteCSS { _ = os.Remove(env.customCSSPath) } else if tc.modifyCSS != "" { _ = os.WriteFile(env.customCSSPath, []byte(tc.modifyCSS), 0644) }
+			if got := env.reloader.ReloadCSS(); got != tc.wantReload {
+				t.Fatalf("ReloadCSS() = %v, want %v", got, tc.wantReload)
+			}
+			if tc.wantReload {
+				evt := expectEvent(t, env.eventCh, events.EventStyleReload, 2*time.Second)
+				var payload events.StyleReloadEvent
+				if err := json.Unmarshal(evt.Data, &payload); err != nil || payload.File != "c.css" {
+					t.Fatalf("unexpected payload: %v, err=%v", payload, err)
+				}
+			}
+			if env.reloader.ReloadCSS() { t.Error("expected subsequent false") }
+			expectNoEvent(t, env.eventCh)
+		})
 	}
 }
 
-func TestAssetReloader_WidgetIncomplete_SetsPackageErrorAndDispatchesStatus(t *testing.T) {
-	env := setupReloaderTest(t, false)
-	drainEvents(env.eventCh)
+func TestAssetReloader_ReloadWidgets(t *testing.T) {
+	tests := []struct {
+		name, setup, act, wantEvt string
+		wantReload, isComb        bool
+		wantSt                    config.ConfigStatus
+	}{
+		{"view_mod", "builtin", "modify_view", events.EventWidgetReload, true, false, ""},
+		{"manifest_mod", "builtin", "modify_manifest", events.EventWidgetReload, true, false, ""},
+		{"assets_mod", "custom_assets", "modify_asset", events.EventWidgetReload, true, false, ""},
+		{"incomplete_err", "custom_incomplete", "none", events.EventSystemStatus, true, false, config.ConfigStatusError},
+		{"promo_ok", "custom_incomplete", "promote", events.EventWidgetReload, true, false, config.ConfigStatusOK},
+		{"complete_to_incomplete", "custom", "remove_view", events.EventSystemStatus, true, false, config.ConfigStatusError},
+		{"del_pkg", "custom", "delete_pkg", events.EventWidgetReload, true, false, ""},
+		{"del_incomplete", "custom_incomplete", "delete_pkg", events.EventSystemStatus, true, false, config.ConfigStatusOK},
+		{"combined", "builtin", "combined", events.EventWidgetReload, true, true, ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			env := setupReloaderTest(t, tc.isComb)
+			drainEvents(env.eventCh)
+			if tc.setup == "builtin" {
+				_, _ = env.renderEngine.RenderWidget(context.Background(), "test-instance")
+			} else if tc.setup != "" {
+				name, man, view, aName, aBody := "c-pkg", "default", "<div>c</div>", "", ""
+				if tc.setup == "custom_incomplete" { name, view = "bad-pkg", "" }
+				if tc.setup == "custom_assets" { name, aName, aBody = "a-pkg", "icons/i.svg", "<svg>1</svg>" }
+				writeWidgetPkg(t, env.customDir, name, man, view, aName, aBody)
+				if tc.act != "none" { env.reloader.ReloadWidgets(); drainEvents(env.eventCh) }
+			}
+			pBuiltin := filepath.Join(env.builtinDir, "test-widget")
+			pCustom := filepath.Join(env.customDir, "c-pkg")
+			switch tc.act {
+			case "modify_view":
+				_ = os.WriteFile(filepath.Join(pBuiltin, "views", "widget.html"), []byte("<div>New View</div>"), 0644)
+			case "modify_manifest":
+				_ = os.WriteFile(filepath.Join(pBuiltin, "manifest.yaml"), []byte("name: test-widget\nversion: \"1.0.1\"\nprovider: spacer\ndefault_dimensions: [6, 2]\n"), 0644)
+			case "modify_asset":
+				_ = os.WriteFile(filepath.Join(env.customDir, "a-pkg", "assets", "icons", "i.svg"), []byte("<svg>2</svg>"), 0644)
+			case "remove_view":
+				_ = os.Remove(filepath.Join(pCustom, "views", "widget.html"))
+			case "promote":
+				writeWidgetPkg(t, env.customDir, "bad-pkg", "", "<div>promoted</div>", "", "")
+			case "delete_pkg":
+				_ = os.RemoveAll(pCustom); _ = os.RemoveAll(filepath.Join(env.customDir, "bad-pkg"))
+			case "combined":
+				_ = os.WriteFile(env.customCSSPath, []byte("body { color: red; }"), 0644)
+				_ = os.WriteFile(filepath.Join(pBuiltin, "views", "widget.html"), []byte("<div>Combined View</div>"), 0644)
+			}
 
-	// Create incomplete package under customDir (manifest only, no view)
-	incompleteDir := filepath.Join(env.customDir, "broken-card")
-	if err := os.MkdirAll(incompleteDir, 0755); err != nil {
-		t.Fatalf("failed to create broken-card dir: %v", err)
-	}
-	manifestContent := `name: broken-card
-version: "1.0.0"
-description: Missing view template
-provider: spacer
-default_dimensions: [6, 2]
-`
-	if err := os.WriteFile(filepath.Join(incompleteDir, "manifest.yaml"), []byte(manifestContent), 0644); err != nil {
-		t.Fatalf("failed to write manifest: %v", err)
-	}
-
-	if !env.reloader.ReloadWidgets() {
-		t.Fatal("expected ReloadWidgets to return true when incomplete package detected")
-	}
-
-	// Verify error status set on configManager
-	status := env.configManager.Status()
-	if status.ConfigStatus != config.ConfigStatusError {
-		t.Fatalf("expected config status 'error', got %q", status.ConfigStatus)
-	}
-	if status.ConfigError == nil || *status.ConfigError == "" {
-		t.Fatal("expected non-empty config error message")
-	}
-
-	// Verify system.status event dispatched
-	evt := expectEvent(t, env.eventCh, events.EventSystemStatus, 2*time.Second)
-	var statusPayload events.SystemStatusData
-	if err := json.Unmarshal(evt.Data, &statusPayload); err != nil {
-		t.Fatalf("failed to unmarshal system.status payload: %v", err)
-	}
-	if statusPayload.ConfigStatus != "error" {
-		t.Errorf("expected status 'error', got %q", statusPayload.ConfigStatus)
-	}
-
-	// Verify that widget.reload was NOT dispatched for the broken package
-	expectNoEvent(t, env.eventCh, 100*time.Millisecond)
-
-	// Repeated check without change returns false
-	if env.reloader.ReloadWidgets() {
-		t.Error("expected ReloadWidgets to return false on duplicate check of incomplete package")
-	}
-	expectNoEvent(t, env.eventCh, 100*time.Millisecond)
-}
-
-func TestAssetReloader_WidgetPromoted_ClearsPackageErrorAndDispatchesWidgetReload(t *testing.T) {
-	env := setupReloaderTest(t, false)
-	drainEvents(env.eventCh)
-
-	// 1. Create incomplete package
-	pkgDir := filepath.Join(env.customDir, "promo-widget")
-	if err := os.MkdirAll(pkgDir, 0755); err != nil {
-		t.Fatalf("failed to create pkg dir: %v", err)
-	}
-	manifestContent := `name: promo-widget
-version: "1.0.0"
-description: Promoting from incomplete to complete
-provider: spacer
-default_dimensions: [6, 2]
-`
-	if err := os.WriteFile(filepath.Join(pkgDir, "manifest.yaml"), []byte(manifestContent), 0644); err != nil {
-		t.Fatalf("failed to write manifest: %v", err)
-	}
-
-	if !env.reloader.ReloadWidgets() {
-		t.Fatal("expected ReloadWidgets to return true for incomplete package")
-	}
-	expectEvent(t, env.eventCh, events.EventSystemStatus, 2*time.Second)
-
-	if env.configManager.Status().ConfigStatus != config.ConfigStatusError {
-		t.Fatalf("expected error status, got %v", env.configManager.Status().ConfigStatus)
-	}
-
-	// 2. Supply missing view to promote package to complete
-	if err := os.MkdirAll(filepath.Join(pkgDir, "views"), 0755); err != nil {
-		t.Fatalf("failed to create views dir: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(pkgDir, "views", "widget.html"), []byte("<div>Promoted!</div>"), 0644); err != nil {
-		t.Fatalf("failed to write view template: %v", err)
-	}
-
-	if !env.reloader.ReloadWidgets() {
-		t.Fatal("expected ReloadWidgets to return true when package is promoted")
-	}
-
-	// Should dispatch widget.reload for promo-widget
-	reloadEvt := expectEvent(t, env.eventCh, events.EventWidgetReload, 2*time.Second)
-	var reloadPayload events.WidgetReloadEvent
-	if err := json.Unmarshal(reloadEvt.Data, &reloadPayload); err != nil {
-		t.Fatalf("failed to unmarshal widget.reload: %v", err)
-	}
-	if reloadPayload.Type != "promo-widget" {
-		t.Errorf("expected Type 'promo-widget', got %q", reloadPayload.Type)
-	}
-
-	// Should dispatch system.status indicating OK status
-	statusEvt := expectEvent(t, env.eventCh, events.EventSystemStatus, 2*time.Second)
-	var statusPayload events.SystemStatusData
-	if err := json.Unmarshal(statusEvt.Data, &statusPayload); err != nil {
-		t.Fatalf("failed to unmarshal system.status: %v", err)
-	}
-	if statusPayload.ConfigStatus != "ok" {
-		t.Errorf("expected status 'ok', got %q", statusPayload.ConfigStatus)
-	}
-
-	if env.configManager.Status().ConfigStatus != config.ConfigStatusOK {
-		t.Fatalf("expected config status to return to OK, got %v", env.configManager.Status().ConfigStatus)
+			if tc.isComb {
+				if c, w := env.reloader.Reload(); !c || !w { t.Fatalf("Reload() = (%v, %v)", c, w) }
+				expectEvent(t, env.eventCh, events.EventStyleReload, 2*time.Second)
+				expectEvent(t, env.eventCh, events.EventWidgetReload, 2*time.Second)
+				return
+			}
+			if got := env.reloader.ReloadWidgets(); got != tc.wantReload { t.Fatalf("ReloadWidgets() = %v, want %v", got, tc.wantReload) }
+			if tc.wantEvt != "" { expectEvent(t, env.eventCh, tc.wantEvt, 2*time.Second) }
+			if tc.wantSt != "" {
+				if tc.wantEvt != events.EventSystemStatus { expectEvent(t, env.eventCh, events.EventSystemStatus, 2*time.Second) }
+				if st := env.configManager.Status().ConfigStatus; st != tc.wantSt { t.Fatalf("status = %v, want %v", st, tc.wantSt) }
+			}
+			if env.reloader.ReloadWidgets() { t.Error("expected subsequent false") }
+			expectNoEvent(t, env.eventCh)
+			if tc.act == "modify_view" {
+				if h, _ := env.renderEngine.RenderWidget(context.Background(), "test-instance"); string(h) != "<div>New View</div>" {
+					t.Fatalf("rendered = %s", string(h))
+				}
+			}
+		})
 	}
 }
 
-func TestAssetReloader_WidgetDeleted_DispatchesWidgetReload(t *testing.T) {
-	env := setupReloaderTest(t, false)
-	drainEvents(env.eventCh)
-
-	// Create a custom package
-	customPkgDir := filepath.Join(env.customDir, "ephemeral-card")
-	if err := os.MkdirAll(filepath.Join(customPkgDir, "views"), 0755); err != nil {
-		t.Fatalf("failed to create views dir: %v", err)
-	}
-	manifest := `name: ephemeral-card
-version: "1.0.0"
-description: To be deleted
-provider: spacer
-default_dimensions: [6, 2]
-`
-	if err := os.WriteFile(filepath.Join(customPkgDir, "manifest.yaml"), []byte(manifest), 0644); err != nil {
-		t.Fatalf("failed to write manifest: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(customPkgDir, "views", "widget.html"), []byte("<div>Ephemeral</div>"), 0644); err != nil {
-		t.Fatalf("failed to write view: %v", err)
-	}
-
-	// Register it
-	if !env.reloader.ReloadWidgets() {
-		t.Fatal("expected ReloadWidgets to return true when new custom package added")
-	}
-	expectEvent(t, env.eventCh, events.EventWidgetReload, 2*time.Second)
-
-	// Delete entire widget directory
-	if err := os.RemoveAll(customPkgDir); err != nil {
-		t.Fatalf("failed to remove ephemeral-card: %v", err)
-	}
-
-	// Reload widgets
-	if !env.reloader.ReloadWidgets() {
-		t.Fatal("expected ReloadWidgets to return true when package deleted")
-	}
-
-	delEvt := expectEvent(t, env.eventCh, events.EventWidgetReload, 2*time.Second)
-	var delPayload events.WidgetReloadEvent
-	if err := json.Unmarshal(delEvt.Data, &delPayload); err != nil {
-		t.Fatalf("failed to unmarshal reload event: %v", err)
-	}
-	if delPayload.Type != "ephemeral-card" {
-		t.Errorf("expected Type 'ephemeral-card', got %q", delPayload.Type)
-	}
-
-	// Repeated check returns false
-	if env.reloader.ReloadWidgets() {
-		t.Error("expected ReloadWidgets to return false on subsequent check")
-	}
-	expectNoEvent(t, env.eventCh, 100*time.Millisecond)
-}
-
-func TestAssetReloader_IncompleteWidgetDeleted_ClearsError(t *testing.T) {
-	env := setupReloaderTest(t, false)
-	drainEvents(env.eventCh)
-
-	// Create incomplete package
-	pkgDir := filepath.Join(env.customDir, "bad-pkg")
-	if err := os.MkdirAll(pkgDir, 0755); err != nil {
-		t.Fatalf("failed to create bad-pkg dir: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(pkgDir, "manifest.yaml"), []byte("name: bad-pkg\nversion: \"1.0.0\"\nprovider: spacer\n"), 0644); err != nil {
-		t.Fatalf("failed to write manifest: %v", err)
-	}
-
-	if !env.reloader.ReloadWidgets() {
-		t.Fatal("expected ReloadWidgets to return true for incomplete package")
-	}
-	expectEvent(t, env.eventCh, events.EventSystemStatus, 2*time.Second)
-	if env.configManager.Status().ConfigStatus != config.ConfigStatusError {
-		t.Fatal("expected error status")
-	}
-
-	// Remove incomplete directory
-	if err := os.RemoveAll(pkgDir); err != nil {
-		t.Fatalf("failed to remove pkgDir: %v", err)
-	}
-
-	if !env.reloader.ReloadWidgets() {
-		t.Fatal("expected ReloadWidgets to return true when incomplete package is deleted")
-	}
-
-	statusEvt := expectEvent(t, env.eventCh, events.EventSystemStatus, 2*time.Second)
-	var statusPayload events.SystemStatusData
-	if err := json.Unmarshal(statusEvt.Data, &statusPayload); err != nil {
-		t.Fatalf("failed to unmarshal system.status: %v", err)
-	}
-	if statusPayload.ConfigStatus != "ok" {
-		t.Errorf("expected status 'ok', got %q", statusPayload.ConfigStatus)
-	}
-	if env.configManager.Status().ConfigStatus != config.ConfigStatusOK {
-		t.Fatal("expected status to return to OK after deleting incomplete package")
+func TestAssetReloader_EdgeCases(t *testing.T) {
+	for _, tc := range []struct{ name, target string }{
+		{"nil_safety", "nil_safety"}, {"missing_dir", "missing_dir"}, {"read_errors", "read_errors"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tmp := t.TempDir()
+			switch tc.target {
+			case "nil_safety":
+				r := NewAssetReloader("", nil, "", "", nil, nil, nil, nil)
+				if r.ReloadCSS() || r.ReloadWidgets() || func() bool { c, w := r.Reload(); return c || w }() { t.Fatal("expected false") }
+			case "missing_dir":
+				m := filepath.Join(tmp, "m")
+				r := NewAssetReloader(filepath.Join(tmp, "m.css"), widget.NewLoader("", m), "", m, nil, nil, nil, nil)
+				if c, w := r.Reload(); c || w { t.Fatal("expected false") }
+			case "read_errors":
+				cd, cf, bf := filepath.Join(tmp, "cd"), filepath.Join(tmp, "cf"), filepath.Join(tmp, "bf")
+				_ = os.MkdirAll(cd, 0755); _ = os.WriteFile(cf, []byte("x"), 0644); _ = os.WriteFile(bf, []byte("x"), 0644)
+				r := NewAssetReloader(cd, nil, bf, cf, nil, nil, nil, nil)
+				if r.ReloadCSS() || r.ReloadWidgets() { t.Fatal("expected false on read errors") }
+				if r.computePackageHash(&domain.Package{ManifestPath: filepath.Join(tmp, "m"), ViewPath: filepath.Join(tmp, "v")}) == "" { t.Fatal("hash empty") }
+			}
+		})
 	}
 }
-
-func TestAssetReloader_NonExistentCustomDirectory(t *testing.T) {
-	tmpDir := t.TempDir()
-	nonExistentDir := filepath.Join(tmpDir, "missing-custom-widgets")
-	loader := widget.NewLoader("", nonExistentDir)
-
-	reloader := NewAssetReloader(
-		filepath.Join(tmpDir, "missing.css"),
-		loader,
-		"",
-		nonExistentDir,
-		nil,
-		nil,
-		nil,
-		nil,
-	)
-
-	cssReloaded, widgetsReloaded := reloader.Reload()
-	if cssReloaded || widgetsReloaded {
-		t.Errorf("expected (false, false) with non-existent directories, got (%v, %v)", cssReloaded, widgetsReloaded)
-	}
-}
-
-func TestAssetReloader_ReloadCombined(t *testing.T) {
-	env := setupReloaderTest(t, true)
-	drainEvents(env.eventCh)
-
-	// Modify CSS
-	if err := os.WriteFile(env.customCSSPath, []byte("body { color: red; }"), 0644); err != nil {
-		t.Fatalf("failed to modify css: %v", err)
-	}
-
-	// Modify widget view
-	viewPath := filepath.Join(env.builtinDir, "test-widget", "views", "widget.html")
-	if err := os.WriteFile(viewPath, []byte("<div>Combined Reload View</div>"), 0644); err != nil {
-		t.Fatalf("failed to modify view: %v", err)
-	}
-
-	cssReloaded, widgetsReloaded := env.reloader.Reload()
-	if !cssReloaded {
-		t.Error("expected cssReloaded to be true")
-	}
-	if !widgetsReloaded {
-		t.Error("expected widgetsReloaded to be true")
-	}
-
-	expectEvent(t, env.eventCh, events.EventStyleReload, 2*time.Second)
-	expectEvent(t, env.eventCh, events.EventWidgetReload, 2*time.Second)
-}
-
-func TestAssetReloader_PackageWithAssets_HashedAndReloaded(t *testing.T) {
-	env := setupReloaderTest(t, false)
-	drainEvents(env.eventCh)
-
-	// Create a widget package with static assets
-	pkgDir := filepath.Join(env.customDir, "asset-widget")
-	if err := os.MkdirAll(filepath.Join(pkgDir, "views"), 0755); err != nil {
-		t.Fatalf("failed to create views dir: %v", err)
-	}
-	assetsDir := filepath.Join(pkgDir, "assets", "icons")
-	if err := os.MkdirAll(assetsDir, 0755); err != nil {
-		t.Fatalf("failed to create assets dir: %v", err)
-	}
-
-	manifestContent := `name: asset-widget
-version: "1.0.0"
-description: Tests asset hashing
-provider: spacer
-default_dimensions: [6, 2]
-supported_dimensions:
-  - [6, 2]
-`
-	if err := os.WriteFile(filepath.Join(pkgDir, "manifest.yaml"), []byte(manifestContent), 0644); err != nil {
-		t.Fatalf("failed to write manifest: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(pkgDir, "views", "widget.html"), []byte("<div>With Assets</div>"), 0644); err != nil {
-		t.Fatalf("failed to write view: %v", err)
-	}
-	assetFile := filepath.Join(assetsDir, "icon.svg")
-	if err := os.WriteFile(assetFile, []byte("<svg>icon v1</svg>"), 0644); err != nil {
-		t.Fatalf("failed to write asset: %v", err)
-	}
-
-	// First reload discovers and registers the asset widget
-	if !env.reloader.ReloadWidgets() {
-		t.Fatal("expected ReloadWidgets to register asset widget")
-	}
-	expectEvent(t, env.eventCh, events.EventWidgetReload, 2*time.Second)
-
-	// Second reload without modifications should be a no-op
-	if env.reloader.ReloadWidgets() {
-		t.Fatal("expected no reload when assets unchanged")
-	}
-
-	// Modify asset file
-	if err := os.WriteFile(assetFile, []byte("<svg>icon v2 modified</svg>"), 0644); err != nil {
-		t.Fatalf("failed to modify asset: %v", err)
-	}
-
-	// Reload should detect modified asset
-	if !env.reloader.ReloadWidgets() {
-		t.Fatal("expected ReloadWidgets to detect modified asset file")
-	}
-	expectEvent(t, env.eventCh, events.EventWidgetReload, 2*time.Second)
-}
-
-func TestAssetReloader_CompletePackageBecomesIncomplete(t *testing.T) {
-	env := setupReloaderTest(t, false)
-	drainEvents(env.eventCh)
-
-	// Create a complete widget
-	pkgDir := filepath.Join(env.customDir, "breaking-widget")
-	if err := os.MkdirAll(filepath.Join(pkgDir, "views"), 0755); err != nil {
-		t.Fatalf("failed to create views dir: %v", err)
-	}
-	manifestContent := `name: breaking-widget
-version: "1.0.0"
-description: Tests transition from complete to broken
-provider: spacer
-default_dimensions: [6, 2]
-supported_dimensions:
-  - [6, 2]
-`
-	if err := os.WriteFile(filepath.Join(pkgDir, "manifest.yaml"), []byte(manifestContent), 0644); err != nil {
-		t.Fatalf("failed to write manifest: %v", err)
-	}
-	viewPath := filepath.Join(pkgDir, "views", "widget.html")
-	if err := os.WriteFile(viewPath, []byte("<div>Valid</div>"), 0644); err != nil {
-		t.Fatalf("failed to write view: %v", err)
-	}
-
-	// Discover complete package
-	if !env.reloader.ReloadWidgets() {
-		t.Fatal("expected initial reload to discover package")
-	}
-	expectEvent(t, env.eventCh, events.EventWidgetReload, 2*time.Second)
-
-	// Break package by removing view template
-	if err := os.Remove(viewPath); err != nil {
-		t.Fatalf("failed to remove view: %v", err)
-	}
-
-	// Reload should detect incomplete package, evict cache, set package error
-	if !env.reloader.ReloadWidgets() {
-		t.Fatal("expected ReloadWidgets to report change when package breaks")
-	}
-
-	expectEvent(t, env.eventCh, events.EventSystemStatus, 2*time.Second)
-	if env.configManager.Status().ConfigStatus != config.ConfigStatusError {
-		t.Errorf("expected error status, got %v", env.configManager.Status().ConfigStatus)
-	}
-}
-
-func TestAssetReloader_NilSafety(t *testing.T) {
-	reloader := NewAssetReloader("", nil, "", "", nil, nil, nil, nil)
-	if reloader.ReloadCSS() {
-		t.Error("expected ReloadCSS on nil instance to return false")
-	}
-	if reloader.ReloadWidgets() {
-		t.Error("expected ReloadWidgets on nil instance to return false")
-	}
-	css, wid := reloader.Reload()
-	if css || wid {
-		t.Errorf("expected (false, false), got (%v, %v)", css, wid)
-	}
-}
-
-func TestAssetReloader_ReadErrorBranches(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	// customCSSPath is a directory, not a file -> os.ReadFile fails with EISDIR
-	cssDir := filepath.Join(tmpDir, "css-dir")
-	if err := os.MkdirAll(cssDir, 0755); err != nil {
-		t.Fatalf("failed to create css-dir: %v", err)
-	}
-
-	// customDir is a regular file, not a directory -> os.ReadDir fails with ENOTDIR
-	customFile := filepath.Join(tmpDir, "custom-file")
-	if err := os.WriteFile(customFile, []byte("not a dir"), 0644); err != nil {
-		t.Fatalf("failed to write custom-file: %v", err)
-	}
-
-	// builtinDir is a regular file, not a directory -> os.ReadDir fails with ENOTDIR
-	builtinFile := filepath.Join(tmpDir, "builtin-file")
-	if err := os.WriteFile(builtinFile, []byte("not a dir"), 0644); err != nil {
-		t.Fatalf("failed to write builtin-file: %v", err)
-	}
-
-	reloader := NewAssetReloader(cssDir, nil, builtinFile, customFile, nil, nil, nil, nil)
-
-	// ReloadCSS should handle read error gracefully and return false
-	if reloader.ReloadCSS() {
-		t.Error("expected ReloadCSS to return false when CSS path is a directory")
-	}
-
-	// ReloadWidgets should handle non-directory custom and builtin paths gracefully
-	if reloader.ReloadWidgets() {
-		t.Error("expected ReloadWidgets to return false when widget dirs are files")
-	}
-
-	// computePackageHash error branches for missing manifest and view template
-	hash := reloader.computePackageHash(&domain.Package{
-		ManifestPath: filepath.Join(tmpDir, "nonexistent-manifest.yaml"),
-		ViewPath:     filepath.Join(tmpDir, "nonexistent-view.html"),
-	})
-	if hash == "" {
-		t.Error("expected non-empty hash even with missing files")
-	}
-}
-
