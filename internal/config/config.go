@@ -36,6 +36,37 @@ func trimmedOr(s, def string) string {
 	return t
 }
 
+func derefOr[T any](p *T, def T) T {
+	if p == nil {
+		return def
+	}
+	return *p
+}
+
+func checkPositiveInt(p *int, label string) error {
+	if p != nil && *p <= 0 {
+		return fmt.Errorf("%s must be positive (got %d)", label, *p)
+	}
+	return nil
+}
+
+func checkNonNegativeInt(p *int, label string) error {
+	if p != nil && *p < 0 {
+		return fmt.Errorf("%s must be non-negative (got %d)", label, *p)
+	}
+	return nil
+}
+
+func checkLatLon(lat, lon float64, prefix string) error {
+	if lat < -90.0 || lat > 90.0 {
+		return fmt.Errorf("%s latitude must be between -90 and 90 (got %f)", prefix, lat)
+	}
+	if lon < -180.0 || lon > 180.0 {
+		return fmt.Errorf("%s longitude must be between -180 and 180 (got %f)", prefix, lon)
+	}
+	return nil
+}
+
 // Config represents the root configuration schema of Mirrormere.
 type Config struct {
 	Host           string          `yaml:"host,omitempty"`
@@ -69,18 +100,18 @@ type LocationConfig struct {
 
 // GetLatitude returns the latitude, or 0 if unset or nil.
 func (lc *LocationConfig) GetLatitude() float64 {
-	if lc == nil || lc.Latitude == nil {
+	if lc == nil {
 		return 0
 	}
-	return *lc.Latitude
+	return derefOr(lc.Latitude, 0)
 }
 
 // GetLongitude returns the longitude, or 0 if unset or nil.
 func (lc *LocationConfig) GetLongitude() float64 {
-	if lc == nil || lc.Longitude == nil {
+	if lc == nil {
 		return 0
 	}
-	return *lc.Longitude
+	return derefOr(lc.Longitude, 0)
 }
 
 // ThemeConfig defines visual theme mode and Day/Night switching behavior.
@@ -144,10 +175,10 @@ type HeaderVideoConfig struct {
 
 // IsEnabled returns true if the header video button is explicitly enabled.
 func (hv *HeaderVideoConfig) IsEnabled() bool {
-	if hv == nil || hv.Enabled == nil {
+	if hv == nil {
 		return false
 	}
-	return *hv.Enabled
+	return derefOr(hv.Enabled, false)
 }
 
 // GetStreamID returns the configured stream identifier (default: "chromecast").
@@ -177,10 +208,10 @@ type HeaderWeatherConfig struct {
 
 // GetRefreshIntervalSeconds returns the weather polling cadence in seconds (default: 900).
 func (hw *HeaderWeatherConfig) GetRefreshIntervalSeconds() int {
-	if hw == nil || hw.RefreshIntervalSeconds == nil {
+	if hw == nil {
 		return 900
 	}
-	return *hw.RefreshIntervalSeconds
+	return derefOr(hw.RefreshIntervalSeconds, 900)
 }
 
 // GridConfig defines the discrete tile geometry (strictly 6x2).
@@ -295,10 +326,10 @@ func (s *SpeakerIDConfig) IsEnabled() bool {
 
 // GetThreshold returns the match threshold (default: 0.70).
 func (s *SpeakerIDConfig) GetThreshold() float64 {
-	if s == nil || s.Threshold == nil {
+	if s == nil {
 		return 0.70
 	}
-	return *s.Threshold
+	return derefOr(s.Threshold, 0.70)
 }
 
 // GetTimeoutSeconds returns the embed timeout in seconds (default: 5).
@@ -332,18 +363,18 @@ func (vh *VoiceHubConfig) GetTTSTimeoutSeconds() int {
 
 // GetTTSVoice returns the voice model identifier (default: "af_bella").
 func (vh *VoiceHubConfig) GetTTSVoice() string {
-	if vh == nil || vh.TTSVoice == "" {
+	if vh == nil {
 		return "af_bella"
 	}
-	return vh.TTSVoice
+	return trimmedOr(vh.TTSVoice, "af_bella")
 }
 
 // GetTTSModel returns the TTS engine/model identifier (default: "kokoro").
 func (vh *VoiceHubConfig) GetTTSModel() string {
-	if vh == nil || vh.TTSModel == "" {
+	if vh == nil {
 		return "kokoro"
 	}
-	return vh.TTSModel
+	return trimmedOr(vh.TTSModel, "kokoro")
 }
 
 // Location returns the validated IANA time.Location pointer for the household.
@@ -361,42 +392,42 @@ func (c *Config) Location() *time.Location {
 
 // GetIntervalSeconds returns rotation interval in seconds (default: 30).
 func (r *RotationConfig) GetIntervalSeconds() int {
-	if r.IntervalSeconds == nil {
+	if r == nil {
 		return 30
 	}
-	return *r.IntervalSeconds
+	return derefOr(r.IntervalSeconds, 30)
 }
 
 // GetTransition returns the transition visual hint (default: "slide").
 func (r *RotationConfig) GetTransition() string {
-	if r.Transition == "" {
+	if r == nil {
 		return "slide"
 	}
-	return r.Transition
+	return trimmedOr(r.Transition, "slide")
 }
 
 // GetPauseOnTouch returns whether interaction pauses rotation (default: true).
 func (r *RotationConfig) GetPauseOnTouch() bool {
-	if r.PauseOnTouch == nil {
+	if r == nil {
 		return true
 	}
-	return *r.PauseOnTouch
+	return derefOr(r.PauseOnTouch, true)
 }
 
 // GetPauseDurationSeconds returns touch interaction pause duration in seconds (default: 120).
 func (r *RotationConfig) GetPauseDurationSeconds() int {
-	if r.PauseDurationSeconds == nil {
+	if r == nil {
 		return 120
 	}
-	return *r.PauseDurationSeconds
+	return derefOr(r.PauseDurationSeconds, 120)
 }
 
 // IsEnabled returns whether the top banner header is active (default: true).
 func (h *HeaderConfig) IsEnabled() bool {
-	if h.Enabled == nil {
+	if h == nil {
 		return true
 	}
-	return *h.Enabled
+	return derefOr(h.Enabled, true)
 }
 
 // DefaultHeaderElements returns the standard header elements if none specified.
@@ -448,10 +479,8 @@ func checkNodeForInterpolation(node *yaml.Node) error {
 	if node == nil {
 		return nil
 	}
-	if node.Kind == yaml.ScalarNode {
-		if interpolationRegex.MatchString(node.Value) {
-			return fmt.Errorf("line %d: arbitrary '${...}' string interpolation is prohibited in '%s'; use explicit '*_env' keys instead (e.g. token_env, url_env)", node.Line, node.Value)
-		}
+	if node.Kind == yaml.ScalarNode && interpolationRegex.MatchString(node.Value) {
+		return fmt.Errorf("line %d: arbitrary '${...}' string interpolation is prohibited in '%s'; use explicit '*_env' keys instead (e.g. token_env, url_env)", node.Line, node.Value)
 	}
 	for _, child := range node.Content {
 		if err := checkNodeForInterpolation(child); err != nil {
@@ -465,28 +494,20 @@ func validateStructuralKeys(root *yaml.Node) error {
 	if len(root.Content) == 0 {
 		return fmt.Errorf("configuration file is empty")
 	}
-
 	topNode := root.Content[0]
 	if topNode.Kind != yaml.MappingNode {
 		return fmt.Errorf("configuration root must be a YAML mapping")
 	}
-
 	for i := 0; i < len(topNode.Content); i += 2 {
-		keyNode := topNode.Content[i]
-		valNode := topNode.Content[i+1]
-		key := keyNode.Value
-
-		switch key {
+		keyNode, valNode := topNode.Content[i], topNode.Content[i+1]
+		switch key := keyNode.Value; key {
 		case "screens":
 			return fmt.Errorf("line %d: configuration contains disallowed top-level key 'screens': screens are dynamically computed by the 6x2 layout solver", keyNode.Line)
 		case "providers":
 			return fmt.Errorf("line %d: configuration contains disallowed top-level key 'providers': widget instances configure their own data sources under display.widgets", keyNode.Line)
 		case "header":
 			return fmt.Errorf("line %d: configuration contains disallowed top-level key 'header': header must be configured under display.header", keyNode.Line)
-		case "timezone", "host", "port":
-			// Canonical top-level keys
-		case "voice_hub", "chat_log", "location":
-			// Canonical top-level keys
+		case "timezone", "host", "port", "voice_hub", "chat_log", "location":
 		case "display":
 			if valNode.Kind == yaml.MappingNode {
 				if err := validateDisplayKeys(valNode); err != nil {
@@ -497,22 +518,18 @@ func validateStructuralKeys(root *yaml.Node) error {
 			return fmt.Errorf("line %d: unknown or disallowed top-level key '%s'", keyNode.Line, key)
 		}
 	}
-
 	return nil
 }
 
 func validateDisplayKeys(displayNode *yaml.Node) error {
 	for i := 0; i < len(displayNode.Content); i += 2 {
 		keyNode := displayNode.Content[i]
-		key := keyNode.Value
-
-		switch key {
+		switch key := keyNode.Value; key {
 		case "screens":
 			return fmt.Errorf("line %d: display contains disallowed key 'screens': screens are dynamically computed by the 6x2 layout solver", keyNode.Line)
 		case "providers":
 			return fmt.Errorf("line %d: display contains disallowed key 'providers': widget instances configure their own data sources under display.widgets", keyNode.Line)
 		case "rotation", "grid", "header", "widgets", "hide_cursor", "remote_url", "theme":
-			// Canonical keys
 		default:
 			return fmt.Errorf("line %d: unknown key '%s' under display", keyNode.Line, key)
 		}
@@ -521,12 +538,9 @@ func validateDisplayKeys(displayNode *yaml.Node) error {
 }
 
 func (c *Config) applyDefaults() {
-	// Rotation defaults
 	if c.Display.Rotation.Transition == "" {
 		c.Display.Rotation.Transition = "slide"
 	}
-
-	// Grid defaults
 	if c.Display.Grid.Columns == 0 {
 		c.Display.Grid.Columns = 6
 	}
@@ -534,15 +548,14 @@ func (c *Config) applyDefaults() {
 		c.Display.Grid.Rows = 2
 	}
 
-	// Location and Header Weather propagation
 	if c.LocationConfig != nil && c.LocationConfig.Latitude != nil && c.LocationConfig.Longitude != nil {
-		if c.Display.Header.Weather != nil {
-			if c.Display.Header.Weather.Latitude == 0 && c.Display.Header.Weather.Longitude == 0 {
-				c.Display.Header.Weather.Latitude = *c.LocationConfig.Latitude
-				c.Display.Header.Weather.Longitude = *c.LocationConfig.Longitude
+		if hw := c.Display.Header.Weather; hw != nil {
+			if hw.Latitude == 0 && hw.Longitude == 0 {
+				hw.Latitude = *c.LocationConfig.Latitude
+				hw.Longitude = *c.LocationConfig.Longitude
 			}
-			if c.Display.Header.Weather.Location == "" && c.LocationConfig.Name != "" {
-				c.Display.Header.Weather.Location = c.LocationConfig.Name
+			if hw.Location == "" && c.LocationConfig.Name != "" {
+				hw.Location = c.LocationConfig.Name
 			}
 		}
 		for i := range c.Display.Widgets {
@@ -562,17 +575,10 @@ func (c *Config) applyDefaults() {
 				}
 			}
 		}
-	} else if c.Display.Header.Weather != nil && (c.Display.Header.Weather.Latitude != 0 || c.Display.Header.Weather.Longitude != 0) {
-		// Backwards compatibility: populate LocationConfig from display.header.weather if set
-		lat := c.Display.Header.Weather.Latitude
-		lon := c.Display.Header.Weather.Longitude
-		name := c.Display.Header.Weather.Location
+	} else if hw := c.Display.Header.Weather; hw != nil && (hw.Latitude != 0 || hw.Longitude != 0) {
+		lat, lon, name := hw.Latitude, hw.Longitude, hw.Location
 		if c.LocationConfig == nil {
-			c.LocationConfig = &LocationConfig{
-				Name:      name,
-				Latitude:  &lat,
-				Longitude: &lon,
-			}
+			c.LocationConfig = &LocationConfig{Name: name, Latitude: &lat, Longitude: &lon}
 		} else {
 			if c.LocationConfig.Latitude == nil {
 				c.LocationConfig.Latitude = &lat
@@ -586,8 +592,14 @@ func (c *Config) applyDefaults() {
 		}
 	}
 
-	if c.Display.Header.Weather != nil && c.Display.Header.Weather.Units == "" {
-		c.Display.Header.Weather.Units = "imperial"
+	if hw := c.Display.Header.Weather; hw != nil {
+		if hw.Units == "" {
+			hw.Units = "imperial"
+		}
+		if hw.RefreshIntervalSeconds == nil {
+			defaultInterval := 900
+			hw.RefreshIntervalSeconds = &defaultInterval
+		}
 	}
 
 	if c.Display.Theme == nil {
@@ -596,17 +608,8 @@ func (c *Config) applyDefaults() {
 		c.Display.Theme.Mode = "day"
 	}
 
-	// Header defaults
 	if c.Display.Header.Elements == nil {
 		c.Display.Header.Elements = DefaultHeaderElements()
-	}
-
-	// Header Weather defaults if configured
-	if c.Display.Header.Weather != nil {
-		if c.Display.Header.Weather.RefreshIntervalSeconds == nil {
-			defaultInterval := 900
-			c.Display.Header.Weather.RefreshIntervalSeconds = &defaultInterval
-		}
 	}
 }
 
@@ -631,30 +634,22 @@ func (c *Config) Validate() error {
 	}
 
 	// 3. Rotation validation
-	if c.Display.Rotation.IntervalSeconds != nil && *c.Display.Rotation.IntervalSeconds < 0 {
-		return fmt.Errorf("rotation interval_seconds must be non-negative (got %d)", *c.Display.Rotation.IntervalSeconds)
+	if err := checkNonNegativeInt(c.Display.Rotation.IntervalSeconds, "rotation interval_seconds"); err != nil {
+		return err
 	}
-	if c.Display.Rotation.PauseDurationSeconds != nil && *c.Display.Rotation.PauseDurationSeconds < 0 {
-		return fmt.Errorf("rotation pause_duration_seconds must be non-negative (got %d)", *c.Display.Rotation.PauseDurationSeconds)
+	if err := checkNonNegativeInt(c.Display.Rotation.PauseDurationSeconds, "rotation pause_duration_seconds"); err != nil {
+		return err
 	}
 	switch c.Display.Rotation.Transition {
 	case "slide", "fade", "instant", "none":
-		// valid
 	default:
 		return fmt.Errorf("invalid rotation transition '%s': must be one of slide, fade, instant, none", c.Display.Rotation.Transition)
 	}
 
 	// 3b. Location validation
-	if lc := c.LocationConfig; lc != nil {
-		if lc.Latitude != nil {
-			if *lc.Latitude < -90.0 || *lc.Latitude > 90.0 {
-				return fmt.Errorf("location latitude must be between -90 and 90 (got %f)", *lc.Latitude)
-			}
-		}
-		if lc.Longitude != nil {
-			if *lc.Longitude < -180.0 || *lc.Longitude > 180.0 {
-				return fmt.Errorf("location longitude must be between -180 and 180 (got %f)", *lc.Longitude)
-			}
+	if lc := c.LocationConfig; lc != nil && (lc.Latitude != nil || lc.Longitude != nil) {
+		if err := checkLatLon(derefOr(lc.Latitude, 0), derefOr(lc.Longitude, 0), "location"); err != nil {
+			return err
 		}
 	}
 
@@ -663,7 +658,6 @@ func (c *Config) Validate() error {
 		mode := tc.GetMode()
 		switch mode {
 		case "auto", "day", "night":
-			// valid
 		default:
 			return fmt.Errorf("invalid theme mode '%s': must be one of auto, day, night", tc.Mode)
 		}
@@ -677,18 +671,14 @@ func (c *Config) Validate() error {
 
 	// 4. Header Weather validation
 	if hw := c.Display.Header.Weather; hw != nil {
-		if hw.RefreshIntervalSeconds != nil && *hw.RefreshIntervalSeconds <= 0 {
-			return fmt.Errorf("header weather refresh_interval_seconds must be positive (got %d)", *hw.RefreshIntervalSeconds)
+		if err := checkPositiveInt(hw.RefreshIntervalSeconds, "header weather refresh_interval_seconds"); err != nil {
+			return err
 		}
-		if hw.Latitude < -90.0 || hw.Latitude > 90.0 {
-			return fmt.Errorf("header weather latitude must be between -90 and 90 (got %f)", hw.Latitude)
-		}
-		if hw.Longitude < -180.0 || hw.Longitude > 180.0 {
-			return fmt.Errorf("header weather longitude must be between -180 and 180 (got %f)", hw.Longitude)
+		if err := checkLatLon(hw.Latitude, hw.Longitude, "header weather"); err != nil {
+			return err
 		}
 		switch strings.ToLower(hw.Units) {
 		case "imperial", "metric":
-			// valid
 		default:
 			return fmt.Errorf("invalid header weather units '%s': must be 'imperial' or 'metric'", hw.Units)
 		}
@@ -720,8 +710,8 @@ func (c *Config) Validate() error {
 			}
 		}
 
-		if w.RefreshIntervalSeconds != nil && *w.RefreshIntervalSeconds <= 0 {
-			return fmt.Errorf("widget '%s': refresh_interval_seconds must be positive (got %d)", w.ID, *w.RefreshIntervalSeconds)
+		if err := checkPositiveInt(w.RefreshIntervalSeconds, fmt.Sprintf("widget '%s': refresh_interval_seconds", w.ID)); err != nil {
+			return err
 		}
 
 		if w.Method != "" {
@@ -734,39 +724,35 @@ func (c *Config) Validate() error {
 			w.Method = "POST"
 		}
 
-		if w.Endpoint != "" {
-			if !isValidHTTPURL(w.Endpoint) {
-				return fmt.Errorf("widget '%s': invalid endpoint URL '%s' (must be http:// or https:// with host)", w.ID, w.Endpoint)
-			}
+		if w.Endpoint != "" && !isValidHTTPURL(w.Endpoint) {
+			return fmt.Errorf("widget '%s': invalid endpoint URL '%s' (must be http:// or https:// with host)", w.ID, w.Endpoint)
 		}
 	}
 
 	// 5b. ChatLog validation
 	if cl := c.ChatLog; cl != nil {
-		if cl.TTLMinutes != nil && *cl.TTLMinutes <= 0 {
-			return fmt.Errorf("chat_log ttl_minutes must be positive (got %d)", *cl.TTLMinutes)
+		if err := checkPositiveInt(cl.TTLMinutes, "chat_log ttl_minutes"); err != nil {
+			return err
 		}
-		if cl.MaxMessagesPerNode != nil && *cl.MaxMessagesPerNode <= 0 {
-			return fmt.Errorf("chat_log max_messages_per_node must be positive (got %d)", *cl.MaxMessagesPerNode)
+		if err := checkPositiveInt(cl.MaxMessagesPerNode, "chat_log max_messages_per_node"); err != nil {
+			return err
 		}
 	}
 
 	// 6. VoiceHub validation
 	if vh := c.VoiceHub; vh != nil && vh.Enabled {
-		if vh.BrainTimeoutSeconds != nil && *vh.BrainTimeoutSeconds <= 0 {
-			return fmt.Errorf("voice_hub brain_timeout_seconds must be positive (got %d)", *vh.BrainTimeoutSeconds)
+		if err := checkPositiveInt(vh.BrainTimeoutSeconds, "voice_hub brain_timeout_seconds"); err != nil {
+			return err
 		}
-		if vh.TTSTimeoutSeconds != nil && *vh.TTSTimeoutSeconds <= 0 {
-			return fmt.Errorf("voice_hub tts_timeout_seconds must be positive (got %d)", *vh.TTSTimeoutSeconds)
+		if err := checkPositiveInt(vh.TTSTimeoutSeconds, "voice_hub tts_timeout_seconds"); err != nil {
+			return err
 		}
 		if fp := vh.FastPath; fp != nil {
-			if fp.TimeoutMS != nil && *fp.TimeoutMS <= 0 {
-				return fmt.Errorf("voice_hub fast_path timeout_ms must be positive (got %d)", *fp.TimeoutMS)
+			if err := checkPositiveInt(fp.TimeoutMS, "voice_hub fast_path timeout_ms"); err != nil {
+				return err
 			}
-			if fp.IsEnabled() {
-				if !isValidHTTPURL(fp.URL) {
-					return fmt.Errorf("voice_hub fast_path url must be an http(s) URL (got %q)", fp.URL)
-				}
+			if fp.IsEnabled() && !isValidHTTPURL(fp.URL) {
+				return fmt.Errorf("voice_hub fast_path url must be an http(s) URL (got %q)", fp.URL)
 			}
 		}
 		if sid := vh.SpeakerID; sid != nil {
@@ -776,8 +762,8 @@ func (c *Config) Validate() error {
 			if sid.Threshold != nil && (*sid.Threshold <= 0 || *sid.Threshold > 1) {
 				return fmt.Errorf("voice_hub speaker_id threshold must be in (0, 1] (got %v)", *sid.Threshold)
 			}
-			if sid.TimeoutSeconds != nil && *sid.TimeoutSeconds <= 0 {
-				return fmt.Errorf("voice_hub speaker_id timeout_seconds must be positive (got %d)", *sid.TimeoutSeconds)
+			if err := checkPositiveInt(sid.TimeoutSeconds, "voice_hub speaker_id timeout_seconds"); err != nil {
+				return err
 			}
 		}
 	}
