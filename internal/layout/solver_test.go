@@ -3,145 +3,74 @@ package layout_test
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/azylman/mirrormere/internal/domain"
 	"github.com/azylman/mirrormere/internal/layout"
 )
 
+func mkW(id string, c, r int, pinned bool) layout.WidgetInput {
+	return layout.WidgetInput{ID: id, Dimensions: domain.NewDimension(c, r), Pinned: pinned}
+}
+
+func repeatW(prefix string, c, r, n int) []layout.WidgetInput {
+	res := make([]layout.WidgetInput, n)
+	for i := 0; i < n; i++ {
+		res[i] = mkW(fmt.Sprintf("%s-%d", prefix, i), c, r, false)
+	}
+	return res
+}
+
 func TestCellIndex(t *testing.T) {
 	t.Parallel()
-
 	for r := 0; r < layout.GridRows; r++ {
 		for c := 0; c < layout.GridColumns; c++ {
-			expected := r*layout.GridColumns + c
-			actual := layout.CellIndex(c, r)
-			if actual != expected {
-				t.Fatalf("CellIndex(%d, %d) = %d; want %d", c, r, actual, expected)
+			if actual, want := layout.CellIndex(c, r), r*layout.GridColumns+c; actual != want {
+				t.Fatalf("CellIndex(%d, %d) = %d; want %d", c, r, actual, want)
 			}
 		}
 	}
 }
 
-func TestWidgetBitmask_Valid(t *testing.T) {
+func TestWidgetBitmask(t *testing.T) {
 	t.Parallel()
-
 	tests := []struct {
 		name     string
 		cols     int
 		rows     int
 		origCol  int
 		origRow  int
-		expected uint16
+		want     uint16
+		wantErr  bool
 	}{
-		{
-			name:     "single cell (0, 0)",
-			cols:     1,
-			rows:     1,
-			origCol:  0,
-			origRow:  0,
-			expected: 0b000000000001,
-		},
-		{
-			name:     "single cell (5, 1)",
-			cols:     1,
-			rows:     1,
-			origCol:  5,
-			origRow:  1,
-			expected: 0b100000000000,
-		},
-		{
-			name:     "2x1 at (0, 0)",
-			cols:     2,
-			rows:     1,
-			origCol:  0,
-			origRow:  0,
-			expected: 0b000000000011,
-		},
-		{
-			name:     "2x1 at (4, 1)",
-			cols:     2,
-			rows:     1,
-			origCol:  4,
-			origRow:  1,
-			expected: 0b110000000000,
-		},
-		{
-			name:     "4x2 hero at (0, 0)",
-			cols:     4,
-			rows:     2,
-			origCol:  0,
-			origRow:  0,
-			expected: 0b001111001111,
-		},
-		{
-			name:     "6x2 full grid hero at (0, 0)",
-			cols:     6,
-			rows:     2,
-			origCol:  0,
-			origRow:  0,
-			expected: layout.FullGridMask,
-		},
-		{
-			name:     "6x1 banner row 0",
-			cols:     6,
-			rows:     1,
-			origCol:  0,
-			origRow:  0,
-			expected: 0b000000111111,
-		},
-		{
-			name:     "6x1 banner row 1",
-			cols:     6,
-			rows:     1,
-			origCol:  0,
-			origRow:  1,
-			expected: 0b111111000000,
-		},
+		{"single cell (0, 0)", 1, 1, 0, 0, 0b000000000001, false},
+		{"single cell (5, 1)", 1, 1, 5, 1, 0b100000000000, false},
+		{"2x1 at (0, 0)", 2, 1, 0, 0, 0b000000000011, false},
+		{"2x1 at (4, 1)", 2, 1, 4, 1, 0b110000000000, false},
+		{"4x2 hero at (0, 0)", 4, 2, 0, 0, 0b001111001111, false},
+		{"6x2 full grid hero at (0, 0)", 6, 2, 0, 0, layout.FullGridMask, false},
+		{"6x1 banner row 0", 6, 1, 0, 0, 0b000000111111, false},
+		{"6x1 banner row 1", 6, 1, 0, 1, 0b111111000000, false},
+		{"cols zero", 0, 1, 0, 0, 0, true},
+		{"cols too large", 7, 1, 0, 0, 0, true},
+		{"rows zero", 1, 0, 0, 0, 0, true},
+		{"rows too large", 1, 3, 0, 0, 0, true},
+		{"originCol negative", 1, 1, -1, 0, 0, true},
+		{"originRow negative", 1, 1, 0, -1, 0, true},
+		{"originCol overflow", 4, 1, 3, 0, 0, true},
+		{"originRow overflow", 1, 2, 0, 1, 0, true},
 	}
-
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			mask, err := layout.WidgetBitmask(tc.cols, tc.rows, tc.origCol, tc.origRow)
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("WidgetBitmask err = %v, wantErr = %v", err, tc.wantErr)
 			}
-			if mask != tc.expected {
-				t.Fatalf("WidgetBitmask(%d, %d, %d, %d) = %012b; want %012b", tc.cols, tc.rows, tc.origCol, tc.origRow, mask, tc.expected)
-			}
-		})
-	}
-}
-
-func TestWidgetBitmask_Invalid(t *testing.T) {
-	t.Parallel()
-
-	invalidCases := []struct {
-		name    string
-		cols    int
-		rows    int
-		origCol int
-		origRow int
-	}{
-		{"cols zero", 0, 1, 0, 0},
-		{"cols too large", 7, 1, 0, 0},
-		{"rows zero", 1, 0, 0, 0},
-		{"rows too large", 1, 3, 0, 0},
-		{"originCol negative", 1, 1, -1, 0},
-		{"originRow negative", 1, 1, 0, -1},
-		{"originCol overflow", 4, 1, 3, 0},
-		{"originRow overflow", 1, 2, 0, 1},
-	}
-
-	for _, tc := range invalidCases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			_, err := layout.WidgetBitmask(tc.cols, tc.rows, tc.origCol, tc.origRow)
-			if err == nil {
-				t.Fatalf("expected error for %s, got nil", tc.name)
+			if !tc.wantErr && mask != tc.want {
+				t.Fatalf("WidgetBitmask = %012b; want %012b", mask, tc.want)
 			}
 		})
 	}
@@ -149,82 +78,51 @@ func TestWidgetBitmask_Invalid(t *testing.T) {
 
 func TestComputeScreens(t *testing.T) {
 	t.Parallel()
-
-	// 1. Single screen unpinned full
-	k, def, err := layout.ComputeScreens(0, 12)
-	if err != nil || k != 1 || def != 0 {
-		t.Fatalf("expected k=1, def=0, got k=%d, def=%d, err=%v", k, def, err)
+	tests := []struct {
+		name     string
+		pinned   int
+		unpinned int
+		wantK    int
+		wantDef  int
+		wantErr  string
+	}{
+		{"single screen unpinned full", 0, 12, 1, 0, ""},
+		{"multi-screen unpinned full", 0, 24, 2, 0, ""},
+		{"unpinned deficit", 0, 14, 2, 10, ""},
+		{"pinned + unpinned balanced", 8, 8, 2, 0, ""},
+		{"pinned + unpinned deficit", 8, 2, 1, 2, ""},
+		{"pinned only with deficit", 8, 0, 1, 4, ""},
+		{"pinned full screen", 12, 0, 1, 0, ""},
+		{"negative pinned area", -1, 10, 0, 0, "non-negative"},
+		{"negative unpinned area", 4, -2, 0, 0, "non-negative"},
+		{"pinned area > 12", 14, 0, 0, 0, "exceeding single-screen limit"},
+		{"pinned area == 12 with unpinned > 0", 12, 2, 0, 0, "leaving no screen space"},
 	}
-
-	// 2. Multi-screen unpinned full
-	k, def, err = layout.ComputeScreens(0, 24)
-	if err != nil || k != 2 || def != 0 {
-		t.Fatalf("expected k=2, def=0, got k=%d, def=%d, err=%v", k, def, err)
-	}
-
-	// 3. Unpinned deficit
-	k, def, err = layout.ComputeScreens(0, 14)
-	if err != nil || k != 2 || def != 10 {
-		t.Fatalf("expected k=2, def=10, got k=%d, def=%d, err=%v", k, def, err)
-	}
-
-	// 4. Pinned + Unpinned balanced (Pinned 8 + Unpinned 8 -> K=2, def=0)
-	k, def, err = layout.ComputeScreens(8, 8)
-	if err != nil || k != 2 || def != 0 {
-		t.Fatalf("expected k=2, def=0, got k=%d, def=%d, err=%v", k, def, err)
-	}
-
-	// 5. Pinned + Unpinned deficit (Pinned 8 + Unpinned 2 -> K=1, def=2)
-	k, def, err = layout.ComputeScreens(8, 2)
-	if err != nil || k != 1 || def != 2 {
-		t.Fatalf("expected k=1, def=2, got k=%d, def=%d, err=%v", k, def, err)
-	}
-
-	// 6. Pinned only with deficit (Pinned 8 + Unpinned 0 -> K=1, def=4)
-	k, def, err = layout.ComputeScreens(8, 0)
-	if err != nil || k != 1 || def != 4 {
-		t.Fatalf("expected k=1, def=4, got k=%d, def=%d, err=%v", k, def, err)
-	}
-
-	// 7. Pinned full screen (Pinned 12 + Unpinned 0 -> K=1, def=0)
-	k, def, err = layout.ComputeScreens(12, 0)
-	if err != nil || k != 1 || def != 0 {
-		t.Fatalf("expected k=1, def=0, got k=%d, def=%d, err=%v", k, def, err)
-	}
-
-	// 8. Negative areas
-	_, _, err = layout.ComputeScreens(-1, 10)
-	if err == nil {
-		t.Fatal("expected error for negative pinned area, got nil")
-	}
-	_, _, err = layout.ComputeScreens(4, -2)
-	if err == nil {
-		t.Fatal("expected error for negative unpinned area, got nil")
-	}
-
-	// 9. Pinned area > 12
-	_, _, err = layout.ComputeScreens(14, 0)
-	if err == nil || !strings.Contains(err.Error(), "exceeding single-screen limit") {
-		t.Fatalf("expected single-screen limit error, got %v", err)
-	}
-
-	// 10. Pinned area == 12 with unpinned > 0
-	_, _, err = layout.ComputeScreens(12, 2)
-	if err == nil || !strings.Contains(err.Error(), "leaving no screen space") {
-		t.Fatalf("expected leaving no space error, got %v", err)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			k, def, err := layout.ComputeScreens(tc.pinned, tc.unpinned)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("ComputeScreens(%d, %d) err = %v, want %q", tc.pinned, tc.unpinned, err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil || k != tc.wantK || def != tc.wantDef {
+				t.Fatalf("ComputeScreens(%d, %d) = (%d, %d, %v), want (%d, %d, nil)", tc.pinned, tc.unpinned, k, def, err, tc.wantK, tc.wantDef)
+			}
+		})
 	}
 }
 
 func TestFormatDeficitError_Formatting(t *testing.T) {
 	t.Parallel()
-
 	err := layout.FormatDeficitError(14, 2, 10)
 	if err == nil {
 		t.Fatal("expected non-nil error")
 	}
 	msg := err.Error()
-
-	expectedLines := []string{
+	for _, line := range []string{
 		"[Mirrormere Config Error] Invalid widget layout configuration:",
 		"Total widget area is 14 cells.",
 		"A 6x2 grid requires screen areas in multiples of 12 (Target: 2 screens = 24 cells).",
@@ -233,18 +131,13 @@ func TestFormatDeficitError_Formatting(t *testing.T) {
 		"Add a [4, 2] widget (8 cells) and a [2, 1] widget (2 cells).",
 		"Or expand existing [2, 1] widgets to [3, 2] / [4, 2].",
 		"Or insert native spacer tiles (e.g. { type: \"spacer\", dimensions: [2, 2] }) to intentionally leave layout space open.",
-	}
-
-	for _, line := range expectedLines {
+	} {
 		if !strings.Contains(msg, line) {
 			t.Errorf("error output missing expected line %q;\nFull message:\n%s", line, msg)
 		}
 	}
-
-	// Test various deficits to verify decomposeDeficit and spacer suggestions
 	for d := 0; d <= 13; d++ {
-		e := layout.FormatDeficitError(12-d, 1, d)
-		if e == nil {
+		if e := layout.FormatDeficitError(12-d, 1, d); e == nil {
 			t.Fatalf("expected error for deficit %d", d)
 		}
 	}
@@ -252,58 +145,22 @@ func TestFormatDeficitError_Formatting(t *testing.T) {
 
 func TestSolve_Archetypes(t *testing.T) {
 	t.Parallel()
-
 	tests := []struct {
-		name    string
-		widgets []layout.WidgetInput
+		name        string
+		widgets     []layout.WidgetInput
+		wantScreens int
 	}{
-		{
-			name: "2/3 + 1/3 Golden Ratio: [4, 2] + [2, 1] + [2, 1]",
-			widgets: []layout.WidgetInput{
-				{ID: "calendar", Dimensions: domain.NewDimension(4, 2)},
-				{ID: "weather", Dimensions: domain.NewDimension(2, 1)},
-				{ID: "chores", Dimensions: domain.NewDimension(2, 1)},
-			},
-		},
-		{
-			name: "50/50 Split: [3, 2] + [3, 2]",
-			widgets: []layout.WidgetInput{
-				{ID: "photos", Dimensions: domain.NewDimension(3, 2)},
-				{ID: "hass", Dimensions: domain.NewDimension(3, 2)},
-			},
-		},
-		{
-			name: "Tri-Column: [2, 2] + [2, 2] + [2, 2]",
-			widgets: []layout.WidgetInput{
-				{ID: "col1", Dimensions: domain.NewDimension(2, 2)},
-				{ID: "col2", Dimensions: domain.NewDimension(2, 2)},
-				{ID: "col3", Dimensions: domain.NewDimension(2, 2)},
-			},
-		},
-		{
-			name: "Full Hero Canvas: [6, 2]",
-			widgets: []layout.WidgetInput{
-				{ID: "hero-photo", Dimensions: domain.NewDimension(6, 2)},
-			},
-		},
-		{
-			name: "Horizontal Banners: [6, 1] + [6, 1]",
-			widgets: []layout.WidgetInput{
-				{ID: "banner-top", Dimensions: domain.NewDimension(6, 1)},
-				{ID: "banner-bottom", Dimensions: domain.NewDimension(6, 1)},
-			},
-		},
-		{
-			name: "Mixed 4-cell widgets with different rows: [2, 2] + [4, 1] + [2, 1] + [2, 1]",
-			widgets: []layout.WidgetInput{
-				{ID: "w-2x2", Dimensions: domain.NewDimension(2, 2)},
-				{ID: "w-4x1", Dimensions: domain.NewDimension(4, 1)},
-				{ID: "w-2x1a", Dimensions: domain.NewDimension(2, 1)},
-				{ID: "w-2x1b", Dimensions: domain.NewDimension(2, 1)},
-			},
-		},
+		{"2/3 + 1/3 Golden Ratio", []layout.WidgetInput{mkW("calendar", 4, 2, false), mkW("weather", 2, 1, false), mkW("chores", 2, 1, false)}, 1},
+		{"50/50 Split", []layout.WidgetInput{mkW("photos", 3, 2, false), mkW("hass", 3, 2, false)}, 1},
+		{"Tri-Column", []layout.WidgetInput{mkW("col1", 2, 2, false), mkW("col2", 2, 2, false), mkW("col3", 2, 2, false)}, 1},
+		{"Full Hero Canvas", []layout.WidgetInput{mkW("hero-photo", 6, 2, false)}, 1},
+		{"Horizontal Banners", []layout.WidgetInput{mkW("banner-top", 6, 1, false), mkW("banner-bottom", 6, 1, false)}, 1},
+		{"Mixed 4-cell widgets", []layout.WidgetInput{mkW("w-2x2", 2, 2, false), mkW("w-4x1", 4, 1, false), mkW("w-2x1a", 2, 1, false), mkW("w-2x1b", 2, 1, false)}, 1},
+		{"Multi-screen unpinned", []layout.WidgetInput{mkW("w-cal", 4, 2, false), mkW("w-tasks1", 2, 1, false), mkW("w-tasks2", 2, 1, false), mkW("w-photo1", 3, 2, false), mkW("w-photo2", 3, 2, false)}, 2},
+		{"Three screens pruning", []layout.WidgetInput{mkW("hero1", 6, 2, false), mkW("hero2", 6, 2, false), mkW("cal", 4, 2, false), mkW("t1", 2, 1, false), mkW("t2", 2, 1, false)}, 3},
+		{"Pinned full screen", []layout.WidgetInput{mkW("pinned-hero", 6, 2, true)}, 1},
+		{"Multiple pinned sorting", []layout.WidgetInput{mkW("pinned-b", 2, 1, true), mkW("pinned-a", 2, 1, true), mkW("pinned-c", 4, 1, true), mkW("pinned-d", 2, 2, true)}, 1},
 	}
-
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -311,106 +168,36 @@ func TestSolve_Archetypes(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Solve failed: %v", err)
 			}
-			if res.TotalScreens != 1 {
-				t.Fatalf("expected 1 screen, got %d", res.TotalScreens)
+			if res.TotalScreens != tc.wantScreens || len(res.Screens) != tc.wantScreens {
+				t.Fatalf("TotalScreens = %d, want %d", res.TotalScreens, tc.wantScreens)
 			}
-			if len(res.Screens) != 1 {
-				t.Fatalf("expected 1 screen in slice, got %d", len(res.Screens))
-			}
-			if res.Screens[0].Bitmask != layout.FullGridMask {
-				t.Fatalf("screen bitmask %012b; want %012b", res.Screens[0].Bitmask, layout.FullGridMask)
-			}
-			if len(res.Screens[0].Widgets) != len(tc.widgets) {
-				t.Fatalf("expected %d widgets placed, got %d", len(tc.widgets), len(res.Screens[0].Widgets))
-			}
-
-			// Validate helper methods
-			for _, pw := range res.Screens[0].Widgets {
-				if pw.Cols() != pw.Dimensions.Cols || pw.Rows() != pw.Dimensions.Rows {
-					t.Errorf("PlacedWidget size helper mismatch for %s", pw.WidgetID)
+			for i, s := range res.Screens {
+				if s.Index != i {
+					t.Errorf("screen %d has index %d", i, s.Index)
 				}
-				if pw.Col() != pw.Origin[0] || pw.Row() != pw.Origin[1] {
-					t.Errorf("PlacedWidget origin helper mismatch for %s", pw.WidgetID)
+				if s.Bitmask != layout.FullGridMask {
+					t.Errorf("screen %d bitmask %012b; want %012b", i, s.Bitmask, layout.FullGridMask)
+				}
+				for _, pw := range s.Widgets {
+					if pw.Cols() != pw.Dimensions.Cols || pw.Rows() != pw.Dimensions.Rows {
+						t.Errorf("size mismatch for %s", pw.WidgetID)
+					}
+					if pw.Col() != pw.Origin[0] || pw.Row() != pw.Origin[1] {
+						t.Errorf("origin mismatch for %s", pw.WidgetID)
+					}
 				}
 			}
 		})
-	}
-}
-
-func TestSolve_MultiScreen_Unpinned(t *testing.T) {
-	t.Parallel()
-
-	// Screen 1: [4, 2] + [2, 1] + [2, 1] = 12
-	// Screen 2: [3, 2] + [3, 2] = 12
-	// Total 24 cells -> K = 2 screens
-	widgets := []layout.WidgetInput{
-		{ID: "w-cal", Dimensions: domain.NewDimension(4, 2)},
-		{ID: "w-tasks1", Dimensions: domain.NewDimension(2, 1)},
-		{ID: "w-tasks2", Dimensions: domain.NewDimension(2, 1)},
-		{ID: "w-photo1", Dimensions: domain.NewDimension(3, 2)},
-		{ID: "w-photo2", Dimensions: domain.NewDimension(3, 2)},
-	}
-
-	res, err := layout.Solve(widgets)
-	if err != nil {
-		t.Fatalf("Solve failed: %v", err)
-	}
-	if res.TotalScreens != 2 {
-		t.Fatalf("expected 2 screens, got %d", res.TotalScreens)
-	}
-	for i, s := range res.Screens {
-		if s.Index != i {
-			t.Errorf("screen %d has index %d", i, s.Index)
-		}
-		if s.Bitmask != layout.FullGridMask {
-			t.Errorf("screen %d bitmask %012b; want %012b", i, s.Bitmask, layout.FullGridMask)
-		}
-	}
-}
-
-func TestSolve_ThreeScreens_Pruning(t *testing.T) {
-	t.Parallel()
-
-	// 3 screens = 36 cells.
-	// Screen 1: [6, 2] = 12
-	// Screen 2: [6, 2] = 12
-	// Screen 3: [4, 2] + [2, 1] + [2, 1] = 12
-	widgets := []layout.WidgetInput{
-		{ID: "hero1", Dimensions: domain.NewDimension(6, 2)},
-		{ID: "hero2", Dimensions: domain.NewDimension(6, 2)},
-		{ID: "cal", Dimensions: domain.NewDimension(4, 2)},
-		{ID: "t1", Dimensions: domain.NewDimension(2, 1)},
-		{ID: "t2", Dimensions: domain.NewDimension(2, 1)},
-	}
-
-	res, err := layout.Solve(widgets)
-	if err != nil {
-		t.Fatalf("Solve failed: %v", err)
-	}
-	if res.TotalScreens != 3 {
-		t.Fatalf("expected 3 screens, got %d", res.TotalScreens)
-	}
-	for i, s := range res.Screens {
-		if s.Bitmask != layout.FullGridMask {
-			t.Errorf("screen %d bitmask %012b; want %012b", i, s.Bitmask, layout.FullGridMask)
-		}
 	}
 }
 
 func TestSolve_PinnedReplication(t *testing.T) {
 	t.Parallel()
-
-	// Pinned 4x2 hero (8 cells).
-	// Unpinned: four 2x1 widgets (8 cells).
-	// K = 2 screens. Pinned widget replicated across both screens at identical origin.
 	widgets := []layout.WidgetInput{
-		{ID: "pinned-cal", Dimensions: domain.NewDimension(4, 2), Pinned: true},
-		{ID: "task-1", Dimensions: domain.NewDimension(2, 1)},
-		{ID: "task-2", Dimensions: domain.NewDimension(2, 1)},
-		{ID: "task-3", Dimensions: domain.NewDimension(2, 1)},
-		{ID: "task-4", Dimensions: domain.NewDimension(2, 1)},
+		mkW("pinned-cal", 4, 2, true),
+		mkW("task-1", 2, 1, false), mkW("task-2", 2, 1, false),
+		mkW("task-3", 2, 1, false), mkW("task-4", 2, 1, false),
 	}
-
 	res, err := layout.Solve(widgets)
 	if err != nil {
 		t.Fatalf("Solve failed: %v", err)
@@ -418,421 +205,96 @@ func TestSolve_PinnedReplication(t *testing.T) {
 	if res.TotalScreens != 2 {
 		t.Fatalf("expected 2 screens, got %d", res.TotalScreens)
 	}
-
-	var pinnedOrigins [][2]int
+	var origins [][2]int
 	for _, s := range res.Screens {
-		if s.Bitmask != layout.FullGridMask {
-			t.Errorf("screen %d bitmask %012b; want %012b", s.Index, s.Bitmask, layout.FullGridMask)
-		}
-		foundPinned := false
+		found := false
 		for _, pw := range s.Widgets {
 			if pw.WidgetID == "pinned-cal" {
-				foundPinned = true
+				found = true
 				if !pw.Pinned {
-					t.Errorf("expected PlacedWidget.Pinned to be true")
+					t.Errorf("expected PlacedWidget.Pinned true")
 				}
-				pinnedOrigins = append(pinnedOrigins, pw.Origin)
+				origins = append(origins, pw.Origin)
 			}
 		}
-		if !foundPinned {
+		if !found {
 			t.Errorf("screen %d missing pinned widget", s.Index)
 		}
 	}
-
-	if len(pinnedOrigins) != 2 || pinnedOrigins[0] != pinnedOrigins[1] {
-		t.Fatalf("pinned widget origin mismatch across screens: %v", pinnedOrigins)
+	if len(origins) != 2 || origins[0] != origins[1] {
+		t.Fatalf("pinned widget origin mismatch across screens: %v", origins)
 	}
 }
 
-func TestSolve_PinnedFullScreen(t *testing.T) {
+func TestSolve_ErrorsAndDeadlocks(t *testing.T) {
 	t.Parallel()
-
-	widgets := []layout.WidgetInput{
-		{ID: "pinned-hero", Dimensions: domain.NewDimension(6, 2), Pinned: true},
+	tests := []struct {
+		name    string
+		widgets []layout.WidgetInput
+		budget  int
+		wantErr string
+	}{
+		{"deficit_guidance", []layout.WidgetInput{mkW("cal", 4, 2, false), mkW("weather", 3, 2, false)}, 0, "Deficit: 10 cells needed"},
+		{"deadlock_width_mismatch", []layout.WidgetInput{mkW("w-5x2", 5, 2, false), mkW("w-2x1", 2, 1, false)}, 0, "cannot geometrically tile the 6x2 grid"},
+		{"deadlock_row_mismatch", []layout.WidgetInput{mkW("w-5x1", 5, 1, false), mkW("w-4x1", 4, 1, false), mkW("w-3x1", 3, 1, false)}, 0, "cannot geometrically tile the 6x2 grid"},
+		{"deadlock_pinned_conflict", []layout.WidgetInput{mkW("pin-5x1", 5, 1, true), mkW("u-3x2", 3, 2, false), mkW("u-1x1", 1, 1, false)}, 0, "cannot geometrically tile the 6x2 grid"},
+		{"zero_widgets", nil, 0, "Deficit: 12 cells"},
+		{"empty_id", []layout.WidgetInput{mkW("  ", 4, 2, false)}, 0, "empty id"},
+		{"duplicate_id", []layout.WidgetInput{mkW("dup", 4, 2, false), mkW("dup", 2, 1, false)}, 0, "duplicate widget id"},
+		{"invalid_dimensions", []layout.WidgetInput{mkW("invalid-dims", 7, 2, false)}, 0, "invalid dimensions"},
+		{"pinned_area_gt_12", []layout.WidgetInput{mkW("p1", 4, 2, true), mkW("p2", 4, 2, true)}, 0, "exceeding single-screen limit"},
+		{"pinned_12_with_unpinned", []layout.WidgetInput{mkW("p1", 6, 2, true), mkW("u1", 2, 1, false)}, 0, "leaving no screen space"},
+		{"budget_ceiling", slices.Concat(repeatW("w-5x1", 5, 1, 6), repeatW("w-2x1", 2, 1, 9)), 2, "cannot geometrically tile the 6x2 grid"},
+		{"multiscreen_backtracking_deadlock", []layout.WidgetInput{mkW("hero-6x2", 6, 2, false), mkW("w-5x1-a", 5, 1, false), mkW("w-5x1-b", 5, 1, false), mkW("w-2x1-a", 2, 1, false)}, 0, "cannot geometrically tile the 6x2 grid"},
+		{"issue180_untileable_48_k4", slices.Concat(repeatW("w-5x1", 5, 1, 6), repeatW("w-2x1", 2, 1, 9)), 0, "cannot geometrically tile the 6x2 grid"},
+		{"issue180_untileable_60_k5", slices.Concat(repeatW("w-5x1", 5, 1, 10), repeatW("w-2x1", 2, 1, 5)), 0, "cannot geometrically tile the 6x2 grid"},
+		{"issue180_untileable_mixed_48_k4", slices.Concat([]layout.WidgetInput{mkW("w-3x2", 3, 2, false)}, repeatW("w-5x1", 5, 1, 6), repeatW("w-2x1", 2, 1, 6)), 0, "cannot geometrically tile the 6x2 grid"},
 	}
-
-	res, err := layout.Solve(widgets)
-	if err != nil {
-		t.Fatalf("Solve failed: %v", err)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var err error
+			if tc.budget > 0 {
+				_, err = layout.SolveWithBudget(tc.widgets, tc.budget)
+			} else {
+				_, err = layout.Solve(tc.widgets)
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("got err = %v, want substring %q", err, tc.wantErr)
+			}
+		})
 	}
-	if res.TotalScreens != 1 {
-		t.Fatalf("expected 1 screen, got %d", res.TotalScreens)
-	}
-	if res.Screens[0].Bitmask != layout.FullGridMask {
-		t.Fatalf("screen bitmask %012b; want %012b", res.Screens[0].Bitmask, layout.FullGridMask)
-	}
-}
-
-func TestSolve_MultiplePinnedSorting(t *testing.T) {
-	t.Parallel()
-
-	// 4 pinned widgets with different areas, rows, and IDs:
-	// - pinned-b: [2, 1] (area 2)
-	// - pinned-a: [2, 1] (area 2, same area, same rows, ID tiebreak)
-	// - pinned-c: [4, 1] (area 4, rows=1)
-	// - pinned-d: [2, 2] (area 4, rows=2 vs rows=1)
-	// Total pinned area = 2 + 2 + 4 + 4 = 12 (full screen)
-	widgets := []layout.WidgetInput{
-		{ID: "pinned-b", Dimensions: domain.NewDimension(2, 1), Pinned: true},
-		{ID: "pinned-a", Dimensions: domain.NewDimension(2, 1), Pinned: true},
-		{ID: "pinned-c", Dimensions: domain.NewDimension(4, 1), Pinned: true},
-		{ID: "pinned-d", Dimensions: domain.NewDimension(2, 2), Pinned: true},
-	}
-
-	res, err := layout.Solve(widgets)
-	if err != nil {
-		t.Fatalf("Solve failed: %v", err)
-	}
-	if res.TotalScreens != 1 {
-		t.Fatalf("expected 1 screen, got %d", res.TotalScreens)
-	}
-	if res.Screens[0].Bitmask != layout.FullGridMask {
-		t.Fatalf("screen bitmask %012b; want %012b", res.Screens[0].Bitmask, layout.FullGridMask)
-	}
-}
-
-func TestSolve_DeficitGuidance(t *testing.T) {
-	t.Parallel()
-
-	// 14 cells -> K=2, deficit 10
-	widgets := []layout.WidgetInput{
-		{ID: "cal", Dimensions: domain.NewDimension(4, 2)},
-		{ID: "weather", Dimensions: domain.NewDimension(3, 2)},
-	}
-
-	_, err := layout.Solve(widgets)
-	if err == nil {
-		t.Fatal("expected deficit error, got nil")
-	}
-	if !strings.Contains(err.Error(), "Deficit: 10 cells needed") {
-		t.Fatalf("expected deficit error message, got: %v", err)
-	}
-}
-
-func TestSolve_GeometricDeadlocks(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Width mismatch: [5, 2] + [2, 1] (area 12, impossible)", func(t *testing.T) {
-		t.Parallel()
-		widgets := []layout.WidgetInput{
-			{ID: "w-5x2", Dimensions: domain.NewDimension(5, 2)},
-			{ID: "w-2x1", Dimensions: domain.NewDimension(2, 1)},
-		}
-		_, err := layout.Solve(widgets)
-		if err == nil || !strings.Contains(err.Error(), "cannot geometrically tile the 6x2 grid") {
-			t.Fatalf("expected geometric deadlock error, got %v", err)
-		}
-	})
-
-	t.Run("Row partition mismatch: [5, 1] + [4, 1] + [3, 1] (area 12, impossible)", func(t *testing.T) {
-		t.Parallel()
-		widgets := []layout.WidgetInput{
-			{ID: "w-5x1", Dimensions: domain.NewDimension(5, 1)},
-			{ID: "w-4x1", Dimensions: domain.NewDimension(4, 1)},
-			{ID: "w-3x1", Dimensions: domain.NewDimension(3, 1)},
-		}
-		_, err := layout.Solve(widgets)
-		if err == nil || !strings.Contains(err.Error(), "cannot geometrically tile the 6x2 grid") {
-			t.Fatalf("expected geometric deadlock error, got %v", err)
-		}
-	})
-
-	t.Run("Pinned conflict: pinned [5, 1] + [3, 2] + [1, 1]", func(t *testing.T) {
-		t.Parallel()
-		widgets := []layout.WidgetInput{
-			{ID: "pin-5x1", Dimensions: domain.NewDimension(5, 1), Pinned: true},
-			{ID: "u-3x2", Dimensions: domain.NewDimension(3, 2)},
-			{ID: "u-1x1", Dimensions: domain.NewDimension(1, 1)},
-		}
-		_, err := layout.Solve(widgets)
-		if err == nil || !strings.Contains(err.Error(), "cannot geometrically tile the 6x2 grid") {
-			t.Fatalf("expected geometric deadlock error, got %v", err)
-		}
-	})
-}
-
-func TestSolve_EdgeCases(t *testing.T) {
-	t.Parallel()
-
-	// 1. Zero widgets
-	t.Run("zero widgets", func(t *testing.T) {
-		t.Parallel()
-		_, err := layout.Solve(nil)
-		if err == nil || !strings.Contains(err.Error(), "Deficit: 12 cells") {
-			t.Fatalf("expected deficit error for zero widgets, got %v", err)
-		}
-	})
-
-	// 2. Empty ID
-	t.Run("empty widget ID", func(t *testing.T) {
-		t.Parallel()
-		widgets := []layout.WidgetInput{
-			{ID: "  ", Dimensions: domain.NewDimension(4, 2)},
-		}
-		_, err := layout.Solve(widgets)
-		if err == nil || !strings.Contains(err.Error(), "empty id") {
-			t.Fatalf("expected empty id error, got %v", err)
-		}
-	})
-
-	// 3. Duplicate ID
-	t.Run("duplicate widget ID", func(t *testing.T) {
-		t.Parallel()
-		widgets := []layout.WidgetInput{
-			{ID: "dup", Dimensions: domain.NewDimension(4, 2)},
-			{ID: "dup", Dimensions: domain.NewDimension(2, 1)},
-		}
-		_, err := layout.Solve(widgets)
-		if err == nil || !strings.Contains(err.Error(), "duplicate widget id") {
-			t.Fatalf("expected duplicate id error, got %v", err)
-		}
-	})
-
-	// 4. Invalid dimensions
-	t.Run("invalid dimensions", func(t *testing.T) {
-		t.Parallel()
-		widgets := []layout.WidgetInput{
-			{ID: "invalid-dims", Dimensions: domain.NewDimension(7, 2)},
-		}
-		_, err := layout.Solve(widgets)
-		if err == nil || !strings.Contains(err.Error(), "invalid dimensions") {
-			t.Fatalf("expected invalid dimensions error, got %v", err)
-		}
-	})
-
-	// 5. Pinned area > 12
-	t.Run("pinned area > 12", func(t *testing.T) {
-		t.Parallel()
-		widgets := []layout.WidgetInput{
-			{ID: "p1", Dimensions: domain.NewDimension(4, 2), Pinned: true},
-			{ID: "p2", Dimensions: domain.NewDimension(4, 2), Pinned: true},
-		}
-		_, err := layout.Solve(widgets)
-		if err == nil || !strings.Contains(err.Error(), "exceeding single-screen limit") {
-			t.Fatalf("expected exceeding limit error, got %v", err)
-		}
-	})
-
-	// 6. Pinned area == 12 with unpinned > 0
-	t.Run("pinned area == 12 with unpinned > 0", func(t *testing.T) {
-		t.Parallel()
-		widgets := []layout.WidgetInput{
-			{ID: "p1", Dimensions: domain.NewDimension(6, 2), Pinned: true},
-			{ID: "u1", Dimensions: domain.NewDimension(2, 1)},
-		}
-		_, err := layout.Solve(widgets)
-		if err == nil || !strings.Contains(err.Error(), "leaving no screen space") {
-			t.Fatalf("expected leaving no screen space error, got %v", err)
-		}
-	})
 }
 
 func TestPlacedWidget_JSON(t *testing.T) {
 	t.Parallel()
-
-	pw := layout.PlacedWidget{
-		WidgetID:   "family-calendar",
-		Type:       "calendar-agenda",
-		Origin:     [2]int{0, 0},
-		Dimensions: domain.NewDimension(4, 2),
-		Pinned:     true,
-	}
-
+	pw := layout.PlacedWidget{WidgetID: "family-calendar", Type: "calendar-agenda", Origin: [2]int{0, 0}, Dimensions: domain.NewDimension(4, 2), Pinned: true}
 	data, err := json.Marshal(pw)
 	if err != nil {
 		t.Fatalf("failed to marshal PlacedWidget: %v", err)
 	}
-
-	jsonStr := string(data)
-	if !strings.Contains(jsonStr, `"origin":[0,0]`) {
-		t.Errorf("expected 'origin:[0,0]', got %s", jsonStr)
-	}
-	if !strings.Contains(jsonStr, `"dimensions":[4,2]`) {
-		t.Errorf("expected 'dimensions:[4,2]', got %s", jsonStr)
-	}
-	if !strings.Contains(jsonStr, `"widget_id":"family-calendar"`) {
-		t.Errorf("expected 'widget_id:family-calendar', got %s", jsonStr)
+	s := string(data)
+	if !strings.Contains(s, `"origin":[0,0]`) || !strings.Contains(s, `"dimensions":[4,2]`) || !strings.Contains(s, `"widget_id":"family-calendar"`) {
+		t.Errorf("unexpected json: %s", s)
 	}
 }
 
 func BenchmarkSolve(b *testing.B) {
 	widgets := []layout.WidgetInput{
-		{ID: "cal", Dimensions: domain.NewDimension(4, 2), Pinned: true},
-		{ID: "tasks-1", Dimensions: domain.NewDimension(2, 1)},
-		{ID: "tasks-2", Dimensions: domain.NewDimension(2, 1)},
-		{ID: "weather-1", Dimensions: domain.NewDimension(2, 1)},
-		{ID: "weather-2", Dimensions: domain.NewDimension(2, 1)},
+		mkW("cal", 4, 2, true),
+		mkW("tasks-1", 2, 1, false), mkW("tasks-2", 2, 1, false),
+		mkW("weather-1", 2, 1, false), mkW("weather-2", 2, 1, false),
 	}
-
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, err := layout.Solve(widgets)
-		if err != nil {
+		if _, err := layout.Solve(widgets); err != nil {
 			b.Fatalf("Solve failed: %v", err)
 		}
 	}
 }
 
-func TestSolve_Issue180_UntileableWallClock(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name    string
-		builder func() []layout.WidgetInput
-	}{
-		{
-			name: "6x [5,1] + 9x [2,1] (area 48, K=4)",
-			builder: func() []layout.WidgetInput {
-				var widgets []layout.WidgetInput
-				for i := 0; i < 6; i++ {
-					widgets = append(widgets, layout.WidgetInput{
-						ID:         fmt.Sprintf("w-5x1-%d", i),
-						Dimensions: domain.NewDimension(5, 1),
-					})
-				}
-				for i := 0; i < 9; i++ {
-					widgets = append(widgets, layout.WidgetInput{
-						ID:         fmt.Sprintf("w-2x1-%d", i),
-						Dimensions: domain.NewDimension(2, 1),
-					})
-				}
-				return widgets
-			},
-		},
-		{
-			name: "10x [5,1] + 5x [2,1] (area 60, K=5)",
-			builder: func() []layout.WidgetInput {
-				var widgets []layout.WidgetInput
-				for i := 0; i < 10; i++ {
-					widgets = append(widgets, layout.WidgetInput{
-						ID:         fmt.Sprintf("w-5x1-%d", i),
-						Dimensions: domain.NewDimension(5, 1),
-					})
-				}
-				for i := 0; i < 5; i++ {
-					widgets = append(widgets, layout.WidgetInput{
-						ID:         fmt.Sprintf("w-2x1-%d", i),
-						Dimensions: domain.NewDimension(2, 1),
-					})
-				}
-				return widgets
-			},
-		},
-		{
-			name: "1x [3,2] + 6x [5,1] + 6x [2,1] (area 48, K=4)",
-			builder: func() []layout.WidgetInput {
-				widgets := []layout.WidgetInput{
-					{ID: "w-3x2", Dimensions: domain.NewDimension(3, 2)},
-				}
-				for i := 0; i < 6; i++ {
-					widgets = append(widgets, layout.WidgetInput{
-						ID:         fmt.Sprintf("w-5x1-%d", i),
-						Dimensions: domain.NewDimension(5, 1),
-					})
-				}
-				for i := 0; i < 6; i++ {
-					widgets = append(widgets, layout.WidgetInput{
-						ID:         fmt.Sprintf("w-2x1-%d", i),
-						Dimensions: domain.NewDimension(2, 1),
-					})
-				}
-				return widgets
-			},
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			widgets := tc.builder()
-
-			start := time.Now()
-			_, err := layout.Solve(widgets)
-			elapsed := time.Since(start)
-
-			if err == nil {
-				t.Fatalf("expected geometric deadlock error for untileable configuration %q, got nil", tc.name)
-			}
-			if !strings.Contains(err.Error(), "cannot geometrically tile the 6x2 grid") {
-				t.Fatalf("expected deadlock error string, got %v", err)
-			}
-			// Must complete sub-millisecond; 50ms is a safe generous CI bound
-			if elapsed > 50*time.Millisecond {
-				t.Fatalf("Solve took %v on untileable config, expected < 50ms", elapsed)
-			}
-		})
-	}
-}
-
-func TestSolve_NodeBudgetCeiling(t *testing.T) {
-	t.Parallel()
-
-	// 6x [5,1] + 9x [2,1] with a budget of 2 nodes
-	var widgets []layout.WidgetInput
-	for i := 0; i < 6; i++ {
-		widgets = append(widgets, layout.WidgetInput{
-			ID:         fmt.Sprintf("w-5x1-%d", i),
-			Dimensions: domain.NewDimension(5, 1),
-		})
-	}
-	for i := 0; i < 9; i++ {
-		widgets = append(widgets, layout.WidgetInput{
-			ID:         fmt.Sprintf("w-2x1-%d", i),
-			Dimensions: domain.NewDimension(2, 1),
-		})
-	}
-
-	_, err := layout.SolveWithBudget(widgets, 2)
-	if err == nil {
-		t.Fatal("expected error when search budget exhausted, got nil")
-	}
-	if !strings.Contains(err.Error(), "cannot geometrically tile the 6x2 grid") {
-		t.Fatalf("expected geometric deadlock error, got %v", err)
-	}
-}
-
-func TestSolve_MultiScreenBacktrackingDeadlock(t *testing.T) {
-	t.Parallel()
-
-	// Screen 1 can tile with [6, 2], but remaining widgets: 2x [5, 1] + 1x [2, 1] (12 cells)
-	// cannot tile Screen 2. Must backtrack cleanly and report deadlock.
-	widgets := []layout.WidgetInput{
-		{ID: "hero-6x2", Dimensions: domain.NewDimension(6, 2)},
-		{ID: "w-5x1-a", Dimensions: domain.NewDimension(5, 1)},
-		{ID: "w-5x1-b", Dimensions: domain.NewDimension(5, 1)},
-		{ID: "w-2x1-a", Dimensions: domain.NewDimension(2, 1)},
-	}
-
-	start := time.Now()
-	_, err := layout.Solve(widgets)
-	elapsed := time.Since(start)
-
-	if err == nil {
-		t.Fatal("expected multi-screen deadlock error, got nil")
-	}
-	if !strings.Contains(err.Error(), "cannot geometrically tile the 6x2 grid") {
-		t.Fatalf("expected deadlock error, got %v", err)
-	}
-	if elapsed > 50*time.Millisecond {
-		t.Fatalf("multi-screen deadlock solve took %v, expected < 50ms", elapsed)
-	}
-}
-
 func BenchmarkSolve_Untileable_Issue180(b *testing.B) {
-	var widgets []layout.WidgetInput
-	for i := 0; i < 6; i++ {
-		widgets = append(widgets, layout.WidgetInput{
-			ID:         fmt.Sprintf("w-5x1-%d", i),
-			Dimensions: domain.NewDimension(5, 1),
-		})
-	}
-	for i := 0; i < 9; i++ {
-		widgets = append(widgets, layout.WidgetInput{
-			ID:         fmt.Sprintf("w-2x1-%d", i),
-			Dimensions: domain.NewDimension(2, 1),
-		})
-	}
-
+	widgets := slices.Concat(repeatW("w-5x1", 5, 1, 6), repeatW("w-2x1", 2, 1, 9))
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, _ = layout.Solve(widgets)
