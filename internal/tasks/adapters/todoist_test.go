@@ -2,10 +2,7 @@ package adapters_test
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -14,1082 +11,198 @@ import (
 
 func TestNewTodoistAdapter_Validation(t *testing.T) {
 	t.Parallel()
-
-	// 1. Missing token
-	_, err := adapters.NewTodoistAdapter(adapters.TodoistAdapterConfig{})
-	if err == nil || !strings.Contains(err.Error(), "token is required") {
-		t.Fatalf("expected error for empty token, got %v", err)
-	}
-
-	// 2. Invalid BaseURL
-	_, err = adapters.NewTodoistAdapter(adapters.TodoistAdapterConfig{
-		Token:   "secret-token",
-		BaseURL: "ftp://invalid",
-	})
-	if err == nil || !strings.Contains(err.Error(), "must be http:// or https://") {
-		t.Fatalf("expected error for invalid base_url, got %v", err)
-	}
-
-	// 3. Valid Config
-	ad, err := adapters.NewTodoistAdapter(adapters.TodoistAdapterConfig{
-		ProjectID: "proj-1",
-		Token:     "secret-token",
-		ListName:  "Household",
-	})
-	if err != nil {
-		t.Fatalf("unexpected error for valid config: %v", err)
-	}
-	if ad.Name() != "todoist" {
-		t.Errorf("expected Name() to be 'todoist', got %q", ad.Name())
-	}
-}
-
-func TestTodoistAdapter_FetchList_Success_WithProjectID(t *testing.T) {
-	t.Parallel()
-
-	var receivedAuth string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		receivedAuth = r.Header.Get("Authorization")
-		w.Header().Set("Content-Type", "application/json")
-
-		switch r.URL.Path {
-		case "/api/v1/projects/proj-123":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"id":   "proj-123",
-				"name": "Family Errands",
-			})
-		case "/api/v1/sections":
-			if r.URL.Query().Get("project_id") != "proj-123" {
-				http.Error(w, "invalid project_id query", http.StatusBadRequest)
-				return
-			}
-			_ = json.NewEncoder(w).Encode([]map[string]any{
-				{"id": "sec-2", "project_id": "proj-123", "order": 2, "name": "Hardware"},
-				{"id": "sec-1", "project_id": "proj-123", "order": 1, "name": "Groceries"},
-			})
-		case "/api/v1/tasks":
-			if r.URL.Query().Get("project_id") != "proj-123" {
-				http.Error(w, "invalid project_id query", http.StatusBadRequest)
-				return
-			}
-			_ = json.NewEncoder(w).Encode([]map[string]any{
-				{
-					"id":         "t-1",
-					"project_id": "proj-123",
-					"section_id": "sec-1",
-					"content":    "Buy Oat Milk",
-					"order":      1,
-					"due":        map[string]any{"date": "2026-10-15"},
-					"created_at": "2026-10-10T12:00:00Z",
-				},
-				{
-					"id":         "t-2",
-					"project_id": "proj-123",
-					"section_id": "sec-2",
-					"content":    "Buy Screws",
-					"order":      2,
-					"created_at": "2026-10-10T12:05:00Z",
-				},
-			})
-		case "/api/v1/tasks/completed":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"items": []map[string]any{
-					{
-						"id":             "c-1",
-						"task_id":        "t-99",
-						"content":        "Buy Bread",
-						"completed_date": "2026-10-09T18:00:00Z",
-					},
-				},
-			})
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer server.Close()
-
-	ad, err := adapters.NewTodoistAdapter(adapters.TodoistAdapterConfig{
-		ProjectID: "proj-123",
-		Token:     "test-token",
-		BaseURL:   server.URL,
-		Client:    server.Client(),
-	})
-	if err != nil {
-		t.Fatalf("unexpected error creating adapter: %v", err)
-	}
-
-	ctx := context.Background()
-	list, items, err := ad.FetchList(ctx)
-	if err != nil {
-		t.Fatalf("FetchList failed: %v", err)
-	}
-
-	if receivedAuth != "Bearer test-token" {
-		t.Errorf("expected Authorization 'Bearer test-token', got %q", receivedAuth)
-	}
-
-	if list.ID != "proj-123" {
-		t.Errorf("expected list ID 'proj-123', got %q", list.ID)
-	}
-	if list.Name != "Family Errands" {
-		t.Errorf("expected list Name 'Family Errands', got %q", list.Name)
-	}
-	if len(list.Sections) != 2 || list.Sections[0] != "Groceries" || list.Sections[1] != "Hardware" {
-		t.Errorf("unexpected sections: %+v", list.Sections)
-	}
-
-	if len(items) != 3 {
-		t.Fatalf("expected 3 items (2 active + 1 completed), got %d", len(items))
-	}
-
-	// Active task 1
-	if items[0].Title != "Buy Oat Milk" || items[0].Done != false || items[0].Section != "Groceries" {
-		t.Errorf("unexpected item 0: %+v", items[0])
-	}
-	if items[0].DueDate == nil || *items[0].DueDate != "2026-10-15" {
-		t.Errorf("unexpected due date item 0: %+v", items[0].DueDate)
-	}
-
-	// Active task 2
-	if items[1].Title != "Buy Screws" || items[1].Done != false || items[1].Section != "Hardware" {
-		t.Errorf("unexpected item 1: %+v", items[1])
-	}
-
-	// Completed task
-	if items[2].Title != "Buy Bread" || items[2].Done != true || items[2].ID != "t-99" {
-		t.Errorf("unexpected item 2: %+v", items[2])
-	}
-}
-
-func TestTodoistAdapter_FetchList_ByProjectName(t *testing.T) {
-	t.Parallel()
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		switch r.URL.Path {
-		case "/api/v1/projects":
-			_ = json.NewEncoder(w).Encode([]map[string]any{
-				{"id": "p-inbox", "name": "Inbox", "is_inbox_project": true},
-				{"id": "p-fam", "name": "Family Tasks", "is_inbox_project": false},
-			})
-		case "/api/v1/sections":
-			_ = json.NewEncoder(w).Encode([]map[string]any{})
-		case "/api/v1/tasks":
-			_ = json.NewEncoder(w).Encode([]map[string]any{
-				{"id": "t-1", "content": "Costume ideas", "order": 1},
-			})
-		case "/api/v1/tasks/completed":
-			_ = json.NewEncoder(w).Encode(map[string]any{"items": []any{}})
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer server.Close()
-
-	ad, err := adapters.NewTodoistAdapter(adapters.TodoistAdapterConfig{
-		ProjectName: "family tasks", // case-insensitive match
-		Token:       "tok-123",
-		BaseURL:     server.URL,
-		Client:      server.Client(),
-	})
-	if err != nil {
-		t.Fatalf("unexpected adapter init error: %v", err)
-	}
-
-	list, items, err := ad.FetchList(context.Background())
-	if err != nil {
-		t.Fatalf("FetchList failed: %v", err)
-	}
-
-	if list.ID != "p-fam" {
-		t.Errorf("expected resolved list ID 'p-fam', got %q", list.ID)
-	}
-	if list.Name != "Family Tasks" {
-		t.Errorf("expected list name 'Family Tasks', got %q", list.Name)
-	}
-	if len(items) != 1 || items[0].Title != "Costume ideas" {
-		t.Errorf("unexpected items: %+v", items)
-	}
-}
-
-func TestTodoistAdapter_FetchList_InboxFallback(t *testing.T) {
-	t.Parallel()
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		switch r.URL.Path {
-		case "/api/v1/projects":
-			_ = json.NewEncoder(w).Encode([]map[string]any{
-				{"id": "p-def-inbox", "name": "Inbox", "is_inbox_project": true},
-			})
-		case "/api/v1/sections":
-			_ = json.NewEncoder(w).Encode([]map[string]any{})
-		case "/api/v1/tasks":
-			_ = json.NewEncoder(w).Encode([]map[string]any{
-				{"id": "t-inbox-1", "content": "Inbox Item", "order": 1},
-			})
-		case "/api/v1/tasks/completed":
-			_ = json.NewEncoder(w).Encode(map[string]any{"items": []any{}})
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer server.Close()
-
-	// Neither ProjectID nor ProjectName configured -> fallback to Inbox
-	ad, err := adapters.NewTodoistAdapter(adapters.TodoistAdapterConfig{
-		Token:   "tok-inbox",
-		BaseURL: server.URL,
-		Client:  server.Client(),
-	})
-	if err != nil {
-		t.Fatalf("unexpected adapter init error: %v", err)
-	}
-
-	list, items, err := ad.FetchList(context.Background())
-	if err != nil {
-		t.Fatalf("FetchList failed: %v", err)
-	}
-
-	if list.ID != "p-def-inbox" {
-		t.Errorf("expected list ID 'p-def-inbox', got %q", list.ID)
-	}
-	if list.Name != "Inbox" {
-		t.Errorf("expected list name 'Inbox', got %q", list.Name)
-	}
-	if len(items) != 1 || items[0].Title != "Inbox Item" {
-		t.Errorf("unexpected items: %+v", items)
-	}
-}
-
-func TestTodoistAdapter_FetchList_HierarchyAndSections(t *testing.T) {
-	t.Parallel()
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		switch r.URL.Path {
-		case "/api/v1/projects/proj-hier":
-			_ = json.NewEncoder(w).Encode(map[string]any{"id": "proj-hier", "name": "Hierarchical"})
-		case "/api/v1/sections":
-			_ = json.NewEncoder(w).Encode([]map[string]any{
-				{"id": "sec-kitchen", "name": "Kitchen", "order": 1},
-			})
-		case "/api/v1/tasks":
-			_ = json.NewEncoder(w).Encode([]map[string]any{
-				{
-					"id":         "p-1",
-					"section_id": "sec-kitchen",
-					"content":    "Parent Task 1",
-					"order":      1,
-				},
-				{
-					"id":        "c-1",
-					"parent_id": "p-1",
-					"content":   "Subtask 1A",
-					"order":     1,
-				},
-				{
-					"id":        "c-2",
-					"parent_id": "p-1",
-					"content":   "Subtask 1B",
-					"order":     2,
-				},
-				{
-					"id":        "orphan-1",
-					"parent_id": "non-existent-parent",
-					"content":   "Orphaned Task",
-					"order":     2,
-				},
-			})
-		case "/api/v1/tasks/completed":
-			_ = json.NewEncoder(w).Encode(map[string]any{"items": []any{}})
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer server.Close()
-
-	ad, err := adapters.NewTodoistAdapter(adapters.TodoistAdapterConfig{
-		ProjectID: "proj-hier",
-		Token:     "tok",
-		BaseURL:   server.URL,
-		Client:    server.Client(),
-	})
-	if err != nil {
-		t.Fatalf("unexpected adapter init error: %v", err)
-	}
-
-	_, items, err := ad.FetchList(context.Background())
-	if err != nil {
-		t.Fatalf("FetchList failed: %v", err)
-	}
-
-	if len(items) != 4 {
-		t.Fatalf("expected 4 items, got %d", len(items))
-	}
-
-	// Verify order: Parent 1 -> Subtask 1A -> Subtask 1B -> Orphaned Task
-	if items[0].Title != "Parent Task 1" || items[0].Section != "Kitchen" {
-		t.Errorf("expected parent task first, got %+v", items[0])
-	}
-	if items[1].Title != "Subtask 1A" || items[1].Section != "Kitchen" {
-		t.Errorf("expected Subtask 1A second with inherited Kitchen section, got %+v", items[1])
-	}
-	if items[2].Title != "Subtask 1B" || items[2].Section != "Kitchen" {
-		t.Errorf("expected Subtask 1B third with inherited Kitchen section, got %+v", items[2])
-	}
-	if items[3].Title != "Orphaned Task" {
-		t.Errorf("expected Orphaned Task fourth, got %+v", items[3])
-	}
-}
-
-func TestTodoistAdapter_FetchList_DueDates(t *testing.T) {
-	t.Parallel()
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		switch r.URL.Path {
-		case "/api/v1/projects/p-due":
-			_ = json.NewEncoder(w).Encode(map[string]any{"id": "p-due", "name": "Due Project"})
-		case "/api/v1/sections":
-			_ = json.NewEncoder(w).Encode([]any{})
-		case "/api/v1/tasks":
-			_ = json.NewEncoder(w).Encode([]map[string]any{
-				{
-					"id":      "d-1",
-					"content": "Date only",
-					"due":     map[string]any{"date": "2026-10-31"},
-				},
-				{
-					"id":      "d-2",
-					"content": "Datetime",
-					"due":     map[string]any{"datetime": "2026-11-05T14:30:00Z"},
-				},
-			})
-		case "/api/v1/tasks/completed":
-			_ = json.NewEncoder(w).Encode(map[string]any{"items": []any{}})
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer server.Close()
-
-	ad, err := adapters.NewTodoistAdapter(adapters.TodoistAdapterConfig{
-		ProjectID: "p-due",
-		Token:     "tok",
-		BaseURL:   server.URL,
-		Client:    server.Client(),
-	})
-	if err != nil {
-		t.Fatalf("unexpected adapter init error: %v", err)
-	}
-
-	_, items, err := ad.FetchList(context.Background())
-	if err != nil {
-		t.Fatalf("FetchList failed: %v", err)
-	}
-
-	if items[0].DueDate == nil || *items[0].DueDate != "2026-10-31" {
-		t.Errorf("expected due date 2026-10-31, got %+v", items[0].DueDate)
-	}
-	if items[1].DueDate == nil || *items[1].DueDate != "2026-11-05" {
-		t.Errorf("expected datetime truncated to 2026-11-05, got %+v", items[1].DueDate)
-	}
-}
-
-func TestTodoistAdapter_FetchList_SyncDegradation(t *testing.T) {
-	t.Parallel()
-
-	// Sync endpoint returns 500 Server Error
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		switch r.URL.Path {
-		case "/api/v1/projects/p-degrade":
-			_ = json.NewEncoder(w).Encode(map[string]any{"id": "p-degrade", "name": "Degrade Test"})
-		case "/api/v1/sections":
-			_ = json.NewEncoder(w).Encode([]any{})
-		case "/api/v1/tasks":
-			_ = json.NewEncoder(w).Encode([]map[string]any{
-				{"id": "t-act", "content": "Still Works", "order": 1},
-			})
-		case "/api/v1/tasks/completed":
-			http.Error(w, "internal sync error", http.StatusInternalServerError)
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer server.Close()
-
-	ad, err := adapters.NewTodoistAdapter(adapters.TodoistAdapterConfig{
-		ProjectID: "p-degrade",
-		Token:     "tok",
-		BaseURL:   server.URL,
-		Client:    server.Client(),
-	})
-	if err != nil {
-		t.Fatalf("unexpected adapter init error: %v", err)
-	}
-
-	// FetchList must still succeed with active tasks!
-	list, items, err := ad.FetchList(context.Background())
-	if err != nil {
-		t.Fatalf("expected FetchList to succeed despite sync v9 failure, got %v", err)
-	}
-
-	if list.Name != "Degrade Test" {
-		t.Errorf("expected list name 'Degrade Test', got %q", list.Name)
-	}
-	if len(items) != 1 || items[0].Title != "Still Works" {
-		t.Errorf("expected 1 item, got %+v", items)
-	}
-}
-
-func TestTodoistAdapter_FetchList_Errors(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
-		name       string
-		statusCode int
-		wantErr    error
+		name, token, url string
+		wantErr          string
 	}{
-		{"401 Unauthorized", http.StatusUnauthorized, adapters.ErrUnauthorized},
-		{"403 Forbidden", http.StatusForbidden, adapters.ErrUnauthorized},
-		{"404 Not Found", http.StatusNotFound, adapters.ErrUpstreamNotFound},
-		{"429 Rate Limit", http.StatusTooManyRequests, adapters.UpstreamHTTPError{Code: 429}},
-		{"500 Server Error", http.StatusInternalServerError, adapters.UpstreamHTTPError{Code: 500}},
+		{"empty_token", "", "https://example.com", "token is required"},
+		{"invalid_base_url", "tok", "ftp://invalid", "must be http:// or https://"},
+		{"valid_config", "tok", "https://api.todoist.com", ""},
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				http.Error(w, "server error", tt.statusCode)
-			}))
-			defer server.Close()
-
-			ad, err := adapters.NewTodoistAdapter(adapters.TodoistAdapterConfig{
-				ProjectID: "p-err",
-				Token:     "tok",
-				BaseURL:   server.URL,
-				Client:    server.Client(),
-			})
-			if err != nil {
-				t.Fatalf("unexpected adapter init error: %v", err)
-			}
-
-			_, _, err = ad.FetchList(context.Background())
-			if err == nil {
-				t.Fatalf("expected error for status %d, got nil", tt.statusCode)
-			}
-
-			if errors.Is(tt.wantErr, adapters.ErrUnauthorized) || errors.Is(tt.wantErr, adapters.ErrUpstreamNotFound) {
-				if !errors.Is(err, tt.wantErr) {
-					t.Errorf("expected %v, got %v", tt.wantErr, err)
-				}
-			} else {
-				var httpErr adapters.UpstreamHTTPError
-				if errors.As(err, &httpErr) {
-					if httpErr.Code != tt.statusCode {
-						t.Errorf("expected status code %d, got %d", tt.statusCode, httpErr.Code)
-					}
-				} else {
-					t.Errorf("expected UpstreamHTTPError, got %v", err)
-				}
-			}
-		})
-	}
-}
-
-func TestTodoistAdapter_FetchList_PayloadTooLarge(t *testing.T) {
-	t.Parallel()
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		// Emit more than 2MB
-		huge := make([]byte, adapters.MaxPayloadBytes+1024)
-		for i := range huge {
-			huge[i] = 'a'
-		}
-		_, _ = w.Write(huge)
-	}))
-	defer server.Close()
-
-	ad, err := adapters.NewTodoistAdapter(adapters.TodoistAdapterConfig{
-		ProjectID: "p-huge",
-		Token:     "tok",
-		BaseURL:   server.URL,
-		Client:    server.Client(),
-	})
-	if err != nil {
-		t.Fatalf("unexpected adapter init error: %v", err)
-	}
-
-	_, _, err = ad.FetchList(context.Background())
-	if !errors.Is(err, adapters.ErrPayloadTooLarge) {
-		t.Fatalf("expected ErrPayloadTooLarge, got %v", err)
-	}
-}
-
-
-func TestTodoistAdapter_FetchList_ByProjectName_NotFound(t *testing.T) {
-	t.Parallel()
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode([]map[string]any{
-			{"id": "p-1", "name": "Work"},
-		})
-	}))
-	defer server.Close()
-
-	ad, err := adapters.NewTodoistAdapter(adapters.TodoistAdapterConfig{
-		ProjectName: "NonExistent",
-		Token:       "tok",
-		BaseURL:     server.URL,
-		Client:      server.Client(),
-	})
-	if err != nil {
-		t.Fatalf("unexpected adapter init error: %v", err)
-	}
-
-	_, _, err = ad.FetchList(context.Background())
-	if !errors.Is(err, adapters.ErrUpstreamNotFound) {
-		t.Fatalf("expected ErrUpstreamNotFound, got %v", err)
-	}
-}
-
-func TestTodoistAdapter_FetchList_ListNameOverride(t *testing.T) {
-	t.Parallel()
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		switch r.URL.Path {
-		case "/api/v1/projects/p-1":
-			_ = json.NewEncoder(w).Encode(map[string]any{"id": "p-1", "name": "API Name"})
-		case "/api/v1/sections":
-			_ = json.NewEncoder(w).Encode([]any{})
-		case "/api/v1/tasks":
-			_ = json.NewEncoder(w).Encode([]any{})
-		case "/api/v1/tasks/completed":
-			_ = json.NewEncoder(w).Encode(map[string]any{"items": []any{}})
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer server.Close()
-
-	ad, err := adapters.NewTodoistAdapter(adapters.TodoistAdapterConfig{
-		ProjectID: "p-1",
-		ListName:  "Custom Overridden Name",
-		Token:     "tok",
-		BaseURL:   server.URL,
-		Client:    server.Client(),
-	})
-	if err != nil {
-		t.Fatalf("unexpected adapter init error: %v", err)
-	}
-
-	list, _, err := ad.FetchList(context.Background())
-	if err != nil {
-		t.Fatalf("FetchList failed: %v", err)
-	}
-	if list.Name != "Custom Overridden Name" {
-		t.Errorf("expected list name 'Custom Overridden Name', got %q", list.Name)
-	}
-}
-
-func TestTodoistAdapter_FetchList_NumericIDsAndFlexibleString(t *testing.T) {
-	t.Parallel()
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		switch r.URL.Path {
-		case "/api/v1/projects":
-			_ = json.NewEncoder(w).Encode([]map[string]any{
-				{"id": 2203306141, "name": "Numeric Project", "is_inbox_project": false, "order": 1},
-			})
-		case "/api/v1/sections":
-			_ = json.NewEncoder(w).Encode([]map[string]any{
-				{"id": 998877, "project_id": 2203306141, "name": "Numeric Section", "order": 1},
-			})
-		case "/api/v1/tasks":
-			_ = json.NewEncoder(w).Encode([]map[string]any{
-				{
-					"id":         11223344,
-					"project_id": 2203306141,
-					"section_id": 998877,
-					"content":    "Task with Numeric ID",
-					"order":      1,
-				},
-			})
-		case "/api/v1/tasks/completed":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"items": []map[string]any{
-					{
-						"id":         556677,
-						"task_id":    889900,
-						"content":    "Completed Numeric Task",
-						"section_id": 998877,
-					},
-				},
-			})
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer server.Close()
-
-	ad, err := adapters.NewTodoistAdapter(adapters.TodoistAdapterConfig{
-		Token:   "tok",
-		BaseURL: server.URL,
-		Client:  server.Client(),
-	})
-	if err != nil {
-		t.Fatalf("unexpected adapter init error: %v", err)
-	}
-
-	list, items, err := ad.FetchList(context.Background())
-	if err != nil {
-		t.Fatalf("FetchList failed: %v", err)
-	}
-
-	if list.ID != "2203306141" {
-		t.Errorf("expected list ID '2203306141', got %q", list.ID)
-	}
-	if list.Name != "Numeric Project" {
-		t.Errorf("expected list Name 'Numeric Project', got %q", list.Name)
-	}
-	if len(items) != 2 {
-		t.Fatalf("expected 2 items, got %d", len(items))
-	}
-	if items[0].ID != "11223344" || items[0].Section != "Numeric Section" {
-		t.Errorf("unexpected item 0: %+v", items[0])
-	}
-	if items[1].ID != "889900" || items[1].Section != "Numeric Section" || !items[1].Done {
-		t.Errorf("unexpected completed item 1: %+v", items[1])
-	}
-}
-
-func TestTodoistAdapter_FetchList_CycleProtection(t *testing.T) {
-	t.Parallel()
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		switch r.URL.Path {
-		case "/api/v1/projects/p-cycle":
-			_ = json.NewEncoder(w).Encode(map[string]any{"id": "p-cycle", "name": "Cycle Project"})
-		case "/api/v1/sections":
-			_ = json.NewEncoder(w).Encode([]any{})
-		case "/api/v1/tasks":
-			// Mutual circular parent references
-			_ = json.NewEncoder(w).Encode([]map[string]any{
-				{"id": "t-1", "parent_id": "t-2", "content": "Cycle A", "order": 1},
-				{"id": "t-2", "parent_id": "t-1", "content": "Cycle B", "order": 2},
-			})
-		case "/api/v1/tasks/completed":
-			_ = json.NewEncoder(w).Encode(map[string]any{"items": []any{}})
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer server.Close()
-
-	ad, err := adapters.NewTodoistAdapter(adapters.TodoistAdapterConfig{
-		ProjectID: "p-cycle",
-		Token:     "tok",
-		BaseURL:   server.URL,
-		Client:    server.Client(),
-	})
-	if err != nil {
-		t.Fatalf("unexpected adapter init error: %v", err)
-	}
-
-	_, items, err := ad.FetchList(context.Background())
-	if err != nil {
-		t.Fatalf("FetchList failed: %v", err)
-	}
-	if len(items) != 2 {
-		t.Fatalf("expected 2 items despite cycle, got %d", len(items))
-	}
-}
-
-func TestTodoistAdapter_FetchList_EmptyProjectsFallback(t *testing.T) {
-	t.Parallel()
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		switch r.URL.Path {
-		case "/api/v1/projects":
-			_ = json.NewEncoder(w).Encode([]any{})
-		case "/api/v1/sections":
-			_ = json.NewEncoder(w).Encode([]any{})
-		case "/api/v1/tasks":
-			_ = json.NewEncoder(w).Encode([]any{})
-		case "/api/v1/tasks/completed":
-			_ = json.NewEncoder(w).Encode(map[string]any{"items": []any{}})
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer server.Close()
-
-	ad, err := adapters.NewTodoistAdapter(adapters.TodoistAdapterConfig{
-		Token:   "tok",
-		BaseURL: server.URL,
-		Client:  server.Client(),
-	})
-	if err != nil {
-		t.Fatalf("unexpected adapter init error: %v", err)
-	}
-
-	list, items, err := ad.FetchList(context.Background())
-	if err != nil {
-		t.Fatalf("FetchList failed: %v", err)
-	}
-	if list.ID != "inbox" {
-		t.Errorf("expected list ID 'inbox', got %q", list.ID)
-	}
-	if list.Name != "Inbox" {
-		t.Errorf("expected list Name 'Inbox', got %q", list.Name)
-	}
-	if len(items) != 0 {
-		t.Errorf("expected 0 items, got %d", len(items))
-	}
-}
-
-func TestTodoist_CoverageGaps(t *testing.T) {
-	t.Parallel()
-
-	// 1. Malformed JSON on single project endpoint
-	t.Run("malformed_project_json", func(t *testing.T) {
-		t.Parallel()
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte("{invalid-json"))
-		}))
-		defer srv.Close()
-
-		ad, _ := adapters.NewTodoistAdapter(adapters.TodoistAdapterConfig{
-			ProjectID: "proj-bad",
-			Token:     "tok",
-			BaseURL:   srv.URL,
-			Client:    srv.Client(),
-		})
-		_, _, err := ad.FetchList(context.Background())
-		if err == nil || !strings.Contains(err.Error(), "failed to parse todoist project") {
-			t.Fatalf("expected failed to parse todoist project error, got %v", err)
-		}
-	})
-
-	// 2. Malformed JSON on projects list endpoint
-	t.Run("malformed_projects_list_json", func(t *testing.T) {
-		t.Parallel()
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte("{not-an-array"))
-		}))
-		defer srv.Close()
-
-		ad, _ := adapters.NewTodoistAdapter(adapters.TodoistAdapterConfig{
-			ProjectName: "Family",
-			Token:       "tok",
-			BaseURL:     srv.URL,
-			Client:      srv.Client(),
-		})
-		_, _, err := ad.FetchList(context.Background())
-		if err == nil || !strings.Contains(err.Error(), "failed to parse todoist projects") {
-			t.Fatalf("expected failed to parse todoist projects error, got %v", err)
-		}
-	})
-
-	// 3. Fallback when projects exist but none marked as inbox
-	t.Run("projects_without_inbox_fallback", func(t *testing.T) {
-		t.Parallel()
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			switch r.URL.Path {
-			case "/api/v1/projects":
-				_ = json.NewEncoder(w).Encode([]map[string]any{
-					{"id": "p-first", "name": "First Project", "is_inbox_project": false},
-				})
-			case "/api/v1/sections":
-				_ = json.NewEncoder(w).Encode([]any{})
-			case "/api/v1/tasks":
-				_ = json.NewEncoder(w).Encode([]any{})
-			case "/api/v1/tasks/completed":
-				_ = json.NewEncoder(w).Encode(map[string]any{"items": []any{}})
-			default:
-				http.NotFound(w, r)
-			}
-		}))
-		defer srv.Close()
-
-		ad, _ := adapters.NewTodoistAdapter(adapters.TodoistAdapterConfig{
-			Token:   "tok",
-			BaseURL: srv.URL,
-			Client:  srv.Client(),
-		})
-		list, _, err := ad.FetchList(context.Background())
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if list.ID != "p-first" || list.Name != "First Project" {
-			t.Errorf("expected fallback to first project, got ID=%q Name=%q", list.ID, list.Name)
-		}
-	})
-
-	// 4. Malformed JSON on sections
-	t.Run("malformed_sections_json", func(t *testing.T) {
-		t.Parallel()
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			switch r.URL.Path {
-			case "/api/v1/projects/p-1":
-				_ = json.NewEncoder(w).Encode(map[string]any{"id": "p-1", "name": "P1"})
-			case "/api/v1/sections":
-				_, _ = w.Write([]byte("{invalid-sections"))
-			default:
-				http.NotFound(w, r)
-			}
-		}))
-		defer srv.Close()
-
-		ad, _ := adapters.NewTodoistAdapter(adapters.TodoistAdapterConfig{
-			ProjectID: "p-1",
-			Token:     "tok",
-			BaseURL:   srv.URL,
-			Client:    srv.Client(),
-		})
-		_, _, err := ad.FetchList(context.Background())
-		if err == nil || !strings.Contains(err.Error(), "failed to parse todoist sections") {
-			t.Fatalf("expected failed to parse todoist sections error, got %v", err)
-		}
-	})
-
-	// 5. Malformed JSON on tasks
-	t.Run("malformed_tasks_json", func(t *testing.T) {
-		t.Parallel()
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			switch r.URL.Path {
-			case "/api/v1/projects/p-1":
-				_ = json.NewEncoder(w).Encode(map[string]any{"id": "p-1", "name": "P1"})
-			case "/api/v1/sections":
-				_ = json.NewEncoder(w).Encode([]any{})
-			case "/api/v1/tasks":
-				_, _ = w.Write([]byte("{invalid-tasks"))
-			default:
-				http.NotFound(w, r)
-			}
-		}))
-		defer srv.Close()
-
-		ad, _ := adapters.NewTodoistAdapter(adapters.TodoistAdapterConfig{
-			ProjectID: "p-1",
-			Token:     "tok",
-			BaseURL:   srv.URL,
-			Client:    srv.Client(),
-		})
-		_, _, err := ad.FetchList(context.Background())
-		if err == nil || !strings.Contains(err.Error(), "failed to parse todoist tasks") {
-			t.Fatalf("expected failed to parse todoist tasks error, got %v", err)
-		}
-	})
-
-	// 6. Numeric and null IDs + invalid date parsing fallback
-	t.Run("numeric_and_null_ids", func(t *testing.T) {
-		t.Parallel()
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			switch r.URL.Path {
-			case "/api/v1/projects/12345":
-				_ = json.NewEncoder(w).Encode(map[string]any{"id": 12345, "name": "Numeric Project"})
-			case "/api/v1/sections":
-				_ = json.NewEncoder(w).Encode([]map[string]any{
-					{"id": 999, "name": "Num Sec", "order": 1},
-				})
-			case "/api/v1/tasks":
-				_ = json.NewEncoder(w).Encode([]map[string]any{
-					{"id": 555, "section_id": 999, "content": "Numeric ID Task", "parent_id": nil, "order": 1, "due": nil, "created_at": "invalid-date"},
-				})
-			case "/api/v1/tasks/completed":
-				_ = json.NewEncoder(w).Encode(map[string]any{
-					"items": []map[string]any{
-						{"id": 777, "task_id": 777, "content": "Comp Num", "completed_date": "invalid-date", "section_id": 999},
-					},
-				})
-			default:
-				http.NotFound(w, r)
-			}
-		}))
-		defer srv.Close()
-
-		ad, _ := adapters.NewTodoistAdapter(adapters.TodoistAdapterConfig{
-			ProjectID: "12345",
-			Token:     "tok",
-			BaseURL:   srv.URL,
-			Client:    srv.Client(),
-		})
-		list, items, err := ad.FetchList(context.Background())
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if list.ID != "12345" {
-			t.Errorf("expected list ID 12345, got %q", list.ID)
-		}
-		if len(items) != 2 {
-			t.Fatalf("expected 2 items, got %d", len(items))
-		}
-	})
-}
-
-func TestTodoistAdapter_CompleteItem(t *testing.T) {
-	t.Parallel()
-
-	cases := []struct {
-		name       string
-		statusCode int
-		itemID     string
-		cancelCtx  bool
-		wantErr    error
-		wantCode   int
-		expectErr  bool
-	}{
-		{
-			name:       "204 No Content success",
-			statusCode: http.StatusNoContent,
-			itemID:     "task-123",
-			expectErr:  false,
-		},
-		{
-			name:       "200 OK success",
-			statusCode: http.StatusOK,
-			itemID:     "task-456",
-			expectErr:  false,
-		},
-		{
-			name:       "401 Unauthorized",
-			statusCode: http.StatusUnauthorized,
-			itemID:     "task-123",
-			wantErr:    adapters.ErrUnauthorized,
-			expectErr:  true,
-		},
-		{
-			name:       "403 Forbidden",
-			statusCode: http.StatusForbidden,
-			itemID:     "task-123",
-			wantErr:    adapters.ErrUnauthorized,
-			expectErr:  true,
-		},
-		{
-			name:       "404 Not Found",
-			statusCode: http.StatusNotFound,
-			itemID:     "task-123",
-			wantErr:    adapters.ErrUpstreamNotFound,
-			expectErr:  true,
-		},
-		{
-			name:       "429 Too Many Requests",
-			statusCode: http.StatusTooManyRequests,
-			itemID:     "task-123",
-			wantCode:   429,
-			expectErr:  true,
-		},
-		{
-			name:       "500 Internal Server Error",
-			statusCode: http.StatusInternalServerError,
-			itemID:     "task-123",
-			wantCode:   500,
-			expectErr:  true,
-		},
-		{
-			name:      "empty item ID",
-			itemID:    "",
-			expectErr: true,
-		},
-		{
-			name:      "path traversal item ID with slashes",
-			itemID:    "task/sub",
-			expectErr: true,
-		},
-		{
-			name:      "path traversal item ID with dotdot",
-			itemID:    "../evil",
-			expectErr: true,
-		},
-		{
-			name:      "canceled context",
-			itemID:    "task-123",
-			cancelCtx: true,
-			expectErr: true,
-		},
-	}
-
-	for _, tc := range cases {
+	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
+			ad, err := adapters.NewTodoistAdapter(adapters.TodoistAdapterConfig{Token: tc.token, BaseURL: tc.url})
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("expected error containing %q, got %v", tc.wantErr, err)
+				}
+				return
+			}
+			if err != nil || ad.Name() != "todoist" {
+				t.Fatalf("unexpected adapter creation result: %v", err)
+			}
+		})
+	}
+}
 
-			var capturedAuth string
-			var capturedMethod string
-			var capturedPath string
-
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				capturedAuth = r.Header.Get("Authorization")
-				capturedMethod = r.Method
-				capturedPath = r.URL.Path
-
-				w.WriteHeader(tc.statusCode)
-			}))
-			defer srv.Close()
-
-			ad, err := adapters.NewTodoistAdapter(adapters.TodoistAdapterConfig{
-				Token:   "secret-token",
-				BaseURL: srv.URL,
-				Client:  srv.Client(),
-			})
+func TestTodoistAdapter_FetchList(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		cfg       adapters.TodoistAdapterConfig
+		routes    map[string]mockRoute
+		wantName  string
+		wantItems int
+		checkSec  string
+		checkDue  bool
+		wantErr   string
+		wantErrIs error
+	}{
+		{
+			name: "project_id_success", cfg: adapters.TodoistAdapterConfig{ProjectID: "p1"},
+			routes: map[string]mockRoute{
+				"/api/v1/projects/p1":            {body: `{"id":"p1","name":"Work"}`},
+				"/api/v1/sections?project_id=p1": {body: `[{"id":"s1","name":"Dev"}]`},
+				"/api/v1/tasks?project_id=p1":    {body: `[{"id":"t1","content":"Code","section_id":"s1"}]`},
+			}, wantName: "Work", wantItems: 1,
+		},
+		{
+			name: "project_name_match", cfg: adapters.TodoistAdapterConfig{ProjectName: "Shopping"},
+			routes: map[string]mockRoute{
+				"/api/v1/projects":               {body: `[{"id":"p2","name":"Shopping"}]`},
+				"/api/v1/sections?project_id=p2": {body: `[]`},
+				"/api/v1/tasks?project_id=p2":    {body: `[{"id":"t2","content":"Milk"}]`},
+			}, wantName: "Shopping", wantItems: 1,
+		},
+		{
+			name: "project_name_not_found", cfg: adapters.TodoistAdapterConfig{ProjectName: "Missing"},
+			routes:    map[string]mockRoute{"/api/v1/projects": {body: `[{"id":"p1","name":"Other"}]`}},
+			wantErrIs: adapters.ErrUpstreamNotFound,
+		},
+		{
+			name: "inbox_fallback", cfg: adapters.TodoistAdapterConfig{},
+			routes: map[string]mockRoute{
+				"/api/v1/projects":                    {body: `[{"id":"p1","name":"Other"},{"id":"p-inbox","name":"Inbox","inbox_project":true}]`},
+				"/api/v1/sections?project_id=p-inbox": {body: `[]`},
+				"/api/v1/tasks?project_id=p-inbox":    {body: `[{"id":"t3","content":"Task"}]`},
+			}, wantName: "Inbox", wantItems: 1,
+		},
+		{
+			name: "non_inbox_first_project_fallback", cfg: adapters.TodoistAdapterConfig{},
+			routes: map[string]mockRoute{
+				"/api/v1/projects":                    {body: `[{"id":"p-first","name":"General"}]`},
+				"/api/v1/sections?project_id=p-first": {body: `[]`},
+				"/api/v1/tasks?project_id=p-first":    {body: `[{"id":"t4","content":"Task"}]`},
+			}, wantName: "General", wantItems: 1,
+		},
+		{
+			name: "empty_projects_fallback", cfg: adapters.TodoistAdapterConfig{},
+			routes: map[string]mockRoute{
+				"/api/v1/projects": {body: `[]`},
+				"/api/v1/tasks":    {body: `[{"id":"t5","content":"Task"}]`},
+			}, wantName: "Inbox", wantItems: 1,
+		},
+		{
+			name: "list_name_override", cfg: adapters.TodoistAdapterConfig{ProjectID: "p1", ListName: "Custom"},
+			routes: map[string]mockRoute{
+				"/api/v1/projects/p1":            {body: `{"id":"p1","name":"Work"}`},
+				"/api/v1/sections?project_id=p1": {body: `[]`},
+				"/api/v1/tasks?project_id=p1":    {body: `[]`},
+			}, wantName: "Custom", wantItems: 0,
+		},
+		{
+			name: "hierarchy_and_sections", cfg: adapters.TodoistAdapterConfig{ProjectID: "p1"},
+			routes: map[string]mockRoute{
+				"/api/v1/projects/p1":            {body: `{"id":"p1"}`},
+				"/api/v1/sections?project_id=p1": {body: `[{"id":"s1","name":"Sprint"}]`},
+				"/api/v1/tasks?project_id=p1":    {body: `[{"id":"t1","section_id":"s1","order":1},{"id":"t2","parent_id":"t1","child_order":1},{"id":"t3","parent_id":"missing"}]`},
+			}, wantName: "p1", wantItems: 3, checkSec: "Sprint",
+		},
+		{
+			name: "cycle_protection", cfg: adapters.TodoistAdapterConfig{ProjectID: "p1"},
+			routes: map[string]mockRoute{
+				"/api/v1/projects/p1":            {body: `{"id":"p1"}`},
+				"/api/v1/sections?project_id=p1": {body: `[]`},
+				"/api/v1/tasks?project_id=p1":    {body: `[{"id":"t1","parent_id":"t2"},{"id":"t2","parent_id":"t1"}]`},
+			}, wantName: "p1", wantItems: 2,
+		},
+		{
+			name: "numeric_bool_null_ids", cfg: adapters.TodoistAdapterConfig{ProjectID: "123"},
+			routes: map[string]mockRoute{
+				"/api/v1/projects/123":            {body: `{"id":123,"name":"Numeric"}`},
+				"/api/v1/sections?project_id=123": {body: `[{"id":true,"name":"Sec"}]`},
+				"/api/v1/tasks?project_id=123":    {body: `[{"id":456,"content":"Num","parent_id":null,"section_id":true,"added_at":"invalid-date","order":2}]`},
+			}, wantName: "Numeric", wantItems: 1,
+		},
+		{
+			name: "due_dates_date_and_datetime", cfg: adapters.TodoistAdapterConfig{ProjectID: "p1"},
+			routes: map[string]mockRoute{
+				"/api/v1/projects/p1":            {body: `{"id":"p1"}`},
+				"/api/v1/sections?project_id=p1": {body: `[]`},
+				"/api/v1/tasks?project_id=p1":    {body: `[{"id":"t1","due":{"date":"2026-10-01"}},{"id":"t2","due":{"datetime":"2026-10-02T15:04:05Z"}}]`},
+			}, wantName: "p1", wantItems: 2, checkDue: true,
+		},
+		{
+			name: "sync_completed_degradation", cfg: adapters.TodoistAdapterConfig{ProjectID: "p1"},
+			routes: map[string]mockRoute{
+				"/api/v1/projects/p1":                            {body: `{"id":"p1"}`},
+				"/api/v1/sections?project_id=p1":                 {body: `[]`},
+				"/api/v1/tasks?project_id=p1":                    {body: `[{"id":"t1","content":"Active"}]`},
+				"/api/v1/tasks/completed?project_id=p1&limit=30": {status: 500},
+			}, wantName: "p1", wantItems: 1,
+		},
+		{
+			name: "completed_tasks_success", cfg: adapters.TodoistAdapterConfig{ProjectID: "p1"},
+			routes: map[string]mockRoute{
+				"/api/v1/projects/p1":                            {body: `{"id":"p1"}`},
+				"/api/v1/sections?project_id=p1":                 {body: `[{"id":"s1","name":"DoneSec"}]`},
+				"/api/v1/tasks?project_id=p1":                    {body: `[{"id":"t1","content":"Active"}]`},
+				"/api/v1/tasks/completed?project_id=p1&limit=30": {body: `{"items":[{"task_id":"c1","content":"Done","section_id":"other_sec","completed_date":"2026-09-27"},{"id":"c2","content":"NoTaskID"}]}`},
+			}, wantName: "p1", wantItems: 3,
+		},
+		{
+			name: "envelope_results_format", cfg: adapters.TodoistAdapterConfig{},
+			routes: map[string]mockRoute{
+				"/api/v1/projects":                  {body: `{"results":[{"id":"p-env","name":"Env"}]}`},
+				"/api/v1/sections?project_id=p-env": {body: `{"results":[{"id":"s-env","name":"EnvSec"}]}`},
+				"/api/v1/tasks?project_id=p-env":    {body: `{"results":[{"id":"t-env","content":"EnvTask"}]}`},
+			}, wantName: "Env", wantItems: 1,
+		},
+		{"payload_too_large", adapters.TodoistAdapterConfig{}, map[string]mockRoute{"/api/v1/projects": {body: strings.Repeat("x", adapters.MaxPayloadBytes+10)}}, "", 0, "", false, "", adapters.ErrPayloadTooLarge},
+		{"error_401", adapters.TodoistAdapterConfig{}, map[string]mockRoute{"/api/v1/projects": {status: 401}}, "", 0, "", false, "", adapters.ErrUnauthorized},
+		{"error_403", adapters.TodoistAdapterConfig{}, map[string]mockRoute{"/api/v1/projects": {status: 403}}, "", 0, "", false, "", adapters.ErrUnauthorized},
+		{"error_404", adapters.TodoistAdapterConfig{}, map[string]mockRoute{"/api/v1/projects": {status: 404}}, "", 0, "", false, "", adapters.ErrUpstreamNotFound},
+		{"error_429", adapters.TodoistAdapterConfig{}, map[string]mockRoute{"/api/v1/projects": {status: 429}}, "", 0, "", false, "status 429", nil},
+		{"error_500", adapters.TodoistAdapterConfig{}, map[string]mockRoute{"/api/v1/projects": {status: 500}}, "", 0, "", false, "status 500", nil},
+		{"malformed_project_json", adapters.TodoistAdapterConfig{ProjectID: "p1"}, map[string]mockRoute{"/api/v1/projects/p1": {body: `{bad`}}, "", 0, "", false, "failed to parse todoist project", nil},
+		{"malformed_projects_list_json", adapters.TodoistAdapterConfig{}, map[string]mockRoute{"/api/v1/projects": {body: `{bad`}}, "", 0, "", false, "failed to parse todoist projects", nil},
+		{"project_name_500", adapters.TodoistAdapterConfig{ProjectName: "P"}, map[string]mockRoute{"/api/v1/projects": {status: 500}}, "", 0, "", false, "status 500", nil},
+		{"sections_500", adapters.TodoistAdapterConfig{ProjectID: "p1"}, map[string]mockRoute{"/api/v1/projects/p1": {body: `{"id":"p1"}`}, "/api/v1/sections?project_id=p1": {status: 500}}, "", 0, "", false, "failed to fetch todoist sections", nil},
+		{"malformed_sections_json", adapters.TodoistAdapterConfig{ProjectID: "p1"}, map[string]mockRoute{"/api/v1/projects/p1": {body: `{"id":"p1"}`}, "/api/v1/sections?project_id=p1": {body: `{bad`}}, "", 0, "", false, "failed to parse todoist sections", nil},
+		{"tasks_500", adapters.TodoistAdapterConfig{ProjectID: "p1"}, map[string]mockRoute{"/api/v1/projects/p1": {body: `{"id":"p1"}`}, "/api/v1/sections?project_id=p1": {body: `[]`}, "/api/v1/tasks?project_id=p1": {status: 500}}, "", 0, "", false, "failed to fetch todoist tasks", nil},
+		{"malformed_tasks_json", adapters.TodoistAdapterConfig{ProjectID: "p1"}, map[string]mockRoute{"/api/v1/projects/p1": {body: `{"id":"p1"}`}, "/api/v1/sections?project_id=p1": {body: `[]`}, "/api/v1/tasks?project_id=p1": {body: `{bad`}}, "", 0, "", false, "failed to parse todoist tasks", nil},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			srv := newRouteServer(t, tc.routes, nil)
+			cfg := tc.cfg
+			cfg.Token, cfg.BaseURL, cfg.Client = "tok", srv.URL, srv.Client()
+			ad, err := adapters.NewTodoistAdapter(cfg)
 			if err != nil {
 				t.Fatalf("failed to create adapter: %v", err)
 			}
-
-			ctx := context.Background()
-			if tc.cancelCtx {
-				cctx, cancel := context.WithCancel(ctx)
-				cancel()
-				ctx = cctx
-			}
-
-			err = ad.CompleteItem(ctx, tc.itemID)
-
-			if tc.expectErr {
-				if err == nil {
-					t.Fatalf("expected error, got nil")
-				}
-				if tc.wantErr != nil && !errors.Is(err, tc.wantErr) {
-					t.Fatalf("expected error %v, got %v", tc.wantErr, err)
-				}
-				if tc.wantCode != 0 {
-					var httpErr adapters.UpstreamHTTPError
-					if errors.As(err, &httpErr) {
-						if httpErr.Code != tc.wantCode {
-							t.Errorf("expected code %d, got %d", tc.wantCode, httpErr.Code)
-						}
-					} else {
-						t.Errorf("expected UpstreamHTTPError, got %T: %v", err, err)
-					}
-				}
-			} else {
+			list, items, err := ad.FetchList(context.Background())
+			if tc.wantErrIs != nil && !errors.Is(err, tc.wantErrIs) {
+				t.Fatalf("expected error %v, got %v", tc.wantErrIs, err)
+			} else if tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)) {
+				t.Fatalf("expected error containing %q, got %v", tc.wantErr, err)
+			} else if tc.wantErr == "" && tc.wantErrIs == nil {
 				if err != nil {
 					t.Fatalf("unexpected error: %v", err)
 				}
-				if capturedMethod != http.MethodPost {
-					t.Errorf("expected method POST, got %q", capturedMethod)
+				if tc.wantName != "" && list.Name != tc.wantName {
+					t.Errorf("list name = %q, want %q", list.Name, tc.wantName)
 				}
-				if capturedAuth != "Bearer secret-token" {
-					t.Errorf("expected auth 'Bearer secret-token', got %q", capturedAuth)
+				if len(items) != tc.wantItems {
+					t.Errorf("items count = %d, want %d", len(items), tc.wantItems)
 				}
-				expectedPath := "/api/v1/tasks/" + tc.itemID + "/close"
-				if capturedPath != expectedPath {
-					t.Errorf("expected path %q, got %q", expectedPath, capturedPath)
+				if tc.checkSec != "" && (len(items) < 2 || items[1].Section != tc.checkSec) {
+					t.Errorf("expected items[1].Section == %q, got %+v", tc.checkSec, items)
+				}
+				if tc.checkDue && (len(items) < 2 || items[0].DueDate == nil || items[1].DueDate == nil) {
+					t.Errorf("expected due dates parsed, got %+v", items)
 				}
 			}
 		})

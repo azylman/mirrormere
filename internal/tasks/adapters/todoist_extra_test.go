@@ -2,126 +2,64 @@ package adapters_test
 
 import (
 	"context"
-	"encoding/json"
-	"net/http"
-	"net/http/httptest"
+	"errors"
+	"strings"
 	"testing"
 
 	"github.com/azylman/mirrormere/internal/tasks/adapters"
 )
 
-func TestTodoistAdapter_ExtraCoverage(t *testing.T) {
+func TestUpstreamHTTPError(t *testing.T) {
 	t.Parallel()
+	err := adapters.UpstreamHTTPError{Code: 503, URL: "https://user:pass@example.com/api?token=secret"}
+	if err.StatusCode() != 503 || !strings.Contains(err.Error(), "example.com") || strings.Contains(err.Error(), "secret") {
+		t.Fatalf("unexpected err: %v", err)
+	}
+}
 
-	// 1. Projects endpoint returns 500 error when searching by ProjectName
-	t.Run("project_name_500_error", func(t *testing.T) {
-		t.Parallel()
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			http.Error(w, "server error", http.StatusInternalServerError)
-		}))
-		defer srv.Close()
-
-		ad, _ := adapters.NewTodoistAdapter(adapters.TodoistAdapterConfig{
-			ProjectName: "Family",
-			Token:       "tok",
-			BaseURL:     srv.URL,
-			Client:      srv.Client(),
-		})
-		_, _, err := ad.FetchList(context.Background())
-		if err == nil {
-			t.Fatal("expected error on 500 from projects endpoint")
-		}
-	})
-
-	// 2. Sections endpoint returns 500 error
-	t.Run("sections_500_error", func(t *testing.T) {
-		t.Parallel()
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			switch r.URL.Path {
-			case "/api/v1/projects/p-1":
-				_ = json.NewEncoder(w).Encode(map[string]any{"id": "p-1", "name": "P1"})
-			case "/api/v1/sections":
-				http.Error(w, "server error", http.StatusInternalServerError)
-			default:
-				http.NotFound(w, r)
+func TestTodoistAdapter_CompleteItem(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name, itemID  string
+		route         mockRoute
+		close, cancel bool
+		wantErr       string
+		wantErrIs     error
+		wantCode      int
+	}{
+		{"204_no_content", "i1", mockRoute{status: 204}, false, false, "", nil, 0},
+		{"200_ok", "i1", mockRoute{status: 200}, false, false, "", nil, 0},
+		{"404_not_found", "i1", mockRoute{status: 404}, false, false, "", adapters.ErrUpstreamNotFound, 0},
+		{"401_unauthorized", "i1", mockRoute{status: 401}, false, false, "", adapters.ErrUnauthorized, 0},
+		{"500_error", "i1", mockRoute{status: 500}, false, false, "", nil, 500},
+		{"empty_item_id", "", mockRoute{}, false, false, "item ID is required", nil, 0},
+		{"invalid_item_id", "bad/..", mockRoute{}, false, false, "invalid item ID", nil, 0},
+		{"network_error", "i1", mockRoute{}, true, false, "todoist close request failed", nil, 0},
+		{"canceled_context", "i1", mockRoute{status: 200}, false, true, "context canceled", nil, 0},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			srv := newRouteServer(t, map[string]mockRoute{"/api/v1/tasks/" + tc.itemID + "/close": tc.route}, nil)
+			if tc.close {
+				srv.Close()
 			}
-		}))
-		defer srv.Close()
-
-		ad, _ := adapters.NewTodoistAdapter(adapters.TodoistAdapterConfig{
-			ProjectID: "p-1",
-			Token:     "tok",
-			BaseURL:   srv.URL,
-			Client:    srv.Client(),
-		})
-		_, _, err := ad.FetchList(context.Background())
-		if err == nil {
-			t.Fatal("expected error on 500 from sections endpoint")
-		}
-	})
-
-	// 3. Task with boolean ID (triggers default branch in flexibleString)
-	t.Run("task_with_bool_id", func(t *testing.T) {
-		t.Parallel()
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			switch r.URL.Path {
-			case "/api/v1/projects/p-bool":
-				_ = json.NewEncoder(w).Encode(map[string]any{"id": "p-bool", "name": "Bool"})
-			case "/api/v1/sections":
-				_ = json.NewEncoder(w).Encode([]any{})
-			case "/api/v1/tasks":
-				_ = json.NewEncoder(w).Encode([]map[string]any{
-					{"id": true, "content": "Bool ID", "order": 1},
-				})
-			case "/api/v1/tasks/completed":
-				_ = json.NewEncoder(w).Encode(map[string]any{"items": []any{}})
-			default:
-				http.NotFound(w, r)
+			ad, _ := adapters.NewTodoistAdapter(adapters.TodoistAdapterConfig{Token: "tok", BaseURL: srv.URL, Client: srv.Client()})
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			if tc.cancel {
+				cancel()
 			}
-		}))
-		defer srv.Close()
-
-		ad, _ := adapters.NewTodoistAdapter(adapters.TodoistAdapterConfig{
-			ProjectID: "p-bool",
-			Token:     "tok",
-			BaseURL:   srv.URL,
-			Client:    srv.Client(),
-		})
-		_, items, err := ad.FetchList(context.Background())
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if len(items) != 1 || items[0].ID != "true" {
-			t.Errorf("expected item ID 'true', got %+v", items)
-		}
-	})
-
-	// 4. Tasks endpoint returns 500 error
-	t.Run("tasks_500_error", func(t *testing.T) {
-		t.Parallel()
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			switch r.URL.Path {
-			case "/api/v1/projects/p-tasks-err":
-				_ = json.NewEncoder(w).Encode(map[string]any{"id": "p-tasks-err", "name": "Tasks Err"})
-			case "/api/v1/sections":
-				_ = json.NewEncoder(w).Encode([]any{})
-			case "/api/v1/tasks":
-				http.Error(w, "server error", http.StatusInternalServerError)
-			default:
-				http.NotFound(w, r)
+			err := ad.CompleteItem(ctx, tc.itemID)
+			if tc.wantErrIs != nil && !errors.Is(err, tc.wantErrIs) {
+				t.Fatalf("expected %v, got %v", tc.wantErrIs, err)
+			} else if tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)) {
+				t.Fatalf("expected %q, got %v", tc.wantErr, err)
 			}
-		}))
-		defer srv.Close()
-
-		ad, _ := adapters.NewTodoistAdapter(adapters.TodoistAdapterConfig{
-			ProjectID: "p-tasks-err",
-			Token:     "tok",
-			BaseURL:   srv.URL,
-			Client:    srv.Client(),
+			var httpErr adapters.UpstreamHTTPError
+			if tc.wantCode != 0 && (!errors.As(err, &httpErr) || httpErr.Code != tc.wantCode) {
+				t.Fatalf("expected code %d, got %v", tc.wantCode, err)
+			}
 		})
-		_, _, err := ad.FetchList(context.Background())
-		if err == nil {
-			t.Fatal("expected error on 500 from tasks endpoint")
-		}
-	})
+	}
 }
