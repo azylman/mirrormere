@@ -36,6 +36,7 @@ var (
 	lastFlushTime      time.Time
 	nowFn              = time.Now
 	writeCountersDirMu sync.RWMutex
+	writeMetaDirFn     = coverage.WriteMetaDir
 	writeCountersDirFn = coverage.WriteCountersDir
 )
 
@@ -269,8 +270,10 @@ func (s *ActionServer) handleCoverageFlush(w http.ResponseWriter, r *http.Reques
 		}
 		lastFlushTime = now
 		writeCountersDirMu.RLock()
+		metaFn := writeMetaDirFn
 		fn := writeCountersDirFn
 		writeCountersDirMu.RUnlock()
+		_ = metaFn(dir) //nolint:errcheck
 		err := fn(dir)
 		flushMu.Unlock()
 

@@ -369,3 +369,53 @@ func TestBuildHTTPServer(t *testing.T) {
 		t.Errorf("expected write timeout 14s, got %v", s.WriteTimeout)
 	}
 }
+
+func TestCoverageFlushEndpoint(t *testing.T) {
+	tests := []struct {
+		name        string
+		method      string
+		coverDir    string
+		simTime     time.Time
+		writeErr    error
+		repeatCall  bool
+		wantCode    int
+		wantBodySub string
+	}{
+		{name: "method_not_allowed", method: http.MethodDelete, wantCode: http.StatusMethodNotAllowed},
+		{name: "unset_gocoverdir", method: http.MethodGet, coverDir: "", wantCode: http.StatusOK, wantBodySub: `"status":"ok"`},
+		{name: "valid_flush_and_debounce", method: http.MethodPost, coverDir: "temp", simTime: time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC), repeatCall: true, wantCode: http.StatusOK, wantBodySub: `"status":"ok"`},
+		{name: "write_error_500", method: http.MethodGet, coverDir: "temp", simTime: time.Date(2026, 10, 4, 13, 0, 0, 0, time.UTC), writeErr: errors.New("simulated flush error"), wantCode: http.StatusInternalServerError, wantBodySub: "simulated flush error"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if !tc.simTime.IsZero() {
+				defer SetNowFnForTest(func() time.Time { return tc.simTime })()
+			}
+			dir := tc.coverDir
+			if dir == "temp" {
+				dir = t.TempDir()
+			}
+			t.Setenv("GOCOVERDIR", dir)
+			defer SetWriteCountersDirForTest(func(string) error { return tc.writeErr })()
+
+			srv := NewServer(&mockHAClient{}, nil)
+			req := httptest.NewRequest(tc.method, "/debug/coverage/flush", nil)
+			rec := httptest.NewRecorder()
+			srv.ServeHTTP(rec, req)
+			if rec.Code != tc.wantCode {
+				t.Fatalf("code = %d, want %d", rec.Code, tc.wantCode)
+			}
+			if tc.wantBodySub != "" && !strings.Contains(rec.Body.String(), tc.wantBodySub) {
+				t.Fatalf("body = %q, want %q", rec.Body.String(), tc.wantBodySub)
+			}
+			if tc.repeatCall {
+				req2 := httptest.NewRequest(tc.method, "/debug/coverage/flush", nil)
+				rec2 := httptest.NewRecorder()
+				srv.ServeHTTP(rec2, req2)
+				if rec2.Code != http.StatusOK || !strings.Contains(rec2.Body.String(), `"status":"debounced"`) {
+					t.Fatalf("repeat call code=%d body=%q", rec2.Code, rec2.Body.String())
+				}
+			}
+		})
+	}
+}
