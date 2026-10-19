@@ -31,396 +31,208 @@ func NewDefaultVideoHandler(coord VideoCoordinator) *DefaultVideoHandler {
 	return &DefaultVideoHandler{coord: coord}
 }
 
+func (h *DefaultVideoHandler) ready(w http.ResponseWriter) bool {
+	if h.coord == nil {
+		writeAPIError(w, http.StatusInternalServerError, "video coordinator not configured")
+		return false
+	}
+	return true
+}
+
 // GetVideoState handles GET /api/video/state.
 func (h *DefaultVideoHandler) GetVideoState(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Accept")
-
-	if r.Method == http.MethodOptions {
-		w.WriteHeader(http.StatusNoContent)
+	if !requireCORSAndMethod(w, r, "GET, HEAD, OPTIONS", http.MethodGet, http.MethodHead) || !h.ready(w) {
 		return
 	}
-
-	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		w.Header().Set("Allow", "GET, HEAD, OPTIONS")
-		writeVideoError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-
-	if h.coord == nil {
-		writeVideoError(w, http.StatusInternalServerError, "video coordinator not configured")
-		return
-	}
-
-	state := h.coord.GetState()
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
 	if r.Method == http.MethodHead {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
 		return
 	}
+	writeJSON(w, http.StatusOK, toAPIVideoStateResponse(h.coord.GetState()))
+}
 
-	if err := json.NewEncoder(w).Encode(toAPIVideoStateResponse(state)); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+func setIf[T any](dst *T, src *T) {
+	if src != nil {
+		*dst = *src
 	}
+}
+
+func setStr[T ~string](dst *string, src *T) {
+	if src != nil && *src != "" {
+		*dst = string(*src)
+	}
+}
+
+func applyStreamMetadata(s *video.VideoStream, title, series, season, episode *string, pos, dur *float32, updatedAt *int64) {
+	setIf(&s.Title, title)
+	setIf(&s.Series, series)
+	setIf(&s.Season, season)
+	setIf(&s.Episode, episode)
+	if pos != nil {
+		s.Position = float64(*pos)
+	}
+	if dur != nil {
+		s.Duration = float64(*dur)
+	}
+	setIf(&s.PositionUpdatedAt, updatedAt)
 }
 
 // PostVideoTrigger handles POST /api/video/trigger.
 func (h *DefaultVideoHandler) PostVideoTrigger(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Accept")
-
-	if r.Method == http.MethodOptions {
-		w.WriteHeader(http.StatusNoContent)
+	if !requireCORSAndMethod(w, r, "POST, OPTIONS", http.MethodPost) || !h.ready(w) {
 		return
 	}
-
-	if r.Method != http.MethodPost {
-		w.Header().Set("Allow", "POST, OPTIONS")
-		writeVideoError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-
-	if h.coord == nil {
-		writeVideoError(w, http.StatusInternalServerError, "video coordinator not configured")
-		return
-	}
-
 	var req api.VideoTriggerRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeVideoError(w, http.StatusBadRequest, "invalid video trigger request: malformed JSON")
-		return
-	}
-
-	if strings.TrimSpace(req.Id) == "" || strings.TrimSpace(req.StreamUrl) == "" {
-		writeVideoError(w, http.StatusBadRequest, "invalid video trigger request: id and stream_url are required")
+		writeAPIError(w, http.StatusBadRequest, "invalid video trigger request: malformed JSON")
 		return
 	}
 	reqID := strings.TrimSpace(req.Id)
-	if reqID == "all" || reqID == "*" {
-		writeVideoError(w, http.StatusBadRequest, "invalid video trigger request: 'all' and '*' are reserved sentinels")
+	if reqID == "" || strings.TrimSpace(req.StreamUrl) == "" || reqID == "all" || reqID == "*" {
+		msg := "invalid video trigger request: id and stream_url are required"
+		if reqID == "all" || reqID == "*" {
+			msg = "invalid video trigger request: \x27all\x27 and \x27*\x27 are reserved sentinels"
+		}
+		writeAPIError(w, http.StatusBadRequest, msg)
 		return
 	}
-
-	vType := video.TypeWebRTC
-	if req.Type != nil && string(*req.Type) != "" {
-		vType = string(*req.Type)
-	}
-	vPriority := video.PriorityPersistent
-	if req.Priority != nil && string(*req.Priority) != "" {
-		vPriority = string(*req.Priority)
-	}
-	vTimeout := 0
-	if req.TimeoutSeconds != nil {
-		vTimeout = *req.TimeoutSeconds
-	}
-	vControllable := false
-	if req.Controllable != nil {
-		vControllable = *req.Controllable
-	}
-	vControlURL := ""
-	if req.ControlUrl != nil {
-		vControlURL = *req.ControlUrl
-	}
-	vPlayerState := video.PlayerStatePlaying
-	if req.PlayerState != nil && string(*req.PlayerState) != "" {
-		vPlayerState = string(*req.PlayerState)
-	}
-
 	stream := video.VideoStream{
-		ID:             req.Id,
-		StreamURL:      req.StreamUrl,
-		Type:           vType,
-		Priority:       vPriority,
-		TimeoutSeconds: vTimeout,
-		Controllable:   vControllable,
-		ControlURL:     vControlURL,
-		PlayerState:    vPlayerState,
+		ID: req.Id, StreamURL: req.StreamUrl, Type: video.TypeWebRTC, Priority: video.PriorityPersistent, PlayerState: video.PlayerStatePlaying,
 	}
-	if req.Title != nil {
-		stream.Title = *req.Title
-	}
-	if req.Series != nil {
-		stream.Series = *req.Series
-	}
-	if req.Season != nil {
-		stream.Season = *req.Season
-	}
-	if req.Episode != nil {
-		stream.Episode = *req.Episode
-	}
-	if req.Position != nil {
-		stream.Position = float64(*req.Position)
-	}
-	if req.Duration != nil {
-		stream.Duration = float64(*req.Duration)
-	}
-	if req.PositionUpdatedAt != nil {
-		stream.PositionUpdatedAt = *req.PositionUpdatedAt
-	}
+	setStr(&stream.Type, req.Type)
+	setStr(&stream.Priority, req.Priority)
+	setIf(&stream.TimeoutSeconds, req.TimeoutSeconds)
+	setIf(&stream.Controllable, req.Controllable)
+	setIf(&stream.ControlURL, req.ControlUrl)
+	setStr(&stream.PlayerState, req.PlayerState)
+	applyStreamMetadata(&stream, req.Title, req.Series, req.Season, req.Episode, req.Position, req.Duration, req.PositionUpdatedAt)
 
 	newState, err := h.coord.Trigger(stream)
 	if err != nil {
-		writeVideoError(w, http.StatusBadRequest, err.Error())
+		writeAPIError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	if err := json.NewEncoder(w).Encode(toAPIVideoStateResponse(newState)); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-	}
+	writeJSON(w, http.StatusOK, toAPIVideoStateResponse(newState))
 }
 
 // PostVideoDismiss handles POST /api/video/dismiss.
 func (h *DefaultVideoHandler) PostVideoDismiss(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Accept")
-
-	if r.Method == http.MethodOptions {
-		w.WriteHeader(http.StatusNoContent)
+	if !requireCORSAndMethod(w, r, "POST, OPTIONS", http.MethodPost) || !h.ready(w) {
 		return
 	}
-
-	if r.Method != http.MethodPost {
-		w.Header().Set("Allow", "POST, OPTIONS")
-		writeVideoError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-
-	if h.coord == nil {
-		writeVideoError(w, http.StatusInternalServerError, "video coordinator not configured")
-		return
-	}
-
 	var req api.VideoDismissRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeVideoError(w, http.StatusBadRequest, "invalid video dismiss request: malformed JSON")
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Id) == "" {
+		msg := "invalid video dismiss request: malformed JSON"
+		if err == nil {
+			msg = "invalid video dismiss request: id is required"
+		}
+		writeAPIError(w, http.StatusBadRequest, msg)
 		return
 	}
-
-	if strings.TrimSpace(req.Id) == "" {
-		writeVideoError(w, http.StatusBadRequest, "invalid video dismiss request: id is required")
-		return
-	}
-
 	newState, err := h.coord.Dismiss(req.Id)
 	if err != nil {
 		if errors.Is(err, video.ErrStreamNotFound) {
-			writeVideoError(w, http.StatusNotFound, "stream not active")
+			writeAPIError(w, http.StatusNotFound, "stream not active")
 			return
 		}
-		writeVideoError(w, http.StatusBadRequest, err.Error())
+		writeAPIError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	if err := json.NewEncoder(w).Encode(toAPIVideoStateResponse(newState)); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-	}
+	writeJSON(w, http.StatusOK, toAPIVideoStateResponse(newState))
 }
 
 // PostVideoAction handles POST /api/video/action.
 func (h *DefaultVideoHandler) PostVideoAction(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Accept")
-
-	if r.Method == http.MethodOptions {
-		w.WriteHeader(http.StatusNoContent)
+	if !requireCORSAndMethod(w, r, "POST, OPTIONS", http.MethodPost) || !h.ready(w) {
 		return
 	}
-
-	if r.Method != http.MethodPost {
-		w.Header().Set("Allow", "POST, OPTIONS")
-		writeVideoError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-
-	if h.coord == nil {
-		writeVideoError(w, http.StatusInternalServerError, "video coordinator not configured")
-		return
-	}
-
 	var req api.VideoActionRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeVideoError(w, http.StatusBadRequest, "invalid video action request: malformed JSON")
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Id) == "" || string(req.Action) == "" {
+		msg := "invalid video action request: malformed JSON"
+		if err == nil {
+			msg = "invalid video action request: id and action are required"
+		}
+		writeAPIError(w, http.StatusBadRequest, msg)
 		return
 	}
-
-	if strings.TrimSpace(req.Id) == "" || string(req.Action) == "" {
-		writeVideoError(w, http.StatusBadRequest, "invalid video action request: id and action are required")
-		return
-	}
-
 	err := h.coord.ForwardAction(r.Context(), req.Id, string(req.Action), req.Value)
 	if err != nil {
-		if errors.Is(err, video.ErrStreamNotFound) {
-			writeVideoError(w, http.StatusNotFound, "stream not active")
-			return
+		switch {
+		case errors.Is(err, video.ErrStreamNotFound):
+			writeAPIError(w, http.StatusNotFound, "stream not active")
+		case errors.Is(err, video.ErrNotControllable):
+			writeAPIError(w, http.StatusUnprocessableEntity, "stream is not controllable")
+		case errors.Is(err, video.ErrControllerUnreachable):
+			writeAPIError(w, http.StatusBadGateway, "stream controller unreachable")
+		default:
+			writeAPIError(w, http.StatusBadRequest, err.Error())
 		}
-		if errors.Is(err, video.ErrNotControllable) {
-			writeVideoError(w, http.StatusUnprocessableEntity, "stream is not controllable")
-			return
-		}
-		if errors.Is(err, video.ErrControllerUnreachable) {
-			writeVideoError(w, http.StatusBadGateway, "stream controller unreachable")
-			return
-		}
-		writeVideoError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	if err := json.NewEncoder(w).Encode(api.ActionResponse{Status: "ok"}); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-	}
+	writeJSON(w, http.StatusOK, api.ActionResponse{Status: "ok"})
 }
 
 // PostVideoState handles POST /api/video/state.
 func (h *DefaultVideoHandler) PostVideoState(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Accept")
-
-	if r.Method == http.MethodOptions {
-		w.WriteHeader(http.StatusNoContent)
+	if !requireCORSAndMethod(w, r, "POST, OPTIONS", http.MethodPost) || !h.ready(w) {
 		return
 	}
-
-	if r.Method != http.MethodPost {
-		w.Header().Set("Allow", "POST, OPTIONS")
-		writeVideoError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-
-	if h.coord == nil {
-		writeVideoError(w, http.StatusInternalServerError, "video coordinator not configured")
-		return
-	}
-
 	var req api.VideoPlayerStateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeVideoError(w, http.StatusBadRequest, "invalid video player state request: malformed JSON")
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Id) == "" || string(req.PlayerState) == "" {
+		msg := "invalid video player state request: malformed JSON"
+		if err == nil {
+			msg = "invalid video player state request: id and player_state are required"
+		}
+		writeAPIError(w, http.StatusBadRequest, msg)
 		return
 	}
-
-	if strings.TrimSpace(req.Id) == "" || string(req.PlayerState) == "" {
-		writeVideoError(w, http.StatusBadRequest, "invalid video player state request: id and player_state are required")
-		return
-	}
-
-	update := video.VideoStream{
-		ID:          req.Id,
-		PlayerState: string(req.PlayerState),
-	}
-	if req.Title != nil {
-		update.Title = *req.Title
-	}
-	if req.Series != nil {
-		update.Series = *req.Series
-	}
-	if req.Season != nil {
-		update.Season = *req.Season
-	}
-	if req.Episode != nil {
-		update.Episode = *req.Episode
-	}
-	if req.Position != nil {
-		update.Position = float64(*req.Position)
-	}
-	if req.Duration != nil {
-		update.Duration = float64(*req.Duration)
-	}
-	if req.PositionUpdatedAt != nil {
-		update.PositionUpdatedAt = *req.PositionUpdatedAt
-	}
+	update := video.VideoStream{ID: req.Id, PlayerState: string(req.PlayerState)}
+	applyStreamMetadata(&update, req.Title, req.Series, req.Season, req.Episode, req.Position, req.Duration, req.PositionUpdatedAt)
 
 	_, err := h.coord.UpdatePlayerState(req.Id, update)
 	if err != nil {
 		if errors.Is(err, video.ErrStreamNotFound) {
-			writeVideoError(w, http.StatusNotFound, "stream not active")
+			writeAPIError(w, http.StatusNotFound, "stream not active")
 			return
 		}
-		writeVideoError(w, http.StatusBadRequest, err.Error())
+		writeAPIError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	writeJSON(w, http.StatusOK, api.VideoPlayerStateResponse{
+		Status: "ok", Id: req.Id, PlayerState: api.VideoPlayerStateResponsePlayerState(req.PlayerState),
+	})
+}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	if err := json.NewEncoder(w).Encode(api.VideoPlayerStateResponse{
-		Status:      "ok",
-		Id:          req.Id,
-		PlayerState: api.VideoPlayerStateResponsePlayerState(req.PlayerState),
-	}); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+func ptrWhen[T any](v T, cond bool) *T {
+	if !cond {
+		return nil
 	}
+	return &v
 }
 
 func toAPIVideoStream(s *video.VideoStream) *api.VideoStream {
 	if s == nil {
 		return nil
 	}
-	apiStream := &api.VideoStream{
-		Id:        s.ID,
-		StreamUrl: s.StreamURL,
-		Type:      api.VideoStreamType(s.Type),
+	return &api.VideoStream{
+		Id:                s.ID,
+		StreamUrl:         s.StreamURL,
+		Type:              api.VideoStreamType(s.Type),
+		Priority:          ptrWhen(api.VideoStreamPriority(s.Priority), s.Priority != ""),
+		TimeoutSeconds:    ptrWhen(s.TimeoutSeconds, s.TimeoutSeconds > 0),
+		Controllable:      ptrWhen(true, s.Controllable),
+		ControlUrl:        ptrWhen(s.ControlURL, s.ControlURL != ""),
+		PlayerState:       ptrWhen(api.VideoStreamPlayerState(s.PlayerState), s.PlayerState != ""),
+		Muted:             &s.Muted,
+		Title:             ptrWhen(s.Title, s.Title != ""),
+		Series:            ptrWhen(s.Series, s.Series != ""),
+		Season:            ptrWhen(s.Season, s.Season != ""),
+		Episode:           ptrWhen(s.Episode, s.Episode != ""),
+		Position:          ptrWhen(float32(s.Position), s.Position > 0 || s.PositionUpdatedAt > 0),
+		Duration:          ptrWhen(float32(s.Duration), s.Duration > 0),
+		PositionUpdatedAt: ptrWhen(s.PositionUpdatedAt, s.PositionUpdatedAt > 0),
 	}
-	if s.Priority != "" {
-		p := api.VideoStreamPriority(s.Priority)
-		apiStream.Priority = &p
-	}
-	if s.TimeoutSeconds > 0 {
-		t := s.TimeoutSeconds
-		apiStream.TimeoutSeconds = &t
-	}
-	if s.Controllable {
-		c := true
-		apiStream.Controllable = &c
-	}
-	if s.ControlURL != "" {
-		u := s.ControlURL
-		apiStream.ControlUrl = &u
-	}
-	if s.PlayerState != "" {
-		ps := api.VideoStreamPlayerState(s.PlayerState)
-		apiStream.PlayerState = &ps
-	}
-	m := s.Muted
-	apiStream.Muted = &m
-	if s.Title != "" {
-		t := s.Title
-		apiStream.Title = &t
-	}
-	if s.Series != "" {
-		ser := s.Series
-		apiStream.Series = &ser
-	}
-	if s.Season != "" {
-		sea := s.Season
-		apiStream.Season = &sea
-	}
-	if s.Episode != "" {
-		ep := s.Episode
-		apiStream.Episode = &ep
-	}
-	if s.Position > 0 || s.PositionUpdatedAt > 0 {
-		pos := float32(s.Position)
-		apiStream.Position = &pos
-	}
-	if s.Duration > 0 {
-		dur := float32(s.Duration)
-		apiStream.Duration = &dur
-	}
-	if s.PositionUpdatedAt > 0 {
-		pu := s.PositionUpdatedAt
-		apiStream.PositionUpdatedAt = &pu
-	}
-	return apiStream
 }
 
 func toAPIVideoStateResponse(state video.VideoState) api.VideoStateResponse {
@@ -428,21 +240,5 @@ func toAPIVideoStateResponse(state video.VideoState) api.VideoStateResponse {
 	if state.Mode == video.ModeVideo {
 		mode = api.Video
 	}
-	return api.VideoStateResponse{
-		Status:  "ok",
-		Mode:    mode,
-		Primary: toAPIVideoStream(state.Primary),
-		Pip:     toAPIVideoStream(state.Pip),
-	}
-}
-
-func writeVideoError(w http.ResponseWriter, code int, msg string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(code)
-	if err := json.NewEncoder(w).Encode(api.ErrorResponse{
-		Status: "error",
-		Error:  msg,
-	}); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-	}
+	return api.VideoStateResponse{Status: "ok", Mode: mode, Primary: toAPIVideoStream(state.Primary), Pip: toAPIVideoStream(state.Pip)}
 }
