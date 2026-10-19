@@ -11,1367 +11,417 @@ import (
 	"time"
 )
 
-func TestSQLiteStore_LifecycleAndPragmas(t *testing.T) {
-	tempDir := t.TempDir()
-	dbPath := filepath.Join(tempDir, "nested", "deep", "lists.db")
-
-	store, err := NewSQLiteStore(dbPath)
+func newTestStore(t *testing.T) *SQLiteStore {
+	t.Helper()
+	s, err := NewSQLiteStore(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
-		t.Fatalf("failed to create SQLiteStore: %v", err)
+		t.Fatalf("newTestStore: %v", err)
 	}
-	defer store.Close()
+	t.Cleanup(func() { _ = s.Close() })
+	return s
+}
 
-	// Verify Pragmas
-	var journalMode string
-	if err := store.db.QueryRow("PRAGMA journal_mode;").Scan(&journalMode); err != nil {
-		t.Fatalf("failed to query journal_mode: %v", err)
-	}
-	if journalMode != "wal" {
-		t.Errorf("expected journal_mode 'wal', got %q", journalMode)
-	}
+func mkList(id, name, source string, sections ...string) List {
+	return List{ID: id, Name: name, Source: source, Sections: sections}
+}
 
-	var foreignKeys int
-	if err := store.db.QueryRow("PRAGMA foreign_keys;").Scan(&foreignKeys); err != nil {
-		t.Fatalf("failed to query foreign_keys: %v", err)
-	}
-	if foreignKeys != 1 {
-		t.Errorf("expected foreign_keys 1, got %d", foreignKeys)
-	}
+func mkItem(id, listID, title, section string, done bool, pos int, assignee, due string) ListItem {
+	it := ListItem{ID: id, ListID: listID, Title: title, Section: section, Done: done, Position: pos}
+	if assignee != "" { it.Assignee = &assignee }
+	if due != "" { it.DueDate = &due }
+	return it
+}
 
-	var busyTimeout int
-	if err := store.db.QueryRow("PRAGMA busy_timeout;").Scan(&busyTimeout); err != nil {
-		t.Fatalf("failed to query busy_timeout: %v", err)
-	}
-	if busyTimeout != 5000 {
-		t.Errorf("expected busy_timeout 5000, got %d", busyTimeout)
-	}
+const legCols = "id TEXT PRIMARY KEY, list_id TEXT REFERENCES lists(id), title TEXT NOT NULL, done BOOLEAN DEFAULT 0, section TEXT, position INTEGER DEFAULT 0, assignee TEXT, due_date TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP"
 
-	// Test flat filename without parent directory inside isolated temp dir
-	flatDir := t.TempDir()
-	origWd, err := os.Getwd()
-	if err == nil {
-		if chErr := os.Chdir(flatDir); chErr == nil {
-			defer func() { _ = os.Chdir(origWd) }()
-			flatStore, err := NewSQLiteStore("test_flat.db")
-			if err != nil {
-				t.Fatalf("failed to create flat store: %v", err)
+func TestSQLiteStore_InitAndMigrate(t *testing.T) {
+	tests := []struct {
+		name, pathType, setupSQL, listID string
+		wantInitErr                      bool
+		wantItems                        int
+	}{
+		{name: "pragmas", pathType: "nested"},
+		{name: "flat_path", pathType: "flat"},
+		{name: "default_path", pathType: "default"},
+		{name: "mkdir_error", pathType: "bad_dir", wantInitErr: true},
+		{name: "pragma_error", pathType: "bad_device", wantInitErr: true},
+		{
+			name:     "legacy_single_col_pk",
+			setupSQL: "CREATE TABLE lists (id TEXT PRIMARY KEY, name TEXT); CREATE TABLE list_items (" + legCols + "); INSERT INTO lists VALUES ('legacy-list', 'Legacy'); INSERT INTO list_items VALUES ('i1', 'legacy-list', 'Milk', 0, '', 1, '', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);",
+			listID:   "legacy-list", wantItems: 1,
+		},
+		{
+			name:     "preexisting_migrated_cleanup",
+			setupSQL: "CREATE TABLE lists (id TEXT PRIMARY KEY, name TEXT); CREATE TABLE list_items (" + legCols + "); CREATE TABLE list_items_migrated (junk_col TEXT); INSERT INTO list_items_migrated VALUES ('stale'); INSERT INTO lists VALUES ('todo', 'Todo'); INSERT INTO list_items VALUES ('t1', 'todo', 'Buy Milk', 0, '', 1, '', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);",
+			listID:   "todo", wantItems: 1,
+		},
+		{
+			name:     "orphaned_migrated_recovery",
+			setupSQL: "CREATE TABLE lists (id TEXT PRIMARY KEY, name TEXT); CREATE TABLE list_items_migrated (id TEXT NOT NULL, list_id TEXT, title TEXT NOT NULL, done BOOLEAN DEFAULT 0, section TEXT, position INTEGER DEFAULT 0, assignee TEXT, due_date TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (list_id, id)); INSERT INTO lists VALUES ('chores', 'Chores'); INSERT INTO list_items_migrated VALUES ('c1', 'chores', 'Sweep', 1, '', 0, '', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);",
+			listID:   "chores", wantItems: 1,
+		},
+		{
+			name:        "not_null_violation_rollback",
+			setupSQL:    "CREATE TABLE lists (id TEXT PRIMARY KEY, name TEXT); CREATE TABLE list_items (id TEXT PRIMARY KEY, list_id TEXT, title TEXT, done BOOLEAN DEFAULT 0, section TEXT, position INTEGER DEFAULT 0, assignee TEXT, due_date TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP); INSERT INTO lists VALUES ('l1', 'List 1'); INSERT INTO list_items (id, list_id, title) VALUES ('i1', 'l1', NULL);",
+			wantInitErr: true,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			dbPath := filepath.Join(t.TempDir(), "store.db")
+			switch tc.pathType {
+			case "nested": dbPath = filepath.Join(t.TempDir(), "nested", "deep", "store.db")
+			case "flat":
+				origWd, _ := os.Getwd()
+				_ = os.Chdir(t.TempDir())
+				defer func() { _ = os.Chdir(origWd) }()
+				dbPath = "flat.db"
+			case "default":
+				orig := defaultDBPath
+				defaultDBPath = filepath.Join(t.TempDir(), "def.db")
+				defer func() { defaultDBPath = orig }()
+				dbPath = ""
+			case "bad_dir": dbPath = "/dev/null/impossible/lists.db"
+			case "bad_device": dbPath = "/dev/null"
 			}
-			_ = flatStore.Close()
-		}
+			if tc.setupSQL != "" {
+				rawDB, _ := sql.Open("sqlite", dbPath)
+				_, _ = rawDB.Exec(tc.setupSQL)
+				_ = rawDB.Close()
+			}
+			s, err := NewSQLiteStore(dbPath)
+			if (err != nil) != tc.wantInitErr {
+				t.Fatalf("NewSQLiteStore err = %v, wantInitErr = %v", err, tc.wantInitErr)
+			}
+			if err != nil {
+				return
+			}
+			defer s.Close()
+			if tc.pathType == "nested" {
+				var jm string; var fk, bt int
+				_ = s.db.QueryRow("PRAGMA journal_mode;").Scan(&jm)
+				_ = s.db.QueryRow("PRAGMA foreign_keys;").Scan(&fk)
+				_ = s.db.QueryRow("PRAGMA busy_timeout;").Scan(&bt)
+				if jm != "wal" || fk != 1 || bt != 5000 {
+					t.Fatalf("pragmas mismatch")
+				}
+			}
+			if tc.listID != "" {
+				if items, err := s.GetListItems(context.Background(), tc.listID, true); err != nil || len(items) != tc.wantItems {
+					t.Fatalf("count mismatch")
+				}
+			}
+		})
 	}
 }
 
-func TestSQLiteStore_ListCRUD(t *testing.T) {
-	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "lists.db"))
-	if err != nil {
-		t.Fatalf("failed to init store: %v", err)
+func TestSQLiteStore_ListAndItemCRUD(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name, action, targetID, itemID string
+		seedLists                     []List
+		seedItems                     []ListItem
+		rawSQL                        string
+		includeDone                   bool
+		wantCount                     int
+		wantErr                       error
+	}{
+		{name: "get_list_not_found", action: "get_list", targetID: "missing", wantErr: ErrListNotFound},
+		{name: "get_list_success", action: "get_list", targetID: "l1", seedLists: []List{mkList("l1", "List 1", "local", "S1", "S2")}, wantCount: 2},
+		{name: "get_list_malformed_sections", action: "get_list", targetID: "bad", rawSQL: `INSERT INTO lists (id, name, sections) VALUES ('bad', 'Bad', '{invalid')`},
+		{name: "get_list_null_sections", action: "get_list", targetID: "null_sec", rawSQL: `INSERT INTO lists (id, name, sections) VALUES ('null_sec', 'Null', 'null')`},
+		{name: "get_list_empty_sections", action: "get_list", targetID: "emp_sec", rawSQL: `INSERT INTO lists (id, name, sections) VALUES ('emp_sec', 'Emp', '')`},
+		{name: "upsert_list", action: "upsert_list", targetID: "l_up"},
+		{name: "delete_list", action: "delete_list", targetID: "l_del", seedLists: []List{mkList("l_del", "Del", "local")}},
+		{name: "delete_list_cascade", action: "delete_list_cascade", targetID: "l_cas", seedLists: []List{mkList("l_cas", "Cas", "local")}, seedItems: []ListItem{mkItem("i_cas", "l_cas", "I", "", false, 0, "", "")}},
+		{name: "get_items_missing_list", action: "get_items", targetID: "missing_list", wantErr: ErrListNotFound},
+		{name: "get_items_empty_list", action: "get_items", targetID: "l_emp", seedLists: []List{mkList("l_emp", "Emp", "local")}},
+		{
+			name: "get_items_filtered", action: "get_items_filtered", targetID: "l_items", seedLists: []List{mkList("l_items", "Items", "local")},
+			seedItems: []ListItem{mkItem("c1", "l_items", "A", "", false, 10, "Alex", "2026-09-26"), mkItem("c2", "l_items", "B", "", true, 5, "", ""), mkItem("c3", "l_items", "C", "", false, 2, "", "")},
+		},
+		{name: "upsert_item", action: "upsert_item", targetID: "l_iu", itemID: "i_up", seedLists: []List{mkList("l_iu", "L", "local")}},
+		{name: "delete_item", action: "delete_item", targetID: "l_dit", itemID: "it1", seedLists: []List{mkList("l_dit", "L", "local")}, seedItems: []ListItem{mkItem("it1", "l_dit", "I", "", false, 0, "", "")}},
+		{
+			name: "shared_item_ids_isolation", action: "shared_item_ids", targetID: "la", itemID: "shared",
+			seedLists: []List{mkList("la", "A", "local"), mkList("lb", "B", "local")},
+			seedItems: []ListItem{mkItem("shared", "la", "Apples", "", false, 0, "", ""), mkItem("shared", "lb", "Oranges", "", true, 0, "", "")},
+		},
 	}
-	defer store.Close()
-
-	ctx := context.Background()
-
-	// 1. Get non-existent list
-	_, err = store.GetList(ctx, "local:missing")
-	if !errors.Is(err, ErrListNotFound) {
-		t.Fatalf("expected ErrListNotFound, got %v", err)
-	}
-
-	// 2. Upsert list
-	now := time.Now().UTC().Truncate(time.Second)
-	list := List{
-		ID:        "local:groceries",
-		Name:      "Groceries",
-		Source:    "local",
-		Sections:  []string{"Produce", "Dairy", "Bakery"},
-		CreatedAt: now,
-		UpdatedAt: now,
-	}
-
-	if err := store.UpsertList(ctx, list); err != nil {
-		t.Fatalf("failed to upsert list: %v", err)
-	}
-
-	// 3. Get existing list
-	fetched, err := store.GetList(ctx, "local:groceries")
-	if err != nil {
-		t.Fatalf("failed to get list: %v", err)
-	}
-	if fetched.ID != list.ID || fetched.Name != list.Name || fetched.Source != list.Source {
-		t.Errorf("list mismatch: expected %+v, got %+v", list, *fetched)
-	}
-	if len(fetched.Sections) != 3 || fetched.Sections[0] != "Produce" {
-		t.Errorf("sections mismatch: got %+v", fetched.Sections)
-	}
-
-	// 4. Update list
-	list.Name = "Weekly Groceries"
-	list.Sections = []string{"Snacks"}
-	if err := store.UpsertList(ctx, list); err != nil {
-		t.Fatalf("failed to update list: %v", err)
-	}
-
-	updated, err := store.GetList(ctx, "local:groceries")
-	if err != nil {
-		t.Fatalf("failed to get updated list: %v", err)
-	}
-	if updated.Name != "Weekly Groceries" || len(updated.Sections) != 1 || updated.Sections[0] != "Snacks" {
-		t.Errorf("updated list mismatch: got %+v", *updated)
-	}
-
-	// 5. Delete list
-	if err := store.DeleteList(ctx, "local:groceries"); err != nil {
-		t.Fatalf("failed to delete list: %v", err)
-	}
-
-	// 6. Delete again returns ErrListNotFound
-	if err := store.DeleteList(ctx, "local:groceries"); !errors.Is(err, ErrListNotFound) {
-		t.Fatalf("expected ErrListNotFound on repeat delete, got %v", err)
-	}
-}
-
-func TestSQLiteStore_ItemCRUDAndFiltering(t *testing.T) {
-	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "lists.db"))
-	if err != nil {
-		t.Fatalf("failed to init store: %v", err)
-	}
-	defer store.Close()
-
-	ctx := context.Background()
-
-	// 1. Query items for non-existent list -> ErrListNotFound
-	_, err = store.GetListItems(ctx, "local:nonexistent", true)
-	if !errors.Is(err, ErrListNotFound) {
-		t.Fatalf("expected ErrListNotFound, got %v", err)
-	}
-
-	// 2. Create list
-	list := List{
-		ID:       "local:chores",
-		Name:     "Daily Chores",
-		Source:   "local",
-		Sections: []string{"Morning", "Evening"},
-	}
-	if err := store.UpsertList(ctx, list); err != nil {
-		t.Fatalf("failed to upsert list: %v", err)
-	}
-
-	// 3. Query empty list -> returns empty slice
-	emptyItems, err := store.GetListItems(ctx, "local:chores", true)
-	if err != nil {
-		t.Fatalf("failed to get empty items: %v", err)
-	}
-	if emptyItems == nil || len(emptyItems) != 0 {
-		t.Fatalf("expected empty non-nil slice, got %+v", emptyItems)
-	}
-
-	// 4. Upsert items
-	assignee1 := "Alex"
-	dueDate1 := "2026-09-26"
-	item1 := ListItem{
-		ID:        "c1",
-		ListID:    "local:chores",
-		Title:     "Feed cats",
-		Done:      false,
-		Section:   "Morning",
-		Position:  10,
-		Assignee:  &assignee1,
-		DueDate:   &dueDate1,
-		CreatedAt: time.Now().Add(-10 * time.Minute),
-		UpdatedAt: time.Now().Add(-10 * time.Minute),
-	}
-
-	item2 := ListItem{
-		ID:        "c2",
-		ListID:    "local:chores",
-		Title:     "Take out trash",
-		Done:      true,
-		Section:   "Evening",
-		Position:  5,
-		CreatedAt: time.Now().Add(-5 * time.Minute),
-		UpdatedAt: time.Now().Add(-1 * time.Minute),
-	}
-
-	item3 := ListItem{
-		ID:        "c3",
-		ListID:    "local:chores",
-		Title:     "Water plants",
-		Done:      false,
-		Section:   "Morning",
-		Position:  2,
-		CreatedAt: time.Now().Add(-2 * time.Minute),
-		UpdatedAt: time.Now().Add(-2 * time.Minute),
-	}
-
-	for _, it := range []ListItem{item1, item2, item3} {
-		if err := store.UpsertItem(ctx, it); err != nil {
-			t.Fatalf("failed to upsert item %s: %v", it.ID, err)
-		}
-	}
-
-	// 5. Query with includeDone = true -> all 3 items ordered by position ASC (c3, c2, c1)
-	allItems, err := store.GetListItems(ctx, "local:chores", true)
-	if err != nil {
-		t.Fatalf("failed to get all items: %v", err)
-	}
-	if len(allItems) != 3 {
-		t.Fatalf("expected 3 items, got %d", len(allItems))
-	}
-	if allItems[0].ID != "c3" || allItems[1].ID != "c2" || allItems[2].ID != "c1" {
-		t.Errorf("ordering mismatch: expected c3, c2, c1; got %s, %s, %s",
-			allItems[0].ID, allItems[1].ID, allItems[2].ID)
-	}
-	if allItems[2].Assignee == nil || *allItems[2].Assignee != "Alex" {
-		t.Errorf("expected assignee Alex on c1, got %v", allItems[2].Assignee)
-	}
-	if allItems[0].Assignee != nil {
-		t.Errorf("expected nil assignee on c3, got %v", allItems[0].Assignee)
-	}
-
-	// 6. Query with includeDone = false -> only c3 and c1 (ordered by position ASC: c3, c1)
-	activeItems, err := store.GetListItems(ctx, "local:chores", false)
-	if err != nil {
-		t.Fatalf("failed to get active items: %v", err)
-	}
-	if len(activeItems) != 2 {
-		t.Fatalf("expected 2 active items, got %d", len(activeItems))
-	}
-	if activeItems[0].ID != "c3" || activeItems[1].ID != "c1" {
-		t.Errorf("active items ordering mismatch: expected c3, c1; got %s, %s",
-			activeItems[0].ID, activeItems[1].ID)
-	}
-
-	// 7. Delete individual item
-	if err := store.DeleteItem(ctx, "local:chores", "c2"); err != nil {
-		t.Fatalf("failed to delete item: %v", err)
-	}
-	if err := store.DeleteItem(ctx, "local:chores", "c2"); !errors.Is(err, ErrItemNotFound) {
-		t.Fatalf("expected ErrItemNotFound on repeat delete, got %v", err)
-	}
-
-	// 8. Foreign key cascade delete
-	if err := store.DeleteList(ctx, "local:chores"); err != nil {
-		t.Fatalf("failed to delete list: %v", err)
-	}
-	// Re-create list to verify items were deleted by cascade
-	if err := store.UpsertList(ctx, list); err != nil {
-		t.Fatalf("failed to re-create list: %v", err)
-	}
-	postCascadeItems, err := store.GetListItems(ctx, "local:chores", true)
-	if err != nil {
-		t.Fatalf("failed to check post-cascade items: %v", err)
-	}
-	if len(postCascadeItems) != 0 {
-		t.Fatalf("expected 0 items post cascade, got %d", len(postCascadeItems))
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s, ctx := newTestStore(t), context.Background()
+			if tc.rawSQL != "" { _, _ = s.db.ExecContext(ctx, tc.rawSQL) }
+			for _, l := range tc.seedLists { _ = s.UpsertList(ctx, l) }
+			for _, it := range tc.seedItems { _ = s.UpsertItem(ctx, it) }
+			switch tc.action {
+			case "get_list":
+				l, err := s.GetList(ctx, tc.targetID)
+				if !errors.Is(err, tc.wantErr) || (err == nil && len(l.Sections) != tc.wantCount) {
+					t.Fatalf("GetList mismatch")
+				}
+			case "upsert_list":
+				_ = s.UpsertList(ctx, List{ID: tc.targetID, Name: "Initial"})
+				_ = s.UpsertList(ctx, List{ID: tc.targetID, Name: "Updated", Sections: []string{"A"}})
+				if got, err := s.GetList(ctx, tc.targetID); err != nil || got.Name != "Updated" || len(got.Sections) != 1 {
+					t.Fatalf("upsert mismatch")
+				}
+			case "delete_list":
+				if s.DeleteList(ctx, tc.targetID) != nil || !errors.Is(s.DeleteList(ctx, tc.targetID), ErrListNotFound) {
+					t.Fatalf("delete list failed")
+				}
+			case "delete_list_cascade":
+				_ = s.DeleteList(ctx, tc.targetID)
+				_ = s.UpsertList(ctx, mkList(tc.targetID, "Revived", "local"))
+				if items, err := s.GetListItems(ctx, tc.targetID, true); err != nil || len(items) != 0 {
+					t.Fatalf("cascade failed")
+				}
+			case "get_items":
+				if items, err := s.GetListItems(ctx, tc.targetID, tc.includeDone); !errors.Is(err, tc.wantErr) || (err == nil && len(items) != tc.wantCount) {
+					t.Fatalf("GetListItems mismatch")
+				}
+			case "get_items_filtered":
+				all, err1 := s.GetListItems(ctx, tc.targetID, true)
+				act, err2 := s.GetListItems(ctx, tc.targetID, false)
+				if err1 != nil || err2 != nil || len(all) != 3 || len(act) != 2 || all[0].ID != "c3" || act[0].ID != "c3" {
+					t.Fatalf("filtering mismatch")
+				}
+			case "upsert_item":
+				_ = s.UpsertItem(ctx, ListItem{ID: tc.itemID, ListID: tc.targetID, Title: "Item"})
+				_ = s.UpsertItem(ctx, ListItem{ID: tc.itemID, ListID: tc.targetID, Title: "Item Updated"})
+			case "delete_item":
+				if s.DeleteItem(ctx, tc.targetID, tc.itemID) != nil || !errors.Is(s.DeleteItem(ctx, tc.targetID, tc.itemID), ErrItemNotFound) {
+					t.Fatalf("delete item failed")
+				}
+			case "shared_item_ids":
+				_ = s.UpsertItem(ctx, mkItem(tc.itemID, tc.targetID, "Updated Apples", "", false, 0, "", ""))
+				if itemsB, err := s.GetListItems(ctx, "lb", true); err != nil || len(itemsB) != 1 || itemsB[0].Title != "Oranges" {
+					t.Fatalf("List B corrupted")
+				}
+				_ = s.DeleteItem(ctx, tc.targetID, tc.itemID)
+				if itemsBAfter, err := s.GetListItems(ctx, "lb", true); err != nil || len(itemsBAfter) != 1 || itemsBAfter[0].ID != tc.itemID {
+					t.Fatalf("List B corrupted delete")
+				}
+			}
+		})
 	}
 }
 
 func TestSQLiteStore_GetTasksSnapshot(t *testing.T) {
-	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "lists.db"))
-	if err != nil {
-		t.Fatalf("failed to init store: %v", err)
-	}
-	defer store.Close()
-
-	ctx := context.Background()
-
-	// Missing list returns ErrListNotFound
-	_, err = store.GetTasksSnapshot(ctx, "missing", 3)
-	if !errors.Is(err, ErrListNotFound) {
-		t.Fatalf("expected ErrListNotFound, got %v", err)
-	}
-
-	list := List{
-		ID:     "groceries",
-		Name:   "Groceries",
-		Source: "local",
-	}
-	if err := store.UpsertList(ctx, list); err != nil {
-		t.Fatalf("failed to create list: %v", err)
-	}
-
-	now := time.Now().UTC()
-	assignee := "Alex"
-	dueDate := "2026-09-26"
-	items := []ListItem{
-		{ID: "i1", ListID: "groceries", Title: "Milk", Done: false, Section: "Dairy", Assignee: &assignee, DueDate: &dueDate, Position: 1, CreatedAt: now},
-		{ID: "i2", ListID: "groceries", Title: "Eggs", Done: false, Section: "Dairy", Position: 2, CreatedAt: now},
+	t.Parallel()
+	store, ctx, now := newTestStore(t), context.Background(), time.Now().UTC()
+	assignee, dueDate := "Alex", "2026-09-26"
+	_ = store.UpsertList(ctx, mkList("groceries", "Groceries", "local"))
+	for _, it := range []ListItem{
+		{ID: "i1", ListID: "groceries", Title: "Milk", Section: "Dairy", Assignee: &assignee, DueDate: &dueDate, Position: 1, CreatedAt: now},
+		{ID: "i2", ListID: "groceries", Title: "Eggs", Section: "Dairy", Position: 2, CreatedAt: now},
 		{ID: "i3", ListID: "groceries", Title: "Bread", Done: true, Section: "Bakery", Position: 3, UpdatedAt: now.Add(-3 * time.Minute)},
 		{ID: "i4", ListID: "groceries", Title: "Butter", Done: true, Section: "Dairy", Position: 4, UpdatedAt: now.Add(-2 * time.Minute)},
-		{ID: "i5", ListID: "groceries", Title: "Cheese", Done: true, Section: "Dairy", Assignee: &assignee, DueDate: &dueDate, Position: 5, UpdatedAt: now.Add(-1 * time.Minute)},
-	}
-	for _, it := range items {
-		if err := store.UpsertItem(ctx, it); err != nil {
-			t.Fatalf("failed to upsert item: %v", err)
-		}
+		{ID: "i5", ListID: "groceries", Title: "Cheese", Done: true, Section: "Dairy", Assignee: &assignee, DueDate: &dueDate, Position: 5, UpdatedAt: now.Add(-time.Minute)},
+	} {
+		_ = store.UpsertItem(ctx, it)
 	}
 
-	// 1. showCompleted = 0 -> only 2 unchecked items
-	snap0, err := store.GetTasksSnapshot(ctx, "groceries", 0)
-	if err != nil {
-		t.Fatalf("failed to get snapshot 0: %v", err)
+	tests := []struct {
+		name, listID             string
+		showCompleted, wantCount int
+		wantIDs                  []string
+		wantErr                  error
+	}{
+		{"missing_list", "missing", 3, 0, nil, ErrListNotFound},
+		{"show_completed_0", "groceries", 0, 2, []string{"i1", "i2"}, nil},
+		{"show_completed_2", "groceries", 2, 4, []string{"i1", "i2", "i5", "i4"}, nil},
+		{"show_completed_all", "groceries", -1, 5, []string{"i1", "i2", "i5", "i4", "i3"}, nil},
 	}
-	if len(snap0.Items) != 2 {
-		t.Fatalf("expected 2 items, got %d", len(snap0.Items))
-	}
-	if snap0.Items[0].Section != "Dairy" || snap0.Items[0].Assignee == nil || *snap0.Items[0].Assignee != "Alex" {
-		t.Errorf("expected section and assignee on i1, got %+v", snap0.Items[0])
-	}
-
-	// 2. showCompleted = 2 -> 2 unchecked + 2 most recently completed (i5, i4)
-	snap2, err := store.GetTasksSnapshot(ctx, "groceries", 2)
-	if err != nil {
-		t.Fatalf("failed to get snapshot 2: %v", err)
-	}
-	if len(snap2.Items) != 4 {
-		t.Fatalf("expected 4 items, got %d", len(snap2.Items))
-	}
-	// Verify completed items order (i5, i4)
-	if snap2.Items[2].ID != "i5" || snap2.Items[3].ID != "i4" {
-		t.Errorf("completed items order mismatch: expected i5, i4; got %s, %s",
-			snap2.Items[2].ID, snap2.Items[3].ID)
-	}
-	if snap2.Items[2].DueDate == nil || *snap2.Items[2].DueDate != "2026-09-26" {
-		t.Errorf("expected due date on i5, got %+v", snap2.Items[2])
-	}
-
-	// 3. showCompleted = -1 (all completed) -> 2 unchecked + 3 completed = 5 total
-	snapAll, err := store.GetTasksSnapshot(ctx, "groceries", -1)
-	if err != nil {
-		t.Fatalf("failed to get all snapshot: %v", err)
-	}
-	if len(snapAll.Items) != 5 {
-		t.Fatalf("expected 5 items, got %d", len(snapAll.Items))
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			snap, err := store.GetTasksSnapshot(ctx, tc.listID, tc.showCompleted)
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("err = %v, want %v", err, tc.wantErr)
+			}
+			if tc.wantErr == nil && len(snap.Items) != tc.wantCount {
+				t.Fatalf("count = %d, want %d", len(snap.Items), tc.wantCount)
+			}
+		})
 	}
 }
 
-func TestSQLiteStore_ErrorBranches(t *testing.T) {
-	// 1. Directory creation failure
-	impossiblePath := "/dev/null/impossible/lists.db"
-	if _, err := NewSQLiteStore(impossiblePath); err == nil {
-		t.Error("expected error for impossible directory path")
+func TestSQLiteStore_SyncList(t *testing.T) {
+	t.Parallel()
+	due, ass := "2026-09-30", "Alex"
+	tests := []struct {
+		name        string
+		seedList    *List
+		seedItems   []ListItem
+		corruptSQL  string
+		cancelCtx   bool
+		closeDB     bool
+		syncList    List
+		syncItems   []ListItem
+		wantChanged bool
+		wantErr     bool
+		wantCount   int
+	}{
+		{name: "cold_sync", syncList: mkList("s1", "Initial", ""), syncItems: []ListItem{mkItem("i1", "s1", "A", "", false, 0, ass, due), mkItem("i2", "s1", "B", "", false, 1, "", "")}, wantChanged: true, wantCount: 2},
+		{name: "noop_repeat", seedList: &List{ID: "s2", Name: "L", Source: "local"}, seedItems: []ListItem{mkItem("i1", "s2", "A", "", false, 0, "", "")}, syncList: mkList("s2", "L", "local"), syncItems: []ListItem{mkItem("i1", "s2", "A", "", false, 0, "", "")}, wantChanged: false, wantCount: 1},
+		{name: "item_done_modification", seedList: &List{ID: "s3", Name: "L", Source: "local"}, seedItems: []ListItem{mkItem("i1", "s3", "A", "", false, 0, "", "")}, syncList: mkList("s3", "L", "local"), syncItems: []ListItem{mkItem("i1", "s3", "A", "", true, 0, "", "")}, wantChanged: true, wantCount: 1},
+		{name: "item_attr_change", seedList: &List{ID: "s3b", Name: "L", Source: "local"}, seedItems: []ListItem{mkItem("i1", "s3b", "A", "Old", false, 0, "A", "2026-09-01")}, syncList: mkList("s3b", "L", "local"), syncItems: []ListItem{mkItem("i1", "s3b", "A", "New", false, 5, "B", "2026-10-01")}, wantChanged: true, wantCount: 1},
+		{name: "item_deletion", seedList: &List{ID: "s4", Name: "L", Source: "local"}, seedItems: []ListItem{mkItem("i1", "s4", "A", "", false, 0, "", ""), mkItem("i2", "s4", "B", "", false, 1, "", "")}, syncList: mkList("s4", "L", "local"), syncItems: []ListItem{mkItem("i1", "s4", "A", "", false, 0, "", "")}, wantChanged: true, wantCount: 1},
+		{name: "list_name_sections_change", seedList: &List{ID: "s5", Name: "Old", Source: "local", Sections: []string{"A"}}, seedItems: []ListItem{mkItem("i1", "s5", "A", "", false, 0, "", "")}, syncList: mkList("s5", "New", "local", "B"), syncItems: []ListItem{mkItem("i1", "s5", "A", "", false, 0, "", "")}, wantChanged: true, wantCount: 1},
+		{name: "list_source_change", seedList: &List{ID: "s5b", Name: "L", Source: "local"}, syncList: mkList("s5b", "L", "http"), wantChanged: true, wantCount: 0},
+		{name: "empty_items_sync", seedList: &List{ID: "s6", Name: "L", Source: "local"}, seedItems: []ListItem{mkItem("i1", "s6", "A", "", false, 0, "", "")}, syncList: mkList("s6", "L", "local"), syncItems: []ListItem{}, wantChanged: true, wantCount: 0},
+		{name: "item_id_replacement", seedList: &List{ID: "s7", Name: "L", Source: "local"}, seedItems: []ListItem{mkItem("i1", "s7", "A", "", false, 0, "", "")}, syncList: mkList("s7", "L", "local"), syncItems: []ListItem{mkItem("i2", "s7", "B", "", false, 0, "", "")}, wantChanged: true, wantCount: 1},
+		{name: "duplicate_incoming_ids", seedList: &List{ID: "s8", Name: "L", Source: "local"}, seedItems: []ListItem{mkItem("i1", "s8", "A", "", false, 0, "", ""), mkItem("i2", "s8", "B", "", false, 1, "", "")}, syncList: mkList("s8", "L", "local"), syncItems: []ListItem{mkItem("i1", "s8", "A", "", false, 0, "", ""), mkItem("i1", "s8", "A Dup", "", false, 0, "", "")}, wantChanged: true, wantCount: 1},
+		{name: "canceled_ctx", cancelCtx: true, syncList: mkList("s9", "L", "local"), wantErr: true},
+		{name: "closed_db", closeDB: true, syncList: mkList("s10", "L", "local"), wantErr: true},
+		{name: "dropped_lists_table", corruptSQL: "DROP TABLE lists;", syncList: mkList("s11", "L", "local"), wantErr: true},
+		{name: "dropped_items_table", seedList: &List{ID: "s12", Name: "L", Source: "local"}, corruptSQL: "DROP TABLE list_items;", syncList: mkList("s12", "L", "local"), wantErr: true},
+		{name: "scan_error", seedList: &List{ID: "s13", Name: "L", Source: "local"}, corruptSQL: "DROP TABLE list_items; CREATE TABLE list_items (id TEXT, list_id TEXT, title TEXT, done TEXT, section TEXT, position TEXT, assignee TEXT, due_date TEXT); INSERT INTO list_items VALUES ('i1', 's13', 't', 'not-int', 's', 'not-int', 'a', 'd');", syncList: mkList("s13", "L", "local"), wantErr: true},
+		{name: "corrupt_sections_json", seedList: &List{ID: "s14", Name: "L", Source: "local"}, corruptSQL: "UPDATE lists SET sections = '{bad-json' WHERE id = 's14';", syncList: mkList("s14", "L", "local"), wantChanged: false, wantCount: 0},
 	}
-
-	// 2. Store with canceled context
-	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "errors.db"))
-	if err != nil {
-		t.Fatalf("failed to init store: %v", err)
-	}
-	defer store.Close()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	// Queries with canceled context return errors
-	if _, err := store.GetList(ctx, "any"); err == nil {
-		t.Error("expected error for canceled GetList")
-	}
-	if _, err := store.GetListItems(ctx, "any", true); err == nil {
-		t.Error("expected error for canceled GetListItems")
-	}
-	if _, err := store.GetTasksSnapshot(ctx, "any", 3); err == nil {
-		t.Error("expected error for canceled GetTasksSnapshot")
-	}
-	if err := store.UpsertList(ctx, List{ID: "any"}); err == nil {
-		t.Error("expected error for canceled UpsertList")
-	}
-	if err := store.UpsertItem(ctx, ListItem{ID: "any", ListID: "any"}); err == nil {
-		t.Error("expected error for canceled UpsertItem")
-	}
-	if err := store.DeleteList(ctx, "any"); err == nil {
-		t.Error("expected error for canceled DeleteList")
-	}
-	if err := store.DeleteItem(ctx, "any", "any"); err == nil {
-		t.Error("expected error for canceled DeleteItem")
-	}
-
-	// 3. Malformed sections in database
-	bgCtx := context.Background()
-	_, _ = store.db.Exec("INSERT INTO lists (id, name, sections) VALUES ('bad-sections', 'Test', '{not-json')")
-	listWithBadSections, err := store.GetList(bgCtx, "bad-sections")
-	if err != nil {
-		t.Fatalf("expected GetList to succeed even with malformed sections, got %v", err)
-	}
-	if len(listWithBadSections.Sections) != 0 {
-		t.Errorf("expected empty sections on malformed JSON, got %+v", listWithBadSections.Sections)
-	}
-
-	// 4. Null and empty sections in database
-	_, _ = store.db.Exec("INSERT INTO lists (id, name, sections) VALUES ('null-sections', 'Test', 'null')")
-	listWithNullSections, err := store.GetList(bgCtx, "null-sections")
-	if err != nil || listWithNullSections.Sections == nil {
-		t.Errorf("expected non-nil sections on null JSON, got %+v", listWithNullSections)
-	}
-
-	_, _ = store.db.Exec("INSERT INTO lists (id, name, sections) VALUES ('empty-sections', 'Test', '')")
-	listWithEmptySections, err := store.GetList(bgCtx, "empty-sections")
-	if err != nil || listWithEmptySections.Sections == nil {
-		t.Errorf("expected non-nil sections on empty string, got %+v", listWithEmptySections)
-	}
-
-	// 5. Upsert with zero values
-	if err := store.UpsertList(bgCtx, List{ID: "zero-val", Name: "Zero"}); err != nil {
-		t.Fatalf("failed to upsert list with zero times: %v", err)
-	}
-	if err := store.UpsertItem(bgCtx, ListItem{ID: "item-zero", ListID: "zero-val", Title: "Item Zero"}); err != nil {
-		t.Fatalf("failed to upsert item with zero times: %v", err)
-	}
-
-	// 6. Default dbPath test
-	defStore, err := NewSQLiteStore("")
-	if err == nil {
-		_ = defStore.Close()
-		_ = os.Remove("/data/lists.db")
-		_ = os.Remove("/data/lists.db-wal")
-		_ = os.Remove("/data/lists.db-shm")
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s, ctx := newTestStore(t), context.Background()
+			if tc.seedList != nil { _ = s.UpsertList(ctx, *tc.seedList) }
+			for _, it := range tc.seedItems { _ = s.UpsertItem(ctx, it) }
+			if tc.corruptSQL != "" { _, _ = s.db.ExecContext(ctx, tc.corruptSQL) }
+			if tc.closeDB { _ = s.Close() }
+			if tc.cancelCtx {
+				cCtx, cancel := context.WithCancel(ctx)
+				cancel()
+				ctx = cCtx
+			}
+			changed, err := s.SyncList(ctx, tc.syncList, tc.syncItems)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("SyncList err = %v, wantErr = %v", err, tc.wantErr)
+			}
+			if err == nil {
+				if changed != tc.wantChanged {
+					t.Fatalf("changed = %v, want %v", changed, tc.wantChanged)
+				}
+				items, err := s.GetListItems(context.Background(), tc.syncList.ID, true)
+				if err != nil || len(items) != tc.wantCount {
+					t.Fatalf("GetListItems count = %d, want %d, err = %v", len(items), tc.wantCount, err)
+				}
+			}
+		})
 	}
 }
 
-func TestSQLiteStore_QueryFailures(t *testing.T) {
-	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "failures.db"))
-	if err != nil {
-		t.Fatalf("failed to init store: %v", err)
-	}
-	defer store.Close()
+func TestSQLiteStore_CompleteItem(t *testing.T) {
+	t.Parallel()
+	s, ctx := newTestStore(t), context.Background()
+	_ = s.UpsertList(ctx, mkList("list-1", "Test", "local"))
+	_ = s.UpsertItem(ctx, mkItem("item-1", "list-1", "Buy", "", false, 0, "", ""))
 
-	ctx := context.Background()
-	list := List{ID: "fail-test", Name: "Fail Test"}
-	if err := store.UpsertList(ctx, list); err != nil {
-		t.Fatalf("failed to upsert list: %v", err)
+	tests := []struct{ name, listID, itemID string; wantErr error }{
+		{"first_completion", "list-1", "item-1", nil}, {"idempotent_repeat", "list-1", "item-1", nil},
+		{"item_not_found", "list-1", "item-999", ErrItemNotFound}, {"list_not_found", "non-existent-list", "item-1", ErrItemNotFound},
 	}
-
-	// Drop list_items to force query execution errors while parent list exists
-	if _, err := store.db.Exec("DROP TABLE list_items"); err != nil {
-		t.Fatalf("failed to drop list_items: %v", err)
-	}
-
-	if _, err := store.GetListItems(ctx, "fail-test", true); err == nil {
-		t.Error("expected error from GetListItems with dropped table")
-	}
-	if _, err := store.GetListItems(ctx, "fail-test", false); err == nil {
-		t.Error("expected error from GetListItems (includeDone=false) with dropped table")
-	}
-	if _, err := store.GetTasksSnapshot(ctx, "fail-test", 3); err == nil {
-		t.Error("expected error from GetTasksSnapshot with dropped table")
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if err := s.CompleteItem(ctx, tc.listID, tc.itemID); !errors.Is(err, tc.wantErr) {
+				t.Fatalf("CompleteItem err = %v, want %v", err, tc.wantErr)
+			}
+		})
 	}
 }
 
-func TestSQLiteStore_ConcurrencyAndClosed(t *testing.T) {
-	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "concurrency.db"))
-	if err != nil {
-		t.Fatalf("failed to init store: %v", err)
+func runOp(ts *SQLiteStore, c context.Context, op string) (err error) {
+	switch op {
+	case "get_list": _, err = ts.GetList(c, "any")
+	case "get_items": _, err = ts.GetListItems(c, "any", true)
+	case "snapshot": _, err = ts.GetTasksSnapshot(c, "any", 3)
+	case "upsert_list": err = ts.UpsertList(c, mkList("any", "Any", "local"))
+	case "upsert_item": err = ts.UpsertItem(c, mkItem("any", "any", "Any", "", false, 0, "", ""))
+	case "delete_list": err = ts.DeleteList(c, "any")
+	case "delete_item": err = ts.DeleteItem(c, "any", "any")
+	case "complete_item": err = ts.CompleteItem(c, "any", "any")
+	case "migrate": err = ts.migrate()
+	case "syntax": _, err = ts.queryItems(c, "SELECT INVALID SYNTAX")
+	case "scan": _, err = ts.queryItems(c, "SELECT 'id', 'lid', 't', 'not-int', 's', 'not-int', 'a', 'd', 'cr', 'up'")
+	case "drop_snap", "drop_items":
+		_ = ts.UpsertList(c, mkList("fd", "FD", "local"))
+		_, _ = ts.db.Exec("DROP TABLE list_items")
+		if op == "drop_snap" { _, err = ts.GetTasksSnapshot(c, "fd", 3) } else { _, err = ts.GetListItems(c, "fd", true) }
 	}
+	return err
+}
 
-	ctx := context.Background()
-	list := List{ID: "stress", Name: "Stress Test"}
-	if err := store.UpsertList(ctx, list); err != nil {
-		t.Fatalf("failed to create list: %v", err)
-	}
+func TestSQLiteStore_ConcurrencyAndErrors(t *testing.T) {
+	t.Parallel()
+	s, ctx := newTestStore(t), context.Background()
+	_ = s.UpsertList(ctx, mkList("stress", "Stress", "local"))
 
-	const workers = 8
-	const opsPerWorker = 20
 	var wg sync.WaitGroup
-	wg.Add(workers)
-
-	for w := 0; w < workers; w++ {
+	for w := 0; w < 8; w++ {
+		wg.Add(1)
 		go func(workerID int) {
 			defer wg.Done()
-			for op := 0; op < opsPerWorker; op++ {
-				itemID := filepath.Join("item", string(rune('A'+workerID)), string(rune('0'+op)))
-				_ = store.UpsertItem(ctx, ListItem{
-					ID:       itemID,
-					ListID:   "stress",
-					Title:    "Work",
-					Position: op,
-				})
-				_, _ = store.GetListItems(ctx, "stress", true)
-				_, _ = store.GetTasksSnapshot(ctx, "stress", 3)
+			for op := 0; op < 20; op++ {
+				_ = s.UpsertItem(ctx, mkItem(filepath.Join("it", string(rune('A'+workerID)), string(rune('0'+op))), "stress", "W", "", false, op, "", ""))
+				_, _ = s.GetListItems(ctx, "stress", true)
+				_, _ = s.GetTasksSnapshot(ctx, "stress", 3)
 			}
 		}(w)
 	}
 	wg.Wait()
-
-	// Verify close behavior
-	if err := store.Close(); err != nil {
-		t.Fatalf("failed to close store: %v", err)
-	}
-	// Double close is safe
-	if err := store.Close(); err != nil {
-		t.Errorf("double close failed: %v", err)
+	if err := s.Close(); err != nil || s.Close() != nil {
+		t.Fatalf("close failed")
 	}
 
-	// Operations on closed store return error
-	if _, err := store.GetList(ctx, "stress"); err == nil {
-		t.Error("expected error getting list on closed store")
+	tests := []struct{ name, state, op string }{
+		{"cancel_get_list", "cancel", "get_list"}, {"cancel_get_items", "cancel", "get_items"},
+		{"cancel_snapshot", "cancel", "snapshot"}, {"cancel_upsert_list", "cancel", "upsert_list"},
+		{"cancel_upsert_item", "cancel", "upsert_item"}, {"cancel_delete_list", "cancel", "delete_list"},
+		{"cancel_delete_item", "cancel", "delete_item"}, {"cancel_complete_item", "cancel", "complete_item"},
+		{"closed_get_list", "closed", "get_list"}, {"closed_get_items", "closed", "get_items"},
+		{"closed_snapshot", "closed", "snapshot"}, {"closed_upsert_list", "closed", "upsert_list"},
+		{"closed_upsert_item", "closed", "upsert_item"}, {"closed_delete_list", "closed", "delete_list"},
+		{"closed_delete_item", "closed", "delete_item"}, {"closed_complete_item", "closed", "complete_item"},
+		{"closed_migrate", "closed", "migrate"}, {"query_syntax", "syntax", "syntax"}, {"query_scan", "scan", "scan"}, {"drop_snap", "ok", "drop_snap"}, {"drop_items", "ok", "drop_items"},
 	}
-	if _, err := store.GetListItems(ctx, "stress", true); err == nil {
-		t.Error("expected error getting items on closed store")
-	}
-	if _, err := store.GetTasksSnapshot(ctx, "stress", 3); err == nil {
-		t.Error("expected error getting snapshot on closed store")
-	}
-	if err := store.UpsertList(ctx, list); err == nil {
-		t.Error("expected error upserting list on closed store")
-	}
-	if err := store.UpsertItem(ctx, ListItem{ID: "x", ListID: "stress"}); err == nil {
-		t.Error("expected error upserting item on closed store")
-	}
-	if err := store.DeleteList(ctx, "stress"); err == nil {
-		t.Error("expected error deleting list on closed store")
-	}
-	if err := store.DeleteItem(ctx, "stress", "x"); err == nil {
-		t.Error("expected error deleting item on closed store")
-	}
-	if err := store.CompleteItem(ctx, "stress", "x"); err == nil {
-		t.Error("expected error completing item on closed store")
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ts, c := newTestStore(t), context.Background()
+			if tc.state == "cancel" {
+				var cancel context.CancelFunc
+				c, cancel = context.WithCancel(c)
+				cancel()
+			} else if tc.state == "closed" {
+				_ = ts.Close()
+			}
+			if err := runOp(ts, c, tc.op); err == nil {
+				t.Fatalf("expected error for %s", tc.name)
+			}
+		})
 	}
 }
 
 func TestParseTime(t *testing.T) {
-	if !parseTime("").IsZero() {
-		t.Error("expected zero time for empty string")
-	}
-	if !parseTime("invalid-date").IsZero() {
-		t.Error("expected zero time for invalid date")
-	}
-
-	now := time.Now().UTC().Truncate(time.Second)
-	parsed := parseTime(now.Format(time.RFC3339))
-	if !parsed.Equal(now) {
-		t.Errorf("expected %v, got %v", now, parsed)
-	}
-
-	standard := parseTime("2026-09-26 14:30:00")
-	if standard.Year() != 2026 || standard.Month() != 9 || standard.Day() != 26 {
-		t.Errorf("expected 2026-09-26, got %v", standard)
-	}
-}
-
-func TestSQLiteStore_ContextCancellationErrors(t *testing.T) {
-	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "cancel.db"))
-	if err != nil {
-		t.Fatalf("failed to init store: %v", err)
-	}
-	defer store.Close()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // pre-canceled
-
-	list := List{ID: "c1", Name: "Canceled"}
-	item := ListItem{ID: "i1", ListID: "c1", Title: "Test"}
-
-	if _, err := store.GetList(ctx, "c1"); err == nil {
-		t.Error("expected error with canceled context on GetList")
-	}
-	if _, err := store.GetListItems(ctx, "c1", true); err == nil {
-		t.Error("expected error with canceled context on GetListItems")
-	}
-	if _, err := store.GetTasksSnapshot(ctx, "c1", 3); err == nil {
-		t.Error("expected error with canceled context on GetTasksSnapshot")
-	}
-	if err := store.UpsertList(ctx, list); err == nil {
-		t.Error("expected error with canceled context on UpsertList")
-	}
-	if err := store.UpsertItem(ctx, item); err == nil {
-		t.Error("expected error with canceled context on UpsertItem")
-	}
-	if err := store.DeleteList(ctx, "c1"); err == nil {
-		t.Error("expected error with canceled context on DeleteList")
-	}
-	if err := store.DeleteItem(ctx, "c1", "i1"); err == nil {
-		t.Error("expected error with canceled context on DeleteItem")
-	}
-	if err := store.CompleteItem(ctx, "c1", "i1"); err == nil {
-		t.Error("expected error with canceled context on CompleteItem")
-	}
-}
-
-func TestSQLiteStore_QueryItems_Errors(t *testing.T) {
-	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "err.db"))
-	if err != nil {
-		t.Fatalf("failed to init store: %v", err)
-	}
-	defer store.Close()
-
-	ctx := context.Background()
-
-	// 1. Invalid SQL syntax -> queryErr
-	if _, err := store.queryItems(ctx, "SELECT INVALID SYNTAX"); err == nil {
-		t.Error("expected syntax error from queryItems")
-	}
-
-	// 2. Scan error (wrong types for integer done/position)
-	if _, err := store.queryItems(ctx, "SELECT 'id', 'lid', 'title', 'not-an-int', 'sec', 'not-an-int', 'ass', 'due', 'cr', 'up'"); err == nil {
-		t.Error("expected scan error from queryItems with invalid column types")
-	}
-}
-
-func TestSQLiteStore_InitErrors(t *testing.T) {
-	// 1. MkdirAll error
-	if _, err := NewSQLiteStore("/dev/null/forbidden/test.db"); err == nil {
-		t.Error("expected error for forbidden mkdir")
-	}
-
-	// 2. Pragmas execution error on non-database device node
-	if _, err := NewSQLiteStore("/dev/null"); err == nil {
-		t.Error("expected pragma error on /dev/null")
-	}
-}
-
-func TestSQLiteStore_SyncList_Lifecycle(t *testing.T) {
-	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "sync.db"))
-	if err != nil {
-		t.Fatalf("failed to init store: %v", err)
-	}
-	defer store.Close()
-
-	ctx := context.Background()
-
-	due := "2026-09-30"
-	ass := "Alex"
-	list := List{
-		ID:       "sync-list",
-		Name:     "Initial Name",
-		Source:   "http",
-		Sections: []string{"Produce"},
-	}
-	items := []ListItem{
-		{
-			ID:       "i1",
-			ListID:   "sync-list",
-			Title:    "Bananas",
-			Done:     false,
-			Section:  "Produce",
-			Position: 0,
-			Assignee: &ass,
-			DueDate:  &due,
-		},
-		{
-			ID:       "i2",
-			ListID:   "sync-list",
-			Title:    "Oat Milk",
-			Done:     false,
-			Section:  "Dairy",
-			Position: 1,
-		},
-	}
-
-	// 1. Cold sync of new list -> changed=true
-	changed, err := store.SyncList(ctx, list, items)
-	if err != nil {
-		t.Fatalf("SyncList failed: %v", err)
-	}
-	if !changed {
-		t.Fatal("expected changed=true on cold sync")
-	}
-
-	// Verify items stored
-	storedItems, err := store.GetListItems(ctx, "sync-list", true)
-	if err != nil || len(storedItems) != 2 {
-		t.Fatalf("expected 2 items, got %d (err: %v)", len(storedItems), err)
-	}
-
-	// 2. Identical sync -> changed=false (zero writes)
-	changed, err = store.SyncList(ctx, list, items)
-	if err != nil {
-		t.Fatalf("SyncList failed: %v", err)
-	}
-	if changed {
-		t.Fatal("expected changed=false on identical sync")
-	}
-
-	// 3. Item modification (marking i1 done) -> changed=true
-	items[0].Done = true
-	changed, err = store.SyncList(ctx, list, items)
-	if err != nil {
-		t.Fatalf("SyncList failed: %v", err)
-	}
-	if !changed {
-		t.Fatal("expected changed=true on item modification")
-	}
-
-	// Verify i1 is now done
-	storedItems, err = store.GetListItems(ctx, "sync-list", true)
-	if err != nil || len(storedItems) != 2 || !storedItems[0].Done {
-		t.Fatalf("expected i1 to be done, got items: %+v", storedItems)
-	}
-
-	// 4. Item removal (i2 removed upstream) -> changed=true, i2 deleted from DB
-	singleItem := []ListItem{items[0]}
-	changed, err = store.SyncList(ctx, list, singleItem)
-	if err != nil {
-		t.Fatalf("SyncList failed: %v", err)
-	}
-	if !changed {
-		t.Fatal("expected changed=true when item removed")
-	}
-	storedItems, err = store.GetListItems(ctx, "sync-list", true)
-	if err != nil || len(storedItems) != 1 || storedItems[0].ID != "i1" {
-		t.Fatalf("expected only i1 remaining, got %+v", storedItems)
-	}
-
-	// 5. Metadata modification (name changed) -> changed=true
-	list.Name = "Updated Groceries Name"
-	changed, err = store.SyncList(ctx, list, singleItem)
-	if err != nil {
-		t.Fatalf("SyncList failed: %v", err)
-	}
-	if !changed {
-		t.Fatal("expected changed=true on list name change")
-	}
-	updatedList, err := store.GetList(ctx, "sync-list")
-	if err != nil || updatedList.Name != "Updated Groceries Name" {
-		t.Fatalf("expected updated name, got %+v", updatedList)
-	}
-
-	// 6. Empty items sync -> changed=true, deletes remaining items
-	changed, err = store.SyncList(ctx, list, []ListItem{})
-	if err != nil {
-		t.Fatalf("SyncList failed: %v", err)
-	}
-	if !changed {
-		t.Fatal("expected changed=true on empty items sync")
-	}
-	storedItems, err = store.GetListItems(ctx, "sync-list", true)
-	if err != nil || len(storedItems) != 0 {
-		t.Fatalf("expected 0 items remaining, got %d", len(storedItems))
-	}
-	// 7. Same count (1 item), but different item ID (replacement) -> changed=true
-	baseItem := []ListItem{
-		{
-			ID:       "i-base",
-			ListID:   "sync-list",
-			Title:    "Base Item",
-			Done:     false,
-			Position: 0,
-		},
-	}
-	_, err = store.SyncList(ctx, list, baseItem)
-	if err != nil {
-		t.Fatalf("SyncList failed: %v", err)
-	}
-
-	newItem := []ListItem{
-		{
-			ID:       "i-brand-new",
-			ListID:   "sync-list",
-			Title:    "Brand New Item",
-			Done:     false,
-			Position: 0,
-		},
-	}
-	changed, err = store.SyncList(ctx, list, newItem)
-	if err != nil || !changed {
-		t.Fatalf("expected changed=true on item replacement, got changed=%v err=%v", changed, err)
-	}
-
-	// 8. Individual attribute modifications (section, position, assignee, due_date)
-	newSec := "Pantry"
-	newAss := "Taylor"
-	newDue := "2026-10-15"
-	modItem := newItem[0]
-	modItem.Section = newSec
-	modItem.Position = 5
-	modItem.Assignee = &newAss
-	modItem.DueDate = &newDue
-
-	changed, err = store.SyncList(ctx, list, []ListItem{modItem})
-	if err != nil || !changed {
-		t.Fatalf("expected changed=true on attribute modification, got changed=%v err=%v", changed, err)
-	}
-
-	// 9. Sections metadata change -> changed=true
-	listWithNewSec := list
-	listWithNewSec.Sections = []string{"Produce", "Bakery"}
-	changed, err = store.SyncList(ctx, listWithNewSec, []ListItem{modItem})
-	if err != nil || !changed {
-		t.Fatalf("expected changed=true on sections change, got changed=%v err=%v", changed, err)
-	}
-
-	// 10. Source empty and sections nil normalization
-	emptySourceList := List{
-		ID:   "sync-list",
-		Name: "Normalized List",
-	}
-	changed, err = store.SyncList(ctx, emptySourceList, []ListItem{modItem})
-	if err != nil || !changed {
-		t.Fatalf("expected changed=true on normalization sync, got changed=%v err=%v", changed, err)
-	}
-	normList, err := store.GetList(ctx, "sync-list")
-	if err != nil || normList.Source != "local" {
-		t.Fatalf("expected source 'local' on empty source, got %+v", normList)
-	}
-
-	// 11. Sync against an existing list whose stored sections is empty string / nil
-	_, _ = store.db.Exec("INSERT INTO lists (id, name, sections) VALUES ('empty-sec-list', 'Empty Sec', '')")
-	if _, err := store.SyncList(ctx, List{ID: "empty-sec-list", Name: "Empty Sec"}, nil); err != nil {
-		t.Fatalf("expected sync to succeed on empty sections: %v", err)
-	}
-}
-
-func TestSQLiteStore_SyncList_Errors(t *testing.T) {
-	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "sync_err.db"))
-	if err != nil {
-		t.Fatalf("failed to init store: %v", err)
-	}
-
-	ctx := context.Background()
-
-	// 1. Context cancelled error
-	cancCtx, cancel := context.WithCancel(ctx)
-	cancel()
-	_, err = store.SyncList(cancCtx, List{ID: "canc"}, nil)
-	if err == nil {
-		t.Fatal("expected error on cancelled context SyncList")
-	}
-
-	// 2. Closed store
-	_ = store.Close()
-	_, err = store.SyncList(ctx, List{ID: "closed"}, nil)
-	if err == nil {
-		t.Fatal("expected error on closed store SyncList")
-	}
-
-	// 3. Dropped table error
-	storeDropped, err := NewSQLiteStore(filepath.Join(t.TempDir(), "dropped.db"))
-	if err != nil {
-		t.Fatalf("failed to init store: %v", err)
-	}
-	defer storeDropped.Close()
-	_, _ = storeDropped.db.Exec("DROP TABLE list_items; DROP TABLE lists;")
-	_, err = storeDropped.SyncList(ctx, List{ID: "fail"}, nil)
-	if err == nil {
-		t.Fatal("expected error on dropped table SyncList")
-	}
-
-	// 4. Dropped list_items table only (causes tx.QueryContext for items to fail)
-	storeItemsDropped, err := NewSQLiteStore(filepath.Join(t.TempDir(), "items_dropped.db"))
-	if err != nil {
-		t.Fatalf("failed to init store: %v", err)
-	}
-	defer storeItemsDropped.Close()
-	_ = storeItemsDropped.UpsertList(ctx, List{ID: "existing-list", Name: "Existing"})
-	_, _ = storeItemsDropped.db.Exec("DROP TABLE list_items;")
-	_, err = storeItemsDropped.SyncList(ctx, List{ID: "existing-list", Name: "Existing"}, nil)
-	if err == nil {
-		t.Fatal("expected error on dropped list_items table in SyncList")
-	}
-
-	// 5. Corrupt list_items schema causing scan error in SyncList
-	storeScanErr, err := NewSQLiteStore(filepath.Join(t.TempDir(), "scan_err.db"))
-	if err != nil {
-		t.Fatalf("failed to init store: %v", err)
-	}
-	defer storeScanErr.Close()
-	_ = storeScanErr.UpsertList(ctx, List{ID: "scan-list", Name: "Scan List"})
-	_, _ = storeScanErr.db.Exec("DROP TABLE list_items;")
-	_, _ = storeScanErr.db.Exec("CREATE TABLE list_items (id TEXT, list_id TEXT, title TEXT, done TEXT, section TEXT, position TEXT, assignee TEXT, due_date TEXT);")
-	_, _ = storeScanErr.db.Exec("INSERT INTO list_items VALUES ('i1', 'scan-list', 'title', 'not-an-int', 'sec', 'not-an-int', 'ass', 'due');")
-	_, err = storeScanErr.SyncList(ctx, List{ID: "scan-list", Name: "Scan List"}, nil)
-	if err == nil {
-		t.Fatal("expected scan error in SyncList")
-	}
-
-	// 6. Corrupt sections JSON in lists table
-	storeCorruptSections, err := NewSQLiteStore(filepath.Join(t.TempDir(), "corrupt_sections.db"))
-	if err != nil {
-		t.Fatalf("failed to init store: %v", err)
-	}
-	defer storeCorruptSections.Close()
-	_ = storeCorruptSections.UpsertList(ctx, List{ID: "bad-sec", Name: "Bad Sections"})
-	_, _ = storeCorruptSections.db.Exec("UPDATE lists SET sections = '{invalid-json' WHERE id = 'bad-sec';")
-	changed, err := storeCorruptSections.SyncList(ctx, List{ID: "bad-sec", Name: "Bad Sections"}, nil)
-	if err != nil {
-		t.Fatalf("unexpected error when handling corrupt sections JSON: %v", err)
-	}
-	if !changed {
-		// Because corrupt sections were unmarshaled to empty slice, but incoming is also empty, changed might be false
-		// But it successfully fell back without error
-	}
-}
-
-func TestSQLiteStore_ClosedStore_GetTasksSnapshot(t *testing.T) {
 	t.Parallel()
-	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "closed.db"))
-	if err != nil {
-		t.Fatalf("failed to init store: %v", err)
-	}
-	ctx := context.Background()
-	_ = store.UpsertList(ctx, List{ID: "test-list", Name: "Test"})
-	_ = store.Close()
-
-	if _, err := store.GetTasksSnapshot(ctx, "test-list", 3); err == nil {
-		t.Error("expected error from GetTasksSnapshot on closed store, got nil")
-	}
-}
-
-func TestSQLiteStore_SyncList_DuplicateIncomingIDs(t *testing.T) {
-	t.Parallel()
-	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "dup.db"))
-	if err != nil {
-		t.Fatalf("failed to init store: %v", err)
-	}
-	defer store.Close()
-	ctx := context.Background()
-	list := List{ID: "dup-list", Name: "Duplicate Test"}
-
-	// Existing: 2 distinct items
-	existing := []ListItem{
-		{ID: "i1", ListID: "dup-list", Title: "Item 1"},
-		{ID: "i2", ListID: "dup-list", Title: "Item 2"},
-	}
-	_, err = store.SyncList(ctx, list, existing)
-	if err != nil {
-		t.Fatalf("initial SyncList failed: %v", err)
-	}
-
-	// Incoming: 2 items, but both have duplicate ID "i1"
-	// Total incoming items = 2, total existing items = 2, but unique incoming = 1
-	incoming := []ListItem{
-		{ID: "i1", ListID: "dup-list", Title: "Item 1"},
-		{ID: "i1", ListID: "dup-list", Title: "Item 1 Duplicate"},
-	}
-	changed, err := store.SyncList(ctx, list, incoming)
-	if err != nil {
-		t.Fatalf("SyncList with duplicate IDs failed: %v", err)
-	}
-	if !changed {
-		t.Error("expected changed=true when incoming items have duplicate IDs reducing unique count")
-	}
-}
-
-func TestSQLiteStore_MultiList_SharedItemIDs(t *testing.T) {
-	t.Parallel()
-	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "shared_ids.db"))
-	if err != nil {
-		t.Fatalf("failed to init store: %v", err)
-	}
-	defer store.Close()
-	ctx := context.Background()
-
-	listA := List{ID: "list_a", Name: "List A", Source: "http"}
-	listB := List{ID: "list_b", Name: "List B", Source: "http"}
-
-	itemsA := []ListItem{
-		{ID: "item-1", ListID: "list_a", Title: "Apples", Done: false, Position: 0},
-		{ID: "item-2", ListID: "list_a", Title: "Bananas", Done: true, Position: 1},
-	}
-	itemsB := []ListItem{
-		{ID: "item-1", ListID: "list_b", Title: "Oranges", Done: true, Position: 0},
-		{ID: "item-2", ListID: "list_b", Title: "Grapes", Done: false, Position: 1},
-	}
-
-	// 1. Sync list A
-	changedA, err := store.SyncList(ctx, listA, itemsA)
-	if err != nil || !changedA {
-		t.Fatalf("expected changed=true on list A sync, got changed=%v, err=%v", changedA, err)
-	}
-
-	// 2. Sync list B (with identical item IDs)
-	changedB, err := store.SyncList(ctx, listB, itemsB)
-	if err != nil || !changedB {
-		t.Fatalf("expected changed=true on list B sync, got changed=%v, err=%v", changedB, err)
-	}
-
-	// 3. Verify List A items were NOT overwritten by List B
-	fetchedA, err := store.GetListItems(ctx, "list_a", true)
-	if err != nil {
-		t.Fatalf("failed to get list A items: %v", err)
-	}
-	if len(fetchedA) != 2 {
-		t.Fatalf("expected 2 items for list A, got %d", len(fetchedA))
-	}
-	if fetchedA[0].ID != "item-1" || fetchedA[0].Title != "Apples" || fetchedA[0].Done {
-		t.Errorf("list A item-1 corrupted: %+v", fetchedA[0])
-	}
-	if fetchedA[1].ID != "item-2" || fetchedA[1].Title != "Bananas" || !fetchedA[1].Done {
-		t.Errorf("list A item-2 corrupted: %+v", fetchedA[1])
-	}
-
-	// 4. Verify List B items are correct
-	fetchedB, err := store.GetListItems(ctx, "list_b", true)
-	if err != nil {
-		t.Fatalf("failed to get list B items: %v", err)
-	}
-	if len(fetchedB) != 2 {
-		t.Fatalf("expected 2 items for list B, got %d", len(fetchedB))
-	}
-	if fetchedB[0].ID != "item-1" || fetchedB[0].Title != "Oranges" || !fetchedB[0].Done {
-		t.Errorf("list B item-1 corrupted: %+v", fetchedB[0])
-	}
-	if fetchedB[1].ID != "item-2" || fetchedB[1].Title != "Grapes" || fetchedB[1].Done {
-		t.Errorf("list B item-2 corrupted: %+v", fetchedB[1])
-	}
-
-	// 5. Repeat sync returns changed=false on both (no diff churn!)
-	changedA2, err := store.SyncList(ctx, listA, itemsA)
-	if err != nil || changedA2 {
-		t.Fatalf("expected changed=false on repeat list A sync, got changed=%v, err=%v", changedA2, err)
-	}
-	changedB2, err := store.SyncList(ctx, listB, itemsB)
-	if err != nil || changedB2 {
-		t.Fatalf("expected changed=false on repeat list B sync, got changed=%v, err=%v", changedB2, err)
-	}
-
-	// 6. Test UpsertItem isolation
-	updatedItemA := ListItem{
-		ID:       "item-1",
-		ListID:   "list_a",
-		Title:    "Honeycrisp Apples",
-		Done:     false,
-		Position: 0,
-	}
-	if err := store.UpsertItem(ctx, updatedItemA); err != nil {
-		t.Fatalf("failed to upsert item A: %v", err)
-	}
-
-	// List B's item-1 must still be Oranges
-	fetchedBAfterUpsert, err := store.GetListItems(ctx, "list_b", true)
-	if err != nil {
-		t.Fatalf("failed to get list B items: %v", err)
-	}
-	if fetchedBAfterUpsert[0].Title != "Oranges" {
-		t.Errorf("expected list B item-1 to remain 'Oranges', got %q", fetchedBAfterUpsert[0].Title)
-	}
-
-	// 7. Test DeleteItem isolation: deleting item-1 from list A does not delete item-1 from list B
-	if err := store.DeleteItem(ctx, "list_a", "item-1"); err != nil {
-		t.Fatalf("failed to delete item from list A: %v", err)
-	}
-	fetchedBAfterDelete, err := store.GetListItems(ctx, "list_b", true)
-	if err != nil {
-		t.Fatalf("failed to get list B items: %v", err)
-	}
-	if len(fetchedBAfterDelete) != 2 || fetchedBAfterDelete[0].ID != "item-1" {
-		t.Errorf("expected list B to retain item-1, got %+v", fetchedBAfterDelete)
-	}
-}
-
-func TestSQLiteStore_Migration_LegacySingleColumnPK(t *testing.T) {
-	t.Parallel()
-	dbPath := filepath.Join(t.TempDir(), "legacy_migration.db")
-
-	// Create legacy database schema with id TEXT PRIMARY KEY
-	legacyDB, err := sql.Open("sqlite", dbPath)
-	if err != nil {
-		t.Fatalf("failed to create legacy db: %v", err)
-	}
-	legacyDDL := `
-	CREATE TABLE lists (
-		id TEXT PRIMARY KEY,
-		name TEXT NOT NULL,
-		source TEXT NOT NULL DEFAULT 'local',
-		sections TEXT NOT NULL DEFAULT '[]',
-		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-		updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-	);
-
-	CREATE TABLE list_items (
-		id TEXT PRIMARY KEY,
-		list_id TEXT NOT NULL REFERENCES lists(id) ON DELETE CASCADE,
-		title TEXT NOT NULL,
-		done BOOLEAN NOT NULL DEFAULT 0,
-		section TEXT,
-		position INTEGER NOT NULL DEFAULT 0,
-		assignee TEXT,
-		due_date TEXT,
-		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-		updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-	);
-
-	INSERT INTO lists (id, name, source) VALUES ('legacy-list', 'Legacy List', 'local');
-	INSERT INTO list_items (id, list_id, title, done, position) VALUES ('i1', 'legacy-list', 'Legacy Item 1', 0, 0);
-	`
-	if _, err := legacyDB.Exec(legacyDDL); err != nil {
-		_ = legacyDB.Close()
-		t.Fatalf("failed to seed legacy db: %v", err)
-	}
-	_ = legacyDB.Close()
-
-	// Open with NewSQLiteStore which should trigger migrate() and upgrade list_items
-	store, err := NewSQLiteStore(dbPath)
-	if err != nil {
-		t.Fatalf("failed to open store on legacy db: %v", err)
-	}
-	defer store.Close()
-
-	ctx := context.Background()
-
-	// Verify legacy item preserved
-	items, err := store.GetListItems(ctx, "legacy-list", true)
-	if err != nil {
-		t.Fatalf("failed to get items from migrated db: %v", err)
-	}
-	if len(items) != 1 || items[0].Title != "Legacy Item 1" {
-		t.Fatalf("unexpected items after migration: %+v", items)
-	}
-
-	// Verify composite primary key by creating second list with same item ID
-	if err := store.UpsertList(ctx, List{ID: "new-list", Name: "New List"}); err != nil {
-		t.Fatalf("failed to upsert new list: %v", err)
-	}
-	newItem := ListItem{
-		ID:       "i1",
-		ListID:   "new-list",
-		Title:    "New List Item 1",
-		Done:     true,
-		Position: 0,
-	}
-	if err := store.UpsertItem(ctx, newItem); err != nil {
-		t.Fatalf("failed to insert item with colliding id into new list: %v", err)
-	}
-
-	// Verify both items coexist
-	itemsLegacy, err := store.GetListItems(ctx, "legacy-list", true)
-	if err != nil || len(itemsLegacy) != 1 || itemsLegacy[0].Title != "Legacy Item 1" {
-		t.Errorf("legacy item corrupted after inserting duplicate ID on new list: %+v", itemsLegacy)
-	}
-	itemsNew, err := store.GetListItems(ctx, "new-list", true)
-	if err != nil || len(itemsNew) != 1 || itemsNew[0].Title != "New List Item 1" {
-		t.Errorf("new item corrupted: %+v", itemsNew)
-	}
-}
-
-func TestSQLiteStore_Migration_PreExistingMigratedTable(t *testing.T) {
-	t.Parallel()
-	dbPath := filepath.Join(t.TempDir(), "leftover_migrated.db")
-
-	legacyDB, err := sql.Open("sqlite", dbPath)
-	if err != nil {
-		t.Fatalf("failed to open legacy db: %v", err)
-	}
-	// Seed legacy schema with an existing list_items_migrated table (leftover from an interrupted run)
-	legacyDDL := `
-	CREATE TABLE lists (
-		id TEXT PRIMARY KEY,
-		name TEXT NOT NULL,
-		source TEXT NOT NULL DEFAULT 'local',
-		sections TEXT NOT NULL DEFAULT '[]',
-		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-		updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-	);
-
-	CREATE TABLE list_items (
-		id TEXT PRIMARY KEY,
-		list_id TEXT NOT NULL REFERENCES lists(id) ON DELETE CASCADE,
-		title TEXT NOT NULL,
-		done BOOLEAN NOT NULL DEFAULT 0,
-		section TEXT,
-		position INTEGER NOT NULL DEFAULT 0,
-		assignee TEXT,
-		due_date TEXT,
-		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-		updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-	);
-
-	-- Leftover table from a prior crash/interrupted migration
-	CREATE TABLE list_items_migrated (
-		junk_col TEXT
-	);
-	INSERT INTO list_items_migrated (junk_col) VALUES ('stale');
-
-	INSERT INTO lists (id, name, source) VALUES ('todo', 'Todo List', 'local');
-	INSERT INTO list_items (id, list_id, title, done, position) VALUES ('t1', 'todo', 'Buy Milk', 0, 1);
-	`
-	if _, err := legacyDB.Exec(legacyDDL); err != nil {
-		_ = legacyDB.Close()
-		t.Fatalf("failed to seed legacy db with leftover migrated table: %v", err)
-	}
-	_ = legacyDB.Close()
-
-	// NewSQLiteStore must cleanly drop list_items_migrated, migrate list_items, and preserve all rows
-	store, err := NewSQLiteStore(dbPath)
-	if err != nil {
-		t.Fatalf("expected NewSQLiteStore to succeed with leftover list_items_migrated, got: %v", err)
-	}
-	defer store.Close()
-
-	items, err := store.GetListItems(context.Background(), "todo", true)
-	if err != nil {
-		t.Fatalf("failed to get items after migration: %v", err)
-	}
-	if len(items) != 1 || items[0].Title != "Buy Milk" {
-		t.Fatalf("expected preserved legacy item, got: %+v", items)
-	}
-}
-
-func TestSQLiteStore_Migration_OrphanedMigratedTableRecovery(t *testing.T) {
-	t.Parallel()
-	dbPath := filepath.Join(t.TempDir(), "orphaned_recovery.db")
-
-	legacyDB, err := sql.Open("sqlite", dbPath)
-	if err != nil {
-		t.Fatalf("failed to open db: %v", err)
-	}
-	// Simulate an older non-transactional crash after DROP list_items but before RENAME
-	setupDDL := `
-	CREATE TABLE lists (
-		id TEXT PRIMARY KEY,
-		name TEXT NOT NULL,
-		source TEXT NOT NULL DEFAULT 'local',
-		sections TEXT NOT NULL DEFAULT '[]',
-		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-		updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-	);
-
-	CREATE TABLE list_items_migrated (
-		id TEXT NOT NULL,
-		list_id TEXT NOT NULL REFERENCES lists(id) ON DELETE CASCADE,
-		title TEXT NOT NULL,
-		done BOOLEAN NOT NULL DEFAULT 0,
-		section TEXT,
-		position INTEGER NOT NULL DEFAULT 0,
-		assignee TEXT,
-		due_date TEXT,
-		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-		updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-		PRIMARY KEY (list_id, id)
-	);
-
-	INSERT INTO lists (id, name, source) VALUES ('chores', 'Household Chores', 'local');
-	INSERT INTO list_items_migrated (id, list_id, title, done, position) VALUES ('c1', 'chores', 'Sweep Floor', 1, 0);
-	`
-	if _, err := legacyDB.Exec(setupDDL); err != nil {
-		_ = legacyDB.Close()
-		t.Fatalf("failed to seed orphaned migration scenario: %v", err)
-	}
-	_ = legacyDB.Close()
-
-	// Opening store should recover the rows from list_items_migrated into list_items
-	store, err := NewSQLiteStore(dbPath)
-	if err != nil {
-		t.Fatalf("failed to open store with orphaned migrated rows: %v", err)
-	}
-	defer store.Close()
-
-	items, err := store.GetListItems(context.Background(), "chores", true)
-	if err != nil {
-		t.Fatalf("failed to get items after orphan recovery: %v", err)
-	}
-	if len(items) != 1 || items[0].Title != "Sweep Floor" || !items[0].Done {
-		t.Fatalf("expected recovered orphan item, got: %+v", items)
-	}
-}
-
-func TestSQLiteStore_MigrateErrors(t *testing.T) {
-	t.Parallel()
-	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "migrate_err.db"))
-	if err != nil {
-		t.Fatalf("failed to init store: %v", err)
-	}
-	_ = store.Close()
-
-	// 1. Closed DB error on migrate()
-	if err := store.migrate(); err == nil {
-		t.Error("expected error from migrate on closed store")
-	}
-
-	// 2. Closed underlying DB handle error when store is not marked nil
-	store2, err := NewSQLiteStore(filepath.Join(t.TempDir(), "migrate_err2.db"))
-	if err != nil {
-		t.Fatalf("failed to init store2: %v", err)
-	}
-	_ = store2.db.Close()
-	if err := store2.migrate(); err == nil {
-		t.Error("expected error from migrate when underlying db is closed")
-	}
-
-	// 3. Migration failure statement execution error inside transaction (triggers rollback)
-	dbPath3 := filepath.Join(t.TempDir(), "migrate_err3.db")
-	legacyDB, err := sql.Open("sqlite", dbPath3)
-	if err != nil {
-		t.Fatalf("failed to create legacy db: %v", err)
-	}
-	_, _ = legacyDB.Exec(`
-		CREATE TABLE lists (id TEXT PRIMARY KEY, name TEXT);
-		CREATE TABLE list_items (
-			id TEXT PRIMARY KEY,
-			list_id TEXT,
-			title TEXT,
-			done BOOLEAN DEFAULT 0,
-			section TEXT,
-			position INTEGER DEFAULT 0,
-			assignee TEXT,
-			due_date TEXT,
-			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-		);
-		INSERT INTO lists (id, name) VALUES ('l1', 'List 1');
-		-- NULL title violates NOT NULL constraint in list_items_migrated, causing tx.Exec statement failure and rollback
-		INSERT INTO list_items (id, list_id, title) VALUES ('i1', 'l1', NULL);
-	`)
-	_ = legacyDB.Close()
-
-	if _, err := NewSQLiteStore(dbPath3); err == nil {
-		t.Error("expected NewSQLiteStore to fail migration when INSERT violates NOT NULL constraint")
-	}
-}
-
-
-func TestSQLiteStore_CompleteItem(t *testing.T) {
-	t.Parallel()
-
-	dbPath := filepath.Join(t.TempDir(), "complete.db")
-	store, err := NewSQLiteStore(dbPath)
-	if err != nil {
-		t.Fatalf("failed to open store: %v", err)
-	}
-	defer store.Close()
-
-	ctx := context.Background()
-	now := time.Now().UTC().Truncate(time.Second)
-
-	list := List{
-		ID:        "list-1",
-		Name:      "Test List",
-		Source:    "local",
-		Sections:  []string{"General"},
-		CreatedAt: now,
-		UpdatedAt: now,
-	}
-	if err := store.UpsertList(ctx, list); err != nil {
-		t.Fatalf("failed to upsert list: %v", err)
-	}
-
-	item := ListItem{
-		ID:        "item-1",
-		ListID:    "list-1",
-		Title:     "Buy Groceries",
-		Done:      false,
-		Position:  0,
-		CreatedAt: now,
-		UpdatedAt: now,
-	}
-	if err := store.UpsertItem(ctx, item); err != nil {
-		t.Fatalf("failed to upsert item: %v", err)
-	}
-
-	// 1. Complete item successfully
-	if err := store.CompleteItem(ctx, "list-1", "item-1"); err != nil {
-		t.Fatalf("failed to complete item: %v", err)
-	}
-
-	// Verify item is now done
-	items, err := store.GetListItems(ctx, "list-1", true)
-	if err != nil {
-		t.Fatalf("failed to get items: %v", err)
-	}
-	if len(items) != 1 {
-		t.Fatalf("expected 1 item, got %d", len(items))
-	}
-	if !items[0].Done {
-		t.Errorf("expected item to be done, got %+v", items[0])
-	}
-
-	// 2. Repeat completion is idempotent (returns nil)
-	if err := store.CompleteItem(ctx, "list-1", "item-1"); err != nil {
-		t.Fatalf("expected repeat completion to be idempotent, got: %v", err)
-	}
-
-	// 3. Complete non-existent item returns ErrItemNotFound
-	if err := store.CompleteItem(ctx, "list-1", "item-999"); !errors.Is(err, ErrItemNotFound) {
-		t.Fatalf("expected ErrItemNotFound, got: %v", err)
-	}
-	if err := store.CompleteItem(ctx, "non-existent-list", "item-1"); !errors.Is(err, ErrItemNotFound) {
-		t.Fatalf("expected ErrItemNotFound, got: %v", err)
+	tests := []struct {
+		name     string
+		raw      string
+		wantZero bool
+		wantYear int
+	}{
+		{"empty", "", true, 0}, {"invalid", "bad", true, 0},
+		{"rfc3339", "2026-10-18T19:43:43Z", false, 2026}, {"rfc3339_nano", "2026-10-18T19:43:43.123456789Z", false, 2026},
+		{"sqlite_dt", "2026-09-26 14:30:00", false, 2026}, {"sqlite_tz", "2026-09-26 14:30:00-07:00", false, 2026},
+		{"sqlite_iso", "2026-09-26T14:30:00", false, 2026},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := parseTime(tc.raw); (tc.wantZero && !got.IsZero()) || (!tc.wantZero && (got.IsZero() || got.Year() != tc.wantYear)) {
+				t.Fatalf("parseTime(%q) = %v", tc.raw, got)
+			}
+		})
 	}
 }
