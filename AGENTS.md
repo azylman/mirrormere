@@ -16,7 +16,7 @@ See `README.md` for the product overview.
   `deadcode -test ./...`, the Go coverage floor (95%, `scripts/check-coverage.sh`),
   `go generate ./...` zero-drift on `internal/api/`, then the Node tests
   (`web/test`, `sidecars/eink-renderer/test`) and Python unittest suites
-  (`clients/eink-node`, `clients/ear`, `sidecars/remote`). It needs `golangci-lint`,
+  (`client/eink-node`, `client/ear`, `client/remote`). It needs `golangci-lint`,
   and installs `deadcode` and `oapi-codegen` via `go install` when missing.
 - CI (`.github/workflows/ci.yml`) runs `sh scripts/verify.sh --full` on pull requests to `main`.
 
@@ -27,8 +27,8 @@ See `README.md` for the product overview.
   `server` (HTTP handlers), `api` (generated types), `widget`, `render`, `layout`,
   `rotation`, `provider`, `display`, `kiosk`, `events`, `chatlog`, `tasks`, `video`, `audio`, `domain`.
 - `sidecars/` - separately deployed helpers: `hass-proxy` (Go, shares the root module),
-  `cast-watcher` (Go), `eink-renderer` (Node), `voice-fingerprinter` and `remote` (Python).
-- `clients/` - edge clients (`ear` voice daemon, `eink-node`), both Python.
+  `eink-renderer` (Node), and `voice-fingerprinter` (Python).
+- `client/` - edge clients: `ear` voice daemon, `eink-node`, `remote` (Python), and `cast-watcher` (Go).
 - `web/` - the kiosk front end (static assets and templates) and its Node tests.
 - `widgets/` - widget manifests and assets, one directory per widget.
 - `deploy/` - compose files, kiosk and e-ink setup, and `deploy/examples/config.yaml`.

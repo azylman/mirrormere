@@ -144,6 +144,7 @@ services:
       retries: 3
 
   hass-proxy:
+    profiles: ["voice", "hass"]
     build:
       context: ..
       dockerfile: sidecars/hass-proxy/Dockerfile
