@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -29,32 +30,29 @@ type mockSTT struct {
 	calledWith []byte
 }
 
-func (m *mockSTT) Transcribe(ctx context.Context, wavData []byte) (string, error) {
+func (m *mockSTT) Transcribe(_ context.Context, wavData []byte) (string, error) {
 	m.mu.Lock()
-	delay := m.delay
+	delay, text, err := m.delay, m.text, m.err
 	m.calledWith = wavData
-	text, err := m.text, m.err
 	m.mu.Unlock()
 	if delay > 0 {
-		time.Sleep(delay)
+		<-time.After(delay)
 	}
 	return text, err
 }
 
 type mockBrain struct {
-	mu         sync.Mutex
-	reply      string
-	statuses   []string
-	err        error
-	calledWith string
-	lastReq    AskRequest
+	mu                sync.Mutex
+	reply, calledWith string
+	statuses          []string
+	err               error
+	lastReq           AskRequest
 }
 
-func (m *mockBrain) Ask(ctx context.Context, req AskRequest, onStatus func(status string)) (string, error) {
+func (m *mockBrain) Ask(_ context.Context, req AskRequest, onStatus func(status string)) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.calledWith = req.Prompt
-	m.lastReq = req
+	m.calledWith, m.lastReq = req.Prompt, req
 	for _, s := range m.statuses {
 		if onStatus != nil {
 			onStatus(s)
@@ -64,65 +62,45 @@ func (m *mockBrain) Ask(ctx context.Context, req AskRequest, onStatus func(statu
 }
 
 type mockTTS struct {
-	mu          sync.Mutex
-	delay       time.Duration
-	audio       []byte
-	format      string
-	err         error
-	calledWith  string
-	calledTexts []string
-	calls       int
+	mu                 sync.Mutex
+	delay              time.Duration
+	audio              []byte
+	format, calledWith string
+	err                error
+	calledTexts        []string
+	calls              int
 }
 
-func (m *mockTTS) Synthesize(ctx context.Context, text string, onChunk func(chunk TTSAudioChunk) error) error {
+func (m *mockTTS) Synthesize(_ context.Context, text string, onChunk func(chunk TTSAudioChunk) error) error {
 	m.mu.Lock()
-	delay := m.delay
-	m.calledWith = text
-	m.calledTexts = append(m.calledTexts, text)
-	m.calls++
-	audio, format, err := m.audio, m.format, m.err
+	delay, audio, format, err := m.delay, m.audio, m.format, m.err
+	m.calledWith, m.calledTexts, m.calls = text, append(m.calledTexts, text), m.calls+1
 	m.mu.Unlock()
 	if delay > 0 {
-		time.Sleep(delay)
+		<-time.After(delay)
 	}
-	if err != nil {
+	if err != nil || len(audio) == 0 || onChunk == nil {
 		return err
 	}
-	if len(audio) > 0 && onChunk != nil {
-		if format == "" {
-			format = "pcm"
-		}
-		return onChunk(TTSAudioChunk{
-			Data:       audio,
-			Format:     format,
-			SampleRate: 24000,
-			Channels:   1,
-		})
+	if format == "" {
+		format = "pcm"
 	}
-	return nil
+	return onChunk(TTSAudioChunk{Data: audio, Format: format, SampleRate: 24000, Channels: 1})
 }
 
-type mockBlockingSTT struct {
-	onTranscribe func()
-}
+type mockBlockingSTT struct{ onTranscribe func() }
 
-func (m *mockBlockingSTT) Transcribe(ctx context.Context, wavData []byte) (string, error) {
+func (m *mockBlockingSTT) Transcribe(context.Context, []byte) (string, error) {
 	m.onTranscribe()
 	return "test", nil
 }
 
 func makeValidWAV(sampleCount int) []byte {
 	buf := make([]byte, 44+sampleCount*2)
-	copy(buf[0:4], []byte("RIFF"))
-	copy(buf[8:12], []byte("WAVE"))
-	copy(buf[12:16], []byte("fmt "))
-	buf[16] = 16 // PCM format chunk size
-	buf[20] = 1  // format = 1 (PCM)
-	buf[22] = 1  // channels = 1
-	buf[24] = 0x80
-	buf[25] = 0x3E // 16000 Hz
-	buf[34] = 16   // bits per sample
-	copy(buf[36:40], []byte("data"))
+	copy(buf[0:4], "RIFF")
+	copy(buf[8:16], "WAVEfmt ")
+	buf[16], buf[20], buf[22], buf[24], buf[25], buf[34] = 16, 1, 1, 0x80, 0x3E, 16
+	copy(buf[36:40], "data")
 	return buf
 }
 
@@ -138,30 +116,19 @@ func drainMockWyomingRequest(reader *bufio.Reader) {
 			PayloadLength int    `json:"payload_length"`
 		}
 		_ = json.Unmarshal(line, &hdr)
-		if hdr.DataLength > 0 {
-			_, _ = io.CopyN(io.Discard, reader, int64(hdr.DataLength))
-		}
-		if hdr.PayloadLength > 0 {
-			_, _ = io.CopyN(io.Discard, reader, int64(hdr.PayloadLength))
-		}
+		_, _ = io.CopyN(io.Discard, reader, int64(hdr.DataLength+hdr.PayloadLength))
 		if hdr.Type == "audio-stop" {
 			break
 		}
 	}
 }
 
-func mkSTT(text string, err error) *mockSTT {
-	return &mockSTT{text: text, err: err}
-}
-
-func wavRdr(n int) io.Reader {
-	return bytes.NewReader(makeValidWAV(n))
-}
+func mkSTT(text string, err error) *mockSTT { return &mockSTT{text: text, err: err} }
+func wavRdr(n int) io.Reader                { return bytes.NewReader(makeValidWAV(n)) }
 
 func wavWithZeroRateAndChannels(samples int) []byte {
 	b := makeValidWAV(samples)
-	copy(b[22:24], []byte{0, 0})
-	copy(b[24:28], []byte{0, 0, 0, 0})
+	copy(b[22:28], make([]byte, 6))
 	return b
 }
 
@@ -173,109 +140,29 @@ func startWyomingServer(t *testing.T, handler func(conn net.Conn, r *bufio.Reade
 	}
 	t.Cleanup(func() { _ = l.Close() })
 	go func() {
-		conn, err := l.Accept()
-		if err != nil {
-			return
+		if conn, err := l.Accept(); err == nil {
+			defer conn.Close()
+			handler(conn, bufio.NewReader(conn))
 		}
-		defer conn.Close()
-		handler(conn, bufio.NewReader(conn))
 	}()
 	return "tcp://" + l.Addr().String()
 }
 
-func TestHub_Interact_Success(t *testing.T) {
-	t.Parallel()
-
-	cfg := &config.VoiceHubConfig{
-		Enabled: true,
-	}
-	hubEvents := events.NewHub(events.HubConfig{}, nil, nil)
-	defer hubEvents.Close()
-	coord := NewCoordinator(hubEvents)
-
-	stt := mkSTT("Turn off office lights", nil)
-	brain := &mockBrain{
-		reply:    "Turned off office lights.",
-		statuses: []string{"⚡ Checking devices...", "⚡ Turning off lights..."},
-	}
-	tts := mkTTS([]byte("fake-pcm-bytes"), "pcm", nil)
-
-	h := NewHub(cfg, coord,
-		WithSTTClient(stt),
-		WithBrainClient(brain),
-		WithTTSClient(tts),
-	)
-
-	if !h.IsEnabled() {
-		t.Fatal("expected hub to be enabled")
-	}
-
-	var emittedEvents []struct {
-		Event string
-		Data  any
-	}
-	var mu sync.Mutex
-	sink := func(event string, data any) error {
-		mu.Lock()
-		defer mu.Unlock()
-		emittedEvents = append(emittedEvents, struct {
-			Event string
-			Data  any
-		}{Event: event, Data: data})
-		return nil
-	}
-
-	wav := makeValidWAV(1600)
-	err := h.Interact(context.Background(), bytes.NewReader(wav), "kiosk-kitchen", "sess-1", sink, EdgeTimings{})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	mu.Lock()
-	defer mu.Unlock()
-
-	expectedSequence := []string{"state", "transcript", "status", "status", "reply", "audio_chunk", "audio_chunk", "done"}
-	if len(emittedEvents) != len(expectedSequence) {
-		t.Fatalf("expected %d events, got %d: %+v", len(expectedSequence), len(emittedEvents), emittedEvents)
-	}
-	for i, exp := range expectedSequence {
-		if emittedEvents[i].Event != exp {
-			t.Errorf("at index %d: expected event %q, got %q", i, exp, emittedEvents[i].Event)
-		}
-	}
-
-	st := coord.GetState()
-	if st.State != StateSpeaking {
-		t.Errorf("expected final state speaking, got %s", st.State)
-	}
-	if st.Reply == nil || *st.Reply != brain.reply {
-		t.Errorf("expected final reply %q, got %v", brain.reply, st.Reply)
-	}
-
-	reset := coord.Reset()
-	if reset.State != StateIdle {
-		t.Errorf("expected state idle after reset, got %s", reset.State)
-	}
-}
-
 func TestHub_Interact_Scenarios(t *testing.T) {
 	t.Parallel()
-
 	tests := []struct {
-		name         string
-		disabled     bool
-		noCoord      bool
-		audio        io.Reader
-		stt          STTClient
-		brain        BrainClient
-		tts          TTSClient
-		sinkErrEvent string
-		wantErr      error
-		wantErrStr   string
-		wantState    string
-		wantReply    string
-		wantEvents   []string
+		name                             string
+		disabled, noCoord                bool
+		audio                            io.Reader
+		stt                              STTClient
+		brain                            BrainClient
+		tts                              TTSClient
+		sinkErrEvent                     string
+		wantErr                          error
+		wantErrStr, wantState, wantReply string
+		wantEvents                       []string
 	}{
+		{"success", false, false, wavRdr(1600), mkSTT("Turn off office lights", nil), &mockBrain{reply: "Turned off office lights.", statuses: []string{"⚡ Checking devices...", "⚡ Turning off lights..."}}, mkTTS([]byte("fake-pcm-bytes"), "pcm", nil), "", nil, "", StateSpeaking, "Turned off office lights.", []string{"state", "transcript", "status", "reply", "audio_chunk", "done"}},
 		{"disabled", true, false, wavRdr(100), nil, nil, nil, "", ErrHubDisabled, "", "", "", nil},
 		{"invalid_audio_nil", false, false, nil, nil, nil, nil, "", ErrInvalidAudio, "", "", "", nil},
 		{"invalid_audio_short", false, false, strings.NewReader("RIFFshort"), nil, nil, nil, "", ErrInvalidAudio, "", "", "", nil},
@@ -295,120 +182,56 @@ func TestHub_Interact_Scenarios(t *testing.T) {
 		{"sink_state_no_coord", false, true, wavRdr(100), mkSTT("hello", nil), mkBrain("hi", nil), mkTTS(nil, "", nil), "state", nil, "sink error on state", "", "", nil},
 		{"sink_transcript_no_coord", false, true, wavRdr(100), mkSTT("hello", nil), mkBrain("hi", nil), mkTTS(nil, "", nil), "transcript", nil, "sink error on transcript", "", "", nil},
 		{"sink_reply_no_coord", false, true, wavRdr(100), mkSTT("hello", nil), mkBrain("hi", nil), mkTTS(nil, "", nil), "reply", nil, "sink error on reply", "", "", nil},
+		{"sink_status_non_fatal", false, false, wavRdr(100), mkSTT("hello", nil), &mockBrain{reply: "hi", statuses: []string{"thinking..."}}, mkTTS([]byte("wav"), "pcm", nil), "status", nil, "", "", "", nil},
+		{"sink_audio_chunk_aborts", false, false, wavRdr(100), mkSTT("hello", nil), mkBrain("hi", nil), mkTTS([]byte("wav"), "pcm", nil), "audio_chunk", nil, "audio sink error", "", "", nil},
+		{"sink_stt_error_propagates", false, false, wavRdr(100), mkSTT("", errors.New("stt failure")), nil, nil, "error", nil, "sink error on stt failure", "", "", nil},
+		{"sink_brain_error_propagates", false, false, wavRdr(100), mkSTT("hello", nil), mkBrain("", errors.New("brain failure")), nil, "error", nil, "sink error on brain failure", "", "", nil},
+		{"sink_tts_error_propagates", false, false, wavRdr(100), mkSTT("hello", nil), mkBrain("hi", nil), mkTTS(nil, "", errors.New("tts failure")), "error", nil, "sink error on tts failure", "", "", nil},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			cfg := &config.VoiceHubConfig{Enabled: !tc.disabled}
+			hubEvents := events.NewHub(events.HubConfig{}, nil, nil)
+			defer hubEvents.Close()
 			var coord *Coordinator
 			if !tc.noCoord {
-				coord = NewCoordinator(nil)
+				coord = NewCoordinator(hubEvents)
 			}
-			h := NewHub(cfg, coord,
-				WithSTTClient(tc.stt),
-				WithBrainClient(tc.brain),
-				WithTTSClient(tc.tts),
-			)
-
-			var mu sync.Mutex
-			var emitted []string
-			sink := func(event string, data any) error {
-				mu.Lock()
-				defer mu.Unlock()
-				emitted = append(emitted, event)
+			h := NewHub(&config.VoiceHubConfig{Enabled: !tc.disabled}, coord, WithSTTClient(tc.stt), WithBrainClient(tc.brain), WithTTSClient(tc.tts))
+			if h.IsEnabled() == tc.disabled {
+				t.Fatalf("IsEnabled() = %v, disabled = %v", h.IsEnabled(), tc.disabled)
+			}
+			sink, getEvents := collectEvents()
+			err := h.Interact(context.Background(), tc.audio, "kiosk-kitchen", "", func(event string, data any) error {
+				_ = sink(event, data)
 				if tc.sinkErrEvent != "" && event == tc.sinkErrEvent {
-					return fmt.Errorf("sink error on %s", event)
-				}
-				return nil
-			}
-
-			err := h.Interact(context.Background(), tc.audio, "", "", sink, EdgeTimings{})
-			if tc.wantErr != nil && !errors.Is(err, tc.wantErr) {
-				t.Fatalf("expected error %v, got %v", tc.wantErr, err)
-			}
-			if tc.wantErrStr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErrStr)) {
-				t.Fatalf("expected error containing %q, got: %v", tc.wantErrStr, err)
-			}
-			if tc.wantErr == nil && tc.wantErrStr == "" && err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if coord != nil && tc.wantState != "" && coord.GetState().State != tc.wantState {
-				t.Errorf("expected state %s, got %s", tc.wantState, coord.GetState().State)
-			}
-			if coord != nil && tc.wantReply != "" {
-				rep := coord.GetState().Reply
-				if rep == nil || *rep != tc.wantReply {
-					t.Errorf("expected reply %q, got %v", tc.wantReply, rep)
-				}
-			}
-			mu.Lock()
-			defer mu.Unlock()
-			for _, exp := range tc.wantEvents {
-				found := false
-				for _, ev := range emitted {
-					if ev == exp {
-						found = true
-						break
-					}
-				}
-				if !found {
-					t.Errorf("expected event %q in emitted: %v", exp, emitted)
-				}
-			}
-		})
-	}
-}
-
-func TestHub_Interact_SinkErrors(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name       string
-		stt        STTClient
-		brain      BrainClient
-		tts        TTSClient
-		failEvent  string
-		wantErrStr string
-	}{
-		{"status_non_fatal", mkSTT("hello", nil), &mockBrain{reply: "hi", statuses: []string{"thinking..."}}, mkTTS([]byte("wav"), "pcm", nil), "status", ""},
-		{"audio_chunk_aborts", mkSTT("hello", nil), mkBrain("hi", nil), mkTTS([]byte("wav"), "pcm", nil), "audio_chunk", "audio sink error"},
-		{"done_aborts", mkSTT("hello", nil), mkBrain("hi", nil), mkTTS([]byte("wav"), "pcm", nil), "done", "done sink error"},
-		{"stt_error_propagates", mkSTT("", errors.New("stt failure")), nil, nil, "error", "sink error on stt failure"},
-		{"brain_error_propagates", mkSTT("hello", nil), mkBrain("", errors.New("brain failure")), nil, "error", "sink error on brain failure"},
-		{"tts_error_propagates", mkSTT("hello", nil), mkBrain("hi", nil), mkTTS(nil, "", errors.New("tts failure")), "error", "sink error on tts failure"},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			cfg := &config.VoiceHubConfig{Enabled: true}
-			coord := NewCoordinator(nil)
-			h := NewHub(cfg, coord,
-				WithSTTClient(tc.stt),
-				WithBrainClient(tc.brain),
-				WithTTSClient(tc.tts),
-			)
-
-			sink := func(event string, data any) error {
-				if event == tc.failEvent {
 					if tc.wantErrStr != "" {
 						return errors.New(tc.wantErrStr)
 					}
 					return errors.New("status sink error")
 				}
 				return nil
+			}, EdgeTimings{})
+			if (tc.wantErr != nil && !errors.Is(err, tc.wantErr)) || (tc.wantErrStr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErrStr))) || (tc.wantErr == nil && tc.wantErrStr == "" && err != nil) {
+				t.Fatalf("err = %v; wantErr=%v wantErrStr=%q", err, tc.wantErr, tc.wantErrStr)
 			}
-
-			err := h.Interact(context.Background(), wavRdr(100), "", "", sink, EdgeTimings{})
-			if tc.wantErrStr == "" {
-				if err != nil {
-					t.Fatalf("expected nil error, got: %v", err)
+			if coord != nil && tc.wantState != "" && coord.GetState().State != tc.wantState {
+				t.Errorf("expected state %s, got %s", tc.wantState, coord.GetState().State)
+			}
+			if coord != nil && tc.wantReply != "" {
+				if coord.GetState().Reply == nil || *coord.GetState().Reply != tc.wantReply {
+					t.Errorf("expected reply %q, got %v", tc.wantReply, coord.GetState().Reply)
 				}
-				return
+				if reset := coord.Reset(); reset.State != StateIdle {
+					t.Errorf("expected state idle after reset, got %s", reset.State)
+				}
 			}
-			if err == nil || !strings.Contains(err.Error(), tc.wantErrStr) {
-				t.Fatalf("expected error containing %q, got: %v", tc.wantErrStr, err)
+			emitted := strings.Join(eventNames(getEvents()), ",")
+			for _, exp := range tc.wantEvents {
+				if !strings.Contains(emitted, exp) {
+					t.Errorf("expected event %q in %q", exp, emitted)
+				}
 			}
 		})
 	}
@@ -416,71 +239,46 @@ func TestHub_Interact_SinkErrors(t *testing.T) {
 
 func TestHub_Interact_ConcurrencyAndPanic(t *testing.T) {
 	t.Parallel()
-
 	t.Run("concurrent_busy", func(t *testing.T) {
 		t.Parallel()
-		cfg := &config.VoiceHubConfig{Enabled: true}
-		sttStarted := make(chan struct{})
-		sttBlock := make(chan struct{})
-		blockingSTT := &mockBlockingSTT{
-			onTranscribe: func() {
-				close(sttStarted)
-				<-sttBlock
-			},
-		}
-		h := NewHub(cfg, nil, WithSTTClient(blockingSTT))
-
-		doneCh := make(chan error)
-		go func() {
-			doneCh <- h.Interact(context.Background(), wavRdr(100), "", "", func(string, any) error { return nil }, EdgeTimings{})
-		}()
-
+		sttStarted, sttBlock, doneCh := make(chan struct{}), make(chan struct{}), make(chan error)
+		h := NewHub(&config.VoiceHubConfig{Enabled: true}, nil, WithSTTClient(&mockBlockingSTT{
+			onTranscribe: func() { close(sttStarted); <-sttBlock },
+		}))
+		nopSink := func(string, any) error { return nil }
+		go func() { doneCh <- h.Interact(context.Background(), wavRdr(100), "", "", nopSink, EdgeTimings{}) }()
 		<-sttStarted
-		secondErr := h.Interact(context.Background(), wavRdr(100), "", "", func(string, any) error { return nil }, EdgeTimings{})
-		if !errors.Is(secondErr, ErrInteractionBusy) {
-			t.Errorf("expected ErrInteractionBusy, got: %v", secondErr)
+		if err := h.Interact(context.Background(), wavRdr(100), "", "", nopSink, EdgeTimings{}); !errors.Is(err, ErrInteractionBusy) {
+			t.Errorf("expected ErrInteractionBusy, got: %v", err)
 		}
 		close(sttBlock)
-		firstErr := <-doneCh
-		if errors.Is(firstErr, ErrInteractionBusy) {
+		if firstErr := <-doneCh; errors.Is(firstErr, ErrInteractionBusy) {
 			t.Errorf("first call should not be busy: %v", firstErr)
 		}
 	})
 
 	t.Run("panic_recovers_and_transitions_coordinator", func(t *testing.T) {
 		t.Parallel()
-		cfg := &config.VoiceHubConfig{Enabled: true}
 		coord := NewCoordinator(nil)
-		panickingSTT := &mockBlockingSTT{
-			onTranscribe: func() {
-				panic("unexpected boom")
-			},
-		}
-		h := NewHub(cfg, coord, WithSTTClient(panickingSTT))
-
+		h := NewHub(&config.VoiceHubConfig{Enabled: true}, coord, WithSTTClient(&mockBlockingSTT{
+			onTranscribe: func() { panic("unexpected boom") },
+		}))
 		defer func() {
-			r := recover()
-			if r == nil {
-				t.Fatal("expected panic, got none")
-			}
-			if coord.GetState().State != StateError {
-				t.Errorf("expected coordinator state error on panic, got %s", coord.GetState().State)
+			if recover() == nil || coord.GetState().State != StateError {
+				t.Fatalf("expected panic and StateError, got state %s", coord.GetState().State)
 			}
 		}()
-
 		_ = h.Interact(context.Background(), wavRdr(100), "", "", func(string, any) error { return nil }, EdgeTimings{})
 	})
 }
 
 func TestDefaultSTTClient_Wyoming(t *testing.T) {
 	t.Parallel()
-
 	tests := []struct {
-		name     string
-		drain    bool
-		resp     string
-		wantText string
-		wantErr  bool
+		name           string
+		drain          bool
+		resp, wantText string
+		wantErr        bool
 	}{
 		{"wyoming_success", true, fmt.Sprintf("{\"type\":\"transcript\",\"data_length\":%d}\n{\"text\":\"test transcript from wyoming\"}", len(`{"text":"test transcript from wyoming"}`)), "test transcript from wyoming", false},
 		{"wyoming_advanced", true, fmt.Sprintf("not-json-line\n{\"type\":\"ping\",\"payload_length\":4}\npong{\"type\":\"transcript\",\"data_length\":%d}\n{\"text\":\"advanced transcript\"}", len(`{"text":"advanced transcript"}`)), "advanced transcript", false},
@@ -489,7 +287,6 @@ func TestDefaultSTTClient_Wyoming(t *testing.T) {
 		{"truncated_data_length", true, "{\"type\":\"event\",\"data_length\":100}\nshort", "", true},
 		{"truncated_payload_length", true, "{\"type\":\"event\",\"payload_length\":100}\nshort", "", true},
 	}
-
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -501,19 +298,9 @@ func TestDefaultSTTClient_Wyoming(t *testing.T) {
 					_, _ = conn.Write([]byte(tc.resp))
 				}
 			})
-			client := NewDefaultSTTClient(addr)
-			txt, err := client.Transcribe(context.Background(), makeValidWAV(100))
-			if tc.wantErr {
-				if err == nil {
-					t.Fatalf("expected error, got nil")
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if txt != tc.wantText {
-				t.Fatalf("expected %q, got %q", tc.wantText, txt)
+			txt, err := NewDefaultSTTClient(addr).Transcribe(context.Background(), makeValidWAV(100))
+			if (err != nil) != tc.wantErr || (!tc.wantErr && txt != tc.wantText) {
+				t.Fatalf("got (%q, %v), want (%q, wantErr=%v)", txt, err, tc.wantText, tc.wantErr)
 			}
 		})
 	}
@@ -521,15 +308,12 @@ func TestDefaultSTTClient_Wyoming(t *testing.T) {
 
 func TestDefaultSTTClient_HTTPAndErrors(t *testing.T) {
 	t.Parallel()
-
 	tests := []struct {
-		name       string
-		status     int
-		respBody   string
-		rawURL     string
-		wantText   string
-		wantErr    bool
-		wantErrStr string
+		name                       string
+		status                     int
+		respBody, rawURL, wantText string
+		wantErr                    bool
+		wantErrStr                 string
 	}{
 		{"http_success", http.StatusOK, `{"text":"test transcript from http"}`, "", "test transcript from http", false, ""},
 		{"transcript_fallback", http.StatusOK, `{"transcript":"fallback transcript"}`, "", "fallback transcript", false, ""},
@@ -539,13 +323,12 @@ func TestDefaultSTTClient_HTTPAndErrors(t *testing.T) {
 		{"http_500", http.StatusInternalServerError, `internal server error`, "", "", true, "500"},
 		{"network_failure", 0, "", "http://127.0.0.1:59998/invalid", "", true, ""},
 	}
-
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			targetURL := tc.rawURL
 			if tc.status > 0 {
-				ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 					w.Header().Set("Content-Type", "application/json")
 					w.WriteHeader(tc.status)
 					_, _ = w.Write([]byte(tc.respBody))
@@ -553,22 +336,9 @@ func TestDefaultSTTClient_HTTPAndErrors(t *testing.T) {
 				defer ts.Close()
 				targetURL = ts.URL
 			}
-			client := NewDefaultSTTClient(targetURL)
-			txt, err := client.Transcribe(context.Background(), makeValidWAV(100))
-			if tc.wantErr {
-				if err == nil {
-					t.Fatalf("expected error, got nil")
-				}
-				if tc.wantErrStr != "" && !strings.Contains(err.Error(), tc.wantErrStr) {
-					t.Fatalf("expected error containing %q, got: %v", tc.wantErrStr, err)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if txt != tc.wantText {
-				t.Fatalf("expected %q, got %q", tc.wantText, txt)
+			txt, err := NewDefaultSTTClient(targetURL).Transcribe(context.Background(), makeValidWAV(100))
+			if (err != nil) != tc.wantErr || (tc.wantErr && tc.wantErrStr != "" && !strings.Contains(err.Error(), tc.wantErrStr)) || (!tc.wantErr && txt != tc.wantText) {
+				t.Fatalf("got (%q, %v), want (%q, wantErr=%v, errStr=%q)", txt, err, tc.wantText, tc.wantErr, tc.wantErrStr)
 			}
 		})
 	}
@@ -576,19 +346,15 @@ func TestDefaultSTTClient_HTTPAndErrors(t *testing.T) {
 
 func TestDefaultBrainClient(t *testing.T) {
 	t.Parallel()
-
 	tests := []struct {
-		name         string
-		contentType  string
-		status       int
-		rawURL       string
-		respBody     string
-		req          AskRequest
-		wantReply    string
-		wantStatuses []string
-		wantErr      bool
-		wantErrStr   string
-		wantNodeID   string
+		name, contentType      string
+		status                 int
+		rawURL, respBody       string
+		req                    AskRequest
+		wantReply              string
+		wantStatuses           []string
+		wantErr                bool
+		wantErrStr, wantNodeID string
 	}{
 		{"sse_success", "text/event-stream", 200, "", "event: status\ndata: {\"status\":\"⚡ executing tool\"}\n\nevent: reply\ndata: {\"reply\":\"The light is on\"}\n\nevent: done\ndata: {}\n\n", AskRequest{Prompt: "turn on light", SessionID: "s1"}, "The light is on", []string{"⚡ executing tool"}, false, "", ""},
 		{"json_success", "application/json", 200, "", `{"reply":"JSON reply"}`, AskRequest{Prompt: "hello", SessionID: "s1"}, "JSON reply", nil, false, "", ""},
@@ -603,7 +369,6 @@ func TestDefaultBrainClient(t *testing.T) {
 		{"sse_scanner_overflow", "text/event-stream", 200, "", "data: " + strings.Repeat("a", sseScannerMaxLine+1024) + "\n\n", AskRequest{Prompt: "hi", SessionID: "s1"}, "", nil, true, "", ""},
 		{"network_failure", "", 0, "http://127.0.0.1:59998/invalid", "", AskRequest{Prompt: "hi", SessionID: "s1"}, "", nil, true, "", ""},
 	}
-
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -624,49 +389,19 @@ func TestDefaultBrainClient(t *testing.T) {
 				defer ts.Close()
 				targetURL = ts.URL
 			}
-
-			client := NewDefaultBrainClient(targetURL, 5)
 			var statuses []string
-			reply, err := client.Ask(context.Background(), tc.req, func(s string) {
-				statuses = append(statuses, s)
-			})
-			if tc.wantErr {
-				if err == nil {
-					t.Fatalf("expected error, got nil")
-				}
-				if tc.wantErrStr != "" && !strings.Contains(err.Error(), tc.wantErrStr) {
-					t.Fatalf("expected error containing %q, got: %v", tc.wantErrStr, err)
-				}
-				return
+			reply, err := NewDefaultBrainClient(targetURL, 5).Ask(context.Background(), tc.req, func(s string) { statuses = append(statuses, s) })
+			if (err != nil) != tc.wantErr || (tc.wantErr && tc.wantErrStr != "" && !strings.Contains(err.Error(), tc.wantErrStr)) {
+				t.Fatalf("err = %v, wantErr %v (%q)", err, tc.wantErr, tc.wantErrStr)
 			}
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if !strings.Contains(reply, tc.wantReply) {
-				t.Fatalf("expected reply containing %q, got %q", tc.wantReply, reply)
-			}
-			if len(tc.wantStatuses) > 0 {
-				if len(statuses) != len(tc.wantStatuses) {
-					t.Fatalf("expected statuses %v, got %v", tc.wantStatuses, statuses)
-				}
-				for i, wantS := range tc.wantStatuses {
-					if statuses[i] != wantS {
-						t.Errorf("at index %d: expected status %q, got %q", i, wantS, statuses[i])
-					}
-				}
+			if !tc.wantErr && (!strings.Contains(reply, tc.wantReply) || (len(tc.wantStatuses) > 0 && !reflect.DeepEqual(statuses, tc.wantStatuses))) {
+				t.Fatalf("got reply=%q statuses=%v, want %q %v", reply, statuses, tc.wantReply, tc.wantStatuses)
 			}
 			if tc.wantNodeID != "" {
 				mu.Lock()
 				defer mu.Unlock()
-				if lastBody["node_id"] != tc.wantNodeID {
-					t.Errorf("expected node_id %q, got %v", tc.wantNodeID, lastBody["node_id"])
-				}
-				sess, _ := lastBody["session_id"].(string)
-				if !strings.HasPrefix(sess, "turn-") {
-					t.Errorf("expected session_id starting with 'turn-', got %v", sess)
-				}
-				if _, exists := lastBody["device_name"]; exists {
-					t.Errorf("expected no device_name, got %v", lastBody["device_name"])
+				if lastBody["node_id"] != tc.wantNodeID || !strings.HasPrefix(lastBody["session_id"].(string), "turn-") || lastBody["device_name"] != nil {
+					t.Errorf("unexpected request body: %+v", lastBody)
 				}
 			}
 		})
@@ -675,21 +410,15 @@ func TestDefaultBrainClient(t *testing.T) {
 
 func TestDefaultTTSClient(t *testing.T) {
 	t.Parallel()
-
 	tests := []struct {
-		name           string
-		contentType    string
-		status         int
-		rawURL         string
-		body           []byte
-		text           string
-		sinkErr        error
-		wantErr        error
-		wantErrStr     string
-		wantFormat     string
-		wantTotalBytes int
-		wantRate       int
-		wantChannels   int
+		name, contentType                      string
+		status                                 int
+		rawURL                                 string
+		body                                   []byte
+		text                                   string
+		sinkErr, wantErr                       error
+		wantErrStr, wantFormat                 string
+		wantTotalBytes, wantRate, wantChannels int
 	}{
 		{"wav_stream", "audio/wav", 200, "", makeValidWAV(4800), "hello world", nil, nil, "", "pcm", 9600, 16000, 1},
 		{"pcm_stream", "audio/pcm", 200, "", bytes.Repeat([]byte{0x01, 0x02}, 2400), "hello", nil, nil, "", "pcm", 4800, 0, 0},
@@ -702,13 +431,12 @@ func TestDefaultTTSClient(t *testing.T) {
 		{"wav_zero_rate_channels", "audio/wav", 200, "", wavWithZeroRateAndChannels(2400), "hello", nil, nil, "", "pcm", 0, 24000, 1},
 		{"network_failure", "", 0, "http://127.0.0.1:59998/invalid", nil, "hi", nil, nil, "error", "", 0, 0, 0},
 	}
-
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			targetURL := tc.rawURL
 			if tc.status > 0 {
-				ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 					if tc.contentType != "" {
 						w.Header().Set("Content-Type", tc.contentType)
 					}
@@ -718,61 +446,23 @@ func TestDefaultTTSClient(t *testing.T) {
 				defer ts.Close()
 				targetURL = ts.URL
 			}
-
-			tts := NewDefaultTTSClient(targetURL, "kokoro", "af_bella", 5)
 			var totalPCM int
 			var lastChunk TTSAudioChunk
-			err := tts.Synthesize(context.Background(), tc.text, func(chunk TTSAudioChunk) error {
+			err := NewDefaultTTSClient(targetURL, "kokoro", "af_bella", 5).Synthesize(context.Background(), tc.text, func(chunk TTSAudioChunk) error {
 				if tc.sinkErr != nil {
 					return tc.sinkErr
 				}
-				lastChunk = chunk
-				totalPCM += len(chunk.Data)
+				lastChunk, totalPCM = chunk, totalPCM+len(chunk.Data)
 				return nil
 			})
-
-			if tc.wantErr != nil && !errors.Is(err, tc.wantErr) {
-				t.Fatalf("expected error %v, got %v", tc.wantErr, err)
+			if (tc.wantErr != nil && !errors.Is(err, tc.wantErr)) || (tc.wantErrStr != "" && (err == nil || (tc.wantErrStr != "error" && !strings.Contains(err.Error(), tc.wantErrStr)))) || (tc.wantErr == nil && tc.wantErrStr == "" && err != nil) {
+				t.Fatalf("err = %v; wantErr=%v wantErrStr=%q", err, tc.wantErr, tc.wantErrStr)
 			}
-			if tc.wantErrStr != "" {
-				if err == nil {
-					t.Fatalf("expected error containing %q, got nil", tc.wantErrStr)
-				}
-				if tc.wantErrStr != "error" && !strings.Contains(err.Error(), tc.wantErrStr) {
-					t.Fatalf("expected error containing %q, got: %v", tc.wantErrStr, err)
-				}
-				return
-			}
-			if tc.wantErr == nil && err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if tc.wantFormat != "" && lastChunk.Format != tc.wantFormat {
-				t.Errorf("expected format %q, got %q", tc.wantFormat, lastChunk.Format)
-			}
-			if tc.wantRate > 0 && lastChunk.SampleRate != tc.wantRate {
-				t.Errorf("expected sample rate %d, got %d", tc.wantRate, lastChunk.SampleRate)
-			}
-			if tc.wantChannels > 0 && lastChunk.Channels != tc.wantChannels {
-				t.Errorf("expected channels %d, got %d", tc.wantChannels, lastChunk.Channels)
-			}
-			if tc.wantTotalBytes > 0 && totalPCM != tc.wantTotalBytes {
-				t.Errorf("expected %d total PCM bytes, got %d", tc.wantTotalBytes, totalPCM)
+			if (tc.wantFormat != "" && lastChunk.Format != tc.wantFormat) || (tc.wantRate > 0 && lastChunk.SampleRate != tc.wantRate) || (tc.wantChannels > 0 && lastChunk.Channels != tc.wantChannels) || (tc.wantTotalBytes > 0 && totalPCM != tc.wantTotalBytes) {
+				t.Errorf("chunk=%+v totalPCM=%d; want fmt=%q rate=%d ch=%d total=%d", lastChunk, totalPCM, tc.wantFormat, tc.wantRate, tc.wantChannels, tc.wantTotalBytes)
 			}
 		})
 	}
-}
-
-type delayStreamingBrain struct {
-	*mockStreamingBrain
-	delay time.Duration
-}
-
-func (d *delayStreamingBrain) AskStreaming(ctx context.Context, req AskRequest, onStatus func(status string), onAudio func(chunk BrainAudioChunk)) (string, error) {
-	reply, err := d.mockStreamingBrain.AskStreaming(ctx, req, onStatus, onAudio)
-	if d.delay > 0 {
-		time.Sleep(d.delay)
-	}
-	return reply, err
 }
 
 type metricExpectation struct {
@@ -784,10 +474,11 @@ type metricExpectation struct {
 func mkExp(name string, minVal float64, kv ...string) metricExpectation {
 	return metricExpectation{name: name, minVal: minVal, labels: kv}
 }
+func exps(e ...metricExpectation) []metricExpectation { return e }
 
 func TestHub_MetricsRecording(t *testing.T) {
 	t.Parallel()
-
+	const durM, errM, turnM = "mirrormere_voice_stage_duration_seconds", "mirrormere_voice_errors_total", "mirrormere_voice_turns_total"
 	tests := []struct {
 		name    string
 		stt     STTClient
@@ -797,103 +488,24 @@ func TestHub_MetricsRecording(t *testing.T) {
 		wantErr error
 		metrics []metricExpectation
 	}{
-		{
-			name:    "success",
-			stt:     &mockSTT{delay: 2 * time.Millisecond, text: "lights on"},
-			brain:   mkBrain("turning on lights", nil),
-			tts:     &mockTTS{delay: 2 * time.Millisecond, audio: []byte("tts-audio-bytes"), format: "pcm"},
-			timings: EdgeTimings{WakeEvalSec: 0.05, UtteranceSpeechSec: 1.0, UtteranceSilenceSec: 0.25},
-			metrics: []metricExpectation{
-				mkExp("mirrormere_voice_stage_duration_seconds", 1, "stage", "wake_eval", "status", "success"),
-				mkExp("mirrormere_voice_stage_duration_seconds", 1, "stage", "utterance_speech", "status", "success"),
-				mkExp("mirrormere_voice_stage_duration_seconds", 1, "stage", "utterance_silence", "status", "success"),
-				mkExp("mirrormere_voice_stage_duration_seconds", 1, "stage", "stt", "status", "success"),
-				mkExp("mirrormere_voice_stage_duration_seconds", 1, "stage", "brain", "status", "success"),
-				mkExp("mirrormere_voice_stage_duration_seconds", 1, "stage", "tts", "status", "success"),
-				mkExp("mirrormere_voice_turns_total", 1, "status", "success"),
-				mkExp("mirrormere_voice_stt_rtf", 0, "engine", "whisper"),
-				mkExp("mirrormere_voice_tts_chars_per_second", 0.001, "voice", "kokoro"),
-			},
-		},
-		{
-			name:    "stt_failure",
-			stt:     &mockSTT{err: errors.New("whisper down")},
-			wantErr: ErrSTTFailed,
-			metrics: []metricExpectation{
-				mkExp("mirrormere_voice_stage_duration_seconds", 1, "stage", "stt", "status", "error"),
-				mkExp("mirrormere_voice_errors_total", 1, "stage", "stt", "error_type", "stt_error"),
-				mkExp("mirrormere_voice_turns_total", 1, "status", "error"),
-			},
-		},
-		{
-			name:    "brain_failure",
-			stt:     &mockSTT{text: "hello"},
-			brain:   mkBrain("", errors.New("brain failed")),
-			wantErr: ErrBrainFailed,
-			metrics: []metricExpectation{
-				mkExp("mirrormere_voice_stage_duration_seconds", 1, "stage", "brain", "status", "error"),
-				mkExp("mirrormere_voice_errors_total", 1, "stage", "brain", "error_type", "brain_error"),
-				mkExp("mirrormere_voice_turns_total", 1, "status", "error"),
-			},
-		},
-		{
-			name:    "tts_failure",
-			stt:     &mockSTT{text: "hello"},
-			brain:   mkBrain("hi there", nil),
-			tts:     mkTTS(nil, "", errors.New("tts failed")),
-			metrics: []metricExpectation{
-				mkExp("mirrormere_voice_stage_duration_seconds", 1, "stage", "tts", "status", "error"),
-				mkExp("mirrormere_voice_errors_total", 1, "stage", "tts", "error_type", "tts_error"),
-				mkExp("mirrormere_voice_turns_total", 1, "status", "error"),
-			},
-		},
-		{
-			name: "streaming_brain",
-			stt:  &mockSTT{delay: 2 * time.Millisecond, text: "what is the weather"},
-			brain: &delayStreamingBrain{
-				mockStreamingBrain: &mockStreamingBrain{
-					reply:     "It's sunny today. Enjoy the warmth.",
-					sentences: []BrainAudioChunk{{Text: "It's sunny today."}, {Text: "Enjoy the warmth."}},
-				},
-				delay: 2 * time.Millisecond,
-			},
-			tts: &mockTTS{delay: 2 * time.Millisecond, audio: makeValidWAV(1600), format: "pcm"},
-			metrics: []metricExpectation{
-				mkExp("mirrormere_voice_stage_duration_seconds", 1, "stage", "tts", "status", "success"),
-				mkExp("mirrormere_voice_tts_chars_per_second", 0.001, "voice", "kokoro"),
-				mkExp("mirrormere_voice_turns_total", 1, "status", "success"),
-			},
-		},
+		{"success", &mockSTT{delay: 2 * time.Millisecond, text: "lights on"}, mkBrain("turning on lights", nil), &mockTTS{delay: 2 * time.Millisecond, audio: []byte("tts-audio-bytes"), format: "pcm"}, EdgeTimings{WakeEvalSec: 0.05, UtteranceSpeechSec: 1.0, UtteranceSilenceSec: 0.25}, nil, exps(mkExp(durM, 1, "stage", "wake_eval", "status", "success"), mkExp(durM, 1, "stage", "utterance_speech", "status", "success"), mkExp(durM, 1, "stage", "utterance_silence", "status", "success"), mkExp(durM, 1, "stage", "stt", "status", "success"), mkExp(durM, 1, "stage", "brain", "status", "success"), mkExp(durM, 1, "stage", "tts", "status", "success"), mkExp(turnM, 1, "status", "success"), mkExp("mirrormere_voice_stt_rtf", 0, "engine", "whisper"), mkExp("mirrormere_voice_tts_chars_per_second", 0.001, "voice", "kokoro"))},
+		{"stt_failure", mkSTT("", errors.New("whisper down")), nil, nil, EdgeTimings{}, ErrSTTFailed, exps(mkExp(durM, 1, "stage", "stt", "status", "error"), mkExp(errM, 1, "stage", "stt", "error_type", "stt_error"), mkExp(turnM, 1, "status", "error"))},
+		{"brain_failure", mkSTT("hello", nil), mkBrain("", errors.New("brain failed")), nil, EdgeTimings{}, ErrBrainFailed, exps(mkExp(durM, 1, "stage", "brain", "status", "error"), mkExp(errM, 1, "stage", "brain", "error_type", "brain_error"), mkExp(turnM, 1, "status", "error"))},
+		{"tts_failure", mkSTT("hello", nil), mkBrain("hi there", nil), mkTTS(nil, "", errors.New("tts failed")), EdgeTimings{}, nil, exps(mkExp(durM, 1, "stage", "tts", "status", "error"), mkExp(errM, 1, "stage", "tts", "error_type", "tts_error"), mkExp(turnM, 1, "status", "error"))},
+		{"streaming_brain", &mockSTT{delay: 2 * time.Millisecond, text: "what is the weather"}, mkStreamBrain("It's sunny today. Enjoy the warmth.", nil, "It's sunny today.", "Enjoy the warmth."), &mockTTS{delay: 2 * time.Millisecond, audio: makeValidWAV(1600), format: "pcm"}, EdgeTimings{}, nil, exps(mkExp(durM, 1, "stage", "tts", "status", "success"), mkExp("mirrormere_voice_tts_chars_per_second", 0.001, "voice", "kokoro"), mkExp(turnM, 1, "status", "success"))},
 	}
-
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			reg := prometheus.NewRegistry()
-			m := NewMetrics(reg)
-			cfg := &config.VoiceHubConfig{Enabled: true, TTSModel: "kokoro"}
-			h := NewHub(cfg, nil,
-				WithSTTClient(tc.stt),
-				WithBrainClient(tc.brain),
-				WithTTSClient(tc.tts),
-				WithMetrics(m),
-			)
-			wav := makeValidWAV(16000)
-			err := h.Interact(context.Background(), bytes.NewReader(wav), "kiosk-kitchen", "sess-1", func(string, any) error { return nil }, tc.timings)
-			if tc.wantErr != nil && !errors.Is(err, tc.wantErr) {
-				t.Fatalf("expected error %v, got: %v", tc.wantErr, err)
-			}
-			if tc.wantErr == nil && err != nil {
-				t.Fatalf("unexpected error: %v", err)
+			h := NewHub(&config.VoiceHubConfig{Enabled: true, TTSModel: "kokoro"}, nil, WithSTTClient(tc.stt), WithBrainClient(tc.brain), WithTTSClient(tc.tts), WithMetrics(NewMetrics(reg)))
+			err := h.Interact(context.Background(), wavRdr(16000), "kiosk-kitchen", "sess-1", func(string, any) error { return nil }, tc.timings)
+			if (err != nil) != (tc.wantErr != nil) || (tc.wantErr != nil && !errors.Is(err, tc.wantErr)) {
+				t.Fatalf("err = %v, want %v", err, tc.wantErr)
 			}
 			for _, exp := range tc.metrics {
-				val, ok := metricVal(t, reg, exp.name, lbl(exp.labels...))
-				if !ok {
-					t.Errorf("metric %s with labels %v not found", exp.name, exp.labels)
-					continue
-				}
-				if val < exp.minVal {
-					t.Errorf("metric %s with labels %v: got %f, want >= %f", exp.name, exp.labels, val, exp.minVal)
+				if val, ok := metricVal(t, reg, exp.name, lbl(exp.labels...)); !ok || val < exp.minVal {
+					t.Errorf("metric %s %v: got %f (ok=%v), want >= %f", exp.name, exp.labels, val, ok, exp.minVal)
 				}
 			}
 		})

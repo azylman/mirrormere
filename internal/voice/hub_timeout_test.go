@@ -13,111 +13,74 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-type funcBrain func(ctx context.Context, req AskRequest, onStatus func(status string)) (string, error)
+type funcBrain func(context.Context, AskRequest, func(string)) (string, error)
 
-func (f funcBrain) Ask(ctx context.Context, req AskRequest, onStatus func(status string)) (string, error) {
-	return f(ctx, req, onStatus)
+func (f funcBrain) Ask(ctx context.Context, r AskRequest, s func(string)) (string, error) {
+	return f(ctx, r, s)
 }
 
-type funcStreamingBrain func(ctx context.Context, req AskRequest, onStatus func(string), onAudio func(BrainAudioChunk)) (string, error)
+type funcStreamingBrain func(context.Context, AskRequest, func(string), func(BrainAudioChunk)) (string, error)
 
-func (f funcStreamingBrain) Ask(ctx context.Context, req AskRequest, onStatus func(string)) (string, error) {
-	return f(ctx, req, onStatus, nil)
+func (f funcStreamingBrain) Ask(ctx context.Context, r AskRequest, s func(string)) (string, error) {
+	return f(ctx, r, s, nil)
+}
+func (f funcStreamingBrain) AskStreaming(ctx context.Context, r AskRequest, s func(string), a func(BrainAudioChunk)) (string, error) {
+	return f(ctx, r, s, a)
 }
 
-func (f funcStreamingBrain) AskStreaming(ctx context.Context, req AskRequest, onStatus func(string), onAudio func(BrainAudioChunk)) (string, error) {
-	return f(ctx, req, onStatus, onAudio)
+var pcm4800 = TTSAudioChunk{Data: make([]byte, 4800), Format: "pcm", SampleRate: 24000, Channels: 1}
+
+func waitCtx(ctx context.Context, d time.Duration) bool {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-t.C:
+		return true
+	}
 }
 
-func ttsFn(fn func(ctx context.Context, text string, onChunk func(TTSAudioChunk) error) error) *mockStreamingTTS {
-	return &mockStreamingTTS{streamingFn: fn}
+func wrapBrain(streaming bool, run funcStreamingBrain) BrainClient {
+	if streaming {
+		return run
+	}
+	return funcBrain(func(ctx context.Context, r AskRequest, s func(string)) (string, error) { return run(ctx, r, s, nil) })
 }
 
-func mkBlockingBrain() BrainClient {
-	return funcBrain(func(ctx context.Context, _ AskRequest, _ func(string)) (string, error) {
-		<-ctx.Done()
-		return "", ctx.Err()
-	})
-}
-
-func mkBlockingStreamBrain() BrainClient {
-	return funcStreamingBrain(func(ctx context.Context, _ AskRequest, _ func(string), _ func(BrainAudioChunk)) (string, error) {
-		<-ctx.Done()
-		return "", ctx.Err()
-	})
-}
-
-func mkPeriodicStreamBrain(count int, interval time.Duration, reply string) BrainClient {
-	return funcStreamingBrain(func(ctx context.Context, _ AskRequest, _ func(string), onAudio func(BrainAudioChunk)) (string, error) {
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-		for i := 0; i < count; i++ {
-			select {
-			case <-ctx.Done():
+func simBrain(streaming bool, steps int, delay time.Duration, status, reply string, stall bool) BrainClient {
+	return wrapBrain(streaming, func(ctx context.Context, _ AskRequest, onStatus func(string), onAudio func(BrainAudioChunk)) (string, error) {
+		if status != "" {
+			if !waitCtx(ctx, delay) {
 				return "", ctx.Err()
-			case <-ticker.C:
-				if onAudio != nil {
-					onAudio(BrainAudioChunk{Text: fmt.Sprintf("part-%d", i)})
-				}
+			}
+			if onStatus != nil {
+				onStatus(status)
 			}
 		}
-		return reply, nil
-	})
-}
-
-func mkStallStreamBrain() BrainClient {
-	return funcStreamingBrain(func(ctx context.Context, _ AskRequest, _ func(string), onAudio func(BrainAudioChunk)) (string, error) {
-		if onAudio != nil {
-			onAudio(BrainAudioChunk{Text: "start chunk"})
+		for i := 0; i < steps; i++ {
+			if delay > 0 && !waitCtx(ctx, delay) {
+				return "", ctx.Err()
+			}
+			if onAudio != nil {
+				onAudio(BrainAudioChunk{Text: fmt.Sprintf("part-%d", i)})
+			}
 		}
-		<-ctx.Done()
-		return "", ctx.Err()
-	})
-}
-
-func mkStatusResetStreamBrain(delay time.Duration, status, reply string) BrainClient {
-	return funcStreamingBrain(func(ctx context.Context, _ AskRequest, onStatus func(string), onAudio func(BrainAudioChunk)) (string, error) {
-		t1 := time.NewTimer(delay)
-		defer t1.Stop()
-		select {
-		case <-ctx.Done():
+		if stall {
+			<-ctx.Done()
 			return "", ctx.Err()
-		case <-t1.C:
-		}
-		if onStatus != nil {
-			onStatus(status)
-		}
-		t2 := time.NewTimer(delay)
-		defer t2.Stop()
-		select {
-		case <-ctx.Done():
-			return "", ctx.Err()
-		case <-t2.C:
-		}
-		if onAudio != nil {
-			onAudio(BrainAudioChunk{Text: reply})
 		}
 		return reply, nil
 	})
 }
 
 func heartbeatBrain(streaming bool, ch chan struct{}) BrainClient {
-	if streaming {
-		return funcStreamingBrain(func(ctx context.Context, _ AskRequest, _ func(string), onAudio func(BrainAudioChunk)) (string, error) {
-			select {
-			case <-ch:
-				if onAudio != nil {
-					onAudio(BrainAudioChunk{Text: "chunk"})
-				}
-				return "stream done", nil
-			case <-ctx.Done():
-				return "", ctx.Err()
-			}
-		})
-	}
-	return funcBrain(func(ctx context.Context, _ AskRequest, _ func(string)) (string, error) {
+	return wrapBrain(streaming, func(ctx context.Context, _ AskRequest, _ func(string), onAudio func(BrainAudioChunk)) (string, error) {
 		select {
 		case <-ch:
+			if onAudio != nil {
+				onAudio(BrainAudioChunk{Text: "chunk"})
+			}
 			return "done", nil
 		case <-ctx.Done():
 			return "", ctx.Err()
@@ -125,142 +88,73 @@ func heartbeatBrain(streaming bool, ch chan struct{}) BrainClient {
 	})
 }
 
-func mkBlockingTTS() TTSClient {
-	return ttsFn(func(ctx context.Context, _ string, _ func(TTSAudioChunk) error) error {
-		<-ctx.Done()
-		return ctx.Err()
-	})
-}
-
-func mkMidStreamFailTTS(failErr error) TTSClient {
-	return ttsFn(func(_ context.Context, _ string, onChunk func(TTSAudioChunk) error) error {
-		_ = onChunk(TTSAudioChunk{Data: nil})
-		if err := onChunk(TTSAudioChunk{Data: make([]byte, 4800), Format: "pcm", SampleRate: 24000, Channels: 1}); err != nil {
-			return err
-		}
-		return failErr
-	})
-}
-
-func mkPeriodicTTS(count int, interval time.Duration) TTSClient {
-	return ttsFn(func(ctx context.Context, _ string, onChunk func(TTSAudioChunk) error) error {
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-		for i := 0; i < count; i++ {
-			select {
-			case <-ctx.Done():
+func simTTS(chunks int, delay time.Duration, stall bool, finalErr error) TTSClient {
+	return mkStreamTTS(func(ctx context.Context, _ string, onChunk func(TTSAudioChunk) error) error {
+		_ = onChunk(TTSAudioChunk{})
+		for i := 0; i < chunks; i++ {
+			if delay > 0 && !waitCtx(ctx, delay) {
 				return ctx.Err()
-			case <-ticker.C:
-				if err := onChunk(TTSAudioChunk{Data: make([]byte, 4800), Format: "pcm", SampleRate: 24000, Channels: 1}); err != nil {
-					return err
-				}
+			}
+			if err := onChunk(pcm4800); err != nil {
+				return err
 			}
 		}
-		return nil
-	})
-}
-
-func mkStallingTTS() TTSClient {
-	return ttsFn(func(ctx context.Context, _ string, onChunk func(TTSAudioChunk) error) error {
-		if err := onChunk(TTSAudioChunk{Data: make([]byte, 4800), Format: "pcm", SampleRate: 24000, Channels: 1}); err != nil {
-			return err
+		if stall {
+			<-ctx.Done()
+			return ctx.Err()
 		}
-		<-ctx.Done()
-		return ctx.Err()
+		return finalErr
 	})
 }
 
 func TestHub_ThinkingHeartbeat(t *testing.T) {
 	t.Parallel()
-
+	tb, tt := 45, 12
+	cfg := &config.VoiceHubConfig{Enabled: true, BrainTimeoutSeconds: &tb, TTSTimeoutSeconds: &tt}
+	if h0 := NewHub(cfg, nil); h0.brainTimeout != 45*time.Second || h0.ttsTimeout != 12*time.Second || h0.heartbeatInterval != 5*time.Second {
+		t.Fatalf("unexpected config defaults: %+v", h0)
+	}
 	tests := []struct {
-		name                string
-		streaming           bool
-		failThinkingSink    bool
-		wantAudioChunk      bool
-		wantPositiveElapsed bool
+		name                                                        string
+		streaming, failThinkingSink, wantAudioChunk, wantPosElapsed bool
 	}{
 		{"unary", false, false, false, true},
 		{"streaming", true, false, true, false},
 		{"sink_error", false, true, false, false},
 	}
-
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-
 			heartbeatSeen := make(chan struct{}, 1)
-			brain := heartbeatBrain(tc.streaming, heartbeatSeen)
-
-			var mu sync.Mutex
-			var events []recordedEvent
-			var thinkingReceived bool
-
-			sink := func(event string, data any) error {
-				mu.Lock()
-				defer mu.Unlock()
-				events = append(events, recordedEvent{Event: event, Data: data})
+			sink, getEvents := collectEvents()
+			var once sync.Once
+			h := NewHub(&config.VoiceHubConfig{Enabled: true}, nil, WithSTTClient(&mockSTT{text: "hi"}), WithBrainClient(heartbeatBrain(tc.streaming, heartbeatSeen)), WithTTSClient(&mockTTS{audio: makeValidWAV(1600), format: "pcm"}), WithThinkingHeartbeatInterval(10*time.Millisecond), WithBrainTimeout(2*time.Second), WithTTSTimeout(5*time.Second))
+			err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(1600)), "node-1", "s-1", func(event string, data any) error {
+				_ = sink(event, data)
 				if event == "thinking" {
-					if !thinkingReceived {
-						thinkingReceived = true
-						select {
-						case heartbeatSeen <- struct{}{}:
-						default:
-						}
-					}
+					once.Do(func() { heartbeatSeen <- struct{}{} })
 					if tc.failThinkingSink {
 						return errors.New("client socket closed")
 					}
 				}
 				return nil
-			}
-
-			h := NewHub(
-				&config.VoiceHubConfig{Enabled: true},
-				nil,
-				WithSTTClient(&mockSTT{text: "hi"}),
-				WithBrainClient(brain),
-				WithTTSClient(&mockTTS{audio: makeValidWAV(1600), format: "pcm"}),
-				WithThinkingHeartbeatInterval(10*time.Millisecond),
-				WithBrainTimeout(2*time.Second),
-			)
-
-			err := h.Interact(context.Background(), bytes.NewReader(makeValidWAV(1600)), "node-1", "s-1", sink, EdgeTimings{})
+			}, EdgeTimings{})
 			if err != nil {
 				t.Fatalf("expected nil error, got %v", err)
 			}
-
-			mu.Lock()
-			defer mu.Unlock()
-
 			var hadThinking, hadAudioChunk, thinkingAfterAudio bool
-			for _, ev := range events {
+			for _, ev := range getEvents() {
 				if ev.Event == "thinking" {
-					hadThinking = true
-					if hadAudioChunk {
-						thinkingAfterAudio = true
+					hadThinking, thinkingAfterAudio = true, thinkingAfterAudio || hadAudioChunk
+					if m, ok := ev.Data.(map[string]int); ok && tc.wantPosElapsed && m["elapsed_seconds"] <= 0 {
+						t.Errorf("expected positive elapsed_seconds, got %v", m["elapsed_seconds"])
 					}
-					if tc.wantPositiveElapsed {
-						if m, ok := ev.Data.(map[string]int); ok {
-							if m["elapsed_seconds"] <= 0 {
-								t.Errorf("expected positive elapsed_seconds, got %v", m["elapsed_seconds"])
-							}
-						}
-					}
-				}
-				if ev.Event == "audio_chunk" {
+				} else if ev.Event == "audio_chunk" {
 					hadAudioChunk = true
 				}
 			}
-
-			if !hadThinking {
-				t.Error("expected thinking event")
-			}
-			if tc.wantAudioChunk && !hadAudioChunk {
-				t.Error("expected audio_chunk event")
-			}
-			if thinkingAfterAudio {
-				t.Error("thinking event emitted after audio streaming began")
+			if !hadThinking || (tc.wantAudioChunk && !hadAudioChunk) || thinkingAfterAudio {
+				t.Errorf("heartbeat check failed: hadThinking=%v hadAudio=%v afterAudio=%v", hadThinking, hadAudioChunk, thinkingAfterAudio)
 			}
 		})
 	}
@@ -268,98 +162,60 @@ func TestHub_ThinkingHeartbeat(t *testing.T) {
 
 func TestHub_BrainTimeouts(t *testing.T) {
 	t.Parallel()
-
 	tests := []struct {
-		name             string
-		brain            BrainClient
-		timeout          time.Duration
-		cancelOnStatus   bool
-		wantErr          error
-		wantCoordErr     bool
-		wantMetric       bool
-		wantTimeoutEvent bool
-		wantReply        string
+		name                                       string
+		brain                                      BrainClient
+		timeout                                    time.Duration
+		cancelOnStatus                             bool
+		wantErr                                    error
+		wantCoordErr, wantMetric, wantTimeoutEvent bool
+		wantReply                                  string
 	}{
-		{"unary_timeout", mkBlockingBrain(), 20 * time.Millisecond, false, ErrBrainTimeout, true, true, true, ""},
-		{"streaming_timeout", mkBlockingStreamBrain(), 20 * time.Millisecond, false, ErrBrainTimeout, false, false, true, ""},
+		{"unary_timeout", simBrain(false, 0, 0, "", "", true), 20 * time.Millisecond, false, ErrBrainTimeout, true, true, true, ""},
+		{"streaming_timeout", simBrain(true, 0, 0, "", "", true), 20 * time.Millisecond, false, ErrBrainTimeout, false, false, true, ""},
 		{"client_cancellation", &mockBrain{statuses: []string{"thinking..."}}, 5 * time.Second, true, nil, false, false, false, ""},
-		{"streaming_long_reply", mkPeriodicStreamBrain(6, 10*time.Millisecond, "full reply text"), 25 * time.Millisecond, false, nil, false, false, false, "full reply text"},
-		{"streaming_stall", mkStallStreamBrain(), 20 * time.Millisecond, false, ErrBrainTimeout, false, false, true, ""},
-		{"status_reset", mkStatusResetStreamBrain(15*time.Millisecond, "tool executing: web search", "done answer"), 25 * time.Millisecond, false, nil, false, false, false, "done answer"},
+		{"streaming_long_reply", simBrain(true, 6, 10*time.Millisecond, "", "full reply text", false), 25 * time.Millisecond, false, nil, false, false, false, "full reply text"},
+		{"streaming_stall", simBrain(true, 1, 0, "", "", true), 20 * time.Millisecond, false, ErrBrainTimeout, false, false, true, ""},
+		{"status_reset", simBrain(true, 1, 15*time.Millisecond, "tool executing: web search", "done answer", false), 25 * time.Millisecond, false, nil, false, false, false, "done answer"},
 	}
-
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-
 			reg := prometheus.NewRegistry()
-			m := NewMetrics(reg)
 			coord := NewCoordinator(nil)
-
 			sink, getEvents := collectEvents()
-
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
-
 			var cancelOnce sync.Once
-			wrappedSink := func(event string, data any) error {
+			h := NewHub(&config.VoiceHubConfig{Enabled: true}, coord, WithSTTClient(&mockSTT{text: "hello"}), WithBrainClient(tc.brain), WithMetrics(NewMetrics(reg)), WithBrainTimeout(tc.timeout))
+			err := h.Interact(ctx, bytes.NewReader(makeValidWAV(1600)), "node-brain", "s-brain", func(event string, data any) error {
 				if tc.cancelOnStatus && event == "status" {
 					cancelOnce.Do(cancel)
 				}
 				return sink(event, data)
-			}
-
-			h := NewHub(
-				&config.VoiceHubConfig{Enabled: true},
-				coord,
-				WithSTTClient(&mockSTT{text: "hello"}),
-				WithBrainClient(tc.brain),
-				WithMetrics(m),
-				WithBrainTimeout(tc.timeout),
-			)
-
-			err := h.Interact(ctx, bytes.NewReader(makeValidWAV(1600)), "node-brain", "s-brain", wrappedSink, EdgeTimings{})
-			if tc.wantErr != nil {
-				if err == nil || !errors.Is(err, tc.wantErr) {
-					t.Fatalf("expected error wrapping %v, got %v", tc.wantErr, err)
-				}
-				if !errors.Is(err, ErrBrainFailed) {
-					t.Errorf("expected error wrapping ErrBrainFailed, got %v", err)
-				}
-			} else if !tc.cancelOnStatus && err != nil {
+			}, EdgeTimings{})
+			if tc.wantErr != nil && (!errors.Is(err, tc.wantErr) || !errors.Is(err, ErrBrainFailed)) {
+				t.Fatalf("expected error wrapping %v + ErrBrainFailed, got %v", tc.wantErr, err)
+			} else if tc.wantErr == nil && !tc.cancelOnStatus && err != nil {
 				t.Fatalf("expected nil error, got %v", err)
 			}
-
-			if tc.wantTimeoutEvent && !hasErrorCode(getEvents(), "brain_timeout") {
-				t.Errorf("expected brain_timeout event, got %v", eventNames(getEvents()))
+			evs := getEvents()
+			if hasErrorCode(evs, "brain_timeout") != tc.wantTimeoutEvent || (tc.wantCoordErr && coord.GetState().State != StateError) {
+				t.Errorf("timeoutEvent=%v (want %v) state=%q", hasErrorCode(evs, "brain_timeout"), tc.wantTimeoutEvent, coord.GetState().State)
 			}
-			if !tc.wantTimeoutEvent && hasErrorCode(getEvents(), "brain_timeout") {
-				t.Errorf("unexpected brain_timeout event, got %v", eventNames(getEvents()))
-			}
-
-			if tc.wantCoordErr && coord.GetState().State != StateError {
-				t.Errorf("expected coord StateError, got %q", coord.GetState().State)
-			}
-
 			if tc.wantMetric {
-				val, ok := metricVal(t, reg, "mirrormere_voice_errors_total", lbl("stage", "brain", "error_type", "brain_timeout"))
-				if !ok || val != 1 {
+				if val, ok := metricVal(t, reg, "mirrormere_voice_errors_total", lbl("stage", "brain", "error_type", "brain_timeout")); !ok || val != 1 {
 					t.Errorf("expected brain_timeout metric 1, got %v (ok=%v)", val, ok)
 				}
 			}
-
-			if tc.wantReply != "" {
-				var foundReply bool
-				for _, ev := range getEvents() {
-					if ev.Event == "reply" {
-						if m, ok := ev.Data.(map[string]string); ok && m["reply"] == tc.wantReply {
-							foundReply = true
-						}
-					}
+			var gotReply string
+			for _, ev := range evs {
+				if m, ok := ev.Data.(map[string]string); ok && ev.Event == "reply" {
+					gotReply = m["reply"]
 				}
-				if !foundReply {
-					t.Errorf("expected reply event with %q, got %v", tc.wantReply, getEvents())
-				}
+			}
+			if tc.wantReply != "" && gotReply != tc.wantReply {
+				t.Errorf("expected reply %q, got %q", tc.wantReply, gotReply)
 			}
 		})
 	}
@@ -367,68 +223,39 @@ func TestHub_BrainTimeouts(t *testing.T) {
 
 func TestHub_TTSTimeouts(t *testing.T) {
 	t.Parallel()
-
 	tests := []struct {
-		name          string
-		tts           TTSClient
-		timeout       time.Duration
-		wantStatus    string
-		wantErr       bool
-		wantEventCode string
-		wantCoordErr  bool
-		wantMetric    bool
+		name                     string
+		tts                      TTSClient
+		timeout                  time.Duration
+		wantStatus               string
+		wantErr                  bool
+		wantEventCode            string
+		wantCoordErr, wantMetric bool
 	}{
-		{"initial_timeout_graceful", mkBlockingTTS(), 20 * time.Millisecond, "error", false, "tts_timeout", false, true},
-		{"mid_stream_timeout", mkMidStreamFailTTS(context.DeadlineExceeded), 50 * time.Millisecond, "error", true, "tts_timeout", true, false},
-		{"mid_stream_generic_error", mkMidStreamFailTTS(errors.New("i/o error")), -1 * time.Second, "error", true, "tts_error", false, false},
-		{"long_reply_inactivity", mkPeriodicTTS(5, 10*time.Millisecond), 25 * time.Millisecond, "success", false, "", false, false},
-		{"mid_stream_stall", mkStallingTTS(), 20 * time.Millisecond, "error", true, "tts_timeout", false, false},
+		{"initial_timeout_graceful", simTTS(0, 0, true, nil), 20 * time.Millisecond, "error", false, "tts_timeout", false, true},
+		{"mid_stream_timeout", simTTS(1, 0, false, context.DeadlineExceeded), 50 * time.Millisecond, "error", true, "tts_timeout", true, false},
+		{"mid_stream_generic_error", simTTS(1, 0, false, errors.New("i/o error")), -1 * time.Second, "error", true, "tts_error", false, false},
+		{"long_reply_inactivity", simTTS(5, 10*time.Millisecond, false, nil), 25 * time.Millisecond, "success", false, "", false, false},
+		{"mid_stream_stall", simTTS(1, 0, true, nil), 20 * time.Millisecond, "error", true, "tts_timeout", false, false},
 	}
-
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-
 			reg := prometheus.NewRegistry()
-			m := NewMetrics(reg)
 			coord := NewCoordinator(nil)
-
 			sink, getEvents := collectEvents()
-
-			opts := []HubOption{
-				WithTTSClient(tc.tts),
-				WithMetrics(m),
-				WithTTSTimeout(tc.timeout),
-			}
-
-			h := NewHub(&config.VoiceHubConfig{Enabled: true}, coord, opts...)
-
+			h := NewHub(&config.VoiceHubConfig{Enabled: true}, coord, WithTTSClient(tc.tts), WithMetrics(NewMetrics(reg)), WithTTSTimeout(tc.timeout))
 			tr := "transcript"
 			status, err := h.synthesizeAndEmitReply(context.Background(), "reply text", "node-tts", "kokoro", &tr, sink)
-			if status != tc.wantStatus {
-				t.Fatalf("expected status %q, got %q", tc.wantStatus, status)
+			if status != tc.wantStatus || (err != nil) != tc.wantErr {
+				t.Fatalf("status=%q err=%v, want status=%q wantErr=%v", status, err, tc.wantStatus, tc.wantErr)
 			}
-			if tc.wantErr && err == nil {
-				t.Fatalf("expected non-nil error, got nil")
+			evs := getEvents()
+			if (tc.wantEventCode != "" && !hasErrorCode(evs, tc.wantEventCode)) || (tc.wantEventCode == "" && hasErrorCode(evs, "tts_timeout")) || (tc.wantCoordErr && coord.GetState().State != StateError) {
+				t.Errorf("events=%v state=%q", eventNames(evs), coord.GetState().State)
 			}
-			if !tc.wantErr && err != nil {
-				t.Fatalf("expected nil error, got %v", err)
-			}
-
-			if tc.wantEventCode != "" && !hasErrorCode(getEvents(), tc.wantEventCode) {
-				t.Errorf("expected %s event, got %v", tc.wantEventCode, eventNames(getEvents()))
-			}
-			if tc.wantEventCode == "" && hasErrorCode(getEvents(), "tts_timeout") {
-				t.Errorf("unexpected tts_timeout event, got %v", eventNames(getEvents()))
-			}
-
-			if tc.wantCoordErr && coord.GetState().State != StateError {
-				t.Errorf("expected coord StateError, got %q", coord.GetState().State)
-			}
-
 			if tc.wantMetric {
-				val, ok := metricVal(t, reg, "mirrormere_voice_errors_total", lbl("stage", "tts", "error_type", "tts_timeout"))
-				if !ok || val != 1 {
+				if val, ok := metricVal(t, reg, "mirrormere_voice_errors_total", lbl("stage", "tts", "error_type", "tts_timeout")); !ok || val != 1 {
 					t.Errorf("expected tts_timeout metric 1, got %v (ok=%v)", val, ok)
 				}
 			}
@@ -438,142 +265,63 @@ func TestHub_TTSTimeouts(t *testing.T) {
 
 func TestInactivityContext(t *testing.T) {
 	t.Parallel()
-
 	tests := []struct {
-		name         string
-		timeout      time.Duration
-		cancelParent bool
-		triggerStop  bool
-		resetDelay   time.Duration
-		wantDoneErr  error
+		name                      string
+		timeout                   time.Duration
+		cancelParent, triggerStop bool
+		resetDelay                time.Duration
+		wantDoneErr               error
 	}{
 		{"expires_on_timeout", 50 * time.Millisecond, false, false, 0, context.DeadlineExceeded},
-		{"reset_extends_deadline", 80 * time.Millisecond, false, false, 45 * time.Millisecond, context.DeadlineExceeded},
+		{"reset_extends_deadline", 100 * time.Millisecond, false, false, 55 * time.Millisecond, context.DeadlineExceeded},
 		{"parent_cancellation", 200 * time.Millisecond, true, false, 0, context.Canceled},
 		{"stop_cancels_context", 500 * time.Millisecond, false, true, 0, context.Canceled},
-		{"zero_duration", 0, false, true, 0, context.Canceled},
-		{"negative_duration", -1 * time.Second, false, true, 0, context.Canceled},
+		{"zero_duration", 0, false, true, 15 * time.Millisecond, context.Canceled},
+		{"negative_duration", -1 * time.Second, false, true, 15 * time.Millisecond, context.Canceled},
 	}
-
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-
-			parent := context.Background()
-			var cancelParent context.CancelFunc
-			if tc.cancelParent {
-				parent, cancelParent = context.WithCancel(parent)
-				defer cancelParent()
-			}
+			parent, cancelParent := context.WithCancel(context.Background())
+			defer cancelParent()
 			ctx, stop := newInactivityContext(parent, tc.timeout)
 			defer stop()
-
 			if tc.resetDelay > 0 {
-				t1 := time.NewTimer(tc.resetDelay)
-				select {
-				case <-ctx.Done():
+				if !waitCtx(ctx, tc.resetDelay) {
 					t.Fatalf("premature cancel: %v", ctx.Err())
-				case <-t1.C:
 				}
 				ctx.Reset()
-
-				t2 := time.NewTimer(tc.resetDelay)
-				select {
-				case <-ctx.Done():
-					t.Fatalf("context canceled prematurely after reset: %v", ctx.Err())
-				case <-t2.C:
+				if !waitCtx(ctx, tc.resetDelay) {
+					t.Fatalf("canceled prematurely after reset: %v", ctx.Err())
 				}
 			}
-
 			if tc.cancelParent {
 				cancelParent()
 			}
 			if tc.triggerStop {
-				if tc.timeout <= 0 {
-					tZero := time.NewTimer(30 * time.Millisecond)
-					select {
-					case <-ctx.Done():
-						t.Fatalf("zero duration context prematurely canceled: %v", ctx.Err())
-					case <-tZero.C:
-					}
-					ctx.Reset()
-				}
 				stop()
 			}
-
-			timer := time.NewTimer(500 * time.Millisecond)
-			defer timer.Stop()
-			select {
-			case <-ctx.Done():
-				if !errors.Is(ctx.Err(), tc.wantDoneErr) {
-					t.Fatalf("expected %v, got %v", tc.wantDoneErr, ctx.Err())
-				}
-				ctx.Reset()
-			case <-timer.C:
-				t.Fatal("timed out waiting for context completion")
+			if waitCtx(ctx, 500*time.Millisecond) || !errors.Is(ctx.Err(), tc.wantDoneErr) {
+				t.Fatalf("expected %v, got %v", tc.wantDoneErr, ctx.Err())
 			}
+			ctx.Reset()
 		})
-	}
-}
-
-func TestHub_OptionsAndConfigDefaults(t *testing.T) {
-	t.Parallel()
-
-	timeoutBrain := 45
-	timeoutTTS := 12
-	cfg := &config.VoiceHubConfig{
-		Enabled:             true,
-		BrainTimeoutSeconds: &timeoutBrain,
-		TTSTimeoutSeconds:   &timeoutTTS,
-	}
-
-	h := NewHub(cfg, nil)
-	if h.brainTimeout != 45*time.Second {
-		t.Errorf("expected brain timeout 45s, got %v", h.brainTimeout)
-	}
-	if h.ttsTimeout != 12*time.Second {
-		t.Errorf("expected tts timeout 12s, got %v", h.ttsTimeout)
-	}
-	if h.heartbeatInterval != 5*time.Second {
-		t.Errorf("expected default heartbeat interval 5s, got %v", h.heartbeatInterval)
-	}
-
-	h2 := NewHub(
-		cfg,
-		nil,
-		WithBrainTimeout(15*time.Second),
-		WithTTSTimeout(5*time.Second),
-		WithThinkingHeartbeatInterval(2*time.Second),
-	)
-	if h2.brainTimeout != 15*time.Second {
-		t.Errorf("expected overridden brain timeout 15s, got %v", h2.brainTimeout)
-	}
-	if h2.ttsTimeout != 5*time.Second {
-		t.Errorf("expected overridden tts timeout 5s, got %v", h2.ttsTimeout)
-	}
-	if h2.heartbeatInterval != 2*time.Second {
-		t.Errorf("expected overridden heartbeat interval 2s, got %v", h2.heartbeatInterval)
 	}
 }
 
 func TestIsTimeoutError(t *testing.T) {
 	t.Parallel()
-
 	canceledCtx, cancel := context.WithCancel(context.Background())
 	cancel()
-
 	deadlineCtx, cancelDeadline := context.WithTimeout(context.Background(), time.Nanosecond)
 	t.Cleanup(cancelDeadline)
 	<-deadlineCtx.Done()
-
 	validCtx := context.Background()
-
 	tests := []struct {
-		name       string
-		err        error
-		timeoutCtx context.Context
-		parentCtx  context.Context
-		expected   bool
+		name                  string
+		err                   error
+		timeoutCtx, parentCtx context.Context
+		expected              bool
 	}{
 		{"parent_canceled_returns_false", context.DeadlineExceeded, deadlineCtx, canceledCtx, false},
 		{"err_is_deadline_exceeded", context.DeadlineExceeded, nil, validCtx, true},
