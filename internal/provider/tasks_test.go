@@ -86,11 +86,7 @@ func TestTasksProvider_Init(t *testing.T) {
 	}{
 		{"missing_source", "requires valid upstream source", map[string]any{}, mkOpts("w", nil, "")},
 		{"local_source_rejected", "requires valid upstream source", map[string]any{"source": "local"}, mkOpts("w", nil, "")},
-		{"http_missing_block", "requires 'http' config block", map[string]any{"source": "http"}, mkOpts("w", nil, "")},
-		{"http_missing_base_url", "requires 'http.base_url'", mkCfg("http", "http", map[string]any{}), mkOpts("w", nil, "")},
-		{"http_invalid_url", "failed to create http task adapter", mkCfg("http", "http", map[string]any{"base_url": "ftp://bad"}), mkOpts("w", nil, "")},
-		{"http_secrets_success", "", mkCfg("http", "http", map[string]any{"base_url": "https://example.com", "token_env": "TOK"}), mkOpts("w", map[string]string{"TOK": "sec"}, "")},
-		{"http_token_env_res", "", mkCfg("http", "http", map[string]any{"base_url": "https://example.com/api", "token_env": "MTOK"}), mkOpts("w", map[string]string{"MTOK": "sec"}, "")},
+		{"http_source_rejected", "requires valid upstream source", map[string]any{"source": "http"}, mkOpts("w", nil, "")},
 		{"gtasks_missing_block", "requires 'gtasks' config block", map[string]any{"source": "gtasks"}, mkOpts("w", nil, "")},
 		{"gtasks_missing_tasklist", "requires 'gtasks.tasklist_id'", mkCfg("gtasks", "gtasks", map[string]any{}), mkOpts("w", nil, "")},
 		{"gtasks_invalid_url", "failed to create gtasks adapter", mkCfg("gtasks", "gtasks", map[string]any{"tasklist_id": "tl", "base_url": "ftp://bad"}), mkOpts("w", nil, "")},
@@ -107,9 +103,9 @@ func TestTasksProvider_Init(t *testing.T) {
 		{"todoist_opts_token", "", mkCfg("todoist", "todoist", map[string]any{}), mkOpts("w", nil, "tok")},
 		{"todoist_namespaced_secret", "", mkCfg("todoist", "todoist", map[string]any{}), mkOpts("w", map[string]string{"todoist.token": "tok"}, "")},
 		{"todoist_invalid_url", "failed to create todoist adapter", mkCfg("todoist", "todoist", map[string]any{"token": "tok", "base_url": "ftp://bad"}), mkOpts("w", nil, "")},
-		{"custom_float_show", "", map[string]any{"source": "http", "http": map[string]any{"base_url": "https://example.com"}, "show_completed": float64(7), "list_name": "Custom"}, mkOpts("w", nil, "tok")},
-		{"custom_str_show", "", map[string]any{"source": "http", "http": map[string]any{"base_url": "https://example.com"}, "show_completed": "10"}, mkOpts("w", nil, "tok")},
-		{"custom_neg_show", "", map[string]any{"source": "http", "http": map[string]any{"base_url": "https://example.com"}, "show_completed": -2}, mkOpts("w", nil, "tok")},
+		{"custom_float_show", "", map[string]any{"source": "todoist", "todoist": map[string]any{"token": "tok"}, "show_completed": float64(7), "list_name": "Custom"}, mkOpts("w", nil, "tok")},
+		{"custom_str_show", "", map[string]any{"source": "todoist", "todoist": map[string]any{"token": "tok"}, "show_completed": "10"}, mkOpts("w", nil, "tok")},
+		{"custom_neg_show", "", map[string]any{"source": "todoist", "todoist": map[string]any{"token": "tok"}, "show_completed": -2}, mkOpts("w", nil, "tok")},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -168,8 +164,8 @@ func TestTasksProvider_Fetch(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	due := "2026-10-01"
-	lCh := mkTaskList("daily-chores", "Daily Chores", "http")
-	fakeWithDue := &fakeAdapter{name: "http", list: &lCh, items: []tasks.ListItem{{ID: "t1", ListID: "daily-chores", Title: "Water plants", DueDate: &due}}}
+	lCh := mkTaskList("daily-chores", "Daily Chores", "todoist")
+	fakeWithDue := &fakeAdapter{name: "todoist", list: &lCh, items: []tasks.ListItem{{ID: "t1", ListID: "daily-chores", Title: "Water plants", DueDate: &due}}}
 	tests := []struct {
 		name, wantErrSub, wantListID string
 		adapter                      adapters.Adapter
@@ -179,10 +175,10 @@ func TestTasksProvider_Fetch(t *testing.T) {
 		wantItems                    int
 	}{
 		{"uninitialized", "not initialized", "", nil, nil, provider.InitOptions{}, true, 0},
-		{"adapter_success", "", "daily-chores", fakeWithDue, map[string]any{"list_id": "daily-chores", "source": "http", "show_completed": 5}, mkOpts("widget-chores", nil, ""), false, 1},
-		{"adapter_failure", "upstream timeout", "", &fakeAdapter{name: "http", fetchErr: errors.New("upstream timeout")}, map[string]any{"list_id": "daily-chores"}, mkOpts("widget-chores", nil, ""), false, 0},
+		{"adapter_success", "", "daily-chores", fakeWithDue, map[string]any{"list_id": "daily-chores", "source": "todoist", "show_completed": 5}, mkOpts("widget-chores", nil, ""), false, 1},
+		{"adapter_failure", "upstream timeout", "", &fakeAdapter{name: "todoist", fetchErr: errors.New("upstream timeout")}, map[string]any{"list_id": "daily-chores"}, mkOpts("widget-chores", nil, ""), false, 0},
 		{"id_normalization", "", "canonical-chores", &fakeAdapter{name: "gtasks", list: &tasks.List{ID: "ext-123", Name: "Ext Title", Source: "gtasks"}, items: []tasks.ListItem{mkTaskItem("task-1", "ext-123", "Clean kitchen", "", false)}}, map[string]any{"list_id": "canonical-chores", "source": "gtasks"}, mkOpts("my-widget", nil, ""), false, 1},
-		{"adapter_nil_list", "adapter returned nil list", "", &fakeAdapter{name: "http"}, map[string]any{"list_id": "nil-test", "source": "http"}, mkOpts("my-widget", nil, ""), false, 0},
+		{"adapter_nil_list", "adapter returned nil list", "", &fakeAdapter{name: "todoist"}, map[string]any{"list_id": "nil-test", "source": "todoist"}, mkOpts("my-widget", nil, ""), false, 0},
 		{"todoist_integration", "", "family-tasks", nil, map[string]any{"list_id": "family-tasks", "source": "todoist", "todoist": map[string]any{"project_id": "p-family", "token": "mock-token", "base_url": server.URL}}, mkOpts("family-tasks", nil, ""), false, 1},
 	}
 	for _, tc := range tests {
@@ -272,7 +268,7 @@ func TestTasksProvider_CompleteItem(t *testing.T) {
 		})
 	}
 
-	pList := provider.NewTasksProviderWithAdapter(&fakeAdapter{name: "http"})
+	pList := provider.NewTasksProviderWithAdapter(&fakeAdapter{name: "todoist"})
 	_ = pList.Init(context.Background(), map[string]any{"list_id": "upstream-list"}, provider.InitOptions{ID: "w-tasks"})
 	if pList.ListID() != "upstream-list" {
 		t.Errorf("expected ListID 'upstream-list', got %q", pList.ListID())

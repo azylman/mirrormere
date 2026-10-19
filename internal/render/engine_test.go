@@ -380,7 +380,7 @@ func TestEngine_BuiltinWidgetPackages(t *testing.T) {
 	repoWidgetsDir := filepath.Join("..", "..", "widgets")
 	loader := widget.NewLoader(repoWidgetsDir, t.TempDir())
 	packages := make(map[string]*domain.Package)
-	for _, name := range []string{"weather-forecast", "calendar-agenda", "tasks", "photo-carousel", "chat-log"} {
+	for _, name := range []string{"weather-forecast", "calendar-feed", "tasks", "photo-carousel", "chat-log"} {
 		pkg, err := loader.LoadPackage(name)
 		if err != nil {
 			t.Fatalf("failed to load package %q: %v", name, err)
@@ -425,14 +425,14 @@ func TestEngine_BuiltinWidgetPackages(t *testing.T) {
 		{name: "weather-forecast loc-named", widgetType: "weather-forecast", dims: []int{2, 1}, cfg: map[string]any{"location_name": "Ayda's School"}, state: mockState{data: weatherData, state: "healthy", timestamp: "2026-09-26T12:00:00Z"}, wantContains: []string{"weather-location-name", "Ayda"}},
 		{name: "weather-forecast loading named", widgetType: "weather-forecast", dims: []int{2, 1}, cfg: map[string]any{"name": "Home"}, state: mockState{data: nil, state: "healthy"}, wantContains: []string{"Home", "Loading weather forecast..."}},
 		{
-			name: "calendar-agenda loaded", widgetType: "calendar-agenda", dims: []int{4, 2},
+			name: "calendar-feed loaded", widgetType: "calendar-feed", dims: []int{4, 2},
 			cfg:             map[string]any{"title": "Family Schedule", "calendars": []any{map[string]any{"name": "Active Family", "color": "#3b82f6", "enabled": true}, map[string]any{"name": "Disabled Work", "color": "#ef4444", "enabled": false}}},
 			state:           mockState{data: calData, state: "healthy", timestamp: "2026-09-26T12:00:00Z"},
 			wantContains:    []string{"Soccer Practice", "Community Park Field 2", "Family Calendar", "Trash", "All Day", "Family Schedule", "Active Family", "1 Calendar"},
 			wantNotContains: []string{"Ancient Practice", "Bring soccer balls and water bottles", "Upcoming", "Disabled Work"},
 		},
-		{name: "calendar-agenda empty", widgetType: "calendar-agenda", dims: []int{4, 2}, state: mockState{data: emptyCalData, state: "healthy", timestamp: "2026-09-26T12:00:00Z"}, wantContains: []string{"No upcoming events", "Upcoming"}, wantNotContains: []string{"calendar-header-chips"}},
-		{name: "calendar-agenda loading", widgetType: "calendar-agenda", dims: []int{4, 2}, state: mockState{data: nil, state: "healthy"}, wantContains: []string{"Loading calendar"}},
+		{name: "calendar-feed empty", widgetType: "calendar-feed", dims: []int{4, 2}, state: mockState{data: emptyCalData, state: "healthy", timestamp: "2026-09-26T12:00:00Z"}, wantContains: []string{"No upcoming events", "Upcoming"}, wantNotContains: []string{"calendar-header-chips"}},
+		{name: "calendar-feed loading", widgetType: "calendar-feed", dims: []int{4, 2}, state: mockState{data: nil, state: "healthy"}, wantContains: []string{"Loading calendar"}},
 		{
 			name: "tasks loaded", widgetType: "tasks", dims: []int{3, 2}, state: mockState{data: tasksLoaded, state: "healthy", timestamp: "2026-09-26T12:00:00Z"},
 			wantContains:    []string{"Groceries", "Oat Milk", "Coffee Beans", "task-item-done", "@Alex", "1 to do", "tasks-sparkle-icon", "tasks-icon-box", "tasks-progress"},

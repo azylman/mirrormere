@@ -351,18 +351,16 @@ func derefSlice(v any) []any {
 
 func validateTasksSourceConfig(widgetID, source string, cfg map[string]any) error {
 	p := "[Mirrormere Config Error] tasks widget '" + widgetID + "'"
-	if source != "http" && source != "gtasks" && source != "todoist" {
-		return fmt.Errorf("%s declares invalid source '%s' (must be 'gtasks', 'http', or 'todoist')", p, source)
+	if source != "gtasks" && source != "todoist" {
+		return fmt.Errorf("%s declares invalid source '%s' (must be 'gtasks' or 'todoist')", p, source)
 	}
 	subCfg, ok := cfg[source].(map[string]any)
 	if !ok || subCfg == nil {
 		return fmt.Errorf("%s with source '%s' requires '%s' config block", p, source, source)
 	}
 	u := derefStr(subCfg["base_url"])
-	if source == "http" && u == "" {
-		return fmt.Errorf("%s with source 'http' requires non-empty 'http.base_url'", p)
-	} else if (source == "http" || (source == "todoist" && u != "")) && !isValidHTTPURL(u) {
-		return fmt.Errorf("%s: invalid %s.base_url '%s' (must be http:// or https:// with host)", p, source, u)
+	if source == "todoist" && u != "" && !isValidHTTPURL(u) {
+		return fmt.Errorf("%s: invalid todoist.base_url '%s' (must be http:// or https:// with host)", p, u)
 	} else if source == "gtasks" && derefStr(subCfg["tasklist_id"]) == "" {
 		return fmt.Errorf("%s with source 'gtasks' requires non-empty 'gtasks.tasklist_id'", p)
 	}
@@ -374,7 +372,7 @@ func validateDomainRulesStage(cfg *Config, registry map[string]*domain.Package) 
 		if pkg := registry[w.Type]; pkg != nil && pkg.Manifest.Provider == "http" && w.Endpoint == "" {
 			return fmt.Errorf("widget '%s': provider 'http' requires non-empty 'endpoint' URL", w.ID)
 		}
-		if (w.Type == "calendar-grid" || w.Type == "calendar-family") && validateFamilyCalendarConfig(w.ID, w.Config) != nil {
+		if w.Type == "calendar-grid" && validateFamilyCalendarConfig(w.ID, w.Config) != nil {
 			return validateFamilyCalendarConfig(w.ID, w.Config)
 		}
 		if w.Type != "tasks" {
@@ -382,7 +380,7 @@ func validateDomainRulesStage(cfg *Config, registry map[string]*domain.Package) 
 		}
 		src := derefStr(w.Config["source"])
 		if src == "" {
-			return fmt.Errorf("[Mirrormere Config Error] tasks widget '%s' requires non-empty 'source' ('gtasks', 'http', or 'todoist')", w.ID)
+			return fmt.Errorf("[Mirrormere Config Error] tasks widget '%s' requires non-empty 'source' ('gtasks' or 'todoist')", w.ID)
 		}
 		if err := validateTasksSourceConfig(w.ID, src, w.Config); err != nil {
 			return err

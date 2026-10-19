@@ -40,8 +40,8 @@ func createStandardPackages() map[string]*domain.Package {
 	cal := map[string]any{"type": "object", "required": []string{"calendars"}, "properties": map[string]any{"calendars": map[string]any{"type": "array"}}}
 	tasks := map[string]any{"type": "object", "properties": map[string]any{"list_id": map[string]any{"type": "string"}, "source": map[string]any{"type": "string"}}}
 	return map[string]*domain.Package{
-		"calendar-agenda":  mkTestPkg("calendar-agenda", "builtin", "calendar-agenda", 4, 2, 300, cal, nil),
-		"calendar-family":  mkTestPkg("calendar-family", "builtin", "calendar-agenda", 6, 2, 300, nil, nil, domain.NewDimension(4, 2), domain.NewDimension(6, 2)),
+		"calendar-feed":    mkTestPkg("calendar-feed", "builtin", "calendar-feed", 4, 2, 300, cal, nil),
+		"calendar-grid":    mkTestPkg("calendar-grid", "builtin", "calendar-feed", 6, 2, 300, nil, nil, domain.NewDimension(4, 2), domain.NewDimension(6, 2)),
 		"weather-forecast": mkTestPkg("weather-forecast", "builtin", "weather-forecast", 2, 1, 600, nil, nil),
 		"tasks":            mkTestPkg("tasks", "builtin", "tasks", 2, 1, 120, tasks, nil),
 		"spacer":           mkTestPkg("spacer", "builtin", "spacer", 2, 1, 0, nil, nil),
@@ -49,7 +49,7 @@ func createStandardPackages() map[string]*domain.Package {
 	}
 }
 
-const validBaseYAML = "timezone: America/New_York\ndisplay:\n  grid:\n    columns: 6\n    rows: 2\n  rotation:\n    interval_seconds: 30\n    transition: slide\n  widgets:\n    - id: cal-hero\n      type: calendar-agenda\n      dimensions: [4, 2]\n      pinned: true\n      config: {calendars: [{name: Family}]}\n    - id: weather-1\n      type: weather-forecast\n    - id: tasks-1\n      type: tasks\n      dimensions: [2, 1]\n      config: {list_id: chores, source: gtasks, gtasks: {tasklist_id: list-1}}\n"
+const validBaseYAML = "timezone: America/New_York\ndisplay:\n  grid:\n    columns: 6\n    rows: 2\n  rotation:\n    interval_seconds: 30\n    transition: slide\n  widgets:\n    - id: cal-hero\n      type: calendar-feed\n      dimensions: [4, 2]\n      pinned: true\n      config: {calendars: [{name: Family}]}\n    - id: weather-1\n      type: weather-forecast\n    - id: tasks-1\n      type: tasks\n      dimensions: [2, 1]\n      config: {list_id: chores, source: gtasks, gtasks: {tasklist_id: list-1}}\n"
 
 func buildFamilyYAML(membersBlock string) string { return buildFamilyWithHoursYAML("", membersBlock) }
 
@@ -58,7 +58,7 @@ func buildFamilyWithHoursYAML(hours, membersBlock string) string {
 	if hours != "" {
 		h = "        hours: " + hours + "\n"
 	}
-	return "timezone: America/New_York\ndisplay:\n  widgets:\n    - id: family-cal\n      type: calendar-family\n      dimensions: [6, 2]\n      config:\n" + h + "        shared_color: \"#3D405B\"\n        calendars:\n          - {name: alex-personal, url: \"https://example.org/alex.ics\"}\n          - {name: school, url: \"https://example.org/school.ics\"}\n        members:\n" + membersBlock + "\n"
+	return "timezone: America/New_York\ndisplay:\n  widgets:\n    - id: family-cal\n      type: calendar-grid\n      dimensions: [6, 2]\n      config:\n" + h + "        shared_color: \"#3D405B\"\n        calendars:\n          - {name: alex-personal, url: \"https://example.org/alex.ics\"}\n          - {name: school, url: \"https://example.org/school.ics\"}\n        members:\n" + membersBlock + "\n"
 }
 
 func mkMemberYAML(name, color, pattern, cals string) string {
@@ -239,19 +239,17 @@ func TestLKGC_ReloadValidationFailures(t *testing.T) {
 		{"Stage 3: nonexistent package", withLKGCWidgets(mkWYAML("w1", "nonexistent-type", "[2, 1]", "")), "widget package 'nonexistent-type' error", nil},
 		{"Stage 3: invalid package manifest", withLKGCWidgets(mkWYAML("w1", "bad-manifest-pkg", "[2, 1]", "")), "widget package 'bad-manifest-pkg' manifest invalid", withPkg("bad-manifest-pkg", &domain.Package{Type: "bad-manifest-pkg", Manifest: domain.WidgetManifest{Name: ""}})},
 		{"Stage 3: omitted dimensions without manifest default", withLKGCWidgets("    - id: w1\n      type: no-default-pkg\n"), "widget 'w1' omits 'dimensions' and package manifest 'no-default-pkg' has no valid default_dimensions", withPkg("no-default-pkg", mkTestPkg("no-default-pkg", "builtin", "no-default-pkg", 0, 0, 60, nil, nil))},
-		{"Stage 3: unsupported dimensions [3, 2]", withLKGCWidgets(mkWYAML("family-cal", "calendar-family", "[3, 2]", "")), "dimensions [3, 2] not supported by package 'calendar-family'", nil},
-		{"Stage 4: missing required property calendars", withLKGCWidgets(mkWYAML("cal-missing", "calendar-agenda", "[4, 2]", "      config: {view: month}\n") + mkWYAML("filler", "spacer", "[2, 2]", "")), "manifest config_schema validation error for widget 'cal-missing'", nil},
-		{"Stage 4: calendars type mismatch", withLKGCWidgets(mkWYAML("cal-mismatch", "calendar-agenda", "[4, 2]", "      config: {calendars: not-an-array}\n") + mkWYAML("filler", "spacer", "[2, 2]", "")), "manifest config_schema validation error for widget 'cal-mismatch'", nil},
-		{"Stage 4: nil config when schema requires properties", withLKGCWidgets(mkWYAML("cal-nil", "calendar-agenda", "[4, 2]", "") + mkWYAML("filler", "spacer", "[2, 2]", "")), "manifest config_schema validation error for widget 'cal-nil'", nil},
+		{"Stage 3: unsupported dimensions [3, 2]", withLKGCWidgets(mkWYAML("family-cal", "calendar-grid", "[3, 2]", "")), "dimensions [3, 2] not supported by package 'calendar-grid'", nil},
+		{"Stage 4: missing required property calendars", withLKGCWidgets(mkWYAML("cal-missing", "calendar-feed", "[4, 2]", "      config: {view: month}\n") + mkWYAML("filler", "spacer", "[2, 2]", "")), "manifest config_schema validation error for widget 'cal-missing'", nil},
+		{"Stage 4: calendars type mismatch", withLKGCWidgets(mkWYAML("cal-mismatch", "calendar-feed", "[4, 2]", "      config: {calendars: not-an-array}\n") + mkWYAML("filler", "spacer", "[2, 2]", "")), "manifest config_schema validation error for widget 'cal-mismatch'", nil},
+		{"Stage 4: nil config when schema requires properties", withLKGCWidgets(mkWYAML("cal-nil", "calendar-feed", "[4, 2]", "") + mkWYAML("filler", "spacer", "[2, 2]", "")), "manifest config_schema validation error for widget 'cal-nil'", nil},
 		{"Stage 5: sensor-http missing endpoint", withLKGCWidgets(mkWYAML("http-1", "sensor-http", "[2, 1]", "")), "widget 'http-1': provider 'http' requires non-empty 'endpoint' URL", nil},
 		{"Stage 5: sensor-http invalid endpoint", withLKGCWidgets(mkWYAML("http-1", "sensor-http", "[2, 1]", "      endpoint: \"ftp://not-supported\"\n")), "widget 'http-1': invalid endpoint URL", nil},
 		{"Stage 5: sensor-http hostless endpoint", withLKGCWidgets(mkWYAML("http-1", "sensor-http", "[2, 1]", "      endpoint: \"http://\"\n")), "widget 'http-1': invalid endpoint URL", nil},
 		{"Stage 5: tasks missing source", withLKGCWidgets(mkTaskYAML("tasks-slave", "[2, 1]", "chores", "", "")), "tasks widget 'tasks-slave' requires non-empty 'source'", nil},
 		{"Stage 5: tasks invalid source", withLKGCWidgets(mkTaskYAML("tasks-1", "[2, 1]", "chores", "invalid_source_type", "")), "declares invalid source 'invalid_source_type'", nil},
 		{"Stage 5: tasks local source rejected", withLKGCWidgets(mkTaskYAML("tasks-1", "[2, 1]", "chores", "local", "")), "declares invalid source 'local'", nil},
-		{"Stage 5: tasks http missing http block", withLKGCWidgets(mkTaskYAML("tasks-1", "[2, 1]", "chores", "http", "")), "tasks widget 'tasks-1' with source 'http' requires 'http' config block", nil},
-		{"Stage 5: tasks http empty base_url", withLKGCWidgets(mkTaskYAML("tasks-1", "[2, 1]", "chores", "http", "        http: {base_url: \"\"}\n")), "tasks widget 'tasks-1' with source 'http' requires non-empty 'http.base_url'", nil},
-		{"Stage 5: tasks http invalid base_url", withLKGCWidgets(mkTaskYAML("tasks-1", "[2, 1]", "chores", "http", "        http: {base_url: \"ftp://not-http\"}\n")), "invalid http.base_url 'ftp://not-http'", nil},
+		{"Stage 5: tasks http source rejected", withLKGCWidgets(mkTaskYAML("tasks-1", "[2, 1]", "chores", "http", "")), "declares invalid source 'http'", nil},
 		{"Stage 5: tasks gtasks missing tasklist_id", withLKGCWidgets(mkTaskYAML("tasks-1", "[2, 1]", "chores", "gtasks", "        gtasks: {refresh_token: dummy}\n")), "tasks widget 'tasks-1' with source 'gtasks' requires non-empty 'gtasks.tasklist_id'", nil},
 		{"Stage 5: tasks todoist missing todoist block", withLKGCWidgets(mkTaskYAML("tasks-1", "[2, 1]", "chores", "todoist", "")), "tasks widget 'tasks-1' with source 'todoist' requires 'todoist' config block", nil},
 		{"Stage 5: tasks todoist invalid base_url", withLKGCWidgets(mkTaskYAML("tasks-1", "[2, 1]", "chores", "todoist", "        todoist: {base_url: \"not-a-valid-url\"}\n")), "invalid todoist.base_url 'not-a-valid-url'", nil},
@@ -264,8 +262,8 @@ func TestLKGC_ReloadValidationFailures(t *testing.T) {
 		{"Stage 5: family empty calendar reference", buildFamilyYAML(mkMemberYAML("Alex", "#E07A5F", "solid", "[\"\"]")), "member \"Alex\" declares an empty calendar reference", nil},
 		{"Stage 5: family missing member name", buildFamilyYAML(mkMemberYAML("", "#E07A5F", "solid", "[alex-personal]")), "requires non-empty 'name'", nil},
 		{"Stage 5: family bad hours order", buildFamilyWithHoursYAML("[\"18:00\", \"08:00\"]", mkMemberYAML("Alex", "#E07A5F", "solid", "[alex-personal]")), "'hours' start \"18:00\" must be before end \"08:00\"", nil},
-		{"Stage 6: layout cell deficit", withLKGCWidgets("    - id: cal-1\n      type: calendar-agenda\n      dimensions: [4, 2]\n      config:\n        calendars: []\n    - id: weather-1\n      type: weather-forecast\n      dimensions: [2, 1]"), "Deficit", nil},
-		{"Stage 6: layout geometric conflict", withLKGCWidgets(mkWYAML("w1", "calendar-agenda", "[4, 2]", "      pinned: true\n      config: {calendars: [{name: c}]}\n") + mkWYAML("w2", "calendar-family", "[6, 2]", "      pinned: true\n")), "layout solver error", nil},
+		{"Stage 6: layout cell deficit", withLKGCWidgets("    - id: cal-1\n      type: calendar-feed\n      dimensions: [4, 2]\n      config:\n        calendars: []\n    - id: weather-1\n      type: weather-forecast\n      dimensions: [2, 1]"), "Deficit", nil},
+		{"Stage 6: layout geometric conflict", withLKGCWidgets(mkWYAML("w1", "calendar-feed", "[4, 2]", "      pinned: true\n      config: {calendars: [{name: c}]}\n") + mkWYAML("w2", "calendar-grid", "[6, 2]", "      pinned: true\n")), "layout solver error", nil},
 	}
 
 	for _, tc := range tests {
@@ -298,10 +296,9 @@ func TestLKGC_ReloadValidDomainConfigs(t *testing.T) {
 		yamlData string
 	}{
 		{"valid todoist source", withLKGCWidgets("    - id: my-todo\n      type: tasks\n      dimensions: [6, 2]\n      config:\n        list_id: test\n        source: todoist\n        todoist:\n          project_id: proj-123\n")},
-		{"valid http source", withLKGCWidgets("    - id: my-http\n      type: tasks\n      dimensions: [6, 2]\n      config:\n        list_id: test\n        source: http\n        http:\n          base_url: https://tasks.example.org\n")},
 		{"matching gtasks source with different show_completed", withLKGCWidgets("    - id: t1\n      type: tasks\n      dimensions: [3, 2]\n      config:\n        list_id: shared\n        source: gtasks\n        gtasks:\n          tasklist_id: list-123\n        show_completed: 5\n    - id: t2\n      type: tasks\n      dimensions: [3, 2]\n      config:\n        list_id: shared\n        source: gtasks\n        gtasks:\n          tasklist_id: list-123\n        show_completed: 1\n")},
-		{"valid calendar-family config", buildFamilyWithHoursYAML("[\"08:00\", \"18:00\"]", mkMemberYAML("Alex", "#E07A5F", "solid", "[alex-personal]")+mkMemberYAML("Taylor", "#81B29A", "dots", "[school]"))},
-		{"calendar-family with non-string hours elements skipped", buildFamilyWithHoursYAML("[7, 21]", mkMemberYAML("Alex", "#E07A5F", "solid", "[alex-personal]"))},
+		{"valid calendar-grid config", buildFamilyWithHoursYAML("[\"08:00\", \"18:00\"]", mkMemberYAML("Alex", "#E07A5F", "solid", "[alex-personal]")+mkMemberYAML("Taylor", "#81B29A", "dots", "[school]"))},
+		{"calendar-grid with non-string hours elements skipped", buildFamilyWithHoursYAML("[7, 21]", mkMemberYAML("Alex", "#E07A5F", "solid", "[alex-personal]"))},
 	}
 
 	for _, tc := range tests {

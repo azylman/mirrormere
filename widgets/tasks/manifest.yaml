@@ -61,16 +61,6 @@ config_schema:
         base_url:
           type: string
       additionalProperties: false
-    http:
-      type: object
-      properties:
-        base_url:
-          type: string
-        token:
-          type: string
-        token_env:
-          type: string
-      additionalProperties: false
     todoist:
       type: object
       properties:

@@ -29,7 +29,7 @@ func createPackageFixture(t *testing.T, baseDir, widgetType, manifest, view stri
 }
 
 const (
-	calManifest     = "name: Cal\nversion: \"1.0.0\"\nprovider: calendar-agenda\ndefault_dimensions: [4, 2]\nrefresh:\n  interval_seconds: 300\n"
+	calManifest     = "name: Cal\nversion: \"1.0.0\"\nprovider: calendar-feed\ndefault_dimensions: [4, 2]\nrefresh:\n  interval_seconds: 300\n"
 	weatherManifest = "name: Weather\nversion: \"1.0.0\"\nprovider: weather-forecast\ndefault_dimensions: [2, 1]\nrefresh:\n  interval_seconds: 900\n"
 	defaultManifest = "name: T\nversion: \"1.0.0\"\nprovider: t\ndefault_dimensions: [2, 1]\nconfig_schema:\n  type: object\n  properties:\n    theme:\n      type: string\n      default: dark\n"
 )
@@ -38,13 +38,13 @@ func TestLoader_WholePackageOverride(t *testing.T) {
 	t.Parallel()
 	tmp := t.TempDir()
 	b, c := filepath.Join(tmp, "b"), filepath.Join(tmp, "c")
-	createPackageFixture(t, b, "calendar-agenda", calManifest, "<div></div>", true)
+	createPackageFixture(t, b, "calendar-feed", calManifest, "<div></div>", true)
 	createPackageFixture(t, b, "weather-forecast", weatherManifest, "<div></div>", false)
-	createPackageFixture(t, c, "calendar-agenda", "name: Custom Cal\nversion: \"2.0.0\"\nprovider: calendar-agenda\ndefault_dimensions: [4, 2]\nrefresh:\n  interval_seconds: 600\n", "<div>custom</div>", false)
+	createPackageFixture(t, c, "calendar-feed", "name: Custom Cal\nversion: \"2.0.0\"\nprovider: calendar-feed\ndefault_dimensions: [4, 2]\nrefresh:\n  interval_seconds: 600\n", "<div>custom</div>", false)
 	createPackageFixture(t, c, "sensor-card", "name: Sensor\nversion: \"1.0.0\"\nprovider: http\ndefault_dimensions: [2, 1]\nresponse_schema:\n  type: object\n  required: [value]\n  properties:\n    value: {type: number}\n", "<div>sensor</div>", true)
 
 	loader := widget.NewLoader(b, c)
-	cal, err1 := loader.LoadPackage("calendar-agenda")
+	cal, err1 := loader.LoadPackage("calendar-feed")
 	w, err2 := loader.LoadPackage("weather-forecast")
 	s, err3 := loader.LoadPackage("sensor-card")
 	if err1 != nil || err2 != nil || err3 != nil || cal == nil || cal.Source != "custom" || cal.Manifest.Version != "2.0.0" || cal.HasAssets() || w == nil || w.Source != "builtin" || s == nil || s.Source != "custom" || !s.HasAssets() {
@@ -179,8 +179,6 @@ func TestBuiltinPackagesAndAliases(t *testing.T) {
 		{"live-view", "live-view", "live-view", 3, 2, 0, true},
 		{"calendar-feed", "calendar-feed", "calendar-feed", 4, 2, 0, false},
 		{"calendar-grid", "calendar-grid", "calendar-feed", 6, 2, 0, false},
-		{"calendar-agenda", "calendar-feed", "calendar-feed", 4, 2, 0, false},
-		{"calendar-family", "calendar-grid", "calendar-feed", 6, 2, 0, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
