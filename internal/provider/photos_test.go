@@ -215,11 +215,9 @@ func TestPhotosProvider_InitAndLifecycle(t *testing.T) {
 	}
 
 	reg := provider.NewRegistry()
-	if !reg.Has("photo-carousel") || !reg.Has("photos") { t.Fatal("registry missing photo providers") }
+	if !reg.Has("photo-carousel") { t.Fatal("registry missing photo-carousel provider") }
 	p1, err := reg.Create("photo-carousel")
 	if err != nil || p1 == nil { t.Fatalf("failed create photo-carousel: %v", err) }
-	p2, err := reg.Create("photos")
-	if err != nil || p2 == nil { t.Fatalf("failed create photos: %v", err) }
 	if err := p1.Subscribe(context.Background(), nil); err != nil { t.Errorf("Subscribe failed: %v", err) }
 	if err := p1.Shutdown(context.Background()); err != nil { t.Errorf("Shutdown failed: %v", err) }
 }

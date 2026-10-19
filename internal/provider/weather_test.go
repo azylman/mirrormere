@@ -326,9 +326,8 @@ func TestWeatherProvider_LifecycleAndSerialization(t *testing.T) {
 	if err := p.Shutdown(context.Background()); err != nil { t.Fatalf("Shutdown failed: %v", err) }
 
 	reg := provider.NewRegistry()
-	if !reg.Has("weather-forecast") || !reg.Has("weather") { t.Error("missing registry keys") }
+	if !reg.Has("weather-forecast") { t.Error("missing registry key") }
 	if p1, err := reg.Create("weather-forecast"); err != nil || p1 == nil { t.Fatalf("create forecast failed: %v", err) }
-	if p2, err := reg.Create("weather"); err != nil || p2 == nil { t.Fatalf("create weather failed: %v", err) }
 
 	snap := provider.WeatherSnapshot{
 		Location: "Home",

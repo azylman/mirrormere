@@ -23,7 +23,7 @@ func (d *dummyProvider) Shutdown(context.Context) error                         
 func TestRegistry(t *testing.T) {
 	t.Parallel()
 	reg := provider.NewRegistry()
-	builtins := []string{"spacer", "live-view", "http", "weather", "weather-forecast", "calendar", "calendar-feed", "calendar-agenda", "photos", "photo-carousel", "tasks"}
+	builtins := []string{"spacer", "live-view", "http", "weather-forecast", "calendar-feed", "photo-carousel", "tasks"}
 	for _, name := range builtins {
 		if !reg.Has(name) {
 			t.Fatalf("missing builtin %s", name)

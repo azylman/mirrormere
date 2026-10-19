@@ -25,11 +25,6 @@ const (
 	AssetsDirname = "assets"
 )
 
-var legacyAliases = map[string]string{
-	"calendar-family": "calendar-grid",
-	"calendar-agenda": "calendar-feed",
-}
-
 // Loader discovers and loads widget packages from disk.
 type Loader struct {
 	builtinDir string
@@ -54,9 +49,6 @@ func (l *Loader) LoadPackage(widgetType string) (*domain.Package, error) {
 		}
 	}
 
-	if target, ok := legacyAliases[widgetType]; ok {
-		return l.LoadPackage(target)
-	}
 	return nil, fmt.Errorf("widget package '%s' not found", widgetType)
 }
 

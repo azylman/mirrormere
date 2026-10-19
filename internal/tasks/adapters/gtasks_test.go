@@ -3,11 +3,60 @@ package adapters_test
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/azylman/mirrormere/internal/tasks/adapters"
 )
+
+type mockRoute struct {
+	status     int
+	body       string
+	nextStatus int
+	nextBody   string
+}
+
+func newRouteServer(t *testing.T, routes map[string]mockRoute, authOut *string) *httptest.Server {
+	t.Helper()
+	var mu sync.Mutex
+	m := make(map[string]mockRoute, len(routes))
+	for k, v := range routes {
+		m[k] = v
+	}
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		if authOut != nil {
+			*authOut = r.Header.Get("Authorization")
+		}
+		route, ok := m[r.URL.RequestURI()]
+		if !ok {
+			route, ok = m[r.URL.Path]
+		}
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		status := route.status
+		if status == 0 {
+			status = http.StatusOK
+		}
+		body := route.body
+		if route.nextStatus != 0 {
+			route.status, route.body = route.nextStatus, route.nextBody
+			route.nextStatus, route.nextBody = 0, ""
+			m[r.URL.RequestURI()], m[r.URL.Path] = route, route
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(s.Close)
+	return s
+}
 
 func TestNewGTasksAdapter_Validation(t *testing.T) {
 	t.Parallel()

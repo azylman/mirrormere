@@ -85,33 +85,6 @@ func (p *TasksProvider) Init(ctx context.Context, config map[string]any, opts In
 	// Instantiate external source adapter if not already injected
 	if p.adapter == nil {
 		switch cfg.Source {
-		case "http":
-			httpCfg, ok := config["http"].(map[string]any)
-			if !ok || httpCfg == nil {
-				return errors.New("tasks provider with source 'http' requires 'http' config block")
-			}
-			baseURL, ok := httpCfg["base_url"].(string)
-			if !ok || baseURL == "" {
-				return errors.New("tasks provider with source 'http' requires 'http.base_url'")
-			}
-
-			token := opts.GetSecret("http.token")
-			if token == "" {
-				token = strings.TrimSpace(opts.Token)
-			}
-			if token == "" {
-				token = resolveTaskSecret(opts, httpCfg, "http", "token", "token_env")
-			}
-
-			ad, err := adapters.NewHTTPAdapter(adapters.HTTPAdapterConfig{
-				BaseURL: baseURL,
-				Token:   token,
-			})
-			if err != nil {
-				return fmt.Errorf("failed to create http task adapter: %w", err)
-			}
-			p.adapter = ad
-
 		case "gtasks":
 			gtasksCfg, ok := config["gtasks"].(map[string]any)
 			if !ok || gtasksCfg == nil {
@@ -266,7 +239,7 @@ func (p *TasksProvider) Init(ctx context.Context, config map[string]any, opts In
 			p.adapter = ad
 
 		default:
-			return fmt.Errorf("tasks provider requires valid upstream source ('gtasks', 'todoist', or 'http'), got %q", cfg.Source)
+			return fmt.Errorf("tasks provider requires valid upstream source ('gtasks' or 'todoist'), got %q", cfg.Source)
 		}
 	}
 

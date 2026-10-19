@@ -78,7 +78,7 @@ func TestLoad_ExampleConfig(t *testing.T) {
 	assertEq(t, "widgets len", len(cfg.Display.Widgets), 5)
 
 	cal := cfg.Display.Widgets[0]
-	if cal.ID != "family-calendar" || (cal.Type != "calendar-feed" && cal.Type != "calendar-agenda") {
+	if cal.ID != "family-calendar" || cal.Type != "calendar-feed" {
 		t.Errorf("unexpected first widget: %+v", cal)
 	}
 	cals, _ := cal.Config["calendars"].([]any)

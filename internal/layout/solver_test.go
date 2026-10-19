@@ -216,7 +216,7 @@ func TestSolve_ErrorsAndDeadlocks(t *testing.T) {
 
 func TestPlacedWidget_JSON(t *testing.T) {
 	t.Parallel()
-	pw := layout.PlacedWidget{WidgetID: "family-calendar", Type: "calendar-agenda", Origin: [2]int{0, 0}, Dimensions: domain.NewDimension(4, 2), Pinned: true}
+	pw := layout.PlacedWidget{WidgetID: "family-calendar", Type: "calendar-feed", Origin: [2]int{0, 0}, Dimensions: domain.NewDimension(4, 2), Pinned: true}
 	data, err := json.Marshal(pw)
 	if err != nil {
 		t.Fatalf("failed to marshal PlacedWidget: %v", err)
