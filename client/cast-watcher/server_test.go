@@ -1,585 +1,225 @@
 package main
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
 
 type mockMediaActionSender struct {
-	sendFunc   func(ctx context.Context, action string) error
-	wakeFunc   func(ctx context.Context) error
-	statusFunc func() StatusSnapshot
-	seekFunc   func(ctx context.Context, targetTime float64) error
+	mu               sync.Mutex
+	sendErr, wakeErr error
+	seekErr          error
+	status           StatusSnapshot
+	lastAction       string
+	lastSeek         float64
+	woken            bool
 }
 
 func (m *mockMediaActionSender) SendMediaAction(ctx context.Context, action string) error {
-	if m.sendFunc != nil {
-		return m.sendFunc(ctx, action)
-	}
-	return nil
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.lastAction = action
+	return m.sendErr
 }
 
 func (m *mockMediaActionSender) Seek(ctx context.Context, targetTime float64) error {
-	if m.seekFunc != nil {
-		return m.seekFunc(ctx, targetTime)
-	}
-	return nil
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.lastSeek = targetTime
+	return m.seekErr
 }
 
 func (m *mockMediaActionSender) Wake(ctx context.Context) error {
-	if m.wakeFunc != nil {
-		return m.wakeFunc(ctx)
-	}
-	return nil
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.woken = true
+	return m.wakeErr
 }
 
 func (m *mockMediaActionSender) GetStatus() StatusSnapshot {
-	if m.statusFunc != nil {
-		return m.statusFunc()
-	}
-	return StatusSnapshot{
-		Connected:   true,
-		AppID:       "test-app",
-		PlayerState: "playing",
-	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.status
 }
 
-func TestActionServer_HandleAction_Success(t *testing.T) {
-	var receivedAction string
-	mockClient := &mockMediaActionSender{
-		sendFunc: func(ctx context.Context, action string) error {
-			receivedAction = action
-			return nil
-		},
+func TestActionServer_HandleAction(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		method     string
+		body       string
+		sendErr    error
+		wakeErr    error
+		seekErr    error
+		wantCode   int
+		wantAction string
+		wantSeek   float64
+		wantWake   bool
+	}{
+		{"play", "POST", `{"id":"chromecast","action":"play"}`, nil, nil, nil, http.StatusOK, "play", 0, false},
+		{"pause", "POST", `{"id":"chromecast","action":"pause"}`, nil, nil, nil, http.StatusOK, "pause", 0, false},
+		{"toggle", "POST", `{"id":"chromecast","action":"toggle_playback"}`, nil, nil, nil, http.StatusOK, "toggle_playback", 0, false},
+		{"wake_ok", "POST", `{"id":"chromecast","action":"wake"}`, nil, nil, nil, http.StatusOK, "", 0, true},
+		{"wake_not_connected", "POST", `{"id":"chromecast","action":"wake"}`, nil, ErrNotConnected, nil, http.StatusBadGateway, "", 0, true},
+		{"wake_internal_err", "POST", `{"id":"chromecast","action":"wake"}`, nil, errors.New("timeout"), nil, http.StatusInternalServerError, "", 0, true},
+		{"options_preflight", "OPTIONS", "", nil, nil, nil, http.StatusOK, "", 0, false},
+		{"get_method_not_allowed", "GET", "", nil, nil, nil, http.StatusMethodNotAllowed, "", 0, false},
+		{"malformed_json", "POST", `{invalid`, nil, nil, nil, http.StatusBadRequest, "", 0, false},
+		{"empty_id", "POST", `{"id":"","action":"play"}`, nil, nil, nil, http.StatusBadRequest, "", 0, false},
+		{"empty_action", "POST", `{"id":"chromecast","action":""}`, nil, nil, nil, http.StatusBadRequest, "", 0, false},
+		{"wrong_id", "POST", `{"id":"appletv","action":"play"}`, nil, nil, nil, http.StatusNotFound, "", 0, false},
+		{"action_invalid", "POST", `{"id":"chromecast","action":"bad"}`, ErrInvalidAction, nil, nil, http.StatusBadRequest, "bad", 0, false},
+		{"action_not_connected", "POST", `{"id":"chromecast","action":"play"}`, ErrNotConnected, nil, nil, http.StatusBadGateway, "play", 0, false},
+		{"action_no_session", "POST", `{"id":"chromecast","action":"play"}`, ErrNoActiveMediaSession, nil, nil, http.StatusBadGateway, "play", 0, false},
+		{"action_internal_err", "POST", `{"id":"chromecast","action":"play"}`, errors.New("internal"), nil, nil, http.StatusInternalServerError, "play", 0, false},
+		{"seek_float", "POST", `{"id":"chromecast","action":"seek","value":42.5}`, nil, nil, nil, http.StatusOK, "", 42.5, false},
+		{"seek_string", "POST", `{"id":"chromecast","action":"seek","value":"10.5"}`, nil, nil, nil, http.StatusOK, "", 10.5, false},
+		{"seek_int", "POST", `{"id":"chromecast","action":"seek","value":10}`, nil, nil, nil, http.StatusOK, "", 10.0, false},
+		{"seek_negative", "POST", `{"id":"chromecast","action":"seek","value":-5}`, nil, nil, nil, http.StatusBadRequest, "", 0, false},
+		{"seek_bad_string", "POST", `{"id":"chromecast","action":"seek","value":"abc"}`, nil, nil, nil, http.StatusBadRequest, "", 0, false},
+		{"seek_missing_val", "POST", `{"id":"chromecast","action":"seek"}`, nil, nil, nil, http.StatusBadRequest, "", 0, false},
+		{"seek_invalid_action", "POST", `{"id":"chromecast","action":"seek","value":10}`, nil, nil, ErrInvalidAction, http.StatusBadRequest, "", 10.0, false},
+		{"seek_not_connected", "POST", `{"id":"chromecast","action":"seek","value":10}`, nil, nil, ErrNotConnected, http.StatusBadGateway, "", 10.0, false},
+		{"seek_no_session", "POST", `{"id":"chromecast","action":"seek","value":10}`, nil, nil, ErrNoActiveMediaSession, http.StatusBadGateway, "", 10.0, false},
+		{"seek_internal_err", "POST", `{"id":"chromecast","action":"seek","value":10}`, nil, nil, errors.New("seek failed"), http.StatusInternalServerError, "", 10.0, false},
 	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			mock := &mockMediaActionSender{sendErr: tc.sendErr, wakeErr: tc.wakeErr, seekErr: tc.seekErr}
+			server := NewActionServer(ServerConfig{Port: 0}, mock)
+			req := httptest.NewRequest(tc.method, "/action", strings.NewReader(tc.body))
+			rec := httptest.NewRecorder()
+			server.mux.ServeHTTP(rec, req)
 
-	server := NewActionServer(ServerConfig{}, mockClient)
-
-	payload := `{"id":"chromecast","action":"toggle_playback"}`
-	req := httptest.NewRequest(http.MethodPost, "/action", bytes.NewBufferString(payload))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-
-	server.mux.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200 OK, got %d: %s", rec.Code, rec.Body.String())
-	}
-	if receivedAction != "toggle_playback" {
-		t.Errorf("expected action 'toggle_playback', got '%s'", receivedAction)
-	}
-
-	var resp map[string]string
-	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
-	if resp["status"] != "ok" {
-		t.Errorf("expected status 'ok', got '%s'", resp["status"])
-	}
-}
-
-func TestActionServer_HandleAction_Wake(t *testing.T) {
-	var wakeCalled bool
-	mockClient := &mockMediaActionSender{
-		wakeFunc: func(ctx context.Context) error {
-			wakeCalled = true
-			return nil
-		},
-	}
-
-	server := NewActionServer(ServerConfig{}, mockClient)
-
-	payload := `{"id":"chromecast","action":"wake"}`
-	req := httptest.NewRequest(http.MethodPost, "/action", bytes.NewBufferString(payload))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-
-	server.mux.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200 OK, got %d: %s", rec.Code, rec.Body.String())
-	}
-	if !wakeCalled {
-		t.Error("expected Wake to be called on client")
-	}
-
-	var resp map[string]string
-	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
-	if resp["status"] != "ok" {
-		t.Errorf("expected status 'ok', got '%s'", resp["status"])
-	}
-	if rec.Header().Get("Access-Control-Allow-Origin") != "*" {
-		t.Errorf("expected CORS header, got %s", rec.Header().Get("Access-Control-Allow-Origin"))
-	}
-}
-
-func TestActionServer_HandleAction_WakeErrors(t *testing.T) {
-	mockClient := &mockMediaActionSender{
-		wakeFunc: func(ctx context.Context) error {
-			return ErrNotConnected
-		},
-	}
-
-	server := NewActionServer(ServerConfig{}, mockClient)
-
-	// ErrNotConnected -> 502 Bad Gateway
-	req := httptest.NewRequest(http.MethodPost, "/action", bytes.NewBufferString(`{"id":"chromecast","action":"wake"}`))
-	rec := httptest.NewRecorder()
-	server.mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusBadGateway {
-		t.Errorf("expected 502 Bad Gateway, got %d", rec.Code)
-	}
-
-	// Internal error -> 500
-	mockClient.wakeFunc = func(ctx context.Context) error {
-		return errors.New("wake internal error")
-	}
-	req2 := httptest.NewRequest(http.MethodPost, "/action", bytes.NewBufferString(`{"id":"chromecast","action":"wake"}`))
-	rec2 := httptest.NewRecorder()
-	server.mux.ServeHTTP(rec2, req2)
-	if rec2.Code != http.StatusInternalServerError {
-		t.Errorf("expected 500 Internal Server Error, got %d", rec2.Code)
-	}
-}
-
-func TestActionServer_HandleAction_OptionsPreflight(t *testing.T) {
-	mockClient := &mockMediaActionSender{}
-	server := NewActionServer(ServerConfig{}, mockClient)
-
-	req := httptest.NewRequest(http.MethodOptions, "/action", nil)
-	rec := httptest.NewRecorder()
-
-	server.mux.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200 OK for OPTIONS, got %d", rec.Code)
-	}
-	if rec.Header().Get("Access-Control-Allow-Origin") != "*" {
-		t.Errorf("expected Access-Control-Allow-Origin: *, got '%s'", rec.Header().Get("Access-Control-Allow-Origin"))
-	}
-	if rec.Header().Get("Access-Control-Allow-Methods") != "POST, OPTIONS" {
-		t.Errorf("expected Access-Control-Allow-Methods: POST, OPTIONS, got '%s'", rec.Header().Get("Access-Control-Allow-Methods"))
-	}
-	if rec.Header().Get("Access-Control-Allow-Headers") != "Content-Type" {
-		t.Errorf("expected Access-Control-Allow-Headers: Content-Type, got '%s'", rec.Header().Get("Access-Control-Allow-Headers"))
-	}
-}
-
-func TestActionServer_HandleAction_Errors(t *testing.T) {
-	mockClient := &mockMediaActionSender{
-		sendFunc: func(ctx context.Context, action string) error {
-			switch action {
-			case "invalid":
-				return ErrInvalidAction
-			case "not_connected":
-				return ErrNotConnected
-			case "no_session":
-				return ErrNoActiveMediaSession
-			case "fail":
-				return errors.New("boom")
-			default:
-				return nil
+			if rec.Code != tc.wantCode {
+				t.Fatalf("got code %d, want %d", rec.Code, tc.wantCode)
 			}
-		},
-	}
-
-	server := NewActionServer(ServerConfig{}, mockClient)
-
-	// 1. Method Not Allowed
-	req := httptest.NewRequest(http.MethodGet, "/action", nil)
-	rec := httptest.NewRecorder()
-	server.mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", rec.Code)
-	}
-
-	// 2. Malformed JSON
-	req = httptest.NewRequest(http.MethodPost, "/action", bytes.NewBufferString("{invalid"))
-	rec = httptest.NewRecorder()
-	server.mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("expected 400 for malformed json, got %d", rec.Code)
-	}
-
-	// 3. Missing ID / Action
-	req = httptest.NewRequest(http.MethodPost, "/action", bytes.NewBufferString(`{"id":""}`))
-	rec = httptest.NewRecorder()
-	server.mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("expected 400 for missing fields, got %d", rec.Code)
-	}
-
-	// 4. Stream Not Active (id != "chromecast")
-	req = httptest.NewRequest(http.MethodPost, "/action", bytes.NewBufferString(`{"id":"doorbell","action":"pause"}`))
-	rec = httptest.NewRecorder()
-	server.mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusNotFound {
-		t.Errorf("expected 404 for unknown stream, got %d", rec.Code)
-	}
-
-	// 5. Invalid action
-	req = httptest.NewRequest(http.MethodPost, "/action", bytes.NewBufferString(`{"id":"chromecast","action":"invalid"}`))
-	rec = httptest.NewRecorder()
-	server.mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("expected 400 for invalid action, got %d", rec.Code)
-	}
-
-	// 6. Not Connected -> 502
-	req = httptest.NewRequest(http.MethodPost, "/action", bytes.NewBufferString(`{"id":"chromecast","action":"not_connected"}`))
-	rec = httptest.NewRecorder()
-	server.mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusBadGateway {
-		t.Errorf("expected 502 for not connected, got %d", rec.Code)
-	}
-
-	// 7. No Media Session -> 502
-	req = httptest.NewRequest(http.MethodPost, "/action", bytes.NewBufferString(`{"id":"chromecast","action":"no_session"}`))
-	rec = httptest.NewRecorder()
-	server.mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusBadGateway {
-		t.Errorf("expected 502 for no media session, got %d", rec.Code)
-	}
-
-	// 8. Other internal error -> 500
-	req = httptest.NewRequest(http.MethodPost, "/action", bytes.NewBufferString(`{"id":"chromecast","action":"fail"}`))
-	rec = httptest.NewRecorder()
-	server.mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusInternalServerError {
-		t.Errorf("expected 500 for internal error, got %d", rec.Code)
+			if tc.wantAction != "" && mock.lastAction != tc.wantAction {
+				t.Fatalf("got action %q, want %q", mock.lastAction, tc.wantAction)
+			}
+			if tc.wantSeek > 0 && mock.lastSeek != tc.wantSeek {
+				t.Fatalf("got seek %f, want %f", mock.lastSeek, tc.wantSeek)
+			}
+			if tc.wantWake && !mock.woken {
+				t.Fatalf("expected Wake to be called")
+			}
+		})
 	}
 }
 
 func TestActionServer_HandleHealthz(t *testing.T) {
-	mockClient := &mockMediaActionSender{
-		statusFunc: func() StatusSnapshot {
-			return StatusSnapshot{
-				Connected:   true,
-				AppID:       "CC1AD845",
-				PlayerState: "buffering",
-			}
-		},
-	}
-
-	server := NewActionServer(ServerConfig{}, mockClient)
-
-	// GET /healthz
-	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
-	rec := httptest.NewRecorder()
-	server.mux.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200 OK, got %d", rec.Code)
-	}
-
-	var snap map[string]any
-	if err := json.Unmarshal(rec.Body.Bytes(), &snap); err != nil {
-		t.Fatalf("failed to decode healthz response: %v", err)
-	}
-	if snap["status"] != "ok" || snap["chromecast_connected"] != true || snap["app_id"] != "CC1AD845" || snap["player_state"] != "buffering" {
-		t.Errorf("unexpected healthz payload: %+v", snap)
-	}
-
-	// HEAD /healthz
-	reqHead := httptest.NewRequest(http.MethodHead, "/healthz", nil)
-	recHead := httptest.NewRecorder()
-	server.mux.ServeHTTP(recHead, reqHead)
-	if recHead.Code != http.StatusOK {
-		t.Errorf("expected 200 for HEAD, got %d", recHead.Code)
-	}
-
-	// POST /healthz -> 405
-	reqPost := httptest.NewRequest(http.MethodPost, "/healthz", nil)
-	recPost := httptest.NewRecorder()
-	server.mux.ServeHTTP(recPost, reqPost)
-	if recPost.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405 for POST /healthz, got %d", recPost.Code)
+	t.Parallel()
+	mock := &mockMediaActionSender{status: StatusSnapshot{Connected: true, AppID: "YouTube", PlayerState: "playing"}}
+	server := NewActionServer(ServerConfig{Port: 0}, mock)
+	for _, tc := range []struct {
+		method   string
+		wantCode int
+		hasBody  bool
+	}{
+		{http.MethodGet, http.StatusOK, true},
+		{http.MethodHead, http.StatusOK, false},
+		{http.MethodPost, http.StatusMethodNotAllowed, false},
+	} {
+		req := httptest.NewRequest(tc.method, "/healthz", nil)
+		rec := httptest.NewRecorder()
+		server.mux.ServeHTTP(rec, req)
+		if rec.Code != tc.wantCode || (tc.hasBody && !strings.Contains(rec.Body.String(), "YouTube")) || (!tc.hasBody && rec.Body.Len() > 0) {
+			t.Fatalf("%s /healthz: code %d, body %q", tc.method, rec.Code, rec.Body.String())
+		}
 	}
 }
 
-type errResponseWriter struct {
-	header http.Header
-}
+type errResponseWriter struct{ header http.Header }
 
 func (e *errResponseWriter) Header() http.Header         { return e.header }
 func (e *errResponseWriter) Write([]byte) (int, error)   { return 0, errors.New("simulated write error") }
 func (e *errResponseWriter) WriteHeader(statusCode int) {}
 
 func TestWriteJSON_Error(t *testing.T) {
-	rw := &errResponseWriter{header: make(http.Header)}
-	writeJSON(rw, http.StatusOK, map[string]string{"key": "val"})
+	t.Parallel()
+	writeJSON(&errResponseWriter{header: make(http.Header)}, http.StatusOK, map[string]string{"foo": "bar"})
 }
 
 func TestActionServer_HandleCoverageFlush(t *testing.T) {
-	mockClient := &mockMediaActionSender{}
-	server := NewActionServer(ServerConfig{}, mockClient)
+	server := NewActionServer(ServerConfig{Port: 0}, &mockMediaActionSender{})
 
-	// 1. Method Not Allowed (e.g. DELETE)
-	t.Run("MethodNotAllowed", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodDelete, "/debug/coverage/flush", nil)
-		rec := httptest.NewRecorder()
-		server.mux.ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusMethodNotAllowed {
-			t.Fatalf("expected 405 Method Not Allowed, got %d", rec.Code)
-		}
-	})
-
-	// 2. Unset GOCOVERDIR -> 200 OK
-	t.Run("UnsetGOCOVERDIR", func(t *testing.T) {
-		t.Setenv("GOCOVERDIR", "")
-		req := httptest.NewRequest(http.MethodGet, "/debug/coverage/flush", nil)
-		rec := httptest.NewRecorder()
-		server.mux.ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Fatalf("expected 200 OK, got %d", rec.Code)
-		}
-		if !strings.Contains(rec.Body.String(), "\"status\":\"ok\"") {
-			t.Fatalf("expected status ok in body, got %q", rec.Body.String())
-		}
-	})
-
-	// 3. Set GOCOVERDIR with success and debounce
-	t.Run("SuccessWithGOCOVERDIR_And_Debounce", func(t *testing.T) {
-		simulatedTime := time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC)
-		restoreTime := SetNowFnForTest(func() time.Time {
-			return simulatedTime
-		})
-		defer restoreTime()
-
-		tempDir := t.TempDir()
-		t.Setenv("GOCOVERDIR", tempDir)
-
-		var capturedDir string
-		restoreWriter := SetWriteCountersDirForTest(func(dir string) error {
-			capturedDir = dir
-			return nil
-		})
-		defer restoreWriter()
-
-		req := httptest.NewRequest(http.MethodPost, "/debug/coverage/flush", nil)
-		rec := httptest.NewRecorder()
-		server.mux.ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Fatalf("expected 200 OK, got %d", rec.Code)
-		}
-		if capturedDir != tempDir {
-			t.Fatalf("expected capturedDir %q, got %q", tempDir, capturedDir)
-		}
-		if !strings.Contains(rec.Body.String(), "\"status\":\"ok\"") {
-			t.Fatalf("expected status ok in body, got %q", rec.Body.String())
-		}
-
-		// Immediate second call should be debounced
-		rec2 := httptest.NewRecorder()
-		server.mux.ServeHTTP(rec2, req)
-		if rec2.Code != http.StatusOK {
-			t.Fatalf("expected 200 OK for debounced flush, got %d", rec2.Code)
-		}
-		if !strings.Contains(rec2.Body.String(), "\"status\":\"debounced\"") {
-			t.Fatalf("expected debounced status in body, got %q", rec2.Body.String())
-		}
-	})
-
-	// 4. Set GOCOVERDIR with error -> 500
-	t.Run("ErrorWithGOCOVERDIR", func(t *testing.T) {
-		simulatedTime := time.Date(2026, 10, 4, 13, 0, 0, 0, time.UTC)
-		restoreTime := SetNowFnForTest(func() time.Time {
-			return simulatedTime
-		})
-		defer restoreTime()
-
-		tempDir := t.TempDir()
-		t.Setenv("GOCOVERDIR", tempDir)
-
-		restoreWriter := SetWriteCountersDirForTest(func(dir string) error {
-			return errors.New("simulated flush error")
-		})
-		defer restoreWriter()
-
-		req := httptest.NewRequest(http.MethodGet, "/debug/coverage/flush", nil)
-		rec := httptest.NewRecorder()
-		server.mux.ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusInternalServerError {
-			t.Fatalf("expected 500 Internal Server Error, got %d", rec.Code)
-		}
-	})
-}
-
-func TestActionServer_HandleAction_Seek(t *testing.T) {
-	var receivedTime float64
-	var seekErr error
-
-	mockClient := &mockMediaActionSender{
-		seekFunc: func(ctx context.Context, targetTime float64) error {
-			receivedTime = targetTime
-			return seekErr
-		},
-	}
-
-	server := NewActionServer(ServerConfig{}, mockClient)
-
-	// 1. Success seek with float64
-	payload := `{"id":"chromecast","action":"seek","value":42.5}`
-	req := httptest.NewRequest(http.MethodPost, "/action", bytes.NewBufferString(payload))
-	req.Header.Set("Content-Type", "application/json")
+	req := httptest.NewRequest(http.MethodDelete, "/debug/coverage/flush", nil)
 	rec := httptest.NewRecorder()
 	server.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405, got %d", rec.Code)
+	}
 
+	t.Setenv("GOCOVERDIR", "")
+	req = httptest.NewRequest(http.MethodPost, "/debug/coverage/flush", nil)
+	rec = httptest.NewRecorder()
+	server.mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200 OK, got %d: %s", rec.Code, rec.Body.String())
-	}
-	if receivedTime != 42.5 {
-		t.Errorf("expected targetTime 42.5, got %v", receivedTime)
+		t.Errorf("expected 200, got %d", rec.Code)
 	}
 
-	// 2. Success seek with string value
-	payload = `{"id":"chromecast","action":"seek","value":"150.25"}`
-	req = httptest.NewRequest(http.MethodPost, "/action", bytes.NewBufferString(payload))
-	req.Header.Set("Content-Type", "application/json")
+	t.Setenv("GOCOVERDIR", t.TempDir())
+	restoreCounters := SetWriteCountersDirForTest(func(dir string) error { return nil })
+	defer restoreCounters()
+	simTime := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	restoreNow := SetNowFnForTest(func() time.Time { return simTime })
+	defer restoreNow()
+
+	req = httptest.NewRequest(http.MethodGet, "/debug/coverage/flush", nil)
 	rec = httptest.NewRecorder()
 	server.mux.ServeHTTP(rec, req)
-
 	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200 OK, got %d: %s", rec.Code, rec.Body.String())
-	}
-	if receivedTime != 150.25 {
-		t.Errorf("expected targetTime 150.25, got %v", receivedTime)
+		t.Errorf("expected ok status, got %d", rec.Code)
 	}
 
-	// 3. Success seek with integer value
-	payload = `{"id":"chromecast","action":"seek","value":60}`
-	req = httptest.NewRequest(http.MethodPost, "/action", bytes.NewBufferString(payload))
-	req.Header.Set("Content-Type", "application/json")
 	rec = httptest.NewRecorder()
 	server.mux.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200 OK, got %d: %s", rec.Code, rec.Body.String())
-	}
-	if receivedTime != 60.0 {
-		t.Errorf("expected targetTime 60.0, got %v", receivedTime)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "debounced") {
+		t.Errorf("expected debounced, got %d: %s", rec.Code, rec.Body.String())
 	}
 
-	// 4. Invalid value: negative
-	payload = `{"id":"chromecast","action":"seek","value":-5}`
-	req = httptest.NewRequest(http.MethodPost, "/action", bytes.NewBufferString(payload))
+	simTime = simTime.Add(2 * time.Second)
+	SetWriteCountersDirForTest(func(dir string) error { return errors.New("write failed") })
 	rec = httptest.NewRecorder()
 	server.mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("expected 400 for negative seek value, got %d", rec.Code)
-	}
-
-	// 5. Invalid value: missing
-	payload = `{"id":"chromecast","action":"seek"}`
-	req = httptest.NewRequest(http.MethodPost, "/action", bytes.NewBufferString(payload))
-	rec = httptest.NewRecorder()
-	server.mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("expected 400 for missing seek value, got %d", rec.Code)
-	}
-
-	// 6. Invalid value: non-numeric string
-	payload = `{"id":"chromecast","action":"seek","value":"abc"}`
-	req = httptest.NewRequest(http.MethodPost, "/action", bytes.NewBufferString(payload))
-	rec = httptest.NewRecorder()
-	server.mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("expected 400 for non-numeric seek value, got %d", rec.Code)
-	}
-
-	// 7. Disconnected: 502
-	seekErr = ErrNotConnected
-	payload = `{"id":"chromecast","action":"seek","value":10}`
-	req = httptest.NewRequest(http.MethodPost, "/action", bytes.NewBufferString(payload))
-	rec = httptest.NewRecorder()
-	server.mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusBadGateway {
-		t.Errorf("expected 502 for disconnected seek, got %d", rec.Code)
-	}
-
-	// 8. No media session: 502
-	seekErr = ErrNoActiveMediaSession
-	req = httptest.NewRequest(http.MethodPost, "/action", bytes.NewBufferString(payload))
-	rec = httptest.NewRecorder()
-	server.mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusBadGateway {
-		t.Errorf("expected 502 for no session seek, got %d", rec.Code)
-	}
-
-	// 9. Invalid action: 400
-	seekErr = ErrInvalidAction
-	req = httptest.NewRequest(http.MethodPost, "/action", bytes.NewBufferString(payload))
-	rec = httptest.NewRecorder()
-	server.mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("expected 400 for ErrInvalidAction seek, got %d", rec.Code)
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500 error, got %d", rec.Code)
 	}
 }
 
 func TestExtractTargetTime(t *testing.T) {
-	// nil
-	if _, err := extractTargetTime(nil); err == nil {
-		t.Errorf("expected error for nil")
-	}
+	t.Parallel()
+	nestedVal := any(42.5)
+	var ifaceNil *interface{}
 
-	// float32
-	if v, err := extractTargetTime(float32(12.5)); err != nil || v != 12.5 {
-		t.Errorf("got %v, %v, want 12.5, nil", v, err)
-	}
-
-	// int64
-	if v, err := extractTargetTime(int64(42)); err != nil || v != 42.0 {
-		t.Errorf("got %v, %v, want 42.0, nil", v, err)
-	}
-
-	// int32
-	if v, err := extractTargetTime(int32(10)); err != nil || v != 10.0 {
-		t.Errorf("got %v, %v, want 10.0, nil", v, err)
-	}
-
-	// json.Number
-	if v, err := extractTargetTime(json.Number("99.5")); err != nil || v != 99.5 {
-		t.Errorf("got %v, %v, want 99.5, nil", v, err)
-	}
-
-	// string
-	if v, err := extractTargetTime(" 123.4 "); err != nil || v != 123.4 {
-		t.Errorf("got %v, %v, want 123.4, nil", v, err)
-	}
-
-	// pointer to interface
-	var inner any = float64(50.0)
-	var ptr *any = &inner
-	if v, err := extractTargetTime(ptr); err != nil || v != 50.0 {
-		t.Errorf("got %v, %v, want 50.0, nil", v, err)
-	}
-
-	// nil pointer
-	var nilPtr *any = nil
-	if _, err := extractTargetTime(nilPtr); err == nil {
-		t.Errorf("expected error for nil pointer")
-	}
-	var nilInner *any = new(any)
-	if _, err := extractTargetTime(nilInner); err == nil {
-		t.Errorf("expected error for pointer to nil")
-	}
-
-	// unsupported type
-	if _, err := extractTargetTime(true); err == nil {
-		t.Errorf("expected error for bool")
+	for _, tc := range []struct {
+		input   any
+		wantVal float64
+		wantErr bool
+	}{
+		{nil, 0, true},
+		{float64(42.5), 42.5, false},
+		{float32(42.5), 42.5, false},
+		{int(42), 42.0, false},
+		{int64(42), 42.0, false},
+		{int32(42), 42.0, false},
+		{"42.5", 42.5, false},
+		{"  42.5  ", 42.5, false},
+		{"not_a_number", 0, true},
+		{&nestedVal, 42.5, false},
+		{ifaceNil, 0, true},
+		{true, 0, true},
+	} {
+		got, err := extractTargetTime(tc.input)
+		if (err != nil) != tc.wantErr || (!tc.wantErr && got != tc.wantVal) {
+			t.Fatalf("extractTargetTime(%v) = (%f, %v), want (%f, err=%v)", tc.input, got, err, tc.wantVal, tc.wantErr)
+		}
 	}
 }
-

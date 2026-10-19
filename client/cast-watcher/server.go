@@ -42,27 +42,15 @@ var (
 
 // SetNowFnForTest overrides the time provider for testing debounce without sleeps.
 func SetNowFnForTest(fn func() time.Time) func() {
-	flushMu.Lock()
-	prev := nowFn
-	nowFn = fn
-	flushMu.Unlock()
-	return func() {
-		flushMu.Lock()
-		nowFn = prev
-		flushMu.Unlock()
-	}
+	flushMu.Lock(); defer flushMu.Unlock()
+	prev := nowFn; nowFn = fn
+	return func() { flushMu.Lock(); defer flushMu.Unlock(); nowFn = prev }
 }
 
 func SetWriteCountersDirForTest(fn func(string) error) func() {
-	writeCountersDirMu.Lock()
-	prev := writeCountersDirFn
-	writeCountersDirFn = fn
-	writeCountersDirMu.Unlock()
-	return func() {
-		writeCountersDirMu.Lock()
-		writeCountersDirFn = prev
-		writeCountersDirMu.Unlock()
-	}
+	writeCountersDirMu.Lock(); defer writeCountersDirMu.Unlock()
+	prev := writeCountersDirFn; writeCountersDirFn = fn
+	return func() { writeCountersDirMu.Lock(); defer writeCountersDirMu.Unlock(); writeCountersDirFn = prev }
 }
 
 // ActionServer handles incoming transport webhook actions and health probes.
@@ -83,34 +71,15 @@ type ActionWebhookRequest struct {
 
 // NewActionServer constructs an ActionServer backed by client.
 func NewActionServer(cfg ServerConfig, client MediaActionSender) *ActionServer {
-	logger := cfg.Logger
-	if logger == nil {
-		logger = slog.Default()
+	if cfg.Logger == nil {
+		cfg.Logger = slog.Default()
 	}
-
 	mux := http.NewServeMux()
-	s := &ActionServer{
-		cfg:    cfg,
-		client: client,
-		mux:    mux,
-		logger: logger,
-	}
-
+	s := &ActionServer{cfg: cfg, client: client, mux: mux, logger: cfg.Logger}
 	mux.HandleFunc("/action", s.handleAction)
 	mux.HandleFunc("/healthz", s.handleHealthz)
 	mux.HandleFunc("/debug/coverage/flush", s.handleCoverageFlush)
-
-	bindAddr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
-	s.server = &http.Server{
-		Addr:              bindAddr,
-		Handler:           mux,
-		ReadHeaderTimeout: 3 * time.Second,
-		ReadTimeout:       5 * time.Second,
-		WriteTimeout:      5 * time.Second,
-		IdleTimeout:       30 * time.Second,
-		MaxHeaderBytes:    1 << 20, // 1MB Slowloris defense
-	}
-
+	s.server = &http.Server{Addr: fmt.Sprintf("%s:%d", cfg.Host, cfg.Port), Handler: mux, ReadHeaderTimeout: 3 * time.Second, ReadTimeout: 5 * time.Second, WriteTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 1 << 20}
 	return s
 }
 
@@ -124,125 +93,68 @@ func (s *ActionServer) Shutdown(ctx context.Context) error {
 	return s.server.Shutdown(ctx)
 }
 
+func writeActionError(w http.ResponseWriter, err error) {
+	code := http.StatusInternalServerError
+	if errors.Is(err, ErrInvalidAction) {
+		code = http.StatusBadRequest
+	} else if errors.Is(err, ErrNotConnected) || errors.Is(err, ErrNoActiveMediaSession) {
+		code = http.StatusBadGateway
+	}
+	writeJSONError(w, code, err.Error())
+}
+
 func (s *ActionServer) handleAction(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-
+	h := w.Header()
+	h.Set("Access-Control-Allow-Origin", "*")
+	h.Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+	h.Set("Access-Control-Allow-Headers", "Content-Type")
 	if r.Method == http.MethodOptions {
-		w.WriteHeader(http.StatusOK)
-		return
+		w.WriteHeader(http.StatusOK); return
 	}
-
 	if r.Method != http.MethodPost {
-		w.Header().Set("Allow", "POST, OPTIONS")
-		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
+		h.Set("Allow", "POST, OPTIONS")
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed"); return
 	}
-
 	var req ActionWebhookRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSONError(w, http.StatusBadRequest, "invalid request payload: malformed JSON")
-		return
+		writeJSONError(w, http.StatusBadRequest, "invalid request payload: malformed JSON"); return
 	}
-
 	if strings.TrimSpace(req.ID) == "" || strings.TrimSpace(req.Action) == "" {
-		writeJSONError(w, http.StatusBadRequest, "id and action are required")
-		return
+		writeJSONError(w, http.StatusBadRequest, "id and action are required"); return
 	}
-
 	if req.ID != "chromecast" {
-		writeJSONError(w, http.StatusNotFound, "stream not active")
-		return
+		writeJSONError(w, http.StatusNotFound, "stream not active"); return
 	}
-
-	if req.Action == "wake" {
-		err := s.client.Wake(r.Context())
-		if err != nil {
-			if errors.Is(err, ErrNotConnected) {
-				writeJSONError(w, http.StatusBadGateway, err.Error())
-				return
-			}
-			writeJSONError(w, http.StatusInternalServerError, err.Error())
-			return
+	var err error
+	switch req.Action {
+	case "wake":
+		err = s.client.Wake(r.Context())
+	case "seek":
+		var targetTime float64
+		if targetTime, err = extractTargetTime(req.Value); err != nil || targetTime < 0 {
+			writeJSONError(w, http.StatusBadRequest, "invalid seek target time: must be a non-negative number"); return
 		}
-
-		writeJSON(w, http.StatusOK, map[string]string{
-			"status": "ok",
-		})
-		return
-	}
-
-	if req.Action == "seek" {
-		targetTime, err := extractTargetTime(req.Value)
-		if err != nil || targetTime < 0 {
-			writeJSONError(w, http.StatusBadRequest, "invalid seek target time: must be a non-negative number")
-			return
-		}
-
 		err = s.client.Seek(r.Context(), targetTime)
-		if err != nil {
-			if errors.Is(err, ErrInvalidAction) {
-				writeJSONError(w, http.StatusBadRequest, err.Error())
-				return
-			}
-			if errors.Is(err, ErrNotConnected) || errors.Is(err, ErrNoActiveMediaSession) {
-				writeJSONError(w, http.StatusBadGateway, err.Error())
-				return
-			}
-			writeJSONError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-
-		writeJSON(w, http.StatusOK, map[string]string{
-			"status": "ok",
-		})
-		return
+	default:
+		err = s.client.SendMediaAction(r.Context(), req.Action)
 	}
-
-	err := s.client.SendMediaAction(r.Context(), req.Action)
 	if err != nil {
-		if errors.Is(err, ErrInvalidAction) {
-			writeJSONError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		if errors.Is(err, ErrNotConnected) || errors.Is(err, ErrNoActiveMediaSession) {
-			writeJSONError(w, http.StatusBadGateway, err.Error())
-			return
-		}
-
-		writeJSONError(w, http.StatusInternalServerError, err.Error())
-		return
+		writeActionError(w, err); return
 	}
-
-	writeJSON(w, http.StatusOK, map[string]string{
-		"status": "ok",
-	})
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 func (s *ActionServer) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		w.Header().Set("Allow", "GET, HEAD")
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		return
+		w.WriteHeader(http.StatusMethodNotAllowed); return
 	}
-
-	status := s.client.GetStatus()
-	resp := map[string]any{
-		"status":               "ok",
-		"chromecast_connected": status.Connected,
-		"app_id":               status.AppID,
-		"player_state":         status.PlayerState,
-	}
-
 	if r.Method == http.MethodHead {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		return
+		w.Header().Set("Content-Type", "application/json"); w.WriteHeader(http.StatusOK); return
 	}
-
-	writeJSON(w, http.StatusOK, resp)
+	st := s.client.GetStatus()
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "chromecast_connected": st.Connected, "app_id": st.AppID, "player_state": st.PlayerState})
 }
 
 func writeJSON(w http.ResponseWriter, status int, data any) {
@@ -256,70 +168,52 @@ func writeJSON(w http.ResponseWriter, status int, data any) {
 func (s *ActionServer) handleCoverageFlush(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodPost {
 		w.Header().Set("Allow", "GET, POST")
-		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed"); return
 	}
-
 	if dir := os.Getenv("GOCOVERDIR"); dir != "" {
-		flushMu.Lock()
+		flushMu.Lock(); defer flushMu.Unlock()
 		now := nowFn()
 		if now.Sub(lastFlushTime) < time.Second {
-			flushMu.Unlock()
-			writeJSON(w, http.StatusOK, map[string]string{"status": "debounced"})
-			return
+			writeJSON(w, http.StatusOK, map[string]string{"status": "debounced"}); return
 		}
 		lastFlushTime = now
 		writeCountersDirMu.RLock()
-		metaFn := writeMetaDirFn
-		fn := writeCountersDirFn
+		metaFn, fn := writeMetaDirFn, writeCountersDirFn
 		writeCountersDirMu.RUnlock()
 		_ = metaFn(dir) //nolint:errcheck
-		err := fn(dir)
-		flushMu.Unlock()
-
-		if err != nil {
+		if err := fn(dir); err != nil {
 			s.logger.Error("coverage flush failed", "error", err)
-			writeJSONError(w, http.StatusInternalServerError, err.Error())
-			return
+			writeJSONError(w, http.StatusInternalServerError, err.Error()); return
 		}
 	}
-
-	writeJSON(w, http.StatusOK, map[string]string{
-		"status": "ok",
-	})
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 func writeJSONError(w http.ResponseWriter, status int, msg string) {
-	writeJSON(w, status, map[string]string{
-		"status": "error",
-		"error":  msg,
-	})
+	writeJSON(w, status, map[string]string{"status": "error", "error": msg})
 }
 
 func extractTargetTime(val any) (float64, error) {
 	if val == nil {
 		return 0, errors.New("missing seek value")
 	}
+	if p, ok := val.(*interface{}); ok {
+		if p == nil || *p == nil {
+			return 0, errors.New("missing seek value")
+		}
+		return extractTargetTime(*p)
+	}
 	switch v := val.(type) {
 	case float64:
 		return v, nil
 	case float32:
 		return float64(v), nil
-	case int:
-		return float64(v), nil
-	case int64:
-		return float64(v), nil
-	case int32:
-		return float64(v), nil
+	case int, int32, int64:
+		f, err := strconv.ParseFloat(fmt.Sprint(v), 64); return f, err
 	case json.Number:
 		return v.Float64()
 	case string:
 		return strconv.ParseFloat(strings.TrimSpace(v), 64)
-	case *interface{}:
-		if v == nil || *v == nil {
-			return 0, errors.New("missing seek value")
-		}
-		return extractTargetTime(*v)
 	default:
 		return 0, fmt.Errorf("unsupported seek value type: %T", val)
 	}

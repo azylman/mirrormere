@@ -8,25 +8,16 @@ import (
 )
 
 const (
-	// MaxPayloadSize protects against heap exhaustion from malformed or malicious frames.
-	MaxPayloadSize = 64 * 1024 // 64KB
-
-	// ProtocolVersion0 is the standard Google Cast v2 wire protocol version.
-	ProtocolVersion0 = 0
-
-	// PayloadTypeString indicates payload_utf8 is populated.
+	MaxPayloadSize    = 64 * 1024 // 64KB
+	ProtocolVersion0  = 0
 	PayloadTypeString = 0
-	// PayloadTypeBinary indicates payload_binary is populated.
 	PayloadTypeBinary = 1
 )
 
 var (
-	// ErrPayloadTooLarge indicates that a frame length exceeds MaxPayloadSize.
 	ErrPayloadTooLarge = errors.New("cast message payload exceeds max size")
-	// ErrCorruptFrame indicates that protobuf varint or wire formatting is corrupted.
-	ErrCorruptFrame = errors.New("corrupt cast message protobuf frame")
-	// ErrTruncatedFrame indicates that the frame bytes were truncated before the field ended.
-	ErrTruncatedFrame = errors.New("truncated cast message frame")
+	ErrCorruptFrame    = errors.New("corrupt cast message protobuf frame")
+	ErrTruncatedFrame  = errors.New("truncated cast message frame")
 )
 
 // CastMessage represents a decoded Google Cast v2 wire message.
@@ -44,42 +35,26 @@ type CastMessage struct {
 func EncodeCastMessage(msg CastMessage) ([]byte, error) {
 	var body []byte
 	var scratch [10]byte
-
-	// Field 1: protocol_version (varint, tag = 0x08)
 	body = appendVarintField(body, 1, uint64(msg.ProtocolVersion), &scratch)
-
-	// Field 2: source_id (length-delimited, tag = 0x12)
 	if msg.SourceID != "" {
 		body = appendLengthDelimited(body, 2, []byte(msg.SourceID), &scratch)
 	}
-
-	// Field 3: destination_id (length-delimited, tag = 0x1a)
 	if msg.DestinationID != "" {
 		body = appendLengthDelimited(body, 3, []byte(msg.DestinationID), &scratch)
 	}
-
-	// Field 4: namespace (length-delimited, tag = 0x22)
 	if msg.Namespace != "" {
 		body = appendLengthDelimited(body, 4, []byte(msg.Namespace), &scratch)
 	}
-
-	// Field 5: payload_type (varint, tag = 0x28)
 	body = appendVarintField(body, 5, uint64(msg.PayloadType), &scratch)
-
-	// Field 6: payload_utf8 (length-delimited, tag = 0x32)
 	if msg.PayloadUTF8 != "" || msg.PayloadType == PayloadTypeString {
 		body = appendLengthDelimited(body, 6, []byte(msg.PayloadUTF8), &scratch)
 	}
-
-	// Field 7: payload_binary (length-delimited, tag = 0x3a)
 	if len(msg.PayloadBinary) > 0 {
 		body = appendLengthDelimited(body, 7, msg.PayloadBinary, &scratch)
 	}
-
 	if len(body) > MaxPayloadSize {
 		return nil, ErrPayloadTooLarge
 	}
-
 	frame := make([]byte, 4+len(body))
 	binary.BigEndian.PutUint32(frame[:4], uint32(len(body)))
 	copy(frame[4:], body)
@@ -92,12 +67,10 @@ func DecodeCastMessage(r io.Reader) (CastMessage, error) {
 	if _, err := io.ReadFull(r, lenBuf[:]); err != nil {
 		return CastMessage{}, err
 	}
-
 	payloadLen := binary.BigEndian.Uint32(lenBuf[:])
 	if payloadLen > MaxPayloadSize {
 		return CastMessage{}, ErrPayloadTooLarge
 	}
-
 	payloadBuf := make([]byte, payloadLen)
 	if _, err := io.ReadFull(r, payloadBuf); err != nil {
 		return CastMessage{}, err
@@ -111,9 +84,7 @@ func DecodeCastMessage(r io.Reader) (CastMessage, error) {
 			return CastMessage{}, ErrCorruptFrame
 		}
 		offset += n
-
-		fieldNum := int(tag >> 3)
-		wireType := int(tag & 0x07)
+		fieldNum, wireType := int(tag>>3), int(tag&0x07)
 
 		switch wireType {
 		case 0: // Varint
@@ -122,10 +93,9 @@ func DecodeCastMessage(r io.Reader) (CastMessage, error) {
 				return CastMessage{}, ErrCorruptFrame
 			}
 			offset += vn
-			switch fieldNum {
-			case 1:
+			if fieldNum == 1 {
 				msg.ProtocolVersion = int(val)
-			case 5:
+			} else if fieldNum == 5 {
 				msg.PayloadType = int(val)
 			}
 		case 1: // 64-bit fixed
@@ -144,7 +114,6 @@ func DecodeCastMessage(r io.Reader) (CastMessage, error) {
 			}
 			data := payloadBuf[offset : offset+int(fieldLen)]
 			offset += int(fieldLen)
-
 			switch fieldNum {
 			case 2:
 				msg.SourceID = string(data)
@@ -166,21 +135,18 @@ func DecodeCastMessage(r io.Reader) (CastMessage, error) {
 			return CastMessage{}, fmt.Errorf("%w: unsupported wire type %d", ErrCorruptFrame, wireType)
 		}
 	}
-
 	return msg, nil
 }
 
 func appendVarintField(dst []byte, fieldNum int, val uint64, scratch *[10]byte) []byte {
-	tag := uint64(fieldNum << 3)
-	n := binary.PutUvarint(scratch[:], tag)
+	n := binary.PutUvarint(scratch[:], uint64(fieldNum<<3))
 	dst = append(dst, scratch[:n]...)
 	n = binary.PutUvarint(scratch[:], val)
 	return append(dst, scratch[:n]...)
 }
 
 func appendLengthDelimited(dst []byte, fieldNum int, data []byte, scratch *[10]byte) []byte {
-	tag := uint64((fieldNum << 3) | 2)
-	n := binary.PutUvarint(scratch[:], tag)
+	n := binary.PutUvarint(scratch[:], uint64((fieldNum<<3)|2))
 	dst = append(dst, scratch[:n]...)
 	n = binary.PutUvarint(scratch[:], uint64(len(data)))
 	dst = append(dst, scratch[:n]...)
