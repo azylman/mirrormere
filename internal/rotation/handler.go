@@ -126,10 +126,6 @@ func (h *Handler) PostScreenPause(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, api.ScreenPauseResponse{Status: "ok", Paused: *req.Paused, CurrentScreen: currentScreen})
 }
 
-func (h *Handler) HandleSelect(w http.ResponseWriter, r *http.Request)  { h.PostScreenSelect(w, r) }
-func (h *Handler) HandleAdvance(w http.ResponseWriter, r *http.Request) { h.PostScreenAdvance(w, r) }
-func (h *Handler) HandlePause(w http.ResponseWriter, r *http.Request)   { h.PostScreenPause(w, r) }
-
 func writeError(w http.ResponseWriter, code int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)

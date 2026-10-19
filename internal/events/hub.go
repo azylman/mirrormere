@@ -209,12 +209,6 @@ func (h *Hub) Unsubscribe(subID uint64) {
 	}
 }
 
-func (h *Hub) SubscriberCount() int {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-	return len(h.subscribers)
-}
-
 func (h *Hub) ReplaySince(id string) ([]*Event, bool) { return h.ring.ReplaySince(id) }
 func (h *Hub) BuildHydration() []*Event {
 	return BuildHydrationBatch(h.stateProvider, h.idGen, h.cfg.NowFunc())

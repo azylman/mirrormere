@@ -398,22 +398,6 @@ func (r *RotationConfig) GetIntervalSeconds() int {
 	return derefOr(r.IntervalSeconds, 30)
 }
 
-// GetTransition returns the transition visual hint (default: "slide").
-func (r *RotationConfig) GetTransition() string {
-	if r == nil {
-		return "slide"
-	}
-	return trimmedOr(r.Transition, "slide")
-}
-
-// GetPauseOnTouch returns whether interaction pauses rotation (default: true).
-func (r *RotationConfig) GetPauseOnTouch() bool {
-	if r == nil {
-		return true
-	}
-	return derefOr(r.PauseOnTouch, true)
-}
-
 // GetPauseDurationSeconds returns touch interaction pause duration in seconds (default: 120).
 func (r *RotationConfig) GetPauseDurationSeconds() int {
 	if r == nil {

@@ -99,13 +99,6 @@ func (c *Coordinator) snapshotLocked() events.VoiceStateData {
 	}
 }
 
-// SetSpeakingTimeout overrides the speaking watchdog timeout (default 30s).
-func (c *Coordinator) SetSpeakingTimeout(d time.Duration) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.speakingTimeout = d
-}
-
 // Stop stops and clears any active timers.
 func (c *Coordinator) Stop() {
 	c.mu.Lock()

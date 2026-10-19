@@ -73,7 +73,6 @@ func TestMetrics_CollectorsAndSafety(t *testing.T) {
 		m.RecordAmbientRMS(node, math.NaN())
 		m.RecordAmbientRMS(node, math.Inf(1))
 		m.RecordEdgeHeartbeat(node)
-		m.RecordFalseWake(node)
 		for _, n := range []int{0, -5, 5, 1500} {
 			m.RecordFalseWakes(node, n)
 		}
@@ -102,7 +101,7 @@ func TestMetrics_CollectorsAndSafety(t *testing.T) {
 		{"mirrormere_voice_stage_duration_seconds", lbl("node_id", node, "stage", "wake_eval", "status", "success"), 1},
 		{"mirrormere_voice_stage_duration_seconds", lbl("node_id", node, "stage", "deliberation", "status", "success"), 1},
 		{"mirrormere_voice_ambient_rms_dbfs", lbl("node_id", node), -40.5},
-		{"mirrormere_voice_false_wakes_total", lbl("node_id", node), 1006},
+		{"mirrormere_voice_false_wakes_total", lbl("node_id", node), 1005},
 		{"mirrormere_voice_playback_duration_seconds", lbl("node_id", node), 1},
 		{"mirrormere_voice_turns_total", lbl("node_id", node, "status", "success"), 1},
 		{"mirrormere_voice_errors_total", lbl("node_id", node, "stage", "stt", "error_type", "network_timeout"), 1},

@@ -76,16 +76,6 @@ func (m *WidgetManifest) Validate() error {
 	return nil
 }
 
-// HasCapability checks whether the widget declares support for a specific runtime capability.
-func (m *WidgetManifest) HasCapability(capability string) bool {
-	for _, c := range m.Capabilities {
-		if strings.EqualFold(c, capability) {
-			return true
-		}
-	}
-	return false
-}
-
 func isNamedSchemaMapKeyword(k string) bool {
 	switch k {
 	case "properties", "patternProperties", "$defs", "definitions", "dependentSchemas":

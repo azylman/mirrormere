@@ -36,52 +36,31 @@ func StandardFuncMap(nowFunc func() time.Time) template.FuncMap {
 	weekViewFn := func(data any, cfg map[string]any, dims domain.Dimension) (*FamilyViewModel, error) {
 		return BuildFamilyView(data, cfg, dims, nowFunc())
 	}
-	dayViewFn := func(data any, cfg map[string]any, dims domain.Dimension) (*FamilyDayViewModel, error) {
-		return BuildFamilyDayView(data, cfg, dims, nowFunc())
-	}
 	monthViewFn := func(data any, cfg map[string]any, dims domain.Dimension) (*FamilyMonthViewModel, error) {
 		return BuildFamilyMonthView(data, cfg, dims, nowFunc())
 	}
-	combinedDataFn := func(dayView *FamilyDayViewModel, weekView *FamilyViewModel, monthView *FamilyMonthViewModel, cfg map[string]any) map[string]any {
-		return BuildFamilyCombinedData(dayView, weekView, monthView, cfg)
+	combinedDataFn := func(weekView *FamilyViewModel, monthView *FamilyMonthViewModel, cfg map[string]any) map[string]any {
+		return BuildFamilyCombinedData(weekView, monthView, cfg)
 	}
 
 	return template.FuncMap{
-		"seq": Seq,
 		"formatDate": func(args ...any) string {
 			return FormatDateInLocation(nowFunc().Location(), args...)
 		},
 		"formatTime": func(args ...any) string {
 			return FormatTimeInLocation(nowFunc().Location(), args...)
 		},
-		"relDate": func(args ...any) string {
-			return RelDate(nowFunc(), args...)
-		},
-		"json":                  JSONHelper,
-		"jsonJS":                JSONJSHelper,
-		"weatherIcon":           WeatherIcon,
-		"weatherHourlyGraph":    WeatherHourlyGraph,
-		"weatherDailyForecast":  WeatherDailyForecast,
-		"todayPrecipProb":       TodayPrecipProb,
-		"calendarGridView":      weekViewFn,
-		"calendarGridDayView":   dayViewFn,
-		"calendarGridMonthView": monthViewFn,
-		"calendarFamilyView":    weekViewFn,
-		"calendarFamilyDayView": dayViewFn,
-		"dayView":               dayViewFn,
-		"isDayView": func(cfg map[string]any) bool {
-			return strings.EqualFold(stringOr(cfg, "default_view", "week"), "day")
-		},
-		"calendarFamilyMonthView": monthViewFn,
-		"monthView":               monthViewFn,
+		"json":               JSONHelper,
+		"jsonJS":             JSONJSHelper,
+		"weatherIcon":        WeatherIcon,
+		"weatherHourlyGraph": WeatherHourlyGraph,
+		"todayPrecipProb":    TodayPrecipProb,
+		"calendarGridView":   weekViewFn,
+		"monthView":          monthViewFn,
 		"isMonthView": func(cfg map[string]any) bool {
 			return strings.EqualFold(stringOr(cfg, "default_view", "week"), "month")
 		},
-		"calendarGridData":   combinedDataFn,
-		"calendarFamilyData": combinedDataFn,
-		"calendarFeedEvents": func(data any, args ...any) []provider.CalendarEvent {
-			return CalendarFeedEvents(data, nowFunc())
-		},
+		"calendarGridData": combinedDataFn,
 		"calendarFeedDayGroups": func(data any, args ...any) []CalendarFeedDayGroup {
 			return CalendarFeedDayGroups(data, nowFunc())
 		},
@@ -89,53 +68,9 @@ func StandardFuncMap(nowFunc func() time.Time) template.FuncMap {
 		"activeCalendars":             CalendarFeedActiveCalendars,
 		"tasksStats":                  TasksStats,
 		"stringOr":                    stringOr,
-		"add": func(a, b int) int {
-			return a + b
-		},
 		"sub": func(a, b int) int {
 			return a - b
 		},
-	}
-}
-
-// Seq generates integer sequences for template range loops.
-// - seq(n): generates [0, 1, ..., n-1]
-// - seq(start, end): generates [start, start+1, ..., end]
-// - seq(start, end, step): generates sequence stepping by step
-func Seq(args ...int) []int {
-	switch len(args) {
-	case 0:
-		return []int{}
-	case 1:
-		n := args[0]
-		if n <= 0 {
-			return []int{}
-		}
-		res := make([]int, n)
-		for i := 0; i < n; i++ {
-			res[i] = i
-		}
-		return res
-	case 2:
-		start, end := args[0], args[1]
-		if start > end {
-			return []int{}
-		}
-		res := make([]int, end-start+1)
-		for i := range res {
-			res[i] = start + i
-		}
-		return res
-	default:
-		start, end, step := args[0], args[1], args[2]
-		if step <= 0 || start > end {
-			return []int{}
-		}
-		var res []int
-		for i := start; i <= end; i += step {
-			res = append(res, i)
-		}
-		return res
 	}
 }
 
@@ -195,12 +130,6 @@ func resolveFormatArgs(defaultLayout string, args []any) (layout string, val any
 	return layout, val, true
 }
 
-// FormatDate formats a time value with the specified date layout.
-// If layout is omitted, defaults to "2006-01-02".
-func FormatDate(args ...any) string {
-	return FormatDateInLocation(nil, args...)
-}
-
 // FormatDateInLocation formats a time value with the specified date layout in the given location.
 // If layout is omitted, defaults to "2006-01-02".
 // If loc is nil, UTC/original location is preserved.
@@ -227,12 +156,6 @@ func FormatDateInLocation(loc *time.Location, args ...any) string {
 		t = t.In(loc)
 	}
 	return t.Format(layout)
-}
-
-// FormatTime formats a time value with the specified time layout.
-// If layout is omitted, defaults to "15:04".
-func FormatTime(args ...any) string {
-	return FormatTimeInLocation(nil, args...)
 }
 
 // FormatTimeInLocation formats a time value with the specified time layout in the given location.
@@ -657,7 +580,7 @@ func WeatherHourlyGraph(args ...any) template.HTML {
 		if i > 0 {
 			timeWeight = "600"
 			timeColor = "var(--mm-text-dim, #8b819f)"
-			if formatted := FormatTime("3 PM", pt.timeStr); formatted != "" {
+			if formatted := FormatTimeInLocation(nil, "3 PM", pt.timeStr); formatted != "" {
 				timeLabel = formatted
 			} else {
 				timeLabel = pt.timeStr
@@ -669,191 +592,6 @@ func WeatherHourlyGraph(args ...any) template.HTML {
 
 	sb.WriteString("</svg>")
 	return template.HTML(sb.String())
-}
-
-// WeatherDailyItem represents a formatted daily forecast row for the weather widget.
-type WeatherDailyItem struct {
-	Date          string
-	DayName       string
-	Icon          string
-	ConditionText string
-	TempMin       float64
-	TempMax       float64
-	PrecipProbMax int
-	HasPrecip     bool
-	BarLeft       float64
-	BarWidth      float64
-}
-
-func extractDailyPoints(arg any) []provider.WeatherDaily {
-	val, ok := derefSlice(arg)
-	if !ok {
-		return nil
-	}
-
-	n := val.Len()
-	pts := make([]provider.WeatherDaily, 0, n)
-	for i := 0; i < n; i++ {
-		itemVal := val.Index(i)
-		if !itemVal.IsValid() {
-			continue
-		}
-		item := itemVal.Interface()
-		if item == nil {
-			continue
-		}
-
-		var pt provider.WeatherDaily
-		if d, ok := item.(provider.WeatherDaily); ok {
-			pt = d
-		} else if dp, ok := item.(*provider.WeatherDaily); ok && dp != nil {
-			pt = *dp
-		} else if m, ok := item.(map[string]any); ok {
-			if s, ok := m["date"].(string); ok {
-				pt.Date = s
-			}
-			if v, ok := mapFloat(m, "temp_max"); ok {
-				pt.TempMax = v
-			}
-			if v, ok := mapFloat(m, "temp_min"); ok {
-				pt.TempMin = v
-			}
-			if v, ok := mapInt(m, "precip_prob_max"); ok {
-				pt.PrecipProbMax = v
-			}
-			if s, ok := m["condition_text"].(string); ok {
-				pt.ConditionText = s
-			}
-			if s, ok := m["icon"].(string); ok {
-				pt.Icon = s
-			}
-		} else {
-			v := reflect.ValueOf(item)
-			if v.Kind() == reflect.Pointer {
-				if v.IsNil() {
-					continue
-				}
-				v = v.Elem()
-			}
-			if v.Kind() == reflect.Struct {
-				pt.Date = structString(v, "Date")
-				pt.TempMax = structFloat(v, "TempMax")
-				pt.TempMin = structFloat(v, "TempMin")
-				pt.PrecipProbMax = structInt(v, "PrecipProbMax")
-				pt.ConditionText = structString(v, "ConditionText")
-				pt.Icon = structString(v, "Icon")
-			}
-		}
-
-		if math.IsNaN(pt.TempMin) || math.IsInf(pt.TempMin, 0) {
-			pt.TempMin = 0.0
-		}
-		if math.IsNaN(pt.TempMax) || math.IsInf(pt.TempMax, 0) {
-			pt.TempMax = 0.0
-		}
-		if pt.Icon == "" {
-			pt.Icon = "weather-cloudy"
-		}
-		pts = append(pts, pt)
-	}
-
-	return pts
-}
-
-// WeatherDailyForecast extracts upcoming daily forecast items (excluding today, index 0),
-// formats day names, and computes normalized temperature bar ranges.
-func WeatherDailyForecast(arg any, maxDaysOpt ...int) []WeatherDailyItem {
-	pts := extractDailyPoints(arg)
-	if len(pts) <= 1 {
-		return nil
-	}
-
-	maxDays := 5
-	if len(maxDaysOpt) > 0 && maxDaysOpt[0] > 0 {
-		maxDays = maxDaysOpt[0]
-	}
-
-	end := 1 + maxDays
-	if end > len(pts) {
-		end = len(pts)
-	}
-
-	upcoming := pts[1:end]
-	if len(upcoming) == 0 {
-		return nil
-	}
-
-	items := make([]WeatherDailyItem, len(upcoming))
-	var overallMin, overallMax float64
-
-	for i, raw := range upcoming {
-		dayName := "Tomorrow"
-		if i > 0 {
-			if t, err := time.Parse("2006-01-02", strings.TrimSpace(raw.Date)); err == nil {
-				dayName = t.Format("Mon")
-			} else {
-				dayName = raw.Date
-			}
-		}
-
-		tMin := raw.TempMin
-		tMax := raw.TempMax
-		if tMin > tMax {
-			tMin, tMax = tMax, tMin
-		}
-
-		if i == 0 {
-			overallMin = tMin
-			overallMax = tMax
-		} else {
-			if tMin < overallMin {
-				overallMin = tMin
-			}
-			if tMax > overallMax {
-				overallMax = tMax
-			}
-		}
-
-		items[i] = WeatherDailyItem{
-			Date:          raw.Date,
-			DayName:       dayName,
-			Icon:          raw.Icon,
-			ConditionText: raw.ConditionText,
-			TempMin:       tMin,
-			TempMax:       tMax,
-			PrecipProbMax: raw.PrecipProbMax,
-			HasPrecip:     raw.PrecipProbMax > 0,
-		}
-	}
-
-	span := overallMax - overallMin
-	if span < 2.0 {
-		span = 2.0
-	}
-
-	for i := range items {
-		barLeft := ((items[i].TempMin - overallMin) / span) * 100.0
-		barWidth := ((items[i].TempMax - items[i].TempMin) / span) * 100.0
-
-		if barLeft < 0.0 {
-			barLeft = 0.0
-		} else if barLeft > 95.0 {
-			barLeft = 95.0
-		}
-
-		if barWidth < 5.0 {
-			barWidth = 5.0
-		}
-		if barLeft+barWidth > 100.0 {
-			barWidth = 100.0 - barLeft
-		}
-
-		items[i].BarLeft = barLeft
-		items[i].BarWidth = barWidth
-		items[i].HasPrecip = items[i].PrecipProbMax > 0
-	}
-
-	return items
 }
 
 // TodayPrecipProb extracts today's maximum precipitation probability percentage (0-100)

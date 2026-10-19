@@ -230,8 +230,11 @@ func TestHandler_SlowConsumerDisconnect(t *testing.T) {
 	hub.Publish(EventWidgetUpdate, []byte("slow_2"))
 	hub.Publish(EventWidgetUpdate, []byte("slow_3"))
 
-	if hub.SubscriberCount() != 0 {
-		t.Fatalf("expected evicted, got %d", hub.SubscriberCount())
+	hub.mu.RLock()
+	n := len(hub.subscribers)
+	hub.mu.RUnlock()
+	if n != 0 {
+		t.Fatalf("expected evicted, got %d", n)
 	}
 	close(blockCh)
 }

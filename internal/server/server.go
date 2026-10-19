@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net"
 	"net/http"
 	"os"
@@ -194,54 +193,6 @@ func (s *Server) Addr() string {
 // Routes returns the configured http.Handler for in-memory testing.
 func (s *Server) Routes() http.Handler { return s.mux }
 
-func setHandler[T any](s *Server, dst *T, h T) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	*dst = h
-}
-
-func getHandler[T any](s *Server, src *T) T {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return *src
-}
-
-// RegisterEventsHandler and EventsHandler manage the /api/events HTTP handler.
-func (s *Server) RegisterEventsHandler(h http.Handler) { setHandler(s, &s.eventsHandler, h) }
-func (s *Server) EventsHandler() http.Handler          { return getHandler(s, &s.eventsHandler) }
-
-// RegisterScreenHandler and ScreenHandler manage the screen navigation handler.
-func (s *Server) RegisterScreenHandler(h ScreenHandler) { setHandler(s, &s.screenHandler, h) }
-func (s *Server) ScreenHandler() ScreenHandler          { return getHandler(s, &s.screenHandler) }
-
-// RegisterRenderHandler and RenderHandler manage the render and asset handler.
-func (s *Server) RegisterRenderHandler(h RenderHandler) { setHandler(s, &s.renderHandler, h) }
-func (s *Server) RenderHandler() RenderHandler          { return getHandler(s, &s.renderHandler) }
-
-// RegisterPushHandler and PushHandler manage the widget push webhook handler.
-func (s *Server) RegisterPushHandler(h PushHandler) { setHandler(s, &s.pushHandler, h) }
-func (s *Server) PushHandler() PushHandler          { return getHandler(s, &s.pushHandler) }
-
-// RegisterDisplayHandler and DisplayHandler manage the display and static asset handler.
-func (s *Server) RegisterDisplayHandler(h DisplayHandler) { setHandler(s, &s.displayHandler, h) }
-func (s *Server) DisplayHandler() DisplayHandler          { return getHandler(s, &s.displayHandler) }
-
-// RegisterListsHandler and ListsHandler manage the tasks/lists inspection handler.
-func (s *Server) RegisterListsHandler(h ListsHandler) { setHandler(s, &s.listsHandler, h) }
-func (s *Server) ListsHandler() ListsHandler          { return getHandler(s, &s.listsHandler) }
-
-// RegisterAudioHandler and AudioHandler manage the master audio handler.
-func (s *Server) RegisterAudioHandler(h AudioHandler) { setHandler(s, &s.audioHandler, h) }
-func (s *Server) AudioHandler() AudioHandler          { return getHandler(s, &s.audioHandler) }
-
-// RegisterVideoHandler and VideoHandler manage the video stream handler.
-func (s *Server) RegisterVideoHandler(h VideoHandler) { setHandler(s, &s.videoHandler, h) }
-func (s *Server) VideoHandler() VideoHandler          { return getHandler(s, &s.videoHandler) }
-
-// RegisterVoiceHandler and VoiceHandler manage the voice pipeline handler.
-func (s *Server) RegisterVoiceHandler(h VoiceHandler) { setHandler(s, &s.voiceHandler, h) }
-func (s *Server) VoiceHandler() VoiceHandler          { return getHandler(s, &s.voiceHandler) }
-
 func isNil[H any](h H) bool { return any(h) == nil }
 
 func dispatchHandler[H any](s *Server, get func() H, isNil func(H) bool, fn func(H, http.ResponseWriter, *http.Request)) http.HandlerFunc {
@@ -414,17 +365,6 @@ func (s *Server) Serve(l net.Listener) error {
 		return nil
 	}
 	return err
-}
-
-// ListenAndServe binds to cfg.Host:cfg.Port and serves requests.
-func (s *Server) ListenAndServe() error {
-	bindAddr := fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port)
-	var lc net.ListenConfig
-	l, err := lc.Listen(context.Background(), "tcp", bindAddr)
-	if err != nil {
-		return fmt.Errorf("failed to bind address %s: %w", bindAddr, err)
-	}
-	return s.Serve(l)
 }
 
 // Shutdown gracefully stops the HTTP server.

@@ -58,21 +58,6 @@ type Layout struct {
 	Screens      []Screen `json:"screens"`
 }
 
-// CellIndex returns the 1D discrete cell index (0..11) for coordinates (col, row).
-func CellIndex(col, row int) int { return row*GridColumns + col }
-
-// WidgetBitmask computes the 12-bit integer bitmask for a widget of size (cols, rows) at origin (originCol, originRow).
-// It returns an error if the widget bounds exceed the 6x2 grid.
-func WidgetBitmask(cols, rows, originCol, originRow int) (uint16, error) {
-	if cols < 1 || cols > GridColumns || rows < 1 || rows > GridRows {
-		return 0, fmt.Errorf("invalid dimensions [%d, %d]: cols must be 1..6, rows must be 1..2", cols, rows)
-	}
-	if originCol < 0 || originCol+cols > GridColumns || originRow < 0 || originRow+rows > GridRows {
-		return 0, fmt.Errorf("widget [%d, %d] at origin [%d, %d] exceeds 6x2 grid bounds", cols, rows, originCol, originRow)
-	}
-	return ComputeWidgetBitmask(cols, rows, originCol, originRow), nil
-}
-
 // ComputeWidgetBitmask computes the bitmask assuming bounds have already been validated.
 func ComputeWidgetBitmask(cols, rows, originCol, originRow int) uint16 {
 	rowMask := uint16(((1 << cols) - 1) << originCol)

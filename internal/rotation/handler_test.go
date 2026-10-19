@@ -53,17 +53,15 @@ func TestHandler_PostScreenSelect(t *testing.T) {
 		body     string
 		nilCtrl  bool
 		ctrlErr  error
-		useAlias bool
 		wantCode int
 		wantSub  string
 	}{
-		{"valid_index_2", http.MethodPost, `{"screen_index":2}`, false, nil, false, http.StatusOK, `"current_screen":2`},
-		{"alias_handle_select", http.MethodPost, `{"screen_index":1}`, false, nil, true, http.StatusOK, `"current_screen":1`},
-		{"options_cors", http.MethodOptions, "", false, nil, false, http.StatusNoContent, ""},
-		{"get_not_allowed", http.MethodGet, "", false, nil, false, http.StatusMethodNotAllowed, ""},
-		{"nil_controller", http.MethodPost, `{"screen_index":1}`, true, nil, false, http.StatusInternalServerError, "not configured"},
-		{"invalid_json", http.MethodPost, `{bad`, false, nil, false, http.StatusBadRequest, "invalid request body"},
-		{"ctrl_err", http.MethodPost, `{"screen_index":9}`, false, ErrInvalidScreenIndex, false, http.StatusBadRequest, ErrInvalidScreenIndex.Error()},
+		{"valid_index_2", http.MethodPost, `{"screen_index":2}`, false, nil, http.StatusOK, `"current_screen":2`},
+		{"options_cors", http.MethodOptions, "", false, nil, http.StatusNoContent, ""},
+		{"get_not_allowed", http.MethodGet, "", false, nil, http.StatusMethodNotAllowed, ""},
+		{"nil_controller", http.MethodPost, `{"screen_index":1}`, true, nil, http.StatusInternalServerError, "not configured"},
+		{"invalid_json", http.MethodPost, `{bad`, false, nil, http.StatusBadRequest, "invalid request body"},
+		{"ctrl_err", http.MethodPost, `{"screen_index":9}`, false, ErrInvalidScreenIndex, http.StatusBadRequest, ErrInvalidScreenIndex.Error()},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -73,11 +71,7 @@ func TestHandler_PostScreenSelect(t *testing.T) {
 				ctrl = &mockController{totalScreen: 3, ctrlErr: tc.ctrlErr}
 			}
 			h := NewHandler(ctrl)
-			fn := h.PostScreenSelect
-			if tc.useAlias {
-				fn = h.HandleSelect
-			}
-			rec := doReq(http.HandlerFunc(fn), tc.method, "/api/screen/select", tc.body)
+			rec := doReq(http.HandlerFunc(h.PostScreenSelect), tc.method, "/api/screen/select", tc.body)
 			if rec.Code != tc.wantCode || (tc.wantSub != "" && !strings.Contains(rec.Body.String(), tc.wantSub)) {
 				t.Fatalf("got (%d, %q), want (%d, sub %q)", rec.Code, rec.Body.String(), tc.wantCode, tc.wantSub)
 			}
@@ -93,19 +87,17 @@ func TestHandler_PostScreenAdvance(t *testing.T) {
 		body     string
 		nilCtrl  bool
 		ctrlErr  error
-		useAlias bool
 		wantCode int
 		wantSub  string
 	}{
-		{"default_next", http.MethodPost, "", false, nil, false, http.StatusOK, `"current_screen":1`},
-		{"nil_body", http.MethodPost, "<nil>", false, nil, false, http.StatusOK, `"current_screen":1`},
-		{"alias_handle_advance", http.MethodPost, "", false, nil, true, http.StatusOK, `"current_screen":1`},
-		{"explicit_prev", http.MethodPost, `{"direction":"prev"}`, false, nil, false, http.StatusOK, `"current_screen":1`},
-		{"options_cors", http.MethodOptions, "", false, nil, false, http.StatusNoContent, ""},
-		{"method_not_allowed", http.MethodPut, "", false, nil, false, http.StatusMethodNotAllowed, ""},
-		{"nil_controller", http.MethodPost, "", true, nil, false, http.StatusInternalServerError, "not configured"},
-		{"invalid_json", http.MethodPost, `{broken`, false, nil, false, http.StatusBadRequest, "invalid request body"},
-		{"ctrl_err", http.MethodPost, `{"direction":"bad"}`, false, ErrInvalidDirection, false, http.StatusBadRequest, ErrInvalidDirection.Error()},
+		{"default_next", http.MethodPost, "", false, nil, http.StatusOK, `"current_screen":1`},
+		{"nil_body", http.MethodPost, "<nil>", false, nil, http.StatusOK, `"current_screen":1`},
+		{"explicit_prev", http.MethodPost, `{"direction":"prev"}`, false, nil, http.StatusOK, `"current_screen":1`},
+		{"options_cors", http.MethodOptions, "", false, nil, http.StatusNoContent, ""},
+		{"method_not_allowed", http.MethodPut, "", false, nil, http.StatusMethodNotAllowed, ""},
+		{"nil_controller", http.MethodPost, "", true, nil, http.StatusInternalServerError, "not configured"},
+		{"invalid_json", http.MethodPost, `{broken`, false, nil, http.StatusBadRequest, "invalid request body"},
+		{"ctrl_err", http.MethodPost, `{"direction":"bad"}`, false, ErrInvalidDirection, http.StatusBadRequest, ErrInvalidDirection.Error()},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -115,11 +107,7 @@ func TestHandler_PostScreenAdvance(t *testing.T) {
 				ctrl = &mockController{totalScreen: 2, ctrlErr: tc.ctrlErr}
 			}
 			h := NewHandler(ctrl)
-			fn := h.PostScreenAdvance
-			if tc.useAlias {
-				fn = h.HandleAdvance
-			}
-			rec := doReq(http.HandlerFunc(fn), tc.method, "/api/screen/advance", tc.body)
+			rec := doReq(http.HandlerFunc(h.PostScreenAdvance), tc.method, "/api/screen/advance", tc.body)
 			if rec.Code != tc.wantCode || (tc.wantSub != "" && !strings.Contains(rec.Body.String(), tc.wantSub)) {
 				t.Fatalf("got (%d, %q), want (%d, sub %q)", rec.Code, rec.Body.String(), tc.wantCode, tc.wantSub)
 			}
@@ -135,24 +123,22 @@ func TestHandler_PostScreenPause(t *testing.T) {
 		body     string
 		nilCtrl  bool
 		ctrlErr  error
-		useAlias bool
 		wantCode int
 		wantSub  string
 	}{
-		{"pause_default", http.MethodPost, `{"paused":true}`, false, nil, false, http.StatusOK, `"paused":true`},
-		{"pause_explicit", http.MethodPost, `{"paused":true,"duration_seconds":60}`, false, nil, false, http.StatusOK, `"paused":true`},
-		{"resume", http.MethodPost, `{"paused":false}`, false, nil, false, http.StatusOK, `"paused":false`},
-		{"alias_handle_pause", http.MethodPost, `{"paused":true}`, false, nil, true, http.StatusOK, `"paused":true`},
-		{"options_cors", http.MethodOptions, "", false, nil, false, http.StatusNoContent, ""},
-		{"method_not_allowed", http.MethodDelete, "", false, nil, false, http.StatusMethodNotAllowed, ""},
-		{"nil_controller", http.MethodPost, `{"paused":true}`, true, nil, false, http.StatusInternalServerError, "not configured"},
-		{"invalid_json", http.MethodPost, `{bad`, false, nil, false, http.StatusBadRequest, "invalid payload"},
-		{"missing_paused", http.MethodPost, `{}`, false, nil, false, http.StatusBadRequest, "invalid payload"},
-		{"missing_paused_dur", http.MethodPost, `{"duration_seconds":120}`, false, nil, false, http.StatusBadRequest, "invalid payload"},
-		{"non_bool_paused", http.MethodPost, `{"paused":"true"}`, false, nil, false, http.StatusBadRequest, "invalid payload"},
-		{"negative_dur", http.MethodPost, `{"paused":true,"duration_seconds":-5}`, false, nil, false, http.StatusBadRequest, "duration_seconds"},
-		{"pause_err", http.MethodPost, `{"paused":true}`, false, errors.New("pause err"), false, http.StatusBadRequest, "pause err"},
-		{"resume_err", http.MethodPost, `{"paused":false}`, false, errors.New("resume err"), false, http.StatusBadRequest, "resume err"},
+		{"pause_default", http.MethodPost, `{"paused":true}`, false, nil, http.StatusOK, `"paused":true`},
+		{"pause_explicit", http.MethodPost, `{"paused":true,"duration_seconds":60}`, false, nil, http.StatusOK, `"paused":true`},
+		{"resume", http.MethodPost, `{"paused":false}`, false, nil, http.StatusOK, `"paused":false`},
+		{"options_cors", http.MethodOptions, "", false, nil, http.StatusNoContent, ""},
+		{"method_not_allowed", http.MethodDelete, "", false, nil, http.StatusMethodNotAllowed, ""},
+		{"nil_controller", http.MethodPost, `{"paused":true}`, true, nil, http.StatusInternalServerError, "not configured"},
+		{"invalid_json", http.MethodPost, `{bad`, false, nil, http.StatusBadRequest, "invalid payload"},
+		{"missing_paused", http.MethodPost, `{}`, false, nil, http.StatusBadRequest, "invalid payload"},
+		{"missing_paused_dur", http.MethodPost, `{"duration_seconds":120}`, false, nil, http.StatusBadRequest, "invalid payload"},
+		{"non_bool_paused", http.MethodPost, `{"paused":"true"}`, false, nil, http.StatusBadRequest, "invalid payload"},
+		{"negative_dur", http.MethodPost, `{"paused":true,"duration_seconds":-5}`, false, nil, http.StatusBadRequest, "duration_seconds"},
+		{"pause_err", http.MethodPost, `{"paused":true}`, false, errors.New("pause err"), http.StatusBadRequest, "pause err"},
+		{"resume_err", http.MethodPost, `{"paused":false}`, false, errors.New("resume err"), http.StatusBadRequest, "resume err"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -162,11 +148,7 @@ func TestHandler_PostScreenPause(t *testing.T) {
 				ctrl = &mockController{ctrlErr: tc.ctrlErr}
 			}
 			h := NewHandler(ctrl)
-			fn := h.PostScreenPause
-			if tc.useAlias {
-				fn = h.HandlePause
-			}
-			rec := doReq(http.HandlerFunc(fn), tc.method, "/api/screen/pause", tc.body)
+			rec := doReq(http.HandlerFunc(h.PostScreenPause), tc.method, "/api/screen/pause", tc.body)
 			if rec.Code != tc.wantCode || (tc.wantSub != "" && !strings.Contains(rec.Body.String(), tc.wantSub)) {
 				t.Fatalf("got (%d, %q), want (%d, sub %q)", rec.Code, rec.Body.String(), tc.wantCode, tc.wantSub)
 			}

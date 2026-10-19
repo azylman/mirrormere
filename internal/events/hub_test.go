@@ -14,7 +14,7 @@ func TestHub_PublishAndSubscribe(t *testing.T) {
 	cfg.ApplyDefaults()
 	hub := NewHub(cfg, nil, nil)
 	defer hub.Close()
-	if hub.SubscriberCount() != 0 || hub.StateProvider() != nil || hub.RotationCoordinator() != nil || hub.ProviderCoordinator() != nil || hub.RingBuffer() == nil || hub.IDGenerator() == nil || hub.Config().RingCapacity != 10 {
+	if hub.StateProvider() != nil || hub.RotationCoordinator() != nil || hub.ProviderCoordinator() != nil || hub.RingBuffer() == nil || hub.IDGenerator() == nil || hub.Config().RingCapacity != 10 {
 		t.Fatal("unexpected initial state")
 	}
 
@@ -36,8 +36,8 @@ func TestHub_PublishAndSubscribe(t *testing.T) {
 	}
 	unsub1()
 	hub.Unsubscribe(99999)
-	if hub.SubscriberCount() != 1 {
-		t.Fatalf("expected 1, got %d", hub.SubscriberCount())
+	if len(hub.subscribers) != 1 {
+		t.Fatalf("expected 1, got %d", len(hub.subscribers))
 	}
 }
 
@@ -53,7 +53,7 @@ func TestHub_SlowConsumerDrop(t *testing.T) {
 	}
 	hub.Publish(EventWidgetUpdate, []byte("1"))
 	hub.Publish(EventWidgetUpdate, []byte("2"))
-	if hub.SubscriberCount() != 0 || string((<-ch).Data) != "1" || (<-ch != nil) {
+	if len(hub.subscribers) != 0 || string((<-ch).Data) != "1" || (<-ch != nil) {
 		t.Fatal("expected evicted and closed")
 	}
 }
@@ -115,7 +115,7 @@ func TestHub_CloseAndEdgeCases(t *testing.T) {
 	hub.Close()
 	hub.Close()
 	hub.Subscribe(context.Background())
-	if hub.SubscriberCount() != 0 || (<-ch != nil) {
+	if len(hub.subscribers) != 0 || (<-ch != nil) {
 		t.Fatal("expected closed")
 	}
 	hub.Publish(EventWidgetUpdate, []byte("{}"))

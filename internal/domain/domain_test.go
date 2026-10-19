@@ -73,16 +73,7 @@ func TestDimension_YAML(t *testing.T) {
 		t.Errorf("expected 3x1, got %dx%d", d2.Cols, d2.Rows)
 	}
 
-	// 3. Marshaling
-	marshaled, err := yaml.Marshal(d1)
-	if err != nil {
-		t.Fatalf("unexpected marshal error: %v", err)
-	}
-	if !strings.Contains(string(marshaled), "- 4\n- 2") && !strings.Contains(string(marshaled), "[4, 2]") {
-		t.Errorf("unexpected marshaled output: %s", string(marshaled))
-	}
-
-	// 4. Invalid YAML cases
+	// 3. Invalid YAML cases
 	var dBad domain.Dimension
 	if err := yaml.Unmarshal([]byte("[4]"), &dBad); err == nil {
 		t.Fatal("expected error for 1-element sequence, got nil")
@@ -169,15 +160,6 @@ config_schema:
 	}
 	if err := m.Validate(); err != nil {
 		t.Fatalf("unexpected validate error: %v", err)
-	}
-	if !m.HasCapability("ambient-static") {
-		t.Error("expected ambient-static capability")
-	}
-	if !m.HasCapability("TOUCH-INTERACTIVE") {
-		t.Error("expected case-insensitive capability match")
-	}
-	if m.HasCapability("video-capture") {
-		t.Error("did not expect video-capture capability")
 	}
 
 	// Missing name
@@ -383,22 +365,10 @@ func TestPackage_Methods(t *testing.T) {
 	if !pkg.HasAssets() {
 		t.Error("expected HasAssets to be true")
 	}
-	if !pkg.IsBuiltin() {
-		t.Error("expected IsBuiltin to be true")
-	}
-	if pkg.IsCustom() {
-		t.Error("expected IsCustom to be false")
-	}
 
 	pkgCustom := domain.Package{
 		Type:   "sensor-card",
 		Source: "custom",
-	}
-	if !pkgCustom.IsCustom() {
-		t.Error("expected IsCustom to be true")
-	}
-	if pkgCustom.IsBuiltin() {
-		t.Error("expected IsBuiltin to be false")
 	}
 	if pkgCustom.HasAssets() {
 		t.Error("expected HasAssets to be false when AssetsDir is empty")

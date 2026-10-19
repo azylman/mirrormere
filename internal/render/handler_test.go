@@ -201,7 +201,6 @@ func TestHandler_ServeStyle(t *testing.T) {
 		cssPath         string
 		customCSSPath   string
 		setPath         string
-		checkPath       string
 		wantStatus      int
 		wantBody        string
 		wantEmpty       bool
@@ -216,7 +215,7 @@ func TestHandler_ServeStyle(t *testing.T) {
 		{name: "custom override layered on base 200 (custom newer)", method: http.MethodGet, cssPath: validCSS, customCSSPath: customCSS, wantStatus: http.StatusOK, wantBody: "/* test stylesheet */\n/* custom stylesheet */", wantContentType: "text/css; charset=utf-8", wantLastMod: newerTime.Format(http.TimeFormat)},
 		{name: "custom override layered on base 200 (base newer)", method: http.MethodGet, cssPath: validCSS, customCSSPath: olderCustomCSS, wantStatus: http.StatusOK, wantBody: "/* test stylesheet */\n/* older custom stylesheet */", wantContentType: "text/css; charset=utf-8", wantLastMod: baseTime.Format(http.TimeFormat)},
 		{name: "missing custom override falls back to base 200", method: http.MethodGet, cssPath: validCSS, customCSSPath: missingCSS, wantStatus: http.StatusOK, wantBody: "/* test stylesheet */"},
-		{name: "custom stylesheet SetCSSPath 200", method: http.MethodGet, cssPath: validCSS, setPath: customCSS, checkPath: customCSS, wantStatus: http.StatusOK, wantBody: "/* custom stylesheet */"},
+		{name: "custom stylesheet SetCSSPath 200", method: http.MethodGet, cssPath: validCSS, setPath: customCSS, wantStatus: http.StatusOK, wantBody: "/* custom stylesheet */"},
 		{name: "OPTIONS preflight 204", method: http.MethodOptions, cssPath: validCSS, wantStatus: http.StatusNoContent},
 		{name: "HEAD request 200", method: http.MethodHead, cssPath: validCSS, wantStatus: http.StatusOK, wantEmpty: true},
 		{name: "POST method not allowed 405", method: http.MethodPost, cssPath: validCSS, wantStatus: http.StatusMethodNotAllowed, wantErrMsg: "method not allowed"},
@@ -228,9 +227,6 @@ func TestHandler_ServeStyle(t *testing.T) {
 			h := render.NewHandler(nil, nil, render.WithCSSPath(tc.cssPath), render.WithCustomCSSPath(tc.customCSSPath))
 			if tc.setPath != "" {
 				h.SetCSSPath(tc.setPath)
-			}
-			if tc.checkPath != "" && h.CSSPath() != tc.checkPath {
-				t.Fatalf("CSSPath() = %q, want %q", h.CSSPath(), tc.checkPath)
 			}
 			rec := httptest.NewRecorder()
 			h.ServeStyle(rec, httptest.NewRequest(tc.method, "/style.css", nil))

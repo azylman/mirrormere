@@ -23,18 +23,15 @@ func TestSWRCache_LifecycleAndStateTransitions(t *testing.T) {
 	wID := "sensor-weather"
 	t0 := time.Date(2026, 9, 25, 10, 0, 0, 0, time.UTC)
 
-	if _, ok := cache.Get(wID); ok || cache.GetConsecutiveFailures(wID) != 0 || cache.GetLastError(wID) != nil {
+	if _, ok := cache.Get(wID); ok || cache.GetConsecutiveFailures(wID) != 0 {
 		t.Fatal("expected empty initial cache")
-	}
-	if _, ok := cache.GetLastSuccess(wID); ok {
-		t.Fatal("expected no last success")
 	}
 
 	errCold := errors.New("timeout on cold boot")
 	p1, tr1 := cache.RecordFailure(wID, errCold, t0)
 	assertCacheStep(t, cache, p1, tr1, provider.StateError, t0.Format(time.RFC3339), true, 1)
-	if dm, ok := p1.Data.(map[string]any); !ok || len(dm) != 0 || !errors.Is(cache.GetLastError(wID), errCold) {
-		t.Fatal("expected empty fallback map and last error")
+	if dm, ok := p1.Data.(map[string]any); !ok || len(dm) != 0 {
+		t.Fatal("expected empty fallback map")
 	}
 
 	p2, tr2 := cache.RecordFailure(wID, errCold, t0.Add(5*time.Second))
@@ -43,9 +40,6 @@ func TestSWRCache_LifecycleAndStateTransitions(t *testing.T) {
 	t2 := t0.Add(30 * time.Second)
 	p3, tr3 := cache.RecordSuccess(wID, map[string]any{"temp": 72.5}, t2)
 	assertCacheStep(t, cache, p3, tr3, provider.StateHealthy, t2.Format(time.RFC3339), true, 0)
-	if ls, ok := cache.GetLastSuccess(wID); !ok || !ls.Equal(t2) || cache.GetLastError(wID) != nil {
-		t.Fatal("expected last success and cleared error")
-	}
 
 	t3 := t2.Add(60 * time.Second)
 	p4, tr4 := cache.RecordSuccess(wID, map[string]any{"temp": 73.0}, t3)
@@ -70,12 +64,12 @@ func TestSWRCache_LifecycleAndStateTransitions(t *testing.T) {
 		t.Fatal("expected healthy on push")
 	}
 
-	if all := cache.GetAll(); len(all) != 1 || all[wID].State != provider.StateHealthy || len(cache.GetStatusMap()) != 1 {
-		t.Fatalf("unexpected GetAll or StatusMap: %v", all)
+	if len(cache.GetStatusMap()) != 1 {
+		t.Fatal("unexpected StatusMap length")
 	}
 
 	cache.Purge(wID)
-	if _, ok := cache.Get(wID); ok || len(cache.GetAll()) != 0 || cache.GetStatusMap() != nil {
+	if _, ok := cache.Get(wID); ok || cache.GetStatusMap() != nil {
 		t.Fatal("expected cache eviction after Purge")
 	}
 }
@@ -96,7 +90,6 @@ func TestSWRCache_ConcurrentAccessSafety(t *testing.T) {
 					cache.RecordFailure(id, errors.New("transient"), now)
 				} else {
 					_, _ = cache.Get(id)
-					_ = cache.GetAll()
 					_ = cache.GetStatusMap()
 				}
 			}

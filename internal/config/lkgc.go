@@ -109,14 +109,6 @@ func (m *Manager) Current() *Config {
 	return nil
 }
 
-// CurrentLayout returns the active 6x2 grid layout (lock-free).
-func (m *Manager) CurrentLayout() *layout.Layout {
-	if s := m.current.Load(); s != nil {
-		return s.Layout
-	}
-	return nil
-}
-
 // CurrentSnapshot returns the complete running snapshot including packages and layout (lock-free).
 func (m *Manager) CurrentSnapshot() *Snapshot { return m.current.Load() }
 
@@ -175,11 +167,6 @@ func (m *Manager) SetErrorStatus(err error) {
 	if err != nil {
 		m.updateLocked(func() { m.configReloadErr = err })
 	}
-}
-
-// ClearErrorStatus resets the error status back to OK if it was in error state.
-func (m *Manager) ClearErrorStatus() {
-	m.updateLocked(func() { m.configReloadErr, m.packageErrors = nil, make(map[string]string) })
 }
 
 // Reload executes the 6-stage validation pipeline on candidate YAML data.

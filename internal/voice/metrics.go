@@ -185,14 +185,6 @@ func (m *Metrics) RecordEdgeHeartbeat(nodeID string) {
 	m.lastSeen.WithLabelValues(SanitizeNodeID(nodeID)).Set(float64(time.Now().Unix()))
 }
 
-// RecordFalseWake increments the false wake counter.
-func (m *Metrics) RecordFalseWake(nodeID string) {
-	if m == nil || m.falseWakes == nil {
-		return
-	}
-	m.falseWakes.WithLabelValues(SanitizeNodeID(nodeID)).Inc()
-}
-
 // RecordFalseWakes increments the false wake counter by count with bounding.
 func (m *Metrics) RecordFalseWakes(nodeID string, count int) {
 	if m == nil || m.falseWakes == nil || count <= 0 {

@@ -84,13 +84,6 @@ func (e *Engine) Invalidate(widgetType string) {
 	delete(e.cache, widgetType)
 }
 
-// InvalidateAll flushes all compiled templates from memory.
-func (e *Engine) InvalidateAll() {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.cache = make(map[string]*template.Template)
-}
-
 // RenderWidget executes the HTML template for the given widget instance, returning the rendered HTML fragment.
 func (e *Engine) RenderWidget(ctx context.Context, widgetID string) ([]byte, error) {
 	return e.RenderWidgetForNode(ctx, widgetID, "")

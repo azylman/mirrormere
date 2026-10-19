@@ -200,7 +200,7 @@
   </div>
 
   <script type="application/json" class="calendar-grid-data calendar-family-data">
-    {{ json (calendarGridData nil $view $monthView .Config) }}
+    {{ json (calendarGridData $view $monthView .Config) }}
   </script>
   <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E" style="display:none;" alt="" onload="window.MirrormereCalendarGrid ? window.MirrormereCalendarGrid.mount(this.closest('.widget-calendar-grid, .widget-calendar-family')) : (window.MirrormereCalendarFamily &amp;&amp; window.MirrormereCalendarFamily.mount(this.closest('.widget-calendar-grid, .widget-calendar-family')))" />
 </div>

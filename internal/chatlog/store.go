@@ -103,9 +103,6 @@ func NewStore(opts ...Option) *Store {
 	return s
 }
 
-// TTL returns the configured message lifetime.
-func (s *Store) TTL() time.Duration { return s.ttl }
-
 // Add appends a message under key. A zero At is stamped with the current time.
 func (s *Store) Add(key string, m Message) {
 	s.mu.Lock()

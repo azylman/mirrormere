@@ -84,11 +84,6 @@ func (d *Dimension) UnmarshalYAML(node *yaml.Node) error {
 	}
 }
 
-// MarshalYAML serializes Dimension as a standard 2-element sequence [cols, rows].
-func (d Dimension) MarshalYAML() (any, error) {
-	return []int{d.Cols, d.Rows}, nil
-}
-
 // MarshalJSON serializes Dimension as a standard 2-element JSON array [cols, rows].
 func (d Dimension) MarshalJSON() ([]byte, error) {
 	return json.Marshal([]int{d.Cols, d.Rows})
