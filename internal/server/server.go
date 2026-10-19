@@ -89,21 +89,18 @@ type VoiceHandler interface {
 
 // Config encapsulates configuration for the HTTP server.
 type Config struct {
-	Host              string
-	Port              int
-	ReadTimeout       time.Duration
-	ReadHeaderTimeout time.Duration
-	WriteTimeout      time.Duration
-	IdleTimeout       time.Duration
-	EventsHandler     http.Handler
-	ScreenHandler     ScreenHandler
-	RenderHandler     RenderHandler
-	PushHandler       PushHandler
-	DisplayHandler    DisplayHandler
-	ListsHandler      ListsHandler
-	AudioHandler      AudioHandler
-	VideoHandler      VideoHandler
-	VoiceHandler      VoiceHandler
+	Host                                                      string
+	Port                                                      int
+	ReadTimeout, ReadHeaderTimeout, WriteTimeout, IdleTimeout time.Duration
+	EventsHandler                                             http.Handler
+	ScreenHandler                                             ScreenHandler
+	RenderHandler                                             RenderHandler
+	PushHandler                                               PushHandler
+	DisplayHandler                                            DisplayHandler
+	ListsHandler                                              ListsHandler
+	AudioHandler                                              AudioHandler
+	VideoHandler                                              VideoHandler
+	VoiceHandler                                              VoiceHandler
 }
 
 // ApplyDefaults sets fallback values for any unspecified configuration fields.
@@ -167,24 +164,14 @@ type Server struct {
 // New constructs a configured Server instance.
 func New(cfg Config) *Server {
 	cfg.ApplyDefaults()
-
 	s := &Server{
-		cfg:            cfg,
-		mux:            http.NewServeMux(),
-		ready:          make(chan struct{}),
-		eventsHandler:  cfg.EventsHandler,
-		screenHandler:  cfg.ScreenHandler,
-		renderHandler:  cfg.RenderHandler,
-		pushHandler:    cfg.PushHandler,
-		displayHandler: cfg.DisplayHandler,
-		listsHandler:   cfg.ListsHandler,
-		audioHandler:   cfg.AudioHandler,
-		videoHandler:   cfg.VideoHandler,
-		voiceHandler:   cfg.VoiceHandler,
+		cfg: cfg, mux: http.NewServeMux(), ready: make(chan struct{}),
+		eventsHandler: cfg.EventsHandler, screenHandler: cfg.ScreenHandler,
+		renderHandler: cfg.RenderHandler, pushHandler: cfg.PushHandler,
+		displayHandler: cfg.DisplayHandler, listsHandler: cfg.ListsHandler,
+		audioHandler: cfg.AudioHandler, videoHandler: cfg.VideoHandler, voiceHandler: cfg.VoiceHandler,
 	}
-
 	s.setupRoutes()
-
 	s.httpServer = &http.Server{
 		Handler:           s.mux,
 		ReadTimeout:       s.cfg.ReadTimeout,
@@ -192,14 +179,11 @@ func New(cfg Config) *Server {
 		WriteTimeout:      s.cfg.WriteTimeout,
 		IdleTimeout:       s.cfg.IdleTimeout,
 	}
-
 	return s
 }
 
 // Ready returns a channel closed as soon as the server listener is bound.
-func (s *Server) Ready() <-chan struct{} {
-	return s.ready
-}
+func (s *Server) Ready() <-chan struct{} { return s.ready }
 
 // Addr returns the network address the server is actively listening on.
 func (s *Server) Addr() string {
@@ -209,134 +193,69 @@ func (s *Server) Addr() string {
 }
 
 // Routes returns the configured http.Handler for in-memory testing.
-func (s *Server) Routes() http.Handler {
-	return s.mux
-}
+func (s *Server) Routes() http.Handler { return s.mux }
 
-// RegisterEventsHandler dynamically registers or replaces the /api/events HTTP handler.
-func (s *Server) RegisterEventsHandler(h http.Handler) {
+func setHandler[T any](s *Server, dst *T, h T) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.eventsHandler = h
+	*dst = h
 }
 
-// EventsHandler returns the currently registered events handler.
-func (s *Server) EventsHandler() http.Handler {
+func getHandler[T any](s *Server, src *T) T {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.eventsHandler
+	return *src
 }
 
-// RegisterScreenHandler dynamically registers or replaces the screen navigation handler.
-func (s *Server) RegisterScreenHandler(h ScreenHandler) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.screenHandler = h
-}
+// RegisterEventsHandler and EventsHandler manage the /api/events HTTP handler.
+func (s *Server) RegisterEventsHandler(h http.Handler) { setHandler(s, &s.eventsHandler, h) }
+func (s *Server) EventsHandler() http.Handler          { return getHandler(s, &s.eventsHandler) }
 
-// ScreenHandler returns the currently registered screen handler.
-func (s *Server) ScreenHandler() ScreenHandler {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.screenHandler
-}
+// RegisterScreenHandler and ScreenHandler manage the screen navigation handler.
+func (s *Server) RegisterScreenHandler(h ScreenHandler) { setHandler(s, &s.screenHandler, h) }
+func (s *Server) ScreenHandler() ScreenHandler          { return getHandler(s, &s.screenHandler) }
 
-// RegisterRenderHandler dynamically registers or replaces the render and asset handler.
-func (s *Server) RegisterRenderHandler(h RenderHandler) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.renderHandler = h
-}
+// RegisterRenderHandler and RenderHandler manage the render and asset handler.
+func (s *Server) RegisterRenderHandler(h RenderHandler) { setHandler(s, &s.renderHandler, h) }
+func (s *Server) RenderHandler() RenderHandler          { return getHandler(s, &s.renderHandler) }
 
-// RenderHandler returns the currently registered render handler.
-func (s *Server) RenderHandler() RenderHandler {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.renderHandler
-}
+// RegisterPushHandler and PushHandler manage the widget push webhook handler.
+func (s *Server) RegisterPushHandler(h PushHandler) { setHandler(s, &s.pushHandler, h) }
+func (s *Server) PushHandler() PushHandler          { return getHandler(s, &s.pushHandler) }
 
-// RegisterPushHandler dynamically registers or replaces the widget push webhook handler.
-func (s *Server) RegisterPushHandler(h PushHandler) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.pushHandler = h
-}
+// RegisterDisplayHandler and DisplayHandler manage the display and static asset handler.
+func (s *Server) RegisterDisplayHandler(h DisplayHandler) { setHandler(s, &s.displayHandler, h) }
+func (s *Server) DisplayHandler() DisplayHandler          { return getHandler(s, &s.displayHandler) }
 
-// PushHandler returns the currently registered push handler.
-func (s *Server) PushHandler() PushHandler {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.pushHandler
-}
+// RegisterListsHandler and ListsHandler manage the tasks/lists inspection handler.
+func (s *Server) RegisterListsHandler(h ListsHandler) { setHandler(s, &s.listsHandler, h) }
+func (s *Server) ListsHandler() ListsHandler          { return getHandler(s, &s.listsHandler) }
 
-// RegisterDisplayHandler dynamically registers or replaces the display and static asset handler.
-func (s *Server) RegisterDisplayHandler(h DisplayHandler) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.displayHandler = h
-}
+// RegisterAudioHandler and AudioHandler manage the master audio handler.
+func (s *Server) RegisterAudioHandler(h AudioHandler) { setHandler(s, &s.audioHandler, h) }
+func (s *Server) AudioHandler() AudioHandler          { return getHandler(s, &s.audioHandler) }
 
-// DisplayHandler returns the currently registered display handler.
-func (s *Server) DisplayHandler() DisplayHandler {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.displayHandler
-}
+// RegisterVideoHandler and VideoHandler manage the video stream handler.
+func (s *Server) RegisterVideoHandler(h VideoHandler) { setHandler(s, &s.videoHandler, h) }
+func (s *Server) VideoHandler() VideoHandler          { return getHandler(s, &s.videoHandler) }
 
-// RegisterListsHandler dynamically registers or replaces the tasks/lists inspection handler.
-func (s *Server) RegisterListsHandler(h ListsHandler) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.listsHandler = h
-}
+// RegisterVoiceHandler and VoiceHandler manage the voice pipeline handler.
+func (s *Server) RegisterVoiceHandler(h VoiceHandler) { setHandler(s, &s.voiceHandler, h) }
+func (s *Server) VoiceHandler() VoiceHandler          { return getHandler(s, &s.voiceHandler) }
 
-// ListsHandler returns the currently registered lists handler.
-func (s *Server) ListsHandler() ListsHandler {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.listsHandler
-}
+func isNil[H any](h H) bool { return any(h) == nil }
 
-// RegisterAudioHandler dynamically registers or replaces the master audio handler.
-func (s *Server) RegisterAudioHandler(h AudioHandler) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.audioHandler = h
-}
-
-// AudioHandler returns the currently registered audio handler.
-func (s *Server) AudioHandler() AudioHandler {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.audioHandler
-}
-
-// RegisterVideoHandler dynamically registers or replaces the video stream handler.
-func (s *Server) RegisterVideoHandler(h VideoHandler) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.videoHandler = h
-}
-
-// VideoHandler returns the currently registered video handler.
-func (s *Server) VideoHandler() VideoHandler {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.videoHandler
-}
-
-// RegisterVoiceHandler dynamically registers or replaces the voice pipeline handler.
-func (s *Server) RegisterVoiceHandler(h VoiceHandler) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.voiceHandler = h
-}
-
-// VoiceHandler returns the currently registered voice handler.
-func (s *Server) VoiceHandler() VoiceHandler {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.voiceHandler
+func dispatchHandler[H any](s *Server, get func() H, isNil func(H) bool, fn func(H, http.ResponseWriter, *http.Request)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		s.mu.RLock()
+		h := get()
+		s.mu.RUnlock()
+		if isNil(h) {
+			http.NotFound(w, r)
+			return
+		}
+		fn(h, w, r)
+	}
 }
 
 func (s *Server) setupRoutes() {
@@ -344,303 +263,51 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/health", s.handleHealth)
 	s.mux.HandleFunc("/debug/coverage/flush", s.handleCoverageFlush)
 	s.mux.Handle("/metrics", promhttp.Handler())
-	s.mux.HandleFunc("/api/events", s.handleEvents)
-	s.mux.HandleFunc("/api/screen/select", s.handleScreenSelect)
-	s.mux.HandleFunc("/api/screen/advance", s.handleScreenAdvance)
-	s.mux.HandleFunc("/api/screen/pause", s.handleScreenPause)
-	s.mux.HandleFunc("/api/lists/{list_id}/items", s.handleListItems)
-	s.mux.HandleFunc("/api/lists/{list_id}/items/{item_id}/complete", s.handleCompleteListItem)
-	s.mux.HandleFunc("/api/audio", s.handleAudio)
-	s.mux.HandleFunc("/api/audio/volume", s.handleAudioVolume)
-	s.mux.HandleFunc("/api/audio/mute", s.handleAudioMute)
-	s.mux.HandleFunc("/api/video/trigger", s.handleVideoTrigger)
-	s.mux.HandleFunc("/api/video/dismiss", s.handleVideoDismiss)
-	s.mux.HandleFunc("/api/video/action", s.handleVideoAction)
-	s.mux.HandleFunc("/api/video/state", s.handleVideoState)
-	s.mux.HandleFunc("/api/voice/state", s.handleVoiceState)
-	s.mux.HandleFunc("/api/voice/interact", s.handleVoiceInteract)
-	s.mux.HandleFunc("/api/voice/heartbeat", s.handleVoiceHeartbeat)
-	s.mux.HandleFunc("/api/widgets/{widget_id}/render", s.handleWidgetRender)
-	s.mux.HandleFunc("/api/widgets/{widget_id}/push", s.handleWidgetPush)
-	s.mux.HandleFunc("/widget-types/{type}/assets/{path...}", s.handleWidgetAsset)
-	s.mux.HandleFunc("/style.css", s.handleStyle)
-	s.mux.HandleFunc("/display", s.handleDisplay)
-	s.mux.HandleFunc("/static/{path...}", s.handleStatic)
+	s.mux.HandleFunc("/api/events", dispatchHandler(s, func() http.Handler { return s.eventsHandler }, isNil, func(h http.Handler, w http.ResponseWriter, r *http.Request) { h.ServeHTTP(w, r) }))
+	s.mux.HandleFunc("/api/screen/select", dispatchHandler(s, func() ScreenHandler { return s.screenHandler }, isNil, func(h ScreenHandler, w http.ResponseWriter, r *http.Request) { h.PostScreenSelect(w, r) }))
+	s.mux.HandleFunc("/api/screen/advance", dispatchHandler(s, func() ScreenHandler { return s.screenHandler }, isNil, func(h ScreenHandler, w http.ResponseWriter, r *http.Request) { h.PostScreenAdvance(w, r) }))
+	s.mux.HandleFunc("/api/screen/pause", dispatchHandler(s, func() ScreenHandler { return s.screenHandler }, isNil, func(h ScreenHandler, w http.ResponseWriter, r *http.Request) { h.PostScreenPause(w, r) }))
+	s.mux.HandleFunc("/api/lists/{list_id}/items", dispatchHandler(s, func() ListsHandler { return s.listsHandler }, isNil, func(h ListsHandler, w http.ResponseWriter, r *http.Request) { h.GetListItems(w, r, r.PathValue("list_id")) }))
+	s.mux.HandleFunc("/api/lists/{list_id}/items/{item_id}/complete", dispatchHandler(s, func() ListsHandler { return s.listsHandler }, isNil, func(h ListsHandler, w http.ResponseWriter, r *http.Request) { h.CompleteListItem(w, r, r.PathValue("list_id"), r.PathValue("item_id")) }))
+	s.mux.HandleFunc("/api/audio", dispatchHandler(s, func() AudioHandler { return s.audioHandler }, isNil, func(h AudioHandler, w http.ResponseWriter, r *http.Request) { h.GetAudio(w, r) }))
+	s.mux.HandleFunc("/api/audio/volume", dispatchHandler(s, func() AudioHandler { return s.audioHandler }, isNil, func(h AudioHandler, w http.ResponseWriter, r *http.Request) { h.PostAudioVolume(w, r) }))
+	s.mux.HandleFunc("/api/audio/mute", dispatchHandler(s, func() AudioHandler { return s.audioHandler }, isNil, func(h AudioHandler, w http.ResponseWriter, r *http.Request) { h.PostAudioMute(w, r) }))
+	s.mux.HandleFunc("/api/video/trigger", dispatchHandler(s, func() VideoHandler { return s.videoHandler }, isNil, func(h VideoHandler, w http.ResponseWriter, r *http.Request) { h.PostVideoTrigger(w, r) }))
+	s.mux.HandleFunc("/api/video/dismiss", dispatchHandler(s, func() VideoHandler { return s.videoHandler }, isNil, func(h VideoHandler, w http.ResponseWriter, r *http.Request) { h.PostVideoDismiss(w, r) }))
+	s.mux.HandleFunc("/api/video/action", dispatchHandler(s, func() VideoHandler { return s.videoHandler }, isNil, func(h VideoHandler, w http.ResponseWriter, r *http.Request) { h.PostVideoAction(w, r) }))
+	s.mux.HandleFunc("/api/video/state", dispatchHandler(s, func() VideoHandler { return s.videoHandler }, isNil, func(h VideoHandler, w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet || r.Method == http.MethodHead {
+			h.GetVideoState(w, r)
+		} else {
+			h.PostVideoState(w, r)
+		}
+	}))
+	s.mux.HandleFunc("/api/voice/state", dispatchHandler(s, func() VoiceHandler { return s.voiceHandler }, isNil, func(h VoiceHandler, w http.ResponseWriter, r *http.Request) { h.PostVoiceState(w, r) }))
+	s.mux.HandleFunc("/api/voice/interact", dispatchHandler(s, func() VoiceHandler { return s.voiceHandler }, isNil, func(h VoiceHandler, w http.ResponseWriter, r *http.Request) { h.PostVoiceInteract(w, r) }))
+	s.mux.HandleFunc("/api/voice/heartbeat", dispatchHandler(s, func() VoiceHandler { return s.voiceHandler }, isNil, func(h VoiceHandler, w http.ResponseWriter, r *http.Request) { h.PostVoiceHeartbeat(w, r) }))
+	s.mux.HandleFunc("/api/widgets/{widget_id}/render", dispatchHandler(s, func() RenderHandler { return s.renderHandler }, isNil, func(h RenderHandler, w http.ResponseWriter, r *http.Request) { h.GetWidgetRender(w, r, r.PathValue("widget_id")) }))
+	s.mux.HandleFunc("/api/widgets/{widget_id}/push", dispatchHandler(s, func() PushHandler { return s.pushHandler }, isNil, func(h PushHandler, w http.ResponseWriter, r *http.Request) { h.PostWidgetPush(w, r, r.PathValue("widget_id")) }))
+	s.mux.HandleFunc("/widget-types/{type}/assets/{path...}", dispatchHandler(s, func() RenderHandler { return s.renderHandler }, isNil, func(h RenderHandler, w http.ResponseWriter, r *http.Request) { h.GetWidgetAsset(w, r, r.PathValue("type"), r.PathValue("path")) }))
+	s.mux.HandleFunc("/style.css", dispatchHandler(s, func() RenderHandler { return s.renderHandler }, isNil, func(h RenderHandler, w http.ResponseWriter, r *http.Request) { h.ServeStyle(w, r) }))
+	s.mux.HandleFunc("/display", dispatchHandler(s, func() DisplayHandler { return s.displayHandler }, isNil, func(h DisplayHandler, w http.ResponseWriter, r *http.Request) { h.GetDisplay(w, r) }))
+	s.mux.HandleFunc("/static/{path...}", dispatchHandler(s, func() DisplayHandler { return s.displayHandler }, isNil, func(h DisplayHandler, w http.ResponseWriter, r *http.Request) { h.GetStatic(w, r, r.PathValue("path")) }))
 	s.mux.HandleFunc("/", s.handleRoot)
 }
 
-func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
-	s.mu.RLock()
-	h := s.eventsHandler
-	s.mu.RUnlock()
-	if h == nil {
-		http.NotFound(w, r)
-		return
-	}
-	h.ServeHTTP(w, r)
-}
-
-func (s *Server) handleScreenSelect(w http.ResponseWriter, r *http.Request) {
-	s.mu.RLock()
-	h := s.screenHandler
-	s.mu.RUnlock()
-	if h == nil {
-		http.NotFound(w, r)
-		return
-	}
-	h.PostScreenSelect(w, r)
-}
-
-func (s *Server) handleScreenAdvance(w http.ResponseWriter, r *http.Request) {
-	s.mu.RLock()
-	h := s.screenHandler
-	s.mu.RUnlock()
-	if h == nil {
-		http.NotFound(w, r)
-		return
-	}
-	h.PostScreenAdvance(w, r)
-}
-
-func (s *Server) handleScreenPause(w http.ResponseWriter, r *http.Request) {
-	s.mu.RLock()
-	h := s.screenHandler
-	s.mu.RUnlock()
-	if h == nil {
-		http.NotFound(w, r)
-		return
-	}
-	h.PostScreenPause(w, r)
-}
-
-func (s *Server) handleListItems(w http.ResponseWriter, r *http.Request) {
-	s.mu.RLock()
-	h := s.listsHandler
-	s.mu.RUnlock()
-	if h == nil {
-		http.NotFound(w, r)
-		return
-	}
-	listID := r.PathValue("list_id")
-	h.GetListItems(w, r, listID)
-}
-
-func (s *Server) handleCompleteListItem(w http.ResponseWriter, r *http.Request) {
-	s.mu.RLock()
-	h := s.listsHandler
-	s.mu.RUnlock()
-	if h == nil {
-		http.NotFound(w, r)
-		return
-	}
-	listID := r.PathValue("list_id")
-	itemID := r.PathValue("item_id")
-	h.CompleteListItem(w, r, listID, itemID)
-}
-
-func (s *Server) handleAudio(w http.ResponseWriter, r *http.Request) {
-	s.mu.RLock()
-	h := s.audioHandler
-	s.mu.RUnlock()
-	if h == nil {
-		http.NotFound(w, r)
-		return
-	}
-	h.GetAudio(w, r)
-}
-
-func (s *Server) handleAudioVolume(w http.ResponseWriter, r *http.Request) {
-	s.mu.RLock()
-	h := s.audioHandler
-	s.mu.RUnlock()
-	if h == nil {
-		http.NotFound(w, r)
-		return
-	}
-	h.PostAudioVolume(w, r)
-}
-
-func (s *Server) handleAudioMute(w http.ResponseWriter, r *http.Request) {
-	s.mu.RLock()
-	h := s.audioHandler
-	s.mu.RUnlock()
-	if h == nil {
-		http.NotFound(w, r)
-		return
-	}
-	h.PostAudioMute(w, r)
-}
-
-func (s *Server) handleVideoTrigger(w http.ResponseWriter, r *http.Request) {
-	s.mu.RLock()
-	h := s.videoHandler
-	s.mu.RUnlock()
-	if h == nil {
-		http.NotFound(w, r)
-		return
-	}
-	h.PostVideoTrigger(w, r)
-}
-
-func (s *Server) handleVideoDismiss(w http.ResponseWriter, r *http.Request) {
-	s.mu.RLock()
-	h := s.videoHandler
-	s.mu.RUnlock()
-	if h == nil {
-		http.NotFound(w, r)
-		return
-	}
-	h.PostVideoDismiss(w, r)
-}
-
-func (s *Server) handleVideoAction(w http.ResponseWriter, r *http.Request) {
-	s.mu.RLock()
-	h := s.videoHandler
-	s.mu.RUnlock()
-	if h == nil {
-		http.NotFound(w, r)
-		return
-	}
-	h.PostVideoAction(w, r)
-}
-
-func (s *Server) handleVideoState(w http.ResponseWriter, r *http.Request) {
-	s.mu.RLock()
-	h := s.videoHandler
-	s.mu.RUnlock()
-	if h == nil {
-		http.NotFound(w, r)
-		return
-	}
-	if r.Method == http.MethodGet || r.Method == http.MethodHead {
-		h.GetVideoState(w, r)
-		return
-	}
-	h.PostVideoState(w, r)
-}
-
-func (s *Server) handleVoiceState(w http.ResponseWriter, r *http.Request) {
-	s.mu.RLock()
-	h := s.voiceHandler
-	s.mu.RUnlock()
-	if h == nil {
-		http.NotFound(w, r)
-		return
-	}
-	h.PostVoiceState(w, r)
-}
-
-func (s *Server) handleVoiceInteract(w http.ResponseWriter, r *http.Request) {
-	s.mu.RLock()
-	h := s.voiceHandler
-	s.mu.RUnlock()
-	if h == nil {
-		http.NotFound(w, r)
-		return
-	}
-	h.PostVoiceInteract(w, r)
-}
-
-func (s *Server) handleVoiceHeartbeat(w http.ResponseWriter, r *http.Request) {
-	s.mu.RLock()
-	h := s.voiceHandler
-	s.mu.RUnlock()
-	if h == nil {
-		http.NotFound(w, r)
-		return
-	}
-	h.PostVoiceHeartbeat(w, r)
-}
-
-func (s *Server) handleWidgetRender(w http.ResponseWriter, r *http.Request) {
-	s.mu.RLock()
-	h := s.renderHandler
-	s.mu.RUnlock()
-	if h == nil {
-		http.NotFound(w, r)
-		return
-	}
-	widgetID := r.PathValue("widget_id")
-	h.GetWidgetRender(w, r, widgetID)
-}
-
-func (s *Server) handleWidgetPush(w http.ResponseWriter, r *http.Request) {
-	s.mu.RLock()
-	h := s.pushHandler
-	s.mu.RUnlock()
-	if h == nil {
-		http.NotFound(w, r)
-		return
-	}
-	widgetID := r.PathValue("widget_id")
-	h.PostWidgetPush(w, r, widgetID)
-}
-
-func (s *Server) handleWidgetAsset(w http.ResponseWriter, r *http.Request) {
-	s.mu.RLock()
-	h := s.renderHandler
-	s.mu.RUnlock()
-	if h == nil {
-		http.NotFound(w, r)
-		return
-	}
-	pType := r.PathValue("type")
-	path := r.PathValue("path")
-	h.GetWidgetAsset(w, r, pType, path)
-}
-
-func (s *Server) handleStyle(w http.ResponseWriter, r *http.Request) {
-	s.mu.RLock()
-	h := s.renderHandler
-	s.mu.RUnlock()
-	if h == nil {
-		http.NotFound(w, r)
-		return
-	}
-	h.ServeStyle(w, r)
-}
-
-func (s *Server) handleDisplay(w http.ResponseWriter, r *http.Request) {
-	s.mu.RLock()
-	h := s.displayHandler
-	s.mu.RUnlock()
-	if h == nil {
-		http.NotFound(w, r)
-		return
-	}
-	h.GetDisplay(w, r)
-}
-
-func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
-	s.mu.RLock()
-	h := s.displayHandler
-	s.mu.RUnlock()
-	if h == nil {
-		http.NotFound(w, r)
-		return
-	}
-	path := r.PathValue("path")
-	h.GetStatic(w, r, path)
-}
-
-
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	// CORS Headers for client probes & autoheal
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "*")
-
 	switch r.Method {
 	case http.MethodOptions:
 		w.WriteHeader(http.StatusNoContent)
-	case http.MethodHead:
+	case http.MethodHead, http.MethodGet:
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-	case http.MethodGet:
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		if err := json.NewEncoder(w).Encode(HealthResponse{Status: "ok"}); err != nil {
-			http.Error(w, "failed to encode response", http.StatusInternalServerError)
+		if r.Method == http.MethodGet {
+			if err := json.NewEncoder(w).Encode(HealthResponse{Status: "ok"}); err != nil {
+				http.Error(w, "failed to encode response", http.StatusInternalServerError)
+			}
 		}
 	default:
 		w.Header().Set("Allow", "GET, HEAD, OPTIONS")
@@ -662,11 +329,7 @@ func SetNowFnForTest(fn func() time.Time) func() {
 	prev := nowFn
 	nowFn = fn
 	flushMu.Unlock()
-	return func() {
-		flushMu.Lock()
-		nowFn = prev
-		flushMu.Unlock()
-	}
+	return func() { flushMu.Lock(); nowFn = prev; flushMu.Unlock() }
 }
 
 // SetWriteCountersDirForTest overrides writeCountersDirFn for testing purposes.
@@ -675,11 +338,7 @@ func SetWriteCountersDirForTest(fn func(string) error) func() {
 	prev := writeCountersDirFn
 	writeCountersDirFn = fn
 	writeCountersDirMu.Unlock()
-	return func() {
-		writeCountersDirMu.Lock()
-		writeCountersDirFn = prev
-		writeCountersDirMu.Unlock()
-	}
+	return func() { writeCountersDirMu.Lock(); writeCountersDirFn = prev; writeCountersDirMu.Unlock() }
 }
 
 func (s *Server) handleCoverageFlush(w http.ResponseWriter, r *http.Request) {
@@ -696,9 +355,7 @@ func (s *Server) handleCoverageFlush(w http.ResponseWriter, r *http.Request) {
 			flushMu.Unlock()
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
-			if _, err := w.Write([]byte("{\"status\":\"debounced\"}\n")); err != nil {
-				return
-			}
+			_, _ = w.Write([]byte("{\"status\":\"debounced\"}\n")) //nolint:errcheck
 			return
 		}
 		lastFlushTime = now
@@ -714,16 +371,9 @@ func (s *Server) handleCoverageFlush(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	data, err := json.Marshal(map[string]string{"status": "ok"})
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	if _, err := w.Write(append(data, '\n')); err != nil {
-		return
-	}
+	_, _ = w.Write([]byte("{\"status\":\"ok\"}\n")) //nolint:errcheck
 }
 
 func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
@@ -731,7 +381,6 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	if r.Method == http.MethodOptions {
 		w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
@@ -739,21 +388,15 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		w.Header().Set("Allow", "GET, HEAD, OPTIONS")
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	if r.Method == http.MethodGet {
-		if err := json.NewEncoder(w).Encode(RootResponse{
-			Service: "mirrormere",
-			Status:  "running",
-			Version: Version,
-		}); err != nil {
+		if err := json.NewEncoder(w).Encode(RootResponse{Service: "mirrormere", Status: "running", Version: Version}); err != nil {
 			http.Error(w, "failed to encode response", http.StatusInternalServerError)
 		}
 	}
@@ -764,11 +407,7 @@ func (s *Server) Serve(l net.Listener) error {
 	s.mu.Lock()
 	s.addr = l.Addr().String()
 	s.mu.Unlock()
-
-	s.readyOnce.Do(func() {
-		close(s.ready)
-	})
-
+	s.readyOnce.Do(func() { close(s.ready) })
 	err := s.httpServer.Serve(l)
 	if errors.Is(err, http.ErrServerClosed) {
 		return nil
