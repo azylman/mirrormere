@@ -27,8 +27,7 @@ var (
 // SetNowFnForTest overrides the time provider for testing debounce without sleeps.
 func SetNowFnForTest(fn func() time.Time) func() {
 	flushMu.Lock()
-	prev := nowFn
-	nowFn = fn
+	prev := nowFn; nowFn = fn
 	flushMu.Unlock()
 	return func() { flushMu.Lock(); nowFn = prev; flushMu.Unlock() }
 }
@@ -36,8 +35,7 @@ func SetNowFnForTest(fn func() time.Time) func() {
 // SetWriteCountersDirForTest overrides writeCountersDirFn for testing purposes.
 func SetWriteCountersDirForTest(fn func(string) error) func() {
 	writeCountersDirMu.Lock()
-	prev := writeCountersDirFn
-	writeCountersDirFn = fn
+	prev := writeCountersDirFn; writeCountersDirFn = fn
 	writeCountersDirMu.Unlock()
 	return func() { writeCountersDirMu.Lock(); writeCountersDirFn = prev; writeCountersDirMu.Unlock() }
 }
@@ -54,22 +52,11 @@ func NewServer(client HAClient, logger *slog.Logger) *Server {
 	if logger == nil {
 		logger = slog.Default()
 	}
-
-	s := &Server{
-		client: client,
-		logger: logger,
-		mux:    http.NewServeMux(),
-	}
-
-	s.routes()
-	return s
-}
-
-// routes configures the HTTP routes.
-func (s *Server) routes() {
+	s := &Server{client: client, logger: logger, mux: http.NewServeMux()}
 	s.mux.HandleFunc("/healthz", s.handleHealthz)
 	s.mux.HandleFunc("/intent", s.handleIntent)
 	s.mux.HandleFunc("/debug/coverage/flush", s.handleCoverageFlush)
+	return s
 }
 
 // ServeHTTP delegates to the internal ServeMux.
@@ -77,7 +64,6 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.mux.ServeHTTP(w, r)
 }
 
-// handleHealthz handles Docker and Nomad health probes.
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		w.Header().Set("Allow", "GET, HEAD")
@@ -86,9 +72,7 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
-	if _, err := w.Write([]byte("OK\n")); err != nil {
-		s.logger.WarnContext(r.Context(), "failed to write healthz response", "error", err)
-	}
+	_, _ = w.Write([]byte("OK\n")) //nolint:errcheck
 }
 
 func (s *Server) handleCoverageFlush(w http.ResponseWriter, r *http.Request) {
@@ -97,7 +81,6 @@ func (s *Server) handleCoverageFlush(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-
 	if dir := os.Getenv("GOCOVERDIR"); dir != "" {
 		flushMu.Lock()
 		now := nowFn()
@@ -110,33 +93,28 @@ func (s *Server) handleCoverageFlush(w http.ResponseWriter, r *http.Request) {
 		}
 		lastFlushTime = now
 		writeCountersDirMu.RLock()
-		metaFn := writeMetaDirFn
-		fn := writeCountersDirFn
+		metaFn, fn := writeMetaDirFn, writeCountersDirFn
 		writeCountersDirMu.RUnlock()
 		_ = metaFn(dir) //nolint:errcheck
 		err := fn(dir)
 		flushMu.Unlock()
-
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 	}
-
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte("{\"status\":\"ok\"}\n")) //nolint:errcheck
 }
 
-// handleIntent processes the inbound voice intent request.
 func (s *Server) handleIntent(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", "POST")
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
-
-	bodyBytes, err := io.ReadAll(io.LimitReader(r.Body, 64*1024)) // 64KB max request
+	bodyBytes, err := io.ReadAll(io.LimitReader(r.Body, 64*1024))
 	if err != nil {
 		s.logger.WarnContext(r.Context(), "failed to read request body", "error", err)
 		http.Error(w, "Bad Request", http.StatusBadRequest)
@@ -150,8 +128,6 @@ func (s *Server) handleIntent(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid JSON payload", http.StatusBadRequest)
 		return
 	}
-
-	// Empty text fast-fail: return 204 immediately
 	if strings.TrimSpace(req.Text) == "" {
 		w.WriteHeader(http.StatusNoContent)
 		return
@@ -163,28 +139,22 @@ func (s *Server) handleIntent(w http.ResponseWriter, r *http.Request) {
 			s.logger.DebugContext(r.Context(), "client canceled request before completion")
 			return
 		}
-		// Treat errors as no-match per LAMMAS contract
 		s.logger.WarnContext(r.Context(), "intent processing encountered error, treating as no match", "error", err)
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-
 	if !matched || intentResp == nil {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-
-	// Successful match: stream response strictly as Server-Sent Events per contract
 	s.writeSSE(w, r, req.TurnID, intentResp.Speech)
 }
 
-// writeSSE streams the matched intent response using Server-Sent Events.
-func (s *Server) writeSSE(w http.ResponseWriter, r *http.Request, turnID string, speech string) {
+func (s *Server) writeSSE(w http.ResponseWriter, r *http.Request, turnID, speech string) {
 	var flusher http.Flusher
 	if f, ok := w.(http.Flusher); ok {
 		flusher = f
 	}
-
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -194,10 +164,7 @@ func (s *Server) writeSSE(w http.ResponseWriter, r *http.Request, turnID string,
 		if r.Context().Err() != nil {
 			return false
 		}
-		jsonData, err := json.Marshal(data)
-		if err != nil {
-			return false
-		}
+		jsonData, _ := json.Marshal(data) //nolint:errcheck,errchkjson
 		if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", eventType, jsonData); err != nil {
 			return false
 		}
@@ -207,31 +174,21 @@ func (s *Server) writeSSE(w http.ResponseWriter, r *http.Request, turnID string,
 		return true
 	}
 
-	// Emit turn, sentence, reply, done events per LAMMAS contract
-	if !writeEvent("turn", map[string]string{"turn_id": turnID}) {
-		return
+	if writeEvent("turn", map[string]string{"turn_id": turnID}) &&
+		writeEvent("sentence", map[string]string{"text": speech}) &&
+		writeEvent("reply", map[string]string{"reply": speech, "tts_engine": "none"}) {
+		_ = writeEvent("done", map[string]string{"turn_id": turnID})
 	}
-	if !writeEvent("sentence", map[string]string{"text": speech}) {
-		return
-	}
-	if !writeEvent("reply", map[string]string{"reply": speech, "tts_engine": "none"}) {
-		return
-	}
-	_ = writeEvent("done", map[string]string{"turn_id": turnID})
 }
 
 // BuildHTTPServer constructs an http.Server with configured timeouts.
 func BuildHTTPServer(cfg ServerConfig, handler http.Handler) *http.Server {
-	addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
-	readTimeout := time.Duration(cfg.ReadTimeoutSeconds) * time.Second
-	writeTimeout := time.Duration(cfg.WriteTimeoutSeconds) * time.Second
-
 	return &http.Server{
-		Addr:              addr,
+		Addr:              fmt.Sprintf("%s:%d", cfg.Host, cfg.Port),
 		Handler:           handler,
 		ReadHeaderTimeout: 3 * time.Second,
-		ReadTimeout:       readTimeout,
-		WriteTimeout:      writeTimeout,
+		ReadTimeout:       time.Duration(cfg.ReadTimeoutSeconds) * time.Second,
+		WriteTimeout:      time.Duration(cfg.WriteTimeoutSeconds) * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
 }

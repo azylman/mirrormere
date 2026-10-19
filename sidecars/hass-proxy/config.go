@@ -53,52 +53,31 @@ func (c Config) String() string {
 		tokenStatus = "<redacted>"
 	}
 	return fmt.Sprintf("Config{Server: %s:%d, HA_URL: %s, HA_Token: %s, AgentID: %s, Language: %s, TimeoutMS: %d, ConversationPath: %s, DeviceID: %s, NodeDevices: %d entries}",
-		c.Server.Host,
-		c.Server.Port,
-		c.HomeAssistant.URL,
-		tokenStatus,
-		c.HomeAssistant.AgentID,
-		c.HomeAssistant.Language,
-		c.HomeAssistant.TimeoutMS,
-		c.HomeAssistant.ConversationPath,
-		c.HomeAssistant.DeviceID,
-		len(c.HomeAssistant.NodeDevices),
-	)
+		c.Server.Host, c.Server.Port, c.HomeAssistant.URL, tokenStatus, c.HomeAssistant.AgentID, c.HomeAssistant.Language, c.HomeAssistant.TimeoutMS, c.HomeAssistant.ConversationPath, c.HomeAssistant.DeviceID, len(c.HomeAssistant.NodeDevices))
 }
 
 // LoadConfig loads configuration from the specified YAML file path.
-// If the path is empty, it attempts default candidate paths.
-// Secret tokens are extracted from HASS_TOKEN or HOMEASSISTANT_TOKEN if not explicitly set in YAML.
 func LoadConfig(path string) (*Config, error) {
 	resolvedPath, err := resolveConfigPath(path)
 	if err != nil {
 		return nil, err
 	}
-
 	data, err := os.ReadFile(resolvedPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read config file %q: %w", resolvedPath, err)
 	}
-
 	cfg := &Config{
 		Server: ServerConfig{
-			Host:                DefaultServerHost,
-			Port:                DefaultServerPort,
-			ReadTimeoutSeconds:  DefaultServerReadTimeoutSeconds,
-			WriteTimeoutSeconds: DefaultServerWriteTimeoutSeconds,
+			Host: DefaultServerHost, Port: DefaultServerPort,
+			ReadTimeoutSeconds: DefaultServerReadTimeoutSeconds, WriteTimeoutSeconds: DefaultServerWriteTimeoutSeconds,
 		},
 		HomeAssistant: HomeAssistantConfig{
-			Language:         DefaultHALanguage,
-			TimeoutMS:        DefaultHATimeoutMS,
-			ConversationPath: DefaultHAConversationPath,
+			Language: DefaultHALanguage, TimeoutMS: DefaultHATimeoutMS, ConversationPath: DefaultHAConversationPath,
 		},
 	}
-
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return nil, fmt.Errorf("failed to parse YAML config from %q: %w", resolvedPath, err)
 	}
-
-	// Secret extraction: all config is in YAML, but secrets may be injected via environment
 	if cfg.HomeAssistant.Token == "" {
 		if envToken := os.Getenv("HASS_TOKEN"); envToken != "" {
 			cfg.HomeAssistant.Token = envToken
@@ -106,8 +85,6 @@ func LoadConfig(path string) (*Config, error) {
 			cfg.HomeAssistant.Token = envToken
 		}
 	}
-
-	// Normalize defaults and clean URL
 	cfg.HomeAssistant.URL = strings.TrimRight(cfg.HomeAssistant.URL, "/")
 	if cfg.HomeAssistant.ConversationPath == "" {
 		cfg.HomeAssistant.ConversationPath = DefaultHAConversationPath
@@ -127,11 +104,9 @@ func LoadConfig(path string) (*Config, error) {
 	if cfg.Server.WriteTimeoutSeconds <= 0 {
 		cfg.Server.WriteTimeoutSeconds = DefaultServerWriteTimeoutSeconds
 	}
-
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid configuration: %w", err)
 	}
-
 	return cfg, nil
 }
 
@@ -143,21 +118,12 @@ func resolveConfigPath(path string) (string, error) {
 		}
 		return filepath.Clean(path), nil
 	}
-
-	candidates := []string{
-		"/config/config.yaml",
-		"/config/hass-proxy.yaml",
-		"config.yaml",
-		"hass-proxy.yaml",
-		"config/config.yaml",
-	}
-
+	candidates := []string{"/config/config.yaml", "/config/hass-proxy.yaml", "config.yaml", "hass-proxy.yaml", "config/config.yaml"}
 	for _, cand := range candidates {
 		if fi, err := os.Stat(cand); err == nil && !fi.IsDir() {
 			return filepath.Clean(cand), nil
 		}
 	}
-
 	return "", fmt.Errorf("no config file found in candidate paths: %s", strings.Join(candidates, ", "))
 }
 
