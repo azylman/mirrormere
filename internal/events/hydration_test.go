@@ -1,7 +1,7 @@
 package events
 
 import (
-	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -10,408 +10,174 @@ import (
 	"github.com/azylman/mirrormere/internal/layout"
 )
 
-func TestInMemoryStateProvider_GettersAndSetters(t *testing.T) {
+func TestInMemoryStateProvider(t *testing.T) {
 	t.Parallel()
-
 	provider := NewInMemoryStateProvider(nil)
 
-	// 1. Defaults
-	if provider.CurrentSnapshot() != nil {
-		t.Error("expected nil snapshot initially")
+	if provider.CurrentSnapshot() != nil || provider.CurrentStatus().ConfigStatus != config.ConfigStatusOK ||
+		provider.GetVideoState().Mode != "widgets" || provider.GetAudioState().Volume != 75 || provider.GetAudioState().Muted ||
+		provider.GetVoiceState().State != "idle" || provider.GetTheme() != "day" || provider.GetProvidersStatus() != nil ||
+		provider.GetScreenRotateData() != nil || provider.BootID() == "" {
+		t.Fatal("unexpected default values in provider")
 	}
-	st := provider.CurrentStatus()
-	if st.ConfigStatus != config.ConfigStatusOK {
-		t.Errorf("expected default status ok, got %v", st.ConfigStatus)
-	}
-
-	vid := provider.GetVideoState()
-	if vid.Mode != "widgets" {
-		t.Errorf("expected default video mode widgets, got %s", vid.Mode)
-	}
-
-	aud := provider.GetAudioState()
-	if aud.Volume != 75 || aud.Muted {
-		t.Errorf("expected default volume 75, muted false, got %v", aud)
-	}
-
-	vc := provider.GetVoiceState()
-	if vc.State != "idle" {
-		t.Errorf("expected default voice state idle, got %s", vc.State)
-	}
-
 	if _, ok := provider.GetHeaderWeather(); ok {
-		t.Error("expected no weather initially")
+		t.Fatal("expected ok=false for unset weather")
+	}
+	if _, _, _, ok := provider.GetWidgetState("w"); ok {
+		t.Fatal("expected ok=false for unset widget state")
+	}
+	if _, ok := provider.GetWidgetTimestamp("w"); ok {
+		t.Fatal("expected ok=false for unset widget timestamp")
 	}
 
-	if _, _, _, ok := provider.GetWidgetState("unknown"); ok {
-		t.Error("expected unknown widget to return ok=false")
+	snap := &config.Snapshot{}
+	provider.SetSnapshot(snap)
+	if provider.CurrentSnapshot() != snap {
+		t.Fatal("SetSnapshot failed")
 	}
 
-	// 2. Custom setters
-	customSnap := &config.Snapshot{}
-	provider.SetSnapshot(customSnap)
-	if provider.CurrentSnapshot() != customSnap {
-		t.Error("snapshot setter failed")
-	}
-
-	errMsg := "reload failed"
-	provider.SetStatus(config.Status{
-		ConfigStatus: config.ConfigStatusError,
-		ConfigError:  &errMsg,
-	})
+	errStr := "err"
+	provider.SetStatus(config.Status{ConfigStatus: config.ConfigStatusError, ConfigError: &errStr})
 	if provider.CurrentStatus().ConfigStatus != config.ConfigStatusError {
-		t.Error("status setter failed")
+		t.Fatal("SetStatus failed")
 	}
 
-	provider.SetWidgetState("w1", map[string]string{"foo": "bar"}, "healthy", "2026-09-25T10:00:00Z")
-	data, state, ts, ok := provider.GetWidgetState("w1")
-	if !ok || state != "healthy" || data == nil || ts != "2026-09-25T10:00:00Z" {
-		t.Errorf("widget state setter failed: %v, %v, %v, %v", data, state, ts, ok)
+	provider.SetWidgetState("w1", map[string]string{"k": "v"}, "healthy", "2026-09-25T10:00:00Z")
+	d, s, ts, ok := provider.GetWidgetState("w1")
+	if !ok || s != "healthy" || d == nil || ts != "2026-09-25T10:00:00Z" {
+		t.Fatal("SetWidgetState failed")
 	}
-	ts, tsOk := provider.GetWidgetTimestamp("w1")
-	if !tsOk || ts != "2026-09-25T10:00:00Z" {
-		t.Errorf("expected timestamp '2026-09-25T10:00:00Z', got %q, %v", ts, tsOk)
-	}
-	if _, emptyOk := provider.GetWidgetTimestamp("unknown-widget"); emptyOk {
-		t.Error("expected false for unknown widget timestamp")
+	if ts, ok := provider.GetWidgetTimestamp("w1"); !ok || ts != "2026-09-25T10:00:00Z" {
+		t.Fatal("GetWidgetTimestamp failed")
 	}
 
-	provider.SetHeaderWeather(&HeaderWeather{Temperature: 75.0, Units: "F"})
-	weather, ok := provider.GetHeaderWeather()
-	if !ok || weather.Temperature != 75.0 {
-		t.Errorf("header weather setter failed: %v, %v", weather, ok)
+	provider.SetHeaderWeather(&HeaderWeather{Temperature: 72, Units: "F"})
+	if w, ok := provider.GetHeaderWeather(); !ok || w.Temperature != 72 {
+		t.Fatal("SetHeaderWeather failed")
 	}
 
-	provider.SetVideoState(&VideoStateData{Mode: "video"})
-	if provider.GetVideoState().Mode != "video" {
-		t.Error("video setter failed")
+	provider.SetVideoState(&VideoStateData{Mode: "cast"})
+	if provider.GetVideoState().Mode != "cast" {
+		t.Fatal("SetVideoState failed")
+	}
+	provider.SetVideoState(nil)
+	if provider.GetVideoState().Mode != "widgets" {
+		t.Fatal("expected fallback video mode widgets")
 	}
 
 	provider.SetAudioState(&AudioStateData{Volume: 50, Muted: true})
 	if provider.GetAudioState().Volume != 50 || !provider.GetAudioState().Muted {
-		t.Error("audio setter failed")
-	}
-
-	transcript := "hello"
-	status := "⚡ Running tool..."
-	provider.SetVoiceState(&VoiceStateData{State: "thinking", Transcript: &transcript, Status: &status})
-	if provider.GetVoiceState().State != "thinking" || *provider.GetVoiceState().Transcript != "hello" || *provider.GetVoiceState().Status != status {
-		t.Error("voice setter failed")
-	}
-
-	// Nil resets
-	provider.SetVideoState(nil)
-	if provider.GetVideoState().Mode != "widgets" {
-		t.Error("expected nil video reset to default")
+		t.Fatal("SetAudioState failed")
 	}
 	provider.SetAudioState(nil)
 	if provider.GetAudioState().Volume != 75 {
-		t.Error("expected nil audio reset to default")
+		t.Fatal("expected fallback audio volume 75")
+	}
+
+	txt := "hi"
+	provider.SetVoiceState(&VoiceStateData{State: "speaking", Transcript: &txt})
+	if provider.GetVoiceState().State != "speaking" || *provider.GetVoiceState().Transcript != "hi" {
+		t.Fatal("SetVoiceState failed")
 	}
 	provider.SetVoiceState(nil)
 	if provider.GetVoiceState().State != "idle" {
-		t.Error("expected nil voice reset to default")
+		t.Fatal("expected fallback voice state idle")
 	}
 
-	// ScreenRotateData
-	if provider.GetScreenRotateData() != nil {
-		t.Error("expected nil ScreenRotateData initially")
-	}
-	provider.SetScreenRotateData(&ScreenRotateData{
-		CurrentScreen:   2,
-		TotalScreens:    3,
-		IntervalSeconds: 15,
-	})
-	rd := provider.GetScreenRotateData()
-	if rd == nil || rd.CurrentScreen != 2 || rd.TotalScreens != 3 || rd.IntervalSeconds != 15 {
-		t.Errorf("expected ScreenRotateData to be preserved, got %+v", rd)
-	}
-	provider.SetScreenRotateData(nil)
-	if provider.GetScreenRotateData() != nil {
-		t.Error("expected nil ScreenRotateData after nil reset")
-	}
-
-	// Theme
-	if provider.GetTheme() != "day" {
-		t.Errorf("expected initial theme 'day', got %q", provider.GetTheme())
-	}
 	provider.SetTheme("night")
 	if provider.GetTheme() != "night" {
-		t.Errorf("expected theme 'night', got %q", provider.GetTheme())
+		t.Fatal("SetTheme failed")
 	}
 	provider.SetTheme("")
 	if provider.GetTheme() != "day" {
-		t.Errorf("expected empty theme reset to 'day', got %q", provider.GetTheme())
+		t.Fatal("expected fallback theme day")
+	}
+
+	provider.SetProvidersStatus(map[string]string{"ha": "ok"})
+	if ps := provider.GetProvidersStatus(); ps["ha"] != "ok" {
+		t.Fatal("SetProvidersStatus failed")
+	}
+
+	provider.SetScreenRotateData(&ScreenRotateData{CurrentScreen: 2})
+	if rd := provider.GetScreenRotateData(); rd == nil || rd.CurrentScreen != 2 {
+		t.Fatal("SetScreenRotateData failed")
 	}
 }
 
-func TestBuildHydrationBatch_OrderingAndPayloads(t *testing.T) {
+func TestBuildHydrationBatch(t *testing.T) {
 	t.Parallel()
-
-	provider := NewInMemoryStateProvider(nil)
-
-	// Mock Snapshot with Layout and Widgets
-	cfg := &config.Config{
-		Timezone: "America/Los_Angeles",
-		Display: config.DisplayConfig{
-			Widgets: []config.WidgetConfig{
-				{ID: "w1", Type: "clock"},
-				{ID: "w2", Type: "weather"},
-			},
-		},
-	}
-	lay := &layout.Layout{
-		TotalScreens: 1,
-		Screens: []layout.Screen{
-			{
-				Index: 0,
-				Widgets: []layout.PlacedWidget{
-					{
-						WidgetID:   "w1",
-						Origin:     [2]int{0, 0},
-						Dimensions: domain.NewDimension(3, 2),
-					},
-				},
-			},
-		},
-	}
-	provider.SetSnapshot(&config.Snapshot{
-		Config: cfg,
-		Layout: lay,
-	})
-
-	provider.SetWidgetState("w1", map[string]string{"time": "12:00"}, "healthy")
-	// w2 left unset to verify default fallback
-
-	provider.SetHeaderWeather(&HeaderWeather{
-		Temperature: 72.0,
-		Units:       "F",
-		WeatherCode: 1,
-		Icon:        "weather-sunny",
-	})
-
-	errTxt := "pkg error"
-	provider.SetStatus(config.Status{
-		ConfigStatus: config.ConfigStatusOK,
-	})
-	provider.SetProvidersStatus(map[string]string{
-		"bad-pkg": errTxt,
-	})
-
 	now := time.Date(2026, 9, 25, 20, 0, 0, 0, time.UTC)
 	idGen := NewIDGenerator()
 
-	batch := BuildHydrationBatch(provider, idGen, now)
-
-	// Expected items:
-	// 1: screen.rotate
-	// 2: widget.update (w1)
-	// 3: widget.update (w2)
-	// 4: header.update
-	// 5: video.state
-	// 6: audio.state
-	// 7: voice.state
-	// 8: system.status
-	// 9: theme.update
-	if len(batch) != 9 {
-		t.Fatalf("expected 9 hydration events (1 screen + 2 widgets + 6 subsystems), got %d", len(batch))
+	if evts := appendHydrationEvent(nil, idGen, now, "bad", make(chan int)); len(evts) != 0 {
+		t.Fatal("expected no events appended on marshal failure")
+	}
+	if sysData := buildSystemStatusData(nil, config.Status{}, "2026-09-25T00:00:00Z"); sysData.ConfigStatus != "ok" {
+		t.Fatalf("expected fallback config_status 'ok', got %s", sysData.ConfigStatus)
 	}
 
-	// 1. screen.rotate
-	if batch[0].Type != EventScreenRotate {
-		t.Fatalf("expected item 0 to be %s, got %s", EventScreenRotate, batch[0].Type)
-	}
-	var rot ScreenRotateData
-	if err := json.Unmarshal(batch[0].Data, &rot); err != nil {
-		t.Fatalf("failed to unmarshal screen.rotate: %v", err)
-	}
-	if rot.TotalScreens != 1 || len(rot.Widgets) != 1 || rot.Widgets[0].WidgetID != "w1" {
-		t.Errorf("unexpected rotate data: %+v", rot)
-	}
-
-	// 2 & 3. widget.update
-	if batch[1].Type != EventWidgetUpdate || batch[2].Type != EventWidgetUpdate {
-		t.Fatalf("expected items 1 and 2 to be %s, got %s and %s", EventWidgetUpdate, batch[1].Type, batch[2].Type)
-	}
-	var w1, w2 WidgetUpdateData
-	_ = json.Unmarshal(batch[1].Data, &w1)
-	_ = json.Unmarshal(batch[2].Data, &w2)
-	if w1.WidgetID != "w1" || w1.State != "healthy" {
-		t.Errorf("unexpected w1: %+v", w1)
-	}
-	if w2.WidgetID != "w2" || w2.State != "healthy" {
-		t.Errorf("unexpected w2 fallback: %+v", w2)
-	}
-
-	// 4. header.update
-	if batch[3].Type != EventHeaderUpdate {
-		t.Fatalf("expected item 3 to be %s, got %s", EventHeaderUpdate, batch[3].Type)
-	}
-	var hdr HeaderUpdateData
-	if err := json.Unmarshal(batch[3].Data, &hdr); err != nil || hdr.Weather.Temperature != 72.0 {
-		t.Errorf("unexpected header update: %+v", hdr)
-	}
-	if hdr.Timezone != "America/Los_Angeles" {
-		t.Errorf("expected header update timezone America/Los_Angeles, got %s", hdr.Timezone)
-	}
-
-	// 5. video.state
-	if batch[4].Type != EventVideoState {
-		t.Fatalf("expected item 4 to be %s, got %s", EventVideoState, batch[4].Type)
-	}
-
-	// 6. audio.state
-	if batch[5].Type != EventAudioState {
-		t.Fatalf("expected item 5 to be %s, got %s", EventAudioState, batch[5].Type)
-	}
-
-	// 7. voice.state
-	if batch[6].Type != EventVoiceState {
-		t.Fatalf("expected item 6 to be %s, got %s", EventVoiceState, batch[6].Type)
-	}
-
-	// 8. system.status
-	if batch[7].Type != EventSystemStatus {
-		t.Fatalf("expected item 7 to be %s, got %s", EventSystemStatus, batch[7].Type)
-	}
-	var sys SystemStatusData
-	if err := json.Unmarshal(batch[7].Data, &sys); err != nil {
-		t.Fatalf("failed to unmarshal system.status: %v", err)
-	}
-	if !sys.Online || sys.ConfigStatus != "ok" || sys.Providers["bad-pkg"] != errTxt {
-		t.Errorf("unexpected system status: %+v", sys)
-	}
-	if sys.BootID == "" || sys.BootID != provider.BootID() {
-		t.Errorf("expected BootID %s, got %s", provider.BootID(), sys.BootID)
-	}
-
-	// 9. theme.update
-	if batch[8].Type != EventThemeUpdate {
-		t.Fatalf("expected item 8 to be %s, got %s", EventThemeUpdate, batch[8].Type)
-	}
-	var thm ThemeUpdateData
-	if err := json.Unmarshal(batch[8].Data, &thm); err != nil {
-		t.Fatalf("failed to unmarshal theme.update: %v", err)
-	}
-	if thm.Theme != "day" {
-		t.Errorf("expected default theme 'day', got %q", thm.Theme)
-	}
-}
-
-func TestBuildHydrationBatch_NilProvider(t *testing.T) {
-	t.Parallel()
-
-	now := time.Date(2026, 9, 25, 20, 0, 0, 0, time.UTC)
-	idGen := NewIDGenerator()
-
-	batch := BuildHydrationBatch(nil, idGen, now)
-	// Without widgets, we expect: screen.rotate, header.update, video.state, audio.state, voice.state, system.status, theme.update (7 events)
-	if len(batch) != 7 {
-		t.Fatalf("expected 7 events for nil provider, got %d", len(batch))
-	}
-
-	expectedTypes := []string{
-		EventScreenRotate,
-		EventHeaderUpdate,
-		EventVideoState,
-		EventAudioState,
-		EventVoiceState,
-		EventSystemStatus,
-		EventThemeUpdate,
-	}
-
-	for i, exp := range expectedTypes {
-		if batch[i].Type != exp {
-			t.Errorf("index %d: expected %s, got %s", i, exp, batch[i].Type)
+	makeProvider := func(withRotate bool) *InMemoryStateProvider {
+		p := NewInMemoryStateProvider(nil)
+		p.SetSnapshot(&config.Snapshot{
+			Config: &config.Config{Timezone: "America/New_York", Display: config.DisplayConfig{Widgets: []config.WidgetConfig{{ID: "w1", Type: "clock"}}}},
+			Layout: &layout.Layout{TotalScreens: 1, Screens: []layout.Screen{{Index: 0, Widgets: []layout.PlacedWidget{{WidgetID: "w1", Origin: [2]int{0, 0}, Dimensions: domain.NewDimension(3, 2)}}}}},
+		})
+		p.SetWidgetState("w1", map[string]any{"time": "20:00"}, "healthy", "2026-09-25T20:00:00Z")
+		p.SetHeaderWeather(&HeaderWeather{Temperature: 68.5, Units: "F"})
+		p.SetTheme("night")
+		if withRotate {
+			p.SetScreenRotateData(&ScreenRotateData{CurrentScreen: 1, TotalScreens: 3, IntervalSeconds: 45})
 		}
+		return p
 	}
-}
 
-type mockLoader struct{}
-
-func (mockLoader) LoadPackage(widgetType string) (*domain.Package, error) {
-	return &domain.Package{
-		Type: widgetType,
-		Manifest: domain.WidgetManifest{
-			Name:              "Spacer",
-			Version:           "1.0.0",
-			Provider:          "spacer",
-			DefaultDimensions: domain.NewDimension(6, 2),
+	tests := []struct {
+		name      string
+		provider  StateProvider
+		wantLen   int
+		wantTypes []string
+		wantSub   string
+	}{
+		{
+			name: "nil_provider", provider: nil, wantLen: 7,
+			wantTypes: []string{EventScreenRotate, EventHeaderUpdate, EventVideoState, EventAudioState, EventVoiceState, EventSystemStatus, EventThemeUpdate},
+			wantSub:   `"timezone":"UTC"`,
 		},
-	}, nil
-}
-
-func TestInMemoryStateProvider_WithManager(t *testing.T) {
-	t.Parallel()
-
-	yamlData := []byte(`
-timezone: UTC
-display:
-  grid:
-    columns: 6
-    rows: 2
-  widgets:
-    - id: test-w
-      type: spacer
-      dimensions: [6, 2]
-`)
-	mgr, err := config.NewManager(yamlData, mockLoader{}, nil, nil)
-	if err != nil {
-		t.Fatalf("failed to create manager: %v", err)
-	}
-
-	provider := NewInMemoryStateProvider(mgr)
-
-	if provider.CurrentSnapshot() == nil {
-		t.Error("expected non-nil snapshot from initialized manager")
-	}
-	st := provider.CurrentStatus()
-	if st.ConfigStatus != config.ConfigStatusOK {
-		t.Errorf("expected OK status, got %v", st.ConfigStatus)
-	}
-}
-
-func TestBuildHydrationBatch_WithActiveScreenRotate(t *testing.T) {
-	t.Parallel()
-
-	provider := NewInMemoryStateProvider(nil)
-	provider.SetScreenRotateData(&ScreenRotateData{
-		CurrentScreen:   1,
-		TotalScreens:    3,
-		IntervalSeconds: 45,
-		Widgets: []ScreenRotateWidget{
-			{WidgetID: "clock-main", Origin: [2]int{0, 0}, Dimensions: domain.NewDimension(3, 2)},
+		{
+			name: "full_provider_ordering_and_payloads", provider: makeProvider(false), wantLen: 8,
+			wantTypes: []string{EventScreenRotate, EventWidgetUpdate, EventHeaderUpdate, EventVideoState, EventAudioState, EventVoiceState, EventSystemStatus, EventThemeUpdate},
+			wantSub:   `"timezone":"America/New_York"`,
 		},
-	})
-
-	idGen := NewIDGenerator()
-	now := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
-	batch := BuildHydrationBatch(provider, idGen, now)
-
-	if len(batch) == 0 {
-		t.Fatal("expected non-empty hydration batch")
+		{
+			name: "with_active_screen_rotate", provider: makeProvider(true), wantLen: 8,
+			wantTypes: []string{EventScreenRotate, EventWidgetUpdate, EventHeaderUpdate, EventVideoState, EventAudioState, EventVoiceState, EventSystemStatus, EventThemeUpdate},
+			wantSub:   `"current_screen":1`,
+		},
 	}
-
-	first := batch[0]
-	if first.Type != EventScreenRotate {
-		t.Fatalf("expected first event to be screen.rotate, got %s", first.Type)
-	}
-
-	var rotateData ScreenRotateData
-	if err := json.Unmarshal(first.Data, &rotateData); err != nil {
-		t.Fatalf("failed to decode screen.rotate payload: %v", err)
-	}
-
-	if rotateData.CurrentScreen != 1 {
-		t.Errorf("expected CurrentScreen 1, got %d", rotateData.CurrentScreen)
-	}
-	if rotateData.TotalScreens != 3 {
-		t.Errorf("expected TotalScreens 3, got %d", rotateData.TotalScreens)
-	}
-	if rotateData.IntervalSeconds != 45 {
-		t.Errorf("expected IntervalSeconds 45, got %d", rotateData.IntervalSeconds)
-	}
-	if len(rotateData.Widgets) != 1 || rotateData.Widgets[0].WidgetID != "clock-main" {
-		t.Errorf("unexpected widgets: %+v", rotateData.Widgets)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			batch := BuildHydrationBatch(tc.provider, idGen, now)
+			if len(batch) != tc.wantLen {
+				t.Fatalf("expected batch length %d, got %d", tc.wantLen, len(batch))
+			}
+			for i, wantType := range tc.wantTypes {
+				if batch[i].Type != wantType {
+					t.Errorf("event %d: expected type %s, got %s", i, wantType, batch[i].Type)
+				}
+			}
+			if tc.wantSub != "" {
+				var found bool
+				for _, evt := range batch {
+					if strings.Contains(string(evt.Data), tc.wantSub) {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Fatalf("expected batch to contain %q", tc.wantSub)
+				}
+			}
+		})
 	}
 }

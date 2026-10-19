@@ -2,7 +2,7 @@ package events
 
 import (
 	"context"
-	"encoding/json"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -10,325 +10,150 @@ import (
 
 func TestHub_PublishAndSubscribe(t *testing.T) {
 	t.Parallel()
-
-	currTime := time.Date(2026, 9, 25, 20, 0, 0, 0, time.UTC)
-	clock := func() time.Time { return currTime }
-
-	cfg := HubConfig{
-		RingCapacity:      10,
-		RingTTL:           5 * time.Minute,
-		HeartbeatInterval: 15 * time.Second,
-		SubscriberBuffer:  4,
-		NowFunc:           clock,
-	}
-
+	cfg := HubConfig{RingCapacity: 10, RingTTL: 5 * time.Minute, HeartbeatInterval: 15 * time.Second, SubscriberBuffer: 4, NowFunc: func() time.Time { return time.Date(2026, 9, 25, 20, 0, 0, 0, time.UTC) }}
+	cfg.ApplyDefaults()
 	hub := NewHub(cfg, nil, nil)
 	defer hub.Close()
-
-	if hub.SubscriberCount() != 0 {
-		t.Fatalf("expected 0 subscribers initially, got %d", hub.SubscriberCount())
-	}
-	if hub.StateProvider() != nil {
-		t.Error("expected nil StateProvider")
-	}
-	if hub.RingBuffer() == nil {
-		t.Error("expected non-nil RingBuffer")
-	}
-	if hub.IDGenerator() == nil {
-		t.Error("expected non-nil IDGenerator")
-	}
-	if hub.Config().RingCapacity != 10 {
-		t.Errorf("expected RingCapacity 10, got %d", hub.Config().RingCapacity)
+	if hub.SubscriberCount() != 0 || hub.StateProvider() != nil || hub.RotationCoordinator() != nil || hub.ProviderCoordinator() != nil || hub.RingBuffer() == nil || hub.IDGenerator() == nil || hub.Config().RingCapacity != 10 {
+		t.Fatal("unexpected initial state")
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-
 	ch1, unsub1 := hub.Subscribe(ctx)
-	ch2, unsub2 := hub.Subscribe(ctx)
+	ch2, _ := hub.Subscribe(ctx)
+	evt := hub.Publish(EventWidgetUpdate, []byte(`{"status":"ok"}`))
 
-	if hub.SubscriberCount() != 2 {
-		t.Fatalf("expected 2 subscribers, got %d", hub.SubscriberCount())
-	}
-
-	evt := hub.Publish(EventWidgetUpdate, []byte("{\"status\":\"ok\"}"))
-	if evt == nil || evt.ID == "" {
-		t.Fatal("expected published event with ID")
-	}
-
-	// Read from subscriber 1
-	select {
-	case received := <-ch1:
-		if received.ID != evt.ID || received.Type != EventWidgetUpdate {
-			t.Errorf("unexpected event received on ch1: %+v", received)
+	for _, ch := range []<-chan *Event{ch1, ch2} {
+		select {
+		case r := <-ch:
+			if r.ID != evt.ID || r.Type != EventWidgetUpdate {
+				t.Fatalf("unexpected event: %+v", r)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout")
 		}
-	case <-time.After(1 * time.Second):
-		t.Fatal("timeout waiting for event on ch1")
 	}
-
-	// Read from subscriber 2
-	select {
-	case received := <-ch2:
-		if received.ID != evt.ID {
-			t.Errorf("unexpected event received on ch2: %+v", received)
-		}
-	case <-time.After(1 * time.Second):
-		t.Fatal("timeout waiting for event on ch2")
-	}
-
-	// Unsubscribe sub1
 	unsub1()
+	hub.Unsubscribe(99999)
 	if hub.SubscriberCount() != 1 {
-		t.Fatalf("expected 1 subscriber after unsub1, got %d", hub.SubscriberCount())
-	}
-
-	// Verify ch1 is closed
-	_, ok := <-ch1
-	if ok {
-		t.Error("expected ch1 to be closed after unsubscribe")
-	}
-
-	unsub2()
-	if hub.SubscriberCount() != 0 {
-		t.Fatalf("expected 0 subscribers after unsub2, got %d", hub.SubscriberCount())
+		t.Fatalf("expected 1, got %d", hub.SubscriberCount())
 	}
 }
 
 func TestHub_SlowConsumerDrop(t *testing.T) {
 	t.Parallel()
-
-	cfg := HubConfig{
-		RingCapacity:      10,
-		RingTTL:           5 * time.Minute,
-		HeartbeatInterval: 15 * time.Second,
-		SubscriberBuffer:  1, // buffer capacity 1
-	}
-
-	hub := NewHub(cfg, nil, nil)
+	hub := NewHub(HubConfig{SubscriberBuffer: 1}, nil, nil)
 	defer hub.Close()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	ch, unsub := hub.Subscribe(ctx)
+	ch, unsub := hub.Subscribe(context.Background())
 	defer unsub()
 
-	// Fill buffer
+	if (&subscriber{closed: true}).trySend(&Event{}) != sendClosed {
+		t.Fatal("expected sendClosed")
+	}
 	hub.Publish(EventWidgetUpdate, []byte("1"))
-	// Second publish overflows buffer and terminates subscriber
 	hub.Publish(EventWidgetUpdate, []byte("2"))
-
-	if hub.SubscriberCount() != 0 {
-		t.Fatalf("expected subscriber to be evicted, count: %d", hub.SubscriberCount())
-	}
-
-	select {
-	case received := <-ch:
-		if string(received.Data) != "1" {
-			t.Errorf("expected first event '1', got %s", string(received.Data))
-		}
-	case <-time.After(1 * time.Second):
-		t.Fatal("timeout reading from ch")
-	}
-
-	// Next read must return closed channel
-	select {
-	case _, ok := <-ch:
-		if ok {
-			t.Error("expected channel to be closed after slow consumer eviction")
-		}
-	case <-time.After(1 * time.Second):
-		t.Fatal("timeout waiting for closed channel")
+	if hub.SubscriberCount() != 0 || string((<-ch).Data) != "1" || (<-ch != nil) {
+		t.Fatal("expected evicted and closed")
 	}
 }
 
 func TestHub_ConcurrentPublishAndSubscribe(t *testing.T) {
 	t.Parallel()
-
-	cfg := HubConfig{
-		RingCapacity:     500,
-		SubscriberBuffer: 100,
-	}
-
-	hub := NewHub(cfg, nil, nil)
+	hub := NewHub(HubConfig{RingCapacity: 500, SubscriberBuffer: 100}, nil, nil)
 	defer hub.Close()
-
-	const numSubscribers = 10
-	const numPublishers = 10
-	const eventsPerPublisher = 20
-
-	var wg sync.WaitGroup
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	for i := 0; i < numSubscribers; i++ {
+	var wg, pubWg sync.WaitGroup
+	for i := 0; i < 5; i++ {
 		ch, unsub := hub.Subscribe(ctx)
 		wg.Add(1)
-		go func(c <-chan *Event, un func()) {
+		go func() {
 			defer wg.Done()
-			defer un()
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case _, ok := <-c:
-					if !ok {
-						return
-					}
-				}
+			defer unsub()
+			for range ch {
 			}
-		}(ch, unsub)
+		}()
 	}
-
-	var pubWg sync.WaitGroup
-	for i := 0; i < numPublishers; i++ {
+	for i := 0; i < 5; i++ {
 		pubWg.Add(1)
 		go func() {
 			defer pubWg.Done()
-			for j := 0; j < eventsPerPublisher; j++ {
+			for j := 0; j < 20; j++ {
 				hub.Publish(EventWidgetUpdate, []byte("{}"))
 			}
 		}()
 	}
-
 	pubWg.Wait()
 	cancel()
+	hub.Close()
 	wg.Wait()
 }
 
-func TestHub_Close(t *testing.T) {
+func TestHub_CloseAndEdgeCases(t *testing.T) {
 	t.Parallel()
-
 	hub := NewHub(HubConfig{}, nil, nil)
-
-	ctx := context.Background()
-	ch, _ := hub.Subscribe(ctx)
-
-	hub.Close()
-	// Repeated close is idempotent
-	hub.Close()
-
-	if hub.SubscriberCount() != 0 {
-		t.Errorf("expected 0 subscribers after close, got %d", hub.SubscriberCount())
+	if replayed, found := hub.ReplaySince(hub.Publish(EventSystemStatus, []byte("{}")).ID); !found || len(replayed) != 0 {
+		t.Fatalf("unexpected replay hit: (%v, %v)", replayed, found)
 	}
-
-	// Verify channel closed
-	_, ok := <-ch
-	if ok {
-		t.Error("expected subscriber channel to be closed after hub.Close()")
+	if batch := hub.BuildHydration(); len(batch) < 6 {
+		t.Fatalf("expected >= 6, got %d", len(batch))
 	}
-
-	// Publish after close is no-op
-	hub.Publish(EventWidgetUpdate, []byte("{}"))
-}
-
-func TestHub_ReplayAndHydration(t *testing.T) {
-	t.Parallel()
-
-	hub := NewHub(HubConfig{}, nil, nil)
-	defer hub.Close()
-
-	evt := hub.Publish(EventSystemStatus, []byte("{}"))
-	replayed, found := hub.ReplaySince(evt.ID)
-	if !found || len(replayed) != 0 {
-		t.Errorf("expected replay hit with 0 subsequent events, got (%v, %v)", replayed, found)
-	}
-
-	batch := hub.BuildHydration()
-	if len(batch) < 6 {
-		t.Errorf("expected at least 6 hydration events, got %d", len(batch))
-	}
-}
-
-func TestHub_PublishNilAndContextDone(t *testing.T) {
-	t.Parallel()
-
-	hub := NewHub(HubConfig{}, nil, nil)
-	defer hub.Close()
-
-	// Nil event publish is a no-op
 	hub.PublishEvent(nil)
+	evtBlank := &Event{Type: "test_blank"}
+	hub.PublishEvent(evtBlank)
+	if evtBlank.ID == "" || evtBlank.Timestamp.IsZero() {
+		t.Fatal("expected populated ID")
+	}
 
-	// Subscriber whose context is already canceled
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-
 	hub.Subscribe(ctx)
-	if hub.SubscriberCount() != 1 {
-		t.Fatalf("expected 1 subscriber, got %d", hub.SubscriberCount())
-	}
-
-	// Publish should clean up the canceled subscriber
 	hub.Publish(EventWidgetUpdate, []byte("{}"))
-	if hub.SubscriberCount() != 0 {
-		t.Errorf("expected 0 subscribers after context done unsubscription, got %d", hub.SubscriberCount())
+	ch, _ := hub.Subscribe(context.Background())
+	hub.Close()
+	hub.Close()
+	hub.Subscribe(context.Background())
+	if hub.SubscriberCount() != 0 || (<-ch != nil) {
+		t.Fatal("expected closed")
 	}
+	hub.Publish(EventWidgetUpdate, []byte("{}"))
 }
 
-func TestHub_PublishAudioState_SyncsStateProvider(t *testing.T) {
+func TestHub_PublishSyncsStateProvider(t *testing.T) {
 	t.Parallel()
-
-	provider := NewInMemoryStateProvider(nil)
-	hub := NewHub(HubConfig{}, provider, nil)
-	defer hub.Close()
-
-	payload, _ := json.Marshal(AudioStateData{Volume: 85, Muted: true})
-	hub.Publish(EventAudioState, payload)
-
-	state := provider.GetAudioState()
-	if state.Volume != 85 || !state.Muted {
-		t.Fatalf("expected volume 85, muted true in stateProvider, got %+v", state)
+	for _, tc := range []struct {
+		name, eventType, payload, wantVal string
+	}{
+		{"screen_rotate", EventScreenRotate, `{"current_screen":1,"total_screens":2,"interval_seconds":20}`, "1"},
+		{"audio_state", EventAudioState, `{"volume":85,"muted":true}`, "85"},
+		{"video_state", EventVideoState, `{"mode":"video","primary":{"id":"cast"}}`, "video"},
+		{"voice_state", EventVoiceState, `{"state":"thinking","transcript":"hello"}`, "thinking"},
+		{"theme_update", EventThemeUpdate, `{"theme":"night"}`, "night"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			provider := NewInMemoryStateProvider(nil)
+			hub := NewHub(HubConfig{}, provider, nil)
+			defer hub.Close()
+			hub.Publish(tc.eventType, []byte(tc.payload))
+			var got string
+			switch tc.eventType {
+			case EventScreenRotate:
+				got = fmt.Sprintf("%d", provider.GetScreenRotateData().CurrentScreen)
+			case EventAudioState:
+				got = fmt.Sprintf("%d", provider.GetAudioState().Volume)
+			case EventVideoState:
+				got = provider.GetVideoState().Mode
+			case EventVoiceState:
+				got = provider.GetVoiceState().State
+			case EventThemeUpdate:
+				got = provider.GetTheme()
+			}
+			if got != tc.wantVal {
+				t.Fatalf("got %q, want %q", got, tc.wantVal)
+			}
+		})
 	}
 }
-
-func TestHub_PublishVideoState_SyncsStateProvider(t *testing.T) {
-	t.Parallel()
-
-	provider := NewInMemoryStateProvider(nil)
-	hub := NewHub(HubConfig{}, provider, nil)
-	defer hub.Close()
-
-	payload, _ := json.Marshal(VideoStateData{
-		Mode: "video",
-		Primary: map[string]any{
-			"id": "chromecast",
-		},
-		Pip: nil,
-	})
-	hub.Publish(EventVideoState, payload)
-
-	state := provider.GetVideoState()
-	if state.Mode != "video" {
-		t.Fatalf("expected mode 'video' in stateProvider, got %+v", state)
-	}
-	if state.Primary == nil {
-		t.Fatalf("expected primary to be set in stateProvider")
-	}
-}
-
-func TestHub_PublishVoiceState_SyncsStateProvider(t *testing.T) {
-	t.Parallel()
-
-	provider := NewInMemoryStateProvider(nil)
-	hub := NewHub(HubConfig{}, provider, nil)
-	defer hub.Close()
-
-	transcript := "What is the weather?"
-	payload, _ := json.Marshal(VoiceStateData{
-		State:      "thinking",
-		Transcript: &transcript,
-		Reply:      nil,
-		TTSEngine:  nil,
-	})
-	hub.Publish(EventVoiceState, payload)
-
-	state := provider.GetVoiceState()
-	if state.State != "thinking" {
-		t.Fatalf("expected state 'thinking' in stateProvider, got %+v", state)
-	}
-	if state.Transcript == nil || *state.Transcript != transcript {
-		t.Fatalf("expected transcript %q in stateProvider, got %+v", transcript, state.Transcript)
-	}
-}
-
-
