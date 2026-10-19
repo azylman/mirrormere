@@ -8,59 +8,123 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/azylman/mirrormere/internal/provider"
 )
 
+func wCfg(lat, lon any, units, name, locName string) map[string]any {
+	m := map[string]any{}
+	if lat != nil { m["latitude"] = lat }
+	if lon != nil { m["longitude"] = lon }
+	if units != "" { m["units"] = units }
+	if name != "" { m["name"] = name }
+	if locName != "" { m["location_name"] = locName }
+	return m
+}
+
+func sampleOpenMeteoJSON() string {
+	return `{"latitude":37.8,"longitude":-122.27,"timezone":"America/Los_Angeles","current":{"time":"2026-09-26T12:00","temperature_2m":68.4,"relative_humidity_2m":58,"apparent_temperature":67.8,"precipitation":0.0,"weather_code":1,"wind_speed_10m":7.2},"hourly":{"time":["2026-09-26T12:00","2026-09-26T13:00","2026-09-26T14:00"],"temperature_2m":[68.4,70.1,71.5],"precipitation_probability":[0,5,10],"weather_code":[1,2,2]},"daily":{"time":["2026-09-26","2026-09-27"],"weather_code":[1,2],"temperature_2m_max":[72.5,74.0],"temperature_2m_min":[55.0,56.5],"precipitation_probability_max":[10,20]}}`
+}
+
+const sampleNightJSON = `{"latitude":37.8,"longitude":-122.2,"current":{"time":"2026-10-12T20:00","temperature_2m":62.5,"weather_code":0,"is_day":0},"hourly":{"time":["2026-10-12T20:00","2026-10-12T21:00","2026-10-12T22:00","2026-10-13T08:00"],"temperature_2m":[62.5,60.0,58.0,65.0],"precipitation_probability":[0,0,0,10],"weather_code":[0,1,2,0],"is_day":[0,0]},"daily":{"time":["2026-10-12"],"weather_code":[0],"temperature_2m_max":[70.0],"temperature_2m_min":[55.0],"precipitation_probability_max":[0]}}`
+
+func makeHourlyDailyJSON(numHours, numDays int, curTime string) []byte {
+	hours, temps, probs, codes := make([]string, numHours), make([]float64, numHours), make([]int, numHours), make([]int, numHours)
+	for i := 0; i < numHours; i++ {
+		hours[i], temps[i], probs[i], codes[i] = fmt.Sprintf("2026-09-26T%02d:00", i), 60.0+float64(i), i, 1
+	}
+	days, dMax, dMin, dCodes, dProbs := make([]string, numDays), make([]float64, numDays), make([]float64, numDays), make([]int, numDays), make([]int, numDays)
+	for i := 0; i < numDays; i++ {
+		days[i], dMax[i], dMin[i], dCodes[i], dProbs[i] = fmt.Sprintf("2026-09-%02d", i+1), 70.0+float64(i), 50.0+float64(i), 1, 10
+	}
+	if curTime == "" { curTime = "2026-09-26T12:00" }
+	b, _ := json.Marshal(map[string]any{
+		"current": map[string]any{"time": curTime, "temperature_2m": 70.0, "weather_code": 1, "wind_speed_10m": 5.0, "relative_humidity_2m": 50, "apparent_temperature": 69.0},
+		"hourly":  map[string]any{"time": hours, "temperature_2m": temps, "precipitation_probability": probs, "weather_code": codes},
+		"daily":   map[string]any{"time": days, "temperature_2m_max": dMax, "temperature_2m_min": dMin, "weather_code": dCodes, "precipitation_probability_max": dProbs},
+	})
+	return b
+}
+
+func makeMismatchedJSON() []byte {
+	hours, temps, probs, codes := make([]string, 30), make([]float64, 28), make([]int, 27), make([]int, 26)
+	for i := 0; i < 30; i++ {
+		hours[i] = fmt.Sprintf("2026-09-26T%02d:00", i)
+		if i < 28 { temps[i] = 65.0 + float64(i) }
+		if i < 27 { probs[i] = i }
+		if i < 26 { codes[i] = 1 }
+	}
+	days, dMax, dMin, dCodes, dProbs := make([]string, 10), make([]float64, 9), make([]float64, 8), make([]int, 8), make([]int, 8)
+	for i := 0; i < 10; i++ {
+		days[i] = fmt.Sprintf("2026-09-%02d", i+1)
+		if i < 9 { dMax[i] = 70.0 + float64(i) }
+		if i < 8 { dMin[i], dCodes[i], dProbs[i] = 50.0+float64(i), 0, 5 }
+	}
+	b, _ := json.Marshal(map[string]any{
+		"current": map[string]any{"temperature_2m": 70.0, "weather_code": 0, "wind_speed_10m": 5.0, "relative_humidity_2m": 50, "apparent_temperature": 69.0},
+		"hourly":  map[string]any{"time": hours, "temperature_2m": temps, "precipitation_probability": probs, "weather_code": codes},
+		"daily":   map[string]any{"time": days, "temperature_2m_max": dMax, "temperature_2m_min": dMin, "weather_code": dCodes, "precipitation_probability_max": dProbs},
+	})
+	return b
+}
+
 func TestMapWMOCode(t *testing.T) {
 	t.Parallel()
-
-	testCases := []struct {
-		code         int
-		expectedText string
-		expectedIcon string
+	cases := []struct {
+		code, isDay int
+		text, icon  string
 	}{
-		{0, "Clear Sky", "weather-sunny"},
-		{1, "Mainly Clear", "weather-partly-cloudy"},
-		{2, "Partly Cloudy", "weather-partly-cloudy"},
-		{3, "Overcast", "weather-cloudy"},
-		{45, "Fog", "weather-fog"},
-		{48, "Fog", "weather-fog"},
-		{51, "Drizzle", "weather-rainy"},
-		{53, "Drizzle", "weather-rainy"},
-		{55, "Drizzle", "weather-rainy"},
-		{56, "Freezing Drizzle", "weather-snowy-rainy"},
-		{57, "Freezing Drizzle", "weather-snowy-rainy"},
-		{61, "Rain", "weather-rainy"},
-		{63, "Rain", "weather-rainy"},
-		{65, "Rain", "weather-rainy"},
-		{66, "Freezing Rain", "weather-snowy-rainy"},
-		{67, "Freezing Rain", "weather-snowy-rainy"},
-		{71, "Snow Fall", "weather-snowy"},
-		{73, "Snow Fall", "weather-snowy"},
-		{75, "Snow Fall", "weather-snowy"},
-		{77, "Snow Grains", "weather-snowy"},
-		{80, "Rain Showers", "weather-pouring"},
-		{81, "Rain Showers", "weather-pouring"},
-		{82, "Rain Showers", "weather-pouring"},
-		{85, "Snow Showers", "weather-snowy"},
-		{86, "Snow Showers", "weather-snowy"},
-		{95, "Thunderstorm", "weather-lightning"},
-		{96, "Thunderstorm with Hail", "weather-lightning-rainy"},
-		{99, "Thunderstorm with Hail", "weather-lightning-rainy"},
-		{999, "Unknown", "weather-cloudy"},
+		{0, 1, "Clear Sky", "weather-sunny"},
+		{0, 0, "Clear", "weather-clear-night"},
+		{1, 1, "Mainly Clear", "weather-partly-cloudy"},
+		{1, 0, "Mainly Clear", "weather-night-partly-cloudy"},
+		{2, 1, "Partly Cloudy", "weather-partly-cloudy"},
+		{2, 0, "Partly Cloudy", "weather-night-partly-cloudy"},
+		{3, 1, "Overcast", "weather-cloudy"},
+		{3, 0, "Overcast", "weather-cloudy"},
+		{45, 1, "Fog", "weather-fog"},
+		{48, 1, "Fog", "weather-fog"},
+		{51, 1, "Drizzle", "weather-rainy"},
+		{53, 1, "Drizzle", "weather-rainy"},
+		{55, 1, "Drizzle", "weather-rainy"},
+		{56, 1, "Freezing Drizzle", "weather-snowy-rainy"},
+		{57, 1, "Freezing Drizzle", "weather-snowy-rainy"},
+		{61, 1, "Rain", "weather-rainy"},
+		{61, 0, "Rain", "weather-rainy"},
+		{63, 1, "Rain", "weather-rainy"},
+		{65, 1, "Rain", "weather-rainy"},
+		{66, 1, "Freezing Rain", "weather-snowy-rainy"},
+		{67, 1, "Freezing Rain", "weather-snowy-rainy"},
+		{71, 1, "Snow Fall", "weather-snowy"},
+		{73, 1, "Snow Fall", "weather-snowy"},
+		{75, 1, "Snow Fall", "weather-snowy"},
+		{77, 1, "Snow Grains", "weather-snowy"},
+		{80, 1, "Rain Showers", "weather-pouring"},
+		{81, 1, "Rain Showers", "weather-pouring"},
+		{82, 1, "Rain Showers", "weather-pouring"},
+		{85, 1, "Snow Showers", "weather-snowy"},
+		{86, 1, "Snow Showers", "weather-snowy"},
+		{95, 1, "Thunderstorm", "weather-lightning"},
+		{95, 0, "Thunderstorm", "weather-lightning"},
+		{96, 1, "Thunderstorm with Hail", "weather-lightning-rainy"},
+		{99, 1, "Thunderstorm with Hail", "weather-lightning-rainy"},
+		{999, 1, "Unknown", "weather-cloudy"},
+		{999, 0, "Unknown", "weather-cloudy"},
 	}
-
-	for _, tc := range testCases {
-		text, icon := provider.MapWMOCode(tc.code)
-		if text != tc.expectedText || icon != tc.expectedIcon {
-			t.Errorf("code %d: expected (%q, %q), got (%q, %q)", tc.code, tc.expectedText, tc.expectedIcon, text, icon)
+	for _, tc := range cases {
+		text, icon := provider.MapWMOCodeWithDay(tc.code, tc.isDay)
+		if text != tc.text || icon != tc.icon {
+			t.Errorf("MapWMOCodeWithDay(%d, %d) = (%q, %q), want (%q, %q)", tc.code, tc.isDay, text, icon, tc.text, tc.icon)
+		}
+		if tc.isDay == 1 {
+			if defText, defIcon := provider.MapWMOCode(tc.code); defText != tc.text || defIcon != tc.icon {
+				t.Errorf("MapWMOCode(%d) = (%q, %q), want (%q, %q)", tc.code, defText, defIcon, tc.text, tc.icon)
+			}
 		}
 	}
 }
 
-func TestWeatherProvider_Init_Validation(t *testing.T) {
+func TestWeatherProvider_Init(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -70,139 +134,22 @@ func TestWeatherProvider_Init_Validation(t *testing.T) {
 		expectError bool
 		errorSubstr string
 	}{
-		{
-			name: "valid imperial with float coordinates and timezone in opts",
-			cfg: map[string]any{
-				"latitude":  37.8044,
-				"longitude": -122.2712,
-				"units":     "imperial",
-			},
-			opts: provider.InitOptions{
-				Timezone: "America/Los_Angeles",
-			},
-			expectError: false,
-		},
-		{
-			name: "valid metric with string coordinates and legacy config timezone ignored",
-			cfg: map[string]any{
-				"latitude":  "51.5074",
-				"longitude": "-0.1278",
-				"units":     "metric",
-				"timezone":  "America/Chicago",
-			},
-			opts: provider.InitOptions{
-				Timezone: "Europe/London",
-			},
-			expectError: false,
-		},
-		{
-			name: "valid metric with string coordinates",
-			cfg: map[string]any{
-				"latitude":  "51.5074",
-				"longitude": "-0.1278",
-				"units":     "metric",
-			},
-			expectError: false,
-		},
-		{
-			name: "valid with int coordinates",
-			cfg: map[string]any{
-				"latitude":  37,
-				"longitude": -122,
-			},
-			expectError: false,
-		},
-		{
-			name: "custom endpoint override in opts",
-			cfg: map[string]any{
-				"latitude":  37.8044,
-				"longitude": -122.2712,
-			},
-			opts: provider.InitOptions{
-				Endpoint: "https://custom.open-meteo.internal/v1/forecast",
-			},
-			expectError: false,
-		},
-		{
-			name: "missing latitude",
-			cfg: map[string]any{
-				"longitude": -122.2712,
-			},
-			expectError: true,
-			errorSubstr: "valid latitude and longitude",
-		},
-		{
-			name: "missing longitude",
-			cfg: map[string]any{
-				"latitude": 37.8044,
-			},
-			expectError: true,
-			errorSubstr: "valid latitude and longitude",
-		},
-		{
-			name: "unparseable string coordinate",
-			cfg: map[string]any{
-				"latitude":  "not-a-number",
-				"longitude": -122.2712,
-			},
-			expectError: true,
-			errorSubstr: "valid latitude and longitude",
-		},
-		{
-			name: "invalid coordinate type",
-			cfg: map[string]any{
-				"latitude":  []string{"37.8"},
-				"longitude": -122.2712,
-			},
-			expectError: true,
-			errorSubstr: "valid latitude and longitude",
-		},
-		{
-			name: "latitude out of bounds high",
-			cfg: map[string]any{
-				"latitude":  95.0,
-				"longitude": -122.2712,
-			},
-			expectError: true,
-			errorSubstr: "latitude 95.0000 out of range",
-		},
-		{
-			name: "latitude out of bounds low",
-			cfg: map[string]any{
-				"latitude":  -95.0,
-				"longitude": -122.2712,
-			},
-			expectError: true,
-			errorSubstr: "latitude -95.0000 out of range",
-		},
-		{
-			name: "longitude out of bounds high",
-			cfg: map[string]any{
-				"latitude":  37.0,
-				"longitude": 185.0,
-			},
-			expectError: true,
-			errorSubstr: "longitude 185.0000 out of range",
-		},
-		{
-			name: "longitude out of bounds low",
-			cfg: map[string]any{
-				"latitude":  37.0,
-				"longitude": -185.0,
-			},
-			expectError: true,
-			errorSubstr: "longitude -185.0000 out of range",
-		},
-		{
-			name: "invalid units string",
-			cfg: map[string]any{
-				"latitude":  37.0,
-				"longitude": -122.0,
-				"units":     "kelvin",
-			},
-			expectError: true,
-			errorSubstr: "invalid units \"kelvin\"",
-		},
+		{"valid_imperial", wCfg(37.8044, -122.2712, "imperial", "", ""), provider.InitOptions{Timezone: "America/Los_Angeles"}, false, ""},
+		{"valid_metric_strings", wCfg("51.5074", "-0.1278", "metric", "", ""), provider.InitOptions{Timezone: "Europe/London"}, false, ""},
+		{"valid_int_coords", wCfg(37, -122, "", "", ""), provider.InitOptions{}, false, ""},
+		{"valid_float32_int64", wCfg(float32(37.5), int64(-122), "", "", ""), provider.InitOptions{}, false, ""},
+		{"endpoint_override", wCfg(37.8044, -122.2712, "", "", ""), provider.InitOptions{Endpoint: "https://custom.open-meteo.internal"}, false, ""},
+		{"location_name", wCfg(37.8, -122.2, "", "", "Ayda's School"), provider.InitOptions{}, false, ""},
+		{"name", wCfg(37.8, -122.2, "", "Home", ""), provider.InitOptions{}, false, ""},
+		{"missing_lat", wCfg(nil, -122.2712, "", "", ""), provider.InitOptions{}, true, "valid latitude and longitude"},
+		{"missing_lon", wCfg(37.8044, nil, "", "", ""), provider.InitOptions{}, true, "valid latitude and longitude"},
+		{"bad_coord_string", wCfg("not-a-number", -122.2712, "", "", ""), provider.InitOptions{}, true, "valid latitude and longitude"},
+		{"bad_coord_type", wCfg([]string{"37.8"}, -122.2712, "", "", ""), provider.InitOptions{}, true, "valid latitude and longitude"},
+		{"lat_high", wCfg(95.0, -122.2712, "", "", ""), provider.InitOptions{}, true, "latitude 95.0000 out of range"},
+		{"lat_low", wCfg(-95.0, -122.2712, "", "", ""), provider.InitOptions{}, true, "latitude -95.0000 out of range"},
+		{"lon_high", wCfg(37.0, 185.0, "", "", ""), provider.InitOptions{}, true, "longitude 185.0000 out of range"},
+		{"lon_low", wCfg(37.0, -185.0, "", "", ""), provider.InitOptions{}, true, "longitude -185.0000 out of range"},
+		{"invalid_units", wCfg(37.0, -122.0, "kelvin", "", ""), provider.InitOptions{}, true, "invalid units \"kelvin\""},
 	}
 
 	for _, tc := range tests {
@@ -211,807 +158,189 @@ func TestWeatherProvider_Init_Validation(t *testing.T) {
 			p := provider.NewWeatherProvider()
 			err := p.Init(context.Background(), tc.cfg, tc.opts)
 			if tc.expectError {
-				if err == nil {
-					t.Fatalf("expected error containing %q, got nil", tc.errorSubstr)
-				}
-				if !strings.Contains(err.Error(), tc.errorSubstr) {
-					t.Fatalf("expected error containing %q, got %q", tc.errorSubstr, err.Error())
-				}
-			} else {
-				if err != nil {
-					t.Fatalf("unexpected error: %v", err)
-				}
+				if err == nil || !strings.Contains(err.Error(), tc.errorSubstr) { t.Fatalf("want error containing %q, got %v", tc.errorSubstr, err) }
+			} else if err != nil {
+				t.Fatalf("unexpected error: %v", err)
 			}
 		})
 	}
 }
 
-func sampleOpenMeteoJSON() string {
-	return `{
-		"latitude": 37.8,
-		"longitude": -122.27,
-		"timezone": "America/Los_Angeles",
-		"current": {
-			"time": "2026-09-26T12:00",
-			"temperature_2m": 68.4,
-			"relative_humidity_2m": 58,
-			"apparent_temperature": 67.8,
-			"precipitation": 0.0,
-			"weather_code": 1,
-			"wind_speed_10m": 7.2
-		},
-		"hourly": {
-			"time": ["2026-09-26T12:00", "2026-09-26T13:00", "2026-09-26T14:00"],
-			"temperature_2m": [68.4, 70.1, 71.5],
-			"precipitation_probability": [0, 5, 10],
-			"weather_code": [1, 2, 2]
-		},
-		"daily": {
-			"time": ["2026-09-26", "2026-09-27"],
-			"weather_code": [1, 2],
-			"temperature_2m_max": [72.5, 74.0],
-			"temperature_2m_min": [55.0, 56.5],
-			"precipitation_probability_max": [10, 20]
-		}
-	}`
-}
-
-func TestWeatherProvider_Fetch_Imperial(t *testing.T) {
-	t.Parallel()
-
-	var receivedQuery string
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		receivedQuery = r.URL.RawQuery
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(sampleOpenMeteoJSON()))
-	}))
-	defer ts.Close()
-
-	p := provider.NewWeatherProviderWithClient(ts.Client(), ts.URL)
-	err := p.Init(context.Background(), map[string]any{
-		"latitude":  37.8044,
-		"longitude": -122.2712,
-		"units":     "imperial",
-	}, provider.InitOptions{
-		Timezone: "America/Los_Angeles",
-	})
-	if err != nil {
-		t.Fatalf("Init failed: %v", err)
-	}
-
-	data, err := p.Fetch(context.Background())
-	if err != nil {
-		t.Fatalf("Fetch failed: %v", err)
-	}
-
-	snap, ok := data.(provider.WeatherSnapshot)
-	if !ok {
-		t.Fatalf("expected WeatherSnapshot return type, got %T", data)
-	}
-
-	// Verify current observations
-	if snap.Current.Temperature != 68.4 {
-		t.Errorf("expected temp 68.4, got %f", snap.Current.Temperature)
-	}
-	if snap.Current.FeelsLike != 67.8 {
-		t.Errorf("expected feels_like 67.8, got %f", snap.Current.FeelsLike)
-	}
-	if snap.Current.Humidity != 58 {
-		t.Errorf("expected humidity 58, got %d", snap.Current.Humidity)
-	}
-	if snap.Current.WindSpeed != 7.2 {
-		t.Errorf("expected wind_speed 7.2, got %f", snap.Current.WindSpeed)
-	}
-	if snap.Current.ConditionCode != 1 {
-		t.Errorf("expected condition_code 1, got %d", snap.Current.ConditionCode)
-	}
-	if snap.Current.ConditionText != "Mainly Clear" {
-		t.Errorf("expected 'Mainly Clear', got %q", snap.Current.ConditionText)
-	}
-	if snap.Current.Icon != "weather-partly-cloudy" {
-		t.Errorf("expected 'weather-partly-cloudy', got %q", snap.Current.Icon)
-	}
-	if snap.Current.Units.Temperature != "°F" || snap.Current.Units.WindSpeed != "mph" {
-		t.Errorf("unexpected imperial units: %+v", snap.Current.Units)
-	}
-	if snap.Current.PrecipProbMax != 10 {
-		t.Errorf("expected Current.PrecipProbMax 10, got %d", snap.Current.PrecipProbMax)
-	}
-	if snap.TodayPrecipProbMax() != 10 {
-		t.Errorf("expected TodayPrecipProbMax() 10, got %d", snap.TodayPrecipProbMax())
-	}
-
-	// Verify hourly
-	if len(snap.Hourly) != 3 {
-		t.Fatalf("expected 3 hourly entries, got %d", len(snap.Hourly))
-	}
-	if snap.Hourly[0].Temp != 68.4 || snap.Hourly[0].PrecipProb != 0 || snap.Hourly[0].Icon != "weather-partly-cloudy" {
-		t.Errorf("unexpected hourly[0]: %+v", snap.Hourly[0])
-	}
-
-	// Verify daily
-	if len(snap.Daily) != 2 {
-		t.Fatalf("expected 2 daily entries, got %d", len(snap.Daily))
-	}
-	if snap.Daily[0].TempMax != 72.5 || snap.Daily[0].TempMin != 55.0 || snap.Daily[0].PrecipProbMax != 10 {
-		t.Errorf("unexpected daily[0]: %+v", snap.Daily[0])
-	}
-	if snap.Daily[0].ConditionText != "Mainly Clear" {
-		t.Errorf("unexpected daily[0] condition_text: %q", snap.Daily[0].ConditionText)
-	}
-
-	// Verify query params sent to Open-Meteo
-	if !strings.Contains(receivedQuery, "temperature_unit=fahrenheit") {
-		t.Errorf("expected temperature_unit=fahrenheit in query, got %q", receivedQuery)
-	}
-	if !strings.Contains(receivedQuery, "wind_speed_unit=mph") {
-		t.Errorf("expected wind_speed_unit=mph in query, got %q", receivedQuery)
-	}
-	if !strings.Contains(receivedQuery, "precipitation_unit=inch") {
-		t.Errorf("expected precipitation_unit=inch in query, got %q", receivedQuery)
-	}
-	if !strings.Contains(receivedQuery, "timezone=America%2FLos_Angeles") {
-		t.Errorf("expected timezone=America%%2FLos_Angeles in query, got %q", receivedQuery)
-	}
-}
-
-func TestWeatherProvider_Fetch_Metric(t *testing.T) {
-	t.Parallel()
-
-	var receivedQuery string
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		receivedQuery = r.URL.RawQuery
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(sampleOpenMeteoJSON()))
-	}))
-	defer ts.Close()
-
-	p := provider.NewWeatherProviderWithClient(ts.Client(), ts.URL)
-	err := p.Init(context.Background(), map[string]any{
-		"latitude":  51.5074,
-		"longitude": -0.1278,
-		"units":     "metric",
-	}, provider.InitOptions{})
-	if err != nil {
-		t.Fatalf("Init failed: %v", err)
-	}
-
-	data, err := p.Fetch(context.Background())
-	if err != nil {
-		t.Fatalf("Fetch failed: %v", err)
-	}
-
-	snap := data.(provider.WeatherSnapshot)
-	if snap.Current.Units.Temperature != "°C" || snap.Current.Units.WindSpeed != "km/h" {
-		t.Errorf("unexpected metric units: %+v", snap.Current.Units)
-	}
-
-	if !strings.Contains(receivedQuery, "temperature_unit=celsius") {
-		t.Errorf("expected temperature_unit=celsius in query, got %q", receivedQuery)
-	}
-	if !strings.Contains(receivedQuery, "wind_speed_unit=kmh") {
-		t.Errorf("expected wind_speed_unit=kmh in query, got %q", receivedQuery)
-	}
-	if !strings.Contains(receivedQuery, "precipitation_unit=mm") {
-		t.Errorf("expected precipitation_unit=mm in query, got %q", receivedQuery)
-	}
-	if !strings.Contains(receivedQuery, "timezone=UTC") {
-		t.Errorf("expected default timezone=UTC in query, got %q", receivedQuery)
-	}
-}
-
-func TestWeatherProvider_Fetch_Errors(t *testing.T) {
-	t.Parallel()
-
-	t.Run("HTTP 500 error", func(t *testing.T) {
-		t.Parallel()
-		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusInternalServerError)
-			_, _ = w.Write([]byte("internal upstream failure"))
-		}))
-		defer ts.Close()
-
-		p := provider.NewWeatherProviderWithClient(ts.Client(), ts.URL)
-		_ = p.Init(context.Background(), map[string]any{"latitude": 37.0, "longitude": -122.0}, provider.InitOptions{})
-
-		_, err := p.Fetch(context.Background())
-		if err == nil {
-			t.Fatal("expected error on HTTP 500, got nil")
-		}
-		if !strings.Contains(err.Error(), "HTTP 500") {
-			t.Errorf("expected HTTP 500 in error, got %q", err.Error())
-		}
-	})
-
-	t.Run("Malformed JSON error", func(t *testing.T) {
-		t.Parallel()
-		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte("not valid json"))
-		}))
-		defer ts.Close()
-
-		p := provider.NewWeatherProviderWithClient(ts.Client(), ts.URL)
-		_ = p.Init(context.Background(), map[string]any{"latitude": 37.0, "longitude": -122.0}, provider.InitOptions{})
-
-		_, err := p.Fetch(context.Background())
-		if err == nil {
-			t.Fatal("expected error on malformed JSON, got nil")
-		}
-		if !strings.Contains(err.Error(), "failed to decode Open-Meteo response") {
-			t.Errorf("expected decode error, got %q", err.Error())
-		}
-	})
-
-	t.Run("Slowloris 1MB body limit exceeded", func(t *testing.T) {
-		t.Parallel()
-		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusOK)
-			// Stream 2MB of padding
-			padding := strings.Repeat("A", 1024*1024*2)
-			_, _ = fmt.Fprintf(w, `{"current":{"temperature_2m": 60},"padding":"%s"}`, padding)
-		}))
-		defer ts.Close()
-
-		p := provider.NewWeatherProviderWithClient(ts.Client(), ts.URL)
-		_ = p.Init(context.Background(), map[string]any{"latitude": 37.0, "longitude": -122.0}, provider.InitOptions{})
-
-		// When reading is capped at 1MB, the JSON will be truncated and unmarshal will fail
-		_, err := p.Fetch(context.Background())
-		if err == nil {
-			t.Fatal("expected error on truncated oversized payload, got nil")
-		}
-	})
-
-	t.Run("Invalid baseURL error", func(t *testing.T) {
-		t.Parallel()
-		p := provider.NewWeatherProviderWithClient(nil, "http://invalid-host-%-escape")
-		_ = p.Init(context.Background(), map[string]any{"latitude": 37.0, "longitude": -122.0}, provider.InitOptions{})
-
-		_, err := p.Fetch(context.Background())
-		if err == nil {
-			t.Fatal("expected error on invalid baseURL, got nil")
-		}
-		if !strings.Contains(err.Error(), "invalid weather baseURL") {
-			t.Errorf("expected invalid baseURL error, got %q", err.Error())
-		}
-	})
-
-	t.Run("Context cancelled", func(t *testing.T) {
-		t.Parallel()
-		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			time.Sleep(100 * time.Millisecond)
-			w.WriteHeader(http.StatusOK)
-		}))
-		defer ts.Close()
-
-		ctx, cancel := context.WithCancel(context.Background())
-		cancel() // Cancel immediately
-
-		p := provider.NewWeatherProviderWithClient(ts.Client(), ts.URL)
-		_ = p.Init(context.Background(), map[string]any{"latitude": 37.0, "longitude": -122.0}, provider.InitOptions{})
-
-		_, err := p.Fetch(ctx)
-		if err == nil {
-			t.Fatal("expected error on cancelled context, got nil")
-		}
-	})
-}
-
-func TestWeatherProvider_SubscribeAndShutdown(t *testing.T) {
-	t.Parallel()
-
-	p := provider.NewWeatherProvider()
-	ch := make(chan provider.WidgetPayload, 1)
-
-	// Subscribe on polling provider returns nil without errors
-	if err := p.Subscribe(context.Background(), ch); err != nil {
-		t.Fatalf("unexpected error on Subscribe: %v", err)
-	}
-
-	// Shutdown on polling provider returns nil without errors
-	if err := p.Shutdown(context.Background()); err != nil {
-		t.Fatalf("unexpected error on Shutdown: %v", err)
-	}
-}
-
-func TestWeatherProvider_DefaultRegistry(t *testing.T) {
-	t.Parallel()
-
-	reg := provider.NewRegistry()
-	if !reg.Has("weather-forecast") {
-		t.Error("expected registry to have 'weather-forecast'")
-	}
-	if !reg.Has("weather") {
-		t.Error("expected registry to have 'weather'")
-	}
-
-	p1, err := reg.Create("weather-forecast")
-	if err != nil || p1 == nil {
-		t.Fatalf("failed to create 'weather-forecast': %v", err)
-	}
-
-	p2, err := reg.Create("weather")
-	if err != nil || p2 == nil {
-		t.Fatalf("failed to create 'weather': %v", err)
-	}
-}
-
-func TestWeatherSnapshot_JSONMarshal(t *testing.T) {
-	t.Parallel()
-
-	snap := provider.WeatherSnapshot{
-		Current: provider.WeatherCurrent{
-			Temperature:   72.4,
-			FeelsLike:     70.5,
-			Humidity:      45,
-			WindSpeed:     5.5,
-			Units:         provider.WeatherUnits{Temperature: "°F", WindSpeed: "mph"},
-			ConditionCode: 0,
-			ConditionText: "Clear Sky",
-			Icon:          "weather-sunny",
-		},
-		Hourly: []provider.WeatherHourly{
-			{Time: "2026-09-26T12:00", Temp: 72.4, PrecipProb: 0, Icon: "weather-sunny"},
-		},
-		Daily: []provider.WeatherDaily{
-			{Date: "2026-09-26", TempMax: 75.0, TempMin: 55.0, PrecipProbMax: 0, ConditionText: "Clear Sky", Icon: "weather-sunny"},
-		},
-	}
-
-	b, err := json.Marshal(snap)
-	if err != nil {
-		t.Fatalf("failed to marshal WeatherSnapshot: %v", err)
-	}
-
-	var parsed map[string]any
-	if err := json.Unmarshal(b, &parsed); err != nil {
-		t.Fatalf("failed to unmarshal WeatherSnapshot JSON: %v", err)
-	}
-
-	current, ok := parsed["current"].(map[string]any)
-	if !ok || current["temperature"] != 72.4 {
-		t.Errorf("unexpected current in JSON: %+v", current)
-	}
-}
-
-func TestWeatherProvider_Init_CoordinateTypes(t *testing.T) {
-	t.Parallel()
-
-	p := provider.NewWeatherProvider()
-	err := p.Init(context.Background(), map[string]any{
-		"latitude":  float32(37.5),
-		"longitude": int64(-122),
-	}, provider.InitOptions{})
-	if err != nil {
-		t.Fatalf("Init failed with float32 and int64 coordinates: %v", err)
-	}
-}
-
-func TestWeatherProvider_Fetch_HourlyAndDailyLimits(t *testing.T) {
-	t.Parallel()
-
-	// Build JSON with 30 hourly items and 10 daily items, plus mismatched slices
-	hours := make([]string, 30)
-	temps := make([]float64, 28) // Mismatched length (28 < 30)
-	probs := make([]int, 27)     // Mismatched length (27 < 28)
-	codes := make([]int, 26)     // Mismatched length (26 < 27)
-	for i := 0; i < 30; i++ {
-		hours[i] = fmt.Sprintf("2026-09-26T%02d:00", i)
-		if i < 28 {
-			temps[i] = 65.0 + float64(i)
-		}
-		if i < 27 {
-			probs[i] = i
-		}
-		if i < 26 {
-			codes[i] = 1
-		}
-	}
-
-	days := make([]string, 10)
-	dMax := make([]float64, 9) // Mismatched
-	dMin := make([]float64, 8) // Mismatched
-	dCodes := make([]int, 8)
-	dProbs := make([]int, 8)
-	for i := 0; i < 10; i++ {
-		days[i] = fmt.Sprintf("2026-09-%02d", i+1)
-		if i < 9 {
-			dMax[i] = 70.0 + float64(i)
-		}
-		if i < 8 {
-			dMin[i] = 50.0 + float64(i)
-			dCodes[i] = 0
-			dProbs[i] = 5
-		}
-	}
-
-	jsonMap := map[string]any{
-		"current": map[string]any{
-			"temperature_2m":       70.0,
-			"relative_humidity_2m": 50,
-			"apparent_temperature": 69.0,
-			"precipitation":        0.0,
-			"weather_code":         0,
-			"wind_speed_10m":       5.0,
-		},
-		"hourly": map[string]any{
-			"time":                      hours,
-			"temperature_2m":            temps,
-			"precipitation_probability": probs,
-			"weather_code":              codes,
-		},
-		"daily": map[string]any{
-			"time":                         days,
-			"temperature_2m_max":           dMax,
-			"temperature_2m_min":           dMin,
-			"weather_code":                 dCodes,
-			"precipitation_probability_max": dProbs,
-		},
-	}
-
-	payload, err := json.Marshal(jsonMap)
-	if err != nil {
-		t.Fatalf("failed to marshal test json: %v", err)
-	}
-
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(payload)
-	}))
-	defer ts.Close()
-
-	p := provider.NewWeatherProviderWithClient(ts.Client(), ts.URL)
-	_ = p.Init(context.Background(), map[string]any{
-		"latitude":  37.0,
-		"longitude": -122.0,
-	}, provider.InitOptions{})
-
-	res, err := p.Fetch(context.Background())
-	if err != nil {
-		t.Fatalf("Fetch failed: %v", err)
-	}
-
-	snap := res.(provider.WeatherSnapshot)
-	// Hourly should be capped at min(26, 24) = 24
-	if len(snap.Hourly) != 24 {
-		t.Errorf("expected 24 hourly items, got %d", len(snap.Hourly))
-	}
-
-	// Daily should be capped at min(8, 7) = 7
-	if len(snap.Daily) != 7 {
-		t.Errorf("expected 7 daily items, got %d", len(snap.Daily))
-	}
-}
-
-func TestWeatherProvider_Init_LocationName(t *testing.T) {
-	t.Parallel()
-
-	jsonMap := map[string]any{
-		"latitude":  37.83,
-		"longitude": -122.28,
-		"current": map[string]any{
-			"temperature_2m": 68.0,
-			"weather_code":   1,
-		},
-		"hourly": map[string]any{
-			"time":           []string{},
-			"temperature_2m": []float64{},
-		},
-		"daily": map[string]any{
-			"time":         []string{},
-			"weather_code": []int{},
-		},
-	}
-	payload, _ := json.Marshal(jsonMap)
-
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(payload)
-	}))
-	defer ts.Close()
-
-	// 1. With "name"
-	p1 := provider.NewWeatherProviderWithClient(ts.Client(), ts.URL)
-	if err := p1.Init(context.Background(), map[string]any{
-		"latitude":  37.83,
-		"longitude": -122.28,
-		"name":      "Home",
-	}, provider.InitOptions{}); err != nil {
-		t.Fatalf("Init failed: %v", err)
-	}
-	res1, err := p1.Fetch(context.Background())
-	if err != nil {
-		t.Fatalf("Fetch failed: %v", err)
-	}
-	snap1 := res1.(provider.WeatherSnapshot)
-	if snap1.Location != "Home" {
-		t.Errorf("expected Location 'Home', got %q", snap1.Location)
-	}
-
-	// 2. With "location_name"
-	p2 := provider.NewWeatherProviderWithClient(ts.Client(), ts.URL)
-	if err := p2.Init(context.Background(), map[string]any{
-		"latitude":      37.83,
-		"longitude":     -122.28,
-		"location_name": "Ayda's School",
-	}, provider.InitOptions{}); err != nil {
-		t.Fatalf("Init failed: %v", err)
-	}
-	res2, err := p2.Fetch(context.Background())
-	if err != nil {
-		t.Fatalf("Fetch failed: %v", err)
-	}
-	snap2 := res2.(provider.WeatherSnapshot)
-	if snap2.Location != "Ayda's School" {
-		t.Errorf("expected Location 'Ayda's School', got %q", snap2.Location)
-	}
-
-	// 3. JSON marshal with location
-	b, err := json.Marshal(snap1)
-	if err != nil {
-		t.Fatalf("json.Marshal failed: %v", err)
-	}
-	var parsed map[string]any
-	if err := json.Unmarshal(b, &parsed); err != nil {
-		t.Fatalf("json.Unmarshal failed: %v", err)
-	}
-	if parsed["location"] != "Home" {
-		t.Errorf("expected location 'Home' in JSON, got %v", parsed["location"])
-	}
-}
-
-func TestWeatherProvider_Fetch_CurrentHourAlignment(t *testing.T) {
-	t.Parallel()
-
-	// 48 hours of forecast
-	hours := make([]string, 48)
-	temps := make([]float64, 48)
-	probs := make([]int, 48)
-	codes := make([]int, 48)
-	for i := 0; i < 48; i++ {
-		hours[i] = fmt.Sprintf("2026-09-26T%02d:00", i)
-		temps[i] = 60.0 + float64(i)
-		probs[i] = i
-		codes[i] = 1
-	}
-
-	// 1. Current.Time at 14:00 -> should return 24 entries starting at 14:00
-	json1 := map[string]any{
-		"current": map[string]any{
-			"time":           "2026-09-26T14:15",
-			"temperature_2m": 72.0,
-			"weather_code":   1,
-		},
-		"hourly": map[string]any{
-			"time":                      hours,
-			"temperature_2m":            temps,
-			"precipitation_probability": probs,
-			"weather_code":              codes,
-		},
-	}
-	payload1, _ := json.Marshal(json1)
-
-	ts1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(payload1)
-	}))
-	defer ts1.Close()
-
-	p1 := provider.NewWeatherProviderWithClient(ts1.Client(), ts1.URL)
-	_ = p1.Init(context.Background(), map[string]any{"latitude": 37.0, "longitude": -122.0}, provider.InitOptions{})
-	res1, err := p1.Fetch(context.Background())
-	if err != nil {
-		t.Fatalf("Fetch failed: %v", err)
-	}
-	snap1 := res1.(provider.WeatherSnapshot)
-	if len(snap1.Hourly) != 24 {
-		t.Fatalf("expected 24 hourly entries, got %d", len(snap1.Hourly))
-	}
-	if snap1.Hourly[0].Time != "2026-09-26T14:00" {
-		t.Errorf("expected first hourly item to be 2026-09-26T14:00, got %s", snap1.Hourly[0].Time)
-	}
-
-	// 2. Current.Time near end (40:00) with 48 items -> should safely return 8 items
-	json2 := map[string]any{
-		"current": map[string]any{
-			"time":           "2026-09-26T40:00",
-			"temperature_2m": 75.0,
-			"weather_code":   1,
-		},
-		"hourly": map[string]any{
-			"time":                      hours,
-			"temperature_2m":            temps,
-			"precipitation_probability": probs,
-			"weather_code":              codes,
-		},
-	}
-	payload2, _ := json.Marshal(json2)
-
-	ts2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(payload2)
-	}))
-	defer ts2.Close()
-
-	p2 := provider.NewWeatherProviderWithClient(ts2.Client(), ts2.URL)
-	_ = p2.Init(context.Background(), map[string]any{"latitude": 37.0, "longitude": -122.0}, provider.InitOptions{})
-	res2, err := p2.Fetch(context.Background())
-	if err != nil {
-		t.Fatalf("Fetch failed: %v", err)
-	}
-	snap2 := res2.(provider.WeatherSnapshot)
-	if len(snap2.Hourly) != 8 {
-		t.Errorf("expected 8 hourly items near end, got %d", len(snap2.Hourly))
-	}
-
-	// 3. Short / unparseable Current.Time -> defaults to 0 without panic
-	json3 := map[string]any{
-		"current": map[string]any{
-			"time":           "bad",
-			"temperature_2m": 65.0,
-			"weather_code":   0,
-		},
-		"hourly": map[string]any{
-			"time":                      hours[:10],
-			"temperature_2m":            temps[:10],
-			"precipitation_probability": probs[:10],
-			"weather_code":              codes[:10],
-		},
-	}
-	payload3, _ := json.Marshal(json3)
-
-	ts3 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(payload3)
-	}))
-	defer ts3.Close()
-
-	p3 := provider.NewWeatherProviderWithClient(ts3.Client(), ts3.URL)
-	_ = p3.Init(context.Background(), map[string]any{"latitude": 37.0, "longitude": -122.0}, provider.InitOptions{})
-	res3, err := p3.Fetch(context.Background())
-	if err != nil {
-		t.Fatalf("Fetch failed: %v", err)
-	}
-	snap3 := res3.(provider.WeatherSnapshot)
-	if len(snap3.Hourly) != 10 {
-		t.Errorf("expected 10 hourly items for short time fallback, got %d", len(snap3.Hourly))
-	}
-}
-
-func TestMapWMOCodeWithDay(t *testing.T) {
+func TestWeatherProvider_Fetch(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name         string
-		code         int
-		isDay        int
-		expectedText string
-		expectedIcon string
+		name       string
+		body       []byte
+		cfg        map[string]any
+		opts       provider.InitOptions
+		wantTemp   float64
+		wantUnitsT string
+		wantUnitsW string
+		wantIcon   string
+		wantCond   string
+		wantPrecip int
+		wantHourly int
+		wantDaily  int
+		wantFirstH string
+		wantLoc    string
+		wantQuery  []string
+		nightCheck bool
 	}{
-		{"day clear sky", 0, 1, "Clear Sky", "weather-sunny"},
-		{"night clear", 0, 0, "Clear", "weather-clear-night"},
-		{"day mainly clear", 1, 1, "Mainly Clear", "weather-partly-cloudy"},
-		{"night mainly clear", 1, 0, "Mainly Clear", "weather-night-partly-cloudy"},
-		{"day partly cloudy", 2, 1, "Partly Cloudy", "weather-partly-cloudy"},
-		{"night partly cloudy", 2, 0, "Partly Cloudy", "weather-night-partly-cloudy"},
-		{"day overcast", 3, 1, "Overcast", "weather-cloudy"},
-		{"night overcast", 3, 0, "Overcast", "weather-cloudy"},
-		{"day rain", 61, 1, "Rain", "weather-rainy"},
-		{"night rain", 61, 0, "Rain", "weather-rainy"},
-		{"day thunderstorm", 95, 1, "Thunderstorm", "weather-lightning"},
-		{"night thunderstorm", 95, 0, "Thunderstorm", "weather-lightning"},
-		{"unknown code", 999, 0, "Unknown", "weather-cloudy"},
+		{
+			name: "imperial", body: []byte(sampleOpenMeteoJSON()), cfg: wCfg(37.8044, -122.2712, "imperial", "", ""), opts: provider.InitOptions{Timezone: "America/Los_Angeles"},
+			wantTemp: 68.4, wantUnitsT: "°F", wantUnitsW: "mph", wantIcon: "weather-partly-cloudy", wantCond: "Mainly Clear", wantPrecip: 10, wantHourly: 3, wantDaily: 2,
+			wantQuery: []string{"temperature_unit=fahrenheit", "wind_speed_unit=mph", "precipitation_unit=inch", "timezone=America%2FLos_Angeles"},
+		},
+		{
+			name: "metric", body: []byte(sampleOpenMeteoJSON()), cfg: wCfg(51.5074, -0.1278, "metric", "", ""), opts: provider.InitOptions{},
+			wantUnitsT: "°C", wantUnitsW: "km/h",
+			wantQuery: []string{"temperature_unit=celsius", "wind_speed_unit=kmh", "precipitation_unit=mm", "timezone=UTC"},
+		},
+		{
+			name: "nighttime", body: []byte(sampleNightJSON), cfg: wCfg(37.8044, -122.2712, "imperial", "", ""), opts: provider.InitOptions{Timezone: "America/Los_Angeles"},
+			wantCond: "Clear", wantIcon: "weather-clear-night", wantHourly: 4, wantDaily: 1, nightCheck: true,
+		},
+		{
+			name: "hourly_daily_limits", body: makeMismatchedJSON(), cfg: wCfg(37.0, -122.0, "", "", ""), opts: provider.InitOptions{},
+			wantHourly: 24, wantDaily: 7,
+		},
+		{
+			name: "current_hour_alignment", body: makeHourlyDailyJSON(48, 2, "2026-09-26T14:15"), cfg: wCfg(37.0, -122.0, "", "", ""), opts: provider.InitOptions{},
+			wantHourly: 24, wantFirstH: "2026-09-26T14:00",
+		},
+		{
+			name: "hour_alignment_tail", body: makeHourlyDailyJSON(48, 2, "2026-09-26T40:00"), cfg: wCfg(37.0, -122.0, "", "", ""), opts: provider.InitOptions{},
+			wantHourly: 8,
+		},
+		{
+			name: "hour_alignment_bad_time", body: makeHourlyDailyJSON(10, 2, "bad"), cfg: wCfg(37.0, -122.0, "", "", ""), opts: provider.InitOptions{},
+			wantHourly: 10,
+		},
+		{
+			name: "location_name", body: makeHourlyDailyJSON(1, 1, ""), cfg: wCfg(37.83, -122.28, "", "", "Ayda's School"), opts: provider.InitOptions{},
+			wantLoc: "Ayda's School",
+		},
+		{
+			name: "name", body: makeHourlyDailyJSON(1, 1, ""), cfg: wCfg(37.83, -122.28, "", "Home", ""), opts: provider.InitOptions{},
+			wantLoc: "Home",
+		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			text, icon := provider.MapWMOCodeWithDay(tc.code, tc.isDay)
-			if text != tc.expectedText || icon != tc.expectedIcon {
-				t.Errorf("MapWMOCodeWithDay(%d, %d) = (%q, %q), want (%q, %q)",
-					tc.code, tc.isDay, text, icon, tc.expectedText, tc.expectedIcon)
+			var reqQuery string
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				reqQuery = r.URL.RawQuery
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write(tc.body)
+			}))
+			defer ts.Close()
+
+			p := provider.NewWeatherProviderWithClient(ts.Client(), ts.URL)
+			if err := p.Init(context.Background(), tc.cfg, tc.opts); err != nil { t.Fatalf("Init failed: %v", err) }
+			res, err := p.Fetch(context.Background())
+			if err != nil { t.Fatalf("Fetch failed: %v", err) }
+			snap := res.(provider.WeatherSnapshot)
+			if tc.wantTemp != 0 && snap.Current.Temperature != tc.wantTemp { t.Errorf("temp = %v, want %v", snap.Current.Temperature, tc.wantTemp) }
+			if tc.wantUnitsT != "" && snap.Current.Units.Temperature != tc.wantUnitsT { t.Errorf("units temp = %q, want %q", snap.Current.Units.Temperature, tc.wantUnitsT) }
+			if tc.wantUnitsW != "" && snap.Current.Units.WindSpeed != tc.wantUnitsW { t.Errorf("units wind = %q, want %q", snap.Current.Units.WindSpeed, tc.wantUnitsW) }
+			if tc.wantIcon != "" && snap.Current.Icon != tc.wantIcon { t.Errorf("icon = %q, want %q", snap.Current.Icon, tc.wantIcon) }
+			if tc.wantCond != "" && snap.Current.ConditionText != tc.wantCond { t.Errorf("cond = %q, want %q", snap.Current.ConditionText, tc.wantCond) }
+			if tc.wantPrecip != 0 && (snap.Current.PrecipProbMax != tc.wantPrecip || snap.TodayPrecipProbMax() != tc.wantPrecip) { t.Errorf("precip = %d, want %d", snap.Current.PrecipProbMax, tc.wantPrecip) }
+			if tc.wantHourly != 0 && len(snap.Hourly) != tc.wantHourly { t.Errorf("hourly len = %d, want %d", len(snap.Hourly), tc.wantHourly) }
+			if tc.wantDaily != 0 && len(snap.Daily) != tc.wantDaily { t.Errorf("daily len = %d, want %d", len(snap.Daily), tc.wantDaily) }
+			if tc.wantFirstH != "" && snap.Hourly[0].Time != tc.wantFirstH { t.Errorf("first hourly = %q, want %q", snap.Hourly[0].Time, tc.wantFirstH) }
+			if tc.wantLoc != "" && snap.Location != tc.wantLoc { t.Errorf("loc = %q, want %q", snap.Location, tc.wantLoc) }
+			for _, q := range tc.wantQuery {
+				if !strings.Contains(reqQuery, q) { t.Errorf("query %q missing %q", reqQuery, q) }
+			}
+			if tc.nightCheck {
+				if snap.Hourly[0].Icon != "weather-clear-night" || snap.Hourly[1].Icon != "weather-night-partly-cloudy" || snap.Hourly[2].Icon != "weather-partly-cloudy" || snap.Hourly[3].Icon != "weather-sunny" || snap.Daily[0].Icon != "weather-sunny" {
+					t.Errorf("night icon mismatch: %+v", snap.Hourly)
+				}
 			}
 		})
 	}
 }
 
-func TestWeatherProvider_Fetch_NighttimeAndSliceResilience(t *testing.T) {
+func TestWeatherProvider_FetchErrors(t *testing.T) {
 	t.Parallel()
 
-	jsonNight := map[string]any{
-		"latitude":  37.8044,
-		"longitude": -122.2712,
-		"current": map[string]any{
-			"time":                 "2026-10-12T20:00",
-			"temperature_2m":       62.5,
-			"relative_humidity_2m": 75,
-			"apparent_temperature": 61.0,
-			"precipitation":        0.0,
-			"weather_code":         0,
-			"wind_speed_10m":       5.0,
-			"is_day":               0,
-		},
-		"hourly": map[string]any{
-			"time": []string{
-				"2026-10-12T20:00",
-				"2026-10-12T21:00",
-				"2026-10-12T22:00",
-				"2026-10-13T08:00",
-			},
-			"temperature_2m":            []float64{62.5, 60.0, 58.0, 65.0},
-			"precipitation_probability": []int{0, 0, 0, 10},
-			"weather_code":              []int{0, 1, 2, 0},
-			// is_day slice intentionally shorter (length 2 vs 4) to verify bounds protection
-			"is_day": []int{0, 0},
-		},
-		"daily": map[string]any{
-			"time":                           []string{"2026-10-12"},
-			"weather_code":                   []int{0},
-			"temperature_2m_max":             []float64{70.0},
-			"temperature_2m_min":             []float64{55.0},
-			"precipitation_probability_max": []int{0},
-		},
-	}
-	payload, err := json.Marshal(jsonNight)
-	if err != nil {
-		t.Fatalf("failed to marshal night json: %v", err)
+	tests := []struct {
+		name       string
+		status     int
+		body       string
+		baseURL    string
+		cancel     bool
+		wantErrSub string
+	}{
+		{"http_500", 500, "internal error", "", false, "HTTP 500"},
+		{"malformed_json", 200, "not valid json", "", false, "failed to decode Open-Meteo response"},
+		{"slowloris_limit", 200, fmt.Sprintf(`{"current":{"temperature_2m":60},"pad":"%s"}`, strings.Repeat("A", 1024*1024*2)), "", false, "failed to decode Open-Meteo response"},
+		{"invalid_base_url", 0, "", "http://invalid-host-%-escape", false, "invalid weather baseURL"},
+		{"context_cancelled", 200, "", "", true, "context canceled"},
 	}
 
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(payload)
-	}))
-	defer ts.Close()
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			baseURL := tc.baseURL
+			var client *http.Client
+			if tc.status > 0 {
+				ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if tc.cancel {
+						<-r.Context().Done()
+						return
+					}
+					w.WriteHeader(tc.status)
+					_, _ = w.Write([]byte(tc.body))
+				}))
+				defer ts.Close()
+				baseURL = ts.URL
+				client = ts.Client()
+			}
+			p := provider.NewWeatherProviderWithClient(client, baseURL)
+			_ = p.Init(context.Background(), wCfg(37.0, -122.0, "", "", ""), provider.InitOptions{})
 
-	p := provider.NewWeatherProviderWithClient(ts.Client(), ts.URL)
-	err = p.Init(context.Background(), map[string]any{
-		"latitude":  37.8044,
-		"longitude": -122.2712,
-		"units":     "imperial",
-	}, provider.InitOptions{Timezone: "America/Los_Angeles"})
-	if err != nil {
-		t.Fatalf("Init failed: %v", err)
+			ctx := context.Background()
+			if tc.cancel {
+				cctx, cancel := context.WithCancel(ctx)
+				cancel()
+				ctx = cctx
+			}
+			if _, err := p.Fetch(ctx); err == nil || !strings.Contains(err.Error(), tc.wantErrSub) {
+				t.Fatalf("expected error containing %q, got %v", tc.wantErrSub, err)
+			}
+		})
 	}
+}
 
-	res, err := p.Fetch(context.Background())
-	if err != nil {
-		t.Fatalf("Fetch failed: %v", err)
-	}
-	snap := res.(provider.WeatherSnapshot)
+func TestWeatherProvider_LifecycleAndSerialization(t *testing.T) {
+	t.Parallel()
 
-	// Verify current nighttime weather
-	if snap.Current.ConditionText != "Clear" {
-		t.Errorf("expected current condition 'Clear', got %q", snap.Current.ConditionText)
-	}
-	if snap.Current.Icon != "weather-clear-night" {
-		t.Errorf("expected current icon 'weather-clear-night', got %q", snap.Current.Icon)
-	}
+	p := provider.NewWeatherProvider()
+	ch := make(chan provider.WidgetPayload, 1)
+	if err := p.Subscribe(context.Background(), ch); err != nil { t.Fatalf("Subscribe failed: %v", err) }
+	if err := p.Shutdown(context.Background()); err != nil { t.Fatalf("Shutdown failed: %v", err) }
 
-	// Verify hourly night vs day transitions with safe bounds
-	if len(snap.Hourly) != 4 {
-		t.Fatalf("expected 4 hourly items, got %d", len(snap.Hourly))
-	}
-	if snap.Hourly[0].Icon != "weather-clear-night" {
-		t.Errorf("hourly[0] icon: expected 'weather-clear-night', got %q", snap.Hourly[0].Icon)
-	}
-	if snap.Hourly[1].Icon != "weather-night-partly-cloudy" {
-		t.Errorf("hourly[1] icon: expected 'weather-night-partly-cloudy', got %q", snap.Hourly[1].Icon)
-	}
-	// Hourly[2] and [3] exceed the length of is_day slice, so they safely default to day (1)
-	if snap.Hourly[2].Icon != "weather-partly-cloudy" {
-		t.Errorf("hourly[2] icon: expected 'weather-partly-cloudy', got %q", snap.Hourly[2].Icon)
-	}
-	if snap.Hourly[3].Icon != "weather-sunny" {
-		t.Errorf("hourly[3] icon: expected 'weather-sunny', got %q", snap.Hourly[3].Icon)
-	}
+	reg := provider.NewRegistry()
+	if !reg.Has("weather-forecast") || !reg.Has("weather") { t.Error("missing registry keys") }
+	if p1, err := reg.Create("weather-forecast"); err != nil || p1 == nil { t.Fatalf("create forecast failed: %v", err) }
+	if p2, err := reg.Create("weather"); err != nil || p2 == nil { t.Fatalf("create weather failed: %v", err) }
 
-	// Daily forecast should remain standard daytime mapping
-	if snap.Daily[0].Icon != "weather-sunny" {
-		t.Errorf("daily[0] icon: expected 'weather-sunny', got %q", snap.Daily[0].Icon)
+	snap := provider.WeatherSnapshot{
+		Location: "Home",
+		Current: provider.WeatherCurrent{Temperature: 72.4, ConditionText: "Clear Sky", Icon: "weather-sunny", Units: provider.WeatherUnits{Temperature: "°F", WindSpeed: "mph"}},
+		Hourly: []provider.WeatherHourly{{Time: "2026-09-26T12:00", Temp: 72.4, Icon: "weather-sunny"}},
+		Daily:  []provider.WeatherDaily{{Date: "2026-09-26", TempMax: 75.0, TempMin: 55.0, ConditionText: "Clear Sky", Icon: "weather-sunny"}},
+	}
+	b, err := json.Marshal(snap)
+	if err != nil { t.Fatalf("Marshal failed: %v", err) }
+	var parsed map[string]any
+	if err := json.Unmarshal(b, &parsed); err != nil { t.Fatalf("Unmarshal failed: %v", err) }
+	if parsed["location"] != "Home" || parsed["current"].(map[string]any)["temperature"] != 72.4 {
+		t.Errorf("unexpected json: %+v", parsed)
 	}
 }

@@ -277,20 +277,14 @@ var (
 
 // extractAlbumTitle discovers the album name from og:title or title tag, stripping Google Photos branding.
 func extractAlbumTitle(html string) string {
-	if m := ogTitleRe.FindStringSubmatch(html); len(m) > 1 {
-		title := strings.TrimSpace(m[1])
-		title = strings.TrimSuffix(title, " - Google Photos")
-		title = strings.TrimSuffix(title, " - Google")
-		if title != "" {
-			return title
-		}
-	}
-	if m := titleTagRe.FindStringSubmatch(html); len(m) > 1 {
-		title := strings.TrimSpace(m[1])
-		title = strings.TrimSuffix(title, " - Google Photos")
-		title = strings.TrimSuffix(title, " - Google")
-		if title != "" {
-			return title
+	for _, re := range []*regexp.Regexp{ogTitleRe, titleTagRe} {
+		if m := re.FindStringSubmatch(html); len(m) > 1 {
+			title := strings.TrimSpace(m[1])
+			title = strings.TrimSuffix(title, " - Google Photos")
+			title = strings.TrimSuffix(title, " - Google")
+			if title != "" {
+				return title
+			}
 		}
 	}
 	return "Shared Album"
@@ -555,7 +549,7 @@ func toFloat(val any) (float64, bool) {
 			return f, true
 		}
 	case string:
-		if f, err := strconv.ParseFloat(v, 64); err == nil {
+		if f, err := strconv.ParseFloat(strings.TrimSpace(v), 64); err == nil {
 			return f, true
 		}
 	}
