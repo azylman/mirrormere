@@ -19,195 +19,93 @@ func (m *mockPackageLoader) LoadPackage(widgetType string) (*domain.Package, err
 	if m.err != nil {
 		return nil, m.err
 	}
-	pkg, ok := m.packages[widgetType]
-	if !ok {
-		return nil, fmt.Errorf("widget package '%s' not found", widgetType)
+	if pkg, ok := m.packages[widgetType]; ok {
+		return pkg, nil
 	}
-	return pkg, nil
+	return nil, fmt.Errorf("widget package '%s' not found", widgetType)
+}
+
+func mkTestPkg(t, src, prov string, c, r, refresh int, schema, respSchema map[string]any, supported ...domain.Dimension) *domain.Package {
+	return &domain.Package{
+		Type: t, Source: src,
+		Manifest: domain.WidgetManifest{
+			Name: t, Version: "1.0.0", Provider: prov, DefaultDimensions: domain.NewDimension(c, r),
+			Refresh: domain.ManifestRefresh{IntervalSeconds: refresh}, ConfigSchema: schema,
+			ResponseSchema: respSchema, SupportedDimensions: supported,
+		},
+	}
 }
 
 func createStandardPackages() map[string]*domain.Package {
+	cal := map[string]any{"type": "object", "required": []string{"calendars"}, "properties": map[string]any{"calendars": map[string]any{"type": "array"}}}
+	tasks := map[string]any{"type": "object", "properties": map[string]any{"list_id": map[string]any{"type": "string"}, "source": map[string]any{"type": "string"}}}
 	return map[string]*domain.Package{
-		"calendar-agenda": {
-			Type:   "calendar-agenda",
-			Source: "builtin",
-			Manifest: domain.WidgetManifest{
-				Name:              "Calendar Agenda",
-				Version:           "1.0.0",
-				Provider:          "calendar-agenda",
-				DefaultDimensions: domain.NewDimension(4, 2),
-				Refresh:           domain.ManifestRefresh{IntervalSeconds: 300},
-				ConfigSchema: map[string]any{
-					"type":     "object",
-					"required": []string{"calendars"},
-					"properties": map[string]any{
-						"calendars": map[string]any{
-							"type": "array",
-						},
-					},
-				},
-			},
-		},
-		"calendar-family": {
-			Type:   "calendar-family",
-			Source: "builtin",
-			Manifest: domain.WidgetManifest{
-				Name:              "Family Calendar",
-				Version:           "1.0.0",
-				Provider:          "calendar-agenda",
-				DefaultDimensions: domain.NewDimension(6, 2),
-				SupportedDimensions: []domain.Dimension{
-					domain.NewDimension(4, 2),
-					domain.NewDimension(6, 2),
-				},
-				Refresh: domain.ManifestRefresh{IntervalSeconds: 300},
-			},
-		},
-		"weather-forecast": {
-			Type:   "weather-forecast",
-			Source: "builtin",
-			Manifest: domain.WidgetManifest{
-				Name:              "Weather Forecast",
-				Version:           "1.0.0",
-				Provider:          "weather-forecast",
-				DefaultDimensions: domain.NewDimension(2, 1),
-				Refresh:           domain.ManifestRefresh{IntervalSeconds: 600},
-			},
-		},
-		"tasks": {
-			Type:   "tasks",
-			Source: "builtin",
-			Manifest: domain.WidgetManifest{
-				Name:              "Tasks & Lists",
-				Version:           "1.0.0",
-				Provider:          "tasks",
-				DefaultDimensions: domain.NewDimension(2, 1),
-				Refresh:           domain.ManifestRefresh{IntervalSeconds: 120},
-				ConfigSchema: map[string]any{
-					"type": "object",
-					"properties": map[string]any{
-						"list_id": map[string]any{"type": "string"},
-						"source":  map[string]any{"type": "string"},
-					},
-				},
-			},
-		},
-		"spacer": {
-			Type:   "spacer",
-			Source: "builtin",
-			Manifest: domain.WidgetManifest{
-				Name:              "Spacer Tile",
-				Version:           "1.0.0",
-				Provider:          "spacer",
-				DefaultDimensions: domain.NewDimension(2, 1),
-			},
-		},
-		"sensor-http": {
-			Type:   "sensor-http",
-			Source: "custom",
-			Manifest: domain.WidgetManifest{
-				Name:              "HTTP Sensor",
-				Version:           "1.0.0",
-				Provider:          "http",
-				DefaultDimensions: domain.NewDimension(2, 1),
-				ResponseSchema: map[string]any{
-					"type": "object",
-				},
-			},
-		},
+		"calendar-agenda":  mkTestPkg("calendar-agenda", "builtin", "calendar-agenda", 4, 2, 300, cal, nil),
+		"calendar-family":  mkTestPkg("calendar-family", "builtin", "calendar-agenda", 6, 2, 300, nil, nil, domain.NewDimension(4, 2), domain.NewDimension(6, 2)),
+		"weather-forecast": mkTestPkg("weather-forecast", "builtin", "weather-forecast", 2, 1, 600, nil, nil),
+		"tasks":            mkTestPkg("tasks", "builtin", "tasks", 2, 1, 120, tasks, nil),
+		"spacer":           mkTestPkg("spacer", "builtin", "spacer", 2, 1, 0, nil, nil),
+		"sensor-http":      mkTestPkg("sensor-http", "custom", "http", 2, 1, 0, nil, map[string]any{"type": "object"}),
 	}
 }
 
-const validBaseYAML = `
-timezone: America/New_York
-display:
-  grid:
-    columns: 6
-    rows: 2
-  rotation:
-    interval_seconds: 30
-    transition: slide
-  widgets:
-    - id: cal-hero
-      type: calendar-agenda
-      dimensions: [4, 2]
-      pinned: true
-      config:
-        calendars:
-          - name: Family
-    - id: weather-1
-      type: weather-forecast
-    - id: tasks-1
-      type: tasks
-      dimensions: [2, 1]
-      config:
-        list_id: chores
-        source: local
-`
+const validBaseYAML = "timezone: America/New_York\ndisplay:\n  grid:\n    columns: 6\n    rows: 2\n  rotation:\n    interval_seconds: 30\n    transition: slide\n  widgets:\n    - id: cal-hero\n      type: calendar-agenda\n      dimensions: [4, 2]\n      pinned: true\n      config: {calendars: [{name: Family}]}\n    - id: weather-1\n      type: weather-forecast\n    - id: tasks-1\n      type: tasks\n      dimensions: [2, 1]\n      config: {list_id: chores, source: local}\n"
 
-const familyBaseYAMLTemplate = `
-timezone: America/New_York
-display:
-  grid:
-    columns: 6
-    rows: 2
-  rotation:
-    interval_seconds: 30
-    transition: slide
-  widgets:
-    - id: family-cal
-      type: calendar-family
-      dimensions: [6, 2]
-      config:
-        shared_color: "#3D405B"
-        calendars:
-          - name: alex-personal
-            url: "https://example.org/alex.ics"
-          - name: school
-            url: "https://example.org/school.ics"
-        members:
-%s
-`
-
-func buildFamilyYAML(membersBlock string) string {
-	return strings.Replace(familyBaseYAMLTemplate, "%s", membersBlock, 1)
-}
+func buildFamilyYAML(membersBlock string) string { return buildFamilyWithHoursYAML("", membersBlock) }
 
 func buildFamilyWithHoursYAML(hours, membersBlock string) string {
-	tmpl := `
-timezone: America/New_York
-display:
-  grid:
-    columns: 6
-    rows: 2
-  rotation:
-    interval_seconds: 30
-    transition: slide
-  widgets:
-    - id: family-cal
-      type: calendar-family
-      dimensions: [6, 2]
-      config:
-        hours: %s
-        calendars:
-          - name: alex-personal
-            url: "https://example.org/alex.ics"
-        members:
-%s
-`
-	return fmt.Sprintf(tmpl, hours, membersBlock)
+	h := ""
+	if hours != "" {
+		h = "        hours: " + hours + "\n"
+	}
+	return "timezone: America/New_York\ndisplay:\n  widgets:\n    - id: family-cal\n      type: calendar-family\n      dimensions: [6, 2]\n      config:\n" + h + "        shared_color: \"#3D405B\"\n        calendars:\n          - {name: alex-personal, url: \"https://example.org/alex.ics\"}\n          - {name: school, url: \"https://example.org/school.ics\"}\n        members:\n" + membersBlock + "\n"
+}
+
+func mkMemberYAML(name, color, pattern, cals string) string {
+	if name == "" && color == "" && pattern == "" && cals == "" {
+		return "          - {}\n"
+	}
+	res := "          - name: " + name + "\n"
+	for _, kv := range [][2]string{{color, `color: "` + color + `"`}, {pattern, "pattern: " + pattern}, {cals, "calendars: " + cals}} {
+		if kv[0] != "" {
+			res += "            " + kv[1] + "\n"
+		}
+	}
+	return res
 }
 
 func makeNineMembers() string {
-	var sb strings.Builder
-	for i := 0; i < 9; i++ {
-		fmt.Fprintf(&sb, "          - name: Member%c\n            color: \"#E07A5F\"\n            pattern: solid\n            calendars: [alex-personal]\n", 'A'+i)
+	res := ""
+	for i := range 9 {
+		res += mkMemberYAML(fmt.Sprintf("Member%c", 'A'+i), "#E07A5F", "solid", "[alex-personal]")
 	}
-	return sb.String()
+	return res
 }
 
-func withLKGCWidgets(widgetsYAML string) string {
-	return fmt.Sprintf("timezone: America/New_York\ndisplay:\n  widgets:\n%s\n", widgetsYAML)
+func mkTaskYAML(id, dims, listID, source, extra string) string {
+	y := fmt.Sprintf("    - id: %s\n      type: tasks\n      dimensions: %s\n", id, dims)
+	if listID == "" && source == "" && extra == "" {
+		return y
+	}
+	y += "      config:\n"
+	if listID != "" {
+		y += "        list_id: " + listID + "\n"
+	}
+	if source != "" {
+		y += "        source: " + source + "\n"
+	}
+	if extra != "" {
+		y += strings.TrimRight(extra, "\n") + "\n"
+	}
+	return y
+}
+
+func mkWYAML(id, wType, dims, extra string) string {
+	return fmt.Sprintf("    - id: %s\n      type: %s\n      dimensions: %s\n%s", id, wType, dims, extra)
+}
+
+func withLKGCWidgets(y string) string {
+	return "timezone: America/New_York\ndisplay:\n  widgets:\n" + y + "\n"
 }
 
 func withPkg(pkgType string, p *domain.Package) map[string]*domain.Package {
@@ -217,52 +115,35 @@ func withPkg(pkgType string, p *domain.Package) map[string]*domain.Package {
 }
 
 func mkShellCfg(tz string, hideCursor bool, remoteURL string, video *config.HeaderVideoConfig) *config.Config {
-	return &config.Config{
-		Timezone: tz,
-		Display: config.DisplayConfig{
-			HideCursor: hideCursor,
-			RemoteURL:  remoteURL,
-			Header: config.HeaderConfig{
-				Video: video,
-			},
-		},
-	}
+	return &config.Config{Timezone: tz, Display: config.DisplayConfig{HideCursor: hideCursor, RemoteURL: remoteURL, Header: config.HeaderConfig{Video: video}}}
 }
 
 func mkVideoCfg(enabled *bool, streamID, streamURL string) *config.HeaderVideoConfig {
-	return &config.HeaderVideoConfig{
-		Enabled:   enabled,
-		StreamID:  streamID,
-		StreamURL: streamURL,
-	}
+	return &config.HeaderVideoConfig{Enabled: enabled, StreamID: streamID, StreamURL: streamURL}
+}
+
+func mkW(id, wType string, c, r int, pinned bool, endpoint string, refresh *int, cfg map[string]any) config.WidgetConfig {
+	return config.WidgetConfig{ID: id, Type: wType, Dimensions: []int{c, r}, Pinned: pinned, Endpoint: endpoint, RefreshIntervalSeconds: refresh, Config: cfg}
+}
+
+func mkCfg(ws ...config.WidgetConfig) *config.Config {
+	return &config.Config{Display: config.DisplayConfig{Widgets: ws}}
 }
 
 func TestLKGC_ManagerLifecycleAndStatus(t *testing.T) {
 	t.Parallel()
-
 	loader := &mockPackageLoader{packages: createStandardPackages()}
 
-	// Cold boot failures
 	if _, err := config.NewManager([]byte(validBaseYAML), nil, nil, nil); err == nil || !strings.Contains(err.Error(), "package loader cannot be nil") {
 		t.Fatalf("expected nil loader error, got %v", err)
 	}
 	if _, err := config.NewManager([]byte("invalid: yaml: ["), loader, nil, nil); err == nil || !strings.Contains(err.Error(), "initial configuration validation failed") {
 		t.Fatalf("expected initial validation error, got %v", err)
 	}
-
-	// Zero-value Manager accessors
 	var emptyManager config.Manager
-	if emptyManager.Current() != nil {
-		t.Error("expected nil Current() on empty manager")
+	if emptyManager.Current() != nil || emptyManager.CurrentLayout() != nil || emptyManager.Status().ConfigStatus != config.ConfigStatusOK {
+		t.Errorf("expected zero-value manager defaults")
 	}
-	if emptyManager.CurrentLayout() != nil {
-		t.Error("expected nil CurrentLayout() on empty manager")
-	}
-	if st := emptyManager.Status(); st.ConfigStatus != config.ConfigStatusOK {
-		t.Errorf("expected default ok status, got %v", st.ConfigStatus)
-	}
-
-	// ValidatePipeline nil args
 	if _, err := config.ValidatePipeline([]byte(validBaseYAML), nil, nil); err == nil || !strings.Contains(err.Error(), "package loader cannot be nil") {
 		t.Fatalf("expected nil loader error, got %v", err)
 	}
@@ -270,431 +151,143 @@ func TestLKGC_ManagerLifecycleAndStatus(t *testing.T) {
 		t.Fatalf("unexpected error with nil getenv: %v", err)
 	}
 
-	// Cold boot + accessors
 	m, err := config.NewManager([]byte(validBaseYAML), loader, nil, nil)
-	if err != nil {
-		t.Fatalf("unexpected cold boot error: %v", err)
+	if err != nil || m.Current() == nil || m.CurrentLayout() == nil || m.CurrentSnapshot() == nil {
+		t.Fatalf("cold boot failed: %v", err)
 	}
-	cfg := m.Current()
-	if cfg == nil || cfg.Timezone != "America/New_York" || len(cfg.Display.Widgets) != 3 {
-		t.Fatalf("unexpected Current() config: %+v", cfg)
-	}
-	l := m.CurrentLayout()
-	if l == nil || l.TotalScreens != 1 || len(l.Screens[0].Widgets) != 3 {
-		t.Fatalf("unexpected CurrentLayout(): %+v", l)
-	}
-	snap := m.CurrentSnapshot()
-	if snap == nil || snap.Config == nil || snap.Layout == nil || snap.Packages == nil || snap.LoadedAt.IsZero() {
-		t.Fatalf("expected complete non-nil Snapshot, got %+v", snap)
-	}
-	st := m.Status()
-	if st.ConfigStatus != config.ConfigStatusOK || st.ConfigError != nil || st.LastChecked.IsZero() || st.LastSuccess.IsZero() {
-		t.Fatalf("unexpected initial Status(): %+v", st)
-	}
-	origSuccess := st.LastSuccess
 
-	// Reload error retention and recovery telemetry (ZERO sleep)
+	checkStatus := func(want config.ConfigStatus, wantSub string) {
+		t.Helper()
+		st := m.Status()
+		if st.ConfigStatus != want || (wantSub != "" && (st.ConfigError == nil || !strings.Contains(*st.ConfigError, wantSub))) || (want == config.ConfigStatusOK && st.ConfigError != nil) {
+			t.Fatalf("checkStatus failed: want (%v, sub %q), got (%v, err %v)", want, wantSub, st.ConfigStatus, st.ConfigError)
+		}
+	}
+
+	checkStatus(config.ConfigStatusOK, "")
+	origSuccess := m.Status().LastSuccess
+
 	if _, _, err := m.Reload([]byte("syntax: [error")); err == nil {
 		t.Fatal("expected reload error")
 	}
-	st2 := m.Status()
-	if st2.ConfigStatus != config.ConfigStatusError || st2.ConfigError == nil {
-		t.Fatalf("expected error status, got %+v", st2)
-	}
-	if st2.LastSuccess != origSuccess {
-		t.Errorf("expected LastSuccess preserved on error, got %v != %v", st2.LastSuccess, origSuccess)
-	}
-	validYAML2 := strings.Replace(validBaseYAML, "America/New_York", "America/Chicago", 1)
-	snap2, _, err := m.Reload([]byte(validYAML2))
-	if err != nil {
-		t.Fatalf("recovery reload failed: %v", err)
-	}
-	if snap2.Config.Timezone != "America/Chicago" {
-		t.Errorf("expected timezone America/Chicago, got %s", snap2.Config.Timezone)
-	}
-	st3 := m.Status()
-	if st3.ConfigStatus != config.ConfigStatusOK || st3.ConfigError != nil {
-		t.Fatalf("expected recovered status ok, got %+v", st3)
-	}
-	if st3.LastSuccess.Before(origSuccess) {
-		t.Errorf("expected !st3.LastSuccess.Before(origSuccess): %v vs %v", st3.LastSuccess, origSuccess)
+	checkStatus(config.ConfigStatusError, "")
+	if st := m.Status(); st.LastSuccess != origSuccess {
+		t.Errorf("expected LastSuccess preserved on error, got %v != %v", st.LastSuccess, origSuccess)
 	}
 
-	// Package errors and explicit status lifecycle
+	validYAML2 := strings.Replace(validBaseYAML, "America/New_York", "America/Chicago", 1)
+	if snap2, _, err := m.Reload([]byte(validYAML2)); err != nil || snap2.Config.Timezone != "America/Chicago" {
+		t.Fatalf("recovery reload failed: %v", err)
+	}
+	checkStatus(config.ConfigStatusOK, "")
+	if m.Status().LastSuccess.Before(origSuccess) {
+		t.Errorf("expected !LastSuccess.Before(origSuccess)")
+	}
+
 	m.SetPackageError("pkg-a", nil)
-	if m.Status().ConfigStatus != config.ConfigStatusOK {
-		t.Errorf("expected OK after nil error, got %v", m.Status().ConfigStatus)
-	}
+	checkStatus(config.ConfigStatusOK, "")
 	m.SetPackageError("pkg-a", fmt.Errorf("manifest.yaml missing"))
-	st = m.Status()
-	if st.ConfigStatus != config.ConfigStatusError || st.ConfigError == nil || !strings.Contains(*st.ConfigError, "manifest.yaml missing") {
-		t.Errorf("expected pkg-a error, got %v", st)
-	}
+	checkStatus(config.ConfigStatusError, "manifest.yaml missing")
 	m.SetPackageError("pkg-b", fmt.Errorf("views/widget.html missing"))
-	if m.ClearPackageError("pkg-nonexistent") {
-		t.Error("expected false for clearing non-existent package error")
+	if m.ClearPackageError("pkg-nonexistent") || !m.ClearPackageError("pkg-a") {
+		t.Error("unexpected ClearPackageError results")
 	}
-	if !m.ClearPackageError("pkg-a") {
-		t.Error("expected true when clearing existing package error")
-	}
-	st = m.Status()
-	if st.ConfigStatus != config.ConfigStatusError || st.ConfigError == nil || !strings.Contains(*st.ConfigError, "views/widget.html missing") {
-		t.Errorf("expected pkg-b error to remain, got %v", st)
-	}
+	checkStatus(config.ConfigStatusError, "views/widget.html missing")
 	if !m.ClearPackageError("pkg-b") {
 		t.Error("expected true when clearing pkg-b")
 	}
-	st = m.Status()
-	if st.ConfigStatus != config.ConfigStatusOK || st.ConfigError != nil {
-		t.Errorf("expected OK status after clearing all package errors, got %v", st)
-	}
+	checkStatus(config.ConfigStatusOK, "")
 
 	m.SetErrorStatus(fmt.Errorf("file read error"))
-	st = m.Status()
-	if st.ConfigStatus != config.ConfigStatusError || st.ConfigError == nil || !strings.Contains(*st.ConfigError, "file read error") {
-		t.Errorf("expected file read error, got %v", st)
-	}
+	checkStatus(config.ConfigStatusError, "file read error")
 	m.SetPackageError("pkg-c", fmt.Errorf("pkg-c error"))
 	m.ClearPackageError("pkg-c")
-	st = m.Status()
-	if st.ConfigStatus != config.ConfigStatusError || st.ConfigError == nil || !strings.Contains(*st.ConfigError, "file read error") {
-		t.Errorf("expected file read error to persist after clearing pkg-c, got %v", st)
-	}
+	checkStatus(config.ConfigStatusError, "file read error")
 	m.ClearErrorStatus()
-	st = m.Status()
-	if st.ConfigStatus != config.ConfigStatusOK || st.ConfigError != nil {
-		t.Errorf("expected OK after ClearErrorStatus, got %v", st)
-	}
+	checkStatus(config.ConfigStatusOK, "")
 	m.SetErrorStatus(nil)
-	if m.Status().ConfigStatus != config.ConfigStatusOK {
-		t.Errorf("expected OK after nil SetErrorStatus, got %v", m.Status().ConfigStatus)
-	}
+	checkStatus(config.ConfigStatusOK, "")
 
-	// Reload clears stale package errors
 	m.SetPackageError("orphan-widget", fmt.Errorf("views/widget.html missing"))
-	if m.Status().ConfigStatus != config.ConfigStatusError {
-		t.Fatalf("expected error status after SetPackageError, got %v", m.Status().ConfigStatus)
-	}
+	checkStatus(config.ConfigStatusError, "")
 	if _, _, err := m.Reload([]byte(validBaseYAML)); err != nil {
 		t.Fatalf("Reload failed: %v", err)
 	}
-	st = m.Status()
-	if st.ConfigStatus != config.ConfigStatusOK || st.ConfigError != nil {
-		t.Errorf("expected OK status after successful config reload, got %v", st)
-	}
+	checkStatus(config.ConfigStatusOK, "")
 }
 
 func TestLKGC_ReloadValidationFailures(t *testing.T) {
 	t.Parallel()
+	loader := &mockPackageLoader{packages: createStandardPackages()}
 
 	tests := []struct {
-		name     string
-		yaml     string
-		wantErr  string
-		packages map[string]*domain.Package
+		name       string
+		yamlData   string
+		wantErrSub string
+		pkgs       map[string]*domain.Package
 	}{
-		// Stage 1: Syntax & structure
-		{
-			name:    "Stage 1: syntax error",
-			yaml:    "display: {bad: [yaml",
-			wantErr: "YAML syntax error",
-		},
-		{
-			name:    "Stage 1: empty configuration",
-			yaml:    "",
-			wantErr: "configuration file is empty",
-		},
-		{
-			name:    "Stage 1: root not mapping",
-			yaml:    "- item 1\n- item 2",
-			wantErr: "configuration root must be a YAML mapping",
-		},
-		{
-			name:    "Stage 1: decode error rotation scalar",
-			yaml:    "timezone: UTC\ndisplay:\n  rotation: \"scalar-not-struct\"\n  widgets: []\n",
-			wantErr: "failed to decode configuration",
-		},
-		{
-			name:    "Stage 1: disallowed screens top-level key",
-			yaml:    "timezone: UTC\nscreens: []\ndisplay:\n  widgets: []\n",
-			wantErr: "disallowed top-level key 'screens'",
-		},
-		{
-			name:    "Stage 1: disallowed providers top-level key",
-			yaml:    "timezone: UTC\nproviders: []\ndisplay:\n  widgets: []\n",
-			wantErr: "disallowed top-level key 'providers'",
-		},
-		{
-			name:    "Stage 1: disallowed root header key",
-			yaml:    "timezone: UTC\nheader: {}\ndisplay:\n  widgets: []\n",
-			wantErr: "header must be configured under display.header",
-		},
-		{
-			name:    "Stage 1: prohibited string interpolation",
-			yaml:    "timezone: ${TZ}\ndisplay:\n  widgets: []\n",
-			wantErr: "arbitrary '${...}' string interpolation is prohibited",
-		},
-		{
-			name:    "Stage 1: unknown top-level key",
-			yaml:    "timezone: UTC\nbogus_key: 123\ndisplay:\n  widgets: []\n",
-			wantErr: "unknown or disallowed top-level key 'bogus_key'",
-		},
-
-		// Stage 2: Core instance schema
-		{
-			name:    "Stage 2: invalid timezone",
-			yaml:    "timezone: Invalid/Zone_Name\ndisplay:\n  widgets: []\n",
-			wantErr: "unknown time zone",
-		},
-		{
-			name:    "Stage 2: invalid grid dimensions",
-			yaml:    "timezone: UTC\ndisplay:\n  grid:\n    columns: 5\n    rows: 2\n  widgets: []\n",
-			wantErr: "grid columns must be 6",
-		},
-		{
-			name:    "Stage 2: duplicate widget ID",
-			yaml:    withLKGCWidgets("    - id: duplicate-id\n      type: spacer\n      dimensions: [6, 1]\n    - id: duplicate-id\n      type: spacer\n      dimensions: [6, 1]"),
-			wantErr: "duplicate widget id 'duplicate-id'",
-		},
-		{
-			name:    "Stage 2: empty widget ID",
-			yaml:    withLKGCWidgets("    - id: \"\"\n      type: spacer\n      dimensions: [6, 2]"),
-			wantErr: "missing required field 'id'",
-		},
-		{
-			name:    "Stage 2: empty widget type",
-			yaml:    withLKGCWidgets("    - id: w1\n      type: \"\"\n      dimensions: [6, 2]"),
-			wantErr: "missing required field 'type'",
-		},
-		{
-			name:    "Stage 2: dimensions out of bounds",
-			yaml:    withLKGCWidgets("    - id: w1\n      type: spacer\n      dimensions: [7, 1]"),
-			wantErr: "invalid dimensions [7, 1]: cols must be 1..6, rows must be 1..2",
-		},
-		{
-			name:    "Stage 2: non-positive refresh interval",
-			yaml:    withLKGCWidgets("    - id: w1\n      type: spacer\n      dimensions: [6, 2]\n      refresh_interval_seconds: 0"),
-			wantErr: "refresh_interval_seconds must be positive",
-		},
-		{
-			name:    "Stage 2: invalid HTTP method",
-			yaml:    withLKGCWidgets("    - id: w1\n      type: spacer\n      dimensions: [6, 2]\n      method: \"PATCH\""),
-			wantErr: "invalid http method 'PATCH'",
-		},
-		{
-			name:    "Stage 2: invalid endpoint URL",
-			yaml:    withLKGCWidgets("    - id: w1\n      type: spacer\n      dimensions: [6, 2]\n      endpoint: \"ftp://example.com/data\""),
-			wantErr: "invalid endpoint URL 'ftp://example.com/data'",
-		},
-		{
-			name:    "Stage 2: unset token_env",
-			yaml:    withLKGCWidgets("    - id: w1\n      type: spacer\n      dimensions: [6, 2]\n      token_env: UNSET_TOKEN_VAR_xyz"),
-			wantErr: "defined in token_env is unset or empty",
-		},
-		{
-			name:    "Stage 2: conflicting feed and feed_env",
-			yaml:    withLKGCWidgets("    - id: w1\n      type: spacer\n      dimensions: [6, 2]\n      config:\n        feed: \"http://public\"\n        feed_env: FEED_SECRET_xyz"),
-			wantErr: "cannot specify both 'feed' and 'feed_env'",
-		},
-
-		// Stage 3: Package existence & completeness
-		{
-			name:    "Stage 3: nonexistent package",
-			yaml:    withLKGCWidgets("    - id: w-unknown\n      type: non-existent-widget\n      dimensions: [6, 2]"),
-			wantErr: "widget package 'non-existent-widget' not found",
-		},
-		{
-			name:     "Stage 3: invalid package manifest",
-			packages: withPkg("invalid-manifest", &domain.Package{Type: "invalid-manifest", Manifest: domain.WidgetManifest{}}),
-			yaml:     withLKGCWidgets("    - id: w-bad\n      type: invalid-manifest\n      dimensions: [6, 2]"),
-			wantErr:  "manifest invalid",
-		},
-		{
-			name:     "Stage 3: omitted dimensions without manifest default",
-			packages: withPkg("no-defaults", &domain.Package{Type: "no-defaults", Manifest: domain.WidgetManifest{Name: "No Defaults", Version: "1.0.0", Provider: "tasks"}}),
-			yaml:     withLKGCWidgets("    - id: w-nodim\n      type: no-defaults\n      config:\n        source: local"),
-			wantErr:  "has no valid default_dimensions",
-		},
-		{
-			name:     "Stage 3: unsupported dimensions [3, 2]",
-			packages: withPkg("restricted-dims", &domain.Package{Type: "restricted-dims", Manifest: domain.WidgetManifest{Name: "Restricted Dims", Version: "1.0.0", Provider: "spacer", DefaultDimensions: domain.NewDimension(2, 1), SupportedDimensions: []domain.Dimension{domain.NewDimension(2, 1)}}}),
-			yaml:     withLKGCWidgets("    - id: w-res\n      type: restricted-dims\n      dimensions: [3, 2]"),
-			wantErr:  "not supported by package 'restricted-dims'",
-		},
-
-		// Stage 4: Manifest config schema
-		{
-			name:    "Stage 4: missing required property calendars",
-			yaml:    withLKGCWidgets("    - id: cal-missing\n      type: calendar-agenda\n      dimensions: [4, 2]\n      config:\n        view: month\n    - id: filler\n      type: spacer\n      dimensions: [2, 2]"),
-			wantErr: "manifest config_schema validation error for widget 'cal-missing'",
-		},
-		{
-			name:    "Stage 4: calendars type mismatch",
-			yaml:    withLKGCWidgets("    - id: cal-mismatch\n      type: calendar-agenda\n      dimensions: [4, 2]\n      config:\n        calendars: not-an-array\n    - id: filler\n      type: spacer\n      dimensions: [2, 2]"),
-			wantErr: "manifest config_schema validation error for widget 'cal-mismatch'",
-		},
-		{
-			name:    "Stage 4: nil config when schema requires properties",
-			yaml:    withLKGCWidgets("    - id: cal-nil\n      type: calendar-agenda\n      dimensions: [4, 2]\n    - id: filler\n      type: spacer\n      dimensions: [2, 2]"),
-			wantErr: "manifest config_schema validation error for widget 'cal-nil'",
-		},
-
-		// Stage 5: Domain & source of truth rules (Tasks, HTTP & Family Calendar)
-		{
-			name:    "Stage 5: tasks no primary source",
-			yaml:    withLKGCWidgets("    - id: my-todo\n      type: tasks\n      dimensions: [6, 2]\n      config:\n        list_id: orphaned-tasks"),
-			wantErr: "references list_id 'orphaned-tasks' with no primary source definition",
-		},
-		{
-			name:    "Stage 5: tasks invalid source",
-			yaml:    withLKGCWidgets("    - id: my-todo\n      type: tasks\n      dimensions: [6, 2]\n      config:\n        list_id: test\n        source: dropbox"),
-			wantErr: "declares invalid source 'dropbox'",
-		},
-		{
-			name:    "Stage 5: tasks http missing http block",
-			yaml:    withLKGCWidgets("    - id: my-todo\n      type: tasks\n      dimensions: [6, 2]\n      config:\n        list_id: test\n        source: http"),
-			wantErr: "requires 'http' config block",
-		},
-		{
-			name:    "Stage 5: tasks http invalid base_url",
-			yaml:    withLKGCWidgets("    - id: my-todo\n      type: tasks\n      dimensions: [6, 2]\n      config:\n        list_id: test\n        source: http\n        http:\n          base_url: ftp://example.com"),
-			wantErr: "invalid http.base_url",
-		},
-		{
-			name:    "Stage 5: tasks http empty base_url",
-			yaml:    withLKGCWidgets("    - id: t1\n      type: tasks\n      dimensions: [6, 2]\n      config:\n        source: http\n        http:\n          base_url: \"\""),
-			wantErr: "requires non-empty 'http.base_url'",
-		},
-		{
-			name:    "Stage 5: tasks gtasks missing tasklist_id",
-			yaml:    withLKGCWidgets("    - id: my-todo\n      type: tasks\n      dimensions: [6, 2]\n      config:\n        list_id: test\n        source: gtasks\n        gtasks:\n          tasklist_id: \"\""),
-			wantErr: "requires non-empty 'gtasks.tasklist_id'",
-		},
-		{
-			name:    "Stage 5: tasks todoist missing todoist block",
-			yaml:    withLKGCWidgets("    - id: my-todo\n      type: tasks\n      dimensions: [6, 2]\n      config:\n        list_id: test\n        source: todoist"),
-			wantErr: "requires 'todoist' config block",
-		},
-		{
-			name:    "Stage 5: tasks todoist invalid base_url",
-			yaml:    withLKGCWidgets("    - id: my-todo\n      type: tasks\n      dimensions: [6, 2]\n      config:\n        list_id: test\n        source: todoist\n        todoist:\n          base_url: ftp://example.com"),
-			wantErr: "invalid todoist.base_url",
-		},
-		{
-			name:    "Stage 5: conflicting primary sources type mismatch",
-			yaml:    withLKGCWidgets("    - id: tasks-primary-1\n      type: tasks\n      dimensions: [3, 2]\n      config:\n        list_id: shared-chores\n        source: local\n    - id: tasks-primary-2\n      type: tasks\n      dimensions: [3, 2]\n      config:\n        list_id: shared-chores\n        source: gtasks\n        gtasks:\n          tasklist_id: list-123"),
-			wantErr: "conflicting source definitions for list_id 'shared-chores'",
-		},
-		{
-			name:    "Stage 5: conflicting gtasks tasklist_id",
-			yaml:    withLKGCWidgets("    - id: tasks-primary-1\n      type: tasks\n      dimensions: [3, 2]\n      config:\n        list_id: shared-chores\n        source: gtasks\n        gtasks:\n          tasklist_id: list-123\n    - id: tasks-primary-2\n      type: tasks\n      dimensions: [3, 2]\n      config:\n        list_id: shared-chores\n        source: gtasks\n        gtasks:\n          tasklist_id: list-999"),
-			wantErr: "conflicting source definitions for list_id 'shared-chores'",
-		},
-		{
-			name:    "Stage 5: conflicting http base_url",
-			yaml:    withLKGCWidgets("    - id: tasks-primary-1\n      type: tasks\n      dimensions: [3, 2]\n      config:\n        list_id: shared-chores\n        source: http\n        http:\n          base_url: https://api1.example.com/lists\n    - id: tasks-primary-2\n      type: tasks\n      dimensions: [3, 2]\n      config:\n        list_id: shared-chores\n        source: http\n        http:\n          base_url: https://api2.example.com/lists"),
-			wantErr: "conflicting source definitions for list_id 'shared-chores'",
-		},
-		{
-			name:    "Stage 5: sensor-http missing endpoint",
-			yaml:    withLKGCWidgets("    - id: sensor-1\n      type: sensor-http\n      dimensions: [6, 2]"),
-			wantErr: "provider 'http' requires non-empty 'endpoint' URL",
-		},
-		{
-			name:    "Stage 5: sensor-http invalid endpoint",
-			yaml:    withLKGCWidgets("    - id: sensor-1\n      type: sensor-http\n      dimensions: [6, 2]\n      endpoint: notaurl"),
-			wantErr: "invalid endpoint URL 'notaurl'",
-		},
-		{
-			name:    "Stage 5: sensor-http hostless endpoint",
-			yaml:    withLKGCWidgets("    - id: sensor-1\n      type: sensor-http\n      dimensions: [6, 2]\n      endpoint: \"http://\""),
-			wantErr: "invalid endpoint URL",
-		},
-		{
-			name:    "Stage 5: family unknown calendar reference",
-			yaml:    buildFamilyYAML("          - name: Alex\n            pattern: solid\n            calendars: [typo-personal]"),
-			wantErr: "unknown calendar",
-		},
-		{
-			name:    "Stage 5: family duplicate member name",
-			yaml:    buildFamilyYAML("          - name: Alex\n            pattern: solid\n            calendars: [alex-personal]\n          - name: Alex\n            pattern: hatch\n            calendars: [school]"),
-			wantErr: "duplicate member name",
-		},
-		{
-			name:    "Stage 5: family more than 8 members",
-			yaml:    buildFamilyYAML(makeNineMembers()),
-			wantErr: "at most 8 members",
-		},
-		{
-			name:    "Stage 5: family duplicate pattern",
-			yaml:    buildFamilyYAML("          - name: Alex\n            pattern: solid\n            calendars: [alex-personal]\n          - name: Kid\n            pattern: solid\n            calendars: [school]"),
-			wantErr: "must be distinct",
-		},
-		{
-			name:    "Stage 5: family omitted patterns colliding",
-			yaml:    buildFamilyYAML("          - name: Alex\n            color: \"#E07A5F\"\n            calendars: [alex-personal]\n          - name: Kid\n            color: \"#81B29A\"\n            calendars: [school]"),
-			wantErr: "must be distinct",
-		},
-		{
-			name:    "Stage 5: family omitted colliding with explicit solid",
-			yaml:    buildFamilyYAML("          - name: Alex\n            calendars: [alex-personal]\n          - name: Kid\n            pattern: solid\n            calendars: [school]"),
-			wantErr: "must be distinct",
-		},
-		{
-			name:    "Stage 5: family bad hours order",
-			yaml:    buildFamilyWithHoursYAML("[\"21:00\", \"07:00\"]", "          - name: Alex\n            color: \"#E07A5F\"\n            pattern: solid\n            calendars: [alex-personal]"),
-			wantErr: "must be before end",
-		},
-		{
-			name:    "Stage 5: family empty calendar reference",
-			yaml:    buildFamilyYAML("          - name: Alex\n            pattern: solid\n            calendars: [\"\"]"),
-			wantErr: "empty calendar reference",
-		},
-		{
-			name:    "Stage 5: family missing member name",
-			yaml:    buildFamilyYAML("          - color: \"#E07A5F\"\n            pattern: solid\n            calendars: [alex-personal]"),
-			wantErr: "requires non-empty 'name'",
-		},
-
-		// Stage 6: Layout solver
-		{
-			name:    "Stage 6: layout cell deficit",
-			yaml:    withLKGCWidgets("    - id: cal-1\n      type: calendar-agenda\n      dimensions: [4, 2]\n      config:\n        calendars: []\n    - id: weather-1\n      type: weather-forecast\n      dimensions: [2, 1]"),
-			wantErr: "deficit",
-		},
-		{
-			name:    "Stage 6: layout geometric conflict",
-			yaml:    withLKGCWidgets("    - id: hero-5x2\n      type: spacer\n      dimensions: [5, 2]\n    - id: side-2x1\n      type: spacer\n      dimensions: [2, 1]"),
-			wantErr: "layout solver error",
-		},
+		{"Stage 1: syntax error", "display:\n  widgets: [", "syntax error", nil},
+		{"Stage 1: root not mapping", "- item1\n- item2\n", "configuration root must be a YAML mapping", nil},
+		{"Stage 1: empty configuration", "   \n\t  \n", "configuration file is empty", nil},
+		{"Stage 1: prohibited string interpolation", withLKGCWidgets(mkWYAML("w1", "spacer", "[2, 1]", "      endpoint: \"${TZ}\"\n")), "arbitrary '${...}' string interpolation is prohibited", nil},
+		{"Stage 1: disallowed root header key", "header:\n  elements: [clock]\n" + withLKGCWidgets(mkWYAML("w1", "spacer", "[2, 1]", "")), "configuration contains disallowed top-level key 'header'", nil},
+		{"Stage 1: disallowed providers top-level key", "providers:\n  my-provider:\n    url: http://example.org\n" + withLKGCWidgets(mkWYAML("w1", "spacer", "[2, 1]", "")), "configuration contains disallowed top-level key 'providers'", nil},
+		{"Stage 1: disallowed screens top-level key", "screens:\n  - widgets: [w1]\n" + withLKGCWidgets(mkWYAML("w1", "spacer", "[2, 1]", "")), "configuration contains disallowed top-level key 'screens'", nil},
+		{"Stage 2: widget missing ID", withLKGCWidgets("    - type: spacer\n      dimensions: [2, 1]\n"), "missing required field 'id'", nil},
+		{"Stage 2: duplicate widget ID", withLKGCWidgets(mkWYAML("dupe", "spacer", "[2, 1]", "") + mkWYAML("dupe", "spacer", "[2, 1]", "")), "duplicate widget id 'dupe'", nil},
+		{"Stage 2: invalid endpoint URL", withLKGCWidgets(mkWYAML("w1", "sensor-http", "[2, 1]", "      endpoint: \"://not-a-valid-url\"\n")), "invalid endpoint URL", nil},
+		{"Stage 2: unset token_env", withLKGCWidgets(mkWYAML("w1", "sensor-http", "[2, 1]", "      endpoint: http://example.org\n      token_env: UNSET_MIRRORMERE_TEST_SECRET_ENV_VAR\n")), "defined in token_env is unset or empty", nil},
+		{"Stage 2: conflicting feed and feed_env", withLKGCWidgets(mkWYAML("w1", "sensor-http", "[2, 1]", "      config:\n        feed: \"http://public\"\n        feed_env: FEED_SECRET_xyz\n")), "cannot specify both 'feed' and 'feed_env'", nil},
+		{"Stage 3: nonexistent package", withLKGCWidgets(mkWYAML("w1", "nonexistent-type", "[2, 1]", "")), "widget package 'nonexistent-type' error", nil},
+		{"Stage 3: invalid package manifest", withLKGCWidgets(mkWYAML("w1", "bad-manifest-pkg", "[2, 1]", "")), "widget package 'bad-manifest-pkg' manifest invalid", withPkg("bad-manifest-pkg", &domain.Package{Type: "bad-manifest-pkg", Manifest: domain.WidgetManifest{Name: ""}})},
+		{"Stage 3: omitted dimensions without manifest default", withLKGCWidgets("    - id: w1\n      type: no-default-pkg\n"), "widget 'w1' omits 'dimensions' and package manifest 'no-default-pkg' has no valid default_dimensions", withPkg("no-default-pkg", mkTestPkg("no-default-pkg", "builtin", "no-default-pkg", 0, 0, 60, nil, nil))},
+		{"Stage 3: unsupported dimensions [3, 2]", withLKGCWidgets(mkWYAML("family-cal", "calendar-family", "[3, 2]", "")), "dimensions [3, 2] not supported by package 'calendar-family'", nil},
+		{"Stage 4: missing required property calendars", withLKGCWidgets(mkWYAML("cal-missing", "calendar-agenda", "[4, 2]", "      config: {view: month}\n") + mkWYAML("filler", "spacer", "[2, 2]", "")), "manifest config_schema validation error for widget 'cal-missing'", nil},
+		{"Stage 4: calendars type mismatch", withLKGCWidgets(mkWYAML("cal-mismatch", "calendar-agenda", "[4, 2]", "      config: {calendars: not-an-array}\n") + mkWYAML("filler", "spacer", "[2, 2]", "")), "manifest config_schema validation error for widget 'cal-mismatch'", nil},
+		{"Stage 4: nil config when schema requires properties", withLKGCWidgets(mkWYAML("cal-nil", "calendar-agenda", "[4, 2]", "") + mkWYAML("filler", "spacer", "[2, 2]", "")), "manifest config_schema validation error for widget 'cal-nil'", nil},
+		{"Stage 5: sensor-http missing endpoint", withLKGCWidgets(mkWYAML("http-1", "sensor-http", "[2, 1]", "")), "widget 'http-1': provider 'http' requires non-empty 'endpoint' URL", nil},
+		{"Stage 5: sensor-http invalid endpoint", withLKGCWidgets(mkWYAML("http-1", "sensor-http", "[2, 1]", "      endpoint: \"ftp://not-supported\"\n")), "widget 'http-1': invalid endpoint URL", nil},
+		{"Stage 5: sensor-http hostless endpoint", withLKGCWidgets(mkWYAML("http-1", "sensor-http", "[2, 1]", "      endpoint: \"http://\"\n")), "widget 'http-1': invalid endpoint URL", nil},
+		{"Stage 5: tasks no primary source", withLKGCWidgets(mkTaskYAML("tasks-slave", "[2, 1]", "chores", "", "")), "tasks widget 'tasks-slave' references list_id 'chores' with no primary source definition", nil},
+		{"Stage 5: tasks invalid source", withLKGCWidgets(mkTaskYAML("tasks-1", "[2, 1]", "chores", "invalid_source_type", "")), "declares invalid source 'invalid_source_type'", nil},
+		{"Stage 5: tasks http missing http block", withLKGCWidgets(mkTaskYAML("tasks-1", "[2, 1]", "chores", "http", "")), "tasks widget 'tasks-1' with source 'http' requires 'http' config block", nil},
+		{"Stage 5: tasks http empty base_url", withLKGCWidgets(mkTaskYAML("tasks-1", "[2, 1]", "chores", "http", "        http: {base_url: \"\"}\n")), "tasks widget 'tasks-1' with source 'http' requires non-empty 'http.base_url'", nil},
+		{"Stage 5: tasks http invalid base_url", withLKGCWidgets(mkTaskYAML("tasks-1", "[2, 1]", "chores", "http", "        http: {base_url: \"ftp://not-http\"}\n")), "invalid http.base_url 'ftp://not-http'", nil},
+		{"Stage 5: tasks gtasks missing tasklist_id", withLKGCWidgets(mkTaskYAML("tasks-1", "[2, 1]", "chores", "gtasks", "        gtasks: {refresh_token: dummy}\n")), "tasks widget 'tasks-1' with source 'gtasks' requires non-empty 'gtasks.tasklist_id'", nil},
+		{"Stage 5: tasks todoist missing todoist block", withLKGCWidgets(mkTaskYAML("tasks-1", "[2, 1]", "chores", "todoist", "")), "tasks widget 'tasks-1' with source 'todoist' requires 'todoist' config block", nil},
+		{"Stage 5: tasks todoist invalid base_url", withLKGCWidgets(mkTaskYAML("tasks-1", "[2, 1]", "chores", "todoist", "        todoist: {base_url: \"not-a-valid-url\"}\n")), "invalid todoist.base_url 'not-a-valid-url'", nil},
+		{"Stage 5: conflicting primary sources type mismatch", withLKGCWidgets(mkTaskYAML("t1", "[2, 1]", "chores", "local", "") + mkTaskYAML("t2", "[2, 1]", "chores", "gtasks", "        gtasks: {tasklist_id: \"list1\"}\n")), "conflicting source definitions for list_id 'chores' between widget 't1' and widget 't2'", nil},
+		{"Stage 5: conflicting gtasks tasklist_id", withLKGCWidgets(mkTaskYAML("t1", "[2, 1]", "shared", "gtasks", "        gtasks: {tasklist_id: \"listA\"}\n") + mkTaskYAML("t2", "[2, 1]", "shared", "gtasks", "        gtasks: {tasklist_id: \"listB\"}\n")), "conflicting source definitions for list_id 'shared'", nil},
+		{"Stage 5: conflicting http base_url", withLKGCWidgets(mkTaskYAML("t1", "[2, 1]", "shared", "http", "        http: {base_url: \"http://api.one.internal\"}\n") + mkTaskYAML("t2", "[2, 1]", "shared", "http", "        http: {base_url: \"http://api.two.internal\"}\n")), "conflicting source definitions for list_id 'shared'", nil},
+		{"Stage 5: family more than 8 members", buildFamilyYAML(makeNineMembers()), "at most 8 members are supported, found 9", nil},
+		{"Stage 5: family duplicate member name", buildFamilyYAML(mkMemberYAML("Alex", "#E07A5F", "solid", "[alex-personal]") + mkMemberYAML("Alex", "#81B29A", "stripes", "[alex-personal]")), "duplicate member name \"Alex\"", nil},
+		{"Stage 5: family duplicate pattern", buildFamilyYAML(mkMemberYAML("Alex", "#E07A5F", "dots", "[alex-personal]") + mkMemberYAML("Taylor", "#81B29A", "dots", "[alex-personal]")), "member \"Alex\" and member \"Taylor\" both declare e-ink pattern \"dots\"", nil},
+		{"Stage 5: family omitted colliding with explicit solid", buildFamilyYAML(mkMemberYAML("Alex", "#E07A5F", "", "[alex-personal]") + mkMemberYAML("Taylor", "#81B29A", "solid", "[alex-personal]")), "both declare e-ink pattern \"solid\"", nil},
+		{"Stage 5: family omitted patterns colliding", buildFamilyYAML(mkMemberYAML("Alex", "#E07A5F", "", "[alex-personal]") + mkMemberYAML("Taylor", "#81B29A", "", "[alex-personal]")), "both declare e-ink pattern \"solid\"", nil},
+		{"Stage 5: family unknown calendar reference", buildFamilyYAML(mkMemberYAML("Alex", "#E07A5F", "solid", "[unknown-cal]")), "member \"Alex\" claims unknown calendar \"unknown-cal\"", nil},
+		{"Stage 5: family empty calendar reference", buildFamilyYAML(mkMemberYAML("Alex", "#E07A5F", "solid", "[\"\"]")), "member \"Alex\" declares an empty calendar reference", nil},
+		{"Stage 5: family missing member name", buildFamilyYAML(mkMemberYAML("", "#E07A5F", "solid", "[alex-personal]")), "requires non-empty 'name'", nil},
+		{"Stage 5: family bad hours order", buildFamilyWithHoursYAML("[\"18:00\", \"08:00\"]", mkMemberYAML("Alex", "#E07A5F", "solid", "[alex-personal]")), "'hours' start \"18:00\" must be before end \"08:00\"", nil},
+		{"Stage 6: layout cell deficit", withLKGCWidgets("    - id: cal-1\n      type: calendar-agenda\n      dimensions: [4, 2]\n      config:\n        calendars: []\n    - id: weather-1\n      type: weather-forecast\n      dimensions: [2, 1]"), "Deficit", nil},
+		{"Stage 6: layout geometric conflict", withLKGCWidgets(mkWYAML("w1", "calendar-agenda", "[4, 2]", "      pinned: true\n      config: {calendars: [{name: c}]}\n") + mkWYAML("w2", "calendar-family", "[6, 2]", "      pinned: true\n")), "layout solver error", nil},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			pkgs := tc.packages
-			if pkgs == nil {
-				pkgs = createStandardPackages()
+			loaderToUse := loader
+			if tc.pkgs != nil {
+				loaderToUse = &mockPackageLoader{packages: tc.pkgs}
 			}
-			loader := &mockPackageLoader{packages: pkgs}
-			m, err := config.NewManager([]byte(validBaseYAML), loader, nil, nil)
-			if err != nil {
-				t.Fatalf("setup failed: %v", err)
+			m, err := config.NewManager([]byte(tc.yamlData), loaderToUse, nil, nil)
+			if err == nil {
+				t.Fatalf("expected NewManager validation error for %s, got nil", tc.name)
 			}
-			_, _, err = m.Reload([]byte(tc.yaml))
-			if err == nil || !strings.Contains(strings.ToLower(err.Error()), strings.ToLower(tc.wantErr)) {
-				t.Fatalf("m.Reload() error = %v, want substring %q", err, tc.wantErr)
+			if !strings.Contains(err.Error(), tc.wantErrSub) {
+				t.Fatalf("error = %q, want substring %q", err.Error(), tc.wantErrSub)
 			}
-			// Verify LKGC retention
-			if m.Current().Timezone != "America/New_York" {
-				t.Errorf("LKGC violated: running timezone changed to %s", m.Current().Timezone)
-			}
-			st := m.Status()
-			if st.ConfigStatus != config.ConfigStatusError {
-				t.Errorf("expected status 'error', got %s", st.ConfigStatus)
-			}
-			if st.ConfigError == nil || !strings.Contains(strings.ToLower(*st.ConfigError), strings.ToLower(tc.wantErr)) {
-				t.Errorf("expected ConfigError containing %q, got %v", tc.wantErr, st.ConfigError)
+			if m != nil {
+				t.Fatal("expected nil manager on cold boot failure")
 			}
 		})
 	}
@@ -702,51 +295,29 @@ func TestLKGC_ReloadValidationFailures(t *testing.T) {
 
 func TestLKGC_ReloadValidDomainConfigs(t *testing.T) {
 	t.Parallel()
+	loader := &mockPackageLoader{packages: createStandardPackages()}
 
 	tests := []struct {
-		name string
-		yaml string
+		name     string
+		yamlData string
 	}{
-		{
-			name: "valid todoist source",
-			yaml: withLKGCWidgets("    - id: my-todo\n      type: tasks\n      dimensions: [6, 2]\n      config:\n        list_id: test\n        source: todoist\n        todoist:\n          project_id: proj-123"),
-		},
-		{
-			name: "matching local source with different show_completed",
-			yaml: withLKGCWidgets("    - id: tasks-primary-1\n      type: tasks\n      dimensions: [3, 2]\n      config:\n        list_id: shared-chores\n        source: local\n        show_completed: 3\n    - id: tasks-primary-2\n      type: tasks\n      dimensions: [3, 2]\n      config:\n        list_id: shared-chores\n        source: local\n        show_completed: 0"),
-		},
-		{
-			name: "matching gtasks source with different show_completed",
-			yaml: withLKGCWidgets("    - id: tasks-primary-1\n      type: tasks\n      dimensions: [3, 2]\n      config:\n        list_id: shared-chores\n        source: gtasks\n        gtasks:\n          tasklist_id: list-123\n        show_completed: 5\n    - id: tasks-primary-2\n      type: tasks\n      dimensions: [3, 2]\n      config:\n        list_id: shared-chores\n        source: gtasks\n        gtasks:\n          tasklist_id: list-123\n        show_completed: 1"),
-		},
-		{
-			name: "valid secondary tasks consumer without source",
-			yaml: withLKGCWidgets("    - id: primary-tasks\n      type: tasks\n      dimensions: [3, 2]\n      config:\n        list_id: chores\n        source: local\n    - id: secondary-tasks\n      type: tasks\n      dimensions: [3, 2]\n      config:\n        list_id: chores"),
-		},
-		{
-			name: "valid calendar-family config",
-			yaml: buildFamilyYAML("          - name: Alex\n            color: \"#E07A5F\"\n            pattern: solid\n            calendars: [alex-personal]\n          - name: Kid\n            color: \"#81B29A\"\n            pattern: hatch\n            calendars: [school]"),
-		},
-		{
-			name: "calendar-family with non-string hours elements skipped",
-			yaml: buildFamilyWithHoursYAML("[7, 21]", "          - name: Alex\n            color: \"#E07A5F\"\n            pattern: solid\n            calendars: [alex-personal]"),
-		},
+		{"valid todoist source", withLKGCWidgets("    - id: my-todo\n      type: tasks\n      dimensions: [6, 2]\n      config:\n        list_id: test\n        source: todoist\n        todoist:\n          project_id: proj-123\n")},
+		{"matching local source with different show_completed", withLKGCWidgets("    - id: t1\n      type: tasks\n      dimensions: [3, 2]\n      config:\n        list_id: shared\n        source: local\n        show_completed: 3\n    - id: t2\n      type: tasks\n      dimensions: [3, 2]\n      config:\n        list_id: shared\n        source: local\n        show_completed: 0\n")},
+		{"matching gtasks source with different show_completed", withLKGCWidgets("    - id: t1\n      type: tasks\n      dimensions: [3, 2]\n      config:\n        list_id: shared\n        source: gtasks\n        gtasks:\n          tasklist_id: list-123\n        show_completed: 5\n    - id: t2\n      type: tasks\n      dimensions: [3, 2]\n      config:\n        list_id: shared\n        source: gtasks\n        gtasks:\n          tasklist_id: list-123\n        show_completed: 1\n")},
+		{"valid secondary tasks consumer without source", withLKGCWidgets("    - id: primary-tasks\n      type: tasks\n      dimensions: [3, 2]\n      config:\n        list_id: chores\n        source: local\n    - id: secondary-tasks\n      type: tasks\n      dimensions: [3, 2]\n      config:\n        list_id: chores\n")},
+		{"valid calendar-family config", buildFamilyWithHoursYAML("[\"08:00\", \"18:00\"]", mkMemberYAML("Alex", "#E07A5F", "solid", "[alex-personal]")+mkMemberYAML("Taylor", "#81B29A", "dots", "[school]"))},
+		{"calendar-family with non-string hours elements skipped", buildFamilyWithHoursYAML("[7, 21]", mkMemberYAML("Alex", "#E07A5F", "solid", "[alex-personal]"))},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			loader := &mockPackageLoader{packages: createStandardPackages()}
-			m, err := config.NewManager([]byte(validBaseYAML), loader, nil, nil)
+			snap, err := config.ValidatePipeline([]byte(tc.yamlData), loader, nil)
 			if err != nil {
-				t.Fatalf("setup failed: %v", err)
+				t.Fatalf("expected valid domain config for %s, got: %v", tc.name, err)
 			}
-			snap, diff, err := m.Reload([]byte(tc.yaml))
-			if err != nil {
-				t.Fatalf("m.Reload() unexpected error: %v", err)
-			}
-			if snap == nil || diff == nil {
-				t.Fatal("expected non-nil snap and diff")
+			if snap == nil || snap.Config == nil {
+				t.Fatal("expected non-nil snapshot and config")
 			}
 		})
 	}
@@ -754,135 +325,65 @@ func TestLKGC_ReloadValidDomainConfigs(t *testing.T) {
 
 func TestLKGC_DiffConfigs(t *testing.T) {
 	t.Parallel()
-
-	oldCfg := &config.Config{
-		Display: config.DisplayConfig{
-			Widgets: []config.WidgetConfig{
-				{ID: "unchanged-1", Type: "spacer", Dimensions: []int{2, 1}},
-				{ID: "removed-1", Type: "spacer", Dimensions: []int{2, 1}},
-				{ID: "mod-transport", Type: "spacer", Dimensions: []int{2, 1}, Endpoint: "http://old"},
-				{ID: "mod-domain", Type: "tasks", Dimensions: []int{2, 1}, Config: map[string]any{"list_id": "old"}},
-				{ID: "replaced-1", Type: "tasks", Dimensions: []int{2, 1}},
-				{ID: "resized-only", Type: "spacer", Dimensions: []int{2, 1}, Pinned: false},
-				{ID: "pinned-only", Type: "spacer", Dimensions: []int{2, 1}, Pinned: false},
-			},
-		},
-	}
-
 	newInterval := 60
-	newCfg := &config.Config{
-		Display: config.DisplayConfig{
-			Widgets: []config.WidgetConfig{
-				{ID: "unchanged-1", Type: "spacer", Dimensions: []int{2, 1}},
-				{ID: "added-1", Type: "spacer", Dimensions: []int{2, 1}},
-				{ID: "mod-transport", Type: "spacer", Dimensions: []int{2, 1}, Endpoint: "http://new", RefreshIntervalSeconds: &newInterval},
-				{ID: "mod-domain", Type: "tasks", Dimensions: []int{2, 1}, Config: map[string]any{"list_id": "new"}},
-				{ID: "replaced-1", Type: "spacer", Dimensions: []int{2, 1}}, // Type changed from tasks to spacer
-				{ID: "resized-only", Type: "spacer", Dimensions: []int{4, 1}, Pinned: false}, // Layout change: dimensions
-				{ID: "pinned-only", Type: "spacer", Dimensions: []int{2, 1}, Pinned: true},   // Layout change: pinned
-			},
-		},
-	}
+	oldCfg := mkCfg(
+		mkW("unchanged-1", "spacer", 2, 1, false, "", nil, nil),
+		mkW("removed-1", "spacer", 2, 1, false, "", nil, nil),
+		mkW("mod-transport", "spacer", 2, 1, false, "http://old", nil, nil),
+		mkW("mod-domain", "tasks", 2, 1, false, "", nil, map[string]any{"list_id": "old"}),
+		mkW("replaced-1", "tasks", 2, 1, false, "", nil, nil),
+		mkW("resized-only", "spacer", 2, 1, false, "", nil, nil),
+		mkW("pinned-only", "spacer", 2, 1, false, "", nil, nil),
+	)
+	newCfg := mkCfg(
+		mkW("unchanged-1", "spacer", 2, 1, false, "", nil, nil),
+		mkW("added-1", "spacer", 2, 1, false, "", nil, nil),
+		mkW("mod-transport", "spacer", 2, 1, false, "http://new", &newInterval, nil),
+		mkW("mod-domain", "tasks", 2, 1, false, "", nil, map[string]any{"list_id": "new"}),
+		mkW("replaced-1", "spacer", 2, 1, false, "", nil, nil),
+		mkW("resized-only", "spacer", 4, 1, false, "", nil, nil),
+		mkW("pinned-only", "spacer", 2, 1, true, "", nil, nil),
+	)
 
 	diff := config.DiffConfigs(oldCfg, newCfg)
-	if len(diff.Unchanged) != 3 {
-		t.Fatalf("expected 3 unchanged widgets, got %d: %v", len(diff.Unchanged), diff.Unchanged)
-	}
-	unchangedMap := make(map[string]bool)
-	for _, u := range diff.Unchanged {
-		unchangedMap[u.ID] = true
-	}
-	for _, expectedID := range []string{"unchanged-1", "resized-only", "pinned-only"} {
-		if !unchangedMap[expectedID] {
-			t.Errorf("expected widget '%s' in diff.Unchanged", expectedID)
-		}
-	}
-
-	if len(diff.LayoutModified) != 2 {
-		t.Fatalf("expected 2 layout-modified widgets, got %d: %v", len(diff.LayoutModified), diff.LayoutModified)
-	}
-	layoutMap := make(map[string]bool)
-	for _, lm := range diff.LayoutModified {
-		layoutMap[lm.ID] = true
-	}
-	for _, expectedID := range []string{"resized-only", "pinned-only"} {
-		if !layoutMap[expectedID] {
-			t.Errorf("expected widget '%s' in diff.LayoutModified", expectedID)
-		}
-	}
-
-	if len(diff.Added) != 1 || diff.Added[0].ID != "added-1" {
-		t.Errorf("expected 1 added widget, got %v", diff.Added)
-	}
-	if len(diff.Removed) != 1 || diff.Removed[0].ID != "removed-1" {
-		t.Errorf("expected 1 removed widget, got %v", diff.Removed)
-	}
-	if len(diff.Modified) != 3 {
-		t.Fatalf("expected 3 modified widgets, got %d", len(diff.Modified))
+	if len(diff.Unchanged) != 3 || len(diff.LayoutModified) != 2 || len(diff.Added) != 1 || len(diff.Removed) != 1 || len(diff.Modified) != 3 {
+		t.Fatalf("unexpected diff counts: %+v", diff)
 	}
 
 	for _, m := range diff.Modified {
-		switch m.ID {
-		case "mod-transport":
-			if m.DomainChange {
-				t.Error("expected DomainChange=false for transport change")
-			}
-			if m.Change != config.ChangeModified {
-				t.Errorf("expected ChangeModified, got %s", m.Change)
-			}
-		case "mod-domain":
-			if !m.DomainChange {
-				t.Error("expected DomainChange=true for domain config change")
-			}
-			if m.Change != config.ChangeModified {
-				t.Errorf("expected ChangeModified, got %s", m.Change)
-			}
-		case "replaced-1":
-			if m.Change != config.ChangeReplaced {
-				t.Errorf("expected ChangeReplaced, got %s", m.Change)
-			}
-		case "resized-only", "pinned-only":
-			t.Errorf("layout-only edit '%s' must not be classified as Modified", m.ID)
+		if (m.ID == "mod-transport" && (m.DomainChange || m.Change != config.ChangeModified)) ||
+			(m.ID == "mod-domain" && (!m.DomainChange || m.Change != config.ChangeModified)) ||
+			(m.ID == "replaced-1" && m.Change != config.ChangeReplaced) ||
+			(m.ID == "resized-only" || m.ID == "pinned-only") {
+			t.Errorf("unexpected modified instance diff: %+v", m)
 		}
 	}
 
-	if diff.TimezoneChanged {
-		t.Errorf("expected TimezoneChanged to be false when both timezones are empty or identical")
+	if config.DiffConfigs(oldCfg, oldCfg).TimezoneChanged || !config.DiffConfigs(&config.Config{Timezone: "America/Los_Angeles"}, &config.Config{Timezone: "America/New_York"}).TimezoneChanged {
+		t.Error("unexpected TimezoneChanged result")
 	}
 
-	tzOld := &config.Config{Timezone: "America/Los_Angeles"}
-	tzNew := &config.Config{Timezone: "America/New_York"}
-	tzDiff := config.DiffConfigs(tzOld, tzNew)
-	if !tzDiff.TimezoneChanged {
-		t.Errorf("expected TimezoneChanged to be true when timezone changed from LA to NY")
-	}
-
-	// Shell changed table
-	trueVal := true
-	falseVal := false
-	shellTests := []struct {
-		name         string
-		oldCfg       *config.Config
-		newCfg       *config.Config
-		wantShellMod bool
+	trueVal, falseVal := true, false
+	for _, tc := range []struct {
+		name           string
+		oldCfg, newCfg *config.Config
+		want           bool
 	}{
-		{name: "nil old config produces false", oldCfg: nil, newCfg: mkShellCfg("", false, "", nil), wantShellMod: false},
-		{name: "nil new config produces false", oldCfg: mkShellCfg("", false, "", nil), newCfg: nil, wantShellMod: false},
-		{name: "identical empty configs produce false", oldCfg: mkShellCfg("", false, "", nil), newCfg: mkShellCfg("", false, "", nil), wantShellMod: false},
-		{name: "widget change only produces false", oldCfg: &config.Config{Display: config.DisplayConfig{Widgets: []config.WidgetConfig{{ID: "w1", Type: "clock"}}}}, newCfg: &config.Config{Display: config.DisplayConfig{Widgets: []config.WidgetConfig{{ID: "w1", Type: "clock"}, {ID: "w2", Type: "weather"}}}}, wantShellMod: false},
-		{name: "timezone change only produces false", oldCfg: mkShellCfg("America/Los_Angeles", false, "", nil), newCfg: mkShellCfg("America/New_York", false, "", nil), wantShellMod: false},
-		{name: "header video enabled added produces true", oldCfg: mkShellCfg("", false, "", nil), newCfg: mkShellCfg("", false, "", mkVideoCfg(&trueVal, "chromecast", "http://localhost:1984/stream")), wantShellMod: true},
-		{name: "header video enabled flipped produces true", oldCfg: mkShellCfg("", false, "", mkVideoCfg(&trueVal, "", "")), newCfg: mkShellCfg("", false, "", mkVideoCfg(&falseVal, "", "")), wantShellMod: true},
-		{name: "header video stream URL changed produces true", oldCfg: mkShellCfg("", false, "", mkVideoCfg(&trueVal, "", "http://localhost:1984/old")), newCfg: mkShellCfg("", false, "", mkVideoCfg(&trueVal, "", "http://localhost:1984/new")), wantShellMod: true},
-		{name: "hide cursor changed produces true", oldCfg: mkShellCfg("", false, "", nil), newCfg: mkShellCfg("", true, "", nil), wantShellMod: true},
-		{name: "remote URL changed produces true", oldCfg: mkShellCfg("", false, "", nil), newCfg: mkShellCfg("", false, "http://192.168.1.50:8080", nil), wantShellMod: true},
-	}
-	for _, tc := range shellTests {
+		{"nil old", nil, mkShellCfg("", false, "", nil), false},
+		{"nil new", mkShellCfg("", false, "", nil), nil, false},
+		{"empty identical", mkShellCfg("", false, "", nil), mkShellCfg("", false, "", nil), false},
+		{"widget only", mkCfg(config.WidgetConfig{ID: "w1", Type: "clock"}), mkCfg(config.WidgetConfig{ID: "w1", Type: "clock"}, config.WidgetConfig{ID: "w2", Type: "weather"}), false},
+		{"tz only", mkShellCfg("America/Los_Angeles", false, "", nil), mkShellCfg("America/New_York", false, "", nil), false},
+		{"video enabled added", mkShellCfg("", false, "", nil), mkShellCfg("", false, "", mkVideoCfg(&trueVal, "chromecast", "http://localhost:1984/stream")), true},
+		{"video enabled flipped", mkShellCfg("", false, "", mkVideoCfg(&trueVal, "", "")), mkShellCfg("", false, "", mkVideoCfg(&falseVal, "", "")), true},
+		{"video stream URL changed", mkShellCfg("", false, "", mkVideoCfg(&trueVal, "", "http://localhost:1984/old")), mkShellCfg("", false, "", mkVideoCfg(&trueVal, "", "http://localhost:1984/new")), true},
+		{"hide cursor changed", mkShellCfg("", false, "", nil), mkShellCfg("", true, "", nil), true},
+		{"remote URL changed", mkShellCfg("", false, "", nil), mkShellCfg("", false, "http://192.168.1.50:8080", nil), true},
+	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			d := config.DiffConfigs(tc.oldCfg, tc.newCfg)
-			if d.ShellChanged != tc.wantShellMod {
-				t.Errorf("DiffConfigs() ShellChanged = %v, want %v", d.ShellChanged, tc.wantShellMod)
+			if d := config.DiffConfigs(tc.oldCfg, tc.newCfg); d.ShellChanged != tc.want {
+				t.Errorf("got %v, want %v", d.ShellChanged, tc.want)
 			}
 		})
 	}
@@ -890,9 +391,7 @@ func TestLKGC_DiffConfigs(t *testing.T) {
 
 func TestLKGC_ConcurrencyAndRace(t *testing.T) {
 	t.Parallel()
-
-	loader := &mockPackageLoader{packages: createStandardPackages()}
-	m, err := config.NewManager([]byte(validBaseYAML), loader, nil, nil)
+	m, err := config.NewManager([]byte(validBaseYAML), &mockPackageLoader{packages: createStandardPackages()}, nil, nil)
 	if err != nil {
 		t.Fatalf("setup failed: %v", err)
 	}
@@ -900,8 +399,7 @@ func TestLKGC_ConcurrencyAndRace(t *testing.T) {
 	var wg sync.WaitGroup
 	stopChan := make(chan struct{})
 
-	// 10 Reader goroutines constantly reading Current(), CurrentLayout(), and Status()
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -910,16 +408,10 @@ func TestLKGC_ConcurrencyAndRace(t *testing.T) {
 				case <-stopChan:
 					return
 				default:
-					cfg := m.Current()
-					if cfg == nil {
-						t.Errorf("got nil Current() config during concurrent read")
+					if m.Current() == nil || m.CurrentLayout() == nil {
+						t.Errorf("nil snapshot accessor during concurrent read")
 					}
-					l := m.CurrentLayout()
-					if l == nil {
-						t.Errorf("got nil CurrentLayout() during concurrent read")
-					}
-					st := m.Status()
-					if st.ConfigStatus != config.ConfigStatusOK && st.ConfigStatus != config.ConfigStatusError {
+					if st := m.Status(); st.ConfigStatus != config.ConfigStatusOK && st.ConfigStatus != config.ConfigStatusError {
 						t.Errorf("invalid status: %v", st.ConfigStatus)
 					}
 				}
@@ -927,22 +419,18 @@ func TestLKGC_ConcurrencyAndRace(t *testing.T) {
 		}()
 	}
 
-	// 1 Reload worker alternating valid and invalid reloads
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		zones := []string{"America/New_York", "America/Chicago", "America/Denver", "America/Los_Angeles"}
 		for i := 0; i < 20; i++ {
+			y := "invalid: yaml: ["
 			if i%2 == 0 {
-				newZone := zones[i%len(zones)]
-				y := strings.Replace(validBaseYAML, "America/New_York", newZone, 1)
-				_, _, _ = m.Reload([]byte(y))
-			} else {
-				_, _, _ = m.Reload([]byte("invalid: yaml: ["))
+				y = strings.Replace(validBaseYAML, "America/New_York", zones[i%len(zones)], 1)
 			}
+			_, _, _ = m.Reload([]byte(y))
 		}
 		close(stopChan)
 	}()
-
 	wg.Wait()
 }
