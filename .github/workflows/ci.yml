@@ -65,7 +65,6 @@ jobs:
               - 'cmd/**'
               - 'internal/**'
               - 'api/**'
-              - 'web/**'
               - 'Makefile'
             mirrormere-cast-watcher:
               - '.dockerignore'

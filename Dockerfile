@@ -31,10 +31,8 @@ RUN --mount=type=cache,target=/etc/apk/cache,sharing=locked \
 
 WORKDIR /app
 
-# Copy compiled executable, static web assets, and built-in widgets from builder stage
+# Copy compiled executable from builder stage (web/ and widgets/ are volume-mounted at runtime)
 COPY --from=builder --link --chown=10001:10001 /app/server /app/server
-COPY --from=builder --link --chown=10001:10001 /src/web /app/web
-COPY --from=builder --link --chown=10001:10001 /src/widgets /app/widgets
 
 # Switch to unprivileged non-root user
 USER 10001:10001
