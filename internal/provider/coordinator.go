@@ -231,13 +231,7 @@ func (c *ProviderCoordinator) CompleteListItem(ctx context.Context, listID, item
 func (c *ProviderCoordinator) PushUpdate(widgetID string, data any) (WidgetPayload, error) {
 	now := c.nowFunc()
 	payload, _ := c.cache.RecordPush(widgetID, data, now)
-
-	if c.stateSink != nil {
-		c.stateSink.SetWidgetState(widgetID, payload.Data, payload.State, payload.Timestamp)
-		c.stateSink.SetProvidersStatus(c.cache.GetStatusMap())
-	}
-
-	c.broadcastUpdate(payload)
+	c.syncAndBroadcast(payload)
 	return payload, nil
 }
 
@@ -285,11 +279,7 @@ func (c *ProviderCoordinator) UpdateConfig(snap *config.Snapshot) error {
 		if m.DomainChange {
 			c.cache.Purge(m.ID)
 			nowStr := c.nowFunc().UTC().Format(time.RFC3339)
-			if c.stateSink != nil {
-				c.stateSink.SetWidgetState(m.ID, map[string]any{}, StateDegraded, nowStr)
-				c.stateSink.SetProvidersStatus(c.cache.GetStatusMap())
-			}
-			c.broadcastUpdate(WidgetPayload{
+			c.syncAndBroadcast(WidgetPayload{
 				WidgetID:  m.ID,
 				Timestamp: nowStr,
 				State:     StateDegraded,
@@ -402,11 +392,7 @@ func (c *ProviderCoordinator) startSingleWorkerLocked(w *config.WidgetConfig, sn
 	if w.Type == "spacer" || providerName == "spacer" || providerName == "chat-log" || providerName == "live-view" || w.Type == "live-view" {
 		now := c.nowFunc()
 		payload, _ := c.cache.RecordSuccess(w.ID, map[string]any{}, now)
-		if c.stateSink != nil {
-			c.stateSink.SetWidgetState(w.ID, payload.Data, payload.State, payload.Timestamp)
-			c.stateSink.SetProvidersStatus(c.cache.GetStatusMap())
-		}
-		c.broadcastUpdate(payload)
+		c.syncAndBroadcast(payload)
 		return
 	}
 
@@ -562,20 +548,13 @@ func (c *ProviderCoordinator) fetchAndRecord(ctx context.Context, w *worker) err
 
 	if err == nil {
 		payload, _ := c.cache.RecordSuccess(w.widgetID, data, now)
-		if c.stateSink != nil {
-			c.stateSink.SetWidgetState(w.widgetID, payload.Data, payload.State, payload.Timestamp)
-			c.stateSink.SetProvidersStatus(c.cache.GetStatusMap())
-		}
-		c.broadcastUpdate(payload)
+		c.syncAndBroadcast(payload)
 		return nil
 	}
 
 	c.logger.Warn("provider fetch failed", "widget_id", w.widgetID, "error", err)
 	payload, transitioned := c.cache.RecordFailure(w.widgetID, err, now)
-	if c.stateSink != nil {
-		c.stateSink.SetWidgetState(w.widgetID, payload.Data, payload.State, payload.Timestamp)
-		c.stateSink.SetProvidersStatus(c.cache.GetStatusMap())
-	}
+	c.syncStateSink(payload)
 
 	// Only broadcast over SSE when operational state actually transitions (suppress degraded retry spam)
 	if transitioned {
@@ -588,11 +567,7 @@ func (c *ProviderCoordinator) fetchAndRecord(ctx context.Context, w *worker) err
 func (c *ProviderCoordinator) recordColdBootError(widgetID string, err error) {
 	now := c.nowFunc()
 	payload, _ := c.cache.RecordFailure(widgetID, err, now)
-	if c.stateSink != nil {
-		c.stateSink.SetWidgetState(widgetID, payload.Data, payload.State, payload.Timestamp)
-		c.stateSink.SetProvidersStatus(c.cache.GetStatusMap())
-	}
-	c.broadcastUpdate(payload)
+	c.syncAndBroadcast(payload)
 }
 
 func (c *ProviderCoordinator) listenEventSink() {
@@ -632,10 +607,7 @@ func (c *ProviderCoordinator) recordWorkerPush(w *worker, payload WidgetPayload)
 
 	now := c.nowFunc()
 	p, _ := c.cache.RecordPush(payload.WidgetID, payload.Data, now)
-	if c.stateSink != nil {
-		c.stateSink.SetWidgetState(p.WidgetID, p.Data, p.State, p.Timestamp)
-		c.stateSink.SetProvidersStatus(c.cache.GetStatusMap())
-	}
+	c.syncStateSink(p)
 	return p, true
 }
 
@@ -647,6 +619,18 @@ func (c *ProviderCoordinator) isWorkerActiveLocked(w *worker, widgetID string) b
 	return ok && current == w && !w.stopped.Load()
 }
 
+
+func (c *ProviderCoordinator) syncStateSink(p WidgetPayload) {
+	if c.stateSink != nil {
+		c.stateSink.SetWidgetState(p.WidgetID, p.Data, p.State, p.Timestamp)
+		c.stateSink.SetProvidersStatus(c.cache.GetStatusMap())
+	}
+}
+
+func (c *ProviderCoordinator) syncAndBroadcast(p WidgetPayload) {
+	c.syncStateSink(p)
+	c.broadcastUpdate(p)
+}
 
 func (c *ProviderCoordinator) broadcastUpdate(payload WidgetPayload) {
 	if c.broadcaster == nil {
@@ -801,10 +785,7 @@ func (c *ProviderCoordinator) recordPushLocked(widgetID string, data map[string]
 
 	now := c.nowFunc()
 	p, _ := c.cache.RecordPush(widgetID, data, now)
-	if c.stateSink != nil {
-		c.stateSink.SetWidgetState(p.WidgetID, p.Data, p.State, p.Timestamp)
-		c.stateSink.SetProvidersStatus(c.cache.GetStatusMap())
-	}
+	c.syncStateSink(p)
 	return p, nil
 }
 
@@ -822,24 +803,9 @@ func (c *ProviderCoordinator) getCompiledResponseSchema(widgetType string, schem
 		return sch, nil
 	}
 
-	compiler := jsonschema.NewCompiler()
-	compiler.DefaultDraft(jsonschema.Draft2020)
-
-	schemaJSON, err := json.Marshal(schemaMap)
+	sch, err := compileResponseSchema(widgetType, schemaMap)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal response_schema: %w", err)
-	}
-	doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(schemaJSON))
-	if err != nil {
-		return nil, fmt.Errorf("failed to unmarshal response_schema: %w", err)
-	}
-	schemaURL := fmt.Sprintf("schema://widgets/%s/response_schema.json", widgetType)
-	if err := compiler.AddResource(schemaURL, doc); err != nil {
-		return nil, fmt.Errorf("failed to add response_schema resource: %w", err)
-	}
-	sch, err = compiler.Compile(schemaURL)
-	if err != nil {
-		return nil, fmt.Errorf("failed to compile response_schema: %w", err)
+		return nil, err
 	}
 	c.schemas[widgetType] = sch
 	return sch, nil
