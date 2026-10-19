@@ -18,8 +18,8 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
     go build -cover -covermode=atomic -trimpath -ldflags="-s -w -extldflags '-static'" -o /app/hass-proxy ./sidecars/hass-proxy
 
-# Runtime stage: minimal hardened Alpine 3.21 environment
-FROM alpine:3.21
+# Runtime stage: minimal hardened Alpine 3.24 environment
+FROM alpine:3.24
 
 # Install runtime certificates and create non-root user
 RUN --mount=type=cache,target=/etc/apk/cache,sharing=locked \
