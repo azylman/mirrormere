@@ -1,5 +1,5 @@
 # Mirrormere Reference Configuration Template
-# Authoritative Documentation: , , , 
+# Authoritative Documentation: README.md, docs/decisions.md, api/openapi.yaml
 
 # Server host and port bindings (restart required to apply changes)
 host: "0.0.0.0"
@@ -120,6 +120,12 @@ display:
 # --output /data/speakers.json` (or standalone, see sidecars/voice-fingerprinter) —
 # /data is the shared persistent data volume mirrormere-core reads fingerprints_path from.
 # voice_hub:
+#   enabled: true
+#   stt_url: "tcp://localhost:10300"
+#   brain_url: "http://localhost:8000/voice/ask"
+#   tts_url: "http://localhost:8880/v1/audio/speech"
+#   tts_voice: "af_bella"
+#   tts_model: "kokoro"
 #   speaker_id:
 #     embed_url: "http://voice-fingerprinter:9096/embed"
 #     fingerprints_path: "/data/speakers.json"
@@ -131,5 +137,5 @@ display:
 #   # text/event-stream = already executed, the hub speaks the sentences with its own TTS.
 #   # Unset url = feature off (no call is made).
 #   fast_path:
-#     url: "http://voice-gateway:9098/intent"
+#     url: "http://hass-proxy:8095/intent"
 #     timeout_ms: 800      # optional, default 800

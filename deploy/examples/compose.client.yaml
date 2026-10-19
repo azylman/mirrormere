@@ -35,7 +35,7 @@ services:
     environment:
       - MIRRORMERE_NODE_ID=${MIRRORMERE_NODE_ID:-display-1}
       - MIRRORMERE_URL=${MIRRORMERE_URL:-http://localhost:8080}
-      - MIRRORMERE_HUB_URL=${MIRRORMERE_HUB_URL:-http://localhost:9000/api/voice/interact}
+      - MIRRORMERE_HUB_URL=${MIRRORMERE_HUB_URL:-http://localhost:8080/api/voice/interact}
       - MIRRORMERE_VOICE_CONFIG=/config/voice.yaml
       - MIRRORMERE_HEARTBEAT_FILE=/tmp/ear.heartbeat
       - MIRRORMERE_AUDIO_DEVICE=${MIRRORMERE_AUDIO_DEVICE:-default} # Example mic (check `arecord -l`)

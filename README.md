@@ -72,13 +72,26 @@ mirrormere/
 
 ---
 
-## Getting Started & Roadmap
+## Quickstart
 
-1. **Hardware Validation**: Complete bench testing of the Intel N100 VESA touch sandwich and the Raspberry Pi 4B e-paper HAT.
-2. **Core Data Daemon**: Implement the unified calendar (CalDAV/Google), weather, and task sync services.
-3. **PWA Touch Display**: Scaffold the Wayland display frontend with touch navigation and UVC video capture overlays.
-4. **E-Paper Rendering Engine**: Deploy the Python/C SPI framebuffer pipeline for the 7.5" Waveshare panel.
-5. **Widget SDK**: Document the developer contract for authoring third-party widgets.
+1. **Stage Configuration & Optional Stylesheet Overrides**:
+   ```bash
+   mkdir -p deploy/config deploy/data
+   cp deploy/examples/config.yaml deploy/config/config.yaml
+   cp deploy/examples/custom.css deploy/config/custom.css # Optional: or deploy/examples/eink.css for 1-bit e-paper
+   ```
+2. **Launch `mirrormere-core` (Docker Compose or Standalone Image)**:
+   ```bash
+   docker compose -f deploy/compose.yml up -d mirrormere-core
+   # Or standalone (built-in web/ and widgets/ are bundled inside the image):
+   # docker run -d --name mirrormere-core -p 8080:8080 -v ./deploy/config:/config:ro -v ./deploy/data:/data ghcr.io/azylman/mirrormere:latest
+   ```
+3. **Open the Display & Hot-Reload**:
+   - Open `http://localhost:8080/display` (add `?hide_cursor=true` on touch kiosks or `?node=<node_id>` for per-node `chat-log` views).
+   - Live-reload `config.yaml` and `custom.css` without restarting: `docker kill -s HUP mirrormere-core`.
+4. **Hardware Profiles & Edge Daemons**:
+   - **Touch Display (Wayland + Chrome)**: Run `sudo ./deploy/display/install.sh` and see `deploy/examples/compose.client.yaml`.
+   - **E-Ink & Voice Sidecars**: See `deploy/eink/mirrormere-eink.service`, `client/ear/README.md`, and `sidecars/hass-proxy/README.md`.
 
 ---
 
