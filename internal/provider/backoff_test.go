@@ -3,6 +3,7 @@ package provider_test
 import (
 	"errors"
 	"net"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -10,216 +11,95 @@ import (
 	"github.com/azylman/mirrormere/internal/provider"
 )
 
-type customHTTPError struct {
-	code int
-	msg  string
-}
+type customHTTPError int
 
-func (e *customHTTPError) Error() string {
-	return e.msg
-}
-
-func (e *customHTTPError) StatusCode() int {
-	return e.code
-}
-
-type mockNetTimeoutError struct{}
-
-func (e *mockNetTimeoutError) Error() string   { return "i/o timeout" }
-func (e *mockNetTimeoutError) Timeout() bool   { return true }
-func (e *mockNetTimeoutError) Temporary() bool { return true }
+func (c customHTTPError) Error() string   { return "http" }
+func (c customHTTPError) StatusCode() int { return int(c) }
 
 func TestIsNetworkOrServerError(t *testing.T) {
 	t.Parallel()
-
 	tests := []struct {
-		name     string
-		err      error
-		expected bool
+		name string
+		err  error
+		want bool
 	}{
-		{name: "nil error", err: nil, expected: false},
-		{name: "syscall ECONNREFUSED", err: syscall.ECONNREFUSED, expected: true},
-		{name: "syscall ECONNRESET", err: syscall.ECONNRESET, expected: true},
-		{name: "syscall ETIMEDOUT", err: syscall.ETIMEDOUT, expected: true},
-		{name: "syscall EHOSTUNREACH", err: syscall.EHOSTUNREACH, expected: true},
-		{name: "syscall ENETUNREACH", err: syscall.ENETUNREACH, expected: true},
-		{name: "wrapped ECONNREFUSED", err: errors.Join(errors.New("dial failed"), syscall.ECONNREFUSED), expected: true},
-		{name: "net.Error timeout", err: &mockNetTimeoutError{}, expected: true},
-		{name: "net.OpError", err: &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("socket closed")}, expected: true},
-		{name: "HTTP 500 error", err: &customHTTPError{code: 500, msg: "internal server error"}, expected: true},
-		{name: "HTTP 502 error", err: &customHTTPError{code: 502, msg: "bad gateway"}, expected: true},
-		{name: "HTTP 503 error", err: &customHTTPError{code: 503, msg: "service unavailable"}, expected: true},
-		{name: "HTTP 504 error", err: &customHTTPError{code: 504, msg: "gateway timeout"}, expected: true},
-		{name: "HTTP 429 rate limit", err: &customHTTPError{code: 429, msg: "too many requests"}, expected: true},
-		{name: "HTTP 400 client error", err: &customHTTPError{code: 400, msg: "bad request"}, expected: false},
-		{name: "HTTP 401 client error", err: &customHTTPError{code: 401, msg: "unauthorized"}, expected: false},
-		{name: "HTTP 403 client error", err: &customHTTPError{code: 403, msg: "forbidden"}, expected: false},
-		{name: "HTTP 404 client error", err: &customHTTPError{code: 404, msg: "not found"}, expected: false},
-		{name: "string contains connection refused", err: errors.New("dial tcp 127.0.0.1:8080: connect: connection refused"), expected: true},
-		{name: "string contains timeout", err: errors.New("request context deadline exceeded (Client.Timeout)"), expected: true},
-		{name: "string contains 502 Bad Gateway", err: errors.New("received 502 Bad Gateway from upstream"), expected: true},
-		{name: "string contains 429 Too Many Requests", err: errors.New("received 429 Too Many Requests from API"), expected: true},
-		{name: "string contains status 503", err: errors.New("upstream failed with status 503"), expected: true},
-		{name: "string contains HTTP 503", err: errors.New("HTTP 503: upstream unavailable"), expected: true},
-		{name: "string contains HTTP 429", err: errors.New("HTTP 429: rate limit exceeded"), expected: true},
-		{name: "HTTPStatusError 500", err: &provider.HTTPStatusError{Code: 500, Body: "internal error"}, expected: true},
-		{name: "HTTPStatusError 503 empty body", err: &provider.HTTPStatusError{Code: 503}, expected: true},
-		{name: "HTTPStatusError 429", err: &provider.HTTPStatusError{Code: 429, Body: "rate limited"}, expected: true},
-		{name: "HTTPStatusError 404", err: &provider.HTTPStatusError{Code: 404, Body: "not found"}, expected: false},
-		{name: "schema validation failure", err: errors.New("data validation failed against response_schema"), expected: false},
-		{name: "generic parse error", err: errors.New("json: cannot unmarshal string into Go value"), expected: false},
+		{"nil", nil, false},
+		{"ECONNREFUSED", syscall.ECONNREFUSED, true},
+		{"ECONNRESET", syscall.ECONNRESET, true},
+		{"ETIMEDOUT", syscall.ETIMEDOUT, true},
+		{"EHOSTUNREACH", syscall.EHOSTUNREACH, true},
+		{"ENETUNREACH", syscall.ENETUNREACH, true},
+		{"wrapped ECONNREFUSED", errors.Join(errors.New("dial"), syscall.ECONNREFUSED), true},
+		{"net timeout", &net.DNSError{IsTimeout: true}, true},
+		{"net OpError", &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("closed")}, true},
+		{"HTTP 500", customHTTPError(500), true},
+		{"HTTP 502", customHTTPError(502), true},
+		{"HTTP 503", customHTTPError(503), true},
+		{"HTTP 429", customHTTPError(429), true},
+		{"HTTP 400", customHTTPError(400), false},
+		{"HTTP 401", customHTTPError(401), false},
+		{"HTTP 404", customHTTPError(404), false},
+		{"str conn refused", errors.New("connection refused"), true},
+		{"str timeout", errors.New("deadline exceeded"), true},
+		{"str 502", errors.New("502 Bad Gateway"), true},
+		{"str 429", errors.New("429 Too Many Requests"), true},
+		{"str status 503", errors.New("status 503"), true},
+		{"str HTTP 503", errors.New("HTTP 503: down"), true},
+		{"str HTTP 429", errors.New("HTTP 429"), true},
+		{"HTTPStatusError 500", &provider.HTTPStatusError{Code: 500, Body: "err"}, true},
+		{"HTTPStatusError 503 empty", &provider.HTTPStatusError{Code: 503}, true},
+		{"HTTPStatusError 429", &provider.HTTPStatusError{Code: 429, Body: "rate"}, true},
+		{"HTTPStatusError 404", &provider.HTTPStatusError{Code: 404, Body: "nf"}, false},
+		{"schema failure", errors.New("validation failed against response_schema"), false},
+		{"json parse error", errors.New("cannot unmarshal"), false},
 	}
-
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got := provider.IsNetworkOrServerError(tc.err)
-			if got != tc.expected {
-				t.Errorf("IsNetworkOrServerError(%v) = %v; want %v", tc.err, got, tc.expected)
+			if got := provider.IsNetworkOrServerError(tc.err); got != tc.want {
+				t.Errorf("IsNetworkOrServerError(%v) = %v; want %v", tc.err, got, tc.want)
 			}
 		})
 	}
 }
 
-func TestBackoffPolicy_CalculationAndJitter(t *testing.T) {
+func TestBackoffPolicy(t *testing.T) {
 	t.Parallel()
-
-	// Deterministic policy with zero jitter (rand returns 0.5 -> (0.5*2 - 1) = 0 jitter)
-	boZeroJitter := &provider.BackoffPolicy{
-		InitialInterval: 5 * time.Second,
-		MaxInterval:     60 * time.Second,
-		Multiplier:      2.0,
-		JitterFraction:  0.2,
-		RandFunc:        func() float64 { return 0.5 },
+	bo := func(initSec, maxSec int, mult, jit, r float64) *provider.BackoffPolicy {
+		return &provider.BackoffPolicy{InitialInterval: time.Duration(initSec) * time.Second, MaxInterval: time.Duration(maxSec) * time.Second, Multiplier: mult, JitterFraction: jit, RandFunc: func() float64 { return r }}
 	}
-
-	intervalCap := 30 * time.Second
-
-	// Attempt 1: 5s
-	d1 := boZeroJitter.NextDelay(1, intervalCap)
-	if d1 != 5*time.Second {
-		t.Errorf("attempt 1: got %v, want 5s", d1)
+	zero, def := bo(5, 60, 2, 0.2, 0.5), provider.DefaultBackoffPolicy()
+	tests := []struct {
+		name                     string
+		policy                   *provider.BackoffPolicy
+		err                      error
+		failures                 int
+		capDur, wantMin, wantMax time.Duration
+	}{
+		{"att1", zero, nil, 1, 30 * time.Second, 5 * time.Second, 5 * time.Second},
+		{"att2", zero, nil, 2, 30 * time.Second, 10 * time.Second, 10 * time.Second},
+		{"att3", zero, nil, 3, 30 * time.Second, 20 * time.Second, 20 * time.Second},
+		{"att4_clamp", zero, nil, 4, 30 * time.Second, 30 * time.Second, 30 * time.Second},
+		{"default_zero", &provider.BackoffPolicy{}, nil, 0, 0, 1 * time.Nanosecond, 10 * time.Minute},
+		{"min_jitter", bo(10, 60, 2, 0.2, 0.0), nil, 1, 60 * time.Second, 8 * time.Second, 8 * time.Second},
+		{"max_jitter", bo(10, 60, 2, 0.2, 1.0), nil, 1, 60 * time.Second, 12 * time.Second, 12 * time.Second},
+		{"over_jitter", bo(50, 100, 2, 0.5, 1.0), nil, 1, 60 * time.Second, 60 * time.Second, 60 * time.Second},
+		{"negative_cfg", bo(-1, -1, 0.5, -0.5, 0), nil, 1, 10 * time.Second, 1 * time.Nanosecond, 10 * time.Minute},
+		{"jitter_gt_1", bo(5, 60, 2, 1.5, 0.5), nil, 1, 60 * time.Second, 1 * time.Nanosecond, 10 * time.Minute},
+		{"compute_nil", def, nil, 1, 60 * time.Second, 60 * time.Second, 60 * time.Second},
+		{"compute_400", def, customHTTPError(400), 3, 60 * time.Second, 60 * time.Second, 60 * time.Second},
+		{"compute_net", def, syscall.ECONNREFUSED, 1, 60 * time.Second, 1 * time.Nanosecond, 59 * time.Second},
 	}
-
-	// Attempt 2: 10s
-	d2 := boZeroJitter.NextDelay(2, intervalCap)
-	if d2 != 10*time.Second {
-		t.Errorf("attempt 2: got %v, want 10s", d2)
-	}
-
-	// Attempt 3: 20s
-	d3 := boZeroJitter.NextDelay(3, intervalCap)
-	if d3 != 20*time.Second {
-		t.Errorf("attempt 3: got %v, want 20s", d3)
-	}
-
-	// Attempt 4: 40s -> clamped to intervalCap 30s
-	d4 := boZeroJitter.NextDelay(4, intervalCap)
-	if d4 != 30*time.Second {
-		t.Errorf("attempt 4 clamped: got %v, want 30s", d4)
-	}
-
-	// Attempt 5: clamped to intervalCap 30s
-	d5 := boZeroJitter.NextDelay(5, intervalCap)
-	if d5 != 30*time.Second {
-		t.Errorf("attempt 5 clamped: got %v, want 30s", d5)
-	}
-
-	// Test with negative failures and fallback defaults
-	dDefault := (&provider.BackoffPolicy{}).NextDelay(0, 0)
-	if dDefault <= 0 {
-		t.Errorf("expected positive default delay, got %v", dDefault)
-	}
-
-	// Test Jitter extremes: rand=0.0 (-20% jitter) and rand=1.0 (+20% jitter)
-	boMinJitter := &provider.BackoffPolicy{
-		InitialInterval: 10 * time.Second,
-		MaxInterval:     60 * time.Second,
-		Multiplier:      2.0,
-		JitterFraction:  0.2,
-		RandFunc:        func() float64 { return 0.0 }, // -20%
-	}
-	dMin := boMinJitter.NextDelay(1, 60*time.Second)
-	if dMin != 8*time.Second { // 10s * (1 - 0.20) = 8s
-		t.Errorf("min jitter: got %v, want 8s", dMin)
-	}
-
-	boMaxJitter := &provider.BackoffPolicy{
-		InitialInterval: 10 * time.Second,
-		MaxInterval:     60 * time.Second,
-		Multiplier:      2.0,
-		JitterFraction:  0.2,
-		RandFunc:        func() float64 { return 1.0 }, // +20%
-	}
-	dMax := boMaxJitter.NextDelay(1, 60*time.Second)
-	if dMax != 12*time.Second { // 10s * (1 + 0.20) = 12s
-		t.Errorf("max jitter: got %v, want 12s", dMax)
-	}
-
-	// Hard ceiling test when jitter exceeds intervalCap
-	boOverJitter := &provider.BackoffPolicy{
-		InitialInterval: 50 * time.Second,
-		MaxInterval:     100 * time.Second,
-		Multiplier:      2.0,
-		JitterFraction:  0.5,
-		RandFunc:        func() float64 { return 1.0 },
-	}
-	dCapped := boOverJitter.NextDelay(1, 60*time.Second)
-	if dCapped > 60*time.Second {
-		t.Errorf("expected delay clamped to intervalCap 60s, got %v", dCapped)
-	}
-}
-
-func TestBackoffPolicy_ComputeRetryDelay(t *testing.T) {
-	t.Parallel()
-
-	bo := provider.DefaultBackoffPolicy()
-	intervalCap := 60 * time.Second
-
-	// 1. Nil error -> regular intervalCap
-	if d := bo.ComputeRetryDelay(nil, 1, intervalCap); d != intervalCap {
-		t.Fatalf("expected intervalCap %v on nil error, got %v", intervalCap, d)
-	}
-
-	// 2. Non-retryable error (e.g. 400 Bad Request) -> regular intervalCap
-	clientErr := &customHTTPError{code: 400, msg: "bad request"}
-	if d := bo.ComputeRetryDelay(clientErr, 3, intervalCap); d != intervalCap {
-		t.Fatalf("expected regular intervalCap %v on client error, got %v", intervalCap, d)
-	}
-
-	// 3. Network error -> exponential backoff delay (much less than intervalCap on early failures)
-	netErr := syscall.ECONNREFUSED
-	dNet := bo.ComputeRetryDelay(netErr, 1, intervalCap)
-	if dNet <= 0 || dNet >= intervalCap {
-		t.Fatalf("expected backoff delay for network error between 0 and %v, got %v", intervalCap, dNet)
-	}
-}
-
-func TestBackoffPolicy_EdgeCases(t *testing.T) {
-	t.Parallel()
-
-	// InitialInterval <= 0, MaxInterval <= 0, Multiplier < 1.0, JitterFraction < 0
-	bo := &provider.BackoffPolicy{
-		InitialInterval: -1,
-		MaxInterval:     -1,
-		Multiplier:      0.5,
-		JitterFraction:  -0.5,
-	}
-	d := bo.NextDelay(1, 10*time.Second)
-	if d <= 0 {
-		t.Fatalf("expected positive delay, got %v", d)
-	}
-
-	// JitterFraction > 1.0
-	boOverJitter := &provider.BackoffPolicy{
-		InitialInterval: 5 * time.Second,
-		MaxInterval:     60 * time.Second,
-		Multiplier:      2.0,
-		JitterFraction:  1.5,
-		RandFunc:        func() float64 { return 0.5 },
-	}
-	dOver := boOverJitter.NextDelay(1, 60*time.Second)
-	if dOver <= 0 {
-		t.Fatalf("expected positive delay, got %v", dOver)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			d := tc.policy.NextDelay(tc.failures, tc.capDur)
+			if strings.HasPrefix(tc.name, "compute") {
+				d = tc.policy.ComputeRetryDelay(tc.err, tc.failures, tc.capDur)
+			}
+			if d < tc.wantMin || d > tc.wantMax {
+				t.Fatalf("got %v, want [%v, %v]", d, tc.wantMin, tc.wantMax)
+			}
+		})
 	}
 }

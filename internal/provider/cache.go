@@ -17,6 +17,15 @@ type cacheEntry struct {
 	hasLKG              bool
 }
 
+func (e *cacheEntry) toPayload() WidgetPayload {
+	return WidgetPayload{
+		WidgetID:  e.widgetID,
+		Timestamp: e.timestamp,
+		State:     e.state,
+		Data:      e.data,
+	}
+}
+
 // SWRCache maintains the in-memory Stale-While-Revalidate state registry for all widgets.
 // Thread-safe for concurrent read and write access.
 type SWRCache struct {
@@ -40,12 +49,7 @@ func (c *SWRCache) Get(widgetID string) (WidgetPayload, bool) {
 	if !ok {
 		return WidgetPayload{}, false
 	}
-	return WidgetPayload{
-		WidgetID:  e.widgetID,
-		Timestamp: e.timestamp,
-		State:     e.state,
-		Data:      e.data,
-	}, true
+	return e.toPayload(), true
 }
 
 // RecordSuccess records a successful data fetch. It sets the state to "healthy",
@@ -75,12 +79,7 @@ func (c *SWRCache) RecordSuccess(widgetID string, data any, now time.Time) (Widg
 
 	transitioned := (oldState != StateHealthy)
 
-	return WidgetPayload{
-		WidgetID:  widgetID,
-		Timestamp: nowStr,
-		State:     StateHealthy,
-		Data:      data,
-	}, transitioned
+	return e.toPayload(), transitioned
 }
 
 // RecordFailure records a failed data fetch. Under Stale-While-Revalidate:
@@ -109,12 +108,7 @@ func (c *SWRCache) RecordFailure(widgetID string, err error, now time.Time) (Wid
 	if e.hasLKG {
 		e.state = StateDegraded
 		transitioned = (oldState != StateDegraded)
-		payload = WidgetPayload{
-			WidgetID:  widgetID,
-			Timestamp: e.timestamp, // Retains timestamp of last successful fetch
-			State:     StateDegraded,
-			Data:      e.data, // LKG frozen and preserved
-		}
+		payload = e.toPayload()
 	} else {
 		e.state = StateError
 		if e.data == nil {
@@ -123,12 +117,7 @@ func (c *SWRCache) RecordFailure(widgetID string, err error, now time.Time) (Wid
 		nowStr := now.UTC().Format(time.RFC3339)
 		e.timestamp = nowStr
 		transitioned = (oldState != StateError)
-		payload = WidgetPayload{
-			WidgetID:  widgetID,
-			Timestamp: nowStr,
-			State:     StateError,
-			Data:      e.data,
-		}
+		payload = e.toPayload()
 	}
 
 	return payload, transitioned
@@ -153,12 +142,7 @@ func (c *SWRCache) GetAll() map[string]WidgetPayload {
 
 	out := make(map[string]WidgetPayload, len(c.entries))
 	for id, e := range c.entries {
-		out[id] = WidgetPayload{
-			WidgetID:  e.widgetID,
-			Timestamp: e.timestamp,
-			State:     e.state,
-			Data:      e.data,
-		}
+		out[id] = e.toPayload()
 	}
 	return out
 }

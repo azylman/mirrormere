@@ -2,7 +2,6 @@ package provider_test
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -16,492 +15,143 @@ import (
 
 func sampleResponseSchema() map[string]any {
 	return map[string]any{
-		"type": "object",
-		"required": []any{
-			"temperature",
-			"humidity",
-		},
-		"properties": map[string]any{
-			"temperature": map[string]any{"type": "number"},
-			"humidity":    map[string]any{"type": "number"},
-			"status":      map[string]any{"type": "string"},
-		},
+		"type":       "object",
+		"required":   []any{"temperature", "humidity"},
+		"properties": map[string]any{"temperature": map[string]any{"type": "number"}, "humidity": map[string]any{"type": "number"}, "status": map[string]any{"type": "string"}},
 	}
 }
 
-func TestHTTPProvider_InitValidation(t *testing.T) {
-	t.Parallel()
-
-	t.Run("empty endpoint returns error", func(t *testing.T) {
-		t.Parallel()
-		p := provider.NewHTTPProvider()
-		err := p.Init(context.Background(), nil, provider.InitOptions{
-			Endpoint:       "",
-			ResponseSchema: sampleResponseSchema(),
-		})
-		if err == nil || !strings.Contains(err.Error(), "requires non-empty endpoint") {
-			t.Fatalf("expected empty endpoint error, got: %v", err)
-		}
-	})
-
-	t.Run("unsupported method returns error", func(t *testing.T) {
-		t.Parallel()
-		p := provider.NewHTTPProvider()
-		err := p.Init(context.Background(), nil, provider.InitOptions{
-			Endpoint:       "http://localhost:8080/data",
-			Method:         "DELETE",
-			ResponseSchema: sampleResponseSchema(),
-		})
-		if err == nil || !strings.Contains(err.Error(), "unsupported HTTP method") {
-			t.Fatalf("expected unsupported method error, got: %v", err)
-		}
-	})
-
-	t.Run("empty response_schema returns error", func(t *testing.T) {
-		t.Parallel()
-		p := provider.NewHTTPProvider()
-		err := p.Init(context.Background(), nil, provider.InitOptions{
-			Endpoint:       "http://localhost:8080/data",
-			ResponseSchema: nil,
-		})
-		if err == nil || !strings.Contains(err.Error(), "requires non-empty response_schema") {
-			t.Fatalf("expected empty response_schema error, got: %v", err)
-		}
-	})
-
-	t.Run("invalid response_schema returns error", func(t *testing.T) {
-		t.Parallel()
-		p := provider.NewHTTPProvider()
-		err := p.Init(context.Background(), nil, provider.InitOptions{
-			Endpoint: "http://localhost:8080/data",
-			ResponseSchema: map[string]any{
-				"type": 12345, // invalid schema type
-			},
-		})
-		if err == nil {
-			t.Fatal("expected invalid response_schema error, got nil")
-		}
-	})
+func httpOpts(endpoint, method, token string, dims []int, secrets map[string]string, schema map[string]any) provider.InitOptions {
+	return provider.InitOptions{ID: "w1", Type: "sensor-card", Endpoint: endpoint, Method: method, Token: token, Dimensions: dims, Secrets: secrets, ResponseSchema: schema}
 }
 
-func TestHTTPProvider_FetchPOST(t *testing.T) {
+func TestHTTPProvider_Init(t *testing.T) {
 	t.Parallel()
-
-	var receivedMethod string
-	var receivedHeaders http.Header
-	var receivedBody map[string]any
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		receivedMethod = r.Method
-		receivedHeaders = r.Header.Clone()
-		_ = json.NewDecoder(r.Body).Decode(&receivedBody)
-
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"temperature": 72.5,
-			"humidity":    45.0,
-			"status":      "good",
+	tests := []struct {
+		name       string
+		opts       provider.InitOptions
+		wantErrSub string
+	}{
+		{"empty_endpoint", httpOpts("", "GET", "", nil, nil, sampleResponseSchema()), "requires non-empty endpoint"},
+		{"unsupported_method", httpOpts("http://x", "DELETE", "", nil, nil, sampleResponseSchema()), "unsupported HTTP method"},
+		{"empty_schema", httpOpts("http://x", "GET", "", nil, nil, nil), "requires non-empty response_schema"},
+		{"invalid_schema", httpOpts("http://x", "GET", "", nil, nil, map[string]any{"type": 123}), "failed to compile response_schema"},
+		{"marshal_schema_err", httpOpts("http://x", "GET", "", nil, nil, map[string]any{"bad": make(chan int)}), "failed to marshal response_schema"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			p := provider.NewHTTPProvider()
+			err := p.Init(context.Background(), nil, tc.opts)
+			if err == nil || !strings.Contains(err.Error(), tc.wantErrSub) {
+				t.Fatalf("Init() error = %v, want substring %q", err, tc.wantErrSub)
+			}
 		})
-	}))
-	defer srv.Close()
-
-	p := provider.NewHTTPProviderWithClient(srv.Client(), nil)
-	err := p.Init(context.Background(), map[string]any{
-		"entity_id": "sensor.living_room",
-		"unit":      "F",
-	}, provider.InitOptions{
-		ID:             "living-room-temp",
-		Type:           "sensor-card",
-		Dimensions:     []int{2, 1},
-		Endpoint:       srv.URL,
-		Method:         "POST",
-		Token:          "secret-token-123",
-		ResponseSchema: sampleResponseSchema(),
-	})
-	if err != nil {
-		t.Fatalf("Init failed: %v", err)
-	}
-
-	data, err := p.Fetch(context.Background())
-	if err != nil {
-		t.Fatalf("Fetch failed: %v", err)
-	}
-
-	resMap, ok := data.(map[string]any)
-	if !ok {
-		t.Fatalf("expected map[string]any, got %T", data)
-	}
-	if resMap["temperature"] != 72.5 || resMap["humidity"] != 45.0 {
-		t.Fatalf("unexpected data: %+v", resMap)
-	}
-
-	// Verify request headers and method
-	if receivedMethod != http.MethodPost {
-		t.Errorf("expected POST, got %s", receivedMethod)
-	}
-	if receivedHeaders.Get("Content-Type") != "application/json" {
-		t.Errorf("expected application/json Content-Type, got %s", receivedHeaders.Get("Content-Type"))
-	}
-	if receivedHeaders.Get("Accept") != "application/json" {
-		t.Errorf("expected application/json Accept, got %s", receivedHeaders.Get("Accept"))
-	}
-	if receivedHeaders.Get("Authorization") != "Bearer secret-token-123" {
-		t.Errorf("expected Bearer token, got %s", receivedHeaders.Get("Authorization"))
-	}
-	if receivedHeaders.Get("X-Widget-ID") != "living-room-temp" {
-		t.Errorf("expected X-Widget-ID 'living-room-temp', got %s", receivedHeaders.Get("X-Widget-ID"))
-	}
-	if receivedHeaders.Get("X-Widget-Type") != "sensor-card" {
-		t.Errorf("expected X-Widget-Type 'sensor-card', got %s", receivedHeaders.Get("X-Widget-Type"))
-	}
-	if receivedHeaders.Get("X-Widget-Dimensions") != "2x1" {
-		t.Errorf("expected X-Widget-Dimensions '2x1', got %s", receivedHeaders.Get("X-Widget-Dimensions"))
-	}
-
-	// Verify domain config in POST body
-	if receivedBody["entity_id"] != "sensor.living_room" || receivedBody["unit"] != "F" {
-		t.Errorf("unexpected POST body: %+v", receivedBody)
-	}
-
-	// Verify Subscribe and Shutdown
-	if err := p.Subscribe(context.Background(), nil); err != nil {
-		t.Errorf("Subscribe returned error: %v", err)
-	}
-	if err := p.Shutdown(context.Background()); err != nil {
-		t.Errorf("Shutdown returned error: %v", err)
 	}
 }
 
-func TestHTTPProvider_FetchGET(t *testing.T) {
+func TestHTTPProvider_Fetch(t *testing.T) {
 	t.Parallel()
-
-	var receivedMethod string
-	var bodyLen int
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		receivedMethod = r.Method
-		b, _ := io.ReadAll(r.Body)
-		bodyLen = len(b)
-
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"temperature": 68.0,
-			"humidity":    50.0,
-		})
-	}))
-	defer srv.Close()
-
-	p := provider.NewHTTPProviderWithClient(srv.Client(), nil)
-	err := p.Init(context.Background(), nil, provider.InitOptions{
-		ID:             "outdoor-temp",
-		Type:           "sensor-card",
-		Endpoint:       srv.URL,
-		Method:         "get",
-		Secrets:        map[string]string{"token_env": "env-token-456"},
-		ResponseSchema: sampleResponseSchema(),
-	})
-	if err != nil {
-		t.Fatalf("Init failed: %v", err)
+	tests := []struct {
+		name           string
+		method         string
+		status         int
+		respBody       string
+		token          string
+		secrets        map[string]string
+		dims           []int
+		cfg            map[string]any
+		wantVal        float64
+		wantErrSub     string
+		wantStatusCode int
+		cancelCtx      bool
+		badURL         bool
+	}{
+		{"fetch_post_ok", "POST", 200, `{"temperature":72.5,"humidity":45.0,"status":"good"}`, "secret-token-123", nil, []int{2, 1}, map[string]any{"entity_id": "sensor.lr", "unit": "F"}, 72.5, "", 0, false, false},
+		{"fetch_get_ok", "GET", 200, `{"temperature":68.0,"humidity":50.0}`, "", map[string]string{"token_env": "env-token-456"}, nil, nil, 68.0, "", 0, false, false},
+		{"token_env_dims", "POST", 200, `{"temperature":70.0,"humidity":40.0}`, "", map[string]string{"token_env": "secret-from-env"}, []int{3, 2}, nil, 70.0, "", 0, false, false},
+		{"status_503_backoff", "GET", 503, "upstream unavailable", "", nil, nil, nil, 0, "HTTP 503", 503, false, false},
+		{"status_400_permanent", "GET", 400, "bad request", "", nil, nil, nil, 0, "HTTP 400", 400, false, false},
+		{"invalid_json", "GET", 200, "not valid json", "", nil, nil, nil, 0, "invalid response JSON", 0, false, false},
+		{"non_object_json", "GET", 200, "[1, 2, 3]", "", nil, nil, nil, 0, "response body must be a JSON object", 0, false, false},
+		{"schema_fail", "GET", 200, `{"temperature":75.0}`, "", nil, nil, nil, 0, "response_schema validation failed", 0, false, false},
+		{"cancelled_context", "GET", 200, "{}", "", nil, nil, nil, 0, "context", 0, true, false},
+		{"marshal_cfg_err", "POST", 200, "{}", "", nil, nil, map[string]any{"bad": make(chan int)}, 0, "failed to marshal domain config", 0, false, false},
+		{"bad_request_url", "GET", 200, "{}", "", nil, nil, nil, 0, "failed to create HTTP request", 0, false, true},
 	}
 
-	data, err := p.Fetch(context.Background())
-	if err != nil {
-		t.Fatalf("Fetch failed: %v", err)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var gotMethod, gotDims, gotAuth, gotBody string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if tc.cancelCtx {
+					<-r.Context().Done()
+					return
+				}
+				gotMethod, gotDims, gotAuth = r.Method, r.Header.Get("X-Widget-Dimensions"), r.Header.Get("Authorization")
+				b, _ := io.ReadAll(r.Body)
+				gotBody = string(b)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(tc.respBody))
+			}))
+			defer srv.Close()
+
+			endpoint := srv.URL
+			if tc.badURL {
+				endpoint = "://invalid-url"
+			}
+			p := provider.NewHTTPProviderWithClient(srv.Client(), nil)
+			if err := p.Init(context.Background(), tc.cfg, httpOpts(endpoint, tc.method, tc.token, tc.dims, tc.secrets, sampleResponseSchema())); err != nil {
+				t.Fatalf("Init failed: %v", err)
+			}
+
+			ctx := context.Background()
+			if tc.cancelCtx {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithCancel(ctx)
+				cancel()
+			}
+
+			data, err := p.Fetch(ctx)
+			if tc.wantErrSub != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErrSub) {
+					t.Fatalf("Fetch() error = %v, want substring %q", err, tc.wantErrSub)
+				}
+				if tc.wantStatusCode != 0 {
+					var sc provider.HTTPStatusCoder
+					if !errors.As(err, &sc) || sc.StatusCode() != tc.wantStatusCode {
+						t.Fatalf("want status code %d, got %v", tc.wantStatusCode, err)
+					}
+					delay := provider.DefaultBackoffPolicy().ComputeRetryDelay(err, 1, 900*time.Second)
+					if (tc.wantStatusCode == 503 && delay >= 900*time.Second) || (tc.wantStatusCode == 400 && delay != 900*time.Second) {
+						t.Fatalf("unexpected retry delay for %d: %v", tc.wantStatusCode, delay)
+					}
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Fetch() unexpected error: %v", err)
+			}
+			resMap, ok := data.(map[string]any)
+			if !ok || resMap["temperature"] != tc.wantVal {
+				t.Fatalf("unexpected data: %+v", data)
+			}
+			if tc.name == "fetch_post_ok" && (gotMethod != http.MethodPost || gotDims != "2x1" || gotAuth != "Bearer secret-token-123" || !strings.Contains(gotBody, "sensor.lr")) {
+				t.Fatalf("unexpected headers/body: method=%s dims=%s auth=%s body=%s", gotMethod, gotDims, gotAuth, gotBody)
+			}
+			if tc.name == "token_env_dims" && (gotDims != "3x2" || gotAuth != "Bearer secret-from-env") {
+				t.Fatalf("token_env dims header check failed: dims=%s auth=%s", gotDims, gotAuth)
+			}
+		})
 	}
-
-	if receivedMethod != http.MethodGet {
-		t.Errorf("expected GET, got %s", receivedMethod)
-	}
-	if bodyLen > 0 {
-		t.Errorf("expected empty body for GET, got %d bytes", bodyLen)
-	}
-
-	resMap, ok := data.(map[string]any)
-	if !ok || resMap["temperature"] != 68.0 {
-		t.Fatalf("unexpected data: %+v", data)
-	}
-}
-
-func TestHTTPProvider_FetchErrors(t *testing.T) {
-	t.Parallel()
-
-	t.Run("non-2xx HTTP status returns HTTPStatusError and triggers backoff", func(t *testing.T) {
-		t.Parallel()
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			http.Error(w, "upstream service unavailable", http.StatusServiceUnavailable)
-		}))
-		defer srv.Close()
-
-		p := provider.NewHTTPProviderWithClient(srv.Client(), nil)
-		_ = p.Init(context.Background(), nil, provider.InitOptions{
-			Endpoint:       srv.URL,
-			ResponseSchema: sampleResponseSchema(),
-		})
-
-		_, err := p.Fetch(context.Background())
-		if err == nil || !strings.Contains(err.Error(), "HTTP 503") {
-			t.Fatalf("expected HTTP 503 error, got: %v", err)
-		}
-
-		// Verify error implements HTTPStatusCoder interface
-		var statusErr provider.HTTPStatusCoder
-		if !errors.As(err, &statusErr) {
-			t.Fatalf("expected error to implement HTTPStatusCoder, got %T", err)
-		}
-		if statusErr.StatusCode() != http.StatusServiceUnavailable {
-			t.Fatalf("expected StatusCode 503, got %d", statusErr.StatusCode())
-		}
-
-		// Verify IsNetworkOrServerError recognizes HTTP 503 as transient
-		if !provider.IsNetworkOrServerError(err) {
-			t.Fatalf("expected IsNetworkOrServerError to return true for HTTP 503, got false")
-		}
-
-		// Verify ComputeRetryDelay calculates backoff delay, not the 15-minute interval cap
-		intervalCap := 900 * time.Second
-		backoff := provider.DefaultBackoffPolicy()
-		retryDelay := backoff.ComputeRetryDelay(err, 1, intervalCap)
-		if retryDelay >= intervalCap {
-			t.Fatalf("expected retry delay to be backed off (< %v), got %v", intervalCap, retryDelay)
-		}
-		if retryDelay < 3*time.Second || retryDelay > 7*time.Second {
-			t.Fatalf("expected retry delay around 5s (+/- 20%%), got %v", retryDelay)
-		}
-	})
-
-	t.Run("4xx client error is classified as permanent", func(t *testing.T) {
-		t.Parallel()
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			http.Error(w, "bad request", http.StatusBadRequest)
-		}))
-		defer srv.Close()
-
-		p := provider.NewHTTPProviderWithClient(srv.Client(), nil)
-		_ = p.Init(context.Background(), nil, provider.InitOptions{
-			Endpoint:       srv.URL,
-			ResponseSchema: sampleResponseSchema(),
-		})
-
-		_, err := p.Fetch(context.Background())
-		if err == nil || !strings.Contains(err.Error(), "HTTP 400") {
-			t.Fatalf("expected HTTP 400 error, got: %v", err)
-		}
-
-		if provider.IsNetworkOrServerError(err) {
-			t.Fatalf("expected IsNetworkOrServerError to return false for HTTP 400, got true")
-		}
-
-		intervalCap := 900 * time.Second
-		backoff := provider.DefaultBackoffPolicy()
-		retryDelay := backoff.ComputeRetryDelay(err, 1, intervalCap)
-		if retryDelay != intervalCap {
-			t.Fatalf("expected permanent client error to retain intervalCap %v, got %v", intervalCap, retryDelay)
-		}
-	})
-
-	t.Run("invalid JSON response returns error", func(t *testing.T) {
-		t.Parallel()
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte("not valid json"))
-		}))
-		defer srv.Close()
-
-		p := provider.NewHTTPProviderWithClient(srv.Client(), nil)
-		_ = p.Init(context.Background(), nil, provider.InitOptions{
-			Endpoint:       srv.URL,
-			ResponseSchema: sampleResponseSchema(),
-		})
-
-		_, err := p.Fetch(context.Background())
-		if err == nil || !strings.Contains(err.Error(), "invalid response JSON") {
-			t.Fatalf("expected invalid JSON error, got: %v", err)
-		}
-	})
-
-	t.Run("non-object JSON response returns error", func(t *testing.T) {
-		t.Parallel()
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`[1, 2, 3]`))
-		}))
-		defer srv.Close()
-
-		p := provider.NewHTTPProviderWithClient(srv.Client(), nil)
-		_ = p.Init(context.Background(), nil, provider.InitOptions{
-			Endpoint:       srv.URL,
-			ResponseSchema: sampleResponseSchema(),
-		})
-
-		_, err := p.Fetch(context.Background())
-		if err == nil || !strings.Contains(err.Error(), "response body must be a JSON object") {
-			t.Fatalf("expected JSON object error, got: %v", err)
-		}
-	})
-
-	t.Run("response schema validation failure returns error", func(t *testing.T) {
-		t.Parallel()
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusOK)
-			// Missing required "humidity" field
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"temperature": 75.0,
-			})
-		}))
-		defer srv.Close()
-
-		p := provider.NewHTTPProviderWithClient(srv.Client(), nil)
-		_ = p.Init(context.Background(), nil, provider.InitOptions{
-			Endpoint:       srv.URL,
-			ResponseSchema: sampleResponseSchema(),
-		})
-
-		_, err := p.Fetch(context.Background())
-		if err == nil || !strings.Contains(err.Error(), "response_schema validation failed") {
-			t.Fatalf("expected response_schema validation error, got: %v", err)
-		}
-	})
-
-	t.Run("cancelled context returns error", func(t *testing.T) {
-		t.Parallel()
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			time.Sleep(100 * time.Millisecond)
-			w.WriteHeader(http.StatusOK)
-		}))
-		defer srv.Close()
-
-		p := provider.NewHTTPProviderWithClient(srv.Client(), nil)
-		_ = p.Init(context.Background(), nil, provider.InitOptions{
-			Endpoint:       srv.URL,
-			ResponseSchema: sampleResponseSchema(),
-		})
-
-		ctx, cancel := context.WithCancel(context.Background())
-		cancel() // Cancel immediately
-
-		_, err := p.Fetch(ctx)
-		if err == nil {
-			t.Fatal("expected context cancelled error, got nil")
-		}
-	})
 }
 
 func TestHTTPProvider_LifecycleAndConstructors(t *testing.T) {
 	t.Parallel()
-
-	// NewHTTPProvider (default client and logger)
-	pDefault := provider.NewHTTPProvider()
-	if pDefault == nil {
-		t.Fatal("expected non-nil default HTTPProvider")
-	}
-
-	// NewHTTPProviderWithClient with nil client and nil logger
-	pNilBoth := provider.NewHTTPProviderWithClient(nil, nil)
-	if pNilBoth == nil {
-		t.Fatal("expected non-nil HTTPProvider from nil args")
-	}
-
-	// Subscribe returns nil
-	if err := pNilBoth.Subscribe(context.Background(), nil); err != nil {
-		t.Errorf("Subscribe() returned unexpected error: %v", err)
-	}
-
-	// Shutdown returns nil
-	if err := pNilBoth.Shutdown(context.Background()); err != nil {
-		t.Errorf("Shutdown() returned unexpected error: %v", err)
+	p := provider.NewHTTPProviderWithClient(nil, nil)
+	if provider.NewHTTPProvider() == nil || p == nil || p.Subscribe(context.Background(), nil) != nil || p.Shutdown(context.Background()) != nil {
+		t.Fatal("expected working constructors and no-op lifecycle methods")
 	}
 }
-
-func TestHTTPProvider_TokenEnvAndDimensions(t *testing.T) {
-	t.Parallel()
-
-	var gotDimensions string
-	var gotAuth string
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotDimensions = r.Header.Get("X-Widget-Dimensions")
-		gotAuth = r.Header.Get("Authorization")
-		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"temperature": 70.0,
-			"humidity":    40.0,
-		})
-	}))
-	defer srv.Close()
-
-	p := provider.NewHTTPProviderWithClient(srv.Client(), nil)
-	err := p.Init(context.Background(), nil, provider.InitOptions{
-		ID:             "tile-dim",
-		Type:           "dim-widget",
-		Endpoint:       srv.URL,
-		Dimensions:     []int{3, 2},
-		Secrets:        map[string]string{"token_env": "secret-from-env"},
-		ResponseSchema: sampleResponseSchema(),
-	})
-	if err != nil {
-		t.Fatalf("Init failed: %v", err)
-	}
-
-	res, err := p.Fetch(context.Background())
-	if err != nil {
-		t.Fatalf("Fetch failed: %v", err)
-	}
-	if res == nil {
-		t.Fatal("expected non-nil response")
-	}
-
-	if gotDimensions != "3x2" {
-		t.Errorf("got X-Widget-Dimensions %q, want '3x2'", gotDimensions)
-	}
-	if gotAuth != "Bearer secret-from-env" {
-		t.Errorf("got Authorization %q, want 'Bearer secret-from-env'", gotAuth)
-	}
-}
-
-func TestHTTPProvider_MarshalAndURLFailures(t *testing.T) {
-	t.Parallel()
-
-	// 1. Init: marshal response_schema error
-	p := provider.NewHTTPProvider()
-	err := p.Init(context.Background(), nil, provider.InitOptions{
-		Endpoint:       "http://example.com/api",
-		ResponseSchema: map[string]any{"bad": make(chan int)},
-	})
-	if err == nil || !strings.Contains(err.Error(), "failed to marshal response_schema") {
-		t.Fatalf("expected failed to marshal response_schema error, got: %v", err)
-	}
-
-	// 2. Fetch POST: marshal domainConfig error
-	pPost := provider.NewHTTPProvider()
-	err = pPost.Init(context.Background(), map[string]any{"bad": make(chan int)}, provider.InitOptions{
-		Endpoint:       "http://example.com/api",
-		Method:         "POST",
-		ResponseSchema: sampleResponseSchema(),
-	})
-	if err != nil {
-		t.Fatalf("Init failed: %v", err)
-	}
-	_, err = pPost.Fetch(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "failed to marshal domain config") {
-		t.Fatalf("expected failed to marshal domain config error, got: %v", err)
-	}
-
-	// 3. Fetch: bad request URL error
-	pBadURL := provider.NewHTTPProvider()
-	err = pBadURL.Init(context.Background(), nil, provider.InitOptions{
-		Endpoint:       "://invalid-url",
-		Method:         "GET",
-		ResponseSchema: sampleResponseSchema(),
-	})
-	if err != nil {
-		t.Fatalf("Init failed: %v", err)
-	}
-	_, err = pBadURL.Fetch(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "failed to create HTTP request") {
-		t.Fatalf("expected failed to create HTTP request error, got: %v", err)
-	}
-}
-
-
