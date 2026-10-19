@@ -24,6 +24,15 @@ type SystemReloadEvent struct {
 	Timestamp string `json:"timestamp"`
 }
 
+func (h *Hub) publishJSON(eventType string, payload any) error {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	h.Publish(eventType, data)
+	return nil
+}
+
 // DispatchConfigReload handles configuration updates, layout changes, and domain state resets.
 func (h *Hub) DispatchConfigReload(snapshot *config.Snapshot, diff *config.ConfigDiff) error {
 	if snapshot == nil {
@@ -39,23 +48,8 @@ func (h *Hub) DispatchConfigReload(snapshot *config.Snapshot, diff *config.Confi
 	if rc := h.RotationCoordinator(); rc != nil {
 		rc.UpdateConfig(snapshot)
 	} else if snapshot.Layout != nil && len(snapshot.Layout.Screens) > 0 {
-		var rotateData ScreenRotateData
-		rotateData.CurrentScreen = 0
-		rotateData.TotalScreens = snapshot.Layout.TotalScreens
-		rotateData.IntervalSeconds = snapshot.Config.Display.Rotation.GetIntervalSeconds()
-		rotateData.Widgets = make([]ScreenRotateWidget, 0, len(snapshot.Layout.Screens[0].Widgets))
-
-		for _, pw := range snapshot.Layout.Screens[0].Widgets {
-			rotateData.Widgets = append(rotateData.Widgets, ScreenRotateWidget{
-				WidgetID:   pw.WidgetID,
-				Origin:     pw.Origin,
-				Dimensions: pw.Dimensions,
-			})
-		}
-
-		data, err := json.Marshal(rotateData)
-		if err == nil {
-			h.Publish(EventScreenRotate, data)
+		if err := h.publishJSON(EventScreenRotate, buildScreenRotateFromSnapshot(snapshot)); err != nil {
+			return err
 		}
 	}
 
@@ -78,9 +72,8 @@ func (h *Hub) DispatchConfigReload(snapshot *config.Snapshot, diff *config.Confi
 					State:     "degraded",
 					Data:      map[string]any{},
 				}
-				data, err := json.Marshal(payload)
-				if err == nil {
-					h.Publish(EventWidgetUpdate, data)
+				if err := h.publishJSON(EventWidgetUpdate, payload); err != nil {
+					return err
 				}
 			}
 		}
@@ -97,13 +90,12 @@ func (h *Hub) DispatchConfigReload(snapshot *config.Snapshot, diff *config.Confi
 			if tz == "" {
 				tz = "UTC"
 			}
-			headerBytes, err := json.Marshal(HeaderUpdateData{
+			if err := h.publishJSON(EventHeaderUpdate, HeaderUpdateData{
 				Timestamp: nowStr,
 				Timezone:  tz,
 				Weather:   weather,
-			})
-			if err == nil {
-				h.Publish(EventHeaderUpdate, headerBytes)
+			}); err != nil {
+				return err
 			}
 		}
 
@@ -124,70 +116,24 @@ func (h *Hub) DispatchConfigReload(snapshot *config.Snapshot, diff *config.Confi
 
 // DispatchStyleReload broadcasts style.reload notifications to connected clients.
 func (h *Hub) DispatchStyleReload(event StyleReloadEvent) error {
-	data, err := json.Marshal(event)
-	if err != nil {
-		return err
-	}
-	h.Publish(EventStyleReload, data)
-	return nil
+	return h.publishJSON(EventStyleReload, event)
 }
 
 // DispatchWidgetReload broadcasts widget.reload notifications to connected clients.
 func (h *Hub) DispatchWidgetReload(event WidgetReloadEvent) error {
-	data, err := json.Marshal(event)
-	if err != nil {
-		return err
-	}
-	h.Publish(EventWidgetReload, data)
-	return nil
+	return h.publishJSON(EventWidgetReload, event)
 }
 
 // DispatchSystemReload broadcasts system.reload notifications to connected clients.
 func (h *Hub) DispatchSystemReload(event SystemReloadEvent) error {
-	data, err := json.Marshal(event)
-	if err != nil {
-		return err
-	}
-	h.Publish(EventSystemReload, data)
-	return nil
+	return h.publishJSON(EventSystemReload, event)
 }
 
 // DispatchStatus broadcasts system.status telemetry matching api/schemas/system.status.json.
 func (h *Hub) DispatchStatus(status config.Status) error {
-	// Update in-memory state provider
 	if isp, ok := h.stateProvider.(*InMemoryStateProvider); ok {
 		isp.SetStatus(status)
 	}
-
-	now := h.cfg.NowFunc()
-	nowStr := now.UTC().Format(time.RFC3339)
-
-	configStatus := string(status.ConfigStatus)
-	if configStatus == "" {
-		configStatus = "ok"
-	}
-
-	var providers map[string]string
-	var bootID string
-	if h.stateProvider != nil {
-		providers = h.stateProvider.GetProvidersStatus()
-		bootID = h.stateProvider.BootID()
-	}
-
-	sysStatus := SystemStatusData{
-		Online:       true,
-		Time:         nowStr,
-		ConfigStatus: configStatus,
-		ConfigError:  status.ConfigError,
-		Providers:    providers,
-		BootID:       bootID,
-	}
-
-	data, err := json.Marshal(sysStatus)
-	if err != nil {
-		return err
-	}
-
-	h.Publish(EventSystemStatus, data)
-	return nil
+	nowStr := h.cfg.NowFunc().UTC().Format(time.RFC3339)
+	return h.publishJSON(EventSystemStatus, buildSystemStatusData(h.stateProvider, status, nowStr))
 }

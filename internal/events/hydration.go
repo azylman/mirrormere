@@ -10,14 +10,12 @@ import (
 	"github.com/azylman/mirrormere/internal/domain"
 )
 
-// ScreenRotateWidget defines placed widget layout geometry in screen.rotate events.
 type ScreenRotateWidget struct {
 	WidgetID   string           `json:"widget_id"`
 	Origin     [2]int           `json:"origin"`
 	Dimensions domain.Dimension `json:"dimensions"`
 }
 
-// ScreenRotateData matches .C.
 type ScreenRotateData struct {
 	CurrentScreen   int                  `json:"current_screen"`
 	TotalScreens    int                  `json:"total_screens"`
@@ -25,7 +23,6 @@ type ScreenRotateData struct {
 	Widgets         []ScreenRotateWidget `json:"widgets"`
 }
 
-// WidgetUpdateData matches .A.
 type WidgetUpdateData struct {
 	WidgetID  string `json:"widget_id"`
 	Timestamp string `json:"timestamp"`
@@ -33,7 +30,6 @@ type WidgetUpdateData struct {
 	Data      any    `json:"data"`
 }
 
-// HeaderWeather matches .B and .
 type HeaderWeather struct {
 	Temperature float64 `json:"temperature"`
 	Units       string  `json:"units"`
@@ -43,27 +39,23 @@ type HeaderWeather struct {
 	Location    string  `json:"location,omitempty"`
 }
 
-// HeaderUpdateData matches .B and .
 type HeaderUpdateData struct {
 	Timestamp string         `json:"timestamp"`
 	Timezone  string         `json:"timezone"`
 	Weather   *HeaderWeather `json:"weather,omitempty"`
 }
 
-// VideoStateData matches .E.
 type VideoStateData struct {
 	Mode    string `json:"mode"`
 	Primary any    `json:"primary"`
 	Pip     any    `json:"pip"`
 }
 
-// AudioStateData matches .F.
 type AudioStateData struct {
 	Volume int  `json:"volume"`
 	Muted  bool `json:"muted"`
 }
 
-// VoiceStateData matches .G.
 type VoiceStateData struct {
 	State      string  `json:"state"`
 	Transcript *string `json:"transcript"`
@@ -72,12 +64,10 @@ type VoiceStateData struct {
 	Status     *string `json:"status"`
 }
 
-// ThemeUpdateData matches theme.update event payload.
 type ThemeUpdateData struct {
 	Theme string `json:"theme"`
 }
 
-// SystemStatusData matches api/schemas/system.status.json and .D.
 type SystemStatusData struct {
 	Online       bool              `json:"online"`
 	Time         string            `json:"time"`
@@ -87,7 +77,6 @@ type SystemStatusData struct {
 	BootID       string            `json:"boot_id,omitempty"`
 }
 
-// StateProvider supplies active subsystem snapshots for initial connection hydration.
 type StateProvider interface {
 	CurrentSnapshot() *config.Snapshot
 	CurrentStatus() config.Status
@@ -108,7 +97,6 @@ type widgetStateEntry struct {
 	timestamp string
 }
 
-// InMemoryStateProvider maintains thread-safe cached state across subsystems.
 type InMemoryStateProvider struct {
 	mu           sync.RWMutex
 	mgr          *config.Manager
@@ -125,7 +113,6 @@ type InMemoryStateProvider struct {
 	bootID       string
 }
 
-// NewInMemoryStateProvider constructs an InMemoryStateProvider.
 func NewInMemoryStateProvider(mgr *config.Manager) *InMemoryStateProvider {
 	return &InMemoryStateProvider{
 		mgr:          mgr,
@@ -133,32 +120,13 @@ func NewInMemoryStateProvider(mgr *config.Manager) *InMemoryStateProvider {
 		widgetStates: make(map[string]widgetStateEntry),
 		providers:    make(map[string]string),
 		theme:        "day",
-		videoState: &VideoStateData{
-			Mode:    "widgets",
-			Primary: nil,
-			Pip:     nil,
-		},
-		audioState: &AudioStateData{
-			Volume: 75,
-			Muted:  false,
-		},
-		voiceState: &VoiceStateData{
-			State:      "idle",
-			Transcript: nil,
-			Reply:      nil,
-			TTSEngine:  nil,
-		},
+		videoState:   &VideoStateData{Mode: "widgets"},
+		audioState:   &AudioStateData{Volume: 75},
+		voiceState:   &VoiceStateData{State: "idle"},
 	}
 }
 
-// SetSnapshot updates the cached snapshot (used when config manager is not provided).
-func (p *InMemoryStateProvider) SetSnapshot(snap *config.Snapshot) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.snapshot = snap
-}
-
-// CurrentSnapshot returns the active configuration snapshot.
+func (p *InMemoryStateProvider) SetSnapshot(snap *config.Snapshot) { p.mu.Lock(); defer p.mu.Unlock(); p.snapshot = snap }
 func (p *InMemoryStateProvider) CurrentSnapshot() *config.Snapshot {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
@@ -168,14 +136,7 @@ func (p *InMemoryStateProvider) CurrentSnapshot() *config.Snapshot {
 	return p.snapshot
 }
 
-// SetStatus updates the cached status.
-func (p *InMemoryStateProvider) SetStatus(status config.Status) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.status = &status
-}
-
-// CurrentStatus returns the latest system status.
+func (p *InMemoryStateProvider) SetStatus(status config.Status) { p.mu.Lock(); defer p.mu.Unlock(); p.status = &status }
 func (p *InMemoryStateProvider) CurrentStatus() config.Status {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
@@ -185,13 +146,9 @@ func (p *InMemoryStateProvider) CurrentStatus() config.Status {
 	if p.status != nil {
 		return *p.status
 	}
-	return config.Status{
-		ConfigStatus: config.ConfigStatusOK,
-	}
+	return config.Status{ConfigStatus: config.ConfigStatusOK}
 }
 
-// SetWidgetState stores the latest state and domain data for a widget instance.
-// Optional timestamp parameter preserves the last successful fetch timestamp for degraded widgets.
 func (p *InMemoryStateProvider) SetWidgetState(widgetID string, data any, state string, timestamp ...string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -202,7 +159,6 @@ func (p *InMemoryStateProvider) SetWidgetState(widgetID string, data any, state 
 	p.widgetStates[widgetID] = widgetStateEntry{data: data, state: state, timestamp: ts}
 }
 
-// GetWidgetState returns cached state, domain data, and timestamp for a widget instance.
 func (p *InMemoryStateProvider) GetWidgetState(widgetID string) (any, string, string, bool) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
@@ -213,7 +169,6 @@ func (p *InMemoryStateProvider) GetWidgetState(widgetID string) (any, string, st
 	return entry.data, entry.state, entry.timestamp, true
 }
 
-// GetWidgetTimestamp returns the recorded timestamp for a widget instance.
 func (p *InMemoryStateProvider) GetWidgetTimestamp(widgetID string) (string, bool) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
@@ -224,99 +179,54 @@ func (p *InMemoryStateProvider) GetWidgetTimestamp(widgetID string) (string, boo
 	return entry.timestamp, true
 }
 
-// SetHeaderWeather updates the ambient header weather.
-func (p *InMemoryStateProvider) SetHeaderWeather(weather *HeaderWeather) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.weather = weather
-}
-
-// GetHeaderWeather returns the ambient header weather.
+func (p *InMemoryStateProvider) SetHeaderWeather(weather *HeaderWeather) { p.mu.Lock(); defer p.mu.Unlock(); p.weather = weather }
 func (p *InMemoryStateProvider) GetHeaderWeather() (*HeaderWeather, bool) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
-	if p.weather == nil {
-		return nil, false
-	}
-	return p.weather, true
+	return p.weather, p.weather != nil
 }
 
-// SetVideoState updates video presentation state.
-func (p *InMemoryStateProvider) SetVideoState(state *VideoStateData) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.videoState = state
-}
-
-// GetVideoState returns video presentation state.
+func (p *InMemoryStateProvider) SetVideoState(state *VideoStateData) { p.mu.Lock(); defer p.mu.Unlock(); p.videoState = state }
 func (p *InMemoryStateProvider) GetVideoState() *VideoStateData {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
-	if p.videoState == nil {
-		return &VideoStateData{Mode: "widgets", Primary: nil, Pip: nil}
+	if p.videoState != nil {
+		return p.videoState
 	}
-	return p.videoState
+	return &VideoStateData{Mode: "widgets"}
 }
 
-// SetAudioState updates audio volume and mute state.
-func (p *InMemoryStateProvider) SetAudioState(state *AudioStateData) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.audioState = state
-}
-
-// GetAudioState returns audio state.
+func (p *InMemoryStateProvider) SetAudioState(state *AudioStateData) { p.mu.Lock(); defer p.mu.Unlock(); p.audioState = state }
 func (p *InMemoryStateProvider) GetAudioState() *AudioStateData {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
-	if p.audioState == nil {
-		return &AudioStateData{Volume: 75, Muted: false}
+	if p.audioState != nil {
+		return p.audioState
 	}
-	return p.audioState
+	return &AudioStateData{Volume: 75}
 }
 
-// SetVoiceState updates voice pipeline state.
-func (p *InMemoryStateProvider) SetVoiceState(state *VoiceStateData) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.voiceState = state
-}
-
-// GetVoiceState returns voice pipeline state.
+func (p *InMemoryStateProvider) SetVoiceState(state *VoiceStateData) { p.mu.Lock(); defer p.mu.Unlock(); p.voiceState = state }
 func (p *InMemoryStateProvider) GetVoiceState() *VoiceStateData {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
-	if p.voiceState == nil {
-		return &VoiceStateData{State: "idle"}
+	if p.voiceState != nil {
+		return p.voiceState
 	}
-	return p.voiceState
+	return &VoiceStateData{State: "idle"}
 }
 
-// SetTheme updates the active theme ("day" or "night").
-func (p *InMemoryStateProvider) SetTheme(theme string) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.theme = theme
-}
-
-// GetTheme returns the active theme ("day" or "night").
+func (p *InMemoryStateProvider) SetTheme(theme string) { p.mu.Lock(); defer p.mu.Unlock(); p.theme = theme }
 func (p *InMemoryStateProvider) GetTheme() string {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
-	if p.theme == "" {
-		return "day"
+	if p.theme != "" {
+		return p.theme
 	}
-	return p.theme
+	return "day"
 }
 
-// SetProvidersStatus updates the operational status summary map for providers.
-func (p *InMemoryStateProvider) SetProvidersStatus(providers map[string]string) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.providers = providers
-}
-
-// GetProvidersStatus returns a copy of the operational status summary map for providers.
+func (p *InMemoryStateProvider) SetProvidersStatus(providers map[string]string) { p.mu.Lock(); defer p.mu.Unlock(); p.providers = providers }
 func (p *InMemoryStateProvider) GetProvidersStatus() map[string]string {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
@@ -330,14 +240,7 @@ func (p *InMemoryStateProvider) GetProvidersStatus() map[string]string {
 	return copied
 }
 
-// SetScreenRotateData updates the cached screen rotation data.
-func (p *InMemoryStateProvider) SetScreenRotateData(data *ScreenRotateData) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.screenRotate = data
-}
-
-// GetScreenRotateData returns the active screen rotation data if set.
+func (p *InMemoryStateProvider) SetScreenRotateData(data *ScreenRotateData) { p.mu.Lock(); defer p.mu.Unlock(); p.screenRotate = data }
 func (p *InMemoryStateProvider) GetScreenRotateData() *ScreenRotateData {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
@@ -348,219 +251,44 @@ func (p *InMemoryStateProvider) GetScreenRotateData() *ScreenRotateData {
 	return &cp
 }
 
-// BootID returns the unique process startup identifier.
-func (p *InMemoryStateProvider) BootID() string {
-	return p.bootID
+func (p *InMemoryStateProvider) BootID() string { return p.bootID }
+
+func appendHydrationEvent(events []*Event, idGen *IDGenerator, now time.Time, eventType string, payload any) []*Event {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return events
+	}
+	return append(events, &Event{ID: idGen.Next(now), Type: eventType, Data: data, Timestamp: now})
 }
 
-// BuildHydrationBatch constructs the authoritative 7-step initial state hydration batch
-// matching the exact sequence mandated by .
-func BuildHydrationBatch(provider StateProvider, idGen *IDGenerator, now time.Time) []*Event {
-	events := make([]*Event, 0, 8)
-	nowStr := now.UTC().Format(time.RFC3339)
+func buildScreenRotateFromSnapshot(snap *config.Snapshot) ScreenRotateData {
+	rd := ScreenRotateData{TotalScreens: 1, IntervalSeconds: 30, Widgets: []ScreenRotateWidget{}}
+	if snap == nil || snap.Config == nil {
+		return rd
+	}
+	rd.IntervalSeconds = snap.Config.Display.Rotation.GetIntervalSeconds()
+	if snap.Layout == nil || len(snap.Layout.Screens) == 0 {
+		return rd
+	}
+	rd.TotalScreens = snap.Layout.TotalScreens
+	for _, pw := range snap.Layout.Screens[0].Widgets {
+		rd.Widgets = append(rd.Widgets, ScreenRotateWidget{WidgetID: pw.WidgetID, Origin: pw.Origin, Dimensions: pw.Dimensions})
+	}
+	return rd
+}
 
-	var snap *config.Snapshot
-	if provider != nil {
-		snap = provider.CurrentSnapshot()
-	}
-
-	// 1. Current Screen Configuration (screen.rotate)
-	var rotateData ScreenRotateData
-	var haveRotateData bool
-	if provider != nil {
-		if rd := provider.GetScreenRotateData(); rd != nil {
-			rotateData = *rd
-			haveRotateData = true
-		}
-	}
-
-	if !haveRotateData {
-		rotateData.CurrentScreen = 0
-		rotateData.TotalScreens = 1
-		rotateData.IntervalSeconds = 30
-		rotateData.Widgets = []ScreenRotateWidget{}
-
-		if snap != nil && snap.Config != nil {
-			rotateData.IntervalSeconds = snap.Config.Display.Rotation.GetIntervalSeconds()
-			if snap.Layout != nil {
-				rotateData.TotalScreens = snap.Layout.TotalScreens
-				if len(snap.Layout.Screens) > 0 {
-					activeScreen := snap.Layout.Screens[0]
-					for _, pw := range activeScreen.Widgets {
-						rotateData.Widgets = append(rotateData.Widgets, ScreenRotateWidget{
-							WidgetID:   pw.WidgetID,
-							Origin:     pw.Origin,
-							Dimensions: pw.Dimensions,
-						})
-					}
-				}
-			}
-		}
-	}
-	rotateBytes, err := json.Marshal(rotateData)
-	if err == nil {
-		events = append(events, &Event{
-			ID:        idGen.Next(now),
-			Type:      EventScreenRotate,
-			Data:      rotateBytes,
-			Timestamp: now,
-		})
-	}
-
-	// 2. Full Widget State Hydration (widget.update batch across all configured widgets)
-	if snap != nil && snap.Config != nil && len(snap.Config.Display.Widgets) > 0 {
-		for _, w := range snap.Config.Display.Widgets {
-			var wData any = map[string]any{}
-			wState := "healthy"
-			wTimestamp := nowStr
-			if provider != nil {
-				if d, s, ts, ok := provider.GetWidgetState(w.ID); ok {
-					if d != nil {
-						wData = d
-					}
-					if s != "" {
-						wState = s
-					}
-					if ts != "" {
-						wTimestamp = ts
-					}
-				}
-				if tsProvider, ok := provider.(interface{ GetWidgetTimestamp(string) (string, bool) }); ok {
-					if ts, ok := tsProvider.GetWidgetTimestamp(w.ID); ok && ts != "" {
-						wTimestamp = ts
-					}
-				}
-			}
-
-			payload := WidgetUpdateData{
-				WidgetID:  w.ID,
-				Timestamp: wTimestamp,
-				State:     wState,
-				Data:      wData,
-			}
-			pBytes, err := json.Marshal(payload)
-			if err == nil {
-				events = append(events, &Event{
-					ID:        idGen.Next(now),
-					Type:      EventWidgetUpdate,
-					Data:      pBytes,
-					Timestamp: now,
-				})
-			}
-		}
-	}
-
-	// 3. Fixed Header Ambient Weather (header.update)
-	var weather *HeaderWeather
-	if provider != nil {
-		if w, ok := provider.GetHeaderWeather(); ok {
-			weather = w
-		}
-	}
-	tz := "UTC"
-	if provider != nil {
-		if snap := provider.CurrentSnapshot(); snap != nil && snap.Config != nil && snap.Config.Timezone != "" {
-			tz = snap.Config.Timezone
-		}
-	}
-	headerBytes, err := json.Marshal(HeaderUpdateData{
-		Timestamp: nowStr,
-		Timezone:  tz,
-		Weather:   weather,
-	})
-	if err == nil {
-		events = append(events, &Event{
-			ID:        idGen.Next(now),
-			Type:      EventHeaderUpdate,
-			Data:      headerBytes,
-			Timestamp: now,
-		})
-	}
-
-	// 4. Active Video Pipeline State (video.state)
-	var videoState *VideoStateData
-	if provider != nil {
-		videoState = provider.GetVideoState()
-	}
-	if videoState == nil {
-		videoState = &VideoStateData{
-			Mode:    "widgets",
-			Primary: nil,
-			Pip:     nil,
-		}
-	}
-	videoBytes, err := json.Marshal(videoState)
-	if err == nil {
-		events = append(events, &Event{
-			ID:        idGen.Next(now),
-			Type:      EventVideoState,
-			Data:      videoBytes,
-			Timestamp: now,
-		})
-	}
-
-	// 5. Active Audio State (audio.state)
-	var audioState *AudioStateData
-	if provider != nil {
-		audioState = provider.GetAudioState()
-	}
-	if audioState == nil {
-		audioState = &AudioStateData{
-			Volume: 75,
-			Muted:  false,
-		}
-	}
-	audioBytes, err := json.Marshal(audioState)
-	if err == nil {
-		events = append(events, &Event{
-			ID:        idGen.Next(now),
-			Type:      EventAudioState,
-			Data:      audioBytes,
-			Timestamp: now,
-		})
-	}
-
-	// 6. Active Voice Pipeline State (voice.state)
-	var voiceState *VoiceStateData
-	if provider != nil {
-		voiceState = provider.GetVoiceState()
-	}
-	if voiceState == nil {
-		voiceState = &VoiceStateData{
-			State: "idle",
-		}
-	}
-	voiceBytes, err := json.Marshal(voiceState)
-	if err == nil {
-		events = append(events, &Event{
-			ID:        idGen.Next(now),
-			Type:      EventVoiceState,
-			Data:      voiceBytes,
-			Timestamp: now,
-		})
-	}
-
-	// 7. System Health Status (system.status)
-	var status config.Status
-	if provider != nil {
-		status = provider.CurrentStatus()
-	} else {
-		status = config.Status{ConfigStatus: config.ConfigStatusOK}
-	}
-
+func buildSystemStatusData(provider StateProvider, status config.Status, nowStr string) SystemStatusData {
 	configStatus := string(status.ConfigStatus)
 	if configStatus == "" {
 		configStatus = "ok"
 	}
-
 	var providers map[string]string
 	var bootID string
 	if provider != nil {
 		providers = provider.GetProvidersStatus()
 		bootID = provider.BootID()
 	}
-
-	sysStatus := SystemStatusData{
+	return SystemStatusData{
 		Online:       true,
 		Time:         nowStr,
 		ConfigStatus: configStatus,
@@ -568,32 +296,82 @@ func BuildHydrationBatch(provider StateProvider, idGen *IDGenerator, now time.Ti
 		Providers:    providers,
 		BootID:       bootID,
 	}
-	statusBytes, err := json.Marshal(sysStatus)
-	if err == nil {
-		events = append(events, &Event{
-			ID:        idGen.Next(now),
-			Type:      EventSystemStatus,
-			Data:      statusBytes,
-			Timestamp: now,
-		})
+}
+
+func BuildHydrationBatch(provider StateProvider, idGen *IDGenerator, now time.Time) []*Event {
+	events := make([]*Event, 0, 8)
+	nowStr := now.UTC().Format(time.RFC3339)
+	var snap *config.Snapshot
+	if provider != nil {
+		snap = provider.CurrentSnapshot()
 	}
 
-	// 8. Active Theme (theme.update)
+	rotateData := buildScreenRotateFromSnapshot(snap)
+	if provider != nil {
+		if rd := provider.GetScreenRotateData(); rd != nil {
+			rotateData = *rd
+		}
+	}
+	events = appendHydrationEvent(events, idGen, now, EventScreenRotate, rotateData)
+
+	if snap != nil && snap.Config != nil {
+		for _, w := range snap.Config.Display.Widgets {
+			payload := WidgetUpdateData{WidgetID: w.ID, Timestamp: nowStr, State: "healthy", Data: map[string]any{}}
+			if provider != nil {
+				if d, s, ts, ok := provider.GetWidgetState(w.ID); ok {
+					if d != nil {
+						payload.Data = d
+					}
+					if s != "" {
+						payload.State = s
+					}
+					if ts != "" {
+						payload.Timestamp = ts
+					}
+				}
+				if tsP, ok := provider.(interface{ GetWidgetTimestamp(string) (string, bool) }); ok {
+					if ts, ok := tsP.GetWidgetTimestamp(w.ID); ok && ts != "" {
+						payload.Timestamp = ts
+					}
+				}
+			}
+			events = appendHydrationEvent(events, idGen, now, EventWidgetUpdate, payload)
+		}
+	}
+
+	var weather *HeaderWeather
+	tz := "UTC"
+	vid := &VideoStateData{Mode: "widgets"}
+	aud := &AudioStateData{Volume: 75}
+	vc := &VoiceStateData{State: "idle"}
+	var status config.Status
 	theme := "day"
 	if provider != nil {
+		if w, ok := provider.GetHeaderWeather(); ok {
+			weather = w
+		}
+		if snap != nil && snap.Config != nil && snap.Config.Timezone != "" {
+			tz = snap.Config.Timezone
+		}
+		if v := provider.GetVideoState(); v != nil {
+			vid = v
+		}
+		if a := provider.GetAudioState(); a != nil {
+			aud = a
+		}
+		if v := provider.GetVoiceState(); v != nil {
+			vc = v
+		}
 		if t := provider.GetTheme(); t != "" {
 			theme = t
 		}
+		status = provider.CurrentStatus()
 	}
-	themeBytes, err := json.Marshal(ThemeUpdateData{Theme: theme})
-	if err == nil {
-		events = append(events, &Event{
-			ID:        idGen.Next(now),
-			Type:      EventThemeUpdate,
-			Data:      themeBytes,
-			Timestamp: now,
-		})
-	}
-
+	events = appendHydrationEvent(events, idGen, now, EventHeaderUpdate, HeaderUpdateData{Timestamp: nowStr, Timezone: tz, Weather: weather})
+	events = appendHydrationEvent(events, idGen, now, EventVideoState, vid)
+	events = appendHydrationEvent(events, idGen, now, EventAudioState, aud)
+	events = appendHydrationEvent(events, idGen, now, EventVoiceState, vc)
+	events = appendHydrationEvent(events, idGen, now, EventSystemStatus, buildSystemStatusData(provider, status, nowStr))
+	events = appendHydrationEvent(events, idGen, now, EventThemeUpdate, ThemeUpdateData{Theme: theme})
 	return events
 }
