@@ -340,10 +340,6 @@ func TestEngine_CacheAndInvalidation(t *testing.T) {
 	if out3, err := engine.RenderWidget(context.Background(), "instance-1"); err != nil || !strings.Contains(string(out3), "v2: instance-1") {
 		t.Errorf("expected updated v2 output after Invalidate, got err=%v, out=%s", err, out3)
 	}
-	engine.InvalidateAll()
-	if out4, err := engine.RenderWidget(context.Background(), "instance-1"); err != nil || !strings.Contains(string(out4), "v2: instance-1") {
-		t.Errorf("expected v2 output after InvalidateAll, got err=%v, out=%s", err, out4)
-	}
 }
 
 func TestSanitizeConfig(t *testing.T) {

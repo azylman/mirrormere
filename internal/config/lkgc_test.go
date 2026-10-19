@@ -141,7 +141,7 @@ func TestLKGC_ManagerLifecycleAndStatus(t *testing.T) {
 		t.Fatalf("expected initial validation error, got %v", err)
 	}
 	var emptyManager config.Manager
-	if emptyManager.Current() != nil || emptyManager.CurrentLayout() != nil || emptyManager.Status().ConfigStatus != config.ConfigStatusOK {
+	if emptyManager.Current() != nil || emptyManager.CurrentSnapshot() != nil || emptyManager.Status().ConfigStatus != config.ConfigStatusOK {
 		t.Errorf("expected zero-value manager defaults")
 	}
 	if _, err := config.ValidatePipeline([]byte(validBaseYAML), nil, nil); err == nil || !strings.Contains(err.Error(), "package loader cannot be nil") {
@@ -152,7 +152,7 @@ func TestLKGC_ManagerLifecycleAndStatus(t *testing.T) {
 	}
 
 	m, err := config.NewManager([]byte(validBaseYAML), loader, nil, nil)
-	if err != nil || m.Current() == nil || m.CurrentLayout() == nil || m.CurrentSnapshot() == nil {
+	if err != nil || m.Current() == nil || m.CurrentSnapshot() == nil {
 		t.Fatalf("cold boot failed: %v", err)
 	}
 
@@ -203,10 +203,8 @@ func TestLKGC_ManagerLifecycleAndStatus(t *testing.T) {
 	m.SetPackageError("pkg-c", fmt.Errorf("pkg-c error"))
 	m.ClearPackageError("pkg-c")
 	checkStatus(config.ConfigStatusError, "file read error")
-	m.ClearErrorStatus()
-	checkStatus(config.ConfigStatusOK, "")
 	m.SetErrorStatus(nil)
-	checkStatus(config.ConfigStatusOK, "")
+	checkStatus(config.ConfigStatusError, "file read error")
 
 	m.SetPackageError("orphan-widget", fmt.Errorf("views/widget.html missing"))
 	checkStatus(config.ConfigStatusError, "")
@@ -405,7 +403,7 @@ func TestLKGC_ConcurrencyAndRace(t *testing.T) {
 				case <-stopChan:
 					return
 				default:
-					if m.Current() == nil || m.CurrentLayout() == nil {
+					if m.Current() == nil || m.CurrentSnapshot() == nil {
 						t.Errorf("nil snapshot accessor during concurrent read")
 					}
 					if st := m.Status(); st.ConfigStatus != config.ConfigStatusOK && st.ConfigStatus != config.ConfigStatusError {

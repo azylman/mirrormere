@@ -168,7 +168,6 @@ func TestProviderCoordinator_HeaderWeatherPoller_Lifecycle(t *testing.T) {
 	coord := provider.NewCoordinator(provider.CoordinatorConfig{
 		Broadcaster: broadcaster, HeaderWeatherSink: sink, HeaderPollerClient: ts.Client(), HeaderPollerBaseURL: ts.URL,
 	}, snap)
-	if coord.HeaderPoller() == nil { t.Fatal("expected non-nil HeaderPoller on coordinator") }
 	if _, ok := broadcaster.waitForPublish(2 * time.Second); !ok { t.Fatal("waitForPublish timed out") }
 	if saved := sink.GetWeather(); saved == nil || saved.Temperature != 72.4 { t.Errorf("expected initial header weather in sink, got %+v", saved) }
 

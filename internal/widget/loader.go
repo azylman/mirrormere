@@ -41,54 +41,6 @@ func NewLoader(builtinDir, customDir string) *Loader {
 	return &Loader{builtinDir: builtinDir, customDir: customDir}
 }
 
-// DefaultLoader constructs a Loader with standard production paths.
-func DefaultLoader() *Loader { return NewLoader(DefaultBuiltinDir, DefaultCustomDir) }
-
-// Discover scans both custom and built-in widget directories and returns the resolved package registry.
-func (l *Loader) Discover() (map[string]*domain.Package, error) {
-	registry := make(map[string]*domain.Package)
-	if err := l.scanDir(l.customDir, "custom", registry); err != nil {
-		return nil, err
-	}
-	if err := l.scanDir(l.builtinDir, "builtin", registry); err != nil {
-		return nil, err
-	}
-	for alias, target := range legacyAliases {
-		if targetPkg, ok := registry[target]; ok {
-			if _, exists := registry[alias]; !exists {
-				registry[alias] = targetPkg
-			}
-		}
-	}
-	return registry, nil
-}
-
-func (l *Loader) scanDir(baseDir, source string, registry map[string]*domain.Package) error {
-	entries, err := os.ReadDir(baseDir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return fmt.Errorf("failed to read widget directory %q: %w", baseDir, err)
-	}
-
-	for _, entry := range entries {
-		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
-			continue
-		}
-		widgetType := entry.Name()
-		if _, exists := registry[widgetType]; exists {
-			continue
-		}
-		pkg, err := l.loadPackageFromDir(filepath.Join(baseDir, widgetType), widgetType, source)
-		if err != nil {
-			return err
-		}
-		registry[widgetType] = pkg
-	}
-	return nil
-}
-
 // LoadPackage resolves a single widget package by type, adhering to whole-package precedence.
 func (l *Loader) LoadPackage(widgetType string) (*domain.Package, error) {
 	if strings.HasPrefix(widgetType, ".") {

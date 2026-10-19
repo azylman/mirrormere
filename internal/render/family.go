@@ -93,37 +93,6 @@ type FamilyDayEvent struct {
 	IsLinked    bool    `json:"is_linked"`
 }
 
-// FamilyDayColumn represents a single member column (or shared column) in the day view.
-type FamilyDayColumn struct {
-	Name        string           `json:"name"`
-	Initial     string           `json:"initial"`
-	Color       string           `json:"color"`
-	TextColor   string           `json:"text_color"`
-	Pattern     string           `json:"pattern"`
-	IsShared    bool             `json:"is_shared"`
-	Events      []FamilyDayEvent `json:"events"`
-	EarlyEvents []FamilyDayEvent `json:"early_events"`
-	LateEvents  []FamilyDayEvent `json:"late_events"`
-}
-
-// FamilyDayViewModel is the fully resolved server-side view model consumed by the calendar-family
-// day view template.
-type FamilyDayViewModel struct {
-	Date            string            `json:"date"`
-	WeekdayAbbr     string            `json:"weekday_abbr"`
-	DayOfMonth      int               `json:"day_of_month"`
-	IsToday         bool              `json:"is_today"`
-	IsWeekend       bool              `json:"is_weekend"`
-	HoursStart      string            `json:"hours_start"`
-	HoursEnd        string            `json:"hours_end"`
-	HourMarkers     []string          `json:"hour_markers"`
-	TimelineMarkers []TimelineMarker  `json:"timeline_markers,omitempty"`
-	Members         []FamilyMember    `json:"members"`
-	Columns         []FamilyDayColumn `json:"columns"`
-	AllDayEvents    []FamilyDayEvent  `json:"all_day_events"`
-	SharedColor     string            `json:"shared_color"`
-}
-
 // TimelineMarker represents a resolved time marker with normalized canvas positioning.
 type TimelineMarker struct {
 	Label   string  `json:"label"`
@@ -147,7 +116,6 @@ type HoursBand struct {
 const (
 	defaultSharedColor = "#3D405B"
 	maxFamilyMembers   = 8
-	defaultLinkGlyph   = "🔗"
 )
 
 // familyCalendarSource mirrors the subset of the calendar-family config_schema `calendars[]`
@@ -674,13 +642,6 @@ func maxVisibleTimedRows(dims domain.Dimension) int {
 	return 3
 }
 
-func maxMemberColumns(dims domain.Dimension) int {
-	if dims.Cols >= 6 {
-		return 8
-	}
-	return 3
-}
-
 func stringOr(cfg map[string]any, key, fallback string) string {
 	if cfg == nil {
 		return fallback
@@ -868,15 +829,6 @@ func parseExplicitHoursBand(cfg map[string]any) (HoursBand, bool) {
 	}
 
 	return newHoursBand(hStart, mStart, hEnd, mEnd), true
-}
-
-// ParseHoursBand parses the `hours` array from config, validating that start < end.
-// Defaults to 07:00–21:00 if absent, invalid, or inverted.
-func ParseHoursBand(cfg map[string]any) HoursBand {
-	if band, ok := parseExplicitHoursBand(cfg); ok {
-		return band
-	}
-	return defaultHoursBand()
 }
 
 func defaultHoursBand() HoursBand {
@@ -1110,227 +1062,6 @@ func truncateString(s string, maxRunes int) string {
 	return s
 }
 
-// BuildFamilyDayView resolves the calendar-agenda provider's CalendarSnapshot payload plus the
-// calendar-family widget instance config into the single-day view model.
-func BuildFamilyDayView(data any, cfg map[string]any, dims domain.Dimension, now time.Time) (*FamilyDayViewModel, error) {
-	members, err := parseFamilyMembers(cfg)
-	if err != nil {
-		return nil, err
-	}
-	calendars := parseFamilyCalendarSources(cfg)
-	sharedColor := stringOr(cfg, "shared_color", defaultSharedColor)
-	hours := ParseHoursBand(cfg)
-
-	loc := now.Location()
-	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
-	if dateStr, ok := cfg["date"].(string); ok && strings.TrimSpace(dateStr) != "" {
-		if t, err := time.ParseInLocation("2006-01-02", strings.TrimSpace(dateStr), loc); err == nil {
-			today = t
-		}
-	}
-
-	snapshot := extractCalendarSnapshot(data)
-	dayDateStr := today.Format("2006-01-02")
-	dayStart := today
-	dayEnd := today.AddDate(0, 0, 1)
-
-	maxCols := maxMemberColumns(dims)
-	activeCount := len(members)
-	if activeCount > maxCols {
-		activeCount = maxCols
-	}
-
-	activeMembers := members[:activeCount]
-	collapsedMembers := members[activeCount:]
-
-	columns := make([]FamilyDayColumn, len(activeMembers))
-	memberColMap := make(map[string]int, len(activeMembers))
-	for i, m := range activeMembers {
-		columns[i] = FamilyDayColumn{
-			Name:        m.Name,
-			Initial:     m.Initial,
-			Color:       m.Color,
-			TextColor:   m.TextColor,
-			Pattern:     m.Pattern,
-			IsShared:    false,
-			Events:      make([]FamilyDayEvent, 0),
-			EarlyEvents: make([]FamilyDayEvent, 0),
-			LateEvents:  make([]FamilyDayEvent, 0),
-		}
-		memberColMap[m.Name] = i
-	}
-
-	collapsedMemberMap := make(map[string]bool, len(collapsedMembers))
-	for _, m := range collapsedMembers {
-		collapsedMemberMap[m.Name] = true
-	}
-
-	sharedCol := FamilyDayColumn{
-		Name:        "Shared",
-		Initial:     "S",
-		Color:       sharedColor,
-		TextColor:   contrastTextColor(sharedColor),
-		Pattern:     "solid",
-		IsShared:    true,
-		Events:      make([]FamilyDayEvent, 0),
-		EarlyEvents: make([]FamilyDayEvent, 0),
-		LateEvents:  make([]FamilyDayEvent, 0),
-	}
-
-	var allDayEvents []FamilyDayEvent
-
-	mergedData := mergeFamilyEvents(
-		snapshot.Events,
-		members,
-		calendars,
-		sharedColor,
-		loc,
-		func(ev provider.CalendarEvent) []string {
-			if ev.AllDay {
-				for _, d := range familyDateRange(ev.Start, ev.End) {
-					if d == dayDateStr {
-						return []string{dayDateStr}
-					}
-				}
-				return nil
-			}
-			tStart, ok1 := parseFamilyTime(ev.Start)
-			if !ok1 {
-				return nil
-			}
-			tEnd, ok2 := parseFamilyTime(ev.End)
-			tStartLoc := tStart.In(loc)
-			tEndLoc := tStartLoc.Add(30 * time.Minute)
-			if ok2 {
-				tEndLoc = tEnd.In(loc)
-			}
-			if tStartLoc.Before(dayEnd) && tEndLoc.After(dayStart) {
-				return []string{dayDateStr}
-			}
-			return nil
-		},
-	)
-
-	for _, id := range mergedData.order {
-		fe := mergedData.events[id]
-		rawEv := mergedData.rawEvents[id]
-		if fe.AllDay {
-			dayEv := FamilyDayEvent{
-				FamilyEvent: *fe,
-				ColSpan:     1,
-			}
-			allDayEvents = append(allDayEvents, dayEv)
-			continue
-		}
-
-		tStart, _ := parseFamilyTime(rawEv.Start)
-		tEnd, okEnd := parseFamilyTime(rawEv.End)
-		tStartLoc := tStart.In(loc)
-		tEndLoc := tStartLoc.Add(30 * time.Minute)
-		if okEnd {
-			tEndLoc = tEnd.In(loc)
-		}
-		topPct, heightPct, isEarly, isLate := ComputeDayEventPosition(tStartLoc, tEndLoc, today, hours)
-		dayEv := FamilyDayEvent{
-			FamilyEvent: *fe,
-			TopPct:      topPct,
-			HeightPct:   heightPct,
-			IsEarlyEdge: isEarly,
-			IsLateEdge:  isLate,
-			ColSpan:     1,
-		}
-
-		if len(fe.Owners) == 0 {
-			dispatchDayEvent(&sharedCol, dayEv)
-			continue
-		}
-
-		var activeCols []int
-		var hasCollapsed bool
-		for _, ownerName := range fe.Owners {
-			if colIdx, ok := memberColMap[ownerName]; ok {
-				activeCols = append(activeCols, colIdx)
-			} else if collapsedMemberMap[ownerName] {
-				hasCollapsed = true
-			}
-		}
-
-		if len(activeCols) == 0 {
-			// All claiming members are collapsed into the Shared column
-			dispatchDayEvent(&sharedCol, dayEv)
-			continue
-		}
-
-		if !hasCollapsed {
-			if len(activeCols) == 1 {
-				dispatchDayEvent(&columns[activeCols[0]], dayEv)
-				continue
-			}
-
-			// Check if active columns are contiguous/adjacent
-			isAdjacent := (activeCols[len(activeCols)-1] - activeCols[0]) == (len(activeCols) - 1)
-			if isAdjacent {
-				dayEv.ColSpan = len(activeCols)
-				dispatchDayEvent(&columns[activeCols[0]], dayEv)
-				continue
-			}
-		}
-
-		// Non-adjacent columns or mixed active and collapsed members:
-		// Duplicate event block into each claiming column with link indicator glyph.
-		dayEv.ColSpan = 1
-		dayEv.IsLinked = true
-		dayEv.LinkGlyph = defaultLinkGlyph
-
-		for _, colIdx := range activeCols {
-			copyEv := dayEv
-			copyEv.Color = columns[colIdx].Color
-			copyEv.TextColor = columns[colIdx].TextColor
-			copyEv.Pattern = columns[colIdx].Pattern
-			dispatchDayEvent(&columns[colIdx], copyEv)
-		}
-
-		if hasCollapsed {
-			dispatchDayEvent(&sharedCol, dayEv)
-		}
-	}
-
-	if len(sharedCol.Events) > 0 || len(sharedCol.EarlyEvents) > 0 || len(sharedCol.LateEvents) > 0 {
-		columns = append(columns, sharedCol)
-	}
-
-	for i := range columns {
-		sort.SliceStable(columns[i].Events, func(a, b int) bool {
-			if columns[i].Events[a].TopPct != columns[i].Events[b].TopPct {
-				return columns[i].Events[a].TopPct < columns[i].Events[b].TopPct
-			}
-			return columns[i].Events[a].Start < columns[i].Events[b].Start
-		})
-		sort.SliceStable(columns[i].EarlyEvents, func(a, b int) bool {
-			return columns[i].EarlyEvents[a].Start < columns[i].EarlyEvents[b].Start
-		})
-		sort.SliceStable(columns[i].LateEvents, func(a, b int) bool {
-			return columns[i].LateEvents[a].Start < columns[i].LateEvents[b].Start
-		})
-	}
-
-	return &FamilyDayViewModel{
-		Date:            dayDateStr,
-		WeekdayAbbr:     today.Format("Mon"),
-		DayOfMonth:      today.Day(),
-		IsToday:         today.Year() == now.Year() && today.YearDay() == now.YearDay(),
-		IsWeekend:       today.Weekday() == time.Saturday || today.Weekday() == time.Sunday,
-		HoursStart:      hours.StartStr,
-		HoursEnd:        hours.EndStr,
-		HourMarkers:     hours.Markers,
-		TimelineMarkers: hours.TimelineMarkers,
-		Members:         members,
-		Columns:         columns,
-		AllDayEvents:    allDayEvents,
-		SharedColor:     sharedColor,
-	}, nil
-}
-
 func appendDayEvent(events, early, late *[]FamilyDayEvent, ev FamilyDayEvent) {
 	if ev.HeightPct > 0 {
 		*events = append(*events, ev)
@@ -1341,10 +1072,6 @@ func appendDayEvent(events, early, late *[]FamilyDayEvent, ev FamilyDayEvent) {
 	if ev.IsLateEdge {
 		*late = append(*late, ev)
 	}
-}
-
-func dispatchDayEvent(col *FamilyDayColumn, ev FamilyDayEvent) {
-	appendDayEvent(&col.Events, &col.EarlyEvents, &col.LateEvents, ev)
 }
 
 // FamilyMonthDot represents a colored dot indicator for a member with events on a day in Month view.
@@ -1567,9 +1294,9 @@ func weekdayHeaders(mondayStart bool) []string {
 	return []string{"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"}
 }
 
-// BuildFamilyCombinedData merges resolved day, week, and month view models into a unified JSON
+// BuildFamilyCombinedData merges resolved week and month view models into a unified JSON
 // data payload for client-side view switching, event detail modal indexing, and swipe paging.
-func BuildFamilyCombinedData(dayView *FamilyDayViewModel, weekView *FamilyViewModel, monthView *FamilyMonthViewModel, cfg map[string]any) map[string]any {
+func BuildFamilyCombinedData(weekView *FamilyViewModel, monthView *FamilyMonthViewModel, cfg map[string]any) map[string]any {
 	res := map[string]any{
 		"config": cfg,
 	}
@@ -1579,16 +1306,6 @@ func BuildFamilyCombinedData(dayView *FamilyDayViewModel, weekView *FamilyViewMo
 		}
 		if endStr, ok := cfg["cached_range_end"].(string); ok && strings.TrimSpace(endStr) != "" {
 			res["cached_range_end"] = strings.TrimSpace(endStr)
-		}
-	}
-	if dayView != nil {
-		res["date"] = dayView.Date
-		res["columns"] = dayView.Columns
-		if len(dayView.AllDayEvents) > 0 {
-			res["day_all_day_events"] = dayView.AllDayEvents
-			if _, ok := res["all_day_events"]; !ok {
-				res["all_day_events"] = dayView.AllDayEvents
-			}
 		}
 	}
 	if weekView != nil {
@@ -1608,10 +1325,6 @@ func BuildFamilyCombinedData(dayView *FamilyDayViewModel, weekView *FamilyViewMo
 	var baseTime time.Time
 	if weekView != nil && weekView.Today != "" {
 		if t, err := time.Parse("2006-01-02", weekView.Today); err == nil {
-			baseTime = t
-		}
-	} else if dayView != nil && dayView.Date != "" {
-		if t, err := time.Parse("2006-01-02", dayView.Date); err == nil {
 			baseTime = t
 		}
 	}

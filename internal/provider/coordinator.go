@@ -321,11 +321,6 @@ func (c *ProviderCoordinator) UpdateConfig(snap *config.Snapshot) error {
 	return nil
 }
 
-// HeaderPoller returns the coordinator's autonomous header weather poller.
-func (c *ProviderCoordinator) HeaderPoller() *HeaderWeatherPoller {
-	return c.headerPoller
-}
-
 // Stop gracefully shuts down all worker goroutines, subscriptions, and event listeners.
 func (c *ProviderCoordinator) Stop() error {
 	return c.Shutdown(context.Background())

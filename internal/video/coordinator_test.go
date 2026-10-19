@@ -97,14 +97,14 @@ func TestCoordinator_ValidationAndClose(t *testing.T) {
 		})
 	}
 
-	if _, err := coord.DismissAll(); !errors.Is(err, ErrStreamNotFound) {
-		t.Fatalf("expected ErrStreamNotFound on idle DismissAll, got %v", err)
+	if _, err := coord.Dismiss("all"); !errors.Is(err, ErrStreamNotFound) {
+		t.Fatalf("expected ErrStreamNotFound on idle Dismiss, got %v", err)
 	}
 
 	coord.Close()
 	_, e1 := coord.Trigger(mkStream("c", "u", "", "", 0))
 	_, e2 := coord.Dismiss("c")
-	_, e3 := coord.DismissAll()
+	_, e3 := coord.Dismiss("all")
 	_, e4 := coord.SetPlayerState("c", PlayerStatePlaying)
 	_, e5 := coord.UpdatePlayerState("c", VideoStream{PlayerState: PlayerStatePlaying})
 	for _, err := range []error{e1, e2, e3, e4, e5} {
@@ -164,7 +164,7 @@ func TestCoordinator_PriorityStackAndTimers(t *testing.T) {
 		t.Fatalf("unexpected demotion/timer: s7=%+v st7=%+v", s7, st7)
 	}
 
-	// 8-11. Primary timer expiry, Dismiss("all"), DismissAll(), and Dismiss("*")
+	// 8-11. Primary timer expiry, Dismiss("all"), and Dismiss("*")
 	_, _ = coord.Dismiss("chromecast")
 	_, _ = coord.Trigger(mkStream("alert", "http://alert", "", PriorityTemporary, 45))
 	tf.fireAll()
@@ -172,11 +172,9 @@ func TestCoordinator_PriorityStackAndTimers(t *testing.T) {
 	_, _ = coord.Trigger(mkStream("a", "http://a", "", PriorityTemporary, 30))
 	sAll, _ := coord.Dismiss("all")
 	_, _ = coord.Trigger(mkStream("p", "http://p", "", PriorityPersistent, 0))
-	sM, _ := coord.DismissAll()
-	_, _ = coord.Trigger(mkStream("p", "http://p", "", PriorityPersistent, 0))
 	sW, _ := coord.Dismiss("*")
 	defSnap, _ := coord.Trigger(VideoStream{ID: "def", StreamURL: "http://def"})
-	if sAll.Mode != ModeWidgets || sM.Mode != ModeWidgets || sW.Mode != ModeWidgets || defSnap.Primary.Priority != PriorityPersistent || defSnap.Primary.TimeoutSeconds != 0 {
+	if sAll.Mode != ModeWidgets || sW.Mode != ModeWidgets || defSnap.Primary.Priority != PriorityPersistent || defSnap.Primary.TimeoutSeconds != 0 {
 		t.Fatal("unexpected dismiss/defaults")
 	}
 }

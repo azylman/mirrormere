@@ -234,8 +234,6 @@ func (c *Coordinator) Dismiss(id string) (VideoState, error) {
 	return c.unlockAndPublish(c.snapshotLocked())
 }
 
-func (c *Coordinator) DismissAll() (VideoState, error) { return c.Dismiss("all") }
-
 func (c *Coordinator) SetPlayerState(id, playerState string) (VideoState, error) {
 	if !isValidPlayerState(playerState) {
 		return VideoState{}, ErrInvalidPlayerState

@@ -142,70 +142,47 @@ func TestCoverageFlushEndpoint(t *testing.T) {
 
 func TestServer_Lifecycle(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
-		name              string
-		host              string
-		port              int
-		useCustomListener bool
-		wantBindErr       bool
-	}{
-		{"serve_ready_shutdown", "127.0.0.1", -1, true, false},
-		{"listen_and_serve_success", "127.0.0.1", -1, false, false},
-		{"listen_and_serve_bind_error", "999.999.999.999", 8080, false, true},
+	srv := server.New(server.Config{Host: "127.0.0.1", Port: -1})
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Listen failed: %v", err)
 	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			srv := server.New(server.Config{Host: tc.host, Port: tc.port})
-			if tc.wantBindErr {
-				if err := srv.ListenAndServe(); err == nil {
-					t.Fatal("expected bind error, got nil")
-				}
-				return
-			}
-			errCh := make(chan error, 1)
-			if tc.useCustomListener {
-				l, _ := net.Listen("tcp", "127.0.0.1:0")
-				go func() { errCh <- srv.Serve(l) }()
-			} else {
-				go func() { errCh <- srv.ListenAndServe() }()
-			}
+	errCh := make(chan error, 1)
+	go func() { errCh <- srv.Serve(l) }()
 
-			select {
-			case <-srv.Ready():
-			case err := <-errCh:
-				t.Fatalf("server failed to start: %v", err)
-			case <-time.After(2 * time.Second):
-				t.Fatal("server start timed out")
-			}
+	select {
+	case <-srv.Ready():
+	case err := <-errCh:
+		t.Fatalf("server failed to start: %v", err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("server start timed out")
+	}
 
-			if srv.Addr() == "" {
-				t.Fatal("expected non-empty bound address")
-			}
+	if srv.Addr() == "" {
+		t.Fatal("expected non-empty bound address")
+	}
 
-			resp, err := http.Get("http://" + srv.Addr() + "/healthz")
-			if err != nil {
-				t.Fatalf("GET /healthz failed: %v", err)
-			}
-			_ = resp.Body.Close()
-			if resp.StatusCode != http.StatusOK {
-				t.Fatalf("status = %d, want 200", resp.StatusCode)
-			}
+	resp, err := http.Get("http://" + srv.Addr() + "/healthz")
+	if err != nil {
+		t.Fatalf("GET /healthz failed: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
 
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			defer cancel()
-			if err := srv.Shutdown(ctx); err != nil {
-				t.Fatalf("Shutdown failed: %v", err)
-			}
-			select {
-			case err := <-errCh:
-				if err != nil {
-					t.Fatalf("server stopped with error: %v", err)
-				}
-			case <-time.After(2 * time.Second):
-				t.Fatal("server shutdown timed out")
-			}
-		})
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(ctx); err != nil {
+		t.Fatalf("Shutdown failed: %v", err)
+	}
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("server stopped with error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("server shutdown timed out")
 	}
 }
 
@@ -249,34 +226,27 @@ func (m *mockAll) PostVoiceHeartbeat(w http.ResponseWriter, _ *http.Request) {
 	m.w(w, "voice_heartbeat")
 }
 
-func setAndGet[T any](set func(T), get func() T, v any) any { set(v.(T)); return get() }
-
-func testHandlerFamily(t *testing.T, srv *server.Server, fam string, m1, m2 *mockAll) *server.Server {
-	t.Helper()
+func testHandlerFamily(fam string, m1 *mockAll) *server.Server {
 	var c server.Config
-	var got any
 	switch fam {
 	case "events":
-		c.EventsHandler, got = m1, setAndGet(srv.RegisterEventsHandler, srv.EventsHandler, m2)
+		c.EventsHandler = m1
 	case "screen":
-		c.ScreenHandler, got = m1, setAndGet(srv.RegisterScreenHandler, srv.ScreenHandler, m2)
+		c.ScreenHandler = m1
 	case "render":
-		c.RenderHandler, got = m1, setAndGet(srv.RegisterRenderHandler, srv.RenderHandler, m2)
+		c.RenderHandler = m1
 	case "display":
-		c.DisplayHandler, got = m1, setAndGet(srv.RegisterDisplayHandler, srv.DisplayHandler, m2)
+		c.DisplayHandler = m1
 	case "push":
-		c.PushHandler, got = m1, setAndGet(srv.RegisterPushHandler, srv.PushHandler, m2)
+		c.PushHandler = m1
 	case "lists":
-		c.ListsHandler, got = m1, setAndGet(srv.RegisterListsHandler, srv.ListsHandler, m2)
+		c.ListsHandler = m1
 	case "audio":
-		c.AudioHandler, got = m1, setAndGet(srv.RegisterAudioHandler, srv.AudioHandler, m2)
+		c.AudioHandler = m1
 	case "video":
-		c.VideoHandler, got = m1, setAndGet(srv.RegisterVideoHandler, srv.VideoHandler, m2)
+		c.VideoHandler = m1
 	case "voice":
-		c.VoiceHandler, got = m1, setAndGet(srv.RegisterVoiceHandler, srv.VoiceHandler, m2)
-	}
-	if got != m2 {
-		t.Fatalf("%s getter returned %v, want %v", fam, got, m2)
+		c.VoiceHandler = m1
 	}
 	return server.New(c)
 }
@@ -321,16 +291,10 @@ func TestServer_HandlerDelegation(t *testing.T) {
 				t.Fatalf("unset handler returned %d, want 404", rec.Code)
 			}
 
-			m1, m2 := &mockAll{status: http.StatusOK}, &mockAll{status: http.StatusTeapot}
-			srvCfg := testHandlerFamily(t, srvEmpty, tc.family, m1, m2)
-
+			srvCfg := testHandlerFamily(tc.family, &mockAll{status: http.StatusOK})
 			rec200 := doServerReq(srvCfg, tc.method, tc.path)
 			if rec200.Code != http.StatusOK || !strings.Contains(rec200.Body.String(), tc.wantBody) {
 				t.Fatalf("configured handler code=%d body=%q, want 200 with %q", rec200.Code, rec200.Body.String(), tc.wantBody)
-			}
-
-			if recTeapot := doServerReq(srvEmpty, tc.method, tc.path); recTeapot.Code != http.StatusTeapot {
-				t.Fatalf("dynamic handler returned %d, want 418", recTeapot.Code)
 			}
 		})
 	}

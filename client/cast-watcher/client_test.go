@@ -370,7 +370,6 @@ func (e *errConn) Close() error { return errors.New("conn close failure") }
 
 func TestCastClient_LifecycleAndEdgeCases(t *testing.T) {
 	client := NewCastClient(ClientConfig{})
-	if client.IsConnected() { t.Error("expected IsConnected false initially") }
 	client.Close(); client.Start(context.Background())
 
 	cErr := NewCastClient(ClientConfig{}); cErr.conn = &errConn{}; cErr.Close()

@@ -148,12 +148,6 @@ func (c *CastClient) Close() {
 	})
 }
 
-// IsConnected returns whether the CastV2 socket is currently connected.
-func (c *CastClient) IsConnected() bool {
-	c.mu.RLock(); defer c.mu.RUnlock()
-	return c.connected
-}
-
 // StatusSnapshot represents the current connection and media state for health reporting.
 type StatusSnapshot struct {
 	Connected   bool   `json:"chromecast_connected"`

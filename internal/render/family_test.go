@@ -31,28 +31,6 @@ func baseFamilyConfig() map[string]any {
 	}
 }
 
-func fiveMemberConfig() map[string]any {
-	return map[string]any{
-		"members": []any{
-			map[string]any{"name": "Alex", "color": "#e11d48", "pattern": "solid", "calendars": []any{"alex-cal"}},
-			map[string]any{"name": "Kid", "color": "#81B29A", "pattern": "hatch", "calendars": []any{"kid-cal"}},
-			map[string]any{"name": "Partner", "color": "#3B82F6", "pattern": "dots", "calendars": []any{"partner-cal"}},
-			map[string]any{"name": "Grandma", "color": "#F59E0B", "pattern": "outline", "calendars": []any{"grandma-cal"}},
-			map[string]any{"name": "Grandpa", "color": "#10B981", "pattern": "solid", "calendars": []any{"grandpa-cal"}},
-		},
-		"calendars": []any{
-			map[string]any{"name": "alex-cal"},
-			map[string]any{"name": "kid-cal"},
-			map[string]any{"name": "partner-cal"},
-			map[string]any{"name": "grandma-cal"},
-			map[string]any{"name": "grandpa-cal"},
-			map[string]any{"name": "unclaimed-cal"},
-		},
-		"hours": []any{"08:00", "20:00"},
-		"date":  "2026-09-27",
-	}
-}
-
 var testNow = mustTimeStatic("2006-01-02", "2026-09-27")
 
 func mustTimeStatic(layout, val string) time.Time {
@@ -523,9 +501,6 @@ func TestFamilyUnitHelpers(t *testing.T) {
 	if truncateString("short", 10) != "short" || truncateString(strings.Repeat("a", 300), 280) != strings.Repeat("a", 279)+"…" || truncateString(strings.Repeat("🎉", 10), 5) != strings.Repeat("🎉", 4)+"…" || truncateString("abc", 1) != "a" {
 		t.Errorf("truncateString branches failed")
 	}
-	if maxMemberColumns(domain.NewDimension(6, 2)) != 8 || maxMemberColumns(domain.NewDimension(8, 2)) != 8 || maxMemberColumns(domain.NewDimension(4, 2)) != 3 || maxMemberColumns(domain.NewDimension(3, 2)) != 3 || maxMemberColumns(domain.NewDimension(0, 0)) != 3 {
-		t.Errorf("maxMemberColumns branches failed")
-	}
 }
 
 func TestParseHoursBand(t *testing.T) {
@@ -564,7 +539,7 @@ func TestParseHoursBand(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			band := ParseHoursBand(tc.cfg)
+			band := resolveFamilyHoursBand(tc.cfg, nil, nil, time.UTC)
 			if band.StartStr != tc.wantStart || band.EndStr != tc.wantEnd {
 				t.Errorf("got %s-%s, want %s-%s", band.StartStr, band.EndStr, tc.wantStart, tc.wantEnd)
 			}
@@ -720,227 +695,6 @@ func TestComputeDayEventPosition(t *testing.T) {
 			}
 			if (tc.wantMinHeight > 0 && height < tc.wantMinHeight) || (tc.wantMaxTopHeight > 0 && top+height > tc.wantMaxTopHeight) || (tc.wantNonZero && top == 0 && height == 0) {
 				t.Errorf("bounds check failed: top=%v, height=%v", top, height)
-			}
-		})
-	}
-}
-
-type familyDayViewExpectations struct {
-	colCount             int
-	colNames             []string
-	colShared            map[int]bool
-	colEventsCount       map[int]int
-	colEarlyCount        map[int]int
-	colLateCount         map[int]int
-	eventColIdx          map[string]int
-	eventColSpan         map[string]int
-	eventIsLinked        map[string]bool
-	eventLinkGlyph       map[string]string
-	eventInitials        map[string][]string
-	eventColor           map[string]string
-	duplicatedCols       map[string][]int
-	allDayCount          int
-	sharedColOmitted     bool
-	privateEventRedacted bool
-}
-
-func TestBuildFamilyDayView(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name    string
-		data    any
-		cfg     map[string]any
-		dims    domain.Dimension
-		wantErr string
-		exp     familyDayViewExpectations
-	}{
-		{
-			name: "comprehensive single day view",
-			data: snap(
-				mkCalEv("evt_timed_alex", "alex-personal", "Alex Meeting", "2026-09-27T10:00:00Z", "2026-09-27T11:00:00Z", false),
-				mkCalEv("evt_shared_holiday", "holidays", "Rosh Hashanah", "2026-09-27", "2026-09-27", true),
-				mkCalEv("evt_early_alex", "alex-personal", "Dawn Run", "2026-09-27T05:30:00Z", "2026-09-27T06:30:00Z", false),
-				mkCalEv("evt_late_alex", "alex-personal", "Late Movie", "2026-09-27T22:00:00Z", "2026-09-27T23:30:00Z", false),
-				mkCalEv("evt_unclaimed", "holidays", "Town Parade", "2026-09-27T14:00:00Z", "2026-09-27T15:00:00Z", false),
-				provider.CalendarEvent{ID: "evt_private", CalendarName: "secret-work", Title: "Confidential Call", Location: "Secret Room", Description: "Secret notes", Start: "2026-09-27T16:00:00Z", End: "2026-09-27T17:00:00Z"},
-			),
-			exp: familyDayViewExpectations{
-				colCount: 3, colNames: []string{"Alex", "Kid", "Shared"}, colShared: map[int]bool{2: true},
-				colEventsCount: map[int]int{0: 1, 1: 0, 2: 2}, colEarlyCount: map[int]int{0: 1}, colLateCount: map[int]int{0: 1},
-				allDayCount: 1, privateEventRedacted: true,
-			},
-		},
-		{
-			name: "6x2 allows all 5 member columns",
-			cfg:  fiveMemberConfig(), dims: domain.NewDimension(6, 2),
-			data: snap(mkCalEv("e1", "alex-cal", "Alex Job", "2026-09-27T10:00:00Z", "2026-09-27T11:00:00Z", false), mkCalEv("e2", "grandma-cal", "Knitting", "2026-09-27T14:00:00Z", "2026-09-27T15:00:00Z", false)),
-			exp:  familyDayViewExpectations{colCount: 5, colNames: []string{"Alex", "Kid", "Partner", "Grandma", "Grandpa"}, eventColIdx: map[string]int{"Knitting": 3}},
-		},
-		{
-			name: "4x2 collapses remaining members into shared column with colored initials",
-			cfg:  fiveMemberConfig(), dims: domain.NewDimension(4, 2),
-			data: snap(mkCalEv("e1", "alex-cal", "Alex Job", "2026-09-27T10:00:00Z", "2026-09-27T11:00:00Z", false), mkCalEv("e2", "grandma-cal", "Knitting", "2026-09-27T14:00:00Z", "2026-09-27T15:00:00Z", false)),
-			exp: familyDayViewExpectations{
-				colCount: 4, colNames: []string{"Alex", "Kid", "Partner", "Shared"}, eventColIdx: map[string]int{"Knitting": 3},
-				eventInitials: map[string][]string{"Knitting": {"G"}}, eventColor: map[string]string{"Knitting": "#F59E0B"},
-				eventColSpan: map[string]int{"Knitting": 1}, eventIsLinked: map[string]bool{"Knitting": false},
-			},
-		},
-		{
-			name: "4x2 omits shared column when no collapsed or unclaimed events",
-			cfg:  fiveMemberConfig(), dims: domain.NewDimension(4, 2),
-			data: snap(mkCalEv("e1", "alex-cal", "Alex Job", "2026-09-27T10:00:00Z", "2026-09-27T11:00:00Z", false), mkCalEv("e2", "kid-cal", "Soccer Practice", "2026-09-27T15:00:00Z", "2026-09-27T16:00:00Z", false)),
-			exp:  familyDayViewExpectations{colCount: 3, sharedColOmitted: true},
-		},
-		{
-			name: "adjacent column ColSpan 2 and ColSpan 3",
-			cfg:  fiveMemberConfig(), dims: domain.NewDimension(6, 2),
-			data: snap(
-				mkCalEv("e_adj_2", "alex-cal", "Team Sync", "2026-09-27T10:00:00Z", "2026-09-27T11:00:00Z", false),
-				mkCalEv("e_adj_2", "kid-cal", "Team Sync", "2026-09-27T10:00:00Z", "2026-09-27T11:00:00Z", false),
-				mkCalEv("e_adj_3", "kid-cal", "Family Dinner", "2026-09-27T18:00:00Z", "2026-09-27T19:30:00Z", false),
-				mkCalEv("e_adj_3", "partner-cal", "Family Dinner", "2026-09-27T18:00:00Z", "2026-09-27T19:30:00Z", false),
-				mkCalEv("e_adj_3", "grandma-cal", "Family Dinner", "2026-09-27T18:00:00Z", "2026-09-27T19:30:00Z", false),
-			),
-			exp: familyDayViewExpectations{
-				colCount: 5, eventColIdx: map[string]int{"Team Sync": 0, "Family Dinner": 1},
-				eventColSpan: map[string]int{"Team Sync": 2, "Family Dinner": 3}, eventIsLinked: map[string]bool{"Team Sync": false, "Family Dinner": false},
-			},
-		},
-		{
-			name: "6x2 non-adjacent members duplicate with link glyph",
-			cfg:  fiveMemberConfig(), dims: domain.NewDimension(6, 2),
-			data: snap(mkCalEv("e_nonadj", "alex-cal", "Doctor Visit", "2026-09-27T11:00:00Z", "2026-09-27T12:00:00Z", false), mkCalEv("e_nonadj", "partner-cal", "Doctor Visit", "2026-09-27T11:00:00Z", "2026-09-27T12:00:00Z", false)),
-			exp:  familyDayViewExpectations{colCount: 5, duplicatedCols: map[string][]int{"Doctor Visit": {0, 2}}, eventIsLinked: map[string]bool{"Doctor Visit": true}, eventLinkGlyph: map[string]string{"Doctor Visit": "🔗"}, eventColSpan: map[string]int{"Doctor Visit": 1}},
-		},
-		{
-			name: "4x2 mixed active and collapsed member duplicates into member and shared",
-			cfg:  fiveMemberConfig(), dims: domain.NewDimension(4, 2),
-			data: snap(mkCalEv("e_mixed", "alex-cal", "Park Picnic", "2026-09-27T13:00:00Z", "2026-09-27T14:30:00Z", false), mkCalEv("e_mixed", "grandma-cal", "Park Picnic", "2026-09-27T13:00:00Z", "2026-09-27T14:30:00Z", false)),
-			exp:  familyDayViewExpectations{colCount: 4, duplicatedCols: map[string][]int{"Park Picnic": {0, 3}}, eventIsLinked: map[string]bool{"Park Picnic": true}, eventLinkGlyph: map[string]string{"Park Picnic": "🔗"}},
-		},
-		{
-			name: "unclaimed event routes to shared column",
-			cfg:  fiveMemberConfig(), dims: domain.NewDimension(6, 2),
-			data: snap(mkCalEv("e_unclaimed", "unclaimed-cal", "Town Marathon", "2026-09-27T09:00:00Z", "2026-09-27T11:00:00Z", false)),
-			exp:  familyDayViewExpectations{colCount: 6, eventColIdx: map[string]int{"Town Marathon": 5}, eventColSpan: map[string]int{"Town Marathon": 1}, eventIsLinked: map[string]bool{"Town Marathon": false}},
-		},
-		{name: "invalid member config error", cfg: map[string]any{"members": []any{"not-a-map"}}, wantErr: "is not a mapping"},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			dims := domain.NewDimension(6, 2)
-			if tc.dims.Cols > 0 || tc.dims.Rows > 0 {
-				dims = tc.dims
-			}
-			cfg := tc.cfg
-			if cfg == nil && tc.wantErr == "" {
-				cfg = baseFamilyConfig()
-			}
-			view, err := BuildFamilyDayView(tc.data, cfg, dims, testNow)
-			if tc.wantErr != "" {
-				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
-					t.Fatalf("expected error containing %q, got %v", tc.wantErr, err)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			exp := tc.exp
-			if exp.colCount > 0 && len(view.Columns) != exp.colCount {
-				t.Errorf("len(Columns) = %d, want %d", len(view.Columns), exp.colCount)
-			}
-			for i, name := range exp.colNames {
-				if i < len(view.Columns) && view.Columns[i].Name != name {
-					t.Errorf("Columns[%d].Name = %q, want %q", i, view.Columns[i].Name, name)
-				}
-			}
-			for colIdx, wantShared := range exp.colShared {
-				if colIdx < len(view.Columns) && view.Columns[colIdx].IsShared != wantShared {
-					t.Errorf("Columns[%d].IsShared = %v, want %v", colIdx, view.Columns[colIdx].IsShared, wantShared)
-				}
-			}
-			for colIdx, count := range exp.colEventsCount {
-				if colIdx < len(view.Columns) && len(view.Columns[colIdx].Events) != count {
-					t.Errorf("Columns[%d].Events = %d, want %d", colIdx, len(view.Columns[colIdx].Events), count)
-				}
-			}
-			for colIdx, count := range exp.colEarlyCount {
-				if colIdx < len(view.Columns) && len(view.Columns[colIdx].EarlyEvents) != count {
-					t.Errorf("Columns[%d].EarlyEvents = %d, want %d", colIdx, len(view.Columns[colIdx].EarlyEvents), count)
-				}
-			}
-			for colIdx, count := range exp.colLateCount {
-				if colIdx < len(view.Columns) && len(view.Columns[colIdx].LateEvents) != count {
-					t.Errorf("Columns[%d].LateEvents = %d, want %d", colIdx, len(view.Columns[colIdx].LateEvents), count)
-				}
-			}
-			if exp.allDayCount > 0 && len(view.AllDayEvents) != exp.allDayCount {
-				t.Errorf("len(AllDayEvents) = %d, want %d", len(view.AllDayEvents), exp.allDayCount)
-			}
-			if exp.sharedColOmitted {
-				for _, col := range view.Columns {
-					if col.IsShared {
-						t.Errorf("expected shared column omitted")
-					}
-				}
-			}
-			if exp.privateEventRedacted {
-				var priv *FamilyDayEvent
-				for _, col := range view.Columns {
-					for i := range col.Events {
-						if col.Events[i].ID == "evt_private" {
-							priv = &col.Events[i]
-						}
-					}
-				}
-				if priv == nil || priv.Title != "Busy" || priv.Description != "Busy" || priv.Location != "" {
-					t.Errorf("private event redaction failed: %+v", priv)
-				}
-			}
-			for evTitle, wantCol := range exp.eventColIdx {
-				found := false
-				if wantCol < len(view.Columns) {
-					for _, ev := range view.Columns[wantCol].Events {
-						if ev.Title == evTitle {
-							found = true
-							if wantSpan, ok := exp.eventColSpan[evTitle]; ok && ev.ColSpan != wantSpan {
-								t.Errorf("event %q ColSpan = %d, want %d", evTitle, ev.ColSpan, wantSpan)
-							}
-							if wantLinked, ok := exp.eventIsLinked[evTitle]; ok && ev.IsLinked != wantLinked {
-								t.Errorf("event %q IsLinked = %v, want %v", evTitle, ev.IsLinked, wantLinked)
-							}
-							if wantInitials, ok := exp.eventInitials[evTitle]; ok && len(ev.Initials) != len(wantInitials) {
-								t.Errorf("event %q initials = %d, want %d", evTitle, len(ev.Initials), len(wantInitials))
-							}
-							if wantColor, ok := exp.eventColor[evTitle]; ok && ev.Color != wantColor {
-								t.Errorf("event %q Color = %q, want %q", evTitle, ev.Color, wantColor)
-							}
-						}
-					}
-				}
-				if !found {
-					t.Errorf("event %q not found in col %d", evTitle, wantCol)
-				}
-			}
-			for evTitle, wantCols := range exp.duplicatedCols {
-				for _, cIdx := range wantCols {
-					found := false
-					for _, ev := range view.Columns[cIdx].Events {
-						if ev.Title == evTitle {
-							found = true
-							if (exp.eventIsLinked[evTitle] != ev.IsLinked) || (exp.eventLinkGlyph[evTitle] != "" && ev.LinkGlyph != exp.eventLinkGlyph[evTitle]) {
-								t.Errorf("event %q link mismatch in col %d: %+v", evTitle, cIdx, ev)
-							}
-						}
-					}
-					if !found {
-						t.Errorf("event %q not found in duplicated col %d", evTitle, cIdx)
-					}
-				}
 			}
 		})
 	}
@@ -1168,10 +922,6 @@ func TestBuildFamilyCombinedData(t *testing.T) {
 		Days:         []FamilyDay{{Date: "2026-10-10", DayOfMonth: 10}},
 		AllDayEvents: []FamilySpanEvent{{FamilyEvent: FamilyEvent{ID: "e_span", Title: "Conference"}}},
 	}
-	dayView := &FamilyDayViewModel{
-		Date: "2026-10-10", Columns: []FamilyDayColumn{{Name: "Alex"}},
-		AllDayEvents: []FamilyDayEvent{{FamilyEvent: FamilyEvent{ID: "e_day_allday", Title: "Holiday"}}},
-	}
 	monthView := &FamilyMonthViewModel{
 		RangeStart: "2026-09-28", RangeEnd: "2026-11-08",
 		Days: []FamilyMonthDay{{Date: "2026-10-10", DayOfMonth: 10}},
@@ -1179,7 +929,6 @@ func TestBuildFamilyCombinedData(t *testing.T) {
 
 	tests := []struct {
 		name      string
-		dayView   *FamilyDayViewModel
 		weekView  *FamilyViewModel
 		monthView *FamilyMonthViewModel
 		cfg       map[string]any
@@ -1187,17 +936,17 @@ func TestBuildFamilyCombinedData(t *testing.T) {
 	}{
 		{name: "nil inputs safety"},
 		{
-			name: "full aggregation", dayView: dayView, weekView: weekView, monthView: monthView, cfg: map[string]any{"default_view": "week"},
-			wantKeys: map[string]any{"date": "2026-10-10", "today": "2026-10-10", "range_start": "2026-10-05", "range_end": "2026-10-11", "cached_range_start": "2026-07-12", "cached_range_end": "2027-04-08", "month_range_start": "2026-09-28", "month_range_end": "2026-11-08"},
+			name: "full aggregation", weekView: weekView, monthView: monthView, cfg: map[string]any{"default_view": "week"},
+			wantKeys: map[string]any{"today": "2026-10-10", "range_start": "2026-10-05", "range_end": "2026-10-11", "cached_range_start": "2026-07-12", "cached_range_end": "2027-04-08", "month_range_start": "2026-09-28", "month_range_end": "2026-11-08"},
 		},
 		{name: "explicit cfg bounds take precedence", weekView: weekView, cfg: map[string]any{"cached_range_start": "2026-09-01", "cached_range_end": "2026-12-31"}, wantKeys: map[string]any{"cached_range_start": "2026-09-01", "cached_range_end": "2026-12-31"}},
-		{name: "dayView rolling window bounds fallback", dayView: &FamilyDayViewModel{Date: "2026-10-10"}, wantKeys: map[string]any{"cached_range_start": "2026-07-12", "cached_range_end": "2027-04-08"}},
+		{name: "monthView bounds fallback when weekView nil", monthView: monthView, wantKeys: map[string]any{"cached_range_start": "2026-09-28", "cached_range_end": "2026-11-08"}},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			res := BuildFamilyCombinedData(tc.dayView, tc.weekView, tc.monthView, tc.cfg)
+			res := BuildFamilyCombinedData(tc.weekView, tc.monthView, tc.cfg)
 			if res == nil {
 				t.Fatalf("expected non-nil map")
 			}

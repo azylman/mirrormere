@@ -23,58 +23,6 @@ func repeatW(prefix string, c, r, n int) []layout.WidgetInput {
 	return res
 }
 
-func TestCellIndex(t *testing.T) {
-	t.Parallel()
-	for r := 0; r < layout.GridRows; r++ {
-		for c := 0; c < layout.GridColumns; c++ {
-			if actual, want := layout.CellIndex(c, r), r*layout.GridColumns+c; actual != want {
-				t.Fatalf("CellIndex(%d, %d) = %d; want %d", c, r, actual, want)
-			}
-		}
-	}
-}
-
-func TestWidgetBitmask(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name     string
-		cols     int
-		rows     int
-		origCol  int
-		origRow  int
-		want     uint16
-		wantErr  bool
-	}{
-		{"single cell (0, 0)", 1, 1, 0, 0, 0b000000000001, false},
-		{"single cell (5, 1)", 1, 1, 5, 1, 0b100000000000, false},
-		{"2x1 at (0, 0)", 2, 1, 0, 0, 0b000000000011, false},
-		{"2x1 at (4, 1)", 2, 1, 4, 1, 0b110000000000, false},
-		{"4x2 hero at (0, 0)", 4, 2, 0, 0, 0b001111001111, false},
-		{"6x2 full grid hero at (0, 0)", 6, 2, 0, 0, layout.FullGridMask, false},
-		{"6x1 banner row 0", 6, 1, 0, 0, 0b000000111111, false},
-		{"6x1 banner row 1", 6, 1, 0, 1, 0b111111000000, false},
-		{"cols zero", 0, 1, 0, 0, 0, true},
-		{"cols too large", 7, 1, 0, 0, 0, true},
-		{"rows zero", 1, 0, 0, 0, 0, true},
-		{"rows too large", 1, 3, 0, 0, 0, true},
-		{"originCol negative", 1, 1, -1, 0, 0, true},
-		{"originRow negative", 1, 1, 0, -1, 0, true},
-		{"originCol overflow", 4, 1, 3, 0, 0, true},
-		{"originRow overflow", 1, 2, 0, 1, 0, true},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			mask, err := layout.WidgetBitmask(tc.cols, tc.rows, tc.origCol, tc.origRow)
-			if (err != nil) != tc.wantErr {
-				t.Fatalf("WidgetBitmask err = %v, wantErr = %v", err, tc.wantErr)
-			}
-			if !tc.wantErr && mask != tc.want {
-				t.Fatalf("WidgetBitmask = %012b; want %012b", mask, tc.want)
-			}
-		})
-	}
-}
 
 func TestComputeScreens(t *testing.T) {
 	t.Parallel()

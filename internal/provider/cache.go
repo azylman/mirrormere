@@ -135,18 +135,6 @@ func (c *SWRCache) Purge(widgetID string) {
 	delete(c.entries, widgetID)
 }
 
-// GetAll returns a snapshot map of all cached widget payloads.
-func (c *SWRCache) GetAll() map[string]WidgetPayload {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	out := make(map[string]WidgetPayload, len(c.entries))
-	for id, e := range c.entries {
-		out[id] = e.toPayload()
-	}
-	return out
-}
-
 // GetStatusMap returns a map of widgetID to operational state string for header/status reporting.
 func (c *SWRCache) GetStatusMap() map[string]string {
 	c.mu.RLock()
@@ -171,26 +159,4 @@ func (c *SWRCache) GetConsecutiveFailures(widgetID string) int {
 		return e.consecutiveFailures
 	}
 	return 0
-}
-
-// GetLastError returns the most recent error recorded for widgetID.
-func (c *SWRCache) GetLastError(widgetID string) error {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	if e, ok := c.entries[widgetID]; ok {
-		return e.lastError
-	}
-	return nil
-}
-
-// GetLastSuccess returns the timestamp of the last successful fetch.
-func (c *SWRCache) GetLastSuccess(widgetID string) (time.Time, bool) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	if e, ok := c.entries[widgetID]; ok && e.hasLKG {
-		return e.lastSuccess, true
-	}
-	return time.Time{}, false
 }

@@ -34,7 +34,7 @@ const (
 	defaultManifest = "name: T\nversion: \"1.0.0\"\nprovider: t\ndefault_dimensions: [2, 1]\nconfig_schema:\n  type: object\n  properties:\n    theme:\n      type: string\n      default: dark\n"
 )
 
-func TestLoader_DiscoverAndWholePackageOverride(t *testing.T) {
+func TestLoader_WholePackageOverride(t *testing.T) {
 	t.Parallel()
 	tmp := t.TempDir()
 	b, c := filepath.Join(tmp, "b"), filepath.Join(tmp, "c")
@@ -43,25 +43,26 @@ func TestLoader_DiscoverAndWholePackageOverride(t *testing.T) {
 	createPackageFixture(t, c, "calendar-agenda", "name: Custom Cal\nversion: \"2.0.0\"\nprovider: calendar-agenda\ndefault_dimensions: [4, 2]\nrefresh:\n  interval_seconds: 600\n", "<div>custom</div>", false)
 	createPackageFixture(t, c, "sensor-card", "name: Sensor\nversion: \"1.0.0\"\nprovider: http\ndefault_dimensions: [2, 1]\nresponse_schema:\n  type: object\n  required: [value]\n  properties:\n    value: {type: number}\n", "<div>sensor</div>", true)
 
-	reg, err := widget.NewLoader(b, c).Discover()
-	cal, w, s := reg["calendar-agenda"], reg["weather-forecast"], reg["sensor-card"]
-	if err != nil || len(reg) != 3 || cal == nil || !cal.IsCustom() || cal.Manifest.Version != "2.0.0" || cal.HasAssets() || w == nil || !w.IsBuiltin() || s == nil || !s.IsCustom() || !s.HasAssets() {
-		t.Fatalf("unexpected Discover(): len=%d, err=%v", len(reg), err)
+	loader := widget.NewLoader(b, c)
+	cal, err1 := loader.LoadPackage("calendar-agenda")
+	w, err2 := loader.LoadPackage("weather-forecast")
+	s, err3 := loader.LoadPackage("sensor-card")
+	if err1 != nil || err2 != nil || err3 != nil || cal == nil || cal.Source != "custom" || cal.Manifest.Version != "2.0.0" || cal.HasAssets() || w == nil || w.Source != "builtin" || s == nil || s.Source != "custom" || !s.HasAssets() {
+		t.Fatalf("unexpected LoadPackage(): err1=%v err2=%v err3=%v", err1, err2, err3)
 	}
 }
 
-func TestLoader_DiscoverErrorsAndEdgeCases(t *testing.T) {
+func TestLoader_LoadPackageErrorsAndEdgeCases(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name, pkgName, manifest, view, loadPkg, wantErr string
-		inCustom, isDirFile                             bool
+		name, pkgName, manifest, view, wantErr string
+		inCustom                               bool
 	}{
-		{"missing_manifest", "bad", "", "<div></div>", "", "missing required file manifest.yaml", true, false},
-		{"missing_view", "bad", weatherManifest, "", "", "missing required file manifest.yaml (or views/widget.html)", true, false},
-		{"yaml_syntax_error", "bad-yaml", "name: [unclosed", "<div></div>", "", "manifest syntax error", false, false},
-		{"disallowed_default", "has-default", defaultManifest, "<div></div>", "", "declares disallowed keyword 'default'", false, false},
-		{"non_dir_skipped", "calendar-agenda", calManifest, "<div></div>", "", "", false, true},
-		{"hidden_dirs_skipped", ".git", "", "", ".git", "not found", true, false},
+		{"missing_manifest", "bad", "", "<div></div>", "missing required file manifest.yaml", true},
+		{"missing_view", "bad", weatherManifest, "", "missing required file manifest.yaml (or views/widget.html)", true},
+		{"yaml_syntax_error", "bad-yaml", "name: [unclosed", "<div></div>", "manifest syntax error", false},
+		{"disallowed_default", "has-default", defaultManifest, "<div></div>", "declares disallowed keyword 'default'", false},
+		{"hidden_dirs_skipped", ".git", "", "", "not found", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -69,13 +70,8 @@ func TestLoader_DiscoverErrorsAndEdgeCases(t *testing.T) {
 			b, c := filepath.Join(tmp, "b"), filepath.Join(tmp, "c")
 			_ = os.MkdirAll(b, 0755)
 			_ = os.MkdirAll(c, 0755)
-			if tc.isDirFile {
-				_ = os.WriteFile(filepath.Join(b, "README.md"), []byte("#"), 0644)
-			}
-			if tc.loadPkg == ".git" {
+			if tc.pkgName == ".git" {
 				_ = os.MkdirAll(filepath.Join(c, ".git"), 0755)
-				_ = os.MkdirAll(filepath.Join(b, ".vscode"), 0755)
-				createPackageFixture(t, b, "calendar-agenda", calManifest, "<div></div>", false)
 			} else {
 				dir := b
 				if tc.inCustom {
@@ -84,25 +80,12 @@ func TestLoader_DiscoverErrorsAndEdgeCases(t *testing.T) {
 				createPackageFixture(t, dir, tc.pkgName, tc.manifest, tc.view, false)
 			}
 			loader := widget.NewLoader(b, c)
-			reg, err := loader.Discover()
-			if tc.loadPkg != "" {
-				_, err = loader.LoadPackage(tc.loadPkg)
-			}
-			if (err != nil) != (tc.wantErr != "") || (tc.wantErr != "" && !strings.Contains(err.Error(), tc.wantErr)) ||
-				(tc.wantErr == "" && (len(reg) != 1 || reg["calendar-agenda"] == nil)) {
-				t.Fatalf("Discover/LoadPackage = (%v, %v), wantErr=%q", reg, err, tc.wantErr)
+			pkg, err := loader.LoadPackage(tc.pkgName)
+			if (err != nil) != (tc.wantErr != "") || (tc.wantErr != "" && !strings.Contains(err.Error(), tc.wantErr)) {
+				t.Fatalf("LoadPackage(%q) = (%v, %v), wantErr=%q", tc.pkgName, pkg, err, tc.wantErr)
 			}
 		})
 	}
-
-	t.Run("scan_dir_file_error", func(t *testing.T) {
-		t.Parallel()
-		f := filepath.Join(t.TempDir(), "file.txt")
-		_ = os.WriteFile(f, []byte("x"), 0644)
-		if _, err := widget.NewLoader(f, t.TempDir()).Discover(); err == nil || !strings.Contains(err.Error(), "failed to read widget directory") {
-			t.Fatalf("expected read error, got %v", err)
-		}
-	})
 }
 
 func TestLoader_LoadPackage(t *testing.T) {
@@ -113,10 +96,6 @@ func TestLoader_LoadPackage(t *testing.T) {
 	createPackageFixture(t, c, "custom-w", weatherManifest, "<div></div>", false)
 
 	loader := widget.NewLoader(b, c)
-	if widget.DefaultLoader() == nil {
-		t.Fatal("DefaultLoader returned nil")
-	}
-
 	for _, tc := range []struct{ name, pkgType, wantSource, wantErr string }{
 		{"custom", "custom-w", "custom", ""},
 		{"builtin", "builtin-w", "builtin", ""},
@@ -190,33 +169,26 @@ func TestCheckPackageCompleteness(t *testing.T) {
 func TestBuiltinPackagesAndAliases(t *testing.T) {
 	t.Parallel()
 	loader := widget.NewLoader(filepath.Join("..", "..", "widgets"), t.TempDir())
-	reg, err := loader.Discover()
-	if err != nil {
-		t.Fatalf("Discover() failed: %v", err)
-	}
 	for _, tc := range []struct {
 		name, wantType, wantProv     string
 		wantCols, wantRows, suppDims int
-		wantCap                      string
 		hasConf                      bool
 	}{
-		{"spacer", "spacer", "spacer", 1, 1, 12, "ambient-static", false},
-		{"weather-forecast", "weather-forecast", "weather-forecast", 2, 1, 0, "ambient-static", false},
-		{"live-view", "live-view", "live-view", 3, 2, 0, "touch-interactive", true},
-		{"calendar-feed", "calendar-feed", "calendar-feed", 4, 2, 0, "", false},
-		{"calendar-grid", "calendar-grid", "calendar-feed", 6, 2, 0, "", false},
-		{"calendar-agenda", "calendar-feed", "calendar-feed", 4, 2, 0, "", false},
-		{"calendar-family", "calendar-grid", "calendar-feed", 6, 2, 0, "", false},
+		{"spacer", "spacer", "spacer", 1, 1, 12, false},
+		{"weather-forecast", "weather-forecast", "weather-forecast", 2, 1, 0, false},
+		{"live-view", "live-view", "live-view", 3, 2, 0, true},
+		{"calendar-feed", "calendar-feed", "calendar-feed", 4, 2, 0, false},
+		{"calendar-grid", "calendar-grid", "calendar-feed", 6, 2, 0, false},
+		{"calendar-agenda", "calendar-feed", "calendar-feed", 4, 2, 0, false},
+		{"calendar-family", "calendar-grid", "calendar-feed", 6, 2, 0, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			pkg, err := loader.LoadPackage(tc.name)
 			if err != nil || pkg.Type != tc.wantType || pkg.Manifest.Provider != tc.wantProv ||
 				pkg.Manifest.DefaultDimensions.Cols != tc.wantCols || pkg.Manifest.DefaultDimensions.Rows != tc.wantRows ||
-				(tc.wantCap != "" && !pkg.Manifest.HasCapability(tc.wantCap)) ||
 				(tc.suppDims > 0 && len(pkg.Manifest.SupportedDimensions) != tc.suppDims) ||
-				(tc.hasConf && pkg.Manifest.ConfigSchema == nil) || pkg.Manifest.Validate() != nil ||
-				reg[tc.name] == nil {
+				(tc.hasConf && pkg.Manifest.ConfigSchema == nil) || pkg.Manifest.Validate() != nil {
 				t.Fatalf("LoadPackage(%q) = (%+v, %v)", tc.name, pkg, err)
 			}
 		})

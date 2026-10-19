@@ -66,8 +66,7 @@ func TestLoad_ExampleConfig(t *testing.T) {
 	assertEq(t, "timezone", cfg.Timezone, "America/Los_Angeles")
 	assertEq(t, "location", cfg.Location().String(), "America/Los_Angeles")
 	assertEq(t, "rotation interval", cfg.Display.Rotation.GetIntervalSeconds(), 30)
-	assertEq(t, "transition", cfg.Display.Rotation.GetTransition(), "slide")
-	assertEq(t, "pause_on_touch", cfg.Display.Rotation.GetPauseOnTouch(), true)
+	assertEq(t, "transition", cfg.Display.Rotation.Transition, "slide")
 	assertEq(t, "pause_duration", cfg.Display.Rotation.GetPauseDurationSeconds(), 120)
 	assertEq(t, "header enabled", cfg.Display.Header.IsEnabled(), true)
 	assertEq(t, "elements len", len(cfg.Display.Header.Elements), 4)
@@ -203,7 +202,7 @@ func TestParseWithEnv_ValidConfigsAndDefaults(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 			if tc.wantTransition != "" {
-				assertEq(t, "transition", cfg.Display.Rotation.GetTransition(), tc.wantTransition)
+				assertEq(t, "transition", cfg.Display.Rotation.Transition, tc.wantTransition)
 			}
 			if tc.wantWeatherUnits != "" && cfg.Display.Header.Weather != nil {
 				assertEq(t, "weather units", cfg.Display.Header.Weather.Units, tc.wantWeatherUnits)
@@ -402,11 +401,11 @@ func TestConfig_Accessors(t *testing.T) {
 	assertEq(t, "vh pop", popVH.IsEnabled() && popVH.GetBrainTimeoutSeconds() == 60 && popVH.GetTTSTimeoutSeconds() == 20 && popVH.GetTTSVoice() == "custom_v" && popVH.GetTTSModel() == "custom_m", true)
 
 	var nilRot *config.RotationConfig
-	assertEq(t, "rot nil", nilRot.GetIntervalSeconds() == 30 && nilRot.GetTransition() == "slide" && nilRot.GetPauseOnTouch() && nilRot.GetPauseDurationSeconds() == 120, true)
+	assertEq(t, "rot nil", nilRot.GetIntervalSeconds() == 30 && nilRot.GetPauseDurationSeconds() == 120, true)
 	zeroRot := config.RotationConfig{}
-	assertEq(t, "rot zero", zeroRot.GetIntervalSeconds() == 30 && zeroRot.GetTransition() == "slide" && zeroRot.GetPauseOnTouch() && zeroRot.GetPauseDurationSeconds() == 120, true)
+	assertEq(t, "rot zero", zeroRot.GetIntervalSeconds() == 30 && zeroRot.GetPauseDurationSeconds() == 120, true)
 	popRot := config.RotationConfig{IntervalSeconds: ptr(10), Transition: "fade", PauseOnTouch: ptr(false), PauseDurationSeconds: ptr(60)}
-	assertEq(t, "rot pop", popRot.GetIntervalSeconds() == 10 && popRot.GetTransition() == "fade" && !popRot.GetPauseOnTouch() && popRot.GetPauseDurationSeconds() == 60, true)
+	assertEq(t, "rot pop", popRot.GetIntervalSeconds() == 10 && popRot.GetPauseDurationSeconds() == 60, true)
 
 	var nilHdr *config.HeaderConfig
 	assertEq(t, "hdr nil", nilHdr.IsEnabled(), true)

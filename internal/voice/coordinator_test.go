@@ -112,7 +112,7 @@ func TestCoordinator_SpeakingSafetyWatchdog(t *testing.T) {
 	t.Parallel()
 	txt := "hello"
 	cDefault := NewCoordinator(nil)
-	cDefault.SetSpeakingTimeout(0)
+	cDefault.speakingTimeout = 0
 	cDefault.Transition(StateSpeaking, &txt, nil, nil, nil)
 	cDefault.Stop()
 
@@ -124,7 +124,7 @@ func TestCoordinator_SpeakingSafetyWatchdog(t *testing.T) {
 	defer unsub()
 
 	c := NewCoordinator(hub)
-	c.SetSpeakingTimeout(10 * time.Millisecond)
+	c.speakingTimeout = 10 * time.Millisecond
 	c.Transition(StateSpeaking, &txt, nil, nil, nil)
 	for _, want := range []string{StateSpeaking, StateIdle} {
 		select {
@@ -143,7 +143,7 @@ func TestCoordinator_SpeakingSafetyWatchdog(t *testing.T) {
 
 	cErr, cRst, cStop := NewCoordinator(nil), NewCoordinator(nil), NewCoordinator(nil)
 	for _, coord := range []*Coordinator{cErr, cRst, cStop} {
-		coord.SetSpeakingTimeout(10 * time.Millisecond)
+		coord.speakingTimeout = 10 * time.Millisecond
 		coord.Transition(StateSpeaking, &txt, nil, nil, nil)
 	}
 	cErr.Transition(StateError, nil, nil, nil, nil)

@@ -15,13 +15,3 @@ type Package struct {
 func (p *Package) HasAssets() bool {
 	return p.AssetsDir != ""
 }
-
-// IsCustom returns whether the package is a custom user override.
-func (p *Package) IsCustom() bool {
-	return p.Source == "custom"
-}
-
-// IsBuiltin returns whether the package is a core built-in.
-func (p *Package) IsBuiltin() bool {
-	return p.Source == "builtin"
-}

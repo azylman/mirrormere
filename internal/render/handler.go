@@ -68,13 +68,6 @@ func (h *Handler) SetCSSPath(path string) {
 	h.cssPath = path
 }
 
-// CSSPath returns the currently configured stylesheet path.
-func (h *Handler) CSSPath() string {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-	return h.cssPath
-}
-
 // GetWidgetRender handles GET /api/widgets/{widget_id}/render requests. The optional
 // "node" query parameter is the requesting display's voice node_id.
 func (h *Handler) GetWidgetRender(w http.ResponseWriter, r *http.Request, widgetID string) {

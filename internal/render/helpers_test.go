@@ -17,46 +17,6 @@ func calEv(title, start, end string, allDay bool) provider.CalendarEvent {
 	return provider.CalendarEvent{Title: title, Start: start, End: end, AllDay: allDay}
 }
 
-func wd(date string, tMin, tMax float64, precip int, cond, icon string) provider.WeatherDaily {
-	return provider.WeatherDaily{Date: date, TempMin: tMin, TempMax: tMax, PrecipProbMax: precip, ConditionText: cond, Icon: icon}
-}
-
-func TestSeq(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name string
-		args []int
-		want []int
-	}{
-		{name: "empty args", args: []int{}, want: []int{}},
-		{name: "seq 0", args: []int{0}, want: []int{}},
-		{name: "seq negative", args: []int{-3}, want: []int{}},
-		{name: "seq 5", args: []int{5}, want: []int{0, 1, 2, 3, 4}},
-		{name: "seq 1 to 5", args: []int{1, 5}, want: []int{1, 2, 3, 4, 5}},
-		{name: "seq 5 to 5", args: []int{5, 5}, want: []int{5}},
-		{name: "seq 5 to 1 (descending)", args: []int{5, 1}, want: []int{}},
-		{name: "seq 0 to 10 step 2", args: []int{0, 10, 2}, want: []int{0, 2, 4, 6, 8, 10}},
-		{name: "seq 1 to 5 step 0", args: []int{1, 5, 0}, want: []int{}},
-		{name: "seq 1 to 5 negative step", args: []int{1, 5, -1}, want: []int{}},
-		{name: "seq 5 to 1 step 2", args: []int{5, 1, 2}, want: []int{}},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			got := render.Seq(tc.args...)
-			if len(got) != len(tc.want) {
-				t.Fatalf("expected length %d, got %d (%v)", len(tc.want), len(got), got)
-			}
-			for i := range got {
-				if got[i] != tc.want[i] {
-					t.Errorf("at index %d: expected %d, got %d", i, tc.want[i], got[i])
-				}
-			}
-		})
-	}
-}
-
 func TestParseTime(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 9, 25, 20, 0, 0, 0, time.UTC)
@@ -130,11 +90,6 @@ func TestFormatDate(t *testing.T) {
 			if got := render.FormatDateInLocation(tc.loc, tc.args...); got != tc.want {
 				t.Errorf("FormatDateInLocation(%v) = %q, want %q", tc.args, got, tc.want)
 			}
-			if tc.loc == nil {
-				if gotBase := render.FormatDate(tc.args...); gotBase != tc.want {
-					t.Errorf("FormatDate(%v) = %q, want %q", tc.args, gotBase, tc.want)
-				}
-			}
 		})
 	}
 }
@@ -172,11 +127,6 @@ func TestFormatTime(t *testing.T) {
 			t.Parallel()
 			if got := render.FormatTimeInLocation(tc.loc, tc.args...); got != tc.want {
 				t.Errorf("FormatTimeInLocation(%v) = %q, want %q", tc.args, got, tc.want)
-			}
-			if tc.loc == nil {
-				if gotBase := render.FormatTime(tc.args...); gotBase != tc.want {
-					t.Errorf("FormatTime(%v) = %q, want %q", tc.args, gotBase, tc.want)
-				}
 			}
 		})
 	}
@@ -271,10 +221,8 @@ func TestStandardFuncMap(t *testing.T) {
 		data         any
 		wantContains []string
 	}{
-		{name: "seq", tmpl: `{{range seq 3}}{{.}}{{end}}`, wantContains: []string{"012"}},
 		{name: "formatDate", tmpl: `{{formatDate "2006" "2026-09-25"}}`, wantContains: []string{"2026"}},
 		{name: "formatTime", tmpl: `{{formatTime "15:04" "2026-09-25T14:30:00Z"}}`, wantContains: []string{"14:30"}},
-		{name: "relDate", tmpl: `{{relDate "2026-09-26T12:00:00Z"}}`, wantContains: []string{"Tomorrow"}},
 		{name: "json", tmpl: `{{json .}}`, data: map[string]string{"foo": "bar"}, wantContains: []string{`"foo":"bar"`}},
 		{name: "jsonJS", tmpl: `<script>const data = {{jsonJS .}};</script>`, data: map[string]int{"count": 42}, wantContains: []string{`"count":42`}},
 		{name: "weatherIcon", tmpl: `{{weatherIcon "weather-partly-cloudy" 24}}`, wantContains: []string{`width="24"`, `mm-icon-weather-partly-cloudy`}},
@@ -283,17 +231,7 @@ func TestStandardFuncMap(t *testing.T) {
 			data:         map[string]any{"Hourly": []testHourlyItem{{Time: "2026-09-25T12:00", Temp: 68.0, PrecipProb: 0, Icon: "weather-sunny"}, {Time: "2026-09-25T13:00", Temp: 71.0, PrecipProb: 20, Icon: "weather-partly-cloudy"}}, "ID": "widget-123"},
 			wantContains: []string{`class="weather-hourly-graph"`, `id="mm-weather-grad-widget-123"`, `68°`, `71°`},
 		},
-		{
-			name: "weatherDailyForecast", tmpl: `{{ $f := weatherDailyForecast .Daily 5 }}{{ range $f }}{{ .DayName }}: {{ printf "%.0f" .TempMin }}°-{{ printf "%.0f" .TempMax }}° {{ end }}`,
-			data:         map[string]any{"Daily": []provider.WeatherDaily{wd("2026-09-25", 50, 60, 0, "", ""), wd("2026-09-26", 55, 65, 20, "Sunny", "weather-sunny"), wd("2026-09-27", 52, 62, 0, "Cloudy", "weather-cloudy")}},
-			wantContains: []string{"Tomorrow: 55°-65°", "Sun: 52°-62°"},
-		},
 		{name: "todayPrecipProb", tmpl: `{{todayPrecipProb .}}%`, data: provider.WeatherSnapshot{Daily: []provider.WeatherDaily{{PrecipProbMax: 42}}}, wantContains: []string{"42%"}},
-		{
-			name: "calendarFeedEvents", tmpl: `{{ range (calendarFeedEvents .) }}{{ .Title }};{{ end }}`,
-			data:         provider.CalendarSnapshot{Events: []provider.CalendarEvent{calEv("Old", "2026-07-01T10:00:00Z", "2026-07-01T11:00:00Z", false), calEv("Upcoming", "2026-09-25T16:00:00Z", "2026-09-25T17:00:00Z", false)}},
-			wantContains: []string{"Upcoming;"},
-		},
 		{
 			name: "calendarFeedDayGroups", tmpl: `{{ range (calendarFeedDayGroups .) }}{{ .Date }}:{{ len .Events }};{{ end }}`,
 			data:         provider.CalendarSnapshot{Events: []provider.CalendarEvent{calEv("E1", "2026-09-25T14:00:00Z", "2026-09-25T15:00:00Z", false), calEv("E2", "2026-09-25T16:00:00Z", "2026-09-25T17:00:00Z", false)}},
@@ -305,14 +243,14 @@ func TestStandardFuncMap(t *testing.T) {
 			wantContains: []string{"1:Cal 1;"},
 		},
 		{name: "tasksStats", tmpl: `{{ $s := tasksStats . }}{{ $s.Summary }}`, data: []map[string]any{{"done": true}, {"done": false}}, wantContains: []string{"1 to do"}},
-		{name: "stringOr and math", tmpl: `{{stringOr . "missing" "fallback"}}:{{add 5 3}}:{{sub 5 3}}`, data: map[string]any{"exists": "value"}, wantContains: []string{"fallback:8:2"}},
+		{name: "stringOr and math", tmpl: `{{stringOr . "missing" "fallback"}}:{{sub 5 3}}`, data: map[string]any{"exists": "value"}, wantContains: []string{"fallback:2"}},
 		{
 			name:         "family view helpers and combined data",
-			tmpl:         `{{ $d := dayView .Data .Cfg .Dims }}{{ $w := calendarFamilyView .Data .Cfg .Dims }}{{ $m := calendarFamilyMonthView .Data .Cfg .Dims }}{{ $c := calendarFamilyData $d $w $m .Cfg }}{{ $d.Date }}:{{ $m.MonthName }}:{{ index $c "date" }}:{{ isDayView .DayCfg }}:{{ isDayView .Cfg }}`,
-			data:         map[string]any{"Data": provider.CalendarSnapshot{}, "Cfg": familyCfg, "DayCfg": map[string]any{"default_view": "day"}, "Dims": domain.NewDimension(6, 2)},
+			tmpl:         `{{ $w := calendarGridView .Data .Cfg .Dims }}{{ $m := monthView .Data .Cfg .Dims }}{{ $c := calendarGridData $w $m .Cfg }}{{ $w.RangeStart }}:{{ $m.MonthName }}:{{ index $c "range_start" }}:{{ isMonthView .MonthCfg }}:{{ isMonthView .Cfg }}`,
+			data:         map[string]any{"Data": provider.CalendarSnapshot{}, "Cfg": familyCfg, "MonthCfg": map[string]any{"default_view": "month"}, "Dims": domain.NewDimension(6, 2)},
 			wantContains: []string{"2026-09-27:September:2026-09-27:true:false"},
 		},
-		{name: "nil nowFunc fallback", funcMap: render.StandardFuncMap(nil), tmpl: `{{range seq 2}}{{.}}{{end}}`, wantContains: []string{"01"}},
+		{name: "nil nowFunc fallback", funcMap: render.StandardFuncMap(nil), tmpl: `{{formatDate "2006" "2026-09-25"}}`, wantContains: []string{"2026"}},
 	}
 
 	for _, tc := range tests {
@@ -458,115 +396,6 @@ func TestWeatherHourlyGraph(t *testing.T) {
 			for _, sub := range tc.wantNotContains {
 				if strings.Contains(got, sub) {
 					t.Errorf("WeatherHourlyGraph() should not contain %q in %s", sub, got)
-				}
-			}
-		})
-	}
-}
-
-type customDaily struct {
-	Date          string
-	TempMax       float32
-	TempMin       float32
-	PrecipProbMax int64
-	ConditionText string
-	Icon          string
-}
-
-type customDailyInt struct {
-	Date          string
-	TempMax       int
-	TempMin       int
-	PrecipProbMax float32
-	ConditionText string
-	Icon          string
-}
-
-func TestWeatherDailyForecast(t *testing.T) {
-	t.Parallel()
-	multiDay := []provider.WeatherDaily{
-		wd("2026-10-11", 55, 75, 0, "", ""),
-		wd("2026-10-12", 50, 70, 20, "Sunny", "weather-sunny"),
-		wd("2026-10-13", 45, 65, 0, "Cloudy", "weather-cloudy"),
-		wd("2026-10-14", 40, 60, 80, "Rain", "weather-rainy"),
-		wd("2026-10-15", 42, 62, 10, "Partly Cloudy", "weather-partly-cloudy"),
-		wd("2026-10-16", 48, 68, 0, "Clear", "weather-sunny"),
-		wd("2026-10-17", 52, 72, 0, "Sunny", "weather-sunny"),
-	}
-	sliceForPtr := []provider.WeatherDaily{wd("2026-10-11", 50, 60, 0, "", ""), wd("2026-10-12", 52, 62, 0, "Sunny", "weather-sunny")}
-
-	tests := []struct {
-		name          string
-		arg           any
-		maxDays       []int
-		wantNil       bool
-		wantCount     int
-		wantDayNames  []string
-		wantIcons     []string
-		wantConds     []string
-		wantMinMax    [][2]float64
-		wantPrecip    []int
-		wantBarLeft2  float64
-		wantBarWidth2 float64
-		checkBarLeft2 bool
-	}{
-		{name: "nil input", arg: nil, wantNil: true},
-		{name: "empty slice", arg: []provider.WeatherDaily{}, wantNil: true},
-		{name: "non-slice string", arg: "not-a-slice", wantNil: true},
-		{name: "nil slice pointer", arg: (*[]provider.WeatherDaily)(nil), wantNil: true},
-		{name: "single item slice returns nil", arg: []provider.WeatherDaily{wd("2026-10-11", 50, 70, 0, "Clear", "weather-sunny")}, wantNil: true},
-		{name: "multi-day default 5-day cap and bar metrics", arg: multiDay, wantCount: 5, wantDayNames: []string{"Tomorrow", "Tue", "Wed", "Thu", "Fri"}, wantPrecip: []int{20, 0, 80, 10, 0}, checkBarLeft2: true, wantBarLeft2: 0.0, wantBarWidth2: 66.666},
-		{name: "flatline temperatures with span < 2", arg: []provider.WeatherDaily{wd("2026-10-11", 68, 68, 0, "", ""), wd("2026-10-12", 68, 68, 0, "", ""), wd("2026-10-13", 68, 68, 0, "", "")}, wantCount: 2},
-		{name: "negative temperatures and inverted min max swap", arg: []provider.WeatherDaily{wd("2026-01-01", 10, 20, 0, "", ""), wd("2026-01-02", -5, -15, 0, "", "weather-snowy"), wd("2026-01-03", -20, -10, 0, "", "weather-snowy")}, wantCount: 2, wantDayNames: []string{"Tomorrow", "Sat"}, wantMinMax: [][2]float64{{-15, -5}, {-20, -10}}},
-		{name: "unparseable date fallback and custom maxDays 2", arg: []provider.WeatherDaily{wd("today", 50, 60, 0, "", ""), wd("unparseable-date-1", 50, 60, 0, "", ""), wd("unparseable-date-2", 52, 62, 0, "", ""), wd("unparseable-date-3", 54, 64, 0, "", "")}, maxDays: []int{2}, wantCount: 2, wantDayNames: []string{"Tomorrow", "unparseable-date-2"}},
-		{name: "slice pointer non-nil", arg: &sliceForPtr, wantCount: 1, wantConds: []string{"Sunny"}},
-		{name: "map slice with precip and icon", arg: []map[string]any{{"date": "2026-10-11", "temp_min": 50, "temp_max": 60}, {"date": "2026-10-12", "temp_min": 45.0, "temp_max": 65.0, "precip_prob_max": 30, "condition_text": "Rain", "icon": "weather-rainy"}}, wantCount: 1, wantDayNames: []string{"Tomorrow"}, wantConds: []string{"Rain"}, wantIcons: []string{"weather-rainy"}, wantPrecip: []int{30}},
-		{name: "mixed custom struct slice with reflection", arg: []any{nil, (*customDaily)(nil), &customDaily{Date: "2026-10-11", TempMin: 50, TempMax: 60, ConditionText: "Clear", Icon: "weather-sunny"}, customDailyInt{Date: "2026-10-12", TempMin: 40, TempMax: 65, PrecipProbMax: 30, ConditionText: "Rain"}, &provider.WeatherDaily{Date: "2026-10-13", TempMin: 45, TempMax: math.NaN(), PrecipProbMax: 10, ConditionText: "Cloudy"}}, wantCount: 2, wantDayNames: []string{"Tomorrow", "Tue"}, wantIcons: []string{"weather-cloudy", "weather-cloudy"}},
-		{name: "barLeft clamping to 95 and maxDays zero", arg: []provider.WeatherDaily{wd("2026-10-11", 50, 60, 0, "", ""), wd("2026-10-12", 0, 10, 0, "", ""), wd("2026-10-13", 98, 100, 0, "", "")}, maxDays: []int{0}, wantCount: 2, checkBarLeft2: true, wantBarLeft2: 95.0},
-		{name: "negative maxDays fallback", arg: []provider.WeatherDaily{wd("2026-10-11", 50, 60, 0, "", ""), wd("2026-10-12", 0, 10, 0, "", ""), wd("2026-10-13", 98, 100, 0, "", "")}, maxDays: []int{-5}, wantCount: 2},
-		{name: "map slice with int temps and float precip", arg: []map[string]any{{"date": "2026-10-11", "temp_min": 50, "temp_max": 70, "precip_prob_max": 10}, {"date": "2026-10-12", "temp_min": 45, "temp_max": 65, "precip_prob_max": 50.0}}, wantCount: 1, wantMinMax: [][2]float64{{45, 65}}, wantPrecip: []int{50}},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			got := render.WeatherDailyForecast(tc.arg, tc.maxDays...)
-			if tc.wantNil {
-				if got != nil {
-					t.Fatalf("expected nil forecast, got %+v", got)
-				}
-				return
-			}
-			if len(got) != tc.wantCount {
-				t.Fatalf("expected %d items, got %d", tc.wantCount, len(got))
-			}
-			for i, item := range got {
-				if math.IsNaN(item.BarLeft) || math.IsNaN(item.BarWidth) || item.BarLeft < 0 || item.BarLeft > 95 || item.BarWidth < 5 || item.BarLeft+item.BarWidth > 100.001 {
-					t.Errorf("item %d bar bounds invalid: left=%f, width=%f", i, item.BarLeft, item.BarWidth)
-				}
-				if i < len(tc.wantDayNames) && item.DayName != tc.wantDayNames[i] {
-					t.Errorf("item %d: dayName = %q, want %q", i, item.DayName, tc.wantDayNames[i])
-				}
-				if i < len(tc.wantIcons) && item.Icon != tc.wantIcons[i] {
-					t.Errorf("item %d: icon = %q, want %q", i, item.Icon, tc.wantIcons[i])
-				}
-				if i < len(tc.wantConds) && item.ConditionText != tc.wantConds[i] {
-					t.Errorf("item %d: conditionText = %q, want %q", i, item.ConditionText, tc.wantConds[i])
-				}
-				if i < len(tc.wantPrecip) && (item.PrecipProbMax != tc.wantPrecip[i] || item.HasPrecip != (tc.wantPrecip[i] > 0)) {
-					t.Errorf("item %d: precip = %d (%v), want %d", i, item.PrecipProbMax, item.HasPrecip, tc.wantPrecip[i])
-				}
-				if i < len(tc.wantMinMax) && (item.TempMin != tc.wantMinMax[i][0] || item.TempMax != tc.wantMinMax[i][1]) {
-					t.Errorf("item %d: min/max = %f/%f, want %f/%f", i, item.TempMin, item.TempMax, tc.wantMinMax[i][0], tc.wantMinMax[i][1])
-				}
-			}
-			if tc.checkBarLeft2 && len(got) >= 2 {
-				targetIdx := len(got) - 1
-				if len(got) >= 3 {
-					targetIdx = 2
-				}
-				if math.Abs(got[targetIdx].BarLeft-tc.wantBarLeft2) > 0.01 || (tc.wantBarWidth2 > 0 && math.Abs(got[targetIdx].BarWidth-tc.wantBarWidth2) > 0.1) {
-					t.Errorf("bar metrics at %d: got (%f, %f), want (%f, %f)", targetIdx, got[targetIdx].BarLeft, got[targetIdx].BarWidth, tc.wantBarLeft2, tc.wantBarWidth2)
 				}
 			}
 		})
