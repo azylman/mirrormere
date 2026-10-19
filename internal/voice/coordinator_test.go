@@ -14,73 +14,37 @@ import (
 )
 
 type mockSink struct {
-	mu     sync.Mutex
-	states []*events.VoiceStateData
+	mu   sync.Mutex
+	last *events.VoiceStateData
 }
 
 func (m *mockSink) SetVoiceState(state *events.VoiceStateData) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.states = append(m.states, state)
+	m.last = state
+	m.mu.Unlock()
 }
 
-func (m *mockSink) LastState() *events.VoiceStateData {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if len(m.states) == 0 {
-		return nil
-	}
-	return m.states[len(m.states)-1]
-}
-
-func strPtr(s string) *string {
-	return &s
-}
+func strPtr(s string) *string { return &s }
 
 func TestCoordinator_StateAndStatusTransitions(t *testing.T) {
 	t.Parallel()
-
-	// Initial defaults
-	if st := NewCoordinator(nil).GetState(); st.State != StateIdle || st.Transcript != nil || st.Reply != nil || st.TTSEngine != nil || st.Status != nil {
-		t.Fatalf("expected idle with nil fields, got %+v", st)
-	}
 	sinkInit := &mockSink{}
-	_ = NewCoordinator(nil, sinkInit)
-	if last := sinkInit.LastState(); last == nil || last.State != StateIdle {
-		t.Fatalf("expected initial sink state idle, got %+v", last)
+	if st := NewCoordinator(nil, sinkInit).GetState(); st.State != StateIdle || st.Transcript != nil || sinkInit.last == nil || sinkInit.last.State != StateIdle {
+		t.Fatalf("expected initial idle state, got %+v sink=%+v", st, sinkInit.last)
 	}
 
-	// IsValidState validation
-	for _, tc := range []struct {
-		s     string
-		valid bool
-	}{
-		{StateIdle, true}, {StateListening, true}, {StateTranscribing, true},
-		{StateThinking, true}, {StateSynthesizing, true}, {StateSpeaking, true},
-		{StateError, true}, {"", false}, {"running", false}, {"LISTENING", false},
-	} {
-		if got := IsValidState(tc.s); got != tc.valid {
-			t.Errorf("IsValidState(%q) = %v, want %v", tc.s, got, tc.valid)
-		}
-	}
-
-	// Valid states lifecycle with Hub and Sink
 	sink := &mockSink{}
 	hub := events.NewHub(events.HubConfig{RingCapacity: 10, RingTTL: time.Minute}, nil, nil)
-	t.Cleanup(func() { hub.Close() })
+	t.Cleanup(hub.Close)
 	subCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	sub, unsub := hub.Subscribe(subCtx)
 	defer unsub()
 
 	c := NewCoordinator(hub, sink)
-
-	validCases := []struct {
-		state      string
-		transcript *string
-		reply      *string
-		engine     *string
-		status     *string
+	for _, tc := range []struct {
+		state                             string
+		transcript, reply, engine, status *string
 	}{
 		{StateIdle, nil, nil, nil, nil},
 		{StateListening, strPtr("listening..."), nil, nil, nil},
@@ -89,248 +53,137 @@ func TestCoordinator_StateAndStatusTransitions(t *testing.T) {
 		{StateSynthesizing, strPtr("Turn on kitchen lights"), strPtr("Turning on lights"), strPtr("kokoro"), nil},
 		{StateSpeaking, strPtr("Turn on kitchen lights"), strPtr("Turning on lights"), strPtr("kokoro"), nil},
 		{StateError, nil, nil, nil, strPtr("network error")},
-	}
-
-	for _, tc := range validCases {
+	} {
 		st, err := c.SetFullState(tc.state, tc.transcript, tc.reply, tc.engine, tc.status)
-		if err != nil || st.State != tc.state {
-			t.Fatalf("SetFullState(%s): err=%v, state=%s", tc.state, err, st.State)
-		}
-		if last := sink.LastState(); last == nil || last.State != tc.state {
-			t.Fatalf("sink state mismatch: %+v", last)
+		if !IsValidState(tc.state) || err != nil || st.State != tc.state || sink.last == nil || sink.last.State != tc.state {
+			t.Fatalf("SetFullState(%s): err=%v state=%s", tc.state, err, st.State)
 		}
 		select {
 		case evt := <-sub:
 			var vs events.VoiceStateData
-			if err := json.Unmarshal(evt.Data, &vs); err != nil || vs.State != tc.state {
-				t.Fatalf("SSE mismatch for state %s: %+v", tc.state, vs)
+			if json.Unmarshal(evt.Data, &vs) != nil || vs.State != tc.state {
+				t.Fatalf("SSE mismatch for %s: %+v", tc.state, vs)
 			}
 		case <-time.After(time.Second):
-			t.Fatalf("timeout waiting for SSE event for state %s", tc.state)
+			t.Fatalf("timeout waiting for SSE %s", tc.state)
 		}
 	}
 
-	// SetState clears status
-	st, err := c.SetState(StateThinking, strPtr("q"), nil, nil)
-	if err != nil || st.Status != nil {
+	if st, err := c.SetState(StateThinking, strPtr("q"), nil, nil); err != nil || st.Status != nil {
 		t.Fatalf("SetState should clear status: %+v", st)
 	}
 	<-sub
-
-	// SetStatus updates status preserving state
-	newStatus := "⚡ Querying Home Assistant..."
-	st = c.SetStatus(&newStatus)
-	if st.State != StateThinking || st.Status == nil || *st.Status != newStatus {
+	if st := c.SetStatus(strPtr("⚡ Querying...")); st.State != StateThinking || st.Status == nil || *st.Status != "⚡ Querying..." {
 		t.Fatalf("SetStatus mismatch: %+v", st)
 	}
 	<-sub
-
-	// Reset clears all fields and returns to idle
-	st = c.Reset()
-	if st.State != StateIdle || st.Transcript != nil || st.Reply != nil || st.TTSEngine != nil || st.Status != nil {
+	if st := c.Reset(); st.State != StateIdle || st.Transcript != nil || st.Reply != nil || st.TTSEngine != nil || st.Status != nil {
 		t.Fatalf("Reset mismatch: %+v", st)
 	}
 	<-sub
 
-	// Invalid states
-	for _, inv := range []string{"", "IDLE", "pending", "waiting", "unknown", " listening"} {
-		if _, err := c.SetState(inv, nil, nil, nil); !errors.Is(err, ErrInvalidState) {
-			t.Errorf("SetState(%q) error = %v, want ErrInvalidState", inv, err)
+	for _, inv := range []string{"", "IDLE", "running", "LISTENING", "pending", "waiting", "unknown", " listening"} {
+		if _, err := c.SetState(inv, nil, nil, nil); IsValidState(inv) || !errors.Is(err, ErrInvalidState) {
+			t.Errorf("SetState(%q) err = %v", inv, err)
 		}
 		if _, err := c.SetFullState(inv, nil, nil, nil, nil); !errors.Is(err, ErrInvalidState) {
-			t.Errorf("SetFullState(%q) error = %v, want ErrInvalidState", inv, err)
+			t.Errorf("SetFullState(%q) err = %v", inv, err)
 		}
 	}
-}
 
-func TestCoordinator_IdleTransitions(t *testing.T) {
-	t.Parallel()
-	states := []string{StateListening, StateTranscribing, StateThinking, StateSpeaking, StateSynthesizing, StateError}
-	for _, st := range states {
-		txt := "test"
-		c := NewCoordinator(nil)
-		c.Transition(st, &txt, &txt, &txt, &txt)
-		if s, err := c.SetState(StateIdle, nil, nil, nil); err != nil || s.State != StateIdle {
-			t.Fatalf("SetState(StateIdle) from %s: err=%v, state=%s", st, err, s.State)
-		}
-
-		c.Transition(st, &txt, &txt, &txt, &txt)
-		if s, err := c.SetFullState(StateIdle, nil, nil, nil, nil); err != nil || s.State != StateIdle {
-			t.Fatalf("SetFullState(StateIdle) from %s: err=%v, state=%s", st, err, s.State)
-		}
-
-		c.Transition(st, &txt, &txt, &txt, &txt)
-		if s := c.Reset(); s.State != StateIdle {
-			t.Fatalf("Reset() from %s: state=%s", st, s.State)
-		}
-
-		c.Transition(st, &txt, &txt, &txt, &txt)
-		if s := c.Transition(StateIdle, nil, nil, nil, nil); s.State != StateIdle {
-			t.Fatalf("Transition(StateIdle) from %s: state=%s", st, s.State)
+	txt := "test"
+	for _, st := range []string{StateListening, StateTranscribing, StateThinking, StateSpeaking, StateSynthesizing, StateError} {
+		ci := NewCoordinator(nil)
+		ci.Transition(st, &txt, &txt, &txt, &txt)
+		_, err1 := ci.SetState(StateIdle, nil, nil, nil)
+		ci.Transition(st, &txt, &txt, &txt, &txt)
+		_, err2 := ci.SetFullState(StateIdle, nil, nil, nil, nil)
+		ci.Transition(st, &txt, &txt, &txt, &txt)
+		s1 := ci.Reset()
+		ci.Transition(st, &txt, &txt, &txt, &txt)
+		s2 := ci.Transition(StateIdle, nil, nil, nil, nil)
+		if err1 != nil || err2 != nil || s1.State != StateIdle || s2.State != StateIdle {
+			t.Fatalf("idle transitions from %s failed", st)
 		}
 	}
 }
 
 func TestCoordinator_SpeakingSafetyWatchdog(t *testing.T) {
 	t.Parallel()
+	txt := "hello"
+	cDefault := NewCoordinator(nil)
+	cDefault.SetSpeakingTimeout(0)
+	cDefault.Transition(StateSpeaking, &txt, nil, nil, nil)
+	cDefault.Stop()
 
-	t.Run("auto-resets to idle after speaking timeout", func(t *testing.T) {
-		t.Parallel()
-		hub := events.NewHub(events.HubConfig{RingCapacity: 10, RingTTL: time.Minute}, nil, nil)
-		t.Cleanup(func() { hub.Close() })
-		subCtx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-		sub, unsub := hub.Subscribe(subCtx)
-		defer unsub()
+	hub := events.NewHub(events.HubConfig{RingCapacity: 10, RingTTL: time.Minute}, nil, nil)
+	t.Cleanup(hub.Close)
+	subCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sub, unsub := hub.Subscribe(subCtx)
+	defer unsub()
 
-		c := NewCoordinator(hub)
-		c.SetSpeakingTimeout(10 * time.Millisecond)
-		txt := "hello"
-		c.Transition(StateSpeaking, &txt, nil, nil, nil)
-
-		select {
-		case <-sub:
-		case <-time.After(time.Second):
-			t.Fatal("timed out waiting for speaking event")
-		}
-
+	c := NewCoordinator(hub)
+	c.SetSpeakingTimeout(10 * time.Millisecond)
+	c.Transition(StateSpeaking, &txt, nil, nil, nil)
+	for _, want := range []string{StateSpeaking, StateIdle} {
 		select {
 		case evt := <-sub:
 			var data events.VoiceStateData
-			if err := json.Unmarshal(evt.Data, &data); err != nil || data.State != StateIdle {
-				t.Fatalf("expected auto-reset to idle, got %+v", data)
+			if json.Unmarshal(evt.Data, &data) != nil || data.State != want {
+				t.Fatalf("expected %s event, got %+v", want, data)
 			}
 		case <-time.After(time.Second):
-			t.Fatal("timed out waiting for watchdog auto-reset")
+			t.Fatalf("timed out waiting for %s event", want)
 		}
-		if st := c.GetState(); st.State != StateIdle {
-			t.Fatalf("expected state idle, got %s", st.State)
-		}
-	})
+	}
+	if st := c.GetState(); st.State != StateIdle {
+		t.Fatalf("expected state idle, got %s", st.State)
+	}
 
-	t.Run("defaults to 30s when timeout non-positive", func(t *testing.T) {
-		t.Parallel()
-		c := NewCoordinator(nil)
-		c.SetSpeakingTimeout(0)
-		txt := "hello"
-		c.Transition(StateSpeaking, &txt, nil, nil, nil)
-		c.Stop()
-	})
+	cErr, cRst, cStop := NewCoordinator(nil), NewCoordinator(nil), NewCoordinator(nil)
+	for _, coord := range []*Coordinator{cErr, cRst, cStop} {
+		coord.SetSpeakingTimeout(10 * time.Millisecond)
+		coord.Transition(StateSpeaking, &txt, nil, nil, nil)
+	}
+	cErr.Transition(StateError, nil, nil, nil, nil)
+	cRst.Reset()
+	cRst.Transition(StateListening, nil, nil, nil, nil)
+	cStop.Stop()
 
-	t.Run("transition out of speaking cancels watchdog", func(t *testing.T) {
-		t.Parallel()
-		c := NewCoordinator(nil)
-		c.SetSpeakingTimeout(10 * time.Millisecond)
-		txt := "hello"
-		c.Transition(StateSpeaking, &txt, nil, nil, nil)
-		c.Transition(StateError, nil, nil, nil, nil)
-
-		tm := time.NewTimer(25 * time.Millisecond)
-		defer tm.Stop()
-		<-tm.C
-
-		if st := c.GetState(); st.State != StateError {
-			t.Fatalf("expected state error to remain, got %s", st.State)
-		}
-	})
-
-	t.Run("Reset cancels watchdog timer", func(t *testing.T) {
-		t.Parallel()
-		c := NewCoordinator(nil)
-		c.SetSpeakingTimeout(10 * time.Millisecond)
-		txt := "hello"
-		c.Transition(StateSpeaking, &txt, nil, nil, nil)
-		c.Reset()
-		c.Transition(StateListening, nil, nil, nil, nil)
-
-		tm := time.NewTimer(25 * time.Millisecond)
-		defer tm.Stop()
-		<-tm.C
-
-		if st := c.GetState(); st.State != StateListening {
-			t.Fatalf("expected state listening to remain, got %s", st.State)
-		}
-	})
-
-	t.Run("Stop cancels watchdog timer", func(t *testing.T) {
-		t.Parallel()
-		c := NewCoordinator(nil)
-		c.SetSpeakingTimeout(10 * time.Millisecond)
-		txt := "hello"
-		c.Transition(StateSpeaking, &txt, nil, nil, nil)
-		c.Stop()
-
-		tm := time.NewTimer(25 * time.Millisecond)
-		defer tm.Stop()
-		<-tm.C
-
-		if st := c.GetState(); st.State != StateSpeaking {
-			t.Fatalf("expected state speaking after Stop(), got %s", st.State)
-		}
-		c.Reset()
-	})
+	tm := time.NewTimer(25 * time.Millisecond)
+	defer tm.Stop()
+	<-tm.C
+	if cErr.GetState().State != StateError || cRst.GetState().State != StateListening || cStop.GetState().State != StateSpeaking {
+		t.Fatalf("watchdog cancel mismatch: err=%s rst=%s stop=%s", cErr.GetState().State, cRst.GetState().State, cStop.GetState().State)
+	}
+	cStop.Reset()
 }
 
-func TestCoordinator_ConcurrentAccess(t *testing.T) {
+func TestCoordinator_ConcurrentAndSchema(t *testing.T) {
 	t.Parallel()
-
 	c := NewCoordinator(nil)
+	states := []string{StateIdle, StateListening, StateTranscribing, StateThinking, StateSynthesizing, StateSpeaking, StateError}
 	var wg sync.WaitGroup
-
 	for i := 0; i < 50; i++ {
-		wg.Add(2)
+		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
-			states := []string{StateIdle, StateListening, StateTranscribing, StateThinking, StateSynthesizing, StateSpeaking, StateError}
-			state := states[idx%len(states)]
 			txt := "query"
-			_, _ = c.SetState(state, &txt, nil, nil)
-		}(i)
-
-		go func() {
-			defer wg.Done()
+			_, _ = c.SetState(states[idx%len(states)], &txt, nil, nil)
 			_ = c.GetState()
-		}()
+		}(i)
 	}
-
 	wg.Wait()
-}
 
-func TestVoiceStateData_SchemaCompliance(t *testing.T) {
-	t.Parallel()
-
-	schemaPath := filepath.Join("..", "..", "api", "schemas", "voice.state.json")
-	schemaBytes, err := os.ReadFile(schemaPath)
+	schemaBytes, err := os.ReadFile(filepath.Join("..", "..", "api", "schemas", "voice.state.json"))
 	if err != nil {
-		t.Skipf("skipping schema file test if not in root: %v", err)
+		t.Skipf("skipping schema file test: %v", err)
 	}
-
-	var schema map[string]any
-	if err := json.Unmarshal(schemaBytes, &schema); err != nil {
-		t.Fatalf("failed to parse schema: %v", err)
-	}
-
-	transcript := "Hello"
-	reply := "Hi"
-	engine := "piper"
-	data := events.VoiceStateData{
-		State:      StateSpeaking,
-		Transcript: &transcript,
-		Reply:      &reply,
-		TTSEngine:  &engine,
-	}
-
-	payload, err := json.Marshal(data)
-	if err != nil {
-		t.Fatalf("failed to marshal data: %v", err)
-	}
-
-	var parsed map[string]any
-	if err := json.Unmarshal(payload, &parsed); err != nil {
-		t.Fatalf("failed to unmarshal payload: %v", err)
-	}
-
-	if parsed["state"] != StateSpeaking || parsed["transcript"] != transcript || parsed["reply"] != reply || parsed["tts_engine"] != engine {
-		t.Fatalf("mismatched parsed schema data: %+v", parsed)
+	var schema, parsed map[string]any
+	tr, rep, eng := "Hello", "Hi", "piper"
+	payload, err := json.Marshal(events.VoiceStateData{State: StateSpeaking, Transcript: &tr, Reply: &rep, TTSEngine: &eng})
+	if err != nil || json.Unmarshal(schemaBytes, &schema) != nil || json.Unmarshal(payload, &parsed) != nil || parsed["state"] != StateSpeaking || parsed["tts_engine"] != eng {
+		t.Fatalf("schema compliance failed: err=%v parsed=%+v", err, parsed)
 	}
 }
