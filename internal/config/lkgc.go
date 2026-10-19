@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -18,83 +20,67 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// PackageLoader discovers and resolves widget packages by type.
-type PackageLoader interface {
-	LoadPackage(widgetType string) (*domain.Package, error)
-}
-
-// ConfigStatus indicates the operational validity of the running configuration.
-type ConfigStatus string
-
 const (
-	// ConfigStatusOK indicates the running configuration is valid and active.
-	ConfigStatusOK ConfigStatus = "ok"
-	// ConfigStatusError indicates a validation error occurred during candidate reload, retaining LKGC.
+	ConfigStatusOK    ConfigStatus = "ok"
 	ConfigStatusError ConfigStatus = "error"
-)
 
-// Status provides telemetry and health state for system.status reporting.
-type Status struct {
-	ConfigStatus ConfigStatus `json:"config_status"`
-	ConfigError  *string      `json:"config_error"`
-	LastChecked  time.Time    `json:"last_checked"`
-	LastSuccess  time.Time    `json:"last_success,omitempty"`
-}
-
-// Snapshot encapsulates an immutable, synchronized state of runtime configuration, layout, and packages.
-type Snapshot struct {
-	Config   *Config
-	Layout   *layout.Layout
-	Packages map[string]*domain.Package
-	LoadedAt time.Time
-}
-
-// InstanceChangeType categorizes the diff between running and new widget instances.
-type InstanceChangeType string
-
-const (
 	ChangeUnchanged InstanceChangeType = "unchanged"
 	ChangeAdded     InstanceChangeType = "added"
 	ChangeRemoved   InstanceChangeType = "removed"
 	ChangeModified  InstanceChangeType = "modified"
-	ChangeReplaced  InstanceChangeType = "replaced" // Type change on same ID: Removed + Added
+	ChangeReplaced  InstanceChangeType = "replaced"
 )
 
-// InstanceDiff details modifications to an existing widget instance.
-type InstanceDiff struct {
-	ID           string
-	Type         string
-	Change       InstanceChangeType
-	OldInstance  *WidgetConfig
-	NewInstance  *WidgetConfig
-	DomainChange bool // Target domain parameters changed (requires cache purge/empty loading state)
-}
-
-// ConfigDiff summarizes all instance-level diffs between running and new configurations.
-type ConfigDiff struct {
-	Unchanged       []WidgetConfig
-	Added           []WidgetConfig
-	Removed         []WidgetConfig
-	Modified        []InstanceDiff
-	LayoutModified  []WidgetConfig // Instances whose dimensions or pinned status changed without worker modifications
-	TimezoneChanged bool           // Household IANA timezone updated
-	ShellChanged    bool           // Top-level display shell (header, hide_cursor, remote_url) changed
-}
-
-// Manager coordinates live configuration reloads and enforces LKGC resilience.
-type Manager struct {
-	reloadMu        sync.Mutex
-	current         atomic.Pointer[Snapshot]
-	status          atomic.Pointer[Status]
-	loader          PackageLoader
-	getenv          func(string) string
-	logger          *slog.Logger
-	configReloadErr error
-	packageErrors   map[string]string
-}
+type (
+	// PackageLoader discovers and resolves widget packages by type.
+	PackageLoader interface {
+		LoadPackage(widgetType string) (*domain.Package, error)
+	}
+	// ConfigStatus indicates the operational validity of the running configuration.
+	ConfigStatus string
+	// InstanceChangeType categorizes the diff between running and new widget instances.
+	InstanceChangeType string
+	// Status provides telemetry and health state for system.status reporting.
+	Status struct {
+		ConfigStatus ConfigStatus `json:"config_status"`
+		ConfigError  *string      `json:"config_error"`
+		LastChecked  time.Time    `json:"last_checked"`
+		LastSuccess  time.Time    `json:"last_success,omitempty"`
+	}
+	// Snapshot encapsulates an immutable, synchronized state of runtime configuration, layout, and packages.
+	Snapshot struct {
+		Config   *Config
+		Layout   *layout.Layout
+		Packages map[string]*domain.Package
+		LoadedAt time.Time
+	}
+	// InstanceDiff details modifications to an existing widget instance.
+	InstanceDiff struct {
+		ID, Type                 string
+		Change                   InstanceChangeType
+		OldInstance, NewInstance *WidgetConfig
+		DomainChange             bool
+	}
+	// ConfigDiff summarizes all instance-level diffs between running and new configurations.
+	ConfigDiff struct {
+		Unchanged, Added, Removed, LayoutModified []WidgetConfig
+		Modified                                  []InstanceDiff
+		TimezoneChanged, ShellChanged             bool
+	}
+	// Manager coordinates live configuration reloads and enforces LKGC resilience.
+	Manager struct {
+		reloadMu        sync.Mutex
+		current         atomic.Pointer[Snapshot]
+		status          atomic.Pointer[Status]
+		loader          PackageLoader
+		getenv          func(string) string
+		logger          *slog.Logger
+		configReloadErr error
+		packageErrors   map[string]string
+	}
+)
 
 // NewManager creates and initializes an LKGC Manager with the initial configuration.
-// If the initial configuration fails validation, NewManager fails fast with an error.
 func NewManager(initialYAML []byte, loader PackageLoader, getenv func(string) string, logger *slog.Logger) (*Manager, error) {
 	if loader == nil {
 		return nil, fmt.Errorf("package loader cannot be nil")
@@ -105,197 +91,116 @@ func NewManager(initialYAML []byte, loader PackageLoader, getenv func(string) st
 	if logger == nil {
 		logger = slog.Default()
 	}
-
-	m := &Manager{
-		loader:        loader,
-		getenv:        getenv,
-		logger:        logger,
-		packageErrors: make(map[string]string),
-	}
-
 	snapshot, err := ValidatePipeline(initialYAML, loader, getenv)
 	if err != nil {
-		errMsg := err.Error()
-		m.status.Store(&Status{
-			ConfigStatus: ConfigStatusError,
-			ConfigError:  &errMsg,
-			LastChecked:  time.Now(),
-		})
 		return nil, fmt.Errorf("initial configuration validation failed: %w", err)
 	}
-
+	m := &Manager{loader: loader, getenv: getenv, logger: logger, packageErrors: make(map[string]string)}
 	m.current.Store(snapshot)
-	m.status.Store(&Status{
-		ConfigStatus: ConfigStatusOK,
-		ConfigError:  nil,
-		LastChecked:  snapshot.LoadedAt,
-		LastSuccess:  snapshot.LoadedAt,
-	})
-
+	m.status.Store(&Status{ConfigStatus: ConfigStatusOK, LastChecked: snapshot.LoadedAt, LastSuccess: snapshot.LoadedAt})
 	return m, nil
 }
 
 // Current returns the active running configuration snapshot (lock-free).
 func (m *Manager) Current() *Config {
-	snap := m.current.Load()
-	if snap == nil {
-		return nil
+	if s := m.current.Load(); s != nil {
+		return s.Config
 	}
-	return snap.Config
+	return nil
 }
 
 // CurrentLayout returns the active 6x2 grid layout (lock-free).
 func (m *Manager) CurrentLayout() *layout.Layout {
-	snap := m.current.Load()
-	if snap == nil {
-		return nil
+	if s := m.current.Load(); s != nil {
+		return s.Layout
 	}
-	return snap.Layout
+	return nil
 }
 
 // CurrentSnapshot returns the complete running snapshot including packages and layout (lock-free).
-func (m *Manager) CurrentSnapshot() *Snapshot {
-	return m.current.Load()
-}
+func (m *Manager) CurrentSnapshot() *Snapshot { return m.current.Load() }
 
 // Status returns the current configuration telemetry status (lock-free).
 func (m *Manager) Status() Status {
-	st := m.status.Load()
-	if st == nil {
-		return Status{ConfigStatus: ConfigStatusOK}
+	if s := m.status.Load(); s != nil {
+		return *s
 	}
-	return *st
+	return Status{ConfigStatus: ConfigStatusOK}
 }
 
 func (m *Manager) updateStatusLocked() {
-	now := time.Now()
-	prev := m.status.Load()
-	var lastSuccess time.Time
-	if prev != nil {
+	now, lastSuccess := time.Now(), time.Time{}
+	if prev := m.status.Load(); prev != nil {
 		lastSuccess = prev.LastSuccess
 	}
-
+	var errMsg string
 	if m.configReloadErr != nil {
-		errMsg := m.configReloadErr.Error()
-		m.status.Store(&Status{
-			ConfigStatus: ConfigStatusError,
-			ConfigError:  &errMsg,
-			LastChecked:  now,
-			LastSuccess:  lastSuccess,
-		})
-		return
+		errMsg = m.configReloadErr.Error()
+	} else if len(m.packageErrors) > 0 {
+		errMsg = m.packageErrors[slices.Sorted(maps.Keys(m.packageErrors))[0]]
 	}
-
-	if len(m.packageErrors) > 0 {
-		var firstType string
-		for t := range m.packageErrors {
-			if firstType == "" || t < firstType {
-				firstType = t
-			}
-		}
-		errMsg := m.packageErrors[firstType]
-		m.status.Store(&Status{
-			ConfigStatus: ConfigStatusError,
-			ConfigError:  &errMsg,
-			LastChecked:  now,
-			LastSuccess:  lastSuccess,
-		})
-		return
+	if errMsg != "" {
+		m.status.Store(&Status{ConfigStatus: ConfigStatusError, ConfigError: &errMsg, LastChecked: now, LastSuccess: lastSuccess})
+	} else {
+		m.status.Store(&Status{ConfigStatus: ConfigStatusOK, LastChecked: now, LastSuccess: now})
 	}
+}
 
-	m.status.Store(&Status{
-		ConfigStatus: ConfigStatusOK,
-		ConfigError:  nil,
-		LastChecked:  now,
-		LastSuccess:  now,
-	})
+func (m *Manager) updateLocked(fn func()) {
+	m.reloadMu.Lock()
+	defer m.reloadMu.Unlock()
+	fn()
+	m.updateStatusLocked()
 }
 
 // SetPackageError records a package incompleteness error in Manager's status.
 func (m *Manager) SetPackageError(widgetType string, err error) {
-	if err == nil {
-		return
+	if err != nil {
+		m.updateLocked(func() { m.packageErrors[widgetType] = err.Error() })
 	}
-	m.reloadMu.Lock()
-	defer m.reloadMu.Unlock()
-
-	if m.packageErrors == nil {
-		m.packageErrors = make(map[string]string)
-	}
-	m.packageErrors[widgetType] = err.Error()
-	m.updateStatusLocked()
 }
 
 // ClearPackageError clears an incomplete package error for widgetType.
-// If all package errors are resolved and no active config error exists, status returns to OK and returns true.
 func (m *Manager) ClearPackageError(widgetType string) bool {
-	m.reloadMu.Lock()
-	defer m.reloadMu.Unlock()
-
-	if m.packageErrors == nil {
-		return false
-	}
-	if _, ok := m.packageErrors[widgetType]; !ok {
-		return false
-	}
-	delete(m.packageErrors, widgetType)
-	m.updateStatusLocked()
-	return true
+	var ok bool
+	m.updateLocked(func() {
+		_, ok = m.packageErrors[widgetType]
+		delete(m.packageErrors, widgetType)
+	})
+	return ok
 }
 
 // SetErrorStatus explicitly records an error status (e.g. for configuration read errors).
 func (m *Manager) SetErrorStatus(err error) {
-	if err == nil {
-		return
+	if err != nil {
+		m.updateLocked(func() { m.configReloadErr = err })
 	}
-	m.reloadMu.Lock()
-	defer m.reloadMu.Unlock()
-
-	m.configReloadErr = err
-	m.updateStatusLocked()
 }
 
 // ClearErrorStatus resets the error status back to OK if it was in error state.
 func (m *Manager) ClearErrorStatus() {
-	m.reloadMu.Lock()
-	defer m.reloadMu.Unlock()
-
-	m.configReloadErr = nil
-	m.packageErrors = make(map[string]string)
-	m.updateStatusLocked()
+	m.updateLocked(func() { m.configReloadErr, m.packageErrors = nil, make(map[string]string) })
 }
 
 // Reload executes the 6-stage validation pipeline on candidate YAML data.
-// If validation succeeds, it atomically swaps the running configuration and returns the diff.
-// If validation fails, it retains running LKGC, logs structured diagnostics, and updates telemetry.
 func (m *Manager) Reload(data []byte) (*Snapshot, *ConfigDiff, error) {
 	m.reloadMu.Lock()
 	defer m.reloadMu.Unlock()
-
 	candidate, err := ValidatePipeline(data, m.loader, m.getenv)
 	if err != nil {
-		errMsg := err.Error()
-		m.logger.Error(fmt.Sprintf("[config.reloader] error=\"live config validation failed: %s; retaining LKGC\"", errMsg))
-
+		m.logger.Error(fmt.Sprintf("[config.reloader] error=\"live config validation failed: %s; retaining LKGC\"", err.Error()))
 		m.configReloadErr = err
 		m.updateStatusLocked()
 		return nil, nil, err
 	}
-
-	oldSnap := m.current.Load()
-	var diff *ConfigDiff
-	if oldSnap != nil && oldSnap.Config != nil {
-		diff = DiffConfigs(oldSnap.Config, candidate.Config)
-	} else {
-		diff = &ConfigDiff{}
-		diff.Added = append(diff.Added, candidate.Config.Display.Widgets...)
+	var oldCfg *Config
+	if oldSnap := m.current.Load(); oldSnap != nil {
+		oldCfg = oldSnap.Config
 	}
-
-	m.configReloadErr = nil
-	m.packageErrors = make(map[string]string)
+	diff := DiffConfigs(oldCfg, candidate.Config)
+	m.configReloadErr, m.packageErrors = nil, make(map[string]string)
 	m.current.Store(candidate)
 	m.updateStatusLocked()
-
 	return candidate, diff, nil
 }
 
@@ -307,519 +212,309 @@ func ValidatePipeline(data []byte, loader PackageLoader, getenv func(string) str
 	if getenv == nil {
 		getenv = os.Getenv
 	}
-
-	// Stage 1: YAML Syntax & AST Structure
 	cfg, err := parseYAMLStage(data)
 	if err != nil {
 		return nil, fmt.Errorf("stage 1 (syntax & structure): %w", err)
-	}
-
-	// Stage 2: Core Instance Schemas & Env Resolution
-	if err := validateCoreInstancesStage(cfg, getenv); err != nil {
+	} else if err = validateCoreInstancesStage(cfg, getenv); err != nil {
 		return nil, fmt.Errorf("stage 2 (instance schemas): %w", err)
 	}
-
-	// Stage 3: Package Existence & Completeness
-	packages, err := validatePackagesStage(cfg, loader)
+	pkgs, err := validatePackagesStage(cfg, loader)
 	if err != nil {
 		return nil, fmt.Errorf("stage 3 (package existence & completeness): %w", err)
-	}
-
-	// Stage 4: Manifest config_schema Validation
-	if err := validateManifestConfigSchemasStage(cfg, packages); err != nil {
+	} else if err = validateManifestConfigSchemasStage(cfg, pkgs); err != nil {
 		return nil, fmt.Errorf("stage 4 (manifest config_schema): %w", err)
-	}
-
-	// Stage 5: Domain & Source-of-Truth Rules
-	if err := validateDomainRulesStage(cfg, packages); err != nil {
+	} else if err = validateDomainRulesStage(cfg, pkgs); err != nil {
 		return nil, fmt.Errorf("stage 5 (domain rules): %w", err)
 	}
-
-	// Stage 6: 6x2 Bin-Packing Layout Solver
-	l, err := validateLayoutSolverStage(cfg)
-	if err != nil {
-		return nil, fmt.Errorf("stage 6 (layout solver): %w", err)
+	inputs := make([]layout.WidgetInput, len(cfg.Display.Widgets))
+	for i, w := range cfg.Display.Widgets {
+		dim, err := domain.DimensionFromSlice(w.Dimensions)
+		if err != nil {
+			return nil, fmt.Errorf("stage 6 (layout solver): %w", err)
+		}
+		inputs[i] = layout.WidgetInput{ID: w.ID, Type: w.Type, Dimensions: dim, Pinned: w.Pinned}
 	}
-
-	return &Snapshot{
-		Config:   cfg,
-		Layout:   l,
-		Packages: packages,
-		LoadedAt: time.Now(),
-	}, nil
-}
-
-func parseYAMLStage(data []byte) (*Config, error) {
-	if len(data) == 0 || len(strings.TrimSpace(string(data))) == 0 {
-		return nil, fmt.Errorf("configuration file is empty")
+	if l, err := layout.Solve(inputs); err != nil {
+		return nil, fmt.Errorf("stage 6 (layout solver): layout solver error: %w", err)
+	} else {
+		return &Snapshot{Config: cfg, Layout: l, Packages: pkgs, LoadedAt: time.Now()}, nil
 	}
-
-	var root yaml.Node
-	if err := yaml.Unmarshal(data, &root); err != nil {
-		return nil, fmt.Errorf("YAML syntax error: %w", err)
-	}
-
-	if err := checkNodeForInterpolation(&root); err != nil {
-		return nil, err
-	}
-
-	if err := validateStructuralKeys(&root); err != nil {
-		return nil, err
-	}
-
-	var cfg Config
-	if err := root.Decode(&cfg); err != nil {
-		return nil, fmt.Errorf("failed to decode configuration: %w", err)
-	}
-
-	cfg.applyDefaults()
-	return &cfg, nil
 }
 
 func validateCoreInstancesStage(cfg *Config, getenv func(string) string) error {
 	if err := cfg.Validate(); err != nil {
 		return err
 	}
-	if err := cfg.ResolveEnv(getenv); err != nil {
-		return err
+	return cfg.ResolveEnv(getenv)
+}
+
+func parseYAMLStage(data []byte) (*Config, error) {
+	if len(strings.TrimSpace(string(data))) == 0 {
+		return nil, fmt.Errorf("configuration file is empty")
 	}
-	return nil
+	var root yaml.Node
+	if err := yaml.Unmarshal(data, &root); err != nil {
+		return nil, fmt.Errorf("YAML syntax error: %w", err)
+	} else if err := checkNodeForInterpolation(&root); err != nil {
+		return nil, err
+	} else if err := validateStructuralKeys(&root); err != nil {
+		return nil, err
+	}
+	var cfg Config
+	if err := root.Decode(&cfg); err != nil {
+		return nil, fmt.Errorf("failed to decode configuration: %w", err)
+	}
+	cfg.applyDefaults()
+	return &cfg, nil
 }
 
 func validatePackagesStage(cfg *Config, loader PackageLoader) (map[string]*domain.Package, error) {
 	registry := make(map[string]*domain.Package)
-
-	for _, w := range cfg.Display.Widgets {
-		if _, exists := registry[w.Type]; exists {
-			continue
-		}
-		pkg, err := loader.LoadPackage(w.Type)
-		if err != nil {
-			return nil, fmt.Errorf("widget package '%s' error: %w", w.Type, err)
-		}
-		if err := pkg.Manifest.Validate(); err != nil {
-			return nil, fmt.Errorf("widget package '%s' manifest invalid: %w", w.Type, err)
-		}
-		registry[w.Type] = pkg
-	}
-
-	// Apply manifest defaults (default_dimensions, refresh_interval_seconds)
 	for i := range cfg.Display.Widgets {
 		w := &cfg.Display.Widgets[i]
-		pkg := registry[w.Type]
-
-		// Fallback dimensions if omitted
+		pkg, ok := registry[w.Type]
+		if !ok {
+			var err error
+			if pkg, err = loader.LoadPackage(w.Type); err != nil {
+				return nil, fmt.Errorf("widget package '%s' error: %w", w.Type, err)
+			}
+			if err = pkg.Manifest.Validate(); err != nil {
+				return nil, fmt.Errorf("widget package '%s' manifest invalid: %w", w.Type, err)
+			}
+			registry[w.Type] = pkg
+		}
 		if len(w.Dimensions) == 0 {
 			if !pkg.Manifest.DefaultDimensions.IsValid() {
 				return nil, fmt.Errorf("[Mirrormere Config Error] widget '%s' omits 'dimensions' and package manifest '%s' has no valid default_dimensions", w.ID, w.Type)
 			}
 			w.Dimensions = pkg.Manifest.DefaultDimensions.Slice()
 		}
-
-		// Fallback refresh interval if omitted
 		if w.RefreshIntervalSeconds == nil && pkg.Manifest.Refresh.IntervalSeconds > 0 {
-			interval := pkg.Manifest.Refresh.IntervalSeconds
-			w.RefreshIntervalSeconds = &interval
+			w.RefreshIntervalSeconds = &pkg.Manifest.Refresh.IntervalSeconds
 		}
-	}
-
-	// Verify supported_dimensions if declared in manifest
-	for _, w := range cfg.Display.Widgets {
-		pkg := registry[w.Type]
 		if len(pkg.Manifest.SupportedDimensions) > 0 {
 			dim, err := domain.DimensionFromSlice(w.Dimensions)
 			if err != nil {
 				return nil, err
-			}
-			supported := false
-			for _, s := range pkg.Manifest.SupportedDimensions {
-				if s.Cols == dim.Cols && s.Rows == dim.Rows {
-					supported = true
-					break
-				}
-			}
-			if !supported {
-				return nil, fmt.Errorf("widget '%s': dimensions [%d, %d] not supported by package '%s' (supported: %v)",
-					w.ID, dim.Cols, dim.Rows, w.Type, pkg.Manifest.SupportedDimensions)
+			} else if !slices.Contains(pkg.Manifest.SupportedDimensions, dim) {
+				return nil, fmt.Errorf("widget '%s': dimensions [%d, %d] not supported by package '%s' (supported: %v)", w.ID, dim.Cols, dim.Rows, w.Type, pkg.Manifest.SupportedDimensions)
 			}
 		}
 	}
-
 	return registry, nil
 }
 
-func validateManifestConfigSchemasStage(cfg *Config, registry map[string]*domain.Package) error {
-	compiledSchemas := make(map[string]*jsonschema.Schema)
+func unmarshalSchemaDoc(v any) (any, error) {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	return jsonschema.UnmarshalJSON(bytes.NewReader(b))
+}
 
+func validateManifestConfigSchemasStage(cfg *Config, registry map[string]*domain.Package) error {
+	compiled := make(map[string]*jsonschema.Schema)
 	for _, w := range cfg.Display.Widgets {
 		pkg := registry[w.Type]
 		if len(pkg.Manifest.ConfigSchema) == 0 {
 			continue
 		}
-
-		sch, compiled := compiledSchemas[w.Type]
-		if !compiled {
-			compiler := jsonschema.NewCompiler()
-			compiler.DefaultDraft(jsonschema.Draft2020)
-
-			schemaJSON, err := json.Marshal(pkg.Manifest.ConfigSchema)
-			if err != nil {
-				return fmt.Errorf("widget '%s': failed to marshal manifest config_schema: %w", w.ID, err)
-			}
-			doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(schemaJSON))
+		sch, ok := compiled[w.Type]
+		if !ok {
+			c := jsonschema.NewCompiler()
+			c.DefaultDraft(jsonschema.Draft2020)
+			doc, err := unmarshalSchemaDoc(pkg.Manifest.ConfigSchema)
 			if err != nil {
 				return fmt.Errorf("widget '%s': failed to unmarshal manifest config_schema: %w", w.ID, err)
 			}
-			schemaURL := fmt.Sprintf("schema://widgets/%s/config_schema.json", w.Type)
-			if err := compiler.AddResource(schemaURL, doc); err != nil {
+			url := "schema://widgets/" + w.Type + "/config_schema.json"
+			if err = c.AddResource(url, doc); err != nil {
 				return fmt.Errorf("widget '%s': failed to add schema resource: %w", w.ID, err)
-			}
-			s, err := compiler.Compile(schemaURL)
-			if err != nil {
+			} else if sch, err = c.Compile(url); err != nil {
 				return fmt.Errorf("widget '%s': failed to compile manifest config_schema: %w", w.ID, err)
 			}
-			compiledSchemas[w.Type] = s
-			sch = s
+			compiled[w.Type] = sch
 		}
-
-		instanceConfig := w.Config
-		if instanceConfig == nil {
-			instanceConfig = make(map[string]any)
+		cfgVal := w.Config
+		if cfgVal == nil {
+			cfgVal = map[string]any{}
 		}
-		valJSON, err := json.Marshal(instanceConfig)
-		if err != nil {
-			return fmt.Errorf("widget '%s': failed to marshal instance config: %w", w.ID, err)
-		}
-		valDoc, err := jsonschema.UnmarshalJSON(bytes.NewReader(valJSON))
+		valDoc, err := unmarshalSchemaDoc(cfgVal)
 		if err != nil {
 			return fmt.Errorf("widget '%s': failed to unmarshal instance config: %w", w.ID, err)
-		}
-
-		if err := sch.Validate(valDoc); err != nil {
+		} else if err := sch.Validate(valDoc); err != nil {
 			return fmt.Errorf("manifest config_schema validation error for widget '%s': %w", w.ID, err)
 		}
 	}
-
 	return nil
+}
+
+func derefStr(v any) string {
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return ""
+}
+func derefSlice(v any) []any {
+	if s, ok := v.([]any); ok {
+		return s
+	}
+	return nil
+}
+
+func validateTasksSourceConfig(widgetID, source string, cfg map[string]any) (any, error) {
+	if source == "local" {
+		return nil, nil
+	}
+	p := "[Mirrormere Config Error] tasks widget '" + widgetID + "'"
+	if source != "http" && source != "gtasks" && source != "todoist" {
+		return nil, fmt.Errorf("%s declares invalid source '%s' (must be 'local', 'gtasks', 'http', or 'todoist')", p, source)
+	}
+	subCfg, ok := cfg[source].(map[string]any)
+	if !ok || subCfg == nil {
+		return nil, fmt.Errorf("%s with source '%s' requires '%s' config block", p, source, source)
+	}
+	u := derefStr(subCfg["base_url"])
+	if source == "http" && u == "" {
+		return nil, fmt.Errorf("%s with source 'http' requires non-empty 'http.base_url'", p)
+	} else if (source == "http" || (source == "todoist" && u != "")) && !isValidHTTPURL(u) {
+		return nil, fmt.Errorf("%s: invalid %s.base_url '%s' (must be http:// or https:// with host)", p, source, u)
+	} else if source == "gtasks" && derefStr(subCfg["tasklist_id"]) == "" {
+		return nil, fmt.Errorf("%s with source 'gtasks' requires non-empty 'gtasks.tasklist_id'", p)
+	}
+	return subCfg, nil
 }
 
 func validateDomainRulesStage(cfg *Config, registry map[string]*domain.Package) error {
-	// 1. Generic HTTP widgets check
-	for _, w := range cfg.Display.Widgets {
-		pkg := registry[w.Type]
-		if pkg != nil && pkg.Manifest.Provider == "http" {
-			if w.Endpoint == "" {
-				return fmt.Errorf("widget '%s': provider 'http' requires non-empty 'endpoint' URL", w.ID)
-			}
-		}
+	type primaryDef struct {
+		widgetID, source string
+		sourceCfg        any
 	}
-
-	// 1b. calendar-grid (and legacy calendar-family) member/calendar cross-field rules
+	primarySources, allListIDs := make(map[string]primaryDef), make(map[string][]string)
 	for _, w := range cfg.Display.Widgets {
-		if w.Type != "calendar-grid" && w.Type != "calendar-family" {
-			continue
+		if pkg := registry[w.Type]; pkg != nil && pkg.Manifest.Provider == "http" && w.Endpoint == "" {
+			return fmt.Errorf("widget '%s': provider 'http' requires non-empty 'endpoint' URL", w.ID)
 		}
-		if err := validateFamilyCalendarConfig(w.ID, w.Config); err != nil {
-			return err
+		if (w.Type == "calendar-grid" || w.Type == "calendar-family") && validateFamilyCalendarConfig(w.ID, w.Config) != nil {
+			return validateFamilyCalendarConfig(w.ID, w.Config)
 		}
-	}
-
-	// 2. Tasks & Lists Source-of-Truth Rules
-	type primarySourceDef struct {
-		widgetID  string
-		source    string
-		sourceCfg any
-	}
-	primarySources := make(map[string]primarySourceDef)
-	allListIDs := make(map[string][]string) // list_id -> []widgetID
-
-	for _, w := range cfg.Display.Widgets {
 		if w.Type != "tasks" {
 			continue
 		}
-
-		listID := w.ID
-		if w.Config != nil {
-			if customListID, ok := w.Config["list_id"].(string); ok && customListID != "" {
-				listID = customListID
-			}
-		}
+		listID := trimmedOr(derefStr(w.Config["list_id"]), w.ID)
 		allListIDs[listID] = append(allListIDs[listID], w.ID)
-
-		var source string
-		if w.Config != nil {
-			if src, ok := w.Config["source"].(string); ok {
-				source = src
+		if src := derefStr(w.Config["source"]); src != "" {
+			srcCfg, err := validateTasksSourceConfig(w.ID, src, w.Config)
+			if err != nil {
+				return err
+			} else if ex, ok := primarySources[listID]; ok && (ex.source != src || !reflect.DeepEqual(ex.sourceCfg, srcCfg)) {
+				return fmt.Errorf("[Mirrormere Config Error] conflicting source definitions for list_id '%s' between widget '%s' and widget '%s'", listID, ex.widgetID, w.ID)
 			}
-		}
-
-		if source != "" {
-			switch source {
-			case "local", "gtasks", "http", "todoist":
-				// Valid source adapter
-			default:
-				return fmt.Errorf("[Mirrormere Config Error] tasks widget '%s' declares invalid source '%s' (must be 'local', 'gtasks', 'http', or 'todoist')", w.ID, source)
-			}
-
-			var sourceCfg any
-			if source == "http" {
-				httpCfg, ok := w.Config["http"].(map[string]any)
-				if !ok || httpCfg == nil {
-					return fmt.Errorf("[Mirrormere Config Error] tasks widget '%s' with source 'http' requires 'http' config block", w.ID)
-				}
-				baseURL, ok := httpCfg["base_url"].(string)
-				if !ok || baseURL == "" {
-					return fmt.Errorf("[Mirrormere Config Error] tasks widget '%s' with source 'http' requires non-empty 'http.base_url'", w.ID)
-				}
-				if !isValidHTTPURL(baseURL) {
-					return fmt.Errorf("[Mirrormere Config Error] tasks widget '%s': invalid http.base_url '%s' (must be http:// or https:// with host)", w.ID, baseURL)
-				}
-				sourceCfg = httpCfg
-			} else if source == "gtasks" {
-				gtasksCfg, ok := w.Config["gtasks"].(map[string]any)
-				if !ok || gtasksCfg == nil {
-					return fmt.Errorf("[Mirrormere Config Error] tasks widget '%s' with source 'gtasks' requires 'gtasks' config block", w.ID)
-				}
-				taskListID, ok := gtasksCfg["tasklist_id"].(string)
-				if !ok || taskListID == "" {
-					return fmt.Errorf("[Mirrormere Config Error] tasks widget '%s' with source 'gtasks' requires non-empty 'gtasks.tasklist_id'", w.ID)
-				}
-				sourceCfg = gtasksCfg
-			} else if source == "todoist" {
-				todoistCfg, ok := w.Config["todoist"].(map[string]any)
-				if !ok || todoistCfg == nil {
-					return fmt.Errorf("[Mirrormere Config Error] tasks widget '%s' with source 'todoist' requires 'todoist' config block", w.ID)
-				}
-				if baseURL, ok := todoistCfg["base_url"].(string); ok && baseURL != "" {
-					if !isValidHTTPURL(baseURL) {
-						return fmt.Errorf("[Mirrormere Config Error] tasks widget '%s': invalid todoist.base_url '%s' (must be http:// or https:// with host)", w.ID, baseURL)
-					}
-				}
-				sourceCfg = todoistCfg
-			}
-
-			if existing, exists := primarySources[listID]; exists {
-				if existing.source != source || !reflect.DeepEqual(existing.sourceCfg, sourceCfg) {
-					return fmt.Errorf("[Mirrormere Config Error] conflicting source definitions for list_id '%s' between widget '%s' and widget '%s'",
-						listID, existing.widgetID, w.ID)
-				}
-			} else {
-				primarySources[listID] = primarySourceDef{
-					widgetID:  w.ID,
-					source:    source,
-					sourceCfg: sourceCfg,
-				}
-			}
+			primarySources[listID] = primaryDef{widgetID: w.ID, source: src, sourceCfg: srcCfg}
 		}
 	}
-
 	for listID, widgetIDs := range allListIDs {
 		if _, hasPrimary := primarySources[listID]; !hasPrimary {
-			firstWidget := widgetIDs[0]
-			return fmt.Errorf("[Mirrormere Config Error] tasks widget '%s' references list_id '%s' with no primary source definition",
-				firstWidget, listID)
+			return fmt.Errorf("[Mirrormere Config Error] tasks widget '%s' references list_id '%s' with no primary source definition", widgetIDs[0], listID)
 		}
 	}
-
 	return nil
 }
 
-// validateFamilyCalendarConfig enforces the calendar-family cross-field validation rules from
-//  "Configuration > Validation (boot and LKGC)" that a structural JSON Schema cannot
-// express: member-to-calendar name references, member uniqueness/limit, e-ink pattern
-// distinctness, and hours ordering.
 func validateFamilyCalendarConfig(widgetID string, rawConfig map[string]any) error {
-	calendarNames := make(map[string]bool)
-	if rawList, ok := rawConfig["calendars"].([]any); ok {
-		for _, item := range rawList {
-			if m, ok := item.(map[string]any); ok {
-				if name, ok := m["name"].(string); ok && strings.TrimSpace(name) != "" {
-					calendarNames[name] = true
-				}
-			}
+	p := "[Mirrormere Config Error] calendar-family widget '" + widgetID + "': "
+	cals := make(map[string]bool)
+	for _, item := range derefSlice(rawConfig["calendars"]) {
+		if m, ok := item.(map[string]any); ok && strings.TrimSpace(derefStr(m["name"])) != "" {
+			cals[strings.TrimSpace(derefStr(m["name"]))] = true
 		}
 	}
-
-	rawMembers, hasMembers := rawConfig["members"].([]any)
-	if !hasMembers {
-		rawMembers = nil
+	members := derefSlice(rawConfig["members"])
+	if len(members) > 8 {
+		return fmt.Errorf("%sat most 8 members are supported, found %d", p, len(members))
 	}
-	if len(rawMembers) > 8 {
-		return fmt.Errorf("[Mirrormere Config Error] calendar-family widget '%s': at most 8 members are supported, found %d", widgetID, len(rawMembers))
-	}
-
-	seenNames := make(map[string]bool)
-	seenPatterns := make(map[string]string)
-	for idx, item := range rawMembers {
+	names, patterns := make(map[string]bool), make(map[string]string)
+	for idx, item := range members {
 		m, ok := item.(map[string]any)
 		if !ok {
-			return fmt.Errorf("[Mirrormere Config Error] calendar-family widget '%s': members[%d] is not a mapping", widgetID, idx)
+			return fmt.Errorf("%smembers[%d] is not a mapping", p, idx)
 		}
-		var name string
-		if v, ok := m["name"].(string); ok {
-			name = v
-		}
-		name = strings.TrimSpace(name)
+		name := strings.TrimSpace(derefStr(m["name"]))
 		if name == "" {
-			return fmt.Errorf("[Mirrormere Config Error] calendar-family widget '%s': members[%d] requires non-empty 'name'", widgetID, idx)
+			return fmt.Errorf("%smembers[%d] requires non-empty 'name'", p, idx)
+		} else if names[name] {
+			return fmt.Errorf("%sduplicate member name %q", p, name)
 		}
-		if seenNames[name] {
-			return fmt.Errorf("[Mirrormere Config Error] calendar-family widget '%s': duplicate member name %q", widgetID, name)
+		names[name] = true
+		pattern := trimmedOr(derefStr(m["pattern"]), "solid")
+		if prev, ok := patterns[pattern]; ok {
+			return fmt.Errorf("%smember %q and member %q both declare e-ink pattern %q; patterns must be distinct", p, prev, name, pattern)
 		}
-		seenNames[name] = true
-
-		// An omitted 'pattern' defaults to "solid" at render time (parseFamilyMembers), so two
-		// members that both omit it - or one that omits it and one that sets "solid" explicitly
-		// - collide on the same e-ink pattern just as if both had typed "solid". Apply the same
-		// default here before the collision check.
-		pattern := "solid"
-		if v, ok := m["pattern"].(string); ok && strings.TrimSpace(v) != "" {
-			pattern = strings.TrimSpace(v)
-		}
-		if prevMember, exists := seenPatterns[pattern]; exists {
-			return fmt.Errorf("[Mirrormere Config Error] calendar-family widget '%s': member %q and member %q both declare e-ink pattern %q; patterns must be distinct", widgetID, prevMember, name, pattern)
-		}
-		seenPatterns[pattern] = name
-
-		claimed, hasClaimed := m["calendars"].([]any)
-		if !hasClaimed {
-			claimed = nil
-		}
-		for _, c := range claimed {
-			calName, ok := c.(string)
-			if !ok || strings.TrimSpace(calName) == "" {
-				return fmt.Errorf("[Mirrormere Config Error] calendar-family widget '%s': member %q declares an empty calendar reference", widgetID, name)
-			}
-			if !calendarNames[calName] {
-				return fmt.Errorf("[Mirrormere Config Error] calendar-family widget '%s': member %q claims unknown calendar %q (not declared in 'calendars')", widgetID, name, calName)
+		patterns[pattern] = name
+		for _, c := range derefSlice(m["calendars"]) {
+			cal := strings.TrimSpace(derefStr(c))
+			if cal == "" {
+				return fmt.Errorf("%smember %q declares an empty calendar reference", p, name)
+			} else if !cals[cal] {
+				return fmt.Errorf("%smember %q claims unknown calendar %q (not declared in 'calendars')", p, name, cal)
 			}
 		}
 	}
-
-	if rawHours, ok := rawConfig["hours"].([]any); ok && len(rawHours) == 2 {
-		start, okStart := rawHours[0].(string)
-		end, okEnd := rawHours[1].(string)
-		if okStart && okEnd && start >= end {
-			return fmt.Errorf("[Mirrormere Config Error] calendar-family widget '%s': 'hours' start %q must be before end %q", widgetID, start, end)
+	if h := derefSlice(rawConfig["hours"]); len(h) == 2 {
+		if s, e := derefStr(h[0]), derefStr(h[1]); s != "" && e != "" && s >= e {
+			return fmt.Errorf("%s'hours' start %q must be before end %q", p, s, e)
 		}
 	}
-
 	return nil
-}
-
-func validateLayoutSolverStage(cfg *Config) (*layout.Layout, error) {
-	inputs := make([]layout.WidgetInput, len(cfg.Display.Widgets))
-	for i, w := range cfg.Display.Widgets {
-		dim, err := domain.DimensionFromSlice(w.Dimensions)
-		if err != nil {
-			return nil, err
-		}
-		inputs[i] = layout.WidgetInput{
-			ID:         w.ID,
-			Type:       w.Type,
-			Dimensions: dim,
-			Pinned:     w.Pinned,
-		}
-	}
-
-	l, err := layout.Solve(inputs)
-	if err != nil {
-		return nil, fmt.Errorf("layout solver error: %w", err)
-	}
-	return l, nil
 }
 
 // DiffConfigs computes instance-level differences between old and new configurations.
 func DiffConfigs(oldCfg, newCfg *Config) *ConfigDiff {
 	diff := &ConfigDiff{}
-	if oldCfg != nil && newCfg != nil && oldCfg.Timezone != newCfg.Timezone {
-		diff.TimezoneChanged = true
-	}
+	oldMap, oldWidgets := widgetMap(oldCfg)
+	newMap, newWidgets := widgetMap(newCfg)
 	if oldCfg != nil && newCfg != nil {
-		if !reflect.DeepEqual(oldCfg.Display.Header, newCfg.Display.Header) ||
+		diff.TimezoneChanged = oldCfg.Timezone != newCfg.Timezone
+		diff.ShellChanged = !reflect.DeepEqual(oldCfg.Display.Header, newCfg.Display.Header) ||
 			oldCfg.Display.HideCursor != newCfg.Display.HideCursor ||
-			oldCfg.Display.RemoteURL != newCfg.Display.RemoteURL {
-			diff.ShellChanged = true
-		}
+			oldCfg.Display.RemoteURL != newCfg.Display.RemoteURL
 	}
-	oldMap := make(map[string]WidgetConfig)
-	if oldCfg != nil {
-		for _, w := range oldCfg.Display.Widgets {
-			oldMap[w.ID] = w
-		}
-	}
-
-	newMap := make(map[string]WidgetConfig)
-	if newCfg != nil {
-		for _, w := range newCfg.Display.Widgets {
-			newMap[w.ID] = w
-		}
-	}
-
-	if newCfg != nil {
-		for _, newW := range newCfg.Display.Widgets {
-			oldW, exists := oldMap[newW.ID]
-			if !exists {
-				diff.Added = append(diff.Added, newW)
-				continue
-			}
-
-			if oldW.Type != newW.Type {
-				// Type change on same ID is composite Removed + Added (Replacement)
-				diff.Modified = append(diff.Modified, InstanceDiff{
-					ID:           newW.ID,
-					Type:         newW.Type,
-					Change:       ChangeReplaced,
-					OldInstance:  &oldW,
-					NewInstance:  &newW,
-					DomainChange: true,
-				})
-				continue
-			}
-
-			domainChanged := !reflect.DeepEqual(oldW.Config, newW.Config)
-			transportChanged := oldW.Endpoint != newW.Endpoint ||
-				oldW.Method != newW.Method ||
-				oldW.TokenEnv != newW.TokenEnv ||
-				!equalIntPtr(oldW.RefreshIntervalSeconds, newW.RefreshIntervalSeconds)
-			layoutChanged := !reflect.DeepEqual(oldW.Dimensions, newW.Dimensions) ||
-				oldW.Pinned != newW.Pinned
-
-			if !domainChanged && !transportChanged {
-				diff.Unchanged = append(diff.Unchanged, newW)
-				if layoutChanged {
-					diff.LayoutModified = append(diff.LayoutModified, newW)
-				}
-			} else {
-				diff.Modified = append(diff.Modified, InstanceDiff{
-					ID:           newW.ID,
-					Type:         newW.Type,
-					Change:       ChangeModified,
-					OldInstance:  &oldW,
-					NewInstance:  &newW,
-					DomainChange: domainChanged,
-				})
+	for _, w := range newWidgets {
+		oldW, exists := oldMap[w.ID]
+		switch {
+		case !exists:
+			diff.Added = append(diff.Added, w)
+		case oldW.Type != w.Type:
+			diff.Modified = append(diff.Modified, InstanceDiff{ID: w.ID, Type: w.Type, Change: ChangeReplaced, OldInstance: &oldW, NewInstance: &w, DomainChange: true})
+		case !reflect.DeepEqual(oldW.Config, w.Config):
+			diff.Modified = append(diff.Modified, InstanceDiff{ID: w.ID, Type: w.Type, Change: ChangeModified, OldInstance: &oldW, NewInstance: &w, DomainChange: true})
+		case oldW.Endpoint != w.Endpoint || oldW.Method != w.Method || oldW.TokenEnv != w.TokenEnv || !equalIntPtr(oldW.RefreshIntervalSeconds, w.RefreshIntervalSeconds):
+			diff.Modified = append(diff.Modified, InstanceDiff{ID: w.ID, Type: w.Type, Change: ChangeModified, OldInstance: &oldW, NewInstance: &w})
+		default:
+			diff.Unchanged = append(diff.Unchanged, w)
+			if !reflect.DeepEqual(oldW.Dimensions, w.Dimensions) || oldW.Pinned != w.Pinned {
+				diff.LayoutModified = append(diff.LayoutModified, w)
 			}
 		}
 	}
-
-	if oldCfg != nil {
-		for _, oldW := range oldCfg.Display.Widgets {
-			if _, exists := newMap[oldW.ID]; !exists {
-				diff.Removed = append(diff.Removed, oldW)
-			}
+	for _, oldW := range oldWidgets {
+		if _, exists := newMap[oldW.ID]; !exists {
+			diff.Removed = append(diff.Removed, oldW)
 		}
 	}
-
 	return diff
 }
 
+func widgetMap(cfg *Config) (map[string]WidgetConfig, []WidgetConfig) {
+	if cfg == nil {
+		return nil, nil
+	}
+	m := make(map[string]WidgetConfig, len(cfg.Display.Widgets))
+	for _, w := range cfg.Display.Widgets {
+		m[w.ID] = w
+	}
+	return m, cfg.Display.Widgets
+}
 func equalIntPtr(a, b *int) bool {
-	if a == nil && b == nil {
-		return true
-	}
-	if a == nil || b == nil {
-		return false
-	}
-	return *a == *b
+	return (a == nil && b == nil) || (a != nil && b != nil && *a == *b)
 }
