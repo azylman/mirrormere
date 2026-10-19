@@ -15,6 +15,28 @@ type HTTPStatusCoder interface {
 	StatusCode() int
 }
 
+var transientErrorSubstrings = []string{
+	"connection refused",
+	"connection reset",
+	"timeout",
+	"deadline exceeded",
+	"500 internal server error",
+	"502 bad gateway",
+	"503 service unavailable",
+	"504 gateway timeout",
+	"429 too many requests",
+	"status 500",
+	"status 502",
+	"status 503",
+	"status 504",
+	"status 429",
+	"http 500",
+	"http 502",
+	"http 503",
+	"http 504",
+	"http 429",
+}
+
 // IsNetworkOrServerError inspects whether an error represents a transient network fault,
 // connection refusal, timeout, or upstream 5xx/429 status code.
 func IsNetworkOrServerError(err error) bool {
@@ -54,26 +76,10 @@ func IsNetworkOrServerError(err error) bool {
 
 	// 4. String pattern matching for common error messages
 	msg := strings.ToLower(err.Error())
-	if strings.Contains(msg, "connection refused") ||
-		strings.Contains(msg, "connection reset") ||
-		strings.Contains(msg, "timeout") ||
-		strings.Contains(msg, "deadline exceeded") ||
-		strings.Contains(msg, "500 internal server error") ||
-		strings.Contains(msg, "502 bad gateway") ||
-		strings.Contains(msg, "503 service unavailable") ||
-		strings.Contains(msg, "504 gateway timeout") ||
-		strings.Contains(msg, "429 too many requests") ||
-		strings.Contains(msg, "status 500") ||
-		strings.Contains(msg, "status 502") ||
-		strings.Contains(msg, "status 503") ||
-		strings.Contains(msg, "status 504") ||
-		strings.Contains(msg, "status 429") ||
-		strings.Contains(msg, "http 500") ||
-		strings.Contains(msg, "http 502") ||
-		strings.Contains(msg, "http 503") ||
-		strings.Contains(msg, "http 504") ||
-		strings.Contains(msg, "http 429") {
-		return true
+	for _, sub := range transientErrorSubstrings {
+		if strings.Contains(msg, sub) {
+			return true
+		}
 	}
 
 	return false

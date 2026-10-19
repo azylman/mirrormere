@@ -101,25 +101,9 @@ func (p *HTTPProvider) Init(ctx context.Context, config map[string]any, opts Ini
 		return errors.New("http provider requires non-empty response_schema")
 	}
 
-	compiler := jsonschema.NewCompiler()
-	compiler.DefaultDraft(jsonschema.Draft2020)
-
-	schemaJSON, err := json.Marshal(opts.ResponseSchema)
+	sch, err := compileResponseSchema(opts.Type, opts.ResponseSchema)
 	if err != nil {
-		return fmt.Errorf("failed to marshal response_schema: %w", err)
-	}
-	doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(schemaJSON))
-	if err != nil {
-		return fmt.Errorf("failed to unmarshal response_schema: %w", err)
-	}
-
-	schemaURL := fmt.Sprintf("schema://widgets/%s/response_schema.json", opts.Type)
-	if err := compiler.AddResource(schemaURL, doc); err != nil {
-		return fmt.Errorf("failed to add response_schema resource: %w", err)
-	}
-	sch, err := compiler.Compile(schemaURL)
-	if err != nil {
-		return fmt.Errorf("failed to compile response_schema: %w", err)
+		return err
 	}
 
 	p.endpoint = endpoint
@@ -135,6 +119,28 @@ func (p *HTTPProvider) Init(ctx context.Context, config map[string]any, opts Ini
 	p.schema = sch
 
 	return nil
+}
+
+func compileResponseSchema(widgetType string, schemaMap map[string]any) (*jsonschema.Schema, error) {
+	compiler := jsonschema.NewCompiler()
+	compiler.DefaultDraft(jsonschema.Draft2020)
+	schemaJSON, err := json.Marshal(schemaMap)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal response_schema: %w", err)
+	}
+	doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(schemaJSON))
+	if err != nil {
+		return nil, fmt.Errorf("failed to unmarshal response_schema: %w", err)
+	}
+	schemaURL := fmt.Sprintf("schema://widgets/%s/response_schema.json", widgetType)
+	if err := compiler.AddResource(schemaURL, doc); err != nil {
+		return nil, fmt.Errorf("failed to add response_schema resource: %w", err)
+	}
+	sch, err := compiler.Compile(schemaURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to compile response_schema: %w", err)
+	}
+	return sch, nil
 }
 
 // Fetch executes a polling request against the configured endpoint and validates response schema.
