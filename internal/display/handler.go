@@ -19,7 +19,6 @@ const (
 	DefaultContainerTemplatePath = "/app/web/templates/display.html"
 	// DefaultContainerStaticDir is the standard container path for static web assets.
 	DefaultContainerStaticDir = "/app/web/static"
-
 	// LocalFallbackTemplatePath is the relative development path for display.html.
 	LocalFallbackTemplatePath = "web/templates/display.html"
 	// LocalFallbackStaticDir is the relative development path for static web assets.
@@ -29,108 +28,21 @@ const (
 // HandlerOption configures Handler instances.
 type HandlerOption func(*Handler)
 
-// WithTemplatePath sets the primary container template path for display.html.
-func WithTemplatePath(path string) HandlerOption {
-	return func(h *Handler) {
-		h.templatePath = path
-	}
-}
-
-// WithLocalTemplatePath sets the local development fallback template path.
-func WithLocalTemplatePath(path string) HandlerOption {
-	return func(h *Handler) {
-		h.localTemplatePath = path
-	}
-}
-
-// WithStaticDir sets the primary container directory for static assets.
-func WithStaticDir(dir string) HandlerOption {
-	return func(h *Handler) {
-		h.staticDir = dir
-	}
-}
-
-// WithLocalStaticDir sets the local development fallback directory for static assets.
-func WithLocalStaticDir(dir string) HandlerOption {
-	return func(h *Handler) {
-		h.localStaticDir = dir
-	}
-}
-
-// WithTemplateContent sets an in-memory template override directly (primarily for testing).
-func WithTemplateContent(content []byte) HandlerOption {
-	return func(h *Handler) {
-		h.templateContent = content
-	}
-}
-
-// WithEmbeddedTemplate is an alias for WithTemplateContent for backward compatibility.
-func WithEmbeddedTemplate(content []byte) HandlerOption {
-	return WithTemplateContent(content)
-}
-
-// WithTimezone sets the static fallback household IANA timezone.
-func WithTimezone(tz string) HandlerOption {
-	return func(h *Handler) {
-		h.timezone = tz
-	}
-}
-
-// WithTimezoneProvider sets a dynamic function returning the current household IANA timezone.
-func WithTimezoneProvider(provider func() string) HandlerOption {
-	return func(h *Handler) {
-		h.timezoneProvider = provider
-	}
-}
-
-// WithHideCursor sets the static fallback cursor suppression state.
-func WithHideCursor(hide bool) HandlerOption {
-	return func(h *Handler) {
-		h.hideCursor = hide
-	}
-}
-
-// WithHideCursorProvider sets a dynamic function returning the current cursor suppression state.
-func WithHideCursorProvider(provider func() bool) HandlerOption {
-	return func(h *Handler) {
-		h.hideCursorProvider = provider
-	}
-}
-
-// WithRemoteURL sets the static fallback remote URL for touch event forwarding.
-func WithRemoteURL(url string) HandlerOption {
-	return func(h *Handler) {
-		h.remoteURL = url
-	}
-}
-
-// WithRemoteURLProvider sets a dynamic function returning the remote URL for touch forwarding.
-func WithRemoteURLProvider(provider func() string) HandlerOption {
-	return func(h *Handler) {
-		h.remoteURLProvider = provider
-	}
-}
-
-// WithHeaderVideoTemplateData sets static HeaderVideoTemplateData for the display.
-func WithHeaderVideoTemplateData(data *HeaderVideoTemplateData) HandlerOption {
-	return func(h *Handler) {
-		h.headerVideo = data
-	}
-}
-
-// WithHeaderVideoProvider sets a dynamic function returning HeaderVideoTemplateData.
-func WithHeaderVideoProvider(provider func() *HeaderVideoTemplateData) HandlerOption {
-	return func(h *Handler) {
-		h.headerVideoProvider = provider
-	}
-}
-
-// WithThemeProvider sets a dynamic function returning the current active theme ("day" or "night").
-func WithThemeProvider(provider func() string) HandlerOption {
-	return func(h *Handler) {
-		h.themeProvider = provider
-	}
-}
+func WithTemplatePath(path string) HandlerOption                         { return func(h *Handler) { h.templatePath = path } }
+func WithLocalTemplatePath(path string) HandlerOption                    { return func(h *Handler) { h.localTemplatePath = path } }
+func WithStaticDir(dir string) HandlerOption                             { return func(h *Handler) { h.staticDir = dir } }
+func WithLocalStaticDir(dir string) HandlerOption                        { return func(h *Handler) { h.localStaticDir = dir } }
+func WithTemplateContent(content []byte) HandlerOption                   { return func(h *Handler) { h.templateContent = content } }
+func WithEmbeddedTemplate(content []byte) HandlerOption                  { return WithTemplateContent(content) }
+func WithTimezone(tz string) HandlerOption                               { return func(h *Handler) { h.timezone = tz } }
+func WithTimezoneProvider(provider func() string) HandlerOption          { return func(h *Handler) { h.timezoneProvider = provider } }
+func WithHideCursor(hide bool) HandlerOption                             { return func(h *Handler) { h.hideCursor = hide } }
+func WithHideCursorProvider(provider func() bool) HandlerOption          { return func(h *Handler) { h.hideCursorProvider = provider } }
+func WithRemoteURL(url string) HandlerOption                             { return func(h *Handler) { h.remoteURL = url } }
+func WithRemoteURLProvider(provider func() string) HandlerOption         { return func(h *Handler) { h.remoteURLProvider = provider } }
+func WithHeaderVideoTemplateData(d *HeaderVideoTemplateData) HandlerOption { return func(h *Handler) { h.headerVideo = d } }
+func WithHeaderVideoProvider(p func() *HeaderVideoTemplateData) HandlerOption { return func(h *Handler) { h.headerVideoProvider = p } }
+func WithThemeProvider(provider func() string) HandlerOption             { return func(h *Handler) { h.themeProvider = provider } }
 
 // Handler serves the web display HUD shell and static web runtime assets.
 type Handler struct {
@@ -151,14 +63,12 @@ type Handler struct {
 	themeProvider       func() string
 }
 
-// SetTimezone updates the household timezone dynamically.
 func (h *Handler) SetTimezone(tz string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.timezone = tz
 }
 
-// Timezone returns the effective household timezone, defaulting to "UTC".
 func (h *Handler) Timezone() string {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
@@ -173,14 +83,12 @@ func (h *Handler) Timezone() string {
 	return "UTC"
 }
 
-// SetHideCursor updates the cursor suppression state dynamically.
 func (h *Handler) SetHideCursor(hide bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.hideCursor = hide
 }
 
-// HideCursor returns whether cursor suppression is enabled, defaulting to false.
 func (h *Handler) HideCursor() bool {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
@@ -190,14 +98,12 @@ func (h *Handler) HideCursor() bool {
 	return h.hideCursor
 }
 
-// SetRemoteURL updates the fallback remote URL dynamically.
 func (h *Handler) SetRemoteURL(url string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.remoteURL = url
 }
 
-// RemoteURL returns the effective remote URL for touch forwarding.
 func (h *Handler) RemoteURL() string {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
@@ -209,7 +115,6 @@ func (h *Handler) RemoteURL() string {
 	return h.remoteURL
 }
 
-// HeaderVideo returns the current header video template data.
 func (h *Handler) HeaderVideo() *HeaderVideoTemplateData {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
@@ -219,7 +124,6 @@ func (h *Handler) HeaderVideo() *HeaderVideoTemplateData {
 	return h.headerVideo
 }
 
-// Theme returns the current active theme mode ("day" or "night").
 func (h *Handler) Theme() string {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
@@ -257,70 +161,61 @@ func NewHandler(opts ...HandlerOption) *Handler {
 		staticDir:         DefaultContainerStaticDir,
 		localStaticDir:    LocalFallbackStaticDir,
 	}
-
 	for _, opt := range opts {
 		opt(h)
 	}
-
 	return h
 }
 
-// GetDisplay handles GET /display requests, serving display.html with household timezone context.
-func (h *Handler) GetDisplay(w http.ResponseWriter, r *http.Request) {
+func checkGetOrHead(w http.ResponseWriter, r *http.Request) bool {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Accept")
-
 	if r.Method == http.MethodOptions {
 		w.WriteHeader(http.StatusNoContent)
-		return
+		return false
 	}
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		w.Header().Set("Allow", "GET, HEAD, OPTIONS")
 		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return false
+	}
+	return true
+}
+
+func readFile(p string) ([]byte, bool) {
+	if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
+		if data, err := os.ReadFile(p); err == nil {
+			return data, true
+		}
+	}
+	return nil, false
+}
+
+func (h *Handler) resolveTemplateBytes() ([]byte, bool) {
+	if data, ok := readFile(h.templatePath); ok {
+		return data, true
+	}
+	if len(h.templateContent) > 0 {
+		return h.templateContent, true
+	}
+	for _, c := range []string{h.localTemplatePath, filepath.Join("..", "..", h.localTemplatePath)} {
+		if data, ok := readFile(c); ok {
+			return data, true
+		}
+	}
+	return nil, false
+}
+
+// GetDisplay handles GET /display requests, serving display.html with household timezone context.
+func (h *Handler) GetDisplay(w http.ResponseWriter, r *http.Request) {
+	if !checkGetOrHead(w, r) {
 		return
 	}
-
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "public, max-age=0, must-revalidate")
 
-	var raw []byte
-	var found bool
-
-	// 1. Check primary container template path on disk
-	if h.templatePath != "" {
-		if fi, err := os.Stat(h.templatePath); err == nil && !fi.IsDir() {
-			if data, err := os.ReadFile(h.templatePath); err == nil {
-				raw = data
-				found = true
-			}
-		}
-	}
-
-	// 2. Explicit template content override (primarily unit tests)
-	if !found && len(h.templateContent) > 0 {
-		raw = h.templateContent
-		found = true
-	}
-
-	// 3. Check local repo development template path on disk
-	if !found && h.localTemplatePath != "" {
-		candidates := []string{
-			h.localTemplatePath,
-			filepath.Join("..", "..", h.localTemplatePath),
-		}
-		for _, c := range candidates {
-			if fi, err := os.Stat(c); err == nil && !fi.IsDir() {
-				if data, err := os.ReadFile(c); err == nil {
-					raw = data
-					found = true
-					break
-				}
-			}
-		}
-	}
-
-	// 4. Not found
+	raw, found := h.resolveTemplateBytes()
 	if !found {
 		writeJSONError(w, http.StatusNotFound, "display template not found")
 		return
@@ -332,23 +227,21 @@ func (h *Handler) GetDisplay(w http.ResponseWriter, r *http.Request) {
 	}
 
 	out := raw
-	tmpl, err := template.New("display.html").Parse(string(raw))
-	if err == nil {
-		var buf bytes.Buffer
+	if tmpl, err := template.New("display.html").Parse(string(raw)); err == nil {
 		hideCursor := h.HideCursor()
 		if q := r.URL.Query().Get("hide_cursor"); q == "true" {
 			hideCursor = true
 		} else if q == "false" {
 			hideCursor = false
 		}
-		data := DisplayTemplateData{
+		var buf bytes.Buffer
+		if err := tmpl.Execute(&buf, DisplayTemplateData{
 			Timezone:    h.Timezone(),
 			HideCursor:  hideCursor,
 			RemoteURL:   h.RemoteURL(),
 			HeaderVideo: h.HeaderVideo(),
 			Theme:       h.Theme(),
-		}
-		if err := tmpl.Execute(&buf, data); err == nil {
+		}); err == nil {
 			out = buf.Bytes()
 		}
 	}
@@ -358,100 +251,70 @@ func (h *Handler) GetDisplay(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func tryServeStaticFile(w http.ResponseWriter, r *http.Request, baseDir, clean string) bool {
+	if baseDir == "" {
+		return false
+	}
+	fullPath := filepath.Join(baseDir, clean)
+	if rel, err := filepath.Rel(baseDir, fullPath); err == nil && !strings.HasPrefix(rel, "..") {
+		if fi, err := os.Stat(fullPath); err == nil && !fi.IsDir() {
+			w.Header().Set("Content-Type", detectContentType(clean))
+			w.Header().Set("Cache-Control", "public, max-age=0, must-revalidate")
+			http.ServeFile(w, r, fullPath)
+			return true
+		}
+	}
+	return false
+}
+
 // GetStatic handles GET /static/{path...} requests with strict path traversal defenses.
 func (h *Handler) GetStatic(w http.ResponseWriter, r *http.Request, assetPath string) {
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Accept")
-
-	if r.Method == http.MethodOptions {
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
-	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		w.Header().Set("Allow", "GET, HEAD, OPTIONS")
-		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-
-	// 1. Strict path traversal defense
-	if assetPath == "" || strings.Contains(assetPath, "..") || strings.HasPrefix(assetPath, ".") || filepath.IsAbs(assetPath) {
-		writeJSONError(w, http.StatusBadRequest, "invalid asset path: path traversal detected")
+	if !checkGetOrHead(w, r) {
 		return
 	}
 
 	clean := filepath.Clean(assetPath)
-	if clean == "." || strings.HasPrefix(clean, "..") || strings.HasPrefix(clean, "/") || strings.HasPrefix(clean, "\\") {
+	if assetPath == "" || strings.Contains(assetPath, "..") || strings.HasPrefix(assetPath, ".") || filepath.IsAbs(assetPath) ||
+		clean == "." || strings.HasPrefix(clean, "..") || strings.HasPrefix(clean, "/") || strings.HasPrefix(clean, "\\") {
 		writeJSONError(w, http.StatusBadRequest, "invalid asset path: path traversal detected")
 		return
 	}
 
-	// 1b. Alias rewrites for backward compatibility
 	if filepath.ToSlash(clean) == "js/calendar_grid.js" {
 		clean = filepath.FromSlash("js/calendar_family.js")
 	}
 
-	// 2. Check primary container static dir on disk
-	if h.staticDir != "" {
-		fullPath := filepath.Join(h.staticDir, clean)
-		rel, err := filepath.Rel(h.staticDir, fullPath)
-		if err == nil && !strings.HasPrefix(rel, "..") {
-			if fi, err := os.Stat(fullPath); err == nil && !fi.IsDir() {
-				w.Header().Set("Content-Type", detectContentType(clean))
-				w.Header().Set("Cache-Control", "public, max-age=0, must-revalidate")
-				http.ServeFile(w, r, fullPath)
-				return
-			}
+	for _, baseDir := range []string{h.staticDir, h.localStaticDir, filepath.Join("..", "..", h.localStaticDir)} {
+		if tryServeStaticFile(w, r, baseDir, clean) {
+			return
 		}
 	}
 
-	// 3. Check local development fallback static dir on disk
-	if h.localStaticDir != "" {
-		candidates := []string{
-			h.localStaticDir,
-			filepath.Join("..", "..", h.localStaticDir),
-		}
-		for _, baseDir := range candidates {
-			fullPath := filepath.Join(baseDir, clean)
-			rel, err := filepath.Rel(baseDir, fullPath)
-			if err == nil && !strings.HasPrefix(rel, "..") {
-				if fi, err := os.Stat(fullPath); err == nil && !fi.IsDir() {
-					w.Header().Set("Content-Type", detectContentType(clean))
-					w.Header().Set("Cache-Control", "public, max-age=0, must-revalidate")
-					http.ServeFile(w, r, fullPath)
-					return
-				}
-			}
-		}
-	}
-
-	// 4. Asset not found
 	writeJSONError(w, http.StatusNotFound, "static asset not found")
+}
+
+var contentTypes = map[string]string{
+	".js":    "text/javascript; charset=utf-8",
+	".css":   "text/css; charset=utf-8",
+	".svg":   "image/svg+xml",
+	".json":  "application/json; charset=utf-8",
+	".png":   "image/png",
+	".jpg":   "image/jpeg",
+	".jpeg":  "image/jpeg",
+	".webp":  "image/webp",
+	".woff2": "font/woff2",
+	".html":  "text/html; charset=utf-8",
 }
 
 func detectContentType(path string) string {
 	ext := strings.ToLower(filepath.Ext(path))
-	switch ext {
-	case ".js":
-		return "text/javascript; charset=utf-8"
-	case ".css":
-		return "text/css; charset=utf-8"
-	case ".svg":
-		return "image/svg+xml"
-	case ".json":
-		return "application/json; charset=utf-8"
-	case ".png":
-		return "image/png"
-	case ".webp":
-		return "image/webp"
-	case ".html":
-		return "text/html; charset=utf-8"
-	default:
-		if t := mime.TypeByExtension(ext); t != "" {
-			return t
-		}
-		return "application/octet-stream"
+	if ct, ok := contentTypes[ext]; ok {
+		return ct
 	}
+	if t := mime.TypeByExtension(ext); t != "" {
+		return t
+	}
+	return "application/octet-stream"
 }
 
 func writeJSONError(w http.ResponseWriter, status int, msg string) {
