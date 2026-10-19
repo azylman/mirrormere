@@ -12,11 +12,13 @@ coverage/
 docs/
 *.md
 
-# Clients & local deployment configs
+# Clients, host-mounted runtime assets, & local deployment configs
 client/ear/
 client/eink-node/
 client/remote/
 deploy/
+web/
+widgets/
 
 # Developer tooling & configurations
 .golangci.yml

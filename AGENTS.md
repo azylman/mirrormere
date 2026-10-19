@@ -52,3 +52,6 @@ See `README.md` for the product overview.
 - The voice hub talks to its STT, brain, TTS and optional fast-path endpoints over HTTP
   (STT may also be Wyoming TCP); the URLs come from the `voice_hub` section of the config.
 - Go tests are expected to stay above the 95% coverage floor; new code needs tests.
+- `Dockerfile` builds a bare-binary image (`/app/server` only). Never `COPY` `web/` or
+  `widgets/` into the image; both are volume-mounted at runtime (`/app/web:ro`, `/app/widgets:ro`)
+  so templates, CSS, JS, and widgets remain mutable without publishing a new container image.
