@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -192,8 +191,8 @@ func NewWeatherProviderWithClient(client *http.Client, baseURL string) *WeatherP
 
 // Init initializes the provider with instance domain config and framework options.
 func (p *WeatherProvider) Init(ctx context.Context, config map[string]any, opts InitOptions) error {
-	latVal, hasLat := parseCoordinate(config["latitude"])
-	lonVal, hasLon := parseCoordinate(config["longitude"])
+	latVal, hasLat := toFloat(config["latitude"])
+	lonVal, hasLon := toFloat(config["longitude"])
 
 	if !hasLat || !hasLon {
 		return errors.New("weather provider requires valid latitude and longitude")
@@ -328,16 +327,7 @@ func (p *WeatherProvider) Fetch(ctx context.Context) (any, error) {
 		Daily:  make([]WeatherDaily, 0, len(data.Daily.Time)),
 	}
 
-	maxSafeLen := len(data.Hourly.Time)
-	if len(data.Hourly.Temperature2m) < maxSafeLen {
-		maxSafeLen = len(data.Hourly.Temperature2m)
-	}
-	if len(data.Hourly.WeatherCode) < maxSafeLen {
-		maxSafeLen = len(data.Hourly.WeatherCode)
-	}
-	if len(data.Hourly.PrecipitationProbability) < maxSafeLen {
-		maxSafeLen = len(data.Hourly.PrecipitationProbability)
-	}
+	maxSafeLen := minSliceLen(len(data.Hourly.Time), len(data.Hourly.Temperature2m), len(data.Hourly.WeatherCode), len(data.Hourly.PrecipitationProbability))
 
 	startIndex := 0
 	if len(data.Current.Time) >= 13 {
@@ -374,23 +364,7 @@ func (p *WeatherProvider) Fetch(ctx context.Context) (any, error) {
 		})
 	}
 
-	dailyCount := len(data.Daily.Time)
-	if len(data.Daily.Temperature2mMax) < dailyCount {
-		dailyCount = len(data.Daily.Temperature2mMax)
-	}
-	if len(data.Daily.Temperature2mMin) < dailyCount {
-		dailyCount = len(data.Daily.Temperature2mMin)
-	}
-	if len(data.Daily.WeatherCode) < dailyCount {
-		dailyCount = len(data.Daily.WeatherCode)
-	}
-	if len(data.Daily.PrecipitationProbabilityMax) < dailyCount {
-		dailyCount = len(data.Daily.PrecipitationProbabilityMax)
-	}
-	// Limit daily timeline to 7 days
-	if dailyCount > 7 {
-		dailyCount = 7
-	}
+	dailyCount := minSliceLen(7, len(data.Daily.Time), len(data.Daily.Temperature2mMax), len(data.Daily.Temperature2mMin), len(data.Daily.WeatherCode), len(data.Daily.PrecipitationProbabilityMax))
 
 	for i := 0; i < dailyCount; i++ {
 		dText, dIcon := MapWMOCode(data.Daily.WeatherCode[i])
@@ -417,24 +391,12 @@ func (p *WeatherProvider) Shutdown(ctx context.Context) error {
 	return nil
 }
 
-func parseCoordinate(val any) (float64, bool) {
-	if val == nil {
-		return 0, false
-	}
-	switch v := val.(type) {
-	case float64:
-		return v, true
-	case float32:
-		return float64(v), true
-	case int:
-		return float64(v), true
-	case int64:
-		return float64(v), true
-	case string:
-		f, err := strconv.ParseFloat(strings.TrimSpace(v), 64)
-		if err == nil {
-			return f, true
+func minSliceLen(n int, lens ...int) int {
+	minVal := n
+	for _, l := range lens {
+		if l < minVal {
+			minVal = l
 		}
 	}
-	return 0, false
+	return minVal
 }

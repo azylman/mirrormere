@@ -15,23 +15,18 @@ import (
 	"github.com/azylman/mirrormere/internal/provider"
 )
 
-func intPtr(i int) *int {
-	return &i
-}
-
-func boolPtr(b bool) *bool {
-	return &b
-}
+func intPtr(i int) *int { return &i }
+func boolPtr(b bool) *bool { return &b }
 
 type mockHeaderSink struct {
 	mu      sync.Mutex
 	weather *events.HeaderWeather
 }
 
-func (s *mockHeaderSink) SetHeaderWeather(weather *events.HeaderWeather) {
+func (s *mockHeaderSink) SetHeaderWeather(w *events.HeaderWeather) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.weather = weather
+	s.weather = w
 }
 
 func (s *mockHeaderSink) GetWeather() *events.HeaderWeather {
@@ -40,470 +35,148 @@ func (s *mockHeaderSink) GetWeather() *events.HeaderWeather {
 	return s.weather
 }
 
-func sampleHeaderOpenMeteoJSON() string {
-	return `{
-		"current": {
-			"temperature_2m": 72.4,
-			"weather_code": 1
-		}
-	}`
+func sampleHeaderOpenMeteoJSON() string { return `{"current":{"temperature_2m":72.4,"weather_code":1}}` }
+const sampleHeaderNightJSON = `{"current":{"temperature_2m":58.2,"weather_code":0,"is_day":0}}`
+
+func mkHeaderCfg(lat, lon float64, units string, interval *int) *config.HeaderWeatherConfig {
+	return &config.HeaderWeatherConfig{Latitude: lat, Longitude: lon, Units: units, RefreshIntervalSeconds: interval}
 }
 
 func TestNewHeaderWeatherPoller_Defaults(t *testing.T) {
 	t.Parallel()
-
 	poller := provider.NewHeaderWeatherPoller(provider.HeaderWeatherPollerConfig{})
-	if poller == nil {
-		t.Fatal("expected non-nil poller")
-	}
-
-	// Calling Stop before Start is a no-op and should not panic
+	if poller == nil { t.Fatal("expected non-nil poller") }
 	poller.Stop()
 }
 
-func TestHeaderWeatherPoller_FetchOnce_Imperial(t *testing.T) {
+func TestHeaderWeatherPoller_FetchOnce(t *testing.T) {
 	t.Parallel()
-
-	var receivedQuery string
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		receivedQuery = r.URL.RawQuery
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(sampleHeaderOpenMeteoJSON()))
-	}))
-	defer ts.Close()
-
-	sink := &mockHeaderSink{}
-	broadcaster := &mockBroadcaster{}
-	fixedTime := time.Date(2026, 9, 26, 12, 0, 0, 0, time.UTC)
-
-	poller := provider.NewHeaderWeatherPoller(provider.HeaderWeatherPollerConfig{
-		Client:      ts.Client(),
-		BaseURL:     ts.URL,
-		Broadcaster: broadcaster,
-		StateSink:   sink,
-		NowFunc:     func() time.Time { return fixedTime },
-	})
-
-	weatherCfg := &config.HeaderWeatherConfig{
-		Latitude:               37.8044,
-		Longitude:              -122.2712,
-		Units:                  "imperial",
-		RefreshIntervalSeconds: intPtr(900),
+	tests := []struct {
+		name       string
+		status     int
+		body       string
+		baseURL    string
+		weatherCfg *config.HeaderWeatherConfig
+		tz         string
+		wantTemp   float64
+		wantUnits  string
+		wantCode   int
+		wantIcon   string
+		wantCond   string
+		wantQuery  []string
+		wantErrSub string
+		checkSink  bool
+	}{
+		{"imperial", 200, sampleHeaderOpenMeteoJSON(), "", mkHeaderCfg(37.8044, -122.2712, "imperial", intPtr(900)), "America/Los_Angeles", 72.4, "F", 1, "weather-partly-cloudy", "", []string{"temperature_unit=fahrenheit", "latitude=37.8044"}, "", true},
+		{"metric", 200, sampleHeaderOpenMeteoJSON(), "", mkHeaderCfg(51.5074, -0.1278, "metric", intPtr(900)), "Europe/London", 0, "C", 0, "", "", []string{"temperature_unit=celsius"}, "", false},
+		{"nighttime", 200, sampleHeaderNightJSON, "", mkHeaderCfg(37.8044, -122.2712, "imperial", nil), "America/Los_Angeles", 0, "", 0, "weather-clear-night", "Clear", nil, "", false},
+		{"empty_tz_zero_interval", 200, sampleHeaderOpenMeteoJSON(), "", mkHeaderCfg(37.8, -122.2, "", intPtr(0)), "", 0, "", 0, "", "", nil, "", false},
+		{"nil_config", 0, "", "", nil, "", 0, "", 0, "", "", nil, "", false},
+		{"http_500", 500, "upstream failure", "", mkHeaderCfg(37.8, -122.2, "", nil), "UTC", 0, "", 0, "", "", nil, "HTTP 500", false},
+		{"malformed_json", 200, "not valid json", "", mkHeaderCfg(37.8, -122.2, "", nil), "UTC", 0, "", 0, "", "", nil, "failed to decode header Open-Meteo response", false},
+		{"invalid_base_url", 0, "", "http://invalid-host-%-escape", mkHeaderCfg(37.8, -122.2, "", nil), "UTC", 0, "", 0, "", "", nil, "invalid header weather baseURL", false},
 	}
-
-	poller.Start(context.Background(), weatherCfg, "America/Los_Angeles")
-	defer poller.Stop()
-
-	// Immediate fetch should have completed
-	hw, err := poller.FetchOnce(context.Background())
-	if err != nil {
-		t.Fatalf("FetchOnce failed: %v", err)
-	}
-
-	if hw.Temperature != 72.4 {
-		t.Errorf("expected temp 72.4, got %f", hw.Temperature)
-	}
-	if hw.Units != "F" {
-		t.Errorf("expected units 'F', got %q", hw.Units)
-	}
-	if hw.WeatherCode != 1 {
-		t.Errorf("expected weather_code 1, got %d", hw.WeatherCode)
-	}
-	if hw.Icon != "weather-partly-cloudy" {
-		t.Errorf("expected icon 'weather-partly-cloudy', got %q", hw.Icon)
-	}
-
-	// Check sink
-	saved := sink.GetWeather()
-	if saved == nil || saved.Temperature != 72.4 {
-		t.Errorf("expected sink to have weather, got %+v", saved)
-	}
-
-	// Check broadcast
-	eventsList := broadcaster.getEvents()
-	if len(eventsList) == 0 {
-		t.Fatal("expected broadcaster to receive event")
-	}
-	lastEvt := eventsList[len(eventsList)-1]
-	if lastEvt.Type != events.EventHeaderUpdate {
-		t.Errorf("expected event %s, got %s", events.EventHeaderUpdate, lastEvt.Type)
-	}
-
-	var data events.HeaderUpdateData
-	if err := json.Unmarshal(lastEvt.Data, &data); err != nil {
-		t.Fatalf("failed to unmarshal broadcast data: %v", err)
-	}
-	if data.Timezone != "America/Los_Angeles" {
-		t.Errorf("expected timezone America/Los_Angeles, got %s", data.Timezone)
-	}
-	if data.Weather == nil || data.Weather.Temperature != 72.4 {
-		t.Errorf("unexpected broadcast weather: %+v", data.Weather)
-	}
-
-	// Check query string
-	if !strings.Contains(receivedQuery, "temperature_unit=fahrenheit") {
-		t.Errorf("expected temperature_unit=fahrenheit, got %s", receivedQuery)
-	}
-	if !strings.Contains(receivedQuery, "latitude=37.8044") {
-		t.Errorf("expected latitude=37.8044, got %s", receivedQuery)
-	}
-}
-
-func TestHeaderWeatherPoller_FetchOnce_Metric(t *testing.T) {
-	t.Parallel()
-
-	var receivedQuery string
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		receivedQuery = r.URL.RawQuery
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(sampleHeaderOpenMeteoJSON()))
-	}))
-	defer ts.Close()
-
-	poller := provider.NewHeaderWeatherPoller(provider.HeaderWeatherPollerConfig{
-		Client:  ts.Client(),
-		BaseURL: ts.URL,
-	})
-
-	weatherCfg := &config.HeaderWeatherConfig{
-		Latitude:               51.5074,
-		Longitude:              -0.1278,
-		Units:                  "metric",
-		RefreshIntervalSeconds: intPtr(900),
-	}
-
-	poller.Start(context.Background(), weatherCfg, "Europe/London")
-	defer poller.Stop()
-
-	hw, err := poller.FetchOnce(context.Background())
-	if err != nil {
-		t.Fatalf("FetchOnce failed: %v", err)
-	}
-
-	if hw.Units != "C" {
-		t.Errorf("expected metric units 'C', got %q", hw.Units)
-	}
-	if !strings.Contains(receivedQuery, "temperature_unit=celsius") {
-		t.Errorf("expected temperature_unit=celsius, got %s", receivedQuery)
-	}
-}
-
-func TestHeaderWeatherPoller_FetchOnce_Errors(t *testing.T) {
-	t.Parallel()
-
-	t.Run("nil config returns nil", func(t *testing.T) {
-		t.Parallel()
-		poller := provider.NewHeaderWeatherPoller(provider.HeaderWeatherPollerConfig{})
-		hw, err := poller.FetchOnce(context.Background())
-		if err != nil || hw != nil {
-			t.Errorf("expected (nil, nil), got (%v, %v)", hw, err)
-		}
-	})
-
-	t.Run("HTTP 500 error", func(t *testing.T) {
-		t.Parallel()
-		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusInternalServerError)
-			_, _ = w.Write([]byte("upstream server failure"))
-		}))
-		defer ts.Close()
-
-		poller := provider.NewHeaderWeatherPoller(provider.HeaderWeatherPollerConfig{
-			Client:  ts.Client(),
-			BaseURL: ts.URL,
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var reqQuery string
+			baseURL, client := tc.baseURL, (*http.Client)(nil)
+			if tc.status > 0 {
+				ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					reqQuery = r.URL.RawQuery
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(tc.status)
+					_, _ = w.Write([]byte(tc.body))
+				}))
+				defer ts.Close()
+				baseURL, client = ts.URL, ts.Client()
+			}
+			sink, broadcaster := &mockHeaderSink{}, &mockBroadcaster{}
+			poller := provider.NewHeaderWeatherPoller(provider.HeaderWeatherPollerConfig{
+				Client: client, BaseURL: baseURL, Broadcaster: broadcaster, StateSink: sink,
+			})
+			if tc.weatherCfg != nil {
+				poller.Start(context.Background(), tc.weatherCfg, tc.tz)
+				defer poller.Stop()
+			}
+			hw, err := poller.FetchOnce(context.Background())
+			if tc.wantErrSub != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErrSub) { t.Fatalf("want error containing %q, got %v", tc.wantErrSub, err) }
+				return
+			}
+			if err != nil { t.Fatalf("unexpected error: %v", err) }
+			if tc.weatherCfg == nil {
+				if hw != nil { t.Fatalf("expected nil for nil cfg, got %+v", hw) }
+				return
+			}
+			if tc.wantTemp != 0 && hw.Temperature != tc.wantTemp { t.Errorf("temp = %v, want %v", hw.Temperature, tc.wantTemp) }
+			if tc.wantUnits != "" && hw.Units != tc.wantUnits { t.Errorf("units = %q, want %q", hw.Units, tc.wantUnits) }
+			if tc.wantCode != 0 && hw.WeatherCode != tc.wantCode { t.Errorf("code = %v, want %v", hw.WeatherCode, tc.wantCode) }
+			if tc.wantIcon != "" && hw.Icon != tc.wantIcon { t.Errorf("icon = %q, want %q", hw.Icon, tc.wantIcon) }
+			if tc.wantCond != "" && hw.Condition != tc.wantCond { t.Errorf("cond = %q, want %q", hw.Condition, tc.wantCond) }
+			for _, q := range tc.wantQuery {
+				if !strings.Contains(reqQuery, q) { t.Errorf("query %q missing %q", reqQuery, q) }
+			}
+			if tc.checkSink {
+				if saved := sink.GetWeather(); saved == nil || saved.Temperature != tc.wantTemp { t.Errorf("sink mismatch: %+v", saved) }
+				evts := broadcaster.getEvents()
+				if len(evts) == 0 || evts[len(evts)-1].Type != events.EventHeaderUpdate { t.Fatalf("expected header.update event, got %+v", evts) }
+				var data events.HeaderUpdateData
+				if err := json.Unmarshal(evts[len(evts)-1].Data, &data); err != nil || data.Timezone != tc.tz || data.Weather == nil || data.Weather.Temperature != tc.wantTemp {
+					t.Errorf("unexpected broadcast data: %+v", data)
+				}
+			}
 		})
-
-		weatherCfg := &config.HeaderWeatherConfig{
-			Latitude:  37.8,
-			Longitude: -122.2,
-		}
-		poller.Start(context.Background(), weatherCfg, "UTC")
-		defer poller.Stop()
-
-		_, err := poller.FetchOnce(context.Background())
-		if err == nil {
-			t.Fatal("expected error on HTTP 500, got nil")
-		}
-		if !strings.Contains(err.Error(), "HTTP 500") {
-			t.Errorf("expected HTTP 500 in error, got %q", err.Error())
-		}
-	})
-
-	t.Run("malformed JSON", func(t *testing.T) {
-		t.Parallel()
-		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte("not valid json"))
-		}))
-		defer ts.Close()
-
-		poller := provider.NewHeaderWeatherPoller(provider.HeaderWeatherPollerConfig{
-			Client:  ts.Client(),
-			BaseURL: ts.URL,
-		})
-
-		weatherCfg := &config.HeaderWeatherConfig{Latitude: 37.8, Longitude: -122.2}
-		poller.Start(context.Background(), weatherCfg, "UTC")
-		defer poller.Stop()
-
-		_, err := poller.FetchOnce(context.Background())
-		if err == nil {
-			t.Fatal("expected error on malformed JSON, got nil")
-		}
-		if !strings.Contains(err.Error(), "failed to decode header Open-Meteo response") {
-			t.Errorf("expected decode error, got %q", err.Error())
-		}
-	})
-
-	t.Run("invalid baseURL", func(t *testing.T) {
-		t.Parallel()
-		poller := provider.NewHeaderWeatherPoller(provider.HeaderWeatherPollerConfig{
-			BaseURL: "http://invalid-host-%-escape",
-		})
-		weatherCfg := &config.HeaderWeatherConfig{Latitude: 37.8, Longitude: -122.2}
-		poller.Start(context.Background(), weatherCfg, "UTC")
-		defer poller.Stop()
-
-		_, err := poller.FetchOnce(context.Background())
-		if err == nil {
-			t.Fatal("expected error on invalid baseURL, got nil")
-		}
-		if !strings.Contains(err.Error(), "invalid header weather baseURL") {
-			t.Errorf("expected invalid baseURL error, got %q", err.Error())
-		}
-	})
+	}
 }
 
 func TestHeaderWeatherPoller_StartStopUpdate(t *testing.T) {
 	t.Parallel()
-
-	var fetchCount int
-	var mu sync.Mutex
+	fetched := make(chan struct{}, 10)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mu.Lock()
-		fetchCount++
-		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(sampleHeaderOpenMeteoJSON()))
+		select { case fetched <- struct{}{}: default: }
 	}))
 	defer ts.Close()
 
-	poller := provider.NewHeaderWeatherPoller(provider.HeaderWeatherPollerConfig{
-		Client:  ts.Client(),
-		BaseURL: ts.URL,
-	})
-
-	// Start with nil does nothing
+	poller := provider.NewHeaderWeatherPoller(provider.HeaderWeatherPollerConfig{Client: ts.Client(), BaseURL: ts.URL})
 	poller.Start(context.Background(), nil, "UTC")
-
-	weatherCfg := &config.HeaderWeatherConfig{
-		Latitude:               37.8,
-		Longitude:              -122.2,
-		RefreshIntervalSeconds: intPtr(1), // 1 second for fast test
+	poller.Start(context.Background(), mkHeaderCfg(37.8, -122.2, "", intPtr(1)), "America/Los_Angeles")
+	select {
+	case <-fetched:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for initial fetch")
 	}
-
-	poller.Start(context.Background(), weatherCfg, "America/Los_Angeles")
-
-	// Wait briefly for at least initial fetch
-	time.Sleep(50 * time.Millisecond)
-
-	mu.Lock()
-	count1 := fetchCount
-	mu.Unlock()
-	if count1 == 0 {
-		t.Error("expected at least 1 fetch after start")
-	}
-
-	// Update configuration
-	newCfg := &config.HeaderWeatherConfig{
-		Latitude:               51.5,
-		Longitude:              -0.1,
-		RefreshIntervalSeconds: intPtr(900),
-	}
-	poller.UpdateConfig(context.Background(), newCfg, "Europe/London")
-
-	// Stop cleanly
+	poller.UpdateConfig(context.Background(), mkHeaderCfg(51.5, -0.1, "", intPtr(900)), "Europe/London")
 	poller.Stop()
-
-	// Double stop is safe
 	poller.Stop()
 }
 
 func TestProviderCoordinator_HeaderWeatherPoller_Lifecycle(t *testing.T) {
 	t.Parallel()
-
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(sampleHeaderOpenMeteoJSON()))
 	}))
 	defer ts.Close()
 
-	sink := &mockHeaderSink{}
-	broadcaster := &mockBroadcaster{}
-
-	snap := &config.Snapshot{
-		Config: &config.Config{
-			Timezone: "America/Los_Angeles",
-			Display: config.DisplayConfig{
-				Header: config.HeaderConfig{
-					Enabled: boolPtr(true),
-					Weather: &config.HeaderWeatherConfig{
-						Latitude:               37.8044,
-						Longitude:              -122.2712,
-						Units:                  "imperial",
-						RefreshIntervalSeconds: intPtr(900),
-					},
-				},
-				Widgets: []config.WidgetConfig{},
-			},
-		},
-	}
-
+	sink, broadcaster := &mockHeaderSink{}, &mockBroadcaster{}
+	snap := &config.Snapshot{Config: &config.Config{Timezone: "America/Los_Angeles", Display: config.DisplayConfig{
+		Header: config.HeaderConfig{Enabled: boolPtr(true), Weather: mkHeaderCfg(37.8044, -122.2712, "imperial", intPtr(900))},
+	}}}
 	coord := provider.NewCoordinator(provider.CoordinatorConfig{
-		Broadcaster:         broadcaster,
-		HeaderWeatherSink:   sink,
-		HeaderPollerClient:  ts.Client(),
-		HeaderPollerBaseURL: ts.URL,
+		Broadcaster: broadcaster, HeaderWeatherSink: sink, HeaderPollerClient: ts.Client(), HeaderPollerBaseURL: ts.URL,
 	}, snap)
+	if coord.HeaderPoller() == nil { t.Fatal("expected non-nil HeaderPoller on coordinator") }
+	if _, ok := broadcaster.waitForPublish(2 * time.Second); !ok { t.Fatal("waitForPublish timed out") }
+	if saved := sink.GetWeather(); saved == nil || saved.Temperature != 72.4 { t.Errorf("expected initial header weather in sink, got %+v", saved) }
 
-	hp := coord.HeaderPoller()
-	if hp == nil {
-		t.Fatal("expected non-nil HeaderPoller on coordinator")
-	}
-
-	// Give initial fetch time to execute
-	time.Sleep(50 * time.Millisecond)
-
-	saved := sink.GetWeather()
-	if saved == nil || saved.Temperature != 72.4 {
-		t.Errorf("expected initial header weather in sink, got %+v", saved)
-	}
-
-	// UpdateConfig with new weather
-	newSnap := &config.Snapshot{
-		Config: &config.Config{
-			Timezone: "Europe/London",
-			Display: config.DisplayConfig{
-				Header: config.HeaderConfig{
-					Enabled: boolPtr(true),
-					Weather: &config.HeaderWeatherConfig{
-						Latitude:               51.5074,
-						Longitude:              -0.1278,
-						Units:                  "metric",
-						RefreshIntervalSeconds: intPtr(600),
-					},
-				},
-				Widgets: []config.WidgetConfig{},
-			},
-		},
-	}
-	if err := coord.UpdateConfig(newSnap); err != nil {
-		t.Fatalf("UpdateConfig failed: %v", err)
-	}
-
-	// UpdateConfig removing weather stops the poller
-	noWeatherSnap := &config.Snapshot{
-		Config: &config.Config{
-			Timezone: "UTC",
-			Display: config.DisplayConfig{
-				Header: config.HeaderConfig{
-					Enabled: boolPtr(true),
-					Weather: nil,
-				},
-				Widgets: []config.WidgetConfig{},
-			},
-		},
-	}
-	if err := coord.UpdateConfig(noWeatherSnap); err != nil {
-		t.Fatalf("UpdateConfig removing weather failed: %v", err)
-	}
-
-	// Shutdown coordinator cleanly
-	if err := coord.Shutdown(context.Background()); err != nil {
-		t.Fatalf("Shutdown failed: %v", err)
-	}
-}
-
-func TestHeaderWeatherPoller_EmptyTimezoneAndZeroInterval(t *testing.T) {
-	t.Parallel()
-
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(sampleHeaderOpenMeteoJSON()))
-	}))
-	defer ts.Close()
-
-	poller := provider.NewHeaderWeatherPoller(provider.HeaderWeatherPollerConfig{
-		Client:  ts.Client(),
-		BaseURL: ts.URL,
-	})
-
-	// Pass empty timezone and zero RefreshIntervalSeconds
-	weatherCfg := &config.HeaderWeatherConfig{
-		Latitude:               37.8,
-		Longitude:              -122.2,
-		RefreshIntervalSeconds: intPtr(0),
-	}
-	poller.Start(context.Background(), weatherCfg, "")
-	defer poller.Stop()
-
-	hw, err := poller.FetchOnce(context.Background())
-	if err != nil || hw == nil {
-		t.Fatalf("FetchOnce failed: %v", err)
-	}
-}
-
-func TestHeaderWeatherPoller_FetchOnce_Nighttime(t *testing.T) {
-	t.Parallel()
-
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{
-			"current": {
-				"temperature_2m": 58.2,
-				"weather_code": 0,
-				"is_day": 0
-			}
-		}`))
-	}))
-	defer ts.Close()
-
-	sink := &mockHeaderSink{}
-	broadcaster := &mockBroadcaster{}
-
-	poller := provider.NewHeaderWeatherPoller(provider.HeaderWeatherPollerConfig{
-		Client:      ts.Client(),
-		BaseURL:     ts.URL,
-		Broadcaster: broadcaster,
-		StateSink:   sink,
-	})
-
-	weatherCfg := &config.HeaderWeatherConfig{
-		Latitude:  37.8044,
-		Longitude: -122.2712,
-		Units:     "imperial",
-	}
-	poller.Start(context.Background(), weatherCfg, "America/Los_Angeles")
-	defer poller.Stop()
-
-	hw, err := poller.FetchOnce(context.Background())
-	if err != nil {
-		t.Fatalf("FetchOnce failed: %v", err)
-	}
-
-	if hw.WeatherCode != 0 {
-		t.Errorf("expected weather_code 0, got %d", hw.WeatherCode)
-	}
-	if hw.Condition != "Clear" {
-		t.Errorf("expected condition 'Clear', got %q", hw.Condition)
-	}
-	if hw.Icon != "weather-clear-night" {
-		t.Errorf("expected icon 'weather-clear-night', got %q", hw.Icon)
-	}
+	newSnap := &config.Snapshot{Config: &config.Config{Timezone: "Europe/London", Display: config.DisplayConfig{
+		Header: config.HeaderConfig{Enabled: boolPtr(true), Weather: mkHeaderCfg(51.5074, -0.1278, "metric", intPtr(600))},
+	}}}
+	if err := coord.UpdateConfig(newSnap); err != nil { t.Fatalf("UpdateConfig failed: %v", err) }
+	noWeatherSnap := &config.Snapshot{Config: &config.Config{Timezone: "UTC", Display: config.DisplayConfig{Header: config.HeaderConfig{Enabled: boolPtr(true)}}}}
+	if err := coord.UpdateConfig(noWeatherSnap); err != nil { t.Fatalf("UpdateConfig removing weather failed: %v", err) }
+	if err := coord.Shutdown(context.Background()); err != nil { t.Fatalf("Shutdown failed: %v", err) }
 }
