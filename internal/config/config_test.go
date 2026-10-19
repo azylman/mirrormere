@@ -54,7 +54,10 @@ func TestLoad_ExampleConfig(t *testing.T) {
 		t.Fatalf("expected error mentioning FAMILY_CALENDAR_URL, got: %v", err)
 	}
 
-	mockEnv := map[string]string{"FAMILY_CALENDAR_URL": "https://calendar.google.com/calendar/ical/example%40gmail.com/private-token/basic.ics"}
+	mockEnv := map[string]string{
+		"FAMILY_CALENDAR_URL": "https://calendar.google.com/calendar/ical/example%40gmail.com/private-token/basic.ics",
+		"TODOIST_API_TOKEN":   "todoist-test-token",
+	}
 	cfg, err := config.LoadWithEnv(examplePath, mockGetenv(mockEnv))
 	if err != nil {
 		t.Fatalf("unexpected error loading example config: %v", err)

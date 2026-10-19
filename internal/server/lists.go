@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strconv"
 	"strings"
 	"sync"
 
@@ -14,27 +13,15 @@ import (
 	"github.com/azylman/mirrormere/internal/tasks/adapters"
 )
 
-// ListItemsStore abstracts storage access needed by DefaultListsHandler.
-type ListItemsStore interface {
-	GetListItems(ctx context.Context, listID string, includeDone bool) ([]tasks.ListItem, error)
-}
-
-// ItemCompleter abstracts item completion logic across stores and providers.
+// ItemCompleter abstracts item completion logic across upstream task providers.
 type ItemCompleter interface {
 	CompleteListItem(ctx context.Context, listID, itemID string) error
 }
 
-// StoreCompleter allows a ListItemsStore that directly implements CompleteItem to be used.
-type StoreCompleter interface {
-	CompleteItem(ctx context.Context, listID, itemID string) error
-}
-
-// DefaultListsHandler serves OpenAPI GET /api/lists/{list_id}/items and POST .../complete.
+// DefaultListsHandler serves OpenAPI POST /api/lists/{list_id}/items/{item_id}/complete.
 type DefaultListsHandler struct {
 	mu        sync.RWMutex
-	store     ListItemsStore
 	completer ItemCompleter
-	notifier  *tasks.ChangeNotifier
 }
 
 // ListsHandlerOption allows configuring optional dependencies for DefaultListsHandler.
@@ -45,14 +32,9 @@ func WithItemCompleter(c ItemCompleter) ListsHandlerOption {
 	return func(h *DefaultListsHandler) { h.completer = c }
 }
 
-// WithChangeNotifier injects a custom ChangeNotifier for local fallback updates.
-func WithChangeNotifier(n *tasks.ChangeNotifier) ListsHandlerOption {
-	return func(h *DefaultListsHandler) { h.notifier = n }
-}
-
-// NewDefaultListsHandler constructs a DefaultListsHandler backed by store and optional options.
-func NewDefaultListsHandler(store ListItemsStore, opts ...ListsHandlerOption) *DefaultListsHandler {
-	h := &DefaultListsHandler{store: store, notifier: tasks.DefaultChangeNotifier()}
+// NewDefaultListsHandler constructs a DefaultListsHandler with optional options.
+func NewDefaultListsHandler(opts ...ListsHandlerOption) *DefaultListsHandler {
+	h := &DefaultListsHandler{}
 	for _, opt := range opts {
 		opt(h)
 	}
@@ -64,47 +46,6 @@ func (h *DefaultListsHandler) SetItemCompleter(c ItemCompleter) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.completer = c
-}
-
-// GetListItems handles GET /api/lists/{list_id}/items.
-func (h *DefaultListsHandler) GetListItems(w http.ResponseWriter, r *http.Request, listID string) {
-	if !requireCORSAndMethod(w, r, "GET, HEAD, OPTIONS", http.MethodGet, http.MethodHead) {
-		return
-	}
-	h.mu.RLock()
-	store := h.store
-	h.mu.RUnlock()
-	if store == nil {
-		writeAPIError(w, http.StatusInternalServerError, "tasks store not configured")
-		return
-	}
-	includeDone := true
-	if raw := r.URL.Query().Get("include_done"); raw != "" {
-		parsed, err := strconv.ParseBool(raw)
-		if err != nil {
-			writeAPIError(w, http.StatusBadRequest, fmt.Sprintf("invalid include_done query parameter: %q", raw))
-			return
-		}
-		includeDone = parsed
-	}
-	items, err := store.GetListItems(r.Context(), listID, includeDone)
-	if err != nil {
-		if errors.Is(err, tasks.ErrListNotFound) {
-			writeAPIError(w, http.StatusNotFound, fmt.Sprintf("list '%s' not found", listID))
-			return
-		}
-		writeAPIError(w, http.StatusInternalServerError, "failed to query list items: "+err.Error())
-		return
-	}
-	if items == nil {
-		items = []tasks.ListItem{}
-	}
-	if r.Method == http.MethodHead {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		return
-	}
-	writeJSON(w, http.StatusOK, items)
 }
 
 // CompleteListItem handles POST /api/lists/{list_id}/items/{item_id}/complete.
@@ -123,23 +64,15 @@ func (h *DefaultListsHandler) CompleteListItem(w http.ResponseWriter, r *http.Re
 	}
 
 	h.mu.RLock()
-	completer, store, notifier := h.completer, h.store, h.notifier
+	completer := h.completer
 	h.mu.RUnlock()
 
-	var completeErr error
-	if completer != nil {
-		completeErr = completer.CompleteListItem(r.Context(), listID, itemID)
-	} else if sc, ok := store.(StoreCompleter); ok {
-		completeErr = sc.CompleteItem(r.Context(), listID, itemID)
-		if completeErr == nil && notifier != nil {
-			notifier.NotifyChange(listID)
-		}
-	} else {
+	if completer == nil {
 		writeAPIError(w, http.StatusInternalServerError, "task completion not configured")
 		return
 	}
 
-	if completeErr != nil {
+	if completeErr := completer.CompleteListItem(r.Context(), listID, itemID); completeErr != nil {
 		switch {
 		case errors.Is(completeErr, tasks.ErrListNotFound):
 			writeAPIError(w, http.StatusNotFound, fmt.Sprintf("list '%s' not found", listID))

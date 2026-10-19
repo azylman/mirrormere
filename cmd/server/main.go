@@ -26,16 +26,14 @@ import (
 	"github.com/azylman/mirrormere/internal/rotation"
 	"github.com/azylman/mirrormere/internal/server"
 	"github.com/azylman/mirrormere/internal/solar"
-	"github.com/azylman/mirrormere/internal/tasks"
 	"github.com/azylman/mirrormere/internal/video"
 	"github.com/azylman/mirrormere/internal/voice"
 	"github.com/azylman/mirrormere/internal/widget"
 )
 
 var (
-	exitFunc      = os.Exit
-	argsHook      []string
-	defaultDBPath = "/data/lists.db"
+	exitFunc = os.Exit
+	argsHook []string
 )
 
 func main() {
@@ -328,23 +326,6 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 	hub := events.NewHub(events.HubConfig{}, stateProvider, logger)
 	defer hub.Close()
 
-	dbPath := os.Getenv("DB_PATH")
-	if dbPath == "" {
-		dbPath = defaultDBPath
-	}
-	tasksStore, err := tasks.NewSQLiteStore(dbPath)
-	if err != nil {
-		logger.Warn("failed to initialize persistent tasks store; falling back to in-memory store", "path", dbPath, "error", err)
-		if tasksStore, err = tasks.NewSQLiteStore(":memory:"); err != nil {
-			return fmt.Errorf("failed to initialize fallback in-memory tasks store: %w", err)
-		}
-	}
-	defer func() {
-		if err := tasksStore.Close(); err != nil {
-			logger.Warn("failed to close tasks store", "error", err)
-		}
-	}()
-
 	var chatLogCfg *config.ChatLogConfig
 	var voiceHubCfg *config.VoiceHubConfig
 	if snapshot != nil && snapshot.Config != nil {
@@ -353,7 +334,6 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 	chatStore := chatlog.NewStore(chatlog.WithTTL(chatLogCfg.GetTTL()), chatlog.WithMaxPerKey(chatLogCfg.GetMaxMessagesPerNode()))
 
 	reg := provider.NewRegistry()
-	reg.Register("tasks", func() provider.Provider { return provider.NewTasksProviderWithStore(tasksStore) })
 
 	videoCoord := video.NewCoordinator(hub, video.WithSink(stateProvider))
 	defer videoCoord.Close()
@@ -375,8 +355,7 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 	}()
 	hub.SetProviderCoordinator(providerCoord)
 
-	listsHandler := server.NewDefaultListsHandler(tasksStore)
-	listsHandler.SetItemCompleter(providerCoord)
+	listsHandler := server.NewDefaultListsHandler(server.WithItemCompleter(providerCoord))
 
 	renderEngine := render.NewEngine(loader, stateProvider,
 		render.WithNowFunc(householdNowFunc(stateProvider)),

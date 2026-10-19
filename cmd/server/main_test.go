@@ -20,12 +20,6 @@ import (
 	"github.com/azylman/mirrormere/internal/render"
 )
 
-func init() {
-	if os.Getenv("DB_PATH") == "" {
-		_ = os.Setenv("DB_PATH", ":memory:")
-	}
-}
-
 type failWriter struct{}
 
 func (failWriter) Write(p []byte) (int, error) {
@@ -53,7 +47,7 @@ func startDaemon(t *testing.T, yamlContent, customCSS string, customWidget map[s
 	if customCSS != "" {
 		_ = os.WriteFile(filepath.Join(tmpDir, "custom.css"), []byte(customCSS), 0644)
 	}
-	if len(customWidget) > 0 {
+	if customWidget != nil {
 		wDir := filepath.Join(tmpDir, "widgets", customWidget["name"])
 		if m, ok := customWidget["manifest"]; ok {
 			_ = os.MkdirAll(wDir, 0755); _ = os.WriteFile(filepath.Join(wDir, "manifest.yaml"), []byte(m), 0644)
@@ -253,25 +247,14 @@ func TestRun_CLIAndErrors(t *testing.T) {
 
 func TestRun_DaemonLifecycleAndSmoke(t *testing.T) {
 	tests := []struct {
-		name, dbPath, envHost, envPort string
-		useDefDB, smokeCheck           bool
+		name, envHost, envPort string
+		smokeCheck             bool
 	}{
-		{name: "composition_smoke", dbPath: ":memory:", smokeCheck: true},
-		{name: "db_fallback_memory", dbPath: "/dev/null/impossible/lists.db"},
-		{name: "empty_db_env", useDefDB: true},
-		{name: "env_host_port_ignored", dbPath: ":memory:", envHost: "1.2.3.4", envPort: "9999"},
+		{name: "composition_smoke", smokeCheck: true},
+		{name: "env_host_port_ignored", envHost: "1.2.3.4", envPort: "9999"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if tc.useDefDB {
-				tmpDB := filepath.Join(t.TempDir(), "default_lists.db")
-				oldDef := defaultDBPath
-				defaultDBPath = tmpDB
-				t.Cleanup(func() { defaultDBPath = oldDef })
-				t.Setenv("DB_PATH", "")
-			} else {
-				t.Setenv("DB_PATH", tc.dbPath)
-			}
 			if tc.envHost != "" { t.Setenv("HOST", tc.envHost) }
 			if tc.envPort != "" { t.Setenv("PORT", tc.envPort) }
 
@@ -286,7 +269,7 @@ func TestRun_DaemonLifecycleAndSmoke(t *testing.T) {
 				}{
 					{"/healthz", "", 200}, {"/api/audio", `"volume":75`, 200},
 					{"/api/video/state", `"mode":"widgets"`, 200}, {"/display", "mirrormere-app", 200},
-					{"/style.css", "", 200}, {"/api/lists/test/items", "not found", 404},
+					{"/style.css", "", 200},
 				} {
 					r, err := c.Get(d.baseURL + ep.path)
 					if err != nil || r.StatusCode != ep.status {
@@ -297,6 +280,13 @@ func TestRun_DaemonLifecycleAndSmoke(t *testing.T) {
 						t.Fatalf("GET %s = %s", ep.path, string(b))
 					}
 				}
+
+				completeReq, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, d.baseURL+"/api/lists/test/items/item-1/complete", nil)
+				completeResp, err := c.Do(completeReq)
+				if err != nil || completeResp.StatusCode != http.StatusNotFound {
+					t.Fatalf("POST /api/lists/test/items/item-1/complete = %v, err=%v", completeResp.StatusCode, err)
+				}
+				_ = completeResp.Body.Close()
 
 				req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, d.baseURL+"/api/events", nil)
 				r, err := http.DefaultClient.Do(req)
@@ -311,12 +301,6 @@ func TestRun_DaemonLifecycleAndSmoke(t *testing.T) {
 			} else if tc.envHost != "" {
 				if strings.Contains(d.baseURL, "1.2.3.4") || strings.HasSuffix(d.baseURL, ":9999") {
 					t.Fatalf("env host/port not ignored: %s", d.baseURL)
-				}
-			} else {
-				if r, err := http.Get(d.baseURL + "/healthz"); err != nil || r.StatusCode != http.StatusOK {
-					t.Fatalf("healthz: %v", err)
-				} else {
-					_ = r.Body.Close()
 				}
 			}
 		})

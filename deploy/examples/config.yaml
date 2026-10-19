@@ -78,8 +78,11 @@ display:
       pinned: false
       refresh_interval_seconds: 300
       config:
-        source: local
+        source: todoist
         list_id: family-chores
+        todoist:
+          project_name: "Family Chores"
+          token_env: "TODOIST_API_TOKEN"
 
     # Screen 2 Tiles (12 cells total: 3x2 + 3x2 = 12)
     - id: living-room-photos

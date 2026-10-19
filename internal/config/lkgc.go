@@ -362,35 +362,27 @@ func derefSlice(v any) []any {
 	return nil
 }
 
-func validateTasksSourceConfig(widgetID, source string, cfg map[string]any) (any, error) {
-	if source == "local" {
-		return nil, nil
-	}
+func validateTasksSourceConfig(widgetID, source string, cfg map[string]any) error {
 	p := "[Mirrormere Config Error] tasks widget '" + widgetID + "'"
 	if source != "http" && source != "gtasks" && source != "todoist" {
-		return nil, fmt.Errorf("%s declares invalid source '%s' (must be 'local', 'gtasks', 'http', or 'todoist')", p, source)
+		return fmt.Errorf("%s declares invalid source '%s' (must be 'gtasks', 'http', or 'todoist')", p, source)
 	}
 	subCfg, ok := cfg[source].(map[string]any)
 	if !ok || subCfg == nil {
-		return nil, fmt.Errorf("%s with source '%s' requires '%s' config block", p, source, source)
+		return fmt.Errorf("%s with source '%s' requires '%s' config block", p, source, source)
 	}
 	u := derefStr(subCfg["base_url"])
 	if source == "http" && u == "" {
-		return nil, fmt.Errorf("%s with source 'http' requires non-empty 'http.base_url'", p)
+		return fmt.Errorf("%s with source 'http' requires non-empty 'http.base_url'", p)
 	} else if (source == "http" || (source == "todoist" && u != "")) && !isValidHTTPURL(u) {
-		return nil, fmt.Errorf("%s: invalid %s.base_url '%s' (must be http:// or https:// with host)", p, source, u)
+		return fmt.Errorf("%s: invalid %s.base_url '%s' (must be http:// or https:// with host)", p, source, u)
 	} else if source == "gtasks" && derefStr(subCfg["tasklist_id"]) == "" {
-		return nil, fmt.Errorf("%s with source 'gtasks' requires non-empty 'gtasks.tasklist_id'", p)
+		return fmt.Errorf("%s with source 'gtasks' requires non-empty 'gtasks.tasklist_id'", p)
 	}
-	return subCfg, nil
+	return nil
 }
 
 func validateDomainRulesStage(cfg *Config, registry map[string]*domain.Package) error {
-	type primaryDef struct {
-		widgetID, source string
-		sourceCfg        any
-	}
-	primarySources, allListIDs := make(map[string]primaryDef), make(map[string][]string)
 	for _, w := range cfg.Display.Widgets {
 		if pkg := registry[w.Type]; pkg != nil && pkg.Manifest.Provider == "http" && w.Endpoint == "" {
 			return fmt.Errorf("widget '%s': provider 'http' requires non-empty 'endpoint' URL", w.ID)
@@ -401,21 +393,12 @@ func validateDomainRulesStage(cfg *Config, registry map[string]*domain.Package) 
 		if w.Type != "tasks" {
 			continue
 		}
-		listID := trimmedOr(derefStr(w.Config["list_id"]), w.ID)
-		allListIDs[listID] = append(allListIDs[listID], w.ID)
-		if src := derefStr(w.Config["source"]); src != "" {
-			srcCfg, err := validateTasksSourceConfig(w.ID, src, w.Config)
-			if err != nil {
-				return err
-			} else if ex, ok := primarySources[listID]; ok && (ex.source != src || !reflect.DeepEqual(ex.sourceCfg, srcCfg)) {
-				return fmt.Errorf("[Mirrormere Config Error] conflicting source definitions for list_id '%s' between widget '%s' and widget '%s'", listID, ex.widgetID, w.ID)
-			}
-			primarySources[listID] = primaryDef{widgetID: w.ID, source: src, sourceCfg: srcCfg}
+		src := derefStr(w.Config["source"])
+		if src == "" {
+			return fmt.Errorf("[Mirrormere Config Error] tasks widget '%s' requires non-empty 'source' ('gtasks', 'http', or 'todoist')", w.ID)
 		}
-	}
-	for listID, widgetIDs := range allListIDs {
-		if _, hasPrimary := primarySources[listID]; !hasPrimary {
-			return fmt.Errorf("[Mirrormere Config Error] tasks widget '%s' references list_id '%s' with no primary source definition", widgetIDs[0], listID)
+		if err := validateTasksSourceConfig(w.ID, src, w.Config); err != nil {
+			return err
 		}
 	}
 	return nil

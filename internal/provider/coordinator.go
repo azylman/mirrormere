@@ -209,10 +209,12 @@ func (c *ProviderCoordinator) RefreshWidget(widgetID string) error {
 func (c *ProviderCoordinator) CompleteListItem(ctx context.Context, listID, itemID string) error {
 	c.mu.RLock()
 	var targetProvider *TasksProvider
+	var targetWidgetID string
 	for _, w := range c.workers {
 		if tp, ok := w.provider.(*TasksProvider); ok {
 			if w.widgetID == listID || tp.ListID() == listID {
 				targetProvider = tp
+				targetWidgetID = w.widgetID
 				break
 			}
 		}
@@ -223,7 +225,11 @@ func (c *ProviderCoordinator) CompleteListItem(ctx context.Context, listID, item
 		return tasks.ErrListNotFound
 	}
 
-	return targetProvider.CompleteItem(ctx, itemID)
+	if err := targetProvider.CompleteItem(ctx, itemID); err != nil {
+		return err
+	}
+
+	return c.RefreshWidget(targetWidgetID)
 }
 
 // PushUpdate records an unsolicited domain data update (e.g. from inbound webhook)

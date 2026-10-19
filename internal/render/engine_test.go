@@ -129,7 +129,7 @@ func sampleTasksData(now time.Time) (tasks.TasksSnapshot, tasks.TasksSnapshot, t
 			{ID: "i2", ListID: "groceries", Title: "Coffee Beans", Done: true, Section: "Pantry", Position: 1, CreatedAt: now, UpdatedAt: now},
 		},
 	}
-	empty := tasks.TasksSnapshot{List: tasks.List{ID: "empty-list", Name: "Chores", Source: "local", CreatedAt: now, UpdatedAt: now}, Items: []tasks.ListItem{}}
+	empty := tasks.TasksSnapshot{List: tasks.List{ID: "empty-list", Name: "Chores", Source: "gtasks", CreatedAt: now, UpdatedAt: now}, Items: []tasks.ListItem{}}
 	unnamed := tasks.TasksSnapshot{
 		List:  tasks.List{ID: "unnamed-list", CreatedAt: now, UpdatedAt: now},
 		Items: []tasks.ListItem{{ID: "u1", ListID: "unnamed-list", Title: "Thing to do", Done: false, CreatedAt: now, UpdatedAt: now}},

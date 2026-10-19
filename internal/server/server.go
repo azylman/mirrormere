@@ -58,9 +58,8 @@ type DisplayHandler interface {
 	GetStatic(w http.ResponseWriter, r *http.Request, path string)
 }
 
-// ListsHandler handles task and checklist inspection endpoints matching OpenAPI specifications.
+// ListsHandler handles task completion endpoints matching OpenAPI specifications.
 type ListsHandler interface {
-	GetListItems(w http.ResponseWriter, r *http.Request, listID string)
 	CompleteListItem(w http.ResponseWriter, r *http.Request, listID, itemID string)
 }
 
@@ -267,7 +266,6 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/api/screen/select", dispatchHandler(s, func() ScreenHandler { return s.screenHandler }, isNil, func(h ScreenHandler, w http.ResponseWriter, r *http.Request) { h.PostScreenSelect(w, r) }))
 	s.mux.HandleFunc("/api/screen/advance", dispatchHandler(s, func() ScreenHandler { return s.screenHandler }, isNil, func(h ScreenHandler, w http.ResponseWriter, r *http.Request) { h.PostScreenAdvance(w, r) }))
 	s.mux.HandleFunc("/api/screen/pause", dispatchHandler(s, func() ScreenHandler { return s.screenHandler }, isNil, func(h ScreenHandler, w http.ResponseWriter, r *http.Request) { h.PostScreenPause(w, r) }))
-	s.mux.HandleFunc("/api/lists/{list_id}/items", dispatchHandler(s, func() ListsHandler { return s.listsHandler }, isNil, func(h ListsHandler, w http.ResponseWriter, r *http.Request) { h.GetListItems(w, r, r.PathValue("list_id")) }))
 	s.mux.HandleFunc("/api/lists/{list_id}/items/{item_id}/complete", dispatchHandler(s, func() ListsHandler { return s.listsHandler }, isNil, func(h ListsHandler, w http.ResponseWriter, r *http.Request) { h.CompleteListItem(w, r, r.PathValue("list_id"), r.PathValue("item_id")) }))
 	s.mux.HandleFunc("/api/audio", dispatchHandler(s, func() AudioHandler { return s.audioHandler }, isNil, func(h AudioHandler, w http.ResponseWriter, r *http.Request) { h.GetAudio(w, r) }))
 	s.mux.HandleFunc("/api/audio/volume", dispatchHandler(s, func() AudioHandler { return s.audioHandler }, isNil, func(h AudioHandler, w http.ResponseWriter, r *http.Request) { h.PostAudioVolume(w, r) }))
