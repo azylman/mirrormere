@@ -1,0 +1,26 @@
+agent = "gemini"
+review_agent = "gemini"
+review_reasoning = "thorough"
+default_branch = "main"
+
+exclude_patterns = [
+  "*.sum",
+  "*.lock",
+  "package-lock.json",
+  "pnpm-lock.yaml"
+]
+
+review_guidelines = """
+This repository is azylman/mirrormere (smart display kiosk UI, frontend dashboard widgets, and display/audio hardware integration).
+Enforce the following invariants:
+1. Security & Secrets: Never allow plaintext API keys, tokens, or credentials in code or static assets. Prevent XSS, DOM injection, and command injection.
+2. Concurrency & Resource Hygiene: Ensure WebSocket/SSE streams, audio/media pipelines, timers, and event listeners are cleanly closed and disposed on unmount/disconnect.
+3. Testing & Code Quality: Maintain clean abstraction boundaries, mobile/touch responsiveness, and deterministic unit tests without arbitrary sleeps.
+"""
+
+[ci]
+agents = ["gemini"]
+review_types = ["default", "security", "design"]
+reasoning = "thorough"
+min_severity = "medium"
+upsert_comments = true
