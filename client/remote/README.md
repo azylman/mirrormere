@@ -28,7 +28,7 @@ remote:
   # by startup cleanup and periodic reconnection. When empty, standard peripherals
   # (audio, keyboard, mouse, gaming, tablet) are skipped to avoid disrupting host peripherals.
   managed_devices:
-    - "DC:E5:5B:A6:30:8B"
+    - "AA:BB:CC:DD:EE:FF"
 
   # Pointer mode: "touch" (default) or "mouse" (Issue #503)
   # In "touch" mode, synthetic taps and evdev events emit absolute HID digitizer reports.
