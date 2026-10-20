@@ -1570,7 +1570,7 @@ test('Video Presentation Mode & Multi-Stream Player with PiP', async (t) => {
       });
 
       mgr.enterVideoMode({
-        primary: { id: 'chromecast', stream_url: 'webrtc://cast', type: 'webrtc' },
+        primary: { id: 'chromecast', stream_url: 'webrtc://cast', type: 'webrtc', controllable: true },
       });
 
       const videoEl = mgr.primarySession.element;
@@ -1624,7 +1624,7 @@ test('Video Presentation Mode & Multi-Stream Player with PiP', async (t) => {
       });
 
       mgr.enterVideoMode({
-        primary: { id: 'chromecast', stream_url: 'webrtc://cast', type: 'webrtc' },
+        primary: { id: 'chromecast', stream_url: 'webrtc://cast', type: 'webrtc', controllable: true },
       });
 
       const videoEl = mgr.primarySession.element;
@@ -1667,7 +1667,7 @@ test('Video Presentation Mode & Multi-Stream Player with PiP', async (t) => {
       });
 
       mgr.enterVideoMode({
-        primary: { id: 'chromecast', stream_url: 'webrtc://cast', type: 'webrtc' },
+        primary: { id: 'chromecast', stream_url: 'webrtc://cast', type: 'webrtc', controllable: true },
       });
 
       const videoEl = mgr.primarySession.element;
@@ -1688,10 +1688,13 @@ test('Video Presentation Mode & Multi-Stream Player with PiP', async (t) => {
 
     await t2.test('cleans up touch listeners on session teardown', () => {
       const primarySlot = createMockElement('div', 'video-primary-slot');
-      const mgr = new VideoPlayerManager({ primarySlot });
+      const mgr = new VideoPlayerManager({
+        primarySlot,
+        remoteUrl: 'http://localhost:8092',
+      });
 
       mgr.enterVideoMode({
-        primary: { id: 'chromecast', stream_url: 'webrtc://cast', type: 'webrtc' },
+        primary: { id: 'chromecast', stream_url: 'webrtc://cast', type: 'webrtc', controllable: true },
       });
 
       const session = mgr.primarySession;
@@ -1738,6 +1741,50 @@ test('Video Presentation Mode & Multi-Stream Player with PiP', async (t) => {
       await mgr.sendTouchEvent('tap', 0.5, 0.5);
       assert.strictEqual(called, false);
       mgr.destroy();
+    });
+
+    await t2.test('does not bind touch forwarding when stream is not controllable or remoteUrl is empty', () => {
+      const primarySlot = createMockElement('div', 'video-primary-slot');
+
+      // Case 1: controllable is omitted / false, with remoteUrl set
+      const mgr1 = new VideoPlayerManager({
+        primarySlot,
+        remoteUrl: 'http://localhost:8092',
+      });
+      mgr1.enterVideoMode({
+        primary: { id: 'stream-uncontrolled', stream_url: 'webrtc://cam', type: 'webrtc' },
+      });
+      assert.strictEqual(mgr1.primarySession.touchCleanups, undefined);
+      let pointerDownFired = false;
+      mgr1.primarySession.element.dispatchEvent('pointerdown', {
+        stopPropagation: () => { pointerDownFired = true; },
+        preventDefault: () => { pointerDownFired = true; },
+      });
+      assert.strictEqual(pointerDownFired, false, 'pointerdown should not be intercepted on non-controllable stream');
+      mgr1.destroy();
+
+      // Case 2: controllable is explicitly false
+      const mgr2 = new VideoPlayerManager({
+        primarySlot,
+        remoteUrl: 'http://localhost:8092',
+      });
+      mgr2.enterVideoMode({
+        primary: { id: 'stream-false', stream_url: 'webrtc://cam', type: 'webrtc', controllable: false },
+      });
+      assert.strictEqual(mgr2.primarySession.touchCleanups, undefined);
+      mgr2.destroy();
+
+      // Case 3: controllable is true but remoteUrl is empty
+      const mgr3 = new VideoPlayerManager({
+        primarySlot,
+        remoteUrl: '',
+        window: null,
+      });
+      mgr3.enterVideoMode({
+        primary: { id: 'stream-no-remote', stream_url: 'webrtc://cam', type: 'webrtc', controllable: true },
+      });
+      assert.strictEqual(mgr3.primarySession.touchCleanups, undefined);
+      mgr3.destroy();
     });
   });
 });

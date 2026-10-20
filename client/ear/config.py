@@ -49,7 +49,7 @@ class VoiceConfig:
     keywords_score: float = 1.0
     keywords_threshold: float = 0.25
     sherpa_num_threads: int = 2
-    google_voice_url: str = "http://localhost:8092/voice"
+    google_voice_url: str = ""
     google_voice_timeout_seconds: float = 3.0
 
     def wake_mode_uses_wake_word(self) -> bool:

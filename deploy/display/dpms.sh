@@ -8,7 +8,8 @@ set -euo pipefail
 if [[ -f /etc/default/mirrormere-display ]]; then
     # shellcheck source=/dev/null
     source /etc/default/mirrormere-display
-elif [[ -f /etc/default/mirrormere-kiosk ]]; then
+fi
+if [[ -f /etc/default/mirrormere-kiosk ]]; then
     # shellcheck source=/dev/null
     source /etc/default/mirrormere-kiosk
 fi
@@ -92,6 +93,16 @@ case "$cmd" in
             output="$(get_output)"
             echo "[Mirrormere DPMS] Powering on output: ${output}"
             run_display_wayland wlr-randr --output "${output}" --on
+            if [[ -z "${MIRRORMERE_SCALE_FACTOR:-}" ]]; then
+                if [[ -r /etc/default/mirrormere-display ]]; then
+                    # shellcheck source=/dev/null
+                    source /etc/default/mirrormere-display
+                fi
+                if [[ -z "${MIRRORMERE_SCALE_FACTOR:-}" ]] && [[ -r /etc/default/mirrormere-kiosk ]]; then
+                    # shellcheck source=/dev/null
+                    source /etc/default/mirrormere-kiosk
+                fi
+            fi
             scale="${MIRRORMERE_SCALE_FACTOR:-1.0}"
             run_display_wayland wlr-randr --output "${output}" --scale "${scale}" 2>/dev/null || true
             reset_swayidle_active
