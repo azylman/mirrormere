@@ -17,7 +17,10 @@ const DefaultConfigPath = "/config/config.yaml"
 var interpolationRegex = regexp.MustCompile(`\$\{([^}]+)\}`)
 
 func isValidHTTPURL(raw string) bool {
-	u, err := url.ParseRequestURI(strings.TrimSpace(raw))
+	if raw == "" || raw != strings.TrimSpace(raw) {
+		return false
+	}
+	u, err := url.ParseRequestURI(raw)
 	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
 }
 

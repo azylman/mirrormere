@@ -42,6 +42,10 @@ func mkHeaderCfg(lat, lon float64, units string, interval *int) *config.HeaderWe
 	return &config.HeaderWeatherConfig{Latitude: lat, Longitude: lon, Units: units, RefreshIntervalSeconds: interval}
 }
 
+func mkHeaderCfgWithLoc(lat, lon float64, units string, interval *int, loc string) *config.HeaderWeatherConfig {
+	return &config.HeaderWeatherConfig{Latitude: lat, Longitude: lon, Units: units, RefreshIntervalSeconds: interval, Location: loc}
+}
+
 func TestNewHeaderWeatherPoller_Defaults(t *testing.T) {
 	t.Parallel()
 	poller := provider.NewHeaderWeatherPoller(provider.HeaderWeatherPollerConfig{})
@@ -63,18 +67,20 @@ func TestHeaderWeatherPoller_FetchOnce(t *testing.T) {
 		wantCode   int
 		wantIcon   string
 		wantCond   string
+		wantLoc    string
 		wantQuery  []string
 		wantErrSub string
 		checkSink  bool
 	}{
-		{"imperial", 200, sampleHeaderOpenMeteoJSON(), "", mkHeaderCfg(37.8044, -122.2712, "imperial", intPtr(900)), "America/Los_Angeles", 72.4, "F", 1, "weather-partly-cloudy", "", []string{"temperature_unit=fahrenheit", "latitude=37.8044"}, "", true},
-		{"metric", 200, sampleHeaderOpenMeteoJSON(), "", mkHeaderCfg(51.5074, -0.1278, "metric", intPtr(900)), "Europe/London", 0, "C", 0, "", "", []string{"temperature_unit=celsius"}, "", false},
-		{"nighttime", 200, sampleHeaderNightJSON, "", mkHeaderCfg(37.8044, -122.2712, "imperial", nil), "America/Los_Angeles", 0, "", 0, "weather-clear-night", "Clear", nil, "", false},
-		{"empty_tz_zero_interval", 200, sampleHeaderOpenMeteoJSON(), "", mkHeaderCfg(37.8, -122.2, "", intPtr(0)), "", 0, "", 0, "", "", nil, "", false},
-		{"nil_config", 0, "", "", nil, "", 0, "", 0, "", "", nil, "", false},
-		{"http_500", 500, "upstream failure", "", mkHeaderCfg(37.8, -122.2, "", nil), "UTC", 0, "", 0, "", "", nil, "HTTP 500", false},
-		{"malformed_json", 200, "not valid json", "", mkHeaderCfg(37.8, -122.2, "", nil), "UTC", 0, "", 0, "", "", nil, "failed to decode header Open-Meteo response", false},
-		{"invalid_base_url", 0, "", "http://invalid-host-%-escape", mkHeaderCfg(37.8, -122.2, "", nil), "UTC", 0, "", 0, "", "", nil, "invalid header weather baseURL", false},
+		{"imperial", 200, sampleHeaderOpenMeteoJSON(), "", mkHeaderCfg(37.8044, -122.2712, "imperial", intPtr(900)), "America/Los_Angeles", 72.4, "F", 1, "weather-partly-cloudy", "", "", []string{"temperature_unit=fahrenheit", "latitude=37.8044"}, "", true},
+		{"custom_location", 200, sampleHeaderOpenMeteoJSON(), "", mkHeaderCfgWithLoc(37.8044, -122.2712, "imperial", intPtr(900), "San Francisco"), "America/Los_Angeles", 72.4, "F", 1, "weather-partly-cloudy", "", "San Francisco", []string{"temperature_unit=fahrenheit"}, "", false},
+		{"metric", 200, sampleHeaderOpenMeteoJSON(), "", mkHeaderCfg(51.5074, -0.1278, "metric", intPtr(900)), "Europe/London", 0, "C", 0, "", "", "", []string{"temperature_unit=celsius"}, "", false},
+		{"nighttime", 200, sampleHeaderNightJSON, "", mkHeaderCfg(37.8044, -122.2712, "imperial", nil), "America/Los_Angeles", 0, "", 0, "weather-clear-night", "Clear", "", nil, "", false},
+		{"empty_tz_zero_interval", 200, sampleHeaderOpenMeteoJSON(), "", mkHeaderCfg(37.8, -122.2, "", intPtr(0)), "", 0, "", 0, "", "", "", nil, "", false},
+		{"nil_config", 0, "", "", nil, "", 0, "", 0, "", "", "", nil, "", false},
+		{"http_500", 500, "upstream failure", "", mkHeaderCfg(37.8, -122.2, "", nil), "UTC", 0, "", 0, "", "", "", nil, "HTTP 500", false},
+		{"malformed_json", 200, "not valid json", "", mkHeaderCfg(37.8, -122.2, "", nil), "UTC", 0, "", 0, "", "", "", nil, "failed to decode header Open-Meteo response", false},
+		{"invalid_base_url", 0, "", "http://invalid-host-%-escape", mkHeaderCfg(37.8, -122.2, "", nil), "UTC", 0, "", 0, "", "", "", nil, "invalid header weather baseURL", false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -114,6 +120,7 @@ func TestHeaderWeatherPoller_FetchOnce(t *testing.T) {
 			if tc.wantCode != 0 && hw.WeatherCode != tc.wantCode { t.Errorf("code = %v, want %v", hw.WeatherCode, tc.wantCode) }
 			if tc.wantIcon != "" && hw.Icon != tc.wantIcon { t.Errorf("icon = %q, want %q", hw.Icon, tc.wantIcon) }
 			if tc.wantCond != "" && hw.Condition != tc.wantCond { t.Errorf("cond = %q, want %q", hw.Condition, tc.wantCond) }
+			if hw.Location != tc.wantLoc { t.Errorf("location = %q, want %q", hw.Location, tc.wantLoc) }
 			for _, q := range tc.wantQuery {
 				if !strings.Contains(reqQuery, q) { t.Errorf("query %q missing %q", reqQuery, q) }
 			}

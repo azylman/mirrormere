@@ -134,6 +134,7 @@ func TestParseWithEnv_ValidationErrors(t *testing.T) {
 		{"widget non-positive refresh", "timezone: UTC\ndisplay:\n  widgets:\n    - id: w1\n      type: spacer\n      refresh_interval_seconds: 0\n", "refresh_interval_seconds must be positive"},
 		{"widget invalid http method", "timezone: UTC\ndisplay:\n  widgets:\n    - id: w1\n      type: spacer\n      method: DELETE\n", "invalid http method 'DELETE'"},
 		{"widget invalid endpoint url", "timezone: UTC\ndisplay:\n  widgets:\n    - id: w1\n      type: spacer\n      endpoint: ftp://example.com/api\n", "invalid endpoint URL 'ftp://example.com/api'"},
+		{"widget whitespace padded endpoint url", "timezone: UTC\ndisplay:\n  widgets:\n    - id: w1\n      type: spacer\n      endpoint: \" http://example.com/api \"\n", "invalid endpoint URL"},
 		{"chat_log non-positive ttl", withBaseYAML("chat_log:\n  ttl_minutes: 0\n"), "chat_log ttl_minutes must be positive"},
 		{"chat_log non-positive max_messages", withBaseYAML("chat_log:\n  max_messages_per_node: -1\n"), "chat_log max_messages_per_node must be positive"},
 		{"voice_hub brain timeout non-positive", withBaseYAML("voice_hub:\n  enabled: true\n  brain_timeout_seconds: 0\n"), "voice_hub brain_timeout_seconds must be positive"},
