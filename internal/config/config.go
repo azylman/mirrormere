@@ -545,6 +545,32 @@ func validateStructuralKeys(root *yaml.Node) error {
 	return nil
 }
 
+// validateVoiceKeys rejects unknown keys under display.voice and display.voice.waveform,
+// so a typo such as levles_url fails validation instead of being silently ignored.
+func validateVoiceKeys(voiceNode *yaml.Node) error {
+	if voiceNode.Kind != yaml.MappingNode {
+		return nil
+	}
+	for i := 0; i+1 < len(voiceNode.Content); i += 2 {
+		keyNode, valNode := voiceNode.Content[i], voiceNode.Content[i+1]
+		if keyNode.Value != "waveform" {
+			return fmt.Errorf("line %d: unknown key '%s' under display.voice", keyNode.Line, keyNode.Value)
+		}
+		if valNode.Kind != yaml.MappingNode {
+			continue
+		}
+		for j := 0; j+1 < len(valNode.Content); j += 2 {
+			wk := valNode.Content[j]
+			switch wk.Value {
+			case "enabled", "levels_url", "gain":
+			default:
+				return fmt.Errorf("line %d: unknown key '%s' under display.voice.waveform", wk.Line, wk.Value)
+			}
+		}
+	}
+	return nil
+}
+
 func validateDisplayKeys(displayNode *yaml.Node) error {
 	for i := 0; i < len(displayNode.Content); i += 2 {
 		keyNode := displayNode.Content[i]
@@ -553,7 +579,11 @@ func validateDisplayKeys(displayNode *yaml.Node) error {
 			return fmt.Errorf("line %d: display contains disallowed key 'screens': screens are dynamically computed by the 6x2 layout solver", keyNode.Line)
 		case "providers":
 			return fmt.Errorf("line %d: display contains disallowed key 'providers': widget instances configure their own data sources under display.widgets", keyNode.Line)
-		case "rotation", "grid", "header", "widgets", "hide_cursor", "remote_url", "theme", "voice":
+		case "voice":
+			if err := validateVoiceKeys(displayNode.Content[i+1]); err != nil {
+				return err
+			}
+		case "rotation", "grid", "header", "widgets", "hide_cursor", "remote_url", "theme":
 		default:
 			return fmt.Errorf("line %d: unknown key '%s' under display", keyNode.Line, key)
 		}
@@ -705,6 +735,17 @@ func (c *Config) Validate() error {
 		case "imperial", "metric":
 		default:
 			return fmt.Errorf("invalid header weather units '%s': must be 'imperial' or 'metric'", hw.Units)
+		}
+	}
+
+	// 4b. Voice waveform validation
+	if v := c.Display.Voice; v != nil && v.Waveform != nil {
+		vw := v.Waveform
+		if strings.TrimSpace(vw.LevelsURL) != "" && !isValidHTTPURL(vw.LevelsURL) {
+			return fmt.Errorf("display voice waveform levels_url must be an http(s) URL (got %q)", vw.LevelsURL)
+		}
+		if vw.Gain != nil && !(*vw.Gain > 0) {
+			return fmt.Errorf("display voice waveform gain must be positive (got %v)", *vw.Gain)
 		}
 	}
 
