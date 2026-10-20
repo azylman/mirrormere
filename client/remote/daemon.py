@@ -15,7 +15,7 @@ import os
 import signal
 import struct
 import sys
-from typing import Optional
+from typing import Callable, List, Optional, Set
 
 try:
     from aiohttp import web
@@ -262,111 +262,198 @@ try:
     from bluez_peripheral.gatt.descriptor import descriptor, DescriptorFlags
     from dbus_next.service import dbus_property, method
     from dbus_next.constants import PropertyAccess
+    from dbus_next.errors import DBusError
+    HAS_BLUEZ_PERIPHERAL = True
+except ImportError:
+    logger.warning("bluez-peripheral not installed; running in mock/test mode.")
+    HAS_BLUEZ_PERIPHERAL = False
 
-    class DeviceInfoService(Service):
-        def __init__(self):
-            super().__init__("180A", True)
+    class BaseAgent:
+        def __init__(self, capability=None):
+            self.capability = capability
 
-        @characteristic("2A29", CharacteristicFlags.READ)
-        def manufacturer_name(self, options):
-            return b"Mirrormere"
+    class AgentCapability:
+        DISPLAY_YES_NO = "DisplayYesNo"
 
-        @characteristic("2A24", CharacteristicFlags.READ)
-        def model_number(self, options):
-            return b"Cockpit-Remote-v1"
+    class Service:
+        def __init__(self, uuid, primary):
+            self.uuid = uuid
+            self.primary = primary
 
-    class BatteryService(Service):
-        def __init__(self):
-            super().__init__("180F", True)
+    class ServiceCollection:
+        def __init__(self, services):
+            self.services = services
 
-        @characteristic("2A19", CharacteristicFlags.READ | CharacteristicFlags.NOTIFY)
-        def battery_level(self, options):
-            return bytes([100])
+    class CharacteristicFlags:
+        READ = 1
+        WRITE = 2
+        NOTIFY = 4
+        WRITE_WITHOUT_RESPONSE = 8
 
-        def send_battery_level(self, level: int = 100):
-            val = bytes([max(0, min(100, level))])
-            if hasattr(self, "battery_level") and hasattr(self.battery_level, "changed"):
-                try:
-                    self.battery_level.changed(val)
-                except Exception as e:
-                    logger.debug("Battery notification skipped or failed: %s", e)
+    class DescriptorFlags:
+        READ = 1
 
-    class HIDService(Service):
-        def __init__(self):
-            self._mouse_val = bytes([0, 0, 0])
-            self._touch_val = bytes([0, 0, 0, 0, 0])
-            self._consumer_val = bytes([0, 0])
-            self._protocol_mode = bytes([1])
-            super().__init__("1812", True)
+    def characteristic(uuid, flags):
+        def decorator(f):
+            class CharMock:
+                def __init__(self, fn):
+                    self.fn = fn
+                def __call__(self, *args, **kwargs):
+                    return self.fn(*args, **kwargs)
+                def setter(self, fn):
+                    return self
+            return CharMock(f)
+        return decorator
 
-        @characteristic("2A4A", CharacteristicFlags.READ)
-        def hid_information(self, options):
-            return bytes([0x01, 0x01, 0x00, 0x02])
+    def descriptor(uuid, char):
+        def decorator(f):
+            return f
+        return decorator
 
-        @characteristic("2A4B", CharacteristicFlags.READ)
-        def report_map(self, options):
-            return REPORT_MAP
+    def method(*args, **kwargs):
+        def decorator(f):
+            return f
+        return decorator
 
-        @characteristic("2A4C", CharacteristicFlags.READ | CharacteristicFlags.WRITE_WITHOUT_RESPONSE)
-        def hid_control_point(self, options):
-            return bytes([0])
+    def dbus_property(*args, **kwargs):
+        def decorator(f):
+            class PropMock:
+                def __init__(self, fn):
+                    self.fn = fn
+                def __call__(self, *args, **kwargs):
+                    return self.fn(*args, **kwargs)
+                def setter(self, fn):
+                    return self
+            return PropMock(f)
+        return decorator
 
-        @hid_control_point.setter
-        def hid_control_point(self, value, options):
-            pass
+    class PropertyAccess:
+        READ = 1
+        READWRITE = 2
 
-        @characteristic("2A4E", CharacteristicFlags.READ | CharacteristicFlags.WRITE_WITHOUT_RESPONSE)
-        def protocol_mode(self, options):
-            return self._protocol_mode
+    Advertisement = None
+    KioskAdvertisement = None
+    FastKioskAdvertisement = None
 
-        @protocol_mode.setter
-        def protocol_mode(self, value, options):
-            self._protocol_mode = value
+    class DBusError(Exception):
+        def __init__(self, name: str, message: str):
+            super().__init__(f"{name}: {message}")
+            self.name = name
+            self.type = name
+            self.text = message
 
-        @characteristic("2A4D", CharacteristicFlags.READ | CharacteristicFlags.NOTIFY)
-        def report_mouse(self, options):
-            return self._mouse_val
+    get_message_bus = None
+    Adapter = None
 
-        @descriptor("2908", report_mouse)
-        def report_mouse_ref(self, options):
-            return bytes([1, 1])
 
-        @characteristic("2A4D", CharacteristicFlags.READ | CharacteristicFlags.NOTIFY)
-        def report_touch(self, options):
-            return self._touch_val
+class DeviceInfoService(Service):
+    def __init__(self):
+        super().__init__("180A", True)
 
-        @descriptor("2908", report_touch)
-        def report_touch_ref(self, options):
-            return bytes([2, 1])
+    @characteristic("2A29", CharacteristicFlags.READ)
+    def manufacturer_name(self, options=None):
+        return b"Mirrormere"
 
-        @characteristic("2A4D", CharacteristicFlags.READ | CharacteristicFlags.NOTIFY)
-        def report_consumer(self, options):
-            return self._consumer_val
+    @characteristic("2A24", CharacteristicFlags.READ)
+    def model_number(self, options=None):
+        return b"Mirrormere-Remote-v1"
 
-        @descriptor("2908", report_consumer)
-        def report_consumer_ref(self, options):
-            return bytes([3, 1])
 
-        def send_mouse(self, buttons: int, dx: int = 0, dy: int = 0):
-            val = bytes([buttons & 0x07, dx & 0xFF, dy & 0xFF])
-            self._mouse_val = val
-            if hasattr(self, "report_mouse") and hasattr(self.report_mouse, "changed"):
-                self.report_mouse.changed(val)
+class BatteryService(Service):
+    def __init__(self):
+        super().__init__("180F", True)
 
-        def send_touch(self, tip_down: bool, x_ratio: float, y_ratio: float):
-            flags = 0x03 if tip_down else 0x00
-            x_raw, y_raw = to_hid_digitizer(x_ratio, y_ratio)
-            val = bytes([flags]) + struct.pack("<HH", x_raw, y_raw)
-            self._touch_val = val
-            if hasattr(self, "report_touch") and hasattr(self.report_touch, "changed"):
-                self.report_touch.changed(val)
+    @characteristic("2A19", CharacteristicFlags.READ | CharacteristicFlags.NOTIFY)
+    def battery_level(self, options=None):
+        return bytes([100])
 
-        def send_consumer_key(self, keycode: int):
-            val = struct.pack("<H", keycode)
-            self._consumer_val = val
-            if hasattr(self, "report_consumer") and hasattr(self.report_consumer, "changed"):
-                self.report_consumer.changed(val)
+    def send_battery_level(self, level: int = 100):
+        val = bytes([max(0, min(100, level))])
+        if hasattr(self, "battery_level") and hasattr(self.battery_level, "changed"):
+            try:
+                self.battery_level.changed(val)
+            except Exception as e:
+                logger.debug("Battery notification skipped or failed: %s", e)
 
+
+class HIDService(Service):
+    def __init__(self):
+        self._mouse_val = bytes([0, 0, 0])
+        self._touch_val = bytes([0, 0, 0, 0, 0])
+        self._consumer_val = bytes([0, 0])
+        self._protocol_mode = bytes([1])
+        super().__init__("1812", True)
+
+    @characteristic("2A4A", CharacteristicFlags.READ)
+    def hid_information(self, options=None):
+        return bytes([0x01, 0x01, 0x00, 0x02])
+
+    @characteristic("2A4B", CharacteristicFlags.READ)
+    def report_map(self, options=None):
+        return REPORT_MAP
+
+    @characteristic("2A4C", CharacteristicFlags.READ | CharacteristicFlags.WRITE_WITHOUT_RESPONSE)
+    def hid_control_point(self, options=None):
+        return bytes([0])
+
+    @hid_control_point.setter
+    def hid_control_point(self, value, options=None):
+        pass
+
+    @characteristic("2A4E", CharacteristicFlags.READ | CharacteristicFlags.WRITE_WITHOUT_RESPONSE)
+    def protocol_mode(self, options=None):
+        return self._protocol_mode
+
+    @protocol_mode.setter
+    def protocol_mode(self, value, options=None):
+        self._protocol_mode = value
+
+    @characteristic("2A4D", CharacteristicFlags.READ | CharacteristicFlags.NOTIFY)
+    def report_mouse(self, options=None):
+        return self._mouse_val
+
+    @descriptor("2908", report_mouse)
+    def report_mouse_ref(self, options=None):
+        return bytes([1, 1])
+
+    @characteristic("2A4D", CharacteristicFlags.READ | CharacteristicFlags.NOTIFY)
+    def report_touch(self, options=None):
+        return self._touch_val
+
+    @descriptor("2908", report_touch)
+    def report_touch_ref(self, options=None):
+        return bytes([2, 1])
+
+    @characteristic("2A4D", CharacteristicFlags.READ | CharacteristicFlags.NOTIFY)
+    def report_consumer(self, options=None):
+        return self._consumer_val
+
+    @descriptor("2908", report_consumer)
+    def report_consumer_ref(self, options=None):
+        return bytes([3, 1])
+
+    def send_mouse(self, buttons: int, dx: int = 0, dy: int = 0):
+        val = bytes([buttons & 0x07, dx & 0xFF, dy & 0xFF])
+        self._mouse_val = val
+        if hasattr(self, "report_mouse") and hasattr(self.report_mouse, "changed"):
+            self.report_mouse.changed(val)
+
+    def send_touch(self, tip_down: bool, x_ratio: float, y_ratio: float):
+        flags = 0x03 if tip_down else 0x00
+        x_raw, y_raw = to_hid_digitizer(x_ratio, y_ratio)
+        val = bytes([flags]) + struct.pack("<HH", x_raw, y_raw)
+        self._touch_val = val
+        if hasattr(self, "report_touch") and hasattr(self.report_touch, "changed"):
+            self.report_touch.changed(val)
+
+    def send_consumer_key(self, keycode: int):
+        val = struct.pack("<H", keycode)
+        self._consumer_val = val
+        if hasattr(self, "report_consumer") and hasattr(self.report_consumer, "changed"):
+            self.report_consumer.changed(val)
+
+
+if Advertisement:
     class KioskAdvertisement(Advertisement):
         @dbus_property(PropertyAccess.READWRITE)
         def TxPower(self) -> "n":
@@ -375,6 +462,7 @@ try:
         @TxPower.setter
         def TxPower(self, val: "n"):
             pass
+
 
     class FastKioskAdvertisement(KioskAdvertisement):
         def __init__(
@@ -395,56 +483,91 @@ try:
         @dbus_property(PropertyAccess.READ)
         def MaxInterval(self) -> "u":
             return self._max_interval
+else:
+    KioskAdvertisement = None
+    FastKioskAdvertisement = None
 
-    class PairingAgent(BaseAgent):
-        capability = AgentCapability.DISPLAY_YES_NO
 
-        def __init__(self, remote_helper: AndroidRemoteHelper, auto_confirm: bool = True):
-            self.remote_helper = remote_helper
-            self.auto_confirm = auto_confirm
-            super().__init__(AgentCapability.DISPLAY_YES_NO)
+class PairingAgent(BaseAgent):
+    capability = AgentCapability.DISPLAY_YES_NO
 
-        @method()
-        def Release(self):
-            logger.info("Agent released")
+    def __init__(
+        self,
+        remote_helper: AndroidRemoteHelper,
+        auto_confirm: bool = True,
+        on_trusted: Optional[Callable[[str], None]] = None,
+    ):
+        self.remote_helper = remote_helper
+        self.auto_confirm = auto_confirm
+        self.on_trusted = on_trusted
+        self._trusting_macs: Set[str] = set()
+        super().__init__(AgentCapability.DISPLAY_YES_NO)
 
-        @method()
-        def RequestPinCode(self, device: "o") -> "s":
-            logger.info("Auto-replying PIN code 0000 for %s", device)
-            return "0000"
+    @method()
+    def Release(self):
+        logger.info("Agent released")
 
-        @method()
-        def RequestPasskey(self, device: "o") -> "u":
-            logger.info("RequestPasskey for %s", device)
-            return 0
+    @method()
+    def RequestPinCode(self, device: "o") -> "s":
+        if not self.auto_confirm:
+            logger.warning("PIN code request rejected: auto_confirm_pairing is false for %s", device)
+            raise DBusError("org.bluez.Error.Rejected", "Pairing rejected: auto_confirm_pairing is false")
+        logger.info("Auto-replying PIN code 0000 for %s", device)
+        mac = str(device).split("/")[-1].replace("dev_", "").replace("_", ":").upper()
+        asyncio.create_task(self._trust_device(mac))
+        return "0000"
 
-        @method()
-        def DisplayPasskey(self, device: "o", passkey: "u", entered: "q"):
-            logger.info("DisplayPasskey for %s: %06d", device, passkey)
+    @method()
+    def RequestPasskey(self, device: "o") -> "u":
+        if not self.auto_confirm:
+            logger.warning("Passkey request rejected: auto_confirm_pairing is false for %s", device)
+            raise DBusError("org.bluez.Error.Rejected", "Pairing rejected: auto_confirm_pairing is false")
+        logger.info("RequestPasskey for %s", device)
+        mac = str(device).split("/")[-1].replace("dev_", "").replace("_", ":").upper()
+        asyncio.create_task(self._trust_device(mac))
+        return 0
 
-        @method()
-        def RequestConfirmation(self, device: "o", passkey: "u"):
-            logger.info("Auto-confirming pairing request for %s (passkey %06d)", device, passkey)
-            mac = device.split("/")[-1].replace("dev_", "").replace("_", ":").upper()
-            asyncio.create_task(self._trust_device(mac))
+    @method()
+    def DisplayPasskey(self, device: "o", passkey: "u", entered: "q"):
+        logger.info("DisplayPasskey for %s: %06d", device, passkey)
 
-        @method()
-        def RequestAuthorization(self, device: "o"):
-            logger.info("Auto-authorizing device %s", device)
-            mac = device.split("/")[-1].replace("dev_", "").replace("_", ":").upper()
-            asyncio.create_task(self._trust_device(mac))
+    @method()
+    def RequestConfirmation(self, device: "o", passkey: "u"):
+        if not self.auto_confirm:
+            logger.warning("Pairing confirmation rejected: auto_confirm_pairing is false for %s", device)
+            raise DBusError("org.bluez.Error.Rejected", "Pairing rejected: auto_confirm_pairing is false")
+        logger.info("Auto-confirming pairing request for %s (passkey %06d)", device, passkey)
+        mac = str(device).split("/")[-1].replace("dev_", "").replace("_", ":").upper()
+        asyncio.create_task(self._trust_device(mac))
 
-        @method()
-        def AuthorizeService(self, device: "o", uuid: "s"):
-            logger.info("Auto-authorizing service %s for device %s", uuid, device)
-            mac = device.split("/")[-1].replace("dev_", "").replace("_", ":").upper()
-            asyncio.create_task(self._trust_device(mac))
+    @method()
+    def RequestAuthorization(self, device: "o"):
+        if not self.auto_confirm:
+            logger.warning("Pairing authorization rejected: auto_confirm_pairing is false for %s", device)
+            raise DBusError("org.bluez.Error.Rejected", "Pairing rejected: auto_confirm_pairing is false")
+        logger.info("Auto-authorizing device %s", device)
+        mac = str(device).split("/")[-1].replace("dev_", "").replace("_", ":").upper()
+        asyncio.create_task(self._trust_device(mac))
 
-        @method()
-        def Cancel(self):
-            logger.info("Pairing cancelled by peer")
+    @method()
+    def AuthorizeService(self, device: "o", uuid: "s"):
+        if not self.auto_confirm:
+            logger.warning("Service authorization rejected: auto_confirm_pairing is false for %s (uuid %s)", device, uuid)
+            raise DBusError("org.bluez.Error.Rejected", "Pairing rejected: auto_confirm_pairing is false")
+        logger.info("Auto-authorizing service %s for device %s", uuid, device)
+        mac = str(device).split("/")[-1].replace("dev_", "").replace("_", ":").upper()
+        asyncio.create_task(self._trust_device(mac))
 
-        async def _trust_device(self, mac: str):
+    @method()
+    def Cancel(self):
+        logger.info("Pairing cancelled by peer")
+
+    async def _trust_device(self, mac: str):
+        mac = mac.strip().upper()
+        if not mac or mac in self._trusting_macs:
+            return
+        self._trusting_macs.add(mac)
+        try:
             for attempt in range(5):
                 await asyncio.sleep(0.5)
                 try:
@@ -456,27 +579,26 @@ try:
                     stdout, _ = await proc.communicate()
                     if proc.returncode == 0:
                         logger.info("Successfully trusted device %s", mac)
+                        if self.on_trusted:
+                            try:
+                                self.on_trusted(mac)
+                            except Exception as e:
+                                logger.debug("on_trusted callback failed: %s", e)
                         return
                     logger.debug("bluetoothctl trust %s (attempt %d) output: %s", mac, attempt + 1, stdout.decode().strip())
                 except Exception as e:
                     logger.warning("Failed to auto-trust %s (attempt %d): %s", mac, attempt + 1, e)
-
-except ImportError:
-    logger.warning("bluez-peripheral not installed; running in mock/test mode.")
-    HIDService = None
-    Advertisement = None
-    KioskAdvertisement = None
-    FastKioskAdvertisement = None
-    PairingAgent = None
-    AgentCapability = None
+        finally:
+            self._trusting_macs.discard(mac)
 
 
 class TouchReader:
     """Reads touch events from physical evdev device non-exclusively."""
 
-    def __init__(self, hid_service, target_path: str):
+    def __init__(self, hid_service, target_path: str, pointer_mode: str = "touch"):
         self.hid = hid_service
         self.target_path = target_path
+        self.pointer_mode = pointer_mode
         self.touch_active = False
         self.cur_x = 0
         self.cur_y = 0
@@ -597,34 +719,39 @@ class TouchReader:
                             if not self.touch_active:
                                 prev_touch_active = False
                                 if self.hid:
-                                    x_r, y_r = self._normalize()
-                                    self.hid.send_mouse(0, 0, 0)
-                                    self.hid.send_touch(False, x_r, y_r)
+                                    if self.pointer_mode == "mouse":
+                                        self.hid.send_mouse(0, 0, 0)
+                                    else:
+                                        x_r, y_r = self._normalize()
+                                        self.hid.send_touch(False, x_r, y_r)
                     elif ev.type == evdev.ecodes.EV_KEY and ev.code == evdev.ecodes.BTN_TOUCH:
                         self.touch_active = bool(ev.value)
                         if not self.touch_active:
                             prev_touch_active = False
                             if self.hid:
-                                x_r, y_r = self._normalize()
-                                self.hid.send_mouse(0, 0, 0)
-                                self.hid.send_touch(False, x_r, y_r)
+                                if self.pointer_mode == "mouse":
+                                    self.hid.send_mouse(0, 0, 0)
+                                else:
+                                    x_r, y_r = self._normalize()
+                                    self.hid.send_touch(False, x_r, y_r)
                     elif ev.type == evdev.ecodes.EV_SYN and ev.code == evdev.ecodes.SYN_REPORT:
                         if self.touch_active and self.hid:
-                            x_r, y_r = self._normalize()
-                            if not prev_touch_active:
-                                self.hid.send_mouse(1, 0, 0)
-                                prev_touch_active = True
-                            self.hid.send_touch(True, x_r, y_r)
+                            if self.pointer_mode == "mouse":
+                                if not prev_touch_active:
+                                    self.hid.send_mouse(1, 0, 0)
+                                    prev_touch_active = True
+                            else:
+                                x_r, y_r = self._normalize()
+                                self.hid.send_touch(True, x_r, y_r)
             except Exception as e:
                 logger.warning("Touch reader disconnected or errored (%s); re-opening in 3s...", e)
                 if self.touch_active and self.hid:
                     try:
-                        self.hid.send_mouse(0, 0, 0)
-                    except Exception:
-                        pass
-                    try:
-                        x_r, y_r = self._normalize()
-                        self.hid.send_touch(False, x_r, y_r)
+                        if self.pointer_mode == "mouse":
+                            self.hid.send_mouse(0, 0, 0)
+                        else:
+                            x_r, y_r = self._normalize()
+                            self.hid.send_touch(False, x_r, y_r)
                     except Exception:
                         pass
                 self.touch_active = False
@@ -636,8 +763,14 @@ class RemoteDaemon:
     def __init__(self, config: Optional[RemoteConfig] = None):
         self.config = config or load_config()
         self.remote_helper = AndroidRemoteHelper(self.config.chromecast_host, self.config.cert_dir)
-        self.hid = HIDService() if HIDService else None
-        self.touch_reader = TouchReader(self.hid, self.config.touch_device)
+        self.hid = HIDService() if (HIDService and HAS_BLUEZ_PERIPHERAL) else None
+        self.touch_reader = TouchReader(self.hid, self.config.touch_device, pointer_mode=self.config.pointer_mode)
+        self.managed_macs: Set[str] = set()
+        if self.config.managed_devices:
+            for m in self.config.managed_devices:
+                if m.strip():
+                    self.managed_macs.add(m.strip().upper())
+        self._load_persisted_managed_devices()
         self.bus = None
         self.adapter = None
         self.agent = None
@@ -649,6 +782,61 @@ class RemoteDaemon:
         self.keepalive_task = None
         self._last_wake_pulse = 0.0
         self._last_heartbeat = 0.0
+
+    def _load_persisted_managed_devices(self):
+        try:
+            device_file = os.path.join(self.config.cert_dir, "managed_devices.txt")
+            if os.path.exists(device_file):
+                with open(device_file, "r", encoding="utf-8") as f:
+                    for line in f:
+                        m = line.strip().upper()
+                        if m:
+                            self.managed_macs.add(m)
+        except Exception as e:
+            logger.debug("Could not load persisted managed devices: %s", e)
+
+    def add_managed_device(self, mac: str):
+        mac = mac.strip().upper()
+        if not mac:
+            return
+        self.managed_macs.add(mac)
+        try:
+            os.makedirs(self.config.cert_dir, exist_ok=True)
+            device_file = os.path.join(self.config.cert_dir, "managed_devices.txt")
+            existing = set()
+            if os.path.exists(device_file):
+                with open(device_file, "r", encoding="utf-8") as f:
+                    for line in f:
+                        m = line.strip().upper()
+                        if m:
+                            existing.add(m)
+            existing.add(mac)
+            with open(device_file, "w", encoding="utf-8") as f:
+                for m in sorted(existing):
+                    f.write(f"{m}\n")
+        except Exception as e:
+            logger.warning("Failed to persist managed device %s: %s", mac, e)
+
+    def remove_managed_device(self, mac: str):
+        mac = mac.strip().upper()
+        if mac in self.managed_macs:
+            self.managed_macs.remove(mac)
+        try:
+            device_file = os.path.join(self.config.cert_dir, "managed_devices.txt")
+            if os.path.exists(device_file):
+                existing = set()
+                with open(device_file, "r", encoding="utf-8") as f:
+                    for line in f:
+                        m = line.strip().upper()
+                        if m:
+                            existing.add(m)
+                if mac in existing:
+                    existing.remove(mac)
+                    with open(device_file, "w", encoding="utf-8") as f:
+                        for m in sorted(existing):
+                            f.write(f"{m}\n")
+        except Exception as e:
+            logger.warning("Failed to update managed_devices.txt after removal of %s: %s", mac, e)
 
     def send_heartbeat(self):
         """Emit periodic battery notification over BLE to keep L2CAP connection warm."""
@@ -719,16 +907,17 @@ class RemoteDaemon:
                 logger.warning("Dropping tap event: touch_lock acquisition timed out (D-Bus congestion)")
                 return web.json_response({"status": "error", "message": "touch dispatch timeout"}, status=503)
             try:
-                self.hid.send_mouse(1, 0, 0)
-                self.hid.send_touch(True, x_ratio, y_ratio)
+                if self.config.pointer_mode == "mouse":
+                    self.hid.send_mouse(1, 0, 0)
+                else:
+                    self.hid.send_touch(True, x_ratio, y_ratio)
                 await asyncio.sleep(self.config.tap_duration)
             finally:
                 try:
-                    self.hid.send_mouse(0, 0, 0)
-                except Exception:
-                    pass
-                try:
-                    self.hid.send_touch(False, x_ratio, y_ratio)
+                    if self.config.pointer_mode == "mouse":
+                        self.hid.send_mouse(0, 0, 0)
+                    else:
+                        self.hid.send_touch(False, x_ratio, y_ratio)
                 except Exception:
                     pass
                 self.touch_lock.release()
@@ -765,24 +954,29 @@ class RemoteDaemon:
 
         try:
             if action in ("down", "move"):
-                if action == "down":
-                    self.hid.send_mouse(1, 0, 0)
-                self.hid.send_touch(True, x_ratio, y_ratio)
+                if self.config.pointer_mode == "mouse":
+                    if action == "down":
+                        self.hid.send_mouse(1, 0, 0)
+                else:
+                    self.hid.send_touch(True, x_ratio, y_ratio)
             elif action == "up":
-                self.hid.send_mouse(0, 0, 0)
-                self.hid.send_touch(False, x_ratio, y_ratio)
+                if self.config.pointer_mode == "mouse":
+                    self.hid.send_mouse(0, 0, 0)
+                else:
+                    self.hid.send_touch(False, x_ratio, y_ratio)
             elif action == "tap":
                 try:
-                    self.hid.send_mouse(1, 0, 0)
-                    self.hid.send_touch(True, x_ratio, y_ratio)
+                    if self.config.pointer_mode == "mouse":
+                        self.hid.send_mouse(1, 0, 0)
+                    else:
+                        self.hid.send_touch(True, x_ratio, y_ratio)
                     await asyncio.sleep(self.config.tap_duration)
                 finally:
                     try:
-                        self.hid.send_mouse(0, 0, 0)
-                    except Exception:
-                        pass
-                    try:
-                        self.hid.send_touch(False, x_ratio, y_ratio)
+                        if self.config.pointer_mode == "mouse":
+                            self.hid.send_mouse(0, 0, 0)
+                        else:
+                            self.hid.send_touch(False, x_ratio, y_ratio)
                     except Exception:
                         pass
             else:
@@ -876,6 +1070,7 @@ class RemoteDaemon:
             code, stdout, stderr = await self._run_bluetoothctl("remove", mac, timeout=5.0)
             if code == 0:
                 logger.info("Successfully removed/unpaired bluetooth device %s", mac)
+                self.remove_managed_device(mac)
                 return web.json_response({"status": "ok", "action": "remove", "mac": mac})
             else:
                 logger.warning("bluetoothctl remove %s failed with code %d: %s", mac, code, stderr.decode())
@@ -966,6 +1161,23 @@ class RemoteDaemon:
             "sample_rate": sample_rate,
         })
 
+    STANDARD_PERIPHERAL_ICONS = (
+        "Icon: audio-",
+        "Icon: input-keyboard",
+        "Icon: input-mouse",
+        "Icon: input-gaming",
+        "Icon: input-tablet",
+    )
+
+    @classmethod
+    def _is_standard_peripheral(cls, info_text: str) -> bool:
+        for line in info_text.splitlines():
+            line_s = line.strip()
+            for icon in cls.STANDARD_PERIPHERAL_ICONS:
+                if icon in line_s:
+                    return True
+        return False
+
     async def _cleanup_stale_connections(self):
         """Disconnects paired devices that BlueZ still holds from a previous container lifecycle.
 
@@ -984,9 +1196,16 @@ class RemoteDaemon:
                 parts = line.strip().split(maxsplit=2)
                 if len(parts) >= 2 and parts[0] == "Device":
                     mac = parts[1].upper()
+                    if self.managed_macs and mac not in self.managed_macs:
+                        logger.debug("Skipping unmanaged device %s during stale connection cleanup", mac)
+                        continue
                     try:
                         _, info_out, _ = await self._run_bluetoothctl("info", mac, timeout=5.0)
-                        if any(l.strip() == "Connected: yes" for l in info_out.decode().splitlines()):
+                        info_str = info_out.decode()
+                        if not self.managed_macs and self._is_standard_peripheral(info_str):
+                            logger.debug("Skipping standard peripheral %s during stale connection cleanup", mac)
+                            continue
+                        if any(l.strip() == "Connected: yes" for l in info_str.splitlines()):
                             logger.info("Found pre-existing/stale connection to %s on startup; resetting link...", mac)
                             await self._run_bluetoothctl("disconnect", mac, timeout=5.0)
                     except Exception as e:
@@ -1012,11 +1231,17 @@ class RemoteDaemon:
                     if target_mac and mac != target_mac.upper():
                         continue
 
+                    if self.managed_macs and mac not in self.managed_macs:
+                        logger.debug("Skipping unmanaged device %s (%s)", mac, name)
+                        continue
+
                     is_connected = False
                     services_resolved = False
+                    info_str = ""
                     try:
                         _, info_out, _ = await self._run_bluetoothctl("info", mac, timeout=5.0)
-                        for info_line in info_out.decode().splitlines():
+                        info_str = info_out.decode()
+                        for info_line in info_str.splitlines():
                             stripped = info_line.strip()
                             if stripped == "Connected: yes":
                                 is_connected = True
@@ -1024,6 +1249,10 @@ class RemoteDaemon:
                                 services_resolved = True
                     except Exception as e:
                         logger.debug("Failed to check info for %s: %s", mac, e)
+
+                    if not self.managed_macs and self._is_standard_peripheral(info_str):
+                        logger.debug("Skipping standard peripheral %s (%s)", mac, name)
+                        continue
 
                     if force and is_connected:
                         logger.info("Forced reconnect requested for %s (%s); disconnecting first...", mac, name)
@@ -1095,10 +1324,12 @@ class RemoteDaemon:
             except Exception as e:
                 logger.warning("Failed to configure adapter alias/power: %s", e)
 
+        pairable_state = "on" if self.config.auto_confirm_pairing else "off"
+        discoverable_state = "on" if self.config.auto_confirm_pairing else "off"
         for cmd in [
             ["bluetoothctl", "discoverable-timeout", "0"],
-            ["bluetoothctl", "discoverable", "on"],
-            ["bluetoothctl", "pairable", "on"],
+            ["bluetoothctl", "discoverable", discoverable_state],
+            ["bluetoothctl", "pairable", pairable_state],
         ]:
             try:
                 proc = await asyncio.create_subprocess_exec(*cmd)
@@ -1111,11 +1342,15 @@ class RemoteDaemon:
         asyncio.create_task(self.remote_helper.start())
 
         # Setup BlueZ Peripheral if available
-        if HIDService:
+        if HIDService and HAS_BLUEZ_PERIPHERAL:
             try:
                 self.bus = await get_message_bus()
                 self.adapter = await Adapter.get_first(self.bus)
-                self.agent = PairingAgent(self.remote_helper, auto_confirm=self.config.auto_confirm_pairing)
+                self.agent = PairingAgent(
+                    self.remote_helper,
+                    auto_confirm=self.config.auto_confirm_pairing,
+                    on_trusted=self.add_managed_device,
+                )
                 await self.agent.register(self.bus)
 
                 dev_info = DeviceInfoService()

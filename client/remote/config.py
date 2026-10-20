@@ -1,7 +1,7 @@
 """Configuration loader and schema for Mirrormere Remote sidecar."""
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List, Optional
 
 try:
@@ -26,6 +26,14 @@ class RemoteConfig:
     tap_duration: float = 0.015
     bluetooth_heartbeat: bool = True
     bluetooth_heartbeat_interval: float = 30.0
+    managed_devices: List[str] = field(default_factory=list)
+    pointer_mode: str = "touch"
+
+    def __post_init__(self):
+        if self.managed_devices:
+            self.managed_devices = [m.strip().upper() for m in self.managed_devices if m.strip()]
+        if self.pointer_mode:
+            self.pointer_mode = self.pointer_mode.strip().lower()
 
 
 DEFAULT_CONFIG_PATHS = [
@@ -36,26 +44,40 @@ DEFAULT_CONFIG_PATHS = [
 
 
 def _parse_simple_yaml(text: str) -> dict:
-    """Minimal stdlib YAML parser for simple key-value config when PyYAML is unavailable."""
+    """Minimal stdlib YAML parser for simple key-value and list config when PyYAML is unavailable."""
     data = {}
-    current_dict = data
+    stack = [(-1, data)]
+    current_key = None
+    parent_dict = data
     for line in text.splitlines():
         stripped = line.strip()
         if not stripped or stripped.startswith("#"):
             continue
         indent = len(line) - len(line.lstrip())
+
+        while len(stack) > 1 and indent <= stack[-1][0]:
+            stack.pop()
+
+        current_dict = stack[-1][1]
+
+        if stripped.startswith("- "):
+            item = stripped[2:].strip().strip("\"'")
+            if current_key and isinstance(parent_dict.get(current_key), list):
+                parent_dict[current_key].append(item)
+            elif current_key and current_key in parent_dict:
+                parent_dict[current_key] = [item]
+            continue
+
         if ":" in stripped:
             k, v = stripped.split(":", 1)
             k = k.strip()
             v = v.strip()
-            if indent == 0 and not v:
-                sub = {}
-                data[k] = sub
-                current_dict = sub
-            elif not v:
+            current_key = k
+            parent_dict = current_dict
+            if not v:
                 sub = {}
                 current_dict[k] = sub
-                current_dict = sub
+                stack.append((indent, sub))
             else:
                 clean_v = v.strip("\"'")
                 if clean_v.lower() in ("true", "yes", "on"):
@@ -162,6 +184,14 @@ def load_config(path: Optional[str] = None) -> RemoteConfig:
                         cfg.bluetooth_heartbeat_interval = float(data["bluetooth_heartbeat_interval"])
                     except ValueError:
                         pass
+                if "managed_devices" in data:
+                    v = data["managed_devices"]
+                    if isinstance(v, list):
+                        cfg.managed_devices = [str(m).strip().upper() for m in v if str(m).strip()]
+                    elif isinstance(v, str):
+                        cfg.managed_devices = [m.strip().strip("'\"").upper() for m in v.strip("[]").split(",") if m.strip()]
+                if "pointer_mode" in data:
+                    cfg.pointer_mode = str(data["pointer_mode"]).strip().lower()
         except Exception as e:
             if path:
                 raise ValueError(f"Failed to parse config from {path}: {e}") from e
