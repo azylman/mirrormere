@@ -19,6 +19,8 @@ config_schema:
     - members
     - calendars
   properties:
+    title:
+      type: string
     default_view:
       type: string
       enum:

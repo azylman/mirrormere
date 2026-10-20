@@ -59,12 +59,46 @@
       <div class="cf-event cf-allday cf-event-clickable{{ if .Pattern }} cf-pattern-{{ .Pattern }}{{ end }}" data-event-id="{{ .ID }}" data-event-title="{{ .Title }}" data-event-allday="true" data-event-location="{{ .Location }}" data-event-description="{{ .Description }}" style="grid-column: {{ .StartCol }} / span {{ .ColSpan }}; font-size: 0.68rem; font-weight: 700; border-radius: 6px; padding: 3px 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: {{ .TextColor }}; background: {{ .Color }}; cursor: pointer; touch-action: manipulation;">{{ .Title }}</div>
       {{ end }}
     </div>
+    {{ else }}
+    {{ $hasLocalAllDay := false }}
+    {{ range $view.Days }}{{ if .AllDay }}{{ $hasLocalAllDay = true }}{{ end }}{{ end }}
+    {{ if $hasLocalAllDay }}
+    <div class="cf-allday-band cf-week-allday-grid" style="{{ if or $view.TimelineMarkers $view.HourMarkers }}margin-left: 44px;{{ end }} display: grid; grid-template-columns: repeat({{ len $view.Days }}, 1fr); gap: 6px; padding-bottom: 6px; margin-bottom: 6px; border-bottom: 1px dashed var(--mm-divider, rgba(90, 60, 30, 0.1));">
+      {{ range $view.Days }}
+      <div class="cf-day-allday-col" style="display: flex; flex-direction: column; gap: 2px;">
+        {{ range .AllDay }}
+        <div class="cf-edge-band cf-allday-band-local" style="display: flex; flex-direction: column; gap: 2px; padding: 2px 4px; background: rgba(90, 60, 30, 0.05); border-radius: 6px; border: 1px dashed var(--mm-divider, rgba(90, 60, 30, 0.12)); flex-shrink: 0;">
+          <div class="cf-event cf-allday cf-event-clickable{{ if .Pattern }} cf-pattern-{{ .Pattern }}{{ end }}" role="button" tabindex="0" title="{{ .Title }}" aria-label="{{ .Title }} (All Day)" data-event-id="{{ .ID }}" data-event-title="{{ .Title }}" data-event-allday="true" data-event-location="{{ .Location }}" data-event-description="{{ .Description }}" style="font-size: 0.65rem; font-weight: 700; border-radius: 4px; padding: 2px 4px; color: {{ .TextColor }}; background: {{ .Color }}; cursor: pointer; touch-action: manipulation; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ .Title }}</div>
+        </div>
+        {{ end }}
+      </div>
+      {{ end }}
+    </div>
+    {{ end }}
+    {{ end }}
+
+    {{ $hasEarly := false }}
+    {{ range $view.Days }}{{ if .EarlyEvents }}{{ $hasEarly = true }}{{ end }}{{ end }}
+    {{ if $hasEarly }}
+    <div class="cf-edge-band cf-week-early-grid" style="{{ if or $view.TimelineMarkers $view.HourMarkers }}margin-left: 44px;{{ end }} display: grid; grid-template-columns: repeat({{ len $view.Days }}, 1fr); gap: 6px; padding-bottom: 4px; margin-bottom: 4px; border-bottom: 1px dashed var(--mm-divider, rgba(90, 60, 30, 0.1));">
+      {{ range $view.Days }}
+      <div class="cf-day-early-col" style="display: flex; flex-direction: column; gap: 2px;">
+        {{ range .EarlyEvents }}
+        <div class="cf-edge-band cf-early-band" style="display: flex; flex-direction: column; gap: 2px; padding: 2px 4px; background: rgba(90, 60, 30, 0.05); border-radius: 6px; border: 1px dashed var(--mm-divider, rgba(90, 60, 30, 0.12)); flex-shrink: 0;">
+          <div class="cf-edge-event cf-event-clickable{{ if .Pattern }} cf-pattern-{{ .Pattern }}{{ end }}" role="button" tabindex="0" title="Early event: {{ .Start }} {{ .Title }}{{ if .Location }} ({{ .Location }}){{ end }}" aria-label="Early event: {{ .Title }} at {{ .Start }}" data-event-id="{{ .ID }}" data-event-title="{{ .Title }}" data-event-start="{{ .Start }}" data-event-end="{{ .End }}" data-event-location="{{ .Location }}" data-event-description="{{ .Description }}" style="font-size: 0.60rem; font-weight: 700; padding: 2px 4px; border-radius: 4px; background: {{ .Color }}; color: {{ .TextColor }}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; touch-action: manipulation;">
+            ▲ {{ .Start }} {{ .Title }}
+          </div>
+        </div>
+        {{ end }}
+      </div>
+      {{ end }}
+    </div>
     {{ end }}
 
     <div class="cf-week-body" style="display: flex; flex: 1; min-height: 0; gap: 6px; position: relative;">
       {{ if or $view.TimelineMarkers $view.HourMarkers }}
       <div class="cf-timeline-axis" style="width: 38px; display: flex; flex-direction: column; flex-shrink: 0; user-select: none;">
-        <div class="cf-timeline-spacer" style="height: 48px; flex-shrink: 0;"></div>
+        <div class="cf-timeline-spacer" style="height: 44px; flex-shrink: 0;"></div>
         <div class="cf-timeline-markers" style="flex: 1; position: relative; min-height: 0; margin-bottom: 6px; font-family: var(--mm-font-mono, monospace); font-size: 0.60rem; font-weight: 700; color: var(--mm-text-dim, #8b819f);">
           {{ if $view.TimelineMarkers }}
             {{ range $view.TimelineMarkers }}
@@ -85,7 +119,7 @@
         {{ range $view.Days }}
         <div class="cf-day{{ if .IsToday }} cf-today{{ end }}{{ if .IsWeekend }} cf-weekend{{ end }}" data-date="{{ .Date }}" style="display: flex; flex-direction: column; min-width: 0; min-height: 0; border-radius: 14px; padding: 6px; background: {{ if .IsToday }}var(--mm-cal-today-bg, var(--mm-lavender-light, #f3effe)){{ else if .IsWeekend }}var(--mm-cal-weekend-bg, rgba(90, 60, 30, 0.02)){{ else }}var(--mm-cal-day-bg, rgba(90, 60, 30, 0.03)){{ end }}; border: {{ if .IsToday }}2px solid var(--mm-cal-today-border, var(--mm-lavender, #8b60ed)){{ else }}1px solid var(--mm-card-border, rgba(90, 60, 30, 0.08)){{ end }}; overflow: hidden; position: relative;">
           
-          <div class="cf-day-header" style="text-align: center; padding-bottom: 6px; border-bottom: 1px solid {{ if .IsToday }}var(--mm-cal-today-header-border, rgba(139, 96, 237, 0.25)){{ else }}var(--mm-divider, rgba(90, 60, 30, 0.07)){{ end }}; flex-shrink: 0; background: transparent;">
+          <div class="cf-day-header" style="height: 44px; box-sizing: border-box; text-align: center; padding-bottom: 6px; border-bottom: 1px solid {{ if .IsToday }}var(--mm-cal-today-header-border, rgba(139, 96, 237, 0.25)){{ else }}var(--mm-divider, rgba(90, 60, 30, 0.07)){{ end }}; flex-shrink: 0; background: transparent;">
             <div class="cf-day-weekday" style="font-size: 0.68rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em; color: {{ if .IsToday }}var(--mm-cal-today-text, var(--mm-lavender, #8b60ed)){{ else }}var(--mm-text-dim, #8b819f){{ end }};">
               {{ if .IsToday }}Today{{ else }}{{ .WeekdayAbb }}{{ end }}
             </div>
@@ -93,26 +127,6 @@
               {{ .DayOfMonth }}
             </div>
           </div>
-
-          {{ if not $view.AllDayEvents }}
-          {{ if .AllDay }}
-          <div class="cf-edge-band cf-allday-band-local" style="display: flex; flex-direction: column; gap: 2px; padding: 2px 4px; margin-top: 4px; background: rgba(90, 60, 30, 0.05); border-radius: 6px; border: 1px dashed var(--mm-divider, rgba(90, 60, 30, 0.12)); flex-shrink: 0;">
-            {{ range .AllDay }}
-            <div class="cf-event cf-allday cf-event-clickable{{ if .Pattern }} cf-pattern-{{ .Pattern }}{{ end }}" role="button" tabindex="0" title="{{ .Title }}" aria-label="{{ .Title }} (All Day)" data-event-id="{{ .ID }}" data-event-title="{{ .Title }}" data-event-allday="true" data-event-location="{{ .Location }}" data-event-description="{{ .Description }}" style="font-size: 0.65rem; font-weight: 700; border-radius: 4px; padding: 2px 4px; color: {{ .TextColor }}; background: {{ .Color }}; cursor: pointer; touch-action: manipulation; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ .Title }}</div>
-            {{ end }}
-          </div>
-          {{ end }}
-          {{ end }}
-
-          {{ if .EarlyEvents }}
-          <div class="cf-edge-band cf-early-band" style="display: flex; flex-direction: column; gap: 2px; padding: 2px 4px; margin-top: 4px; background: rgba(90, 60, 30, 0.05); border-radius: 6px; border: 1px dashed var(--mm-divider, rgba(90, 60, 30, 0.12)); flex-shrink: 0;">
-            {{ range .EarlyEvents }}
-            <div class="cf-edge-event cf-event-clickable{{ if .Pattern }} cf-pattern-{{ .Pattern }}{{ end }}" role="button" tabindex="0" title="Early event: {{ .Start }} {{ .Title }}{{ if .Location }} ({{ .Location }}){{ end }}" aria-label="Early event: {{ .Title }} at {{ .Start }}" data-event-id="{{ .ID }}" data-event-title="{{ .Title }}" data-event-start="{{ .Start }}" data-event-end="{{ .End }}" data-event-location="{{ .Location }}" data-event-description="{{ .Description }}" style="font-size: 0.60rem; font-weight: 700; padding: 2px 4px; border-radius: 4px; background: {{ .Color }}; color: {{ .TextColor }}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; touch-action: manipulation;">
-              ▲ {{ .Start }} {{ .Title }}
-            </div>
-            {{ end }}
-          </div>
-          {{ end }}
 
           <div class="cf-day-canvas" style="flex: 1; position: relative; min-height: 0; margin-top: 4px;">
             {{ range .Events }}
@@ -131,20 +145,28 @@
             {{ end }}
           </div>
 
-          {{ if .LateEvents }}
-          <div class="cf-edge-band cf-late-band" style="display: flex; flex-direction: column; gap: 2px; padding: 2px 4px; margin-top: 4px; background: rgba(90, 60, 30, 0.05); border-radius: 6px; border: 1px dashed var(--mm-divider, rgba(90, 60, 30, 0.12)); flex-shrink: 0;">
-            {{ range .LateEvents }}
-            <div class="cf-edge-event cf-event-clickable{{ if .Pattern }} cf-pattern-{{ .Pattern }}{{ end }}" role="button" tabindex="0" title="Late event: {{ .Start }} {{ .Title }}{{ if .Location }} ({{ .Location }}){{ end }}" aria-label="Late event: {{ .Title }} at {{ .Start }}" data-event-id="{{ .ID }}" data-event-title="{{ .Title }}" data-event-start="{{ .Start }}" data-event-end="{{ .End }}" data-event-location="{{ .Location }}" data-event-description="{{ .Description }}" style="font-size: 0.60rem; font-weight: 700; padding: 2px 4px; border-radius: 4px; background: {{ .Color }}; color: {{ .TextColor }}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; touch-action: manipulation;">
-              ▼ {{ .Start }} {{ .Title }}
-            </div>
-            {{ end }}
-          </div>
-          {{ end }}
-
         </div>
         {{ end }}
       </div>
     </div>
+
+    {{ $hasLate := false }}
+    {{ range $view.Days }}{{ if .LateEvents }}{{ $hasLate = true }}{{ end }}{{ end }}
+    {{ if $hasLate }}
+    <div class="cf-edge-band cf-week-late-grid" style="{{ if or $view.TimelineMarkers $view.HourMarkers }}margin-left: 44px;{{ end }} display: grid; grid-template-columns: repeat({{ len $view.Days }}, 1fr); gap: 6px; padding-top: 4px; margin-top: 4px; border-top: 1px dashed var(--mm-divider, rgba(90, 60, 30, 0.1));">
+      {{ range $view.Days }}
+      <div class="cf-day-late-col" style="display: flex; flex-direction: column; gap: 2px;">
+        {{ range .LateEvents }}
+        <div class="cf-edge-band cf-late-band" style="display: flex; flex-direction: column; gap: 2px; padding: 2px 4px; background: rgba(90, 60, 30, 0.05); border-radius: 6px; border: 1px dashed var(--mm-divider, rgba(90, 60, 30, 0.12)); flex-shrink: 0;">
+          <div class="cf-edge-event cf-event-clickable{{ if .Pattern }} cf-pattern-{{ .Pattern }}{{ end }}" role="button" tabindex="0" title="Late event: {{ .Start }} {{ .Title }}{{ if .Location }} ({{ .Location }}){{ end }}" aria-label="Late event: {{ .Title }} at {{ .Start }}" data-event-id="{{ .ID }}" data-event-title="{{ .Title }}" data-event-start="{{ .Start }}" data-event-end="{{ .End }}" data-event-location="{{ .Location }}" data-event-description="{{ .Description }}" style="font-size: 0.60rem; font-weight: 700; padding: 2px 4px; border-radius: 4px; background: {{ .Color }}; color: {{ .TextColor }}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; touch-action: manipulation;">
+            ▼ {{ .Start }} {{ .Title }}
+          </div>
+        </div>
+        {{ end }}
+      </div>
+      {{ end }}
+    </div>
+    {{ end }}
     {{ else }}
     <div class="cf-empty" style="display: flex; align-items: center; justify-content: center; flex: 1; color: var(--mm-text-dim); font-size: 0.9rem;">
       <span>No calendar data yet</span>

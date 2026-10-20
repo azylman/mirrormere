@@ -221,10 +221,7 @@ func (p *HeaderWeatherPoller) FetchOnce(ctx context.Context) (*events.HeaderWeat
 		isDay = *data.Current.IsDay
 	}
 	condText, iconToken := MapWMOCodeWithDay(data.Current.WeatherCode, isDay)
-	loc := cfg.Location
-	if loc == "" {
-		loc = "Oakland"
-	}
+	loc := strings.TrimSpace(cfg.Location)
 
 	hw := &events.HeaderWeather{
 		Temperature: data.Current.Temperature2m,
