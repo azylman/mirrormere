@@ -342,6 +342,41 @@ describe('Header Next Up Event Pill', () => {
     assert.equal(elements['next-event-title'].textContent, 'Team Offsite');
   });
 
+  test('preserves each day of a multi-day all_day event in calendar-grid JSON', () => {
+    const elements = setupMockDOM();
+
+    const gridJson = JSON.stringify({
+      days: [
+        {
+          date: '2026-10-11',
+          events: [],
+          all_day: [{ id: 'multi-1', title: 'Family Retreat', all_day: true }],
+        },
+        {
+          date: '2026-10-12',
+          events: [],
+          all_day: [{ id: 'multi-1', title: 'Family Retreat', all_day: true }],
+        },
+      ],
+    });
+
+    global.document.querySelectorAll = (selector) => {
+      if (selector.includes('calendar-grid-data') || selector.includes('calendar-family-data')) {
+        return [{ textContent: gridJson }];
+      }
+      return [];
+    };
+
+    delete require.cache[require.resolve('../static/js/display.js')];
+    const display = require('../static/js/display.js');
+
+    // On day 2 of the multi-day event, day 1 is in the past; day 2 must not be dropped by deduplication
+    const nowDay2 = new Date('2026-10-12T10:00:00-07:00');
+    display.updateNextUpEvent(nowDay2);
+    assert.equal(elements['next-event-label'].textContent, 'TODAY');
+    assert.equal(elements['next-event-title'].textContent, 'Family Retreat');
+  });
+
   test('next-event-pill is styled at 52px height matching weather pill with no glowing icon', () => {
     const fs = require('node:fs');
     const path = require('node:path');

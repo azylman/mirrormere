@@ -1076,7 +1076,7 @@
             if (!ev || !ev.title) return;
             const isAllDay = Boolean(forceAllDay || ev.all_day || ev.allDay || !ev.start);
             events.push({
-              id: ev.id || `grid-${dayDate}-${ev.start || 'allday'}-${ev.title}`,
+              id: ev.id ? `${ev.id}-${dayDate}` : `grid-${dayDate}-${ev.start || 'allday'}-${ev.title}`,
               title: ev.title,
               start: ev.start || dayDate,
               end: ev.end || dayDate,
