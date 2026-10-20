@@ -274,3 +274,38 @@ func TestGetStatic(t *testing.T) {
 		})
 	}
 }
+
+func TestVoiceWaveformProvider(t *testing.T) {
+	t.Parallel()
+	tmpl := []byte(`<body>{{ if and .VoiceWaveform .VoiceWaveform.Enabled }}<wave url="{{ .VoiceWaveform.LevelsURL }}" gain="{{ .VoiceWaveform.Gain }}"></wave>{{ end }}</body>`)
+
+	h := display.NewHandler(display.WithEmbeddedTemplate(tmpl))
+	if h.VoiceWaveform() != nil {
+		t.Fatal("voice waveform without provider should be nil")
+	}
+	rec := httptest.NewRecorder()
+	h.GetDisplay(rec, httptest.NewRequest(http.MethodGet, "/display", nil))
+	if strings.Contains(rec.Body.String(), "<wave") {
+		t.Fatalf("waveform rendered without provider: %s", rec.Body.String())
+	}
+
+	wave := &display.VoiceWaveformTemplateData{Enabled: true, LevelsURL: "http://127.0.0.1:8765/levels", Gain: 2.2}
+	h = display.NewHandler(display.WithEmbeddedTemplate(tmpl), display.WithVoiceWaveformProvider(func() *display.VoiceWaveformTemplateData { return wave }))
+	if h.VoiceWaveform() != wave {
+		t.Fatal("voice waveform getter did not return provider value")
+	}
+	rec = httptest.NewRecorder()
+	h.GetDisplay(rec, httptest.NewRequest(http.MethodGet, "/display", nil))
+	body := rec.Body.String()
+	if !strings.Contains(body, `url="http://127.0.0.1:8765/levels"`) || !strings.Contains(body, `gain="2.2"`) {
+		t.Fatalf("waveform data missing from template: %s", body)
+	}
+
+	disabled := &display.VoiceWaveformTemplateData{Enabled: false, LevelsURL: "http://127.0.0.1:8765/levels", Gain: 2.2}
+	h = display.NewHandler(display.WithEmbeddedTemplate(tmpl), display.WithVoiceWaveformProvider(func() *display.VoiceWaveformTemplateData { return disabled }))
+	rec = httptest.NewRecorder()
+	h.GetDisplay(rec, httptest.NewRequest(http.MethodGet, "/display", nil))
+	if strings.Contains(rec.Body.String(), "<wave") {
+		t.Fatalf("disabled waveform rendered: %s", rec.Body.String())
+	}
+}

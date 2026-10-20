@@ -225,6 +225,41 @@ func TestHouseholdHelpers(t *testing.T) {
 	_ = h.Theme()
 }
 
+func TestBuildDisplayHandler_VoiceWaveform(t *testing.T) {
+	t.Parallel()
+	enabled := true
+	tests := []struct {
+		name    string
+		voice   *config.DisplayVoiceConfig
+		wantNil bool
+	}{
+		{name: "no voice section", voice: nil, wantNil: true},
+		{name: "voice without waveform", voice: &config.DisplayVoiceConfig{}, wantNil: true},
+		{name: "waveform disabled", voice: &config.DisplayVoiceConfig{Waveform: &config.VoiceWaveformConfig{Enabled: ptrBool(false)}}, wantNil: true},
+		{name: "waveform enabled", voice: &config.DisplayVoiceConfig{Waveform: &config.VoiceWaveformConfig{Enabled: &enabled, LevelsURL: "http://127.0.0.1:9100/levels", Gain: ptrFloat(1.5)}}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			sp := &fakeSnapProvider{theme: "day", snap: &config.Snapshot{Config: &config.Config{Timezone: "UTC", Display: config.DisplayConfig{Voice: tc.voice}}}}
+			h := buildDisplayHandler(sp, func() string { return "day" })
+			wv := h.VoiceWaveform()
+			if tc.wantNil {
+				if wv != nil {
+					t.Fatalf("voice waveform = %+v, want nil", wv)
+				}
+				return
+			}
+			if wv == nil || !wv.Enabled || wv.LevelsURL != "http://127.0.0.1:9100/levels" || wv.Gain != 1.5 {
+				t.Fatalf("voice waveform = %+v", wv)
+			}
+		})
+	}
+}
+
+func ptrBool(v bool) *bool         { return &v }
+func ptrFloat(v float64) *float64 { return &v }
+
 func TestRun_CLIAndErrors(t *testing.T) {
 	tests := []struct {
 		name, envCfg, yamlData, wantErr string

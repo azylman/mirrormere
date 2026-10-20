@@ -62,6 +62,10 @@ func WithHeaderVideoProvider(p func() *HeaderVideoTemplateData) HandlerOption {
 	return func(h *Handler) { h.headerVideoProvider = p }
 }
 
+func WithVoiceWaveformProvider(p func() *VoiceWaveformTemplateData) HandlerOption {
+	return func(h *Handler) { h.voiceWaveformProvider = p }
+}
+
 func WithThemeProvider(provider func() string) HandlerOption {
 	return func(h *Handler) { h.themeProvider = provider }
 }
@@ -82,6 +86,7 @@ type Handler struct {
 	remoteURLProvider   func() string
 	headerVideo         *HeaderVideoTemplateData
 	headerVideoProvider func() *HeaderVideoTemplateData
+	voiceWaveformProvider func() *VoiceWaveformTemplateData
 	themeProvider       func() string
 }
 
@@ -146,6 +151,15 @@ func (h *Handler) HeaderVideo() *HeaderVideoTemplateData {
 	return h.headerVideo
 }
 
+func (h *Handler) VoiceWaveform() *VoiceWaveformTemplateData {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	if h.voiceWaveformProvider != nil {
+		return h.voiceWaveformProvider()
+	}
+	return nil
+}
+
 func (h *Handler) Theme() string {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
@@ -166,13 +180,21 @@ type HeaderVideoTemplateData struct {
 	Type       string
 }
 
+// VoiceWaveformTemplateData holds the voice waveform mouth parameters for the display template.
+type VoiceWaveformTemplateData struct {
+	Enabled   bool
+	LevelsURL string
+	Gain      float64
+}
+
 // DisplayTemplateData holds context parameters passed to display.html template.
 type DisplayTemplateData struct {
-	Timezone    string
-	HideCursor  bool
-	RemoteURL   string
-	HeaderVideo *HeaderVideoTemplateData
-	Theme       string
+	Timezone      string
+	HideCursor    bool
+	RemoteURL     string
+	HeaderVideo   *HeaderVideoTemplateData
+	VoiceWaveform *VoiceWaveformTemplateData
+	Theme         string
 }
 
 // NewHandler constructs a Handler with default filesystem paths.
@@ -261,8 +283,9 @@ func (h *Handler) GetDisplay(w http.ResponseWriter, r *http.Request) {
 			Timezone:    h.Timezone(),
 			HideCursor:  hideCursor,
 			RemoteURL:   h.RemoteURL(),
-			HeaderVideo: h.HeaderVideo(),
-			Theme:       h.Theme(),
+			HeaderVideo:   h.HeaderVideo(),
+			VoiceWaveform: h.VoiceWaveform(),
+			Theme:         h.Theme(),
 		}); err == nil {
 			out = buf.Bytes()
 		}

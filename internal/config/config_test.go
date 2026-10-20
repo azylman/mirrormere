@@ -345,6 +345,30 @@ func TestLoad(t *testing.T) {
 	assertEq(t, "Timezone", loaded.Timezone, "UTC")
 }
 
+func TestDisplayVoiceWaveform_Parse(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := config.ParseWithEnv([]byte(withBaseYAML("  voice:\n    waveform:\n      enabled: true\n      levels_url: \"http://127.0.0.1:9100/levels\"\n      gain: 3.0\n")), mockGetenv(nil))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Display.Voice == nil || cfg.Display.Voice.Waveform == nil {
+		t.Fatal("display.voice.waveform not parsed")
+	}
+	wave := cfg.Display.Voice.Waveform
+	assertEq(t, "wave enabled", wave.IsEnabled(), true)
+	assertEq(t, "wave url", wave.GetLevelsURL(), "http://127.0.0.1:9100/levels")
+	assertEq(t, "wave gain", wave.GetGain(), 3.0)
+
+	cfg, err = config.ParseWithEnv([]byte(withBaseYAML("")), mockGetenv(nil))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Display.Voice != nil {
+		t.Fatal("display.voice should be nil when omitted")
+	}
+}
+
 func TestConfig_Accessors(t *testing.T) {
 	t.Parallel()
 	var nilLoc *config.LocationConfig
@@ -367,6 +391,13 @@ func TestConfig_Accessors(t *testing.T) {
 	assertEq(t, "vid zero", !(&config.HeaderVideoConfig{}).IsEnabled() && (&config.HeaderVideoConfig{}).GetStreamID() == "chromecast" && (&config.HeaderVideoConfig{}).GetType() == "webrtc", true)
 	popVid := &config.HeaderVideoConfig{Enabled: ptr(true), StreamID: "cam", Type: "hls"}
 	assertEq(t, "vid pop", popVid.IsEnabled() && popVid.GetStreamID() == "cam" && popVid.GetType() == "hls", true)
+
+	var nilWave *config.VoiceWaveformConfig
+	assertEq(t, "wave nil", !nilWave.IsEnabled() && nilWave.GetLevelsURL() == "http://127.0.0.1:8765/levels" && nilWave.GetGain() == 2.2, true)
+	assertEq(t, "wave zero", !(&config.VoiceWaveformConfig{}).IsEnabled() && (&config.VoiceWaveformConfig{}).GetLevelsURL() == "http://127.0.0.1:8765/levels" && (&config.VoiceWaveformConfig{}).GetGain() == 2.2, true)
+	popWave := &config.VoiceWaveformConfig{Enabled: ptr(true), LevelsURL: "http://10.0.0.5:9000/levels", Gain: ptr(1.5)}
+	assertEq(t, "wave pop", popWave.IsEnabled() && popWave.GetLevelsURL() == "http://10.0.0.5:9000/levels" && popWave.GetGain() == 1.5, true)
+	assertEq(t, "wave blank url", (&config.VoiceWaveformConfig{LevelsURL: "  "}).GetLevelsURL(), "http://127.0.0.1:8765/levels")
 
 	var nilWeather *config.HeaderWeatherConfig
 	assertEq(t, "weather nil", nilWeather.GetRefreshIntervalSeconds(), 900)

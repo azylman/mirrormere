@@ -85,13 +85,50 @@ type Config struct {
 
 // DisplayConfig specifies visual presentation, rotation parameters, and active widget instances.
 type DisplayConfig struct {
-	HideCursor bool           `yaml:"hide_cursor,omitempty"`
-	RemoteURL  string         `yaml:"remote_url,omitempty"`
-	Rotation   RotationConfig `yaml:"rotation"`
-	Header     HeaderConfig   `yaml:"header"`
-	Grid       GridConfig     `yaml:"grid"`
-	Widgets    []WidgetConfig `yaml:"widgets"`
-	Theme      *ThemeConfig   `yaml:"theme,omitempty"`
+	HideCursor bool                `yaml:"hide_cursor,omitempty"`
+	RemoteURL  string              `yaml:"remote_url,omitempty"`
+	Rotation   RotationConfig      `yaml:"rotation"`
+	Header     HeaderConfig        `yaml:"header"`
+	Grid       GridConfig          `yaml:"grid"`
+	Widgets    []WidgetConfig      `yaml:"widgets"`
+	Theme      *ThemeConfig        `yaml:"theme,omitempty"`
+	Voice      *DisplayVoiceConfig `yaml:"voice,omitempty"`
+}
+
+// DisplayVoiceConfig configures voice visuals on the display.
+type DisplayVoiceConfig struct {
+	Waveform *VoiceWaveformConfig `yaml:"waveform,omitempty"`
+}
+
+// VoiceWaveformConfig configures the waveform mouth fed by the ear daemon's /levels stream.
+type VoiceWaveformConfig struct {
+	Enabled   *bool    `yaml:"enabled,omitempty"`
+	LevelsURL string   `yaml:"levels_url,omitempty"`
+	Gain      *float64 `yaml:"gain,omitempty"`
+}
+
+// IsEnabled returns true if the voice waveform mouth is explicitly enabled.
+func (vw *VoiceWaveformConfig) IsEnabled() bool {
+	if vw == nil {
+		return false
+	}
+	return derefOr(vw.Enabled, false)
+}
+
+// GetLevelsURL returns the ear daemon's levels stream URL (default: http://127.0.0.1:8765/levels).
+func (vw *VoiceWaveformConfig) GetLevelsURL() string {
+	if vw == nil {
+		return "http://127.0.0.1:8765/levels"
+	}
+	return trimmedOr(vw.LevelsURL, "http://127.0.0.1:8765/levels")
+}
+
+// GetGain returns the waveform amplification factor (default: 2.2).
+func (vw *VoiceWaveformConfig) GetGain() float64 {
+	if vw == nil {
+		return 2.2
+	}
+	return derefOr(vw.Gain, 2.2)
 }
 
 // LocationConfig defines physical coordinates and location name for the device/household.
@@ -516,7 +553,7 @@ func validateDisplayKeys(displayNode *yaml.Node) error {
 			return fmt.Errorf("line %d: display contains disallowed key 'screens': screens are dynamically computed by the 6x2 layout solver", keyNode.Line)
 		case "providers":
 			return fmt.Errorf("line %d: display contains disallowed key 'providers': widget instances configure their own data sources under display.widgets", keyNode.Line)
-		case "rotation", "grid", "header", "widgets", "hide_cursor", "remote_url", "theme":
+		case "rotation", "grid", "header", "widgets", "hide_cursor", "remote_url", "theme", "voice":
 		default:
 			return fmt.Errorf("line %d: unknown key '%s' under display", keyNode.Line, key)
 		}
