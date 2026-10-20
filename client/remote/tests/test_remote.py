@@ -262,6 +262,106 @@ class TestDaemonComponents(unittest.TestCase):
         self.assertAlmostEqual(x_r, 0.5)
         self.assertAlmostEqual(y_r, 0.5)
 
+    def test_touch_reader_run_pointer_mode_touch(self):
+        hid_mock = MagicMock()
+        reader = daemon.TouchReader(hid_mock, "/dev/input/event0", pointer_mode="touch")
+        reader.cur_x = 1440
+        reader.cur_y = 810
+        mock_dev = MagicMock()
+
+        class MockEv:
+            def __init__(self, t, c, v):
+                self.type = t
+                self.code = c
+                self.value = v
+
+        mock_evdev = MagicMock()
+        mock_evdev.ecodes.EV_ABS = 3
+        mock_evdev.ecodes.EV_KEY = 1
+        mock_evdev.ecodes.EV_SYN = 0
+        mock_evdev.ecodes.BTN_TOUCH = 330
+        mock_evdev.ecodes.SYN_REPORT = 0
+        mock_evdev.ecodes.ABS_MT_TRACKING_ID = 57
+        mock_evdev.ecodes.ABS_MT_POSITION_X = 53
+        mock_evdev.ecodes.ABS_MT_POSITION_Y = 54
+        mock_evdev.ecodes.ABS_X = 0
+        mock_evdev.ecodes.ABS_Y = 1
+
+        async def fake_loop():
+            # touch down
+            yield MockEv(1, 330, 1)
+            yield MockEv(0, 0, 0)
+            # touch up
+            yield MockEv(1, 330, 0)
+            raise StopAsyncIteration
+
+        mock_dev.async_read_loop = fake_loop
+        mock_evdev.InputDevice.return_value = mock_dev
+
+        async def run():
+            with patch.dict("sys.modules", {"evdev": mock_evdev}), \
+                 patch.object(reader, "resolve_device", return_value="/dev/input/event0"), \
+                 patch("os.path.exists", return_value=True), \
+                 patch("asyncio.sleep", side_effect=asyncio.CancelledError):
+                try:
+                    await reader.run()
+                except asyncio.CancelledError:
+                    pass
+
+        asyncio.run(run())
+        hid_mock.send_mouse.assert_not_called()
+        self.assertTrue(hid_mock.send_touch.called)
+
+    def test_touch_reader_run_pointer_mode_mouse(self):
+        hid_mock = MagicMock()
+        reader = daemon.TouchReader(hid_mock, "/dev/input/event0", pointer_mode="mouse")
+        reader.cur_x = 1440
+        reader.cur_y = 810
+        mock_dev = MagicMock()
+
+        class MockEv:
+            def __init__(self, t, c, v):
+                self.type = t
+                self.code = c
+                self.value = v
+
+        mock_evdev = MagicMock()
+        mock_evdev.ecodes.EV_ABS = 3
+        mock_evdev.ecodes.EV_KEY = 1
+        mock_evdev.ecodes.EV_SYN = 0
+        mock_evdev.ecodes.BTN_TOUCH = 330
+        mock_evdev.ecodes.SYN_REPORT = 0
+        mock_evdev.ecodes.ABS_MT_TRACKING_ID = 57
+        mock_evdev.ecodes.ABS_MT_POSITION_X = 53
+        mock_evdev.ecodes.ABS_MT_POSITION_Y = 54
+        mock_evdev.ecodes.ABS_X = 0
+        mock_evdev.ecodes.ABS_Y = 1
+
+        async def fake_loop():
+            # touch down
+            yield MockEv(1, 330, 1)
+            yield MockEv(0, 0, 0)
+            # touch up
+            yield MockEv(1, 330, 0)
+            raise StopAsyncIteration
+
+        mock_dev.async_read_loop = fake_loop
+        mock_evdev.InputDevice.return_value = mock_dev
+
+        async def run():
+            with patch.dict("sys.modules", {"evdev": mock_evdev}), \
+                 patch.object(reader, "resolve_device", return_value="/dev/input/event0"), \
+                 patch("os.path.exists", return_value=True), \
+                 patch("asyncio.sleep", side_effect=asyncio.CancelledError):
+                try:
+                    await reader.run()
+                except asyncio.CancelledError:
+                    pass
+
+        asyncio.run(run())
+        hid_mock.send_touch.assert_not_called()
+        self.assertTrue(hid_mock.send_mouse.called)
+
     def test_remote_daemon_initialization(self):
         d = daemon.RemoteDaemon()
         self.assertIsNotNone(d.remote_helper)
@@ -317,6 +417,156 @@ class TestDaemonComponents(unittest.TestCase):
     def test_pairing_agent_capability_display_yes_no(self):
         if daemon.PairingAgent is not None and daemon.AgentCapability is not None:
             self.assertEqual(daemon.PairingAgent.capability, daemon.AgentCapability.DISPLAY_YES_NO)
+
+    def test_device_info_service_model_number(self):
+        dev_info = daemon.DeviceInfoService()
+        self.assertEqual(dev_info.model_number({}), b"Mirrormere-Remote-v1")
+        self.assertEqual(dev_info.manufacturer_name({}), b"Mirrormere")
+
+    def test_pairing_agent_auto_confirm_true(self):
+        async def run_test():
+            helper = MagicMock()
+            agent = daemon.PairingAgent(helper, auto_confirm=True)
+            with patch.object(agent, "_trust_device", new_callable=AsyncMock) as mock_trust:
+                agent.RequestConfirmation("/org/bluez/dev_DC_E5_5B_A6_30_8B", 123456)
+                agent.RequestAuthorization("/org/bluez/dev_DC_E5_5B_A6_30_8B")
+                agent.AuthorizeService("/org/bluez/dev_DC_E5_5B_A6_30_8B", "1812")
+                await asyncio.sleep(0.01)
+                self.assertEqual(mock_trust.call_count, 3)
+                mock_trust.assert_any_call("DC:E5:5B:A6:30:8B")
+        asyncio.run(run_test())
+
+    def test_pairing_agent_auto_confirm_false(self):
+        helper = MagicMock()
+        agent = daemon.PairingAgent(helper, auto_confirm=False)
+        with patch.object(agent, "_trust_device", new_callable=AsyncMock) as mock_trust:
+            with self.assertRaises(daemon.DBusError):
+                agent.RequestConfirmation("/org/bluez/dev_DC_E5_5B_A6_30_8B", 123456)
+            with self.assertRaises(daemon.DBusError):
+                agent.RequestAuthorization("/org/bluez/dev_DC_E5_5B_A6_30_8B")
+            with self.assertRaises(daemon.DBusError):
+                agent.AuthorizeService("/org/bluez/dev_DC_E5_5B_A6_30_8B", "1812")
+            mock_trust.assert_not_called()
+
+    def test_configure_adapter_states(self):
+        d = daemon.RemoteDaemon()
+        d.adapter = AsyncMock()
+        # auto_confirm_pairing is True -> discoverable on, pairable on
+        d.config.auto_confirm_pairing = True
+        with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_exec:
+            proc = AsyncMock()
+            proc.wait = AsyncMock(return_value=0)
+            mock_exec.return_value = proc
+            asyncio.run(d._configure_adapter())
+            mock_exec.assert_any_call("bluetoothctl", "discoverable", "on")
+            mock_exec.assert_any_call("bluetoothctl", "pairable", "on")
+
+        # auto_confirm_pairing is False -> discoverable off, pairable off
+        d.config.auto_confirm_pairing = False
+        with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_exec:
+            proc = AsyncMock()
+            proc.wait = AsyncMock(return_value=0)
+            mock_exec.return_value = proc
+            asyncio.run(d._configure_adapter())
+            mock_exec.assert_any_call("bluetoothctl", "discoverable", "off")
+            mock_exec.assert_any_call("bluetoothctl", "pairable", "off")
+
+    def test_managed_devices_tracking_and_persistence(self):
+        import tempfile, shutil
+        temp_dir = tempfile.mkdtemp()
+        try:
+            from config import RemoteConfig
+            cfg = RemoteConfig(cert_dir=temp_dir, managed_devices=["11:22:33:44:55:66"])
+            d = daemon.RemoteDaemon(config=cfg)
+            self.assertIn("11:22:33:44:55:66", d.managed_macs)
+
+            # Add another managed device
+            d.add_managed_device("aa:bb:cc:dd:ee:ff")
+            self.assertIn("AA:BB:CC:DD:EE:FF", d.managed_macs)
+
+            # Verify persisted file
+            dev_file = os.path.join(temp_dir, "managed_devices.txt")
+            self.assertTrue(os.path.exists(dev_file))
+            with open(dev_file, "r") as f:
+                lines = [l.strip() for l in f]
+            self.assertIn("AA:BB:CC:DD:EE:FF", lines)
+
+            # Test reload into new daemon instance
+            cfg2 = RemoteConfig(cert_dir=temp_dir)
+            d2 = daemon.RemoteDaemon(config=cfg2)
+            self.assertIn("AA:BB:CC:DD:EE:FF", d2.managed_macs)
+
+            # Test remove managed device
+            d2.remove_managed_device("AA:BB:CC:DD:EE:FF")
+            self.assertNotIn("AA:BB:CC:DD:EE:FF", d2.managed_macs)
+            with open(dev_file, "r") as f:
+                lines_after = [l.strip() for l in f]
+            self.assertNotIn("AA:BB:CC:DD:EE:FF", lines_after)
+        finally:
+            shutil.rmtree(temp_dir)
+
+    def test_cleanup_stale_connections_filtering(self):
+        d = daemon.RemoteDaemon()
+        d._run_bluetoothctl = AsyncMock()
+
+        # Case 1: managed_macs is populated -> only disconnect devices in managed_macs
+        d.managed_macs = {"DC:E5:5B:A6:30:8B"}
+        paired_stdout = b"Device DC:E5:5B:A6:30:8B Chromecast\nDevice 00:11:22:33:44:55 Unrelated Headset\n"
+        d._run_bluetoothctl.side_effect = [
+            (0, paired_stdout, b""),  # devices Paired
+            (0, b"Connected: yes\nIcon: video-display\n", b""),  # info for DC:E5:...
+            (0, b"", b""),  # disconnect DC:E5:...
+        ]
+        asyncio.run(d._cleanup_stale_connections())
+        d._run_bluetoothctl.assert_any_call("disconnect", "DC:E5:5B:A6:30:8B", timeout=5.0)
+        for call in d._run_bluetoothctl.call_args_list:
+            self.assertNotIn("00:11:22:33:44:55", call[0])
+
+        # Case 2: managed_macs is empty -> skips standard peripherals (audio, keyboard, etc.)
+        d.managed_macs = set()
+        d._run_bluetoothctl.reset_mock()
+        paired_stdout2 = b"Device AA:BB:CC:00:00:01 Headphones\nDevice AA:BB:CC:00:00:02 Display\n"
+        d._run_bluetoothctl.side_effect = [
+            (0, paired_stdout2, b""),  # devices Paired
+            (0, b"Connected: yes\nIcon: audio-headphones\n", b""),  # info for Headphones (peripheral)
+            (0, b"Connected: yes\nIcon: display\n", b""),  # info for Display
+            (0, b"", b""),  # disconnect Display
+        ]
+        asyncio.run(d._cleanup_stale_connections())
+        d._run_bluetoothctl.assert_any_call("disconnect", "AA:BB:CC:00:00:02", timeout=5.0)
+        for call in d._run_bluetoothctl.call_args_list:
+            if call[0][0] == "disconnect":
+                self.assertNotEqual(call[0][1], "AA:BB:CC:00:00:01")
+
+    def test_check_and_reconnect_bluetooth_filtering(self):
+        d = daemon.RemoteDaemon()
+        d._run_bluetoothctl = AsyncMock()
+
+        # Case 1: managed_macs populated -> skips unmanaged
+        d.managed_macs = {"DC:E5:5B:A6:30:8B"}
+        paired_stdout = b"Device DC:E5:5B:A6:30:8B Chromecast\nDevice 11:22:33:44:55:66 Keyboard\n"
+        d._run_bluetoothctl.side_effect = [
+            (0, paired_stdout, b""),
+            (0, b"Connected: no\n", b""),
+            (0, b"", b""),  # connect
+        ]
+        results = asyncio.run(d._check_and_reconnect_bluetooth())
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["mac"], "DC:E5:5B:A6:30:8B")
+
+        # Case 2: managed_macs empty -> skips standard peripheral icons
+        d.managed_macs = set()
+        d._run_bluetoothctl.reset_mock()
+        paired_stdout2 = b"Device 11:11:11:11:11:11 Keyboard\nDevice 22:22:22:22:22:22 TV\n"
+        d._run_bluetoothctl.side_effect = [
+            (0, paired_stdout2, b""),
+            (0, b"Connected: no\nIcon: input-keyboard\n", b""),  # Keyboard peripheral
+            (0, b"Connected: no\nIcon: video-display\n", b""),  # TV
+            (0, b"", b""),  # connect TV
+        ]
+        results = asyncio.run(d._check_and_reconnect_bluetooth())
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["mac"], "22:22:22:22:22:22")
 
 
 class TestConfig(unittest.TestCase):
@@ -396,6 +646,49 @@ remote:
             self.assertEqual(cfg.advert_name, "Mirrormere Remote")
             self.assertEqual(cfg.http_port, 8092)
 
+    def test_managed_devices_and_pointer_mode_config(self):
+        from config import RemoteConfig, load_config
+        import tempfile
+        content = """
+managed_devices:
+  - "aa:bb:cc:dd:ee:01"
+  - "AA:BB:CC:DD:EE:02"
+pointer_mode: "mouse"
+"""
+        with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
+            f.write(content)
+            temp_path = f.name
+        try:
+            cfg = load_config(temp_path)
+            self.assertEqual(cfg.managed_devices, ["AA:BB:CC:DD:EE:01", "AA:BB:CC:DD:EE:02"])
+            self.assertEqual(cfg.pointer_mode, "mouse")
+        finally:
+            os.remove(temp_path)
+
+        # Test comma-separated string YAML and lowercase normalization
+        content2 = """
+managed_devices: "11:22:33:44:55:66, 77:88:99:aa:bb:cc"
+pointer_mode: "TOUCH"
+"""
+        with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
+            f.write(content2)
+            temp_path2 = f.name
+        try:
+            cfg2 = load_config(temp_path2)
+            self.assertEqual(cfg2.managed_devices, ["11:22:33:44:55:66", "77:88:99:AA:BB:CC"])
+            self.assertEqual(cfg2.pointer_mode, "touch")
+        finally:
+            os.remove(temp_path2)
+
+        # Test env var override
+        with patch.dict(os.environ, {
+            "MIRRORMERE_REMOTE_MANAGED_DEVICES": "de:ad:be:ef:00:01, de:ad:be:ef:00:02",
+            "MIRRORMERE_REMOTE_POINTER_MODE": "mouse",
+        }):
+            cfg_env = load_config("/nonexistent/file.yaml")
+            self.assertEqual(cfg_env.managed_devices, ["DE:AD:BE:EF:00:01", "DE:AD:BE:EF:00:02"])
+            self.assertEqual(cfg_env.pointer_mode, "mouse")
+
 
 class TestHIDDescriptor(unittest.TestCase):
     def test_report_map_multi_report(self):
@@ -440,18 +733,16 @@ class TestTouchEndpoint(unittest.TestCase):
             self.assertEqual(resp.data["action"], "tap")
             self.assertEqual(resp.data["x"], 0.25)
             self.assertEqual(resp.data["y"], 0.75)
-            self.assertEqual(self.daemon.hid.send_mouse.call_count, 2)
-            self.daemon.hid.send_mouse.assert_any_call(1, 0, 0)
-            self.daemon.hid.send_mouse.assert_any_call(0, 0, 0)
+            self.daemon.hid.send_mouse.assert_not_called()
             self.assertEqual(self.daemon.hid.send_touch.call_count, 2)
             self.daemon.hid.send_touch.assert_any_call(True, 0.25, 0.75)
             self.daemon.hid.send_touch.assert_any_call(False, 0.25, 0.75)
 
     def test_handle_touch_down_move_up(self):
-        for action, tip_down, expect_mouse, mouse_args in [
-            ("down", True, True, (1, 0, 0)),
-            ("move", True, False, None),
-            ("up", False, True, (0, 0, 0)),
+        for action, tip_down in [
+            ("down", True),
+            ("move", True),
+            ("up", False),
         ]:
             self.daemon.hid.reset_mock()
             req = MagicMock()
@@ -465,10 +756,7 @@ class TestTouchEndpoint(unittest.TestCase):
                 self.assertEqual(resp.status, 200)
                 self.assertEqual(resp.data["action"], action)
                 self.daemon.hid.send_touch.assert_called_once_with(tip_down, 0.4, 0.6)
-                if expect_mouse:
-                    self.daemon.hid.send_mouse.assert_called_once_with(*mouse_args)
-                else:
-                    self.daemon.hid.send_mouse.assert_not_called()
+                self.daemon.hid.send_mouse.assert_not_called()
 
     def test_handle_tap_endpoint(self):
         req = MagicMock()
@@ -483,9 +771,7 @@ class TestTouchEndpoint(unittest.TestCase):
             self.assertEqual(resp.data["action"], "tap")
             self.assertEqual(resp.data["x"], 0.3)
             self.assertEqual(resp.data["y"], 0.7)
-            self.assertEqual(self.daemon.hid.send_mouse.call_count, 2)
-            self.daemon.hid.send_mouse.assert_any_call(1, 0, 0)
-            self.daemon.hid.send_mouse.assert_any_call(0, 0, 0)
+            self.daemon.hid.send_mouse.assert_not_called()
             self.assertEqual(self.daemon.hid.send_touch.call_count, 2)
             self.daemon.hid.send_touch.assert_any_call(True, 0.3, 0.7)
             self.daemon.hid.send_touch.assert_any_call(False, 0.3, 0.7)
@@ -501,9 +787,48 @@ class TestTouchEndpoint(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 asyncio.run(self.daemon.handle_tap(req))
 
-        # Mouse and touch release should still have been called in finally
-        self.daemon.hid.send_mouse.assert_any_call(0, 0, 0)
+        # Under default pointer_mode=touch, only touch release called
+        self.daemon.hid.send_mouse.assert_not_called()
         self.daemon.hid.send_touch.assert_any_call(False, 0.5, 0.5)
+
+    def test_handle_touch_and_tap_mouse_mode(self):
+        self.daemon.config.pointer_mode = "mouse"
+        # Test tap in mouse mode
+        req = MagicMock()
+        async def mock_tap_json():
+            return {"x": 0.3, "y": 0.7}
+        req.json = mock_tap_json
+
+        with patch.object(daemon, "web") as mock_web:
+            mock_web.json_response = lambda data, status=200: MagicMock(status=status, data=data)
+            resp = asyncio.run(self.daemon.handle_tap(req))
+            self.assertEqual(resp.status, 200)
+            self.daemon.hid.send_touch.assert_not_called()
+            self.assertEqual(self.daemon.hid.send_mouse.call_count, 2)
+            self.daemon.hid.send_mouse.assert_any_call(1, 0, 0)
+            self.daemon.hid.send_mouse.assert_any_call(0, 0, 0)
+
+        # Test touch actions in mouse mode
+        for action, expect_mouse, mouse_arg in [
+            ("down", True, 1),
+            ("move", False, None),
+            ("up", True, 0),
+        ]:
+            self.daemon.hid.reset_mock()
+            req = MagicMock()
+            async def make_json(act=action):
+                return {"action": act, "x": 0.4, "y": 0.6}
+            req.json = make_json
+
+            with patch.object(daemon, "web") as mock_web:
+                mock_web.json_response = lambda data, status=200: MagicMock(status=status, data=data)
+                resp = asyncio.run(self.daemon.handle_touch(req))
+                self.assertEqual(resp.status, 200)
+                self.daemon.hid.send_touch.assert_not_called()
+                if expect_mouse:
+                    self.daemon.hid.send_mouse.assert_called_once_with(mouse_arg, 0, 0)
+                else:
+                    self.daemon.hid.send_mouse.assert_not_called()
 
     def test_handle_touch_tap_duration(self):
         self.daemon.config.tap_duration = 0.012
