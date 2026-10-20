@@ -391,7 +391,7 @@ class TestDaemonComponents(unittest.TestCase):
         d = daemon.RemoteDaemon()
         req = MagicMock()
         async def mock_json():
-            return {"mac": "DC:E5:5B:A6:30:8B"}
+            return {"mac": "AA:BB:CC:DD:EE:FF"}
         req.json = mock_json
         with patch.object(daemon, "web") as mock_web, patch("asyncio.create_subprocess_exec") as mock_exec:
             mock_web.json_response = lambda data, status=200: MagicMock(status=status, data=data)
@@ -428,14 +428,14 @@ class TestDaemonComponents(unittest.TestCase):
             helper = MagicMock()
             agent = daemon.PairingAgent(helper, auto_confirm=True)
             with patch.object(agent, "_trust_device", new_callable=AsyncMock) as mock_trust:
-                self.assertEqual(agent.RequestPinCode("/org/bluez/dev_DC_E5_5B_A6_30_8B"), "0000")
-                self.assertEqual(agent.RequestPasskey("/org/bluez/dev_DC_E5_5B_A6_30_8B"), 0)
-                agent.RequestConfirmation("/org/bluez/dev_DC_E5_5B_A6_30_8B", 123456)
-                agent.RequestAuthorization("/org/bluez/dev_DC_E5_5B_A6_30_8B")
-                agent.AuthorizeService("/org/bluez/dev_DC_E5_5B_A6_30_8B", "1812")
+                self.assertEqual(agent.RequestPinCode("/org/bluez/dev_AA_BB_CC_DD_EE_FF"), "0000")
+                self.assertEqual(agent.RequestPasskey("/org/bluez/dev_AA_BB_CC_DD_EE_FF"), 0)
+                agent.RequestConfirmation("/org/bluez/dev_AA_BB_CC_DD_EE_FF", 123456)
+                agent.RequestAuthorization("/org/bluez/dev_AA_BB_CC_DD_EE_FF")
+                agent.AuthorizeService("/org/bluez/dev_AA_BB_CC_DD_EE_FF", "1812")
                 await asyncio.sleep(0.01)
                 self.assertEqual(mock_trust.call_count, 5)
-                mock_trust.assert_any_call("DC:E5:5B:A6:30:8B")
+                mock_trust.assert_any_call("AA:BB:CC:DD:EE:FF")
         asyncio.run(run_test())
 
     def test_pairing_agent_auto_confirm_false(self):
@@ -443,15 +443,15 @@ class TestDaemonComponents(unittest.TestCase):
         agent = daemon.PairingAgent(helper, auto_confirm=False)
         with patch.object(agent, "_trust_device", new_callable=AsyncMock) as mock_trust:
             with self.assertRaises(daemon.DBusError):
-                agent.RequestPinCode("/org/bluez/dev_DC_E5_5B_A6_30_8B")
+                agent.RequestPinCode("/org/bluez/dev_AA_BB_CC_DD_EE_FF")
             with self.assertRaises(daemon.DBusError):
-                agent.RequestPasskey("/org/bluez/dev_DC_E5_5B_A6_30_8B")
+                agent.RequestPasskey("/org/bluez/dev_AA_BB_CC_DD_EE_FF")
             with self.assertRaises(daemon.DBusError):
-                agent.RequestConfirmation("/org/bluez/dev_DC_E5_5B_A6_30_8B", 123456)
+                agent.RequestConfirmation("/org/bluez/dev_AA_BB_CC_DD_EE_FF", 123456)
             with self.assertRaises(daemon.DBusError):
-                agent.RequestAuthorization("/org/bluez/dev_DC_E5_5B_A6_30_8B")
+                agent.RequestAuthorization("/org/bluez/dev_AA_BB_CC_DD_EE_FF")
             with self.assertRaises(daemon.DBusError):
-                agent.AuthorizeService("/org/bluez/dev_DC_E5_5B_A6_30_8B", "1812")
+                agent.AuthorizeService("/org/bluez/dev_AA_BB_CC_DD_EE_FF", "1812")
             mock_trust.assert_not_called()
 
     def test_pairing_agent_trust_device_deduplicates_and_calls_on_trusted(self):
@@ -463,23 +463,23 @@ class TestDaemonComponents(unittest.TestCase):
             mock_proc = MagicMock(returncode=0)
             async def slow_communicate():
                 await orig_sleep(0)
-                return (b"Changing DC:E5:5B:A6:30:8B trust succeeded\n", b"")
+                return (b"Changing AA:BB:CC:DD:EE:FF trust succeeded\n", b"")
             async def fast_sleep(_):
                 await orig_sleep(0)
             mock_proc.communicate = slow_communicate
             with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)) as mock_exec, \
                  patch("asyncio.sleep", new=fast_sleep):
                 await asyncio.gather(
-                    agent._trust_device("dc:e5:5b:a6:30:8b"),
-                    agent._trust_device("DC:E5:5B:A6:30:8B"),
+                    agent._trust_device("aa:bb:cc:dd:ee:ff"),
+                    agent._trust_device("AA:BB:CC:DD:EE:FF"),
                 )
                 mock_exec.assert_awaited_once_with(
-                    "bluetoothctl", "trust", "DC:E5:5B:A6:30:8B",
+                    "bluetoothctl", "trust", "AA:BB:CC:DD:EE:FF",
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                 )
-                self.assertEqual(trusted_macs, ["DC:E5:5B:A6:30:8B"])
-                self.assertNotIn("DC:E5:5B:A6:30:8B", agent._trusting_macs)
+                self.assertEqual(trusted_macs, ["AA:BB:CC:DD:EE:FF"])
+                self.assertNotIn("AA:BB:CC:DD:EE:FF", agent._trusting_macs)
         asyncio.run(run_test())
 
     def test_configure_adapter_states(self):
@@ -544,15 +544,15 @@ class TestDaemonComponents(unittest.TestCase):
         d._run_bluetoothctl = AsyncMock()
 
         # Case 1: managed_macs is populated -> only disconnect devices in managed_macs
-        d.managed_macs = {"DC:E5:5B:A6:30:8B"}
-        paired_stdout = b"Device DC:E5:5B:A6:30:8B Chromecast\nDevice 00:11:22:33:44:55 Unrelated Headset\n"
+        d.managed_macs = {"AA:BB:CC:DD:EE:FF"}
+        paired_stdout = b"Device AA:BB:CC:DD:EE:FF Chromecast\nDevice 00:11:22:33:44:55 Unrelated Headset\n"
         d._run_bluetoothctl.side_effect = [
             (0, paired_stdout, b""),  # devices Paired
-            (0, b"Connected: yes\nIcon: video-display\n", b""),  # info for DC:E5:...
-            (0, b"", b""),  # disconnect DC:E5:...
+            (0, b"Connected: yes\nIcon: video-display\n", b""),  # info for AA:BB:...
+            (0, b"", b""),  # disconnect AA:BB:...
         ]
         asyncio.run(d._cleanup_stale_connections())
-        d._run_bluetoothctl.assert_any_call("disconnect", "DC:E5:5B:A6:30:8B", timeout=5.0)
+        d._run_bluetoothctl.assert_any_call("disconnect", "AA:BB:CC:DD:EE:FF", timeout=5.0)
         for call in d._run_bluetoothctl.call_args_list:
             self.assertNotIn("00:11:22:33:44:55", call[0])
 
@@ -577,8 +577,8 @@ class TestDaemonComponents(unittest.TestCase):
         d._run_bluetoothctl = AsyncMock()
 
         # Case 1: managed_macs populated -> skips unmanaged
-        d.managed_macs = {"DC:E5:5B:A6:30:8B"}
-        paired_stdout = b"Device DC:E5:5B:A6:30:8B Chromecast\nDevice 11:22:33:44:55:66 Keyboard\n"
+        d.managed_macs = {"AA:BB:CC:DD:EE:FF"}
+        paired_stdout = b"Device AA:BB:CC:DD:EE:FF Chromecast\nDevice 11:22:33:44:55:66 Keyboard\n"
         d._run_bluetoothctl.side_effect = [
             (0, paired_stdout, b""),
             (0, b"Connected: no\n", b""),
@@ -586,7 +586,7 @@ class TestDaemonComponents(unittest.TestCase):
         ]
         results = asyncio.run(d._check_and_reconnect_bluetooth())
         self.assertEqual(len(results), 1)
-        self.assertEqual(results[0]["mac"], "DC:E5:5B:A6:30:8B")
+        self.assertEqual(results[0]["mac"], "AA:BB:CC:DD:EE:FF")
 
         # Case 2: managed_macs empty -> skips standard peripheral icons
         d.managed_macs = set()
@@ -927,8 +927,8 @@ class TestBluetoothKeepalive(unittest.TestCase):
         self.daemon = daemon.RemoteDaemon()
 
     def test_reconnect_disconnected_paired_device(self):
-        paired_stdout = b"Device DC:E5:5B:A6:30:8B Chromecast\n"
-        info_stdout = b"Device DC:E5:5B:A6:30:8B (public)\n\tName: Chromecast\n\tConnected: no\n\tPaired: yes\n"
+        paired_stdout = b"Device AA:BB:CC:DD:EE:FF Chromecast\n"
+        info_stdout = b"Device AA:BB:CC:DD:EE:FF (public)\n\tName: Chromecast\n\tConnected: no\n\tPaired: yes\n"
 
         async def mock_create_subprocess_exec(*cmd, **kwargs):
             proc = MagicMock()
@@ -952,12 +952,12 @@ class TestBluetoothKeepalive(unittest.TestCase):
         with patch("asyncio.create_subprocess_exec", side_effect=mock_create_subprocess_exec):
             results = asyncio.run(self.daemon._check_and_reconnect_bluetooth())
             self.assertEqual(len(results), 1)
-            self.assertEqual(results[0]["mac"], "DC:E5:5B:A6:30:8B")
+            self.assertEqual(results[0]["mac"], "AA:BB:CC:DD:EE:FF")
             self.assertTrue(results[0]["reconnected"])
 
     def test_already_connected_device_no_reconnect_attempt(self):
-        paired_stdout = b"Device DC:E5:5B:A6:30:8B Chromecast\n"
-        info_stdout = b"Device DC:E5:5B:A6:30:8B (public)\n\tName: Chromecast\n\tConnected: yes\n\tPaired: yes\n"
+        paired_stdout = b"Device AA:BB:CC:DD:EE:FF Chromecast\n"
+        info_stdout = b"Device AA:BB:CC:DD:EE:FF (public)\n\tName: Chromecast\n\tConnected: yes\n\tPaired: yes\n"
 
         connect_called = False
         async def mock_create_subprocess_exec(*cmd, **kwargs):
@@ -985,12 +985,12 @@ class TestBluetoothKeepalive(unittest.TestCase):
     def test_handle_bluetooth_reconnect_endpoint(self):
         req = MagicMock()
         async def mock_json():
-            return {"mac": "DC:E5:5B:A6:30:8B"}
+            return {"mac": "AA:BB:CC:DD:EE:FF"}
         req.json = mock_json
 
         with patch.object(self.daemon, "_check_and_reconnect_bluetooth", new_callable=AsyncMock) as mock_recon, \
              patch.object(daemon, "web") as mock_web:
-            mock_recon.return_value = [{"mac": "DC:E5:5B:A6:30:8B", "reconnected": True}]
+            mock_recon.return_value = [{"mac": "AA:BB:CC:DD:EE:FF", "reconnected": True}]
             mock_web.json_response = lambda data, status=200: MagicMock(status=status, data=data)
             resp = asyncio.run(self.daemon.handle_bluetooth_reconnect(req))
             self.assertEqual(resp.status, 200)
@@ -1020,16 +1020,16 @@ class TestBluetoothKeepalive(unittest.TestCase):
             cmd_log.append(cmd)
             proc = MagicMock(returncode=0)
             if cmd == ("bluetoothctl", "devices", "Paired"):
-                proc.communicate = AsyncMock(return_value=(b"Device DC:E5:5B:A6:30:8B TV\nDevice 11:22:33:44:55:66 Other\n", b""))
+                proc.communicate = AsyncMock(return_value=(b"Device AA:BB:CC:DD:EE:FF TV\nDevice 11:22:33:44:55:66 Other\n", b""))
             elif cmd[:2] == ("bluetoothctl", "info"):
-                proc.communicate = AsyncMock(return_value=(b"Connected: yes\n" if "DC:E5" in cmd[2] else b"Connected: no\n", b""))
+                proc.communicate = AsyncMock(return_value=(b"Connected: yes\n" if "AA:BB" in cmd[2] else b"Connected: no\n", b""))
             else:
                 proc.communicate = AsyncMock(return_value=(b"", b""))
             return proc
 
         with patch("asyncio.create_subprocess_exec", side_effect=mock_exec):
             asyncio.run(self.daemon._cleanup_stale_connections())
-            self.assertIn(("bluetoothctl", "disconnect", "DC:E5:5B:A6:30:8B"), cmd_log)
+            self.assertIn(("bluetoothctl", "disconnect", "AA:BB:CC:DD:EE:FF"), cmd_log)
             self.assertNotIn(("bluetoothctl", "disconnect", "11:22:33:44:55:66"), cmd_log)
 
     def test_reconnect_force_flag_disconnects_first(self):
@@ -1038,7 +1038,7 @@ class TestBluetoothKeepalive(unittest.TestCase):
             cmd_log.append(cmd)
             proc = MagicMock(returncode=0)
             if cmd == ("bluetoothctl", "devices", "Paired"):
-                proc.communicate = AsyncMock(return_value=(b"Device DC:E5:5B:A6:30:8B TV\n", b""))
+                proc.communicate = AsyncMock(return_value=(b"Device AA:BB:CC:DD:EE:FF TV\n", b""))
             elif cmd[:2] == ("bluetoothctl", "info"):
                 proc.communicate = AsyncMock(return_value=(b"Connected: yes\nServicesResolved: yes\n", b""))
             else:
@@ -1048,23 +1048,23 @@ class TestBluetoothKeepalive(unittest.TestCase):
         with patch("asyncio.create_subprocess_exec", side_effect=mock_exec):
             results = asyncio.run(self.daemon._check_and_reconnect_bluetooth(force=True))
             self.assertTrue(results[0]["reconnected"])
-            disconnect_idx = cmd_log.index(("bluetoothctl", "disconnect", "DC:E5:5B:A6:30:8B"))
-            connect_idx = cmd_log.index(("bluetoothctl", "connect", "DC:E5:5B:A6:30:8B"))
+            disconnect_idx = cmd_log.index(("bluetoothctl", "disconnect", "AA:BB:CC:DD:EE:FF"))
+            connect_idx = cmd_log.index(("bluetoothctl", "connect", "AA:BB:CC:DD:EE:FF"))
             self.assertLess(disconnect_idx, connect_idx)
 
     def test_handle_bluetooth_reconnect_passes_force(self):
         req = MagicMock()
         async def mock_json():
-            return {"mac": "DC:E5:5B:A6:30:8B", "force": True}
+            return {"mac": "AA:BB:CC:DD:EE:FF", "force": True}
         req.json = mock_json
 
         with patch.object(self.daemon, "_check_and_reconnect_bluetooth", new_callable=AsyncMock) as mock_recon, \
              patch.object(daemon, "web") as mock_web:
-            mock_recon.return_value = [{"mac": "DC:E5:5B:A6:30:8B", "reconnected": True}]
+            mock_recon.return_value = [{"mac": "AA:BB:CC:DD:EE:FF", "reconnected": True}]
             mock_web.json_response = lambda data, status=200: MagicMock(status=status, data=data)
             resp = asyncio.run(self.daemon.handle_bluetooth_reconnect(req))
             self.assertEqual(resp.status, 200)
-            mock_recon.assert_awaited_once_with(target_mac="DC:E5:5B:A6:30:8B", force=True)
+            mock_recon.assert_awaited_once_with(target_mac="AA:BB:CC:DD:EE:FF", force=True)
 
 
 class TestConfigKeepalive(unittest.TestCase):
@@ -1190,7 +1190,7 @@ remote:
         d = daemon.RemoteDaemon()
         d.remote_helper.connected = True
         d.remote_helper.remote = MagicMock()
-        d.last_known_paired_devices = [{"mac": "DC:E5:5B:A6:30:8B", "connected": False}]
+        d.last_known_paired_devices = [{"mac": "AA:BB:CC:DD:EE:FF", "connected": False}]
 
         async def run_test():
             await d._wake_via_wifi_if_needed()
@@ -1201,7 +1201,7 @@ remote:
             d.remote_helper.remote.send_key_command.assert_not_called()
 
             d._last_wake_pulse = 0.0
-            d.last_known_paired_devices = [{"mac": "DC:E5:5B:A6:30:8B", "connected": True}]
+            d.last_known_paired_devices = [{"mac": "AA:BB:CC:DD:EE:FF", "connected": True}]
             await d._wake_via_wifi_if_needed()
             d.remote_helper.remote.send_key_command.assert_not_called()
 
@@ -1210,7 +1210,7 @@ remote:
     def test_touch_lock_serialization(self):
         d = daemon.RemoteDaemon()
         d.hid = MagicMock()
-        d.last_known_paired_devices = [{"mac": "DC:E5:5B:A6:30:8B", "connected": True}]
+        d.last_known_paired_devices = [{"mac": "AA:BB:CC:DD:EE:FF", "connected": True}]
 
         order = []
         async def fake_tap(val, x, y):
@@ -1234,7 +1234,7 @@ remote:
     def test_touch_lock_timeout(self):
         d = daemon.RemoteDaemon()
         d.hid = MagicMock()
-        d.last_known_paired_devices = [{"mac": "DC:E5:5B:A6:30:8B", "connected": True}]
+        d.last_known_paired_devices = [{"mac": "AA:BB:CC:DD:EE:FF", "connected": True}]
 
         async def run_timeout():
             req = MagicMock()
@@ -1255,16 +1255,16 @@ remote:
         d = daemon.RemoteDaemon()
         d.remote_helper.connected = True
         d.remote_helper.remote = MagicMock()
-        d.last_known_paired_devices = [{"mac": "DC:E5:5B:A6:30:8B", "connected": False}]
+        d.last_known_paired_devices = [{"mac": "AA:BB:CC:DD:EE:FF", "connected": False}]
 
         req = MagicMock()
         async def mock_json():
-            return {"mac": "DC:E5:5B:A6:30:8B", "wake_wifi": True}
+            return {"mac": "AA:BB:CC:DD:EE:FF", "wake_wifi": True}
         req.json = mock_json
 
         with patch.object(daemon, "web") as mock_web, patch.object(d, "_check_and_reconnect_bluetooth", new_callable=AsyncMock) as mock_reconnect:
             mock_web.json_response = lambda data, status=200: MagicMock(status=status, data=data)
-            mock_reconnect.return_value = [{"mac": "DC:E5:5B:A6:30:8B", "reconnected": True}]
+            mock_reconnect.return_value = [{"mac": "AA:BB:CC:DD:EE:FF", "reconnected": True}]
             resp = asyncio.run(d.handle_bluetooth_reconnect(req))
             self.assertEqual(resp.status, 200)
             d.remote_helper.remote.send_key_command.assert_called_with("WAKEUP")
