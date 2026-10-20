@@ -244,7 +244,7 @@ voice:
 
     def test_google_voice_config_defaults(self):
         cfg = VoiceConfig()
-        self.assertEqual(cfg.google_voice_url, "http://localhost:8092/voice")
+        self.assertEqual(cfg.google_voice_url, "")
         self.assertEqual(cfg.google_voice_timeout_seconds, 3.0)
 
     def test_google_voice_config_from_yaml(self):

@@ -1085,7 +1085,7 @@
      * @param {Object} session - Active video stream session.
      */
     bindTouchForwarding(session) {
-      if (!this.touchForwardingEnabled || !session || !session.element) return;
+      if (!this.touchForwardingEnabled || !Boolean(this.remoteUrl) || !Boolean(session?.element) || !Boolean(session?.stream?.controllable)) return;
       const videoEl = session.element;
 
       let isDown = false;

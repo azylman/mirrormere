@@ -1321,7 +1321,8 @@ class TestVoiceDaemon(unittest.TestCase):
         self.assertTrue(os.path.exists(kw_path), f"keywords.txt not found at {kw_path}")
         with open(kw_path, "r", encoding="utf-8") as f:
             content = f.read()
-        self.assertIn("@hey_aerial", content)
+        self.assertIn("@hey_siri", content)
+        self.assertIn("@hello_world", content)
         self.assertIn("@hey_google", content)
 
     def test_is_google_wake(self):

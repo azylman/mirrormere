@@ -4,4 +4,6 @@ After=mirrormere-display.service
 
 [Service]
 Type=oneshot
+EnvironmentFile=-/etc/default/mirrormere-display
+EnvironmentFile=-/etc/default/mirrormere-kiosk
 ExecStart=/opt/mirrormere/display/dpms.sh on
