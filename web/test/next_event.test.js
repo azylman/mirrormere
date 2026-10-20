@@ -280,6 +280,103 @@ describe('Header Next Up Event Pill', () => {
     assert.equal(titleEl.textContent, 'Grid Event');
   });
 
+  test('ingests early_events, late_events, and all_day from calendar-grid JSON', () => {
+    const elements = setupMockDOM();
+
+    const gridJson = JSON.stringify({
+      days: [
+        {
+          date: '2026-10-12',
+          events: [], // empty primary events
+          early_events: [
+            {
+              id: 'early-1',
+              title: 'Morning Standup',
+              start: '07:30',
+              end: '08:00',
+              all_day: false,
+            },
+          ],
+          late_events: [
+            {
+              id: 'late-1',
+              title: 'Late Night Review',
+              start: '21:30',
+              end: '22:00',
+              all_day: false,
+            },
+          ],
+          all_day: [
+            {
+              id: 'allday-1',
+              title: 'Team Offsite',
+            },
+          ],
+        },
+      ],
+    });
+
+    global.document.querySelectorAll = (selector) => {
+      if (selector.includes('calendar-grid-data') || selector.includes('calendar-family-data')) {
+        return [{ textContent: gridJson }];
+      }
+      return [];
+    };
+
+    delete require.cache[require.resolve('../static/js/display.js')];
+    const display = require('../static/js/display.js');
+
+    // Test late_events selection when current time is 20:00 (upcoming at 21:30)
+    const nowLate = new Date('2026-10-12T20:00:00-07:00');
+    display.updateNextUpEvent(nowLate);
+    assert.equal(elements['next-event-title'].textContent, 'Late Night Review');
+
+    // Test early_events selection when current time is 06:00 (upcoming at 07:30)
+    const nowEarly = new Date('2026-10-12T06:00:00-07:00');
+    display.updateNextUpEvent(nowEarly);
+    assert.equal(elements['next-event-title'].textContent, 'Morning Standup');
+
+    // Test all_day selection when past timed events (e.g. 23:00)
+    const nowAllday = new Date('2026-10-12T23:00:00-07:00');
+    display.updateNextUpEvent(nowAllday);
+    assert.equal(elements['next-event-title'].textContent, 'Team Offsite');
+  });
+
+  test('preserves each day of a multi-day all_day event in calendar-grid JSON', () => {
+    const elements = setupMockDOM();
+
+    const gridJson = JSON.stringify({
+      days: [
+        {
+          date: '2026-10-11',
+          events: [],
+          all_day: [{ id: 'multi-1', title: 'Family Retreat', all_day: true }],
+        },
+        {
+          date: '2026-10-12',
+          events: [],
+          all_day: [{ id: 'multi-1', title: 'Family Retreat', all_day: true }],
+        },
+      ],
+    });
+
+    global.document.querySelectorAll = (selector) => {
+      if (selector.includes('calendar-grid-data') || selector.includes('calendar-family-data')) {
+        return [{ textContent: gridJson }];
+      }
+      return [];
+    };
+
+    delete require.cache[require.resolve('../static/js/display.js')];
+    const display = require('../static/js/display.js');
+
+    // On day 2 of the multi-day event, day 1 is in the past; day 2 must not be dropped by deduplication
+    const nowDay2 = new Date('2026-10-12T10:00:00-07:00');
+    display.updateNextUpEvent(nowDay2);
+    assert.equal(elements['next-event-label'].textContent, 'TODAY');
+    assert.equal(elements['next-event-title'].textContent, 'Family Retreat');
+  });
+
   test('next-event-pill is styled at 52px height matching weather pill with no glowing icon', () => {
     const fs = require('node:fs');
     const path = require('node:path');
