@@ -224,16 +224,18 @@ func TestTasksProvider_Fetch(t *testing.T) {
 func TestTasksProvider_CompleteItem(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name                    string
-		hasAdapter              bool
-		adapterErr, wantErrIs   error
-		itemID, wantErrSub      string
-		wantAdapterCall         int
+		name                  string
+		hasAdapter            bool
+		nonCompleter          bool
+		adapterErr, wantErrIs error
+		itemID, wantErrSub    string
+		wantAdapterCall       int
 	}{
-		{"nil_adapter", false, nil, nil, "i1", "not initialized", 0},
-		{"completer_success", true, nil, nil, "item-100", "", 1},
-		{"upstream_not_found", true, adapters.ErrUpstreamNotFound, tasks.ErrItemNotFound, "item-ghost", "", 1},
-		{"upstream_error", true, errors.New("upstream timeout"), nil, "item-fail", "upstream task completion failed", 1},
+		{"nil_adapter", false, false, nil, nil, "i1", "not initialized", 0},
+		{"non_completer_adapter", true, true, nil, tasks.ErrCompletionUnsupported, "item-1", "", 0},
+		{"completer_success", true, false, nil, nil, "item-100", "", 1},
+		{"upstream_not_found", true, false, adapters.ErrUpstreamNotFound, tasks.ErrItemNotFound, "item-ghost", "", 1},
+		{"upstream_error", true, false, errors.New("upstream timeout"), nil, "item-fail", "upstream task completion failed", 1},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -241,7 +243,9 @@ func TestTasksProvider_CompleteItem(t *testing.T) {
 			ctx := context.Background()
 			var compAdapter *mockCompleterAdapter
 			var adapter adapters.Adapter
-			if tc.hasAdapter {
+			if tc.nonCompleter {
+				adapter = &fakeAdapter{}
+			} else if tc.hasAdapter {
 				compAdapter = &mockCompleterAdapter{err: tc.adapterErr}
 				adapter = compAdapter
 			}

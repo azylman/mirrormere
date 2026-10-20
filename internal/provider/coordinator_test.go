@@ -568,7 +568,7 @@ func TestProviderCoordinator_ShutdownEdgeCases(t *testing.T) {
 	if err := coord.CompleteListItem(context.Background(), "edge-tile", "item-1"); err == nil {
 		t.Fatal("expected error on stopped coordinator")
 	}
-	tp := provider.NewTasksProviderWithAdapter(&fakeAdapter{list: &tasks.List{ID: "list-1"}})
+	tp := provider.NewTasksProviderWithAdapter(&mockCompleterAdapter{})
 	coordTasks := newCoord(regOne("tasks", tp), nil, nil, mkSnap("", nil, config.WidgetConfig{ID: "w-tasks", Type: "tasks", Config: map[string]any{"list_id": "list-1"}}))
 	defer coordTasks.Stop()
 	if err := coordTasks.CompleteListItem(context.Background(), "unknown-list", "item-1"); !errors.Is(err, tasks.ErrListNotFound) || coordTasks.CompleteListItem(context.Background(), "w-tasks", "item-1") != nil {

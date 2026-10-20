@@ -9,8 +9,9 @@ import (
 
 // Standard error definitions for task and list operations.
 var (
-	ErrListNotFound = errors.New("list not found")
-	ErrItemNotFound = errors.New("item not found")
+	ErrListNotFound          = errors.New("list not found")
+	ErrItemNotFound          = errors.New("item not found")
+	ErrCompletionUnsupported = errors.New("task completion not supported by provider")
 )
 
 // List represents a distinct task or checklist entity Model.

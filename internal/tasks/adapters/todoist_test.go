@@ -58,6 +58,25 @@ func TestTodoistAdapter_FetchList(t *testing.T) {
 			}, wantName: "Work", wantItems: 1,
 		},
 		{
+			name: "multi_page_cursor_pagination",
+			cfg:  adapters.TodoistAdapterConfig{ProjectName: "Work"},
+			routes: map[string]mockRoute{
+				"/api/v1/projects":                               {body: `{"results":[{"id":"p0","name":"Other"}],"next_cursor":"c2"}`},
+				"/api/v1/projects?cursor=c2":                     {body: `{"results":[{"id":"p1","name":"Work"}],"next_cursor":"c1"}`},
+				"/api/v1/projects?cursor=c1":                     {body: `{"results":[],"next_cursor":"c2"}`},
+				"/api/v1/sections?project_id=p1":                 {body: `{"results":[{"id":"s1","name":"Sec1","order":1}],"next_cursor":"c2"}`},
+				"/api/v1/sections?project_id=p1&cursor=c2":        {body: `{"results":[{"id":"s2","name":"Sec2","order":2}],"next_cursor":"c1"}`},
+				"/api/v1/sections?project_id=p1&cursor=c1":        {body: `{"results":[],"next_cursor":"c2"}`},
+				"/api/v1/tasks?project_id=p1":                    {body: `{"results":[{"id":"t1","content":"Task 1","section_id":"s1"}],"next_cursor":"c2"}`},
+				"/api/v1/tasks?project_id=p1&cursor=c2":           {body: `{"results":[{"id":"t2","content":"Task 2","section_id":"s2"}],"next_cursor":"c1"}`},
+				"/api/v1/tasks?project_id=p1&cursor=c1":           {body: `{"results":[],"next_cursor":"c2"}`},
+				"/api/v1/tasks/completed?project_id=p1&limit=30": {body: `{"items":[]}`},
+			},
+			wantName:  "Work",
+			wantItems: 2,
+			checkSec:  "Sec2",
+		},
+		{
 			name: "project_name_match", cfg: adapters.TodoistAdapterConfig{ProjectName: "Shopping"},
 			routes: map[string]mockRoute{
 				"/api/v1/projects":               {body: `[{"id":"p2","name":"Shopping"}]`},

@@ -65,6 +65,8 @@ func NewGTasksAdapter(cfg GTasksAdapterConfig) (*GTasksAdapter, error) {
 	}, nil
 }
 
+var _ Completer = (*GTasksAdapter)(nil)
+
 func (a *GTasksAdapter) Name() string { return "gtasks" }
 
 type gtasksListMetadata struct {
@@ -332,4 +334,52 @@ func (a *GTasksAdapter) doGetWithRetry(ctx context.Context, targetURL string, is
 		}
 	}
 	return body, err
+}
+
+// CompleteItem completes a task in Google Tasks via PATCH /tasks/v1/lists/{taskListID}/tasks/{itemID}.
+func (a *GTasksAdapter) CompleteItem(ctx context.Context, itemID string) error {
+	itemID = strings.TrimSpace(itemID)
+	if itemID == "" {
+		return errors.New("item ID is required")
+	}
+	if strings.Contains(itemID, "/") || strings.Contains(itemID, "..") {
+		return errors.New("invalid item ID")
+	}
+
+	targetURL := fmt.Sprintf("%s/tasks/v1/lists/%s/tasks/%s", a.baseURL, url.PathEscape(a.taskListID), url.PathEscape(itemID))
+	return a.doPatchWithRetry(ctx, targetURL, false)
+}
+
+func (a *GTasksAdapter) doPatchWithRetry(ctx context.Context, targetURL string, isRetry bool) error {
+	token, err := a.getAccessToken(ctx, false)
+	if err != nil {
+		return fmt.Errorf("failed to obtain gtasks access token: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, targetURL, strings.NewReader(`{"status":"completed"}`))
+	if err != nil {
+		return fmt.Errorf("failed to create http request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("google tasks patch request failed: %w", err)
+	}
+
+	if resp.StatusCode == http.StatusUnauthorized && !isRetry && a.refreshToken != "" {
+		_ = resp.Body.Close()
+		if _, refreshErr := a.getAccessToken(ctx, true); refreshErr == nil {
+			return a.doPatchWithRetry(ctx, targetURL, true)
+		}
+		return mapUpstreamStatus(resp.StatusCode, targetURL)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096)) //nolint:errcheck
+	return mapUpstreamStatus(resp.StatusCode, targetURL)
 }

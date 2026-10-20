@@ -41,6 +41,7 @@ func TestDefaultListsHandler_CompleteListItem(t *testing.T) {
 		{"err_list_not_found", http.MethodPost, "groceries", "i1", true, false, tasks.ErrListNotFound, http.StatusNotFound},
 		{"err_item_not_found", http.MethodPost, "groceries", "i1", true, false, tasks.ErrItemNotFound, http.StatusNotFound},
 		{"err_upstream_not_found", http.MethodPost, "groceries", "i1", true, false, adapters.ErrUpstreamNotFound, http.StatusNotFound},
+		{"err_completion_unsupported", http.MethodPost, "groceries", "i1", true, false, tasks.ErrCompletionUnsupported, http.StatusNotImplemented},
 		{"err_unauthorized", http.MethodPost, "groceries", "i1", true, false, adapters.ErrUnauthorized, http.StatusUnauthorized},
 		{"err_upstream_500", http.MethodPost, "groceries", "i1", true, false, adapters.UpstreamHTTPError{Code: 500}, http.StatusBadGateway},
 		{"err_internal", http.MethodPost, "groceries", "i1", true, false, errors.New("upstream error"), http.StatusInternalServerError},

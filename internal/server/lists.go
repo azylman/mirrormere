@@ -78,6 +78,8 @@ func (h *DefaultListsHandler) CompleteListItem(w http.ResponseWriter, r *http.Re
 			writeAPIError(w, http.StatusNotFound, fmt.Sprintf("list '%s' not found", listID))
 		case errors.Is(completeErr, tasks.ErrItemNotFound), errors.Is(completeErr, adapters.ErrUpstreamNotFound):
 			writeAPIError(w, http.StatusNotFound, fmt.Sprintf("item '%s' not found in list '%s'", itemID, listID))
+		case errors.Is(completeErr, tasks.ErrCompletionUnsupported):
+			writeAPIError(w, http.StatusNotImplemented, "task completion not supported by provider")
 		case errors.Is(completeErr, adapters.ErrUnauthorized):
 			writeAPIError(w, http.StatusUnauthorized, "upstream provider unauthorized")
 		default:
