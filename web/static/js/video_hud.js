@@ -1030,7 +1030,7 @@
         payload.value = value;
       }
 
-      const isRemoteKeyPreferred = ['back', 'home', 'captions', 'previous', 'next', 'rewind', 'fast_forward'].includes(actionName);
+      const isRemoteKeyPreferred = ['back', 'home', 'captions', 'previous', 'next'].includes(actionName);
 
       let p = null;
       if (isRemoteKeyPreferred && this.remoteUrl) {

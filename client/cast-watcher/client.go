@@ -554,10 +554,9 @@ func (c *CastClient) handleMediaMessage(msg CastMessage) {
 		c.lastDuration, c.lastPosition = duration, currentTime
 		c.lastPositionTime = time.Now()
 	} else {
-		if title != "" { c.lastTitle = title }
-		if series != "" { c.lastSeries = series }
-		if season != "" { c.lastSeason = season }
-		if episode != "" { c.lastEpisode = episode }
+		if title != "" {
+			c.lastTitle, c.lastSeries, c.lastSeason, c.lastEpisode = title, series, season, episode
+		}
 		if duration > 0 { c.lastDuration = duration }
 	}
 

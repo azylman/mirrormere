@@ -1065,6 +1065,7 @@ test('VideoHUDController: rewind and fast forward dispatch actions and remote ke
     muteIcon: dom.muteIcon,
     volumeSlider: dom.volumeSlider,
     stageElement: dom.stage,
+    remoteUrl: 'http://tv.lan:8080',
     fetch: mockFetch,
   });
 
@@ -1102,7 +1103,6 @@ test('VideoHUDController: rewind and fast forward dispatch actions and remote ke
   await new Promise((r) => setTimeout(r, 320));
 
   // 2. Persistent stream without control_url -> dispatches to remoteUrl/key
-  hud.remoteUrl = 'http://tv.lan:8080';
   hud.handleVideoState({
     mode: 'video',
     primary: {
@@ -2520,8 +2520,6 @@ test('VideoHUDController: route Android TV navigation/key actions to remote side
     { fn: () => hud.handleCaptions(), key: 'cc' },
     { fn: () => hud.handlePrevious(), key: 'prev' },
     { fn: () => hud.handleNext(), key: 'next' },
-    { fn: () => hud.handleRewind(), key: 'rewind' },
-    { fn: () => hud.handleFastForward(), key: 'fast_forward' },
   ];
 
   for (let i = 0; i < remoteActions.length; i++) {
@@ -2532,18 +2530,31 @@ test('VideoHUDController: route Android TV navigation/key actions to remote side
     await new Promise((r) => setTimeout(r, 320));
   }
 
-  // Play/pause toggle dispatches to api/video/action
-  await hud.handlePlayPauseToggle();
+  // Rewind and fast-forward dispatch to api/video/action when stream has control_url
+  await hud.handleRewind();
   assert.equal(networkCalls.length, remoteActions.length + 1);
   assert.equal(networkCalls[remoteActions.length].url, 'api/video/action');
-  assert.deepEqual(networkCalls[remoteActions.length].body, { id: 'stream_cast', action: 'toggle_playback' });
+  assert.deepEqual(networkCalls[remoteActions.length].body, { id: 'stream_cast', action: 'rewind' });
+  await new Promise((r) => setTimeout(r, 320));
+
+  await hud.handleFastForward();
+  assert.equal(networkCalls.length, remoteActions.length + 2);
+  assert.equal(networkCalls[remoteActions.length + 1].url, 'api/video/action');
+  assert.deepEqual(networkCalls[remoteActions.length + 1].body, { id: 'stream_cast', action: 'fast_forward' });
+  await new Promise((r) => setTimeout(r, 320));
+
+  // Play/pause toggle dispatches to api/video/action
+  await hud.handlePlayPauseToggle();
+  assert.equal(networkCalls.length, remoteActions.length + 3);
+  assert.equal(networkCalls[remoteActions.length + 2].url, 'api/video/action');
+  assert.deepEqual(networkCalls[remoteActions.length + 2].body, { id: 'stream_cast', action: 'toggle_playback' });
   await new Promise((r) => setTimeout(r, 320));
 
   // Seek dispatches to api/video/action
   await hud.handleSeek(45);
-  assert.equal(networkCalls.length, remoteActions.length + 2);
-  assert.equal(networkCalls[remoteActions.length + 1].url, 'api/video/action');
-  assert.deepEqual(networkCalls[remoteActions.length + 1].body, { id: 'stream_cast', action: 'seek', value: 45 });
+  assert.equal(networkCalls.length, remoteActions.length + 4);
+  assert.equal(networkCalls[remoteActions.length + 3].url, 'api/video/action');
+  assert.deepEqual(networkCalls[remoteActions.length + 3].body, { id: 'stream_cast', action: 'seek', value: 45 });
 
   hud.destroy();
 });
