@@ -189,6 +189,20 @@ class VoiceDaemon:
         self.busy_lock = threading.Lock()
         self.reply_ended_at = 0.0
 
+        # Waveform levels for the display's voice mouth (GET /levels). 0 disables.
+        self.waveform = None
+        if cfg.waveform_levels_port > 0:
+            try:
+                from .waveform_levels import WaveformLevelServer
+            except (ImportError, ValueError):
+                from waveform_levels import WaveformLevelServer
+            self.waveform = WaveformLevelServer(
+                host=cfg.waveform_levels_host,
+                port=cfg.waveform_levels_port,
+                latency_ms=cfg.waveform_levels_latency_ms,
+            )
+            self.waveform.start()
+
         self.sherpa_stream = None
         if model is not None:
             self.model = model
@@ -377,6 +391,8 @@ class VoiceDaemon:
         """Signal handler to stop main loop gracefully."""
         logger.info("Shutdown signal received, stopping voice daemon...")
         self.running = False
+        if self.waveform is not None:
+            self.waveform.stop()
 
     def reset_wake_engine(self) -> None:
         """Flushes/resets internal decoder state for the active wake engine."""
@@ -1031,6 +1047,8 @@ class VoiceDaemon:
         abort = threading.Event()
         self._turn_abort = abort
         pcm_proc = None
+        sample_rate = 24000
+        channels = 1
         turn_playback_start = None
         turn_playback_total = 0.0
         reply_received = False
@@ -1063,6 +1081,8 @@ class VoiceDaemon:
                             self._player_procs.remove(pcm_proc)
                         self.playing = bool(self._player_procs)
                     pcm_proc = None
+            if self.waveform is not None:
+                self.waveform.clear()
 
         try:
             with open(wav_path, "rb") as f:
@@ -1161,6 +1181,8 @@ class VoiceDaemon:
                                         try:
                                             pcm_proc.stdin.write(audio_bytes)
                                             pcm_proc.stdin.flush()
+                                            if self.waveform is not None and channels == 1:
+                                                self.waveform.push_pcm(audio_bytes, sample_rate)
                                         except Exception as e:
                                             logger.warning("Failed to write audio to PCM stream: %s", e)
                                 if is_final:

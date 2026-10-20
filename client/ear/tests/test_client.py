@@ -446,6 +446,84 @@ class TestVoiceDaemon(unittest.TestCase):
             self.assertFalse(daemon.busy)
             self.assertGreater(daemon.reply_ended_at, 0.0)
 
+    def test_waveform_port_zero_creates_no_server(self):
+        daemon = VoiceDaemon(self.cfg, model=MockModel())
+        self.assertIsNone(daemon.waveform)
+
+    @patch("client.ear.client.urllib.request.urlopen")
+    def test_hub_sse_stream_worker_feeds_waveform_levels(self, mock_urlopen):
+        """Mono PCM chunks are pushed to the waveform server with their rate, and
+        closing the PCM stream clears it. Stereo chunks are not pushed."""
+        pcm1 = b"\x00\x01" * 100
+        pcm2 = b"\x02\x03" * 100
+        sse_lines = [
+            b"event: audio_chunk\r\n",
+            b'data: {"chunk_index": 0, "format": "pcm", "sample_rate": 24000, "channels": 1, "is_final": false, "data": "'
+            + base64.b64encode(pcm1)
+            + b'"}\r\n',
+            b"\r\n",
+            b"event: audio_chunk\r\n",
+            b'data: {"chunk_index": 1, "format": "pcm", "sample_rate": 24000, "channels": 1, "is_final": true, "data": "'
+            + base64.b64encode(pcm2)
+            + b'"}\r\n',
+            b"\r\n",
+            b"event: done\r\n",
+            b"data: {}\r\n",
+            b"\r\n",
+        ]
+        mock_resp = MagicMock()
+        mock_resp.status = 200
+        mock_resp.__iter__.return_value = iter(sse_lines)
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        with open(self.save_path, "wb") as f:
+            f.write(b"RIFFdummyWAVE")
+
+        daemon = VoiceDaemon(self.cfg, model=MockModel())
+        daemon.waveform = MagicMock()
+        mock_proc = MagicMock()
+        mock_proc.stdin = MagicMock()
+        mock_proc.wait.return_value = 0
+
+        with patch.object(daemon, "_start_pcm_stream", return_value=mock_proc):
+            daemon._hub_stream_worker(self.save_path)
+        self.assertEqual(
+            daemon.waveform.push_pcm.call_args_list,
+            [call(pcm1, 24000), call(pcm2, 24000)],
+        )
+        daemon.waveform.clear.assert_called()
+
+    @patch("client.ear.client.urllib.request.urlopen")
+    def test_hub_sse_stream_worker_skips_waveform_for_stereo(self, mock_urlopen):
+        pcm = b"\x00\x01" * 100
+        sse_lines = [
+            b"event: audio_chunk\r\n",
+            b'data: {"chunk_index": 0, "format": "pcm", "sample_rate": 24000, "channels": 2, "is_final": true, "data": "'
+            + base64.b64encode(pcm)
+            + b'"}\r\n',
+            b"\r\n",
+            b"event: done\r\n",
+            b"data: {}\r\n",
+            b"\r\n",
+        ]
+        mock_resp = MagicMock()
+        mock_resp.status = 200
+        mock_resp.__iter__.return_value = iter(sse_lines)
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        with open(self.save_path, "wb") as f:
+            f.write(b"RIFFdummyWAVE")
+
+        daemon = VoiceDaemon(self.cfg, model=MockModel())
+        daemon.waveform = MagicMock()
+        mock_proc = MagicMock()
+        mock_proc.stdin = MagicMock()
+        mock_proc.wait.return_value = 0
+
+        with patch.object(daemon, "_start_pcm_stream", return_value=mock_proc):
+            daemon._hub_stream_worker(self.save_path)
+        daemon.waveform.push_pcm.assert_not_called()
+
     @patch("client.ear.client.urllib.request.urlopen")
     def test_hub_sse_stream_worker_drain_before_clear_gating(self, mock_urlopen):
         """Tests that self.busy remains True until player.wait() returns."""
@@ -1115,6 +1193,12 @@ class TestVoiceDaemon(unittest.TestCase):
         self.assertTrue(daemon.running)
         daemon.stop()
         self.assertFalse(daemon.running)
+
+    def test_stop_stops_waveform_server(self):
+        daemon = VoiceDaemon(self.cfg, model=MockModel())
+        daemon.waveform = MagicMock()
+        daemon.stop()
+        daemon.waveform.stop.assert_called_once()
 
     def test_wake_word_fail_closed_on_unmatched_models(self):
         cfg = VoiceConfig(wake_models=["hey_unmatched"])

@@ -60,6 +60,11 @@ class VoiceConfig:
     sherpa_num_threads: int = 2
     google_voice_url: str = ""
     google_voice_timeout_seconds: float = 3.0
+    # Waveform levels for the display's voice mouth (GET /levels, SSE).
+    # 0 disables the server.
+    waveform_levels_port: int = 0
+    waveform_levels_host: str = "127.0.0.1"
+    waveform_levels_latency_ms: float = 300.0
 
     def wake_mode_uses_wake_word(self) -> bool:
         """Returns True if the current wake mode evaluates a wake phrase."""
