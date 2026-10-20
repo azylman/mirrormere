@@ -37,8 +37,9 @@ jobs:
     needs: check-bootstrap
     if: >
       needs.check-bootstrap.outputs.bootstrapped == 'true' &&
-      github.event.pull_request.head.repo.full_name == github.repository &&
-      github.actor == 'azylman'
+      (github.actor == 'azylman' || github.actor == 'mcarmody') &&
+      (github.event.pull_request.head.repo.full_name == github.repository ||
+       github.event.pull_request.head.repo.full_name == 'mcarmody/mirrormere')
     runs-on: [self-hosted, roborev]
     timeout-minutes: 20
     steps:
