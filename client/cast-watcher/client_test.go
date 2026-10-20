@@ -291,6 +291,8 @@ func TestCastClient_MediaMetadataAndThrottling(t *testing.T) {
 		{"transient_buffering", `{"type":"MEDIA_STATUS","status":[{"mediaSessionId":2,"playerState":"BUFFERING","currentTime":0.0}]}`, false, 8, "buffering", "New Session", "", "", "", 0, 1800.0},
 		{"transient_playing", `{"type":"MEDIA_STATUS","status":[{"mediaSessionId":2,"playerState":"PLAYING","currentTime":1.0}]}`, false, 9, "playing", "New Session", "", "", "", 0, 1800.0},
 		{"idle_purges", `{"type":"MEDIA_STATUS","status":[{"mediaSessionId":0,"playerState":"IDLE"}]}`, false, 10, "idle", "", "", "", "", 0, 0},
+		{"repeat_terminal_idle", `{"type":"MEDIA_STATUS","status":[{"mediaSessionId":2,"playerState":"IDLE","idleReason":"FINISHED","media":{"duration":1800.0,"metadata":{"title":"Stale Finished"}}}]}`, false, 10, "", "", "", "", "", 0, 0},
+		{"post_idle_trigger", "", true, 11, "", "", "", "", "", 0, 0},
 	}
 
 	for _, step := range steps {
@@ -315,6 +317,9 @@ func TestCastClient_MediaMetadataAndThrottling(t *testing.T) {
 			if step.wantDur != 0 && last["duration"] != step.wantDur { t.Errorf("[%s] duration=%v, want %f", step.name, last["duration"], step.wantDur) }
 			if step.name == "same_session_movie" && (last["series"] != "" || last["season"] != "" || last["episode"] != "") {
 				t.Errorf("[%s] expected cleared series/season/episode, got %+v", step.name, last)
+			}
+			if step.name == "post_idle_trigger" && (last["title"] != nil || last["duration"] != nil) {
+				t.Errorf("[%s] expected cleared metadata after repeat terminal idle, got %+v", step.name, last)
 			}
 		}
 		mu.Unlock()

@@ -564,15 +564,14 @@ func (c *CastClient) handleMediaMessage(msg CastMessage) {
 		reason := strings.ToUpper(strings.TrimSpace(item.IdleReason))
 		isTerminalIdle := item.MediaSessionID == 0 || reason == "FINISHED" || reason == "CANCELLED" || reason == "INTERRUPTED" || reason == "ERROR"
 		if isTerminalIdle {
+			c.resetMediaStateLocked()
+			c.playerState = "idle"
+			c.lastReportedPlayerState = "idle"
 			if prevPlayerState != "idle" {
-				c.resetMediaStateLocked()
-				c.playerState = "idle"
-				c.lastReportedPlayerState = "idle"
 				c.mu.Unlock()
 				c.queueDispatch(func() { c.dispatchPlayerState("idle") })
 				return
 			}
-			c.playerState = "idle"
 		}
 	} else if normalizedState == "playing" || normalizedState == "paused" || normalizedState == "buffering" {
 		c.playerState = normalizedState
