@@ -232,6 +232,19 @@ func TestCoordinator_PlayerStateAndMetadata(t *testing.T) {
 		t.Fatal("unexpected metadata preservation")
 	}
 
+	// Verify switching from TV episode to movie title clears Series, Season, Episode (#613)
+	_, _ = coord.Trigger(VideoStream{
+		ID: "chromecast", StreamURL: "http://cast-tv", Priority: PriorityPersistent,
+		Title: "Ep 1", Series: "Show A", Season: "1", Episode: "2",
+	})
+	sMovie, err := coord.UpdatePlayerState("chromecast", VideoStream{
+		PlayerState: PlayerStatePlaying,
+		Title:       "Movie Title",
+	})
+	if err != nil || sMovie.Primary.Title != "Movie Title" || sMovie.Primary.Series != "" || sMovie.Primary.Season != "" || sMovie.Primary.Episode != "" {
+		t.Fatalf("expected series/season/episode cleared on movie title update, got: %+v (err: %v)", sMovie.Primary, err)
+	}
+
 	for _, check := range []struct {
 		id, ps  string
 		wantErr error

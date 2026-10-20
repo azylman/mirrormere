@@ -288,6 +288,14 @@ func copyMetadata(target, src *VideoStream, overwrite bool) {
 	if src == nil {
 		return
 	}
+	if overwrite && src.Title != "" {
+		target.Title = src.Title
+		target.Series = src.Series
+		target.Season = src.Season
+		target.Episode = src.Episode
+		target.Duration = src.Duration
+		return
+	}
 	copyStr := func(dst *string, val string) {
 		if val != "" && (overwrite || *dst == "") {
 			*dst = val

@@ -168,6 +168,31 @@ func TestCastClient_MediaActionsAndSeek(t *testing.T) {
 	if client.lastPosition != 128.5 || client.lastPositionTime.IsZero() {
 		t.Errorf("expected recorded position 128.5, got %f", client.lastPosition)
 	}
+
+	// Test rewind and fast_forward dispatch SEEK frames (#605)
+	client.lastPosition = 100.0
+	go func() { _ = client.SendMediaAction(ctx, "rewind") }()
+	m, _ = DecodeCastMessage(s1)
+	if m.DestinationID != "t1" || m.Namespace != NamespaceMedia || !strings.Contains(m.PayloadUTF8, `"SEEK"`) || !strings.Contains(m.PayloadUTF8, "90") {
+		t.Errorf("expected SEEK frame around 90 for rewind, got %+v", m)
+	}
+
+	client.lastPosition = 100.0
+	go func() { _ = client.SendMediaAction(ctx, "fast_forward") }()
+	m, _ = DecodeCastMessage(s1)
+	if m.DestinationID != "t1" || m.Namespace != NamespaceMedia || !strings.Contains(m.PayloadUTF8, `"SEEK"`) || !strings.Contains(m.PayloadUTF8, "110") {
+		t.Errorf("expected SEEK frame around 110 for fast_forward, got %+v", m)
+	}
+
+	// Test rewind clamping at 0 and playing drift calculation
+	client.playerState = "playing"
+	client.lastPosition = 5.0
+	client.lastPositionTime = time.Now()
+	go func() { _ = client.SendMediaAction(ctx, "rewind") }()
+	m, _ = DecodeCastMessage(s1)
+	if !strings.Contains(m.PayloadUTF8, `"SEEK"`) || !strings.Contains(m.PayloadUTF8, `"currentTime":0`) {
+		t.Errorf("expected clamped SEEK 0 frame for rewind, got %+v", m)
+	}
 }
 
 func TestCastClient_Wake(t *testing.T) {
@@ -256,7 +281,10 @@ func TestCastClient_MediaMetadataAndThrottling(t *testing.T) {
 		{"title_change", `{"type":"MEDIA_STATUS","status":[{"mediaSessionId":1,"playerState":"PAUSED","currentTime":0.0,"media":{"duration":3600.0,"metadata":{"title":"Chapter 2","seriesTitle":"Mando","season":"2","episode":"4"}}}]}`, false, 4, "", "Chapter 2", "", "", "4", 0, 0},
 		{"new_session", `{"type":"MEDIA_STATUS","status":[{"mediaSessionId":2,"playerState":"PLAYING","currentTime":0.0,"media":{"duration":1800.0,"metadata":{"title":"New Session","seriesTitle":"Show B"}}}]}`, false, 5, "", "New Session", "", "", "", 0, 1800.0},
 		{"dispatch_trigger", "", true, 6, "", "New Session", "Show B", "", "", 0, 0},
-		{"idle_purges", `{"type":"MEDIA_STATUS","status":[{"mediaSessionId":0,"playerState":"IDLE"}]}`, false, 7, "idle", "", "", "", "", 0, 0},
+		{"transient_idle", `{"type":"MEDIA_STATUS","status":[{"mediaSessionId":2,"playerState":"IDLE"}]}`, false, 6, "", "", "", "", "", 0, 0},
+		{"transient_buffering", `{"type":"MEDIA_STATUS","status":[{"mediaSessionId":2,"playerState":"BUFFERING","currentTime":0.0}]}`, false, 7, "buffering", "New Session", "", "", "", 0, 1800.0},
+		{"transient_playing", `{"type":"MEDIA_STATUS","status":[{"mediaSessionId":2,"playerState":"PLAYING","currentTime":1.0}]}`, false, 8, "playing", "New Session", "", "", "", 0, 1800.0},
+		{"idle_purges", `{"type":"MEDIA_STATUS","status":[{"mediaSessionId":0,"playerState":"IDLE"}]}`, false, 9, "idle", "", "", "", "", 0, 0},
 	}
 
 	for _, step := range steps {
@@ -410,7 +438,7 @@ func TestCastClient_LifecycleAndEdgeCases(t *testing.T) {
 	cDefaults.handleHeartbeatMessage(CastMessage{PayloadUTF8: `{"type":"PING"}`})
 	cDefaults.handleMediaMessage(CastMessage{Namespace: NamespaceMedia, PayloadUTF8: `{"type":"MEDIA_STATUS","status":[]}`})
 	cDefaults.handleMediaMessage(CastMessage{Namespace: NamespaceMedia, PayloadUTF8: `{invalid`})
-	cDefaults.handleMediaMessage(CastMessage{Namespace: NamespaceMedia, PayloadUTF8: `{"type":"MEDIA_STATUS","status":[{"mediaSessionId":10,"playerState":"IDLE"}]}`})
+	cDefaults.handleMediaMessage(CastMessage{Namespace: NamespaceMedia, PayloadUTF8: `{"type":"MEDIA_STATUS","status":[{"mediaSessionId":10,"playerState":"IDLE","idleReason":"FINISHED"}]}`})
 	if cDefaults.playerState != "idle" { t.Errorf("expected idle state, got %s", cDefaults.playerState) }
 
 	downServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusBadGateway) }))
