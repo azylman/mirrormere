@@ -3053,7 +3053,7 @@ button, .touch-target {
 }
 
 .mm-voice-waveform__line {
-  stroke: var(--mm-text-title);
+  stroke: var(--mm-text-primary);
   fill: none;
   stroke-width: 1.4;
   stroke-linecap: round;
