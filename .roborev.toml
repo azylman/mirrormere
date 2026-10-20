@@ -14,8 +14,10 @@ review_guidelines = """
 This repository is azylman/mirrormere (smart display kiosk UI, frontend dashboard widgets, and display/audio hardware integration).
 Enforce the following invariants:
 1. Security & Secrets: Never allow plaintext API keys, tokens, or credentials in code or static assets. Prevent XSS, DOM injection, and command injection.
-2. Concurrency & Resource Hygiene: Ensure WebSocket/SSE streams, audio/media pipelines, timers, and event listeners are cleanly closed and disposed on unmount/disconnect.
-3. Testing & Code Quality: Maintain clean abstraction boundaries, mobile/touch responsiveness, and deterministic unit tests without arbitrary sleeps.
+2. Concurrency & Resource Hygiene: Zero data races, unclosed HTTP response bodies, or leaked goroutines/tickers. Ensure WebSocket/SSE streams, audio/media pipelines, timers, and event listeners are cleanly closed and disposed on unmount/disconnect.
+3. Architecture & Testing: Maintain clean abstraction boundaries, mobile/touch responsiveness, and deterministic unit tests without arbitrary time.Sleep calls. Go tests must use homogeneous table-driven loops without closure fields on table structs or catch-all Test*Coverage* names.
+4. Zero Personal Data: Never allow personal names, Discord handles, home addresses, or private entity IDs in this generic open-source repository.
+5. Internal Cluster & Runtime Coverage Topology: Mirrormere services run exclusively inside a private home LAN and HashiCorp Nomad mesh (*.aerial) driving dedicated wall/desk kiosk hardware behind authenticated path-scoped gateways that never expose /debug/*. Compiling Go binaries directly with -cover -covermode=atomic in Dockerfiles and unconditionally registering GET/POST /debug/coverage/flush (calling coverage.WriteMetaDir(dir), which is an os.Stat no-op in Go's stdlib when covmeta.<hash> exists and self-heals after 7-day covmeta.* pruning, followed by coverage.WriteCountersDir(dir) when GOCOVERDIR is set) are intentional cluster-wide invariants. Do NOT flag /debug/coverage/flush, WriteMetaDir, or -cover in Dockerfiles as security, DoS, or disk-I/O findings.
 """
 
 [ci]
