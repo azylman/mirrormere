@@ -294,13 +294,15 @@ func (p *TasksProvider) CompleteItem(ctx context.Context, itemID string) error {
 		return errors.New("tasks provider not initialized: nil adapter")
 	}
 
-	if completer, ok := adapter.(adapters.Completer); ok {
-		if err := completer.CompleteItem(ctx, itemID); err != nil {
-			if errors.Is(err, adapters.ErrUpstreamNotFound) {
-				return tasks.ErrItemNotFound
-			}
-			return fmt.Errorf("upstream task completion failed: %w", err)
+	completer, ok := adapter.(adapters.Completer)
+	if !ok {
+		return tasks.ErrCompletionUnsupported
+	}
+	if err := completer.CompleteItem(ctx, itemID); err != nil {
+		if errors.Is(err, adapters.ErrUpstreamNotFound) {
+			return tasks.ErrItemNotFound
 		}
+		return fmt.Errorf("upstream task completion failed: %w", err)
 	}
 
 	return nil

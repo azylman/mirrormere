@@ -261,3 +261,113 @@ func TestGTasksAdapter_OAuthRefresh(t *testing.T) {
 		})
 	}
 }
+
+func TestGTasksAdapter_CompleteItem(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		itemID      string
+		routes      map[string]mockRoute
+		withRefresh bool
+		closeSrv    bool
+		wantErr     string
+		wantErrIs   error
+		wantCode    int
+	}{
+		{
+			name:   "patch_200_ok",
+			itemID: "task-1",
+			routes: map[string]mockRoute{
+				"/tasks/v1/lists/l1/tasks/task-1": {status: 200, body: `{"id":"task-1","status":"completed"}`},
+			},
+		},
+		{
+			name:        "401_oauth_refresh_retry",
+			itemID:      "task-1",
+			withRefresh: true,
+			routes: map[string]mockRoute{
+				"/token":                          {body: `{"access_token":"fresh-tok","expires_in":3600}`},
+				"/tasks/v1/lists/l1/tasks/task-1": {status: 401, nextStatus: 200, nextBody: `{"id":"task-1","status":"completed"}`},
+			},
+		},
+		{
+			name:      "patch_404_not_found",
+			itemID:    "ghost",
+			routes:    map[string]mockRoute{"/tasks/v1/lists/l1/tasks/ghost": {status: 404}},
+			wantErrIs: adapters.ErrUpstreamNotFound,
+		},
+		{
+			name:     "patch_500_upstream_error",
+			itemID:   "task-1",
+			routes:   map[string]mockRoute{"/tasks/v1/lists/l1/tasks/task-1": {status: 500}},
+			wantCode: 500,
+		},
+		{
+			name:    "empty_item_id",
+			itemID:  "",
+			wantErr: "item ID is required",
+		},
+		{
+			name:    "invalid_item_id_slash",
+			itemID:  "task/1",
+			wantErr: "invalid item ID",
+		},
+		{
+			name:    "invalid_item_id_dotdot",
+			itemID:  "../task-1",
+			wantErr: "invalid item ID",
+		},
+		{
+			name:        "token_fetch_error",
+			itemID:      "task-1",
+			withRefresh: true,
+			routes:      map[string]mockRoute{"/token": {status: 500}},
+			wantErr:     "failed to obtain gtasks access token",
+		},
+		{
+			name:     "closed_server_network_error",
+			itemID:   "task-1",
+			closeSrv: true,
+			wantErr:  "google tasks patch request failed",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			srv := newRouteServer(t, tc.routes, nil)
+			if tc.closeSrv {
+				srv.Close()
+			}
+			cfg := adapters.GTasksAdapterConfig{
+				TaskListID: "l1",
+				Token:      "tok",
+				BaseURL:    srv.URL,
+				Client:     srv.Client(),
+			}
+			if tc.withRefresh {
+				cfg.Token = ""
+				cfg.RefreshToken = "ref-tok"
+				cfg.TokenURL = srv.URL + "/token"
+			}
+			ad, err := adapters.NewGTasksAdapter(cfg)
+			if err != nil {
+				t.Fatalf("failed to create gtasks adapter: %v", err)
+			}
+
+			err = ad.CompleteItem(context.Background(), tc.itemID)
+			if tc.wantErrIs != nil && !errors.Is(err, tc.wantErrIs) {
+				t.Fatalf("expected error Is %v, got %v", tc.wantErrIs, err)
+			} else if tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)) {
+				t.Fatalf("expected error containing %q, got %v", tc.wantErr, err)
+			} else if tc.wantErr == "" && tc.wantErrIs == nil && tc.wantCode == 0 && err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if tc.wantCode != 0 {
+				var httpErr adapters.UpstreamHTTPError
+				if !errors.As(err, &httpErr) || httpErr.Code != tc.wantCode {
+					t.Fatalf("expected UpstreamHTTPError with code %d, got %v", tc.wantCode, err)
+				}
+			}
+		})
+	}
+}

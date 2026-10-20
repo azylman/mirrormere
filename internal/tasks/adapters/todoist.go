@@ -16,7 +16,10 @@ import (
 	"github.com/azylman/mirrormere/internal/tasks"
 )
 
-const defaultTodoistBaseURL = "https://api.todoist.com"
+const (
+	defaultTodoistBaseURL = "https://api.todoist.com"
+	maxTodoistPages       = 10
+)
 
 var (
 	_ Adapter   = (*TodoistAdapter)(nil)
@@ -145,18 +148,55 @@ type todoistCompletedResponse struct {
 	Items []todoistCompletedItem `json:"items"`
 }
 
-func unmarshalResultsOrSlice[T any](body []byte) ([]T, error) {
+func unmarshalPageOrSlice[T any](body []byte) ([]T, string, error) {
 	var envelope struct {
-		Results []T `json:"results"`
+		Results    []T    `json:"results"`
+		NextCursor string `json:"next_cursor"`
 	}
 	if err := json.Unmarshal(body, &envelope); err == nil && envelope.Results != nil {
-		return envelope.Results, nil
+		return envelope.Results, strings.TrimSpace(envelope.NextCursor), nil
 	}
 	var direct []T
 	if err := json.Unmarshal(body, &direct); err == nil {
-		return direct, nil
+		return direct, "", nil
 	}
-	return nil, errors.New("failed to decode response as results envelope or slice")
+	return nil, "", errors.New("failed to decode response as results envelope or slice")
+}
+
+func fetchPaginated[T any](ctx context.Context, a *TodoistAdapter, rawURL, resourceLabel string) ([]T, error) {
+	var all []T
+	seen := make(map[string]bool)
+	cursor := ""
+
+	for page := 0; page < maxTodoistPages; page++ {
+		targetURL := rawURL
+		if page > 0 && cursor != "" {
+			separator := "?"
+			if strings.Contains(rawURL, "?") {
+				separator = "&"
+			}
+			targetURL = fmt.Sprintf("%s%scursor=%s", rawURL, separator, url.QueryEscape(cursor))
+		}
+
+		body, err := a.doGet(ctx, targetURL)
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch todoist %s: %w", resourceLabel, err)
+		}
+
+		items, nextCursor, parseErr := unmarshalPageOrSlice[T](body)
+		if parseErr != nil {
+			return nil, fmt.Errorf("failed to parse todoist %s from %s: %w", resourceLabel, sanitizeURL(targetURL), parseErr)
+		}
+		all = append(all, items...)
+
+		if nextCursor == "" || seen[nextCursor] {
+			break
+		}
+		seen[nextCursor] = true
+		cursor = nextCursor
+	}
+
+	return all, nil
 }
 
 func (a *TodoistAdapter) resolveProject(ctx context.Context) (string, string, error) {
@@ -178,13 +218,9 @@ func (a *TodoistAdapter) resolveProject(ctx context.Context) (string, string, er
 	}
 
 	projectsURL := fmt.Sprintf("%s/api/v1/projects", a.baseURL)
-	body, err := a.doGet(ctx, projectsURL)
+	projects, err := fetchPaginated[todoistProject](ctx, a, projectsURL, "projects")
 	if err != nil {
 		return "", "", err
-	}
-	projects, err := unmarshalResultsOrSlice[todoistProject](body)
-	if err != nil {
-		return "", "", fmt.Errorf("failed to parse todoist projects from %s: %w", sanitizeURL(projectsURL), err)
 	}
 
 	if a.projectName != "" {
@@ -235,13 +271,9 @@ func (a *TodoistAdapter) FetchList(ctx context.Context) (*tasks.List, []tasks.Li
 	sectionMap := make(map[string]string)
 	if resolvedProjectID != "" {
 		sectionsURL := fmt.Sprintf("%s/api/v1/sections?project_id=%s", a.baseURL, url.QueryEscape(resolvedProjectID))
-		secBody, secErr := a.doGet(ctx, sectionsURL)
+		rawSections, secErr := fetchPaginated[todoistSection](ctx, a, sectionsURL, "sections")
 		if secErr != nil {
-			return nil, nil, fmt.Errorf("failed to fetch todoist sections: %w", secErr)
-		}
-		rawSections, parseErr := unmarshalResultsOrSlice[todoistSection](secBody)
-		if parseErr != nil {
-			return nil, nil, fmt.Errorf("failed to parse todoist sections from %s: %w", sanitizeURL(sectionsURL), parseErr)
+			return nil, nil, secErr
 		}
 		sort.SliceStable(rawSections, func(i, j int) bool { return rawSections[i].Order < rawSections[j].Order })
 		sections = make([]string, 0, len(rawSections))
@@ -259,13 +291,9 @@ func (a *TodoistAdapter) FetchList(ctx context.Context) (*tasks.List, []tasks.Li
 	} else {
 		tasksURL = fmt.Sprintf("%s/api/v1/tasks", a.baseURL)
 	}
-	tasksBody, taskErr := a.doGet(ctx, tasksURL)
+	rawTasks, taskErr := fetchPaginated[todoistTask](ctx, a, tasksURL, "tasks")
 	if taskErr != nil {
-		return nil, nil, fmt.Errorf("failed to fetch todoist tasks: %w", taskErr)
-	}
-	rawTasks, parseErr := unmarshalResultsOrSlice[todoistTask](tasksBody)
-	if parseErr != nil {
-		return nil, nil, fmt.Errorf("failed to parse todoist tasks from %s: %w", sanitizeURL(tasksURL), parseErr)
+		return nil, nil, taskErr
 	}
 
 	var completedTasks []tasks.ListItem
