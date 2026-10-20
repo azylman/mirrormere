@@ -149,13 +149,21 @@ func TestCastClient_MediaActionsAndSeek(t *testing.T) {
 	if err := client.SendMediaAction(ctx, "rewind_bad"); !errors.Is(err, ErrInvalidAction) { t.Errorf("expected ErrInvalidAction, got: %v", err) }
 	if err := client.Seek(ctx, -10.0); !errors.Is(err, ErrInvalidAction) { t.Errorf("expected ErrInvalidAction for negative seek, got: %v", err) }
 
+	sendAction := func(action string) CastMessage {
+		t.Helper()
+		errCh := make(chan error, 1)
+		go func() { errCh <- client.SendMediaAction(ctx, action) }()
+		msg, err := DecodeCastMessage(s1)
+		if err != nil { t.Fatalf("decode %s failed: %v", action, err) }
+		if err := <-errCh; err != nil { t.Fatalf("SendMediaAction(%s) failed: %v", action, err) }
+		return msg
+	}
+
 	client.playerState = "paused"
-	go func() { _ = client.SendMediaAction(ctx, "toggle_playback") }()
-	m, _ := DecodeCastMessage(s1)
+	m := sendAction("toggle_playback")
 	if !strings.Contains(m.PayloadUTF8, "PLAY") { t.Errorf("expected PLAY on toggle, got %s", m.PayloadUTF8) }
 
-	go func() { _ = client.SendMediaAction(ctx, "play") }()
-	m, _ = DecodeCastMessage(s1)
+	m = sendAction("play")
 	if !strings.Contains(m.PayloadUTF8, "PLAY") { t.Errorf("expected PLAY on play, got %s", m.PayloadUTF8) }
 
 	seekErrCh := make(chan error, 1)
@@ -167,6 +175,28 @@ func TestCastClient_MediaActionsAndSeek(t *testing.T) {
 	}
 	if client.lastPosition != 128.5 || client.lastPositionTime.IsZero() {
 		t.Errorf("expected recorded position 128.5, got %f", client.lastPosition)
+	}
+
+	// Test rewind and fast_forward dispatch SEEK frames (#605)
+	client.lastPosition = 100.0
+	m = sendAction("rewind")
+	if m.DestinationID != "t1" || m.Namespace != NamespaceMedia || !strings.Contains(m.PayloadUTF8, `"SEEK"`) || !strings.Contains(m.PayloadUTF8, "90") {
+		t.Errorf("expected SEEK frame around 90 for rewind, got %+v", m)
+	}
+
+	client.lastPosition = 100.0
+	m = sendAction("fast_forward")
+	if m.DestinationID != "t1" || m.Namespace != NamespaceMedia || !strings.Contains(m.PayloadUTF8, `"SEEK"`) || !strings.Contains(m.PayloadUTF8, "110") {
+		t.Errorf("expected SEEK frame around 110 for fast_forward, got %+v", m)
+	}
+
+	// Test rewind clamping at 0 and playing drift calculation
+	client.playerState = "playing"
+	client.lastPosition = 5.0
+	client.lastPositionTime = time.Now()
+	m = sendAction("rewind")
+	if !strings.Contains(m.PayloadUTF8, `"SEEK"`) || !strings.Contains(m.PayloadUTF8, `"currentTime":0`) {
+		t.Errorf("expected clamped SEEK 0 frame for rewind, got %+v", m)
 	}
 }
 
@@ -254,9 +284,15 @@ func TestCastClient_MediaMetadataAndThrottling(t *testing.T) {
 		{"seek_drift", `{"type":"MEDIA_STATUS","status":[{"mediaSessionId":1,"playerState":"PLAYING","currentTime":50.0}]}`, false, 2, "", "Chapter 1", "", "", "", 50.0, 0},
 		{"paused", `{"type":"MEDIA_STATUS","status":[{"mediaSessionId":1,"playerState":"PAUSED","currentTime":50.0}]}`, false, 3, "paused", "", "", "", "", 0, 0},
 		{"title_change", `{"type":"MEDIA_STATUS","status":[{"mediaSessionId":1,"playerState":"PAUSED","currentTime":0.0,"media":{"duration":3600.0,"metadata":{"title":"Chapter 2","seriesTitle":"Mando","season":"2","episode":"4"}}}]}`, false, 4, "", "Chapter 2", "", "", "4", 0, 0},
-		{"new_session", `{"type":"MEDIA_STATUS","status":[{"mediaSessionId":2,"playerState":"PLAYING","currentTime":0.0,"media":{"duration":1800.0,"metadata":{"title":"New Session","seriesTitle":"Show B"}}}]}`, false, 5, "", "New Session", "", "", "", 0, 1800.0},
-		{"dispatch_trigger", "", true, 6, "", "New Session", "Show B", "", "", 0, 0},
-		{"idle_purges", `{"type":"MEDIA_STATUS","status":[{"mediaSessionId":0,"playerState":"IDLE"}]}`, false, 7, "idle", "", "", "", "", 0, 0},
+		{"same_session_movie", `{"type":"MEDIA_STATUS","status":[{"mediaSessionId":1,"playerState":"PLAYING","currentTime":0.0,"media":{"duration":5400.0,"metadata":{"title":"Movie In Same Session"}}}]}`, false, 5, "playing", "Movie In Same Session", "", "", "", 0, 5400.0},
+		{"new_session", `{"type":"MEDIA_STATUS","status":[{"mediaSessionId":2,"playerState":"PLAYING","currentTime":0.0,"media":{"duration":1800.0,"metadata":{"title":"New Session","seriesTitle":"Show B"}}}]}`, false, 6, "", "New Session", "", "", "", 0, 1800.0},
+		{"dispatch_trigger", "", true, 7, "", "New Session", "Show B", "", "", 0, 0},
+		{"transient_idle", `{"type":"MEDIA_STATUS","status":[{"mediaSessionId":2,"playerState":"IDLE"}]}`, false, 7, "", "", "", "", "", 0, 0},
+		{"transient_buffering", `{"type":"MEDIA_STATUS","status":[{"mediaSessionId":2,"playerState":"BUFFERING","currentTime":0.0}]}`, false, 8, "buffering", "New Session", "", "", "", 0, 1800.0},
+		{"transient_playing", `{"type":"MEDIA_STATUS","status":[{"mediaSessionId":2,"playerState":"PLAYING","currentTime":1.0}]}`, false, 9, "playing", "New Session", "", "", "", 0, 1800.0},
+		{"idle_purges", `{"type":"MEDIA_STATUS","status":[{"mediaSessionId":0,"playerState":"IDLE"}]}`, false, 10, "idle", "", "", "", "", 0, 0},
+		{"repeat_terminal_idle", `{"type":"MEDIA_STATUS","status":[{"mediaSessionId":2,"playerState":"IDLE","idleReason":"FINISHED","media":{"duration":1800.0,"metadata":{"title":"Stale Finished"}}}]}`, false, 10, "", "", "", "", "", 0, 0},
+		{"post_idle_trigger", "", true, 11, "", "", "", "", "", 0, 0},
 	}
 
 	for _, step := range steps {
@@ -279,6 +315,12 @@ func TestCastClient_MediaMetadataAndThrottling(t *testing.T) {
 			if step.wantEp != "" && last["episode"] != step.wantEp { t.Errorf("[%s] episode=%v, want %s", step.name, last["episode"], step.wantEp) }
 			if step.wantPos != 0 && last["position"] != step.wantPos { t.Errorf("[%s] position=%v, want %f", step.name, last["position"], step.wantPos) }
 			if step.wantDur != 0 && last["duration"] != step.wantDur { t.Errorf("[%s] duration=%v, want %f", step.name, last["duration"], step.wantDur) }
+			if step.name == "same_session_movie" && (last["series"] != "" || last["season"] != "" || last["episode"] != "") {
+				t.Errorf("[%s] expected cleared series/season/episode, got %+v", step.name, last)
+			}
+			if step.name == "post_idle_trigger" && (last["title"] != nil || last["duration"] != nil) {
+				t.Errorf("[%s] expected cleared metadata after repeat terminal idle, got %+v", step.name, last)
+			}
 		}
 		mu.Unlock()
 	}
@@ -410,7 +452,7 @@ func TestCastClient_LifecycleAndEdgeCases(t *testing.T) {
 	cDefaults.handleHeartbeatMessage(CastMessage{PayloadUTF8: `{"type":"PING"}`})
 	cDefaults.handleMediaMessage(CastMessage{Namespace: NamespaceMedia, PayloadUTF8: `{"type":"MEDIA_STATUS","status":[]}`})
 	cDefaults.handleMediaMessage(CastMessage{Namespace: NamespaceMedia, PayloadUTF8: `{invalid`})
-	cDefaults.handleMediaMessage(CastMessage{Namespace: NamespaceMedia, PayloadUTF8: `{"type":"MEDIA_STATUS","status":[{"mediaSessionId":10,"playerState":"IDLE"}]}`})
+	cDefaults.handleMediaMessage(CastMessage{Namespace: NamespaceMedia, PayloadUTF8: `{"type":"MEDIA_STATUS","status":[{"mediaSessionId":10,"playerState":"IDLE","idleReason":"FINISHED"}]}`})
 	if cDefaults.playerState != "idle" { t.Errorf("expected idle state, got %s", cDefaults.playerState) }
 
 	downServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusBadGateway) }))

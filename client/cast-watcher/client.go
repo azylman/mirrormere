@@ -206,7 +206,7 @@ func (c *CastClient) resetReportedOnFailure(operation string) {
 	}
 }
 
-// SendMediaAction translates an action (toggle_playback, play, pause) into a Cast command.
+// SendMediaAction translates an action (toggle_playback, play, pause, rewind, fast_forward) into a Cast command.
 func (c *CastClient) SendMediaAction(ctx context.Context, action string) error {
 	transportID, mediaSessionID, curState, err := c.activeMediaTarget()
 	if err != nil { return err }
@@ -216,6 +216,22 @@ func (c *CastClient) SendMediaAction(ctx context.Context, action string) error {
 	case "pause": cmd = "PAUSE"
 	case "toggle_playback":
 		cmd = "PLAY"; if curState == "playing" { cmd = "PAUSE" }
+	case "rewind":
+		c.mu.RLock()
+		pos := c.lastPosition
+		if c.playerState == "playing" && !c.lastPositionTime.IsZero() {
+			pos += time.Since(c.lastPositionTime).Seconds()
+		}
+		c.mu.RUnlock()
+		return c.Seek(ctx, math.Max(0, pos-10))
+	case "fast_forward":
+		c.mu.RLock()
+		pos := c.lastPosition
+		if c.playerState == "playing" && !c.lastPositionTime.IsZero() {
+			pos += time.Since(c.lastPositionTime).Seconds()
+		}
+		c.mu.RUnlock()
+		return c.Seek(ctx, pos+10)
 	default:
 		return fmt.Errorf("%w: %s", ErrInvalidAction, action)
 	}
@@ -431,6 +447,7 @@ func (c *CastClient) handleReceiverMessage(msg CastMessage) {
 type mediaStatusItem struct {
 	MediaSessionID int            `json:"mediaSessionId"`
 	PlayerState    string         `json:"playerState"`
+	IdleReason     string         `json:"idleReason"`
 	CurrentTime    float64        `json:"currentTime"`
 	Media          struct {
 		Duration float64        `json:"duration"`
@@ -537,23 +554,25 @@ func (c *CastClient) handleMediaMessage(msg CastMessage) {
 		c.lastDuration, c.lastPosition = duration, currentTime
 		c.lastPositionTime = time.Now()
 	} else {
-		if title != "" { c.lastTitle = title }
-		if series != "" { c.lastSeries = series }
-		if season != "" { c.lastSeason = season }
-		if episode != "" { c.lastEpisode = episode }
+		if title != "" {
+			c.lastTitle, c.lastSeries, c.lastSeason, c.lastEpisode = title, series, season, episode
+		}
 		if duration > 0 { c.lastDuration = duration }
 	}
 
 	if normalizedState == "idle" {
-		if prevPlayerState != "idle" {
+		reason := strings.ToUpper(strings.TrimSpace(item.IdleReason))
+		isTerminalIdle := item.MediaSessionID == 0 || reason == "FINISHED" || reason == "CANCELLED" || reason == "INTERRUPTED" || reason == "ERROR"
+		if isTerminalIdle {
 			c.resetMediaStateLocked()
 			c.playerState = "idle"
 			c.lastReportedPlayerState = "idle"
-			c.mu.Unlock()
-			c.queueDispatch(func() { c.dispatchPlayerState("idle") })
-			return
+			if prevPlayerState != "idle" {
+				c.mu.Unlock()
+				c.queueDispatch(func() { c.dispatchPlayerState("idle") })
+				return
+			}
 		}
-		c.playerState = "idle"
 	} else if normalizedState == "playing" || normalizedState == "paused" || normalizedState == "buffering" {
 		c.playerState = normalizedState
 		shouldDispatch := normalizedState != prevPlayerState ||

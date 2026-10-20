@@ -232,6 +232,31 @@ func TestCoordinator_PlayerStateAndMetadata(t *testing.T) {
 		t.Fatal("unexpected metadata preservation")
 	}
 
+	// Verify switching from TV episode to movie title clears Series, Season, Episode while preserving Duration if omitted (#613)
+	_, _ = coord.Trigger(VideoStream{
+		ID: "chromecast", StreamURL: "http://cast-tv", Priority: PriorityPersistent,
+		Title: "Ep 1", Series: "Show A", Season: "1", Episode: "2", Duration: 3600,
+	})
+	sMovie, err := coord.UpdatePlayerState("chromecast", VideoStream{
+		PlayerState: PlayerStatePlaying,
+		Title:       "Movie Title",
+	})
+	if err != nil || sMovie.Primary.Title != "Movie Title" || sMovie.Primary.Series != "" || sMovie.Primary.Season != "" || sMovie.Primary.Episode != "" || sMovie.Primary.Duration != 3600 {
+		t.Fatalf("expected series/season/episode cleared and duration preserved on movie title update, got: %+v (err: %v)", sMovie.Primary, err)
+	}
+	// Verify re-triggering active TV stream with a movie Title does not backfill stale Series/Season/Episode
+	_, _ = coord.Trigger(VideoStream{
+		ID: "chromecast", StreamURL: "http://cast-tv", Priority: PriorityPersistent,
+		Title: "Ep 2", Series: "Show A", Season: "1", Episode: "3", Duration: 1800,
+	})
+	sRetrigMovie, err := coord.Trigger(VideoStream{
+		ID: "chromecast", StreamURL: "http://cast-movie", Priority: PriorityPersistent,
+		Title: "Standalone Movie",
+	})
+	if err != nil || sRetrigMovie.Primary.Title != "Standalone Movie" || sRetrigMovie.Primary.Series != "" || sRetrigMovie.Primary.Season != "" || sRetrigMovie.Primary.Episode != "" || sRetrigMovie.Primary.Duration != 0 {
+		t.Fatalf("expected re-triggered movie stream not to inherit stale episode metadata, got: %+v (err: %v)", sRetrigMovie.Primary, err)
+	}
+
 	for _, check := range []struct {
 		id, ps  string
 		wantErr error

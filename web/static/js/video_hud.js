@@ -1030,8 +1030,12 @@
         payload.value = value;
       }
 
+      const isRemoteKeyPreferred = ['back', 'home', 'captions', 'previous', 'next'].includes(actionName);
+
       let p = null;
-      if (value !== undefined || actionName === 'seek' || (stream.controllable && stream.control_url)) {
+      if (isRemoteKeyPreferred && this.remoteUrl) {
+        p = this.postRemoteKey(remoteKeyName || actionName);
+      } else if (value !== undefined || actionName === 'seek' || (stream.controllable && stream.control_url)) {
         p = this.postAction(payload);
       } else if (this.remoteUrl) {
         p = this.postRemoteKey(remoteKeyName || actionName);
