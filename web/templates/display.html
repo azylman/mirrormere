@@ -13,7 +13,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Comfortaa:wght@600;700&family=Nunito:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" id="hud-stylesheet" href="style.css">
 </head>
-<body data-timezone="{{ .Timezone }}" data-theme="{{ if .Theme }}{{ .Theme }}{{ else }}day{{ end }}"{{ if .HideCursor }} class="mm-touch-display"{{ end }}{{ if .RemoteURL }} data-remote-url="{{ .RemoteURL }}"{{ end }}>
+<body data-timezone="{{ .Timezone }}" data-theme="{{ if .Theme }}{{ .Theme }}{{ else }}day{{ end }}"{{ if .HideCursor }} class="mm-touch-display"{{ end }}{{ if .RemoteURL }} data-remote-url="{{ .RemoteURL }}"{{ end }}{{ if and .VoiceWaveform .VoiceWaveform.Enabled }} data-voice-waveform-url="{{ .VoiceWaveform.LevelsURL }}" data-voice-waveform-gain="{{ .VoiceWaveform.Gain }}"{{ end }}>
   <div id="mirrormere-app" data-timezone="{{ .Timezone }}">
     <header class="header-zone">
       <div class="header-time-block">
@@ -152,6 +152,7 @@
   <script src="static/js/video_hud.js"></script>
   <script src="static/js/live_view.js"></script>
   <script src="static/js/voice.js"></script>
+  <script src="static/js/waveform.js"></script>
   <script src="static/js/calendar_family.js"></script>
   <script src="static/js/display.js"></script>
 </body>

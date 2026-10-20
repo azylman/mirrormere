@@ -44,6 +44,13 @@ display:
       control_url: "http://cast-watcher:8090/action"
       type: "webrtc"
 
+  # Voice waveform mouth, driven by the ear daemon's real reply audio.
+  # voice:
+  #   waveform:
+  #     enabled: true
+  #     levels_url: "http://127.0.0.1:8765/levels"
+  #     gain: 2.2
+
   # Active widget instances
   # Widgets are automatically packed across minimal rotation screens via the 6x2 bitmask solver.
   # No manual 'screens' or top-level 'providers' blocks are required.

@@ -1409,6 +1409,19 @@
         });
       }
 
+      // 7a. Initialize Voice Waveform Mouth (fed by the ear daemon's /levels stream)
+      if (window.MirrormereWaveform && window.MirrormereWaveform.WaveformMouth) {
+        const body = document.body;
+        const url = body && body.dataset ? body.dataset.voiceWaveformUrl : '';
+        if (url) {
+          window.voiceWaveform = new window.MirrormereWaveform.WaveformMouth({
+            sseClient: sseClient,
+            levelsUrl: url,
+            gain: parseFloat(body.dataset.voiceWaveformGain) || undefined,
+          });
+        }
+      }
+
       // 7b. Initialize Tasks Widget Interaction
       initTasksInteraction();
 
