@@ -11,8 +11,8 @@
    light or dark before that pass - no gradients, glows, blur, or
    transitions, all of which dither into noise.
 
-    "No e-ink CSS in the widget": calendar-family's core template
-   (widgets/calendar-family/views/widget.html) is unconditional, full-color
+    "No e-ink CSS in the widget": calendar-grid's core template
+   (widgets/calendar-grid/views/widget.html) is unconditional, full-color
    HTML with inline member/event colors bound from the server-side view
    model. This stylesheet supplies the e-ink presentation for it - pattern
    fills on `.cf-owner-chip`/`.cf-event` keyed to each member's `pattern`,
@@ -186,7 +186,7 @@ button, .touch-target {
 }
 
 /* ==========================================================================
-   calendar-family e-ink presentation
+   calendar-grid e-ink presentation
 
    The widget's own <style> block was removed (this stylesheet is now the
    only place e-ink-specific CSS lives). Member/event color is set inline
@@ -195,23 +195,23 @@ button, .touch-target {
    `background` shorthand's image layer for pattern fills.
    ========================================================================== */
 
-div[data-widget-type="calendar-family"] .cf-day.cf-today {
+div[data-widget-type="calendar-grid"] .cf-day.cf-today {
   outline: 2px solid #000000;
 }
 
-div[data-widget-type="calendar-family"] .cf-day.cf-today .cf-day-header {
+div[data-widget-type="calendar-grid"] .cf-day.cf-today .cf-day-header {
   background: #000000 !important;
   color: #ffffff !important;
 }
 
-div[data-widget-type="calendar-family"] .cf-event {
+div[data-widget-type="calendar-grid"] .cf-event {
   background: #ffffff !important;
   background-image: none !important;
   border: 2px solid #000000;
   color: #000000 !important;
 }
 
-div[data-widget-type="calendar-family"] .cf-owner-chip {
+div[data-widget-type="calendar-grid"] .cf-owner-chip {
   background: #ffffff !important;
   background-image: none !important;
   color: #000000 !important;
@@ -231,26 +231,26 @@ div[data-widget-type="calendar-family"] .cf-owner-chip {
    left identification strip rather than tiled behind the text - a
    full-card tile reads as noise once dithered and fights the text 
    "E-Ink Rendering" requires stay legible. */
-div[data-widget-type="calendar-family"] .cf-pattern-solid {
+div[data-widget-type="calendar-grid"] .cf-pattern-solid {
   background: #000000 !important;
   background-image: none !important;
   color: #ffffff !important;
 }
 
-div[data-widget-type="calendar-family"] .cf-owner-chip.cf-pattern-hatch {
+div[data-widget-type="calendar-grid"] .cf-owner-chip.cf-pattern-hatch {
   background: #ffffff !important;
   background-image: repeating-linear-gradient(45deg, #000 0, #000 2px, #fff 2px, #fff 5px) !important;
   color: #000000 !important;
 }
 
-div[data-widget-type="calendar-family"] .cf-owner-chip.cf-pattern-dots {
+div[data-widget-type="calendar-grid"] .cf-owner-chip.cf-pattern-dots {
   background: #ffffff !important;
   background-image: radial-gradient(circle, #000 1.4px, transparent 1.6px) !important;
   background-size: 6px 6px !important;
   color: #000000 !important;
 }
 
-div[data-widget-type="calendar-family"] .cf-event.cf-pattern-hatch {
+div[data-widget-type="calendar-grid"] .cf-event.cf-pattern-hatch {
   background-color: #ffffff !important;
   background-image: repeating-linear-gradient(45deg, #000 0, #000 2px, #fff 2px, #fff 5px) !important;
   background-repeat: no-repeat !important;
@@ -260,7 +260,7 @@ div[data-widget-type="calendar-family"] .cf-event.cf-pattern-hatch {
   color: #000000 !important;
 }
 
-div[data-widget-type="calendar-family"] .cf-event.cf-pattern-dots {
+div[data-widget-type="calendar-grid"] .cf-event.cf-pattern-dots {
   background-color: #ffffff !important;
   background-image: radial-gradient(circle, #000 1.4px, transparent 1.6px) !important;
   background-repeat: repeat-y !important;
@@ -270,7 +270,7 @@ div[data-widget-type="calendar-family"] .cf-event.cf-pattern-dots {
   color: #000000 !important;
 }
 
-div[data-widget-type="calendar-family"] .cf-pattern-outline {
+div[data-widget-type="calendar-grid"] .cf-pattern-outline {
   background: #ffffff !important;
   background-image: none !important;
   border: 2px solid #000000;

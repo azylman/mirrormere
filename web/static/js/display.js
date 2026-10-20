@@ -1072,21 +1072,28 @@
           const data = JSON.parse(script.textContent || '{}');
           const days = Array.isArray(data.days) ? data.days : Array.isArray(data) ? data : [];
           const events = [];
+          const pushGridEvent = (ev, dayDate, forceAllDay = false) => {
+            if (!ev || !ev.title) return;
+            const isAllDay = Boolean(forceAllDay || ev.all_day || ev.allDay || !ev.start);
+            events.push({
+              id: ev.id || `grid-${dayDate}-${ev.start || 'allday'}-${ev.title}`,
+              title: ev.title,
+              start: ev.start || dayDate,
+              end: ev.end || dayDate,
+              allDay: isAllDay,
+              date: dayDate,
+              dayDate: dayDate,
+            });
+          };
           for (const day of days) {
             const dayDate = day.date;
-            if (Array.isArray(day.events)) {
-              for (const ev of day.events) {
-                const isAllDay = Boolean(ev.all_day || ev.allDay || !ev.start);
-                events.push({
-                  id: ev.id || `grid-${dayDate}-${ev.start}-${ev.title}`,
-                  title: ev.title,
-                  start: ev.start,
-                  end: ev.end,
-                  allDay: isAllDay,
-                  date: dayDate,
-                  dayDate: dayDate,
-                });
+            for (const group of [day.events, day.early_events, day.late_events]) {
+              if (Array.isArray(group)) {
+                for (const ev of group) pushGridEvent(ev, dayDate, false);
               }
+            }
+            if (Array.isArray(day.all_day)) {
+              for (const ev of day.all_day) pushGridEvent(ev, dayDate, true);
             }
           }
           if (events.length > 0) {
