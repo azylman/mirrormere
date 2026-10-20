@@ -36,11 +36,6 @@ remote:
   pointer_mode: "touch"
 ```
 
-### Environment Variable Overrides
-
-- `MIRRORMERE_REMOTE_MANAGED_DEVICES`: Comma-separated list of MAC addresses to manage (e.g. `DC:E5:5B:A6:30:8B,AA:BB:CC:DD:EE:FF`).
-- `MIRRORMERE_REMOTE_POINTER_MODE`: `"touch"` or `"mouse"`.
-
 > **Note on Changing Pointer Mode or HID Descriptors**:
 > Bluetooth clients cache BLE GATT characteristics and HID report descriptors upon pairing. If you switch `pointer_mode` or update HID descriptors, client operating systems (like Android TV) may not recognize the descriptor change until the existing pairing is removed and re-established.
 > Call the `POST /bluetooth/remove` API endpoint (passing `{"mac": "<DEVICE_MAC>"}`) and re-pair the remote device to refresh GATT services and descriptors.

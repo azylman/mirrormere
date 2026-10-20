@@ -496,13 +496,11 @@ class PairingAgent(BaseAgent):
         remote_helper: AndroidRemoteHelper,
         auto_confirm: bool = True,
         on_trusted: Optional[Callable[[str], None]] = None,
-        cert_dir: Optional[str] = None,
     ):
         self.remote_helper = remote_helper
         self.auto_confirm = auto_confirm
         self.on_trusted = on_trusted
-        self.cert_dir = cert_dir
-        self.managed_devices: Set[str] = set()
+        self._trusting_macs: Set[str] = set()
         super().__init__(AgentCapability.DISPLAY_YES_NO)
 
     @method()
@@ -511,12 +509,22 @@ class PairingAgent(BaseAgent):
 
     @method()
     def RequestPinCode(self, device: "o") -> "s":
+        if not self.auto_confirm:
+            logger.warning("PIN code request rejected: auto_confirm_pairing is false for %s", device)
+            raise DBusError("org.bluez.Error.Rejected", "Pairing rejected: auto_confirm_pairing is false")
         logger.info("Auto-replying PIN code 0000 for %s", device)
+        mac = str(device).split("/")[-1].replace("dev_", "").replace("_", ":").upper()
+        asyncio.create_task(self._trust_device(mac))
         return "0000"
 
     @method()
     def RequestPasskey(self, device: "o") -> "u":
+        if not self.auto_confirm:
+            logger.warning("Passkey request rejected: auto_confirm_pairing is false for %s", device)
+            raise DBusError("org.bluez.Error.Rejected", "Pairing rejected: auto_confirm_pairing is false")
         logger.info("RequestPasskey for %s", device)
+        mac = str(device).split("/")[-1].replace("dev_", "").replace("_", ":").upper()
+        asyncio.create_task(self._trust_device(mac))
         return 0
 
     @method()
@@ -556,44 +564,32 @@ class PairingAgent(BaseAgent):
 
     async def _trust_device(self, mac: str):
         mac = mac.strip().upper()
-        for attempt in range(5):
-            await asyncio.sleep(0.5)
-            try:
-                proc = await asyncio.create_subprocess_exec(
-                    "bluetoothctl", "trust", mac,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                )
-                stdout, _ = await proc.communicate()
-                if proc.returncode == 0:
-                    logger.info("Successfully trusted device %s", mac)
-                    self.managed_devices.add(mac)
-                    if self.cert_dir:
-                        try:
-                            os.makedirs(self.cert_dir, exist_ok=True)
-                            dev_file = os.path.join(self.cert_dir, "managed_devices.txt")
-                            existing = set()
-                            if os.path.exists(dev_file):
-                                with open(dev_file, "r", encoding="utf-8") as f:
-                                    for line in f:
-                                        s = line.strip().upper()
-                                        if s:
-                                            existing.add(s)
-                            existing.add(mac)
-                            with open(dev_file, "w", encoding="utf-8") as f:
-                                for m in sorted(existing):
-                                    f.write(f"{m}\n")
-                        except Exception as e:
-                            logger.warning("Failed writing to managed_devices.txt: %s", e)
-                    if self.on_trusted:
-                        try:
-                            self.on_trusted(mac)
-                        except Exception as e:
-                            logger.debug("on_trusted callback failed: %s", e)
-                    return
-                logger.debug("bluetoothctl trust %s (attempt %d) output: %s", mac, attempt + 1, stdout.decode().strip())
-            except Exception as e:
-                logger.warning("Failed to auto-trust %s (attempt %d): %s", mac, attempt + 1, e)
+        if not mac or mac in self._trusting_macs:
+            return
+        self._trusting_macs.add(mac)
+        try:
+            for attempt in range(5):
+                await asyncio.sleep(0.5)
+                try:
+                    proc = await asyncio.create_subprocess_exec(
+                        "bluetoothctl", "trust", mac,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                    )
+                    stdout, _ = await proc.communicate()
+                    if proc.returncode == 0:
+                        logger.info("Successfully trusted device %s", mac)
+                        if self.on_trusted:
+                            try:
+                                self.on_trusted(mac)
+                            except Exception as e:
+                                logger.debug("on_trusted callback failed: %s", e)
+                        return
+                    logger.debug("bluetoothctl trust %s (attempt %d) output: %s", mac, attempt + 1, stdout.decode().strip())
+                except Exception as e:
+                    logger.warning("Failed to auto-trust %s (attempt %d): %s", mac, attempt + 1, e)
+        finally:
+            self._trusting_macs.discard(mac)
 
 
 class TouchReader:
@@ -1354,7 +1350,6 @@ class RemoteDaemon:
                     self.remote_helper,
                     auto_confirm=self.config.auto_confirm_pairing,
                     on_trusted=self.add_managed_device,
-                    cert_dir=self.config.cert_dir,
                 )
                 await self.agent.register(self.bus)
 

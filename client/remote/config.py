@@ -99,18 +99,9 @@ def load_config(path: Optional[str] = None) -> RemoteConfig:
     """Loads configuration strictly from a scoped YAML file.
 
     In accordance with system invariants, NO environment variable fallback
-    is provided for individual configuration fields, except where explicitly
-    permitted (MIRRORMERE_REMOTE_MANAGED_DEVICES, MIRRORMERE_REMOTE_POINTER_MODE).
+    is provided for individual configuration fields.
     """
     cfg = RemoteConfig()
-
-    env_managed = os.environ.get("MIRRORMERE_REMOTE_MANAGED_DEVICES")
-    if env_managed:
-        cfg.managed_devices = [m.strip().upper() for m in env_managed.split(",") if m.strip()]
-
-    env_pointer = os.environ.get("MIRRORMERE_REMOTE_POINTER_MODE")
-    if env_pointer:
-        cfg.pointer_mode = env_pointer.strip().lower()
 
     target_path = path
     if not target_path:

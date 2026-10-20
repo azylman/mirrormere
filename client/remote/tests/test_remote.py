@@ -428,11 +428,13 @@ class TestDaemonComponents(unittest.TestCase):
             helper = MagicMock()
             agent = daemon.PairingAgent(helper, auto_confirm=True)
             with patch.object(agent, "_trust_device", new_callable=AsyncMock) as mock_trust:
+                self.assertEqual(agent.RequestPinCode("/org/bluez/dev_DC_E5_5B_A6_30_8B"), "0000")
+                self.assertEqual(agent.RequestPasskey("/org/bluez/dev_DC_E5_5B_A6_30_8B"), 0)
                 agent.RequestConfirmation("/org/bluez/dev_DC_E5_5B_A6_30_8B", 123456)
                 agent.RequestAuthorization("/org/bluez/dev_DC_E5_5B_A6_30_8B")
                 agent.AuthorizeService("/org/bluez/dev_DC_E5_5B_A6_30_8B", "1812")
                 await asyncio.sleep(0.01)
-                self.assertEqual(mock_trust.call_count, 3)
+                self.assertEqual(mock_trust.call_count, 5)
                 mock_trust.assert_any_call("DC:E5:5B:A6:30:8B")
         asyncio.run(run_test())
 
@@ -441,12 +443,44 @@ class TestDaemonComponents(unittest.TestCase):
         agent = daemon.PairingAgent(helper, auto_confirm=False)
         with patch.object(agent, "_trust_device", new_callable=AsyncMock) as mock_trust:
             with self.assertRaises(daemon.DBusError):
+                agent.RequestPinCode("/org/bluez/dev_DC_E5_5B_A6_30_8B")
+            with self.assertRaises(daemon.DBusError):
+                agent.RequestPasskey("/org/bluez/dev_DC_E5_5B_A6_30_8B")
+            with self.assertRaises(daemon.DBusError):
                 agent.RequestConfirmation("/org/bluez/dev_DC_E5_5B_A6_30_8B", 123456)
             with self.assertRaises(daemon.DBusError):
                 agent.RequestAuthorization("/org/bluez/dev_DC_E5_5B_A6_30_8B")
             with self.assertRaises(daemon.DBusError):
                 agent.AuthorizeService("/org/bluez/dev_DC_E5_5B_A6_30_8B", "1812")
             mock_trust.assert_not_called()
+
+    def test_pairing_agent_trust_device_deduplicates_and_calls_on_trusted(self):
+        async def run_test():
+            helper = MagicMock()
+            trusted_macs = []
+            agent = daemon.PairingAgent(helper, auto_confirm=True, on_trusted=trusted_macs.append)
+            orig_sleep = asyncio.sleep
+            mock_proc = MagicMock(returncode=0)
+            async def slow_communicate():
+                await orig_sleep(0)
+                return (b"Changing DC:E5:5B:A6:30:8B trust succeeded\n", b"")
+            async def fast_sleep(_):
+                await orig_sleep(0)
+            mock_proc.communicate = slow_communicate
+            with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)) as mock_exec, \
+                 patch("asyncio.sleep", new=fast_sleep):
+                await asyncio.gather(
+                    agent._trust_device("dc:e5:5b:a6:30:8b"),
+                    agent._trust_device("DC:E5:5B:A6:30:8B"),
+                )
+                mock_exec.assert_awaited_once_with(
+                    "bluetoothctl", "trust", "DC:E5:5B:A6:30:8B",
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                self.assertEqual(trusted_macs, ["DC:E5:5B:A6:30:8B"])
+                self.assertNotIn("DC:E5:5B:A6:30:8B", agent._trusting_macs)
+        asyncio.run(run_test())
 
     def test_configure_adapter_states(self):
         d = daemon.RemoteDaemon()
@@ -640,14 +674,18 @@ remote:
             "CHROMECAST_HOST": "malicious-host.lan",
             "ADVERT_NAME": "Ignored Advert",
             "HTTP_PORT": "9999",
+            "MIRRORMERE_REMOTE_MANAGED_DEVICES": "de:ad:be:ef:00:01, de:ad:be:ef:00:02",
+            "MIRRORMERE_REMOTE_POINTER_MODE": "mouse",
         }):
             cfg = load_config("/nonexistent/file.yaml")
             self.assertEqual(cfg.chromecast_host, "chromecast.lan")
             self.assertEqual(cfg.advert_name, "Mirrormere Remote")
             self.assertEqual(cfg.http_port, 8092)
+            self.assertEqual(cfg.managed_devices, [])
+            self.assertEqual(cfg.pointer_mode, "touch")
 
     def test_managed_devices_and_pointer_mode_config(self):
-        from config import RemoteConfig, load_config
+        from config import load_config
         import tempfile
         content = """
 managed_devices:
@@ -679,15 +717,6 @@ pointer_mode: "TOUCH"
             self.assertEqual(cfg2.pointer_mode, "touch")
         finally:
             os.remove(temp_path2)
-
-        # Test env var override
-        with patch.dict(os.environ, {
-            "MIRRORMERE_REMOTE_MANAGED_DEVICES": "de:ad:be:ef:00:01, de:ad:be:ef:00:02",
-            "MIRRORMERE_REMOTE_POINTER_MODE": "mouse",
-        }):
-            cfg_env = load_config("/nonexistent/file.yaml")
-            self.assertEqual(cfg_env.managed_devices, ["DE:AD:BE:EF:00:01", "DE:AD:BE:EF:00:02"])
-            self.assertEqual(cfg_env.pointer_mode, "mouse")
 
 
 class TestHIDDescriptor(unittest.TestCase):
