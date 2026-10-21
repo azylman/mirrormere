@@ -98,6 +98,13 @@ class WaveformLevelServerTests(unittest.TestCase):
         t, _ = srv._queue[0]
         self.assertAlmostEqual(t, 10.3, places=9)
 
+    def test_out_of_range_port_disables_server_without_raising(self):
+        srv = WaveformLevelServer(port=70000, latency_ms=300, now=FakeClock())
+        with self.assertLogs("client.ear.waveform_levels", level="WARNING"):
+            srv.start()
+        self.assertFalse(srv.enabled)
+        srv.stop()
+
     def test_port_in_use_disables_server_without_raising(self):
         blocker = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:

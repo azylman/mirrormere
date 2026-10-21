@@ -271,3 +271,8 @@ def _validate(cfg: VoiceConfig) -> None:
         cfg.google_voice_timeout_seconds = 3.0
     else:
         cfg.google_voice_timeout_seconds = float(cfg.google_voice_timeout_seconds)
+
+    # bool is a subclass of int, so reject it explicitly before the range check.
+    port = cfg.waveform_levels_port
+    if isinstance(port, bool) or not isinstance(port, int) or not (0 <= port <= 65535):
+        cfg.waveform_levels_port = 0

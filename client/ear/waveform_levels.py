@@ -123,7 +123,7 @@ class WaveformLevelServer:
             return
         try:
             httpd = _Server((self.host, self.port), _Handler)
-        except OSError as exc:
+        except (OSError, OverflowError, ValueError) as exc:
             log.warning("waveform levels disabled: cannot bind %s:%s (%s)", self.host, self.port, exc)
             self._enabled = False
             return
