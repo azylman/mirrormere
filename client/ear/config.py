@@ -96,6 +96,13 @@ def _parse_simple_yaml(text: str) -> dict:
                 current_list = sub_list
             else:
                 clean_v = v.strip("\"'")
+                lowered = clean_v.lower()
+                if lowered == "true":
+                    current_section[k] = True
+                    continue
+                if lowered == "false":
+                    current_section[k] = False
+                    continue
                 try:
                     if "." in clean_v:
                         parsed_v = float(clean_v)
@@ -229,12 +236,16 @@ def _validate(cfg: VoiceConfig) -> None:
         cfg.vad_threshold = 0.5
     else:
         cfg.vad_threshold = float(cfg.vad_threshold)
-    if not isinstance(cfg.barge_in_vad_threshold, (int, float)) or not (0.0 <= float(cfg.barge_in_vad_threshold) <= 1.0):
+    v = cfg.barge_in_vad_threshold
+    if isinstance(v, bool) or not isinstance(v, (int, float)) or not (0.0 <= float(v) <= 1.0):
         cfg.barge_in_vad_threshold = 0.7
     else:
-        cfg.barge_in_vad_threshold = float(cfg.barge_in_vad_threshold)
-    if not isinstance(cfg.barge_in_min_speech_ms, int) or cfg.barge_in_min_speech_ms < 0:
+        cfg.barge_in_vad_threshold = float(v)
+    v = cfg.barge_in_min_speech_ms
+    if isinstance(v, bool) or not isinstance(v, (int, float)) or v <= 0:
         cfg.barge_in_min_speech_ms = 300
+    else:
+        cfg.barge_in_min_speech_ms = int(v)
 
     try:
         cfg.sherpa_num_threads = max(1, min(int(cfg.sherpa_num_threads), 2))

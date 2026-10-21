@@ -1,7 +1,7 @@
 import os
 import tempfile
 import unittest
-from client.ear.config import VoiceConfig, load_config
+from client.ear.config import VoiceConfig, _parse_simple_yaml, _validate, load_config
 
 
 class TestVoiceConfig(unittest.TestCase):
@@ -274,6 +274,47 @@ ear:
         finally:
             del os.environ["MIRRORMERE_GOOGLE_VOICE_URL"]
             del os.environ["MIRRORMERE_GOOGLE_VOICE_TIMEOUT_SECONDS"]
+
+
+class TestBargeInConfigValidation(unittest.TestCase):
+    def _validated(self, **overrides):
+        cfg = VoiceConfig(**overrides)
+        _validate(cfg)
+        return cfg
+
+    def test_min_speech_ms_nonpositive_or_bool_falls_back_to_default(self):
+        for bad in (0, -5, True, False):
+            with self.subTest(value=bad):
+                cfg = self._validated(barge_in_min_speech_ms=bad)
+                self.assertEqual(cfg.barge_in_min_speech_ms, 300)
+
+    def test_min_speech_ms_positive_is_kept(self):
+        cfg = self._validated(barge_in_min_speech_ms=450)
+        self.assertEqual(cfg.barge_in_min_speech_ms, 450)
+
+    def test_min_speech_ms_float_truncates_to_int(self):
+        cfg = self._validated(barge_in_min_speech_ms=450.7)
+        self.assertEqual(cfg.barge_in_min_speech_ms, 450)
+
+    def test_vad_threshold_bool_falls_back_to_default(self):
+        for bad in (True, False):
+            with self.subTest(value=bad):
+                cfg = self._validated(barge_in_vad_threshold=bad)
+                self.assertEqual(cfg.barge_in_vad_threshold, 0.7)
+
+    def test_vad_threshold_valid_number_is_kept(self):
+        cfg = self._validated(barge_in_vad_threshold=0.85)
+        self.assertEqual(cfg.barge_in_vad_threshold, 0.85)
+
+    def test_parse_simple_yaml_booleans(self):
+        parsed = _parse_simple_yaml("ear:\n  barge_in: true\n  other: False\n")
+        self.assertIs(parsed["ear"]["barge_in"], True)
+        self.assertIs(parsed["ear"]["other"], False)
+
+    def test_parse_simple_yaml_numbers_unchanged(self):
+        parsed = _parse_simple_yaml("ear:\n  barge_in_min_speech_ms: 450\n  barge_in_vad_threshold: 0.8\n")
+        self.assertEqual(parsed["ear"]["barge_in_min_speech_ms"], 450)
+        self.assertEqual(parsed["ear"]["barge_in_vad_threshold"], 0.8)
 
 
 if __name__ == "__main__":
