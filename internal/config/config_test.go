@@ -123,6 +123,10 @@ func TestParseWithEnv_ValidationErrors(t *testing.T) {
 		{"theme invalid mode", withBaseYAML("  theme:\n    mode: cyberpunk\n"), "invalid theme mode 'cyberpunk'"},
 		{"theme auto without coordinates", withBaseYAML("  theme:\n    mode: auto\n"), "theme mode 'auto' requires location coordinates"},
 		{"header weather non-positive interval", withBaseYAML("  header:\n    weather:\n      refresh_interval_seconds: 0\n      latitude: 37.0\n      longitude: -122.0\n      units: imperial\n"), "header weather refresh_interval_seconds must be positive"},
+		{"voice unknown key", withBaseYAML("  voice:\n    wave:\n      enabled: true\n"), "unknown key 'wave' under display.voice"},
+		{"voice waveform unknown key", withBaseYAML("  voice:\n    waveform:\n      levles_url: \"http://127.0.0.1:8765/levels\"\n"), "unknown key 'levles_url' under display.voice.waveform"},
+		{"voice waveform bad levels url", withBaseYAML("  voice:\n    waveform:\n      levels_url: \"ftp://127.0.0.1/levels\"\n"), "display voice waveform levels_url must be an http(s) URL"},
+		{"voice waveform non-positive gain", withBaseYAML("  voice:\n    waveform:\n      gain: 0\n"), "display voice waveform gain must be positive"},
 		{"header weather lat out of bounds", "location:\n  latitude: 0\n  longitude: 0\n" + withBaseYAML("  header:\n    weather:\n      latitude: -95.0\n      longitude: -122.0\n      units: imperial\n"), "header weather latitude must be between -90 and 90"},
 		{"header weather lon out of bounds", "location:\n  latitude: 0\n  longitude: 0\n" + withBaseYAML("  header:\n    weather:\n      latitude: 37.0\n      longitude: 200.0\n      units: imperial\n"), "header weather longitude must be between -180 and 180"},
 		{"header weather invalid units", withBaseYAML("  header:\n    weather:\n      latitude: 37.0\n      longitude: -122.0\n      units: kelvin\n"), "invalid header weather units 'kelvin'"},
@@ -345,6 +349,30 @@ func TestLoad(t *testing.T) {
 	assertEq(t, "Timezone", loaded.Timezone, "UTC")
 }
 
+func TestDisplayVoiceWaveform_Parse(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := config.ParseWithEnv([]byte(withBaseYAML("  voice:\n    waveform:\n      enabled: true\n      levels_url: \"http://127.0.0.1:9100/levels\"\n      gain: 3.0\n")), mockGetenv(nil))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Display.Voice == nil || cfg.Display.Voice.Waveform == nil {
+		t.Fatal("display.voice.waveform not parsed")
+	}
+	wave := cfg.Display.Voice.Waveform
+	assertEq(t, "wave enabled", wave.IsEnabled(), true)
+	assertEq(t, "wave url", wave.GetLevelsURL(), "http://127.0.0.1:9100/levels")
+	assertEq(t, "wave gain", wave.GetGain(), 3.0)
+
+	cfg, err = config.ParseWithEnv([]byte(withBaseYAML("")), mockGetenv(nil))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Display.Voice != nil {
+		t.Fatal("display.voice should be nil when omitted")
+	}
+}
+
 func TestConfig_Accessors(t *testing.T) {
 	t.Parallel()
 	var nilLoc *config.LocationConfig
@@ -367,6 +395,13 @@ func TestConfig_Accessors(t *testing.T) {
 	assertEq(t, "vid zero", !(&config.HeaderVideoConfig{}).IsEnabled() && (&config.HeaderVideoConfig{}).GetStreamID() == "chromecast" && (&config.HeaderVideoConfig{}).GetType() == "webrtc", true)
 	popVid := &config.HeaderVideoConfig{Enabled: ptr(true), StreamID: "cam", Type: "hls"}
 	assertEq(t, "vid pop", popVid.IsEnabled() && popVid.GetStreamID() == "cam" && popVid.GetType() == "hls", true)
+
+	var nilWave *config.VoiceWaveformConfig
+	assertEq(t, "wave nil", !nilWave.IsEnabled() && nilWave.GetLevelsURL() == "http://127.0.0.1:8765/levels" && nilWave.GetGain() == 2.2, true)
+	assertEq(t, "wave zero", !(&config.VoiceWaveformConfig{}).IsEnabled() && (&config.VoiceWaveformConfig{}).GetLevelsURL() == "http://127.0.0.1:8765/levels" && (&config.VoiceWaveformConfig{}).GetGain() == 2.2, true)
+	popWave := &config.VoiceWaveformConfig{Enabled: ptr(true), LevelsURL: "http://10.0.0.5:9000/levels", Gain: ptr(1.5)}
+	assertEq(t, "wave pop", popWave.IsEnabled() && popWave.GetLevelsURL() == "http://10.0.0.5:9000/levels" && popWave.GetGain() == 1.5, true)
+	assertEq(t, "wave blank url", (&config.VoiceWaveformConfig{LevelsURL: "  "}).GetLevelsURL(), "http://127.0.0.1:8765/levels")
 
 	var nilWeather *config.HeaderWeatherConfig
 	assertEq(t, "weather nil", nilWeather.GetRefreshIntervalSeconds(), 900)

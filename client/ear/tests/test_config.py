@@ -275,6 +275,57 @@ ear:
             del os.environ["MIRRORMERE_GOOGLE_VOICE_URL"]
             del os.environ["MIRRORMERE_GOOGLE_VOICE_TIMEOUT_SECONDS"]
 
+    def test_waveform_levels_defaults_disabled(self):
+        cfg = VoiceConfig()
+        self.assertEqual(cfg.waveform_levels_port, 0)
+        self.assertEqual(cfg.waveform_levels_host, "127.0.0.1")
+        self.assertEqual(cfg.waveform_levels_latency_ms, 300.0)
+
+    def test_waveform_levels_from_yaml(self):
+        yaml_content = """
+ear:
+  waveform_levels_port: 8765
+  waveform_levels_host: "0.0.0.0"
+  waveform_levels_latency_ms: 250
+"""
+        with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
+            f.write(yaml_content)
+            temp_path = f.name
+        try:
+            cfg = load_config(temp_path)
+            self.assertIsInstance(cfg.waveform_levels_port, int)
+            self.assertEqual(cfg.waveform_levels_port, 8765)
+            self.assertEqual(cfg.waveform_levels_host, "0.0.0.0")
+            self.assertIsInstance(cfg.waveform_levels_latency_ms, float)
+            self.assertEqual(cfg.waveform_levels_latency_ms, 250.0)
+        finally:
+            if os.path.exists(temp_path):
+                os.unlink(temp_path)
+
+    def test_validate_rejects_bool_port(self):
+        # bool is an int subclass; a literal True must not slip through as port 1.
+        cfg = VoiceConfig(waveform_levels_port=True)
+        _validate(cfg)
+        self.assertEqual(cfg.waveform_levels_port, 0)
+
+    def test_waveform_levels_invalid_port_resets_to_disabled(self):
+        for raw, expected in (("70000", 0), ("-1", 0), ("true", 0), ("8765", 8765)):
+            with self.subTest(port=raw):
+                yaml_content = f"""
+ear:
+  waveform_levels_port: {raw}
+"""
+                with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
+                    f.write(yaml_content)
+                    temp_path = f.name
+                try:
+                    cfg = load_config(temp_path)
+                    self.assertIs(type(cfg.waveform_levels_port), int)
+                    self.assertEqual(cfg.waveform_levels_port, expected)
+                finally:
+                    if os.path.exists(temp_path):
+                        os.unlink(temp_path)
+
 
 class TestBargeInConfigValidation(unittest.TestCase):
     def _validated(self, **overrides):

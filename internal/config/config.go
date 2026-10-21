@@ -85,13 +85,50 @@ type Config struct {
 
 // DisplayConfig specifies visual presentation, rotation parameters, and active widget instances.
 type DisplayConfig struct {
-	HideCursor bool           `yaml:"hide_cursor,omitempty"`
-	RemoteURL  string         `yaml:"remote_url,omitempty"`
-	Rotation   RotationConfig `yaml:"rotation"`
-	Header     HeaderConfig   `yaml:"header"`
-	Grid       GridConfig     `yaml:"grid"`
-	Widgets    []WidgetConfig `yaml:"widgets"`
-	Theme      *ThemeConfig   `yaml:"theme,omitempty"`
+	HideCursor bool                `yaml:"hide_cursor,omitempty"`
+	RemoteURL  string              `yaml:"remote_url,omitempty"`
+	Rotation   RotationConfig      `yaml:"rotation"`
+	Header     HeaderConfig        `yaml:"header"`
+	Grid       GridConfig          `yaml:"grid"`
+	Widgets    []WidgetConfig      `yaml:"widgets"`
+	Theme      *ThemeConfig        `yaml:"theme,omitempty"`
+	Voice      *DisplayVoiceConfig `yaml:"voice,omitempty"`
+}
+
+// DisplayVoiceConfig configures voice visuals on the display.
+type DisplayVoiceConfig struct {
+	Waveform *VoiceWaveformConfig `yaml:"waveform,omitempty"`
+}
+
+// VoiceWaveformConfig configures the waveform mouth fed by the ear daemon's /levels stream.
+type VoiceWaveformConfig struct {
+	Enabled   *bool    `yaml:"enabled,omitempty"`
+	LevelsURL string   `yaml:"levels_url,omitempty"`
+	Gain      *float64 `yaml:"gain,omitempty"`
+}
+
+// IsEnabled returns true if the voice waveform mouth is explicitly enabled.
+func (vw *VoiceWaveformConfig) IsEnabled() bool {
+	if vw == nil {
+		return false
+	}
+	return derefOr(vw.Enabled, false)
+}
+
+// GetLevelsURL returns the ear daemon's levels stream URL (default: http://127.0.0.1:8765/levels).
+func (vw *VoiceWaveformConfig) GetLevelsURL() string {
+	if vw == nil {
+		return "http://127.0.0.1:8765/levels"
+	}
+	return trimmedOr(vw.LevelsURL, "http://127.0.0.1:8765/levels")
+}
+
+// GetGain returns the waveform amplification factor (default: 2.2).
+func (vw *VoiceWaveformConfig) GetGain() float64 {
+	if vw == nil {
+		return 2.2
+	}
+	return derefOr(vw.Gain, 2.2)
 }
 
 // LocationConfig defines physical coordinates and location name for the device/household.
@@ -508,6 +545,32 @@ func validateStructuralKeys(root *yaml.Node) error {
 	return nil
 }
 
+// validateVoiceKeys rejects unknown keys under display.voice and display.voice.waveform,
+// so a typo such as levles_url fails validation instead of being silently ignored.
+func validateVoiceKeys(voiceNode *yaml.Node) error {
+	if voiceNode.Kind != yaml.MappingNode {
+		return nil
+	}
+	for i := 0; i+1 < len(voiceNode.Content); i += 2 {
+		keyNode, valNode := voiceNode.Content[i], voiceNode.Content[i+1]
+		if keyNode.Value != "waveform" {
+			return fmt.Errorf("line %d: unknown key '%s' under display.voice", keyNode.Line, keyNode.Value)
+		}
+		if valNode.Kind != yaml.MappingNode {
+			continue
+		}
+		for j := 0; j+1 < len(valNode.Content); j += 2 {
+			wk := valNode.Content[j]
+			switch wk.Value {
+			case "enabled", "levels_url", "gain":
+			default:
+				return fmt.Errorf("line %d: unknown key '%s' under display.voice.waveform", wk.Line, wk.Value)
+			}
+		}
+	}
+	return nil
+}
+
 func validateDisplayKeys(displayNode *yaml.Node) error {
 	for i := 0; i < len(displayNode.Content); i += 2 {
 		keyNode := displayNode.Content[i]
@@ -516,6 +579,10 @@ func validateDisplayKeys(displayNode *yaml.Node) error {
 			return fmt.Errorf("line %d: display contains disallowed key 'screens': screens are dynamically computed by the 6x2 layout solver", keyNode.Line)
 		case "providers":
 			return fmt.Errorf("line %d: display contains disallowed key 'providers': widget instances configure their own data sources under display.widgets", keyNode.Line)
+		case "voice":
+			if err := validateVoiceKeys(displayNode.Content[i+1]); err != nil {
+				return err
+			}
 		case "rotation", "grid", "header", "widgets", "hide_cursor", "remote_url", "theme":
 		default:
 			return fmt.Errorf("line %d: unknown key '%s' under display", keyNode.Line, key)
@@ -668,6 +735,17 @@ func (c *Config) Validate() error {
 		case "imperial", "metric":
 		default:
 			return fmt.Errorf("invalid header weather units '%s': must be 'imperial' or 'metric'", hw.Units)
+		}
+	}
+
+	// 4b. Voice waveform validation
+	if v := c.Display.Voice; v != nil && v.Waveform != nil {
+		vw := v.Waveform
+		if strings.TrimSpace(vw.LevelsURL) != "" && !isValidHTTPURL(vw.LevelsURL) {
+			return fmt.Errorf("display voice waveform levels_url must be an http(s) URL (got %q)", vw.LevelsURL)
+		}
+		if vw.Gain != nil && !(*vw.Gain > 0) {
+			return fmt.Errorf("display voice waveform gain must be positive (got %v)", *vw.Gain)
 		}
 	}
 

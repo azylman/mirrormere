@@ -60,6 +60,11 @@ class VoiceConfig:
     sherpa_num_threads: int = 2
     google_voice_url: str = ""
     google_voice_timeout_seconds: float = 3.0
+    # Waveform levels for the display's voice mouth (GET /levels, SSE).
+    # 0 disables the server.
+    waveform_levels_port: int = 0
+    waveform_levels_host: str = "127.0.0.1"
+    waveform_levels_latency_ms: float = 300.0
 
     def wake_mode_uses_wake_word(self) -> bool:
         """Returns True if the current wake mode evaluates a wake phrase."""
@@ -266,3 +271,8 @@ def _validate(cfg: VoiceConfig) -> None:
         cfg.google_voice_timeout_seconds = 3.0
     else:
         cfg.google_voice_timeout_seconds = float(cfg.google_voice_timeout_seconds)
+
+    # bool is a subclass of int, so reject it explicitly before the range check.
+    port = cfg.waveform_levels_port
+    if isinstance(port, bool) or not isinstance(port, int) or not (0 <= port <= 65535):
+        cfg.waveform_levels_port = 0

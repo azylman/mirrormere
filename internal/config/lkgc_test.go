@@ -371,6 +371,9 @@ func TestLKGC_DiffConfigs(t *testing.T) {
 		{"video stream URL changed", mkShellCfg("", false, "", mkVideoCfg(&trueVal, "", "http://localhost:1984/old")), mkShellCfg("", false, "", mkVideoCfg(&trueVal, "", "http://localhost:1984/new")), true},
 		{"hide cursor changed", mkShellCfg("", false, "", nil), mkShellCfg("", true, "", nil), true},
 		{"remote URL changed", mkShellCfg("", false, "", nil), mkShellCfg("", false, "http://192.168.1.50:8080", nil), true},
+		{"voice waveform added", mkShellCfg("", false, "", nil), withVoice(mkShellCfg("", false, "", nil), &config.DisplayVoiceConfig{Waveform: &config.VoiceWaveformConfig{Enabled: &trueVal}}), true},
+		{"voice waveform URL changed", withVoice(mkShellCfg("", false, "", nil), &config.DisplayVoiceConfig{Waveform: &config.VoiceWaveformConfig{Enabled: &trueVal, LevelsURL: "http://127.0.0.1:8765/levels"}}), withVoice(mkShellCfg("", false, "", nil), &config.DisplayVoiceConfig{Waveform: &config.VoiceWaveformConfig{Enabled: &trueVal, LevelsURL: "http://127.0.0.1:9000/levels"}}), true},
+		{"voice waveform identical", withVoice(mkShellCfg("", false, "", nil), &config.DisplayVoiceConfig{Waveform: &config.VoiceWaveformConfig{Enabled: &trueVal}}), withVoice(mkShellCfg("", false, "", nil), &config.DisplayVoiceConfig{Waveform: &config.VoiceWaveformConfig{Enabled: &trueVal}}), false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -425,4 +428,9 @@ func TestLKGC_ConcurrencyAndRace(t *testing.T) {
 		close(stopChan)
 	}()
 	wg.Wait()
+}
+
+func withVoice(c *config.Config, v *config.DisplayVoiceConfig) *config.Config {
+	c.Display.Voice = v
+	return c
 }

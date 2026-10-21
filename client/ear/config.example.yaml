@@ -89,6 +89,12 @@ ear:
   sample_rate: 16000
   chunk_samples: 1280
 
+  # Waveform levels for the display's voice mouth (GET /levels, SSE).
+  # 0 disables. The display reads it via display.voice.waveform.levels_url.
+  waveform_levels_port: 0
+  waveform_levels_host: "127.0.0.1"
+  waveform_levels_latency_ms: 300
+
 # --- Example: ambient (edge, no wake word) config -----------------------
 # ear:
 #   wake_mode: ambient

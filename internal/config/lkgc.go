@@ -446,7 +446,8 @@ func DiffConfigs(oldCfg, newCfg *Config) *ConfigDiff {
 		diff.TimezoneChanged = oldCfg.Timezone != newCfg.Timezone
 		diff.ShellChanged = !reflect.DeepEqual(oldCfg.Display.Header, newCfg.Display.Header) ||
 			oldCfg.Display.HideCursor != newCfg.Display.HideCursor ||
-			oldCfg.Display.RemoteURL != newCfg.Display.RemoteURL
+			oldCfg.Display.RemoteURL != newCfg.Display.RemoteURL ||
+			!reflect.DeepEqual(oldCfg.Display.Voice, newCfg.Display.Voice)
 	}
 	for _, w := range newWidgets {
 		oldW, exists := oldMap[w.ID]

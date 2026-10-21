@@ -191,6 +191,15 @@ func buildDisplayHandler(stateProvider render.StateSnapshotProvider, currentThem
 			}
 			return nil
 		}),
+		display.WithVoiceWaveformProvider(func() *display.VoiceWaveformTemplateData {
+			if c := cfg(); c != nil && c.Display.Voice != nil && c.Display.Voice.Waveform.IsEnabled() {
+				wv := c.Display.Voice.Waveform
+				return &display.VoiceWaveformTemplateData{
+					Enabled: true, LevelsURL: wv.GetLevelsURL(), Gain: wv.GetGain(),
+				}
+			}
+			return nil
+		}),
 	)
 }
 
