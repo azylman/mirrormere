@@ -487,6 +487,116 @@ class TestVoiceDaemon(unittest.TestCase):
         self.assertFalse(daemon.busy, "busy flag must clear after player.wait() completes")
 
     @patch("client.ear.client.urllib.request.urlopen")
+    def test_hub_stream_worker_drains_pcm_in_finally_before_busy_clears(self, mock_urlopen):
+        """Stream ends with a pcm chunk that is NOT is_final, then done. The drain
+        happens in the finally: block, so it must still run before busy clears."""
+        pcm = b"\x01\x02" * 50
+        sse_lines = [
+            b"event: audio_chunk\r\n",
+            b'data: {"chunk_index": 0, "format": "pcm", "sample_rate": 24000, "channels": 1, "is_final": false, "data": "'
+            + base64.b64encode(pcm)
+            + b'"}\r\n',
+            b"\r\n",
+            b"event: done\r\n",
+            b"data: {}\r\n",
+            b"\r\n",
+        ]
+        mock_resp = MagicMock()
+        mock_resp.status = 200
+        mock_resp.__iter__.return_value = iter(sse_lines)
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        with open(self.save_path, "wb") as f:
+            f.write(b"RIFFdummyWAVE")
+
+        daemon = VoiceDaemon(self.cfg, model=MockModel())
+        mock_proc = MagicMock()
+        mock_proc.stdin = MagicMock()
+
+        observed = []
+
+        def fake_wait(timeout=None):
+            observed.append((daemon.busy, daemon.playing))
+            return 0
+
+        mock_proc.wait.side_effect = fake_wait
+
+        with patch.object(daemon, "_start_pcm_stream", return_value=mock_proc):
+            daemon._hub_stream_worker(self.save_path)
+
+        mock_proc.stdin.close.assert_called_once()
+        self.assertEqual(observed, [(True, True)], "drain must run while busy and playing are still set")
+        self.assertFalse(daemon.busy)
+        self.assertFalse(daemon.playing)
+
+    @patch("client.ear.client.urllib.request.urlopen")
+    def test_hub_stream_worker_no_wav_playback_after_abort(self, mock_urlopen):
+        """Barge-in sets abort before a wav audio_chunk arrives; the chunk must not be played."""
+        audio = b"late-wav-audio"
+        daemon = VoiceDaemon(self.cfg, model=MockModel())
+
+        def sse_stream():
+            yield b"event: transcript\r\n"
+            yield b'data: {"transcript": "hi"}\r\n'
+            yield b"\r\n"
+            daemon._turn_abort.set()  # barge-in lands before the reply audio
+            yield b"event: audio_chunk\r\n"
+            yield (
+                b'data: {"format": "wav", "is_final": true, "data": "'
+                + base64.b64encode(audio)
+                + b'"}\r\n'
+            )
+            yield b"\r\n"
+
+        mock_resp = MagicMock()
+        mock_resp.status = 200
+        mock_resp.__iter__.side_effect = lambda: sse_stream()
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        with open(self.save_path, "wb") as f:
+            f.write(b"RIFFdummyWAVE")
+
+        with patch.object(daemon, "play_audio") as mock_play:
+            daemon._hub_stream_worker(self.save_path)
+            mock_play.assert_not_called()
+
+    @patch("client.ear.client.urllib.request.urlopen")
+    def test_hub_stream_worker_abort_leaves_busy_preroll_and_wake_engine_alone(self, mock_urlopen):
+        """After barge-in, a new turn owns busy/pre_roll/the wake engine. The
+        abandoned worker must not touch them when it finishes."""
+        model = MockModel()
+        daemon = VoiceDaemon(self.cfg, model=model)
+        daemon.pre_roll.append(b"new-turn-frame")
+        daemon.reply_ended_at = 123.0
+
+        def sse_stream():
+            yield b"event: transcript\r\n"
+            yield b'data: {"transcript": "hi"}\r\n'
+            yield b"\r\n"
+            # Barge-in fired: abort set, and a new turn has claimed busy.
+            daemon._turn_abort.set()
+            daemon.busy = True
+            yield b"event: done\r\n"
+            yield b"data: {}\r\n"
+            yield b"\r\n"
+
+        mock_resp = MagicMock()
+        mock_resp.status = 200
+        mock_resp.__iter__.side_effect = lambda: sse_stream()
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        with open(self.save_path, "wb") as f:
+            f.write(b"RIFFdummyWAVE")
+
+        daemon._hub_stream_worker(self.save_path)
+
+        self.assertTrue(daemon.busy, "abandoned worker must not clear busy owned by the new turn")
+        self.assertEqual(list(daemon.pre_roll), [b"new-turn-frame"], "abandoned worker must not clear pre_roll")
+        self.assertEqual(daemon.reply_ended_at, 123.0, "abandoned worker must not stamp reply_ended_at")
+        self.assertFalse(model.reset_called, "abandoned worker must not reset the wake engine")
+        mock_urlopen.assert_called_once()  # no idle post from the abandoned worker
+
+    @patch("client.ear.client.urllib.request.urlopen")
     def test_hub_sse_stream_worker_pcm_timeout_kill(self, mock_urlopen):
         """Tests that a hung player subprocess is killed and reaped before releasing busy."""
         pcm = b"\x01\x02" * 50

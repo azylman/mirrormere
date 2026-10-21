@@ -575,6 +575,7 @@ class VoiceDaemon:
         with self._player_lock:
             procs = list(self._player_procs)
             self._player_procs.clear()
+            self.playing = False
             resp = self._active_resp
             self._active_resp = None
         for p in procs:
@@ -585,7 +586,6 @@ class VoiceDaemon:
         if resp is not None:
             self._abort_response(resp)
 
-        self.playing = False
         with self.busy_lock:
             self.busy = False
         self.reply_ended_at = now
@@ -953,7 +953,7 @@ class VoiceDaemon:
                 p = subprocess.Popen([player, "-"], stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
                 with self._player_lock:
                     self._player_procs.append(p)
-                self.playing = True
+                    self.playing = True
                 try:
                     p.communicate(input=audio_data, timeout=30)
                 finally:
@@ -1156,7 +1156,7 @@ class VoiceDaemon:
                                         if pcm_proc:
                                             with self._player_lock:
                                                 self._player_procs.append(pcm_proc)
-                                            self.playing = True
+                                                self.playing = True
                                     if pcm_proc and pcm_proc.stdin:
                                         try:
                                             pcm_proc.stdin.write(audio_bytes)
@@ -1167,6 +1167,8 @@ class VoiceDaemon:
                                     close_pcm_proc()
                             else:
                                 if audio_bytes:
+                                    if abort.is_set():
+                                        break
                                     if turn_playback_start is None:
                                         turn_playback_start = time.perf_counter()
                                     t0 = time.perf_counter()
@@ -1188,12 +1190,10 @@ class VoiceDaemon:
             with self._player_lock:
                 if self._active_resp is not None and self._turn_abort is abort:
                     self._active_resp = None
-            if abort.is_set():
-                # Barge-in already killed the player and handed the daemon to a
-                # new turn; touching busy/pre_roll/the wake engine here would race it.
-                close_pcm_proc()
-            else:
-                close_pcm_proc()
+            close_pcm_proc()
+            # Barge-in already killed the player and handed the daemon to a
+            # new turn; touching busy/pre_roll/the wake engine here would race it.
+            if not abort.is_set():
                 self.busy = False
                 self.reply_ended_at = time.time()
                 self.reset_wake_engine()
