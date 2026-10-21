@@ -42,6 +42,15 @@ class VoiceConfig:
     # Silero speech-probability threshold (0.0-1.0) at or above which a
     # window counts as speech. Only used when vad == "silero".
     vad_threshold: float = 0.5
+    # Barge-in (default OFF): while reply audio is playing, keep running a
+    # dedicated Silero VAD on the echo-cancelled mic; sustained speech stops
+    # playback and starts a new turn. Needs Silero (falls back to disabled).
+    barge_in: bool = False
+    # Continuous speech required (ms) before playback is cut.
+    barge_in_min_speech_ms: int = 300
+    # Silero threshold used only during playback; higher than vad_threshold
+    # because residual echo leaks through the AEC.
+    barge_in_vad_threshold: float = 0.7
     # Sherpa-ONNX KWS settings (used when wake_engine == "sherpa-onnx")
     sherpa_model_dir: str = "/opt/mirrormere/voice/sherpa"
     keywords_file: str = "/config/keywords.txt"
@@ -87,6 +96,13 @@ def _parse_simple_yaml(text: str) -> dict:
                 current_list = sub_list
             else:
                 clean_v = v.strip("\"'")
+                lowered = clean_v.lower()
+                if lowered == "true":
+                    current_section[k] = True
+                    continue
+                if lowered == "false":
+                    current_section[k] = False
+                    continue
                 try:
                     if "." in clean_v:
                         parsed_v = float(clean_v)
@@ -139,9 +155,12 @@ def load_config(path: Optional[str] = None) -> VoiceConfig:
                             continue
                         if hasattr(cfg, k):
                             field_type = type(getattr(cfg, k))
-                            if field_type == float and isinstance(v, (int, float)):
+                            if field_type == bool:
+                                if isinstance(v, bool):
+                                    setattr(cfg, k, v)
+                            elif field_type == float and isinstance(v, (int, float)) and not isinstance(v, bool):
                                 setattr(cfg, k, float(v))
-                            elif field_type == int and isinstance(v, int):
+                            elif field_type == int and isinstance(v, int) and not isinstance(v, bool):
                                 setattr(cfg, k, int(v))
                             elif field_type == list and isinstance(v, list):
                                 setattr(cfg, k, [str(item) for item in v])
@@ -217,6 +236,16 @@ def _validate(cfg: VoiceConfig) -> None:
         cfg.vad_threshold = 0.5
     else:
         cfg.vad_threshold = float(cfg.vad_threshold)
+    v = cfg.barge_in_vad_threshold
+    if isinstance(v, bool) or not isinstance(v, (int, float)) or not (0.0 <= float(v) <= 1.0):
+        cfg.barge_in_vad_threshold = 0.7
+    else:
+        cfg.barge_in_vad_threshold = float(v)
+    v = cfg.barge_in_min_speech_ms
+    if isinstance(v, bool) or not isinstance(v, (int, float)) or v <= 0:
+        cfg.barge_in_min_speech_ms = 300
+    else:
+        cfg.barge_in_min_speech_ms = int(v)
 
     try:
         cfg.sherpa_num_threads = max(1, min(int(cfg.sherpa_num_threads), 2))
