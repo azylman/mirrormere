@@ -61,12 +61,12 @@ class _Handler(BaseHTTPRequestHandler):
 
         waveform = self.server.waveform  # type: ignore[attr-defined]
         inbox = waveform._subscribe()
-        self.send_response(200)
-        self.send_header("Content-Type", "text/event-stream")
-        self.send_header("Cache-Control", "no-cache")
-        self.send_header(_CORS, "*")
-        self.end_headers()
         try:
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header(_CORS, "*")
+            self.end_headers()
             self.wfile.flush()
             while True:
                 try:
