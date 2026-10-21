@@ -37,6 +37,12 @@ function createMockElement(tagName = 'div') {
       children.push(child);
       return child;
     },
+    removeChild(child) {
+      const i = children.indexOf(child);
+      if (i >= 0) children.splice(i, 1);
+      child.parentNode = null;
+      return child;
+    },
   };
 }
 
@@ -57,8 +63,12 @@ function createFakeEventSourceFactory() {
     const handlers = new Map();
     const source = {
       url,
+      closed: false,
       addEventListener(type, fn) {
         handlers.set(type, fn);
+      },
+      close() {
+        this.closed = true;
       },
       emit(type, data) {
         const fn = handlers.get(type);
@@ -216,6 +226,33 @@ test('waveform mouth', async (t) => {
     factory.sources[0].emit('frame', ['a'].concat(new Array(32).fill(0)));
     factory.sources[0].emit('frame', 'not json{');
     assert.equal(svg.classList.contains('is-active'), false);
+  });
+
+  await t.test('destroy() stops the loop, closes the stream and removes the svg; second call is a no-op', () => {
+    const { mouth, doc, svg, factory, sse, timing } = makeMouth();
+    sse.emit('voice.state', { state: 'speaking' });
+    factory.sources[0].emit('frame', LOUD);
+    assert.equal(doc.body.children.length, 1);
+    assert.notEqual(timing.pending, null, 'loop is running before destroy');
+
+    mouth.destroy();
+    assert.equal(factory.sources[0].closed, true, 'EventSource closed');
+    assert.equal(doc.body.children.length, 0, 'svg removed from body');
+    assert.equal(svg.parentNode, null);
+    assert.equal(timing.pending, null, 'rAF loop cancelled');
+    assert.equal(mouth.looping, false);
+
+    assert.doesNotThrow(() => mouth.destroy());
+    sse.emit('voice.state', { state: 'speaking' });
+    assert.equal(timing.pending, null, 'voice.state after destroy does not restart the loop');
+  });
+
+  await t.test('destroy() without a levelsUrl is a safe no-op', () => {
+    const doc = createMockDocument();
+    const mouth = new WaveformMouth({ document: doc, levelsUrl: '', eventSourceFactory: null });
+    assert.doesNotThrow(() => mouth.destroy());
+    assert.doesNotThrow(() => mouth.destroy());
+    assert.equal(doc.body.children.length, 0);
   });
 
   await t.test('reduced motion draws the latest frame without easing', () => {

@@ -145,6 +145,7 @@
       this.looping = false;
       this.rafId = null;
       this.lastTick = null;
+      this.destroyed = false;
 
       if (!this.levelsUrl || !this.document) return;
 
@@ -249,7 +250,7 @@
 
     /** Starts the speaking loop once. No-op without a raf. */
     startLoop() {
-      if (!this.raf || this.looping) return;
+      if (this.destroyed || !this.raf || this.looping) return;
       this.looping = true;
       this.lastTick = null;
       const tick = (now) => {
@@ -269,6 +270,28 @@
       this.looping = false;
       this.rafId = null;
       this.lastTick = null;
+    }
+
+    /**
+     * Tears the mouth down: stops the animation loop, closes the level stream and removes the svg.
+     * Safe to call more than once, and when no levelsUrl was given (nothing was mounted).
+     */
+    destroy() {
+      if (this.destroyed) return;
+      this.destroyed = true;
+      this.stopLoop();
+      if (this.levelSource && typeof this.levelSource.close === 'function') {
+        this.levelSource.close();
+      }
+      this.levelSource = null;
+      if (this.element && this.element.parentNode && typeof this.element.parentNode.removeChild === 'function') {
+        this.element.parentNode.removeChild(this.element);
+      }
+      this.element = null;
+      this.polyline = null;
+      this.levelFrame = null;
+      this.levelAt = null;
+      this.shownY = null;
     }
 
     /**
