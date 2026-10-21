@@ -122,8 +122,12 @@ func decomposeDeficit(deficit int) string {
 		dim  [2]int
 		area int
 	}{
-		{[2]int{4, 2}, 8}, {[2]int{3, 2}, 6}, {[2]int{2, 2}, 4},
-		{[2]int{3, 1}, 3}, {[2]int{2, 1}, 2}, {[2]int{1, 1}, 1},
+		{[2]int{4, 2}, 8},
+		{[2]int{3, 2}, 6},
+		{[2]int{2, 2}, 4},
+		{[2]int{3, 1}, 3},
+		{[2]int{2, 1}, 2},
+		{[2]int{1, 1}, 1},
 	} {
 		for deficit >= opt.area && opt.area > 0 {
 			parts = append(parts, fmt.Sprintf("a [%d, %d] widget (%d cells)", opt.dim[0], opt.dim[1], opt.area))

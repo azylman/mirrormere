@@ -41,19 +41,21 @@ func startDaemon(t *testing.T, yamlContent, customCSS string, customWidget map[s
 	if yamlContent == "" {
 		yamlContent = "timezone: UTC\ndisplay:\n  widgets:\n    - id: spacer\n      type: spacer\n      dimensions: [6, 2]\n"
 	}
-	if err := os.WriteFile(configPath, []byte(yamlContent), 0644); err != nil {
+	if err := os.WriteFile(configPath, []byte(yamlContent), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if customCSS != "" {
-		_ = os.WriteFile(filepath.Join(tmpDir, "custom.css"), []byte(customCSS), 0644)
+		_ = os.WriteFile(filepath.Join(tmpDir, "custom.css"), []byte(customCSS), 0o644)
 	}
 	if customWidget != nil {
 		wDir := filepath.Join(tmpDir, "widgets", customWidget["name"])
 		if m, ok := customWidget["manifest"]; ok {
-			_ = os.MkdirAll(wDir, 0755); _ = os.WriteFile(filepath.Join(wDir, "manifest.yaml"), []byte(m), 0644)
+			_ = os.MkdirAll(wDir, 0o755)
+			_ = os.WriteFile(filepath.Join(wDir, "manifest.yaml"), []byte(m), 0o644)
 		}
 		if v, ok := customWidget["view"]; ok {
-			_ = os.MkdirAll(filepath.Join(wDir, "views"), 0755); _ = os.WriteFile(filepath.Join(wDir, "views", "widget.html"), []byte(v), 0644)
+			_ = os.MkdirAll(filepath.Join(wDir, "views"), 0o755)
+			_ = os.WriteFile(filepath.Join(wDir, "views", "widget.html"), []byte(v), 0o644)
 		}
 	}
 
@@ -123,11 +125,13 @@ type fakeSnapProvider struct {
 	theme string
 }
 
-func (f *fakeSnapProvider) CurrentSnapshot() *config.Snapshot                 { return f.snap }
-func (f *fakeSnapProvider) GetWidgetState(string) (any, string, string, bool) { return nil, "", "", false }
-func (f *fakeSnapProvider) CurrentStatus() config.Status                     { return config.Status{} }
-func (f *fakeSnapProvider) GetTheme() string                                 { return f.theme }
-func (f *fakeSnapProvider) SetTheme(s string)                                { f.theme = s }
+func (f *fakeSnapProvider) CurrentSnapshot() *config.Snapshot { return f.snap }
+func (f *fakeSnapProvider) GetWidgetState(string) (any, string, string, bool) {
+	return nil, "", "", false
+}
+func (f *fakeSnapProvider) CurrentStatus() config.Status { return config.Status{} }
+func (f *fakeSnapProvider) GetTheme() string             { return f.theme }
+func (f *fakeSnapProvider) SetTheme(s string)            { f.theme = s }
 
 func TestHouseholdHelpers(t *testing.T) {
 	tests := []struct {
@@ -168,27 +172,42 @@ func TestHouseholdHelpers(t *testing.T) {
 			switch tc.helper {
 			case "now":
 				var prov render.StateSnapshotProvider
-				if sp != nil { prov = sp }
+				if sp != nil {
+					prov = sp
+				}
 				now := householdNowFunc(prov)()
 				if tc.wantTheme != "" {
-					if z, _ := now.Zone(); z != tc.wantTheme { t.Fatalf("zone = %s, want %s", z, tc.wantTheme) }
+					if z, _ := now.Zone(); z != tc.wantTheme {
+						t.Fatalf("zone = %s, want %s", z, tc.wantTheme)
+					}
 				} else if now.IsZero() {
 					t.Fatal("expected non-zero time")
 				}
 			case "theme":
 				var prov render.StateSnapshotProvider
-				if sp != nil { prov = sp }
+				if sp != nil {
+					prov = sp
+				}
 				got := householdThemeFunc(prov)()
 				if tc.wantTheme == "auto" {
-					if got != "day" && got != "night" { t.Fatalf("auto theme = %s", got) }
+					if got != "day" && got != "night" {
+						t.Fatalf("auto theme = %s", got)
+					}
 				} else if got != tc.wantTheme {
 					t.Fatalf("theme = %s, want %s", got, tc.wantTheme)
 				}
 			case "transition":
 				var cur func() string
-				if tc.name != "trans_nil_fn" { cur = func() string { return tc.themeMode } }
-				var prov interface{ GetTheme() string; SetTheme(string) }
-				if sp != nil { prov = sp }
+				if tc.name != "trans_nil_fn" {
+					cur = func() string { return tc.themeMode }
+				}
+				var prov interface {
+					GetTheme() string
+					SetTheme(string)
+				}
+				if sp != nil {
+					prov = sp
+				}
 				hub := events.NewHub(events.HubConfig{}, nil, nil)
 				defer hub.Close()
 				if changed := evaluateThemeTransition(cur, prov, hub, slog.Default()); changed != tc.wantBool {
@@ -199,7 +218,11 @@ func TestHouseholdHelpers(t *testing.T) {
 	}
 
 	h := buildDisplayHandler(&fakeSnapProvider{}, func() string { return "day" })
-	_ = h.Timezone(); _ = h.HideCursor(); _ = h.RemoteURL(); _ = h.HeaderVideo(); _ = h.Theme()
+	_ = h.Timezone()
+	_ = h.HideCursor()
+	_ = h.RemoteURL()
+	_ = h.HeaderVideo()
+	_ = h.Theme()
 }
 
 func TestRun_CLIAndErrors(t *testing.T) {
@@ -226,18 +249,24 @@ func TestRun_CLIAndErrors(t *testing.T) {
 			args := tc.args
 			if tc.yamlData != "" {
 				cfgFile := filepath.Join(tmpDir, "config.yaml")
-				_ = os.WriteFile(cfgFile, []byte(tc.yamlData), 0644)
+				_ = os.WriteFile(cfgFile, []byte(tc.yamlData), 0o644)
 				args = []string{cfgFile}
 			}
 			t.Setenv("CONFIG_PATH", tc.envCfg)
 			var stdout, stderr bytes.Buffer
 			var outW, errW io.Writer = &stdout, &stderr
-			if tc.useFailOut { outW = failWriter{} }
-			if tc.useFailErr { errW = failWriter{} }
+			if tc.useFailOut {
+				outW = failWriter{}
+			}
+			if tc.useFailErr {
+				errW = failWriter{}
+			}
 
 			err := Run(context.Background(), args, outW, errW)
 			if tc.wantErr == "" {
-				if err != nil { t.Fatalf("unexpected error: %v", err) }
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
 			} else if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 				t.Fatalf("expected error containing %q, got %v", tc.wantErr, err)
 			}
@@ -255,8 +284,12 @@ func TestRun_DaemonLifecycleAndSmoke(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if tc.envHost != "" { t.Setenv("HOST", tc.envHost) }
-			if tc.envPort != "" { t.Setenv("PORT", tc.envPort) }
+			if tc.envHost != "" {
+				t.Setenv("HOST", tc.envHost)
+			}
+			if tc.envPort != "" {
+				t.Setenv("PORT", tc.envPort)
+			}
 
 			yamlContent := "host: \"127.0.0.1\"\nport: 0\ntimezone: America/New_York\ndisplay:\n  header:\n    video:\n      enabled: true\n      stream_id: \"test-cam\"\n      stream_url: \"http://camera.example.com/stream.m3u8\"\n      control_url: \"http://controller.example.com/wake\"\n      type: \"webrtc\"\n  widgets:\n    - id: default-spacer\n      type: spacer\n      dimensions: [6, 2]\n"
 			d := startDaemon(t, yamlContent, "", nil)
@@ -267,15 +300,18 @@ func TestRun_DaemonLifecycleAndSmoke(t *testing.T) {
 					path, match string
 					status      int
 				}{
-					{"/healthz", "", 200}, {"/api/audio", `"volume":75`, 200},
-					{"/api/video/state", `"mode":"widgets"`, 200}, {"/display", "mirrormere-app", 200},
+					{"/healthz", "", 200},
+					{"/api/audio", `"volume":75`, 200},
+					{"/api/video/state", `"mode":"widgets"`, 200},
+					{"/display", "mirrormere-app", 200},
 					{"/style.css", "", 200},
 				} {
 					r, err := c.Get(d.baseURL + ep.path)
 					if err != nil || r.StatusCode != ep.status {
 						t.Fatalf("GET %s = %v, err=%v", ep.path, r.StatusCode, err)
 					}
-					b, _ := io.ReadAll(r.Body); _ = r.Body.Close()
+					b, _ := io.ReadAll(r.Body)
+					_ = r.Body.Close()
 					if ep.match != "" && !strings.Contains(string(b), ep.match) {
 						t.Fatalf("GET %s = %s", ep.path, string(b))
 					}
@@ -294,7 +330,8 @@ func TestRun_DaemonLifecycleAndSmoke(t *testing.T) {
 					t.Fatalf("events: %v", err)
 				}
 				buf := make([]byte, 256)
-				n, _ := r.Body.Read(buf); _ = r.Body.Close()
+				n, _ := r.Body.Read(buf)
+				_ = r.Body.Close()
 				if n == 0 {
 					t.Fatal("empty events chunk")
 				}
@@ -353,17 +390,17 @@ func TestRun_SIGHUP(t *testing.T) {
 
 			switch tc.action {
 			case "valid_yaml":
-				_ = os.WriteFile(d.configPath, []byte("host: \"127.0.0.1\"\nport: 0\ntimezone: UTC\ndisplay:\n  widgets:\n    - id: s\n      type: spacer\n      dimensions: [6, 2]\n"), 0644)
+				_ = os.WriteFile(d.configPath, []byte("host: \"127.0.0.1\"\nport: 0\ntimezone: UTC\ndisplay:\n  widgets:\n    - id: s\n      type: spacer\n      dimensions: [6, 2]\n"), 0o644)
 			case "invalid_yaml":
-				_ = os.WriteFile(d.configPath, []byte("timezone: [invalid: -"), 0644)
+				_ = os.WriteFile(d.configPath, []byte("timezone: [invalid: -"), 0o644)
 			case "read_error":
 				_ = os.Remove(d.configPath)
 			case "style_reload":
-				_ = os.WriteFile(filepath.Join(d.tmpDir, "custom.css"), []byte("body { background: #9b59b6; }"), 0644)
+				_ = os.WriteFile(filepath.Join(d.tmpDir, "custom.css"), []byte("body { background: #9b59b6; }"), 0o644)
 			case "widget_reload":
-				_ = os.WriteFile(filepath.Join(d.tmpDir, "widgets", "clock", "views", "widget.html"), []byte("<div>Hot Reloaded Clock View</div>"), 0644)
+				_ = os.WriteFile(filepath.Join(d.tmpDir, "widgets", "clock", "views", "widget.html"), []byte("<div>Hot Reloaded Clock View</div>"), 0o644)
 			case "host_port_change":
-				_ = os.WriteFile(d.configPath, []byte("host: \"127.0.0.2\"\nport: 9090\ntimezone: UTC\ndisplay:\n  widgets:\n    - id: s\n      type: spacer\n      dimensions: [6, 2]\n"), 0644)
+				_ = os.WriteFile(d.configPath, []byte("host: \"127.0.0.2\"\nport: 9090\ntimezone: UTC\ndisplay:\n  widgets:\n    - id: s\n      type: spacer\n      dimensions: [6, 2]\n"), 0o644)
 			}
 
 			d.hupChan <- syscall.SIGHUP
@@ -392,7 +429,8 @@ func TestRun_SIGHUP(t *testing.T) {
 				if err != nil || r.StatusCode != http.StatusOK {
 					t.Fatalf("GET %s failed: %v", tc.wantHTTPPath, err)
 				}
-				b, _ := io.ReadAll(r.Body); _ = r.Body.Close()
+				b, _ := io.ReadAll(r.Body)
+				_ = r.Body.Close()
 				if !strings.Contains(string(b), tc.wantHTTPBody) {
 					t.Fatalf("GET %s = %s, want %s", tc.wantHTTPPath, string(b), tc.wantHTTPBody)
 				}

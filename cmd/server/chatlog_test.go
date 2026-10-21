@@ -13,7 +13,7 @@ type fakeSnapshots struct{ snap *config.Snapshot }
 
 func (f fakeSnapshots) CurrentSnapshot() *config.Snapshot                 { return f.snap }
 func (f fakeSnapshots) GetWidgetState(string) (any, string, string, bool) { return nil, "", "", false }
-func (f fakeSnapshots) CurrentStatus() config.Status                     { return config.Status{} }
+func (f fakeSnapshots) CurrentStatus() config.Status                      { return config.Status{} }
 
 type fakePusher struct {
 	ids []string

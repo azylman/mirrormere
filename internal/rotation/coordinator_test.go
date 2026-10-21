@@ -64,10 +64,22 @@ func TestCoordinator_LifecycleAndUpdateConfig(t *testing.T) {
 	NewCoordinator(Config{Broadcaster: nil}, snap).publishRotateLocked(events.ScreenRotateData{})
 	coord.Stop()
 	for _, fn := range []func() error{
-		func() error { _, err := coord.SelectScreen(0); return err },
-		func() error { _, err := coord.AdvanceScreen("next"); return err },
-		func() error { _, err := coord.PauseRotation(10); return err },
-		func() error { _, err := coord.ResumeRotation(); return err },
+		func() error {
+			_, err := coord.SelectScreen(0)
+			return err
+		},
+		func() error {
+			_, err := coord.AdvanceScreen("next")
+			return err
+		},
+		func() error {
+			_, err := coord.PauseRotation(10)
+			return err
+		},
+		func() error {
+			_, err := coord.ResumeRotation()
+			return err
+		},
 	} {
 		if err := fn(); err == nil {
 			t.Fatal("expected error on stopped coordinator")

@@ -63,8 +63,17 @@ func NewCoordinator(cfg Config, initialSnapshot *config.Snapshot) *Coordinator {
 	return c
 }
 
-func (c *Coordinator) CurrentScreen() int { c.mu.RLock(); defer c.mu.RUnlock(); return c.currentScreen }
-func (c *Coordinator) IsPaused() bool     { c.mu.RLock(); defer c.mu.RUnlock(); return c.paused }
+func (c *Coordinator) CurrentScreen() int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.currentScreen
+}
+
+func (c *Coordinator) IsPaused() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.paused
+}
 
 func (c *Coordinator) TotalScreens() int {
 	c.mu.RLock()

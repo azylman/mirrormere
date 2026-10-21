@@ -31,9 +31,18 @@ type nonFlusher struct {
 	body   []byte
 }
 
-func (n *nonFlusher) Header() http.Header        { if n.header == nil { n.header = make(http.Header) }; return n.header }
-func (n *nonFlusher) Write(b []byte) (int, error) { n.body = append(n.body, b...); return len(b), nil }
-func (n *nonFlusher) WriteHeader(c int)           { n.code = c }
+func (n *nonFlusher) Header() http.Header {
+	if n.header == nil {
+		n.header = make(http.Header)
+	}
+	return n.header
+}
+
+func (n *nonFlusher) Write(b []byte) (int, error) {
+	n.body = append(n.body, b...)
+	return len(b), nil
+}
+func (n *nonFlusher) WriteHeader(c int) { n.code = c }
 
 type errFlusher struct{ nonFlusher }
 
@@ -43,12 +52,12 @@ func (e *errFlusher) Flush()                    {}
 func TestServer_Intent(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name, method, body, acceptHdr, writerType string
+		name, method, body, acceptHdr, writerType  string
 		readErr, cancelCtx, midCancel, clientMatch bool
-		clientResp                                *IntentResponse
-		clientErr                                 error
-		wantCode                                  int
-		wantSub                                   []string
+		clientResp                                 *IntentResponse
+		clientErr                                  error
+		wantCode                                   int
+		wantSub                                    []string
 	}{
 		{name: "method_not_allowed", method: http.MethodGet, wantCode: http.StatusMethodNotAllowed},
 		{name: "read_body_error", method: http.MethodPost, readErr: true, wantCode: http.StatusBadRequest},

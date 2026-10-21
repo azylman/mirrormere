@@ -38,6 +38,7 @@ func (m *mockCompleterAdapter) Name() string { return "mock-completer" }
 func (m *mockCompleterAdapter) FetchList(_ context.Context) (*tasks.List, []tasks.ListItem, error) {
 	return &tasks.List{ID: "test"}, nil, nil
 }
+
 func (m *mockCompleterAdapter) CompleteItem(_ context.Context, itemID string) error {
 	m.calls++
 	m.lastItem = itemID
@@ -47,12 +48,15 @@ func (m *mockCompleterAdapter) CompleteItem(_ context.Context, itemID string) er
 func mkTaskList(id, name, source string) tasks.List {
 	return tasks.List{ID: id, Name: name, Source: source}
 }
+
 func mkTaskItem(id, listID, title, section string, done bool) tasks.ListItem {
 	return tasks.ListItem{ID: id, ListID: listID, Title: title, Section: section, Done: done}
 }
+
 func mkOpts(id string, sec map[string]string, tok string) provider.InitOptions {
 	return provider.InitOptions{ID: id, Secrets: sec, Token: tok}
 }
+
 func mkCfg(src, subKey string, sub map[string]any) map[string]any {
 	if subKey == "" {
 		return map[string]any{"source": src}

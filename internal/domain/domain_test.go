@@ -339,7 +339,7 @@ config_schema:
 
 	// Provider: http with valid response_schema
 	mHTTP.ResponseSchema = map[string]any{
-		"type": "object",
+		"type":     "object",
 		"required": []any{"temperature"},
 		"properties": map[string]any{
 			"temperature": map[string]any{"type": "number"},

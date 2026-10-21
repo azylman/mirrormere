@@ -11,8 +11,10 @@ func TestCalDAV_InternalHelpers(t *testing.T) {
 		t.Fatal("expected non-nil client and logger defaults")
 	}
 	for _, tc := range []struct{ in, want string }{
-		{"https://example.com/dav", "https://example.com/dav/"}, {"https://example.com/dav/", "https://example.com/dav/"},
-		{"https://example.com/dav/file.ics", "https://example.com/dav/file.ics"}, {"http:// invalid url", "http:// invalid url"},
+		{"https://example.com/dav", "https://example.com/dav/"},
+		{"https://example.com/dav/", "https://example.com/dav/"},
+		{"https://example.com/dav/file.ics", "https://example.com/dav/file.ics"},
+		{"http:// invalid url", "http:// invalid url"},
 	} {
 		if got := ensureTrailingSlash(tc.in); got != tc.want {
 			t.Errorf("ensureTrailingSlash(%q) = %q, want %q", tc.in, got, tc.want)
@@ -26,8 +28,10 @@ func TestCalDAV_InternalHelpers(t *testing.T) {
 		}
 	}
 	for _, tc := range []struct{ base, ref, want string }{
-		{"https://example.com/dav/", "/cal/", "https://example.com/cal/"}, {"https://example.com/dav/", "cal/", "https://example.com/dav/cal/"},
-		{"http:// invalid base", "cal/", "cal/"}, {"https://example.com/dav/", "http:// invalid ref", "http:// invalid ref"},
+		{"https://example.com/dav/", "/cal/", "https://example.com/cal/"},
+		{"https://example.com/dav/", "cal/", "https://example.com/dav/cal/"},
+		{"http:// invalid base", "cal/", "cal/"},
+		{"https://example.com/dav/", "http:// invalid ref", "http:// invalid ref"},
 	} {
 		if got := resolveHRef(tc.base, tc.ref); got != tc.want {
 			t.Errorf("resolveHRef(%q, %q) = %q, want %q", tc.base, tc.ref, got, tc.want)

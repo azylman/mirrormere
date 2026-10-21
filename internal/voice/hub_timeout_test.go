@@ -24,6 +24,7 @@ type funcStreamingBrain func(context.Context, AskRequest, func(string), func(Bra
 func (f funcStreamingBrain) Ask(ctx context.Context, r AskRequest, s func(string)) (string, error) {
 	return f(ctx, r, s, nil)
 }
+
 func (f funcStreamingBrain) AskStreaming(ctx context.Context, r AskRequest, s func(string), a func(BrainAudioChunk)) (string, error) {
 	return f(ctx, r, s, a)
 }

@@ -58,6 +58,18 @@ check_utf8_bom() {
     fi
 }
 
+check_gofmt() {
+    if has_cmd gofmt; then
+        echo "   [gofmt] Checking code formatting..."
+        unformatted=$(gofmt -l . 2>/dev/null | grep -v -E '(^|/)vendor/' || true)
+        if [ -n "$unformatted" ]; then
+            echo "🚨 [Mirrormere Verify] Error: Unformatted Go files detected (run gofmt -w or golangci-lint fmt):" >&2
+            echo "$unformatted" | sed 's/^/   • /' >&2
+            exit 1
+        fi
+    fi
+}
+
 # 2. Go Vet
 run_go_vet() {
     echo "   [go vet] Checking codebase..."
@@ -225,6 +237,7 @@ run_python_tests() {
 
 # Execute checks in pipeline order
 check_utf8_bom
+check_gofmt
 run_codegen_drift
 run_go_vet
 run_golangci_lint

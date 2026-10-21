@@ -42,8 +42,10 @@ func mkWidgetConfig(tokenEnv string, cfg map[string]any) *config.Config {
 	}
 }
 
-const locationPropagateYAML = "timezone: America/Los_Angeles\nlocation:\n  name: Oakland Hills\n  latitude: 37.8044\n  longitude: -122.2712\ndisplay:\n  theme:\n    mode: auto\n  header:\n    weather:\n      units: imperial\n  widgets:\n    - id: forecast-1\n      type: weather-forecast\n"
-const legacyWeatherPropagateYAML = "timezone: America/Los_Angeles\ndisplay:\n  theme:\n    mode: auto\n  header:\n    weather:\n      location: Oakland\n      latitude: 37.8\n      longitude: -122.2\n  widgets:\n    - id: w1\n      type: spacer\n"
+const (
+	locationPropagateYAML      = "timezone: America/Los_Angeles\nlocation:\n  name: Oakland Hills\n  latitude: 37.8044\n  longitude: -122.2712\ndisplay:\n  theme:\n    mode: auto\n  header:\n    weather:\n      units: imperial\n  widgets:\n    - id: forecast-1\n      type: weather-forecast\n"
+	legacyWeatherPropagateYAML = "timezone: America/Los_Angeles\ndisplay:\n  theme:\n    mode: auto\n  header:\n    weather:\n      location: Oakland\n      latitude: 37.8\n      longitude: -122.2\n  widgets:\n    - id: w1\n      type: spacer\n"
+)
 
 func TestLoad_ExampleConfig(t *testing.T) {
 	t.Parallel()
@@ -333,7 +335,7 @@ func TestLoad(t *testing.T) {
 	assertEq(t, "Secrets[token]", cfg.Display.Widgets[0].Secrets["token"], "sys-token-val")
 
 	path := filepath.Join(t.TempDir(), "config.yaml")
-	if err := os.WriteFile(path, raw, 0644); err != nil {
+	if err := os.WriteFile(path, raw, 0o644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 	loaded, err := config.Load(path)

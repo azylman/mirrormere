@@ -113,11 +113,21 @@ func NewCastClient(cfg ClientConfig) *CastClient {
 			return (&tls.Dialer{Config: &tls.Config{InsecureSkipVerify: true}}).DialContext(ctx, network, addr)
 		}
 	}
-	if cfg.HeartbeatInterval <= 0 { cfg.HeartbeatInterval = 5 * time.Second }
-	if cfg.WatchdogTimeout <= 0 { cfg.WatchdogTimeout = 15 * time.Second }
-	if cfg.ReconnectBase <= 0 { cfg.ReconnectBase = 1 * time.Second }
-	if cfg.ReconnectMax <= 0 { cfg.ReconnectMax = 30 * time.Second }
-	if cfg.WakeDelay <= 0 { cfg.WakeDelay = 1500 * time.Millisecond }
+	if cfg.HeartbeatInterval <= 0 {
+		cfg.HeartbeatInterval = 5 * time.Second
+	}
+	if cfg.WatchdogTimeout <= 0 {
+		cfg.WatchdogTimeout = 15 * time.Second
+	}
+	if cfg.ReconnectBase <= 0 {
+		cfg.ReconnectBase = 1 * time.Second
+	}
+	if cfg.ReconnectMax <= 0 {
+		cfg.ReconnectMax = 30 * time.Second
+	}
+	if cfg.WakeDelay <= 0 {
+		cfg.WakeDelay = 1500 * time.Millisecond
+	}
 
 	return &CastClient{cfg: cfg, logger: logger, client: httpClient, dialer: dialer, dispatchCh: make(chan func(), 64)}
 }
@@ -143,8 +153,12 @@ func (c *CastClient) Close() {
 		c.closed = true
 		cancel, conn := c.cancelFunc, c.conn
 		c.mu.Unlock()
-		if cancel != nil { cancel() }
-		if conn != nil { _ = conn.Close() } //nolint:errcheck
+		if cancel != nil {
+			cancel()
+		}
+		if conn != nil {
+			_ = conn.Close() //nolint:errcheck
+		}
 	})
 }
 
@@ -157,7 +171,8 @@ type StatusSnapshot struct {
 
 // GetStatus returns the current status snapshot for healthcheck inspection.
 func (c *CastClient) GetStatus() StatusSnapshot {
-	c.mu.RLock(); defer c.mu.RUnlock()
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	return StatusSnapshot{Connected: c.connected, AppID: c.appID, PlayerState: c.playerState}
 }
 
@@ -174,14 +189,21 @@ func newCastMsg(dest, ns, payload string) CastMessage {
 
 func (c *CastClient) sendJSONContext(ctx context.Context, dest, ns string, payload map[string]any) error {
 	b, err := json.Marshal(payload)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	return c.sendMessageContext(ctx, newCastMsg(dest, ns, string(b)))
 }
 
 func (c *CastClient) activeMediaTarget() (string, int, string, error) {
-	c.mu.RLock(); defer c.mu.RUnlock()
-	if !c.connected || c.conn == nil { return "", 0, "", ErrNotConnected }
-	if c.transportID == "" || c.mediaSessionID == 0 { return "", 0, "", ErrNoActiveMediaSession }
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if !c.connected || c.conn == nil {
+		return "", 0, "", ErrNotConnected
+	}
+	if c.transportID == "" || c.mediaSessionID == 0 {
+		return "", 0, "", ErrNoActiveMediaSession
+	}
 	return c.transportID, c.mediaSessionID, c.playerState, nil
 }
 
@@ -197,7 +219,8 @@ func (c *CastClient) resetMediaStateLocked() {
 }
 
 func (c *CastClient) resetReportedOnFailure(operation string) {
-	c.mu.Lock(); defer c.mu.Unlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	if operation == "state" {
 		c.lastReportedPlayerState, c.lastReportedTitle = "", ""
 		c.lastReportedSeries, c.lastReportedSeason, c.lastReportedEpisode = "", "", ""
@@ -209,13 +232,20 @@ func (c *CastClient) resetReportedOnFailure(operation string) {
 // SendMediaAction translates an action (toggle_playback, play, pause, rewind, fast_forward) into a Cast command.
 func (c *CastClient) SendMediaAction(ctx context.Context, action string) error {
 	transportID, mediaSessionID, curState, err := c.activeMediaTarget()
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	var cmd string
 	switch action {
-	case "play": cmd = "PLAY"
-	case "pause": cmd = "PAUSE"
+	case "play":
+		cmd = "PLAY"
+	case "pause":
+		cmd = "PAUSE"
 	case "toggle_playback":
-		cmd = "PLAY"; if curState == "playing" { cmd = "PAUSE" }
+		cmd = "PLAY"
+		if curState == "playing" {
+			cmd = "PAUSE"
+		}
 	case "rewind":
 		c.mu.RLock()
 		pos := c.lastPosition
@@ -240,13 +270,20 @@ func (c *CastClient) SendMediaAction(ctx context.Context, action string) error {
 
 // Seek commands the active Chromecast media session to jump to targetTime in seconds.
 func (c *CastClient) Seek(ctx context.Context, targetTime float64) error {
-	if targetTime < 0 { return fmt.Errorf("%w: target time must be >= 0", ErrInvalidAction) }
+	if targetTime < 0 {
+		return fmt.Errorf("%w: target time must be >= 0", ErrInvalidAction)
+	}
 	transportID, mediaSessionID, _, err := c.activeMediaTarget()
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	if err := c.sendJSONContext(ctx, transportID, NamespaceMedia, map[string]any{"type": "SEEK", "requestId": atomic.AddUint64(&c.reqCounter, 1), "mediaSessionId": mediaSessionID, "currentTime": targetTime}); err != nil {
 		return err
 	}
-	c.mu.Lock(); c.lastPosition = targetTime; c.lastPositionTime = time.Now(); c.mu.Unlock()
+	c.mu.Lock()
+	c.lastPosition = targetTime
+	c.lastPositionTime = time.Now()
+	c.mu.Unlock()
 	return nil
 }
 
@@ -256,10 +293,15 @@ func (c *CastClient) Wake(ctx context.Context) error {
 	notConnected := !c.connected || c.conn == nil
 	notIdle := c.appID != "" || strings.EqualFold(c.playerState, "playing") || strings.EqualFold(c.playerState, "buffering")
 	c.mu.RUnlock()
-	if notConnected { return ErrNotConnected }
-	if notIdle { return nil }
+	if notConnected {
+		return ErrNotConnected
+	}
+	if notIdle {
+		return nil
+	}
 
-	c.wakeMu.Lock(); defer c.wakeMu.Unlock()
+	c.wakeMu.Lock()
+	defer c.wakeMu.Unlock()
 	c.mu.RLock()
 	notIdle = c.appID != "" || strings.EqualFold(c.playerState, "playing") || strings.EqualFold(c.playerState, "buffering")
 	c.mu.RUnlock()
@@ -273,9 +315,12 @@ func (c *CastClient) Wake(ctx context.Context) error {
 		return err
 	}
 	wakeDelay := c.cfg.WakeDelay
-	if wakeDelay <= 0 { wakeDelay = 1500 * time.Millisecond }
+	if wakeDelay <= 0 {
+		wakeDelay = 1500 * time.Millisecond
+	}
 	select {
-	case <-ctx.Done(): return ctx.Err()
+	case <-ctx.Done():
+		return ctx.Err()
 	case <-time.After(wakeDelay):
 	}
 
@@ -293,36 +338,53 @@ func (c *CastClient) supervisorLoop(ctx context.Context) {
 	backoff := c.cfg.ReconnectBase
 	for {
 		select {
-		case <-ctx.Done(): return
+		case <-ctx.Done():
+			return
 		default:
 		}
 
 		err := c.connectAndServe(ctx)
-		if ctx.Err() != nil { return }
+		if ctx.Err() != nil {
+			return
+		}
 
-		c.mu.Lock(); c.connected = false; c.conn = nil; c.mu.Unlock()
+		c.mu.Lock()
+		c.connected = false
+		c.conn = nil
+		c.mu.Unlock()
 		if err != nil {
 			c.logger.Warn("[CastWatcher] Chromecast connection dropped or failed", "error", err, "retry_in", backoff)
 		}
 
 		var jitter time.Duration
-		if b := int64(backoff / 4); b > 0 { jitter = time.Duration(rand.Int63n(b)) }
+		if b := int64(backoff / 4); b > 0 {
+			jitter = time.Duration(rand.Int63n(b))
+		}
 		select {
-		case <-ctx.Done(): return
+		case <-ctx.Done():
+			return
 		case <-time.After(backoff + jitter):
 		}
 		backoff *= 2
-		if backoff > c.cfg.ReconnectMax { backoff = c.cfg.ReconnectMax }
+		if backoff > c.cfg.ReconnectMax {
+			backoff = c.cfg.ReconnectMax
+		}
 	}
 }
 
 func (c *CastClient) connectAndServe(ctx context.Context) error {
 	c.logger.Info("[CastWatcher] Connecting to Chromecast", "addr", c.cfg.ChromecastAddr)
 	conn, err := c.dialer(ctx, "tcp", c.cfg.ChromecastAddr)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	defer func() { _ = conn.Close() }() //nolint:errcheck
 
-	c.mu.Lock(); c.conn = conn; c.connected = true; c.lastMessageTime = time.Now(); c.mu.Unlock()
+	c.mu.Lock()
+	c.conn = conn
+	c.connected = true
+	c.lastMessageTime = time.Now()
+	c.mu.Unlock()
 	c.logger.Info("[CastWatcher] Connected to Chromecast", "addr", c.cfg.ChromecastAddr)
 
 	if err := c.sendMessage(newCastMsg(DestinationReceiver, NamespaceConnection, `{"type":"CONNECT"}`)); err != nil {
@@ -340,10 +402,14 @@ func (c *CastClient) connectAndServe(ctx context.Context) error {
 	for {
 		msg, err := DecodeCastMessage(conn)
 		if err != nil {
-			if errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) { return err }
+			if errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) {
+				return err
+			}
 			return fmt.Errorf("error reading cast frame: %w", err)
 		}
-		c.mu.Lock(); c.lastMessageTime = time.Now(); c.mu.Unlock()
+		c.mu.Lock()
+		c.lastMessageTime = time.Now()
+		c.mu.Unlock()
 		c.handleIncomingMessage(msg)
 	}
 }
@@ -354,9 +420,12 @@ func (c *CastClient) heartbeatAndWatchdog(conn net.Conn, done <-chan struct{}) {
 
 	for {
 		select {
-		case <-done: return
+		case <-done:
+			return
 		case <-ticker.C:
-			c.mu.RLock(); lastMsg := c.lastMessageTime; c.mu.RUnlock()
+			c.mu.RLock()
+			lastMsg := c.lastMessageTime
+			c.mu.RUnlock()
 			if time.Since(lastMsg) > c.cfg.WatchdogTimeout {
 				c.logger.Warn("[CastWatcher] Watchdog timeout: no messages received within threshold, closing connection", "elapsed", time.Since(lastMsg))
 				_ = conn.Close() //nolint:errcheck
@@ -445,10 +514,10 @@ func (c *CastClient) handleReceiverMessage(msg CastMessage) {
 }
 
 type mediaStatusItem struct {
-	MediaSessionID int            `json:"mediaSessionId"`
-	PlayerState    string         `json:"playerState"`
-	IdleReason     string         `json:"idleReason"`
-	CurrentTime    float64        `json:"currentTime"`
+	MediaSessionID int     `json:"mediaSessionId"`
+	PlayerState    string  `json:"playerState"`
+	IdleReason     string  `json:"idleReason"`
+	CurrentTime    float64 `json:"currentTime"`
 	Media          struct {
 		Duration float64        `json:"duration"`
 		Metadata map[string]any `json:"metadata"`
@@ -484,12 +553,16 @@ var (
 )
 
 func extractMediaMetadata(meta map[string]any) (title, series, season, episode string) {
-	if meta == nil { return "", "", "", "" }
+	if meta == nil {
+		return "", "", "", ""
+	}
 
 	getAny := func(keys ...string) string {
 		for _, k := range keys {
 			if v, ok := meta[k]; ok && v != nil {
-				if s := parseStringOrInt(v); s != "" { return s }
+				if s := parseStringOrInt(v); s != "" {
+					return s
+				}
 			}
 		}
 		return ""
@@ -503,31 +576,51 @@ func extractMediaMetadata(meta map[string]any) (title, series, season, episode s
 
 	if series == "" && subtitle != "" && !strings.EqualFold(subtitle, title) {
 		if subMatches := rxSubEpOnly.FindStringSubmatch(subtitle); len(subMatches) > 0 {
-			if season == "" { season = subMatches[1] }
-			if episode == "" { episode = subMatches[2] }
+			if season == "" {
+				season = subMatches[1]
+			}
+			if episode == "" {
+				episode = subMatches[2]
+			}
 		} else {
 			series = subtitle
 		}
 	}
 
 	applySeriesMatches := func(m []string) {
-		if series == "" { series = strings.TrimSpace(m[1]) }
-		if season == "" { season = m[2] }
-		if episode == "" { episode = m[3] }
-		if m[4] != "" { title = strings.TrimSpace(m[4]) }
+		if series == "" {
+			series = strings.TrimSpace(m[1])
+		}
+		if season == "" {
+			season = m[2]
+		}
+		if episode == "" {
+			episode = m[3]
+		}
+		if m[4] != "" {
+			title = strings.TrimSpace(m[4])
+		}
 	}
 
 	if m := rxParenEpisode.FindStringSubmatch(title); len(m) > 0 {
 		title = strings.TrimSpace(m[1])
-		if season == "" { season = m[2] }
-		if episode == "" { episode = m[3] }
+		if season == "" {
+			season = m[2]
+		}
+		if episode == "" {
+			episode = m[3]
+		}
 	} else if m := rxSeriesSXXEXX.FindStringSubmatch(title); len(m) > 0 {
 		applySeriesMatches(m)
 	} else if m := rxSeriesEpNum.FindStringSubmatch(title); len(m) > 0 {
 		applySeriesMatches(m)
 	} else if m := rxEpNumLead.FindStringSubmatch(title); len(m) > 0 {
-		if season == "" { season = m[1] }
-		if episode == "" { episode = m[2] }
+		if season == "" {
+			season = m[1]
+		}
+		if episode == "" {
+			episode = m[2]
+		}
 		title = strings.TrimSpace(m[3])
 	}
 	return title, series, season, episode
@@ -557,7 +650,9 @@ func (c *CastClient) handleMediaMessage(msg CastMessage) {
 		if title != "" {
 			c.lastTitle, c.lastSeries, c.lastSeason, c.lastEpisode = title, series, season, episode
 		}
-		if duration > 0 { c.lastDuration = duration }
+		if duration > 0 {
+			c.lastDuration = duration
+		}
 	}
 
 	if normalizedState == "idle" {
@@ -612,14 +707,25 @@ func (c *CastClient) sendMessage(msg CastMessage) error {
 }
 
 func (c *CastClient) sendMessageContext(ctx context.Context, msg CastMessage) error {
-	if err := ctx.Err(); err != nil { return err }
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	frame, err := EncodeCastMessage(msg)
-	if err != nil { return err }
-	c.mu.RLock(); conn := c.conn; c.mu.RUnlock()
-	if conn == nil { return ErrNotConnected }
-	c.writeMu.Lock(); defer c.writeMu.Unlock()
+	if err != nil {
+		return err
+	}
+	c.mu.RLock()
+	conn := c.conn
+	c.mu.RUnlock()
+	if conn == nil {
+		return ErrNotConnected
+	}
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
 	deadline := time.Now().Add(5 * time.Second)
-	if d, ok := ctx.Deadline(); ok { deadline = d }
+	if d, ok := ctx.Deadline(); ok {
+		deadline = d
+	}
 	_ = conn.SetWriteDeadline(deadline) //nolint:errcheck
 	_, err = conn.Write(frame)
 	return err
@@ -637,8 +743,10 @@ func (c *CastClient) queueDispatch(fn func()) {
 func (c *CastClient) dispatchWorker(ctx context.Context) {
 	for {
 		select {
-		case <-ctx.Done(): return
-		case fn := <-c.dispatchCh: fn()
+		case <-ctx.Done():
+			return
+		case fn := <-c.dispatchCh:
+			fn()
 		}
 	}
 }
@@ -651,9 +759,13 @@ func (c *CastClient) postJSON(endpoint string, payload any, op string) {
 
 func (c *CastClient) dispatchTrigger() {
 	streamURL := c.cfg.StreamURL
-	if streamURL == "" { streamURL = "http://localhost:1984/api/webrtc?src=cast" }
+	if streamURL == "" {
+		streamURL = "http://localhost:1984/api/webrtc?src=cast"
+	}
 	controlURL := c.cfg.ControlURL
-	if controlURL == "" { controlURL = "http://cast-watcher:8090/action" }
+	if controlURL == "" {
+		controlURL = "http://cast-watcher:8090/action"
+	}
 	payload := map[string]any{
 		"id": "chromecast", "type": "webrtc", "priority": "persistent",
 		"stream_url": streamURL, "controllable": true, "control_url": controlURL,
@@ -663,12 +775,18 @@ func (c *CastClient) dispatchTrigger() {
 	duration, position, posTime := c.lastDuration, c.lastPosition, c.lastPositionTime
 	c.mu.RUnlock()
 	for k, v := range map[string]string{"title": title, "series": series, "season": season, "episode": episode} {
-		if v != "" { payload[k] = v }
+		if v != "" {
+			payload[k] = v
+		}
 	}
-	if duration > 0 { payload["duration"] = duration }
+	if duration > 0 {
+		payload["duration"] = duration
+	}
 	if position > 0 {
 		posUpdatedAt := time.Now().UnixMilli()
-		if !posTime.IsZero() { posUpdatedAt = posTime.UnixMilli() }
+		if !posTime.IsZero() {
+			posUpdatedAt = posTime.UnixMilli()
+		}
 		payload["position"] = position
 		payload["position_updated_at"] = posUpdatedAt
 	}
@@ -685,7 +803,9 @@ func (c *CastClient) dispatchPlayerState(state string) {
 	duration, position, posTime := c.lastDuration, c.lastPosition, c.lastPositionTime
 	c.mu.RUnlock()
 	posUpdatedAt := time.Now().UnixMilli()
-	if !posTime.IsZero() { posUpdatedAt = posTime.UnixMilli() }
+	if !posTime.IsZero() {
+		posUpdatedAt = posTime.UnixMilli()
+	}
 	c.postJSON("state", map[string]any{
 		"id": "chromecast", "player_state": state, "title": title, "series": series,
 		"season": season, "episode": episode, "position": position, "duration": duration,

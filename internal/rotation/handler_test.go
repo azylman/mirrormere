@@ -33,6 +33,7 @@ func (m *mockController) SelectScreen(index int) (events.ScreenRotateData, error
 	}
 	return events.ScreenRotateData{CurrentScreen: index, TotalScreens: m.totalScreen}, nil
 }
+
 func (m *mockController) AdvanceScreen(dir string) (events.ScreenRotateData, error) {
 	if m.ctrlErr != nil {
 		return events.ScreenRotateData{}, m.ctrlErr

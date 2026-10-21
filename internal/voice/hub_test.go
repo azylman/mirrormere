@@ -243,7 +243,10 @@ func TestHub_Interact_ConcurrencyAndPanic(t *testing.T) {
 		t.Parallel()
 		sttStarted, sttBlock, doneCh := make(chan struct{}), make(chan struct{}), make(chan error)
 		h := NewHub(&config.VoiceHubConfig{Enabled: true}, nil, WithSTTClient(&mockBlockingSTT{
-			onTranscribe: func() { close(sttStarted); <-sttBlock },
+			onTranscribe: func() {
+				close(sttStarted)
+				<-sttBlock
+			},
 		}))
 		nopSink := func(string, any) error { return nil }
 		go func() { doneCh <- h.Interact(context.Background(), wavRdr(100), "", "", nopSink, EdgeTimings{}) }()

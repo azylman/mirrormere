@@ -16,12 +16,12 @@ import (
 func TestRunWithReady(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "config.yaml")
-	_ = os.WriteFile(configPath, []byte("server:\n  host: 127.0.0.1\n  port: 8095\nhomeassistant:\n  url: http://127.0.0.1:8123\n"), 0600)
+	_ = os.WriteFile(configPath, []byte("server:\n  host: 127.0.0.1\n  port: 8095\nhomeassistant:\n  url: http://127.0.0.1:8123\n"), 0o600)
 	ln, _ := net.Listen("tcp", "127.0.0.1:0")
 	port := ln.Addr().(*net.TCPAddr).Port
 	defer ln.Close()
 	collideConfig := filepath.Join(tmpDir, "collide.yaml")
-	_ = os.WriteFile(collideConfig, []byte(fmt.Sprintf("server:\n  host: 127.0.0.1\n  port: %d\nhomeassistant:\n  url: http://127.0.0.1:8123\n", port)), 0600)
+	_ = os.WriteFile(collideConfig, []byte(fmt.Sprintf("server:\n  host: 127.0.0.1\n  port: %d\nhomeassistant:\n  url: http://127.0.0.1:8123\n", port)), 0o600)
 
 	tests := []struct {
 		name        string
@@ -99,7 +99,10 @@ func TestMain_Execution(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			oldArgs, oldExit := argsHook, exitFunc
-			defer func() { argsHook = oldArgs; exitFunc = oldExit }()
+			defer func() {
+				argsHook = oldArgs
+				exitFunc = oldExit
+			}()
 			argsHook = tc.args
 			exitCode := 0
 			exitFunc = func(code int) { exitCode = code }

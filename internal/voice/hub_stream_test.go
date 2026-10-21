@@ -179,6 +179,7 @@ func mkBrain(reply string, err error) *mockBrain { return &mockBrain{reply: repl
 func mkTTS(audio []byte, format string, err error) *mockTTS {
 	return &mockTTS{audio: audio, format: format, err: err}
 }
+
 func mkStreamTTS(fn func(context.Context, string, func(TTSAudioChunk) error) error) *mockStreamingTTS {
 	return &mockStreamingTTS{streamingFn: fn}
 }

@@ -22,10 +22,10 @@ func setupTestServer(t *testing.T) (*render.Handler, string, *domain.Package) {
 	tmpDir := t.TempDir()
 	pkg := createTestPackage(t, tmpDir, "sensor", `<div class="sensor">{{.Data.temp}}</div>`)
 	subDir := filepath.Join(pkg.Dir, "assets", "sub")
-	if err := os.MkdirAll(subDir, 0755); err != nil {
+	if err := os.MkdirAll(subDir, 0o755); err != nil {
 		t.Fatalf("failed to create sub assets dir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(subDir, "nested.png"), []byte("pngdata"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(subDir, "nested.png"), []byte("pngdata"), 0o644); err != nil {
 		t.Fatalf("failed to write nested asset: %v", err)
 	}
 
@@ -184,9 +184,9 @@ func TestHandler_ServeStyle(t *testing.T) {
 	validCSS := filepath.Join(tmpDir, "valid.css")
 	customCSS := filepath.Join(tmpDir, "custom.css")
 	olderCustomCSS := filepath.Join(tmpDir, "older_custom.css")
-	_ = os.WriteFile(validCSS, []byte("/* test stylesheet */"), 0644)
-	_ = os.WriteFile(customCSS, []byte("/* custom stylesheet */"), 0644)
-	_ = os.WriteFile(olderCustomCSS, []byte("/* older custom stylesheet */"), 0644)
+	_ = os.WriteFile(validCSS, []byte("/* test stylesheet */"), 0o644)
+	_ = os.WriteFile(customCSS, []byte("/* custom stylesheet */"), 0o644)
+	_ = os.WriteFile(olderCustomCSS, []byte("/* older custom stylesheet */"), 0o644)
 	baseTime := time.Date(2026, 10, 18, 12, 0, 0, 0, time.UTC)
 	newerTime := time.Date(2026, 10, 18, 13, 0, 0, 0, time.UTC)
 	olderTime := time.Date(2026, 10, 18, 11, 0, 0, 0, time.UTC)

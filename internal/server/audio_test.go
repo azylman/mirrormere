@@ -26,6 +26,7 @@ func (m *mockAudioCoord) SetVolume(v int) (int, bool, error) {
 	}
 	return m.volume, m.muted, m.err
 }
+
 func (m *mockAudioCoord) SetMute(mut *bool) (int, bool, error) {
 	if m.err == nil && mut == nil {
 		m.muted = !m.muted

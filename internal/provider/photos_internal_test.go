@@ -11,11 +11,20 @@ func TestPhotos_InternalHelpers(t *testing.T) {
 	t.Run("toFloat conversions", func(t *testing.T) {
 		t.Parallel()
 		for _, tc := range []struct {
-			val any; exp float64; ok bool
+			val any
+			exp float64
+			ok  bool
 		}{
-			{42.5, 42.5, true}, {float32(10.5), 10.5, true}, {7, 7.0, true}, {int64(100), 100.0, true},
-			{json.Number("3.14"), 3.14, true}, {json.Number("invalid"), 0, false}, {"123.45", 123.45, true},
-			{"invalid", 0, false}, {true, 0, false}, {nil, 0, false},
+			{42.5, 42.5, true},
+			{float32(10.5), 10.5, true},
+			{7, 7.0, true},
+			{int64(100), 100.0, true},
+			{json.Number("3.14"), 3.14, true},
+			{json.Number("invalid"), 0, false},
+			{"123.45", 123.45, true},
+			{"invalid", 0, false},
+			{true, 0, false},
+			{nil, 0, false},
 		} {
 			if got, ok := toFloat(tc.val); ok != tc.ok || (ok && got != tc.exp) {
 				t.Errorf("toFloat(%v) = (%v, %v), want (%v, %v)", tc.val, got, ok, tc.exp, tc.ok)

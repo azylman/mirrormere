@@ -73,22 +73,22 @@ func createTestPackage(t *testing.T, dir, widgetType, viewContent string) *domai
 	pkgDir := filepath.Join(dir, widgetType)
 	viewsDir := filepath.Join(pkgDir, "views")
 	assetsDir := filepath.Join(pkgDir, "assets")
-	if err := os.MkdirAll(viewsDir, 0755); err != nil {
+	if err := os.MkdirAll(viewsDir, 0o755); err != nil {
 		t.Fatalf("failed to create views dir: %v", err)
 	}
-	if err := os.MkdirAll(assetsDir, 0755); err != nil {
+	if err := os.MkdirAll(assetsDir, 0o755); err != nil {
 		t.Fatalf("failed to create assets dir: %v", err)
 	}
 	manifestPath := filepath.Join(pkgDir, "manifest.yaml")
 	manifestContent := "id: " + widgetType + "\nversion: 1.0.0\nname: Test " + widgetType + "\ndescription: Test widget\nauthor: Tester\nentrypoint: views/widget.html\ndefault_dimensions:\n  cols: 2\n  rows: 1\n"
-	if err := os.WriteFile(manifestPath, []byte(manifestContent), 0644); err != nil {
+	if err := os.WriteFile(manifestPath, []byte(manifestContent), 0o644); err != nil {
 		t.Fatalf("failed to write manifest: %v", err)
 	}
 	viewPath := filepath.Join(viewsDir, "widget.html")
-	if err := os.WriteFile(viewPath, []byte(viewContent), 0644); err != nil {
+	if err := os.WriteFile(viewPath, []byte(viewContent), 0o644); err != nil {
 		t.Fatalf("failed to write view: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(assetsDir, "icon.svg"), []byte("<svg>icon</svg>"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(assetsDir, "icon.svg"), []byte("<svg>icon</svg>"), 0o644); err != nil {
 		t.Fatalf("failed to write asset: %v", err)
 	}
 	return &domain.Package{
@@ -267,8 +267,10 @@ func TestEngine_RenderWidget_Errors(t *testing.T) {
 	pkgs := map[string]*domain.Package{"syntax-pkg": syntaxPkg, "missing-file-pkg": missingFilePkg, "exec-err-pkg": execErrPkg}
 	snap := &config.Snapshot{
 		Config: &config.Config{Display: config.DisplayConfig{Widgets: []config.WidgetConfig{
-			{ID: "w-syntax", Type: "syntax-pkg"}, {ID: "w-missing-file", Type: "missing-file-pkg"},
-			{ID: "w-exec-err", Type: "exec-err-pkg"}, {ID: "w-missing-pkg", Type: "nonexistent"},
+			{ID: "w-syntax", Type: "syntax-pkg"},
+			{ID: "w-missing-file", Type: "missing-file-pkg"},
+			{ID: "w-exec-err", Type: "exec-err-pkg"},
+			{ID: "w-missing-pkg", Type: "nonexistent"},
 		}}},
 		Packages: pkgs,
 	}
@@ -330,7 +332,7 @@ func TestEngine_CacheAndInvalidation(t *testing.T) {
 	if err != nil || !strings.Contains(string(out1), "v1: instance-1") {
 		t.Fatalf("first render: err=%v, out=%s", err, out1)
 	}
-	if err := os.WriteFile(pkg.ViewPath, []byte(`<span>v2: {{.ID}}</span>`), 0644); err != nil {
+	if err := os.WriteFile(pkg.ViewPath, []byte(`<span>v2: {{.ID}}</span>`), 0o644); err != nil {
 		t.Fatalf("failed to update template: %v", err)
 	}
 	if out2, err := engine.RenderWidget(context.Background(), "instance-1"); err != nil || !strings.Contains(string(out2), "v1: instance-1") {

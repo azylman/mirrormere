@@ -193,13 +193,17 @@ func (m *mockAll) w(w http.ResponseWriter, s string) {
 	_, _ = w.Write([]byte(s))
 }
 
-func (m *mockAll) ServeHTTP(w http.ResponseWriter, _ *http.Request)         { m.w(w, "events") }
-func (m *mockAll) PostScreenSelect(w http.ResponseWriter, _ *http.Request)  { m.w(w, "screen_select") }
+func (m *mockAll) ServeHTTP(w http.ResponseWriter, _ *http.Request)        { m.w(w, "events") }
+func (m *mockAll) PostScreenSelect(w http.ResponseWriter, _ *http.Request) { m.w(w, "screen_select") }
+
 func (m *mockAll) PostScreenAdvance(w http.ResponseWriter, _ *http.Request) { m.w(w, "screen_advance") }
-func (m *mockAll) PostScreenPause(w http.ResponseWriter, _ *http.Request)   { m.w(w, "screen_pause") }
+
+func (m *mockAll) PostScreenPause(w http.ResponseWriter, _ *http.Request) { m.w(w, "screen_pause") }
+
 func (m *mockAll) GetWidgetRender(w http.ResponseWriter, _ *http.Request, id string) {
 	m.w(w, "render:"+id)
 }
+
 func (m *mockAll) GetWidgetAsset(w http.ResponseWriter, _ *http.Request, t, p string) {
 	m.w(w, "asset:"+t+":"+p)
 }
@@ -209,19 +213,24 @@ func (m *mockAll) PostWidgetPush(w http.ResponseWriter, _ *http.Request, id stri
 }
 func (m *mockAll) GetDisplay(w http.ResponseWriter, _ *http.Request)          { m.w(w, "display") }
 func (m *mockAll) GetStatic(w http.ResponseWriter, _ *http.Request, p string) { m.w(w, "static:"+p) }
+
 func (m *mockAll) CompleteListItem(w http.ResponseWriter, _ *http.Request, l, i string) {
 	m.w(w, "complete:"+l+":"+i)
 }
-func (m *mockAll) GetAudio(w http.ResponseWriter, _ *http.Request)          { m.w(w, "audio") }
-func (m *mockAll) PostAudioVolume(w http.ResponseWriter, _ *http.Request)   { m.w(w, "volume") }
-func (m *mockAll) PostAudioMute(w http.ResponseWriter, _ *http.Request)     { m.w(w, "mute") }
-func (m *mockAll) PostVideoTrigger(w http.ResponseWriter, _ *http.Request)  { m.w(w, "v_trigger") }
-func (m *mockAll) PostVideoDismiss(w http.ResponseWriter, _ *http.Request)  { m.w(w, "v_dismiss") }
-func (m *mockAll) PostVideoAction(w http.ResponseWriter, _ *http.Request)   { m.w(w, "v_action") }
-func (m *mockAll) PostVideoState(w http.ResponseWriter, _ *http.Request)    { m.w(w, "v_post_state") }
-func (m *mockAll) GetVideoState(w http.ResponseWriter, _ *http.Request)     { m.w(w, "v_get_state") }
-func (m *mockAll) PostVoiceState(w http.ResponseWriter, _ *http.Request)    { m.w(w, "voice_state") }
+func (m *mockAll) GetAudio(w http.ResponseWriter, _ *http.Request)         { m.w(w, "audio") }
+func (m *mockAll) PostAudioVolume(w http.ResponseWriter, _ *http.Request)  { m.w(w, "volume") }
+func (m *mockAll) PostAudioMute(w http.ResponseWriter, _ *http.Request)    { m.w(w, "mute") }
+func (m *mockAll) PostVideoTrigger(w http.ResponseWriter, _ *http.Request) { m.w(w, "v_trigger") }
+func (m *mockAll) PostVideoDismiss(w http.ResponseWriter, _ *http.Request) { m.w(w, "v_dismiss") }
+func (m *mockAll) PostVideoAction(w http.ResponseWriter, _ *http.Request)  { m.w(w, "v_action") }
+func (m *mockAll) PostVideoState(w http.ResponseWriter, _ *http.Request)   { m.w(w, "v_post_state") }
+
+func (m *mockAll) GetVideoState(w http.ResponseWriter, _ *http.Request) { m.w(w, "v_get_state") }
+
+func (m *mockAll) PostVoiceState(w http.ResponseWriter, _ *http.Request) { m.w(w, "voice_state") }
+
 func (m *mockAll) PostVoiceInteract(w http.ResponseWriter, _ *http.Request) { m.w(w, "voice_interact") }
+
 func (m *mockAll) PostVoiceHeartbeat(w http.ResponseWriter, _ *http.Request) {
 	m.w(w, "voice_heartbeat")
 }

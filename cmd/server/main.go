@@ -137,7 +137,8 @@ func householdThemeFunc(sp render.StateSnapshotProvider) func() string {
 func evaluateThemeTransition(currentTheme func() string, sp interface {
 	GetTheme() string
 	SetTheme(string)
-}, hub *events.Hub, logger *slog.Logger) bool {
+}, hub *events.Hub, logger *slog.Logger,
+) bool {
 	if currentTheme == nil || sp == nil {
 		return false
 	}
@@ -218,8 +219,12 @@ func handleSIGHUP(
 
 			if snap != nil && snap.Config != nil {
 				newHost, newPort := server.DefaultHost, server.DefaultPort
-				if snap.Config.Host != "" { newHost = snap.Config.Host }
-				if snap.Config.Port != nil { newPort = *snap.Config.Port }
+				if snap.Config.Host != "" {
+					newHost = snap.Config.Host
+				}
+				if snap.Config.Port != nil {
+					newPort = *snap.Config.Port
+				}
 				if newHost != initialHost || newPort != initialPort {
 					logger.Warn("host or port changed in configuration; server restart required for changes to take effect",
 						"bound_host", initialHost, "bound_port", initialPort, "new_host", newHost, "new_port", newPort)
@@ -280,13 +285,16 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 	builtinDir := widget.DefaultBuiltinDir
 	for _, c := range []string{"/app/widgets", "widgets", "../../widgets"} {
 		if fi, err := os.Stat(c); err == nil && fi.IsDir() {
-			builtinDir = c; break
+			builtinDir = c
+			break
 		}
 	}
 	customDir := widget.DefaultCustomDir
 	if configPath != "" {
 		if cDir := filepath.Join(filepath.Dir(configPath), "widgets"); cDir != "" {
-			if fi, err := os.Stat(cDir); err == nil && fi.IsDir() { customDir = cDir }
+			if fi, err := os.Stat(cDir); err == nil && fi.IsDir() {
+				customDir = cDir
+			}
 		}
 	}
 	loader := widget.NewLoader(builtinDir, customDir)
@@ -316,8 +324,12 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 
 	initialHost, initialPort := server.DefaultHost, server.DefaultPort
 	if snapshot != nil && snapshot.Config != nil {
-		if snapshot.Config.Host != "" { initialHost = snapshot.Config.Host }
-		if snapshot.Config.Port != nil { initialPort = *snapshot.Config.Port }
+		if snapshot.Config.Host != "" {
+			initialHost = snapshot.Config.Host
+		}
+		if snapshot.Config.Port != nil {
+			initialPort = *snapshot.Config.Port
+		}
 	}
 
 	stateProvider := events.NewInMemoryStateProvider(configManager)
@@ -437,8 +449,12 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 		return err
 	}
 
-	if rcfg.addrChan != nil { rcfg.addrChan <- listener.Addr().String() }
-	if readyChan != nil { readyChan <- struct{}{} }
+	if rcfg.addrChan != nil {
+		rcfg.addrChan <- listener.Addr().String()
+	}
+	if readyChan != nil {
+		readyChan <- struct{}{}
+	}
 
 	errChan := make(chan error, 1)
 	go func() { errChan <- srv.Serve(listener) }()

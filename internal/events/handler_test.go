@@ -21,22 +21,26 @@ type flushingRecorder struct {
 func newFlushingRecorder() *flushingRecorder {
 	return &flushingRecorder{ResponseRecorder: httptest.NewRecorder(), flushCh: make(chan struct{}, 100)}
 }
+
 func (f *flushingRecorder) Write(b []byte) (int, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.ResponseRecorder.Write(b)
 }
+
 func (f *flushingRecorder) Flush() {
 	select {
 	case f.flushCh <- struct{}{}:
 	default:
 	}
 }
+
 func (f *flushingRecorder) BodyString() string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.Body.String()
 }
+
 func (f *flushingRecorder) wait(n int) {
 	for i := 0; i < n; i++ {
 		select {
@@ -178,7 +182,10 @@ func TestHandler_InitialHydration(t *testing.T) {
 				Handler(hub).ServeHTTP(rec, req)
 			} else {
 				done := make(chan struct{})
-				go func() { defer close(done); Handler(hub).ServeHTTP(rec, req) }()
+				go func() {
+					defer close(done)
+					Handler(hub).ServeHTTP(rec, req)
+				}()
 				rec.wait(2)
 				typ := "card2"
 				if tc.m == "live_after_replay" {

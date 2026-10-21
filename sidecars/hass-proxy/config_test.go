@@ -24,29 +24,29 @@ func TestLoadConfig(t *testing.T) {
 		wantNodeCt int
 	}{
 		{
-			name: "valid_full",
-			yaml: "server:\n  host: 127.0.0.1\n  port: 8099\n  read_timeout_seconds: 15\n  write_timeout_seconds: 20\nhomeassistant:\n  url: http://ha.local:8123\n  token: secret-token\n  agent_id: ag\n  language: fr\n  timeout_ms: 3500\n  conversation_path: /api/conv\n  device_id: fallback-dev-999\n  node_devices:\n    kiosk: dev-1\n    office: dev-2\n",
+			name:     "valid_full",
+			yaml:     "server:\n  host: 127.0.0.1\n  port: 8099\n  read_timeout_seconds: 15\n  write_timeout_seconds: 20\nhomeassistant:\n  url: http://ha.local:8123\n  token: secret-token\n  agent_id: ag\n  language: fr\n  timeout_ms: 3500\n  conversation_path: /api/conv\n  device_id: fallback-dev-999\n  node_devices:\n    kiosk: dev-1\n    office: dev-2\n",
 			wantPort: 8099, wantURL: "http://ha.local:8123", wantToken: "secret-token", wantLang: "fr", wantDevID: "fallback-dev-999", wantNodeCt: 2,
 		},
 		{
-			name: "defaults_and_normalization",
-			yaml: "homeassistant:\n  url: http://ha.local:8123/\n  conversation_path: api/conv\n  timeout_ms: -10\nserver:\n  read_timeout_seconds: -1\n  write_timeout_seconds: -2\n",
+			name:     "defaults_and_normalization",
+			yaml:     "homeassistant:\n  url: http://ha.local:8123/\n  conversation_path: api/conv\n  timeout_ms: -10\nserver:\n  read_timeout_seconds: -1\n  write_timeout_seconds: -2\n",
 			wantPort: DefaultServerPort, wantURL: "http://ha.local:8123", wantLang: DefaultHALanguage,
 		},
 		{
-			name: "empty_conversation_path",
-			yaml: "homeassistant:\n  url: http://ha.local:8123\n  conversation_path: ''\n",
+			name:     "empty_conversation_path",
+			yaml:     "homeassistant:\n  url: http://ha.local:8123\n  conversation_path: ''\n",
 			wantPort: DefaultServerPort, wantURL: "http://ha.local:8123", wantLang: DefaultHALanguage,
 		},
 		{
-			name: "secret_from_hass_token_env",
-			yaml: "homeassistant:\n  url: http://ha.local:8123\n",
+			name:   "secret_from_hass_token_env",
+			yaml:   "homeassistant:\n  url: http://ha.local:8123\n",
 			envKey: "HASS_TOKEN", envVal: "env-hass-token",
 			wantPort: DefaultServerPort, wantURL: "http://ha.local:8123", wantToken: "env-hass-token", wantLang: DefaultHALanguage,
 		},
 		{
-			name: "secret_from_homeassistant_token_env",
-			yaml: "homeassistant:\n  url: http://ha.local:8123\n",
+			name:   "secret_from_homeassistant_token_env",
+			yaml:   "homeassistant:\n  url: http://ha.local:8123\n",
 			envKey: "HOMEASSISTANT_TOKEN", envVal: "env-ha-token",
 			wantPort: DefaultServerPort, wantURL: "http://ha.local:8123", wantToken: "env-ha-token", wantLang: DefaultHALanguage,
 		},
@@ -62,7 +62,7 @@ func TestLoadConfig(t *testing.T) {
 			path := filepath.Join(tmpDir, tc.name+".yaml")
 			if tc.nonExist {
 				path = filepath.Join(tmpDir, "does-not-exist.yaml")
-			} else if err := os.WriteFile(path, []byte(tc.yaml), 0600); err != nil {
+			} else if err := os.WriteFile(path, []byte(tc.yaml), 0o600); err != nil {
 				t.Fatalf("failed to write test yaml: %v", err)
 			}
 
@@ -118,7 +118,7 @@ func TestResolveConfigPath_Candidates(t *testing.T) {
 	}
 	defer func() { _ = os.Chdir(origDir) }()
 
-	if err := os.WriteFile(filepath.Join(tmpDir, "config.yaml"), []byte("homeassistant:\n  url: http://localhost:8123\n"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(tmpDir, "config.yaml"), []byte("homeassistant:\n  url: http://localhost:8123\n"), 0o600); err != nil {
 		t.Fatalf("failed to write config.yaml: %v", err)
 	}
 	resolved, err := resolveConfigPath("")

@@ -15,7 +15,7 @@ import (
 	"github.com/azylman/mirrormere/internal/provider"
 )
 
-func intPtr(i int) *int { return &i }
+func intPtr(i int) *int    { return &i }
 func boolPtr(b bool) *bool { return &b }
 
 type mockHeaderSink struct {
@@ -35,7 +35,10 @@ func (s *mockHeaderSink) GetWeather() *events.HeaderWeather {
 	return s.weather
 }
 
-func sampleHeaderOpenMeteoJSON() string { return `{"current":{"temperature_2m":72.4,"weather_code":1}}` }
+func sampleHeaderOpenMeteoJSON() string {
+	return `{"current":{"temperature_2m":72.4,"weather_code":1}}`
+}
+
 const sampleHeaderNightJSON = `{"current":{"temperature_2m":58.2,"weather_code":0,"is_day":0}}`
 
 func mkHeaderCfg(lat, lon float64, units string, interval *int) *config.HeaderWeatherConfig {
@@ -49,7 +52,9 @@ func mkHeaderCfgWithLoc(lat, lon float64, units string, interval *int, loc strin
 func TestNewHeaderWeatherPoller_Defaults(t *testing.T) {
 	t.Parallel()
 	poller := provider.NewHeaderWeatherPoller(provider.HeaderWeatherPollerConfig{})
-	if poller == nil { t.Fatal("expected non-nil poller") }
+	if poller == nil {
+		t.Fatal("expected non-nil poller")
+	}
 	poller.Stop()
 }
 
@@ -107,27 +112,51 @@ func TestHeaderWeatherPoller_FetchOnce(t *testing.T) {
 			}
 			hw, err := poller.FetchOnce(context.Background())
 			if tc.wantErrSub != "" {
-				if err == nil || !strings.Contains(err.Error(), tc.wantErrSub) { t.Fatalf("want error containing %q, got %v", tc.wantErrSub, err) }
+				if err == nil || !strings.Contains(err.Error(), tc.wantErrSub) {
+					t.Fatalf("want error containing %q, got %v", tc.wantErrSub, err)
+				}
 				return
 			}
-			if err != nil { t.Fatalf("unexpected error: %v", err) }
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
 			if tc.weatherCfg == nil {
-				if hw != nil { t.Fatalf("expected nil for nil cfg, got %+v", hw) }
+				if hw != nil {
+					t.Fatalf("expected nil for nil cfg, got %+v", hw)
+				}
 				return
 			}
-			if tc.wantTemp != 0 && hw.Temperature != tc.wantTemp { t.Errorf("temp = %v, want %v", hw.Temperature, tc.wantTemp) }
-			if tc.wantUnits != "" && hw.Units != tc.wantUnits { t.Errorf("units = %q, want %q", hw.Units, tc.wantUnits) }
-			if tc.wantCode != 0 && hw.WeatherCode != tc.wantCode { t.Errorf("code = %v, want %v", hw.WeatherCode, tc.wantCode) }
-			if tc.wantIcon != "" && hw.Icon != tc.wantIcon { t.Errorf("icon = %q, want %q", hw.Icon, tc.wantIcon) }
-			if tc.wantCond != "" && hw.Condition != tc.wantCond { t.Errorf("cond = %q, want %q", hw.Condition, tc.wantCond) }
-			if hw.Location != tc.wantLoc { t.Errorf("location = %q, want %q", hw.Location, tc.wantLoc) }
+			if tc.wantTemp != 0 && hw.Temperature != tc.wantTemp {
+				t.Errorf("temp = %v, want %v", hw.Temperature, tc.wantTemp)
+			}
+			if tc.wantUnits != "" && hw.Units != tc.wantUnits {
+				t.Errorf("units = %q, want %q", hw.Units, tc.wantUnits)
+			}
+			if tc.wantCode != 0 && hw.WeatherCode != tc.wantCode {
+				t.Errorf("code = %v, want %v", hw.WeatherCode, tc.wantCode)
+			}
+			if tc.wantIcon != "" && hw.Icon != tc.wantIcon {
+				t.Errorf("icon = %q, want %q", hw.Icon, tc.wantIcon)
+			}
+			if tc.wantCond != "" && hw.Condition != tc.wantCond {
+				t.Errorf("cond = %q, want %q", hw.Condition, tc.wantCond)
+			}
+			if hw.Location != tc.wantLoc {
+				t.Errorf("location = %q, want %q", hw.Location, tc.wantLoc)
+			}
 			for _, q := range tc.wantQuery {
-				if !strings.Contains(reqQuery, q) { t.Errorf("query %q missing %q", reqQuery, q) }
+				if !strings.Contains(reqQuery, q) {
+					t.Errorf("query %q missing %q", reqQuery, q)
+				}
 			}
 			if tc.checkSink {
-				if saved := sink.GetWeather(); saved == nil || saved.Temperature != tc.wantTemp { t.Errorf("sink mismatch: %+v", saved) }
+				if saved := sink.GetWeather(); saved == nil || saved.Temperature != tc.wantTemp {
+					t.Errorf("sink mismatch: %+v", saved)
+				}
 				evts := broadcaster.getEvents()
-				if len(evts) == 0 || evts[len(evts)-1].Type != events.EventHeaderUpdate { t.Fatalf("expected header.update event, got %+v", evts) }
+				if len(evts) == 0 || evts[len(evts)-1].Type != events.EventHeaderUpdate {
+					t.Fatalf("expected header.update event, got %+v", evts)
+				}
 				var data events.HeaderUpdateData
 				if err := json.Unmarshal(evts[len(evts)-1].Data, &data); err != nil || data.Timezone != tc.tz || data.Weather == nil || data.Weather.Temperature != tc.wantTemp {
 					t.Errorf("unexpected broadcast data: %+v", data)
@@ -143,7 +172,10 @@ func TestHeaderWeatherPoller_StartStopUpdate(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(sampleHeaderOpenMeteoJSON()))
-		select { case fetched <- struct{}{}: default: }
+		select {
+		case fetched <- struct{}{}:
+		default:
+		}
 	}))
 	defer ts.Close()
 
@@ -175,14 +207,24 @@ func TestProviderCoordinator_HeaderWeatherPoller_Lifecycle(t *testing.T) {
 	coord := provider.NewCoordinator(provider.CoordinatorConfig{
 		Broadcaster: broadcaster, HeaderWeatherSink: sink, HeaderPollerClient: ts.Client(), HeaderPollerBaseURL: ts.URL,
 	}, snap)
-	if _, ok := broadcaster.waitForPublish(2 * time.Second); !ok { t.Fatal("waitForPublish timed out") }
-	if saved := sink.GetWeather(); saved == nil || saved.Temperature != 72.4 { t.Errorf("expected initial header weather in sink, got %+v", saved) }
+	if _, ok := broadcaster.waitForPublish(2 * time.Second); !ok {
+		t.Fatal("waitForPublish timed out")
+	}
+	if saved := sink.GetWeather(); saved == nil || saved.Temperature != 72.4 {
+		t.Errorf("expected initial header weather in sink, got %+v", saved)
+	}
 
 	newSnap := &config.Snapshot{Config: &config.Config{Timezone: "Europe/London", Display: config.DisplayConfig{
 		Header: config.HeaderConfig{Enabled: boolPtr(true), Weather: mkHeaderCfg(51.5074, -0.1278, "metric", intPtr(600))},
 	}}}
-	if err := coord.UpdateConfig(newSnap); err != nil { t.Fatalf("UpdateConfig failed: %v", err) }
+	if err := coord.UpdateConfig(newSnap); err != nil {
+		t.Fatalf("UpdateConfig failed: %v", err)
+	}
 	noWeatherSnap := &config.Snapshot{Config: &config.Config{Timezone: "UTC", Display: config.DisplayConfig{Header: config.HeaderConfig{Enabled: boolPtr(true)}}}}
-	if err := coord.UpdateConfig(noWeatherSnap); err != nil { t.Fatalf("UpdateConfig removing weather failed: %v", err) }
-	if err := coord.Shutdown(context.Background()); err != nil { t.Fatalf("Shutdown failed: %v", err) }
+	if err := coord.UpdateConfig(noWeatherSnap); err != nil {
+		t.Fatalf("UpdateConfig removing weather failed: %v", err)
+	}
+	if err := coord.Shutdown(context.Background()); err != nil {
+		t.Fatalf("Shutdown failed: %v", err)
+	}
 }

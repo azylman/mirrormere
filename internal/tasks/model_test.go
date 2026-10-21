@@ -40,12 +40,12 @@ func TestBuildSnapshot(t *testing.T) {
 			wantSections:  []string{},
 		},
 		{
-			name:         "active_sorting_and_completed_hidden",
-			list:         tasks.List{ID: "chores", Name: "Chores", Sections: []string{"Kitchen"}},
-			items:        []tasks.ListItem{mkItem("b", false, 2, 1, 1), mkItem("a2", false, 1, 5, 5), mkItem("a1", false, 1, 2, 2), mkItem("a0", false, 1, 2, 2), mkItem("d1", true, 0, 1, 10)},
+			name:          "active_sorting_and_completed_hidden",
+			list:          tasks.List{ID: "chores", Name: "Chores", Sections: []string{"Kitchen"}},
+			items:         []tasks.ListItem{mkItem("b", false, 2, 1, 1), mkItem("a2", false, 1, 5, 5), mkItem("a1", false, 1, 2, 2), mkItem("a0", false, 1, 2, 2), mkItem("d1", true, 0, 1, 10)},
 			showCompleted: 0,
-			wantIDs:      []string{"a0", "a1", "a2", "b"},
-			wantSections: []string{"Kitchen"},
+			wantIDs:       []string{"a0", "a1", "a2", "b"},
+			wantSections:  []string{"Kitchen"},
 		},
 		{
 			name:          "completed_sorted_and_capped",

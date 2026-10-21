@@ -83,9 +83,10 @@ func (c *SWRCache) RecordSuccess(widgetID string, data any, now time.Time) (Widg
 }
 
 // RecordFailure records a failed data fetch. Under Stale-While-Revalidate:
-// - If LKG data exists, state transitions to "degraded", LKG data is preserved,
-//   and timestamp retains the timestamp of the last successful fetch.
-// - If no LKG data exists (cold-boot), state transitions to "error" with empty fallback data.
+//   - If LKG data exists, state transitions to "degraded", LKG data is preserved,
+//     and timestamp retains the timestamp of the last successful fetch.
+//   - If no LKG data exists (cold-boot), state transitions to "error" with empty fallback data.
+//
 // Returns the active payload and whether an operational state transition occurred.
 func (c *SWRCache) RecordFailure(widgetID string, err error, now time.Time) (WidgetPayload, bool) {
 	c.mu.Lock()

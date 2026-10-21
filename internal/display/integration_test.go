@@ -19,9 +19,14 @@ type staticSnapshotProvider struct {
 	snapshot *config.Snapshot
 }
 
-func (p *staticSnapshotProvider) CurrentSnapshot() *config.Snapshot                  { return p.snapshot }
-func (p *staticSnapshotProvider) GetWidgetState(string) (any, string, string, bool) { return map[string]any{}, "healthy", "", true }
-func (p *staticSnapshotProvider) CurrentStatus() config.Status                      { return config.Status{ConfigStatus: config.ConfigStatusOK} }
+func (p *staticSnapshotProvider) CurrentSnapshot() *config.Snapshot { return p.snapshot }
+func (p *staticSnapshotProvider) GetWidgetState(string) (any, string, string, bool) {
+	return map[string]any{}, "healthy", "", true
+}
+
+func (p *staticSnapshotProvider) CurrentStatus() config.Status {
+	return config.Status{ConfigStatus: config.ConfigStatusOK}
+}
 
 func TestWalkingSkeleton_EndToEnd(t *testing.T) {
 	t.Parallel()

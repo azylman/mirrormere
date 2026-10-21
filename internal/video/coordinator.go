@@ -21,6 +21,7 @@ type VideoStateSink interface {
 type CoordinatorOption func(*Coordinator)
 
 func WithSink(sink VideoStateSink) CoordinatorOption { return func(c *Coordinator) { c.sink = sink } }
+
 func WithHTTPClient(client *http.Client) CoordinatorOption {
 	return func(c *Coordinator) {
 		if client != nil {
@@ -28,6 +29,7 @@ func WithHTTPClient(client *http.Client) CoordinatorOption {
 		}
 	}
 }
+
 func WithTimerFunc(tf TimerFunc) CoordinatorOption {
 	return func(c *Coordinator) {
 		if tf != nil {

@@ -23,7 +23,6 @@ func repeatW(prefix string, c, r, n int) []layout.WidgetInput {
 	return res
 }
 
-
 func TestComputeScreens(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

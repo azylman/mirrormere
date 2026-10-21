@@ -16,8 +16,8 @@ func TestGetDisplay_RoutingAndResolution(t *testing.T) {
 	tempDir := t.TempDir()
 	primPath := filepath.Join(tempDir, "display.html")
 	localPath := filepath.Join(tempDir, "local.html")
-	_ = os.WriteFile(primPath, []byte("<h1>primary</h1>"), 0644)
-	_ = os.WriteFile(localPath, []byte("<h1>local</h1>"), 0644)
+	_ = os.WriteFile(primPath, []byte("<h1>primary</h1>"), 0o644)
+	_ = os.WriteFile(localPath, []byte("<h1>local</h1>"), 0o644)
 
 	tests := []struct {
 		name     string
@@ -199,19 +199,19 @@ func TestGetStatic(t *testing.T) {
 		"test.css":              []byte(".a { color: red; }"),
 		"test.js":               []byte("const x = 1;"),
 		"test.svg":              []byte("<svg></svg>"),
-		"test.png":              []byte{0x89, 'P', 'N', 'G'},
-		"test.jpg":              []byte{0xFF, 0xD8, 0xFF},
+		"test.png":              {0x89, 'P', 'N', 'G'},
+		"test.jpg":              {0xFF, 0xD8, 0xFF},
 		"test.woff2":            []byte("wOF2"),
 		"test.html":             []byte("<html>test</html>"),
 		"test.bin":              []byte("binary data"),
 		"test.custom":           []byte("custom data"),
 		"js/calendar_family.js": []byte("console.log('calendar controller');"),
 	}
-	_ = os.MkdirAll(filepath.Join(tempDir, "js"), 0755)
+	_ = os.MkdirAll(filepath.Join(tempDir, "js"), 0o755)
 	for relPath, data := range files {
-		_ = os.WriteFile(filepath.Join(tempDir, relPath), data, 0644)
+		_ = os.WriteFile(filepath.Join(tempDir, relPath), data, 0o644)
 	}
-	_ = os.WriteFile(filepath.Join(localDir, "theme.css"), []byte("body { background: #000; }"), 0644)
+	_ = os.WriteFile(filepath.Join(localDir, "theme.css"), []byte("body { background: #000; }"), 0o644)
 
 	h := display.NewHandler(display.WithStaticDir(tempDir), display.WithLocalStaticDir(localDir))
 	hFallback := display.NewHandler(display.WithStaticDir(""), display.WithLocalStaticDir(localDir))
