@@ -158,9 +158,9 @@ def load_config(path: Optional[str] = None) -> VoiceConfig:
                             if field_type == bool:
                                 if isinstance(v, bool):
                                     setattr(cfg, k, v)
-                            elif field_type == float and isinstance(v, (int, float)):
+                            elif field_type == float and isinstance(v, (int, float)) and not isinstance(v, bool):
                                 setattr(cfg, k, float(v))
-                            elif field_type == int and isinstance(v, int):
+                            elif field_type == int and isinstance(v, int) and not isinstance(v, bool):
                                 setattr(cfg, k, int(v))
                             elif field_type == list and isinstance(v, list):
                                 setattr(cfg, k, [str(item) for item in v])

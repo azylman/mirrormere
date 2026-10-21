@@ -306,6 +306,21 @@ class TestBargeInConfigValidation(unittest.TestCase):
         cfg = self._validated(barge_in_vad_threshold=0.85)
         self.assertEqual(cfg.barge_in_vad_threshold, 0.85)
 
+    def test_load_config_bool_values_for_numeric_barge_in_keys_use_defaults(self):
+        # The loader's int/float branches accept bool (bool is an int subclass),
+        # so without a guard `true` would arrive as 1 / 1.0 and skip _validate's bool check.
+        yaml_content = "ear:\n  barge_in_min_speech_ms: true\n  barge_in_vad_threshold: true\n"
+        with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
+            f.write(yaml_content)
+            temp_path = f.name
+        try:
+            cfg = load_config(temp_path)
+            self.assertEqual(cfg.barge_in_min_speech_ms, 300)
+            self.assertEqual(cfg.barge_in_vad_threshold, 0.7)
+        finally:
+            if os.path.exists(temp_path):
+                os.unlink(temp_path)
+
     def test_parse_simple_yaml_booleans(self):
         parsed = _parse_simple_yaml("ear:\n  barge_in: true\n  other: False\n")
         self.assertIs(parsed["ear"]["barge_in"], True)
