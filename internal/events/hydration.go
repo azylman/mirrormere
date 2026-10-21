@@ -126,7 +126,12 @@ func NewInMemoryStateProvider(mgr *config.Manager) *InMemoryStateProvider {
 	}
 }
 
-func (p *InMemoryStateProvider) SetSnapshot(snap *config.Snapshot) { p.mu.Lock(); defer p.mu.Unlock(); p.snapshot = snap }
+func (p *InMemoryStateProvider) SetSnapshot(snap *config.Snapshot) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.snapshot = snap
+}
+
 func (p *InMemoryStateProvider) CurrentSnapshot() *config.Snapshot {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
@@ -136,7 +141,12 @@ func (p *InMemoryStateProvider) CurrentSnapshot() *config.Snapshot {
 	return p.snapshot
 }
 
-func (p *InMemoryStateProvider) SetStatus(status config.Status) { p.mu.Lock(); defer p.mu.Unlock(); p.status = &status }
+func (p *InMemoryStateProvider) SetStatus(status config.Status) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.status = &status
+}
+
 func (p *InMemoryStateProvider) CurrentStatus() config.Status {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
@@ -179,14 +189,24 @@ func (p *InMemoryStateProvider) GetWidgetTimestamp(widgetID string) (string, boo
 	return entry.timestamp, true
 }
 
-func (p *InMemoryStateProvider) SetHeaderWeather(weather *HeaderWeather) { p.mu.Lock(); defer p.mu.Unlock(); p.weather = weather }
+func (p *InMemoryStateProvider) SetHeaderWeather(weather *HeaderWeather) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.weather = weather
+}
+
 func (p *InMemoryStateProvider) GetHeaderWeather() (*HeaderWeather, bool) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	return p.weather, p.weather != nil
 }
 
-func (p *InMemoryStateProvider) SetVideoState(state *VideoStateData) { p.mu.Lock(); defer p.mu.Unlock(); p.videoState = state }
+func (p *InMemoryStateProvider) SetVideoState(state *VideoStateData) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.videoState = state
+}
+
 func (p *InMemoryStateProvider) GetVideoState() *VideoStateData {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
@@ -196,7 +216,12 @@ func (p *InMemoryStateProvider) GetVideoState() *VideoStateData {
 	return &VideoStateData{Mode: "widgets"}
 }
 
-func (p *InMemoryStateProvider) SetAudioState(state *AudioStateData) { p.mu.Lock(); defer p.mu.Unlock(); p.audioState = state }
+func (p *InMemoryStateProvider) SetAudioState(state *AudioStateData) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.audioState = state
+}
+
 func (p *InMemoryStateProvider) GetAudioState() *AudioStateData {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
@@ -206,7 +231,12 @@ func (p *InMemoryStateProvider) GetAudioState() *AudioStateData {
 	return &AudioStateData{Volume: 75}
 }
 
-func (p *InMemoryStateProvider) SetVoiceState(state *VoiceStateData) { p.mu.Lock(); defer p.mu.Unlock(); p.voiceState = state }
+func (p *InMemoryStateProvider) SetVoiceState(state *VoiceStateData) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.voiceState = state
+}
+
 func (p *InMemoryStateProvider) GetVoiceState() *VoiceStateData {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
@@ -216,7 +246,12 @@ func (p *InMemoryStateProvider) GetVoiceState() *VoiceStateData {
 	return &VoiceStateData{State: "idle"}
 }
 
-func (p *InMemoryStateProvider) SetTheme(theme string) { p.mu.Lock(); defer p.mu.Unlock(); p.theme = theme }
+func (p *InMemoryStateProvider) SetTheme(theme string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.theme = theme
+}
+
 func (p *InMemoryStateProvider) GetTheme() string {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
@@ -226,7 +261,12 @@ func (p *InMemoryStateProvider) GetTheme() string {
 	return "day"
 }
 
-func (p *InMemoryStateProvider) SetProvidersStatus(providers map[string]string) { p.mu.Lock(); defer p.mu.Unlock(); p.providers = providers }
+func (p *InMemoryStateProvider) SetProvidersStatus(providers map[string]string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.providers = providers
+}
+
 func (p *InMemoryStateProvider) GetProvidersStatus() map[string]string {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
@@ -240,7 +280,12 @@ func (p *InMemoryStateProvider) GetProvidersStatus() map[string]string {
 	return copied
 }
 
-func (p *InMemoryStateProvider) SetScreenRotateData(data *ScreenRotateData) { p.mu.Lock(); defer p.mu.Unlock(); p.screenRotate = data }
+func (p *InMemoryStateProvider) SetScreenRotateData(data *ScreenRotateData) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.screenRotate = data
+}
+
 func (p *InMemoryStateProvider) GetScreenRotateData() *ScreenRotateData {
 	p.mu.RLock()
 	defer p.mu.RUnlock()

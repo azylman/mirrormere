@@ -138,8 +138,8 @@ func TestActionServer_HandleHealthz(t *testing.T) {
 
 type errResponseWriter struct{ header http.Header }
 
-func (e *errResponseWriter) Header() http.Header         { return e.header }
-func (e *errResponseWriter) Write([]byte) (int, error)   { return 0, errors.New("simulated write error") }
+func (e *errResponseWriter) Header() http.Header        { return e.header }
+func (e *errResponseWriter) Write([]byte) (int, error)  { return 0, errors.New("simulated write error") }
 func (e *errResponseWriter) WriteHeader(statusCode int) {}
 
 func TestWriteJSON_Error(t *testing.T) {

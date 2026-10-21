@@ -111,7 +111,7 @@ func Handler(hub *Hub) http.Handler {
 		}
 
 		// 9. Drain any events queued during batch preparation
-		drainLoop:
+	drainLoop:
 		for {
 			select {
 			case <-r.Context().Done():

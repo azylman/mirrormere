@@ -27,17 +27,27 @@ var (
 // SetNowFnForTest overrides the time provider for testing debounce without sleeps.
 func SetNowFnForTest(fn func() time.Time) func() {
 	flushMu.Lock()
-	prev := nowFn; nowFn = fn
+	prev := nowFn
+	nowFn = fn
 	flushMu.Unlock()
-	return func() { flushMu.Lock(); nowFn = prev; flushMu.Unlock() }
+	return func() {
+		flushMu.Lock()
+		nowFn = prev
+		flushMu.Unlock()
+	}
 }
 
 // SetWriteCountersDirForTest overrides writeCountersDirFn for testing purposes.
 func SetWriteCountersDirForTest(fn func(string) error) func() {
 	writeCountersDirMu.Lock()
-	prev := writeCountersDirFn; writeCountersDirFn = fn
+	prev := writeCountersDirFn
+	writeCountersDirFn = fn
 	writeCountersDirMu.Unlock()
-	return func() { writeCountersDirMu.Lock(); writeCountersDirFn = prev; writeCountersDirMu.Unlock() }
+	return func() {
+		writeCountersDirMu.Lock()
+		writeCountersDirFn = prev
+		writeCountersDirMu.Unlock()
+	}
 }
 
 // Server encapsulates the HTTP handler and dependencies for the Home Assistant Fast-Path Proxy.

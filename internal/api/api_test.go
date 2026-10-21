@@ -218,9 +218,9 @@ func (m *mockServer) PostVoiceInteract(w http.ResponseWriter, r *http.Request) {
 func TestHandler_Endpoints(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name, method, path, body                                                           string
-		initMuted                                                                          bool
-		wantCode                                                                           int
+		name, method, path, body                                                                                          string
+		initMuted                                                                                                         bool
+		wantCode                                                                                                          int
 		wantSub, wantWidgetID, wantType, wantPath, wantTriggerID, wantDismissID, wantActionID, wantAction, wantVoiceState string
 	}{
 		{"audio_get", http.MethodGet, "/api/audio", "", false, http.StatusOK, `"volume":75`, "", "", "", "", "", "", "", ""},
@@ -280,9 +280,14 @@ func TestHandler_Endpoints(t *testing.T) {
 				t.Fatalf("got (%d, %q), want (%d, sub %q)", rec.Code, rec.Body.String(), tc.wantCode, tc.wantSub)
 			}
 			for _, check := range [][2]string{
-				{tc.wantWidgetID, mock.lastWidgetID}, {tc.wantType, mock.lastType}, {tc.wantPath, mock.lastPath},
-				{tc.wantTriggerID, mock.lastTriggerID}, {tc.wantDismissID, mock.lastDismissID},
-				{tc.wantActionID, mock.lastActionID}, {tc.wantAction, mock.lastAction}, {tc.wantVoiceState, mock.lastVoiceState},
+				{tc.wantWidgetID, mock.lastWidgetID},
+				{tc.wantType, mock.lastType},
+				{tc.wantPath, mock.lastPath},
+				{tc.wantTriggerID, mock.lastTriggerID},
+				{tc.wantDismissID, mock.lastDismissID},
+				{tc.wantActionID, mock.lastActionID},
+				{tc.wantAction, mock.lastAction},
+				{tc.wantVoiceState, mock.lastVoiceState},
 			} {
 				if check[0] != "" && check[1] != check[0] {
 					t.Fatalf("got %q, want %q", check[1], check[0])
@@ -309,10 +314,13 @@ func TestHandler_OptionsAndMuxConstructors(t *testing.T) {
 		},
 	})
 	endpoints := []struct{ method, path, body string }{
-		{http.MethodGet, "/v1/healthz", ""}, {http.MethodGet, "/v1/health", ""},
-		{http.MethodGet, "/v1/api/audio", ""}, {http.MethodGet, "/v1/api/widgets/widget-1/render", ""},
+		{http.MethodGet, "/v1/healthz", ""},
+		{http.MethodGet, "/v1/health", ""},
+		{http.MethodGet, "/v1/api/audio", ""},
+		{http.MethodGet, "/v1/api/widgets/widget-1/render", ""},
 		{http.MethodGet, "/v1/widget-types/clock/assets/icon.svg", ""},
-		{http.MethodPost, "/v1/api/audio/volume", `{"volume": 50}`}, {http.MethodPost, "/v1/api/audio/mute", `{}`},
+		{http.MethodPost, "/v1/api/audio/volume", `{"volume": 50}`},
+		{http.MethodPost, "/v1/api/audio/mute", `{}`},
 		{http.MethodPost, "/v1/api/screen/advance", `{"direction": "next"}`},
 		{http.MethodPost, "/v1/api/screen/pause", `{"paused": true}`},
 		{http.MethodPost, "/v1/api/screen/select", `{"screen_index": 0}`},
@@ -349,9 +357,9 @@ func TestServerInterfaceWrapper_ParameterErrors(t *testing.T) {
 	}
 	tests := []struct {
 		name, target, method, url string
-		pathParams               [][2]string
-		withMW                   bool
-		wantCode                 int
+		pathParams                [][2]string
+		withMW                    bool
+		wantCode                  int
 	}{
 		{"render_missing_widget_id", "get_widget_render", http.MethodGet, "/api/widgets//render", nil, false, http.StatusBadRequest},
 		{"push_missing_widget_id", "post_widget_push", http.MethodPost, "/api/widgets//push", nil, false, http.StatusBadRequest},
@@ -406,17 +414,28 @@ func TestServerInterfaceWrapper_ParameterErrors(t *testing.T) {
 
 func dispatchWrapper(w *ServerInterfaceWrapper, target string, rec http.ResponseWriter, req *http.Request) {
 	switch target {
-	case "get_widget_render": w.GetWidgetRender(rec, req)
-	case "post_widget_push": w.PostWidgetPush(rec, req)
-	case "get_widget_asset": w.GetWidgetAsset(rec, req)
-	case "complete_list_item": w.CompleteListItem(rec, req)
-	case "post_voice_interact": w.PostVoiceInteract(rec, req)
-	case "post_voice_state": w.PostVoiceState(rec, req)
-	case "post_video_action": w.PostVideoAction(rec, req)
-	case "post_video_dismiss": w.PostVideoDismiss(rec, req)
-	case "get_video_state": w.GetVideoState(rec, req)
-	case "post_video_state": w.PostVideoState(rec, req)
-	case "post_video_trigger": w.PostVideoTrigger(rec, req)
+	case "get_widget_render":
+		w.GetWidgetRender(rec, req)
+	case "post_widget_push":
+		w.PostWidgetPush(rec, req)
+	case "get_widget_asset":
+		w.GetWidgetAsset(rec, req)
+	case "complete_list_item":
+		w.CompleteListItem(rec, req)
+	case "post_voice_interact":
+		w.PostVoiceInteract(rec, req)
+	case "post_voice_state":
+		w.PostVoiceState(rec, req)
+	case "post_video_action":
+		w.PostVideoAction(rec, req)
+	case "post_video_dismiss":
+		w.PostVideoDismiss(rec, req)
+	case "get_video_state":
+		w.GetVideoState(rec, req)
+	case "post_video_state":
+		w.PostVideoState(rec, req)
+	case "post_video_trigger":
+		w.PostVideoTrigger(rec, req)
 	}
 }
 

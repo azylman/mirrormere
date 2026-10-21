@@ -127,6 +127,7 @@ func (t todoistTask) EffectiveOrder() int {
 	}
 	return t.Order
 }
+
 func (t todoistTask) EffectiveCreatedAt() string {
 	if t.CreatedAt != "" {
 		return t.CreatedAt

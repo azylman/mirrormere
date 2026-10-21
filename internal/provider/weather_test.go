@@ -14,11 +14,21 @@ import (
 
 func wCfg(lat, lon any, units, name, locName string) map[string]any {
 	m := map[string]any{}
-	if lat != nil { m["latitude"] = lat }
-	if lon != nil { m["longitude"] = lon }
-	if units != "" { m["units"] = units }
-	if name != "" { m["name"] = name }
-	if locName != "" { m["location_name"] = locName }
+	if lat != nil {
+		m["latitude"] = lat
+	}
+	if lon != nil {
+		m["longitude"] = lon
+	}
+	if units != "" {
+		m["units"] = units
+	}
+	if name != "" {
+		m["name"] = name
+	}
+	if locName != "" {
+		m["location_name"] = locName
+	}
 	return m
 }
 
@@ -37,7 +47,9 @@ func makeHourlyDailyJSON(numHours, numDays int, curTime string) []byte {
 	for i := 0; i < numDays; i++ {
 		days[i], dMax[i], dMin[i], dCodes[i], dProbs[i] = fmt.Sprintf("2026-09-%02d", i+1), 70.0+float64(i), 50.0+float64(i), 1, 10
 	}
-	if curTime == "" { curTime = "2026-09-26T12:00" }
+	if curTime == "" {
+		curTime = "2026-09-26T12:00"
+	}
 	b, _ := json.Marshal(map[string]any{
 		"current": map[string]any{"time": curTime, "temperature_2m": 70.0, "weather_code": 1, "wind_speed_10m": 5.0, "relative_humidity_2m": 50, "apparent_temperature": 69.0},
 		"hourly":  map[string]any{"time": hours, "temperature_2m": temps, "precipitation_probability": probs, "weather_code": codes},
@@ -50,15 +62,25 @@ func makeMismatchedJSON() []byte {
 	hours, temps, probs, codes := make([]string, 30), make([]float64, 28), make([]int, 27), make([]int, 26)
 	for i := 0; i < 30; i++ {
 		hours[i] = fmt.Sprintf("2026-09-26T%02d:00", i)
-		if i < 28 { temps[i] = 65.0 + float64(i) }
-		if i < 27 { probs[i] = i }
-		if i < 26 { codes[i] = 1 }
+		if i < 28 {
+			temps[i] = 65.0 + float64(i)
+		}
+		if i < 27 {
+			probs[i] = i
+		}
+		if i < 26 {
+			codes[i] = 1
+		}
 	}
 	days, dMax, dMin, dCodes, dProbs := make([]string, 10), make([]float64, 9), make([]float64, 8), make([]int, 8), make([]int, 8)
 	for i := 0; i < 10; i++ {
 		days[i] = fmt.Sprintf("2026-09-%02d", i+1)
-		if i < 9 { dMax[i] = 70.0 + float64(i) }
-		if i < 8 { dMin[i], dCodes[i], dProbs[i] = 50.0+float64(i), 0, 5 }
+		if i < 9 {
+			dMax[i] = 70.0 + float64(i)
+		}
+		if i < 8 {
+			dMin[i], dCodes[i], dProbs[i] = 50.0+float64(i), 0, 5
+		}
 	}
 	b, _ := json.Marshal(map[string]any{
 		"current": map[string]any{"temperature_2m": 70.0, "weather_code": 0, "wind_speed_10m": 5.0, "relative_humidity_2m": 50, "apparent_temperature": 69.0},
@@ -158,7 +180,9 @@ func TestWeatherProvider_Init(t *testing.T) {
 			p := provider.NewWeatherProvider()
 			err := p.Init(context.Background(), tc.cfg, tc.opts)
 			if tc.expectError {
-				if err == nil || !strings.Contains(err.Error(), tc.errorSubstr) { t.Fatalf("want error containing %q, got %v", tc.errorSubstr, err) }
+				if err == nil || !strings.Contains(err.Error(), tc.errorSubstr) {
+					t.Fatalf("want error containing %q, got %v", tc.errorSubstr, err)
+				}
 			} else if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -239,22 +263,48 @@ func TestWeatherProvider_Fetch(t *testing.T) {
 			defer ts.Close()
 
 			p := provider.NewWeatherProviderWithClient(ts.Client(), ts.URL)
-			if err := p.Init(context.Background(), tc.cfg, tc.opts); err != nil { t.Fatalf("Init failed: %v", err) }
+			if err := p.Init(context.Background(), tc.cfg, tc.opts); err != nil {
+				t.Fatalf("Init failed: %v", err)
+			}
 			res, err := p.Fetch(context.Background())
-			if err != nil { t.Fatalf("Fetch failed: %v", err) }
+			if err != nil {
+				t.Fatalf("Fetch failed: %v", err)
+			}
 			snap := res.(provider.WeatherSnapshot)
-			if tc.wantTemp != 0 && snap.Current.Temperature != tc.wantTemp { t.Errorf("temp = %v, want %v", snap.Current.Temperature, tc.wantTemp) }
-			if tc.wantUnitsT != "" && snap.Current.Units.Temperature != tc.wantUnitsT { t.Errorf("units temp = %q, want %q", snap.Current.Units.Temperature, tc.wantUnitsT) }
-			if tc.wantUnitsW != "" && snap.Current.Units.WindSpeed != tc.wantUnitsW { t.Errorf("units wind = %q, want %q", snap.Current.Units.WindSpeed, tc.wantUnitsW) }
-			if tc.wantIcon != "" && snap.Current.Icon != tc.wantIcon { t.Errorf("icon = %q, want %q", snap.Current.Icon, tc.wantIcon) }
-			if tc.wantCond != "" && snap.Current.ConditionText != tc.wantCond { t.Errorf("cond = %q, want %q", snap.Current.ConditionText, tc.wantCond) }
-			if tc.wantPrecip != 0 && (snap.Current.PrecipProbMax != tc.wantPrecip || snap.TodayPrecipProbMax() != tc.wantPrecip) { t.Errorf("precip = %d, want %d", snap.Current.PrecipProbMax, tc.wantPrecip) }
-			if tc.wantHourly != 0 && len(snap.Hourly) != tc.wantHourly { t.Errorf("hourly len = %d, want %d", len(snap.Hourly), tc.wantHourly) }
-			if tc.wantDaily != 0 && len(snap.Daily) != tc.wantDaily { t.Errorf("daily len = %d, want %d", len(snap.Daily), tc.wantDaily) }
-			if tc.wantFirstH != "" && snap.Hourly[0].Time != tc.wantFirstH { t.Errorf("first hourly = %q, want %q", snap.Hourly[0].Time, tc.wantFirstH) }
-			if tc.wantLoc != "" && snap.Location != tc.wantLoc { t.Errorf("loc = %q, want %q", snap.Location, tc.wantLoc) }
+			if tc.wantTemp != 0 && snap.Current.Temperature != tc.wantTemp {
+				t.Errorf("temp = %v, want %v", snap.Current.Temperature, tc.wantTemp)
+			}
+			if tc.wantUnitsT != "" && snap.Current.Units.Temperature != tc.wantUnitsT {
+				t.Errorf("units temp = %q, want %q", snap.Current.Units.Temperature, tc.wantUnitsT)
+			}
+			if tc.wantUnitsW != "" && snap.Current.Units.WindSpeed != tc.wantUnitsW {
+				t.Errorf("units wind = %q, want %q", snap.Current.Units.WindSpeed, tc.wantUnitsW)
+			}
+			if tc.wantIcon != "" && snap.Current.Icon != tc.wantIcon {
+				t.Errorf("icon = %q, want %q", snap.Current.Icon, tc.wantIcon)
+			}
+			if tc.wantCond != "" && snap.Current.ConditionText != tc.wantCond {
+				t.Errorf("cond = %q, want %q", snap.Current.ConditionText, tc.wantCond)
+			}
+			if tc.wantPrecip != 0 && (snap.Current.PrecipProbMax != tc.wantPrecip || snap.TodayPrecipProbMax() != tc.wantPrecip) {
+				t.Errorf("precip = %d, want %d", snap.Current.PrecipProbMax, tc.wantPrecip)
+			}
+			if tc.wantHourly != 0 && len(snap.Hourly) != tc.wantHourly {
+				t.Errorf("hourly len = %d, want %d", len(snap.Hourly), tc.wantHourly)
+			}
+			if tc.wantDaily != 0 && len(snap.Daily) != tc.wantDaily {
+				t.Errorf("daily len = %d, want %d", len(snap.Daily), tc.wantDaily)
+			}
+			if tc.wantFirstH != "" && snap.Hourly[0].Time != tc.wantFirstH {
+				t.Errorf("first hourly = %q, want %q", snap.Hourly[0].Time, tc.wantFirstH)
+			}
+			if tc.wantLoc != "" && snap.Location != tc.wantLoc {
+				t.Errorf("loc = %q, want %q", snap.Location, tc.wantLoc)
+			}
 			for _, q := range tc.wantQuery {
-				if !strings.Contains(reqQuery, q) { t.Errorf("query %q missing %q", reqQuery, q) }
+				if !strings.Contains(reqQuery, q) {
+					t.Errorf("query %q missing %q", reqQuery, q)
+				}
 			}
 			if tc.nightCheck {
 				if snap.Hourly[0].Icon != "weather-clear-night" || snap.Hourly[1].Icon != "weather-night-partly-cloudy" || snap.Hourly[2].Icon != "weather-partly-cloudy" || snap.Hourly[3].Icon != "weather-sunny" || snap.Daily[0].Icon != "weather-sunny" {
@@ -322,23 +372,35 @@ func TestWeatherProvider_LifecycleAndSerialization(t *testing.T) {
 
 	p := provider.NewWeatherProvider()
 	ch := make(chan provider.WidgetPayload, 1)
-	if err := p.Subscribe(context.Background(), ch); err != nil { t.Fatalf("Subscribe failed: %v", err) }
-	if err := p.Shutdown(context.Background()); err != nil { t.Fatalf("Shutdown failed: %v", err) }
+	if err := p.Subscribe(context.Background(), ch); err != nil {
+		t.Fatalf("Subscribe failed: %v", err)
+	}
+	if err := p.Shutdown(context.Background()); err != nil {
+		t.Fatalf("Shutdown failed: %v", err)
+	}
 
 	reg := provider.NewRegistry()
-	if !reg.Has("weather-forecast") { t.Error("missing registry key") }
-	if p1, err := reg.Create("weather-forecast"); err != nil || p1 == nil { t.Fatalf("create forecast failed: %v", err) }
+	if !reg.Has("weather-forecast") {
+		t.Error("missing registry key")
+	}
+	if p1, err := reg.Create("weather-forecast"); err != nil || p1 == nil {
+		t.Fatalf("create forecast failed: %v", err)
+	}
 
 	snap := provider.WeatherSnapshot{
 		Location: "Home",
-		Current: provider.WeatherCurrent{Temperature: 72.4, ConditionText: "Clear Sky", Icon: "weather-sunny", Units: provider.WeatherUnits{Temperature: "°F", WindSpeed: "mph"}},
-		Hourly: []provider.WeatherHourly{{Time: "2026-09-26T12:00", Temp: 72.4, Icon: "weather-sunny"}},
-		Daily:  []provider.WeatherDaily{{Date: "2026-09-26", TempMax: 75.0, TempMin: 55.0, ConditionText: "Clear Sky", Icon: "weather-sunny"}},
+		Current:  provider.WeatherCurrent{Temperature: 72.4, ConditionText: "Clear Sky", Icon: "weather-sunny", Units: provider.WeatherUnits{Temperature: "°F", WindSpeed: "mph"}},
+		Hourly:   []provider.WeatherHourly{{Time: "2026-09-26T12:00", Temp: 72.4, Icon: "weather-sunny"}},
+		Daily:    []provider.WeatherDaily{{Date: "2026-09-26", TempMax: 75.0, TempMin: 55.0, ConditionText: "Clear Sky", Icon: "weather-sunny"}},
 	}
 	b, err := json.Marshal(snap)
-	if err != nil { t.Fatalf("Marshal failed: %v", err) }
+	if err != nil {
+		t.Fatalf("Marshal failed: %v", err)
+	}
 	var parsed map[string]any
-	if err := json.Unmarshal(b, &parsed); err != nil { t.Fatalf("Unmarshal failed: %v", err) }
+	if err := json.Unmarshal(b, &parsed); err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
 	if parsed["location"] != "Home" || parsed["current"].(map[string]any)["temperature"] != 72.4 {
 		t.Errorf("unexpected json: %+v", parsed)
 	}

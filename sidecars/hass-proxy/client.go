@@ -42,10 +42,14 @@ type HAConversationRequest struct {
 type HAConversationResponse struct {
 	Response struct {
 		Speech struct {
-			Plain struct{ Speech string `json:"speech"` } `json:"plain"`
+			Plain struct {
+				Speech string `json:"speech"`
+			} `json:"plain"`
 		} `json:"speech"`
-		ResponseType string                              `json:"response_type"`
-		Data         struct{ Code string `json:"code"` } `json:"data"`
+		ResponseType string `json:"response_type"`
+		Data         struct {
+			Code string `json:"code"`
+		} `json:"data"`
 	} `json:"response"`
 	ConversationID string `json:"conversation_id"`
 }

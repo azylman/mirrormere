@@ -24,7 +24,10 @@ func TestChatLogWidget_NoPollingWorkerAndEmptyCache(t *testing.T) {
 	t.Parallel()
 	var created bool
 	reg, sink := provider.NewRegistry(), newMockStateSink()
-	reg.Register("chat-log", func() provider.Provider { created = true; return nil })
+	reg.Register("chat-log", func() provider.Provider {
+		created = true
+		return nil
+	})
 	coord := provider.NewCoordinator(provider.CoordinatorConfig{Registry: reg, Broadcaster: &mockBroadcaster{}, StateSink: sink}, chatLogSnapshot())
 	defer func() { _ = coord.Stop() }()
 	if _, ok := sink.widgetStates["chat"]; created || !ok {

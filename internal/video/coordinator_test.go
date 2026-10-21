@@ -20,8 +20,16 @@ type mockTimer struct {
 	fn      func()
 }
 
-func (m *mockTimer) Stop() bool { m.stopped = true; return true }
-func (m *mockTimer) fire()      { if !m.stopped && m.fn != nil { m.fn() } }
+func (m *mockTimer) Stop() bool {
+	m.stopped = true
+	return true
+}
+
+func (m *mockTimer) fire() {
+	if !m.stopped && m.fn != nil {
+		m.fn()
+	}
+}
 
 type mockTimerFactory struct {
 	mu     sync.Mutex
@@ -35,10 +43,13 @@ func (f *mockTimerFactory) TimerFunc(_ time.Duration, fn func()) Timer {
 	f.timers = append(f.timers, t)
 	return t
 }
+
 func (f *mockTimerFactory) fireAll() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	for _, t := range f.timers { t.fire() }
+	for _, t := range f.timers {
+		t.fire()
+	}
 }
 
 type mockSink struct {
@@ -46,7 +57,11 @@ type mockSink struct {
 	state *events.VideoStateData
 }
 
-func (s *mockSink) SetVideoState(st *events.VideoStateData) { s.mu.Lock(); defer s.mu.Unlock(); s.state = st }
+func (s *mockSink) SetVideoState(st *events.VideoStateData) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.state = st
+}
 
 func mkStream(id, url, sType, prio string, timeout int) VideoStream {
 	return VideoStream{ID: id, StreamURL: url, Type: sType, Priority: prio, TimeoutSeconds: timeout}
@@ -108,15 +123,24 @@ func TestCoordinator_ValidationAndClose(t *testing.T) {
 	_, e4 := coord.SetPlayerState("c", PlayerStatePlaying)
 	_, e5 := coord.UpdatePlayerState("c", VideoStream{PlayerState: PlayerStatePlaying})
 	for _, err := range []error{e1, e2, e3, e4, e5} {
-		if !errors.Is(err, ErrStreamNotFound) { t.Fatal("expected ErrStreamNotFound on closed coordinator") }
+		if !errors.Is(err, ErrStreamNotFound) {
+			t.Fatal("expected ErrStreamNotFound on closed coordinator")
+		}
 	}
 
 	var capturedCB func()
-	c2 := NewCoordinator(nil, WithTimerFunc(func(_ time.Duration, f func()) Timer { capturedCB = f; return &mockTimer{} }))
+	c2 := NewCoordinator(nil, WithTimerFunc(func(_ time.Duration, f func()) Timer {
+		capturedCB = f
+		return &mockTimer{}
+	}))
 	_, _ = c2.Trigger(mkStream("t", "u", "", PriorityTemporary, 10))
 	c2.Close()
-	if capturedCB != nil { capturedCB() }
-	if (&realTimer{}).Stop() { t.Fatal("expected false on nil timer Stop") }
+	if capturedCB != nil {
+		capturedCB()
+	}
+	if (&realTimer{}).Stop() {
+		t.Fatal("expected false on nil timer Stop")
+	}
 }
 
 func TestCoordinator_PriorityStackAndTimers(t *testing.T) {
@@ -137,7 +161,9 @@ func TestCoordinator_PriorityStackAndTimers(t *testing.T) {
 	s1, _ := coord.Trigger(mkStream("chromecast", "http://cast", TypeWebRTC, PriorityPersistent, 0))
 	select {
 	case evt := <-subCh:
-		if evt.Type != events.EventVideoState { t.Fatalf("expected video.state event, got %s", evt.Type) }
+		if evt.Type != events.EventVideoState {
+			t.Fatalf("expected video.state event, got %s", evt.Type)
+		}
 	default:
 		t.Fatal("expected SSE event published")
 	}
@@ -356,7 +382,9 @@ func TestCoordinator_SchemaValidation(t *testing.T) {
 	t.Parallel()
 	if b, err := os.ReadFile(filepath.Join("..", "..", "api", "schemas", "video.state.json")); err == nil {
 		var s map[string]any
-		if err := json.Unmarshal(b, &s); err != nil { t.Fatalf("failed to parse schema: %v", err) }
+		if err := json.Unmarshal(b, &s); err != nil {
+			t.Fatalf("failed to parse schema: %v", err)
+		}
 	}
 	st := VideoState{Mode: ModeVideo, Primary: &VideoStream{ID: "c", StreamURL: "u", Priority: PriorityPersistent}, Pip: &VideoStream{ID: "d", StreamURL: "u"}}
 	b1, _ := json.Marshal(st)

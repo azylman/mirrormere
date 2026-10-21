@@ -124,16 +124,19 @@ func (h *Hub) SetRotationCoordinator(c RotationCoordinator) {
 	defer h.mu.Unlock()
 	h.rotationCoordinator = c
 }
+
 func (h *Hub) RotationCoordinator() RotationCoordinator {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	return h.rotationCoordinator
 }
+
 func (h *Hub) SetProviderCoordinator(c ProviderCoordinator) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.providerCoordinator = c
 }
+
 func (h *Hub) ProviderCoordinator() ProviderCoordinator {
 	h.mu.RLock()
 	defer h.mu.RUnlock()

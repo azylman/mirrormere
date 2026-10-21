@@ -23,7 +23,9 @@ func TestPhotosProvider_FetchExtraction(t *testing.T) {
 	t.Parallel()
 	var tenPhotos strings.Builder
 	tenPhotos.WriteString("<html><body>")
-	for i := 1; i <= 10; i++ { fmt.Fprintf(&tenPhotos, `<img src="https://lh3.googleusercontent.com/pw/PHOTO_%d"/>`, i) }
+	for i := 1; i <= 10; i++ {
+		fmt.Fprintf(&tenPhotos, `<img src="https://lh3.googleusercontent.com/pw/PHOTO_%d"/>`, i)
+	}
 	tenPhotos.WriteString("</body></html>")
 
 	tests := []struct {
@@ -56,11 +58,17 @@ func TestPhotosProvider_FetchExtraction(t *testing.T) {
 			defer ts.Close()
 
 			cfg := map[string]any{"share_url": ts.URL}
-			for k, v := range tc.cfg { cfg[k] = v }
+			for k, v := range tc.cfg {
+				cfg[k] = v
+			}
 			p := provider.NewPhotosProvider()
-			if err := p.Init(context.Background(), cfg, provider.InitOptions{}); err != nil { t.Fatalf("Init failed: %v", err) }
+			if err := p.Init(context.Background(), cfg, provider.InitOptions{}); err != nil {
+				t.Fatalf("Init failed: %v", err)
+			}
 			res, err := p.Fetch(context.Background())
-			if err != nil { t.Fatalf("Fetch failed: %v", err) }
+			if err != nil {
+				t.Fatalf("Fetch failed: %v", err)
+			}
 			snap := res.(*provider.PhotoSnapshot)
 			if snap.AlbumName != tc.wantAlbum || snap.TotalPhotos != tc.wantTotal || len(snap.Photos) != tc.wantPhotos {
 				t.Fatalf("got album=%q total=%d photos=%d; want %q, %d, %d", snap.AlbumName, snap.TotalPhotos, len(snap.Photos), tc.wantAlbum, tc.wantTotal, tc.wantPhotos)
@@ -131,7 +139,9 @@ func TestPhotosProvider_ErrorsAndSWR(t *testing.T) {
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "text/html")
 			chunk := strings.Repeat("A", 1024*1024)
-			for i := 0; i < 6; i++ { _, _ = io.WriteString(w, chunk) }
+			for i := 0; i < 6; i++ {
+				_, _ = io.WriteString(w, chunk)
+			}
 		}))
 		defer ts.Close()
 		p := provider.NewPhotosProvider()
@@ -158,9 +168,13 @@ func TestPhotosProvider_ErrorsAndSWR(t *testing.T) {
 		p := provider.NewPhotosProvider()
 		_ = p.Init(context.Background(), map[string]any{"share_url": ts.URL}, provider.InitOptions{})
 		res1, err := p.Fetch(context.Background())
-		if err != nil { t.Fatalf("first fetch failed: %v", err) }
+		if err != nil {
+			t.Fatalf("first fetch failed: %v", err)
+		}
 		res2, err := p.Fetch(context.Background())
-		if err != nil { t.Fatalf("second fetch under SWR failed: %v", err) }
+		if err != nil {
+			t.Fatalf("second fetch under SWR failed: %v", err)
+		}
 		s1, s2 := res1.(*provider.PhotoSnapshot), res2.(*provider.PhotoSnapshot)
 		if len(s2.Photos) != 1 || s2.Photos[0].URL != s1.Photos[0].URL {
 			t.Fatalf("expected cached snapshot under SWR: %+v", s2)
@@ -183,7 +197,9 @@ func TestPhotosProvider_InitAndLifecycle(t *testing.T) {
 		{"opts_override", "", "", map[string]any{"share_url": "https://p.app/raw"}, provider.InitOptions{Secrets: map[string]string{"share_url": "https://p.app/over"}}, ""},
 		{"bad_scheme", "", "", map[string]any{"share_url": "ftp://photos.google.com/album"}, provider.InitOptions{}, "invalid share URL"},
 	} {
-		if tc.envKey != "" { t.Setenv(tc.envKey, tc.envVal) }
+		if tc.envKey != "" {
+			t.Setenv(tc.envKey, tc.envVal)
+		}
 		p := provider.NewPhotosProvider()
 		err := p.Init(context.Background(), tc.cfg, tc.opts)
 		if tc.wantErrSub != "" {
@@ -215,9 +231,17 @@ func TestPhotosProvider_InitAndLifecycle(t *testing.T) {
 	}
 
 	reg := provider.NewRegistry()
-	if !reg.Has("photo-carousel") { t.Fatal("registry missing photo-carousel provider") }
+	if !reg.Has("photo-carousel") {
+		t.Fatal("registry missing photo-carousel provider")
+	}
 	p1, err := reg.Create("photo-carousel")
-	if err != nil || p1 == nil { t.Fatalf("failed create photo-carousel: %v", err) }
-	if err := p1.Subscribe(context.Background(), nil); err != nil { t.Errorf("Subscribe failed: %v", err) }
-	if err := p1.Shutdown(context.Background()); err != nil { t.Errorf("Shutdown failed: %v", err) }
+	if err != nil || p1 == nil {
+		t.Fatalf("failed create photo-carousel: %v", err)
+	}
+	if err := p1.Subscribe(context.Background(), nil); err != nil {
+		t.Errorf("Subscribe failed: %v", err)
+	}
+	if err := p1.Shutdown(context.Background()); err != nil {
+		t.Errorf("Shutdown failed: %v", err)
+	}
 }

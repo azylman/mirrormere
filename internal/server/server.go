@@ -217,7 +217,9 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/api/screen/select", dispatchHandler(s, func() ScreenHandler { return s.screenHandler }, isNil, func(h ScreenHandler, w http.ResponseWriter, r *http.Request) { h.PostScreenSelect(w, r) }))
 	s.mux.HandleFunc("/api/screen/advance", dispatchHandler(s, func() ScreenHandler { return s.screenHandler }, isNil, func(h ScreenHandler, w http.ResponseWriter, r *http.Request) { h.PostScreenAdvance(w, r) }))
 	s.mux.HandleFunc("/api/screen/pause", dispatchHandler(s, func() ScreenHandler { return s.screenHandler }, isNil, func(h ScreenHandler, w http.ResponseWriter, r *http.Request) { h.PostScreenPause(w, r) }))
-	s.mux.HandleFunc("/api/lists/{list_id}/items/{item_id}/complete", dispatchHandler(s, func() ListsHandler { return s.listsHandler }, isNil, func(h ListsHandler, w http.ResponseWriter, r *http.Request) { h.CompleteListItem(w, r, r.PathValue("list_id"), r.PathValue("item_id")) }))
+	s.mux.HandleFunc("/api/lists/{list_id}/items/{item_id}/complete", dispatchHandler(s, func() ListsHandler { return s.listsHandler }, isNil, func(h ListsHandler, w http.ResponseWriter, r *http.Request) {
+		h.CompleteListItem(w, r, r.PathValue("list_id"), r.PathValue("item_id"))
+	}))
 	s.mux.HandleFunc("/api/audio", dispatchHandler(s, func() AudioHandler { return s.audioHandler }, isNil, func(h AudioHandler, w http.ResponseWriter, r *http.Request) { h.GetAudio(w, r) }))
 	s.mux.HandleFunc("/api/audio/volume", dispatchHandler(s, func() AudioHandler { return s.audioHandler }, isNil, func(h AudioHandler, w http.ResponseWriter, r *http.Request) { h.PostAudioVolume(w, r) }))
 	s.mux.HandleFunc("/api/audio/mute", dispatchHandler(s, func() AudioHandler { return s.audioHandler }, isNil, func(h AudioHandler, w http.ResponseWriter, r *http.Request) { h.PostAudioMute(w, r) }))
@@ -234,9 +236,15 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/api/voice/state", dispatchHandler(s, func() VoiceHandler { return s.voiceHandler }, isNil, func(h VoiceHandler, w http.ResponseWriter, r *http.Request) { h.PostVoiceState(w, r) }))
 	s.mux.HandleFunc("/api/voice/interact", dispatchHandler(s, func() VoiceHandler { return s.voiceHandler }, isNil, func(h VoiceHandler, w http.ResponseWriter, r *http.Request) { h.PostVoiceInteract(w, r) }))
 	s.mux.HandleFunc("/api/voice/heartbeat", dispatchHandler(s, func() VoiceHandler { return s.voiceHandler }, isNil, func(h VoiceHandler, w http.ResponseWriter, r *http.Request) { h.PostVoiceHeartbeat(w, r) }))
-	s.mux.HandleFunc("/api/widgets/{widget_id}/render", dispatchHandler(s, func() RenderHandler { return s.renderHandler }, isNil, func(h RenderHandler, w http.ResponseWriter, r *http.Request) { h.GetWidgetRender(w, r, r.PathValue("widget_id")) }))
-	s.mux.HandleFunc("/api/widgets/{widget_id}/push", dispatchHandler(s, func() PushHandler { return s.pushHandler }, isNil, func(h PushHandler, w http.ResponseWriter, r *http.Request) { h.PostWidgetPush(w, r, r.PathValue("widget_id")) }))
-	s.mux.HandleFunc("/widget-types/{type}/assets/{path...}", dispatchHandler(s, func() RenderHandler { return s.renderHandler }, isNil, func(h RenderHandler, w http.ResponseWriter, r *http.Request) { h.GetWidgetAsset(w, r, r.PathValue("type"), r.PathValue("path")) }))
+	s.mux.HandleFunc("/api/widgets/{widget_id}/render", dispatchHandler(s, func() RenderHandler { return s.renderHandler }, isNil, func(h RenderHandler, w http.ResponseWriter, r *http.Request) {
+		h.GetWidgetRender(w, r, r.PathValue("widget_id"))
+	}))
+	s.mux.HandleFunc("/api/widgets/{widget_id}/push", dispatchHandler(s, func() PushHandler { return s.pushHandler }, isNil, func(h PushHandler, w http.ResponseWriter, r *http.Request) {
+		h.PostWidgetPush(w, r, r.PathValue("widget_id"))
+	}))
+	s.mux.HandleFunc("/widget-types/{type}/assets/{path...}", dispatchHandler(s, func() RenderHandler { return s.renderHandler }, isNil, func(h RenderHandler, w http.ResponseWriter, r *http.Request) {
+		h.GetWidgetAsset(w, r, r.PathValue("type"), r.PathValue("path"))
+	}))
 	s.mux.HandleFunc("/style.css", dispatchHandler(s, func() RenderHandler { return s.renderHandler }, isNil, func(h RenderHandler, w http.ResponseWriter, r *http.Request) { h.ServeStyle(w, r) }))
 	s.mux.HandleFunc("/display", dispatchHandler(s, func() DisplayHandler { return s.displayHandler }, isNil, func(h DisplayHandler, w http.ResponseWriter, r *http.Request) { h.GetDisplay(w, r) }))
 	s.mux.HandleFunc("/static/{path...}", dispatchHandler(s, func() DisplayHandler { return s.displayHandler }, isNil, func(h DisplayHandler, w http.ResponseWriter, r *http.Request) { h.GetStatic(w, r, r.PathValue("path")) }))
@@ -279,7 +287,11 @@ func SetNowFnForTest(fn func() time.Time) func() {
 	prev := nowFn
 	nowFn = fn
 	flushMu.Unlock()
-	return func() { flushMu.Lock(); nowFn = prev; flushMu.Unlock() }
+	return func() {
+		flushMu.Lock()
+		nowFn = prev
+		flushMu.Unlock()
+	}
 }
 
 // SetWriteCountersDirForTest overrides writeCountersDirFn for testing purposes.
@@ -288,7 +300,11 @@ func SetWriteCountersDirForTest(fn func(string) error) func() {
 	prev := writeCountersDirFn
 	writeCountersDirFn = fn
 	writeCountersDirMu.Unlock()
-	return func() { writeCountersDirMu.Lock(); writeCountersDirFn = prev; writeCountersDirMu.Unlock() }
+	return func() {
+		writeCountersDirMu.Lock()
+		writeCountersDirFn = prev
+		writeCountersDirMu.Unlock()
+	}
 }
 
 func (s *Server) handleCoverageFlush(w http.ResponseWriter, r *http.Request) {

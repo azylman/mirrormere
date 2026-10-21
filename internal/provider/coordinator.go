@@ -34,15 +34,15 @@ type StateSink interface {
 
 // CoordinatorConfig specifies dependencies and options for ProviderCoordinator.
 type CoordinatorConfig struct {
-	Registry            Registry
-	Broadcaster         Broadcaster
-	StateSink           StateSink
-	HeaderWeatherSink   HeaderWeatherSink
-	Cache               *SWRCache
-	Logger              *slog.Logger
-	NowFunc             func() time.Time
-	Backoff             *BackoffPolicy
-	OnBeforeRecordPush  func(widgetID string)
+	Registry           Registry
+	Broadcaster        Broadcaster
+	StateSink          StateSink
+	HeaderWeatherSink  HeaderWeatherSink
+	Cache              *SWRCache
+	Logger             *slog.Logger
+	NowFunc            func() time.Time
+	Backoff            *BackoffPolicy
+	OnBeforeRecordPush func(widgetID string)
 	// ChatLog, when set, receives chat-log widget pushes.
 	ChatLog             *chatlog.Store
 	HeaderPollerClient  *http.Client
@@ -619,7 +619,6 @@ func (c *ProviderCoordinator) isWorkerActiveLocked(w *worker, widgetID string) b
 	current, ok := c.workers[widgetID]
 	return ok && current == w && !w.stopped.Load()
 }
-
 
 func (c *ProviderCoordinator) syncStateSink(p WidgetPayload) {
 	if c.stateSink != nil {

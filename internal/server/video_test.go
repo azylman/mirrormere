@@ -28,17 +28,21 @@ func (m *mockVideoCoordinator) Trigger(s video.VideoStream) (video.VideoState, e
 	m.lastStream, m.state = s, video.VideoState{Mode: video.ModeVideo, Primary: &s}
 	return m.state, m.err
 }
+
 func (m *mockVideoCoordinator) Dismiss(id string) (video.VideoState, error) {
 	m.lastDismissID, m.state = id, video.VideoState{Mode: video.ModeWidgets}
 	return m.state, m.err
 }
+
 func (m *mockVideoCoordinator) SetPlayerState(id, ps string) (video.VideoState, error) {
 	return m.UpdatePlayerState(id, video.VideoStream{ID: id, PlayerState: ps})
 }
+
 func (m *mockVideoCoordinator) UpdatePlayerState(id string, u video.VideoStream) (video.VideoState, error) {
 	m.lastStream = u
 	return m.state, m.err
 }
+
 func (m *mockVideoCoordinator) ForwardAction(ctx context.Context, id, act string, val any) error {
 	m.lastActionID, m.lastActionVal = id, act
 	return m.err

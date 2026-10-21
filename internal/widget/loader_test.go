@@ -14,16 +14,16 @@ import (
 func createPackageFixture(t *testing.T, baseDir, widgetType, manifest, view string, hasAssets bool) string {
 	t.Helper()
 	pkgDir := filepath.Join(baseDir, widgetType)
-	_ = os.MkdirAll(filepath.Join(pkgDir, "views"), 0755)
+	_ = os.MkdirAll(filepath.Join(pkgDir, "views"), 0o755)
 	if manifest != "" {
-		_ = os.WriteFile(filepath.Join(pkgDir, widget.ManifestFilename), []byte(manifest), 0644)
+		_ = os.WriteFile(filepath.Join(pkgDir, widget.ManifestFilename), []byte(manifest), 0o644)
 	}
 	if view != "" {
-		_ = os.WriteFile(filepath.Join(pkgDir, widget.ViewFilename), []byte(view), 0644)
+		_ = os.WriteFile(filepath.Join(pkgDir, widget.ViewFilename), []byte(view), 0o644)
 	}
 	if hasAssets {
-		_ = os.MkdirAll(filepath.Join(pkgDir, widget.AssetsDirname), 0755)
-		_ = os.WriteFile(filepath.Join(pkgDir, widget.AssetsDirname, "icon.svg"), []byte("<svg></svg>"), 0644)
+		_ = os.MkdirAll(filepath.Join(pkgDir, widget.AssetsDirname), 0o755)
+		_ = os.WriteFile(filepath.Join(pkgDir, widget.AssetsDirname, "icon.svg"), []byte("<svg></svg>"), 0o644)
 	}
 	return pkgDir
 }
@@ -68,10 +68,10 @@ func TestLoader_LoadPackageErrorsAndEdgeCases(t *testing.T) {
 			t.Parallel()
 			tmp := t.TempDir()
 			b, c := filepath.Join(tmp, "b"), filepath.Join(tmp, "c")
-			_ = os.MkdirAll(b, 0755)
-			_ = os.MkdirAll(c, 0755)
+			_ = os.MkdirAll(b, 0o755)
+			_ = os.MkdirAll(c, 0o755)
 			if tc.pkgName == ".git" {
-				_ = os.MkdirAll(filepath.Join(c, ".git"), 0755)
+				_ = os.MkdirAll(filepath.Join(c, ".git"), 0o755)
 			} else {
 				dir := b
 				if tc.inCustom {
@@ -120,7 +120,9 @@ func TestLoader_ApplyDefaults(t *testing.T) {
 	reg := map[string]*domain.Package{"cal": mkPkg("C", 4, 2, 300), "weather": mkPkg("W", 2, 1, 900), "corrupt": {Type: "corrupt"}}
 	ci := 120
 	wCal, wWea := config.WidgetConfig{ID: "w1", Type: "cal"}, config.WidgetConfig{ID: "w2", Type: "weather", Dimensions: []int{3, 2}, RefreshIntervalSeconds: &ci}
-	wCfg := func(ws ...config.WidgetConfig) *config.Config { return &config.Config{Display: config.DisplayConfig{Widgets: ws}} }
+	wCfg := func(ws ...config.WidgetConfig) *config.Config {
+		return &config.Config{Display: config.DisplayConfig{Widgets: ws}}
+	}
 	for _, tc := range []struct {
 		name, wantErr string
 		cfg           *config.Config
@@ -152,7 +154,10 @@ func TestLoader_ApplyDefaults(t *testing.T) {
 func TestCheckPackageCompleteness(t *testing.T) {
 	t.Parallel()
 	tmp := t.TempDir()
-	for _, tc := range []struct{ name, manifest, view string; want bool }{
+	for _, tc := range []struct {
+		name, manifest, view string
+		want                 bool
+	}{
 		{"complete", "name: test", "<div></div>", true},
 		{"no_manifest", "", "<div></div>", false},
 		{"no_view", "name: test", "", false},

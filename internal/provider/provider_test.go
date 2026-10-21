@@ -14,11 +14,17 @@ func (d *dummyProvider) Init(context.Context, map[string]any, provider.InitOptio
 	d.init = true
 	return nil
 }
+
 func (d *dummyProvider) Fetch(context.Context) (any, error) {
 	return map[string]any{"dummy": true}, nil
 }
+
 func (d *dummyProvider) Subscribe(context.Context, chan<- provider.WidgetPayload) error { return nil }
-func (d *dummyProvider) Shutdown(context.Context) error                                 { d.shut = true; return nil }
+
+func (d *dummyProvider) Shutdown(context.Context) error {
+	d.shut = true
+	return nil
+}
 
 func TestRegistry(t *testing.T) {
 	t.Parallel()

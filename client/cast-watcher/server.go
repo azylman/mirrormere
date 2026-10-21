@@ -42,15 +42,27 @@ var (
 
 // SetNowFnForTest overrides the time provider for testing debounce without sleeps.
 func SetNowFnForTest(fn func() time.Time) func() {
-	flushMu.Lock(); defer flushMu.Unlock()
-	prev := nowFn; nowFn = fn
-	return func() { flushMu.Lock(); defer flushMu.Unlock(); nowFn = prev }
+	flushMu.Lock()
+	defer flushMu.Unlock()
+	prev := nowFn
+	nowFn = fn
+	return func() {
+		flushMu.Lock()
+		defer flushMu.Unlock()
+		nowFn = prev
+	}
 }
 
 func SetWriteCountersDirForTest(fn func(string) error) func() {
-	writeCountersDirMu.Lock(); defer writeCountersDirMu.Unlock()
-	prev := writeCountersDirFn; writeCountersDirFn = fn
-	return func() { writeCountersDirMu.Lock(); defer writeCountersDirMu.Unlock(); writeCountersDirFn = prev }
+	writeCountersDirMu.Lock()
+	defer writeCountersDirMu.Unlock()
+	prev := writeCountersDirFn
+	writeCountersDirFn = fn
+	return func() {
+		writeCountersDirMu.Lock()
+		defer writeCountersDirMu.Unlock()
+		writeCountersDirFn = prev
+	}
 }
 
 // ActionServer handles incoming transport webhook actions and health probes.
@@ -109,21 +121,26 @@ func (s *ActionServer) handleAction(w http.ResponseWriter, r *http.Request) {
 	h.Set("Access-Control-Allow-Methods", "POST, OPTIONS")
 	h.Set("Access-Control-Allow-Headers", "Content-Type")
 	if r.Method == http.MethodOptions {
-		w.WriteHeader(http.StatusOK); return
+		w.WriteHeader(http.StatusOK)
+		return
 	}
 	if r.Method != http.MethodPost {
 		h.Set("Allow", "POST, OPTIONS")
-		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed"); return
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
 	}
 	var req ActionWebhookRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSONError(w, http.StatusBadRequest, "invalid request payload: malformed JSON"); return
+		writeJSONError(w, http.StatusBadRequest, "invalid request payload: malformed JSON")
+		return
 	}
 	if strings.TrimSpace(req.ID) == "" || strings.TrimSpace(req.Action) == "" {
-		writeJSONError(w, http.StatusBadRequest, "id and action are required"); return
+		writeJSONError(w, http.StatusBadRequest, "id and action are required")
+		return
 	}
 	if req.ID != "chromecast" {
-		writeJSONError(w, http.StatusNotFound, "stream not active"); return
+		writeJSONError(w, http.StatusNotFound, "stream not active")
+		return
 	}
 	var err error
 	switch req.Action {
@@ -132,14 +149,16 @@ func (s *ActionServer) handleAction(w http.ResponseWriter, r *http.Request) {
 	case "seek":
 		var targetTime float64
 		if targetTime, err = extractTargetTime(req.Value); err != nil || targetTime < 0 {
-			writeJSONError(w, http.StatusBadRequest, "invalid seek target time: must be a non-negative number"); return
+			writeJSONError(w, http.StatusBadRequest, "invalid seek target time: must be a non-negative number")
+			return
 		}
 		err = s.client.Seek(r.Context(), targetTime)
 	default:
 		err = s.client.SendMediaAction(r.Context(), req.Action)
 	}
 	if err != nil {
-		writeActionError(w, err); return
+		writeActionError(w, err)
+		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
@@ -148,10 +167,13 @@ func (s *ActionServer) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		w.Header().Set("Allow", "GET, HEAD")
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusMethodNotAllowed); return
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
 	}
 	if r.Method == http.MethodHead {
-		w.Header().Set("Content-Type", "application/json"); w.WriteHeader(http.StatusOK); return
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		return
 	}
 	st := s.client.GetStatus()
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "chromecast_connected": st.Connected, "app_id": st.AppID, "player_state": st.PlayerState})
@@ -168,13 +190,16 @@ func writeJSON(w http.ResponseWriter, status int, data any) {
 func (s *ActionServer) handleCoverageFlush(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodPost {
 		w.Header().Set("Allow", "GET, POST")
-		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed"); return
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
 	}
 	if dir := os.Getenv("GOCOVERDIR"); dir != "" {
-		flushMu.Lock(); defer flushMu.Unlock()
+		flushMu.Lock()
+		defer flushMu.Unlock()
 		now := nowFn()
 		if now.Sub(lastFlushTime) < time.Second {
-			writeJSON(w, http.StatusOK, map[string]string{"status": "debounced"}); return
+			writeJSON(w, http.StatusOK, map[string]string{"status": "debounced"})
+			return
 		}
 		lastFlushTime = now
 		writeCountersDirMu.RLock()
@@ -183,7 +208,8 @@ func (s *ActionServer) handleCoverageFlush(w http.ResponseWriter, r *http.Reques
 		_ = metaFn(dir) //nolint:errcheck
 		if err := fn(dir); err != nil {
 			s.logger.Error("coverage flush failed", "error", err)
-			writeJSONError(w, http.StatusInternalServerError, err.Error()); return
+			writeJSONError(w, http.StatusInternalServerError, err.Error())
+			return
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
@@ -209,7 +235,8 @@ func extractTargetTime(val any) (float64, error) {
 	case float32:
 		return float64(v), nil
 	case int, int32, int64:
-		f, err := strconv.ParseFloat(fmt.Sprint(v), 64); return f, err
+		f, err := strconv.ParseFloat(fmt.Sprint(v), 64)
+		return f, err
 	case json.Number:
 		return v.Float64()
 	case string:

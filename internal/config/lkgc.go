@@ -342,6 +342,7 @@ func derefStr(v any) string {
 	}
 	return ""
 }
+
 func derefSlice(v any) []any {
 	if s, ok := v.([]any); ok {
 		return s
@@ -483,6 +484,7 @@ func widgetMap(cfg *Config) (map[string]WidgetConfig, []WidgetConfig) {
 	}
 	return m, cfg.Display.Widgets
 }
+
 func equalIntPtr(a, b *int) bool {
 	return (a == nil && b == nil) || (a != nil && b != nil && *a == *b)
 }

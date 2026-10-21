@@ -27,12 +27,17 @@ func setupReloaderTest(t *testing.T, initialCSS bool) *reloaderTestEnv {
 	t.Helper()
 	tmp := t.TempDir()
 	css, bDir, cDir := filepath.Join(tmp, "c.css"), filepath.Join(tmp, "b"), filepath.Join(tmp, "c")
-	_ = os.MkdirAll(bDir, 0755); _ = os.MkdirAll(cDir, 0755)
+	_ = os.MkdirAll(bDir, 0o755)
+	_ = os.MkdirAll(cDir, 0o755)
 	writeWidgetPkg(t, bDir, "test-widget", "default", "<div>Initial View</div>", "", "")
-	if initialCSS { _ = os.WriteFile(css, []byte("body { background: #000; }"), 0644) }
+	if initialCSS {
+		_ = os.WriteFile(css, []byte("body { background: #000; }"), 0o644)
+	}
 	loader := widget.NewLoader(bDir, cDir)
 	cfgMgr, err := config.NewManager([]byte("timezone: UTC\ndisplay:\n  widgets:\n    - id: test-instance\n      type: test-widget\n      dimensions: [6, 2]\n"), loader, nil, nil)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	sp := events.NewInMemoryStateProvider(cfgMgr)
 	hub := events.NewHub(events.HubConfig{}, sp, nil)
 	t.Cleanup(func() { hub.Close() })
@@ -51,10 +56,18 @@ func writeWidgetPkg(t *testing.T, dir, name, manifest, view, assetName, assetBod
 	if manifest == "default" {
 		manifest = "name: " + name + "\nversion: \"1.0.0\"\nprovider: spacer\ndefault_dimensions: [6, 2]\n"
 	}
-	if manifest != "" { _ = os.MkdirAll(p, 0755); _ = os.WriteFile(filepath.Join(p, "manifest.yaml"), []byte(manifest), 0644) }
-	if view != "" { _ = os.MkdirAll(filepath.Join(p, "views"), 0755); _ = os.WriteFile(filepath.Join(p, "views", "widget.html"), []byte(view), 0644) }
+	if manifest != "" {
+		_ = os.MkdirAll(p, 0o755)
+		_ = os.WriteFile(filepath.Join(p, "manifest.yaml"), []byte(manifest), 0o644)
+	}
+	if view != "" {
+		_ = os.MkdirAll(filepath.Join(p, "views"), 0o755)
+		_ = os.WriteFile(filepath.Join(p, "views", "widget.html"), []byte(view), 0o644)
+	}
 	if assetName != "" {
-		ap := filepath.Join(p, "assets", assetName); _ = os.MkdirAll(filepath.Dir(ap), 0755); _ = os.WriteFile(ap, []byte(assetBody), 0644)
+		ap := filepath.Join(p, "assets", assetName)
+		_ = os.MkdirAll(filepath.Dir(ap), 0o755)
+		_ = os.WriteFile(ap, []byte(assetBody), 0o644)
 	}
 	return p
 }
@@ -65,8 +78,12 @@ func expectEvent(t *testing.T, ch <-chan *events.Event, exp string, timeout time
 	for {
 		select {
 		case evt, ok := <-ch:
-			if !ok { t.Fatalf("channel closed waiting for %s", exp) }
-			if evt.Type == exp { return evt }
+			if !ok {
+				t.Fatalf("channel closed waiting for %s", exp)
+			}
+			if evt.Type == exp {
+				return evt
+			}
 		case <-deadline:
 			t.Fatalf("timeout waiting for %s", exp)
 		}
@@ -107,7 +124,11 @@ func TestAssetReloader_ReloadCSS(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			env := setupReloaderTest(t, tc.initialCSS)
 			drainEvents(env.eventCh)
-			if tc.deleteCSS { _ = os.Remove(env.customCSSPath) } else if tc.modifyCSS != "" { _ = os.WriteFile(env.customCSSPath, []byte(tc.modifyCSS), 0644) }
+			if tc.deleteCSS {
+				_ = os.Remove(env.customCSSPath)
+			} else if tc.modifyCSS != "" {
+				_ = os.WriteFile(env.customCSSPath, []byte(tc.modifyCSS), 0o644)
+			}
 			if got := env.reloader.ReloadCSS(); got != tc.wantReload {
 				t.Fatalf("ReloadCSS() = %v, want %v", got, tc.wantReload)
 			}
@@ -118,7 +139,9 @@ func TestAssetReloader_ReloadCSS(t *testing.T) {
 					t.Fatalf("unexpected payload: %v, err=%v", payload, err)
 				}
 			}
-			if env.reloader.ReloadCSS() { t.Error("expected subsequent false") }
+			if env.reloader.ReloadCSS() {
+				t.Error("expected subsequent false")
+			}
 			expectNoEvent(t, env.eventCh)
 		})
 	}
@@ -148,44 +171,64 @@ func TestAssetReloader_ReloadWidgets(t *testing.T) {
 				_, _ = env.renderEngine.RenderWidget(context.Background(), "test-instance")
 			} else if tc.setup != "" {
 				name, man, view, aName, aBody := "c-pkg", "default", "<div>c</div>", "", ""
-				if tc.setup == "custom_incomplete" { name, view = "bad-pkg", "" }
-				if tc.setup == "custom_assets" { name, aName, aBody = "a-pkg", "icons/i.svg", "<svg>1</svg>" }
+				if tc.setup == "custom_incomplete" {
+					name, view = "bad-pkg", ""
+				}
+				if tc.setup == "custom_assets" {
+					name, aName, aBody = "a-pkg", "icons/i.svg", "<svg>1</svg>"
+				}
 				writeWidgetPkg(t, env.customDir, name, man, view, aName, aBody)
-				if tc.act != "none" { env.reloader.ReloadWidgets(); drainEvents(env.eventCh) }
+				if tc.act != "none" {
+					env.reloader.ReloadWidgets()
+					drainEvents(env.eventCh)
+				}
 			}
 			pBuiltin := filepath.Join(env.builtinDir, "test-widget")
 			pCustom := filepath.Join(env.customDir, "c-pkg")
 			switch tc.act {
 			case "modify_view":
-				_ = os.WriteFile(filepath.Join(pBuiltin, "views", "widget.html"), []byte("<div>New View</div>"), 0644)
+				_ = os.WriteFile(filepath.Join(pBuiltin, "views", "widget.html"), []byte("<div>New View</div>"), 0o644)
 			case "modify_manifest":
-				_ = os.WriteFile(filepath.Join(pBuiltin, "manifest.yaml"), []byte("name: test-widget\nversion: \"1.0.1\"\nprovider: spacer\ndefault_dimensions: [6, 2]\n"), 0644)
+				_ = os.WriteFile(filepath.Join(pBuiltin, "manifest.yaml"), []byte("name: test-widget\nversion: \"1.0.1\"\nprovider: spacer\ndefault_dimensions: [6, 2]\n"), 0o644)
 			case "modify_asset":
-				_ = os.WriteFile(filepath.Join(env.customDir, "a-pkg", "assets", "icons", "i.svg"), []byte("<svg>2</svg>"), 0644)
+				_ = os.WriteFile(filepath.Join(env.customDir, "a-pkg", "assets", "icons", "i.svg"), []byte("<svg>2</svg>"), 0o644)
 			case "remove_view":
 				_ = os.Remove(filepath.Join(pCustom, "views", "widget.html"))
 			case "promote":
 				writeWidgetPkg(t, env.customDir, "bad-pkg", "", "<div>promoted</div>", "", "")
 			case "delete_pkg":
-				_ = os.RemoveAll(pCustom); _ = os.RemoveAll(filepath.Join(env.customDir, "bad-pkg"))
+				_ = os.RemoveAll(pCustom)
+				_ = os.RemoveAll(filepath.Join(env.customDir, "bad-pkg"))
 			case "combined":
-				_ = os.WriteFile(env.customCSSPath, []byte("body { color: red; }"), 0644)
-				_ = os.WriteFile(filepath.Join(pBuiltin, "views", "widget.html"), []byte("<div>Combined View</div>"), 0644)
+				_ = os.WriteFile(env.customCSSPath, []byte("body { color: red; }"), 0o644)
+				_ = os.WriteFile(filepath.Join(pBuiltin, "views", "widget.html"), []byte("<div>Combined View</div>"), 0o644)
 			}
 
 			if tc.isComb {
-				if c, w := env.reloader.Reload(); !c || !w { t.Fatalf("Reload() = (%v, %v)", c, w) }
+				if c, w := env.reloader.Reload(); !c || !w {
+					t.Fatalf("Reload() = (%v, %v)", c, w)
+				}
 				expectEvent(t, env.eventCh, events.EventStyleReload, 2*time.Second)
 				expectEvent(t, env.eventCh, events.EventWidgetReload, 2*time.Second)
 				return
 			}
-			if got := env.reloader.ReloadWidgets(); got != tc.wantReload { t.Fatalf("ReloadWidgets() = %v, want %v", got, tc.wantReload) }
-			if tc.wantEvt != "" { expectEvent(t, env.eventCh, tc.wantEvt, 2*time.Second) }
-			if tc.wantSt != "" {
-				if tc.wantEvt != events.EventSystemStatus { expectEvent(t, env.eventCh, events.EventSystemStatus, 2*time.Second) }
-				if st := env.configManager.Status().ConfigStatus; st != tc.wantSt { t.Fatalf("status = %v, want %v", st, tc.wantSt) }
+			if got := env.reloader.ReloadWidgets(); got != tc.wantReload {
+				t.Fatalf("ReloadWidgets() = %v, want %v", got, tc.wantReload)
 			}
-			if env.reloader.ReloadWidgets() { t.Error("expected subsequent false") }
+			if tc.wantEvt != "" {
+				expectEvent(t, env.eventCh, tc.wantEvt, 2*time.Second)
+			}
+			if tc.wantSt != "" {
+				if tc.wantEvt != events.EventSystemStatus {
+					expectEvent(t, env.eventCh, events.EventSystemStatus, 2*time.Second)
+				}
+				if st := env.configManager.Status().ConfigStatus; st != tc.wantSt {
+					t.Fatalf("status = %v, want %v", st, tc.wantSt)
+				}
+			}
+			if env.reloader.ReloadWidgets() {
+				t.Error("expected subsequent false")
+			}
 			expectNoEvent(t, env.eventCh)
 			if tc.act == "modify_view" {
 				if h, _ := env.renderEngine.RenderWidget(context.Background(), "test-instance"); string(h) != "<div>New View</div>" {
@@ -205,17 +248,30 @@ func TestAssetReloader_EdgeCases(t *testing.T) {
 			switch tc.target {
 			case "nil_safety":
 				r := NewAssetReloader("", nil, "", "", nil, nil, nil, nil)
-				if r.ReloadCSS() || r.ReloadWidgets() || func() bool { c, w := r.Reload(); return c || w }() { t.Fatal("expected false") }
+				if r.ReloadCSS() || r.ReloadWidgets() || func() bool {
+					c, w := r.Reload()
+					return c || w
+				}() {
+					t.Fatal("expected false")
+				}
 			case "missing_dir":
 				m := filepath.Join(tmp, "m")
 				r := NewAssetReloader(filepath.Join(tmp, "m.css"), widget.NewLoader("", m), "", m, nil, nil, nil, nil)
-				if c, w := r.Reload(); c || w { t.Fatal("expected false") }
+				if c, w := r.Reload(); c || w {
+					t.Fatal("expected false")
+				}
 			case "read_errors":
 				cd, cf, bf := filepath.Join(tmp, "cd"), filepath.Join(tmp, "cf"), filepath.Join(tmp, "bf")
-				_ = os.MkdirAll(cd, 0755); _ = os.WriteFile(cf, []byte("x"), 0644); _ = os.WriteFile(bf, []byte("x"), 0644)
+				_ = os.MkdirAll(cd, 0o755)
+				_ = os.WriteFile(cf, []byte("x"), 0o644)
+				_ = os.WriteFile(bf, []byte("x"), 0o644)
 				r := NewAssetReloader(cd, nil, bf, cf, nil, nil, nil, nil)
-				if r.ReloadCSS() || r.ReloadWidgets() { t.Fatal("expected false on read errors") }
-				if r.computePackageHash(&domain.Package{ManifestPath: filepath.Join(tmp, "m"), ViewPath: filepath.Join(tmp, "v")}) == "" { t.Fatal("hash empty") }
+				if r.ReloadCSS() || r.ReloadWidgets() {
+					t.Fatal("expected false on read errors")
+				}
+				if r.computePackageHash(&domain.Package{ManifestPath: filepath.Join(tmp, "m"), ViewPath: filepath.Join(tmp, "v")}) == "" {
+					t.Fatal("hash empty")
+				}
 			}
 		})
 	}

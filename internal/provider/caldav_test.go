@@ -204,8 +204,12 @@ func TestCalDAV_ErrorsAndEdgeCases(t *testing.T) {
 			w.Header().Set("Content-Type", "application/xml; charset=utf-8")
 			w.WriteHeader(http.StatusMultiStatus)
 			chunk := make([]byte, 1024*1024)
-			for i := range chunk { chunk[i] = ' ' }
-			_, _ = w.Write(chunk); _, _ = w.Write(chunk); _, _ = w.Write([]byte("EXCESS"))
+			for i := range chunk {
+				chunk[i] = ' '
+			}
+			_, _ = w.Write(chunk)
+			_, _ = w.Write(chunk)
+			_, _ = w.Write([]byte("EXCESS"))
 		}))
 		defer srv.Close()
 		client := provider.NewCalDAVClient(srv.Client(), nil)
