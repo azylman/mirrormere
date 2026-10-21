@@ -72,22 +72,22 @@ func WithThemeProvider(provider func() string) HandlerOption {
 
 // Handler serves the web display HUD shell and static web runtime assets.
 type Handler struct {
-	templatePath        string
-	localTemplatePath   string
-	staticDir           string
-	localStaticDir      string
-	templateContent     []byte
-	mu                  sync.RWMutex
-	timezone            string
-	timezoneProvider    func() string
-	hideCursor          bool
-	hideCursorProvider  func() bool
-	remoteURL           string
-	remoteURLProvider   func() string
-	headerVideo         *HeaderVideoTemplateData
-	headerVideoProvider func() *HeaderVideoTemplateData
+	templatePath          string
+	localTemplatePath     string
+	staticDir             string
+	localStaticDir        string
+	templateContent       []byte
+	mu                    sync.RWMutex
+	timezone              string
+	timezoneProvider      func() string
+	hideCursor            bool
+	hideCursorProvider    func() bool
+	remoteURL             string
+	remoteURLProvider     func() string
+	headerVideo           *HeaderVideoTemplateData
+	headerVideoProvider   func() *HeaderVideoTemplateData
 	voiceWaveformProvider func() *VoiceWaveformTemplateData
-	themeProvider       func() string
+	themeProvider         func() string
 }
 
 func (h *Handler) SetTimezone(tz string) {
@@ -280,9 +280,9 @@ func (h *Handler) GetDisplay(w http.ResponseWriter, r *http.Request) {
 		}
 		var buf bytes.Buffer
 		if err := tmpl.Execute(&buf, DisplayTemplateData{
-			Timezone:    h.Timezone(),
-			HideCursor:  hideCursor,
-			RemoteURL:   h.RemoteURL(),
+			Timezone:      h.Timezone(),
+			HideCursor:    hideCursor,
+			RemoteURL:     h.RemoteURL(),
 			HeaderVideo:   h.HeaderVideo(),
 			VoiceWaveform: h.VoiceWaveform(),
 			Theme:         h.Theme(),

@@ -257,7 +257,7 @@ func TestBuildDisplayHandler_VoiceWaveform(t *testing.T) {
 	}
 }
 
-func ptrBool(v bool) *bool         { return &v }
+func ptrBool(v bool) *bool        { return &v }
 func ptrFloat(v float64) *float64 { return &v }
 
 func TestRun_CLIAndErrors(t *testing.T) {
