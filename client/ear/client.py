@@ -601,6 +601,8 @@ class VoiceDaemon:
                 pass
         if resp is not None:
             self._abort_response(resp)
+        if self.waveform is not None:
+            self.waveform.clear()
 
         with self.busy_lock:
             self.busy = False

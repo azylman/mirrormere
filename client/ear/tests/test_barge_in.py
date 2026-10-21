@@ -220,6 +220,13 @@ class TestDoBargeIn(BargeInTestCase):
         self.assertFalse(daemon.busy)
         self.assertFalse(daemon.playing)
 
+    def test_barge_in_clears_waveform_levels(self):
+        daemon, _ = self.make_daemon()
+        self.start_playback(daemon)
+        daemon.waveform = MagicMock()
+        daemon._do_barge_in(1.0, 300.0)
+        daemon.waveform.clear.assert_called_once()
+
     def test_abort_response_shuts_down_socket_then_closes(self):
         daemon, _ = self.make_daemon()
         resp = MagicMock()
