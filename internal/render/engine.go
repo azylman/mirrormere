@@ -84,14 +84,6 @@ func (e *Engine) Invalidate(widgetType string) {
 	delete(e.cache, widgetType)
 }
 
-// RenderWidgetForNode renders a widget for one display, identified by its
-// voice node_id. Widgets whose data depends on the requesting display (see
-// WithNodeDataFunc) get that display's data; every other widget renders from
-// the shared state exactly as RenderWidget does.
-func (e *Engine) RenderWidgetForNode(ctx context.Context, widgetID, nodeID string) ([]byte, error) {
-	return e.RenderWidgetWithOverrides(ctx, widgetID, nodeID, nil)
-}
-
 // RenderWidgetWithOverrides renders a widget instance for one display with optional runtime configuration overrides.
 func (e *Engine) RenderWidgetWithOverrides(ctx context.Context, widgetID, nodeID string, overrides map[string]any) ([]byte, error) {
 	if widgetID == "" {

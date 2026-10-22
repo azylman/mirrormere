@@ -1,6 +1,12 @@
 package server
 
-import "time"
+import (
+	"net/http"
+	"time"
+)
+
+// Routes returns the configured http.Handler for in-memory testing.
+func (s *Server) Routes() http.Handler { return s.mux }
 
 // SetItemCompleter dynamically updates the ItemCompleter.
 func (h *DefaultListsHandler) SetItemCompleter(c ItemCompleter) {

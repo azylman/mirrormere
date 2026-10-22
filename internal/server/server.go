@@ -180,9 +180,6 @@ func New(cfg Config) *Server {
 	return s
 }
 
-// Routes returns the configured http.Handler for in-memory testing.
-func (s *Server) Routes() http.Handler { return s.mux }
-
 func isNil[H any](h H) bool { return any(h) == nil }
 
 func dispatchHandler[H any](s *Server, get func() H, isNil func(H) bool, fn func(H, http.ResponseWriter, *http.Request)) http.HandlerFunc {
