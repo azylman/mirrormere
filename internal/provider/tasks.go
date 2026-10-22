@@ -36,13 +36,6 @@ func NewTasksProvider() *TasksProvider {
 	return &TasksProvider{}
 }
 
-// NewTasksProviderWithAdapter constructs a TasksProvider with an injected Adapter for testing.
-func NewTasksProviderWithAdapter(adapter adapters.Adapter) *TasksProvider {
-	return &TasksProvider{
-		adapter: adapter,
-	}
-}
-
 // Init configures the tasks provider and instantiates external adapters if declared.
 func (p *TasksProvider) Init(ctx context.Context, config map[string]any, opts InitOptions) error {
 	p.mu.Lock()

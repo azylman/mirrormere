@@ -60,10 +60,6 @@ type (
 	}
 )
 
-func WithAddrChan(ch chan<- string) Option   { return func(rc *runConfig) { rc.addrChan = ch } }
-func WithHupChan(ch <-chan os.Signal) Option { return func(rc *runConfig) { rc.hupChan = ch } }
-func WithOnReload(fn func()) Option          { return func(rc *runConfig) { rc.onReload = fn } }
-
 func chatLogWidgetIDs(snap *config.Snapshot) (ids []string) {
 	if snap != nil && snap.Config != nil {
 		for _, w := range snap.Config.Display.Widgets {

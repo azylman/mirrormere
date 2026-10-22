@@ -41,13 +41,6 @@ func NewDefaultListsHandler(opts ...ListsHandlerOption) *DefaultListsHandler {
 	return h
 }
 
-// SetItemCompleter dynamically updates the ItemCompleter.
-func (h *DefaultListsHandler) SetItemCompleter(c ItemCompleter) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.completer = c
-}
-
 // CompleteListItem handles POST /api/lists/{list_id}/items/{item_id}/complete.
 func (h *DefaultListsHandler) CompleteListItem(w http.ResponseWriter, r *http.Request, listID, itemID string) {
 	if !requireCORSAndMethod(w, r, "POST, OPTIONS", http.MethodPost) {
