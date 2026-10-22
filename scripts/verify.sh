@@ -136,8 +136,32 @@ ensure_deadcode() {
 }
 
 run_deadcode() {
-    echo "   [deadcode] Checking for unreachable code..."
+    echo "   [deadcode] Checking for unreachable code (production & test graphs)..."
     ensure_deadcode
+    main_pkgs=$(go list -f '{{if eq .Name "main"}}{{.ImportPath}}{{end}}' ./...) || {
+        echo "🚨 [Mirrormere Verify] Error: failed to list main packages" >&2
+        exit 1
+    }
+    set +e
+    # shellcheck disable=SC2086
+    dead_prod=$(GOMEMLIMIT="${DEADCODE_GOMEMLIMIT:-384MiB}" GOGC="${DEADCODE_GOGC:-20}" "$DEADCODE_BIN" $main_pkgs 2>&1)
+    rc_prod=$?
+    set -e
+    if [ "$rc_prod" -ne 0 ]; then
+        if [ "$rc_prod" -eq 137 ] && [ "$MODE" = "staged" ]; then
+            echo "   [deadcode] Warning: deadcode killed by cgroup OOM in local pre-flight (exit 137), deferred to CI." >&2
+            return 0
+        fi
+        echo "🚨 [Mirrormere Verify] Error: deadcode (production) execution failed (exit $rc_prod):" >&2
+        echo "$dead_prod" >&2
+        exit 1
+    fi
+    if [ -n "$dead_prod" ]; then
+        echo "🚨 [Mirrormere Verify] Unreachable production code or compiled-in test hooks detected:" >&2
+        echo "$dead_prod" | sed 's/^/   • /' >&2
+        exit 1
+    fi
+
     set +e
     dead_output=$(GOMEMLIMIT="${DEADCODE_GOMEMLIMIT:-384MiB}" GOGC="${DEADCODE_GOGC:-20}" "$DEADCODE_BIN" -test ./... 2>&1)
     rc=$?
@@ -147,7 +171,7 @@ run_deadcode() {
             echo "   [deadcode] Warning: deadcode killed by cgroup OOM in local pre-flight (exit 137), deferred to CI." >&2
             return 0
         fi
-        echo "🚨 [Mirrormere Verify] Error: deadcode execution failed (exit $rc):" >&2
+        echo "🚨 [Mirrormere Verify] Error: deadcode (-test) execution failed (exit $rc):" >&2
         echo "$dead_output" >&2
         exit 1
     fi
