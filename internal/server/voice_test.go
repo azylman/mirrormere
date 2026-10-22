@@ -14,7 +14,6 @@ import (
 	"github.com/azylman/mirrormere/internal/events"
 	"github.com/azylman/mirrormere/internal/server"
 	"github.com/azylman/mirrormere/internal/voice"
-	"github.com/prometheus/client_golang/prometheus"
 )
 
 type mockVoiceCoord struct {
@@ -161,7 +160,7 @@ func TestDefaultVoiceHandler_PostVoiceHeartbeat(t *testing.T) {
 			t.Parallel()
 			var opts []server.DefaultVoiceHandlerOption
 			if tc.withMetrics {
-				opts = append(opts, server.WithVoiceMetrics(voice.NewMetrics(prometheus.NewRegistry())))
+				opts = append(opts, server.WithVoiceMetrics(voice.DefaultMetrics()))
 			}
 			h := server.NewDefaultVoiceHandler(nil, nil, opts...)
 			rec := httptest.NewRecorder()

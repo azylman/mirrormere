@@ -28,34 +28,16 @@ const (
 // HandlerOption configures Handler instances.
 type HandlerOption func(*Handler)
 
-func WithTemplatePath(path string) HandlerOption { return func(h *Handler) { h.templatePath = path } }
-
-func WithLocalTemplatePath(path string) HandlerOption {
-	return func(h *Handler) { h.localTemplatePath = path }
-}
-func WithStaticDir(dir string) HandlerOption      { return func(h *Handler) { h.staticDir = dir } }
-func WithLocalStaticDir(dir string) HandlerOption { return func(h *Handler) { h.localStaticDir = dir } }
-
-func WithTemplateContent(content []byte) HandlerOption {
-	return func(h *Handler) { h.templateContent = content }
-}
-func WithEmbeddedTemplate(content []byte) HandlerOption { return WithTemplateContent(content) }
-func WithTimezone(tz string) HandlerOption              { return func(h *Handler) { h.timezone = tz } }
-
 func WithTimezoneProvider(provider func() string) HandlerOption {
 	return func(h *Handler) { h.timezoneProvider = provider }
 }
-func WithHideCursor(hide bool) HandlerOption { return func(h *Handler) { h.hideCursor = hide } }
+
 func WithHideCursorProvider(provider func() bool) HandlerOption {
 	return func(h *Handler) { h.hideCursorProvider = provider }
 }
-func WithRemoteURL(url string) HandlerOption { return func(h *Handler) { h.remoteURL = url } }
+
 func WithRemoteURLProvider(provider func() string) HandlerOption {
 	return func(h *Handler) { h.remoteURLProvider = provider }
-}
-
-func WithHeaderVideoTemplateData(d *HeaderVideoTemplateData) HandlerOption {
-	return func(h *Handler) { h.headerVideo = d }
 }
 
 func WithHeaderVideoProvider(p func() *HeaderVideoTemplateData) HandlerOption {
@@ -90,12 +72,6 @@ type Handler struct {
 	themeProvider         func() string
 }
 
-func (h *Handler) SetTimezone(tz string) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.timezone = tz
-}
-
 func (h *Handler) Timezone() string {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
@@ -110,12 +86,6 @@ func (h *Handler) Timezone() string {
 	return "UTC"
 }
 
-func (h *Handler) SetHideCursor(hide bool) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.hideCursor = hide
-}
-
 func (h *Handler) HideCursor() bool {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
@@ -123,12 +93,6 @@ func (h *Handler) HideCursor() bool {
 		return h.hideCursorProvider()
 	}
 	return h.hideCursor
-}
-
-func (h *Handler) SetRemoteURL(url string) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.remoteURL = url
 }
 
 func (h *Handler) RemoteURL() string {

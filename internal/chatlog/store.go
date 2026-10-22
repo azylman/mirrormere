@@ -71,15 +71,6 @@ func WithMaxPerKey(n int) Option {
 	}
 }
 
-// WithClock injects the time source (tests).
-func WithClock(now func() time.Time) Option {
-	return func(s *Store) {
-		if now != nil {
-			s.now = now
-		}
-	}
-}
-
 // Store is a thread-safe, TTL-bounded, per-key message store.
 type Store struct {
 	mu   sync.Mutex

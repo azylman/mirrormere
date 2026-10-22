@@ -53,14 +53,6 @@ func DefaultMetrics() *Metrics {
 	return defaultMetrics
 }
 
-// NewMetrics instantiates and registers bounded voice metrics.
-func NewMetrics(reg prometheus.Registerer) *Metrics {
-	if reg == nil {
-		return DefaultMetrics()
-	}
-	return newMetrics(reg)
-}
-
 func newMetrics(reg prometheus.Registerer) *Metrics {
 	factory := promauto.With(reg)
 

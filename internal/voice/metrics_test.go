@@ -7,6 +7,14 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
+// NewMetrics instantiates and registers bounded voice metrics.
+func NewMetrics(reg prometheus.Registerer) *Metrics {
+	if reg == nil {
+		return DefaultMetrics()
+	}
+	return newMetrics(reg)
+}
+
 func lbl(kv ...string) map[string]string {
 	m := make(map[string]string, len(kv)/2)
 	for i := 0; i+1 < len(kv); i += 2 {

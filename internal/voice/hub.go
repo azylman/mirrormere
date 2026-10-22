@@ -135,51 +135,6 @@ type Hub struct {
 // HubOption configures optional Hub overrides (e.g. for testing).
 type HubOption func(*Hub)
 
-// WithSTTClient overrides the STT client implementation.
-func WithSTTClient(stt STTClient) HubOption {
-	return func(h *Hub) { h.stt = stt }
-}
-
-// WithBrainClient overrides the Brain client implementation.
-func WithBrainClient(brain BrainClient) HubOption {
-	return func(h *Hub) { h.brain = brain }
-}
-
-// WithTTSClient overrides the TTS client implementation.
-func WithTTSClient(tts TTSClient) HubOption {
-	return func(h *Hub) { h.tts = tts }
-}
-
-// WithSpeakerIdentifier overrides the speaker identification implementation.
-func WithSpeakerIdentifier(id SpeakerIdentifier) HubOption {
-	return func(h *Hub) { h.speaker = id }
-}
-
-// WithMetrics overrides the voice metrics collector.
-func WithMetrics(m *Metrics) HubOption {
-	return func(h *Hub) { h.metrics = m }
-}
-
-// WithFastPathClient overrides the deterministic fast-path client (nil disables it).
-func WithFastPathClient(fp FastPathClient) HubOption {
-	return func(h *Hub) { h.fastPath = fp }
-}
-
-// WithBrainTimeout overrides the brain deliberation timeout.
-func WithBrainTimeout(d time.Duration) HubOption {
-	return func(h *Hub) { h.brainTimeout = d }
-}
-
-// WithTTSTimeout overrides the TTS synthesis timeout.
-func WithTTSTimeout(d time.Duration) HubOption {
-	return func(h *Hub) { h.ttsTimeout = d }
-}
-
-// WithThinkingHeartbeatInterval overrides the thinking heartbeat interval.
-func WithThinkingHeartbeatInterval(d time.Duration) HubOption {
-	return func(h *Hub) { h.heartbeatInterval = d }
-}
-
 // WithChatLog makes the hub record every turn (the transcribed user text and
 // the brain's final reply) into store, keyed by voice node, for the chat-log
 // widget. onChange (optional) runs after each recorded message; the server
