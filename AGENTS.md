@@ -13,7 +13,7 @@ See `README.md` for the product overview.
   `go test ./internal/voice/... ./internal/config/...`.
 - Pre-flight: `scripts/verify.sh --staged` (or `--full`, which `make verify` and CI run).
   It checks, in order: UTF-8 BOM hygiene, `go vet ./...`, `golangci-lint`,
-  `deadcode -test ./...`, the Go coverage floor (95%, `scripts/check-coverage.sh`),
+  dual-pass `deadcode` (`deadcode <main-entrypoints>` without `-test` plus `deadcode -test ./...`), the Go coverage floor (95%, `scripts/check-coverage.sh`),
   `go generate ./...` zero-drift on `internal/api/`, then the Node tests
   (`web/test`, `sidecars/eink-renderer/test`) and Python unittest suites
   (`client/eink-node`, `client/ear`, `client/remote`). It needs `golangci-lint`,
