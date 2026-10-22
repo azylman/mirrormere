@@ -31,9 +31,6 @@ func TestRegistry(t *testing.T) {
 	reg := provider.NewRegistry()
 	builtins := []string{"spacer", "live-view", "http", "weather-forecast", "calendar-feed", "photo-carousel", "tasks"}
 	for _, name := range builtins {
-		if !reg.Has(name) {
-			t.Fatalf("missing builtin %s", name)
-		}
 		if p, err := reg.Create(name); err != nil || p == nil {
 			t.Fatalf("create %s failed: %v", name, err)
 		}
@@ -50,14 +47,8 @@ func TestRegistry(t *testing.T) {
 	}
 	dummy := &dummyProvider{}
 	reg.Register("custom-dummy", func() provider.Provider { return dummy })
-	if !reg.Has("custom-dummy") {
-		t.Fatal("missing custom-dummy")
-	}
 	if got, err := reg.Create("custom-dummy"); err != nil || got != dummy {
 		t.Fatalf("bad custom: %v", err)
-	}
-	if reg.Has("unknown") {
-		t.Fatal("unexpected unknown")
 	}
 	if _, err := reg.Create("unknown"); !errors.Is(err, provider.ErrProviderNotRegistered) {
 		t.Fatalf("want ErrProviderNotRegistered: %v", err)

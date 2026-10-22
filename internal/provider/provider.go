@@ -59,7 +59,6 @@ type Factory func() Provider
 type Registry interface {
 	Register(providerType string, factory Factory)
 	Create(providerType string) (Provider, error)
-	Has(providerType string) bool
 }
 
 // ErrProviderNotRegistered indicates no factory is registered for the requested provider type.
@@ -122,12 +121,4 @@ func (r *DefaultRegistry) Create(providerType string) (Provider, error) {
 		return nil, fmt.Errorf("%w: %q", ErrProviderNotRegistered, providerType)
 	}
 	return factory(), nil
-}
-
-// Has checks whether a factory exists for the provider type.
-func (r *DefaultRegistry) Has(providerType string) bool {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	_, ok := r.factories[providerType]
-	return ok
 }

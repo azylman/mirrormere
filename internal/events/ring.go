@@ -71,13 +71,6 @@ func (r *RingBuffer) Add(event *Event) {
 	}
 }
 
-// Count returns the number of active entries currently held in the ring buffer.
-func (r *RingBuffer) Count() int {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return r.count
-}
-
 // ReplaySince searches for lastEventID and returns all events chronologically subsequent to it.
 // If lastEventID is empty, not found, or older than TTL, it returns (nil, false) to indicate a cache miss.
 func (r *RingBuffer) ReplaySince(lastEventID string) ([]*Event, bool) {

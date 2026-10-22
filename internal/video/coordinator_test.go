@@ -136,9 +136,8 @@ func TestCoordinator_ValidationAndClose(t *testing.T) {
 	_, e1 := coord.Trigger(mkStream("c", "u", "", "", 0))
 	_, e2 := coord.Dismiss("c")
 	_, e3 := coord.Dismiss("all")
-	_, e4 := coord.SetPlayerState("c", PlayerStatePlaying)
-	_, e5 := coord.UpdatePlayerState("c", VideoStream{PlayerState: PlayerStatePlaying})
-	for _, err := range []error{e1, e2, e3, e4, e5} {
+	_, e4 := coord.UpdatePlayerState("c", VideoStream{PlayerState: PlayerStatePlaying})
+	for _, err := range []error{e1, e2, e3, e4} {
 		if !errors.Is(err, ErrStreamNotFound) {
 			t.Fatal("expected ErrStreamNotFound on closed coordinator")
 		}
@@ -241,9 +240,9 @@ func TestCoordinator_PlayerStateAndMetadata(t *testing.T) {
 		{"missing", PlayerStatePlaying, "", ErrStreamNotFound},
 		{"", PlayerStatePlaying, "", ErrInvalidStream},
 	} {
-		snap, err := coord.SetPlayerState(tc.id, tc.state)
+		snap, err := coord.UpdatePlayerState(tc.id, VideoStream{PlayerState: tc.state})
 		if !errors.Is(err, tc.wantErr) {
-			t.Fatalf("SetPlayerState(%s, %s) err=%v, want %v", tc.id, tc.state, err, tc.wantErr)
+			t.Fatalf("UpdatePlayerState(%s, %s) err=%v, want %v", tc.id, tc.state, err, tc.wantErr)
 		}
 		if tc.wantErr == nil {
 			var ps string
@@ -429,7 +428,7 @@ func TestCoordinator_Concurrency(t *testing.T) {
 				_, _ = coord.Trigger(mkStream("doorbell", "http://stream", "", PriorityTemporary, 45))
 			}
 			_ = coord.GetState()
-			_, _ = coord.SetPlayerState("cast", PlayerStatePlaying)
+			_, _ = coord.UpdatePlayerState("cast", VideoStream{PlayerState: PlayerStatePlaying})
 			if id%5 == 0 {
 				_, _ = coord.Dismiss("doorbell")
 			}

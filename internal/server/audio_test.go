@@ -18,8 +18,7 @@ type mockAudioCoord struct {
 	err    error
 }
 
-func (m *mockAudioCoord) GetState() (int, bool)          { return m.volume, m.muted }
-func (m *mockAudioCoord) ToggleMute() (int, bool, error) { return m.SetMute(nil) }
+func (m *mockAudioCoord) GetState() (int, bool) { return m.volume, m.muted }
 func (m *mockAudioCoord) SetVolume(v int) (int, bool, error) {
 	if m.err == nil {
 		m.volume = v

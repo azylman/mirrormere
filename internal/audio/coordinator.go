@@ -93,11 +93,6 @@ func (c *Coordinator) SetMute(muted *bool) (int, bool, error) {
 	return currentVol, currentMuted, nil
 }
 
-// ToggleMute toggles the mute state and broadcasts audio.state.
-func (c *Coordinator) ToggleMute() (int, bool, error) {
-	return c.SetMute(nil)
-}
-
 func (c *Coordinator) publishState(volume int, muted bool) {
 	data := events.AudioStateData{
 		Volume: volume,

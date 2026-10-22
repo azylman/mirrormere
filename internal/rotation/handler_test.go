@@ -43,8 +43,6 @@ func (m *mockController) AdvanceScreen(dir string) (events.ScreenRotateData, err
 func (m *mockController) PauseRotation(d time.Duration) (int, error) { return 0, m.ctrlErr }
 func (m *mockController) ResumeRotation() (int, error)               { return 0, m.ctrlErr }
 func (m *mockController) CurrentScreen() int                         { return 0 }
-func (m *mockController) TotalScreens() int                          { return m.totalScreen }
-func (m *mockController) IsPaused() bool                             { return false }
 
 func TestHandler_PostScreenSelect(t *testing.T) {
 	t.Parallel()

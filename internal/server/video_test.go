@@ -34,10 +34,6 @@ func (m *mockVideoCoordinator) Dismiss(id string) (video.VideoState, error) {
 	return m.state, m.err
 }
 
-func (m *mockVideoCoordinator) SetPlayerState(id, ps string) (video.VideoState, error) {
-	return m.UpdatePlayerState(id, video.VideoStream{ID: id, PlayerState: ps})
-}
-
 func (m *mockVideoCoordinator) UpdatePlayerState(id string, u video.VideoStream) (video.VideoState, error) {
 	m.lastStream = u
 	return m.state, m.err

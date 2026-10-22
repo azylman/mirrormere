@@ -67,7 +67,7 @@ func mkCfg(src, subKey string, sub map[string]any) map[string]any {
 func TestTasksProvider_Init(t *testing.T) {
 	t.Parallel()
 	reg := provider.NewRegistry()
-	if p, err := reg.Create("tasks"); err != nil || p == nil || !reg.Has("tasks") {
+	if p, err := reg.Create("tasks"); err != nil || p == nil {
 		t.Fatal("registry tasks provider creation failed")
 	}
 	if provider.NewTasksProviderWithAdapter(nil) == nil {
