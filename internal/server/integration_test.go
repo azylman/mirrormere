@@ -1,4 +1,4 @@
-package display_test
+package server_test
 
 import (
 	"net/http"
