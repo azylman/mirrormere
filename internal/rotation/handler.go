@@ -18,8 +18,6 @@ type ScreenController interface {
 	PauseRotation(duration time.Duration) (int, error)
 	ResumeRotation() (int, error)
 	CurrentScreen() int
-	TotalScreens() int
-	IsPaused() bool
 }
 
 // Handler serves HTTP endpoints for screen navigation matching OpenAPI specification.

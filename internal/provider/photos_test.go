@@ -231,9 +231,6 @@ func TestPhotosProvider_InitAndLifecycle(t *testing.T) {
 	}
 
 	reg := provider.NewRegistry()
-	if !reg.Has("photo-carousel") {
-		t.Fatal("registry missing photo-carousel provider")
-	}
 	p1, err := reg.Create("photo-carousel")
 	if err != nil || p1 == nil {
 		t.Fatalf("failed create photo-carousel: %v", err)

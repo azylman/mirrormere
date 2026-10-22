@@ -14,7 +14,7 @@ func TestHub_PublishAndSubscribe(t *testing.T) {
 	cfg.ApplyDefaults()
 	hub := NewHub(cfg, nil, nil)
 	defer hub.Close()
-	if hub.StateProvider() != nil || hub.RotationCoordinator() != nil || hub.ProviderCoordinator() != nil || hub.RingBuffer() == nil || hub.IDGenerator() == nil || hub.Config().RingCapacity != 10 {
+	if hub.stateProvider != nil || hub.RotationCoordinator() != nil || hub.ProviderCoordinator() != nil || hub.ring == nil || hub.idGen == nil || hub.cfg.RingCapacity != 10 {
 		t.Fatal("unexpected initial state")
 	}
 

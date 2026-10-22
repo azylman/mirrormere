@@ -380,9 +380,6 @@ func TestWeatherProvider_LifecycleAndSerialization(t *testing.T) {
 	}
 
 	reg := provider.NewRegistry()
-	if !reg.Has("weather-forecast") {
-		t.Error("missing registry key")
-	}
 	if p1, err := reg.Create("weather-forecast"); err != nil || p1 == nil {
 		t.Fatalf("create forecast failed: %v", err)
 	}

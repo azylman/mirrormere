@@ -16,7 +16,6 @@ type AudioCoordinator interface {
 	GetState() (int, bool)
 	SetVolume(vol int) (int, bool, error)
 	SetMute(muted *bool) (int, bool, error)
-	ToggleMute() (int, bool, error)
 }
 
 // DefaultAudioHandler serves OpenAPI /api/audio, /api/audio/volume, and /api/audio/mute endpoints.

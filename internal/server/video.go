@@ -16,7 +16,6 @@ type VideoCoordinator interface {
 	GetState() video.VideoState
 	Trigger(stream video.VideoStream) (video.VideoState, error)
 	Dismiss(id string) (video.VideoState, error)
-	SetPlayerState(id string, playerState string) (video.VideoState, error)
 	UpdatePlayerState(id string, update video.VideoStream) (video.VideoState, error)
 	ForwardAction(ctx context.Context, id, action string, value any) error
 }

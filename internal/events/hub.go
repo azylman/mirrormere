@@ -118,7 +118,6 @@ func NewHub(cfg HubConfig, stateProvider StateProvider, logger *slog.Logger) *Hu
 	}
 }
 
-func (h *Hub) StateProvider() StateProvider { return h.stateProvider }
 func (h *Hub) SetRotationCoordinator(c RotationCoordinator) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -142,9 +141,6 @@ func (h *Hub) ProviderCoordinator() ProviderCoordinator {
 	defer h.mu.RUnlock()
 	return h.providerCoordinator
 }
-func (h *Hub) Config() HubConfig         { return h.cfg }
-func (h *Hub) RingBuffer() *RingBuffer   { return h.ring }
-func (h *Hub) IDGenerator() *IDGenerator { return h.idGen }
 
 func (h *Hub) Publish(eventType string, data []byte) *Event {
 	now := h.cfg.NowFunc()

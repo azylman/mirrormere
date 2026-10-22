@@ -220,13 +220,6 @@ func (c *Coordinator) Dismiss(id string) (VideoState, error) {
 	return c.unlockAndPublish(c.snapshotLocked())
 }
 
-func (c *Coordinator) SetPlayerState(id, playerState string) (VideoState, error) {
-	if !isValidPlayerState(playerState) {
-		return VideoState{}, ErrInvalidPlayerState
-	}
-	return c.UpdatePlayerState(id, VideoStream{PlayerState: playerState})
-}
-
 // UpdatePlayerState updates transport state and optional stream metadata without wiping existing data.
 func (c *Coordinator) UpdatePlayerState(id string, update VideoStream) (VideoState, error) {
 	id = strings.TrimSpace(id)

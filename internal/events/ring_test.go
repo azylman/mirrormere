@@ -19,16 +19,16 @@ func TestRingBuffer_AddAndCount(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 9, 25, 20, 0, 0, 0, time.UTC)
 	r := NewRingBuffer(3, 5*time.Minute, func() time.Time { return now })
-	if r.Count() != 0 {
-		t.Fatalf("expected count 0, got %d", r.Count())
+	if r.count != 0 {
+		t.Fatalf("expected count 0, got %d", r.count)
 	}
 	evt1 := &Event{ID: "evt_1", Type: "test"}
 	r.Add(evt1)
 	r.Add(&Event{ID: "evt_2", Type: "test"})
 	r.Add(&Event{ID: "evt_3", Type: "test"})
 	r.Add(&Event{ID: "evt_4", Type: "test"})
-	if r.Count() != 3 || evt1.Timestamp != now {
-		t.Fatalf("expected count 3, got %d", r.Count())
+	if r.count != 3 || evt1.Timestamp != now {
+		t.Fatalf("expected count 3, got %d", r.count)
 	}
 }
 

@@ -321,9 +321,6 @@ func TestCalendarProvider_Fetch_MultiFeedAndErrors(t *testing.T) {
 	t.Run("registry and lifecycle", func(t *testing.T) {
 		t.Parallel()
 		reg := provider.NewRegistry()
-		if !reg.Has("calendar-feed") {
-			t.Error("expected registry to have calendar-feed")
-		}
 		p, err := reg.Create("calendar-feed")
 		if err != nil {
 			t.Fatalf("failed create: %v", err)

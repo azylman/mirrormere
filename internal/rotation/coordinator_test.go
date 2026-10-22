@@ -45,19 +45,16 @@ func TestCoordinator_LifecycleAndUpdateConfig(t *testing.T) {
 	coord := NewCoordinator(Config{Broadcaster: mb}, snap)
 	defer coord.Stop()
 
-	if coord.CurrentScreen() != 0 || coord.TotalScreens() != 3 || coord.IsPaused() || coord.IntervalSeconds() != 30 {
-		t.Fatalf("unexpected initial state")
-	}
-	if data := coord.ScreenRotateData(); data.CurrentScreen != 0 || data.TotalScreens != 3 || len(data.Widgets) != 1 {
-		t.Fatalf("unexpected screen rotate data")
+	if data := coord.ScreenRotateData(); coord.CurrentScreen() != 0 || coord.paused || data.CurrentScreen != 0 || data.TotalScreens != 3 || data.IntervalSeconds != 30 || len(data.Widgets) != 1 {
+		t.Fatalf("unexpected initial state or screen rotate data")
 	}
 
 	_, _ = coord.SelectScreen(2)
 	d2 := coord.UpdateConfig(makeTestSnapshot(2, 15, 60))
-	if coord.CurrentScreen() != 0 || d2.TotalScreens != 2 || coord.IntervalSeconds() != 15 {
+	if coord.CurrentScreen() != 0 || d2.TotalScreens != 2 || d2.IntervalSeconds != 15 {
 		t.Fatalf("expected clamped screen 0 and 2 screens, got cur=%d total=%d", coord.CurrentScreen(), d2.TotalScreens)
 	}
-	if dNil := coord.UpdateConfig(nil); dNil.TotalScreens != 0 || coord.TotalScreens() != 0 {
+	if dNil := coord.UpdateConfig(nil); dNil.TotalScreens != 0 {
 		t.Fatalf("expected 0 total screens on nil update")
 	}
 
@@ -139,16 +136,16 @@ func TestCoordinator_AutoRotateAndPauseTimers(t *testing.T) {
 	coord := NewCoordinator(Config{Broadcaster: &mockBroadcaster{}}, makeTestSnapshot(2, 1, 120))
 	defer coord.Stop()
 
-	if cur, err := coord.PauseRotation(-1); err != nil || cur != 0 || !coord.IsPaused() {
+	if cur, err := coord.PauseRotation(-1); err != nil || cur != 0 || !coord.paused {
 		t.Fatal("unexpected PauseRotation(-1)")
 	}
-	if cur, err := coord.PauseRotation(0); err != nil || cur != 0 || !coord.IsPaused() {
+	if cur, err := coord.PauseRotation(0); err != nil || cur != 0 || !coord.paused {
 		t.Fatal("unexpected PauseRotation(0)")
 	}
-	if cur, err := coord.ResumeRotation(); err != nil || cur != 0 || coord.IsPaused() {
+	if cur, err := coord.ResumeRotation(); err != nil || cur != 0 || coord.paused {
 		t.Fatal("unexpected ResumeRotation")
 	}
-	if _, err := coord.ResumeRotation(); err != nil || coord.IsPaused() {
+	if _, err := coord.ResumeRotation(); err != nil || coord.paused {
 		t.Fatal("expected idempotent resume")
 	}
 
@@ -157,7 +154,7 @@ func TestCoordinator_AutoRotateAndPauseTimers(t *testing.T) {
 	pGen := coord.pauseGen
 	coord.mu.Unlock()
 	coord.onPauseTimeout(pGen)
-	if coord.IsPaused() {
+	if coord.paused {
 		t.Fatal("expected auto-resume to clear paused flag")
 	}
 

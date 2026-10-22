@@ -69,30 +69,6 @@ func (c *Coordinator) CurrentScreen() int {
 	return c.currentScreen
 }
 
-func (c *Coordinator) IsPaused() bool {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.paused
-}
-
-func (c *Coordinator) TotalScreens() int {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	if c.snapshot != nil && c.snapshot.Layout != nil {
-		return c.snapshot.Layout.TotalScreens
-	}
-	return 0
-}
-
-func (c *Coordinator) IntervalSeconds() int {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	if c.snapshot != nil && c.snapshot.Config != nil {
-		return c.snapshot.Config.Display.Rotation.GetIntervalSeconds()
-	}
-	return 30
-}
-
 func (c *Coordinator) ScreenRotateData() events.ScreenRotateData {
 	c.mu.RLock()
 	defer c.mu.RUnlock()

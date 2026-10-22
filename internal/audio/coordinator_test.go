@@ -75,16 +75,12 @@ func TestCoordinator_VolumeAndMute(t *testing.T) {
 	for _, tc := range []struct {
 		arg  *bool
 		want bool
-	}{{&tVal, true}, {&fVal, false}, {nil, true}} {
+	}{{&tVal, true}, {&fVal, false}, {nil, true}, {nil, false}} {
 		if vol, muted, err := coord.SetMute(tc.arg); err != nil || vol != 100 || muted != tc.want {
 			t.Fatalf("SetMute(%v): got (%d, %v, %v)", tc.arg, vol, muted, err)
 		}
 		assertAudioState(t, sub, sink, 100, tc.want)
 	}
-	if vol, muted, err := coord.ToggleMute(); err != nil || vol != 100 || muted {
-		t.Fatalf("ToggleMute: got (%d, %v, %v)", vol, muted, err)
-	}
-	assertAudioState(t, sub, sink, 100, false)
 }
 
 func TestCoordinator_ConcurrentAndSchema(t *testing.T) {
@@ -100,7 +96,7 @@ func TestCoordinator_ConcurrentAndSchema(t *testing.T) {
 			defer wg.Done()
 			for j := 0; j < 50; j++ {
 				_, _, _ = coord.SetVolume((id*20 + j) % 101)
-				_, _, _ = coord.ToggleMute()
+				_, _, _ = coord.SetMute(nil)
 				if v, _ := coord.GetState(); v < 0 || v > 100 {
 					t.Errorf("invalid volume: %d", v)
 				}
