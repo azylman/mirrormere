@@ -6,6 +6,15 @@ import (
 	"time"
 )
 
+// WithClock injects the time source (tests).
+func WithClock(now func() time.Time) Option {
+	return func(s *Store) {
+		if now != nil {
+			s.now = now
+		}
+	}
+}
+
 type fakeClock struct {
 	mu sync.Mutex
 	t  time.Time

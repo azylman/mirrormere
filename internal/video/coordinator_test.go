@@ -15,6 +15,22 @@ import (
 	"github.com/azylman/mirrormere/internal/events"
 )
 
+func WithHTTPClient(client *http.Client) CoordinatorOption {
+	return func(c *Coordinator) {
+		if client != nil {
+			c.httpClient = client
+		}
+	}
+}
+
+func WithTimerFunc(tf TimerFunc) CoordinatorOption {
+	return func(c *Coordinator) {
+		if tf != nil {
+			c.timerFunc = tf
+		}
+	}
+}
+
 type mockTimer struct {
 	stopped bool
 	fn      func()

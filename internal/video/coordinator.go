@@ -22,22 +22,6 @@ type CoordinatorOption func(*Coordinator)
 
 func WithSink(sink VideoStateSink) CoordinatorOption { return func(c *Coordinator) { c.sink = sink } }
 
-func WithHTTPClient(client *http.Client) CoordinatorOption {
-	return func(c *Coordinator) {
-		if client != nil {
-			c.httpClient = client
-		}
-	}
-}
-
-func WithTimerFunc(tf TimerFunc) CoordinatorOption {
-	return func(c *Coordinator) {
-		if tf != nil {
-			c.timerFunc = tf
-		}
-	}
-}
-
 // Coordinator manages the authoritative in-memory video priority stack, auto-dismiss timers,
 // transport action forwarding, and real-time SSE broadcasts.
 type Coordinator struct {
