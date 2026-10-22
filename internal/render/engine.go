@@ -84,11 +84,6 @@ func (e *Engine) Invalidate(widgetType string) {
 	delete(e.cache, widgetType)
 }
 
-// RenderWidget executes the HTML template for the given widget instance, returning the rendered HTML fragment.
-func (e *Engine) RenderWidget(ctx context.Context, widgetID string) ([]byte, error) {
-	return e.RenderWidgetForNode(ctx, widgetID, "")
-}
-
 // RenderWidgetForNode renders a widget for one display, identified by its
 // voice node_id. Widgets whose data depends on the requesting display (see
 // WithNodeDataFunc) get that display's data; every other widget renders from

@@ -49,6 +49,32 @@ type errFlusher struct{ nonFlusher }
 func (e *errFlusher) Write([]byte) (int, error) { return 0, errors.New("simulated write error") }
 func (e *errFlusher) Flush()                    {}
 
+// SetNowFnForTest overrides the time provider for testing debounce without sleeps.
+func SetNowFnForTest(fn func() time.Time) func() {
+	flushMu.Lock()
+	prev := nowFn
+	nowFn = fn
+	flushMu.Unlock()
+	return func() {
+		flushMu.Lock()
+		nowFn = prev
+		flushMu.Unlock()
+	}
+}
+
+// SetWriteCountersDirForTest overrides writeCountersDirFn for testing purposes.
+func SetWriteCountersDirForTest(fn func(string) error) func() {
+	writeCountersDirMu.Lock()
+	prev := writeCountersDirFn
+	writeCountersDirFn = fn
+	writeCountersDirMu.Unlock()
+	return func() {
+		writeCountersDirMu.Lock()
+		writeCountersDirFn = prev
+		writeCountersDirMu.Unlock()
+	}
+}
+
 func TestServer_Intent(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

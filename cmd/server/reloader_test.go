@@ -168,7 +168,7 @@ func TestAssetReloader_ReloadWidgets(t *testing.T) {
 			env := setupReloaderTest(t, tc.isComb)
 			drainEvents(env.eventCh)
 			if tc.setup == "builtin" {
-				_, _ = env.renderEngine.RenderWidget(context.Background(), "test-instance")
+				_, _ = env.renderEngine.RenderWidgetForNode(context.Background(), "test-instance", "")
 			} else if tc.setup != "" {
 				name, man, view, aName, aBody := "c-pkg", "default", "<div>c</div>", "", ""
 				if tc.setup == "custom_incomplete" {
@@ -231,7 +231,7 @@ func TestAssetReloader_ReloadWidgets(t *testing.T) {
 			}
 			expectNoEvent(t, env.eventCh)
 			if tc.act == "modify_view" {
-				if h, _ := env.renderEngine.RenderWidget(context.Background(), "test-instance"); string(h) != "<div>New View</div>" {
+				if h, _ := env.renderEngine.RenderWidgetForNode(context.Background(), "test-instance", ""); string(h) != "<div>New View</div>" {
 					t.Fatalf("rendered = %s", string(h))
 				}
 			}

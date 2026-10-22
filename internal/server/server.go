@@ -180,16 +180,6 @@ func New(cfg Config) *Server {
 	return s
 }
 
-// Ready returns a channel closed as soon as the server listener is bound.
-func (s *Server) Ready() <-chan struct{} { return s.ready }
-
-// Addr returns the network address the server is actively listening on.
-func (s *Server) Addr() string {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.addr
-}
-
 // Routes returns the configured http.Handler for in-memory testing.
 func (s *Server) Routes() http.Handler { return s.mux }
 
@@ -280,32 +270,6 @@ var (
 	writeMetaDirFn     = coverage.WriteMetaDir
 	writeCountersDirFn = coverage.WriteCountersDir
 )
-
-// SetNowFnForTest overrides the time provider for testing debounce without sleeps.
-func SetNowFnForTest(fn func() time.Time) func() {
-	flushMu.Lock()
-	prev := nowFn
-	nowFn = fn
-	flushMu.Unlock()
-	return func() {
-		flushMu.Lock()
-		nowFn = prev
-		flushMu.Unlock()
-	}
-}
-
-// SetWriteCountersDirForTest overrides writeCountersDirFn for testing purposes.
-func SetWriteCountersDirForTest(fn func(string) error) func() {
-	writeCountersDirMu.Lock()
-	prev := writeCountersDirFn
-	writeCountersDirFn = fn
-	writeCountersDirMu.Unlock()
-	return func() {
-		writeCountersDirMu.Lock()
-		writeCountersDirFn = prev
-		writeCountersDirMu.Unlock()
-	}
-}
 
 func (s *Server) handleCoverageFlush(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodPost {

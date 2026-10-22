@@ -40,31 +40,6 @@ var (
 	writeCountersDirFn = coverage.WriteCountersDir
 )
 
-// SetNowFnForTest overrides the time provider for testing debounce without sleeps.
-func SetNowFnForTest(fn func() time.Time) func() {
-	flushMu.Lock()
-	defer flushMu.Unlock()
-	prev := nowFn
-	nowFn = fn
-	return func() {
-		flushMu.Lock()
-		defer flushMu.Unlock()
-		nowFn = prev
-	}
-}
-
-func SetWriteCountersDirForTest(fn func(string) error) func() {
-	writeCountersDirMu.Lock()
-	defer writeCountersDirMu.Unlock()
-	prev := writeCountersDirFn
-	writeCountersDirFn = fn
-	return func() {
-		writeCountersDirMu.Lock()
-		defer writeCountersDirMu.Unlock()
-		writeCountersDirFn = prev
-	}
-}
-
 // ActionServer handles incoming transport webhook actions and health probes.
 type ActionServer struct {
 	cfg    ServerConfig

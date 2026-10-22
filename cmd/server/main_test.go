@@ -22,6 +22,10 @@ import (
 
 type failWriter struct{}
 
+func WithAddrChan(ch chan<- string) Option   { return func(rc *runConfig) { rc.addrChan = ch } }
+func WithHupChan(ch <-chan os.Signal) Option { return func(rc *runConfig) { rc.hupChan = ch } }
+func WithOnReload(fn func()) Option          { return func(rc *runConfig) { rc.onReload = fn } }
+
 func (failWriter) Write(p []byte) (int, error) {
 	return 0, errors.New("simulated stdout write failure")
 }
