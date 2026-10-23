@@ -70,11 +70,21 @@ check_gofmt() {
     fi
 }
 
-# 2. Go Vet
+# 2. Go Vet & Ratcheted Code Health Gate
 run_go_vet() {
     echo "   [go vet] Checking codebase..."
     if has_cmd go; then
         go vet ./...
+    else
+        echo "🚨 [Mirrormere Verify] Error: go not found in PATH." >&2
+        exit 1
+    fi
+}
+
+run_code_health() {
+    echo "   [code-health] Checking ratcheted complexity and length limits..."
+    if has_cmd go; then
+        go run ./scripts/code-health -root "$REPO_ROOT" -baseline "$REPO_ROOT/.code-health-baseline.json"
     else
         echo "🚨 [Mirrormere Verify] Error: go not found in PATH." >&2
         exit 1
@@ -264,6 +274,7 @@ check_utf8_bom
 check_gofmt
 run_codegen_drift
 run_go_vet
+run_code_health
 run_golangci_lint
 run_deadcode
 run_coverage_gate
