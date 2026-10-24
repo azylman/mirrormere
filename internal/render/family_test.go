@@ -1015,7 +1015,7 @@ func TestCalendarWidgetTemplates(t *testing.T) {
 			),
 			cfg: withFamilyCfg(map[string]any{"default_view": "week", "date": "2026-09-27", "hours": []any{"07:00", "21:00"}}),
 			wantContains: []string{
-				"cf-view-switcher", "cf-view-week", "cf-week-grid", "Team Standup", "cf-today", "var(--mm-cal-today-border",
+				"cf-view-switcher", "cf-view-week", "cf-week-grid", "Team Standup", "cf-today", "border: 1px solid var(--mm-cal-today-border",
 				`data-view="week" role="tab" aria-selected="true">Week</button>`,
 				`data-view="month" role="tab" aria-selected="false">Month</button>`,
 				"calendar-family-data", "MirrormereCalendarFamily.mount",
@@ -1023,7 +1023,7 @@ func TestCalendarWidgetTemplates(t *testing.T) {
 				"cf-week-body", "cf-timeline-axis", "cf-timeline-markers", "cf-hour-marker", "cf-day-canvas", "Soccer Practice", "top: 64.29%",
 				"height: 44px",
 			},
-			wantNotContains: []string{"var(--mm-coral, #ff6f59)", `data-view="day"`},
+			wantNotContains: []string{"var(--mm-coral, #ff6f59)", `data-view="day"`, "border: 2px solid var(--mm-cal-today-border"},
 		},
 		{
 			name:      "calendar-grid custom title template render",
@@ -1069,8 +1069,9 @@ func TestCalendarWidgetTemplates(t *testing.T) {
 				"var(--mm-member-0", "var(--mm-cf-shared", "cf-month-event-title", "Parent Teacher Night",
 				`data-view="month" role="tab" aria-selected="true">Month</button>`,
 				`data-view="week" role="tab" aria-selected="false">Week</button>`,
+				"outline: 1px solid var(--mm-cal-today-border",
 			},
-			wantNotContains: []string{`data-view="day"`},
+			wantNotContains: []string{`data-view="day"`, "outline: 2px solid var(--mm-cal-today-border"},
 		},
 		{
 			name:         "calendar-family month view template render 4x2",

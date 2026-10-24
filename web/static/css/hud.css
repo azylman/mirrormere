@@ -244,11 +244,10 @@ body[data-theme="night"],
 
 [data-theme="night"] .calendar-grid-cell.today {
   border-color: var(--mm-cal-today-border, var(--mm-lavender));
-  box-shadow: inset 0 0 0 1px var(--mm-cal-today-border, var(--mm-lavender));
 }
 
 [data-theme="night"] .cf-day.cf-today {
-  outline: 2px solid var(--mm-cal-today-border, var(--mm-lavender));
+  border: 1px solid var(--mm-cal-today-border, var(--mm-lavender));
   background: var(--mm-cal-today-bg, rgba(197, 163, 255, 0.14));
 }
 
@@ -257,7 +256,7 @@ body[data-theme="night"],
 }
 
 [data-theme="night"] .cf-month-day.cf-today {
-  outline: 2px solid var(--mm-cal-today-border, var(--mm-lavender));
+  outline: 1px solid var(--mm-cal-today-border, var(--mm-lavender));
 }
 
 [data-theme="night"] .cf-today-num {
@@ -2767,7 +2766,7 @@ button, .touch-target {
 }
 
 .cf-day.cf-today {
-  outline: 2px solid var(--mm-cal-today-border, var(--mm-lavender));
+  border: 1px solid var(--mm-cal-today-border, var(--mm-lavender));
   background: var(--mm-cal-today-bg, var(--mm-lavender-light, #f3effe));
 }
 

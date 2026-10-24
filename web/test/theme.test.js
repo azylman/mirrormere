@@ -109,13 +109,14 @@ describe('Fairyfloss Theme Mode Switching', () => {
       // Day mode tokens & styles
       assert.match(content, /--mm-cal-today-border:\s*var\(--mm-lavender/, `${path.basename(cssPath)} must define --mm-cal-today-border using lavender`);
       assert.match(content, /--mm-cal-today-bg:\s*var\(--mm-lavender-light/, `${path.basename(cssPath)} must define --mm-cal-today-bg using lavender light`);
-      assert.match(content, /\.cf-day\.cf-today/, `${path.basename(cssPath)} must style .cf-day.cf-today`);
+      assert.match(content, /\.cf-day\.cf-today\s*\{[^}]*border:\s*1px\s+solid\s+var\(--mm-cal-today-border/, `${path.basename(cssPath)} must style .cf-day.cf-today with 1px border`);
+      assert.doesNotMatch(content, /\.cf-day\.cf-today\s*\{[^}]*outline:\s*2px/, `${path.basename(cssPath)} must not apply 2px outline to .cf-day.cf-today`);
       assert.match(content, /\.cf-today-badge/, `${path.basename(cssPath)} must style .cf-today-badge`);
 
       // Night mode overrides
       assert.match(content, /\[data-theme=["']?night["']?\]\s+\.calendar-grid-cell\.today/, `${path.basename(cssPath)} must include [data-theme="night"] .calendar-grid-cell.today`);
-      assert.match(content, /\[data-theme=["']?night["']?\]\s+\.cf-day\.cf-today/, `${path.basename(cssPath)} must include [data-theme="night"] .cf-day.cf-today`);
-      assert.match(content, /\[data-theme=["']?night["']?\]\s+\.cf-month-day\.cf-today/, `${path.basename(cssPath)} must include [data-theme="night"] .cf-month-day.cf-today`);
+      assert.match(content, /\[data-theme=["']?night["']?\]\s+\.cf-day\.cf-today\s*\{[^}]*border:\s*1px\s+solid\s+var\(--mm-cal-today-border/, `${path.basename(cssPath)} must include [data-theme="night"] .cf-day.cf-today with 1px border`);
+      assert.match(content, /\[data-theme=["']?night["']?\]\s+\.cf-month-day\.cf-today\s*\{[^}]*outline:\s*1px\s+solid\s+var\(--mm-cal-today-border/, `${path.basename(cssPath)} must include [data-theme="night"] .cf-month-day.cf-today with 1px outline`);
       assert.match(content, /\[data-theme=["']?night["']?\]\s+\.cf-today-badge/, `${path.basename(cssPath)} must include [data-theme="night"] .cf-today-badge`);
     }
   });
