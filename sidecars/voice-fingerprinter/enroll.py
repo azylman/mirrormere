@@ -267,19 +267,28 @@ def _read_yaml_speakers(path: Path) -> dict | None:
         if re.match(r"^voice_hub:\s*(?:#.*)?$", line):
             vh_idx = i
             break
+        elif re.match(r"^voice_hub:\s*\S+", line):
+            raise RuntimeError(f"{path} has malformed voice_hub entry: expected mapping block, found scalar/inline mapping")
+
     if vh_idx is None:
         return None
 
     vh_end = _find_block_bounds(lines, vh_idx, 0)
     sid_idx = None
+    sid_indent = 2
     for i in range(vh_idx + 1, vh_end):
-        if re.match(r"^  speaker_id:\s*(?:#.*)?$", lines[i]):
+        m = re.match(r"^(\s+)speaker_id:\s*(?:#.*)?$", lines[i])
+        if m:
             sid_idx = i
+            sid_indent = len(m.group(1))
             break
+        elif re.match(r"^\s+speaker_id:\s*\S+", lines[i]):
+            raise RuntimeError(f"{path} has malformed speaker_id entry: expected mapping block, found scalar/inline mapping")
+
     if sid_idx is None:
         return None
 
-    sid_end = _find_block_bounds(lines, sid_idx, 2)
+    sid_end = _find_block_bounds(lines, sid_idx, sid_indent)
     model = None
     speakers: list[dict] = []
     has_speakers_key = False
@@ -291,27 +300,35 @@ def _read_yaml_speakers(path: Path) -> dict | None:
         if not stripped or stripped.startswith("#"):
             i += 1
             continue
-        m_model = re.match(r"^    model:\s*(.+)$", line)
-        if m_model:
-            model = _parse_yaml_scalar(m_model.group(1))
+
+        indent = len(line) - len(line.lstrip(" "))
+        if indent <= sid_indent:
+            break
+
+        if re.match(r"^model:\s*", stripped):
+            m_model = re.match(r"^model:\s*(.+)$", stripped)
+            if m_model:
+                model = _parse_yaml_scalar(m_model.group(1))
             i += 1
             continue
-        m_spk = re.match(r"^    speakers:\s*(.*)$", line)
-        if m_spk:
+
+        if re.match(r"^speakers:\s*", stripped):
             has_speakers_key = True
-            rest = _strip_yaml_comment(m_spk.group(1))
+            m_spk = re.match(r"^speakers:\s*(.*)$", stripped)
+            rest = _strip_yaml_comment(m_spk.group(1)) if m_spk else ""
             i += 1
             if rest == "[]":
                 continue
             current: dict = {}
+            speakers_indent = indent
             while i < sid_end:
                 sub = lines[i]
                 sub_s = sub.strip()
                 if not sub_s or sub_s.startswith("#"):
                     i += 1
                     continue
-                indent = len(sub) - len(sub.lstrip(" "))
-                if indent < 4 or (indent == 4 and not sub_s.startswith("-")):
+                sub_indent = len(sub) - len(sub.lstrip(" "))
+                if sub_indent <= speakers_indent and not sub_s.startswith("-"):
                     break
                 if sub_s.startswith("-"):
                     if "id" in current and "embedding" in current:
@@ -320,13 +337,39 @@ def _read_yaml_speakers(path: Path) -> dict | None:
                     sub_s = sub_s[1:].strip()
                 if sub_s.startswith("id:"):
                     current["id"] = _parse_yaml_scalar(sub_s[3:].strip())
+                    i += 1
                 elif sub_s.startswith("embedding:"):
                     raw_emb = _strip_yaml_comment(sub_s[len("embedding:"):].strip())
-                    try:
-                        current["embedding"] = [float(x) for x in json.loads(raw_emb)]
-                    except Exception as exc:
-                        raise RuntimeError(f"{path} has invalid speaker embedding list: {exc}") from exc
-                i += 1
+                    if raw_emb:
+                        try:
+                            current["embedding"] = [float(x) for x in json.loads(raw_emb)]
+                        except Exception as exc:
+                            raise RuntimeError(f"{path} has invalid speaker embedding list: {exc}") from exc
+                        i += 1
+                    else:
+                        emb_vals = []
+                        i += 1
+                        while i < sid_end:
+                            item_line = lines[i]
+                            item_s = item_line.strip()
+                            if not item_s or item_s.startswith("#"):
+                                i += 1
+                                continue
+                            item_indent = len(item_line) - len(item_line.lstrip(" "))
+                            if item_indent <= sub_indent:
+                                break
+                            m_val = re.match(r"^-\s*([^\s#]+)", item_s)
+                            if not m_val:
+                                break
+                            try:
+                                emb_vals.append(float(m_val.group(1)))
+                            except ValueError as exc:
+                                raise RuntimeError(f"{path} has invalid float in embedding block sequence: {exc}") from exc
+                            i += 1
+                        current["embedding"] = emb_vals
+                else:
+                    i += 1
+
             if "id" in current and "embedding" in current:
                 speakers.append(current)
             continue
@@ -337,8 +380,9 @@ def _read_yaml_speakers(path: Path) -> dict | None:
     return {"model": model, "speakers": speakers}
 
 
-def _format_speaker_id_entries(data: dict, indent: int = 4) -> list[str]:
+def _format_speaker_id_entries(data: dict, indent: int = 4, step: int = 2) -> list[str]:
     pad = " " * indent
+    step_pad = " " * step
     model_val = json.dumps(data.get("model") or "")
     out = [f"{pad}model: {model_val}"]
     speakers = data.get("speakers") or []
@@ -349,8 +393,8 @@ def _format_speaker_id_entries(data: dict, indent: int = 4) -> list[str]:
         for sp in speakers:
             sp_id = json.dumps(sp["id"])
             emb_str = "[" + ", ".join(repr(float(x)) for x in sp["embedding"]) + "]"
-            out.append(f"{pad}  - id: {sp_id}")
-            out.append(f"{pad}    embedding: {emb_str}")
+            out.append(f"{pad}{step_pad}- id: {sp_id}")
+            out.append(f"{pad}{step_pad}  embedding: {emb_str}")
     return out
 
 
@@ -361,15 +405,15 @@ def _build_yaml_with_speakers(existing_text: str, data: dict) -> str:
         if re.match(r"^voice_hub:\s*(?:#.*)?$", line):
             vh_idx = i
             break
-
-    entry_lines = _format_speaker_id_entries(data, indent=4)
+        elif re.match(r"^voice_hub:\s*\S+", line):
+            raise RuntimeError("Existing text has malformed voice_hub entry: expected mapping block, found scalar/inline mapping")
 
     if vh_idx is None:
+        entry_lines = _format_speaker_id_entries(data, indent=4, step=2)
         if lines and lines[-1].strip():
             lines.append("")
         lines.extend([
             "voice_hub:",
-            "  enabled: true",
             "  speaker_id:",
             f'    embed_url: "{DEFAULT_DOCKER_EMBED_URL}"',
             *entry_lines,
@@ -378,32 +422,70 @@ def _build_yaml_with_speakers(existing_text: str, data: dict) -> str:
 
     vh_end = _find_block_bounds(lines, vh_idx, 0)
     sid_idx = None
+    sid_indent = None
+    vh_child_indent = None
     for i in range(vh_idx + 1, vh_end):
-        if re.match(r"^  speaker_id:\s*(?:#.*)?$", lines[i]):
+        stripped = lines[i].strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        cur_indent = len(lines[i]) - len(lines[i].lstrip(" "))
+        if vh_child_indent is None:
+            vh_child_indent = cur_indent
+        m = re.match(r"^(\s+)speaker_id:\s*(?:#.*)?$", lines[i])
+        if m:
             sid_idx = i
+            sid_indent = len(m.group(1))
             break
+        elif re.match(r"^\s+speaker_id:\s*\S+", lines[i]):
+            raise RuntimeError("Existing text has malformed speaker_id entry: expected mapping block, found scalar/inline mapping")
+
+    if vh_child_indent is None:
+        vh_child_indent = 2
 
     if sid_idx is None:
+        sid_pad = " " * vh_child_indent
+        child_pad = " " * (vh_child_indent * 2)
+        entry_lines = _format_speaker_id_entries(data, indent=vh_child_indent * 2, step=vh_child_indent)
         new_sid = [
-            "  speaker_id:",
-            f'    embed_url: "{DEFAULT_DOCKER_EMBED_URL}"',
+            f"{sid_pad}speaker_id:",
+            f'{child_pad}embed_url: "{DEFAULT_DOCKER_EMBED_URL}"',
             *entry_lines,
         ]
         lines[vh_end:vh_end] = new_sid
         return "\n".join(lines) + "\n"
 
-    sid_end = _find_block_bounds(lines, sid_idx, 2)
+    sid_end = _find_block_bounds(lines, sid_idx, sid_indent)
+    child_indent = sid_indent + vh_child_indent
+    step = child_indent - sid_indent
+    for i in range(sid_idx + 1, sid_end):
+        stripped = lines[i].strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        child_indent = len(lines[i]) - len(lines[i].lstrip(" "))
+        break
+
+    for i in range(sid_idx + 1, sid_end):
+        m = re.match(r"^(\s*)-\s+", lines[i])
+        if m:
+            item_indent = len(m.group(1))
+            if item_indent > child_indent:
+                step = item_indent - child_indent
+                break
+
+    entry_lines = _format_speaker_id_entries(data, indent=child_indent, step=step)
+    child_pad = " " * child_indent
     kept: list[str] = []
     has_embed_url = False
     i = sid_idx + 1
     while i < sid_end:
         line = lines[i]
-        if re.match(r"^    embed_url:\s*", line):
+        stripped = line.strip()
+        if re.match(r"^embed_url:\s*", stripped):
             has_embed_url = True
-        if re.match(r"^    model:\s*", line):
+        if re.match(r"^model:\s*", stripped):
             i += 1
             continue
-        m_spk = re.match(r"^    speakers:\s*(.*)$", line)
+        m_spk = re.match(r"^speakers:\s*(.*)$", stripped)
         if m_spk:
             rest = _strip_yaml_comment(m_spk.group(1))
             i += 1
@@ -415,7 +497,7 @@ def _build_yaml_with_speakers(existing_text: str, data: dict) -> str:
                         i += 1
                         continue
                     indent = len(sub) - len(sub.lstrip(" "))
-                    if indent < 4 or (indent == 4 and not sub_s.startswith("-")):
+                    if indent <= child_indent and not sub_s.startswith("-"):
                         break
                     i += 1
             continue
@@ -423,7 +505,7 @@ def _build_yaml_with_speakers(existing_text: str, data: dict) -> str:
         i += 1
 
     if not has_embed_url:
-        kept.insert(0, f'    embed_url: "{DEFAULT_DOCKER_EMBED_URL}"')
+        kept.insert(0, f'{child_pad}embed_url: "{DEFAULT_DOCKER_EMBED_URL}"')
 
     lines[sid_idx + 1 : sid_end] = kept + entry_lines
     return "\n".join(lines) + "\n"

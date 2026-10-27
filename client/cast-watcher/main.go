@@ -137,7 +137,7 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 	if err != nil {
 		return fmt.Errorf("failed to bind address %s: %w", bindAddr, err)
 	}
-	defer listener.Close()
+	defer closeListenerSafe(listener, logger)
 
 	if _, err := fmt.Fprintf(stdout, "Mirrormere Cast Watcher listening on %s (Chromecast: %s)\n", listener.Addr().String(), chromecastAddr); err != nil {
 		return err
@@ -156,5 +156,14 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 		return server.Shutdown(shutdownCtx)
 	case err := <-errChan:
 		return err
+	}
+}
+
+func closeListenerSafe(l net.Listener, logger *slog.Logger) {
+	if l == nil {
+		return
+	}
+	if err := l.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+		logger.Debug("failed to close listener", "error", err)
 	}
 }

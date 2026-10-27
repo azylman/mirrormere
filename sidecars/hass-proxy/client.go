@@ -124,7 +124,10 @@ func (c *HAClientInstance) ProcessIntent(ctx context.Context, req IntentRequest)
 		Language:       c.language,
 		DeviceID:       c.resolveDeviceID(req.Node),
 	}
-	reqBody, _ := json.Marshal(haReq) //nolint:errcheck,errchkjson
+	reqBody, err := json.Marshal(haReq)
+	if err != nil {
+		return nil, false, err
+	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, bytes.NewReader(reqBody))
 	if err != nil {

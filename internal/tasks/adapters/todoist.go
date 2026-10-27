@@ -493,6 +493,9 @@ func (a *TodoistAdapter) CompleteItem(ctx context.Context, itemID string) error 
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096)) //nolint:errcheck
+	_, err = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+	if err != nil {
+		return fmt.Errorf("failed to drain response body: %w", err)
+	}
 	return mapUpstreamStatus(resp.StatusCode, targetURL)
 }

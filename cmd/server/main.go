@@ -457,7 +457,7 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 	}
 
 	if _, err := fmt.Fprintf(stdout, "Mirrormere daemon listening on %s (v%s)\n", listener.Addr().String(), server.Version); err != nil {
-		_ = listener.Close()
+		closeListenerIgnoreClosed(listener)
 		return err
 	}
 
@@ -489,4 +489,10 @@ func resolveCSSPath() string {
 		}
 	}
 	return render.DefaultCSSPath
+}
+
+func closeListenerIgnoreClosed(l net.Listener) {
+	if l != nil {
+		_ = l.Close()
+	}
 }

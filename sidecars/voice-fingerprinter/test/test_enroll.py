@@ -279,3 +279,103 @@ def test_cmd_list_and_remove(tmp_path, capsys):
     assert rc == 0
     data = enroll.read_speakers(output)
     assert [s["id"] for s in data["speakers"]] == ["speaker-2"]
+
+
+def test_read_and_write_yaml_4space_indentation(tmp_path):
+    cfg_path = tmp_path / "config.yaml"
+    initial_yaml = """voice_hub:
+    speaker_id:
+        embed_url: "http://localhost:9096/embed"
+        model: "m1"
+        speakers:
+            - id: "speaker-1"
+              embedding: [0.1, 0.2]
+"""
+    cfg_path.write_text(initial_yaml)
+    data = enroll.read_speakers(cfg_path)
+    assert data["model"] == "m1"
+    assert len(data["speakers"]) == 1
+    assert data["speakers"][0]["id"] == "speaker-1"
+
+    data["speakers"].append({"id": "speaker-2", "embedding": [0.3, 0.4]})
+    enroll.write_speakers(cfg_path, data)
+
+    updated_text = cfg_path.read_text()
+    assert "    speaker_id:" in updated_text
+    assert "        model: \"m1\"" in updated_text
+    assert "        speakers:" in updated_text
+
+    re_read = enroll.read_speakers(cfg_path)
+    assert len(re_read["speakers"]) == 2
+    assert re_read["speakers"][1]["id"] == "speaker-2"
+
+
+def test_read_yaml_block_sequence_embedding(tmp_path):
+    cfg_path = tmp_path / "config.yaml"
+    block_yaml = """voice_hub:
+  speaker_id:
+    model: "speechbrain/spkrec-ecapa-voxceleb"
+    speakers:
+      - id: "speaker-block"
+        embedding:
+          - 0.125
+          - -0.25
+          - 0.5
+"""
+    cfg_path.write_text(block_yaml)
+    data = enroll.read_speakers(cfg_path)
+    assert data["model"] == "speechbrain/spkrec-ecapa-voxceleb"
+    assert len(data["speakers"]) == 1
+    assert data["speakers"][0]["id"] == "speaker-block"
+    assert data["speakers"][0]["embedding"] == [0.125, -0.25, 0.5]
+
+
+def test_read_yaml_malformed_voice_hub_or_speaker_id_raises(tmp_path):
+    p1 = tmp_path / "bad1.yaml"
+    p1.write_text("voice_hub: {}\n")
+    with pytest.raises(RuntimeError, match="malformed voice_hub"):
+        enroll.read_speakers(p1)
+
+    p2 = tmp_path / "bad2.yaml"
+    p2.write_text("""voice_hub:
+  speaker_id: "scalar"
+""")
+    with pytest.raises(RuntimeError, match="malformed speaker_id"):
+        enroll.read_speakers(p2)
+
+
+def test_build_yaml_scratch_omits_enabled_true(tmp_path):
+    cfg_path = tmp_path / "config.yaml"
+    cfg_path.write_text("")
+    enroll.write_speakers(cfg_path, {
+        "model": "model-xyz",
+        "speakers": [{"id": "s1", "embedding": [0.1, 0.2]}],
+    })
+    text = cfg_path.read_text()
+    assert "enabled: true" not in text
+    assert "voice_hub:" in text
+    assert "  speaker_id:" in text
+    data = enroll.read_speakers(cfg_path)
+    assert data["model"] == "model-xyz"
+    assert len(data["speakers"]) == 1
+
+
+def test_build_yaml_inserts_speaker_id_at_direct_child_indent_when_nested_blocks_exist(tmp_path):
+    cfg_path = tmp_path / "config.yaml"
+    cfg_path.write_text("""voice_hub:
+  fast_path:
+    url: "http://fast"
+""")
+    enroll.write_speakers(cfg_path, {
+        "model": "model-xyz",
+        "speakers": [{"id": "s1", "embedding": [0.1, 0.2]}],
+    })
+    text = cfg_path.read_text()
+    assert "\n  speaker_id:\n" in text
+    assert "\n    embed_url:" in text
+    assert "\n    fast_path:\n      speaker_id:" not in text
+    data = enroll.read_speakers(cfg_path)
+    assert data["model"] == "model-xyz"
+    assert len(data["speakers"]) == 1
+    assert data["speakers"][0]["id"] == "s1"
+

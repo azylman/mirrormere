@@ -83,9 +83,7 @@ func RunWithReady(
 	}
 
 	httpServer := BuildHTTPServer(cfg.Server, NewServer(client, logger))
-	if stdout != nil {
-		_, _ = fmt.Fprintln(stdout, "hass-proxy initialized") //nolint:errcheck
-	}
+	logStdoutInit(stdout, logger)
 
 	var listener net.Listener
 	if listenerOverride != nil {
@@ -95,7 +93,7 @@ func RunWithReady(
 	} else {
 		listener = l
 	}
-	defer listener.Close()
+	defer closeListenerSafe(listener, logger)
 
 	if readyChan != nil {
 		close(readyChan)
@@ -119,5 +117,22 @@ func RunWithReady(
 		return nil
 	case err := <-errChan:
 		return err
+	}
+}
+
+func closeListenerSafe(l net.Listener, logger *slog.Logger) {
+	if l == nil {
+		return
+	}
+	if err := l.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+		logger.Debug("listener close", "error", err)
+	}
+}
+
+func logStdoutInit(stdout io.Writer, logger *slog.Logger) {
+	if stdout != nil {
+		if _, err := fmt.Fprintln(stdout, "hass-proxy initialized"); err != nil {
+			logger.Warn("stdout write failed", "error", err)
+		}
 	}
 }
