@@ -39,6 +39,7 @@ import json
 import math
 import os
 import re
+import stat
 import struct
 import sys
 import tempfile
@@ -443,6 +444,7 @@ def read_speakers(path: Path):
 
 def write_speakers(path: Path, data: dict) -> None:
     """Atomic write: temp file in the same directory, then os.replace."""
+    target_mode = stat.S_IMODE(path.stat().st_mode) if path.exists() else 0o644
     if _is_yaml_path(path):
         existing_text = path.read_text(encoding="utf-8") if path.exists() else ""
         payload = _build_yaml_with_speakers(existing_text, data)
@@ -453,6 +455,7 @@ def write_speakers(path: Path, data: dict) -> None:
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(payload)
+        os.chmod(tmp_name, target_mode)
         os.replace(tmp_name, path)
     finally:
         if os.path.exists(tmp_name):

@@ -10,6 +10,7 @@ from __future__ import annotations
 import importlib
 import json
 import math
+import stat
 import struct
 import sys
 import wave
@@ -145,6 +146,7 @@ def test_write_and_read_speakers_roundtrip(tmp_path):
     data = {"model": "model-x", "speakers": [{"id": "speaker-1", "embedding": [0.1, 0.2, 0.3]}]}
     enroll.write_speakers(path, data)
     assert path.exists()
+    assert stat.S_IMODE(path.stat().st_mode) == 0o644
     read_back = enroll.read_speakers(path)
     assert read_back == data
     # Atomic write leaves no temp file behind.
@@ -166,10 +168,12 @@ def test_write_and_read_yaml_config_roundtrip_preserves_existing_settings(tmp_pa
         '    url: "http://hass-proxy:8095/intent"\n',
         encoding="utf-8",
     )
+    cfg_path.chmod(0o640)
     assert enroll.read_speakers(cfg_path) is None
 
     data1 = {"model": "speechbrain/spkrec-ecapa-voxceleb", "speakers": [{"id": "speaker-1", "embedding": [0.25, 0.5]}]}
     enroll.write_speakers(cfg_path, data1)
+    assert stat.S_IMODE(cfg_path.stat().st_mode) == 0o640
     assert enroll.read_speakers(cfg_path) == data1
 
     text = cfg_path.read_text(encoding="utf-8")
