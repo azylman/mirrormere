@@ -106,7 +106,7 @@ PORT = int(os.environ["MDE_PORT"]) if "MDE_PORT" in os.environ else (int(_file_c
 BIND = os.environ.get("MDE_BIND") if "MDE_BIND" in os.environ else (_file_cfg.get("bind") or "0.0.0.0")
 
 MODEL_SOURCE = os.environ.get("MDE_MODEL_SOURCE") or _file_cfg.get("model_source") or "speechbrain/spkrec-ecapa-voxceleb"
-MODEL_ID = MODEL_SOURCE  # the model string the hub's speakers.json must match exactly
+MODEL_ID = MODEL_SOURCE  # the model string voice_hub.speaker_id.model in config.yaml must match exactly
 DEVICE = os.environ.get("MDE_DEVICE") or _file_cfg.get("device") or "cpu"
 SAVEDIR = Path(os.environ.get("MDE_SAVEDIR") or _file_cfg.get("savedir") or "/models/speechbrain-ecapa")
 THREADS = int(os.environ.get("MDE_THREADS") or _file_cfg.get("threads") or str(os.cpu_count() or 1))

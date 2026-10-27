@@ -131,6 +131,7 @@ services:
       - MDE_DEVICE=cpu
     volumes:
       - voice-fingerprinter-models:/models  # ECAPA model cache, downloaded on first run (~80MB)
+      - ./config:/config                    # rw: allows `enroll.py --output /config/config.yaml` inside container
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:9096/health"]
       interval: 15s

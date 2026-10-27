@@ -130,9 +130,9 @@ display:
 # Speaker identification. Optional: with
 # this block absent, `speaker` is always empty. Uncomment and point
 # embed_url at the voice-fingerprinter sidecar (deploy/compose.yml,
-# profile "speaker-id") to enable it. Generate speaker centroids with
-# `sidecars/voice-fingerprinter/enroll.py` and configure them inline under
-# `voice_hub.speaker_id.speakers`.
+# profile "speaker-id") to enable it. Enroll speakers directly into config.yaml
+# with `python3 sidecars/voice-fingerprinter/enroll.py <id> --wav <file>...
+# --output deploy/config/config.yaml` and send SIGHUP to mirrormere-core.
 # voice_hub:
 #   enabled: true
 #   stt_url: "tcp://localhost:10300"

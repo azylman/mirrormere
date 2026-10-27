@@ -52,24 +52,27 @@ docker start mirrormere-ear
 
 > [!NOTE]
 > **Single-Host vs. Split Deployment**:
-> - **Single-host (Hub and Ear on same machine)**: Move the file directly: `mv /tmp/enroll-<speaker_id>.wav deploy/data/enroll-<speaker_id>.wav`.
-> - **Split deployment (Ear on satellite Pi, Hub on server)**: Copy the recorded WAV from the voice node to the Hub host's data directory:
+> - **Single-host (Hub and Ear on same machine)**: Move the file directly: `mv /tmp/enroll-<speaker_id>.wav deploy/config/enroll-<speaker_id>.wav`.
+> - **Split deployment (Ear on satellite Pi, Hub on server)**: Copy the recorded WAV from the voice node to the Hub host's config directory:
 >   ```bash
->   scp /tmp/enroll-<speaker_id>.wav <hub-host>:/path/to/mirrormere/deploy/data/enroll-<speaker_id>.wav
+>   scp /tmp/enroll-<speaker_id>.wav <hub-host>:/path/to/mirrormere/deploy/config/enroll-<speaker_id>.wav
 >   rm /tmp/enroll-<speaker_id>.wav
 >   ```
 
 ### 2. Enroll Speaker Fingerprint
-On the Hub host, feed the recording to `enroll.py` targeting your Mirrormere `/data/speakers.json`, then delete the temporary recording:
+On the Hub host, feed the recording to `enroll.py` targeting your Mirrormere `config.yaml` (which updates `voice_hub.speaker_id.model` and `voice_hub.speaker_id.speakers` in-place), reload `mirrormere-core`, and delete the temporary recording:
 
 ```bash
-# Running inside the sidecar container (with ./data mounted to /data):
-docker compose exec voice-fingerprinter python enroll.py <speaker_id> --wav /data/enroll-<speaker_id>.wav --output /data/speakers.json
+# Running inside the sidecar container (with ./config mounted to /config):
+docker compose exec voice-fingerprinter python enroll.py <speaker_id> --wav /config/enroll-<speaker_id>.wav --output /config/config.yaml
 
-# Audio is never stored long-term; clean up the WAV on both hosts:
-rm deploy/data/enroll-<speaker_id>.wav
+# Audio is never stored long-term; clean up the WAV:
+rm deploy/config/enroll-<speaker_id>.wav
 
 # Or running standalone against the sidecar HTTP endpoint:
-python sidecars/voice-fingerprinter/enroll.py <speaker_id> --wav deploy/data/enroll-<speaker_id>.wav --embed-url http://localhost:9096/embed --output deploy/data/speakers.json
-rm deploy/data/enroll-<speaker_id>.wav
+python3 sidecars/voice-fingerprinter/enroll.py <speaker_id> --wav deploy/config/enroll-<speaker_id>.wav --embed-url http://localhost:9096/embed --output deploy/config/config.yaml
+rm deploy/config/enroll-<speaker_id>.wav
+
+# Hot-reload mirrormere-core so Voice Hub picks up the updated speaker_id config:
+docker kill -s HUP mirrormere-core
 ```

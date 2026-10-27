@@ -8,7 +8,6 @@ played.
 from __future__ import annotations
 
 import importlib
-import io
 import json
 import math
 import struct
@@ -153,8 +152,46 @@ def test_write_and_read_speakers_roundtrip(tmp_path):
     assert leftovers == []
 
 
+def test_write_and_read_yaml_config_roundtrip_preserves_existing_settings(tmp_path):
+    cfg_path = tmp_path / "config.yaml"
+    cfg_path.write_text(
+        "# Header comment\n"
+        'timezone: "America/Los_Angeles"\n'
+        "voice_hub:\n"
+        "  enabled: true\n"
+        "  speaker_id:\n"
+        '    embed_url: "http://voice-fingerprinter:9096/embed"\n'
+        "    threshold: 0.75\n"
+        "  fast_path:\n"
+        '    url: "http://hass-proxy:8095/intent"\n',
+        encoding="utf-8",
+    )
+    assert enroll.read_speakers(cfg_path) is None
+
+    data1 = {"model": "speechbrain/spkrec-ecapa-voxceleb", "speakers": [{"id": "mike", "embedding": [0.25, 0.5]}]}
+    enroll.write_speakers(cfg_path, data1)
+    assert enroll.read_speakers(cfg_path) == data1
+
+    text = cfg_path.read_text(encoding="utf-8")
+    assert "# Header comment" in text
+    assert 'timezone: "America/Los_Angeles"' in text
+    assert "threshold: 0.75" in text
+    assert 'url: "http://hass-proxy:8095/intent"' in text
+
+    data2 = {
+        "model": "speechbrain/spkrec-ecapa-voxceleb",
+        "speakers": [
+            {"id": "mike", "embedding": [0.25, 0.5]},
+            {"id": "lauren", "embedding": [0.75, -0.25]},
+        ],
+    }
+    enroll.write_speakers(cfg_path, data2)
+    assert enroll.read_speakers(cfg_path) == data2
+
+
 def test_read_speakers_missing_file_returns_none(tmp_path):
     assert enroll.read_speakers(tmp_path / "does-not-exist.json") is None
+    assert enroll.read_speakers(tmp_path / "does-not-exist.yaml") is None
 
 
 def test_read_speakers_bad_json_raises(tmp_path):
@@ -164,23 +201,33 @@ def test_read_speakers_bad_json_raises(tmp_path):
         enroll.read_speakers(path)
 
 
-def test_cmd_enroll_end_to_end_writes_file(tmp_path, monkeypatch, capsys):
+def test_cmd_enroll_end_to_end_writes_yaml_and_json(tmp_path, monkeypatch, capsys):
     fake = _fake_embed_wav_factory()
     monkeypatch.setattr(enroll, "embed_wav", fake)
 
     wav_path = tmp_path / "mike.wav"
     _make_wav_file(wav_path, seconds=12.0)  # enough chunks to clear MIN_SURVIVING_CHUNKS
-    output = tmp_path / "speakers.json"
+    yaml_output = tmp_path / "config.yaml"
 
     rc = enroll.main([
-        "mike", "--wav", str(wav_path), "--output", str(output),
+        "mike", "--wav", str(wav_path), "--output", str(yaml_output),
         "--embed-url", "http://fake/embed",
     ])
     assert rc == 0
 
-    written = json.loads(output.read_text())
+    parsed = enroll.read_speakers(yaml_output)
+    assert parsed["model"] == "speechbrain/spkrec-ecapa-voxceleb"
+    assert len(parsed["speakers"]) == 1
+    assert parsed["speakers"][0]["id"] == "mike"
+
+    json_output = tmp_path / "speakers.json"
+    rc_json = enroll.main([
+        "mike", "--wav", str(wav_path), "--output", str(json_output),
+        "--embed-url", "http://fake/embed",
+    ])
+    assert rc_json == 0
+    written = json.loads(json_output.read_text())
     assert written["model"] == "speechbrain/spkrec-ecapa-voxceleb"
-    assert len(written["speakers"]) == 1
     assert written["speakers"][0]["id"] == "mike"
 
 
@@ -188,7 +235,7 @@ def test_cmd_enroll_dry_run_does_not_write(tmp_path, monkeypatch):
     monkeypatch.setattr(enroll, "embed_wav", _fake_embed_wav_factory())
     wav_path = tmp_path / "mike.wav"
     _make_wav_file(wav_path, seconds=12.0)
-    output = tmp_path / "speakers.json"
+    output = tmp_path / "config.yaml"
 
     rc = enroll.main(["mike", "--wav", str(wav_path), "--output", str(output), "--dry-run"])
     assert rc == 0
@@ -196,7 +243,7 @@ def test_cmd_enroll_dry_run_does_not_write(tmp_path, monkeypatch):
 
 
 def test_cmd_enroll_model_mismatch_refused_via_cli(tmp_path, monkeypatch, capsys):
-    output = tmp_path / "speakers.json"
+    output = tmp_path / "config.yaml"
     enroll.write_speakers(output, {"model": "old-model", "speakers": [{"id": "lauren", "embedding": [0.1]}]})
 
     monkeypatch.setattr(enroll, "embed_wav", _fake_embed_wav_factory(model="new-model"))
@@ -207,13 +254,13 @@ def test_cmd_enroll_model_mismatch_refused_via_cli(tmp_path, monkeypatch, capsys
     assert rc == 1
 
     # Original file untouched.
-    data = json.loads(output.read_text())
+    data = enroll.read_speakers(output)
     assert data["model"] == "old-model"
     assert data["speakers"] == [{"id": "lauren", "embedding": [0.1]}]
 
 
 def test_cmd_list_and_remove(tmp_path, capsys):
-    output = tmp_path / "speakers.json"
+    output = tmp_path / "config.yaml"
     enroll.write_speakers(output, {
         "model": "model-x",
         "speakers": [{"id": "mike", "embedding": [0.1, 0.2]}, {"id": "lauren", "embedding": [0.3]}],
@@ -226,5 +273,5 @@ def test_cmd_list_and_remove(tmp_path, capsys):
 
     rc = enroll.main(["--remove", "mike", "--output", str(output)])
     assert rc == 0
-    data = json.loads(output.read_text())
+    data = enroll.read_speakers(output)
     assert [s["id"] for s in data["speakers"]] == ["lauren"]
