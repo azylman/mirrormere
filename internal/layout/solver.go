@@ -123,28 +123,36 @@ func formatDeficitErrorForGrid(totalArea, targetScreens, deficit, gridCols, grid
 }
 
 func formatGridDeficitError(totalArea, targetScreens, deficit, gridCols, gridRows int) error {
+	portrait := gridCols == 2 && gridRows == 6
 	var b strings.Builder
 	fmt.Fprintf(&b, "[Mirrormere Config Error] Invalid widget layout configuration:\n  Total widget area is %d cells.\n  A %dx%d grid requires screen areas in multiples of 12 (Target: %d screens = %d cells).\n  Deficit: %d cells needed to achieve 100%% fully-filled screens.\n  Suggestions:\n", totalArea, gridCols, gridRows, targetScreens, targetScreens*GridTotalCells, deficit)
-	for _, s := range buildSuggestions(deficit) {
+	for _, s := range buildSuggestions(deficit, portrait) {
 		fmt.Fprintf(&b, "    - %s\n", s)
 	}
 	return fmt.Errorf("%s", strings.TrimRight(b.String(), "\n"))
 }
 
-func buildSuggestions(deficit int) []string {
-	sp := recommendedSpacerDimensions(deficit)
+func buildSuggestions(deficit int, portrait bool) []string {
+	sp := recommendedSpacerDimensions(deficit, portrait)
+	expandHint := "Or expand existing [2, 1] widgets to [3, 2] / [4, 2]."
+	if portrait {
+		expandHint = "Or expand existing [1, 2] widgets to [2, 3] / [2, 4]."
+	}
 	sugs := []string{
-		"Or expand existing [2, 1] widgets to [3, 2] / [4, 2].",
+		expandHint,
 		fmt.Sprintf("Or insert native spacer tiles (e.g. { type: \"spacer\", dimensions: [%d, %d] }) to intentionally leave layout space open.", sp[0], sp[1]),
 	}
-	if add := decomposeDeficit(deficit); add != "" {
+	if add := decomposeDeficit(deficit, portrait); add != "" {
 		return append([]string{add}, sugs...)
 	}
 	return sugs
 }
 
-func decomposeDeficit(deficit int) string {
+func decomposeDeficit(deficit int, portrait bool) string {
 	if deficit == 12 {
+		if portrait {
+			return "Add a [2, 6] widget (12 cells)."
+		}
 		return "Add a [6, 2] widget (12 cells)."
 	}
 	var parts []string
@@ -159,8 +167,12 @@ func decomposeDeficit(deficit int) string {
 		{[2]int{2, 1}, 2},
 		{[2]int{1, 1}, 1},
 	} {
+		dim := opt.dim
+		if portrait {
+			dim = [2]int{opt.dim[1], opt.dim[0]}
+		}
 		for deficit >= opt.area && opt.area > 0 {
-			parts = append(parts, fmt.Sprintf("a [%d, %d] widget (%d cells)", opt.dim[0], opt.dim[1], opt.area))
+			parts = append(parts, fmt.Sprintf("a [%d, %d] widget (%d cells)", dim[0], dim[1], opt.area))
 			deficit -= opt.area
 		}
 	}
@@ -176,24 +188,30 @@ func decomposeDeficit(deficit int) string {
 	}
 }
 
-func recommendedSpacerDimensions(deficit int) [2]int {
+func recommendedSpacerDimensions(deficit int, portrait bool) [2]int {
+	var dim [2]int
 	switch deficit {
 	case 1, 2, 3:
-		return [2]int{deficit, 1}
+		dim = [2]int{deficit, 1}
 	case 4, 10:
-		return [2]int{2, 2}
+		dim = [2]int{2, 2}
 	case 6:
-		return [2]int{3, 2}
+		dim = [2]int{3, 2}
 	case 8:
-		return [2]int{4, 2}
+		dim = [2]int{4, 2}
 	case 12:
-		return [2]int{6, 2}
+		dim = [2]int{6, 2}
 	default:
 		if deficit <= 6 {
-			return [2]int{deficit, 1}
+			dim = [2]int{deficit, 1}
+		} else {
+			dim = [2]int{2, 1}
 		}
-		return [2]int{2, 1}
 	}
+	if portrait {
+		return [2]int{dim[1], dim[0]}
+	}
+	return dim
 }
 
 const defaultMaxSearchNodes = 100_000

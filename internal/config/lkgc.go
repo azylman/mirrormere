@@ -284,7 +284,8 @@ func validatePackagesStage(cfg *Config, loader PackageLoader) (map[string]*domai
 			}
 			if !defDim.IsValidForGrid(cfg.Display.Grid.Columns, cfg.Display.Grid.Rows) {
 				flipped := domain.NewDimension(defDim.Rows, defDim.Cols)
-				if flipped.IsValidForGrid(cfg.Display.Grid.Columns, cfg.Display.Grid.Rows) {
+				if flipped.IsValidForGrid(cfg.Display.Grid.Columns, cfg.Display.Grid.Rows) &&
+					(len(pkg.Manifest.SupportedDimensions) == 0 || slices.Contains(pkg.Manifest.SupportedDimensions, flipped)) {
 					defDim = flipped
 				}
 			}
