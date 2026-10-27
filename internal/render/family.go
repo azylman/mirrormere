@@ -91,6 +91,7 @@ type FamilyDayEvent struct {
 	ColSpan     int     `json:"col_span"`
 	LinkGlyph   string  `json:"link_glyph"`
 	IsLinked    bool    `json:"is_linked"`
+	HideStart   bool    `json:"hide_start,omitempty"`
 }
 
 // TimelineMarker represents a resolved time marker with normalized canvas positioning.
@@ -371,22 +372,7 @@ func BuildFamilyView(data any, cfg map[string]any, dims domain.Dimension, now ti
 				continue
 			}
 
-			rawEv := mergedData.rawEvents[id]
-			tStart, ok1 := parseFamilyTime(rawEv.Start)
-			tEnd, ok2 := parseFamilyTime(rawEv.End)
-			if ok1 {
-				if !ok2 || tEnd.Before(tStart) || tEnd.Equal(tStart) {
-					tEnd = tStart.Add(30 * time.Minute)
-				}
-				topPct, heightPct, isEarly, isLate := ComputeDayEventPosition(tStart, tEnd, d, hours)
-				dayEv := FamilyDayEvent{
-					FamilyEvent: *fe,
-					TopPct:      topPct,
-					HeightPct:   heightPct,
-					IsEarlyEdge: isEarly,
-					IsLateEdge:  isLate,
-					ColSpan:     1,
-				}
+			if dayEv, ok := buildFamilyDayEvent(*fe, mergedData.rawEvents[id], d, hours); ok {
 				appendDayEvent(&days[i].Events, &days[i].EarlyEvents, &days[i].LateEvents, dayEv)
 			}
 		}
@@ -1060,6 +1046,36 @@ func truncateString(s string, maxRunes int) string {
 		return string(runes[:maxRunes])
 	}
 	return s
+}
+
+const (
+	shortEventDurationThreshold = 30 * time.Minute
+	shortEventHeightPctFloor    = 3.5
+)
+
+func buildFamilyDayEvent(fe FamilyEvent, rawEv provider.CalendarEvent, d time.Time, hours HoursBand) (FamilyDayEvent, bool) {
+	tStart, ok1 := parseFamilyTime(rawEv.Start)
+	if !ok1 {
+		return FamilyDayEvent{}, false
+	}
+	tEnd, ok2 := parseFamilyTime(rawEv.End)
+	if !ok2 || tEnd.Before(tStart) || tEnd.Equal(tStart) {
+		tEnd = tStart.Add(30 * time.Minute)
+	}
+	topPct, heightPct, isEarly, isLate := ComputeDayEventPosition(tStart, tEnd, d, hours)
+	return FamilyDayEvent{
+		FamilyEvent: fe,
+		TopPct:      topPct,
+		HeightPct:   heightPct,
+		IsEarlyEdge: isEarly,
+		IsLateEdge:  isLate,
+		ColSpan:     1,
+		HideStart:   shouldHideEventStart(tStart, tEnd, heightPct),
+	}, true
+}
+
+func shouldHideEventStart(eventStart, eventEnd time.Time, heightPct float64) bool {
+	return heightPct < shortEventHeightPctFloor || eventEnd.Sub(eventStart) < shortEventDurationThreshold
 }
 
 func appendDayEvent(events, early, late *[]FamilyDayEvent, ev FamilyDayEvent) {
