@@ -203,7 +203,7 @@ func handleSIGHUP(
 	configPath string, configManager *config.Manager, hub *events.Hub,
 	stateProvider *events.InMemoryStateProvider, currentTheme func() string,
 	initialHost string, initialPort int, assetReloader *AssetReloader,
-	renderHandler *render.Handler, onReload func(), logger *slog.Logger,
+	renderHandler *render.Handler, voiceHub *voice.Hub, onReload func(), logger *slog.Logger,
 ) {
 	logger.Info("received SIGHUP, reloading configuration and assets", "path", configPath)
 	if configPath != "" {
@@ -223,6 +223,7 @@ func handleSIGHUP(
 			evaluateThemeTransition(currentTheme, stateProvider, hub, logger)
 
 			if snap != nil && snap.Config != nil {
+				voiceHub.ReloadSpeakerID(snap.Config.VoiceHub)
 				newHost, newPort := server.DefaultHost, server.DefaultPort
 				if snap.Config.Host != "" {
 					newHost = snap.Config.Host
@@ -416,7 +417,7 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 					return
 				}
 				if sig == syscall.SIGHUP {
-					handleSIGHUP(configPath, configManager, hub, stateProvider, currentTheme, initialHost, initialPort, assetReloader, renderHandler, rcfg.onReload, logger)
+					handleSIGHUP(configPath, configManager, hub, stateProvider, currentTheme, initialHost, initialPort, assetReloader, renderHandler, voiceHub, rcfg.onReload, logger)
 				}
 			}
 		}

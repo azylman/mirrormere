@@ -9,8 +9,6 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -46,7 +44,7 @@ type errReader struct{}
 
 func (errReader) Read([]byte) (int, error) { return 0, errors.New("read error") }
 
-func TestSpeakerMatchingAndStore(t *testing.T) {
+func TestSpeakerMatchingAndIdentifier(t *testing.T) {
 	t.Parallel()
 	s1, err1 := CosineSimilarity([]float64{1, 0}, []float64{1, 0})
 	s2, err2 := CosineSimilarity([]float64{1, 0}, []float64{0, 1})
@@ -58,6 +56,7 @@ func TestSpeakerMatchingAndStore(t *testing.T) {
 
 	spk := []Fingerprint{{ID: "mike", Embedding: []float64{1, 0, 0}}, {ID: "lauren", Embedding: []float64{0, 1, 0}}}
 	mixed := []Fingerprint{{ID: "broken", Embedding: []float64{1, 0}}, spk[0]}
+	uncomp := []Fingerprint{{ID: "broken", Embedding: []float64{1, 0}}}
 	for _, tc := range []struct {
 		emb     []float64
 		list    []Fingerprint
@@ -69,66 +68,50 @@ func TestSpeakerMatchingAndStore(t *testing.T) {
 		{[]float64{0, 0, 1}, spk, "", false},
 		{[]float64{1, 0}, spk, "", true},
 		{[]float64{1, 0, 0}, mixed, "mike", false},
+		{[]float64{1, 0, 0}, uncomp, "", true},
 		{[]float64{math.NaN(), 0, 0}, spk, "", true},
+		{[]float64{0, 0, 0}, spk, "", true},
 	} {
 		if id, sim, err := MatchSpeaker(tc.emb, tc.list, 0.7); (err != nil) != tc.wantErr || id != tc.wantID || (id != "" && sim < 0.7) {
 			t.Fatalf("id=%q sim=%v err=%v", id, sim, err)
 		}
 	}
 
-	dir := t.TempDir()
-	p := filepath.Join(dir, "reload.json")
-	_ = os.WriteFile(p, []byte(`{"model":"ecapa","speakers":[{"id":"mike","embedding":[1,0]}]}`), 0o644)
-	store := NewFingerprintStore(p)
-	if f, err := store.Load(); err != nil || len(f.Speakers) != 1 {
-		t.Fatalf("first load: %+v err=%v", f, err)
-	}
-	_ = os.WriteFile(p, []byte(`{"model":"ecapa","speakers":[{"id":"mike","embedding":[1,0]},{"id":"lauren","embedding":[0,1]}]}`), 0o644)
-	_ = os.Chtimes(p, time.Now().Add(2*time.Second), time.Now().Add(2*time.Second))
-	if f, err := store.Load(); err != nil || len(f.Speakers) != 2 {
-		t.Fatalf("reload: %+v err=%v", f, err)
-	}
-
-	badJSON := filepath.Join(dir, "bad.json")
-	for _, raw := range []string{
-		`{not json`,
-		`{"speakers":[{"id":"","embedding":[1]}]}`,
-		`{"speakers":[{"id":"a","embedding":[1]},{"id":"a","embedding":[1]}]}`,
-		`{"speakers":[{"id":"a"}]}`,
-		`{"speakers":[{"id":"a","embedding":[1,0]},{"id":"b","embedding":[1]}]}`,
-		`{"speakers":[{"id":"a","embedding":[0,0]}]}`,
-	} {
-		_ = os.WriteFile(badJSON, []byte(raw), 0o644)
-		if _, err := NewFingerprintStore(badJSON).Load(); err == nil {
-			t.Errorf("expected error for %s", raw)
-		}
-	}
-
-	emptyPath := filepath.Join(dir, "empty.json")
-	_ = os.WriteFile(emptyPath, []byte(`{"model":"ecapa"}`), 0o644)
+	enrolled := []Fingerprint{{ID: "mike", Embedding: []float64{1, 0}}, {ID: "lauren", Embedding: []float64{0, 1}}}
 	for _, tc := range []struct {
 		wantSpeaker string
 		emb         SpeakerEmbedder
-		store       *FingerprintStore
+		model       string
+		speakers    []Fingerprint
 		wantErr     bool
 	}{
-		{"lauren", &mockEmbedder{emb: []float64{0.2, 0.98}, model: "ecapa"}, store, false},
-		{"", &mockEmbedder{emb: []float64{0, 1}, model: "wavlm"}, store, true},
-		{"", &mockEmbedder{err: errors.New("down")}, store, true},
-		{"", &mockEmbedder{err: errors.New("unused")}, NewFingerprintStore(emptyPath), false},
-		{"", &mockEmbedder{}, NewFingerprintStore(filepath.Join(dir, "missing.json")), true},
-		{"", &mockEmbedder{emb: []float64{0, 0}}, store, true},
+		{"lauren", &mockEmbedder{emb: []float64{0.2, 0.98}, model: "ecapa"}, "ecapa", enrolled, false},
+		{"", &mockEmbedder{emb: []float64{0, 1}, model: "wavlm"}, "ecapa", enrolled, true},
+		{"", &mockEmbedder{err: errors.New("down")}, "ecapa", enrolled, true},
+		{"", &mockEmbedder{err: errors.New("unused")}, "ecapa", nil, false},
+		{"", &mockEmbedder{emb: []float64{0, 0}}, "ecapa", enrolled, true},
 	} {
-		if m, err := NewFingerprintIdentifier(tc.emb, tc.store, 0.7).Identify(context.Background(), nil); (err != nil) != tc.wantErr || m.Speaker != tc.wantSpeaker {
+		if m, err := NewFingerprintIdentifier(tc.emb, tc.model, tc.speakers, 0.7).Identify(context.Background(), nil); (err != nil) != tc.wantErr || m.Speaker != tc.wantSpeaker {
 			t.Fatalf("got %q err=%v", m.Speaker, err)
 		}
 	}
 
-	validCfg := &config.SpeakerIDConfig{EmbedURL: "http://x", FingerprintsPath: "/f.json"}
+	validCfg := &config.SpeakerIDConfig{EmbedURL: "http://x", Model: "ecapa", Speakers: enrolled}
+	var nilHub *Hub
+	nilHub.ReloadSpeakerID(&config.VoiceHubConfig{Enabled: true, SpeakerID: validCfg})
+	hub := NewHub(&config.VoiceHubConfig{Enabled: true}, nil)
 	if NewSpeakerIdentifierFromConfig(nil) != nil || NewSpeakerIdentifierFromConfig(&config.SpeakerIDConfig{EmbedURL: "http://x"}) != nil ||
 		NewSpeakerIdentifierFromConfig(validCfg) == nil || NewHub(&config.VoiceHubConfig{Enabled: true, SpeakerID: validCfg}, nil).speaker == nil ||
-		NewHub(&config.VoiceHubConfig{Enabled: true}, nil).speaker != nil {
+		hub.speaker != nil {
 		t.Fatal("speaker config wiring failed")
+	}
+	hub.ReloadSpeakerID(&config.VoiceHubConfig{Enabled: true, SpeakerID: validCfg})
+	if hub.speaker == nil {
+		t.Fatal("expected speaker identifier after ReloadSpeakerID")
+	}
+	hub.ReloadSpeakerID(nil)
+	if hub.speaker != nil {
+		t.Fatal("expected nil speaker identifier after ReloadSpeakerID(nil)")
 	}
 }
 

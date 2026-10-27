@@ -10,9 +10,7 @@ import (
 	"log/slog"
 	"math"
 	"net/http"
-	"os"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/azylman/mirrormere/internal/config"
@@ -39,84 +37,8 @@ type SpeakerIdentifier interface {
 	Identify(ctx context.Context, wavData []byte) (SpeakerMatch, error)
 }
 
-// Fingerprint is one enrolled speaker.
-type Fingerprint struct {
-	ID        string    `json:"id"`
-	Embedding []float64 `json:"embedding"`
-}
-
-// FingerprintFile is the on-disk enrollment store.
-type FingerprintFile struct {
-	// Model is the embedding model the fingerprints were generated with.
-	// Embeddings from different models are not comparable.
-	Model    string        `json:"model"`
-	Speakers []Fingerprint `json:"speakers"`
-}
-
-// FingerprintStore loads the fingerprint file and reloads it when it changes on disk.
-type FingerprintStore struct {
-	path string
-
-	mu      sync.Mutex
-	modTime time.Time
-	size    int64
-	loaded  *FingerprintFile
-}
-
-// NewFingerprintStore constructs a store for the given file path.
-func NewFingerprintStore(path string) *FingerprintStore {
-	return &FingerprintStore{path: strings.TrimSpace(path)}
-}
-
-// Load returns the current fingerprints, re-reading the file if its mtime or size changed.
-func (s *FingerprintStore) Load() (*FingerprintFile, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	info, err := os.Stat(s.path)
-	if err != nil {
-		return nil, fmt.Errorf("fingerprints: %w", err)
-	}
-	if s.loaded != nil && info.ModTime().Equal(s.modTime) && info.Size() == s.size {
-		return s.loaded, nil
-	}
-
-	raw, err := os.ReadFile(s.path)
-	if err != nil {
-		return nil, fmt.Errorf("fingerprints: %w", err)
-	}
-	var f FingerprintFile
-	if err := json.Unmarshal(raw, &f); err != nil {
-		return nil, fmt.Errorf("fingerprints: parse %s: %w", s.path, err)
-	}
-	seen := make(map[string]bool, len(f.Speakers))
-	dim := 0
-	for i, sp := range f.Speakers {
-		if strings.TrimSpace(sp.ID) == "" {
-			return nil, fmt.Errorf("fingerprints: speaker %d has an empty id", i)
-		}
-		if seen[sp.ID] {
-			return nil, fmt.Errorf("fingerprints: duplicate speaker id %q", sp.ID)
-		}
-		seen[sp.ID] = true
-		if len(sp.Embedding) == 0 {
-			return nil, fmt.Errorf("fingerprints: speaker %q has an empty embedding", sp.ID)
-		}
-		if dim == 0 {
-			dim = len(sp.Embedding)
-		} else if len(sp.Embedding) != dim {
-			return nil, fmt.Errorf("fingerprints: speaker %q has dimension %d, expected %d", sp.ID, len(sp.Embedding), dim)
-		}
-		if err := checkVector(sp.Embedding); err != nil {
-			return nil, fmt.Errorf("fingerprints: speaker %q: %w", sp.ID, err)
-		}
-	}
-
-	s.loaded = &f
-	s.modTime = info.ModTime()
-	s.size = info.Size()
-	return s.loaded, nil
-}
+// Fingerprint is one enrolled speaker voiceprint centroid.
+type Fingerprint = config.SpeakerFingerprint
 
 // checkVector rejects vectors that cannot be compared: non-finite values or zero magnitude.
 func checkVector(v []float64) error {
@@ -179,16 +101,22 @@ func MatchSpeaker(embedding []float64, speakers []Fingerprint, threshold float64
 	return bestID, best, nil
 }
 
-// FingerprintIdentifier matches utterances against a FingerprintStore.
+// FingerprintIdentifier matches utterances against inline enrolled speaker fingerprints.
 type FingerprintIdentifier struct {
 	embedder  SpeakerEmbedder
-	store     *FingerprintStore
+	model     string
+	speakers  []Fingerprint
 	threshold float64
 }
 
-// NewFingerprintIdentifier constructs an identifier from an embedder, store and threshold.
-func NewFingerprintIdentifier(embedder SpeakerEmbedder, store *FingerprintStore, threshold float64) *FingerprintIdentifier {
-	return &FingerprintIdentifier{embedder: embedder, store: store, threshold: threshold}
+// NewFingerprintIdentifier constructs an identifier from an embedder, model, speakers, and threshold.
+func NewFingerprintIdentifier(embedder SpeakerEmbedder, model string, speakers []Fingerprint, threshold float64) *FingerprintIdentifier {
+	return &FingerprintIdentifier{
+		embedder:  embedder,
+		model:     strings.TrimSpace(model),
+		speakers:  speakers,
+		threshold: threshold,
+	}
 }
 
 // NewSpeakerIdentifierFromConfig returns nil when speaker matching is not configured.
@@ -198,28 +126,39 @@ func NewSpeakerIdentifierFromConfig(cfg *config.SpeakerIDConfig) SpeakerIdentifi
 	}
 	return NewFingerprintIdentifier(
 		NewDefaultEmbedClient(cfg.EmbedURL, cfg.GetTimeoutSeconds()),
-		NewFingerprintStore(cfg.FingerprintsPath),
+		cfg.Model,
+		cfg.Speakers,
 		cfg.GetThreshold(),
 	)
 }
 
+// ReloadSpeakerID updates the active speaker identifier when configuration is reloaded on SIGHUP.
+func (h *Hub) ReloadSpeakerID(cfg *config.VoiceHubConfig) {
+	if h == nil {
+		return
+	}
+	var sid SpeakerIdentifier
+	if cfg != nil && cfg.Enabled {
+		sid = NewSpeakerIdentifierFromConfig(cfg.SpeakerID)
+	}
+	h.mu.Lock()
+	h.speaker = sid
+	h.mu.Unlock()
+}
+
 // Identify embeds the utterance and matches it against enrolled fingerprints.
 func (f *FingerprintIdentifier) Identify(ctx context.Context, wavData []byte) (SpeakerMatch, error) {
-	file, err := f.store.Load()
-	if err != nil {
-		return SpeakerMatch{}, err
-	}
-	if len(file.Speakers) == 0 {
+	if len(f.speakers) == 0 {
 		return SpeakerMatch{}, nil
 	}
 	emb, model, err := f.embedder.Embed(ctx, wavData)
 	if err != nil {
 		return SpeakerMatch{}, fmt.Errorf("embed: %w", err)
 	}
-	if file.Model != "" && model != "" && file.Model != model {
-		return SpeakerMatch{}, fmt.Errorf("model mismatch: embedding model %q does not match fingerprint model %q", model, file.Model)
+	if f.model != "" && model != "" && f.model != model {
+		return SpeakerMatch{}, fmt.Errorf("model mismatch: embedding model %q does not match fingerprint model %q", model, f.model)
 	}
-	id, score, err := MatchSpeaker(emb, file.Speakers, f.threshold)
+	id, score, err := MatchSpeaker(emb, f.speakers, f.threshold)
 	if err != nil {
 		return SpeakerMatch{}, err
 	}

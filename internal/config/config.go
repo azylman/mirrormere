@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"math"
 	"net/url"
 	"os"
 	"regexp"
@@ -344,24 +345,31 @@ func (f *FastPathConfig) GetTimeoutMS() int {
 	return positiveIntOr(f.TimeoutMS, 800)
 }
 
+// SpeakerFingerprint is one enrolled speaker voiceprint centroid.
+type SpeakerFingerprint struct {
+	ID        string    `yaml:"id" json:"id"`
+	Embedding []float64 `yaml:"embedding" json:"embedding"`
+}
+
 // SpeakerIDConfig configures voice-fingerprint speaker matching.
 type SpeakerIDConfig struct {
 	// EmbedURL is an HTTP endpoint that accepts a raw WAV body and returns
 	// {"embedding": [float...], "model": "<model id>"}.
 	EmbedURL string `yaml:"embed_url"`
-	// FingerprintsPath is the JSON file of enrolled fingerprints. It is
-	// re-read when its modification time changes, so re-enrollment needs
-	// no restart.
-	FingerprintsPath string `yaml:"fingerprints_path"`
+	// Model is the embedding model the fingerprints were generated with.
+	// Embeddings from different models are not comparable.
+	Model string `yaml:"model,omitempty"`
+	// Speakers is the list of enrolled speaker fingerprints configured inline.
+	Speakers []SpeakerFingerprint `yaml:"speakers,omitempty"`
 	// Threshold is the minimum cosine similarity to accept a match (default 0.70).
 	Threshold *float64 `yaml:"threshold,omitempty"`
 	// TimeoutSeconds bounds the embed call (default 5).
 	TimeoutSeconds *int `yaml:"timeout_seconds,omitempty"`
 }
 
-// IsEnabled reports whether speaker matching is configured.
+// IsEnabled reports whether speaker matching is configured with at least one enrolled speaker.
 func (s *SpeakerIDConfig) IsEnabled() bool {
-	return s != nil && strings.TrimSpace(s.EmbedURL) != "" && strings.TrimSpace(s.FingerprintsPath) != ""
+	return s != nil && strings.TrimSpace(s.EmbedURL) != "" && len(s.Speakers) > 0
 }
 
 // GetThreshold returns the match threshold (default: 0.70).
@@ -780,19 +788,64 @@ func (c *Config) Validate() error {
 				return fmt.Errorf("voice_hub fast_path url must be an http(s) URL (got %q)", fp.URL)
 			}
 		}
-		if sid := vh.SpeakerID; sid != nil {
-			if strings.TrimSpace(sid.EmbedURL) == "" || strings.TrimSpace(sid.FingerprintsPath) == "" {
-				return fmt.Errorf("voice_hub speaker_id requires both embed_url and fingerprints_path")
-			}
-			if sid.Threshold != nil && (*sid.Threshold <= 0 || *sid.Threshold > 1) {
-				return fmt.Errorf("voice_hub speaker_id threshold must be in (0, 1] (got %v)", *sid.Threshold)
-			}
-			if err := checkPositiveInt(sid.TimeoutSeconds, "voice_hub speaker_id timeout_seconds"); err != nil {
-				return err
-			}
+		if err := validateSpeakerID(vh.SpeakerID); err != nil {
+			return err
 		}
 	}
 
+	return nil
+}
+
+func validateSpeakerVector(id string, vec []float64) error {
+	if len(vec) == 0 {
+		return fmt.Errorf("voice_hub speaker_id speaker %q has an empty embedding", id)
+	}
+	var norm float64
+	for _, x := range vec {
+		if math.IsNaN(x) || math.IsInf(x, 0) {
+			return fmt.Errorf("voice_hub speaker_id speaker %q: embedding contains NaN or Inf", id)
+		}
+		norm += x * x
+	}
+	if norm == 0 {
+		return fmt.Errorf("voice_hub speaker_id speaker %q: embedding has zero magnitude", id)
+	}
+	return nil
+}
+
+func validateSpeakerID(sid *SpeakerIDConfig) error {
+	if sid == nil {
+		return nil
+	}
+	if strings.TrimSpace(sid.EmbedURL) == "" {
+		return fmt.Errorf("voice_hub speaker_id requires embed_url")
+	}
+	if sid.Threshold != nil && (*sid.Threshold <= 0 || *sid.Threshold > 1) {
+		return fmt.Errorf("voice_hub speaker_id threshold must be in (0, 1] (got %v)", *sid.Threshold)
+	}
+	if err := checkPositiveInt(sid.TimeoutSeconds, "voice_hub speaker_id timeout_seconds"); err != nil {
+		return err
+	}
+	seen := make(map[string]bool, len(sid.Speakers))
+	dim := 0
+	for i, sp := range sid.Speakers {
+		id := strings.TrimSpace(sp.ID)
+		if id == "" {
+			return fmt.Errorf("voice_hub speaker_id speaker %d has an empty id", i)
+		}
+		if seen[id] {
+			return fmt.Errorf("voice_hub speaker_id duplicate speaker id %q", id)
+		}
+		seen[id] = true
+		if err := validateSpeakerVector(id, sp.Embedding); err != nil {
+			return err
+		}
+		if dim == 0 {
+			dim = len(sp.Embedding)
+		} else if len(sp.Embedding) != dim {
+			return fmt.Errorf("voice_hub speaker_id speaker %q has dimension %d, expected %d", id, len(sp.Embedding), dim)
+		}
+	}
 	return nil
 }
 
