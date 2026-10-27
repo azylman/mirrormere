@@ -270,16 +270,24 @@
         const override = getStoredThemeOverride();
         const modeLabel = normalized === 'night' ? 'Dark Mode' : 'Light Mode';
         const nextLabel = normalized === 'night' ? 'Light Mode' : 'Dark Mode';
+        const autoTheme = lastServerTheme || 'day';
+        const oppositeOfAuto = autoTheme === 'night' ? 'day' : 'night';
+        const isOppositeOverride = override === oppositeOfAuto;
+        const actionLabel = !override
+          ? nextLabel
+          : (isOppositeOverride ? nextLabel : 'Auto Solar');
         if (btn.dataset) {
           btn.dataset.theme = normalized;
           btn.dataset.mode = override ? 'manual' : 'auto';
         }
         if (typeof btn.setAttribute === 'function') {
-          btn.setAttribute('aria-label', `Switch to ${nextLabel} (Currently ${modeLabel})`);
+          btn.setAttribute('aria-label', `Switch to ${actionLabel} (Currently ${modeLabel})`);
         }
         btn.title = override
-          ? `${modeLabel} (Manual Override — Click for Auto Solar)`
-          : `${modeLabel} (Auto Solar — Click for ${nextLabel})`;
+          ? (isOppositeOverride
+            ? `${modeLabel} (Manual Override — Tap for ${nextLabel}, Long-press for Auto Solar)`
+            : `${modeLabel} (Manual Override — Tap or Long-press for Auto Solar)`)
+          : `${modeLabel} (Auto Solar — Tap for ${nextLabel})`;
       }
     }
   }
