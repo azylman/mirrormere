@@ -2,10 +2,9 @@
 """voice-fingerprinter — CPU speaker-embedding sidecar for Mirrormere's Voice
 Hub speaker-ID feature.
 
-Ported from the karakos household's desktop_embed.py (GPU, desktop-only)
-to run as a small standalone container on Alex's Intel N150 edge box, CPU
-only. The contract is unchanged: `internal/voice/speaker.go`'s
-DefaultEmbedClient POSTs raw WAV bytes to `embed_url` and expects
+Designed to run as a small standalone CPU-only container on an Intel N100/N150
+edge box. The contract matches `internal/voice/speaker.go`'s
+DefaultEmbedClient, which POSTs raw WAV bytes to `embed_url` and expects
 `{"embedding": [...floats], "model": "..."}` back; any model that produces
 stable, comparable vectors satisfies it.
 
@@ -106,7 +105,7 @@ PORT = int(os.environ["MDE_PORT"]) if "MDE_PORT" in os.environ else (int(_file_c
 BIND = os.environ.get("MDE_BIND") if "MDE_BIND" in os.environ else (_file_cfg.get("bind") or "0.0.0.0")
 
 MODEL_SOURCE = os.environ.get("MDE_MODEL_SOURCE") or _file_cfg.get("model_source") or "speechbrain/spkrec-ecapa-voxceleb"
-MODEL_ID = MODEL_SOURCE  # the model string the hub's speakers.json must match exactly
+MODEL_ID = MODEL_SOURCE  # the model string voice_hub.speaker_id.model in config.yaml must match exactly
 DEVICE = os.environ.get("MDE_DEVICE") or _file_cfg.get("device") or "cpu"
 SAVEDIR = Path(os.environ.get("MDE_SAVEDIR") or _file_cfg.get("savedir") or "/models/speechbrain-ecapa")
 THREADS = int(os.environ.get("MDE_THREADS") or _file_cfg.get("threads") or str(os.cpu_count() or 1))
