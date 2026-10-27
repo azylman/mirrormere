@@ -195,6 +195,46 @@ func TestRun(t *testing.T) {
 			wantCode: 1,
 			wantErr:  "collect targets",
 		},
+		{
+			name: "banned nolint errcheck fails check",
+			files: map[string]string{
+				"pkg/err.go": "package pkg\n\nfunc Bad() {\n\t//nolint:errcheck\n\t_ = 1\n}\n",
+			},
+			wantCode: 1,
+			wantErr:  "//nolint:errcheck is prohibited; all errors must be checked",
+		},
+		{
+			name: "banned nolint all fails check",
+			files: map[string]string{
+				"pkg/all.go": "package pkg\n\nfunc Bad() {\n\t//nolint:all\n\t_ = 1\n}\n",
+			},
+			wantCode: 1,
+			wantErr:  "//nolint:all is prohibited; all errors must be checked",
+		},
+		{
+			name: "banned bare nolint fails check",
+			files: map[string]string{
+				"pkg/bare.go": "package pkg\n\nfunc Bad() {\n\t//nolint\n\t_ = 1\n}\n",
+			},
+			wantCode: 1,
+			wantErr:  "bare //nolint directive is prohibited; specify allowed linter or handle errors",
+		},
+		{
+			name: "banned comma-separated nolint with whitespace fails check",
+			files: map[string]string{
+				"pkg/multi.go": "package pkg\n\nfunc Bad() {\n\t//nolint:govet, errcheck\n\t_ = 1\n}\n",
+			},
+			wantCode: 1,
+			wantErr:  "//nolint:errcheck is prohibited; all errors must be checked",
+		},
+		{
+			name: "allowed specific nolint passes check",
+			files: map[string]string{
+				"pkg/allowed.go": "package pkg\n\nfunc Good() {\n\t//nolint:nilerr // explanation\n\t_ = 1\n}\n",
+			},
+			wantCode: 0,
+			wantOut:  "all complexity and length ratchets passed",
+		},
 	}
 
 	for _, tc := range tests {

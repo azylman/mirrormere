@@ -70,6 +70,34 @@ check_gofmt() {
     fi
 }
 
+check_no_imperative_ddl() {
+    local files=""
+    if [ "$MODE" = "staged" ]; then
+        files=$(git diff --cached --name-only 2>/dev/null | grep -E '\.(go|py|ts)$' | grep -v -E '(_test\.go|\.test\.ts|test_.*\.py|/testdata/)' | grep -v -E '^(scripts|vendor|node_modules)/' || true)
+    else
+        files=$(find . -maxdepth 4 -type f \( -name "*.go" -o -name "*.py" -o -name "*.ts" \) \
+            ! -name "*_test.go" ! -name "*.test.ts" ! -name "test_*.py" \
+            ! -path "*/vendor/*" ! -path "*/node_modules/*" ! -path "*/.git/*" ! -path "*/scripts/*" 2>/dev/null || true)
+    fi
+
+    [ -z "$files" ] && return 0
+
+    local violations=""
+    violations=$(echo "$files" | while read -r f; do
+        [ -f "$f" ] || continue
+        # Ignore comments and check for raw DDL
+        grep -H -n -i -E '\b(CREATE|ALTER|DROP)[[:space:]]+TABLE\b' "$f" 2>/dev/null | grep -v -E '^[^:]+:[0-9]+:[[:space:]]*(//|#|\*)' || true
+    done)
+
+    if [ -n "$violations" ]; then
+        echo "🚨 [Mirrormere Verify] Imperative DDL (CREATE/ALTER/DROP TABLE) detected in application code:" >&2
+        echo "$violations" | sed 's/^/   • /' >&2
+        echo "   Database schema changes must be declared in schema.sql and generated via scripts/atlas-diff.sh." >&2
+        return 1
+    fi
+    return 0
+}
+
 # 2. Go Vet & Ratcheted Code Health Gate
 run_go_vet() {
     echo "   [go vet] Checking codebase..."
@@ -272,6 +300,7 @@ run_python_tests() {
 # Execute checks in pipeline order
 check_utf8_bom
 check_gofmt
+check_no_imperative_ddl
 run_codegen_drift
 run_go_vet
 run_code_health

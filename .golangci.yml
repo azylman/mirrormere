@@ -3,16 +3,22 @@ linters:
   enable:
     - bodyclose
     - copyloopvar
+    - errcheck
     - errchkjson
     - errname
     - errorlint
     - fatcontext
+    - govet
+    - ineffassign
     - nilerr
     - noctx
     - predeclared
+    - sqlclosecheck
+    - staticcheck
     - tparallel
     - unconvert
     - unparam
+    - unused
     - wastedassign
   settings:
     errcheck:
@@ -28,9 +34,9 @@ linters:
         - (*strings.Builder).WriteByte
         - (*strings.Builder).WriteRune
         - hash.Hash.Write
+        - (*database/sql.Rows).Close
         - (io.Closer).Close
         - (io.ReadCloser).Close
-        - (net.Listener).Close
     staticcheck:
       checks:
         - "SA*"
