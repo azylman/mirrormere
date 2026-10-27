@@ -1,18 +1,17 @@
 package server
 
 import (
-	"archive/tar"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"net"
 	"net/http"
-	"os"
-	"path/filepath"
 	"runtime/coverage"
 	"sync"
 	"time"
 
+	"github.com/azylman/mirrormere/internal/covflush"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
@@ -268,7 +267,6 @@ var (
 	writeCountersDirFn = coverage.WriteCountersDir
 )
 
-//nolint:errcheck // best-effort ephemeral coverage archive streaming
 func (s *Server) handleCoverageFlush(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodPost {
 		w.Header().Set("Allow", "GET, POST")
@@ -278,27 +276,22 @@ func (s *Server) handleCoverageFlush(w http.ResponseWriter, r *http.Request) {
 
 	flushMu.Lock()
 	defer flushMu.Unlock()
-	dir, _ := os.MkdirTemp("", "cov-*")
-	defer os.RemoveAll(dir)
+
 	writeCountersDirMu.RLock()
 	metaFn, fn := writeMetaDirFn, writeCountersDirFn
 	writeCountersDirMu.RUnlock()
-	_ = metaFn(dir)
-	if err := fn(dir); err != nil {
+
+	var buf bytes.Buffer
+	if err := covflush.WriteArchive(&buf, metaFn, fn); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/x-tar")
 	w.WriteHeader(http.StatusOK)
-	tw := tar.NewWriter(w)
-	entries, _ := os.ReadDir(dir)
-	for _, e := range entries {
-		data, _ := os.ReadFile(filepath.Join(dir, e.Name()))
-		_ = tw.WriteHeader(&tar.Header{Name: e.Name(), Mode: 0o600, Size: int64(len(data))})
-		_, _ = tw.Write(data)
+	if _, err := w.Write(buf.Bytes()); err != nil {
+		return
 	}
-	_ = tw.Close()
 }
 
 func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {

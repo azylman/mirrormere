@@ -1,7 +1,7 @@
 package main
 
 import (
-	"archive/tar"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,12 +9,12 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"os"
-	"path/filepath"
 	"runtime/coverage"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/azylman/mirrormere/internal/covflush"
 )
 
 var (
@@ -56,10 +56,11 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte("OK\n")) //nolint:errcheck
+	if _, err := w.Write([]byte("OK\n")); err != nil {
+		s.logger.DebugContext(r.Context(), "healthz write failed", "error", err)
+	}
 }
 
-//nolint:errcheck // best-effort ephemeral coverage archive streaming
 func (s *Server) handleCoverageFlush(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodPost {
 		w.Header().Set("Allow", "GET, POST")
@@ -68,26 +69,21 @@ func (s *Server) handleCoverageFlush(w http.ResponseWriter, r *http.Request) {
 	}
 	flushMu.Lock()
 	defer flushMu.Unlock()
-	dir, _ := os.MkdirTemp("", "cov-*")
-	defer os.RemoveAll(dir)
+
 	writeCountersDirMu.RLock()
 	metaFn, fn := writeMetaDirFn, writeCountersDirFn
 	writeCountersDirMu.RUnlock()
-	_ = metaFn(dir)
-	if err := fn(dir); err != nil {
+
+	var buf bytes.Buffer
+	if err := covflush.WriteArchive(&buf, metaFn, fn); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "application/x-tar")
 	w.WriteHeader(http.StatusOK)
-	tw := tar.NewWriter(w)
-	entries, _ := os.ReadDir(dir)
-	for _, e := range entries {
-		data, _ := os.ReadFile(filepath.Join(dir, e.Name()))
-		_ = tw.WriteHeader(&tar.Header{Name: e.Name(), Mode: 0o600, Size: int64(len(data))})
-		_, _ = tw.Write(data)
+	if _, err := w.Write(buf.Bytes()); err != nil {
+		return
 	}
-	_ = tw.Close()
 }
 
 func (s *Server) handleIntent(w http.ResponseWriter, r *http.Request) {
@@ -146,7 +142,10 @@ func (s *Server) writeSSE(w http.ResponseWriter, r *http.Request, turnID, speech
 		if r.Context().Err() != nil {
 			return false
 		}
-		jsonData, _ := json.Marshal(data) //nolint:errcheck,errchkjson
+		jsonData, err := json.Marshal(data)
+		if err != nil {
+			return false
+		}
 		if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", eventType, jsonData); err != nil {
 			return false
 		}

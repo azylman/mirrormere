@@ -156,9 +156,7 @@ func (c *CastClient) Close() {
 		if cancel != nil {
 			cancel()
 		}
-		if conn != nil {
-			_ = conn.Close() //nolint:errcheck
-		}
+		c.closeConn(conn)
 	})
 }
 
@@ -378,7 +376,7 @@ func (c *CastClient) connectAndServe(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = conn.Close() }() //nolint:errcheck
+	defer c.closeConn(conn)
 
 	c.mu.Lock()
 	c.conn = conn
@@ -428,12 +426,12 @@ func (c *CastClient) heartbeatAndWatchdog(conn net.Conn, done <-chan struct{}) {
 			c.mu.RUnlock()
 			if time.Since(lastMsg) > c.cfg.WatchdogTimeout {
 				c.logger.Warn("[CastWatcher] Watchdog timeout: no messages received within threshold, closing connection", "elapsed", time.Since(lastMsg))
-				_ = conn.Close() //nolint:errcheck
+				c.closeConn(conn)
 				return
 			}
 			if err := c.sendMessage(newCastMsg(DestinationHeartbeat, NamespaceHeartbeat, `{"type":"PING"}`)); err != nil {
 				c.logger.Warn("[CastWatcher] Failed to send heartbeat PING", "error", err)
-				_ = conn.Close() //nolint:errcheck
+				c.closeConn(conn)
 				return
 			}
 		}
@@ -453,7 +451,7 @@ func (c *CastClient) handleIncomingMessage(msg CastMessage) {
 
 func (c *CastClient) handleHeartbeatMessage(msg CastMessage) {
 	if strings.Contains(msg.PayloadUTF8, `"PING"`) {
-		_ = c.sendMessage(newCastMsg(msg.SourceID, NamespaceHeartbeat, `{"type":"PONG"}`)) //nolint:errcheck
+		c.sendBestEffort(newCastMsg(msg.SourceID, NamespaceHeartbeat, `{"type":"PONG"}`))
 	}
 }
 
@@ -490,9 +488,9 @@ func (c *CastClient) handleReceiverMessage(msg CastMessage) {
 		if activeTransportID != prevTransportID {
 			c.logger.Info("[CastWatcher] Active cast app detected", "app_id", activeAppID, "transport_id", activeTransportID)
 			go func(tid string) {
-				_ = c.sendMessage(newCastMsg(tid, NamespaceConnection, `{"type":"CONNECT"}`)) //nolint:errcheck
+				c.sendBestEffort(newCastMsg(tid, NamespaceConnection, `{"type":"CONNECT"}`))
 				reqID := atomic.AddUint64(&c.reqCounter, 1)
-				_ = c.sendMessage(newCastMsg(tid, NamespaceMedia, fmt.Sprintf(`{"type":"GET_STATUS","requestId":%d}`, reqID))) //nolint:errcheck
+				c.sendBestEffort(newCastMsg(tid, NamespaceMedia, fmt.Sprintf(`{"type":"GET_STATUS","requestId":%d}`, reqID)))
 			}(activeTransportID)
 		}
 		if !c.lastTriggered {
@@ -726,7 +724,9 @@ func (c *CastClient) sendMessageContext(ctx context.Context, msg CastMessage) er
 	if d, ok := ctx.Deadline(); ok {
 		deadline = d
 	}
-	_ = conn.SetWriteDeadline(deadline) //nolint:errcheck
+	if err := conn.SetWriteDeadline(deadline); err != nil {
+		return err
+	}
 	_, err = conn.Write(frame)
 	return err
 }
@@ -831,10 +831,28 @@ func (c *CastClient) postToCore(targetURL string, payload []byte, operation stri
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512)) //nolint:errcheck
+		var body []byte
+		if b, rErr := io.ReadAll(io.LimitReader(resp.Body, 512)); rErr == nil {
+			body = b
+		}
 		c.logger.Warn("[CastWatcher] Core rejected webhook", "operation", operation, "status", resp.StatusCode, "response", string(body))
 		c.resetReportedOnFailure(operation)
 	} else {
 		c.logger.Debug("[CastWatcher] Core webhook accepted", "operation", operation, "status", resp.StatusCode)
+	}
+}
+
+func (c *CastClient) closeConn(conn net.Conn) {
+	if conn == nil {
+		return
+	}
+	if err := conn.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+		c.logger.Debug("[CastWatcher] Connection close error", "error", err)
+	}
+}
+
+func (c *CastClient) sendBestEffort(msg CastMessage) {
+	if err := c.sendMessage(msg); err != nil {
+		c.logger.Debug("[CastWatcher] Best-effort message send failed", "namespace", msg.Namespace, "error", err)
 	}
 }

@@ -64,7 +64,7 @@ On the Hub host, feed the recording to `enroll.py` targeting your Mirrormere `co
 
 ```bash
 # Running inside the sidecar container (with ./config mounted to /config):
-docker compose exec voice-fingerprinter python enroll.py <speaker_id> --wav /config/enroll-<speaker_id>.wav --output /config/config.yaml
+docker compose run --rm -v ./config:/config voice-fingerprinter python enroll.py <speaker_id> --wav /config/enroll-<speaker_id>.wav --output /config/config.yaml
 
 # Audio is never stored long-term; clean up the WAV:
 rm deploy/config/enroll-<speaker_id>.wav
