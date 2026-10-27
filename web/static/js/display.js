@@ -221,24 +221,178 @@
     }
   }
 
+  const STORAGE_KEY_THEME_OVERRIDE = 'mirrormere_theme_override';
+  let lastServerTheme = null;
+
+  function getStoredThemeOverride() {
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        const val = window.localStorage.getItem(STORAGE_KEY_THEME_OVERRIDE);
+        if (val === 'day' || val === 'night') return val;
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  function setStoredThemeOverride(val) {
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        if (val === 'day' || val === 'night') {
+          window.localStorage.setItem(STORAGE_KEY_THEME_OVERRIDE, val);
+        } else {
+          window.localStorage.removeItem(STORAGE_KEY_THEME_OVERRIDE);
+        }
+      }
+    } catch (_) {}
+  }
+
+  function applyThemeToDOM(theme) {
+    const normalized = (theme === 'night') ? 'night' : 'day';
+    if (typeof document !== 'undefined') {
+      if (document.documentElement && document.documentElement.dataset) {
+        document.documentElement.dataset.theme = normalized;
+      }
+      if (document.body && document.body.dataset) {
+        document.body.dataset.theme = normalized;
+      }
+      const appEl = document.getElementById('mirrormere-app');
+      if (appEl && appEl.dataset) {
+        appEl.dataset.theme = normalized;
+      }
+      if (typeof document.querySelector === 'function') {
+        const metaTheme = document.querySelector('meta[name="theme-color"]');
+        if (metaTheme && typeof metaTheme.setAttribute === 'function') {
+          metaTheme.setAttribute('content', normalized === 'night' ? '#3b364c' : '#f8f5ee');
+        }
+      }
+      const btn = document.getElementById('theme-toggle-btn');
+      if (btn) {
+        const override = getStoredThemeOverride();
+        const modeLabel = normalized === 'night' ? 'Dark Mode' : 'Light Mode';
+        const nextLabel = normalized === 'night' ? 'Light Mode' : 'Dark Mode';
+        const autoTheme = lastServerTheme || 'day';
+        const oppositeOfAuto = autoTheme === 'night' ? 'day' : 'night';
+        const isOppositeOverride = override === oppositeOfAuto;
+        const actionLabel = !override
+          ? nextLabel
+          : (isOppositeOverride ? nextLabel : 'Auto Solar');
+        if (btn.dataset) {
+          btn.dataset.theme = normalized;
+          btn.dataset.mode = override ? 'manual' : 'auto';
+        }
+        if (typeof btn.setAttribute === 'function') {
+          btn.setAttribute('aria-label', `Switch to ${actionLabel} (Currently ${modeLabel})`);
+        }
+        btn.title = override
+          ? (isOppositeOverride
+            ? `${modeLabel} (Manual Override — Tap for ${nextLabel}, Long-press for Auto Solar)`
+            : `${modeLabel} (Manual Override — Tap or Long-press for Auto Solar)`)
+          : `${modeLabel} (Auto Solar — Tap for ${nextLabel})`;
+      }
+    }
+  }
+
+  function getTheme() {
+    if (typeof document !== 'undefined') {
+      if (document.documentElement && document.documentElement.dataset && document.documentElement.dataset.theme) {
+        return document.documentElement.dataset.theme === 'night' ? 'night' : 'day';
+      }
+      if (document.body && document.body.dataset && document.body.dataset.theme) {
+        return document.body.dataset.theme === 'night' ? 'night' : 'day';
+      }
+    }
+    return lastServerTheme || 'day';
+  }
+
+  function setTheme(theme, persistOverride = true) {
+    const normalized = (theme === 'night') ? 'night' : 'day';
+    if (persistOverride) {
+      setStoredThemeOverride(normalized);
+    }
+    applyThemeToDOM(normalized);
+    return normalized;
+  }
+
+  function toggleTheme() {
+    const current = getTheme();
+    const next = current === 'night' ? 'day' : 'night';
+    const override = getStoredThemeOverride();
+    if (!override) {
+      return setTheme(next, true);
+    }
+    const autoTheme = lastServerTheme || 'day';
+    const oppositeOfAuto = autoTheme === 'night' ? 'day' : 'night';
+    if (override === oppositeOfAuto) {
+      return setTheme(autoTheme, true);
+    }
+    return resetThemeToAuto();
+  }
+
+  function resetThemeToAuto() {
+    setStoredThemeOverride(null);
+    const target = lastServerTheme || getTheme() || 'day';
+    applyThemeToDOM(target);
+    return target;
+  }
+
+  function setupThemeToggle() {
+    if (typeof document === 'undefined') return;
+    if (!lastServerTheme) {
+      lastServerTheme = getTheme();
+    }
+    const override = getStoredThemeOverride();
+    if (override) {
+      applyThemeToDOM(override);
+    } else {
+      applyThemeToDOM(lastServerTheme);
+    }
+    const btn = document.getElementById('theme-toggle-btn');
+    if (btn && btn.dataset && !btn.dataset.boundThemeToggle && typeof btn.addEventListener === 'function') {
+      btn.dataset.boundThemeToggle = 'true';
+      let longPressTimer = null;
+      let longPressTriggered = false;
+      const clearLongPress = () => {
+        if (longPressTimer) {
+          clearTimeout(longPressTimer);
+          longPressTimer = null;
+        }
+      };
+      btn.addEventListener('pointerdown', () => {
+        longPressTriggered = false;
+        clearLongPress();
+        longPressTimer = setTimeout(() => {
+          longPressTimer = null;
+          longPressTriggered = true;
+          resetThemeToAuto();
+        }, 500);
+      });
+      btn.addEventListener('pointerup', clearLongPress);
+      btn.addEventListener('pointercancel', clearLongPress);
+      btn.addEventListener('pointerleave', clearLongPress);
+      btn.addEventListener('click', (e) => {
+        if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+        if (longPressTriggered) {
+          longPressTriggered = false;
+          return;
+        }
+        toggleTheme();
+      });
+    }
+  }
+
   /**
    * Update active theme ("day" vs "night") on HTML, body, and app container.
    */
   function handleThemeUpdate(data) {
     if (!data || !data.theme) return;
     const theme = (data.theme === 'night') ? 'night' : 'day';
-    if (typeof document !== 'undefined') {
-      if (document.documentElement && document.documentElement.dataset) {
-        document.documentElement.dataset.theme = theme;
-      }
-      if (document.body && document.body.dataset) {
-        document.body.dataset.theme = theme;
-      }
-      const appEl = document.getElementById('mirrormere-app');
-      if (appEl && appEl.dataset) {
-        appEl.dataset.theme = theme;
-      }
+    lastServerTheme = theme;
+    const override = getStoredThemeOverride();
+    if (override) {
+      applyThemeToDOM(override);
+      return;
     }
+    applyThemeToDOM(theme);
   }
 
   let currentBootId = null;
@@ -1293,8 +1447,9 @@
   function init() {
     if (typeof document === 'undefined') return;
 
-    // 0. Resolve cursor suppression query overrides
+    // 0. Resolve cursor suppression query overrides & theme toggle
     resolveCursorSuppression();
+    setupThemeToggle();
 
     // 1. Start real-time clock
     updateClock();
@@ -1502,6 +1657,11 @@
     updateClock,
     handleHeaderUpdate,
     handleThemeUpdate,
+    getTheme,
+    setTheme,
+    toggleTheme,
+    resetThemeToAuto,
+    setupThemeToggle,
     handleSystemStatus,
     handleSystemReload,
     checkDailyMaintenanceReload,

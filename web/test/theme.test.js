@@ -59,6 +59,68 @@ describe('Fairyfloss Theme Mode Switching', () => {
     assert.equal(document.documentElement.dataset.theme, 'night');
   });
 
+  test('header theme toggle cycles 3-state (auto -> opposite -> auto-match -> auto) and seeds lastServerTheme on load', () => {
+    const store = new Map();
+    global.window = {
+      localStorage: {
+        getItem: (k) => (store.has(k) ? store.get(k) : null),
+        setItem: (k, v) => store.set(k, String(v)),
+        removeItem: (k) => store.delete(k),
+      },
+    };
+    const elements = setupMockDOM('day');
+    const listeners = {};
+    elements['theme-toggle-btn'] = {
+      dataset: {},
+      attributes: {},
+      setAttribute(k, v) {
+        this.attributes[k] = v;
+      },
+      addEventListener(evt, fn) {
+        listeners[evt] = fn;
+      },
+    };
+
+    delete require.cache[require.resolve('../static/js/display.js')];
+    const display = require('../static/js/display.js');
+
+    // Pre-populate stored override before setupThemeToggle to verify lastServerTheme seeding
+    store.set('mirrormere_theme_override', 'night');
+    display.setupThemeToggle();
+    assert.equal(display.getTheme(), 'night');
+    assert.equal(elements['theme-toggle-btn'].dataset.mode, 'manual');
+
+    // Resetting to auto before any SSE event restores initial server theme ('day')
+    display.resetThemeToAuto();
+    assert.equal(display.getTheme(), 'day');
+    assert.equal(store.has('mirrormere_theme_override'), false);
+    assert.equal(elements['theme-toggle-btn'].dataset.mode, 'auto');
+
+    // Tap 1: Auto ('day') -> Manual opposite ('night')
+    listeners.click({ stopPropagation() {} });
+    assert.equal(display.getTheme(), 'night');
+    assert.equal(store.get('mirrormere_theme_override'), 'night');
+    assert.equal(elements['theme-toggle-btn'].dataset.mode, 'manual');
+
+    // Server theme.update to 'day' is ignored while manual override is active
+    display.handleThemeUpdate({ theme: 'day' });
+    assert.equal(display.getTheme(), 'night');
+
+    // Tap 2: Manual opposite ('night') -> Manual matching auto ('day')
+    listeners.click({ stopPropagation() {} });
+    assert.equal(display.getTheme(), 'day');
+    assert.equal(store.get('mirrormere_theme_override'), 'day');
+    assert.equal(elements['theme-toggle-btn'].dataset.mode, 'manual');
+
+    // Tap 3: Manual matching auto ('day') -> Auto ('day')
+    listeners.click({ stopPropagation() {} });
+    assert.equal(store.has('mirrormere_theme_override'), false);
+    assert.equal(display.getTheme(), 'day');
+    assert.equal(elements['theme-toggle-btn'].dataset.mode, 'auto');
+
+    delete global.window;
+  });
+
   test('CSS stylesheets contain Sailor HG Fairyfloss night mode tokens', () => {
     for (const cssPath of [hudCSSPath]) {
       assert.ok(fs.existsSync(cssPath), `${path.basename(cssPath)} must exist`);

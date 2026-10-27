@@ -204,6 +204,88 @@ body[data-theme="night"],
   color: var(--mm-lavender);
 }
 
+/* Header Light / Dark Theme Toggle Button */
+.header-theme-toggle {
+  display: flex;
+  align-items: center;
+}
+
+.theme-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  width: 52px;
+  height: 52px;
+  min-width: 52px;
+  min-height: 52px;
+  padding: 0;
+  background: var(--mm-bg-surface);
+  border: 1.5px solid var(--mm-card-border, rgba(90, 60, 30, 0.12));
+  border-radius: 9999px;
+  box-shadow: 0 4px 12px -2px rgba(130, 100, 70, 0.08);
+  color: var(--mm-text-title);
+  cursor: pointer;
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: transform 0.15s ease, background 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease, color 0.2s ease;
+}
+
+.theme-toggle-btn:hover {
+  border-color: var(--mm-lavender, #8b60ed);
+  box-shadow: 0 4px 14px -1px rgba(139, 96, 237, 0.25);
+  transform: translateY(-1px);
+}
+
+.theme-toggle-btn:active {
+  transform: scale(0.92);
+}
+
+.theme-toggle-btn[data-mode="manual"]::after {
+  content: "";
+  position: absolute;
+  bottom: 5px;
+  right: 5px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--mm-lavender, #8b60ed);
+  box-shadow: 0 0 6px var(--mm-lavender, #8b60ed);
+}
+
+.theme-toggle-btn .theme-icon {
+  width: 22px;
+  height: 22px;
+  transition: transform 0.25s ease, opacity 0.2s ease;
+}
+
+:root .theme-toggle-btn .theme-icon-sun,
+[data-theme="day"] .theme-toggle-btn .theme-icon-sun {
+  display: block;
+  color: #f59e0b;
+}
+
+:root .theme-toggle-btn .theme-icon-moon,
+[data-theme="day"] .theme-toggle-btn .theme-icon-moon {
+  display: none;
+}
+
+[data-theme="night"] .theme-toggle-btn {
+  background: var(--mm-bg-surface, #4e4765);
+  border-color: rgba(255, 184, 209, 0.22);
+  box-shadow: 0 4px 14px -2px rgba(20, 14, 38, 0.45);
+}
+
+[data-theme="night"] .theme-toggle-btn .theme-icon-sun {
+  display: none;
+}
+
+[data-theme="night"] .theme-toggle-btn .theme-icon-moon {
+  display: block;
+  color: #ffb8d1;
+}
+
 [data-theme="night"] .status-jewel {
   background: rgba(71, 65, 94, 0.85);
   border-color: rgba(197, 163, 255, 0.2);
