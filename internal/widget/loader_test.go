@@ -179,7 +179,7 @@ func TestBuiltinPackagesAndAliases(t *testing.T) {
 		wantCols, wantRows, suppDims int
 		hasConf                      bool
 	}{
-		{"spacer", "spacer", "spacer", 1, 1, 12, false},
+		{"spacer", "spacer", "spacer", 1, 1, 20, false},
 		{"weather-forecast", "weather-forecast", "weather-forecast", 2, 1, 0, false},
 		{"live-view", "live-view", "live-view", 3, 2, 0, true},
 		{"calendar-feed", "calendar-feed", "calendar-feed", 4, 2, 0, false},

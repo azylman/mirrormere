@@ -247,3 +247,29 @@ func BenchmarkSolve_Untileable_Issue180(b *testing.B) {
 		_, _ = layout.Solve(widgets)
 	}
 }
+
+func TestSolveGridWithBudget_Portrait2x6(t *testing.T) {
+	t.Parallel()
+	widgets := []layout.WidgetInput{
+		mkW("cal", 2, 4, true),
+		mkW("weather", 1, 2, false),
+		mkW("tasks", 1, 2, false),
+	}
+	res, err := layout.SolveGridWithBudget(widgets, 2, 6, 0)
+	if err != nil {
+		t.Fatalf("SolveGridWithBudget(2, 6) failed: %v", err)
+	}
+	if res.TotalScreens != 1 || res.Screens[0].Bitmask != layout.FullGridMask {
+		t.Fatalf("unexpected 2x6 layout result: %+v", res)
+	}
+
+	if _, err := layout.SolveGridWithBudget(nil, 2, 6, 0); err == nil || !strings.Contains(err.Error(), "A 2x6 grid requires") {
+		t.Fatalf("expected 2x6 deficit error for empty widgets, got %v", err)
+	}
+	if _, err := layout.SolveGridWithBudget([]layout.WidgetInput{mkW("wide", 4, 2, false)}, 2, 6, 0); err == nil || !strings.Contains(err.Error(), "cols must be 1..2, rows must be 1..6") {
+		t.Fatalf("expected 2x6 dimension error, got %v", err)
+	}
+	if _, err := layout.SolveGridWithBudget([]layout.WidgetInput{mkW("tall-1", 1, 5, false), mkW("wide-1", 2, 2, false), mkW("wide-2", 2, 1, false), mkW("unit", 1, 1, false)}, 2, 6, 0); err == nil || !strings.Contains(err.Error(), "cannot geometrically tile the 2x6 grid") {
+		t.Fatalf("expected 2x6 geometric tiling error, got %v", err)
+	}
+}

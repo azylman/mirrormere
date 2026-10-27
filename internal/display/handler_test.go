@@ -77,7 +77,7 @@ func TestGetDisplay_RoutingAndResolution(t *testing.T) {
 
 func TestGetDisplay_TemplateDataAndProviders(t *testing.T) {
 	t.Parallel()
-	tmpl := []byte(`<body data-tz="{{ .Timezone }}" class="{{ if .HideCursor }}cursor-hidden{{ end }}" data-remote="{{ .RemoteURL }}" data-theme="{{ .Theme }}">{{ if .HeaderVideo }}<div id="video" data-id="{{ .HeaderVideo.StreamID }}" data-url="{{ .HeaderVideo.StreamURL }}" data-ctrl="{{ .HeaderVideo.ControlURL }}" data-type="{{ .HeaderVideo.Type }}"></div>{{ end }}</body>`)
+	tmpl := []byte(`<body data-tz="{{ .Timezone }}" class="{{ if .HideCursor }}cursor-hidden{{ end }}" data-remote="{{ .RemoteURL }}" data-theme="{{ .Theme }}" data-grid="{{ .Grid }}">{{ if .HeaderVideo }}<div id="video" data-id="{{ .HeaderVideo.StreamID }}" data-url="{{ .HeaderVideo.StreamURL }}" data-ctrl="{{ .HeaderVideo.ControlURL }}" data-type="{{ .HeaderVideo.Type }}"></div>{{ end }}</body>`)
 
 	tests := []struct {
 		name       string
@@ -100,6 +100,7 @@ func TestGetDisplay_TemplateDataAndProviders(t *testing.T) {
 		{"static_header_video", "static_video", "/display", "cam1", `data-id="cam1"`, ""},
 		{"dynamic_header_video", "dyn_video", "/display", "live-cam", "", ""},
 		{"dynamic_theme", "dyn_theme", "/display", "night", `data-theme="night"`, ""},
+		{"dynamic_grid_2x6", "dyn_grid", "/display", "2x6", `data-grid="2x6"`, ""},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -170,6 +171,11 @@ func TestGetDisplay_TemplateDataAndProviders(t *testing.T) {
 				h = display.NewHandler(display.WithEmbeddedTemplate(tmpl), display.WithThemeProvider(func() string { return th }))
 				if h.Theme() != tc.wantGetter {
 					t.Fatalf("theme getter: got %s, want %s", h.Theme(), tc.wantGetter)
+				}
+			case "dyn_grid":
+				h = display.NewHandler(display.WithEmbeddedTemplate(tmpl), display.WithGridProvider(func() string { return "2x6" }))
+				if h.Grid() != tc.wantGetter {
+					t.Fatalf("grid getter: got %s, want %s", h.Grid(), tc.wantGetter)
 				}
 			default:
 				h = display.NewHandler(display.WithEmbeddedTemplate(tmpl))

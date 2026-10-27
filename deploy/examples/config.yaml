@@ -20,6 +20,11 @@ display:
   theme:
     mode: "auto"
 
+  # Grid orientation: 6x2 (landscape default) or 2x6 (portrait)
+  grid:
+    columns: 6
+    rows: 2
+
   rotation:
     interval_seconds: 30
     transition: "slide"

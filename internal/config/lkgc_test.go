@@ -370,6 +370,7 @@ func TestLKGC_DiffConfigs(t *testing.T) {
 		{"video enabled flipped", mkShellCfg("", false, "", mkVideoCfg(&trueVal, "", "")), mkShellCfg("", false, "", mkVideoCfg(&falseVal, "", "")), true},
 		{"video stream URL changed", mkShellCfg("", false, "", mkVideoCfg(&trueVal, "", "http://localhost:1984/old")), mkShellCfg("", false, "", mkVideoCfg(&trueVal, "", "http://localhost:1984/new")), true},
 		{"hide cursor changed", mkShellCfg("", false, "", nil), mkShellCfg("", true, "", nil), true},
+		{"grid orientation changed", &config.Config{Display: config.DisplayConfig{Grid: config.GridConfig{Columns: 6, Rows: 2}}}, &config.Config{Display: config.DisplayConfig{Grid: config.GridConfig{Columns: 2, Rows: 6}}}, true},
 		{"remote URL changed", mkShellCfg("", false, "", nil), mkShellCfg("", false, "http://192.168.1.50:8080", nil), true},
 		{"voice waveform added", mkShellCfg("", false, "", nil), withVoice(mkShellCfg("", false, "", nil), &config.DisplayVoiceConfig{Waveform: &config.VoiceWaveformConfig{Enabled: &trueVal}}), true},
 		{"voice waveform URL changed", withVoice(mkShellCfg("", false, "", nil), &config.DisplayVoiceConfig{Waveform: &config.VoiceWaveformConfig{Enabled: &trueVal, LevelsURL: "http://127.0.0.1:8765/levels"}}), withVoice(mkShellCfg("", false, "", nil), &config.DisplayVoiceConfig{Waveform: &config.VoiceWaveformConfig{Enabled: &trueVal, LevelsURL: "http://127.0.0.1:9000/levels"}}), true},
@@ -433,4 +434,17 @@ func TestLKGC_ConcurrencyAndRace(t *testing.T) {
 func withVoice(c *config.Config, v *config.DisplayVoiceConfig) *config.Config {
 	c.Display.Voice = v
 	return c
+}
+
+func TestValidatePipeline_Portrait2x6Grid(t *testing.T) {
+	t.Parallel()
+	loader := &mockPackageLoader{packages: createStandardPackages()}
+	portraitYAML := "timezone: America/New_York\ndisplay:\n  grid:\n    columns: 2\n    rows: 6\n  widgets:\n    - id: cal-1\n      type: calendar-feed\n      config: {calendars: [{name: Family}]}\n    - id: weather-1\n      type: weather-forecast\n    - id: tasks-1\n      type: tasks\n      config: {list_id: chores, source: gtasks, gtasks: {tasklist_id: list-1}}\n"
+	snap, err := config.ValidatePipeline([]byte(portraitYAML), loader, nil)
+	if err != nil {
+		t.Fatalf("expected 2x6 portrait pipeline to succeed with auto-transposed default dimensions, got: %v", err)
+	}
+	if snap.Config.Display.Grid.Columns != 2 || snap.Config.Display.Grid.Rows != 6 || snap.Layout.TotalScreens != 1 {
+		t.Fatalf("unexpected 2x6 snapshot: %+v", snap)
+	}
 }

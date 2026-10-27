@@ -255,10 +255,27 @@ func (hw *HeaderWeatherConfig) GetRefreshIntervalSeconds() int {
 	return derefOr(hw.RefreshIntervalSeconds, 900)
 }
 
-// GridConfig defines the discrete tile geometry (strictly 6x2).
+// GridConfig defines the discrete tile geometry (6x2 landscape or 2x6 portrait).
 type GridConfig struct {
 	Columns int `yaml:"columns,omitempty"`
 	Rows    int `yaml:"rows,omitempty"`
+}
+
+func validateGridAndWidgetDimensions(grid GridConfig, widgetID string, dims []int) error {
+	if (grid.Columns != 6 || grid.Rows != 2) && (grid.Columns != 2 || grid.Rows != 6) {
+		return fmt.Errorf("grid dimensions must be 6x2 or 2x6 (got %dx%d)", grid.Columns, grid.Rows)
+	}
+	if len(dims) == 0 {
+		return nil
+	}
+	if len(dims) != 2 {
+		return fmt.Errorf("widget '%s': dimensions must contain exactly 2 integers: [cols, rows]", widgetID)
+	}
+	cols, rows := dims[0], dims[1]
+	if cols < 1 || cols > grid.Columns || rows < 1 || rows > grid.Rows {
+		return fmt.Errorf("widget '%s': invalid dimensions [%d, %d]: cols must be 1..%d, rows must be 1..%d", widgetID, cols, rows, grid.Columns, grid.Rows)
+	}
+	return nil
 }
 
 // WidgetConfig declares a self-contained widget instance with placement and domain settings.
@@ -648,11 +665,8 @@ func (c *Config) Validate() error {
 	c.location = loc
 
 	// 2. Grid validation
-	if c.Display.Grid.Columns != 6 {
-		return fmt.Errorf("grid columns must be 6 (got %d)", c.Display.Grid.Columns)
-	}
-	if c.Display.Grid.Rows != 2 {
-		return fmt.Errorf("grid rows must be 2 (got %d)", c.Display.Grid.Rows)
+	if err := validateGridAndWidgetDimensions(c.Display.Grid, "", nil); err != nil {
+		return err
 	}
 
 	// 3. Rotation validation
@@ -733,14 +747,8 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("widget '%s' is missing required field 'type'", w.ID)
 		}
 
-		if len(w.Dimensions) > 0 {
-			if len(w.Dimensions) != 2 {
-				return fmt.Errorf("widget '%s': dimensions must contain exactly 2 integers: [cols, rows]", w.ID)
-			}
-			cols, rows := w.Dimensions[0], w.Dimensions[1]
-			if cols < 1 || cols > 6 || rows < 1 || rows > 2 {
-				return fmt.Errorf("widget '%s': invalid dimensions [%d, %d]: cols must be 1..6, rows must be 1..2", w.ID, cols, rows)
-			}
+		if err := validateGridAndWidgetDimensions(c.Display.Grid, w.ID, w.Dimensions); err != nil {
+			return err
 		}
 
 		if err := checkPositiveInt(w.RefreshIntervalSeconds, fmt.Sprintf("widget '%s': refresh_interval_seconds", w.ID)); err != nil {

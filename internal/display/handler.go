@@ -52,6 +52,10 @@ func WithThemeProvider(provider func() string) HandlerOption {
 	return func(h *Handler) { h.themeProvider = provider }
 }
 
+func WithGridProvider(provider func() string) HandlerOption {
+	return func(h *Handler) { h.gridProvider = provider }
+}
+
 // Handler serves the web display HUD shell and static web runtime assets.
 type Handler struct {
 	templatePath          string
@@ -70,6 +74,7 @@ type Handler struct {
 	headerVideoProvider   func() *HeaderVideoTemplateData
 	voiceWaveformProvider func() *VoiceWaveformTemplateData
 	themeProvider         func() string
+	gridProvider          func() string
 }
 
 func (h *Handler) Timezone() string {
@@ -135,6 +140,17 @@ func (h *Handler) Theme() string {
 	return "day"
 }
 
+func (h *Handler) Grid() string {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	if h.gridProvider != nil {
+		if g := h.gridProvider(); g == "2x6" || g == "6x2" {
+			return g
+		}
+	}
+	return "6x2"
+}
+
 // HeaderVideoTemplateData holds parameters for the fullscreen video TV button in the header.
 type HeaderVideoTemplateData struct {
 	Enabled    bool
@@ -159,6 +175,7 @@ type DisplayTemplateData struct {
 	HeaderVideo   *HeaderVideoTemplateData
 	VoiceWaveform *VoiceWaveformTemplateData
 	Theme         string
+	Grid          string
 }
 
 // NewHandler constructs a Handler with default filesystem paths.
@@ -250,6 +267,7 @@ func (h *Handler) GetDisplay(w http.ResponseWriter, r *http.Request) {
 			HeaderVideo:   h.HeaderVideo(),
 			VoiceWaveform: h.VoiceWaveform(),
 			Theme:         h.Theme(),
+			Grid:          h.Grid(),
 		}); err == nil {
 			out = buf.Bytes()
 		}

@@ -227,6 +227,13 @@ func TestHouseholdHelpers(t *testing.T) {
 	_ = h.RemoteURL()
 	_ = h.HeaderVideo()
 	_ = h.Theme()
+	if h.Grid() != "6x2" {
+		t.Fatalf("expected default grid 6x2, got %s", h.Grid())
+	}
+	hPortrait := buildDisplayHandler(&fakeSnapProvider{snap: &config.Snapshot{Config: &config.Config{Display: config.DisplayConfig{Grid: config.GridConfig{Columns: 2, Rows: 6}}}}}, func() string { return "day" })
+	if hPortrait.Grid() != "2x6" {
+		t.Fatalf("expected portrait grid 2x6, got %s", hPortrait.Grid())
+	}
 }
 
 func TestBuildDisplayHandler_VoiceWaveform(t *testing.T) {
