@@ -37,9 +37,11 @@ jobs:
     needs: check-bootstrap
     if: >
       needs.check-bootstrap.outputs.bootstrapped == 'true' &&
-      (github.actor == 'azylman' || github.actor == 'mcarmody') &&
+      (github.actor == 'azylman' || github.actor == 'mcarmody' || github.actor == 'brockventures' || github.actor == 'harperwallbanger') &&
       (github.event.pull_request.head.repo.full_name == github.repository ||
-       github.event.pull_request.head.repo.full_name == 'mcarmody/mirrormere')
+       github.event.pull_request.head.repo.full_name == 'mcarmody/mirrormere' ||
+       github.event.pull_request.head.repo.full_name == 'brockventures/mirrormere' ||
+       github.event.pull_request.head.repo.full_name == 'harperwallbanger/mirrormere')
     runs-on: [self-hosted, roborev]
     timeout-minutes: 20
     steps:
@@ -57,6 +59,8 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -o pipefail
+          export GH_TOKEN="${GITHUB_PAT:-${GH_TOKEN}}"
+          export GITHUB_TOKEN="${GITHUB_PAT:-${GITHUB_TOKEN}}"
           SHORT_SHA="${HEAD_SHA:0:7}"
           if [ -n "${PR_NUMBER:-}" ] && [ -n "${HEAD_SHA:-}" ]; then
             OVERRIDE_COMMENT=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments?per_page=100" \
