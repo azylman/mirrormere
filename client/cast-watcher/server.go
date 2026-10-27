@@ -1,6 +1,7 @@
 package main
 
 import (
+	"archive/tar"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"runtime/coverage"
 	"strconv"
 	"strings"
@@ -33,8 +35,6 @@ type ServerConfig struct {
 
 var (
 	flushMu            sync.Mutex
-	lastFlushTime      time.Time
-	nowFn              = time.Now
 	writeCountersDirMu sync.RWMutex
 	writeMetaDirFn     = coverage.WriteMetaDir
 	writeCountersDirFn = coverage.WriteCountersDir
@@ -162,32 +162,36 @@ func writeJSON(w http.ResponseWriter, status int, data any) {
 	}
 }
 
+//nolint:errcheck // best-effort ephemeral coverage archive streaming
 func (s *ActionServer) handleCoverageFlush(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodPost {
 		w.Header().Set("Allow", "GET, POST")
 		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	if dir := os.Getenv("GOCOVERDIR"); dir != "" {
-		flushMu.Lock()
-		defer flushMu.Unlock()
-		now := nowFn()
-		if now.Sub(lastFlushTime) < time.Second {
-			writeJSON(w, http.StatusOK, map[string]string{"status": "debounced"})
-			return
-		}
-		lastFlushTime = now
-		writeCountersDirMu.RLock()
-		metaFn, fn := writeMetaDirFn, writeCountersDirFn
-		writeCountersDirMu.RUnlock()
-		_ = metaFn(dir) //nolint:errcheck
-		if err := fn(dir); err != nil {
-			s.logger.Error("coverage flush failed", "error", err)
-			writeJSONError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
+	flushMu.Lock()
+	defer flushMu.Unlock()
+	dir, _ := os.MkdirTemp("", "cov-*")
+	defer os.RemoveAll(dir)
+	writeCountersDirMu.RLock()
+	metaFn, fn := writeMetaDirFn, writeCountersDirFn
+	writeCountersDirMu.RUnlock()
+	_ = metaFn(dir)
+	if err := fn(dir); err != nil {
+		s.logger.Error("coverage flush failed", "error", err)
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	w.Header().Set("Content-Type", "application/x-tar")
+	w.WriteHeader(http.StatusOK)
+	tw := tar.NewWriter(w)
+	entries, _ := os.ReadDir(dir)
+	for _, e := range entries {
+		data, _ := os.ReadFile(filepath.Join(dir, e.Name()))
+		_ = tw.WriteHeader(&tar.Header{Name: e.Name(), Mode: 0o600, Size: int64(len(data))})
+		_, _ = tw.Write(data)
+	}
+	_ = tw.Close()
 }
 
 func writeJSONError(w http.ResponseWriter, status int, msg string) {

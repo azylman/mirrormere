@@ -1,12 +1,14 @@
 package server
 
 import (
+	"archive/tar"
 	"context"
 	"encoding/json"
 	"errors"
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"runtime/coverage"
 	"sync"
 	"time"
@@ -261,13 +263,12 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 var (
 	flushMu            sync.Mutex
-	lastFlushTime      time.Time
-	nowFn              = time.Now
 	writeCountersDirMu sync.RWMutex
 	writeMetaDirFn     = coverage.WriteMetaDir
 	writeCountersDirFn = coverage.WriteCountersDir
 )
 
+//nolint:errcheck // best-effort ephemeral coverage archive streaming
 func (s *Server) handleCoverageFlush(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodPost {
 		w.Header().Set("Allow", "GET, POST")
@@ -275,34 +276,29 @@ func (s *Server) handleCoverageFlush(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if dir := os.Getenv("GOCOVERDIR"); dir != "" {
-		flushMu.Lock()
-		now := nowFn()
-		if now.Sub(lastFlushTime) < time.Second {
-			flushMu.Unlock()
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte("{\"status\":\"debounced\"}\n")) //nolint:errcheck
-			return
-		}
-		lastFlushTime = now
-		writeCountersDirMu.RLock()
-		metaFn := writeMetaDirFn
-		fn := writeCountersDirFn
-		writeCountersDirMu.RUnlock()
-		_ = metaFn(dir) //nolint:errcheck
-		err := fn(dir)
-		flushMu.Unlock()
-
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
+	flushMu.Lock()
+	defer flushMu.Unlock()
+	dir, _ := os.MkdirTemp("", "cov-*")
+	defer os.RemoveAll(dir)
+	writeCountersDirMu.RLock()
+	metaFn, fn := writeMetaDirFn, writeCountersDirFn
+	writeCountersDirMu.RUnlock()
+	_ = metaFn(dir)
+	if err := fn(dir); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Type", "application/x-tar")
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte("{\"status\":\"ok\"}\n")) //nolint:errcheck
+	tw := tar.NewWriter(w)
+	entries, _ := os.ReadDir(dir)
+	for _, e := range entries {
+		data, _ := os.ReadFile(filepath.Join(dir, e.Name()))
+		_ = tw.WriteHeader(&tar.Header{Name: e.Name(), Mode: 0o600, Size: int64(len(data))})
+		_, _ = tw.Write(data)
+	}
+	_ = tw.Close()
 }
 
 func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
