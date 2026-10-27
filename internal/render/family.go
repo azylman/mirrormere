@@ -627,6 +627,10 @@ func maxVisibleTimedRows(dims domain.Dimension) int {
 	return 3
 }
 
+func showMonthViewTitles(dims domain.Dimension) bool {
+	return dims.Cols >= 4 || dims.Rows >= 4
+}
+
 func stringOr(cfg map[string]any, key, fallback string) string {
 	if cfg == nil {
 		return fallback
@@ -1218,7 +1222,7 @@ func BuildFamilyMonthView(data any, cfg map[string]any, dims domain.Dimension, n
 		}
 	}
 
-	showTitles := dims.Cols >= 4 || dims.Rows >= 4
+	showTitles := showMonthViewTitles(dims)
 	for idx := range days {
 		evs := dayEventsMap[idx]
 		sort.SliceStable(evs, func(a, b int) bool {
