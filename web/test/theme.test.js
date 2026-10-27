@@ -59,7 +59,7 @@ describe('Fairyfloss Theme Mode Switching', () => {
     assert.equal(document.documentElement.dataset.theme, 'night');
   });
 
-  test('header theme toggle switches between day and night and persists manual override until reset to auto', () => {
+  test('header theme toggle cycles 3-state (auto -> opposite -> auto-match -> auto) and seeds lastServerTheme on load', () => {
     const store = new Map();
     global.window = {
       localStorage: {
@@ -84,11 +84,19 @@ describe('Fairyfloss Theme Mode Switching', () => {
     delete require.cache[require.resolve('../static/js/display.js')];
     const display = require('../static/js/display.js');
 
+    // Pre-populate stored override before setupThemeToggle to verify lastServerTheme seeding
+    store.set('mirrormere_theme_override', 'night');
     display.setupThemeToggle();
+    assert.equal(display.getTheme(), 'night');
+    assert.equal(elements['theme-toggle-btn'].dataset.mode, 'manual');
+
+    // Resetting to auto before any SSE event restores initial server theme ('day')
+    display.resetThemeToAuto();
     assert.equal(display.getTheme(), 'day');
+    assert.equal(store.has('mirrormere_theme_override'), false);
     assert.equal(elements['theme-toggle-btn'].dataset.mode, 'auto');
 
-    // Click toggles to night and stores manual override
+    // Tap 1: Auto ('day') -> Manual opposite ('night')
     listeners.click({ stopPropagation() {} });
     assert.equal(display.getTheme(), 'night');
     assert.equal(store.get('mirrormere_theme_override'), 'night');
@@ -98,8 +106,14 @@ describe('Fairyfloss Theme Mode Switching', () => {
     display.handleThemeUpdate({ theme: 'day' });
     assert.equal(display.getTheme(), 'night');
 
-    // Double-click resets to auto and applies last server theme ('day')
-    listeners.dblclick({ stopPropagation() {} });
+    // Tap 2: Manual opposite ('night') -> Manual matching auto ('day')
+    listeners.click({ stopPropagation() {} });
+    assert.equal(display.getTheme(), 'day');
+    assert.equal(store.get('mirrormere_theme_override'), 'day');
+    assert.equal(elements['theme-toggle-btn'].dataset.mode, 'manual');
+
+    // Tap 3: Manual matching auto ('day') -> Auto ('day')
+    listeners.click({ stopPropagation() {} });
     assert.equal(store.has('mirrormere_theme_override'), false);
     assert.equal(display.getTheme(), 'day');
     assert.equal(elements['theme-toggle-btn'].dataset.mode, 'auto');

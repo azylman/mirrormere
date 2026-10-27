@@ -278,7 +278,7 @@
           btn.setAttribute('aria-label', `Switch to ${nextLabel} (Currently ${modeLabel})`);
         }
         btn.title = override
-          ? `${modeLabel} (Manual Override — Click for ${nextLabel}, Double-click for Auto)`
+          ? `${modeLabel} (Manual Override — Click for Auto Solar)`
           : `${modeLabel} (Auto Solar — Click for ${nextLabel})`;
       }
     }
@@ -306,8 +306,18 @@
   }
 
   function toggleTheme() {
-    const next = getTheme() === 'night' ? 'day' : 'night';
-    return setTheme(next, true);
+    const current = getTheme();
+    const next = current === 'night' ? 'day' : 'night';
+    const override = getStoredThemeOverride();
+    if (!override) {
+      return setTheme(next, true);
+    }
+    const autoTheme = lastServerTheme || 'day';
+    const oppositeOfAuto = autoTheme === 'night' ? 'day' : 'night';
+    if (override === oppositeOfAuto) {
+      return setTheme(autoTheme, true);
+    }
+    return resetThemeToAuto();
   }
 
   function resetThemeToAuto() {
@@ -319,22 +329,45 @@
 
   function setupThemeToggle() {
     if (typeof document === 'undefined') return;
+    if (!lastServerTheme) {
+      lastServerTheme = getTheme();
+    }
     const override = getStoredThemeOverride();
     if (override) {
       applyThemeToDOM(override);
     } else {
-      applyThemeToDOM(getTheme());
+      applyThemeToDOM(lastServerTheme);
     }
     const btn = document.getElementById('theme-toggle-btn');
     if (btn && btn.dataset && !btn.dataset.boundThemeToggle && typeof btn.addEventListener === 'function') {
       btn.dataset.boundThemeToggle = 'true';
+      let longPressTimer = null;
+      let longPressTriggered = false;
+      const clearLongPress = () => {
+        if (longPressTimer) {
+          clearTimeout(longPressTimer);
+          longPressTimer = null;
+        }
+      };
+      btn.addEventListener('pointerdown', () => {
+        longPressTriggered = false;
+        clearLongPress();
+        longPressTimer = setTimeout(() => {
+          longPressTimer = null;
+          longPressTriggered = true;
+          resetThemeToAuto();
+        }, 500);
+      });
+      btn.addEventListener('pointerup', clearLongPress);
+      btn.addEventListener('pointercancel', clearLongPress);
+      btn.addEventListener('pointerleave', clearLongPress);
       btn.addEventListener('click', (e) => {
         if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+        if (longPressTriggered) {
+          longPressTriggered = false;
+          return;
+        }
         toggleTheme();
-      });
-      btn.addEventListener('dblclick', (e) => {
-        if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
-        resetThemeToAuto();
       });
     }
   }
