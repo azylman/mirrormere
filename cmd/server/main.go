@@ -493,6 +493,8 @@ func resolveCSSPath() string {
 
 func closeListenerIgnoreClosed(l net.Listener) {
 	if l != nil {
-		_ = l.Close()
+		if err := l.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			slog.Warn("Error closing listener", "err", err)
+		}
 	}
 }
