@@ -567,7 +567,7 @@ def cmd_enroll(args) -> int:
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("speaker_id", nargs="?", help="speaker id to enroll (e.g. mike)")
+    parser.add_argument("speaker_id", nargs="?", help="speaker id to enroll (e.g. speaker-1)")
     parser.add_argument("--wav", nargs="+", metavar="FILE", help="WAV file(s) of the speaker talking")
     parser.add_argument("--embed-url", default=DEFAULT_EMBED_URL,
                          help=f"voice-fingerprinter server URL (default {DEFAULT_EMBED_URL})")

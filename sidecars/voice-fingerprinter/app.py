@@ -2,10 +2,9 @@
 """voice-fingerprinter — CPU speaker-embedding sidecar for Mirrormere's Voice
 Hub speaker-ID feature.
 
-Ported from the karakos household's desktop_embed.py (GPU, desktop-only)
-to run as a small standalone container on Alex's Intel N150 edge box, CPU
-only. The contract is unchanged: `internal/voice/speaker.go`'s
-DefaultEmbedClient POSTs raw WAV bytes to `embed_url` and expects
+Designed to run as a small standalone CPU-only container on an Intel N100/N150
+edge box. The contract matches `internal/voice/speaker.go`'s
+DefaultEmbedClient, which POSTs raw WAV bytes to `embed_url` and expects
 `{"embedding": [...floats], "model": "..."}` back; any model that produces
 stable, comparable vectors satisfies it.
 

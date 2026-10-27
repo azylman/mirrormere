@@ -111,38 +111,38 @@ def test_build_centroid_rejects_inconsistent_models(monkeypatch):
 
 
 def test_merge_speaker_new_file():
-    merged = enroll.merge_speaker(None, "mike", [0.1, 0.2], "model-x", force=False)
-    assert merged == {"model": "model-x", "speakers": [{"id": "mike", "embedding": [0.1, 0.2]}]}
+    merged = enroll.merge_speaker(None, "speaker-1", [0.1, 0.2], "model-x", force=False)
+    assert merged == {"model": "model-x", "speakers": [{"id": "speaker-1", "embedding": [0.1, 0.2]}]}
 
 
 def test_merge_speaker_adds_to_existing():
-    existing = {"model": "model-x", "speakers": [{"id": "lauren", "embedding": [0.5]}]}
-    merged = enroll.merge_speaker(existing, "mike", [0.1, 0.2], "model-x", force=False)
+    existing = {"model": "model-x", "speakers": [{"id": "speaker-2", "embedding": [0.5]}]}
+    merged = enroll.merge_speaker(existing, "speaker-1", [0.1, 0.2], "model-x", force=False)
     ids = {s["id"] for s in merged["speakers"]}
-    assert ids == {"lauren", "mike"}
+    assert ids == {"speaker-2", "speaker-1"}
 
 
 def test_merge_speaker_replaces_same_id():
-    existing = {"model": "model-x", "speakers": [{"id": "mike", "embedding": [9.9]}]}
-    merged = enroll.merge_speaker(existing, "mike", [0.1, 0.2], "model-x", force=False)
-    assert merged["speakers"] == [{"id": "mike", "embedding": [0.1, 0.2]}]
+    existing = {"model": "model-x", "speakers": [{"id": "speaker-1", "embedding": [9.9]}]}
+    merged = enroll.merge_speaker(existing, "speaker-1", [0.1, 0.2], "model-x", force=False)
+    assert merged["speakers"] == [{"id": "speaker-1", "embedding": [0.1, 0.2]}]
 
 
 def test_merge_speaker_refuses_model_mismatch_without_force():
-    existing = {"model": "model-old", "speakers": [{"id": "lauren", "embedding": [0.5]}]}
+    existing = {"model": "model-old", "speakers": [{"id": "speaker-2", "embedding": [0.5]}]}
     with pytest.raises(RuntimeError, match="refusing to write a mixed-model"):
-        enroll.merge_speaker(existing, "mike", [0.1, 0.2], "model-new", force=False)
+        enroll.merge_speaker(existing, "speaker-1", [0.1, 0.2], "model-new", force=False)
 
 
 def test_merge_speaker_force_drops_other_speakers():
-    existing = {"model": "model-old", "speakers": [{"id": "lauren", "embedding": [0.5]}]}
-    merged = enroll.merge_speaker(existing, "mike", [0.1, 0.2], "model-new", force=True)
-    assert merged == {"model": "model-new", "speakers": [{"id": "mike", "embedding": [0.1, 0.2]}]}
+    existing = {"model": "model-old", "speakers": [{"id": "speaker-2", "embedding": [0.5]}]}
+    merged = enroll.merge_speaker(existing, "speaker-1", [0.1, 0.2], "model-new", force=True)
+    assert merged == {"model": "model-new", "speakers": [{"id": "speaker-1", "embedding": [0.1, 0.2]}]}
 
 
 def test_write_and_read_speakers_roundtrip(tmp_path):
     path = tmp_path / "speakers.json"
-    data = {"model": "model-x", "speakers": [{"id": "mike", "embedding": [0.1, 0.2, 0.3]}]}
+    data = {"model": "model-x", "speakers": [{"id": "speaker-1", "embedding": [0.1, 0.2, 0.3]}]}
     enroll.write_speakers(path, data)
     assert path.exists()
     read_back = enroll.read_speakers(path)
@@ -168,7 +168,7 @@ def test_write_and_read_yaml_config_roundtrip_preserves_existing_settings(tmp_pa
     )
     assert enroll.read_speakers(cfg_path) is None
 
-    data1 = {"model": "speechbrain/spkrec-ecapa-voxceleb", "speakers": [{"id": "mike", "embedding": [0.25, 0.5]}]}
+    data1 = {"model": "speechbrain/spkrec-ecapa-voxceleb", "speakers": [{"id": "speaker-1", "embedding": [0.25, 0.5]}]}
     enroll.write_speakers(cfg_path, data1)
     assert enroll.read_speakers(cfg_path) == data1
 
@@ -181,8 +181,8 @@ def test_write_and_read_yaml_config_roundtrip_preserves_existing_settings(tmp_pa
     data2 = {
         "model": "speechbrain/spkrec-ecapa-voxceleb",
         "speakers": [
-            {"id": "mike", "embedding": [0.25, 0.5]},
-            {"id": "lauren", "embedding": [0.75, -0.25]},
+            {"id": "speaker-1", "embedding": [0.25, 0.5]},
+            {"id": "speaker-2", "embedding": [0.75, -0.25]},
         ],
     }
     enroll.write_speakers(cfg_path, data2)
@@ -205,12 +205,12 @@ def test_cmd_enroll_end_to_end_writes_yaml_and_json(tmp_path, monkeypatch, capsy
     fake = _fake_embed_wav_factory()
     monkeypatch.setattr(enroll, "embed_wav", fake)
 
-    wav_path = tmp_path / "mike.wav"
+    wav_path = tmp_path / "speaker-1.wav"
     _make_wav_file(wav_path, seconds=12.0)  # enough chunks to clear MIN_SURVIVING_CHUNKS
     yaml_output = tmp_path / "config.yaml"
 
     rc = enroll.main([
-        "mike", "--wav", str(wav_path), "--output", str(yaml_output),
+        "speaker-1", "--wav", str(wav_path), "--output", str(yaml_output),
         "--embed-url", "http://fake/embed",
     ])
     assert rc == 0
@@ -218,60 +218,60 @@ def test_cmd_enroll_end_to_end_writes_yaml_and_json(tmp_path, monkeypatch, capsy
     parsed = enroll.read_speakers(yaml_output)
     assert parsed["model"] == "speechbrain/spkrec-ecapa-voxceleb"
     assert len(parsed["speakers"]) == 1
-    assert parsed["speakers"][0]["id"] == "mike"
+    assert parsed["speakers"][0]["id"] == "speaker-1"
 
     json_output = tmp_path / "speakers.json"
     rc_json = enroll.main([
-        "mike", "--wav", str(wav_path), "--output", str(json_output),
+        "speaker-1", "--wav", str(wav_path), "--output", str(json_output),
         "--embed-url", "http://fake/embed",
     ])
     assert rc_json == 0
     written = json.loads(json_output.read_text())
     assert written["model"] == "speechbrain/spkrec-ecapa-voxceleb"
-    assert written["speakers"][0]["id"] == "mike"
+    assert written["speakers"][0]["id"] == "speaker-1"
 
 
 def test_cmd_enroll_dry_run_does_not_write(tmp_path, monkeypatch):
     monkeypatch.setattr(enroll, "embed_wav", _fake_embed_wav_factory())
-    wav_path = tmp_path / "mike.wav"
+    wav_path = tmp_path / "speaker-1.wav"
     _make_wav_file(wav_path, seconds=12.0)
     output = tmp_path / "config.yaml"
 
-    rc = enroll.main(["mike", "--wav", str(wav_path), "--output", str(output), "--dry-run"])
+    rc = enroll.main(["speaker-1", "--wav", str(wav_path), "--output", str(output), "--dry-run"])
     assert rc == 0
     assert not output.exists()
 
 
 def test_cmd_enroll_model_mismatch_refused_via_cli(tmp_path, monkeypatch, capsys):
     output = tmp_path / "config.yaml"
-    enroll.write_speakers(output, {"model": "old-model", "speakers": [{"id": "lauren", "embedding": [0.1]}]})
+    enroll.write_speakers(output, {"model": "old-model", "speakers": [{"id": "speaker-2", "embedding": [0.1]}]})
 
     monkeypatch.setattr(enroll, "embed_wav", _fake_embed_wav_factory(model="new-model"))
-    wav_path = tmp_path / "mike.wav"
+    wav_path = tmp_path / "speaker-1.wav"
     _make_wav_file(wav_path, seconds=12.0)
 
-    rc = enroll.main(["mike", "--wav", str(wav_path), "--output", str(output)])
+    rc = enroll.main(["speaker-1", "--wav", str(wav_path), "--output", str(output)])
     assert rc == 1
 
     # Original file untouched.
     data = enroll.read_speakers(output)
     assert data["model"] == "old-model"
-    assert data["speakers"] == [{"id": "lauren", "embedding": [0.1]}]
+    assert data["speakers"] == [{"id": "speaker-2", "embedding": [0.1]}]
 
 
 def test_cmd_list_and_remove(tmp_path, capsys):
     output = tmp_path / "config.yaml"
     enroll.write_speakers(output, {
         "model": "model-x",
-        "speakers": [{"id": "mike", "embedding": [0.1, 0.2]}, {"id": "lauren", "embedding": [0.3]}],
+        "speakers": [{"id": "speaker-1", "embedding": [0.1, 0.2]}, {"id": "speaker-2", "embedding": [0.3]}],
     })
 
     rc = enroll.main(["--list", "--output", str(output)])
     assert rc == 0
     out = capsys.readouterr().out
-    assert "mike" in out and "lauren" in out
+    assert "speaker-1" in out and "speaker-2" in out
 
-    rc = enroll.main(["--remove", "mike", "--output", str(output)])
+    rc = enroll.main(["--remove", "speaker-1", "--output", str(output)])
     assert rc == 0
     data = enroll.read_speakers(output)
-    assert [s["id"] for s in data["speakers"]] == ["lauren"]
+    assert [s["id"] for s in data["speakers"]] == ["speaker-2"]
