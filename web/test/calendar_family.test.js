@@ -1625,4 +1625,121 @@ test('Calendar Family Client Controller', async (t) => {
     assert.equal(global.window.MirrormereCalendarFamily.getInstance('detached-cal'), null);
   });
 
+  await t.test('fitDayEvents removes start time when event is <30 mins or when start time + event name do not both fit', () => {
+    const el = createMockElement({ widgetId: 'fit-events-cal', defaultView: 'week' });
+
+    // 1. Short event (<30 mins): 09:00 to 09:15 -> removes start time
+    const evShort = createMockDOMNode('div', { className: 'cf-day-event cf-event-clickable' });
+    evShort.dataset.eventId = 'ev-short-15';
+    evShort.dataset.eventStart = '09:00';
+    evShort.dataset.eventEnd = '09:15';
+    evShort.dataset.eventTitle = 'Quick Standup';
+    const hdrShort = createMockDOMNode('div', { className: 'cf-event-header' });
+    const timeShort = createMockDOMNode('span', { className: 'cf-event-time' });
+    timeShort.textContent = '09:00';
+    hdrShort.appendChild(timeShort);
+    const titleShort = createMockDOMNode('div', { className: 'cf-event-title' });
+    titleShort.textContent = 'Quick Standup';
+    evShort.appendChild(hdrShort);
+    evShort.appendChild(titleShort);
+    el._panels.week.appendChild(evShort);
+
+    // 2. Event with insufficient vertical height (headerH + titleH + 2 > clientHeight) -> removes start time
+    const evTightH = createMockDOMNode('div', { className: 'cf-day-event cf-event-clickable' });
+    evTightH.dataset.eventId = 'ev-tight-h';
+    evTightH.dataset.eventStart = '10:00';
+    evTightH.dataset.eventEnd = '10:30';
+    evTightH.clientHeight = 20;
+    const hdrTightH = createMockDOMNode('div', { className: 'cf-event-header' });
+    hdrTightH.offsetHeight = 11;
+    const timeTightH = createMockDOMNode('span', { className: 'cf-event-time' });
+    timeTightH.textContent = '10:00';
+    hdrTightH.appendChild(timeTightH);
+    const titleTightH = createMockDOMNode('div', { className: 'cf-event-title' });
+    titleTightH.offsetHeight = 13;
+    titleTightH.textContent = 'Design Check';
+    evTightH.appendChild(hdrTightH);
+    evTightH.appendChild(titleTightH);
+    el._panels.week.appendChild(evTightH);
+
+    // 3. Event with scrollHeight > clientHeight (no location) -> removes start time
+    const evScrollH = createMockDOMNode('div', { className: 'cf-day-event cf-event-clickable' });
+    evScrollH.dataset.eventId = 'ev-scroll-h';
+    evScrollH.dataset.eventStart = '11:00';
+    evScrollH.dataset.eventEnd = '11:30';
+    evScrollH.clientHeight = 20;
+    evScrollH.scrollHeight = 28;
+    const hdrScrollH = createMockDOMNode('div', { className: 'cf-event-header' });
+    const timeScrollH = createMockDOMNode('span', { className: 'cf-event-time' });
+    timeScrollH.textContent = '11:00';
+    hdrScrollH.appendChild(timeScrollH);
+    const titleScrollH = createMockDOMNode('div', { className: 'cf-event-title' });
+    titleScrollH.textContent = 'Overflow Check';
+    evScrollH.appendChild(hdrScrollH);
+    evScrollH.appendChild(titleScrollH);
+    el._panels.week.appendChild(evScrollH);
+
+    // 4. Event with same-row horizontal overflow (timeW + titleW + 8 > clientWidth) -> removes start time
+    const evTightW = createMockDOMNode('div', { className: 'cf-day-event cf-event-clickable' });
+    evTightW.dataset.eventId = 'ev-tight-w';
+    evTightW.dataset.eventStart = '12:00';
+    evTightW.dataset.eventEnd = '12:45';
+    evTightW.clientWidth = 60;
+    const hdrTightW = createMockDOMNode('div', { className: 'cf-event-header' });
+    const timeTightW = createMockDOMNode('span', { className: 'cf-event-time' });
+    timeTightW.offsetWidth = 30;
+    timeTightW.offsetTop = 2;
+    timeTightW.textContent = '12:00';
+    hdrTightW.appendChild(timeTightW);
+    const titleTightW = createMockDOMNode('div', { className: 'cf-event-title' });
+    titleTightW.scrollWidth = 40;
+    titleTightW.offsetTop = 2;
+    titleTightW.textContent = 'Lunch Sync';
+    evTightW.appendChild(hdrTightW);
+    evTightW.appendChild(titleTightW);
+    el._panels.week.appendChild(evTightW);
+
+    // 5. Normal event (60 mins, plenty of height and width) -> keeps start time
+    const evNormal = createMockDOMNode('div', { className: 'cf-day-event cf-event-clickable' });
+    evNormal.dataset.eventId = 'ev-normal-60';
+    evNormal.dataset.eventStart = '14:00';
+    evNormal.dataset.eventEnd = '15:00';
+    evNormal.clientHeight = 48;
+    evNormal.clientWidth = 140;
+    const hdrNormal = createMockDOMNode('div', { className: 'cf-event-header' });
+    hdrNormal.offsetHeight = 11;
+    const timeNormal = createMockDOMNode('span', { className: 'cf-event-time' });
+    timeNormal.textContent = '14:00';
+    hdrNormal.appendChild(timeNormal);
+    const titleNormal = createMockDOMNode('div', { className: 'cf-event-title' });
+    titleNormal.offsetHeight = 13;
+    titleNormal.textContent = 'Architecture Review';
+    evNormal.appendChild(hdrNormal);
+    evNormal.appendChild(titleNormal);
+    el._panels.week.appendChild(evNormal);
+
+    global.window.MirrormereCalendarFamily.mount(el);
+
+    assert.equal(evShort.querySelector('.cf-event-time'), null, 'short <30 min event should remove start time');
+    assert.equal(evShort.querySelector('.cf-event-header'), null, 'short <30 min event should remove header row');
+    assert.equal(evShort.classList.contains('cf-event-compact'), true);
+    assert.equal(evShort.querySelector('.cf-event-title').textContent, 'Quick Standup');
+
+    assert.equal(evTightH.querySelector('.cf-event-time'), null, 'vertically tight event should remove start time');
+    assert.equal(evTightH.classList.contains('cf-event-compact'), true);
+    assert.equal(evTightH.querySelector('.cf-event-title').textContent, 'Design Check');
+
+    assert.equal(evScrollH.querySelector('.cf-event-time'), null, 'scrollHeight overflow event should remove start time');
+    assert.equal(evScrollH.classList.contains('cf-event-compact'), true);
+
+    assert.equal(evTightW.querySelector('.cf-event-time'), null, 'horizontally overflowing single-line event should remove start time');
+    assert.equal(evTightW.classList.contains('cf-event-compact'), true);
+
+    assert.ok(evNormal.querySelector('.cf-event-time'), 'normal event with sufficient size should retain start time');
+    assert.equal(evNormal.querySelector('.cf-event-time').textContent, '14:00');
+    assert.equal(evNormal.classList.contains('cf-event-compact'), false);
+
+    global.window.MirrormereCalendarFamily.unmount('fit-events-cal');
+  });
+
 });

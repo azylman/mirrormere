@@ -130,15 +130,17 @@
 
           <div class="cf-day-canvas" style="flex: 1; position: relative; min-height: 0; margin-top: 4px;">
             {{ range .Events }}
-            <div class="cf-day-event cf-event-clickable{{ if .Pattern }} cf-pattern-{{ .Pattern }}{{ end }}" role="button" tabindex="0" title="{{ .Start }}–{{ .End }}: {{ .Title }}{{ if .Location }} ({{ .Location }}){{ end }}" aria-label="{{ .Title }}, {{ .Start }} to {{ .End }}{{ if .Location }}, {{ .Location }}{{ end }}" data-event-id="{{ .ID }}" data-event-title="{{ .Title }}" data-event-start="{{ .Start }}" data-event-end="{{ .End }}" data-event-location="{{ .Location }}" data-event-description="{{ .Description }}" style="position: absolute; top: {{ .TopPct }}%; height: {{ .HeightPct }}%; left: calc({{ .LeftPct }}% + 1px); width: calc({{ .WidthPct }}% - 2px); min-height: 20px; padding: 2px 4px; border-radius: 6px; background: {{ .Color }}; color: {{ .TextColor }}; overflow: hidden; display: flex; flex-direction: column; box-sizing: border-box; border: 1px solid rgba(0, 0, 0, 0.12); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12); cursor: pointer; touch-action: manipulation;">
-              <div class="cf-event-header" style="display: flex; align-items: center; justify-content: space-between; gap: 2px; font-size: 0.60rem; font-weight: 800; line-height: 1.1;">
+            <div class="cf-day-event cf-event-clickable{{ if .Pattern }} cf-pattern-{{ .Pattern }}{{ end }}{{ if .HideStart }} cf-event-compact{{ end }}" role="button" tabindex="0" title="{{ .Start }}–{{ .End }}: {{ .Title }}{{ if .Location }} ({{ .Location }}){{ end }}" aria-label="{{ .Title }}, {{ .Start }} to {{ .End }}{{ if .Location }}, {{ .Location }}{{ end }}" data-event-id="{{ .ID }}" data-event-title="{{ .Title }}" data-event-start="{{ .Start }}" data-event-end="{{ .End }}" data-event-location="{{ .Location }}" data-event-description="{{ .Description }}" style="position: absolute; top: {{ .TopPct }}%; height: {{ .HeightPct }}%; left: calc({{ .LeftPct }}% + 1px); width: calc({{ .WidthPct }}% - 2px); min-height: 20px; padding: {{ if .HideStart }}1px 4px{{ else }}2px 4px{{ end }}; border-radius: 6px; background: {{ .Color }}; color: {{ .TextColor }}; overflow: hidden; display: flex; flex-direction: column; {{ if .HideStart }}justify-content: center; {{ end }}box-sizing: border-box; border: 1px solid rgba(0, 0, 0, 0.12); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12); cursor: pointer; touch-action: manipulation;">
+              {{ if not .HideStart }}
+              <div class="cf-event-header" style="display: flex; align-items: center; justify-content: space-between; gap: 2px; font-size: 0.60rem; font-weight: 800; line-height: 1.1; flex-shrink: 0;">
                 <span class="cf-event-time" style="font-family: var(--mm-font-mono, monospace);">{{ .Start }}</span>
                 {{ if .Initials }}
                 <span class="cf-event-initials" style="opacity: 0.85;">{{ range .Initials }}{{ . }}{{ end }}</span>
                 {{ end }}
               </div>
-              <div class="cf-event-title" style="font-size: 0.65rem; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 1.2;">{{ .Title }}</div>
-              {{ if .Location }}
+              {{ end }}
+              <div class="cf-event-title" style="font-size: 0.65rem; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 1.2; flex-shrink: 0;">{{ .Title }}</div>
+              {{ if and .Location (not .HideStart) }}
               <div class="cf-event-location" style="font-size: 0.55rem; opacity: 0.85; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ .Location }}</div>
               {{ end }}
             </div>
@@ -384,6 +386,16 @@
   .cf-day-event:hover, .cf-day-event:active {
     z-index: 20 !important;
     filter: brightness(1.15);
+  }
+  .cf-day-event.cf-event-compact {
+    padding-top: 1px !important;
+    padding-bottom: 1px !important;
+    justify-content: center;
+  }
+  .cf-day-event.cf-event-compact .cf-event-header,
+  .cf-day-event.cf-event-compact .cf-event-time,
+  .cf-day-event.cf-event-compact .cf-event-location {
+    display: none !important;
   }
   .cf-modal-overlay {
     position: absolute;

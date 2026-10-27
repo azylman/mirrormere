@@ -241,7 +241,89 @@
       this.bindInteractions();
       this.updateViewUI(this.activeView);
       this.updateDateUI();
+      this.fitDayEvents();
       this.resetInactivityTimer();
+    }
+
+    computeDurationMinutes(startStr, endStr) {
+      if (!startStr || !endStr) return 0;
+      const parseHM = (s) => {
+        const parts = String(s).trim().split(':');
+        if (parts.length < 2) return null;
+        const h = parseInt(parts[0], 10);
+        const m = parseInt(parts[1], 10);
+        if (isNaN(h) || isNaN(m)) return null;
+        return h * 60 + m;
+      };
+      const s = parseHM(startStr);
+      const e = parseHM(endStr);
+      if (s === null || e === null || e <= s) return 0;
+      return e - s;
+    }
+
+    fitDayEvents() {
+      if (!this.element || typeof this.element.querySelectorAll !== 'function') return;
+      const dayEvents = this.element.querySelectorAll('.cf-day-event');
+      for (const evEl of dayEvents) {
+        const timeEl = evEl.querySelector ? evEl.querySelector('.cf-event-time') : null;
+        const titleEl = evEl.querySelector ? evEl.querySelector('.cf-event-title') : null;
+        if (!timeEl || !titleEl) continue;
+
+        const headerEl = evEl.querySelector ? evEl.querySelector('.cf-event-header') : null;
+        let fits = true;
+
+        const startStr = (evEl.dataset && (evEl.dataset.eventStart || evEl.dataset.start)) || timeEl.textContent || '';
+        const endStr = (evEl.dataset && (evEl.dataset.eventEnd || evEl.dataset.end)) || '';
+        const durMins = this.computeDurationMinutes(startStr, endStr);
+        if (durMins > 0 && durMins < 30) {
+          fits = false;
+        }
+
+        if (fits && typeof evEl.clientHeight === 'number' && evEl.clientHeight > 0) {
+          const headerH = (headerEl && typeof headerEl.offsetHeight === 'number' && headerEl.offsetHeight > 0)
+            ? headerEl.offsetHeight
+            : (typeof timeEl.offsetHeight === 'number' ? timeEl.offsetHeight : 0);
+          const titleH = typeof titleEl.offsetHeight === 'number' ? titleEl.offsetHeight : 0;
+          if (headerH > 0 && titleH > 0) {
+            if (headerH + titleH + 2 > evEl.clientHeight) {
+              fits = false;
+            }
+          } else if (typeof evEl.scrollHeight === 'number' && evEl.scrollHeight > evEl.clientHeight + 1) {
+            const locEl = evEl.querySelector ? evEl.querySelector('.cf-event-location') : null;
+            if (!locEl) {
+              fits = false;
+            }
+          }
+        }
+
+        if (fits && typeof evEl.clientWidth === 'number' && evEl.clientWidth > 0) {
+          const timeW = typeof timeEl.offsetWidth === 'number' ? timeEl.offsetWidth : 0;
+          const titleW = typeof titleEl.scrollWidth === 'number' ? titleEl.scrollWidth : 0;
+          if (timeW > 0 && titleW > 0 && timeEl.offsetTop === titleEl.offsetTop) {
+            if (timeW + titleW + 8 > evEl.clientWidth) {
+              fits = false;
+            }
+          }
+        }
+
+        if (!fits) {
+          if (typeof timeEl.remove === 'function') {
+            timeEl.remove();
+          } else if (timeEl.parentNode) {
+            timeEl.parentNode.removeChild(timeEl);
+          }
+          if (headerEl) {
+            if (typeof headerEl.remove === 'function') {
+              headerEl.remove();
+            } else if (headerEl.parentNode) {
+              headerEl.parentNode.removeChild(headerEl);
+            }
+          }
+          if (evEl.classList && typeof evEl.classList.add === 'function') {
+            evEl.classList.add('cf-event-compact');
+          }
+        }
+      }
     }
 
     bindViewSwitcher() {
@@ -981,6 +1063,7 @@
       this.element.dataset.currentDate = this.formatDateISO(this.currentDate);
       this.element.dataset.pageOffset = String(this.pageOffset);
       this.updateDateUI();
+      this.fitDayEvents();
     }
 
     showSyncIndicator(message = 'Not synced yet') {
@@ -1137,6 +1220,9 @@
 
       // 6. Refresh date labels for active view
       this.updateDateUI();
+      if (view === 'week') {
+        this.fitDayEvents();
+      }
     }
 
     destroy() {
