@@ -958,6 +958,11 @@ html, body {
   transition: opacity 0.3s cubic-bezier(0.25, 1, 0.5, 1);
 }
 
+.grid-canvas[data-grid="2x6"] {
+  grid-template-columns: repeat(2, 1fr);
+  grid-template-rows: repeat(6, 1fr);
+}
+
 #mirrormere-app:has(.screen-indicator[style*="display: none"]) .grid-canvas,
 #mirrormere-app:has(.screen-indicator.paused) .grid-canvas,
 #mirrormere-app:has(.screen-indicator[hidden]) .grid-canvas {

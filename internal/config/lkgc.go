@@ -221,11 +221,18 @@ func ValidatePipeline(data []byte, loader PackageLoader, getenv func(string) str
 		}
 		inputs[i] = layout.WidgetInput{ID: w.ID, Type: w.Type, Dimensions: dim, Pinned: w.Pinned}
 	}
-	if l, err := layout.Solve(inputs); err != nil {
+	l, err := solveForConfigGrid(inputs, cfg.Display.Grid)
+	if err != nil {
 		return nil, fmt.Errorf("stage 6 (layout solver): layout solver error: %w", err)
-	} else {
-		return &Snapshot{Config: cfg, Layout: l, Packages: pkgs, LoadedAt: time.Now()}, nil
 	}
+	return &Snapshot{Config: cfg, Layout: l, Packages: pkgs, LoadedAt: time.Now()}, nil
+}
+
+func solveForConfigGrid(inputs []layout.WidgetInput, grid GridConfig) (*layout.Layout, error) {
+	if grid.Columns == 2 && grid.Rows == 6 {
+		return layout.SolveGridWithBudget(inputs, 2, 6, 0)
+	}
+	return layout.Solve(inputs)
 }
 
 func validateCoreInstancesStage(cfg *Config, getenv func(string) string) error {
@@ -271,10 +278,18 @@ func validatePackagesStage(cfg *Config, loader PackageLoader) (map[string]*domai
 			registry[w.Type] = pkg
 		}
 		if len(w.Dimensions) == 0 {
-			if !pkg.Manifest.DefaultDimensions.IsValid() {
+			defDim := pkg.Manifest.DefaultDimensions
+			if !defDim.IsValid() {
 				return nil, fmt.Errorf("[Mirrormere Config Error] widget '%s' omits 'dimensions' and package manifest '%s' has no valid default_dimensions", w.ID, w.Type)
 			}
-			w.Dimensions = pkg.Manifest.DefaultDimensions.Slice()
+			if !defDim.IsValidForGrid(cfg.Display.Grid.Columns, cfg.Display.Grid.Rows) {
+				flipped := domain.NewDimension(defDim.Rows, defDim.Cols)
+				if flipped.IsValidForGrid(cfg.Display.Grid.Columns, cfg.Display.Grid.Rows) &&
+					(len(pkg.Manifest.SupportedDimensions) == 0 || slices.Contains(pkg.Manifest.SupportedDimensions, flipped)) {
+					defDim = flipped
+				}
+			}
+			w.Dimensions = defDim.Slice()
 		}
 		if w.RefreshIntervalSeconds == nil && pkg.Manifest.Refresh.IntervalSeconds > 0 {
 			w.RefreshIntervalSeconds = &pkg.Manifest.Refresh.IntervalSeconds
@@ -445,6 +460,7 @@ func DiffConfigs(oldCfg, newCfg *Config) *ConfigDiff {
 	if oldCfg != nil && newCfg != nil {
 		diff.TimezoneChanged = oldCfg.Timezone != newCfg.Timezone
 		diff.ShellChanged = !reflect.DeepEqual(oldCfg.Display.Header, newCfg.Display.Header) ||
+			oldCfg.Display.Grid != newCfg.Display.Grid ||
 			oldCfg.Display.HideCursor != newCfg.Display.HideCursor ||
 			oldCfg.Display.RemoteURL != newCfg.Display.RemoteURL ||
 			!reflect.DeepEqual(oldCfg.Display.Voice, newCfg.Display.Voice)

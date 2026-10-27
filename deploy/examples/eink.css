@@ -163,6 +163,11 @@ html, body {
   height: calc(100% - var(--mm-header-height) - var(--mm-grid-gap));
 }
 
+.grid-canvas[data-grid="2x6"] {
+  grid-template-columns: repeat(2, 1fr);
+  grid-template-rows: repeat(6, 1fr);
+}
+
 .widget-card {
   display: flex;
   flex-direction: column;

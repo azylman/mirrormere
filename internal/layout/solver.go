@@ -58,13 +58,32 @@ type Layout struct {
 	Screens      []Screen `json:"screens"`
 }
 
-// ComputeWidgetBitmask computes the bitmask assuming bounds have already been validated.
+// ComputeWidgetBitmask computes the bitmask assuming bounds have already been validated on the default 6x2 grid.
 func ComputeWidgetBitmask(cols, rows, originCol, originRow int) uint16 {
 	rowMask := uint16(((1 << cols) - 1) << originCol)
 	if rows == 1 {
 		return rowMask << (originRow * GridColumns)
 	}
 	return rowMask | (rowMask << GridColumns)
+}
+
+func computeWidgetBitmaskForGrid(cols, rows, originCol, originRow, gridCols int) uint16 {
+	if gridCols == GridColumns && rows <= 2 {
+		return ComputeWidgetBitmask(cols, rows, originCol, originRow)
+	}
+	rowMask := uint16(((1 << cols) - 1) << originCol)
+	var mask uint16
+	for r := 0; r < rows; r++ {
+		mask |= rowMask << ((originRow + r) * gridCols)
+	}
+	return mask
+}
+
+func normalizeGrid(gridCols, gridRows int) (int, int) {
+	if gridCols == 2 && gridRows == 6 {
+		return 2, 6
+	}
+	return GridColumns, GridRows
 }
 
 // ComputeScreens calculates the minimal number of rotation screens K and cell deficit.
@@ -93,28 +112,47 @@ func ComputeScreens(pinnedArea, unpinnedArea int) (int, int, error) {
 
 // FormatDeficitError formats layout configuration errors Load Diagnostics & Deficit Guidance.
 func FormatDeficitError(totalArea, targetScreens, deficit int) error {
+	return formatGridDeficitError(totalArea, targetScreens, deficit, GridColumns, GridRows)
+}
+
+func formatDeficitErrorForGrid(totalArea, targetScreens, deficit, gridCols, gridRows int) error {
+	if gridCols == GridColumns && gridRows == GridRows {
+		return FormatDeficitError(totalArea, targetScreens, deficit)
+	}
+	return formatGridDeficitError(totalArea, targetScreens, deficit, gridCols, gridRows)
+}
+
+func formatGridDeficitError(totalArea, targetScreens, deficit, gridCols, gridRows int) error {
+	portrait := gridCols == 2 && gridRows == 6
 	var b strings.Builder
-	fmt.Fprintf(&b, "[Mirrormere Config Error] Invalid widget layout configuration:\n  Total widget area is %d cells.\n  A 6x2 grid requires screen areas in multiples of 12 (Target: %d screens = %d cells).\n  Deficit: %d cells needed to achieve 100%% fully-filled screens.\n  Suggestions:\n", totalArea, targetScreens, targetScreens*GridTotalCells, deficit)
-	for _, s := range buildSuggestions(deficit) {
+	fmt.Fprintf(&b, "[Mirrormere Config Error] Invalid widget layout configuration:\n  Total widget area is %d cells.\n  A %dx%d grid requires screen areas in multiples of 12 (Target: %d screens = %d cells).\n  Deficit: %d cells needed to achieve 100%% fully-filled screens.\n  Suggestions:\n", totalArea, gridCols, gridRows, targetScreens, targetScreens*GridTotalCells, deficit)
+	for _, s := range buildSuggestions(deficit, portrait) {
 		fmt.Fprintf(&b, "    - %s\n", s)
 	}
 	return fmt.Errorf("%s", strings.TrimRight(b.String(), "\n"))
 }
 
-func buildSuggestions(deficit int) []string {
-	sp := recommendedSpacerDimensions(deficit)
+func buildSuggestions(deficit int, portrait bool) []string {
+	sp := recommendedSpacerDimensions(deficit, portrait)
+	expandHint := "Or expand existing [2, 1] widgets to [3, 2] / [4, 2]."
+	if portrait {
+		expandHint = "Or expand existing [1, 2] widgets to [2, 3] / [2, 4]."
+	}
 	sugs := []string{
-		"Or expand existing [2, 1] widgets to [3, 2] / [4, 2].",
+		expandHint,
 		fmt.Sprintf("Or insert native spacer tiles (e.g. { type: \"spacer\", dimensions: [%d, %d] }) to intentionally leave layout space open.", sp[0], sp[1]),
 	}
-	if add := decomposeDeficit(deficit); add != "" {
+	if add := decomposeDeficit(deficit, portrait); add != "" {
 		return append([]string{add}, sugs...)
 	}
 	return sugs
 }
 
-func decomposeDeficit(deficit int) string {
+func decomposeDeficit(deficit int, portrait bool) string {
 	if deficit == 12 {
+		if portrait {
+			return "Add a [2, 6] widget (12 cells)."
+		}
 		return "Add a [6, 2] widget (12 cells)."
 	}
 	var parts []string
@@ -129,8 +167,12 @@ func decomposeDeficit(deficit int) string {
 		{[2]int{2, 1}, 2},
 		{[2]int{1, 1}, 1},
 	} {
+		dim := opt.dim
+		if portrait {
+			dim = [2]int{opt.dim[1], opt.dim[0]}
+		}
 		for deficit >= opt.area && opt.area > 0 {
-			parts = append(parts, fmt.Sprintf("a [%d, %d] widget (%d cells)", opt.dim[0], opt.dim[1], opt.area))
+			parts = append(parts, fmt.Sprintf("a [%d, %d] widget (%d cells)", dim[0], dim[1], opt.area))
 			deficit -= opt.area
 		}
 	}
@@ -146,24 +188,30 @@ func decomposeDeficit(deficit int) string {
 	}
 }
 
-func recommendedSpacerDimensions(deficit int) [2]int {
+func recommendedSpacerDimensions(deficit int, portrait bool) [2]int {
+	var dim [2]int
 	switch deficit {
 	case 1, 2, 3:
-		return [2]int{deficit, 1}
+		dim = [2]int{deficit, 1}
 	case 4, 10:
-		return [2]int{2, 2}
+		dim = [2]int{2, 2}
 	case 6:
-		return [2]int{3, 2}
+		dim = [2]int{3, 2}
 	case 8:
-		return [2]int{4, 2}
+		dim = [2]int{4, 2}
 	case 12:
-		return [2]int{6, 2}
+		dim = [2]int{6, 2}
 	default:
 		if deficit <= 6 {
-			return [2]int{deficit, 1}
+			dim = [2]int{deficit, 1}
+		} else {
+			dim = [2]int{2, 1}
 		}
-		return [2]int{2, 1}
 	}
+	if portrait {
+		return [2]int{dim[1], dim[0]}
+	}
+	return dim
 }
 
 const defaultMaxSearchNodes = 100_000
@@ -180,17 +228,17 @@ type unpinnedPlacement struct {
 	widget WidgetInput
 }
 
-// Solve executes exact 2D recursive backtracking bitmask bin-packing for the 6x2 grid.
+// Solve executes exact 2D recursive backtracking bitmask bin-packing for the default 6x2 grid.
 func Solve(widgets []WidgetInput) (*Layout, error) {
 	return SolveWithBudget(widgets, defaultMaxSearchNodes)
 }
 
-// SolveWithBudget executes the solver with an explicit search node ceiling.
+// SolveWithBudget executes the solver with an explicit search node ceiling on the default 6x2 grid.
 func SolveWithBudget(widgets []WidgetInput, maxSearchNodes int) (*Layout, error) {
-	if len(widgets) == 0 {
-		return nil, FormatDeficitError(0, 1, GridTotalCells)
-	}
+	return SolveGridWithBudget(widgets, GridColumns, GridRows, maxSearchNodes)
+}
 
+func partitionAndValidateWidgets(widgets []WidgetInput, gridCols, gridRows int) ([]WidgetInput, []WidgetInput, int, error) {
 	seenIDs := make(map[string]int, len(widgets))
 	var pinned, unpinned []WidgetInput
 	var pinnedArea, unpinnedArea int
@@ -198,15 +246,15 @@ func SolveWithBudget(widgets []WidgetInput, maxSearchNodes int) (*Layout, error)
 	for i, w := range widgets {
 		trimmedID := strings.TrimSpace(w.ID)
 		if trimmedID == "" {
-			return nil, fmt.Errorf("widget at index %d has empty id", i)
+			return nil, nil, 0, fmt.Errorf("widget at index %d has empty id", i)
 		}
 		if prevIdx, exists := seenIDs[trimmedID]; exists {
-			return nil, fmt.Errorf("duplicate widget id '%s' found (indices %d and %d)", trimmedID, prevIdx, i)
+			return nil, nil, 0, fmt.Errorf("duplicate widget id '%s' found (indices %d and %d)", trimmedID, prevIdx, i)
 		}
 		seenIDs[trimmedID] = i
 
-		if !w.Dimensions.IsValid() {
-			return nil, fmt.Errorf("widget '%s' has invalid dimensions [%d, %d]: cols must be 1..6, rows must be 1..2", w.ID, w.Dimensions.Cols, w.Dimensions.Rows)
+		if !w.Dimensions.IsValidForGrid(gridCols, gridRows) {
+			return nil, nil, 0, fmt.Errorf("widget '%s' has invalid dimensions [%d, %d]: cols must be 1..%d, rows must be 1..%d", w.ID, w.Dimensions.Cols, w.Dimensions.Rows, gridCols, gridRows)
 		}
 
 		area := w.Dimensions.Area()
@@ -221,14 +269,16 @@ func SolveWithBudget(widgets []WidgetInput, maxSearchNodes int) (*Layout, error)
 
 	k, deficit, err := ComputeScreens(pinnedArea, unpinnedArea)
 	if err != nil {
-		return nil, err
+		return nil, nil, 0, err
 	}
 	if deficit > 0 {
 		effectiveTotalArea := (k * GridTotalCells) - deficit
-		return nil, FormatDeficitError(effectiveTotalArea, k, deficit)
+		return nil, nil, 0, formatDeficitErrorForGrid(effectiveTotalArea, k, deficit, gridCols, gridRows)
 	}
+	return pinned, unpinned, k, nil
+}
 
-	// Sort pinned widgets: area desc, rows desc, ID asc
+func sortAndGroupWidgets(pinned, unpinned []WidgetInput) []*shapeGroup {
 	sort.SliceStable(pinned, func(i, j int) bool {
 		if pinned[i].Dimensions.Area() != pinned[j].Dimensions.Area() {
 			return pinned[i].Dimensions.Area() > pinned[j].Dimensions.Area()
@@ -239,7 +289,6 @@ func SolveWithBudget(widgets []WidgetInput, maxSearchNodes int) (*Layout, error)
 		return pinned[i].ID < pinned[j].ID
 	})
 
-	// Shape grouping for unpinned widgets: eliminates M! permutation explosions
 	shapeMap := make(map[[2]int]*shapeGroup)
 	var shapeGroups []*shapeGroup
 	for _, w := range unpinned {
@@ -266,108 +315,13 @@ func SolveWithBudget(widgets []WidgetInput, maxSearchNodes int) (*Layout, error)
 			return sg.widgets[i].ID < sg.widgets[j].ID
 		})
 	}
+	return shapeGroups
+}
 
-	screenMasks := make([]uint16, k)
-	pinnedPlacements := make([]PlacedWidget, len(pinned))
-	unpinnedPlacements := make([]unpinnedPlacement, len(unpinned))
-	placedCount := 0
-	nodeCount := 0
-
-	var placePinned func(pIdx int) bool
-	var placeUnpinnedExactCover func() bool
-
-	placePinned = func(pIdx int) bool {
-		if pIdx == len(pinned) {
-			return placeUnpinnedExactCover()
-		}
-
-		pw := pinned[pIdx]
-		w, h := pw.Dimensions.Cols, pw.Dimensions.Rows
-		maxCol, maxRow := GridColumns-w, GridRows-h
-
-		for r := 0; r <= maxRow; r++ {
-			for c := 0; c <= maxCol; c++ {
-				mask := ComputeWidgetBitmask(w, h, c, r)
-				if (screenMasks[0] & mask) == 0 {
-					for s := 0; s < k; s++ {
-						screenMasks[s] |= mask
-					}
-					pinnedPlacements[pIdx] = PlacedWidget{
-						WidgetID: pw.ID, Type: pw.Type, Origin: [2]int{c, r}, Dimensions: pw.Dimensions, Pinned: true,
-					}
-					if placePinned(pIdx + 1) {
-						return true
-					}
-					for s := 0; s < k; s++ {
-						screenMasks[s] &= ^mask
-					}
-				}
-			}
-		}
-		return false
-	}
-
-	placeUnpinnedExactCover = func() bool {
-		nodeCount++
-		if maxSearchNodes > 0 && nodeCount > maxSearchNodes {
-			return false
-		}
-
-		targetScreen := -1
-		for s := 0; s < k; s++ {
-			if screenMasks[s] != FullGridMask {
-				targetScreen = s
-				break
-			}
-		}
-		if targetScreen == -1 {
-			return true
-		}
-
-		sMask := screenMasks[targetScreen]
-		emptyCell := bits.TrailingZeros16(^sMask)
-		c, r := emptyCell%GridColumns, emptyCell/GridColumns
-
-		for _, sg := range shapeGroups {
-			if sg.count == 0 {
-				continue
-			}
-			w, h := sg.dims.Cols, sg.dims.Rows
-			if c+w > GridColumns || r+h > GridRows {
-				continue
-			}
-			mask := ComputeWidgetBitmask(w, h, c, r)
-			if (sMask & mask) == 0 {
-				screenMasks[targetScreen] |= mask
-				sg.count--
-
-				assignedWidget := sg.widgets[len(sg.widgets)-sg.count-1]
-				unpinnedPlacements[placedCount] = unpinnedPlacement{
-					screen: targetScreen,
-					origin: [2]int{c, r},
-					widget: assignedWidget,
-				}
-				placedCount++
-
-				if placeUnpinnedExactCover() {
-					return true
-				}
-
-				placedCount--
-				sg.count++
-				screenMasks[targetScreen] &= ^mask
-			}
-		}
-		return false
-	}
-
-	if !placePinned(0) {
-		return nil, fmt.Errorf("[Mirrormere Config Error] Invalid widget layout configuration:\n  Widgets satisfy total cell count but cannot geometrically tile the 6x2 grid without gaps or overlaps.\n  Suggestions:\n    - Adjust widget dimensions to fit the 6x2 grid columns (e.g. use standard widths 2, 3, 4, or 6).\n    - Insert native spacer tiles (e.g. { type: \"spacer\", dimensions: [2, 1] }) to pad irregular shapes.")
-	}
-
-	layout := &Layout{TotalScreens: k, Screens: make([]Screen, k)}
+func assembleSolvedLayout(k int, screenMasks []uint16, pinnedPlacements []PlacedWidget, unpinnedPlacements []unpinnedPlacement, placedCount int) *Layout {
+	res := &Layout{TotalScreens: k, Screens: make([]Screen, k)}
 	for s := 0; s < k; s++ {
-		screenWidgets := make([]PlacedWidget, 0, len(pinned)+len(unpinned))
+		screenWidgets := make([]PlacedWidget, 0, len(pinnedPlacements)+placedCount)
 		screenWidgets = append(screenWidgets, pinnedPlacements...)
 		for i := 0; i < placedCount; i++ {
 			if unpinnedPlacements[i].screen == s {
@@ -383,8 +337,120 @@ func SolveWithBudget(widgets []WidgetInput, maxSearchNodes int) (*Layout, error)
 			}
 			return screenWidgets[i].Col() < screenWidgets[j].Col()
 		})
-		layout.Screens[s] = Screen{Index: s, Bitmask: screenMasks[s], Widgets: screenWidgets}
+		res.Screens[s] = Screen{Index: s, Bitmask: screenMasks[s], Widgets: screenWidgets}
+	}
+	return res
+}
+
+// SolveGridWithBudget executes the solver for a 6x2 or 2x6 grid with an explicit search node ceiling.
+func SolveGridWithBudget(widgets []WidgetInput, gridCols, gridRows, maxSearchNodes int) (*Layout, error) {
+	gridCols, gridRows = normalizeGrid(gridCols, gridRows)
+	if maxSearchNodes <= 0 {
+		maxSearchNodes = defaultMaxSearchNodes
+	}
+	if len(widgets) == 0 {
+		return nil, formatDeficitErrorForGrid(0, 1, GridTotalCells, gridCols, gridRows)
 	}
 
-	return layout, nil
+	pinned, unpinned, k, err := partitionAndValidateWidgets(widgets, gridCols, gridRows)
+	if err != nil {
+		return nil, err
+	}
+	shapeGroups := sortAndGroupWidgets(pinned, unpinned)
+
+	screenMasks := make([]uint16, k)
+	pinnedPlacements := make([]PlacedWidget, len(pinned))
+	unpinnedPlacements := make([]unpinnedPlacement, len(unpinned))
+	placedCount, nodeCount := 0, 0
+
+	var placePinned func(pIdx int) bool
+	var placeUnpinnedExactCover func() bool
+
+	placePinned = func(pIdx int) bool {
+		if pIdx == len(pinned) {
+			return placeUnpinnedExactCover()
+		}
+		pw := pinned[pIdx]
+		w, h := pw.Dimensions.Cols, pw.Dimensions.Rows
+		maxCol, maxRow := gridCols-w, gridRows-h
+		for r := 0; r <= maxRow; r++ {
+			for c := 0; c <= maxCol; c++ {
+				mask := computeWidgetBitmaskForGrid(w, h, c, r, gridCols)
+				if (screenMasks[0] & mask) != 0 {
+					continue
+				}
+				fillMaskAllScreens(screenMasks, k, mask, true)
+				pinnedPlacements[pIdx] = PlacedWidget{
+					WidgetID: pw.ID, Type: pw.Type, Origin: [2]int{c, r}, Dimensions: pw.Dimensions, Pinned: true,
+				}
+				if placePinned(pIdx + 1) {
+					return true
+				}
+				fillMaskAllScreens(screenMasks, k, mask, false)
+			}
+		}
+		return false
+	}
+
+	placeUnpinnedExactCover = func() bool {
+		nodeCount++
+		if nodeCount > maxSearchNodes {
+			return false
+		}
+		targetScreen := firstIncompleteScreen(screenMasks, k)
+		if targetScreen == -1 {
+			return true
+		}
+
+		sMask := screenMasks[targetScreen]
+		emptyCell := bits.TrailingZeros16(^sMask)
+		c, r := emptyCell%gridCols, emptyCell/gridCols
+
+		for _, sg := range shapeGroups {
+			if sg.count == 0 || c+sg.dims.Cols > gridCols || r+sg.dims.Rows > gridRows {
+				continue
+			}
+			mask := computeWidgetBitmaskForGrid(sg.dims.Cols, sg.dims.Rows, c, r, gridCols)
+			if (sMask & mask) != 0 {
+				continue
+			}
+			screenMasks[targetScreen] |= mask
+			sg.count--
+			unpinnedPlacements[placedCount] = unpinnedPlacement{
+				screen: targetScreen, origin: [2]int{c, r}, widget: sg.widgets[len(sg.widgets)-sg.count-1],
+			}
+			placedCount++
+			if placeUnpinnedExactCover() {
+				return true
+			}
+			placedCount--
+			sg.count++
+			screenMasks[targetScreen] &= ^mask
+		}
+		return false
+	}
+
+	if !placePinned(0) {
+		return nil, fmt.Errorf("[Mirrormere Config Error] Invalid widget layout configuration:\n  Widgets satisfy total cell count but cannot geometrically tile the %dx%d grid without gaps or overlaps.\n  Suggestions:\n    - Adjust widget dimensions to fit the %dx%d grid.\n    - Insert native spacer tiles (e.g. { type: \"spacer\", dimensions: [2, 1] }) to pad irregular shapes.", gridCols, gridRows, gridCols, gridRows)
+	}
+	return assembleSolvedLayout(k, screenMasks, pinnedPlacements, unpinnedPlacements, placedCount), nil
+}
+
+func firstIncompleteScreen(screenMasks []uint16, k int) int {
+	for s := 0; s < k; s++ {
+		if screenMasks[s] != FullGridMask {
+			return s
+		}
+	}
+	return -1
+}
+
+func fillMaskAllScreens(screenMasks []uint16, k int, mask uint16, set bool) {
+	for s := 0; s < k; s++ {
+		if set {
+			screenMasks[s] |= mask
+		} else {
+			screenMasks[s] &= ^mask
+		}
+	}
 }

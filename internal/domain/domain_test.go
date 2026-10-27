@@ -45,9 +45,15 @@ func TestDimension_ConstructorsAndMethods(t *testing.T) {
 		t.Fatalf("expected length error, got %v", err)
 	}
 
+	// DimensionFromSlice valid on 2x6 portrait grid
+	dPortrait, err := domain.DimensionFromSlice([]int{2, 6})
+	if err != nil || !dPortrait.IsValidForGrid(2, 6) || dPortrait.IsValidForGrid(6, 2) {
+		t.Fatalf("expected 2x6 portrait dimension to be valid for 2x6 only, got %v", err)
+	}
+
 	// DimensionFromSlice out of bounds
 	_, err = domain.DimensionFromSlice([]int{7, 2})
-	if err == nil || !strings.Contains(err.Error(), "violates 6x2 grid bounds") {
+	if err == nil || !strings.Contains(err.Error(), "violates 6x2 / 2x6 grid bounds") {
 		t.Fatalf("expected bounds error, got %v", err)
 	}
 }
