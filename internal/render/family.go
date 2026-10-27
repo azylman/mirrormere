@@ -91,7 +91,6 @@ type FamilyDayEvent struct {
 	ColSpan     int     `json:"col_span"`
 	LinkGlyph   string  `json:"link_glyph"`
 	IsLinked    bool    `json:"is_linked"`
-	HideStart   bool    `json:"hide_start,omitempty"`
 }
 
 // TimelineMarker represents a resolved time marker with normalized canvas positioning.
@@ -1048,11 +1047,6 @@ func truncateString(s string, maxRunes int) string {
 	return s
 }
 
-const (
-	shortEventDurationThreshold = 30 * time.Minute
-	shortEventHeightPctFloor    = 3.5
-)
-
 func buildFamilyDayEvent(fe FamilyEvent, rawEv provider.CalendarEvent, d time.Time, hours HoursBand) (FamilyDayEvent, bool) {
 	tStart, ok1 := parseFamilyTime(rawEv.Start)
 	if !ok1 {
@@ -1070,12 +1064,7 @@ func buildFamilyDayEvent(fe FamilyEvent, rawEv provider.CalendarEvent, d time.Ti
 		IsEarlyEdge: isEarly,
 		IsLateEdge:  isLate,
 		ColSpan:     1,
-		HideStart:   shouldHideEventStart(tStart, tEnd, heightPct),
 	}, true
-}
-
-func shouldHideEventStart(eventStart, eventEnd time.Time, heightPct float64) bool {
-	return heightPct < shortEventHeightPctFloor || eventEnd.Sub(eventStart) < shortEventDurationThreshold
 }
 
 func appendDayEvent(events, early, late *[]FamilyDayEvent, ev FamilyDayEvent) {

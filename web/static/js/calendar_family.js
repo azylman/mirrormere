@@ -245,22 +245,6 @@
       this.resetInactivityTimer();
     }
 
-    computeDurationMinutes(startStr, endStr) {
-      if (!startStr || !endStr) return 0;
-      const parseHM = (s) => {
-        const parts = String(s).trim().split(':');
-        if (parts.length < 2) return null;
-        const h = parseInt(parts[0], 10);
-        const m = parseInt(parts[1], 10);
-        if (isNaN(h) || isNaN(m)) return null;
-        return h * 60 + m;
-      };
-      const s = parseHM(startStr);
-      const e = parseHM(endStr);
-      if (s === null || e === null || e <= s) return 0;
-      return e - s;
-    }
-
     fitDayEvents() {
       if (!this.element || typeof this.element.querySelectorAll !== 'function') return;
       const dayEvents = this.element.querySelectorAll('.cf-day-event');
@@ -269,17 +253,14 @@
         const titleEl = evEl.querySelector ? evEl.querySelector('.cf-event-title') : null;
         if (!timeEl || !titleEl) continue;
 
+        if (evEl.classList && typeof evEl.classList.remove === 'function') {
+          evEl.classList.remove('cf-event-compact');
+        }
+
         const headerEl = evEl.querySelector ? evEl.querySelector('.cf-event-header') : null;
         let fits = true;
 
-        const startStr = (evEl.dataset && (evEl.dataset.eventStart || evEl.dataset.start)) || timeEl.textContent || '';
-        const endStr = (evEl.dataset && (evEl.dataset.eventEnd || evEl.dataset.end)) || '';
-        const durMins = this.computeDurationMinutes(startStr, endStr);
-        if (durMins > 0 && durMins < 30) {
-          fits = false;
-        }
-
-        if (fits && typeof evEl.clientHeight === 'number' && evEl.clientHeight > 0) {
+        if (typeof evEl.clientHeight === 'number' && evEl.clientHeight > 0) {
           const headerH = (headerEl && typeof headerEl.offsetHeight === 'number' && headerEl.offsetHeight > 0)
             ? headerEl.offsetHeight
             : (typeof timeEl.offsetHeight === 'number' ? timeEl.offsetHeight : 0);
@@ -306,22 +287,8 @@
           }
         }
 
-        if (!fits) {
-          if (typeof timeEl.remove === 'function') {
-            timeEl.remove();
-          } else if (timeEl.parentNode) {
-            timeEl.parentNode.removeChild(timeEl);
-          }
-          if (headerEl) {
-            if (typeof headerEl.remove === 'function') {
-              headerEl.remove();
-            } else if (headerEl.parentNode) {
-              headerEl.parentNode.removeChild(headerEl);
-            }
-          }
-          if (evEl.classList && typeof evEl.classList.add === 'function') {
-            evEl.classList.add('cf-event-compact');
-          }
+        if (!fits && evEl.classList && typeof evEl.classList.add === 'function') {
+          evEl.classList.add('cf-event-compact');
         }
       }
     }

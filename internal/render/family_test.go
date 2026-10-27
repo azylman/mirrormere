@@ -119,7 +119,6 @@ type buildFamilyViewExpectations struct {
 	eventNoDates     map[string][]string
 	spanEvents       []FamilySpanEvent
 	dayEventPos      map[string]FamilyDayEvent
-	eventHideStart   map[string]bool
 	earlyEventsCount map[int]int
 	lateEventsCount  map[int]int
 }
@@ -266,19 +265,7 @@ func TestBuildFamilyView(t *testing.T) {
 				mkCalEv("e2", "school", "Event 2", "2026-09-27T09:30:00Z", "2026-09-27T11:00:00Z", false),
 			),
 			exp: buildFamilyViewExpectations{
-				dayEventPos:    map[string]FamilyDayEvent{"e1": {LeftPct: 0.0, WidthPct: 50.0}, "e2": {LeftPct: 50.0, WidthPct: 50.0}},
-				eventHideStart: map[string]bool{"e1": false, "e2": false},
-			},
-		},
-		{
-			name: "short event under 30m sets HideStart",
-			cfg:  withFamilyCfg(map[string]any{"hours": []any{"08:00", "12:00"}}),
-			data: snap(
-				mkCalEv("e_short_15", "alex-personal", "Quick Standup", "2026-09-27T09:00:00Z", "2026-09-27T09:15:00Z", false),
-				mkCalEv("e_30", "alex-personal", "Half Hour Sync", "2026-09-27T10:00:00Z", "2026-09-27T10:30:00Z", false),
-			),
-			exp: buildFamilyViewExpectations{
-				eventHideStart: map[string]bool{"e_short_15": true, "e_30": false},
+				dayEventPos: map[string]FamilyDayEvent{"e1": {LeftPct: 0.0, WidthPct: 50.0}, "e2": {LeftPct: 50.0, WidthPct: 50.0}},
 			},
 		},
 		{
@@ -459,19 +446,6 @@ func TestBuildFamilyView(t *testing.T) {
 				}
 				if (wantPos.TopPct > 0 && found.TopPct != wantPos.TopPct) || (wantPos.HeightPct > 0 && found.HeightPct != wantPos.HeightPct) || (wantPos.LeftPct > 0 && found.LeftPct != wantPos.LeftPct) || (wantPos.WidthPct > 0 && found.WidthPct != wantPos.WidthPct) {
 					t.Errorf("event %q pos = %+v, want %+v", evID, found, wantPos)
-				}
-			}
-			for evID, wantHide := range exp.eventHideStart {
-				var found *FamilyDayEvent
-				for _, d := range view.Days {
-					for i := range d.Events {
-						if d.Events[i].ID == evID {
-							found = &d.Events[i]
-						}
-					}
-				}
-				if found == nil || found.HideStart != wantHide {
-					t.Errorf("event %q HideStart = %+v, want %v", evID, found, wantHide)
 				}
 			}
 			for dayIdx, wantCount := range exp.earlyEventsCount {
@@ -1063,7 +1037,7 @@ func TestCalendarWidgetTemplates(t *testing.T) {
 			},
 		},
 		{
-			name:      "calendar-grid short event under 30m omits start time header and renders title",
+			name:      "calendar-grid renders event header and title with flex-shrink 0 and cf-event-compact CSS",
 			widgetDir: "calendar-grid",
 			data: snap(
 				mkCalEv("e_short", "alex-personal", "Quick 15m Check-in", "2026-09-27T09:15:00Z", "2026-09-27T09:30:00Z", false),
@@ -1072,13 +1046,11 @@ func TestCalendarWidgetTemplates(t *testing.T) {
 			cfg: withFamilyCfg(map[string]any{"date": "2026-09-27", "hours": []any{"07:00", "21:00"}}),
 			wantContains: []string{
 				"Quick 15m Check-in",
-				"cf-event-compact",
+				".cf-day-event.cf-event-compact",
 				`data-event-start="09:15"`,
+				`<span class="cf-event-time" style="font-family: var(--mm-font-mono, monospace);">09:15</span>`,
 				"Full Hour Review",
 				`<span class="cf-event-time" style="font-family: var(--mm-font-mono, monospace);">11:00</span>`,
-			},
-			wantNotContains: []string{
-				`<span class="cf-event-time" style="font-family: var(--mm-font-mono, monospace);">09:15</span>`,
 			},
 		},
 		{
