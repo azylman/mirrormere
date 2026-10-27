@@ -6,6 +6,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -48,19 +50,6 @@ type errFlusher struct{ nonFlusher }
 
 func (e *errFlusher) Write([]byte) (int, error) { return 0, errors.New("simulated write error") }
 func (e *errFlusher) Flush()                    {}
-
-// SetNowFnForTest overrides the time provider for testing debounce without sleeps.
-func SetNowFnForTest(fn func() time.Time) func() {
-	flushMu.Lock()
-	prev := nowFn
-	nowFn = fn
-	flushMu.Unlock()
-	return func() {
-		flushMu.Lock()
-		nowFn = prev
-		flushMu.Unlock()
-	}
-}
 
 // SetWriteCountersDirForTest overrides writeCountersDirFn for testing purposes.
 func SetWriteCountersDirForTest(fn func(string) error) func() {
@@ -167,40 +156,27 @@ func TestServer_HealthzAndBuild(t *testing.T) {
 
 func TestCoverageFlushEndpoint(t *testing.T) {
 	tests := []struct {
-		name, method, coverDir, wantSub string
-		simTime                         time.Time
-		writeErr                        error
-		repeatCall                      bool
-		wantCode                        int
+		name, method, wantSub string
+		writeErr              error
+		wantCode              int
 	}{
 		{name: "method_not_allowed", method: http.MethodDelete, wantCode: http.StatusMethodNotAllowed},
-		{name: "unset_gocoverdir", method: http.MethodGet, wantCode: http.StatusOK, wantSub: `"status":"ok"`},
-		{name: "valid_flush_and_debounce", method: http.MethodPost, coverDir: "temp", simTime: time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC), repeatCall: true, wantCode: http.StatusOK, wantSub: `"status":"ok"`},
-		{name: "write_error_500", method: http.MethodGet, coverDir: "temp", simTime: time.Date(2026, 10, 4, 13, 0, 0, 0, time.UTC), writeErr: errors.New("err"), wantCode: http.StatusInternalServerError, wantSub: "err"},
+		{name: "valid_flush_tar", method: http.MethodPost, wantCode: http.StatusOK, wantSub: "covcounters.test"},
+		{name: "write_error_500", method: http.MethodGet, writeErr: errors.New("err"), wantCode: http.StatusInternalServerError, wantSub: "err"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if !tc.simTime.IsZero() {
-				defer SetNowFnForTest(func() time.Time { return tc.simTime })()
-			}
-			dir := tc.coverDir
-			if dir == "temp" {
-				dir = t.TempDir()
-			}
-			t.Setenv("GOCOVERDIR", dir)
-			defer SetWriteCountersDirForTest(func(string) error { return tc.writeErr })()
+			defer SetWriteCountersDirForTest(func(dir string) error {
+				if tc.writeErr != nil {
+					return tc.writeErr
+				}
+				return os.WriteFile(filepath.Join(dir, "covcounters.test"), []byte("cov"), 0o600)
+			})()
 			srv := NewServer(&mockHAClient{}, nil)
 			rec := httptest.NewRecorder()
 			srv.ServeHTTP(rec, httptest.NewRequest(tc.method, "/debug/coverage/flush", nil))
 			if rec.Code != tc.wantCode || (tc.wantSub != "" && !strings.Contains(rec.Body.String(), tc.wantSub)) {
 				t.Fatalf("code=%d want %d, body=%q want %q", rec.Code, tc.wantCode, rec.Body.String(), tc.wantSub)
-			}
-			if tc.repeatCall {
-				rec2 := httptest.NewRecorder()
-				srv.ServeHTTP(rec2, httptest.NewRequest(tc.method, "/debug/coverage/flush", nil))
-				if rec2.Code != http.StatusOK || !strings.Contains(rec2.Body.String(), `"status":"debounced"`) {
-					t.Fatalf("repeat code=%d body=%q", rec2.Code, rec2.Body.String())
-				}
 			}
 		})
 	}

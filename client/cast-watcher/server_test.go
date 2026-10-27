@@ -5,10 +5,11 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
-	"time"
 )
 
 type mockMediaActionSender struct {
@@ -46,19 +47,6 @@ func (m *mockMediaActionSender) GetStatus() StatusSnapshot {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.status
-}
-
-// SetNowFnForTest overrides the time provider for testing debounce without sleeps.
-func SetNowFnForTest(fn func() time.Time) func() {
-	flushMu.Lock()
-	defer flushMu.Unlock()
-	prev := nowFn
-	nowFn = fn
-	return func() {
-		flushMu.Lock()
-		defer flushMu.Unlock()
-		nowFn = prev
-	}
 }
 
 func SetWriteCountersDirForTest(fn func(string) error) func() {
@@ -174,48 +162,29 @@ func TestWriteJSON_Error(t *testing.T) {
 
 func TestActionServer_HandleCoverageFlush(t *testing.T) {
 	server := NewActionServer(ServerConfig{Port: 0}, &mockMediaActionSender{})
-
-	req := httptest.NewRequest(http.MethodDelete, "/debug/coverage/flush", nil)
-	rec := httptest.NewRecorder()
-	server.mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected 405, got %d", rec.Code)
+	tests := []struct {
+		name, method, wantSub string
+		writeErr              error
+		wantCode              int
+	}{
+		{name: "method_not_allowed", method: http.MethodDelete, wantCode: http.StatusMethodNotAllowed},
+		{name: "valid_flush_tar", method: http.MethodPost, wantCode: http.StatusOK, wantSub: "covcounters.test"},
+		{name: "write_error_500", method: http.MethodGet, writeErr: errors.New("write failed"), wantCode: http.StatusInternalServerError, wantSub: "write failed"},
 	}
-
-	t.Setenv("GOCOVERDIR", "")
-	req = httptest.NewRequest(http.MethodPost, "/debug/coverage/flush", nil)
-	rec = httptest.NewRecorder()
-	server.mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Errorf("expected 200, got %d", rec.Code)
-	}
-
-	t.Setenv("GOCOVERDIR", t.TempDir())
-	restoreCounters := SetWriteCountersDirForTest(func(dir string) error { return nil })
-	defer restoreCounters()
-	simTime := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
-	restoreNow := SetNowFnForTest(func() time.Time { return simTime })
-	defer restoreNow()
-
-	req = httptest.NewRequest(http.MethodGet, "/debug/coverage/flush", nil)
-	rec = httptest.NewRecorder()
-	server.mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Errorf("expected ok status, got %d", rec.Code)
-	}
-
-	rec = httptest.NewRecorder()
-	server.mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "debounced") {
-		t.Errorf("expected debounced, got %d: %s", rec.Code, rec.Body.String())
-	}
-
-	simTime = simTime.Add(2 * time.Second)
-	SetWriteCountersDirForTest(func(dir string) error { return errors.New("write failed") })
-	rec = httptest.NewRecorder()
-	server.mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusInternalServerError {
-		t.Errorf("expected 500 error, got %d", rec.Code)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			defer SetWriteCountersDirForTest(func(dir string) error {
+				if tc.writeErr != nil {
+					return tc.writeErr
+				}
+				return os.WriteFile(filepath.Join(dir, "covcounters.test"), []byte("cov"), 0o600)
+			})()
+			rec := httptest.NewRecorder()
+			server.mux.ServeHTTP(rec, httptest.NewRequest(tc.method, "/debug/coverage/flush", nil))
+			if rec.Code != tc.wantCode || (tc.wantSub != "" && !strings.Contains(rec.Body.String(), tc.wantSub)) {
+				t.Fatalf("got code %d body %q, want %d %q", rec.Code, rec.Body.String(), tc.wantCode, tc.wantSub)
+			}
+		})
 	}
 }
 

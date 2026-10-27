@@ -6,6 +6,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -98,29 +100,22 @@ func TestCoverageFlushEndpoint(t *testing.T) {
 	tests := []struct {
 		name        string
 		method      string
-		coverDir    string
-		simTime     time.Time
 		writeErr    error
-		repeatCall  bool
 		wantCode    int
 		wantBodySub string
 	}{
 		{name: "method_not_allowed", method: http.MethodDelete, wantCode: http.StatusMethodNotAllowed},
-		{name: "unset_gocoverdir", method: http.MethodGet, coverDir: "", wantCode: http.StatusOK, wantBodySub: `"status":"ok"`},
-		{name: "valid_flush_and_debounce", method: http.MethodPost, coverDir: "temp", simTime: time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC), repeatCall: true, wantCode: http.StatusOK, wantBodySub: `"status":"ok"`},
-		{name: "write_error_500", method: http.MethodGet, coverDir: "temp", simTime: time.Date(2026, 10, 4, 13, 0, 0, 0, time.UTC), writeErr: errors.New("simulated flush error"), wantCode: http.StatusInternalServerError, wantBodySub: "simulated flush error"},
+		{name: "valid_flush_tar", method: http.MethodPost, wantCode: http.StatusOK, wantBodySub: "covcounters.test"},
+		{name: "write_error_500", method: http.MethodGet, writeErr: errors.New("simulated flush error"), wantCode: http.StatusInternalServerError, wantBodySub: "simulated flush error"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if !tc.simTime.IsZero() {
-				defer server.SetNowFnForTest(func() time.Time { return tc.simTime })()
-			}
-			dir := tc.coverDir
-			if dir == "temp" {
-				dir = t.TempDir()
-			}
-			t.Setenv("GOCOVERDIR", dir)
-			defer server.SetWriteCountersDirForTest(func(string) error { return tc.writeErr })()
+			defer server.SetWriteCountersDirForTest(func(dir string) error {
+				if tc.writeErr != nil {
+					return tc.writeErr
+				}
+				return os.WriteFile(filepath.Join(dir, "covcounters.test"), []byte("covdata"), 0o600)
+			})()
 
 			srv := server.New(server.Config{})
 			rec := doServerReq(srv, tc.method, "/debug/coverage/flush")
@@ -129,12 +124,6 @@ func TestCoverageFlushEndpoint(t *testing.T) {
 			}
 			if tc.wantBodySub != "" && !strings.Contains(rec.Body.String(), tc.wantBodySub) {
 				t.Fatalf("body = %q, want %q", rec.Body.String(), tc.wantBodySub)
-			}
-			if tc.repeatCall {
-				rec2 := doServerReq(srv, tc.method, "/debug/coverage/flush")
-				if rec2.Code != http.StatusOK || !strings.Contains(rec2.Body.String(), `"status":"debounced"`) {
-					t.Fatalf("repeat call code=%d body=%q", rec2.Code, rec2.Body.String())
-				}
 			}
 		})
 	}

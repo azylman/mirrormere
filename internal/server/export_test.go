@@ -2,7 +2,6 @@ package server
 
 import (
 	"net/http"
-	"time"
 )
 
 // Routes returns the configured http.Handler for in-memory testing.
@@ -23,19 +22,6 @@ func (s *Server) Addr() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.addr
-}
-
-// SetNowFnForTest overrides the time provider for testing debounce without sleeps.
-func SetNowFnForTest(fn func() time.Time) func() {
-	flushMu.Lock()
-	prev := nowFn
-	nowFn = fn
-	flushMu.Unlock()
-	return func() {
-		flushMu.Lock()
-		nowFn = prev
-		flushMu.Unlock()
-	}
 }
 
 // SetWriteCountersDirForTest overrides writeCountersDirFn for testing purposes.
