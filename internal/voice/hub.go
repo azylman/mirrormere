@@ -300,8 +300,8 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 		return ErrInteractionBusy
 	}
 	h.inFlight = true
+	spk := h.speaker
 	h.mu.Unlock()
-
 	defer func() {
 		h.mu.Lock()
 		h.inFlight = false
@@ -383,9 +383,9 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 	speakerCh := make(chan SpeakerMatch, 1)
 	idCtx, idCancel := context.WithCancel(ctx)
 	defer idCancel()
-	if h.speaker != nil {
+	if spk != nil {
 		go func() {
-			m, idErr := h.speaker.Identify(idCtx, wavData)
+			m, idErr := spk.Identify(idCtx, wavData)
 			if idErr != nil {
 				// Speaker matching is best-effort: the turn proceeds without a speaker.
 				slog.Warn("speaker identification failed", "error", idErr)

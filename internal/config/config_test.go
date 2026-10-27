@@ -147,11 +147,16 @@ func TestParseWithEnv_ValidationErrors(t *testing.T) {
 		{"voice_hub tts timeout non-positive", withBaseYAML("voice_hub:\n  enabled: true\n  tts_timeout_seconds: -2\n"), "voice_hub tts_timeout_seconds must be positive"},
 		{"fast_path timeout_ms non-positive", withBaseYAML("voice_hub:\n  enabled: true\n  fast_path:\n    url: http://127.0.0.1:8000/intent\n    timeout_ms: 0\n"), "voice_hub fast_path timeout_ms must be positive"},
 		{"fast_path invalid url", withBaseYAML("voice_hub:\n  enabled: true\n  fast_path:\n    url: not-a-valid-url\n"), "voice_hub fast_path url must be an http(s) URL"},
-		{"speaker_id missing embed_url", withBaseYAML("voice_hub:\n  enabled: true\n  speaker_id:\n    fingerprints_path: /path/to/fp.json\n"), "voice_hub speaker_id requires both embed_url and fingerprints_path"},
-		{"speaker_id missing fingerprints_path", withBaseYAML("voice_hub:\n  enabled: true\n  speaker_id:\n    embed_url: http://127.0.0.1:8080/embed\n"), "voice_hub speaker_id requires both embed_url and fingerprints_path"},
-		{"speaker_id threshold zero", withBaseYAML("voice_hub:\n  enabled: true\n  speaker_id:\n    embed_url: http://127.0.0.1:8080/embed\n    fingerprints_path: /path/to/fp.json\n    threshold: 0.0\n"), "voice_hub speaker_id threshold must be in (0, 1]"},
-		{"speaker_id threshold greater than 1", withBaseYAML("voice_hub:\n  enabled: true\n  speaker_id:\n    embed_url: http://127.0.0.1:8080/embed\n    fingerprints_path: /path/to/fp.json\n    threshold: 1.5\n"), "voice_hub speaker_id threshold must be in (0, 1]"},
-		{"speaker_id timeout_seconds non-positive", withBaseYAML("voice_hub:\n  enabled: true\n  speaker_id:\n    embed_url: http://127.0.0.1:8080/embed\n    fingerprints_path: /path/to/fp.json\n    timeout_seconds: -1\n"), "voice_hub speaker_id timeout_seconds must be positive"},
+		{"speaker_id missing embed_url", withBaseYAML("voice_hub:\n  enabled: true\n  speaker_id:\n    model: ecapa\n"), "voice_hub speaker_id requires embed_url"},
+		{"speaker_id empty speaker id", withBaseYAML("voice_hub:\n  enabled: true\n  speaker_id:\n    embed_url: http://127.0.0.1:8080/embed\n    speakers:\n      - id: \"\"\n        embedding: [1.0]\n"), "voice_hub speaker_id speaker 0 has an empty id"},
+		{"speaker_id duplicate speaker id", withBaseYAML("voice_hub:\n  enabled: true\n  speaker_id:\n    embed_url: http://127.0.0.1:8080/embed\n    speakers:\n      - id: a\n        embedding: [1.0]\n      - id: a\n        embedding: [1.0]\n"), "voice_hub speaker_id duplicate speaker id \"a\""},
+		{"speaker_id empty embedding", withBaseYAML("voice_hub:\n  enabled: true\n  speaker_id:\n    embed_url: http://127.0.0.1:8080/embed\n    speakers:\n      - id: a\n"), "voice_hub speaker_id speaker \"a\" has an empty embedding"},
+		{"speaker_id nan embedding", withBaseYAML("voice_hub:\n  enabled: true\n  speaker_id:\n    embed_url: http://127.0.0.1:8080/embed\n    speakers:\n      - id: a\n        embedding: [.nan]\n"), "voice_hub speaker_id speaker \"a\": embedding contains NaN or Inf"},
+		{"speaker_id zero magnitude embedding", withBaseYAML("voice_hub:\n  enabled: true\n  speaker_id:\n    embed_url: http://127.0.0.1:8080/embed\n    speakers:\n      - id: a\n        embedding: [0.0, 0.0]\n"), "voice_hub speaker_id speaker \"a\": embedding has zero magnitude"},
+		{"speaker_id dimension mismatch", withBaseYAML("voice_hub:\n  enabled: true\n  speaker_id:\n    embed_url: http://127.0.0.1:8080/embed\n    speakers:\n      - id: a\n        embedding: [1.0, 0.0]\n      - id: b\n        embedding: [1.0]\n"), "voice_hub speaker_id speaker \"b\" has dimension 1, expected 2"},
+		{"speaker_id threshold zero", withBaseYAML("voice_hub:\n  enabled: true\n  speaker_id:\n    embed_url: http://127.0.0.1:8080/embed\n    threshold: 0.0\n"), "voice_hub speaker_id threshold must be in (0, 1]"},
+		{"speaker_id threshold greater than 1", withBaseYAML("voice_hub:\n  enabled: true\n  speaker_id:\n    embed_url: http://127.0.0.1:8080/embed\n    threshold: 1.5\n"), "voice_hub speaker_id threshold must be in (0, 1]"},
+		{"speaker_id timeout_seconds non-positive", withBaseYAML("voice_hub:\n  enabled: true\n  speaker_id:\n    embed_url: http://127.0.0.1:8080/embed\n    timeout_seconds: -1\n"), "voice_hub speaker_id timeout_seconds must be positive"},
 	}
 
 	for _, tc := range tests {
@@ -187,7 +192,7 @@ func TestParseWithEnv_ValidConfigsAndDefaults(t *testing.T) {
 		{name: "widget default method POST with endpoint", yaml: "timezone: UTC\ndisplay:\n  widgets:\n    - id: w1\n      type: spacer\n      endpoint: http://example.com/api\n", wantMethod: "POST"},
 		{name: "hide_cursor and remote_url", yaml: withBaseYAML("  hide_cursor: true\n  remote_url: http://localhost:8080/display\n"), wantHideCursor: true, wantRemoteURL: "http://localhost:8080/display"},
 		{name: "nil getenv fallback", yaml: withBaseYAML(""), nilGetenv: true, wantTransition: "slide"},
-		{name: "voice hub speaker id and fast path valid", yaml: withBaseYAML("voice_hub:\n  enabled: true\n  fast_path:\n    url: http://127.0.0.1:8000/intent\n  speaker_id:\n    embed_url: http://127.0.0.1:8080/embed\n    fingerprints_path: /path/to/fp.json\n"), wantVoiceHub: true, wantFastPath: true, wantSpeakerID: true},
+		{name: "voice hub speaker id and fast path valid", yaml: withBaseYAML("voice_hub:\n  enabled: true\n  fast_path:\n    url: http://127.0.0.1:8000/intent\n  speaker_id:\n    embed_url: http://127.0.0.1:8080/embed\n    model: ecapa\n    speakers:\n      - id: mike\n        embedding: [1.0, 0.0]\n"), wantVoiceHub: true, wantFastPath: true, wantSpeakerID: true},
 		{name: "header video valid config", yaml: withBaseYAML("  header:\n    video:\n      enabled: true\n      stream_id: frontdoor\n      type: webrtc\n"), wantVideoEnabled: true, wantVideoStream: "frontdoor"},
 		{name: "chat log defaults when omitted", yaml: withBaseYAML(""), wantChatTTL: 20 * time.Minute, wantChatMax: 50},
 		{name: "chat log custom values", yaml: withBaseYAML("chat_log:\n  ttl_minutes: 5\n  max_messages_per_node: 12\n"), wantChatTTL: 5 * time.Minute, wantChatMax: 12},
@@ -427,7 +432,7 @@ func TestConfig_Accessors(t *testing.T) {
 	assertEq(t, "sid nil", !nilSID.IsEnabled() && nilSID.GetThreshold() == 0.70 && nilSID.GetTimeoutSeconds() == 5, true)
 	assertEq(t, "sid zero", !(&config.SpeakerIDConfig{}).IsEnabled() && (&config.SpeakerIDConfig{}).GetThreshold() == 0.70 && (&config.SpeakerIDConfig{}).GetTimeoutSeconds() == 5, true)
 	assertEq(t, "sid nonpos", (&config.SpeakerIDConfig{TimeoutSeconds: ptr(-5)}).GetTimeoutSeconds(), 5)
-	popSID := &config.SpeakerIDConfig{EmbedURL: "http://embed", FingerprintsPath: "/fp.json", Threshold: ptr(0.85), TimeoutSeconds: ptr(10)}
+	popSID := &config.SpeakerIDConfig{EmbedURL: "http://embed", Model: "ecapa", Speakers: []config.SpeakerFingerprint{{ID: "a", Embedding: []float64{1.0}}}, Threshold: ptr(0.85), TimeoutSeconds: ptr(10)}
 	assertEq(t, "sid pop", popSID.IsEnabled() && popSID.GetThreshold() == 0.85 && popSID.GetTimeoutSeconds() == 10, true)
 
 	var nilVH *config.VoiceHubConfig
