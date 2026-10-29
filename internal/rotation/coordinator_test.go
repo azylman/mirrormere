@@ -149,7 +149,7 @@ func TestCoordinator_AutoRotateAndPauseTimers(t *testing.T) {
 		t.Fatal("expected idempotent resume")
 	}
 
-	_, _ = coord.PauseRotation(time.Millisecond)
+	_, _ = coord.PauseRotation(time.Hour)
 	coord.mu.Lock()
 	pGen := coord.pauseGen
 	coord.mu.Unlock()
@@ -172,7 +172,10 @@ func TestCoordinator_AutoRotateAndPauseTimers(t *testing.T) {
 	if coord2.CurrentScreen() != 1 {
 		t.Fatalf("expected screen 1, got %d", coord2.CurrentScreen())
 	}
-	coord2.onRotateTimeout(coord2.timerGen)
+	coord2.mu.Lock()
+	tGen1 := coord2.timerGen
+	coord2.mu.Unlock()
+	coord2.onRotateTimeout(tGen1)
 	if coord2.CurrentScreen() != 0 {
 		t.Fatalf("expected screen 0, got %d", coord2.CurrentScreen())
 	}
@@ -181,13 +184,20 @@ func TestCoordinator_AutoRotateAndPauseTimers(t *testing.T) {
 	coord2.mu.Lock()
 	coord2.paused = true
 	coord2.mu.Unlock()
-	coord2.onRotateTimeout(coord2.timerGen)
+	coord2.mu.Lock()
+	tGen2 := coord2.timerGen
+	coord2.mu.Unlock()
+	coord2.onRotateTimeout(tGen2)
 	coord2.Stop()
-	coord2.onRotateTimeout(coord2.timerGen)
+	coord2.mu.Lock()
+	tGen3 := coord2.timerGen
+	coord2.mu.Unlock()
+	coord2.onRotateTimeout(tGen3)
 	coord2.mu.Lock()
 	coord2.stopped, coord2.snapshot = false, nil
+	tGen4 := coord2.timerGen
 	coord2.mu.Unlock()
-	coord2.onRotateTimeout(coord2.timerGen)
+	coord2.onRotateTimeout(tGen4)
 
 	NewCoordinator(Config{}, makeTestSnapshot(2, 0, 120)).Stop()
 }
@@ -229,7 +239,12 @@ func TestCoordinator_Concurrency(t *testing.T) {
 			}
 		}()
 	}
-	runWorker(func() { coord.onRotateTimeout(coord.timerGen) })
+	runWorker(func() {
+		coord.mu.Lock()
+		gen := coord.timerGen
+		coord.mu.Unlock()
+		coord.onRotateTimeout(gen)
+	})
 	runWorker(func() { _, _ = coord.AdvanceScreen("next") })
 	runWorker(func() { _, _ = coord.SelectScreen(1) })
 	wg.Wait()
