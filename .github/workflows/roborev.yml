@@ -13,30 +13,9 @@ permissions:
   pull-requests: write
 
 jobs:
-  check-bootstrap:
-    name: Check RoboRev Bootstrap State
-    runs-on: [self-hosted, ci]
-    outputs:
-      bootstrapped: ${{ steps.check.outputs.bootstrapped }}
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - name: Check if .roborev.toml exists on main
-        id: check
-        run: |
-          if git cat-file -e origin/main:.roborev.toml 2>/dev/null; then
-            echo "bootstrapped=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "bootstrapped=false" >> "$GITHUB_OUTPUT"
-          fi
-
   roborev:
     name: roborev
-    needs: check-bootstrap
     if: >
-      needs.check-bootstrap.outputs.bootstrapped == 'true' &&
       (github.actor == 'azylman' || github.actor == 'mcarmody' || github.actor == 'brockventures') &&
       (github.event.pull_request.user.login == 'azylman' || github.event.pull_request.user.login == 'mcarmody' || github.event.pull_request.user.login == 'brockventures') &&
       (github.event.pull_request.head.repo.full_name == github.repository ||
@@ -59,6 +38,10 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -o pipefail
+          if ! git cat-file -e origin/main:.roborev.toml 2>/dev/null; then
+            echo "RoboRev not bootstrapped on main; skipping."
+            exit 0
+          fi
           export GH_TOKEN="${GITHUB_PAT:-${GH_TOKEN}}"
           export GITHUB_TOKEN="${GITHUB_PAT:-${GITHUB_TOKEN}}"
           SHORT_SHA="${HEAD_SHA:0:7}"
