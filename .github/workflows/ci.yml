@@ -11,6 +11,13 @@ on:
       - 'LICENSE'
   pull_request:
     branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      force_all:
+        description: 'Force build and publish all container images'
+        required: false
+        default: false
+        type: boolean
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -18,10 +25,12 @@ concurrency:
 
 permissions:
   contents: read
+  packages: write
 
 jobs:
   verify:
     name: Verify Codebase
+    if: github.event_name != 'push' || inputs.force_all == true
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
@@ -109,7 +118,8 @@ jobs:
               { name: "mirrormere-hass-proxy", context: ".", file: "./sidecars/hass-proxy/Dockerfile" }
             ];
 
-            const matrix = catalog.filter(c => filter[c.name] === "true");
+            const forceAll = "${{ inputs.force_all }}" === "true";
+            const matrix = forceAll ? catalog : catalog.filter(c => filter[c.name] === "true");
             console.log("Computed matrix:", JSON.stringify(matrix));
             const hasBuilds = matrix.length > 0;
             const fs = require("fs");
@@ -136,19 +146,16 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Set up Python (voice-fingerprinter unit tests)
-        if: matrix.name == 'mirrormere-voice-fingerprinter'
+        if: matrix.name == 'mirrormere-voice-fingerprinter' && (github.event_name != 'push' || inputs.force_all == true)
         uses: actions/setup-python@v7
         with:
           python-version: '3.11'
 
       - name: Run voice-fingerprinter unit tests
-        if: matrix.name == 'mirrormere-voice-fingerprinter'
+        if: matrix.name == 'mirrormere-voice-fingerprinter' && (github.event_name != 'push' || inputs.force_all == true)
         run: |
           pip install --quiet -r sidecars/voice-fingerprinter/requirements-test.txt
           cd sidecars/voice-fingerprinter && python -m pytest test/ -v
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v4
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -158,35 +165,81 @@ jobs:
         run: echo "owner=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
 
       - name: Log in to GitHub Container Registry
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Resolve Git Tree SHA
+        id: tree_check
+        env:
+          OWNER: ${{ steps.repo_owner.outputs.owner }}
+          IMAGE_NAME: ${{ matrix.name }}
+          EVENT_NAME: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          FORCE_ALL: ${{ inputs.force_all }}
+        run: |
+          set -euo pipefail
+          TREE_SHA=$(git rev-parse HEAD^{tree})
+          echo "tree_sha=${TREE_SHA}" >> "$GITHUB_OUTPUT"
+          if [ "$EVENT_NAME" = "push" ] && [ "$REF" = "refs/heads/main" ] && [ "$FORCE_ALL" != "true" ]; then
+            if docker buildx imagetools inspect "ghcr.io/${OWNER}/${IMAGE_NAME}:tree-${TREE_SHA}" >/dev/null 2>&1; then
+              echo "exists=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+          echo "exists=false" >> "$GITHUB_OUTPUT"
+
+      - name: Push Image from PR Tree Cache (${{ matrix.name }})
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.tree_check.outputs.exists == 'true'
+        env:
+          OWNER: ${{ steps.repo_owner.outputs.owner }}
+          IMAGE_NAME: ${{ matrix.name }}
+          SHA: ${{ github.sha }}
+          TREE_SHA: ${{ steps.tree_check.outputs.tree_sha }}
+        run: |
+          set -euo pipefail
+          SRC="ghcr.io/${OWNER}/${IMAGE_NAME}:tree-${TREE_SHA}"
+          docker buildx imagetools create \
+            --tag "ghcr.io/${OWNER}/${IMAGE_NAME}:${SHA}" \
+            --tag "ghcr.io/${OWNER}/${IMAGE_NAME}:latest" \
+            --annotation "index:org.opencontainers.image.revision=${SHA}" \
+            "$SRC"
+
+      - name: Set up QEMU
+        if: steps.tree_check.outputs.exists != 'true'
+        uses: docker/setup-qemu-action@v4
+
       - name: Build and Push Docker Image
+        if: steps.tree_check.outputs.exists != 'true'
         uses: docker/build-push-action@v7
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.file }}
           platforms: linux/amd64,linux/arm64
-          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          push: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) }}
           tags: |
-            ghcr.io/${{ steps.repo_owner.outputs.owner }}/${{ matrix.name }}:${{ github.sha }}
-            ghcr.io/${{ steps.repo_owner.outputs.owner }}/${{ matrix.name }}:latest
+            ghcr.io/${{ steps.repo_owner.outputs.owner }}/${{ matrix.name }}:tree-${{ steps.tree_check.outputs.tree_sha }}
+            ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') && format('ghcr.io/{0}/{1}:{2}', steps.repo_owner.outputs.owner, matrix.name, github.sha) || '' }}
+            ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') && format('ghcr.io/{0}/{1}:latest', steps.repo_owner.outputs.owner, matrix.name) || '' }}
           labels: |
             org.opencontainers.image.title=${{ matrix.name }}
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.licenses=MIT
-          cache-from: type=gha,scope=${{ matrix.name }}
-          cache-to: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && format('type=gha,mode=max,scope={0}', matrix.name) || '' }}
+          cache-from: |
+            type=registry,ref=ghcr.io/${{ steps.repo_owner.outputs.owner }}/${{ matrix.name }}:buildcache
+            type=gha,scope=${{ matrix.name }}
+          cache-to: |
+            ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && format('type=registry,ref=ghcr.io/{0}/{1}:buildcache,mode=max', steps.repo_owner.outputs.owner, matrix.name) || '' }}
+            type=gha,mode=max,scope=${{ matrix.name }}
 
   build-gate:
     name: Container Builds Gate
     needs: [verify, changes, docker]
-    if: always()
+    if: always() && !cancelled() && !contains(needs.*.result, 'cancelled')
     runs-on: ubuntu-latest
     steps:
       - name: Verify Container Builds
@@ -201,7 +254,7 @@ jobs:
           echo "Has builds: $HAS_BUILDS"
           echo "Docker builds status: $DOCKER_RES"
 
-          if [ "$VERIFY_RES" != "success" ]; then
+          if [ "$VERIFY_RES" != "success" ] && { [ "${{ github.event_name }}" != "push" ] || [ "$VERIFY_RES" != "skipped" ]; }; then
             echo "::error::Codebase verification failed"
             exit 1
           fi
