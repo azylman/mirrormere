@@ -31,21 +31,10 @@ jobs:
   verify:
     name: Verify Codebase
     if: github.event_name != 'push' || inputs.force_all == true
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, ci]
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v7
-
-      - name: Setup Go
-        uses: actions/setup-go@v7
-        with:
-          go-version-file: 'go.mod'
-          cache: true
-
-      - name: Install golangci-lint
-        run: |
-          mkdir -p $(go env GOPATH)/bin
-          curl -sSfL https://github.com/golangci/golangci-lint/releases/download/v2.15.0/golangci-lint-2.15.0-linux-amd64.tar.gz | tar -xz -C $(go env GOPATH)/bin --strip-components=1 golangci-lint-2.15.0-linux-amd64/golangci-lint
 
       - name: Run Full Verification Pipeline
         run: |
@@ -53,7 +42,7 @@ jobs:
 
   changes:
     name: Detect Changed Microservices
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, ci]
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
       has_builds: ${{ steps.set-matrix.outputs.has_builds }}
@@ -133,7 +122,7 @@ jobs:
     name: Build & Publish Container Image (${{ matrix.name }})
     needs: changes
     if: needs.changes.outputs.has_builds == 'true'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, ci]
     permissions:
       contents: read
       packages: write
@@ -145,17 +134,10 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v7
 
-      - name: Set up Python (voice-fingerprinter unit tests)
-        if: matrix.name == 'mirrormere-voice-fingerprinter' && (github.event_name != 'push' || inputs.force_all == true)
-        uses: actions/setup-python@v7
-        with:
-          python-version: '3.11'
-
       - name: Run voice-fingerprinter unit tests
         if: matrix.name == 'mirrormere-voice-fingerprinter' && (github.event_name != 'push' || inputs.force_all == true)
         run: |
-          pip install --quiet -r sidecars/voice-fingerprinter/requirements-test.txt
-          cd sidecars/voice-fingerprinter && python -m pytest test/ -v
+          cd sidecars/voice-fingerprinter && python3 -m pytest test/ -v
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -240,7 +222,7 @@ jobs:
     name: Container Builds Gate
     needs: [verify, changes, docker]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, ci]
     steps:
       - name: Verify Container Builds
         run: |
