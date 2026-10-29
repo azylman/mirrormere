@@ -146,6 +146,10 @@ html, body {
   gap: 12px;
 }
 
+.header-status:has(.status-ok) {
+  display: none;
+}
+
 .status-dot {
   width: 12px;
   height: 12px;

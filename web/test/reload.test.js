@@ -39,7 +39,10 @@ describe('Display Deployment and Daily Maintenance Reload', () => {
             textContent: '',
             innerHTML: '',
             title: '',
+            style: {},
             dataset: {},
+            addEventListener() {},
+            removeEventListener() {},
             classList: {
               classes: new Set(),
               add(...cls) { cls.forEach(c => this.classes.add(c)); },
@@ -322,5 +325,50 @@ describe('Display Deployment and Daily Maintenance Reload', () => {
 
     display.handleSystemReload(undefined, 0);
     assert.equal(reloadedCount, 1);
+  });
+
+  test('hides header-status when healthy and shows when degraded or offline', () => {
+    const display = require('../static/js/display.js');
+    display.resetBootIdState();
+
+    display.handleSystemStatus({ online: true, config_status: 'ok' });
+    assert.equal(document.getElementById('header-status').style.display, 'none');
+    assert.equal(document.getElementById('system-status-dot').classList.contains('status-ok'), true);
+
+    display.handleSystemStatus({ online: true, config_status: 'error', config_error: 'bad yaml' });
+    assert.equal(document.getElementById('header-status').style.display, '');
+    assert.equal(document.getElementById('system-status-dot').classList.contains('status-degraded'), true);
+
+    display.handleSystemStatus({ online: false });
+    assert.equal(document.getElementById('header-status').style.display, '');
+    assert.equal(document.getElementById('system-status-dot').classList.contains('status-error'), true);
+
+    display.handleSystemStatus({ online: true, config_status: 'ok' });
+    assert.equal(document.getElementById('header-status').style.display, 'none');
+    assert.equal(document.getElementById('system-status-dot').classList.contains('status-ok'), true);
+  });
+
+  test('SSE connection disconnect shows status-error and reconnect restores prior config status', () => {
+    const sseHandlers = {};
+    mockWindow.MirrormereSSE = class {
+      on(evt, cb) {
+        sseHandlers[evt] = cb;
+      }
+      connect() {}
+    };
+    const display = require('../static/js/display.js');
+    display.resetBootIdState();
+    display.init();
+
+    display.handleSystemStatus({ online: true, config_status: 'ok' });
+    assert.equal(document.getElementById('header-status').style.display, 'none');
+
+    sseHandlers.connection({ status: 'disconnected' });
+    assert.equal(document.getElementById('header-status').style.display, '');
+    assert.equal(document.getElementById('system-status-dot').classList.contains('status-error'), true);
+
+    sseHandlers.connection({ status: 'connected' });
+    assert.equal(document.getElementById('header-status').style.display, 'none');
+    assert.equal(document.getElementById('system-status-dot').classList.contains('status-ok'), true);
   });
 });

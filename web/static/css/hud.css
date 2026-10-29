@@ -989,17 +989,31 @@ html, body {
   align-items: center;
 }
 
+.header-status:has(.status-ok) {
+  display: none;
+}
+
 .status-jewel {
   width: 36px;
   height: 36px;
   border-radius: 50%;
-  background: #ecfdf5;
-  border: 1px solid #a7f3d0;
+  background: var(--mm-bg-surface);
+  border: 1.5px solid var(--mm-card-border);
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 1px 3px rgba(16, 185, 129, 0.1);
+  box-shadow: 0 2px 6px rgba(90, 60, 30, 0.06);
   transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.status-jewel:has(.status-degraded) {
+  background: var(--mm-honey-light);
+  border-color: rgba(245, 158, 11, 0.35);
+}
+
+.status-jewel:has(.status-error) {
+  background: var(--mm-rose-light);
+  border-color: rgba(244, 63, 122, 0.35);
 }
 
 .status-dot {
@@ -1014,11 +1028,6 @@ html, body {
 .status-dot.status-degraded {
   background-color: var(--mm-status-degraded);
   box-shadow: 0 0 6px rgba(245, 158, 11, 0.4);
-}
-
-.status-dot.status-error {
-  background-color: var(--mm-status-error);
-  box-shadow: 0 0 6px rgba(244, 63, 122, 0.4);
 }
 
 .status-dot.status-error {
