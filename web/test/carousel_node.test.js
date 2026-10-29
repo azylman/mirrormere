@@ -541,4 +541,159 @@ test('carousel layout and indicator styling in hud.css', () => {
   );
 });
 
+test('carousel unmounts outgoing widget controllers before DOM replacement', async (t) => {
+  function setupCarouselWithControllers() {
+    const unmounted = [];
+    const win = {
+      location: { search: '' },
+    };
+
+    const doc = {
+      createDocumentFragment: () => ({
+        children: [],
+        appendChild(child) { this.children.push(child); },
+      }),
+      createElement: (tag) => {
+        const el = {
+          tagName: tag.toUpperCase(),
+          style: {},
+          dataset: {},
+          children: [],
+          appendChild(child) { this.children.push(child); },
+          querySelector(sel) {
+            if (sel === '.widget-card') return this;
+            return null;
+          },
+          replaceWith() {},
+        };
+        el.firstElementChild = el;
+        return el;
+      },
+    };
+
+    const fn = new Function('window', 'document', 'requestAnimationFrame', 'setTimeout', 'setInterval', 'clearInterval', 'clearTimeout', carouselCode);
+    fn(win, doc, () => {}, setTimeout, setInterval, clearInterval, clearTimeout);
+    const Carousel = win.MirrormereCarousel;
+
+    win.MirrormereCalendarFamily = {
+      unmount: (id) => { unmounted.push(['calendar', id]); },
+    };
+    win.MirrormereLiveView = {
+      unmount: (id) => { unmounted.push(['liveview', id]); },
+    };
+    win.MirrormerePhotoCarousel = {
+      unmount: (id) => { unmounted.push(['photo', id]); },
+    };
+
+    return { win, doc, Carousel, unmounted };
+  }
+
+  await t.test('handleScreenRotate invokes unmount on activeWidgets and canvas querySelectorAll items before clearing innerHTML', async () => {
+    const { Carousel, unmounted } = setupCarouselWithControllers();
+
+    const canvasElements = [
+      { dataset: { widgetId: 'w-from-dom' } },
+    ];
+    let clearedBeforeUnmount = false;
+
+    const canvas = {
+      dataset: {},
+      classList: { add() {}, remove() {} },
+      appendChild() {},
+      addEventListener() {},
+      querySelectorAll(sel) {
+        if (sel === '[data-widget-id]') return canvasElements;
+        return [];
+      },
+      set innerHTML(val) {
+        if (val === '') {
+          if (unmounted.length === 0) {
+            clearedBeforeUnmount = true;
+          }
+        }
+      },
+    };
+
+    const c = new Carousel(canvas);
+    c.activeWidgets = new Map([
+      ['w-active', { element: {} }],
+    ]);
+
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = async () => ({
+      ok: true,
+      text: async () => '<div class="widget-card">New Card</div>',
+    });
+
+    try {
+      await c.handleScreenRotate({
+        widgets: [{ widget_id: 'w-incoming', origin: [0, 0], dimensions: [2, 1] }],
+        current_screen: 0,
+        total_screens: 1,
+      });
+
+      assert.equal(clearedBeforeUnmount, false, 'unmount must occur before innerHTML is cleared');
+      assert.deepEqual(unmounted, [
+        ['calendar', 'w-active'],
+        ['liveview', 'w-active'],
+        ['photo', 'w-active'],
+        ['calendar', 'w-from-dom'],
+        ['liveview', 'w-from-dom'],
+        ['photo', 'w-from-dom'],
+      ]);
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  });
+
+  await t.test('handleWidgetUpdate invokes unmount on registered controllers before replacing node', async () => {
+    const { Carousel, unmounted } = setupCarouselWithControllers();
+
+    let replacedBeforeUnmount = false;
+    const existingNode = {
+      dataset: { widgetId: 'w-target' },
+      style: { gridColumn: '1 / span 2', gridRow: '1 / span 1' },
+      replaceWith(newNode) {
+        if (unmounted.length === 0) {
+          replacedBeforeUnmount = true;
+        }
+      },
+    };
+
+    const canvas = {
+      dataset: {},
+      classList: { add() {}, remove() {} },
+      addEventListener() {},
+      querySelector(sel) {
+        if (sel === '[data-widget-id="w-target"]') return existingNode;
+        return null;
+      },
+    };
+
+    const c = new Carousel(canvas);
+    c.activeWidgets = new Map([
+      ['w-target', { element: existingNode }],
+    ]);
+
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = async () => ({
+      ok: true,
+      text: async () => '<div class="widget-card">Updated Card</div>',
+    });
+
+    try {
+      await c.handleWidgetUpdate({ widget_id: 'w-target' });
+
+      assert.equal(replacedBeforeUnmount, false, 'unmount must occur before replaceWith');
+      assert.deepEqual(unmounted, [
+        ['calendar', 'w-target'],
+        ['liveview', 'w-target'],
+        ['photo', 'w-target'],
+      ]);
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  });
+});
+
 

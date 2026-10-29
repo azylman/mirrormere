@@ -152,6 +152,11 @@ class CoalescingEngine:
                 logger.warning("execute_refresh called without configured fetcher")
                 return RefreshResult(status="no_fetcher", error="No fetcher configured")
 
+            if "reconnect_recovery" in self.dirty_reasons:
+                self.last_etag = None
+                self.last_image_bytes = None
+                is_full = True
+
             self.last_fetch_time = now
             self.fetch_count += 1
 

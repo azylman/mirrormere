@@ -100,6 +100,22 @@ class MirrormereCarousel {
   }
 
   /**
+   * Unmount outgoing widget controllers before DOM replacement.
+   */
+  unmountWidgetControllers(widgetId) {
+    if (!widgetId || typeof window === 'undefined') return;
+    for (const ctrl of [
+      window.MirrormereCalendarFamily,
+      window.MirrormereLiveView,
+      window.MirrormerePhotoCarousel,
+    ]) {
+      if (ctrl && typeof ctrl.unmount === 'function') {
+        ctrl.unmount(widgetId);
+      }
+    }
+  }
+
+  /**
    * React to screen.rotate event: pre-warms widget markup off-screen
    * and swaps fragments in a single frame to eliminate blank flashes.
    */
@@ -181,6 +197,24 @@ class MirrormereCarousel {
     // 3. Hot-swap onto canvas with smooth transition
     if (this.canvas) {
       this.canvas.classList.add('transitioning');
+      const outgoingIds = new Set();
+      if (this.activeWidgets) {
+        for (const id of this.activeWidgets.keys()) {
+          outgoingIds.add(id);
+        }
+      }
+      if (this.canvas && typeof this.canvas.querySelectorAll === 'function') {
+        const els = this.canvas.querySelectorAll('[data-widget-id]');
+        for (const el of els) {
+          if (el.dataset?.widgetId) {
+            outgoingIds.add(el.dataset.widgetId);
+          }
+        }
+      }
+      for (const oldId of outgoingIds) {
+        this.unmountWidgetControllers(oldId);
+      }
+
       // Single DOM replacement eliminates intermediate blank frames
       this.canvas.innerHTML = '';
       this.canvas.appendChild(fragment);
@@ -237,6 +271,7 @@ class MirrormereCarousel {
           newNode.style.gridColumn = existing.style.gridColumn;
           newNode.style.gridRow = existing.style.gridRow;
           newNode.dataset.widgetId = widgetID;
+          this.unmountWidgetControllers(widgetID);
           existing.replaceWith(newNode);
 
           const cached = this.activeWidgets.get(widgetID);

@@ -1602,21 +1602,24 @@
       scanAndIngestCalendarWidgets();
       updateNextUpEvent();
 
-      sseClient.on('screen.rotate', (data) => {
-        if (carousel) carousel.handleScreenRotate(data);
+      sseClient.on('screen.rotate', async (data) => {
+        if (carousel) await carousel.handleScreenRotate(data);
         scanAndIngestCalendarWidgets();
         updateNextUpEvent();
       });
 
-      sseClient.on('widget.update', (data) => {
-        if (carousel) carousel.handleWidgetUpdate(data);
+      sseClient.on('widget.update', async (data) => {
+        if (carousel) await carousel.handleWidgetUpdate(data);
         syncInFlightTasks();
         scanAndIngestCalendarWidgets();
         updateNextUpEvent();
       });
 
-      sseClient.on('widget.reload', (data) => {
-        if (carousel) carousel.handleWidgetReload(data);
+      sseClient.on('widget.reload', async (data) => {
+        if (carousel) await carousel.handleWidgetReload(data);
+        syncInFlightTasks();
+        scanAndIngestCalendarWidgets();
+        updateNextUpEvent();
       });
 
       sseClient.on('style.reload', (data) => {

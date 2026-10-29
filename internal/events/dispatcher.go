@@ -64,18 +64,8 @@ func (h *Hub) DispatchConfigReload(snapshot *config.Snapshot, diff *config.Confi
 	if diff != nil {
 		now := h.cfg.NowFunc()
 		nowStr := now.UTC().Format(time.RFC3339)
-		for _, mod := range diff.Modified {
-			if mod.DomainChange {
-				payload := WidgetUpdateData{
-					WidgetID:  mod.ID,
-					Timestamp: nowStr,
-					State:     "degraded",
-					Data:      map[string]any{},
-				}
-				if err := h.publishJSON(EventWidgetUpdate, payload); err != nil {
-					return err
-				}
-			}
+		if err := h.dispatchDegradedWidgetUpdates(diff, nowStr); err != nil {
+			return err
 		}
 
 		// 4. If household timezone changed, broadcast header.update
@@ -111,6 +101,26 @@ func (h *Hub) DispatchConfigReload(snapshot *config.Snapshot, diff *config.Confi
 		}
 	}
 
+	return nil
+}
+
+func (h *Hub) dispatchDegradedWidgetUpdates(diff *config.ConfigDiff, nowStr string) error {
+	if h.ProviderCoordinator() != nil {
+		return nil
+	}
+	for _, mod := range diff.Modified {
+		if mod.DomainChange {
+			payload := WidgetUpdateData{
+				WidgetID:  mod.ID,
+				Timestamp: nowStr,
+				State:     "degraded",
+				Data:      map[string]any{},
+			}
+			if err := h.publishJSON(EventWidgetUpdate, payload); err != nil {
+				return err
+			}
+		}
+	}
 	return nil
 }
 

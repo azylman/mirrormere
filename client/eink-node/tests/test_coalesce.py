@@ -342,6 +342,30 @@ class TestCoalescingEngine(unittest.TestCase):
         self.assertEqual(res.status, "refreshed")
         self.assertEqual(len(self.panel_writes), 1)
 
+    def test_reconnect_recovery_clears_etag_and_forces_full_refresh(self):
+        """
+        When 'reconnect_recovery' is in dirty_reasons, execute_refresh resets last_etag and
+        last_image_bytes to force an unconditional fetch and passes is_full=True to the panel writer.
+        """
+        engine = self.create_engine(coalesce_seconds=5.0, min_refresh_seconds=60.0)
+        engine.last_etag = '"stale-etag"'
+        engine.last_image_bytes = b"stale-image-bytes"
+
+        self.fetcher.set_response(
+            FetchResult(status_code=200, etag='"fresh-etag"', data=b"stale-image-bytes", not_modified=False)
+        )
+
+        engine.mark_dirty("reconnect_recovery")
+        self.clock.advance(5.0)
+
+        res = engine.execute_refresh(self.clock.time())
+        self.assertEqual(res.status, "refreshed")
+        self.assertEqual(self.fetcher.call_history[-1]["last_etag"], None)
+        self.assertEqual(len(self.panel_writes), 1)
+        self.assertTrue(self.panel_writes[0]["is_full"])
+        self.assertEqual(engine.last_etag, '"fresh-etag"')
+        self.assertEqual(engine.last_image_bytes, b"stale-image-bytes")
+
 
 if __name__ == "__main__":
     unittest.main()
