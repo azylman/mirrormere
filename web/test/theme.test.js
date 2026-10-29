@@ -229,4 +229,11 @@ describe('Fairyfloss Theme Mode Switching', () => {
       );
     }
   });
+
+  test('CSS stylesheets contain night mode overrides for voice assistant header takeover', () => {
+    const content = fs.readFileSync(hudCSSPath, 'utf8');
+    assert.match(content, /\[data-theme=["']?night["']?\]\s+\.header-voice\s*\{/);
+    assert.match(content, /\[data-theme=["']?night["']?\]\s+\.header-voice-dismiss\s*\{/);
+    assert.match(content, /\[data-theme=["']?night["']?\]\s+\.voice-pulse-ring\s*\{/);
+  });
 });

@@ -204,6 +204,42 @@ body[data-theme="night"],
   color: var(--mm-lavender);
 }
 
+/* Night Mode Voice Assistant Header Takeover */
+[data-theme="night"] .header-voice {
+  background: linear-gradient(90deg, #47415e 0%, #5a5475 50%, #4d4268 100%);
+  border-color: var(--mm-coral, #ff857f);
+  box-shadow: inset 0 2px 6px rgba(20, 16, 32, 0.45);
+}
+
+[data-theme="night"] .voice-indicator {
+  box-shadow: 0 2px 10px rgba(255, 133, 127, 0.25);
+}
+
+[data-theme="night"] .voice-pulse-ring {
+  background: radial-gradient(circle, rgba(255, 133, 127, 0.55) 0%, rgba(255, 133, 127, 0.18) 60%, transparent 100%);
+}
+
+[data-theme="night"] .voice-indicator.thinking .voice-pulse-ring,
+[data-theme="night"] .voice-indicator.transcribing .voice-pulse-ring {
+  background: radial-gradient(circle, rgba(255, 243, 82, 0.5) 0%, rgba(255, 243, 82, 0.16) 60%, transparent 100%);
+}
+
+[data-theme="night"] .voice-indicator.speaking .voice-pulse-ring {
+  background: radial-gradient(circle, rgba(194, 255, 223, 0.5) 0%, rgba(194, 255, 223, 0.16) 60%, transparent 100%);
+}
+
+[data-theme="night"] .header-voice-dismiss {
+  background: rgba(71, 65, 94, 0.9);
+  border-color: rgba(197, 163, 255, 0.25);
+  color: var(--mm-text-title);
+  box-shadow: 0 2px 8px rgba(20, 16, 32, 0.4);
+}
+
+[data-theme="night"] .header-voice-dismiss:hover {
+  background: #676084;
+  border-color: rgba(197, 163, 255, 0.5);
+}
+
 /* Header Light / Dark Theme Toggle Button */
 .header-theme-toggle {
   display: flex;
