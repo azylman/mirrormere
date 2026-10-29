@@ -119,7 +119,19 @@ $msg"
     fi
 }
 
-cgo_val="${CGO_ENABLED:-0}"
+cgo_val="${CGO_ENABLED:-}"
+if [ -z "$cgo_val" ]; then
+    if command -v gcc >/dev/null 2>&1 || command -v clang >/dev/null 2>&1; then
+        cgo_val=1
+    else
+        cgo_val=0
+    fi
+fi
+
+race_flag=""
+if [ "$cgo_val" = "1" ]; then
+    race_flag="-race"
+fi
 
 GO_TEST_PREFIX=""
 if [ "$(id -u)" -eq 0 ] && command -v setpriv >/dev/null 2>&1 && id -u ubuntu >/dev/null 2>&1; then
@@ -145,7 +157,7 @@ for pkg in $PACKAGES; do
 
     # Run tests with coverage profile
     test_log="${PROF_DIR}/test_${idx}.log"
-    if $GO_TEST_PREFIX env CGO_ENABLED="$cgo_val" go test -coverprofile="$prof" "$pkg" >"$test_log" 2>&1; then
+    if $GO_TEST_PREFIX env CGO_ENABLED="$cgo_val" go test ${race_flag:+"$race_flag"} -coverprofile="$prof" "$pkg" >"$test_log" 2>&1; then
         if [ -f "$prof" ] && [ -s "$prof" ]; then
             # Parse statements from profile
             cov_stats=$(awk 'NR>1 { total += $2; if ($3 > 0) covered += $2 } END { printf "%d %d\n", total, covered }' "$prof")

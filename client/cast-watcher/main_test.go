@@ -104,22 +104,30 @@ func TestRun_Lifecycle(t *testing.T) {
 	} {
 		p := writeTestYAML(t, tmpDir, "sub.yaml", tc.yaml)
 		ctxSub, cancelSub := context.WithCancel(context.Background())
-		stdout.Reset()
+		var subOut, subErr bytes.Buffer
+		subDone := make(chan error, 1)
 		rCh := make(chan struct{}, 1)
-		go func() { _ = RunWithReady(ctxSub, []string{p}, &stdout, &stderr, rCh, nil) }()
+		go func() {
+			subDone <- RunWithReady(ctxSub, []string{p}, &subOut, &subErr, rCh, nil)
+		}()
 		<-rCh
 		cancelSub()
-		if !strings.Contains(stdout.String(), tc.want) {
-			t.Fatalf("expected %s in output, got %s", tc.want, stdout.String())
+		<-subDone
+		if !strings.Contains(subOut.String(), tc.want) {
+			t.Fatalf("expected %s in output, got %s", tc.want, subOut.String())
 		}
 	}
 
 	t.Setenv("CONFIG_PATH", cfgPath)
 	ctxEnv, cancelEnv := context.WithCancel(context.Background())
 	rChEnv := make(chan struct{}, 1)
-	go func() { _ = RunWithReady(ctxEnv, nil, &bytes.Buffer{}, &bytes.Buffer{}, rChEnv, client) }()
+	doneEnv := make(chan error, 1)
+	go func() {
+		doneEnv <- RunWithReady(ctxEnv, nil, &bytes.Buffer{}, &bytes.Buffer{}, rChEnv, client)
+	}()
 	<-rChEnv
 	cancelEnv()
+	<-doneEnv
 
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

@@ -90,11 +90,14 @@ func TestHeaderWeatherPoller_FetchOnce(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
+			var reqMu sync.Mutex
 			var reqQuery string
 			baseURL, client := tc.baseURL, (*http.Client)(nil)
 			if tc.status > 0 {
 				ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					reqMu.Lock()
 					reqQuery = r.URL.RawQuery
+					reqMu.Unlock()
 					w.Header().Set("Content-Type", "application/json")
 					w.WriteHeader(tc.status)
 					_, _ = w.Write([]byte(tc.body))
@@ -144,9 +147,12 @@ func TestHeaderWeatherPoller_FetchOnce(t *testing.T) {
 			if hw.Location != tc.wantLoc {
 				t.Errorf("location = %q, want %q", hw.Location, tc.wantLoc)
 			}
+			reqMu.Lock()
+			qCaptured := reqQuery
+			reqMu.Unlock()
 			for _, q := range tc.wantQuery {
-				if !strings.Contains(reqQuery, q) {
-					t.Errorf("query %q missing %q", reqQuery, q)
+				if !strings.Contains(qCaptured, q) {
+					t.Errorf("query %q missing %q", qCaptured, q)
 				}
 			}
 			if tc.checkSink {
