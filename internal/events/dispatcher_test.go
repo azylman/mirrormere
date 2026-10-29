@@ -63,6 +63,13 @@ func TestHub_DispatchConfigReload(t *testing.T) {
 		{name: "with_rotation_coordinator", snap: &config.Snapshot{Config: &config.Config{}}, coord: true},
 		{name: "with_provider_coordinator", snap: &config.Snapshot{Config: &config.Config{}}, provCoord: true},
 		{name: "with_provider_coordinator_error", snap: &config.Snapshot{Config: &config.Config{}}, provCoord: true, provErr: true},
+		{
+			name:       "provider_coordinator_suppresses_duplicate_widget_update",
+			snap:       snapWithLayout,
+			diff:       &config.ConfigDiff{Modified: []config.InstanceDiff{{ID: "w1", DomainChange: true}}},
+			provCoord:  true,
+			wantEvents: []string{EventScreenRotate},
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -109,6 +116,12 @@ func TestHub_DispatchConfigReload(t *testing.T) {
 				case <-time.After(1 * time.Second):
 					t.Fatalf("timeout waiting for %s", wantType)
 				}
+			}
+
+			select {
+			case evt := <-ch:
+				t.Fatalf("unexpected extra event: %s %s", evt.Type, string(evt.Data))
+			default:
 			}
 		})
 	}
