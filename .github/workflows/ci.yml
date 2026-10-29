@@ -239,7 +239,7 @@ jobs:
   build-gate:
     name: Container Builds Gate
     needs: [verify, changes, docker]
-    if: always() && !cancelled() && !contains(needs.*.result, 'cancelled')
+    if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Verify Container Builds
