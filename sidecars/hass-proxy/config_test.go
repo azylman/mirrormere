@@ -30,7 +30,7 @@ func TestLoadConfig(t *testing.T) {
 		},
 		{
 			name:     "defaults_and_normalization",
-			yaml:     "homeassistant:\n  url: http://ha.local:8123/\n  conversation_path: api/conv\n  timeout_ms: -10\nserver:\n  read_timeout_seconds: -1\n  write_timeout_seconds: -2\n",
+			yaml:     "homeassistant:\n  url: http://ha.local:8123/\n  conversation_path: api/conv\n  timeout_ms: -10\nserver:\n  port: 0\n  read_timeout_seconds: -1\n  write_timeout_seconds: -2\n",
 			wantPort: DefaultServerPort, wantURL: "http://ha.local:8123", wantLang: DefaultHALanguage,
 		},
 		{

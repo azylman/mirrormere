@@ -8,7 +8,7 @@
 # be a persistent volume (see deploy/compose.yml's voice-fingerprinter
 # service) or every container restart re-downloads it.
 
-FROM python:3.11-slim AS base
+FROM python:3.12-slim AS base
 
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
@@ -27,11 +27,12 @@ RUN --mount=type=bind,source=requirements.txt,target=requirements.txt \
         --extra-index-url https://download.pytorch.org/whl/cpu \
         -r requirements.txt \
     && rm -rf \
-        /usr/local/lib/python3.11/site-packages/torch/test \
-        /usr/local/lib/python3.11/site-packages/torch/include \
-        /usr/local/lib/python3.11/site-packages/pip \
-    && find /usr/local/lib/python3.11/site-packages/torch/bin -type f ! -name torch_shm_manager -delete \
-    && python -m compileall -b -q /usr/local/lib/python3.11/site-packages
+        /usr/local/lib/python3.12/site-packages/torch/test \
+        /usr/local/lib/python3.12/site-packages/torch/include \
+        /usr/local/lib/python3.12/site-packages/pip \
+    && find /usr/local/lib/python3.12/site-packages/torch/bin -type f ! -name torch_shm_manager -delete \
+    && python -m compileall -b -q /usr/local/lib/python3.12/site-packages \
+    && python -c "import torch, torchaudio, speechbrain"
 
 COPY --link --chown=10001:10001 app.py enroll.py ./
 
