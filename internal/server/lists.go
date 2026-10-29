@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	"sync"
 
 	"github.com/azylman/mirrormere/internal/api"
 	"github.com/azylman/mirrormere/internal/tasks"
@@ -20,7 +19,6 @@ type ItemCompleter interface {
 
 // DefaultListsHandler serves OpenAPI POST /api/lists/{list_id}/items/{item_id}/complete.
 type DefaultListsHandler struct {
-	mu        sync.RWMutex
 	completer ItemCompleter
 }
 
@@ -56,10 +54,7 @@ func (h *DefaultListsHandler) CompleteListItem(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	h.mu.RLock()
 	completer := h.completer
-	h.mu.RUnlock()
-
 	if completer == nil {
 		writeAPIError(w, http.StatusInternalServerError, "task completion not configured")
 		return

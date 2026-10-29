@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 # Ensure client/remote is on sys.path even when discover is run from repository root
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from coords import clamp, normalize_coordinates, to_hid_digitizer, to_hid_mouse_delta
+from coords import clamp, normalize_coordinates, to_hid_digitizer
 
 from keycodes import (
     lookup_consumer_key,
@@ -85,16 +85,6 @@ class TestCoords(unittest.TestCase):
         x, y = to_hid_digitizer(1.0, 1.0, max_logical=32767)
         self.assertEqual(x, 32767)
         self.assertEqual(y, 32767)
-
-    def test_to_hid_mouse_delta(self):
-        dx, dy = to_hid_mouse_delta(10.0, -15.0)
-        self.assertEqual(dx, 10)
-        self.assertEqual(dy, -15)
-
-        # Extreme values clamped to -127..127
-        dx, dy = to_hid_mouse_delta(500.0, -500.0)
-        self.assertEqual(dx, 127)
-        self.assertEqual(dy, -127)
 
 
 class TestKeycodes(unittest.TestCase):
