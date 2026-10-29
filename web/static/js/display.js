@@ -401,6 +401,8 @@
   let pendingReloadTimer = null;
   let pendingBootId = null;
   let pendingSystemReloadTimer = null;
+  let lastConfigStatus = 'ok';
+  let lastConfigError = null;
 
   const STORAGE_KEY_DAILY_RELOAD = 'mm_last_daily_reload_date';
   const STORAGE_KEY_DEPLOY_RELOAD = 'mm_last_reload_timestamp';
@@ -475,19 +477,27 @@
    */
   function handleSystemStatus(data) {
     if (typeof document === 'undefined') return;
+    if (data && typeof data.config_status === 'string') {
+      lastConfigStatus = data.config_status;
+      lastConfigError = data.config_error || null;
+    }
     const dot = document.getElementById('system-status-dot');
+    const container = document.getElementById('header-status');
     if (dot && data) {
       dot.classList.remove('status-ok', 'status-degraded', 'status-error');
 
       if (data.online === false) {
         dot.classList.add('status-error');
         dot.title = 'System Status: Offline';
+        if (container && container.style) container.style.display = '';
       } else if (data.config_status === 'error') {
         dot.classList.add('status-degraded');
         dot.title = `Configuration Degraded: ${data.config_error || 'Error'}`;
+        if (container && container.style) container.style.display = '';
       } else {
         dot.classList.add('status-ok');
         dot.title = 'System Status: Healthy';
+        if (container && container.style) container.style.display = 'none';
       }
     }
 
@@ -616,6 +626,8 @@
     currentBootId = null;
     lastReloadTimestamp = 0;
     lastDailyReloadDate = '';
+    lastConfigStatus = 'ok';
+    lastConfigError = null;
     if (pendingReloadTimer) {
       clearTimeout(pendingReloadTimer);
       pendingReloadTimer = null;
@@ -638,8 +650,8 @@
    */
   function handleStyleReload(data) {
     if (typeof document === 'undefined') return;
-    const link = document.getElementById('hud-stylesheet') || document.querySelector('link[rel="stylesheet"][href*="style.css"]');
-    if (!link) return;
+    const link = document.getElementById('hud-stylesheet') || (typeof document.querySelector === 'function' ? document.querySelector('link[rel="stylesheet"][href*="style.css"]') : null);
+    if (!link || typeof link.href !== 'string') return;
 
     const cacheBuster = `t=${Date.now()}`;
     const baseHref = link.href.split('?')[0];
@@ -657,8 +669,8 @@
    */
   async function checkStyleHeartbeat() {
     if (typeof fetch === 'undefined' || typeof document === 'undefined') return;
-    const link = document.getElementById('hud-stylesheet') || document.querySelector('link[rel="stylesheet"][href*="style.css"]');
-    if (!link) return;
+    const link = document.getElementById('hud-stylesheet') || (typeof document.querySelector === 'function' ? document.querySelector('link[rel="stylesheet"][href*="style.css"]') : null);
+    if (!link || typeof link.href !== 'string') return;
 
     const url = link.href.split('?')[0];
     try {
@@ -1614,7 +1626,10 @@
 
       sseClient.on('connection', (data) => {
         if (data && data.status === 'connected') {
+          handleSystemStatus({ online: true, config_status: lastConfigStatus, config_error: lastConfigError });
           checkStyleHeartbeat();
+        } else if (data && data.status === 'disconnected') {
+          handleSystemStatus({ online: false });
         }
       });
 
