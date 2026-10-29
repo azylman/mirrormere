@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 
 	"github.com/azylman/mirrormere/internal/api"
 )
@@ -63,14 +62,9 @@ type Handler struct {
 	staticDir             string
 	localStaticDir        string
 	templateContent       []byte
-	mu                    sync.RWMutex
-	timezone              string
 	timezoneProvider      func() string
-	hideCursor            bool
 	hideCursorProvider    func() bool
-	remoteURL             string
 	remoteURLProvider     func() string
-	headerVideo           *HeaderVideoTemplateData
 	headerVideoProvider   func() *HeaderVideoTemplateData
 	voiceWaveformProvider func() *VoiceWaveformTemplateData
 	themeProvider         func() string
@@ -78,51 +72,38 @@ type Handler struct {
 }
 
 func (h *Handler) Timezone() string {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
 	if h.timezoneProvider != nil {
 		if tz := h.timezoneProvider(); tz != "" {
 			return tz
 		}
 	}
-	if h.timezone != "" {
-		return h.timezone
-	}
 	return "UTC"
 }
 
 func (h *Handler) HideCursor() bool {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
 	if h.hideCursorProvider != nil {
 		return h.hideCursorProvider()
 	}
-	return h.hideCursor
+	return false
 }
 
 func (h *Handler) RemoteURL() string {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
 	if h.remoteURLProvider != nil {
 		if url := h.remoteURLProvider(); url != "" {
 			return url
 		}
 	}
-	return h.remoteURL
+	return ""
 }
 
 func (h *Handler) HeaderVideo() *HeaderVideoTemplateData {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
 	if h.headerVideoProvider != nil {
 		return h.headerVideoProvider()
 	}
-	return h.headerVideo
+	return nil
 }
 
 func (h *Handler) VoiceWaveform() *VoiceWaveformTemplateData {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
 	if h.voiceWaveformProvider != nil {
 		return h.voiceWaveformProvider()
 	}
@@ -130,8 +111,6 @@ func (h *Handler) VoiceWaveform() *VoiceWaveformTemplateData {
 }
 
 func (h *Handler) Theme() string {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
 	if h.themeProvider != nil {
 		if t := h.themeProvider(); t != "" {
 			return t
@@ -141,8 +120,6 @@ func (h *Handler) Theme() string {
 }
 
 func (h *Handler) Grid() string {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
 	if h.gridProvider != nil {
 		if g := h.gridProvider(); g == "2x6" || g == "6x2" {
 			return g

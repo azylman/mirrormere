@@ -7,13 +7,6 @@ import (
 // Routes returns the configured http.Handler for in-memory testing.
 func (s *Server) Routes() http.Handler { return s.mux }
 
-// SetItemCompleter dynamically updates the ItemCompleter.
-func (h *DefaultListsHandler) SetItemCompleter(c ItemCompleter) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.completer = c
-}
-
 // Ready returns a channel closed as soon as the server listener is bound.
 func (s *Server) Ready() <-chan struct{} { return s.ready }
 

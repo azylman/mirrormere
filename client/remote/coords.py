@@ -55,12 +55,3 @@ def to_hid_digitizer(
     clamped_x = clamp(x_ratio, 0.0, 1.0)
     clamped_y = clamp(y_ratio, 0.0, 1.0)
     return int(clamped_x * max_logical_x), int(clamped_y * max_logical_y)
-
-
-def to_hid_mouse_delta(dx: float, dy: float, scale: float = 1.0) -> tuple[int, int]:
-    """Convert relative movement deltas into signed 8-bit HID mouse deltas (-127..127)."""
-    scaled_dx = int(dx * scale)
-    scaled_dy = int(dy * scale)
-    clamped_dx = int(clamp(scaled_dx, -127, 127))
-    clamped_dy = int(clamp(scaled_dy, -127, 127))
-    return clamped_dx, clamped_dy
