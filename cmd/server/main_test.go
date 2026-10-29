@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -21,6 +22,20 @@ import (
 )
 
 type failWriter struct{}
+
+type failListener struct {
+	net.Listener
+}
+
+func (f *failListener) Close() error {
+	return errors.New("simulated close listener failure")
+}
+
+func TestCloseListenerIgnoreClosed(t *testing.T) {
+	t.Parallel()
+	closeListenerIgnoreClosed(nil)
+	closeListenerIgnoreClosed(&failListener{})
+}
 
 func WithAddrChan(ch chan<- string) Option   { return func(rc *runConfig) { rc.addrChan = ch } }
 func WithHupChan(ch <-chan os.Signal) Option { return func(rc *runConfig) { rc.hupChan = ch } }

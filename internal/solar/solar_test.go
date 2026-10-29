@@ -1,37 +1,86 @@
 package solar_test
 
 import (
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/azylman/mirrormere/internal/solar"
 )
 
-func TestCalculateSunriseSunset_Oakland(t *testing.T) {
+func TestCalculateSunriseSunset(t *testing.T) {
 	t.Parallel()
 
-	loc, err := time.LoadLocation("America/Los_Angeles")
+	laLoc, err := time.LoadLocation("America/Los_Angeles")
 	if err != nil {
 		t.Fatalf("failed to load timezone: %v", err)
 	}
 
-	// Oct 10, 2026 in Oakland, CA
-	date := time.Date(2026, 10, 10, 12, 0, 0, 0, loc)
-	lat := 37.8044
-	lon := -122.2712
-
-	sunrise, sunset, err := solar.CalculateSunriseSunset(lat, lon, date)
+	sydLoc, err := time.LoadLocation("Australia/Sydney")
 	if err != nil {
-		t.Fatalf("unexpected error calculating solar times: %v", err)
+		t.Fatalf("failed to load timezone: %v", err)
 	}
 
-	// Expected Oakland sunrise in early October is ~7:10 - 7:20 AM PDT
-	// Sunset is ~6:35 - 6:45 PM PDT
-	if sunrise.Hour() != 7 || (sunrise.Minute() < 10 || sunrise.Minute() > 20) {
-		t.Errorf("expected sunrise between 7:10 AM and 7:20 AM PDT, got %s", sunrise.Format("15:04:05 MST"))
+	tests := []struct {
+		name       string
+		lat, lon   float64
+		date       time.Time
+		wantRiseH  int
+		wantSetH   int
+		wantErrSub string
+	}{
+		{
+			name:      "Oakland_EarlyOctober",
+			lat:       37.8044,
+			lon:       -122.2712,
+			date:      time.Date(2026, 10, 10, 12, 0, 0, 0, laLoc),
+			wantRiseH: 7,
+			wantSetH:  18,
+		},
+		{
+			name:      "Sydney_October",
+			lat:       -33.8688,
+			lon:       151.2093,
+			date:      time.Date(2026, 10, 10, 12, 0, 0, 0, sydLoc),
+			wantRiseH: 6,
+			wantSetH:  19,
+		},
+		{
+			name:       "HighArctic_WinterPolarNight",
+			lat:        85.0,
+			lon:        0.0,
+			date:       time.Date(2026, 12, 21, 12, 0, 0, 0, time.UTC),
+			wantErrSub: "sun never rises",
+		},
+		{
+			name:       "HighArctic_SummerPolarDay",
+			lat:        85.0,
+			lon:        0.0,
+			date:       time.Date(2026, 6, 21, 12, 0, 0, 0, time.UTC),
+			wantErrSub: "sun never sets",
+		},
 	}
-	if sunset.Hour() != 18 || (sunset.Minute() < 35 || sunset.Minute() > 45) {
-		t.Errorf("expected sunset between 6:35 PM and 6:45 PM PDT, got %s", sunset.Format("15:04:05 MST"))
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			sunrise, sunset, err := solar.CalculateSunriseSunset(tc.lat, tc.lon, tc.date)
+			if tc.wantErrSub != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErrSub) {
+					t.Fatalf("expected error containing %q, got %v", tc.wantErrSub, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error calculating solar times: %v", err)
+			}
+			if sunrise.Hour() != tc.wantRiseH {
+				t.Errorf("expected sunrise hour %d, got %s", tc.wantRiseH, sunrise.Format("15:04:05 MST"))
+			}
+			if sunset.Hour() != tc.wantSetH {
+				t.Errorf("expected sunset hour %d, got %s", tc.wantSetH, sunset.Format("15:04:05 MST"))
+			}
+		})
 	}
 }
 
@@ -46,82 +95,53 @@ func TestIsNight(t *testing.T) {
 	lat := 37.8044
 	lon := -122.2712
 
-	// Midday (12:00 PM) -> should be Day (not night)
-	midday := time.Date(2026, 10, 10, 12, 0, 0, 0, loc)
-	if solar.IsNight(lat, lon, midday) {
-		t.Errorf("expected midday to be day, got night")
+	tests := []struct {
+		name      string
+		lat, lon  float64
+		date      time.Time
+		wantNight bool
+	}{
+		{"Midday", lat, lon, time.Date(2026, 10, 10, 12, 0, 0, 0, loc), false},
+		{"Midnight", lat, lon, time.Date(2026, 10, 10, 0, 0, 0, 0, loc), true},
+		{"LateNight", lat, lon, time.Date(2026, 10, 10, 22, 0, 0, 0, loc), true},
+		{"EarlyMorning", lat, lon, time.Date(2026, 10, 10, 5, 0, 0, 0, loc), true},
+		{"AfterSunrise", lat, lon, time.Date(2026, 10, 10, 8, 0, 0, 0, loc), false},
+		{"PolarNightFallback_Late", 85.0, 0.0, time.Date(2026, 12, 21, 22, 0, 0, 0, time.UTC), true},
+		{"PolarNightFallback_Midday", 85.0, 0.0, time.Date(2026, 12, 21, 12, 0, 0, 0, time.UTC), false},
 	}
-
-	// Midnight (12:00 AM) -> should be Night
-	midnight := time.Date(2026, 10, 10, 0, 0, 0, 0, loc)
-	if !solar.IsNight(lat, lon, midnight) {
-		t.Errorf("expected midnight to be night, got day")
-	}
-
-	// 10:00 PM -> should be Night
-	lateNight := time.Date(2026, 10, 10, 22, 0, 0, 0, loc)
-	if !solar.IsNight(lat, lon, lateNight) {
-		t.Errorf("expected 10:00 PM to be night, got day")
-	}
-
-	// 5:00 AM -> before sunrise -> should be Night
-	earlyMorning := time.Date(2026, 10, 10, 5, 0, 0, 0, loc)
-	if !solar.IsNight(lat, lon, earlyMorning) {
-		t.Errorf("expected 5:00 AM to be night, got day")
-	}
-
-	// 8:00 AM -> after sunrise -> should be Day
-	afterSunrise := time.Date(2026, 10, 10, 8, 0, 0, 0, loc)
-	if solar.IsNight(lat, lon, afterSunrise) {
-		t.Errorf("expected 8:00 AM to be day, got night")
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := solar.IsNight(tc.lat, tc.lon, tc.date)
+			if got != tc.wantNight {
+				t.Fatalf("IsNight(%f, %f, %s) = %v, want %v", tc.lat, tc.lon, tc.date, got, tc.wantNight)
+			}
+		})
 	}
 
 	// Sunrise and Sunset exact boundaries
+	midday := time.Date(2026, 10, 10, 12, 0, 0, 0, loc)
 	sunrise, sunset, err := solar.CalculateSunriseSunset(lat, lon, midday)
 	if err != nil {
 		t.Fatalf("failed to calculate sunrise/sunset: %v", err)
 	}
 
-	// 1 minute before sunrise -> night
-	if !solar.IsNight(lat, lon, sunrise.Add(-1*time.Minute)) {
-		t.Errorf("expected 1 minute before sunrise (%s) to be night", sunrise.Add(-1*time.Minute).Format("15:04"))
+	boundTests := []struct {
+		name      string
+		t         time.Time
+		wantNight bool
+	}{
+		{"BeforeSunrise", sunrise.Add(-1 * time.Minute), true},
+		{"AfterSunrise", sunrise.Add(1 * time.Minute), false},
+		{"BeforeSunset", sunset.Add(-1 * time.Minute), false},
+		{"AfterSunset", sunset.Add(1 * time.Minute), true},
 	}
-	// 1 minute after sunrise -> day
-	if solar.IsNight(lat, lon, sunrise.Add(1*time.Minute)) {
-		t.Errorf("expected 1 minute after sunrise (%s) to be day", sunrise.Add(1*time.Minute).Format("15:04"))
-	}
-	// 1 minute before sunset -> day
-	if solar.IsNight(lat, lon, sunset.Add(-1*time.Minute)) {
-		t.Errorf("expected 1 minute before sunset (%s) to be day", sunset.Add(-1*time.Minute).Format("15:04"))
-	}
-	// 1 minute after sunset -> night
-	if !solar.IsNight(lat, lon, sunset.Add(1*time.Minute)) {
-		t.Errorf("expected 1 minute after sunset (%s) to be night", sunset.Add(1*time.Minute).Format("15:04"))
-	}
-}
-
-func TestCalculateSunriseSunset_SouthernHemisphere(t *testing.T) {
-	t.Parallel()
-
-	loc, err := time.LoadLocation("Australia/Sydney")
-	if err != nil {
-		t.Fatalf("failed to load timezone: %v", err)
-	}
-
-	// Sydney in October (Spring in Southern Hemisphere)
-	date := time.Date(2026, 10, 10, 12, 0, 0, 0, loc)
-	lat := -33.8688
-	lon := 151.2093
-
-	sunrise, sunset, err := solar.CalculateSunriseSunset(lat, lon, date)
-	if err != nil {
-		t.Fatalf("unexpected error calculating solar times: %v", err)
-	}
-
-	if sunrise.Hour() < 5 || sunrise.Hour() > 7 {
-		t.Errorf("expected Sydney sunrise around 6 AM, got %s", sunrise.Format("15:04 MST"))
-	}
-	if sunset.Hour() < 18 || sunset.Hour() > 20 {
-		t.Errorf("expected Sydney sunset around 7 PM, got %s", sunset.Format("15:04 MST"))
+	for _, tc := range boundTests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := solar.IsNight(lat, lon, tc.t); got != tc.wantNight {
+				t.Errorf("IsNight(%s) = %v, want %v", tc.t.Format("15:04"), got, tc.wantNight)
+			}
+		})
 	}
 }
