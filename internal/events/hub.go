@@ -61,7 +61,7 @@ const (
 type subscriber struct {
 	id     uint64
 	ch     chan *Event
-	ctx    context.Context
+	done   <-chan struct{}
 	mu     sync.Mutex
 	closed bool
 }
@@ -174,9 +174,13 @@ func (h *Hub) PublishEvent(evt *Event) {
 	h.mu.RUnlock()
 
 	for _, sub := range subs {
-		if sub.ctx != nil && sub.ctx.Err() != nil {
-			h.Unsubscribe(sub.id)
-			continue
+		if sub.done != nil {
+			select {
+			case <-sub.done:
+				h.Unsubscribe(sub.id)
+				continue
+			default:
+			}
 		}
 		if sub.trySend(evt) == sendBufferFull {
 			h.logger.Warn("slow subscriber evicted", "subscriber_id", sub.id, "buffer_size", h.cfg.SubscriberBuffer)
@@ -187,7 +191,11 @@ func (h *Hub) PublishEvent(evt *Event) {
 
 func (h *Hub) Subscribe(ctx context.Context) (<-chan *Event, func()) {
 	subID := h.nextSubID.Add(1)
-	sub := &subscriber{id: subID, ch: make(chan *Event, h.cfg.SubscriberBuffer), ctx: ctx}
+	var done <-chan struct{}
+	if ctx != nil {
+		done = ctx.Done()
+	}
+	sub := &subscriber{id: subID, ch: make(chan *Event, h.cfg.SubscriberBuffer), done: done}
 	h.mu.Lock()
 	if !h.closed.Load() {
 		h.subscribers[subID] = sub

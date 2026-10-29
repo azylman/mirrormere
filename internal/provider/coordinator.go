@@ -50,7 +50,6 @@ type CoordinatorConfig struct {
 }
 
 type worker struct {
-	ctx        context.Context
 	widgetID   string
 	widgetType string
 	provider   Provider
@@ -80,7 +79,6 @@ type ProviderCoordinator struct {
 	workers            map[string]*worker
 	snapshot           *config.Snapshot
 	eventSink          chan workerEvent
-	sinkCtx            context.Context
 	sinkCancel         context.CancelFunc
 	sinkWg             sync.WaitGroup
 	onBeforeRecordPush func(widgetID string)
@@ -143,7 +141,6 @@ func NewCoordinator(cfg CoordinatorConfig, initialSnapshot *config.Snapshot) *Pr
 		workers:            make(map[string]*worker),
 		snapshot:           initialSnapshot,
 		eventSink:          make(chan workerEvent, 64),
-		sinkCtx:            sinkCtx,
 		sinkCancel:         sinkCancel,
 		onBeforeRecordPush: cfg.OnBeforeRecordPush,
 		chatLog:            cfg.ChatLog,
@@ -152,7 +149,7 @@ func NewCoordinator(cfg CoordinatorConfig, initialSnapshot *config.Snapshot) *Pr
 	}
 
 	c.sinkWg.Add(1)
-	go c.listenEventSink()
+	go c.listenEventSink(sinkCtx)
 
 	if initialSnapshot != nil && initialSnapshot.Config != nil {
 		if initialSnapshot.Config.Display.Header.Weather != nil {
@@ -419,7 +416,6 @@ func (c *ProviderCoordinator) startSingleWorkerLocked(w *config.WidgetConfig, sn
 	interval := resolveInterval(w, pkg)
 	workerCtx, workerCancel := context.WithCancel(context.Background())
 	wrk := &worker{
-		ctx:        workerCtx,
 		widgetID:   w.ID,
 		widgetType: w.Type,
 		provider:   p,
@@ -571,12 +567,12 @@ func (c *ProviderCoordinator) recordColdBootError(widgetID string, err error) {
 	c.syncAndBroadcast(payload)
 }
 
-func (c *ProviderCoordinator) listenEventSink() {
+func (c *ProviderCoordinator) listenEventSink(sinkCtx context.Context) {
 	defer c.sinkWg.Done()
 
 	for {
 		select {
-		case <-c.sinkCtx.Done():
+		case <-sinkCtx.Done():
 			return
 		case ev, ok := <-c.eventSink:
 			if !ok {
