@@ -356,14 +356,14 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 		chatLogCfg, voiceHubCfg = snapshot.Config.ChatLog, snapshot.Config.VoiceHub
 	}
 	chatStore := chatlog.NewStore(chatlog.WithTTL(chatLogCfg.GetTTL()), chatlog.WithMaxPerKey(chatLogCfg.GetMaxMessagesPerNode()))
-
 	reg := provider.NewRegistry()
-
 	videoCoord := video.NewCoordinator(hub, video.WithSink(stateProvider))
 	defer videoCoord.Close()
 
 	var providerCoord *provider.ProviderCoordinator
-	voiceHub := voice.NewHub(voiceHubCfg, voice.NewCoordinator(hub, stateProvider), voice.WithChatLog(chatStore, newChatLogHook(stateProvider, func() chatLogPusher { return providerCoord }, chatStore)))
+	voiceCoord := voice.NewCoordinator(hub, stateProvider)
+	defer voiceCoord.Stop()
+	voiceHub := voice.NewHub(voiceHubCfg, voiceCoord, voice.WithChatLog(chatStore, newChatLogHook(stateProvider, func() chatLogPusher { return providerCoord }, chatStore)))
 
 	rotationCoord := rotation.NewCoordinator(rotation.Config{Broadcaster: hub, Logger: logger}, snapshot)
 	defer rotationCoord.Stop()
@@ -444,7 +444,7 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 		ListsHandler:   listsHandler,
 		AudioHandler:   server.NewDefaultAudioHandler(audio.NewCoordinator(hub, stateProvider)),
 		VideoHandler:   server.NewDefaultVideoHandler(videoCoord),
-		VoiceHandler:   server.NewDefaultVoiceHandler(voice.NewCoordinator(hub, stateProvider), voiceHub, server.WithVoiceMetrics(voice.DefaultMetrics())),
+		VoiceHandler:   server.NewDefaultVoiceHandler(voiceCoord, voiceHub, server.WithVoiceMetrics(voice.DefaultMetrics())),
 	}
 	cfg.ApplyDefaults()
 

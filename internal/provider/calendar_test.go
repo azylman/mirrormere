@@ -116,18 +116,26 @@ func TestCalendarProvider_Fetch_ParsingAndRecurrence(t *testing.T) {
 		ics := icsDoc(
 			"BEGIN:VEVENT\nUID:daily\nDTSTART:20260921T090000Z\nDTEND:20260921T093000Z\nRRULE:FREQ=DAILY;COUNT=5\nEXDATE:20260923T090000Z\nSUMMARY:Team Standup\nEND:VEVENT",
 			"BEGIN:VEVENT\nUID:daily\nRECURRENCE-ID:20260924T090000Z\nDTSTART:20260924T100000Z\nDTEND:20260924T104500Z\nSUMMARY:Team Standup (Delayed)\nLOCATION:Zoom Room A\nEND:VEVENT",
+			"BEGIN:VEVENT\nUID:tz-daily\nDTSTART;TZID=America/Los_Angeles:20260921T090000\nDTEND;TZID=America/Los_Angeles:20260921T093000\nRRULE:FREQ=DAILY;COUNT=4\nEXDATE;TZID=America/Los_Angeles:20260922T090000,,20260923,20260923T090000\nSUMMARY:LA Sync\nEND:VEVENT",
+			"BEGIN:VEVENT\nUID:tz-daily\nRECURRENCE-ID;TZID=America/Los_Angeles:20260924T090000\nDTSTART;TZID=America/Los_Angeles:20260924T110000\nDTEND;TZID=America/Los_Angeles:20260924T113000\nSUMMARY:LA Sync (Moved)\nEND:VEVENT",
 		)
 		ref := time.Date(2026, 9, 20, 0, 0, 0, 0, time.UTC)
 		snap, err := fetchTestCalendar(t, ics, ref, nil)
-		if err != nil || len(snap.Events) != 4 {
-			t.Fatalf("fetch failed: err=%v len=%d", err, len(snap.Events))
+		if err != nil || len(snap.Events) != 6 {
+			t.Fatalf("fetch failed: err=%v len=%d events=%+v", err, len(snap.Events), snap.Events)
 		}
 		for _, ev := range snap.Events {
 			if strings.Contains(ev.Start, "2026-09-23") {
 				t.Fatalf("found excluded exdate event: %+v", ev)
 			}
-			if strings.Contains(ev.Start, "2026-09-24") && (ev.Title != "Team Standup (Delayed)" || ev.Location != "Zoom Room A") {
-				t.Errorf("overridden event mismatch: %+v", ev)
+			if ev.Title == "LA Sync" && strings.Contains(ev.Start, "2026-09-22") {
+				t.Fatalf("found excluded tz exdate event: %+v", ev)
+			}
+			if strings.Contains(ev.Start, "2026-09-24") && ev.Title == "Team Standup" {
+				t.Errorf("unoverridden UTC event remained: %+v", ev)
+			}
+			if strings.Contains(ev.Start, "2026-09-24") && ev.Title == "LA Sync" {
+				t.Errorf("unoverridden TZID event remained: %+v", ev)
 			}
 		}
 	})
