@@ -388,12 +388,14 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 	renderHandler := render.NewHandler(renderEngine, loader, render.WithCSSPath(resolveCSSPath()), render.WithCustomCSSPath(customCSSPath))
 	assetReloader := NewAssetReloader(customCSSPath, loader, builtinDir, customDir, renderEngine, configManager, hub, logger)
 
+	hupCtx, hupCancel := context.WithCancel(ctx)
+	defer hupCancel()
 	themeTicker := time.NewTicker(30 * time.Second)
 	defer themeTicker.Stop()
 	go func() {
 		for {
 			select {
-			case <-ctx.Done():
+			case <-hupCtx.Done():
 				return
 			case <-themeTicker.C:
 				evaluateThemeTransition(currentTheme, stateProvider, hub, logger)
@@ -411,8 +413,6 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 		defer signal.Stop(ch)
 	}
 
-	hupCtx, hupCancel := context.WithCancel(ctx)
-	defer hupCancel()
 	go func() {
 		for {
 			select {

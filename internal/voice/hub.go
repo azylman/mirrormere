@@ -1001,10 +1001,10 @@ func (c *DefaultSTTClient) transcribeWyoming(ctx context.Context, wavData []byte
 	defer closer.Close()
 
 	// Watch context cancellation
-	go func() {
-		<-ctx.Done()
-		closer.Close()
-	}()
+	stopCancelWatch := context.AfterFunc(ctx, func() {
+		_ = closer.Close()
+	})
+	defer stopCancelWatch()
 
 	// Extract raw PCM bytes from WAV (skip 44-byte standard header if present)
 	pcm := wavData

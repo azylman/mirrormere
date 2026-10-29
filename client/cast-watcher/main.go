@@ -70,7 +70,7 @@ func loadConfigFile(path string) (*Config, error) {
 			return &cfg, nil
 		}
 	}
-	return nil, nil
+	return &Config{}, nil
 }
 
 // RunWithReady executes cast-watcher and signals readyChan when the HTTP listener is active.
