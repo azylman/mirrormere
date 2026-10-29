@@ -409,6 +409,29 @@ func (p *CalendarProvider) fetchCalendar(ctx context.Context, source CalendarSou
 	return parseCalendarEvents(cal, source, windowStart, windowEnd), nil
 }
 
+func addRecurrencePropertyKeys(dst map[string]bool, prop *ical.IANAProperty) {
+	for _, raw := range strings.Split(prop.Value, ",") {
+		v := strings.TrimSpace(raw)
+		if v == "" {
+			continue
+		}
+		dst[v] = true
+		itemProp := &ical.IANAProperty{
+			BaseProperty: ical.BaseProperty{
+				IANAToken:      prop.IANAToken,
+				Value:          v,
+				ICalParameters: prop.ICalParameters,
+			},
+		}
+		if t, err := parseICalDateTime(itemProp, len(v) == 8); err == nil {
+			dst[t.UTC().Format("20060102T150405Z")] = true
+			if len(v) == 8 {
+				dst[t.Format("20060102")] = true
+			}
+		}
+	}
+}
+
 func parseCalendarEvents(cal *ical.Calendar, source CalendarSource, windowStart, windowEnd time.Time) []CalendarEvent {
 	var events []CalendarEvent
 	recurrenceOverrides := make(map[string]map[string]bool) // uid -> set of recurrence-id timestamps
@@ -422,7 +445,7 @@ func parseCalendarEvents(cal *ical.Calendar, source CalendarSource, windowStart,
 			if recurrenceOverrides[uid] == nil {
 				recurrenceOverrides[uid] = make(map[string]bool)
 			}
-			recurrenceOverrides[uid][recIDProp.Value] = true
+			addRecurrencePropertyKeys(recurrenceOverrides[uid], recIDProp)
 		}
 	}
 
@@ -559,13 +582,7 @@ func expandRecurrence(e *ical.VEvent, source CalendarSource, uid, title, locatio
 	exdates := make(map[string]bool)
 	for _, prop := range e.Properties {
 		if prop.IANAToken == string(ical.ComponentPropertyExdate) {
-			vals := strings.Split(prop.Value, ",")
-			for _, v := range vals {
-				v = strings.TrimSpace(v)
-				if v != "" {
-					exdates[v] = true
-				}
-			}
+			addRecurrencePropertyKeys(exdates, &prop)
 		}
 	}
 
@@ -590,7 +607,7 @@ func expandRecurrence(e *ical.VEvent, source CalendarSource, uid, title, locatio
 	var expanded []CalendarEvent
 	for _, occ := range occurrences {
 		// Check exclusions
-		occStr := occ.Format("20060102T150405Z")
+		occStr := occ.UTC().Format("20060102T150405Z")
 		occDateStr := occ.Format("20060102")
 		if exdates[occStr] || exdates[occDateStr] {
 			continue
