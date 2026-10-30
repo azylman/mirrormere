@@ -433,11 +433,14 @@
         }
         if (!session.spinner || session.spinner.classList.contains('fade-out')) return;
         session.spinner.classList.add('fade-out');
-        setTimeout(() => {
+        const removeTimer = setTimeout(() => {
           if (session.spinner && session.spinner.parentNode) {
             session.spinner.parentNode.removeChild(session.spinner);
           }
         }, 400);
+        if (removeTimer && typeof removeTimer.unref === 'function') {
+          removeTimer.unref();
+        }
       };
       session.dismissSpinner = dismissSpinner;
 
@@ -452,6 +455,9 @@
       }
 
       session.spinnerSafetyTimer = setTimeout(dismissSpinner, 12000);
+      if (session.spinnerSafetyTimer && typeof session.spinnerSafetyTimer.unref === 'function') {
+        session.spinnerSafetyTimer.unref();
+      }
     }
 
     /**
@@ -658,7 +664,10 @@
           if (typeof pc.addEventListener === 'function') {
             pc.addEventListener('icegatheringstatechange', check);
           }
-          setTimeout(resolve, 500);
+          const iceTimer = setTimeout(resolve, 500);
+          if (iceTimer && typeof iceTimer.unref === 'function') {
+            iceTimer.unref();
+          }
         });
 
         if (session.cancelled) {
@@ -673,6 +682,9 @@
         const timeoutMs = (typeof this.options.negotiationTimeout === 'number') ? this.options.negotiationTimeout : 5000;
         if (controller) {
           timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+          if (timeoutId && typeof timeoutId.unref === 'function') {
+            timeoutId.unref();
+          }
         }
 
         const res = await fetchFn(streamUrl, {
@@ -790,6 +802,9 @@
             if (session.cancelled) return;
             this.scheduleWebRTCReconnect(session);
           }, timeout);
+          if (session.disconnectTimer && typeof session.disconnectTimer.unref === 'function') {
+            session.disconnectTimer.unref();
+          }
         }
         return;
       }
@@ -823,6 +838,9 @@
         if (session.cancelled) return;
         await this.reconnectWebRTC(session);
       }, delay);
+      if (session.reconnectTimer && typeof session.reconnectTimer.unref === 'function') {
+        session.reconnectTimer.unref();
+      }
     }
 
     /**

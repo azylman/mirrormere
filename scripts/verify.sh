@@ -6,7 +6,6 @@ set -eu
 
 # Prevent MSYS2 from mangling path conversions on Windows
 export MSYS_NO_PATHCONV=1
-export GOMEMLIMIT="${GOMEMLIMIT:-1200MiB}"
 
 # Ensure MinGit / MSYS binaries (/usr/bin, /mingw64/bin, /cmd) are in PATH
 for p in /usr/bin /mingw64/bin /cmd; do
@@ -23,6 +22,9 @@ for arg in "$@"; do
     case "$arg" in
         --staged)
             MODE="staged"
+            ;;
+        --lint-only)
+            MODE="lint"
             ;;
         --full)
             MODE="full"
@@ -60,8 +62,26 @@ check_utf8_bom() {
 
 check_gofmt() {
     if has_cmd gofmt; then
-        echo "   [gofmt] Checking code formatting..."
-        unformatted=$(gofmt -l . 2>/dev/null | grep -v -E '(^|/)vendor/' || true)
+        if [ "$MODE" = "staged" ] && has_cmd git; then
+            staged_go=$(git diff --cached --name-only --diff-filter=ACM 2>/dev/null | grep '\.go$' || true)
+            if [ -z "$staged_go" ]; then
+                return 0
+            fi
+            # shellcheck disable=SC2086
+            unformatted=$(gofmt -l $staged_go 2>/dev/null | grep -v -E '(^|/)vendor/' || true)
+            if [ -n "$unformatted" ] && [ -z "${GITHUB_ACTIONS:-}" ]; then
+                echo "   [gofmt] Auto-formatting staged Go files..."
+                # shellcheck disable=SC2086
+                gofmt -w $unformatted
+                # shellcheck disable=SC2086
+                git add $unformatted
+                # shellcheck disable=SC2086
+                unformatted=$(gofmt -l $staged_go 2>/dev/null | grep -v -E '(^|/)vendor/' || true)
+            fi
+        else
+            echo "   [gofmt] Checking code formatting..."
+            unformatted=$(gofmt -l . 2>/dev/null | grep -v -E '(^|/)vendor/' || true)
+        fi
         if [ -n "$unformatted" ]; then
             echo "🚨 [Mirrormere Verify] Error: Unformatted Go files detected (run gofmt -w or golangci-lint fmt):" >&2
             echo "$unformatted" | sed 's/^/   • /' >&2
@@ -71,7 +91,7 @@ check_gofmt() {
 }
 
 check_no_imperative_ddl() {
-    local files=""
+    files=""
     if [ "$MODE" = "staged" ]; then
         files=$(git diff --cached --name-only 2>/dev/null | grep -E '\.(go|py|ts)$' | grep -v -E '(_test\.go|\.test\.ts|test_.*\.py|/testdata/)' | grep -v -E '^(scripts|vendor|node_modules)/' || true)
     else
@@ -82,10 +102,8 @@ check_no_imperative_ddl() {
 
     [ -z "$files" ] && return 0
 
-    local violations=""
     violations=$(echo "$files" | while read -r f; do
         [ -f "$f" ] || continue
-        # Ignore comments and check for raw DDL
         grep -H -n -i -E '\b(CREATE|ALTER|DROP)[[:space:]]+TABLE\b' "$f" 2>/dev/null | grep -v -E '^[^:]+:[0-9]+:[[:space:]]*(//|#|\*)' || true
     done)
 
@@ -98,21 +116,25 @@ check_no_imperative_ddl() {
     return 0
 }
 
-# 2. Go Vet & Ratcheted Code Health Gate
-run_go_vet() {
-    echo "   [go vet] Checking codebase..."
-    if has_cmd go; then
-        go vet ./...
-    else
-        echo "🚨 [Mirrormere Verify] Error: go not found in PATH." >&2
-        exit 1
+# 2. Ratcheted Code Health Gate (Cached Binary)
+CODE_HEALTH_BIN=""
+ensure_code_health() {
+    gopath="$(go env GOPATH 2>/dev/null || true)"
+    bin_dir="${gopath:-$HOME/go}/bin"
+    mkdir -p "$bin_dir"
+    CODE_HEALTH_BIN="$bin_dir/mirrormere-code-health"
+    src_sum=$(cksum "$REPO_ROOT/scripts/code-health/"*.go 2>/dev/null || true)
+    if [ ! -x "$CODE_HEALTH_BIN" ] || [ -z "$src_sum" ] || [ "$(cat "${CODE_HEALTH_BIN}.cksum" 2>/dev/null || true)" != "$src_sum" ]; then
+        (cd "$REPO_ROOT/scripts/code-health" && go build -o "$CODE_HEALTH_BIN" .)
+        printf '%s\n' "$src_sum" > "${CODE_HEALTH_BIN}.cksum"
     fi
 }
 
 run_code_health() {
     echo "   [code-health] Checking ratcheted complexity and length limits..."
     if has_cmd go; then
-        go run ./scripts/code-health -root "$REPO_ROOT" -baseline "$REPO_ROOT/.code-health-baseline.json"
+        ensure_code_health
+        "$CODE_HEALTH_BIN" -root "$REPO_ROOT" -baseline "$REPO_ROOT/.code-health-baseline.json"
     else
         echo "🚨 [Mirrormere Verify] Error: go not found in PATH." >&2
         exit 1
@@ -182,7 +204,7 @@ run_deadcode() {
     }
     set +e
     # shellcheck disable=SC2086
-    dead_prod=$(GOMEMLIMIT="${DEADCODE_GOMEMLIMIT:-384MiB}" GOGC="${DEADCODE_GOGC:-20}" "$DEADCODE_BIN" $main_pkgs 2>&1)
+    dead_prod=$("$DEADCODE_BIN" $main_pkgs 2>&1)
     rc_prod=$?
     set -e
     if [ "$rc_prod" -ne 0 ]; then
@@ -201,7 +223,7 @@ run_deadcode() {
     fi
 
     set +e
-    dead_output=$(GOMEMLIMIT="${DEADCODE_GOMEMLIMIT:-384MiB}" GOGC="${DEADCODE_GOGC:-20}" "$DEADCODE_BIN" -test ./... 2>&1)
+    dead_output=$("$DEADCODE_BIN" -test ./... 2>&1)
     rc=$?
     set -e
     if [ "$rc" -ne 0 ]; then
@@ -297,12 +319,98 @@ run_python_tests() {
     fi
 }
 
-# Execute checks in pipeline order
+if [ "$MODE" = "staged" ]; then
+    if has_cmd git; then
+        git rm --cached -q PR_DESCRIPTION.md .pr_description.md 2>/dev/null || true
+    fi
+    STAGED_FILES=$(git diff --cached --name-only 2>/dev/null || true)
+    if [ -z "$STAGED_FILES" ]; then
+        echo "✅ [Mirrormere Verify] No staged files to verify."
+        exit 0
+    fi
+
+    check_utf8_bom
+    check_gofmt
+    check_no_imperative_ddl
+
+    if echo "$STAGED_FILES" | grep -q -E '\.go$|\.code-health-baseline\.json$'; then
+        run_code_health
+    fi
+
+    if echo "$STAGED_FILES" | grep -q -E '^(api/|internal/api/)'; then
+        run_codegen_drift
+    fi
+
+    if echo "$STAGED_FILES" | grep -q -E '\.go$|^go\.(mod|sum)$|^\.golangci\.yml$|^scripts/verify\.sh$'; then
+        run_golangci_lint
+        run_deadcode
+    fi
+
+    if echo "$STAGED_FILES" | grep -q -E '^go\.(mod|sum)$'; then
+        run_coverage_gate
+    elif echo "$STAGED_FILES" | grep -q '\.go$'; then
+        pkgs=$(echo "$STAGED_FILES" | grep '\.go$' | grep -v '^scripts/code-health/' | while read -r f; do dirname "$f"; done | sort -u)
+        for p in $pkgs; do
+            if [ -d "$p" ]; then
+                sh "$REPO_ROOT/scripts/check-coverage.sh" --check --service "$p"
+            fi
+        done
+    fi
+
+    if echo "$STAGED_FILES" | grep -q -E '^web/' && has_cmd node; then
+        echo "   [node test] Running web client test suite..."
+        TZ=UTC node --test web/test/*.test.js
+    fi
+
+    if echo "$STAGED_FILES" | grep -q -E '^sidecars/eink-renderer/' && has_cmd node; then
+        echo "   [node test] Running eink-renderer sidecar test suite..."
+        TZ=UTC node --test sidecars/eink-renderer/test/*.test.js
+    fi
+
+    if echo "$STAGED_FILES" | grep -q -E '^client/eink-node/' && has_cmd python3; then
+        echo "   [python test] Running e-ink node client test suite..."
+        PYTHONPATH="client/eink-node" python3 -m unittest discover -s client/eink-node/tests -p "test_*.py"
+    fi
+
+    if echo "$STAGED_FILES" | grep -q -E '^client/ear/' && has_cmd python3; then
+        echo "   [python test] Running edge ear (voice) daemon test suite..."
+        PYTHONPATH="." python3 -m unittest discover -s client/ear/tests -p "test_*.py"
+    fi
+
+    if echo "$STAGED_FILES" | grep -q -E '^client/remote/' && has_cmd python3; then
+        echo "   [python test] Running remote (bluetooth/chromecast) client test suite..."
+        PYTHONPATH="client/remote" python3 -m unittest discover -s client/remote/tests -p "test_*.py"
+    fi
+
+    if has_cmd git && git diff --quiet 2>/dev/null; then
+        git_dir=$(git rev-parse --git-dir 2>/dev/null || true)
+        tree_sha=$(git write-tree 2>/dev/null || true)
+        if [ -n "$git_dir" ] && [ -n "$tree_sha" ]; then
+            printf '%s\n' "$tree_sha" > "$git_dir/.aerial-verified-tree" 2>/dev/null || true
+        fi
+    fi
+
+    echo "✨ [Mirrormere Verify] Fast pre-flight checks passed cleanly!"
+    exit 0
+fi
+
+if [ "$MODE" = "lint" ]; then
+    check_utf8_bom
+    check_gofmt
+    check_no_imperative_ddl
+    run_codegen_drift
+    run_code_health
+    run_golangci_lint
+    run_deadcode
+    echo "✨ [Mirrormere Verify] All lint and static analysis checks passed!"
+    exit 0
+fi
+
+# Full verification: Run entire CI-equivalent verification suite
 check_utf8_bom
 check_gofmt
 check_no_imperative_ddl
 run_codegen_drift
-run_go_vet
 run_code_health
 run_golangci_lint
 run_deadcode

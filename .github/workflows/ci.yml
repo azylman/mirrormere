@@ -28,24 +28,19 @@ permissions:
   packages: write
 
 jobs:
-  verify:
-    name: Verify Codebase
-    if: github.event_name != 'push' || inputs.force_all == true
-    runs-on: [self-hosted, ci]
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v7
-
-      - name: Run Full Verification Pipeline
-        run: |
-          sh scripts/verify.sh --full
-
   changes:
     name: Detect Changed Microservices
     runs-on: [self-hosted, ci]
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
       has_builds: ${{ steps.set-matrix.outputs.has_builds }}
+      ci_scripts: ${{ steps.filter.outputs.ci_scripts }}
+      go_core: ${{ steps.filter.outputs.go_core }}
+      web: ${{ steps.filter.outputs.web }}
+      eink_node: ${{ steps.filter.outputs.eink_node }}
+      eink_renderer: ${{ steps.filter.outputs.mirrormere-eink-renderer }}
+      ear: ${{ steps.filter.outputs.mirrormere-ear }}
+      remote: ${{ steps.filter.outputs.mirrormere-remote }}
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v7
@@ -55,6 +50,27 @@ jobs:
         id: filter
         with:
           filters: |
+            ci_scripts:
+              - 'scripts/**'
+              - '.github/workflows/ci.yml'
+            go_core:
+              - 'Dockerfile'
+              - 'go.mod'
+              - 'go.sum'
+              - '.golangci.yml'
+              - '.code-health-baseline.json'
+              - 'cmd/**'
+              - 'internal/**'
+              - 'api/**'
+              - 'web/**'
+              - 'widgets/**'
+              - 'client/cast-watcher/**'
+              - 'sidecars/hass-proxy/**'
+            web:
+              - 'web/**'
+              - 'widgets/**'
+            eink_node:
+              - 'client/eink-node/**'
             mirrormere:
               - 'Dockerfile'
               - '.dockerignore'
@@ -117,6 +133,64 @@ jobs:
             fs.appendFileSync(output, `matrix=${JSON.stringify(safeMatrix)}\n`);
             fs.appendFileSync(output, `has_builds=${hasBuilds}\n`);
           '
+
+  verify:
+    name: Verify Codebase
+    needs: changes
+    if: github.event_name != 'push' || inputs.force_all == true
+    runs-on: [self-hosted, ci]
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v7
+
+      - name: Run Go Unit Tests & Coverage Gate
+        if: needs.changes.outputs.go_core == 'true' || needs.changes.outputs.ci_scripts == 'true' || inputs.force_all == true
+        run: |
+          sh scripts/check-coverage.sh --check --summary
+
+      - name: Run Web & Sidecar Node.js Unit Tests
+        if: needs.changes.outputs.web == 'true' || needs.changes.outputs.eink_renderer == 'true' || needs.changes.outputs.ci_scripts == 'true' || inputs.force_all == true
+        run: |
+          set -e
+          if [ "${{ needs.changes.outputs.web }}" = "true" ] || [ "${{ needs.changes.outputs.ci_scripts }}" = "true" ] || [ "${{ inputs.force_all }}" = "true" ]; then
+            echo "Running web client test suite..."
+            TZ=UTC node --test web/test/*.test.js
+          fi
+          if [ "${{ needs.changes.outputs.eink_renderer }}" = "true" ] || [ "${{ needs.changes.outputs.ci_scripts }}" = "true" ] || [ "${{ inputs.force_all }}" = "true" ]; then
+            echo "Running eink-renderer sidecar test suite..."
+            TZ=UTC node --test sidecars/eink-renderer/test/*.test.js
+          fi
+
+      - name: Run Python Client Unit Tests
+        if: needs.changes.outputs.eink_node == 'true' || needs.changes.outputs.ear == 'true' || needs.changes.outputs.remote == 'true' || needs.changes.outputs.ci_scripts == 'true' || inputs.force_all == true
+        run: |
+          set -e
+          if [ "${{ needs.changes.outputs.eink_node }}" = "true" ] || [ "${{ needs.changes.outputs.ci_scripts }}" = "true" ] || [ "${{ inputs.force_all }}" = "true" ]; then
+            echo "Running e-ink node client test suite..."
+            PYTHONPATH="client/eink-node" python3 -m unittest discover -s client/eink-node/tests -p "test_*.py"
+          fi
+          if [ "${{ needs.changes.outputs.ear }}" = "true" ] || [ "${{ needs.changes.outputs.ci_scripts }}" = "true" ] || [ "${{ inputs.force_all }}" = "true" ]; then
+            echo "Running edge ear (voice) daemon test suite..."
+            PYTHONPATH="." python3 -m unittest discover -s client/ear/tests -p "test_*.py"
+          fi
+          if [ "${{ needs.changes.outputs.remote }}" = "true" ] || [ "${{ needs.changes.outputs.ci_scripts }}" = "true" ] || [ "${{ inputs.force_all }}" = "true" ]; then
+            echo "Running remote (bluetooth/chromecast) client test suite..."
+            PYTHONPATH="client/remote" python3 -m unittest discover -s client/remote/tests -p "test_*.py"
+          fi
+
+  lint:
+    name: Lint Microservices & Frontend
+    needs: changes
+    if: github.event_name != 'push' || inputs.force_all == true
+    runs-on: [self-hosted, ci]
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v7
+
+      - name: Run Static Analysis, Codegen Drift & Linting
+        if: needs.changes.outputs.go_core == 'true' || needs.changes.outputs.ci_scripts == 'true' || inputs.force_all == true
+        run: |
+          sh scripts/verify.sh --lint-only
 
   docker:
     name: Build & Publish Container Image (${{ matrix.name }})
@@ -224,24 +298,31 @@ jobs:
 
   build-gate:
     name: Container Builds Gate
-    needs: [verify, changes, docker]
+    needs: [changes, verify, lint, docker]
     if: always()
     runs-on: [self-hosted, ci]
     steps:
       - name: Verify Container Builds
         run: |
           VERIFY_RES="${{ needs.verify.result }}"
+          LINT_RES="${{ needs.lint.result }}"
           CHANGES_RES="${{ needs.changes.result }}"
           DOCKER_RES="${{ needs.docker.result }}"
           HAS_BUILDS="${{ needs.changes.outputs.has_builds }}"
 
           echo "Verify status: $VERIFY_RES"
+          echo "Lint status: $LINT_RES"
           echo "Changes status: $CHANGES_RES"
           echo "Has builds: $HAS_BUILDS"
           echo "Docker builds status: $DOCKER_RES"
 
           if [ "$VERIFY_RES" != "success" ] && { [ "${{ github.event_name }}" != "push" ] || [ "$VERIFY_RES" != "skipped" ]; }; then
             echo "::error::Codebase verification failed"
+            exit 1
+          fi
+
+          if [ "$LINT_RES" != "success" ] && { [ "${{ github.event_name }}" != "push" ] || [ "$LINT_RES" != "skipped" ]; }; then
+            echo "::error::Codebase linting failed"
             exit 1
           fi
 

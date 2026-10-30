@@ -366,6 +366,9 @@ class MirrormereCarousel {
     this.navLockTimeout = setTimeout(() => {
       this.releaseNavLock();
     }, 600);
+    if (this.navLockTimeout && typeof this.navLockTimeout.unref === 'function') {
+      this.navLockTimeout.unref();
+    }
   }
 
   /**
@@ -684,6 +687,9 @@ window.PhotoCarouselInstance = class PhotoCarouselInstance {
     this.timer = setInterval(() => {
       this.cycleNext();
     }, intervalMs);
+    if (this.timer && typeof this.timer.unref === 'function') {
+      this.timer.unref();
+    }
   }
 
   stopCycling() {

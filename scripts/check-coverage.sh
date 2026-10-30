@@ -2,7 +2,7 @@
 set -eu
 
 # scripts/check-coverage.sh - Native Test Coverage & Threshold Gating Engine for Mirrormere
-# Zero external SaaS dependencies. Statement-weighted Go coverage.
+# Zero external SaaS dependencies. Parallel statement-weighted Go coverage.
 
 # Ensure MinGit / MSYS binaries (/usr/bin, /mingw64/bin, /cmd) are in PATH
 for p in /usr/bin /mingw64/bin /cmd; do
@@ -18,6 +18,7 @@ CHECK_MODE=0
 SUMMARY_MODE=0
 GAPS_MODE=0
 COVERAGE_THRESHOLD=95.0
+TARGET_SERVICE=""
 CUSTOM_PROFILE_DIR=""
 
 usage() {
@@ -28,7 +29,10 @@ Options:
   --check               Exit with status 1 if any coverage threshold is violated (floor: ${COVERAGE_THRESHOLD}%)
   --summary             Output Markdown summary table (also written to \$GITHUB_STEP_SUMMARY if set)
   --gaps                Print top uncovered functions and statement deficit for below-target packages
+  --service <name>      Target a specific Go package or subtree by path or basename (e.g., web, internal/server, cast-watcher)
+  --package <name>      Alias for --service
   --profile-dir <dir>   Store intermediate coverage profiles in the specified directory
+  --parallel <n>        Parallel package test limit (accepted for CLI compatibility)
   -h, --help            Show this help message
 EOF
     exit 0
@@ -48,8 +52,15 @@ while [ $# -gt 0 ]; do
             GAPS_MODE=1
             shift
             ;;
+        --service|--package)
+            TARGET_SERVICE="$2"
+            shift 2
+            ;;
         --profile-dir)
             CUSTOM_PROFILE_DIR="$2"
+            shift 2
+            ;;
+        --parallel)
             shift 2
             ;;
         -h|--help)
@@ -95,7 +106,6 @@ trap cleanup EXIT INT TERM
 # ANSI Colors
 CYAN='\033[0;36m'
 GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
 RED='\033[0;31m'
 BOLD='\033[1m'
 NC='\033[0m'
@@ -143,48 +153,156 @@ if [ "$(id -u)" -eq 0 ] && command -v setpriv >/dev/null 2>&1 && id -u ubuntu >/
     fi
 fi
 
-# Discover all Go packages with source files
-PACKAGES=$(go list ./... 2>/dev/null || true)
-
-idx=0
-for pkg in $PACKAGES; do
-    idx=$((idx + 1))
-    prof="${PROF_DIR}/cov_${idx}.out"
-    pkg_rel=$(echo "$pkg" | sed "s|^github.com/azylman/mirrormere/\?||")
-    if [ -z "$pkg_rel" ]; then
-        pkg_rel="."
+ALL_PACKAGES=$(go list ./... 2>/dev/null || true)
+if [ -n "$TARGET_SERVICE" ]; then
+    clean_target="${TARGET_SERVICE#./}"
+    if [ "$clean_target" = "." ]; then
+        PACKAGES=$(go list . 2>/dev/null || true)
+    elif [ -d "$clean_target" ]; then
+        PACKAGES=$(go list "./${clean_target}/..." 2>/dev/null || true)
+    else
+        PACKAGES=$(echo "$ALL_PACKAGES" | awk -v tgt="$clean_target" '
+            $0 == tgt || $0 ~ "/" tgt "$" || $0 ~ "/" tgt "/" { print $0 }
+        ')
     fi
+    if [ -z "$PACKAGES" ]; then
+        echo "🚨 [Mirrormere Coverage] Unknown target package or service: $TARGET_SERVICE" >&2
+        exit 1
+    fi
+else
+    PACKAGES="$ALL_PACKAGES"
+fi
 
-    # Run tests with coverage profile
-    test_log="${PROF_DIR}/test_${idx}.log"
-    if $GO_TEST_PREFIX env CGO_ENABLED="$cgo_val" go test ${race_flag:+"$race_flag"} -coverprofile="$prof" "$pkg" >"$test_log" 2>&1; then
-        if [ -f "$prof" ] && [ -s "$prof" ]; then
-            # Parse statements from profile
-            cov_stats=$(awk 'NR>1 { total += $2; if ($3 > 0) covered += $2 } END { printf "%d %d\n", total, covered }' "$prof")
+COMBINED_PROF="${PROF_DIR}/coverage.out"
+TEST_LOG="${PROF_DIR}/test.log"
+
+# Run all targeted packages in a single parallel Go invocation
+# shellcheck disable=SC2086
+if $GO_TEST_PREFIX env CGO_ENABLED="$cgo_val" go test ${race_flag:+"$race_flag"} -timeout "${MIRRORMERE_TEST_TIMEOUT:-180s}" -coverprofile="$COMBINED_PROF" $PACKAGES >"$TEST_LOG" 2>&1; then
+    for pkg in $PACKAGES; do
+        pkg_rel=$(echo "$pkg" | sed "s|^github.com/azylman/mirrormere/\?||")
+        if [ -z "$pkg_rel" ]; then
+            pkg_rel="."
+        fi
+
+        tot_stmt=0
+        cov_stmt=0
+        if [ -f "$COMBINED_PROF" ] && [ -s "$COMBINED_PROF" ]; then
+            cov_stats=$(awk -v target_pkg="$pkg" '
+                NR > 1 && NF >= 3 {
+                    file = $1
+                    sub(/:[0-9]+\.[0-9]+,[0-9]+\.[0-9]+$/, "", file)
+                    sub(/\/[^\/]+$/, "", file)
+                    if (file == target_pkg) {
+                        stmts = $2 + 0
+                        cnt = $3 + 0
+                        total += stmts
+                        if (cnt > 0) covered += stmts
+                    }
+                }
+                END { printf "%d %d\n", total + 0, covered + 0 }
+            ' "$COMBINED_PROF")
             tot_stmt=$(echo "$cov_stats" | cut -d' ' -f1)
             cov_stmt=$(echo "$cov_stats" | cut -d' ' -f2)
+        fi
 
-            if [ "$tot_stmt" -gt 0 ]; then
-                pct=$(awk "BEGIN { printf \"%.2f\", ($cov_stmt / $tot_stmt) * 100 }")
-                echo "$pkg_rel $tot_stmt $cov_stmt $pct" >> "$PKG_DATA_FILE"
-                TOTAL_GO_STMTS=$((TOTAL_GO_STMTS + tot_stmt))
-                COVERED_GO_STMTS=$((COVERED_GO_STMTS + cov_stmt))
+        if [ "$tot_stmt" -gt 0 ]; then
+            pct=$(awk "BEGIN { printf \"%.2f\", ($cov_stmt / $tot_stmt) * 100 }")
+            echo "$pkg_rel $tot_stmt $cov_stmt $pct" >> "$PKG_DATA_FILE"
+            TOTAL_GO_STMTS=$((TOTAL_GO_STMTS + tot_stmt))
+            COVERED_GO_STMTS=$((COVERED_GO_STMTS + cov_stmt))
 
-                below=$(awk "BEGIN { print ($pct < $COVERAGE_THRESHOLD) ? 1 : 0 }")
-                if [ "$below" -eq 1 ]; then
-                    record_violation "Package '$pkg_rel' coverage ${pct}% is below required ${COVERAGE_THRESHOLD}%"
+            below=$(awk "BEGIN { print ($pct < $COVERAGE_THRESHOLD) ? 1 : 0 }")
+            if [ "$below" -eq 1 ]; then
+                record_violation "Package '$pkg_rel' coverage ${pct}% is below required ${COVERAGE_THRESHOLD}%"
+            fi
+
+            if [ "$below" -eq 1 ] || [ "$GAPS_MODE" -eq 1 ]; then
+                needed=$(awk "BEGIN { req = int(($tot_stmt * $COVERAGE_THRESHOLD + 99) / 100); diff = req - $cov_stmt; print (diff > 0) ? diff : 0 }")
+                if [ "$below" -eq 1 ] || [ "$needed" -gt 0 ]; then
+                    echo "   🔍 [Coverage Audit] $pkg_rel: $cov_stmt / $tot_stmt stmts (${pct}%). Deficit: $needed stmts to reach ${COVERAGE_THRESHOLD}%."
+                    pkg_prof="${PROF_DIR}/pkg_gap.out"
+                    awk -v target_pkg="$pkg" '
+                        NR == 1 { print; next }
+                        NF >= 3 {
+                            file = $1
+                            sub(/:[0-9]+\.[0-9]+,[0-9]+\.[0-9]+$/, "", file)
+                            sub(/\/[^\/]+$/, "", file)
+                            if (file == target_pkg) print
+                        }
+                    ' "$COMBINED_PROF" > "$pkg_prof"
+                    if [ -s "$pkg_prof" ] && command -v go >/dev/null 2>&1; then
+                        echo "      Top uncovered functions in $pkg_rel:"
+                        go tool cover -func="$pkg_prof" 2>/dev/null | awk '$1 !~ /^total:/ && $NF != "100.0%"' | sort -k3 -n | head -n 5 | sed 's/^/      • /' || true
+                    fi
+                    if [ -s "$pkg_prof" ]; then
+                        awk '
+                            !/^mode:/ && $(NF-1)+0 > 0 && $NF+0 == 0 {
+                                col_idx = match($1, /:[0-9]+\.[0-9]+,[0-9]+\.[0-9]+$/)
+                                if (col_idx > 0) {
+                                    path = substr($1, 1, col_idx - 1)
+                                    sub(/.*[\/\\]/, "", path)
+                                    range_str = substr($1, col_idx + 1)
+                                    split(range_str, b, ",")
+                                    split(b[1], s, ".")
+                                    split(b[2], e, ".")
+                                    print path ":" (s[1]+0) ":" (e[1]+0)
+                                }
+                            }
+                        ' "$pkg_prof" | sort -t: -k1,1 -k2,2n -k3,3n | awk -F: -v pkg="$pkg_rel" '
+                            function flush_range() {
+                                if (cur_file != "") {
+                                    rng = sprintf("L%d-L%d", prev_start, prev_end)
+                                    if (file_ranges[cur_file] == "") {
+                                        file_ranges[cur_file] = rng
+                                    } else {
+                                        file_ranges[cur_file] = file_ranges[cur_file] ", " rng
+                                    }
+                                }
+                            }
+                            {
+                                f = $1; s = $2 + 0; e = $3 + 0
+                                if (f != cur_file) {
+                                    flush_range()
+                                    cur_file = f
+                                    prev_start = s
+                                    prev_end = e
+                                    if (!seen[f]++) {
+                                        files[++file_count] = f
+                                    }
+                                } else {
+                                    if (s <= prev_end + 1) {
+                                        if (e > prev_end) prev_end = e
+                                    } else {
+                                        flush_range()
+                                        prev_start = s
+                                        prev_end = e
+                                    }
+                                }
+                            }
+                            END {
+                                flush_range()
+                                if (file_count > 0) {
+                                    printf("      Uncovered line ranges in %s:\n", pkg)
+                                    limit = (file_count > 10) ? 10 : file_count
+                                    for (i = 1; i <= limit; i++) {
+                                        fn = files[i]
+                                        printf("      • %s: %s\n", fn, file_ranges[fn])
+                                    }
+                                }
+                            }
+                        '
+                    fi
                 fi
-            else
-                echo "$pkg_rel 0 0 100.00" >> "$PKG_DATA_FILE"
             fi
         else
             echo "$pkg_rel 0 0 100.00" >> "$PKG_DATA_FILE"
         fi
-    else
-        cat "$test_log" >&2 || true
-        record_violation "Package '$pkg_rel' tests failed"
-    fi
-done
+    done
+else
+    cat "$TEST_LOG" >&2 || true
+    record_violation "Go package unit tests failed"
+fi
 
 GLOBAL_PCT="100.00"
 if [ "$TOTAL_GO_STMTS" -gt 0 ]; then
