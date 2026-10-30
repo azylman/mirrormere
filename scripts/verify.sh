@@ -202,11 +202,27 @@ run_deadcode() {
         echo "🚨 [Mirrormere Verify] Error: failed to list main packages" >&2
         exit 1
     }
-    set +e
+
+    tmp_prod=$(mktemp)
+    tmp_test=$(mktemp)
+
     # shellcheck disable=SC2086
-    dead_prod=$("$DEADCODE_BIN" $main_pkgs 2>&1)
-    rc_prod=$?
-    set -e
+    "$DEADCODE_BIN" $main_pkgs > "$tmp_prod" 2>&1 &
+    pid_prod=$!
+
+    "$DEADCODE_BIN" -test ./... > "$tmp_test" 2>&1 &
+    pid_test=$!
+
+    rc_prod=0
+    wait "$pid_prod" || rc_prod=$?
+
+    rc=0
+    wait "$pid_test" || rc=$?
+
+    dead_prod=$(cat "$tmp_prod" 2>/dev/null || true)
+    dead_output=$(cat "$tmp_test" 2>/dev/null || true)
+    rm -f "$tmp_prod" "$tmp_test"
+
     if [ "$rc_prod" -ne 0 ]; then
         if [ "$rc_prod" -eq 137 ] && [ "$MODE" = "staged" ]; then
             echo "   [deadcode] Warning: deadcode killed by cgroup OOM in local pre-flight (exit 137), deferred to CI." >&2
@@ -222,10 +238,6 @@ run_deadcode() {
         exit 1
     fi
 
-    set +e
-    dead_output=$("$DEADCODE_BIN" -test ./... 2>&1)
-    rc=$?
-    set -e
     if [ "$rc" -ne 0 ]; then
         if [ "$rc" -eq 137 ] && [ "$MODE" = "staged" ]; then
             echo "   [deadcode] Warning: deadcode killed by cgroup OOM in local pre-flight (exit 137), deferred to CI." >&2
@@ -399,9 +411,40 @@ if [ "$MODE" = "lint" ]; then
     check_gofmt
     check_no_imperative_ddl
     run_codegen_drift
-    run_code_health
-    run_golangci_lint
-    run_deadcode
+    ensure_code_health
+    ensure_deadcode
+
+    log_health=$(mktemp)
+    log_lint=$(mktemp)
+    log_deadcode=$(mktemp)
+
+    (run_code_health) > "$log_health" 2>&1 &
+    p_health=$!
+
+    (run_golangci_lint) > "$log_lint" 2>&1 &
+    p_lint=$!
+
+    (run_deadcode) > "$log_deadcode" 2>&1 &
+    p_deadcode=$!
+
+    rc_health=0
+    wait "$p_health" || rc_health=$?
+
+    rc_lint=0
+    wait "$p_lint" || rc_lint=$?
+
+    rc_deadcode=0
+    wait "$p_deadcode" || rc_deadcode=$?
+
+    cat "$log_health"
+    cat "$log_lint"
+    cat "$log_deadcode"
+    rm -f "$log_health" "$log_lint" "$log_deadcode"
+
+    if [ "$rc_health" -ne 0 ] || [ "$rc_lint" -ne 0 ] || [ "$rc_deadcode" -ne 0 ]; then
+        exit 1
+    fi
+
     echo "✨ [Mirrormere Verify] All lint and static analysis checks passed!"
     exit 0
 fi
