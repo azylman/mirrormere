@@ -180,7 +180,7 @@ jobs:
           set -euo pipefail
           TREE_SHA=$(git rev-parse HEAD^{tree})
           echo "tree_sha=${TREE_SHA}" >> "$GITHUB_OUTPUT"
-          if [ "$EVENT_NAME" = "push" ] && [ "$REF" = "refs/heads/main" ] && [ "$FORCE_ALL" != "true" ]; then
+          if { [ "$EVENT_NAME" = "push" ] || [ "$EVENT_NAME" = "workflow_dispatch" ]; } && [ "$REF" = "refs/heads/main" ] && [ "$FORCE_ALL" != "true" ]; then
             if docker buildx imagetools inspect "ghcr.io/${OWNER}/${IMAGE_NAME}:tree-${TREE_SHA}" >/dev/null 2>&1; then
               echo "exists=true" >> "$GITHUB_OUTPUT"
               exit 0
@@ -189,7 +189,7 @@ jobs:
           echo "exists=false" >> "$GITHUB_OUTPUT"
 
       - name: Push Image from PR Tree Cache (${{ matrix.name }})
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.tree_check.outputs.exists == 'true'
+        if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && steps.tree_check.outputs.exists == 'true'
         env:
           OWNER: ${{ steps.repo_owner.outputs.owner }}
           IMAGE_NAME: ${{ matrix.name }}
@@ -211,11 +211,11 @@ jobs:
           context: ${{ matrix.context }}
           file: ${{ matrix.file }}
           platforms: linux/amd64,linux/arm64
-          push: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) }}
+          push: ${{ ((github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) }}
           tags: |
             ghcr.io/${{ steps.repo_owner.outputs.owner }}/${{ matrix.name }}:tree-${{ steps.tree_check.outputs.tree_sha }}
-            ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') && format('ghcr.io/{0}/{1}:{2}', steps.repo_owner.outputs.owner, matrix.name, github.sha) || '' }}
-            ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') && format('ghcr.io/{0}/{1}:latest', steps.repo_owner.outputs.owner, matrix.name) || '' }}
+            ${{ ((github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main') && format('ghcr.io/{0}/{1}:{2}', steps.repo_owner.outputs.owner, matrix.name, github.sha) || '' }}
+            ${{ ((github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main') && format('ghcr.io/{0}/{1}:latest', steps.repo_owner.outputs.owner, matrix.name) || '' }}
           labels: |
             org.opencontainers.image.title=${{ matrix.name }}
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
