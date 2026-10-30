@@ -772,6 +772,7 @@
       btn.classList.add('loading');
       btn.classList.remove('error');
       safetyTimer = setTimeout(clearLoading, 4000);
+      if (safetyTimer && typeof safetyTimer.unref === 'function') safetyTimer.unref();
 
       const streamUrl = options.streamUrl || (win && win.MIRRORMERE_CAST_STREAM_URL) || (btn.dataset && btn.dataset.streamUrl) || '';
       const controlUrl = options.controlUrl || (win && win.MIRRORMERE_CAST_CONTROL_URL) || (btn.dataset && btn.dataset.controlUrl) || '';
@@ -810,7 +811,8 @@
         console.warn('[MirrormereDisplay] Header video trigger failed:', err);
         clearLoading();
         btn.classList.add('error');
-        setTimeout(() => btn.classList.remove('error'), 1500);
+        const errTimer = setTimeout(() => btn.classList.remove('error'), 1500);
+        if (errTimer && typeof errTimer.unref === 'function') errTimer.unref();
       }
     };
 

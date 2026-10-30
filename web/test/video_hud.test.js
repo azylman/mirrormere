@@ -245,6 +245,7 @@ function createHUDDOM() {
   };
 }
 
+test.describe('VideoHUD Suite', { concurrency: true }, () => {
 test('VideoHUDController: auto-fade lifecycle and tap-to-wake', async () => {
   const dom = createHUDDOM();
   const hud = new VideoHUDController({
@@ -2557,5 +2558,6 @@ test('VideoHUDController: route Android TV navigation/key actions to remote side
   assert.deepEqual(networkCalls[remoteActions.length + 3].body, { id: 'stream_cast', action: 'seek', value: 45 });
 
   hud.destroy();
+});
 });
 

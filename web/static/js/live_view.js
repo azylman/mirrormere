@@ -121,6 +121,9 @@
           this.isLoading = false;
           this.element.classList.remove('loading');
         }, 2000);
+        if (this.safetyTimer && typeof this.safetyTimer.unref === 'function') {
+          this.safetyTimer.unref();
+        }
 
         const payload = {
           id: this.config.stream_id || this.widgetId,
