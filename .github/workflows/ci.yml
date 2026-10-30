@@ -62,8 +62,6 @@ jobs:
               - 'cmd/**'
               - 'internal/**'
               - 'api/**'
-              - 'web/**'
-              - 'widgets/**'
               - 'client/cast-watcher/**'
               - 'sidecars/hass-proxy/**'
             web:
@@ -155,6 +153,10 @@ jobs:
           if [ "${{ needs.changes.outputs.web }}" = "true" ] || [ "${{ needs.changes.outputs.ci_scripts }}" = "true" ] || [ "${{ inputs.force_all }}" = "true" ]; then
             echo "Running web client test suite..."
             TZ=UTC node --test web/test/*.test.js
+            if [ "${{ needs.changes.outputs.go_core }}" != "true" ] && [ "${{ needs.changes.outputs.ci_scripts }}" != "true" ] && [ "${{ inputs.force_all }}" != "true" ]; then
+              echo "Validating HTML templates and widget manifests with Go tests..."
+              go test ./internal/render ./internal/server ./internal/widget
+            fi
           fi
           if [ "${{ needs.changes.outputs.eink_renderer }}" = "true" ] || [ "${{ needs.changes.outputs.ci_scripts }}" = "true" ] || [ "${{ inputs.force_all }}" = "true" ]; then
             echo "Running eink-renderer sidecar test suite..."
