@@ -363,7 +363,7 @@ jobs:
           exit 1
 
   build-gate:
-    name: Container Builds Gate
+    name: CI Gate
     needs: [changes, verify, lint, roborev, docker]
     if: always()
     runs-on: [self-hosted, ci]
