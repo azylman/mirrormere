@@ -139,8 +139,22 @@ jobs:
         run: |
           cd sidecars/voice-fingerprinter && python3 -m pytest test/ -v
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
+      - name: Set up Persistent Local Buildx Builder
+        run: |
+          mkdir -p /cache/buildx-config /root/.docker/buildx/instances
+          flock /cache/buildx.lock bash -c '
+            if [ ! -f /proc/sys/fs/binfmt_misc/qemu-aarch64 ]; then
+              docker run --privileged --rm tonistiigi/binfmt:latest --install arm64
+            fi
+            export BUILDX_CONFIG=/cache/buildx-config
+            if ! docker buildx inspect --bootstrap calibarn-buildkit >/dev/null 2>&1; then
+              docker buildx rm -f calibarn-buildkit >/dev/null 2>&1 || true
+              docker rm -f buildx_buildkit_calibarn-buildkit0 >/dev/null 2>&1 || true
+              docker buildx create --name calibarn-buildkit --driver docker-container --driver-opt network=host --use --bootstrap
+            fi
+            cp -f /cache/buildx-config/instances/calibarn-buildkit /root/.docker/buildx/instances/calibarn-buildkit
+          '
+          docker buildx use calibarn-buildkit
 
       - name: Lowercase Repository Owner
         id: repo_owner
@@ -190,10 +204,6 @@ jobs:
             --annotation "index:org.opencontainers.image.revision=${SHA}" \
             "$SRC"
 
-      - name: Set up QEMU
-        if: steps.tree_check.outputs.exists != 'true'
-        uses: docker/setup-qemu-action@v4
-
       - name: Build and Push Docker Image
         if: steps.tree_check.outputs.exists != 'true'
         uses: docker/build-push-action@v7
@@ -211,12 +221,6 @@ jobs:
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.licenses=MIT
-          cache-from: |
-            type=registry,ref=ghcr.io/${{ steps.repo_owner.outputs.owner }}/${{ matrix.name }}:buildcache
-            type=gha,scope=${{ matrix.name }}
-          cache-to: |
-            ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && format('type=registry,ref=ghcr.io/{0}/{1}:buildcache,mode=max', steps.repo_owner.outputs.owner, matrix.name) || '' }}
-            type=gha,mode=max,scope=${{ matrix.name }}
 
   build-gate:
     name: Container Builds Gate
