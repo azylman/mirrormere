@@ -1056,7 +1056,7 @@ func ComputeDayEventPosition(eventStart, eventEnd time.Time, day time.Time, hour
 	topPct, heightPct = calculateVisibleEventPosition(effStart, effEnd, wStart, wEnd, start, end, wDuration)
 	topPct = roundToTwoDecimals(topPct)
 	heightPct = roundToTwoDecimals(heightPct)
-	return
+	return topPct, heightPct, isEarlyEdge, isLateEdge
 }
 
 func roundToTwoDecimals(val float64) float64 {

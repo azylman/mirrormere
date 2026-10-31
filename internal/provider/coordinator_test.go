@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -548,10 +549,10 @@ func TestProviderCoordinator_ConfigAndOptionsResolution(t *testing.T) {
 	if p1.initCfg["token"] != nil || p1.initCfg["token_env"] != nil || p1.initCfg["method"] != nil || p1.initCfg["endpoint"] != "domain-endpoint-override" || p1.initCfg["city"] != "Oakland" || p1.initCfg["api_key_env"] != "SENSOR_API_KEY" {
 		t.Errorf("unexpected domain config: %v", p1.initCfg)
 	}
-	if p1.initOpts.ID != "sensor-tile-1" || p1.initOpts.Type != "custom-sensor" || p1.initOpts.Endpoint != "https://sensor.local/api/metrics" || p1.initOpts.Method != "POST" || p1.initOpts.GetSecret("api_key") != "secret-sensor-api-key" || p1.initOpts.Timezone != "America/Los_Angeles" {
+	if p1.initOpts.ID != "sensor-tile-1" || p1.initOpts.Type != "custom-sensor" || p1.initOpts.Endpoint != "https://sensor.local/api/metrics" || p1.initOpts.Method != http.MethodPost || p1.initOpts.GetSecret("api_key") != "secret-sensor-api-key" || p1.initOpts.Timezone != "America/Los_Angeles" {
 		t.Errorf("unexpected initOpts: %+v", p1.initOpts)
 	}
-	if !p2.initCalled || p2.initOpts.Method != "POST" || p2.initOpts.Token != "standalone-token" || p2.initOpts.GetSecret("token") != "standalone-token" {
+	if !p2.initCalled || p2.initOpts.Method != http.MethodPost || p2.initOpts.Token != "standalone-token" || p2.initOpts.GetSecret("token") != "standalone-token" {
 		t.Errorf("unexpected fallback options: called=%v, opts=%+v", p2.initCalled, p2.initOpts)
 	}
 }

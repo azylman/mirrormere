@@ -158,10 +158,10 @@ func TestPhotosProvider_ErrorsAndSWR(t *testing.T) {
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			count++
 			if count == 1 {
-				w.WriteHeader(200)
+				w.WriteHeader(http.StatusOK)
 				_, _ = w.Write([]byte(`<html><head><title>SWR</title></head><body><img src="https://lh3.googleusercontent.com/pw/SWROK"/></body></html>`))
 			} else {
-				w.WriteHeader(500)
+				w.WriteHeader(http.StatusInternalServerError)
 			}
 		}))
 		defer ts.Close()

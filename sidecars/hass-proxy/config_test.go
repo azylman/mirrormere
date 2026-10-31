@@ -108,15 +108,8 @@ func TestResolveConfigPath_Candidates(t *testing.T) {
 	if _, err := resolveConfigPath(""); err == nil {
 		t.Fatal("expected error when no candidate files exist")
 	}
-	origDir, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("failed to get cwd: %v", err)
-	}
 	tmpDir := t.TempDir()
-	if err := os.Chdir(tmpDir); err != nil {
-		t.Fatalf("failed to chdir to tmpDir: %v", err)
-	}
-	defer func() { _ = os.Chdir(origDir) }()
+	t.Chdir(tmpDir)
 
 	if err := os.WriteFile(filepath.Join(tmpDir, "config.yaml"), []byte("homeassistant:\n  url: http://localhost:8123\n"), 0o600); err != nil {
 		t.Fatalf("failed to write config.yaml: %v", err)

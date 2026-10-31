@@ -128,7 +128,7 @@ func resolveConfigPath(path string) (string, error) {
 }
 
 // Validate checks required fields and value ranges.
-func (c *Config) Validate() error {
+func (c Config) Validate() error {
 	if c.Server.Port <= 0 || c.Server.Port > 65535 {
 		return fmt.Errorf("server.port must be between 1 and 65535, got %d", c.Server.Port)
 	}
