@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="{{ if .Theme }}{{ .Theme }}{{ else }}day{{ end }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="{{ if eq .Theme "night" }}#3b364c{{ else }}#f8f5ee{{ end }}">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Mirrormere</title>
+  <base href="./">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Comfortaa:wght@600;700&family=Nunito:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" id="hud-stylesheet" href="style.css">
+  <link rel="stylesheet" href="static/ui/app.css">
+  <script>window.MIRRORMERE_REMOTE_URL = {{ .RemoteURL }};</script>
+</head>
+<body data-timezone="{{ .Timezone }}" data-theme="{{ if .Theme }}{{ .Theme }}{{ else }}day{{ end }}" data-grid="{{ .Grid }}" data-hide-cursor="{{ if .HideCursor }}true{{ else }}false{{ end }}"{{ if .HideCursor }} class="mm-touch-display"{{ end }}{{ if .RemoteURL }} data-remote-url="{{ .RemoteURL }}"{{ end }}{{ if and .VoiceWaveform .VoiceWaveform.Enabled }} data-voice-waveform-url="{{ .VoiceWaveform.LevelsURL }}" data-voice-waveform-gain="{{ .VoiceWaveform.Gain }}"{{ end }}{{ if and .HeaderVideo .HeaderVideo.Enabled }} data-header-video="true"{{ if .HeaderVideo.StreamID }} data-stream-id="{{ .HeaderVideo.StreamID }}"{{ end }}{{ if .HeaderVideo.StreamURL }} data-stream-url="{{ .HeaderVideo.StreamURL }}"{{ end }}{{ if .HeaderVideo.ControlURL }} data-control-url="{{ .HeaderVideo.ControlURL }}"{{ end }}{{ if .HeaderVideo.Type }} data-type="{{ .HeaderVideo.Type }}"{{ end }}{{ end }}>
+  <div id="root"></div>
+  <script type="module" src="static/ui/app.js"></script>
+</body>
+</html>

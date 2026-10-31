@@ -331,6 +331,24 @@ run_python_tests() {
     fi
 }
 
+# 9. React UI (web/ui): lint, typecheck, tests, build, committed-output drift.
+# Runs only when web/ui or web/static/ui changed and web/ui/node_modules exists (npm ci done).
+run_ui_checks() {
+    if ! has_cmd npm; then
+        echo "🚨 [Mirrormere Verify] Error: npm not found in PATH; web/ui checks cannot run." >&2
+        exit 1
+    fi
+    echo "   [ui] Running React UI lint, typecheck, tests and build..."
+    (cd "$REPO_ROOT/web/ui" && npm run lint && npm run typecheck && npm test && npm run build)
+    echo "   [ui] Checking committed web/static/ui output against a fresh build..."
+    git diff --exit-code web/static/ui
+    untracked=$(git ls-files --others --exclude-standard web/static/ui)
+    if [ -n "$untracked" ]; then
+        echo "   [ui] Untracked build output in web/static/ui: $untracked"
+        return 1
+    fi
+}
+
 if [ "$MODE" = "staged" ]; then
     if has_cmd git; then
         git rm --cached -q PR_DESCRIPTION.md .pr_description.md 2>/dev/null || true
@@ -372,6 +390,10 @@ if [ "$MODE" = "staged" ]; then
     if echo "$STAGED_FILES" | grep -q -E '^web/' && has_cmd node; then
         echo "   [node test] Running web client test suite..."
         TZ=UTC node --test web/test/*.test.js
+    fi
+
+    if echo "$STAGED_FILES" | grep -q -E '^web/(ui|static/ui)/' && [ -d "$REPO_ROOT/web/ui/node_modules" ]; then
+        run_ui_checks
     fi
 
     if echo "$STAGED_FILES" | grep -q -E '^sidecars/eink-renderer/' && has_cmd node; then
@@ -458,6 +480,20 @@ run_code_health
 run_golangci_lint
 run_deadcode
 run_coverage_gate
+ui_changed=""
+if [ -n "$(git status --porcelain -- web/ui web/static/ui 2>/dev/null)" ]; then
+    ui_changed=1
+fi
+if git rev-parse --verify -q origin/main >/dev/null 2>&1; then
+    base=$(git merge-base HEAD origin/main 2>/dev/null || true)
+    if [ -n "$base" ] && [ -n "$(git diff --name-only "$base" HEAD -- web/ui web/static/ui 2>/dev/null)" ]; then
+        ui_changed=1
+    fi
+fi
+if [ -n "$ui_changed" ] && [ -d "$REPO_ROOT/web/ui/node_modules" ]; then
+    run_ui_checks
+fi
+
 run_node_tests
 run_python_tests
 
