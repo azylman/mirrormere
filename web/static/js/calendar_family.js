@@ -66,7 +66,34 @@
       this.touchCancelHandler = this.handleTouchCancel.bind(this);
 
       this.init();
+      this.decorateMealieEvents();
     }
+
+    decorateMealieEvents() {
+      if (!this.element || typeof this.element.querySelectorAll !== 'function') return;
+      const pills = this.element.querySelectorAll('.cf-allday[data-event-location^="/hearth-api/mealie/image/"]');
+      pills.forEach(pill => {
+        if (pill.dataset.mealieDecorated === 'true') return;
+        const imgUrl = pill.dataset.eventLocation;
+        const rawTitle = (pill.dataset.eventTitle || pill.textContent || '').replace(/^🍽️\s*/, '');
+        pill.dataset.mealieDecorated = 'true';
+        pill.style.display = 'flex';
+        pill.style.alignItems = 'center';
+        pill.style.gap = '6px';
+        pill.style.padding = '3px 6px';
+        pill.textContent = '';
+        const imgEl = document.createElement('img');
+        imgEl.src = imgUrl;
+        imgEl.alt = '';
+        imgEl.style.cssText = 'width:26px;height:26px;border-radius:5px;object-fit:cover;flex-shrink:0;box-shadow:0 1px 3px rgba(0,0,0,0.3);';
+        const spanEl = document.createElement('span');
+        spanEl.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:800;';
+        spanEl.textContent = `🍽️ ${rawTitle}`;
+        pill.appendChild(imgEl);
+        pill.appendChild(spanEl);
+      });
+    }
+
 
     parseData() {
       const dataEl = this.element.querySelector('.calendar-grid-data, .calendar-family-data');
@@ -242,6 +269,7 @@
       this.updateViewUI(this.activeView);
       this.updateDateUI();
       this.fitDayEvents();
+      this.decorateMealieEvents();
       this.resetInactivityTimer();
     }
 
@@ -615,12 +643,24 @@
         card.appendChild(timeEl);
       }
 
-      // 5. Location
+      // 5. Location or Mealie Recipe Hero Image
       if (ev.location && ev.location.trim()) {
-        const locEl = document.createElement('div');
-        locEl.className = 'cf-modal-location';
-        locEl.textContent = `📍 ${ev.location.trim()}`;
-        card.appendChild(locEl);
+        const loc = ev.location.trim();
+        if (loc.startsWith('/hearth-api/mealie/image/')) {
+          const imgWrap = document.createElement('div');
+          imgWrap.style.cssText = 'width:100%;height:190px;border-radius:12px;overflow:hidden;margin:8px 0 10px;background:rgba(15,23,42,0.4);';
+          const imgEl = document.createElement('img');
+          imgEl.src = loc;
+          imgEl.alt = ev.title || 'Meal Photo';
+          imgEl.style.cssText = 'width:100%;height:100%;object-fit:cover;display:block;';
+          imgWrap.appendChild(imgEl);
+          card.appendChild(imgWrap);
+        } else {
+          const locEl = document.createElement('div');
+          locEl.className = 'cf-modal-location';
+          locEl.textContent = `📍 ${loc}`;
+          card.appendChild(locEl);
+        }
       }
 
       // 6. Owner chips / initials
@@ -660,14 +700,18 @@
         card.appendChild(ownersContainer);
       }
 
-      // 7. Event Description (up to 280 characters)
+      // 7. Event Description (full scrollable recipe for Mealie, 280 chars for normal events)
       if (ev.description && ev.description.trim()) {
-        let desc = ev.description.trim();
-        if (desc.length > 280) {
+        let desc = ev.description.trim().replace(/\\n/g, '\n').replace(/\\,/g, ',').replace(/\\;/g, ';');
+        const isMealie = (ev.location && ev.location.startsWith('/hearth-api/mealie/image/')) || (ev.title && ev.title.includes('🍽️'));
+        if (!isMealie && desc.length > 280) {
           desc = desc.slice(0, 277) + '...';
         }
         const descEl = document.createElement('div');
         descEl.className = 'cf-modal-description';
+        if (isMealie) {
+          descEl.style.cssText = 'white-space:pre-wrap;max-height:320px;overflow-y:auto;font-size:0.86rem;line-height:1.45;padding-right:6px;';
+        }
         descEl.textContent = desc;
         card.appendChild(descEl);
       }
@@ -1031,6 +1075,7 @@
       this.element.dataset.pageOffset = String(this.pageOffset);
       this.updateDateUI();
       this.fitDayEvents();
+      this.decorateMealieEvents();
     }
 
     showSyncIndicator(message = 'Not synced yet') {
@@ -1189,6 +1234,7 @@
       this.updateDateUI();
       if (view === 'week') {
         this.fitDayEvents();
+      this.decorateMealieEvents();
       }
     }
 

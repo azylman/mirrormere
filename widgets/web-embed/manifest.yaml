@@ -1,0 +1,30 @@
+name: web-embed
+version: "1.0.0"
+description: Embedded web dashboard tile with swipe-handle header bar.
+provider: spacer
+
+capabilities:
+  - ambient-static
+  - touch-interactive
+
+default_dimensions: [2, 6]
+
+supported_dimensions:
+  - [1, 2]
+  - [2, 2]
+  - [2, 3]
+  - [2, 4]
+  - [2, 6]
+  - [3, 2]
+  - [4, 2]
+  - [6, 2]
+
+config_schema:
+  type: object
+  required:
+    - url
+  properties:
+    url:
+      type: string
+    title:
+      type: string

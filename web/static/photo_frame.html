@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>Rosie &amp; Isaac — Family Photos</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-user-select: none; }
+  html, body {
+    width: 100%; height: 100%; overflow: hidden;
+    background: #141210; color: #F5F0EB;
+    font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+  }
+  .frame-root {
+    position: relative; width: 100%; height: 100%;
+    overflow: hidden; border-radius: 18px;
+    background: radial-gradient(circle at 50% 35%, #26211d 0%, #141210 100%);
+  }
+  .slide {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    object-fit: cover;
+    opacity: 0;
+    transition: opacity 0.9s cubic-bezier(0.22, 1, 0.36, 1), transform 14s ease-out;
+    transform: scale(1.04);
+    pointer-events: none;
+  }
+  .slide.active {
+    opacity: 1;
+    transform: scale(1.0);
+  }
+  .vignette {
+    position: absolute; inset: 0;
+    background: linear-gradient(
+      180deg,
+      rgba(15, 13, 11, 0.55) 0%,
+      rgba(15, 13, 11, 0.0) 26%,
+      rgba(15, 13, 11, 0.0) 68%,
+      rgba(15, 13, 11, 0.72) 100%
+    );
+    pointer-events: none;
+  }
+  .top-bar {
+    position: absolute; top: 12px; left: 14px; right: 14px;
+    display: flex; align-items: center; justify-content: space-between;
+    z-index: 5; pointer-events: none;
+  }
+  .album-badge {
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 5px 11px; border-radius: 999px;
+    background: rgba(20, 18, 16, 0.62);
+    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    font-size: 12px; font-weight: 700; letter-spacing: 0.02em; color: #F5F0EB;
+  }
+  .sync-dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: #4ADE80;
+    box-shadow: 0 0 8px rgba(74, 222, 128, 0.7);
+  }
+  .sync-dot.pending {
+    background: #F59E0B;
+    box-shadow: 0 0 8px rgba(245, 158, 11, 0.7);
+  }
+  .counter-pill {
+    padding: 4px 9px; border-radius: 999px;
+    background: rgba(20, 18, 16, 0.58);
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    font-size: 11px; font-weight: 600; color: rgba(245, 240, 235, 0.85);
+  }
+  .bottom-bar {
+    position: absolute; bottom: 12px; left: 14px; right: 14px;
+    display: flex; align-items: center; justify-content: space-between;
+    z-index: 6;
+  }
+  .caption {
+    font-size: 12px; font-weight: 600; color: rgba(245, 240, 235, 0.82);
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+  }
+  .icon-btn {
+    pointer-events: auto;
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    background: rgba(20, 18, 16, 0.65);
+    color: #F5F0EB;
+    border-radius: 999px;
+    padding: 5px 11px;
+    font-size: 11px; font-weight: 700;
+    cursor: pointer;
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  }
+  .icon-btn:active { transform: scale(0.96); }
+  .empty-state {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    padding: 24px; text-align: center; z-index: 4;
+  }
+  .empty-state.hidden { display: none; }
+  .empty-icon {
+    width: 46px; height: 46px; border-radius: 14px;
+    background: rgba(245, 158, 11, 0.14);
+    border: 1px solid rgba(245, 158, 11, 0.35);
+    display: flex; align-items: center; justify-content: center;
+    margin-bottom: 12px; font-size: 22px;
+  }
+  .empty-title {
+    font-size: 15px; font-weight: 700; color: #F5F0EB; margin-bottom: 6px;
+  }
+  .empty-desc {
+    font-size: 12px; line-height: 1.45; color: rgba(245, 240, 235, 0.72);
+    max-width: 280px; margin-bottom: 14px;
+  }
+  .connect-btn {
+    pointer-events: auto;
+    border: 1px solid rgba(245, 158, 11, 0.55);
+    background: linear-gradient(135deg, rgba(245, 158, 11, 0.28), rgba(217, 119, 6, 0.22));
+    color: #FDE68A;
+    padding: 9px 16px; border-radius: 999px;
+    font-size: 12px; font-weight: 700;
+    cursor: pointer;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+  }
+  .connect-btn:active { transform: scale(0.97); }
+</style>
+</head>
+<body>
+<div class="frame-root" id="frame-root">
+  <img class="slide" id="slide-a" alt="Family Photo A" referrerpolicy="no-referrer" />
+  <img class="slide" id="slide-b" alt="Family Photo B" referrerpolicy="no-referrer" />
+  <div class="vignette"></div>
+
+  <div class="top-bar">
+    <div class="album-badge">
+      <span class="sync-dot pending" id="sync-dot"></span>
+      <span id="album-title">Rosie &amp; Isaac</span>
+    </div>
+    <div class="counter-pill" id="counter-pill" style="display:none">1 / 1</div>
+  </div>
+
+  <div class="empty-state" id="empty-state">
+    <div class="empty-icon">📸</div>
+    <div class="empty-title">Rosie &amp; Isaac</div>
+    <div class="empty-desc" id="empty-desc">
+      Waiting for Android Google Photos bridge sync from the ApoloSign tablet...
+    </div>
+    <button class="connect-btn" id="connect-btn" type="button">Sync via Android Google Account</button>
+  </div>
+
+  <div class="bottom-bar">
+    <span class="caption" id="status-caption">Google Photos Shared Album</span>
+    <button class="icon-btn" id="next-btn" type="button" style="display:none">Next ▸</button>
+  </div>
+</div>
+
+<script>
+(function() {
+  const STATE_URL = '/hearth-api/photos/state';
+  const SYNC_URL = '/hearth-api/photos/sync';
+  const ROTATE_MS = 18000;
+
+  let photos = [];
+  let currentIndex = 0;
+  let activeSlot = 'a';
+  let rotateTimer = null;
+  let albumUrl = '';
+  let albumAuthUrl = '';
+
+  const slideA = document.getElementById('slide-a');
+  const slideB = document.getElementById('slide-b');
+  const syncDot = document.getElementById('sync-dot');
+  const counterPill = document.getElementById('counter-pill');
+  const emptyState = document.getElementById('empty-state');
+  const emptyDesc = document.getElementById('empty-desc');
+  const connectBtn = document.getElementById('connect-btn');
+  const nextBtn = document.getElementById('next-btn');
+  const statusCaption = document.getElementById('status-caption');
+
+  function formatPhotoUrl(baseUrl) {
+    if (!baseUrl) return '';
+    const clean = baseUrl.split('=')[0];
+    return clean + '=w1080-h1080-c';
+  }
+
+  function showPhoto(idx) {
+    if (!photos.length) return;
+    currentIndex = ((idx % photos.length) + photos.length) % photos.length;
+    const url = formatPhotoUrl(photos[currentIndex]);
+    const nextSlide = activeSlot === 'a' ? slideB : slideA;
+    const prevSlide = activeSlot === 'a' ? slideA : slideB;
+
+    nextSlide.onload = function() {
+      nextSlide.classList.add('active');
+      prevSlide.classList.remove('active');
+      activeSlot = activeSlot === 'a' ? 'b' : 'a';
+    };
+    nextSlide.src = url;
+
+    emptyState.classList.add('hidden');
+    syncDot.classList.remove('pending');
+    counterPill.style.display = 'inline-block';
+    counterPill.textContent = (currentIndex + 1) + ' / ' + photos.length;
+    nextBtn.style.display = 'inline-block';
+    statusCaption.textContent = 'Tap photo to advance';
+  }
+
+  function startRotation() {
+    if (rotateTimer) clearInterval(rotateTimer);
+    rotateTimer = setInterval(function() {
+      if (photos.length > 1) {
+        showPhoto(currentIndex + 1);
+      }
+    }, ROTATE_MS);
+  }
+
+  async function pushSyncedPhotosToBackend(extractedUrls, sourceLabel) {
+    if (!Array.isArray(extractedUrls) || !extractedUrls.length) return;
+    try {
+      const resp = await fetch(SYNC_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          album_title: 'Rosie and Isaac',
+          source: sourceLabel || 'ember-android-bridge',
+          photos: extractedUrls
+        })
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        if (Array.isArray(data.photos) && data.photos.length) {
+          photos = data.photos;
+          showPhoto(0);
+          startRotation();
+        }
+      }
+    } catch (err) {
+      console.warn('Failed to push synced photos to backend:', err);
+    }
+  }
+
+  // Callback invoked by Ember Android WebView after extracting lh3.googleusercontent.com/pw/... URLs
+  window.onEmberPhotosSynced = function(payload) {
+    try {
+      const data = typeof payload === 'string' ? JSON.parse(payload) : payload;
+      if (data && Array.isArray(data.photos) && data.photos.length > 0) {
+        photos = data.photos;
+        showPhoto(0);
+        startRotation();
+        pushSyncedPhotosToBackend(data.photos, data.source || 'ember-android');
+      } else if (data && data.needs_auth) {
+        emptyDesc.textContent = 'Tap below on the ApoloSign tablet to authorize your Android Google account for Google Photos.';
+      }
+    } catch (e) {
+      console.warn('onEmberPhotosSynced parse error:', e);
+    }
+  };
+
+  function triggerAndroidBridgeSync(interactive) {
+    const targetUrl = albumAuthUrl || albumUrl;
+    if (window.EmberBridge) {
+      if (interactive && typeof window.EmberBridge.connectGooglePhotos === 'function') {
+        emptyDesc.textContent = 'Opening Android Google account session for Rosie & Isaac...';
+        window.EmberBridge.connectGooglePhotos(targetUrl);
+        return true;
+      }
+      if (typeof window.EmberBridge.syncGooglePhotosAlbum === 'function') {
+        emptyDesc.textContent = 'Syncing Rosie & Isaac directly through Android Google account...';
+        window.EmberBridge.syncGooglePhotosAlbum(targetUrl);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  async function loadBackendState() {
+    try {
+      const resp = await fetch(STATE_URL, { cache: 'no-store' });
+      if (!resp.ok) return;
+      const data = await resp.json();
+      albumUrl = data.album_url || '';
+      albumAuthUrl = data.album_auth_url || albumUrl;
+      if (Array.isArray(data.photos) && data.photos.length > 0) {
+        photos = data.photos;
+        showPhoto(currentIndex);
+        startRotation();
+      } else {
+        // Attempt automatic silent sync if running inside Ember Android WebView
+        triggerAndroidBridgeSync(false);
+      }
+    } catch (e) {
+      console.warn('Failed to fetch photo state:', e);
+    }
+  }
+
+  connectBtn.addEventListener('click', function(ev) {
+    ev.stopPropagation();
+    if (!triggerAndroidBridgeSync(true)) {
+      loadBackendState();
+    }
+  });
+
+  nextBtn.addEventListener('click', function(ev) {
+    ev.stopPropagation();
+    if (photos.length > 0) {
+      showPhoto(currentIndex + 1);
+      startRotation();
+    }
+  });
+
+  // Tap photo to advance; horizontal swipe forwards to Hearth page carousel
+  let touchStartX = null;
+  let touchStartY = null;
+  document.addEventListener('touchstart', function(e) {
+    if (e.touches.length === 1) {
+      touchStartX = e.touches[0].clientX;
+      touchStartY = e.touches[0].clientY;
+    }
+  }, { passive: true });
+
+  document.addEventListener('touchend', function(e) {
+    if (touchStartX === null || !e.changedTouches.length) return;
+    const dx = e.changedTouches[0].clientX - touchStartX;
+    const dy = e.changedTouches[0].clientY - touchStartY;
+    touchStartX = null;
+    touchStartY = null;
+    if (Math.abs(dx) > 65 && Math.abs(dx) > Math.abs(dy) * 1.4) {
+      window.parent.postMessage({ type: 'hearth-swipe', direction: dx < 0 ? 'next' : 'prev' }, '*');
+    } else if (Math.abs(dx) < 15 && Math.abs(dy) < 15 && photos.length > 1) {
+      if (!e.target.closest('button')) {
+        showPhoto(currentIndex + 1);
+        startRotation();
+      }
+    }
+  }, { passive: true });
+
+  loadBackendState();
+  // Periodically refresh state & trigger Android sync when running on tablet
+  setInterval(function() {
+    triggerAndroidBridgeSync(false);
+    loadBackendState();
+  }, 300000);
+})();
+</script>
+</body>
+</html>

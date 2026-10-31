@@ -33,11 +33,69 @@ class MirrormereCarousel {
     this.navLockTimeout = null;
     this._isDragging = false;
     this.pendingRotateData = null;
+    this._localSwipeUntil = 0;
+    this._initialScreenLocked = false;
+    this.activeTaskWidgetId = 'whole-foods-tasks';
+    this.taskWidgetIds = ['whole-foods-tasks', 'costco-tasks', 'ryans-tasks'];
+    this.screenLayouts = new Map([
+      [0, [
+        { widget_id: 'hearth-family-grid', origin: [0, 0], dimensions: [2, 4] },
+        { widget_id: 'whole-foods-tasks', origin: [0, 4], dimensions: [1, 2] },
+        { widget_id: 'family-photos', origin: [1, 4], dimensions: [1, 2] },
+      ]],
+      [1, [
+        { widget_id: 'youtube-music-card', origin: [0, 0], dimensions: [2, 3] },
+        { widget_id: 'new-on-plex', origin: [0, 3], dimensions: [2, 3] },
+      ]],
+      [2, [
+        { widget_id: 'home-assistant-dashboard', origin: [0, 0], dimensions: [2, 6] },
+      ]],
+    ]);
+    this.widgetNodeCache = new Map();
+    this._prewarmedAll = false;
+
+    if (this.canvas && this.canvas.children) {
+      for (const child of Array.from(this.canvas.children)) {
+        const wid = child.dataset && child.dataset.widgetId;
+        if (wid) {
+          this.widgetNodeCache.set(wid, child);
+        }
+        child.style.display = 'none';
+      }
+    }
 
     MirrormereCarousel.instances.add(this);
 
     this.bindTouchGestures();
     this.bindIndicatorGestures();
+    if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+      window.addEventListener('message', (e) => {
+        if (e && e.data && e.data.type === 'hearth-swipe') {
+          this.advanceScreen(e.data.direction || 'next');
+        }
+      });
+    }
+    setTimeout(() => {
+      const initialWidgets = this.getWidgetsForScreen(0);
+      if (initialWidgets) {
+        this.totalScreens = 3;
+        this.currentScreen = 0;
+        this.updateIndicator();
+        this.ensureWidgetsMounted(initialWidgets).then(() => {
+          if (this.currentScreen === 0) {
+            this.applyCachedScreen(0, this.getWidgetsForScreen(0));
+            if (window.MirrormereDisplay && typeof window.MirrormereDisplay.scanAndIngestCalendarWidgets === 'function') {
+              window.MirrormereDisplay.scanAndIngestCalendarWidgets();
+              window.MirrormereDisplay.updateNextUpEvent();
+            }
+          }
+          if (!this._prewarmedAll) {
+            this._prewarmedAll = true;
+            setTimeout(() => this.prewarmAllScreens(), 300);
+          }
+        });
+      }
+    }, 0);
   }
 
   /**
@@ -119,6 +177,54 @@ class MirrormereCarousel {
    * React to screen.rotate event: pre-warms widget markup off-screen
    * and swaps fragments in a single frame to eliminate blank flashes.
    */
+  getWidgetsForScreen(screenIndex) {
+    if (screenIndex === 0) {
+      return [
+        { widget_id: 'hearth-family-grid', origin: [0, 0], dimensions: [2, 4] },
+        { widget_id: this.activeTaskWidgetId || 'whole-foods-tasks', origin: [0, 4], dimensions: [1, 2] },
+        { widget_id: 'family-photos', origin: [1, 4], dimensions: [1, 2] },
+      ];
+    }
+    return this.screenLayouts.get(screenIndex) || [];
+  }
+
+  injectTaskSwitcher(node, wid) {
+    if (!node || !this.taskWidgetIds.includes(wid)) return;
+    const hdr = node.querySelector('.tasks-header');
+    if (!hdr || hdr.querySelector('.hearth-task-switcher')) return;
+    const bar = document.createElement('div');
+    bar.className = 'hearth-task-switcher';
+    bar.style.cssText = 'display:inline-flex;gap:4px;margin-left:auto;';
+    const tabs = [
+      { id: 'whole-foods-tasks', label: 'WF' },
+      { id: 'costco-tasks', label: 'Costco' },
+      { id: 'ryans-tasks', label: 'To-Do' },
+    ];
+    for (const t of tabs) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = t.label;
+      const isAct = t.id === wid;
+      b.style.cssText = `border:0;border-radius:999px;padding:3px 8px;font-size:0.68rem;font-weight:800;cursor:pointer;background:${isAct ? '#7c3aed' : 'rgba(148,163,184,0.22)'};color:${isAct ? '#ffffff' : 'inherit'};`;
+      b.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        if (this.activeTaskWidgetId !== t.id) {
+          this.activeTaskWidgetId = t.id;
+          const wList = this.getWidgetsForScreen(0);
+          this.ensureWidgetsMounted(wList).then(() => {
+            if (this.currentScreen === 0) {
+              this.applyCachedScreen(0, wList);
+            }
+          });
+        }
+      });
+      bar.appendChild(b);
+    }
+    const prog = hdr.querySelector('.tasks-progress');
+    if (prog) prog.style.display = 'none';
+    hdr.appendChild(bar);
+  }
+
   async handleScreenRotate(data) {
     if (!data || !Array.isArray(data.widgets)) {
       return;
@@ -131,36 +237,51 @@ class MirrormereCarousel {
       return;
     }
 
-    this.currentScreen = data.current_screen ?? 0;
-    this.totalScreens = data.total_screens ?? 1;
+    if (this._localSwipeUntil && Date.now() < this._localSwipeUntil) {
+      return;
+    }
+
+    const targetScreen = !this._initialScreenLocked ? 0 : this.currentScreen;
+    this._initialScreenLocked = true;
+    this.currentScreen = targetScreen;
+    this.totalScreens = 3;
+    const widgetsToShow = this.getWidgetsForScreen(targetScreen);
     this.updateIndicator();
 
-    // 1. Pre-warm: fetch all widget fragments in parallel before touching the active DOM
-    const fetchPromises = data.widgets.map(async (widget) => {
+    await this.ensureWidgetsMounted(widgetsToShow);
+    this.applyCachedScreen(targetScreen, widgetsToShow);
+
+    if (!this._prewarmedAll) {
+      this._prewarmedAll = true;
+      setTimeout(() => this.prewarmAllScreens(), 400);
+    }
+  }
+
+  async ensureWidgetsMounted(widgets) {
+    if (!Array.isArray(widgets)) return;
+    const missingWidgets = widgets.filter(w => !this.widgetNodeCache.has(w.widget_id));
+    for (const w of widgets) {
+      const existingNode = this.widgetNodeCache.get(w.widget_id);
+      if (existingNode) {
+        this.injectTaskSwitcher(existingNode, w.widget_id);
+      }
+    }
+    if (missingWidgets.length === 0) return;
+
+    const fetchPromises = missingWidgets.map(async (widget) => {
       try {
         const res = await fetch(this.renderURL(widget.widget_id));
-        if (!res.ok) {
-          throw new Error(`HTTP ${res.status}`);
-        }
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const html = await res.text();
-        return { widget, html, error: null };
+        return { widget, html };
       } catch (err) {
-        console.warn(`[MirrormereCarousel] Failed to render widget ${widget.widget_id}:`, err);
-        const fallbackHTML = `<div class="widget-card" data-widget-id="${widget.widget_id}" style="border-color: var(--mm-status-error);">
-          <div style="color: var(--mm-status-error); font-size: 0.9rem;">Widget ${widget.widget_id} unavailable</div>
-        </div>`;
-        return { widget, html: fallbackHTML, error: err };
+        const fallbackHTML = `<div class="widget-card" data-widget-id="${widget.widget_id}"><div style="font-size:0.9rem;">Widget ${widget.widget_id} unavailable</div></div>`;
+        return { widget, html: fallbackHTML };
       }
     });
-
-    const rendered = await Promise.all(fetchPromises);
-
-    // 2. Build incoming fragment nodes
-    const fragment = document.createDocumentFragment();
-    const newActiveWidgets = new Map();
-
-    for (const item of rendered) {
-      const { widget, html } = item;
+    const fetched = await Promise.all(fetchPromises);
+    for (const { widget, html } of fetched) {
+      if (this.widgetNodeCache.has(widget.widget_id)) continue;
       const temp = document.createElement('div');
       temp.innerHTML = html.trim();
       const node = (temp.querySelector && temp.querySelector('.widget-card')) || temp.firstElementChild || document.createElement('div');
@@ -171,8 +292,30 @@ class MirrormereCarousel {
           }
         }
       }
+      node.dataset.widgetId = widget.widget_id;
+      node.style.display = 'none';
+      this.injectTaskSwitcher(node, widget.widget_id);
+      if (this.canvas) {
+        this.canvas.appendChild(node);
+      }
+      this.widgetNodeCache.set(widget.widget_id, node);
+      if (node.classList && (node.classList.contains('widget-calendar-grid') || node.classList.contains('widget-calendar-family'))) {
+        if (window.MirrormereCalendarFamily && typeof window.MirrormereCalendarFamily.mount === 'function') {
+          window.MirrormereCalendarFamily.mount(node);
+        }
+      }
+    }
+  }
 
-      // Enforce 6x2 grid cell positioning (1-indexed CSS grid lines)
+  applyCachedScreen(screenIndex, widgets) {
+    if (!this.canvas || !Array.isArray(widgets)) return;
+    const activeIds = new Set();
+    const newActiveWidgets = new Map();
+
+    for (const widget of widgets) {
+      const node = this.widgetNodeCache.get(widget.widget_id);
+      if (!node) continue;
+      this.injectTaskSwitcher(node, widget.widget_id);
       const colStart = (widget.origin && widget.origin[0] !== undefined) ? widget.origin[0] + 1 : 1;
       const rowStart = (widget.origin && widget.origin[1] !== undefined) ? widget.origin[1] + 1 : 1;
       const colSpan = (widget.dimensions && widget.dimensions[0]) ? widget.dimensions[0] : 1;
@@ -185,67 +328,59 @@ class MirrormereCarousel {
       node.dataset.originRow = String(rowStart - 1);
       node.dataset.dimCols = String(colSpan);
       node.dataset.dimRows = String(rowSpan);
+      node.style.display = '';
 
-      fragment.appendChild(node);
+      activeIds.add(widget.widget_id);
       newActiveWidgets.set(widget.widget_id, {
         element: node,
         origin: widget.origin,
         dimensions: widget.dimensions,
       });
+
+      if (typeof requestAnimationFrame === 'function') {
+        requestAnimationFrame(() => {
+          const calInst = window.MirrormereCalendarFamily && window.MirrormereCalendarFamily.getInstance && window.MirrormereCalendarFamily.getInstance(widget.widget_id);
+          if (calInst && typeof calInst.fitDayEvents === 'function') {
+            calInst.fitDayEvents();
+          }
+        });
+      }
     }
 
-    // 3. Hot-swap onto canvas with smooth transition
-    if (this.canvas) {
-      this.canvas.classList.add('transitioning');
-      const outgoingIds = new Set();
-      if (this.activeWidgets) {
-        for (const id of this.activeWidgets.keys()) {
-          outgoingIds.add(id);
-        }
+    for (const [wid, node] of this.widgetNodeCache.entries()) {
+      if (!activeIds.has(wid)) {
+        node.style.display = 'none';
       }
-      if (this.canvas && typeof this.canvas.querySelectorAll === 'function') {
-        const els = this.canvas.querySelectorAll('[data-widget-id]');
-        for (const el of els) {
-          if (el.dataset?.widgetId) {
-            outgoingIds.add(el.dataset.widgetId);
-          }
-        }
-      }
-      for (const oldId of outgoingIds) {
-        this.unmountWidgetControllers(oldId);
-      }
-
-      // Single DOM replacement eliminates intermediate blank frames
-      this.canvas.innerHTML = '';
-      this.canvas.appendChild(fragment);
-      this.activeWidgets = newActiveWidgets;
-      // Hydration marker for the e-ink renderer's settle poll: lets it tell
-      // "hydrated with N widgets" (N may be 0) from the pre-hydration page.
-      this.canvas.dataset.widgetCount = String(newActiveWidgets.size);
-      this.canvas.dataset.screenHydrated = 'true';
-
-      requestAnimationFrame(() => {
-        setTimeout(() => {
-          if (this.canvas) {
-            this.canvas.classList.remove('transitioning');
-          }
-        }, 150);
-      });
     }
+    if (this.canvas && this.canvas.children) {
+      for (const child of Array.from(this.canvas.children)) {
+        const wid = child.dataset && child.dataset.widgetId;
+        if (!wid || !activeIds.has(wid)) {
+          child.style.display = 'none';
+        }
+      }
+    }
+
+    this.activeWidgets = newActiveWidgets;
+    this.canvas.dataset.widgetCount = String(newActiveWidgets.size);
+    this.canvas.dataset.screenHydrated = 'true';
   }
 
-  /**
-   * React to widget.update: if widget is visible on active screen,
-   * fetches fresh markup and updates the element in place.
-   */
+  async prewarmAllScreens() {
+    for (const [, widgets] of this.screenLayouts.entries()) {
+      await this.ensureWidgetsMounted(widgets);
+    }
+    const extraTasks = this.taskWidgetIds.map(id => ({ widget_id: id, origin: [0, 4], dimensions: [1, 2] }));
+    await this.ensureWidgetsMounted(extraTasks);
+  }
+
   async handleWidgetUpdate(data) {
     if (!data || !data.widget_id || this.isPaused) {
       return;
     }
 
     const widgetID = data.widget_id;
-    if (!this.activeWidgets.has(widgetID)) {
-      // Widget is rotated off-screen; skip DOM fetch
+    if (!this.activeWidgets.has(widgetID) && !this.widgetNodeCache.has(widgetID)) {
       return;
     }
 
@@ -272,8 +407,10 @@ class MirrormereCarousel {
           newNode.style.gridRow = existing.style.gridRow;
           newNode.dataset.widgetId = widgetID;
           this.unmountWidgetControllers(widgetID);
+          newNode.style.display = existing.style.display;
+          this.injectTaskSwitcher(newNode, widgetID);
           existing.replaceWith(newNode);
-
+          this.widgetNodeCache.set(widgetID, newNode);
           const cached = this.activeWidgets.get(widgetID);
           if (cached) {
             cached.element = newNode;
@@ -307,7 +444,7 @@ class MirrormereCarousel {
    * Bind touch swipe gestures for Touch Kiosk Profile A.
    */
   bindTouchGestures() {
-    const target = this.canvas || document.body;
+    const target = document.body || this.canvas;
 
     target.addEventListener('touchstart', (e) => {
       if (this.isPaused) return;
@@ -365,7 +502,7 @@ class MirrormereCarousel {
     }
     this.navLockTimeout = setTimeout(() => {
       this.releaseNavLock();
-    }, 600);
+    }, 180);
     if (this.navLockTimeout && typeof this.navLockTimeout.unref === 'function') {
       this.navLockTimeout.unref();
     }
@@ -386,48 +523,26 @@ class MirrormereCarousel {
    * Dispatch screen advance navigation request.
    */
   async advanceScreen(direction = 'next') {
-    if (this.isPaused || this.isNavigating || this.totalScreens <= 1) return;
-    this.acquireNavLock();
-    try {
-      await fetch('api/screen/advance', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ direction }),
-      });
-    } catch (err) {
-      console.error('[MirrormereCarousel] Failed to advance screen:', err);
-    }
+    if (this.isPaused || this.totalScreens <= 1) return;
+    const step = (direction === 'prev' || direction === 'backward') ? -1 : 1;
+    const nextIdx = (this.currentScreen + step + this.totalScreens) % this.totalScreens;
+    return this.selectScreen(nextIdx);
   }
 
   /**
    * Dispatch screen select navigation request.
    */
   async selectScreen(screenIndex) {
-    if (this.isPaused || this.isNavigating || this.totalScreens <= 1 || screenIndex === this.currentScreen) return;
+    if (this.isPaused || this.totalScreens <= 1 || screenIndex === this.currentScreen) return;
+    this._localSwipeUntil = Date.now() + 2000;
+    this.currentScreen = screenIndex;
+    this.updateIndicator();
+    const layout = this.getWidgetsForScreen(screenIndex);
+    if (layout) {
+      await this.ensureWidgetsMounted(layout);
+      this.applyCachedScreen(screenIndex, layout);
+    }
     this.acquireNavLock();
-
-    // Optimistic dot highlight
-    if (this.indicator && this.indicator.children) {
-      Array.from(this.indicator.children).forEach((dot, idx) => {
-        if (dot.classList && typeof dot.classList.toggle === 'function') {
-          dot.classList.toggle('active', idx === screenIndex);
-        }
-        if (typeof dot.setAttribute === 'function') {
-          dot.setAttribute('aria-current', idx === screenIndex ? 'step' : 'false');
-        }
-      });
-    }
-
-    try {
-      await fetch('api/screen/select', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ screen_index: screenIndex }),
-      });
-    } catch (err) {
-      console.error('[MirrormereCarousel] Failed to select screen:', err);
-      this.updateIndicator(); // Revert on failure
-    }
   }
 
   /**
