@@ -18,6 +18,7 @@ type ScreenController interface {
 	PauseRotation(duration time.Duration) (int, error)
 	ResumeRotation() (int, error)
 	CurrentScreen() int
+	ScreenLayout() ScreenLayoutSnapshot
 }
 
 // Handler serves HTTP endpoints for screen navigation matching OpenAPI specification.
@@ -122,6 +123,47 @@ func (h *Handler) PostScreenPause(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, api.ScreenPauseResponse{Status: "ok", Paused: *req.Paused, CurrentScreen: currentScreen})
+}
+
+// GetScreens handles GET /api/screens requests, returning the solved layout of every screen so the
+// client can keep adjacent screens mounted.
+func (h *Handler) GetScreens(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Accept")
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.Header().Set("Allow", "GET, HEAD, OPTIONS")
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if h.controller == nil {
+		writeError(w, http.StatusInternalServerError, "screen controller not configured")
+		return
+	}
+
+	snap := h.controller.ScreenLayout()
+	resp := api.ScreensResponse{
+		CurrentScreen:   snap.CurrentScreen,
+		IntervalSeconds: snap.IntervalSeconds,
+		Screens:         make([]api.ScreenLayout, 0, len(snap.Screens)),
+	}
+	for i, screen := range snap.Screens {
+		widgets := make([]api.WidgetPlacement, 0, len(screen.Widgets))
+		for _, pw := range screen.Widgets {
+			widgets = append(widgets, api.WidgetPlacement{
+				WidgetId:   pw.WidgetID,
+				Type:       pw.Type,
+				Origin:     []int{pw.Origin[0], pw.Origin[1]},
+				Dimensions: []int{pw.Dimensions.Cols, pw.Dimensions.Rows},
+			})
+		}
+		resp.Screens = append(resp.Screens, api.ScreenLayout{Index: i, Widgets: widgets})
+	}
+	writeJSON(w, resp)
 }
 
 func writeError(w http.ResponseWriter, code int, msg string) {

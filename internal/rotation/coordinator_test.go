@@ -261,3 +261,28 @@ func TestCoordinator_Concurrency(t *testing.T) {
 	}
 	t.Fatal("expected matching screen.rotate event")
 }
+
+func TestCoordinator_ScreenLayout(t *testing.T) {
+	t.Parallel()
+	coord := NewCoordinator(Config{Broadcaster: &mockBroadcaster{}}, makeTestSnapshot(3, 45, 120))
+	if _, err := coord.SelectScreen(2); err != nil {
+		t.Fatalf("SelectScreen: %v", err)
+	}
+	got := coord.ScreenLayout()
+	if got.CurrentScreen != 2 || got.IntervalSeconds != 45 || len(got.Screens) != 3 {
+		t.Fatalf("ScreenLayout = %+v, want current 2, interval 45, 3 screens", got)
+	}
+	if got.Screens[0].Widgets[0].WidgetID != "widget-screen" {
+		t.Errorf("screen widgets not carried through: %+v", got.Screens[0])
+	}
+
+	empty := NewCoordinator(Config{}, nil).ScreenLayout()
+	if empty.CurrentScreen != 0 || empty.IntervalSeconds != 30 || empty.Screens != nil {
+		t.Errorf("nil snapshot ScreenLayout = %+v, want defaults", empty)
+	}
+
+	noConfig := NewCoordinator(Config{}, &config.Snapshot{Layout: &layout.Layout{TotalScreens: 1, Screens: []layout.Screen{{Index: 0}}}}).ScreenLayout()
+	if noConfig.IntervalSeconds != 30 || len(noConfig.Screens) != 1 {
+		t.Errorf("layout without config ScreenLayout = %+v", noConfig)
+	}
+}

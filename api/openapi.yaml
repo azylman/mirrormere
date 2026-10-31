@@ -53,6 +53,63 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+  /api/widgets/{widget_id}:
+    get:
+      summary: Get widget data as JSON
+      description: Returns a single widget instance's resolved data, config, placement and runtime state as JSON. This is the data the client-side React renderer consumes. The data field matches the widget.update SSE payload for the same widget. Calendar-grid widgets additionally include view_model, the server-resolved week and month geometry built over the merged config, so the client does not re-implement calendar layout.
+      operationId: getWidgetJSON
+      parameters:
+        - name: widget_id
+          in: path
+          required: true
+          description: Unique identifier of the widget instance
+          schema:
+            type: string
+        - name: node
+          in: query
+          required: false
+          description: Requesting display's voice node_id; per-node data replaces the shared data when present
+          schema:
+            type: string
+        - name: date
+          in: query
+          required: false
+          description: Anchor date for calendar-grid view_model (YYYY-MM-DD)
+          schema:
+            type: string
+            format: date
+        - name: view
+          in: query
+          required: false
+          description: Calendar-grid active view (day, week or month)
+          schema:
+            type: string
+            enum: [day, week, month]
+      responses:
+        '200':
+          description: Widget data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WidgetDetailResponse'
+        '400':
+          description: Invalid date or view query parameter
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Widget not found in active configuration
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Widget data could not be resolved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /api/widgets/{widget_id}/push:
     post:
       summary: Push realtime widget payload
@@ -130,6 +187,18 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+  /api/screens:
+    get:
+      summary: List screen layout
+      description: Returns the solved rotation layout for every screen, the current screen index and the rotation interval. Lets the client keep adjacent screens mounted without waiting for screen.rotate, which carries only the current screen.
+      operationId: getScreens
+      responses:
+        '200':
+          description: Solved screen layout
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScreensResponse'
   /api/screen/select:
     post:
       summary: Select screen by index
@@ -628,6 +697,113 @@ components:
           type: string
           format: date-time
           example: 2026-09-24T22:20:00Z
+    WidgetPlacement:
+      type: object
+      required:
+        - widget_id
+        - type
+        - origin
+        - dimensions
+      properties:
+        widget_id:
+          type: string
+        type:
+          type: string
+        origin:
+          type: array
+          items:
+            type: integer
+          minItems: 2
+          maxItems: 2
+          description: '[col, row] grid origin'
+        dimensions:
+          type: array
+          items:
+            type: integer
+          minItems: 2
+          maxItems: 2
+          description: '[cols, rows] grid span'
+    WidgetDetailResponse:
+      type: object
+      required:
+        - widget_id
+        - type
+        - origin
+        - dimensions
+        - config
+        - state
+        - data
+        - timestamp
+        - online
+        - assets_base
+      properties:
+        widget_id:
+          type: string
+        type:
+          type: string
+        origin:
+          type: array
+          items:
+            type: integer
+          minItems: 2
+          maxItems: 2
+        dimensions:
+          type: array
+          items:
+            type: integer
+          minItems: 2
+          maxItems: 2
+        config:
+          type: object
+          additionalProperties: true
+          description: Widget instance config with credential and *_env keys removed
+        state:
+          type: string
+          example: healthy
+        data:
+          description: Domain data; same payload as the widget.update SSE event for this widget
+        timestamp:
+          type: string
+        online:
+          type: boolean
+        assets_base:
+          type: string
+          example: widget-types/weather-forecast/assets/
+          description: Base path for the widget package assets
+        view_model:
+          type: object
+          additionalProperties: true
+          description: 'Present only for calendar-grid. Object with keys week (FamilyViewModel), month (FamilyMonthViewModel) and active_view (week or month, from the view query parameter or the widget default_view).'
+    ScreensResponse:
+      type: object
+      required:
+        - current_screen
+        - interval_seconds
+        - screens
+      properties:
+        current_screen:
+          type: integer
+          minimum: 0
+        interval_seconds:
+          type: integer
+          minimum: 0
+        screens:
+          type: array
+          items:
+            $ref: '#/components/schemas/ScreenLayout'
+    ScreenLayout:
+      type: object
+      required:
+        - index
+        - widgets
+      properties:
+        index:
+          type: integer
+          minimum: 0
+        widgets:
+          type: array
+          items:
+            $ref: '#/components/schemas/WidgetPlacement'
     AudioStateResponse:
       type: object
       required:

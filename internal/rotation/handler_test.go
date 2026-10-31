@@ -1,6 +1,7 @@
 package rotation
 
 import (
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -9,12 +10,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/azylman/mirrormere/internal/api"
+	"github.com/azylman/mirrormere/internal/domain"
 	"github.com/azylman/mirrormere/internal/events"
+	"github.com/azylman/mirrormere/internal/layout"
 )
 
 type mockController struct {
 	ctrlErr     error
 	totalScreen int
+	layout      ScreenLayoutSnapshot
 }
 
 func doReq(h http.Handler, method, path, body string) *httptest.ResponseRecorder {
@@ -43,6 +48,7 @@ func (m *mockController) AdvanceScreen(dir string) (events.ScreenRotateData, err
 func (m *mockController) PauseRotation(d time.Duration) (int, error) { return 0, m.ctrlErr }
 func (m *mockController) ResumeRotation() (int, error)               { return 0, m.ctrlErr }
 func (m *mockController) CurrentScreen() int                         { return 0 }
+func (m *mockController) ScreenLayout() ScreenLayoutSnapshot         { return m.layout }
 
 func TestHandler_PostScreenSelect(t *testing.T) {
 	t.Parallel()
@@ -167,5 +173,64 @@ func TestWriteJSONAndErrorHelpers(t *testing.T) {
 	writeJSON(rec2, map[string]string{"result": "ok"})
 	if rec2.Code != http.StatusOK {
 		t.Errorf("expected 200, got %d", rec2.Code)
+	}
+}
+
+func TestHandler_GetScreens(t *testing.T) {
+	t.Parallel()
+	layoutSnap := ScreenLayoutSnapshot{
+		CurrentScreen:   1,
+		IntervalSeconds: 60,
+		Screens: []layout.Screen{
+			{Index: 0, Widgets: []layout.PlacedWidget{{WidgetID: "clock", Type: "clock", Origin: [2]int{0, 0}, Dimensions: domain.NewDimension(2, 1)}}},
+			{Index: 1, Widgets: []layout.PlacedWidget{{WidgetID: "weather", Origin: [2]int{2, 1}, Dimensions: domain.NewDimension(3, 2)}}},
+		},
+	}
+	tests := []struct {
+		name     string
+		method   string
+		ctrl     bool
+		layout   ScreenLayoutSnapshot
+		wantCode int
+		wantSub  string
+	}{
+		{"get_layout", http.MethodGet, true, layoutSnap, http.StatusOK, `"widget_id":"weather"`},
+		{"head_layout", http.MethodHead, true, layoutSnap, http.StatusOK, ""},
+		{"empty_layout", http.MethodGet, true, ScreenLayoutSnapshot{IntervalSeconds: 30}, http.StatusOK, `"screens":[]`},
+		{"options", http.MethodOptions, true, layoutSnap, http.StatusNoContent, ""},
+		{"post_not_allowed", http.MethodPost, true, layoutSnap, http.StatusMethodNotAllowed, "method not allowed"},
+		{"nil_controller", http.MethodGet, false, layoutSnap, http.StatusInternalServerError, "not configured"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var ctrl ScreenController
+			if tc.ctrl {
+				ctrl = &mockController{layout: tc.layout}
+			}
+			h := NewHandler(ctrl)
+			rec := doReq(http.HandlerFunc(h.GetScreens), tc.method, "/api/screens", "<nil>")
+			if rec.Code != tc.wantCode || (tc.wantSub != "" && !strings.Contains(rec.Body.String(), tc.wantSub)) {
+				t.Fatalf("got (%d, %q), want (%d, sub %q)", rec.Code, rec.Body.String(), tc.wantCode, tc.wantSub)
+			}
+		})
+	}
+}
+
+func TestHandler_GetScreensResponseShape(t *testing.T) {
+	t.Parallel()
+	h := NewHandler(&mockController{layout: ScreenLayoutSnapshot{CurrentScreen: 1, IntervalSeconds: 60, Screens: []layout.Screen{
+		{Index: 0, Widgets: []layout.PlacedWidget{{WidgetID: "clock", Type: "clock", Origin: [2]int{0, 0}, Dimensions: domain.NewDimension(2, 1)}}},
+	}}})
+	rec := doReq(http.HandlerFunc(h.GetScreens), http.MethodGet, "/api/screens", "<nil>")
+	var resp api.ScreensResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.CurrentScreen != 1 || resp.IntervalSeconds != 60 || len(resp.Screens) != 1 || resp.Screens[0].Index != 0 {
+		t.Fatalf("unexpected response: %+v", resp)
+	}
+	if w := resp.Screens[0].Widgets[0]; w.WidgetId != "clock" || w.Type != "clock" || w.Origin[0] != 0 || w.Dimensions[0] != 2 || w.Dimensions[1] != 1 {
+		t.Errorf("unexpected widget placement: %+v", w)
 	}
 }
