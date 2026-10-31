@@ -39,21 +39,13 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	return RunWithReady(ctx, args, stdout, stderr, nil, nil, nil)
 }
 
-// RunWithReady executes the sidecar and signals readyChan when the HTTP listener is active.
-func RunWithReady(
-	ctx context.Context,
-	args []string,
-	stdout, stderr io.Writer,
-	readyChan chan<- struct{},
-	listenerOverride net.Listener,
-	clientOverride HAClient,
-) error {
+func parseHassProxyArgs(args []string, stderr io.Writer) (string, bool, error) {
 	var configPath string
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		if arg == "-h" || arg == "-help" || arg == "--help" {
 			_, err := fmt.Fprintln(stderr, "Usage: hass-proxy [-config <path>]")
-			return err
+			return "", true, err
 		}
 		if (arg == "-config" || arg == "--config") && i+1 < len(args) {
 			configPath = args[i+1]
@@ -65,6 +57,26 @@ func RunWithReady(
 		} else if !strings.HasPrefix(arg, "-") && configPath == "" {
 			configPath = arg
 		}
+	}
+	return configPath, false, nil
+}
+
+func newHassProxyServer(cfg *Config, handler http.Handler) *http.Server {
+	return BuildHTTPServer(cfg.Server, handler)
+}
+
+// RunWithReady executes the sidecar and signals readyChan when the HTTP listener is active.
+func RunWithReady(
+	ctx context.Context,
+	args []string,
+	stdout, stderr io.Writer,
+	readyChan chan<- struct{},
+	listenerOverride net.Listener,
+	clientOverride HAClient,
+) error {
+	configPath, helpShown, err := parseHassProxyArgs(args, stderr)
+	if helpShown || err != nil {
+		return err
 	}
 
 	cfg, err := LoadConfig(configPath)
@@ -82,7 +94,7 @@ func RunWithReady(
 		client = NewHAClient(cfg.HomeAssistant, logger)
 	}
 
-	httpServer := BuildHTTPServer(cfg.Server, NewServer(client, logger))
+	httpServer := newHassProxyServer(cfg, NewServer(client, logger))
 	logStdoutInit(stdout, logger)
 
 	var listener net.Listener

@@ -61,6 +61,60 @@ func EncodeCastMessage(msg CastMessage) ([]byte, error) {
 	return frame, nil
 }
 
+func decodeCastField(payloadBuf []byte, offset, fieldNum, wireType int, msg *CastMessage) (int, error) {
+	switch wireType {
+	case 0: // Varint
+		val, vn := binary.Uvarint(payloadBuf[offset:])
+		if vn <= 0 {
+			return 0, ErrCorruptFrame
+		}
+		offset += vn
+		switch fieldNum {
+		case 1:
+			msg.ProtocolVersion = int(val)
+		case 5:
+			msg.PayloadType = int(val)
+		}
+		return offset, nil
+	case 1: // 64-bit fixed
+		if offset+8 > len(payloadBuf) {
+			return 0, ErrTruncatedFrame
+		}
+		return offset + 8, nil
+	case 2: // Length-delimited (string / bytes)
+		fieldLen, ln := binary.Uvarint(payloadBuf[offset:])
+		if ln <= 0 {
+			return 0, ErrCorruptFrame
+		}
+		offset += ln
+		if fieldLen > uint64(len(payloadBuf)-offset) {
+			return 0, ErrTruncatedFrame
+		}
+		data := payloadBuf[offset : offset+int(fieldLen)]
+		offset += int(fieldLen)
+		switch fieldNum {
+		case 2:
+			msg.SourceID = string(data)
+		case 3:
+			msg.DestinationID = string(data)
+		case 4:
+			msg.Namespace = string(data)
+		case 6:
+			msg.PayloadUTF8 = string(data)
+		case 7:
+			msg.PayloadBinary = append([]byte(nil), data...)
+		}
+		return offset, nil
+	case 5: // 32-bit fixed
+		if offset+4 > len(payloadBuf) {
+			return 0, ErrTruncatedFrame
+		}
+		return offset + 4, nil
+	default:
+		return 0, fmt.Errorf("%w: unsupported wire type %d", ErrCorruptFrame, wireType)
+	}
+}
+
 // DecodeCastMessage reads and decodes a single 4-byte framed CastMessage from r.
 func DecodeCastMessage(r io.Reader) (CastMessage, error) {
 	var lenBuf [4]byte
@@ -86,53 +140,10 @@ func DecodeCastMessage(r io.Reader) (CastMessage, error) {
 		offset += n
 		fieldNum, wireType := int(tag>>3), int(tag&0x07)
 
-		switch wireType {
-		case 0: // Varint
-			val, vn := binary.Uvarint(payloadBuf[offset:])
-			if vn <= 0 {
-				return CastMessage{}, ErrCorruptFrame
-			}
-			offset += vn
-			if fieldNum == 1 {
-				msg.ProtocolVersion = int(val)
-			} else if fieldNum == 5 {
-				msg.PayloadType = int(val)
-			}
-		case 1: // 64-bit fixed
-			if offset+8 > len(payloadBuf) {
-				return CastMessage{}, ErrTruncatedFrame
-			}
-			offset += 8
-		case 2: // Length-delimited (string / bytes)
-			fieldLen, ln := binary.Uvarint(payloadBuf[offset:])
-			if ln <= 0 {
-				return CastMessage{}, ErrCorruptFrame
-			}
-			offset += ln
-			if fieldLen > uint64(len(payloadBuf)-offset) {
-				return CastMessage{}, ErrTruncatedFrame
-			}
-			data := payloadBuf[offset : offset+int(fieldLen)]
-			offset += int(fieldLen)
-			switch fieldNum {
-			case 2:
-				msg.SourceID = string(data)
-			case 3:
-				msg.DestinationID = string(data)
-			case 4:
-				msg.Namespace = string(data)
-			case 6:
-				msg.PayloadUTF8 = string(data)
-			case 7:
-				msg.PayloadBinary = append([]byte(nil), data...)
-			}
-		case 5: // 32-bit fixed
-			if offset+4 > len(payloadBuf) {
-				return CastMessage{}, ErrTruncatedFrame
-			}
-			offset += 4
-		default:
-			return CastMessage{}, fmt.Errorf("%w: unsupported wire type %d", ErrCorruptFrame, wireType)
+		var err error
+		offset, err = decodeCastField(payloadBuf, offset, fieldNum, wireType, &msg)
+		if err != nil {
+			return CastMessage{}, err
 		}
 	}
 	return msg, nil

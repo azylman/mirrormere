@@ -73,28 +73,26 @@ func loadConfigFile(path string) (*Config, error) {
 	return &Config{}, nil
 }
 
-// RunWithReady executes cast-watcher and signals readyChan when the HTTP listener is active.
-func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, readyChan chan<- struct{}, clientOverride *CastClient) error {
+func parseCastWatcherArgs(args []string, stderr io.Writer) (string, bool, error) {
 	var configPath string
 	for _, arg := range args {
 		if arg == "-h" || arg == "-help" || arg == "--help" {
 			_, err := fmt.Fprintln(stderr, "Usage: cast-watcher [config-path]")
-			return err
+			return "", true, err
 		}
 		if strings.HasPrefix(arg, "-") {
-			return fmt.Errorf("flags are not supported; configure via config file: %s", arg)
+			return "", false, fmt.Errorf("flags are not supported; configure via config file: %s", arg)
 		}
 		if configPath == "" {
 			configPath = arg
 		}
 	}
+	return configPath, false, nil
+}
 
-	cfg, err := loadConfigFile(configPath)
-	if err != nil {
-		return err
-	}
+func resolveClientConfig(cfg *Config, logger *slog.Logger) (ClientConfig, int, error) {
 	if cfg == nil || strings.TrimSpace(cfg.ControlURL) == "" {
-		return errors.New("control_url is required in configuration")
+		return ClientConfig{}, 0, errors.New("control_url is required in configuration")
 	}
 
 	chromecastAddr := strings.TrimSpace(cfg.ChromecastAddr)
@@ -117,16 +115,37 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 		controlPort = *cfg.ControlPort
 	}
 
+	clientCfg := ClientConfig{
+		ChromecastAddr: chromecastAddr,
+		CoreURL:        coreURL,
+		StreamURL:      streamURL,
+		ControlURL:     cfg.ControlURL,
+		Logger:         logger,
+	}
+	return clientCfg, controlPort, nil
+}
+
+// RunWithReady executes cast-watcher and signals readyChan when the HTTP listener is active.
+func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, readyChan chan<- struct{}, clientOverride *CastClient) error {
+	configPath, helpShown, err := parseCastWatcherArgs(args, stderr)
+	if helpShown || err != nil {
+		return err
+	}
+
+	cfg, err := loadConfigFile(configPath)
+	if err != nil {
+		return err
+	}
+
 	logger := slog.New(slog.NewTextHandler(stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	clientCfg, controlPort, err := resolveClientConfig(cfg, logger)
+	if err != nil {
+		return err
+	}
+
 	client := clientOverride
 	if client == nil {
-		client = NewCastClient(ClientConfig{
-			ChromecastAddr: chromecastAddr,
-			CoreURL:        coreURL,
-			StreamURL:      streamURL,
-			ControlURL:     cfg.ControlURL,
-			Logger:         logger,
-		})
+		client = NewCastClient(clientCfg)
 	}
 	defer client.Close()
 	client.Start(ctx)
@@ -139,7 +158,7 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 	}
 	defer closeListenerSafe(listener, logger)
 
-	if _, err := fmt.Fprintf(stdout, "Mirrormere Cast Watcher listening on %s (Chromecast: %s)\n", listener.Addr().String(), chromecastAddr); err != nil {
+	if _, err := fmt.Fprintf(stdout, "Mirrormere Cast Watcher listening on %s (Chromecast: %s)\n", listener.Addr().String(), clientCfg.ChromecastAddr); err != nil {
 		return err
 	}
 	if readyChan != nil {

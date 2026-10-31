@@ -111,6 +111,73 @@ func (r *AssetReloader) ReloadCSS() bool {
 	return true
 }
 
+func (r *AssetReloader) evictDeletedWidgetLocked(widgetType string) bool {
+	if r.renderEngine != nil {
+		r.renderEngine.Invalidate(widgetType)
+	}
+	statusChanged := false
+	if r.configManager != nil && r.configManager.ClearPackageError(widgetType) {
+		statusChanged = true
+	}
+	if _, wasIncomplete := r.incompletePkgs[widgetType]; wasIncomplete {
+		delete(r.incompletePkgs, widgetType)
+		statusChanged = true
+	}
+	delete(r.pkgHashes, widgetType)
+	if r.hub != nil {
+		if err := r.hub.DispatchWidgetReload(events.WidgetReloadEvent{Type: widgetType}); err != nil {
+			r.logger.Error("failed to dispatch widget reload for deleted package", "type", widgetType, "error", err)
+		}
+	}
+	return statusChanged
+}
+
+func (r *AssetReloader) recordWidgetLoadErrorLocked(widgetType string, err error) bool {
+	statusChanged := false
+	lastErr, hadErr := r.incompletePkgs[widgetType]
+	if !hadErr || lastErr != err.Error() {
+		if r.configManager != nil {
+			r.configManager.SetPackageError(widgetType, err)
+		}
+		r.incompletePkgs[widgetType] = err.Error()
+		statusChanged = true
+	}
+	if _, hadHash := r.pkgHashes[widgetType]; hadHash {
+		delete(r.pkgHashes, widgetType)
+		if r.renderEngine != nil {
+			r.renderEngine.Invalidate(widgetType)
+		}
+	}
+	return statusChanged
+}
+
+func (r *AssetReloader) updateLoadedWidgetLocked(widgetType string, pkg *domain.Package) (bool, bool) {
+	statusChanged := false
+	if r.configManager != nil && r.configManager.ClearPackageError(widgetType) {
+		statusChanged = true
+	}
+	if _, wasIncomplete := r.incompletePkgs[widgetType]; wasIncomplete {
+		delete(r.incompletePkgs, widgetType)
+		statusChanged = true
+	}
+
+	widgetsChanged := false
+	newHash := r.computePackageHash(pkg)
+	if oldHash, hadHash := r.pkgHashes[widgetType]; !hadHash || oldHash != newHash {
+		r.pkgHashes[widgetType] = newHash
+		if r.renderEngine != nil {
+			r.renderEngine.Invalidate(widgetType)
+		}
+		if r.hub != nil {
+			if err := r.hub.DispatchWidgetReload(events.WidgetReloadEvent{Type: widgetType}); err != nil {
+				r.logger.Error("failed to dispatch widget reload", "type", widgetType, "error", err)
+			}
+		}
+		widgetsChanged = true
+	}
+	return widgetsChanged, statusChanged
+}
+
 // ReloadWidgets re-scans widget packages, invalidating template caches and broadcasting widget.reload or system.status.
 func (r *AssetReloader) ReloadWidgets() bool {
 	r.Lock()
@@ -124,21 +191,8 @@ func (r *AssetReloader) ReloadWidgets() bool {
 
 	for _, widgetType := range types {
 		if !r.packageDirExists(widgetType) {
-			if r.renderEngine != nil {
-				r.renderEngine.Invalidate(widgetType)
-			}
-			if r.configManager != nil && r.configManager.ClearPackageError(widgetType) {
+			if r.evictDeletedWidgetLocked(widgetType) {
 				statusChanged = true
-			}
-			if _, wasIncomplete := r.incompletePkgs[widgetType]; wasIncomplete {
-				delete(r.incompletePkgs, widgetType)
-				statusChanged = true
-			}
-			delete(r.pkgHashes, widgetType)
-			if r.hub != nil {
-				if err := r.hub.DispatchWidgetReload(events.WidgetReloadEvent{Type: widgetType}); err != nil {
-					r.logger.Error("failed to dispatch widget reload for deleted package", "type", widgetType, "error", err)
-				}
 			}
 			widgetsChanged = true
 			continue
@@ -146,43 +200,18 @@ func (r *AssetReloader) ReloadWidgets() bool {
 
 		pkg, err := r.loader.LoadPackage(widgetType)
 		if err != nil {
-			lastErr, hadErr := r.incompletePkgs[widgetType]
-			if !hadErr || lastErr != err.Error() {
-				if r.configManager != nil {
-					r.configManager.SetPackageError(widgetType, err)
-				}
-				r.incompletePkgs[widgetType] = err.Error()
+			if r.recordWidgetLoadErrorLocked(widgetType, err) {
 				statusChanged = true
-			}
-			if _, hadHash := r.pkgHashes[widgetType]; hadHash {
-				delete(r.pkgHashes, widgetType)
-				if r.renderEngine != nil {
-					r.renderEngine.Invalidate(widgetType)
-				}
 			}
 			continue
 		}
 
-		if r.configManager != nil && r.configManager.ClearPackageError(widgetType) {
-			statusChanged = true
-		}
-		if _, wasIncomplete := r.incompletePkgs[widgetType]; wasIncomplete {
-			delete(r.incompletePkgs, widgetType)
-			statusChanged = true
-		}
-
-		newHash := r.computePackageHash(pkg)
-		if oldHash, hadHash := r.pkgHashes[widgetType]; !hadHash || oldHash != newHash {
-			r.pkgHashes[widgetType] = newHash
-			if r.renderEngine != nil {
-				r.renderEngine.Invalidate(widgetType)
-			}
-			if r.hub != nil {
-				if err := r.hub.DispatchWidgetReload(events.WidgetReloadEvent{Type: widgetType}); err != nil {
-					r.logger.Error("failed to dispatch widget reload", "type", widgetType, "error", err)
-				}
-			}
+		wChanged, sChanged := r.updateLoadedWidgetLocked(widgetType, pkg)
+		if wChanged {
 			widgetsChanged = true
+		}
+		if sChanged {
+			statusChanged = true
 		}
 	}
 
