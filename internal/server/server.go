@@ -201,6 +201,7 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/health", s.handleHealth)
 	s.mux.HandleFunc("/debug/coverage/flush", s.handleCoverageFlush)
 	s.mux.Handle("/metrics", promhttp.Handler())
+	s.mux.HandleFunc("/api/perf", handlePerf(defaultPerfHistogramsOnce()))
 	s.mux.HandleFunc("/api/events", dispatchHandler(s, func() http.Handler { return s.eventsHandler }, isNil, func(h http.Handler, w http.ResponseWriter, r *http.Request) { h.ServeHTTP(w, r) }))
 	s.mux.HandleFunc("/api/screen/select", dispatchHandler(s, func() ScreenHandler { return s.screenHandler }, isNil, func(h ScreenHandler, w http.ResponseWriter, r *http.Request) { h.PostScreenSelect(w, r) }))
 	s.mux.HandleFunc("/api/screen/advance", dispatchHandler(s, func() ScreenHandler { return s.screenHandler }, isNil, func(h ScreenHandler, w http.ResponseWriter, r *http.Request) { h.PostScreenAdvance(w, r) }))
