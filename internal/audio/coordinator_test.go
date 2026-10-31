@@ -90,11 +90,11 @@ func TestCoordinator_ConcurrentAndSchema(t *testing.T) {
 	coord := audio.NewCoordinator(hub, &mockSink{})
 
 	var wg sync.WaitGroup
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
-			for j := 0; j < 50; j++ {
+			for j := range 50 {
 				_, _, _ = coord.SetVolume((id*20 + j) % 101)
 				_, _, _ = coord.SetMute(nil)
 				if v, _ := coord.GetState(); v < 0 || v > 100 {

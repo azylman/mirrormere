@@ -59,7 +59,7 @@ func simBrain(streaming bool, steps int, delay time.Duration, status, reply stri
 				onStatus(status)
 			}
 		}
-		for i := 0; i < steps; i++ {
+		for i := range steps {
 			if delay > 0 && !waitCtx(ctx, delay) {
 				return "", ctx.Err()
 			}
@@ -92,7 +92,7 @@ func heartbeatBrain(streaming bool, ch chan struct{}) BrainClient {
 func simTTS(chunks int, delay time.Duration, stall bool, finalErr error) TTSClient {
 	return mkStreamTTS(func(ctx context.Context, _ string, onChunk func(TTSAudioChunk) error) error {
 		_ = onChunk(TTSAudioChunk{})
-		for i := 0; i < chunks; i++ {
+		for range chunks {
 			if delay > 0 && !waitCtx(ctx, delay) {
 				return ctx.Err()
 			}

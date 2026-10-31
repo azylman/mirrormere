@@ -139,7 +139,7 @@ func TestPhotosProvider_ErrorsAndSWR(t *testing.T) {
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "text/html")
 			chunk := strings.Repeat("A", 1024*1024)
-			for i := 0; i < 6; i++ {
+			for range 6 {
 				_, _ = io.WriteString(w, chunk)
 			}
 		}))

@@ -168,7 +168,7 @@ func (m *mockStreamingTTS) Synthesize(ctx context.Context, text string, onChunk 
 }
 
 func mkStreamBrain(reply string, err error, sentences ...string) *mockStreamingBrain {
-	var chunks []BrainAudioChunk
+	chunks := make([]BrainAudioChunk, 0, len(sentences))
 	for _, s := range sentences {
 		chunks = append(chunks, BrainAudioChunk{Text: s})
 	}

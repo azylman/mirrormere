@@ -22,6 +22,7 @@ import (
 // invalidating compiled template caches and broadcasting SSE reload notifications.
 type AssetReloader struct {
 	sync.Mutex
+
 	customCSSPath string
 	loader        *widget.Loader
 	builtinDir    string

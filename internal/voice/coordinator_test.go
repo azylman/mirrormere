@@ -165,7 +165,7 @@ func TestCoordinator_ConcurrentAndSchema(t *testing.T) {
 	c := NewCoordinator(nil)
 	states := []string{StateIdle, StateListening, StateTranscribing, StateThinking, StateSynthesizing, StateSpeaking, StateError}
 	var wg sync.WaitGroup
-	for i := 0; i < 50; i++ {
+	for i := range 50 {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()

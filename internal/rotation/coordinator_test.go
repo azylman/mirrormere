@@ -29,7 +29,7 @@ func (m *mockBroadcaster) Publish(eventType string, data []byte) *events.Event {
 
 func makeTestSnapshot(totalScreens, intervalSec, pauseDurationSec int) *config.Snapshot {
 	screens := make([]layout.Screen, totalScreens)
-	for i := 0; i < totalScreens; i++ {
+	for i := range totalScreens {
 		screens[i] = layout.Screen{Index: i, Widgets: []layout.PlacedWidget{{WidgetID: "widget-screen", Dimensions: domain.NewDimension(3, 2)}}}
 	}
 	return &config.Snapshot{
@@ -209,7 +209,7 @@ func TestCoordinator_Concurrency(t *testing.T) {
 	defer coord.Stop()
 
 	var wg sync.WaitGroup
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
@@ -233,7 +233,7 @@ func TestCoordinator_Concurrency(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for i := 0; i < 50; i++ {
+			for range 50 {
 				fn()
 				runtime.Gosched()
 			}

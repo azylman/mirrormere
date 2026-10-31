@@ -532,7 +532,7 @@ func parseStringOrInt(v any) string {
 	case string:
 		return strings.TrimSpace(val)
 	case float64:
-		return fmt.Sprintf("%d", int(val))
+		return strconv.Itoa(int(val))
 	case int:
 		return strconv.Itoa(val)
 	case json.Number:
