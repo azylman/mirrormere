@@ -176,6 +176,12 @@ func buildDisplayHandler(stateProvider render.StateSnapshotProvider, currentThem
 			return "UTC"
 		}),
 		display.WithHideCursorProvider(func() bool { return cfg() != nil && cfg().Display.HideCursor }),
+		display.WithUIProvider(func() string {
+			if c := cfg(); c != nil {
+				return c.Display.GetUI()
+			}
+			return "legacy"
+		}),
 		display.WithRemoteURLProvider(func() string {
 			if c := cfg(); c != nil {
 				return c.Display.RemoteURL

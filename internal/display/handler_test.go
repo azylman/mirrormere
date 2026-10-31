@@ -321,3 +321,95 @@ func TestVoiceWaveformProvider(t *testing.T) {
 		t.Fatalf("disabled waveform rendered: %s", rec.Body.String())
 	}
 }
+
+func TestGetDisplay_UIShellSelection(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	legacyPath := filepath.Join(dir, "display.html")
+	reactPath := filepath.Join(dir, "display_react.html")
+	_ = os.WriteFile(legacyPath, []byte("LEGACY {{ .Timezone }}"), 0o644)
+	_ = os.WriteFile(reactPath, []byte("REACT {{ .Timezone }} {{ .Grid }}"), 0o644)
+
+	tests := []struct {
+		name     string
+		configUI string
+		query    string
+		want     string
+	}{
+		{"default is legacy", "", "", "LEGACY UTC"},
+		{"explicit legacy config", "legacy", "", "LEGACY UTC"},
+		{"react config", "react", "", "REACT UTC 6x2"},
+		{"query react overrides legacy config", "legacy", "ui=react", "REACT UTC 6x2"},
+		{"query legacy overrides react config", "react", "ui=legacy", "LEGACY UTC"},
+		{"unknown query value falls back to react config", "react", "ui=bogus", "REACT UTC 6x2"},
+		{"unknown query value falls back to legacy config", "", "ui=bogus", "LEGACY UTC"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			h := display.NewHandler(
+				display.WithTemplatePath(legacyPath), display.WithLocalTemplatePath(""),
+				display.WithReactTemplatePath(reactPath), display.WithLocalReactTemplatePath(""),
+				display.WithUIProvider(func() string { return tc.configUI }),
+				display.WithTimezoneProvider(func() string { return "UTC" }),
+			)
+			rec := httptest.NewRecorder()
+			h.GetDisplay(rec, httptest.NewRequest(http.MethodGet, "/display?"+tc.query, nil))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("code: got %d, want 200", rec.Code)
+			}
+			if got := rec.Body.String(); got != tc.want {
+				t.Fatalf("body: got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestGetDisplay_ReactShellMissingAndHead(t *testing.T) {
+	t.Parallel()
+	// Inline legacy content must never stand in for the React shell.
+	h := display.NewHandler(
+		display.WithTemplateContent([]byte("<h1>legacy</h1>")),
+		display.WithReactTemplatePath("/no/such/react"), display.WithLocalReactTemplatePath("/no/such/local"),
+	)
+	rec := httptest.NewRecorder()
+	h.GetDisplay(rec, httptest.NewRequest(http.MethodGet, "/display?ui=react", nil))
+	if rec.Code != http.StatusNotFound || !strings.Contains(rec.Body.String(), "display template not found") {
+		t.Fatalf("missing react shell: code %d body %q", rec.Code, rec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
+	h.GetDisplay(rec, httptest.NewRequest(http.MethodHead, "/display?ui=react", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("HEAD missing react shell: code %d, want 404", rec.Code)
+	}
+}
+
+func TestGetDisplay_ReactShellRepoTemplate(t *testing.T) {
+	t.Parallel()
+	h := display.NewHandler(
+		display.WithReactTemplatePath("../../web/templates/display_react.html"),
+		display.WithLocalReactTemplatePath(""),
+		display.WithTemplateContent([]byte("<h1>legacy</h1>")),
+		display.WithHideCursorProvider(func() bool { return true }),
+		display.WithRemoteURLProvider(func() string { return "http://remote.example/display" }),
+	)
+	rec := httptest.NewRecorder()
+	h.GetDisplay(rec, httptest.NewRequest(http.MethodGet, "/display?ui=react", nil))
+	body := rec.Body.String()
+	for _, want := range []string{
+		`<div id="root"></div>`,
+		`<script type="module" src="static/ui/app.js"></script>`,
+		`<base href="./">`,
+		`data-hide-cursor="true"`,
+		`class="mm-touch-display"`,
+		`data-remote-url="http://remote.example/display"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("react shell missing %q", want)
+		}
+	}
+	if strings.Contains(body, "<h1>legacy</h1>") {
+		t.Fatal("react request served legacy inline content")
+	}
+}

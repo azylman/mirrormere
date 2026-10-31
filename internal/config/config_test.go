@@ -474,3 +474,37 @@ func TestConfig_Accessors(t *testing.T) {
 	fbLoc := weatherFallbackCfg.GetLocationConfig()
 	assertEq(t, "fb loc", fbLoc != nil && fbLoc.Name == "San Jose" && *fbLoc.Latitude == 37.33, true)
 }
+
+func TestDisplayUI(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		yaml    string
+		wantUI  string
+		wantErr string
+	}{
+		{name: "omitted defaults to legacy", yaml: withBaseYAML(""), wantUI: "legacy"},
+		{name: "explicit legacy", yaml: withBaseYAML("  ui: legacy\n"), wantUI: "legacy"},
+		{name: "react", yaml: withBaseYAML("  ui: react\n"), wantUI: "react"},
+		{name: "react normalized case and whitespace", yaml: withBaseYAML("  ui: \" React \"\n"), wantUI: "react"},
+		{name: "unknown shell rejected", yaml: withBaseYAML("  ui: vue\n"), wantErr: "invalid display ui 'vue': must be one of legacy, react"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cfg, err := config.ParseWithEnv([]byte(tc.yaml), nil)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("error: got %v, want substring %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got := cfg.Display.GetUI(); got != tc.wantUI {
+				t.Fatalf("GetUI: got %q, want %q", got, tc.wantUI)
+			}
+		})
+	}
+}

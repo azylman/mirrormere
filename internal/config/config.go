@@ -86,6 +86,7 @@ type Config struct {
 
 // DisplayConfig specifies visual presentation, rotation parameters, and active widget instances.
 type DisplayConfig struct {
+	UI         string              `yaml:"ui,omitempty"` // "legacy" (default) or "react"; ?ui= on /display overrides
 	HideCursor bool                `yaml:"hide_cursor,omitempty"`
 	RemoteURL  string              `yaml:"remote_url,omitempty"`
 	Rotation   RotationConfig      `yaml:"rotation"`
@@ -94,6 +95,11 @@ type DisplayConfig struct {
 	Widgets    []WidgetConfig      `yaml:"widgets"`
 	Theme      *ThemeConfig        `yaml:"theme,omitempty"`
 	Voice      *DisplayVoiceConfig `yaml:"voice,omitempty"`
+}
+
+// GetUI returns the display shell selected by config: "legacy" (default) or "react".
+func (dc DisplayConfig) GetUI() string {
+	return strings.ToLower(trimmedOr(dc.UI, "legacy"))
 }
 
 // DisplayVoiceConfig configures voice visuals on the display.
@@ -568,7 +574,7 @@ func validateDisplayKeys(displayNode *yaml.Node) error {
 			if err := validateVoiceKeys(displayNode.Content[i+1]); err != nil {
 				return err
 			}
-		case "rotation", "grid", "header", "widgets", "hide_cursor", "remote_url", "theme":
+		case "rotation", "grid", "header", "widgets", "hide_cursor", "remote_url", "theme", "ui":
 		default:
 			return fmt.Errorf("line %d: unknown key '%s' under display", keyNode.Line, key)
 		}
@@ -695,6 +701,15 @@ func (c *Config) validateTheme() error {
 	return nil
 }
 
+func (c *Config) validateUI() error {
+	switch ui := c.Display.GetUI(); ui {
+	case "legacy", "react":
+		return nil
+	default:
+		return fmt.Errorf("invalid display ui '%s': must be one of legacy, react", c.Display.UI)
+	}
+}
+
 func (c *Config) validateHeaderWeather() error {
 	hw := c.Display.Header.Weather
 	if hw == nil {
@@ -753,6 +768,9 @@ func (c *Config) validateDisplayAndHeader() error {
 	}
 
 	if err := c.validateTheme(); err != nil {
+		return err
+	}
+	if err := c.validateUI(); err != nil {
 		return err
 	}
 	if err := c.validateHeaderWeather(); err != nil {
