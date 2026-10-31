@@ -998,8 +998,8 @@ func resolveEnvInValue(widgetID string, v any, prefix string, secrets map[string
 
 func resolveEnvInMap(widgetID string, m map[string]any, prefix string, secrets map[string]string, getenv func(string) string) error {
 	for k, v := range m {
-		if strings.HasSuffix(k, "_env") {
-			baseKey := strings.TrimSuffix(k, "_env")
+		if before, ok := strings.CutSuffix(k, "_env"); ok {
+			baseKey := before
 			if _, exists := m[baseKey]; exists {
 				return fmt.Errorf("widget '%s': cannot specify both '%s' and '%s'", widgetID, baseKey, k)
 			}

@@ -10,8 +10,6 @@ import (
 	"github.com/azylman/mirrormere/internal/config"
 )
 
-func ptr[T any](v T) *T { return &v }
-
 func assertEq[T comparable](t *testing.T, label string, got, want T) {
 	t.Helper()
 	if got != want {
@@ -388,7 +386,7 @@ func TestConfig_Accessors(t *testing.T) {
 	assertEq(t, "nil loc lon", nilLoc.GetLongitude(), 0)
 	assertEq(t, "zero loc lat", (&config.LocationConfig{}).GetLatitude(), 0)
 	assertEq(t, "zero loc lon", (&config.LocationConfig{}).GetLongitude(), 0)
-	popLoc := &config.LocationConfig{Latitude: ptr(37.8), Longitude: ptr(-122.2)}
+	popLoc := &config.LocationConfig{Latitude: new(37.8), Longitude: new(-122.2)}
 	assertEq(t, "pop loc lat", popLoc.GetLatitude(), 37.8)
 	assertEq(t, "pop loc lon", popLoc.GetLongitude(), -122.2)
 
@@ -401,62 +399,62 @@ func TestConfig_Accessors(t *testing.T) {
 	var nilVid *config.HeaderVideoConfig
 	assertEq(t, "vid nil", !nilVid.IsEnabled() && nilVid.GetStreamID() == "chromecast" && nilVid.GetType() == "webrtc", true)
 	assertEq(t, "vid zero", !(&config.HeaderVideoConfig{}).IsEnabled() && (&config.HeaderVideoConfig{}).GetStreamID() == "chromecast" && (&config.HeaderVideoConfig{}).GetType() == "webrtc", true)
-	popVid := &config.HeaderVideoConfig{Enabled: ptr(true), StreamID: "cam", Type: "hls"}
+	popVid := &config.HeaderVideoConfig{Enabled: new(true), StreamID: "cam", Type: "hls"}
 	assertEq(t, "vid pop", popVid.IsEnabled() && popVid.GetStreamID() == "cam" && popVid.GetType() == "hls", true)
 
 	var nilWave *config.VoiceWaveformConfig
 	assertEq(t, "wave nil", !nilWave.IsEnabled() && nilWave.GetLevelsURL() == "http://127.0.0.1:8765/levels" && nilWave.GetGain() == 2.2, true)
 	assertEq(t, "wave zero", !(&config.VoiceWaveformConfig{}).IsEnabled() && (&config.VoiceWaveformConfig{}).GetLevelsURL() == "http://127.0.0.1:8765/levels" && (&config.VoiceWaveformConfig{}).GetGain() == 2.2, true)
-	popWave := &config.VoiceWaveformConfig{Enabled: ptr(true), LevelsURL: "http://10.0.0.5:9000/levels", Gain: ptr(1.5)}
+	popWave := &config.VoiceWaveformConfig{Enabled: new(true), LevelsURL: "http://10.0.0.5:9000/levels", Gain: new(1.5)}
 	assertEq(t, "wave pop", popWave.IsEnabled() && popWave.GetLevelsURL() == "http://10.0.0.5:9000/levels" && popWave.GetGain() == 1.5, true)
 	assertEq(t, "wave blank url", (&config.VoiceWaveformConfig{LevelsURL: "  "}).GetLevelsURL(), "http://127.0.0.1:8765/levels")
 
 	var nilWeather *config.HeaderWeatherConfig
 	assertEq(t, "weather nil", nilWeather.GetRefreshIntervalSeconds(), 900)
 	assertEq(t, "weather zero", (&config.HeaderWeatherConfig{}).GetRefreshIntervalSeconds(), 900)
-	assertEq(t, "weather pop", (&config.HeaderWeatherConfig{RefreshIntervalSeconds: ptr(10)}).GetRefreshIntervalSeconds(), 10)
+	assertEq(t, "weather pop", (&config.HeaderWeatherConfig{RefreshIntervalSeconds: new(10)}).GetRefreshIntervalSeconds(), 10)
 
 	var nilChat *config.ChatLogConfig
 	assertEq(t, "chat nil", nilChat.GetTTL() == 20*time.Minute && nilChat.GetMaxMessagesPerNode() == 50, true)
 	assertEq(t, "chat zero", (&config.ChatLogConfig{}).GetTTL() == 20*time.Minute && (&config.ChatLogConfig{}).GetMaxMessagesPerNode() == 50, true)
-	nonPosChat := &config.ChatLogConfig{TTLMinutes: ptr(0), MaxMessagesPerNode: ptr(-5)}
+	nonPosChat := &config.ChatLogConfig{TTLMinutes: new(0), MaxMessagesPerNode: new(-5)}
 	assertEq(t, "chat nonpos", nonPosChat.GetTTL() == 20*time.Minute && nonPosChat.GetMaxMessagesPerNode() == 50, true)
-	popChat := &config.ChatLogConfig{TTLMinutes: ptr(5), MaxMessagesPerNode: ptr(10)}
+	popChat := &config.ChatLogConfig{TTLMinutes: new(5), MaxMessagesPerNode: new(10)}
 	assertEq(t, "chat pop", popChat.GetTTL() == 5*time.Minute && popChat.GetMaxMessagesPerNode() == 10, true)
 
 	var nilFP *config.FastPathConfig
 	assertEq(t, "fp nil", !nilFP.IsEnabled() && nilFP.GetTimeoutMS() == 800, true)
 	assertEq(t, "fp zero", !(&config.FastPathConfig{}).IsEnabled() && (&config.FastPathConfig{}).GetTimeoutMS() == 800, true)
-	assertEq(t, "fp nonpos", (&config.FastPathConfig{URL: "http://intent", TimeoutMS: ptr(-5)}).IsEnabled() && (&config.FastPathConfig{URL: "http://intent", TimeoutMS: ptr(-5)}).GetTimeoutMS() == 800, true)
-	popFP := &config.FastPathConfig{URL: "http://intent", TimeoutMS: ptr(500)}
+	assertEq(t, "fp nonpos", (&config.FastPathConfig{URL: "http://intent", TimeoutMS: new(-5)}).IsEnabled() && (&config.FastPathConfig{URL: "http://intent", TimeoutMS: new(-5)}).GetTimeoutMS() == 800, true)
+	popFP := &config.FastPathConfig{URL: "http://intent", TimeoutMS: new(500)}
 	assertEq(t, "fp pop", popFP.IsEnabled() && popFP.GetTimeoutMS() == 500, true)
 
 	var nilSID *config.SpeakerIDConfig
 	assertEq(t, "sid nil", !nilSID.IsEnabled() && nilSID.GetThreshold() == 0.70 && nilSID.GetTimeoutSeconds() == 5, true)
 	assertEq(t, "sid zero", !(&config.SpeakerIDConfig{}).IsEnabled() && (&config.SpeakerIDConfig{}).GetThreshold() == 0.70 && (&config.SpeakerIDConfig{}).GetTimeoutSeconds() == 5, true)
-	assertEq(t, "sid nonpos", (&config.SpeakerIDConfig{TimeoutSeconds: ptr(-5)}).GetTimeoutSeconds(), 5)
-	popSID := &config.SpeakerIDConfig{EmbedURL: "http://embed", Model: "ecapa", Speakers: []config.SpeakerFingerprint{{ID: "a", Embedding: []float64{1.0}}}, Threshold: ptr(0.85), TimeoutSeconds: ptr(10)}
+	assertEq(t, "sid nonpos", (&config.SpeakerIDConfig{TimeoutSeconds: new(-5)}).GetTimeoutSeconds(), 5)
+	popSID := &config.SpeakerIDConfig{EmbedURL: "http://embed", Model: "ecapa", Speakers: []config.SpeakerFingerprint{{ID: "a", Embedding: []float64{1.0}}}, Threshold: new(0.85), TimeoutSeconds: new(10)}
 	assertEq(t, "sid pop", popSID.IsEnabled() && popSID.GetThreshold() == 0.85 && popSID.GetTimeoutSeconds() == 10, true)
 
 	var nilVH *config.VoiceHubConfig
 	assertEq(t, "vh nil", !nilVH.IsEnabled() && nilVH.GetBrainTimeoutSeconds() == 30 && nilVH.GetTTSTimeoutSeconds() == 10 && nilVH.GetTTSVoice() == "af_bella" && nilVH.GetTTSModel() == "kokoro", true)
 	assertEq(t, "vh zero", !(&config.VoiceHubConfig{}).IsEnabled() && (&config.VoiceHubConfig{}).GetBrainTimeoutSeconds() == 30 && (&config.VoiceHubConfig{}).GetTTSTimeoutSeconds() == 10 && (&config.VoiceHubConfig{}).GetTTSVoice() == "af_bella" && (&config.VoiceHubConfig{}).GetTTSModel() == "kokoro", true)
-	nonPosVH := &config.VoiceHubConfig{BrainTimeoutSeconds: ptr(-5), TTSTimeoutSeconds: ptr(0)}
+	nonPosVH := &config.VoiceHubConfig{BrainTimeoutSeconds: new(-5), TTSTimeoutSeconds: new(0)}
 	assertEq(t, "vh nonpos", nonPosVH.GetBrainTimeoutSeconds() == 30 && nonPosVH.GetTTSTimeoutSeconds() == 10, true)
-	popVH := &config.VoiceHubConfig{Enabled: true, BrainTimeoutSeconds: ptr(60), TTSTimeoutSeconds: ptr(20), TTSVoice: "custom_v", TTSModel: "custom_m"}
+	popVH := &config.VoiceHubConfig{Enabled: true, BrainTimeoutSeconds: new(60), TTSTimeoutSeconds: new(20), TTSVoice: "custom_v", TTSModel: "custom_m"}
 	assertEq(t, "vh pop", popVH.IsEnabled() && popVH.GetBrainTimeoutSeconds() == 60 && popVH.GetTTSTimeoutSeconds() == 20 && popVH.GetTTSVoice() == "custom_v" && popVH.GetTTSModel() == "custom_m", true)
 
 	var nilRot *config.RotationConfig
 	assertEq(t, "rot nil", nilRot.GetIntervalSeconds() == 30 && nilRot.GetPauseDurationSeconds() == 120, true)
 	zeroRot := config.RotationConfig{}
 	assertEq(t, "rot zero", zeroRot.GetIntervalSeconds() == 30 && zeroRot.GetPauseDurationSeconds() == 120, true)
-	popRot := config.RotationConfig{IntervalSeconds: ptr(10), Transition: "fade", PauseOnTouch: ptr(false), PauseDurationSeconds: ptr(60)}
+	popRot := config.RotationConfig{IntervalSeconds: new(10), Transition: "fade", PauseOnTouch: new(false), PauseDurationSeconds: new(60)}
 	assertEq(t, "rot pop", popRot.GetIntervalSeconds() == 10 && popRot.GetPauseDurationSeconds() == 60, true)
 
 	var nilHdr *config.HeaderConfig
 	assertEq(t, "hdr nil", nilHdr.IsEnabled(), true)
 	assertEq(t, "hdr zero", (&config.HeaderConfig{}).IsEnabled(), true)
-	assertEq(t, "hdr pop", (&config.HeaderConfig{Enabled: ptr(false)}).IsEnabled(), false)
+	assertEq(t, "hdr pop", (&config.HeaderConfig{Enabled: new(false)}).IsEnabled(), false)
 
 	elems := config.DefaultHeaderElements()
 	assertEq(t, "hdr elems", len(elems) == 4 && elems[0] == "clock", true)

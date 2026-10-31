@@ -440,8 +440,7 @@ func TestCastClient_WatchdogTrigger(t *testing.T) {
 		WatchdogTimeout:   10 * time.Millisecond,
 		ReconnectBase:     20 * time.Millisecond,
 	})
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	client.Start(ctx)
 	defer client.Close()

@@ -3,6 +3,7 @@ package adapters_test
 import (
 	"context"
 	"errors"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -23,9 +24,7 @@ func newRouteServer(t *testing.T, routes map[string]mockRoute, authOut *string) 
 	t.Helper()
 	var mu sync.Mutex
 	m := make(map[string]mockRoute, len(routes))
-	for k, v := range routes {
-		m[k] = v
-	}
+	maps.Copy(m, routes)
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		defer mu.Unlock()

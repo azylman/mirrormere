@@ -397,8 +397,8 @@ func (p *CalendarProvider) fetchCalendar(ctx context.Context, source CalendarSou
 	}
 
 	targetURL := source.URL
-	if strings.HasPrefix(targetURL, "webcal://") {
-		targetURL = "https://" + strings.TrimPrefix(targetURL, "webcal://")
+	if after, ok := strings.CutPrefix(targetURL, "webcal://"); ok {
+		targetURL = "https://" + after
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
@@ -435,18 +435,16 @@ func (p *CalendarProvider) fetchCalendar(ctx context.Context, source CalendarSou
 }
 
 func addRecurrencePropertyKeys(dst map[string]bool, prop *ical.IANAProperty) {
-	for _, raw := range strings.Split(prop.Value, ",") {
+	for raw := range strings.SplitSeq(prop.Value, ",") {
 		v := strings.TrimSpace(raw)
 		if v == "" {
 			continue
 		}
 		dst[v] = true
 		itemProp := &ical.IANAProperty{
-			BaseProperty: ical.BaseProperty{
-				IANAToken:      prop.IANAToken,
-				Value:          v,
-				ICalParameters: prop.ICalParameters,
-			},
+			IANAToken:      prop.IANAToken,
+			Value:          v,
+			ICalParameters: prop.ICalParameters,
 		}
 		if t, err := parseICalDateTime(itemProp, len(v) == 8); err == nil {
 			dst[t.UTC().Format("20060102T150405Z")] = true
@@ -771,10 +769,7 @@ func formatEventRange(start, end time.Time, isAllDay bool) (string, string) {
 		if end.After(start) && end.Sub(start) >= 24*time.Hour {
 			endInclusive = end.Add(-24 * time.Hour)
 		}
-		endStr := endInclusive.Format("2006-01-02")
-		if endStr < startStr {
-			endStr = startStr
-		}
+		endStr := max(endInclusive.Format("2006-01-02"), startStr)
 		return startStr, endStr
 	}
 	return start.Format(time.RFC3339), end.Format(time.RFC3339)

@@ -196,7 +196,7 @@ func extractTargetTime(val any) (float64, error) {
 	if val == nil {
 		return 0, errors.New("missing seek value")
 	}
-	if p, ok := val.(*interface{}); ok {
+	if p, ok := val.(*any); ok {
 		if p == nil || *p == nil {
 			return 0, errors.New("missing seek value")
 		}

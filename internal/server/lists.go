@@ -71,8 +71,7 @@ func (h *DefaultListsHandler) CompleteListItem(w http.ResponseWriter, r *http.Re
 		case errors.Is(completeErr, adapters.ErrUnauthorized):
 			writeAPIError(w, http.StatusUnauthorized, "upstream provider unauthorized")
 		default:
-			var upstreamErr adapters.UpstreamHTTPError
-			if errors.As(completeErr, &upstreamErr) {
+			if upstreamErr, ok := errors.AsType[adapters.UpstreamHTTPError](completeErr); ok {
 				writeAPIError(w, http.StatusBadGateway, fmt.Sprintf("upstream provider error (status %d)", upstreamErr.Code))
 			} else {
 				writeAPIError(w, http.StatusInternalServerError, "failed to complete item: "+completeErr.Error())

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -58,9 +59,7 @@ func TestPhotosProvider_FetchExtraction(t *testing.T) {
 			defer ts.Close()
 
 			cfg := map[string]any{"share_url": ts.URL}
-			for k, v := range tc.cfg {
-				cfg[k] = v
-			}
+			maps.Copy(cfg, tc.cfg)
 			p := provider.NewPhotosProvider()
 			if err := p.Init(context.Background(), cfg, provider.InitOptions{}); err != nil {
 				t.Fatalf("Init failed: %v", err)

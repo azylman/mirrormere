@@ -191,7 +191,7 @@ func TestActionServer_HandleCoverageFlush(t *testing.T) {
 func TestExtractTargetTime(t *testing.T) {
 	t.Parallel()
 	nestedVal := any(42.5)
-	var ifaceNil *interface{}
+	var ifaceNil *any
 
 	for _, tc := range []struct {
 		input   any

@@ -376,10 +376,7 @@ func (p *WeatherProvider) Fetch(ctx context.Context) (any, error) {
 	}
 
 	// Limit hourly timeline to next 24 entries
-	endIndex := startIndex + 24
-	if endIndex > maxSafeLen {
-		endIndex = maxSafeLen
-	}
+	endIndex := min(startIndex+24, maxSafeLen)
 
 	for i := startIndex; i < endIndex; i++ {
 		hIsDay := 1

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"runtime"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -230,14 +231,12 @@ func TestCoordinator_Concurrency(t *testing.T) {
 	}
 
 	runWorker := func(fn func()) {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for range 50 {
 				fn()
 				runtime.Gosched()
 			}
-		}()
+		})
 	}
 	runWorker(func() {
 		coord.mu.Lock()
@@ -251,8 +250,8 @@ func TestCoordinator_Concurrency(t *testing.T) {
 
 	mb.mu.Lock()
 	defer mb.mu.Unlock()
-	for i := len(mb.events) - 1; i >= 0; i-- {
-		if mb.events[i] == events.EventScreenRotate {
+	for i, v := range slices.Backward(mb.events) {
+		if v == events.EventScreenRotate {
 			var lastRotate events.ScreenRotateData
 			if err := json.Unmarshal(mb.datas[i], &lastRotate); err == nil && lastRotate.CurrentScreen == coord.CurrentScreen() {
 				return

@@ -2,6 +2,7 @@ package events
 
 import (
 	"encoding/json"
+	"maps"
 	"strconv"
 	"sync"
 	"time"
@@ -274,9 +275,7 @@ func (p *InMemoryStateProvider) GetProvidersStatus() map[string]string {
 		return nil
 	}
 	copied := make(map[string]string, len(p.providers))
-	for k, v := range p.providers {
-		copied[k] = v
-	}
+	maps.Copy(copied, p.providers)
 	return copied
 }
 

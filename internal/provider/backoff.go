@@ -54,12 +54,10 @@ func IsNetworkOrServerError(err error) bool {
 	}
 
 	// 2. Net errors (timeouts, DNS lookup failures, socket operation errors)
-	var ne net.Error
-	if errors.As(err, &ne) {
+	if _, ok := errors.AsType[net.Error](err); ok {
 		return true
 	}
-	var opErr *net.OpError
-	if errors.As(err, &opErr) {
+	if _, ok := errors.AsType[*net.OpError](err); ok {
 		return true
 	}
 
@@ -153,10 +151,7 @@ func (b *BackoffPolicy) NextDelay(failures int, intervalCap time.Duration) time.
 
 	r := randFn()
 	jitter := (r*2.0 - 1.0) * jitterFrac
-	finalDelay := time.Duration(delay * (1.0 + jitter))
-	if finalDelay < 0 {
-		finalDelay = 0
-	}
+	finalDelay := max(time.Duration(delay*(1.0+jitter)), 0)
 
 	// Enforce hard ceiling against intervalCap
 	if intervalCap > 0 && finalDelay > intervalCap {

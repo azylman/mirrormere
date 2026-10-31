@@ -68,22 +68,18 @@ func TestHub_ConcurrentPublishAndSubscribe(t *testing.T) {
 	var wg, pubWg sync.WaitGroup
 	for range 5 {
 		ch, unsub := hub.Subscribe(ctx)
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			defer unsub()
 			for range ch {
 			}
-		}()
+		})
 	}
 	for range 5 {
-		pubWg.Add(1)
-		go func() {
-			defer pubWg.Done()
+		pubWg.Go(func() {
 			for range 20 {
 				hub.Publish(EventWidgetUpdate, []byte("{}"))
 			}
-		}()
+		})
 	}
 	pubWg.Wait()
 	cancel()

@@ -2,6 +2,7 @@ package provider_test
 
 import (
 	"context"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -27,9 +28,7 @@ func fetchTestCalendar(t *testing.T, ics string, refTime time.Time, cfgOverrides
 	cfg := map[string]any{
 		"calendars": []any{map[string]any{"name": "Cal", "url": srv.URL, "color": "#3b82f6"}},
 	}
-	for k, v := range cfgOverrides {
-		cfg[k] = v
-	}
+	maps.Copy(cfg, cfgOverrides)
 	if err := p.Init(context.Background(), cfg, provider.InitOptions{}); err != nil {
 		return provider.CalendarSnapshot{}, err
 	}

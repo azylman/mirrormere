@@ -28,7 +28,7 @@ func perfHistogramCount(t *testing.T, srv *server.Server, series string) float64
 	t.Helper()
 	rec := httptest.NewRecorder()
 	srv.Routes().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
-	for _, line := range strings.Split(rec.Body.String(), "\n") {
+	for line := range strings.SplitSeq(rec.Body.String(), "\n") {
 		if !strings.HasPrefix(line, series+" ") {
 			continue
 		}

@@ -397,9 +397,7 @@ func TestLKGC_ConcurrencyAndRace(t *testing.T) {
 	stopChan := make(chan struct{})
 
 	for range 10 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for {
 				select {
 				case <-stopChan:
@@ -413,12 +411,10 @@ func TestLKGC_ConcurrencyAndRace(t *testing.T) {
 					}
 				}
 			}
-		}()
+		})
 	}
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		zones := []string{"America/New_York", "America/Chicago", "America/Denver", "America/Los_Angeles"}
 		for i := range 20 {
 			y := "invalid: yaml: ["
@@ -428,7 +424,7 @@ func TestLKGC_ConcurrencyAndRace(t *testing.T) {
 			_, _, _ = m.Reload([]byte(y))
 		}
 		close(stopChan)
-	}()
+	})
 	wg.Wait()
 }
 
