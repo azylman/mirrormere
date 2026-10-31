@@ -189,6 +189,12 @@ func (m *mockAll) PostScreenAdvance(w http.ResponseWriter, _ *http.Request) { m.
 
 func (m *mockAll) PostScreenPause(w http.ResponseWriter, _ *http.Request) { m.w(w, "screen_pause") }
 
+func (m *mockAll) GetScreens(w http.ResponseWriter, _ *http.Request) { m.w(w, "screens") }
+
+func (m *mockAll) GetWidgetJSON(w http.ResponseWriter, _ *http.Request, id string) {
+	m.w(w, "widget:"+id)
+}
+
 func (m *mockAll) GetWidgetRender(w http.ResponseWriter, _ *http.Request, id string) {
 	m.w(w, "render:"+id)
 }
@@ -262,7 +268,9 @@ func TestServer_HandlerDelegation(t *testing.T) {
 		{"screen_select", "screen", http.MethodPost, "/api/screen/select", "screen_select"},
 		{"screen_advance", "screen", http.MethodPost, "/api/screen/advance", "screen_advance"},
 		{"screen_pause", "screen", http.MethodPost, "/api/screen/pause", "screen_pause"},
+		{"screens_get", "screen", http.MethodGet, "/api/screens", "screens"},
 		{"render_widget", "render", http.MethodGet, "/api/widgets/sensor-1/render", "render:sensor-1"},
+		{"widget_json", "render", http.MethodGet, "/api/widgets/sensor-1", "widget:sensor-1"},
 		{"render_asset", "render", http.MethodGet, "/widget-types/clock/assets/icon.png", "asset:clock:icon.png"},
 		{"render_style", "render", http.MethodGet, "/style.css", "style"},
 		{"display_main", "display", http.MethodGet, "/display", "display"},

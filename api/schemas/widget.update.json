@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "widget.update",
+  "description": "Widget data update broadcast over SSE (provider refresh, custom push, hydration and degraded updates). The data field of GET /api/widgets/{widget_id} carries the same payload for the same widget.",
+  "type": "object",
+  "required": [
+    "widget_id",
+    "timestamp",
+    "state",
+    "data"
+  ],
+  "properties": {
+    "widget_id": {
+      "type": "string",
+      "description": "Widget instance identifier"
+    },
+    "timestamp": {
+      "type": "string",
+      "description": "RFC 3339 time the data was produced"
+    },
+    "state": {
+      "type": "string",
+      "description": "Widget health state, e.g. healthy or degraded"
+    },
+    "data": {
+      "description": "Domain data; shape is defined by the widget type's manifest response_schema"
+    }
+  },
+  "additionalProperties": false
+}

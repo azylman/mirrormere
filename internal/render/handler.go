@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -80,23 +81,10 @@ func (h *Handler) GetWidgetRender(w http.ResponseWriter, r *http.Request, widget
 		return
 	}
 
-	overrides := make(map[string]any)
-	if dateParam := strings.TrimSpace(r.URL.Query().Get("date")); dateParam != "" {
-		if _, err := time.Parse("2006-01-02", dateParam); err == nil {
-			overrides["date"] = dateParam
-		} else {
-			writeJSONError(w, http.StatusBadRequest, "invalid date parameter: must be YYYY-MM-DD")
-			return
-		}
-	}
-	if viewParam := strings.TrimSpace(r.URL.Query().Get("view")); viewParam != "" {
-		lowerView := strings.ToLower(viewParam)
-		if lowerView == "day" || lowerView == "week" || lowerView == "month" {
-			overrides["default_view"] = lowerView
-		} else {
-			writeJSONError(w, http.StatusBadRequest, "invalid view parameter: must be day, week, or month")
-			return
-		}
+	overrides, err := parseWidgetOverrides(r.URL.Query())
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
 	}
 
 	htmlBytes, err := h.engine.RenderWidgetWithOverrides(r.Context(), widgetID, r.URL.Query().Get("node"), overrides)
@@ -117,6 +105,110 @@ func (h *Handler) GetWidgetRender(w http.ResponseWriter, r *http.Request, widget
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
 	}
+}
+
+// parseWidgetOverrides validates the date and view query parameters shared by the HTML and JSON widget routes
+// and returns them as configuration overrides.
+func parseWidgetOverrides(query url.Values) (map[string]any, error) {
+	overrides := make(map[string]any)
+	if dateParam := strings.TrimSpace(query.Get("date")); dateParam != "" {
+		if _, err := time.Parse("2006-01-02", dateParam); err != nil {
+			return nil, errors.New("invalid date parameter: must be YYYY-MM-DD")
+		}
+		overrides["date"] = dateParam
+	}
+	if viewParam := strings.TrimSpace(query.Get("view")); viewParam != "" {
+		lowerView := strings.ToLower(viewParam)
+		if lowerView != "day" && lowerView != "week" && lowerView != "month" {
+			return nil, errors.New("invalid view parameter: must be day, week, or month")
+		}
+		overrides["default_view"] = lowerView
+	}
+	return overrides, nil
+}
+
+// GetWidgetJSON handles GET /api/widgets/{widget_id} requests, returning the widget's data, config, placement
+// and runtime state as JSON for client-side rendering. Calendar-grid widgets include view_model, the
+// server-resolved week and month geometry over the merged config.
+func (h *Handler) GetWidgetJSON(w http.ResponseWriter, r *http.Request, widgetID string) {
+	if !handleCORSAndMethod(w, r) {
+		return
+	}
+
+	if h.engine == nil {
+		writeJSONError(w, http.StatusInternalServerError, "rendering engine not configured")
+		return
+	}
+
+	overrides, err := parseWidgetOverrides(r.URL.Query())
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	ctx, err := h.engine.WidgetContext(r.Context(), widgetID, r.URL.Query().Get("node"), overrides)
+	if err != nil {
+		var notFound WidgetNotFoundError
+		if errors.As(err, &notFound) {
+			writeJSONError(w, http.StatusNotFound, notFound.Error())
+			return
+		}
+		writeJSONError(w, http.StatusInternalServerError, "failed to resolve widget: "+err.Error())
+		return
+	}
+
+	resp := api.WidgetDetailResponse{
+		WidgetId:   ctx.ID,
+		Type:       ctx.Type,
+		Origin:     []int{ctx.Origin[0], ctx.Origin[1]},
+		Dimensions: []int{ctx.Dimensions.Cols, ctx.Dimensions.Rows},
+		Config:     ctx.Config,
+		State:      ctx.State,
+		Data:       ctx.Data,
+		Timestamp:  ctx.Timestamp,
+		Online:     ctx.Online,
+		AssetsBase: ctx.Assets + "/",
+	}
+	if ctx.Type == "calendar-grid" {
+		viewModel, err := h.calendarViewModel(ctx)
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "failed to build calendar view model: "+err.Error())
+			return
+		}
+		resp.ViewModel = &viewModel
+	}
+
+	body, err := json.Marshal(resp)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "failed to encode widget: "+err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	if r.Method == http.MethodGet {
+		if _, err := w.Write(body); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+	}
+}
+
+// calendarViewModel builds the calendar-grid week and month view models over the merged widget context,
+// so the date and view overrides change the geometry. active_view mirrors the template's default-view rule.
+func (h *Handler) calendarViewModel(ctx Context) (map[string]any, error) {
+	now := h.engine.nowFunc()
+	week, err := BuildFamilyView(ctx.Data, ctx.Config, ctx.Dimensions, now)
+	if err != nil {
+		return nil, err
+	}
+	month, err := BuildFamilyMonthView(ctx.Data, ctx.Config, ctx.Dimensions, now)
+	if err != nil {
+		return nil, err
+	}
+	activeView := "week"
+	if strings.EqualFold(stringOr(ctx.Config, "default_view", "week"), "month") {
+		activeView = "month"
+	}
+	return map[string]any{"week": week, "month": month, "active_view": activeView}, nil
 }
 
 // GetWidgetAsset handles GET /widget-types/{type}/assets/{path} requests with path traversal protection.
