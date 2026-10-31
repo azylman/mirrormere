@@ -475,7 +475,17 @@ run_code_health
 run_golangci_lint
 run_deadcode
 run_coverage_gate
-if [ -n "$(git status --porcelain -- web/ui web/static/ui 2>/dev/null)" ] && [ -d "$REPO_ROOT/web/ui/node_modules" ]; then
+ui_changed=""
+if [ -n "$(git status --porcelain -- web/ui web/static/ui 2>/dev/null)" ]; then
+    ui_changed=1
+fi
+if git rev-parse --verify -q origin/main >/dev/null 2>&1; then
+    base=$(git merge-base HEAD origin/main 2>/dev/null || true)
+    if [ -n "$base" ] && [ -n "$(git diff --name-only "$base" HEAD -- web/ui web/static/ui 2>/dev/null)" ]; then
+        ui_changed=1
+    fi
+fi
+if [ -n "$ui_changed" ] && [ -d "$REPO_ROOT/web/ui/node_modules" ]; then
     run_ui_checks
 fi
 
