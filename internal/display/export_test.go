@@ -5,6 +5,7 @@ func WithTemplatePath(path string) HandlerOption { return func(h *Handler) { h.t
 func WithLocalTemplatePath(path string) HandlerOption {
 	return func(h *Handler) { h.localTemplatePath = path }
 }
+
 func WithReactTemplatePath(path string) HandlerOption {
 	return func(h *Handler) { h.reactTemplatePath = path }
 }
