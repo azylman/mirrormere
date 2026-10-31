@@ -239,39 +239,131 @@ func TestAssetReloader_ReloadWidgets(t *testing.T) {
 	}
 }
 
-func TestAssetReloader_EdgeCases(t *testing.T) {
-	for _, tc := range []struct{ name, target string }{
-		{"nil_safety", "nil_safety"}, {"missing_dir", "missing_dir"}, {"read_errors", "read_errors"},
-	} {
+func TestAssetReloader_ReloadCSS_Guards(t *testing.T) {
+	tests := []struct {
+		name       string
+		subPath    string
+		wantReload bool
+	}{
+		{"empty_path", "", false},
+		{"missing_file", "missing.css", false},
+		{"directory_read_error", ".", false},
+	}
+	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			tmp := t.TempDir()
-			switch tc.target {
-			case "nil_safety":
-				r := NewAssetReloader("", nil, "", "", nil, nil, nil, nil)
-				if r.ReloadCSS() || r.ReloadWidgets() || func() bool {
-					c, w := r.Reload()
-					return c || w
-				}() {
-					t.Fatal("expected false")
+			var p string
+			if tc.subPath == "." {
+				p = tmp
+			} else if tc.subPath != "" {
+				p = filepath.Join(tmp, tc.subPath)
+			}
+			r := NewAssetReloader(p, nil, "", "", nil, nil, nil, nil)
+			if got := r.ReloadCSS(); got != tc.wantReload {
+				t.Fatalf("ReloadCSS() = %v, want %v", got, tc.wantReload)
+			}
+		})
+	}
+}
+
+func TestAssetReloader_ReloadWidgets_Guards(t *testing.T) {
+	tests := []struct {
+		name       string
+		withLoader bool
+		dirKind    string
+		wantReload bool
+	}{
+		{"nil_loader", false, "none", false},
+		{"missing_dirs", true, "missing", false},
+		{"file_dir_read_error", true, "file", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tmp := t.TempDir()
+			var dir string
+			if tc.dirKind == "missing" {
+				dir = filepath.Join(tmp, "missing")
+			} else if tc.dirKind == "file" {
+				dir = filepath.Join(tmp, "file")
+				if err := os.WriteFile(dir, []byte("x"), 0o644); err != nil {
+					t.Fatalf("write file: %v", err)
 				}
-			case "missing_dir":
-				m := filepath.Join(tmp, "m")
-				r := NewAssetReloader(filepath.Join(tmp, "m.css"), widget.NewLoader("", m), "", m, nil, nil, nil, nil)
-				if c, w := r.Reload(); c || w {
-					t.Fatal("expected false")
-				}
-			case "read_errors":
-				cd, cf, bf := filepath.Join(tmp, "cd"), filepath.Join(tmp, "cf"), filepath.Join(tmp, "bf")
-				_ = os.MkdirAll(cd, 0o755)
-				_ = os.WriteFile(cf, []byte("x"), 0o644)
-				_ = os.WriteFile(bf, []byte("x"), 0o644)
-				r := NewAssetReloader(cd, nil, bf, cf, nil, nil, nil, nil)
-				if r.ReloadCSS() || r.ReloadWidgets() {
-					t.Fatal("expected false on read errors")
-				}
-				if r.computePackageHash(&domain.Package{ManifestPath: filepath.Join(tmp, "m"), ViewPath: filepath.Join(tmp, "v")}) == "" {
-					t.Fatal("hash empty")
-				}
+			}
+			var loader *widget.Loader
+			if tc.withLoader {
+				loader = widget.NewLoader("", dir)
+			}
+			r := NewAssetReloader("", loader, dir, dir, nil, nil, nil, nil)
+			if got := r.ReloadWidgets(); got != tc.wantReload {
+				t.Fatalf("ReloadWidgets() = %v, want %v", got, tc.wantReload)
+			}
+		})
+	}
+}
+
+func TestAssetReloader_Reload_Guards(t *testing.T) {
+	tests := []struct {
+		name                 string
+		cssSubPath           string
+		widgetDirKind        string
+		wantCSS, wantWidgets bool
+	}{
+		{
+			name:        "nil_safety",
+			wantCSS:     false,
+			wantWidgets: false,
+		},
+		{
+			name:          "missing_dirs",
+			cssSubPath:    "missing.css",
+			widgetDirKind: "missing",
+			wantCSS:       false,
+			wantWidgets:   false,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tmp := t.TempDir()
+			var p string
+			if tc.cssSubPath != "" {
+				p = filepath.Join(tmp, tc.cssSubPath)
+			}
+			var dir string
+			var loader *widget.Loader
+			if tc.widgetDirKind == "missing" {
+				dir = filepath.Join(tmp, "missing")
+				loader = widget.NewLoader("", dir)
+			}
+			r := NewAssetReloader(p, loader, dir, dir, nil, nil, nil, nil)
+			c, w := r.Reload()
+			if c != tc.wantCSS || w != tc.wantWidgets {
+				t.Fatalf("Reload() = (%v, %v), want (%v, %v)", c, w, tc.wantCSS, tc.wantWidgets)
+			}
+		})
+	}
+}
+
+func TestAssetReloader_ComputePackageHash(t *testing.T) {
+	tests := []struct {
+		name     string
+		pkg      *domain.Package
+		wantZero bool
+	}{
+		{
+			name: "missing_paths",
+			pkg: &domain.Package{
+				ManifestPath: "/nonexistent/manifest.yaml",
+				ViewPath:     "/nonexistent/widget.html",
+			},
+			wantZero: false,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			r := NewAssetReloader("", nil, "", "", nil, nil, nil, nil)
+			h := r.computePackageHash(tc.pkg)
+			if (h == "") != tc.wantZero {
+				t.Fatalf("computePackageHash() = %q, wantZero = %v", h, tc.wantZero)
 			}
 		})
 	}
