@@ -185,6 +185,8 @@ type DisplayTemplateData struct {
 	VoiceWaveform *VoiceWaveformTemplateData
 	Theme         string
 	Grid          string
+	// Perf loads the client-side performance instrumentation (static/js/perf.js) when the page is requested with ?perf=1.
+	Perf bool
 }
 
 // NewHandler constructs a Handler with default filesystem paths.
@@ -285,6 +287,7 @@ func (h *Handler) GetDisplay(w http.ResponseWriter, r *http.Request) {
 			VoiceWaveform: h.VoiceWaveform(),
 			Theme:         h.Theme(),
 			Grid:          h.Grid(),
+			Perf:          r.URL.Query().Get("perf") == "1",
 		}); err == nil {
 			out = buf.Bytes()
 		}
