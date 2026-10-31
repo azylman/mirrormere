@@ -139,7 +139,7 @@ func TestPerf_WrongMethod(t *testing.T) {
 func oversizeBatch() string {
 	var b strings.Builder
 	b.WriteString(`{"samples":[`)
-	for i := 0; i < 201; i++ {
+	for i := range 201 {
 		if i > 0 {
 			b.WriteByte(',')
 		}
@@ -152,7 +152,7 @@ func oversizeBatch() string {
 func fullBatch() string {
 	var b strings.Builder
 	b.WriteString(`{"samples":[`)
-	for i := 0; i < 200; i++ {
+	for i := range 200 {
 		if i > 0 {
 			b.WriteByte(',')
 		}
