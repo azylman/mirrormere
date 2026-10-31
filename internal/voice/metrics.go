@@ -56,7 +56,7 @@ func DefaultMetrics() *Metrics {
 func newMetrics(reg prometheus.Registerer) *Metrics {
 	factory := promauto.With(reg)
 
-	return &Metrics{
+	m := &Metrics{
 		stageDuration: factory.NewHistogramVec(
 			prometheus.HistogramOpts{
 				Namespace: "mirrormere",
@@ -141,6 +141,23 @@ func newMetrics(reg prometheus.Registerer) *Metrics {
 			[]string{"node_id", "voice"},
 		),
 	}
+
+	for _, status := range []string{"success", "error"} {
+		m.turnsTotal.WithLabelValues("cockpit", status).Add(0)
+	}
+	m.falseWakes.WithLabelValues("cockpit").Add(0)
+	for _, stage := range []string{"wake_eval", "stt", "brain", "tts", "deliberation"} {
+		m.errorsTotal.WithLabelValues("cockpit", stage, "none").Add(0)
+		for _, status := range []string{"success", "error", "timeout"} {
+			m.stageDuration.WithLabelValues("cockpit", stage, status)
+		}
+	}
+	m.sttRTF.WithLabelValues("cockpit", "faster-whisper").Set(0)
+	m.ttsCPS.WithLabelValues("cockpit", "kokoro").Set(0)
+	m.playbackDuration.WithLabelValues("cockpit")
+	m.ambientRMS.WithLabelValues("cockpit").Set(0)
+
+	return m
 }
 
 func validBoundedFloat(v, minVal, maxVal float64) bool {

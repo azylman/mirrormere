@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
-# Build stage: compile static Go binary using official Go 1.27 toolchain
-FROM --platform=$BUILDPLATFORM golang:1.27.3-alpine AS builder
+# Build stage: compile static Go binary using official Go 1.27 toolchain via mirror.gcr.io to prevent unauthenticated Docker Hub rate limits
+FROM --platform=$BUILDPLATFORM mirror.gcr.io/library/golang:1.27.3-alpine AS builder
 
 WORKDIR /src
 
@@ -18,8 +18,8 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
     go build -cover -covermode=atomic -trimpath -ldflags="-s -w -extldflags '-static'" -o /app/server ./cmd/server
 
-# Runtime stage: minimal hardened Alpine 3.24 environment
-FROM alpine:3.24
+# Runtime stage: minimal hardened Alpine 3.24 environment via mirror.gcr.io
+FROM mirror.gcr.io/library/alpine:3.24
 
 # Install runtime certificates and timezone database
 RUN --mount=type=cache,target=/etc/apk/cache,sharing=locked \
