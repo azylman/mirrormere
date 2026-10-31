@@ -38,11 +38,13 @@ type ScreenHandler interface {
 	PostScreenAdvance(w http.ResponseWriter, r *http.Request)
 	PostScreenPause(w http.ResponseWriter, r *http.Request)
 	PostScreenSelect(w http.ResponseWriter, r *http.Request)
+	GetScreens(w http.ResponseWriter, r *http.Request)
 }
 
 // RenderHandler handles widget rendering, package static assets, and stylesheet endpoints.
 type RenderHandler interface {
 	GetWidgetRender(w http.ResponseWriter, r *http.Request, widgetID string)
+	GetWidgetJSON(w http.ResponseWriter, r *http.Request, widgetID string)
 	GetWidgetAsset(w http.ResponseWriter, r *http.Request, widgetType string, assetPath string)
 	ServeStyle(w http.ResponseWriter, r *http.Request)
 }
@@ -225,6 +227,10 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/api/voice/state", dispatchHandler(s, func() VoiceHandler { return s.voiceHandler }, isNil, func(h VoiceHandler, w http.ResponseWriter, r *http.Request) { h.PostVoiceState(w, r) }))
 	s.mux.HandleFunc("/api/voice/interact", dispatchHandler(s, func() VoiceHandler { return s.voiceHandler }, isNil, func(h VoiceHandler, w http.ResponseWriter, r *http.Request) { h.PostVoiceInteract(w, r) }))
 	s.mux.HandleFunc("/api/voice/heartbeat", dispatchHandler(s, func() VoiceHandler { return s.voiceHandler }, isNil, func(h VoiceHandler, w http.ResponseWriter, r *http.Request) { h.PostVoiceHeartbeat(w, r) }))
+	s.mux.HandleFunc("/api/screens", dispatchHandler(s, func() ScreenHandler { return s.screenHandler }, isNil, func(h ScreenHandler, w http.ResponseWriter, r *http.Request) { h.GetScreens(w, r) }))
+	s.mux.HandleFunc("/api/widgets/{widget_id}", dispatchHandler(s, func() RenderHandler { return s.renderHandler }, isNil, func(h RenderHandler, w http.ResponseWriter, r *http.Request) {
+		h.GetWidgetJSON(w, r, r.PathValue("widget_id"))
+	}))
 	s.mux.HandleFunc("/api/widgets/{widget_id}/render", dispatchHandler(s, func() RenderHandler { return s.renderHandler }, isNil, func(h RenderHandler, w http.ResponseWriter, r *http.Request) {
 		h.GetWidgetRender(w, r, r.PathValue("widget_id"))
 	}))

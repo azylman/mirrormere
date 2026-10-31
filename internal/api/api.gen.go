@@ -111,6 +111,13 @@ const (
 	Transcribing VoiceStateRequestState = "transcribing"
 )
 
+// Defines values for GetWidgetJSONParamsView.
+const (
+	Day   GetWidgetJSONParamsView = "day"
+	Month GetWidgetJSONParamsView = "month"
+	Week  GetWidgetJSONParamsView = "week"
+)
+
 // ActionResponse defines model for ActionResponse.
 type ActionResponse struct {
 	Status string `json:"status"`
@@ -173,6 +180,12 @@ type ScreenAdvanceRequest struct {
 // ScreenAdvanceRequestDirection Direction to advance screen (next or prev)
 type ScreenAdvanceRequestDirection string
 
+// ScreenLayout defines model for ScreenLayout.
+type ScreenLayout struct {
+	Index   int               `json:"index"`
+	Widgets []WidgetPlacement `json:"widgets"`
+}
+
 // ScreenNavigationResponse defines model for ScreenNavigationResponse.
 type ScreenNavigationResponse struct {
 	CurrentScreen int    `json:"current_screen"`
@@ -200,6 +213,13 @@ type ScreenPauseResponse struct {
 type ScreenSelectRequest struct {
 	// ScreenIndex 0-indexed screen number
 	ScreenIndex int `json:"screen_index"`
+}
+
+// ScreensResponse defines model for ScreensResponse.
+type ScreensResponse struct {
+	CurrentScreen   int            `json:"current_screen"`
+	IntervalSeconds int            `json:"interval_seconds"`
+	Screens         []ScreenLayout `json:"screens"`
 }
 
 // VideoActionRequest defines model for VideoActionRequest.
@@ -331,6 +351,39 @@ type VoiceStateResponse struct {
 	Status string `json:"status"`
 }
 
+// WidgetDetailResponse defines model for WidgetDetailResponse.
+type WidgetDetailResponse struct {
+	// AssetsBase Base path for the widget package assets
+	AssetsBase string `json:"assets_base"`
+
+	// Config Widget instance config with credential and *_env keys removed
+	Config map[string]interface{} `json:"config"`
+
+	// Data Domain data; same payload as the widget.update SSE event for this widget
+	Data       interface{} `json:"data"`
+	Dimensions []int       `json:"dimensions"`
+	Online     bool        `json:"online"`
+	Origin     []int       `json:"origin"`
+	State      string      `json:"state"`
+	Timestamp  string      `json:"timestamp"`
+	Type       string      `json:"type"`
+
+	// ViewModel Present only for calendar-grid. Object with keys week (FamilyViewModel), month (FamilyMonthViewModel) and active_view (week or month, from the view query parameter or the widget default_view).
+	ViewModel *map[string]interface{} `json:"view_model,omitempty"`
+	WidgetId  string                  `json:"widget_id"`
+}
+
+// WidgetPlacement defines model for WidgetPlacement.
+type WidgetPlacement struct {
+	// Dimensions [cols, rows] grid span
+	Dimensions []int `json:"dimensions"`
+
+	// Origin [col, row] grid origin
+	Origin   []int  `json:"origin"`
+	Type     string `json:"type"`
+	WidgetId string `json:"widget_id"`
+}
+
 // WidgetPushResponse defines model for WidgetPushResponse.
 type WidgetPushResponse struct {
 	Status    string    `json:"status"`
@@ -349,6 +402,21 @@ type PostVoiceInteractMultipartBody struct {
 	// SessionId Optional session or interaction correlation ID
 	SessionId *string `json:"session_id,omitempty"`
 }
+
+// GetWidgetJSONParams defines parameters for GetWidgetJSON.
+type GetWidgetJSONParams struct {
+	// Node Requesting display's voice node_id; per-node data replaces the shared data when present
+	Node *string `form:"node,omitempty" json:"node,omitempty"`
+
+	// Date Anchor date for calendar-grid view_model (YYYY-MM-DD)
+	Date *openapi_types.Date `form:"date,omitempty" json:"date,omitempty"`
+
+	// View Calendar-grid active view (day, week or month)
+	View *GetWidgetJSONParamsView `form:"view,omitempty" json:"view,omitempty"`
+}
+
+// GetWidgetJSONParamsView defines parameters for GetWidgetJSON.
+type GetWidgetJSONParamsView string
 
 // PostWidgetPushJSONBody defines parameters for PostWidgetPush.
 type PostWidgetPushJSONBody map[string]interface{}
