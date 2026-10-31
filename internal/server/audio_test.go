@@ -50,6 +50,7 @@ func doAudioReq(h http.HandlerFunc, m, p, b string) *httptest.ResponseRecorder {
 }
 
 func checkAudioResp(t *testing.T, rec *httptest.ResponseRecorder, vol int, muted bool) {
+	t.Helper()
 	var resp api.AudioStateResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil || (vol > 0 && resp.Volume != vol) || (vol == 0 && resp.Muted != muted) {
 		t.Fatalf("unexpected resp: %v, %+v", err, resp)
