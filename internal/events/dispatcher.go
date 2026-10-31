@@ -33,6 +33,50 @@ func (h *Hub) publishJSON(eventType string, payload any) error {
 	return nil
 }
 
+func (h *Hub) dispatchTimezoneChange(snapshot *config.Snapshot, nowStr string) error {
+	var weather *HeaderWeather
+	if isp, ok := h.stateProvider.(*InMemoryStateProvider); ok {
+		if w, ok := isp.GetHeaderWeather(); ok {
+			weather = w
+		}
+	}
+	tz := snapshot.Config.Timezone
+	if tz == "" {
+		tz = "UTC"
+	}
+	return h.publishJSON(EventHeaderUpdate, HeaderUpdateData{
+		Timestamp: nowStr,
+		Timezone:  tz,
+		Weather:   weather,
+	})
+}
+
+func (h *Hub) dispatchDiffReloads(snapshot *config.Snapshot, diff *config.ConfigDiff) error {
+	if diff == nil {
+		return nil
+	}
+	now := h.cfg.NowFunc()
+	nowStr := now.UTC().Format(time.RFC3339)
+	if err := h.dispatchDegradedWidgetUpdates(diff, nowStr); err != nil {
+		return err
+	}
+	if diff.TimezoneChanged && snapshot.Config != nil {
+		if err := h.dispatchTimezoneChange(snapshot, nowStr); err != nil {
+			return err
+		}
+	}
+	if diff.ShellChanged {
+		reloadEvent := SystemReloadEvent{
+			Reason:    "shell_change",
+			Timestamp: nowStr,
+		}
+		if err := h.DispatchSystemReload(reloadEvent); err != nil {
+			h.logger.Error("failed to dispatch system reload on shell change", "error", err)
+		}
+	}
+	return nil
+}
+
 // DispatchConfigReload handles configuration updates, layout changes, and domain state resets.
 func (h *Hub) DispatchConfigReload(snapshot *config.Snapshot, diff *config.ConfigDiff) error {
 	if snapshot == nil {
@@ -60,48 +104,7 @@ func (h *Hub) DispatchConfigReload(snapshot *config.Snapshot, diff *config.Confi
 		}
 	}
 
-	// 3. For any modified instance whose domain parameters changed, broadcast degraded widget.update
-	if diff != nil {
-		now := h.cfg.NowFunc()
-		nowStr := now.UTC().Format(time.RFC3339)
-		if err := h.dispatchDegradedWidgetUpdates(diff, nowStr); err != nil {
-			return err
-		}
-
-		// 4. If household timezone changed, broadcast header.update
-		if diff.TimezoneChanged && snapshot.Config != nil {
-			var weather *HeaderWeather
-			if isp, ok := h.stateProvider.(*InMemoryStateProvider); ok {
-				if w, ok := isp.GetHeaderWeather(); ok {
-					weather = w
-				}
-			}
-			tz := snapshot.Config.Timezone
-			if tz == "" {
-				tz = "UTC"
-			}
-			if err := h.publishJSON(EventHeaderUpdate, HeaderUpdateData{
-				Timestamp: nowStr,
-				Timezone:  tz,
-				Weather:   weather,
-			}); err != nil {
-				return err
-			}
-		}
-
-		// 5. If top-level display shell changed, broadcast system.reload
-		if diff.ShellChanged {
-			reloadEvent := SystemReloadEvent{
-				Reason:    "shell_change",
-				Timestamp: nowStr,
-			}
-			if err := h.DispatchSystemReload(reloadEvent); err != nil {
-				h.logger.Error("failed to dispatch system reload on shell change", "error", err)
-			}
-		}
-	}
-
-	return nil
+	return h.dispatchDiffReloads(snapshot, diff)
 }
 
 func (h *Hub) dispatchDegradedWidgetUpdates(diff *config.ConfigDiff, nowStr string) error {

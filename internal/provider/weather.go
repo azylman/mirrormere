@@ -24,17 +24,25 @@ func MapWMOCode(code int) (string, string) {
 	return MapWMOCodeWithDay(code, 1)
 }
 
+func mapWMONightCode(code int) (string, string, bool) {
+	switch code {
+	case 0:
+		return "Clear", "weather-clear-night", true
+	case 1:
+		return "Mainly Clear", "weather-night-partly-cloudy", true
+	case 2:
+		return "Partly Cloudy", "weather-night-partly-cloudy", true
+	default:
+		return "", "", false
+	}
+}
+
 // MapWMOCodeWithDay maps a WMO 4501 weather code and day/night solar flag (1 for day, 0 for night)
 // to human-readable condition text and vector icon token.
 func MapWMOCodeWithDay(code int, isDay int) (string, string) {
 	if isDay == 0 {
-		switch code {
-		case 0:
-			return "Clear", "weather-clear-night"
-		case 1:
-			return "Mainly Clear", "weather-night-partly-cloudy"
-		case 2:
-			return "Partly Cloudy", "weather-night-partly-cloudy"
+		if cond, icon, ok := mapWMONightCode(code); ok {
+			return cond, icon
 		}
 	}
 	switch code {

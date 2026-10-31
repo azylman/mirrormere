@@ -191,7 +191,19 @@ func (e *Engine) getOrCompileTemplate(pkg *domain.Package) (*template.Template, 
 	return tmpl, nil
 }
 
-func (e *Engine) buildContext(widgetID string, w *config.WidgetConfig, pkg *domain.Package, snap *config.Snapshot) Context {
+func fallbackWidgetDimension(w *config.WidgetConfig, pkg *domain.Package) domain.Dimension {
+	if len(w.Dimensions) == 2 {
+		if d, err := domain.DimensionFromSlice(w.Dimensions); err == nil {
+			return d
+		}
+	}
+	if pkg != nil && pkg.Manifest.DefaultDimensions.IsValid() {
+		return pkg.Manifest.DefaultDimensions
+	}
+	return domain.NewDimension(1, 1)
+}
+
+func resolveWidgetPlacement(widgetID string, w *config.WidgetConfig, pkg *domain.Package, snap *config.Snapshot) ([2]int, domain.Dimension) {
 	origin := [2]int{0, 0}
 	var dim domain.Dimension
 	placed := false
@@ -213,35 +225,31 @@ func (e *Engine) buildContext(widgetID string, w *config.WidgetConfig, pkg *doma
 	}
 
 	if !placed {
-		if len(w.Dimensions) == 2 {
-			if d, err := domain.DimensionFromSlice(w.Dimensions); err == nil {
-				dim = d
-			}
-		}
-		if !dim.IsValid() && pkg != nil && pkg.Manifest.DefaultDimensions.IsValid() {
-			dim = pkg.Manifest.DefaultDimensions
-		}
-		if !dim.IsValid() {
-			dim = domain.NewDimension(1, 1)
-		}
+		dim = fallbackWidgetDimension(w, pkg)
 	}
 
+	return origin, dim
+}
+
+func (e *Engine) resolveWidgetRuntimeState(widgetID string) (any, string, string, bool) {
 	var wData any = map[string]any{}
 	wState := "healthy"
 	var timestamp string
-	if e.provider != nil {
-		if d, s, ts, ok := e.provider.GetWidgetState(widgetID); ok {
-			if d != nil {
-				wData = d
-			}
-			if s != "" {
-				wState = s
-			}
-			timestamp = ts
-		}
+	if e.provider == nil {
+		return wData, wState, timestamp, true
 	}
 
-	if timestamp == "" && e.provider != nil {
+	if d, s, ts, ok := e.provider.GetWidgetState(widgetID); ok {
+		if d != nil {
+			wData = d
+		}
+		if s != "" {
+			wState = s
+		}
+		timestamp = ts
+	}
+
+	if timestamp == "" {
 		if tsProvider, ok := e.provider.(interface{ GetWidgetTimestamp(string) (string, bool) }); ok {
 			if ts, ok := tsProvider.GetWidgetTimestamp(widgetID); ok && ts != "" {
 				timestamp = ts
@@ -249,13 +257,13 @@ func (e *Engine) buildContext(widgetID string, w *config.WidgetConfig, pkg *doma
 		}
 	}
 
-	online := true
-	if e.provider != nil {
-		st := e.provider.CurrentStatus()
-		if st.ConfigStatus == config.ConfigStatusError {
-			online = false
-		}
-	}
+	online := e.provider.CurrentStatus().ConfigStatus != config.ConfigStatusError
+	return wData, wState, timestamp, online
+}
+
+func (e *Engine) buildContext(widgetID string, w *config.WidgetConfig, pkg *domain.Package, snap *config.Snapshot) Context {
+	origin, dim := resolveWidgetPlacement(widgetID, w, pkg, snap)
+	wData, wState, timestamp, online := e.resolveWidgetRuntimeState(widgetID)
 
 	return Context{
 		ID:         widgetID,

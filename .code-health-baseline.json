@@ -1,39 +1,4 @@
 {
-  "files": {
-    "internal/voice/hub.go": {
-      "lines": 1528
-    }
-  },
-  "functions": {
-    "internal/render/engine.go::*Engine.buildContext": {
-      "cc": 24
-    },
-    "internal/render/family.go::BuildFamilyMonthView": {
-      "lines": 162,
-      "cc": 30
-    },
-    "internal/render/family.go::BuildFamilyView": {
-      "lines": 166,
-      "cc": 31
-    },
-    "internal/render/helpers.go::TasksStats": {
-      "cc": 34
-    },
-    "internal/render/helpers.go::TodayPrecipProb": {
-      "cc": 21
-    },
-    "internal/video/coordinator.go::*Coordinator.Trigger": {
-      "cc": 27
-    },
-    "internal/voice/hub.go::*Hub.Interact": {
-      "lines": 444,
-      "cc": 84
-    },
-    "internal/voice/hub.go::*Hub.synthesizeAndEmitReply": {
-      "cc": 23
-    },
-    "internal/voice/hub.go::parseWAVHeader": {
-      "cc": 21
-    }
-  }
+  "files": {},
+  "functions": {}
 }

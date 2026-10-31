@@ -398,6 +398,42 @@ func structInt(v reflect.Value, field string) int {
 	return 0
 }
 
+func hourlyPointFromMap(m map[string]any) hourlyPoint {
+	var pt hourlyPoint
+	if t, ok := m["time"].(string); ok {
+		pt.timeStr = t
+	}
+	if tmp, ok := mapFloat(m, "temp"); ok {
+		pt.temp = tmp
+	}
+	if p, ok := mapInt(m, "precip_prob"); ok {
+		pt.precipProb = p
+	}
+	if ic, ok := m["icon"].(string); ok {
+		pt.icon = ic
+	}
+	return pt
+}
+
+func hourlyPointFromStruct(item any) (hourlyPoint, bool) {
+	v := reflect.ValueOf(item)
+	if v.Kind() == reflect.Pointer {
+		if v.IsNil() {
+			return hourlyPoint{}, false
+		}
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		return hourlyPoint{}, false
+	}
+	return hourlyPoint{
+		timeStr:    structString(v, "Time"),
+		temp:       structFloat(v, "Temp"),
+		precipProb: structInt(v, "PrecipProb"),
+		icon:       structString(v, "Icon"),
+	}, true
+}
+
 func extractHourlyPoints(arg any) []hourlyPoint {
 	val, ok := derefSlice(arg)
 	if !ok {
@@ -418,32 +454,11 @@ func extractHourlyPoints(arg any) []hourlyPoint {
 
 		var pt hourlyPoint
 		if m, ok := item.(map[string]any); ok {
-			if t, ok := m["time"].(string); ok {
-				pt.timeStr = t
-			}
-			if tmp, ok := mapFloat(m, "temp"); ok {
-				pt.temp = tmp
-			}
-			if p, ok := mapInt(m, "precip_prob"); ok {
-				pt.precipProb = p
-			}
-			if ic, ok := m["icon"].(string); ok {
-				pt.icon = ic
-			}
+			pt = hourlyPointFromMap(m)
+		} else if parsed, ok := hourlyPointFromStruct(item); ok {
+			pt = parsed
 		} else {
-			v := reflect.ValueOf(item)
-			if v.Kind() == reflect.Pointer {
-				if v.IsNil() {
-					continue
-				}
-				v = v.Elem()
-			}
-			if v.Kind() == reflect.Struct {
-				pt.timeStr = structString(v, "Time")
-				pt.temp = structFloat(v, "Temp")
-				pt.precipProb = structInt(v, "PrecipProb")
-				pt.icon = structString(v, "Icon")
-			}
+			continue
 		}
 
 		if math.IsNaN(pt.temp) || math.IsInf(pt.temp, 0) {
@@ -594,6 +609,31 @@ func WeatherHourlyGraph(args ...any) template.HTML {
 	return template.HTML(sb.String())
 }
 
+func precipProbFromMap(v map[string]any) int {
+	if daily, ok := v["daily"].([]any); ok && len(daily) > 0 {
+		if first, ok := daily[0].(map[string]any); ok {
+			if p, ok := mapInt(first, "precip_prob_max"); ok {
+				return p
+			}
+		}
+	}
+	if daily, ok := v["daily"].([]provider.WeatherDaily); ok && len(daily) > 0 {
+		return daily[0].PrecipProbMax
+	}
+	if cur, ok := v["current"].(map[string]any); ok {
+		if p, ok := mapInt(cur, "precip_prob_max"); ok {
+			return p
+		}
+	}
+	if cur, ok := v["current"].(provider.WeatherCurrent); ok {
+		return cur.PrecipProbMax
+	}
+	if p, ok := mapInt(v, "precip_prob_max"); ok {
+		return p
+	}
+	return 0
+}
+
 // TodayPrecipProb extracts today's maximum precipitation probability percentage (0-100)
 // from WeatherSnapshot, WeatherCurrent, map data, or slices.
 func TodayPrecipProb(arg any) int {
@@ -619,27 +659,7 @@ func TodayPrecipProb(arg any) int {
 			return v[0].PrecipProbMax
 		}
 	case map[string]any:
-		if daily, ok := v["daily"].([]any); ok && len(daily) > 0 {
-			if first, ok := daily[0].(map[string]any); ok {
-				if p, ok := mapInt(first, "precip_prob_max"); ok {
-					return p
-				}
-			}
-		}
-		if daily, ok := v["daily"].([]provider.WeatherDaily); ok && len(daily) > 0 {
-			return daily[0].PrecipProbMax
-		}
-		if cur, ok := v["current"].(map[string]any); ok {
-			if p, ok := mapInt(cur, "precip_prob_max"); ok {
-				return p
-			}
-		}
-		if cur, ok := v["current"].(provider.WeatherCurrent); ok {
-			return cur.PrecipProbMax
-		}
-		if p, ok := mapInt(v, "precip_prob_max"); ok {
-			return p
-		}
+		return precipProbFromMap(v)
 	}
 
 	return 0
@@ -663,6 +683,20 @@ func extractCalendarSnapshot(data any) provider.CalendarSnapshot {
 		}
 	}
 	return provider.CalendarSnapshot{}
+}
+
+func isTimedCalendarEventConcluded(ev provider.CalendarEvent, refTime time.Time) bool {
+	if ev.End != "" {
+		if t, ok := ParseTime(ev.End); ok {
+			return t.Before(refTime)
+		}
+	}
+	if ev.Start != "" {
+		if t, ok := ParseTime(ev.Start); ok {
+			return t.Add(time.Hour).Before(refTime)
+		}
+	}
+	return false
 }
 
 // CalendarFeedEvents filters a CalendarSnapshot (or equivalent payload) down to events starting
@@ -693,25 +727,8 @@ func CalendarFeedEvents(data any, refTime time.Time) []provider.CalendarEvent {
 			continue
 		}
 
-		// Timed event: parse End first, falling back to Start
-		var endTime time.Time
-		if ev.End != "" {
-			if t, ok := ParseTime(ev.End); ok {
-				endTime = t
-			}
-		}
-
-		if !endTime.IsZero() {
-			if endTime.Before(refTime) {
-				continue
-			}
-		} else if ev.Start != "" {
-			if t, ok := ParseTime(ev.Start); ok {
-				// Default 1-hour duration if end time is omitted
-				if t.Add(time.Hour).Before(refTime) {
-					continue
-				}
-			}
+		if isTimedCalendarEventConcluded(ev, refTime) {
+			continue
 		}
 
 		filtered = append(filtered, ev)
@@ -817,77 +834,87 @@ type TasksStatsResult struct {
 	Summary   string `json:"summary"`
 }
 
+func derefReflectValue(v reflect.Value) (reflect.Value, bool) {
+	for v.Kind() == reflect.Pointer || v.Kind() == reflect.Interface {
+		if v.IsNil() {
+			return reflect.Value{}, false
+		}
+		v = v.Elem()
+	}
+	return v, true
+}
+
+func extractItemsValue(val reflect.Value) reflect.Value {
+	if val.Kind() == reflect.Struct {
+		itemsField := val.FieldByName("Items")
+		if itemsField.IsValid() {
+			return itemsField
+		}
+	} else if val.Kind() == reflect.Map {
+		for _, key := range val.MapKeys() {
+			if strings.EqualFold(fmt.Sprint(key.Interface()), "items") {
+				return val.MapIndex(key)
+			}
+		}
+	}
+	return val
+}
+
+func isTaskItemDone(v reflect.Value) (bool, bool) {
+	v, ok := derefReflectValue(v)
+	if !ok {
+		return false, false
+	}
+	switch v.Kind() {
+	case reflect.Struct:
+		f := v.FieldByName("Done")
+		if f.IsValid() && f.Kind() == reflect.Bool && f.Bool() {
+			return true, true
+		}
+		return true, false
+	case reflect.Map:
+		for _, key := range v.MapKeys() {
+			if strings.EqualFold(fmt.Sprint(key.Interface()), "done") {
+				val := v.MapIndex(key)
+				val, ok := derefReflectValue(val)
+				if ok && val.Kind() == reflect.Bool && val.Bool() {
+					return true, true
+				}
+				return true, false
+			}
+		}
+		return true, false
+	}
+	return true, false
+}
+
 // TasksStats inspects a tasks list or slice of items and calculates completion metrics.
 func TasksStats(input any) TasksStatsResult {
 	if input == nil {
 		return TasksStatsResult{}
 	}
 
+	val, ok := derefReflectValue(reflect.ValueOf(input))
+	if !ok {
+		return TasksStatsResult{}
+	}
+
+	val = extractItemsValue(val)
+	val, ok = derefReflectValue(val)
+	if !ok {
+		return TasksStatsResult{}
+	}
+
 	var total, done int
-
-	inspectItem := func(v reflect.Value) {
-		for v.Kind() == reflect.Pointer || v.Kind() == reflect.Interface {
-			if v.IsNil() {
-				return
-			}
-			v = v.Elem()
-		}
-		total++
-		switch v.Kind() {
-		case reflect.Struct:
-			f := v.FieldByName("Done")
-			if f.IsValid() && f.Kind() == reflect.Bool && f.Bool() {
-				done++
-			}
-		case reflect.Map:
-			for _, key := range v.MapKeys() {
-				if strings.EqualFold(fmt.Sprint(key.Interface()), "done") {
-					val := v.MapIndex(key)
-					for val.Kind() == reflect.Pointer || val.Kind() == reflect.Interface {
-						val = val.Elem()
-					}
-					if val.Kind() == reflect.Bool && val.Bool() {
-						done++
-					}
-					break
-				}
-			}
-		}
-	}
-
-	val := reflect.ValueOf(input)
-	for val.Kind() == reflect.Pointer || val.Kind() == reflect.Interface {
-		if val.IsNil() {
-			return TasksStatsResult{}
-		}
-		val = val.Elem()
-	}
-
-	if val.Kind() == reflect.Struct {
-		itemsField := val.FieldByName("Items")
-		if itemsField.IsValid() {
-			val = itemsField
-		}
-	} else if val.Kind() == reflect.Map {
-		for _, key := range val.MapKeys() {
-			if strings.EqualFold(fmt.Sprint(key.Interface()), "items") {
-				val = val.MapIndex(key)
-				break
-			}
-		}
-	}
-
-	for val.Kind() == reflect.Pointer || val.Kind() == reflect.Interface {
-		if val.IsNil() {
-			return TasksStatsResult{}
-		}
-		val = val.Elem()
-	}
-
 	if val.Kind() == reflect.Slice || val.Kind() == reflect.Array {
 		n := val.Len()
 		for i := 0; i < n; i++ {
-			inspectItem(val.Index(i))
+			if valid, isDone := isTaskItemDone(val.Index(i)); valid {
+				total++
+				if isDone {
+					done++
+				}
+			}
 		}
 	}
 

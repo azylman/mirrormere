@@ -166,6 +166,31 @@ func (h *Handler) GetWidgetAsset(w http.ResponseWriter, r *http.Request, widgetT
 	http.ServeFile(w, r, target)
 }
 
+func tryServeCombinedStyle(w http.ResponseWriter, r *http.Request, cssPath, customCSSPath string, baseModTime time.Time) bool {
+	if customCSSPath == "" {
+		return false
+	}
+	customFi, statErr := os.Stat(customCSSPath)
+	if statErr != nil || customFi.IsDir() {
+		return false
+	}
+	baseBytes, baseErr := os.ReadFile(cssPath)
+	if baseErr != nil {
+		return false
+	}
+	customBytes, customErr := os.ReadFile(customCSSPath)
+	if customErr != nil {
+		return false
+	}
+	combined := append(append(baseBytes[:len(baseBytes):len(baseBytes)], '\n'), customBytes...)
+	modTime := customFi.ModTime()
+	if baseModTime.After(modTime) {
+		modTime = baseModTime
+	}
+	http.ServeContent(w, r, "style.css", modTime, bytes.NewReader(combined))
+	return true
+}
+
 // ServeStyle handles GET /style.css requests, serving the configured stylesheet from disk.
 func (h *Handler) ServeStyle(w http.ResponseWriter, r *http.Request) {
 	if !handleCORSAndMethod(w, r) {
@@ -190,18 +215,8 @@ func (h *Handler) ServeStyle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if customFi, statErr := os.Stat(customCSSPath); customCSSPath != "" && statErr == nil && !customFi.IsDir() {
-		if baseBytes, baseErr := os.ReadFile(cssPath); baseErr == nil {
-			if customBytes, customErr := os.ReadFile(customCSSPath); customErr == nil {
-				combined := append(append(baseBytes[:len(baseBytes):len(baseBytes)], '\n'), customBytes...)
-				modTime := customFi.ModTime()
-				if fi.ModTime().After(modTime) {
-					modTime = fi.ModTime()
-				}
-				http.ServeContent(w, r, "style.css", modTime, bytes.NewReader(combined))
-				return
-			}
-		}
+	if tryServeCombinedStyle(w, r, cssPath, customCSSPath, fi.ModTime()) {
+		return
 	}
 
 	http.ServeFile(w, r, cssPath)
