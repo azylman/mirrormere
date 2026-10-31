@@ -197,6 +197,7 @@ class MirrormereCarousel {
     // 3. Hot-swap onto canvas with smooth transition
     if (this.canvas) {
       this.canvas.classList.add('transitioning');
+      this.setAnimating(true);
       const outgoingIds = new Set();
       if (this.activeWidgets) {
         for (const id of this.activeWidgets.keys()) {
@@ -229,9 +230,19 @@ class MirrormereCarousel {
           if (this.canvas) {
             this.canvas.classList.remove('transitioning');
           }
+          this.setAnimating(false);
         }, 150);
       });
     }
+  }
+
+  /**
+   * Flag the document body while a screen transition is running. perf.js samples
+   * frame timing only while body.dataset.animating === '1'.
+   */
+  setAnimating(on) {
+    if (typeof document === 'undefined' || !document.body || !document.body.dataset) return;
+    document.body.dataset.animating = on ? '1' : '0';
   }
 
   /**

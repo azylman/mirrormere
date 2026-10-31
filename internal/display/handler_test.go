@@ -321,3 +321,35 @@ func TestVoiceWaveformProvider(t *testing.T) {
 		t.Fatalf("disabled waveform rendered: %s", rec.Body.String())
 	}
 }
+
+// TestGetDisplay_PerfScriptGatedByQuery checks the real display.html template: the perf
+// instrumentation script is emitted only for ?perf=1 and no other page load pulls it in.
+func TestGetDisplay_PerfScriptGatedByQuery(t *testing.T) {
+	t.Parallel()
+	const perfScript = "static/js/perf.js"
+	tests := []struct {
+		name     string
+		path     string
+		wantPerf bool
+	}{
+		{"no_query", "/display", false},
+		{"perf_zero", "/display?perf=0", false},
+		{"perf_empty", "/display?perf=", false},
+		{"perf_one", "/display?perf=1", true},
+		{"perf_one_with_other_params", "/display?hide_cursor=true&perf=1", true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			h := display.NewHandler(display.WithTemplatePath("../../web/templates/display.html"), display.WithLocalTemplatePath(""))
+			rec := httptest.NewRecorder()
+			h.GetDisplay(rec, httptest.NewRequest(http.MethodGet, tc.path, nil))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("code: got %d, want 200", rec.Code)
+			}
+			if got := strings.Contains(rec.Body.String(), perfScript); got != tc.wantPerf {
+				t.Fatalf("perf.js present = %v, want %v", got, tc.wantPerf)
+			}
+		})
+	}
+}
