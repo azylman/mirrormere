@@ -146,7 +146,6 @@ func TestParseWithEnv_ValidationErrors(t *testing.T) {
 		{"chat_log non-positive ttl", withBaseYAML("chat_log:\n  ttl_minutes: 0\n"), "chat_log ttl_minutes must be positive"},
 		{"chat_log non-positive max_messages", withBaseYAML("chat_log:\n  max_messages_per_node: -1\n"), "chat_log max_messages_per_node must be positive"},
 		{"voice_hub brain timeout non-positive", withBaseYAML("voice_hub:\n  enabled: true\n  brain_timeout_seconds: 0\n"), "voice_hub brain_timeout_seconds must be positive"},
-		{"voice_hub eri timeout non-positive", withBaseYAML("voice_hub:\n  enabled: true\n  eri_timeout_seconds: 0\n"), "voice_hub brain_timeout_seconds must be positive"},
 		{"voice_hub tts timeout non-positive", withBaseYAML("voice_hub:\n  enabled: true\n  tts_timeout_seconds: -2\n"), "voice_hub tts_timeout_seconds must be positive"},
 		{"fast_path timeout_ms non-positive", withBaseYAML("voice_hub:\n  enabled: true\n  fast_path:\n    url: http://127.0.0.1:8000/intent\n    timeout_ms: 0\n"), "voice_hub fast_path timeout_ms must be positive"},
 		{"fast_path invalid url", withBaseYAML("voice_hub:\n  enabled: true\n  fast_path:\n    url: not-a-valid-url\n"), "voice_hub fast_path url must be an http(s) URL"},
@@ -185,8 +184,6 @@ func TestParseWithEnv_ValidConfigsAndDefaults(t *testing.T) {
 		wantHideCursor, wantVoiceHub, wantSpeakerID, wantFastPath, wantVideoEnabled  bool
 		wantChatTTL                                                                  time.Duration
 		wantLat                                                                      float64
-		wantEriURL, wantBrainURL                                                     string
-		wantEriTimeout, wantBrainTimeout                                             int
 	}{
 		{name: "comment interpolation allowed and default transition", yaml: "# ${VAR} in comment is allowed\n" + withBaseYAML(""), wantTransition: "slide"},
 		{name: "rotation transition fade", yaml: withBaseYAML("  rotation:\n    transition: fade\n"), wantTransition: "fade"},
@@ -198,8 +195,6 @@ func TestParseWithEnv_ValidConfigsAndDefaults(t *testing.T) {
 		{name: "widget default method POST with endpoint", yaml: "timezone: UTC\ndisplay:\n  widgets:\n    - id: w1\n      type: spacer\n      endpoint: http://example.com/api\n", wantMethod: "POST"},
 		{name: "hide_cursor and remote_url", yaml: withBaseYAML("  hide_cursor: true\n  remote_url: http://localhost:8080/display\n"), wantHideCursor: true, wantRemoteURL: "http://localhost:8080/display"},
 		{name: "nil getenv fallback", yaml: withBaseYAML(""), nilGetenv: true, wantTransition: "slide"},
-		{name: "voice hub eri url and timeout fallback to brain", yaml: withBaseYAML("voice_hub:\n  enabled: true\n  eri_url: http://127.0.0.1:8088/voice/ask\n  eri_timeout_seconds: 45\n"), wantVoiceHub: true, wantEriURL: "http://127.0.0.1:8088/voice/ask", wantBrainURL: "http://127.0.0.1:8088/voice/ask", wantEriTimeout: 45, wantBrainTimeout: 45},
-		{name: "voice hub brain url and timeout fallback to eri", yaml: withBaseYAML("voice_hub:\n  enabled: true\n  brain_url: http://127.0.0.1:8088/voice/ask\n  brain_timeout_seconds: 50\n"), wantVoiceHub: true, wantEriURL: "http://127.0.0.1:8088/voice/ask", wantBrainURL: "http://127.0.0.1:8088/voice/ask", wantEriTimeout: 50, wantBrainTimeout: 50},
 		{name: "voice hub speaker id and fast path valid", yaml: withBaseYAML("voice_hub:\n  enabled: true\n  fast_path:\n    url: http://127.0.0.1:8000/intent\n  speaker_id:\n    embed_url: http://127.0.0.1:8080/embed\n    model: ecapa\n    speakers:\n      - id: mike\n        embedding: [1.0, 0.0]\n"), wantVoiceHub: true, wantFastPath: true, wantSpeakerID: true},
 		{name: "header video valid config", yaml: withBaseYAML("  header:\n    video:\n      enabled: true\n      stream_id: frontdoor\n      type: webrtc\n"), wantVideoEnabled: true, wantVideoStream: "frontdoor"},
 		{name: "chat log defaults when omitted", yaml: withBaseYAML(""), wantChatTTL: 20 * time.Minute, wantChatMax: 50},
@@ -241,18 +236,6 @@ func TestParseWithEnv_ValidConfigsAndDefaults(t *testing.T) {
 			}
 			if tc.wantVoiceHub {
 				assertEq(t, "voice hub", cfg.VoiceHub.IsEnabled(), true)
-			}
-			if tc.wantEriURL != "" && cfg.VoiceHub != nil {
-				assertEq(t, "eri url", cfg.VoiceHub.EriURL, tc.wantEriURL)
-			}
-			if tc.wantBrainURL != "" && cfg.VoiceHub != nil {
-				assertEq(t, "brain url", cfg.VoiceHub.BrainURL, tc.wantBrainURL)
-			}
-			if tc.wantEriTimeout != 0 && cfg.VoiceHub != nil {
-				assertEq(t, "eri timeout", cfg.VoiceHub.GetEriTimeoutSeconds(), tc.wantEriTimeout)
-			}
-			if tc.wantBrainTimeout != 0 && cfg.VoiceHub != nil {
-				assertEq(t, "brain timeout", cfg.VoiceHub.GetBrainTimeoutSeconds(), tc.wantBrainTimeout)
 			}
 			if tc.wantFastPath {
 				assertEq(t, "fast path", cfg.VoiceHub != nil && cfg.VoiceHub.FastPath.IsEnabled(), true)
@@ -456,14 +439,12 @@ func TestConfig_Accessors(t *testing.T) {
 	assertEq(t, "sid pop", popSID.IsEnabled() && popSID.GetThreshold() == 0.85 && popSID.GetTimeoutSeconds() == 10, true)
 
 	var nilVH *config.VoiceHubConfig
-	assertEq(t, "vh nil", !nilVH.IsEnabled() && nilVH.GetBrainTimeoutSeconds() == 30 && nilVH.GetEriTimeoutSeconds() == 30 && nilVH.GetTTSTimeoutSeconds() == 10 && nilVH.GetTTSVoice() == "af_bella" && nilVH.GetTTSModel() == "kokoro", true)
-	assertEq(t, "vh zero", !(&config.VoiceHubConfig{}).IsEnabled() && (&config.VoiceHubConfig{}).GetBrainTimeoutSeconds() == 30 && (&config.VoiceHubConfig{}).GetEriTimeoutSeconds() == 30 && (&config.VoiceHubConfig{}).GetTTSTimeoutSeconds() == 10 && (&config.VoiceHubConfig{}).GetTTSVoice() == "af_bella" && (&config.VoiceHubConfig{}).GetTTSModel() == "kokoro", true)
-	nonPosVH := &config.VoiceHubConfig{BrainTimeoutSeconds: ptr(-5), EriTimeoutSeconds: ptr(-5), TTSTimeoutSeconds: ptr(0)}
-	assertEq(t, "vh nonpos", nonPosVH.GetBrainTimeoutSeconds() == 30 && nonPosVH.GetEriTimeoutSeconds() == 30 && nonPosVH.GetTTSTimeoutSeconds() == 10, true)
+	assertEq(t, "vh nil", !nilVH.IsEnabled() && nilVH.GetBrainTimeoutSeconds() == 30 && nilVH.GetTTSTimeoutSeconds() == 10 && nilVH.GetTTSVoice() == "af_bella" && nilVH.GetTTSModel() == "kokoro", true)
+	assertEq(t, "vh zero", !(&config.VoiceHubConfig{}).IsEnabled() && (&config.VoiceHubConfig{}).GetBrainTimeoutSeconds() == 30 && (&config.VoiceHubConfig{}).GetTTSTimeoutSeconds() == 10 && (&config.VoiceHubConfig{}).GetTTSVoice() == "af_bella" && (&config.VoiceHubConfig{}).GetTTSModel() == "kokoro", true)
+	nonPosVH := &config.VoiceHubConfig{BrainTimeoutSeconds: ptr(-5), TTSTimeoutSeconds: ptr(0)}
+	assertEq(t, "vh nonpos", nonPosVH.GetBrainTimeoutSeconds() == 30 && nonPosVH.GetTTSTimeoutSeconds() == 10, true)
 	popVH := &config.VoiceHubConfig{Enabled: true, BrainTimeoutSeconds: ptr(60), TTSTimeoutSeconds: ptr(20), TTSVoice: "custom_v", TTSModel: "custom_m"}
-	assertEq(t, "vh pop", popVH.IsEnabled() && popVH.GetBrainTimeoutSeconds() == 60 && popVH.GetEriTimeoutSeconds() == 60 && popVH.GetTTSTimeoutSeconds() == 20 && popVH.GetTTSVoice() == "custom_v" && popVH.GetTTSModel() == "custom_m", true)
-	popVHEri := &config.VoiceHubConfig{Enabled: true, EriTimeoutSeconds: ptr(40), TTSTimeoutSeconds: ptr(20), TTSVoice: "custom_v", TTSModel: "custom_m"}
-	assertEq(t, "vh eri pop", popVHEri.IsEnabled() && popVHEri.GetBrainTimeoutSeconds() == 40 && popVHEri.GetEriTimeoutSeconds() == 40, true)
+	assertEq(t, "vh pop", popVH.IsEnabled() && popVH.GetBrainTimeoutSeconds() == 60 && popVH.GetTTSTimeoutSeconds() == 20 && popVH.GetTTSVoice() == "custom_v" && popVH.GetTTSModel() == "custom_m", true)
 
 	var nilRot *config.RotationConfig
 	assertEq(t, "rot nil", nilRot.GetIntervalSeconds() == 30 && nilRot.GetPauseDurationSeconds() == 120, true)

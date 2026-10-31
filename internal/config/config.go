@@ -324,8 +324,6 @@ type VoiceHubConfig struct {
 	STTURL              string `yaml:"stt_url,omitempty"`
 	BrainURL            string `yaml:"brain_url,omitempty"`
 	BrainTimeoutSeconds *int   `yaml:"brain_timeout_seconds,omitempty"`
-	EriURL              string `yaml:"eri_url,omitempty"`
-	EriTimeoutSeconds   *int   `yaml:"eri_timeout_seconds,omitempty"`
 	TTSURL              string `yaml:"tts_url,omitempty"`
 	TTSVoice            string `yaml:"tts_voice,omitempty"`
 	TTSModel            string `yaml:"tts_model,omitempty"`
@@ -417,15 +415,7 @@ func (vh *VoiceHubConfig) GetBrainTimeoutSeconds() int {
 	if vh == nil {
 		return 30
 	}
-	if vh.EriTimeoutSeconds != nil {
-		return positiveIntOr(vh.EriTimeoutSeconds, 30)
-	}
 	return positiveIntOr(vh.BrainTimeoutSeconds, 30)
-}
-
-// GetEriTimeoutSeconds returns the Eri deliberation timeout in seconds (default: 30).
-func (vh *VoiceHubConfig) GetEriTimeoutSeconds() int {
-	return vh.GetBrainTimeoutSeconds()
 }
 
 // GetTTSTimeoutSeconds returns the TTS synthesis timeout in seconds (default: 10).
@@ -660,24 +650,6 @@ func (c *Config) applyDefaults() {
 	if c.Display.Header.Elements == nil {
 		c.Display.Header.Elements = DefaultHeaderElements()
 	}
-
-	c.applyVoiceHubDefaults()
-}
-
-func (c *Config) applyVoiceHubDefaults() {
-	if c.VoiceHub == nil {
-		return
-	}
-	if strings.TrimSpace(c.VoiceHub.EriURL) != "" {
-		c.VoiceHub.BrainURL = c.VoiceHub.EriURL
-	} else if strings.TrimSpace(c.VoiceHub.BrainURL) != "" {
-		c.VoiceHub.EriURL = c.VoiceHub.BrainURL
-	}
-	if c.VoiceHub.EriTimeoutSeconds != nil {
-		c.VoiceHub.BrainTimeoutSeconds = c.VoiceHub.EriTimeoutSeconds
-	} else if c.VoiceHub.BrainTimeoutSeconds != nil {
-		c.VoiceHub.EriTimeoutSeconds = c.VoiceHub.BrainTimeoutSeconds
-	}
 }
 
 // Validate checks the semantic correctness of the parsed configuration.
@@ -811,9 +783,6 @@ func (c *Config) Validate() error {
 	// 6. VoiceHub validation
 	if vh := c.VoiceHub; vh != nil && vh.Enabled {
 		if err := checkPositiveInt(vh.BrainTimeoutSeconds, "voice_hub brain_timeout_seconds"); err != nil {
-			return err
-		}
-		if err := checkPositiveInt(vh.EriTimeoutSeconds, "voice_hub eri_timeout_seconds"); err != nil {
 			return err
 		}
 		if err := checkPositiveInt(vh.TTSTimeoutSeconds, "voice_hub tts_timeout_seconds"); err != nil {

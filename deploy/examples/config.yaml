@@ -136,7 +136,7 @@ display:
 # voice_hub:
 #   enabled: true
 #   stt_url: "tcp://localhost:10300"
-#   eri_url: "http://localhost:8000/voice/ask"
+#   brain_url: "http://localhost:8000/voice/ask"
 #   tts_url: "http://localhost:8880/v1/audio/speech"
 #   tts_voice: "af_bella"
 #   tts_model: "kokoro"
