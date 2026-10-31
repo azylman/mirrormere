@@ -418,7 +418,7 @@ func TestCoordinator_Concurrency(t *testing.T) {
 	defer coord.Close()
 
 	var wg sync.WaitGroup
-	for i := 0; i < 50; i++ {
+	for i := range 50 {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()

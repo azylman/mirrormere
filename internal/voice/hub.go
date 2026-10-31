@@ -159,6 +159,7 @@ func (h *Hub) recordChat(nodeID, role, author, text string) {
 // with context.DeadlineExceeded. Calls to Reset() advance the deadline.
 type inactivityContext struct {
 	context.Context
+
 	cancel       context.CancelFunc
 	timer        *time.Timer
 	d            time.Duration
@@ -912,7 +913,7 @@ func NewDefaultBrainClient(url string, timeoutSec int) BrainClient {
 // Ask sends the transcribed prompt to the agent brain and listens for status updates and reply.
 func (b *DefaultBrainClient) Ask(ctx context.Context, ask AskRequest, onStatus func(status string)) (string, error) {
 	if b.url == "" {
-		return fmt.Sprintf("I heard: %s", ask.Prompt), nil
+		return "I heard: " + ask.Prompt, nil
 	}
 
 	resp, jsonReply, err := b.doAskRequest(ctx, ask)
@@ -935,7 +936,7 @@ func (b *DefaultBrainClient) Ask(ctx context.Context, ask AskRequest, onStatus f
 // like Ask.
 func (b *DefaultBrainClient) AskStreaming(ctx context.Context, ask AskRequest, onStatus func(status string), onAudio func(chunk BrainAudioChunk)) (string, error) {
 	if b.url == "" {
-		return fmt.Sprintf("I heard: %s", ask.Prompt), nil
+		return "I heard: " + ask.Prompt, nil
 	}
 
 	resp, jsonReply, err := b.doAskRequest(ctx, ask)

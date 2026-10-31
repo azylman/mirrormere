@@ -363,7 +363,7 @@ func (p *WeatherProvider) Fetch(ctx context.Context) (any, error) {
 	startIndex := 0
 	if len(data.Current.Time) >= 13 {
 		curHour := data.Current.Time[:13]
-		for i := 0; i < maxSafeLen; i++ {
+		for i := range maxSafeLen {
 			hTime := data.Hourly.Time[i]
 			if len(hTime) >= 13 && hTime[:13] >= curHour {
 				startIndex = i
@@ -397,7 +397,7 @@ func (p *WeatherProvider) Fetch(ctx context.Context) (any, error) {
 
 	dailyCount := minSliceLen(7, len(data.Daily.Time), len(data.Daily.Temperature2mMax), len(data.Daily.Temperature2mMin), len(data.Daily.WeatherCode), len(data.Daily.PrecipitationProbabilityMax))
 
-	for i := 0; i < dailyCount; i++ {
+	for i := range dailyCount {
 		dText, dIcon := MapWMOCode(data.Daily.WeatherCode[i])
 		snapshot.Daily = append(snapshot.Daily, WeatherDaily{
 			Date:          data.Daily.Time[i],

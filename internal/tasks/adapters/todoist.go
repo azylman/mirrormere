@@ -169,7 +169,7 @@ func fetchPaginated[T any](ctx context.Context, a *TodoistAdapter, rawURL, resou
 	seen := make(map[string]bool)
 	cursor := ""
 
-	for page := 0; page < maxTodoistPages; page++ {
+	for page := range maxTodoistPages {
 		targetURL := rawURL
 		if page > 0 && cursor != "" {
 			separator := "?"
@@ -227,7 +227,7 @@ func (a *TodoistAdapter) resolveProjectID(ctx context.Context) (string, string, 
 		return id, p.Name, nil
 	}
 
-	projectsURL := fmt.Sprintf("%s/api/v1/projects", a.baseURL)
+	projectsURL := a.baseURL + "/api/v1/projects"
 	projects, err := fetchPaginated[todoistProject](ctx, a, projectsURL, "projects")
 	if err != nil {
 		return "", "", err
@@ -387,7 +387,7 @@ func (a *TodoistAdapter) FetchList(ctx context.Context) (*tasks.List, []tasks.Li
 	if resolvedProjectID != "" {
 		tasksURL = fmt.Sprintf("%s/api/v1/tasks?project_id=%s", a.baseURL, url.QueryEscape(resolvedProjectID))
 	} else {
-		tasksURL = fmt.Sprintf("%s/api/v1/tasks", a.baseURL)
+		tasksURL = a.baseURL + "/api/v1/tasks"
 	}
 	rawTasks, taskErr := fetchPaginated[todoistTask](ctx, a, tasksURL, "tasks")
 	if taskErr != nil {

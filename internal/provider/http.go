@@ -166,7 +166,7 @@ func (p *HTTPProvider) Fetch(ctx context.Context) (any, error) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 	if p.widgetID != "" {
-		req.Header.Set("X-Widget-ID", p.widgetID)
+		req.Header.Set("X-Widget-Id", p.widgetID)
 	}
 	if p.widgetType != "" {
 		req.Header.Set("X-Widget-Type", p.widgetType)

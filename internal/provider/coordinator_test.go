@@ -584,10 +584,11 @@ func TestProviderCoordinator_PushWidgetData(t *testing.T) {
 		"custom-sensor":     mkPkg("custom-sensor", "http", 0, map[string]any{"type": "object", "required": []any{"temperature", "humidity"}, "properties": map[string]any{"temperature": map[string]any{"type": "number"}, "humidity": map[string]any{"type": "number"}}}),
 		"bad-schema-widget": mkPkg("bad-schema-widget", "http", 0, map[string]any{"type": 12345}),
 	}
-	widgets := []config.WidgetConfig{
-		{ID: "tile-custom", Type: "custom-sensor", Endpoint: "https://example.com/sensor"},
-		{ID: "tile-bad-schema", Type: "bad-schema-widget", Endpoint: "https://example.com/bad"},
-	}
+	widgets := make([]config.WidgetConfig, 0, 5)
+	widgets = append(widgets,
+		config.WidgetConfig{ID: "tile-custom", Type: "custom-sensor", Endpoint: "https://example.com/sensor"},
+		config.WidgetConfig{ID: "tile-bad-schema", Type: "bad-schema-widget", Endpoint: "https://example.com/bad"},
+	)
 	for typ, id := range map[string]string{"tasks": "tile-tasks", "calendar-feed": "tile-calendar", "weather-forecast": "tile-weather"} {
 		pkgs[typ] = mkPkg(typ, typ, 0, nil)
 		widgets = append(widgets, mkWidget(id, typ, 0, nil))

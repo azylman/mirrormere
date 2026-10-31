@@ -442,7 +442,7 @@ func extractHourlyPoints(arg any) []hourlyPoint {
 
 	n := val.Len()
 	pts := make([]hourlyPoint, 0, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		itemVal := val.Index(i)
 		if !itemVal.IsValid() {
 			continue
@@ -488,7 +488,7 @@ func WeatherHourlyGraph(args ...any) template.HTML {
 	gradientID := "mm-weather-hourly-grad"
 	if len(args) > 1 && args[1] != nil {
 		if idStr := fmt.Sprint(args[1]); idStr != "" {
-			gradientID = fmt.Sprintf("mm-weather-grad-%s", template.HTMLEscapeString(idStr))
+			gradientID = "mm-weather-grad-" + template.HTMLEscapeString(idStr)
 		}
 	}
 
@@ -553,7 +553,7 @@ func WeatherHourlyGraph(args ...any) template.HTML {
 		fmt.Fprintf(&curvePath, "M %.1f %.1f", pts[0].x, pts[0].y)
 		fmt.Fprintf(&areaPath, "M %.1f %.1f L %.1f %.1f", pts[0].x, baseY, pts[0].x, pts[0].y)
 
-		for i := 0; i < n-1; i++ {
+		for i := range n - 1 {
 			dx := (pts[i+1].x - pts[i].x) / 2.0
 			seg := fmt.Sprintf(" C %.1f %.1f, %.1f %.1f, %.1f %.1f",
 				pts[i].x+dx, pts[i].y,
@@ -884,8 +884,9 @@ func isTaskItemDone(v reflect.Value) (bool, bool) {
 			}
 		}
 		return true, false
+	default:
+		return true, false
 	}
-	return true, false
 }
 
 // TasksStats inspects a tasks list or slice of items and calculates completion metrics.
@@ -908,7 +909,7 @@ func TasksStats(input any) TasksStatsResult {
 	var total, done int
 	if val.Kind() == reflect.Slice || val.Kind() == reflect.Array {
 		n := val.Len()
-		for i := 0; i < n; i++ {
+		for i := range n {
 			if valid, isDone := isTaskItemDone(val.Index(i)); valid {
 				total++
 				if isDone {

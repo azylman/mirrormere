@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -173,11 +174,11 @@ func (a *GTasksAdapter) FetchList(ctx context.Context) (*tasks.List, []tasks.Lis
 	seenTokens := make(map[string]bool)
 	pageToken := ""
 
-	for page := 0; page < maxGoogleTasksPages; page++ {
+	for range maxGoogleTasksPages {
 		queryParams := url.Values{}
 		queryParams.Set("showCompleted", "true")
 		queryParams.Set("showHidden", "true")
-		queryParams.Set("maxResults", fmt.Sprintf("%d", googleTasksPageSize))
+		queryParams.Set("maxResults", strconv.Itoa(googleTasksPageSize))
 		if pageToken != "" {
 			queryParams.Set("pageToken", pageToken)
 		}

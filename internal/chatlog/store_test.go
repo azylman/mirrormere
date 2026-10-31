@@ -132,8 +132,9 @@ func TestStore_ViewPerNodeAndFallback(t *testing.T) {
 	s.Replace(WidgetKey("w1"), []Message{{Role: RoleAgent, Text: "pushed", At: clk.Now().Add(time.Second)}})
 
 	msgsOf := func(v map[string]any) []string {
-		var out []string
-		for _, m := range v["messages"].([]any) {
+		items := v["messages"].([]any)
+		out := make([]string, 0, len(items))
+		for _, m := range items {
 			out = append(out, m.(map[string]any)["text"].(string))
 		}
 		return out
@@ -184,11 +185,11 @@ func TestParsePush(t *testing.T) {
 func TestStore_ConcurrentUse(t *testing.T) {
 	s := NewStore()
 	var wg sync.WaitGroup
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			for j := 0; j < 100; j++ {
+			for range 100 {
 				s.Add(NodeKey("n"), Message{Text: "x"})
 				_ = s.Messages(nil)
 			}

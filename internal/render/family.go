@@ -58,6 +58,7 @@ type FamilyDay struct {
 // FamilySpanEvent represents an all-day event positioned across columns in the week view.
 type FamilySpanEvent struct {
 	FamilyEvent
+
 	StartCol int `json:"start_col"`
 	ColSpan  int `json:"col_span"`
 }
@@ -82,6 +83,7 @@ type FamilyViewModel struct {
 // FamilyDayEvent represents a resolved event positioned within a day view column or edge band.
 type FamilyDayEvent struct {
 	FamilyEvent
+
 	TopPct      float64 `json:"top_pct"`
 	HeightPct   float64 `json:"height_pct"`
 	LeftPct     float64 `json:"left_pct"`
@@ -264,7 +266,7 @@ func BuildFamilyView(data any, cfg map[string]any, dims domain.Dimension, now ti
 	snapshot := extractCalendarSnapshot(data)
 
 	days := make([]FamilyDay, numDays)
-	for i := 0; i < numDays; i++ {
+	for i := range numDays {
 		d := rangeStart.AddDate(0, 0, i)
 		days[i] = FamilyDay{
 			Date:       d.Format("2006-01-02"),
@@ -1183,7 +1185,7 @@ func BuildFamilyMonthView(data any, cfg map[string]any, dims domain.Dimension, n
 
 	dayIndex := make(map[string]int, monthGridDays)
 	days := make([]FamilyMonthDay, monthGridDays)
-	for i := 0; i < monthGridDays; i++ {
+	for i := range monthGridDays {
 		d := windowStart.AddDate(0, 0, i)
 		dStr := d.Format("2006-01-02")
 		dayIndex[dStr] = i
@@ -1211,7 +1213,7 @@ func BuildFamilyMonthView(data any, cfg map[string]any, dims domain.Dimension, n
 	populateFamilyMonthDays(days, mergedData, dayIndex, members, sharedColor, dims)
 
 	weeks := make([]FamilyMonthWeek, numWeeks)
-	for w := 0; w < numWeeks; w++ {
+	for w := range numWeeks {
 		weekDays := make([]FamilyMonthDay, daysPerWeek)
 		copy(weekDays, days[w*daysPerWeek:(w+1)*daysPerWeek])
 		weeks[w] = FamilyMonthWeek{

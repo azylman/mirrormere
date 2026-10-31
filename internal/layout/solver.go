@@ -73,7 +73,7 @@ func computeWidgetBitmaskForGrid(cols, rows, originCol, originRow, gridCols int)
 	}
 	rowMask := uint16(((1 << cols) - 1) << originCol)
 	var mask uint16
-	for r := 0; r < rows; r++ {
+	for r := range rows {
 		mask |= rowMask << ((originRow + r) * gridCols)
 	}
 	return mask
@@ -320,10 +320,10 @@ func sortAndGroupWidgets(pinned, unpinned []WidgetInput) []*shapeGroup {
 
 func assembleSolvedLayout(k int, screenMasks []uint16, pinnedPlacements []PlacedWidget, unpinnedPlacements []unpinnedPlacement, placedCount int) *Layout {
 	res := &Layout{TotalScreens: k, Screens: make([]Screen, k)}
-	for s := 0; s < k; s++ {
+	for s := range k {
 		screenWidgets := make([]PlacedWidget, 0, len(pinnedPlacements)+placedCount)
 		screenWidgets = append(screenWidgets, pinnedPlacements...)
-		for i := 0; i < placedCount; i++ {
+		for i := range placedCount {
 			if unpinnedPlacements[i].screen == s {
 				screenWidgets = append(screenWidgets, PlacedWidget{
 					WidgetID: unpinnedPlacements[i].widget.ID, Type: unpinnedPlacements[i].widget.Type,
@@ -464,7 +464,7 @@ func SolveGridWithBudget(widgets []WidgetInput, gridCols, gridRows, maxSearchNod
 }
 
 func firstIncompleteScreen(screenMasks []uint16, k int) int {
-	for s := 0; s < k; s++ {
+	for s := range k {
 		if screenMasks[s] != FullGridMask {
 			return s
 		}
@@ -473,7 +473,7 @@ func firstIncompleteScreen(screenMasks []uint16, k int) int {
 }
 
 func fillMaskAllScreens(screenMasks []uint16, k int, mask uint16, set bool) {
-	for s := 0; s < k; s++ {
+	for s := range k {
 		if set {
 			screenMasks[s] |= mask
 		} else {

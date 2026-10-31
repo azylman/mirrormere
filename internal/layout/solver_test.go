@@ -17,7 +17,7 @@ func mkW(id string, c, r int, pinned bool) layout.WidgetInput {
 
 func repeatW(prefix string, c, r, n int) []layout.WidgetInput {
 	res := make([]layout.WidgetInput, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		res[i] = mkW(fmt.Sprintf("%s-%d", prefix, i), c, r, false)
 	}
 	return res
@@ -83,7 +83,7 @@ func TestFormatDeficitError_Formatting(t *testing.T) {
 			t.Errorf("error output missing expected line %q;\nFull message:\n%s", line, msg)
 		}
 	}
-	for d := 0; d <= 13; d++ {
+	for d := range 14 {
 		if e := layout.FormatDeficitError(12-d, 1, d); e == nil {
 			t.Fatalf("expected error for deficit %d", d)
 		}
@@ -233,7 +233,7 @@ func BenchmarkSolve(b *testing.B) {
 		mkW("weather-1", 2, 1, false), mkW("weather-2", 2, 1, false),
 	}
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		if _, err := layout.Solve(widgets); err != nil {
 			b.Fatalf("Solve failed: %v", err)
 		}
@@ -243,7 +243,7 @@ func BenchmarkSolve(b *testing.B) {
 func BenchmarkSolve_Untileable_Issue180(b *testing.B) {
 	widgets := slices.Concat(repeatW("w-5x1", 5, 1, 6), repeatW("w-2x1", 2, 1, 9))
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		_, _ = layout.Solve(widgets)
 	}
 }

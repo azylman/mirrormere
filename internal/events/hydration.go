@@ -2,7 +2,7 @@ package events
 
 import (
 	"encoding/json"
-	"fmt"
+	"strconv"
 	"sync"
 	"time"
 
@@ -116,7 +116,7 @@ type InMemoryStateProvider struct {
 func NewInMemoryStateProvider(mgr *config.Manager) *InMemoryStateProvider {
 	return &InMemoryStateProvider{
 		mgr:          mgr,
-		bootID:       fmt.Sprintf("%d", time.Now().UnixNano()),
+		bootID:       strconv.FormatInt(time.Now().UnixNano(), 10),
 		widgetStates: make(map[string]widgetStateEntry),
 		providers:    make(map[string]string),
 		theme:        "day",

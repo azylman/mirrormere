@@ -513,7 +513,7 @@ func TestCastClient_LifecycleAndEdgeCases(t *testing.T) {
 	cBack.Start(ctxB)
 
 	cQueue := NewCastClient(ClientConfig{})
-	for i := 0; i < 64; i++ {
+	for range 64 {
 		cQueue.dispatchCh <- func() {}
 	}
 	called := make(chan struct{})

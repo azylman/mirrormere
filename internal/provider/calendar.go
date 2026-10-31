@@ -731,7 +731,7 @@ func parseICalDuration(val string) time.Duration {
 	timePart := false
 
 	var num int
-	for i := 0; i < len(val); i++ {
+	for i := range len(val) {
 		ch := val[i]
 		if ch == 'T' {
 			timePart = true

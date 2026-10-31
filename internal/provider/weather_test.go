@@ -40,11 +40,11 @@ const sampleNightJSON = `{"latitude":37.8,"longitude":-122.2,"current":{"time":"
 
 func makeHourlyDailyJSON(numHours, numDays int, curTime string) []byte {
 	hours, temps, probs, codes := make([]string, numHours), make([]float64, numHours), make([]int, numHours), make([]int, numHours)
-	for i := 0; i < numHours; i++ {
+	for i := range numHours {
 		hours[i], temps[i], probs[i], codes[i] = fmt.Sprintf("2026-09-26T%02d:00", i), 60.0+float64(i), i, 1
 	}
 	days, dMax, dMin, dCodes, dProbs := make([]string, numDays), make([]float64, numDays), make([]float64, numDays), make([]int, numDays), make([]int, numDays)
-	for i := 0; i < numDays; i++ {
+	for i := range numDays {
 		days[i], dMax[i], dMin[i], dCodes[i], dProbs[i] = fmt.Sprintf("2026-09-%02d", i+1), 70.0+float64(i), 50.0+float64(i), 1, 10
 	}
 	if curTime == "" {
@@ -60,7 +60,7 @@ func makeHourlyDailyJSON(numHours, numDays int, curTime string) []byte {
 
 func makeMismatchedJSON() []byte {
 	hours, temps, probs, codes := make([]string, 30), make([]float64, 28), make([]int, 27), make([]int, 26)
-	for i := 0; i < 30; i++ {
+	for i := range 30 {
 		hours[i] = fmt.Sprintf("2026-09-26T%02d:00", i)
 		if i < 28 {
 			temps[i] = 65.0 + float64(i)
@@ -73,7 +73,7 @@ func makeMismatchedJSON() []byte {
 		}
 	}
 	days, dMax, dMin, dCodes, dProbs := make([]string, 10), make([]float64, 9), make([]float64, 8), make([]int, 8), make([]int, 8)
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		days[i] = fmt.Sprintf("2026-09-%02d", i+1)
 		if i < 9 {
 			dMax[i] = 70.0 + float64(i)
