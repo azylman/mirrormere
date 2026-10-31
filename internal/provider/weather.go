@@ -189,20 +189,44 @@ func NewWeatherProviderWithClient(client *http.Client, baseURL string) *WeatherP
 	}
 }
 
+// WeatherConfig holds optional subconfiguration fields for WeatherProvider.
+type WeatherConfig struct {
+	Units    string
+	Timezone string
+	Location string
+}
+
+func resolveWeatherCoord(config map[string]any, key string) (float64, error) {
+	val, ok := toFloat(config[key])
+	if !ok {
+		return 0, errors.New("weather provider requires valid latitude and longitude")
+	}
+	if key == "latitude" && (val < -90 || val > 90) {
+		return 0, fmt.Errorf("latitude %.4f out of range [-90, 90]", val)
+	}
+	if key == "longitude" && (val < -180 || val > 180) {
+		return 0, fmt.Errorf("longitude %.4f out of range [-180, 180]", val)
+	}
+	return val, nil
+}
+
+func applyWeatherSubConfigs(config map[string]any, cfg *WeatherConfig) {
+	if n, ok := config["name"].(string); ok && strings.TrimSpace(n) != "" {
+		cfg.Location = strings.TrimSpace(n)
+	} else if loc, ok := config["location_name"].(string); ok && strings.TrimSpace(loc) != "" {
+		cfg.Location = strings.TrimSpace(loc)
+	}
+}
+
 // Init initializes the provider with instance domain config and framework options.
 func (p *WeatherProvider) Init(ctx context.Context, config map[string]any, opts InitOptions) error {
-	latVal, hasLat := toFloat(config["latitude"])
-	lonVal, hasLon := toFloat(config["longitude"])
-
-	if !hasLat || !hasLon {
-		return errors.New("weather provider requires valid latitude and longitude")
+	latVal, err := resolveWeatherCoord(config, "latitude")
+	if err != nil {
+		return err
 	}
-
-	if latVal < -90 || latVal > 90 {
-		return fmt.Errorf("latitude %.4f out of range [-90, 90]", latVal)
-	}
-	if lonVal < -180 || lonVal > 180 {
-		return fmt.Errorf("longitude %.4f out of range [-180, 180]", lonVal)
+	lonVal, err := resolveWeatherCoord(config, "longitude")
+	if err != nil {
+		return err
 	}
 
 	units := "imperial"
@@ -224,18 +248,17 @@ func (p *WeatherProvider) Init(ctx context.Context, config map[string]any, opts 
 		p.baseURL = opts.Endpoint
 	}
 
-	location := ""
-	if n, ok := config["name"].(string); ok && strings.TrimSpace(n) != "" {
-		location = strings.TrimSpace(n)
-	} else if loc, ok := config["location_name"].(string); ok && strings.TrimSpace(loc) != "" {
-		location = strings.TrimSpace(loc)
+	subCfg := WeatherConfig{
+		Units:    units,
+		Timezone: tz,
 	}
+	applyWeatherSubConfigs(config, &subCfg)
 
 	p.latitude = latVal
 	p.longitude = lonVal
 	p.units = units
 	p.timezone = tz
-	p.location = location
+	p.location = subCfg.Location
 
 	return nil
 }

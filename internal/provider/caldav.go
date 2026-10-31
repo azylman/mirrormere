@@ -189,41 +189,57 @@ func (c *CalDAVClient) DiscoverCalendarURL(ctx context.Context, source CalendarS
 	}
 
 	// 1. Fast-Path: Check if endpoint itself is already a calendar collection
+	if hasDirectCalendarCollection(ms) {
+		return endpoint, nil
+	}
+
+	// 2 & 3. Discover from calendar-home-set or current-user-principal
+	if discovered := c.discoverFromPropstatHrefs(ctx, ms, endpoint, source); discovered != "" {
+		return discovered, nil
+	}
+
+	return endpoint, nil
+}
+
+func hasDirectCalendarCollection(ms *propfindMultiStatus) bool {
 	for _, res := range ms.Responses {
 		for _, ps := range res.Propstats {
 			if strings.Contains(ps.Status, "200") && ps.Prop.ResourceType.Calendar != nil {
-				return endpoint, nil
+				return true
 			}
 		}
 	}
+	return false
+}
 
-	// 2. Discover calendar-home-set
+func (c *CalDAVClient) discoverFromPropstatHrefs(ctx context.Context, ms *propfindMultiStatus, endpoint string, source CalendarSource) string {
+	// Discover calendar-home-set
 	for _, res := range ms.Responses {
 		for _, ps := range res.Propstats {
 			if strings.Contains(ps.Status, "200") && ps.Prop.CalendarHomeSet.Href != "" {
 				homeURL := resolveHRef(endpoint, ps.Prop.CalendarHomeSet.Href)
 				if discovered := c.findCalendarInHome(ctx, homeURL, source); discovered != "" {
-					return discovered, nil
+					return discovered
 				}
 			}
 		}
 	}
 
-	// 3. Discover current-user-principal
+	// Discover current-user-principal
 	for _, res := range ms.Responses {
 		for _, ps := range res.Propstats {
 			if strings.Contains(ps.Status, "200") && ps.Prop.CurrentUserPrincipal.Href != "" {
 				principalURL := resolveHRef(endpoint, ps.Prop.CurrentUserPrincipal.Href)
 				if homeURL := c.findHomeSetFromPrincipal(ctx, principalURL, source); homeURL != "" {
 					if discovered := c.findCalendarInHome(ctx, homeURL, source); discovered != "" {
-						return discovered, nil
+						return discovered
 					}
 				}
 			}
 		}
 	}
 
-	return endpoint, nil
+	return ""
 }
 
 func (c *CalDAVClient) findHomeSetFromPrincipal(ctx context.Context, principalURL string, source CalendarSource) string {

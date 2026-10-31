@@ -163,23 +163,7 @@ func resolveCalendarField(m map[string]any, opts InitOptions, idx int, name, fie
 	return resolved, envKey, nil
 }
 
-func parseCalendarConfig(raw map[string]any, opts InitOptions) (*CalendarConfig, error) {
-	cfg := &CalendarConfig{
-		WindowDaysPast:   DefaultWindowDaysPast,
-		WindowDaysFuture: DefaultWindowDaysFuture,
-		View:             "agenda",
-	}
-
-	if v, ok := raw["view"].(string); ok && strings.TrimSpace(v) != "" {
-		cfg.View = strings.TrimSpace(v)
-	}
-
-	if sr, ok := raw["strip_recurring"].(bool); ok {
-		cfg.StripRecurring = sr
-	} else if er, ok := raw["exclude_recurring"].(bool); ok {
-		cfg.StripRecurring = er
-	}
-
+func extractRawCalendarSources(raw map[string]any) ([]map[string]any, error) {
 	var rawSources []map[string]any
 	switch list := raw["calendars"].(type) {
 	case []any:
@@ -197,94 +181,135 @@ func parseCalendarConfig(raw map[string]any, opts InitOptions) (*CalendarConfig,
 	if len(rawSources) == 0 {
 		return nil, errors.New("calendar provider requires at least one calendar in 'calendars'")
 	}
+	return rawSources, nil
+}
+
+func validateCalendarSourceAuth(src CalendarSource) error {
+	// Auth exclusivity: Cannot specify both Basic Auth and Bearer Token
+	if (src.Username != "" || src.Password != "") && src.Token != "" {
+		return fmt.Errorf("calendar %q cannot specify both Basic auth (username/password) and Bearer auth (token)", src.Name)
+	}
+
+	// Basic auth completeness
+	if src.Username != "" && src.Password == "" {
+		return fmt.Errorf("calendar %q: username provided without password", src.Name)
+	}
+	if src.Password != "" && src.Username == "" {
+		return fmt.Errorf("calendar %q: password provided without username", src.Name)
+	}
+	return nil
+}
+
+func parseCalendarSource(m map[string]any, opts InitOptions, idx int, defaultStripRecurring bool) (CalendarSource, error) {
+	name, ok := m["name"].(string)
+	if !ok || strings.TrimSpace(name) == "" {
+		return CalendarSource{}, fmt.Errorf("calendar at index %d requires non-empty 'name'", idx)
+	}
+	name = strings.TrimSpace(name)
+
+	var rawType string
+	if t, ok := m["type"].(string); ok {
+		rawType = t
+	}
+	sourceType := strings.ToLower(strings.TrimSpace(rawType))
+	if sourceType == "" {
+		sourceType = "ical"
+	}
+	if sourceType != "ical" && sourceType != "caldav" {
+		return CalendarSource{}, fmt.Errorf("calendar %q: invalid type %q (must be 'ical' or 'caldav')", name, sourceType)
+	}
+
+	resolvedURL, urlEnv, err := resolveCalendarField(m, opts, idx, name, "url")
+	if err != nil {
+		return CalendarSource{}, err
+	}
+	if resolvedURL == "" && urlEnv == "" {
+		return CalendarSource{}, fmt.Errorf("calendar %q requires either 'url' or 'url_env'", name)
+	}
+
+	resolvedUsername, usernameEnv, err := resolveCalendarField(m, opts, idx, name, "username")
+	if err != nil {
+		return CalendarSource{}, err
+	}
+
+	resolvedPassword, passwordEnv, err := resolveCalendarField(m, opts, idx, name, "password")
+	if err != nil {
+		return CalendarSource{}, err
+	}
+
+	resolvedToken, tokenEnv, err := resolveCalendarField(m, opts, idx, name, "token")
+	if err != nil {
+		return CalendarSource{}, err
+	}
+
+	color := "#3b82f6"
+	if c, ok := m["color"].(string); ok && strings.TrimSpace(c) != "" {
+		color = strings.TrimSpace(c)
+	}
+
+	enabled := true
+	if e, ok := m["enabled"].(bool); ok {
+		enabled = e
+	}
+
+	stripRecurring := defaultStripRecurring
+	if sr, ok := m["strip_recurring"].(bool); ok {
+		stripRecurring = sr
+	} else if er, ok := m["exclude_recurring"].(bool); ok {
+		stripRecurring = er
+	}
+
+	src := CalendarSource{
+		Name:           name,
+		Type:           sourceType,
+		URL:            resolvedURL,
+		URLEnv:         urlEnv,
+		Color:          color,
+		Enabled:        enabled,
+		StripRecurring: stripRecurring,
+		Username:       resolvedUsername,
+		UsernameEnv:    usernameEnv,
+		Password:       resolvedPassword,
+		PasswordEnv:    passwordEnv,
+		Token:          resolvedToken,
+		TokenEnv:       tokenEnv,
+	}
+
+	if err := validateCalendarSourceAuth(src); err != nil {
+		return CalendarSource{}, err
+	}
+
+	return src, nil
+}
+
+func parseCalendarConfig(raw map[string]any, opts InitOptions) (*CalendarConfig, error) {
+	cfg := &CalendarConfig{
+		WindowDaysPast:   DefaultWindowDaysPast,
+		WindowDaysFuture: DefaultWindowDaysFuture,
+		View:             "agenda",
+	}
+
+	if v, ok := raw["view"].(string); ok && strings.TrimSpace(v) != "" {
+		cfg.View = strings.TrimSpace(v)
+	}
+
+	if sr, ok := raw["strip_recurring"].(bool); ok {
+		cfg.StripRecurring = sr
+	} else if er, ok := raw["exclude_recurring"].(bool); ok {
+		cfg.StripRecurring = er
+	}
+
+	rawSources, err := extractRawCalendarSources(raw)
+	if err != nil {
+		return nil, err
+	}
 
 	for idx, m := range rawSources {
-		name, ok := m["name"].(string)
-		if !ok || strings.TrimSpace(name) == "" {
-			return nil, fmt.Errorf("calendar at index %d requires non-empty 'name'", idx)
-		}
-		name = strings.TrimSpace(name)
-
-		var rawType string
-		if t, ok := m["type"].(string); ok {
-			rawType = t
-		}
-		sourceType := strings.ToLower(strings.TrimSpace(rawType))
-		if sourceType == "" {
-			sourceType = "ical"
-		}
-		if sourceType != "ical" && sourceType != "caldav" {
-			return nil, fmt.Errorf("calendar %q: invalid type %q (must be 'ical' or 'caldav')", name, sourceType)
-		}
-
-		resolvedURL, urlEnv, err := resolveCalendarField(m, opts, idx, name, "url")
+		src, err := parseCalendarSource(m, opts, idx, cfg.StripRecurring)
 		if err != nil {
 			return nil, err
 		}
-		if resolvedURL == "" && urlEnv == "" {
-			return nil, fmt.Errorf("calendar %q requires either 'url' or 'url_env'", name)
-		}
-
-		resolvedUsername, usernameEnv, err := resolveCalendarField(m, opts, idx, name, "username")
-		if err != nil {
-			return nil, err
-		}
-
-		resolvedPassword, passwordEnv, err := resolveCalendarField(m, opts, idx, name, "password")
-		if err != nil {
-			return nil, err
-		}
-
-		resolvedToken, tokenEnv, err := resolveCalendarField(m, opts, idx, name, "token")
-		if err != nil {
-			return nil, err
-		}
-
-		// Auth exclusivity: Cannot specify both Basic Auth and Bearer Token
-		if (resolvedUsername != "" || resolvedPassword != "") && resolvedToken != "" {
-			return nil, fmt.Errorf("calendar %q cannot specify both Basic auth (username/password) and Bearer auth (token)", name)
-		}
-
-		// Basic auth completeness
-		if resolvedUsername != "" && resolvedPassword == "" {
-			return nil, fmt.Errorf("calendar %q: username provided without password", name)
-		}
-		if resolvedPassword != "" && resolvedUsername == "" {
-			return nil, fmt.Errorf("calendar %q: password provided without username", name)
-		}
-
-		color := "#3b82f6"
-		if c, ok := m["color"].(string); ok && strings.TrimSpace(c) != "" {
-			color = strings.TrimSpace(c)
-		}
-
-		enabled := true
-		if e, ok := m["enabled"].(bool); ok {
-			enabled = e
-		}
-
-		stripRecurring := cfg.StripRecurring
-		if sr, ok := m["strip_recurring"].(bool); ok {
-			stripRecurring = sr
-		} else if er, ok := m["exclude_recurring"].(bool); ok {
-			stripRecurring = er
-		}
-
-		cfg.Calendars = append(cfg.Calendars, CalendarSource{
-			Name:           name,
-			Type:           sourceType,
-			URL:            resolvedURL,
-			URLEnv:         urlEnv,
-			Color:          color,
-			Enabled:        enabled,
-			StripRecurring: stripRecurring,
-			Username:       resolvedUsername,
-			UsernameEnv:    usernameEnv,
-			Password:       resolvedPassword,
-			PasswordEnv:    passwordEnv,
-			Token:          resolvedToken,
-			TokenEnv:       tokenEnv,
-		})
+		cfg.Calendars = append(cfg.Calendars, src)
 	}
 
 	return cfg, nil
@@ -432,12 +457,9 @@ func addRecurrencePropertyKeys(dst map[string]bool, prop *ical.IANAProperty) {
 	}
 }
 
-func parseCalendarEvents(cal *ical.Calendar, source CalendarSource, windowStart, windowEnd time.Time) []CalendarEvent {
-	var events []CalendarEvent
-	recurrenceOverrides := make(map[string]map[string]bool) // uid -> set of recurrence-id timestamps
-
-	// Pass 1: Discover modified/overridden occurrences (RECURRENCE-ID)
-	for _, e := range cal.Events() {
+func collectRecurrenceOverrides(events []*ical.VEvent) map[string]map[string]bool {
+	recurrenceOverrides := make(map[string]map[string]bool)
+	for _, e := range events {
 		uidProp := e.GetProperty(ical.ComponentPropertyUniqueId)
 		recIDProp := e.GetProperty(ical.ComponentPropertyRecurrenceId)
 		if uidProp != nil && recIDProp != nil {
@@ -448,70 +470,82 @@ func parseCalendarEvents(cal *ical.Calendar, source CalendarSource, windowStart,
 			addRecurrencePropertyKeys(recurrenceOverrides[uid], recIDProp)
 		}
 	}
+	return recurrenceOverrides
+}
 
-	// Pass 2: Parse events and expand recurrences
-	for _, e := range cal.Events() {
-		uid := ""
-		if p := e.GetProperty(ical.ComponentPropertyUniqueId); p != nil {
-			uid = p.Value
-		}
-
-		title := "Untitled Event"
-		if p := e.GetProperty(ical.ComponentPropertySummary); p != nil && strings.TrimSpace(p.Value) != "" {
-			title = strings.TrimSpace(p.Value)
-		}
-
-		location := ""
-		if p := e.GetProperty(ical.ComponentPropertyLocation); p != nil {
-			location = strings.TrimSpace(p.Value)
-		}
-
-		description := ""
-		if p := e.GetProperty(ical.ComponentPropertyDescription); p != nil {
-			description = strings.TrimSpace(p.Value)
-		}
-
-		dtStartProp := e.GetProperty(ical.ComponentPropertyDtStart)
-		if dtStartProp == nil {
-			continue
-		}
-
-		isAllDay := false
-		if valParam, ok := dtStartProp.ICalParameters["VALUE"]; ok {
-			for _, v := range valParam {
-				if strings.ToUpper(v) == "DATE" {
-					isAllDay = true
-					break
-				}
-			}
-		}
-		if !isAllDay && len(dtStartProp.Value) == 8 {
-			isAllDay = true
-		}
-
-		rruleProp := e.GetProperty(ical.ComponentPropertyRrule)
-		recIDProp := e.GetProperty(ical.ComponentPropertyRecurrenceId)
-		rdateProp := e.GetProperty(ical.ComponentProperty("RDATE"))
-
-		isRecurring := rruleProp != nil || recIDProp != nil || rdateProp != nil
-		if source.StripRecurring && isRecurring {
-			continue
-		}
-
-		if rruleProp != nil && recIDProp == nil {
-			// Recurring master event
-			expanded := expandRecurrence(e, source, uid, title, location, description, isAllDay, windowStart, windowEnd, recurrenceOverrides[uid])
-			events = append(events, expanded...)
-		} else {
-			// Single event or modified occurrence
-			ev, ok := parseSingleEvent(e, source, uid, title, location, description, isAllDay, windowStart, windowEnd)
-			if ok {
-				events = append(events, ev)
+func isAllDayProperty(dtStartProp *ical.IANAProperty) bool {
+	if dtStartProp == nil {
+		return false
+	}
+	if valParam, ok := dtStartProp.ICalParameters["VALUE"]; ok {
+		for _, v := range valParam {
+			if strings.ToUpper(v) == "DATE" {
+				return true
 			}
 		}
 	}
+	return len(dtStartProp.Value) == 8
+}
+
+func parseCalendarEvents(cal *ical.Calendar, source CalendarSource, windowStart, windowEnd time.Time) []CalendarEvent {
+	var events []CalendarEvent
+	recurrenceOverrides := collectRecurrenceOverrides(cal.Events())
+
+	// Pass 2: Parse events and expand recurrences
+	for _, e := range cal.Events() {
+		evs := expandAndClipEvent(e, source, windowStart, windowEnd, recurrenceOverrides)
+		events = append(events, evs...)
+	}
 
 	return events
+}
+
+func expandAndClipEvent(e *ical.VEvent, source CalendarSource, windowStart, windowEnd time.Time, recurrenceOverrides map[string]map[string]bool) []CalendarEvent {
+	dtStartProp := e.GetProperty(ical.ComponentPropertyDtStart)
+	if dtStartProp == nil {
+		return nil
+	}
+
+	isAllDay := isAllDayProperty(dtStartProp)
+
+	rruleProp := e.GetProperty(ical.ComponentPropertyRrule)
+	recIDProp := e.GetProperty(ical.ComponentPropertyRecurrenceId)
+	rdateProp := e.GetProperty(ical.ComponentProperty("RDATE"))
+
+	isRecurring := rruleProp != nil || recIDProp != nil || rdateProp != nil
+	if source.StripRecurring && isRecurring {
+		return nil
+	}
+
+	uid := ""
+	if p := e.GetProperty(ical.ComponentPropertyUniqueId); p != nil {
+		uid = p.Value
+	}
+
+	title := "Untitled Event"
+	if p := e.GetProperty(ical.ComponentPropertySummary); p != nil && strings.TrimSpace(p.Value) != "" {
+		title = strings.TrimSpace(p.Value)
+	}
+
+	location := ""
+	if p := e.GetProperty(ical.ComponentPropertyLocation); p != nil {
+		location = strings.TrimSpace(p.Value)
+	}
+
+	description := ""
+	if p := e.GetProperty(ical.ComponentPropertyDescription); p != nil {
+		description = strings.TrimSpace(p.Value)
+	}
+
+	if rruleProp != nil && recIDProp == nil {
+		return expandRecurrence(e, source, uid, title, location, description, isAllDay, windowStart, windowEnd, recurrenceOverrides[uid])
+	}
+
+	ev, ok := parseSingleEvent(e, source, uid, title, location, description, isAllDay, windowStart, windowEnd)
+	if ok {
+		return []CalendarEvent{ev}
+	}
+	return nil
 }
 
 func eventDuration(e *ical.VEvent, startTime time.Time, isAllDay bool) time.Duration {
@@ -567,6 +601,52 @@ func parseSingleEvent(e *ical.VEvent, source CalendarSource, uid, title, locatio
 	}, true
 }
 
+func expandRecurringEvent(rruleProp *ical.IANAProperty, base CalendarEvent, start time.Time, duration time.Duration, winStart, winEnd time.Time, excluded map[string]bool) []CalendarEvent {
+	if rruleProp == nil {
+		return nil
+	}
+	ruleStr := rruleProp.Value
+	upperRule := strings.ToUpper(ruleStr)
+	if strings.Contains(upperRule, "FREQ=SECONDLY") || strings.Contains(upperRule, "FREQ=MINUTELY") {
+		return nil
+	}
+
+	rule, err := rrule.StrToRRule(ruleStr)
+	if err != nil {
+		return nil
+	}
+
+	rule.DTStart(start)
+	occurrences := rule.Between(winStart.Add(-duration), winEnd, true)
+	const maxOccurrences = 500
+	if len(occurrences) > maxOccurrences {
+		occurrences = occurrences[:maxOccurrences]
+	}
+
+	var expanded []CalendarEvent
+	for _, occ := range occurrences {
+		occStr := occ.UTC().Format("20060102T150405Z")
+		occDateStr := occ.Format("20060102")
+		if excluded[occStr] || excluded[occDateStr] {
+			continue
+		}
+
+		occEnd := occ.Add(duration)
+		if occEnd.Before(winStart) || occ.After(winEnd) {
+			continue
+		}
+
+		startStr, endStr := formatEventRange(occ, occEnd, base.AllDay)
+		ev := base
+		ev.ID = fmt.Sprintf("evt_%s_%d", sanitizeID(base.ID), occ.Unix())
+		ev.Start = startStr
+		ev.End = endStr
+		expanded = append(expanded, ev)
+	}
+
+	return expanded
+}
+
 func expandRecurrence(e *ical.VEvent, source CalendarSource, uid, title, location, description string, isAllDay bool, windowStart, windowEnd time.Time, overrides map[string]bool) []CalendarEvent {
 	dtStartProp := e.GetProperty(ical.ComponentPropertyDtStart)
 	rruleProp := e.GetProperty(ical.ComponentPropertyRrule)
@@ -579,67 +659,29 @@ func expandRecurrence(e *ical.VEvent, source CalendarSource, uid, title, locatio
 	duration := eventDuration(e, startTime, isAllDay)
 
 	// Collect EXDATE exclusions
-	exdates := make(map[string]bool)
+	excluded := make(map[string]bool)
 	for _, prop := range e.Properties {
 		if prop.IANAToken == string(ical.ComponentPropertyExdate) {
-			addRecurrencePropertyKeys(exdates, &prop)
+			addRecurrencePropertyKeys(excluded, &prop)
+		}
+	}
+	for k, v := range overrides {
+		if v {
+			excluded[k] = true
 		}
 	}
 
-	ruleStr := rruleProp.Value
-	upperRule := strings.ToUpper(ruleStr)
-	if strings.Contains(upperRule, "FREQ=SECONDLY") || strings.Contains(upperRule, "FREQ=MINUTELY") {
-		return nil
+	base := CalendarEvent{
+		ID:           uid,
+		CalendarName: source.Name,
+		Color:        source.Color,
+		Title:        title,
+		AllDay:       isAllDay,
+		Location:     location,
+		Description:  description,
 	}
 
-	rule, err := rrule.StrToRRule(ruleStr)
-	if err != nil {
-		return nil
-	}
-
-	rule.DTStart(startTime)
-	occurrences := rule.Between(windowStart.Add(-duration), windowEnd, true)
-	const maxOccurrences = 500
-	if len(occurrences) > maxOccurrences {
-		occurrences = occurrences[:maxOccurrences]
-	}
-
-	var expanded []CalendarEvent
-	for _, occ := range occurrences {
-		// Check exclusions
-		occStr := occ.UTC().Format("20060102T150405Z")
-		occDateStr := occ.Format("20060102")
-		if exdates[occStr] || exdates[occDateStr] {
-			continue
-		}
-
-		// Check if overridden by a RECURRENCE-ID event
-		if overrides != nil && (overrides[occStr] || overrides[occDateStr]) {
-			continue
-		}
-
-		occEnd := occ.Add(duration)
-		if occEnd.Before(windowStart) || occ.After(windowEnd) {
-			continue
-		}
-
-		startStr, endStr := formatEventRange(occ, occEnd, isAllDay)
-		eventID := fmt.Sprintf("evt_%s_%d", sanitizeID(uid), occ.Unix())
-
-		expanded = append(expanded, CalendarEvent{
-			ID:           eventID,
-			CalendarName: source.Name,
-			Color:        source.Color,
-			Title:        title,
-			Start:        startStr,
-			End:          endStr,
-			AllDay:       isAllDay,
-			Location:     location,
-			Description:  description,
-		})
-	}
-
-	return expanded
+	return expandRecurringEvent(rruleProp, base, startTime, duration, windowStart, windowEnd, excluded)
 }
 
 func parseICalDateTime(prop *ical.IANAProperty, isAllDay bool) (time.Time, error) {
@@ -656,7 +698,7 @@ func parseICalDateTime(prop *ical.IANAProperty, isAllDay bool) (time.Time, error
 	}
 
 	// Check TZID parameter
-	var loc *time.Location = time.UTC
+	loc := time.UTC
 	if tzid, ok := prop.ICalParameters["TZID"]; ok && len(tzid) > 0 {
 		if l, err := time.LoadLocation(tzid[0]); err == nil {
 			loc = l
