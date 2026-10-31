@@ -228,6 +228,14 @@ func TestRun(t *testing.T) {
 			wantErr:  "//nolint:errcheck is prohibited; all errors must be checked",
 		},
 		{
+			name: "banned nolint dupl fails check",
+			files: map[string]string{
+				"pkg/dupl.go": "package pkg\n\nfunc Bad() {\n\t//nolint:dupl\n\t_ = 1\n}\n",
+			},
+			wantCode: 1,
+			wantErr:  "//nolint:dupl is prohibited",
+		},
+		{
 			name: "allowed specific nolint passes check",
 			files: map[string]string{
 				"pkg/allowed.go": "package pkg\n\nfunc Good() {\n\t//nolint:nilerr // explanation\n\t_ = 1\n}\n",

@@ -651,21 +651,7 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 		}
 		if err != nil {
 			finalStatus = "error"
-			h.metrics.RecordStageDuration(nodeID, "brain", "error", brainDuration)
-			errType := "brain_error"
-			retErr := fmt.Errorf("%w: %w", ErrBrainFailed, err)
-			if isTimeoutError(err, streamCtx, ctx) {
-				errType = "brain_timeout"
-				retErr = fmt.Errorf("%w: %w", ErrBrainTimeout, err)
-			}
-			h.metrics.RecordError(nodeID, "brain", errType)
-			if h.coord != nil {
-				h.coord.Transition(StateError, nil, nil, nil, nil)
-			}
-			if sinkErr := safeSink("error", map[string]string{"error": errType, "message": err.Error()}); sinkErr != nil {
-				return sinkErr
-			}
-			return retErr
+			return h.recordBrainStageError(ctx, streamCtx, nodeID, brainDuration, err, safeSink)
 		}
 		if recordBrain {
 			h.metrics.RecordStageDuration(nodeID, "brain", "success", brainDuration)
@@ -727,21 +713,7 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 		stopThinking()
 		if err != nil {
 			finalStatus = "error"
-			h.metrics.RecordStageDuration(nodeID, "brain", "error", brainDuration)
-			errType := "brain_error"
-			retErr := fmt.Errorf("%w: %w", ErrBrainFailed, err)
-			if isTimeoutError(err, brainCtx, ctx) {
-				errType = "brain_timeout"
-				retErr = fmt.Errorf("%w: %w", ErrBrainTimeout, err)
-			}
-			h.metrics.RecordError(nodeID, "brain", errType)
-			if h.coord != nil {
-				h.coord.Transition(StateError, nil, nil, nil, nil)
-			}
-			if sinkErr := safeSink("error", map[string]string{"error": errType, "message": err.Error()}); sinkErr != nil {
-				return sinkErr
-			}
-			return retErr
+			return h.recordBrainStageError(ctx, brainCtx, nodeID, brainDuration, err, safeSink)
 		}
 		if recordBrain {
 			h.metrics.RecordStageDuration(nodeID, "brain", "success", brainDuration)
@@ -760,6 +732,30 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 	}
 
 	return nil
+}
+
+func (h *Hub) recordBrainStageError(
+	ctx, callCtx context.Context,
+	nodeID string,
+	brainDuration float64,
+	err error,
+	safeSink SSEEventSink,
+) error {
+	h.metrics.RecordStageDuration(nodeID, "brain", "error", brainDuration)
+	errType := "brain_error"
+	retErr := fmt.Errorf("%w: %w", ErrBrainFailed, err)
+	if isTimeoutError(err, callCtx, ctx) {
+		errType = "brain_timeout"
+		retErr = fmt.Errorf("%w: %w", ErrBrainTimeout, err)
+	}
+	h.metrics.RecordError(nodeID, "brain", errType)
+	if h.coord != nil {
+		h.coord.Transition(StateError, nil, nil, nil, nil)
+	}
+	if sinkErr := safeSink("error", map[string]string{"error": errType, "message": err.Error()}); sinkErr != nil {
+		return sinkErr
+	}
+	return retErr
 }
 
 const pcmChunkFloor = 4800

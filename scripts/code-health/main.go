@@ -374,7 +374,7 @@ func checkNolintComment(raw string) string {
 			tok = fields[0]
 		}
 		switch tok {
-		case "errcheck", "all":
+		case "errcheck", "all", "dupl":
 			return fmt.Sprintf("//nolint:%s is prohibited; all errors must be checked", tok)
 		}
 	}
