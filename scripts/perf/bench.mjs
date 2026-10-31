@@ -141,7 +141,7 @@ async function launchChrome(chromePath) {
     'about:blank',
   ], { stdio: ['ignore', 'ignore', 'pipe'] });
 
-  const port = await new Promise((resolve, reject) => {
+  const portReady = new Promise((resolve, reject) => {
     let stderr = '';
     const timer = setTimeout(() => {
       reject(new Error(`Chrome did not expose DevTools within ${CHROME_START_TIMEOUT_MS} ms; stderr: ${stderr.slice(-400)}`));
@@ -163,6 +163,15 @@ async function launchChrome(chromePath) {
       reject(new Error(`Chrome exited early with code ${code}; stderr: ${stderr.slice(-400)}`));
     });
   });
+  let port;
+  try {
+    port = await portReady;
+  } catch (err) {
+    // Startup failed: runBench's finally never sees this Chrome, so clean it up here.
+    proc.kill('SIGTERM');
+    await rm(profileDir, { recursive: true, force: true }).catch(() => {});
+    throw err;
+  }
   return { proc, port, profileDir };
 }
 
