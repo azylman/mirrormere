@@ -86,17 +86,47 @@ func (e *Engine) Invalidate(widgetType string) {
 
 // RenderWidgetWithOverrides renders a widget instance for one display with optional runtime configuration overrides.
 func (e *Engine) RenderWidgetWithOverrides(ctx context.Context, widgetID, nodeID string, overrides map[string]any) ([]byte, error) {
+	pkg, tmplCtx, err := e.resolveWidget(widgetID, nodeID, overrides)
+	if err != nil {
+		return nil, err
+	}
+
+	// Obtain or compile template
+	tmpl, err := e.getOrCompileTemplate(pkg)
+	if err != nil {
+		return nil, err
+	}
+
+	// Execute template
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, tmplCtx); err != nil {
+		return nil, fmt.Errorf("failed to execute template for widget %q: %w", widgetID, err)
+	}
+
+	return buf.Bytes(), nil
+}
+
+// WidgetContext returns the execution context for one widget instance on one display: placement,
+// sanitized config with overrides applied, runtime state and the per-node data override. It is the
+// context the HTML template receives, so the JSON widget route reports the same values.
+func (e *Engine) WidgetContext(ctx context.Context, widgetID, nodeID string, overrides map[string]any) (Context, error) {
+	_, tmplCtx, err := e.resolveWidget(widgetID, nodeID, overrides)
+	return tmplCtx, err
+}
+
+// resolveWidget locates the declared widget instance and its package and builds the merged execution context.
+func (e *Engine) resolveWidget(widgetID, nodeID string, overrides map[string]any) (*domain.Package, Context, error) {
 	if widgetID == "" {
-		return nil, WidgetNotFoundError{WidgetID: ""}
+		return nil, Context{}, WidgetNotFoundError{WidgetID: ""}
 	}
 
 	if e.provider == nil {
-		return nil, fmt.Errorf("state snapshot provider is unconfigured")
+		return nil, Context{}, fmt.Errorf("state snapshot provider is unconfigured")
 	}
 
 	snap := e.provider.CurrentSnapshot()
 	if snap == nil || snap.Config == nil {
-		return nil, fmt.Errorf("no active configuration snapshot available")
+		return nil, Context{}, fmt.Errorf("no active configuration snapshot available")
 	}
 
 	// 1. Locate declared widget instance
@@ -108,7 +138,7 @@ func (e *Engine) RenderWidgetWithOverrides(ctx context.Context, widgetID, nodeID
 		}
 	}
 	if targetWidget == nil {
-		return nil, WidgetNotFoundError{WidgetID: widgetID}
+		return nil, Context{}, WidgetNotFoundError{WidgetID: widgetID}
 	}
 
 	// 2. Resolve widget package
@@ -120,20 +150,14 @@ func (e *Engine) RenderWidgetWithOverrides(ctx context.Context, widgetID, nodeID
 		var err error
 		pkg, err = e.resolver.LoadPackage(targetWidget.Type)
 		if err != nil {
-			return nil, fmt.Errorf("failed to load package for widget type %q: %w", targetWidget.Type, err)
+			return nil, Context{}, fmt.Errorf("failed to load package for widget type %q: %w", targetWidget.Type, err)
 		}
 	}
 	if pkg == nil {
-		return nil, fmt.Errorf("widget package for type %q not found", targetWidget.Type)
+		return nil, Context{}, fmt.Errorf("widget package for type %q not found", targetWidget.Type)
 	}
 
-	// 3. Obtain or compile template
-	tmpl, err := e.getOrCompileTemplate(pkg)
-	if err != nil {
-		return nil, err
-	}
-
-	// 4. Build execution context
+	// 3. Build execution context
 	tmplCtx := e.buildContext(widgetID, targetWidget, pkg, snap)
 	if len(overrides) > 0 {
 		mergedConfig := make(map[string]any, len(tmplCtx.Config)+len(overrides))
@@ -151,13 +175,7 @@ func (e *Engine) RenderWidgetWithOverrides(ctx context.Context, widgetID, nodeID
 		}
 	}
 
-	// 5. Execute template
-	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, tmplCtx); err != nil {
-		return nil, fmt.Errorf("failed to execute template for widget %q: %w", widgetID, err)
-	}
-
-	return buf.Bytes(), nil
+	return pkg, tmplCtx, nil
 }
 
 func (e *Engine) getOrCompileTemplate(pkg *domain.Package) (*template.Template, error) {
