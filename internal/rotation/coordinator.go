@@ -9,6 +9,7 @@ import (
 
 	"github.com/azylman/mirrormere/internal/config"
 	"github.com/azylman/mirrormere/internal/events"
+	"github.com/azylman/mirrormere/internal/layout"
 )
 
 var (
@@ -61,6 +62,29 @@ func NewCoordinator(cfg Config, initialSnapshot *config.Snapshot) *Coordinator {
 	}
 	c.mu.Unlock()
 	return c
+}
+
+// ScreenLayoutSnapshot is the solved rotation layout as currently held by the coordinator.
+type ScreenLayoutSnapshot struct {
+	CurrentScreen   int
+	IntervalSeconds int
+	Screens         []layout.Screen
+}
+
+// ScreenLayout returns the current screen index, the rotation interval and every solved screen of the active layout.
+func (c *Coordinator) ScreenLayout() ScreenLayoutSnapshot {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	out := ScreenLayoutSnapshot{CurrentScreen: c.currentScreen, IntervalSeconds: 30}
+	if c.snapshot != nil {
+		if c.snapshot.Config != nil {
+			out.IntervalSeconds = c.snapshot.Config.Display.Rotation.GetIntervalSeconds()
+		}
+		if c.snapshot.Layout != nil {
+			out.Screens = c.snapshot.Layout.Screens
+		}
+	}
+	return out
 }
 
 func (c *Coordinator) CurrentScreen() int {
