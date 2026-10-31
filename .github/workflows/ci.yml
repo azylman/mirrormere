@@ -216,6 +216,8 @@ jobs:
           cd ../..
           # A fresh build must match the committed web/static/ui output byte for byte.
           git diff --exit-code web/static/ui
+          # git diff misses new untracked files; fail on those too.
+          test -z "$(git ls-files --others --exclude-standard web/static/ui)"
 
   lint:
     name: Lint Microservices & Frontend

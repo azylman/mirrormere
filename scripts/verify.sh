@@ -342,6 +342,11 @@ run_ui_checks() {
     (cd "$REPO_ROOT/web/ui" && npm run lint && npm run typecheck && npm test && npm run build)
     echo "   [ui] Checking committed web/static/ui output against a fresh build..."
     git diff --exit-code web/static/ui
+    untracked=$(git ls-files --others --exclude-standard web/static/ui)
+    if [ -n "$untracked" ]; then
+        echo "   [ui] Untracked build output in web/static/ui: $untracked"
+        return 1
+    fi
 }
 
 if [ "$MODE" = "staged" ]; then
