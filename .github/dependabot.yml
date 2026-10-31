@@ -11,9 +11,6 @@ updates:
       github-actions:
         patterns:
           - "*"
-        update-types:
-          - "minor"
-          - "patch"
 
   - package-ecosystem: "gomod"
     directory: "/"
@@ -26,9 +23,6 @@ updates:
       go-dependencies:
         patterns:
           - "*"
-        update-types:
-          - "minor"
-          - "patch"
 
   - package-ecosystem: "pip"
     directories:
@@ -45,9 +39,6 @@ updates:
       python-dependencies:
         patterns:
           - "*"
-        update-types:
-          - "minor"
-          - "patch"
     ignore:
       - dependency-name: "openwakeword"
         versions:
