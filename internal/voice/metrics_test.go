@@ -29,6 +29,8 @@ func metricVal(t *testing.T, reg *prometheus.Registry, name string, labels map[s
 	if err != nil {
 		t.Fatalf("gather metrics: %v", err)
 	}
+	var total float64
+	var found bool
 	for _, mf := range mfs {
 		if mf.GetName() != name {
 			continue
@@ -44,17 +46,18 @@ func metricVal(t *testing.T, reg *prometheus.Registry, name string, labels map[s
 					continue nextMetric
 				}
 			}
+			found = true
 			switch {
 			case m.GetCounter() != nil:
-				return m.GetCounter().GetValue(), true
+				total += m.GetCounter().GetValue()
 			case m.GetGauge() != nil:
-				return m.GetGauge().GetValue(), true
+				total += m.GetGauge().GetValue()
 			case m.GetHistogram() != nil:
-				return float64(m.GetHistogram().GetSampleCount()), true
+				total += float64(m.GetHistogram().GetSampleCount())
 			}
 		}
 	}
-	return 0, false
+	return total, found
 }
 
 func TestMetrics_CollectorsAndSafety(t *testing.T) {
@@ -70,7 +73,8 @@ func TestMetrics_CollectorsAndSafety(t *testing.T) {
 
 	reg := prometheus.NewRegistry()
 	node := "kitchen-display"
-	for _, m := range []*Metrics{nil, NewMetrics(reg)} {
+	metrics := NewMetrics(reg)
+	for _, m := range []*Metrics{nil, metrics} {
 		for _, stg := range []string{"wake_eval", "stt", "brain", "tts"} {
 			m.RecordStageDuration(node, stg, "success", 0.35)
 		}
@@ -117,6 +121,17 @@ func TestMetrics_CollectorsAndSafety(t *testing.T) {
 		{"mirrormere_voice_stt_rtf", lbl("node_id", node, "engine", "unknown"), 0.22},
 		{"mirrormere_voice_tts_chars_per_second", lbl("node_id", node, "voice", "kokoro_am_adam"), 28.5},
 		{"mirrormere_voice_tts_chars_per_second", lbl("node_id", node, "voice", "unknown"), 24.0},
+		{"mirrormere_voice_turns_total", lbl("node_id", "cockpit", "status", "success"), 0},
+		{"mirrormere_voice_turns_total", lbl("node_id", "cockpit", "status", "error"), 0},
+		{"mirrormere_voice_false_wakes_total", lbl("node_id", "cockpit"), 0},
+		{"mirrormere_voice_errors_total", lbl("node_id", "cockpit", "stage", "wake_eval", "error_type", "none"), 0},
+		{"mirrormere_voice_errors_total", lbl("node_id", "cockpit", "stage", "deliberation", "error_type", "none"), 0},
+		{"mirrormere_voice_stage_duration_seconds", lbl("node_id", "cockpit", "stage", "wake_eval", "status", "success"), 0},
+		{"mirrormere_voice_stage_duration_seconds", lbl("node_id", "cockpit", "stage", "deliberation", "status", "timeout"), 0},
+		{"mirrormere_voice_playback_duration_seconds", lbl("node_id", "cockpit"), 0},
+		{"mirrormere_voice_stt_rtf", lbl("node_id", "cockpit", "engine", "faster-whisper"), 0},
+		{"mirrormere_voice_tts_chars_per_second", lbl("node_id", "cockpit", "voice", "kokoro"), 0},
+		{"mirrormere_voice_ambient_rms_dbfs", lbl("node_id", "cockpit"), 0},
 	} {
 		if val, ok := metricVal(t, reg, tc.name, tc.lbl); !ok || val != tc.want {
 			t.Errorf("metric %s %v = (%v, %v), want (%v, true)", tc.name, tc.lbl, val, ok, tc.want)
@@ -124,7 +139,12 @@ func TestMetrics_CollectorsAndSafety(t *testing.T) {
 	}
 	_, okFail := metricVal(t, reg, "mirrormere_voice_stage_duration_seconds", lbl("node_id", node, "stage", "stt", "status", "fail"))
 	_, okNone := metricVal(t, reg, "nonexistent_metric", nil)
-	if val, ok := metricVal(t, reg, "mirrormere_voice_edge_last_seen_timestamp_seconds", lbl("node_id", node)); !ok || val <= 0 || okFail || okNone {
-		t.Fatalf("last_seen=(%v,%v) fail=%v none=%v", val, ok, okFail, okNone)
+	_, okCockpitBeforeHeartbeat := metricVal(t, reg, "mirrormere_voice_edge_last_seen_timestamp_seconds", lbl("node_id", "cockpit"))
+	if val, ok := metricVal(t, reg, "mirrormere_voice_edge_last_seen_timestamp_seconds", lbl("node_id", node)); !ok || val <= 0 || okFail || okNone || okCockpitBeforeHeartbeat {
+		t.Fatalf("last_seen=(%v,%v) fail=%v none=%v cockpit_before=%v", val, ok, okFail, okNone, okCockpitBeforeHeartbeat)
+	}
+	metrics.RecordEdgeHeartbeat("cockpit")
+	if val, ok := metricVal(t, reg, "mirrormere_voice_edge_last_seen_timestamp_seconds", lbl("node_id", "cockpit")); !ok || val <= 0 {
+		t.Fatalf("cockpit last_seen after heartbeat=(%v,%v), want (>0, true)", val, ok)
 	}
 }
