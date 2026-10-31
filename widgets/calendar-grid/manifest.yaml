@@ -12,6 +12,7 @@ default_dimensions: [6, 2]
 supported_dimensions:
   - [4, 2]
   - [6, 2]
+  - [2, 3]
   - [2, 4]
   - [2, 6]
 
