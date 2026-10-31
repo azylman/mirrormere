@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/http"
 	"strings"
 	"sync"
@@ -430,9 +431,7 @@ func (c *ProviderCoordinator) startSingleWorkerLocked(w *config.WidgetConfig, sn
 
 	// Forward pushes from workerSink to coordinator eventSink, stamping the worker's widget ID
 	// and dropping payloads once the worker context is cancelled.
-	wrk.subWg.Add(1)
-	go func() {
-		defer wrk.subWg.Done()
+	wrk.subWg.Go(func() {
 		for {
 			select {
 			case <-workerCtx.Done():
@@ -452,16 +451,14 @@ func (c *ProviderCoordinator) startSingleWorkerLocked(w *config.WidgetConfig, sn
 				}
 			}
 		}
-	}()
+	})
 
 	// Start subscription if provider supports push events
-	wrk.subWg.Add(1)
-	go func() {
-		defer wrk.subWg.Done()
+	wrk.subWg.Go(func() {
 		if err := p.Subscribe(workerCtx, workerSink); err != nil && !errors.Is(err, context.Canceled) {
 			c.logger.Warn("provider subscribe error", "widget_id", wrk.widgetID, "error", err)
 		}
-	}()
+	})
 
 	// Start worker loop
 	go c.runWorker(workerCtx, wrk)
@@ -643,9 +640,7 @@ func (c *ProviderCoordinator) broadcastUpdate(payload WidgetPayload) {
 func (c *ProviderCoordinator) buildProviderConfig(w *config.WidgetConfig) map[string]any {
 	cfgMap := make(map[string]any)
 	if w.Config != nil {
-		for k, v := range w.Config {
-			cfgMap[k] = v
-		}
+		maps.Copy(cfgMap, w.Config)
 	}
 	return cfgMap
 }
@@ -658,9 +653,7 @@ func (c *ProviderCoordinator) buildInitOptions(w *config.WidgetConfig, pkg *doma
 
 	secrets := make(map[string]string)
 	if w.Secrets != nil {
-		for k, v := range w.Secrets {
-			secrets[k] = v
-		}
+		maps.Copy(secrets, w.Secrets)
 	}
 	token := w.Token
 	if token == "" && secrets["token"] != "" {

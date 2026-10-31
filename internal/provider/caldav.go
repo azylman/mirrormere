@@ -166,8 +166,8 @@ func (c *CalDAVClient) doPropfind(ctx context.Context, targetURL, depth, xmlBody
 // DiscoverCalendarURL resolves the specific calendar collection URL from an endpoint, principal, or home-set.
 func (c *CalDAVClient) DiscoverCalendarURL(ctx context.Context, source CalendarSource) (string, error) {
 	endpoint := strings.TrimSpace(source.URL)
-	if strings.HasPrefix(endpoint, "webcal://") {
-		endpoint = "https://" + strings.TrimPrefix(endpoint, "webcal://")
+	if after, ok := strings.CutPrefix(endpoint, "webcal://"); ok {
+		endpoint = "https://" + after
 	}
 
 	propfindBody := `<?xml version="1.0" encoding="utf-8" ?>

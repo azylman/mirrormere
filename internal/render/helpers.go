@@ -919,10 +919,7 @@ func TasksStats(input any) TasksStatsResult {
 		}
 	}
 
-	rem := total - done
-	if rem < 0 {
-		rem = 0
-	}
+	rem := max(total-done, 0)
 
 	summary := ""
 	if total > 0 {

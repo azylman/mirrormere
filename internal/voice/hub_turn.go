@@ -78,10 +78,7 @@ func (h *Hub) transcribeWithSpeaker(
 		return "", SpeakerMatch{}, fmt.Errorf("%w: %w", ErrSTTFailed, err)
 	}
 	h.metrics.RecordStageDuration(nodeID, "stt", "success", sttDuration)
-	pcmBytes := len(wavData) - 44
-	if pcmBytes < 0 {
-		pcmBytes = 0
-	}
+	pcmBytes := max(len(wavData)-44, 0)
 	audioSec := float64(pcmBytes) / (16000.0 * 2.0)
 	if audioSec > 0.001 {
 		rtf := sttDuration / audioSec

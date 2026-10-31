@@ -1071,12 +1071,12 @@ func consumeStreamingSSE(r io.Reader, onStatus func(status string), onAudio func
 			currentEvent = ""
 			continue
 		}
-		if strings.HasPrefix(line, "event:") {
-			currentEvent = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
+		if after, ok := strings.CutPrefix(line, "event:"); ok {
+			currentEvent = strings.TrimSpace(after)
 			continue
 		}
-		if strings.HasPrefix(line, "data:") {
-			dataStr := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if after, ok := strings.CutPrefix(line, "data:"); ok {
+			dataStr := strings.TrimSpace(after)
 			var payload map[string]any
 			if unmarshalErr := json.Unmarshal([]byte(dataStr), &payload); unmarshalErr != nil {
 				continue

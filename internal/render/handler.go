@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -89,8 +90,7 @@ func (h *Handler) GetWidgetRender(w http.ResponseWriter, r *http.Request, widget
 
 	htmlBytes, err := h.engine.RenderWidgetWithOverrides(r.Context(), widgetID, r.URL.Query().Get("node"), overrides)
 	if err != nil {
-		var notFound WidgetNotFoundError
-		if errors.As(err, &notFound) {
+		if notFound, ok := errors.AsType[WidgetNotFoundError](err); ok {
 			writeJSONError(w, http.StatusNotFound, notFound.Error())
 			return
 		}
@@ -148,8 +148,7 @@ func (h *Handler) GetWidgetJSON(w http.ResponseWriter, r *http.Request, widgetID
 
 	ctx, err := h.engine.WidgetContext(r.Context(), widgetID, r.URL.Query().Get("node"), overrides)
 	if err != nil {
-		var notFound WidgetNotFoundError
-		if errors.As(err, &notFound) {
+		if notFound, ok := errors.AsType[WidgetNotFoundError](err); ok {
 			writeJSONError(w, http.StatusNotFound, notFound.Error())
 			return
 		}
@@ -274,7 +273,7 @@ func tryServeCombinedStyle(w http.ResponseWriter, r *http.Request, cssPath, cust
 	if customErr != nil {
 		return false
 	}
-	combined := append(append(baseBytes[:len(baseBytes):len(baseBytes)], '\n'), customBytes...)
+	combined := append(append(slices.Clip(baseBytes), '\n'), customBytes...)
 	modTime := customFi.ModTime()
 	if baseModTime.After(modTime) {
 		modTime = baseModTime

@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -89,10 +90,8 @@ func pushChatLogUpdates(sp render.StateSnapshotProvider, pusher chatLogPusher, s
 
 func chatLogNodeData(sp render.StateSnapshotProvider, store *chatlog.Store) func(widgetID, nodeID string) (any, bool) {
 	return func(widgetID, nodeID string) (any, bool) {
-		for _, id := range chatLogWidgetIDs(sp.CurrentSnapshot()) {
-			if id == widgetID {
-				return store.View(widgetID, nodeID), true
-			}
+		if slices.Contains(chatLogWidgetIDs(sp.CurrentSnapshot()), widgetID) {
+			return store.View(widgetID, nodeID), true
 		}
 		return nil, false
 	}

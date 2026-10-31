@@ -165,10 +165,7 @@ func brainStageSeconds(b BrainClient, total time.Duration) (float64, bool) {
 	if fp.handled {
 		return 0, false
 	}
-	d := total - fp.elapsed
-	if d < 0 {
-		d = 0
-	}
+	d := max(total-fp.elapsed, 0)
 	return d.Seconds(), true
 }
 

@@ -3,6 +3,7 @@ package render
 import (
 	"fmt"
 	"math"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -393,13 +394,7 @@ func populateFamilyDayColumns(days []FamilyDay, rangeStart time.Time, maxVisible
 			if fe.AllDay {
 				continue
 			}
-			hasDay := false
-			for _, dateKey := range mergedData.dates[id] {
-				if dateKey == dStr {
-					hasDay = true
-					break
-				}
-			}
+			hasDay := slices.Contains(mergedData.dates[id], dStr)
 			if !hasDay {
 				continue
 			}
@@ -526,10 +521,7 @@ func layoutEventCluster(events []FamilyDayEvent, c eventClusterRange) {
 		}
 	}
 
-	numLanes := len(lanes)
-	if numLanes > maxDayLanes {
-		numLanes = maxDayLanes
-	}
+	numLanes := min(len(lanes), maxDayLanes)
 	laneWidth := roundToTwoDecimals(100.0 / float64(numLanes))
 
 	for k := c.startIdx; k < c.endIdx; k++ {
@@ -667,12 +659,7 @@ func stringOr(cfg map[string]any, key, fallback string) string {
 }
 
 func calendarClaimedBy(m FamilyMember, calendarName string) bool {
-	for _, c := range m.Calendars {
-		if c == calendarName {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(m.Calendars, calendarName)
 }
 
 func parseFamilyMembers(cfg map[string]any) ([]FamilyMember, error) {

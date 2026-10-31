@@ -50,10 +50,10 @@ func parseHassProxyArgs(args []string, stderr io.Writer) (string, bool, error) {
 		if (arg == "-config" || arg == "--config") && i+1 < len(args) {
 			configPath = args[i+1]
 			i++
-		} else if strings.HasPrefix(arg, "-config=") {
-			configPath = strings.TrimPrefix(arg, "-config=")
-		} else if strings.HasPrefix(arg, "--config=") {
-			configPath = strings.TrimPrefix(arg, "--config=")
+		} else if after, ok := strings.CutPrefix(arg, "-config="); ok {
+			configPath = after
+		} else if after, ok := strings.CutPrefix(arg, "--config="); ok {
+			configPath = after
 		} else if !strings.HasPrefix(arg, "-") && configPath == "" {
 			configPath = arg
 		}

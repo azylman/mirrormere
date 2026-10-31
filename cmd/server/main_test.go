@@ -261,8 +261,8 @@ func TestBuildDisplayHandler_VoiceWaveform(t *testing.T) {
 	}{
 		{name: "no voice section", voice: nil, wantNil: true},
 		{name: "voice without waveform", voice: &config.DisplayVoiceConfig{}, wantNil: true},
-		{name: "waveform disabled", voice: &config.DisplayVoiceConfig{Waveform: &config.VoiceWaveformConfig{Enabled: ptrBool(false)}}, wantNil: true},
-		{name: "waveform enabled", voice: &config.DisplayVoiceConfig{Waveform: &config.VoiceWaveformConfig{Enabled: &enabled, LevelsURL: "http://127.0.0.1:9100/levels", Gain: ptrFloat(1.5)}}},
+		{name: "waveform disabled", voice: &config.DisplayVoiceConfig{Waveform: &config.VoiceWaveformConfig{Enabled: new(false)}}, wantNil: true},
+		{name: "waveform enabled", voice: &config.DisplayVoiceConfig{Waveform: &config.VoiceWaveformConfig{Enabled: &enabled, LevelsURL: "http://127.0.0.1:9100/levels", Gain: new(1.5)}}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -282,9 +282,6 @@ func TestBuildDisplayHandler_VoiceWaveform(t *testing.T) {
 		})
 	}
 }
-
-func ptrBool(v bool) *bool        { return &v }
-func ptrFloat(v float64) *float64 { return &v }
 
 func TestRun_CLIAndErrors(t *testing.T) {
 	tests := []struct {
@@ -430,8 +427,7 @@ func TestRun_SIGHUP(t *testing.T) {
 			var sseEvents chan string
 			if tc.wantEvtType != "" {
 				sseEvents = make(chan string, 20)
-				sseCtx, sseCancel := context.WithCancel(context.Background())
-				defer sseCancel()
+				sseCtx := t.Context()
 				req, _ := http.NewRequestWithContext(sseCtx, http.MethodGet, d.baseURL+"/api/events", nil)
 				resp, err := http.DefaultClient.Do(req)
 				if err != nil {
@@ -442,8 +438,8 @@ func TestRun_SIGHUP(t *testing.T) {
 					scanner := bufio.NewScanner(resp.Body)
 					for scanner.Scan() {
 						line := scanner.Text()
-						if strings.HasPrefix(line, "event: ") {
-							sseEvents <- strings.TrimPrefix(line, "event: ")
+						if after, ok := strings.CutPrefix(line, "event: "); ok {
+							sseEvents <- after
 						}
 					}
 				}()
