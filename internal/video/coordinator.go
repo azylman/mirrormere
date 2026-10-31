@@ -117,20 +117,20 @@ func (c *Coordinator) promotePipOrResetLocked() {
 	}
 }
 
-func (c *Coordinator) Trigger(stream VideoStream) (VideoState, error) {
+func normalizeAndValidateStream(stream *VideoStream) error {
 	stream.ID, stream.StreamURL = strings.TrimSpace(stream.ID), strings.TrimSpace(stream.StreamURL)
 	if stream.ID == "" || stream.StreamURL == "" || stream.ID == "all" || stream.ID == "*" {
-		return VideoState{}, ErrInvalidStream
+		return ErrInvalidStream
 	}
 	if stream.Type == "" {
 		stream.Type = TypeWebRTC
 	} else if stream.Type != TypeWebRTC && stream.Type != TypeHLS && stream.Type != TypeMJPEG {
-		return VideoState{}, ErrInvalidStream
+		return ErrInvalidStream
 	}
 	if stream.Priority == "" {
 		stream.Priority = PriorityPersistent
 	} else if stream.Priority != PriorityPersistent && stream.Priority != PriorityTemporary {
-		return VideoState{}, ErrInvalidStream
+		return ErrInvalidStream
 	}
 	if stream.Priority == PriorityTemporary && stream.TimeoutSeconds <= 0 {
 		stream.TimeoutSeconds = DefaultTemporaryTimeoutSeconds
@@ -140,7 +140,48 @@ func (c *Coordinator) Trigger(stream VideoStream) (VideoState, error) {
 	if stream.PlayerState == "" {
 		stream.PlayerState = PlayerStatePlaying
 	} else if !isValidPlayerState(stream.PlayerState) {
-		return VideoState{}, ErrInvalidPlayerState
+		return ErrInvalidPlayerState
+	}
+	return nil
+}
+
+func (c *Coordinator) assignPersistentStreamSlotLocked(stream *VideoStream) {
+	stream.Muted = false
+	if c.primary != nil {
+		if c.primary.Priority == PriorityTemporary {
+			c.stopTimerLocked(streamID(c.pip))
+			c.primary.Muted, c.pip = true, c.primary
+		} else {
+			c.stopTimerLocked(c.primary.ID)
+		}
+	}
+	c.primary = stream
+}
+
+func (c *Coordinator) assignTemporaryStreamSlotLocked(stream *VideoStream) {
+	timeout := time.Duration(stream.TimeoutSeconds) * time.Second
+	if c.primary != nil && c.primary.Priority == PriorityPersistent {
+		c.stopTimerLocked(streamID(c.pip))
+		stream.Muted, c.pip = true, stream
+		c.startTimerLocked(stream.ID, timeout)
+		return
+	}
+	c.stopTimerLocked(streamID(c.primary))
+	stream.Muted, c.primary = false, stream
+	c.startTimerLocked(stream.ID, timeout)
+}
+
+func (c *Coordinator) assignStreamSlotLocked(stream *VideoStream) {
+	if stream.Priority == PriorityPersistent {
+		c.assignPersistentStreamSlotLocked(stream)
+		return
+	}
+	c.assignTemporaryStreamSlotLocked(stream)
+}
+
+func (c *Coordinator) Trigger(stream VideoStream) (VideoState, error) {
+	if err := normalizeAndValidateStream(&stream); err != nil {
+		return VideoState{}, err
 	}
 
 	c.mu.Lock()
@@ -160,26 +201,7 @@ func (c *Coordinator) Trigger(stream VideoStream) (VideoState, error) {
 		stream.PositionUpdatedAt = time.Now().UnixMilli()
 	}
 
-	if stream.Priority == PriorityPersistent {
-		stream.Muted = false
-		if c.primary != nil {
-			if c.primary.Priority == PriorityTemporary {
-				c.stopTimerLocked(streamID(c.pip))
-				c.primary.Muted, c.pip = true, c.primary
-			} else {
-				c.stopTimerLocked(c.primary.ID)
-			}
-		}
-		c.primary = &stream
-	} else if c.primary != nil && c.primary.Priority == PriorityPersistent {
-		c.stopTimerLocked(streamID(c.pip))
-		stream.Muted, c.pip = true, &stream
-		c.startTimerLocked(stream.ID, time.Duration(stream.TimeoutSeconds)*time.Second)
-	} else {
-		c.stopTimerLocked(streamID(c.primary))
-		stream.Muted, c.primary = false, &stream
-		c.startTimerLocked(stream.ID, time.Duration(stream.TimeoutSeconds)*time.Second)
-	}
+	c.assignStreamSlotLocked(&stream)
 	c.mode = ModeVideo
 
 	return c.unlockAndPublish(c.snapshotLocked())

@@ -342,6 +342,92 @@ func assembleSolvedLayout(k int, screenMasks []uint16, pinnedPlacements []Placed
 	return res
 }
 
+type gridSolver struct {
+	gridCols           int
+	gridRows           int
+	maxSearchNodes     int
+	k                  int
+	pinned             []WidgetInput
+	unpinned           []WidgetInput
+	shapeGroups        []*shapeGroup
+	screenMasks        []uint16
+	pinnedPlacements   []PlacedWidget
+	unpinnedPlacements []unpinnedPlacement
+	placedCount        int
+	nodeCount          int
+}
+
+func (s *gridSolver) placePinned(pIdx int) bool {
+	if pIdx == len(s.pinned) {
+		return s.placeUnpinnedExactCover()
+	}
+	pw := s.pinned[pIdx]
+	w, h := pw.Dimensions.Cols, pw.Dimensions.Rows
+	maxCol, maxRow := s.gridCols-w, s.gridRows-h
+	for r := 0; r <= maxRow; r++ {
+		for c := 0; c <= maxCol; c++ {
+			mask := computeWidgetBitmaskForGrid(w, h, c, r, s.gridCols)
+			if (s.screenMasks[0] & mask) != 0 {
+				continue
+			}
+			fillMaskAllScreens(s.screenMasks, s.k, mask, true)
+			s.pinnedPlacements[pIdx] = PlacedWidget{
+				WidgetID: pw.ID, Type: pw.Type, Origin: [2]int{c, r}, Dimensions: pw.Dimensions, Pinned: true,
+			}
+			if s.placePinned(pIdx + 1) {
+				return true
+			}
+			fillMaskAllScreens(s.screenMasks, s.k, mask, false)
+		}
+	}
+	return false
+}
+
+func (s *gridSolver) tryPlaceShapeGroup(sg *shapeGroup, targetScreen int, sMask uint16, c, r int) bool {
+	if sg.count == 0 || c+sg.dims.Cols > s.gridCols || r+sg.dims.Rows > s.gridRows {
+		return false
+	}
+	mask := computeWidgetBitmaskForGrid(sg.dims.Cols, sg.dims.Rows, c, r, s.gridCols)
+	if (sMask & mask) != 0 {
+		return false
+	}
+	s.screenMasks[targetScreen] |= mask
+	sg.count--
+	s.unpinnedPlacements[s.placedCount] = unpinnedPlacement{
+		screen: targetScreen, origin: [2]int{c, r}, widget: sg.widgets[len(sg.widgets)-sg.count-1],
+	}
+	s.placedCount++
+	if s.placeUnpinnedExactCover() {
+		return true
+	}
+	s.placedCount--
+	sg.count++
+	s.screenMasks[targetScreen] &= ^mask
+	return false
+}
+
+func (s *gridSolver) placeUnpinnedExactCover() bool {
+	s.nodeCount++
+	if s.nodeCount > s.maxSearchNodes {
+		return false
+	}
+	targetScreen := firstIncompleteScreen(s.screenMasks, s.k)
+	if targetScreen == -1 {
+		return true
+	}
+
+	sMask := s.screenMasks[targetScreen]
+	emptyCell := bits.TrailingZeros16(^sMask)
+	c, r := emptyCell%s.gridCols, emptyCell/s.gridCols
+
+	for _, sg := range s.shapeGroups {
+		if s.tryPlaceShapeGroup(sg, targetScreen, sMask, c, r) {
+			return true
+		}
+	}
+	return false
+}
+
 // SolveGridWithBudget executes the solver for a 6x2 or 2x6 grid with an explicit search node ceiling.
 func SolveGridWithBudget(widgets []WidgetInput, gridCols, gridRows, maxSearchNodes int) (*Layout, error) {
 	gridCols, gridRows = normalizeGrid(gridCols, gridRows)
@@ -358,82 +444,23 @@ func SolveGridWithBudget(widgets []WidgetInput, gridCols, gridRows, maxSearchNod
 	}
 	shapeGroups := sortAndGroupWidgets(pinned, unpinned)
 
-	screenMasks := make([]uint16, k)
-	pinnedPlacements := make([]PlacedWidget, len(pinned))
-	unpinnedPlacements := make([]unpinnedPlacement, len(unpinned))
-	placedCount, nodeCount := 0, 0
-
-	var placePinned func(pIdx int) bool
-	var placeUnpinnedExactCover func() bool
-
-	placePinned = func(pIdx int) bool {
-		if pIdx == len(pinned) {
-			return placeUnpinnedExactCover()
-		}
-		pw := pinned[pIdx]
-		w, h := pw.Dimensions.Cols, pw.Dimensions.Rows
-		maxCol, maxRow := gridCols-w, gridRows-h
-		for r := 0; r <= maxRow; r++ {
-			for c := 0; c <= maxCol; c++ {
-				mask := computeWidgetBitmaskForGrid(w, h, c, r, gridCols)
-				if (screenMasks[0] & mask) != 0 {
-					continue
-				}
-				fillMaskAllScreens(screenMasks, k, mask, true)
-				pinnedPlacements[pIdx] = PlacedWidget{
-					WidgetID: pw.ID, Type: pw.Type, Origin: [2]int{c, r}, Dimensions: pw.Dimensions, Pinned: true,
-				}
-				if placePinned(pIdx + 1) {
-					return true
-				}
-				fillMaskAllScreens(screenMasks, k, mask, false)
-			}
-		}
-		return false
+	solver := &gridSolver{
+		gridCols:           gridCols,
+		gridRows:           gridRows,
+		maxSearchNodes:     maxSearchNodes,
+		k:                  k,
+		pinned:             pinned,
+		unpinned:           unpinned,
+		shapeGroups:        shapeGroups,
+		screenMasks:        make([]uint16, k),
+		pinnedPlacements:   make([]PlacedWidget, len(pinned)),
+		unpinnedPlacements: make([]unpinnedPlacement, len(unpinned)),
 	}
 
-	placeUnpinnedExactCover = func() bool {
-		nodeCount++
-		if nodeCount > maxSearchNodes {
-			return false
-		}
-		targetScreen := firstIncompleteScreen(screenMasks, k)
-		if targetScreen == -1 {
-			return true
-		}
-
-		sMask := screenMasks[targetScreen]
-		emptyCell := bits.TrailingZeros16(^sMask)
-		c, r := emptyCell%gridCols, emptyCell/gridCols
-
-		for _, sg := range shapeGroups {
-			if sg.count == 0 || c+sg.dims.Cols > gridCols || r+sg.dims.Rows > gridRows {
-				continue
-			}
-			mask := computeWidgetBitmaskForGrid(sg.dims.Cols, sg.dims.Rows, c, r, gridCols)
-			if (sMask & mask) != 0 {
-				continue
-			}
-			screenMasks[targetScreen] |= mask
-			sg.count--
-			unpinnedPlacements[placedCount] = unpinnedPlacement{
-				screen: targetScreen, origin: [2]int{c, r}, widget: sg.widgets[len(sg.widgets)-sg.count-1],
-			}
-			placedCount++
-			if placeUnpinnedExactCover() {
-				return true
-			}
-			placedCount--
-			sg.count++
-			screenMasks[targetScreen] &= ^mask
-		}
-		return false
-	}
-
-	if !placePinned(0) {
+	if !solver.placePinned(0) {
 		return nil, fmt.Errorf("[Mirrormere Config Error] Invalid widget layout configuration:\n  Widgets satisfy total cell count but cannot geometrically tile the %dx%d grid without gaps or overlaps.\n  Suggestions:\n    - Adjust widget dimensions to fit the %dx%d grid.\n    - Insert native spacer tiles (e.g. { type: \"spacer\", dimensions: [2, 1] }) to pad irregular shapes.", gridCols, gridRows, gridCols, gridRows)
 	}
-	return assembleSolvedLayout(k, screenMasks, pinnedPlacements, unpinnedPlacements, placedCount), nil
+	return assembleSolvedLayout(k, solver.screenMasks, solver.pinnedPlacements, solver.unpinnedPlacements, solver.placedCount), nil
 }
 
 func firstIncompleteScreen(screenMasks []uint16, k int) int {

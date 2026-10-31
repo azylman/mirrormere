@@ -205,6 +205,60 @@ func buildDisplayHandler(stateProvider render.StateSnapshotProvider, currentThem
 	)
 }
 
+func checkBoundHostPort(cfg *config.Config, initialHost string, initialPort int, logger *slog.Logger) {
+	newHost, newPort := server.DefaultHost, server.DefaultPort
+	if cfg.Host != "" {
+		newHost = cfg.Host
+	}
+	if cfg.Port != nil {
+		newPort = *cfg.Port
+	}
+	if newHost != initialHost || newPort != initialPort {
+		logger.Warn("host or port changed in configuration; server restart required for changes to take effect",
+			"bound_host", initialHost, "bound_port", initialPort, "new_host", newHost, "new_port", newPort)
+	}
+}
+
+func reloadConfigOnSIGHUP(
+	configPath string,
+	configManager *config.Manager,
+	hub *events.Hub,
+	stateProvider *events.InMemoryStateProvider,
+	currentTheme func() string,
+	initialHost string,
+	initialPort int,
+	voiceHub *voice.Hub,
+	logger *slog.Logger,
+) {
+	if configPath == "" {
+		return
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		logger.Error("failed to read configuration file on SIGHUP", "path", configPath, "error", err)
+		configManager.SetErrorStatus(err)
+		dispatchStatus(hub, configManager.Status(), logger)
+		return
+	}
+	snap, diff, err := configManager.Reload(data)
+	if err != nil {
+		logger.Error("failed to validate configuration on SIGHUP; retaining LKGC", "error", err)
+		dispatchStatus(hub, configManager.Status(), logger)
+		return
+	}
+	if err := hub.DispatchConfigReload(snap, diff); err != nil {
+		logger.Error("failed to dispatch reload", "error", err)
+	}
+	dispatchStatus(hub, configManager.Status(), logger)
+	logger.Info("configuration reloaded successfully on SIGHUP", "widgets", len(snap.Config.Display.Widgets))
+	evaluateThemeTransition(currentTheme, stateProvider, hub, logger)
+
+	if snap != nil && snap.Config != nil {
+		voiceHub.ReloadSpeakerID(snap.Config.VoiceHub)
+		checkBoundHostPort(snap.Config, initialHost, initialPort, logger)
+	}
+}
+
 func handleSIGHUP(
 	configPath string, configManager *config.Manager, hub *events.Hub,
 	stateProvider *events.InMemoryStateProvider, currentTheme func() string,
@@ -212,38 +266,7 @@ func handleSIGHUP(
 	renderHandler *render.Handler, voiceHub *voice.Hub, onReload func(), logger *slog.Logger,
 ) {
 	logger.Info("received SIGHUP, reloading configuration and assets", "path", configPath)
-	if configPath != "" {
-		if data, err := os.ReadFile(configPath); err != nil {
-			logger.Error("failed to read configuration file on SIGHUP", "path", configPath, "error", err)
-			configManager.SetErrorStatus(err)
-			dispatchStatus(hub, configManager.Status(), logger)
-		} else if snap, diff, err := configManager.Reload(data); err != nil {
-			logger.Error("failed to validate configuration on SIGHUP; retaining LKGC", "error", err)
-			dispatchStatus(hub, configManager.Status(), logger)
-		} else {
-			if err := hub.DispatchConfigReload(snap, diff); err != nil {
-				logger.Error("failed to dispatch reload", "error", err)
-			}
-			dispatchStatus(hub, configManager.Status(), logger)
-			logger.Info("configuration reloaded successfully on SIGHUP", "widgets", len(snap.Config.Display.Widgets))
-			evaluateThemeTransition(currentTheme, stateProvider, hub, logger)
-
-			if snap != nil && snap.Config != nil {
-				voiceHub.ReloadSpeakerID(snap.Config.VoiceHub)
-				newHost, newPort := server.DefaultHost, server.DefaultPort
-				if snap.Config.Host != "" {
-					newHost = snap.Config.Host
-				}
-				if snap.Config.Port != nil {
-					newPort = *snap.Config.Port
-				}
-				if newHost != initialHost || newPort != initialPort {
-					logger.Warn("host or port changed in configuration; server restart required for changes to take effect",
-						"bound_host", initialHost, "bound_port", initialPort, "new_host", newHost, "new_port", newPort)
-				}
-			}
-		}
-	}
+	reloadConfigOnSIGHUP(configPath, configManager, hub, stateProvider, currentTheme, initialHost, initialPort, voiceHub, logger)
 	if assetReloader != nil {
 		cssReloaded, widgetsReloaded := assetReloader.Reload()
 		logger.Info("asset reload on SIGHUP complete", "css_reloaded", cssReloaded, "widgets_reloaded", widgetsReloaded)

@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"math"
 	"mime"
 	"mime/multipart"
 	"net"
@@ -288,6 +287,86 @@ func (h *Hub) IsEnabled() bool {
 	return h != nil && h.cfg.IsEnabled()
 }
 
+func createSafeSink(sink SSEEventSink) SSEEventSink {
+	var sinkMu sync.Mutex
+	return func(event string, data any) error {
+		sinkMu.Lock()
+		defer sinkMu.Unlock()
+		return sink(event, data)
+	}
+}
+
+func (h *Hub) prepareTurnBrain(nodeID string) BrainClient {
+	if h.fastPath != nil {
+		return &fastPathBrain{inner: h.brain, fp: h.fastPath, metrics: h.metrics, nodeID: nodeID}
+	}
+	return h.brain
+}
+
+func (h *Hub) makeStatusForwarder(safeSink SSEEventSink) func(string) {
+	return func(status string) {
+		if h.coord != nil {
+			h.coord.SetStatus(&status)
+		}
+		if sinkErr := safeSink("status", map[string]string{"status": status}); sinkErr != nil {
+			slog.Debug("status sink error", "error", sinkErr)
+		}
+	}
+}
+
+func (h *Hub) makeNonStreamingReplyEmitter(
+	ctx context.Context,
+	transcript, engine, nodeID string,
+	safeSink SSEEventSink,
+	onTTSError func(),
+) func(string) error {
+	return func(reply string) error {
+		if h.coord != nil {
+			h.coord.Transition(StateSpeaking, &transcript, &reply, &engine, nil)
+		}
+		if err := safeSink("reply", map[string]string{"reply": reply, "tts_engine": engine}); err != nil {
+			return err
+		}
+		if h.tts != nil {
+			status, ttsErr := h.synthesizeAndEmitReply(ctx, reply, nodeID, engine, &transcript, safeSink)
+			if ttsErr != nil {
+				return ttsErr
+			}
+			if status == "error" {
+				onTTSError()
+			}
+		}
+		return nil
+	}
+}
+
+func (h *Hub) handleTurnPanicOrError(r any, retErr error, turnActive bool) {
+	if r != nil {
+		if h.coord != nil {
+			h.coord.Transition(StateError, nil, nil, nil, nil)
+		}
+		panic(r)
+	}
+	if retErr != nil && turnActive && h.coord != nil {
+		h.coord.Transition(StateError, nil, nil, nil, nil)
+	}
+}
+
+func (h *Hub) notifyTranscribing(safeSink SSEEventSink) error {
+	if h.coord != nil {
+		h.coord.Transition(StateTranscribing, nil, nil, nil, nil)
+	}
+	return safeSink("state", map[string]string{"state": StateTranscribing})
+}
+
+func (h *Hub) notifyThinking(transcript, speaker, nodeID string, safeSink SSEEventSink) error {
+	if h.coord != nil {
+		h.coord.Transition(StateThinking, &transcript, nil, nil, nil)
+	}
+	h.recordChat(nodeID, chatlog.RoleHuman, speaker, transcript)
+	return safeSink("transcript", map[string]string{"transcript": transcript, "speaker": speaker})
+}
+
 // Interact coordinates the complete voice interaction pipeline for an incoming audio recording.
 func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID string, sink SSEEventSink, timings EdgeTimings) (retErr error) {
 	if !h.IsEnabled() {
@@ -310,49 +389,24 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 
 	var turnActive bool
 	defer func() {
-		if r := recover(); r != nil {
-			if h.coord != nil {
-				h.coord.Transition(StateError, nil, nil, nil, nil)
-			}
-			panic(r)
-		}
-		if retErr != nil && turnActive && h.coord != nil {
-			h.coord.Transition(StateError, nil, nil, nil, nil)
-		}
+		h.handleTurnPanicOrError(recover(), retErr, turnActive)
 	}()
 
 	if sessionID == "" {
 		sessionID = fmt.Sprintf("turn-%d", time.Now().UnixNano())
 	}
 
-	// Mutex to protect concurrent SSE writes from multiple goroutines
-	var sinkMu sync.Mutex
-	safeSink := func(event string, data any) error {
-		sinkMu.Lock()
-		defer sinkMu.Unlock()
-		return sink(event, data)
-	}
+	safeSink := createSafeSink(sink)
 
 	// 1. Read and validate WAV audio payload
-	if audio == nil {
-		return ErrInvalidAudio
-	}
-	wavData, err := io.ReadAll(audio)
-	if err != nil || len(wavData) < 44 || !bytes.HasPrefix(wavData, []byte("RIFF")) {
-		return ErrInvalidAudio
+	wavData, err := readAndValidateWAVAudio(audio)
+	if err != nil {
+		return err
 	}
 
 	start := time.Now()
 
-	if timings.WakeEvalSec > 0 {
-		h.metrics.RecordStageDuration(nodeID, "wake_eval", "success", timings.WakeEvalSec)
-	}
-	if timings.UtteranceSpeechSec > 0 {
-		h.metrics.RecordStageDuration(nodeID, "utterance_speech", "success", timings.UtteranceSpeechSec)
-	}
-	if timings.UtteranceSilenceSec > 0 {
-		h.metrics.RecordStageDuration(nodeID, "utterance_silence", "success", timings.UtteranceSilenceSec)
-	}
+	h.recordEdgeTimings(nodeID, timings)
 
 	finalStatus := "success"
 	defer func() {
@@ -364,82 +418,20 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 
 	// Step 1: Notify HUD and client: transcribing
 	turnActive = true
-	if h.coord != nil {
-		h.coord.Transition(StateTranscribing, nil, nil, nil, nil)
-	}
-	if err := safeSink("state", map[string]string{"state": StateTranscribing}); err != nil {
+	if err := h.notifyTranscribing(safeSink); err != nil {
 		return err
 	}
 
 	// Step 2: Speech-to-Text transcription, with speaker matching in parallel
-	if h.stt == nil {
-		finalStatus = "error"
-		h.metrics.RecordStageDuration(nodeID, "stt", "error", 0)
-		h.metrics.RecordError(nodeID, "stt", "stt_error")
-		return ErrSTTFailed
-	}
-	// The channel is buffered so the goroutine never blocks, and idCancel stops
-	// a slow embed call once the turn no longer needs it.
-	speakerCh := make(chan SpeakerMatch, 1)
-	idCtx, idCancel := context.WithCancel(ctx)
-	defer idCancel()
-	if spk != nil {
-		go func() {
-			m, idErr := spk.Identify(idCtx, wavData)
-			if idErr != nil {
-				// Speaker matching is best-effort: the turn proceeds without a speaker.
-				slog.Warn("speaker identification failed", "error", idErr)
-				m = SpeakerMatch{}
-			}
-			speakerCh <- m
-		}()
-	} else {
-		speakerCh <- SpeakerMatch{}
-	}
-	sttStart := time.Now()
-	transcript, err := h.stt.Transcribe(ctx, wavData)
-	sttDuration := time.Since(sttStart).Seconds()
-	var match SpeakerMatch
-	if err == nil {
-		// STT is the critical path. Give matching a short grace period after STT
-		// finishes, then continue without a speaker rather than stall the turn.
-		select {
-		case match = <-speakerCh:
-		case <-time.After(speakerGrace):
-			idCancel()
-			slog.Warn("speaker identification exceeded grace period after STT; continuing without speaker", "grace", speakerGrace)
-		}
-	}
-	speaker := match.Speaker
+	transcript, match, err := h.transcribeWithSpeaker(ctx, wavData, spk, nodeID, safeSink)
 	if err != nil {
 		finalStatus = "error"
-		h.metrics.RecordStageDuration(nodeID, "stt", "error", sttDuration)
-		h.metrics.RecordError(nodeID, "stt", "stt_error")
-		if h.coord != nil {
-			h.coord.Transition(StateError, nil, nil, nil, nil)
-		}
-		if sinkErr := safeSink("error", map[string]string{"error": "stt_error", "message": err.Error()}); sinkErr != nil {
-			return sinkErr
-		}
-		return fmt.Errorf("%w: %w", ErrSTTFailed, err)
+		return err
 	}
-	h.metrics.RecordStageDuration(nodeID, "stt", "success", sttDuration)
-	pcmBytes := len(wavData) - 44
-	if pcmBytes < 0 {
-		pcmBytes = 0
-	}
-	audioSec := float64(pcmBytes) / (16000.0 * 2.0)
-	if audioSec > 0.001 {
-		rtf := sttDuration / audioSec
-		h.metrics.RecordSTTRTF(nodeID, "whisper", rtf)
-	}
+	speaker := match.Speaker
 
 	// Step 3: Transition to thinking with recognized transcript
-	if h.coord != nil {
-		h.coord.Transition(StateThinking, &transcript, nil, nil, nil)
-	}
-	h.recordChat(nodeID, chatlog.RoleHuman, speaker, transcript)
-	if err := safeSink("transcript", map[string]string{"transcript": transcript, "speaker": speaker}); err != nil {
+	if err := h.notifyThinking(transcript, speaker, nodeID, safeSink); err != nil {
 		return err
 	}
 
@@ -450,16 +442,6 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 		h.metrics.RecordStageDuration(nodeID, "brain", "error", 0)
 		h.metrics.RecordError(nodeID, "brain", "brain_error")
 		return ErrBrainFailed
-	}
-
-	onStatus := func(status string) {
-		if h.coord != nil {
-			h.coord.SetStatus(&status)
-		}
-		if sinkErr := safeSink("status", map[string]string{"status": status}); sinkErr != nil {
-			// Status stream dropped by client; deliberate gracefully
-			slog.Debug("status sink error", "error", sinkErr)
-		}
 	}
 
 	askReq := AskRequest{
@@ -479,250 +461,20 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 		heartbeatInterval = 5 * time.Second
 	}
 
-	var heartbeatMu sync.Mutex
-	heartbeatActive := true
-	stopHeartbeat := make(chan struct{})
-	var stopOnce sync.Once
-	stopThinking := func() {
-		stopOnce.Do(func() {
-			heartbeatMu.Lock()
-			heartbeatActive = false
-			heartbeatMu.Unlock()
-			close(stopHeartbeat)
-		})
-	}
-	defer stopThinking()
-
-	startHeartbeat := func(doneCtx context.Context) {
-		go func() {
-			ticker := time.NewTicker(heartbeatInterval)
-			defer ticker.Stop()
-			tickerStart := time.Now()
-			for {
-				select {
-				case <-stopHeartbeat:
-					return
-				case <-doneCtx.Done():
-					return
-				case tick := <-ticker.C:
-					heartbeatMu.Lock()
-					active := heartbeatActive
-					heartbeatMu.Unlock()
-					if !active {
-						return
-					}
-					elapsedSec := int(math.Round(tick.Sub(tickerStart).Seconds()))
-					if elapsedSec <= 0 {
-						elapsedSec = 1
-					}
-					if sinkErr := safeSink("thinking", map[string]int{"elapsed_seconds": elapsedSec}); sinkErr != nil {
-						slog.Debug("thinking heartbeat sink error", "error", sinkErr)
-						return
-					}
-				}
-			}
-		}()
-	}
-
 	engine := h.cfg.GetTTSModel()
+	turnBrain := h.prepareTurnBrain(nodeID)
+	onStatus := h.makeStatusForwarder(safeSink)
+	emitNonStreamingReply := h.makeNonStreamingReplyEmitter(ctx, transcript, engine, nodeID, safeSink, func() {
+		finalStatus = "error"
+	})
 
-	// Optional LAMMAS fast path: wrap the brain for this turn so the
-	// deterministic endpoint is tried first and its sentences flow through
-	// the same streaming playback code as a brain reply. With no fast path
-	// configured the brain is used untouched.
-	turnBrain := h.brain
-	if h.fastPath != nil {
-		turnBrain = &fastPathBrain{inner: h.brain, fp: h.fastPath, metrics: h.metrics, nodeID: nodeID}
+	status, delibErr := h.deliberateTurn(ctx, turnBrain, askReq, transcript, nodeID, engine, brainTimeout, heartbeatInterval, safeSink, onStatus, emitNonStreamingReply)
+	if delibErr != nil {
+		finalStatus = "error"
+		return delibErr
 	}
-
-	emitNonStreamingReply := func(reply string) error {
-		if h.coord != nil {
-			h.coord.Transition(StateSpeaking, &transcript, &reply, &engine, nil)
-		}
-		if err := safeSink("reply", map[string]string{"reply": reply, "tts_engine": engine}); err != nil {
-			return err
-		}
-		if h.tts != nil {
-			status, ttsErr := h.synthesizeAndEmitReply(ctx, reply, nodeID, engine, &transcript, safeSink)
-			if ttsErr != nil {
-				return ttsErr
-			}
-			if status == "error" {
-				finalStatus = "error"
-			}
-		}
-		return nil
-	}
-
-	var reply string
-	if streamingBrain, ok := turnBrain.(AudioStreamingBrainClient); ok {
-		var (
-			streamedAny      bool
-			streamErr        error
-			caption          strings.Builder
-			streamChars      int
-			totalTTSDuration float64
-		)
-
-		streamCtx, stopStream := newInactivityContext(ctx, brainTimeout)
-		defer stopStream()
-		cancelStream := stopStream
-		startHeartbeat(streamCtx)
-
-		streamOnStatus := func(status string) {
-			streamCtx.Reset()
-			onStatus(status)
-		}
-
-		streamer := &pcmChunkStreamer{
-			sink:          safeSink,
-			ignoreSinkErr: true,
-		}
-
-		onAudio := func(chunk BrainAudioChunk) {
-			stopThinking()
-			if chunk.Text != "" {
-				streamCtx.Reset()
-			}
-			if streamErr != nil {
-				return
-			}
-			if strings.TrimSpace(chunk.Text) == "" {
-				return
-			}
-			streamedAny = true
-			streamChars += len(chunk.Text)
-
-			if caption.Len() > 0 && chunk.Text != "" {
-				caption.WriteString(" ")
-			}
-			caption.WriteString(chunk.Text)
-			if h.coord != nil {
-				captionSoFar := caption.String()
-				h.coord.Transition(StateSpeaking, &transcript, &captionSoFar, &engine, nil)
-			}
-
-			if h.tts == nil {
-				slog.Warn("no TTS client configured; dropping streamed sentence", "text", chunk.Text)
-				return
-			}
-			var streamedTTSAny bool
-			ttsTimeout := h.ttsTimeout
-			if ttsTimeout <= 0 {
-				ttsTimeout = 10 * time.Second
-			}
-			ttsCtx, stopTTS := newInactivityContext(ctx, ttsTimeout)
-			defer stopTTS()
-			t0 := time.Now()
-			ttsErr := h.tts.Synthesize(ttsCtx, chunk.Text, func(tc TTSAudioChunk) error {
-				if len(tc.Data) == 0 {
-					return nil
-				}
-				ttsCtx.Reset()
-				streamedTTSAny = true
-				if err := streamer.push(tc, chunk.Text); err != nil {
-					streamErr = err
-					slog.Error("TTS stream chunk rejected", "error", streamErr)
-					cancelStream()
-					return streamErr
-				}
-				return nil
-			})
-			totalTTSDuration += time.Since(t0).Seconds()
-			if errors.Is(ttsErr, ErrUnsupportedAudioFormat) && streamErr == nil {
-				// DefaultTTSClient rejected the response itself.
-				streamErr = fmt.Errorf("%w (sentence %q)", ttsErr, chunk.Text)
-				cancelStream()
-				return
-			}
-			if ttsErr != nil || !streamedTTSAny {
-				slog.Warn("TTS synthesis for streamed sentence failed; dropping sentence", "text", chunk.Text, "error", ttsErr)
-				return
-			}
-			slog.Debug("synthesized streamed sentence via TTS", "text", chunk.Text)
-		}
-
-		brainStart := time.Now()
-		reply, err = streamingBrain.AskStreaming(streamCtx, askReq, streamOnStatus, onAudio)
-		brainDuration, recordBrain := brainStageSeconds(turnBrain, time.Since(brainStart))
-		stopThinking()
-		if streamErr != nil {
-			err = streamErr
-		}
-		if err != nil {
-			finalStatus = "error"
-			return h.recordBrainStageError(ctx, streamCtx, nodeID, brainDuration, err, safeSink)
-		}
-		if recordBrain {
-			h.metrics.RecordStageDuration(nodeID, "brain", "success", brainDuration)
-		}
-		h.recordChat(nodeID, chatlog.RoleAgent, "", reply)
-
-		if streamedAny {
-			// The brain streamed sentence audio, so the hub must NOT also
-			// run its own TTS over the full reply (no double speech).
-			if h.coord != nil {
-				h.coord.Transition(StateSpeaking, &transcript, &reply, &engine, nil)
-			}
-			if streamer.anySent || len(streamer.pcmBuf) > 0 {
-				if finishErr := streamer.finish(); finishErr != nil {
-					return finishErr
-				}
-
-				h.metrics.RecordStageDuration(nodeID, "tts", "success", totalTTSDuration)
-				if totalTTSDuration > 0.001 && streamChars > 0 {
-					cps := float64(streamChars) / totalTTSDuration
-					h.metrics.RecordTTSCPS(nodeID, engine, cps)
-				}
-			} else if h.tts != nil {
-				// Every streamed sentence in remote-tts mode failed synthesis:
-				// last resort is one TTS call over the full reply
-				// so the reply is never silently dropped.
-				status, ttsErr := h.synthesizeAndEmitReply(ctx, reply, nodeID, engine, &transcript, safeSink)
-				if ttsErr != nil {
-					return ttsErr
-				}
-				if status == "error" {
-					finalStatus = "error"
-				}
-			}
-			// Devil's Advocate catch: still emit reply so the kiosk caption
-			// toast renders the reply text, even though (for streaming) it
-			// arrives after the audio rather than before.
-			if err := safeSink("reply", map[string]string{"reply": reply, "tts_engine": engine}); err != nil {
-				return err
-			}
-		} else {
-			if err := emitNonStreamingReply(reply); err != nil {
-				return err
-			}
-		}
-	} else {
-		brainCtx, stopBrain := newInactivityContext(ctx, brainTimeout)
-		defer stopBrain()
-		startHeartbeat(brainCtx)
-
-		unaryOnStatus := func(status string) {
-			brainCtx.Reset()
-			onStatus(status)
-		}
-
-		brainStart := time.Now()
-		reply, err = turnBrain.Ask(brainCtx, askReq, unaryOnStatus)
-		brainDuration, recordBrain := brainStageSeconds(turnBrain, time.Since(brainStart))
-		stopThinking()
-		if err != nil {
-			finalStatus = "error"
-			return h.recordBrainStageError(ctx, brainCtx, nodeID, brainDuration, err, safeSink)
-		}
-		if recordBrain {
-			h.metrics.RecordStageDuration(nodeID, "brain", "success", brainDuration)
-		}
-		h.recordChat(nodeID, chatlog.RoleAgent, "", reply)
-
-		if err := emitNonStreamingReply(reply); err != nil {
-			return err
-		}
+	if status == "error" {
+		finalStatus = "error"
 	}
 
 	// Step 6: Complete interaction and return to idle
@@ -732,6 +484,39 @@ func (h *Hub) Interact(ctx context.Context, audio io.Reader, nodeID, sessionID s
 	}
 
 	return nil
+}
+
+func readAndValidateWAVAudio(audio io.Reader) ([]byte, error) {
+	if audio == nil {
+		return nil, ErrInvalidAudio
+	}
+	wavData, err := io.ReadAll(audio)
+	if err != nil || len(wavData) < 44 || !bytes.HasPrefix(wavData, []byte("RIFF")) {
+		return nil, ErrInvalidAudio
+	}
+	return wavData, nil
+}
+
+func (h *Hub) deliberateTurn(
+	ctx context.Context,
+	turnBrain BrainClient,
+	askReq AskRequest,
+	transcript string,
+	nodeID string,
+	engine string,
+	brainTimeout time.Duration,
+	heartbeatInterval time.Duration,
+	safeSink SSEEventSink,
+	onStatus func(status string),
+	emitNonStreamingReply func(reply string) error,
+) (string, error) {
+	if streamingBrain, ok := turnBrain.(AudioStreamingBrainClient); ok {
+		return h.deliberateStreaming(ctx, streamingBrain, turnBrain, askReq, transcript, nodeID, engine, brainTimeout, heartbeatInterval, safeSink, onStatus, emitNonStreamingReply)
+	}
+	if err := h.deliberateUnary(ctx, turnBrain, askReq, nodeID, brainTimeout, heartbeatInterval, safeSink, onStatus, emitNonStreamingReply); err != nil {
+		return "error", err
+	}
+	return "success", nil
 }
 
 func (h *Hub) recordBrainStageError(
@@ -799,6 +584,28 @@ func (s *pcmChunkStreamer) emit(data []byte, isFinal bool) error {
 	return nil
 }
 
+func (s *pcmChunkStreamer) latchOrVerifyFormat(tc TTSAudioChunk) error {
+	if tc.SampleRate <= 0 && tc.Channels <= 0 {
+		return nil
+	}
+	if !s.latched {
+		s.latched = true
+		s.rate = 24000
+		s.channels = 1
+		if tc.SampleRate > 0 {
+			s.rate = tc.SampleRate
+		}
+		if tc.Channels > 0 {
+			s.channels = tc.Channels
+		}
+		return nil
+	}
+	if (tc.SampleRate > 0 && tc.SampleRate != s.rate) || (tc.Channels > 0 && tc.Channels != s.channels) {
+		return fmt.Errorf("%w: latched %d Hz/%d ch, got %d Hz/%d ch", ErrMixedPCMFormat, s.rate, s.channels, tc.SampleRate, tc.Channels)
+	}
+	return nil
+}
+
 func (s *pcmChunkStreamer) push(tc TTSAudioChunk, sentenceContext string) error {
 	if len(tc.Data) == 0 {
 		return nil
@@ -809,20 +616,8 @@ func (s *pcmChunkStreamer) push(tc TTSAudioChunk, sentenceContext string) error 
 		}
 		return fmt.Errorf("%w: TTS returned %q audio", ErrUnsupportedAudioFormat, tc.Format)
 	}
-	if tc.SampleRate > 0 || tc.Channels > 0 {
-		if !s.latched {
-			s.latched = true
-			s.rate = 24000
-			s.channels = 1
-			if tc.SampleRate > 0 {
-				s.rate = tc.SampleRate
-			}
-			if tc.Channels > 0 {
-				s.channels = tc.Channels
-			}
-		} else if (tc.SampleRate > 0 && tc.SampleRate != s.rate) || (tc.Channels > 0 && tc.Channels != s.channels) {
-			return fmt.Errorf("%w: latched %d Hz/%d ch, got %d Hz/%d ch", ErrMixedPCMFormat, s.rate, s.channels, tc.SampleRate, tc.Channels)
-		}
+	if err := s.latchOrVerifyFormat(tc); err != nil {
+		return err
 	}
 	s.pcmBuf = append(s.pcmBuf, tc.Data...)
 	for len(s.pcmBuf) >= pcmChunkFloor {
@@ -912,33 +707,11 @@ func (h *Hub) synthesizeAndEmitReply(
 	}
 
 	ttsDuration := time.Since(ttsStart).Seconds()
-	if ttsErr != nil && !streamer.anySent {
-		slog.Warn("TTS synthesis failed", "node_id", nodeID, "error", ttsErr)
+	if ttsErr != nil {
 		finalStatus = "error"
-		h.metrics.RecordStageDuration(nodeID, "tts", "error", ttsDuration)
-		errType := "tts_error"
-		if isTimeoutError(ttsErr, ttsCtx, ctx) {
-			errType = "tts_timeout"
+		if recordErr := h.recordTTSSynthesisError(ctx, ttsCtx, ttsErr, nodeID, ttsDuration, streamer.anySent, safeSink); recordErr != nil {
+			return "error", recordErr
 		}
-		h.metrics.RecordError(nodeID, "tts", errType)
-		if sinkErr := safeSink("error", map[string]string{"error": errType, "message": ttsErr.Error()}); sinkErr != nil {
-			return "error", sinkErr
-		}
-	} else if ttsErr != nil && streamer.anySent {
-		slog.Warn("TTS synthesis failed mid-stream", "node_id", nodeID, "error", ttsErr)
-		h.metrics.RecordStageDuration(nodeID, "tts", "error", ttsDuration)
-		errType := "tts_error"
-		if isTimeoutError(ttsErr, ttsCtx, ctx) {
-			errType = "tts_timeout"
-		}
-		h.metrics.RecordError(nodeID, "tts", errType)
-		if h.coord != nil {
-			h.coord.Transition(StateError, nil, nil, nil, nil)
-		}
-		if sinkErr := safeSink("error", map[string]string{"error": errType, "message": ttsErr.Error()}); sinkErr != nil {
-			return "error", sinkErr
-		}
-		return "error", ttsErr
 	} else {
 		h.metrics.RecordStageDuration(nodeID, "tts", "success", ttsDuration)
 		if ttsDuration > 0.001 && len(reply) > 0 {
@@ -1254,6 +1027,34 @@ func (b *DefaultBrainClient) consumeSSEStreaming(r io.Reader, onStatus func(stat
 	return consumeStreamingSSE(r, onStatus, onAudio)
 }
 
+func handleSSEDataPayload(
+	payload map[string]any,
+	currentEvent string,
+	reply *string,
+	onStatus func(status string),
+	onAudio func(chunk BrainAudioChunk),
+) (done bool) {
+	switch currentEvent {
+	case "status":
+		if statusVal, ok := payload["status"].(string); ok && onStatus != nil {
+			onStatus(statusVal)
+		}
+	case "sentence":
+		if onAudio != nil {
+			if textVal, ok := payload["text"].(string); ok && strings.TrimSpace(textVal) != "" {
+				onAudio(BrainAudioChunk{Text: textVal})
+			}
+		}
+	case "reply":
+		if replyVal, ok := payload["reply"].(string); ok {
+			*reply = replyVal
+		}
+	case "done":
+		return true
+	}
+	return false
+}
+
 // consumeStreamingSSE parses the /ask/stream-shaped SSE event set (status,
 // sentence, reply, done). It is shared by the brain client and the fast-path
 // client, which speak the same events.
@@ -1279,24 +1080,7 @@ func consumeStreamingSSE(r io.Reader, onStatus func(status string), onAudio func
 			if unmarshalErr := json.Unmarshal([]byte(dataStr), &payload); unmarshalErr != nil {
 				continue
 			}
-
-			switch currentEvent {
-			case "status":
-				if statusVal, ok := payload["status"].(string); ok && onStatus != nil {
-					onStatus(statusVal)
-				}
-			case "sentence":
-				if onAudio == nil {
-					continue
-				}
-				if textVal, ok := payload["text"].(string); ok && strings.TrimSpace(textVal) != "" {
-					onAudio(BrainAudioChunk{Text: textVal})
-				}
-			case "reply":
-				if replyVal, ok := payload["reply"].(string); ok {
-					reply = replyVal
-				}
-			case "done":
+			if handleSSEDataPayload(payload, currentEvent, &reply, onStatus, onAudio) {
 				return strings.TrimSpace(reply), nil
 			}
 		}
@@ -1488,33 +1272,11 @@ func parseWAVHeader(r io.Reader) wavInfo {
 			info.streamable = info.haveFmt && isPCM && bits == 16
 			return info
 		case "fmt ":
-			if size < 16 || size > 4096 {
+			var ok bool
+			isPCM, bits, ok = parseWAVFmtChunk(r, size, &info)
+			if !ok {
 				return info
 			}
-			body := make([]byte, size)
-			if _, err := io.ReadFull(r, body); err != nil {
-				return info
-			}
-			if size%2 == 1 {
-				if _, err := io.CopyN(io.Discard, r, 1); err != nil {
-					return info
-				}
-			}
-			tag := binary.LittleEndian.Uint16(body[0:2])
-			if tag == 0xFFFE && size >= 26 {
-				tag = binary.LittleEndian.Uint16(body[24:26])
-			}
-			isPCM = tag == 1
-			info.channels = int(binary.LittleEndian.Uint16(body[2:4]))
-			info.sampleRate = int(binary.LittleEndian.Uint32(body[4:8]))
-			bits = int(binary.LittleEndian.Uint16(body[14:16]))
-			if info.channels <= 0 {
-				info.channels = 1
-			}
-			if info.sampleRate <= 0 {
-				info.sampleRate = 24000
-			}
-			info.haveFmt = true
 		default:
 			skip := int64(size) + int64(size%2)
 			if skip > maxWAVHeaderSkip {

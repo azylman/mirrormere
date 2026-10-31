@@ -144,6 +144,34 @@ func (c *Coordinator) Reset() events.VoiceStateData {
 	return c.updateState(StateIdle, nil, nil, nil, nil)
 }
 
+func (c *Coordinator) armSpeakingWatchdogLocked() {
+	if c.speakingTimer != nil {
+		c.speakingTimer.Stop()
+	}
+	timeout := c.speakingTimeout
+	if timeout <= 0 {
+		timeout = defaultSpeakingWatchdogTimeout
+	}
+	var timer *time.Timer
+	timer = time.AfterFunc(timeout, func() {
+		c.mu.Lock()
+		if c.speakingTimer != timer || c.state != StateSpeaking {
+			c.mu.Unlock()
+			return
+		}
+		c.mu.Unlock()
+		c.Reset()
+	})
+	c.speakingTimer = timer
+}
+
+func (c *Coordinator) disarmSpeakingWatchdogLocked() {
+	if c.speakingTimer != nil {
+		c.speakingTimer.Stop()
+		c.speakingTimer = nil
+	}
+}
+
 func (c *Coordinator) updateState(state string, transcript, reply, ttsEngine, status *string) events.VoiceStateData {
 	c.mu.Lock()
 
@@ -154,29 +182,9 @@ func (c *Coordinator) updateState(state string, transcript, reply, ttsEngine, st
 	c.status = status
 
 	if state == StateSpeaking {
-		if c.speakingTimer != nil {
-			c.speakingTimer.Stop()
-		}
-		timeout := c.speakingTimeout
-		if timeout <= 0 {
-			timeout = defaultSpeakingWatchdogTimeout
-		}
-		var timer *time.Timer
-		timer = time.AfterFunc(timeout, func() {
-			c.mu.Lock()
-			if c.speakingTimer != timer || c.state != StateSpeaking {
-				c.mu.Unlock()
-				return
-			}
-			c.mu.Unlock()
-			c.Reset()
-		})
-		c.speakingTimer = timer
+		c.armSpeakingWatchdogLocked()
 	} else {
-		if c.speakingTimer != nil {
-			c.speakingTimer.Stop()
-			c.speakingTimer = nil
-		}
+		c.disarmSpeakingWatchdogLocked()
 	}
 
 	data := c.snapshotLocked()

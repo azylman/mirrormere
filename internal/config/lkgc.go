@@ -262,6 +262,39 @@ func parseYAMLStage(data []byte) (*Config, error) {
 	return &cfg, nil
 }
 
+func resolveWidgetDefaultDimensions(w *WidgetConfig, pkg *domain.Package, grid GridConfig) error {
+	if len(w.Dimensions) > 0 {
+		return nil
+	}
+	defDim := pkg.Manifest.DefaultDimensions
+	if !defDim.IsValid() {
+		return fmt.Errorf("[Mirrormere Config Error] widget '%s' omits 'dimensions' and package manifest '%s' has no valid default_dimensions", w.ID, w.Type)
+	}
+	if !defDim.IsValidForGrid(grid.Columns, grid.Rows) {
+		flipped := domain.NewDimension(defDim.Rows, defDim.Cols)
+		if flipped.IsValidForGrid(grid.Columns, grid.Rows) &&
+			(len(pkg.Manifest.SupportedDimensions) == 0 || slices.Contains(pkg.Manifest.SupportedDimensions, flipped)) {
+			defDim = flipped
+		}
+	}
+	w.Dimensions = defDim.Slice()
+	return nil
+}
+
+func validateWidgetSupportedDimensions(w *WidgetConfig, pkg *domain.Package) error {
+	if len(pkg.Manifest.SupportedDimensions) == 0 {
+		return nil
+	}
+	dim, err := domain.DimensionFromSlice(w.Dimensions)
+	if err != nil {
+		return err
+	}
+	if !slices.Contains(pkg.Manifest.SupportedDimensions, dim) {
+		return fmt.Errorf("widget '%s': dimensions [%d, %d] not supported by package '%s' (supported: %v)", w.ID, dim.Cols, dim.Rows, w.Type, pkg.Manifest.SupportedDimensions)
+	}
+	return nil
+}
+
 func validatePackagesStage(cfg *Config, loader PackageLoader) (map[string]*domain.Package, error) {
 	registry := make(map[string]*domain.Package)
 	for i := range cfg.Display.Widgets {
@@ -277,30 +310,14 @@ func validatePackagesStage(cfg *Config, loader PackageLoader) (map[string]*domai
 			}
 			registry[w.Type] = pkg
 		}
-		if len(w.Dimensions) == 0 {
-			defDim := pkg.Manifest.DefaultDimensions
-			if !defDim.IsValid() {
-				return nil, fmt.Errorf("[Mirrormere Config Error] widget '%s' omits 'dimensions' and package manifest '%s' has no valid default_dimensions", w.ID, w.Type)
-			}
-			if !defDim.IsValidForGrid(cfg.Display.Grid.Columns, cfg.Display.Grid.Rows) {
-				flipped := domain.NewDimension(defDim.Rows, defDim.Cols)
-				if flipped.IsValidForGrid(cfg.Display.Grid.Columns, cfg.Display.Grid.Rows) &&
-					(len(pkg.Manifest.SupportedDimensions) == 0 || slices.Contains(pkg.Manifest.SupportedDimensions, flipped)) {
-					defDim = flipped
-				}
-			}
-			w.Dimensions = defDim.Slice()
+		if err := resolveWidgetDefaultDimensions(w, pkg, cfg.Display.Grid); err != nil {
+			return nil, err
 		}
 		if w.RefreshIntervalSeconds == nil && pkg.Manifest.Refresh.IntervalSeconds > 0 {
 			w.RefreshIntervalSeconds = &pkg.Manifest.Refresh.IntervalSeconds
 		}
-		if len(pkg.Manifest.SupportedDimensions) > 0 {
-			dim, err := domain.DimensionFromSlice(w.Dimensions)
-			if err != nil {
-				return nil, err
-			} else if !slices.Contains(pkg.Manifest.SupportedDimensions, dim) {
-				return nil, fmt.Errorf("widget '%s': dimensions [%d, %d] not supported by package '%s' (supported: %v)", w.ID, dim.Cols, dim.Rows, w.Type, pkg.Manifest.SupportedDimensions)
-			}
+		if err := validateWidgetSupportedDimensions(w, pkg); err != nil {
+			return nil, err
 		}
 	}
 	return registry, nil
