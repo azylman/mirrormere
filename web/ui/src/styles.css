@@ -1,0 +1,10 @@
+/* Scaffold only. The React shell still uses hud.css from style.css (see display_react.html). */
+#mirrormere-app {
+  position: fixed;
+  inset: 0;
+}
+
+#grid-canvas {
+  width: 100%;
+  height: 100%;
+}
