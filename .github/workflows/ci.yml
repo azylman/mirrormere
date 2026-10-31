@@ -37,6 +37,7 @@ jobs:
       ci_scripts: ${{ steps.filter.outputs.ci_scripts }}
       go_core: ${{ steps.filter.outputs.go_core }}
       web: ${{ steps.filter.outputs.web }}
+      ui: ${{ steps.filter.outputs.ui }}
       eink_node: ${{ steps.filter.outputs.eink_node }}
       eink_renderer: ${{ steps.filter.outputs.mirrormere-eink-renderer }}
       ear: ${{ steps.filter.outputs.mirrormere-ear }}
@@ -67,6 +68,9 @@ jobs:
             web:
               - 'web/**'
               - 'widgets/**'
+            ui:
+              - 'web/ui/**'
+              - 'web/static/ui/**'
             eink_node:
               - 'client/eink-node/**'
             mirrormere:
@@ -179,6 +183,39 @@ jobs:
             echo "Running remote (bluetooth/chromecast) client test suite..."
             PYTHONPATH="client/remote" python3 -m unittest discover -s client/remote/tests -p "test_*.py"
           fi
+
+  ui:
+    name: React UI (web/ui)
+    needs: changes
+    if: github.event_name != 'push' || inputs.force_all == true
+    runs-on: [self-hosted, ci]
+    defaults:
+      run:
+        working-directory: web/ui
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js (pinned by web/ui/.nvmrc)
+        if: needs.changes.outputs.ui == 'true' || inputs.force_all == true
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: web/ui/.nvmrc
+          cache: npm
+          cache-dependency-path: web/ui/package-lock.json
+
+      - name: Install, lint, typecheck, test, build and check committed output
+        if: needs.changes.outputs.ui == 'true' || inputs.force_all == true
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run lint
+          npm run typecheck
+          npm test
+          npm run build
+          cd ../..
+          # A fresh build must match the committed web/static/ui output byte for byte.
+          git diff --exit-code web/static/ui
 
   lint:
     name: Lint Microservices & Frontend
@@ -383,7 +420,7 @@ jobs:
 
   build-gate:
     name: CI Gate
-    needs: [changes, verify, lint, roborev, docker]
+    needs: [changes, verify, lint, ui, roborev, docker]
     if: always()
     runs-on: [self-hosted, ci]
     env:
