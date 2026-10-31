@@ -550,41 +550,18 @@ var (
 	rxSubEpOnly    = regexp.MustCompile(`(?i)^(?:Season\s*(\d+)[,\s]*)?Episode\s*(\d+)$`)
 )
 
-func extractMediaMetadata(meta map[string]any) (title, series, season, episode string) {
-	if meta == nil {
-		return "", "", "", ""
-	}
-
-	getAny := func(keys ...string) string {
-		for _, k := range keys {
-			if v, ok := meta[k]; ok && v != nil {
-				if s := parseStringOrInt(v); s != "" {
-					return s
-				}
+func firstMetaString(meta map[string]any, keys ...string) string {
+	for _, k := range keys {
+		if v, ok := meta[k]; ok && v != nil {
+			if s := parseStringOrInt(v); s != "" {
+				return s
 			}
 		}
-		return ""
 	}
+	return ""
+}
 
-	title = getAny("title", "name", "episodeTitle", "episode_title", "episodeName")
-	series = getAny("seriesTitle", "series_title", "seriesName", "series_name", "series", "showTitle", "show_title", "tvShowTitle", "tv_show_title")
-	season = getAny("season", "seasonNumber", "season_number", "season_index")
-	episode = getAny("episode", "episodeNumber", "episode_number", "episode_index")
-	subtitle := getAny("subtitle")
-
-	if series == "" && subtitle != "" && !strings.EqualFold(subtitle, title) {
-		if subMatches := rxSubEpOnly.FindStringSubmatch(subtitle); len(subMatches) > 0 {
-			if season == "" {
-				season = subMatches[1]
-			}
-			if episode == "" {
-				episode = subMatches[2]
-			}
-		} else {
-			series = subtitle
-		}
-	}
-
+func applyTitleEpisodePatterns(title, series, season, episode string) (string, string, string, string) {
 	applySeriesMatches := func(m []string) {
 		if series == "" {
 			series = strings.TrimSpace(m[1])
@@ -608,11 +585,17 @@ func extractMediaMetadata(meta map[string]any) (title, series, season, episode s
 		if episode == "" {
 			episode = m[3]
 		}
-	} else if m := rxSeriesSXXEXX.FindStringSubmatch(title); len(m) > 0 {
+		return title, series, season, episode
+	}
+	if m := rxSeriesSXXEXX.FindStringSubmatch(title); len(m) > 0 {
 		applySeriesMatches(m)
-	} else if m := rxSeriesEpNum.FindStringSubmatch(title); len(m) > 0 {
+		return title, series, season, episode
+	}
+	if m := rxSeriesEpNum.FindStringSubmatch(title); len(m) > 0 {
 		applySeriesMatches(m)
-	} else if m := rxEpNumLead.FindStringSubmatch(title); len(m) > 0 {
+		return title, series, season, episode
+	}
+	if m := rxEpNumLead.FindStringSubmatch(title); len(m) > 0 {
 		if season == "" {
 			season = m[1]
 		}
@@ -622,6 +605,114 @@ func extractMediaMetadata(meta map[string]any) (title, series, season, episode s
 		title = strings.TrimSpace(m[3])
 	}
 	return title, series, season, episode
+}
+
+func extractSubtitleEpisode(subtitle, title, currentSeason, currentEpisode string) (series, season, episode string) {
+	if subtitle == "" || strings.EqualFold(subtitle, title) {
+		return "", currentSeason, currentEpisode
+	}
+	subMatches := rxSubEpOnly.FindStringSubmatch(subtitle)
+	if len(subMatches) == 0 {
+		return subtitle, currentSeason, currentEpisode
+	}
+	season, episode = currentSeason, currentEpisode
+	if season == "" {
+		season = subMatches[1]
+	}
+	if episode == "" {
+		episode = subMatches[2]
+	}
+	return "", season, episode
+}
+
+func extractMediaMetadata(meta map[string]any) (title, series, season, episode string) {
+	if meta == nil {
+		return "", "", "", ""
+	}
+
+	title = firstMetaString(meta, "title", "name", "episodeTitle", "episode_title", "episodeName")
+	series = firstMetaString(meta, "seriesTitle", "series_title", "seriesName", "series_name", "series", "showTitle", "show_title", "tvShowTitle", "tv_show_title")
+	season = firstMetaString(meta, "season", "seasonNumber", "season_number", "season_index")
+	episode = firstMetaString(meta, "episode", "episodeNumber", "episode_number", "episode_index")
+	subtitle := firstMetaString(meta, "subtitle")
+
+	if series == "" {
+		var subSeries string
+		subSeries, season, episode = extractSubtitleEpisode(subtitle, title, season, episode)
+		if subSeries != "" {
+			series = subSeries
+		}
+	}
+
+	return applyTitleEpisodePatterns(title, series, season, episode)
+}
+
+func (c *CastClient) updateMediaMetadataLocked(item mediaStatusItem) {
+	prevMediaSessionID := c.mediaSessionID
+	c.mediaSessionID = item.MediaSessionID
+
+	title, series, season, episode := extractMediaMetadata(item.Media.Metadata)
+	duration, currentTime := item.Media.Duration, item.CurrentTime
+
+	if item.MediaSessionID != 0 && item.MediaSessionID != prevMediaSessionID {
+		c.lastTitle, c.lastSeries, c.lastSeason, c.lastEpisode = title, series, season, episode
+		c.lastDuration, c.lastPosition = duration, currentTime
+		c.lastPositionTime = time.Now()
+		return
+	}
+
+	if title != "" {
+		c.lastTitle, c.lastSeries, c.lastSeason, c.lastEpisode = title, series, season, episode
+	}
+	if duration > 0 {
+		c.lastDuration = duration
+	}
+}
+
+func (c *CastClient) shouldDispatchActiveMediaLocked(item mediaStatusItem, normalizedState, prevPlayerState, prevTitle string) bool {
+	if normalizedState != prevPlayerState ||
+		c.lastTitle != prevTitle || c.lastSeries != c.lastReportedSeries ||
+		c.lastSeason != c.lastReportedSeason || c.lastEpisode != c.lastReportedEpisode ||
+		(item.MediaSessionID != 0 && item.MediaSessionID != c.lastReportedMediaSessionID) {
+		return true
+	}
+
+	var expectedTime float64
+	if prevPlayerState == "playing" && !c.lastPositionTime.IsZero() {
+		expectedTime = c.lastPosition + time.Since(c.lastPositionTime).Seconds()
+	} else {
+		expectedTime = c.lastPosition
+	}
+	return math.Abs(item.CurrentTime-expectedTime) > 5.0
+}
+
+func (c *CastClient) handleIdleMediaLocked(item mediaStatusItem, prevPlayerState string) bool {
+	reason := strings.ToUpper(strings.TrimSpace(item.IdleReason))
+	isTerminalIdle := item.MediaSessionID == 0 || reason == "FINISHED" || reason == "CANCELLED" || reason == "INTERRUPTED" || reason == "ERROR"
+	if !isTerminalIdle {
+		return false
+	}
+	c.resetMediaStateLocked()
+	c.playerState = "idle"
+	c.lastReportedPlayerState = "idle"
+	if prevPlayerState != "idle" {
+		c.queueDispatch(func() { c.dispatchPlayerState("idle") })
+	}
+	return true
+}
+
+func (c *CastClient) handleActiveMediaLocked(item mediaStatusItem, normalizedState, prevPlayerState, prevTitle string) {
+	c.playerState = normalizedState
+	if !c.shouldDispatchActiveMediaLocked(item, normalizedState, prevPlayerState, prevTitle) {
+		return
+	}
+	c.lastReportedPlayerState = normalizedState
+	c.lastReportedTitle = c.lastTitle
+	c.lastReportedSeries, c.lastReportedSeason, c.lastReportedEpisode = c.lastSeries, c.lastSeason, c.lastEpisode
+	c.lastReportedMediaSessionID = c.mediaSessionID
+	c.lastPosition = item.CurrentTime
+	c.lastPositionTime = time.Now()
+	c.queueDispatch(func() { c.dispatchPlayerState(normalizedState) })
 }
 
 func (c *CastClient) handleMediaMessage(msg CastMessage) {
@@ -634,70 +725,16 @@ func (c *CastClient) handleMediaMessage(msg CastMessage) {
 	normalizedState := strings.ToLower(item.PlayerState)
 
 	c.mu.Lock()
-	prevMediaSessionID, prevPlayerState, prevTitle := c.mediaSessionID, c.lastReportedPlayerState, c.lastReportedTitle
-	c.mediaSessionID = item.MediaSessionID
+	defer c.mu.Unlock()
+	prevPlayerState, prevTitle := c.lastReportedPlayerState, c.lastReportedTitle
+	c.updateMediaMetadataLocked(item)
 
-	title, series, season, episode := extractMediaMetadata(item.Media.Metadata)
-	duration, currentTime := item.Media.Duration, item.CurrentTime
-
-	if item.MediaSessionID != 0 && item.MediaSessionID != prevMediaSessionID {
-		c.lastTitle, c.lastSeries, c.lastSeason, c.lastEpisode = title, series, season, episode
-		c.lastDuration, c.lastPosition = duration, currentTime
-		c.lastPositionTime = time.Now()
-	} else {
-		if title != "" {
-			c.lastTitle, c.lastSeries, c.lastSeason, c.lastEpisode = title, series, season, episode
-		}
-		if duration > 0 {
-			c.lastDuration = duration
-		}
+	switch normalizedState {
+	case "idle":
+		c.handleIdleMediaLocked(item, prevPlayerState)
+	case "playing", "paused", "buffering":
+		c.handleActiveMediaLocked(item, normalizedState, prevPlayerState, prevTitle)
 	}
-
-	if normalizedState == "idle" {
-		reason := strings.ToUpper(strings.TrimSpace(item.IdleReason))
-		isTerminalIdle := item.MediaSessionID == 0 || reason == "FINISHED" || reason == "CANCELLED" || reason == "INTERRUPTED" || reason == "ERROR"
-		if isTerminalIdle {
-			c.resetMediaStateLocked()
-			c.playerState = "idle"
-			c.lastReportedPlayerState = "idle"
-			if prevPlayerState != "idle" {
-				c.mu.Unlock()
-				c.queueDispatch(func() { c.dispatchPlayerState("idle") })
-				return
-			}
-		}
-	} else if normalizedState == "playing" || normalizedState == "paused" || normalizedState == "buffering" {
-		c.playerState = normalizedState
-		shouldDispatch := normalizedState != prevPlayerState ||
-			c.lastTitle != prevTitle || c.lastSeries != c.lastReportedSeries ||
-			c.lastSeason != c.lastReportedSeason || c.lastEpisode != c.lastReportedEpisode ||
-			(item.MediaSessionID != 0 && item.MediaSessionID != c.lastReportedMediaSessionID)
-
-		if !shouldDispatch {
-			var expectedTime float64
-			if prevPlayerState == "playing" && !c.lastPositionTime.IsZero() {
-				expectedTime = c.lastPosition + time.Since(c.lastPositionTime).Seconds()
-			} else {
-				expectedTime = c.lastPosition
-			}
-			if math.Abs(currentTime-expectedTime) > 5.0 {
-				shouldDispatch = true
-			}
-		}
-
-		if shouldDispatch {
-			c.lastReportedPlayerState = normalizedState
-			c.lastReportedTitle = c.lastTitle
-			c.lastReportedSeries, c.lastReportedSeason, c.lastReportedEpisode = c.lastSeries, c.lastSeason, c.lastEpisode
-			c.lastReportedMediaSessionID = c.mediaSessionID
-			c.lastPosition = currentTime
-			c.lastPositionTime = time.Now()
-			c.mu.Unlock()
-			c.queueDispatch(func() { c.dispatchPlayerState(normalizedState) })
-			return
-		}
-	}
-	c.mu.Unlock()
 }
 
 func (c *CastClient) sendMessage(msg CastMessage) error {
