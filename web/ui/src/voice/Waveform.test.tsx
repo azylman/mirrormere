@@ -187,19 +187,26 @@ describe('Waveform and WaveformMouth', () => {
     });
   });
 
-  describe('WaveformMouth legacy options and lifecycle', () => {
-    it('does not mount or connect when levelsUrl is empty', () => {
-      const mouth = new WaveformMouth({ levelsUrl: '' });
-      expect(mouth.element).toBeNull();
+  describe('WaveformMouth options and lifecycle', () => {
+    it('does not connect when levelsUrl is empty', () => {
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      const polyline = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+      const mouth = new WaveformMouth({ levelsUrl: '', svgElement: svg, polylineElement: polyline });
+      expect(mouth.element).toBe(svg);
       expect(MockEventSource.instances.length).toBe(0);
       mouth.destroy();
     });
 
-    it('mounts into document body when svgElement is not provided', () => {
-      const mouth = new WaveformMouth({ levelsUrl: 'http://127.0.0.1:8765/levels' });
-      expect(mouth.element).not.toBeNull();
-      expect(mouth.element?.parentNode).toBe(document.body);
-      expect(mouth.polyline).not.toBeNull();
+    it('connects to level stream with svgElement and polylineElement provided from React', () => {
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      const polyline = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+      const mouth = new WaveformMouth({
+        levelsUrl: 'http://127.0.0.1:8765/levels',
+        svgElement: svg,
+        polylineElement: polyline,
+      });
+      expect(mouth.element).toBe(svg);
+      expect(mouth.polyline).toBe(polyline);
       expect(MockEventSource.instances.length).toBe(1);
 
       mouth.destroy();
@@ -207,7 +214,7 @@ describe('Waveform and WaveformMouth', () => {
       expect(MockEventSource.instances[0]!.closed).toBe(true);
     });
 
-    it('reuses existing svgElement and polylineElement when provided without removing on destroy', () => {
+    it('reuses existing svgElement and polylineElement without removing them on destroy', () => {
       const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
       const polyline = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
       svg.appendChild(polyline);
@@ -223,7 +230,7 @@ describe('Waveform and WaveformMouth', () => {
       expect(mouth.polyline).toBe(polyline);
 
       mouth.destroy();
-      // Should NOT remove svg from parentNode because it did not create it
+      // Should NOT remove svg from parentNode because React owns it
       expect(svg.parentNode).toBe(document.body);
       document.body.removeChild(svg);
     });
@@ -482,12 +489,18 @@ describe('Waveform and WaveformMouth', () => {
     });
 
     it('reduced-motion draws latest frame immediately without easing', () => {
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      const polyline = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+      svg.appendChild(polyline);
+
       const mouth = new WaveformMouth({
         levelsUrl: 'http://127.0.0.1:8765/levels',
         reducedMotion: true,
         clock: () => currentTime,
         raf: window.requestAnimationFrame.bind(window),
         caf: window.cancelAnimationFrame.bind(window),
+        svgElement: svg,
+        polylineElement: polyline,
       });
 
       mouth.setVoiceState('speaking');
