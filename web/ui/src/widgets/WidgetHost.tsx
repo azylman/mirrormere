@@ -1,5 +1,5 @@
 import { memo, useEffect, useRef, type CSSProperties } from 'react';
-import { needsHydrate, useDisplayStore } from '../store';
+import { hydratedReloadCount, needsHydrate, useDisplayStore } from '../store';
 import { useWidget } from '../store/hooks';
 import { widgetComponentFor } from './registry';
 
@@ -33,10 +33,13 @@ export const WidgetHost = memo(function WidgetHost({ id, origin, dimensions }: W
   const paused = useDisplayStore((s) => s.carousel.paused);
   // The type and reload count this cell last acted on. Meta arrives after mount, so the
   // first time a type appears it becomes the baseline and does not count as a reload.
-  const seen = useRef({ type, count: reloads ?? 0 });
+  const seen = useRef({ type, count: type === undefined ? 0 : hydratedReloadCount(id) });
 
   useEffect(() => {
     if (needsHydrate(id)) {
+      // This fetch reads the latest reload count, so the reload effect must not repeat it.
+      const reloadsNow = useDisplayStore.getState().widgetReloads;
+      seen.current = { ...seen.current, count: reloadsNow[seen.current.type ?? ''] ?? 0 };
       useDisplayStore.getState().hydrateWidget(id).catch((err: unknown) => {
         console.warn(`[mirrormere] widget ${id} hydrate failed:`, err);
       });
@@ -46,8 +49,8 @@ export const WidgetHost = memo(function WidgetHost({ id, origin, dimensions }: W
   useEffect(() => {
     const count = reloads ?? 0;
     if (seen.current.type !== type) {
-      seen.current = { type, count };
-      return;
+      // The first time this cell learns its type, the reloads already counted are its baseline.
+      seen.current = { type, count: hydratedReloadCount(id) };
     }
     if (paused || count <= seen.current.count) return;
     seen.current = { type, count };

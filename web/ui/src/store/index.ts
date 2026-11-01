@@ -104,6 +104,11 @@ const hydrateSeq = new Map<string, number>();
 const hydratedAtReload = new Map<string, number>();
 let screensSeq = 0;
 
+/** The widgetReloads count for its type when the widget's meta was last fetched; 0 before any fetch. */
+export function hydratedReloadCount(id: string): number {
+  return hydratedAtReload.get(id) ?? 0;
+}
+
 /**
  * True when a widget needs a detail fetch on mount: it has no meta, or a widget.reload
  * for its type arrived after its meta was fetched (for example while it was unmounted).

@@ -35,12 +35,19 @@ const screens: ScreensResponse = {
 
 const CLOCK_IDS = ['a-0', 'shared', 'b-2', 'c-2'];
 
-function stubApi() {
+/** Holds the detail fetch for `id` until `until` resolves. */
+interface Hold {
+  id: string;
+  until: Promise<void>;
+}
+
+function stubApi(hold?: Hold) {
   const fetchMock = vi.fn(async (url: string) => {
     if (url === 'api/screens') {
       return new Response(JSON.stringify(screens), { status: 200 });
     }
     const id = decodeURIComponent(url.replace('api/widgets/', ''));
+    if (hold?.id === id) await hold.until;
     const type = screens.screens.flatMap((screen) => screen.widgets).find((w) => w.widget_id === id)?.type ?? 'clock';
     return new Response(
       JSON.stringify({
@@ -129,6 +136,67 @@ describe('WidgetHost widget.reload', () => {
     render(<Carousel />);
     await settle();
     for (const id of CLOCK_IDS) expect(hydrations(fetchMock, id)).toBe(1);
+  });
+});
+
+describe('WidgetHost reload during the first hydrate', () => {
+  beforeEach(() => {
+    useDisplayStore.setState(initial, true);
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  const cell = () => <WidgetHost id="a-0" origin={[0, 0]} dimensions={[1, 1]} />;
+
+  /** A gate that holds the first detail fetch for a-0 until `release` is called. */
+  function gate() {
+    let release!: () => void;
+    const until = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    return { until, release };
+  }
+
+  it('re-hydrates exactly once after the first fetch when a reload of its type arrived in flight', async () => {
+    const held = gate();
+    const fetchMock = stubApi({ id: 'a-0', until: held.until });
+    render(cell());
+    await settle();
+    expect(hydrations(fetchMock, 'a-0')).toBe(1);
+
+    reload('clock');
+    await settle();
+    expect(hydrations(fetchMock, 'a-0')).toBe(1);
+
+    held.release();
+    await settle();
+    expect(hydrations(fetchMock, 'a-0')).toBe(2);
+    await settle();
+    expect(hydrations(fetchMock, 'a-0')).toBe(2);
+  });
+
+  it('defers a reload that arrived in flight while paused, then re-hydrates once on resume', async () => {
+    const held = gate();
+    const fetchMock = stubApi({ id: 'a-0', until: held.until });
+    act(() => useDisplayStore.getState().pause());
+    render(cell());
+    await settle();
+    expect(hydrations(fetchMock, 'a-0')).toBe(1);
+
+    reload('clock');
+    await settle();
+    held.release();
+    await settle();
+    expect(hydrations(fetchMock, 'a-0')).toBe(1);
+
+    act(() => useDisplayStore.getState().resume());
+    await settle();
+    expect(hydrations(fetchMock, 'a-0')).toBe(2);
+    await settle();
+    expect(hydrations(fetchMock, 'a-0')).toBe(2);
   });
 });
 
