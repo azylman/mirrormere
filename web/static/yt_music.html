@@ -41,6 +41,7 @@
     overflow-x: auto;
     scrollbar-width: none;
     flex-shrink: 0;
+    touch-action: pan-x;
   }
   .speaker-bar::-webkit-scrollbar { display: none; }
   .spk-pill {
@@ -54,6 +55,7 @@
     border-radius: 999px;
     cursor: pointer;
     white-space: nowrap;
+    touch-action: manipulation;
   }
   .spk-pill.active {
     background: var(--spk-active);
@@ -120,6 +122,7 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
+    touch-action: manipulation;
   }
   .ctrl-btn.play-main {
     background: var(--accent);
@@ -139,6 +142,7 @@
     width: 100%;
     accent-color: var(--spk-active);
     cursor: pointer;
+    touch-action: pan-x;
   }
   /* Mode & Search Toolbar */
   .sub-toolbar {
@@ -158,6 +162,7 @@
     border-radius: 999px;
     cursor: pointer;
     white-space: nowrap;
+    touch-action: manipulation;
   }
   .mode-btn.active {
     background: var(--accent);
@@ -191,6 +196,7 @@
     overflow-y: auto;
     padding-right: 4px;
     flex: 1;
+    touch-action: pan-y;
   }
   .media-grid::-webkit-scrollbar { width: 5px; }
   .media-grid::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.18); border-radius: 99px; }
@@ -203,6 +209,7 @@
     padding: 6px 8px;
     border: 1px solid rgba(255,255,255,0.08);
     cursor: pointer;
+    touch-action: manipulation;
   }
   .media-tile:active { transform: scale(0.97); }
   .tile-img {
@@ -446,6 +453,10 @@
   // Forward horizontal screen swipes to parent Hearth carousel
   let tsX = 0, tsY = 0, tsT = 0;
   document.addEventListener('touchstart', (e) => {
+    if (e.target && e.target.closest && e.target.closest('.speaker-bar, .vol-slider, .vol-wrap, input')) {
+      tsT = 0;
+      return;
+    }
     if (e.touches && e.touches.length === 1) {
       tsX = e.touches[0].clientX;
       tsY = e.touches[0].clientY;
@@ -453,11 +464,12 @@
     }
   }, {passive: true});
   document.addEventListener('touchend', (e) => {
-    if (!e.changedTouches || e.changedTouches.length !== 1) return;
+    if (!tsT || !e.changedTouches || e.changedTouches.length !== 1) return;
     const dx = e.changedTouches[0].clientX - tsX;
     const dy = e.changedTouches[0].clientY - tsY;
     const dt = Date.now() - tsT;
-    if (dt < 800 && Math.abs(dx) > 70 && Math.abs(dx) > Math.abs(dy) * 1.6) {
+    tsT = 0;
+    if (dt < 800 && Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5) {
       window.parent.postMessage({type: 'hearth-swipe', direction: dx < 0 ? 'next' : 'prev'}, '*');
     }
   }, {passive: true});
