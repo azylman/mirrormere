@@ -304,6 +304,7 @@ func TestHandler_GetWidgetJSON_MatchesHydration(t *testing.T) {
 		"spacer":           map[string]any{},
 		"tasks":            tasksLoaded,
 		"weather-forecast": sampleWeatherData(),
+		"web-embed":        map[string]any{},
 	}
 
 	var names []string

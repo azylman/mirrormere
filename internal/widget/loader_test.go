@@ -184,6 +184,7 @@ func TestBuiltinPackagesAndAliases(t *testing.T) {
 		{"live-view", "live-view", "live-view", 3, 2, 0, true},
 		{"calendar-feed", "calendar-feed", "calendar-feed", 4, 2, 0, false},
 		{"calendar-grid", "calendar-grid", "calendar-feed", 6, 2, 0, false},
+		{"web-embed", "web-embed", "spacer", 2, 2, 5, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()

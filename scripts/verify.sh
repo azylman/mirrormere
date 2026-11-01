@@ -328,6 +328,8 @@ run_python_tests() {
         PYTHONPATH="." python3 -m unittest discover -s client/ear/tests -p "test_*.py"
         echo "   [python test] Running remote (bluetooth/chromecast) client test suite..."
         PYTHONPATH="client/remote" python3 -m unittest discover -s client/remote/tests -p "test_*.py"
+        echo "   [python test] Running iCal bridge test suite..."
+        PYTHONPATH="deploy/ical-bridge" python3 -m unittest discover -s deploy/ical-bridge -p "test_*.py"
     fi
 }
 
@@ -414,6 +416,11 @@ if [ "$MODE" = "staged" ]; then
     if echo "$STAGED_FILES" | grep -q -E '^client/remote/' && has_cmd python3; then
         echo "   [python test] Running remote (bluetooth/chromecast) client test suite..."
         PYTHONPATH="client/remote" python3 -m unittest discover -s client/remote/tests -p "test_*.py"
+    fi
+
+    if echo "$STAGED_FILES" | grep -q -E '^deploy/ical-bridge/' && has_cmd python3; then
+        echo "   [python test] Running iCal bridge test suite..."
+        PYTHONPATH="deploy/ical-bridge" python3 -m unittest discover -s deploy/ical-bridge -p "test_*.py"
     fi
 
     if has_cmd git && git diff --quiet 2>/dev/null; then
