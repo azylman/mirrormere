@@ -67,6 +67,9 @@ export function Carousel() {
   const layoutVersion = useDisplayStore((s) => s.layoutVersion);
   const paused = useDisplayStore((s) => s.carousel.paused);
   const [shown, setShown] = useState(() => useDisplayStore.getState().screen.currentScreen);
+  // The screen React rendered. The controller starts from this, not from the store: a hydration
+  // batch can move the store between this render and the effect that builds the controller.
+  const shownRef = useRef(shown);
 
   const viewportRef = useRef<HTMLDivElement>(null);
   const trackRef = useRef<HTMLDivElement>(null);
@@ -87,10 +90,14 @@ export function Carousel() {
       viewport,
       track,
       host,
-      initial: useDisplayStore.getState().screen.currentScreen,
+      initial: shownRef.current,
     });
     controllerRef.current = controller;
     controller.attach();
+    // The store moved after the first render: show its screen now, since the subscriber
+    // attached above only hears later changes.
+    const storeScreen = useDisplayStore.getState().screen.currentScreen;
+    if (storeScreen !== shownRef.current) controller.requestShow(storeScreen);
     return () => {
       controller.dispose();
       controllerRef.current = null;
@@ -100,6 +107,7 @@ export function Carousel() {
   // Runs before paint, in the same commit that moved the panes: the track returns to
   // rest with the new current pane already in place, so nothing flashes.
   useLayoutEffect(() => {
+    shownRef.current = shown;
     controllerRef.current?.rendered(shown);
   }, [shown]);
 

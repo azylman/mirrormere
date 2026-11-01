@@ -1,5 +1,5 @@
 import { act, cleanup, render } from '@testing-library/react';
-import { Profiler } from 'react';
+import { Profiler, useLayoutEffect } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useDisplayStore } from '../store';
 import type { ScreenLayout, ScreensResponse } from '../sse/types';
@@ -197,6 +197,39 @@ describe('Carousel', () => {
 
     expect(onRender.mock.calls.length).toBe(before);
     expect(gridCanvas()?.querySelectorAll('[data-widget-id]')).toHaveLength(2);
+  });
+
+  it('follows a store change that lands between the first render and the controller mount', async () => {
+    vi.useFakeTimers();
+    stubApi();
+    useDisplayStore.setState({ screen: { ...useDisplayStore.getState().screen, currentScreen: 0 } });
+    // Layout effects run after Carousel renders and before its passive effects build the
+    // controller: the same gap a reconnect hydration batch can land in.
+    function MoveStore() {
+      useLayoutEffect(() => {
+        useDisplayStore.setState({ screen: { ...useDisplayStore.getState().screen, currentScreen: 1 } });
+      }, []);
+      return null;
+    }
+    render(
+      <>
+        <Carousel />
+        <MoveStore />
+      </>,
+    );
+    await act(async () => {
+      vi.advanceTimersByTime(SETTLE_FALLBACK_MS);
+    });
+    expect(gridCanvas()?.querySelector('[data-widget-id="b-1"]')).not.toBeNull();
+
+    // A swipe back to screen 0 still renders it.
+    act(() => {
+      useDisplayStore.setState({ screen: { ...useDisplayStore.getState().screen, currentScreen: 0 } });
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(SETTLE_FALLBACK_MS);
+    });
+    expect(gridCanvas()?.querySelector('[data-widget-id="a-0"]')).not.toBeNull();
   });
 
   it('slides to a server-rotated neighbour and re-centres with the new current pane', async () => {

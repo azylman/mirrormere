@@ -464,6 +464,25 @@ describe('CarouselController', () => {
     expect(h.host.select).toHaveBeenCalledWith(1);
   });
 
+  it('finishes a commit to the screen React already shows instead of waiting for a render', () => {
+    vi.useFakeTimers();
+    useDisplayStore.setState({ screen: { ...initial.screen, currentScreen: 1, totalScreens: 2 } });
+    const h = build(1);
+    // React shows screen 0 while the controller holds 1 (the mismatch a hydration batch caused).
+    h.controller.rendered(0);
+    swipe(h, 500, 200);
+    h.transitionEnd();
+    expect(h.host.commit).toHaveBeenLastCalledWith(0);
+    const busy = (h.controller as unknown as { isBusy(): boolean }).isBusy();
+    expect(busy).toBe(false);
+    expect(h.track.style.transform).toBe('');
+
+    // The carousel still takes swipes afterwards.
+    swipe(h, 500, 200);
+    h.transitionEnd();
+    expect(h.host.commit).toHaveBeenLastCalledWith(1);
+  });
+
   describe('layout shrink', () => {
     const busy = (h: Harness): boolean => (h.controller as unknown as { isBusy(): boolean }).isBusy();
 
