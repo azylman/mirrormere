@@ -15,7 +15,7 @@ describe('ChatLogWidget', () => {
     cleanup();
   });
 
-  it('renders transcript turns with sample.json data', () => {
+  it('renders messages with sample.json data matching legacy widget.html', () => {
     useDisplayStore.setState({
       widgets: {
         'chat-1': {
@@ -37,35 +37,52 @@ describe('ChatLogWidget', () => {
     const root = container.querySelector('.widget-chat-log') as HTMLElement;
     expect(root).not.toBeNull();
 
-    // Default title
-    const title = root.querySelector('.chat-log-title');
-    expect(title?.textContent).toBe('Voice History');
+    // Session from data.session
+    const session = root.querySelector('.chat-log-session');
+    expect(session?.textContent).toBe('Kitchen assistant');
+
+    // Updated at timestamp
+    const updated = root.querySelector('.chat-log-updated');
+    expect(updated?.textContent).toBe('18:42');
 
     // Messages container
-    const messages = root.querySelector('.chat-log-messages');
-    expect(messages).not.toBeNull();
+    const messagesContainer = root.querySelector('.chat-log-messages');
+    expect(messagesContainer).not.toBeNull();
 
-    const turns = root.querySelectorAll('.chat-log-turn');
-    expect(turns.length).toBe(2);
+    const messages = root.querySelectorAll('.chat-log-message');
+    expect(messages.length).toBe(4);
 
-    // Turn 1
-    const turn1User = turns[0].querySelector('.chat-log-bubble.chat-log-user');
-    expect(turn1User).not.toBeNull();
-    expect(turn1User?.textContent).toContain('You');
-    expect(turn1User?.textContent).toContain('What is on the calendar tomorrow?');
-    expect(turn1User?.querySelector('.chat-log-time')?.textContent).toBe(' 18:39');
+    // Message 0: human
+    expect(messages[0].classList.contains('chat-log-human')).toBe(true);
+    expect(messages[0].querySelector('.chat-log-author')?.textContent).toBe('sam');
+    expect(messages[0].querySelector('.chat-log-ts')?.textContent).toBe(' 18:39');
+    expect(messages[0].querySelector('.chat-log-text')?.textContent).toBe(
+      'What is on the calendar tomorrow?'
+    );
 
-    const turn1Assistant = turns[0].querySelector('.chat-log-bubble.chat-log-assistant');
-    expect(turn1Assistant).not.toBeNull();
-    expect(turn1Assistant?.textContent).toContain('Assistant');
-    expect(turn1Assistant?.textContent).toContain('Dentist at 9:00 and soccer practice at 4:30.');
+    // Message 1: agent
+    expect(messages[1].classList.contains('chat-log-agent')).toBe(true);
+    expect(messages[1].querySelector('.chat-log-author')?.textContent).toBe('assistant');
+    expect(messages[1].querySelector('.chat-log-ts')?.textContent).toBe(' 18:39');
+    expect(messages[1].querySelector('.chat-log-text')?.textContent).toBe(
+      'Dentist at 9:00 and soccer practice at 4:30.'
+    );
 
-    // Turn 2
-    const turn2User = turns[1].querySelector('.chat-log-bubble.chat-log-user');
-    expect(turn2User?.textContent).toContain('Add milk and eggs to the shopping list.');
+    // Message 2: human
+    expect(messages[2].classList.contains('chat-log-human')).toBe(true);
+    expect(messages[2].querySelector('.chat-log-author')?.textContent).toBe('sam');
+    expect(messages[2].querySelector('.chat-log-ts')?.textContent).toBe(' 18:41');
+    expect(messages[2].querySelector('.chat-log-text')?.textContent).toBe(
+      'Add milk and eggs to the shopping list.'
+    );
 
-    const turn2Assistant = turns[1].querySelector('.chat-log-bubble.chat-log-assistant');
-    expect(turn2Assistant?.textContent).toContain('Done. Milk and eggs are on the shopping list.');
+    // Message 3: agent
+    expect(messages[3].classList.contains('chat-log-agent')).toBe(true);
+    expect(messages[3].querySelector('.chat-log-author')?.textContent).toBe('assistant');
+    expect(messages[3].querySelector('.chat-log-ts')?.textContent).toBe(' 18:42');
+    expect(messages[3].querySelector('.chat-log-text')?.textContent).toBe(
+      'Done. Milk and eggs are on the shopping list.'
+    );
   });
 
   it('renders empty state on unhydrated data: {} and empty messages: []', () => {
@@ -85,6 +102,7 @@ describe('ChatLogWidget', () => {
     expect(empty1).not.toBeNull();
     expect(empty1?.textContent).toBe('No messages yet');
     expect(c1.querySelector('.chat-log-messages')).toBeNull();
+    expect(c1.querySelector('.chat-log-header')).toBeNull();
 
     // Empty array messages: []
     useDisplayStore.setState({
@@ -104,7 +122,8 @@ describe('ChatLogWidget', () => {
     expect(c2.querySelector('.chat-log-messages')).toBeNull();
   });
 
-  it('renders custom config.title when specified', () => {
+  it('falls back session to config.title and then Chat', () => {
+    // Falls back to config.title
     useDisplayStore.setState({
       widgets: {
         'chat-title': {
@@ -112,21 +131,66 @@ describe('ChatLogWidget', () => {
             type: 'chat-log',
             origin: [0, 0],
             dimensions: [3, 2],
-            config: { title: 'Kitchen Assistant' },
+            config: { title: 'Living Room Chat' },
             assets_base: '',
           },
           state: 'healthy',
           data: {
-            messages: [{ query: 'Turn on kitchen lights', response: 'Lights turned on' }],
+            messages: [{ role: 'human', text: 'Hello' }],
           },
           timestamp: '2026-10-31T12:00:00Z',
         },
       },
     });
 
-    const { container } = render(<ChatLogWidget id="chat-title" type="chat-log" />);
-    const title = container.querySelector('.chat-log-title');
-    expect(title?.textContent).toBe('Kitchen Assistant');
+    const { container: c1 } = render(<ChatLogWidget id="chat-title" type="chat-log" />);
+    expect(c1.querySelector('.chat-log-session')?.textContent).toBe('Living Room Chat');
+    expect(c1.querySelector('.chat-log-updated')).toBeNull();
+
+    // Falls back to default 'Chat'
+    useDisplayStore.setState({
+      widgets: {
+        'chat-default': {
+          meta: {
+            type: 'chat-log',
+            origin: [0, 0],
+            dimensions: [3, 2],
+            config: {},
+            assets_base: '',
+          },
+          state: 'healthy',
+          data: {
+            messages: [{ role: 'agent', text: 'Ready' }],
+          },
+          timestamp: '2026-10-31T12:00:00Z',
+        },
+      },
+    });
+
+    const { container: c2 } = render(<ChatLogWidget id="chat-default" type="chat-log" />);
+    expect(c2.querySelector('.chat-log-session')?.textContent).toBe('Chat');
+  });
+
+  it('falls back author to role when author is omitted', () => {
+    useDisplayStore.setState({
+      widgets: {
+        'chat-no-author': {
+          state: 'healthy',
+          data: {
+            messages: [
+              { role: 'human', text: 'Test query' },
+              { role: 'agent', text: 'Test response' },
+            ],
+          },
+          timestamp: '2026-10-31T12:00:00Z',
+        },
+      },
+    });
+
+    const { container } = render(<ChatLogWidget id="chat-no-author" type="chat-log" />);
+    const authors = container.querySelectorAll('.chat-log-author');
+    expect(authors[0]?.textContent).toBe('human');
+    expect(authors[1]?.textContent).toBe('agent');
   });
 
   it('renders widget-error-banner when state is error', () => {
@@ -147,9 +211,8 @@ describe('ChatLogWidget', () => {
     expect(banner?.textContent).toContain('Widget Error');
   });
 
-  it('escapes HTML and script tags in query and response safely', () => {
-    const maliciousQuery = '<script>window.__pwned = true;</script><b>Hello</b>';
-    const maliciousResponse = '<img src="x" onerror="alert(1)"/><i>World</i>';
+  it('escapes HTML and script tags in text safely', () => {
+    const maliciousText = '<script>window.__pwned = true;</script><b>Hello</b><img src="x" onerror="alert(1)"/>';
 
     useDisplayStore.setState({
       widgets: {
@@ -158,8 +221,9 @@ describe('ChatLogWidget', () => {
           data: {
             messages: [
               {
-                query: maliciousQuery,
-                response: maliciousResponse,
+                role: 'human',
+                author: '<evil>',
+                text: maliciousText,
               },
             ],
           },
@@ -174,51 +238,10 @@ describe('ChatLogWidget', () => {
     expect(container.querySelector('img')).toBeNull();
 
     // Text content must contain the exact raw string safely rendered
-    const userText = container.querySelector('.chat-log-user .chat-log-text');
-    expect(userText?.textContent).toBe(maliciousQuery);
+    const textEl = container.querySelector('.chat-log-text');
+    expect(textEl?.textContent).toBe(maliciousText);
 
-    const assistantText = container.querySelector('.chat-log-assistant .chat-log-text');
-    expect(assistantText?.textContent).toBe(maliciousResponse);
-  });
-
-  it('omits user bubble and places timestamp on assistant bubble for standalone agent messages', () => {
-    useDisplayStore.setState({
-      widgets: {
-        'chat-standalone-agent': {
-          meta: {
-            type: 'chat-log',
-            origin: [0, 0],
-            dimensions: [3, 2],
-            config: {},
-            assets_base: '',
-          },
-          state: 'healthy',
-          data: {
-            messages: [
-              {
-                role: 'agent',
-                text: 'Reminder: Dinner reservation at 7:00 PM.',
-                ts: '2026-10-31T19:00:00Z',
-              },
-            ],
-          },
-          timestamp: '2026-10-31T19:00:00Z',
-        },
-      },
-    });
-
-    const { container } = render(<ChatLogWidget id="chat-standalone-agent" type="chat-log" />);
-    // No empty 'You' bubble should be rendered
-    expect(container.querySelector('.chat-log-user')).toBeNull();
-
-    // Assistant bubble should be rendered with text and timestamp
-    const assistantBubble = container.querySelector('.chat-log-assistant');
-    expect(assistantBubble).not.toBeNull();
-    expect(assistantBubble?.textContent).toContain('Assistant');
-    expect(assistantBubble?.textContent).toContain('Reminder: Dinner reservation at 7:00 PM.');
-
-    const timeEl = assistantBubble?.querySelector('.chat-log-time');
-    expect(timeEl).not.toBeNull();
-    expect(timeEl?.textContent).toBe(' 19:00');
+    const authorEl = container.querySelector('.chat-log-author');
+    expect(authorEl?.textContent).toBe('<evil>');
   });
 });

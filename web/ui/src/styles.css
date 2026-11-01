@@ -71,10 +71,20 @@ body[data-grid="2x6"] .grid-pane {
   pointer-events: none;
 }
 
+/* Reset nested widget-calendar card padding so calendar widgets don't double-pad inside WidgetHost */
+.widget-card > .widget-calendar {
+  padding: 0;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+
 /* Common inner widget root layout filling WidgetHost's .widget-card container. */
 .widget-tasks,
 .widget-weather,
-.widget-chat-log {
+.widget-chat-log,
+.widget-calendar-feed,
+.widget-calendar-grid {
   display: flex;
   flex-direction: column;
   flex: 1;
@@ -104,10 +114,15 @@ body[data-grid="2x6"] .grid-pane {
   flex-shrink: 0;
 }
 
-.chat-log-title {
+.chat-log-session {
   font-size: 1.1rem;
   font-weight: 700;
   letter-spacing: 0.02em;
+}
+
+.chat-log-updated {
+  font-size: 0.95rem;
+  font-family: var(--mm-font-mono, monospace);
 }
 
 .chat-log-messages {
@@ -120,20 +135,19 @@ body[data-grid="2x6"] .grid-pane {
   overflow: hidden;
 }
 
-.chat-log-turn {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+.chat-log-message {
   flex-shrink: 0;
-}
-
-.chat-log-bubble {
   padding-left: 8px;
-  border-left: 2px dotted var(--mm-text-primary);
 }
 
-.chat-log-bubble.chat-log-user {
+.chat-log-message.chat-log-human,
+.chat-log-human {
   border-left: 5px solid var(--mm-text-primary);
+}
+
+.chat-log-message.chat-log-agent,
+.chat-log-agent {
+  border-left: 2px dotted var(--mm-text-primary);
 }
 
 .chat-log-meta {
@@ -141,14 +155,13 @@ body[data-grid="2x6"] .grid-pane {
   font-weight: 700;
 }
 
-.chat-log-speaker {
+.chat-log-author {
   font-weight: 700;
 }
 
-.chat-log-time {
+.chat-log-ts {
   font-weight: 400;
   font-family: var(--mm-font-mono, monospace);
-  margin-left: 6px;
 }
 
 .chat-log-text {
@@ -157,7 +170,7 @@ body[data-grid="2x6"] .grid-pane {
   word-break: break-word;
 }
 
-.chat-log-user .chat-log-text {
+.chat-log-human .chat-log-text {
   font-weight: 600;
 }
 
