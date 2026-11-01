@@ -238,6 +238,22 @@ describe('display store', () => {
       expect(useDisplayStore.getState().widgets.w.data).toBe('new');
     });
 
+    it('keeps a stream update that lands while the fetch is in flight', async () => {
+      let resolveFetch: (r: Response) => void = () => {};
+      vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>((resolve) => (resolveFetch = resolve))));
+
+      const pending = useDisplayStore.getState().hydrateWidget('w');
+      useDisplayStore.getState().applyEvents([widgetUpdate('w', { live: true }, 'degraded', 'stream-t')]);
+      resolveFetch(new Response(JSON.stringify(detail({ widget_id: 'w', data: { stale: true }, state: 'healthy', timestamp: 'fetch-t' })), { status: 200 }));
+      await pending;
+
+      const entry = useDisplayStore.getState().widgets.w;
+      expect(entry.data).toEqual({ live: true });
+      expect(entry.state).toBe('degraded');
+      expect(entry.timestamp).toBe('stream-t');
+      expect(entry.meta?.type).toBe('weather-forecast');
+    });
+
     it('re-hydrates calendar-grid widgets on widget.update so viewModel stays current', async () => {
       useDisplayStore.setState({
         widgets: {

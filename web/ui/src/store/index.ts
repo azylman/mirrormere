@@ -154,14 +154,23 @@ export const useDisplayStore = create<DisplayStore>()((set, get) => ({
   async hydrateWidget(id) {
     const seq = (hydrateSeq.get(id) ?? 0) + 1;
     hydrateSeq.set(id, seq);
+    const before = get().widgets[id];
     const entry = toWidgetEntry(await fetchWidgetDetail(id));
     if (hydrateSeq.get(id) !== seq) return;
 
+    // A widget.update that landed while the fetch was in flight is newer than
+    // the fetch for state, data and timestamp. Keep the stream's values and take
+    // only meta and viewModel from the fetch.
     const current = get().widgets[id];
-    if (current && deepEqual(current, entry)) return;
-    const next: WidgetEntry = current && deepEqual(current.data, entry.data)
-      ? { ...entry, data: current.data }
+    const streamed = current !== before && current !== undefined;
+    const incoming: WidgetEntry = streamed
+      ? { ...current, meta: entry.meta, viewModel: entry.viewModel }
       : entry;
+
+    if (current && deepEqual(current, incoming)) return;
+    const next: WidgetEntry = current && deepEqual(current.data, incoming.data)
+      ? { ...incoming, data: current.data }
+      : incoming;
     set((s) => ({ widgets: { ...s.widgets, [id]: next } }));
   },
 
