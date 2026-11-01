@@ -26,6 +26,9 @@ for arg in "$@"; do
         --lint-only)
             MODE="lint"
             ;;
+        --guards-only)
+            MODE="guards"
+            ;;
         --full)
             MODE="full"
             ;;
@@ -491,6 +494,14 @@ if [ "$MODE" = "staged" ]; then
     exit 0
 fi
 
+if [ "$MODE" = "guards" ]; then
+    check_utf8_bom
+    check_no_imperative_ddl
+    check_dependabot_coverage
+    echo "✨ [Mirrormere Verify] All repo-wide hygiene guards passed!"
+    exit 0
+fi
+
 if [ "$MODE" = "lint" ]; then
     check_utf8_bom
     check_gofmt
@@ -539,6 +550,7 @@ fi
 check_utf8_bom
 check_gofmt
 check_no_imperative_ddl
+check_dependabot_coverage
 run_codegen_drift
 run_code_health
 run_golangci_lint

@@ -64,6 +64,7 @@ jobs:
               - 'cmd/**'
               - 'internal/**'
               - 'api/**'
+              - 'web/**/*.go'
               - 'client/cast-watcher/**'
               - 'sidecars/hass-proxy/**'
             web:
@@ -167,7 +168,7 @@ jobs:
             TZ=UTC node --test web/test/*.test.js
             if [ "${{ needs.changes.outputs.go_core }}" != "true" ] && [ "${{ needs.changes.outputs.ci_scripts }}" != "true" ] && [ "${{ inputs.force_all }}" != "true" ]; then
               echo "Validating HTML templates and widget manifests with Go tests..."
-              go test ./internal/render ./internal/server ./internal/widget
+              go test ./web ./internal/render ./internal/server ./internal/widget
             fi
           fi
           if [ "${{ needs.changes.outputs.eink_renderer }}" = "true" ] || [ "${{ needs.changes.outputs.ci_scripts }}" = "true" ] || [ "${{ inputs.force_all }}" = "true" ]; then
@@ -297,6 +298,10 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v7
+
+      - name: Run Repo-Wide Hygiene Guards
+        run: |
+          sh scripts/verify.sh --guards-only
 
       - name: Run Static Analysis, Codegen Drift & Linting
         if: needs.changes.outputs.go_core == 'true' || needs.changes.outputs.ci_scripts == 'true' || inputs.force_all == true
