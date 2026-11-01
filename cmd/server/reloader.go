@@ -3,9 +3,11 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"hash"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -18,12 +20,21 @@ import (
 	"github.com/azylman/mirrormere/internal/widget"
 )
 
-// AssetReloader coordinates detection of custom stylesheet and widget package modifications,
-// invalidating compiled template caches and broadcasting SSE reload notifications.
+// ReloaderOption configures optional AssetReloader parameters.
+type ReloaderOption func(*AssetReloader)
+
+// WithWebDir configures the runtime web assets directory (/app/web) monitored for SIGHUP changes.
+func WithWebDir(webDir string) ReloaderOption {
+	return func(r *AssetReloader) { r.webDir = webDir }
+}
+
+// AssetReloader coordinates detection of custom stylesheet, widget package, and runtime web asset
+// modifications, invalidating compiled template caches and broadcasting SSE reload notifications.
 type AssetReloader struct {
 	sync.Mutex
 
 	customCSSPath string
+	webDir        string
 	loader        *widget.Loader
 	builtinDir    string
 	customDir     string
@@ -33,6 +44,7 @@ type AssetReloader struct {
 	logger        *slog.Logger
 
 	lastCSSHash    string
+	lastWebHash    string
 	pkgHashes      map[string]string
 	incompletePkgs map[string]string
 }
@@ -41,6 +53,7 @@ type AssetReloader struct {
 func NewAssetReloader(
 	customCSSPath string, loader *widget.Loader, builtinDir, customDir string,
 	renderEngine *render.Engine, configManager *config.Manager, hub *events.Hub, logger *slog.Logger,
+	opts ...ReloaderOption,
 ) *AssetReloader {
 	if logger == nil {
 		logger = slog.Default()
@@ -56,6 +69,11 @@ func NewAssetReloader(
 		logger:         logger,
 		pkgHashes:      make(map[string]string),
 		incompletePkgs: make(map[string]string),
+	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(ar)
+		}
 	}
 	ar.seedInitialState()
 	return ar
@@ -81,6 +99,7 @@ func (r *AssetReloader) seedInitialState() {
 	if hash, ok := r.readCSSHash("failed to read custom CSS file during initial seeding"); ok {
 		r.lastCSSHash = hash
 	}
+	r.lastWebHash = r.computeWebHash()
 	if r.loader != nil {
 		for _, widgetType := range r.discoverWidgetTypesLocked() {
 			if pkg, err := r.loader.LoadPackage(widgetType); err == nil {
@@ -88,6 +107,27 @@ func (r *AssetReloader) seedInitialState() {
 			}
 		}
 	}
+}
+
+// ReloadWeb re-scans runtime web assets (templates and static bundles) and broadcasts system.reload if modified.
+func (r *AssetReloader) ReloadWeb() bool {
+	r.Lock()
+	defer r.Unlock()
+	currentHash := r.computeWebHash()
+	if currentHash == "" || currentHash == r.lastWebHash {
+		return false
+	}
+	r.lastWebHash = currentHash
+	if r.hub != nil {
+		evt := events.SystemReloadEvent{
+			Reason:    "web_assets",
+			Timestamp: time.Now().UTC().Format(time.RFC3339),
+		}
+		if err := r.hub.DispatchSystemReload(evt); err != nil {
+			r.logger.Error("failed to dispatch system reload on web asset change", "error", err)
+		}
+	}
+	return true
 }
 
 // ReloadCSS re-checks custom.css on disk, updating internal hash state and broadcasting style.reload if modified.
@@ -282,24 +322,44 @@ func (r *AssetReloader) computePackageHash(pkg *domain.Package) string {
 	}
 
 	if pkg.AssetsDir != "" {
-		if walkErr := filepath.Walk(pkg.AssetsDir, func(path string, info os.FileInfo, err error) error {
-			if err != nil || info.IsDir() {
-				return err
-			}
-			rel, relErr := filepath.Rel(pkg.AssetsDir, path)
-			if relErr != nil {
-				return relErr
-			}
-			hasher.Write([]byte(rel))
-			if data, readErr := os.ReadFile(path); readErr == nil {
-				hasher.Write(data)
-			}
-			return nil
-		}); walkErr != nil {
+		if walkErr := hashDirFiles(hasher, pkg.AssetsDir); walkErr != nil {
 			r.logger.Warn("failed to walk package assets for hash", "path", pkg.AssetsDir, "error", walkErr)
 		}
 	}
 	return hex.EncodeToString(hasher.Sum(nil))
+}
+
+func (r *AssetReloader) computeWebHash() string {
+	if r.webDir == "" {
+		return ""
+	}
+	hasher := sha256.New()
+	if err := hashDirFiles(hasher, r.webDir, "ui", "test", "node_modules"); err != nil {
+		return ""
+	}
+	return hex.EncodeToString(hasher.Sum(nil))
+}
+
+func hashDirFiles(hasher hash.Hash, rootDir string, skipTopDirs ...string) error {
+	cleanRoot := filepath.Clean(rootDir)
+	return filepath.Walk(cleanRoot, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			if path != cleanRoot && (strings.HasPrefix(info.Name(), ".") || (filepath.Dir(path) == cleanRoot && slices.Contains(skipTopDirs, info.Name()))) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if rel, relErr := filepath.Rel(cleanRoot, path); relErr == nil {
+			hasher.Write([]byte(filepath.ToSlash(rel)))
+		}
+		if data, readErr := os.ReadFile(path); readErr == nil {
+			hasher.Write(data)
+		}
+		return nil
+	})
 }
 
 func hashBytes(data []byte) string {
