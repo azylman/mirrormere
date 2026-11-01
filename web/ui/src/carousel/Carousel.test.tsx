@@ -106,11 +106,11 @@ function gridCanvas(): HTMLElement | null {
 }
 
 describe('panesFor and paneKey', () => {
-  it('mounts previous, current and next, wrapping', () => {
+  it('mounts previous, current and next in stable 0..total-1 order, wrapping', () => {
     expect(panesFor(0, 3)).toEqual([
-      { index: 2, offset: -1 },
       { index: 0, offset: 0 },
       { index: 1, offset: 1 },
+      { index: 2, offset: -1 },
     ]);
   });
 
@@ -128,18 +128,18 @@ describe('panesFor and paneKey', () => {
     expect(panesFor(1, 3).map((pane) => paneKey(pane, 3))).toEqual(['0', '1', '2']);
   });
 
-  it('mounts all screens with non-neighbors parked (offset: null) when total >= 4', () => {
+  it('mounts all screens with non-neighbors parked (offset: null) in stable 0..total-1 order when total >= 4', () => {
     expect(panesFor(0, 4)).toEqual([
-      { index: 3, offset: -1 },
       { index: 0, offset: 0 },
       { index: 1, offset: 1 },
       { index: 2, offset: null },
+      { index: 3, offset: -1 },
     ]);
     expect(panesFor(2, 5)).toEqual([
+      { index: 0, offset: null },
       { index: 1, offset: -1 },
       { index: 2, offset: 0 },
       { index: 3, offset: 1 },
-      { index: 0, offset: null },
       { index: 4, offset: null },
     ]);
   });
@@ -927,6 +927,39 @@ describe('Carousel', () => {
 
       // Crucial assertion: the DOM element reference must be identical
       expect(newNeighborPane).toBe(initialParkedPane);
+    });
+
+    it('preserves the exact same DOM node references in the exact same child order across swipes with zero DOM reordering', async () => {
+      fakeIdleClock();
+      stubApi(fourScreens);
+      useDisplayStore.setState({ screen: { ...initial.screen, currentScreen: 0, totalScreens: 4 } });
+      render(<Carousel />);
+      await act(async () => {});
+      await runIdleSteps();
+
+      const initialPanes = Array.from(document.querySelectorAll<HTMLElement>('.grid-pane'));
+      expect(initialPanes).toHaveLength(4);
+
+      // Swipe sequentially across all screens
+      for (let nextScreen = 1; nextScreen <= 3; nextScreen++) {
+        act(() => {
+          window.dispatchEvent(
+            new MessageEvent('message', {
+              data: { type: 'hearth-swipe', direction: 'next' },
+            }),
+          );
+        });
+        await act(async () => {
+          vi.advanceTimersByTime(SETTLE_FALLBACK_MS);
+        });
+        expect(useDisplayStore.getState().screen.currentScreen).toBe(nextScreen);
+
+        const currentPanes = Array.from(document.querySelectorAll<HTMLElement>('.grid-pane'));
+        expect(currentPanes).toHaveLength(4);
+        currentPanes.forEach((pane, idx) => {
+          expect(pane).toBe(initialPanes[idx]);
+        });
+      }
     });
   });
 });
