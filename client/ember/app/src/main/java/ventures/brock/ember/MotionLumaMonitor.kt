@@ -48,6 +48,31 @@ class MotionLumaMonitor(
         const val DEFAULT_SAMPLE_INTERVAL_MS = 2000L
         const val FRAME_WIDTH = 160
         const val FRAME_HEIGHT = 120
+
+        fun computeFrameLumaAndDelta(
+            currentFrame: ByteArray,
+            prevFrame: ByteArray?,
+            motionThreshold: Double = DEFAULT_MOTION_THRESHOLD
+        ): Triple<Double, Double, Boolean> {
+            if (currentFrame.isEmpty()) {
+                return Triple(0.0, 0.0, false)
+            }
+            var sumLuma = 0.0
+            var sumDelta = 0.0
+            val hasPrev = prevFrame != null && prevFrame.size == currentFrame.size
+            for (i in currentFrame.indices) {
+                val luma = currentFrame[i].toInt() and 0xFF
+                sumLuma += luma
+                if (hasPrev) {
+                    val prevLuma = prevFrame!![i].toInt() and 0xFF
+                    sumDelta += abs(luma - prevLuma)
+                }
+            }
+            val avgLuma = sumLuma / currentFrame.size
+            val meanDelta = if (hasPrev) sumDelta / currentFrame.size else 0.0
+            val motionDetected = hasPrev && meanDelta >= motionThreshold
+            return Triple(avgLuma, meanDelta, motionDetected)
+        }
     }
 
     @Volatile
@@ -287,40 +312,31 @@ class MotionLumaMonitor(
         val rowStride = yPlane.rowStride
         val pixelStride = yPlane.pixelStride
 
-        var sumLuma = 0.0
-        var sumDelta = 0.0
         val totalPixels = width * height
         val currentPixels = ByteArray(totalPixels)
         var pixelIndex = 0
-
-        val prev = previousFramePixels
 
         for (row in 0 until height) {
             val rowOffset = row * rowStride
             for (col in 0 until width) {
                 val bufferIndex = rowOffset + col * pixelStride
                 val luma = buffer.get(bufferIndex).toInt() and 0xFF
-                currentPixels[pixelIndex] = luma.toByte()
-                sumLuma += luma
-
-                if (prev != null) {
-                    val prevLuma = prev[pixelIndex].toInt() and 0xFF
-                    sumDelta += abs(luma - prevLuma)
-                }
-                pixelIndex++
+                currentPixels[pixelIndex++] = luma.toByte()
             }
         }
 
-        val avgLuma = sumLuma / totalPixels
+        val prev = previousFramePixels
+        val (avgLuma, meanDelta, motionDetected) = computeFrameLumaAndDelta(
+            currentPixels,
+            prev,
+            motionThreshold
+        )
         previousFramePixels = currentPixels
 
         dispatchAmbientLuma(avgLuma)
 
-        if (prev != null) {
-            val meanDelta = sumDelta / totalPixels
-            if (meanDelta >= motionThreshold) {
-                dispatchMotionDetected()
-            }
+        if (motionDetected) {
+            dispatchMotionDetected()
         }
     }
 

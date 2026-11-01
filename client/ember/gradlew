@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# 1. Check if local gradle and Android SDK are present
+has_android_sdk=false
+if [ -n "${ANDROID_HOME:-}" ] && [ -d "${ANDROID_HOME}" ]; then
+    has_android_sdk=true
+elif [ -n "${ANDROID_SDK_ROOT:-}" ] && [ -d "${ANDROID_SDK_ROOT}" ]; then
+    has_android_sdk=true
+fi
+
+if command -v gradle >/dev/null 2>&1 && [ "$has_android_sdk" = "true" ]; then
+    exec gradle --no-daemon "$@"
+fi
+
+# 2. Check if docker is available
+if ! command -v docker >/dev/null 2>&1; then
+    echo "Error: Neither local Android SDK + Gradle nor Docker was found." >&2
+    exit 1
+fi
+
+CACHE_VOLUME="aerial-ci-cache"
+DOCKER_ARGS=()
+
+if docker volume inspect "$CACHE_VOLUME" >/dev/null 2>&1; then
+    DOCKER_ARGS+=(-v "${CACHE_VOLUME}:/cache" -e "GRADLE_USER_HOME=/cache/gradle")
+fi
+
+exec tar -cf - -C "$SCRIPT_DIR" . | docker run --rm -i "${DOCKER_ARGS[@]}" ghcr.io/cirruslabs/android-sdk:34 bash -c '
+    set -euo pipefail
+    WORK_DIR=$(mktemp -d)
+    trap "rm -rf \"$WORK_DIR\"" EXIT
+    cd "$WORK_DIR"
+    tar -xf -
+
+    if ! command -v gradle >/dev/null 2>&1; then
+        GRADLE_VERSION="8.5"
+        if [ -d "/cache" ]; then
+            mkdir -p /cache
+            flock /cache/gradle-install.lock bash -c "
+                set -euo pipefail
+                GRADLE_VERSION=\"$GRADLE_VERSION\"
+                if [ ! -x \"/cache/gradle-\${GRADLE_VERSION}/bin/gradle\" ]; then
+                    GRADLE_ZIP=\"/tmp/gradle-\${GRADLE_VERSION}-bin.zip\"
+                    if [ -f \"/cache/gradle-\${GRADLE_VERSION}-bin.zip\" ]; then
+                        cp \"/cache/gradle-\${GRADLE_VERSION}-bin.zip\" \"\$GRADLE_ZIP\"
+                    else
+                        curl -sSL \"https://services.gradle.org/distributions/gradle-\${GRADLE_VERSION}-bin.zip\" -o \"\$GRADLE_ZIP\" || \
+                        wget -q \"https://services.gradle.org/distributions/gradle-\${GRADLE_VERSION}-bin.zip\" -O \"\$GRADLE_ZIP\"
+                        cp \"\$GRADLE_ZIP\" \"/cache/gradle-\${GRADLE_VERSION}-bin.zip\" 2>/dev/null || true
+                    fi
+                    unzip -q -o \"\$GRADLE_ZIP\" -d /cache/
+                    rm -f \"\$GRADLE_ZIP\"
+                fi
+            "
+            export PATH="/cache/gradle-${GRADLE_VERSION}/bin:${PATH}"
+        else
+            GRADLE_ZIP="/tmp/gradle-${GRADLE_VERSION}-bin.zip"
+            curl -sSL "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip" -o "$GRADLE_ZIP" || \
+            wget -q "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip" -O "$GRADLE_ZIP"
+            unzip -q -o "$GRADLE_ZIP" -d /opt/
+            rm -f "$GRADLE_ZIP"
+            export PATH="/opt/gradle-${GRADLE_VERSION}/bin:${PATH}"
+        fi
+    fi
+
+    if [ -d "/cache" ]; then
+        mkdir -p /cache/gradle
+        flock /cache/gradle.lock gradle --no-daemon "$@"
+    else
+        gradle --no-daemon "$@"
+    fi
+' bash "$@"

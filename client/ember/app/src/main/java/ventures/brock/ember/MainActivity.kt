@@ -41,6 +41,17 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Calendar
 
+enum class NightScheduleAction {
+    NONE,
+    WAKE,
+    SLEEP
+}
+
+data class NightScheduleDecision(
+    val action: NightScheduleAction,
+    val inNightWindow: Boolean
+)
+
 /**
  * Native EMBER Kiosk MainActivity.
  *
@@ -125,6 +136,76 @@ class MainActivity : Activity() {
             startMinutes: Int = 0,
             endMinutes: Int = 6 * 60 + 30
         ): Boolean = isNightQuietHours(hour, minute, startMinutes, endMinutes)
+
+        fun decideNightSchedule(
+            hour: Int,
+            minute: Int,
+            startMinutes: Int = 0,
+            endMinutes: Int = 6 * 60 + 30,
+            wasInNightWindow: Boolean,
+            isAsleep: Boolean,
+            nowMs: Long,
+            lastTouchOrWakeTimeMs: Long,
+            idleTimeoutMs: Long = IDLE_TIMEOUT_MS
+        ): NightScheduleDecision {
+            val inNight = isNightQuietHours(hour, minute, startMinutes, endMinutes)
+            val action = if (wasInNightWindow && !inNight) {
+                NightScheduleAction.WAKE
+            } else if (inNight && !isAsleep && (nowMs - lastTouchOrWakeTimeMs) >= idleTimeoutMs) {
+                NightScheduleAction.SLEEP
+            } else {
+                NightScheduleAction.NONE
+            }
+            return NightScheduleDecision(action = action, inNightWindow = inNight)
+        }
+
+        fun shouldSleepOnIdleTimeout(
+            isAsleep: Boolean,
+            motionMonitorRunning: Boolean,
+            hour: Int,
+            minute: Int,
+            startMinutes: Int = 0,
+            endMinutes: Int = 6 * 60 + 30,
+            nowMs: Long = IDLE_TIMEOUT_MS,
+            lastTouchOrWakeTimeMs: Long = 0L,
+            idleTimeoutMs: Long = IDLE_TIMEOUT_MS
+        ): Boolean {
+            if (isAsleep) return false
+            val inNight = isNightQuietHours(hour, minute, startMinutes, endMinutes)
+            if (!motionMonitorRunning && !inNight) return false
+            val elapsed = nowMs - lastTouchOrWakeTimeMs
+            return elapsed >= idleTimeoutMs
+        }
+
+        fun shouldSleepOnAmbientLuma(
+            avgLuma: Double,
+            isAsleep: Boolean,
+            nowMs: Long,
+            lastWakeTimeMs: Long,
+            threshold: Double = DARKNESS_LUMA_THRESHOLD,
+            gracePeriodMs: Long = WAKE_GRACE_PERIOD_MS
+        ): Boolean {
+            if (isAsleep) return false
+            if (avgLuma >= threshold) return false
+            val elapsed = nowMs - lastWakeTimeMs
+            return elapsed > gracePeriodMs
+        }
+
+        fun resolveStartUrlValue(
+            intentUrl: String?,
+            savedUrl: String?,
+            defaultUrl: String = DEFAULT_START_URL
+        ): Pair<String, String?> {
+            if (!intentUrl.isNullOrBlank()) {
+                val trimmed = intentUrl.trim()
+                return Pair(trimmed, trimmed)
+            }
+            if (!savedUrl.isNullOrBlank()) {
+                val trimmed = savedUrl.trim()
+                return Pair(trimmed, null)
+            }
+            return Pair(defaultUrl, null)
+        }
 
         fun extractOrigin(urlString: String?): String? {
             if (urlString.isNullOrBlank()) return null
@@ -264,8 +345,19 @@ class MainActivity : Activity() {
     private val idleRunnable = Runnable {
         val (startMin, endMin) = resolveNightSchedule()
         val cal = Calendar.getInstance()
-        val inNight = isNightQuietHours(cal.get(Calendar.HOUR_OF_DAY), cal.get(Calendar.MINUTE), startMin, endMin)
-        if (motionLumaMonitor.running || inNight) {
+        val now = System.currentTimeMillis()
+        if (shouldSleepOnIdleTimeout(
+                isAsleep = isAsleep,
+                motionMonitorRunning = motionLumaMonitor.running,
+                hour = cal.get(Calendar.HOUR_OF_DAY),
+                minute = cal.get(Calendar.MINUTE),
+                startMinutes = startMin,
+                endMinutes = endMin,
+                nowMs = now,
+                lastTouchOrWakeTimeMs = lastTouchOrWakeTime,
+                idleTimeoutMs = IDLE_TIMEOUT_MS
+            )
+        ) {
             Log.i(TAG, "Idle timeout reached ($IDLE_TIMEOUT_MS ms) - dimming to sleep")
             sleep()
         }
@@ -762,14 +854,15 @@ class MainActivity : Activity() {
                     var p = $escaped;
                     if (typeof window.onEmberPhotosSynced === 'function') {
                         window.onEmberPhotosSynced(p);
-                    }
-                    var frames = document.querySelectorAll('iframe');
-                    for (var i = 0; i < frames.length; i++) {
-                        try {
-                            if (frames[i].contentWindow && typeof frames[i].contentWindow.onEmberPhotosSynced === 'function') {
-                                frames[i].contentWindow.onEmberPhotosSynced(p);
-                            }
-                        } catch (e) {}
+                    } else {
+                        var frames = document.querySelectorAll('iframe');
+                        for (var i = 0; i < frames.length; i++) {
+                            try {
+                                if (frames[i].contentWindow && typeof frames[i].contentWindow.onEmberPhotosSynced === 'function') {
+                                    frames[i].contentWindow.onEmberPhotosSynced(p);
+                                }
+                            } catch (e) {}
+                        }
                     }
                 })();
             """.trimIndent()
@@ -795,24 +888,36 @@ class MainActivity : Activity() {
     fun evaluateNightSchedule(hour: Int, minute: Int) {
         if (isFinishing || isDestroyed) return
         val (startMin, endMin) = resolveNightSchedule()
-        val inNight = isNightQuietHours(hour, minute, startMin, endMin)
+        val now = System.currentTimeMillis()
+        val decision = decideNightSchedule(
+            hour = hour,
+            minute = minute,
+            startMinutes = startMin,
+            endMinutes = endMin,
+            wasInNightWindow = wasInNightWindow,
+            isAsleep = isAsleep,
+            nowMs = now,
+            lastTouchOrWakeTimeMs = lastTouchOrWakeTime,
+            idleTimeoutMs = IDLE_TIMEOUT_MS
+        )
 
-        if (wasInNightWindow && !inNight) {
-            Log.i(TAG, "Exiting night quiet hours at %02d:%02d - waking".format(hour, minute))
-            wake()
-        } else if (inNight) {
-            val elapsed = System.currentTimeMillis() - lastTouchOrWakeTime
-            if (!isAsleep && elapsed >= IDLE_TIMEOUT_MS) {
+        when (decision.action) {
+            NightScheduleAction.WAKE -> {
+                Log.i(TAG, "Exiting night quiet hours at %02d:%02d - waking".format(hour, minute))
+                wake()
+            }
+            NightScheduleAction.SLEEP -> {
                 Log.i(
                     TAG,
                     "Night quiet hours active at %02d:%02d and idle timeout elapsed (%d ms) - sleeping"
-                        .format(hour, minute, elapsed)
+                        .format(hour, minute, now - lastTouchOrWakeTime)
                 )
                 sleep()
             }
+            NightScheduleAction.NONE -> {}
         }
 
-        wasInNightWindow = inNight
+        wasInNightWindow = decision.inNightWindow
     }
 
     fun resolveNightSchedule(): Pair<Int, Int> {
@@ -844,12 +949,18 @@ class MainActivity : Activity() {
     }
 
     fun handleAmbientLuma(avgLuma: Double) {
-        if (avgLuma < DARKNESS_LUMA_THRESHOLD) {
-            val elapsed = System.currentTimeMillis() - lastWakeTime
-            if (!isAsleep && elapsed > WAKE_GRACE_PERIOD_MS) {
-                Log.i(TAG, "Ambient darkness detected (luma=$avgLuma < $DARKNESS_LUMA_THRESHOLD) - sleeping")
-                sleep()
-            }
+        val now = System.currentTimeMillis()
+        if (shouldSleepOnAmbientLuma(
+                avgLuma = avgLuma,
+                isAsleep = isAsleep,
+                nowMs = now,
+                lastWakeTimeMs = lastWakeTime,
+                threshold = DARKNESS_LUMA_THRESHOLD,
+                gracePeriodMs = WAKE_GRACE_PERIOD_MS
+            )
+        ) {
+            Log.i(TAG, "Ambient darkness detected (luma=$avgLuma < $DARKNESS_LUMA_THRESHOLD) - sleeping")
+            sleep()
         }
     }
 
@@ -860,16 +971,13 @@ class MainActivity : Activity() {
 
     fun resolveStartUrl(intent: Intent?): String {
         val intentUrl = intent?.getStringExtra(EXTRA_START_URL)
-        if (!intentUrl.isNullOrBlank()) {
-            saveStartUrl(intentUrl)
-            return intentUrl
-        }
         val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val savedUrl = prefs.getString(KEY_START_URL, null)
-        if (!savedUrl.isNullOrBlank()) {
-            return savedUrl
+        val (resolvedUrl, urlToPersist) = resolveStartUrlValue(intentUrl, savedUrl, DEFAULT_START_URL)
+        if (urlToPersist != null) {
+            saveStartUrl(urlToPersist)
         }
-        return DEFAULT_START_URL
+        return resolvedUrl
     }
 
     fun saveStartUrl(url: String) {

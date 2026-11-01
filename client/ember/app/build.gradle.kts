@@ -32,9 +32,14 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+    }
 }
 
 dependencies {
     // Lightweight native runtime: uses standard Android platform APIs
     // without external AndroidX dependencies to ensure fast CI compilation.
+    testImplementation("junit:junit:4.13.2")
 }
