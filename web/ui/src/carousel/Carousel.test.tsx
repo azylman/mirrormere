@@ -7,6 +7,18 @@ import captureSource from '../../../../sidecars/eink-renderer/src/capture.js?raw
 import stylesSource from '../styles.css?raw';
 import { Carousel, panesFor, paneKey } from './Carousel';
 import { SETTLE_FALLBACK_MS } from './track';
+import { scheduleIdleStep } from './Screen';
+
+/** Lets neighbour panes finish their idle-slot widget mounts (16 ms timer fallback in jsdom). */
+async function flushIdleMounts(): Promise<void> {
+  // act() applies state updates only when its scope ends, so each pass lets every pane take
+  // one idle step; ten passes cover the largest test screen with room to spare.
+  for (let i = 0; i < 10; i++) {
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 40));
+    });
+  }
+}
 
 const initial = useDisplayStore.getState();
 
@@ -125,6 +137,7 @@ describe('Carousel', () => {
     const fetchMock = stubApi();
     render(<Carousel />);
     await act(async () => {});
+    await flushIdleMounts();
 
     expect(fetchMock).toHaveBeenCalledWith('api/screens', expect.anything());
     const hydrated = fetchMock.mock.calls
@@ -135,10 +148,46 @@ describe('Carousel', () => {
     expect(document.querySelectorAll('[data-widget-id]')).toHaveLength(5);
   });
 
+  it('mounts neighbour widgets after the current pane, one idle slot at a time (#803)', async () => {
+    stubApi();
+    render(<Carousel />);
+    await act(async () => {});
+
+    const neighbourWidgets = () =>
+      Array.from(document.querySelectorAll<HTMLElement>('.grid-pane'))
+        .filter((pane) => pane.id !== 'grid-canvas')
+        .flatMap((pane) => Array.from(pane.querySelectorAll('[data-widget-id]')));
+    expect(gridCanvas()?.querySelectorAll('[data-widget-id]')).toHaveLength(2);
+    expect(gridCanvas()?.dataset.screenHydrated).toBe('true');
+    expect(neighbourWidgets()).toHaveLength(0);
+
+    await flushIdleMounts();
+    expect(neighbourWidgets()).toHaveLength(3);
+  });
+
+  it('scheduleIdleStep runs the step in a later task', () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('requestIdleCallback', undefined);
+    const step = vi.fn();
+    scheduleIdleStep(step);
+    expect(step).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(16);
+    expect(step).toHaveBeenCalledTimes(1);
+  });
+
+  it('scheduleIdleStep does not run a cancelled step', async () => {
+    const step = vi.fn();
+    const cancel = scheduleIdleStep(step);
+    cancel();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(step).not.toHaveBeenCalled();
+  });
+
   it('puts #grid-canvas and the hydration attributes on the current pane only', async () => {
     stubApi();
     render(<Carousel />);
     await act(async () => {});
+    await flushIdleMounts();
 
     expect(document.querySelectorAll('#grid-canvas')).toHaveLength(1);
     const canvas = gridCanvas();

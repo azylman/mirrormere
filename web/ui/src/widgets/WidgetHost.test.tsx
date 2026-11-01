@@ -81,6 +81,18 @@ async function settle() {
   });
 }
 
+/** Lets neighbour panes finish their idle-slot widget mounts (#803; 16 ms timer fallback in jsdom). */
+async function mountNeighbours() {
+  // act() applies state updates only when its scope ends, so each pass lets every pane take
+  // one idle step; ten passes cover the largest test screen with room to spare.
+  for (let i = 0; i < 10; i++) {
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 40));
+    });
+  }
+  await settle();
+}
+
 function reload(type: string) {
   act(() => {
     useDisplayStore.getState().applyEvents([{ type: 'widget.reload', data: { type } }]);
@@ -102,6 +114,7 @@ describe('WidgetHost widget.reload', () => {
     const fetchMock = stubApi();
     render(<Carousel />);
     await settle();
+    await mountNeighbours();
     const mounted = Object.fromEntries(CLOCK_IDS.map((id) => [id, hydrations(fetchMock, id)]));
     expect(mounted).toEqual({ 'a-0': 1, shared: 1, 'b-2': 1, 'c-2': 1 });
     const weatherBefore = hydrations(fetchMock, 'b-1');
@@ -117,6 +130,7 @@ describe('WidgetHost widget.reload', () => {
     const fetchMock = stubApi();
     render(<Carousel />);
     await settle();
+    await mountNeighbours();
 
     act(() => useDisplayStore.getState().pause());
     reload('clock');
@@ -135,6 +149,7 @@ describe('WidgetHost widget.reload', () => {
     const fetchMock = stubApi();
     render(<Carousel />);
     await settle();
+    await mountNeighbours();
     for (const id of CLOCK_IDS) expect(hydrations(fetchMock, id)).toBe(1);
   });
 });
