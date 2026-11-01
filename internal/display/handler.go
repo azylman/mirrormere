@@ -22,6 +22,10 @@ const (
 	LocalFallbackTemplatePath = "web/templates/display.html"
 	// LocalFallbackStaticDir is the relative development path for static web assets.
 	LocalFallbackStaticDir = "web/static"
+	// DefaultContainerReactTemplatePath is the container path for the React display shell (?ui=react).
+	DefaultContainerReactTemplatePath = "/app/web/templates/display_react.html"
+	// LocalFallbackReactTemplatePath is the relative development path for the React display shell.
+	LocalFallbackReactTemplatePath = "web/templates/display_react.html"
 )
 
 // HandlerOption configures Handler instances.
@@ -55,20 +59,28 @@ func WithGridProvider(provider func() string) HandlerOption {
 	return func(h *Handler) { h.gridProvider = provider }
 }
 
+// WithUIProvider supplies display.ui from config ("legacy" or "react"). ?ui= on the request overrides it.
+func WithUIProvider(provider func() string) HandlerOption {
+	return func(h *Handler) { h.uiProvider = provider }
+}
+
 // Handler serves the web display HUD shell and static web runtime assets.
 type Handler struct {
-	templatePath          string
-	localTemplatePath     string
-	staticDir             string
-	localStaticDir        string
-	templateContent       []byte
-	timezoneProvider      func() string
-	hideCursorProvider    func() bool
-	remoteURLProvider     func() string
-	headerVideoProvider   func() *HeaderVideoTemplateData
-	voiceWaveformProvider func() *VoiceWaveformTemplateData
-	themeProvider         func() string
-	gridProvider          func() string
+	templatePath           string
+	localTemplatePath      string
+	reactTemplatePath      string
+	localReactTemplatePath string
+	staticDir              string
+	localStaticDir         string
+	templateContent        []byte
+	timezoneProvider       func() string
+	hideCursorProvider     func() bool
+	remoteURLProvider      func() string
+	headerVideoProvider    func() *HeaderVideoTemplateData
+	voiceWaveformProvider  func() *VoiceWaveformTemplateData
+	themeProvider          func() string
+	gridProvider           func() string
+	uiProvider             func() string
 }
 
 func (h *Handler) Timezone() string {
@@ -119,6 +131,26 @@ func (h *Handler) Theme() string {
 	return "day"
 }
 
+// UI returns the configured display shell, "legacy" unless the config provider says "react".
+func (h *Handler) UI() string {
+	if h.uiProvider != nil && h.uiProvider() == "react" {
+		return "react"
+	}
+	return "legacy"
+}
+
+// useReact reports whether the request should get the React shell: ?ui= wins when it is
+// "react" or "legacy"; any other value falls through to the configured default.
+func (h *Handler) useReact(r *http.Request) bool {
+	switch r.URL.Query().Get("ui") {
+	case "react":
+		return true
+	case "legacy":
+		return false
+	}
+	return h.UI() == "react"
+}
+
 func (h *Handler) Grid() string {
 	if h.gridProvider != nil {
 		if g := h.gridProvider(); g == "2x6" || g == "6x2" {
@@ -153,15 +185,19 @@ type DisplayTemplateData struct {
 	VoiceWaveform *VoiceWaveformTemplateData
 	Theme         string
 	Grid          string
+	// Perf loads the client-side performance instrumentation (static/js/perf.js) when the page is requested with ?perf=1.
+	Perf bool
 }
 
 // NewHandler constructs a Handler with default filesystem paths.
 func NewHandler(opts ...HandlerOption) *Handler {
 	h := &Handler{
-		templatePath:      DefaultContainerTemplatePath,
-		localTemplatePath: LocalFallbackTemplatePath,
-		staticDir:         DefaultContainerStaticDir,
-		localStaticDir:    LocalFallbackStaticDir,
+		templatePath:           DefaultContainerTemplatePath,
+		localTemplatePath:      LocalFallbackTemplatePath,
+		reactTemplatePath:      DefaultContainerReactTemplatePath,
+		localReactTemplatePath: LocalFallbackReactTemplatePath,
+		staticDir:              DefaultContainerStaticDir,
+		localStaticDir:         LocalFallbackStaticDir,
 	}
 	for _, opt := range opts {
 		opt(h)
@@ -194,14 +230,19 @@ func readFile(p string) ([]byte, bool) {
 	return nil, false
 }
 
-func (h *Handler) resolveTemplateBytes() ([]byte, bool) {
-	if data, ok := readFile(h.templatePath); ok {
+func (h *Handler) resolveTemplateBytes(react bool) ([]byte, bool) {
+	container, local := h.templatePath, h.localTemplatePath
+	if react {
+		container, local = h.reactTemplatePath, h.localReactTemplatePath
+	}
+	if data, ok := readFile(container); ok {
 		return data, true
 	}
-	if len(h.templateContent) > 0 {
+	// Inline content is the legacy display.html only; it never stands in for the React shell.
+	if !react && len(h.templateContent) > 0 {
 		return h.templateContent, true
 	}
-	for _, c := range []string{h.localTemplatePath, filepath.Join("..", "..", h.localTemplatePath)} {
+	for _, c := range []string{local, filepath.Join("..", "..", local)} {
 		if data, ok := readFile(c); ok {
 			return data, true
 		}
@@ -217,7 +258,8 @@ func (h *Handler) GetDisplay(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "public, max-age=0, must-revalidate")
 
-	raw, found := h.resolveTemplateBytes()
+	react := h.useReact(r)
+	raw, found := h.resolveTemplateBytes(react)
 	if !found {
 		writeJSONError(w, http.StatusNotFound, "display template not found")
 		return
@@ -245,6 +287,7 @@ func (h *Handler) GetDisplay(w http.ResponseWriter, r *http.Request) {
 			VoiceWaveform: h.VoiceWaveform(),
 			Theme:         h.Theme(),
 			Grid:          h.Grid(),
+			Perf:          r.URL.Query().Get("perf") == "1",
 		}); err == nil {
 			out = buf.Bytes()
 		}

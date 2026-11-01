@@ -9,6 +9,12 @@ import (
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
+// Defines values for PerfSampleUi.
+const (
+	Legacy PerfSampleUi = "legacy"
+	React  PerfSampleUi = "react"
+)
+
 // Defines values for ScreenAdvanceRequestDirection.
 const (
 	ScreenAdvanceRequestDirectionNext ScreenAdvanceRequestDirection = "next"
@@ -105,6 +111,13 @@ const (
 	Transcribing VoiceStateRequestState = "transcribing"
 )
 
+// Defines values for GetWidgetJSONParamsView.
+const (
+	Day   GetWidgetJSONParamsView = "day"
+	Month GetWidgetJSONParamsView = "month"
+	Week  GetWidgetJSONParamsView = "week"
+)
+
 // ActionResponse defines model for ActionResponse.
 type ActionResponse struct {
 	Status string `json:"status"`
@@ -138,6 +151,26 @@ type HealthResponse struct {
 	Status string `json:"status"`
 }
 
+// PerfBatchRequest defines model for PerfBatchRequest.
+type PerfBatchRequest struct {
+	Samples []PerfSample `json:"samples"`
+}
+
+// PerfSample defines model for PerfSample.
+type PerfSample struct {
+	// Metric Allow-listed metric name. One of gesture_first_frame, swipe_settle, frame, long_task, interaction, screen_ready, widget_update.
+	Metric string `json:"metric"`
+
+	// Ui Display UI that produced the sample.
+	Ui PerfSampleUi `json:"ui"`
+
+	// ValueMs Measured duration in milliseconds.
+	ValueMs float64 `json:"value_ms"`
+}
+
+// PerfSampleUi Display UI that produced the sample.
+type PerfSampleUi string
+
 // ScreenAdvanceRequest defines model for ScreenAdvanceRequest.
 type ScreenAdvanceRequest struct {
 	// Direction Direction to advance screen (next or prev)
@@ -146,6 +179,12 @@ type ScreenAdvanceRequest struct {
 
 // ScreenAdvanceRequestDirection Direction to advance screen (next or prev)
 type ScreenAdvanceRequestDirection string
+
+// ScreenLayout defines model for ScreenLayout.
+type ScreenLayout struct {
+	Index   int               `json:"index"`
+	Widgets []WidgetPlacement `json:"widgets"`
+}
 
 // ScreenNavigationResponse defines model for ScreenNavigationResponse.
 type ScreenNavigationResponse struct {
@@ -174,6 +213,13 @@ type ScreenPauseResponse struct {
 type ScreenSelectRequest struct {
 	// ScreenIndex 0-indexed screen number
 	ScreenIndex int `json:"screen_index"`
+}
+
+// ScreensResponse defines model for ScreensResponse.
+type ScreensResponse struct {
+	CurrentScreen   int            `json:"current_screen"`
+	IntervalSeconds int            `json:"interval_seconds"`
+	Screens         []ScreenLayout `json:"screens"`
 }
 
 // VideoActionRequest defines model for VideoActionRequest.
@@ -305,6 +351,39 @@ type VoiceStateResponse struct {
 	Status string `json:"status"`
 }
 
+// WidgetDetailResponse defines model for WidgetDetailResponse.
+type WidgetDetailResponse struct {
+	// AssetsBase Base path for the widget package assets
+	AssetsBase string `json:"assets_base"`
+
+	// Config Widget instance config with credential and *_env keys removed
+	Config map[string]interface{} `json:"config"`
+
+	// Data Domain data; same payload as the widget.update SSE event for this widget
+	Data       interface{} `json:"data"`
+	Dimensions []int       `json:"dimensions"`
+	Online     bool        `json:"online"`
+	Origin     []int       `json:"origin"`
+	State      string      `json:"state"`
+	Timestamp  string      `json:"timestamp"`
+	Type       string      `json:"type"`
+
+	// ViewModel Present only for calendar-grid. Object with keys week (FamilyViewModel), month (FamilyMonthViewModel) and active_view (week or month, from the view query parameter or the widget default_view).
+	ViewModel *map[string]interface{} `json:"view_model,omitempty"`
+	WidgetId  string                  `json:"widget_id"`
+}
+
+// WidgetPlacement defines model for WidgetPlacement.
+type WidgetPlacement struct {
+	// Dimensions [cols, rows] grid span
+	Dimensions []int `json:"dimensions"`
+
+	// Origin [col, row] grid origin
+	Origin   []int  `json:"origin"`
+	Type     string `json:"type"`
+	WidgetId string `json:"widget_id"`
+}
+
 // WidgetPushResponse defines model for WidgetPushResponse.
 type WidgetPushResponse struct {
 	Status    string    `json:"status"`
@@ -324,6 +403,21 @@ type PostVoiceInteractMultipartBody struct {
 	SessionId *string `json:"session_id,omitempty"`
 }
 
+// GetWidgetJSONParams defines parameters for GetWidgetJSON.
+type GetWidgetJSONParams struct {
+	// Node Requesting display's voice node_id; per-node data replaces the shared data when present
+	Node *string `form:"node,omitempty" json:"node,omitempty"`
+
+	// Date Anchor date for calendar-grid view_model (YYYY-MM-DD)
+	Date *openapi_types.Date `form:"date,omitempty" json:"date,omitempty"`
+
+	// View Calendar-grid active view (day, week or month)
+	View *GetWidgetJSONParamsView `form:"view,omitempty" json:"view,omitempty"`
+}
+
+// GetWidgetJSONParamsView defines parameters for GetWidgetJSON.
+type GetWidgetJSONParamsView string
+
 // PostWidgetPushJSONBody defines parameters for PostWidgetPush.
 type PostWidgetPushJSONBody map[string]interface{}
 
@@ -332,6 +426,9 @@ type PostAudioMuteJSONRequestBody = AudioMuteRequest
 
 // PostAudioVolumeJSONRequestBody defines body for PostAudioVolume for application/json ContentType.
 type PostAudioVolumeJSONRequestBody = AudioVolumeRequest
+
+// PostPerfJSONRequestBody defines body for PostPerf for application/json ContentType.
+type PostPerfJSONRequestBody = PerfBatchRequest
 
 // PostScreenAdvanceJSONRequestBody defines body for PostScreenAdvance for application/json ContentType.
 type PostScreenAdvanceJSONRequestBody = ScreenAdvanceRequest

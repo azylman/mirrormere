@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,7 +14,7 @@ import (
 func buildLargeGoSource(fileLines, funcLines int) string {
 	var sb strings.Builder
 	sb.WriteString("package sample\n\nfunc ForwardDecl()\n\nfunc BigFunc(x int) int {\n")
-	for i := 0; i < funcLines; i++ {
+	for range funcLines {
 		sb.WriteString("\tx++\n")
 	}
 	sb.WriteString("\treturn x\n}\n")
@@ -20,6 +22,93 @@ func buildLargeGoSource(fileLines, funcLines int) string {
 	for i := curLines; i < fileLines; i++ {
 		sb.WriteString("// padding line\n")
 	}
+	return sb.String()
+}
+
+func buildCloneFuncSource(name string) string {
+	return `func ` + name + `(x int, ch chan int) int {
+	if x > 0 {
+		println("positive")
+	} else {
+		println("non-positive")
+	}
+	for i := 0; i < x; i++ {
+		select {
+		case <-ch:
+			return -1
+		default:
+			break
+		}
+	}
+	switch x {
+	case 1:
+		defer println("defer 1")
+	default:
+		defer println("defer default")
+	}
+	for range []int{1} {
+		println("loop")
+	}
+	return x
+}
+`
+}
+
+func buildGappedCloneFuncSource(name string) string {
+	return `func ` + name + `(x int, ch chan int) int {
+	if x > 0 {
+		println("positive")
+	} else {
+		println("non-positive")
+	}
+	for i := 0; i < x; i++ {
+		select {
+		case <-ch:
+			return -1
+		default:
+			break
+		}
+	}
+	if x == 42 {
+		return 42
+	}
+	switch x {
+	case 1:
+		defer println("defer 1")
+	default:
+		defer println("defer default")
+	}
+	for range []int{1} {
+		println("loop")
+	}
+	return x
+}
+`
+}
+
+func buildCallAndTypeSwitchSource() string {
+	return `package sample
+
+type Worker struct{}
+
+func (w *Worker) Process(x any, fn func()) {
+	switch x.(type) {
+	case int:
+		w.Process(nil, nil)
+	default:
+		fn()
+	}
+}
+`
+}
+
+func buildClosureFieldsSource() string {
+	var sb strings.Builder
+	sb.WriteString("type Suite struct {\n")
+	for _, name := range []string{"run", "check", "extraCheck", "setup", "validate", "validator", "verify", "lookup"} {
+		sb.WriteString("\t" + name + " " + "func()\n")
+	}
+	sb.WriteString("\tother string\n}\n")
 	return sb.String()
 }
 
@@ -114,7 +203,7 @@ func TestRun(t *testing.T) {
 				"pkg/complex.go": complexAndDeepSource,
 			},
 			wantCode: 1,
-			wantErr:  "4 ratchet violation(s) detected",
+			wantErr:  "2 ratchet violation(s) detected",
 		},
 		{
 			name: "grandfathered baseline allows exact match and blocks growth",
@@ -196,44 +285,151 @@ func TestRun(t *testing.T) {
 			wantErr:  "collect targets",
 		},
 		{
-			name: "banned nolint errcheck fails check",
+			name: "banned nolint directives detected across variants",
 			files: map[string]string{
-				"pkg/err.go": "package pkg\n\nfunc Bad() {\n\t//nolint:errcheck\n\t_ = 1\n}\n",
+				"pkg/banned.go": "package pkg\n\n//nolint:errcheck\nfunc f1() {}\n\n// nolint:all\nfunc f2() {}\n\n/*nolint:errcheck*/\nfunc f3() {}\n\n//nolint\nfunc f4() {}\n\n//nolint:unparam, errcheck\nfunc f5() {}\n\n//nolint:gosec, all // comment\nfunc f6() {}\n",
+				"pkg/valid.go":  "package pkg\n\n//nolint:unparam // allowed\nfunc ok() {}\n// regular comment\n",
 			},
 			wantCode: 1,
-			wantErr:  "//nolint:errcheck is prohibited; all errors must be checked",
+			wantErr:  "ratchet violation(s) detected",
 		},
 		{
-			name: "banned nolint all fails check",
+			name: "banned nolint dupl directive returns error",
 			files: map[string]string{
-				"pkg/all.go": "package pkg\n\nfunc Bad() {\n\t//nolint:all\n\t_ = 1\n}\n",
+				"pkg/dupl.go": "package pkg\n\n//nolint:dupl\nfunc f1() {}\n",
 			},
 			wantCode: 1,
-			wantErr:  "//nolint:all is prohibited; all errors must be checked",
+			wantErr:  "//nolint:dupl is prohibited",
 		},
 		{
-			name: "banned bare nolint fails check",
+			name: "banned nolint gocyclo and funlen directives return error",
 			files: map[string]string{
-				"pkg/bare.go": "package pkg\n\nfunc Bad() {\n\t//nolint\n\t_ = 1\n}\n",
+				"pkg/cyclo.go": "package pkg\n\n//nolint:gocyclo\nfunc f1() {}\n\n//nolint:funlen\nfunc f2() {}\n",
 			},
 			wantCode: 1,
-			wantErr:  "bare //nolint directive is prohibited; specify allowed linter or handle errors",
+			wantErr:  "//nolint:gocyclo is prohibited",
 		},
 		{
-			name: "banned comma-separated nolint with whitespace fails check",
+			name: "allowed nolint directives and normal comments pass cleanly",
 			files: map[string]string{
-				"pkg/multi.go": "package pkg\n\nfunc Bad() {\n\t//nolint:govet, errcheck\n\t_ = 1\n}\n",
-			},
-			wantCode: 1,
-			wantErr:  "//nolint:errcheck is prohibited; all errors must be checked",
-		},
-		{
-			name: "allowed specific nolint passes check",
-			files: map[string]string{
-				"pkg/allowed.go": "package pkg\n\nfunc Good() {\n\t//nolint:nilerr // explanation\n\t_ = 1\n}\n",
+				"pkg/valid.go": "package pkg\n\n//nolint:unparam // allowed reason\nfunc ok() {}\n\n//nolint:gosec,unparam\nfunc ok2() {}\n\n//nolint:gosec, unparam // multiple allowed\nfunc ok3() {}\n// regular comment\n",
 			},
 			wantCode: 0,
-			wantOut:  "all complexity and length ratchets passed",
+			wantOut:  "Checked 1 Go file(s)",
+		},
+		{
+			name: "type-3 near-miss ast clone detected within same package",
+			files: map[string]string{
+				"pkg/clones.go": "package pkg\n\n" + buildCloneFuncSource("CloneA") + "\n" + buildCloneFuncSource("CloneB"),
+			},
+			wantCode: 1,
+			wantErr:  "near-miss AST clone similarity 1.00 exceeds 0.80 ceiling",
+		},
+		{
+			name: "type-3 gapped function clone detected via ast edit distance within same package",
+			files: map[string]string{
+				"pkg/clones.go": "package pkg\n\n" + buildCloneFuncSource("CloneA") + "\n" + buildGappedCloneFuncSource("CloneB"),
+			},
+			wantCode: 1,
+			wantErr:  "near-miss AST edit similarity 0.88 exceeds 0.85 ceiling",
+		},
+		{
+			name: "intra-package struct clone detected above threshold",
+			files: map[string]string{
+				"pkg/structs.go": `package pkg
+
+type Embed struct{}
+
+type Alpha struct {
+	Embed
+	A int
+	B *int
+	C pkg.Type
+	D []string
+	E map[string]int
+	F chan int
+}
+
+type Beta struct {
+	Embed
+	A int
+	B *int
+	C pkg.Type
+	D []string
+	E map[string]int
+	F chan int
+}
+`,
+			},
+			wantCode: 1,
+			wantErr:  "struct field similarity 1.00 exceeds 0.85 ceiling",
+		},
+		{
+			name: "structs below minimum field threshold do not trigger violation",
+			files: map[string]string{
+				"pkg/structs.go": `package pkg
+
+type SmallA struct {
+	A int
+	B string
+}
+
+type SmallB struct {
+	A int
+	B string
+}
+`,
+			},
+			wantCode: 0,
+			wantOut:  "Checked 1 Go file(s)",
+		},
+		{
+			name: "identical functions in different packages do not trigger clone violation",
+			files: map[string]string{
+				"pkg1/a.go": "package pkg1\n\n" + buildCloneFuncSource("CloneA"),
+				"pkg2/b.go": "package pkg2\n\n" + buildCloneFuncSource("CloneA"),
+			},
+			wantCode: 0,
+			wantOut:  "Checked 2 Go file(s)",
+		},
+		{
+			name: "test file hygiene violations reported in check mode",
+			files: map[string]string{
+				"pkg/ok.go": "package pkg\n",
+				"pkg/bad_test.go": "package pkg\n\n//nolint:gocyclo\nfunc TestFoo_Extra() {}\n\ntype Case struct {\n\t" +
+					"check" + " " + "func()\n}\n",
+			},
+			wantCode: 1,
+			wantErr:  "ratchet violation(s) detected",
+		},
+		{
+			name: "syntax error in test file fails check",
+			files: map[string]string{
+				"pkg/ok.go":       "package pkg\n",
+				"pkg/bad_test.go": "package pkg\nfunc (",
+			},
+			wantCode: 1,
+			wantErr:  "code-health: check:",
+		},
+		{
+			name: "explicit targets ignore unselected test files with violations",
+			files: map[string]string{
+				"pkg/clean.go":    "package pkg\n",
+				"pkg/bad_test.go": "package pkg\n\nfunc TestFoo_Extra() {}\n",
+			},
+			targetArgs: []string{"pkg/clean.go"},
+			wantCode:   0,
+			wantOut:    "Checked 1 Go file(s)",
+		},
+		{
+			name: "explicit test targets are checked and violations reported",
+			files: map[string]string{
+				"pkg/clean.go":    "package pkg\n",
+				"pkg/bad_test.go": "package pkg\n\nfunc TestFoo_Extra() {}\n",
+			},
+			targetArgs: []string{"pkg/bad_test.go"},
+			wantCode:   1,
+			wantErr:    "ratchet violation(s) detected",
 		},
 	}
 
@@ -312,6 +508,533 @@ func TestExprName(t *testing.T) {
 			t.Parallel()
 			if got := exprName(tc.expr); got != tc.want {
 				t.Errorf("exprName() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestAnalyzeTestFile(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name           string
+		content        string
+		nonexistent    bool
+		wantViolations []string
+		wantErr        bool
+	}{
+		{
+			name: "clean test file produces no violations",
+			content: `package pkg
+func TestValid() {}
+type Case struct {
+	expected int
+}
+`,
+		},
+		{
+			name: "generated test file is skipped",
+			content: "// Code generated by tool; DO NOT EDIT.\npackage pkg\n//nolint:errcheck\nfunc TestFoo_Extra() {}\n" +
+				"type Case struct {\n\t" + "check" + " " + "func()\n}\n",
+		},
+		{
+			name: "split test names and closure fields detected",
+			content: `package pkg
+
+//nolint:gocyclo
+func TestA_Extra() {}
+func TestB_MoreCases() {}
+func TestC_Additional() {}
+func TestD_Uncovered() {}
+func TestE_EdgeCases() {}
+func TestF_CornerCases() {}
+func TestG_Branches() {}
+func TestH_AllBranches() {}
+func TestI_Chunk1_Cases() {}
+func TestJ_CoverageGaps() {}
+` + buildClosureFieldsSource(),
+			wantViolations: []string{
+				"//nolint:gocyclo is prohibited",
+				"test function TestA_Extra uses banned split/catch-all suffix",
+				"test function TestB_MoreCases uses banned split/catch-all suffix",
+				"test function TestC_Additional uses banned split/catch-all suffix",
+				"test function TestD_Uncovered uses banned split/catch-all suffix",
+				"test function TestE_EdgeCases uses banned split/catch-all suffix",
+				"test function TestF_CornerCases uses banned split/catch-all suffix",
+				"test function TestG_Branches uses banned split/catch-all suffix",
+				"test function TestH_AllBranches uses banned split/catch-all suffix",
+				"test function TestI_Chunk1_Cases uses banned split/catch-all suffix",
+				"test function TestJ_CoverageGaps uses banned split/catch-all suffix",
+				`test struct field "run" uses a banned closure func type`,
+				`test struct field "check" uses a banned closure func type`,
+				`test struct field "extraCheck" uses a banned closure func type`,
+				`test struct field "setup" uses a banned closure func type`,
+				`test struct field "validate" uses a banned closure func type`,
+				`test struct field "validator" uses a banned closure func type`,
+				`test struct field "verify" uses a banned closure func type`,
+				`test struct field "lookup" uses a banned closure func type`,
+			},
+		},
+		{
+			name:        "nonexistent file returns error",
+			nonexistent: true,
+			wantErr:     true,
+		},
+		{
+			name:    "syntax error returns error",
+			content: "package pkg\nfunc (",
+			wantErr: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			filePath := filepath.Join(dir, "sample_test.go")
+			if !tc.nonexistent {
+				if err := os.WriteFile(filePath, []byte(tc.content), 0o644); err != nil {
+					t.Fatalf("write file: %v", err)
+				}
+			} else {
+				filePath = filepath.Join(dir, "does_not_exist_test.go")
+			}
+
+			violations, err := analyzeTestFile(filePath, "sample_test.go")
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("analyzeTestFile() error = %v, wantErr = %v", err, tc.wantErr)
+			}
+			if len(tc.wantViolations) > 0 {
+				joined := strings.Join(violations, "\n")
+				for _, wv := range tc.wantViolations {
+					if !strings.Contains(joined, wv) {
+						t.Errorf("violations output does not contain expected snippet %q; got:\n%s", wv, joined)
+					}
+				}
+			} else if len(violations) > 0 && !tc.wantErr {
+				t.Errorf("expected 0 violations, got %d: %v", len(violations), violations)
+			}
+		})
+	}
+}
+
+func TestIsGoBuiltin(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		sym  string
+		want bool
+	}{
+		{name: "len", sym: "len", want: true},
+		{name: "cap", sym: "cap", want: true},
+		{name: "make", sym: "make", want: true},
+		{name: "new", sym: "new", want: true},
+		{name: "append", sym: "append", want: true},
+		{name: "copy", sym: "copy", want: true},
+		{name: "delete", sym: "delete", want: true},
+		{name: "close", sym: "close", want: true},
+		{name: "min", sym: "min", want: true},
+		{name: "max", sym: "max", want: true},
+		{name: "panic", sym: "panic", want: true},
+		{name: "recover", sym: "recover", want: true},
+		{name: "print", sym: "print", want: true},
+		{name: "println", sym: "println", want: true},
+		{name: "complex", sym: "complex", want: true},
+		{name: "real", sym: "real", want: true},
+		{name: "imag", sym: "imag", want: true},
+		{name: "clear", sym: "clear", want: true},
+		{name: "non-builtin custom", sym: "customFunc", want: false},
+		{name: "empty name", sym: "", want: false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := isGoBuiltin(tc.sym); got != tc.want {
+				t.Errorf("isGoBuiltin(%q) = %v, want %v", tc.sym, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestJaccardSimilarity(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		a    map[string]struct{}
+		b    map[string]struct{}
+		want float64
+	}{
+		{
+			name: "both empty",
+			a:    nil,
+			b:    nil,
+			want: 0.0,
+		},
+		{
+			name: "left empty",
+			a:    nil,
+			b:    map[string]struct{}{"x": {}},
+			want: 0.0,
+		},
+		{
+			name: "right empty",
+			a:    map[string]struct{}{"x": {}},
+			b:    nil,
+			want: 0.0,
+		},
+		{
+			name: "identical sets",
+			a:    map[string]struct{}{"x": {}, "y": {}},
+			b:    map[string]struct{}{"x": {}, "y": {}},
+			want: 1.0,
+		},
+		{
+			name: "disjoint sets",
+			a:    map[string]struct{}{"x": {}},
+			b:    map[string]struct{}{"y": {}},
+			want: 0.0,
+		},
+		{
+			name: "partial overlap",
+			a:    map[string]struct{}{"x": {}, "y": {}},
+			b:    map[string]struct{}{"y": {}, "z": {}},
+			want: 1.0 / 3.0,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := jaccardSimilarity(tc.a, tc.b)
+			if diff := got - tc.want; diff > 1e-6 || diff < -1e-6 {
+				t.Errorf("jaccardSimilarity() = %f, want %f", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestCollectTestTargets(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		files    map[string]string
+		explicit []string
+		want     []string
+		wantErr  bool
+	}{
+		{
+			name: "collects candidates and skips generated and excluded",
+			files: map[string]string{
+				"pkg/a_test.go":          "package pkg\n",
+				"pkg/b_gen.go":           "package pkg\n",
+				"pkg/c.gen.go":           "package pkg\n",
+				"pkg/d.pb.go":            "package pkg\n",
+				"pkg/e_gen_test.go":      "package pkg\n",
+				"pkg/f.gen_test.go":      "package pkg\n",
+				"pkg/g.pb_test.go":       "package pkg\n",
+				"vendor/v/v_test.go":     "package v\n",
+				"testdata/t_test.go":     "package t\n",
+				".hidden/h_test.go":      "package h\n",
+				"node_modules/m_test.go": "package m\n",
+			},
+			want: []string{"pkg/a_test.go"},
+		},
+		{
+			name: "explicit targets filters valid candidates",
+			files: map[string]string{
+				"pkg/a_test.go": "package pkg\n",
+				"pkg/b_test.go": "package pkg\n",
+			},
+			explicit: []string{"pkg/b_test.go", "pkg/nonexistent_test.go", "pkg/regular.go"},
+			want:     []string{"pkg/b_test.go"},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			for rel, content := range tc.files {
+				full := filepath.Join(dir, filepath.FromSlash(rel))
+				if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+					t.Fatalf("mkdir: %v", err)
+				}
+				if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+					t.Fatalf("write: %v", err)
+				}
+			}
+
+			var explicitArgs []string
+			for _, exp := range tc.explicit {
+				explicitArgs = append(explicitArgs, filepath.Join(dir, filepath.FromSlash(exp)))
+			}
+
+			got, err := collectTestTargets(dir, explicitArgs)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("collectTestTargets() error = %v, wantErr = %v", err, tc.wantErr)
+			}
+			if len(got) != len(tc.want) {
+				t.Fatalf("collectTestTargets() returned %d items, want %d: %v", len(got), len(tc.want), got)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Errorf("target[%d] = %q, want %q", i, got[i], tc.want[i])
+				}
+			}
+		})
+	}
+}
+
+func TestBuildCloneTokens(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		src        string
+		wantTokens []string
+	}{
+		{
+			name: "call expressions and type switch tokens",
+			src:  buildCallAndTypeSwitchSource(),
+			wantTokens: []string{
+				"switch", "case", "call:.Process", "case", "call:fn",
+			},
+		},
+		{
+			name: "control flow constructs",
+			src: `package sample
+func Control(ch chan int) int {
+	if true {
+		defer close(ch)
+	} else {
+		for i := 0; i < 1; i++ {
+			for range []int{1} {
+				select {
+				case <-ch:
+					return 1
+				default:
+					return 0
+				}
+			}
+		}
+	}
+	return 0
+}
+`,
+			wantTokens: []string{
+				"if", "else", "defer", "for", "range", "select", "comm", "return", "comm", "return", "return",
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			fset := token.NewFileSet()
+			f, err := parser.ParseFile(fset, "sample.go", tc.src, 0)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			var body *ast.BlockStmt
+			for _, decl := range f.Decls {
+				if fn, ok := decl.(*ast.FuncDecl); ok && fn.Body != nil {
+					body = fn.Body
+					break
+				}
+			}
+			if body == nil {
+				t.Fatal("no function body found")
+			}
+			got := buildCloneTokens(body)
+			if len(got) != len(tc.wantTokens) {
+				t.Fatalf("buildCloneTokens() got %v, want %v", got, tc.wantTokens)
+			}
+			for i := range got {
+				if got[i] != tc.wantTokens[i] {
+					t.Errorf("token[%d] = %q, want %q", i, got[i], tc.wantTokens[i])
+				}
+			}
+		})
+	}
+}
+
+func TestBuildScopedCloneTokens(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		src        string
+		wantTokens []string
+	}{
+		{
+			name: "scoped block delimiters with calls and controls",
+			src: `package sample
+func Scoped() {
+	if true {
+		println("ok")
+	}
+}
+`,
+			wantTokens: []string{
+				"{", "if", "{", "}", "}",
+			},
+		},
+		{
+			name:       "nil body returns nil",
+			src:        "",
+			wantTokens: nil,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if tc.src == "" {
+				if got := buildScopedCloneTokens(nil); got != nil {
+					t.Fatalf("buildScopedCloneTokens(nil) = %v, want nil", got)
+				}
+				return
+			}
+			fset := token.NewFileSet()
+			f, err := parser.ParseFile(fset, "sample.go", tc.src, 0)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			var body *ast.BlockStmt
+			for _, decl := range f.Decls {
+				if fn, ok := decl.(*ast.FuncDecl); ok && fn.Body != nil {
+					body = fn.Body
+					break
+				}
+			}
+			if body == nil {
+				t.Fatal("no function body found")
+			}
+			got := buildScopedCloneTokens(body)
+			if len(got) != len(tc.wantTokens) {
+				t.Fatalf("buildScopedCloneTokens() got %v, want %v", got, tc.wantTokens)
+			}
+			for i := range got {
+				if got[i] != tc.wantTokens[i] {
+					t.Errorf("token[%d] = %q, want %q", i, got[i], tc.wantTokens[i])
+				}
+			}
+		})
+	}
+}
+
+func TestFormatFieldType(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		expr ast.Expr
+		want string
+	}{
+		{
+			name: "ident",
+			expr: &ast.Ident{Name: "int"},
+			want: "int",
+		},
+		{
+			name: "star expr",
+			expr: &ast.StarExpr{X: &ast.Ident{Name: "string"}},
+			want: "*string",
+		},
+		{
+			name: "selector expr",
+			expr: &ast.SelectorExpr{X: &ast.Ident{Name: "pkg"}, Sel: &ast.Ident{Name: "Type"}},
+			want: "pkg.Type",
+		},
+		{
+			name: "array type",
+			expr: &ast.ArrayType{Elt: &ast.Ident{Name: "byte"}},
+			want: "[]byte",
+		},
+		{
+			name: "map type",
+			expr: &ast.MapType{Key: &ast.Ident{Name: "string"}, Value: &ast.Ident{Name: "int"}},
+			want: "map[string]int",
+		},
+		{
+			name: "fallback",
+			expr: &ast.ChanType{Value: &ast.Ident{Name: "int"}},
+			want: "other",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := formatFieldType(tc.expr); got != tc.want {
+				t.Errorf("formatFieldType() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestEditSimilarity(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		a    []string
+		b    []string
+		want float64
+	}{
+		{
+			name: "both empty",
+			a:    nil,
+			b:    nil,
+			want: 0.0,
+		},
+		{
+			name: "left empty",
+			a:    nil,
+			b:    []string{"x"},
+			want: 0.0,
+		},
+		{
+			name: "right empty",
+			a:    []string{"x"},
+			b:    nil,
+			want: 0.0,
+		},
+		{
+			name: "identical slices",
+			a:    []string{"a", "b", "c"},
+			b:    []string{"a", "b", "c"},
+			want: 1.0,
+		},
+		{
+			name: "single substitution",
+			a:    []string{"a", "b", "c"},
+			b:    []string{"a", "x", "c"},
+			want: 2.0 / 3.0,
+		},
+		{
+			name: "single insertion",
+			a:    []string{"a", "b"},
+			b:    []string{"a", "x", "b"},
+			want: 2.0 / 3.0,
+		},
+		{
+			name: "completely disjoint",
+			a:    []string{"a", "b"},
+			b:    []string{"c", "d"},
+			want: 0.0,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := editSimilarity(tc.a, tc.b)
+			if diff := got - tc.want; diff > 1e-6 || diff < -1e-6 {
+				t.Errorf("editSimilarity() = %f, want %f", got, tc.want)
 			}
 		})
 	}

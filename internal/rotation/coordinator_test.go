@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"runtime"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -29,7 +30,7 @@ func (m *mockBroadcaster) Publish(eventType string, data []byte) *events.Event {
 
 func makeTestSnapshot(totalScreens, intervalSec, pauseDurationSec int) *config.Snapshot {
 	screens := make([]layout.Screen, totalScreens)
-	for i := 0; i < totalScreens; i++ {
+	for i := range totalScreens {
 		screens[i] = layout.Screen{Index: i, Widgets: []layout.PlacedWidget{{WidgetID: "widget-screen", Dimensions: domain.NewDimension(3, 2)}}}
 	}
 	return &config.Snapshot{
@@ -209,7 +210,7 @@ func TestCoordinator_Concurrency(t *testing.T) {
 	defer coord.Stop()
 
 	var wg sync.WaitGroup
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
@@ -230,14 +231,12 @@ func TestCoordinator_Concurrency(t *testing.T) {
 	}
 
 	runWorker := func(fn func()) {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for i := 0; i < 50; i++ {
+		wg.Go(func() {
+			for range 50 {
 				fn()
 				runtime.Gosched()
 			}
-		}()
+		})
 	}
 	runWorker(func() {
 		coord.mu.Lock()
@@ -251,8 +250,8 @@ func TestCoordinator_Concurrency(t *testing.T) {
 
 	mb.mu.Lock()
 	defer mb.mu.Unlock()
-	for i := len(mb.events) - 1; i >= 0; i-- {
-		if mb.events[i] == events.EventScreenRotate {
+	for i, v := range slices.Backward(mb.events) {
+		if v == events.EventScreenRotate {
 			var lastRotate events.ScreenRotateData
 			if err := json.Unmarshal(mb.datas[i], &lastRotate); err == nil && lastRotate.CurrentScreen == coord.CurrentScreen() {
 				return
@@ -260,4 +259,29 @@ func TestCoordinator_Concurrency(t *testing.T) {
 		}
 	}
 	t.Fatal("expected matching screen.rotate event")
+}
+
+func TestCoordinator_ScreenLayout(t *testing.T) {
+	t.Parallel()
+	coord := NewCoordinator(Config{Broadcaster: &mockBroadcaster{}}, makeTestSnapshot(3, 45, 120))
+	if _, err := coord.SelectScreen(2); err != nil {
+		t.Fatalf("SelectScreen: %v", err)
+	}
+	got := coord.ScreenLayout()
+	if got.CurrentScreen != 2 || got.IntervalSeconds != 45 || len(got.Screens) != 3 {
+		t.Fatalf("ScreenLayout = %+v, want current 2, interval 45, 3 screens", got)
+	}
+	if got.Screens[0].Widgets[0].WidgetID != "widget-screen" {
+		t.Errorf("screen widgets not carried through: %+v", got.Screens[0])
+	}
+
+	empty := NewCoordinator(Config{}, nil).ScreenLayout()
+	if empty.CurrentScreen != 0 || empty.IntervalSeconds != 30 || empty.Screens != nil {
+		t.Errorf("nil snapshot ScreenLayout = %+v, want defaults", empty)
+	}
+
+	noConfig := NewCoordinator(Config{}, &config.Snapshot{Layout: &layout.Layout{TotalScreens: 1, Screens: []layout.Screen{{Index: 0}}}}).ScreenLayout()
+	if noConfig.IntervalSeconds != 30 || len(noConfig.Screens) != 1 {
+		t.Errorf("layout without config ScreenLayout = %+v", noConfig)
+	}
 }

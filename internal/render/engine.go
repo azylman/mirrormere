@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"html/template"
+	"maps"
 	"os"
 	"sync"
 	"time"
@@ -86,17 +87,47 @@ func (e *Engine) Invalidate(widgetType string) {
 
 // RenderWidgetWithOverrides renders a widget instance for one display with optional runtime configuration overrides.
 func (e *Engine) RenderWidgetWithOverrides(ctx context.Context, widgetID, nodeID string, overrides map[string]any) ([]byte, error) {
+	pkg, tmplCtx, err := e.resolveWidget(widgetID, nodeID, overrides)
+	if err != nil {
+		return nil, err
+	}
+
+	// Obtain or compile template
+	tmpl, err := e.getOrCompileTemplate(pkg)
+	if err != nil {
+		return nil, err
+	}
+
+	// Execute template
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, tmplCtx); err != nil {
+		return nil, fmt.Errorf("failed to execute template for widget %q: %w", widgetID, err)
+	}
+
+	return buf.Bytes(), nil
+}
+
+// WidgetContext returns the execution context for one widget instance on one display: placement,
+// sanitized config with overrides applied, runtime state and the per-node data override. It is the
+// context the HTML template receives, so the JSON widget route reports the same values.
+func (e *Engine) WidgetContext(ctx context.Context, widgetID, nodeID string, overrides map[string]any) (Context, error) {
+	_, tmplCtx, err := e.resolveWidget(widgetID, nodeID, overrides)
+	return tmplCtx, err
+}
+
+// resolveWidget locates the declared widget instance and its package and builds the merged execution context.
+func (e *Engine) resolveWidget(widgetID, nodeID string, overrides map[string]any) (*domain.Package, Context, error) {
 	if widgetID == "" {
-		return nil, WidgetNotFoundError{WidgetID: ""}
+		return nil, Context{}, WidgetNotFoundError{WidgetID: ""}
 	}
 
 	if e.provider == nil {
-		return nil, fmt.Errorf("state snapshot provider is unconfigured")
+		return nil, Context{}, fmt.Errorf("state snapshot provider is unconfigured")
 	}
 
 	snap := e.provider.CurrentSnapshot()
 	if snap == nil || snap.Config == nil {
-		return nil, fmt.Errorf("no active configuration snapshot available")
+		return nil, Context{}, fmt.Errorf("no active configuration snapshot available")
 	}
 
 	// 1. Locate declared widget instance
@@ -108,7 +139,7 @@ func (e *Engine) RenderWidgetWithOverrides(ctx context.Context, widgetID, nodeID
 		}
 	}
 	if targetWidget == nil {
-		return nil, WidgetNotFoundError{WidgetID: widgetID}
+		return nil, Context{}, WidgetNotFoundError{WidgetID: widgetID}
 	}
 
 	// 2. Resolve widget package
@@ -120,29 +151,19 @@ func (e *Engine) RenderWidgetWithOverrides(ctx context.Context, widgetID, nodeID
 		var err error
 		pkg, err = e.resolver.LoadPackage(targetWidget.Type)
 		if err != nil {
-			return nil, fmt.Errorf("failed to load package for widget type %q: %w", targetWidget.Type, err)
+			return nil, Context{}, fmt.Errorf("failed to load package for widget type %q: %w", targetWidget.Type, err)
 		}
 	}
 	if pkg == nil {
-		return nil, fmt.Errorf("widget package for type %q not found", targetWidget.Type)
+		return nil, Context{}, fmt.Errorf("widget package for type %q not found", targetWidget.Type)
 	}
 
-	// 3. Obtain or compile template
-	tmpl, err := e.getOrCompileTemplate(pkg)
-	if err != nil {
-		return nil, err
-	}
-
-	// 4. Build execution context
+	// 3. Build execution context
 	tmplCtx := e.buildContext(widgetID, targetWidget, pkg, snap)
 	if len(overrides) > 0 {
 		mergedConfig := make(map[string]any, len(tmplCtx.Config)+len(overrides))
-		for k, v := range tmplCtx.Config {
-			mergedConfig[k] = v
-		}
-		for k, v := range overrides {
-			mergedConfig[k] = v
-		}
+		maps.Copy(mergedConfig, tmplCtx.Config)
+		maps.Copy(mergedConfig, overrides)
 		tmplCtx.Config = mergedConfig
 	}
 	if e.nodeData != nil {
@@ -151,13 +172,7 @@ func (e *Engine) RenderWidgetWithOverrides(ctx context.Context, widgetID, nodeID
 		}
 	}
 
-	// 5. Execute template
-	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, tmplCtx); err != nil {
-		return nil, fmt.Errorf("failed to execute template for widget %q: %w", widgetID, err)
-	}
-
-	return buf.Bytes(), nil
+	return pkg, tmplCtx, nil
 }
 
 func (e *Engine) getOrCompileTemplate(pkg *domain.Package) (*template.Template, error) {
@@ -191,7 +206,19 @@ func (e *Engine) getOrCompileTemplate(pkg *domain.Package) (*template.Template, 
 	return tmpl, nil
 }
 
-func (e *Engine) buildContext(widgetID string, w *config.WidgetConfig, pkg *domain.Package, snap *config.Snapshot) Context {
+func fallbackWidgetDimension(w *config.WidgetConfig, pkg *domain.Package) domain.Dimension {
+	if len(w.Dimensions) == 2 {
+		if d, err := domain.DimensionFromSlice(w.Dimensions); err == nil {
+			return d
+		}
+	}
+	if pkg != nil && pkg.Manifest.DefaultDimensions.IsValid() {
+		return pkg.Manifest.DefaultDimensions
+	}
+	return domain.NewDimension(1, 1)
+}
+
+func resolveWidgetPlacement(widgetID string, w *config.WidgetConfig, pkg *domain.Package, snap *config.Snapshot) ([2]int, domain.Dimension) {
 	origin := [2]int{0, 0}
 	var dim domain.Dimension
 	placed := false
@@ -213,49 +240,47 @@ func (e *Engine) buildContext(widgetID string, w *config.WidgetConfig, pkg *doma
 	}
 
 	if !placed {
-		if len(w.Dimensions) == 2 {
-			if d, err := domain.DimensionFromSlice(w.Dimensions); err == nil {
-				dim = d
-			}
-		}
-		if !dim.IsValid() && pkg != nil && pkg.Manifest.DefaultDimensions.IsValid() {
-			dim = pkg.Manifest.DefaultDimensions
-		}
-		if !dim.IsValid() {
-			dim = domain.NewDimension(1, 1)
-		}
+		dim = fallbackWidgetDimension(w, pkg)
 	}
 
+	return origin, dim
+}
+
+func (e *Engine) resolveWidgetRuntimeState(widgetID string) (any, string, string, bool) {
 	var wData any = map[string]any{}
 	wState := "healthy"
 	var timestamp string
-	if e.provider != nil {
-		if d, s, ts, ok := e.provider.GetWidgetState(widgetID); ok {
-			if d != nil {
-				wData = d
-			}
-			if s != "" {
-				wState = s
-			}
-			timestamp = ts
-		}
+	if e.provider == nil {
+		return wData, wState, timestamp, true
 	}
 
-	if timestamp == "" && e.provider != nil {
-		if tsProvider, ok := e.provider.(interface{ GetWidgetTimestamp(string) (string, bool) }); ok {
+	if d, s, ts, ok := e.provider.GetWidgetState(widgetID); ok {
+		if d != nil {
+			wData = d
+		}
+		if s != "" {
+			wState = s
+		}
+		timestamp = ts
+	}
+
+	if timestamp == "" {
+		if tsProvider, ok := e.provider.(interface {
+			GetWidgetTimestamp(widgetID string) (string, bool)
+		}); ok {
 			if ts, ok := tsProvider.GetWidgetTimestamp(widgetID); ok && ts != "" {
 				timestamp = ts
 			}
 		}
 	}
 
-	online := true
-	if e.provider != nil {
-		st := e.provider.CurrentStatus()
-		if st.ConfigStatus == config.ConfigStatusError {
-			online = false
-		}
-	}
+	online := e.provider.CurrentStatus().ConfigStatus != config.ConfigStatusError
+	return wData, wState, timestamp, online
+}
+
+func (e *Engine) buildContext(widgetID string, w *config.WidgetConfig, pkg *domain.Package, snap *config.Snapshot) Context {
+	origin, dim := resolveWidgetPlacement(widgetID, w, pkg, snap)
+	wData, wState, timestamp, online := e.resolveWidgetRuntimeState(widgetID)
 
 	return Context{
 		ID:         widgetID,

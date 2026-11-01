@@ -59,7 +59,7 @@ func simBrain(streaming bool, steps int, delay time.Duration, status, reply stri
 				onStatus(status)
 			}
 		}
-		for i := 0; i < steps; i++ {
+		for i := range steps {
 			if delay > 0 && !waitCtx(ctx, delay) {
 				return "", ctx.Err()
 			}
@@ -92,7 +92,7 @@ func heartbeatBrain(streaming bool, ch chan struct{}) BrainClient {
 func simTTS(chunks int, delay time.Duration, stall bool, finalErr error) TTSClient {
 	return mkStreamTTS(func(ctx context.Context, _ string, onChunk func(TTSAudioChunk) error) error {
 		_ = onChunk(TTSAudioChunk{})
-		for i := 0; i < chunks; i++ {
+		for range chunks {
 			if delay > 0 && !waitCtx(ctx, delay) {
 				return ctx.Err()
 			}
@@ -145,12 +145,13 @@ func TestHub_ThinkingHeartbeat(t *testing.T) {
 			}
 			var hadThinking, hadAudioChunk, thinkingAfterAudio bool
 			for _, ev := range getEvents() {
-				if ev.Event == "thinking" {
+				switch ev.Event {
+				case "thinking":
 					hadThinking, thinkingAfterAudio = true, thinkingAfterAudio || hadAudioChunk
 					if m, ok := ev.Data.(map[string]int); ok && tc.wantPosElapsed && m["elapsed_seconds"] <= 0 {
 						t.Errorf("expected positive elapsed_seconds, got %v", m["elapsed_seconds"])
 					}
-				} else if ev.Event == "audio_chunk" {
+				case "audio_chunk":
 					hadAudioChunk = true
 				}
 			}
@@ -175,9 +176,9 @@ func TestHub_BrainTimeouts(t *testing.T) {
 		{"unary_timeout", simBrain(false, 0, 0, "", "", true), 20 * time.Millisecond, false, ErrBrainTimeout, true, true, true, ""},
 		{"streaming_timeout", simBrain(true, 0, 0, "", "", true), 20 * time.Millisecond, false, ErrBrainTimeout, false, false, true, ""},
 		{"client_cancellation", &mockBrain{statuses: []string{"thinking..."}}, 5 * time.Second, true, nil, false, false, false, ""},
-		{"streaming_long_reply", simBrain(true, 6, 10*time.Millisecond, "", "full reply text", false), 25 * time.Millisecond, false, nil, false, false, false, "full reply text"},
+		{"streaming_long_reply", simBrain(true, 12, 5*time.Millisecond, "", "full reply text", false), 50 * time.Millisecond, false, nil, false, false, false, "full reply text"},
 		{"streaming_stall", simBrain(true, 1, 0, "", "", true), 20 * time.Millisecond, false, ErrBrainTimeout, false, false, true, ""},
-		{"status_reset", simBrain(true, 1, 15*time.Millisecond, "tool executing: web search", "done answer", false), 25 * time.Millisecond, false, nil, false, false, false, "done answer"},
+		{"status_reset", simBrain(true, 6, 5*time.Millisecond, "tool executing: web search", "done answer", false), 25 * time.Millisecond, false, nil, false, false, false, "done answer"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -236,7 +237,7 @@ func TestHub_TTSTimeouts(t *testing.T) {
 		{"initial_timeout_graceful", simTTS(0, 0, true, nil), 20 * time.Millisecond, "error", false, "tts_timeout", false, true},
 		{"mid_stream_timeout", simTTS(1, 0, false, context.DeadlineExceeded), 50 * time.Millisecond, "error", true, "tts_timeout", true, false},
 		{"mid_stream_generic_error", simTTS(1, 0, false, errors.New("i/o error")), -1 * time.Second, "error", true, "tts_error", false, false},
-		{"long_reply_inactivity", simTTS(5, 10*time.Millisecond, false, nil), 25 * time.Millisecond, "success", false, "", false, false},
+		{"long_reply_inactivity", simTTS(8, 5*time.Millisecond, false, nil), 30 * time.Millisecond, "success", false, "", false, false},
 		{"mid_stream_stall", simTTS(1, 0, true, nil), 20 * time.Millisecond, "error", true, "tts_timeout", false, false},
 	}
 	for _, tc := range tests {
@@ -333,7 +334,7 @@ func TestIsTimeoutError(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if got := isTimeoutError(tc.err, tc.timeoutCtx, tc.parentCtx); got != tc.expected {
+			if got := isTimeoutError(tc.timeoutCtx, tc.parentCtx, tc.err); got != tc.expected {
 				t.Errorf("isTimeoutError() = %v, expected %v", got, tc.expected)
 			}
 		})

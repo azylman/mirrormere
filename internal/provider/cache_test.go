@@ -79,16 +79,17 @@ func TestSWRCache_ConcurrentAccessSafety(t *testing.T) {
 	cache := provider.NewSWRCache()
 	now := time.Now()
 	var wg sync.WaitGroup
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		wg.Add(1)
 		go func(id string, idx int) {
 			defer wg.Done()
-			for j := 0; j < 100; j++ {
-				if (idx+j)%3 == 0 {
+			for j := range 100 {
+				switch (idx + j) % 3 {
+				case 0:
 					cache.RecordSuccess(id, map[string]any{"iter": j}, now)
-				} else if (idx+j)%3 == 1 {
+				case 1:
 					cache.RecordFailure(id, errors.New("transient"), now)
-				} else {
+				default:
 					_, _ = cache.Get(id)
 					_ = cache.GetStatusMap()
 				}

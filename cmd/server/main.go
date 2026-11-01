@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -89,10 +90,8 @@ func pushChatLogUpdates(sp render.StateSnapshotProvider, pusher chatLogPusher, s
 
 func chatLogNodeData(sp render.StateSnapshotProvider, store *chatlog.Store) func(widgetID, nodeID string) (any, bool) {
 	return func(widgetID, nodeID string) (any, bool) {
-		for _, id := range chatLogWidgetIDs(sp.CurrentSnapshot()) {
-			if id == widgetID {
-				return store.View(widgetID, nodeID), true
-			}
+		if slices.Contains(chatLogWidgetIDs(sp.CurrentSnapshot()), widgetID) {
+			return store.View(widgetID, nodeID), true
 		}
 		return nil, false
 	}
@@ -132,7 +131,7 @@ func householdThemeFunc(sp render.StateSnapshotProvider) func() string {
 
 func evaluateThemeTransition(currentTheme func() string, sp interface {
 	GetTheme() string
-	SetTheme(string)
+	SetTheme(theme string)
 }, hub *events.Hub, logger *slog.Logger,
 ) bool {
 	if currentTheme == nil || sp == nil {
@@ -176,6 +175,12 @@ func buildDisplayHandler(stateProvider render.StateSnapshotProvider, currentThem
 			return "UTC"
 		}),
 		display.WithHideCursorProvider(func() bool { return cfg() != nil && cfg().Display.HideCursor }),
+		display.WithUIProvider(func() string {
+			if c := cfg(); c != nil {
+				return c.Display.GetUI()
+			}
+			return "legacy"
+		}),
 		display.WithRemoteURLProvider(func() string {
 			if c := cfg(); c != nil {
 				return c.Display.RemoteURL
@@ -205,6 +210,60 @@ func buildDisplayHandler(stateProvider render.StateSnapshotProvider, currentThem
 	)
 }
 
+func checkBoundHostPort(cfg *config.Config, initialHost string, initialPort int, logger *slog.Logger) {
+	newHost, newPort := server.DefaultHost, server.DefaultPort
+	if cfg.Host != "" {
+		newHost = cfg.Host
+	}
+	if cfg.Port != nil {
+		newPort = *cfg.Port
+	}
+	if newHost != initialHost || newPort != initialPort {
+		logger.Warn("host or port changed in configuration; server restart required for changes to take effect",
+			"bound_host", initialHost, "bound_port", initialPort, "new_host", newHost, "new_port", newPort)
+	}
+}
+
+func reloadConfigOnSIGHUP(
+	configPath string,
+	configManager *config.Manager,
+	hub *events.Hub,
+	stateProvider *events.InMemoryStateProvider,
+	currentTheme func() string,
+	initialHost string,
+	initialPort int,
+	voiceHub *voice.Hub,
+	logger *slog.Logger,
+) {
+	if configPath == "" {
+		return
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		logger.Error("failed to read configuration file on SIGHUP", "path", configPath, "error", err)
+		configManager.SetErrorStatus(err)
+		dispatchStatus(hub, configManager.Status(), logger)
+		return
+	}
+	snap, diff, err := configManager.Reload(data)
+	if err != nil {
+		logger.Error("failed to validate configuration on SIGHUP; retaining LKGC", "error", err)
+		dispatchStatus(hub, configManager.Status(), logger)
+		return
+	}
+	if err := hub.DispatchConfigReload(snap, diff); err != nil {
+		logger.Error("failed to dispatch reload", "error", err)
+	}
+	dispatchStatus(hub, configManager.Status(), logger)
+	logger.Info("configuration reloaded successfully on SIGHUP", "widgets", len(snap.Config.Display.Widgets))
+	evaluateThemeTransition(currentTheme, stateProvider, hub, logger)
+
+	if snap != nil && snap.Config != nil {
+		voiceHub.ReloadSpeakerID(snap.Config.VoiceHub)
+		checkBoundHostPort(snap.Config, initialHost, initialPort, logger)
+	}
+}
+
 func handleSIGHUP(
 	configPath string, configManager *config.Manager, hub *events.Hub,
 	stateProvider *events.InMemoryStateProvider, currentTheme func() string,
@@ -212,38 +271,7 @@ func handleSIGHUP(
 	renderHandler *render.Handler, voiceHub *voice.Hub, onReload func(), logger *slog.Logger,
 ) {
 	logger.Info("received SIGHUP, reloading configuration and assets", "path", configPath)
-	if configPath != "" {
-		if data, err := os.ReadFile(configPath); err != nil {
-			logger.Error("failed to read configuration file on SIGHUP", "path", configPath, "error", err)
-			configManager.SetErrorStatus(err)
-			dispatchStatus(hub, configManager.Status(), logger)
-		} else if snap, diff, err := configManager.Reload(data); err != nil {
-			logger.Error("failed to validate configuration on SIGHUP; retaining LKGC", "error", err)
-			dispatchStatus(hub, configManager.Status(), logger)
-		} else {
-			if err := hub.DispatchConfigReload(snap, diff); err != nil {
-				logger.Error("failed to dispatch reload", "error", err)
-			}
-			dispatchStatus(hub, configManager.Status(), logger)
-			logger.Info("configuration reloaded successfully on SIGHUP", "widgets", len(snap.Config.Display.Widgets))
-			evaluateThemeTransition(currentTheme, stateProvider, hub, logger)
-
-			if snap != nil && snap.Config != nil {
-				voiceHub.ReloadSpeakerID(snap.Config.VoiceHub)
-				newHost, newPort := server.DefaultHost, server.DefaultPort
-				if snap.Config.Host != "" {
-					newHost = snap.Config.Host
-				}
-				if snap.Config.Port != nil {
-					newPort = *snap.Config.Port
-				}
-				if newHost != initialHost || newPort != initialPort {
-					logger.Warn("host or port changed in configuration; server restart required for changes to take effect",
-						"bound_host", initialHost, "bound_port", initialPort, "new_host", newHost, "new_port", newPort)
-				}
-			}
-		}
-	}
+	reloadConfigOnSIGHUP(configPath, configManager, hub, stateProvider, currentTheme, initialHost, initialPort, voiceHub, logger)
 	if assetReloader != nil {
 		cssReloaded, widgetsReloaded := assetReloader.Reload()
 		logger.Info("asset reload on SIGHUP complete", "css_reloaded", cssReloaded, "widgets_reloaded", widgetsReloaded)
@@ -265,35 +293,29 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	return RunWithReady(ctx, args, stdout, stderr, nil)
 }
 
-// RunWithReady executes the server and signals readyChan when the listener is active.
-func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, readyChan chan<- struct{}, opts ...Option) error {
-	var rcfg runConfig
-	for _, opt := range opts {
-		opt(&rcfg)
-	}
-
-	logger := slog.New(slog.NewTextHandler(stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
-
+func parseServerCLIArgs(args []string, stderr io.Writer) (string, bool, error) {
 	var configPath string
 	for _, arg := range args {
 		if arg == "-h" || arg == "-help" || arg == "--help" {
 			_, err := fmt.Fprintln(stderr, "Usage: mirrormere [config-path]")
-			return err
+			return "", true, err
 		}
 		if strings.HasPrefix(arg, "-") {
-			return fmt.Errorf("flags are not supported; configure via config file: %s", arg)
+			return "", false, fmt.Errorf("flags are not supported; configure via config file: %s", arg)
 		}
 		if configPath == "" {
 			configPath = arg
 		}
 	}
-
 	if configPath == "" {
 		if configPath = os.Getenv("CONFIG_PATH"); configPath == "" {
 			configPath = config.DefaultConfigPath
 		}
 	}
+	return configPath, false, nil
+}
 
+func loadInitialConfigAndAssets(configPath string, args []string) (*widget.Loader, string, string, []byte, string, string, error) {
 	builtinDir := widget.DefaultBuiltinDir
 	for _, c := range []string{"/app/widgets", "widgets", "../../widgets"} {
 		if fi, err := os.Stat(c); err == nil && fi.IsDir() {
@@ -312,28 +334,75 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 	loader := widget.NewLoader(builtinDir, customDir)
 
 	var initialYAML []byte
+	effectiveConfigPath := configPath
 	if configPath != "" {
 		if data, err := os.ReadFile(configPath); err == nil {
 			initialYAML = data
 		} else if (len(args) > 0 && configPath == args[0]) || (os.Getenv("CONFIG_PATH") != "" && configPath == os.Getenv("CONFIG_PATH")) {
-			return fmt.Errorf("failed to read configuration file %q: %w", configPath, err)
+			return nil, "", "", nil, "", "", fmt.Errorf("failed to read configuration file %q: %w", configPath, err)
 		}
 	}
 	if initialYAML == nil {
 		initialYAML = []byte("timezone: UTC\ndisplay:\n  widgets:\n    - id: default-spacer\n      type: spacer\n      dimensions: [6, 2]\n")
-		configPath = ""
+		effectiveConfigPath = ""
 	}
 	customCSSPath := render.DefaultCustomCSSPath
-	if configPath != "" {
-		customCSSPath = filepath.Join(filepath.Dir(configPath), "custom.css")
+	if effectiveConfigPath != "" {
+		customCSSPath = filepath.Join(filepath.Dir(effectiveConfigPath), "custom.css")
 	}
+	return loader, builtinDir, customDir, initialYAML, customCSSPath, effectiveConfigPath, nil
+}
 
-	configManager, err := config.NewManager(initialYAML, loader, os.Getenv, logger)
-	if err != nil {
-		return fmt.Errorf("failed to initialize configuration manager: %w", err)
-	}
-	snapshot := configManager.CurrentSnapshot()
+func startReloadWatchers(
+	ctx context.Context,
+	configPath string,
+	configManager *config.Manager,
+	hub *events.Hub,
+	stateProvider *events.InMemoryStateProvider,
+	currentTheme func() string,
+	initialHost string,
+	initialPort int,
+	assetReloader *AssetReloader,
+	renderHandler *render.Handler,
+	voiceHub *voice.Hub,
+	hupChan <-chan os.Signal,
+	onReload func(),
+	logger *slog.Logger,
+) context.CancelFunc {
+	hupCtx, hupCancel := context.WithCancel(ctx)
+	themeTicker := time.NewTicker(30 * time.Second)
+	go func() {
+		defer themeTicker.Stop()
+		for {
+			select {
+			case <-hupCtx.Done():
+				return
+			case <-themeTicker.C:
+				evaluateThemeTransition(currentTheme, stateProvider, hub, logger)
+			}
+		}
+	}()
 
+	go func() {
+		for {
+			select {
+			case <-hupCtx.Done():
+				return
+			case sig, ok := <-hupChan:
+				if !ok {
+					return
+				}
+				if sig == syscall.SIGHUP {
+					handleSIGHUP(configPath, configManager, hub, stateProvider, currentTheme, initialHost, initialPort, assetReloader, renderHandler, voiceHub, onReload, logger)
+				}
+			}
+		}
+	}()
+
+	return hupCancel
+}
+
+func resolveServerHostPort(snapshot *config.Snapshot) (string, int) {
 	initialHost, initialPort := server.DefaultHost, server.DefaultPort
 	if snapshot != nil && snapshot.Config != nil {
 		if snapshot.Config.Host != "" {
@@ -343,6 +412,35 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 			initialPort = *snapshot.Config.Port
 		}
 	}
+	return initialHost, initialPort
+}
+
+// RunWithReady executes the server and signals readyChan when the listener is active.
+func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, readyChan chan<- struct{}, opts ...Option) error {
+	var rcfg runConfig
+	for _, opt := range opts {
+		opt(&rcfg)
+	}
+
+	logger := slog.New(slog.NewTextHandler(stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+
+	configPath, helpShown, err := parseServerCLIArgs(args, stderr)
+	if helpShown || err != nil {
+		return err
+	}
+
+	loader, builtinDir, customDir, initialYAML, customCSSPath, effectiveConfigPath, err := loadInitialConfigAndAssets(configPath, args)
+	if err != nil {
+		return err
+	}
+	configPath = effectiveConfigPath
+
+	configManager, err := config.NewManager(initialYAML, loader, os.Getenv, logger)
+	if err != nil {
+		return fmt.Errorf("failed to initialize configuration manager: %w", err)
+	}
+	snapshot := configManager.CurrentSnapshot()
+	initialHost, initialPort := resolveServerHostPort(snapshot)
 
 	stateProvider := events.NewInMemoryStateProvider(configManager)
 	currentTheme := householdThemeFunc(stateProvider)
@@ -388,21 +486,6 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 	renderHandler := render.NewHandler(renderEngine, loader, render.WithCSSPath(resolveCSSPath()), render.WithCustomCSSPath(customCSSPath))
 	assetReloader := NewAssetReloader(customCSSPath, loader, builtinDir, customDir, renderEngine, configManager, hub, logger)
 
-	hupCtx, hupCancel := context.WithCancel(ctx)
-	defer hupCancel()
-	themeTicker := time.NewTicker(30 * time.Second)
-	defer themeTicker.Stop()
-	go func() {
-		for {
-			select {
-			case <-hupCtx.Done():
-				return
-			case <-themeTicker.C:
-				evaluateThemeTransition(currentTheme, stateProvider, hub, logger)
-			}
-		}
-	}()
-
 	var hupChan <-chan os.Signal
 	if rcfg.hupChan != nil {
 		hupChan = rcfg.hupChan
@@ -413,21 +496,8 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 		defer signal.Stop(ch)
 	}
 
-	go func() {
-		for {
-			select {
-			case <-hupCtx.Done():
-				return
-			case sig, ok := <-hupChan:
-				if !ok {
-					return
-				}
-				if sig == syscall.SIGHUP {
-					handleSIGHUP(configPath, configManager, hub, stateProvider, currentTheme, initialHost, initialPort, assetReloader, renderHandler, voiceHub, rcfg.onReload, logger)
-				}
-			}
-		}
-	}()
+	hupCancel := startReloadWatchers(ctx, configPath, configManager, hub, stateProvider, currentTheme, initialHost, initialPort, assetReloader, renderHandler, voiceHub, hupChan, rcfg.onReload, logger)
+	defer hupCancel()
 
 	portVal := initialPort
 	if portVal == 0 {

@@ -169,7 +169,7 @@ func fetchPaginated[T any](ctx context.Context, a *TodoistAdapter, rawURL, resou
 	seen := make(map[string]bool)
 	cursor := ""
 
-	for page := 0; page < maxTodoistPages; page++ {
+	for page := range maxTodoistPages {
 		targetURL := rawURL
 		if page > 0 && cursor != "" {
 			separator := "?"
@@ -200,7 +200,16 @@ func fetchPaginated[T any](ctx context.Context, a *TodoistAdapter, rawURL, resou
 	return all, nil
 }
 
-func (a *TodoistAdapter) resolveProject(ctx context.Context) (string, string, error) {
+func matchProjectIDByName(projects []todoistProject, target string) (string, string, bool) {
+	for i := range projects {
+		if strings.EqualFold(projects[i].Name, target) {
+			return string(projects[i].ID), projects[i].Name, true
+		}
+	}
+	return "", "", false
+}
+
+func (a *TodoistAdapter) resolveProjectID(ctx context.Context) (string, string, error) {
 	if a.projectID != "" {
 		projectURL := fmt.Sprintf("%s/api/v1/projects/%s", a.baseURL, url.PathEscape(a.projectID))
 		body, err := a.doGet(ctx, projectURL)
@@ -218,17 +227,15 @@ func (a *TodoistAdapter) resolveProject(ctx context.Context) (string, string, er
 		return id, p.Name, nil
 	}
 
-	projectsURL := fmt.Sprintf("%s/api/v1/projects", a.baseURL)
+	projectsURL := a.baseURL + "/api/v1/projects"
 	projects, err := fetchPaginated[todoistProject](ctx, a, projectsURL, "projects")
 	if err != nil {
 		return "", "", err
 	}
 
 	if a.projectName != "" {
-		for i := range projects {
-			if strings.EqualFold(projects[i].Name, a.projectName) {
-				return string(projects[i].ID), projects[i].Name, nil
-			}
+		if id, name, ok := matchProjectIDByName(projects, a.projectName); ok {
+			return id, name, nil
 		}
 		return "", "", ErrUpstreamNotFound
 	}
@@ -244,9 +251,112 @@ func (a *TodoistAdapter) resolveProject(ctx context.Context) (string, string, er
 	return "", "Inbox", nil
 }
 
+func (a *TodoistAdapter) fetchProjectSections(ctx context.Context, projectID string) ([]string, map[string]string, error) {
+	sections := []string{}
+	sectionMap := make(map[string]string)
+	if projectID == "" {
+		return sections, sectionMap, nil
+	}
+
+	sectionsURL := fmt.Sprintf("%s/api/v1/sections?project_id=%s", a.baseURL, url.QueryEscape(projectID))
+	rawSections, secErr := fetchPaginated[todoistSection](ctx, a, sectionsURL, "sections")
+	if secErr != nil {
+		return nil, nil, secErr
+	}
+	sort.SliceStable(rawSections, func(i, j int) bool { return rawSections[i].Order < rawSections[j].Order })
+	sections = make([]string, 0, len(rawSections))
+	for _, s := range rawSections {
+		sections = append(sections, s.Name)
+		if string(s.ID) != "" {
+			sectionMap[string(s.ID)] = s.Name
+		}
+	}
+	return sections, sectionMap, nil
+}
+
+func (a *TodoistAdapter) fetchCompletedProjectItems(ctx context.Context, projectID, listID string, sectionMap map[string]string) []tasks.ListItem {
+	if projectID == "" {
+		return nil
+	}
+	completedURL := fmt.Sprintf("%s/api/v1/tasks/completed?project_id=%s&limit=30", a.baseURL, url.QueryEscape(projectID))
+	completedBody, cErr := a.doGet(ctx, completedURL)
+	if cErr != nil {
+		return nil
+	}
+	var completedResp todoistCompletedResponse
+	if jsonErr := json.Unmarshal(completedBody, &completedResp); jsonErr != nil {
+		return nil
+	}
+	var completedTasks []tasks.ListItem
+	for _, item := range completedResp.Items {
+		itemID := string(item.TaskID)
+		if itemID == "" {
+			itemID = string(item.ID)
+		}
+		if itemID == "" {
+			continue
+		}
+		completedDateStr := item.CompletedAt
+		if completedDateStr == "" {
+			completedDateStr = item.CompletedDate
+		}
+		completedAt := parseTimeFlexible(completedDateStr)
+		var section string
+		if item.SectionID != "" {
+			if name, ok := sectionMap[string(item.SectionID)]; ok {
+				section = name
+			} else {
+				section = string(item.SectionID)
+			}
+		}
+		completedTasks = append(completedTasks, tasks.ListItem{
+			ID: itemID, ListID: listID, Title: item.Content, Done: true,
+			Section: section, CreatedAt: completedAt, UpdatedAt: completedAt,
+		})
+	}
+	return completedTasks
+}
+
+func convertTodoistTask(t todoistTask, listID string, sectionMap map[string]string, pos int) tasks.ListItem {
+	id := string(t.ID)
+	var section string
+	if t.SectionID != "" {
+		if name, ok := sectionMap[string(t.SectionID)]; ok {
+			section = name
+		} else {
+			section = string(t.SectionID)
+		}
+	}
+	var dueDate *string
+	if t.Due != nil {
+		raw := t.Due.Date
+		if len(raw) < 10 {
+			raw = t.Due.Datetime
+		}
+		if len(raw) >= 10 {
+			if _, parseErr := time.Parse("2006-01-02", raw[:10]); parseErr == nil {
+				s := raw[:10]
+				dueDate = &s
+			}
+		}
+	}
+	createdAt := parseTimeFlexible(t.EffectiveCreatedAt())
+	return tasks.ListItem{
+		ID:        id,
+		ListID:    listID,
+		Title:     t.Content,
+		Done:      t.EffectiveDone(),
+		Section:   section,
+		Position:  pos,
+		DueDate:   dueDate,
+		CreatedAt: createdAt,
+		UpdatedAt: createdAt,
+	}
+}
+
 // FetchList retrieves task list metadata and items from the Todoist API.
 func (a *TodoistAdapter) FetchList(ctx context.Context) (*tasks.List, []tasks.ListItem, error) {
-	resolvedProjectID, resolvedProjectTitle, err := a.resolveProject(ctx)
+	resolvedProjectID, resolvedProjectTitle, err := a.resolveProjectID(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -268,70 +378,23 @@ func (a *TodoistAdapter) FetchList(ctx context.Context) (*tasks.List, []tasks.Li
 		listID = "inbox"
 	}
 
-	sections := []string{}
-	sectionMap := make(map[string]string)
-	if resolvedProjectID != "" {
-		sectionsURL := fmt.Sprintf("%s/api/v1/sections?project_id=%s", a.baseURL, url.QueryEscape(resolvedProjectID))
-		rawSections, secErr := fetchPaginated[todoistSection](ctx, a, sectionsURL, "sections")
-		if secErr != nil {
-			return nil, nil, secErr
-		}
-		sort.SliceStable(rawSections, func(i, j int) bool { return rawSections[i].Order < rawSections[j].Order })
-		sections = make([]string, 0, len(rawSections))
-		for _, s := range rawSections {
-			sections = append(sections, s.Name)
-			if string(s.ID) != "" {
-				sectionMap[string(s.ID)] = s.Name
-			}
-		}
+	sections, sectionMap, secErr := a.fetchProjectSections(ctx, resolvedProjectID)
+	if secErr != nil {
+		return nil, nil, secErr
 	}
 
 	var tasksURL string
 	if resolvedProjectID != "" {
 		tasksURL = fmt.Sprintf("%s/api/v1/tasks?project_id=%s", a.baseURL, url.QueryEscape(resolvedProjectID))
 	} else {
-		tasksURL = fmt.Sprintf("%s/api/v1/tasks", a.baseURL)
+		tasksURL = a.baseURL + "/api/v1/tasks"
 	}
 	rawTasks, taskErr := fetchPaginated[todoistTask](ctx, a, tasksURL, "tasks")
 	if taskErr != nil {
 		return nil, nil, taskErr
 	}
 
-	var completedTasks []tasks.ListItem
-	if resolvedProjectID != "" {
-		completedURL := fmt.Sprintf("%s/api/v1/tasks/completed?project_id=%s&limit=30", a.baseURL, url.QueryEscape(resolvedProjectID))
-		if completedBody, cErr := a.doGet(ctx, completedURL); cErr == nil {
-			var completedResp todoistCompletedResponse
-			if jsonErr := json.Unmarshal(completedBody, &completedResp); jsonErr == nil {
-				for _, item := range completedResp.Items {
-					itemID := string(item.TaskID)
-					if itemID == "" {
-						itemID = string(item.ID)
-					}
-					if itemID == "" {
-						continue
-					}
-					completedDateStr := item.CompletedAt
-					if completedDateStr == "" {
-						completedDateStr = item.CompletedDate
-					}
-					completedAt := parseTimeFlexible(completedDateStr)
-					var section string
-					if item.SectionID != "" {
-						if name, ok := sectionMap[string(item.SectionID)]; ok {
-							section = name
-						} else {
-							section = string(item.SectionID)
-						}
-					}
-					completedTasks = append(completedTasks, tasks.ListItem{
-						ID: itemID, ListID: listID, Title: item.Content, Done: true,
-						Section: section, CreatedAt: completedAt, UpdatedAt: completedAt,
-					})
-				}
-			}
-		}
-	}
+	completedTasks := a.fetchCompletedProjectItems(ctx, resolvedProjectID, listID, sectionMap)
 
 	orderedTasks := orderTodoistTasks(rawTasks)
 	now := time.Now().UTC()
@@ -344,32 +407,7 @@ func (a *TodoistAdapter) FetchList(ctx context.Context) (*tasks.List, []tasks.Li
 			continue
 		}
 		seenIDs[id] = true
-		var section string
-		if t.SectionID != "" {
-			if name, ok := sectionMap[string(t.SectionID)]; ok {
-				section = name
-			} else {
-				section = string(t.SectionID)
-			}
-		}
-		var dueDate *string
-		if t.Due != nil {
-			raw := t.Due.Date
-			if len(raw) < 10 {
-				raw = t.Due.Datetime
-			}
-			if len(raw) >= 10 {
-				if _, parseErr := time.Parse("2006-01-02", raw[:10]); parseErr == nil {
-					s := raw[:10]
-					dueDate = &s
-				}
-			}
-		}
-		createdAt := parseTimeFlexible(t.EffectiveCreatedAt())
-		items = append(items, tasks.ListItem{
-			ID: id, ListID: listID, Title: t.Content, Done: t.EffectiveDone(),
-			Section: section, Position: len(items), DueDate: dueDate, CreatedAt: createdAt, UpdatedAt: createdAt,
-		})
+		items = append(items, convertTodoistTask(t, listID, sectionMap, len(items)))
 	}
 
 	for _, ct := range completedTasks {

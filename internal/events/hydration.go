@@ -2,7 +2,8 @@ package events
 
 import (
 	"encoding/json"
-	"fmt"
+	"maps"
+	"strconv"
 	"sync"
 	"time"
 
@@ -116,7 +117,7 @@ type InMemoryStateProvider struct {
 func NewInMemoryStateProvider(mgr *config.Manager) *InMemoryStateProvider {
 	return &InMemoryStateProvider{
 		mgr:          mgr,
-		bootID:       fmt.Sprintf("%d", time.Now().UnixNano()),
+		bootID:       strconv.FormatInt(time.Now().UnixNano(), 10),
 		widgetStates: make(map[string]widgetStateEntry),
 		providers:    make(map[string]string),
 		theme:        "day",
@@ -274,9 +275,7 @@ func (p *InMemoryStateProvider) GetProvidersStatus() map[string]string {
 		return nil
 	}
 	copied := make(map[string]string, len(p.providers))
-	for k, v := range p.providers {
-		copied[k] = v
-	}
+	maps.Copy(copied, p.providers)
 	return copied
 }
 
@@ -343,6 +342,79 @@ func buildSystemStatusData(provider StateProvider, status config.Status, nowStr 
 	}
 }
 
+func buildWidgetUpdatePayload(provider StateProvider, widgetID, nowStr string) WidgetUpdateData {
+	payload := WidgetUpdateData{WidgetID: widgetID, Timestamp: nowStr, State: "healthy", Data: map[string]any{}}
+	if provider == nil {
+		return payload
+	}
+	if d, s, ts, ok := provider.GetWidgetState(widgetID); ok {
+		if d != nil {
+			payload.Data = d
+		}
+		if s != "" {
+			payload.State = s
+		}
+		if ts != "" {
+			payload.Timestamp = ts
+		}
+	}
+	if tsP, ok := provider.(interface {
+		GetWidgetTimestamp(widgetID string) (string, bool)
+	}); ok {
+		if ts, ok := tsP.GetWidgetTimestamp(widgetID); ok && ts != "" {
+			payload.Timestamp = ts
+		}
+	}
+	return payload
+}
+
+func appendWidgetHydrationEvents(events []*Event, snap *config.Snapshot, provider StateProvider, idGen *IDGenerator, now time.Time, nowStr string) []*Event {
+	if snap == nil || snap.Config == nil {
+		return events
+	}
+	for _, w := range snap.Config.Display.Widgets {
+		payload := buildWidgetUpdatePayload(provider, w.ID, nowStr)
+		events = appendHydrationEvent(events, idGen, now, EventWidgetUpdate, payload)
+	}
+	return events
+}
+
+func resolveSubsystemHydrationState(provider StateProvider, snap *config.Snapshot) (*HeaderWeather, string, *VideoStateData, *AudioStateData, *VoiceStateData, config.Status, string) {
+	var weather *HeaderWeather
+	tz := "UTC"
+	vid := &VideoStateData{Mode: "widgets"}
+	aud := &AudioStateData{Volume: 75}
+	vc := &VoiceStateData{State: "idle"}
+	var status config.Status
+	theme := "day"
+
+	if provider == nil {
+		return weather, tz, vid, aud, vc, status, theme
+	}
+
+	if w, ok := provider.GetHeaderWeather(); ok {
+		weather = w
+	}
+	if snap != nil && snap.Config != nil && snap.Config.Timezone != "" {
+		tz = snap.Config.Timezone
+	}
+	if v := provider.GetVideoState(); v != nil {
+		vid = v
+	}
+	if a := provider.GetAudioState(); a != nil {
+		aud = a
+	}
+	if v := provider.GetVoiceState(); v != nil {
+		vc = v
+	}
+	if t := provider.GetTheme(); t != "" {
+		theme = t
+	}
+	status = provider.CurrentStatus()
+
+	return weather, tz, vid, aud, vc, status, theme
+}
+
 func BuildHydrationBatch(provider StateProvider, idGen *IDGenerator, now time.Time) []*Event {
 	events := make([]*Event, 0, 8)
 	nowStr := now.UTC().Format(time.RFC3339)
@@ -359,59 +431,10 @@ func BuildHydrationBatch(provider StateProvider, idGen *IDGenerator, now time.Ti
 	}
 	events = appendHydrationEvent(events, idGen, now, EventScreenRotate, rotateData)
 
-	if snap != nil && snap.Config != nil {
-		for _, w := range snap.Config.Display.Widgets {
-			payload := WidgetUpdateData{WidgetID: w.ID, Timestamp: nowStr, State: "healthy", Data: map[string]any{}}
-			if provider != nil {
-				if d, s, ts, ok := provider.GetWidgetState(w.ID); ok {
-					if d != nil {
-						payload.Data = d
-					}
-					if s != "" {
-						payload.State = s
-					}
-					if ts != "" {
-						payload.Timestamp = ts
-					}
-				}
-				if tsP, ok := provider.(interface{ GetWidgetTimestamp(string) (string, bool) }); ok {
-					if ts, ok := tsP.GetWidgetTimestamp(w.ID); ok && ts != "" {
-						payload.Timestamp = ts
-					}
-				}
-			}
-			events = appendHydrationEvent(events, idGen, now, EventWidgetUpdate, payload)
-		}
-	}
+	events = appendWidgetHydrationEvents(events, snap, provider, idGen, now, nowStr)
 
-	var weather *HeaderWeather
-	tz := "UTC"
-	vid := &VideoStateData{Mode: "widgets"}
-	aud := &AudioStateData{Volume: 75}
-	vc := &VoiceStateData{State: "idle"}
-	var status config.Status
-	theme := "day"
-	if provider != nil {
-		if w, ok := provider.GetHeaderWeather(); ok {
-			weather = w
-		}
-		if snap != nil && snap.Config != nil && snap.Config.Timezone != "" {
-			tz = snap.Config.Timezone
-		}
-		if v := provider.GetVideoState(); v != nil {
-			vid = v
-		}
-		if a := provider.GetAudioState(); a != nil {
-			aud = a
-		}
-		if v := provider.GetVoiceState(); v != nil {
-			vc = v
-		}
-		if t := provider.GetTheme(); t != "" {
-			theme = t
-		}
-		status = provider.CurrentStatus()
-	}
+	weather, tz, vid, aud, vc, status, theme := resolveSubsystemHydrationState(provider, snap)
+
 	events = appendHydrationEvent(events, idGen, now, EventHeaderUpdate, HeaderUpdateData{Timestamp: nowStr, Timezone: tz, Weather: weather})
 	events = appendHydrationEvent(events, idGen, now, EventVideoState, vid)
 	events = appendHydrationEvent(events, idGen, now, EventAudioState, aud)

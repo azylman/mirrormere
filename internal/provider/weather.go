@@ -24,17 +24,25 @@ func MapWMOCode(code int) (string, string) {
 	return MapWMOCodeWithDay(code, 1)
 }
 
+func mapWMONightCode(code int) (string, string, bool) {
+	switch code {
+	case 0:
+		return "Clear", "weather-clear-night", true
+	case 1:
+		return "Mainly Clear", "weather-night-partly-cloudy", true
+	case 2:
+		return "Partly Cloudy", "weather-night-partly-cloudy", true
+	default:
+		return "", "", false
+	}
+}
+
 // MapWMOCodeWithDay maps a WMO 4501 weather code and day/night solar flag (1 for day, 0 for night)
 // to human-readable condition text and vector icon token.
 func MapWMOCodeWithDay(code int, isDay int) (string, string) {
 	if isDay == 0 {
-		switch code {
-		case 0:
-			return "Clear", "weather-clear-night"
-		case 1:
-			return "Mainly Clear", "weather-night-partly-cloudy"
-		case 2:
-			return "Partly Cloudy", "weather-night-partly-cloudy"
+		if cond, icon, ok := mapWMONightCode(code); ok {
+			return cond, icon
 		}
 	}
 	switch code {
@@ -189,20 +197,44 @@ func NewWeatherProviderWithClient(client *http.Client, baseURL string) *WeatherP
 	}
 }
 
+// WeatherConfig holds optional subconfiguration fields for WeatherProvider.
+type WeatherConfig struct {
+	Units    string
+	Timezone string
+	Location string
+}
+
+func resolveWeatherCoord(config map[string]any, key string) (float64, error) {
+	val, ok := toFloat(config[key])
+	if !ok {
+		return 0, errors.New("weather provider requires valid latitude and longitude")
+	}
+	if key == "latitude" && (val < -90 || val > 90) {
+		return 0, fmt.Errorf("latitude %.4f out of range [-90, 90]", val)
+	}
+	if key == "longitude" && (val < -180 || val > 180) {
+		return 0, fmt.Errorf("longitude %.4f out of range [-180, 180]", val)
+	}
+	return val, nil
+}
+
+func applyWeatherSubConfigs(config map[string]any, cfg *WeatherConfig) {
+	if n, ok := config["name"].(string); ok && strings.TrimSpace(n) != "" {
+		cfg.Location = strings.TrimSpace(n)
+	} else if loc, ok := config["location_name"].(string); ok && strings.TrimSpace(loc) != "" {
+		cfg.Location = strings.TrimSpace(loc)
+	}
+}
+
 // Init initializes the provider with instance domain config and framework options.
 func (p *WeatherProvider) Init(ctx context.Context, config map[string]any, opts InitOptions) error {
-	latVal, hasLat := toFloat(config["latitude"])
-	lonVal, hasLon := toFloat(config["longitude"])
-
-	if !hasLat || !hasLon {
-		return errors.New("weather provider requires valid latitude and longitude")
+	latVal, err := resolveWeatherCoord(config, "latitude")
+	if err != nil {
+		return err
 	}
-
-	if latVal < -90 || latVal > 90 {
-		return fmt.Errorf("latitude %.4f out of range [-90, 90]", latVal)
-	}
-	if lonVal < -180 || lonVal > 180 {
-		return fmt.Errorf("longitude %.4f out of range [-180, 180]", lonVal)
+	lonVal, err := resolveWeatherCoord(config, "longitude")
+	if err != nil {
+		return err
 	}
 
 	units := "imperial"
@@ -224,18 +256,17 @@ func (p *WeatherProvider) Init(ctx context.Context, config map[string]any, opts 
 		p.baseURL = opts.Endpoint
 	}
 
-	location := ""
-	if n, ok := config["name"].(string); ok && strings.TrimSpace(n) != "" {
-		location = strings.TrimSpace(n)
-	} else if loc, ok := config["location_name"].(string); ok && strings.TrimSpace(loc) != "" {
-		location = strings.TrimSpace(loc)
+	subCfg := WeatherConfig{
+		Units:    units,
+		Timezone: tz,
 	}
+	applyWeatherSubConfigs(config, &subCfg)
 
 	p.latitude = latVal
 	p.longitude = lonVal
 	p.units = units
 	p.timezone = tz
-	p.location = location
+	p.location = subCfg.Location
 
 	return nil
 }
@@ -332,7 +363,7 @@ func (p *WeatherProvider) Fetch(ctx context.Context) (any, error) {
 	startIndex := 0
 	if len(data.Current.Time) >= 13 {
 		curHour := data.Current.Time[:13]
-		for i := 0; i < maxSafeLen; i++ {
+		for i := range maxSafeLen {
 			hTime := data.Hourly.Time[i]
 			if len(hTime) >= 13 && hTime[:13] >= curHour {
 				startIndex = i
@@ -345,10 +376,7 @@ func (p *WeatherProvider) Fetch(ctx context.Context) (any, error) {
 	}
 
 	// Limit hourly timeline to next 24 entries
-	endIndex := startIndex + 24
-	if endIndex > maxSafeLen {
-		endIndex = maxSafeLen
-	}
+	endIndex := min(startIndex+24, maxSafeLen)
 
 	for i := startIndex; i < endIndex; i++ {
 		hIsDay := 1
@@ -366,7 +394,7 @@ func (p *WeatherProvider) Fetch(ctx context.Context) (any, error) {
 
 	dailyCount := minSliceLen(7, len(data.Daily.Time), len(data.Daily.Temperature2mMax), len(data.Daily.Temperature2mMin), len(data.Daily.WeatherCode), len(data.Daily.PrecipitationProbabilityMax))
 
-	for i := 0; i < dailyCount; i++ {
+	for i := range dailyCount {
 		dText, dIcon := MapWMOCode(data.Daily.WeatherCode[i])
 		snapshot.Daily = append(snapshot.Daily, WeatherDaily{
 			Date:          data.Daily.Time[i],

@@ -83,6 +83,25 @@ func NewPhotosProvider() *PhotosProvider {
 	}
 }
 
+func resolvePhotoShareURL(parsed PhotosConfig, opts InitOptions) (string, error) {
+	if parsed.ShareURLEnv != "" {
+		if sec := opts.GetSecret(parsed.ShareURLEnv); sec != "" {
+			return strings.TrimSpace(sec), nil
+		}
+		if env := os.Getenv(parsed.ShareURLEnv); env != "" {
+			return strings.TrimSpace(env), nil
+		}
+		return "", fmt.Errorf("photo-carousel: environment variable %q specified in 'share_url_env' is not set or empty", parsed.ShareURLEnv)
+	}
+	if parsed.ShareURL != "" {
+		if sec := opts.GetSecret("share_url"); sec != "" {
+			return strings.TrimSpace(sec), nil
+		}
+		return parsed.ShareURL, nil
+	}
+	return "", fmt.Errorf("photo-carousel requires either 'share_url' or 'share_url_env'")
+}
+
 // Init parses configuration, resolves 3-tier secrets, and validates parameters.
 func (p *PhotosProvider) Init(_ context.Context, config map[string]any, opts InitOptions) error {
 	p.mu.Lock()
@@ -94,27 +113,9 @@ func (p *PhotosProvider) Init(_ context.Context, config map[string]any, opts Ini
 	}
 	p.cfg = parsed
 
-	// 3-Tier Secret Resolution Pipeline:
-	// Tier 1: opts.Secrets["share_url"] or parsed.ShareURL
-	// Tier 2: opts.GetSecret(parsed.ShareURLEnv)
-	// Tier 3: os.Getenv(parsed.ShareURLEnv)
-	var resolvedURL string
-	if parsed.ShareURLEnv != "" {
-		if sec := opts.GetSecret(parsed.ShareURLEnv); sec != "" {
-			resolvedURL = strings.TrimSpace(sec)
-		} else if env := os.Getenv(parsed.ShareURLEnv); env != "" {
-			resolvedURL = strings.TrimSpace(env)
-		} else {
-			return fmt.Errorf("photo-carousel: environment variable %q specified in 'share_url_env' is not set or empty", parsed.ShareURLEnv)
-		}
-	} else if parsed.ShareURL != "" {
-		if sec := opts.GetSecret("share_url"); sec != "" {
-			resolvedURL = strings.TrimSpace(sec)
-		} else {
-			resolvedURL = parsed.ShareURL
-		}
-	} else {
-		return fmt.Errorf("photo-carousel requires either 'share_url' or 'share_url_env'")
+	resolvedURL, err := resolvePhotoShareURL(parsed, opts)
+	if err != nil {
+		return err
 	}
 
 	if resolvedURL == "" {
@@ -176,6 +177,36 @@ func (p *PhotosProvider) Shutdown(_ context.Context) error {
 	return nil
 }
 
+func checkAlbumResponseStatus(resp *http.Response) error {
+	// Detect redirect to login wall, cookie consent, or CAPTCHA blocks
+	if resp.Request != nil && resp.Request.URL != nil {
+		finalHost := resp.Request.URL.Host
+		if strings.Contains(finalHost, "accounts.google.com") {
+			return ErrAlbumPrivate
+		}
+		if strings.Contains(finalHost, "sorry.google.com") {
+			return ErrAlbumRateLimit
+		}
+		if strings.Contains(finalHost, "consent.google.com") {
+			return ErrAlbumPrivate
+		}
+	}
+
+	if resp.StatusCode == http.StatusNotFound {
+		return ErrAlbumNotFound
+	}
+	if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusUnauthorized {
+		return ErrAlbumPrivate
+	}
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return ErrAlbumRateLimit
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("upstream Google Photos returned HTTP %d", resp.StatusCode)
+	}
+	return nil
+}
+
 // scrapeAlbum fetches the shared album HTML, follows redirects, extracts image entries, and builds PhotoSnapshot.
 func (p *PhotosProvider) scrapeAlbum(ctx context.Context, client *http.Client, albumURL string, cfg PhotosConfig, logger *slog.Logger) (*PhotoSnapshot, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, albumURL, nil)
@@ -194,31 +225,8 @@ func (p *PhotosProvider) scrapeAlbum(ctx context.Context, client *http.Client, a
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	// Detect redirect to login wall, cookie consent, or CAPTCHA blocks
-	if resp.Request != nil && resp.Request.URL != nil {
-		finalHost := resp.Request.URL.Host
-		if strings.Contains(finalHost, "accounts.google.com") {
-			return nil, ErrAlbumPrivate
-		}
-		if strings.Contains(finalHost, "sorry.google.com") {
-			return nil, ErrAlbumRateLimit
-		}
-		if strings.Contains(finalHost, "consent.google.com") {
-			return nil, ErrAlbumPrivate
-		}
-	}
-
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, ErrAlbumNotFound
-	}
-	if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusUnauthorized {
-		return nil, ErrAlbumPrivate
-	}
-	if resp.StatusCode == http.StatusTooManyRequests {
-		return nil, ErrAlbumRateLimit
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("upstream Google Photos returned HTTP %d", resp.StatusCode)
+	if err := checkAlbumResponseStatus(resp); err != nil {
+		return nil, err
 	}
 
 	// Slowloris defense: enforce 5MB ceiling
@@ -310,6 +318,41 @@ func extractPhotosFromHTML(html string, logger *slog.Logger) []PhotoItem {
 	return []PhotoItem{}
 }
 
+// extractFromCallback parses a single callback chunk for photo media items.
+func extractFromCallback(chunk string, seenURLs map[string]struct{}) []PhotoItem {
+	dataIdx := strings.Index(chunk, "data:")
+	if dataIdx == -1 {
+		dataIdx = strings.Index(chunk, "data :")
+	}
+	if dataIdx == -1 {
+		return nil
+	}
+
+	arrayJSON, ok := extractBalancedArray(chunk[dataIdx:])
+	if !ok {
+		return nil
+	}
+
+	payloads := collectCallbackPayloads([][]string{{"", arrayJSON}})
+	if len(payloads) == 0 {
+		return nil
+	}
+
+	// In Google Photos shared albums, items typically reside at data[1] or nested within data[0]
+	items := findMediaItems(payloads[0])
+	var results []PhotoItem
+	for _, item := range items {
+		photo, ok := parseMediaItem(item)
+		if ok && photo.URL != "" {
+			if _, seen := seenURLs[photo.URL]; !seen {
+				seenURLs[photo.URL] = struct{}{}
+				results = append(results, photo)
+			}
+		}
+	}
+	return results
+}
+
 // extractFromAFInitData searches for AF_initDataCallback blocks and extracts [id, [url, w, h], timestamp] items.
 func extractFromAFInitData(html string) []PhotoItem {
 	callbackIndices := afCallbackPrefixRe.FindAllStringIndex(html, -1)
@@ -322,41 +365,9 @@ func extractFromAFInitData(html string) []PhotoItem {
 
 	for _, idxRange := range callbackIndices {
 		start := idxRange[0]
-		end := start + 500*1024
-		if end > len(html) {
-			end = len(html)
-		}
+		end := min(start+500*1024, len(html))
 		chunk := html[start:end]
-
-		dataIdx := strings.Index(chunk, "data:")
-		if dataIdx == -1 {
-			dataIdx = strings.Index(chunk, "data :")
-		}
-		if dataIdx == -1 {
-			continue
-		}
-
-		arrayJSON, ok := extractBalancedArray(chunk[dataIdx:])
-		if !ok {
-			continue
-		}
-
-		var dataArray []any
-		if err := json.Unmarshal([]byte(arrayJSON), &dataArray); err != nil {
-			continue
-		}
-
-		// In Google Photos shared albums, items typically reside at data[1] or nested within data[0]
-		items := findMediaItems(dataArray)
-		for _, item := range items {
-			photo, ok := parseMediaItem(item)
-			if ok && photo.URL != "" {
-				if _, seen := seenURLs[photo.URL]; !seen {
-					seenURLs[photo.URL] = struct{}{}
-					results = append(results, photo)
-				}
-			}
-		}
+		results = append(results, extractFromCallback(chunk, seenURLs)...)
 	}
 
 	return results
@@ -378,11 +389,12 @@ func extractBalancedArray(s string) (string, bool) {
 		ch := s[i]
 
 		if inString {
-			if escaped {
+			switch {
+			case escaped:
 				escaped = false
-			} else if ch == '\\' {
+			case ch == '\\':
 				escaped = true
-			} else if ch == stringChar {
+			case ch == stringChar:
 				inString = false
 			}
 			continue
@@ -394,9 +406,10 @@ func extractBalancedArray(s string) (string, bool) {
 			continue
 		}
 
-		if ch == '[' {
+		switch ch {
+		case '[':
 			depth++
-		} else if ch == ']' {
+		case ']':
 			depth--
 			if depth == 0 {
 				return s[start : i+1], true
@@ -407,29 +420,39 @@ func extractBalancedArray(s string) (string, bool) {
 	return "", false
 }
 
+func isPhotoItemArray(elem any) bool {
+	elemArr, ok := elem.([]any)
+	if !ok || len(elemArr) < 2 {
+		return false
+	}
+	mediaArr, ok := elemArr[1].([]any)
+	if !ok || len(mediaArr) == 0 {
+		return false
+	}
+	u, ok := mediaArr[0].(string)
+	return ok && strings.HasPrefix(u, "https://lh")
+}
+
+func isMediaItemList(v []any) bool {
+	if len(v) == 0 {
+		return false
+	}
+	matchesCount := 0
+	for _, elem := range v {
+		if isPhotoItemArray(elem) {
+			matchesCount++
+		}
+	}
+	return matchesCount > 0 && matchesCount >= len(v)/2
+}
+
 // findMediaItems recursively inspects the parsed JSON array to locate lists of photo media items.
 func findMediaItems(node any) []any {
-	var candidates []any
-
 	switch v := node.(type) {
 	case []any:
-		// Check if this array looks like a list of photo items (each entry is an array with URL at [1][0])
-		if len(v) > 0 {
-			matchesCount := 0
-			for _, elem := range v {
-				if elemArr, ok := elem.([]any); ok && len(elemArr) >= 2 {
-					if mediaArr, ok := elemArr[1].([]any); ok && len(mediaArr) > 0 {
-						if u, ok := mediaArr[0].(string); ok && strings.HasPrefix(u, "https://lh") {
-							matchesCount++
-						}
-					}
-				}
-			}
-			if matchesCount > 0 && matchesCount >= len(v)/2 {
-				return v
-			}
+		if isMediaItemList(v) {
+			return v
 		}
-
 		for _, elem := range v {
 			if res := findMediaItems(elem); len(res) > 0 {
 				return res
@@ -443,16 +466,10 @@ func findMediaItems(node any) []any {
 		}
 	}
 
-	return candidates
+	return nil
 }
 
-// parseMediaItem parses an individual media item array: [id, [url, width, height], timestamp, ...]
-func parseMediaItem(elem any) (PhotoItem, bool) {
-	arr, ok := elem.([]any)
-	if !ok || len(arr) < 2 {
-		return PhotoItem{}, false
-	}
-
+func tryParseMediaSlice(arr []any) (PhotoItem, bool) {
 	var id string
 	if s, ok := arr[0].(string); ok {
 		id = s
@@ -498,6 +515,28 @@ func parseMediaItem(elem any) (PhotoItem, bool) {
 		Timestamp:   timestampStr,
 		AspectRatio: aspectRatio,
 	}, true
+}
+
+// parseMediaItem parses an individual media item array: [id, [url, width, height], timestamp, ...]
+func parseMediaItem(elem any) (PhotoItem, bool) {
+	arr, ok := elem.([]any)
+	if !ok || len(arr) < 2 {
+		return PhotoItem{}, false
+	}
+	return tryParseMediaSlice(arr)
+}
+
+func collectCallbackPayloads(matches [][]string) [][]any {
+	var payloads [][]any
+	for _, m := range matches {
+		if len(m) > 1 {
+			var data []any
+			if err := json.Unmarshal([]byte(m[1]), &data); err == nil {
+				payloads = append(payloads, data)
+			}
+		}
+	}
+	return payloads
 }
 
 // extractFromFallbackRegex scans the HTML for user media URLs (/pw/ path) and extracts clean URLs.
@@ -556,6 +595,23 @@ func toFloat(val any) (float64, bool) {
 	return 0, false
 }
 
+func positiveIntFromMap(cfg map[string]any, key string, def int) int {
+	if cfg == nil {
+		return def
+	}
+	switch v := cfg[key].(type) {
+	case int:
+		if v > 0 {
+			return v
+		}
+	case float64:
+		if v > 0 {
+			return int(v)
+		}
+	}
+	return def
+}
+
 // parsePhotosConfig parses and validates instance configuration.
 func parsePhotosConfig(cfg map[string]any, _ InitOptions) (PhotosConfig, error) {
 	res := PhotosConfig{
@@ -580,23 +636,9 @@ func parsePhotosConfig(cfg map[string]any, _ InitOptions) (PhotosConfig, error) 
 		return res, fmt.Errorf("photo-carousel: 'share_url' and 'share_url_env' are mutually exclusive")
 	}
 
-	if v, ok := cfg["cycle_interval_seconds"].(int); ok && v > 0 {
-		res.CycleIntervalSeconds = v
-	} else if v, ok := cfg["cycle_interval_seconds"].(float64); ok && v > 0 {
-		res.CycleIntervalSeconds = int(v)
-	}
-	if res.CycleIntervalSeconds < minPhotoCycleIntervalSeconds {
-		res.CycleIntervalSeconds = minPhotoCycleIntervalSeconds
-	}
+	res.CycleIntervalSeconds = max(positiveIntFromMap(cfg, "cycle_interval_seconds", defaultPhotoCycleIntervalSeconds), minPhotoCycleIntervalSeconds)
 
-	if v, ok := cfg["preload_count"].(int); ok && v > 0 {
-		res.PreloadCount = v
-	} else if v, ok := cfg["preload_count"].(float64); ok && v > 0 {
-		res.PreloadCount = int(v)
-	}
-	if res.PreloadCount > maxPhotoPreloadCount {
-		res.PreloadCount = maxPhotoPreloadCount
-	}
+	res.PreloadCount = min(positiveIntFromMap(cfg, "preload_count", defaultPhotoPreloadCount), maxPhotoPreloadCount)
 
 	if v, ok := cfg["shuffle"].(bool); ok {
 		res.Shuffle = v

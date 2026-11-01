@@ -3,6 +3,7 @@ package render
 import (
 	"fmt"
 	"math"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -58,6 +59,7 @@ type FamilyDay struct {
 // FamilySpanEvent represents an all-day event positioned across columns in the week view.
 type FamilySpanEvent struct {
 	FamilyEvent
+
 	StartCol int `json:"start_col"`
 	ColSpan  int `json:"col_span"`
 }
@@ -82,6 +84,7 @@ type FamilyViewModel struct {
 // FamilyDayEvent represents a resolved event positioned within a day view column or edge band.
 type FamilyDayEvent struct {
 	FamilyEvent
+
 	TopPct      float64 `json:"top_pct"`
 	HeightPct   float64 `json:"height_pct"`
 	LeftPct     float64 `json:"left_pct"`
@@ -133,6 +136,45 @@ type mergedFamilyEvents struct {
 	rawEvents map[string]provider.CalendarEvent
 }
 
+func newFamilyEvent(ev provider.CalendarEvent, loc *time.Location) *FamilyEvent {
+	fe := &FamilyEvent{
+		ID:          ev.ID,
+		Title:       ev.Title,
+		Location:    ev.Location,
+		Description: truncateString(ev.Description, 280),
+		AllDay:      ev.AllDay,
+	}
+	if !ev.AllDay {
+		if t, ok := parseFamilyTime(ev.Start); ok {
+			fe.Start = t.In(loc).Format("15:04")
+		}
+		if t, ok := parseFamilyTime(ev.End); ok {
+			fe.End = t.In(loc).Format("15:04")
+		}
+	}
+	return fe
+}
+
+func assignFamilyEventOwners(fe *FamilyEvent, claimed map[string]bool, members []FamilyMember, sharedColor string) {
+	for _, m := range members {
+		if claimed[m.Name] {
+			fe.Owners = append(fe.Owners, m.Name)
+			fe.Initials = append(fe.Initials, m.Initial)
+			fe.Colors = append(fe.Colors, m.Color)
+			fe.Patterns = append(fe.Patterns, m.Pattern)
+		}
+	}
+	if len(fe.Colors) > 0 {
+		fe.Color = fe.Colors[0]
+	} else {
+		fe.Color = sharedColor
+	}
+	if len(fe.Patterns) > 0 {
+		fe.Pattern = fe.Patterns[0]
+	}
+	fe.TextColor = contrastTextColor(fe.Color)
+}
+
 func mergeFamilyEvents(
 	raw []provider.CalendarEvent,
 	members []FamilyMember,
@@ -158,21 +200,7 @@ func mergeFamilyEvents(
 
 		fe, exists := merged[ev.ID]
 		if !exists {
-			fe = &FamilyEvent{
-				ID:          ev.ID,
-				Title:       ev.Title,
-				Location:    ev.Location,
-				Description: truncateString(ev.Description, 280),
-				AllDay:      ev.AllDay,
-			}
-			if !ev.AllDay {
-				if t, ok := parseFamilyTime(ev.Start); ok {
-					fe.Start = t.In(loc).Format("15:04")
-				}
-				if t, ok := parseFamilyTime(ev.End); ok {
-					fe.End = t.In(loc).Format("15:04")
-				}
-			}
+			fe = newFamilyEvent(ev, loc)
 			merged[ev.ID] = fe
 			mergedOrder = append(mergedOrder, ev.ID)
 			mergedDates[ev.ID] = matchedDates
@@ -194,25 +222,7 @@ func mergeFamilyEvents(
 	}
 
 	for _, id := range mergedOrder {
-		fe := merged[id]
-		claimed := mergedOwnerSet[id]
-		for _, m := range members {
-			if claimed[m.Name] {
-				fe.Owners = append(fe.Owners, m.Name)
-				fe.Initials = append(fe.Initials, m.Initial)
-				fe.Colors = append(fe.Colors, m.Color)
-				fe.Patterns = append(fe.Patterns, m.Pattern)
-			}
-		}
-		if len(fe.Colors) > 0 {
-			fe.Color = fe.Colors[0]
-		} else {
-			fe.Color = sharedColor
-		}
-		if len(fe.Patterns) > 0 {
-			fe.Pattern = fe.Patterns[0]
-		}
-		fe.TextColor = contrastTextColor(fe.Color)
+		assignFamilyEventOwners(merged[id], mergedOwnerSet[id], members, sharedColor)
 	}
 
 	return mergedFamilyEvents{
@@ -257,7 +267,7 @@ func BuildFamilyView(data any, cfg map[string]any, dims domain.Dimension, now ti
 	snapshot := extractCalendarSnapshot(data)
 
 	days := make([]FamilyDay, numDays)
-	for i := 0; i < numDays; i++ {
+	for i := range numDays {
 		d := rangeStart.AddDate(0, 0, i)
 		days[i] = FamilyDay{
 			Date:       d.Format("2006-01-02"),
@@ -298,6 +308,26 @@ func BuildFamilyView(data any, cfg map[string]any, dims domain.Dimension, now ti
 		}
 	}
 
+	allDayEvents := buildFamilyAllDaySpans(mergedData, dayIndex, numDays)
+	populateFamilyDayColumns(days, rangeStart, maxVisible, hours, mergedData)
+
+	return &FamilyViewModel{
+		RangeStart:      rangeStart.Format("2006-01-02"),
+		RangeEnd:        rangeEnd.Format("2006-01-02"),
+		RangeLabel:      formatFamilyRangeLabel(rangeStart, rangeEnd),
+		Today:           today.Format("2006-01-02"),
+		HoursStart:      hours.StartStr,
+		HoursEnd:        hours.EndStr,
+		HourMarkers:     hours.Markers,
+		TimelineMarkers: hours.TimelineMarkers,
+		Members:         members,
+		Days:            days,
+		AllDayEvents:    allDayEvents,
+		SharedColor:     sharedColor,
+	}, nil
+}
+
+func buildFamilyAllDaySpans(mergedData mergedFamilyEvents, dayIndex map[string]int, numDays int) []FamilySpanEvent {
 	var allDayEvents []FamilySpanEvent
 	for _, id := range mergedData.order {
 		fe := mergedData.events[id]
@@ -308,7 +338,7 @@ func BuildFamilyView(data any, cfg map[string]any, dims domain.Dimension, now ti
 		if len(dates) == 0 {
 			continue
 		}
-		minIdx := len(days)
+		minIdx := numDays
 		maxIdx := -1
 		for _, d := range dates {
 			if idx, ok := dayIndex[d]; ok {
@@ -340,6 +370,10 @@ func BuildFamilyView(data any, cfg map[string]any, dims domain.Dimension, now ti
 		return allDayEvents[i].Title < allDayEvents[j].Title
 	})
 
+	return allDayEvents
+}
+
+func populateFamilyDayColumns(days []FamilyDay, rangeStart time.Time, maxVisible int, hours HoursBand, mergedData mergedFamilyEvents) {
 	for i := range days {
 		sort.SliceStable(days[i].Timed, func(a, b int) bool {
 			return days[i].Timed[a].Start < days[i].Timed[b].Start
@@ -360,13 +394,7 @@ func BuildFamilyView(data any, cfg map[string]any, dims domain.Dimension, now ti
 			if fe.AllDay {
 				continue
 			}
-			hasDay := false
-			for _, dateKey := range mergedData.dates[id] {
-				if dateKey == dStr {
-					hasDay = true
-					break
-				}
-			}
+			hasDay := slices.Contains(mergedData.dates[id], dStr)
 			if !hasDay {
 				continue
 			}
@@ -378,21 +406,6 @@ func BuildFamilyView(data any, cfg map[string]any, dims domain.Dimension, now ti
 
 		days[i].Events = layoutDayEvents(days[i].Events)
 	}
-
-	return &FamilyViewModel{
-		RangeStart:      rangeStart.Format("2006-01-02"),
-		RangeEnd:        rangeEnd.Format("2006-01-02"),
-		RangeLabel:      formatFamilyRangeLabel(rangeStart, rangeEnd),
-		Today:           today.Format("2006-01-02"),
-		HoursStart:      hours.StartStr,
-		HoursEnd:        hours.EndStr,
-		HourMarkers:     hours.Markers,
-		TimelineMarkers: hours.TimelineMarkers,
-		Members:         members,
-		Days:            days,
-		AllDayEvents:    allDayEvents,
-		SharedColor:     sharedColor,
-	}, nil
 }
 
 func matchWindowDates(dayIndex map[string]int, loc *time.Location) func(provider.CalendarEvent) []string {
@@ -459,6 +472,69 @@ func timedEventDateRange(ev provider.CalendarEvent, loc *time.Location) []string
 
 const maxDayLanes = 4
 
+type eventClusterRange struct {
+	startIdx int
+	endIdx   int
+}
+
+func buildEventClusters(events []FamilyDayEvent) []eventClusterRange {
+	var clusters []eventClusterRange
+	cStart := 0
+	cMaxBottom := events[0].TopPct + events[0].HeightPct
+
+	for i := 1; i < len(events); i++ {
+		evStart := events[i].TopPct
+		evEnd := events[i].TopPct + events[i].HeightPct
+		if evStart < cMaxBottom {
+			if evEnd > cMaxBottom {
+				cMaxBottom = evEnd
+			}
+		} else {
+			clusters = append(clusters, eventClusterRange{startIdx: cStart, endIdx: i})
+			cStart = i
+			cMaxBottom = evEnd
+		}
+	}
+	return append(clusters, eventClusterRange{startIdx: cStart, endIdx: len(events)})
+}
+
+func layoutEventCluster(events []FamilyDayEvent, c eventClusterRange) {
+	var lanes []float64
+	assignedLanes := make([]int, c.endIdx-c.startIdx)
+
+	for k := c.startIdx; k < c.endIdx; k++ {
+		idx := k - c.startIdx
+		evStart := events[k].TopPct
+		evEnd := events[k].TopPct + events[k].HeightPct
+		assigned := false
+		for laneIdx, laneEnd := range lanes {
+			if evStart >= laneEnd {
+				lanes[laneIdx] = evEnd
+				assignedLanes[idx] = laneIdx
+				assigned = true
+				break
+			}
+		}
+		if !assigned {
+			assignedLanes[idx] = len(lanes)
+			lanes = append(lanes, evEnd)
+		}
+	}
+
+	numLanes := min(len(lanes), maxDayLanes)
+	laneWidth := roundToTwoDecimals(100.0 / float64(numLanes))
+
+	for k := c.startIdx; k < c.endIdx; k++ {
+		idx := k - c.startIdx
+		lane := assignedLanes[idx]
+		if lane >= maxDayLanes {
+			lane = maxDayLanes - 1
+		}
+		events[k].LeftPct = roundToTwoDecimals(float64(lane) * (100.0 / float64(numLanes)))
+		events[k].WidthPct = laneWidth
+	}
+}
+
 // layoutDayEvents partitions overlapping canvas events into parallel horizontal lanes,
 // calculating LeftPct and WidthPct so concurrent events don't obscure each other.
 func layoutDayEvents(events []FamilyDayEvent) []FamilyDayEvent {
@@ -478,67 +554,8 @@ func layoutDayEvents(events []FamilyDayEvent) []FamilyDayEvent {
 		return events[i].HeightPct > events[j].HeightPct
 	})
 
-	type clusterRange struct {
-		startIdx int
-		endIdx   int
-	}
-	var clusters []clusterRange
-	cStart := 0
-	cMaxBottom := events[0].TopPct + events[0].HeightPct
-
-	for i := 1; i < len(events); i++ {
-		evStart := events[i].TopPct
-		evEnd := events[i].TopPct + events[i].HeightPct
-		if evStart < cMaxBottom {
-			if evEnd > cMaxBottom {
-				cMaxBottom = evEnd
-			}
-		} else {
-			clusters = append(clusters, clusterRange{startIdx: cStart, endIdx: i})
-			cStart = i
-			cMaxBottom = evEnd
-		}
-	}
-	clusters = append(clusters, clusterRange{startIdx: cStart, endIdx: len(events)})
-
-	for _, c := range clusters {
-		var lanes []float64
-		assignedLanes := make([]int, c.endIdx-c.startIdx)
-
-		for k := c.startIdx; k < c.endIdx; k++ {
-			idx := k - c.startIdx
-			evStart := events[k].TopPct
-			evEnd := events[k].TopPct + events[k].HeightPct
-			assigned := false
-			for laneIdx, laneEnd := range lanes {
-				if evStart >= laneEnd {
-					lanes[laneIdx] = evEnd
-					assignedLanes[idx] = laneIdx
-					assigned = true
-					break
-				}
-			}
-			if !assigned {
-				assignedLanes[idx] = len(lanes)
-				lanes = append(lanes, evEnd)
-			}
-		}
-
-		numLanes := len(lanes)
-		if numLanes > maxDayLanes {
-			numLanes = maxDayLanes
-		}
-		laneWidth := roundToTwoDecimals(100.0 / float64(numLanes))
-
-		for k := c.startIdx; k < c.endIdx; k++ {
-			idx := k - c.startIdx
-			lane := assignedLanes[idx]
-			if lane >= maxDayLanes {
-				lane = maxDayLanes - 1
-			}
-			events[k].LeftPct = roundToTwoDecimals(float64(lane) * (100.0 / float64(numLanes)))
-			events[k].WidthPct = laneWidth
-		}
+	for _, c := range buildEventClusters(events) {
+		layoutEventCluster(events, c)
 	}
 
 	return events
@@ -642,12 +659,7 @@ func stringOr(cfg map[string]any, key, fallback string) string {
 }
 
 func calendarClaimedBy(m FamilyMember, calendarName string) bool {
-	for _, c := range m.Calendars {
-		if c == calendarName {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(m.Calendars, calendarName)
 }
 
 func parseFamilyMembers(cfg map[string]any) ([]FamilyMember, error) {
@@ -968,6 +980,25 @@ func parseClockTime(v string) (hour, minute int, ok bool) {
 	return h, 0, true
 }
 
+func calculateVisibleEventPosition(effStart, effEnd, wStart, wEnd, start, end time.Time, wDuration float64) (float64, float64) {
+	if effEnd.After(effStart) && !start.After(wEnd) && !end.Before(wStart) {
+		topPct := (effStart.Sub(wStart).Seconds() / wDuration) * 100.0
+		heightPct := (effEnd.Sub(effStart).Seconds() / wDuration) * 100.0
+		// Ensure visible events have at least 2.0% height for legibility and tap targets
+		if heightPct < 2.0 {
+			heightPct = 2.0
+		}
+		if topPct+heightPct > 100.0 {
+			topPct = 100.0 - heightPct
+		}
+		return topPct, heightPct
+	}
+	if start.After(wEnd) || start.Equal(wEnd) {
+		return 100.0, 0.0
+	}
+	return 0.0, 0.0
+}
+
 // ComputeDayEventPosition calculates the vertical TopPct and HeightPct for an event on a given day
 // relative to the visible HoursBand, along with flags for early/late edge collapsing.
 //
@@ -1011,29 +1042,10 @@ func ComputeDayEventPosition(eventStart, eventEnd time.Time, day time.Time, hour
 		effEnd = wEnd
 	}
 
-	if effEnd.After(effStart) && !start.After(wEnd) && !end.Before(wStart) {
-		topPct = (effStart.Sub(wStart).Seconds() / wDuration) * 100.0
-		heightPct = (effEnd.Sub(effStart).Seconds() / wDuration) * 100.0
-		// Ensure visible events have at least 2.0% height for legibility and tap targets
-		if heightPct < 2.0 {
-			heightPct = 2.0
-		}
-		if topPct+heightPct > 100.0 {
-			topPct = 100.0 - heightPct
-		}
-	} else {
-		if start.After(wEnd) || start.Equal(wEnd) {
-			topPct = 100.0
-			heightPct = 0.0
-		} else {
-			topPct = 0.0
-			heightPct = 0.0
-		}
-	}
-
+	topPct, heightPct = calculateVisibleEventPosition(effStart, effEnd, wStart, wEnd, start, end, wDuration)
 	topPct = roundToTwoDecimals(topPct)
 	heightPct = roundToTwoDecimals(heightPct)
-	return
+	return topPct, heightPct, isEarlyEdge, isLateEdge
 }
 
 func roundToTwoDecimals(val float64) float64 {
@@ -1144,22 +1156,7 @@ func BuildFamilyMonthView(data any, cfg map[string]any, dims domain.Dimension, n
 
 	loc := now.Location()
 	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
-	target := today
-	if mStr, ok := cfg["month"].(string); ok && strings.TrimSpace(mStr) != "" {
-		mStr = strings.TrimSpace(mStr)
-		if t, err := time.ParseInLocation("2006-01", mStr, loc); err == nil {
-			target = t
-		} else if t, err := time.ParseInLocation("2006-01-02", mStr, loc); err == nil {
-			target = t
-		}
-	} else if dStr, ok := cfg["date"].(string); ok && strings.TrimSpace(dStr) != "" {
-		dStr = strings.TrimSpace(dStr)
-		if t, err := time.ParseInLocation("2006-01-02", dStr, loc); err == nil {
-			target = t
-		} else if t, err := time.ParseInLocation("2006-01", dStr, loc); err == nil {
-			target = t
-		}
-	}
+	target := resolveFamilyMonthAnchor(cfg, today, loc)
 
 	firstOfMonth := time.Date(target.Year(), target.Month(), 1, 0, 0, 0, 0, loc)
 	targetMonth := firstOfMonth.Month()
@@ -1175,7 +1172,7 @@ func BuildFamilyMonthView(data any, cfg map[string]any, dims domain.Dimension, n
 
 	dayIndex := make(map[string]int, monthGridDays)
 	days := make([]FamilyMonthDay, monthGridDays)
-	for i := 0; i < monthGridDays; i++ {
+	for i := range monthGridDays {
 		d := windowStart.AddDate(0, 0, i)
 		dStr := d.Format("2006-01-02")
 		dayIndex[dStr] = i
@@ -1200,6 +1197,99 @@ func BuildFamilyMonthView(data any, cfg map[string]any, dims domain.Dimension, n
 		matchWindowDates(dayIndex, loc),
 	)
 
+	populateFamilyMonthDays(days, mergedData, dayIndex, members, sharedColor, dims)
+
+	weeks := make([]FamilyMonthWeek, numWeeks)
+	for w := range numWeeks {
+		weekDays := make([]FamilyMonthDay, daysPerWeek)
+		copy(weekDays, days[w*daysPerWeek:(w+1)*daysPerWeek])
+		weeks[w] = FamilyMonthWeek{
+			WeekNumber: w + 1,
+			Days:       weekDays,
+		}
+	}
+
+	return &FamilyMonthViewModel{
+		MonthLabel:     firstOfMonth.Format("January 2006"),
+		MonthName:      firstOfMonth.Format("January"),
+		Year:           targetYear,
+		Month:          int(targetMonth),
+		RangeStart:     windowStart.Format("2006-01-02"),
+		RangeEnd:       windowEnd.Format("2006-01-02"),
+		Today:          today.Format("2006-01-02"),
+		WeekdayHeaders: weekdayHeaders(weekStartsMonday),
+		Members:        members,
+		Weeks:          weeks,
+		Days:           days,
+		SharedColor:    sharedColor,
+	}, nil
+}
+
+func parseAnchorDateStr(s string, loc *time.Location) (time.Time, bool) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return time.Time{}, false
+	}
+	for _, layout := range []string{"2006-01", "2006-01-02"} {
+		if t, err := time.ParseInLocation(layout, s, loc); err == nil {
+			return t, true
+		}
+	}
+	return time.Time{}, false
+}
+
+func resolveFamilyMonthAnchor(cfg map[string]any, today time.Time, loc *time.Location) time.Time {
+	if s, ok := cfg["month"].(string); ok {
+		if t, ok := parseAnchorDateStr(s, loc); ok {
+			return t
+		}
+	}
+	if s, ok := cfg["date"].(string); ok {
+		if t, ok := parseAnchorDateStr(s, loc); ok {
+			return t
+		}
+	}
+	return today
+}
+
+func buildMonthDayDots(memberSet map[string]bool, hasUnclaimed bool, members []FamilyMember, sharedColor string) []FamilyMonthDot {
+	var dots []FamilyMonthDot
+	for mIdx, m := range members {
+		if memberSet != nil && memberSet[m.Name] {
+			dots = append(dots, FamilyMonthDot{
+				Name:        m.Name,
+				Initial:     m.Initial,
+				Color:       m.Color,
+				TextColor:   m.TextColor,
+				Pattern:     m.Pattern,
+				IsShared:    false,
+				MemberIndex: mIdx,
+			})
+		}
+	}
+	if hasUnclaimed {
+		dots = append(dots, FamilyMonthDot{
+			Name:        "Shared",
+			Initial:     "S",
+			Color:       sharedColor,
+			TextColor:   contrastTextColor(sharedColor),
+			Pattern:     "solid",
+			IsShared:    true,
+			MemberIndex: -1,
+		})
+	}
+	return dots
+}
+
+func populateFamilyMonthDays(
+	days []FamilyMonthDay,
+	mergedData mergedFamilyEvents,
+	dayIndex map[string]int,
+	members []FamilyMember,
+	sharedColor string,
+	dims domain.Dimension,
+) {
+	monthGridDays := len(days)
 	dayEventsMap := make(map[int][]FamilyEvent, monthGridDays)
 	dayMembersMap := make(map[int]map[string]bool, monthGridDays)
 	dayUnclaimedMap := make(map[int]bool, monthGridDays)
@@ -1240,60 +1330,8 @@ func BuildFamilyMonthView(data any, cfg map[string]any, dims domain.Dimension, n
 		if len(evs) > 0 && showTitles {
 			days[idx].EventTitle = evs[0].Title
 		}
-
-		memberSet := dayMembersMap[idx]
-		var dots []FamilyMonthDot
-		for mIdx, m := range members {
-			if memberSet != nil && memberSet[m.Name] {
-				dots = append(dots, FamilyMonthDot{
-					Name:        m.Name,
-					Initial:     m.Initial,
-					Color:       m.Color,
-					TextColor:   m.TextColor,
-					Pattern:     m.Pattern,
-					IsShared:    false,
-					MemberIndex: mIdx,
-				})
-			}
-		}
-		if dayUnclaimedMap[idx] {
-			dots = append(dots, FamilyMonthDot{
-				Name:        "Shared",
-				Initial:     "S",
-				Color:       sharedColor,
-				TextColor:   contrastTextColor(sharedColor),
-				Pattern:     "solid",
-				IsShared:    true,
-				MemberIndex: -1,
-			})
-		}
-		days[idx].Dots = dots
+		days[idx].Dots = buildMonthDayDots(dayMembersMap[idx], dayUnclaimedMap[idx], members, sharedColor)
 	}
-
-	weeks := make([]FamilyMonthWeek, numWeeks)
-	for w := 0; w < numWeeks; w++ {
-		weekDays := make([]FamilyMonthDay, daysPerWeek)
-		copy(weekDays, days[w*daysPerWeek:(w+1)*daysPerWeek])
-		weeks[w] = FamilyMonthWeek{
-			WeekNumber: w + 1,
-			Days:       weekDays,
-		}
-	}
-
-	return &FamilyMonthViewModel{
-		MonthLabel:     firstOfMonth.Format("January 2006"),
-		MonthName:      firstOfMonth.Format("January"),
-		Year:           targetYear,
-		Month:          int(targetMonth),
-		RangeStart:     windowStart.Format("2006-01-02"),
-		RangeEnd:       windowEnd.Format("2006-01-02"),
-		Today:          today.Format("2006-01-02"),
-		WeekdayHeaders: weekdayHeaders(weekStartsMonday),
-		Members:        members,
-		Weeks:          weeks,
-		Days:           days,
-		SharedColor:    sharedColor,
-	}, nil
 }
 
 func weekdayHeaders(mondayStart bool) []string {
@@ -1301,6 +1339,26 @@ func weekdayHeaders(mondayStart bool) []string {
 		return []string{"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"}
 	}
 	return []string{"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"}
+}
+
+func populateCombinedCachedRanges(res map[string]any, baseTime time.Time, monthView *FamilyMonthViewModel) {
+	if !baseTime.IsZero() {
+		if _, ok := res["cached_range_start"]; !ok {
+			res["cached_range_start"] = baseTime.AddDate(0, 0, -provider.DefaultWindowDaysPast).Format("2006-01-02")
+		}
+		if _, ok := res["cached_range_end"]; !ok {
+			res["cached_range_end"] = baseTime.AddDate(0, 0, provider.DefaultWindowDaysFuture).Format("2006-01-02")
+		}
+		return
+	}
+	if monthView != nil {
+		if _, ok := res["cached_range_start"]; !ok && monthView.RangeStart != "" {
+			res["cached_range_start"] = monthView.RangeStart
+		}
+		if _, ok := res["cached_range_end"]; !ok && monthView.RangeEnd != "" {
+			res["cached_range_end"] = monthView.RangeEnd
+		}
+	}
 }
 
 // BuildFamilyCombinedData merges resolved week and month view models into a unified JSON
@@ -1337,20 +1395,6 @@ func BuildFamilyCombinedData(weekView *FamilyViewModel, monthView *FamilyMonthVi
 			baseTime = t
 		}
 	}
-	if !baseTime.IsZero() {
-		if _, ok := res["cached_range_start"]; !ok {
-			res["cached_range_start"] = baseTime.AddDate(0, 0, -provider.DefaultWindowDaysPast).Format("2006-01-02")
-		}
-		if _, ok := res["cached_range_end"]; !ok {
-			res["cached_range_end"] = baseTime.AddDate(0, 0, provider.DefaultWindowDaysFuture).Format("2006-01-02")
-		}
-	} else if monthView != nil {
-		if _, ok := res["cached_range_start"]; !ok && monthView.RangeStart != "" {
-			res["cached_range_start"] = monthView.RangeStart
-		}
-		if _, ok := res["cached_range_end"]; !ok && monthView.RangeEnd != "" {
-			res["cached_range_end"] = monthView.RangeEnd
-		}
-	}
+	populateCombinedCachedRanges(res, baseTime, monthView)
 	return res
 }

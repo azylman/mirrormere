@@ -86,6 +86,7 @@ type Config struct {
 
 // DisplayConfig specifies visual presentation, rotation parameters, and active widget instances.
 type DisplayConfig struct {
+	UI         string              `yaml:"ui,omitempty"` // "legacy" (default) or "react"; ?ui= on /display overrides
 	HideCursor bool                `yaml:"hide_cursor,omitempty"`
 	RemoteURL  string              `yaml:"remote_url,omitempty"`
 	Rotation   RotationConfig      `yaml:"rotation"`
@@ -94,6 +95,11 @@ type DisplayConfig struct {
 	Widgets    []WidgetConfig      `yaml:"widgets"`
 	Theme      *ThemeConfig        `yaml:"theme,omitempty"`
 	Voice      *DisplayVoiceConfig `yaml:"voice,omitempty"`
+}
+
+// GetUI returns the display shell selected by config: "legacy" (default) or "react".
+func (dc DisplayConfig) GetUI() string {
+	return strings.ToLower(trimmedOr(dc.UI, "legacy"))
 }
 
 // DisplayVoiceConfig configures voice visuals on the display.
@@ -568,7 +574,7 @@ func validateDisplayKeys(displayNode *yaml.Node) error {
 			if err := validateVoiceKeys(displayNode.Content[i+1]); err != nil {
 				return err
 			}
-		case "rotation", "grid", "header", "widgets", "hide_cursor", "remote_url", "theme":
+		case "rotation", "grid", "header", "widgets", "hide_cursor", "remote_url", "theme", "ui":
 		default:
 			return fmt.Errorf("line %d: unknown key '%s' under display", keyNode.Line, key)
 		}
@@ -576,61 +582,69 @@ func validateDisplayKeys(displayNode *yaml.Node) error {
 	return nil
 }
 
-func (c *Config) applyDefaults() {
-	if c.Display.Rotation.Transition == "" {
-		c.Display.Rotation.Transition = "slide"
+func (c *Config) applyWeatherForecastDefaults(lat, lon float64, name string) {
+	for i := range c.Display.Widgets {
+		w := &c.Display.Widgets[i]
+		if w.Type != "weather-forecast" {
+			continue
+		}
+		if w.Config == nil {
+			w.Config = make(map[string]any)
+		}
+		if w.Config["latitude"] == nil {
+			w.Config["latitude"] = lat
+		}
+		if w.Config["longitude"] == nil {
+			w.Config["longitude"] = lon
+		}
+		if w.Config["name"] == nil && w.Config["location_name"] == nil && name != "" {
+			w.Config["location_name"] = name
+		}
 	}
-	if c.Display.Grid.Columns == 0 {
-		c.Display.Grid.Columns = 6
-	}
-	if c.Display.Grid.Rows == 0 {
-		c.Display.Grid.Rows = 2
+}
+
+func (c *Config) applyLocationDefaults() {
+	lc := c.LocationConfig
+	if lc != nil && lc.Latitude != nil && lc.Longitude != nil {
+		c.applyConfiguredLocation(*lc.Latitude, *lc.Longitude, lc.Name)
+		return
 	}
 
-	if c.LocationConfig != nil && c.LocationConfig.Latitude != nil && c.LocationConfig.Longitude != nil {
-		if hw := c.Display.Header.Weather; hw != nil {
-			if hw.Latitude == 0 && hw.Longitude == 0 {
-				hw.Latitude = *c.LocationConfig.Latitude
-				hw.Longitude = *c.LocationConfig.Longitude
-			}
-			if hw.Location == "" && c.LocationConfig.Name != "" {
-				hw.Location = c.LocationConfig.Name
-			}
-		}
-		for i := range c.Display.Widgets {
-			w := &c.Display.Widgets[i]
-			if w.Type == "weather-forecast" {
-				if w.Config == nil {
-					w.Config = make(map[string]any)
-				}
-				if w.Config["latitude"] == nil {
-					w.Config["latitude"] = *c.LocationConfig.Latitude
-				}
-				if w.Config["longitude"] == nil {
-					w.Config["longitude"] = *c.LocationConfig.Longitude
-				}
-				if w.Config["name"] == nil && w.Config["location_name"] == nil && c.LocationConfig.Name != "" {
-					w.Config["location_name"] = c.LocationConfig.Name
-				}
-			}
-		}
-	} else if hw := c.Display.Header.Weather; hw != nil && (hw.Latitude != 0 || hw.Longitude != 0) {
-		lat, lon, name := hw.Latitude, hw.Longitude, hw.Location
-		if c.LocationConfig == nil {
-			c.LocationConfig = &LocationConfig{Name: name, Latitude: &lat, Longitude: &lon}
-		} else {
-			if c.LocationConfig.Latitude == nil {
-				c.LocationConfig.Latitude = &lat
-			}
-			if c.LocationConfig.Longitude == nil {
-				c.LocationConfig.Longitude = &lon
-			}
-			if c.LocationConfig.Name == "" {
-				c.LocationConfig.Name = name
-			}
-		}
+	hw := c.Display.Header.Weather
+	if hw == nil || (hw.Latitude == 0 && hw.Longitude == 0) {
+		return
 	}
 
+	lat, lon, name := hw.Latitude, hw.Longitude, hw.Location
+	if c.LocationConfig == nil {
+		c.LocationConfig = &LocationConfig{Name: name, Latitude: &lat, Longitude: &lon}
+		return
+	}
+	if c.LocationConfig.Latitude == nil {
+		c.LocationConfig.Latitude = &lat
+	}
+	if c.LocationConfig.Longitude == nil {
+		c.LocationConfig.Longitude = &lon
+	}
+	if c.LocationConfig.Name == "" {
+		c.LocationConfig.Name = name
+	}
+}
+
+func (c *Config) applyConfiguredLocation(lat, lon float64, name string) {
+	if hw := c.Display.Header.Weather; hw != nil {
+		if hw.Latitude == 0 && hw.Longitude == 0 {
+			hw.Latitude = lat
+			hw.Longitude = lon
+		}
+		if hw.Location == "" && name != "" {
+			hw.Location = name
+		}
+	}
+	c.applyWeatherForecastDefaults(lat, lon, name)
+}
+
+func (c *Config) applyHeaderAndThemeDefaults() {
 	if hw := c.Display.Header.Weather; hw != nil {
 		if hw.Units == "" {
 			hw.Units = "imperial"
@@ -652,24 +666,89 @@ func (c *Config) applyDefaults() {
 	}
 }
 
-// Validate checks the semantic correctness of the parsed configuration.
-func (c *Config) Validate() error {
-	// 1. Timezone
-	if strings.TrimSpace(c.Timezone) == "" {
-		return fmt.Errorf("missing required configuration field 'timezone'")
+func (c *Config) applyDefaults() {
+	if c.Display.Rotation.Transition == "" {
+		c.Display.Rotation.Transition = "slide"
 	}
-	loc, err := time.LoadLocation(c.Timezone)
-	if err != nil {
-		return fmt.Errorf("invalid timezone '%s': %w", c.Timezone, err)
+	if c.Display.Grid.Columns == 0 {
+		c.Display.Grid.Columns = 6
 	}
-	c.location = loc
+	if c.Display.Grid.Rows == 0 {
+		c.Display.Grid.Rows = 2
+	}
 
-	// 2. Grid validation
+	c.applyLocationDefaults()
+	c.applyHeaderAndThemeDefaults()
+}
+
+func (c *Config) validateTheme() error {
+	tc := c.Display.Theme
+	if tc == nil {
+		return nil
+	}
+	mode := tc.GetMode()
+	switch mode {
+	case "auto", "day", "night":
+	default:
+		return fmt.Errorf("invalid theme mode '%s': must be one of auto, day, night", tc.Mode)
+	}
+	if mode == "auto" {
+		locCfg := c.GetLocationConfig()
+		if locCfg == nil || locCfg.Latitude == nil || locCfg.Longitude == nil {
+			return fmt.Errorf("theme mode 'auto' requires location coordinates (latitude and longitude) to be configured")
+		}
+	}
+	return nil
+}
+
+func (c *Config) validateUI() error {
+	switch ui := c.Display.GetUI(); ui {
+	case "legacy", "react":
+		return nil
+	default:
+		return fmt.Errorf("invalid display ui '%s': must be one of legacy, react", c.Display.UI)
+	}
+}
+
+func (c *Config) validateHeaderWeather() error {
+	hw := c.Display.Header.Weather
+	if hw == nil {
+		return nil
+	}
+	if err := checkPositiveInt(hw.RefreshIntervalSeconds, "header weather refresh_interval_seconds"); err != nil {
+		return err
+	}
+	if err := checkLatLon(hw.Latitude, hw.Longitude, "header weather"); err != nil {
+		return err
+	}
+	switch strings.ToLower(hw.Units) {
+	case "imperial", "metric":
+		return nil
+	default:
+		return fmt.Errorf("invalid header weather units '%s': must be 'imperial' or 'metric'", hw.Units)
+	}
+}
+
+func (c *Config) validateDisplayVoice() error {
+	v := c.Display.Voice
+	if v == nil || v.Waveform == nil {
+		return nil
+	}
+	vw := v.Waveform
+	if strings.TrimSpace(vw.LevelsURL) != "" && !isValidHTTPURL(vw.LevelsURL) {
+		return fmt.Errorf("display voice waveform levels_url must be an http(s) URL (got %q)", vw.LevelsURL)
+	}
+	if vw.Gain != nil && !(*vw.Gain > 0) {
+		return fmt.Errorf("display voice waveform gain must be positive (got %v)", *vw.Gain)
+	}
+	return nil
+}
+
+func (c *Config) validateDisplayAndHeader() error {
 	if err := validateGridAndWidgetDimensions(c.Display.Grid, "", nil); err != nil {
 		return err
 	}
 
-	// 3. Rotation validation
 	if err := checkNonNegativeInt(c.Display.Rotation.IntervalSeconds, "rotation interval_seconds"); err != nil {
 		return err
 	}
@@ -682,56 +761,25 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("invalid rotation transition '%s': must be one of slide, fade, instant, none", c.Display.Rotation.Transition)
 	}
 
-	// 3b. Location validation
 	if lc := c.LocationConfig; lc != nil && (lc.Latitude != nil || lc.Longitude != nil) {
 		if err := checkLatLon(derefOr(lc.Latitude, 0), derefOr(lc.Longitude, 0), "location"); err != nil {
 			return err
 		}
 	}
 
-	// 3c. Theme validation
-	if tc := c.Display.Theme; tc != nil {
-		mode := tc.GetMode()
-		switch mode {
-		case "auto", "day", "night":
-		default:
-			return fmt.Errorf("invalid theme mode '%s': must be one of auto, day, night", tc.Mode)
-		}
-		if mode == "auto" {
-			locCfg := c.GetLocationConfig()
-			if locCfg == nil || locCfg.Latitude == nil || locCfg.Longitude == nil {
-				return fmt.Errorf("theme mode 'auto' requires location coordinates (latitude and longitude) to be configured")
-			}
-		}
+	if err := c.validateTheme(); err != nil {
+		return err
 	}
-
-	// 4. Header Weather validation
-	if hw := c.Display.Header.Weather; hw != nil {
-		if err := checkPositiveInt(hw.RefreshIntervalSeconds, "header weather refresh_interval_seconds"); err != nil {
-			return err
-		}
-		if err := checkLatLon(hw.Latitude, hw.Longitude, "header weather"); err != nil {
-			return err
-		}
-		switch strings.ToLower(hw.Units) {
-		case "imperial", "metric":
-		default:
-			return fmt.Errorf("invalid header weather units '%s': must be 'imperial' or 'metric'", hw.Units)
-		}
+	if err := c.validateUI(); err != nil {
+		return err
 	}
-
-	// 4b. Voice waveform validation
-	if v := c.Display.Voice; v != nil && v.Waveform != nil {
-		vw := v.Waveform
-		if strings.TrimSpace(vw.LevelsURL) != "" && !isValidHTTPURL(vw.LevelsURL) {
-			return fmt.Errorf("display voice waveform levels_url must be an http(s) URL (got %q)", vw.LevelsURL)
-		}
-		if vw.Gain != nil && !(*vw.Gain > 0) {
-			return fmt.Errorf("display voice waveform gain must be positive (got %v)", *vw.Gain)
-		}
+	if err := c.validateHeaderWeather(); err != nil {
+		return err
 	}
+	return c.validateDisplayVoice()
+}
 
-	// 5. Widgets validation
+func (c *Config) validateWidgets() error {
 	seenIDs := make(map[string]int, len(c.Display.Widgets))
 	for i := range c.Display.Widgets {
 		w := &c.Display.Widgets[i]
@@ -769,8 +817,23 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("widget '%s': invalid endpoint URL '%s' (must be http:// or https:// with host)", w.ID, w.Endpoint)
 		}
 	}
+	return nil
+}
 
-	// 5b. ChatLog validation
+func validateVoiceHubFastPath(fp *FastPathConfig) error {
+	if fp == nil {
+		return nil
+	}
+	if err := checkPositiveInt(fp.TimeoutMS, "voice_hub fast_path timeout_ms"); err != nil {
+		return err
+	}
+	if fp.IsEnabled() && !isValidHTTPURL(fp.URL) {
+		return fmt.Errorf("voice_hub fast_path url must be an http(s) URL (got %q)", fp.URL)
+	}
+	return nil
+}
+
+func (c *Config) validateVoiceAndChatLog() error {
 	if cl := c.ChatLog; cl != nil {
 		if err := checkPositiveInt(cl.TTLMinutes, "chat_log ttl_minutes"); err != nil {
 			return err
@@ -780,28 +843,46 @@ func (c *Config) Validate() error {
 		}
 	}
 
-	// 6. VoiceHub validation
-	if vh := c.VoiceHub; vh != nil && vh.Enabled {
-		if err := checkPositiveInt(vh.BrainTimeoutSeconds, "voice_hub brain_timeout_seconds"); err != nil {
-			return err
-		}
-		if err := checkPositiveInt(vh.TTSTimeoutSeconds, "voice_hub tts_timeout_seconds"); err != nil {
-			return err
-		}
-		if fp := vh.FastPath; fp != nil {
-			if err := checkPositiveInt(fp.TimeoutMS, "voice_hub fast_path timeout_ms"); err != nil {
-				return err
-			}
-			if fp.IsEnabled() && !isValidHTTPURL(fp.URL) {
-				return fmt.Errorf("voice_hub fast_path url must be an http(s) URL (got %q)", fp.URL)
-			}
-		}
-		if err := validateSpeakerID(vh.SpeakerID); err != nil {
-			return err
-		}
+	vh := c.VoiceHub
+	if vh == nil || !vh.Enabled {
+		return nil
+	}
+	if err := checkPositiveInt(vh.BrainTimeoutSeconds, "voice_hub brain_timeout_seconds"); err != nil {
+		return err
+	}
+	if err := checkPositiveInt(vh.TTSTimeoutSeconds, "voice_hub tts_timeout_seconds"); err != nil {
+		return err
+	}
+	if err := validateVoiceHubFastPath(vh.FastPath); err != nil {
+		return err
+	}
+	return validateSpeakerID(vh.SpeakerID)
+}
+
+// Validate checks the semantic correctness of the parsed configuration.
+func (c *Config) Validate() error {
+	// 1. Timezone
+	if strings.TrimSpace(c.Timezone) == "" {
+		return fmt.Errorf("missing required configuration field 'timezone'")
+	}
+	loc, err := time.LoadLocation(c.Timezone)
+	if err != nil {
+		return fmt.Errorf("invalid timezone '%s': %w", c.Timezone, err)
+	}
+	c.location = loc
+
+	// 2. Display, Header, Location, Theme
+	if err := c.validateDisplayAndHeader(); err != nil {
+		return err
 	}
 
-	return nil
+	// 3. Widgets
+	if err := c.validateWidgets(); err != nil {
+		return err
+	}
+
+	// 4. Voice and ChatLog
+	return c.validateVoiceAndChatLog()
 }
 
 func validateSpeakerVector(id string, vec []float64) error {
@@ -917,8 +998,8 @@ func resolveEnvInValue(widgetID string, v any, prefix string, secrets map[string
 
 func resolveEnvInMap(widgetID string, m map[string]any, prefix string, secrets map[string]string, getenv func(string) string) error {
 	for k, v := range m {
-		if strings.HasSuffix(k, "_env") {
-			baseKey := strings.TrimSuffix(k, "_env")
+		if before, ok := strings.CutSuffix(k, "_env"); ok {
+			baseKey := before
 			if _, exists := m[baseKey]; exists {
 				return fmt.Errorf("widget '%s': cannot specify both '%s' and '%s'", widgetID, baseKey, k)
 			}

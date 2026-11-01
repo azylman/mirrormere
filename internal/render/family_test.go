@@ -3,6 +3,7 @@ package render
 import (
 	"bytes"
 	"html/template"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -51,9 +52,7 @@ func snap(evs ...provider.CalendarEvent) provider.CalendarSnapshot {
 
 func withFamilyCfg(overrides map[string]any) map[string]any {
 	cfg := baseFamilyConfig()
-	for k, v := range overrides {
-		cfg[k] = v
-	}
+	maps.Copy(cfg, overrides)
 	return cfg
 }
 
@@ -223,10 +222,10 @@ func TestBuildFamilyView(t *testing.T) {
 			),
 			exp: buildFamilyViewExpectations{
 				spanEvents: []FamilySpanEvent{
-					{StartCol: 1, ColSpan: 2, FamilyEvent: FamilyEvent{Title: "Cross-Window Trip"}},
-					{StartCol: 2, ColSpan: 3, FamilyEvent: FamilyEvent{Title: "Camping Trip"}},
-					{StartCol: 4, ColSpan: 1, FamilyEvent: FamilyEvent{Title: "Town Hall"}},
-					{StartCol: 7, ColSpan: 1, FamilyEvent: FamilyEvent{Title: "Future Trip"}},
+					{StartCol: 1, ColSpan: 2, Title: "Cross-Window Trip"},
+					{StartCol: 2, ColSpan: 3, Title: "Camping Trip"},
+					{StartCol: 4, ColSpan: 1, Title: "Town Hall"},
+					{StartCol: 7, ColSpan: 1, Title: "Future Trip"},
 				},
 			},
 		},
@@ -239,8 +238,8 @@ func TestBuildFamilyView(t *testing.T) {
 			),
 			exp: buildFamilyViewExpectations{
 				spanEvents: []FamilySpanEvent{
-					{StartCol: 2, ColSpan: 3, FamilyEvent: FamilyEvent{Title: "Camping Trip"}},
-					{StartCol: 4, ColSpan: 1, FamilyEvent: FamilyEvent{Title: "Town Hall"}},
+					{StartCol: 2, ColSpan: 3, Title: "Camping Trip"},
+					{StartCol: 4, ColSpan: 1, Title: "Town Hall"},
 				},
 			},
 		},
@@ -920,7 +919,7 @@ func TestBuildFamilyCombinedData(t *testing.T) {
 	weekView := &FamilyViewModel{
 		Today: "2026-10-10", RangeStart: "2026-10-05", RangeEnd: "2026-10-11",
 		Days:         []FamilyDay{{Date: "2026-10-10", DayOfMonth: 10}},
-		AllDayEvents: []FamilySpanEvent{{FamilyEvent: FamilyEvent{ID: "e_span", Title: "Conference"}}},
+		AllDayEvents: []FamilySpanEvent{{ID: "e_span", Title: "Conference"}},
 	}
 	monthView := &FamilyMonthViewModel{
 		RangeStart: "2026-09-28", RangeEnd: "2026-11-08",

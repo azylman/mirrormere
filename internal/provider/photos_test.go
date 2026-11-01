@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -58,9 +59,7 @@ func TestPhotosProvider_FetchExtraction(t *testing.T) {
 			defer ts.Close()
 
 			cfg := map[string]any{"share_url": ts.URL}
-			for k, v := range tc.cfg {
-				cfg[k] = v
-			}
+			maps.Copy(cfg, tc.cfg)
 			p := provider.NewPhotosProvider()
 			if err := p.Init(context.Background(), cfg, provider.InitOptions{}); err != nil {
 				t.Fatalf("Init failed: %v", err)
@@ -139,7 +138,7 @@ func TestPhotosProvider_ErrorsAndSWR(t *testing.T) {
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "text/html")
 			chunk := strings.Repeat("A", 1024*1024)
-			for i := 0; i < 6; i++ {
+			for range 6 {
 				_, _ = io.WriteString(w, chunk)
 			}
 		}))
@@ -158,10 +157,10 @@ func TestPhotosProvider_ErrorsAndSWR(t *testing.T) {
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			count++
 			if count == 1 {
-				w.WriteHeader(200)
+				w.WriteHeader(http.StatusOK)
 				_, _ = w.Write([]byte(`<html><head><title>SWR</title></head><body><img src="https://lh3.googleusercontent.com/pw/SWROK"/></body></html>`))
 			} else {
-				w.WriteHeader(500)
+				w.WriteHeader(http.StatusInternalServerError)
 			}
 		}))
 		defer ts.Close()

@@ -65,21 +65,22 @@ func mkMemberYAML(name, color, pattern, cals string) string {
 	if name == "" && color == "" && pattern == "" && cals == "" {
 		return "          - {}\n"
 	}
-	res := "          - name: " + name + "\n"
+	var sb strings.Builder
+	sb.WriteString("          - name: " + name + "\n")
 	for _, kv := range [][2]string{{color, `color: "` + color + `"`}, {pattern, "pattern: " + pattern}, {cals, "calendars: " + cals}} {
 		if kv[0] != "" {
-			res += "            " + kv[1] + "\n"
+			sb.WriteString("            " + kv[1] + "\n")
 		}
 	}
-	return res
+	return sb.String()
 }
 
 func makeNineMembers() string {
-	res := ""
+	var sb strings.Builder
 	for i := range 9 {
-		res += mkMemberYAML(fmt.Sprintf("Member%c", 'A'+i), "#E07A5F", "solid", "[alex-personal]")
+		sb.WriteString(mkMemberYAML(fmt.Sprintf("Member%c", 'A'+i), "#E07A5F", "solid", "[alex-personal]"))
 	}
-	return res
+	return sb.String()
 }
 
 func mkTaskYAML(id, dims, listID, source, extra string) string {
@@ -396,9 +397,7 @@ func TestLKGC_ConcurrencyAndRace(t *testing.T) {
 	stopChan := make(chan struct{})
 
 	for range 10 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for {
 				select {
 				case <-stopChan:
@@ -412,14 +411,12 @@ func TestLKGC_ConcurrencyAndRace(t *testing.T) {
 					}
 				}
 			}
-		}()
+		})
 	}
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		zones := []string{"America/New_York", "America/Chicago", "America/Denver", "America/Los_Angeles"}
-		for i := 0; i < 20; i++ {
+		for i := range 20 {
 			y := "invalid: yaml: ["
 			if i%2 == 0 {
 				y = strings.Replace(validBaseYAML, "America/New_York", zones[i%len(zones)], 1)
@@ -427,7 +424,7 @@ func TestLKGC_ConcurrencyAndRace(t *testing.T) {
 			_, _, _ = m.Reload([]byte(y))
 		}
 		close(stopChan)
-	}()
+	})
 	wg.Wait()
 }
 

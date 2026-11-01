@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -225,7 +226,7 @@ func refresh(t *testing.T, c *provider.ProviderCoordinator, id string) {
 func mkWidget(id, typ string, interval int, cfg map[string]any) config.WidgetConfig {
 	c := config.WidgetConfig{ID: id, Type: typ, Config: cfg}
 	if interval > 0 {
-		c.RefreshIntervalSeconds = intPtr(interval)
+		c.RefreshIntervalSeconds = new(interval)
 	}
 	return c
 }
@@ -293,7 +294,7 @@ func TestProviderCoordinator_LifecycleAndSWR(t *testing.T) {
 	t.Parallel()
 	mockP1, b1, s1 := newControllableMockProvider(), &mockBroadcaster{}, newMockStateSink()
 	coord1 := newCoord(regOne("mock-weather", mockP1), b1, s1, mkSnap("", nil, config.WidgetConfig{
-		ID: "weather-tile", Type: "mock-weather", Dimensions: []int{2, 1}, RefreshIntervalSeconds: intPtr(60),
+		ID: "weather-tile", Type: "mock-weather", Dimensions: []int{2, 1}, RefreshIntervalSeconds: new(60),
 		Config: map[string]any{"city": "Oakland"}, Endpoint: "https://api.example.com/weather", Token: "secret123",
 	}))
 	defer coord1.Stop()
@@ -537,21 +538,21 @@ func TestProviderCoordinator_ConfigAndOptionsResolution(t *testing.T) {
 	reg.Register("minimal-type", func() provider.Provider { return p2 })
 	coord = newCoord(reg, nil, nil, mkSnap("America/Los_Angeles", nil,
 		config.WidgetConfig{
-			ID: "sensor-tile-1", Type: "custom-sensor", Dimensions: []int{2, 1}, RefreshIntervalSeconds: intPtr(30),
+			ID: "sensor-tile-1", Type: "custom-sensor", Dimensions: []int{2, 1}, RefreshIntervalSeconds: new(30),
 			Endpoint: "https://sensor.local/api/metrics", Method: "POST", TokenEnv: "SENSOR_TOKEN", Token: "resolved-bearer-token",
 			Secrets: map[string]string{"token": "resolved-bearer-token", "api_key": "secret-sensor-api-key"},
 			Config:  map[string]any{"city": "Oakland", "endpoint": "domain-endpoint-override", "api_key_env": "SENSOR_API_KEY"},
 		},
-		config.WidgetConfig{ID: "min-tile", Type: "minimal-type", RefreshIntervalSeconds: intPtr(30), Endpoint: "http://bare.local/poll", Token: "standalone-token"},
+		config.WidgetConfig{ID: "min-tile", Type: "minimal-type", RefreshIntervalSeconds: new(30), Endpoint: "http://bare.local/poll", Token: "standalone-token"},
 	))
 	defer coord.Stop()
 	if p1.initCfg["token"] != nil || p1.initCfg["token_env"] != nil || p1.initCfg["method"] != nil || p1.initCfg["endpoint"] != "domain-endpoint-override" || p1.initCfg["city"] != "Oakland" || p1.initCfg["api_key_env"] != "SENSOR_API_KEY" {
 		t.Errorf("unexpected domain config: %v", p1.initCfg)
 	}
-	if p1.initOpts.ID != "sensor-tile-1" || p1.initOpts.Type != "custom-sensor" || p1.initOpts.Endpoint != "https://sensor.local/api/metrics" || p1.initOpts.Method != "POST" || p1.initOpts.GetSecret("api_key") != "secret-sensor-api-key" || p1.initOpts.Timezone != "America/Los_Angeles" {
+	if p1.initOpts.ID != "sensor-tile-1" || p1.initOpts.Type != "custom-sensor" || p1.initOpts.Endpoint != "https://sensor.local/api/metrics" || p1.initOpts.Method != http.MethodPost || p1.initOpts.GetSecret("api_key") != "secret-sensor-api-key" || p1.initOpts.Timezone != "America/Los_Angeles" {
 		t.Errorf("unexpected initOpts: %+v", p1.initOpts)
 	}
-	if !p2.initCalled || p2.initOpts.Method != "POST" || p2.initOpts.Token != "standalone-token" || p2.initOpts.GetSecret("token") != "standalone-token" {
+	if !p2.initCalled || p2.initOpts.Method != http.MethodPost || p2.initOpts.Token != "standalone-token" || p2.initOpts.GetSecret("token") != "standalone-token" {
 		t.Errorf("unexpected fallback options: called=%v, opts=%+v", p2.initCalled, p2.initOpts)
 	}
 }
@@ -583,10 +584,11 @@ func TestProviderCoordinator_PushWidgetData(t *testing.T) {
 		"custom-sensor":     mkPkg("custom-sensor", "http", 0, map[string]any{"type": "object", "required": []any{"temperature", "humidity"}, "properties": map[string]any{"temperature": map[string]any{"type": "number"}, "humidity": map[string]any{"type": "number"}}}),
 		"bad-schema-widget": mkPkg("bad-schema-widget", "http", 0, map[string]any{"type": 12345}),
 	}
-	widgets := []config.WidgetConfig{
-		{ID: "tile-custom", Type: "custom-sensor", Endpoint: "https://example.com/sensor"},
-		{ID: "tile-bad-schema", Type: "bad-schema-widget", Endpoint: "https://example.com/bad"},
-	}
+	widgets := make([]config.WidgetConfig, 0, 5)
+	widgets = append(widgets,
+		config.WidgetConfig{ID: "tile-custom", Type: "custom-sensor", Endpoint: "https://example.com/sensor"},
+		config.WidgetConfig{ID: "tile-bad-schema", Type: "bad-schema-widget", Endpoint: "https://example.com/bad"},
+	)
 	for typ, id := range map[string]string{"tasks": "tile-tasks", "calendar-feed": "tile-calendar", "weather-forecast": "tile-weather"} {
 		pkgs[typ] = mkPkg(typ, typ, 0, nil)
 		widgets = append(widgets, mkWidget(id, typ, 0, nil))

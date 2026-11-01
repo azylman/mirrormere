@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM python:3.11-slim AS builder
+FROM python:3.12-slim AS builder
 
 WORKDIR /build
 
@@ -34,7 +34,7 @@ RUN mkdir -p /opt/mirrormere/voice/sherpa && \
     curl -SL -o /opt/mirrormere/voice/sherpa/silero_vad.onnx \
       https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx
 
-FROM python:3.11-slim
+FROM python:3.12-slim
 
 WORKDIR /app
 

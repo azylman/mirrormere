@@ -15,9 +15,6 @@ import (
 	"github.com/azylman/mirrormere/internal/provider"
 )
 
-func intPtr(i int) *int    { return &i }
-func boolPtr(b bool) *bool { return &b }
-
 type mockHeaderSink struct {
 	mu      sync.Mutex
 	weather *events.HeaderWeather
@@ -77,11 +74,11 @@ func TestHeaderWeatherPoller_FetchOnce(t *testing.T) {
 		wantErrSub string
 		checkSink  bool
 	}{
-		{"imperial", 200, sampleHeaderOpenMeteoJSON(), "", mkHeaderCfg(37.8044, -122.2712, "imperial", intPtr(900)), "America/Los_Angeles", 72.4, "F", 1, "weather-partly-cloudy", "", "", []string{"temperature_unit=fahrenheit", "latitude=37.8044"}, "", true},
-		{"custom_location", 200, sampleHeaderOpenMeteoJSON(), "", mkHeaderCfgWithLoc(37.8044, -122.2712, "imperial", intPtr(900), "San Francisco"), "America/Los_Angeles", 72.4, "F", 1, "weather-partly-cloudy", "", "San Francisco", []string{"temperature_unit=fahrenheit"}, "", false},
-		{"metric", 200, sampleHeaderOpenMeteoJSON(), "", mkHeaderCfg(51.5074, -0.1278, "metric", intPtr(900)), "Europe/London", 0, "C", 0, "", "", "", []string{"temperature_unit=celsius"}, "", false},
+		{"imperial", 200, sampleHeaderOpenMeteoJSON(), "", mkHeaderCfg(37.8044, -122.2712, "imperial", new(900)), "America/Los_Angeles", 72.4, "F", 1, "weather-partly-cloudy", "", "", []string{"temperature_unit=fahrenheit", "latitude=37.8044"}, "", true},
+		{"custom_location", 200, sampleHeaderOpenMeteoJSON(), "", mkHeaderCfgWithLoc(37.8044, -122.2712, "imperial", new(900), "San Francisco"), "America/Los_Angeles", 72.4, "F", 1, "weather-partly-cloudy", "", "San Francisco", []string{"temperature_unit=fahrenheit"}, "", false},
+		{"metric", 200, sampleHeaderOpenMeteoJSON(), "", mkHeaderCfg(51.5074, -0.1278, "metric", new(900)), "Europe/London", 0, "C", 0, "", "", "", []string{"temperature_unit=celsius"}, "", false},
 		{"nighttime", 200, sampleHeaderNightJSON, "", mkHeaderCfg(37.8044, -122.2712, "imperial", nil), "America/Los_Angeles", 0, "", 0, "weather-clear-night", "Clear", "", nil, "", false},
-		{"empty_tz_zero_interval", 200, sampleHeaderOpenMeteoJSON(), "", mkHeaderCfg(37.8, -122.2, "", intPtr(0)), "", 0, "", 0, "", "", "", nil, "", false},
+		{"empty_tz_zero_interval", 200, sampleHeaderOpenMeteoJSON(), "", mkHeaderCfg(37.8, -122.2, "", new(0)), "", 0, "", 0, "", "", "", nil, "", false},
 		{"nil_config", 0, "", "", nil, "", 0, "", 0, "", "", "", nil, "", false},
 		{"http_500", 500, "upstream failure", "", mkHeaderCfg(37.8, -122.2, "", nil), "UTC", 0, "", 0, "", "", "", nil, "HTTP 500", false},
 		{"malformed_json", 200, "not valid json", "", mkHeaderCfg(37.8, -122.2, "", nil), "UTC", 0, "", 0, "", "", "", nil, "failed to decode header Open-Meteo response", false},
@@ -187,13 +184,13 @@ func TestHeaderWeatherPoller_StartStopUpdate(t *testing.T) {
 
 	poller := provider.NewHeaderWeatherPoller(provider.HeaderWeatherPollerConfig{Client: ts.Client(), BaseURL: ts.URL})
 	poller.Start(context.Background(), nil, "UTC")
-	poller.Start(context.Background(), mkHeaderCfg(37.8, -122.2, "", intPtr(1)), "America/Los_Angeles")
+	poller.Start(context.Background(), mkHeaderCfg(37.8, -122.2, "", new(1)), "America/Los_Angeles")
 	select {
 	case <-fetched:
 	case <-time.After(2 * time.Second):
 		t.Fatal("timeout waiting for initial fetch")
 	}
-	poller.UpdateConfig(context.Background(), mkHeaderCfg(51.5, -0.1, "", intPtr(900)), "Europe/London")
+	poller.UpdateConfig(context.Background(), mkHeaderCfg(51.5, -0.1, "", new(900)), "Europe/London")
 	poller.Stop()
 	poller.Stop()
 }
@@ -208,7 +205,7 @@ func TestProviderCoordinator_HeaderWeatherPoller_Lifecycle(t *testing.T) {
 
 	sink, broadcaster := &mockHeaderSink{}, &mockBroadcaster{}
 	snap := &config.Snapshot{Config: &config.Config{Timezone: "America/Los_Angeles", Display: config.DisplayConfig{
-		Header: config.HeaderConfig{Enabled: boolPtr(true), Weather: mkHeaderCfg(37.8044, -122.2712, "imperial", intPtr(900))},
+		Header: config.HeaderConfig{Enabled: new(true), Weather: mkHeaderCfg(37.8044, -122.2712, "imperial", new(900))},
 	}}}
 	coord := provider.NewCoordinator(provider.CoordinatorConfig{
 		Broadcaster: broadcaster, HeaderWeatherSink: sink, HeaderPollerClient: ts.Client(), HeaderPollerBaseURL: ts.URL,
@@ -221,12 +218,12 @@ func TestProviderCoordinator_HeaderWeatherPoller_Lifecycle(t *testing.T) {
 	}
 
 	newSnap := &config.Snapshot{Config: &config.Config{Timezone: "Europe/London", Display: config.DisplayConfig{
-		Header: config.HeaderConfig{Enabled: boolPtr(true), Weather: mkHeaderCfg(51.5074, -0.1278, "metric", intPtr(600))},
+		Header: config.HeaderConfig{Enabled: new(true), Weather: mkHeaderCfg(51.5074, -0.1278, "metric", new(600))},
 	}}}
 	if err := coord.UpdateConfig(newSnap); err != nil {
 		t.Fatalf("UpdateConfig failed: %v", err)
 	}
-	noWeatherSnap := &config.Snapshot{Config: &config.Config{Timezone: "UTC", Display: config.DisplayConfig{Header: config.HeaderConfig{Enabled: boolPtr(true)}}}}
+	noWeatherSnap := &config.Snapshot{Config: &config.Config{Timezone: "UTC", Display: config.DisplayConfig{Header: config.HeaderConfig{Enabled: new(true)}}}}
 	if err := coord.UpdateConfig(noWeatherSnap); err != nil {
 		t.Fatalf("UpdateConfig removing weather failed: %v", err)
 	}

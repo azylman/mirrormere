@@ -1,34 +1,121 @@
 version: "2"
 linters:
   enable:
+    - asasalint
+    - asciicheck
+    - bidichk
     - bodyclose
+    - canonicalheader
     - containedctx
     - copyloopvar
+    - cyclop
+    - decorder
+    - dogsled
+    - dupl
+    - dupword
+    - durationcheck
+    - embeddedstructfieldcheck
     - errcheck
     - errchkjson
     - errname
     - errorlint
+    - exhaustive
+    - exptostd
     - fatcontext
+    - funlen
+    - gocheckcompilerdirectives
+    - gochecksumtype
+    - gocognit
     - gocritic
+    - gocyclo
+    - godoclint
+    - gomoddirectives
+    - goprintffuncname
+    - gosec
+    - gosmopolitan
     - govet
+    - grouper
+    - iface
+    - inamedparam
     - ineffassign
+    - intrange
+    - iotamixing
+    - loggercheck
+    - maintidx
+    - makezero
+    - mirror
+    - misspell
+    - modernize
+    - musttag
+    - nakedret
+    - nestif
     - nilerr
+    - nilnesserr
     - nilnil
     - noctx
+    - nolintlint
+    - nosprintfhostport
+    - perfsprint
+    - prealloc
     - predeclared
+    - protogetter
+    - reassign
+    - recvcheck
+    - revive
+    - rowserrcheck
+    - sloglint
+    - spancheck
     - sqlclosecheck
     - staticcheck
+    - testableexamples
+    - thelper
     - tparallel
     - unconvert
     - unparam
+    - unqueryvet
     - unused
+    - usestdlibvars
+    - usetesting
     - wastedassign
+    - whitespace
   settings:
-    gocritic:
-      disable-all: true
-      enabled-checks:
-        - evalOrder
-        - sloppyReassign
+    cyclop:
+      max-complexity: 20
+      package-average: 10.0
+    exhaustive:
+      default-signifies-exhaustive: true
+    gomoddirectives:
+      replace-local: true
+    perfsprint:
+      error-format: false
+    dupl:
+      threshold: 100
+    dupword:
+      comments-only: true
+    funlen:
+      lines: 150
+      statements: -1
+      ignore-comments: true
+    gocognit:
+      min-complexity: 30
+    gocritic: {}
+    gocyclo:
+      min-complexity: 20
+    govet:
+      enable:
+        - nilness
+        - reflectvaluecompare
+        - sortslice
+        - timeformat
+        - unusedwrite
+    modernize:
+      disable:
+        - omitzero
+    nestif:
+      min-complexity: 5
+    thelper:
+      tb:
+        name: false
     errcheck:
       check-type-assertions: true
       check-blank: true
@@ -48,21 +135,82 @@ linters:
     staticcheck:
       checks:
         - "SA*"
+        - "S1*"
+        - "QF1*"
+    dogsled:
+      max-blank-identifiers: 3
+    gosec:
+      excludes:
+        - G101
+        - G104
+        - G115
+        - G117
+        - G118
+        - G122
+        - G201
+        - G202
+        - G203
+        - G204
+        - G301
+        - G302
+        - G304
+        - G306
+        - G402
+        - G404
+        - G505
+        - G701
+        - G702
+        - G703
+        - G704
+        - G705
+        - G706
+    gosmopolitan:
+      allow-time-local: true
+    revive:
+      rules:
+        - name: blank-imports
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: dot-imports
+        - name: empty-block
+        - name: error-naming
+        - name: error-return
+        - name: errorf
+        - name: increment-decrement
+        - name: indent-error-flow
+        - name: range
+        - name: receiver-naming
+        - name: redefines-builtin-id
+        - name: superfluous-else
+        - name: time-naming
+        - name: unexported-return
+        - name: unreachable-code
+        - name: var-declaration
+        - name: var-naming
   exclusions:
     generated: lax
     rules:
       - linters:
           - containedctx
+          - cyclop
+          - dupl
           - errcheck
           - errchkjson
-          - ineffassign
+          - funlen
+          - gocognit
+          - gocyclo
+          - gosec
+          - gosmopolitan
+          - maintidx
+          - nestif
           - nilnil
           - noctx
-          - staticcheck
           - unparam
-          - unused
-          - wastedassign
         path: _test\.go
+      - linters:
+          - staticcheck
+        path: _test\.go
+        text: "SA1012:"
       - linters:
           - containedctx
         path: internal/voice/hub\.go

@@ -117,42 +117,24 @@ func (h *DefaultVideoHandler) PostVideoTrigger(w http.ResponseWriter, r *http.Re
 
 // PostVideoDismiss handles POST /api/video/dismiss.
 func (h *DefaultVideoHandler) PostVideoDismiss(w http.ResponseWriter, r *http.Request) {
-	if !requireCORSAndMethod(w, r, "POST, OPTIONS", http.MethodPost) || !h.ready(w) {
-		return
-	}
 	var req api.VideoDismissRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Id) == "" {
-		msg := "invalid video dismiss request: malformed JSON"
-		if err == nil {
-			msg = "invalid video dismiss request: id is required"
-		}
-		writeAPIError(w, http.StatusBadRequest, msg)
+	if !h.decodeRequiredVideoPost(w, r, &req,
+		"invalid video dismiss request: malformed JSON",
+		"invalid video dismiss request: id is required",
+		func() bool { return strings.TrimSpace(req.Id) == "" }) {
 		return
 	}
 	newState, err := h.coord.Dismiss(req.Id)
-	if err != nil {
-		if errors.Is(err, video.ErrStreamNotFound) {
-			writeAPIError(w, http.StatusNotFound, "stream not active")
-			return
-		}
-		writeAPIError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, toAPIVideoStateResponse(newState))
+	writeStreamMutationResult(w, err, toAPIVideoStateResponse(newState))
 }
 
 // PostVideoAction handles POST /api/video/action.
 func (h *DefaultVideoHandler) PostVideoAction(w http.ResponseWriter, r *http.Request) {
-	if !requireCORSAndMethod(w, r, "POST, OPTIONS", http.MethodPost) || !h.ready(w) {
-		return
-	}
 	var req api.VideoActionRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Id) == "" || string(req.Action) == "" {
-		msg := "invalid video action request: malformed JSON"
-		if err == nil {
-			msg = "invalid video action request: id and action are required"
-		}
-		writeAPIError(w, http.StatusBadRequest, msg)
+	if !h.decodeRequiredVideoPost(w, r, &req,
+		"invalid video action request: malformed JSON",
+		"invalid video action request: id and action are required",
+		func() bool { return strings.TrimSpace(req.Id) == "" || string(req.Action) == "" }) {
 		return
 	}
 	err := h.coord.ForwardAction(r.Context(), req.Id, string(req.Action), req.Value)
@@ -174,22 +156,38 @@ func (h *DefaultVideoHandler) PostVideoAction(w http.ResponseWriter, r *http.Req
 
 // PostVideoState handles POST /api/video/state.
 func (h *DefaultVideoHandler) PostVideoState(w http.ResponseWriter, r *http.Request) {
-	if !requireCORSAndMethod(w, r, "POST, OPTIONS", http.MethodPost) || !h.ready(w) {
-		return
-	}
 	var req api.VideoPlayerStateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Id) == "" || string(req.PlayerState) == "" {
-		msg := "invalid video player state request: malformed JSON"
-		if err == nil {
-			msg = "invalid video player state request: id and player_state are required"
-		}
-		writeAPIError(w, http.StatusBadRequest, msg)
+	if !h.decodeRequiredVideoPost(w, r, &req,
+		"invalid video player state request: malformed JSON",
+		"invalid video player state request: id and player_state are required",
+		func() bool { return strings.TrimSpace(req.Id) == "" || string(req.PlayerState) == "" }) {
 		return
 	}
 	update := video.VideoStream{ID: req.Id, PlayerState: string(req.PlayerState)}
 	applyStreamMetadata(&update, req.Title, req.Series, req.Season, req.Episode, req.Position, req.Duration, req.PositionUpdatedAt)
 
 	_, err := h.coord.UpdatePlayerState(req.Id, update)
+	writeStreamMutationResult(w, err, api.VideoPlayerStateResponse{
+		Status: "ok", Id: req.Id, PlayerState: api.VideoPlayerStateResponsePlayerState(req.PlayerState),
+	})
+}
+
+func (h *DefaultVideoHandler) decodeRequiredVideoPost(w http.ResponseWriter, r *http.Request, dst any, malformedMsg, missingMsg string, missing func() bool) bool {
+	if !requireCORSAndMethod(w, r, "POST, OPTIONS", http.MethodPost) || !h.ready(w) {
+		return false
+	}
+	if err := json.NewDecoder(r.Body).Decode(dst); err != nil {
+		writeAPIError(w, http.StatusBadRequest, malformedMsg)
+		return false
+	}
+	if missing != nil && missing() {
+		writeAPIError(w, http.StatusBadRequest, missingMsg)
+		return false
+	}
+	return true
+}
+
+func writeStreamMutationResult(w http.ResponseWriter, err error, resp any) {
 	if err != nil {
 		if errors.Is(err, video.ErrStreamNotFound) {
 			writeAPIError(w, http.StatusNotFound, "stream not active")
@@ -198,9 +196,7 @@ func (h *DefaultVideoHandler) PostVideoState(w http.ResponseWriter, r *http.Requ
 		writeAPIError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, api.VideoPlayerStateResponse{
-		Status: "ok", Id: req.Id, PlayerState: api.VideoPlayerStateResponsePlayerState(req.PlayerState),
-	})
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func ptrWhen[T any](v T, cond bool) *T {

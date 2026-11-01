@@ -440,8 +440,7 @@ func TestCastClient_WatchdogTrigger(t *testing.T) {
 		WatchdogTimeout:   10 * time.Millisecond,
 		ReconnectBase:     20 * time.Millisecond,
 	})
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	client.Start(ctx)
 	defer client.Close()
@@ -513,7 +512,7 @@ func TestCastClient_LifecycleAndEdgeCases(t *testing.T) {
 	cBack.Start(ctxB)
 
 	cQueue := NewCastClient(ClientConfig{})
-	for i := 0; i < 64; i++ {
+	for range 64 {
 		cQueue.dispatchCh <- func() {}
 	}
 	called := make(chan struct{})

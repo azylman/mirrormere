@@ -1,7 +1,6 @@
 package voice
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -24,8 +23,6 @@ func (m *mockSink) SetVoiceState(state *events.VoiceStateData) {
 	m.mu.Unlock()
 }
 
-func strPtr(s string) *string { return &s }
-
 func TestCoordinator_StateAndStatusTransitions(t *testing.T) {
 	t.Parallel()
 	sinkInit := &mockSink{}
@@ -36,8 +33,7 @@ func TestCoordinator_StateAndStatusTransitions(t *testing.T) {
 	sink := &mockSink{}
 	hub := events.NewHub(events.HubConfig{RingCapacity: 10, RingTTL: time.Minute}, nil, nil)
 	t.Cleanup(hub.Close)
-	subCtx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	subCtx := t.Context()
 	sub, unsub := hub.Subscribe(subCtx)
 	defer unsub()
 
@@ -47,12 +43,12 @@ func TestCoordinator_StateAndStatusTransitions(t *testing.T) {
 		transcript, reply, engine, status *string
 	}{
 		{StateIdle, nil, nil, nil, nil},
-		{StateListening, strPtr("listening..."), nil, nil, nil},
-		{StateTranscribing, strPtr("Turn on kitchen"), nil, nil, nil},
-		{StateThinking, strPtr("Turn on kitchen lights"), nil, nil, strPtr("⚡ Running tool...")},
-		{StateSynthesizing, strPtr("Turn on kitchen lights"), strPtr("Turning on lights"), strPtr("kokoro"), nil},
-		{StateSpeaking, strPtr("Turn on kitchen lights"), strPtr("Turning on lights"), strPtr("kokoro"), nil},
-		{StateError, nil, nil, nil, strPtr("network error")},
+		{StateListening, new("listening..."), nil, nil, nil},
+		{StateTranscribing, new("Turn on kitchen"), nil, nil, nil},
+		{StateThinking, new("Turn on kitchen lights"), nil, nil, new("⚡ Running tool...")},
+		{StateSynthesizing, new("Turn on kitchen lights"), new("Turning on lights"), new("kokoro"), nil},
+		{StateSpeaking, new("Turn on kitchen lights"), new("Turning on lights"), new("kokoro"), nil},
+		{StateError, nil, nil, nil, new("network error")},
 	} {
 		st, err := c.SetFullState(tc.state, tc.transcript, tc.reply, tc.engine, tc.status)
 		if !IsValidState(tc.state) || err != nil || st.State != tc.state || sink.last == nil || sink.last.State != tc.state {
@@ -69,11 +65,11 @@ func TestCoordinator_StateAndStatusTransitions(t *testing.T) {
 		}
 	}
 
-	if st, err := c.SetState(StateThinking, strPtr("q"), nil, nil); err != nil || st.Status != nil {
+	if st, err := c.SetState(StateThinking, new("q"), nil, nil); err != nil || st.Status != nil {
 		t.Fatalf("SetState should clear status: %+v", st)
 	}
 	<-sub
-	if st := c.SetStatus(strPtr("⚡ Querying...")); st.State != StateThinking || st.Status == nil || *st.Status != "⚡ Querying..." {
+	if st := c.SetStatus(new("⚡ Querying...")); st.State != StateThinking || st.Status == nil || *st.Status != "⚡ Querying..." {
 		t.Fatalf("SetStatus mismatch: %+v", st)
 	}
 	<-sub
@@ -118,8 +114,7 @@ func TestCoordinator_SpeakingSafetyWatchdog(t *testing.T) {
 
 	hub := events.NewHub(events.HubConfig{RingCapacity: 10, RingTTL: time.Minute}, nil, nil)
 	t.Cleanup(hub.Close)
-	subCtx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	subCtx := t.Context()
 	sub, unsub := hub.Subscribe(subCtx)
 	defer unsub()
 
@@ -165,7 +160,7 @@ func TestCoordinator_ConcurrentAndSchema(t *testing.T) {
 	c := NewCoordinator(nil)
 	states := []string{StateIdle, StateListening, StateTranscribing, StateThinking, StateSynthesizing, StateSpeaking, StateError}
 	var wg sync.WaitGroup
-	for i := 0; i < 50; i++ {
+	for i := range 50 {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()

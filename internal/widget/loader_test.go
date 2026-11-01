@@ -184,6 +184,7 @@ func TestBuiltinPackagesAndAliases(t *testing.T) {
 		{"live-view", "live-view", "live-view", 3, 2, 0, true},
 		{"calendar-feed", "calendar-feed", "calendar-feed", 4, 2, 0, false},
 		{"calendar-grid", "calendar-grid", "calendar-feed", 6, 2, 0, false},
+		{"web-embed", "web-embed", "spacer", 2, 2, 5, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -195,5 +196,20 @@ func TestBuiltinPackagesAndAliases(t *testing.T) {
 				t.Fatalf("LoadPackage(%q) = (%+v, %v)", tc.name, pkg, err)
 			}
 		})
+	}
+}
+
+// The legacy-test fixture is a custom package with only a legacy HTML template and a stylesheet,
+// the shape the React UI renders through LegacyWidget.
+func TestLoader_LegacyTestFixture(t *testing.T) {
+	pkg, err := widget.NewLoader("", "testdata").LoadPackage("legacy-test")
+	if err != nil {
+		t.Fatalf("LoadPackage(legacy-test): %v", err)
+	}
+	if pkg.Source != "custom" {
+		t.Errorf("Source = %q, want custom", pkg.Source)
+	}
+	if !pkg.HasAssets() {
+		t.Error("legacy-test fixture should expose an assets directory")
 	}
 }

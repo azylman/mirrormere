@@ -5,6 +5,15 @@ func WithTemplatePath(path string) HandlerOption { return func(h *Handler) { h.t
 func WithLocalTemplatePath(path string) HandlerOption {
 	return func(h *Handler) { h.localTemplatePath = path }
 }
+
+func WithReactTemplatePath(path string) HandlerOption {
+	return func(h *Handler) { h.reactTemplatePath = path }
+}
+
+func WithLocalReactTemplatePath(path string) HandlerOption {
+	return func(h *Handler) { h.localReactTemplatePath = path }
+}
+
 func WithStaticDir(dir string) HandlerOption      { return func(h *Handler) { h.staticDir = dir } }
 func WithLocalStaticDir(dir string) HandlerOption { return func(h *Handler) { h.localStaticDir = dir } }
 

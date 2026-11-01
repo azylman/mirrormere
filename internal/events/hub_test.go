@@ -2,7 +2,7 @@ package events
 
 import (
 	"context"
-	"fmt"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -66,24 +66,20 @@ func TestHub_ConcurrentPublishAndSubscribe(t *testing.T) {
 	defer cancel()
 
 	var wg, pubWg sync.WaitGroup
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		ch, unsub := hub.Subscribe(ctx)
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			defer unsub()
 			for range ch {
 			}
-		}()
+		})
 	}
-	for i := 0; i < 5; i++ {
-		pubWg.Add(1)
-		go func() {
-			defer pubWg.Done()
-			for j := 0; j < 20; j++ {
+	for range 5 {
+		pubWg.Go(func() {
+			for range 20 {
 				hub.Publish(EventWidgetUpdate, []byte("{}"))
 			}
-		}()
+		})
 	}
 	pubWg.Wait()
 	cancel()
@@ -141,9 +137,9 @@ func TestHub_PublishSyncsStateProvider(t *testing.T) {
 			var got string
 			switch tc.eventType {
 			case EventScreenRotate:
-				got = fmt.Sprintf("%d", provider.GetScreenRotateData().CurrentScreen)
+				got = strconv.Itoa(provider.GetScreenRotateData().CurrentScreen)
 			case EventAudioState:
-				got = fmt.Sprintf("%d", provider.GetAudioState().Volume)
+				got = strconv.Itoa(provider.GetAudioState().Volume)
 			case EventVideoState:
 				got = provider.GetVideoState().Mode
 			case EventVoiceState:

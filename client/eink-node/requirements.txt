@@ -1,7 +1,7 @@
 # Mirrormere E-Ink Node Client Dependencies
 
 # Core configuration parser
-PyYAML>=6.0.1
+PyYAML>=6.0.3
 
 # Hardware dependencies (installed on Raspberry Pi OS host in Chunk 5.3):
 # spidev>=3.6

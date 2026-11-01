@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>YouTube Music & Speakers</title>
+<link href="https://fonts.googleapis.com/css2?family=Comfortaa:wght@600;700&family=Nunito:wght@500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --text-main: #f8fafc;
+    --text-sub: rgba(226, 232, 240, 0.72);
+    --card-bg: rgba(30, 41, 59, 0.55);
+    --pill-bg: rgba(255, 255, 255, 0.08);
+    --accent: #ef4444;
+    --spk-active: #10b981;
+  }
+  body.theme-day {
+    --text-main: #1e293b;
+    --text-sub: #64748b;
+    --card-bg: rgba(255, 255, 255, 0.75);
+    --pill-bg: rgba(15, 23, 42, 0.07);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Nunito', sans-serif;
+    background: transparent;
+    color: var(--text-main);
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    padding: 8px 12px 10px;
+    user-select: none;
+    gap: 8px;
+  }
+  /* Speaker Row */
+  .speaker-bar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    overflow-x: auto;
+    scrollbar-width: none;
+    flex-shrink: 0;
+  }
+  .speaker-bar::-webkit-scrollbar { display: none; }
+  .spk-pill {
+    border: 0;
+    background: var(--pill-bg);
+    color: var(--text-main);
+    font-family: inherit;
+    font-size: 0.71rem;
+    font-weight: 700;
+    padding: 5px 10px;
+    border-radius: 999px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .spk-pill.active {
+    background: var(--spk-active);
+    color: #0f172a;
+    font-weight: 800;
+  }
+  /* Now Playing Deck */
+  .player-deck {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: var(--card-bg);
+    border-radius: 12px;
+    padding: 8px 12px;
+    border: 1px solid rgba(255,255,255,0.08);
+    flex-shrink: 0;
+  }
+  .art-thumb {
+    width: 52px;
+    height: 52px;
+    border-radius: 8px;
+    object-fit: cover;
+    background: rgba(15, 23, 42, 0.5);
+    flex-shrink: 0;
+  }
+  .np-meta {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .np-title {
+    font-size: 0.84rem;
+    font-weight: 800;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .np-artist {
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: var(--text-sub);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .transport {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+  .ctrl-btn {
+    border: 0;
+    background: var(--pill-bg);
+    color: var(--text-main);
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    font-size: 0.85rem;
+    font-weight: 800;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .ctrl-btn.play-main {
+    background: var(--accent);
+    color: #ffffff;
+    width: 40px;
+    height: 40px;
+    font-size: 0.95rem;
+  }
+  .vol-wrap {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    width: 110px;
+    flex-shrink: 0;
+  }
+  .vol-slider {
+    width: 100%;
+    accent-color: var(--spk-active);
+    cursor: pointer;
+  }
+  /* Mode & Search Toolbar */
+  .sub-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+  .mode-btn {
+    border: 0;
+    background: var(--pill-bg);
+    color: var(--text-main);
+    font-family: inherit;
+    font-size: 0.72rem;
+    font-weight: 800;
+    padding: 5px 11px;
+    border-radius: 999px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .mode-btn.active {
+    background: var(--accent);
+    color: #fff;
+  }
+  .search-form {
+    display: flex;
+    flex: 1;
+    gap: 6px;
+  }
+  .search-input {
+    flex: 1;
+    border-radius: 999px;
+    border: 1px solid rgba(148, 163, 184, 0.3);
+    background: rgba(15, 23, 42, 0.25);
+    color: var(--text-main);
+    padding: 5px 12px;
+    font-family: inherit;
+    font-size: 0.75rem;
+    outline: none;
+  }
+  body.theme-day .search-input {
+    background: rgba(255, 255, 255, 0.85);
+    color: #0f172a;
+  }
+  /* Content Grid */
+  .media-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(145px, 1fr));
+    gap: 8px;
+    overflow-y: auto;
+    padding-right: 4px;
+    flex: 1;
+  }
+  .media-grid::-webkit-scrollbar { width: 5px; }
+  .media-grid::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.18); border-radius: 99px; }
+  .media-tile {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--card-bg);
+    border-radius: 10px;
+    padding: 6px 8px;
+    border: 1px solid rgba(255,255,255,0.08);
+    cursor: pointer;
+  }
+  .media-tile:active { transform: scale(0.97); }
+  .tile-img {
+    width: 42px;
+    height: 42px;
+    border-radius: 6px;
+    object-fit: cover;
+    flex-shrink: 0;
+    background: rgba(15,23,42,0.4);
+  }
+  .tile-meta {
+    min-width: 0;
+    flex: 1;
+  }
+  .tile-title {
+    font-size: 0.74rem;
+    font-weight: 800;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .tile-sub {
+    font-size: 0.65rem;
+    font-weight: 600;
+    color: var(--text-sub);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+</style>
+</head>
+<body>
+  <div class="speaker-bar" id="speaker-bar"></div>
+
+  <div class="player-deck">
+    <img class="art-thumb" id="np-art" src="https://brands.home-assistant.io/_/ytube_music_player/icon.png" alt="">
+    <div class="np-meta">
+      <div class="np-title" id="np-title">YouTube Music</div>
+      <div class="np-artist" id="np-artist">Pick a playlist or search a song</div>
+    </div>
+    <div class="transport">
+      <button class="ctrl-btn" id="btn-prev" title="Previous">⏮</button>
+      <button class="ctrl-btn play-main" id="btn-play" title="Play / Pause">▶</button>
+      <button class="ctrl-btn" id="btn-next" title="Next">⏭</button>
+      <button class="ctrl-btn" id="btn-stop" title="Stop">⏹</button>
+    </div>
+    <div class="vol-wrap">
+      <span style="font-size:0.75rem;">🔊</span>
+      <input type="range" class="vol-slider" id="vol-slider" min="0" max="100" value="35">
+    </div>
+  </div>
+
+  <div class="sub-toolbar">
+    <button class="mode-btn active" data-tab="playlists">Playlists</button>
+    <button class="mode-btn" data-tab="queue">Queue</button>
+    <form class="search-form" id="search-form">
+      <input type="text" class="search-input" id="search-input" placeholder="Search YouTube Music songs or artists..." autocomplete="off">
+      <button type="submit" class="mode-btn active">Search</button>
+    </form>
+  </div>
+
+  <div class="media-grid" id="media-grid"></div>
+
+<script>
+  let stateData = {active_speaker: 'media_player.home_group', speakers: [], now_playing: {}, playlists: [], queue: []};
+  let searchResults = [];
+  let activeTab = 'playlists';
+
+  function escHtml(s) {
+    return String(s == null ? "" : s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function syncTheme() {
+    try {
+      const parentTheme = window.parent && window.parent.document && window.parent.document.documentElement.getAttribute('data-theme');
+      document.body.classList.toggle('theme-day', parentTheme === 'day');
+    } catch (_) {}
+  }
+  syncTheme();
+  setInterval(syncTheme, 5000);
+
+  function renderUI() {
+    const spkBar = document.getElementById('speaker-bar');
+    spkBar.innerHTML = (stateData.speakers || []).map(s => {
+      const isAct = s.entity_id === stateData.active_speaker;
+      return `<button class="spk-pill ${isAct ? 'active' : ''}" data-spk="${escHtml(s.entity_id)}">🔊 ${escHtml(s.name)}</button>`;
+    }).join('');
+
+    const np = stateData.now_playing || {};
+    document.getElementById('np-title').textContent = np.title || 'YouTube Music';
+    document.getElementById('np-artist').textContent = np.artist || 'Ready';
+    if (np.thumb) {
+      document.getElementById('np-art').src = np.thumb;
+    }
+    document.getElementById('btn-play').textContent = np.state === 'playing' ? '⏸' : '▶';
+    if (typeof np.volume === 'number') {
+      document.getElementById('vol-slider').value = np.volume;
+    }
+
+    const grid = document.getElementById('media-grid');
+    if (activeTab === 'playlists') {
+      grid.innerHTML = (stateData.playlists || []).map(p => `
+        <div class="media-tile" data-pl="${escHtml(p.playlist_id)}" data-title="${escHtml(p.title)}">
+          <img class="tile-img" src="${escHtml(p.thumb)}" loading="lazy" alt="">
+          <div class="tile-meta">
+            <div class="tile-title">${escHtml(p.title)}</div>
+            <div class="tile-sub">${Number(p.count || 0)} tracks · Shuffle</div>
+          </div>
+        </div>
+      `).join('');
+    } else if (activeTab === 'queue') {
+      grid.innerHTML = (stateData.queue || []).map((t, idx) => `
+        <div class="media-tile" data-qidx="${idx}">
+          <img class="tile-img" src="${escHtml(t.thumb)}" loading="lazy" alt="">
+          <div class="tile-meta">
+            <div class="tile-title">${idx === np.queue_index ? '▶ ' : ''}${escHtml(t.title)}</div>
+            <div class="tile-sub">${escHtml(t.artist)}</div>
+          </div>
+        </div>
+      `).join('');
+    } else if (activeTab === 'search') {
+      grid.innerHTML = searchResults.map((t, idx) => `
+        <div class="media-tile" data-sidx="${idx}">
+          <img class="tile-img" src="${escHtml(t.thumb)}" loading="lazy" alt="">
+          <div class="tile-meta">
+            <div class="tile-title">${escHtml(t.title)}</div>
+            <div class="tile-sub">${escHtml(t.artist)}${t.duration ? ' · ' + escHtml(t.duration) : ''}</div>
+          </div>
+        </div>
+      `).join('');
+    }
+  }
+
+  async function refreshState() {
+    try {
+      const r = await fetch('/hearth-api/music/state');
+      stateData = await r.json();
+      renderUI();
+    } catch (_) {}
+  }
+  refreshState();
+  setInterval(refreshState, 8000);
+
+  document.getElementById('speaker-bar').addEventListener('click', async (e) => {
+    const btn = e.target.closest('.spk-pill');
+    if (!btn) return;
+    const spk = btn.dataset.spk;
+    stateData.active_speaker = spk;
+    renderUI();
+    const r = await fetch('/hearth-api/music/control', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({action: 'select_speaker', speaker: spk}),
+    });
+    const res = await r.json();
+    if (res.state) { stateData = res.state; renderUI(); }
+  });
+
+  async function sendControl(action, extra = {}) {
+    const r = await fetch('/hearth-api/music/control', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({action, speaker: stateData.active_speaker, ...extra}),
+    });
+    const res = await r.json();
+    if (res.state) { stateData = res.state; renderUI(); }
+  }
+
+  document.getElementById('btn-prev').addEventListener('click', () => sendControl('prev'));
+  document.getElementById('btn-play').addEventListener('click', () => sendControl('play_pause'));
+  document.getElementById('btn-next').addEventListener('click', () => sendControl('next'));
+  document.getElementById('btn-stop').addEventListener('click', () => sendControl('stop'));
+  document.getElementById('vol-slider').addEventListener('change', (e) => sendControl('volume', {value: Number(e.target.value)}));
+
+  document.querySelectorAll('.mode-btn[data-tab]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.mode-btn[data-tab]').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      activeTab = btn.dataset.tab;
+      renderUI();
+    });
+  });
+
+  document.getElementById('search-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const q = document.getElementById('search-input').value.trim();
+    if (!q) return;
+    activeTab = 'search';
+    document.querySelectorAll('.mode-btn[data-tab]').forEach(b => b.classList.remove('active'));
+    document.getElementById('media-grid').innerHTML = '<div style="font-size:0.78rem;opacity:0.7;">Searching YouTube Music...</div>';
+    try {
+      const r = await fetch('/hearth-api/music/search?q=' + encodeURIComponent(q));
+      const data = await r.json();
+      searchResults = data.items || [];
+      renderUI();
+    } catch (_) {}
+  });
+
+  document.getElementById('media-grid').addEventListener('click', async (e) => {
+    const tile = e.target.closest('.media-tile');
+    if (!tile) return;
+    document.getElementById('np-title').textContent = 'Starting playback...';
+    if (tile.dataset.pl) {
+      const r = await fetch('/hearth-api/music/play', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          speaker: stateData.active_speaker,
+          playlist_id: tile.dataset.pl,
+          playlist_title: tile.dataset.title,
+          shuffle: true,
+        }),
+      });
+      const res = await r.json();
+      if (res.state) { stateData = res.state; renderUI(); }
+    } else if (tile.dataset.sidx !== undefined) {
+      const item = searchResults[Number(tile.dataset.sidx)];
+      if (!item) return;
+      const r = await fetch('/hearth-api/music/play', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          speaker: stateData.active_speaker,
+          video_id: item.video_id,
+          title: item.title,
+          artist: item.artist,
+          thumb: item.thumb,
+        }),
+      });
+      const res = await r.json();
+      if (res.state) { stateData = res.state; renderUI(); }
+    } else if (tile.dataset.qidx !== undefined) {
+      sendControl('play_index', {index: Number(tile.dataset.qidx)});
+    }
+  });
+
+  // Forward horizontal screen swipes to parent Hearth carousel
+  let tsX = 0, tsY = 0, tsT = 0;
+  document.addEventListener('touchstart', (e) => {
+    if (e.touches && e.touches.length === 1) {
+      tsX = e.touches[0].clientX;
+      tsY = e.touches[0].clientY;
+      tsT = Date.now();
+    }
+  }, {passive: true});
+  document.addEventListener('touchend', (e) => {
+    if (!e.changedTouches || e.changedTouches.length !== 1) return;
+    const dx = e.changedTouches[0].clientX - tsX;
+    const dy = e.changedTouches[0].clientY - tsY;
+    const dt = Date.now() - tsT;
+    if (dt < 800 && Math.abs(dx) > 70 && Math.abs(dx) > Math.abs(dy) * 1.6) {
+      window.parent.postMessage({type: 'hearth-swipe', direction: dx < 0 ? 'next' : 'prev'}, '*');
+    }
+  }, {passive: true});
+</script>
+</body>
+</html>

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -95,40 +96,89 @@ type gtasksListResponse struct {
 	NextPageToken string       `json:"nextPageToken"`
 }
 
-// FetchList retrieves task list metadata and items from the Google Tasks API.
-func (a *GTasksAdapter) FetchList(ctx context.Context) (*tasks.List, []tasks.ListItem, error) {
+func (a *GTasksAdapter) fetchListMetadata(ctx context.Context) (string, time.Time, error) {
 	listTitle, listUpdatedAt := a.listName, time.Now().UTC()
 
 	metaURL := fmt.Sprintf("%s/tasks/v1/users/@me/lists/%s", a.baseURL, url.PathEscape(a.taskListID))
 	metaBody, metaErr := a.doGet(ctx, metaURL)
-	if metaErr == nil {
-		var meta gtasksListMetadata
-		if jsonErr := json.Unmarshal(metaBody, &meta); jsonErr == nil {
-			if meta.Title != "" && listTitle == "" {
-				listTitle = meta.Title
-			}
-			if meta.Updated != "" {
-				if t, parseErr := time.Parse(time.RFC3339Nano, meta.Updated); parseErr == nil {
-					listUpdatedAt = t.UTC()
-				}
+	if metaErr != nil {
+		if errors.Is(metaErr, ErrUnauthorized) || errors.Is(metaErr, ErrUpstreamNotFound) {
+			return "", time.Time{}, metaErr
+		}
+		if listTitle == "" {
+			listTitle = a.taskListID
+		}
+		return listTitle, listUpdatedAt, nil
+	}
+
+	var meta gtasksListMetadata
+	if jsonErr := json.Unmarshal(metaBody, &meta); jsonErr == nil {
+		if meta.Title != "" && listTitle == "" {
+			listTitle = meta.Title
+		}
+		if meta.Updated != "" {
+			if t, parseErr := time.Parse(time.RFC3339Nano, meta.Updated); parseErr == nil {
+				listUpdatedAt = t.UTC()
 			}
 		}
-	} else if errors.Is(metaErr, ErrUnauthorized) || errors.Is(metaErr, ErrUpstreamNotFound) {
-		return nil, nil, metaErr
 	}
+
 	if listTitle == "" {
 		listTitle = a.taskListID
+	}
+	return listTitle, listUpdatedAt, nil
+}
+
+func convertGTaskItems(orderedGTasks []gtasksItem, taskListID string, now time.Time) []tasks.ListItem {
+	items := make([]tasks.ListItem, 0, len(orderedGTasks))
+
+	for _, gt := range orderedGTasks {
+		done := strings.EqualFold(gt.Status, "completed")
+		var dueDate *string
+		if len(gt.Due) >= 10 {
+			datePart := gt.Due[:10]
+			if _, parseErr := time.Parse("2006-01-02", datePart); parseErr == nil {
+				dueDate = &datePart
+			}
+		}
+
+		itemUpdatedAt := now
+		if gt.Updated != "" {
+			if t, err := time.Parse(time.RFC3339Nano, gt.Updated); err == nil {
+				itemUpdatedAt = t.UTC()
+			}
+		}
+
+		items = append(items, tasks.ListItem{
+			ID:        gt.ID,
+			ListID:    taskListID,
+			Title:     gt.Title,
+			Done:      done,
+			Position:  len(items),
+			DueDate:   dueDate,
+			CreatedAt: itemUpdatedAt,
+			UpdatedAt: itemUpdatedAt,
+		})
+	}
+	return items
+}
+
+// FetchList retrieves task list metadata and items from the Google Tasks API.
+func (a *GTasksAdapter) FetchList(ctx context.Context) (*tasks.List, []tasks.ListItem, error) {
+	listTitle, listUpdatedAt, err := a.fetchListMetadata(ctx)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	allGTasks := make([]gtasksItem, 0, 64)
 	seenTokens := make(map[string]bool)
 	pageToken := ""
 
-	for page := 0; page < maxGoogleTasksPages; page++ {
+	for range maxGoogleTasksPages {
 		queryParams := url.Values{}
 		queryParams.Set("showCompleted", "true")
 		queryParams.Set("showHidden", "true")
-		queryParams.Set("maxResults", fmt.Sprintf("%d", googleTasksPageSize))
+		queryParams.Set("maxResults", strconv.Itoa(googleTasksPageSize))
 		if pageToken != "" {
 			queryParams.Set("pageToken", pageToken)
 		}
@@ -162,36 +212,7 @@ func (a *GTasksAdapter) FetchList(ctx context.Context) (*tasks.List, []tasks.Lis
 
 	orderedGTasks := orderGTasks(activeItems)
 	now := time.Now().UTC()
-	items := make([]tasks.ListItem, 0, len(orderedGTasks))
-
-	for _, gt := range orderedGTasks {
-		done := strings.EqualFold(gt.Status, "completed")
-		var dueDate *string
-		if len(gt.Due) >= 10 {
-			datePart := gt.Due[:10]
-			if _, parseErr := time.Parse("2006-01-02", datePart); parseErr == nil {
-				dueDate = &datePart
-			}
-		}
-
-		itemUpdatedAt := now
-		if gt.Updated != "" {
-			if t, err := time.Parse(time.RFC3339Nano, gt.Updated); err == nil {
-				itemUpdatedAt = t.UTC()
-			}
-		}
-
-		items = append(items, tasks.ListItem{
-			ID:        gt.ID,
-			ListID:    a.taskListID,
-			Title:     gt.Title,
-			Done:      done,
-			Position:  len(items),
-			DueDate:   dueDate,
-			CreatedAt: itemUpdatedAt,
-			UpdatedAt: itemUpdatedAt,
-		})
-	}
+	items := convertGTaskItems(orderedGTasks, a.taskListID, now)
 
 	return &tasks.List{
 		ID:        a.taskListID,

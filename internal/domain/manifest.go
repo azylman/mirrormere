@@ -105,38 +105,29 @@ func checkNamedSchemaMap(v any, path string) error {
 	return nil
 }
 
+func checkSchemaMapEntry(k, child any, path string) error {
+	kStr := fmt.Sprint(k)
+	childPath := path + "." + kStr
+	if kStr == "default" {
+		return fmt.Errorf("schema at '%s' declares disallowed keyword 'default'; default values in schemas are strictly prohibited", path)
+	}
+	if isNamedSchemaMapKeyword(kStr) {
+		return checkNamedSchemaMap(child, childPath)
+	}
+	return checkForDisallowedDefaultKeyword(child, childPath)
+}
+
 func checkForDisallowedDefaultKeyword(v any, path string) error {
 	switch val := v.(type) {
 	case map[string]any:
 		for k, child := range val {
-			childPath := path + "." + k
-			if k == "default" {
-				return fmt.Errorf("schema at '%s' declares disallowed keyword 'default'; default values in schemas are strictly prohibited", path)
-			}
-			if isNamedSchemaMapKeyword(k) {
-				if err := checkNamedSchemaMap(child, childPath); err != nil {
-					return err
-				}
-				continue
-			}
-			if err := checkForDisallowedDefaultKeyword(child, childPath); err != nil {
+			if err := checkSchemaMapEntry(k, child, path); err != nil {
 				return err
 			}
 		}
 	case map[any]any:
 		for k, child := range val {
-			kStr := fmt.Sprint(k)
-			childPath := path + "." + kStr
-			if kStr == "default" {
-				return fmt.Errorf("schema at '%s' declares disallowed keyword 'default'; default values in schemas are strictly prohibited", path)
-			}
-			if isNamedSchemaMapKeyword(kStr) {
-				if err := checkNamedSchemaMap(child, childPath); err != nil {
-					return err
-				}
-				continue
-			}
-			if err := checkForDisallowedDefaultKeyword(child, childPath); err != nil {
+			if err := checkSchemaMapEntry(k, child, path); err != nil {
 				return err
 			}
 		}

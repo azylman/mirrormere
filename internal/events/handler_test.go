@@ -14,6 +14,7 @@ import (
 
 type flushingRecorder struct {
 	*httptest.ResponseRecorder
+
 	mu      sync.Mutex
 	flushCh chan struct{}
 }
@@ -42,7 +43,7 @@ func (f *flushingRecorder) BodyString() string {
 }
 
 func (f *flushingRecorder) wait(n int) {
-	for i := 0; i < n; i++ {
+	for range n {
 		select {
 		case <-f.flushCh:
 		case <-time.After(time.Second):
@@ -67,6 +68,7 @@ func (f *failFlusher) Flush()                    {}
 
 type hookStateProvider struct {
 	StateProvider
+
 	onHydration func()
 }
 
@@ -77,6 +79,7 @@ func (h *hookStateProvider) GetScreenRotateData() *ScreenRotateData {
 
 type slowWriterRecorder struct {
 	*flushingRecorder
+
 	blockCh, entered chan struct{}
 	liveBlock        bool
 }
@@ -108,10 +111,11 @@ func TestHandler_MethodsAndValidation(t *testing.T) {
 			rec := newFlushingRecorder()
 			var w http.ResponseWriter = rec
 			var nf *nonFlusher
-			if tc.kind == "non_flush" {
+			switch tc.kind {
+			case "non_flush":
 				nf = &nonFlusher{h: make(http.Header)}
 				w = nf
-			} else if tc.kind == "fail_write" {
+			case "fail_write":
 				ff := &failFlusher{nonFlusher{h: make(http.Header)}}
 				nf, w = &ff.nonFlusher, ff
 			}

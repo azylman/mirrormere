@@ -1,7 +1,9 @@
 package events
 
 import (
+	"context"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -53,35 +55,8 @@ func Handler(hub *Hub) http.Handler {
 		defer unsubscribe()
 
 		// 6. Initial Hydration vs Replay
-		lastEventID := strings.TrimSpace(r.Header.Get("Last-Event-ID"))
-		if lastEventID == "" {
-			// Also check query param fallback for non-standard clients
-			lastEventID = strings.TrimSpace(r.URL.Query().Get("lastEventId"))
-			if lastEventID == "" {
-				lastEventID = strings.TrimSpace(r.URL.Query().Get("last_event_id"))
-			}
-		}
-
-		var (
-			initialBatch  []*Event
-			seenReplayIDs map[string]struct{}
-		)
-		if lastEventID != "" {
-			if replayed, found := hub.ReplaySince(lastEventID); found {
-				initialBatch = replayed
-				seenReplayIDs = make(map[string]struct{}, len(replayed)+1)
-				seenReplayIDs[lastEventID] = struct{}{}
-				for _, evt := range replayed {
-					seenReplayIDs[evt.ID] = struct{}{}
-				}
-			} else {
-				// Replay missed/expired: execute full initial state hydration
-				initialBatch = hub.BuildHydration()
-			}
-		} else {
-			// Cold boot or no Last-Event-ID: execute full initial state hydration
-			initialBatch = hub.BuildHydration()
-		}
+		lastEventID := resolveLastEventID(r)
+		initialBatch, seenReplayIDs := prepareInitialEvents(hub, lastEventID)
 
 		// 7. Flush initial batch (hydration or replay)
 		for _, evt := range initialBatch {
@@ -91,61 +66,90 @@ func Handler(hub *Hub) http.Handler {
 		}
 		flusher.Flush()
 
-		// 8. Keep-alive heartbeat ticker
-		ticker := time.NewTicker(hub.cfg.HeartbeatInterval)
-		defer ticker.Stop()
+		// 8-10. Live Stream & Keep-alive SSE Loop
+		streamSSELoop(r.Context(), w, flusher, ch, hub.cfg.HeartbeatInterval, seenReplayIDs)
+	})
+}
 
-		deliverEvent := func(evt *Event) bool {
-			if seenReplayIDs != nil {
-				if _, seen := seenReplayIDs[evt.ID]; seen {
-					return true
-				}
-				// Reached first new event beyond replayed batch; discard filter map
-				seenReplayIDs = nil
-			}
-			if _, err := w.Write(evt.Format()); err != nil {
+func resolveLastEventID(r *http.Request) string {
+	lastEventID := strings.TrimSpace(r.Header.Get("Last-Event-ID"))
+	if lastEventID != "" {
+		return lastEventID
+	}
+	lastEventID = strings.TrimSpace(r.URL.Query().Get("lastEventId"))
+	if lastEventID != "" {
+		return lastEventID
+	}
+	return strings.TrimSpace(r.URL.Query().Get("last_event_id"))
+}
+
+func prepareInitialEvents(hub *Hub, lastEventID string) ([]*Event, map[string]struct{}) {
+	if lastEventID == "" {
+		return hub.BuildHydration(), nil
+	}
+	replayed, found := hub.ReplaySince(lastEventID)
+	if !found {
+		// Replay missed/expired: execute full initial state hydration
+		return hub.BuildHydration(), nil
+	}
+	seenReplayIDs := make(map[string]struct{}, len(replayed)+1)
+	seenReplayIDs[lastEventID] = struct{}{}
+	for _, evt := range replayed {
+		seenReplayIDs[evt.ID] = struct{}{}
+	}
+	return replayed, seenReplayIDs
+}
+
+func drainSSEQueue(ctx context.Context, ch <-chan *Event, deliver func(*Event) bool) bool {
+	for {
+		select {
+		case <-ctx.Done():
+			return false
+		case evt, ok := <-ch:
+			if !ok || !deliver(evt) {
 				return false
 			}
-			flusher.Flush()
+		default:
 			return true
 		}
+	}
+}
 
-		// 9. Drain any events queued during batch preparation
-	drainLoop:
-		for {
-			select {
-			case <-r.Context().Done():
-				return
-			case evt, ok := <-ch:
-				if !ok {
-					return
-				}
-				if !deliverEvent(evt) {
-					return
-				}
-			default:
-				break drainLoop
-			}
-		}
+func streamSSELoop(ctx context.Context, w io.Writer, flusher http.Flusher, ch <-chan *Event, heartbeat time.Duration, seenReplayIDs map[string]struct{}) {
+	ticker := time.NewTicker(heartbeat)
+	defer ticker.Stop()
 
-		// 10. Live Stream Loop
-		for {
-			select {
-			case <-r.Context().Done():
-				return
-			case evt, ok := <-ch:
-				if !ok {
-					return
-				}
-				if !deliverEvent(evt) {
-					return
-				}
-			case t := <-ticker.C:
-				if _, err := w.Write(FormatPing(t)); err != nil {
-					return
-				}
-				flusher.Flush()
+	deliverEvent := func(evt *Event) bool {
+		if seenReplayIDs != nil {
+			if _, seen := seenReplayIDs[evt.ID]; seen {
+				return true
 			}
+			seenReplayIDs = nil
 		}
-	})
+		if _, err := w.Write(evt.Format()); err != nil {
+			return false
+		}
+		flusher.Flush()
+		return true
+	}
+
+	if !drainSSEQueue(ctx, ch, deliverEvent) {
+		return
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case evt, ok := <-ch:
+			if !ok || !deliverEvent(evt) {
+				return
+			}
+		case t := <-ticker.C:
+			if _, err := w.Write(FormatPing(t)); err != nil {
+				return
+			}
+			flusher.Flush()
+		}
+	}
 }

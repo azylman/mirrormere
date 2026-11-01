@@ -91,7 +91,7 @@ func (r *RingBuffer) ReplaySince(lastEventID string) ([]*Event, bool) {
 	startIdx := (r.head - r.count + r.capacity) % r.capacity
 
 	foundIdx := -1
-	for i := 0; i < r.count; i++ {
+	for i := range r.count {
 		idx := (startIdx + i) % r.capacity
 		entry := r.entries[idx]
 		if entry.event != nil && entry.event.ID == lastEventID {
