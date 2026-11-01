@@ -82,6 +82,9 @@ Notes:
 - `swipe_settle` needs at least two screens configured. With one screen, swipes do nothing.
 - The carousel ignores swipes that start inside a calendar widget or an element marked
   `data-prevent-screen-swipe`, so those swipes produce no sample.
+- React `swipe_settle` ends at the first frame after `body[data-animating]` returns to `0` with a
+  hydrated `#grid-canvas`. That can be one frame before React commits the new pane. A cancelled
+  drag (a rest settle) ends the same way and is counted, which the legacy path does not do.
 - `widget_update` needs the server to push widget updates during the run. An idle run reports
   zero samples, with `null` percentiles. The key is still present.
 - Chrome's history gesture on touch input would navigate back to `about:blank` mid-run. The
