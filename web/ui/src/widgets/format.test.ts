@@ -372,7 +372,7 @@ describe('format helpers', () => {
       expect(layout?.points[2].precipProb).toBe(0);
     });
 
-    it('computes layout for all 24 hourly points with totalWidth=1632.0', () => {
+    it('computes layout for 24 hourly points capped to 8 points by default, and preserves 24 points when maxPoints is 24', () => {
       const pts = Array.from({ length: 24 }, (_, i) => ({
         time: `2026-09-26T${String(i).padStart(2, '0')}:00`,
         temp: 55 + (i % 10),
@@ -380,10 +380,17 @@ describe('format helpers', () => {
       }));
       const layout = computeHourlyGraphLayout(pts);
       expect(layout).not.toBeNull();
-      expect(layout?.totalWidth).toBe(1632.0);
-      expect(layout?.points).toHaveLength(24);
+      expect(layout?.totalWidth).toBe(560.0);
+      expect(layout?.points).toHaveLength(8);
       expect(layout?.points[0].timeLabel).toBe('Now');
-      expect(layout?.points[23].timeLabel).toBe('11 PM');
+      expect(layout?.points[7].timeLabel).toBe('7 AM');
+
+      const customLayout = computeHourlyGraphLayout(pts, undefined, { maxPoints: 24 });
+      expect(customLayout).not.toBeNull();
+      expect(customLayout?.totalWidth).toBe(1632.0);
+      expect(customLayout?.points).toHaveLength(24);
+      expect(customLayout?.points[0].timeLabel).toBe('Now');
+      expect(customLayout?.points[23].timeLabel).toBe('11 PM');
     });
 
     it('supports compact 108px height mode when passed via options', () => {
