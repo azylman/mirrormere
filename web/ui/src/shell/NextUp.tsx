@@ -51,25 +51,35 @@ export function formatRelativeCountdown(ms: number, isEnding = false): string {
   return `${prefix}${hours}h ${mins}m`;
 }
 
+const tzOffsetFormatters = new Map<string, Intl.DateTimeFormat>();
+
 function getTimezoneOffsetString(date: Date, tz?: string): string {
   if (!tz || !isValidTimezone(tz)) return '';
   try {
-    const formatter = new Intl.DateTimeFormat('en-US', {
-      timeZone: tz,
-      timeZoneName: 'longOffset',
-    });
+    let formatter = tzOffsetFormatters.get(tz);
+    if (!formatter) {
+      formatter = new Intl.DateTimeFormat('en-US', {
+        timeZone: tz,
+        timeZoneName: 'longOffset',
+      });
+      tzOffsetFormatters.set(tz, formatter);
+    }
     const parts = formatter.formatToParts(date);
-    const tzPart = parts.find((p) => p.type === 'timeZoneName');
-    if (tzPart && tzPart.value) {
-      const m = tzPart.value.match(/GMT([+-]\d{2}:\d{2})/);
-      if (m) return m[1];
-      if (tzPart.value === 'GMT' || tzPart.value === 'UTC') return 'Z';
+    for (let i = 0; i < parts.length; i++) {
+      const p = parts[i];
+      if (p.type === 'timeZoneName' && p.value) {
+        const m = p.value.match(/GMT([+-]\d{2}:\d{2})/);
+        if (m) return m[1];
+        if (p.value === 'GMT' || p.value === 'UTC') return 'Z';
+      }
     }
   } catch {
     // Ignore timezone formatting failures
   }
   return '';
 }
+
+const datePartsFormatters = new Map<string, Intl.DateTimeFormat>();
 
 function getDatePartsInTimezone(
   date: Date,
@@ -83,20 +93,25 @@ function getDatePartsInTimezone(
     };
   }
   try {
-    const formatter = new Intl.DateTimeFormat('en-US', {
-      timeZone: tz,
-      year: 'numeric',
-      month: 'numeric',
-      day: 'numeric',
-    });
+    let formatter = datePartsFormatters.get(tz);
+    if (!formatter) {
+      formatter = new Intl.DateTimeFormat('en-US', {
+        timeZone: tz,
+        year: 'numeric',
+        month: 'numeric',
+        day: 'numeric',
+      });
+      datePartsFormatters.set(tz, formatter);
+    }
     const parts = formatter.formatToParts(date);
     let year = date.getFullYear();
     let month = date.getMonth() + 1;
     let day = date.getDate();
-    for (const p of parts) {
+    for (let i = 0; i < parts.length; i++) {
+      const p = parts[i];
       if (p.type === 'year') year = parseInt(p.value, 10);
-      if (p.type === 'month') month = parseInt(p.value, 10);
-      if (p.type === 'day') day = parseInt(p.value, 10);
+      else if (p.type === 'month') month = parseInt(p.value, 10);
+      else if (p.type === 'day') day = parseInt(p.value, 10);
     }
     return { year, month, day };
   } catch {
@@ -386,7 +401,7 @@ function extractEventsFromDay(day: Record<string, unknown>, out: RawCalendarEven
     });
   };
 
-  for (const groupKey of ['events', 'early_events', 'late_events']) {
+  for (const groupKey of ['events', 'early_events', 'late_events', 'timed']) {
     const group = day[groupKey];
     if (Array.isArray(group)) {
       for (const ev of group) {
@@ -410,7 +425,8 @@ function processArray(arr: unknown[], out: RawCalendarEvent[]) {
       (Array.isArray(rec.events) ||
         Array.isArray(rec.all_day) ||
         Array.isArray(rec.early_events) ||
-        Array.isArray(rec.late_events))
+        Array.isArray(rec.late_events) ||
+        Array.isArray(rec.timed))
     ) {
       extractEventsFromDay(rec, out);
     } else if (
@@ -452,6 +468,39 @@ export function selectCalendarEvents(
         const week = vm.week as Record<string, unknown>;
         if (Array.isArray(week.days)) {
           processArray(week.days, rawList);
+        }
+        if (Array.isArray(week.all_day_events)) {
+          const days = Array.isArray(week.days)
+            ? (week.days as Record<string, unknown>[])
+            : [];
+          for (const evItem of week.all_day_events) {
+            if (!evItem || typeof evItem !== 'object') continue;
+            const ev = { ...(evItem as Record<string, unknown>) };
+            if (!ev.start && !ev.date) {
+              const startCol =
+                typeof ev.start_col === 'number'
+                  ? ev.start_col
+                  : typeof ev.startCol === 'number'
+                    ? ev.startCol
+                    : 1;
+              const targetDay = days[startCol - 1];
+              if (targetDay && typeof targetDay.date === 'string') {
+                ev.date = targetDay.date;
+              }
+            }
+            if (ev.allDay === undefined && ev.all_day === undefined) {
+              ev.allDay = true;
+            }
+            if (typeof ev.title === 'string') {
+              processArray([ev], rawList);
+            }
+          }
+        }
+      }
+      if (vm.month && typeof vm.month === 'object') {
+        const month = vm.month as Record<string, unknown>;
+        if (Array.isArray(month.days)) {
+          processArray(month.days, rawList);
         }
       }
       if (Array.isArray(vm.days)) {

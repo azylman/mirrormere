@@ -2,12 +2,18 @@ import { useEffect, useMemo, useRef } from 'react';
 import { useDocumentVisible } from '../lifecycle/visibility';
 import { useHeader } from '../store/hooks';
 
+const validTimezoneCache = new Map<string, boolean>();
+
 export function isValidTimezone(tz: string | null | undefined): boolean {
   if (!tz || typeof tz !== 'string') return false;
+  const cached = validTimezoneCache.get(tz);
+  if (cached !== undefined) return cached;
   try {
     new Intl.DateTimeFormat(undefined, { timeZone: tz });
+    validTimezoneCache.set(tz, true);
     return true;
   } catch {
+    validTimezoneCache.set(tz, false);
     return false;
   }
 }
