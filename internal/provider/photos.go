@@ -389,11 +389,12 @@ func extractBalancedArray(s string) (string, bool) {
 		ch := s[i]
 
 		if inString {
-			if escaped {
+			switch {
+			case escaped:
 				escaped = false
-			} else if ch == '\\' {
+			case ch == '\\':
 				escaped = true
-			} else if ch == stringChar {
+			case ch == stringChar:
 				inString = false
 			}
 			continue

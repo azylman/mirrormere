@@ -90,11 +90,7 @@ linters:
       ignore-comments: true
     gocognit:
       min-complexity: 30
-    gocritic:
-      disable-all: true
-      enabled-checks:
-        - evalOrder
-        - sloppyReassign
+    gocritic: {}
     gocyclo:
       min-complexity: 20
     govet:
@@ -131,6 +127,8 @@ linters:
     staticcheck:
       checks:
         - "SA*"
+        - "S1*"
+        - "QF1*"
   exclusions:
     generated: lax
     rules:

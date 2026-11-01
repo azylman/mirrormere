@@ -97,20 +97,22 @@ func applyGTasksCredentialsFile(filePath string, clientID, clientSecret, refresh
 		return
 	}
 	if *clientID == "" {
-		if uCreds.ClientID != "" {
+		switch {
+		case uCreds.ClientID != "":
 			*clientID = uCreds.ClientID
-		} else if uCreds.Installed.ClientID != "" {
+		case uCreds.Installed.ClientID != "":
 			*clientID = uCreds.Installed.ClientID
-		} else if uCreds.Web.ClientID != "" {
+		case uCreds.Web.ClientID != "":
 			*clientID = uCreds.Web.ClientID
 		}
 	}
 	if *clientSecret == "" {
-		if uCreds.ClientSecret != "" {
+		switch {
+		case uCreds.ClientSecret != "":
 			*clientSecret = uCreds.ClientSecret
-		} else if uCreds.Installed.ClientSecret != "" {
+		case uCreds.Installed.ClientSecret != "":
 			*clientSecret = uCreds.Installed.ClientSecret
-		} else if uCreds.Web.ClientSecret != "" {
+		case uCreds.Web.ClientSecret != "":
 			*clientSecret = uCreds.Web.ClientSecret
 		}
 	}
