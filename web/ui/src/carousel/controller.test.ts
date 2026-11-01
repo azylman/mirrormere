@@ -406,6 +406,28 @@ describe('CarouselController', () => {
     expect(h.track.style.transform).toBe('');
   });
 
+  it('advances on hearth-swipe window message event and ignores after dispose', () => {
+    vi.useFakeTimers();
+    const h = build(1);
+    window.dispatchEvent(new MessageEvent('message', { data: { type: 'hearth-swipe', direction: 'next' } }));
+    expect(h.track.style.transform).toBe('translate3d(-1000px,0,0)');
+    h.transitionEnd();
+    expect(h.host.commit).toHaveBeenCalledWith(2);
+    expect(h.host.select).toHaveBeenCalledWith(2);
+
+    h.controller.rendered(2);
+    window.dispatchEvent(new MessageEvent('message', { data: { type: 'hearth-swipe', direction: 'prev' } }));
+    expect(h.track.style.transform).toBe('translate3d(1000px,0,0)');
+    h.transitionEnd();
+    expect(h.host.commit).toHaveBeenCalledWith(1);
+    expect(h.host.select).toHaveBeenCalledWith(1);
+
+    h.controller.rendered(1);
+    h.controller.dispose();
+    window.dispatchEvent(new MessageEvent('message', { data: { type: 'hearth-swipe', direction: 'next' } }));
+    expect(h.host.commit).toHaveBeenCalledTimes(2);
+  });
+
   it('keeps the animation count balanced when disposed mid-settle', () => {
     vi.useFakeTimers();
     const h = build();

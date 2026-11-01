@@ -24,16 +24,12 @@ export function panesFor(shown: number, total: number): Pane[] {
   }
   const prev = neighbourOf(shown, total, 'prev');
   const next = neighbourOf(shown, total, 'next');
-  const panes: Pane[] = [
-    { index: prev, offset: -1 },
-    { index: shown, offset: 0 },
-    { index: next, offset: 1 },
-  ];
-  const active = new Set([prev, shown, next]);
+  const panes: Pane[] = [];
   for (let i = 0; i < total; i++) {
-    if (!active.has(i)) {
-      panes.push({ index: i, offset: null });
-    }
+    panes.push({
+      index: i,
+      offset: i === shown ? 0 : i === prev ? -1 : i === next ? 1 : null,
+    });
   }
   return panes;
 }
@@ -123,24 +119,7 @@ export function Carousel({ hidden }: CarouselProps = {}) {
     const storeScreen = useDisplayStore.getState().screen.currentScreen;
     if (storeScreen !== shownRef.current) controller.requestShow(storeScreen);
 
-    const onMessage = (event: MessageEvent) => {
-      if (
-        event.data &&
-        typeof event.data === 'object' &&
-        event.data.type === 'hearth-swipe' &&
-        (event.data.direction === 'next' || event.data.direction === 'prev')
-      ) {
-        const controller = controllerRef.current;
-        const totalScreens = useDisplayStore.getState().screen.totalScreens;
-        if (controller && totalScreens > 1) {
-          controller.goTo(neighbourOf(controller.current, totalScreens, event.data.direction));
-        }
-      }
-    };
-    window.addEventListener('message', onMessage);
-
     return () => {
-      window.removeEventListener('message', onMessage);
       controller.dispose();
       controllerRef.current = null;
     };

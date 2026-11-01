@@ -104,8 +104,9 @@ function runCoordinator(): void {
     }
     if (target) {
       target.step();
+    } else {
+      runCoordinator();
     }
-    runCoordinator();
   });
 }
 
@@ -165,7 +166,7 @@ export const Screen = memo(function Screen({ index, offset, placements, ready }:
 
   useEffect(() => {
     runCoordinator();
-  }, [offset, ready, placements.length]);
+  }, [offset, ready, placements.length, hydratedCount]);
 
   // Layout effects run after the cell children have mounted, so the stamp means every
   // widget of the current pane is in the DOM.
