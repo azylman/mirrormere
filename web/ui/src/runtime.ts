@@ -6,6 +6,33 @@ import { EventStreamClient, SERVER_EVENT_NAMES, type EventStreamOptions } from '
 import type { ServerEventName, StreamEventMap } from './sse/types';
 import { useDisplayStore } from './store';
 
+declare global {
+  interface Window {
+    onEmberPhotosSynced?: (payload: unknown) => void;
+  }
+}
+
+/**
+ * Forwards Ember photo sync payloads to all child iframes via postMessage.
+ */
+export function forwardEmberPhotosSynced(payload: unknown, doc: Document = document): void {
+  const targetOrigin =
+    typeof window !== 'undefined' && window.location?.origin && window.location.origin !== 'null'
+      ? window.location.origin
+      : '*';
+  const frames = doc.querySelectorAll('iframe');
+  for (const frame of Array.from(frames)) {
+    try {
+      (frame as HTMLIFrameElement).contentWindow?.postMessage(
+        { type: 'ember-photos-synced', payload },
+        targetOrigin,
+      );
+    } catch {
+      // Ignore cross-frame dispatch errors
+    }
+  }
+}
+
 /** Events whose payload is applied to the store (batched). */
 const STORE_EVENTS: ReadonlySet<ServerEventName> = new Set<ServerEventName>([
   'screen.rotate',
@@ -116,6 +143,12 @@ export function startRuntime(options: RuntimeOptions = {}): Runtime {
   reflectVisibleAttribute(document, store.getState().visibility.visible);
   syncMaintenance(store.getState().visibility.visible);
 
+  if (typeof window !== 'undefined') {
+    window.onEmberPhotosSynced = (payload: unknown) => {
+      forwardEmberPhotosSynced(payload, document);
+    };
+  }
+
   client.connect();
 
   current = {
@@ -128,6 +161,9 @@ export function startRuntime(options: RuntimeOptions = {}): Runtime {
       syncMaintenance(false);
       reloads.dispose();
       batcher.flush();
+      if (typeof window !== 'undefined') {
+        delete window.onEmberPhotosSynced;
+      }
       current = null;
     },
   };

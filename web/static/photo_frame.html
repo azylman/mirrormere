@@ -255,17 +255,24 @@
     }
   }
 
-  window.onEmberPhotosSynced = handleEmberPhotosSynced;
-  try {
-    if (window.parent && window.parent !== window) {
-      window.parent.onEmberPhotosSynced = handleEmberPhotosSynced;
-    }
-    if (window.top && window.top !== window) {
-      window.top.onEmberPhotosSynced = handleEmberPhotosSynced;
-    }
-  } catch (e) {
-    console.warn('Cross-frame onEmberPhotosSynced registration blocked:', e);
+  if (!window.parent || window.parent === window) {
+    window.onEmberPhotosSynced = handleEmberPhotosSynced;
   }
+
+  window.addEventListener('message', function(ev) {
+    if (!ev || !ev.data || typeof ev.data !== 'object' || ev.data.type !== 'ember-photos-synced') {
+      return;
+    }
+    if (ev.source && ev.source !== window && ev.source !== window.parent && ev.source !== window.top) {
+      return;
+    }
+    if (window.location && window.location.origin && window.location.origin !== 'null') {
+      if (ev.origin !== window.location.origin && ev.origin !== '') {
+        return;
+      }
+    }
+    handleEmberPhotosSynced(ev.data.payload);
+  });
 
   function resolveEmberBridge() {
     try {
