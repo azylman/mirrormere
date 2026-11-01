@@ -49,3 +49,7 @@ export function useVoice(): VoiceSlice {
 export function useSystem(): SystemSlice {
   return useDisplayStore(useShallow((s) => s.system));
 }
+
+export { useCalendarEvents } from '../shell/NextUp';
+export type { RawCalendarEvent } from '../shell/NextUp';
+

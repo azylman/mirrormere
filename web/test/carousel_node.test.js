@@ -696,4 +696,179 @@ test('carousel unmounts outgoing widget controllers before DOM replacement', asy
   });
 });
 
+test('carousel dynamic task switcher and activeTaskWidgetId substitution', async (t) => {
+  function setupTestEnv() {
+    const createdElements = [];
+    const doc = {
+      createDocumentFragment: () => ({ children: [], appendChild() {} }),
+      createElement: (tag) => {
+        const el = {
+          tagName: tag.toUpperCase(),
+          children: [],
+          style: {},
+          dataset: {},
+          listeners: {},
+          appendChild(ch) { this.children.push(ch); },
+          querySelector(sel) {
+            if (sel === '.hearth-task-switcher') {
+              return this.children.find(c => c.className === 'hearth-task-switcher');
+            }
+            if (sel === '.tasks-progress') return null;
+            return null;
+          },
+          addEventListener(evt, fn) {
+            this.listeners[evt] = fn;
+          },
+        };
+        createdElements.push(el);
+        return el;
+      },
+    };
+    const win = { location: { search: '' } };
+    const fn = new Function('window', 'document', 'requestAnimationFrame', 'setTimeout', 'setInterval', 'clearInterval', 'clearTimeout', carouselCode);
+    fn(win, doc, () => {}, () => {}, () => {}, () => {}, () => {});
+    const Carousel = win.MirrormereCarousel;
+    const canvas = {
+      dataset: {},
+      classList: { add() {}, remove() {} },
+      appendChild() {},
+      addEventListener() {},
+    };
+    const c = new Carousel(canvas);
+    return { c, doc, createdElements };
+  }
+
+  await t.test('injectTaskSwitcher parses taskTabs dataset and populates taskWidgetIds', () => {
+    const { c } = setupTestEnv();
+    assert.deepEqual(c.taskWidgetIds, []);
+
+    const hdr = {
+      className: 'tasks-header',
+      children: [],
+      appendChild(ch) { this.children.push(ch); },
+      querySelector(sel) {
+        if (sel === '.hearth-task-switcher') return this.children.find(ch => ch.className === 'hearth-task-switcher') || null;
+        return null;
+      },
+    };
+
+    const node = {
+      dataset: {
+        taskTabs: JSON.stringify([
+          { id: 'tasks-personal', label: 'Personal' },
+          { id: 'tasks-work', label: 'Work' },
+        ]),
+      },
+      querySelector(sel) {
+        if (sel === '.tasks-header') return hdr;
+        return null;
+      },
+    };
+
+    c.injectTaskSwitcher(node, 'tasks-personal');
+    assert.deepEqual(c.taskWidgetIds, ['tasks-personal', 'tasks-work']);
+    assert.equal(hdr.children.length, 1);
+    const switcher = hdr.children[0];
+    assert.equal(switcher.className, 'hearth-task-switcher');
+    assert.equal(switcher.children.length, 2);
+    assert.equal(switcher.children[0].textContent, 'Personal');
+    assert.equal(switcher.children[1].textContent, 'Work');
+  });
+
+  await t.test('getWidgetsForScreen substitutes activeTaskWidgetId when set', () => {
+    const { c } = setupTestEnv();
+    c.screenLayouts.set(0, [
+      { widget_id: 'weather', origin: [0, 0], dimensions: [2, 2] },
+      { widget_id: 'tasks-personal', origin: [0, 2], dimensions: [2, 4] },
+    ]);
+    c.taskWidgetIds = ['tasks-personal', 'tasks-work'];
+
+    // Before activeTaskWidgetId is set
+    const widgetsBefore = c.getWidgetsForScreen(0);
+    assert.deepEqual(widgetsBefore, [
+      { widget_id: 'weather', origin: [0, 0], dimensions: [2, 2] },
+      { widget_id: 'tasks-personal', origin: [0, 2], dimensions: [2, 4] },
+    ]);
+
+    // Set activeTaskWidgetId to 'tasks-work'
+    c.activeTaskWidgetId = 'tasks-work';
+    const widgetsAfter = c.getWidgetsForScreen(0);
+    assert.deepEqual(widgetsAfter, [
+      { widget_id: 'weather', origin: [0, 0], dimensions: [2, 2] },
+      { widget_id: 'tasks-work', origin: [0, 2], dimensions: [2, 4] },
+    ]);
+  });
+
+  await t.test('applyCachedScreen resolves any widget whose widget_id is in taskWidgetIds to activeTaskWidgetId', () => {
+    const { c } = setupTestEnv();
+    c.taskWidgetIds = ['tasks-personal', 'tasks-work'];
+    c.activeTaskWidgetId = 'tasks-work';
+
+    const nodePersonal = { style: {}, dataset: { widgetId: 'tasks-personal' }, querySelector: () => null };
+    const nodeWork = { style: {}, dataset: { widgetId: 'tasks-work' }, querySelector: () => null };
+    c.widgetNodeCache.set('tasks-personal', nodePersonal);
+    c.widgetNodeCache.set('tasks-work', nodeWork);
+
+    c.applyCachedScreen(0, [
+      { widget_id: 'tasks-personal', origin: [0, 0], dimensions: [2, 2] },
+    ]);
+
+    assert.equal(c.activeWidgets.has('tasks-work'), true);
+    assert.equal(c.activeWidgets.has('tasks-personal'), false);
+    assert.equal(nodeWork.style.display, '');
+    assert.equal(nodePersonal.style.display, 'none');
+  });
+
+  await t.test('switcher button click sets activeTaskWidgetId and calls applyCachedScreen with substituted widgets', async () => {
+    const { c } = setupTestEnv();
+    c.currentScreen = 0;
+    c.screenLayouts.set(0, [
+      { widget_id: 'tasks-personal', origin: [0, 0], dimensions: [2, 2] },
+    ]);
+
+    const hdr = {
+      className: 'tasks-header',
+      children: [],
+      appendChild(ch) { this.children.push(ch); },
+      querySelector(sel) {
+        if (sel === '.hearth-task-switcher') return this.children.find(ch => ch.className === 'hearth-task-switcher') || null;
+        return null;
+      },
+    };
+
+    const node = {
+      dataset: {
+        taskSwitcher: JSON.stringify([
+          { id: 'tasks-personal', label: 'Personal' },
+          { id: 'tasks-work', label: 'Work' },
+        ]),
+      },
+      querySelector(sel) {
+        if (sel === '.tasks-header') return hdr;
+        return null;
+      },
+    };
+
+    c.injectTaskSwitcher(node, 'tasks-personal');
+    const switcher = hdr.children[0];
+    const workBtn = switcher.children[1];
+
+    let appliedWidgets = null;
+    c.applyCachedScreen = (screenIndex, widgets) => {
+      appliedWidgets = widgets;
+    };
+    c.ensureWidgetsMounted = async () => {};
+
+    // Click work button
+    let stopped = false;
+    workBtn.listeners.click({ stopPropagation: () => { stopped = true; } });
+
+    assert.equal(stopped, true);
+    assert.equal(c.activeTaskWidgetId, 'tasks-work');
+    await new Promise(resolve => setTimeout(resolve, 10));
+    assert.ok(appliedWidgets);
+    assert.equal(appliedWidgets[0].widget_id, 'tasks-work');
+  });
+});
+
 

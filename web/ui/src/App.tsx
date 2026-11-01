@@ -1,5 +1,5 @@
 import { Carousel } from './carousel/Carousel';
-import { Header } from './header/Header';
+import { Header } from './shell/Header';
 import { VideoStage } from './video/VideoStage';
 import { VoiceHud } from './voice/VoiceHud';
 

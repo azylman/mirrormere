@@ -33,11 +33,71 @@ class MirrormereCarousel {
     this.navLockTimeout = null;
     this._isDragging = false;
     this.pendingRotateData = null;
+    this.screenLayouts = new Map();
+    this.widgetNodeCache = new Map();
+    this.taskWidgetIds = [];
+    this.activeTaskWidgetId = null;
+    this._prewarmedAll = false;
+
+    // Derive screens from DOM if present
+    if (this.canvas) {
+      if (this.canvas.dataset) {
+        if (this.canvas.dataset.totalScreens) {
+          this.totalScreens = parseInt(this.canvas.dataset.totalScreens, 10) || 1;
+        }
+        if (this.canvas.dataset.currentScreen) {
+          this.currentScreen = parseInt(this.canvas.dataset.currentScreen, 10) || 0;
+        }
+        if (this.canvas.dataset.screens) {
+          try {
+            const parsed = JSON.parse(this.canvas.dataset.screens);
+            if (Array.isArray(parsed)) {
+              this.totalScreens = parsed.length;
+              parsed.forEach((s, idx) => {
+                const screenIdx = typeof s.index === 'number' ? s.index : idx;
+                this.screenLayouts.set(screenIdx, s.widgets || []);
+              });
+            }
+          } catch (_) {}
+        }
+      }
+
+      if (this.canvas.children) {
+        for (const child of Array.from(this.canvas.children)) {
+          const wid = child.dataset && child.dataset.widgetId;
+          if (wid) {
+            this.widgetNodeCache.set(wid, child);
+          }
+          if (child.style) {
+            child.style.display = 'none';
+          }
+        }
+      }
+    }
 
     MirrormereCarousel.instances.add(this);
 
     this.bindTouchGestures();
     this.bindIndicatorGestures();
+
+    if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+      window.addEventListener('message', (e) => {
+        if (!e || (typeof window.location !== 'undefined' && window.location.origin && e.origin !== window.location.origin)) {
+          return;
+        }
+        if (e.data && e.data.type === 'hearth-swipe') {
+          this.advanceScreen(e.data.direction || 'next');
+        }
+      });
+    }
+
+    if (typeof window !== 'undefined' && window.location && window.location.pathname && typeof fetch === 'function') {
+      setTimeout(() => {
+        if (this.screenLayouts.size === 0) {
+          this.fetchScreens().catch(() => {});
+        }
+      }, 100);
+    }
   }
 
   /**
@@ -109,10 +169,167 @@ class MirrormereCarousel {
       window.MirrormereLiveView,
       window.MirrormerePhotoCarousel,
     ]) {
-      if (ctrl && typeof ctrl.unmount === 'function') {
-        ctrl.unmount(widgetId);
+      if (ctrl) {
+        if (typeof ctrl.pause === 'function') {
+          ctrl.pause(widgetId);
+        }
+        if (typeof ctrl.unmount === 'function') {
+          ctrl.unmount(widgetId);
+        }
       }
     }
+  }
+
+  /**
+   * Mount widget client controllers (Calendar, LiveView, PhotoCarousel) on rootNode if matching.
+   */
+  mountWidgetControllers(rootNode) {
+    if (!rootNode || typeof window === 'undefined') return;
+
+    const findMatch = (predicate, selector) => {
+      if (predicate(rootNode)) return rootNode;
+      if (typeof rootNode.querySelector === 'function' && selector) {
+        return rootNode.querySelector(selector);
+      }
+      return null;
+    };
+
+    // 1. Calendar Family / Grid
+    if (window.MirrormereCalendarFamily && typeof window.MirrormereCalendarFamily.mount === 'function') {
+      const cal = findMatch(
+        (el) => el.classList && (el.classList.contains('widget-calendar-grid') || el.classList.contains('widget-calendar-family')),
+        '.widget-calendar-grid, .widget-calendar-family, [data-widget-type="calendar-grid"]'
+      );
+      if (cal) {
+        window.MirrormereCalendarFamily.mount(cal);
+      }
+    }
+
+    // 2. Live View
+    if (window.MirrormereLiveView && typeof window.MirrormereLiveView.mount === 'function') {
+      const lv = findMatch(
+        (el) => (el.classList && (el.classList.contains('widget-live-view') || el.classList.contains('live-view-card'))) ||
+                (el.dataset && el.dataset.widgetType === 'live-view'),
+        '.widget-live-view, .live-view-card, [data-widget-type="live-view"], .live-view-config, video.live-view-media'
+      );
+      if (lv) {
+        window.MirrormereLiveView.mount(rootNode);
+      }
+    }
+
+    // 3. Photo Carousel
+    if (window.MirrormerePhotoCarousel && typeof window.MirrormerePhotoCarousel.mount === 'function') {
+      const pc = findMatch(
+        (el) => (el.classList && (el.classList.contains('widget-photo-carousel') || el.classList.contains('photo-carousel-card'))) ||
+                (el.dataset && el.dataset.widgetType === 'photo-carousel'),
+        '.widget-photo-carousel, .photo-carousel-card, [data-widget-type="photo-carousel"], .photo-carousel-data'
+      );
+      if (pc) {
+        window.MirrormerePhotoCarousel.mount(rootNode);
+      }
+    }
+  }
+
+  /**
+   * Get widget layout descriptors for a given screen index.
+   */
+  getWidgetsForScreen(screenIndex) {
+    const widgets = this.screenLayouts.get(screenIndex) || [];
+    if (this.activeTaskWidgetId && Array.isArray(this.taskWidgetIds) && this.taskWidgetIds.length > 0) {
+      return widgets.map((w) => {
+        if (w && this.taskWidgetIds.includes(w.widget_id)) {
+          return { ...w, widget_id: this.activeTaskWidgetId };
+        }
+        return w;
+      });
+    }
+    return widgets;
+  }
+
+  /**
+   * Dynamically inject task switcher tabs if specified by widget data attributes.
+   */
+  injectTaskSwitcher(node, wid) {
+    if (!node || typeof node.querySelector !== 'function') return;
+    if (!Array.isArray(this.taskWidgetIds)) {
+      this.taskWidgetIds = [];
+    }
+    const tabsData = node.dataset && (node.dataset.taskTabs || node.dataset.taskSwitcher);
+    let tabs = [];
+    if (tabsData) {
+      try {
+        tabs = JSON.parse(tabsData);
+      } catch (_) {}
+    }
+    if (Array.isArray(tabs)) {
+      for (const t of tabs) {
+        if (t && t.id && !this.taskWidgetIds.includes(t.id)) {
+          this.taskWidgetIds.push(t.id);
+        }
+      }
+    }
+    if (!this.taskWidgetIds.includes(wid)) return;
+    const hdr = node.querySelector('.tasks-header');
+    if (!hdr || typeof hdr.querySelector !== 'function' || hdr.querySelector('.hearth-task-switcher')) return;
+    if (!Array.isArray(tabs) || tabs.length === 0) return;
+    if (typeof document === 'undefined' || typeof document.createElement !== 'function') return;
+    const bar = document.createElement('div');
+    bar.className = 'hearth-task-switcher';
+    bar.style.cssText = 'display:inline-flex;gap:4px;margin-left:auto;';
+    for (const t of tabs) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = t.label || t.id;
+      const isAct = this.activeTaskWidgetId ? t.id === this.activeTaskWidgetId : t.id === wid;
+      b.style.cssText = `border:0;border-radius:999px;padding:3px 8px;font-size:0.68rem;font-weight:800;cursor:pointer;background:${isAct ? '#7c3aed' : 'rgba(148,163,184,0.22)'};color:${isAct ? '#ffffff' : 'inherit'};`;
+      b.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        if (this.activeTaskWidgetId !== t.id) {
+          this.activeTaskWidgetId = t.id;
+          const wList = this.getWidgetsForScreen(this.currentScreen);
+          this.ensureWidgetsMounted(wList).then(() => {
+            this.applyCachedScreen(this.currentScreen, wList);
+          });
+        }
+      });
+      bar.appendChild(b);
+    }
+    const prog = hdr.querySelector('.tasks-progress');
+    if (prog && prog.style) prog.style.display = 'none';
+    hdr.appendChild(bar);
+  }
+
+  /**
+   * Fetch complete screen layouts dynamically from GET /api/screens.
+   */
+  async fetchScreens() {
+    try {
+      const res = await fetch('api/screens');
+      if (!res.ok) return null;
+      const data = await res.json();
+      if (data && Array.isArray(data.screens)) {
+        this.totalScreens = data.screens.length;
+        if (typeof data.current_screen === 'number') {
+          this.currentScreen = data.current_screen;
+        }
+        for (const s of data.screens) {
+          const idx = typeof s.index === 'number' ? s.index : 0;
+          this.screenLayouts.set(idx, s.widgets || []);
+        }
+        this.updateIndicator();
+        const initialWidgets = this.getWidgetsForScreen(this.currentScreen);
+        if (initialWidgets && initialWidgets.length > 0) {
+          await this.ensureWidgetsMounted(initialWidgets);
+          this.applyCachedScreen(this.currentScreen, initialWidgets);
+        }
+        if (!this._prewarmedAll) {
+          this._prewarmedAll = true;
+          setTimeout(() => this.prewarmAllScreens(), 400);
+        }
+        return data;
+      }
+    } catch (_) {}
+    return null;
   }
 
   /**
@@ -131,36 +348,49 @@ class MirrormereCarousel {
       return;
     }
 
-    this.currentScreen = data.current_screen ?? 0;
-    this.totalScreens = data.total_screens ?? 1;
+    this.currentScreen = typeof data.current_screen === 'number' ? data.current_screen : this.currentScreen;
+    this.totalScreens = typeof data.total_screens === 'number' ? data.total_screens : (this.screenLayouts.size > 0 ? this.screenLayouts.size : this.totalScreens);
+    this.screenLayouts.set(this.currentScreen, data.widgets);
     this.updateIndicator();
 
-    // 1. Pre-warm: fetch all widget fragments in parallel before touching the active DOM
-    const fetchPromises = data.widgets.map(async (widget) => {
+    const widgetsToShow = this.getWidgetsForScreen(this.currentScreen);
+    await this.ensureWidgetsMounted(widgetsToShow);
+    this.applyCachedScreen(this.currentScreen, widgetsToShow);
+
+    if (!this._prewarmedAll) {
+      this._prewarmedAll = true;
+      setTimeout(() => this.prewarmAllScreens(), 400);
+    }
+  }
+
+  /**
+   * Ensure widget DOM nodes are fetched and mounted into the cache.
+   */
+  async ensureWidgetsMounted(widgets) {
+    if (!Array.isArray(widgets)) return;
+    const missingWidgets = widgets.filter(w => !this.widgetNodeCache.has(w.widget_id));
+    for (const w of widgets) {
+      const existingNode = this.widgetNodeCache.get(w.widget_id);
+      if (existingNode) {
+        this.injectTaskSwitcher(existingNode, w.widget_id);
+      }
+    }
+    if (missingWidgets.length === 0) return;
+
+    const fetchPromises = missingWidgets.map(async (widget) => {
       try {
         const res = await fetch(this.renderURL(widget.widget_id));
-        if (!res.ok) {
-          throw new Error(`HTTP ${res.status}`);
-        }
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const html = await res.text();
-        return { widget, html, error: null };
+        return { widget, html };
       } catch (err) {
-        console.warn(`[MirrormereCarousel] Failed to render widget ${widget.widget_id}:`, err);
-        const fallbackHTML = `<div class="widget-card" data-widget-id="${widget.widget_id}" style="border-color: var(--mm-status-error);">
-          <div style="color: var(--mm-status-error); font-size: 0.9rem;">Widget ${widget.widget_id} unavailable</div>
-        </div>`;
-        return { widget, html: fallbackHTML, error: err };
+        const fallbackHTML = `<div class="widget-card" data-widget-id="${widget.widget_id}"><div style="font-size:0.9rem;">Widget ${widget.widget_id} unavailable</div></div>`;
+        return { widget, html: fallbackHTML };
       }
     });
-
-    const rendered = await Promise.all(fetchPromises);
-
-    // 2. Build incoming fragment nodes
-    const fragment = document.createDocumentFragment();
-    const newActiveWidgets = new Map();
-
-    for (const item of rendered) {
-      const { widget, html } = item;
+    const fetched = await Promise.all(fetchPromises);
+    for (const { widget, html } of fetched) {
+      if (this.widgetNodeCache.has(widget.widget_id)) continue;
       const temp = document.createElement('div');
       temp.innerHTML = html.trim();
       const node = (temp.querySelector && temp.querySelector('.widget-card')) || temp.firstElementChild || document.createElement('div');
@@ -171,68 +401,146 @@ class MirrormereCarousel {
           }
         }
       }
+      if (node.dataset) {
+        node.dataset.widgetId = widget.widget_id;
+      }
+      if (node.style) {
+        node.style.display = 'none';
+      }
+      this.injectTaskSwitcher(node, widget.widget_id);
+      if (this.canvas && typeof this.canvas.appendChild === 'function') {
+        this.canvas.appendChild(node);
+      }
+      this.widgetNodeCache.set(widget.widget_id, node);
+    }
+  }
 
-      // Enforce 6x2 grid cell positioning (1-indexed CSS grid lines)
+  /**
+   * Apply cached screen widget positions and visibility.
+   */
+  applyCachedScreen(screenIndex, widgets) {
+    if (!this.canvas || !Array.isArray(widgets)) return;
+    if (this.activeTaskWidgetId && Array.isArray(this.taskWidgetIds) && this.taskWidgetIds.length > 0) {
+      widgets = widgets.map((w) => {
+        if (w && this.taskWidgetIds.includes(w.widget_id)) {
+          return { ...w, widget_id: this.activeTaskWidgetId };
+        }
+        return w;
+      });
+    }
+    const activeIds = new Set(widgets.map(w => w.widget_id));
+    const newActiveWidgets = new Map();
+
+    // Identify outgoing widgets from activeWidgets, canvas querySelectorAll, and cache
+    const outgoingIds = new Set();
+    if (this.activeWidgets) {
+      for (const id of this.activeWidgets.keys()) {
+        if (!activeIds.has(id)) outgoingIds.add(id);
+      }
+    }
+    if (this.canvas && typeof this.canvas.querySelectorAll === 'function') {
+      const els = this.canvas.querySelectorAll('[data-widget-id]');
+      for (const el of els) {
+        const wid = el.dataset && el.dataset.widgetId;
+        if (wid && !activeIds.has(wid)) {
+          outgoingIds.add(wid);
+        }
+      }
+    }
+    for (const [wid] of this.widgetNodeCache.entries()) {
+      if (!activeIds.has(wid)) {
+        outgoingIds.add(wid);
+      }
+    }
+
+    // Unmount/pause active controllers for all outgoing widgets before hiding
+    for (const oldId of outgoingIds) {
+      this.unmountWidgetControllers(oldId);
+    }
+
+    for (const widget of widgets) {
+      const node = this.widgetNodeCache.get(widget.widget_id);
+      if (!node) continue;
+      this.injectTaskSwitcher(node, widget.widget_id);
       const colStart = (widget.origin && widget.origin[0] !== undefined) ? widget.origin[0] + 1 : 1;
       const rowStart = (widget.origin && widget.origin[1] !== undefined) ? widget.origin[1] + 1 : 1;
       const colSpan = (widget.dimensions && widget.dimensions[0]) ? widget.dimensions[0] : 1;
       const rowSpan = (widget.dimensions && widget.dimensions[1]) ? widget.dimensions[1] : 1;
 
-      node.style.gridColumn = `${colStart} / span ${colSpan}`;
-      node.style.gridRow = `${rowStart} / span ${rowSpan}`;
-      node.dataset.widgetId = widget.widget_id;
-      node.dataset.originCol = String(colStart - 1);
-      node.dataset.originRow = String(rowStart - 1);
-      node.dataset.dimCols = String(colSpan);
-      node.dataset.dimRows = String(rowSpan);
+      if (node.style) {
+        node.style.gridColumn = `${colStart} / span ${colSpan}`;
+        node.style.gridRow = `${rowStart} / span ${rowSpan}`;
+        node.style.display = '';
+      }
+      if (node.dataset) {
+        node.dataset.widgetId = widget.widget_id;
+        node.dataset.originCol = String(colStart - 1);
+        node.dataset.originRow = String(rowStart - 1);
+        node.dataset.dimCols = String(colSpan);
+        node.dataset.dimRows = String(rowSpan);
+      }
 
-      fragment.appendChild(node);
+      activeIds.add(widget.widget_id);
       newActiveWidgets.set(widget.widget_id, {
         element: node,
         origin: widget.origin,
         dimensions: widget.dimensions,
       });
+
+      this.mountWidgetControllers(node);
+
+      if (typeof requestAnimationFrame === 'function') {
+        requestAnimationFrame(() => {
+          const calInst = window.MirrormereCalendarFamily && window.MirrormereCalendarFamily.getInstance && window.MirrormereCalendarFamily.getInstance(widget.widget_id);
+          if (calInst && typeof calInst.fitDayEvents === 'function') {
+            calInst.fitDayEvents();
+          }
+        });
+      }
     }
 
-    // 3. Hot-swap onto canvas with smooth transition
-    if (this.canvas) {
+    for (const [wid, node] of this.widgetNodeCache.entries()) {
+      if (!activeIds.has(wid) && node.style) {
+        node.style.display = 'none';
+      }
+    }
+    if (this.canvas && this.canvas.children) {
+      for (const child of Array.from(this.canvas.children)) {
+        const wid = child.dataset && child.dataset.widgetId;
+        if ((!wid || !activeIds.has(wid)) && child.style) {
+          child.style.display = 'none';
+        }
+      }
+    }
+
+    if (this.canvas && this.canvas.classList && typeof this.canvas.classList.add === 'function') {
       this.canvas.classList.add('transitioning');
       this.setAnimating(true);
-      const outgoingIds = new Set();
-      if (this.activeWidgets) {
-        for (const id of this.activeWidgets.keys()) {
-          outgoingIds.add(id);
-        }
+      if (typeof requestAnimationFrame === 'function') {
+        requestAnimationFrame(() => {
+          setTimeout(() => {
+            if (this.canvas && this.canvas.classList && typeof this.canvas.classList.remove === 'function') {
+              this.canvas.classList.remove('transitioning');
+            }
+            this.setAnimating(false);
+          }, 150);
+        });
       }
-      if (this.canvas && typeof this.canvas.querySelectorAll === 'function') {
-        const els = this.canvas.querySelectorAll('[data-widget-id]');
-        for (const el of els) {
-          if (el.dataset?.widgetId) {
-            outgoingIds.add(el.dataset.widgetId);
-          }
-        }
-      }
-      for (const oldId of outgoingIds) {
-        this.unmountWidgetControllers(oldId);
-      }
+    }
 
-      // Single DOM replacement eliminates intermediate blank frames
-      this.canvas.innerHTML = '';
-      this.canvas.appendChild(fragment);
-      this.activeWidgets = newActiveWidgets;
-      // Hydration marker for the e-ink renderer's settle poll: lets it tell
-      // "hydrated with N widgets" (N may be 0) from the pre-hydration page.
+    this.activeWidgets = newActiveWidgets;
+    if (this.canvas.dataset) {
       this.canvas.dataset.widgetCount = String(newActiveWidgets.size);
       this.canvas.dataset.screenHydrated = 'true';
+    }
+  }
 
-      requestAnimationFrame(() => {
-        setTimeout(() => {
-          if (this.canvas) {
-            this.canvas.classList.remove('transitioning');
-          }
-          this.setAnimating(false);
-        }, 150);
-      });
+  /**
+   * Pre-warm all known screen layouts.
+   */
+  async prewarmAllScreens() {
+    for (const [, widgets] of this.screenLayouts.entries()) {
+      await this.ensureWidgetsMounted(widgets);
     }
   }
 
@@ -255,8 +563,7 @@ class MirrormereCarousel {
     }
 
     const widgetID = data.widget_id;
-    if (!this.activeWidgets.has(widgetID)) {
-      // Widget is rotated off-screen; skip DOM fetch
+    if (!this.activeWidgets.has(widgetID) && !this.widgetNodeCache.has(widgetID)) {
       return;
     }
 
@@ -266,7 +573,9 @@ class MirrormereCarousel {
         throw new Error(`HTTP ${res.status}`);
       }
       const html = await res.text();
-      const existing = this.canvas.querySelector(`[data-widget-id="${widgetID}"]`);
+      const existing = (this.canvas && typeof this.canvas.querySelector === 'function')
+        ? this.canvas.querySelector(`[data-widget-id="${widgetID}"]`)
+        : this.widgetNodeCache.get(widgetID);
       if (existing) {
         const temp = document.createElement('div');
         temp.innerHTML = html.trim();
@@ -279,15 +588,26 @@ class MirrormereCarousel {
               }
             }
           }
-          newNode.style.gridColumn = existing.style.gridColumn;
-          newNode.style.gridRow = existing.style.gridRow;
-          newNode.dataset.widgetId = widgetID;
+          if (existing.style && newNode.style) {
+            newNode.style.gridColumn = existing.style.gridColumn;
+            newNode.style.gridRow = existing.style.gridRow;
+            newNode.style.display = existing.style.display;
+          }
+          if (newNode.dataset) {
+            newNode.dataset.widgetId = widgetID;
+          }
           this.unmountWidgetControllers(widgetID);
-          existing.replaceWith(newNode);
-
+          this.injectTaskSwitcher(newNode, widgetID);
+          if (typeof existing.replaceWith === 'function') {
+            existing.replaceWith(newNode);
+          }
+          this.widgetNodeCache.set(widgetID, newNode);
           const cached = this.activeWidgets.get(widgetID);
           if (cached) {
             cached.element = newNode;
+          }
+          if (this.activeWidgets.has(widgetID)) {
+            this.mountWidgetControllers(newNode);
           }
         }
       }
@@ -305,9 +625,11 @@ class MirrormereCarousel {
     }
 
     const widgetType = data.type;
-    const matchingElements = this.canvas.querySelectorAll(`[data-widget-type="${widgetType}"]`);
+    const matchingElements = (this.canvas && typeof this.canvas.querySelectorAll === 'function')
+      ? this.canvas.querySelectorAll(`[data-widget-type="${widgetType}"]`)
+      : [];
     for (const el of matchingElements) {
-      const widgetID = el.dataset.widgetId;
+      const widgetID = el.dataset && el.dataset.widgetId;
       if (widgetID) {
         await this.handleWidgetUpdate({ widget_id: widgetID });
       }
@@ -318,7 +640,11 @@ class MirrormereCarousel {
    * Bind touch swipe gestures for Touch Kiosk Profile A.
    */
   bindTouchGestures() {
-    const target = this.canvas || document.body;
+    const target = (typeof document !== 'undefined' && document.body && typeof document.body.addEventListener === 'function')
+      ? document.body
+      : this.canvas;
+
+    if (!target || typeof target.addEventListener !== 'function') return;
 
     target.addEventListener('touchstart', (e) => {
       if (this.isPaused) return;
@@ -376,7 +702,7 @@ class MirrormereCarousel {
     }
     this.navLockTimeout = setTimeout(() => {
       this.releaseNavLock();
-    }, 600);
+    }, 180);
     if (this.navLockTimeout && typeof this.navLockTimeout.unref === 'function') {
       this.navLockTimeout.unref();
     }
@@ -763,13 +1089,13 @@ window.PhotoCarouselInstance = class PhotoCarouselInstance {
       this._clickHandler = null;
     }
   }
-}
+};
 
 window.MirrormerePhotoCarousel = {
   instances: new Map(),
   mount(element) {
     if (!element) return;
-    const id = element.dataset.widgetId;
+    const id = element.dataset && element.dataset.widgetId;
     if (!id) return;
     if (this.instances.has(id)) {
       this.instances.get(id).destroy();
@@ -785,4 +1111,3 @@ window.MirrormerePhotoCarousel = {
     }
   }
 };
-
