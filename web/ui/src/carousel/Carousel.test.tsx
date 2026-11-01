@@ -358,6 +358,77 @@ describe('Carousel', () => {
     });
   });
 
+  describe('swiping the screen indicator pill', () => {
+    function pill(): HTMLElement {
+      const el = document.querySelector<HTMLElement>('#screen-indicator');
+      if (!el) throw new Error('#screen-indicator not rendered');
+      return el;
+    }
+
+    function firePill(type: string, x: number, target: EventTarget = pill()): void {
+      act(() => {
+        const event = new Event(type, { bubbles: true, cancelable: true });
+        Object.assign(event, { clientX: x, clientY: 100, pointerId: 1, isPrimary: true });
+        target.dispatchEvent(event);
+      });
+    }
+
+    function activeDot(): number | null {
+      const active = document.querySelector<HTMLButtonElement>('.screen-indicator-dot.active');
+      return active ? Number(active.dataset.screenIndex) : null;
+    }
+
+    it('selects the next screen on a 60 px left swipe and captures the pointer on press', async () => {
+      vi.useFakeTimers();
+      stubApi();
+      render(<Carousel />);
+      await act(async () => {});
+      const capture = vi.fn();
+      Object.assign(pill(), { setPointerCapture: capture });
+
+      firePill('pointerdown', 500);
+      expect(capture).toHaveBeenCalledWith(1);
+      firePill('pointerup', 440);
+      await act(async () => {
+        vi.advanceTimersByTime(SETTLE_FALLBACK_MS);
+      });
+
+      expect(useDisplayStore.getState().screen.currentScreen).toBe(2);
+      expect(activeDot()).toBe(2);
+    });
+
+    it('does not capture a press that starts on a dot, so the dot keeps its click', async () => {
+      vi.useFakeTimers();
+      stubApi();
+      render(<Carousel />);
+      await act(async () => {});
+      const capture = vi.fn();
+      Object.assign(pill(), { setPointerCapture: capture });
+      const dot = document.querySelector<HTMLButtonElement>('[data-screen-index="0"]');
+      if (!dot) throw new Error('dot 0 not rendered');
+
+      firePill('pointerdown', 500, dot);
+      expect(capture).not.toHaveBeenCalled();
+    });
+
+    it('drops the gesture on pointercancel, so a lone pointerup does nothing', async () => {
+      vi.useFakeTimers();
+      stubApi();
+      render(<Carousel />);
+      await act(async () => {});
+
+      firePill('pointerdown', 500);
+      firePill('pointercancel', 500);
+      firePill('pointerup', 440);
+      await act(async () => {
+        vi.advanceTimersByTime(SETTLE_FALLBACK_MS);
+      });
+
+      expect(useDisplayStore.getState().screen.currentScreen).toBe(1);
+      expect(activeDot()).toBe(1);
+    });
+  });
+
   it('shows screen 0 when the layout shrinks under the shown screen', async () => {
     const screenOf = (index: number) => ({
       index,

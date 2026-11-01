@@ -23,6 +23,11 @@ export function ScreenIndicator({ total, active, hidden, onSelect, onSwipe }: Sc
 
   const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     start.current = { x: event.clientX, y: event.clientY };
+    // Keeps pointerup on the pill when the finger is released outside it. Not on a dot: capture
+    // retargets the click to the pill, so the dot's onClick would never fire (Chromium).
+    if (!(event.target instanceof Element && event.target.closest('button'))) {
+      event.currentTarget.setPointerCapture?.(event.pointerId);
+    }
   };
 
   const onPointerUp = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -36,6 +41,10 @@ export function ScreenIndicator({ total, active, hidden, onSelect, onSwipe }: Sc
     }
   };
 
+  const onPointerCancel = () => {
+    start.current = null;
+  };
+
   const dots = Array.from({ length: visible ? total : 0 }, (_, i) => i);
   return (
     <div
@@ -44,6 +53,7 @@ export function ScreenIndicator({ total, active, hidden, onSelect, onSwipe }: Sc
       style={{ display: visible ? 'inline-flex' : 'none' }}
       onPointerDown={onPointerDown}
       onPointerUp={onPointerUp}
+      onPointerCancel={onPointerCancel}
     >
       {dots.map((i) => (
         <button
