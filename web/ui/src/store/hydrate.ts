@@ -1,4 +1,4 @@
-import type { WidgetDetailResponse } from '../sse/types';
+import type { ScreensResponse, WidgetDetailResponse } from '../sse/types';
 import type { WidgetEntry } from './types';
 
 /**
@@ -38,4 +38,15 @@ export function toWidgetEntry(body: WidgetDetailResponse): WidgetEntry {
     viewModel: body.view_model,
     timestamp: body.timestamp,
   };
+}
+
+/** Relative, like widgetDetailURL: resolves under the page's /api prefix. */
+export const SCREENS_URL = 'api/screens';
+
+export async function fetchScreenLayouts(fetchImpl: typeof fetch = fetch): Promise<ScreensResponse> {
+  const res = await fetchImpl(SCREENS_URL, { headers: { Accept: 'application/json' } });
+  if (!res.ok) {
+    throw new Error(`screens: HTTP ${res.status}`);
+  }
+  return (await res.json()) as ScreensResponse;
 }

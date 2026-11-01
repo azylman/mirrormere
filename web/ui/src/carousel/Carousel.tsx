@@ -1,0 +1,127 @@
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useDisplayStore } from '../store';
+import type { WidgetPlacement } from '../sse/types';
+import { CarouselController, neighbourOf, type CarouselHost } from './controller';
+import { Screen } from './Screen';
+import { ScreenIndicator } from './ScreenIndicator';
+
+const NO_PLACEMENTS: readonly WidgetPlacement[] = [];
+
+interface Pane {
+  index: number;
+  offset: -1 | 0 | 1;
+}
+
+/** The panes mounted around `shown`: previous, current and next. Only one screen when there is no swipe. */
+export function panesFor(shown: number, total: number): Pane[] {
+  if (total <= 1) return [{ index: shown, offset: 0 }];
+  return [
+    { index: neighbourOf(shown, total, 'prev'), offset: -1 },
+    { index: shown, offset: 0 },
+    { index: neighbourOf(shown, total, 'next'), offset: 1 },
+  ];
+}
+
+/**
+ * Keys panes by screen index, so a neighbour that becomes current keeps its DOM and
+ * its mounted widgets. With two screens, previous and next are the same screen, so the
+ * previous pane gets its own key.
+ */
+export function paneKey(pane: Pane, total: number): string {
+  return pane.offset === -1 && total === 2 ? `${pane.index}-prev` : String(pane.index);
+}
+
+function selectScreen(index: number): void {
+  fetch('api/screen/select', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ screen_index: index }),
+  }).catch((err: unknown) => {
+    console.error('[mirrormere] screen select failed:', err);
+  });
+}
+
+/**
+ * Three screen panes side by side (previous, current, next) in a track that follows
+ * the finger. The current pane owns #grid-canvas. React renders panes only when the
+ * shown screen or the layout changes; gestures and settles never go through React.
+ */
+export function Carousel() {
+  const total = useDisplayStore((s) => s.screen.totalScreens);
+  const layout = useDisplayStore((s) => s.layout);
+  const layoutVersion = useDisplayStore((s) => s.layoutVersion);
+  const paused = useDisplayStore((s) => s.carousel.paused);
+  const [shown, setShown] = useState(() => useDisplayStore.getState().screen.currentScreen);
+
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const trackRef = useRef<HTMLDivElement>(null);
+  const controllerRef = useRef<CarouselController | null>(null);
+
+  useEffect(() => {
+    useDisplayStore.getState().loadScreens().catch((err: unknown) => {
+      console.warn('[mirrormere] screen layout load failed:', err);
+    });
+  }, [layoutVersion]);
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    const track = trackRef.current;
+    if (!viewport || !track) return;
+    const host: CarouselHost = { commit: setShown, select: selectScreen };
+    const controller = new CarouselController({
+      viewport,
+      track,
+      host,
+      initial: useDisplayStore.getState().screen.currentScreen,
+    });
+    controllerRef.current = controller;
+    controller.attach();
+    return () => {
+      controller.dispose();
+      controllerRef.current = null;
+    };
+  }, []);
+
+  // Runs before paint, in the same commit that moved the panes: the track returns to
+  // rest with the new current pane already in place, so nothing flashes.
+  useLayoutEffect(() => {
+    controllerRef.current?.rendered(shown);
+  }, [shown]);
+
+  const placementsByIndex = useMemo(() => {
+    const map = new Map<number, readonly WidgetPlacement[]>();
+    for (const screen of layout) map.set(screen.index, screen.widgets);
+    return map;
+  }, [layout]);
+
+  const panes = panesFor(shown, total);
+  const ready = layout.length > 0;
+
+  return (
+    <>
+      <div ref={viewportRef} className="carousel-viewport">
+        <div ref={trackRef} className="carousel-track">
+          {panes.map((pane) => (
+            <Screen
+              key={paneKey(pane, total)}
+              index={pane.index}
+              offset={pane.offset}
+              placements={placementsByIndex.get(pane.index) ?? NO_PLACEMENTS}
+              ready={ready}
+            />
+          ))}
+        </div>
+      </div>
+      <ScreenIndicator
+        total={total}
+        active={shown}
+        hidden={paused}
+        onSelect={(index) => controllerRef.current?.goTo(index)}
+        onSwipe={(direction) => {
+          const controller = controllerRef.current;
+          if (controller) controller.goTo(neighbourOf(controller.current, total, direction));
+        }}
+      />
+    </>
+  );
+}

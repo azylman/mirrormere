@@ -8,3 +8,39 @@
   width: 100%;
   height: 100%;
 }
+
+/* Carousel. Panes sit at -100%, 0 and +100% of the track; the track carries the finger offset. */
+.carousel-viewport {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+
+.carousel-track {
+  position: absolute;
+  inset: 0;
+  touch-action: pan-y;
+}
+
+/* Same geometry as the legacy .grid-canvas (hud.css), which the current pane no longer carries. */
+.grid-pane {
+  position: absolute;
+  top: 0;
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  grid-template-rows: repeat(2, 1fr);
+  gap: var(--mm-grid-gap);
+  height: calc(100% - var(--mm-header-height) - var(--mm-grid-gap) - var(--mm-indicator-space));
+}
+
+body[data-grid="2x6"] .grid-pane {
+  grid-template-columns: repeat(2, 1fr);
+  grid-template-rows: repeat(6, 1fr);
+}
+
+#mirrormere-app:has(.screen-indicator[style*="display: none"]) .grid-pane,
+#mirrormere-app:has(.screen-indicator.paused) .grid-pane,
+#mirrormere-app:has(.screen-indicator[hidden]) .grid-pane {
+  height: calc(100% - var(--mm-header-height) - var(--mm-grid-gap));
+}

@@ -1,0 +1,213 @@
+import { useDisplayStore } from '../store';
+import { isExcludedTarget, releaseDirection, SwipeGesture, type Direction, type PointerSample, type SwipeRelease } from './gesture';
+import { TrackAnimator } from './track';
+
+export interface CarouselHost {
+  /** Shows `index` as the current screen (React state). */
+  commit(index: number): void;
+  /** Tells the server which screen the user picked. Called only after the settle finishes. */
+  select(index: number): void;
+}
+
+export interface CarouselControllerOptions {
+  viewport: HTMLElement;
+  track: HTMLElement;
+  host: CarouselHost;
+  /** Screen shown at mount. */
+  initial: number;
+  now?: () => number;
+}
+
+/** Index of the neighbour in `direction`, wrapping like the server's advance. */
+export function neighbourOf(index: number, total: number, direction: Direction): number {
+  return direction === 'next' ? (index + 1) % total : (index - 1 + total) % total;
+}
+
+/**
+ * Carousel state machine. Owns the swipe gesture and the track animation, and decides
+ * when the shown screen changes. Pointer events are wired here, not through React, so
+ * a move never re-renders anything.
+ *
+ * Order of operations for a user swipe: track follows the finger, release decides,
+ * the track settles, then the shown screen changes and the POST goes out. No request
+ * is made between pointerup and the end of the settle.
+ */
+export class CarouselController {
+  private shown: number;
+  private readonly animator: TrackAnimator;
+  private readonly gesture = new SwipeGesture();
+  private readonly now: () => number;
+  private gestureWidth = 0;
+  private pointerId: number | null = null;
+  /** Index handed to React and not yet rendered. Gestures wait for the render. */
+  private awaitingRender: number | null = null;
+  /** A server rotate that arrived while the carousel was busy. */
+  private queued: number | null = null;
+  private detachStore: (() => void) | null = null;
+
+  constructor(private readonly options: CarouselControllerOptions) {
+    this.shown = options.initial;
+    this.now = options.now ?? (() => performance.now());
+    this.animator = new TrackAnimator(options.track);
+  }
+
+  /** Index of the screen the carousel shows (the one the host last committed). */
+  get current(): number {
+    return this.shown;
+  }
+
+  attach(): void {
+    const { viewport } = this.options;
+    viewport.addEventListener('pointerdown', this.onPointerDown);
+    viewport.addEventListener('pointermove', this.onPointerMove);
+    viewport.addEventListener('pointerup', this.onPointerUp);
+    viewport.addEventListener('pointercancel', this.onPointerCancel);
+    this.detachStore = useDisplayStore.subscribe((state, prev) => {
+      if (state.screen.currentScreen !== prev.screen.currentScreen) {
+        this.requestShow(state.screen.currentScreen);
+      }
+    });
+  }
+
+  dispose(): void {
+    const { viewport } = this.options;
+    viewport.removeEventListener('pointerdown', this.onPointerDown);
+    viewport.removeEventListener('pointermove', this.onPointerMove);
+    viewport.removeEventListener('pointerup', this.onPointerUp);
+    viewport.removeEventListener('pointercancel', this.onPointerCancel);
+    this.detachStore?.();
+    this.detachStore = null;
+    this.animator.dispose();
+  }
+
+  /**
+   * The store's current screen changed: a server rotate, or the echo of our own select.
+   * An echo names the screen already shown, so it does nothing.
+   */
+  requestShow(index: number): void {
+    if (index === this.shown) return;
+    if (this.isBusy()) {
+      this.queued = index;
+      return;
+    }
+    this.go(index, false);
+  }
+
+  /** User picked a screen with a dot or the pill swipe. */
+  goTo(index: number): void {
+    if (!this.canSwipe() || index === this.shown || this.isBusy()) return;
+    this.go(index, true);
+  }
+
+  /** Called by the host after React renders `index`. Resets the track, then runs any queued rotate. */
+  rendered(index: number): void {
+    if (this.awaitingRender === index) this.awaitingRender = null;
+    if (!this.isBusy()) this.animator.reset();
+    this.drainQueue();
+  }
+
+  private isBusy(): boolean {
+    return this.gesture.active || this.animator.busy || this.awaitingRender !== null;
+  }
+
+  private canSwipe(): boolean {
+    return this.total() > 1 && !useDisplayStore.getState().carousel.paused;
+  }
+
+  private total(): number {
+    return useDisplayStore.getState().screen.totalScreens;
+  }
+
+  private directionTo(index: number): Direction | null {
+    const total = this.total();
+    if (index === neighbourOf(this.shown, total, 'next')) return 'next';
+    if (index === neighbourOf(this.shown, total, 'prev')) return 'prev';
+    return null;
+  }
+
+  /** Slides to an adjacent screen; jumps to a non-adjacent one. */
+  private go(index: number, select: boolean): void {
+    const direction = this.directionTo(index);
+    if (direction === null) {
+      this.commit(index, select);
+      return;
+    }
+    this.animator.settle(direction, () => this.commit(index, select));
+  }
+
+  private commit(index: number, select: boolean): void {
+    this.shown = index;
+    this.awaitingRender = index;
+    this.options.host.commit(index);
+    if (select) this.options.host.select(index);
+  }
+
+  private drainQueue(): void {
+    if (this.queued === null || this.isBusy()) return;
+    const next = this.queued;
+    this.queued = null;
+    this.requestShow(next);
+  }
+
+  private sample(event: PointerEvent): PointerSample {
+    return { x: event.clientX, y: event.clientY, t: this.now() };
+  }
+
+  private readonly onPointerDown = (event: PointerEvent): void => {
+    if (event.isPrimary === false || this.pointerId !== null) return;
+    const allowed = this.canSwipe() && !this.isBusy() && !isExcludedTarget(event.target);
+    if (!this.gesture.begin(this.sample(event), allowed)) return;
+    this.pointerId = event.pointerId ?? 0;
+    this.gestureWidth = this.options.viewport.clientWidth;
+  };
+
+  private readonly onPointerMove = (event: PointerEvent): void => {
+    if (this.pointerId === null || (event.pointerId ?? 0) !== this.pointerId) return;
+    const dx = this.gesture.move(this.sample(event));
+    if (dx === null) return;
+    if (!this.animator.gesturing) {
+      this.animator.beginGesture();
+      this.options.viewport.setPointerCapture?.(this.pointerId);
+    }
+    this.animator.drag(dx);
+  };
+
+  private readonly onPointerUp = (event: PointerEvent): void => {
+    if (this.pointerId === null || (event.pointerId ?? 0) !== this.pointerId) return;
+    this.pointerId = null;
+    const release = this.gesture.end(this.sample(event));
+    this.finishGesture(release);
+  };
+
+  private readonly onPointerCancel = (event: PointerEvent): void => {
+    if (this.pointerId === null || (event.pointerId ?? 0) !== this.pointerId) return;
+    this.pointerId = null;
+    if (this.gesture.cancel()) {
+      this.animator.endGesture();
+      this.animator.settle('rest', () => this.afterRest());
+    } else {
+      this.drainQueue();
+    }
+  };
+
+  private finishGesture(release: SwipeRelease | null): void {
+    if (release === null) {
+      // Tap or vertical scroll: nothing moved, so nothing to settle.
+      this.drainQueue();
+      return;
+    }
+    this.animator.endGesture();
+    const direction = releaseDirection(release, this.gestureWidth);
+    const target = direction === null ? null : neighbourOf(this.shown, this.total(), direction);
+    if (target === null) {
+      this.animator.settle('rest', () => this.afterRest());
+      return;
+    }
+    this.go(target, true);
+  }
+
+  private afterRest(): void {
+    this.animator.reset();
+    this.drainQueue();
+  }
+}

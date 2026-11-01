@@ -2,11 +2,13 @@ import { create } from 'zustand';
 import type { BufferedEvent } from '../sse/batch';
 import type { ConnectionPayload } from '../sse/types';
 import { deepEqual } from './equal';
-import { REFETCH_ON_UPDATE, fetchWidgetDetail, toWidgetEntry } from './hydrate';
-import type { DisplayData, WidgetEntry } from './types';
+import type { ScreenRotatePayload } from '../sse/types';
+import { REFETCH_ON_UPDATE, fetchScreenLayouts, fetchWidgetDetail, toWidgetEntry } from './hydrate';
+import type { CarouselSlice, DisplayData, ScreenSlice, WidgetEntry } from './types';
 
 export type {
   AudioSlice,
+  CarouselSlice,
   DisplayData,
   HeaderSlice,
   ScreenSlice,
@@ -26,6 +28,12 @@ export interface DisplayActions {
   hydrateWidget: (id: string) => Promise<void>;
   setConnection: (payload: ConnectionPayload) => void;
   setDocumentVisible: (visible: boolean) => void;
+  /** Fetch GET api/screens into `layout`. Only the latest request is applied. */
+  loadScreens: () => Promise<void>;
+  /** Queue screen.rotate instead of applying it. Used while a video takes over the carousel. */
+  pause: () => void;
+  /** Leave the paused state and apply the latest queued screen.rotate, if any. */
+  resume: () => void;
 }
 
 export type DisplayStore = DisplayData & DisplayActions;
@@ -48,10 +56,23 @@ const initialData: DisplayData = {
     bootId: null,
   },
   visibility: { visible: true },
+  layout: [],
+  layoutVersion: 0,
+  carousel: { paused: false, pendingRotate: null },
 };
+
+function screenFromRotate(payload: ScreenRotatePayload): ScreenSlice {
+  return {
+    currentScreen: payload.current_screen,
+    totalScreens: payload.total_screens,
+    intervalSeconds: payload.interval_seconds,
+    widgets: payload.widgets,
+  };
+}
 
 /** Latest request sequence per widget id, so a slow older fetch cannot overwrite a newer one. */
 const hydrateSeq = new Map<string, number>();
+let screensSeq = 0;
 
 /**
  * Pure reducer for a batch of events. Returns the patch to apply and the widget
@@ -65,6 +86,8 @@ export function reduceEvents(
   const patch: Partial<DisplayData> = {};
   const refetch = new Set<string>();
   let widgets: Record<string, WidgetEntry> | null = null;
+  let carousel: CarouselSlice = state.carousel;
+  let layoutBumps = 0;
 
   const replace = <K extends keyof DisplayData>(key: K, value: DisplayData[K]): void => {
     if (!deepEqual(state[key], value)) patch[key] = value;
@@ -86,13 +109,12 @@ export function reduceEvents(
         break;
       }
       case 'screen.rotate': {
-        const { current_screen, total_screens, interval_seconds, widgets: placements } = event.data;
-        replace('screen', {
-          currentScreen: current_screen,
-          totalScreens: total_screens,
-          intervalSeconds: interval_seconds,
-          widgets: placements,
-        });
+        // While paused the latest rotate is kept aside and applied by resume().
+        if (carousel.paused) {
+          carousel = { ...carousel, pendingRotate: event.data };
+          break;
+        }
+        replace('screen', screenFromRotate(event.data));
         break;
       }
       case 'header.update':
@@ -116,6 +138,14 @@ export function reduceEvents(
         break;
       case 'system.status': {
         const { online, time, config_status, config_error, providers, boot_id } = event.data;
+        // A config change or a new server boot can change the layout; the carousel refetches it.
+        if (
+          config_status !== state.system.configStatus ||
+          config_error !== state.system.configError ||
+          (boot_id !== undefined && state.system.bootId !== null && boot_id !== state.system.bootId)
+        ) {
+          layoutBumps++;
+        }
         replace('system', {
           ...state.system,
           online,
@@ -127,13 +157,18 @@ export function reduceEvents(
         });
         break;
       }
+      case 'widget.reload':
+        layoutBumps++;
+        break;
       default:
-        // widget.reload, style.reload and system.reload are handled by the runtime, not the store.
+        // style.reload and system.reload are handled by the runtime, not the store.
         break;
     }
   }
 
   if (widgets !== null) patch.widgets = widgets;
+  if (carousel !== state.carousel) patch.carousel = carousel;
+  if (layoutBumps > 0) patch.layoutVersion = state.layoutVersion + layoutBumps;
   return { patch, refetch: [...refetch] };
 }
 
@@ -185,5 +220,32 @@ export const useDisplayStore = create<DisplayStore>()((set, get) => ({
     if (get().visibility.visible !== visible) {
       set({ visibility: { visible } });
     }
+  },
+
+  async loadScreens() {
+    const seq = ++screensSeq;
+    const body = await fetchScreenLayouts();
+    if (seq !== screensSeq) return;
+    const layout = body.screens;
+    if (deepEqual(get().layout, layout)) return;
+    set((s) => ({
+      layout,
+      screen: s.screen.totalScreens === layout.length ? s.screen : { ...s.screen, totalScreens: layout.length },
+    }));
+  },
+
+  pause() {
+    const { carousel } = get();
+    if (!carousel.paused) set({ carousel: { ...carousel, paused: true } });
+  },
+
+  resume() {
+    const { carousel } = get();
+    if (!carousel.paused) return;
+    const pending = carousel.pendingRotate;
+    set({
+      carousel: { paused: false, pendingRotate: null },
+      ...(pending ? { screen: screenFromRotate(pending) } : {}),
+    });
   },
 }));

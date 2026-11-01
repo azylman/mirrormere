@@ -2,6 +2,8 @@ import type {
   AudioStatePayload,
   HeaderWeather,
   ProviderHealth,
+  ScreenLayout,
+  ScreenRotatePayload,
   ScreenRotateWidget,
   VideoStatePayload,
   VoiceStatePayload,
@@ -26,6 +28,12 @@ export interface ScreenSlice {
   totalScreens: number;
   intervalSeconds: number;
   widgets: ScreenRotateWidget[];
+}
+
+/** Carousel state the store owns: a paused carousel queues the latest screen.rotate. */
+export interface CarouselSlice {
+  paused: boolean;
+  pendingRotate: ScreenRotatePayload | null;
 }
 
 export interface HeaderSlice {
@@ -67,4 +75,9 @@ export interface DisplayData {
   voice: VoiceSlice;
   system: SystemSlice;
   visibility: VisibilitySlice;
+  /** Rotation layout of every screen from GET api/screens. Empty until loaded. */
+  layout: ScreenLayout[];
+  /** Bumped on widget.reload and on config or boot changes; the carousel refetches the layout. */
+  layoutVersion: number;
+  carousel: CarouselSlice;
 }
