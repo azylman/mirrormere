@@ -1,6 +1,7 @@
 import { act, cleanup, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Carousel } from '../carousel/Carousel';
+import { WidgetHost } from './WidgetHost';
 import { useDisplayStore } from '../store';
 import type { ScreensResponse } from '../sse/types';
 
@@ -128,5 +129,42 @@ describe('WidgetHost widget.reload', () => {
     render(<Carousel />);
     await settle();
     for (const id of CLOCK_IDS) expect(hydrations(fetchMock, id)).toBe(1);
+  });
+});
+
+describe('WidgetHost remount', () => {
+  beforeEach(() => {
+    useDisplayStore.setState(initial, true);
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  const cell = () => <WidgetHost id="a-0" origin={[0, 0]} dimensions={[1, 1]} />;
+
+  it('re-hydrates on remount when a reload of its type arrived while it was unmounted', async () => {
+    const fetchMock = stubApi();
+    const first = render(cell());
+    await settle();
+    expect(hydrations(fetchMock, 'a-0')).toBe(1);
+
+    first.unmount();
+    reload('clock');
+    render(cell());
+    await settle();
+    expect(hydrations(fetchMock, 'a-0')).toBe(2);
+  });
+
+  it('does not re-hydrate on remount when no reload arrived while it was unmounted', async () => {
+    const fetchMock = stubApi();
+    const first = render(cell());
+    await settle();
+
+    first.unmount();
+    render(cell());
+    await settle();
+    expect(hydrations(fetchMock, 'a-0')).toBe(1);
   });
 });

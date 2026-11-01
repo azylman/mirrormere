@@ -1,5 +1,5 @@
 import { memo, useEffect, useRef, type CSSProperties } from 'react';
-import { useDisplayStore } from '../store';
+import { needsHydrate, useDisplayStore } from '../store';
 import { useWidget } from '../store/hooks';
 import { widgetComponentFor } from './registry';
 
@@ -21,8 +21,9 @@ export function cellStyle(origin: [number, number], dimensions: [number, number]
 
 /**
  * One widget cell. Renders its card on the first commit, so the e-ink settle
- * predicate sees the cell before the data arrives. Fetches the widget detail once,
- * when the store has no meta for it yet. Re-fetches when a widget.reload names its
+ * predicate sees the cell before the data arrives. Fetches the widget detail on mount
+ * when the store has no meta for it, or a reload of its type arrived since (a remount
+ * after a reload). Re-fetches when a widget.reload names its
  * type; a reload that arrives while the carousel is paused waits for resume.
  */
 export const WidgetHost = memo(function WidgetHost({ id, origin, dimensions }: WidgetHostProps) {
@@ -35,9 +36,8 @@ export const WidgetHost = memo(function WidgetHost({ id, origin, dimensions }: W
   const seen = useRef({ type, count: reloads ?? 0 });
 
   useEffect(() => {
-    const store = useDisplayStore.getState();
-    if (!store.widgets[id]?.meta) {
-      store.hydrateWidget(id).catch((err: unknown) => {
+    if (needsHydrate(id)) {
+      useDisplayStore.getState().hydrateWidget(id).catch((err: unknown) => {
         console.warn(`[mirrormere] widget ${id} hydrate failed:`, err);
       });
     }

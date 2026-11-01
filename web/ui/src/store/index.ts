@@ -100,7 +100,20 @@ function screenFromRotate(payload: ScreenRotatePayload): ScreenSlice {
 
 /** Latest request sequence per widget id, so a slow older fetch cannot overwrite a newer one. */
 const hydrateSeq = new Map<string, number>();
+/** Per widget id: the widgetReloads count for its type when its meta was last fetched. */
+const hydratedAtReload = new Map<string, number>();
 let screensSeq = 0;
+
+/**
+ * True when a widget needs a detail fetch on mount: it has no meta, or a widget.reload
+ * for its type arrived after its meta was fetched (for example while it was unmounted).
+ */
+export function needsHydrate(id: string): boolean {
+  const state = useDisplayStore.getState();
+  const entry = state.widgets[id];
+  if (!entry?.meta) return true;
+  return (state.widgetReloads[entry.meta.type] ?? 0) > (hydratedAtReload.get(id) ?? 0);
+}
 
 /**
  * Pure reducer for a batch of events. Returns the patch to apply and the widget
@@ -228,8 +241,10 @@ export const useDisplayStore = create<DisplayStore>()((set, get) => ({
     const seq = (hydrateSeq.get(id) ?? 0) + 1;
     hydrateSeq.set(id, seq);
     const before = get().widgets[id];
+    const reloadsAtStart = get().widgetReloads;
     const entry = toWidgetEntry(await fetchWidgetDetail(id));
     if (hydrateSeq.get(id) !== seq) return;
+    hydratedAtReload.set(id, reloadsAtStart[entry.meta?.type ?? ''] ?? 0);
 
     // A widget.update that landed while the fetch was in flight is newer than
     // the fetch for state, data and timestamp. Keep the stream's values and take
