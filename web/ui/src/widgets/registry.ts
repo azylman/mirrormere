@@ -1,4 +1,5 @@
 import type { ComponentType } from 'react';
+import { LegacyWidget } from './LegacyWidget';
 
 /** Props every widget component receives from WidgetHost. */
 export interface WidgetComponentProps {
@@ -7,10 +8,16 @@ export interface WidgetComponentProps {
 }
 
 /**
- * Widget type -> component. Widget tasks add entries here; WidgetHost renders a
- * placeholder for any type missing from the map.
+ * Widget type -> component. Widget tasks add entries here. A type missing from the map
+ * renders through LEGACY_WIDGET_FALLBACK.
  */
 export const WIDGET_COMPONENTS: Readonly<Record<string, ComponentType<WidgetComponentProps>>> = {};
+
+/**
+ * Renders any type with no registered component: a custom or not-yet-ported package, served as
+ * its legacy HTML fragment.
+ */
+export const LEGACY_WIDGET_FALLBACK: ComponentType<WidgetComponentProps> = LegacyWidget;
 
 export function widgetComponentFor(type: string | undefined): ComponentType<WidgetComponentProps> | undefined {
   if (type === undefined || !Object.prototype.hasOwnProperty.call(WIDGET_COMPONENTS, type)) return undefined;

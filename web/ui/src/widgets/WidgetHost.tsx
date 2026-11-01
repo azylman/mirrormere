@@ -1,7 +1,7 @@
 import { memo, useEffect, useRef, type CSSProperties } from 'react';
 import { hydratedReloadCount, needsHydrate, useDisplayStore } from '../store';
 import { useWidget } from '../store/hooks';
-import { widgetComponentFor } from './registry';
+import { LEGACY_WIDGET_FALLBACK, widgetComponentFor } from './registry';
 
 export interface WidgetHostProps {
   id: string;
@@ -59,7 +59,8 @@ export const WidgetHost = memo(function WidgetHost({ id, origin, dimensions }: W
     });
   }, [id, type, reloads, paused]);
 
-  const Component = widgetComponentFor(type);
+  // No meta yet means no type to pick a component for; the cell stays empty until the detail arrives.
+  const Component = type === undefined ? undefined : (widgetComponentFor(type) ?? LEGACY_WIDGET_FALLBACK);
   return (
     <div className="widget-card" data-widget-id={id} data-widget-type={type} style={cellStyle(origin, dimensions)}>
       {Component ? <Component id={id} type={type ?? ''} /> : <div className="widget-card-placeholder">{type ?? ''}</div>}

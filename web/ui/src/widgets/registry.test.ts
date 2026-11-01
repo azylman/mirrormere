@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { WIDGET_COMPONENTS, widgetComponentFor } from './registry';
 
 describe('widget registry', () => {
-  it('has no component for unknown or missing types, so WidgetHost shows its placeholder', () => {
+  it('has no component for unknown or missing types, so WidgetHost falls back to LegacyWidget', () => {
     expect(widgetComponentFor(undefined)).toBeUndefined();
     expect(widgetComponentFor('not-a-widget')).toBeUndefined();
   });
