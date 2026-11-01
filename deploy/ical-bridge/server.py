@@ -608,9 +608,11 @@ def seerr_search(query):
             m_info = r_item.get("mediaInfo") or {}
             status_code = m_info.get("status", 1)
             # Seerr status codes: 1=unknown/unrequested, 2=pending, 3=processing, 4=partially available, 5=available
-            status_label = "Available" if status_code == 5 else ("Requested" if status_code in (2, 3) else "")
+            status_label = "available" if status_code == 5 else ("requested" if status_code in (2, 3, 4) else "")
+            item_id = r_item.get("id")
             out.append({
-                "id": r_item.get("id"),
+                "id": item_id,
+                "tmdb_id": item_id,
                 "media_type": mtype,
                 "title": title,
                 "year": year,
@@ -1738,7 +1740,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/hearth-api/seerr/search":
             q = (qs.get("q") or [""])[0]
             items = seerr_search(q)
-            payload = json.dumps({"results": items}).encode("utf-8")
+            payload = json.dumps({"items": items, "results": items}).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Cache-Control", "no-store")
