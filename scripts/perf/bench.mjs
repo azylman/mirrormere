@@ -153,6 +153,9 @@ async function launchChrome(chromePath) {
   const profileDir = await mkdtemp(join(tmpdir(), 'mm-perf-'));
   const proc = spawn(chromePath, [
     '--headless=new',
+    // Root (0:0) Docker CI containers run without user namespaces and default to 64 MB /dev/shm.
+    '--no-sandbox',
+    '--disable-dev-shm-usage',
     '--remote-debugging-port=0',
     `--user-data-dir=${profileDir}`,
     '--no-first-run',

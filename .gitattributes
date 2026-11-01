@@ -8,3 +8,6 @@
 *.yml text eol=lf
 *.yaml text eol=lf
 Makefile text eol=lf
+
+# Mark compiled Vite UI bundles as generated so GitHub / linguist collapses them
+web/static/ui/** linguist-generated=true
