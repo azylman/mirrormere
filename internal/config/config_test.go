@@ -460,7 +460,8 @@ func TestConfig_Accessors(t *testing.T) {
 	assertEq(t, "hdr elems", len(elems) == 4 && elems[0] == "clock", true)
 
 	locCfg := &config.Config{Timezone: "America/Denver"}
-	assertEq(t, "cached loc", locCfg.Location() == locCfg.Location() && locCfg.Location().String() == "America/Denver", true)
+	firstLoc := locCfg.Location()
+	assertEq(t, "cached loc", firstLoc == locCfg.Location() && firstLoc.String() == "America/Denver", true)
 	assertEq(t, "invalid loc fallback", (&config.Config{Timezone: "Invalid/Zone_Name"}).Location(), time.UTC)
 
 	var nilCfg *config.Config

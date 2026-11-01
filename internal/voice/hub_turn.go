@@ -374,7 +374,7 @@ func (h *Hub) recordTTSSynthesisError(
 	}
 	h.metrics.RecordStageDuration(nodeID, "tts", "error", ttsDuration)
 	errType := "tts_error"
-	if isTimeoutError(ttsErr, ttsCtx, ctx) {
+	if isTimeoutError(ttsCtx, ctx, ttsErr) {
 		errType = "tts_timeout"
 	}
 	h.metrics.RecordError(nodeID, "tts", errType)

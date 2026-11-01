@@ -237,7 +237,7 @@ func (ic *inactivityContext) Reset() {
 
 // isTimeoutError reports whether an error or context deadline was caused by a timeout,
 // explicitly ignoring client-side parent context cancellations.
-func isTimeoutError(err error, timeoutCtx, parentCtx context.Context) bool {
+func isTimeoutError(timeoutCtx, parentCtx context.Context, err error) bool {
 	if parentCtx != nil && errors.Is(parentCtx.Err(), context.Canceled) {
 		return false
 	}
@@ -530,7 +530,7 @@ func (h *Hub) recordBrainStageError(
 	h.metrics.RecordStageDuration(nodeID, "brain", "error", brainDuration)
 	errType := "brain_error"
 	retErr := fmt.Errorf("%w: %w", ErrBrainFailed, err)
-	if isTimeoutError(err, callCtx, ctx) {
+	if isTimeoutError(callCtx, ctx, err) {
 		errType = "brain_timeout"
 		retErr = fmt.Errorf("%w: %w", ErrBrainTimeout, err)
 	}
