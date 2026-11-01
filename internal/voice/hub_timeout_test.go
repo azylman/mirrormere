@@ -145,12 +145,13 @@ func TestHub_ThinkingHeartbeat(t *testing.T) {
 			}
 			var hadThinking, hadAudioChunk, thinkingAfterAudio bool
 			for _, ev := range getEvents() {
-				if ev.Event == "thinking" {
+				switch ev.Event {
+				case "thinking":
 					hadThinking, thinkingAfterAudio = true, thinkingAfterAudio || hadAudioChunk
 					if m, ok := ev.Data.(map[string]int); ok && tc.wantPosElapsed && m["elapsed_seconds"] <= 0 {
 						t.Errorf("expected positive elapsed_seconds, got %v", m["elapsed_seconds"])
 					}
-				} else if ev.Event == "audio_chunk" {
+				case "audio_chunk":
 					hadAudioChunk = true
 				}
 			}
@@ -333,7 +334,7 @@ func TestIsTimeoutError(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if got := isTimeoutError(tc.err, tc.timeoutCtx, tc.parentCtx); got != tc.expected {
+			if got := isTimeoutError(tc.timeoutCtx, tc.parentCtx, tc.err); got != tc.expected {
 				t.Errorf("isTimeoutError() = %v, expected %v", got, tc.expected)
 			}
 		})
