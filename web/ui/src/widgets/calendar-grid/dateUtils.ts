@@ -1,5 +1,7 @@
 import type {
   FamilyDay,
+  FamilyEvent,
+  FamilyMember,
   FamilyMonthDay,
   FamilyMonthWeek,
   FamilySpanEvent,
@@ -96,6 +98,20 @@ export function stripLeadingMealieEmoji(title?: string): string {
 }
 
 export const stripMealiePrefix = stripLeadingMealieEmoji;
+
+export function matchesMemberFilter(
+  ev: FamilyEvent,
+  selectedMember: string | null,
+  members: FamilyMember[]
+): boolean {
+  if (!selectedMember) return true;
+  if (ev.owners && ev.owners.length > 0) {
+    return ev.owners.includes(selectedMember);
+  }
+  const member = members.find((m) => m.name === selectedMember);
+  const initial = member?.initial || selectedMember.slice(0, 1);
+  return Boolean(ev.initials?.includes(initial));
+}
 
 export function sliceWeekWindow(
   allDays: FamilyDay[] | undefined,

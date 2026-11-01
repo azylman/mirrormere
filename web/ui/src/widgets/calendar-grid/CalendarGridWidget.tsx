@@ -12,6 +12,7 @@ import {
   formatModalDateRange,
   formatMonthLabel,
   formatWeekLabel,
+  matchesMemberFilter,
   parseISODate,
   sliceWeekWindow,
   toISODate,
@@ -19,6 +20,7 @@ import {
 import type {
   FamilyDay,
   FamilyEvent,
+  FamilyMonthDay,
   FamilyMonthViewModel,
   FamilyViewModel,
   ViewMode,
@@ -53,6 +55,7 @@ export const CalendarGridWidget = memo(function CalendarGridWidget({
     rawDefault === 'month' ? 'month' : rawDefault === 'day' ? 'day' : 'week';
 
   const [activeView, setActiveView] = useState<ViewMode>(defaultView);
+  const [selectedMember, setSelectedMember] = useState<string | null>(null);
   const [activeModalEvent, setActiveModalEvent] = useState<FamilyEvent | null>(null);
   const [activeModalDateLabel, setActiveModalDateLabel] = useState<string>('');
 
@@ -93,6 +96,7 @@ export const CalendarGridWidget = memo(function CalendarGridWidget({
     resetDate,
     handleViewSwitch,
     resetToBaseline,
+    selectDayView,
   } = useCalendarRangeData({
     id,
     baseDate,
@@ -112,16 +116,29 @@ export const CalendarGridWidget = memo(function CalendarGridWidget({
   const handleInactivityReset = useCallback(() => {
     setActiveModalEvent(null);
     setActiveModalDateLabel('');
+    setSelectedMember(null);
     resetToBaseline(defaultView);
   }, [defaultView, resetToBaseline]);
 
-  const isInteractive = Boolean(activeModalEvent) || activeView !== defaultView || pageOffset !== 0;
+  const isInteractive =
+    Boolean(activeModalEvent) ||
+    activeView !== defaultView ||
+    pageOffset !== 0 ||
+    Boolean(selectedMember);
 
   const { handleUserActivity } = useInactivityReset({
     isInteractive,
     onReset: handleInactivityReset,
   });
   activityCallbackRef.current = handleUserActivity;
+
+  const handleSelectMember = useCallback(
+    (name: string) => {
+      setSelectedMember((prev) => (prev === name ? null : name));
+      handleUserActivity();
+    },
+    [handleUserActivity]
+  );
 
   const openModal = useCallback(
     (ev: FamilyEvent, dateStr?: string, endDateStr?: string) => {
@@ -171,13 +188,64 @@ export const CalendarGridWidget = memo(function CalendarGridWidget({
   const rangeLabelDay = formatDayLabel(currentDate);
   const currentDateISO = toISODate(currentDate);
 
-  const daysToRender: FamilyDay[] = useMemo(() => {
+  const rawDaysToRender: FamilyDay[] = useMemo(() => {
     return sliceWeekWindow(weekVM?.days, activeView, currentDateISO);
   }, [weekVM?.days, activeView, currentDateISO]);
 
-  const visibleAllDayEvents = useMemo(() => {
+  const daysToRender: FamilyDay[] = useMemo(() => {
+    if (!selectedMember) return rawDaysToRender;
+    const membersList = weekVM?.members || monthVM?.members || [];
+    return rawDaysToRender.map((day) => ({
+      ...day,
+      events: day.events?.filter((ev) => matchesMemberFilter(ev, selectedMember, membersList)),
+      early_events: day.early_events?.filter((ev) => matchesMemberFilter(ev, selectedMember, membersList)),
+      late_events: day.late_events?.filter((ev) => matchesMemberFilter(ev, selectedMember, membersList)),
+      all_day: day.all_day?.filter((ev) => matchesMemberFilter(ev, selectedMember, membersList)),
+      timed: day.timed?.filter((ev) => matchesMemberFilter(ev, selectedMember, membersList)),
+    }));
+  }, [rawDaysToRender, selectedMember, weekVM?.members, monthVM?.members]);
+
+  const rawVisibleAllDayEvents = useMemo(() => {
     return computeDayLayout(weekVM?.all_day_events, weekVM?.days, activeView, currentDateISO);
   }, [weekVM?.all_day_events, weekVM?.days, activeView, currentDateISO]);
+
+  const visibleAllDayEvents = useMemo(() => {
+    if (!selectedMember) return rawVisibleAllDayEvents;
+    const membersList = weekVM?.members || monthVM?.members || [];
+    return rawVisibleAllDayEvents.filter((ev) => matchesMemberFilter(ev, selectedMember, membersList));
+  }, [rawVisibleAllDayEvents, selectedMember, weekVM?.members, monthVM?.members]);
+
+  const filteredMonthVM = useMemo(() => {
+    if (!monthVM) return undefined;
+    if (!selectedMember) return monthVM;
+    const membersList = weekVM?.members || monthVM?.members || [];
+    const filterDay = (day: FamilyMonthDay): FamilyMonthDay => {
+      const filteredEvents = day.events
+        ? day.events.filter((ev) => matchesMemberFilter(ev, selectedMember, membersList))
+        : [];
+      const filteredDots = day.dots
+        ? day.dots.filter((dot) => dot.name === selectedMember)
+        : undefined;
+      return {
+        ...day,
+        dots: filteredDots,
+        events: filteredEvents,
+        events_count: filteredEvents.length,
+        event_title: filteredEvents[0]?.title,
+      };
+    };
+
+    return {
+      ...monthVM,
+      days: monthVM.days ? monthVM.days.map(filterDay) : undefined,
+      weeks: monthVM.weeks
+        ? monthVM.weeks.map((w) => ({
+            ...w,
+            days: w.days.map(filterDay),
+          }))
+        : undefined,
+    };
+  }, [monthVM, selectedMember, weekVM?.members]);
 
   const customTitle =
     typeof config?.title === 'string' && config.title.trim() !== '' ? config.title.trim() : 'Calendar';
@@ -211,6 +279,8 @@ export const CalendarGridWidget = memo(function CalendarGridWidget({
         rangeLabelDay={rangeLabelDay}
         syncMessage={syncMessage}
         members={members}
+        selectedMember={selectedMember}
+        onSelectMember={handleSelectMember}
         onPrev={pagePrev}
         onNext={pageNext}
         onResetDate={resetDate}
@@ -225,13 +295,15 @@ export const CalendarGridWidget = memo(function CalendarGridWidget({
         members={members}
         currentDateISO={currentDateISO}
         onOpenModal={openModal}
+        onSelectDay={selectDayView}
       />
 
       <CalendarMonthView
         activeView={activeView}
-        monthVM={monthVM}
+        monthVM={filteredMonthVM}
         members={members}
         onOpenModal={(ev, date) => openModal(ev, date)}
+        onSelectDay={selectDayView}
       />
 
       <CalendarEventModal

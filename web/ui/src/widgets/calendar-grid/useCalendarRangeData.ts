@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { addDays, addMonths, parseISODate, toISODate } from './dateUtils';
-import type { CalendarGridViewModel, ViewMode } from './types';
+import type { CalendarGridViewModel, FamilyViewModel, ViewMode } from './types';
 
 export interface UseCalendarRangeDataProps {
   id: string;
@@ -337,6 +337,70 @@ export function useCalendarRangeData({
     }
   }, [baseDate, entryViewModel, loadDateView, abortInFlight, setActiveView]);
 
+  const selectDayView = useCallback(
+    (isoDate: string) => {
+      if (!isoDate || !/^\d{4}-\d{2}-\d{2}/.test(isoDate)) return;
+      const prevActiveView = activeView;
+      const prevPagedDate = pagedDate;
+      const prevPagedWeekStart = pagedWeekStart;
+
+      const targetDate = parseISODate(isoDate);
+      onActivity?.();
+      setActiveView('day');
+      setPagedDate(targetDate);
+
+      // Abort any in-flight paging fetch and synchronize pagedWeekStart so subsequent
+      // view switching and week paging step from the active week rather than a stale paged offset.
+      const currentWeekVM = currentViewModel?.week as FamilyViewModel | undefined;
+      const currentWeekDays = currentWeekVM?.days;
+      if (currentWeekDays?.some((d) => d.date === isoDate)) {
+        abortInFlight();
+        if (currentWeekVM?.range_start) {
+          if (toISODate(baseWeekStart) === currentWeekVM.range_start) {
+            setPagedWeekStart(null);
+          } else {
+            setPagedWeekStart(parseISODate(currentWeekVM.range_start));
+          }
+        }
+        return;
+      }
+
+      const entryWeekVM = entryViewModel?.week as FamilyViewModel | undefined;
+      const entryWeekDays = entryWeekVM?.days;
+      if (entryWeekDays?.some((d) => d.date === isoDate)) {
+        abortInFlight();
+        if (entryViewModel) {
+          setCurrentViewModel(entryViewModel);
+        }
+        setPagedWeekStart(null);
+        return;
+      }
+
+      loadDateView(
+        targetDate,
+        'day',
+        () => {
+          setActiveView(prevActiveView);
+          setPagedDate(prevPagedDate);
+          setPagedWeekStart(prevPagedWeekStart);
+        },
+        true
+      );
+    },
+    [
+      activeView,
+      pagedDate,
+      pagedWeekStart,
+      baseWeekStart,
+      onActivity,
+      setActiveView,
+      currentViewModel,
+      entryViewModel,
+      abortInFlight,
+      loadDateView,
+    ]
+  );
+
   useEffect(() => {
     return () => {
       if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
@@ -363,5 +427,6 @@ export function useCalendarRangeData({
     resetDate,
     handleViewSwitch,
     resetToBaseline,
+    selectDayView,
   };
 }

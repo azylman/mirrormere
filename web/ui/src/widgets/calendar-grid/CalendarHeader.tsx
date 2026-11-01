@@ -10,6 +10,8 @@ export interface CalendarHeaderProps {
   rangeLabelDay: string;
   syncMessage: string | null;
   members: FamilyMember[];
+  selectedMember?: string | null;
+  onSelectMember?: (name: string) => void;
   onPrev: () => void;
   onNext: () => void;
   onResetDate: () => void;
@@ -25,6 +27,8 @@ export const CalendarHeader = memo(function CalendarHeader({
   rangeLabelDay,
   syncMessage,
   members,
+  selectedMember,
+  onSelectMember,
   onPrev,
   onNext,
   onResetDate,
@@ -204,10 +208,16 @@ export const CalendarHeader = memo(function CalendarHeader({
             style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}
           >
             {members.map((m, i) => (
-              <div
+              <button
+                type="button"
                 key={m.name || i}
-                className={`cf-member-chip cf-pattern-${m.pattern || 'solid'}`}
+                data-member={m.name}
+                aria-pressed={selectedMember === m.name}
+                className={`cf-member-chip cf-pattern-${m.pattern || 'solid'}${
+                  selectedMember === m.name ? ' active' : ''
+                }${selectedMember && selectedMember !== m.name ? ' dimmed' : ''}`}
                 title={m.name}
+                onClick={() => onSelectMember?.(m.name)}
                 style={{
                   display: 'inline-flex',
                   alignItems: 'center',
@@ -216,6 +226,9 @@ export const CalendarHeader = memo(function CalendarHeader({
                   padding: '3px 9px',
                   borderRadius: '9999px',
                   border: '1px solid var(--mm-card-border, rgba(90, 60, 30, 0.08))',
+                  opacity: selectedMember && selectedMember !== m.name ? 0.45 : 1,
+                  cursor: 'pointer',
+                  touchAction: 'manipulation',
                 }}
               >
                 <span
@@ -240,7 +253,7 @@ export const CalendarHeader = memo(function CalendarHeader({
                 >
                   {m.name}
                 </span>
-              </div>
+              </button>
             ))}
           </div>
         )}
