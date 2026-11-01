@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { App } from './App';
 import { startRuntime } from './runtime';
 import './styles.css';
+import './styles/overrides.css';
 
 const container = document.getElementById('root');
 if (!container) {

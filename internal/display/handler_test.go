@@ -445,3 +445,46 @@ func TestGetDisplay_ReactShellRepoTemplate(t *testing.T) {
 		t.Fatal("react request served legacy inline content")
 	}
 }
+
+// TestGetDisplay_ReactPerfScriptGatedByQuery checks the real display_react.html template: the
+// perf instrumentation loads ahead of the React bundle only for ?ui=react&perf=1 (#779).
+func TestGetDisplay_ReactPerfScriptGatedByQuery(t *testing.T) {
+	t.Parallel()
+	const perfScript = `<script src="static/js/perf.js"></script>`
+	const bundle = `<script type="module" src="static/ui/app.js"></script>`
+	tests := []struct {
+		name     string
+		path     string
+		wantPerf bool
+	}{
+		{"react_no_perf", "/display?ui=react", false},
+		{"react_perf_zero", "/display?ui=react&perf=0", false},
+		{"react_perf_one", "/display?ui=react&perf=1", true},
+		{"react_perf_one_with_other_params", "/display?ui=react&hide_cursor=true&perf=1", true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			h := display.NewHandler(
+				display.WithReactTemplatePath("../../web/templates/display_react.html"),
+				display.WithLocalReactTemplatePath(""),
+				display.WithTemplateContent([]byte("<h1>legacy</h1>")),
+			)
+			rec := httptest.NewRecorder()
+			h.GetDisplay(rec, httptest.NewRequest(http.MethodGet, tc.path, nil))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("code: got %d, want 200", rec.Code)
+			}
+			body := rec.Body.String()
+			if got := strings.Contains(body, perfScript); got != tc.wantPerf {
+				t.Fatalf("perf.js present = %v, want %v", got, tc.wantPerf)
+			}
+			if tc.wantPerf {
+				// perf.js is ahead of the bundle, so it runs before the React shell mounts.
+				if strings.Index(body, perfScript) > strings.Index(body, bundle) {
+					t.Fatal("perf.js must load before the React bundle")
+				}
+			}
+		})
+	}
+}

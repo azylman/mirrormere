@@ -26,6 +26,15 @@ export function observeDocumentVisibility(
   };
 }
 
+/**
+ * Mirrors the visibility slice onto <html data-visible="true|false"> so the CSS
+ * overrides (src/styles/overrides.css) can pause infinite animations while hidden.
+ * runtime.ts calls it on start and on every change of the slice.
+ */
+export function reflectVisibleAttribute(doc: Document, visible: boolean): void {
+  doc.documentElement.dataset.visible = visible ? 'true' : 'false';
+}
+
 export function useDocumentVisible(): boolean {
   return useDisplayStore((s) => s.visibility.visible);
 }

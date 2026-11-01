@@ -1,0 +1,14 @@
+{
+  "_comment": "CI budget for scripts/perf/check-budget.mjs: the #765 targets plus 20% headroom for CI noise (bench at --cpu-throttle 4 --swipes 20). Targets: GitHub issue 765 (the React UI tracking issue). min_count is the fewest samples a metric may have: below it the check fails, so a bench that dropped swipes cannot pass on one sample. A metric with min_count 0 and no samples is reported as skipped.",
+  "metrics": [
+    { "metric": "gesture_first_frame", "stat": "p95", "max": 20.4, "min_count": 15 },
+    { "metric": "swipe_settle", "stat": "p95", "max": 360, "min_count": 15 },
+    { "metric": "interaction", "stat": "p95", "max": 120, "min_count": 1 },
+    { "metric": "frame", "stat": "p95", "max": 20.04, "min_count": 1 },
+    { "metric": "frame", "stat": "max", "max": 39.6, "min_count": 1 },
+    { "metric": "screen_ready", "stat": "p95", "max": 1800, "min_count": 1 },
+    { "metric": "widget_update", "stat": "p95", "max": 60, "min_count": 0 }
+  ],
+  "long_task_during_swipes": { "max": 0 },
+  "app_js_gzip_bytes": { "max": 153600 }
+}

@@ -72,7 +72,6 @@ display:
       refresh_interval_seconds: 300
       config:
         view: week
-        show_relative_time: true
         calendars:
           - name: "Family Events"
             url_env: FAMILY_CALENDAR_URL # Resolved via host environment variable

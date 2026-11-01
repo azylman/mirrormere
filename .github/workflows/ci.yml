@@ -38,6 +38,7 @@ jobs:
       go_core: ${{ steps.filter.outputs.go_core }}
       web: ${{ steps.filter.outputs.web }}
       ui: ${{ steps.filter.outputs.ui }}
+      perf: ${{ steps.filter.outputs.perf }}
       eink_node: ${{ steps.filter.outputs.eink_node }}
       eink_renderer: ${{ steps.filter.outputs.mirrormere-eink-renderer }}
       ear: ${{ steps.filter.outputs.mirrormere-ear }}
@@ -71,6 +72,13 @@ jobs:
             ui:
               - 'web/ui/**'
               - 'web/static/ui/**'
+            perf:
+              - 'web/ui/**'
+              - 'web/static/ui/**'
+              - 'web/static/js/perf.js'
+              - 'web/templates/display_react.html'
+              - 'deploy/examples/config.yaml'
+              - 'scripts/perf/**'
             eink_node:
               - 'client/eink-node/**'
             mirrormere:
@@ -218,6 +226,68 @@ jobs:
           git diff --exit-code web/static/ui
           # git diff misses new untracked files; fail on those too.
           test -z "$(git ls-files --others --exclude-standard web/static/ui)"
+
+  perf:
+    name: Display performance budget (React)
+    needs: changes
+    if: github.event_name != 'push' || inputs.force_all == true
+    # Hosted runner: it ships Chrome, which the bench drives headless (docs/perf.md).
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js (pinned by web/ui/.nvmrc)
+        if: needs.changes.outputs.perf == 'true' || inputs.force_all == true
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: web/ui/.nvmrc
+
+      - name: Set up Go (go.mod)
+        if: needs.changes.outputs.perf == 'true' || inputs.force_all == true
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Start the server with the example config and fixture providers
+        if: needs.changes.outputs.perf == 'true' || inputs.force_all == true
+        run: |
+          set -euo pipefail
+          go build -o bin/server ./cmd/server
+          # The example config reads these secrets by name; the fixture values point at nothing,
+          # so the providers fail fast and the screens still load from config (docs/perf.md).
+          export FAMILY_CALENDAR_URL=http://localhost:9/fixture.ics
+          export TODOIST_API_TOKEN=fixture-token
+          CONFIG_PATH=deploy/examples/config.yaml ./bin/server > server.log 2>&1 &
+          for _ in $(seq 1 60); do
+            if curl -fsS -o /dev/null 'http://localhost:8080/display?ui=react'; then break; fi
+            sleep 1
+          done
+          curl -fsS -o /dev/null 'http://localhost:8080/display?ui=react'
+
+      - name: Bench the React display (4x CPU throttle, 20 swipes)
+        if: needs.changes.outputs.perf == 'true' || inputs.force_all == true
+        run: |
+          set -euo pipefail
+          node scripts/perf/bench.mjs --url 'http://localhost:8080/display?ui=react&perf=1' --cpu-throttle 4 --swipes 20 > bench.json
+
+      - name: Check the performance budget and app.js size
+        if: needs.changes.outputs.perf == 'true' || inputs.force_all == true
+        run: node scripts/perf/check-budget.mjs --bench bench.json --budget scripts/perf/budget.json --app-js web/static/ui/app.js
+
+      - name: Upload bench output and server log
+        if: always() && (needs.changes.outputs.perf == 'true' || inputs.force_all == true)
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-bench
+          path: |
+            bench.json
+            server.log
+          if-no-files-found: ignore
+
+      - name: Stop the server
+        if: always() && (needs.changes.outputs.perf == 'true' || inputs.force_all == true)
+        run: pkill -x server || true
 
   lint:
     name: Lint Microservices & Frontend
@@ -422,7 +492,7 @@ jobs:
 
   build-gate:
     name: CI Gate
-    needs: [changes, verify, lint, ui, roborev, docker]
+    needs: [changes, verify, lint, ui, perf, roborev, docker]
     if: always()
     runs-on: [self-hosted, ci]
     env:

@@ -210,3 +210,236 @@ test('browser wiring: widget_update is recorded only when the node is replaced',
   assert.equal(snap.max, 30);
   assert.equal(beacons.length, 0);
 });
+
+// Browser wiring for the React page (#779). The fake document has a querySelector for the
+// app.js script tag, a mutable #grid-canvas (the React carousel moves the id between panes),
+// and mutation observers that run only when the test fires them for an attribute it changed.
+function harness({ react = false } = {}) {
+  const source = fs.readFileSync(perfPath, 'utf8');
+  const beacons = [];
+  const frames = [];
+  const observers = [];
+  const listeners = {};
+  const fetchCalls = [];
+  const intervals = [];
+  const APP_SCRIPT = 'script[src*="static/ui/app.js"]';
+  let clock = 1000;
+
+  const makePane = (hydrated, classes = []) => {
+    const classSet = new Set(classes);
+    return {
+      dataset: hydrated ? { screenHydrated: 'true' } : {},
+      classList: { contains: (c) => classSet.has(c), set: classSet },
+    };
+  };
+  const body = { dataset: { animating: '0' } };
+  const doc = {
+    body,
+    visibilityState: 'visible',
+    scripts: react ? [{ src: 'static/ui/app.js' }] : [],
+    current: makePane(false),
+    getElementById: (id) => (id === 'grid-canvas' ? doc.current : null),
+    querySelector: (sel) => (sel === APP_SCRIPT && doc.scripts.length ? doc.scripts[0] : null),
+    addEventListener() {},
+  };
+
+  class FakeMutationObserver {
+    constructor(cb) { this.cb = cb; observers.push(this); }
+    observe(target, options) { this.target = target; this.options = options; }
+  }
+  class FakePerformanceObserver {
+    observe() {}
+  }
+  const win = {
+    addEventListener(type, fn) { (listeners[type] = listeners[type] || []).push(fn); },
+    fetch(input) { fetchCalls.push(input); return Promise.resolve({ ok: true }); },
+  };
+  const nav = { sendBeacon(url, payload) { beacons.push(JSON.parse(payload)); return true; } };
+  const fn = new Function(
+    'window', 'document', 'navigator', 'performance', 'requestAnimationFrame', 'MutationObserver',
+    'PerformanceObserver', 'setInterval', 'module', source,
+  );
+  fn(
+    win, doc, nav, { now: () => clock }, (cb) => frames.push(cb), FakeMutationObserver,
+    FakePerformanceObserver, (cb) => { intervals.push(cb); return 1; }, undefined,
+  );
+
+  const fire = (attr) => {
+    for (const o of observers) {
+      if (o.options.attributeFilter && o.options.attributeFilter.includes(attr)) o.cb([]);
+    }
+  };
+  const runFrames = () => {
+    for (let i = 0; i < 50 && frames.length; i++) frames.shift()(clock);
+  };
+  return {
+    win,
+    doc,
+    beacons,
+    fetchCalls,
+    snapshot: () => win.__mmPerf.snapshot(),
+    flush: () => { for (const cb of intervals) cb(); },
+    pendingFrames: () => frames.length,
+    at(ms) { clock = ms; },
+    dispatch(type) { for (const fn of listeners[type] || []) fn({}); },
+    setAnimating(value) { body.dataset.animating = value; fire('data-animating'); },
+    setCanvas(pane) { doc.current = pane; fire('id'); fire('data-screen-hydrated'); },
+    setHydrated(hydrated) {
+      if (hydrated) doc.current.dataset.screenHydrated = 'true';
+      else delete doc.current.dataset.screenHydrated;
+      fire('data-screen-hydrated');
+    },
+    runFrames,
+    makePane,
+  };
+}
+
+test('ui detection: the detector reports legacy until the React script is present, then react for good', () => {
+  const doc = { scripts: [], querySelector: (sel) => (sel === 'script[src*="static/ui/app.js"]' && doc.scripts.length ? doc.scripts[0] : null) };
+  const uiOf = perf.createUiDetector(doc);
+  assert.equal(uiOf(), 'legacy');
+  doc.scripts.push({ src: 'static/ui/app.js' });
+  assert.equal(uiOf(), 'react');
+  doc.scripts.length = 0;
+  assert.equal(uiOf(), 'react');
+  assert.equal(perf.createUiDetector({ querySelector: () => null })(), 'legacy');
+  assert.equal(perf.createUiDetector({})(), 'legacy');
+  // createRecorder without a detector tags legacy, as before.
+  const samples = [];
+  const rec = perf.createRecorder((b) => samples.push(JSON.parse(b)));
+  rec.record('frame', 16);
+  rec.flush();
+  assert.equal(samples[0].samples[0].ui, 'legacy');
+});
+
+test('ui detection: browser samples carry react only once the React script is in the document', () => {
+  const h = harness({ react: false });
+  h.at(1000);
+  h.dispatch('touchstart');
+  h.runFrames(); // recorded while only the legacy page is present
+  h.doc.scripts.push({ src: 'static/ui/app.js' }); // app.js is parsed later in the page
+  h.dispatch('touchstart');
+  h.runFrames();
+  h.flush();
+  assert.deepEqual(h.beacons.flatMap((b) => b.samples.map((s) => s.ui)), ['legacy', 'react']);
+});
+
+test('canvas lookup: #grid-canvas is resolved at each use, so a pane that becomes current is seen', () => {
+  const h = harness({ react: true });
+  const neighbour = h.makePane(false);
+  h.at(1000);
+  h.doc.current = h.makePane(false); // React mounts; no current pane hydrated yet
+  h.setCanvas(neighbour); // the carousel moves #grid-canvas onto a pane that was not hydrated
+  h.setHydrated(true);
+  assert.equal(h.snapshot().screen_ready.count, 1);
+  // Hydration is recorded once; a later change of current pane does not record it again.
+  h.setCanvas(h.makePane(true));
+  assert.equal(h.snapshot().screen_ready.count, 1);
+});
+
+test('react swipe_settle: starts at touchend followed by animating=1, ends on the first frame after animating=0 with a hydrated current canvas', () => {
+  const h = harness({ react: true });
+  h.at(1000);
+  h.setCanvas(h.makePane(true)); // the current pane before the swipe
+  h.dispatch('pointerup');
+  h.dispatch('touchend');
+  h.at(1010);
+  h.setAnimating('1');
+  h.at(1200);
+  // The React carousel's navigation fetch comes after the settle, so it must not start one.
+  h.win.fetch('api/screen/select');
+  assert.equal(h.snapshot().swipe_settle.count, 0);
+
+  // The track settles; React commits the new current pane in the same frame window.
+  h.at(1260);
+  h.setAnimating('0');
+  h.setCanvas(h.makePane(true)); // new current pane, hydrated
+  h.at(1276);
+  h.runFrames();
+  const snap = h.snapshot().swipe_settle;
+  assert.equal(snap.count, 1);
+  assert.equal(snap.p50, 276);
+  assert.equal(h.snapshot().swipe_settle.max, 276);
+});
+
+test('react swipe_settle: a settle that ends before the current pane is hydrated waits for the stamp', () => {
+  const h = harness({ react: true });
+  h.at(1000);
+  h.setCanvas(h.makePane(false)); // a freshly mounted current pane, not hydrated yet
+  h.dispatch('touchend');
+  h.at(1005);
+  h.setAnimating('1');
+  h.at(1250);
+  h.setAnimating('0');
+  h.at(1260);
+  h.runFrames(); // no hydrated current pane yet: no sample, and the check is requeued
+  assert.equal(h.pendingFrames(), 1);
+  assert.equal(h.snapshot().swipe_settle.count, 0);
+  h.setCanvas(h.makePane(false));
+  h.setHydrated(true);
+  h.at(1300);
+  h.runFrames();
+  assert.equal(h.snapshot().swipe_settle.count, 1);
+  assert.equal(h.snapshot().swipe_settle.p50, 300);
+  assert.equal(h.pendingFrames(), 0);
+});
+
+test('react swipe_settle: a tap that never animates does not start a settle', () => {
+  const h = harness({ react: true });
+  h.at(1000);
+  h.setCanvas(h.makePane(true));
+  h.dispatch('touchend');
+  h.at(2500); // outside SWIPE_TOUCH_WINDOW_MS
+  h.setAnimating('1');
+  h.at(2700);
+  h.setAnimating('0');
+  h.runFrames();
+  assert.equal(h.snapshot().swipe_settle.count, 0);
+});
+
+test('react swipe_settle: pending swipes that never settle are dropped after SWIPE_SETTLE_MAX_MS', () => {
+  const h = harness({ react: true });
+  h.at(1000);
+  h.setCanvas(h.makePane(false));
+  h.dispatch('touchend');
+  h.at(1010);
+  h.setAnimating('1');
+  h.at(1100);
+  h.setAnimating('0'); // never hydrates
+  for (let t = 1100; t < 12000; t += 16) {
+    h.at(t);
+    h.runFrames();
+  }
+  assert.equal(h.snapshot().swipe_settle.count, 0);
+  assert.equal(h.pendingFrames(), 0, 'the frame check stops re-queuing past SWIPE_SETTLE_MAX_MS');
+});
+
+test('legacy swipe_settle is unchanged: navigation fetch starts it, the canvas class ends it', () => {
+  const h = harness({ react: false });
+  h.at(1000);
+  const canvas = h.makePane(true, ['transitioning']);
+  h.doc.current = canvas;
+  h.dispatch('touchend');
+  h.at(1100);
+  h.win.fetch('api/screen/advance');
+  h.at(1150);
+  canvas.classList.set.delete('transitioning');
+  h.setCanvas(canvas);
+  h.runFrames();
+  assert.equal(h.snapshot().swipe_settle.count, 1);
+  assert.equal(h.snapshot().swipe_settle.p50, 150);
+});
+
+test('legacy ignores pointerup and animating for swipe_settle', () => {
+  const h = harness({ react: false });
+  h.at(1000);
+  h.setCanvas(h.makePane(true));
+  h.dispatch('pointerup');
+  h.dispatch('touchend');
+  h.at(1010);
+  h.setAnimating('1');
+  h.at(1200);
+  h.setAnimating('0');
+  h.runFrames();
+  assert.equal(h.snapshot().swipe_settle.count, 0);
+});

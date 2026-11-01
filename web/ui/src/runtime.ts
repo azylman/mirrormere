@@ -1,5 +1,5 @@
 import { unstable_batchedUpdates } from 'react-dom';
-import { observeDocumentVisibility } from './lifecycle/visibility';
+import { observeDocumentVisibility, reflectVisibleAttribute } from './lifecycle/visibility';
 import { applyStyleReload, createReloadController, MAINTENANCE_CHECK_INTERVAL_MS } from './lifecycle/reload';
 import { createEventBatcher, type BufferedEvent } from './sse/batch';
 import { EventStreamClient, SERVER_EVENT_NAMES, type EventStreamOptions } from './sse/client';
@@ -109,9 +109,11 @@ export function startRuntime(options: RuntimeOptions = {}): Runtime {
   });
   const unsubscribeVisible = store.subscribe((state, prev) => {
     if (state.visibility.visible !== prev.visibility.visible) {
+      reflectVisibleAttribute(document, state.visibility.visible);
       syncMaintenance(state.visibility.visible);
     }
   });
+  reflectVisibleAttribute(document, store.getState().visibility.visible);
   syncMaintenance(store.getState().visibility.visible);
 
   client.connect();
