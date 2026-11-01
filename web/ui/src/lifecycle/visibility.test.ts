@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { observeDocumentVisibility } from './visibility';
+import { observeDocumentVisibility, reflectVisibleAttribute } from './visibility';
 
 let hidden = false;
 Object.defineProperty(document, 'hidden', { configurable: true, get: () => hidden });
@@ -33,5 +33,15 @@ describe('observeDocumentVisibility', () => {
     document.dispatchEvent(new Event('visibilitychange'));
     window.dispatchEvent(new Event('pagehide'));
     expect(setVisible).toHaveBeenCalledTimes(callsBeforeDispose);
+  });
+});
+
+describe('reflectVisibleAttribute', () => {
+  it('writes the visibility slice to <html data-visible> as "true" or "false"', () => {
+    const doc = { documentElement: { dataset: {} as Record<string, string> } } as unknown as Document;
+    reflectVisibleAttribute(doc, false);
+    expect(doc.documentElement.dataset.visible).toBe('false');
+    reflectVisibleAttribute(doc, true);
+    expect(doc.documentElement.dataset.visible).toBe('true');
   });
 });
