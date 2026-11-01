@@ -185,6 +185,9 @@ export function reduceEvents(
       }
       case 'widget.reload':
         layoutBumps++;
+        for (const [id, entry] of Object.entries(widgets ?? state.widgets)) {
+          if (entry.meta?.type === event.data.type) refetch.add(id);
+        }
         break;
       default:
         // style.reload and system.reload are handled by the runtime, not the store.

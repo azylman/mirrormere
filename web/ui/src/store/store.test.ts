@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BufferedEvent } from '../sse/batch';
 import type { WidgetDetailResponse } from '../sse/types';
-import { useDisplayStore } from './index';
+import { reduceEvents, useDisplayStore } from './index';
 
 const initial = useDisplayStore.getState();
 
@@ -289,6 +289,37 @@ describe('display store', () => {
       useDisplayStore.getState().applyEvents([widgetUpdate('w', 2)]);
       await Promise.resolve();
       expect(fetchMock).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('widget.reload', () => {
+    it('refetches exactly the mounted widgets whose meta.type matches the reloaded type', () => {
+      const meta = (type: string) => ({ type, config: {}, assets_base: 'a/', origin: [0, 0] as [number, number], dimensions: [1, 1] as [number, number] });
+      const state = useDisplayStore.getState();
+      const widgets = {
+        a: { meta: meta('T'), state: 'healthy', data: 1, timestamp: 't0' },
+        b: { meta: meta('other'), state: 'healthy', data: 1, timestamp: 't0' },
+        c: { meta: meta('T'), state: 'healthy', data: 1, timestamp: 't0' },
+        d: { state: 'healthy', data: 1, timestamp: 't0' },
+      };
+      const { refetch } = reduceEvents({ ...state, widgets }, [{ type: 'widget.reload', data: { type: 'T' } }]);
+      expect(refetch.sort()).toEqual(['a', 'c']);
+    });
+
+    it('includes widgets created by a widget.update earlier in the same batch', () => {
+      const meta = { type: 'T', config: {}, assets_base: 'a/', origin: [0, 0] as [number, number], dimensions: [1, 1] as [number, number] };
+      const state = { ...useDisplayStore.getState(), widgets: { a: { meta, state: 'healthy', data: 1, timestamp: 't0' } } };
+      const { refetch } = reduceEvents(state, [
+        widgetUpdate('a', 2),
+        { type: 'widget.reload', data: { type: 'T' } },
+      ]);
+      expect(refetch).toEqual(['a']);
+    });
+
+    it('bumps layoutVersion and refetches nothing when no mounted widget has the type', () => {
+      const { patch, refetch } = reduceEvents(useDisplayStore.getState(), [{ type: 'widget.reload', data: { type: 'T' } }]);
+      expect(refetch).toEqual([]);
+      expect(patch.layoutVersion).toBe(1);
     });
   });
 
