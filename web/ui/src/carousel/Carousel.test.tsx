@@ -232,9 +232,9 @@ describe('Carousel', () => {
     stubApi();
     render(<Carousel />);
     await act(async () => {});
-    const card = document.querySelector<HTMLElement>('[data-widget-id="b-1"]');
+    const card = document.querySelector<HTMLElement>('[data-widget-id="b-2"]');
     expect(card?.className).toContain('widget-card');
-    expect(card?.dataset.widgetType).toBe('weather-forecast');
+    expect(card?.dataset.widgetType).toBe('clock');
     expect(card?.querySelector('.widget-legacy .legacy-label')?.textContent).toBe('legacy');
   });
 
