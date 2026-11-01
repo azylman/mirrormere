@@ -417,4 +417,78 @@ describe('CarouselController', () => {
     expect(h.host.select).toHaveBeenCalledTimes(1);
     expect(h.host.select).toHaveBeenCalledWith(1);
   });
+
+  describe('layout shrink', () => {
+    const busy = (h: Harness): boolean => (h.controller as unknown as { isBusy(): boolean }).isBusy();
+
+    it('resets when the total drops under a settle toward the last screen, without committing or selecting it', () => {
+      vi.useFakeTimers();
+      useDisplayStore.setState({ screen: { ...initial.screen, currentScreen: 2, totalScreens: 4 } });
+      const h = build(2);
+      swipe(h, 500, 200);
+      expect(h.track.style.transform).toBe('translate3d(-1000px,0,0)');
+
+      // The select already moved the store to 3; the layout then loses screen 3.
+      useDisplayStore.setState({ screen: { ...useDisplayStore.getState().screen, currentScreen: 3 } });
+      useDisplayStore.setState({ screen: { ...useDisplayStore.getState().screen, totalScreens: 3 } });
+      h.transitionEnd();
+      vi.advanceTimersByTime(SETTLE_FALLBACK_MS);
+
+      expect(h.host.commit).not.toHaveBeenCalledWith(3);
+      expect(h.host.select).not.toHaveBeenCalledWith(3);
+      expect(h.controller.current).toBeLessThan(3);
+      expect(useDisplayStore.getState().screen.currentScreen).toBe(h.controller.current);
+      expect(document.body.dataset.animating).toBe('0');
+
+      h.controller.rendered(h.controller.current);
+      const from = h.controller.current;
+      swipe(h, 500, 200);
+      h.transitionEnd();
+      expect(h.host.commit).toHaveBeenLastCalledWith((from + 1) % 3);
+      expect(h.host.select).toHaveBeenCalledWith((from + 1) % 3);
+    });
+
+    it('keeps the store current screen when it is still valid', () => {
+      const h = build(2);
+      useDisplayStore.setState({ screen: { ...initial.screen, currentScreen: 1, totalScreens: 2 } });
+      expect(h.controller.current).toBe(1);
+      expect(h.host.commit).toHaveBeenCalledWith(1);
+      expect(h.host.select).not.toHaveBeenCalled();
+    });
+
+    it('springs back on release when the total drops to 1 mid-drag', () => {
+      vi.useFakeTimers();
+      const h = build(0);
+      h.down(500, 100);
+      h.move(400, 100, 200);
+      h.move(200, 100, 200);
+      h.flushFrames();
+      useDisplayStore.setState({ screen: { ...useDisplayStore.getState().screen, totalScreens: 1 } });
+      h.up(200, 100, 0);
+      expect(h.track.style.transform).toBe('translate3d(0px,0,0)');
+
+      h.transitionEnd();
+      vi.advanceTimersByTime(SETTLE_FALLBACK_MS);
+      expect(h.host.commit).not.toHaveBeenCalled();
+      expect(h.host.select).not.toHaveBeenCalled();
+      expect(busy(h)).toBe(false);
+    });
+
+    it('ignores a layout change that leaves the shown screen valid', () => {
+      const h = build(1);
+      useDisplayStore.setState({ screen: { ...initial.screen, currentScreen: 1, totalScreens: 5 } });
+      expect(h.host.commit).not.toHaveBeenCalled();
+    });
+
+    it('leaves the controller not busy when reset names the screen React already rendered', () => {
+      const h = build(1);
+      h.controller.rendered(1);
+      h.controller.reset(1);
+      expect(busy(h)).toBe(false);
+      h.controller.reset(0);
+      expect(busy(h)).toBe(true);
+      h.controller.rendered(0);
+      expect(busy(h)).toBe(false);
+    });
+  });
 });

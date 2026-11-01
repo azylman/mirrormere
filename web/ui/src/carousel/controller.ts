@@ -43,10 +43,15 @@ export class CarouselController {
   private awaitingRender: number | null = null;
   /** A server rotate that arrived while the carousel was busy. */
   private queued: number | null = null;
+  /** Target of a settle in flight. Cleared on commit and on reset. */
+  private settleTarget: number | null = null;
+  /** Last index the host rendered (starts at the initial screen). */
+  private lastRendered: number;
   private detachStore: (() => void) | null = null;
 
   constructor(private readonly options: CarouselControllerOptions) {
     this.shown = options.initial;
+    this.lastRendered = options.initial;
     this.now = options.now ?? (() => performance.now());
     this.animator = new TrackAnimator(options.track);
   }
@@ -63,6 +68,9 @@ export class CarouselController {
     viewport.addEventListener('pointerup', this.onPointerUp);
     viewport.addEventListener('pointercancel', this.onPointerCancel);
     this.detachStore = useDisplayStore.subscribe((state, prev) => {
+      if (state.screen.totalScreens !== prev.screen.totalScreens) {
+        this.layoutChanged(state.screen.totalScreens);
+      }
       if (state.screen.currentScreen !== prev.screen.currentScreen) {
         this.requestShow(state.screen.currentScreen);
       }
@@ -100,6 +108,20 @@ export class CarouselController {
   }
 
   /**
+   * The screen count changed. When it left the shown screen, or the target of a settle in
+   * flight, out of range, shows a valid screen instead: the store's current screen if it
+   * is still in range, else the first.
+   */
+  layoutChanged(total: number): void {
+    if (total < 1) return;
+    if (this.shown >= total || (this.settleTarget !== null && this.settleTarget >= total)) {
+      const cur = useDisplayStore.getState().screen.currentScreen;
+      const index = cur >= 0 && cur < total ? cur : 0;
+      this.reset(index);
+    }
+  }
+
+  /**
    * Shows `index` without a select, for when the layout shrank under the shown screen.
    * Drops any queued rotate: the layout it was for no longer exists.
    */
@@ -109,15 +131,18 @@ export class CarouselController {
     // Cancels any settle without running its callback, and any pending frame.
     this.animator.dispose();
     this.animator.reset();
+    this.settleTarget = null;
     this.shown = index;
     this.queued = null;
-    this.awaitingRender = index;
+    // React skips the render when the host already shows `index`, so there is nothing to wait for.
+    this.awaitingRender = index !== this.lastRendered ? index : null;
     useDisplayStore.getState().setCurrentScreen(index);
     this.options.host.commit(index);
   }
 
   /** Called by the host after React renders `index`. Resets the track, then runs any queued rotate. */
   rendered(index: number): void {
+    this.lastRendered = index;
     if (this.awaitingRender === index) this.awaitingRender = null;
     if (!this.isBusy()) this.animator.reset();
     this.drainQueue();
@@ -137,6 +162,7 @@ export class CarouselController {
 
   private directionTo(index: number): Direction | null {
     const total = this.total();
+    if (total <= 1) return null;
     if (index === neighbourOf(this.shown, total, 'next')) return 'next';
     if (index === neighbourOf(this.shown, total, 'prev')) return 'prev';
     return null;
@@ -149,10 +175,12 @@ export class CarouselController {
       this.commit(index, select);
       return;
     }
+    this.settleTarget = index;
     this.animator.settle(direction, () => this.commit(index, select));
   }
 
   private commit(index: number, select: boolean): void {
+    this.settleTarget = null;
     this.shown = index;
     this.awaitingRender = index;
     this.options.host.commit(index);
@@ -214,6 +242,11 @@ export class CarouselController {
       return;
     }
     this.animator.endGesture();
+    if (!this.canSwipe()) {
+      // The layout shrank to one screen, or the carousel paused, mid-drag.
+      this.animator.settle('rest', () => this.afterRest());
+      return;
+    }
     const direction = releaseDirection(release, this.gestureWidth);
     const target = direction === null ? null : neighbourOf(this.shown, this.total(), direction);
     if (target === null) {
