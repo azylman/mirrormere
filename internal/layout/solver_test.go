@@ -278,18 +278,18 @@ func TestSolveGridWithBudget_PreservesConfigScreenAndWidgetOrder(t *testing.T) {
 	t.Parallel()
 	widgets := []layout.WidgetInput{
 		// Page 1: Calendar (2x4) + Tasks (1x2) + Photos (1x2)
-		mkW("hearth-family-grid", 2, 4, false),
-		mkW("whole-foods-tasks", 1, 2, false),
-		mkW("family-photos", 1, 2, false),
-		// Page 2: YouTube Music (2x3) + New on Plex (2x3)
-		mkW("youtube-music-card", 2, 3, false),
-		mkW("new-on-plex", 2, 3, false),
-		// Page 3: Home Assistant (2x6)
-		mkW("home-assistant-dashboard", 2, 6, false),
+		mkW("calendar-grid", 2, 4, false),
+		mkW("grocery-tasks", 1, 2, false),
+		mkW("shared-photos", 1, 2, false),
+		// Page 2: Music (2x3) + Media (2x3)
+		mkW("music-player-card", 2, 3, false),
+		mkW("recent-media", 2, 3, false),
+		// Page 3: Smart Home (2x6)
+		mkW("smart-home-dashboard", 2, 6, false),
 		// Page 4: Auxiliary widgets
-		mkW("costco-tasks", 1, 2, false),
-		mkW("ryans-tasks", 1, 2, false),
-		mkW("emerald-hills-weather", 2, 2, false),
+		mkW("chore-tasks", 1, 2, false),
+		mkW("member-tasks", 1, 2, false),
+		mkW("local-weather", 2, 2, false),
 		mkW("aux-spacer", 2, 2, false),
 	}
 	res, err := layout.SolveGridWithBudget(widgets, 2, 6, 0)
@@ -299,23 +299,23 @@ func TestSolveGridWithBudget_PreservesConfigScreenAndWidgetOrder(t *testing.T) {
 	if res.TotalScreens != 4 {
 		t.Fatalf("TotalScreens = %d, want 4", res.TotalScreens)
 	}
-	wantScreen0 := []string{"hearth-family-grid", "whole-foods-tasks", "family-photos"}
-	var gotScreen0 []string
+	wantScreen0 := []string{"calendar-grid", "grocery-tasks", "shared-photos"}
+	gotScreen0 := make([]string, 0, len(res.Screens[0].Widgets))
 	for _, w := range res.Screens[0].Widgets {
 		gotScreen0 = append(gotScreen0, w.WidgetID)
 	}
 	if !slices.Equal(gotScreen0, wantScreen0) {
 		t.Fatalf("Screen 0 widgets = %v, want %v", gotScreen0, wantScreen0)
 	}
-	wantScreen1 := []string{"youtube-music-card", "new-on-plex"}
-	var gotScreen1 []string
+	wantScreen1 := []string{"music-player-card", "recent-media"}
+	gotScreen1 := make([]string, 0, len(res.Screens[1].Widgets))
 	for _, w := range res.Screens[1].Widgets {
 		gotScreen1 = append(gotScreen1, w.WidgetID)
 	}
 	if !slices.Equal(gotScreen1, wantScreen1) {
 		t.Fatalf("Screen 1 widgets = %v, want %v", gotScreen1, wantScreen1)
 	}
-	if len(res.Screens[2].Widgets) != 1 || res.Screens[2].Widgets[0].WidgetID != "home-assistant-dashboard" {
-		t.Fatalf("Screen 2 widgets = %+v, want [home-assistant-dashboard]", res.Screens[2].Widgets)
+	if len(res.Screens[2].Widgets) != 1 || res.Screens[2].Widgets[0].WidgetID != "smart-home-dashboard" {
+		t.Fatalf("Screen 2 widgets = %+v, want [smart-home-dashboard]", res.Screens[2].Widgets)
 	}
 }

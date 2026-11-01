@@ -239,7 +239,7 @@
   }
 
   // Callback invoked by Ember Android WebView after extracting lh3.googleusercontent.com/pw/... URLs
-  window.onEmberPhotosSynced = function(payload) {
+  function handleEmberPhotosSynced(payload) {
     try {
       const data = typeof payload === 'string' ? JSON.parse(payload) : payload;
       if (data && Array.isArray(data.photos) && data.photos.length > 0) {
@@ -253,7 +253,19 @@
     } catch (e) {
       console.warn('onEmberPhotosSynced parse error:', e);
     }
-  };
+  }
+
+  window.onEmberPhotosSynced = handleEmberPhotosSynced;
+  try {
+    if (window.parent && window.parent !== window) {
+      window.parent.onEmberPhotosSynced = handleEmberPhotosSynced;
+    }
+    if (window.top && window.top !== window) {
+      window.top.onEmberPhotosSynced = handleEmberPhotosSynced;
+    }
+  } catch (e) {
+    console.warn('Cross-frame onEmberPhotosSynced registration blocked:', e);
+  }
 
   function resolveEmberBridge() {
     try {
@@ -315,7 +327,7 @@
     if (!triggerAndroidBridgeSync(true)) {
       const bridge = resolveEmberBridge();
       if (!bridge) {
-        emptyDesc.textContent = 'Tap this button directly on the ApoloSign kitchen tablet to sign into your Android Google account.';
+        emptyDesc.textContent = 'Tap this button directly on the display tablet to sign into your Android Google account.';
       } else {
         emptyDesc.textContent = 'Updating Ember Android bridge on tablet...';
       }

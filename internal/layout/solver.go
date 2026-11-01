@@ -389,20 +389,20 @@ func (s *gridSolver) placePinned(pIdx int) bool {
 			return true
 		}
 		origBudget := s.maxSearchNodes
-		seqBudget := 512
-		if origBudget < seqBudget {
-			seqBudget = origBudget
-		}
 		savedNodes := s.nodeCount
+		seqCeiling := savedNodes + min(512, max(0, origBudget-savedNodes))
 		s.orderByConfig = true
-		s.maxSearchNodes = savedNodes + seqBudget
+		s.maxSearchNodes = seqCeiling
 		if s.placeUnpinnedExactCover() {
 			s.maxSearchNodes = origBudget
 			return true
 		}
+		hitSeqCeiling := s.nodeCount > seqCeiling
 		s.orderByConfig = false
-		s.nodeCount = savedNodes
 		s.maxSearchNodes = origBudget
+		if !hitSeqCeiling || s.nodeCount >= origBudget {
+			return false
+		}
 		return s.placeUnpinnedExactCover()
 	}
 	pw := s.pinned[pIdx]
