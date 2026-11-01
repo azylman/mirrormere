@@ -239,34 +239,23 @@ jobs:
     name: Display performance budget (React)
     needs: changes
     if: github.event_name != 'push' || inputs.force_all == true
-    # Hosted runner: it ships Chrome, which the bench drives headless (docs/perf.md).
-    runs-on: ubuntu-latest
+    # Self-hosted runner: ships headless Chrome, Go, and Node (docs/perf.md).
+    runs-on: [self-hosted, ci]
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v7
-
-      - name: Set up Node.js (pinned by web/ui/.nvmrc)
-        if: needs.changes.outputs.perf == 'true' || inputs.force_all == true
-        uses: actions/setup-node@v7
-        with:
-          node-version-file: web/ui/.nvmrc
-
-      - name: Set up Go (go.mod)
-        if: needs.changes.outputs.perf == 'true' || inputs.force_all == true
-        uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
 
       - name: Start the server with the example config and fixture providers
         if: needs.changes.outputs.perf == 'true' || inputs.force_all == true
         run: |
           set -euo pipefail
+          pkill -x server || true
           go build -o bin/server ./cmd/server
           # The example config reads these secrets by name; the fixture values point at nothing,
           # so the providers fail fast and the screens still load from config (docs/perf.md).
           export FAMILY_CALENDAR_URL=http://localhost:9/fixture.ics
           export TODOIST_API_TOKEN=fixture-token
-          CONFIG_PATH=deploy/examples/config.yaml ./bin/server > server.log 2>&1 &
+          RUNNER_TRACKING_ID="" CONFIG_PATH=deploy/examples/config.yaml ./bin/server > server.log 2>&1 &
           for _ in $(seq 1 60); do
             if curl -fsS -o /dev/null 'http://localhost:8080/display?ui=react'; then break; fi
             sleep 1
