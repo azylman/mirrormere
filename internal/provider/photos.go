@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -22,7 +23,7 @@ import (
 const (
 	defaultPhotoCycleIntervalSeconds = 60
 	minPhotoCycleIntervalSeconds     = 5
-	defaultPhotoPreloadCount         = 50
+	defaultPhotoPreloadCount         = 500
 	maxPhotoPreloadCount             = 500
 	maxPhotoAlbumBytes               = 5 * 1024 * 1024 // 5MB Slowloris defense ceiling
 )
@@ -67,6 +68,8 @@ type PhotosProvider struct {
 	cfg            PhotosConfig
 	resolvedURL    string
 	cachedSnapshot *PhotoSnapshot
+	deck           []PhotoItem
+	deckCursor     int
 	client         *http.Client
 	logger         *slog.Logger
 	randSource     *rand.Rand
@@ -106,6 +109,10 @@ func resolvePhotoShareURL(parsed PhotosConfig, opts InitOptions) (string, error)
 func (p *PhotosProvider) Init(_ context.Context, config map[string]any, opts InitOptions) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+
+	p.cachedSnapshot = nil
+	p.deck = nil
+	p.deckCursor = 0
 
 	parsed, err := parsePhotosConfig(config, opts)
 	if err != nil {
@@ -174,6 +181,8 @@ func (p *PhotosProvider) Shutdown(_ context.Context) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.cachedSnapshot = nil
+	p.deck = nil
+	p.deckCursor = 0
 	return nil
 }
 
@@ -244,24 +253,7 @@ func (p *PhotosProvider) scrapeAlbum(ctx context.Context, client *http.Client, a
 	photos := extractPhotosFromHTML(html, logger)
 
 	totalFound := len(photos)
-
-	// Shuffling
-	if cfg.Shuffle && len(photos) > 1 {
-		p.mu.Lock()
-		r := p.randSource
-		if r == nil {
-			r = rand.New(rand.NewSource(time.Now().UnixNano()))
-		}
-		r.Shuffle(len(photos), func(i, j int) {
-			photos[i], photos[j] = photos[j], photos[i]
-		})
-		p.mu.Unlock()
-	}
-
-	// Preload count clamping
-	if cfg.PreloadCount > 0 && len(photos) > cfg.PreloadCount {
-		photos = photos[:cfg.PreloadCount]
-	}
+	photos = p.selectAlbumWindow(photos, cfg)
 
 	return &PhotoSnapshot{
 		AlbumName:            albumName,
@@ -269,6 +261,130 @@ func (p *PhotosProvider) scrapeAlbum(ctx context.Context, client *http.Client, a
 		CycleIntervalSeconds: cfg.CycleIntervalSeconds,
 		Photos:               photos,
 	}, nil
+}
+
+func photoItemKey(item PhotoItem) string {
+	if item.URL != "" {
+		return item.URL
+	}
+	return item.ID
+}
+
+func (p *PhotosProvider) reconcilePhotoDeck(scraped []PhotoItem, r *rand.Rand) {
+	if r == nil {
+		r = rand.New(rand.NewSource(time.Now().UnixNano()))
+	}
+
+	scrapedByKey := make(map[string]PhotoItem, len(scraped))
+	for _, item := range scraped {
+		scrapedByKey[photoItemKey(item)] = item
+	}
+
+	newDeck := make([]PhotoItem, 0, len(scraped))
+	deckKeys := make(map[string]struct{}, len(p.deck))
+	newCursor := p.deckCursor
+
+	for i, item := range p.deck {
+		key := photoItemKey(item)
+		if updated, ok := scrapedByKey[key]; ok {
+			newDeck = append(newDeck, updated)
+			deckKeys[key] = struct{}{}
+		} else if i < p.deckCursor {
+			newCursor--
+		}
+	}
+	if newCursor < 0 {
+		newCursor = 0
+	}
+	if newCursor > len(newDeck) {
+		newCursor = len(newDeck)
+	}
+	p.deckCursor = newCursor
+
+	var newItems []PhotoItem
+	for _, item := range scraped {
+		key := photoItemKey(item)
+		if _, exists := deckKeys[key]; !exists {
+			newItems = append(newItems, item)
+			deckKeys[key] = struct{}{}
+		}
+	}
+
+	if len(newItems) > 0 {
+		if len(newItems) > 1 {
+			r.Shuffle(len(newItems), func(i, j int) {
+				newItems[i], newItems[j] = newItems[j], newItems[i]
+			})
+		}
+		newDeck = append(newDeck, newItems...)
+	}
+
+	p.deck = newDeck
+}
+
+func (p *PhotosProvider) selectAlbumWindow(scraped []PhotoItem, cfg PhotosConfig) []PhotoItem {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if !cfg.Shuffle || len(scraped) <= 1 {
+		p.deck = nil
+		p.deckCursor = 0
+		limit := len(scraped)
+		if cfg.PreloadCount > 0 && limit > cfg.PreloadCount {
+			limit = cfg.PreloadCount
+		}
+		return slices.Clone(scraped[:limit])
+	}
+
+	r := p.randSource
+	if r == nil {
+		r = rand.New(rand.NewSource(time.Now().UnixNano()))
+		p.randSource = r
+	}
+	p.reconcilePhotoDeck(scraped, r)
+
+	if p.deckCursor < 0 || p.deckCursor >= len(p.deck) {
+		p.deckCursor = 0
+	}
+
+	limit := len(p.deck)
+	if cfg.PreloadCount > 0 {
+		limit = cfg.PreloadCount
+	}
+
+	if limit >= len(p.deck) {
+		p.deckCursor = 0
+		return slices.Clone(p.deck)
+	}
+
+	if p.deckCursor+limit < len(p.deck) {
+		window := slices.Clone(p.deck[p.deckCursor : p.deckCursor+limit])
+		p.deckCursor += limit
+		return window
+	}
+
+	if p.deckCursor+limit == len(p.deck) {
+		tail := slices.Clone(p.deck[p.deckCursor:])
+		r.Shuffle(len(p.deck), func(i, j int) {
+			p.deck[i], p.deck[j] = p.deck[j], p.deck[i]
+		})
+		if len(p.deck) > 1 && photoItemKey(p.deck[0]) == photoItemKey(tail[len(tail)-1]) {
+			p.deck[0], p.deck[len(p.deck)-1] = p.deck[len(p.deck)-1], p.deck[0]
+		}
+		p.deckCursor = 0
+		return tail
+	}
+
+	// Wrap-around: p.deckCursor+limit > len(p.deck)
+	tail := slices.Clone(p.deck[p.deckCursor:])
+	prefix := slices.Clone(p.deck[:p.deckCursor])
+	r.Shuffle(len(prefix), func(i, j int) {
+		prefix[i], prefix[j] = prefix[j], prefix[i]
+	})
+	p.deck = slices.Concat(tail, prefix)
+	window := slices.Clone(p.deck[:limit])
+	p.deckCursor = limit
+	return window
 }
 
 // Regex patterns for metadata and photo extraction.
