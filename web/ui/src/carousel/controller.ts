@@ -195,6 +195,9 @@ export class CarouselController {
     this.awaitingRender = index;
     this.options.host.commit(index);
     if (select) this.options.host.select(index);
+    // React skips a render for the screen it already shows, so rendered() would never come
+    // and the carousel would stay busy. Finish the commit here instead.
+    if (index === this.lastRendered) this.rendered(index);
   }
 
   private drainQueue(): void {
