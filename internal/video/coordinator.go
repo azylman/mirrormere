@@ -219,7 +219,8 @@ func (c *Coordinator) Dismiss(id string) (VideoState, error) {
 		return VideoState{}, ErrStreamNotFound
 	}
 
-	if id == "all" || id == "*" {
+	switch {
+	case id == "all" || id == "*":
 		if c.primary == nil && c.pip == nil {
 			c.mu.Unlock()
 			return VideoState{}, ErrStreamNotFound
@@ -228,13 +229,13 @@ func (c *Coordinator) Dismiss(id string) (VideoState, error) {
 			c.stopTimerLocked(tid)
 		}
 		c.primary, c.pip, c.mode = nil, nil, ModeWidgets
-	} else if streamID(c.pip) == id {
+	case streamID(c.pip) == id:
 		c.stopTimerLocked(id)
 		c.pip = nil
-	} else if streamID(c.primary) == id {
+	case streamID(c.primary) == id:
 		c.stopTimerLocked(id)
 		c.promotePipOrResetLocked()
-	} else {
+	default:
 		c.mu.Unlock()
 		return VideoState{}, ErrStreamNotFound
 	}

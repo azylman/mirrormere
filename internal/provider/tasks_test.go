@@ -263,11 +263,12 @@ func TestTasksProvider_CompleteItem(t *testing.T) {
 			}
 
 			err := p.CompleteItem(ctx, tc.itemID)
-			if tc.wantErrIs != nil && !errors.Is(err, tc.wantErrIs) {
+			switch {
+			case tc.wantErrIs != nil && !errors.Is(err, tc.wantErrIs):
 				t.Fatalf("expected error Is %v, got %v", tc.wantErrIs, err)
-			} else if tc.wantErrSub != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErrSub)) {
+			case tc.wantErrSub != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErrSub)):
 				t.Fatalf("expected error containing %q, got %v", tc.wantErrSub, err)
-			} else if tc.wantErrIs == nil && tc.wantErrSub == "" && err != nil {
+			case tc.wantErrIs == nil && tc.wantErrSub == "" && err != nil:
 				t.Fatalf("unexpected complete error: %v", err)
 			}
 			if compAdapter != nil && compAdapter.calls != tc.wantAdapterCall {

@@ -219,10 +219,11 @@ func (c *CastClient) resetMediaStateLocked() {
 func (c *CastClient) resetReportedOnFailure(operation string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if operation == "state" {
+	switch operation {
+	case "state":
 		c.lastReportedPlayerState, c.lastReportedTitle = "", ""
 		c.lastReportedSeries, c.lastReportedSeason, c.lastReportedEpisode = "", "", ""
-	} else if operation == "trigger" {
+	case "trigger":
 		c.lastTriggered = false
 	}
 }

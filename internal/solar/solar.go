@@ -100,7 +100,7 @@ func calculateEvent(lat, lon float64, date time.Time, isSunrise bool) (time.Time
 	} else {
 		H = math.Acos(cosH) * radToDeg
 	}
-	H = H / 15.0 // Convert to hours
+	H /= 15.0 // Convert to hours
 
 	// 6. Local mean time of rising/setting
 	T := H + RA - (0.06571 * tApprox) - 6.622

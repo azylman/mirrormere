@@ -87,15 +87,9 @@ func NewRegistry() *DefaultRegistry {
 	r.Register("live-view", func() Provider {
 		return NewLiveViewProvider()
 	})
-	r.Register("http", func() Provider {
-		return NewHTTPProvider()
-	})
-	r.Register("weather-forecast", func() Provider {
-		return NewWeatherProvider()
-	})
-	r.Register("calendar-feed", func() Provider {
-		return NewCalendarProvider()
-	})
+	r.Register("http", NewHTTPProvider)
+	r.Register("weather-forecast", NewWeatherProvider)
+	r.Register("calendar-feed", NewCalendarProvider)
 	r.Register("photo-carousel", func() Provider {
 		return NewPhotosProvider()
 	})
