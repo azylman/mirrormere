@@ -2,8 +2,8 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
-// The build output is committed to web/static/ui/ (fixed names, no hashes) so
-// hosts need no Node toolchain. See AGENTS.md ("web/ui/").
+// The build output is written to web/static/ui/ (fixed names, no hashes) during
+// local builds and the multi-stage Docker build. See AGENTS.md ("web/ui/").
 export default defineConfig({
   base: './',
   plugins: [react()],

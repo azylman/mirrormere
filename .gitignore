@@ -30,6 +30,7 @@ node_modules/
 dist/
 build/
 bin/
+web/static/ui/
 *.out
 *.exe
 

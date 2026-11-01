@@ -40,9 +40,9 @@ See `README.md` for the product overview.
 `web/ui/` is the Vite + React 19 + TypeScript (strict) source for the React display shell, served at
 `/display?ui=react` (or `display.ui: react` in config). Run `npm ci` there (Node version in `web/ui/.nvmrc`),
 then `npm run dev`, `npm run lint`, `npm run typecheck`, `npm test` (Vitest) and `npm run build`.
-The build writes to `web/static/ui/` (`app.js`, `app.css`, fixed names, no hashes), and that output is
-committed. After any change under `web/ui/`, run `npm run build` and commit the regenerated `web/static/ui/`;
-CI's `ui` job fails if a fresh build differs from the committed output. Do not hand-edit `web/static/ui/`.
+The build writes to `web/static/ui/` (`app.js`, `app.css`, fixed names, no hashes), which is git-ignored
+and compiled automatically inside the multi-stage `Dockerfile` (`ui-builder` stage). Do not commit or
+hand-edit `web/static/ui/`.
 
 ## Conventions that are easy to miss
 
@@ -61,6 +61,6 @@ CI's `ui` job fails if a fresh build differs from the committed output. Do not h
 - The voice hub talks to its STT, brain, TTS and optional fast-path endpoints over HTTP
   (STT may also be Wyoming TCP); the URLs come from the `voice_hub` section of the config.
 - Go tests are expected to stay above the 95% coverage floor; new code needs tests.
-- `Dockerfile` builds a bare-binary image (`/app/server` only). Never `COPY` `web/` or
-  `widgets/` into the image; both are volume-mounted at runtime (`/app/web:ro`, `/app/widgets:ro`)
-  so templates, CSS, JS, and widgets remain mutable without publishing a new container image.
+- `Dockerfile` uses a multi-stage build: `ui-builder` compiles `web/ui/` into `/app/web/static/ui/`,
+  `builder` compiles `/app/server`, and the runtime stage packages `/app/server` plus `/app/web/`.
+  Never `COPY` `widgets/` into the image; `widgets/` are volume-mounted at runtime (`/app/widgets:ro`).

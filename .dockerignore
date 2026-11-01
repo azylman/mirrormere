@@ -17,7 +17,9 @@ client/ear/
 client/eink-node/
 client/remote/
 deploy/
-web/
+web/test/
+web/ui/node_modules/
+web/static/ui/
 widgets/
 
 # Developer tooling & configurations
