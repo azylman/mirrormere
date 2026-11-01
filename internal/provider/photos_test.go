@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/azylman/mirrormere/internal/provider"
@@ -239,5 +240,237 @@ func TestPhotosProvider_InitAndLifecycle(t *testing.T) {
 	}
 	if err := p1.Shutdown(context.Background()); err != nil {
 		t.Errorf("Shutdown failed: %v", err)
+	}
+}
+
+func TestPhotosProvider_DeckWindowAndReconcile(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name                string
+		preloadCount        int
+		shuffle             bool
+		pollBatches         [][]string
+		callInitMid         bool
+		callShutdownMid     bool
+		wantCounts          []int
+		wantStable          bool
+		wantDisjoint        bool
+		wantAppended        bool
+		wantRemovedExcluded string
+		wantNoDupes         bool
+	}{
+		{
+			name:         "stable_deck_order_across_polls_when_album_fits_preload",
+			preloadCount: 10,
+			shuffle:      true,
+			pollBatches: [][]string{
+				{"p1", "p2", "p3", "p4", "p5"},
+				{"p1", "p2", "p3", "p4", "p5"},
+			},
+			wantCounts:  []int{5, 5},
+			wantStable:  true,
+			wantNoDupes: true,
+		},
+		{
+			name:         "reconcile_appends_new_photos_without_reshuffling_existing",
+			preloadCount: 10,
+			shuffle:      true,
+			pollBatches: [][]string{
+				{"p1", "p2", "p3"},
+				{"p1", "p2", "p3", "p4"},
+			},
+			wantCounts:   []int{3, 4},
+			wantAppended: true,
+			wantNoDupes:  true,
+		},
+		{
+			name:         "reconcile_removes_old_photos_cleanly",
+			preloadCount: 10,
+			shuffle:      true,
+			pollBatches: [][]string{
+				{"p1", "p2", "p3", "p4"},
+				{"p1", "p3", "p4"},
+			},
+			wantCounts:          []int{4, 3},
+			wantRemovedExcluded: "p2",
+			wantNoDupes:         true,
+		},
+		{
+			name:         "disjoint_windows_when_preload_count_less_than_scraped",
+			preloadCount: 2,
+			shuffle:      true,
+			pollBatches: [][]string{
+				{"p1", "p2", "p3", "p4"},
+				{"p1", "p2", "p3", "p4"},
+			},
+			wantCounts:   []int{2, 2},
+			wantDisjoint: true,
+			wantNoDupes:  true,
+		},
+		{
+			name:         "wraparound_window_with_zero_duplicate_items",
+			preloadCount: 3,
+			shuffle:      true,
+			pollBatches: [][]string{
+				{"p1", "p2", "p3", "p4"},
+				{"p1", "p2", "p3", "p4"},
+			},
+			wantCounts:  []int{3, 3},
+			wantNoDupes: true,
+		},
+		{
+			name:         "init_resets_deck_state",
+			preloadCount: 2,
+			shuffle:      true,
+			pollBatches: [][]string{
+				{"p1", "p2", "p3", "p4"},
+				{"p1", "p2", "p3", "p4"},
+			},
+			callInitMid: true,
+			wantCounts:  []int{2, 2},
+			wantNoDupes: true,
+		},
+		{
+			name:         "shutdown_resets_deck_state",
+			preloadCount: 2,
+			shuffle:      true,
+			pollBatches: [][]string{
+				{"p1", "p2", "p3", "p4"},
+				{"p1", "p2", "p3", "p4"},
+			},
+			callShutdownMid: true,
+			wantCounts:      []int{2, 2},
+			wantNoDupes:     true,
+		},
+		{
+			name:         "unshuffled_sequential_clamped_window",
+			preloadCount: 2,
+			shuffle:      false,
+			pollBatches: [][]string{
+				{"p1", "p2", "p3", "p4"},
+				{"p1", "p2", "p3", "p4"},
+			},
+			wantCounts:  []int{2, 2},
+			wantStable:  true,
+			wantNoDupes: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var pollIndex atomic.Int32
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				idx := int(pollIndex.Load())
+				if idx >= len(tc.pollBatches) {
+					idx = len(tc.pollBatches) - 1
+				}
+				batch := tc.pollBatches[idx]
+				var b strings.Builder
+				b.WriteString("<html><body>")
+				for _, id := range batch {
+					fmt.Fprintf(&b, `<img src="https://lh3.googleusercontent.com/pw/%s"/>`, id)
+				}
+				b.WriteString("</body></html>")
+				w.Header().Set("Content-Type", "text/html; charset=utf-8")
+				_, _ = w.Write([]byte(b.String()))
+			}))
+			defer ts.Close()
+
+			cfg := map[string]any{
+				"share_url":     ts.URL,
+				"preload_count": tc.preloadCount,
+				"shuffle":       tc.shuffle,
+			}
+			p := provider.NewPhotosProvider()
+			if err := p.Init(context.Background(), cfg, provider.InitOptions{}); err != nil {
+				t.Fatalf("Init failed: %v", err)
+			}
+
+			snapshots := make([]*provider.PhotoSnapshot, len(tc.pollBatches))
+			for i := range tc.pollBatches {
+				pollIndex.Store(int32(i))
+				if i == 1 && tc.callInitMid {
+					if err := p.Init(context.Background(), cfg, provider.InitOptions{}); err != nil {
+						t.Fatalf("mid Init failed: %v", err)
+					}
+				}
+				if i == 1 && tc.callShutdownMid {
+					if err := p.Shutdown(context.Background()); err != nil {
+						t.Fatalf("mid Shutdown failed: %v", err)
+					}
+					if err := p.Init(context.Background(), cfg, provider.InitOptions{}); err != nil {
+						t.Fatalf("post-shutdown Init failed: %v", err)
+					}
+				}
+
+				res, err := p.Fetch(context.Background())
+				if err != nil {
+					t.Fatalf("poll %d Fetch failed: %v", i, err)
+				}
+				snapshots[i] = res.(*provider.PhotoSnapshot)
+			}
+
+			for i, snap := range snapshots {
+				if len(snap.Photos) != tc.wantCounts[i] {
+					t.Errorf("poll %d photos count = %d, want %d", i, len(snap.Photos), tc.wantCounts[i])
+				}
+				if tc.wantNoDupes {
+					seen := make(map[string]bool, len(snap.Photos))
+					for _, photo := range snap.Photos {
+						if seen[photo.URL] {
+							t.Errorf("poll %d contains duplicate photo URL %q", i, photo.URL)
+						}
+						seen[photo.URL] = true
+					}
+				}
+			}
+
+			if tc.wantStable && len(snapshots) >= 2 {
+				s1, s2 := snapshots[0].Photos, snapshots[1].Photos
+				if len(s1) != len(s2) {
+					t.Errorf("stable check photo count mismatch: %d vs %d", len(s1), len(s2))
+				} else {
+					for i := range s1 {
+						if s1[i].URL != s2[i].URL {
+							t.Errorf("stable check photo[%d] = %q, want %q", i, s2[i].URL, s1[i].URL)
+						}
+					}
+				}
+			}
+
+			if tc.wantDisjoint && len(snapshots) >= 2 {
+				s1Set := make(map[string]bool)
+				for _, ph := range snapshots[0].Photos {
+					s1Set[ph.URL] = true
+				}
+				for _, ph := range snapshots[1].Photos {
+					if s1Set[ph.URL] {
+						t.Errorf("expected disjoint snapshots, but photo %q was in both", ph.URL)
+					}
+				}
+			}
+
+			if tc.wantAppended && len(snapshots) >= 2 {
+				s1, s2 := snapshots[0].Photos, snapshots[1].Photos
+				for i := range s1 {
+					if s1[i].URL != s2[i].URL {
+						t.Errorf("appended check: photo[%d] = %q, want %q", i, s2[i].URL, s1[i].URL)
+					}
+				}
+				if len(s2) <= len(s1) {
+					t.Errorf("expected snapshot 2 to have appended photos, got len %d <= %d", len(s2), len(s1))
+				}
+			}
+
+			if tc.wantRemovedExcluded != "" && len(snapshots) >= 2 {
+				for _, ph := range snapshots[1].Photos {
+					if strings.Contains(ph.URL, tc.wantRemovedExcluded) {
+						t.Errorf("expected removed photo %q to be excluded from poll 2, but found %q", tc.wantRemovedExcluded, ph.URL)
+					}
+				}
+			}
+		})
 	}
 }
