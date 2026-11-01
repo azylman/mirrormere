@@ -274,7 +274,8 @@ func handleSIGHUP(
 	reloadConfigOnSIGHUP(configPath, configManager, hub, stateProvider, currentTheme, initialHost, initialPort, voiceHub, logger)
 	if assetReloader != nil {
 		cssReloaded, widgetsReloaded := assetReloader.Reload()
-		logger.Info("asset reload on SIGHUP complete", "css_reloaded", cssReloaded, "widgets_reloaded", widgetsReloaded)
+		webReloaded := assetReloader.ReloadWeb()
+		logger.Info("asset reload on SIGHUP complete", "css_reloaded", cssReloaded, "widgets_reloaded", widgetsReloaded, "web_reloaded", webReloaded)
 		renderHandler.SetCSSPath(resolveCSSPath())
 	}
 	if onReload != nil {
@@ -484,7 +485,7 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 		render.WithNodeDataFunc(chatLogNodeData(stateProvider, chatStore)),
 	)
 	renderHandler := render.NewHandler(renderEngine, loader, render.WithCSSPath(resolveCSSPath()), render.WithCustomCSSPath(customCSSPath))
-	assetReloader := NewAssetReloader(customCSSPath, loader, builtinDir, customDir, renderEngine, configManager, hub, logger)
+	assetReloader := NewAssetReloader(customCSSPath, loader, builtinDir, customDir, renderEngine, configManager, hub, logger, WithWebDir(resolveWebDir(configPath)))
 
 	var hupChan <-chan os.Signal
 	if rcfg.hupChan != nil {
@@ -559,6 +560,20 @@ func resolveCSSPath() string {
 		}
 	}
 	return render.DefaultCSSPath
+}
+
+func resolveWebDir(configPath string) string {
+	var candidates []string
+	if configPath != "" {
+		candidates = append(candidates, filepath.Join(filepath.Dir(configPath), "web"))
+	}
+	candidates = append(candidates, "/app/web", "web", filepath.Join("..", "..", "web"))
+	for _, c := range candidates {
+		if fi, err := os.Stat(c); err == nil && fi.IsDir() {
+			return c
+		}
+	}
+	return "/app/web"
 }
 
 func closeListenerIgnoreClosed(l net.Listener) {

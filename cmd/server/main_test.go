@@ -66,6 +66,8 @@ func startDaemon(t *testing.T, yamlContent, customCSS string, customWidget map[s
 	if customCSS != "" {
 		_ = os.WriteFile(filepath.Join(tmpDir, "custom.css"), []byte(customCSS), 0o644)
 	}
+	_ = os.MkdirAll(filepath.Join(tmpDir, "web", "static", "ui"), 0o755)
+	_ = os.WriteFile(filepath.Join(tmpDir, "web", "static", "ui", "app.js"), []byte("console.log('init');"), 0o644)
 	if customWidget != nil {
 		wDir := filepath.Join(tmpDir, "widgets", customWidget["name"])
 		if m, ok := customWidget["manifest"]; ok {
@@ -412,6 +414,7 @@ func TestRun_SIGHUP(t *testing.T) {
 		{name: "read_error_lkgc", action: "read_error", wantLogSub: "failed to read configuration file on SIGHUP"},
 		{name: "style_reload", action: "style_reload", wantEvtType: events.EventStyleReload, wantHTTPPath: "/style.css", wantHTTPBody: "body { background: #9b59b6; }"},
 		{name: "widget_reload", action: "widget_reload", wantEvtType: events.EventWidgetReload, wantHTTPPath: "/api/widgets/clock-instance/render", wantHTTPBody: "<div>Hot Reloaded Clock View</div>"},
+		{name: "web_reload", action: "web_reload", wantEvtType: events.EventSystemReload, wantLogSub: "web_reloaded=true"},
 		{name: "host_port_change", action: "host_port_change", wantLogSub: "host or port changed in configuration; server restart required"},
 	}
 	for _, tc := range tests {
@@ -457,6 +460,8 @@ func TestRun_SIGHUP(t *testing.T) {
 				_ = os.WriteFile(filepath.Join(d.tmpDir, "custom.css"), []byte("body { background: #9b59b6; }"), 0o644)
 			case "widget_reload":
 				_ = os.WriteFile(filepath.Join(d.tmpDir, "widgets", "clock", "views", "widget.html"), []byte("<div>Hot Reloaded Clock View</div>"), 0o644)
+			case "web_reload":
+				_ = os.WriteFile(filepath.Join(d.tmpDir, "web", "static", "ui", "app.js"), []byte("console.log('hot-reloaded');"), 0o644)
 			case "host_port_change":
 				_ = os.WriteFile(d.configPath, []byte("host: \"127.0.0.2\"\nport: 9090\ntimezone: UTC\ndisplay:\n  widgets:\n    - id: s\n      type: spacer\n      dimensions: [6, 2]\n"), 0o644)
 			}
