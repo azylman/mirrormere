@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-<title>Rosie &amp; Isaac — Family Photos</title>
+<title>Shared Photos</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-user-select: none; }
   html, body {
@@ -133,16 +133,16 @@
   <div class="top-bar">
     <div class="album-badge">
       <span class="sync-dot pending" id="sync-dot"></span>
-      <span id="album-title">Rosie &amp; Isaac</span>
+      <span id="album-title">Shared Photos</span>
     </div>
     <div class="counter-pill" id="counter-pill" style="display:none">1 / 1</div>
   </div>
 
   <div class="empty-state" id="empty-state">
     <div class="empty-icon">📸</div>
-    <div class="empty-title">Rosie &amp; Isaac</div>
+    <div class="empty-title">Shared Photos</div>
     <div class="empty-desc" id="empty-desc">
-      Waiting for Android Google Photos bridge sync from the ApoloSign tablet...
+      Waiting for Android Google Photos bridge sync...
     </div>
     <button class="connect-btn" id="connect-btn" type="button">Sync via Android Google Account</button>
   </div>
@@ -220,7 +220,7 @@
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          album_title: 'Rosie and Isaac',
+          album_title: 'Shared Photos',
           source: sourceLabel || 'ember-android-bridge',
           photos: extractedUrls
         })
@@ -248,7 +248,7 @@
         startRotation();
         pushSyncedPhotosToBackend(data.photos, data.source || 'ember-android');
       } else if (data && data.needs_auth) {
-        emptyDesc.textContent = 'Tap below on the ApoloSign tablet to authorize your Android Google account for Google Photos.';
+        emptyDesc.textContent = 'Tap below to authorize your Android Google account for Google Photos.';
       }
     } catch (e) {
       console.warn('onEmberPhotosSynced parse error:', e);
@@ -259,12 +259,12 @@
     const targetUrl = albumAuthUrl || albumUrl;
     if (window.EmberBridge) {
       if (interactive && typeof window.EmberBridge.connectGooglePhotos === 'function') {
-        emptyDesc.textContent = 'Opening Android Google account session for Rosie & Isaac...';
+        emptyDesc.textContent = 'Opening Android Google account session for shared album...';
         window.EmberBridge.connectGooglePhotos(targetUrl);
         return true;
       }
       if (typeof window.EmberBridge.syncGooglePhotosAlbum === 'function') {
-        emptyDesc.textContent = 'Syncing Rosie & Isaac directly through Android Google account...';
+        emptyDesc.textContent = 'Syncing shared album directly through Android Google account...';
         window.EmberBridge.syncGooglePhotosAlbum(targetUrl);
         return true;
       }
@@ -279,6 +279,12 @@
       const data = await resp.json();
       albumUrl = data.album_url || '';
       albumAuthUrl = data.album_auth_url || albumUrl;
+      if (data.album_title) {
+        const titleEl = document.getElementById('album-title');
+        if (titleEl) titleEl.textContent = data.album_title;
+        const emptyTitleEl = document.querySelector('.empty-title');
+        if (emptyTitleEl) emptyTitleEl.textContent = data.album_title;
+      }
       if (Array.isArray(data.photos) && data.photos.length > 0) {
         photos = data.photos;
         showPhoto(currentIndex);
