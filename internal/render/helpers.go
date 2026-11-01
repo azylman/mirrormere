@@ -39,9 +39,6 @@ func StandardFuncMap(nowFunc func() time.Time) template.FuncMap {
 	monthViewFn := func(data any, cfg map[string]any, dims domain.Dimension) (*FamilyMonthViewModel, error) {
 		return BuildFamilyMonthView(data, cfg, dims, nowFunc())
 	}
-	combinedDataFn := func(weekView *FamilyViewModel, monthView *FamilyMonthViewModel, cfg map[string]any) map[string]any {
-		return BuildFamilyCombinedData(weekView, monthView, cfg)
-	}
 
 	return template.FuncMap{
 		"formatDate": func(args ...any) string {
@@ -60,7 +57,7 @@ func StandardFuncMap(nowFunc func() time.Time) template.FuncMap {
 		"isMonthView": func(cfg map[string]any) bool {
 			return strings.EqualFold(stringOr(cfg, "default_view", "week"), "month")
 		},
-		"calendarGridData": combinedDataFn,
+		"calendarGridData": BuildFamilyCombinedData,
 		"calendarFeedDayGroups": func(data any, args ...any) []CalendarFeedDayGroup {
 			return CalendarFeedDayGroups(data, nowFunc())
 		},
@@ -919,18 +916,16 @@ func TasksStats(input any) TasksStatsResult {
 		}
 	}
 
-	rem := total - done
-	if rem < 0 {
-		rem = 0
-	}
+	rem := max(total-done, 0)
 
 	summary := ""
 	if total > 0 {
-		if rem == 0 {
+		switch rem {
+		case 0:
 			summary = "All done"
-		} else if rem == 1 {
+		case 1:
 			summary = "1 to do"
-		} else {
+		default:
 			summary = fmt.Sprintf("%d to do", rem)
 		}
 	}

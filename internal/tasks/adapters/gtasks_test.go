@@ -3,6 +3,7 @@ package adapters_test
 import (
 	"context"
 	"errors"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -23,9 +24,7 @@ func newRouteServer(t *testing.T, routes map[string]mockRoute, authOut *string) 
 	t.Helper()
 	var mu sync.Mutex
 	m := make(map[string]mockRoute, len(routes))
-	for k, v := range routes {
-		m[k] = v
-	}
+	maps.Copy(m, routes)
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		defer mu.Unlock()
@@ -355,11 +354,12 @@ func TestGTasksAdapter_CompleteItem(t *testing.T) {
 			}
 
 			err = ad.CompleteItem(context.Background(), tc.itemID)
-			if tc.wantErrIs != nil && !errors.Is(err, tc.wantErrIs) {
+			switch {
+			case tc.wantErrIs != nil && !errors.Is(err, tc.wantErrIs):
 				t.Fatalf("expected error Is %v, got %v", tc.wantErrIs, err)
-			} else if tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)) {
+			case tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)):
 				t.Fatalf("expected error containing %q, got %v", tc.wantErr, err)
-			} else if tc.wantErr == "" && tc.wantErrIs == nil && tc.wantCode == 0 && err != nil {
+			case tc.wantErr == "" && tc.wantErrIs == nil && tc.wantCode == 0 && err != nil:
 				t.Fatalf("unexpected error: %v", err)
 			}
 			if tc.wantCode != 0 {

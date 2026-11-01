@@ -9,6 +9,12 @@ import (
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
+// Defines values for PerfSampleUi.
+const (
+	Legacy PerfSampleUi = "legacy"
+	React  PerfSampleUi = "react"
+)
+
 // Defines values for ScreenAdvanceRequestDirection.
 const (
 	ScreenAdvanceRequestDirectionNext ScreenAdvanceRequestDirection = "next"
@@ -144,6 +150,26 @@ type ErrorResponse struct {
 type HealthResponse struct {
 	Status string `json:"status"`
 }
+
+// PerfBatchRequest defines model for PerfBatchRequest.
+type PerfBatchRequest struct {
+	Samples []PerfSample `json:"samples"`
+}
+
+// PerfSample defines model for PerfSample.
+type PerfSample struct {
+	// Metric Allow-listed metric name. One of gesture_first_frame, swipe_settle, frame, long_task, interaction, screen_ready, widget_update.
+	Metric string `json:"metric"`
+
+	// Ui Display UI that produced the sample.
+	Ui PerfSampleUi `json:"ui"`
+
+	// ValueMs Measured duration in milliseconds.
+	ValueMs float64 `json:"value_ms"`
+}
+
+// PerfSampleUi Display UI that produced the sample.
+type PerfSampleUi string
 
 // ScreenAdvanceRequest defines model for ScreenAdvanceRequest.
 type ScreenAdvanceRequest struct {
@@ -400,6 +426,9 @@ type PostAudioMuteJSONRequestBody = AudioMuteRequest
 
 // PostAudioVolumeJSONRequestBody defines body for PostAudioVolume for application/json ContentType.
 type PostAudioVolumeJSONRequestBody = AudioVolumeRequest
+
+// PostPerfJSONRequestBody defines body for PostPerf for application/json ContentType.
+type PostPerfJSONRequestBody = PerfBatchRequest
 
 // PostScreenAdvanceJSONRequestBody defines body for PostScreenAdvance for application/json ContentType.
 type PostScreenAdvanceJSONRequestBody = ScreenAdvanceRequest

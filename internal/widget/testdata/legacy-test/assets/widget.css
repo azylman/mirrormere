@@ -1,0 +1,13 @@
+.legacy-test-card {
+  justify-content: center;
+}
+
+.legacy-test-title {
+  margin: 0 0 8px;
+  color: #7fd1ae;
+}
+
+.legacy-test-body {
+  margin: 0;
+  color: #d8dee9;
+}

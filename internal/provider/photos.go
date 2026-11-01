@@ -365,10 +365,7 @@ func extractFromAFInitData(html string) []PhotoItem {
 
 	for _, idxRange := range callbackIndices {
 		start := idxRange[0]
-		end := start + 500*1024
-		if end > len(html) {
-			end = len(html)
-		}
+		end := min(start+500*1024, len(html))
 		chunk := html[start:end]
 		results = append(results, extractFromCallback(chunk, seenURLs)...)
 	}
@@ -392,11 +389,12 @@ func extractBalancedArray(s string) (string, bool) {
 		ch := s[i]
 
 		if inString {
-			if escaped {
+			switch {
+			case escaped:
 				escaped = false
-			} else if ch == '\\' {
+			case ch == '\\':
 				escaped = true
-			} else if ch == stringChar {
+			case ch == stringChar:
 				inString = false
 			}
 			continue
@@ -638,15 +636,9 @@ func parsePhotosConfig(cfg map[string]any, _ InitOptions) (PhotosConfig, error) 
 		return res, fmt.Errorf("photo-carousel: 'share_url' and 'share_url_env' are mutually exclusive")
 	}
 
-	res.CycleIntervalSeconds = positiveIntFromMap(cfg, "cycle_interval_seconds", defaultPhotoCycleIntervalSeconds)
-	if res.CycleIntervalSeconds < minPhotoCycleIntervalSeconds {
-		res.CycleIntervalSeconds = minPhotoCycleIntervalSeconds
-	}
+	res.CycleIntervalSeconds = max(positiveIntFromMap(cfg, "cycle_interval_seconds", defaultPhotoCycleIntervalSeconds), minPhotoCycleIntervalSeconds)
 
-	res.PreloadCount = positiveIntFromMap(cfg, "preload_count", defaultPhotoPreloadCount)
-	if res.PreloadCount > maxPhotoPreloadCount {
-		res.PreloadCount = maxPhotoPreloadCount
-	}
+	res.PreloadCount = min(positiveIntFromMap(cfg, "preload_count", defaultPhotoPreloadCount), maxPhotoPreloadCount)
 
 	if v, ok := cfg["shuffle"].(bool); ok {
 		res.Shuffle = v

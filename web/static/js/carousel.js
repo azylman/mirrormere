@@ -486,6 +486,21 @@ class MirrormereCarousel {
       }
     }
 
+    if (this.canvas && this.canvas.classList && typeof this.canvas.classList.add === 'function') {
+      this.canvas.classList.add('transitioning');
+      this.setAnimating(true);
+      if (typeof requestAnimationFrame === 'function') {
+        requestAnimationFrame(() => {
+          setTimeout(() => {
+            if (this.canvas && this.canvas.classList && typeof this.canvas.classList.remove === 'function') {
+              this.canvas.classList.remove('transitioning');
+            }
+            this.setAnimating(false);
+          }, 150);
+        });
+      }
+    }
+
     this.activeWidgets = newActiveWidgets;
     if (this.canvas.dataset) {
       this.canvas.dataset.widgetCount = String(newActiveWidgets.size);
@@ -500,6 +515,15 @@ class MirrormereCarousel {
     for (const [, widgets] of this.screenLayouts.entries()) {
       await this.ensureWidgetsMounted(widgets);
     }
+  }
+
+  /**
+   * Flag the document body while a screen transition is running. perf.js samples
+   * frame timing only while body.dataset.animating === '1'.
+   */
+  setAnimating(on) {
+    if (typeof document === 'undefined' || !document.body || !document.body.dataset) return;
+    document.body.dataset.animating = on ? '1' : '0';
   }
 
   /**

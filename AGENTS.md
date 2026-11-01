@@ -35,6 +35,15 @@ See `README.md` for the product overview.
 - `api/openapi.yaml` and `api/schemas/*.json` - the REST contract and SSE event payload schemas.
 - `docs/decisions.md` - architectural decisions and invariants; read it before changing behavior.
 
+## web/ui/ (React display shell)
+
+`web/ui/` is the Vite + React 19 + TypeScript (strict) source for the React display shell, served at
+`/display?ui=react` (or `display.ui: react` in config). Run `npm ci` there (Node version in `web/ui/.nvmrc`),
+then `npm run dev`, `npm run lint`, `npm run typecheck`, `npm test` (Vitest) and `npm run build`.
+The build writes to `web/static/ui/` (`app.js`, `app.css`, fixed names, no hashes), and that output is
+committed. After any change under `web/ui/`, run `npm run build` and commit the regenerated `web/static/ui/`;
+CI's `ui` job fails if a fresh build differs from the committed output. Do not hand-edit `web/static/ui/`.
+
 ## Conventions that are easy to miss
 
 - Configuration is one YAML file (`config.yaml`). There are no command-line flags and

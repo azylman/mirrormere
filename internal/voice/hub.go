@@ -237,7 +237,7 @@ func (ic *inactivityContext) Reset() {
 
 // isTimeoutError reports whether an error or context deadline was caused by a timeout,
 // explicitly ignoring client-side parent context cancellations.
-func isTimeoutError(err error, timeoutCtx, parentCtx context.Context) bool {
+func isTimeoutError(timeoutCtx, parentCtx context.Context, err error) bool {
 	if parentCtx != nil && errors.Is(parentCtx.Err(), context.Canceled) {
 		return false
 	}
@@ -530,7 +530,7 @@ func (h *Hub) recordBrainStageError(
 	h.metrics.RecordStageDuration(nodeID, "brain", "error", brainDuration)
 	errType := "brain_error"
 	retErr := fmt.Errorf("%w: %w", ErrBrainFailed, err)
-	if isTimeoutError(err, callCtx, ctx) {
+	if isTimeoutError(callCtx, ctx, err) {
 		errType = "brain_timeout"
 		retErr = fmt.Errorf("%w: %w", ErrBrainTimeout, err)
 	}
@@ -1071,12 +1071,12 @@ func consumeStreamingSSE(r io.Reader, onStatus func(status string), onAudio func
 			currentEvent = ""
 			continue
 		}
-		if strings.HasPrefix(line, "event:") {
-			currentEvent = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
+		if after, ok := strings.CutPrefix(line, "event:"); ok {
+			currentEvent = strings.TrimSpace(after)
 			continue
 		}
-		if strings.HasPrefix(line, "data:") {
-			dataStr := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if after, ok := strings.CutPrefix(line, "data:"); ok {
+			dataStr := strings.TrimSpace(after)
 			var payload map[string]any
 			if unmarshalErr := json.Unmarshal([]byte(dataStr), &payload); unmarshalErr != nil {
 				continue

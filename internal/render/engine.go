@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"html/template"
+	"maps"
 	"os"
 	"sync"
 	"time"
@@ -161,12 +162,8 @@ func (e *Engine) resolveWidget(widgetID, nodeID string, overrides map[string]any
 	tmplCtx := e.buildContext(widgetID, targetWidget, pkg, snap)
 	if len(overrides) > 0 {
 		mergedConfig := make(map[string]any, len(tmplCtx.Config)+len(overrides))
-		for k, v := range tmplCtx.Config {
-			mergedConfig[k] = v
-		}
-		for k, v := range overrides {
-			mergedConfig[k] = v
-		}
+		maps.Copy(mergedConfig, tmplCtx.Config)
+		maps.Copy(mergedConfig, overrides)
 		tmplCtx.Config = mergedConfig
 	}
 	if e.nodeData != nil {
@@ -268,7 +265,9 @@ func (e *Engine) resolveWidgetRuntimeState(widgetID string) (any, string, string
 	}
 
 	if timestamp == "" {
-		if tsProvider, ok := e.provider.(interface{ GetWidgetTimestamp(string) (string, bool) }); ok {
+		if tsProvider, ok := e.provider.(interface {
+			GetWidgetTimestamp(widgetID string) (string, bool)
+		}); ok {
 			if ts, ok := tsProvider.GetWidgetTimestamp(widgetID); ok && ts != "" {
 				timestamp = ts
 			}

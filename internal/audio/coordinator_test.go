@@ -1,7 +1,6 @@
 package audio_test
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -53,8 +52,7 @@ func TestCoordinator_VolumeAndMute(t *testing.T) {
 
 	hub := events.NewHub(events.HubConfig{RingCapacity: 10, RingTTL: time.Minute}, nil, nil)
 	t.Cleanup(hub.Close)
-	subCtx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	subCtx := t.Context()
 	sub, unsub := hub.Subscribe(subCtx)
 	defer unsub()
 

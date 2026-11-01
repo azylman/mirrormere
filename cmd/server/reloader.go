@@ -116,10 +116,8 @@ func (r *AssetReloader) evictDeletedWidgetLocked(widgetType string) bool {
 	if r.renderEngine != nil {
 		r.renderEngine.Invalidate(widgetType)
 	}
-	statusChanged := false
-	if r.configManager != nil && r.configManager.ClearPackageError(widgetType) {
-		statusChanged = true
-	}
+	statusChanged := r.configManager != nil && r.configManager.ClearPackageError(widgetType)
+
 	if _, wasIncomplete := r.incompletePkgs[widgetType]; wasIncomplete {
 		delete(r.incompletePkgs, widgetType)
 		statusChanged = true
@@ -153,10 +151,8 @@ func (r *AssetReloader) recordWidgetLoadErrorLocked(widgetType string, err error
 }
 
 func (r *AssetReloader) updateLoadedWidgetLocked(widgetType string, pkg *domain.Package) (bool, bool) {
-	statusChanged := false
-	if r.configManager != nil && r.configManager.ClearPackageError(widgetType) {
-		statusChanged = true
-	}
+	statusChanged := r.configManager != nil && r.configManager.ClearPackageError(widgetType)
+
 	if _, wasIncomplete := r.incompletePkgs[widgetType]; wasIncomplete {
 		delete(r.incompletePkgs, widgetType)
 		statusChanged = true

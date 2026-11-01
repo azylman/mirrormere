@@ -63,7 +63,7 @@ type CastClient struct {
 	logger     *slog.Logger
 	client     *http.Client
 	dialer     DialFunc
-	reqCounter uint64
+	reqCounter atomic.Uint64
 
 	mu                         sync.RWMutex
 	conn                       net.Conn
@@ -219,10 +219,11 @@ func (c *CastClient) resetMediaStateLocked() {
 func (c *CastClient) resetReportedOnFailure(operation string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if operation == "state" {
+	switch operation {
+	case "state":
 		c.lastReportedPlayerState, c.lastReportedTitle = "", ""
 		c.lastReportedSeries, c.lastReportedSeason, c.lastReportedEpisode = "", "", ""
-	} else if operation == "trigger" {
+	case "trigger":
 		c.lastTriggered = false
 	}
 }
@@ -263,7 +264,7 @@ func (c *CastClient) SendMediaAction(ctx context.Context, action string) error {
 	default:
 		return fmt.Errorf("%w: %s", ErrInvalidAction, action)
 	}
-	return c.sendJSONContext(ctx, transportID, NamespaceMedia, map[string]any{"type": cmd, "requestId": atomic.AddUint64(&c.reqCounter, 1), "mediaSessionId": mediaSessionID})
+	return c.sendJSONContext(ctx, transportID, NamespaceMedia, map[string]any{"type": cmd, "requestId": c.reqCounter.Add(1), "mediaSessionId": mediaSessionID})
 }
 
 // Seek commands the active Chromecast media session to jump to targetTime in seconds.
@@ -275,7 +276,7 @@ func (c *CastClient) Seek(ctx context.Context, targetTime float64) error {
 	if err != nil {
 		return err
 	}
-	if err := c.sendJSONContext(ctx, transportID, NamespaceMedia, map[string]any{"type": "SEEK", "requestId": atomic.AddUint64(&c.reqCounter, 1), "mediaSessionId": mediaSessionID, "currentTime": targetTime}); err != nil {
+	if err := c.sendJSONContext(ctx, transportID, NamespaceMedia, map[string]any{"type": "SEEK", "requestId": c.reqCounter.Add(1), "mediaSessionId": mediaSessionID, "currentTime": targetTime}); err != nil {
 		return err
 	}
 	c.mu.Lock()
@@ -308,7 +309,7 @@ func (c *CastClient) Wake(ctx context.Context) error {
 	}
 	c.lastWakeTime = time.Now()
 
-	reqID := atomic.AddUint64(&c.reqCounter, 1)
+	reqID := c.reqCounter.Add(1)
 	if err := c.sendJSONContext(ctx, DestinationReceiver, NamespaceReceiver, map[string]any{"type": "LAUNCH", "appId": "CC1AD845", "requestId": reqID}); err != nil {
 		return err
 	}
@@ -324,7 +325,7 @@ func (c *CastClient) Wake(ctx context.Context) error {
 
 	stopCtx, stopCancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer stopCancel()
-	stopReqID := atomic.AddUint64(&c.reqCounter, 1)
+	stopReqID := c.reqCounter.Add(1)
 	if err := c.sendJSONContext(stopCtx, DestinationReceiver, NamespaceReceiver, map[string]any{"type": "STOP", "requestId": stopReqID}); err != nil {
 		return err
 	}
@@ -385,11 +386,11 @@ func (c *CastClient) connectAndServe(ctx context.Context) error {
 	c.mu.Unlock()
 	c.logger.Info("[CastWatcher] Connected to Chromecast", "addr", c.cfg.ChromecastAddr)
 
-	if err := c.sendMessage(newCastMsg(DestinationReceiver, NamespaceConnection, `{"type":"CONNECT"}`)); err != nil {
+	if err := c.sendMessageContext(ctx, newCastMsg(DestinationReceiver, NamespaceConnection, `{"type":"CONNECT"}`)); err != nil {
 		return fmt.Errorf("failed to send initial CONNECT: %w", err)
 	}
-	reqID := atomic.AddUint64(&c.reqCounter, 1)
-	if err := c.sendMessage(newCastMsg(DestinationReceiver, NamespaceReceiver, fmt.Sprintf(`{"type":"GET_STATUS","requestId":%d}`, reqID))); err != nil {
+	reqID := c.reqCounter.Add(1)
+	if err := c.sendMessageContext(ctx, newCastMsg(DestinationReceiver, NamespaceReceiver, fmt.Sprintf(`{"type":"GET_STATUS","requestId":%d}`, reqID))); err != nil {
 		return fmt.Errorf("failed to send GET_STATUS: %w", err)
 	}
 
@@ -489,7 +490,7 @@ func (c *CastClient) handleReceiverMessage(msg CastMessage) {
 			c.logger.Info("[CastWatcher] Active cast app detected", "app_id", activeAppID, "transport_id", activeTransportID)
 			go func(tid string) {
 				c.sendBestEffort(newCastMsg(tid, NamespaceConnection, `{"type":"CONNECT"}`))
-				reqID := atomic.AddUint64(&c.reqCounter, 1)
+				reqID := c.reqCounter.Add(1)
 				c.sendBestEffort(newCastMsg(tid, NamespaceMedia, fmt.Sprintf(`{"type":"GET_STATUS","requestId":%d}`, reqID)))
 			}(activeTransportID)
 		}

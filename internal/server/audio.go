@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -111,10 +112,8 @@ func requireCORSAndMethod(w http.ResponseWriter, r *http.Request, allowHeader st
 		w.WriteHeader(http.StatusNoContent)
 		return false
 	}
-	for _, m := range allowed {
-		if r.Method == m {
-			return true
-		}
+	if slices.Contains(allowed, r.Method) {
+		return true
 	}
 	w.Header().Set("Allow", allowHeader)
 	writeAPIError(w, http.StatusMethodNotAllowed, "method not allowed")

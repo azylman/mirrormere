@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -89,10 +90,8 @@ func pushChatLogUpdates(sp render.StateSnapshotProvider, pusher chatLogPusher, s
 
 func chatLogNodeData(sp render.StateSnapshotProvider, store *chatlog.Store) func(widgetID, nodeID string) (any, bool) {
 	return func(widgetID, nodeID string) (any, bool) {
-		for _, id := range chatLogWidgetIDs(sp.CurrentSnapshot()) {
-			if id == widgetID {
-				return store.View(widgetID, nodeID), true
-			}
+		if slices.Contains(chatLogWidgetIDs(sp.CurrentSnapshot()), widgetID) {
+			return store.View(widgetID, nodeID), true
 		}
 		return nil, false
 	}
@@ -132,7 +131,7 @@ func householdThemeFunc(sp render.StateSnapshotProvider) func() string {
 
 func evaluateThemeTransition(currentTheme func() string, sp interface {
 	GetTheme() string
-	SetTheme(string)
+	SetTheme(theme string)
 }, hub *events.Hub, logger *slog.Logger,
 ) bool {
 	if currentTheme == nil || sp == nil {
@@ -176,6 +175,12 @@ func buildDisplayHandler(stateProvider render.StateSnapshotProvider, currentThem
 			return "UTC"
 		}),
 		display.WithHideCursorProvider(func() bool { return cfg() != nil && cfg().Display.HideCursor }),
+		display.WithUIProvider(func() string {
+			if c := cfg(); c != nil {
+				return c.Display.GetUI()
+			}
+			return "legacy"
+		}),
 		display.WithRemoteURLProvider(func() string {
 			if c := cfg(); c != nil {
 				return c.Display.RemoteURL

@@ -281,9 +281,10 @@ func TestAssetReloader_ReloadWidgets_Guards(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			tmp := t.TempDir()
 			var dir string
-			if tc.dirKind == "missing" {
+			switch tc.dirKind {
+			case "missing":
 				dir = filepath.Join(tmp, "missing")
-			} else if tc.dirKind == "file" {
+			case "file":
 				dir = filepath.Join(tmp, "file")
 				if err := os.WriteFile(dir, []byte("x"), 0o644); err != nil {
 					t.Fatalf("write file: %v", err)
