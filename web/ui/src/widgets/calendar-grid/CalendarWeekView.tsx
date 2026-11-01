@@ -1,5 +1,8 @@
-import { memo, useCallback, useEffect, useRef } from 'react';
-import { stripMealiePrefix } from './dateUtils';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { usePaneActive } from '../../carousel/PaneContext';
+import { useDocumentVisible } from '../../lifecycle/visibility';
+import { useDisplayStore } from '../../store';
+import { computeNowIndicatorPct, stripMealiePrefix } from './dateUtils';
 import type {
   FamilyDay,
   FamilyEvent,
@@ -78,6 +81,26 @@ export const CalendarWeekView = memo(function CalendarWeekView({
   currentDateISO,
   onOpenModal,
 }: CalendarWeekViewProps) {
+  const tz = useDisplayStore((s) => s.header.timezone);
+  const isDocVisible = useDocumentVisible();
+  const isPaneActive = usePaneActive();
+  const [now, setNow] = useState(() => new Date());
+
+  const hasToday = daysToRender.some((d) => d.is_today);
+
+  useEffect(() => {
+    if (activeView === 'month' || !isDocVisible || !isPaneActive || !hasToday) {
+      return;
+    }
+    setNow(new Date());
+    const timer = setInterval(() => {
+      setNow(new Date());
+    }, 60_000);
+    return () => clearInterval(timer);
+  }, [activeView, isDocVisible, isPaneActive, hasToday]);
+
+  const nowPct = computeNowIndicatorPct(weekVM, now, tz || undefined);
+
   const canvasRefs = useRef<Map<string, HTMLElement>>(new Map());
   const registerDayCanvas = useCallback((date: string, el: HTMLElement | null) => {
     if (el) {
@@ -303,6 +326,36 @@ export const CalendarWeekView = memo(function CalendarWeekView({
                     </div>
 
                     <div className="cf-day-canvas" ref={(el) => registerDayCanvas(day.date, el)} style={{ flex: 1, position: 'relative', minHeight: 0, marginTop: '4px' }}>
+                      {day.is_today && nowPct !== null && (
+                        <div
+                          className="cf-now-indicator"
+                          aria-hidden="true"
+                          data-now-pct={nowPct.toFixed(1)}
+                          style={{
+                            position: 'absolute',
+                            left: 0,
+                            right: 0,
+                            top: `${nowPct.toFixed(2)}%`,
+                            height: '2px',
+                            background: 'var(--mm-coral, #ff6f59)',
+                            zIndex: 15,
+                            pointerEvents: 'none',
+                          }}
+                        >
+                          <span
+                            className="cf-now-dot"
+                            style={{
+                              position: 'absolute',
+                              left: '-3px',
+                              top: '-3px',
+                              width: '8px',
+                              height: '8px',
+                              borderRadius: '50%',
+                              background: 'var(--mm-coral, #ff6f59)',
+                            }}
+                          />
+                        </div>
+                      )}
                       {day.events?.map((ev) => (
                         <div
                           key={ev.id}

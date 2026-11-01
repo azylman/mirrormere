@@ -855,4 +855,111 @@ describe('CalendarGridWidget', () => {
     const todayBadge = container.querySelector('.cf-today-badge') as HTMLElement;
     expect(todayBadge?.style.display).not.toBe('none');
   });
+
+  describe('cf-now-indicator', () => {
+    it('renders .cf-now-indicator at expected top percentage on .cf-today when within bounds', () => {
+      vi.useFakeTimers();
+      // 13:00 UTC with start 08:00 (480) and end 18:00 (1080) -> (780 - 480) / 600 = 50%
+      vi.setSystemTime(new Date('2026-10-27T13:00:00Z'));
+      useDisplayStore.setState({
+        header: { timestamp: '2026-10-27T13:00:00Z', timezone: 'UTC', weather: null },
+      });
+
+      setGridState();
+      const { container } = render(<CalendarGridWidget id="cal-grid" type="calendar-grid" />);
+
+      const todayCol = container.querySelector('.cf-day.cf-today');
+      expect(todayCol).toBeTruthy();
+
+      const indicator = todayCol?.querySelector('.cf-now-indicator') as HTMLElement;
+      expect(indicator).toBeTruthy();
+      expect(indicator.getAttribute('data-now-pct')).toBe('50.0');
+      expect(indicator.style.top).toMatch(/^50(?:\.0+)?%$/);
+      expect(indicator.querySelector('.cf-now-dot')).toBeTruthy();
+
+      // Non-today days must not contain .cf-now-indicator
+      const nonTodayCols = container.querySelectorAll('.cf-day:not(.cf-today)');
+      expect(nonTodayCols.length).toBeGreaterThan(0);
+      nonTodayCols.forEach((col) => {
+        expect(col.querySelector('.cf-now-indicator')).toBeNull();
+      });
+    });
+
+    it('hides .cf-now-indicator when current time is outside bounds', () => {
+      vi.useFakeTimers();
+      // 06:00 UTC is earlier than timeline start (08:00)
+      vi.setSystemTime(new Date('2026-10-27T06:00:00Z'));
+      useDisplayStore.setState({
+        header: { timestamp: '2026-10-27T06:00:00Z', timezone: 'UTC', weather: null },
+      });
+
+      setGridState();
+      const { container } = render(<CalendarGridWidget id="cal-grid" type="calendar-grid" />);
+
+      const todayCol = container.querySelector('.cf-day.cf-today');
+      expect(todayCol).toBeTruthy();
+      expect(todayCol?.querySelector('.cf-now-indicator')).toBeNull();
+    });
+
+    it('updates .cf-now-indicator when 60s timer ticks', () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-10-27T13:00:00Z'));
+      useDisplayStore.setState({
+        header: { timestamp: '2026-10-27T13:00:00Z', timezone: 'UTC', weather: null },
+      });
+
+      setGridState();
+      const { container } = render(<CalendarGridWidget id="cal-grid" type="calendar-grid" />);
+
+      const indicator = container.querySelector('.cf-today .cf-now-indicator') as HTMLElement;
+      expect(indicator).toBeTruthy();
+      expect(indicator.getAttribute('data-now-pct')).toBe('50.0');
+
+      // Advance by 60 seconds: 13:01:00 -> (781 - 480) / 600 = 50.1666... -> 50.2%
+      act(() => {
+        vi.advanceTimersByTime(60_000);
+      });
+
+      const updated = container.querySelector('.cf-today .cf-now-indicator') as HTMLElement;
+      expect(updated.getAttribute('data-now-pct')).toBe('50.2');
+    });
+
+    it('pauses now timer when document is hidden and updates immediately on visibility restore', () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-10-27T13:00:00Z'));
+      useDisplayStore.setState({
+        header: { timestamp: '2026-10-27T13:00:00Z', timezone: 'UTC', weather: null },
+        visibility: { visible: true },
+      });
+
+      setGridState();
+      const { container } = render(<CalendarGridWidget id="cal-grid" type="calendar-grid" />);
+
+      let indicator = container.querySelector('.cf-today .cf-now-indicator') as HTMLElement;
+      expect(indicator.getAttribute('data-now-pct')).toBe('50.0');
+
+      // Hide document
+      act(() => {
+        useDisplayStore.setState({ visibility: { visible: false } });
+      });
+
+      // Advance time while hidden: 30 minutes to 13:30:00 -> (810 - 480) / 600 = 55.0%
+      act(() => {
+        vi.advanceTimersByTime(30 * 60_000);
+      });
+
+      // While hidden and timer was disarmed, it should still retain old value (not ticked via interval)
+      indicator = container.querySelector('.cf-today .cf-now-indicator') as HTMLElement;
+      expect(indicator.getAttribute('data-now-pct')).toBe('50.0');
+
+      // Restore document visibility
+      act(() => {
+        useDisplayStore.setState({ visibility: { visible: true } });
+      });
+
+      // On visibility restore, useEffect immediately calls setNow(new Date())
+      indicator = container.querySelector('.cf-today .cf-now-indicator') as HTMLElement;
+      expect(indicator.getAttribute('data-now-pct')).toBe('55.0');
+    });
+  });
 });

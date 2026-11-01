@@ -4,6 +4,7 @@ import {
   addMonths,
   buildMonthViewFromDays,
   computeDayLayout,
+  computeNowIndicatorPct,
   formatDayLabel,
   formatISODate,
   formatModalDateRange,
@@ -11,11 +12,12 @@ import {
   formatRangeLabel,
   formatShortDate,
   parseISODate,
+  parseTimeMinutes,
   sliceWeekWindow,
   startOfWeek,
   stripLeadingMealieEmoji,
 } from './dateUtils';
-import type { FamilyDay, FamilyMonthDay, FamilySpanEvent } from './types';
+import type { FamilyDay, FamilyMonthDay, FamilySpanEvent, FamilyViewModel } from './types';
 
 describe('dateUtils', () => {
   it('parses and formats ISO dates', () => {
@@ -134,5 +136,126 @@ describe('dateUtils', () => {
     expect(weeks[0].days.length).toBe(7);
     expect(weeks[1].week_number).toBe(2);
     expect(weeks[1].days.length).toBe(7);
+  });
+
+  describe('parseTimeMinutes', () => {
+    it('parses 24h format times', () => {
+      expect(parseTimeMinutes('00:00')).toBe(0);
+      expect(parseTimeMinutes('08:00')).toBe(480);
+      expect(parseTimeMinutes('8:00')).toBe(480);
+      expect(parseTimeMinutes('14:30')).toBe(870);
+      expect(parseTimeMinutes('23:59')).toBe(1439);
+      expect(parseTimeMinutes('24:00')).toBe(1440);
+    });
+
+    it('parses 12h format times with AM/PM', () => {
+      expect(parseTimeMinutes('12:00 AM')).toBe(0);
+      expect(parseTimeMinutes('12 AM')).toBe(0);
+      expect(parseTimeMinutes('8 AM')).toBe(480);
+      expect(parseTimeMinutes('8:30 AM')).toBe(510);
+      expect(parseTimeMinutes('12:00 PM')).toBe(720);
+      expect(parseTimeMinutes('12 PM')).toBe(720);
+      expect(parseTimeMinutes('1:15 PM')).toBe(795);
+      expect(parseTimeMinutes('11:59 pm')).toBe(1439);
+    });
+
+    it('returns null on invalid or empty labels', () => {
+      expect(parseTimeMinutes('')).toBeNull();
+      expect(parseTimeMinutes('   ')).toBeNull();
+      expect(parseTimeMinutes(undefined)).toBeNull();
+      expect(parseTimeMinutes('invalid')).toBeNull();
+      expect(parseTimeMinutes('25:00')).toBeNull();
+      expect(parseTimeMinutes('12:60')).toBeNull();
+      expect(parseTimeMinutes('13:00 AM')).toBeNull();
+      expect(parseTimeMinutes('0 AM')).toBeNull();
+      expect(parseTimeMinutes('0:00 PM')).toBeNull();
+    });
+  });
+
+  describe('computeNowIndicatorPct', () => {
+    const baseVM: FamilyViewModel = {
+      range_start: '2026-10-25',
+      range_end: '2026-10-31',
+      range_label: 'Oct 25 – 31, 2026',
+      today: '2026-10-27',
+      hours_start: '08:00',
+      hours_end: '20:00',
+    };
+
+    it('computes percentage within bounds using default hours', () => {
+      // 14:00 is halfway between 08:00 (480) and 20:00 (1200)
+      const now = new Date('2026-10-27T14:00:00Z');
+      const pct = computeNowIndicatorPct(baseVM, now, 'UTC');
+      expect(pct).toBeCloseTo(50, 1);
+    });
+
+    it('resolves start and end from timeline_markers when hours_start/end missing', () => {
+      const vm: FamilyViewModel = {
+        ...baseVM,
+        hours_start: undefined,
+        hours_end: undefined,
+        timeline_markers: [
+          { label: '09:00', top_pct: 0, is_start: true },
+          { label: '17:00', top_pct: 100, is_end: true },
+        ],
+      };
+      // 09:00 (540) to 17:00 (1020) -> duration 480 min.
+      // 13:00 (780) is (780 - 540) / 480 = 50%
+      const now = new Date('2026-10-27T13:00:00Z');
+      const pct = computeNowIndicatorPct(vm, now, 'UTC');
+      expect(pct).toBeCloseTo(50, 1);
+    });
+
+    it('resolves start and end from hour_markers when timeline_markers missing', () => {
+      const vm: FamilyViewModel = {
+        ...baseVM,
+        hours_start: undefined,
+        hours_end: undefined,
+        hour_markers: ['10:00', '14:00', '18:00'],
+      };
+      // 10:00 (600) to 18:00 (1080) -> duration 480 min.
+      // 12:00 (720) is (720 - 600) / 480 = 25%
+      const now = new Date('2026-10-27T12:00:00Z');
+      const pct = computeNowIndicatorPct(vm, now, 'UTC');
+      expect(pct).toBeCloseTo(25, 1);
+    });
+
+    it('falls back to default 480 and 1200 when weekVM is undefined', () => {
+      // Default 08:00 (480) to 20:00 (1200)
+      const now = new Date('2026-10-27T14:00:00Z');
+      const pct = computeNowIndicatorPct(undefined, now, 'UTC');
+      expect(pct).toBeCloseTo(50, 1);
+    });
+
+    it('returns null when now is outside bounds', () => {
+      const early = new Date('2026-10-27T07:30:00Z');
+      expect(computeNowIndicatorPct(baseVM, early, 'UTC')).toBeNull();
+
+      const late = new Date('2026-10-27T20:30:00Z');
+      expect(computeNowIndicatorPct(baseVM, late, 'UTC')).toBeNull();
+    });
+
+    it('returns null when endMin <= startMin or now is invalid Date', () => {
+      const invalidVM: FamilyViewModel = {
+        ...baseVM,
+        hours_start: '20:00',
+        hours_end: '08:00',
+      };
+      const now = new Date('2026-10-27T14:00:00Z');
+      expect(computeNowIndicatorPct(invalidVM, now, 'UTC')).toBeNull();
+      expect(computeNowIndicatorPct(baseVM, new Date('invalid'), 'UTC')).toBeNull();
+    });
+
+    it('handles timezone extraction and fallbacks', () => {
+      // 18:00 UTC = 11:00 AM PDT (America/Los_Angeles, UTC-7)
+      // 11:00 is (660 - 480) / (1200 - 480) = 180 / 720 = 25%
+      const now = new Date('2026-10-27T18:00:00Z');
+      const pct = computeNowIndicatorPct(baseVM, now, 'America/Los_Angeles');
+      expect(pct).toBeCloseTo(25, 1);
+
+      // Fallback for invalid timezone: does not throw, uses local time
+      const fallbackPct = computeNowIndicatorPct(baseVM, now, 'Invalid/Timezone');
+      expect(typeof fallbackPct === 'number' || fallbackPct === null).toBe(true);
+    });
   });
 });
