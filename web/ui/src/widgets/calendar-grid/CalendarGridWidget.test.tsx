@@ -428,7 +428,7 @@ describe('CalendarGridWidget', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('does not arm inactivity timer on benign tap/pointer events when isInteractive is false', () => {
+  it('does not arm inactivity timer on benign tap/pointer events when isInteractive is false and does not block screen swipes', () => {
     vi.useFakeTimers();
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
@@ -440,11 +440,14 @@ describe('CalendarGridWidget', () => {
     const { container } = render(<CalendarGridWidget id="cal-grid" type="calendar-grid" />);
     const gridEl = container.querySelector('.widget-calendar-grid')!;
 
-    fireEvent.pointerDown(gridEl);
-    fireEvent.touchStart(gridEl, { touches: [{ clientX: 10, clientY: 10 }] });
-    fireEvent.touchMove(gridEl);
-    fireEvent.touchEnd(gridEl, { changedTouches: [{ clientX: 10, clientY: 10 }] });
+    expect(gridEl.getAttribute('data-prevent-screen-swipe')).toBeNull();
 
+    fireEvent.pointerDown(gridEl);
+    fireEvent.touchStart(gridEl, { touches: [{ clientX: 250, clientY: 100 }] });
+    fireEvent.touchMove(gridEl, { touches: [{ clientX: 50, clientY: 100 }] });
+    fireEvent.touchEnd(gridEl, { changedTouches: [{ clientX: 50, clientY: 100 }] });
+
+    expect(gridEl.getAttribute('data-page-offset')).toBe('0');
     expect(pauseSpy).not.toHaveBeenCalled();
     act(() => {
       vi.advanceTimersByTime(65000);

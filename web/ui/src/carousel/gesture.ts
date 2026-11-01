@@ -4,7 +4,7 @@
  */
 
 /** Swipes that start inside these elements belong to the widget, not the carousel. */
-export const SWIPE_EXCLUDE_SELECTOR = '.widget-calendar-grid, .widget-calendar-family, [data-prevent-screen-swipe]';
+export const SWIPE_EXCLUDE_SELECTOR = '[data-prevent-screen-swipe]';
 
 /** Movement before a gesture is classed as horizontal or vertical. */
 export const INTENT_PX = 10;
