@@ -7,6 +7,7 @@ import { ChatLogWidget } from './chat-log/ChatLogWidget';
 import { CalendarFeedWidget } from './calendar-feed/CalendarFeedWidget';
 import { CalendarGridWidget } from './calendar-grid/CalendarGridWidget';
 import { PhotoCarouselWidget } from './photo-carousel/PhotoCarouselWidget';
+import { LiveViewWidget } from './live-view/LiveViewWidget';
 
 /** Props every widget component receives from WidgetHost. */
 export interface WidgetComponentProps {
@@ -26,6 +27,7 @@ export const WIDGET_COMPONENTS: Readonly<Record<string, ComponentType<WidgetComp
   'calendar-feed': CalendarFeedWidget,
   'calendar-grid': CalendarGridWidget,
   'photo-carousel': PhotoCarouselWidget,
+  'live-view': LiveViewWidget,
 };
 
 /**
