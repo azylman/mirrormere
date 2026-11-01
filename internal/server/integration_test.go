@@ -70,7 +70,8 @@ func TestWalkingSkeleton_EndToEnd(t *testing.T) {
 		wantType string
 		wantSubs []string
 	}{
-		{"/display", "text/html; charset=utf-8", []string{`id="mirrormere-app"`, `data-timezone="America/Los_Angeles"`, `id="grid-canvas"`, `src="static/js/sse.js"`, `src="static/js/carousel.js"`, `src="static/js/display.js"`}},
+		{"/display", "text/html; charset=utf-8", []string{`id="root"`, `data-timezone="America/Los_Angeles"`, `data-grid="6x2"`, `src="static/ui/app.js"`}},
+		{"/display?ui=legacy", "text/html; charset=utf-8", []string{`id="mirrormere-app"`, `data-timezone="America/Los_Angeles"`, `id="grid-canvas"`, `src="static/js/sse.js"`, `src="static/js/carousel.js"`, `src="static/js/display.js"`}},
 		{"/static/js/sse.js", "text/javascript; charset=utf-8", []string{"EventSource"}},
 		{"/style.css", "text/css; charset=utf-8", nil},
 		{"/api/widgets/spacer-1/render", "text/html; charset=utf-8", []string{"widget-spacer", `data-widget-id="spacer-1"`, `data-widget-type="spacer"`}},

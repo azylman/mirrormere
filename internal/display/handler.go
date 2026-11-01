@@ -131,12 +131,12 @@ func (h *Handler) Theme() string {
 	return "day"
 }
 
-// UI returns the configured display shell, "legacy" unless the config provider says "react".
+// UI returns the configured display shell, "react" unless the config provider says "legacy".
 func (h *Handler) UI() string {
-	if h.uiProvider != nil && h.uiProvider() == "react" {
-		return "react"
+	if h.uiProvider != nil && h.uiProvider() == "legacy" {
+		return "legacy"
 	}
-	return "legacy"
+	return "react"
 }
 
 // useReact reports whether the request should get the React shell: ?ui= wins when it is

@@ -361,7 +361,8 @@ func TestRun_DaemonLifecycleAndSmoke(t *testing.T) {
 					{"/healthz", "", 200},
 					{"/api/audio", `"volume":75`, 200},
 					{"/api/video/state", `"mode":"widgets"`, 200},
-					{"/display", "mirrormere-app", 200},
+					{"/display", "static/ui/app.js", 200},
+					{"/display?ui=legacy", "mirrormere-app", 200},
 					{"/style.css", "", 200},
 				} {
 					r, err := c.Get(d.baseURL + ep.path)

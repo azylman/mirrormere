@@ -86,7 +86,7 @@ type Config struct {
 
 // DisplayConfig specifies visual presentation, rotation parameters, and active widget instances.
 type DisplayConfig struct {
-	UI         string              `yaml:"ui,omitempty"` // "legacy" (default) or "react"; ?ui= on /display overrides
+	UI         string              `yaml:"ui,omitempty"` // "react" (default) or "legacy"; ?ui= on /display overrides
 	HideCursor bool                `yaml:"hide_cursor,omitempty"`
 	RemoteURL  string              `yaml:"remote_url,omitempty"`
 	Rotation   RotationConfig      `yaml:"rotation"`
@@ -97,9 +97,9 @@ type DisplayConfig struct {
 	Voice      *DisplayVoiceConfig `yaml:"voice,omitempty"`
 }
 
-// GetUI returns the display shell selected by config: "legacy" (default) or "react".
+// GetUI returns the display shell selected by config: "react" (default) or "legacy".
 func (dc DisplayConfig) GetUI() string {
-	return strings.ToLower(trimmedOr(dc.UI, "legacy"))
+	return strings.ToLower(trimmedOr(dc.UI, "react"))
 }
 
 // DisplayVoiceConfig configures voice visuals on the display.
