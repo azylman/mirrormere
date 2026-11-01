@@ -70,6 +70,7 @@ export interface CalendarWeekViewProps {
   members: FamilyMember[];
   currentDateISO: string;
   onOpenModal: (ev: FamilyEvent, startDate?: string, endDate?: string) => void;
+  onSelectDay?: (date: string) => void;
 }
 
 export const CalendarWeekView = memo(function CalendarWeekView({
@@ -80,6 +81,7 @@ export const CalendarWeekView = memo(function CalendarWeekView({
   members,
   currentDateISO,
   onOpenModal,
+  onSelectDay,
 }: CalendarWeekViewProps) {
   const tz = useDisplayStore((s) => s.header.timezone);
   const isDocVisible = useDocumentVisible();
@@ -311,10 +313,22 @@ export const CalendarWeekView = memo(function CalendarWeekView({
                   >
                     <div
                       className="cf-day-header"
+                      role={activeView === 'week' ? 'button' : undefined}
+                      tabIndex={activeView === 'week' ? 0 : undefined}
+                      onClick={() => {
+                        if (activeView === 'week' && day.date) onSelectDay?.(day.date);
+                      }}
+                      onKeyDown={(e) => {
+                        if (activeView === 'week' && (e.key === 'Enter' || e.key === ' ')) {
+                          e.preventDefault();
+                          if (day.date) onSelectDay?.(day.date);
+                        }
+                      }}
                       style={{
                         height: '44px', boxSizing: 'border-box', textAlign: 'center', paddingBottom: '6px',
                         borderBottom: day.is_today ? '1px solid var(--mm-cal-today-header-border, rgba(139, 96, 237, 0.25))' : '1px solid var(--mm-divider, rgba(90, 60, 30, 0.07))',
                         flexShrink: 0, background: 'transparent',
+                        cursor: activeView === 'week' ? 'pointer' : undefined,
                       }}
                     >
                       <div className="cf-day-weekday" style={{ fontSize: '0.68rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.04em', color: day.is_today ? 'var(--mm-cal-today-text, var(--mm-lavender, #8b60ed))' : 'var(--mm-text-dim, #8b819f)' }}>

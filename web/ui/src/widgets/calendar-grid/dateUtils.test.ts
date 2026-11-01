@@ -11,6 +11,7 @@ import {
   formatMonthLabel,
   formatRangeLabel,
   formatShortDate,
+  matchesMemberFilter,
   parseISODate,
   parseTimeMinutes,
   sliceWeekWindow,
@@ -256,6 +257,45 @@ describe('dateUtils', () => {
       // Fallback for invalid timezone: does not throw, uses local time
       const fallbackPct = computeNowIndicatorPct(baseVM, now, 'Invalid/Timezone');
       expect(typeof fallbackPct === 'number' || fallbackPct === null).toBe(true);
+    });
+  });
+
+  describe('matchesMemberFilter', () => {
+    const members = [
+      { name: 'Alex', initial: 'A', color: '#ff6f59', text_color: '#ffffff', pattern: 'solid' },
+      { name: 'Sam', initial: 'S', color: '#8b60ed', text_color: '#ffffff', pattern: 'dots' },
+    ];
+
+    it('returns true when selectedMember is null or empty string', () => {
+      expect(matchesMemberFilter({ id: '1', title: 'Test' }, null, members)).toBe(true);
+      expect(matchesMemberFilter({ id: '1', title: 'Test' }, '', members)).toBe(true);
+    });
+
+    it('matches by ev.owners when owners array is non-empty', () => {
+      const ev = { id: '1', title: 'Team Meeting', owners: ['Alex'] };
+      expect(matchesMemberFilter(ev, 'Alex', members)).toBe(true);
+      expect(matchesMemberFilter(ev, 'Sam', members)).toBe(false);
+    });
+
+    it('matches by member.initial when owners is absent or empty', () => {
+      const ev = { id: '2', title: 'Coffee', initials: ['A'] };
+      expect(matchesMemberFilter(ev, 'Alex', members)).toBe(true);
+      expect(matchesMemberFilter(ev, 'Sam', members)).toBe(false);
+
+      const evEmptyOwners = { id: '3', title: 'Lunch', owners: [], initials: ['S'] };
+      expect(matchesMemberFilter(evEmptyOwners, 'Sam', members)).toBe(true);
+      expect(matchesMemberFilter(evEmptyOwners, 'Alex', members)).toBe(false);
+    });
+
+    it('falls back to slice(0, 1) when member is not found in members list', () => {
+      const ev = { id: '4', title: 'External', initials: ['J'] };
+      expect(matchesMemberFilter(ev, 'Jordan', members)).toBe(true);
+      expect(matchesMemberFilter(ev, 'Taylor', members)).toBe(false);
+    });
+
+    it('returns false when neither owners nor initials match', () => {
+      const ev = { id: '5', title: 'Dentist' };
+      expect(matchesMemberFilter(ev, 'Alex', members)).toBe(false);
     });
   });
 });

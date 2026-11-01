@@ -7,6 +7,7 @@ export interface CalendarMonthViewProps {
   monthVM?: FamilyMonthViewModel;
   members: FamilyMember[];
   onOpenModal: (ev: FamilyEvent, date: string) => void;
+  onSelectDay?: (date: string) => void;
 }
 
 export const CalendarMonthView = memo(function CalendarMonthView({
@@ -14,6 +15,7 @@ export const CalendarMonthView = memo(function CalendarMonthView({
   monthVM,
   members,
   onOpenModal,
+  onSelectDay,
 }: CalendarMonthViewProps) {
   return (
     <div
@@ -103,6 +105,19 @@ export const CalendarMonthView = memo(function CalendarMonthView({
               >
                 <div
                   className="cf-month-day-header"
+                  role="button"
+                  tabIndex={0}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (day.date) onSelectDay?.(day.date);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      if (day.date) onSelectDay?.(day.date);
+                    }
+                  }}
                   style={{
                     display: 'flex',
                     alignItems: 'center',
@@ -110,6 +125,7 @@ export const CalendarMonthView = memo(function CalendarMonthView({
                     fontSize: '0.68rem',
                     fontWeight: 700,
                     lineHeight: 1.2,
+                    cursor: 'pointer',
                   }}
                 >
                   <span
@@ -199,11 +215,25 @@ export const CalendarMonthView = memo(function CalendarMonthView({
                       {day.events.length > 2 && (
                         <div
                           className="cf-month-more"
+                          role="button"
+                          tabIndex={0}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (day.date) onSelectDay?.(day.date);
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              if (day.date) onSelectDay?.(day.date);
+                            }
+                          }}
                           style={{
                             fontSize: '0.55rem',
                             color: 'var(--mm-text-dim, #94a3b8)',
                             lineHeight: 1.1,
                             marginTop: '1px',
+                            cursor: 'pointer',
                           }}
                         >
                           +{day.events.length - 2} more
