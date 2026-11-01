@@ -470,6 +470,27 @@ func extractHourlyPoints(arg any) []hourlyPoint {
 	return pts
 }
 
+func computeHourlyTempSpan(pts []hourlyPoint) (float64, float64) {
+	minTemp := pts[0].temp
+	maxTemp := pts[0].temp
+	for _, p := range pts[1:] {
+		if p.temp < minTemp {
+			minTemp = p.temp
+		}
+		if p.temp > maxTemp {
+			maxTemp = p.temp
+		}
+	}
+
+	span := maxTemp - minTemp
+	if span < 4.0 {
+		mid := (minTemp + maxTemp) / 2.0
+		minTemp = mid - 2.0
+		span = 4.0
+	}
+	return minTemp, span
+}
+
 // WeatherHourlyGraph renders an SVG continuous line graph showing hourly temperature trends,
 // condition icons, precipitation chances, and time throughout the day.
 func WeatherHourlyGraph(args ...any) template.HTML {
@@ -480,6 +501,9 @@ func WeatherHourlyGraph(args ...any) template.HTML {
 	pts := extractHourlyPoints(args[0])
 	if len(pts) == 0 {
 		return ""
+	}
+	if len(pts) > 8 {
+		pts = pts[:8]
 	}
 
 	gradientID := "mm-weather-hourly-grad"
@@ -505,23 +529,7 @@ func WeatherHourlyGraph(args ...any) template.HTML {
 	}
 	totalWidth := float64(n) * colWidth
 
-	minTemp := pts[0].temp
-	maxTemp := pts[0].temp
-	for _, p := range pts[1:] {
-		if p.temp < minTemp {
-			minTemp = p.temp
-		}
-		if p.temp > maxTemp {
-			maxTemp = p.temp
-		}
-	}
-
-	span := maxTemp - minTemp
-	if span < 4.0 {
-		mid := (minTemp + maxTemp) / 2.0
-		minTemp = mid - 2.0
-		span = 4.0
-	}
+	minTemp, span := computeHourlyTempSpan(pts)
 
 	for i := range pts {
 		pts[i].x = float64(i)*colWidth + colWidth/2.0

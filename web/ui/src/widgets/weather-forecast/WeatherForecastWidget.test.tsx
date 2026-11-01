@@ -370,7 +370,7 @@ describe('WeatherHourlyGraph component', () => {
     expect(svg.getAttribute('viewBox')).toBe('0 0 480.0 300.0');
 
     const labels = Array.from(svg.querySelectorAll('text'));
-    const lastHourLabel = labels.find((el) => el.textContent === '11 PM');
+    const lastHourLabel = labels.find((el) => el.textContent === '7 AM');
     expect(lastHourLabel).toBeDefined();
     const lastX = Number(lastHourLabel?.getAttribute('x'));
     expect(lastX).toBeGreaterThan(0);

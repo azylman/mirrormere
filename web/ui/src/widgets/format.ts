@@ -716,6 +716,7 @@ export interface WeatherHourlyGraphOptions {
   curveBottom?: number;
   baseY?: number;
   containerWidth?: number;
+  maxPoints?: number;
 }
 
 export interface HourlyPointLayout {
@@ -799,7 +800,9 @@ export function computeHourlyGraphLayout(
     return null;
   }
 
-  const n = rawPts.length;
+  const maxPoints = options?.maxPoints && options.maxPoints > 0 ? options.maxPoints : 8;
+  const pts = rawPts.slice(0, maxPoints);
+  const n = pts.length;
   const gradientId =
     widgetId && widgetId.trim() !== ''
       ? `mm-weather-grad-${escapeHtml(widgetId.trim())}`
@@ -822,11 +825,11 @@ export function computeHourlyGraphLayout(
   }
   const totalWidth = n * colWidth;
 
-  let minTemp = rawPts[0].temp;
-  let maxTemp = rawPts[0].temp;
+  let minTemp = pts[0].temp;
+  let maxTemp = pts[0].temp;
   for (let i = 1; i < n; i++) {
-    if (rawPts[i].temp < minTemp) minTemp = rawPts[i].temp;
-    if (rawPts[i].temp > maxTemp) maxTemp = rawPts[i].temp;
+    if (pts[i].temp < minTemp) minTemp = pts[i].temp;
+    if (pts[i].temp > maxTemp) maxTemp = pts[i].temp;
   }
 
   let span = maxTemp - minTemp;
@@ -839,7 +842,7 @@ export function computeHourlyGraphLayout(
   const coords: { x: number; y: number }[] = [];
   for (let i = 0; i < n; i++) {
     const x = i * colWidth + colWidth / 2.0;
-    const ratio = (rawPts[i].temp - minTemp) / span;
+    const ratio = (pts[i].temp - minTemp) / span;
     const y = curveBottom - ratio * (curveBottom - curveTop);
     coords.push({ x, y });
   }
@@ -862,7 +865,7 @@ export function computeHourlyGraphLayout(
 
   const points: HourlyPointLayout[] = [];
   for (let i = 0; i < n; i++) {
-    const pt = rawPts[i];
+    const pt = pts[i];
     const coord = coords[i];
     const lineTopOffset = isTall ? 6.0 : 4.0;
     const lineY1 = coord.y + lineTopOffset;

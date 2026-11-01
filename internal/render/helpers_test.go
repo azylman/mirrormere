@@ -374,6 +374,23 @@ func TestWeatherHourlyGraph(t *testing.T) {
 			wantContains:    []string{`viewBox="0 0 560.0 300.0"`, `width: 100%; max-width: 100%;`, `y1="240.0"`, `y2="240.0"`, `y="20" text-anchor="middle" font-size="11"`, `, 32) scale(1.2)`, `r="4.0"`, `y="275" text-anchor="middle" font-size="13"`, `y="80.0" text-anchor="middle" font-size="14" font-weight="800"`, `y="195.0" text-anchor="middle" font-size="14" font-weight="800"`},
 			wantNotContains: []string{"min-width:"},
 		},
+		{
+			name: "capping at eight points preserves layout width and truncates ninth point",
+			args: []any{[]testHourlyItem{
+				{Time: "2026-09-26T14:00", Temp: 60.0, PrecipProb: 0, Icon: "weather-sunny"},
+				{Time: "2026-09-26T15:00", Temp: 61.0, PrecipProb: 0, Icon: "weather-sunny"},
+				{Time: "2026-09-26T16:00", Temp: 62.0, PrecipProb: 0, Icon: "weather-sunny"},
+				{Time: "2026-09-26T17:00", Temp: 63.0, PrecipProb: 0, Icon: "weather-sunny"},
+				{Time: "2026-09-26T18:00", Temp: 64.0, PrecipProb: 0, Icon: "weather-sunny"},
+				{Time: "2026-09-26T19:00", Temp: 65.0, PrecipProb: 0, Icon: "weather-sunny"},
+				{Time: "2026-09-26T20:00", Temp: 66.0, PrecipProb: 0, Icon: "weather-sunny"},
+				{Time: "2026-09-26T21:00", Temp: 67.0, PrecipProb: 0, Icon: "weather-sunny"},
+				{Time: "2026-09-26T22:00", Temp: 68.0, PrecipProb: 0, Icon: "weather-sunny"},
+				{Time: "2026-09-26T23:00", Temp: 69.0, PrecipProb: 0, Icon: "weather-sunny"},
+			}},
+			wantContains:    []string{`viewBox="0 0 560.0 300.0"`, "9 PM"},
+			wantNotContains: []string{"10 PM"},
+		},
 	}
 
 	for _, tc := range tests {
