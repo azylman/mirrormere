@@ -83,11 +83,14 @@ export function scheduleIdleStep(step: () => void): () => void {
   const run = () => {
     if (!cancelled) step();
   };
-  if (typeof window.requestIdleCallback === 'function') {
-    const id = window.requestIdleCallback(run, { timeout: 300 });
+  // Both functions are read once, so the cancel matches the scheduler that queued the step.
+  const ric = window.requestIdleCallback;
+  const cic = window.cancelIdleCallback;
+  if (typeof ric === 'function' && typeof cic === 'function') {
+    const id = ric.call(window, run, { timeout: 300 });
     return () => {
       cancelled = true;
-      window.cancelIdleCallback(id);
+      cic.call(window, id);
     };
   }
   const id = window.setTimeout(run, 16);

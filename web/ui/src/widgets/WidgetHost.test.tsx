@@ -82,14 +82,28 @@ async function settle() {
 }
 
 /** Lets neighbour panes finish their idle-slot widget mounts (#803; 16 ms timer fallback in jsdom). */
-async function mountNeighbours() {
-  // act() applies state updates only when its scope ends, so each pass lets every pane take
-  // one idle step; ten passes cover the largest test screen with room to spare.
-  for (let i = 0; i < 10; i++) {
+/**
+ * jsdom has no requestIdleCallback, so scheduleIdleStep uses its 16 ms timer there. Tests that
+ * wait for neighbour mounts fake only the timer functions and step the clock, with no real sleeps.
+ */
+function fakeIdleClock(): void {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+}
+
+/**
+ * Steps the fake clock until the idle steps are done. act() applies state only when its scope
+ * ends, so each pass gives every neighbour pane one step and lets it schedule the next.
+ */
+async function runIdleSteps(): Promise<void> {
+  for (let pass = 0; pass < 20; pass++) {
     await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 40));
+      vi.advanceTimersByTime(16);
     });
   }
+}
+
+async function mountNeighbours() {
+  await runIdleSteps();
   await settle();
 }
 
@@ -101,12 +115,14 @@ function reload(type: string) {
 
 describe('WidgetHost widget.reload', () => {
   beforeEach(() => {
+    fakeIdleClock();
     useDisplayStore.setState(initial, true);
     useDisplayStore.setState({ screen: { ...initial.screen, currentScreen: 1, totalScreens: 3 } });
   });
 
   afterEach(() => {
     cleanup();
+    vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 

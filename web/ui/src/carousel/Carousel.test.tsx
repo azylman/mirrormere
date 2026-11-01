@@ -9,13 +9,22 @@ import { Carousel, panesFor, paneKey } from './Carousel';
 import { SETTLE_FALLBACK_MS } from './track';
 import { scheduleIdleStep } from './Screen';
 
-/** Lets neighbour panes finish their idle-slot widget mounts (16 ms timer fallback in jsdom). */
-async function flushIdleMounts(): Promise<void> {
-  // act() applies state updates only when its scope ends, so each pass lets every pane take
-  // one idle step; ten passes cover the largest test screen with room to spare.
-  for (let i = 0; i < 10; i++) {
+/**
+ * jsdom has no requestIdleCallback, so scheduleIdleStep uses its 16 ms timer there. Tests that
+ * wait for neighbour mounts fake only the timer functions and step the clock, with no real sleeps.
+ */
+function fakeIdleClock(): void {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+}
+
+/**
+ * Steps the fake clock until the idle steps are done. act() applies state only when its scope
+ * ends, so each pass gives every neighbour pane one step and lets it schedule the next.
+ */
+async function runIdleSteps(): Promise<void> {
+  for (let pass = 0; pass < 20; pass++) {
     await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 40));
+      vi.advanceTimersByTime(16);
     });
   }
 }
@@ -134,10 +143,11 @@ describe('Carousel', () => {
   });
 
   it('loads the layout on mount and mounts every widget of the three panes', async () => {
+    fakeIdleClock();
     const fetchMock = stubApi();
     render(<Carousel />);
     await act(async () => {});
-    await flushIdleMounts();
+    await runIdleSteps();
 
     expect(fetchMock).toHaveBeenCalledWith('api/screens', expect.anything());
     const hydrated = fetchMock.mock.calls
@@ -149,10 +159,7 @@ describe('Carousel', () => {
   });
 
   it('mounts neighbour widgets after the current pane, one idle slot at a time (#803)', async () => {
-    // Idle callbacks run only when the test flushes them, so the first check cannot race a timer.
-    const idleQueue: IdleRequestCallback[] = [];
-    vi.stubGlobal('requestIdleCallback', (cb: IdleRequestCallback) => idleQueue.push(cb));
-    vi.stubGlobal('cancelIdleCallback', () => {});
+    fakeIdleClock();
     stubApi();
     render(<Carousel />);
     await act(async () => {});
@@ -165,20 +172,12 @@ describe('Carousel', () => {
     expect(gridCanvas()?.dataset.screenHydrated).toBe('true');
     expect(neighbourWidgets()).toHaveLength(0);
 
-    // One idle slot per pane per pass: the 2-widget neighbour needs two passes.
-    for (let pass = 0; pass < 3; pass++) {
-      const batch = idleQueue.splice(0);
-      await act(async () => {
-        for (const cb of batch) cb({ didTimeout: false, timeRemaining: () => 50 } as IdleDeadline);
-      });
-      await act(async () => {});
-    }
+    await runIdleSteps();
     expect(neighbourWidgets()).toHaveLength(3);
   });
 
   it('scheduleIdleStep runs the step in a later task', () => {
     vi.useFakeTimers();
-    vi.stubGlobal('requestIdleCallback', undefined);
     const step = vi.fn();
     scheduleIdleStep(step);
     expect(step).not.toHaveBeenCalled();
@@ -186,19 +185,21 @@ describe('Carousel', () => {
     expect(step).toHaveBeenCalledTimes(1);
   });
 
-  it('scheduleIdleStep does not run a cancelled step', async () => {
+  it('scheduleIdleStep does not run a cancelled step', () => {
+    vi.useFakeTimers();
     const step = vi.fn();
     const cancel = scheduleIdleStep(step);
     cancel();
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    vi.advanceTimersByTime(100);
     expect(step).not.toHaveBeenCalled();
   });
 
   it('puts #grid-canvas and the hydration attributes on the current pane only', async () => {
+    fakeIdleClock();
     stubApi();
     render(<Carousel />);
     await act(async () => {});
-    await flushIdleMounts();
+    await runIdleSteps();
 
     expect(document.querySelectorAll('#grid-canvas')).toHaveLength(1);
     const canvas = gridCanvas();
