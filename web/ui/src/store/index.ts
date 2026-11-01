@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import type { BufferedEvent } from '../sse/batch';
 import type { ConnectionPayload } from '../sse/types';
 import { deepEqual } from './equal';
-import type { ScreenRotatePayload } from '../sse/types';
+import type { ScreenLayout, ScreenRotatePayload } from '../sse/types';
 import { REFETCH_ON_UPDATE, fetchScreenLayouts, fetchWidgetDetail, toWidgetEntry } from './hydrate';
 import type { CarouselSlice, DisplayData, ScreenSlice, WidgetEntry } from './types';
 
@@ -61,6 +61,31 @@ const initialData: DisplayData = {
   carousel: { paused: false, pendingRotate: null },
 };
 
+/**
+ * True when a screen.rotate describes a layout other than `layout`: a different screen
+ * count, or different widget placements on the current screen. A rotate with the same
+ * placements leaves the layout alone. An empty layout is not yet known, so it is never a change.
+ */
+export function rotateChangesLayout(layout: readonly ScreenLayout[], data: ScreenRotatePayload): boolean {
+  if (layout.length === 0) return false;
+  if (data.total_screens !== layout.length) return true;
+  const screen = layout.find((s) => s.index === data.current_screen);
+  if (!screen) return true;
+  const current = screen.widgets;
+  const incoming = data.widgets;
+  if (current.length !== incoming.length) return true;
+  return current.some((w, i) => {
+    const next = incoming[i];
+    return (
+      w.widget_id !== next.widget_id ||
+      w.origin[0] !== next.origin[0] ||
+      w.origin[1] !== next.origin[1] ||
+      w.dimensions[0] !== next.dimensions[0] ||
+      w.dimensions[1] !== next.dimensions[1]
+    );
+  });
+}
+
 function screenFromRotate(payload: ScreenRotatePayload): ScreenSlice {
   return {
     currentScreen: payload.current_screen,
@@ -109,6 +134,7 @@ export function reduceEvents(
         break;
       }
       case 'screen.rotate': {
+        if (rotateChangesLayout(state.layout, event.data)) layoutBumps++;
         // While paused the latest rotate is kept aside and applied by resume().
         if (carousel.paused) {
           carousel = { ...carousel, pendingRotate: event.data };
@@ -243,9 +269,11 @@ export const useDisplayStore = create<DisplayStore>()((set, get) => ({
     const { carousel } = get();
     if (!carousel.paused) return;
     const pending = carousel.pendingRotate;
+    const layoutChanged = pending !== null && rotateChangesLayout(get().layout, pending);
     set({
       carousel: { paused: false, pendingRotate: null },
       ...(pending ? { screen: screenFromRotate(pending) } : {}),
+      ...(layoutChanged ? { layoutVersion: get().layoutVersion + 1 } : {}),
     });
   },
 }));
