@@ -22,9 +22,9 @@ interface Harness {
 
 let harness: Harness | null = null;
 
-function pointer(target: EventTarget, type: string, x: number, y: number): void {
+function pointer(target: EventTarget, type: string, x: number, y: number, pointerId = 1): void {
   const event = new Event(type, { bubbles: true, cancelable: true });
-  Object.assign(event, { clientX: x, clientY: y, pointerId: 1, isPrimary: true });
+  Object.assign(event, { clientX: x, clientY: y, pointerId, isPrimary: true });
   target.dispatchEvent(event);
 }
 
@@ -211,6 +211,52 @@ describe('CarouselController', () => {
     expect(h.track.style.transform).toBe('');
     expect(h.host.commit).not.toHaveBeenCalled();
     expect(h.host.select).not.toHaveBeenCalled();
+  });
+
+  it('starts a new gesture on a fresh press after a vertical release', () => {
+    vi.useFakeTimers();
+    const h = build();
+    h.down(500, 100);
+    h.move(505, 140);
+    h.flushFrames();
+    expect(h.frames).toHaveLength(0);
+
+    // The first pointer is gone; a second pointer drags left past 25% and commits.
+    pointer(h.viewport, 'pointerdown', 500, 100, 2);
+    for (let i = 1; i <= 4; i++) {
+      h.clock.t += 200;
+      pointer(h.viewport, 'pointermove', 500 - 75 * i, 100, 2);
+    }
+    h.flushFrames();
+    pointer(h.viewport, 'pointerup', 200, 100, 2);
+    h.transitionEnd();
+    expect(h.host.commit).toHaveBeenCalledWith(2);
+    expect(h.host.select).toHaveBeenCalledWith(2);
+  });
+
+  it('ends a gesture released on the window and drains a queued rotate', () => {
+    vi.useFakeTimers();
+    const h = build(0);
+    h.down(500, 100);
+    h.move(495, 100);
+    // Still pending (5 px): the gesture is active, so the rotate is queued.
+    h.controller.requestShow(2);
+    expect(h.host.commit).not.toHaveBeenCalled();
+
+    h.clock.t += 16;
+    pointer(window, 'pointerup', 495, 100);
+    // The queued rotate to 2 is a wrap from 0, so it slides 'prev'.
+    expect(h.track.style.transform).toBe('translate3d(1000px,0,0)');
+    h.transitionEnd();
+    expect(h.host.commit).toHaveBeenLastCalledWith(2);
+    expect(h.host.select).not.toHaveBeenCalled();
+    h.controller.rendered(2);
+
+    h.controller.goTo(1);
+    expect(h.track.style.transform).toBe('translate3d(1000px,0,0)');
+    h.transitionEnd();
+    expect(h.host.commit).toHaveBeenLastCalledWith(1);
+    expect(h.host.select).toHaveBeenCalledWith(1);
   });
 
   it('springs back when the browser cancels a horizontal drag', () => {
@@ -481,6 +527,23 @@ describe('CarouselController', () => {
       h.controller.rendered(h.controller.current);
       expect(h.host.commit).not.toHaveBeenCalledWith(2);
       expect(h.controller.current).toBe(0);
+    });
+
+    it('ignores a store update that puts the screen index past the new total', () => {
+      const h = build(1);
+      useDisplayStore.setState({ screen: { ...initial.screen, currentScreen: 2, totalScreens: 2 } });
+      expect(h.controller.current).toBeLessThan(2);
+      expect(h.host.commit).not.toHaveBeenCalledWith(2);
+      expect((h.controller as unknown as { queued: number | null }).queued).toBeNull();
+    });
+
+    it('lands on a valid screen when the total drops under the shown screen and the store moves to it', () => {
+      useDisplayStore.setState({ screen: { ...initial.screen, currentScreen: 2, totalScreens: 3 } });
+      const h = build(2);
+      useDisplayStore.setState({ screen: { ...initial.screen, currentScreen: 2, totalScreens: 2 } });
+      expect(h.controller.current).toBe(0);
+      expect(useDisplayStore.getState().screen.currentScreen).toBe(0);
+      expect(h.host.commit).not.toHaveBeenCalledWith(2);
     });
 
     it('keeps the store current screen when it is still valid', () => {

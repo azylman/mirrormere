@@ -71,8 +71,10 @@ export class CarouselController {
       if (state.screen.totalScreens !== prev.screen.totalScreens) {
         this.layoutChanged(state.screen.totalScreens);
       }
-      if (state.screen.currentScreen !== prev.screen.currentScreen) {
-        this.requestShow(state.screen.currentScreen);
+      // Read the live value: layoutChanged may have reset the store, and the `state` snapshot is stale.
+      const current = useDisplayStore.getState().screen.currentScreen;
+      if (current !== prev.screen.currentScreen) {
+        this.requestShow(current);
       }
     });
   }
@@ -83,6 +85,7 @@ export class CarouselController {
     viewport.removeEventListener('pointermove', this.onPointerMove);
     viewport.removeEventListener('pointerup', this.onPointerUp);
     viewport.removeEventListener('pointercancel', this.onPointerCancel);
+    this.releaseWindowListeners();
     this.detachStore?.();
     this.detachStore = null;
     this.animator.dispose();
@@ -93,6 +96,7 @@ export class CarouselController {
    * An echo names the screen already shown, so it does nothing.
    */
   requestShow(index: number): void {
+    if (index < 0 || index >= this.total()) return;
     if (index === this.shown) {
       // The server is back on the shown screen: a rotate queued before this is stale.
       this.queued = null;
@@ -210,12 +214,23 @@ export class CarouselController {
     if (!this.gesture.begin(this.sample(event), allowed)) return;
     this.pointerId = event.pointerId ?? 0;
     this.gestureWidth = this.options.viewport.clientWidth;
+    // The pointer can be released outside the viewport; the window hears that release.
+    window.addEventListener('pointerup', this.onPointerUp);
+    window.addEventListener('pointercancel', this.onPointerCancel);
   };
 
   private readonly onPointerMove = (event: PointerEvent): void => {
     if (this.pointerId === null || (event.pointerId ?? 0) !== this.pointerId) return;
     const dx = this.gesture.move(this.sample(event));
-    if (dx === null) return;
+    if (dx === null) {
+      if (!this.gesture.active) {
+        // Vertical intent: the page scrolls and the gesture is over. Free the pointer for the next press.
+        this.pointerId = null;
+        this.releaseWindowListeners();
+        this.drainQueue();
+      }
+      return;
+    }
     if (!this.animator.gesturing) {
       this.animator.beginGesture();
       this.options.viewport.setPointerCapture?.(this.pointerId);
@@ -226,6 +241,7 @@ export class CarouselController {
   private readonly onPointerUp = (event: PointerEvent): void => {
     if (this.pointerId === null || (event.pointerId ?? 0) !== this.pointerId) return;
     this.pointerId = null;
+    this.releaseWindowListeners();
     const release = this.gesture.end(this.sample(event));
     this.finishGesture(release);
   };
@@ -233,6 +249,7 @@ export class CarouselController {
   private readonly onPointerCancel = (event: PointerEvent): void => {
     if (this.pointerId === null || (event.pointerId ?? 0) !== this.pointerId) return;
     this.pointerId = null;
+    this.releaseWindowListeners();
     if (this.gesture.cancel()) {
       this.animator.endGesture();
       this.animator.settle('rest', () => this.afterRest());
@@ -265,5 +282,10 @@ export class CarouselController {
   private afterRest(): void {
     this.animator.reset();
     this.drainQueue();
+  }
+
+  private releaseWindowListeners(): void {
+    window.removeEventListener('pointerup', this.onPointerUp);
+    window.removeEventListener('pointercancel', this.onPointerCancel);
   }
 }
