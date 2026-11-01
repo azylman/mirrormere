@@ -448,6 +448,41 @@ describe('CarouselController', () => {
       expect(h.host.select).toHaveBeenCalledWith((from + 1) % 3);
     });
 
+    it('drops a queued rotate to a screen the layout no longer has', () => {
+      vi.useFakeTimers();
+      useDisplayStore.setState({ screen: { ...initial.screen, currentScreen: 0, totalScreens: 4 } });
+      const h = build(0);
+      h.down(500, 100);
+      h.move(450, 100, 400);
+      h.flushFrames();
+      // A server rotate to 3 arrives mid-drag and is queued; then the layout shrinks to 3 screens.
+      useDisplayStore.setState({ screen: { ...useDisplayStore.getState().screen, currentScreen: 3 } });
+      useDisplayStore.setState({ screen: { ...useDisplayStore.getState().screen, currentScreen: 0, totalScreens: 3 } });
+      h.up(450, 100, 400);
+      h.transitionEnd();
+      vi.advanceTimersByTime(SETTLE_FALLBACK_MS);
+      h.controller.rendered(h.controller.current);
+      expect(h.host.commit).not.toHaveBeenCalledWith(3);
+      expect(h.controller.current).toBe(0);
+    });
+
+    it('drops a queued rotate when the server returns to the shown screen', () => {
+      vi.useFakeTimers();
+      useDisplayStore.setState({ screen: { ...initial.screen, currentScreen: 0, totalScreens: 4 } });
+      const h = build(0);
+      h.down(500, 100);
+      h.move(450, 100, 400);
+      h.flushFrames();
+      useDisplayStore.setState({ screen: { ...useDisplayStore.getState().screen, currentScreen: 2 } });
+      useDisplayStore.setState({ screen: { ...useDisplayStore.getState().screen, currentScreen: 0 } });
+      h.up(450, 100, 400);
+      h.transitionEnd();
+      vi.advanceTimersByTime(SETTLE_FALLBACK_MS);
+      h.controller.rendered(h.controller.current);
+      expect(h.host.commit).not.toHaveBeenCalledWith(2);
+      expect(h.controller.current).toBe(0);
+    });
+
     it('keeps the store current screen when it is still valid', () => {
       const h = build(2);
       useDisplayStore.setState({ screen: { ...initial.screen, currentScreen: 1, totalScreens: 2 } });

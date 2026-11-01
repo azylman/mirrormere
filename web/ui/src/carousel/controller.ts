@@ -93,7 +93,11 @@ export class CarouselController {
    * An echo names the screen already shown, so it does nothing.
    */
   requestShow(index: number): void {
-    if (index === this.shown) return;
+    if (index === this.shown) {
+      // The server is back on the shown screen: a rotate queued before this is stale.
+      this.queued = null;
+      return;
+    }
     if (this.isBusy()) {
       this.queued = index;
       return;
@@ -114,6 +118,8 @@ export class CarouselController {
    */
   layoutChanged(total: number): void {
     if (total < 1) return;
+    // A queued rotate to a screen the layout no longer has is dropped.
+    if (this.queued !== null && this.queued >= total) this.queued = null;
     if (this.shown >= total || (this.settleTarget !== null && this.settleTarget >= total)) {
       const cur = useDisplayStore.getState().screen.currentScreen;
       const index = cur >= 0 && cur < total ? cur : 0;
