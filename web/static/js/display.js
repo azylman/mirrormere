@@ -1673,6 +1673,26 @@
     }
   }
 
+  function forwardEmberPhotosSynced(payload) {
+    const targetOrigin =
+      typeof window !== 'undefined' && window.location && window.location.origin && window.location.origin !== 'null'
+        ? window.location.origin
+        : '*';
+    const frames =
+      typeof document !== 'undefined' && typeof document.querySelectorAll === 'function'
+        ? document.querySelectorAll('iframe')
+        : [];
+    for (let i = 0; i < frames.length; i++) {
+      try {
+        if (frames[i].contentWindow && typeof frames[i].contentWindow.postMessage === 'function') {
+          frames[i].contentWindow.postMessage({ type: 'ember-photos-synced', payload }, targetOrigin);
+        }
+      } catch (e) {
+        // Cross-frame dispatch ignored
+      }
+    }
+  }
+
   const api = {
     updateClock,
     handleHeaderUpdate,
@@ -1713,10 +1733,12 @@
     clearCalendarEventStore: () => calendarEventStore.clear(),
     formatRelativeCountdown,
     setupHeaderNextEvent,
+    forwardEmberPhotosSynced,
     init,
   };
 
   if (typeof window !== 'undefined') {
+    window.onEmberPhotosSynced = forwardEmberPhotosSynced;
     window.MirrormereDisplay = api;
   }
   if (typeof module !== 'undefined' && module.exports) {
