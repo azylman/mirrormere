@@ -13,8 +13,6 @@ export const EASE_MAX_DT_MS = 100;
 export const DECAY_TAU_MS = 120;
 export const DRAW_MIN_MS = 25;
 
-const SVG_NS = 'http://www.w3.org/2000/svg';
-
 export function clamp(v: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, v));
 }
@@ -103,7 +101,6 @@ export interface LevelSourceLike {
 
 export interface WaveformMouthOptions {
   sseClient?: { on?: (eventType: string, callback: (data: unknown) => void) => void } | null;
-  document?: Document | null;
   levelsUrl?: string;
   gain?: number;
   eventSourceFactory?: ((url: string) => LevelSourceLike | EventSource) | null;
@@ -111,16 +108,16 @@ export interface WaveformMouthOptions {
   raf?: ((cb: FrameRequestCallback) => number) | null;
   caf?: ((id: number) => void) | null;
   reducedMotion?: boolean;
-  svgElement?: SVGSVGElement | HTMLElement | null;
-  polylineElement?: SVGPolylineElement | HTMLElement | null;
+  svgElement: SVGSVGElement | HTMLElement;
+  polylineElement: SVGPolylineElement | HTMLElement;
 }
 
 /**
- * WaveformMouth draws the speaking waveform from the ear daemon's level stream.
+ * WaveformMouth draws the speaking waveform from the ear daemon's level stream
+ * using imperative rAF mutations on refs provided by React.
  */
 export class WaveformMouth {
   public sseClient: { on?: (eventType: string, callback: (data: unknown) => void) => void } | null;
-  public document: Document | null;
   public levelsUrl: string;
   public gain: number;
   public eventSourceFactory: ((url: string) => LevelSourceLike | EventSource) | null;
@@ -131,7 +128,6 @@ export class WaveformMouth {
 
   public element: SVGSVGElement | HTMLElement | null;
   public polyline: SVGPolylineElement | HTMLElement | null;
-  public ownElement: boolean;
   public voiceState: string;
   public levelFrame: number[] | null;
   public levelAt: number | null;
@@ -142,9 +138,8 @@ export class WaveformMouth {
   public lastTick: number | null;
   public destroyed: boolean;
 
-  constructor(options: WaveformMouthOptions = {}) {
+  constructor(options: WaveformMouthOptions) {
     this.sseClient = options.sseClient || null;
-    this.document = options.document || (typeof document !== 'undefined' ? document : null);
     this.levelsUrl = options.levelsUrl || '';
     this.gain = typeof options.gain === 'number' && options.gain > 0 ? options.gain : LEVEL_GAIN;
     this.eventSourceFactory = options.eventSourceFactory !== undefined
@@ -161,7 +156,6 @@ export class WaveformMouth {
 
     this.element = options.svgElement || null;
     this.polyline = options.polylineElement || null;
-    this.ownElement = !options.svgElement;
     this.voiceState = 'idle';
     this.levelFrame = null;
     this.levelAt = null;
@@ -172,9 +166,9 @@ export class WaveformMouth {
     this.lastTick = null;
     this.destroyed = false;
 
-    if (!this.levelsUrl || (!this.document && !this.element)) return;
+    if (!this.levelsUrl || !this.element || !this.polyline) return;
 
-    this.mount();
+    this.drawMouth(framePoints(new Array(MOUTH_POINTS).fill(0), this.gain));
     this.openLevels();
 
     if (this.sseClient && typeof this.sseClient.on === 'function') {
@@ -185,37 +179,6 @@ export class WaveformMouth {
         this.setVoiceState(state);
       });
     }
-  }
-
-  /**
-   * Builds or reuses the SVG and sets initial mouth points.
-   */
-  mount(): void {
-    if (this.element) {
-      if (!this.polyline && typeof (this.element as Element).querySelector === 'function') {
-        this.polyline = (this.element as Element).querySelector('polyline');
-      }
-      this.drawMouth(framePoints(new Array(MOUTH_POINTS).fill(0), this.gain));
-      return;
-    }
-
-    const doc = this.document;
-    if (!doc || typeof doc.createElementNS !== 'function' || !doc.body) return;
-
-    const svg = doc.createElementNS(SVG_NS, 'svg');
-    svg.setAttribute('class', 'mm-voice-waveform');
-    svg.setAttribute('viewBox', '0 0 100 100');
-    svg.setAttribute('aria-hidden', 'true');
-
-    const polyline = doc.createElementNS(SVG_NS, 'polyline');
-    polyline.setAttribute('class', 'mm-voice-waveform__line');
-
-    svg.appendChild(polyline);
-    doc.body.appendChild(svg);
-
-    this.element = svg as unknown as SVGSVGElement;
-    this.polyline = polyline as unknown as SVGPolylineElement;
-    this.drawMouth(framePoints(new Array(MOUTH_POINTS).fill(0), this.gain));
   }
 
   /**
@@ -298,7 +261,7 @@ export class WaveformMouth {
     beginAnimation();
     const tick = (now: number) => {
       if (!this.looping) return;
-      if (this.document?.hidden) {
+      if (typeof document !== 'undefined' && document.hidden) {
         this.stopLoop();
         return;
       }
@@ -328,8 +291,8 @@ export class WaveformMouth {
   }
 
   /**
-   * Tears the mouth down: stops the animation loop, closes the level stream and removes the svg.
-   * Safe to call more than once, and when no levelsUrl was given (nothing was mounted).
+   * Tears the mouth down: stops the animation loop and closes the level stream.
+   * Safe to call more than once, and when no levelsUrl was given.
    */
   destroy(): void {
     if (this.destroyed) return;
@@ -339,9 +302,6 @@ export class WaveformMouth {
       this.levelSource.close();
     }
     this.levelSource = null;
-    if (this.ownElement && this.element && this.element.parentNode && typeof this.element.parentNode.removeChild === 'function') {
-      this.element.parentNode.removeChild(this.element);
-    }
     this.element = null;
     this.polyline = null;
     this.levelFrame = null;
@@ -372,7 +332,12 @@ export interface WaveformProps {
   gain?: number;
 }
 
-export const Waveform = memo(function Waveform(props: WaveformProps) {
+interface WaveformRendererProps {
+  levelsUrl: string;
+  gain: number;
+}
+
+const WaveformRenderer = memo(function WaveformRenderer({ levelsUrl, gain }: WaveformRendererProps) {
   const svgRef = useRef<SVGSVGElement | null>(null);
   const polylineRef = useRef<SVGPolylineElement | null>(null);
   const mouthRef = useRef<WaveformMouth | null>(null);
@@ -384,17 +349,8 @@ export const Waveform = memo(function Waveform(props: WaveformProps) {
   const activeVoiceStateRef = useRef(activeVoiceState);
   activeVoiceStateRef.current = activeVoiceState;
 
-  const levelsUrl =
-    props.levelsUrl ??
-    (typeof document !== 'undefined' ? document.body?.dataset?.voiceWaveformUrl ?? '' : '');
-  const docGain =
-    typeof document !== 'undefined'
-      ? parseFloat(document.body?.dataset?.voiceWaveformGain ?? '') || LEVEL_GAIN
-      : LEVEL_GAIN;
-  const gain = props.gain ?? docGain;
-
   useEffect(() => {
-    if (!levelsUrl || !svgRef.current || !polylineRef.current) return;
+    if (!svgRef.current || !polylineRef.current) return;
 
     const mouth = new WaveformMouth({
       levelsUrl,
@@ -425,15 +381,28 @@ export const Waveform = memo(function Waveform(props: WaveformProps) {
     mouthRef.current?.setVoiceState(activeVoiceState);
   }, [activeVoiceState]);
 
-  if (!levelsUrl) {
-    return null;
-  }
-
   return (
     <svg ref={svgRef} className="mm-voice-waveform" viewBox="0 0 100 100" aria-hidden="true">
       <polyline ref={polylineRef} className="mm-voice-waveform__line" />
     </svg>
   );
+});
+
+export const Waveform = memo(function Waveform(props: WaveformProps) {
+  const levelsUrl =
+    props.levelsUrl ??
+    (typeof document !== 'undefined' ? document.body?.dataset?.voiceWaveformUrl ?? '' : '');
+  const docGain =
+    typeof document !== 'undefined'
+      ? parseFloat(document.body?.dataset?.voiceWaveformGain ?? '') || LEVEL_GAIN
+      : LEVEL_GAIN;
+  const gain = props.gain ?? docGain;
+
+  if (!levelsUrl) {
+    return null;
+  }
+
+  return <WaveformRenderer levelsUrl={levelsUrl} gain={gain} />;
 });
 
 // Window bindings
