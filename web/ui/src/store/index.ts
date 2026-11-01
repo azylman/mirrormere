@@ -60,6 +60,7 @@ const initialData: DisplayData = {
   visibility: { visible: true },
   layout: [],
   layoutVersion: 0,
+  widgetReloads: {},
   carousel: { paused: false, pendingRotate: null },
 };
 
@@ -115,6 +116,7 @@ export function reduceEvents(
   let widgets: Record<string, WidgetEntry> | null = null;
   let carousel: CarouselSlice = state.carousel;
   let layoutBumps = 0;
+  let reloads: Record<string, number> | null = null;
 
   const replace = <K extends keyof DisplayData>(key: K, value: DisplayData[K]): void => {
     if (!deepEqual(state[key], value)) patch[key] = value;
@@ -185,12 +187,16 @@ export function reduceEvents(
         });
         break;
       }
-      case 'widget.reload':
+      case 'widget.reload': {
+        // Mounted widgets re-hydrate from their WidgetHost, which defers while the carousel is paused.
         layoutBumps++;
-        for (const [id, entry] of Object.entries(widgets ?? state.widgets)) {
-          if (entry.meta?.type === event.data.type) refetch.add(id);
+        const type = event.data.type;
+        if (type) {
+          reloads ??= { ...state.widgetReloads };
+          reloads[type] = (reloads[type] ?? 0) + 1;
         }
         break;
+      }
       default:
         // style.reload and system.reload are handled by the runtime, not the store.
         break;
@@ -199,6 +205,7 @@ export function reduceEvents(
 
   if (widgets !== null) patch.widgets = widgets;
   if (carousel !== state.carousel) patch.carousel = carousel;
+  if (reloads !== null) patch.widgetReloads = reloads;
   if (layoutBumps > 0) patch.layoutVersion = state.layoutVersion + layoutBumps;
   return { patch, refetch: [...refetch] };
 }

@@ -1,0 +1,132 @@
+import { act, cleanup, render } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { Carousel } from '../carousel/Carousel';
+import { useDisplayStore } from '../store';
+import type { ScreensResponse } from '../sse/types';
+
+const initial = useDisplayStore.getState();
+
+// Widgets on the three panes around screen 1: clock on screens 0, 1 and 2; weather on screen 1.
+const screens: ScreensResponse = {
+  current_screen: 1,
+  interval_seconds: 30,
+  screens: [
+    {
+      index: 0,
+      widgets: [
+        { widget_id: 'a-0', type: 'clock', origin: [0, 0], dimensions: [2, 1] },
+        { widget_id: 'shared', type: 'clock', origin: [2, 0], dimensions: [2, 1] },
+      ],
+    },
+    {
+      index: 1,
+      widgets: [
+        { widget_id: 'b-1', type: 'weather-forecast', origin: [0, 0], dimensions: [3, 2] },
+        { widget_id: 'b-2', type: 'clock', origin: [3, 0], dimensions: [3, 1] },
+      ],
+    },
+    {
+      index: 2,
+      widgets: [{ widget_id: 'c-2', type: 'clock', origin: [0, 1], dimensions: [6, 1] }],
+    },
+  ],
+};
+
+const CLOCK_IDS = ['a-0', 'shared', 'b-2', 'c-2'];
+
+function stubApi() {
+  const fetchMock = vi.fn(async (url: string) => {
+    if (url === 'api/screens') {
+      return new Response(JSON.stringify(screens), { status: 200 });
+    }
+    const id = decodeURIComponent(url.replace('api/widgets/', ''));
+    const type = screens.screens.flatMap((screen) => screen.widgets).find((w) => w.widget_id === id)?.type ?? 'clock';
+    return new Response(
+      JSON.stringify({
+        widget_id: id,
+        type,
+        origin: [0, 0],
+        dimensions: [1, 1],
+        config: {},
+        state: 'healthy',
+        data: {},
+        timestamp: '2026-10-31T12:00:00Z',
+        online: true,
+        assets_base: '',
+      }),
+      { status: 200 },
+    );
+  });
+  vi.stubGlobal('fetch', fetchMock);
+  return fetchMock;
+}
+
+/** Number of widget detail fetches for `id` so far. */
+function hydrations(fetchMock: ReturnType<typeof stubApi>, id: string): number {
+  return fetchMock.mock.calls.filter(([url]) => url === `api/widgets/${id}`).length;
+}
+
+/** Lets the layout fetch, the mount hydrates and any reload hydrates settle. */
+async function settle() {
+  await act(async () => {
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+  });
+}
+
+function reload(type: string) {
+  act(() => {
+    useDisplayStore.getState().applyEvents([{ type: 'widget.reload', data: { type } }]);
+  });
+}
+
+describe('WidgetHost widget.reload', () => {
+  beforeEach(() => {
+    useDisplayStore.setState(initial, true);
+    useDisplayStore.setState({ screen: { ...initial.screen, currentScreen: 1, totalScreens: 3 } });
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  it('re-hydrates each mounted widget of the reloaded type exactly once, on every pane', async () => {
+    const fetchMock = stubApi();
+    render(<Carousel />);
+    await settle();
+    const mounted = Object.fromEntries(CLOCK_IDS.map((id) => [id, hydrations(fetchMock, id)]));
+    expect(mounted).toEqual({ 'a-0': 1, shared: 1, 'b-2': 1, 'c-2': 1 });
+    const weatherBefore = hydrations(fetchMock, 'b-1');
+
+    reload('clock');
+    await settle();
+
+    for (const id of CLOCK_IDS) expect(hydrations(fetchMock, id)).toBe(2);
+    expect(hydrations(fetchMock, 'b-1')).toBe(weatherBefore);
+  });
+
+  it('defers a reload while paused and re-hydrates once on resume', async () => {
+    const fetchMock = stubApi();
+    render(<Carousel />);
+    await settle();
+
+    act(() => useDisplayStore.getState().pause());
+    reload('clock');
+    reload('clock');
+    await settle();
+    for (const id of CLOCK_IDS) expect(hydrations(fetchMock, id)).toBe(1);
+
+    act(() => useDisplayStore.getState().resume());
+    await settle();
+    for (const id of CLOCK_IDS) expect(hydrations(fetchMock, id)).toBe(2);
+    expect(hydrations(fetchMock, 'b-1')).toBe(1);
+  });
+
+  it('does not re-hydrate on mount for a reload that arrived before the widget had its type', async () => {
+    useDisplayStore.setState({ widgetReloads: { clock: 3 } });
+    const fetchMock = stubApi();
+    render(<Carousel />);
+    await settle();
+    for (const id of CLOCK_IDS) expect(hydrations(fetchMock, id)).toBe(1);
+  });
+});

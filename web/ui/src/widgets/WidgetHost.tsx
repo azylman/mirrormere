@@ -1,4 +1,4 @@
-import { memo, useEffect, type CSSProperties } from 'react';
+import { memo, useEffect, useRef, type CSSProperties } from 'react';
 import { useDisplayStore } from '../store';
 import { useWidget } from '../store/hooks';
 import { widgetComponentFor } from './registry';
@@ -22,11 +22,17 @@ export function cellStyle(origin: [number, number], dimensions: [number, number]
 /**
  * One widget cell. Renders its card on the first commit, so the e-ink settle
  * predicate sees the cell before the data arrives. Fetches the widget detail once,
- * when the store has no meta for it yet.
+ * when the store has no meta for it yet. Re-fetches when a widget.reload names its
+ * type; a reload that arrives while the carousel is paused waits for resume.
  */
 export const WidgetHost = memo(function WidgetHost({ id, origin, dimensions }: WidgetHostProps) {
   const entry = useWidget(id);
   const type = entry.meta?.type;
+  const reloads = useDisplayStore((s) => (type === undefined ? undefined : s.widgetReloads[type]));
+  const paused = useDisplayStore((s) => s.carousel.paused);
+  // The type and reload count this cell last acted on. Meta arrives after mount, so the
+  // first time a type appears it becomes the baseline and does not count as a reload.
+  const seen = useRef({ type, count: reloads ?? 0 });
 
   useEffect(() => {
     const store = useDisplayStore.getState();
@@ -36,6 +42,19 @@ export const WidgetHost = memo(function WidgetHost({ id, origin, dimensions }: W
       });
     }
   }, [id]);
+
+  useEffect(() => {
+    const count = reloads ?? 0;
+    if (seen.current.type !== type) {
+      seen.current = { type, count };
+      return;
+    }
+    if (paused || count <= seen.current.count) return;
+    seen.current = { type, count };
+    useDisplayStore.getState().hydrateWidget(id).catch((err: unknown) => {
+      console.warn(`[mirrormere] widget ${id} reload hydrate failed:`, err);
+    });
+  }, [id, type, reloads, paused]);
 
   const Component = widgetComponentFor(type);
   return (

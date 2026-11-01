@@ -293,33 +293,31 @@ describe('display store', () => {
   });
 
   describe('widget.reload', () => {
-    it('refetches exactly the mounted widgets whose meta.type matches the reloaded type', () => {
-      const meta = (type: string) => ({ type, config: {}, assets_base: 'a/', origin: [0, 0] as [number, number], dimensions: [1, 1] as [number, number] });
-      const state = useDisplayStore.getState();
-      const widgets = {
-        a: { meta: meta('T'), state: 'healthy', data: 1, timestamp: 't0' },
-        b: { meta: meta('other'), state: 'healthy', data: 1, timestamp: 't0' },
-        c: { meta: meta('T'), state: 'healthy', data: 1, timestamp: 't0' },
-        d: { state: 'healthy', data: 1, timestamp: 't0' },
-      };
-      const { refetch } = reduceEvents({ ...state, widgets }, [{ type: 'widget.reload', data: { type: 'T' } }]);
-      expect(refetch.sort()).toEqual(['a', 'c']);
-    });
-
-    it('includes widgets created by a widget.update earlier in the same batch', () => {
-      const meta = { type: 'T', config: {}, assets_base: 'a/', origin: [0, 0] as [number, number], dimensions: [1, 1] as [number, number] };
-      const state = { ...useDisplayStore.getState(), widgets: { a: { meta, state: 'healthy', data: 1, timestamp: 't0' } } };
-      const { refetch } = reduceEvents(state, [
-        widgetUpdate('a', 2),
+    it('counts reloads per type and leaves other types alone', () => {
+      const { patch } = reduceEvents(useDisplayStore.getState(), [
         { type: 'widget.reload', data: { type: 'T' } },
+        { type: 'widget.reload', data: { type: 'T' } },
+        { type: 'widget.reload', data: { type: 'U' } },
       ]);
-      expect(refetch).toEqual(['a']);
+      expect(patch.widgetReloads).toEqual({ T: 2, U: 1 });
     });
 
-    it('bumps layoutVersion and refetches nothing when no mounted widget has the type', () => {
-      const { patch, refetch } = reduceEvents(useDisplayStore.getState(), [{ type: 'widget.reload', data: { type: 'T' } }]);
+    it('adds to the previous counts without mutating them', () => {
+      const previous = { T: 1 };
+      const state = { ...useDisplayStore.getState(), widgetReloads: previous };
+      const { patch } = reduceEvents(state, [{ type: 'widget.reload', data: { type: 'T' } }]);
+      expect(patch.widgetReloads).toEqual({ T: 2 });
+      expect(previous).toEqual({ T: 1 });
+    });
+
+    it('bumps layoutVersion, counts nothing for an empty type, and refetches no widget', () => {
+      const { patch, refetch } = reduceEvents(useDisplayStore.getState(), [
+        { type: 'widget.reload', data: { type: 'T' } },
+        { type: 'widget.reload', data: { type: '' } },
+      ]);
       expect(refetch).toEqual([]);
-      expect(patch.layoutVersion).toBe(1);
+      expect(patch.layoutVersion).toBe(2);
+      expect(patch.widgetReloads).toEqual({ T: 1 });
     });
   });
 

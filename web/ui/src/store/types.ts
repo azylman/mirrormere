@@ -79,5 +79,7 @@ export interface DisplayData {
   layout: ScreenLayout[];
   /** Bumped on widget.reload and on config or boot changes; the carousel refetches the layout. */
   layoutVersion: number;
+  /** Count of widget.reload events per widget type. A mounted widget re-hydrates when its type's count changes. */
+  widgetReloads: Record<string, number>;
   carousel: CarouselSlice;
 }
