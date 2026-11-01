@@ -910,11 +910,21 @@ window.MirrormereCarousel = MirrormereCarousel;
 window.PhotoCarouselInstance = class PhotoCarouselInstance {
   constructor(element) {
     this.element = element;
-    this.widgetId = element.dataset.widgetId;
+    this.widgetId = element.dataset ? element.dataset.widgetId : null;
     this.timer = null;
     this.currentIndex = 0;
     this.photos = [];
     this.cycleIntervalSeconds = 60;
+
+    let deck = null;
+    if (this.widgetId && window.MirrormerePhotoCarousel && window.MirrormerePhotoCarousel.deckState) {
+      deck = window.MirrormerePhotoCarousel.deckState.get(this.widgetId);
+      if (!deck) {
+        deck = { currentKey: null, seenKeys: new Set() };
+        window.MirrormerePhotoCarousel.deckState.set(this.widgetId, deck);
+      }
+    }
+    this.deck = deck;
 
     const dataScript = element.querySelector('.photo-carousel-data');
     if (dataScript) {
@@ -933,6 +943,20 @@ window.PhotoCarouselInstance = class PhotoCarouselInstance {
         }
       } catch (e) {
         console.warn('[PhotoCarousel] Failed to parse carousel data:', e);
+      }
+    }
+
+    if (this.photos.length > 0 && this.deck) {
+      if (this.deck.currentKey) {
+        const idx = this.photos.findIndex((p, i) => this.getPhotoKey(p, i) === this.deck.currentKey);
+        if (idx !== -1) {
+          this.currentIndex = idx;
+          this.deck.seenKeys.add(this.deck.currentKey);
+        } else {
+          this.restoreFirstUnseen();
+        }
+      } else {
+        this.restoreFirstUnseen();
       }
     }
 
@@ -959,6 +983,27 @@ window.PhotoCarouselInstance = class PhotoCarouselInstance {
     if (this.photos.length > 1) {
       this.startCycling();
     }
+  }
+
+  getPhotoKey(photo, index) {
+    if (!photo) return typeof index === 'number' ? String(index) : '';
+    const rawUrl = photo.url || photo.URL;
+    if (rawUrl && typeof rawUrl === 'string' && rawUrl.trim() !== '') return rawUrl;
+    if (photo.id && typeof photo.id === 'string' && photo.id.trim() !== '') return photo.id;
+    return typeof index === 'number' ? String(index) : '';
+  }
+
+  restoreFirstUnseen() {
+    if (!this.deck || this.photos.length === 0) return;
+    let unseenIdx = this.photos.findIndex((p, i) => !this.deck.seenKeys.has(this.getPhotoKey(p, i)));
+    if (unseenIdx === -1) {
+      this.deck.seenKeys.clear();
+      unseenIdx = 0;
+    }
+    this.currentIndex = unseenIdx;
+    const key = this.getPhotoKey(this.photos[unseenIdx], unseenIdx);
+    this.deck.currentKey = key;
+    this.deck.seenKeys.add(key);
   }
 
   getBackdropURL(rawURL) {
@@ -1043,9 +1088,37 @@ window.PhotoCarouselInstance = class PhotoCarouselInstance {
     }
     if (this.photos.length <= 1 || !this.currentImg || !this.nextImg) return;
 
-    const nextIndex = (this.currentIndex + 1) % this.photos.length;
+    if (this.deck) {
+      const currentKey = this.getPhotoKey(this.photos[this.currentIndex], this.currentIndex);
+      this.deck.currentKey = currentKey;
+      this.deck.seenKeys.add(currentKey);
+    }
+
+    let nextIndex = -1;
+    if (this.deck) {
+      for (let i = 1; i < this.photos.length; i++) {
+        const candidateIdx = (this.currentIndex + i) % this.photos.length;
+        const candidateKey = this.getPhotoKey(this.photos[candidateIdx], candidateIdx);
+        if (!this.deck.seenKeys.has(candidateKey)) {
+          nextIndex = candidateIdx;
+          break;
+        }
+      }
+      if (nextIndex === -1) {
+        this.deck.seenKeys.clear();
+        nextIndex = (this.currentIndex + 1) % this.photos.length;
+      }
+    } else {
+      nextIndex = (this.currentIndex + 1) % this.photos.length;
+    }
+
     const nextPhoto = this.photos[nextIndex];
-    if (!nextPhoto || !nextPhoto.url) return;
+    if (!nextPhoto || !nextPhoto.url) {
+      if (this.deck) {
+        this.deck.seenKeys.add(this.getPhotoKey(nextPhoto, nextIndex));
+      }
+      return;
+    }
 
     const nextSizedURL = this.getSizedURL(nextPhoto.url);
     const nextBackdropURL = this.getBackdropURL(nextPhoto.url);
@@ -1077,6 +1150,11 @@ window.PhotoCarouselInstance = class PhotoCarouselInstance {
         }
 
         this.currentIndex = nextIndex;
+        if (this.deck) {
+          const nextKey = this.getPhotoKey(this.photos[nextIndex], nextIndex);
+          this.deck.currentKey = nextKey;
+          this.deck.seenKeys.add(nextKey);
+        }
       }, 850);
     };
     preloader.src = nextSizedURL;
@@ -1093,6 +1171,7 @@ window.PhotoCarouselInstance = class PhotoCarouselInstance {
 
 window.MirrormerePhotoCarousel = {
   instances: new Map(),
+  deckState: new Map(),
   mount(element) {
     if (!element) return;
     const id = element.dataset && element.dataset.widgetId;
