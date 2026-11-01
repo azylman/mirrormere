@@ -1,6 +1,7 @@
 import { act, cleanup, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Carousel } from '../carousel/Carousel';
+import { stubIdle, unstubIdle, type IdleStub } from '../carousel/idle.testutil';
 import { WidgetHost } from './WidgetHost';
 import { useDisplayStore } from '../store';
 import type { ScreensResponse } from '../sse/types';
@@ -79,7 +80,14 @@ async function settle() {
   await act(async () => {
     for (let i = 0; i < 5; i++) await Promise.resolve();
   });
+  // Neighbour panes mount their widgets when the browser is idle.
+  await idle.flush();
+  await act(async () => {
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+  });
 }
+
+let idle: IdleStub;
 
 function reload(type: string) {
   act(() => {
@@ -89,13 +97,14 @@ function reload(type: string) {
 
 describe('WidgetHost widget.reload', () => {
   beforeEach(() => {
+    idle = stubIdle();
     useDisplayStore.setState(initial, true);
     useDisplayStore.setState({ screen: { ...initial.screen, currentScreen: 1, totalScreens: 3 } });
   });
 
   afterEach(() => {
     cleanup();
-    vi.unstubAllGlobals();
+    unstubIdle();
   });
 
   it('re-hydrates each mounted widget of the reloaded type exactly once, on every pane', async () => {

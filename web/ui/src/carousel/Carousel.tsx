@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { startTransition, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useDisplayStore } from '../store';
 import type { WidgetPlacement } from '../sse/types';
 import { CarouselController, neighbourOf, type CarouselHost } from './controller';
@@ -93,7 +93,16 @@ export function Carousel({ hidden }: CarouselProps = {}) {
     const viewport = viewportRef.current;
     const track = trackRef.current;
     if (!viewport || !track) return;
-    const host: CarouselHost = { commit: setShown, select: selectScreen };
+    // Both updates leave the transitionend listener's task. The pane swap renders as a transition
+    // (it yields, and the layout effect below still calls controller.rendered when it commits).
+    // The store write and the POST wait one task, so the subscribers' render does not stack on
+    // the listener; the controller treats the echo of that write as a no-op.
+    const host: CarouselHost = {
+      commit: (index) => startTransition(() => setShown(index)),
+      select: (index) => {
+        setTimeout(() => selectScreen(index), 0);
+      },
+    };
     const controller = new CarouselController({
       viewport,
       track,

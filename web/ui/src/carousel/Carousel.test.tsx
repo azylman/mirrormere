@@ -6,6 +6,8 @@ import type { ScreenLayout, ScreensResponse } from '../sse/types';
 import captureSource from '../../../../sidecars/eink-renderer/src/capture.js?raw';
 import stylesSource from '../styles.css?raw';
 import { Carousel, panesFor, paneKey } from './Carousel';
+import { stubIdle, unstubIdle } from './idle.testutil';
+import { NEIGHBOUR_FILL_TIMEOUT_MS } from './Screen';
 import { SETTLE_FALLBACK_MS } from './track';
 
 const initial = useDisplayStore.getState();
@@ -114,8 +116,10 @@ describe('Carousel', () => {
 
   afterEach(() => {
     cleanup();
+    // Before useRealTimers: the fake-timer clock decides whether to fake requestIdleCallback
+    // from the globals present when it is first created.
+    unstubIdle();
     vi.useRealTimers();
-    vi.unstubAllGlobals();
     useDisplayStore.setState(initial, true);
     document.body.innerHTML = '';
     document.body.removeAttribute('data-animating');
@@ -123,7 +127,10 @@ describe('Carousel', () => {
 
   it('loads the layout on mount and mounts every widget of the three panes', async () => {
     const fetchMock = stubApi();
+    const idle = stubIdle();
     render(<Carousel />);
+    await act(async () => {});
+    await idle.flush();
     await act(async () => {});
 
     expect(fetchMock).toHaveBeenCalledWith('api/screens', expect.anything());
@@ -137,8 +144,10 @@ describe('Carousel', () => {
 
   it('puts #grid-canvas and the hydration attributes on the current pane only', async () => {
     stubApi();
+    const idle = stubIdle();
     render(<Carousel />);
     await act(async () => {});
+    await idle.flush();
 
     expect(document.querySelectorAll('#grid-canvas')).toHaveLength(1);
     const canvas = gridCanvas();
@@ -290,7 +299,38 @@ describe('Carousel', () => {
       await act(async () => {
         vi.advanceTimersByTime(SETTLE_FALLBACK_MS);
       });
+      // The store write and the request leave the settle callback by one task (a 0 ms timer set
+      // inside a fake-timer tick is due 1 ms later).
+      await act(async () => {
+        vi.advanceTimersByTime(1);
+      });
     }
+
+    it('defers the store write and the request out of the settle callback', async () => {
+      vi.useFakeTimers();
+      const fetchMock = stubApi();
+      render(<Carousel />);
+      await act(async () => {});
+      const selects = () => fetchMock.mock.calls.filter(([url]) => url === 'api/screen/select').length;
+
+      clickDot(2);
+      await act(async () => {
+        vi.advanceTimersByTime(SETTLE_FALLBACK_MS);
+      });
+      // The settle committed screen 2, but the pick has not reached the store or the server yet.
+      expect(gridCanvas()?.querySelector('[data-widget-id="c-2"]')).not.toBeNull();
+      expect(useDisplayStore.getState().screen.currentScreen).toBe(1);
+      expect(selects()).toBe(0);
+
+      await act(async () => {
+        vi.advanceTimersByTime(1);
+      });
+      expect(useDisplayStore.getState().screen.currentScreen).toBe(2);
+      expect(selects()).toBe(1);
+      // The echo names the screen already shown: the carousel stays put.
+      expect(activeDot()).toBe(2);
+      expect(document.body.dataset.animating).toBe('0');
+    });
 
     it('sets currentScreen before the select request is made', async () => {
       vi.useFakeTimers();
@@ -429,6 +469,9 @@ describe('Carousel', () => {
       await act(async () => {
         vi.advanceTimersByTime(SETTLE_FALLBACK_MS);
       });
+      await act(async () => {
+        vi.advanceTimersByTime(1);
+      });
 
       expect(useDisplayStore.getState().screen.currentScreen).toBe(2);
       expect(activeDot()).toBe(2);
@@ -467,6 +510,95 @@ describe('Carousel', () => {
 
     it('declares touch-action: none on .screen-indicator so touch drags do not fire pointercancel', () => {
       expect(stylesSource).toMatch(/\.screen-indicator\s*\{[^}]*touch-action:\s*none\s*;/);
+    });
+  });
+
+  describe('neighbour panes', () => {
+    function widgetIds(pane: Element | null): string[] {
+      return Array.from(pane?.querySelectorAll<HTMLElement>('[data-widget-id]') ?? []).map((el) => el.dataset.widgetId ?? '');
+    }
+
+    function paneAt(left: string): HTMLElement | null {
+      return document.querySelector<HTMLElement>(`.grid-pane[style*="left: ${left}"]`);
+    }
+
+    it('renders neighbours empty and the current pane at once, then fills the neighbours when idle', async () => {
+      const fetchMock = stubApi();
+      const idle = stubIdle();
+      render(<Carousel />);
+      await act(async () => {});
+
+      expect(widgetIds(gridCanvas())).toEqual(['b-1', 'b-2']);
+      expect(widgetIds(paneAt('-100%'))).toEqual([]);
+      expect(widgetIds(paneAt('100%'))).toEqual([]);
+      expect(document.querySelectorAll('.grid-pane')).toHaveLength(3);
+      expect(idle.pending()).toBe(2);
+      expect(idle.timeouts).toEqual([NEIGHBOUR_FILL_TIMEOUT_MS, NEIGHBOUR_FILL_TIMEOUT_MS]);
+      expect(fetchMock.mock.calls.some(([url]) => url === 'api/widgets/a-0' || url === 'api/widgets/c-2')).toBe(false);
+
+      await idle.flush();
+      await act(async () => {});
+
+      expect(widgetIds(paneAt('-100%'))).toEqual(['a-0', 'shared']);
+      expect(widgetIds(paneAt('100%'))).toEqual(['c-2']);
+      expect(idle.pending()).toBe(0);
+      // The current pane's hydration stamp does not wait for the neighbours.
+      expect(gridCanvas()?.dataset.widgetCount).toBe('2');
+    });
+
+    it('falls back to a 300 ms timer where requestIdleCallback is missing', async () => {
+      vi.useFakeTimers();
+      expect('requestIdleCallback' in globalThis).toBe(false);
+      stubApi();
+      render(<Carousel />);
+      await act(async () => {});
+      expect(widgetIds(paneAt('100%'))).toEqual([]);
+
+      await act(async () => {
+        vi.advanceTimersByTime(NEIGHBOUR_FILL_TIMEOUT_MS - 1);
+      });
+      expect(widgetIds(paneAt('100%'))).toEqual([]);
+
+      await act(async () => {
+        vi.advanceTimersByTime(1);
+      });
+      await act(async () => {});
+      expect(widgetIds(paneAt('100%'))).toEqual(['c-2']);
+      expect(widgetIds(paneAt('-100%'))).toEqual(['a-0', 'shared']);
+    });
+
+    it('renders widgets at once when a neighbour becomes current before idle, and cancels its callback', async () => {
+      vi.useFakeTimers();
+      const clientWidth = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1000);
+      stubApi();
+      const idle = stubIdle();
+      render(<Carousel />);
+      await act(async () => {});
+      const oldNext = paneAt('100%');
+      expect(widgetIds(oldNext)).toEqual([]);
+      expect(idle.pending()).toBe(2);
+
+      act(() => {
+        useDisplayStore.setState({ screen: { ...useDisplayStore.getState().screen, currentScreen: 2 } });
+      });
+      await act(async () => {
+        vi.advanceTimersByTime(SETTLE_FALLBACK_MS);
+      });
+
+      // Same DOM node, now current, with its widgets in the commit that made it current.
+      expect(gridCanvas()).toBe(oldNext);
+      expect(widgetIds(gridCanvas())).toEqual(['c-2']);
+      expect(gridCanvas()?.dataset.screenHydrated).toBe('true');
+      // Only the other neighbour is still waiting for idle time.
+      expect(idle.pending()).toBe(1);
+      // The pane that was current kept its widgets as the new previous pane.
+      expect(widgetIds(paneAt('-100%'))).toEqual(['b-1', 'b-2']);
+
+      await idle.flush();
+      await act(async () => {});
+      expect(widgetIds(paneAt('100%'))).toEqual(['a-0', 'shared']);
+      expect(idle.pending()).toBe(0);
+      clientWidth.mockRestore();
     });
   });
 

@@ -360,7 +360,8 @@ describe('CarouselController', () => {
   it('queues a server rotate that arrives during a settle until React has rendered the commit', () => {
     vi.useFakeTimers();
     const h = build();
-    swipe(h, 500, 200);
+    // A server rotate to 2 settles; a second rotate to 0 arrives mid-settle and waits.
+    h.controller.requestShow(2);
     h.controller.requestShow(0);
     expect(h.host.commit).not.toHaveBeenCalled();
 
@@ -374,7 +375,68 @@ describe('CarouselController', () => {
     h.transitionEnd();
     expect(h.host.commit).toHaveBeenLastCalledWith(0);
     expect(h.host.commit).toHaveBeenCalledTimes(2);
-    expect(h.host.select).toHaveBeenCalledTimes(1);
+    expect(h.host.select).not.toHaveBeenCalled();
+  });
+
+  describe('select echo that arrives after the commit', () => {
+    /** Swipes to screen 2 and ends the settle: commit(2) and select(2) have run, the store has not echoed yet. */
+    function swipeToTwo(): Harness {
+      const h = build();
+      swipe(h, 500, 200);
+      h.transitionEnd();
+      expect(h.host.commit).toHaveBeenCalledWith(2);
+      expect(h.host.select).toHaveBeenCalledWith(2);
+      return h;
+    }
+
+    it('treats the echo as a no-op while React has not rendered the commit yet', () => {
+      vi.useFakeTimers();
+      const h = swipeToTwo();
+      h.host.commit.mockClear();
+
+      useDisplayStore.getState().setCurrentScreen(2);
+      expect(h.host.commit).not.toHaveBeenCalled();
+      expect(h.controller.current).toBe(2);
+
+      h.controller.rendered(2);
+      expect(h.host.commit).not.toHaveBeenCalled();
+      expect(h.track.style.transform).toBe('');
+    });
+
+    it('treats the echo as a no-op after React has rendered the commit', () => {
+      vi.useFakeTimers();
+      const h = swipeToTwo();
+      h.controller.rendered(2);
+      h.host.commit.mockClear();
+
+      useDisplayStore.getState().setCurrentScreen(2);
+
+      expect(h.host.commit).not.toHaveBeenCalled();
+      expect(h.controller.current).toBe(2);
+      expect(h.track.style.transform).toBe('');
+      expect(h.frames).toHaveLength(0);
+    });
+
+    it('does not slide to a rotate that arrived mid-settle once the echo is late', () => {
+      vi.useFakeTimers();
+      const h = build();
+      swipe(h, 500, 200);
+      // The server rotates to 0 while the settle runs: queued behind the user's pick.
+      h.controller.requestShow(0);
+      h.transitionEnd();
+      h.host.commit.mockClear();
+
+      // The pick wins: the queued rotate is stale, even though the store echo has not landed yet.
+      h.controller.rendered(2);
+      expect(h.track.style.transform).toBe('');
+      useDisplayStore.getState().setCurrentScreen(2);
+      h.transitionEnd();
+      vi.advanceTimersByTime(SETTLE_FALLBACK_MS);
+
+      expect(h.host.commit).not.toHaveBeenCalled();
+      expect(h.controller.current).toBe(2);
+      expect(h.track.style.transform).toBe('');
+    });
   });
 
   it('applies a dot or pill selection with the same slide and a select after the settle', () => {

@@ -5,7 +5,7 @@ import { TrackAnimator } from './track';
 export interface CarouselHost {
   /** Shows `index` as the current screen (React state). */
   commit(index: number): void;
-  /** Tells the server which screen the user picked. Called only after the settle finishes. */
+  /** Tells the server which screen the user picked. Called only after the settle finishes. The store echo may arrive later. */
   select(index: number): void;
 }
 
@@ -194,7 +194,12 @@ export class CarouselController {
     this.shown = index;
     this.awaitingRender = index;
     this.options.host.commit(index);
-    if (select) this.options.host.select(index);
+    if (select) {
+      // The host may deliver the select's store echo later than this call. The echo used to
+      // clear a rotate queued before the commit; do it here so the late echo cannot undo it.
+      this.queued = null;
+      this.options.host.select(index);
+    }
     // React skips a render for the screen it already shows, so rendered() would never come
     // and the carousel would stay busy. Finish the commit here instead.
     if (index === this.lastRendered) this.rendered(index);
