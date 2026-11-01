@@ -51,6 +51,7 @@ export function parseArgs(argv) {
     swipes: 20,
     swipeX: null,
     swipeY: null,
+    traceAnimating: false,
     help: false,
   };
   for (let i = 0; i < argv.length; i++) {
@@ -67,6 +68,7 @@ export function parseArgs(argv) {
       case '--swipes': opts.swipes = Number(take()); break;
       case '--swipe-x': opts.swipeX = Number(take()); break;
       case '--swipe-y': opts.swipeY = Number(take()); break;
+      case '--trace-animating': opts.traceAnimating = true; break;
       case '-h':
       case '--help': opts.help = true; break;
       default: throw new UsageError(`unknown argument ${flag}`);
@@ -254,6 +256,24 @@ async function swipeRects(cdp) {
   return { blocked: blocked.map(clipToViewport), widgets: widgets.map(clipToViewport) };
 }
 
+/**
+ * Logs every body.dataset.animating transition, with performance.now(), into window.__mmAnimTrace.
+ * Installed before the swipes so a failing run shows whether the carousel animated per swipe (#800).
+ */
+const TRACE_INSTALL_EXPRESSION = `(function () {
+  var trace = window.__mmAnimTrace = [];
+  var body = document.body;
+  var last = body.dataset.animating;
+  new MutationObserver(function () {
+    var value = body.dataset.animating;
+    if (value !== last) {
+      last = value;
+      trace.push({ t: Math.round(performance.now() * 10) / 10, animating: value === undefined ? null : value });
+    }
+  }).observe(body, { attributes: true, attributeFilter: ['data-animating'] });
+  return true;
+})()`;
+
 /** Samples of a metric recorded so far on this page (the retained count, as in the snapshot). */
 async function sampleCount(cdp, metric) {
   return JSON.parse(await evaluate(cdp, `JSON.stringify(window.__mmPerf.snapshot().${metric}.count)`));
@@ -300,12 +320,16 @@ export async function runBench(opts, log = (msg) => process.stderr.write(`${msg}
     // Long tasks and settles from cold load are in the snapshot too. The swipe window is measured
     // by the difference, which is what the CI budget's "long tasks during swipes" means.
     const requested = { x: opts.swipeX ?? VIEWPORT.width / 2, y: opts.swipeY ?? VIEWPORT.height / 2 };
+    if (opts.traceAnimating) await evaluate(cdp, TRACE_INSTALL_EXPRESSION);
     const longTasksBefore = await sampleCount(cdp, 'long_task');
     const settledBefore = await sampleCount(cdp, 'swipe_settle');
     let sent = 0;
     for (let i = 0; i < opts.swipes; i++) {
       const { blocked, widgets } = await swipeRects(cdp);
       const centre = pickSwipePoint(requested, blocked, widgets);
+      if (opts.traceAnimating) {
+        await evaluate(cdp, `window.__mmAnimTrace.push({ mark: 'swipe ${i}', t: Math.round(performance.now() * 10) / 10 })`);
+      }
       await swipe(cdp, i % 2 === 0 ? 'left' : 'right', centre);
       sent++;
       await sleep(SWIPE_GAP_MS);
@@ -313,6 +337,13 @@ export async function runBench(opts, log = (msg) => process.stderr.write(`${msg}
     const during = (await sampleCount(cdp, 'long_task')) - longTasksBefore;
     const settled = (await sampleCount(cdp, 'swipe_settle')) - settledBefore;
     log(`swipes_sent ${sent}, swipes_settled ${settled}`);
+    if (opts.traceAnimating) {
+      const trace = JSON.parse(await evaluate(cdp, 'JSON.stringify(window.__mmAnimTrace || [])'));
+      for (const entry of trace) {
+        const { t, mark, animating } = entry;
+        log(mark !== undefined ? `[trace] t=${t} ${mark}` : `[trace] t=${t} animating=${animating}`);
+      }
+    }
 
     const json = await evaluate(cdp, 'JSON.stringify(window.__mmPerf.snapshot())');
     return {
@@ -336,6 +367,7 @@ const USAGE = `usage: node scripts/perf/bench.mjs --url <display-url> [--chrome 
   --swipes        number of horizontal swipes (default 20)
   --swipe-x       swipe centre x in px (default: viewport centre); moved off blocking widgets
   --swipe-y       swipe centre y in px (default: viewport centre)
+  --trace-animating  log body.dataset.animating transitions and swipe starts to stderr
 `;
 
 async function main() {

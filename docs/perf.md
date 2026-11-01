@@ -39,6 +39,7 @@ Flags:
 | `--chrome` | `$CHROME_BIN`, then `google-chrome` | Path to the Chrome executable. |
 | `--cpu-throttle` | `4` | CPU slowdown factor, at least 1. Use `1` for a raw desktop run. |
 | `--swipes` | `20` | Horizontal swipes. Even swipes go left (next), odd swipes go right (prev). |
+| `--trace-animating` | off | Logs each `body.dataset.animating` transition and each swipe start, with `performance.now()` times, to stderr. A run with 20 `gesture_first_frame` samples but one animating on/off pair means the carousel ignored the swipes after the first. |
 
 The script launches Chrome headless at 1920x1080 with touch emulation, waits for
 `data-screen-hydrated` on `#grid-canvas`, then sends each swipe as 300 px over 120 ms in 8 moves
