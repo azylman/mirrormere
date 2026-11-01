@@ -26,6 +26,12 @@
   touch-action: pan-y;
 }
 
+/* Override hud.css touch-action: manipulation so horizontal touch drags on the indicator
+   pill are not claimed by the browser as a pan (which fires pointercancel before pointerup). */
+.screen-indicator {
+  touch-action: none;
+}
+
 /* Same grid as the legacy .grid-canvas (hud.css). Every pane has this geometry. */
 .grid-pane {
   position: absolute;
