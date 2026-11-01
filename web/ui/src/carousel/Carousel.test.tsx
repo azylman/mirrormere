@@ -486,6 +486,104 @@ describe('Carousel', () => {
     });
   });
 
+  describe('handling hearth-swipe postMessage events', () => {
+    it('advances to the next screen on hearth-swipe next message', async () => {
+      vi.useFakeTimers();
+      stubApi();
+      render(<Carousel />);
+      await act(async () => {});
+
+      act(() => {
+        window.dispatchEvent(
+          new MessageEvent('message', {
+            data: { type: 'hearth-swipe', direction: 'next' },
+          }),
+        );
+      });
+      await act(async () => {
+        vi.advanceTimersByTime(SETTLE_FALLBACK_MS);
+      });
+
+      expect(useDisplayStore.getState().screen.currentScreen).toBe(2);
+    });
+
+    it('advances to the previous screen on hearth-swipe prev message', async () => {
+      vi.useFakeTimers();
+      stubApi();
+      render(<Carousel />);
+      await act(async () => {});
+
+      act(() => {
+        window.dispatchEvent(
+          new MessageEvent('message', {
+            data: { type: 'hearth-swipe', direction: 'prev' },
+          }),
+        );
+      });
+      await act(async () => {
+        vi.advanceTimersByTime(SETTLE_FALLBACK_MS);
+      });
+
+      expect(useDisplayStore.getState().screen.currentScreen).toBe(0);
+    });
+
+    it('ignores unknown message types or missing direction', async () => {
+      vi.useFakeTimers();
+      stubApi();
+      render(<Carousel />);
+      await act(async () => {});
+
+      act(() => {
+        window.dispatchEvent(
+          new MessageEvent('message', {
+            data: { type: 'other-event', direction: 'next' },
+          }),
+        );
+        window.dispatchEvent(
+          new MessageEvent('message', {
+            data: { type: 'hearth-swipe', direction: 'invalid' },
+          }),
+        );
+        window.dispatchEvent(
+          new MessageEvent('message', {
+            data: 'string message',
+          }),
+        );
+      });
+      await act(async () => {
+        vi.advanceTimersByTime(SETTLE_FALLBACK_MS);
+      });
+
+      expect(useDisplayStore.getState().screen.currentScreen).toBe(1);
+    });
+
+    it('does not advance when totalScreens is 1', async () => {
+      vi.useFakeTimers();
+      const oneScreen: ScreensResponse = {
+        current_screen: 0,
+        interval_seconds: 30,
+        screens: [{ index: 0, widgets: [{ widget_id: 'a-0', type: 'clock', origin: [0, 0], dimensions: [1, 1] }] }],
+      };
+      stubApi(oneScreen);
+      useDisplayStore.setState({ screen: { ...initial.screen, currentScreen: 0, totalScreens: 1 } });
+      render(<Carousel />);
+      await act(async () => {});
+
+      act(() => {
+        window.dispatchEvent(
+          new MessageEvent('message', {
+            data: { type: 'hearth-swipe', direction: 'next' },
+          }),
+        );
+      });
+      await act(async () => {
+        vi.advanceTimersByTime(SETTLE_FALLBACK_MS);
+      });
+
+      expect(useDisplayStore.getState().screen.currentScreen).toBe(0);
+    });
+  });
+
   it('shows screen 0 when the layout shrinks under the shown screen', async () => {
     const screenOf = (index: number) => ({
       index,

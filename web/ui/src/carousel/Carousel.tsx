@@ -122,7 +122,25 @@ export function Carousel({ hidden }: CarouselProps = {}) {
     // attached above only hears later changes.
     const storeScreen = useDisplayStore.getState().screen.currentScreen;
     if (storeScreen !== shownRef.current) controller.requestShow(storeScreen);
+
+    const onMessage = (event: MessageEvent) => {
+      if (
+        event.data &&
+        typeof event.data === 'object' &&
+        event.data.type === 'hearth-swipe' &&
+        (event.data.direction === 'next' || event.data.direction === 'prev')
+      ) {
+        const controller = controllerRef.current;
+        const totalScreens = useDisplayStore.getState().screen.totalScreens;
+        if (controller && totalScreens > 1) {
+          controller.goTo(neighbourOf(controller.current, totalScreens, event.data.direction));
+        }
+      }
+    };
+    window.addEventListener('message', onMessage);
+
     return () => {
+      window.removeEventListener('message', onMessage);
       controller.dispose();
       controllerRef.current = null;
     };
