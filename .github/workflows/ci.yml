@@ -73,10 +73,8 @@ jobs:
               - 'widgets/**'
             ui:
               - 'web/ui/**'
-              - 'web/static/ui/**'
             perf:
               - 'web/ui/**'
-              - 'web/static/ui/**'
               - 'web/static/js/perf.js'
               - 'web/templates/display_react.html'
               - 'deploy/examples/config.yaml'
@@ -92,6 +90,9 @@ jobs:
               - 'internal/**'
               - 'api/**'
               - 'Makefile'
+              - 'web/ui/**'
+              - 'web/templates/**'
+              - 'web/static/**'
             mirrormere-cast-watcher:
               - '.dockerignore'
               - 'go.mod'
@@ -221,7 +222,7 @@ jobs:
           cache: npm
           cache-dependency-path: web/ui/package-lock.json
 
-      - name: Install, lint, typecheck, test, build and check committed output
+      - name: Install, lint, typecheck, test, and build
         if: needs.changes.outputs.ui == 'true' || inputs.force_all == true
         run: |
           set -euo pipefail
@@ -230,11 +231,6 @@ jobs:
           npm run typecheck
           npm test
           npm run build
-          cd ../..
-          # A fresh build must match the committed web/static/ui output byte for byte.
-          git diff --exit-code web/static/ui
-          # git diff misses new untracked files; fail on those too.
-          test -z "$(git ls-files --others --exclude-standard web/static/ui)"
 
   perf:
     name: Display performance budget (React)
@@ -245,6 +241,22 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v7
+
+      - name: Set up Node.js (pinned by web/ui/.nvmrc)
+        if: needs.changes.outputs.perf == 'true' || inputs.force_all == true
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: web/ui/.nvmrc
+          cache: npm
+          cache-dependency-path: web/ui/package-lock.json
+
+      - name: Build React UI bundle
+        if: needs.changes.outputs.perf == 'true' || inputs.force_all == true
+        working-directory: web/ui
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run build
 
       - name: Start the server with the example config and fixture providers
         if: needs.changes.outputs.perf == 'true' || inputs.force_all == true

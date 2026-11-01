@@ -1,4 +1,15 @@
 # syntax=docker/dockerfile:1
+# UI build stage: compile React display shell (web/ui -> /src/web/static/ui)
+FROM --platform=$BUILDPLATFORM mirror.gcr.io/library/node:22-alpine AS ui-builder
+
+WORKDIR /src/web/ui
+COPY --link web/ui/package.json web/ui/package-lock.json ./
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --no-audit --no-fund
+
+COPY --link web/ui/ ./
+RUN npm run build
+
 # Build stage: compile static Go binary using official Go 1.27 toolchain via mirror.gcr.io to prevent unauthenticated Docker Hub rate limits
 FROM --platform=$BUILDPLATFORM mirror.gcr.io/library/golang:1.27.3-alpine AS builder
 
@@ -10,9 +21,11 @@ RUN --mount=type=bind,source=go.mod,target=go.mod \
     --mount=type=cache,target=/go/pkg/mod \
     go mod download
 
-# Copy source tree and compile minimal static Linux executable
+# Copy Go source tree and compile minimal static Linux executable
 ARG TARGETOS TARGETARCH
-COPY --link . .
+COPY --link go.mod go.sum ./
+COPY --link cmd/ ./cmd/
+COPY --link internal/ ./internal/
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
@@ -31,8 +44,11 @@ RUN --mount=type=cache,target=/etc/apk/cache,sharing=locked \
 
 WORKDIR /app
 
-# Copy compiled executable from builder stage (web/ and widgets/ are volume-mounted at runtime)
+# Copy compiled executable, web templates/static assets, and built React UI bundle (widgets/ are volume-mounted at runtime)
 COPY --from=builder --link --chown=10001:10001 /app/server /app/server
+COPY --link --chown=10001:10001 web/templates/ /app/web/templates/
+COPY --link --chown=10001:10001 web/static/ /app/web/static/
+COPY --from=ui-builder --link --chown=10001:10001 /src/web/static/ui/ /app/web/static/ui/
 
 # Switch to unprivileged non-root user
 USER 10001:10001

@@ -35,5 +35,4 @@ styling when it holds a `.widget-legacy` container, so the fragment's card is no
 Register a component for the type in `WIDGET_COMPONENTS`. `WidgetHost` passes `id` and `type`, and the
 component reads its data from `useWidget(id)`. Use `useIsCurrentPane()` to pause timers and decoders while
 the pane is off-screen. Keep the card markup inside the component, because `WidgetHost` already renders
-the `.widget-card` cell around it. Components need tests, and the built `web/static/ui/` output must be
-regenerated (`npm run build` in `web/ui/`).
+the `.widget-card` cell around it. Components need tests (`npm test` in `web/ui/`).

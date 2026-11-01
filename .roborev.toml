@@ -16,7 +16,7 @@ Repository Scope: azylman/mirrormere (smart display kiosk UI, frontend dashboard
 Repo-Specific Invariants (appended to global Aerial cluster guidelines in ~/.roborev/config.toml):
 1. Zero Personal Data & Sensitive Identifiers: Never allow personal names, Discord handles, home addresses, or private entity IDs in this generic open-source repository (repository maintainer/collaborator GitHub logins `azylman`, `mcarmody`, and `brockventures` in `.github/workflows/*.yml` CI actor allowlists are expected and permitted).
 2. Frontend & Hardware Resource Hygiene: Ensure WebSocket/SSE streams, WebRTC/audio pipelines, timers, and DOM event listeners are cleanly disposed on unmount/disconnect, and maintain touch/e-ink display responsiveness.
-3. Generated UI Bundles: web/static/ui/** is generated Vite build output excluded from the review diff via exclude_patterns and verified byte-for-byte by CI's React UI job; never read or diff files under web/static/ui/, and never flag missing or unregenerated web/static/ui/ bundle updates when web/ui/ files change.
+3. Generated UI Bundles: web/static/ui/** is git-ignored Vite build output compiled during the multi-stage Docker build (ui-builder stage) and excluded from the review diff via exclude_patterns; never read or diff files under web/static/ui/, and never flag missing or unregenerated web/static/ui/ bundle updates when web/ui/ files change.
 """
 
 [ci]

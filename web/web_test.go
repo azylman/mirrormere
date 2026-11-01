@@ -17,7 +17,7 @@ func TestFilesystemContent(t *testing.T) {
 		t.Errorf("expected non-empty templates/display.html")
 	}
 
-	// Verify the React shell template and its committed bundle are present on disk
+	// Verify the React shell template is present on disk
 	reactHTML, err := os.ReadFile("templates/display_react.html")
 	if err != nil {
 		t.Fatalf("failed to read templates/display_react.html: %v", err)
@@ -28,7 +28,6 @@ func TestFilesystemContent(t *testing.T) {
 
 	// Verify static assets are present on disk
 	expectedFiles := []string{
-		"static/ui/app.js",
 		"static/css/hud.css",
 		"static/js/sse.js",
 		"static/js/audio.js",

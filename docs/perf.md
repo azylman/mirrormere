@@ -80,6 +80,7 @@ values the job uses. The example config reads these by name, and the fixture URL
 connections, so those providers fail fast and the screens still load from config:
 
 ```sh
+(cd web/ui && npm ci && npm run build)
 go build -o bin/server ./cmd/server
 FAMILY_CALENDAR_URL=http://localhost:9/fixture.ics TODOIST_API_TOKEN=fixture-token \
   CONFIG_PATH=deploy/examples/config.yaml ./bin/server
