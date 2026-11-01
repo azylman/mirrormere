@@ -335,6 +335,62 @@ describe('selectCalendarEvents store extraction and deduplication', () => {
     expect(extracted[0].title).toBe('Array Event');
   });
 
+  it('extracts day.timed events, vm.week.all_day_events, and vm.month.days', () => {
+    const widgets = {
+      timedWidget: {
+        state: 'ok',
+        timestamp: '2026-10-31T10:00:00Z',
+        data: {
+          days: [
+            {
+              date: '2026-10-31',
+              timed: [{ id: 'timed-ev-1', title: 'Timed Standup', start: '09:00', end: '09:30' }],
+            },
+          ],
+        },
+      },
+      vmWidget: {
+        state: 'ok',
+        timestamp: '2026-10-31T10:00:00Z',
+        data: null,
+        viewModel: {
+          week: {
+            days: [
+              { date: '2026-11-01', events: [] },
+              { date: '2026-11-02', events: [] },
+              { date: '2026-11-03', events: [] },
+            ],
+            all_day_events: [
+              {
+                id: 'all-day-banner',
+                title: 'Design Sprint',
+                start_col: 2,
+              },
+            ],
+          },
+          month: {
+            days: [
+              {
+                date: '2026-11-15',
+                events: [{ id: 'month-ev-1', title: 'Board Meeting', start: '14:00' }],
+              },
+            ],
+          },
+        },
+      },
+    };
+
+    const extracted = selectCalendarEvents(widgets);
+    const titles = extracted.map((e) => e.title);
+    expect(titles).toContain('Timed Standup');
+    expect(titles).toContain('Design Sprint');
+    expect(titles).toContain('Board Meeting');
+
+    const sprint = extracted.find((e) => e.title === 'Design Sprint');
+    expect(sprint?.date).toBe('2026-11-02');
+    expect(sprint?.allDay).toBe(true);
+  });
+
   it('useCalendarEvents hook extracts events reactively from store', () => {
     useDisplayStore.setState({
       widgets: {

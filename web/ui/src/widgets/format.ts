@@ -92,20 +92,89 @@ export function tasksStats(input: unknown, now: Date = new Date()): TasksStatsRe
   };
 }
 
+const validTimezoneCache = new Map<string, boolean>();
+
+export function isValidTimezone(tz: string | null | undefined): boolean {
+  if (!tz || typeof tz !== 'string') return false;
+  const cached = validTimezoneCache.get(tz);
+  if (cached !== undefined) return cached;
+  try {
+    new Intl.DateTimeFormat(undefined, { timeZone: tz });
+    validTimezoneCache.set(tz, true);
+    return true;
+  } catch {
+    validTimezoneCache.set(tz, false);
+    return false;
+  }
+}
+
+const timeFormatters = new Map<string, Intl.DateTimeFormat>();
+
+function getTimeFormatter(tz: string): Intl.DateTimeFormat {
+  let fmt = timeFormatters.get(tz);
+  if (!fmt) {
+    fmt = new Intl.DateTimeFormat('en-US', {
+      timeZone: tz,
+      hour: 'numeric',
+      minute: 'numeric',
+      hourCycle: 'h23',
+    });
+    timeFormatters.set(tz, fmt);
+  }
+  return fmt;
+}
+
+function extractHourMinute(dtf: Intl.DateTimeFormat, d: Date): { hour: number; minute: number } {
+  const parts = dtf.formatToParts(d);
+  let hour = -1;
+  let minute = 0;
+  for (let i = 0; i < parts.length; i++) {
+    const p = parts[i];
+    if (p.type === 'hour') hour = Number(p.value);
+    else if (p.type === 'minute') minute = Number(p.value);
+  }
+  return { hour, minute };
+}
+
+const formatTimeCache = new Map<string, string>();
+
 /**
- * Formats a time value according to Go layout string ('3 PM' or '15:04').
- * Supports ISO/RFC3339 strings and 'YYYY-MM-DDTHH:mm' strings.
+ * Formats a time value according to Go layout string ('3 PM', '3:04', 'PM', '15:04', 'HH:mm').
+ * Supports 1-argument formatTime(val) defaulting to '15:04', and 2/3 arguments formatTime(layout, val, tz).
  * Returns '' on invalid input or date-only inputs ('YYYY-MM-DD').
  */
-export function formatTime(layout: string, value: unknown): string {
-  if (value === null || value === undefined || value === '') return '';
+export function formatTime(layoutOrValue: unknown, value?: unknown, tz?: string): string {
+  let layout = '15:04';
+  let val: unknown = layoutOrValue;
+
+  if (value !== undefined) {
+    if (typeof layoutOrValue === 'string' && layoutOrValue !== '' && layoutOrValue !== 'default') {
+      layout = layoutOrValue;
+    }
+    val = value;
+  }
+
+  if (val === null || val === undefined || val === '') return '';
+
+  const cacheKey =
+    typeof val === 'string' || typeof val === 'number'
+      ? `${layout}|${val}|${tz ?? ''}`
+      : val instanceof Date && !isNaN(val.getTime())
+        ? `${layout}|${val.getTime()}|${tz ?? ''}`
+        : null;
+
+  if (cacheKey) {
+    const cached = formatTimeCache.get(cacheKey);
+    if (cached !== undefined) return cached;
+  }
 
   let date: Date | null = null;
   let hour = -1;
   let minute = 0;
+  const hasValidTz = Boolean(tz && isValidTimezone(tz));
 
-  if (typeof value === 'string') {
-    const s = value.trim();
+  if (typeof val === 'string') {
+    const s = val.trim();
     // Go formatTime returns "" on date-only input (length 10: YYYY-MM-DD)
     if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
       return '';
@@ -114,19 +183,18 @@ export function formatTime(layout: string, value: unknown): string {
     // Match ISO with optional timezone
     const isoMatch = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?(?:\.\d+)?(Z|[+-]\d{2}:?\d{2})?$/.exec(s);
     if (isoMatch) {
-      const tz = isoMatch[7];
-      if (tz === 'Z') {
+      const tzMatch = isoMatch[7];
+      if (hasValidTz && (tzMatch === 'Z' || (tzMatch && tzMatch !== ''))) {
+        const d = new Date(s);
+        if (isNaN(d.getTime())) return '';
+        const hm = extractHourMinute(getTimeFormatter(tz!), d);
+        hour = hm.hour;
+        minute = hm.minute;
+      } else if (tzMatch === 'Z') {
         const d = new Date(s);
         if (isNaN(d.getTime())) return '';
         hour = d.getUTCHours();
         minute = d.getUTCMinutes();
-      } else if (tz && tz !== '') {
-        const d = new Date(s);
-        if (isNaN(d.getTime())) return '';
-        // In Go, FormatTimeInLocation preserves the local time of the parsed timestamp string
-        // unless a location override is given.
-        hour = Number(isoMatch[4]);
-        minute = Number(isoMatch[5]);
       } else {
         hour = Number(isoMatch[4]);
         minute = Number(isoMatch[5]);
@@ -140,16 +208,34 @@ export function formatTime(layout: string, value: unknown): string {
       } else {
         const d = new Date(s);
         if (isNaN(d.getTime())) return '';
-        date = d;
+        if (hasValidTz) {
+          const hm = extractHourMinute(getTimeFormatter(tz!), d);
+          hour = hm.hour;
+          minute = hm.minute;
+        } else {
+          date = d;
+        }
       }
     }
-  } else if (value instanceof Date) {
-    if (isNaN(value.getTime())) return '';
-    date = value;
-  } else if (typeof value === 'number') {
-    const d = new Date(value);
+  } else if (val instanceof Date) {
+    if (isNaN(val.getTime())) return '';
+    if (hasValidTz) {
+      const hm = extractHourMinute(getTimeFormatter(tz!), val);
+      hour = hm.hour;
+      minute = hm.minute;
+    } else {
+      date = val;
+    }
+  } else if (typeof val === 'number') {
+    const d = new Date(val);
     if (isNaN(d.getTime())) return '';
-    date = d;
+    if (hasValidTz) {
+      const hm = extractHourMinute(getTimeFormatter(tz!), d);
+      hour = hm.hour;
+      minute = hm.minute;
+    } else {
+      date = d;
+    }
   } else {
     return '';
   }
@@ -163,17 +249,408 @@ export function formatTime(layout: string, value: unknown): string {
     return '';
   }
 
+  const ampm = hour >= 12 ? 'PM' : 'AM';
+  const h12 = hour % 12 === 0 ? 12 : hour % 12;
+
+  let res = '';
   if (layout === '3 PM') {
-    const ampm = hour >= 12 ? 'PM' : 'AM';
-    const h12 = hour % 12 === 0 ? 12 : hour % 12;
-    return `${h12} ${ampm}`;
+    res = `${h12} ${ampm}`;
+  } else if (layout === '3:04') {
+    res = `${h12}:${String(minute).padStart(2, '0')}`;
+  } else if (layout === '3:04 PM') {
+    res = `${h12}:${String(minute).padStart(2, '0')} ${ampm}`;
+  } else if (layout === 'PM') {
+    res = ampm;
+  } else if (layout === '15:04' || layout === 'HH:mm') {
+    res = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
   }
 
-  if (layout === '15:04' || layout === 'HH:mm') {
-    return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+  if (cacheKey) {
+    if (formatTimeCache.size > 2000) formatTimeCache.clear();
+    formatTimeCache.set(cacheKey, res);
+  }
+  return res;
+}
+
+const SHORT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const FULL_WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+const dateFormatters = new Map<string, Intl.DateTimeFormat>();
+
+function getDateFormatter(tz: string): Intl.DateTimeFormat {
+  let fmt = dateFormatters.get(tz);
+  if (!fmt) {
+    fmt = new Intl.DateTimeFormat('en-US', {
+      timeZone: tz,
+      weekday: 'long',
+      year: 'numeric',
+      month: 'numeric',
+      day: 'numeric',
+    });
+    dateFormatters.set(tz, fmt);
+  }
+  return fmt;
+}
+
+function extractDateParts(
+  dtf: Intl.DateTimeFormat,
+  d: Date
+): { year: number; month: number; day: number; weekdayIdx: number } {
+  const parts = dtf.formatToParts(d);
+  let year = -1;
+  let month = -1;
+  let day = -1;
+  let weekdayIdx = -1;
+  for (let i = 0; i < parts.length; i++) {
+    const p = parts[i];
+    if (p.type === 'year') year = Number(p.value);
+    else if (p.type === 'month') month = Number(p.value);
+    else if (p.type === 'day') day = Number(p.value);
+    else if (p.type === 'weekday') weekdayIdx = FULL_WEEKDAYS.indexOf(p.value);
+  }
+  return { year, month, day, weekdayIdx };
+}
+
+const formatDateCache = new Map<string, string>();
+
+/**
+ * Formats a date value according to Go layout string ('2006-01-02', 'Jan 2', 'Monday • Jan 2', etc.).
+ * Supports 1-argument formatDate(val) defaulting to '2006-01-02', and 2/3 arguments formatDate(layout, val, tz).
+ * Preserves date-only strings ('YYYY-MM-DD') as calendar dates without timezone shifting.
+ */
+export function formatDate(layoutOrValue: unknown, value?: unknown, tz?: string): string {
+  let layout = '2006-01-02';
+  let val: unknown = layoutOrValue;
+
+  if (value !== undefined) {
+    if (typeof layoutOrValue === 'string' && layoutOrValue !== '' && layoutOrValue !== 'default') {
+      layout = layoutOrValue;
+    }
+    val = value;
   }
 
-  return '';
+  if (val === null || val === undefined || val === '') return '';
+
+  const cacheKey =
+    typeof val === 'string' || typeof val === 'number'
+      ? `${layout}|${val}|${tz ?? ''}`
+      : val instanceof Date && !isNaN(val.getTime())
+        ? `${layout}|${val.getTime()}|${tz ?? ''}`
+        : null;
+
+  if (cacheKey) {
+    const cached = formatDateCache.get(cacheKey);
+    if (cached !== undefined) return cached;
+  }
+
+  let year = -1;
+  let month = -1; // 1-12
+  let day = -1; // 1-31
+  let weekdayIdx = -1; // 0-6
+
+  const hasValidTz = Boolean(tz && isValidTimezone(tz));
+
+  if (typeof val === 'string') {
+    const s = val.trim();
+    // Check date-only string (YYYY-MM-DD)
+    const dateOnlyMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+    if (dateOnlyMatch) {
+      year = Number(dateOnlyMatch[1]);
+      month = Number(dateOnlyMatch[2]);
+      day = Number(dateOnlyMatch[3]);
+      // Weekday for date-only: construct local Date noon
+      const d = new Date(year, month - 1, day, 12, 0, 0);
+      weekdayIdx = d.getDay();
+    } else {
+      const d = new Date(s);
+      if (isNaN(d.getTime())) {
+        return s;
+      }
+      if (hasValidTz) {
+        const dp = extractDateParts(getDateFormatter(tz!), d);
+        year = dp.year;
+        month = dp.month;
+        day = dp.day;
+        weekdayIdx = dp.weekdayIdx;
+      } else {
+        if (s.endsWith('Z')) {
+          year = d.getUTCFullYear();
+          month = d.getUTCMonth() + 1;
+          day = d.getUTCDate();
+          weekdayIdx = d.getUTCDay();
+        } else {
+          year = d.getFullYear();
+          month = d.getMonth() + 1;
+          day = d.getDate();
+          weekdayIdx = d.getDay();
+        }
+      }
+    }
+  } else if (val instanceof Date) {
+    if (isNaN(val.getTime())) return String(val);
+    if (hasValidTz) {
+      const dp = extractDateParts(getDateFormatter(tz!), val);
+      year = dp.year;
+      month = dp.month;
+      day = dp.day;
+      weekdayIdx = dp.weekdayIdx;
+    } else {
+      year = val.getUTCFullYear();
+      month = val.getUTCMonth() + 1;
+      day = val.getUTCDate();
+      weekdayIdx = val.getUTCDay();
+    }
+  } else if (typeof val === 'number') {
+    const d = new Date(val);
+    if (isNaN(d.getTime())) return String(val);
+    if (hasValidTz) {
+      const dp = extractDateParts(getDateFormatter(tz!), d);
+      year = dp.year;
+      month = dp.month;
+      day = dp.day;
+      weekdayIdx = dp.weekdayIdx;
+    } else {
+      year = d.getUTCFullYear();
+      month = d.getUTCMonth() + 1;
+      day = d.getUTCDate();
+      weekdayIdx = d.getUTCDay();
+    }
+  } else {
+    return String(val);
+  }
+
+  let res = String(val);
+  if (year >= 0 && month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+    const shortMonth = SHORT_MONTHS[month - 1];
+    const fullWeekday = weekdayIdx >= 0 ? FULL_WEEKDAYS[weekdayIdx] : '';
+
+    if (layout === '2006-01-02' || layout === 'default') {
+      res = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    } else if (layout === 'Jan 2') {
+      res = `${shortMonth} ${day}`;
+    } else if (layout === 'Jan 02, 2006') {
+      res = `${shortMonth} ${String(day).padStart(2, '0')}, ${year}`;
+    } else if (layout === 'Monday • Jan 2') {
+      res = `${fullWeekday} • ${shortMonth} ${day}`;
+    } else if (layout === '2006') {
+      res = `${year}`;
+    } else {
+      res = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    }
+  }
+
+  if (cacheKey) {
+    if (formatDateCache.size > 2000) formatDateCache.clear();
+    formatDateCache.set(cacheKey, res);
+  }
+  return res;
+}
+
+/**
+ * Returns human-readable relative date expressions ("Today", "Tomorrow", "Yesterday", "in N days", "N days ago").
+ */
+export function relDate(refTime: Date, value: unknown, tz?: string): string {
+  if (value === null || value === undefined || value === '') return '';
+  if (!refTime || isNaN(refTime.getTime())) return String(value);
+
+  const refDateStr = formatDate('2006-01-02', refTime, tz);
+  const valDateStr = formatDate('2006-01-02', value, tz);
+  if (
+    !refDateStr ||
+    !valDateStr ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(refDateStr) ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(valDateStr)
+  ) {
+    return String(value);
+  }
+
+  const [ry, rm, rd] = refDateStr.split('-').map(Number);
+  const [vy, vm, vd] = valDateStr.split('-').map(Number);
+  const refUtc = Date.UTC(ry, rm - 1, rd);
+  const valUtc = Date.UTC(vy, vm - 1, vd);
+  const diffDays = Math.round((valUtc - refUtc) / (24 * 60 * 60 * 1000));
+
+  if (diffDays === 0) return 'Today';
+  if (diffDays === 1) return 'Tomorrow';
+  if (diffDays === -1) return 'Yesterday';
+  if (diffDays > 1) return `in ${diffDays} days`;
+  return `${-diffDays} days ago`;
+}
+
+export interface CalendarFeedActiveCalendar {
+  name: string;
+  color?: string;
+  enabled?: boolean;
+  [key: string]: unknown;
+}
+
+/**
+ * Filters widget configuration calendars down to those that are enabled.
+ */
+export function calendarFeedActiveCalendars(config: unknown): CalendarFeedActiveCalendar[] {
+  if (!config || typeof config !== 'object') return [];
+
+  let rawList: unknown[] | null = null;
+  if (Array.isArray(config)) {
+    rawList = config;
+  } else {
+    const cfg = config as Record<string, unknown>;
+    if (Array.isArray(cfg.calendars)) {
+      rawList = cfg.calendars;
+    }
+  }
+
+  if (!rawList) return [];
+
+  const result: CalendarFeedActiveCalendar[] = [];
+  for (const item of rawList) {
+    if (!item || typeof item !== 'object') continue;
+    const m = item as Record<string, unknown>;
+    const enabledVal = m.enabled;
+    if (enabledVal === false || (typeof enabledVal === 'string' && enabledVal.toLowerCase() === 'false')) {
+      continue;
+    }
+    result.push({
+      ...m,
+      name: String(m.name ?? ''),
+      color: m.color ? String(m.color) : undefined,
+      enabled: true,
+    });
+  }
+
+  return result;
+}
+
+export interface CalendarFeedEvent {
+  id?: string;
+  title: string;
+  start: string;
+  end?: string;
+  all_day?: boolean;
+  allDay?: boolean;
+  location?: string;
+  calendar_name?: string;
+  calendarName?: string;
+  color?: string;
+  [key: string]: unknown;
+}
+
+export interface CalendarFeedDayGroup {
+  date: string;
+  rel: string;
+  start: string;
+  events: CalendarFeedEvent[];
+}
+
+/**
+ * Groups filtered calendar feed events by local calendar date.
+ */
+export function calendarFeedDayGroups(
+  data: unknown,
+  refTime: Date = new Date(),
+  tz?: string
+): CalendarFeedDayGroup[] {
+  if (!data || typeof data !== 'object') return [];
+
+  const effectiveRefTime = refTime && !isNaN(refTime.getTime()) ? refTime : new Date();
+
+  let rawEvents: unknown[] | null = null;
+  if (Array.isArray(data)) {
+    rawEvents = data;
+  } else {
+    const d = data as Record<string, unknown>;
+    if (Array.isArray(d.events)) {
+      rawEvents = d.events;
+    } else if (Array.isArray(d.Events)) {
+      rawEvents = d.Events;
+    }
+  }
+
+  if (!rawEvents || rawEvents.length === 0) return [];
+
+  const todayStr = formatDate('2006-01-02', effectiveRefTime, tz);
+  const refTimeMs = effectiveRefTime.getTime();
+
+  const filtered: CalendarFeedEvent[] = [];
+
+  for (const raw of rawEvents) {
+    if (!raw || typeof raw !== 'object') continue;
+    const ev = raw as Record<string, unknown>;
+    const title = typeof ev.title === 'string' ? ev.title : typeof ev.Title === 'string' ? ev.Title : '';
+    const rawStart = ev.start ?? ev.Start;
+    const startStr = typeof rawStart === 'string' ? rawStart : '';
+    if (!title && !startStr) continue;
+
+    const rawEnd = ev.end ?? ev.End;
+    const endStr = typeof rawEnd === 'string' ? rawEnd : '';
+    const isAllDay = Boolean(ev.all_day || ev.allDay || ev.AllDay || /^\d{4}-\d{2}-\d{2}$/.test(startStr));
+
+    if (isAllDay) {
+      const endDateStr = endStr !== '' ? endStr : startStr;
+      if (endDateStr < todayStr) {
+        continue;
+      }
+      filtered.push({
+        ...ev,
+        id: ev.id ? String(ev.id) : ev.ID ? String(ev.ID) : undefined,
+        title,
+        start: startStr,
+        end: endStr || undefined,
+        allDay: true,
+        all_day: true,
+        location: (ev.location ?? ev.Location) ? String(ev.location ?? ev.Location) : undefined,
+        calendarName: (ev.calendar_name ?? ev.calendarName ?? ev.CalendarName) ? String(ev.calendar_name ?? ev.calendarName ?? ev.CalendarName) : undefined,
+        color: (ev.color ?? ev.Color) ? String(ev.color ?? ev.Color) : undefined,
+      });
+      continue;
+    }
+
+    // Timed event
+    if (endStr !== '') {
+      const endDate = new Date(endStr);
+      if (!isNaN(endDate.getTime()) && endDate.getTime() < refTimeMs) {
+        continue;
+      }
+    } else if (startStr !== '') {
+      const startDate = new Date(startStr);
+      if (!isNaN(startDate.getTime()) && startDate.getTime() + 60 * 60 * 1000 < refTimeMs) {
+        continue;
+      }
+    }
+
+    filtered.push({
+      ...ev,
+      id: ev.id ? String(ev.id) : ev.ID ? String(ev.ID) : undefined,
+      title,
+      start: startStr,
+      end: endStr || undefined,
+      allDay: false,
+      all_day: false,
+      location: (ev.location ?? ev.Location) ? String(ev.location ?? ev.Location) : undefined,
+      calendarName: (ev.calendar_name ?? ev.calendarName ?? ev.CalendarName) ? String(ev.calendar_name ?? ev.calendarName ?? ev.CalendarName) : undefined,
+      color: (ev.color ?? ev.Color) ? String(ev.color ?? ev.Color) : undefined,
+    });
+  }
+
+  if (filtered.length === 0) return [];
+
+  const groups: CalendarFeedDayGroup[] = [];
+  for (const ev of filtered) {
+    const dateStr = formatDate('2006-01-02', ev.start, tz);
+    if (groups.length === 0 || groups[groups.length - 1].date !== dateStr) {
+      const rel = relDate(effectiveRefTime, ev.start, tz);
+      groups.push({
+        date: dateStr,
+        rel,
+        start: ev.start,
+        events: [ev],
+      });
+    } else {
+      groups[groups.length - 1].events.push(ev);
+    }
+  }
+
+  return groups;
 }
 
 /**
