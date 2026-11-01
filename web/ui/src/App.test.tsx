@@ -8,16 +8,27 @@ describe('App', () => {
     vi.unstubAllGlobals();
   });
 
-  it('renders the display shell with the carousel grid canvas', async () => {
+  it('renders the display shell with Header and the carousel grid canvas', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => new Response(JSON.stringify({ current_screen: 0, interval_seconds: 30, screens: [{ index: 0, widgets: [] }] }), { status: 200 })),
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              current_screen: 0,
+              interval_seconds: 30,
+              screens: [{ index: 0, widgets: [] }],
+            }),
+            { status: 200 }
+          )
+      )
     );
     const { container } = render(<App />);
     await act(async () => {});
 
     const shell = container.querySelector('#mirrormere-app');
     expect(shell).not.toBeNull();
+    expect(shell?.querySelector('header.header-zone')).not.toBeNull();
     expect(shell?.querySelectorAll('#grid-canvas')).toHaveLength(1);
     expect(shell?.querySelector('.carousel-track')).not.toBeNull();
   });
