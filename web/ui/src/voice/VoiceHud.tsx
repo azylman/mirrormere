@@ -1,7 +1,8 @@
-import { memo, useEffect } from 'react';
+import { memo, useCallback, useEffect, useRef } from 'react';
 import { AudioController } from '../audio/useAudio';
+import type { VoiceState } from '../sse/types';
 import { Waveform } from './Waveform';
-import { useVoiceHudState, useVoiceHudStore } from './useVoiceHudState';
+import { DUCK_STATES, useVoiceHudState } from './useVoiceHudState';
 
 export { DUCK_STATES } from './useVoiceHudState';
 
@@ -10,9 +11,41 @@ export { DUCK_STATES } from './useVoiceHudState';
  * sharing state with HeaderVoice via useVoiceHudState().
  */
 export const VoiceHud = memo(function VoiceHud() {
-  const { voiceToast, dismissToast } = useVoiceHudState();
+  const hud = useVoiceHudState();
+  const { voiceToast } = hud;
   const { visible, badgeText, bodyText } = voiceToast;
 
+  const stateRef = useRef<{
+    activeState: VoiceState;
+    statusText: string | null;
+    turnDismissed: boolean;
+  }>({
+    activeState: hud.activeState,
+    statusText: hud.statusText,
+    turnDismissed: hud.turnDismissed,
+  });
+
+  // Keep stateRef updated synchronously on render
+  stateRef.current.activeState = hud.activeState;
+  stateRef.current.statusText = hud.statusText;
+  stateRef.current.turnDismissed = hud.turnDismissed;
+
+  const hudRef = useRef(hud);
+  hudRef.current = hud;
+
+  const handleDismissToast = useCallback(() => {
+    stateRef.current.turnDismissed = true;
+    hudRef.current.dismissToast();
+  }, []);
+
+  const handleReset = useCallback(() => {
+    stateRef.current.activeState = 'idle';
+    stateRef.current.statusText = null;
+    stateRef.current.turnDismissed = false;
+    hudRef.current.reset();
+  }, []);
+
+  // Window bindings & audio manager fallback
   useEffect(() => {
     let createdFallback = false;
     let fallbackController: AudioController | null = null;
@@ -22,46 +55,63 @@ export const VoiceHud = memo(function VoiceHud() {
       createdFallback = true;
     }
 
-    useVoiceHudStore.getState().syncDuckState();
-
     if (typeof window !== 'undefined') {
       window.voiceHUD = {
         get currentState() {
-          const state = useVoiceHudStore.getState();
-          if (state.isReset) return 'idle';
-          return state.activeState;
+          return stateRef.current.activeState;
         },
         get currentStatus() {
-          const state = useVoiceHudStore.getState();
-          if (state.isReset) return null;
-          return state.statusText;
+          return stateRef.current.statusText;
         },
         get turnDismissed() {
-          return useVoiceHudStore.getState().turnDismissed;
+          return stateRef.current.turnDismissed;
         },
-        resetHUD: () => {
-          useVoiceHudStore.getState().resetHUD();
-        },
+        resetHUD: handleReset,
       };
 
       window.MirrormereVoice = {
-        resetHUD: () => {
-          useVoiceHudStore.getState().resetHUD();
-        },
+        resetHUD: handleReset,
       };
     }
 
     return () => {
-      useVoiceHudStore.getState().resetHUD();
+      handleReset();
       if (typeof window !== 'undefined') {
         delete window.voiceHUD;
+        delete window.MirrormereVoice;
+        window.audioManager?.setDucked?.(false);
       }
       if (createdFallback && typeof window !== 'undefined' && window.audioManager === fallbackController) {
         delete window.audioManager;
         fallbackController?.destroy();
       }
     };
-  }, []);
+  }, [handleReset]);
+
+  // Audio ducking & safety watchdog timer
+  useEffect(() => {
+    const shouldDuck = DUCK_STATES.has(hud.activeState);
+    if (typeof window !== 'undefined') {
+      window.audioManager?.setDucked?.(shouldDuck);
+    }
+
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    if (shouldDuck || Boolean(hud.statusText)) {
+      timer = setTimeout(() => {
+        handleReset();
+      }, 30000);
+      const unrefTimer = timer as unknown as { unref?: () => void };
+      if (typeof unrefTimer.unref === 'function') {
+        unrefTimer.unref();
+      }
+    }
+
+    return () => {
+      if (timer) {
+        clearTimeout(timer);
+      }
+    };
+  }, [hud.activeState, hud.statusText, handleReset]);
 
   return (
     <>
@@ -70,7 +120,7 @@ export const VoiceHud = memo(function VoiceHud() {
           id="voice-toast"
           className={`voice-toast${visible ? ' visible' : ''}`}
           style={{ display: visible ? 'flex' : 'none' }}
-          onClick={dismissToast}
+          onClick={handleDismissToast}
         >
           <span
             id="voice-toast-badge"

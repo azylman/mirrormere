@@ -5,7 +5,7 @@ import { HeaderVoice } from '../shell/Header';
 import { useDisplayStore } from '../store';
 import { VoiceIcon } from './VoiceIcon';
 import { DUCK_STATES, VoiceHud } from './VoiceHud';
-import { deriveVoiceHudProps, useVoiceHudStore } from './useVoiceHudState';
+import { deriveVoiceHudProps, resetHUD } from './useVoiceHudState';
 
 function renderVoiceSystem() {
   return render(
@@ -23,7 +23,8 @@ describe('VoiceHud and declarative voice system', () => {
     useDisplayStore.setState(initialStore, true);
     delete window.audioManager;
     delete window.voiceHUD;
-    useVoiceHudStore.getState().resetHUD();
+    delete window.MirrormereVoice;
+    resetHUD();
   });
 
   afterEach(() => {
@@ -32,7 +33,8 @@ describe('VoiceHud and declarative voice system', () => {
     useDisplayStore.setState(initialStore, true);
     delete window.audioManager;
     delete window.voiceHUD;
-    useVoiceHudStore.getState().resetHUD();
+    delete window.MirrormereVoice;
+    resetHUD();
   });
 
   describe('constants & icons', () => {
@@ -60,6 +62,7 @@ describe('VoiceHud and declarative voice system', () => {
 
   describe('VoiceHud and HeaderVoice component state transitions and rendering', () => {
     it('initializes with idle state and exposes window bindings', () => {
+      expect(window.MirrormereVoice).toBeUndefined();
       const { unmount } = renderVoiceSystem();
 
       expect(window.voiceHUD).toBeDefined();
@@ -75,6 +78,7 @@ describe('VoiceHud and declarative voice system', () => {
 
       unmount();
       expect(window.voiceHUD).toBeUndefined();
+      expect(window.MirrormereVoice).toBeUndefined();
     });
 
     it('creates fallback AudioController on window.audioManager when absent and tears down on unmount', () => {
