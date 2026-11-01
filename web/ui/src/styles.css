@@ -83,6 +83,12 @@ body[data-grid="2x6"] .grid-pane {
   height: 100%;
 }
 
+.tasks-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
 .widget-chat-log {
   overflow: hidden;
   color: var(--mm-text-primary);
