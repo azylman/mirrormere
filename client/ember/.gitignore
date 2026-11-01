@@ -1,0 +1,9 @@
+.gradle/
+build/
+app/build/
+local.properties
+*.apk
+*.keystore
+__pycache__/
+.pytest_cache/
+.ruff_cache/
