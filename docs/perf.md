@@ -49,6 +49,14 @@ piped into a file.
 
 For the React display, use `--url 'http://localhost:8080/display?ui=react'`.
 
+`--swipe-x <px>` and `--swipe-y <px>` set the centre of each swipe (default: the viewport centre).
+Before each swipe the bench reads the rects of the swipe-blocking elements and of the widgets in
+`#grid-canvas`, and `scripts/perf/swipe-point.mjs` moves the centre off a blocking element onto the
+widest widget that no blocker overlaps; if none qualifies, the centre stays where it was. The bench
+prints `swipes_sent` and `swipes_settled` (the `swipe_settle` samples recorded during the swipes)
+beside the snapshot and in its JSON. It exits 2 when `swipes_settled` is under 80% of `swipes_sent`,
+which usually means the swipe centre is on a blocking widget.
+
 ## CI budget
 
 The `perf` job in `.github/workflows/ci.yml` runs on pull requests that touch the React UI or

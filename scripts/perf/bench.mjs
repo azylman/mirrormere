@@ -7,12 +7,16 @@
  * window.__mmPerf.snapshot() to stdout as JSON. Progress goes to stderr. Works for the legacy
  * and React displays; the page decides which (perf.js detects it).
  *
- * Usage:
  *   node scripts/perf/bench.mjs --url http://localhost:8080/display \
- *     [--chrome <path>] [--cpu-throttle 4] [--swipes 20]
+ *     [--chrome <path>] [--cpu-throttle 4] [--swipes 20] [--swipe-x <px>] [--swipe-y <px>]
  *
- * The output is the snapshot plus long_task_during_swipes: the long tasks recorded between the
- * first and last swipe, which excludes cold-load tasks.
+ * The output is the snapshot plus long_task_during_swipes (the long tasks recorded between the
+ * first and last swipe, which excludes cold-load tasks), swipes_sent and swipes_settled (the
+ * swipe_settle samples recorded during the swipes). Exits 2 when swipes_settled is under 80% of
+ * swipes_sent.
+ *
+ * Each swipe is centred on --swipe-x/--swipe-y (default: viewport centre), moved off any
+ * swipe-blocking widget by pickSwipePoint (swipe-point.mjs).
  *
  * --chrome defaults to $CHROME_BIN, then "google-chrome". Requires Node 22+ (global WebSocket).
  * No npm dependencies.
@@ -22,8 +26,11 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { pickSwipePoint } from './swipe-point.mjs';
 
 const VIEWPORT = { width: 1920, height: 1080 };
+const SWIPE_BLOCKERS = '.widget-calendar-grid, .widget-calendar-family, [data-prevent-screen-swipe]';
+const MIN_SETTLE_RATIO = 0.8;
 const SWIPE_DISTANCE_PX = 300;
 const SWIPE_DURATION_MS = 120;
 const SWIPE_MOVES = 8;
@@ -41,6 +48,8 @@ export function parseArgs(argv) {
     chrome: process.env.CHROME_BIN || 'google-chrome',
     cpuThrottle: 4,
     swipes: 20,
+    swipeX: null,
+    swipeY: null,
     help: false,
   };
   for (let i = 0; i < argv.length; i++) {
@@ -55,6 +64,8 @@ export function parseArgs(argv) {
       case '--chrome': opts.chrome = take(); break;
       case '--cpu-throttle': opts.cpuThrottle = Number(take()); break;
       case '--swipes': opts.swipes = Number(take()); break;
+      case '--swipe-x': opts.swipeX = Number(take()); break;
+      case '--swipe-y': opts.swipeY = Number(take()); break;
       case '-h':
       case '--help': opts.help = true; break;
       default: throw new UsageError(`unknown argument ${flag}`);
@@ -76,6 +87,11 @@ export function parseArgs(argv) {
   }
   if (!Number.isInteger(opts.swipes) || opts.swipes < 0 || opts.swipes > 1000) {
     throw new UsageError('--swipes must be an integer between 0 and 1000');
+  }
+  for (const [flag, value, max] of [['--swipe-x', opts.swipeX, VIEWPORT.width], ['--swipe-y', opts.swipeY, VIEWPORT.height]]) {
+    if (value !== null && (!Number.isFinite(value) || value < 0 || value > max)) {
+      throw new UsageError(`${flag} must be a number between 0 and ${max}`);
+    }
   }
   parsed.searchParams.set('perf', '1');
   opts.pageURL = parsed.toString();
@@ -210,11 +226,43 @@ async function dispatchTouch(cdp, type, touchPoints) {
   await cdp.send('Input.dispatchTouchEvent', { type, touchPoints });
 }
 
-/** One horizontal swipe: 300 px over 120 ms in 8 moves. direction is 'left' (next) or 'right' (prev). */
-async function swipe(cdp, direction) {
-  const y = Math.round(VIEWPORT.height / 2);
+const SWIPE_RECTS_EXPRESSION = `(function () {
+  var rect = function (r) { return { left: r.left, top: r.top, right: r.right, bottom: r.bottom }; };
+  var blocked = Array.from(document.querySelectorAll(${JSON.stringify(SWIPE_BLOCKERS)}))
+    .map(function (el) { return rect(el.getBoundingClientRect()); });
+  var canvas = document.getElementById('grid-canvas');
+  var widgets = canvas
+    ? Array.from(canvas.querySelectorAll('[data-widget-id]')).map(function (el) { return rect(el.getBoundingClientRect()); })
+    : [];
+  return JSON.stringify({ blocked: blocked, widgets: widgets });
+})()`;
+
+/** Rects are clipped to the viewport: a touch cannot land off screen, so a widget's centre must not either. */
+function clipToViewport(r) {
+  return {
+    left: Math.max(0, r.left),
+    top: Math.max(0, r.top),
+    right: Math.min(VIEWPORT.width, r.right),
+    bottom: Math.min(VIEWPORT.height, r.bottom),
+  };
+}
+
+/** Swipe-blocking rects and widget rects on the current pane, in viewport CSS pixels. */
+async function swipeRects(cdp) {
+  const { blocked, widgets } = JSON.parse(await evaluate(cdp, SWIPE_RECTS_EXPRESSION));
+  return { blocked: blocked.map(clipToViewport), widgets: widgets.map(clipToViewport) };
+}
+
+/** Samples of a metric recorded so far on this page (the retained count, as in the snapshot). */
+async function sampleCount(cdp, metric) {
+  return JSON.parse(await evaluate(cdp, `JSON.stringify(window.__mmPerf.snapshot().${metric}.count)`));
+}
+
+/** One horizontal swipe centred on `centre`: 300 px over 120 ms in 8 moves. direction is 'left' (next) or 'right' (prev). */
+async function swipe(cdp, direction, centre) {
+  const y = Math.round(centre.y);
   const half = SWIPE_DISTANCE_PX / 2;
-  const startX = Math.round(VIEWPORT.width / 2 + (direction === 'left' ? half : -half));
+  const startX = Math.round(centre.x + (direction === 'left' ? half : -half));
   const dx = direction === 'left' ? -SWIPE_DISTANCE_PX : SWIPE_DISTANCE_PX;
   const stepMs = SWIPE_DURATION_MS / SWIPE_MOVES;
 
@@ -248,20 +296,30 @@ export async function runBench(opts, log = (msg) => process.stderr.write(`${msg}
     await cdp.send('Page.resetNavigationHistory');
     log(`screen hydrated; sending ${opts.swipes} swipes`);
 
-    // Long tasks from cold load are in the snapshot too. The swipe window is measured by the
-    // difference, which is what the CI budget's "long tasks during swipes" means.
-    const longTaskCount = async () => JSON.parse(
-      await evaluate(cdp, 'JSON.stringify(window.__mmPerf.snapshot().long_task.count)'),
-    );
-    const before = await longTaskCount();
+    // Long tasks and settles from cold load are in the snapshot too. The swipe window is measured
+    // by the difference, which is what the CI budget's "long tasks during swipes" means.
+    const requested = { x: opts.swipeX ?? VIEWPORT.width / 2, y: opts.swipeY ?? VIEWPORT.height / 2 };
+    const longTasksBefore = await sampleCount(cdp, 'long_task');
+    const settledBefore = await sampleCount(cdp, 'swipe_settle');
+    let sent = 0;
     for (let i = 0; i < opts.swipes; i++) {
-      await swipe(cdp, i % 2 === 0 ? 'left' : 'right');
+      const { blocked, widgets } = await swipeRects(cdp);
+      const centre = pickSwipePoint(requested, blocked, widgets);
+      await swipe(cdp, i % 2 === 0 ? 'left' : 'right', centre);
+      sent++;
       await sleep(SWIPE_GAP_MS);
     }
-    const during = (await longTaskCount()) - before;
+    const during = (await sampleCount(cdp, 'long_task')) - longTasksBefore;
+    const settled = (await sampleCount(cdp, 'swipe_settle')) - settledBefore;
+    log(`swipes_sent ${sent}, swipes_settled ${settled}`);
 
     const json = await evaluate(cdp, 'JSON.stringify(window.__mmPerf.snapshot())');
-    return { ...JSON.parse(json), long_task_during_swipes: during };
+    return {
+      ...JSON.parse(json),
+      long_task_during_swipes: during,
+      swipes_sent: sent,
+      swipes_settled: settled,
+    };
   } finally {
     if (cdp) cdp.close();
     chrome.proc.kill('SIGTERM');
@@ -270,10 +328,13 @@ export async function runBench(opts, log = (msg) => process.stderr.write(`${msg}
 }
 
 const USAGE = `usage: node scripts/perf/bench.mjs --url <display-url> [--chrome <path>] [--cpu-throttle N] [--swipes N]
+                                  [--swipe-x <px>] [--swipe-y <px>]
   --url           display page to measure, e.g. http://localhost:8080/display (perf=1 is added)
   --chrome        Chrome executable (default: $CHROME_BIN or google-chrome)
   --cpu-throttle  CPU slowdown factor, >= 1 (default 4)
   --swipes        number of horizontal swipes (default 20)
+  --swipe-x       swipe centre x in px (default: viewport centre); moved off blocking widgets
+  --swipe-y       swipe centre y in px (default: viewport centre)
 `;
 
 async function main() {
@@ -293,6 +354,13 @@ async function main() {
   }
   const snapshot = await runBench(opts);
   process.stdout.write(`${JSON.stringify(snapshot, null, 2)}\n`);
+  if (snapshot.swipes_settled < MIN_SETTLE_RATIO * snapshot.swipes_sent) {
+    process.stderr.write(
+      `only ${snapshot.swipes_settled} of ${snapshot.swipes_sent} swipes settled (need ${MIN_SETTLE_RATIO * 100}%); `
+      + 'the swipe centre is probably on a blocking widget (see --swipe-x/--swipe-y)\n',
+    );
+    process.exitCode = 2;
+  }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
