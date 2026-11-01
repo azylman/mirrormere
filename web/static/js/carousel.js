@@ -412,7 +412,6 @@ class MirrormereCarousel {
         this.canvas.appendChild(node);
       }
       this.widgetNodeCache.set(widget.widget_id, node);
-      this.mountWidgetControllers(node);
     }
   }
 
@@ -607,7 +606,9 @@ class MirrormereCarousel {
           if (cached) {
             cached.element = newNode;
           }
-          this.mountWidgetControllers(newNode);
+          if (this.activeWidgets.has(widgetID)) {
+            this.mountWidgetControllers(newNode);
+          }
         }
       }
     } catch (err) {
