@@ -500,4 +500,41 @@ describe('Carousel', () => {
     await act(async () => {});
     expect(screenCalls()).toBe(2);
   });
+
+  it('hides carousel viewport when entering video mode and restores it when returning to widgets mode', async () => {
+    stubApi();
+    const { container } = render(<Carousel />);
+    await act(async () => {});
+
+    const viewport = container.querySelector<HTMLElement>('.carousel-viewport');
+    expect(viewport).not.toBeNull();
+    expect(viewport?.classList.contains('is-hidden')).toBe(false);
+    expect(viewport?.style.display).toBe('');
+
+    act(() => {
+      useDisplayStore.setState({
+        video: {
+          mode: 'video',
+          primary: { id: 'cam', stream_url: 'http://cam/mjpeg', type: 'mjpeg' },
+          pip: null,
+        },
+      });
+    });
+
+    expect(viewport?.classList.contains('is-hidden')).toBe(true);
+    expect(viewport?.style.display).toBe('none');
+
+    act(() => {
+      useDisplayStore.setState({
+        video: {
+          mode: 'widgets',
+          primary: null,
+          pip: null,
+        },
+      });
+    });
+
+    expect(viewport?.classList.contains('is-hidden')).toBe(false);
+    expect(viewport?.style.display).toBe('');
+  });
 });

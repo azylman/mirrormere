@@ -56,16 +56,24 @@ function selectScreen(index: number): void {
     });
 }
 
+export interface CarouselProps {
+  hidden?: boolean;
+}
+
 /**
  * Three screen panes side by side (previous, current, next) in a track that follows
  * the finger. The current pane owns #grid-canvas. React renders panes only when the
  * shown screen or the layout changes; gestures and settles never go through React.
  */
-export function Carousel() {
+export function Carousel({ hidden }: CarouselProps = {}) {
   const total = useDisplayStore((s) => s.screen.totalScreens);
   const layout = useDisplayStore((s) => s.layout);
   const layoutVersion = useDisplayStore((s) => s.layoutVersion);
   const paused = useDisplayStore((s) => s.carousel.paused);
+  const videoMode = useDisplayStore(
+    (s) => (s.video?.mode || (s.video?.primary ? 'video' : 'widgets')) === 'video',
+  );
+  const isHidden = hidden ?? videoMode;
   const [shown, setShown] = useState(() => useDisplayStore.getState().screen.currentScreen);
   // The screen React rendered. The controller starts from this, not from the store: a hydration
   // batch can move the store between this render and the effect that builds the controller.
@@ -122,7 +130,11 @@ export function Carousel() {
 
   return (
     <>
-      <div ref={viewportRef} className="carousel-viewport">
+      <div
+        ref={viewportRef}
+        className={isHidden ? 'carousel-viewport is-hidden' : 'carousel-viewport'}
+        style={isHidden ? { display: 'none' } : undefined}
+      >
         <div ref={trackRef} className="carousel-track">
           {panes.map((pane) => (
             <Screen
@@ -138,7 +150,7 @@ export function Carousel() {
       <ScreenIndicator
         total={total}
         active={shown}
-        hidden={paused}
+        hidden={paused || isHidden}
         onSelect={(index) => controllerRef.current?.goTo(index)}
         onSwipe={(direction) => {
           const controller = controllerRef.current;

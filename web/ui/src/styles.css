@@ -16,6 +16,10 @@
   overflow: hidden;
 }
 
+.carousel-viewport.is-hidden {
+  display: none;
+}
+
 .carousel-track {
   position: absolute;
   inset: 0;
