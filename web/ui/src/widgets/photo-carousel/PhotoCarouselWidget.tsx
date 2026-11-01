@@ -3,6 +3,7 @@ import { useWidget } from '../../store/hooks';
 import type { WidgetComponentProps } from '../registry';
 import { useIsCurrentPane } from '../../carousel/PaneContext';
 import { useDocumentVisible } from '../../lifecycle/visibility';
+import { beginAnimation, endAnimation } from '../../perf/animating';
 
 export interface PhotoItem {
   id?: string;
@@ -29,6 +30,7 @@ export interface ContainerSize {
 }
 
 const CROSSFADE_MS = 850;
+const EMPTY_PHOTOS: PhotoItem[] = [];
 
 export function parsePhotoCarouselData(raw: unknown): PhotoCarouselData {
   if (!raw) return {};
@@ -119,7 +121,7 @@ export const PhotoCarouselWidget = memo(function PhotoCarouselWidget({
   const data = useMemo(() => parsePhotoCarouselData(rawData), [rawData]);
   const hasLoaded = entry?.state !== 'loading' && Array.isArray(data.photos);
 
-  const photos = Array.isArray(data.photos) ? data.photos : [];
+  const photos = Array.isArray(data.photos) ? data.photos : EMPTY_PHOTOS;
   const fit: 'contain' | 'cover' = config?.fit === 'cover' ? 'cover' : 'contain';
   const cycleIntervalSeconds = Math.max(
     5,
@@ -132,8 +134,15 @@ export const PhotoCarouselWidget = memo(function PhotoCarouselWidget({
 
   const [currentIndex, setCurrentIndex] = useState(0);
   const safeIndex = photos.length > 0 ? currentIndex % photos.length : 0;
-  const safeIndexRef = useRef(safeIndex);
-  safeIndexRef.current = safeIndex;
+  const currentIndexRef = useRef(safeIndex);
+  currentIndexRef.current = safeIndex;
+
+  const probeIndexRef = useRef<number | null>(null);
+  const [retryTick, setRetryTick] = useState(0);
+
+  useEffect(() => {
+    probeIndexRef.current = null;
+  }, [photos]);
 
   const photosRef = useRef(photos);
   photosRef.current = photos;
@@ -143,6 +152,22 @@ export const PhotoCarouselWidget = memo(function PhotoCarouselWidget({
 
   const imageSizeRef = useRef(config?.image_size);
   imageSizeRef.current = config?.image_size;
+
+  const isAnimatingRef = useRef(false);
+
+  const startAnimation = useCallback(() => {
+    if (!isAnimatingRef.current) {
+      isAnimatingRef.current = true;
+      beginAnimation();
+    }
+  }, []);
+
+  const stopAnimation = useCallback(() => {
+    if (isAnimatingRef.current) {
+      isAnimatingRef.current = false;
+      endAnimation();
+    }
+  }, []);
 
   // Crossfade transition state
   const [transitionState, setTransitionState] = useState<{
@@ -180,6 +205,7 @@ export const PhotoCarouselWidget = memo(function PhotoCarouselWidget({
 
   const clearPendingTransition = useCallback(() => {
     cycleSeqRef.current += 1;
+    stopAnimation();
     if (transitionTimeoutRef.current) {
       clearTimeout(transitionTimeoutRef.current);
       transitionTimeoutRef.current = null;
@@ -188,17 +214,20 @@ export const PhotoCarouselWidget = memo(function PhotoCarouselWidget({
       transitionStateRef.current = null;
       setTransitionState(null);
     }
-  }, []);
+  }, [stopAnimation]);
 
   const triggerAdvance = useCallback(() => {
     const currentPhotos = photosRef.current;
     if (currentPhotos.length <= 1) return;
 
-    let baseIndex = safeIndexRef.current;
+    const baseIndex = transitionStateRef.current?.active
+      ? transitionStateRef.current.nextIndex
+      : (probeIndexRef.current ?? currentIndexRef.current);
+
     if (transitionStateRef.current?.active) {
-      baseIndex = transitionStateRef.current.nextIndex;
       setCurrentIndex(baseIndex);
-      safeIndexRef.current = baseIndex;
+      currentIndexRef.current = baseIndex;
+      stopAnimation();
       if (transitionTimeoutRef.current) {
         clearTimeout(transitionTimeoutRef.current);
         transitionTimeoutRef.current = null;
@@ -211,8 +240,9 @@ export const PhotoCarouselWidget = memo(function PhotoCarouselWidget({
     const nextPhoto = currentPhotos[nextIndex];
     const nextRawUrl = nextPhoto?.url ?? nextPhoto?.URL;
     if (!nextRawUrl) {
+      probeIndexRef.current = nextIndex;
       clearPendingTransition();
-      setCurrentIndex(nextIndex);
+      setRetryTick((t) => t + 1);
       return;
     }
 
@@ -232,17 +262,42 @@ export const PhotoCarouselWidget = memo(function PhotoCarouselWidget({
     const preload = new Image();
     preload.src = nextFgUrl;
 
-    const decodePromise =
-      typeof preload.decode === 'function'
-        ? preload.decode().catch(() => {})
-        : new Promise<void>((resolve) => {
-            preload.onload = () => resolve();
-            preload.onerror = () => resolve();
-          });
+    const decodePromise = new Promise<boolean>((resolve) => {
+      let settled = false;
+      const onOk = () => {
+        if (!settled) {
+          settled = true;
+          resolve(true);
+        }
+      };
+      const onFail = () => {
+        if (!settled) {
+          settled = true;
+          resolve(false);
+        }
+      };
 
-    decodePromise.then(() => {
+      if (typeof preload.decode === 'function') {
+        preload.decode().then(onOk, onFail);
+        preload.onerror = onFail;
+      } else {
+        preload.onload = onOk;
+        preload.onerror = onFail;
+      }
+    });
+
+    decodePromise.then((ok) => {
       if (cycleSeqRef.current !== seq) return;
 
+      if (!ok) {
+        probeIndexRef.current = nextIndex;
+        clearPendingTransition();
+        setRetryTick((t) => t + 1);
+        return;
+      }
+
+      probeIndexRef.current = null;
+      startAnimation();
       const nextState = { nextIndex, active: true };
       transitionStateRef.current = nextState;
       setTransitionState(nextState);
@@ -250,12 +305,14 @@ export const PhotoCarouselWidget = memo(function PhotoCarouselWidget({
       transitionTimeoutRef.current = setTimeout(() => {
         if (cycleSeqRef.current !== seq) return;
         setCurrentIndex(nextIndex);
+        currentIndexRef.current = nextIndex;
+        stopAnimation();
         transitionStateRef.current = null;
         setTransitionState(null);
         transitionTimeoutRef.current = null;
       }, CROSSFADE_MS);
     });
-  }, [clearPendingTransition]);
+  }, [clearPendingTransition, startAnimation, stopAnimation]);
 
   // Handle tap-to-advance and reset interval
   const handleClick = useCallback(() => {
@@ -283,9 +340,12 @@ export const PhotoCarouselWidget = memo(function PhotoCarouselWidget({
       return;
     }
 
-    if (photos.length > 1) {
-      timerRef.current = setInterval(triggerAdvance, cycleIntervalSeconds * 1000);
+    if (photos.length <= 1) {
+      clearPendingTransition();
+      return;
     }
+
+    timerRef.current = setInterval(triggerAdvance, cycleIntervalSeconds * 1000);
 
     return () => {
       if (timerRef.current) {
@@ -293,7 +353,15 @@ export const PhotoCarouselWidget = memo(function PhotoCarouselWidget({
         timerRef.current = null;
       }
     };
-  }, [isCurrentPane, isDocumentVisible, photos.length, cycleIntervalSeconds, triggerAdvance, clearPendingTransition]);
+  }, [
+    isCurrentPane,
+    isDocumentVisible,
+    photos.length,
+    cycleIntervalSeconds,
+    triggerAdvance,
+    clearPendingTransition,
+    retryTick,
+  ]);
 
   // Cleanup on unmount
   useEffect(() => {
