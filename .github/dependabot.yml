@@ -9,6 +9,11 @@ updates:
       timezone: "America/Los_Angeles"
     groups:
       github-actions:
+        applies-to: version-updates
+        patterns:
+          - "*"
+      github-actions-security:
+        applies-to: security-updates
         patterns:
           - "*"
 
@@ -21,6 +26,11 @@ updates:
       timezone: "America/Los_Angeles"
     groups:
       go-dependencies:
+        applies-to: version-updates
+        patterns:
+          - "*"
+      go-security:
+        applies-to: security-updates
         patterns:
           - "*"
 
@@ -37,9 +47,33 @@ updates:
       timezone: "America/Los_Angeles"
     groups:
       python-dependencies:
+        applies-to: version-updates
+        patterns:
+          - "*"
+      python-security:
+        applies-to: security-updates
         patterns:
           - "*"
     ignore:
       - dependency-name: "openwakeword"
         versions:
           - ">= 0.5.0"
+
+  - package-ecosystem: "npm"
+    directories:
+      - "/sidecars/eink-renderer"
+      - "/web/ui"
+    schedule:
+      interval: "weekly"
+      day: "saturday"
+      time: "06:00"
+      timezone: "America/Los_Angeles"
+    groups:
+      npm-dependencies:
+        applies-to: version-updates
+        patterns:
+          - "*"
+      npm-security:
+        applies-to: security-updates
+        patterns:
+          - "*"
