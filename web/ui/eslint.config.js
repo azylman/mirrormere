@@ -18,6 +18,14 @@ export default tseslint.config(
     rules: {
       'react-hooks/rules-of-hooks': 'error',
       'react-hooks/exhaustive-deps': 'warn',
+      'max-lines': ['error', { max: 1500, skipBlankLines: true, skipComments: true }],
+    },
+  },
+  {
+    files: ['src/**/*.{ts,tsx}'],
+    ignores: ['src/**/*.test.{ts,tsx}'],
+    rules: {
+      'max-lines-per-function': ['error', { max: 450, skipBlankLines: true, skipComments: true }],
     },
   },
   {
