@@ -115,6 +115,11 @@ body[data-grid="2x6"] .grid-pane {
   box-shadow: none;
 }
 
+.weather-hourly-graph text {
+  user-select: none;
+  pointer-events: none;
+}
+
 /* Common inner widget root layout filling WidgetHost's .widget-card container. */
 .widget-tasks,
 .widget-weather,

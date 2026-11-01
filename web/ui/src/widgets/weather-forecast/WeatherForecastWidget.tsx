@@ -1,7 +1,9 @@
 import { memo } from 'react';
 import { useWidget } from '../../store/hooks';
 import type { WidgetComponentProps } from '../registry';
-import { todayPrecipProb, weatherHourlyGraphSvg, weatherIconSvg } from '../format';
+import { todayPrecipProb } from '../format';
+import { WeatherIcon } from './WeatherIcon';
+import { WeatherHourlyGraph } from './WeatherHourlyGraph';
 
 /**
  * Native React widget component for weather forecasts.
@@ -86,11 +88,9 @@ export const WeatherForecastWidget = memo(function WeatherForecastWidget({
       {showHeader && (
         <div className="weather-header">
           <div className="weather-header-left">
-            <div
-              className="weather-icon-badge"
-              title={conditionText}
-              dangerouslySetInnerHTML={{ __html: weatherIconSvg(iconName, 20) }}
-            />
+            <div className="weather-icon-badge" title={conditionText}>
+              <WeatherIcon name={iconName} size={20} />
+            </div>
             <div className="weather-header-titles">
               {locationName ? (
                 <h2 className="weather-location-name">{locationName}</h2>
@@ -124,10 +124,9 @@ export const WeatherForecastWidget = memo(function WeatherForecastWidget({
         <>
           <div className="weather-container weather-hero weather-Hero">
             {hasHourly ? (
-              <div
-                className="weather-hourly-timeline"
-                dangerouslySetInnerHTML={{ __html: weatherHourlyGraphSvg(hourly, id) }}
-              />
+              <div className="weather-hourly-timeline">
+                <WeatherHourlyGraph hourly={hourly} widgetId={id} />
+              </div>
             ) : (
               <div className="weather-empty">
                 <span className="empty-icon">
