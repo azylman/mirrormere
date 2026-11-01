@@ -4,15 +4,15 @@
   inset: 0;
 }
 
-#grid-canvas {
-  width: 100%;
-  height: 100%;
-}
 
-/* Carousel. Panes sit at -100%, 0 and +100% of the track; the track carries the finger offset. */
+/* Carousel. The viewport takes the space legacy .grid-canvas took (a flex item of the
+   #mirrormere-app column, so the indicator below it lands where legacy puts it). Panes
+   sit at -100%, 0 and +100% of the track; the track carries the finger offset. */
 .carousel-viewport {
-  position: absolute;
-  inset: 0;
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
   overflow: hidden;
 }
 
@@ -22,25 +22,19 @@
   touch-action: pan-y;
 }
 
-/* Same geometry as the legacy .grid-canvas (hud.css), which the current pane no longer carries. */
+/* Same grid as the legacy .grid-canvas (hud.css). Every pane has this geometry. */
 .grid-pane {
   position: absolute;
   top: 0;
   width: 100%;
+  height: 100%;
   display: grid;
   grid-template-columns: repeat(6, 1fr);
   grid-template-rows: repeat(2, 1fr);
   gap: var(--mm-grid-gap);
-  height: calc(100% - var(--mm-header-height) - var(--mm-grid-gap) - var(--mm-indicator-space));
 }
 
 body[data-grid="2x6"] .grid-pane {
   grid-template-columns: repeat(2, 1fr);
   grid-template-rows: repeat(6, 1fr);
-}
-
-#mirrormere-app:has(.screen-indicator[style*="display: none"]) .grid-pane,
-#mirrormere-app:has(.screen-indicator.paused) .grid-pane,
-#mirrormere-app:has(.screen-indicator[hidden]) .grid-pane {
-  height: calc(100% - var(--mm-header-height) - var(--mm-grid-gap));
 }
