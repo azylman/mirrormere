@@ -386,6 +386,10 @@ run_python_tests() {
         PYTHONPATH="." python3 -m unittest discover -s client/ear/tests -p "test_*.py"
         echo "   [python test] Running remote (bluetooth/chromecast) client test suite..."
         PYTHONPATH="client/remote" python3 -m unittest discover -s client/remote/tests -p "test_*.py"
+        if python3 -c "import pytest" >/dev/null 2>&1 && [ -d "client/ember/tests" ]; then
+            echo "   [python test] Running EMBER Android kiosk test suite..."
+            PYTHONPATH="client/ember" python3 -m pytest client/ember/tests/test_ember.py -q
+        fi
         echo "   [python test] Running iCal bridge test suite..."
         PYTHONPATH="deploy/ical-bridge" python3 -m unittest discover -s deploy/ical-bridge -p "test_*.py"
     fi
@@ -475,6 +479,13 @@ if [ "$MODE" = "staged" ]; then
     if echo "$STAGED_FILES" | grep -q -E '^client/remote/' && has_cmd python3; then
         echo "   [python test] Running remote (bluetooth/chromecast) client test suite..."
         PYTHONPATH="client/remote" python3 -m unittest discover -s client/remote/tests -p "test_*.py"
+    fi
+
+    if echo "$STAGED_FILES" | grep -q -E '^client/ember/' && has_cmd python3; then
+        if python3 -c "import pytest" >/dev/null 2>&1 && [ -d "client/ember/tests" ]; then
+            echo "   [python test] Running EMBER Android kiosk test suite..."
+            PYTHONPATH="client/ember" python3 -m pytest client/ember/tests/test_ember.py -q
+        fi
     fi
 
     if echo "$STAGED_FILES" | grep -q -E '^deploy/ical-bridge/' && has_cmd python3; then
