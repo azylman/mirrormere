@@ -7,19 +7,31 @@ import { ScreenIndicator } from './ScreenIndicator';
 
 const NO_PLACEMENTS: readonly WidgetPlacement[] = [];
 
-interface Pane {
+export interface Pane {
   index: number;
-  offset: -1 | 0 | 1;
+  offset: -1 | 0 | 1 | null;
 }
 
-/** The panes mounted around `shown`: previous, current and next. Only one screen when there is no swipe. */
+/** The panes mounted around `shown`: previous, current, next, and parked panes (when total >= 3). */
 export function panesFor(shown: number, total: number): Pane[] {
   if (total <= 1) return [{ index: shown, offset: 0 }];
-  return [
-    { index: neighbourOf(shown, total, 'prev'), offset: -1 },
-    { index: shown, offset: 0 },
-    { index: neighbourOf(shown, total, 'next'), offset: 1 },
-  ];
+  if (total === 2) {
+    return [
+      { index: neighbourOf(shown, total, 'prev'), offset: -1 },
+      { index: shown, offset: 0 },
+      { index: neighbourOf(shown, total, 'next'), offset: 1 },
+    ];
+  }
+  const prev = neighbourOf(shown, total, 'prev');
+  const next = neighbourOf(shown, total, 'next');
+  const panes: Pane[] = [];
+  for (let i = 0; i < total; i++) {
+    panes.push({
+      index: i,
+      offset: i === shown ? 0 : i === prev ? -1 : i === next ? 1 : null,
+    });
+  }
+  return panes;
 }
 
 /**
@@ -106,6 +118,7 @@ export function Carousel({ hidden }: CarouselProps = {}) {
     // attached above only hears later changes.
     const storeScreen = useDisplayStore.getState().screen.currentScreen;
     if (storeScreen !== shownRef.current) controller.requestShow(storeScreen);
+
     return () => {
       controller.dispose();
       controllerRef.current = null;

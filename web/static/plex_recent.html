@@ -47,6 +47,7 @@
     gap: 5px;
     overflow-x: auto;
     scrollbar-width: none;
+    touch-action: pan-x;
   }
   .tabs::-webkit-scrollbar { display: none; }
   .tab-btn {
@@ -60,6 +61,7 @@
     border-radius: 999px;
     cursor: pointer;
     white-space: nowrap;
+    touch-action: manipulation;
   }
   .tab-btn.active {
     background: var(--pill-active);
@@ -77,6 +79,7 @@
     cursor: pointer;
     white-space: nowrap;
     flex-shrink: 0;
+    touch-action: manipulation;
   }
   .poster-grid {
     display: grid;
@@ -85,6 +88,7 @@
     overflow-y: auto;
     padding-right: 4px;
     flex: 1;
+    touch-action: pan-y;
   }
   .poster-grid::-webkit-scrollbar { width: 5px; }
   .poster-grid::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.18); border-radius: 99px; }
@@ -97,6 +101,7 @@
     border: 1px solid rgba(255,255,255,0.08);
     cursor: pointer;
     transition: transform 0.12s ease;
+    touch-action: manipulation;
   }
   .item-card:active { transform: scale(0.96); }
   .poster-wrap {
@@ -198,6 +203,7 @@
     cursor: pointer;
     background: #6366f1;
     color: #fff;
+    touch-action: manipulation;
   }
   .seerr-close {
     background: var(--pill-bg);
@@ -214,6 +220,7 @@
     cursor: pointer;
     background: #6366f1;
     color: #fff;
+    touch-action: manipulation;
   }
   .req-action-btn[disabled] {
     background: rgba(16, 185, 129, 0.22);
@@ -268,6 +275,7 @@
     overflow-y: auto;
     flex: 1;
     padding-right: 4px;
+    touch-action: pan-y;
   }
   .detail-actions {
     display: flex;
@@ -288,6 +296,7 @@
     display: inline-flex;
     align-items: center;
     gap: 6px;
+    touch-action: manipulation;
   }
   .tv-play-btn[disabled] {
     background: rgba(16, 185, 129, 0.25);
@@ -527,6 +536,10 @@
   // Forward horizontal screen swipes to parent Hearth carousel
   let tsX = 0, tsY = 0, tsT = 0;
   document.addEventListener('touchstart', (e) => {
+    if (e.target && e.target.closest && e.target.closest('.tabs, input, .overlay-modal.open')) {
+      tsT = 0;
+      return;
+    }
     if (e.touches && e.touches.length === 1) {
       tsX = e.touches[0].clientX;
       tsY = e.touches[0].clientY;
@@ -534,11 +547,12 @@
     }
   }, {passive: true});
   document.addEventListener('touchend', (e) => {
-    if (!e.changedTouches || e.changedTouches.length !== 1) return;
+    if (!tsT || !e.changedTouches || e.changedTouches.length !== 1) return;
     const dx = e.changedTouches[0].clientX - tsX;
     const dy = e.changedTouches[0].clientY - tsY;
     const dt = Date.now() - tsT;
-    if (dt < 800 && Math.abs(dx) > 70 && Math.abs(dx) > Math.abs(dy) * 1.6) {
+    tsT = 0;
+    if (dt < 800 && Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5) {
       window.parent.postMessage({type: 'hearth-swipe', direction: dx < 0 ? 'next' : 'prev'}, '*');
     }
   }, {passive: true});

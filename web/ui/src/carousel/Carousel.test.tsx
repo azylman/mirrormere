@@ -1,5 +1,5 @@
 import { act, cleanup, render } from '@testing-library/react';
-import { Profiler, useLayoutEffect } from 'react';
+import { Profiler, useContext, useLayoutEffect } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useDisplayStore } from '../store';
 import type { ScreenLayout, ScreensResponse } from '../sse/types';
@@ -7,6 +7,29 @@ import captureSource from '../../../../sidecars/eink-renderer/src/capture.js?raw
 import stylesSource from '../styles.css?raw';
 import { Carousel, panesFor, paneKey } from './Carousel';
 import { SETTLE_FALLBACK_MS } from './track';
+import { PaneContext } from './PaneContext';
+import { scheduleIdleStep } from './Screen';
+import { WIDGET_COMPONENTS } from '../widgets/registry';
+
+/**
+ * jsdom has no requestIdleCallback, so scheduleIdleStep uses its 16 ms timer there. Tests that
+ * wait for neighbour mounts fake only the timer functions and step the clock, with no real sleeps.
+ */
+function fakeIdleClock(): void {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+}
+
+/**
+ * Steps the fake clock until the idle steps are done. act() applies state only when its scope
+ * ends, so each pass gives every neighbour pane one step and lets it schedule the next.
+ */
+async function runIdleSteps(): Promise<void> {
+  for (let pass = 0; pass < 20; pass++) {
+    await act(async () => {
+      vi.advanceTimersByTime(16);
+    });
+  }
+}
 
 const initial = useDisplayStore.getState();
 
@@ -57,7 +80,7 @@ function stubApi(screenBody: ScreensResponse = screens, select: SelectHandler = 
       return new Response('<div class="widget-card"><span class="legacy-label">legacy</span></div>', { status: 200 });
     }
     const id = decodeURIComponent(url.replace('api/widgets/', ''));
-    const type = layout.flatMap((screen) => screen.widgets).find((w) => w.widget_id === id)?.type ?? 'clock';
+    const type = screenBody.screens.flatMap((screen) => screen.widgets).find((w) => w.widget_id === id)?.type ?? 'clock';
     return new Response(
       JSON.stringify({
         widget_id: id,
@@ -83,11 +106,11 @@ function gridCanvas(): HTMLElement | null {
 }
 
 describe('panesFor and paneKey', () => {
-  it('mounts previous, current and next, wrapping', () => {
+  it('mounts previous, current and next in stable 0..total-1 order, wrapping', () => {
     expect(panesFor(0, 3)).toEqual([
-      { index: 2, offset: -1 },
       { index: 0, offset: 0 },
       { index: 1, offset: 1 },
+      { index: 2, offset: -1 },
     ]);
   });
 
@@ -103,6 +126,22 @@ describe('panesFor and paneKey', () => {
 
   it('keys by screen index otherwise, so a neighbour keeps its DOM when it becomes current', () => {
     expect(panesFor(1, 3).map((pane) => paneKey(pane, 3))).toEqual(['0', '1', '2']);
+  });
+
+  it('mounts all screens with non-neighbors parked (offset: null) in stable 0..total-1 order when total >= 4', () => {
+    expect(panesFor(0, 4)).toEqual([
+      { index: 0, offset: 0 },
+      { index: 1, offset: 1 },
+      { index: 2, offset: null },
+      { index: 3, offset: -1 },
+    ]);
+    expect(panesFor(2, 5)).toEqual([
+      { index: 0, offset: null },
+      { index: 1, offset: -1 },
+      { index: 2, offset: 0 },
+      { index: 3, offset: 1 },
+      { index: 4, offset: null },
+    ]);
   });
 });
 
@@ -122,9 +161,11 @@ describe('Carousel', () => {
   });
 
   it('loads the layout on mount and mounts every widget of the three panes', async () => {
+    fakeIdleClock();
     const fetchMock = stubApi();
     render(<Carousel />);
     await act(async () => {});
+    await runIdleSteps();
 
     expect(fetchMock).toHaveBeenCalledWith('api/screens', expect.anything());
     const hydrated = fetchMock.mock.calls
@@ -136,9 +177,11 @@ describe('Carousel', () => {
   });
 
   it('puts #grid-canvas and the hydration attributes on the current pane only', async () => {
+    fakeIdleClock();
     stubApi();
     render(<Carousel />);
     await act(async () => {});
+    await runIdleSteps();
 
     expect(document.querySelectorAll('#grid-canvas')).toHaveLength(1);
     const canvas = gridCanvas();
@@ -155,9 +198,11 @@ describe('Carousel', () => {
   });
 
   it('passes the e-ink settle predicate with neighbour widgets mounted', async () => {
+    fakeIdleClock();
     stubApi();
     render(<Carousel />);
     await act(async () => {});
+    await runIdleSteps();
 
     expect(document.readyState).toBe('complete');
     expect(settlePredicate()).toBe(true);
@@ -470,6 +515,104 @@ describe('Carousel', () => {
     });
   });
 
+  describe('handling hearth-swipe postMessage events', () => {
+    it('advances to the next screen on hearth-swipe next message', async () => {
+      vi.useFakeTimers();
+      stubApi();
+      render(<Carousel />);
+      await act(async () => {});
+
+      act(() => {
+        window.dispatchEvent(
+          new MessageEvent('message', {
+            data: { type: 'hearth-swipe', direction: 'next' },
+          }),
+        );
+      });
+      await act(async () => {
+        vi.advanceTimersByTime(SETTLE_FALLBACK_MS);
+      });
+
+      expect(useDisplayStore.getState().screen.currentScreen).toBe(2);
+    });
+
+    it('advances to the previous screen on hearth-swipe prev message', async () => {
+      vi.useFakeTimers();
+      stubApi();
+      render(<Carousel />);
+      await act(async () => {});
+
+      act(() => {
+        window.dispatchEvent(
+          new MessageEvent('message', {
+            data: { type: 'hearth-swipe', direction: 'prev' },
+          }),
+        );
+      });
+      await act(async () => {
+        vi.advanceTimersByTime(SETTLE_FALLBACK_MS);
+      });
+
+      expect(useDisplayStore.getState().screen.currentScreen).toBe(0);
+    });
+
+    it('ignores unknown message types or missing direction', async () => {
+      vi.useFakeTimers();
+      stubApi();
+      render(<Carousel />);
+      await act(async () => {});
+
+      act(() => {
+        window.dispatchEvent(
+          new MessageEvent('message', {
+            data: { type: 'other-event', direction: 'next' },
+          }),
+        );
+        window.dispatchEvent(
+          new MessageEvent('message', {
+            data: { type: 'hearth-swipe', direction: 'invalid' },
+          }),
+        );
+        window.dispatchEvent(
+          new MessageEvent('message', {
+            data: 'string message',
+          }),
+        );
+      });
+      await act(async () => {
+        vi.advanceTimersByTime(SETTLE_FALLBACK_MS);
+      });
+
+      expect(useDisplayStore.getState().screen.currentScreen).toBe(1);
+    });
+
+    it('does not advance when totalScreens is 1', async () => {
+      vi.useFakeTimers();
+      const oneScreen: ScreensResponse = {
+        current_screen: 0,
+        interval_seconds: 30,
+        screens: [{ index: 0, widgets: [{ widget_id: 'a-0', type: 'clock', origin: [0, 0], dimensions: [1, 1] }] }],
+      };
+      stubApi(oneScreen);
+      useDisplayStore.setState({ screen: { ...initial.screen, currentScreen: 0, totalScreens: 1 } });
+      render(<Carousel />);
+      await act(async () => {});
+
+      act(() => {
+        window.dispatchEvent(
+          new MessageEvent('message', {
+            data: { type: 'hearth-swipe', direction: 'next' },
+          }),
+        );
+      });
+      await act(async () => {
+        vi.advanceTimersByTime(SETTLE_FALLBACK_MS);
+      });
+
+      expect(useDisplayStore.getState().screen.currentScreen).toBe(0);
+    });
+  });
+
   it('shows screen 0 when the layout shrinks under the shown screen', async () => {
     const screenOf = (index: number) => ({
       index,
@@ -541,5 +684,282 @@ describe('Carousel', () => {
 
     expect(viewport?.classList.contains('is-hidden')).toBe(false);
     expect(viewport?.style.display).toBe('');
+  });
+
+  describe('scheduleIdleStep', () => {
+    it('runs the step in a later task using 16ms fallback timer', () => {
+      vi.useFakeTimers();
+      const step = vi.fn();
+      scheduleIdleStep(step);
+      expect(step).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(16);
+      expect(step).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not run a cancelled step', () => {
+      vi.useFakeTimers();
+      const step = vi.fn();
+      const cancel = scheduleIdleStep(step);
+      cancel();
+      vi.advanceTimersByTime(100);
+      expect(step).not.toHaveBeenCalled();
+    });
+
+    it('uses requestIdleCallback with 300ms timeout when available', () => {
+      const ric = vi.fn().mockReturnValue(42);
+      const cic = vi.fn();
+      vi.stubGlobal('requestIdleCallback', ric);
+      vi.stubGlobal('cancelIdleCallback', cic);
+      const step = vi.fn();
+      const cancel = scheduleIdleStep(step);
+      expect(ric).toHaveBeenCalledWith(expect.any(Function), { timeout: 300 });
+      cancel();
+      expect(cic).toHaveBeenCalledWith(42);
+    });
+
+    it('does not run step if cancelled before requestIdleCallback fires', () => {
+      let idleCb: (() => void) | null = null;
+      vi.stubGlobal('requestIdleCallback', (cb: () => void) => {
+        idleCb = cb;
+        return 1;
+      });
+      vi.stubGlobal('cancelIdleCallback', vi.fn());
+      const step = vi.fn();
+      const cancel = scheduleIdleStep(step);
+      cancel();
+      if (idleCb) (idleCb as () => void)();
+      expect(step).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('4-screen layout guardrails', () => {
+    const screenOf = (index: number, count = 2) => ({
+      index,
+      widgets: Array.from({ length: count }, (_, i) => ({
+        widget_id: `s${index}-w${i}`,
+        type: 'clock',
+        origin: [i * 2, 0] as [number, number],
+        dimensions: [2, 1] as [number, number],
+      })),
+    });
+
+    const fourScreens: ScreensResponse = {
+      current_screen: 0,
+      interval_seconds: 30,
+      screens: [screenOf(0, 2), screenOf(1, 2), screenOf(2, 2), screenOf(3, 2)],
+    };
+
+    it('renders exactly one #grid-canvas in the DOM', async () => {
+      fakeIdleClock();
+      stubApi(fourScreens);
+      useDisplayStore.setState({ screen: { ...initial.screen, currentScreen: 0, totalScreens: 4 } });
+      render(<Carousel />);
+      await act(async () => {});
+      await runIdleSteps();
+
+      const canvases = document.querySelectorAll('#grid-canvas');
+      expect(canvases).toHaveLength(1);
+      const canvas = gridCanvas();
+      expect(canvas).not.toBeNull();
+      expect(canvas?.querySelectorAll('[data-widget-id^="s0-"]')).toHaveLength(2);
+    });
+
+    it('renders parked panes with aria-hidden="true", visibility: hidden, and pointer-events: none', async () => {
+      fakeIdleClock();
+      stubApi(fourScreens);
+      useDisplayStore.setState({ screen: { ...initial.screen, currentScreen: 0, totalScreens: 4 } });
+      render(<Carousel />);
+      await act(async () => {});
+      await runIdleSteps();
+
+      const panes = Array.from(document.querySelectorAll<HTMLElement>('.grid-pane'));
+      expect(panes).toHaveLength(4);
+
+      // In panesFor(0, 4), screen 2 has offset === null (parked)
+      const parkedPanes = panes.filter((pane) => pane.getAttribute('aria-hidden') === 'true');
+      expect(parkedPanes).toHaveLength(1);
+
+      const parked = parkedPanes[0];
+      expect(parked.getAttribute('aria-hidden')).toBe('true');
+      expect(parked.style.visibility).toBe('hidden');
+      expect(parked.style.pointerEvents).toBe('none');
+      expect(parked.style.left).toBe('200%');
+
+      // Active panes (current and neighbors) do not have aria-hidden="true" or hidden visibility
+      const activePanes = panes.filter((pane) => pane !== parked);
+      expect(activePanes).toHaveLength(3);
+      for (const active of activePanes) {
+        expect(active.getAttribute('aria-hidden')).toBeNull();
+        expect(active.style.visibility).toBe('');
+        expect(active.style.pointerEvents).toBe('');
+      }
+    });
+
+    it('provides isCurrentPane === false via PaneContext to a widget rendered inside a parked pane', async () => {
+      fakeIdleClock();
+      let capturedIsCurrent: boolean | null = null;
+      let capturedPaneIndex: number | null = null;
+
+      const ProbeWidget = () => {
+        const { isCurrentPane, paneIndex } = useContext(PaneContext);
+        capturedIsCurrent = isCurrentPane;
+        capturedPaneIndex = paneIndex;
+        return <div data-testid="parked-probe" data-is-current={String(isCurrentPane)} />;
+      };
+
+      (WIDGET_COMPONENTS as Record<string, unknown>)['pane-probe'] = ProbeWidget;
+
+      const screensWithProbe: ScreensResponse = {
+        current_screen: 0,
+        interval_seconds: 30,
+        screens: [
+          screenOf(0, 1),
+          screenOf(1, 1),
+          {
+            index: 2, // Parked pane
+            widgets: [{ widget_id: 'probe-w', type: 'pane-probe', origin: [0, 0], dimensions: [1, 1] }],
+          },
+          screenOf(3, 1),
+        ],
+      };
+
+      try {
+        stubApi(screensWithProbe);
+        useDisplayStore.setState({ screen: { ...initial.screen, currentScreen: 0, totalScreens: 4 } });
+        render(<Carousel />);
+        await act(async () => {});
+        await runIdleSteps();
+
+        const probeEl = document.querySelector('[data-testid="parked-probe"]');
+        expect(probeEl).not.toBeNull();
+        expect(probeEl?.getAttribute('data-is-current')).toBe('false');
+        expect(capturedIsCurrent).toBe(false);
+        expect(capturedPaneIndex).toBe(2);
+      } finally {
+        delete (WIDGET_COMPONENTS as Record<string, unknown>)['pane-probe'];
+      }
+    });
+
+    it('hydrates all neighbor pane widgets before any parked pane widget when stepping a fake clock', async () => {
+      fakeIdleClock();
+      stubApi(fourScreens);
+      useDisplayStore.setState({ screen: { ...initial.screen, currentScreen: 0, totalScreens: 4 } });
+      render(<Carousel />);
+      await act(async () => {});
+
+      const getNeighborWidgetsCount = () => {
+        const neighborPanes = Array.from(document.querySelectorAll<HTMLElement>('.grid-pane')).filter(
+          (pane) => pane.id !== 'grid-canvas' && pane.getAttribute('aria-hidden') !== 'true',
+        );
+        return neighborPanes.flatMap((p) => Array.from(p.querySelectorAll('[data-widget-id]'))).length;
+      };
+
+      const getParkedWidgetsCount = () => {
+        const parkedPanes = Array.from(document.querySelectorAll<HTMLElement>('.grid-pane[aria-hidden="true"]'));
+        return parkedPanes.flatMap((p) => Array.from(p.querySelectorAll('[data-widget-id]'))).length;
+      };
+
+      // Initially, current pane has its 2 widgets, but neighbor and parked panes have 0 widgets hydrated
+      expect(getNeighborWidgetsCount()).toBe(0);
+      expect(getParkedWidgetsCount()).toBe(0);
+
+      // Step fake clock one idle tick (16ms) at a time:
+      // The 4 neighbor widgets (2 in screen 1, 2 in screen 3) must hydrate one by one,
+      // while parked pane widgets remain at 0 throughout.
+      for (let i = 1; i <= 4; i++) {
+        await act(async () => {
+          vi.advanceTimersByTime(16);
+        });
+        expect(getNeighborWidgetsCount()).toBe(i);
+        expect(getParkedWidgetsCount()).toBe(0);
+      }
+
+      // All 4 neighbor widgets are hydrated; parked pane still has 0 widgets
+      expect(getNeighborWidgetsCount()).toBe(4);
+      expect(getParkedWidgetsCount()).toBe(0);
+
+      // The next idle step now hydrates the first parked widget
+      await act(async () => {
+        vi.advanceTimersByTime(16);
+      });
+      expect(getNeighborWidgetsCount()).toBe(4);
+      expect(getParkedWidgetsCount()).toBe(1);
+
+      // And the following step hydrates the second parked widget
+      await act(async () => {
+        vi.advanceTimersByTime(16);
+      });
+      expect(getNeighborWidgetsCount()).toBe(4);
+      expect(getParkedWidgetsCount()).toBe(2);
+    });
+
+    it('preserves the exact same .grid-pane DOM element reference when a parked pane becomes a neighbor on swipe', async () => {
+      fakeIdleClock();
+      stubApi(fourScreens);
+      useDisplayStore.setState({ screen: { ...initial.screen, currentScreen: 0, totalScreens: 4 } });
+      render(<Carousel />);
+      await act(async () => {});
+      await runIdleSteps();
+
+      // At screen 0, screen 2 is parked (aria-hidden="true", left: 200%)
+      const initialParkedPane = document.querySelector<HTMLElement>('.grid-pane[aria-hidden="true"]');
+      expect(initialParkedPane).not.toBeNull();
+      expect(initialParkedPane?.style.left).toBe('200%');
+
+      // Swipe to next screen (screen 1). Now screen 2 becomes the next neighbor (offset 1, left: 100%)
+      act(() => {
+        window.dispatchEvent(
+          new MessageEvent('message', {
+            data: { type: 'hearth-swipe', direction: 'next' },
+          }),
+        );
+      });
+      await act(async () => {
+        vi.advanceTimersByTime(SETTLE_FALLBACK_MS);
+      });
+
+      expect(useDisplayStore.getState().screen.currentScreen).toBe(1);
+
+      // Screen 2 is now a neighbor at left: 100%
+      const newNeighborPane = document.querySelector<HTMLElement>('.grid-pane[style*="left: 100%"]');
+      expect(newNeighborPane).not.toBeNull();
+      expect(newNeighborPane?.getAttribute('aria-hidden')).toBeNull();
+
+      // Crucial assertion: the DOM element reference must be identical
+      expect(newNeighborPane).toBe(initialParkedPane);
+    });
+
+    it('preserves the exact same DOM node references in the exact same child order across swipes with zero DOM reordering', async () => {
+      fakeIdleClock();
+      stubApi(fourScreens);
+      useDisplayStore.setState({ screen: { ...initial.screen, currentScreen: 0, totalScreens: 4 } });
+      render(<Carousel />);
+      await act(async () => {});
+      await runIdleSteps();
+
+      const initialPanes = Array.from(document.querySelectorAll<HTMLElement>('.grid-pane'));
+      expect(initialPanes).toHaveLength(4);
+
+      // Swipe sequentially across all screens
+      for (let nextScreen = 1; nextScreen <= 3; nextScreen++) {
+        act(() => {
+          window.dispatchEvent(
+            new MessageEvent('message', {
+              data: { type: 'hearth-swipe', direction: 'next' },
+            }),
+          );
+        });
+        await act(async () => {
+          vi.advanceTimersByTime(SETTLE_FALLBACK_MS);
+        });
+        expect(useDisplayStore.getState().screen.currentScreen).toBe(nextScreen);
+
+        const currentPanes = Array.from(document.querySelectorAll<HTMLElement>('.grid-pane'));
+        expect(currentPanes).toHaveLength(4);
+        currentPanes.forEach((pane, idx) => {
+          expect(pane).toBe(initialPanes[idx]);
+        });
+      }
+    });
   });
 });

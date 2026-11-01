@@ -81,6 +81,32 @@ async function settle() {
   });
 }
 
+/** Lets neighbour panes finish their idle-slot widget mounts (#803; 16 ms timer fallback in jsdom). */
+/**
+ * jsdom has no requestIdleCallback, so scheduleIdleStep uses its 16 ms timer there. Tests that
+ * wait for neighbour mounts fake only the timer functions and step the clock, with no real sleeps.
+ */
+function fakeIdleClock(): void {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+}
+
+/**
+ * Steps the fake clock until the idle steps are done. act() applies state only when its scope
+ * ends, so each pass gives every neighbour pane one step and lets it schedule the next.
+ */
+async function runIdleSteps(): Promise<void> {
+  for (let pass = 0; pass < 20; pass++) {
+    await act(async () => {
+      vi.advanceTimersByTime(16);
+    });
+  }
+}
+
+async function mountNeighbours() {
+  await runIdleSteps();
+  await settle();
+}
+
 function reload(type: string) {
   act(() => {
     useDisplayStore.getState().applyEvents([{ type: 'widget.reload', data: { type } }]);
@@ -89,12 +115,14 @@ function reload(type: string) {
 
 describe('WidgetHost widget.reload', () => {
   beforeEach(() => {
+    fakeIdleClock();
     useDisplayStore.setState(initial, true);
     useDisplayStore.setState({ screen: { ...initial.screen, currentScreen: 1, totalScreens: 3 } });
   });
 
   afterEach(() => {
     cleanup();
+    vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 
@@ -102,6 +130,7 @@ describe('WidgetHost widget.reload', () => {
     const fetchMock = stubApi();
     render(<Carousel />);
     await settle();
+    await mountNeighbours();
     const mounted = Object.fromEntries(CLOCK_IDS.map((id) => [id, hydrations(fetchMock, id)]));
     expect(mounted).toEqual({ 'a-0': 1, shared: 1, 'b-2': 1, 'c-2': 1 });
     const weatherBefore = hydrations(fetchMock, 'b-1');
@@ -117,6 +146,7 @@ describe('WidgetHost widget.reload', () => {
     const fetchMock = stubApi();
     render(<Carousel />);
     await settle();
+    await mountNeighbours();
 
     act(() => useDisplayStore.getState().pause());
     reload('clock');
@@ -135,6 +165,7 @@ describe('WidgetHost widget.reload', () => {
     const fetchMock = stubApi();
     render(<Carousel />);
     await settle();
+    await mountNeighbours();
     for (const id of CLOCK_IDS) expect(hydrations(fetchMock, id)).toBe(1);
   });
 });

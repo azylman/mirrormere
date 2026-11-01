@@ -67,6 +67,7 @@ export class CarouselController {
     viewport.addEventListener('pointermove', this.onPointerMove);
     viewport.addEventListener('pointerup', this.onPointerUp);
     viewport.addEventListener('pointercancel', this.onPointerCancel);
+    window.addEventListener('message', this.onMessage);
     this.detachStore = useDisplayStore.subscribe((state, prev) => {
       if (state.screen.totalScreens !== prev.screen.totalScreens) {
         this.layoutChanged(state.screen.totalScreens);
@@ -85,6 +86,7 @@ export class CarouselController {
     viewport.removeEventListener('pointermove', this.onPointerMove);
     viewport.removeEventListener('pointerup', this.onPointerUp);
     viewport.removeEventListener('pointercancel', this.onPointerCancel);
+    window.removeEventListener('message', this.onMessage);
     this.releaseWindowListeners();
     this.detachStore?.();
     this.detachStore = null;
@@ -258,6 +260,17 @@ export class CarouselController {
       this.animator.settle('rest', () => this.afterRest());
     } else {
       this.drainQueue();
+    }
+  };
+
+  private readonly onMessage = (event: MessageEvent): void => {
+    if (
+      event.data &&
+      typeof event.data === 'object' &&
+      event.data.type === 'hearth-swipe' &&
+      (event.data.direction === 'next' || event.data.direction === 'prev')
+    ) {
+      this.goTo(neighbourOf(this.shown, this.total(), event.data.direction));
     }
   };
 
