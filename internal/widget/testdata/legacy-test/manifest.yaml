@@ -1,7 +1,7 @@
 name: legacy-test
 version: "1.0.0"
 description: Test fixture for a custom widget package with only a legacy HTML template.
-provider: legacy-test
+provider: spacer
 
 capabilities:
   - ambient-static
