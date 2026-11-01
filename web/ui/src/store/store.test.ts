@@ -316,6 +316,42 @@ describe('display store', () => {
       expect(useDisplayStore.getState().widgets.cal.data).toEqual({ events: 2 });
     });
 
+    it('starts a fresh fetch when a calendar-grid widget.update lands while a hydrate is in flight', async () => {
+      useDisplayStore.setState({
+        widgets: {
+          cal: {
+            meta: { type: 'calendar-grid', config: {}, assets_base: 'a/', origin: [0, 0], dimensions: [1, 1] },
+            state: 'healthy',
+            data: { events: 1 },
+            viewModel: { week: 'old' },
+            timestamp: 't0',
+          },
+        },
+      });
+      const resolvers: Array<(r: Response) => void> = [];
+      const fetchMock = vi.fn(() => new Promise<Response>((resolve) => resolvers.push(resolve)));
+      vi.stubGlobal('fetch', fetchMock);
+      const calendarDetail = (viewModel: Record<string, unknown>) =>
+        new Response(
+          JSON.stringify(detail({ widget_id: 'cal', type: 'calendar-grid', data: { events: 2 }, view_model: viewModel })),
+          { status: 200 },
+        );
+
+      // The first hydrate is held in flight; the stream update must not reuse it.
+      const pending = useDisplayStore.getState().hydrateWidget('cal');
+      useDisplayStore.getState().applyEvents([widgetUpdate('cal', { events: 2 })]);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(fetchMock).toHaveBeenLastCalledWith('api/widgets/cal', expect.anything());
+
+      // The newer fetch resolves first, then the older one lands and must be dropped.
+      resolvers[1](calendarDetail({ week: 'second' }));
+      await vi.waitFor(() => expect(useDisplayStore.getState().widgets.cal.viewModel).toEqual({ week: 'second' }));
+      resolvers[0](calendarDetail({ week: 'first' }));
+      await pending;
+
+      expect(useDisplayStore.getState().widgets.cal.viewModel).toEqual({ week: 'second' });
+    });
+
     it('does not refetch widget types outside REFETCH_ON_UPDATE', async () => {
       useDisplayStore.setState({
         widgets: {

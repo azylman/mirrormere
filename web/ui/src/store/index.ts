@@ -24,8 +24,11 @@ export type {
 export interface DisplayActions {
   /** Apply a batch of server events in one store update. Refetches widgets in REFETCH_ON_UPDATE. */
   applyEvents: (events: BufferedEvent[]) => void;
-  /** Fill meta, state, data, viewModel and timestamp from GET api/widgets/{id}. */
-  hydrateWidget: (id: string) => Promise<void>;
+  /**
+   * Fill meta, state, data, viewModel and timestamp from GET api/widgets/{id}.
+   * `fresh` skips sharing an in-flight fetch: a stream update that lands mid-fetch needs its own.
+   */
+  hydrateWidget: (id: string, opts?: { fresh?: boolean }) => Promise<void>;
   setConnection: (payload: ConnectionPayload) => void;
   setDocumentVisible: (visible: boolean) => void;
   /** Fetch GET api/screens into `layout`. Only the latest request is applied. */
@@ -238,18 +241,18 @@ export const useDisplayStore = create<DisplayStore>()((set, get) => ({
     const { patch, refetch } = reduceEvents(get(), events);
     if (Object.keys(patch).length > 0) set(patch);
     for (const id of refetch) {
-      get().hydrateWidget(id).catch((err: unknown) => {
+      get().hydrateWidget(id, { fresh: true }).catch((err: unknown) => {
         console.warn(`[mirrormere] widget ${id} refetch failed:`, err);
       });
     }
   },
 
-  hydrateWidget(id) {
+  hydrateWidget(id, opts) {
     // Two mounts of the same widget (a neighbour pane with two screens) share one fetch,
-    // unless a widget reload landed in between: that one needs a fresh fetch.
+    // unless a widget reload landed in between or the caller asked for a fresh one.
     const reloadsNow = get().widgetReloads;
     const existing = inflight.get(id);
-    if (existing && existing.reloads === reloadsNow) return existing.promise;
+    if (!opts?.fresh && existing && existing.reloads === reloadsNow) return existing.promise;
 
     const run = async (): Promise<void> => {
       const seq = (hydrateSeq.get(id) ?? 0) + 1;
