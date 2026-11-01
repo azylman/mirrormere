@@ -198,6 +198,7 @@ jobs:
           if [ "${{ needs.changes.outputs.ember }}" = "true" ] || [ "${{ needs.changes.outputs.ci_scripts }}" = "true" ] || [ "${{ inputs.force_all }}" = "true" ]; then
             echo "Running EMBER Android client test suite..."
             PYTHONPATH="client/ember" python3 -m pytest client/ember/tests/test_ember.py -q
+            (cd client/ember && ./gradlew testDebugUnitTest)
           fi
 
   ui:
