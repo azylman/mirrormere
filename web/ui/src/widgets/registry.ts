@@ -1,5 +1,7 @@
 import type { ComponentType } from 'react';
 import { LegacyWidget } from './LegacyWidget';
+import { SpacerWidget } from './spacer/SpacerWidget';
+import { ChatLogWidget } from './chat-log/ChatLogWidget';
 
 /** Props every widget component receives from WidgetHost. */
 export interface WidgetComponentProps {
@@ -11,7 +13,10 @@ export interface WidgetComponentProps {
  * Widget type -> component. Widget tasks add entries here. A type missing from the map
  * renders through LEGACY_WIDGET_FALLBACK.
  */
-export const WIDGET_COMPONENTS: Readonly<Record<string, ComponentType<WidgetComponentProps>>> = {};
+export const WIDGET_COMPONENTS: Readonly<Record<string, ComponentType<WidgetComponentProps>>> = {
+  spacer: SpacerWidget,
+  'chat-log': ChatLogWidget,
+};
 
 /**
  * Renders any type with no registered component: a custom or not-yet-ported package, served as
