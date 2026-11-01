@@ -7,6 +7,7 @@
  * window.__mmPerf.snapshot() to stdout as JSON. Progress goes to stderr. Works for the legacy
  * and React displays; the page decides which (perf.js detects it).
  *
+ * Usage:
  *   node scripts/perf/bench.mjs --url http://localhost:8080/display \
  *     [--chrome <path>] [--cpu-throttle 4] [--swipes 20] [--swipe-x <px>] [--swipe-y <px>]
  *
