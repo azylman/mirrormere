@@ -46,7 +46,7 @@ async function waitForText(root: ParentNode, text: string): Promise<void> {
 }
 
 beforeEach(() => {
-  useDisplayStore.setState({ widgets: {} });
+  useDisplayStore.setState({ widgets: {}, widgetReloads: {}, carousel: { paused: false, pendingRotate: null } });
   respond = async () => new Response(fragment('initial'), { status: 200 });
   fetchMock = vi.fn((url: string, init: RequestInit) => respond(url, init));
   vi.stubGlobal('fetch', fetchMock);
@@ -215,6 +215,55 @@ describe('LegacyWidget', () => {
 });
 
 describe('legacy fragment helpers', () => {
+  it('re-fetches on a widget.reload for its type with an unchanged timestamp', async () => {
+    setWidget('t1');
+    const { container } = render(element(true));
+    await waitForText(container, 'initial');
+    respond = async () => new Response(fragment('reloaded'), { status: 200 });
+    act(() => {
+      useDisplayStore.setState({ widgetReloads: { 'other-type': 1 } });
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    act(() => {
+      useDisplayStore.setState({ widgetReloads: { 'other-type': 1, 'legacy-test': 1 } });
+    });
+    await waitForText(container, 'reloaded');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('holds a widget.reload while the carousel is paused and fetches once on resume', async () => {
+    setWidget('t1');
+    const { container } = render(element(true));
+    await waitForText(container, 'initial');
+    respond = async () => new Response(fragment('reloaded'), { status: 200 });
+    act(() => {
+      useDisplayStore.setState({ carousel: { paused: true, pendingRotate: null } });
+    });
+    act(() => {
+      useDisplayStore.setState({ widgetReloads: { 'legacy-test': 1 } });
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    act(() => {
+      useDisplayStore.setState({ carousel: { paused: false, pendingRotate: null } });
+    });
+    await waitForText(container, 'reloaded');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('applies a type stylesheet that first appears on a later render', async () => {
+    const base = 'widget-types/legacy-test/assets/';
+    setWidget('t1', ID, 'legacy-test', base);
+    const { container } = render(element(true));
+    await waitForText(container, 'initial');
+    expect(document.head.querySelector(`link[href="${base}late.css"]`)).toBeNull();
+    respond = async () =>
+      new Response(fragment('styled', `<link rel="stylesheet" href="${base}late.css">`), { status: 200 });
+    setWidget('t2', ID, 'legacy-test', base);
+    await waitForText(container, 'styled');
+    expect(document.head.querySelectorAll(`link[href="${base}late.css"]`)).toHaveLength(1);
+    expect(container.querySelector('link')).toBeNull();
+  });
+
   it('builds the render URL with and without a node parameter', () => {
     expect(legacyRenderURL('a b', '')).toBe('api/widgets/a%20b/render');
     expect(legacyRenderURL('a', '?node=n/1')).toBe('api/widgets/a/render?node=n%2F1');
@@ -230,9 +279,9 @@ describe('legacy fragment helpers', () => {
     expect(hooks[0].targets).toEqual([{ name: 'MirrormereX', selector: '.x' }]);
   });
 
-  it('hoists a stylesheet link only for the type that has not loaded yet', () => {
+  it('leaves a link outside the assets base in the card', () => {
     const { card } = prepareFragment('<div class="widget-card"><link rel="stylesheet" href="other/x.css"></div>');
-    hoistTypeStylesheets('helper-type', 'widget-types/helper-type/assets/', card);
+    hoistTypeStylesheets('widget-types/helper-type/assets/', card);
     expect(card.querySelector('link')).not.toBeNull();
     expect(document.head.querySelector('link[href="other/x.css"]')).toBeNull();
   });

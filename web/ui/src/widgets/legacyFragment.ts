@@ -29,9 +29,6 @@ export interface PreparedFragment {
 /** Matches `window.MirrormereX.mount(this.closest('selector'))` inside an onload attribute. */
 const ONLOAD_MOUNT = /window\.(Mirrormere\w+)\.mount\(this\.closest\((['"])(.+?)\2\)\)/g;
 
-/** Per-type stylesheet state. Module-level so a type's CSS is added once per page, not per cell. */
-const loadedTypes = new Set<string>();
-
 /** Relative, like the other widget URLs: resolves under the page's /api prefix. */
 export function legacyRenderURL(id: string, search: string): string {
   const base = `api/widgets/${encodeURIComponent(id)}/render`;
@@ -66,18 +63,16 @@ export function prepareFragment(html: string): PreparedFragment {
 }
 
 /**
- * Takes the stylesheet links under the type's assets base out of the card. The first cell of a
- * type adds each one to the document head; later cells of that type add none.
+ * Takes the stylesheet links under the type's assets base out of the card and makes sure each
+ * one is in the document head exactly once. Checked per link, so a link that first appears on a
+ * later render of the type is still applied.
  */
-export function hoistTypeStylesheets(type: string, assetsBase: string, card: ParentNode): void {
-  const first = !loadedTypes.has(type);
-  loadedTypes.add(type);
+export function hoistTypeStylesheets(assetsBase: string, card: ParentNode): void {
   if (assetsBase === '') return;
   for (const link of Array.from(card.querySelectorAll('link[rel="stylesheet"]'))) {
     const href = link.getAttribute('href') ?? '';
     if (!href.startsWith(assetsBase)) continue;
     link.remove();
-    if (!first) continue;
     const loaded = Array.from(document.head.querySelectorAll('link[rel="stylesheet"]')).some(
       (existing) => existing.getAttribute('href') === href,
     );

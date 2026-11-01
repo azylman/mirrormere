@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useIsCurrentPane } from '../carousel/PaneContext';
+import { useDisplayStore } from '../store';
 import { useWidget } from '../store/hooks';
 import type { WidgetComponentProps } from './registry';
 import {
@@ -15,8 +16,10 @@ import {
 
 /** Per-cell state that outlives renders: the in-flight request and what is mounted in the card. */
 interface LegacyState {
-  /** The timestamp the last fetch was started for; null before the first fetch and after unmount. */
-  fetchedTimestamp: string | null;
+  /** Timestamp and reload count the last fetch was started for; null before the first fetch and after unmount. */
+  fetchedKey: string | null;
+  /** widgetReloads count for the type, frozen while the carousel is paused. */
+  reloadsSeen: number;
   controller: AbortController | null;
   mounts: LegacyMount[];
 }
@@ -32,25 +35,31 @@ export function LegacyWidget({ id }: WidgetComponentProps) {
   const entry = useWidget(id);
   const current = useIsCurrentPane();
   const host = useRef<HTMLDivElement>(null);
-  const state = useRef<LegacyState>({ fetchedTimestamp: null, controller: null, mounts: [] });
+  const state = useRef<LegacyState>({ fetchedKey: null, reloadsSeen: 0, controller: null, mounts: [] });
   const type = entry.meta?.type ?? '';
   const assetsBase = entry.meta?.assets_base ?? '';
   const timestamp = entry.timestamp;
+  // A widget.reload (template, manifest or config change) does not move the timestamp, so the
+  // reload count is part of the fetch key. Like WidgetHost, a reload waits while paused.
+  const reloads = useDisplayStore((s) => (type === '' ? 0 : (s.widgetReloads[type] ?? 0)));
+  const paused = useDisplayStore((s) => s.carousel.paused);
+  if (!paused) state.current.reloadsSeen = reloads;
+  const fetchKey = `${timestamp}\u0000${state.current.reloadsSeen}`;
 
   useEffect(() => {
     const s = state.current;
     return () => {
       s.controller?.abort();
       s.controller = null;
-      s.fetchedTimestamp = null;
+      s.fetchedKey = null;
       unmountAll(s.mounts);
     };
   }, []);
 
   useEffect(() => {
     const s = state.current;
-    if (s.fetchedTimestamp !== null && (!current || s.fetchedTimestamp === timestamp)) return;
-    s.fetchedTimestamp = timestamp;
+    if (s.fetchedKey !== null && (!current || s.fetchedKey === fetchKey)) return;
+    s.fetchedKey = fetchKey;
     s.controller?.abort();
     const controller = new AbortController();
     s.controller = controller;
@@ -73,7 +82,7 @@ export function LegacyWidget({ id }: WidgetComponentProps) {
       .then((html) => {
         if (controller.signal.aborted) return;
         const { card, hooks } = prepareFragment(html);
-        hoistTypeStylesheets(type, assetsBase, card);
+        hoistTypeStylesheets(assetsBase, card);
         commit(card, hooks);
       })
       .catch((err: unknown) => {
@@ -82,7 +91,7 @@ export function LegacyWidget({ id }: WidgetComponentProps) {
         // Keep the last good card on a failed update; show the unavailable card on the first render.
         if (!hadContent) commit(unavailableCard(id), []);
       });
-  }, [id, type, assetsBase, timestamp, current]);
+  }, [id, type, assetsBase, fetchKey, current]);
 
   return <div ref={host} className="widget-legacy" />;
 }
