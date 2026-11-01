@@ -237,7 +237,7 @@ jobs:
 
   perf:
     name: Display performance budget (React)
-    needs: changes
+    needs: [changes, verify, lint, ui]
     if: github.event_name != 'push' || inputs.force_all == true
     # Self-hosted runner: ships headless Chrome, Go, and Node (docs/perf.md).
     runs-on: [self-hosted, ci]
