@@ -20,6 +20,8 @@ export function useIsCurrentPane(): boolean {
   return isCurrentPane && !isVideoMode;
 }
 
+export const usePaneActive = useIsCurrentPane;
+
 export function usePaneIndex(): number {
   return useContext(PaneContext).paneIndex;
 }
