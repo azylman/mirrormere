@@ -1,4 +1,5 @@
 import { memo, useEffect, useRef } from 'react';
+import { beginAnimation, endAnimation } from '../perf/animating';
 import { useDisplayStore } from '../store';
 
 export const MOUTH_POINTS = 33;
@@ -245,8 +246,11 @@ export class WaveformMouth {
     this.levelFrame = values;
     this.levelAt = this.clock();
     this.refresh();
-    if (this.voiceState === 'speaking' && (this.reducedMotion || !this.looping)) {
-      this.drawFrame(0);
+    if (this.voiceState === 'speaking') {
+      if (this.reducedMotion || !this.looping) {
+        this.drawFrame(0);
+      }
+      this.startLoop();
     }
   }
 
@@ -291,10 +295,19 @@ export class WaveformMouth {
     if (this.destroyed || !this.raf || this.looping) return;
     this.looping = true;
     this.lastTick = null;
+    beginAnimation();
     const tick = (now: number) => {
       if (!this.looping) return;
+      if (this.document?.hidden) {
+        this.stopLoop();
+        return;
+      }
+      const active = this.refresh();
+      if (this.levelAt !== null && !active) {
+        this.stopLoop();
+        return;
+      }
       this.rafId = this.raf!(tick);
-      this.refresh();
       if (this.lastTick !== null && now - this.lastTick < DRAW_MIN_MS) return;
       const dt = this.lastTick === null ? 0 : now - this.lastTick;
       this.lastTick = now;
@@ -304,12 +317,14 @@ export class WaveformMouth {
   }
 
   stopLoop(): void {
-    if (this.looping && this.caf && this.rafId !== null) {
+    if (!this.looping) return;
+    if (this.caf && this.rafId !== null) {
       this.caf(this.rafId);
     }
     this.looping = false;
     this.rafId = null;
     this.lastTick = null;
+    endAnimation();
   }
 
   /**

@@ -1,6 +1,7 @@
 import { Profiler } from 'react';
 import { act, cleanup, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { endAnimation } from '../perf/animating';
 import { useDisplayStore } from '../store';
 import {
   DRAW_MIN_MS,
@@ -57,6 +58,7 @@ describe('Waveform and WaveformMouth', () => {
 
   beforeEach(() => {
     useDisplayStore.setState(initialStore, true);
+    for (let i = 0; i < 5; i++) endAnimation();
     delete window.voiceWaveform;
     MockEventSource.instances = [];
     (window as unknown as { EventSource: unknown }).EventSource = MockEventSource;
@@ -81,6 +83,7 @@ describe('Waveform and WaveformMouth', () => {
     cleanup();
     vi.restoreAllMocks();
     useDisplayStore.setState(initialStore, true);
+    for (let i = 0; i < 5; i++) endAnimation();
     delete window.voiceWaveform;
     if (document.body?.dataset?.voiceWaveformUrl) {
       delete document.body.dataset.voiceWaveformUrl;
@@ -383,11 +386,99 @@ describe('Waveform and WaveformMouth', () => {
       });
       expect(svg.classList.contains('is-active')).toBe(true);
 
-      // At 1401ms (> 400ms), levels are stale -> is-active removed
+      // At 1401ms (> 400ms), levels are stale -> is-active removed and animation stopped
       act(() => {
         triggerRaf(1401);
       });
       expect(svg.classList.contains('is-active')).toBe(false);
+      expect(window.voiceWaveform?.looping).toBe(false);
+      expect(document.body.dataset.animating).toBe('0');
+
+      // Receiving a fresh level frame while still speaking restarts the loop and marks animating
+      act(() => {
+        source.emit('frame', LOUD);
+      });
+      expect(svg.classList.contains('is-active')).toBe(true);
+      expect(window.voiceWaveform?.looping).toBe(true);
+      expect(document.body.dataset.animating).toBe('1');
+    });
+
+    it('marks body.dataset.animating = "1" while speaking and returns to "0" across all stop paths', () => {
+      const { unmount } = render(<Waveform levelsUrl="http://127.0.0.1:8765/levels" />);
+      const source = MockEventSource.instances[0]!;
+
+      expect(document.body.dataset.animating).toBe('0');
+
+      // 1. Enter speaking -> body.dataset.animating is '1'
+      act(() => {
+        useDisplayStore.setState({
+          voice: {
+            state: 'speaking',
+            transcript: 'Hello',
+            reply: 'Reply 1',
+            tts_engine: 'kokoro',
+            status: null,
+          },
+        });
+      });
+      expect(document.body.dataset.animating).toBe('1');
+
+      // Stop path A: leaving speaking -> returns to '0'
+      act(() => {
+        useDisplayStore.setState({
+          voice: {
+            state: 'idle',
+            transcript: null,
+            reply: null,
+            tts_engine: null,
+            status: null,
+          },
+        });
+      });
+      expect(document.body.dataset.animating).toBe('0');
+
+      // 2. Re-enter speaking with fresh levels -> '1'
+      act(() => {
+        useDisplayStore.setState({
+          voice: {
+            state: 'speaking',
+            transcript: 'Hello',
+            reply: 'Reply 2',
+            tts_engine: 'kokoro',
+            status: null,
+          },
+        });
+        source.emit('frame', LOUD);
+      });
+      expect(document.body.dataset.animating).toBe('1');
+
+      // Stop path B: levels going stale (> 400ms) -> returns to '0'
+      act(() => {
+        triggerRaf(1000 + LEVEL_STALE_MS + 1);
+      });
+      expect(document.body.dataset.animating).toBe('0');
+
+      // Fresh frame resumes animation while still speaking -> '1'
+      act(() => {
+        source.emit('frame', LOUD);
+      });
+      expect(document.body.dataset.animating).toBe('1');
+
+      // Stop path C: document hidden -> returns to '0'
+      act(() => {
+        useDisplayStore.setState({ visibility: { visible: false } });
+      });
+      expect(document.body.dataset.animating).toBe('0');
+
+      // Document visible again -> '1'
+      act(() => {
+        useDisplayStore.setState({ visibility: { visible: true } });
+      });
+      expect(document.body.dataset.animating).toBe('1');
+
+      // Stop path D: unmount / destroy() -> returns to '0'
+      unmount();
+      expect(document.body.dataset.animating).toBe('0');
     });
 
     it('reduced-motion draws latest frame immediately without easing', () => {
