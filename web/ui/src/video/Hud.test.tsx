@@ -3,8 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { VideoSource } from '../sse/types';
 import { useDisplayStore } from '../store';
 import { HUD_ICONS, Hud, VideoHUDController } from './Hud';
+import { formatStreamTitle } from './api';
+import { formatDuration } from './useStreamProgress';
 
-describe('Hud component and VideoHUDController', () => {
+describe('Hud component and declarative decomposition', () => {
   const initialStore = useDisplayStore.getState();
 
   beforeEach(() => {
@@ -34,7 +36,7 @@ describe('Hud component and VideoHUDController', () => {
     });
   });
 
-  describe('<Hud /> DOM rendering', () => {
+  describe('<Hud /> DOM rendering & hierarchy', () => {
     it('renders the complete HUD overlay hierarchy matching display.html lines 107-149', () => {
       const { container } = render(
         <div id="video-stage">
@@ -123,156 +125,14 @@ describe('Hud component and VideoHUDController', () => {
     });
   });
 
-  describe('VideoHUDController unit tests', () => {
-    let mockFetch: ReturnType<typeof vi.fn>;
-    let stage: HTMLElement;
-    let overlay: HTMLElement;
-    let titleEl: HTMLElement;
-    let dismissBtn: HTMLElement;
-    let playBtn: HTMLElement;
-    let playIcon: HTMLElement;
-    let muteBtn: HTMLElement;
-    let muteIcon: HTMLElement;
-    let volumeSlider: HTMLInputElement;
-    let rewindBtn: HTMLElement;
-    let forwardBtn: HTMLElement;
-    let backBtn: HTMLElement;
-    let homeBtn: HTMLElement;
-    let ccBtn: HTMLElement;
-    let prevBtn: HTMLElement;
-    let nextBtn: HTMLElement;
-    let progressContainer: HTMLElement;
-    let progressTrack: HTMLElement;
-    let progressFill: HTMLElement;
-    let timeCurrent: HTMLElement;
-    let timeTotal: HTMLElement;
-
-    beforeEach(() => {
-      mockFetch = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
-
-      stage = document.createElement('div');
-      stage.id = 'video-stage';
-
-      overlay = document.createElement('div');
-      overlay.id = 'video-hud-overlay';
-      stage.appendChild(overlay);
-
-      titleEl = document.createElement('span');
-      titleEl.id = 'video-hud-title';
-      overlay.appendChild(titleEl);
-
-      dismissBtn = document.createElement('button');
-      dismissBtn.id = 'video-hud-dismiss-btn';
-      overlay.appendChild(dismissBtn);
-
-      playBtn = document.createElement('button');
-      playBtn.id = 'video-hud-play-btn';
-      playIcon = document.createElement('span');
-      playIcon.id = 'video-hud-play-icon';
-      playBtn.appendChild(playIcon);
-      overlay.appendChild(playBtn);
-
-      muteBtn = document.createElement('button');
-      muteBtn.id = 'video-hud-mute-btn';
-      muteIcon = document.createElement('span');
-      muteIcon.id = 'video-hud-mute-icon';
-      muteBtn.appendChild(muteIcon);
-      overlay.appendChild(muteBtn);
-
-      volumeSlider = document.createElement('input');
-      volumeSlider.type = 'range';
-      volumeSlider.id = 'video-hud-volume-slider';
-      volumeSlider.value = '75';
-      overlay.appendChild(volumeSlider);
-
-      const navBar = document.createElement('div');
-      navBar.id = 'video-hud-nav-bar';
-      backBtn = document.createElement('button');
-      backBtn.id = 'video-hud-back-btn';
-      homeBtn = document.createElement('button');
-      homeBtn.id = 'video-hud-home-btn';
-      navBar.appendChild(backBtn);
-      navBar.appendChild(homeBtn);
-      overlay.appendChild(navBar);
-
-      const bottomBar = document.createElement('div');
-      bottomBar.id = 'video-hud-bottom-bar';
-      ccBtn = document.createElement('button');
-      ccBtn.id = 'video-hud-cc-btn';
-      prevBtn = document.createElement('button');
-      prevBtn.id = 'video-hud-prev-btn';
-      rewindBtn = document.createElement('button');
-      rewindBtn.id = 'video-hud-rewind-btn';
-      forwardBtn = document.createElement('button');
-      forwardBtn.id = 'video-hud-forward-btn';
-      nextBtn = document.createElement('button');
-      nextBtn.id = 'video-hud-next-btn';
-
-      progressContainer = document.createElement('div');
-      progressContainer.id = 'video-hud-progress-container';
-      timeCurrent = document.createElement('span');
-      timeCurrent.id = 'video-hud-time-current';
-      timeTotal = document.createElement('span');
-      timeTotal.id = 'video-hud-time-total';
-      progressTrack = document.createElement('div');
-      progressTrack.id = 'video-hud-progress-track';
-      progressFill = document.createElement('div');
-      progressFill.id = 'video-hud-progress-fill';
-      progressTrack.appendChild(progressFill);
-
-      progressContainer.appendChild(timeCurrent);
-      progressContainer.appendChild(progressTrack);
-      progressContainer.appendChild(timeTotal);
-
-      bottomBar.appendChild(ccBtn);
-      bottomBar.appendChild(prevBtn);
-      bottomBar.appendChild(rewindBtn);
-      bottomBar.appendChild(progressContainer);
-      bottomBar.appendChild(forwardBtn);
-      bottomBar.appendChild(nextBtn);
-      overlay.appendChild(bottomBar);
-
-      document.body.appendChild(stage);
-    });
-
-    afterEach(() => {
-      if (stage.parentNode) {
-        stage.parentNode.removeChild(stage);
-      }
-    });
-
-    it('manages auto-fade timeout (5s default)', () => {
-      const ctrl = new VideoHUDController({
-        overlayElement: overlay,
-        stageElement: stage,
-        fetch: mockFetch as unknown as typeof fetch,
-      });
-
-      ctrl.showHUD();
-      expect(ctrl.isVisible).toBe(true);
-      expect(overlay.classList.contains('visible')).toBe(true);
-
-      // Advance 4900ms -> still visible
-      vi.advanceTimersByTime(4900);
-      expect(ctrl.isVisible).toBe(true);
-
-      // Advance remaining 100ms -> hidden
-      vi.advanceTimersByTime(100);
-      expect(ctrl.isVisible).toBe(false);
-      expect(overlay.classList.contains('visible')).toBe(false);
-
-      ctrl.destroy();
-    });
-
+  describe('formatStreamTitle helper', () => {
     it('formats stream titles accurately with series, season, episode and fallbacks', () => {
-      const ctrl = new VideoHUDController({ overlayElement: overlay, stageElement: stage });
-
-      expect(ctrl.formatStreamTitle(null)).toBe('Live Video');
-      expect(ctrl.formatStreamTitle({ id: 's1', stream_url: '', type: 'webrtc' })).toBe('Stream: s1');
-      expect(ctrl.formatStreamTitle({ id: '', stream_url: '', type: 'webrtc' })).toBe('Live Video');
+      expect(formatStreamTitle(null)).toBe('Live Video');
+      expect(formatStreamTitle({ id: 's1', stream_url: '', type: 'webrtc' })).toBe('Stream: s1');
+      expect(formatStreamTitle({ id: '', stream_url: '', type: 'webrtc' })).toBe('Live Video');
 
       expect(
-        ctrl.formatStreamTitle({
+        formatStreamTitle({
           id: 's1',
           stream_url: '',
           type: 'webrtc',
@@ -284,7 +144,7 @@ describe('Hud component and VideoHUDController', () => {
       ).toBe('Severance S1E9: The Grim Barbarity');
 
       expect(
-        ctrl.formatStreamTitle({
+        formatStreamTitle({
           id: 's1',
           stream_url: '',
           type: 'webrtc',
@@ -294,144 +154,260 @@ describe('Hud component and VideoHUDController', () => {
       ).toBe('Severance: Pilot');
 
       expect(
-        ctrl.formatStreamTitle({
+        formatStreamTitle({
           id: 's1',
           stream_url: '',
           type: 'webrtc',
           title: 'Security Feed',
         }),
       ).toBe('Security Feed');
-
-      ctrl.destroy();
     });
+  });
 
+  describe('formatDuration helper', () => {
     it('formats time to M:SS and H:MM:SS accurately', () => {
-      const ctrl = new VideoHUDController({ overlayElement: overlay, stageElement: stage });
+      expect(formatDuration(-10)).toBe('0:00');
+      expect(formatDuration(0)).toBe('0:00');
+      expect(formatDuration(65)).toBe('1:05');
+      expect(formatDuration(599)).toBe('9:59');
+      expect(formatDuration(3665)).toBe('1:01:05');
+    });
+  });
 
-      expect(ctrl.formatTime(-10)).toBe('0:00');
-      expect(ctrl.formatTime(0)).toBe('0:00');
-      expect(ctrl.formatTime(65)).toBe('1:05');
-      expect(ctrl.formatTime(599)).toBe('9:59');
-      expect(ctrl.formatTime(3665)).toBe('1:01:05');
+  describe('Auto-fade lifecycle and visibility', () => {
+    it('manages auto-fade timeout (5s default)', () => {
+      let ctrl: VideoHUDController | null = null;
+      const { container } = render(
+        <div id="video-stage">
+          <Hud controllerRef={(c) => { ctrl = c; }} />
+        </div>,
+      );
 
-      ctrl.destroy();
+      const overlay = container.querySelector('#video-hud-overlay') as HTMLElement;
+      expect(overlay.classList.contains('visible')).toBe(false);
+
+      act(() => {
+        ctrl?.showHUD();
+      });
+      expect(overlay.classList.contains('visible')).toBe(true);
+
+      // Advance 4900ms -> still visible
+      act(() => {
+        vi.advanceTimersByTime(4900);
+      });
+      expect(overlay.classList.contains('visible')).toBe(true);
+
+      // Advance remaining 100ms -> hidden
+      act(() => {
+        vi.advanceTimersByTime(100);
+      });
+      expect(overlay.classList.contains('visible')).toBe(false);
     });
 
-    it('toggles HUD on stage single tap when idle vs active playback', () => {
-      const ctrl = new VideoHUDController({
-        overlayElement: overlay,
-        stageElement: stage,
-        fetch: mockFetch as unknown as typeof fetch,
+    it('automatically shows HUD when activeStream transitions from null to present and hides when null', () => {
+      render(
+        <div id="video-stage">
+          <Hud />
+        </div>,
+      );
+
+      const overlay = document.getElementById('video-hud-overlay')!;
+      expect(overlay.classList.contains('visible')).toBe(false);
+
+      // Stream becomes present -> HUD automatically shows
+      act(() => {
+        useDisplayStore.setState({
+          video: {
+            mode: 'video',
+            primary: { id: 'stream-auto-show', stream_url: '', type: 'webrtc' },
+            pip: null,
+          },
+        });
       });
+
+      expect(overlay.classList.contains('visible')).toBe(true);
+
+      // Stream becomes null -> HUD automatically hides
+      act(() => {
+        useDisplayStore.setState({
+          video: {
+            mode: 'widgets',
+            primary: null,
+            pip: null,
+          },
+        });
+      });
+
+      expect(overlay.classList.contains('visible')).toBe(false);
+    });
+  });
+
+  describe('Stage tap and double-tap gestures', () => {
+    it('toggles HUD on stage single tap when idle vs active playback', () => {
+      let stage: HTMLElement;
+      render(
+        <div
+          id="video-stage"
+          ref={(el) => {
+            if (el) stage = el;
+          }}
+        >
+          <Hud />
+        </div>,
+      );
+
+      const overlay = document.getElementById('video-hud-overlay')!;
 
       // Tap when hidden -> shows HUD immediately
-      fireEvent.pointerDown(stage, { clientX: 100, clientY: 100 });
-      fireEvent.pointerUp(stage, { clientX: 100, clientY: 100 });
-      expect(ctrl.isVisible).toBe(true);
+      fireEvent.pointerDown(stage!, { clientX: 100, clientY: 100 });
+      fireEvent.pointerUp(stage!, { clientX: 100, clientY: 100 });
+      expect(overlay.classList.contains('visible')).toBe(true);
 
       // Advance past double-tap window (>300ms)
-      vi.advanceTimersByTime(400);
+      act(() => {
+        vi.advanceTimersByTime(400);
+      });
 
       // Now set non-media / idle stream: single tap hides immediately
-      ctrl.handleVideoState({
-        mode: 'video',
-        primary: { id: 's1', stream_url: '', type: 'webrtc', player_state: 'idle' },
-        pip: null,
+      act(() => {
+        useDisplayStore.setState({
+          video: {
+            mode: 'video',
+            primary: { id: 's1', stream_url: '', type: 'webrtc', player_state: 'idle' },
+            pip: null,
+          },
+        });
       });
 
-      fireEvent.pointerDown(stage, { clientX: 100, clientY: 100 });
-      fireEvent.pointerUp(stage, { clientX: 100, clientY: 100 });
-      expect(ctrl.isVisible).toBe(false);
+      fireEvent.pointerDown(stage!, { clientX: 100, clientY: 100 });
+      fireEvent.pointerUp(stage!, { clientX: 100, clientY: 100 });
+      expect(overlay.classList.contains('visible')).toBe(false);
 
       // Advance past double-tap window
-      vi.advanceTimersByTime(400);
+      act(() => {
+        vi.advanceTimersByTime(400);
+      });
 
       // Now set playing controllable stream: single tap delays hide by 250ms
-      ctrl.handleVideoState({
-        mode: 'video',
-        primary: { id: 's1', stream_url: '', type: 'webrtc', controllable: true, player_state: 'playing' },
-        pip: null,
+      act(() => {
+        useDisplayStore.setState({
+          video: {
+            mode: 'video',
+            primary: { id: 's1', stream_url: '', type: 'webrtc', controllable: true, player_state: 'playing' },
+            pip: null,
+          },
+        });
+        window.videoHUD?.showHUD();
       });
-      ctrl.showHUD();
-      expect(ctrl.isVisible).toBe(true);
+      expect(overlay.classList.contains('visible')).toBe(true);
 
-      vi.advanceTimersByTime(400);
+      act(() => {
+        vi.advanceTimersByTime(400);
+      });
 
-      fireEvent.pointerDown(stage, { clientX: 100, clientY: 100 });
-      fireEvent.pointerUp(stage, { clientX: 100, clientY: 100 });
+      fireEvent.pointerDown(stage!, { clientX: 100, clientY: 100 });
+      fireEvent.pointerUp(stage!, { clientX: 100, clientY: 100 });
       // Not hidden immediately: 250ms delay
-      expect(ctrl.isVisible).toBe(true);
+      expect(overlay.classList.contains('visible')).toBe(true);
 
-      vi.advanceTimersByTime(250);
-      expect(ctrl.isVisible).toBe(false);
-
-      ctrl.destroy();
+      act(() => {
+        vi.advanceTimersByTime(250);
+      });
+      expect(overlay.classList.contains('visible')).toBe(false);
     });
 
     it('triggers play/pause toggle on rapid double-tap (<300ms, <30px)', () => {
-      const ctrl = new VideoHUDController({
-        overlayElement: overlay,
-        stageElement: stage,
-        fetch: mockFetch as unknown as typeof fetch,
-      });
+      const mockFetch = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
+      let stage: HTMLElement;
 
-      const spyAction = vi.spyOn(ctrl, 'handlePlayPauseToggle');
+      render(
+        <div
+          id="video-stage"
+          ref={(el) => {
+            if (el) stage = el;
+          }}
+        >
+          <Hud fetch={mockFetch as unknown as typeof fetch} />
+        </div>,
+      );
 
-      ctrl.handleVideoState({
-        mode: 'video',
-        primary: { id: 's1', stream_url: '', type: 'webrtc', controllable: true, player_state: 'playing' },
-        pip: null,
+      act(() => {
+        useDisplayStore.setState({
+          video: {
+            mode: 'video',
+            primary: { id: 's1', stream_url: '', type: 'webrtc', controllable: true, player_state: 'playing' },
+            pip: null,
+          },
+        });
       });
 
       // Tap 1
-      fireEvent.pointerDown(stage, { clientX: 100, clientY: 100 });
-      fireEvent.pointerUp(stage, { clientX: 100, clientY: 100 });
+      fireEvent.pointerDown(stage!, { clientX: 100, clientY: 100 });
+      fireEvent.pointerUp(stage!, { clientX: 100, clientY: 100 });
 
       // Tap 2 within 100ms and 5px away
-      vi.advanceTimersByTime(100);
-      fireEvent.pointerDown(stage, { clientX: 105, clientY: 102 });
-      fireEvent.pointerUp(stage, { clientX: 105, clientY: 102 });
+      act(() => {
+        vi.advanceTimersByTime(100);
+      });
+      fireEvent.pointerDown(stage!, { clientX: 105, clientY: 102 });
+      fireEvent.pointerUp(stage!, { clientX: 105, clientY: 102 });
 
-      expect(spyAction).toHaveBeenCalledTimes(1);
-
-      ctrl.destroy();
+      expect(mockFetch).toHaveBeenCalledWith(
+        'api/video/action',
+        expect.objectContaining({
+          body: JSON.stringify({ id: 's1', action: 'toggle_playback' }),
+        }),
+      );
     });
 
     it('ignores taps inside active corner PiP dock', () => {
-      const pipSlot = document.createElement('div');
-      pipSlot.className = 'video-pip-slot';
-      stage.appendChild(pipSlot);
+      let pipSlot: HTMLElement;
 
-      const ctrl = new VideoHUDController({
-        overlayElement: overlay,
-        stageElement: stage,
-        fetch: mockFetch as unknown as typeof fetch,
-      });
+      render(
+        <div id="video-stage">
+          <div
+            className="video-pip-slot"
+            ref={(el) => {
+              if (el) pipSlot = el;
+            }}
+          />
+          <Hud />
+        </div>
+      );
 
-      expect(ctrl.isVisible).toBe(false);
+      const overlay = document.getElementById('video-hud-overlay')!;
+      expect(overlay.classList.contains('visible')).toBe(false);
 
       // Tap inside PiP dock -> does not wake HUD
-      fireEvent.pointerDown(pipSlot, { clientX: 10, clientY: 10 });
-      fireEvent.pointerUp(pipSlot, { clientX: 10, clientY: 10 });
+      fireEvent.pointerDown(pipSlot!, { clientX: 10, clientY: 10 });
+      fireEvent.pointerUp(pipSlot!, { clientX: 10, clientY: 10 });
 
-      expect(ctrl.isVisible).toBe(false);
-
-      ctrl.destroy();
-      stage.removeChild(pipSlot);
+      expect(overlay.classList.contains('visible')).toBe(false);
     });
+  });
 
+  describe('Transport controls and actions', () => {
     it('executes transport actions with 300ms in-flight lock', () => {
-      const ctrl = new VideoHUDController({
-        overlayElement: overlay,
-        stageElement: stage,
-        fetch: mockFetch as unknown as typeof fetch,
+      const mockFetch = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
+
+      render(
+        <div id="video-stage">
+          <Hud fetch={mockFetch as unknown as typeof fetch} />
+        </div>,
+      );
+
+      act(() => {
+        useDisplayStore.setState({
+          video: {
+            mode: 'video',
+            primary: { id: 's1', stream_url: '', type: 'webrtc', controllable: true, player_state: 'playing' },
+            pip: null,
+          },
+        });
       });
 
-      ctrl.handleVideoState({
-        mode: 'video',
-        primary: { id: 's1', stream_url: '', type: 'webrtc', controllable: true, player_state: 'playing' },
-        pip: null,
-      });
+      const rewindBtn = document.getElementById('video-hud-rewind-btn')!;
+      const forwardBtn = document.getElementById('video-hud-forward-btn')!;
 
       // Click rewind twice rapidly
       fireEvent.click(rewindBtn);
@@ -446,7 +422,9 @@ describe('Hud component and VideoHUDController', () => {
       );
 
       // Advance beyond 300ms lock
-      vi.advanceTimersByTime(350);
+      act(() => {
+        vi.advanceTimersByTime(350);
+      });
 
       fireEvent.click(forwardBtn);
       expect(mockFetch).toHaveBeenCalledTimes(2);
@@ -456,23 +434,29 @@ describe('Hud component and VideoHUDController', () => {
           body: JSON.stringify({ id: 's1', action: 'fast_forward' }),
         }),
       );
-
-      ctrl.destroy();
     });
 
     it('posts to remoteUrl when preferred remote keys (back, home, etc.) are triggered', () => {
-      const ctrl = new VideoHUDController({
-        overlayElement: overlay,
-        stageElement: stage,
-        remoteUrl: 'http://sidecar:8080',
-        fetch: mockFetch as unknown as typeof fetch,
+      const mockFetch = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
+
+      render(
+        <div id="video-stage">
+          <Hud remoteUrl="http://sidecar:8080" fetch={mockFetch as unknown as typeof fetch} />
+        </div>,
+      );
+
+      act(() => {
+        useDisplayStore.setState({
+          video: {
+            mode: 'video',
+            primary: { id: 's1', stream_url: '', type: 'webrtc', player_state: 'playing', controllable: true },
+            pip: null,
+          },
+        });
       });
 
-      ctrl.handleVideoState({
-        mode: 'video',
-        primary: { id: 's1', stream_url: '', type: 'webrtc', player_state: 'playing', controllable: true },
-        pip: null,
-      });
+      const backBtn = document.getElementById('video-hud-back-btn')!;
+      const homeBtn = document.getElementById('video-hud-home-btn')!;
 
       fireEvent.click(backBtn);
       expect(mockFetch).toHaveBeenCalledWith(
@@ -482,7 +466,10 @@ describe('Hud component and VideoHUDController', () => {
         }),
       );
 
-      vi.advanceTimersByTime(350);
+      act(() => {
+        vi.advanceTimersByTime(350);
+      });
+
       fireEvent.click(homeBtn);
       expect(mockFetch).toHaveBeenCalledWith(
         'http://sidecar:8080/key',
@@ -490,66 +477,75 @@ describe('Hud component and VideoHUDController', () => {
           body: JSON.stringify({ key: 'home' }),
         }),
       );
-
-      ctrl.destroy();
     });
 
     it('handleDismiss dismisses all streams if both primary and pip are active with distinct IDs', () => {
-      const ctrl = new VideoHUDController({
-        overlayElement: overlay,
-        stageElement: stage,
-        dismissBtn,
-        videoManager: {
-          serverPrimary: { id: 'primary-1', stream_url: '', type: 'webrtc' },
-          serverPip: { id: 'pip-1', stream_url: '', type: 'webrtc' },
-        },
-        fetch: mockFetch as unknown as typeof fetch,
-      });
+      const mockFetch = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
 
+      render(
+        <div id="video-stage">
+          <Hud
+            videoManager={{
+              serverPrimary: { id: 'primary-1', stream_url: '', type: 'webrtc' },
+              serverPip: { id: 'pip-1', stream_url: '', type: 'webrtc' },
+            }}
+            fetch={mockFetch as unknown as typeof fetch}
+          />
+        </div>,
+      );
+
+      const dismissBtn = document.getElementById('video-hud-dismiss-btn')!;
       fireEvent.click(dismissBtn);
+
       expect(mockFetch).toHaveBeenCalledWith(
         'api/video/dismiss',
         expect.objectContaining({
           body: JSON.stringify({ id: 'all' }),
         }),
       );
-
-      ctrl.destroy();
     });
 
     it('handleDismiss dismisses single targetId when only primary is active', () => {
-      const ctrl = new VideoHUDController({
-        overlayElement: overlay,
-        stageElement: stage,
-        dismissBtn,
-        videoManager: {
-          serverPrimary: { id: 'primary-1', stream_url: '', type: 'webrtc' },
-          serverPip: null,
-        },
-        fetch: mockFetch as unknown as typeof fetch,
-      });
+      const mockFetch = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
 
+      render(
+        <div id="video-stage">
+          <Hud
+            videoManager={{
+              serverPrimary: { id: 'primary-1', stream_url: '', type: 'webrtc' },
+              serverPip: null,
+            }}
+            fetch={mockFetch as unknown as typeof fetch}
+          />
+        </div>,
+      );
+
+      const dismissBtn = document.getElementById('video-hud-dismiss-btn')!;
       fireEvent.click(dismissBtn);
+
       expect(mockFetch).toHaveBeenCalledWith(
         'api/video/dismiss',
         expect.objectContaining({
           body: JSON.stringify({ id: 'primary-1' }),
         }),
       );
-
-      ctrl.destroy();
     });
+  });
 
+  describe('Audio controls & volume slider', () => {
     it('handles mute toggle and updates UI icons', () => {
-      const ctrl = new VideoHUDController({
-        overlayElement: overlay,
-        stageElement: stage,
-        muteBtn,
-        muteIcon,
-        fetch: mockFetch as unknown as typeof fetch,
-      });
+      const mockFetch = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
 
-      expect(ctrl.currentMuted).toBe(false);
+      render(
+        <div id="video-stage">
+          <Hud fetch={mockFetch as unknown as typeof fetch} />
+        </div>,
+      );
+
+      const muteBtn = document.getElementById('video-hud-mute-btn')!;
+      const muteIcon = document.getElementById('video-hud-mute-icon')!;
+
+      expect(muteBtn.classList.contains('muted')).toBe(false);
 
       fireEvent.click(muteBtn);
       expect(mockFetch).toHaveBeenCalledWith(
@@ -559,12 +555,16 @@ describe('Hud component and VideoHUDController', () => {
         }),
       );
 
-      ctrl.handleAudioState({ muted: true, volume: 75 });
-      expect(ctrl.currentMuted).toBe(true);
+      act(() => {
+        useDisplayStore.setState({ audio: { muted: true, volume: 75 } });
+      });
+
       expect(muteBtn.classList.contains('muted')).toBe(true);
       expect(muteIcon.dataset.icon).toBe('muted');
 
-      vi.advanceTimersByTime(350);
+      act(() => {
+        vi.advanceTimersByTime(350);
+      });
 
       fireEvent.click(muteBtn);
       expect(mockFetch).toHaveBeenCalledWith(
@@ -573,20 +573,20 @@ describe('Hud component and VideoHUDController', () => {
           body: JSON.stringify({ muted: false }),
         }),
       );
-
-      ctrl.destroy();
     });
 
     it('throttles volume slider updates (200ms) and commits on release', () => {
-      const ctrl = new VideoHUDController({
-        overlayElement: overlay,
-        stageElement: stage,
-        volumeSlider,
-        fetch: mockFetch as unknown as typeof fetch,
-      });
+      const mockFetch = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
 
-      volumeSlider.value = '80';
-      fireEvent.input(volumeSlider);
+      render(
+        <div id="video-stage">
+          <Hud fetch={mockFetch as unknown as typeof fetch} />
+        </div>,
+      );
+
+      const volumeSlider = document.getElementById('video-hud-volume-slider') as HTMLInputElement;
+
+      fireEvent.input(volumeSlider, { target: { value: '80' } });
 
       // First input immediately dispatches
       expect(mockFetch).toHaveBeenCalledWith(
@@ -597,12 +597,13 @@ describe('Hud component and VideoHUDController', () => {
       );
 
       // Second input within 50ms is throttled
-      volumeSlider.value = '85';
-      fireEvent.input(volumeSlider);
+      fireEvent.input(volumeSlider, { target: { value: '85' } });
       expect(mockFetch).toHaveBeenCalledTimes(1);
 
       // Advance 200ms throttle interval -> flushes pending volume
-      vi.advanceTimersByTime(200);
+      act(() => {
+        vi.advanceTimersByTime(200);
+      });
       expect(mockFetch).toHaveBeenCalledTimes(2);
       expect(mockFetch).toHaveBeenCalledWith(
         'api/audio/volume',
@@ -613,7 +614,7 @@ describe('Hud component and VideoHUDController', () => {
 
       // Commit event commits final
       volumeSlider.value = '90';
-      fireEvent.change(volumeSlider);
+      fireEvent.pointerUp(volumeSlider);
       expect(mockFetch).toHaveBeenCalledTimes(3);
       expect(mockFetch).toHaveBeenCalledWith(
         'api/audio/volume',
@@ -623,49 +624,90 @@ describe('Hud component and VideoHUDController', () => {
       );
 
       // Within commitCooldown (350ms), server audio state is ignored
-      ctrl.handleAudioState({ volume: 50 });
+      act(() => {
+        useDisplayStore.setState({ audio: { muted: false, volume: 50 } });
+      });
       expect(volumeSlider.value).toBe('90');
 
-      vi.advanceTimersByTime(400);
-      ctrl.handleAudioState({ volume: 50 });
+      act(() => {
+        vi.advanceTimersByTime(400);
+        useDisplayStore.setState({ audio: { muted: false, volume: 50 } });
+      });
       expect(volumeSlider.value).toBe('50');
-
-      ctrl.destroy();
     });
 
+    it('does not revert committed volume if no server audio update arrives during cooldown', () => {
+      const mockFetch = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
+
+      render(
+        <div id="video-stage">
+          <Hud fetch={mockFetch as unknown as typeof fetch} />
+        </div>,
+      );
+
+      const volumeSlider = document.getElementById('video-hud-volume-slider') as HTMLInputElement;
+
+      fireEvent.input(volumeSlider, { target: { value: '92' } });
+      fireEvent.pointerUp(volumeSlider);
+      expect(volumeSlider.value).toBe('92');
+
+      // Cooldown timer expires without any server SSE update arriving
+      act(() => {
+        vi.advanceTimersByTime(500);
+      });
+
+      // Volume must remain at 92, NOT revert to default 75
+      expect(volumeSlider.value).toBe('92');
+    });
+  });
+
+  describe('Progress bar & scrubbing', () => {
     it('handles progress ticker and scrubbing seeks', () => {
-      const ctrl = new VideoHUDController({
-        overlayElement: overlay,
-        stageElement: stage,
-        progressContainer,
-        progressTrackElement: progressTrack,
-        progressFillElement: progressFill,
-        timeCurrentElement: timeCurrent,
-        timeTotalElement: timeTotal,
-        fetch: mockFetch as unknown as typeof fetch,
+      const mockFetch = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
+
+      render(
+        <div id="video-stage">
+          <Hud fetch={mockFetch as unknown as typeof fetch} />
+        </div>,
+      );
+
+      act(() => {
+        useDisplayStore.setState({
+          video: {
+            mode: 'video',
+            primary: {
+              id: 's1',
+              stream_url: '',
+              type: 'webrtc',
+              player_state: 'playing',
+              controllable: true,
+              duration: 100,
+              position: 10,
+            },
+            pip: null,
+          },
+        });
+        window.videoHUD?.showHUD();
       });
 
-      ctrl.handleVideoState({
-        mode: 'video',
-        primary: {
-          id: 's1',
-          stream_url: '',
-          type: 'webrtc',
-          player_state: 'playing',
-          controllable: true,
-          duration: 100,
-          position: 10,
-        },
-        pip: null,
-      });
+      const progressContainer = document.getElementById('video-hud-progress-container')!;
+      const timeCurrent = document.getElementById('video-hud-time-current')!;
+      const timeTotal = document.getElementById('video-hud-time-total')!;
+      const progressTrack = document.getElementById('video-hud-progress-track')!;
 
-      ctrl.showHUD();
       expect(progressContainer.style.display).not.toBe('none');
       expect(timeTotal.textContent).toBe('1:40');
 
-      // Ticker runs every 1000ms
-      vi.advanceTimersByTime(1000);
-      expect(timeCurrent.textContent).not.toBe('0:00');
+      // Ticker runs every 1000ms: position starts at 10s -> advances to 11s, 12s
+      expect(timeCurrent.textContent).toBe('0:10');
+      act(() => {
+        vi.advanceTimersByTime(1000);
+      });
+      expect(timeCurrent.textContent).toBe('0:11');
+      act(() => {
+        vi.advanceTimersByTime(1000);
+      });
+      expect(timeCurrent.textContent).toBe('0:12');
 
       // Scrubbing
       progressTrack.getBoundingClientRect = () => ({
@@ -680,16 +722,16 @@ describe('Hud component and VideoHUDController', () => {
         toJSON: () => {},
       });
 
-      fireEvent.pointerDown(progressTrack, { clientX: 100 });
-      expect(ctrl.isScrubbing).toBe(true);
+      fireEvent.pointerDown(progressTrack, { clientX: 100, pointerId: 1 });
       expect(progressTrack.classList.contains('is-scrubbing')).toBe(true);
 
-      fireEvent.pointerMove(progressTrack, { clientX: 150 });
+      fireEvent.pointerMove(progressTrack, { clientX: 150, pointerId: 1 });
       // 150 / 200 = 75% of 100s = 75s = 1:15
       expect(timeCurrent.textContent).toBe('1:15');
 
-      fireEvent.pointerUp(progressTrack, { clientX: 150 });
-      expect(ctrl.isScrubbing).toBe(false);
+      fireEvent.pointerUp(progressTrack, { clientX: 150, pointerId: 1 });
+      expect(progressTrack.classList.contains('is-scrubbing')).toBe(false);
+      expect(timeCurrent.textContent).toBe('1:15');
       expect(mockFetch).toHaveBeenCalledWith(
         'api/video/action',
         expect.objectContaining({
@@ -697,7 +739,11 @@ describe('Hud component and VideoHUDController', () => {
         }),
       );
 
-      ctrl.destroy();
+      // Next 1Hz tick interpolates forward from seek position (1:16)
+      act(() => {
+        vi.advanceTimersByTime(1000);
+      });
+      expect(timeCurrent.textContent).toBe('1:16');
     });
   });
 });
