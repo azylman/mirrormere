@@ -142,50 +142,6 @@ export const CalendarGridWidget = memo(function CalendarGridWidget({
     handleUserActivity();
   }, [handleUserActivity]);
 
-  // Touch swipe navigation
-  const touchStartXRef = useRef<number>(0);
-  const touchStartYRef = useRef<number>(0);
-  const touchStartTimeRef = useRef<number>(0);
-  const isSwipingRef = useRef<boolean>(false);
-
-  const handleTouchStart = (e: React.TouchEvent) => {
-    handleUserActivity();
-    if (activeModalEvent) return;
-    const t = e.touches[0];
-    touchStartXRef.current = t.clientX;
-    touchStartYRef.current = t.clientY;
-    touchStartTimeRef.current = Date.now();
-    isSwipingRef.current = true;
-  };
-
-  const handleTouchMove = () => {
-    handleUserActivity();
-  };
-
-  const handleTouchEnd = (e: React.TouchEvent) => {
-    handleUserActivity();
-    if (!isSwipingRef.current || activeModalEvent) {
-      isSwipingRef.current = false;
-      return;
-    }
-    isSwipingRef.current = false;
-    const t = e.changedTouches[0];
-    const deltaX = t.clientX - touchStartXRef.current;
-    const deltaY = t.clientY - touchStartYRef.current;
-    const duration = Math.max(Date.now() - touchStartTimeRef.current, 1);
-    const absDeltaX = Math.abs(deltaX);
-    const absDeltaY = Math.abs(deltaY);
-    const velocity = absDeltaX / duration;
-
-    const isFlick = absDeltaX >= 40 && velocity >= 0.15 && absDeltaX > absDeltaY * 1.5;
-    const isDrag = absDeltaX >= 50 && duration < 800 && absDeltaX > absDeltaY * 1.5;
-
-    if (isFlick || isDrag) {
-      if (deltaX < 0) pageNext();
-      else pagePrev();
-    }
-  };
-
   const weekVM = currentViewModel?.week as FamilyViewModel | undefined;
   const monthVM = currentViewModel?.month as FamilyMonthViewModel | undefined;
 
@@ -236,11 +192,7 @@ export const CalendarGridWidget = memo(function CalendarGridWidget({
       data-active-view={activeView}
       data-current-date={currentDateISO}
       data-page-offset={String(pageOffset)}
-      data-prevent-screen-swipe="true"
       style={memberCssVars}
-      onTouchStart={handleTouchStart}
-      onTouchMove={handleTouchMove}
-      onTouchEnd={handleTouchEnd}
       onPointerDown={handleUserActivity}
     >
       {isError && (

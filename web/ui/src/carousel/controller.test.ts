@@ -274,11 +274,11 @@ describe('CarouselController', () => {
   it('ignores a swipe that starts inside an excluded zone', () => {
     vi.useFakeTimers();
     const h = build();
-    const grid = document.createElement('div');
-    grid.className = 'widget-calendar-grid';
+    const guarded = document.createElement('div');
+    guarded.setAttribute('data-prevent-screen-swipe', '');
     const cell = document.createElement('span');
-    grid.appendChild(cell);
-    h.viewport.appendChild(grid);
+    guarded.appendChild(cell);
+    h.viewport.appendChild(guarded);
 
     h.down(500, 100, cell);
     h.move(300, 100);

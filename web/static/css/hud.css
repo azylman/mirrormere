@@ -2811,18 +2811,9 @@ button, .touch-target {
   width: 100%;
   height: 100%;
   align-items: center;
-  overflow-x: auto;
-  overflow-y: hidden;
+  overflow: hidden;
   padding: 0;
-  scrollbar-width: none;
-  -ms-overflow-style: none;
-  -webkit-overflow-scrolling: touch;
-  overscroll-behavior-x: contain;
-  touch-action: pan-x;
-}
-
-.weather-hourly-timeline::-webkit-scrollbar {
-  display: none;
+  touch-action: pan-y;
 }
 
 .weather-hourly-graph {

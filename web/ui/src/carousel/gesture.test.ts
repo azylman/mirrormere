@@ -67,20 +67,21 @@ describe('velocityOf', () => {
 });
 
 describe('isExcludedTarget', () => {
-  it('excludes calendar grids, calendar family and data-prevent-screen-swipe', () => {
-    for (const cls of ['widget-calendar-grid', 'widget-calendar-family']) {
-      const el = document.createElement('div');
-      const inner = document.createElement('span');
-      el.className = cls;
-      el.appendChild(inner);
-      expect(isExcludedTarget(inner)).toBe(true);
-    }
+  it('excludes elements inside data-prevent-screen-swipe', () => {
     const guarded = document.createElement('div');
+    const inner = document.createElement('span');
     guarded.setAttribute('data-prevent-screen-swipe', '');
+    guarded.appendChild(inner);
     expect(isExcludedTarget(guarded)).toBe(true);
+    expect(isExcludedTarget(inner)).toBe(true);
   });
 
-  it('does not exclude ordinary widgets or non-element targets', () => {
+  it('does not exclude calendar grids, ordinary widgets, or non-element targets', () => {
+    for (const cls of ['widget-calendar-grid', 'widget-calendar-family']) {
+      const el = document.createElement('div');
+      el.className = cls;
+      expect(isExcludedTarget(el)).toBe(false);
+    }
     const plain = document.createElement('div');
     expect(isExcludedTarget(plain)).toBe(false);
     expect(isExcludedTarget(null)).toBe(false);
