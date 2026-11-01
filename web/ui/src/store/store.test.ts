@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BufferedEvent } from '../sse/batch';
 import type { WidgetDetailResponse } from '../sse/types';
-import { useDisplayStore } from './index';
+import { reduceEvents, useDisplayStore } from './index';
 
 const initial = useDisplayStore.getState();
 
@@ -229,6 +229,8 @@ describe('display store', () => {
       );
 
       const first = useDisplayStore.getState().hydrateWidget('w');
+      // A reload between the calls makes the second a separate fetch rather than a shared one.
+      useDisplayStore.setState({ widgetReloads: { 'weather-forecast': 1 } });
       const second = useDisplayStore.getState().hydrateWidget('w');
       resolvers[1](new Response(JSON.stringify(detail({ widget_id: 'w', data: 'new' })), { status: 200 }));
       await second;
@@ -236,6 +238,46 @@ describe('display store', () => {
       await first;
 
       expect(useDisplayStore.getState().widgets.w.data).toBe('new');
+    });
+
+    it('shares one fetch between concurrent calls while widgetReloads is unchanged', async () => {
+      const fetchMock = stubFetch(detail({ widget_id: 'w' }));
+
+      const first = useDisplayStore.getState().hydrateWidget('w');
+      const second = useDisplayStore.getState().hydrateWidget('w');
+      await Promise.all([first, second]);
+
+      expect(first).toBe(second);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(useDisplayStore.getState().widgets.w.meta?.type).toBe('weather-forecast');
+
+      // The entry is gone once settled: a later call fetches again.
+      await useDisplayStore.getState().hydrateWidget('w');
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    it('makes a second fetch when a widget reload lands between two calls', async () => {
+      const fetchMock = stubFetch(detail({ widget_id: 'w' }));
+
+      const first = useDisplayStore.getState().hydrateWidget('w');
+      useDisplayStore.getState().applyEvents([{ type: 'widget.reload', data: { type: 'weather-forecast' } }]);
+      const second = useDisplayStore.getState().hydrateWidget('w');
+      await Promise.all([first, second]);
+
+      expect(first).not.toBe(second);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not let a rejected shared fetch stick: the next call fetches again', async () => {
+      vi.stubGlobal('fetch', vi.fn(async () => new Response('nope', { status: 500 })));
+      const first = useDisplayStore.getState().hydrateWidget('w');
+      const second = useDisplayStore.getState().hydrateWidget('w');
+      await expect(first).rejects.toThrow('HTTP 500');
+      await expect(second).rejects.toThrow('HTTP 500');
+
+      const fetchMock = stubFetch(detail({ widget_id: 'w' }));
+      await useDisplayStore.getState().hydrateWidget('w');
+      expect(fetchMock).toHaveBeenCalledTimes(1);
     });
 
     it('keeps a stream update that lands while the fetch is in flight', async () => {
@@ -274,6 +316,42 @@ describe('display store', () => {
       expect(useDisplayStore.getState().widgets.cal.data).toEqual({ events: 2 });
     });
 
+    it('starts a fresh fetch when a calendar-grid widget.update lands while a hydrate is in flight', async () => {
+      useDisplayStore.setState({
+        widgets: {
+          cal: {
+            meta: { type: 'calendar-grid', config: {}, assets_base: 'a/', origin: [0, 0], dimensions: [1, 1] },
+            state: 'healthy',
+            data: { events: 1 },
+            viewModel: { week: 'old' },
+            timestamp: 't0',
+          },
+        },
+      });
+      const resolvers: Array<(r: Response) => void> = [];
+      const fetchMock = vi.fn(() => new Promise<Response>((resolve) => resolvers.push(resolve)));
+      vi.stubGlobal('fetch', fetchMock);
+      const calendarDetail = (viewModel: Record<string, unknown>) =>
+        new Response(
+          JSON.stringify(detail({ widget_id: 'cal', type: 'calendar-grid', data: { events: 2 }, view_model: viewModel })),
+          { status: 200 },
+        );
+
+      // The first hydrate is held in flight; the stream update must not reuse it.
+      const pending = useDisplayStore.getState().hydrateWidget('cal');
+      useDisplayStore.getState().applyEvents([widgetUpdate('cal', { events: 2 })]);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(fetchMock).toHaveBeenLastCalledWith('api/widgets/cal', expect.anything());
+
+      // The newer fetch resolves first, then the older one lands and must be dropped.
+      resolvers[1](calendarDetail({ week: 'second' }));
+      await vi.waitFor(() => expect(useDisplayStore.getState().widgets.cal.viewModel).toEqual({ week: 'second' }));
+      resolvers[0](calendarDetail({ week: 'first' }));
+      await pending;
+
+      expect(useDisplayStore.getState().widgets.cal.viewModel).toEqual({ week: 'second' });
+    });
+
     it('does not refetch widget types outside REFETCH_ON_UPDATE', async () => {
       useDisplayStore.setState({
         widgets: {
@@ -289,6 +367,35 @@ describe('display store', () => {
       useDisplayStore.getState().applyEvents([widgetUpdate('w', 2)]);
       await Promise.resolve();
       expect(fetchMock).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('widget.reload', () => {
+    it('counts reloads per type and leaves other types alone', () => {
+      const { patch } = reduceEvents(useDisplayStore.getState(), [
+        { type: 'widget.reload', data: { type: 'T' } },
+        { type: 'widget.reload', data: { type: 'T' } },
+        { type: 'widget.reload', data: { type: 'U' } },
+      ]);
+      expect(patch.widgetReloads).toEqual({ T: 2, U: 1 });
+    });
+
+    it('adds to the previous counts without mutating them', () => {
+      const previous = { T: 1 };
+      const state = { ...useDisplayStore.getState(), widgetReloads: previous };
+      const { patch } = reduceEvents(state, [{ type: 'widget.reload', data: { type: 'T' } }]);
+      expect(patch.widgetReloads).toEqual({ T: 2 });
+      expect(previous).toEqual({ T: 1 });
+    });
+
+    it('bumps layoutVersion, counts nothing for an empty type, and refetches no widget', () => {
+      const { patch, refetch } = reduceEvents(useDisplayStore.getState(), [
+        { type: 'widget.reload', data: { type: 'T' } },
+        { type: 'widget.reload', data: { type: '' } },
+      ]);
+      expect(refetch).toEqual([]);
+      expect(patch.layoutVersion).toBe(2);
+      expect(patch.widgetReloads).toEqual({ T: 1 });
     });
   });
 

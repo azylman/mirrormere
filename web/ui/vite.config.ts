@@ -7,6 +7,8 @@ import react from '@vitejs/plugin-react';
 export default defineConfig({
   base: './',
   plugins: [react()],
+  // Tests read the e-ink settle predicate from sidecars/ (raw import), outside this root.
+  server: { fs: { allow: ['../..'] } },
   build: {
     outDir: '../static/ui',
     emptyOutDir: true,

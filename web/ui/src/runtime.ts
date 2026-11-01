@@ -10,6 +10,7 @@ import { useDisplayStore } from './store';
 const STORE_EVENTS: ReadonlySet<ServerEventName> = new Set<ServerEventName>([
   'screen.rotate',
   'widget.update',
+  'widget.reload',
   'header.update',
   'video.state',
   'audio.state',

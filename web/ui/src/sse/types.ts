@@ -161,3 +161,24 @@ export type StreamEventName = keyof StreamEventMap;
 
 /** Server-sent events (everything except the synthetic connection event). */
 export type ServerEventName = Exclude<StreamEventName, 'connection'>;
+
+/** One widget cell of a screen as listed by GET api/screens (openapi WidgetPlacement). */
+export interface WidgetPlacement {
+  widget_id: string;
+  type: string;
+  origin: [number, number];
+  dimensions: [number, number];
+}
+
+/** One screen of the rotation layout (openapi ScreenLayout). */
+export interface ScreenLayout {
+  index: number;
+  widgets: WidgetPlacement[];
+}
+
+/** Response of GET api/screens (openapi ScreensResponse). */
+export interface ScreensResponse {
+  current_screen: number;
+  interval_seconds: number;
+  screens: ScreenLayout[];
+}
