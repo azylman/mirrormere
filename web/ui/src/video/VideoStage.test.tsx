@@ -1,12 +1,14 @@
-import { act, cleanup, render } from '@testing-library/react';
+import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { VideoSource } from '../sse/types';
 import { useDisplayStore } from '../store';
 import {
+  flushCompositorPaint,
   getNormalizedVideoCoordinates,
   VideoPlayerManager,
   VideoStage,
 } from './VideoStage';
+import { postTouchEvent } from './api';
 
 class MockRTCPeerConnection {
   public connectionState: RTCPeerConnectionState = 'new';
@@ -34,7 +36,10 @@ class MockRTCPeerConnection {
   removeEventListener(type: string, listener: (e: Event) => void): void {
     const arr = this.listeners.get(type);
     if (arr) {
-      this.listeners.set(type, arr.filter((l) => l !== listener));
+      this.listeners.set(
+        type,
+        arr.filter((l) => l !== listener),
+      );
     }
   }
 
@@ -93,33 +98,7 @@ class MockRTCPeerConnection {
   }
 }
 
-function createMockAudioManager() {
-  const registered = new Set<HTMLMediaElement>();
-  return {
-    registered,
-    registerMediaElement: vi.fn((el: HTMLMediaElement) => {
-      registered.add(el);
-      if (el) el.volume = 0.6;
-    }),
-    unregisterMediaElement: vi.fn((el: HTMLMediaElement) => {
-      registered.delete(el);
-    }),
-  };
-}
-
-function createMockCarousel() {
-  return {
-    paused: false,
-    pause: vi.fn(function (this: { paused: boolean }) {
-      this.paused = true;
-    }),
-    resume: vi.fn(function (this: { paused: boolean }) {
-      this.paused = false;
-    }),
-  };
-}
-
-describe('VideoStage and VideoPlayerManager', () => {
+describe('VideoStage Declarative Suite', () => {
   const initialStore = useDisplayStore.getState();
 
   beforeEach(() => {
@@ -128,7 +107,7 @@ describe('VideoStage and VideoPlayerManager', () => {
     useDisplayStore.setState(initialStore, true);
     delete window.videoManager;
     delete window.videoHUD;
-    delete window.audioManager;
+    delete (window as unknown as { carousel?: unknown }).carousel;
     HTMLMediaElement.prototype.play = vi.fn().mockResolvedValue(undefined);
     HTMLMediaElement.prototype.load = vi.fn();
     HTMLMediaElement.prototype.pause = vi.fn();
@@ -142,7 +121,7 @@ describe('VideoStage and VideoPlayerManager', () => {
     useDisplayStore.setState(initialStore, true);
     delete window.videoManager;
     delete window.videoHUD;
-    delete window.audioManager;
+    delete (window as unknown as { carousel?: unknown }).carousel;
   });
 
   describe('getNormalizedVideoCoordinates', () => {
@@ -161,7 +140,6 @@ describe('VideoStage and VideoPlayerManager', () => {
     });
 
     it('compensates for pillarboxing when 16:9 video is rendered inside ultrawide container', () => {
-      // 16:9 video in 2560x1080 container: content width is 1920, offset left is 320
       const mockVideo = {
         videoWidth: 1920,
         videoHeight: 1080,
@@ -181,7 +159,6 @@ describe('VideoStage and VideoPlayerManager', () => {
     });
 
     it('compensates for letterboxing when 16:9 video is rendered inside 4:3 container', () => {
-      // 16:9 video in 1920x1440 container: content height is 1080, offset top is 180
       const mockVideo = {
         videoWidth: 1920,
         videoHeight: 1080,
@@ -237,14 +214,20 @@ describe('VideoStage and VideoPlayerManager', () => {
     });
 
     it('returns null on invalid elements or zero bounds', () => {
-      expect(getNormalizedVideoCoordinates({ clientX: 100, clientY: 100 }, null as unknown as HTMLVideoElement)).toBeNull();
+      expect(
+        getNormalizedVideoCoordinates(
+          { clientX: 100, clientY: 100 },
+          null as unknown as HTMLVideoElement,
+        ),
+      ).toBeNull();
       const zeroRectVideo = {
-        getBoundingClientRect: () => ({ left: 0, top: 0, width: 0, height: 0, right: 0, bottom: 0 }) as DOMRect,
+        getBoundingClientRect: () =>
+          ({ left: 0, top: 0, width: 0, height: 0, right: 0, bottom: 0 }) as DOMRect,
       };
       expect(getNormalizedVideoCoordinates({ clientX: 100, clientY: 100 }, zeroRectVideo)).toBeNull();
     });
 
-    it('instance method produces identical results to exported pure function', () => {
+    it('VideoPlayerManager compatibility adapter exports getNormalizedVideoCoordinates', () => {
       const mgr = new VideoPlayerManager({});
       const mockVideo = {
         videoWidth: 1920,
@@ -255,487 +238,10 @@ describe('VideoStage and VideoPlayerManager', () => {
       const direct = getNormalizedVideoCoordinates({ clientX: 960, clientY: 540 }, mockVideo);
       const instance = mgr.getNormalizedVideoCoordinates({ clientX: 960, clientY: 540 }, mockVideo);
       expect(direct).toEqual(instance);
-      mgr.destroy();
     });
   });
 
   describe('Presentation Mode Switching & Carousel Coordination', () => {
-    it('pauses carousel, leaves grid-canvas unmutated, and shows video-stage on entering video mode', () => {
-      const gridCanvas = document.createElement('main');
-      gridCanvas.id = 'grid-canvas';
-      document.body.appendChild(gridCanvas);
-
-      const stage = document.createElement('div');
-      stage.id = 'video-stage';
-      stage.style.display = 'none';
-      document.body.appendChild(stage);
-
-      const primarySlot = document.createElement('div');
-      primarySlot.id = 'video-primary-slot';
-      stage.appendChild(primarySlot);
-
-      const carousel = createMockCarousel();
-      const mgr = new VideoPlayerManager({
-        stageElement: stage,
-        primarySlot,
-        carousel,
-      });
-
-      mgr.handleVideoState({
-        mode: 'video',
-        primary: {
-          id: 'camera_1',
-          stream_url: 'http://cam/mjpeg',
-          type: 'mjpeg',
-        },
-        pip: null,
-      });
-
-      expect(carousel.pause).toHaveBeenCalledTimes(1);
-      expect(useDisplayStore.getState().carousel.paused).toBe(true);
-      expect(gridCanvas.style.display).toBe('');
-      expect(stage.style.display).toBe('flex');
-      expect(stage.classList.contains('active')).toBe(true);
-      expect(mgr.currentMode).toBe('video');
-
-      // Exit video mode
-      mgr.exitVideoMode();
-
-      expect(carousel.resume).toHaveBeenCalledTimes(1);
-      expect(useDisplayStore.getState().carousel.paused).toBe(false);
-      expect(gridCanvas.style.display).toBe('');
-      expect(stage.style.display).toBe('none');
-      expect(stage.classList.contains('active')).toBe(false);
-      expect(mgr.currentMode).toBe('widgets');
-
-      mgr.destroy();
-    });
-
-    it('reconciles primary stream updates without remounting unchanged streams', () => {
-      const stage = document.createElement('div');
-      const primarySlot = document.createElement('div');
-      stage.appendChild(primarySlot);
-
-      const mgr = new VideoPlayerManager({
-        stageElement: stage,
-        primarySlot,
-      });
-
-      const initialSource: VideoSource = {
-        id: 'cam_a',
-        stream_url: 'http://cam/mjpeg',
-        type: 'mjpeg',
-        title: 'Initial Title',
-      };
-
-      mgr.handleVideoState({ mode: 'video', primary: initialSource, pip: null });
-      const firstSession = mgr.primarySession;
-      expect(firstSession).not.toBeNull();
-      expect(firstSession?.stream.title).toBe('Initial Title');
-
-      // Stream with same ID and stream_url updates metadata in place
-      mgr.handleVideoState({
-        mode: 'video',
-        primary: { ...initialSource, title: 'Updated Title' },
-        pip: null,
-      });
-      expect(mgr.primarySession).toBe(firstSession);
-      expect(mgr.primarySession?.stream.title).toBe('Updated Title');
-
-      // Different stream_url replaces session
-      mgr.handleVideoState({
-        mode: 'video',
-        primary: { ...initialSource, stream_url: 'http://cam/mjpeg_hd' },
-        pip: null,
-      });
-      expect(mgr.primarySession).not.toBe(firstSession);
-      expect(mgr.primarySession?.stream.stream_url).toBe('http://cam/mjpeg_hd');
-
-      mgr.destroy();
-    });
-  });
-
-  describe('Multi-Stream Triad & WebRTC Negotiation', () => {
-    it('mounts MJPEG stream via responsive img element without registering with AudioManager', () => {
-      const stage = document.createElement('div');
-      const primarySlot = document.createElement('div');
-      stage.appendChild(primarySlot);
-      const audioMgr = createMockAudioManager();
-
-      const mgr = new VideoPlayerManager({
-        stageElement: stage,
-        primarySlot,
-        audioManager: audioMgr,
-      });
-
-      mgr.handleVideoState({
-        mode: 'video',
-        primary: { id: 'doorbell', stream_url: 'http://doorbell/stream.mjpg', type: 'mjpeg' },
-        pip: null,
-      });
-
-      const img = primarySlot.querySelector('img');
-      expect(img).not.toBeNull();
-      expect(img?.src).toBe('http://doorbell/stream.mjpg');
-      expect(audioMgr.registered.size).toBe(0);
-
-      mgr.destroy();
-    });
-
-    it('mounts HLS stream and registers with AudioManager', () => {
-      const stage = document.createElement('div');
-      const primarySlot = document.createElement('div');
-      stage.appendChild(primarySlot);
-      const audioMgr = createMockAudioManager();
-
-      const mgr = new VideoPlayerManager({
-        stageElement: stage,
-        primarySlot,
-        audioManager: audioMgr,
-      });
-
-      mgr.handleVideoState({
-        mode: 'video',
-        primary: { id: 'hls_stream', stream_url: 'http://host/stream.m3u8', type: 'hls' },
-        pip: null,
-      });
-
-      const video = primarySlot.querySelector('video');
-      expect(video).not.toBeNull();
-      expect(video?.muted).toBe(false);
-      expect(audioMgr.registerMediaElement).toHaveBeenCalledWith(video);
-
-      mgr.destroy();
-    });
-
-    it('mounts WebRTC stream, negotiates SDP offer/answer, and tears down cleanly on exit', async () => {
-      const stage = document.createElement('div');
-      const primarySlot = document.createElement('div');
-      stage.appendChild(primarySlot);
-
-      let sdpPostSent = false;
-      const mockFetch = vi.fn().mockImplementation(async (_unusedUrl: string, opts) => {
-        if (opts?.method === 'POST') {
-          sdpPostSent = true;
-          return {
-            ok: true,
-            status: 200,
-            text: async () => JSON.stringify({ sdp: 'v=0\r\ns=go2rtc_answer' }),
-          };
-        }
-        return { ok: true, status: 200, text: async () => '' };
-      });
-
-      const mgr = new VideoPlayerManager({
-        stageElement: stage,
-        primarySlot,
-        RTCPeerConnection: MockRTCPeerConnection as unknown as typeof RTCPeerConnection,
-        fetch: mockFetch as unknown as typeof fetch,
-      });
-
-      mgr.handleVideoState({
-        mode: 'video',
-        primary: { id: 'webrtc_cam', stream_url: 'http://go2rtc/stream', type: 'webrtc' },
-        pip: null,
-      });
-
-      const session = mgr.primarySession;
-      expect(session).not.toBeNull();
-      expect(session?.pc).not.toBeNull();
-
-      // Transceivers added
-      const mockPC = session?.pc as unknown as MockRTCPeerConnection;
-      expect(mockPC.transceivers.length).toBe(2);
-      expect(mockPC.transceivers[0].kind).toBe('video');
-      expect(mockPC.transceivers[0].receiver.playoutDelayHint).toBe(0);
-
-      // Run timers for ICE gathering and negotiation
-      await act(async () => {
-        vi.advanceTimersByTime(600);
-      });
-
-      expect(sdpPostSent).toBe(true);
-      expect(mockPC.remoteDescription?.sdp).toBe('v=0\r\ns=go2rtc_answer');
-
-      // Teardown
-      mgr.exitVideoMode();
-      expect(mockPC.closed).toBe(true);
-      expect(mgr.primarySession).toBeNull();
-      expect(primarySlot.children.length).toBe(0);
-
-      mgr.destroy();
-    });
-  });
-
-  describe('PiP Slot, Zero-Reparenting Swap-on-Tap, and Audio Focus', () => {
-    it('manages PiP slot visibility, audio separation, and interactive swap-on-tap', () => {
-      const stage = document.createElement('div');
-      stage.id = 'video-stage';
-      const primarySlot = document.createElement('div');
-      primarySlot.id = 'video-primary-slot';
-      const pipSlot = document.createElement('div');
-      pipSlot.id = 'video-pip-slot';
-      stage.appendChild(primarySlot);
-      stage.appendChild(pipSlot);
-      document.body.appendChild(stage);
-
-      const audioMgr = createMockAudioManager();
-      const mgr = new VideoPlayerManager({
-        stageElement: stage,
-        primarySlot,
-        pipSlot,
-        audioManager: audioMgr,
-      });
-
-      mgr.handleVideoState({
-        mode: 'video',
-        primary: { id: 'primary_stream', stream_url: 'http://main/stream.m3u8', type: 'hls' },
-        pip: { id: 'pip_stream', stream_url: 'http://pip/stream.m3u8', type: 'hls' },
-      });
-
-      expect(pipSlot.style.display).toBe('flex');
-      const primaryVideo = primarySlot.querySelector('video') as HTMLVideoElement;
-      const pipVideo = pipSlot.querySelector('video') as HTMLVideoElement;
-
-      // Audio focus initially on primary
-      expect(primaryVideo.muted).toBe(false);
-      expect(audioMgr.registered.has(primaryVideo)).toBe(true);
-      expect(pipVideo.muted).toBe(true);
-      expect(pipVideo.volume).toBe(0);
-      expect(audioMgr.registered.has(pipVideo)).toBe(false);
-
-      // Tap PiP to trigger zero-reparenting swap
-      mgr.handleSlotClick('pip');
-      expect(mgr.isSwapped).toBe(true);
-      expect(stage.dataset.swapped).toBe('true');
-
-      // Audio focus handed over to visual primary (former PiP)
-      expect(pipVideo.muted).toBe(false);
-      expect(audioMgr.registered.has(pipVideo)).toBe(true);
-      expect(primaryVideo.muted).toBe(true);
-      expect(primaryVideo.volume).toBe(0);
-      expect(audioMgr.registered.has(primaryVideo)).toBe(false);
-
-      // Tap Primary while swapped swaps back
-      mgr.handleSlotClick('primary');
-      expect(mgr.isSwapped).toBe(false);
-      expect(stage.dataset.swapped).toBe('false');
-      expect(primaryVideo.muted).toBe(false);
-      expect(audioMgr.registered.has(primaryVideo)).toBe(true);
-
-      // Dismissing PiP resets swap state without interrupting primary
-      mgr.handleVideoState({
-        mode: 'video',
-        primary: { id: 'primary_stream', stream_url: 'http://main/stream.m3u8', type: 'hls' },
-        pip: null,
-      });
-      expect(mgr.pipSession).toBeNull();
-      expect(pipSlot.style.display).toBe('none');
-      expect(mgr.isSwapped).toBe(false);
-      expect(mgr.primarySession).not.toBeNull();
-
-      mgr.destroy();
-    });
-  });
-
-  describe('WebRTC Watchdog, Auto-Reconnect & Fallback', () => {
-    it('auto-reconnects with backoff on failure and flushes hardware decode buffer', async () => {
-      const stage = document.createElement('div');
-      const primarySlot = document.createElement('div');
-      stage.appendChild(primarySlot);
-
-      const mockFetch = vi.fn().mockResolvedValue({
-        ok: true,
-        status: 200,
-        text: async () => 'v=0\r\ns=answer',
-      });
-
-      const mgr = new VideoPlayerManager({
-        stageElement: stage,
-        primarySlot,
-        RTCPeerConnection: MockRTCPeerConnection as unknown as typeof RTCPeerConnection,
-        fetch: mockFetch as unknown as typeof fetch,
-        reconnectBaseDelay: 100,
-      });
-
-      mgr.handleVideoState({
-        mode: 'video',
-        primary: { id: 'cast', stream_url: 'http://cast/webrtc', type: 'webrtc' },
-        pip: null,
-      });
-
-      const session = mgr.primarySession!;
-      const initialPC = session.pc as unknown as MockRTCPeerConnection;
-
-      // Fail connection
-      initialPC.setConnectionState('failed');
-      expect(session.reconnectAttempts).toBe(1);
-
-      // Hardware decode frame buffer flushed on reconnect
-      await act(async () => {
-        vi.advanceTimersByTime(150);
-      });
-
-      expect(session.pc).not.toBe(initialPC);
-      expect(HTMLMediaElement.prototype.load).toHaveBeenCalled();
-
-      mgr.destroy();
-    });
-
-    it('falls back to widgets mode when primary reconnect attempts are exhausted', async () => {
-      const stage = document.createElement('div');
-      const primarySlot = document.createElement('div');
-      stage.appendChild(primarySlot);
-
-      const mgr = new VideoPlayerManager({
-        stageElement: stage,
-        primarySlot,
-        RTCPeerConnection: MockRTCPeerConnection as unknown as typeof RTCPeerConnection,
-        maxReconnectAttempts: 2,
-        reconnectBaseDelay: 50,
-      });
-
-      mgr.handleVideoState({
-        mode: 'video',
-        primary: { id: 'cam', stream_url: 'http://cam/webrtc', type: 'webrtc' },
-        pip: null,
-      });
-
-      const session = mgr.primarySession!;
-      session.reconnectAttempts = 2; // already reached max
-      mgr.scheduleWebRTCReconnect(session);
-
-      // Primary failure triggers exitVideoMode
-      expect(mgr.currentMode).toBe('widgets');
-      expect(mgr.primarySession).toBeNull();
-
-      mgr.destroy();
-    });
-
-    it('dismisses only PiP slot when PiP reconnect attempts are exhausted', () => {
-      const stage = document.createElement('div');
-      const primarySlot = document.createElement('div');
-      const pipSlot = document.createElement('div');
-      stage.appendChild(primarySlot);
-      stage.appendChild(pipSlot);
-
-      const mgr = new VideoPlayerManager({
-        stageElement: stage,
-        primarySlot,
-        pipSlot,
-        maxReconnectAttempts: 2,
-      });
-
-      mgr.handleVideoState({
-        mode: 'video',
-        primary: { id: 'primary', stream_url: 'http://p/mjpeg', type: 'mjpeg' },
-        pip: { id: 'pip', stream_url: 'http://pip/mjpeg', type: 'mjpeg' },
-      });
-
-      const pipSession = mgr.pipSession!;
-      pipSession.reconnectAttempts = 2;
-      mgr.scheduleWebRTCReconnect(pipSession);
-
-      // PiP is dismissed, primary remains active
-      expect(mgr.currentMode).toBe('video');
-      expect(mgr.pipSession).toBeNull();
-      expect(mgr.primarySession).not.toBeNull();
-      expect(pipSlot.style.display).toBe('none');
-
-      mgr.destroy();
-    });
-  });
-
-  describe('Touch Forwarding', () => {
-    it('dispatches tap, move, and up actions over remoteUrl', async () => {
-      const dispatched: Array<{ url: string; body: unknown }> = [];
-      const mockFetch = vi.fn().mockImplementation(async (url: string, opts) => {
-        dispatched.push({ url, body: JSON.parse(opts.body) });
-        return { ok: true, status: 200, json: async () => ({ status: 'ok' }) };
-      });
-
-      const stage = document.createElement('div');
-      const primarySlot = document.createElement('div');
-      stage.appendChild(primarySlot);
-
-      const mgr = new VideoPlayerManager({
-        stageElement: stage,
-        primarySlot,
-        fetch: mockFetch as unknown as typeof fetch,
-        remoteUrl: 'http://sidecar:8092',
-      });
-
-      mgr.enterVideoMode({
-        mode: 'video',
-        primary: {
-          id: 'interactive_cam',
-          stream_url: 'http://cam/mjpeg',
-          type: 'mjpeg',
-          controllable: true,
-        },
-        pip: null,
-      });
-
-      const img = mgr.primarySession?.element as HTMLImageElement;
-      img.getBoundingClientRect = () =>
-        ({ left: 0, top: 0, width: 1000, height: 1000, right: 1000, bottom: 1000 }) as DOMRect;
-      Object.defineProperty(img, 'naturalWidth', { value: 1000 });
-      Object.defineProperty(img, 'naturalHeight', { value: 1000 });
-
-      // Simulate tap gesture (pointerdown then pointerup without movement)
-      const downEvent = new MouseEvent('pointerdown', { clientX: 500, clientY: 500, button: 0 });
-      img.dispatchEvent(downEvent);
-
-      const upEvent = new MouseEvent('pointerup', { clientX: 500, clientY: 500, button: 0 });
-      img.dispatchEvent(upEvent);
-
-      expect(dispatched.length).toBe(2);
-      expect(dispatched[0].url).toBe('http://sidecar:8092/touch');
-      expect(dispatched[0].body).toEqual({ action: 'down', x: 0.5, y: 0.5 });
-      expect(dispatched[1].body).toEqual({ action: 'tap', x: 0.5, y: 0.5 });
-
-      // Simulate drag gesture
-      dispatched.length = 0;
-      img.dispatchEvent(new MouseEvent('pointerdown', { clientX: 100, clientY: 100, button: 0 }));
-
-      // Move past 10px and throttle interval
-      await act(async () => {
-        vi.advanceTimersByTime(40);
-      });
-      img.dispatchEvent(new MouseEvent('pointermove', { clientX: 300, clientY: 300 }));
-      img.dispatchEvent(new MouseEvent('pointerup', { clientX: 300, clientY: 300 }));
-
-      expect(dispatched.length).toBe(3);
-      expect(dispatched[0].body).toEqual({ action: 'down', x: 0.1, y: 0.1 });
-      expect(dispatched[1].body).toEqual({ action: 'move', x: 0.3, y: 0.3 });
-      expect(dispatched[2].body).toEqual({ action: 'up', x: 0.3, y: 0.3 });
-
-      mgr.destroy();
-    });
-
-    it('falls back to /tap if /touch fails on tap action', async () => {
-      const calls: string[] = [];
-      const mockFetch = vi.fn().mockImplementation(async (url: string) => {
-        calls.push(url);
-        if (url.endsWith('/touch')) {
-          throw new Error('404 Not Found');
-        }
-        return { ok: true, status: 200, json: async () => ({ status: 'ok' }) };
-      });
-
-      const mgr = new VideoPlayerManager({
-        fetch: mockFetch as unknown as typeof fetch,
-        remoteUrl: 'http://sidecar:8092',
-      });
-
-      await mgr.sendTouchEvent('tap', 0.5, 0.5);
-
-      expect(calls).toEqual(['http://sidecar:8092/touch', 'http://sidecar:8092/tap']);
-      mgr.destroy();
-    });
-  });
-
-  describe('<VideoStage /> React Component', () => {
     it('renders stage structure, sets window.videoManager and window.videoHUD, and cleans up on unmount', () => {
       const { container, unmount } = render(<VideoStage />);
 
@@ -753,6 +259,9 @@ describe('VideoStage and VideoPlayerManager', () => {
     });
 
     it('responds to displayStore video slice updates to enter and exit video presentation mode', () => {
+      const mockCarousel = { pause: vi.fn(), resume: vi.fn() };
+      (window as unknown as { carousel?: typeof mockCarousel }).carousel = mockCarousel;
+
       render(<VideoStage />);
       const stageEl = document.getElementById('video-stage');
 
@@ -771,6 +280,7 @@ describe('VideoStage and VideoPlayerManager', () => {
 
       expect(stageEl?.style.display).toBe('flex');
       expect(stageEl?.classList.contains('active')).toBe(true);
+      expect(mockCarousel.pause).toHaveBeenCalledTimes(1);
 
       // Return to widgets mode
       act(() => {
@@ -785,33 +295,543 @@ describe('VideoStage and VideoPlayerManager', () => {
 
       expect(stageEl?.style.display).toBe('none');
       expect(stageEl?.classList.contains('active')).toBe(false);
+      expect(mockCarousel.resume).toHaveBeenCalledTimes(1);
     });
 
-    it('preserves VideoHUDController and VideoPlayerManager bidirectional linkage across store re-renders', () => {
+    it('reconciles primary stream updates without remounting unchanged streams', () => {
       render(<VideoStage />);
+      const initialSource: VideoSource = {
+        id: 'cam_a',
+        stream_url: 'http://cam/mjpeg',
+        type: 'mjpeg',
+        title: 'Initial Title',
+      };
 
-      expect(window.videoManager).toBeDefined();
-      expect(window.videoHUD).toBeDefined();
-      expect(window.videoManager?.hud).toBe(window.videoHUD);
-      expect(window.videoHUD?.videoManager).toBe(window.videoManager);
-
-      const initialHud = window.videoHUD;
-
-      // Trigger store-driven re-render via audio update
       act(() => {
         useDisplayStore.setState({
-          audio: { volume: 50, muted: false },
+          video: { mode: 'video', primary: initialSource, pip: null },
         });
       });
 
-      expect(window.videoHUD).toBe(initialHud);
-      expect(window.videoManager?.hud).toBe(initialHud);
-      expect(window.videoHUD?.videoManager).toBe(window.videoManager);
-    });
+      const primarySlot = document.getElementById('video-primary-slot');
+      const img1 = primarySlot?.querySelector('img');
+      expect(img1).not.toBeNull();
+      expect(img1?.src).toBe('http://cam/mjpeg');
 
-    it('synchronizes HUD stream state on video state updates, PiP dismissal while swapped, and mode exit', () => {
+      // Update metadata in place
+      act(() => {
+        useDisplayStore.setState({
+          video: {
+            mode: 'video',
+            primary: { ...initialSource, title: 'Updated Title' },
+            pip: null,
+          },
+        });
+      });
+
+      const img2 = primarySlot?.querySelector('img');
+      expect(img2).toBe(img1); // Same element preserved
+    });
+  });
+
+  describe('Multi-Stream Triad & Media Rendering', () => {
+    it('mounts MJPEG stream via responsive img element without audio registration', () => {
       render(<VideoStage />);
 
+      act(() => {
+        useDisplayStore.setState({
+          video: {
+            mode: 'video',
+            primary: { id: 'doorbell', stream_url: 'http://doorbell/stream.mjpg', type: 'mjpeg' },
+            pip: null,
+          },
+        });
+      });
+
+      const primarySlot = document.getElementById('video-primary-slot');
+      const img = primarySlot?.querySelector('img');
+      expect(img).not.toBeNull();
+      expect(img?.src).toBe('http://doorbell/stream.mjpg');
+      expect(primarySlot?.querySelector('video')).toBeNull();
+    });
+
+    it('mounts HLS stream via video element', () => {
+      render(<VideoStage />);
+
+      act(() => {
+        useDisplayStore.setState({
+          video: {
+            mode: 'video',
+            primary: { id: 'hls_stream', stream_url: 'http://host/stream.m3u8', type: 'hls' },
+            pip: null,
+          },
+        });
+      });
+
+      const primarySlot = document.getElementById('video-primary-slot');
+      const video = primarySlot?.querySelector('video');
+      expect(video).not.toBeNull();
+      expect(video?.muted).toBe(false);
+    });
+
+    it('mounts WebRTC stream, negotiates SDP offer/answer, and applies zero latency playout delay', async () => {
+      const originalPC = window.RTCPeerConnection;
+      window.RTCPeerConnection = MockRTCPeerConnection as unknown as typeof RTCPeerConnection;
+
+      let sdpPostSent = false;
+      const mockFetch = vi.fn().mockImplementation(async (_url: string, opts) => {
+        if (opts?.method === 'POST') {
+          sdpPostSent = true;
+          return {
+            ok: true,
+            status: 200,
+            text: async () => JSON.stringify({ sdp: 'v=0\r\ns=go2rtc_answer' }),
+          };
+        }
+        return { ok: true, status: 200, text: async () => '' };
+      });
+      window.fetch = mockFetch as unknown as typeof fetch;
+
+      render(<VideoStage />);
+
+      act(() => {
+        useDisplayStore.setState({
+          video: {
+            mode: 'video',
+            primary: { id: 'webrtc_cam', stream_url: 'http://go2rtc/stream', type: 'webrtc' },
+            pip: null,
+          },
+        });
+      });
+
+      const primarySlot = document.getElementById('video-primary-slot');
+      const video = primarySlot?.querySelector('video');
+      expect(video).not.toBeNull();
+
+      // Advance timers for ICE gathering and negotiation
+      await act(async () => {
+        vi.advanceTimersByTime(600);
+      });
+
+      expect(sdpPostSent).toBe(true);
+
+      window.RTCPeerConnection = originalPC;
+    });
+  });
+
+  describe('Zero-Reparenting PiP Swap & Audio Focus', () => {
+    it('manages PiP slot visibility, audio separation, and interactive swap-on-tap', () => {
+      render(<VideoStage />);
+      const stage = document.getElementById('video-stage');
+      const primarySlot = document.getElementById('video-primary-slot');
+      const pipSlot = document.getElementById('video-pip-slot');
+
+      act(() => {
+        useDisplayStore.setState({
+          video: {
+            mode: 'video',
+            primary: { id: 'p_stream', stream_url: 'http://p/stream.m3u8', type: 'hls' },
+            pip: { id: 'pip_stream', stream_url: 'http://pip/stream.m3u8', type: 'hls' },
+          },
+        });
+      });
+
+      expect(pipSlot?.style.display).toBe('flex');
+      const primaryVideo = primarySlot?.querySelector('video') as HTMLVideoElement;
+      const pipVideo = pipSlot?.querySelector('video') as HTMLVideoElement;
+
+      // Audio focus initially on primary
+      expect(primaryVideo.muted).toBe(false);
+      expect(pipVideo.muted).toBe(true);
+      expect(pipVideo.volume).toBe(0);
+
+      // Tap PiP corner dock to trigger zero-reparenting swap
+      act(() => {
+        fireEvent.click(pipSlot!);
+      });
+
+      expect(stage?.getAttribute('data-swapped')).toBe('true');
+      expect(pipVideo.muted).toBe(false);
+      expect(primaryVideo.muted).toBe(true);
+      expect(primaryVideo.volume).toBe(0);
+
+      // Tap Primary while swapped swaps back
+      act(() => {
+        fireEvent.click(primarySlot!);
+      });
+
+      expect(stage?.getAttribute('data-swapped')).toBeNull();
+      expect(primaryVideo.muted).toBe(false);
+      expect(pipVideo.muted).toBe(true);
+
+      // Dismissing PiP resets swap state without interrupting primary
+      act(() => {
+        useDisplayStore.setState({
+          video: {
+            mode: 'video',
+            primary: { id: 'p_stream', stream_url: 'http://p/stream.m3u8', type: 'hls' },
+            pip: null,
+          },
+        });
+      });
+
+      expect(pipSlot?.style.display).toBe('none');
+      expect(stage?.getAttribute('data-swapped')).toBeNull();
+    });
+  });
+
+  describe('Watchdog, Reconnect & Fallback Isolation', () => {
+    it('auto-reconnects on WebRTC failure and flushes hardware decode buffer', async () => {
+      const originalPC = window.RTCPeerConnection;
+      let activePC: MockRTCPeerConnection | null = null;
+
+      class TestPC extends MockRTCPeerConnection {}
+
+      window.RTCPeerConnection = function () {
+        const pc = new TestPC();
+        activePC = pc;
+        return pc;
+      } as unknown as typeof RTCPeerConnection;
+      window.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        text: async () => 'v=0\r\ns=answer',
+      }) as unknown as typeof fetch;
+
+      render(<VideoStage />);
+
+      act(() => {
+        useDisplayStore.setState({
+          video: {
+            mode: 'video',
+            primary: { id: 'cast', stream_url: 'http://cast/webrtc', type: 'webrtc' },
+            pip: null,
+          },
+        });
+      });
+
+      await act(async () => {
+        vi.advanceTimersByTime(600);
+      });
+
+      expect(activePC).not.toBeNull();
+      const firstPC = activePC;
+
+      // Simulate connection failure
+      act(() => {
+        activePC?.setConnectionState('failed');
+      });
+
+      // Run reconnect backoff timer (1000ms base)
+      await act(async () => {
+        vi.advanceTimersByTime(1100);
+      });
+
+      expect(HTMLMediaElement.prototype.load).toHaveBeenCalled();
+      expect(activePC).not.toBe(firstPC);
+
+      window.RTCPeerConnection = originalPC;
+    });
+
+    it('falls back to widgets mode when primary reconnect attempts are exhausted', async () => {
+      const originalPC = window.RTCPeerConnection;
+
+      class AlwaysFailPC extends MockRTCPeerConnection {
+        async createOffer(): Promise<RTCSessionDescriptionInit> {
+          throw new Error('Offer creation failed');
+        }
+      }
+
+      window.RTCPeerConnection = AlwaysFailPC as unknown as typeof RTCPeerConnection;
+
+      render(<VideoStage />);
+
+      act(() => {
+        useDisplayStore.setState({
+          video: {
+            mode: 'video',
+            primary: { id: 'cam_exhaust', stream_url: 'http://cam/webrtc', type: 'webrtc' },
+            pip: null,
+          },
+        });
+      });
+
+      // Exhaust 3 WebRTC retries (1000ms, 1500ms, 2250ms)
+      // Initial failure -> schedules retry 1 (1000ms)
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      // Retry 1 -> schedules retry 2 (1500ms)
+      await act(async () => {
+        vi.advanceTimersByTime(1100);
+        await Promise.resolve();
+      });
+
+      // Retry 2 -> schedules retry 3 (2250ms)
+      await act(async () => {
+        vi.advanceTimersByTime(1600);
+        await Promise.resolve();
+      });
+
+      // Retry 3 -> exhausts retries and falls back to HLS
+      await act(async () => {
+        vi.advanceTimersByTime(2400);
+        await Promise.resolve();
+      });
+
+      // WebRTC exhausted -> fallback to HLS
+      const primarySlot = document.getElementById('video-primary-slot');
+      const video = primarySlot?.querySelector('video');
+      expect(video).not.toBeNull();
+
+      // Trigger HLS error -> fallback to MJPEG
+      await act(async () => {
+        if (video) fireEvent.error(video);
+        await Promise.resolve();
+      });
+
+      const img = primarySlot?.querySelector('img');
+      expect(img).not.toBeNull();
+
+      // Trigger MJPEG error -> terminal failure -> exit video mode
+      await act(async () => {
+        if (img) fireEvent.error(img);
+        await Promise.resolve();
+      });
+
+      expect(useDisplayStore.getState().video.mode).toBe('widgets');
+      expect(useDisplayStore.getState().video.primary).toBeNull();
+
+      window.RTCPeerConnection = originalPC;
+    });
+
+    it('handles per-slot failure isolation when swapped vs unswapped', () => {
+      render(<VideoStage />);
+      const stage = document.getElementById('video-stage');
+      const primarySlot = document.getElementById('video-primary-slot');
+      const pipSlot = document.getElementById('video-pip-slot');
+
+      act(() => {
+        useDisplayStore.setState({
+          video: {
+            mode: 'video',
+            primary: { id: 'p1', stream_url: 'http://p/mjpeg', type: 'mjpeg' },
+            pip: { id: 'pip1', stream_url: 'http://pip/mjpeg', type: 'mjpeg' },
+          },
+        });
+      });
+
+      // 1. Swap streams: pip is presentation primary; primary is in corner dock
+      act(() => {
+        fireEvent.click(pipSlot!);
+      });
+      expect(stage?.getAttribute('data-swapped')).toBe('true');
+
+      // 2. Corner dock (primary) fails: slot failure callback dismisses dock slot, keeping pip active full-screen
+      const primaryImg = primarySlot?.querySelector('img');
+      expect(primaryImg).not.toBeNull();
+      act(() => {
+        if (primaryImg) fireEvent.error(primaryImg);
+      });
+
+      expect(useDisplayStore.getState().video.primary).toBeNull();
+      expect(useDisplayStore.getState().video.pip).not.toBeNull();
+      expect(stage?.style.display).toBe('flex');
+
+      // 3. Subsequent failure of remaining pip stream exits video mode
+      const pipImg = pipSlot?.querySelector('img');
+      expect(pipImg).not.toBeNull();
+      act(() => {
+        if (pipImg) fireEvent.error(pipImg);
+      });
+
+      expect(useDisplayStore.getState().video.mode).toBe('widgets');
+      expect(stage?.style.display).toBe('none');
+    });
+
+    it('preserves loaded state and protocol across swap and unswap without stuck spinner', () => {
+      render(<VideoStage />);
+      const primarySlot = document.getElementById('video-primary-slot');
+      const pipSlot = document.getElementById('video-pip-slot');
+
+      act(() => {
+        useDisplayStore.setState({
+          video: {
+            mode: 'video',
+            primary: { id: 'p_swap', stream_url: 'http://p/mjpeg', type: 'mjpeg' },
+            pip: { id: 'pip_swap', stream_url: 'http://pip/mjpeg', type: 'mjpeg' },
+          },
+        });
+      });
+
+      const primaryImg = primarySlot?.querySelector('img');
+      expect(primaryImg).not.toBeNull();
+
+      // Dismiss initial spinner on load
+      act(() => {
+        if (primaryImg) fireEvent.load(primaryImg);
+      });
+      act(() => {
+        vi.advanceTimersByTime(500);
+      });
+      expect(primarySlot?.querySelector('.video-stream-spinner')).toBeNull();
+
+      // Swap streams: pip is presentation primary
+      act(() => {
+        fireEvent.click(pipSlot!);
+      });
+      expect(primarySlot?.querySelector('.video-stream-spinner')).toBeNull();
+
+      // Unswap back: primary returns to presentation primary without resetting loaded or showing spinner
+      act(() => {
+        fireEvent.click(primarySlot!);
+      });
+      expect(primarySlot?.querySelector('.video-stream-spinner')).toBeNull();
+    });
+
+    it('auto-dismisses waking spinner after 12s safety timeout (#777)', () => {
+      render(<VideoStage />);
+      const primarySlot = document.getElementById('video-primary-slot');
+
+      act(() => {
+        useDisplayStore.setState({
+          video: {
+            mode: 'video',
+            primary: { id: 'p_timeout', stream_url: 'http://p/mjpeg', type: 'mjpeg' },
+            pip: null,
+          },
+        });
+      });
+
+      expect(primarySlot?.querySelector('.video-stream-spinner')).not.toBeNull();
+
+      // Still visible at 10s
+      act(() => {
+        vi.advanceTimersByTime(10000);
+      });
+      expect(primarySlot?.querySelector('.video-stream-spinner')).not.toBeNull();
+
+      // Safety timer fires at 12s + 400ms fade-out
+      act(() => {
+        vi.advanceTimersByTime(2000);
+      });
+      act(() => {
+        vi.advanceTimersByTime(450);
+      });
+      expect(primarySlot?.querySelector('.video-stream-spinner')).toBeNull();
+    });
+
+    it('forces compositor layout reflow and damage commits on flushCompositorPaint', () => {
+      const rAFSpy = vi.spyOn(window, 'requestAnimationFrame');
+      flushCompositorPaint();
+
+      expect(document.getElementById('mm-compositor-heartbeat')).not.toBeNull();
+      expect(rAFSpy).toHaveBeenCalled();
+      rAFSpy.mockRestore();
+    });
+  });
+
+  describe('Touch Forwarding', () => {
+    it('dispatches tap, move, and up actions over remoteUrl', async () => {
+      const dispatched: Array<{ url: string; body: unknown }> = [];
+      const mockFetch = vi.fn().mockImplementation(async (url: string, opts) => {
+        if (opts?.body) {
+          dispatched.push({ url, body: JSON.parse(opts.body) });
+        }
+        return { ok: true, status: 200, json: async () => ({ status: 'ok' }) };
+      });
+      window.fetch = mockFetch as unknown as typeof fetch;
+      document.body.dataset.remoteUrl = 'http://sidecar:8092';
+
+      render(<VideoStage />);
+
+      act(() => {
+        useDisplayStore.setState({
+          video: {
+            mode: 'video',
+            primary: {
+              id: 'interactive_cam',
+              stream_url: 'http://cam/mjpeg',
+              type: 'mjpeg',
+              controllable: true,
+            },
+            pip: null,
+          },
+        });
+      });
+
+      const img = document.querySelector('#video-primary-slot img') as HTMLImageElement;
+      expect(img).not.toBeNull();
+
+      img.getBoundingClientRect = () =>
+        ({ left: 0, top: 0, width: 1000, height: 1000, right: 1000, bottom: 1000 }) as DOMRect;
+      Object.defineProperty(img, 'naturalWidth', { value: 1000, configurable: true });
+      Object.defineProperty(img, 'naturalHeight', { value: 1000, configurable: true });
+
+      // Tap gesture
+      act(() => {
+        fireEvent.pointerDown(img, { clientX: 500, clientY: 500, button: 0 });
+      });
+      act(() => {
+        fireEvent.pointerUp(img, { clientX: 500, clientY: 500, button: 0 });
+      });
+
+      expect(dispatched.length).toBe(2);
+      expect(dispatched[0].url).toBe('http://sidecar:8092/touch');
+      expect(dispatched[0].body).toEqual({ action: 'down', x: 0.5, y: 0.5 });
+      expect(dispatched[1].body).toEqual({ action: 'tap', x: 0.5, y: 0.5 });
+
+      // Drag gesture
+      dispatched.length = 0;
+      act(() => {
+        fireEvent.pointerDown(img, { clientX: 100, clientY: 100, button: 0 });
+      });
+
+      await act(async () => {
+        vi.advanceTimersByTime(60);
+      });
+
+      act(() => {
+        fireEvent.pointerMove(img, { clientX: 300, clientY: 300 });
+      });
+      act(() => {
+        fireEvent.pointerUp(img, { clientX: 300, clientY: 300 });
+      });
+
+      expect(dispatched.length).toBe(3);
+      expect(dispatched[0].body).toEqual({ action: 'down', x: 0.1, y: 0.1 });
+      expect(dispatched[1].body).toEqual({ action: 'move', x: 0.3, y: 0.3 });
+      expect(dispatched[2].body).toEqual({ action: 'up', x: 0.3, y: 0.3 });
+
+      delete document.body.dataset.remoteUrl;
+    });
+
+    it('falls back to /tap if /touch fails on tap action', async () => {
+      const calls: string[] = [];
+      const mockFetch = vi.fn().mockImplementation(async (url: string) => {
+        calls.push(url);
+        if (url.endsWith('/touch')) {
+          throw new Error('404 Not Found');
+        }
+        return { ok: true, status: 200, json: async () => ({ status: 'ok' }) };
+      });
+
+      await postTouchEvent(
+        'http://sidecar:8092',
+        'tap',
+        0.5,
+        0.5,
+        mockFetch as unknown as typeof fetch,
+      );
+
+      expect(calls).toEqual(['http://sidecar:8092/touch', 'http://sidecar:8092/tap']);
+    });
+  });
+
+  describe('HUD Synchronization', () => {
+    it('synchronizes HUD stream state on video state updates, PiP dismissal while swapped, and mode exit', () => {
+      render(<VideoStage />);
       const hud = window.videoHUD!;
       expect(hud).toBeDefined();
 
@@ -820,8 +840,18 @@ describe('VideoStage and VideoPlayerManager', () => {
         useDisplayStore.setState({
           video: {
             mode: 'video',
-            primary: { id: 'primary_stream', stream_url: 'http://p/mjpeg', type: 'mjpeg', title: 'Primary Live' },
-            pip: { id: 'pip_stream', stream_url: 'http://pip/mjpeg', type: 'mjpeg', title: 'PiP Live' },
+            primary: {
+              id: 'primary_stream',
+              stream_url: 'http://p/mjpeg',
+              type: 'mjpeg',
+              title: 'Primary Live',
+            },
+            pip: {
+              id: 'pip_stream',
+              stream_url: 'http://pip/mjpeg',
+              type: 'mjpeg',
+              title: 'PiP Live',
+            },
           },
         });
       });
@@ -841,7 +871,12 @@ describe('VideoStage and VideoPlayerManager', () => {
         useDisplayStore.setState({
           video: {
             mode: 'video',
-            primary: { id: 'primary_stream', stream_url: 'http://p/mjpeg', type: 'mjpeg', title: 'Primary Live' },
+            primary: {
+              id: 'primary_stream',
+              stream_url: 'http://p/mjpeg',
+              type: 'mjpeg',
+              title: 'Primary Live',
+            },
             pip: null,
           },
         });
@@ -856,7 +891,12 @@ describe('VideoStage and VideoPlayerManager', () => {
         useDisplayStore.setState({
           video: {
             mode: 'video',
-            primary: { id: 'primary_stream', stream_url: 'http://p/mjpeg', type: 'mjpeg', title: 'Updated Movie Title' },
+            primary: {
+              id: 'primary_stream',
+              stream_url: 'http://p/mjpeg',
+              type: 'mjpeg',
+              title: 'Updated Movie Title',
+            },
             pip: null,
           },
         });
@@ -877,230 +917,6 @@ describe('VideoStage and VideoPlayerManager', () => {
       });
 
       expect(hud.activeStream).toBeNull();
-    });
-
-    it('unbinds slot click event listeners on destroy()', () => {
-      const stageEl = document.createElement('div');
-      const primarySlot = document.createElement('div');
-      const pipSlot = document.createElement('div');
-      document.body.appendChild(stageEl);
-      document.body.appendChild(primarySlot);
-      document.body.appendChild(pipSlot);
-
-      const manager = new VideoPlayerManager({
-        stageElement: stageEl,
-        primarySlot,
-        pipSlot,
-      });
-
-      manager.handleVideoState({
-        mode: 'video',
-        primary: { id: 'p1', stream_url: 'http://p/mjpeg', type: 'mjpeg' },
-        pip: { id: 'pip1', stream_url: 'http://pip/mjpeg', type: 'mjpeg' },
-      });
-
-      expect(manager.isSwapped).toBe(false);
-
-      // Clicking pipSlot swaps
-      pipSlot.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-      expect(manager.isSwapped).toBe(true);
-
-      // Clicking primarySlot (which is dock when swapped) swaps back
-      primarySlot.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-      expect(manager.isSwapped).toBe(false);
-
-      // Destroy manager - unbinds listeners
-      manager.destroy();
-
-      // Subsequent clicks do not trigger swaps
-      pipSlot.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-      expect(manager.isSwapped).toBe(false);
-
-      primarySlot.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-      expect(manager.isSwapped).toBe(false);
-    });
-
-    it('handles handleStreamFallback correctly when swapped vs not swapped', () => {
-      const stageEl = document.createElement('div');
-      const primarySlot = document.createElement('div');
-      const pipSlot = document.createElement('div');
-      document.body.appendChild(stageEl);
-      document.body.appendChild(primarySlot);
-      document.body.appendChild(pipSlot);
-
-      const mockAudio = createMockAudioManager();
-      const mockHud = {
-        hideHUD: vi.fn(),
-        syncStream: vi.fn(),
-        handleVideoState: vi.fn(),
-        lastVideoState: {
-          mode: 'video' as const,
-          primary: { id: 'p1', stream_url: 'http://p/hls', type: 'hls' as const },
-          pip: { id: 'pip1', stream_url: 'http://pip/hls', type: 'hls' as const },
-        },
-      };
-      const onFallback = vi.fn();
-
-      const manager = new VideoPlayerManager({
-        stageElement: stageEl,
-        primarySlot,
-        pipSlot,
-        audioManager: mockAudio,
-        hud: mockHud,
-        onFallback,
-      });
-
-      manager.handleVideoState({
-        mode: 'video',
-        primary: { id: 'p1', stream_url: 'http://p/hls', type: 'hls' },
-        pip: { id: 'pip1', stream_url: 'http://pip/hls', type: 'hls' },
-      });
-
-      const primarySession = manager.primarySession!;
-      const pipSession = manager.pipSession!;
-      expect(primarySession).toBeDefined();
-      expect(pipSession).toBeDefined();
-
-      // 1. Swap streams: pipSession is presentation primary; primarySession is in corner dock
-      manager.swapStreams();
-      expect(manager.isSwapped).toBe(true);
-
-      // 2. Primary session fails while in swapped corner dock
-      manager.handleStreamFallback(primarySession);
-
-      expect(onFallback).toHaveBeenCalledWith(primarySession, 'pip_dismissed');
-      // Dock is torn down and hidden, but healthy pipSession stays running full-screen!
-      expect(manager.primarySession).toBeNull();
-      expect(manager.pipSession).toBe(pipSession);
-      expect(manager.serverPrimary).toBeNull();
-      expect(primarySlot.style.display).toBe('none');
-      expect(manager.currentMode).toBe('video');
-      expect(mockHud.lastVideoState.primary).toBeNull();
-      expect(mockHud.syncStream).toHaveBeenCalled();
-
-      // 2b. Subsequent failure of remaining pipSession (with primarySession already null) exits video mode
-      manager.handleStreamFallback(pipSession);
-      expect(onFallback).toHaveBeenCalledWith(pipSession, 'widgets');
-      expect(manager.currentMode).toBe('widgets');
-      expect(manager.pipSession).toBeNull();
-
-      // 3. Reset and test opposite: pipSession fails while swapped (full-screen fails)
-      manager.enterVideoMode({
-        mode: 'video',
-        primary: { id: 'p2', stream_url: 'http://p2/hls', type: 'hls' },
-        pip: { id: 'pip2', stream_url: 'http://pip2/hls', type: 'hls' },
-      });
-      if (!manager.isSwapped) {
-        manager.swapStreams();
-      }
-      expect(manager.isSwapped).toBe(true);
-
-      const newPipSession = manager.pipSession!;
-      const newPrimarySession = manager.primarySession!;
-
-      manager.handleStreamFallback(newPipSession);
-
-      expect(onFallback).toHaveBeenCalledWith(newPipSession, 'pip_dismissed');
-      // Should unswap, tear down pipSession, and promote primarySession back to full screen!
-      expect(manager.isSwapped).toBe(false);
-      expect(stageEl.dataset.swapped).toBe('false');
-      expect(manager.pipSession).toBeNull();
-      expect(manager.primarySession).toBe(newPrimarySession);
-      expect(manager.serverPip).toBeNull();
-      expect(pipSlot.style.display).toBe('none');
-      expect(primarySlot.style.display).toBe('');
-      expect(mockHud.lastVideoState.pip).toBeNull();
-
-      // 4. Test not swapped: primarySession fails -> falls back to widgets
-      manager.handleStreamFallback(newPrimarySession);
-      expect(onFallback).toHaveBeenCalledWith(newPrimarySession, 'widgets');
-      expect(manager.currentMode).toBe('widgets');
-      expect(manager.primarySession).toBeNull();
-    });
-
-    it('clears HUD cached state and restores primarySlot display in exitVideoMode', () => {
-      const stageEl = document.createElement('div');
-      const primarySlot = document.createElement('div');
-      const pipSlot = document.createElement('div');
-      document.body.appendChild(stageEl);
-      document.body.appendChild(primarySlot);
-      document.body.appendChild(pipSlot);
-
-      const mockHud = {
-        hideHUD: vi.fn(),
-        syncStream: vi.fn(),
-        handleVideoState: vi.fn(),
-        lastVideoState: {
-          mode: 'video' as const,
-          primary: { id: 'p1', stream_url: 'http://p/mjpeg', type: 'mjpeg' as const },
-          pip: null,
-        },
-      };
-
-      const manager = new VideoPlayerManager({
-        stageElement: stageEl,
-        primarySlot,
-        pipSlot,
-        hud: mockHud,
-      });
-
-      manager.enterVideoMode({
-        mode: 'video',
-        primary: { id: 'p1', stream_url: 'http://p/mjpeg', type: 'mjpeg' },
-        pip: null,
-      });
-
-      // Simulate primarySlot hidden by prior dock fallback
-      primarySlot.style.display = 'none';
-
-      manager.exitVideoMode();
-
-      expect(mockHud.handleVideoState).toHaveBeenCalledWith(null);
-      expect(mockHud.hideHUD).toHaveBeenCalled();
-      expect(mockHud.syncStream).toHaveBeenCalled();
-      expect(primarySlot.style.display).toBe('');
-      expect(pipSlot.style.display).toBe('none');
-      expect(manager.serverPrimary).toBeNull();
-      expect(manager.serverPip).toBeNull();
-    });
-
-    it('manages RTCPeerConnection listeners and nulls session.pc before closing', async () => {
-      const stageEl = document.createElement('div');
-      const primarySlot = document.createElement('div');
-      document.body.appendChild(stageEl);
-      document.body.appendChild(primarySlot);
-
-      const mockPC = new MockRTCPeerConnection();
-      const mockFetch = vi.fn().mockResolvedValue({
-        ok: true,
-        text: async () => 'v=0\r\no=- 54321 2 IN IP4 127.0.0.1\r\ns=Answer',
-      });
-
-      const manager = new VideoPlayerManager({
-        stageElement: stageEl,
-        primarySlot,
-        fetch: mockFetch as unknown as typeof fetch,
-        RTCPeerConnection: function () {
-          return mockPC;
-        } as unknown as typeof RTCPeerConnection,
-      });
-
-      manager.enterVideoMode({
-        mode: 'video',
-        primary: { id: 'rtc_stream', stream_url: 'http://rtc/webrtc', type: 'webrtc' },
-        pip: null,
-      });
-
-      const session = manager.primarySession!;
-      expect(session).toBeDefined();
-      expect(session.pc).toBe(mockPC);
-
-      // Teardown should null session.pc and close mockPC
-      manager.teardownSession(session);
-      expect(session.pc).toBeNull();
-      expect(mockPC.closed).toBe(true);
-      expect(mockPC.onconnectionstatechange).toBeNull();
-      expect(mockPC.oniceconnectionstatechange).toBeNull();
     });
   });
 });
