@@ -12,6 +12,11 @@ describe('widget registry', () => {
     expect(widgetComponentFor('__proto__')).toBeUndefined();
   });
 
+  it('registers spacer and chat-log components', () => {
+    expect(widgetComponentFor('spacer')).toBeDefined();
+    expect(widgetComponentFor('chat-log')).toBeDefined();
+  });
+
   it('returns a registered component by type', () => {
     const Stub = () => null;
     Object.assign(WIDGET_COMPONENTS, { 'test-only-type': Stub });
