@@ -483,7 +483,7 @@ describe('VideoStage Declarative Suite', () => {
   describe('Watchdog, Reconnect & Fallback Isolation', () => {
     it('auto-reconnects on WebRTC failure and flushes hardware decode buffer', async () => {
       const originalPC = window.RTCPeerConnection;
-      let activePC: MockRTCPeerConnection | null = null;
+      let activePC = null as MockRTCPeerConnection | null;
 
       class TestPC extends MockRTCPeerConnection {}
 
@@ -528,7 +528,34 @@ describe('VideoStage Declarative Suite', () => {
       });
 
       expect(HTMLMediaElement.prototype.load).toHaveBeenCalled();
+      expect(firstPC?.closed).toBe(true);
       expect(activePC).not.toBe(firstPC);
+
+      // Simulate incoming media stream on active WebRTC video element
+      const videoEl = document.querySelector('#video-primary-slot video') as HTMLVideoElement;
+      expect(videoEl).not.toBeNull();
+      const mockStream = {} as MediaStream;
+      act(() => {
+        activePC?.ontrack?.({
+          streams: [mockStream],
+          track: { kind: 'video' },
+          receiver: { playoutDelayHint: null },
+        } as unknown as RTCTrackEvent);
+      });
+      expect(videoEl.srcObject).toBe(mockStream);
+      (HTMLMediaElement.prototype.load as ReturnType<typeof vi.fn>).mockClear();
+
+      // Exit stream (sets primary to null and unmounts <video> in the same commit, #868)
+      const exitPC = activePC;
+      act(() => {
+        useDisplayStore.setState({
+          video: { mode: 'widgets', primary: null, pip: null },
+        });
+      });
+
+      expect(videoEl.srcObject).toBeNull();
+      expect(HTMLMediaElement.prototype.load).toHaveBeenCalledTimes(1);
+      expect(exitPC?.closed).toBe(true);
 
       window.RTCPeerConnection = originalPC;
     });
@@ -769,27 +796,40 @@ describe('VideoStage Declarative Suite', () => {
       Object.defineProperty(img, 'naturalWidth', { value: 1000, configurable: true });
       Object.defineProperty(img, 'naturalHeight', { value: 1000, configurable: true });
 
-      // Tap gesture
+      // Stationary long-press tap (>= 500ms) still dispatches tap (#869)
       act(() => {
         fireEvent.pointerDown(img, { clientX: 500, clientY: 500, button: 0 });
       });
       act(() => {
-        fireEvent.pointerUp(img, { clientX: 500, clientY: 500, button: 0 });
+        vi.advanceTimersByTime(500);
+        fireEvent.pointerUp(img, { clientX: 505, clientY: 505, button: 0 });
       });
 
       expect(dispatched.length).toBe(2);
       expect(dispatched[0].url).toBe('http://sidecar:8092/touch');
       expect(dispatched[0].body).toEqual({ action: 'down', x: 0.5, y: 0.5 });
-      expect(dispatched[1].body).toEqual({ action: 'tap', x: 0.5, y: 0.5 });
+      expect(dispatched[1].body).toEqual({ action: 'tap', x: 0.505, y: 0.505 });
 
-      // Drag gesture
+      // 12px slip (> 10px threshold) cancels tap and sends up (#869)
+      dispatched.length = 0;
+      act(() => {
+        vi.advanceTimersByTime(400);
+        fireEvent.pointerDown(img, { clientX: 500, clientY: 500, button: 0 });
+      });
+      act(() => {
+        fireEvent.pointerMove(img, { clientX: 512, clientY: 500 });
+        fireEvent.pointerUp(img, { clientX: 512, clientY: 500, button: 0 });
+      });
+      expect(dispatched.map((d) => (d.body as { action: string }).action)).toEqual(['down', 'up']);
+
+      // Drag gesture with 30ms move throttle (#869)
       dispatched.length = 0;
       act(() => {
         fireEvent.pointerDown(img, { clientX: 100, clientY: 100, button: 0 });
       });
 
       await act(async () => {
-        vi.advanceTimersByTime(60);
+        vi.advanceTimersByTime(35);
       });
 
       act(() => {

@@ -187,7 +187,7 @@ export function reduceEvents(
         replace('audio', event.data);
         break;
       case 'voice.state':
-        replace('voice', event.data);
+        patch.voice = { ...event.data };
         break;
       case 'system.status': {
         const { online, time, config_status, config_error, providers, boot_id } = event.data;

@@ -30,7 +30,8 @@ export const WeatherHourlyGraph = memo(function WeatherHourlyGraph({
       className="weather-hourly-graph"
       viewBox={`0 0 ${layout.totalWidth.toFixed(1)} ${layout.svgHeight.toFixed(1)}`}
       style={{
-        minWidth: `${layout.totalWidth.toFixed(1)}px`,
+        width: '100%',
+        maxWidth: '100%',
         overflow: 'visible',
       }}
     >
