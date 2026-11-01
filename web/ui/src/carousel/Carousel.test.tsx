@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useDisplayStore } from '../store';
 import type { ScreenLayout, ScreensResponse } from '../sse/types';
 import captureSource from '../../../../sidecars/eink-renderer/src/capture.js?raw';
+import stylesSource from '../styles.css?raw';
 import { Carousel, panesFor, paneKey } from './Carousel';
 import { SETTLE_FALLBACK_MS } from './track';
 
@@ -462,6 +463,10 @@ describe('Carousel', () => {
 
       expect(useDisplayStore.getState().screen.currentScreen).toBe(1);
       expect(activeDot()).toBe(1);
+    });
+
+    it('declares touch-action: none on .screen-indicator so touch drags do not fire pointercancel', () => {
+      expect(stylesSource).toMatch(/\.screen-indicator\s*\{[^}]*touch-action:\s*none\s*;/);
     });
   });
 

@@ -785,11 +785,9 @@ export function weatherHourlyGraphSvg(
     return '';
   }
 
-  // Extract up to 8 points
-  const rawPts = hourly.slice(0, 8);
   const pts: HourlyPoint[] = [];
 
-  for (const item of rawPts) {
+  for (const item of hourly) {
     if (!item || typeof item !== 'object') continue;
     const m = item as Record<string, unknown>;
 
@@ -830,10 +828,10 @@ export function weatherHourlyGraphSvg(
 
   const baseColWidth = 68.0;
   const minGraphWidth = 560.0;
-  const svgHeight = options?.svgHeight ?? 108.0;
-  const curveTop = options?.curveTop ?? 34.0;
-  const curveBottom = options?.curveBottom ?? 78.0;
-  const baseY = options?.baseY ?? (svgHeight === 300.0 ? 240.0 : 90.0);
+  const svgHeight = options?.svgHeight ?? 300.0;
+  const curveTop = options?.curveTop ?? 90.0;
+  const curveBottom = options?.curveBottom ?? 205.0;
+  const baseY = options?.baseY ?? (svgHeight === 108.0 ? 90.0 : 240.0);
 
   const isTall = svgHeight >= 200.0;
 
