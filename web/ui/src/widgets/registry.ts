@@ -1,6 +1,8 @@
 import type { ComponentType } from 'react';
 import { LegacyWidget } from './LegacyWidget';
 import { SpacerWidget } from './spacer/SpacerWidget';
+import { TasksWidget } from './tasks/TasksWidget';
+import { WeatherForecastWidget } from './weather-forecast/WeatherForecastWidget';
 import { ChatLogWidget } from './chat-log/ChatLogWidget';
 
 /** Props every widget component receives from WidgetHost. */
@@ -15,6 +17,8 @@ export interface WidgetComponentProps {
  */
 export const WIDGET_COMPONENTS: Readonly<Record<string, ComponentType<WidgetComponentProps>>> = {
   spacer: SpacerWidget,
+  tasks: TasksWidget,
+  'weather-forecast': WeatherForecastWidget,
   'chat-log': ChatLogWidget,
 };
 
