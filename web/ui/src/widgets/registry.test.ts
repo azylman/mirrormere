@@ -12,13 +12,14 @@ describe('widget registry', () => {
     expect(widgetComponentFor('__proto__')).toBeUndefined();
   });
 
-  it('registers spacer, tasks, weather-forecast, chat-log, calendar-feed, and calendar-grid components', () => {
+  it('registers spacer, tasks, weather-forecast, chat-log, calendar-feed, calendar-grid, and photo-carousel components', () => {
     expect(widgetComponentFor('spacer')).toBeDefined();
     expect(widgetComponentFor('tasks')).toBeDefined();
     expect(widgetComponentFor('weather-forecast')).toBeDefined();
     expect(widgetComponentFor('chat-log')).toBeDefined();
     expect(widgetComponentFor('calendar-feed')).toBeDefined();
     expect(widgetComponentFor('calendar-grid')).toBeDefined();
+    expect(widgetComponentFor('photo-carousel')).toBeDefined();
   });
 
   it('returns a registered component by type', () => {
