@@ -295,6 +295,8 @@ export async function runBench(opts, log = (msg) => process.stderr.write(`${msg}
     await waitForHydration(cdp);
     // Drop the about:blank entry Chrome started with so a right swipe has no history to go back to.
     await cdp.send('Page.resetNavigationHistory');
+    // Allow cold-load hydration microtasks, style passes, and initial effects to settle before measuring.
+    await sleep(SWIPE_GAP_MS);
     log(`screen hydrated; sending ${opts.swipes} swipes`);
 
     // Long tasks and settles from cold load are in the snapshot too. The swipe window is measured
