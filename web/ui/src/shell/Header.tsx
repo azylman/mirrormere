@@ -55,7 +55,13 @@ export const HeaderVoice = memo(function HeaderVoice() {
         type="button"
         aria-label="Dismiss Voice"
         title="Dismiss Voice"
-        onClick={resetHUD}
+        onClick={() => {
+          if (window.MirrormereVoice?.resetHUD) {
+            window.MirrormereVoice.resetHUD();
+          } else {
+            resetHUD();
+          }
+        }}
       >
         ✕
       </button>

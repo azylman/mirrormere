@@ -1,10 +1,11 @@
-import { create } from 'zustand';
+import { useCallback, useReducer } from 'react';
 import { AudioController } from '../audio/useAudio';
+import type { VoiceState } from '../sse/types';
 import { useDisplayStore } from '../store';
 import type { VoiceSlice } from '../store/types';
 import type { VoiceIconKind } from './VoiceIcon';
 
-export const DUCK_STATES: ReadonlySet<string> = new Set([
+export const DUCK_STATES: ReadonlySet<VoiceState> = new Set<VoiceState>([
   'listening',
   'transcribing',
   'thinking',
@@ -31,180 +32,30 @@ export interface VoiceToastViewProps {
   bodyText: string | null;
 }
 
-export interface VoiceHudStoreState {
-  activeState: string;
-  transcript: string | null;
-  reply: string | null;
-  ttsEngine: string | null;
+export interface VoiceHudSnapshot extends HeaderVoiceViewProps {
+  headerVoice: HeaderVoiceViewProps;
+  voiceToast: VoiceToastViewProps;
+  dismissToast: () => void;
+  resetHUD: () => void;
+  reset: () => void;
+  activeState: VoiceState;
   statusText: string | null;
   turnDismissed: boolean;
-  isReset: boolean;
-  safetyTimeoutMs: number;
-  syncVoice: (voice: VoiceSlice) => void;
-  resetHUD: () => void;
-  dismissToast: () => void;
-  syncDuckState: () => void;
 }
 
-function getAudioManager(): { setDucked?: (ducked: boolean) => void } | null {
-  if (typeof window !== 'undefined' && window.audioManager) {
-    return window.audioManager as unknown as { setDucked?: (ducked: boolean) => void };
-  }
-  return null;
-}
-
-let safetyTimer: ReturnType<typeof setTimeout> | null = null;
-
-function clearSafetyWatchdog(): void {
-  if (safetyTimer) {
-    clearTimeout(safetyTimer);
-    safetyTimer = null;
-  }
-}
-
-function armSafetyWatchdog(timeoutMs: number, onTimeout: () => void): void {
-  clearSafetyWatchdog();
-  safetyTimer = setTimeout(() => {
-    onTimeout();
-  }, timeoutMs);
-  const timer = safetyTimer as unknown as { unref?: () => void };
-  if (timer && typeof timer.unref === 'function') {
-    timer.unref();
-  }
-}
-
-export const useVoiceHudStore = create<VoiceHudStoreState>()((set, get) => ({
-  activeState: 'idle',
-  transcript: null,
-  reply: null,
-  ttsEngine: null,
-  statusText: null,
-  turnDismissed: false,
-  isReset: false,
-  safetyTimeoutMs: 30000,
-
-  syncVoice(voice: VoiceSlice) {
-    const state = voice?.state ?? 'idle';
-    const transcript = voice?.transcript ?? null;
-    const reply = voice?.reply ?? null;
-    const ttsEngine = voice?.tts_engine ?? null;
-    const incomingStatus = voice?.status ?? null;
-
-    if (state === 'idle' || state === 'error') {
-      clearSafetyWatchdog();
-      getAudioManager()?.setDucked?.(false);
-      const cur = get();
-      if (
-        cur.activeState === state &&
-        cur.transcript === null &&
-        cur.reply === null &&
-        cur.ttsEngine === null &&
-        cur.statusText === null &&
-        cur.turnDismissed === false &&
-        cur.isReset === false
-      ) {
-        return;
-      }
-      set({
-        activeState: state,
-        transcript: null,
-        reply: null,
-        ttsEngine: null,
-        statusText: null,
-        turnDismissed: false,
-        isReset: false,
-      });
-      return;
-    }
-
-    let nextStatus = get().statusText;
-    if (incomingStatus) {
-      nextStatus = incomingStatus;
-    } else if (state !== 'thinking' && state !== 'transcribing') {
-      nextStatus = null;
-    }
-
-    let turnDismissed = get().turnDismissed;
-    if (state === 'listening') {
-      turnDismissed = false;
-    }
-
-    const shouldDuck = DUCK_STATES.has(state);
-    getAudioManager()?.setDucked?.(shouldDuck);
-
-    if (shouldDuck || nextStatus) {
-      armSafetyWatchdog(get().safetyTimeoutMs, () => {
-        get().resetHUD();
-      });
-    } else {
-      clearSafetyWatchdog();
-    }
-
-    set({
-      activeState: state,
-      transcript,
-      reply,
-      ttsEngine,
-      statusText: nextStatus,
-      turnDismissed,
-      isReset: false,
-    });
-  },
-
-  resetHUD() {
-    clearSafetyWatchdog();
-    getAudioManager()?.setDucked?.(false);
-    const cur = get();
-    if (
-      cur.activeState === 'idle' &&
-      cur.transcript === null &&
-      cur.reply === null &&
-      cur.ttsEngine === null &&
-      cur.statusText === null &&
-      cur.turnDismissed === false &&
-      cur.isReset === true
-    ) {
-      return;
-    }
-    set({
-      activeState: 'idle',
+export function resetHUD(): void {
+  useDisplayStore.setState({
+    voice: {
+      state: 'idle',
       transcript: null,
       reply: null,
-      ttsEngine: null,
-      statusText: null,
-      turnDismissed: false,
-      isReset: true,
-    });
-  },
-
-  dismissToast() {
-    if (get().turnDismissed) return;
-    set({ turnDismissed: true });
-  },
-
-  syncDuckState() {
-    const { activeState, isReset } = get();
-    const shouldDuck = !isReset && DUCK_STATES.has(activeState);
-    getAudioManager()?.setDucked?.(shouldDuck);
-  },
-}));
-
-// Synchronize with useDisplayStore
-let lastVoice: VoiceSlice | undefined = useDisplayStore.getState().voice;
-useDisplayStore.subscribe((state) => {
-  if (state.voice !== lastVoice) {
-    lastVoice = state.voice;
-    useVoiceHudStore.getState().syncVoice(state.voice);
-  }
-});
-
-// Window bindings
-if (typeof window !== 'undefined') {
-  window.MirrormereVoice = {
-    resetHUD: () => {
-      useVoiceHudStore.getState().resetHUD();
+      tts_engine: null,
+      status: null,
     },
-  };
+  });
+  if (typeof window !== 'undefined' && window.audioManager?.setDucked) {
+    window.audioManager.setDucked(false);
+  }
 }
 
 export const IDLE_HEADER_VOICE: Readonly<HeaderVoiceViewProps> = Object.freeze({
@@ -231,11 +82,27 @@ const IDLE_DERIVED_PROPS = Object.freeze({
   voiceToast: IDLE_VOICE_TOAST as VoiceToastViewProps,
 });
 
-export function deriveVoiceHudProps(state: VoiceHudStoreState): {
+export function deriveVoiceHudProps(state: {
+  activeState: VoiceState | string;
+  transcript?: string | null;
+  reply?: string | null;
+  ttsEngine?: string | null;
+  statusText?: string | null;
+  turnDismissed?: boolean;
+  isReset?: boolean;
+  [key: string]: unknown;
+}): {
   headerVoice: HeaderVoiceViewProps;
   voiceToast: VoiceToastViewProps;
 } {
-  const { activeState, transcript, reply, ttsEngine, statusText, turnDismissed, isReset } = state;
+  const activeState = (state.activeState || 'idle') as VoiceState;
+  const transcript = state.transcript ?? null;
+  const reply = state.reply ?? null;
+  const ttsEngine = state.ttsEngine ?? null;
+  const statusText = state.statusText ?? null;
+  const turnDismissed = state.turnDismissed ?? false;
+  const isReset = state.isReset ?? false;
+
   const isActive = !isReset && activeState !== 'idle' && activeState !== 'error';
 
   if (!isActive) {
@@ -320,58 +187,136 @@ export function deriveVoiceHudProps(state: VoiceHudStoreState): {
   return { headerVoice, voiceToast };
 }
 
-let cachedIdleVoiceHudState: {
-  headerVoice: HeaderVoiceViewProps;
-  voiceToast: VoiceToastViewProps;
-  dismissToast: () => void;
-  resetHUD: () => void;
-  activeState: string;
+interface VoiceLocalState {
   turnDismissed: boolean;
-  isActive: boolean;
-  stateClass: string;
-  iconKind: VoiceIconKind;
-  label: string;
   statusText: string | null;
-  transcriptText: string | null;
-  showDot: boolean;
-  showPulse: boolean;
-  showProgress: boolean;
-} | null = null;
+  prevVoice: VoiceSlice | null;
+}
 
-export function useVoiceHudState() {
-  const store = useVoiceHudStore();
+type VoiceAction =
+  | { type: 'SYNC_VOICE'; voice: VoiceSlice }
+  | { type: 'DISMISS_TOAST' }
+  | { type: 'RESET' };
 
-  const isIdle =
-    !store.isReset &&
-    store.activeState === 'idle' &&
-    !store.turnDismissed &&
-    !store.statusText;
+function voiceLocalReducer(state: VoiceLocalState, action: VoiceAction): VoiceLocalState {
+  switch (action.type) {
+    case 'SYNC_VOICE': {
+      const { voice } = action;
+      const rawState = voice?.state ?? 'idle';
+      const normalizedStatus =
+        voice?.status && voice.status.trim().length > 0 ? voice.status : null;
+      let nextDismissed = state.turnDismissed;
+      let nextStatus = state.statusText;
 
-  if (isIdle) {
-    if (!cachedIdleVoiceHudState) {
-      cachedIdleVoiceHudState = {
-        ...IDLE_HEADER_VOICE,
-        headerVoice: IDLE_HEADER_VOICE as HeaderVoiceViewProps,
-        voiceToast: IDLE_VOICE_TOAST as VoiceToastViewProps,
-        dismissToast: store.dismissToast,
-        resetHUD: store.resetHUD,
-        activeState: 'idle',
-        turnDismissed: false,
+      if (rawState === 'idle' || rawState === 'error') {
+        nextDismissed = false;
+        nextStatus = null;
+      } else if (rawState === 'listening') {
+        nextDismissed = false;
+        nextStatus = normalizedStatus;
+      } else if (rawState === 'thinking' || rawState === 'transcribing') {
+        if (normalizedStatus !== null) {
+          nextStatus = normalizedStatus;
+        }
+      } else {
+        nextStatus = normalizedStatus;
+      }
+
+      return {
+        turnDismissed: nextDismissed,
+        statusText: nextStatus,
+        prevVoice: voice,
       };
     }
-    return cachedIdleVoiceHudState;
+    case 'DISMISS_TOAST':
+      return {
+        ...state,
+        turnDismissed: true,
+      };
+    case 'RESET':
+      return {
+        turnDismissed: false,
+        statusText: null,
+        prevVoice: state.prevVoice,
+      };
+    default:
+      return state;
+  }
+}
+
+export function useVoiceHudState(): VoiceHudSnapshot {
+  const voice = useDisplayStore((s) => s.voice);
+
+  const [localState, dispatch] = useReducer(voiceLocalReducer, null, () => {
+    const rawState = voice?.state ?? 'idle';
+    const normalizedStatus =
+      voice?.status && voice.status.trim().length > 0 ? voice.status : null;
+    const initialStatus =
+      rawState === 'idle' || rawState === 'error' ? null : normalizedStatus;
+    return {
+      turnDismissed: false,
+      statusText: initialStatus,
+      prevVoice: voice,
+    };
+  });
+
+  let effectiveDismissed = localState.turnDismissed;
+  let effectiveStatus = localState.statusText;
+
+  if (voice !== localState.prevVoice) {
+    const rawState = voice?.state ?? 'idle';
+    const normalizedStatus =
+      voice?.status && voice.status.trim().length > 0 ? voice.status : null;
+
+    if (rawState === 'idle' || rawState === 'error') {
+      effectiveDismissed = false;
+      effectiveStatus = null;
+    } else if (rawState === 'listening') {
+      effectiveDismissed = false;
+      effectiveStatus = normalizedStatus;
+    } else if (rawState === 'thinking' || rawState === 'transcribing') {
+      if (normalizedStatus !== null) {
+        effectiveStatus = normalizedStatus;
+      }
+    } else {
+      effectiveStatus = normalizedStatus;
+    }
+    dispatch({ type: 'SYNC_VOICE', voice });
   }
 
-  const { headerVoice, voiceToast } = deriveVoiceHudProps(store);
+  const dismissToast = useCallback(() => {
+    dispatch({ type: 'DISMISS_TOAST' });
+  }, []);
+
+  const reset = useCallback(() => {
+    dispatch({ type: 'RESET' });
+    resetHUD();
+  }, []);
+
+  const activeState = (voice?.state ?? 'idle') as VoiceState;
+  const transcript = voice?.transcript ?? null;
+  const reply = voice?.reply ?? null;
+  const ttsEngine = voice?.tts_engine ?? null;
+
+  const { headerVoice, voiceToast } = deriveVoiceHudProps({
+    activeState,
+    transcript,
+    reply,
+    ttsEngine,
+    statusText: effectiveStatus,
+    turnDismissed: effectiveDismissed,
+  });
 
   return {
     ...headerVoice,
     headerVoice,
     voiceToast,
-    dismissToast: store.dismissToast,
-    resetHUD: store.resetHUD,
-    activeState: store.isReset ? 'idle' : store.activeState,
-    turnDismissed: store.turnDismissed,
+    dismissToast,
+    resetHUD: reset,
+    reset,
+    activeState,
+    statusText: effectiveStatus,
+    turnDismissed: effectiveDismissed,
   };
 }
 
