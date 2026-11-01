@@ -5,6 +5,7 @@ import { useDisplayStore } from '../store';
 import type { ScreenLayout, ScreensResponse } from '../sse/types';
 import captureSource from '../../../../sidecars/eink-renderer/src/capture.js?raw';
 import { Carousel, panesFor, paneKey } from './Carousel';
+import { SETTLE_FALLBACK_MS } from './track';
 
 const initial = useDisplayStore.getState();
 
@@ -208,7 +209,7 @@ describe('Carousel', () => {
     expect(document.body.dataset.animating).toBe('1');
 
     await act(async () => {
-      vi.advanceTimersByTime(300);
+      vi.advanceTimersByTime(SETTLE_FALLBACK_MS);
     });
 
     // The pane that was next is now the current one: same DOM node, same mounted widgets.

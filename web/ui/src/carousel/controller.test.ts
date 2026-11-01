@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useDisplayStore } from '../store';
 import { CarouselController, neighbourOf, type CarouselHost } from './controller';
-import { SETTLE_MS } from './track';
+import { SETTLE_FALLBACK_MS, SETTLE_MS } from './track';
 
 const initial = useDisplayStore.getState();
 
@@ -142,13 +142,14 @@ describe('CarouselController', () => {
     expect(document.body.dataset.animating).toBe('0');
   });
 
-  it('settles on the fallback timer when no transitionend arrives', () => {
+  it('waits for transitionend rather than the nominal 250 ms, then settles on the fallback timer', () => {
     vi.useFakeTimers();
     const h = build();
     swipe(h, 500, 200);
-    vi.advanceTimersByTime(SETTLE_MS);
+    vi.advanceTimersByTime(SETTLE_MS + 100);
     expect(h.host.commit).not.toHaveBeenCalled();
-    vi.advanceTimersByTime(40);
+    expect(h.host.select).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(SETTLE_FALLBACK_MS);
     expect(h.host.commit).toHaveBeenCalledWith(2);
     expect(h.host.select).toHaveBeenCalledWith(2);
   });

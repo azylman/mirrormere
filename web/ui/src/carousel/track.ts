@@ -3,8 +3,13 @@ import { beginAnimation, endAnimation } from '../perf/animating';
 /** Settle animation: 250 ms, transform only (see the carousel spec). */
 export const SETTLE_MS = 250;
 export const SETTLE_EASING = 'cubic-bezier(.2,.8,.2,1)';
-/** Backstop for the transitionend that a browser skips when the transform did not change. */
-const SETTLE_FALLBACK_MS = 280;
+/**
+ * Backstop only. The settle ends on transitionend, which fires after the transition
+ * actually runs. A timer shorter than the transition's start latency ends the settle
+ * early, so this is set well past SETTLE_MS. It covers a transform that did not change
+ * and a page that was hidden mid-settle.
+ */
+export const SETTLE_FALLBACK_MS = 1000;
 
 export type SettleTarget = 'next' | 'prev' | 'rest';
 
