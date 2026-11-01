@@ -369,9 +369,10 @@ func TestWeatherHourlyGraph(t *testing.T) {
 			wantNotContains: []string{"NaN", "Inf"},
 		},
 		{
-			name:         "scaled vertical coordinates",
-			args:         []any{[]testHourlyItem{{Time: "2026-09-26T12:00", Temp: 80.0, PrecipProb: 40, Icon: "weather-rainy"}, {Time: "2026-09-26T13:00", Temp: 50.0, PrecipProb: 0, Icon: "weather-cloudy"}}},
-			wantContains: []string{`viewBox="0 0 560.0 300.0"`, `y1="240.0"`, `y2="240.0"`, `y="20" text-anchor="middle" font-size="11"`, `, 32) scale(1.2)`, `r="4.0"`, `y="275" text-anchor="middle" font-size="13"`, `y="80.0" text-anchor="middle" font-size="14" font-weight="800"`, `y="195.0" text-anchor="middle" font-size="14" font-weight="800"`},
+			name:            "scaled vertical coordinates",
+			args:            []any{[]testHourlyItem{{Time: "2026-09-26T12:00", Temp: 80.0, PrecipProb: 40, Icon: "weather-rainy"}, {Time: "2026-09-26T13:00", Temp: 50.0, PrecipProb: 0, Icon: "weather-cloudy"}}},
+			wantContains:    []string{`viewBox="0 0 560.0 300.0"`, `width: 100%; max-width: 100%;`, `y1="240.0"`, `y2="240.0"`, `y="20" text-anchor="middle" font-size="11"`, `, 32) scale(1.2)`, `r="4.0"`, `y="275" text-anchor="middle" font-size="13"`, `y="80.0" text-anchor="middle" font-size="14" font-weight="800"`, `y="195.0" text-anchor="middle" font-size="14" font-weight="800"`},
+			wantNotContains: []string{"min-width:"},
 		},
 	}
 

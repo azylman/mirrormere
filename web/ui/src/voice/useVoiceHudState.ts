@@ -1,4 +1,4 @@
-import { useCallback, useReducer } from 'react';
+import { useCallback, useSyncExternalStore } from 'react';
 import { AudioController } from '../audio/useAudio';
 import type { VoiceState } from '../sse/types';
 import { useDisplayStore } from '../store';
@@ -38,21 +38,16 @@ export interface VoiceHudSnapshot extends HeaderVoiceViewProps {
   dismissToast: () => void;
   resetHUD: () => void;
   reset: () => void;
+  voice: VoiceSlice;
   activeState: VoiceState;
   statusText: string | null;
   turnDismissed: boolean;
 }
 
 export function resetHUD(): void {
-  useDisplayStore.setState({
-    voice: {
-      state: 'idle',
-      transcript: null,
-      reply: null,
-      tts_engine: null,
-      status: null,
-    },
-  });
+  const voice = useDisplayStore.getState().voice;
+  currentLocal = { turnDismissed: false, statusText: null, prevVoice: voice, resetForVoice: voice };
+  for (const listener of [...localListeners]) listener();
   if (typeof window !== 'undefined' && window.audioManager?.setDucked) {
     window.audioManager.setDucked(false);
   }
@@ -191,109 +186,73 @@ interface VoiceLocalState {
   turnDismissed: boolean;
   statusText: string | null;
   prevVoice: VoiceSlice | null;
+  resetForVoice: VoiceSlice | null;
 }
 
-type VoiceAction =
-  | { type: 'SYNC_VOICE'; voice: VoiceSlice }
-  | { type: 'DISMISS_TOAST' }
-  | { type: 'RESET' };
+let currentLocal: VoiceLocalState = {
+  turnDismissed: false,
+  statusText: null,
+  prevVoice: null,
+  resetForVoice: null,
+};
 
-function voiceLocalReducer(state: VoiceLocalState, action: VoiceAction): VoiceLocalState {
-  switch (action.type) {
-    case 'SYNC_VOICE': {
-      const { voice } = action;
-      const rawState = voice?.state ?? 'idle';
-      const normalizedStatus =
-        voice?.status && voice.status.trim().length > 0 ? voice.status : null;
-      let nextDismissed = state.turnDismissed;
-      let nextStatus = state.statusText;
-
-      if (rawState === 'idle' || rawState === 'error') {
-        nextDismissed = false;
-        nextStatus = null;
-      } else if (rawState === 'listening') {
-        nextDismissed = false;
-        nextStatus = normalizedStatus;
-      } else if (rawState === 'thinking' || rawState === 'transcribing') {
-        if (normalizedStatus !== null) {
-          nextStatus = normalizedStatus;
-        }
-      } else {
-        nextStatus = normalizedStatus;
-      }
-
-      return {
-        turnDismissed: nextDismissed,
-        statusText: nextStatus,
-        prevVoice: voice,
-      };
-    }
-    case 'DISMISS_TOAST':
-      return {
-        ...state,
-        turnDismissed: true,
-      };
-    case 'RESET':
-      return {
-        turnDismissed: false,
-        statusText: null,
-        prevVoice: state.prevVoice,
-      };
-    default:
-      return state;
-  }
-}
+const localListeners = new Set<() => void>();
+const subscribeLocal = (l: () => void) => {
+  localListeners.add(l);
+  return () => {
+    localListeners.delete(l);
+  };
+};
+const getLocalSnapshot = (): VoiceLocalState => currentLocal;
 
 export function useVoiceHudState(): VoiceHudSnapshot {
   const voice = useDisplayStore((s) => s.voice);
 
-  const [localState, dispatch] = useReducer(voiceLocalReducer, null, () => {
+  if (voice !== currentLocal.prevVoice) {
     const rawState = voice?.state ?? 'idle';
     const normalizedStatus =
       voice?.status && voice.status.trim().length > 0 ? voice.status : null;
-    const initialStatus =
-      rawState === 'idle' || rawState === 'error' ? null : normalizedStatus;
-    return {
-      turnDismissed: false,
-      statusText: initialStatus,
-      prevVoice: voice,
-    };
-  });
-
-  let effectiveDismissed = localState.turnDismissed;
-  let effectiveStatus = localState.statusText;
-
-  if (voice !== localState.prevVoice) {
-    const rawState = voice?.state ?? 'idle';
-    const normalizedStatus =
-      voice?.status && voice.status.trim().length > 0 ? voice.status : null;
+    let nextDismissed = currentLocal.turnDismissed;
+    let nextStatus = currentLocal.statusText;
 
     if (rawState === 'idle' || rawState === 'error') {
-      effectiveDismissed = false;
-      effectiveStatus = null;
+      nextDismissed = false;
+      nextStatus = null;
     } else if (rawState === 'listening') {
-      effectiveDismissed = false;
-      effectiveStatus = normalizedStatus;
+      nextDismissed = false;
+      nextStatus = normalizedStatus;
     } else if (rawState === 'thinking' || rawState === 'transcribing') {
       if (normalizedStatus !== null) {
-        effectiveStatus = normalizedStatus;
+        nextStatus = normalizedStatus;
       }
     } else {
-      effectiveStatus = normalizedStatus;
+      nextStatus = normalizedStatus;
     }
-    dispatch({ type: 'SYNC_VOICE', voice });
+
+    currentLocal = {
+      turnDismissed: nextDismissed,
+      statusText: nextStatus,
+      prevVoice: voice,
+      resetForVoice: null,
+    };
   }
 
+  const localState = useSyncExternalStore(subscribeLocal, getLocalSnapshot, getLocalSnapshot);
+
   const dismissToast = useCallback(() => {
-    dispatch({ type: 'DISMISS_TOAST' });
+    currentLocal = { ...currentLocal, turnDismissed: true };
+    for (const listener of [...localListeners]) listener();
   }, []);
 
   const reset = useCallback(() => {
-    dispatch({ type: 'RESET' });
     resetHUD();
   }, []);
 
-  const activeState = (voice?.state ?? 'idle') as VoiceState;
+  const isReset = localState.resetForVoice !== null && localState.resetForVoice === voice;
+  const rawActiveState = (voice?.state ?? 'idle') as VoiceState;
+  const activeState: VoiceState = isReset ? 'idle' : rawActiveState;
+  const effectiveStatus = isReset ? null : localState.statusText;
+  const effectiveDismissed = localState.turnDismissed;
   const transcript = voice?.transcript ?? null;
   const reply = voice?.reply ?? null;
   const ttsEngine = voice?.tts_engine ?? null;
@@ -305,6 +264,7 @@ export function useVoiceHudState(): VoiceHudSnapshot {
     ttsEngine,
     statusText: effectiveStatus,
     turnDismissed: effectiveDismissed,
+    isReset,
   });
 
   return {
@@ -314,6 +274,7 @@ export function useVoiceHudState(): VoiceHudSnapshot {
     dismissToast,
     resetHUD: reset,
     reset,
+    voice,
     activeState,
     statusText: effectiveStatus,
     turnDismissed: effectiveDismissed,

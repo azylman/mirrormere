@@ -532,8 +532,8 @@ func WeatherHourlyGraph(args ...any) template.HTML {
 	var sb strings.Builder
 	sb.Grow(4096)
 
-	fmt.Fprintf(&sb, `<svg class="weather-hourly-graph" viewBox="0 0 %.1f %.1f" style="height: 100%%; width: auto; min-width: %.1fpx; flex-shrink: 0; display: block; overflow: visible;">`,
-		totalWidth, svgHeight, totalWidth)
+	fmt.Fprintf(&sb, `<svg class="weather-hourly-graph" viewBox="0 0 %.1f %.1f" style="height: 100%%; width: 100%%; max-width: 100%%; display: block; overflow: visible;">`,
+		totalWidth, svgHeight)
 
 	fmt.Fprintf(&sb, `<defs><linearGradient id="%s" x1="0" y1="0" x2="0" y2="1">`+
 		`<stop offset="0%%" stop-color="#ff6f59" stop-opacity="0.25"/>`+

@@ -2818,9 +2818,8 @@ button, .touch-target {
 
 .weather-hourly-graph {
   height: 100%;
-  width: auto;
-  min-width: 100%;
-  flex-shrink: 0;
+  width: 100%;
+  max-width: 100%;
   display: block;
 }
 

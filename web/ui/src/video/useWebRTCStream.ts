@@ -87,6 +87,7 @@ export function useWebRTCStream({
     const streamUrl = stream.stream_url;
     let cancelled = false;
     let pc: RTCPeerConnection | null = null;
+    let mountedVideoEl: HTMLVideoElement | null = videoRef.current;
     let reconnectAttempts = 0;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     let disconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -111,7 +112,7 @@ export function useWebRTCStream({
     };
 
     const flushHardwareBuffer = (): void => {
-      const videoEl = videoRef.current;
+      const videoEl = videoRef.current ?? mountedVideoEl;
       if (videoEl) {
         videoEl.srcObject = null;
         if (typeof videoEl.load === 'function') {
@@ -360,6 +361,7 @@ export function useWebRTCStream({
           }
           const videoEl = videoRef.current;
           if (!videoEl) return;
+          mountedVideoEl = videoEl;
 
           if (event.streams && event.streams[0]) {
             videoEl.srcObject = event.streams[0];

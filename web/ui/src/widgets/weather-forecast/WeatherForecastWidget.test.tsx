@@ -345,4 +345,35 @@ describe('WeatherHourlyGraph component', () => {
     expect(container.textContent).toContain('68°');
     expect(container.textContent).toContain('70°');
   });
+
+  it('fits 24 hourly points inside a narrow card without pixel minWidth clipping (#867)', () => {
+    const cardWidth = 480;
+    const pts = Array.from({ length: 24 }, (_, i) => ({
+      time: `2026-09-26T${String(i).padStart(2, '0')}:00`,
+      temp: 55 + (i % 10),
+      icon: 'weather-sunny',
+    }));
+    const { container } = render(
+      <div style={{ width: `${cardWidth}px` }}>
+        <WeatherHourlyGraph
+          hourly={pts}
+          widgetId="narrow-card"
+          options={{ containerWidth: cardWidth }}
+        />
+      </div>,
+    );
+    const svg = container.querySelector('svg.weather-hourly-graph') as SVGSVGElement;
+    expect(svg).not.toBeNull();
+    expect(svg.style.minWidth).toBe('');
+    expect(svg.style.width).toBe('100%');
+    expect(svg.style.maxWidth).toBe('100%');
+    expect(svg.getAttribute('viewBox')).toBe('0 0 480.0 300.0');
+
+    const labels = Array.from(svg.querySelectorAll('text'));
+    const lastHourLabel = labels.find((el) => el.textContent === '11 PM');
+    expect(lastHourLabel).toBeDefined();
+    const lastX = Number(lastHourLabel?.getAttribute('x'));
+    expect(lastX).toBeGreaterThan(0);
+    expect(lastX).toBeLessThan(cardWidth);
+  });
 });
