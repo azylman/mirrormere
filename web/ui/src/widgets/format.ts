@@ -529,6 +529,7 @@ export interface CalendarFeedEvent {
   all_day?: boolean;
   allDay?: boolean;
   location?: string;
+  description?: string;
   calendar_name?: string;
   calendarName?: string;
   color?: string;
@@ -599,6 +600,7 @@ export function calendarFeedDayGroups(
         allDay: true,
         all_day: true,
         location: (ev.location ?? ev.Location) ? String(ev.location ?? ev.Location) : undefined,
+        description: (ev.description ?? ev.Description) ? String(ev.description ?? ev.Description) : undefined,
         calendarName: (ev.calendar_name ?? ev.calendarName ?? ev.CalendarName) ? String(ev.calendar_name ?? ev.calendarName ?? ev.CalendarName) : undefined,
         color: (ev.color ?? ev.Color) ? String(ev.color ?? ev.Color) : undefined,
       });
@@ -627,6 +629,7 @@ export function calendarFeedDayGroups(
       allDay: false,
       all_day: false,
       location: (ev.location ?? ev.Location) ? String(ev.location ?? ev.Location) : undefined,
+      description: (ev.description ?? ev.Description) ? String(ev.description ?? ev.Description) : undefined,
       calendarName: (ev.calendar_name ?? ev.calendarName ?? ev.CalendarName) ? String(ev.calendar_name ?? ev.calendarName ?? ev.CalendarName) : undefined,
       color: (ev.color ?? ev.Color) ? String(ev.color ?? ev.Color) : undefined,
     });

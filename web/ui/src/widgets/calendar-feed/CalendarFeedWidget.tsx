@@ -1,4 +1,10 @@
-import { memo, useMemo, type CSSProperties } from 'react';
+import {
+  memo,
+  useCallback,
+  useMemo,
+  useState,
+  type CSSProperties,
+} from 'react';
 import { useDisplayStore } from '../../store';
 import { useWidget } from '../../store/hooks';
 import type { WidgetComponentProps } from '../registry';
@@ -7,7 +13,12 @@ import {
   calendarFeedDayGroups,
   formatDate,
   formatTime,
+  type CalendarFeedEvent,
 } from '../format';
+import { CalendarEventModal } from '../calendar-grid/CalendarEventModal';
+import { formatModalDateRange } from '../calendar-grid/dateUtils';
+import { useInactivityReset } from '../calendar-grid/useInactivityReset';
+import type { FamilyEvent } from '../calendar-grid/types';
 
 /**
  * Native React widget component for upcoming calendar feed agendas.
@@ -56,6 +67,65 @@ export const CalendarFeedWidget = memo(function CalendarFeedWidget({
     }
     return calendarFeedDayGroups(data, refTime, tz);
   }, [isHydrated, data, entryTimestamp, tz]);
+
+  const [activeModalEvent, setActiveModalEvent] = useState<FamilyEvent | null>(
+    null
+  );
+  const [activeModalDateLabel, setActiveModalDateLabel] = useState<string>('');
+
+  const handleInactivityReset = useCallback(() => {
+    setActiveModalEvent(null);
+    setActiveModalDateLabel('');
+  }, []);
+
+  const { handleUserActivity } = useInactivityReset({
+    isInteractive: Boolean(activeModalEvent),
+    onReset: handleInactivityReset,
+  });
+
+  const closeModal = useCallback(() => {
+    setActiveModalEvent(null);
+    setActiveModalDateLabel('');
+    handleUserActivity();
+  }, [handleUserActivity]);
+
+  const handleActivateEvent = useCallback(
+    (
+      ev: CalendarFeedEvent,
+      evId: string,
+      isAllDay: boolean,
+      groupDate: string
+    ) => {
+      const calName = ev.calendar_name || ev.calendarName;
+      const familyEvent: FamilyEvent = {
+        id: evId,
+        title: ev.title,
+        all_day: isAllDay,
+        location: ev.location ? String(ev.location) : undefined,
+        description:
+          typeof ev.description === 'string' ? ev.description : undefined,
+        color: ev.color ? String(ev.color) : undefined,
+        owners: calName ? [String(calName)] : undefined,
+        start: !isAllDay
+          ? formatTime('3:04 PM', ev.start, tz) || ev.start
+          : undefined,
+        end:
+          !isAllDay && ev.end
+            ? formatTime('3:04 PM', ev.end, tz) || ev.end
+            : undefined,
+      };
+
+      const startDate = groupDate || formatDate('2006-01-02', ev.start, tz);
+      const endDate = ev.end
+        ? formatDate('2006-01-02', ev.end, tz)
+        : undefined;
+
+      setActiveModalEvent(familyEvent);
+      setActiveModalDateLabel(formatModalDateRange(startDate, endDate));
+      handleUserActivity();
+    },
+    [tz, handleUserActivity]
+  );
 
   return (
     <div className="widget-calendar widget-calendar-feed">
@@ -143,11 +213,26 @@ export const CalendarFeedWidget = memo(function CalendarFeedWidget({
                   return (
                     <div
                       key={evId}
-                      className="calendar-event-item"
+                      className="calendar-event-item cf-event-clickable"
+                      role="button"
+                      tabIndex={0}
                       data-event-id={ev.id ?? ''}
                       data-event-start={ev.start ?? ''}
                       data-event-end={ev.end ?? ''}
                       data-event-allday={isAllDay ? 'true' : 'false'}
+                      onClick={() =>
+                        handleActivateEvent(ev, evId, isAllDay, group.date)
+                      }
+                      onKeyDown={(e) => {
+                        if (
+                          e.key === 'Enter' ||
+                          e.key === ' ' ||
+                          e.key === 'Spacebar'
+                        ) {
+                          e.preventDefault();
+                          handleActivateEvent(ev, evId, isAllDay, group.date);
+                        }
+                      }}
                     >
                       <div className="event-time-col">
                         {isAllDay ? (
@@ -252,6 +337,12 @@ export const CalendarFeedWidget = memo(function CalendarFeedWidget({
           </span>
         </div>
       )}
+
+      <CalendarEventModal
+        event={activeModalEvent}
+        dateLabel={activeModalDateLabel}
+        onClose={closeModal}
+      />
     </div>
   );
 });

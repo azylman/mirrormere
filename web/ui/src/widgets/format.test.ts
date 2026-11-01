@@ -287,6 +287,40 @@ describe('format helpers', () => {
       expect(groups[1].rel).toBe('Tomorrow');
       expect(groups[1].events.map((e) => e.title)).toEqual(['Tomorrow All-Day']);
     });
+
+    it('normalizes description on both all-day and timed events from camelCase or PascalCase', () => {
+      const data = {
+        events: [
+          {
+            id: 'ev-1',
+            title: 'All Day With Desc',
+            start: '2026-10-10',
+            all_day: true,
+            description: 'Important details',
+          },
+          {
+            id: 'ev-2',
+            title: 'Timed With Pascal Desc',
+            start: '2026-10-10T16:00:00Z',
+            end: '2026-10-10T17:00:00Z',
+            Description: 'Meeting agenda and notes',
+          },
+          {
+            id: 'ev-3',
+            title: 'Timed Without Desc',
+            start: '2026-10-10T18:00:00Z',
+            end: '2026-10-10T19:00:00Z',
+          },
+        ],
+      };
+
+      const groups = calendarFeedDayGroups(data, refTime, 'UTC');
+      expect(groups).toHaveLength(1);
+      expect(groups[0].events).toHaveLength(3);
+      expect(groups[0].events[0].description).toBe('Important details');
+      expect(groups[0].events[1].description).toBe('Meeting agenda and notes');
+      expect(groups[0].events[2].description).toBeUndefined();
+    });
   });
 
   describe('todayPrecipProb', () => {
