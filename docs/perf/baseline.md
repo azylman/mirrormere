@@ -76,11 +76,11 @@ node scripts/perf/bench.mjs --url <kiosk-display-url> --cpu-throttle 4 --swipes 
 
 ## 3. React UI Post-Migration Verification (`?ui=react`, #780)
 
-Measured against the complete React display bundle (`web/static/ui/app.js`) after landing all DURIN'S CROWN (#765) widget ports (`#773`–`#779`, `#822`).
+Measured against the complete React display bundle (`web/static/ui/app.js`) after landing all DURIN'S CROWN (#765) widget ports (`#773`–`#779`, `#822`, `#825`).
 
-- **Commit SHA**: `6b6d82e7` (`6b6d82e7b476838d1666b303f388d9319c143c70`)
+- **Commit SHA**: `ca1e534` (`ca1e53483dfb2160873c498de68f4c15dcc6b76c`; initial React default cut at `199ec1f780d4fad258371aeda2f1fc8e6711db6e`)
 - **Date**: `2026-11-01`
-- **React JS bundle**: `118.3 KiB` (`121,155 bytes`) gzip (`383.8 KiB` raw single-file IIFE in `web/static/ui/app.js`; target `<= 150 KiB` gzip — **PASS**)
+- **React JS bundle**: `118.4 KiB` (`121,194 bytes`) gzip (`422.6 KiB` / `432,734 bytes` raw single-file IIFE in `web/static/ui/app.js` at `ca1e534`; `118.3 KiB` / `121,155 bytes` at `199ec1f`; target `<= 150 KB` gzip — **PASS**)
 
 ### 3a. CI-Class Machine (Headless 4x CPU Throttle, 20 Swipes)
 
@@ -92,11 +92,16 @@ node scripts/perf/bench.mjs --url http://127.0.0.1:8080/display?ui=react&perf=1 
 
 | Metric | Count | p50 (ms) | p95 (ms) | Max (ms) | #765 Target | CI Budget (1.2x) | Status & Notes |
 | --- | ---: | ---: | ---: | ---: | --- | --- | --- |
-| `gesture_first_frame` | 20 | 14.0 | 14.7 | 15.2 | p50 `<= 12 ms`, p95 `<= 17 ms` | p95 `<= 20.4 ms` | **PASS** (p95 `14.7 ms <= 17 ms`; p50 `14.0 ms` is bounded by one 60 Hz VSync interval `16.67 ms` from `pointerdown` to first `rAF`, and `.carousel-track` now translates Finger-1:1 on the first `pointermove`). |
-| `swipe_settle` | 20 | 284.2 | 300.3 | 301.3 | p50 `<= 250 ms`, p95 `<= 300 ms` | p95 `<= 360 ms` | **PASS** (`20/20` swipes settled with 0 widget HTML refetches; `SETTLE_MS = 250 ms` CSS `transform 250ms ease-out` transition + ~2 60 Hz frames for `rAF` start and `transitionend` dispatch yields `~284 ms` p50 / `~300 ms` p95). |
-| `frame` | 284 | 16.7 | 16.8 | 33.4 | p95 `<= 16.7 ms`, max `<= 33 ms` | p95 `<= 20.04 ms`, max `<= 39.6 ms` | **PASS** (60.0 fps steady state; `16.8 ms` p95 and `33.4 ms` max reflect 0.1–0.4 ms timer quantization on 1x and 2x 16.67 ms VSync ticks; 0 frames > 2 VSync intervals vs. 15.0% in legacy). |
-| `long_task` (during swipes) | 0 | — | — | — | `0` during swipes | `0` during swipes | **PASS** (`0` long tasks across all 20 swipes; 4 cold-load tasks during initial bundle parse/hydration at 4x CPU throttle, `0` at 1x). |
-| `interaction` | 600 | 48.0 | 56.0 | 64.0 | p95 `<= 100 ms` | p95 `<= 120 ms` | **PASS** (`56.0 ms` p95 <= `100 ms` target). |
-| `screen_ready` | 1 | 759.9 | 759.9 | 759.9 | `<= 1500 ms` (4x CPU) | `<= 1800 ms` | **PASS** (`759.9 ms` at 4x CPU throttle; `102.2 ms` at 1x). |
-| `widget_update` | 0 | — | — | — | p50 `<= 8 ms`, p95 `<= 16 ms` | p95 `<= 19.2 ms` | **PASS (N/A)** — React applies `widget.update` JSON directly to the Zustand store and reconciles in-place without HTML refetch or DOM node replacement. |
-| `app.js` gzip size | 1 | — | — | — | `<= 150 KiB` (`153,600 B`) | `<= 150 KiB` | **PASS** (`118.3 KiB` / `121,155 B`). |
+| `gesture_first_frame` | 20 | 14.0 | 14.7 | 15.2 | p95 `<= 17 ms` (one frame) | p95 `<= 20.4 ms` | **PASS** (p95 `14.7 ms <= 17 ms`; `.carousel-track` translates 1:1 with the finger on the first `pointermove`). |
+| `swipe_settle` | 20 | 284.2 | 300.3 | 301.3 | p95 `<= 300 ms`, 0 network requests | p95 `<= 360 ms` | **MISS (#765 target) / PASS (CI budget)** (p95 `300.3 ms` at 4x CPU throttle and `303.6 ms` on kiosk exceed the `300 ms` #765 target by `0.3–3.6 ms`; `20/20` swipes settled with `0` network requests, bounded by `SETTLE_MS = 250 ms` CSS `transform 250ms ease-out` transition plus ~2–3 60 Hz frames for `rAF` start and `transitionend` dispatch). |
+| `frame` | 284 | 16.7 | 16.8 | 33.4 | p95 `<= 16.7 ms`, max `<= 33 ms` | p95 `<= 20.04 ms`, max `<= 39.6 ms` | **MISS (#765 target) / PASS (CI budget)** (p95 `16.8 ms` and max `33.4 ms` exceed the `16.7 ms` / `33 ms` #765 target by `0.1 ms` / `0.4 ms` due to 60 Hz `rAF` timestamp quantization on 1x and 2x `16.67 ms` VSync ticks; `0` frames > 2 VSync intervals vs. `15.0%` in legacy). |
+| `long_task` (during swipes) | 0 | — | — | — | `0` over `50 ms` | `0` during swipes | **PASS** (`0` long tasks across all 20 swipes; 4 cold-load tasks during initial bundle parse/hydration at 4x CPU throttle, `0` at 1x). |
+| `interaction` | 600 | 48.0 | 56.0 | 64.0 | p95 `<= 100 ms` | p95 `<= 120 ms` | **PASS** (`56.0 ms` p95 `<= 100 ms` target). |
+| `screen_ready` | 1 | 759.9 | 759.9 | 759.9 | p95 `<= 1.5 s` | p95 `<= 1800 ms` | **PASS** (`759.9 ms` at 4x CPU throttle; `102.2 ms` at 1x). |
+| `widget_update` | 0 | — | — | — | p95 `<= 50 ms`, one component re-rendered | p95 `<= 60 ms` (`min_count: 0`) | **NOT MEASURED** (`perf.js` hooks `MirrormereCarousel.prototype.handleWidgetUpdate` DOM node replacement; React reconciles `widget.update` JSON in-place via the store so one component re-renders without HTML refetch or node swap, and `bench.mjs` does not emit synthetic SSE widget updates). |
+| `app.js` gzip size | 1 | — | — | — | `<= 150 KB` gzip | `<= 153,600 B` | **PASS** (`118.4 KiB` / `121,194 B` at `ca1e534`; `118.3 KiB` / `121,155 B` at `199ec1f`). |
+
+### 3b. 24-Hour Kiosk Soak Gate (#780 / #781)
+
+- **Status**: **IN PROGRESS** — React default (`display.ui: "react"`) deployed to `mirrormere-core` on `2026-11-01` (`199ec1f` / `ca1e534`).
+- **Acceptance Criteria before #781 (`remove the legacy display JS`)**: 24-hour soak on the touch kiosk with `0` reload loops in `system.status` logs and `< 20%` renderer memory growth.
