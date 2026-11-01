@@ -169,6 +169,26 @@ type inactivityContext struct {
 	done         bool
 }
 
+func (ic *inactivityContext) onTimeout() {
+	ic.mu.Lock()
+	defer ic.mu.Unlock()
+
+	if ic.done || ic.Context.Err() != nil {
+		return
+	}
+
+	elapsed := time.Since(ic.lastActivity)
+	if elapsed < ic.d {
+		remaining := ic.d - elapsed
+		ic.timer = time.AfterFunc(remaining, ic.onTimeout)
+		return
+	}
+
+	ic.err = context.DeadlineExceeded
+	ic.done = true
+	ic.cancel()
+}
+
 func newInactivityContext(parent context.Context, timeout time.Duration) (*inactivityContext, func()) {
 	ctx, cancel := context.WithCancel(parent)
 	ic := &inactivityContext{
@@ -179,28 +199,8 @@ func newInactivityContext(parent context.Context, timeout time.Duration) (*inact
 	}
 
 	if timeout > 0 {
-		var onTimeout func()
-		onTimeout = func() {
-			ic.mu.Lock()
-			defer ic.mu.Unlock()
-
-			if ic.done || ic.Context.Err() != nil {
-				return
-			}
-
-			elapsed := time.Since(ic.lastActivity)
-			if elapsed < ic.d {
-				remaining := ic.d - elapsed
-				ic.timer = time.AfterFunc(remaining, onTimeout)
-				return
-			}
-
-			ic.err = context.DeadlineExceeded
-			ic.done = true
-			ic.cancel()
-		}
 		ic.mu.Lock()
-		ic.timer = time.AfterFunc(timeout, onTimeout)
+		ic.timer = time.AfterFunc(timeout, ic.onTimeout)
 		ic.mu.Unlock()
 	}
 
@@ -233,6 +233,9 @@ func (ic *inactivityContext) Reset() {
 		return
 	}
 	ic.lastActivity = time.Now()
+	if ic.timer != nil && ic.timer.Stop() {
+		ic.timer.Reset(ic.d)
+	}
 }
 
 // isTimeoutError reports whether an error or context deadline was caused by a timeout,
