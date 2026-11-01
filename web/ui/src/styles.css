@@ -38,3 +38,25 @@ body[data-grid="2x6"] .grid-pane {
   grid-template-columns: repeat(2, 1fr);
   grid-template-rows: repeat(6, 1fr);
 }
+
+/* A legacy fragment brings its own .widget-card. The grid cell around it stays bare, so the card is not drawn twice. */
+.widget-card:has(> .widget-legacy) {
+  padding: 0;
+  background: none;
+  border: none;
+  box-shadow: none;
+}
+
+.widget-legacy {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.widget-legacy > .widget-card {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
