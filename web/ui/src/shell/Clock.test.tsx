@@ -20,11 +20,14 @@ describe('isValidTimezone', () => {
 });
 
 describe('createClockFormatters', () => {
-  it('creates formatters once per timezone and memoizes them', () => {
+  it('creates formatters once per timezone and locale, and memoizes them', () => {
     const tz = 'America/New_York';
-    const first = createClockFormatters(tz);
-    const second = createClockFormatters(tz);
+    const first = createClockFormatters(tz, 'en-US');
+    const second = createClockFormatters(tz, 'en-US');
     expect(first).toBe(second);
+
+    const gb = createClockFormatters(tz, 'en-GB');
+    expect(gb).not.toBe(first);
 
     const defaultFirst = createClockFormatters(undefined);
     const defaultSecond = createClockFormatters(undefined);
@@ -36,6 +39,10 @@ describe('createClockFormatters', () => {
     const formatters = createClockFormatters('UTC');
     expect(formatters.formatTime(date)).toBeTruthy();
     expect(formatters.formatDate(date)).toBeTruthy();
+    const parts = formatters.formatParts(date);
+    expect(parts.time).toBeTruthy();
+    expect(parts.weekday).toBeTruthy();
+    expect(parts.fullDate).toBeTruthy();
   });
 });
 
@@ -71,40 +78,96 @@ describe('Clock component', () => {
     expect(clockEl).not.toBeNull();
     expect(clockEl.dataset.timezone).toBe('UTC');
 
+    const ampmEl = clockEl.querySelector('.header-clock-ampm');
+    expect(ampmEl).not.toBeNull();
+
     const dateStack = container.querySelector('#header-date-stack');
     expect(dateStack).not.toBeNull();
 
     const dateEl = container.querySelector('#header-date');
     expect(dateEl).not.toBeNull();
 
+    const weekdayEl = dateEl?.querySelector('.header-date-weekday');
+    expect(weekdayEl).not.toBeNull();
+
+    const fullDateEl = dateEl?.querySelector('.header-date-full');
+    expect(fullDateEl).not.toBeNull();
+
     expect(document.body.dataset.timezone).toBe('UTC');
     expect(appEl.dataset.timezone).toBe('UTC');
   });
 
-  it('writes textContent on clockEl.firstChild only when formatted time changes', () => {
-    const { container } = render(<Clock />);
+  it('renders 12-hour format spans correctly for en-US locale', () => {
+    const { container } = render(<Clock locale="en-US" />);
+    const clockEl = container.querySelector('#header-clock') as HTMLDivElement;
+    expect(clockEl.firstChild?.textContent).toBe('2:05');
+
+    const ampmEl = clockEl.querySelector('.header-clock-ampm') as HTMLSpanElement;
+    expect(ampmEl).not.toBeNull();
+    expect(ampmEl.textContent).toBe('PM');
+    expect(ampmEl.style.display).toBe('');
+
+    const weekdayEl = container.querySelector('.header-date-weekday') as HTMLSpanElement;
+    expect(weekdayEl.textContent).toBe('Saturday');
+
+    const fullDateEl = container.querySelector('.header-date-full') as HTMLSpanElement;
+    expect(fullDateEl.textContent).toBe('Oct 31');
+  });
+
+  it('renders 24-hour format spans correctly for en-GB locale', () => {
+    const { container } = render(<Clock locale="en-GB" />);
+    const clockEl = container.querySelector('#header-clock') as HTMLDivElement;
+    expect(clockEl.firstChild?.textContent).toBe('14:05');
+
+    const ampmEl = clockEl.querySelector('.header-clock-ampm') as HTMLSpanElement;
+    expect(ampmEl).not.toBeNull();
+    expect(ampmEl.textContent).toBe('');
+    expect(ampmEl.style.display).toBe('none');
+
+    const weekdayEl = container.querySelector('.header-date-weekday') as HTMLSpanElement;
+    expect(weekdayEl.textContent).toBe('Saturday');
+
+    const fullDateEl = container.querySelector('.header-date-full') as HTMLSpanElement;
+    expect(fullDateEl.textContent).toBe('31 Oct');
+  });
+
+  it('writes textContent on spans only when respective parts change', () => {
+    const { container } = render(<Clock locale="en-US" />);
     const clockEl = container.querySelector('#header-clock') as HTMLDivElement;
     const textNode = clockEl.firstChild;
     expect(textNode).not.toBeNull();
 
-    const initialText = textNode!.textContent;
-    expect(initialText).not.toBe('--:--');
+    const ampmEl = clockEl.querySelector('.header-clock-ampm') as HTMLSpanElement;
+    const weekdayEl = container.querySelector('.header-date-weekday') as HTMLSpanElement;
+    const fullDateEl = container.querySelector('.header-date-full') as HTMLSpanElement;
 
-    const setterSpy = vi.spyOn(textNode!, 'textContent', 'set');
+    const timeSpy = vi.spyOn(textNode!, 'textContent', 'set');
+    const ampmSpy = vi.spyOn(ampmEl, 'textContent', 'set');
+    const weekdaySpy = vi.spyOn(weekdayEl, 'textContent', 'set');
+    const fullDateSpy = vi.spyOn(fullDateEl, 'textContent', 'set');
 
-    // Advance 10 seconds: same minute, time string unchanged -> no textContent writes
+    // Advance 10 seconds: same minute, hour, date -> no textContent writes
     act(() => {
       vi.advanceTimersByTime(10000);
     });
-    expect(setterSpy).not.toHaveBeenCalled();
+    expect(timeSpy).not.toHaveBeenCalled();
+    expect(ampmSpy).not.toHaveBeenCalled();
+    expect(weekdaySpy).not.toHaveBeenCalled();
+    expect(fullDateSpy).not.toHaveBeenCalled();
 
-    // Advance past minute boundary: time string changes -> exactly one textContent write
+    // Advance past minute boundary: time string changes -> exactly one textContent write on time
     act(() => {
       vi.advanceTimersByTime(51000);
     });
-    expect(setterSpy).toHaveBeenCalledTimes(1);
+    expect(timeSpy).toHaveBeenCalledTimes(1);
+    expect(ampmSpy).not.toHaveBeenCalled();
+    expect(weekdaySpy).not.toHaveBeenCalled();
+    expect(fullDateSpy).not.toHaveBeenCalled();
 
-    setterSpy.mockRestore();
+    timeSpy.mockRestore();
+    ampmSpy.mockRestore();
+    weekdaySpy.mockRestore();
+    fullDateSpy.mockRestore();
   });
 
   it('stops its timer when document is hidden and resumes when visible', () => {
