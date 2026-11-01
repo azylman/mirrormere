@@ -2,13 +2,6 @@
 """HEARTH Configurable OAuth-to-iCal, Mealie Recipe + Image Proxy & Plex/Arr/Seerr Bridge."""
 
 import socket
-# AF_INET_PATCHED: Force IPv4 resolution inside Docker bridge network
-_orig_getaddrinfo = socket.getaddrinfo
-def _ipv4_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
-    if family == 0 or family == socket.AF_UNSPEC:
-        family = socket.AF_INET
-    return _orig_getaddrinfo(host, port, family, type, proto, flags)
-socket.getaddrinfo = _ipv4_getaddrinfo
 
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
@@ -49,6 +42,8 @@ TOKEN_CACHE = {"token": None, "exp": 0}
 
 PLEX_THUMB_RE = re.compile(r"^/library/(metadata|arts|parts)/[0-9a-zA-Z_/.-]+$")
 RECIPE_ID_RE = re.compile(r"^[0-9a-zA-Z_-]+$")
+YT_VIDEO_ID_RE = re.compile(r"^[0-9A-Za-z_-]{11}$")
+HA_ENTITY_ID_RE = re.compile(r"^[a-z0-9_]+\.[a-z0-9_]+$")
 
 
 def _resolve_env_secrets(data):
@@ -254,19 +249,20 @@ def fetch_gcal_events(cal_id):
             now = time.time()
             if key in CACHE and now - CACHE[key][0] < CACHE_TTL:
                 return CACHE[key][1]
-        token = get_google_token()
-        tmin = (datetime.datetime.now(UTC) - datetime.timedelta(days=45)).strftime("%Y-%m-%dT00:00:00Z")
-        tmax = (datetime.datetime.now(UTC) + datetime.timedelta(days=120)).strftime("%Y-%m-%dT00:00:00Z")
-        q = urllib.parse.urlencode({
-            "singleEvents": "true",
-            "orderBy": "startTime",
-            "maxResults": "500",
-            "timeMin": tmin,
-            "timeMax": tmax,
-        })
-        url = f"https://www.googleapis.com/calendar/v3/calendars/{urllib.parse.quote(cal_id)}/events?{q}"
-        req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
+        items = []
         try:
+            token = get_google_token()
+            tmin = (datetime.datetime.now(UTC) - datetime.timedelta(days=45)).strftime("%Y-%m-%dT00:00:00Z")
+            tmax = (datetime.datetime.now(UTC) + datetime.timedelta(days=120)).strftime("%Y-%m-%dT00:00:00Z")
+            q = urllib.parse.urlencode({
+                "singleEvents": "true",
+                "orderBy": "startTime",
+                "maxResults": "500",
+                "timeMin": tmin,
+                "timeMax": tmax,
+            })
+            url = f"https://www.googleapis.com/calendar/v3/calendars/{urllib.parse.quote(cal_id)}/events?{q}"
+            req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
             with urllib.request.urlopen(req, timeout=6) as r:
                 items = json.loads(r.read().decode()).get("items", [])
         except Exception as e:
@@ -680,6 +676,7 @@ MUSIC_STATE = {
     "last_cast_ts": 0,
     "playing_video_id": "",
 }
+MUSIC_STOP_EVENT = threading.Event()
 
 
 def _get_speakers():
@@ -863,7 +860,7 @@ def search_yt_music(query):
 
 
 def resolve_yt_audio_stream(video_id):
-    if not video_id:
+    if not video_id or not isinstance(video_id, str) or not YT_VIDEO_ID_RE.match(video_id):
         return None, None
     now = time.time()
     with STREAM_URL_LOCK:
@@ -896,7 +893,11 @@ def resolve_yt_audio_stream(video_id):
 def _cast_track_to_speaker(speaker, track):
     if not speaker or not track or not track.get("video_id"):
         return False
+    if not isinstance(speaker, str) or not HA_ENTITY_ID_RE.match(speaker):
+        return False
     vid = track["video_id"]
+    if not isinstance(vid, str) or not YT_VIDEO_ID_RE.match(vid):
+        return False
     lan_url = str(_cfg("BRIDGE_LAN_URL", "http://127.0.0.1:8099")).rstrip("/")
     media_url = f"{lan_url}/hearth-api/music/stream/{vid}.m4a"
     payload = {
@@ -932,7 +933,7 @@ def get_music_dashboard_state():
         shuffle = MUSIC_STATE["shuffle"]
 
     spk_st = {}
-    if active_spk:
+    if active_spk and HA_ENTITY_ID_RE.match(active_spk):
         spk_st = _ha_request("GET", f"/api/states/{active_spk}", timeout=5) or {}
     attrs = spk_st.get("attributes") or {}
     state_str = spk_st.get("state", "off")
@@ -1068,7 +1069,7 @@ def control_music_playback(body):
             _cast_track_to_speaker(active_spk, queue[idx])
 
     # Readiness polling instead of arbitrary time.sleep(0.35)
-    if active_spk:
+    if active_spk and HA_ENTITY_ID_RE.match(active_spk):
         deadline = time.time() + 0.5
         while time.time() < deadline:
             st = _ha_request("GET", f"/api/states/{active_spk}", timeout=1) or {}
@@ -1079,8 +1080,9 @@ def control_music_playback(body):
 
 
 def _music_auto_advance_loop():
-    while True:
-        time.sleep(5)
+    while not MUSIC_STOP_EVENT.is_set():
+        if MUSIC_STOP_EVENT.wait(5):
+            break
         try:
             with MUSIC_STATE_LOCK:
                 vid = MUSIC_STATE["playing_video_id"]
@@ -1090,6 +1092,9 @@ def _music_auto_advance_loop():
                 q_idx = MUSIC_STATE["queue_index"]
 
             if not vid or not active_spk or not queue or time.time() - last_ts < 20:
+                continue
+
+            if not HA_ENTITY_ID_RE.match(active_spk):
                 continue
 
             st = _ha_request("GET", f"/api/states/{active_spk}", timeout=4) or {}
@@ -1102,20 +1107,22 @@ def _music_auto_advance_loop():
         except Exception as e:
             print(f"[HEARTH-Bridge] auto-advance loop warning: {e}", flush=True)
 
-threading.Thread(target=_music_auto_advance_loop, daemon=True).start()
-
 
 def launch_plex_on_living_room_tv(body):
     rating_key = str(body.get("rating_key") or body.get("id") or "").strip()
     mtype = str(body.get("type") or "movie").lower()
+    tv_remote = str(_cfg("PLEX_TV_REMOTE_ENTITY", "remote.living_room_tv"))
+    tv_media_player = str(_cfg("PLEX_TV_MEDIA_PLAYER_ENTITY", "media_player.living_room_tv"))
+    tv_cast_player = str(_cfg("PLEX_TV_CAST_ENTITY", "media_player.living_room_living_room_tv"))
+
+    for ent in (tv_remote, tv_media_player, tv_cast_player):
+        if not HA_ENTITY_ID_RE.match(ent):
+            return False, {"error": f"Invalid Home Assistant entity ID: {ent}"}
+
     plex_base = str(_cfg("PLEX_BASE_URL", "")).rstrip("/")
     plex_token = str(_cfg("PLEX_TOKEN", ""))
     if not rating_key or not plex_base or not plex_token:
         return False, {"error": "Missing Plex rating_key or credentials"}
-
-    tv_remote = str(_cfg("PLEX_TV_REMOTE_ENTITY", "remote.living_room_tv"))
-    tv_media_player = str(_cfg("PLEX_TV_MEDIA_PLAYER_ENTITY", "media_player.living_room_tv"))
-    tv_cast_player = str(_cfg("PLEX_TV_CAST_ENTITY", "media_player.living_room_living_room_tv"))
 
     try:
         # 1. Get Plex machineIdentifier
@@ -1147,6 +1154,12 @@ def launch_plex_on_living_room_tv(body):
         deep_link = f"plex://play/?metadataKey={meta_key}&server={machine_id}"
 
         def _bg_wake_and_play():
+            if not (
+                HA_ENTITY_ID_RE.match(tv_remote)
+                and HA_ENTITY_ID_RE.match(tv_media_player)
+                and HA_ENTITY_ID_RE.match(tv_cast_player)
+            ):
+                return
             rem_st = _ha_request("GET", f"/api/states/{tv_remote}") or {}
             mp_st = _ha_request("GET", f"/api/states/{tv_media_player}") or {}
             is_cold = (
@@ -1535,7 +1548,7 @@ def _derive_screens_from_config():
                 current_cells = 0
             current_screen.append({
                 "widget_id": wid,
-                "origin": w.get("origin", [0, current_cells % 6]),
+                "origin": w.get("origin", [current_cells % 6, (current_cells // 6) % 2]),
                 "dimensions": dims,
             })
             current_cells += cells
@@ -1547,8 +1560,8 @@ def _derive_screens_from_config():
     return [
         {"screen_index": 0, "widgets": [
             {"widget_id": "family-calendar", "origin": [0, 0], "dimensions": [4, 2]},
-            {"widget_id": "home-weather", "origin": [0, 4], "dimensions": [2, 1]},
-            {"widget_id": "household-tasks", "origin": [1, 4], "dimensions": [2, 1]},
+            {"widget_id": "home-weather", "origin": [4, 0], "dimensions": [2, 1]},
+            {"widget_id": "household-tasks", "origin": [4, 1], "dimensions": [2, 1]},
         ]}
     ]
 
@@ -1695,6 +1708,9 @@ class Handler(BaseHTTPRequestHandler):
 
         if path.startswith("/hearth-api/music/stream/"):
             vid = path[len("/hearth-api/music/stream/"):].split(".")[0]
+            if not vid or not YT_VIDEO_ID_RE.match(vid):
+                self._send_json_error(400, "Invalid video_id")
+                return
             stream_url, ctype = resolve_yt_audio_stream(vid)
             if not stream_url:
                 self.send_response(404)
@@ -1772,7 +1788,9 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         max_len = 262144 if path == "/hearth-api/photos/sync" else 8192
-        length = min(length, max_len)
+        if length > max_len:
+            self._send_json_error(413, "Payload too large")
+            return
 
         # Parse and validate JSON body
         try:
@@ -1892,6 +1910,16 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
+    _orig_getaddrinfo = socket.getaddrinfo
+
+    def _ipv4_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+        if family == 0 or family == socket.AF_UNSPEC:
+            family = socket.AF_INET
+        return _orig_getaddrinfo(host, port, family, type, proto, flags)
+
+    socket.getaddrinfo = _ipv4_getaddrinfo
+
+    threading.Thread(target=_music_auto_advance_loop, daemon=True).start()
     srv = ThreadingHTTPServer(("0.0.0.0", 8099), Handler)
     print("[HEARTH-Bridge] Listening on :8099", flush=True)
     srv.serve_forever()

@@ -80,22 +80,38 @@ class TestConfigAndSecrets(unittest.TestCase):
             os.environ.pop("CUSTOM_TEST_VAR", None)
 
     def test_derive_screens_from_config(self):
-        # When no config, returns generic fallback without personal strings
+        # When no config, returns generic fallback with [col, row] origins
+        with patch.object(srv, "_load_config", return_value={}):
+            screens = srv._derive_screens_from_config()
+            self.assertIsInstance(screens, list)
+            self.assertGreaterEqual(len(screens), 1)
+            widgets = screens[0].get("widgets", [])
+            widget_ids = [w["widget_id"] for w in widgets]
+            self.assertEqual(widget_ids, ["family-calendar", "home-weather", "household-tasks"])
+            origins = {w["widget_id"]: w["origin"] for w in widgets}
+            self.assertEqual(origins["family-calendar"], [0, 0])
+            self.assertEqual(origins["home-weather"], [4, 0])
+            self.assertEqual(origins["household-tasks"], [4, 1])
+
+    def test_derive_screens_from_example_config(self):
         screens = srv._derive_screens_from_config()
         self.assertIsInstance(screens, list)
         self.assertGreaterEqual(len(screens), 1)
         first_screen_widgets = [w["widget_id"] for w in screens[0].get("widgets", [])]
         self.assertIn("family-calendar", first_screen_widgets)
-        # Ensure zero forbidden strings
-        serialized = json.dumps(screens).lower()
-        for forbidden in (
-            "ros" + "ie",
-            "isa" + "ac",
-            "ry" + "ans-tasks",
-            "whole" + "-foods-tasks",
-            "cos" + "tco-tasks",
-        ):
-            self.assertNotIn(forbidden, serialized)
+
+    def test_derive_screens_dynamic_col_row(self):
+        with patch.object(srv, "_load_config", return_value={
+            "widgets": [
+                {"id": "widget-a", "dimensions": [2, 1]},
+                {"id": "widget-b", "dimensions": [2, 1]},
+            ]
+        }):
+            screens = srv._derive_screens_from_config()
+            self.assertEqual(len(screens), 1)
+            w = screens[0]["widgets"]
+            self.assertEqual(w[0]["origin"], [0, 0])
+            self.assertEqual(w[1]["origin"], [2, 0])
 
 
 class TestPhotosCacheAndLocks(unittest.TestCase):
@@ -232,6 +248,71 @@ class TestHandlerEndpoints(unittest.TestCase):
         )
         h.do_POST()
         h.send_response.assert_called_with(400)
+
+    def test_post_oversized_body_returns_413(self):
+        # Default max_len is 8192 for non-photos routes
+        h = self._create_handler(
+            "POST",
+            "/hearth-api/music/control",
+            headers={"Content-Length": "10000"},
+            body=b"{}",
+            client_ip="127.0.0.1",
+        )
+        h.do_POST()
+        h.send_response.assert_called_with(413)
+
+        # Photos sync has max_len 262144
+        h_photos = self._create_handler(
+            "POST",
+            "/hearth-api/photos/sync",
+            headers={"Content-Length": "300000"},
+            body=b"{}",
+            client_ip="127.0.0.1",
+        )
+        h_photos.do_POST()
+        h_photos.send_response.assert_called_with(413)
+
+    def test_video_id_validation(self):
+        valid_id = "dQw4w9WgXcQ"
+        self.assertIsNotNone(srv.YT_VIDEO_ID_RE.match(valid_id))
+        self.assertIsNone(srv.YT_VIDEO_ID_RE.match("too_short"))
+        self.assertIsNone(srv.YT_VIDEO_ID_RE.match("invalid$char!"))
+        self.assertIsNone(srv.YT_VIDEO_ID_RE.match("way_too_long_for_video_id"))
+
+        # resolve_yt_audio_stream rejects invalid video_id
+        url, ctype = srv.resolve_yt_audio_stream("invalid_id")
+        self.assertIsNone(url)
+        self.assertIsNone(ctype)
+        url, ctype = srv.resolve_yt_audio_stream("")
+        self.assertIsNone(url)
+        self.assertIsNone(ctype)
+
+        # _cast_track_to_speaker rejects invalid video_id and invalid speaker entity ID
+        self.assertFalse(srv._cast_track_to_speaker("media_player.speaker", {"video_id": "invalid"}))
+        self.assertFalse(srv._cast_track_to_speaker("invalid_speaker", {"video_id": valid_id}))
+
+        # GET /hearth-api/music/stream/<video_id>.m4a returns 400 on invalid video_id
+        h = self._create_handler("GET", "/hearth-api/music/stream/invalid_id.m4a", client_ip="127.0.0.1")
+        h.do_GET()
+        h.send_response.assert_called_with(400)
+
+    def test_ha_entity_id_validation(self):
+        self.assertIsNotNone(srv.HA_ENTITY_ID_RE.match("media_player.living_room_tv"))
+        self.assertIsNotNone(srv.HA_ENTITY_ID_RE.match("remote.living_room_tv"))
+        self.assertIsNone(srv.HA_ENTITY_ID_RE.match("invalid_entity_without_domain"))
+        self.assertIsNone(srv.HA_ENTITY_ID_RE.match("media player.with spaces"))
+        self.assertIsNone(srv.HA_ENTITY_ID_RE.match("../../traversal/path"))
+
+        # launch_plex_on_living_room_tv rejects invalid entity IDs
+        with patch.object(srv, "_cfg", side_effect=lambda k, d="": "invalid_entity" if "ENTITY" in k else d):
+            ok, res = srv.launch_plex_on_living_room_tv({"rating_key": "123", "type": "movie"})
+            self.assertFalse(ok)
+            self.assertIn("Invalid Home Assistant entity ID", res.get("error", ""))
+
+    def test_fetch_gcal_events_handles_token_error(self):
+        with patch.object(srv, "get_google_token", side_effect=RuntimeError("Token error")):
+            events = srv.fetch_gcal_events("test-calendar-id")
+            self.assertEqual(events, [])
 
     def test_get_screens_layout_success(self):
         h = self._create_handler("GET", "/hearth-api/screens/layout", client_ip="127.0.0.1")
