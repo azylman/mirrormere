@@ -1,5 +1,7 @@
-import { useEffect } from 'react';
+import { memo, useEffect } from 'react';
 import { useHeader } from '../store/hooks';
+import { VoiceIcon } from '../voice/VoiceIcon';
+import { useVoiceHudState } from '../voice/useVoiceHudState';
 import { Clock, resolveActiveTimezone } from './Clock';
 import { HeaderVideoButton } from './HeaderVideoButton';
 import { NextUp } from './NextUp';
@@ -11,6 +13,60 @@ import { ThemeToggle } from './theme';
 export interface HeaderProps {
   timezone?: string;
 }
+
+export const HeaderVoice = memo(function HeaderVoice() {
+  const { headerVoice, resetHUD } = useVoiceHudState();
+  const {
+    isActive,
+    stateClass,
+    iconKind,
+    label,
+    statusText,
+    transcriptText,
+    showDot,
+    showProgress,
+  } = headerVoice;
+
+  return (
+    <div className={`header-voice${isActive ? ' visible' : ''}`} id="header-voice">
+      <div className={`voice-indicator${stateClass ? ` ${stateClass}` : ''}`} id="voice-indicator">
+        <span className="voice-pulse-ring" id="voice-pulse-ring" />
+        <span className="voice-dot" id="voice-dot" style={{ display: showDot ? undefined : 'none' }} />
+        <span className="voice-icon" id="voice-icon">
+          <VoiceIcon kind={iconKind} />
+        </span>
+        <span className="voice-label" id="voice-label">
+          {label || null}
+        </span>
+      </div>
+      <span className="voice-status" id="voice-status" style={{ display: statusText ? undefined : 'none' }}>
+        {statusText || null}
+      </span>
+      <div
+        className="voice-transcript"
+        id="voice-transcript"
+        style={{ display: transcriptText ? undefined : 'none' }}
+      >
+        {transcriptText || null}
+      </div>
+      <button
+        id="header-voice-dismiss-btn"
+        className="header-voice-dismiss"
+        type="button"
+        aria-label="Dismiss Voice"
+        title="Dismiss Voice"
+        onClick={resetHUD}
+      >
+        ✕
+      </button>
+      <div
+        className="voice-audio-progress"
+        id="voice-audio-progress"
+        style={{ display: showProgress ? 'block' : 'none' }}
+      />
+    </div>
+  );
+});
 
 export function Header({ timezone: propTimezone }: HeaderProps = {}) {
   const header = useHeader();
@@ -42,48 +98,7 @@ export function Header({ timezone: propTimezone }: HeaderProps = {}) {
         <ThemeToggle />
         <StatusDot />
       </div>
-      <div className="header-voice" id="header-voice">
-        <div className="voice-indicator" id="voice-indicator">
-          <span className="voice-pulse-ring" id="voice-pulse-ring" />
-          <span className="voice-dot" id="voice-dot" style={{ display: 'none' }} />
-          <span className="voice-icon" id="voice-icon">
-            <svg
-              width="22"
-              height="22"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              className="mm-voice-icon-svg"
-            >
-              <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
-              <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-              <line x1="12" y1="19" x2="12" y2="22" />
-            </svg>
-          </span>
-          <span className="voice-label" id="voice-label" />
-        </div>
-        <span className="voice-status" id="voice-status" style={{ display: 'none' }} />
-        <div className="voice-transcript" id="voice-transcript" style={{ display: 'none' }} />
-        <button
-          id="header-voice-dismiss-btn"
-          className="header-voice-dismiss"
-          type="button"
-          aria-label="Dismiss Voice"
-          title="Dismiss Voice"
-          onClick={() => {
-            if (typeof window !== 'undefined') {
-              const win = window as unknown as { MirrormereVoice?: { resetHUD?: () => void } };
-              win.MirrormereVoice?.resetHUD?.();
-            }
-          }}
-        >
-          ✕
-        </button>
-        <div className="voice-audio-progress" id="voice-audio-progress" style={{ display: 'none' }} />
-      </div>
+      <HeaderVoice />
     </header>
   );
 }

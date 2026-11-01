@@ -1,49 +1,29 @@
 import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AudioController } from '../audio/useAudio';
+import { HeaderVoice } from '../shell/Header';
 import { useDisplayStore } from '../store';
-import {
-  DUCK_STATES,
-  VOICE_SVG_MIC,
-  VOICE_SVG_SPARKLE,
-  VOICE_SVG_THINK,
-  VoiceHUDController,
-  VoiceHud,
-} from './VoiceHud';
+import { VoiceIcon } from './VoiceIcon';
+import { DUCK_STATES, VoiceHud } from './VoiceHud';
+import { deriveVoiceHudProps, useVoiceHudStore } from './useVoiceHudState';
 
-function setupHeaderVoiceDOM() {
-  const container = document.createElement('div');
-  container.innerHTML = `
-    <div class="header-voice" id="header-voice">
-      <div class="voice-indicator" id="voice-indicator">
-        <span class="voice-pulse-ring" id="voice-pulse-ring"></span>
-        <span class="voice-dot" id="voice-dot" style="display: none;"></span>
-        <span class="voice-icon" id="voice-icon"></span>
-        <span class="voice-label" id="voice-label"></span>
-      </div>
-      <span class="voice-status" id="voice-status" style="display: none;"></span>
-      <div class="voice-transcript" id="voice-transcript" style="display: none;"></div>
-      <button id="header-voice-dismiss-btn" class="header-voice-dismiss" type="button" aria-label="Dismiss Voice">✕</button>
-      <div class="voice-audio-progress" id="voice-audio-progress" style="display: none;"></div>
-    </div>
-  `;
-  const dismissBtn = container.querySelector('#header-voice-dismiss-btn');
-  dismissBtn?.addEventListener('click', () => {
-    window.MirrormereVoice?.resetHUD?.();
-  });
-  document.body.appendChild(container);
-  return container;
+function renderVoiceSystem() {
+  return render(
+    <>
+      <HeaderVoice />
+      <VoiceHud />
+    </>
+  );
 }
 
-describe('VoiceHud and VoiceHUDController', () => {
+describe('VoiceHud and declarative voice system', () => {
   const initialStore = useDisplayStore.getState();
-  let headerContainer: HTMLElement | null = null;
 
   beforeEach(() => {
     useDisplayStore.setState(initialStore, true);
     delete window.audioManager;
     delete window.voiceHUD;
-    headerContainer = setupHeaderVoiceDOM();
+    useVoiceHudStore.getState().resetHUD();
   });
 
   afterEach(() => {
@@ -52,13 +32,11 @@ describe('VoiceHud and VoiceHUDController', () => {
     useDisplayStore.setState(initialStore, true);
     delete window.audioManager;
     delete window.voiceHUD;
-    if (headerContainer && headerContainer.parentNode) {
-      headerContainer.parentNode.removeChild(headerContainer);
-    }
+    useVoiceHudStore.getState().resetHUD();
   });
 
   describe('constants & icons', () => {
-    it('exports duck states and SVGs', () => {
+    it('exports duck states and VoiceIcon renders correct SVG icons', () => {
       expect(DUCK_STATES.has('listening')).toBe(true);
       expect(DUCK_STATES.has('transcribing')).toBe(true);
       expect(DUCK_STATES.has('thinking')).toBe(true);
@@ -66,15 +44,23 @@ describe('VoiceHud and VoiceHUDController', () => {
       expect(DUCK_STATES.has('speaking')).toBe(true);
       expect(DUCK_STATES.has('idle')).toBe(false);
 
-      expect(VOICE_SVG_MIC).toContain('mm-voice-icon-svg');
-      expect(VOICE_SVG_THINK).toContain('mm-voice-icon-svg');
-      expect(VOICE_SVG_SPARKLE).toContain('mm-voice-icon-svg');
+      const { container: micContainer } = render(<VoiceIcon kind="mic" />);
+      expect(micContainer.querySelector('svg.mm-voice-icon-svg')).not.toBeNull();
+      expect(micContainer.innerHTML).toContain('M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z');
+
+      const { container: thinkContainer } = render(<VoiceIcon kind="think" />);
+      expect(thinkContainer.querySelector('svg.mm-voice-icon-svg')).not.toBeNull();
+      expect(thinkContainer.innerHTML).toContain('M7.9 20A9 9 0 1 0 4 16.1L2 22Z');
+
+      const { container: sparkleContainer } = render(<VoiceIcon kind="sparkle" />);
+      expect(sparkleContainer.querySelector('svg.mm-voice-icon-svg')).not.toBeNull();
+      expect(sparkleContainer.innerHTML).toContain('m12 3-1.912 5.813');
     });
   });
 
-  describe('VoiceHud component state transitions and rendering', () => {
+  describe('VoiceHud and HeaderVoice component state transitions and rendering', () => {
     it('initializes with idle state and exposes window bindings', () => {
-      const { unmount } = render(<VoiceHud />);
+      const { unmount } = renderVoiceSystem();
 
       expect(window.voiceHUD).toBeDefined();
       expect(window.MirrormereVoice).toBeDefined();
@@ -115,7 +101,7 @@ describe('VoiceHud and VoiceHUDController', () => {
     });
 
     it('handles listening state: reveals header, activates pulse ring, ducks audio, hides toast', () => {
-      render(<VoiceHud />);
+      renderVoiceSystem();
       const headerVoice = document.getElementById('header-voice')!;
       const indicator = document.getElementById('voice-indicator')!;
       const label = document.getElementById('voice-label')!;
@@ -143,7 +129,7 @@ describe('VoiceHud and VoiceHUDController', () => {
     });
 
     it('handles transcribing state: halts pulse ring, renders label and transcript', () => {
-      render(<VoiceHud />);
+      renderVoiceSystem();
       const indicator = document.getElementById('voice-indicator')!;
       const label = document.getElementById('voice-label')!;
       const transcript = document.getElementById('voice-transcript')!;
@@ -169,7 +155,7 @@ describe('VoiceHud and VoiceHUDController', () => {
     });
 
     it('handles thinking and synthesizing states', () => {
-      render(<VoiceHud />);
+      renderVoiceSystem();
       const indicator = document.getElementById('voice-indicator')!;
       const label = document.getElementById('voice-label')!;
       const transcript = document.getElementById('voice-transcript')!;
@@ -212,7 +198,7 @@ describe('VoiceHud and VoiceHUDController', () => {
     });
 
     it('handles speaking state with caption toasts and various TTS engine badges', () => {
-      render(<VoiceHud />);
+      renderVoiceSystem();
       const indicator = document.getElementById('voice-indicator')!;
       const label = document.getElementById('voice-label')!;
       const transcript = document.getElementById('voice-transcript')!;
@@ -292,7 +278,7 @@ describe('VoiceHud and VoiceHUDController', () => {
 
       // 5. Speaking without reply hides toast
       act(() => {
-        window.voiceHUD?.resetHUD();
+        window.MirrormereVoice?.resetHUD();
         useDisplayStore.setState({
           voice: {
             state: 'speaking',
@@ -307,7 +293,7 @@ describe('VoiceHud and VoiceHUDController', () => {
     });
 
     it('handles idle and error transitions by resetting HUD and restoring volume', () => {
-      render(<VoiceHud />);
+      renderVoiceSystem();
       const headerVoice = document.getElementById('header-voice')!;
       const toast = document.getElementById('voice-toast')!;
 
@@ -374,7 +360,7 @@ describe('VoiceHud and VoiceHUDController', () => {
     });
 
     it('renders live tool status badge during thinking and clears on speaking/idle', () => {
-      render(<VoiceHud />);
+      renderVoiceSystem();
       const statusEl = document.getElementById('voice-status')!;
       expect(statusEl.style.display).toBe('none');
 
@@ -426,7 +412,7 @@ describe('VoiceHud and VoiceHUDController', () => {
     });
 
     it('supports tap-to-dismiss for caption toast without reopening during the same turn', () => {
-      render(<VoiceHud />);
+      renderVoiceSystem();
       const toast = document.getElementById('voice-toast')!;
 
       act(() => {
@@ -479,7 +465,7 @@ describe('VoiceHud and VoiceHUDController', () => {
     });
 
     it('integrates with header-voice-dismiss-btn via window.MirrormereVoice.resetHUD()', () => {
-      render(<VoiceHud />);
+      renderVoiceSystem();
       const dismissBtn = document.getElementById('header-voice-dismiss-btn')!;
       const headerVoice = document.getElementById('header-voice')!;
 
@@ -507,7 +493,7 @@ describe('VoiceHud and VoiceHUDController', () => {
 
     it('arms 30s safety watchdog and resets HUD on timeout', () => {
       vi.useFakeTimers();
-      render(<VoiceHud />);
+      renderVoiceSystem();
 
       act(() => {
         useDisplayStore.setState({
@@ -540,39 +526,53 @@ describe('VoiceHud and VoiceHUDController', () => {
     });
   });
 
-  describe('VoiceHUDController standalone methods and SSE integration', () => {
-    it('supports attachSSE with both .on and .addEventListener', () => {
-      const controller = new VoiceHUDController();
+  describe('deriveVoiceHudProps pure helper', () => {
+    it('derives idle state props accurately', () => {
+      const idle = deriveVoiceHudProps({
+        activeState: 'idle',
+        transcript: null,
+        reply: null,
+        ttsEngine: null,
+        statusText: null,
+        turnDismissed: false,
+        isReset: false,
+        safetyTimeoutMs: 30000,
+        syncVoice: () => {},
+        resetHUD: () => {},
+        dismissToast: () => {},
+        syncDuckState: () => {},
+      });
 
-      // Test .on interface
-      const onHandlers: Record<string, (d: unknown) => void> = {};
-      const mockSSEOn = {
-        on(event: string, cb: (data: unknown) => void) {
-          onHandlers[event] = cb;
-        },
-      };
-      controller.attachSSE(mockSSEOn);
-      expect(typeof onHandlers['voice.state']).toBe('function');
-      onHandlers['voice.state']!({ state: 'listening' });
-      expect(controller.currentState).toBe('listening');
+      expect(idle.headerVoice.isActive).toBe(false);
+      expect(idle.headerVoice.stateClass).toBe('');
+      expect(idle.headerVoice.label).toBe('');
+      expect(idle.headerVoice.iconKind).toBe('mic');
+      expect(idle.voiceToast.visible).toBe(false);
+    });
 
-      // Test .addEventListener interface
-      const addHandlers: Record<string, (evt: { data?: unknown }) => void> = {};
-      const mockEventSource = {
-        addEventListener(event: string, cb: (evt: { data?: unknown }) => void) {
-          addHandlers[event] = cb;
-        },
-      };
-      controller.attachSSE(mockEventSource);
-      expect(typeof addHandlers['voice.state']).toBe('function');
-      addHandlers['voice.state']!({ data: JSON.stringify({ state: 'thinking', transcript: 'Hi' }) });
-      expect(controller.currentState).toBe('thinking');
+    it('derives speaking props accurately with badge and body', () => {
+      const speaking = deriveVoiceHudProps({
+        activeState: 'speaking',
+        transcript: 'Hello',
+        reply: 'World',
+        ttsEngine: 'Piper',
+        statusText: null,
+        turnDismissed: false,
+        isReset: false,
+        safetyTimeoutMs: 30000,
+        syncVoice: () => {},
+        resetHUD: () => {},
+        dismissToast: () => {},
+        syncDuckState: () => {},
+      });
 
-      // Invalid json is safely ignored
-      addHandlers['voice.state']!({ data: '{bad json' });
-      expect(controller.currentState).toBe('thinking');
-
-      controller.destroy();
+      expect(speaking.headerVoice.isActive).toBe(true);
+      expect(speaking.headerVoice.stateClass).toBe('speaking');
+      expect(speaking.headerVoice.iconKind).toBe('sparkle');
+      expect(speaking.headerVoice.transcriptText).toBe('"World"');
+      expect(speaking.voiceToast.visible).toBe(true);
+      expect(speaking.voiceToast.badgeText).toBe('piper');
+      expect(speaking.voiceToast.bodyText).toBe('World');
     });
   });
 });

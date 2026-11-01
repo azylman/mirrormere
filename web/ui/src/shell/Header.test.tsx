@@ -157,4 +157,30 @@ describe('Header component', () => {
     // document.body.dataset.timezone must retain America/Chicago and NOT be overwritten with UTC!
     expect(document.body.dataset.timezone).toBe('America/Chicago');
   });
+
+  it('updates HeaderVoice declaratively without affecting other header elements', () => {
+    const { container } = render(<Header />);
+    const headerVoice = container.querySelector('#header-voice')!;
+    expect(headerVoice.classList.contains('visible')).toBe(false);
+
+    act(() => {
+      useDisplayStore.setState({
+        voice: {
+          state: 'listening',
+          transcript: null,
+          reply: null,
+          tts_engine: null,
+          status: null,
+        },
+      });
+    });
+
+    expect(headerVoice.classList.contains('visible')).toBe(true);
+    expect(container.querySelector('#voice-indicator')?.classList.contains('listening')).toBe(true);
+    expect(container.querySelector('#voice-label')?.textContent).toBe('Listening...');
+
+    // Clock and weather elements remain intact
+    expect(container.querySelector('#header-clock')).not.toBeNull();
+    expect(container.querySelector('#header-weather')).not.toBeNull();
+  });
 });
