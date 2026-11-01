@@ -385,11 +385,11 @@ func (c *CastClient) connectAndServe(ctx context.Context) error {
 	c.mu.Unlock()
 	c.logger.Info("[CastWatcher] Connected to Chromecast", "addr", c.cfg.ChromecastAddr)
 
-	if err := c.sendMessage(newCastMsg(DestinationReceiver, NamespaceConnection, `{"type":"CONNECT"}`)); err != nil {
+	if err := c.sendMessageContext(ctx, newCastMsg(DestinationReceiver, NamespaceConnection, `{"type":"CONNECT"}`)); err != nil {
 		return fmt.Errorf("failed to send initial CONNECT: %w", err)
 	}
 	reqID := c.reqCounter.Add(1)
-	if err := c.sendMessage(newCastMsg(DestinationReceiver, NamespaceReceiver, fmt.Sprintf(`{"type":"GET_STATUS","requestId":%d}`, reqID))); err != nil {
+	if err := c.sendMessageContext(ctx, newCastMsg(DestinationReceiver, NamespaceReceiver, fmt.Sprintf(`{"type":"GET_STATUS","requestId":%d}`, reqID))); err != nil {
 		return fmt.Errorf("failed to send GET_STATUS: %w", err)
 	}
 
