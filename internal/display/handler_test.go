@@ -40,17 +40,18 @@ func TestGetDisplay_RoutingAndResolution(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			var h *display.Handler
+			legacyOpt := display.WithUIProvider(func() string { return "legacy" })
 			switch tc.kind {
 			case "primary":
-				h = display.NewHandler(display.WithTemplatePath(primPath), display.WithLocalTemplatePath(""))
+				h = display.NewHandler(legacyOpt, display.WithTemplatePath(primPath), display.WithLocalTemplatePath(""))
 			case "local":
-				h = display.NewHandler(display.WithTemplatePath("/no/such/file"), display.WithLocalTemplatePath(localPath))
+				h = display.NewHandler(legacyOpt, display.WithTemplatePath("/no/such/file"), display.WithLocalTemplatePath(localPath))
 			case "content":
-				h = display.NewHandler(display.WithTemplateContent([]byte("<h1>content</h1>")))
+				h = display.NewHandler(legacyOpt, display.WithTemplateContent([]byte("<h1>content</h1>")))
 			case "malformed":
-				h = display.NewHandler(display.WithTemplateContent([]byte("<div>{{ bad")))
+				h = display.NewHandler(legacyOpt, display.WithTemplateContent([]byte("<div>{{ bad")))
 			case "missing":
-				h = display.NewHandler(display.WithTemplatePath("/no/such/file"), display.WithLocalTemplatePath("/no/such/local"))
+				h = display.NewHandler(legacyOpt, display.WithTemplatePath("/no/such/file"), display.WithLocalTemplatePath("/no/such/local"))
 			default:
 				h = display.NewHandler()
 			}
@@ -103,15 +104,16 @@ func TestGetDisplay_TemplateDataAndProviders(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			var h *display.Handler
+			legacyOpt := display.WithUIProvider(func() string { return "legacy" })
 			switch tc.mode {
 			case "static_tz":
-				h = display.NewHandler(display.WithTemplateContent(tmpl), display.WithTimezoneProvider(func() string { return "America/Los_Angeles" }))
+				h = display.NewHandler(legacyOpt, display.WithTemplateContent(tmpl), display.WithTimezoneProvider(func() string { return "America/Los_Angeles" }))
 				if h.Timezone() != tc.wantGetter {
 					t.Fatalf("tz getter: got %s, want %s", h.Timezone(), tc.wantGetter)
 				}
 			case "dyn_tz":
 				tz := "Europe/London"
-				h = display.NewHandler(display.WithTemplateContent(tmpl), display.WithTimezoneProvider(func() string { return tz }))
+				h = display.NewHandler(legacyOpt, display.WithTemplateContent(tmpl), display.WithTimezoneProvider(func() string { return tz }))
 				if h.Timezone() != "Europe/London" {
 					t.Fatalf("tz initial: got %s, want Europe/London", h.Timezone())
 				}
@@ -121,37 +123,37 @@ func TestGetDisplay_TemplateDataAndProviders(t *testing.T) {
 				}
 				tz = "Europe/London"
 			case "static_hide":
-				h = display.NewHandler(display.WithTemplateContent(tmpl), display.WithHideCursorProvider(func() bool { return true }))
+				h = display.NewHandler(legacyOpt, display.WithTemplateContent(tmpl), display.WithHideCursorProvider(func() bool { return true }))
 				if !h.HideCursor() {
 					t.Fatalf("hide getter: expected true")
 				}
 			case "static_unhide":
-				h = display.NewHandler(display.WithTemplateContent(tmpl), display.WithHideCursorProvider(func() bool { return false }))
+				h = display.NewHandler(legacyOpt, display.WithTemplateContent(tmpl), display.WithHideCursorProvider(func() bool { return false }))
 				if h.HideCursor() {
 					t.Fatalf("hide getter: expected false")
 				}
 			case "dyn_hide":
 				val := false
-				h = display.NewHandler(display.WithTemplateContent(tmpl), display.WithHideCursorProvider(func() bool { return val }))
+				h = display.NewHandler(legacyOpt, display.WithTemplateContent(tmpl), display.WithHideCursorProvider(func() bool { return val }))
 				val = true
 				if !h.HideCursor() {
 					t.Fatalf("dyn hide getter: expected true")
 				}
 			case "set_hide":
 				val := false
-				h = display.NewHandler(display.WithTemplateContent(tmpl), display.WithHideCursorProvider(func() bool { return val }))
+				h = display.NewHandler(legacyOpt, display.WithTemplateContent(tmpl), display.WithHideCursorProvider(func() bool { return val }))
 				val = true
 				if !h.HideCursor() {
 					t.Fatalf("set hide getter: expected true")
 				}
 			case "static_remote":
-				h = display.NewHandler(display.WithTemplateContent(tmpl), display.WithRemoteURLProvider(func() string { return "http://remote.lan" }))
+				h = display.NewHandler(legacyOpt, display.WithTemplateContent(tmpl), display.WithRemoteURLProvider(func() string { return "http://remote.lan" }))
 				if h.RemoteURL() != tc.wantGetter {
 					t.Fatalf("remote getter: got %s, want %s", h.RemoteURL(), tc.wantGetter)
 				}
 			case "dyn_remote":
 				url := "http://dyn.lan"
-				h = display.NewHandler(display.WithTemplateContent(tmpl), display.WithRemoteURLProvider(func() string { return url }))
+				h = display.NewHandler(legacyOpt, display.WithTemplateContent(tmpl), display.WithRemoteURLProvider(func() string { return url }))
 				if h.RemoteURL() != "http://dyn.lan" {
 					t.Fatalf("remote initial: got %s, want http://dyn.lan", h.RemoteURL())
 				}
@@ -162,29 +164,29 @@ func TestGetDisplay_TemplateDataAndProviders(t *testing.T) {
 				url = "http://dyn.lan"
 			case "static_video":
 				vData := &display.HeaderVideoTemplateData{Enabled: true, StreamID: "cam1", StreamURL: "http://cam.lan", ControlURL: "http://ctrl.lan", Type: "webrtc"}
-				h = display.NewHandler(display.WithTemplateContent(tmpl), display.WithHeaderVideoProvider(func() *display.HeaderVideoTemplateData { return vData }))
+				h = display.NewHandler(legacyOpt, display.WithTemplateContent(tmpl), display.WithHeaderVideoProvider(func() *display.HeaderVideoTemplateData { return vData }))
 				if h.HeaderVideo() != vData {
 					t.Fatalf("video getter mismatch")
 				}
 			case "dyn_video":
 				vData := &display.HeaderVideoTemplateData{Enabled: true, StreamID: "live-cam"}
-				h = display.NewHandler(display.WithTemplateContent(tmpl), display.WithHeaderVideoProvider(func() *display.HeaderVideoTemplateData { return vData }))
+				h = display.NewHandler(legacyOpt, display.WithTemplateContent(tmpl), display.WithHeaderVideoProvider(func() *display.HeaderVideoTemplateData { return vData }))
 				if h.HeaderVideo().StreamID != tc.wantGetter {
 					t.Fatalf("dyn video getter mismatch")
 				}
 			case "dyn_theme":
 				th := "night"
-				h = display.NewHandler(display.WithTemplateContent(tmpl), display.WithThemeProvider(func() string { return th }))
+				h = display.NewHandler(legacyOpt, display.WithTemplateContent(tmpl), display.WithThemeProvider(func() string { return th }))
 				if h.Theme() != tc.wantGetter {
 					t.Fatalf("theme getter: got %s, want %s", h.Theme(), tc.wantGetter)
 				}
 			case "dyn_grid":
-				h = display.NewHandler(display.WithTemplateContent(tmpl), display.WithGridProvider(func() string { return "2x6" }))
+				h = display.NewHandler(legacyOpt, display.WithTemplateContent(tmpl), display.WithGridProvider(func() string { return "2x6" }))
 				if h.Grid() != tc.wantGetter {
 					t.Fatalf("grid getter: got %s, want %s", h.Grid(), tc.wantGetter)
 				}
 			default:
-				h = display.NewHandler(display.WithTemplateContent(tmpl))
+				h = display.NewHandler(legacyOpt, display.WithTemplateContent(tmpl))
 				if h.Timezone() != "UTC" || h.HideCursor() || h.RemoteURL() != "" || h.Theme() != "day" || h.HeaderVideo() != nil {
 					t.Fatalf("defaults mismatch")
 				}
@@ -290,8 +292,9 @@ func TestGetStatic(t *testing.T) {
 func TestVoiceWaveformProvider(t *testing.T) {
 	t.Parallel()
 	tmpl := []byte(`<body>{{ if and .VoiceWaveform .VoiceWaveform.Enabled }}<wave url="{{ .VoiceWaveform.LevelsURL }}" gain="{{ .VoiceWaveform.Gain }}"></wave>{{ end }}</body>`)
+	legacyOpt := display.WithUIProvider(func() string { return "legacy" })
 
-	h := display.NewHandler(display.WithTemplateContent(tmpl))
+	h := display.NewHandler(legacyOpt, display.WithTemplateContent(tmpl))
 	if h.VoiceWaveform() != nil {
 		t.Fatal("voice waveform without provider should be nil")
 	}
@@ -302,7 +305,7 @@ func TestVoiceWaveformProvider(t *testing.T) {
 	}
 
 	wave := &display.VoiceWaveformTemplateData{Enabled: true, LevelsURL: "http://127.0.0.1:8765/levels", Gain: 2.2}
-	h = display.NewHandler(display.WithTemplateContent(tmpl), display.WithVoiceWaveformProvider(func() *display.VoiceWaveformTemplateData { return wave }))
+	h = display.NewHandler(legacyOpt, display.WithTemplateContent(tmpl), display.WithVoiceWaveformProvider(func() *display.VoiceWaveformTemplateData { return wave }))
 	if h.VoiceWaveform() != wave {
 		t.Fatal("voice waveform getter did not return provider value")
 	}
@@ -314,7 +317,7 @@ func TestVoiceWaveformProvider(t *testing.T) {
 	}
 
 	disabled := &display.VoiceWaveformTemplateData{Enabled: false, LevelsURL: "http://127.0.0.1:8765/levels", Gain: 2.2}
-	h = display.NewHandler(display.WithTemplateContent(tmpl), display.WithVoiceWaveformProvider(func() *display.VoiceWaveformTemplateData { return disabled }))
+	h = display.NewHandler(legacyOpt, display.WithTemplateContent(tmpl), display.WithVoiceWaveformProvider(func() *display.VoiceWaveformTemplateData { return disabled }))
 	rec = httptest.NewRecorder()
 	h.GetDisplay(rec, httptest.NewRequest(http.MethodGet, "/display", nil))
 	if strings.Contains(rec.Body.String(), "<wave") {
@@ -336,13 +339,14 @@ func TestGetDisplay_UIShellSelection(t *testing.T) {
 		query    string
 		want     string
 	}{
-		{"default is legacy", "", "", "LEGACY UTC"},
+		{"default is react", "", "", "REACT UTC 6x2"},
 		{"explicit legacy config", "legacy", "", "LEGACY UTC"},
 		{"react config", "react", "", "REACT UTC 6x2"},
 		{"query react overrides legacy config", "legacy", "ui=react", "REACT UTC 6x2"},
 		{"query legacy overrides react config", "react", "ui=legacy", "LEGACY UTC"},
 		{"unknown query value falls back to react config", "react", "ui=bogus", "REACT UTC 6x2"},
-		{"unknown query value falls back to legacy config", "", "ui=bogus", "LEGACY UTC"},
+		{"unknown query value falls back to legacy config", "legacy", "ui=bogus", "LEGACY UTC"},
+		{"unknown query value falls back to default react", "", "ui=bogus", "REACT UTC 6x2"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -384,7 +388,11 @@ func TestGetDisplay_PerfScriptGatedByQuery(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			h := display.NewHandler(display.WithTemplatePath("../../web/templates/display.html"), display.WithLocalTemplatePath(""))
+			h := display.NewHandler(
+				display.WithUIProvider(func() string { return "legacy" }),
+				display.WithTemplatePath("../../web/templates/display.html"),
+				display.WithLocalTemplatePath(""),
+			)
 			rec := httptest.NewRecorder()
 			h.GetDisplay(rec, httptest.NewRequest(http.MethodGet, tc.path, nil))
 			if rec.Code != http.StatusOK {

@@ -482,7 +482,7 @@ func TestDisplayUI(t *testing.T) {
 		wantUI  string
 		wantErr string
 	}{
-		{name: "omitted defaults to legacy", yaml: withBaseYAML(""), wantUI: "legacy"},
+		{name: "omitted defaults to react", yaml: withBaseYAML(""), wantUI: "react"},
 		{name: "explicit legacy", yaml: withBaseYAML("  ui: legacy\n"), wantUI: "legacy"},
 		{name: "react", yaml: withBaseYAML("  ui: react\n"), wantUI: "react"},
 		{name: "react normalized case and whitespace", yaml: withBaseYAML("  ui: \" React \"\n"), wantUI: "react"},

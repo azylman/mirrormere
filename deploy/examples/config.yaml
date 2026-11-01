@@ -16,9 +16,9 @@ location:
 
 # Display and layout configuration
 display:
-  # Display shell served at /display: "legacy" (display.html, default) or "react" (display_react.html + web/static/ui/app.js).
+  # Display shell served at /display: "react" (display_react.html + web/static/ui/app.js, default) or "legacy" (display.html).
   # The ?ui=react or ?ui=legacy query parameter overrides this per request.
-  ui: "legacy"
+  ui: "react"
 
   # Visual theme mode: "auto" (switches at local sunrise/sunset), "day", or "night" (Sailor HG Fairyfloss)
   theme:

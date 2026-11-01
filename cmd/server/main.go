@@ -179,7 +179,7 @@ func buildDisplayHandler(stateProvider render.StateSnapshotProvider, currentThem
 			if c := cfg(); c != nil {
 				return c.Display.GetUI()
 			}
-			return "legacy"
+			return "react"
 		}),
 		display.WithRemoteURLProvider(func() string {
 			if c := cfg(); c != nil {
