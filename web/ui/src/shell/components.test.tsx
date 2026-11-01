@@ -39,7 +39,34 @@ describe('WeatherPill component', () => {
     expect(container.querySelector('#weather-temp')?.textContent).toBe('68°F');
     expect(container.querySelector('#weather-location')?.textContent).toBe('Berkeley');
     expect(container.querySelector('#weather-desc')?.textContent).toBe('Sunny & Mild');
-    expect(container.querySelector('.mm-icon-weather-sunny')).not.toBeNull();
+    const svg = container.querySelector('.mm-icon-weather-sunny');
+    expect(svg).not.toBeNull();
+    expect(svg?.getAttribute('width')).toBe('26');
+    expect(svg?.getAttribute('height')).toBe('26');
+    expect(svg?.querySelector('circle')).not.toBeNull();
+  });
+
+  it('renders night weather condition with declarative SVG icon', () => {
+    useDisplayStore.setState({
+      header: {
+        timestamp: '2026-10-31T12:00:00Z',
+        timezone: 'America/Los_Angeles',
+        weather: {
+          temperature: 55,
+          units: '°F',
+          icon: 'weather-clear-night',
+          condition: 'Clear Night',
+          location: 'Oakland',
+        },
+      },
+    });
+
+    const { container } = render(<WeatherPill />);
+    expect(container.querySelector('#weather-temp')?.textContent).toBe('55°F');
+    expect(container.querySelector('#weather-desc')?.textContent).toBe('Clear');
+    const svg = container.querySelector('.mm-icon-weather-clear-night');
+    expect(svg).not.toBeNull();
+    expect(svg?.querySelector('path')).not.toBeNull();
   });
 });
 
