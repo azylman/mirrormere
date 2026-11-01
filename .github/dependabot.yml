@@ -77,3 +77,7 @@ updates:
         applies-to: security-updates
         patterns:
           - "*"
+    ignore:
+      - dependency-name: "typescript"
+        versions:
+          - ">= 6.1.0"

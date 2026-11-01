@@ -343,10 +343,10 @@ export function formatDate(layoutOrValue: unknown, value?: unknown, tz?: string)
     if (cached !== undefined) return cached;
   }
 
-  let year = -1;
-  let month = -1; // 1-12
-  let day = -1; // 1-31
-  let weekdayIdx = -1; // 0-6
+  let year: number;
+  let month: number; // 1-12
+  let day: number; // 1-31
+  let weekdayIdx: number; // 0-6
 
   const hasValidTz = Boolean(tz && isValidTimezone(tz));
 
