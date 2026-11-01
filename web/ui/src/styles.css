@@ -134,6 +134,10 @@ body[data-grid="2x6"] .grid-pane {
   height: 100%;
 }
 
+.widget-calendar-feed {
+  position: relative;
+}
+
 .tasks-list {
   display: flex;
   flex-direction: column;

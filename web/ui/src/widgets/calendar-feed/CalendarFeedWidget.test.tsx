@@ -1,4 +1,4 @@
-import { cleanup, render } from '@testing-library/react';
+import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useDisplayStore } from '../../store';
 import { CalendarFeedWidget } from './CalendarFeedWidget';
@@ -329,5 +329,170 @@ describe('CalendarFeedWidget', () => {
 
     const title = container.querySelector('.event-title');
     expect(title?.textContent).toBe('Pascal Meeting');
+  });
+
+  it('opens timed and all-day event modals on click and keyboard, and closes via close button, backdrop click, or Escape', () => {
+    const todayStr = '2026-10-31';
+    useDisplayStore.setState({
+      header: { timestamp: `${todayStr}T08:00:00Z`, timezone: 'UTC', weather: null },
+      widgets: {
+        'cal-modal-test': {
+          meta: {
+            type: 'calendar-feed',
+            origin: [0, 0],
+            dimensions: [3, 2],
+            config: {},
+            assets_base: '',
+          },
+          state: 'healthy',
+          data: {
+            events: [
+              {
+                id: 'ev-allday',
+                title: 'All Day Hackathon',
+                start: todayStr,
+                all_day: true,
+                description: 'Full day hackathon building awesome stuff',
+                calendar_name: 'Events',
+              },
+              {
+                id: 'ev-timed',
+                title: 'Team Sync',
+                start: `${todayStr}T14:30:00Z`,
+                end: `${todayStr}T15:30:00Z`,
+                all_day: false,
+                location: 'Room A',
+                description: 'Weekly team sprint sync',
+                calendar_name: 'Work',
+                color: '#3a86ff',
+              },
+            ],
+          },
+          timestamp: `${todayStr}T08:00:00Z`,
+        },
+      },
+    });
+
+    const { container } = render(
+      <CalendarFeedWidget id="cal-modal-test" type="calendar-feed" />
+    );
+
+    const timedEvent = container.querySelector('[data-event-id="ev-timed"]')!;
+    expect(timedEvent).not.toBeNull();
+    expect(timedEvent.classList.contains('cf-event-clickable')).toBe(true);
+    expect(timedEvent.getAttribute('role')).toBe('button');
+    expect(timedEvent.getAttribute('tabIndex')).toBe('0');
+
+    // 1. Open timed event modal via click
+    fireEvent.click(timedEvent);
+
+    let modal = container.querySelector('.cf-modal-overlay');
+    expect(modal).not.toBeNull();
+    expect(container.querySelector('.cf-modal-title')?.textContent).toBe('Team Sync');
+    const modalTime = container.querySelector('.cf-modal-time');
+    expect(modalTime?.textContent).toBe('Sat, Oct 31 • 2:30 PM – 3:30 PM');
+    const modalLocation = container.querySelector('.cf-modal-location');
+    expect(modalLocation?.textContent).toBe('Room A');
+    expect(container.querySelector('.cf-modal-owner-chip')?.textContent).toContain('Work');
+    expect(container.querySelector('.cf-modal-description')?.textContent).toContain('Weekly team sprint sync');
+
+    // 2. Close via close button
+    const closeBtn = container.querySelector('.cf-modal-close')!;
+    fireEvent.click(closeBtn);
+    expect(container.querySelector('.cf-modal-overlay')).toBeNull();
+
+    // 3. Re-open and close via backdrop click
+    fireEvent.click(timedEvent);
+    modal = container.querySelector('.cf-modal-overlay');
+    expect(modal).not.toBeNull();
+    fireEvent.click(modal!);
+    expect(container.querySelector('.cf-modal-overlay')).toBeNull();
+
+    // 4. Re-open and close via Escape
+    fireEvent.click(timedEvent);
+    expect(container.querySelector('.cf-modal-overlay')).not.toBeNull();
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(container.querySelector('.cf-modal-overlay')).toBeNull();
+
+    // 5. Open all-day event modal via Enter key
+    const allDayEvent = container.querySelector('[data-event-id="ev-allday"]')!;
+    expect(allDayEvent).not.toBeNull();
+    fireEvent.keyDown(allDayEvent, { key: 'Enter' });
+
+    modal = container.querySelector('.cf-modal-overlay');
+    expect(modal).not.toBeNull();
+    expect(container.querySelector('.cf-modal-title')?.textContent).toBe('All Day Hackathon');
+    expect(container.querySelector('.cf-modal-time')?.textContent).toBe('Sat, Oct 31 • All Day');
+    expect(container.querySelector('.cf-modal-owner-chip')?.textContent).toContain('Events');
+    expect(container.querySelector('.cf-modal-description')?.textContent).toContain('Full day hackathon building awesome stuff');
+
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(container.querySelector('.cf-modal-overlay')).toBeNull();
+
+    // 6. Open all-day event modal via Space key
+    fireEvent.keyDown(allDayEvent, { key: ' ' });
+    expect(container.querySelector('.cf-modal-overlay')).not.toBeNull();
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(container.querySelector('.cf-modal-overlay')).toBeNull();
+  });
+
+  it('auto-closes event modal and resumes store after 60s inactivity timer', () => {
+    vi.useFakeTimers();
+    const todayStr = '2026-10-31';
+    useDisplayStore.setState({
+      header: { timestamp: `${todayStr}T08:00:00Z`, timezone: 'UTC', weather: null },
+      widgets: {
+        'cal-inactivity': {
+          meta: {
+            type: 'calendar-feed',
+            origin: [0, 0],
+            dimensions: [3, 2],
+            config: {},
+            assets_base: '',
+          },
+          state: 'healthy',
+          data: {
+            events: [
+              {
+                id: 'ev-timed',
+                title: 'Team Sync',
+                start: `${todayStr}T14:30:00Z`,
+                end: `${todayStr}T15:30:00Z`,
+                all_day: false,
+              },
+            ],
+          },
+          timestamp: `${todayStr}T08:00:00Z`,
+        },
+      },
+    });
+
+    const pauseSpy = vi.spyOn(useDisplayStore.getState(), 'pause');
+    const resumeSpy = vi.spyOn(useDisplayStore.getState(), 'resume');
+
+    const { container } = render(
+      <CalendarFeedWidget id="cal-inactivity" type="calendar-feed" />
+    );
+
+    const timedEvent = container.querySelector('[data-event-id="ev-timed"]')!;
+    fireEvent.click(timedEvent);
+
+    expect(container.querySelector('.cf-modal-overlay')).not.toBeNull();
+    expect(pauseSpy).toHaveBeenCalledTimes(1);
+    expect(resumeSpy).not.toHaveBeenCalled();
+
+    // Advance 59s: modal still open
+    act(() => {
+      vi.advanceTimersByTime(59000);
+    });
+    expect(container.querySelector('.cf-modal-overlay')).not.toBeNull();
+    expect(resumeSpy).not.toHaveBeenCalled();
+
+    // Advance remaining 2s (total 61s): modal closes, store resumes
+    act(() => {
+      vi.advanceTimersByTime(2000);
+    });
+    expect(container.querySelector('.cf-modal-overlay')).toBeNull();
+    expect(resumeSpy).toHaveBeenCalledTimes(1);
   });
 });
