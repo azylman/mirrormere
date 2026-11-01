@@ -131,7 +131,7 @@ func householdThemeFunc(sp render.StateSnapshotProvider) func() string {
 
 func evaluateThemeTransition(currentTheme func() string, sp interface {
 	GetTheme() string
-	SetTheme(string)
+	SetTheme(theme string)
 }, hub *events.Hub, logger *slog.Logger,
 ) bool {
 	if currentTheme == nil || sp == nil {

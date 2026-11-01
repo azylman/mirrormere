@@ -265,7 +265,9 @@ func (e *Engine) resolveWidgetRuntimeState(widgetID string) (any, string, string
 	}
 
 	if timestamp == "" {
-		if tsProvider, ok := e.provider.(interface{ GetWidgetTimestamp(string) (string, bool) }); ok {
+		if tsProvider, ok := e.provider.(interface {
+			GetWidgetTimestamp(widgetID string) (string, bool)
+		}); ok {
 			if ts, ok := tsProvider.GetWidgetTimestamp(widgetID); ok && ts != "" {
 				timestamp = ts
 			}

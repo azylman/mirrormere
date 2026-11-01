@@ -358,7 +358,9 @@ func buildWidgetUpdatePayload(provider StateProvider, widgetID, nowStr string) W
 			payload.Timestamp = ts
 		}
 	}
-	if tsP, ok := provider.(interface{ GetWidgetTimestamp(string) (string, bool) }); ok {
+	if tsP, ok := provider.(interface {
+		GetWidgetTimestamp(widgetID string) (string, bool)
+	}); ok {
 		if ts, ok := tsP.GetWidgetTimestamp(widgetID); ok && ts != "" {
 			payload.Timestamp = ts
 		}

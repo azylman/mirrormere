@@ -222,7 +222,7 @@ func TestHouseholdHelpers(t *testing.T) {
 				}
 				var prov interface {
 					GetTheme() string
-					SetTheme(string)
+					SetTheme(theme string)
 				}
 				if sp != nil {
 					prov = sp
