@@ -260,7 +260,7 @@ describe('VideoStage and VideoPlayerManager', () => {
   });
 
   describe('Presentation Mode Switching & Carousel Coordination', () => {
-    it('pauses carousel, hides grid-canvas, and shows video-stage on entering video mode', () => {
+    it('pauses carousel, leaves grid-canvas unmutated, and shows video-stage on entering video mode', () => {
       const gridCanvas = document.createElement('main');
       gridCanvas.id = 'grid-canvas';
       document.body.appendChild(gridCanvas);
@@ -293,7 +293,7 @@ describe('VideoStage and VideoPlayerManager', () => {
 
       expect(carousel.pause).toHaveBeenCalledTimes(1);
       expect(useDisplayStore.getState().carousel.paused).toBe(true);
-      expect(gridCanvas.style.display).toBe('none');
+      expect(gridCanvas.style.display).toBe('');
       expect(stage.style.display).toBe('flex');
       expect(stage.classList.contains('active')).toBe(true);
       expect(mgr.currentMode).toBe('video');

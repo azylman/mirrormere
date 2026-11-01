@@ -1062,4 +1062,85 @@ describe('PhotoCarouselWidget component', () => {
       window.Image = originalImage;
     }
   });
+
+  it('stops crossfade and cycle timer immediately when entering video mode and stays stopped', async () => {
+    let resolveDecode: (() => void) | null = null;
+    const originalImage = window.Image;
+
+    class MockImage {
+      src = '';
+      decode() {
+        return new Promise<void>((resolve) => {
+          resolveDecode = resolve;
+        });
+      }
+    }
+    // @ts-expect-error mock window.Image
+    window.Image = MockImage;
+
+    try {
+      useDisplayStore.setState({
+        widgets: {
+          [widgetId]: {
+            meta: makeWidgetMeta({ fit: 'cover', image_size: [800, 600] }),
+            data: {
+              photos: [
+                { url: 'https://example.com/p1.jpg' },
+                { url: 'https://example.com/p2.jpg' },
+                { url: 'https://example.com/p3.jpg' },
+              ],
+              cycle_interval_seconds: 10,
+            },
+            state: 'ready',
+            timestamp: '2026-10-31T12:00:00Z',
+          },
+        },
+      });
+
+      render(
+        <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
+          <PhotoCarouselWidget id={widgetId} type="photo-carousel" />
+        </PaneContext.Provider>,
+      );
+
+      // (a) advance cycle timer and resolve Image.decode() so crossfade starts
+      act(() => {
+        vi.advanceTimersByTime(10000);
+      });
+
+      expect(resolveDecode).not.toBeNull();
+      act(() => {
+        resolveDecode!();
+      });
+
+      await vi.waitFor(() => {
+        expect(document.body.dataset.animating).toBe('1');
+      });
+
+      // (b) enter video mode mid-crossfade
+      act(() => {
+        useDisplayStore.setState({
+          video: {
+            mode: 'video',
+            primary: { id: 'cam', stream_url: 'http://cam/mjpeg', type: 'mjpeg' },
+            pip: null,
+          },
+        });
+      });
+
+      // (c) crossfade and cycle timer immediately stop with animating === '0'
+      expect(document.body.dataset.animating).toBe('0');
+
+      // (d) stays stopped across subsequent timer advances
+      resolveDecode = null;
+      act(() => {
+        vi.advanceTimersByTime(30000);
+      });
+
+      expect(resolveDecode).toBeNull();
+      expect(document.body.dataset.animating).toBe('0');
+    } finally {
+      window.Image = originalImage;
+    }
+  });
 });

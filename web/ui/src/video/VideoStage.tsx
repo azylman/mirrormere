@@ -420,13 +420,7 @@ export class VideoPlayerManager {
       // ignore
     }
 
-    // 2. Hide dashboard grid canvas
-    const canvasEl = typeof document !== 'undefined' ? document.getElementById('grid-canvas') : null;
-    if (canvasEl) {
-      canvasEl.style.display = 'none';
-    }
-
-    // 3. Reveal video stage
+    // 2. Reveal video stage
     if (this.stage) {
       this.stage.style.display = 'flex';
       this.stage.classList.add('active');
@@ -553,13 +547,7 @@ export class VideoPlayerManager {
       this.pipSession = null;
     }
 
-    // 2. Restore dashboard grid canvas
-    const canvasEl = typeof document !== 'undefined' ? document.getElementById('grid-canvas') : null;
-    if (canvasEl) {
-      canvasEl.style.display = '';
-    }
-
-    // 3. Resume carousel processing
+    // 2. Resume carousel processing
     if (this.carousel && typeof this.carousel.resume === 'function') {
       this.carousel.resume();
     }
@@ -569,8 +557,16 @@ export class VideoPlayerManager {
       // ignore
     }
 
-    // 4. Explicit paint flush to release any pending Wayland wl_surface.frame callbacks
+    // 3. Reset display store video slice if still in video mode
     if (flushPaint) {
+      try {
+        const cur = useDisplayStore.getState().video;
+        if (cur?.mode === 'video' || cur?.primary !== null) {
+          useDisplayStore.setState({ video: { mode: 'widgets', primary: null, pip: null } });
+        }
+      } catch {
+        // ignore
+      }
       this.flushCompositorPaint();
     }
   }

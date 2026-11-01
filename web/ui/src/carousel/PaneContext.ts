@@ -1,4 +1,5 @@
 import { createContext, useContext } from 'react';
+import { useDisplayStore } from '../store';
 
 /**
  * Provided by each Screen pane. Widgets pause timers, decoders and animations while
@@ -12,7 +13,11 @@ export interface PaneContextValue {
 export const PaneContext = createContext<PaneContextValue>({ isCurrentPane: true, paneIndex: 0 });
 
 export function useIsCurrentPane(): boolean {
-  return useContext(PaneContext).isCurrentPane;
+  const { isCurrentPane } = useContext(PaneContext);
+  const isVideoMode = useDisplayStore(
+    (s) => (s.video?.mode || (s.video?.primary ? 'video' : 'widgets')) === 'video',
+  );
+  return isCurrentPane && !isVideoMode;
 }
 
 export function usePaneIndex(): number {
