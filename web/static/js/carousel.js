@@ -234,16 +234,26 @@ class MirrormereCarousel {
    * Get widget layout descriptors for a given screen index.
    */
   getWidgetsForScreen(screenIndex) {
-    return this.screenLayouts.get(screenIndex) || [];
+    const widgets = this.screenLayouts.get(screenIndex) || [];
+    if (this.activeTaskWidgetId && Array.isArray(this.taskWidgetIds) && this.taskWidgetIds.length > 0) {
+      return widgets.map((w) => {
+        if (w && this.taskWidgetIds.includes(w.widget_id)) {
+          return { ...w, widget_id: this.activeTaskWidgetId };
+        }
+        return w;
+      });
+    }
+    return widgets;
   }
 
   /**
    * Dynamically inject task switcher tabs if specified by widget data attributes.
    */
   injectTaskSwitcher(node, wid) {
-    if (!node || typeof node.querySelector !== 'function' || !this.taskWidgetIds || !this.taskWidgetIds.includes(wid)) return;
-    const hdr = node.querySelector('.tasks-header');
-    if (!hdr || typeof hdr.querySelector !== 'function' || hdr.querySelector('.hearth-task-switcher')) return;
+    if (!node || typeof node.querySelector !== 'function') return;
+    if (!Array.isArray(this.taskWidgetIds)) {
+      this.taskWidgetIds = [];
+    }
     const tabsData = node.dataset && (node.dataset.taskTabs || node.dataset.taskSwitcher);
     let tabs = [];
     if (tabsData) {
@@ -251,6 +261,16 @@ class MirrormereCarousel {
         tabs = JSON.parse(tabsData);
       } catch (_) {}
     }
+    if (Array.isArray(tabs)) {
+      for (const t of tabs) {
+        if (t && t.id && !this.taskWidgetIds.includes(t.id)) {
+          this.taskWidgetIds.push(t.id);
+        }
+      }
+    }
+    if (!this.taskWidgetIds.includes(wid)) return;
+    const hdr = node.querySelector('.tasks-header');
+    if (!hdr || typeof hdr.querySelector !== 'function' || hdr.querySelector('.hearth-task-switcher')) return;
     if (!Array.isArray(tabs) || tabs.length === 0) return;
     if (typeof document === 'undefined' || typeof document.createElement !== 'function') return;
     const bar = document.createElement('div');
@@ -260,7 +280,7 @@ class MirrormereCarousel {
       const b = document.createElement('button');
       b.type = 'button';
       b.textContent = t.label || t.id;
-      const isAct = t.id === wid;
+      const isAct = this.activeTaskWidgetId ? t.id === this.activeTaskWidgetId : t.id === wid;
       b.style.cssText = `border:0;border-radius:999px;padding:3px 8px;font-size:0.68rem;font-weight:800;cursor:pointer;background:${isAct ? '#7c3aed' : 'rgba(148,163,184,0.22)'};color:${isAct ? '#ffffff' : 'inherit'};`;
       b.addEventListener('click', (ev) => {
         ev.stopPropagation();
@@ -333,7 +353,7 @@ class MirrormereCarousel {
     this.screenLayouts.set(this.currentScreen, data.widgets);
     this.updateIndicator();
 
-    const widgetsToShow = data.widgets;
+    const widgetsToShow = this.getWidgetsForScreen(this.currentScreen);
     await this.ensureWidgetsMounted(widgetsToShow);
     this.applyCachedScreen(this.currentScreen, widgetsToShow);
 
@@ -401,6 +421,14 @@ class MirrormereCarousel {
    */
   applyCachedScreen(screenIndex, widgets) {
     if (!this.canvas || !Array.isArray(widgets)) return;
+    if (this.activeTaskWidgetId && Array.isArray(this.taskWidgetIds) && this.taskWidgetIds.length > 0) {
+      widgets = widgets.map((w) => {
+        if (w && this.taskWidgetIds.includes(w.widget_id)) {
+          return { ...w, widget_id: this.activeTaskWidgetId };
+        }
+        return w;
+      });
+    }
     const activeIds = new Set(widgets.map(w => w.widget_id));
     const newActiveWidgets = new Map();
 
