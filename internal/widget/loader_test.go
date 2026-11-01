@@ -197,3 +197,18 @@ func TestBuiltinPackagesAndAliases(t *testing.T) {
 		})
 	}
 }
+
+// The legacy-test fixture is a custom package with only a legacy HTML template and a stylesheet,
+// the shape the React UI renders through LegacyWidget.
+func TestLoader_LegacyTestFixture(t *testing.T) {
+	pkg, err := widget.NewLoader("", "testdata").LoadPackage("legacy-test")
+	if err != nil {
+		t.Fatalf("LoadPackage(legacy-test): %v", err)
+	}
+	if pkg.Source != "custom" {
+		t.Errorf("Source = %q, want custom", pkg.Source)
+	}
+	if !pkg.HasAssets() {
+		t.Error("legacy-test fixture should expose an assets directory")
+	}
+}

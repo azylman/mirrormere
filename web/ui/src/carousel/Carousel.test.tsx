@@ -52,6 +52,9 @@ function stubApi(screenBody: ScreensResponse = screens, select: SelectHandler = 
     if (url === 'api/screen/select') {
       return select();
     }
+    if (url.endsWith('/render')) {
+      return new Response('<div class="widget-card"><span class="legacy-label">legacy</span></div>', { status: 200 });
+    }
     const id = decodeURIComponent(url.replace('api/widgets/', ''));
     const type = layout.flatMap((screen) => screen.widgets).find((w) => w.widget_id === id)?.type ?? 'clock';
     return new Response(
@@ -125,7 +128,7 @@ describe('Carousel', () => {
     expect(fetchMock).toHaveBeenCalledWith('api/screens', expect.anything());
     const hydrated = fetchMock.mock.calls
       .map(([url]) => String(url))
-      .filter((url) => url.startsWith('api/widgets/'))
+      .filter((url) => url.startsWith('api/widgets/') && !url.endsWith('/render'))
       .sort();
     expect(hydrated).toEqual(['api/widgets/a-0', 'api/widgets/b-1', 'api/widgets/b-2', 'api/widgets/c-2', 'api/widgets/shared']);
     expect(document.querySelectorAll('[data-widget-id]')).toHaveLength(5);
@@ -225,14 +228,14 @@ describe('Carousel', () => {
     clientWidth.mockRestore();
   });
 
-  it('shows a placeholder card for widget types with no registered component', async () => {
+  it('renders widget types with no registered component through the legacy fragment', async () => {
     stubApi();
     render(<Carousel />);
     await act(async () => {});
     const card = document.querySelector<HTMLElement>('[data-widget-id="b-1"]');
     expect(card?.className).toContain('widget-card');
     expect(card?.dataset.widgetType).toBe('weather-forecast');
-    expect(card?.querySelector('.widget-card-placeholder')?.textContent).toBe('weather-forecast');
+    expect(card?.querySelector('.widget-legacy .legacy-label')?.textContent).toBe('legacy');
   });
 
   describe('selecting a screen with a dot', () => {
