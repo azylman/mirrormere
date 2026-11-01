@@ -138,6 +138,7 @@ export interface CalendarGridViewModel {
 }
 
 const SHORT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const SHORT_WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const FULL_WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const FULL_MONTHS = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -150,6 +151,25 @@ function parseISODate(s: string): Date {
   const m = parseInt(parts[1], 10);
   const d = parseInt(parts[2], 10);
   return new Date(y, m - 1, d, 12, 0, 0);
+}
+
+function formatShortDate(isoDate: string): string {
+  if (!isoDate || !/^\d{4}-\d{2}-\d{2}/.test(isoDate)) return '';
+  const d = parseISODate(isoDate);
+  if (Number.isNaN(d.getTime())) return '';
+  return `${SHORT_WEEKDAYS[d.getDay()]}, ${SHORT_MONTHS[d.getMonth()]} ${d.getDate()}`;
+}
+
+function formatModalDateLabel(startDate?: string, endDate?: string): string {
+  const startFmt = startDate ? formatShortDate(startDate) : '';
+  const endFmt = endDate && endDate !== startDate ? formatShortDate(endDate) : '';
+  if (startFmt && endFmt) return `${startFmt} – ${endFmt}`;
+  return startFmt || endFmt;
+}
+
+function stripMealiePrefix(title?: string): string {
+  if (!title) return '';
+  return title.replace(/^(?:\u{1F37D}\uFE0F?\s*)+/u, '');
 }
 
 function toISODate(d: Date): string {
@@ -283,6 +303,7 @@ export const CalendarGridWidget = memo(function CalendarGridWidget({
 
   const [activeView, setActiveView] = useState<'day' | 'week' | 'month'>(defaultView);
   const [activeModalEvent, setActiveModalEvent] = useState<FamilyEvent | null>(null);
+  const [activeModalDateLabel, setActiveModalDateLabel] = useState<string>('');
 
   // Base anchor date
   const todayStr = useMemo(() => {
@@ -528,6 +549,7 @@ export const CalendarGridWidget = memo(function CalendarGridWidget({
 
       // Inactivity timeout: reset to default resting state and restore baseline view_model
       setActiveModalEvent(null);
+      setActiveModalDateLabel('');
       setActiveView(defView);
       setPagedDate(null);
       setPagedWeekStart(null);
@@ -852,8 +874,15 @@ export const CalendarGridWidget = memo(function CalendarGridWidget({
 
   // Modal open/close
   const openModal = useCallback(
-    (ev: FamilyEvent) => {
+    (ev: FamilyEvent, dateStr?: string, endDateStr?: string) => {
+      const resolvedStart =
+        dateStr ||
+        (ev.start && /^\d{4}-\d{2}-\d{2}/.test(ev.start) ? ev.start.slice(0, 10) : undefined);
+      const resolvedEnd =
+        endDateStr ||
+        (ev.end && /^\d{4}-\d{2}-\d{2}/.test(ev.end) ? ev.end.slice(0, 10) : undefined);
       setActiveModalEvent(ev);
+      setActiveModalDateLabel(formatModalDateLabel(resolvedStart, resolvedEnd));
       handleUserActivity();
     },
     [handleUserActivity]
@@ -861,6 +890,7 @@ export const CalendarGridWidget = memo(function CalendarGridWidget({
 
   const closeModal = useCallback(() => {
     setActiveModalEvent(null);
+    setActiveModalDateLabel('');
     handleUserActivity();
   }, [handleUserActivity]);
 
@@ -1162,6 +1192,17 @@ export const CalendarGridWidget = memo(function CalendarGridWidget({
               >
                 {visibleAllDayEvents.map((ev) => {
                     const isMealie = ev.location?.startsWith('/hearth-api/mealie/image/');
+                    const spanStartDay =
+                      weekVM?.days?.[ev.start_col - 1]?.date ||
+                      ev.start ||
+                      daysToRender[0]?.date ||
+                      currentDateISO;
+                    const spanEndDay =
+                      ev.col_span > 1
+                        ? weekVM?.days?.[
+                            Math.min((weekVM?.days?.length ?? 1) - 1, ev.start_col + ev.col_span - 2)
+                          ]?.date || ev.end
+                        : ev.end;
                     return (
                       <div
                         key={ev.id}
@@ -1172,7 +1213,7 @@ export const CalendarGridWidget = memo(function CalendarGridWidget({
                         data-event-location={ev.location}
                         data-event-description={ev.description}
                         data-mealie-decorated={isMealie ? 'true' : undefined}
-                        onClick={() => openModal(ev)}
+                        onClick={() => openModal(ev, spanStartDay, spanEndDay)}
                         style={{
                           gridColumn: activeView === 'day' ? '1 / span 1' : `${ev.start_col} / span ${ev.col_span}`,
                           fontSize: '0.68rem',
@@ -1198,12 +1239,29 @@ export const CalendarGridWidget = memo(function CalendarGridWidget({
                               alt=""
                               style={{ width: '26px', height: '26px', borderRadius: '5px', objectFit: 'cover', flexShrink: 0, boxShadow: '0 1px 3px rgba(0,0,0,0.3)' }}
                             />
+                            <svg
+                              className="cf-mealie-icon"
+                              width="12"
+                              height="12"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2.2"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              aria-hidden="true"
+                              style={{ flexShrink: 0 }}
+                            >
+                              <path d="M3 2v7c0 1.1.9 2 2 2h4a2 2 0 0 0 2-2V2" />
+                              <path d="M7 2v20" />
+                              <path d="M21 15V2v0a5 5 0 0 0-5 5v6c0 1.1.9 2 2 2h3Zm0 0v7" />
+                            </svg>
                             <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 800 }}>
-                              {`🍽️ ${ev.title.replace(/^🍽️\s*/, '')}`}
+                              {stripMealiePrefix(ev.title)}
                             </span>
                           </>
                         ) : (
-                          ev.title
+                          stripMealiePrefix(ev.title)
                         )}
                       </div>
                     );
@@ -1240,7 +1298,7 @@ export const CalendarGridWidget = memo(function CalendarGridWidget({
                             data-event-location={ev.location}
                             data-event-description={ev.description}
                             data-mealie-decorated={isMealie ? 'true' : undefined}
-                            onClick={() => openModal(ev)}
+                            onClick={() => openModal(ev, day.date)}
                             style={{
                               fontSize: '0.65rem',
                               fontWeight: 700,
@@ -1265,12 +1323,29 @@ export const CalendarGridWidget = memo(function CalendarGridWidget({
                                   alt=""
                                   style={{ width: '26px', height: '26px', borderRadius: '5px', objectFit: 'cover', flexShrink: 0, boxShadow: '0 1px 3px rgba(0,0,0,0.3)' }}
                                 />
+                                <svg
+                                  className="cf-mealie-icon"
+                                  width="12"
+                                  height="12"
+                                  viewBox="0 0 24 24"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  strokeWidth="2.2"
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                  aria-hidden="true"
+                                  style={{ flexShrink: 0 }}
+                                >
+                                  <path d="M3 2v7c0 1.1.9 2 2 2h4a2 2 0 0 0 2-2V2" />
+                                  <path d="M7 2v20" />
+                                  <path d="M21 15V2v0a5 5 0 0 0-5 5v6c0 1.1.9 2 2 2h3Zm0 0v7" />
+                                </svg>
                                 <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 800 }}>
-                                  {`🍽️ ${ev.title.replace(/^🍽️\s*/, '')}`}
+                                  {stripMealiePrefix(ev.title)}
                                 </span>
                               </>
                             ) : (
-                              ev.title
+                              stripMealiePrefix(ev.title)
                             )}
                           </div>
                         </div>
@@ -1311,7 +1386,7 @@ export const CalendarGridWidget = memo(function CalendarGridWidget({
                           data-event-end={ev.end}
                           data-event-location={ev.location}
                           data-event-description={ev.description}
-                          onClick={() => openModal(ev)}
+                          onClick={() => openModal(ev, day.date)}
                           style={{
                             fontSize: '0.60rem',
                             fontWeight: 700,
@@ -1459,7 +1534,7 @@ export const CalendarGridWidget = memo(function CalendarGridWidget({
                           data-event-end={ev.end}
                           data-event-location={ev.location}
                           data-event-description={ev.description}
-                          onClick={() => openModal(ev)}
+                          onClick={() => openModal(ev, day.date)}
                           style={{
                             position: 'absolute',
                             top: `${ev.top_pct}%`,
@@ -1533,7 +1608,7 @@ export const CalendarGridWidget = memo(function CalendarGridWidget({
                           data-event-end={ev.end}
                           data-event-location={ev.location}
                           data-event-description={ev.description}
-                          onClick={() => openModal(ev)}
+                          onClick={() => openModal(ev, day.date)}
                           style={{
                             fontSize: '0.60rem',
                             fontWeight: 700,
@@ -1593,9 +1668,9 @@ export const CalendarGridWidget = memo(function CalendarGridWidget({
                   data-event-id={day.events && day.events.length > 0 ? day.events[0].id : undefined}
                   onClick={() => {
                     if (day.events && day.events.length > 0) {
-                      openModal(day.events[0]);
+                      openModal(day.events[0], day.date);
                     } else if (day.event_title) {
-                      openModal({ id: day.date, title: day.event_title });
+                      openModal({ id: day.date, title: day.event_title }, day.date);
                     }
                   }}
                   style={{
@@ -1670,7 +1745,7 @@ export const CalendarGridWidget = memo(function CalendarGridWidget({
                             title={ev.title}
                             onClick={(e) => {
                               e.stopPropagation();
-                              openModal(ev);
+                              openModal(ev, day.date);
                             }}
                             style={{
                               fontSize: '0.60rem',
@@ -1684,7 +1759,7 @@ export const CalendarGridWidget = memo(function CalendarGridWidget({
                               touchAction: 'manipulation',
                             }}
                           >
-                            {ev.title}
+                            {stripMealiePrefix(ev.title)}
                           </div>
                         ))}
                         {day.events.length > 2 && (
@@ -1699,7 +1774,7 @@ export const CalendarGridWidget = memo(function CalendarGridWidget({
                         title={day.event_title}
                         onClick={(e) => {
                           e.stopPropagation();
-                          openModal({ id: day.date, title: day.event_title! });
+                          openModal({ id: day.date, title: day.event_title! }, day.date);
                         }}
                         style={{
                           fontSize: '0.60rem',
@@ -1713,7 +1788,7 @@ export const CalendarGridWidget = memo(function CalendarGridWidget({
                           touchAction: 'manipulation',
                         }}
                       >
-                        {day.event_title}
+                        {stripMealiePrefix(day.event_title)}
                       </div>
                     )
                   ) : null}
@@ -1729,98 +1804,144 @@ export const CalendarGridWidget = memo(function CalendarGridWidget({
       </div>
 
       {/* Event Details Modal */}
-      {activeModalEvent && (
-        <div
-          className="cf-modal-overlay"
-          role="dialog"
-          aria-modal="true"
-          aria-label={activeModalEvent.title || 'Event Details'}
-          onClick={(e) => {
-            if (e.target === e.currentTarget) {
-              closeModal();
-            }
-          }}
-        >
-          <div className="cf-modal-card" onClick={(e) => e.stopPropagation()}>
-            <div className="cf-modal-header">
-              <h3 className="cf-modal-title">{activeModalEvent.title || 'Untitled Event'}</h3>
-              <button
-                type="button"
-                className="cf-modal-close"
-                aria-label="Close"
-                onClick={closeModal}
-              >
-                &times;
-              </button>
-            </div>
-
-            {/* Time */}
-            {activeModalEvent.all_day ? (
-              <div className="cf-modal-time">🕒 All Day</div>
-            ) : activeModalEvent.start && activeModalEvent.end ? (
-              <div className="cf-modal-time">🕒 {activeModalEvent.start} – {activeModalEvent.end}</div>
-            ) : activeModalEvent.start ? (
-              <div className="cf-modal-time">🕒 {activeModalEvent.start}</div>
-            ) : null}
-
-            {/* Location or Mealie Hero Image */}
-            {activeModalEvent.location && activeModalEvent.location.trim() ? (
-              activeModalEvent.location.startsWith('/hearth-api/mealie/image/') ? (
-                <div style={{ width: '100%', height: '190px', borderRadius: '12px', overflow: 'hidden', margin: '8px 0 10px', background: 'rgba(15,23,42,0.4)' }}>
-                  <img
-                    src={activeModalEvent.location}
-                    alt={activeModalEvent.title || 'Meal Photo'}
-                    style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
-                  />
-                </div>
-              ) : (
-                <div className="cf-modal-location">
-                  📍 {activeModalEvent.location}
-                </div>
-              )
-            ) : null}
-
-            {/* Owners Chips */}
-            {((activeModalEvent.owners && activeModalEvent.owners.length > 0) || (activeModalEvent.initials && activeModalEvent.initials.length > 0)) && (
-              <div className="cf-modal-owners">
-                {Array.from({ length: Math.max(activeModalEvent.owners?.length || 0, activeModalEvent.initials?.length || 0) }).map((_, i) => {
-                  const ownerName = activeModalEvent.owners?.[i] || '';
-                  const initial = activeModalEvent.initials?.[i] || (ownerName ? ownerName.charAt(0).toUpperCase() : '');
-                  const color = activeModalEvent.colors?.[i] || activeModalEvent.color || 'var(--mm-accent-purple)';
-                  const pattern = activeModalEvent.patterns?.[i] || activeModalEvent.pattern || 'solid';
-                  return (
-                    <span key={i} className={`cf-modal-owner-chip cf-pattern-${pattern}`}>
-                      <span className="cf-modal-owner-badge" style={{ backgroundColor: color }}>
-                        {initial}
-                      </span>
-                      {ownerName && <span className="cf-modal-owner-name">{ownerName}</span>}
-                    </span>
-                  );
-                })}
-              </div>
-            )}
-
-            {/* Description */}
-            {activeModalEvent.description && activeModalEvent.description.trim() ? (() => {
-              let desc = activeModalEvent.description.trim().replace(/\\n/g, '\n').replace(/\\,/g, ',').replace(/\\;/g, ';');
-              const isMealie =
-                activeModalEvent.location?.startsWith('/hearth-api/mealie/image/') ||
-                activeModalEvent.title?.includes('🍽️');
-              if (!isMealie && desc.length > 280) {
-                desc = desc.slice(0, 277) + '...';
+      {activeModalEvent && (() => {
+        const modalTimeText = activeModalEvent.all_day
+          ? 'All Day'
+          : activeModalEvent.start && activeModalEvent.end
+            ? `${activeModalEvent.start} – ${activeModalEvent.end}`
+            : activeModalEvent.start || '';
+        const modalDateTimeDisplay =
+          activeModalDateLabel && modalTimeText
+            ? `${activeModalDateLabel} • ${modalTimeText}`
+            : activeModalDateLabel || modalTimeText;
+        const modalTitle = stripMealiePrefix(activeModalEvent.title) || 'Untitled Event';
+        return (
+          <div
+            className="cf-modal-overlay"
+            role="dialog"
+            aria-modal="true"
+            aria-label={modalTitle}
+            onClick={(e) => {
+              if (e.target === e.currentTarget) {
+                closeModal();
               }
-              return (
-                <div
-                  className="cf-modal-description"
-                  style={isMealie ? { whiteSpace: 'pre-wrap', maxHeight: '320px', overflowY: 'auto', fontSize: '0.86rem', lineHeight: 1.45, paddingRight: '6px' } : undefined}
+            }}
+          >
+            <div className="cf-modal-card" onClick={(e) => e.stopPropagation()}>
+              <div className="cf-modal-header">
+                <h3 className="cf-modal-title">{modalTitle}</h3>
+                <button
+                  type="button"
+                  className="cf-modal-close"
+                  aria-label="Close"
+                  onClick={closeModal}
                 >
-                  {desc}
+                  &times;
+                </button>
+              </div>
+
+              {/* Date & Time */}
+              {modalDateTimeDisplay ? (
+                <div className="cf-modal-time">
+                  <svg
+                    className="cf-modal-icon"
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                    style={{ flexShrink: 0 }}
+                  >
+                    <circle cx="12" cy="12" r="10" />
+                    <polyline points="12 6 12 12 16 14" />
+                  </svg>
+                  <span>{modalDateTimeDisplay}</span>
                 </div>
-              );
-            })() : null}
+              ) : null}
+
+              {/* Location or Mealie Hero Image */}
+              {activeModalEvent.location && activeModalEvent.location.trim() ? (
+                activeModalEvent.location.startsWith('/hearth-api/mealie/image/') ? (
+                  <div style={{ width: '100%', height: '190px', borderRadius: '12px', overflow: 'hidden', margin: '8px 0 10px', background: 'rgba(15,23,42,0.4)' }}>
+                    <img
+                      src={activeModalEvent.location}
+                      alt={modalTitle}
+                      style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                    />
+                  </div>
+                ) : (
+                  <div className="cf-modal-location">
+                    <svg
+                      className="cf-modal-icon"
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2.2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                      style={{ flexShrink: 0 }}
+                    >
+                      <path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z" />
+                      <circle cx="12" cy="10" r="3" />
+                    </svg>
+                    <span>{activeModalEvent.location}</span>
+                  </div>
+                )
+              ) : null}
+
+              {/* Owners Chips */}
+              {((activeModalEvent.owners && activeModalEvent.owners.length > 0) || (activeModalEvent.initials && activeModalEvent.initials.length > 0)) && (
+                <div className="cf-modal-owners">
+                  {Array.from({ length: Math.max(activeModalEvent.owners?.length || 0, activeModalEvent.initials?.length || 0) }).map((_, i) => {
+                    const ownerName = activeModalEvent.owners?.[i] || '';
+                    const initial = activeModalEvent.initials?.[i] || (ownerName ? ownerName.charAt(0).toUpperCase() : '');
+                    const color = activeModalEvent.colors?.[i] || activeModalEvent.color || 'var(--mm-accent-purple)';
+                    const pattern = activeModalEvent.patterns?.[i] || activeModalEvent.pattern || 'solid';
+                    return (
+                      <span key={i} className={`cf-modal-owner-chip cf-pattern-${pattern}`}>
+                        <span className="cf-modal-owner-badge" style={{ backgroundColor: color }}>
+                          {initial}
+                        </span>
+                        {ownerName && <span className="cf-modal-owner-name">{ownerName}</span>}
+                      </span>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Description */}
+              {activeModalEvent.description && activeModalEvent.description.trim() ? (() => {
+                const isMealie =
+                  activeModalEvent.location?.startsWith('/hearth-api/mealie/image/') ||
+                  activeModalEvent.title?.includes('\u{1F37D}');
+                let desc = stripMealiePrefix(
+                  activeModalEvent.description.trim().replace(/\\n/g, '\n').replace(/\\,/g, ',').replace(/\\;/g, ';')
+                );
+                if (isMealie) {
+                  desc = desc.replace(/(?:\u{1F37D}|\u{1F3F7}|\u{1F6D2}|\u{1F469}\u200D\u{1F373}|\u{1F9D1}\u200D\u{1F373}|\u{1F468}\u200D\u{1F373})\uFE0F?\s*/gu, '');
+                } else if (desc.length > 280) {
+                  desc = desc.slice(0, 277) + '...';
+                }
+                return (
+                  <div
+                    className="cf-modal-description"
+                    style={isMealie ? { whiteSpace: 'pre-wrap', maxHeight: '320px', overflowY: 'auto', fontSize: '0.86rem', lineHeight: 1.45, paddingRight: '6px' } : undefined}
+                  >
+                    {desc}
+                  </div>
+                );
+              })() : null}
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 });

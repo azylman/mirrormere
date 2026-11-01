@@ -117,7 +117,7 @@ describe('CalendarFeedWidget', () => {
 
     const empty = container.querySelector('.calendar-empty');
     expect(empty).not.toBeNull();
-    expect(empty?.querySelector('.empty-icon')?.textContent).toBe('🎈');
+    expect(empty?.querySelector('.empty-icon svg')).not.toBeNull();
     expect(empty?.querySelector('.empty-title')?.textContent).toBe(
       'All clear! Enjoy your day ✨'
     );

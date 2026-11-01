@@ -35,6 +35,7 @@ echo "[Mirrormere Install] Installing Wayland, Chrome, graphics, audio, and seat
 apt-get install -y \
     cage \
     google-chrome-stable \
+    fonts-noto-color-emoji \
     swayidle \
     wlr-randr \
     pipewire \

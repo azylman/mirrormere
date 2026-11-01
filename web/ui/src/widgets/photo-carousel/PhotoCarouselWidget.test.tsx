@@ -184,7 +184,7 @@ describe('PhotoCarouselWidget component', () => {
     const empty = container.querySelector('.photo-empty');
     expect(empty).not.toBeNull();
     expect(empty?.querySelector('.empty-title')?.textContent).toBe('No photos in shared album');
-    expect(empty?.querySelector('.empty-icon')?.textContent).toBe('🖼️');
+    expect(empty?.querySelector('.empty-icon svg')).not.toBeNull();
   });
 
   it('renders photo viewport with backdrop and foreground for contain fit', () => {

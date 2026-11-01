@@ -9,6 +9,7 @@ RUN --mount=type=cache,target=/etc/apk/cache,sharing=locked \
         chromium \
         font-noto \
         font-noto-cjk \
+        font-noto-emoji \
         ca-certificates \
         tzdata \
     && rm -rf /usr/local/lib/node_modules/npm /opt/yarn* /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/yarn* /usr/local/bin/corepack \
