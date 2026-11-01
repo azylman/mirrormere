@@ -104,9 +104,15 @@ export class CarouselController {
    * Drops any queued rotate: the layout it was for no longer exists.
    */
   reset(index: number): void {
+    this.pointerId = null;
+    this.gesture.cancel();
+    // Cancels any settle without running its callback, and any pending frame.
+    this.animator.dispose();
+    this.animator.reset();
     this.shown = index;
     this.queued = null;
     this.awaitingRender = index;
+    useDisplayStore.getState().setCurrentScreen(index);
     this.options.host.commit(index);
   }
 

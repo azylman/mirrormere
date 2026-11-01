@@ -377,4 +377,44 @@ describe('CarouselController', () => {
     h.transitionEnd();
     expect(h.host.commit).toHaveBeenCalledWith(2);
   });
+
+  it('reset during a settle toward another screen never commits or selects that screen', () => {
+    vi.useFakeTimers();
+    useDisplayStore.setState({ screen: { ...initial.screen, currentScreen: 2, totalScreens: 4 } });
+    const h = build(2);
+    swipe(h, 500, 200);
+    expect(h.track.style.transform).toBe('translate3d(-1000px,0,0)');
+
+    h.controller.reset(0);
+    h.transitionEnd();
+    vi.advanceTimersByTime(SETTLE_FALLBACK_MS);
+    expect(h.host.commit).not.toHaveBeenCalledWith(3);
+    expect(h.host.select).not.toHaveBeenCalled();
+    expect(document.body.dataset.animating).toBe('0');
+  });
+
+  it('reset sets the store current screen to the index shown', () => {
+    const h = build(1);
+    h.controller.reset(0);
+    expect(useDisplayStore.getState().screen.currentScreen).toBe(0);
+    expect(h.controller.current).toBe(0);
+    expect(h.host.commit).toHaveBeenCalledWith(0);
+    expect(h.host.select).not.toHaveBeenCalled();
+  });
+
+  it('accepts a new swipe after reset once React has rendered the reset screen', () => {
+    vi.useFakeTimers();
+    useDisplayStore.setState({ screen: { ...initial.screen, currentScreen: 2, totalScreens: 4 } });
+    const h = build(2);
+    swipe(h, 500, 200);
+    h.controller.reset(0);
+    h.controller.rendered(0);
+
+    // A left drag from screen 0 goes to screen 1.
+    swipe(h, 500, 200);
+    h.transitionEnd();
+    expect(h.host.commit).toHaveBeenLastCalledWith(1);
+    expect(h.host.select).toHaveBeenCalledTimes(1);
+    expect(h.host.select).toHaveBeenCalledWith(1);
+  });
 });
