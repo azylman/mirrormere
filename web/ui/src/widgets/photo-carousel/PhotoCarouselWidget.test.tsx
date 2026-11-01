@@ -9,6 +9,7 @@ import {
 import { useDisplayStore } from '../../store';
 import type { WidgetMeta } from '../../store/types';
 import { PaneContext } from '../../carousel/PaneContext';
+import { endAnimation } from '../../perf/animating';
 
 function makeWidgetMeta(config: Record<string, unknown> = {}): WidgetMeta {
   return {
@@ -111,6 +112,10 @@ describe('PhotoCarouselWidget component', () => {
     cleanup();
     vi.clearAllTimers();
     vi.useRealTimers();
+    while (document.body.dataset.animating === '1') {
+      endAnimation();
+    }
+    delete document.body.dataset.animating;
   });
 
   it('renders loading state when widget data has not loaded or has not hydrated photos array', () => {
@@ -656,6 +661,403 @@ describe('PhotoCarouselWidget component', () => {
       });
 
       expect(nextFg!.classList.contains('dither')).toBe(true);
+    } finally {
+      window.Image = originalImage;
+    }
+  });
+
+  it('sets document.body.dataset.animating to 1 during crossfade and 0 after CROSSFADE_MS', async () => {
+    let resolveDecode: (() => void) | null = null;
+    const originalImage = window.Image;
+
+    class MockImage {
+      src = '';
+      decode() {
+        return new Promise<void>((resolve) => {
+          resolveDecode = resolve;
+        });
+      }
+    }
+    // @ts-expect-error mock window.Image
+    window.Image = MockImage;
+
+    try {
+      useDisplayStore.setState({
+        widgets: {
+          [widgetId]: {
+            meta: makeWidgetMeta({ fit: 'cover', image_size: [800, 600] }),
+            data: {
+              photos: [
+                { url: 'https://example.com/p1.jpg' },
+                { url: 'https://example.com/p2.jpg' },
+              ],
+              cycle_interval_seconds: 10,
+            },
+            state: 'ready',
+            timestamp: '2026-10-31T12:00:00Z',
+          },
+        },
+      });
+
+      render(
+        <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
+          <PhotoCarouselWidget id={widgetId} type="photo-carousel" />
+        </PaneContext.Provider>,
+      );
+
+      expect(document.body.dataset.animating).toBeUndefined();
+
+      act(() => {
+        vi.advanceTimersByTime(10000);
+      });
+
+      expect(resolveDecode).not.toBeNull();
+      expect(document.body.dataset.animating).toBeUndefined();
+
+      act(() => {
+        resolveDecode!();
+      });
+
+      await vi.waitFor(() => {
+        expect(document.body.dataset.animating).toBe('1');
+      });
+
+      act(() => {
+        vi.advanceTimersByTime(850);
+      });
+
+      expect(document.body.dataset.animating).toBe('0');
+    } finally {
+      window.Image = originalImage;
+    }
+  });
+
+  it('resets document.body.dataset.animating to 0 on early tap commit mid-crossfade', async () => {
+    const decodeResolvers: Array<() => void> = [];
+    const originalImage = window.Image;
+
+    class MockImage {
+      src = '';
+      decode() {
+        return new Promise<void>((resolve) => {
+          decodeResolvers.push(resolve);
+        });
+      }
+    }
+    // @ts-expect-error mock window.Image
+    window.Image = MockImage;
+
+    try {
+      useDisplayStore.setState({
+        widgets: {
+          [widgetId]: {
+            meta: makeWidgetMeta({ fit: 'cover', image_size: [800, 600] }),
+            data: {
+              photos: [
+                { url: 'https://example.com/p1.jpg' },
+                { url: 'https://example.com/p2.jpg' },
+                { url: 'https://example.com/p3.jpg' },
+              ],
+              cycle_interval_seconds: 15,
+            },
+            state: 'ready',
+            timestamp: '2026-10-31T12:00:00Z',
+          },
+        },
+      });
+
+      const { container } = render(
+        <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
+          <PhotoCarouselWidget id={widgetId} type="photo-carousel" />
+        </PaneContext.Provider>,
+      );
+
+      const root = container.querySelector('.widget-photo-carousel')!;
+      act(() => {
+        fireEvent.click(root);
+      });
+
+      expect(decodeResolvers.length).toBe(1);
+      act(() => {
+        decodeResolvers[0]();
+      });
+
+      await vi.waitFor(() => {
+        expect(document.body.dataset.animating).toBe('1');
+      });
+
+      // Tap mid-crossfade: should commit p2 and reset animating to 0 immediately
+      act(() => {
+        fireEvent.click(root);
+      });
+
+      expect(document.body.dataset.animating).toBe('0');
+      expect(decodeResolvers.length).toBe(2);
+
+      act(() => {
+        decodeResolvers[1]();
+      });
+
+      await vi.waitFor(() => {
+        expect(document.body.dataset.animating).toBe('1');
+      });
+
+      act(() => {
+        vi.advanceTimersByTime(850);
+      });
+
+      expect(document.body.dataset.animating).toBe('0');
+    } finally {
+      window.Image = originalImage;
+    }
+  });
+
+  it('resets document.body.dataset.animating to 0 on unmount mid-crossfade', async () => {
+    let resolveDecode: (() => void) | null = null;
+    const originalImage = window.Image;
+
+    class MockImage {
+      src = '';
+      decode() {
+        return new Promise<void>((resolve) => {
+          resolveDecode = resolve;
+        });
+      }
+    }
+    // @ts-expect-error mock window.Image
+    window.Image = MockImage;
+
+    try {
+      useDisplayStore.setState({
+        widgets: {
+          [widgetId]: {
+            meta: makeWidgetMeta({ fit: 'cover', image_size: [800, 600] }),
+            data: {
+              photos: [
+                { url: 'https://example.com/p1.jpg' },
+                { url: 'https://example.com/p2.jpg' },
+              ],
+              cycle_interval_seconds: 10,
+            },
+            state: 'ready',
+            timestamp: '2026-10-31T12:00:00Z',
+          },
+        },
+      });
+
+      const { unmount } = render(
+        <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
+          <PhotoCarouselWidget id={widgetId} type="photo-carousel" />
+        </PaneContext.Provider>,
+      );
+
+      act(() => {
+        vi.advanceTimersByTime(10000);
+      });
+
+      expect(resolveDecode).not.toBeNull();
+      act(() => {
+        resolveDecode!();
+      });
+
+      await vi.waitFor(() => {
+        expect(document.body.dataset.animating).toBe('1');
+      });
+
+      unmount();
+
+      expect(document.body.dataset.animating).toBe('0');
+    } finally {
+      window.Image = originalImage;
+    }
+  });
+
+  it('aborts transition when Image.decode() rejects and advances to subsequent valid photo on next cycle', async () => {
+    const originalImage = window.Image;
+    const decodeCalls: string[] = [];
+
+    class MockImage {
+      _src = '';
+      set src(v: string) {
+        this._src = v;
+      }
+      get src() {
+        return this._src;
+      }
+      decode() {
+        decodeCalls.push(this._src);
+        if (this._src.includes('p2.jpg')) {
+          return Promise.reject(new Error('Corrupt image data'));
+        }
+        return Promise.resolve();
+      }
+    }
+    // @ts-expect-error mock window.Image
+    window.Image = MockImage;
+
+    try {
+      useDisplayStore.setState({
+        widgets: {
+          [widgetId]: {
+            meta: makeWidgetMeta({ fit: 'cover', image_size: [800, 600] }),
+            data: {
+              photos: [
+                { url: 'https://example.com/p1.jpg' },
+                { url: 'https://example.com/p2.jpg' },
+                { url: 'https://example.com/p3.jpg' },
+              ],
+              cycle_interval_seconds: 10,
+            },
+            state: 'ready',
+            timestamp: '2026-10-31T12:00:00Z',
+          },
+        },
+      });
+
+      const { container } = render(
+        <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
+          <PhotoCarouselWidget id={widgetId} type="photo-carousel" />
+        </PaneContext.Provider>,
+      );
+
+      const currentFg = container.querySelector('.photo-layer.photo-current') as HTMLImageElement;
+      expect(currentFg.getAttribute('src')).toBe('https://example.com/p1.jpg=w800-h600-c');
+
+      // Trigger cycle 1: attempts to preload p2 (which rejects)
+      await act(async () => {
+        vi.advanceTimersByTime(10000);
+      });
+
+      expect(decodeCalls.some((url) => url.includes('p2.jpg'))).toBe(true);
+
+      // Wait for decodePromise rejection microtask to be handled
+      await vi.waitFor(() => {
+        expect(document.body.dataset.animating).not.toBe('1');
+        const nextFg = container.querySelector('.photo-layer.photo-next') as HTMLImageElement;
+        expect(nextFg.getAttribute('src')).toBeNull();
+        expect(nextFg.style.opacity).toBe('0');
+        expect(currentFg.getAttribute('src')).toBe('https://example.com/p1.jpg=w800-h600-c');
+      });
+
+      // Next interval cycle: timer re-armed via retryTick, now tries p3 (valid)
+      await act(async () => {
+        vi.advanceTimersByTime(10000);
+      });
+
+      expect(decodeCalls.some((url) => url.includes('p3.jpg'))).toBe(true);
+
+      await vi.waitFor(() => {
+        const nextFg = container.querySelector('.photo-layer.photo-next') as HTMLImageElement;
+        expect(nextFg.getAttribute('src')).toBe('https://example.com/p3.jpg=w800-h600-c');
+        expect(document.body.dataset.animating).toBe('1');
+      });
+
+      act(() => {
+        vi.advanceTimersByTime(850);
+      });
+
+      expect(currentFg.getAttribute('src')).toBe('https://example.com/p3.jpg=w800-h600-c');
+      expect(document.body.dataset.animating).toBe('0');
+    } finally {
+      window.Image = originalImage;
+    }
+  });
+
+  it('aborts transition when onerror fires for the next photo URL and advances to subsequent valid photo', async () => {
+    const originalImage = window.Image;
+    const instances: MockImage[] = [];
+
+    class MockImage {
+      _src = '';
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      set src(v: string) {
+        this._src = v;
+      }
+      get src() {
+        return this._src;
+      }
+      constructor() {
+        instances.push(this);
+      }
+    }
+    // @ts-expect-error mock window.Image without decode
+    window.Image = MockImage;
+
+    try {
+      useDisplayStore.setState({
+        widgets: {
+          [widgetId]: {
+            meta: makeWidgetMeta({ fit: 'cover', image_size: [800, 600] }),
+            data: {
+              photos: [
+                { url: 'https://example.com/p1.jpg' },
+                { url: 'https://example.com/p2.jpg' },
+                { url: 'https://example.com/p3.jpg' },
+              ],
+              cycle_interval_seconds: 10,
+            },
+            state: 'ready',
+            timestamp: '2026-10-31T12:00:00Z',
+          },
+        },
+      });
+
+      const { container } = render(
+        <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
+          <PhotoCarouselWidget id={widgetId} type="photo-carousel" />
+        </PaneContext.Provider>,
+      );
+
+      const currentFg = container.querySelector('.photo-layer.photo-current') as HTMLImageElement;
+      expect(currentFg.getAttribute('src')).toBe('https://example.com/p1.jpg=w800-h600-c');
+
+      // Trigger cycle 1: preload p2
+      act(() => {
+        vi.advanceTimersByTime(10000);
+      });
+
+      const p2Img = instances.find((img) => img._src.includes('p2.jpg'));
+      expect(p2Img).toBeDefined();
+
+      // Trigger onerror for p2
+      act(() => {
+        p2Img!.onerror?.();
+      });
+
+      await vi.waitFor(() => {
+        expect(document.body.dataset.animating).not.toBe('1');
+        const nextFg = container.querySelector('.photo-layer.photo-next') as HTMLImageElement;
+        expect(nextFg.getAttribute('src')).toBeNull();
+        expect(nextFg.style.opacity).toBe('0');
+        expect(currentFg.getAttribute('src')).toBe('https://example.com/p1.jpg=w800-h600-c');
+      });
+
+      // Next interval cycle: preload p3
+      act(() => {
+        vi.advanceTimersByTime(10000);
+      });
+
+      const p3Img = instances.find((img) => img._src.includes('p3.jpg'));
+      expect(p3Img).toBeDefined();
+
+      // Trigger onload for p3
+      act(() => {
+        p3Img!.onload?.();
+      });
+
+      await vi.waitFor(() => {
+        const nextFg = container.querySelector('.photo-layer.photo-next') as HTMLImageElement;
+        expect(nextFg.getAttribute('src')).toBe('https://example.com/p3.jpg=w800-h600-c');
+        expect(document.body.dataset.animating).toBe('1');
+      });
+
+      act(() => {
+        vi.advanceTimersByTime(850);
+      });
+
+      expect(currentFg.getAttribute('src')).toBe('https://example.com/p3.jpg=w800-h600-c');
+      expect(document.body.dataset.animating).toBe('0');
     } finally {
       window.Image = originalImage;
     }
