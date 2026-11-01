@@ -102,6 +102,8 @@ function screenFromRotate(payload: ScreenRotatePayload): ScreenSlice {
 const hydrateSeq = new Map<string, number>();
 /** Per widget id: the widgetReloads count for its type when its meta was last fetched. */
 const hydratedAtReload = new Map<string, number>();
+/** Hydrates in flight per widget id, keyed to the widgetReloads they started under. */
+const inflight = new Map<string, { reloads: Record<string, number>; promise: Promise<void> }>();
 let screensSeq = 0;
 
 /** The widgetReloads count for its type when the widget's meta was last fetched; 0 before any fetch. */
@@ -242,29 +244,42 @@ export const useDisplayStore = create<DisplayStore>()((set, get) => ({
     }
   },
 
-  async hydrateWidget(id) {
-    const seq = (hydrateSeq.get(id) ?? 0) + 1;
-    hydrateSeq.set(id, seq);
-    const before = get().widgets[id];
-    const reloadsAtStart = get().widgetReloads;
-    const entry = toWidgetEntry(await fetchWidgetDetail(id));
-    if (hydrateSeq.get(id) !== seq) return;
-    hydratedAtReload.set(id, reloadsAtStart[entry.meta?.type ?? ''] ?? 0);
+  hydrateWidget(id) {
+    // Two mounts of the same widget (a neighbour pane with two screens) share one fetch,
+    // unless a widget reload landed in between: that one needs a fresh fetch.
+    const reloadsNow = get().widgetReloads;
+    const existing = inflight.get(id);
+    if (existing && existing.reloads === reloadsNow) return existing.promise;
 
-    // A widget.update that landed while the fetch was in flight is newer than
-    // the fetch for state, data and timestamp. Keep the stream's values and take
-    // only meta and viewModel from the fetch.
-    const current = get().widgets[id];
-    const streamed = current !== before && current !== undefined;
-    const incoming: WidgetEntry = streamed
-      ? { ...current, meta: entry.meta, viewModel: entry.viewModel }
-      : entry;
+    const run = async (): Promise<void> => {
+      const seq = (hydrateSeq.get(id) ?? 0) + 1;
+      hydrateSeq.set(id, seq);
+      const before = get().widgets[id];
+      const reloadsAtStart = get().widgetReloads;
+      const entry = toWidgetEntry(await fetchWidgetDetail(id));
+      if (hydrateSeq.get(id) !== seq) return;
+      hydratedAtReload.set(id, reloadsAtStart[entry.meta?.type ?? ''] ?? 0);
 
-    if (current && deepEqual(current, incoming)) return;
-    const next: WidgetEntry = current && deepEqual(current.data, incoming.data)
-      ? { ...incoming, data: current.data }
-      : incoming;
-    set((s) => ({ widgets: { ...s.widgets, [id]: next } }));
+      // A widget.update that landed while the fetch was in flight is newer than
+      // the fetch for state, data and timestamp. Keep the stream's values and take
+      // only meta and viewModel from the fetch.
+      const current = get().widgets[id];
+      const streamed = current !== before && current !== undefined;
+      const incoming: WidgetEntry = streamed
+        ? { ...current, meta: entry.meta, viewModel: entry.viewModel }
+        : entry;
+
+      if (current && deepEqual(current, incoming)) return;
+      const next: WidgetEntry = current && deepEqual(current.data, incoming.data)
+        ? { ...incoming, data: current.data }
+        : incoming;
+      set((s) => ({ widgets: { ...s.widgets, [id]: next } }));
+    };
+    const promise: Promise<void> = run().finally(() => {
+      if (inflight.get(id)?.promise === promise) inflight.delete(id);
+    });
+    inflight.set(id, { reloads: reloadsNow, promise });
+    return promise;
   },
 
   setConnection(payload) {

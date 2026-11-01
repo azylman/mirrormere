@@ -229,6 +229,8 @@ describe('display store', () => {
       );
 
       const first = useDisplayStore.getState().hydrateWidget('w');
+      // A reload between the calls makes the second a separate fetch rather than a shared one.
+      useDisplayStore.setState({ widgetReloads: { 'weather-forecast': 1 } });
       const second = useDisplayStore.getState().hydrateWidget('w');
       resolvers[1](new Response(JSON.stringify(detail({ widget_id: 'w', data: 'new' })), { status: 200 }));
       await second;
@@ -236,6 +238,46 @@ describe('display store', () => {
       await first;
 
       expect(useDisplayStore.getState().widgets.w.data).toBe('new');
+    });
+
+    it('shares one fetch between concurrent calls while widgetReloads is unchanged', async () => {
+      const fetchMock = stubFetch(detail({ widget_id: 'w' }));
+
+      const first = useDisplayStore.getState().hydrateWidget('w');
+      const second = useDisplayStore.getState().hydrateWidget('w');
+      await Promise.all([first, second]);
+
+      expect(first).toBe(second);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(useDisplayStore.getState().widgets.w.meta?.type).toBe('weather-forecast');
+
+      // The entry is gone once settled: a later call fetches again.
+      await useDisplayStore.getState().hydrateWidget('w');
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    it('makes a second fetch when a widget reload lands between two calls', async () => {
+      const fetchMock = stubFetch(detail({ widget_id: 'w' }));
+
+      const first = useDisplayStore.getState().hydrateWidget('w');
+      useDisplayStore.getState().applyEvents([{ type: 'widget.reload', data: { type: 'weather-forecast' } }]);
+      const second = useDisplayStore.getState().hydrateWidget('w');
+      await Promise.all([first, second]);
+
+      expect(first).not.toBe(second);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not let a rejected shared fetch stick: the next call fetches again', async () => {
+      vi.stubGlobal('fetch', vi.fn(async () => new Response('nope', { status: 500 })));
+      const first = useDisplayStore.getState().hydrateWidget('w');
+      const second = useDisplayStore.getState().hydrateWidget('w');
+      await expect(first).rejects.toThrow('HTTP 500');
+      await expect(second).rejects.toThrow('HTTP 500');
+
+      const fetchMock = stubFetch(detail({ widget_id: 'w' }));
+      await useDisplayStore.getState().hydrateWidget('w');
+      expect(fetchMock).toHaveBeenCalledTimes(1);
     });
 
     it('keeps a stream update that lands while the fetch is in flight', async () => {
