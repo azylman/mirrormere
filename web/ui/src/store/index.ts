@@ -34,6 +34,8 @@ export interface DisplayActions {
   pause: () => void;
   /** Leave the paused state and apply the latest queued screen.rotate, if any. */
   resume: () => void;
+  /** Mark `index` as the current screen without a server round trip. No-op when it already is. */
+  setCurrentScreen: (index: number) => void;
 }
 
 export type DisplayStore = DisplayData & DisplayActions;
@@ -278,5 +280,10 @@ export const useDisplayStore = create<DisplayStore>()((set, get) => ({
       ...(pending ? { screen: screenFromRotate(pending) } : {}),
       ...(layoutChanged ? { layoutVersion: get().layoutVersion + 1 } : {}),
     });
+  },
+
+  setCurrentScreen(index) {
+    if (get().screen.currentScreen === index) return;
+    set((s) => ({ screen: { ...s.screen, currentScreen: index } }));
   },
 }));

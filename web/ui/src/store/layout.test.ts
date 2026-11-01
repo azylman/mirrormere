@@ -216,6 +216,25 @@ describe('carousel store', () => {
     });
   });
 
+  describe('setCurrentScreen', () => {
+    it('sets currentScreen and leaves the other screen fields alone', () => {
+      useDisplayStore.getState().applyEvents([rotate(1)]);
+      const before = useDisplayStore.getState().screen;
+      useDisplayStore.getState().setCurrentScreen(2);
+      expect(useDisplayStore.getState().screen).toEqual({ ...before, currentScreen: 2 });
+    });
+
+    it('does nothing when the value is already the current screen', () => {
+      const before = useDisplayStore.getState().screen;
+      const listener = vi.fn();
+      const unsubscribe = useDisplayStore.subscribe(listener);
+      useDisplayStore.getState().setCurrentScreen(before.currentScreen);
+      expect(useDisplayStore.getState().screen).toBe(before);
+      expect(listener).not.toHaveBeenCalled();
+      unsubscribe();
+    });
+  });
+
   describe('loadScreens', () => {
     it('stores the layout of every screen and syncs the screen count', async () => {
       const fetchMock = stubScreens();

@@ -31,14 +31,27 @@ export function paneKey(pane: Pane, total: number): string {
   return pane.offset === -1 && total === 2 ? `${pane.index}-prev` : String(pane.index);
 }
 
+/**
+ * Tells the server which screen the user picked. The store takes the pick up front, so
+ * the carousel and the store agree; a failed select puts the previous screen back, and
+ * the store subscriber slides the carousel back to it.
+ */
 function selectScreen(index: number): void {
+  const store = useDisplayStore.getState();
+  const previous = store.screen.currentScreen;
+  store.setCurrentScreen(index);
   fetch('api/screen/select', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ screen_index: index }),
-  }).catch((err: unknown) => {
-    console.error('[mirrormere] screen select failed:', err);
-  });
+  })
+    .then((res) => {
+      if (!res.ok) throw new Error(`screen select: HTTP ${res.status}`);
+    })
+    .catch((err: unknown) => {
+      useDisplayStore.getState().setCurrentScreen(previous);
+      console.error('[mirrormere] screen select failed:', err);
+    });
 }
 
 /**

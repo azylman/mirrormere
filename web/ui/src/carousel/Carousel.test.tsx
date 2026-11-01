@@ -42,10 +42,15 @@ function settlePredicate(): boolean {
   return new Function(`return (${match[1]});`)() as boolean;
 }
 
-function stubApi(screenBody: ScreensResponse = screens) {
+type SelectHandler = () => Promise<Response>;
+
+function stubApi(screenBody: ScreensResponse = screens, select: SelectHandler = async () => new Response('{}', { status: 200 })) {
   const fetchMock = vi.fn(async (url: string) => {
     if (url === 'api/screens') {
       return new Response(JSON.stringify(screenBody), { status: 200 });
+    }
+    if (url === 'api/screen/select') {
+      return select();
     }
     const id = decodeURIComponent(url.replace('api/widgets/', ''));
     const type = layout.flatMap((screen) => screen.widgets).find((w) => w.widget_id === id)?.type ?? 'clock';
@@ -228,6 +233,95 @@ describe('Carousel', () => {
     expect(card?.className).toContain('widget-card');
     expect(card?.dataset.widgetType).toBe('weather-forecast');
     expect(card?.querySelector('.widget-card-placeholder')?.textContent).toBe('weather-forecast');
+  });
+
+  describe('selecting a screen with a dot', () => {
+    function clickDot(index: number): void {
+      act(() => {
+        document.querySelector<HTMLButtonElement>(`[data-screen-index="${index}"]`)?.click();
+      });
+    }
+
+    function activeDot(): number | null {
+      const active = document.querySelector<HTMLButtonElement>('.screen-indicator-dot.active');
+      return active ? Number(active.dataset.screenIndex) : null;
+    }
+
+    /** Clicks a dot, lets the slide settle, and returns once the select request has been made. */
+    async function selectAndSettle(): Promise<void> {
+      clickDot(2);
+      await act(async () => {
+        vi.advanceTimersByTime(SETTLE_FALLBACK_MS);
+      });
+    }
+
+    it('sets currentScreen before the select request is made', async () => {
+      vi.useFakeTimers();
+      let seenAtRequest: number | undefined;
+      stubApi(screens, async () => {
+        seenAtRequest = useDisplayStore.getState().screen.currentScreen;
+        return new Response('{}', { status: 200 });
+      });
+      render(<Carousel />);
+      await act(async () => {});
+
+      await selectAndSettle();
+
+      expect(seenAtRequest).toBe(2);
+      expect(useDisplayStore.getState().screen.currentScreen).toBe(2);
+      expect(activeDot()).toBe(2);
+    });
+
+    it('keeps the new screen when the select request succeeds', async () => {
+      vi.useFakeTimers();
+      stubApi();
+      render(<Carousel />);
+      await act(async () => {});
+
+      await selectAndSettle();
+      await act(async () => {});
+
+      expect(useDisplayStore.getState().screen.currentScreen).toBe(2);
+      expect(activeDot()).toBe(2);
+    });
+
+    it('restores the previous screen and slides back when the request rejects', async () => {
+      vi.useFakeTimers();
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+      stubApi(screens, async () => {
+        throw new TypeError('network down');
+      });
+      render(<Carousel />);
+      await act(async () => {});
+
+      await selectAndSettle();
+      await act(async () => {});
+
+      expect(useDisplayStore.getState().screen.currentScreen).toBe(1);
+      expect(consoleError).toHaveBeenCalled();
+      await act(async () => {
+        vi.advanceTimersByTime(SETTLE_FALLBACK_MS);
+      });
+      expect(activeDot()).toBe(1);
+    });
+
+    it('restores the previous screen and slides back when the request returns 500', async () => {
+      vi.useFakeTimers();
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+      stubApi(screens, async () => new Response('', { status: 500 }));
+      render(<Carousel />);
+      await act(async () => {});
+
+      await selectAndSettle();
+      await act(async () => {});
+
+      expect(useDisplayStore.getState().screen.currentScreen).toBe(1);
+      expect(consoleError).toHaveBeenCalled();
+      await act(async () => {
+        vi.advanceTimersByTime(SETTLE_FALLBACK_MS);
+      });
+      expect(activeDot()).toBe(1);
+    });
   });
 
   it('refetches the layout when the layout version changes', async () => {
