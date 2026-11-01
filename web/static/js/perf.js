@@ -1,10 +1,11 @@
 /**
- * Mirrormere display performance instrumentation (legacy UI).
+ * Mirrormere display performance instrumentation (legacy and React UI).
  *
- * Loaded only when the page is requested with ?perf=1 (see display.html). Records
- * long tasks, Event Timing interactions, frame timing during screen transitions, and
- * gesture / screen / widget latency. Samples are flushed to POST api/perf every 10 s
+ * Loaded only when the page is requested with ?perf=1 (see display.html and
+ * display_react.html). Records long tasks, Event Timing interactions, frame timing during
+ * screen transitions, and gesture / screen / widget latency. Samples are flushed to POST api/perf every 10 s
  * and kept in memory for window.__mmPerf.snapshot() (p50 / p95 / max per metric).
+ * Each sample is tagged 'react' when the React bundle is in the document, else 'legacy'.
  */
 (function () {
   'use strict';
@@ -18,7 +19,8 @@
     'screen_ready',
     'widget_update',
   ];
-  const UI = 'legacy';
+  const UI_SCRIPT_SELECTOR = 'script[src*="static/ui/app.js"]';
+  const GRID_CANVAS_ID = 'grid-canvas';
   const MAX_BATCH = 200; // POST /api/perf accepts at most 200 samples per request
   const MAX_BUFFER = 2000; // unsent samples kept before the oldest are dropped
   const MAX_RETAINED = 1000; // per-metric samples kept for snapshot()
@@ -54,6 +56,21 @@
     };
   }
 
+  /**
+   * Returns a function that reports 'react' once the React bundle's script tag is in the
+   * document and 'legacy' before that. perf.js runs before that tag is parsed, so the
+   * check happens per call; the 'react' answer is kept once it is found.
+   */
+  function createUiDetector(doc) {
+    let detected = null;
+    return function uiOf() {
+      if (detected === null && doc && typeof doc.querySelector === 'function' && doc.querySelector(UI_SCRIPT_SELECTOR)) {
+        detected = 'react';
+      }
+      return detected || 'legacy';
+    };
+  }
+
   /** Whether a fetch URL is a screen navigation request (advance or select). */
   function isScreenNavigation(url) {
     return typeof url === 'string' && SCREEN_NAV_RE.test(url.replace(/[?#].*$/, ''));
@@ -61,9 +78,11 @@
 
   /**
    * Sample buffer with retained per-metric history. `send(body)` posts one JSON
-   * body and returns whether it was accepted for delivery.
+   * body and returns whether it was accepted for delivery. `uiOf()` gives the value
+   * each sample is tagged with.
    */
-  function createRecorder(send) {
+  function createRecorder(send, uiOf) {
+    const ui = uiOf || (() => 'legacy');
     const retained = {};
     for (const m of METRICS) retained[m] = [];
     let pending = [];
@@ -76,7 +95,7 @@
         const history = retained[metric];
         history.push(valueMs);
         if (history.length > MAX_RETAINED) history.splice(0, history.length - MAX_RETAINED);
-        pending.push({ metric, value_ms: valueMs, ui: UI });
+        pending.push({ metric, value_ms: valueMs, ui: ui() });
         if (pending.length > MAX_BUFFER) pending = pending.slice(pending.length - MAX_BUFFER);
         return true;
       },
@@ -107,6 +126,7 @@
     percentile,
     summarize,
     isScreenNavigation,
+    createUiDetector,
     createRecorder,
   };
 
@@ -131,9 +151,12 @@
     }
   }
 
-  function install(recorder) {
+  function install(recorder, uiOf) {
     const body = document.body;
-    const canvas = document.getElementById('grid-canvas');
+    // #grid-canvas moves between panes in the React carousel, so it is looked up at each use.
+    const canvasNow = () => document.getElementById(GRID_CANVAS_ID);
+    const isReact = () => uiOf() === 'react';
+    const isAnimating = () => body.dataset.animating === '1';
 
     window.__mmPerf = { snapshot: () => recorder.snapshot() };
 
@@ -146,10 +169,9 @@
       requestAnimationFrame(() => recorder.record('gesture_first_frame', performance.now() - t0));
     }, { passive: true, capture: true });
 
-    // frame: rAF deltas, sampled only while carousel.js flags a transition.
+    // frame: rAF deltas, sampled only while the page flags a transition (body data-animating).
     let frameRunning = false;
     let lastFrame = null;
-    const isAnimating = () => body.dataset.animating === '1';
     const frameTick = (ts) => {
       if (!isAnimating()) {
         frameRunning = false;
@@ -160,27 +182,63 @@
       lastFrame = ts;
       requestAnimationFrame(frameTick);
     };
+
+    // swipe_settle. Legacy: a touchend followed by a screen navigation fetch starts it, and
+    // the class-based end is checked below. React: a touchend or pointerup followed by
+    // data-animating becoming '1' starts it (the navigation fetch comes after the settle, so
+    // it cannot). The end is the first frame after data-animating returns to '0' with the
+    // current #grid-canvas hydrated.
+    let touchEndAt = null; // legacy: matched against the navigation fetch
+    let gestureEndAt = null; // React: matched against data-animating becoming '1'
+    let swipeStart = null;
+
+    const checkReactSettle = () => {
+      if (swipeStart === null || isAnimating()) return;
+      const canvas = canvasNow();
+      if (canvas && canvas.dataset.screenHydrated === 'true') {
+        const t0 = swipeStart;
+        swipeStart = null;
+        if (performance.now() - t0 < SWIPE_SETTLE_MAX_MS) recorder.record('swipe_settle', performance.now() - t0);
+        return;
+      }
+      if (performance.now() - swipeStart >= SWIPE_SETTLE_MAX_MS) {
+        swipeStart = null;
+        return;
+      }
+      requestAnimationFrame(checkReactSettle);
+    };
+
     new MutationObserver(() => {
-      if (isAnimating() && !frameRunning) {
+      const animating = isAnimating();
+      if (animating && !frameRunning) {
         frameRunning = true;
         lastFrame = null;
         requestAnimationFrame(frameTick);
       }
+      if (animating) {
+        if (gestureEndAt !== null) {
+          const t0 = gestureEndAt;
+          gestureEndAt = null;
+          if (isReact() && performance.now() - t0 < SWIPE_TOUCH_WINDOW_MS) swipeStart = t0;
+        }
+      } else if (swipeStart !== null && isReact()) {
+        requestAnimationFrame(checkReactSettle);
+      }
     }).observe(body, { attributes: true, attributeFilter: ['data-animating'] });
 
-    // swipe_settle: touchend that starts a screen navigation, to the first frame after the
-    // canvas is hydrated and its transitioning class is gone.
-    let touchEndAt = null;
-    let swipeStart = null;
     window.addEventListener('touchend', () => {
       touchEndAt = performance.now();
+      gestureEndAt = touchEndAt;
+    }, { passive: true, capture: true });
+    window.addEventListener('pointerup', () => {
+      gestureEndAt = performance.now();
     }, { passive: true, capture: true });
 
     const nativeFetch = window.fetch;
     if (typeof nativeFetch === 'function') {
       window.fetch = function (input, init) {
         const url = typeof input === 'string' ? input : (input && input.url) || '';
-        if (touchEndAt !== null && performance.now() - touchEndAt < SWIPE_TOUCH_WINDOW_MS && isScreenNavigation(url)) {
+        if (touchEndAt !== null && performance.now() - touchEndAt < SWIPE_TOUCH_WINDOW_MS && isScreenNavigation(url) && !isReact()) {
           swipeStart = touchEndAt;
           touchEndAt = null;
         }
@@ -188,25 +246,31 @@
       };
     }
 
-    // screen_ready: navigation start to the first data-screen-hydrated stamp. A page that was
-    // already hydrated when this script ran has no usable stamp time, so it is not recorded.
-    let screenReadyDone = canvas !== null && canvas.dataset.screenHydrated === 'true';
-    if (canvas) {
-      new MutationObserver(() => {
-        if (!screenReadyDone && canvas.dataset.screenHydrated === 'true') {
-          screenReadyDone = true;
-          recorder.record('screen_ready', performance.now());
-        }
-        const settled = canvas.dataset.screenHydrated === 'true' && !canvas.classList.contains('transitioning');
-        if (swipeStart !== null && settled) {
+    // screen_ready: navigation start to the first data-screen-hydrated stamp on #grid-canvas.
+    // A page that was already hydrated when this script ran has no usable stamp time, so it
+    // is not recorded. Legacy swipe_settle end: the canvas is hydrated and not transitioning.
+    const hydratedNow = () => {
+      const canvas = canvasNow();
+      return canvas !== null && canvas.dataset.screenHydrated === 'true';
+    };
+    let screenReadyDone = hydratedNow();
+    new MutationObserver(() => {
+      if (!screenReadyDone && hydratedNow()) {
+        screenReadyDone = true;
+        recorder.record('screen_ready', performance.now());
+      }
+      if (swipeStart !== null && !isReact()) {
+        const canvas = canvasNow();
+        const settled = hydratedNow() && !canvas.classList.contains('transitioning');
+        if (settled) {
           const t0 = swipeStart;
           swipeStart = null;
           if (performance.now() - t0 < SWIPE_SETTLE_MAX_MS) {
             requestAnimationFrame(() => recorder.record('swipe_settle', performance.now() - t0));
           }
         }
-      }).observe(canvas, { attributes: true, attributeFilter: ['data-screen-hydrated', 'class'] });
-    }
+      }
+    }).observe(body, { attributes: true, subtree: true, attributeFilter: ['data-screen-hydrated', 'class', 'id'] });
 
     // widget_update: widget.update delivery (handleWidgetUpdate call) to the first frame after
     // the widget node has been replaced. Recorded only when a replacement actually happened.
@@ -240,6 +304,7 @@
   }
 
   if (typeof window !== 'undefined' && typeof document !== 'undefined' && document.body) {
-    install(createRecorder(sendBeacon));
+    const uiOf = createUiDetector(document);
+    install(createRecorder(sendBeacon, uiOf), uiOf);
   }
 })();

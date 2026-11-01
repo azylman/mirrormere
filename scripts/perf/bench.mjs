@@ -1,14 +1,18 @@
 #!/usr/bin/env node
 /**
- * bench.mjs - display performance bench for the legacy UI.
+ * bench.mjs - display performance bench for the legacy and React displays.
  *
  * Launches headless Chrome, loads <url>?perf=1 with CPU throttling, waits for the first
  * screen to hydrate, sends horizontal touch swipes over raw CDP, then prints
- * window.__mmPerf.snapshot() to stdout as JSON. Progress goes to stderr.
+ * window.__mmPerf.snapshot() to stdout as JSON. Progress goes to stderr. Works for the legacy
+ * and React displays; the page decides which (perf.js detects it).
  *
  * Usage:
  *   node scripts/perf/bench.mjs --url http://localhost:8080/display \
  *     [--chrome <path>] [--cpu-throttle 4] [--swipes 20]
+ *
+ * The output is the snapshot plus long_task_during_swipes: the long tasks recorded between the
+ * first and last swipe, which excludes cold-load tasks.
  *
  * --chrome defaults to $CHROME_BIN, then "google-chrome". Requires Node 22+ (global WebSocket).
  * No npm dependencies.
@@ -244,13 +248,20 @@ export async function runBench(opts, log = (msg) => process.stderr.write(`${msg}
     await cdp.send('Page.resetNavigationHistory');
     log(`screen hydrated; sending ${opts.swipes} swipes`);
 
+    // Long tasks from cold load are in the snapshot too. The swipe window is measured by the
+    // difference, which is what the CI budget's "long tasks during swipes" means.
+    const longTaskCount = async () => JSON.parse(
+      await evaluate(cdp, 'JSON.stringify(window.__mmPerf.snapshot().long_task.count)'),
+    );
+    const before = await longTaskCount();
     for (let i = 0; i < opts.swipes; i++) {
       await swipe(cdp, i % 2 === 0 ? 'left' : 'right');
       await sleep(SWIPE_GAP_MS);
     }
+    const during = (await longTaskCount()) - before;
 
     const json = await evaluate(cdp, 'JSON.stringify(window.__mmPerf.snapshot())');
-    return JSON.parse(json);
+    return { ...JSON.parse(json), long_task_during_swipes: during };
   } finally {
     if (cdp) cdp.close();
     chrome.proc.kill('SIGTERM');

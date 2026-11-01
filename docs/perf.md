@@ -6,12 +6,14 @@ a summary. Use both to compare changes against the same baseline.
 
 ## What is measured
 
-All timings are milliseconds. The legacy UI records them when the page is loaded with `?perf=1`.
+All timings are milliseconds. The legacy and React displays both record them when the page is
+loaded with `?perf=1` (`/display?perf=1` and `/display?ui=react&perf=1`). Each sample is tagged
+`ui="react"` when the React bundle is in the page and `ui="legacy"` otherwise.
 
 | Metric | Measures |
 | --- | --- |
 | `gesture_first_frame` | `touchstart` to the first animation frame after it. Main-thread responsiveness to touch. |
-| `swipe_settle` | `touchend` that starts a screen change (a navigation request) to the first frame after the new screen is hydrated and the transition class is removed. |
+| `swipe_settle` | Legacy: `touchend` that starts a screen change (a navigation request) to the first frame after the new screen is hydrated and the transition class is removed. React: `touchend` or `pointerup` followed within 1 s by `body[data-animating]` becoming `1`, to the first frame after `data-animating` returns to `0` with the current `#grid-canvas` hydrated. The React carousel sends its navigation request after the settle, so the React start does not use the request. |
 | `frame` | Gap between consecutive animation frames, sampled only while a screen transition is running. Around 16.7 means 60 fps. |
 | `long_task` | Main-thread tasks of 50 ms or more (`PerformanceObserver` `longtask`). |
 | `interaction` | Event Timing duration for input events slower than 16 ms. |
@@ -40,14 +42,49 @@ Flags:
 
 The script launches Chrome headless at 1920x1080 with touch emulation, waits for
 `data-screen-hydrated` on `#grid-canvas`, then sends each swipe as 300 px over 120 ms in 8 moves
-with a 1 s gap. It prints `window.__mmPerf.snapshot()` as JSON on stdout. Progress messages go to
-stderr, so the output can be piped into a file.
+with a 1 s gap. It prints `window.__mmPerf.snapshot()` as JSON on stdout, plus
+`long_task_during_swipes`: the long tasks recorded between the first and last swipe, which leaves
+out the cold-load tasks in the snapshot. Progress messages go to stderr, so the output can be
+piped into a file.
+
+For the React display, use `--url 'http://localhost:8080/display?ui=react'`.
+
+## CI budget
+
+The `perf` job in `.github/workflows/ci.yml` runs on pull requests that touch the React UI or
+this harness. It starts the server from `deploy/examples/config.yaml`, runs the bench at 4x CPU
+throttle with 20 swipes against `/display?ui=react`, and then runs
+`scripts/perf/check-budget.mjs`:
+
+```sh
+node scripts/perf/bench.mjs --url 'http://localhost:8080/display?ui=react&perf=1' --cpu-throttle 4 --swipes 20 > bench.json
+node scripts/perf/check-budget.mjs --bench bench.json --budget scripts/perf/budget.json --app-js web/static/ui/app.js
+```
+
+`budget.json` holds the #765 targets plus 20% headroom for CI noise. The gate also fails when
+the gzipped `web/static/ui/app.js` is over its budget. `min_count` is the fewest samples a metric
+must have, so a run that dropped swipes cannot pass on one sample. Metrics with `min_count: 0` are
+reported as skipped when they have no samples; `widget_update` is one of them, because the React
+display does not emit it.
+
+To run the same server locally, build it and start it with the example config and the fixture
+values the job uses. The example config reads these by name, and the fixture URL refuses
+connections, so those providers fail fast and the screens still load from config:
+
+```sh
+go build -o bin/server ./cmd/server
+FAMILY_CALENDAR_URL=http://localhost:9/fixture.ics TODOIST_API_TOKEN=fixture-token \
+  CONFIG_PATH=deploy/examples/config.yaml ./bin/server
+```
 
 Notes:
 
 - `swipe_settle` needs at least two screens configured. With one screen, swipes do nothing.
 - The carousel ignores swipes that start inside a calendar widget or an element marked
   `data-prevent-screen-swipe`, so those swipes produce no sample.
+- React `swipe_settle` ends at the first frame after `body[data-animating]` returns to `0` with a
+  hydrated `#grid-canvas`. That can be one frame before React commits the new pane. A cancelled
+  drag (a rest settle) ends the same way and is counted, which the legacy path does not do.
 - `widget_update` needs the server to push widget updates during the run. An idle run reports
   zero samples, with `null` percentiles. The key is still present.
 - Chrome's history gesture on touch input would navigate back to `about:blank` mid-run. The
@@ -103,6 +140,7 @@ The payload carries timings only, no user data.
 
 ## Loading behaviour
 
-`static/js/perf.js` is included only when the display page is requested with `?perf=1`.
-Without the parameter, the page loads no perf script. `carousel.js` still sets
-`body.dataset.animating` during transitions, but nothing reads it.
+`static/js/perf.js` is included only when the display page is requested with `?perf=1`, on both
+`display.html` and `display_react.html`. Without the parameter, the page loads no perf script.
+The legacy `carousel.js` and the React carousel both set `body.dataset.animating` during
+transitions; perf.js reads it for `frame` and, in React mode, for `swipe_settle`.

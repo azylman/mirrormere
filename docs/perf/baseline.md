@@ -37,15 +37,15 @@ node scripts/perf/bench.mjs --url <kiosk-display-url> --cpu-throttle 1 --swipes 
 
 Captured over 10 minutes of active kiosk operation under Wayland `cage` (`--kiosk --ozone-platform=wayland --force-device-scale-factor=2.0`) with 30 s screen rotation, 60 s photo crossfades, live provider polling, and unobstructed touch swipes on the right-hand pane (`x=1450..1750`):
 
-| Metric | Count | p50 (ms) | p95 (ms) | Max (ms) | `/metrics` Histogram Summary (`mirrormere_display_<metric>_ms{ui="legacy"}`) |
-| --- | ---: | ---: | ---: | ---: | --- |
-| `gesture_first_frame` | 46 | 14.2 | 15.5 | 15.5 | 46/46 live samples in `le="16.7"` bucket (mean `14.1 ms`). |
-| `swipe_settle` | 45 | 204.1 | 235.8 | 240.8 | 7 in `le="200"`, 45/45 in `le="300"` (mean `213.6 ms`; 2–3 widget HTML refetches per swipe). |
-| `frame` | 399 | 16.7 | 50.0 | 99.9 | 238 in `le="16.7"` (59.6%), 339 in `le="33"` (85.0%), 389 in `le="50"` (97.5%), 399 in `le="100"` (100%); 15.0% of transition frames exceed 33 ms. |
-| `long_task` | 0 | — | — | — | 0 long tasks during steady-state rotation; 4 total across cold loads (`le="50"`: 1, `le="100"`: 4, sum `249.0 ms`). |
-| `interaction` | 1036 | 24.0 | 32.0 | 128.0 | 334 in `le="16.7"`, 991 in `le="33"`, 1023 in `le="50"`, 1035 in `le="100"`, 1036 in `le="200"`. |
-| `screen_ready` | 2 | 100.9 | 192.6 | 192.6 | 1 in `le="200"` (`100.9 ms` warm cache), 2 in `le="200"` (`192.6 ms` reload). |
-| `widget_update` | 8 | 20.5 | 46.9 | 46.9 | 1 in `le="16.7"`, 6 in `le="33"`, 8/8 in `le="50"` (mean `27.0 ms`; full widget HTML refetch and DOM node replacement). |
+| Metric | Count | p50 (ms) | p95 (ms) | Max (ms) | `/metrics` Histogram Summary (`mirrormere_display_<metric>_ms{ui="legacy"}`) | react (`?ui=react`, kiosk) |
+| --- | ---: | ---: | ---: | ---: | --- | --- |
+| `gesture_first_frame` | 46 | 14.2 | 15.5 | 15.5 | 46/46 live samples in `le="16.7"` bucket (mean `14.1 ms`). | pending kiosk run |
+| `swipe_settle` | 45 | 204.1 | 235.8 | 240.8 | 7 in `le="200"`, 45/45 in `le="300"` (mean `213.6 ms`; 2–3 widget HTML refetches per swipe). | pending kiosk run |
+| `frame` | 399 | 16.7 | 50.0 | 99.9 | 238 in `le="16.7"` (59.6%), 339 in `le="33"` (85.0%), 389 in `le="50"` (97.5%), 399 in `le="100"` (100%); 15.0% of transition frames exceed 33 ms. | pending kiosk run |
+| `long_task` | 0 | — | — | — | 0 long tasks during steady-state rotation; 4 total across cold loads (`le="50"`: 1, `le="100"`: 4, sum `249.0 ms`). | pending kiosk run |
+| `interaction` | 1036 | 24.0 | 32.0 | 128.0 | 334 in `le="16.7"`, 991 in `le="33"`, 1023 in `le="50"`, 1035 in `le="100"`, 1036 in `le="200"`. | pending kiosk run |
+| `screen_ready` | 2 | 100.9 | 192.6 | 192.6 | 1 in `le="200"` (`100.9 ms` warm cache), 2 in `le="200"` (`192.6 ms` reload). | pending kiosk run |
+| `widget_update` | 8 | 20.5 | 46.9 | 46.9 | 1 in `le="16.7"`, 6 in `le="33"`, 8/8 in `le="50"` (mean `27.0 ms`; full widget HTML refetch and DOM node replacement). | pending kiosk run |
 
 ---
 

@@ -17,6 +17,7 @@
 </head>
 <body data-timezone="{{ .Timezone }}" data-theme="{{ if .Theme }}{{ .Theme }}{{ else }}day{{ end }}" data-grid="{{ .Grid }}" data-hide-cursor="{{ if .HideCursor }}true{{ else }}false{{ end }}"{{ if .HideCursor }} class="mm-touch-display"{{ end }}{{ if .RemoteURL }} data-remote-url="{{ .RemoteURL }}"{{ end }}{{ if and .VoiceWaveform .VoiceWaveform.Enabled }} data-voice-waveform-url="{{ .VoiceWaveform.LevelsURL }}" data-voice-waveform-gain="{{ .VoiceWaveform.Gain }}"{{ end }}{{ if and .HeaderVideo .HeaderVideo.Enabled }} data-header-video="true"{{ if .HeaderVideo.StreamID }} data-stream-id="{{ .HeaderVideo.StreamID }}"{{ end }}{{ if .HeaderVideo.StreamURL }} data-stream-url="{{ .HeaderVideo.StreamURL }}"{{ end }}{{ if .HeaderVideo.ControlURL }} data-control-url="{{ .HeaderVideo.ControlURL }}"{{ end }}{{ if .HeaderVideo.Type }} data-type="{{ .HeaderVideo.Type }}"{{ end }}{{ end }}>
   <div id="root"></div>
+  {{ if .Perf }}<script src="static/js/perf.js"></script>{{ end }}
   <script type="module" src="static/ui/app.js"></script>
 </body>
 </html>
