@@ -220,12 +220,22 @@ type shapeGroup struct {
 	dims    domain.Dimension
 	count   int
 	widgets []WidgetInput
+	orders  []int
+}
+
+func (sg *shapeGroup) nextOrder() int {
+	idx := len(sg.widgets) - sg.count
+	if idx >= 0 && idx < len(sg.orders) {
+		return sg.orders[idx]
+	}
+	return 1 << 30
 }
 
 type unpinnedPlacement struct {
 	screen int
 	origin [2]int
 	widget WidgetInput
+	order  int
 }
 
 // Solve executes exact 2D recursive backtracking bitmask bin-packing for the default 6x2 grid.
@@ -291,7 +301,7 @@ func sortAndGroupWidgets(pinned, unpinned []WidgetInput) []*shapeGroup {
 
 	shapeMap := make(map[[2]int]*shapeGroup)
 	var shapeGroups []*shapeGroup
-	for _, w := range unpinned {
+	for idx, w := range unpinned {
 		key := [2]int{w.Dimensions.Cols, w.Dimensions.Rows}
 		sg, exists := shapeMap[key]
 		if !exists {
@@ -301,6 +311,7 @@ func sortAndGroupWidgets(pinned, unpinned []WidgetInput) []*shapeGroup {
 		}
 		sg.count++
 		sg.widgets = append(sg.widgets, w)
+		sg.orders = append(sg.orders, idx)
 	}
 
 	sort.Slice(shapeGroups, func(i, j int) bool {
@@ -310,21 +321,21 @@ func sortAndGroupWidgets(pinned, unpinned []WidgetInput) []*shapeGroup {
 		return shapeGroups[i].dims.Rows > shapeGroups[j].dims.Rows
 	})
 
-	for _, sg := range shapeGroups {
-		sort.SliceStable(sg.widgets, func(i, j int) bool {
-			return sg.widgets[i].ID < sg.widgets[j].ID
-		})
-	}
 	return shapeGroups
 }
 
 func assembleSolvedLayout(k int, screenMasks []uint16, pinnedPlacements []PlacedWidget, unpinnedPlacements []unpinnedPlacement, placedCount int) *Layout {
 	res := &Layout{TotalScreens: k, Screens: make([]Screen, k)}
+	minOrder := make([]int, k)
 	for s := range k {
+		minOrder[s] = 1 << 30
 		screenWidgets := make([]PlacedWidget, 0, len(pinnedPlacements)+placedCount)
 		screenWidgets = append(screenWidgets, pinnedPlacements...)
 		for i := range placedCount {
 			if unpinnedPlacements[i].screen == s {
+				if unpinnedPlacements[i].order < minOrder[s] {
+					minOrder[s] = unpinnedPlacements[i].order
+				}
 				screenWidgets = append(screenWidgets, PlacedWidget{
 					WidgetID: unpinnedPlacements[i].widget.ID, Type: unpinnedPlacements[i].widget.Type,
 					Origin: unpinnedPlacements[i].origin, Dimensions: unpinnedPlacements[i].widget.Dimensions,
@@ -339,6 +350,20 @@ func assembleSolvedLayout(k int, screenMasks []uint16, pinnedPlacements []Placed
 		})
 		res.Screens[s] = Screen{Index: s, Bitmask: screenMasks[s], Widgets: screenWidgets}
 	}
+	orderIdx := make([]int, k)
+	for s := range k {
+		orderIdx[s] = s
+	}
+	sort.SliceStable(orderIdx, func(i, j int) bool {
+		return minOrder[orderIdx[i]] < minOrder[orderIdx[j]]
+	})
+	sortedScreens := make([]Screen, k)
+	for newIdx, oldIdx := range orderIdx {
+		scr := res.Screens[oldIdx]
+		scr.Index = newIdx
+		sortedScreens[newIdx] = scr
+	}
+	res.Screens = sortedScreens
 	return res
 }
 
@@ -355,10 +380,29 @@ type gridSolver struct {
 	unpinnedPlacements []unpinnedPlacement
 	placedCount        int
 	nodeCount          int
+	orderByConfig      bool
 }
 
 func (s *gridSolver) placePinned(pIdx int) bool {
 	if pIdx == len(s.pinned) {
+		if len(s.unpinned) == 0 {
+			return true
+		}
+		origBudget := s.maxSearchNodes
+		seqBudget := 512
+		if origBudget < seqBudget {
+			seqBudget = origBudget
+		}
+		savedNodes := s.nodeCount
+		s.orderByConfig = true
+		s.maxSearchNodes = savedNodes + seqBudget
+		if s.placeUnpinnedExactCover() {
+			s.maxSearchNodes = origBudget
+			return true
+		}
+		s.orderByConfig = false
+		s.nodeCount = savedNodes
+		s.maxSearchNodes = origBudget
 		return s.placeUnpinnedExactCover()
 	}
 	pw := s.pinned[pIdx]
@@ -392,9 +436,10 @@ func (s *gridSolver) tryPlaceShapeGroup(sg *shapeGroup, targetScreen int, sMask 
 		return false
 	}
 	s.screenMasks[targetScreen] |= mask
+	wIdx := len(sg.widgets) - sg.count
 	sg.count--
 	s.unpinnedPlacements[s.placedCount] = unpinnedPlacement{
-		screen: targetScreen, origin: [2]int{c, r}, widget: sg.widgets[len(sg.widgets)-sg.count-1],
+		screen: targetScreen, origin: [2]int{c, r}, widget: sg.widgets[wIdx], order: sg.orders[wIdx],
 	}
 	s.placedCount++
 	if s.placeUnpinnedExactCover() {
@@ -419,6 +464,24 @@ func (s *gridSolver) placeUnpinnedExactCover() bool {
 	sMask := s.screenMasks[targetScreen]
 	emptyCell := bits.TrailingZeros16(^sMask)
 	c, r := emptyCell%s.gridCols, emptyCell/s.gridCols
+
+	if s.orderByConfig {
+		candidates := make([]*shapeGroup, 0, len(s.shapeGroups))
+		for _, sg := range s.shapeGroups {
+			if sg.count > 0 {
+				candidates = append(candidates, sg)
+			}
+		}
+		sort.Slice(candidates, func(i, j int) bool {
+			return candidates[i].nextOrder() < candidates[j].nextOrder()
+		})
+		for _, sg := range candidates {
+			if s.tryPlaceShapeGroup(sg, targetScreen, sMask, c, r) {
+				return true
+			}
+		}
+		return false
+	}
 
 	for _, sg := range s.shapeGroups {
 		if s.tryPlaceShapeGroup(sg, targetScreen, sMask, c, r) {
