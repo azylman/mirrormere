@@ -255,17 +255,29 @@
     }
   };
 
+  function resolveEmberBridge() {
+    try {
+      if (window.EmberBridge) return window.EmberBridge;
+      if (window.parent && window.parent !== window && window.parent.EmberBridge) return window.parent.EmberBridge;
+      if (window.top && window.top !== window && window.top.EmberBridge) return window.top.EmberBridge;
+    } catch (e) {
+      console.warn('Cross-frame EmberBridge lookup blocked:', e);
+    }
+    return null;
+  }
+
   function triggerAndroidBridgeSync(interactive) {
     const targetUrl = albumAuthUrl || albumUrl;
-    if (window.EmberBridge) {
-      if (interactive && typeof window.EmberBridge.connectGooglePhotos === 'function') {
+    const bridge = resolveEmberBridge();
+    if (bridge) {
+      if (interactive && typeof bridge.connectGooglePhotos === 'function') {
         emptyDesc.textContent = 'Opening Android Google account session for shared album...';
-        window.EmberBridge.connectGooglePhotos(targetUrl);
+        bridge.connectGooglePhotos(targetUrl);
         return true;
       }
-      if (typeof window.EmberBridge.syncGooglePhotosAlbum === 'function') {
+      if (typeof bridge.syncGooglePhotosAlbum === 'function') {
         emptyDesc.textContent = 'Syncing shared album directly through Android Google account...';
-        window.EmberBridge.syncGooglePhotosAlbum(targetUrl);
+        bridge.syncGooglePhotosAlbum(targetUrl);
         return true;
       }
     }
@@ -301,6 +313,12 @@
   connectBtn.addEventListener('click', function(ev) {
     ev.stopPropagation();
     if (!triggerAndroidBridgeSync(true)) {
+      const bridge = resolveEmberBridge();
+      if (!bridge) {
+        emptyDesc.textContent = 'Tap this button directly on the ApoloSign kitchen tablet to sign into your Android Google account.';
+      } else {
+        emptyDesc.textContent = 'Updating Ember Android bridge on tablet...';
+      }
       loadBackendState();
     }
   });
