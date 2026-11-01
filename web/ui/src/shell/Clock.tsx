@@ -45,6 +45,19 @@ export function createClockFormatters(tz: string | undefined): ClockFormatters {
   return formatters;
 }
 
+export function resolveActiveTimezone(
+  propTimezone?: string,
+  header?: { timestamp?: string | null; timezone?: string } | null
+): string | undefined {
+  const bodyTz = typeof document !== 'undefined' ? document.body?.dataset?.timezone : undefined;
+  // If an SSE header.update has arrived (indicated by non-null timestamp), prefer header.timezone.
+  // Prior to initial SSE event, prefer document.body data-timezone rendered by the server template
+  // over the store's default fallback timezone ('UTC').
+  const sseTimezone = header?.timestamp ? header.timezone : undefined;
+  const candidates = [propTimezone, sseTimezone, bodyTz, header?.timezone];
+  return candidates.find(isValidTimezone);
+}
+
 export interface ClockProps {
   timezone?: string;
 }
@@ -59,13 +72,7 @@ export function Clock({ timezone: propTimezone }: ClockProps = {}) {
   const lastTimeRef = useRef<string | null>(null);
   const lastDateRef = useRef<string | null>(null);
 
-  const bodyTz = typeof document !== 'undefined' ? document.body?.dataset?.timezone : undefined;
-  // If an SSE header.update has arrived (indicated by non-null timestamp), prefer header.timezone.
-  // Prior to initial SSE event, prefer document.body data-timezone rendered by the server template
-  // over the store's default fallback timezone ('UTC').
-  const sseTimezone = header?.timestamp ? header.timezone : undefined;
-  const candidates = [propTimezone, sseTimezone, bodyTz, header?.timezone];
-  const activeTz = candidates.find(isValidTimezone);
+  const activeTz = resolveActiveTimezone(propTimezone, header);
 
   const formatters = useMemo(() => createClockFormatters(activeTz), [activeTz]);
 
