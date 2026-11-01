@@ -28,7 +28,8 @@ function pointer(target: EventTarget, type: string, x: number, y: number, pointe
   target.dispatchEvent(event);
 }
 
-function build(initialIndex = 1, width = 1000): Harness {
+function build(initialIndex = 1, width = 1000, storeIndex = initialIndex): Harness {
+  useDisplayStore.setState({ screen: { ...useDisplayStore.getState().screen, currentScreen: storeIndex } });
   const viewport = document.createElement('div');
   const track = document.createElement('div');
   viewport.appendChild(track);
@@ -422,6 +423,23 @@ describe('CarouselController', () => {
     expect(h.track.style.transform).toBe('translate3d(-1000px,0,0)');
     h.transitionEnd();
     expect(h.host.commit).toHaveBeenCalledWith(2);
+  });
+
+  it('attaches to the store screen when it moved after React rendered another', () => {
+    vi.useFakeTimers();
+    // React rendered screen 0 at mount; a rotate moved the store to 1 before attach().
+    const h = build(0, 1000, 1);
+    expect(h.controller.current).toBe(1);
+    expect(h.host.commit).toHaveBeenCalledWith(1);
+    expect(h.host.select).not.toHaveBeenCalled();
+    expect(h.track.style.transform).toBe('');
+    expect(document.body.dataset.animating).toBe('0');
+
+    // Once React renders screen 1, the carousel takes swipes again.
+    h.controller.rendered(1);
+    swipe(h, 500, 200);
+    h.transitionEnd();
+    expect(h.host.commit).toHaveBeenLastCalledWith(2);
   });
 
   it('reset during a settle toward another screen never commits or selects that screen', () => {

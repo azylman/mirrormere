@@ -1,5 +1,5 @@
 import { act, cleanup, render } from '@testing-library/react';
-import { Profiler } from 'react';
+import { Profiler, useLayoutEffect } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useDisplayStore } from '../store';
 import type { ScreenLayout, ScreensResponse } from '../sse/types';
@@ -197,6 +197,30 @@ describe('Carousel', () => {
 
     expect(onRender.mock.calls.length).toBe(before);
     expect(gridCanvas()?.querySelectorAll('[data-widget-id]')).toHaveLength(2);
+  });
+
+  it('shows the store screen when it moves between the first render and the carousel attaching', async () => {
+    stubApi();
+    // Layout effects run before the carousel's passive effect that attaches its controller.
+    function MoveStore() {
+      useLayoutEffect(() => {
+        useDisplayStore.setState({ screen: { ...useDisplayStore.getState().screen, currentScreen: 2 } });
+      }, []);
+      return null;
+    }
+    render(
+      <>
+        <MoveStore />
+        <Carousel />
+      </>,
+    );
+    await act(async () => {});
+
+    // Screen 2 is the one with a single widget (c-2). The first render showed screen 1.
+    expect(gridCanvas()?.querySelectorAll('[data-widget-id]')).toHaveLength(1);
+    expect(gridCanvas()?.querySelector('[data-widget-id="c-2"]')).not.toBeNull();
+    // Attaching catches up without a slide.
+    expect(document.body.dataset.animating).not.toBe('1');
   });
 
   it('slides to a server-rotated neighbour and re-centres with the new current pane', async () => {

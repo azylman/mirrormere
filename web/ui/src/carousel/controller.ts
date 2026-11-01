@@ -77,6 +77,10 @@ export class CarouselController {
         this.requestShow(current);
       }
     });
+    // The store can move between the render that set `shown` and this call (a rotate that
+    // lands during mount). Catch up without animating or selecting: the store is the server's state.
+    const current = useDisplayStore.getState().screen.currentScreen;
+    if (current !== this.shown && current >= 0 && current < this.total()) this.reset(current);
   }
 
   dispose(): void {

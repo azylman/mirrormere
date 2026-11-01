@@ -67,6 +67,9 @@ export function Carousel() {
   const layoutVersion = useDisplayStore((s) => s.layoutVersion);
   const paused = useDisplayStore((s) => s.carousel.paused);
   const [shown, setShown] = useState(() => useDisplayStore.getState().screen.currentScreen);
+  // The screen React rendered at mount. The controller starts from it, not from a fresh store read,
+  // so attach() can see a store change that landed after this render and reconcile (#800).
+  const mountedShown = useRef(shown);
 
   const viewportRef = useRef<HTMLDivElement>(null);
   const trackRef = useRef<HTMLDivElement>(null);
@@ -87,7 +90,7 @@ export function Carousel() {
       viewport,
       track,
       host,
-      initial: useDisplayStore.getState().screen.currentScreen,
+      initial: mountedShown.current,
     });
     controllerRef.current = controller;
     controller.attach();
