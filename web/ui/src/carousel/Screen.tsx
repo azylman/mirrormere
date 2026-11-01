@@ -1,4 +1,4 @@
-import { memo, useLayoutEffect, useMemo, useRef } from 'react';
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { WidgetPlacement } from '../sse/types';
 import { WidgetHost } from '../widgets/WidgetHost';
 import { PaneContext, type PaneContextValue } from './PaneContext';
@@ -6,22 +6,149 @@ import { PaneContext, type PaneContextValue } from './PaneContext';
 export interface ScreenProps {
   /** Screen index this pane shows. */
   index: number;
-  /** -1 previous, 0 current, 1 next. Sets the pane's position in the track. */
-  offset: -1 | 0 | 1;
+  /** -1 previous, 0 current, 1 next, or null for parked. Sets the pane's position in the track. */
+  offset: -1 | 0 | 1 | null;
   placements: readonly WidgetPlacement[];
   /** The layout has loaded. The current pane does not claim hydration before that. */
   ready: boolean;
 }
 
+export function scheduleIdleStep(callback: () => void): () => void {
+  if (typeof window !== 'undefined' && typeof (window as unknown as { requestIdleCallback?: (cb: () => void) => number }).requestIdleCallback === 'function') {
+    const handle = (window as unknown as { requestIdleCallback: (cb: () => void) => number }).requestIdleCallback(() => callback());
+    return () => {
+      if (typeof (window as unknown as { cancelIdleCallback?: (id: number) => void }).cancelIdleCallback === 'function') {
+        (window as unknown as { cancelIdleCallback: (id: number) => void }).cancelIdleCallback(handle);
+      }
+    };
+  }
+  const timer = setTimeout(() => callback(), 0);
+  return () => clearTimeout(timer);
+}
+
+interface Subscriber {
+  index: number;
+  getOffset: () => -1 | 0 | 1 | null;
+  isReady: () => boolean;
+  hasWork: () => boolean;
+  step: () => void;
+}
+
+const subscribers = new Set<Subscriber>();
+let cancelPendingStep: (() => void) | null = null;
+
+function runCoordinator(): void {
+  if (cancelPendingStep !== null) return;
+
+  // Prioritize immediate neighbors (-1 or 1) before parked panes (null)
+  let candidate: Subscriber | null = null;
+  for (const sub of subscribers) {
+    if (!sub.isReady() || !sub.hasWork()) continue;
+    const off = sub.getOffset();
+    if (off === -1 || off === 1) {
+      candidate = sub;
+      break;
+    }
+  }
+
+  if (!candidate) {
+    for (const sub of subscribers) {
+      if (!sub.isReady() || !sub.hasWork()) continue;
+      const off = sub.getOffset();
+      if (off === null) {
+        candidate = sub;
+        break;
+      }
+    }
+  }
+
+  if (!candidate) return;
+
+  cancelPendingStep = scheduleIdleStep(() => {
+    cancelPendingStep = null;
+    // Re-evaluate target in case state/offsets changed during the idle wait
+    let target: Subscriber | null = null;
+    for (const sub of subscribers) {
+      if (!sub.isReady() || !sub.hasWork()) continue;
+      const off = sub.getOffset();
+      if (off === -1 || off === 1) {
+        target = sub;
+        break;
+      }
+    }
+    if (!target) {
+      for (const sub of subscribers) {
+        if (!sub.isReady() || !sub.hasWork()) continue;
+        const off = sub.getOffset();
+        if (off === null) {
+          target = sub;
+          break;
+        }
+      }
+    }
+    if (target) {
+      target.step();
+    }
+    runCoordinator();
+  });
+}
+
 /**
  * One screen as a CSS grid. Only the current pane carries `id="grid-canvas"` and the
- * e-ink hydration attributes. Neighbours are siblings outside it, so their widgets are
- * not counted by the settle predicate.
+ * e-ink hydration attributes. Neighbours and parked panes are siblings outside it.
  */
 export const Screen = memo(function Screen({ index, offset, placements, ready }: ScreenProps) {
   const isCurrent = offset === 0;
   const ref = useRef<HTMLDivElement>(null);
   const value = useMemo<PaneContextValue>(() => ({ isCurrentPane: isCurrent, paneIndex: index }), [isCurrent, index]);
+
+  const [hydratedCount, setHydratedCount] = useState<number>(() => (isCurrent ? placements.length : 0));
+  const hydratedRef = useRef(hydratedCount);
+  hydratedRef.current = hydratedCount;
+
+  const offsetRef = useRef(offset);
+  offsetRef.current = offset;
+  const readyRef = useRef(ready);
+  readyRef.current = ready;
+  const placementsRef = useRef(placements);
+  placementsRef.current = placements;
+
+  if (isCurrent && hydratedCount < placements.length) {
+    hydratedRef.current = placements.length;
+    setHydratedCount(placements.length);
+  }
+
+  useEffect(() => {
+    const sub: Subscriber = {
+      index,
+      getOffset: () => offsetRef.current,
+      isReady: () => readyRef.current,
+      hasWork: () => {
+        if (offsetRef.current === 0) return false;
+        return hydratedRef.current < placementsRef.current.length;
+      },
+      step: () => {
+        if (hydratedRef.current < placementsRef.current.length) {
+          hydratedRef.current += 1;
+          setHydratedCount(hydratedRef.current);
+        }
+      },
+    };
+    subscribers.add(sub);
+    runCoordinator();
+
+    return () => {
+      subscribers.delete(sub);
+      if (subscribers.size === 0 && cancelPendingStep !== null) {
+        cancelPendingStep();
+        cancelPendingStep = null;
+      }
+    };
+  }, [index]);
+
+  useEffect(() => {
+    runCoordinator();
+  }, [offset, ready, placements.length]);
 
   // Layout effects run after the cell children have mounted, so the stamp means every
   // widget of the current pane is in the DOM.
@@ -37,15 +164,23 @@ export const Screen = memo(function Screen({ index, offset, placements, ready }:
     }
   }, [isCurrent, ready, placements]);
 
+  const visibleCount = isCurrent ? placements.length : hydratedCount;
+  const visiblePlacements = placements.slice(0, visibleCount);
+
   return (
     <PaneContext.Provider value={value}>
       <div
         ref={ref}
         className="grid-pane"
         id={isCurrent ? 'grid-canvas' : undefined}
-        style={{ left: `${offset * 100}%` }}
+        style={
+          offset === null
+            ? { left: '200%', visibility: 'hidden', pointerEvents: 'none' }
+            : { left: `${offset * 100}%` }
+        }
+        aria-hidden={offset === null ? 'true' : undefined}
       >
-        {placements.map((placement) => (
+        {visiblePlacements.map((placement) => (
           <WidgetHost
             key={placement.widget_id}
             id={placement.widget_id}

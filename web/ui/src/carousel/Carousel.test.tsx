@@ -104,6 +104,22 @@ describe('panesFor and paneKey', () => {
   it('keys by screen index otherwise, so a neighbour keeps its DOM when it becomes current', () => {
     expect(panesFor(1, 3).map((pane) => paneKey(pane, 3))).toEqual(['0', '1', '2']);
   });
+
+  it('mounts all screens with non-neighbors parked (offset: null) when total >= 4', () => {
+    expect(panesFor(0, 4)).toEqual([
+      { index: 3, offset: -1 },
+      { index: 0, offset: 0 },
+      { index: 1, offset: 1 },
+      { index: 2, offset: null },
+    ]);
+    expect(panesFor(2, 5)).toEqual([
+      { index: 1, offset: -1 },
+      { index: 2, offset: 0 },
+      { index: 3, offset: 1 },
+      { index: 0, offset: null },
+      { index: 4, offset: null },
+    ]);
+  });
 });
 
 describe('Carousel', () => {

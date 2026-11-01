@@ -7,19 +7,35 @@ import { ScreenIndicator } from './ScreenIndicator';
 
 const NO_PLACEMENTS: readonly WidgetPlacement[] = [];
 
-interface Pane {
+export interface Pane {
   index: number;
-  offset: -1 | 0 | 1;
+  offset: -1 | 0 | 1 | null;
 }
 
-/** The panes mounted around `shown`: previous, current and next. Only one screen when there is no swipe. */
+/** The panes mounted around `shown`: previous, current, next, and parked panes (when total >= 3). */
 export function panesFor(shown: number, total: number): Pane[] {
   if (total <= 1) return [{ index: shown, offset: 0 }];
-  return [
-    { index: neighbourOf(shown, total, 'prev'), offset: -1 },
+  if (total === 2) {
+    return [
+      { index: neighbourOf(shown, total, 'prev'), offset: -1 },
+      { index: shown, offset: 0 },
+      { index: neighbourOf(shown, total, 'next'), offset: 1 },
+    ];
+  }
+  const prev = neighbourOf(shown, total, 'prev');
+  const next = neighbourOf(shown, total, 'next');
+  const panes: Pane[] = [
+    { index: prev, offset: -1 },
     { index: shown, offset: 0 },
-    { index: neighbourOf(shown, total, 'next'), offset: 1 },
+    { index: next, offset: 1 },
   ];
+  const active = new Set([prev, shown, next]);
+  for (let i = 0; i < total; i++) {
+    if (!active.has(i)) {
+      panes.push({ index: i, offset: null });
+    }
+  }
+  return panes;
 }
 
 /**
