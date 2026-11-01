@@ -710,51 +710,6 @@ export function todayPrecipProb(data: unknown): number {
   return 0;
 }
 
-/** Returns the inner SVG elements for a WMO weather condition token. */
-export function weatherIconPath(token: string): string {
-  switch (token) {
-    case 'weather-sunny':
-      return '<circle cx="12" cy="12" r="5" fill="#f59e0b" stroke="#f59e0b" stroke-width="1"/><g stroke="#f59e0b" stroke-width="2" stroke-linecap="round"><line x1="12" y1="1.5" x2="12" y2="3.5"/><line x1="12" y1="20.5" x2="12" y2="22.5"/><line x1="4.5" y1="4.5" x2="6" y2="6"/><line x1="18" y1="18" x2="19.5" y2="19.5"/><line x1="1.5" y1="12" x2="3.5" y2="12"/><line x1="20.5" y1="12" x2="22.5" y2="12"/><line x1="4.5" y1="19.5" x2="6" y2="18"/><line x1="18" y1="6" x2="19.5" y2="4.5"/></g>';
-    case 'weather-clear-night':
-      return '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>';
-    case 'weather-partly-cloudy':
-      return '<circle cx="16" cy="9" r="4" fill="#f59e0b"/><g stroke="#f59e0b" stroke-width="1.8" stroke-linecap="round"><line x1="16" y1="2" x2="16" y2="3.5"/><line x1="21.5" y1="6" x2="20" y2="7"/><line x1="21.5" y1="12" x2="20" y2="11"/><line x1="11.5" y1="4" x2="12.5" y2="5"/></g><path d="M15.5 19H7a4.5 4.5 0 0 1-.8-8.9A5.5 5.5 0 0 1 16.8 11 3.5 3.5 0 0 1 15.5 19z" fill="#ffffff" stroke="#94a3b8" stroke-width="1.6" stroke-linejoin="round"/>';
-    case 'weather-night-partly-cloudy':
-      return '<path d="M19 10.5A6 6 0 0 1 12.5 4a5 5 0 0 0 6.5 6.5z" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5" stroke-linejoin="round"/><path d="M15.5 19H7a4.5 4.5 0 0 1-.8-8.9A5.5 5.5 0 0 1 16.8 11 3.5 3.5 0 0 1 15.5 19z" fill="#ffffff" stroke="#94a3b8" stroke-width="1.6" stroke-linejoin="round"/>';
-    case 'weather-cloudy':
-      return '<path d="M17.5 19H7a5 5 0 0 1-1-9.9A6 6 0 0 1 17.8 11 4 4 0 0 1 17.5 19z" fill="#f1f5f9" stroke="#94a3b8" stroke-width="1.7" stroke-linejoin="round"/>';
-    case 'weather-fog':
-      return '<g stroke="#94a3b8" stroke-width="2" stroke-linecap="round"><line x1="4" y1="10" x2="20" y2="10"/><line x1="3" y1="14" x2="21" y2="14"/><line x1="5" y1="18" x2="19" y2="18"/><line x1="7" y1="6" x2="17" y2="6"/></g>';
-    case 'weather-rainy':
-      return '<path d="M17.5 15H7a4.5 4.5 0 0 1-1-8.9A5.5 5.5 0 0 1 16.8 7 3.5 3.5 0 0 1 17.5 15z" fill="#f1f5f9" stroke="#94a3b8" stroke-width="1.7" stroke-linejoin="round"/><g stroke="#38bdf8" stroke-width="2" stroke-linecap="round"><line x1="8" y1="18" x2="7" y2="21"/><line x1="12" y1="18" x2="11" y2="21"/><line x1="16" y1="18" x2="15" y2="21"/></g>';
-    case 'weather-pouring':
-      return '<path d="M17.5 14H7a4.5 4.5 0 0 1-1-8.9A5.5 5.5 0 0 1 16.8 6 3.5 3.5 0 0 1 17.5 14z" fill="#e2e8f0" stroke="#64748b" stroke-width="1.7" stroke-linejoin="round"/><g stroke="#0284c7" stroke-width="2" stroke-linecap="round"><line x1="6" y1="17" x2="4" y2="21"/><line x1="10" y1="17" x2="8" y2="21"/><line x1="14" y1="17" x2="12" y2="21"/><line x1="18" y1="17" x2="16" y2="21"/></g>';
-    case 'weather-snowy':
-      return '<path d="M17.5 14H7a4.5 4.5 0 0 1-1-8.9A5.5 5.5 0 0 1 16.8 6 3.5 3.5 0 0 1 17.5 14z" fill="#f1f5f9" stroke="#94a3b8" stroke-width="1.7" stroke-linejoin="round"/><g fill="#93c5fd"><circle cx="8" cy="18" r="1.3"/><circle cx="12" cy="18" r="1.3"/><circle cx="16" cy="18" r="1.3"/><circle cx="10" cy="21" r="1.3"/><circle cx="14" cy="21" r="1.3"/></g>';
-    case 'weather-snowy-rainy':
-      return '<path d="M17.5 14H7a4.5 4.5 0 0 1-1-8.9A5.5 5.5 0 0 1 16.8 6 3.5 3.5 0 0 1 17.5 14z" fill="#f1f5f9" stroke="#94a3b8" stroke-width="1.7" stroke-linejoin="round"/><g fill="#93c5fd"><circle cx="8" cy="18" r="1.3"/><circle cx="14" cy="18" r="1.3"/></g><g stroke="#38bdf8" stroke-width="2" stroke-linecap="round"><line x1="11" y1="18" x2="10" y2="21"/></g>';
-    case 'weather-lightning':
-    case 'weather-lightning-rainy':
-      return '<path d="M17.5 13H7a4.5 4.5 0 0 1-1-8.9A5.5 5.5 0 0 1 16.8 5 3.5 3.5 0 0 1 17.5 13z" fill="#e2e8f0" stroke="#64748b" stroke-width="1.7" stroke-linejoin="round"/><polygon points="12 13 9 18 13 18 11 23 16 16 12 16 14 13" fill="#f59e0b" stroke="#f59e0b" stroke-width="1" stroke-linejoin="round"/>';
-    default:
-      return '<path d="M17.5 19H7a5 5 0 0 1-1-9.9A6 6 0 0 1 17.8 11 4 4 0 0 1 17.5 19z" fill="#f1f5f9" stroke="#94a3b8" stroke-width="1.7" stroke-linejoin="round"/>';
-  }
-}
-
-/**
- * Returns a sanitized scalable vector inline SVG string for WMO condition tokens.
- * Matches WeatherIcon in internal/render/helpers.go.
- */
-export function weatherIconSvg(iconName?: string | null, size: number = 20): string {
-  const token = typeof iconName === 'string' && iconName.trim() !== '' ? iconName.trim() : 'weather-cloudy';
-  let s = typeof size === 'number' && !isNaN(size) && size > 0 ? Math.round(size) : 20;
-  if (s < 12) s = 12;
-  else if (s > 64) s = 64;
-
-  const pathHTML = weatherIconPath(token);
-  return `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="mm-weather-icon mm-icon-${escapeHtml(token)}">${pathHTML}</svg>`;
-}
-
 export interface WeatherHourlyGraphOptions {
   svgHeight?: number;
   curveTop?: number;
@@ -762,34 +717,54 @@ export interface WeatherHourlyGraphOptions {
   baseY?: number;
 }
 
-interface HourlyPoint {
-  timeStr: string;
-  temp: number;
-  precipProb: number;
-  icon: string;
+export interface HourlyPointLayout {
   x: number;
   y: number;
+  lineY1: number;
+  precipProb: number;
+  precipY: number;
+  icon: string;
+  iconTranslateX: number;
+  iconY: number;
+  iconScale: number;
+  tempRound: number;
+  tempY: number;
+  tempFontSize: number;
+  circleR: number;
+  timeLabel: string;
+  timeWeight: string;
+  timeColor: string;
+  timeY: number;
+  timeFontSize: number;
+}
+
+export interface HourlyGraphLayout {
+  totalWidth: number;
+  svgHeight: number;
+  baseY: number;
+  isTall: boolean;
+  gradientId: string;
+  areaPath: string;
+  curvePath: string;
+  gridLinesPath: string;
+  points: HourlyPointLayout[];
 }
 
 /**
- * Produces an SVG continuous line graph showing hourly temperature trends,
- * condition icons, precipitation chances, and time throughout the day.
- * Matches WeatherHourlyGraph in internal/render/helpers.go.
+ * Computes deterministic layout metrics and SVG geometry for an hourly weather forecast graph.
  */
-export function weatherHourlyGraphSvg(
+export function computeHourlyGraphLayout(
   hourly: unknown,
   widgetId?: string,
   options?: WeatherHourlyGraphOptions,
-): string {
+): HourlyGraphLayout | null {
   if (!hourly || !Array.isArray(hourly) || hourly.length === 0) {
-    return '';
+    return null;
   }
 
-  // Extract up to 8 points
-  const rawPts = hourly.slice(0, 8);
-  const pts: HourlyPoint[] = [];
+  const rawPts: { timeStr: string; temp: number; precipProb: number; icon: string }[] = [];
 
-  for (const item of rawPts) {
+  for (const item of hourly) {
     if (!item || typeof item !== 'object') continue;
     const m = item as Record<string, unknown>;
 
@@ -816,24 +791,25 @@ export function weatherHourlyGraphSvg(
       icon = rawIcon.trim();
     }
 
-    pts.push({ timeStr, temp, precipProb, icon, x: 0, y: 0 });
+    rawPts.push({ timeStr, temp, precipProb, icon });
   }
 
-  if (pts.length === 0) {
-    return '';
+  if (rawPts.length === 0) {
+    return null;
   }
 
-  const n = pts.length;
-  const gradientID = widgetId && widgetId.trim() !== ''
-    ? `mm-weather-grad-${escapeHtml(widgetId.trim())}`
-    : 'mm-weather-hourly-grad';
+  const n = rawPts.length;
+  const gradientId =
+    widgetId && widgetId.trim() !== ''
+      ? `mm-weather-grad-${escapeHtml(widgetId.trim())}`
+      : 'mm-weather-hourly-grad';
 
   const baseColWidth = 68.0;
   const minGraphWidth = 560.0;
-  const svgHeight = options?.svgHeight ?? 108.0;
-  const curveTop = options?.curveTop ?? 34.0;
-  const curveBottom = options?.curveBottom ?? 78.0;
-  const baseY = options?.baseY ?? (svgHeight === 300.0 ? 240.0 : 90.0);
+  const svgHeight = options?.svgHeight ?? 300.0;
+  const curveTop = options?.curveTop ?? 90.0;
+  const curveBottom = options?.curveBottom ?? 205.0;
+  const baseY = options?.baseY ?? (svgHeight === 108.0 ? 90.0 : 240.0);
 
   const isTall = svgHeight >= 200.0;
 
@@ -843,11 +819,11 @@ export function weatherHourlyGraphSvg(
   }
   const totalWidth = n * colWidth;
 
-  let minTemp = pts[0].temp;
-  let maxTemp = pts[0].temp;
+  let minTemp = rawPts[0].temp;
+  let maxTemp = rawPts[0].temp;
   for (let i = 1; i < n; i++) {
-    if (pts[i].temp < minTemp) minTemp = pts[i].temp;
-    if (pts[i].temp > maxTemp) maxTemp = pts[i].temp;
+    if (rawPts[i].temp < minTemp) minTemp = rawPts[i].temp;
+    if (rawPts[i].temp > maxTemp) maxTemp = rawPts[i].temp;
   }
 
   let span = maxTemp - minTemp;
@@ -857,56 +833,48 @@ export function weatherHourlyGraphSvg(
     span = 4.0;
   }
 
+  const coords: { x: number; y: number }[] = [];
   for (let i = 0; i < n; i++) {
-    pts[i].x = i * colWidth + colWidth / 2.0;
-    const ratio = (pts[i].temp - minTemp) / span;
-    pts[i].y = curveBottom - ratio * (curveBottom - curveTop);
+    const x = i * colWidth + colWidth / 2.0;
+    const ratio = (rawPts[i].temp - minTemp) / span;
+    const y = curveBottom - ratio * (curveBottom - curveTop);
+    coords.push({ x, y });
   }
 
-  let svg = `<svg class="weather-hourly-graph" viewBox="0 0 ${totalWidth.toFixed(1)} ${svgHeight.toFixed(1)}" style="height: 100%; width: auto; min-width: ${totalWidth.toFixed(1)}px; flex-shrink: 0; display: block; overflow: visible;">`;
-  svg += `<defs><linearGradient id="${gradientID}" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#ff6f59" stop-opacity="0.25"/><stop offset="100%" stop-color="#ff6f59" stop-opacity="0.0"/></linearGradient></defs>`;
-  svg += `<line x1="0" y1="${baseY.toFixed(1)}" x2="${totalWidth.toFixed(1)}" y2="${baseY.toFixed(1)}" stroke="rgba(90, 60, 30, 0.08)" stroke-width="1"/>`;
+  let curvePath = '';
+  let areaPath = '';
 
   if (n > 1) {
-    let curvePath = `M ${pts[0].x.toFixed(1)} ${pts[0].y.toFixed(1)}`;
-    let areaPath = `M ${pts[0].x.toFixed(1)} ${baseY.toFixed(1)} L ${pts[0].x.toFixed(1)} ${pts[0].y.toFixed(1)}`;
+    curvePath = `M ${coords[0].x.toFixed(1)} ${coords[0].y.toFixed(1)}`;
+    areaPath = `M ${coords[0].x.toFixed(1)} ${baseY.toFixed(1)} L ${coords[0].x.toFixed(1)} ${coords[0].y.toFixed(1)}`;
 
     for (let i = 0; i < n - 1; i++) {
-      const dx = (pts[i + 1].x - pts[i].x) / 2.0;
-      const seg = ` C ${(pts[i].x + dx).toFixed(1)} ${pts[i].y.toFixed(1)}, ${(pts[i + 1].x - dx).toFixed(1)} ${pts[i + 1].y.toFixed(1)}, ${pts[i + 1].x.toFixed(1)} ${pts[i + 1].y.toFixed(1)}`;
+      const dx = (coords[i + 1].x - coords[i].x) / 2.0;
+      const seg = ` C ${(coords[i].x + dx).toFixed(1)} ${coords[i].y.toFixed(1)}, ${(coords[i + 1].x - dx).toFixed(1)} ${coords[i + 1].y.toFixed(1)}, ${coords[i + 1].x.toFixed(1)} ${coords[i + 1].y.toFixed(1)}`;
       curvePath += seg;
       areaPath += seg;
     }
-    areaPath += ` L ${pts[n - 1].x.toFixed(1)} ${baseY.toFixed(1)} Z`;
-
-    svg += `<path d="${areaPath}" fill="url(#${gradientID})"/>`;
-    svg += `<path d="${curvePath}" fill="none" stroke="var(--mm-coral, #ff6f59)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>`;
+    areaPath += ` L ${coords[n - 1].x.toFixed(1)} ${baseY.toFixed(1)} Z`;
   }
 
+  const points: HourlyPointLayout[] = [];
   for (let i = 0; i < n; i++) {
-    const pt = pts[i];
+    const pt = rawPts[i];
+    const coord = coords[i];
     const lineTopOffset = isTall ? 6.0 : 4.0;
-    svg += `<line x1="${pt.x.toFixed(1)}" y1="${(pt.y + lineTopOffset).toFixed(1)}" x2="${pt.x.toFixed(1)}" y2="${baseY.toFixed(1)}" stroke="rgba(90, 60, 30, 0.08)" stroke-dasharray="2 2"/>`;
+    const lineY1 = coord.y + lineTopOffset;
+    const precipY = isTall ? 20 : 12;
 
-    if (pt.precipProb > 0) {
-      const precipY = isTall ? 20 : 12;
-      svg += `<text x="${pt.x.toFixed(1)}" y="${precipY}" text-anchor="middle" font-size="11" font-weight="700" fill="var(--mm-sky, #3b9edd)" style="user-select: none; pointer-events: none;">☂ ${pt.precipProb}%</text>`;
-    }
-
-    const iconPath = weatherIconPath(pt.icon);
     const iconY = isTall ? 32 : 14;
     const iconScale = isTall ? 1.2 : 0.8;
     const iconOffsetX = isTall ? 14.4 : 9.6;
-    svg += `<g transform="translate(${(pt.x - iconOffsetX).toFixed(1)}, ${iconY}) scale(${iconScale})" fill="none" stroke="var(--mm-honey, #f59e0b)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${iconPath}</g>`;
+    const iconTranslateX = coord.x - iconOffsetX;
 
     // Round half-away-from-zero to match Go math.Round
     const tempRound = Math.sign(pt.temp) * Math.round(Math.abs(pt.temp)) || 0;
-    const tempY = isTall ? pt.y - 10.0 : pt.y - 6.0;
+    const tempY = isTall ? coord.y - 10.0 : coord.y - 6.0;
     const tempFontSize = isTall ? 14 : 12;
-    svg += `<text x="${pt.x.toFixed(1)}" y="${tempY.toFixed(1)}" text-anchor="middle" font-size="${tempFontSize}" font-weight="800" fill="var(--mm-text-title, #2a2338)" style="user-select: none; pointer-events: none;">${tempRound}°</text>`;
-
-    const circleR = isTall ? '4.0' : '3.5';
-    svg += `<circle cx="${pt.x.toFixed(1)}" cy="${pt.y.toFixed(1)}" r="${circleR}" fill="#ffffff" stroke="var(--mm-coral, #ff6f59)" stroke-width="2.5"/>`;
+    const circleR = isTall ? 4.0 : 3.5;
 
     let timeLabel = 'Now';
     let timeWeight = '800';
@@ -919,9 +887,44 @@ export function weatherHourlyGraphSvg(
     }
     const timeY = isTall ? 275 : 102;
     const timeFontSize = isTall ? 13 : 11;
-    svg += `<text x="${pt.x.toFixed(1)}" y="${timeY}" text-anchor="middle" font-size="${timeFontSize}" font-weight="${timeWeight}" fill="${timeColor}" style="user-select: none; pointer-events: none;">${escapeHtml(timeLabel)}</text>`;
+
+    points.push({
+      x: coord.x,
+      y: coord.y,
+      lineY1,
+      precipProb: pt.precipProb,
+      precipY,
+      icon: pt.icon,
+      iconTranslateX,
+      iconY,
+      iconScale,
+      tempRound,
+      tempY,
+      tempFontSize,
+      circleR,
+      timeLabel,
+      timeWeight,
+      timeColor,
+      timeY,
+      timeFontSize,
+    });
   }
 
-  svg += '</svg>';
-  return svg;
+  let gridLinesPath = '';
+  for (let i = 0; i < n; i++) {
+    const pt = points[i];
+    gridLinesPath += `M ${pt.x.toFixed(1)} ${pt.lineY1.toFixed(1)} L ${pt.x.toFixed(1)} ${baseY.toFixed(1)} `;
+  }
+
+  return {
+    totalWidth,
+    svgHeight,
+    baseY,
+    isTall,
+    gradientId,
+    areaPath,
+    curvePath,
+    gridLinesPath: gridLinesPath.trim(),
+    points,
+  };
 }

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   calendarFeedActiveCalendars,
   calendarFeedDayGroups,
+  computeHourlyGraphLayout,
   escapeHtml,
   formatDate,
   formatTime,
@@ -9,9 +10,6 @@ import {
   relDate,
   tasksStats,
   todayPrecipProb,
-  weatherHourlyGraphSvg,
-  weatherIconPath,
-  weatherIconSvg,
 } from './format';
 
 describe('format helpers', () => {
@@ -325,92 +323,87 @@ describe('format helpers', () => {
     });
   });
 
-  describe('weatherIconPath & weatherIconSvg', () => {
-    it('returns valid SVG path for known tokens', () => {
-      expect(weatherIconPath('weather-sunny')).toContain('circle');
-      expect(weatherIconPath('weather-rainy')).toContain('path');
-      expect(weatherIconPath('weather-clear-night')).toContain('M21');
-      expect(weatherIconPath('unknown-token')).toContain('M17.5 19H7');
+  describe('computeHourlyGraphLayout', () => {
+    it('returns null on empty or missing points', () => {
+      expect(computeHourlyGraphLayout(null)).toBeNull();
+      expect(computeHourlyGraphLayout([])).toBeNull();
+      expect(computeHourlyGraphLayout([null])).toBeNull();
     });
 
-    it('renders scalable SVG clamped to [12, 64]', () => {
-      const defaultSvg = weatherIconSvg('weather-sunny');
-      expect(defaultSvg).toContain('width="20"');
-      expect(defaultSvg).toContain('height="20"');
-      expect(defaultSvg).toContain('mm-icon-weather-sunny');
-
-      const smallSvg = weatherIconSvg('weather-sunny', 5);
-      expect(smallSvg).toContain('width="12"');
-
-      const largeSvg = weatherIconSvg('weather-sunny', 100);
-      expect(largeSvg).toContain('width="64"');
-
-      const customSvg = weatherIconSvg('weather-cloudy', 32);
-      expect(customSvg).toContain('width="32"');
-    });
-  });
-
-  describe('weatherHourlyGraphSvg', () => {
-    it('returns empty string on empty or missing points', () => {
-      expect(weatherHourlyGraphSvg(null)).toBe('');
-      expect(weatherHourlyGraphSvg([])).toBe('');
-      expect(weatherHourlyGraphSvg([null])).toBe('');
-    });
-
-    it('renders a single point without curve or area path', () => {
+    it('computes layout for a single point without curve or area path', () => {
       const pts = [{ time: '2026-09-26T14:00', temp: 72.0, precip_prob: 0, icon: 'weather-sunny' }];
-      const svg = weatherHourlyGraphSvg(pts, 'test-widget');
-      expect(svg).toContain('<svg class="weather-hourly-graph"');
-      expect(svg).toContain('Now');
-      expect(svg).toContain('72°');
-      expect(svg).toContain('id="mm-weather-grad-test-widget"');
-      expect(svg).not.toContain('<path d="M');
+      const layout = computeHourlyGraphLayout(pts, 'test-widget');
+      expect(layout).not.toBeNull();
+      expect(layout?.totalWidth).toBe(560.0);
+      expect(layout?.svgHeight).toBe(300.0);
+      expect(layout?.baseY).toBe(240.0);
+      expect(layout?.gradientId).toBe('mm-weather-grad-test-widget');
+      expect(layout?.curvePath).toBe('');
+      expect(layout?.areaPath).toBe('');
+      expect(layout?.points).toHaveLength(1);
+      expect(layout?.points[0].tempRound).toBe(72);
+      expect(layout?.points[0].timeLabel).toBe('Now');
+      expect(layout?.points[0].icon).toBe('weather-sunny');
     });
 
-    it('renders multiple points with cubic Bezier paths and 108px default height', () => {
+    it('computes layout for multiple points with cubic Bezier paths and 300px default height', () => {
       const pts = [
         { time: '2026-09-26T14:00', temp: 65.0, precip_prob: 10, icon: 'weather-cloudy' },
         { time: '2026-09-26T15:00', temp: 68.0, precip_prob: 20, icon: 'weather-cloudy' },
         { time: '2026-09-26T16:00', temp: 62.0, precip_prob: 0, icon: 'weather-rainy' },
       ];
-      const svg = weatherHourlyGraphSvg(pts);
-      expect(svg).toContain('viewBox="0 0 560.0 108.0"');
-      expect(svg).toContain('<path d="M');
-      expect(svg).toContain('id="mm-weather-hourly-grad"');
-      expect(svg).toContain('Now');
-      expect(svg).toContain('3 PM');
-      expect(svg).toContain('4 PM');
-      expect(svg).toContain('☂ 10%');
-      expect(svg).toContain('☂ 20%');
+      const layout = computeHourlyGraphLayout(pts);
+      expect(layout).not.toBeNull();
+      expect(layout?.totalWidth).toBe(560.0);
+      expect(layout?.svgHeight).toBe(300.0);
+      expect(layout?.baseY).toBe(240.0);
+      expect(layout?.gradientId).toBe('mm-weather-hourly-grad');
+      expect(layout?.curvePath).toContain('M 93.3 147.5');
+      // Verify cubic Bezier control points: C (x0+dx, y0), (x1-dx, y1), (x1, y1)
+      expect(layout?.curvePath).toContain('C 186.7 147.5, 186.7 90.0, 280.0 90.0');
+      expect(layout?.areaPath).toContain('M 93.3 240.0 L 93.3 147.5');
+      expect(layout?.gridLinesPath).toContain('M 93.3 153.5 L 93.3 240.0');
+      expect(layout?.points).toHaveLength(3);
+      expect(layout?.points[0].timeLabel).toBe('Now');
+      expect(layout?.points[1].timeLabel).toBe('3 PM');
+      expect(layout?.points[2].timeLabel).toBe('4 PM');
+      expect(layout?.points[0].precipProb).toBe(10);
+      expect(layout?.points[1].precipProb).toBe(20);
+      expect(layout?.points[2].precipProb).toBe(0);
     });
 
-    it('caps rendering to the first 8 points', () => {
-      const pts = Array.from({ length: 12 }, (_, i) => ({
-        time: `2026-09-26T${String(12 + i).padStart(2, '0')}:00`,
-        temp: 70 + i,
+    it('computes layout for all 24 hourly points with totalWidth=1632.0', () => {
+      const pts = Array.from({ length: 24 }, (_, i) => ({
+        time: `2026-09-26T${String(i).padStart(2, '0')}:00`,
+        temp: 55 + (i % 10),
         icon: 'weather-sunny',
       }));
-      const svg = weatherHourlyGraphSvg(pts);
-      // Point 7 is 7 PM (19:00), Point 8 (20:00 = 8 PM) is the 9th item and should not be present
-      expect(svg).toContain('7 PM');
-      expect(svg).not.toContain('8 PM');
+      const layout = computeHourlyGraphLayout(pts);
+      expect(layout).not.toBeNull();
+      expect(layout?.totalWidth).toBe(1632.0);
+      expect(layout?.points).toHaveLength(24);
+      expect(layout?.points[0].timeLabel).toBe('Now');
+      expect(layout?.points[23].timeLabel).toBe('11 PM');
     });
 
-    it('supports 300px height mode when passed via options', () => {
+    it('supports compact 108px height mode when passed via options', () => {
       const pts = [
         { time: '2026-09-26T12:00', temp: 80.0, precip_prob: 40, icon: 'weather-rainy' },
         { time: '2026-09-26T13:00', temp: 50.0, precip_prob: 0, icon: 'weather-cloudy' },
       ];
-      const svg = weatherHourlyGraphSvg(pts, undefined, {
-        svgHeight: 300.0,
-        curveTop: 90.0,
-        curveBottom: 205.0,
-        baseY: 240.0,
+      const layout = computeHourlyGraphLayout(pts, undefined, {
+        svgHeight: 108.0,
+        curveTop: 34.0,
+        curveBottom: 78.0,
+        baseY: 90.0,
       });
-      expect(svg).toContain('viewBox="0 0 560.0 300.0"');
-      expect(svg).toContain('y1="240.0"');
-      expect(svg).toContain('y2="240.0"');
-      expect(svg).toContain('y="275"');
+      expect(layout).not.toBeNull();
+      expect(layout?.svgHeight).toBe(108.0);
+      expect(layout?.baseY).toBe(90.0);
+      expect(layout?.isTall).toBe(false);
+      expect(layout?.points[0].tempFontSize).toBe(12);
+      expect(layout?.points[0].circleR).toBe(3.5);
+      expect(layout?.points[0].timeY).toBe(102);
     });
   });
 });

@@ -26,6 +26,12 @@
   touch-action: pan-y;
 }
 
+/* Override hud.css touch-action: manipulation so horizontal touch drags on the indicator
+   pill are not claimed by the browser as a pan (which fires pointercancel before pointerup). */
+.screen-indicator {
+  touch-action: none;
+}
+
 /* Same grid as the legacy .grid-canvas (hud.css). Every pane has this geometry. */
 .grid-pane {
   position: absolute;
@@ -107,6 +113,11 @@ body[data-grid="2x6"] .grid-pane {
   min-height: 0;
   border: none;
   box-shadow: none;
+}
+
+.weather-hourly-graph text {
+  user-select: none;
+  pointer-events: none;
 }
 
 /* Common inner widget root layout filling WidgetHost's .widget-card container. */

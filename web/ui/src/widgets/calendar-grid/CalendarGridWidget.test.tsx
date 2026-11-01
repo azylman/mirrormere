@@ -600,8 +600,12 @@ describe('CalendarGridWidget', () => {
     let modal = container.querySelector('.cf-modal-overlay');
     expect(modal).not.toBeNull();
     expect(container.querySelector('.cf-modal-title')?.textContent).toBe('Morning Standup');
-    expect(container.querySelector('.cf-modal-time')?.textContent).toContain('09:00 – 09:30');
-    expect(container.querySelector('.cf-modal-location')?.textContent).toContain('Room 101');
+    const modalTime = container.querySelector('.cf-modal-time');
+    expect(modalTime?.querySelector('svg.cf-modal-icon')).not.toBeNull();
+    expect(modalTime?.textContent).toBe('Mon, Oct 26 • 09:00 – 09:30');
+    const modalLocation = container.querySelector('.cf-modal-location');
+    expect(modalLocation?.querySelector('svg.cf-modal-icon')).not.toBeNull();
+    expect(modalLocation?.textContent).toBe('Room 101');
     expect(container.querySelector('.cf-modal-owner-chip')?.textContent).toContain('Alex');
     expect(container.querySelector('.cf-modal-description')?.textContent).toContain('Weekly team sprint planning');
 
@@ -615,9 +619,11 @@ describe('CalendarGridWidget', () => {
     expect(mealieEl).not.toBeNull();
     fireEvent.click(mealieEl!);
 
-    // Modal has Mealie hero image
+    // Modal has Mealie hero image and formatted all-day date
     modal = container.querySelector('.cf-modal-overlay');
     expect(modal).not.toBeNull();
+    expect(container.querySelector('.cf-modal-title')?.textContent).toBe('Tacos Dinner');
+    expect(container.querySelector('.cf-modal-time')?.textContent).toBe('Tue, Oct 27 • All Day');
     const heroImg = container.querySelector('.cf-modal-card img');
     expect(heroImg?.getAttribute('src')).toBe('/hearth-api/mealie/image/tacos.jpg');
 
@@ -630,6 +636,13 @@ describe('CalendarGridWidget', () => {
     modal = container.querySelector('.cf-modal-overlay')!;
     fireEvent.click(modal);
     expect(container.querySelector('.cf-modal-overlay')).toBeNull();
+
+    // Click multi-day all-day span event
+    const allDaySpanEl = container.querySelector('[data-event-id="ev-allday-1"]');
+    expect(allDaySpanEl).not.toBeNull();
+    fireEvent.click(allDaySpanEl!);
+    expect(container.querySelector('.cf-modal-time')?.textContent).toBe('Mon, Oct 26 – Tue, Oct 27 • All Day');
+    fireEvent.keyDown(window, { key: 'Escape' });
   });
 
   it('decorates Mealie all-day pills declaratively with data-mealie-decorated="true"', () => {
@@ -657,7 +670,8 @@ describe('CalendarGridWidget', () => {
     expect(mealiePill?.getAttribute('data-mealie-decorated')).toBe('true');
     const pillImg = mealiePill?.querySelector('img');
     expect(pillImg?.getAttribute('src')).toBe('/hearth-api/mealie/image/tacos.jpg');
-    expect(mealiePill?.textContent).toContain('🍽️ Tacos Dinner');
+    expect(mealiePill?.querySelector('svg.cf-mealie-icon')).not.toBeNull();
+    expect(mealiePill?.textContent).toBe('Tacos Dinner');
   });
 
   it('manages 60s inactivity reset and store pause/resume', () => {

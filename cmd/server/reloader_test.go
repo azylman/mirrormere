@@ -16,17 +16,21 @@ import (
 )
 
 type reloaderTestEnv struct {
-	customCSSPath, builtinDir, customDir string
-	renderEngine                         *render.Engine
-	configManager                        *config.Manager
-	eventCh                              <-chan *events.Event
-	reloader                             *AssetReloader
+	customCSSPath, webDir, builtinDir, customDir string
+	renderEngine                                 *render.Engine
+	configManager                                *config.Manager
+	eventCh                                      <-chan *events.Event
+	reloader                                     *AssetReloader
 }
 
 func setupReloaderTest(t *testing.T, initialCSS bool) *reloaderTestEnv {
 	t.Helper()
 	tmp := t.TempDir()
-	css, bDir, cDir := filepath.Join(tmp, "c.css"), filepath.Join(tmp, "b"), filepath.Join(tmp, "c")
+	css, wDir, bDir, cDir := filepath.Join(tmp, "c.css"), filepath.Join(tmp, "web"), filepath.Join(tmp, "b"), filepath.Join(tmp, "c")
+	_ = os.MkdirAll(filepath.Join(wDir, "static", "ui"), 0o755)
+	_ = os.MkdirAll(filepath.Join(wDir, "templates"), 0o755)
+	_ = os.WriteFile(filepath.Join(wDir, "static", "ui", "app.js"), []byte("console.log('v1');"), 0o644)
+	_ = os.WriteFile(filepath.Join(wDir, "templates", "display_react.html"), []byte("<html>v1</html>"), 0o644)
 	_ = os.MkdirAll(bDir, 0o755)
 	_ = os.MkdirAll(cDir, 0o755)
 	writeWidgetPkg(t, bDir, "test-widget", "default", "<div>Initial View</div>", "", "")
@@ -45,8 +49,8 @@ func setupReloaderTest(t *testing.T, initialCSS bool) *reloaderTestEnv {
 	t.Cleanup(unsub)
 	eng := render.NewEngine(loader, sp)
 	return &reloaderTestEnv{
-		customCSSPath: css, builtinDir: bDir, customDir: cDir, renderEngine: eng,
-		configManager: cfgMgr, eventCh: ch, reloader: NewAssetReloader(css, loader, bDir, cDir, eng, cfgMgr, hub, nil),
+		customCSSPath: css, webDir: wDir, builtinDir: bDir, customDir: cDir, renderEngine: eng,
+		configManager: cfgMgr, eventCh: ch, reloader: NewAssetReloader(css, loader, bDir, cDir, eng, cfgMgr, hub, nil, WithWebDir(wDir)),
 	}
 }
 
@@ -140,6 +144,52 @@ func TestAssetReloader_ReloadCSS(t *testing.T) {
 				}
 			}
 			if env.reloader.ReloadCSS() {
+				t.Error("expected subsequent false")
+			}
+			expectNoEvent(t, env.eventCh)
+		})
+	}
+}
+
+func TestAssetReloader_ReloadWeb(t *testing.T) {
+	tests := []struct {
+		name, relFile, content string
+		emptyDir, wantReload   bool
+	}{
+		{"static_ui_modified", "static/ui/app.js", "console.log('v2');", false, true},
+		{"template_modified", "templates/display_react.html", "<html>v2</html>", false, true},
+		{"ui_src_ignored", "ui/src/main.tsx", "export default 1;", false, false},
+		{"hidden_dir_ignored", ".cache/tmp.js", "x", false, false},
+		{"unchanged", "", "", false, false},
+		{"empty_web_dir", "", "", true, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			env := setupReloaderTest(t, false)
+			drainEvents(env.eventCh)
+			if tc.emptyDir {
+				r := NewAssetReloader("", nil, "", "", nil, nil, nil, nil, WithWebDir(filepath.Join(t.TempDir(), "missing")))
+				if r.ReloadWeb() {
+					t.Fatal("expected false for missing webDir")
+				}
+				return
+			}
+			if tc.relFile != "" {
+				p := filepath.Join(env.webDir, filepath.FromSlash(tc.relFile))
+				_ = os.MkdirAll(filepath.Dir(p), 0o755)
+				_ = os.WriteFile(p, []byte(tc.content), 0o644)
+			}
+			if got := env.reloader.ReloadWeb(); got != tc.wantReload {
+				t.Fatalf("ReloadWeb() = %v, want %v", got, tc.wantReload)
+			}
+			if tc.wantReload {
+				evt := expectEvent(t, env.eventCh, events.EventSystemReload, 2*time.Second)
+				var payload events.SystemReloadEvent
+				if err := json.Unmarshal(evt.Data, &payload); err != nil || payload.Reason != "web_assets" {
+					t.Fatalf("unexpected payload: %v, err=%v", payload, err)
+				}
+			}
+			if env.reloader.ReloadWeb() {
 				t.Error("expected subsequent false")
 			}
 			expectNoEvent(t, env.eventCh)
@@ -355,6 +405,7 @@ func TestAssetReloader_ComputePackageHash(t *testing.T) {
 			pkg: &domain.Package{
 				ManifestPath: "/nonexistent/manifest.yaml",
 				ViewPath:     "/nonexistent/widget.html",
+				AssetsDir:    "/nonexistent/assets",
 			},
 			wantZero: false,
 		},
