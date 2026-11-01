@@ -13,17 +13,33 @@ export interface ScreenProps {
   ready: boolean;
 }
 
-export function scheduleIdleStep(callback: () => void): () => void {
-  if (typeof window !== 'undefined' && typeof (window as unknown as { requestIdleCallback?: (cb: () => void) => number }).requestIdleCallback === 'function') {
-    const handle = (window as unknown as { requestIdleCallback: (cb: () => void) => number }).requestIdleCallback(() => callback());
+/**
+ * Runs `step` in the next idle slot, with a 300 ms timeout so it cannot starve. Falls back to
+ * a 16 ms timer where requestIdleCallback is missing. Returns a cancel function.
+ *
+ * Not gated on `data-animating`: holding the step until an animation ends lands it exactly
+ * when the settle commit runs, which brings the long task back (#803 bench, 4 of 5 runs).
+ */
+export function scheduleIdleStep(step: () => void): () => void {
+  let cancelled = false;
+  const run = () => {
+    if (!cancelled) step();
+  };
+  // Both functions are read once, so the cancel matches the scheduler that queued the step.
+  const ric = window.requestIdleCallback;
+  const cic = window.cancelIdleCallback;
+  if (typeof ric === 'function' && typeof cic === 'function') {
+    const id = ric.call(window, run, { timeout: 300 });
     return () => {
-      if (typeof (window as unknown as { cancelIdleCallback?: (id: number) => void }).cancelIdleCallback === 'function') {
-        (window as unknown as { cancelIdleCallback: (id: number) => void }).cancelIdleCallback(handle);
-      }
+      cancelled = true;
+      cic.call(window, id);
     };
   }
-  const timer = setTimeout(() => callback(), 0);
-  return () => clearTimeout(timer);
+  const id = window.setTimeout(run, 16);
+  return () => {
+    cancelled = true;
+    window.clearTimeout(id);
+  };
 }
 
 interface Subscriber {
@@ -139,6 +155,7 @@ export const Screen = memo(function Screen({ index, offset, placements, ready }:
 
     return () => {
       subscribers.delete(sub);
+      // If the picked subscriber unmounts mid-wait, the callback re-evaluates targets on fire so canceling only when subscribers.size === 0 is safe.
       if (subscribers.size === 0 && cancelPendingStep !== null) {
         cancelPendingStep();
         cancelPendingStep = null;
