@@ -49,7 +49,9 @@ function selectScreen(index: number): void {
       if (!res.ok) throw new Error(`screen select: HTTP ${res.status}`);
     })
     .catch((err: unknown) => {
-      useDisplayStore.getState().setCurrentScreen(previous);
+      const s = useDisplayStore.getState();
+      // Revert only when nothing newer happened (a rotate or another pick moves currentScreen).
+      if (s.screen.currentScreen === index) s.setCurrentScreen(previous < s.screen.totalScreens ? previous : 0);
       console.error('[mirrormere] screen select failed:', err);
     });
 }

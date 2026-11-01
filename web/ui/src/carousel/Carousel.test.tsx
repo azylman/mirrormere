@@ -305,6 +305,40 @@ describe('Carousel', () => {
       expect(activeDot()).toBe(1);
     });
 
+    it('does not revert a failed select when a newer rotate has moved the screen on', async () => {
+      vi.useFakeTimers();
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+      let rejectSelect: (err: Error) => void = () => {};
+      stubApi(screens, () => new Promise<Response>((_, reject) => (rejectSelect = reject)));
+      render(<Carousel />);
+      await act(async () => {});
+
+      await selectAndSettle();
+      expect(useDisplayStore.getState().screen.currentScreen).toBe(2);
+
+      act(() => {
+        useDisplayStore.getState().applyEvents([
+          {
+            type: 'screen.rotate',
+            data: {
+              current_screen: 0,
+              total_screens: 3,
+              interval_seconds: 30,
+              widgets: layout[0].widgets.map((w) => ({ widget_id: w.widget_id, origin: w.origin, dimensions: w.dimensions })),
+            },
+          },
+        ]);
+      });
+      expect(useDisplayStore.getState().screen.currentScreen).toBe(0);
+
+      await act(async () => {
+        rejectSelect(new TypeError('network down'));
+      });
+
+      expect(consoleError).toHaveBeenCalled();
+      expect(useDisplayStore.getState().screen.currentScreen).toBe(0);
+    });
+
     it('restores the previous screen and slides back when the request returns 500', async () => {
       vi.useFakeTimers();
       const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
