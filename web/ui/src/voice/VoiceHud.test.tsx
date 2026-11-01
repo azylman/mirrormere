@@ -519,13 +519,47 @@ describe('VoiceHud and declarative voice system', () => {
       });
       expect(window.audioManager?.isDucked).toBe(true);
 
-      // Advance past 30 seconds: watchdog fires and restores state
+      // Advance past 30 seconds: watchdog fires and restores local HUD state without overwriting store voice slice
       act(() => {
         vi.advanceTimersByTime(1500);
       });
       expect(window.voiceHUD?.currentState).toBe('idle');
       expect(window.audioManager?.isDucked).toBe(false);
+      expect(useDisplayStore.getState().voice.state).toBe('listening');
 
+      vi.useRealTimers();
+    });
+
+    it('re-arms 30s safety watchdog on repeated thinking events with identical status (#874)', () => {
+      vi.useFakeTimers();
+      renderVoiceSystem();
+      const headerVoice = document.getElementById('header-voice')!;
+      const setDuckedSpy = vi.spyOn(window.audioManager!, 'setDucked');
+
+      for (let step = 0; step < 3; step++) {
+        act(() => {
+          useDisplayStore.getState().applyEvents([
+            {
+              type: 'voice.state',
+              data: {
+                state: 'thinking',
+                transcript: 'Check system status',
+                reply: null,
+                tts_engine: null,
+                status: '⚡ Running diagnostics...',
+              },
+            },
+          ]);
+        });
+        act(() => {
+          vi.advanceTimersByTime(20000);
+        });
+        expect(headerVoice.classList.contains('visible')).toBe(true);
+        expect(window.voiceHUD?.currentState).toBe('thinking');
+        expect(window.audioManager?.isDucked).toBe(true);
+      }
+
+      expect(setDuckedSpy).not.toHaveBeenCalledWith(false);
       vi.useRealTimers();
     });
   });

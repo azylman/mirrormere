@@ -96,7 +96,7 @@ export const VoiceHud = memo(function VoiceHud() {
     }
 
     let timer: ReturnType<typeof setTimeout> | null = null;
-    if (shouldDuck || Boolean(hud.statusText)) {
+    if (hud.voice && (shouldDuck || Boolean(hud.statusText))) {
       timer = setTimeout(() => {
         handleReset();
       }, 30000);
@@ -111,7 +111,7 @@ export const VoiceHud = memo(function VoiceHud() {
         clearTimeout(timer);
       }
     };
-  }, [hud.activeState, hud.statusText, handleReset]);
+  }, [hud.voice, hud.activeState, hud.statusText, handleReset]);
 
   return (
     <>

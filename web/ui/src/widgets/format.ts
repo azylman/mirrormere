@@ -715,6 +715,7 @@ export interface WeatherHourlyGraphOptions {
   curveTop?: number;
   curveBottom?: number;
   baseY?: number;
+  containerWidth?: number;
 }
 
 export interface HourlyPointLayout {
@@ -814,7 +815,9 @@ export function computeHourlyGraphLayout(
   const isTall = svgHeight >= 200.0;
 
   let colWidth = baseColWidth;
-  if (n * colWidth < minGraphWidth && n > 0) {
+  if (options?.containerWidth && options.containerWidth > 0 && n > 0) {
+    colWidth = options.containerWidth / n;
+  } else if (n * colWidth < minGraphWidth && n > 0) {
     colWidth = minGraphWidth / n;
   }
   const totalWidth = n * colWidth;

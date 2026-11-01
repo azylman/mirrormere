@@ -21,14 +21,14 @@ export interface TouchForwardingHandlers {
 
 /**
  * Hook for forwarding pointer/touch gestures on interactive streams to the remote sidecar.
- * Handles down, throttled move (50ms), up, and tap gestures (< 300ms, < 15px).
+ * Handles down, throttled move (30ms), up, and tap gestures (<= 10px).
  */
 export function useTouchForwarding({
   enabled = true,
   remoteUrl = '',
   mediaRef,
   customFetch,
-  throttleMs = 50,
+  throttleMs = 30,
 }: UseTouchForwardingOptions): TouchForwardingHandlers {
   const isDownRef = useRef(false);
   const startXRef = useRef(0);
@@ -68,7 +68,7 @@ export function useTouchForwarding({
       const currentX = e.clientX;
       const currentY = e.clientY;
       const dist = Math.hypot(currentX - startXRef.current, currentY - startYRef.current);
-      if (dist >= 15) {
+      if (dist > 10) {
         hasMovedRef.current = true;
       }
 
@@ -98,11 +98,12 @@ export function useTouchForwarding({
 
       const mediaEl = mediaRef.current;
       const coords = getNormalizedVideoCoordinates(e.nativeEvent, mediaEl);
-      const now = Date.now();
-      const duration = now - downTimeRef.current;
       const dist = Math.hypot(e.clientX - startXRef.current, e.clientY - startYRef.current);
+      if (dist > 10) {
+        hasMovedRef.current = true;
+      }
 
-      if (duration < 300 && dist < 15 && !hasMovedRef.current && coords) {
+      if (!hasMovedRef.current && coords) {
         void postTouchEvent(remoteUrl, 'tap', coords.x, coords.y, customFetch);
       } else if (coords) {
         void postTouchEvent(remoteUrl, 'up', coords.x, coords.y, customFetch);
