@@ -4,6 +4,7 @@ import type { WidgetComponentProps } from '../registry';
 import { useIsCurrentPane } from '../../carousel/PaneContext';
 import { useDocumentVisible } from '../../lifecycle/visibility';
 import { beginAnimation, endAnimation } from '../../perf/animating';
+import { useDisplayStore } from '../../store';
 
 export interface PhotoItem {
   id?: string;
@@ -109,12 +110,95 @@ export function getSizedPhotoURL(
   return `${rawUrl}=w${targetWidth}-h${targetHeight}`;
 }
 
+export interface WidgetPhotoDeckState {
+  currentKey: string | null;
+  seenKeys: Set<string>;
+  remainingMs: number | null;
+}
+
+export const photoDeckStateById = new Map<string, WidgetPhotoDeckState>();
+
+useDisplayStore.subscribe((state) => {
+  for (const id of Array.from(photoDeckStateById.keys())) {
+    if (!state?.widgets?.[id]) {
+      photoDeckStateById.delete(id);
+    }
+  }
+});
+
+function getWidgetPhotoDeckState(id: string): WidgetPhotoDeckState {
+  let deck = photoDeckStateById.get(id);
+  if (!deck) {
+    deck = {
+      currentKey: null,
+      seenKeys: new Set<string>(),
+      remainingMs: null,
+    };
+    photoDeckStateById.set(id, deck);
+  }
+  return deck;
+}
+
+export function getPhotoItemKey(item?: PhotoItem, fallbackIndex?: number): string {
+  const rawUrl = item?.url ?? item?.URL;
+  if (rawUrl && rawUrl.trim() !== '') return rawUrl;
+  if (item?.id && item.id.trim() !== '') return item.id;
+  return fallbackIndex !== undefined ? String(fallbackIndex) : '';
+}
+
+export function selectNextPhotoIndex(
+  photos: readonly PhotoItem[],
+  baseIndex: number,
+  seenKeys: Set<string>,
+): number {
+  if (photos.length <= 1) return 0;
+  const safeBase = ((baseIndex % photos.length) + photos.length) % photos.length;
+  for (let i = 1; i < photos.length; i++) {
+    const candidateIdx = (safeBase + i) % photos.length;
+    const candidateKey = getPhotoItemKey(photos[candidateIdx], candidateIdx);
+    if (!seenKeys.has(candidateKey)) {
+      return candidateIdx;
+    }
+  }
+  seenKeys.clear();
+  return (safeBase + 1) % photos.length;
+}
+
+function scheduleCycleTick(
+  timerRef: React.MutableRefObject<ReturnType<typeof setTimeout> | null>,
+  activeDelayMsRef: React.MutableRefObject<number>,
+  cycleStartedAtRef: React.MutableRefObject<number | null>,
+  deck: WidgetPhotoDeckState,
+  cycleIntervalSeconds: number,
+  triggerAdvance: () => void,
+  delayMs: number,
+) {
+  timerRef.current = setTimeout(() => {
+    deck.remainingMs = cycleIntervalSeconds * 1000;
+    activeDelayMsRef.current = cycleIntervalSeconds * 1000;
+    cycleStartedAtRef.current = Date.now();
+    triggerAdvance();
+    scheduleCycleTick(
+      timerRef,
+      activeDelayMsRef,
+      cycleStartedAtRef,
+      deck,
+      cycleIntervalSeconds,
+      triggerAdvance,
+      cycleIntervalSeconds * 1000,
+    );
+  }, delayMs);
+}
+
 export const PhotoCarouselWidget = memo(function PhotoCarouselWidget({
   id,
 }: WidgetComponentProps) {
   const entry = useWidget(id);
   const isCurrentPane = useIsCurrentPane();
   const isDocumentVisible = useDocumentVisible();
+  const isVideoMode = useDisplayStore(
+    (s) => (s.video?.mode || (s.video?.primary ? 'video' : 'widgets')) === 'video',
+  );
 
   const config = entry?.meta?.config as PhotoCarouselConfig | undefined;
   const rawData = entry?.data;
@@ -128,11 +212,32 @@ export const PhotoCarouselWidget = memo(function PhotoCarouselWidget({
     Number(data?.cycle_interval_seconds ?? config?.cycle_interval_seconds) || 60,
   );
 
+  const deck = getWidgetPhotoDeckState(id);
+
   const rootRef = useRef<HTMLDivElement | null>(null);
   const [containerSize, setContainerSize] = useState<ContainerSize>({ width: 0, height: 0 });
   const containerSizeRef = useRef<ContainerSize>({ width: 0, height: 0 });
 
-  const [currentIndex, setCurrentIndex] = useState(0);
+  const [currentIndex, setCurrentIndex] = useState(() => {
+    if (photos.length === 0) return 0;
+    if (deck.currentKey) {
+      const idx = photos.findIndex((p, i) => getPhotoItemKey(p, i) === deck.currentKey);
+      if (idx !== -1) {
+        deck.seenKeys.add(deck.currentKey);
+        return idx;
+      }
+    }
+    let unseenIdx = photos.findIndex((p, i) => !deck.seenKeys.has(getPhotoItemKey(p, i)));
+    if (unseenIdx === -1) {
+      deck.seenKeys.clear();
+      unseenIdx = 0;
+    }
+    const key = getPhotoItemKey(photos[unseenIdx], unseenIdx);
+    deck.currentKey = key;
+    deck.seenKeys.add(key);
+    return unseenIdx;
+  });
+
   const safeIndex = photos.length > 0 ? currentIndex % photos.length : 0;
   const currentIndexRef = useRef(safeIndex);
   currentIndexRef.current = safeIndex;
@@ -142,7 +247,33 @@ export const PhotoCarouselWidget = memo(function PhotoCarouselWidget({
 
   useEffect(() => {
     probeIndexRef.current = null;
-  }, [photos]);
+    if (photos.length === 0) return;
+
+    if (deck.currentKey) {
+      const idx = photos.findIndex((p, i) => getPhotoItemKey(p, i) === deck.currentKey);
+      if (idx !== -1) {
+        deck.seenKeys.add(deck.currentKey);
+        if (currentIndexRef.current !== idx) {
+          setCurrentIndex(idx);
+          currentIndexRef.current = idx;
+        }
+        return;
+      }
+    }
+
+    let unseenIdx = photos.findIndex((p, i) => !deck.seenKeys.has(getPhotoItemKey(p, i)));
+    if (unseenIdx === -1) {
+      deck.seenKeys.clear();
+      unseenIdx = 0;
+    }
+    const key = getPhotoItemKey(photos[unseenIdx], unseenIdx);
+    deck.currentKey = key;
+    deck.seenKeys.add(key);
+    if (currentIndexRef.current !== unseenIdx) {
+      setCurrentIndex(unseenIdx);
+      currentIndexRef.current = unseenIdx;
+    }
+  }, [photos, deck]);
 
   const photosRef = useRef(photos);
   photosRef.current = photos;
@@ -178,8 +309,10 @@ export const PhotoCarouselWidget = memo(function PhotoCarouselWidget({
   transitionStateRef.current = transitionState;
 
   const cycleSeqRef = useRef(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const transitionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cycleStartedAtRef = useRef<number | null>(null);
+  const activeDelayMsRef = useRef<number>(cycleIntervalSeconds * 1000);
 
   // ResizeObserver for measuring container size (never forced via getBoundingClientRect)
   useEffect(() => {
@@ -225,6 +358,9 @@ export const PhotoCarouselWidget = memo(function PhotoCarouselWidget({
       : (probeIndexRef.current ?? currentIndexRef.current);
 
     if (transitionStateRef.current?.active) {
+      const baseKey = getPhotoItemKey(currentPhotos[baseIndex], baseIndex);
+      deck.currentKey = baseKey;
+      deck.seenKeys.add(baseKey);
       setCurrentIndex(baseIndex);
       currentIndexRef.current = baseIndex;
       stopAnimation();
@@ -234,13 +370,21 @@ export const PhotoCarouselWidget = memo(function PhotoCarouselWidget({
       }
       transitionStateRef.current = null;
       setTransitionState(null);
+    } else {
+      const baseKey = getPhotoItemKey(currentPhotos[baseIndex], baseIndex);
+      deck.currentKey = baseKey;
+      deck.seenKeys.add(baseKey);
     }
 
-    const nextIndex = (baseIndex + 1) % currentPhotos.length;
+    const nextIndex = selectNextPhotoIndex(currentPhotos, baseIndex, deck.seenKeys);
     const nextPhoto = currentPhotos[nextIndex];
     const nextRawUrl = nextPhoto?.url ?? nextPhoto?.URL;
+    const nextKey = getPhotoItemKey(nextPhoto, nextIndex);
+
     if (!nextRawUrl) {
+      deck.seenKeys.add(nextKey);
       probeIndexRef.current = nextIndex;
+      deck.remainingMs = cycleIntervalSeconds * 1000;
       clearPendingTransition();
       setRetryTick((t) => t + 1);
       return;
@@ -290,7 +434,9 @@ export const PhotoCarouselWidget = memo(function PhotoCarouselWidget({
       if (cycleSeqRef.current !== seq) return;
 
       if (!ok) {
+        deck.seenKeys.add(nextKey);
         probeIndexRef.current = nextIndex;
+        deck.remainingMs = cycleIntervalSeconds * 1000;
         clearPendingTransition();
         setRetryTick((t) => t + 1);
         return;
@@ -304,6 +450,8 @@ export const PhotoCarouselWidget = memo(function PhotoCarouselWidget({
 
       transitionTimeoutRef.current = setTimeout(() => {
         if (cycleSeqRef.current !== seq) return;
+        deck.currentKey = nextKey;
+        deck.seenKeys.add(nextKey);
         setCurrentIndex(nextIndex);
         currentIndexRef.current = nextIndex;
         stopAnimation();
@@ -312,55 +460,95 @@ export const PhotoCarouselWidget = memo(function PhotoCarouselWidget({
         transitionTimeoutRef.current = null;
       }, CROSSFADE_MS);
     });
-  }, [clearPendingTransition, startAnimation, stopAnimation]);
+  }, [clearPendingTransition, startAnimation, stopAnimation, cycleIntervalSeconds, deck]);
 
   // Handle tap-to-advance and reset interval
   const handleClick = useCallback(() => {
     if (photos.length > 1) {
+      deck.remainingMs = cycleIntervalSeconds * 1000;
       triggerAdvance();
       if (timerRef.current) {
-        clearInterval(timerRef.current);
+        clearTimeout(timerRef.current);
         timerRef.current = null;
       }
-      if (isCurrentPane && isDocumentVisible) {
-        timerRef.current = setInterval(triggerAdvance, cycleIntervalSeconds * 1000);
+      if (isCurrentPane && isDocumentVisible && !isVideoMode) {
+        activeDelayMsRef.current = cycleIntervalSeconds * 1000;
+        cycleStartedAtRef.current = Date.now();
+        scheduleCycleTick(
+          timerRef,
+          activeDelayMsRef,
+          cycleStartedAtRef,
+          deck,
+          cycleIntervalSeconds,
+          triggerAdvance,
+          cycleIntervalSeconds * 1000,
+        );
       }
     }
-  }, [photos.length, triggerAdvance, isCurrentPane, isDocumentVisible, cycleIntervalSeconds]);
+  }, [
+    photos.length,
+    triggerAdvance,
+    isCurrentPane,
+    isDocumentVisible,
+    isVideoMode,
+    cycleIntervalSeconds,
+    deck,
+  ]);
 
   // Interval timer subscription
   useEffect(() => {
     if (timerRef.current) {
-      clearInterval(timerRef.current);
+      clearTimeout(timerRef.current);
       timerRef.current = null;
     }
 
-    if (!isCurrentPane || !isDocumentVisible) {
+    const shouldRun = isCurrentPane && isDocumentVisible && !isVideoMode && photos.length > 1;
+
+    if (!shouldRun) {
+      if (cycleStartedAtRef.current !== null) {
+        const elapsed = Date.now() - cycleStartedAtRef.current;
+        deck.remainingMs = Math.max(1, activeDelayMsRef.current - elapsed);
+        cycleStartedAtRef.current = null;
+      }
       clearPendingTransition();
       return;
     }
 
-    if (photos.length <= 1) {
-      clearPendingTransition();
-      return;
-    }
+    const initialDelayMs = deck.remainingMs ?? cycleIntervalSeconds * 1000;
+    activeDelayMsRef.current = initialDelayMs;
+    cycleStartedAtRef.current = Date.now();
 
-    timerRef.current = setInterval(triggerAdvance, cycleIntervalSeconds * 1000);
+    scheduleCycleTick(
+      timerRef,
+      activeDelayMsRef,
+      cycleStartedAtRef,
+      deck,
+      cycleIntervalSeconds,
+      triggerAdvance,
+      initialDelayMs,
+    );
 
     return () => {
+      if (cycleStartedAtRef.current !== null) {
+        const elapsed = Date.now() - cycleStartedAtRef.current;
+        deck.remainingMs = Math.max(1, activeDelayMsRef.current - elapsed);
+        cycleStartedAtRef.current = null;
+      }
       if (timerRef.current) {
-        clearInterval(timerRef.current);
+        clearTimeout(timerRef.current);
         timerRef.current = null;
       }
     };
   }, [
     isCurrentPane,
     isDocumentVisible,
+    isVideoMode,
     photos.length,
     cycleIntervalSeconds,
     triggerAdvance,
     clearPendingTransition,
     retryTick,
+    deck,
   ]);
 
   // Cleanup on unmount

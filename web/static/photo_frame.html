@@ -164,6 +164,8 @@
 
   let photos = [];
   let currentIndex = 0;
+  let currentPhotoKey = '';
+  let seenKeys = new Set();
   let activeSlot = 'a';
   let rotateTimer = null;
   let albumUrl = '';
@@ -179,15 +181,38 @@
   const nextBtn = document.getElementById('next-btn');
   const statusCaption = document.getElementById('status-caption');
 
+  function photoKey(url) {
+    if (!url || typeof url !== 'string') return '';
+    return url.split('=')[0];
+  }
+
   function formatPhotoUrl(baseUrl) {
     if (!baseUrl) return '';
-    const clean = baseUrl.split('=')[0];
+    const clean = photoKey(baseUrl);
     return clean + '=w1080-h1080-c';
+  }
+
+  function selectNextIndex(baseIdx) {
+    if (photos.length <= 1) return 0;
+    const safeBase = ((baseIdx % photos.length) + photos.length) % photos.length;
+    for (let i = 1; i < photos.length; i++) {
+      const idx = (safeBase + i) % photos.length;
+      const key = photoKey(photos[idx]);
+      if (!seenKeys.has(key)) {
+        return idx;
+      }
+    }
+    seenKeys.clear();
+    return (safeBase + 1) % photos.length;
   }
 
   function showPhoto(idx) {
     if (!photos.length) return;
     currentIndex = ((idx % photos.length) + photos.length) % photos.length;
+    currentPhotoKey = photoKey(photos[currentIndex]);
+    if (currentPhotoKey) {
+      seenKeys.add(currentPhotoKey);
+    }
     const url = formatPhotoUrl(photos[currentIndex]);
     const nextSlide = activeSlot === 'a' ? slideB : slideA;
     const prevSlide = activeSlot === 'a' ? slideA : slideB;
@@ -211,9 +236,44 @@
     if (rotateTimer) clearInterval(rotateTimer);
     rotateTimer = setInterval(function() {
       if (photos.length > 1) {
-        showPhoto(currentIndex + 1);
+        showPhoto(selectNextIndex(currentIndex));
       }
     }, ROTATE_MS);
+  }
+
+  function reconcilePhotos(incomingUrls) {
+    if (!Array.isArray(incomingUrls) || !incomingUrls.length) return;
+    photos = incomingUrls;
+
+    const existingIndex = currentPhotoKey
+      ? photos.findIndex((u) => photoKey(u) === currentPhotoKey)
+      : -1;
+
+    if (existingIndex !== -1) {
+      currentIndex = existingIndex;
+      if (currentPhotoKey) {
+        seenKeys.add(currentPhotoKey);
+      }
+      emptyState.classList.add('hidden');
+      syncDot.classList.remove('pending');
+      counterPill.style.display = 'inline-block';
+      counterPill.textContent = (currentIndex + 1) + ' / ' + photos.length;
+      nextBtn.style.display = 'inline-block';
+      statusCaption.textContent = 'Tap photo to advance';
+      if (!rotateTimer) {
+        startRotation();
+      }
+    } else {
+      let targetIndex = photos.findIndex((u) => !seenKeys.has(photoKey(u)));
+      if (targetIndex === -1) {
+        seenKeys.clear();
+        targetIndex = 0;
+      }
+      showPhoto(targetIndex);
+      if (!rotateTimer) {
+        startRotation();
+      }
+    }
   }
 
   async function pushSyncedPhotosToBackend(extractedUrls, sourceLabel) {
@@ -231,9 +291,7 @@
       if (resp.ok) {
         const data = await resp.json();
         if (Array.isArray(data.photos) && data.photos.length) {
-          photos = data.photos;
-          showPhoto(0);
-          startRotation();
+          reconcilePhotos(data.photos);
         }
       }
     } catch (err) {
@@ -246,9 +304,7 @@
     try {
       const data = typeof payload === 'string' ? JSON.parse(payload) : payload;
       if (data && Array.isArray(data.photos) && data.photos.length > 0) {
-        photos = data.photos;
-        showPhoto(0);
-        startRotation();
+        reconcilePhotos(data.photos);
         pushSyncedPhotosToBackend(data.photos, data.source || 'ember-android');
       } else if (data && data.needs_auth) {
         emptyDesc.textContent = 'Tap below to authorize your Android Google account for Google Photos.';
@@ -320,9 +376,7 @@
         if (emptyTitleEl) emptyTitleEl.textContent = data.album_title;
       }
       if (Array.isArray(data.photos) && data.photos.length > 0) {
-        photos = data.photos;
-        showPhoto(currentIndex);
-        startRotation();
+        reconcilePhotos(data.photos);
       } else {
         // Attempt automatic silent sync if running inside Ember Android WebView
         triggerAndroidBridgeSync(false);
@@ -348,7 +402,7 @@
   nextBtn.addEventListener('click', function(ev) {
     ev.stopPropagation();
     if (photos.length > 0) {
-      showPhoto(currentIndex + 1);
+      showPhoto(selectNextIndex(currentIndex));
       startRotation();
     }
   });
@@ -373,7 +427,7 @@
       window.parent.postMessage({ type: 'hearth-swipe', direction: dx < 0 ? 'next' : 'prev' }, '*');
     } else if (Math.abs(dx) < 15 && Math.abs(dy) < 15 && photos.length > 1) {
       if (!e.target.closest('button')) {
-        showPhoto(currentIndex + 1);
+        showPhoto(selectNextIndex(currentIndex));
         startRotation();
       }
     }

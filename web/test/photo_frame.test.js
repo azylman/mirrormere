@@ -36,6 +36,9 @@ function createMockElement(id) {
       listeners[ev] = listeners[ev].filter((h) => h !== handler);
     },
     closest: () => null,
+    click: () => {
+      (listeners['click'] || []).forEach((h) => h({ stopPropagation: () => {} }));
+    },
   };
 }
 
@@ -268,5 +271,67 @@ describe('Photo Frame Multi-Iframe Sync (#848)', () => {
       });
     }
     assert.equal(inst.elements['counter-pill'].textContent, '1 / 1', 'Valid message must update photo pool');
+  });
+
+  test('reconcilePhotos preserves active photo slide and updates counter pill during Ember sync without reloading', () => {
+    const inst = createPhotoFrameInstance({ parentWindow: null, origin: 'http://localhost:8080' });
+
+    // Initial sync with 2 photos
+    inst.window.onEmberPhotosSynced({
+      photos: [
+        'https://lh3.googleusercontent.com/pw/photoA=w500',
+        'https://lh3.googleusercontent.com/pw/photoB=w500',
+      ],
+    });
+
+    assert.equal(inst.elements['counter-pill'].textContent, '1 / 2');
+    const slideB = inst.elements['slide-b'];
+    assert.equal(slideB.src, 'https://lh3.googleusercontent.com/pw/photoA=w1080-h1080-c');
+
+    // Trigger onload to mark active
+    slideB.onload();
+
+    // Reset slideA src to test whether it gets reloaded
+    const slideA = inst.elements['slide-a'];
+    slideA.src = 'untouched';
+
+    // 5m periodic sync arrives with updated sizing query params and a new 3rd photo
+    inst.window.onEmberPhotosSynced({
+      photos: [
+        'https://lh3.googleusercontent.com/pw/photoA=w600',
+        'https://lh3.googleusercontent.com/pw/photoB=w600',
+        'https://lh3.googleusercontent.com/pw/photoC=w600',
+      ],
+    });
+
+    // Counter pill text is updated in place to reflect 3 total photos without reload
+    assert.equal(inst.elements['counter-pill'].textContent, '1 / 3');
+    assert.equal(slideA.src, 'untouched', 'Non-active slide must not be loaded when displayed photo is preserved');
+  });
+
+  test('advances through seen photos without replacement before repeating in photo_frame', () => {
+    const inst = createPhotoFrameInstance({ parentWindow: null, origin: 'http://localhost:8080' });
+
+    inst.window.onEmberPhotosSynced({
+      photos: [
+        'https://lh3.googleusercontent.com/pw/p1',
+        'https://lh3.googleusercontent.com/pw/p2',
+        'https://lh3.googleusercontent.com/pw/p3',
+      ],
+    });
+
+    assert.equal(inst.elements['counter-pill'].textContent, '1 / 3');
+
+    // Click next button -> advances to p2 (2 / 3)
+    inst.elements['next-btn'].click();
+    assert.equal(inst.elements['counter-pill'].textContent, '2 / 3');
+
+    // Click next button -> advances to p3 (3 / 3)
+    inst.elements['next-btn'].click();
+    assert.equal(inst.elements['counter-pill'].textContent, '3 / 3');
+
+    // Click next button -> deck exhausted, clears seen and wraps around to p1 (1 / 3)
+    inst.elements['next-btn'].click();
+    assert.equal(inst.elements['counter-pill'].textContent, '1 / 3');
   });
 });

@@ -322,5 +322,111 @@ test('Photo Carousel Client Controller', async (t) => {
 
     window.MirrormerePhotoCarousel.unmount('test-backdrop-cover');
   });
+
+  await t.test('restores currentIndex to matching currentKey photo on remount and exhausts unseen photos before repeating', async () => {
+    let lastPreloader = null;
+    const OriginalImage = global.Image;
+    global.Image = class {
+      constructor() {
+        this.onload = null;
+        this.src = '';
+        lastPreloader = this;
+      }
+    };
+
+    try {
+      const currentImg = { src: '', style: {} };
+      const nextImg = { src: '', style: {} };
+      const currentBackdrop = { src: '', style: {} };
+      const nextBackdrop = { src: '', style: {} };
+
+      const photos = [
+        { id: '1', url: 'https://lh3.googleusercontent.com/pw/P1' },
+        { id: '2', url: 'https://lh3.googleusercontent.com/pw/P2' },
+        { id: '3', url: 'https://lh3.googleusercontent.com/pw/P3' },
+      ];
+
+      function createMockElement(widgetId) {
+        return {
+          dataset: { widgetId },
+          querySelector(selector) {
+            if (selector === '.photo-carousel-data') {
+              return {
+                textContent: JSON.stringify({
+                  cycle_interval_seconds: 30,
+                  photos,
+                }),
+              };
+            }
+            if (selector === '.photo-current') return currentImg;
+            if (selector === '.photo-next') return nextImg;
+            if (selector === '.photo-backdrop-current') return currentBackdrop;
+            if (selector === '.photo-backdrop-next') return nextBackdrop;
+            return null;
+          },
+          getBoundingClientRect() {
+            return { width: 480, height: 320 };
+          },
+          addEventListener() {},
+          removeEventListener() {},
+        };
+      }
+
+      // Mount initial instance (photo P1, index 0)
+      window.MirrormerePhotoCarousel.mount(createMockElement('w-deck-test'));
+      let inst = window.MirrormerePhotoCarousel.instances.get('w-deck-test');
+      assert.ok(inst);
+      assert.equal(inst.currentIndex, 0);
+
+      const deck = window.MirrormerePhotoCarousel.deckState.get('w-deck-test');
+      assert.ok(deck);
+      assert.equal(deck.currentKey, 'https://lh3.googleusercontent.com/pw/P1');
+      assert.ok(deck.seenKeys.has('https://lh3.googleusercontent.com/pw/P1'));
+
+      // Cycle 1: selects unseen photo P2 (index 1)
+      inst.cycleNext();
+      assert.ok(lastPreloader && typeof lastPreloader.onload === 'function');
+      lastPreloader.onload();
+      await new Promise((resolve) => setTimeout(resolve, 900));
+
+      assert.equal(inst.currentIndex, 1);
+      assert.equal(deck.currentKey, 'https://lh3.googleusercontent.com/pw/P2');
+      assert.ok(deck.seenKeys.has('https://lh3.googleusercontent.com/pw/P2'));
+
+      // Remount (e.g. screen rotation or handleWidgetUpdate)
+      window.MirrormerePhotoCarousel.unmount('w-deck-test');
+      assert.equal(window.MirrormerePhotoCarousel.instances.has('w-deck-test'), false);
+
+      window.MirrormerePhotoCarousel.mount(createMockElement('w-deck-test'));
+      inst = window.MirrormerePhotoCarousel.instances.get('w-deck-test');
+      assert.ok(inst);
+      // currentIndex restored to index 1 (photo P2)
+      assert.equal(inst.currentIndex, 1);
+
+      // Cycle 2: selects unseen photo P3 (index 2)
+      inst.cycleNext();
+      assert.ok(lastPreloader && typeof lastPreloader.onload === 'function');
+      lastPreloader.onload();
+      await new Promise((resolve) => setTimeout(resolve, 900));
+
+      assert.equal(inst.currentIndex, 2);
+      assert.equal(deck.currentKey, 'https://lh3.googleusercontent.com/pw/P3');
+      assert.ok(deck.seenKeys.has('https://lh3.googleusercontent.com/pw/P3'));
+      assert.equal(deck.seenKeys.size, 3);
+
+      // Cycle 3: deck exhausted, clears seenKeys and cycles back to P1 (index 0)
+      inst.cycleNext();
+      assert.ok(lastPreloader && typeof lastPreloader.onload === 'function');
+      lastPreloader.onload();
+      await new Promise((resolve) => setTimeout(resolve, 900));
+
+      assert.equal(inst.currentIndex, 0);
+      assert.equal(deck.currentKey, 'https://lh3.googleusercontent.com/pw/P1');
+
+      window.MirrormerePhotoCarousel.unmount('w-deck-test');
+    } finally {
+      global.Image = OriginalImage;
+    }
+  });
 });
 
