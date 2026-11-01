@@ -149,6 +149,10 @@ describe('Carousel', () => {
   });
 
   it('mounts neighbour widgets after the current pane, one idle slot at a time (#803)', async () => {
+    // Idle callbacks run only when the test flushes them, so the first check cannot race a timer.
+    const idleQueue: IdleRequestCallback[] = [];
+    vi.stubGlobal('requestIdleCallback', (cb: IdleRequestCallback) => idleQueue.push(cb));
+    vi.stubGlobal('cancelIdleCallback', () => {});
     stubApi();
     render(<Carousel />);
     await act(async () => {});
@@ -161,7 +165,14 @@ describe('Carousel', () => {
     expect(gridCanvas()?.dataset.screenHydrated).toBe('true');
     expect(neighbourWidgets()).toHaveLength(0);
 
-    await flushIdleMounts();
+    // One idle slot per pane per pass: the 2-widget neighbour needs two passes.
+    for (let pass = 0; pass < 3; pass++) {
+      const batch = idleQueue.splice(0);
+      await act(async () => {
+        for (const cb of batch) cb({ didTimeout: false, timeRemaining: () => 50 } as IdleDeadline);
+      });
+      await act(async () => {});
+    }
     expect(neighbourWidgets()).toHaveLength(3);
   });
 
