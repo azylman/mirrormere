@@ -95,6 +95,12 @@ export function Carousel() {
     };
   }, []);
 
+  // The layout shrank under the shown screen. Show the first screen, without a select:
+  // the server's own rotate will say which screen is current.
+  useEffect(() => {
+    if (total > 0 && shown >= total) controllerRef.current?.reset(0);
+  }, [total, shown]);
+
   // Runs before paint, in the same commit that moved the panes: the track returns to
   // rest with the new current pane already in place, so nothing flashes.
   useLayoutEffect(() => {

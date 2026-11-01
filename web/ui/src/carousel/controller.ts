@@ -99,6 +99,17 @@ export class CarouselController {
     this.go(index, true);
   }
 
+  /**
+   * Shows `index` without a select, for when the layout shrank under the shown screen.
+   * Drops any queued rotate: the layout it was for no longer exists.
+   */
+  reset(index: number): void {
+    this.shown = index;
+    this.queued = null;
+    this.awaitingRender = index;
+    this.options.host.commit(index);
+  }
+
   /** Called by the host after React renders `index`. Resets the track, then runs any queued rotate. */
   rendered(index: number): void {
     if (this.awaitingRender === index) this.awaitingRender = null;

@@ -324,6 +324,28 @@ describe('Carousel', () => {
     });
   });
 
+  it('shows screen 0 when the layout shrinks under the shown screen', async () => {
+    const screenOf = (index: number) => ({
+      index,
+      widgets: [{ widget_id: `s${index}`, type: 'clock', origin: [0, 0] as [number, number], dimensions: [1, 1] as [number, number] }],
+    });
+    const fourScreens: ScreensResponse = { current_screen: 3, interval_seconds: 30, screens: [0, 1, 2, 3].map(screenOf) };
+    const twoScreens: ScreensResponse = { current_screen: 3, interval_seconds: 30, screens: [0, 1].map(screenOf) };
+    stubApi(fourScreens);
+    useDisplayStore.setState({ screen: { ...initial.screen, currentScreen: 3, totalScreens: 4 } });
+    render(<Carousel />);
+    await act(async () => {});
+    expect(gridCanvas()?.querySelector('[data-widget-id="s3"]')).not.toBeNull();
+
+    stubApi(twoScreens);
+    await act(async () => {
+      await useDisplayStore.getState().loadScreens();
+    });
+    expect(useDisplayStore.getState().screen.totalScreens).toBe(2);
+    expect(gridCanvas()?.querySelector('[data-widget-id="s0"]')).not.toBeNull();
+    expect(gridCanvas()?.querySelector('[data-widget-id="s3"]')).toBeNull();
+  });
+
   it('refetches the layout when the layout version changes', async () => {
     const fetchMock = stubApi();
     render(<Carousel />);
