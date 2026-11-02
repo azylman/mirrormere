@@ -94,7 +94,7 @@ export const YtMusicWidget = memo(function YtMusicWidget({ id }: WidgetComponent
         if (!r.ok) return;
         const data = (await r.json()) as MusicState;
         if (!cancelled && data && typeof data === 'object') {
-          setStateData(data);
+          setStateData((prev) => (JSON.stringify(prev) === JSON.stringify(data) ? prev : data));
         }
       } catch {
         // preserve current state on network error

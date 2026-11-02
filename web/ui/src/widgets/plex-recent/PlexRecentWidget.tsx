@@ -102,8 +102,10 @@ export const PlexRecentWidget = memo(function PlexRecentWidget({ id }: WidgetCom
             .catch(() => ({ items: [] })),
         ]);
         if (!cancelled) {
-          setRecentItems(Array.isArray(recentRes?.items) ? recentRes.items : []);
-          setUpcomingItems(Array.isArray(upcomingRes?.items) ? upcomingRes.items : []);
+          const nextRecent = Array.isArray(recentRes?.items) ? recentRes.items : [];
+          const nextUpcoming = Array.isArray(upcomingRes?.items) ? upcomingRes.items : [];
+          setRecentItems((prev) => (JSON.stringify(prev) === JSON.stringify(nextRecent) ? prev : nextRecent));
+          setUpcomingItems((prev) => (JSON.stringify(prev) === JSON.stringify(nextUpcoming) ? prev : nextUpcoming));
         }
       } catch {
         // preserve current list on network error
