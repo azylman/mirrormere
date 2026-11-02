@@ -33,6 +33,9 @@ export interface ContainerSize {
 const CROSSFADE_MS = 850;
 const EMPTY_PHOTOS: PhotoItem[] = [];
 
+export const PHOTO_CONTROLS_HIDE_MS = 3000;
+export const PHOTO_PAUSE_INACTIVITY_MS = 60000;
+
 export function parsePhotoCarouselData(raw: unknown): PhotoCarouselData {
   if (!raw) return {};
   if (typeof raw === 'object' && !Array.isArray(raw)) {
@@ -164,6 +167,11 @@ export function selectNextPhotoIndex(
   return (safeBase + 1) % photos.length;
 }
 
+export function selectPrevPhotoIndex(photos: readonly PhotoItem[], baseIndex: number): number {
+  if (photos.length <= 1) return 0;
+  return (((baseIndex % photos.length) + photos.length) % photos.length - 1 + photos.length) % photos.length;
+}
+
 function scheduleCycleTick(
   timerRef: React.MutableRefObject<ReturnType<typeof setTimeout> | null>,
   activeDelayMsRef: React.MutableRefObject<number>,
@@ -190,6 +198,313 @@ function scheduleCycleTick(
   }, delayMs);
 }
 
+function preloadAndDecode(src: string): Promise<boolean> {
+  const preload = new Image();
+  preload.src = src;
+  return new Promise<boolean>((resolve) => {
+    let settled = false;
+    const onOk = () => {
+      if (!settled) {
+        settled = true;
+        resolve(true);
+      }
+    };
+    const onFail = () => {
+      if (!settled) {
+        settled = true;
+        resolve(false);
+      }
+    };
+
+    if (typeof preload.decode === 'function') {
+      preload.decode().then(onOk, onFail);
+      preload.onerror = onFail;
+    } else {
+      preload.onload = onOk;
+      preload.onerror = onFail;
+    }
+  });
+}
+
+function resolveInitialPhotoIndex(
+  photos: readonly PhotoItem[],
+  deck: WidgetPhotoDeckState,
+): number {
+  if (photos.length === 0) return 0;
+  if (deck.currentKey) {
+    const idx = photos.findIndex((p, i) => getPhotoItemKey(p, i) === deck.currentKey);
+    if (idx !== -1) {
+      deck.seenKeys.add(deck.currentKey);
+      return idx;
+    }
+  }
+  let unseenIdx = photos.findIndex((p, i) => !deck.seenKeys.has(getPhotoItemKey(p, i)));
+  if (unseenIdx === -1) {
+    deck.seenKeys.clear();
+    unseenIdx = 0;
+  }
+  const key = getPhotoItemKey(photos[unseenIdx], unseenIdx);
+  deck.currentKey = key;
+  deck.seenKeys.add(key);
+  return unseenIdx;
+}
+
+function useContainerSize() {
+  const [containerSize, setContainerSize] = useState<ContainerSize>({ width: 0, height: 0 });
+  const containerSizeRef = useRef<ContainerSize>({ width: 0, height: 0 });
+  const [element, setElement] = useState<HTMLDivElement | null>(null);
+
+  const rootRef = useCallback((node: HTMLDivElement | null) => {
+    setElement(node);
+  }, []);
+
+  useEffect(() => {
+    if (!element || typeof ResizeObserver !== 'function') return;
+
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const { width, height } = entry.contentRect;
+        if (width > 0 && height > 0) {
+          const cur = containerSizeRef.current;
+          if (cur.width !== width || cur.height !== height) {
+            const newSize = { width, height };
+            containerSizeRef.current = newSize;
+            setContainerSize(newSize);
+          }
+        }
+      }
+    });
+    ro.observe(element);
+    return () => ro.disconnect();
+  }, [element]);
+
+  return { rootRef, containerSize, containerSizeRef };
+}
+
+function PhotoCarouselLoading() {
+  return (
+    <div
+      className="photo-loading"
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        height: '100%',
+        color: 'var(--mm-text-dim, #8b819f)',
+        fontSize: '0.95rem',
+        fontWeight: 700,
+      }}
+    >
+      <span>Loading photos...</span>
+    </div>
+  );
+}
+
+function PhotoCarouselEmpty() {
+  return (
+    <div className="photo-empty">
+      <span className="empty-icon">
+        <svg
+          width="24"
+          height="24"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
+          <circle cx="9" cy="9" r="2" />
+          <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
+        </svg>
+      </span>
+      <span className="empty-title">No photos in shared album</span>
+    </div>
+  );
+}
+
+function PhotoBackdrop({
+  currentUrl,
+  nextUrl,
+  isTransitioning,
+}: {
+  currentUrl: string;
+  nextUrl: string;
+  isTransitioning: boolean;
+}) {
+  return (
+    <div className="photo-backdrop-container" aria-hidden="true">
+      <img
+        className="photo-backdrop-layer photo-backdrop-current"
+        src={currentUrl}
+        alt=""
+        style={{
+          opacity: isTransitioning ? 0 : 1,
+          transition: isTransitioning ? 'opacity 0.85s ease-in-out' : 'none',
+        }}
+      />
+      <img
+        className="photo-backdrop-layer photo-backdrop-next"
+        src={isTransitioning ? nextUrl : undefined}
+        alt=""
+        style={{
+          opacity: isTransitioning ? 1 : 0,
+          transition: isTransitioning ? 'opacity 0.85s ease-in-out' : 'none',
+        }}
+      />
+    </div>
+  );
+}
+
+function PhotoForeground({
+  currentUrl,
+  nextUrl,
+  isTransitioning,
+}: {
+  currentUrl: string;
+  nextUrl: string;
+  isTransitioning: boolean;
+}) {
+  return (
+    <div className="photo-foreground-container">
+      <img
+        className="photo-layer photo-current dither"
+        src={currentUrl}
+        alt="Photo"
+        style={{
+          opacity: isTransitioning ? 0 : 1,
+          transition: isTransitioning ? 'opacity 0.85s ease-in-out' : 'none',
+        }}
+      />
+      <img
+        className="photo-layer photo-next dither"
+        src={isTransitioning ? nextUrl : undefined}
+        alt="Photo"
+        style={{
+          opacity: isTransitioning ? 1 : 0,
+          transition: isTransitioning ? 'opacity 0.85s ease-in-out' : 'none',
+        }}
+      />
+    </div>
+  );
+}
+
+interface PhotoTransportControlsProps {
+  visible: boolean;
+  isPaused: boolean;
+  onPrev: () => void;
+  onNext: () => void;
+  onTogglePause: () => void;
+}
+
+function PhotoTransportControls({
+  visible,
+  isPaused,
+  onPrev,
+  onNext,
+  onTogglePause,
+}: PhotoTransportControlsProps) {
+  return (
+    <div
+      className={`photo-transport-controls${visible ? ' visible' : ''}`}
+      onClick={(e) => {
+        e.stopPropagation();
+      }}
+    >
+      <button
+        type="button"
+        className="photo-nav-btn photo-nav-prev"
+        aria-label="Previous photo"
+        onClick={(e) => {
+          e.stopPropagation();
+          onPrev();
+        }}
+      >
+        <svg
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          <polyline points="15 18 9 12 15 6" />
+        </svg>
+      </button>
+      <button
+        type="button"
+        className="photo-pause-pill"
+        aria-label={isPaused ? 'Resume slideshow' : 'Pause slideshow'}
+        aria-pressed={isPaused}
+        data-paused={isPaused ? 'true' : 'false'}
+        onClick={(e) => {
+          e.stopPropagation();
+          onTogglePause();
+        }}
+      >
+        {isPaused ? (
+          <>
+            <svg
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="currentColor"
+              stroke="none"
+              aria-hidden="true"
+            >
+              <polygon points="5 3 19 12 5 21 5 3" />
+            </svg>
+            <span>Resume</span>
+          </>
+        ) : (
+          <>
+            <svg
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="currentColor"
+              stroke="none"
+              aria-hidden="true"
+            >
+              <rect x="6" y="4" width="4" height="16" rx="1" />
+              <rect x="14" y="4" width="4" height="16" rx="1" />
+            </svg>
+            <span>Pause</span>
+          </>
+        )}
+      </button>
+      <button
+        type="button"
+        className="photo-nav-btn photo-nav-next"
+        aria-label="Next photo"
+        onClick={(e) => {
+          e.stopPropagation();
+          onNext();
+        }}
+      >
+        <svg
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          <polyline points="9 18 15 12 9 6" />
+        </svg>
+      </button>
+    </div>
+  );
+}
+
 export const PhotoCarouselWidget = memo(function PhotoCarouselWidget({
   id,
 }: WidgetComponentProps) {
@@ -214,29 +529,16 @@ export const PhotoCarouselWidget = memo(function PhotoCarouselWidget({
 
   const deck = getWidgetPhotoDeckState(id);
 
-  const rootRef = useRef<HTMLDivElement | null>(null);
-  const [containerSize, setContainerSize] = useState<ContainerSize>({ width: 0, height: 0 });
-  const containerSizeRef = useRef<ContainerSize>({ width: 0, height: 0 });
+  const [isPaused, setIsPaused] = useState(false);
+  const [controlsVisible, setControlsVisible] = useState(false);
+  const isPausedRef = useRef(isPaused);
+  isPausedRef.current = isPaused;
+  const controlsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pauseInactivityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const [currentIndex, setCurrentIndex] = useState(() => {
-    if (photos.length === 0) return 0;
-    if (deck.currentKey) {
-      const idx = photos.findIndex((p, i) => getPhotoItemKey(p, i) === deck.currentKey);
-      if (idx !== -1) {
-        deck.seenKeys.add(deck.currentKey);
-        return idx;
-      }
-    }
-    let unseenIdx = photos.findIndex((p, i) => !deck.seenKeys.has(getPhotoItemKey(p, i)));
-    if (unseenIdx === -1) {
-      deck.seenKeys.clear();
-      unseenIdx = 0;
-    }
-    const key = getPhotoItemKey(photos[unseenIdx], unseenIdx);
-    deck.currentKey = key;
-    deck.seenKeys.add(key);
-    return unseenIdx;
-  });
+  const { rootRef, containerSize, containerSizeRef } = useContainerSize();
+
+  const [currentIndex, setCurrentIndex] = useState(() => resolveInitialPhotoIndex(photos, deck));
 
   const safeIndex = photos.length > 0 ? currentIndex % photos.length : 0;
   const currentIndexRef = useRef(safeIndex);
@@ -248,30 +550,10 @@ export const PhotoCarouselWidget = memo(function PhotoCarouselWidget({
   useEffect(() => {
     probeIndexRef.current = null;
     if (photos.length === 0) return;
-
-    if (deck.currentKey) {
-      const idx = photos.findIndex((p, i) => getPhotoItemKey(p, i) === deck.currentKey);
-      if (idx !== -1) {
-        deck.seenKeys.add(deck.currentKey);
-        if (currentIndexRef.current !== idx) {
-          setCurrentIndex(idx);
-          currentIndexRef.current = idx;
-        }
-        return;
-      }
-    }
-
-    let unseenIdx = photos.findIndex((p, i) => !deck.seenKeys.has(getPhotoItemKey(p, i)));
-    if (unseenIdx === -1) {
-      deck.seenKeys.clear();
-      unseenIdx = 0;
-    }
-    const key = getPhotoItemKey(photos[unseenIdx], unseenIdx);
-    deck.currentKey = key;
-    deck.seenKeys.add(key);
-    if (currentIndexRef.current !== unseenIdx) {
-      setCurrentIndex(unseenIdx);
-      currentIndexRef.current = unseenIdx;
+    const targetIdx = resolveInitialPhotoIndex(photos, deck);
+    if (currentIndexRef.current !== targetIdx) {
+      setCurrentIndex(targetIdx);
+      currentIndexRef.current = targetIdx;
     }
   }, [photos, deck]);
 
@@ -314,28 +596,6 @@ export const PhotoCarouselWidget = memo(function PhotoCarouselWidget({
   const cycleStartedAtRef = useRef<number | null>(null);
   const activeDelayMsRef = useRef<number>(cycleIntervalSeconds * 1000);
 
-  // ResizeObserver for measuring container size (never forced via getBoundingClientRect)
-  useEffect(() => {
-    const el = rootRef.current;
-    if (!el || typeof ResizeObserver !== 'function') return;
-
-    const ro = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        const { width, height } = entry.contentRect;
-        if (width > 0 && height > 0) {
-          const cur = containerSizeRef.current;
-          if (cur.width !== width || cur.height !== height) {
-            const newSize = { width, height };
-            containerSizeRef.current = newSize;
-            setContainerSize(newSize);
-          }
-        }
-      }
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-
   const clearPendingTransition = useCallback(() => {
     cycleSeqRef.current += 1;
     stopAnimation();
@@ -349,7 +609,46 @@ export const PhotoCarouselWidget = memo(function PhotoCarouselWidget({
     }
   }, [stopAnimation]);
 
-  const triggerAdvance = useCallback(() => {
+  const showControls = useCallback(() => {
+    setControlsVisible(true);
+    if (controlsTimerRef.current) {
+      clearTimeout(controlsTimerRef.current);
+    }
+    controlsTimerRef.current = setTimeout(() => {
+      setControlsVisible(false);
+      controlsTimerRef.current = null;
+    }, PHOTO_CONTROLS_HIDE_MS);
+  }, []);
+
+  const resetPauseInactivityTimer = useCallback(() => {
+    if (pauseInactivityTimerRef.current) {
+      clearTimeout(pauseInactivityTimerRef.current);
+      pauseInactivityTimerRef.current = null;
+    }
+    pauseInactivityTimerRef.current = setTimeout(() => {
+      setIsPaused(false);
+      isPausedRef.current = false;
+      pauseInactivityTimerRef.current = null;
+    }, PHOTO_PAUSE_INACTIVITY_MS);
+  }, []);
+
+  const togglePause = useCallback(() => {
+    if (!isPaused) {
+      setIsPaused(true);
+      isPausedRef.current = true;
+      resetPauseInactivityTimer();
+    } else {
+      setIsPaused(false);
+      isPausedRef.current = false;
+      if (pauseInactivityTimerRef.current) {
+        clearTimeout(pauseInactivityTimerRef.current);
+        pauseInactivityTimerRef.current = null;
+      }
+      showControls();
+    }
+  }, [isPaused, resetPauseInactivityTimer, showControls]);
+
+  const triggerAdvance = useCallback((direction: 'next' | 'prev' = 'next') => {
     const currentPhotos = photosRef.current;
     if (currentPhotos.length <= 1) return;
 
@@ -357,10 +656,15 @@ export const PhotoCarouselWidget = memo(function PhotoCarouselWidget({
       ? transitionStateRef.current.nextIndex
       : (probeIndexRef.current ?? currentIndexRef.current);
 
-    if (transitionStateRef.current?.active) {
-      const baseKey = getPhotoItemKey(currentPhotos[baseIndex], baseIndex);
-      deck.currentKey = baseKey;
+    const baseKey = getPhotoItemKey(currentPhotos[baseIndex], baseIndex);
+    deck.currentKey = baseKey;
+    if (direction === 'prev') {
+      deck.seenKeys.delete(baseKey);
+    } else {
       deck.seenKeys.add(baseKey);
+    }
+
+    if (transitionStateRef.current?.active) {
       setCurrentIndex(baseIndex);
       currentIndexRef.current = baseIndex;
       stopAnimation();
@@ -370,13 +674,12 @@ export const PhotoCarouselWidget = memo(function PhotoCarouselWidget({
       }
       transitionStateRef.current = null;
       setTransitionState(null);
-    } else {
-      const baseKey = getPhotoItemKey(currentPhotos[baseIndex], baseIndex);
-      deck.currentKey = baseKey;
-      deck.seenKeys.add(baseKey);
     }
 
-    const nextIndex = selectNextPhotoIndex(currentPhotos, baseIndex, deck.seenKeys);
+    const nextIndex =
+      direction === 'prev'
+        ? selectPrevPhotoIndex(currentPhotos, baseIndex)
+        : selectNextPhotoIndex(currentPhotos, baseIndex, deck.seenKeys);
     const nextPhoto = currentPhotos[nextIndex];
     const nextRawUrl = nextPhoto?.url ?? nextPhoto?.URL;
     const nextKey = getPhotoItemKey(nextPhoto, nextIndex);
@@ -403,34 +706,7 @@ export const PhotoCarouselWidget = memo(function PhotoCarouselWidget({
       transitionTimeoutRef.current = null;
     }
 
-    const preload = new Image();
-    preload.src = nextFgUrl;
-
-    const decodePromise = new Promise<boolean>((resolve) => {
-      let settled = false;
-      const onOk = () => {
-        if (!settled) {
-          settled = true;
-          resolve(true);
-        }
-      };
-      const onFail = () => {
-        if (!settled) {
-          settled = true;
-          resolve(false);
-        }
-      };
-
-      if (typeof preload.decode === 'function') {
-        preload.decode().then(onOk, onFail);
-        preload.onerror = onFail;
-      } else {
-        preload.onload = onOk;
-        preload.onerror = onFail;
-      }
-    });
-
-    decodePromise.then((ok) => {
+    preloadAndDecode(nextFgUrl).then((ok) => {
       if (cycleSeqRef.current !== seq) return;
 
       if (!ok) {
@@ -462,16 +738,19 @@ export const PhotoCarouselWidget = memo(function PhotoCarouselWidget({
     });
   }, [clearPendingTransition, startAnimation, stopAnimation, cycleIntervalSeconds, deck]);
 
-  // Handle tap-to-advance and reset interval
-  const handleClick = useCallback(() => {
-    if (photos.length > 1) {
+  const stepPhoto = useCallback(
+    (direction: 'prev' | 'next') => {
+      showControls();
+      if (isPausedRef.current) {
+        resetPauseInactivityTimer();
+      }
       deck.remainingMs = cycleIntervalSeconds * 1000;
-      triggerAdvance();
+      triggerAdvance(direction);
       if (timerRef.current) {
         clearTimeout(timerRef.current);
         timerRef.current = null;
       }
-      if (isCurrentPane && isDocumentVisible && !isVideoMode) {
+      if (isCurrentPane && isDocumentVisible && !isVideoMode && !isPausedRef.current) {
         activeDelayMsRef.current = cycleIntervalSeconds * 1000;
         cycleStartedAtRef.current = Date.now();
         scheduleCycleTick(
@@ -484,16 +763,34 @@ export const PhotoCarouselWidget = memo(function PhotoCarouselWidget({
           cycleIntervalSeconds * 1000,
         );
       }
-    }
-  }, [
-    photos.length,
-    triggerAdvance,
-    isCurrentPane,
-    isDocumentVisible,
-    isVideoMode,
-    cycleIntervalSeconds,
-    deck,
-  ]);
+    },
+    [
+      showControls,
+      resetPauseInactivityTimer,
+      cycleIntervalSeconds,
+      triggerAdvance,
+      isCurrentPane,
+      isDocumentVisible,
+      isVideoMode,
+      deck,
+    ],
+  );
+
+  // Handle tap-to-advance and reset interval
+  const handleClick = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      if (photos.length <= 1) return;
+      if (e.clientX > 0) {
+        const rect = e.currentTarget.getBoundingClientRect();
+        if (rect.width > 0 && e.clientX - rect.left < rect.width / 3) {
+          stepPhoto('prev');
+          return;
+        }
+      }
+      stepPhoto('next');
+    },
+    [photos.length, stepPhoto],
+  );
 
   // Interval timer subscription
   useEffect(() => {
@@ -502,7 +799,8 @@ export const PhotoCarouselWidget = memo(function PhotoCarouselWidget({
       timerRef.current = null;
     }
 
-    const shouldRun = isCurrentPane && isDocumentVisible && !isVideoMode && photos.length > 1;
+    const shouldRun =
+      isCurrentPane && isDocumentVisible && !isVideoMode && !isPaused && photos.length > 1;
 
     if (!shouldRun) {
       if (cycleStartedAtRef.current !== null) {
@@ -510,7 +808,11 @@ export const PhotoCarouselWidget = memo(function PhotoCarouselWidget({
         deck.remainingMs = Math.max(1, activeDelayMsRef.current - elapsed);
         cycleStartedAtRef.current = null;
       }
-      clearPendingTransition();
+      const pausedOnly =
+        isPaused && isCurrentPane && isDocumentVisible && !isVideoMode && photos.length > 1;
+      if (!pausedOnly) {
+        clearPendingTransition();
+      }
       return;
     }
 
@@ -543,6 +845,7 @@ export const PhotoCarouselWidget = memo(function PhotoCarouselWidget({
     isCurrentPane,
     isDocumentVisible,
     isVideoMode,
+    isPaused,
     photos.length,
     cycleIntervalSeconds,
     triggerAdvance,
@@ -555,66 +858,16 @@ export const PhotoCarouselWidget = memo(function PhotoCarouselWidget({
   useEffect(() => {
     return () => {
       clearPendingTransition();
+      if (controlsTimerRef.current) {
+        clearTimeout(controlsTimerRef.current);
+        controlsTimerRef.current = null;
+      }
+      if (pauseInactivityTimerRef.current) {
+        clearTimeout(pauseInactivityTimerRef.current);
+        pauseInactivityTimerRef.current = null;
+      }
     };
   }, [clearPendingTransition]);
-
-  // Loading state check: if entry data is missing or photos array is not yet loaded
-  if (!hasLoaded) {
-    return (
-      <div
-        ref={rootRef}
-        className="widget-photo-carousel dither"
-        data-fit={fit}
-      >
-        <div
-          className="photo-loading"
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            height: '100%',
-            color: 'var(--mm-text-dim, #8b819f)',
-            fontSize: '0.95rem',
-            fontWeight: 700,
-          }}
-        >
-          <span>Loading photos...</span>
-        </div>
-      </div>
-    );
-  }
-
-  // Empty state check
-  if (photos.length === 0) {
-    return (
-      <div
-        ref={rootRef}
-        className="widget-photo-carousel dither"
-        data-fit={fit}
-      >
-        <div className="photo-empty">
-          <span className="empty-icon">
-            <svg
-              width="24"
-              height="24"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-            >
-              <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
-              <circle cx="9" cy="9" r="2" />
-              <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
-            </svg>
-          </span>
-          <span className="empty-title">No photos in shared album</span>
-        </div>
-      </div>
-    );
-  }
 
   const currentPhoto = photos[safeIndex];
   const currentRawUrl = currentPhoto?.url ?? currentPhoto?.URL;
@@ -639,52 +892,37 @@ export const PhotoCarouselWidget = memo(function PhotoCarouselWidget({
       ref={rootRef}
       className="widget-photo-carousel dither"
       data-fit={fit}
-      onClick={handleClick}
+      onClick={hasLoaded && photos.length > 0 ? handleClick : undefined}
     >
-      <div className="photo-viewport dither">
-        {fit !== 'cover' && (
-          <div className="photo-backdrop-container" aria-hidden="true">
-            <img
-              className="photo-backdrop-layer photo-backdrop-current"
-              src={currentBackdropUrl}
-              alt=""
-              style={{
-                opacity: isTransitioning ? 0 : 1,
-                transition: isTransitioning ? 'opacity 0.85s ease-in-out' : 'none',
-              }}
+      {!hasLoaded ? (
+        <PhotoCarouselLoading />
+      ) : photos.length === 0 ? (
+        <PhotoCarouselEmpty />
+      ) : (
+        <div className="photo-viewport dither">
+          {fit !== 'cover' && (
+            <PhotoBackdrop
+              currentUrl={currentBackdropUrl}
+              nextUrl={nextBackdropUrl}
+              isTransitioning={isTransitioning}
             />
-            <img
-              className="photo-backdrop-layer photo-backdrop-next"
-              src={isTransitioning ? nextBackdropUrl : undefined}
-              alt=""
-              style={{
-                opacity: isTransitioning ? 1 : 0,
-                transition: isTransitioning ? 'opacity 0.85s ease-in-out' : 'none',
-              }}
+          )}
+          <PhotoForeground
+            currentUrl={currentFgUrl}
+            nextUrl={nextFgUrl}
+            isTransitioning={isTransitioning}
+          />
+          {photos.length > 1 && (
+            <PhotoTransportControls
+              visible={controlsVisible || isPaused}
+              isPaused={isPaused}
+              onPrev={() => stepPhoto('prev')}
+              onNext={() => stepPhoto('next')}
+              onTogglePause={togglePause}
             />
-          </div>
-        )}
-        <div className="photo-foreground-container">
-          <img
-            className="photo-layer photo-current dither"
-            src={currentFgUrl}
-            alt="Photo"
-            style={{
-              opacity: isTransitioning ? 0 : 1,
-              transition: isTransitioning ? 'opacity 0.85s ease-in-out' : 'none',
-            }}
-          />
-          <img
-            className="photo-layer photo-next dither"
-            src={isTransitioning ? nextFgUrl : undefined}
-            alt="Photo"
-            style={{
-              opacity: isTransitioning ? 1 : 0,
-              transition: isTransitioning ? 'opacity 0.85s ease-in-out' : 'none',
-            }}
-          />
+          )}
         </div>
-      </div>
+      )}
     </div>
   );
 });
