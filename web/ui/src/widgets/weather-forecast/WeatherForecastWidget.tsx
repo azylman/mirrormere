@@ -1,3 +1,4 @@
+import './WeatherForecastWidget.css';
 import {
   DEFAULT_SCHOOL_DAY_THRESHOLDS,
   type DaypartSlot,

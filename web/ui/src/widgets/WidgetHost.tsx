@@ -1,3 +1,4 @@
+import './WidgetHost.css';
 import { createElement, useEffect, useRef, type CSSProperties } from 'react';
 import { hydratedReloadCount, needsHydrate, useDisplayStore } from '../store';
 import { useWidget } from '../store/hooks';
