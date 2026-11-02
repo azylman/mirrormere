@@ -447,4 +447,99 @@ describe('PlexRecentWidget', () => {
     expect(container.querySelector('#seerr-modal')?.hasAttribute('data-prevent-screen-swipe')).toBe(true);
     expect(container.querySelector('.seerr-input')?.hasAttribute('data-prevent-screen-swipe')).toBe(true);
   });
+
+  it('covers fallback badges, TV play failure, Seerr search/request errors, and modal close buttons', async () => {
+    useDisplayStore.setState({
+      widgets: {
+        'plex-cov': {
+          html: '',
+          css: '',
+          updatedAt: 1,
+          meta: { config: { api_base: '/custom-plex/' } },
+        },
+      },
+    });
+    const edgeItems: PlexItem[] = [
+      { id: '1', title: 'No Badge Movie', year: 2025, category: 'movie' },
+      { id: '2', title: 'No Badge TV', category: 'tv' },
+      { id: '3', title: 'No Badge Book', category: 'audiobook' },
+    ];
+    let seerrSearchShouldFail = true;
+    let seerrReqMode: 'http-fail' | 'throw' = 'http-fail';
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/plex/recent')) {
+        return new Response(JSON.stringify({ items: edgeItems }), { status: 200 });
+      }
+      if (url.includes('/plex/upcoming')) {
+        return new Response('err', { status: 500 });
+      }
+      if (url.includes('/plex/play')) {
+        return new Response(JSON.stringify({ ok: false }), { status: 500 });
+      }
+      if (url.includes('/seerr/search')) {
+        if (seerrSearchShouldFail) throw new Error('seerr search boom');
+        return new Response(
+          JSON.stringify({
+            items: [
+              { tmdb_id: 901, media_type: 'movie', title: 'Available Film', status: 'available' },
+              { tmdb_id: 902, media_type: 'tv', title: 'Req Film', year: 2026 },
+            ],
+          }),
+          { status: 200 },
+        );
+      }
+      if (url.includes('/seerr/request')) {
+        if (seerrReqMode === 'throw') throw new Error('network drop');
+        return new Response(JSON.stringify({ ok: false }), { status: 500 });
+      }
+      return new Response('{}', { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { container } = render(<PlexRecentWidget id="plex-cov" type="plex-recent" />);
+    await waitFor(() => {
+      expect(container.querySelectorAll('.item-card').length).toBe(3);
+    });
+
+    // Open detail modal on movie without summary or badge, trigger failing TV play, then close
+    fireEvent.click(container.querySelectorAll('.item-card')[0]!);
+    expect(container.querySelector('#detail-summary')?.textContent).toBe('No summary available.');
+    fireEvent.click(container.querySelector('#tv-play-btn')!);
+    await waitFor(() => {
+      expect(container.querySelector('#tv-play-btn')?.textContent).toContain('Failed');
+    });
+    fireEvent.click(container.querySelector('#close-detail-btn')!);
+
+    // Open Seerr modal, submit empty query, submit failing query, then succeeding query + failing request
+    fireEvent.click(container.querySelector('#open-seerr-btn')!);
+    fireEvent.submit(container.querySelector('#seerr-form')!);
+    fireEvent.change(container.querySelector('#seerr-input')!, { target: { value: 'alien' } });
+    fireEvent.submit(container.querySelector('#seerr-form')!);
+    await waitFor(() => {
+      expect(container.querySelector('#seerr-results')?.textContent).toContain('Search failed');
+    });
+
+    seerrSearchShouldFail = false;
+    fireEvent.submit(container.querySelector('#seerr-form')!);
+    await waitFor(() => {
+      expect(container.querySelectorAll('#seerr-results .req-action-btn').length).toBe(2);
+    });
+
+    // Trigger HTTP 500 request error -> shows 'Error' label (line 379)
+    const reqBtns = container.querySelectorAll('#seerr-results .req-action-btn');
+    fireEvent.click(reqBtns[1]!);
+    await waitFor(() => {
+      expect(container.querySelectorAll('#seerr-results .req-action-btn')[1]?.textContent).toBe('Error');
+    });
+
+    // Trigger thrown request error
+    seerrReqMode = 'throw';
+    fireEvent.click(container.querySelectorAll('#seerr-results .req-action-btn')[1]!);
+    await waitFor(() => {
+      expect(container.querySelectorAll('#seerr-results .req-action-btn')[1]?.textContent).toBe('Error');
+    });
+
+    fireEvent.click(container.querySelector('#close-seerr-btn')!);
+  });
 });

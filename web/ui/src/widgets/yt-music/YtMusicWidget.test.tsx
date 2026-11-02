@@ -519,4 +519,62 @@ describe('YtMusicWidget', () => {
     expect(container.querySelector('.speaker-bar')?.hasAttribute('data-prevent-screen-swipe')).toBe(true);
     expect(container.querySelector('.search-input')?.hasAttribute('data-prevent-screen-swipe')).toBe(true);
   });
+
+  it('handles search failure, transport buttons, and switching back to playlists tab', async () => {
+    useDisplayStore.setState({
+      widgets: {
+        'yt-cov': {
+          html: '',
+          css: '',
+          updatedAt: 1,
+          meta: { config: { api_base: '/custom-api/' } },
+        },
+      },
+    });
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/music/state')) {
+        return new Response(
+          JSON.stringify({
+            ...mockInitialState,
+            now_playing: { title: 'Track', state: 'paused' },
+          }),
+          { status: 200 },
+        );
+      }
+      if (url.includes('/music/search')) {
+        throw new Error('search network failure');
+      }
+      if (url.includes('/music/control')) {
+        return new Response(JSON.stringify({ state: mockInitialState }), { status: 200 });
+      }
+      return new Response('{}', { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { container } = render(<YtMusicWidget id="yt-cov" type="yt-music" />);
+    await waitFor(() => {
+      expect(container.querySelector('#np-title')?.textContent).toBe('Track');
+    });
+
+    // Click prev, next, stop
+    fireEvent.click(container.querySelector('#btn-prev')!);
+    fireEvent.click(container.querySelector('#btn-next')!);
+    fireEvent.click(container.querySelector('#btn-stop')!);
+
+    // Empty search submit is ignored
+    fireEvent.submit(container.querySelector('#search-form')!);
+
+    // Search that throws clears results
+    fireEvent.change(container.querySelector('#search-input')!, { target: { value: 'weeknd' } });
+    fireEvent.submit(container.querySelector('#search-form')!);
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith('/custom-api/music/search?q=weeknd');
+    });
+
+    // Switch to queue then back to playlists tab
+    fireEvent.click(container.querySelector('[data-tab="queue"]')!);
+    fireEvent.click(container.querySelector('[data-tab="playlists"]')!);
+    expect(container.querySelector('[data-tab="playlists"]')?.classList.contains('active')).toBe(true);
+  });
 });
