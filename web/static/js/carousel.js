@@ -145,6 +145,8 @@ class MirrormereCarousel {
    */
   pause() {
     this.isPaused = true;
+    if (this._swipe && this._swipe.locked) this.setCanvasOffset(0, true);
+    this._swipe = null;
     if (this.indicator) {
       if (this.indicator.classList && typeof this.indicator.classList.add === 'function') {
         this.indicator.classList.add('paused');
@@ -697,17 +699,27 @@ class MirrormereCarousel {
     }, { passive: true });
 
     target.addEventListener('touchend', (e) => {
-      if (this.isPaused) return;
       const drag = this._swipe;
       this._swipe = null;
+      // Every early return puts a dragged canvas back, so it never sticks off-centre.
+      const snapBack = () => {
+        if (drag && drag.locked) this.setCanvasOffset(0, true);
+      };
+      if (this.isPaused) {
+        snapBack();
+        return;
+      }
       if (this.touchIgnored) {
         this.touchIgnored = false;
+        snapBack();
         return;
       }
       if (e.target && e.target.closest && e.target.closest('.widget-calendar-grid, .widget-calendar-family, [data-prevent-screen-swipe]')) {
+        snapBack();
         return;
       }
       if (!e.changedTouches || e.changedTouches.length !== 1) {
+        snapBack();
         return;
       }
 

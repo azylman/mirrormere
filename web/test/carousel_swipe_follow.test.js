@@ -32,6 +32,7 @@ function setup({ totalScreens = 3 } = {}) {
     move: (x, y) => handlers.touchmove({ target, touches: [t(x, y)] }),
     end: (x, y) => handlers.touchend({ target, changedTouches: [t(x, y)] }),
     cancel: () => handlers.touchcancel({ target }),
+    endMulti: (touches) => handlers.touchend({ target, changedTouches: touches }),
   };
 }
 
@@ -58,7 +59,7 @@ test('a slow deliberate swipe commits (no 800ms cap)', () => {
   Date.now = () => now;
   try {
     s.start(800, 500);
-    now += 1000; // the clip Ryan posted: ~1 s of drag
+    now += 1000; // ~1 s slow drag
     s.move(600, 505);
     s.end(600, 505);
   } finally {
@@ -120,4 +121,28 @@ test('touchcancel springs the canvas back', () => {
   s.move(700, 500);
   s.cancel();
   assert.equal(s.c.canvas.style.transform, '');
+});
+
+test('a multi-touch release puts a dragged canvas back', () => {
+  const s = setup();
+  s.start(800, 500);
+  s.move(700, 505);
+  assert.equal(s.c.canvas.style.transform, 'translateX(-60px)');
+  const t = (x, y) => ({ clientX: x, clientY: y });
+  // Two fingers lifted at once: no commit, and the canvas must not stay offset.
+  s.endMulti([t(700, 505), t(720, 505)]);
+  assert.equal(s.c.canvas.style.transform, '');
+  assert.deepEqual(s.c.advanced, []);
+});
+
+test('pausing mid-drag puts the canvas back', () => {
+  const s = setup();
+  s.start(800, 500);
+  s.move(700, 505);
+  s.c.pause();
+  assert.equal(s.c.canvas.style.transform, '');
+  assert.equal(s.c._swipe, null);
+  s.end(600, 505);
+  assert.equal(s.c.canvas.style.transform, '');
+  assert.deepEqual(s.c.advanced, []);
 });
