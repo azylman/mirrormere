@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -610,7 +611,7 @@ func TestHAAction_DirectProxy_NilServiceData(t *testing.T) {
 	srv := server.New(server.Config{WidgetActionHandler: handler})
 
 	// Service without any extra data
-	payload := `{"domain":"homeassistant","service":"update_entity"}`
+	payload := `{"domain":"light","service":"turn_on"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/widgets/test-w/action", strings.NewReader(payload))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
@@ -621,5 +622,125 @@ func TestHAAction_DirectProxy_NilServiceData(t *testing.T) {
 	}
 	if !bytes.Equal(bytes.TrimSpace(receivedBody), []byte("{}")) {
 		t.Errorf("expected empty JSON object '{}', got %q", string(receivedBody))
+	}
+}
+
+func TestWidgetAction_DomainAndServiceValidation(t *testing.T) {
+	t.Parallel()
+	caller := &mockWidgetActionCaller{}
+	handler := server.NewDefaultWidgetActionHandler(server.WithWidgetActionCaller(caller))
+	srv := server.New(server.Config{WidgetActionHandler: handler})
+
+	t.Run("invalid domain format rejected", func(t *testing.T) {
+		invalidDomains := []string{
+			"../..",
+			"../../api",
+			"../light",
+			"light/admin",
+			"/etc/passwd",
+			"light..turn_on",
+			"light;drop",
+			"light turn_on",
+			"light?admin=true",
+			"LIGHT",
+		}
+		for _, dom := range invalidDomains {
+			payload := fmt.Sprintf(`{"domain":%q,"service":"turn_on"}`, dom)
+			req := httptest.NewRequest(http.MethodPost, "/api/widgets/w-test/action", strings.NewReader(payload))
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+			srv.Routes().ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusBadRequest {
+				t.Errorf("domain %q: expected 400 Bad Request, got %d: %s", dom, rec.Code, rec.Body.String())
+			}
+			if !strings.Contains(rec.Body.String(), "invalid domain") {
+				t.Errorf("domain %q: expected error mentioning invalid domain, got: %s", dom, rec.Body.String())
+			}
+		}
+	})
+
+	t.Run("unsupported domain rejected even if identifier is valid", func(t *testing.T) {
+		unsupportedDomains := []string{
+			"automation",
+			"zone",
+			"shell_command",
+			"hassio",
+			"input_boolean",
+			"input_number",
+		}
+		for _, dom := range unsupportedDomains {
+			payload := fmt.Sprintf(`{"domain":%q,"service":"turn_on"}`, dom)
+			req := httptest.NewRequest(http.MethodPost, "/api/widgets/w-test/action", strings.NewReader(payload))
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+			srv.Routes().ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusBadRequest {
+				t.Errorf("domain %q: expected 400 Bad Request, got %d: %s", dom, rec.Code, rec.Body.String())
+			}
+			if !strings.Contains(rec.Body.String(), "unsupported domain") {
+				t.Errorf("domain %q: expected error mentioning unsupported domain, got: %s", dom, rec.Body.String())
+			}
+		}
+	})
+
+	t.Run("invalid service format rejected", func(t *testing.T) {
+		invalidServices := []string{
+			"../..",
+			"turn_on/../admin",
+			"api/config",
+			"../../../api/template",
+			"turn_on?evil=1",
+			"turn_on#frag",
+			"turn on",
+			"turn-on",
+			"TURN_ON",
+			"turn_on/..",
+		}
+		for _, svc := range invalidServices {
+			payload := fmt.Sprintf(`{"domain":"light","service":%q}`, svc)
+			req := httptest.NewRequest(http.MethodPost, "/api/widgets/w-test/action", strings.NewReader(payload))
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+			srv.Routes().ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusBadRequest {
+				t.Errorf("service %q: expected 400 Bad Request, got %d: %s", svc, rec.Code, rec.Body.String())
+			}
+			if !strings.Contains(rec.Body.String(), "invalid service") {
+				t.Errorf("service %q: expected error mentioning invalid service, got: %s", svc, rec.Body.String())
+			}
+		}
+	})
+}
+
+func TestWidgetAction_DirectProxyPathEscape(t *testing.T) {
+	t.Parallel()
+	var requestedPath string
+	haServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestedPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"success"}`))
+	}))
+	defer haServer.Close()
+
+	handler := server.NewDefaultWidgetActionHandler(
+		server.WithHAActionClient(haServer.Client(), haServer.URL, "token"),
+	)
+	srv := server.New(server.Config{WidgetActionHandler: handler})
+
+	payload := `{"domain":"light","service":"turn_on"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/widgets/test-w/action", strings.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d: %s", rec.Code, rec.Body.String())
+	}
+	expectedPath := "/api/services/light/turn_on"
+	if requestedPath != expectedPath {
+		t.Errorf("expected path %q, got %q", expectedPath, requestedPath)
 	}
 }

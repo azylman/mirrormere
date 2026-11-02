@@ -508,6 +508,17 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 	if portVal == 0 {
 		portVal = -1
 	}
+	var haActionHandler server.WidgetActionHandler
+	if snapshot != nil && snapshot.Config != nil {
+		haActionHandler = server.NewDefaultWidgetActionHandler(
+			server.WithHAActionClient(http.DefaultClient, "", ""),
+			server.WithWidgetActionCaller(providerCoord),
+			server.WithWidgetActionLogger(logger),
+		)
+	} else {
+		haActionHandler = server.NewWidgetActionHandler(providerCoord)
+	}
+
 	cfg := server.Config{
 		Host:                initialHost,
 		Port:                portVal,
@@ -521,6 +532,7 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 		VideoHandler:        server.NewDefaultVideoHandler(videoCoord),
 		VoiceHandler:        server.NewDefaultVoiceHandler(voiceCoord, voiceHub, server.WithVoiceMetrics(voice.DefaultMetrics())),
 		LayoutEditorHandler: server.NewDefaultLayoutEditorHandler(configManager, hub, loader, logger),
+		WidgetActionHandler: haActionHandler,
 	}
 	cfg.ApplyDefaults()
 

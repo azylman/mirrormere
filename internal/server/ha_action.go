@@ -10,7 +10,10 @@ import (
 	"log/slog"
 	"maps"
 	"net/http"
+	"net/url"
 	"strings"
+
+	"github.com/azylman/mirrormere/internal/provider"
 )
 
 // ErrWidgetActionNotConfigured indicates that neither a caller nor direct proxy URL is configured.
@@ -166,7 +169,7 @@ func (h *DefaultWidgetActionHandler) handleWidgetAction(w http.ResponseWriter, r
 }
 
 func (h *DefaultWidgetActionHandler) proxyDirectHA(w http.ResponseWriter, r *http.Request, widgetID, domain, service string, serviceData map[string]any) {
-	reqURL := fmt.Sprintf("%s/api/services/%s/%s", strings.TrimRight(h.baseURL, "/"), domain, service)
+	reqURL := fmt.Sprintf("%s/api/services/%s/%s", strings.TrimRight(h.baseURL, "/"), url.PathEscape(domain), url.PathEscape(service))
 	var bodyReader io.Reader
 	if serviceData != nil {
 		bodyBytes, err := json.Marshal(serviceData)
@@ -253,6 +256,16 @@ func (h *DefaultWidgetActionHandler) parseRequest(w http.ResponseWriter, r *http
 		return "", "", nil, err
 	}
 
+	if !provider.IsValidIdentifier(domain) {
+		return "", "", nil, fmt.Errorf("invalid domain %q: must match ^[a-z0-9_]+$", domain)
+	}
+	if !provider.IsValidIdentifier(service) {
+		return "", "", nil, fmt.Errorf("invalid service %q: must match ^[a-z0-9_]+$", service)
+	}
+	if !provider.IsSupportedDomain(domain) {
+		return "", "", nil, fmt.Errorf("unsupported domain: %q", domain)
+	}
+
 	return domain, service, extractServiceData(req), nil
 }
 
@@ -267,9 +280,12 @@ func splitDomainService(domain, service, action string) (string, string, error) 
 		if parts := strings.SplitN(service, sep, 2); len(parts) == 2 && parts[0] != "" && parts[1] != "" {
 			if domain == "" {
 				domain = strings.TrimSpace(parts[0])
+				service = strings.TrimSpace(parts[1])
+				break
+			} else if strings.EqualFold(strings.TrimSpace(parts[0]), domain) {
+				service = strings.TrimSpace(parts[1])
+				break
 			}
-			service = strings.TrimSpace(parts[1])
-			break
 		}
 	}
 
