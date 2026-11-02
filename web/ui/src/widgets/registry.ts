@@ -1,15 +1,5 @@
 import type { ComponentType } from 'react';
 import { LegacyWidget } from './LegacyWidget';
-import { SpacerWidget } from './spacer/SpacerWidget';
-import { TasksWidget } from './tasks/TasksWidget';
-import { WeatherForecastWidget } from './weather-forecast/WeatherForecastWidget';
-import { ChatLogWidget } from './chat-log/ChatLogWidget';
-import { CalendarFeedWidget } from './calendar-feed/CalendarFeedWidget';
-import { CalendarGridWidget } from './calendar-grid/CalendarGridWidget';
-import { PhotoCarouselWidget } from './photo-carousel/PhotoCarouselWidget';
-import { LiveViewWidget } from './live-view/LiveViewWidget';
-import { PlexRecentWidget } from './plex-recent/PlexRecentWidget';
-import { YtMusicWidget } from './yt-music/YtMusicWidget';
 
 /** Props every widget component receives from WidgetHost. */
 export interface WidgetComponentProps {
@@ -17,22 +7,18 @@ export interface WidgetComponentProps {
   type: string;
 }
 
+const modules = import.meta.glob<Record<string, ComponentType<WidgetComponentProps>>>('./*/*Widget.tsx', { eager: true });
+
 /**
- * Widget type -> component. Widget tasks add entries here. A type missing from the map
- * renders through LEGACY_WIDGET_FALLBACK.
+ * Widget type -> component. Automatically discovered from widget files.
+ * A type missing from the map renders through LEGACY_WIDGET_FALLBACK.
  */
-export const WIDGET_COMPONENTS: Readonly<Record<string, ComponentType<WidgetComponentProps>>> = {
-  spacer: SpacerWidget,
-  tasks: TasksWidget,
-  'weather-forecast': WeatherForecastWidget,
-  'chat-log': ChatLogWidget,
-  'calendar-feed': CalendarFeedWidget,
-  'calendar-grid': CalendarGridWidget,
-  'photo-carousel': PhotoCarouselWidget,
-  'live-view': LiveViewWidget,
-  'plex-recent': PlexRecentWidget,
-  'yt-music': YtMusicWidget,
-};
+export const WIDGET_COMPONENTS: Readonly<Record<string, ComponentType<WidgetComponentProps>>> = Object.fromEntries(
+  Object.entries(modules).map(([path, mod]) => {
+    const [, type, file] = path.split('/');
+    return [type, mod[file.slice(0, -4)]];
+  })
+);
 
 /**
  * Renders any type with no registered component: a custom or not-yet-ported package, served as

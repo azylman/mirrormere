@@ -192,6 +192,26 @@ run_code_health() {
     echo "   [code-health] Checking ratcheted complexity and length limits..."
     if has_cmd go; then
         ensure_code_health
+        if [ "$MODE" = "staged" ] && [ -z "${GITHUB_ACTIONS:-}" ] && has_cmd git; then
+            staged_go=$(git diff --cached --name-only --diff-filter=ACM 2>/dev/null | grep '\.go$' || true)
+            if [ -n "$staged_go" ]; then
+                staged_clean=""
+                for f in $staged_go; do
+                    if [ -f "$f" ] && git diff --quiet -- "$f" 2>/dev/null; then
+                        staged_clean="${staged_clean:+$staged_clean }$f"
+                    fi
+                done
+                if [ -n "$staged_clean" ]; then
+                    # shellcheck disable=SC2086
+                    "$CODE_HEALTH_BIN" -fix -root "$REPO_ROOT" -baseline "$REPO_ROOT/.code-health-baseline.json" $staged_clean >/dev/null 2>&1 || true
+                    for f in $staged_clean; do
+                        if [ -f "$f" ] && ! git diff --quiet -- "$f" 2>/dev/null; then
+                            git add "$f"
+                        fi
+                    done
+                fi
+            fi
+        fi
         "$CODE_HEALTH_BIN" -root "$REPO_ROOT" -baseline "$REPO_ROOT/.code-health-baseline.json"
     else
         echo "🚨 [Mirrormere Verify] Error: go not found in PATH." >&2

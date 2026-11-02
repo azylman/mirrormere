@@ -55,6 +55,21 @@ func TestRegistry(t *testing.T) {
 	}
 }
 
+func TestRegistry_Builtins(t *testing.T) {
+	t.Parallel()
+	reg := provider.NewRegistry()
+	builtins := []string{"spacer", "live-view", "http", "weather-forecast", "calendar-feed", "photo-carousel", "tasks"}
+	for _, name := range builtins {
+		p, err := reg.Create(name)
+		if err != nil {
+			t.Fatalf("Create(%q) failed: %v", name, err)
+		}
+		if p == nil {
+			t.Fatalf("Create(%q) returned nil provider", name)
+		}
+	}
+}
+
 func TestInitOptions_GetSecret(t *testing.T) {
 	t.Parallel()
 	opts := provider.InitOptions{Secrets: map[string]string{"token": "tok-123", "api_key": "secret-xyz"}}
