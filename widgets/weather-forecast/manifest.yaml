@@ -45,4 +45,25 @@ config_schema:
       enum:
         - imperial
         - metric
+    mode:
+      type: string
+      enum:
+        - standard
+        - school-day
+    character_pack:
+      type: string
+    variants_per_state:
+      type: integer
+      minimum: 1
+      maximum: 10
+    rain_threshold_pct:
+      type: integer
+      minimum: 0
+      maximum: 100
+    cold_max_f:
+      type: number
+    cool_max_f:
+      type: number
+    warm_max_f:
+      type: number
   additionalProperties: false

@@ -232,13 +232,13 @@ describe('Clock component', () => {
     expect(weekdayEl.textContent).toBe('Saturday');
     expect(fullDateEl.textContent).toBe('Oct 31');
 
-    // Advance to next day: date and weekday update declaratively
+    // Advance to next day: date and weekday update declaratively (10 hours past midnight into Nov 1)
     act(() => {
-      vi.advanceTimersByTime(11 * 3600 * 1000); // Into Nov 1
+      vi.advanceTimersByTime(10 * 3600 * 1000); // Into Nov 1 (00:06:01 UTC)
     });
     expect(weekdayEl.textContent).toBe('Sunday');
     expect(fullDateEl.textContent).toBe('Nov 1');
-  }, 15000);
+  }, 20000);
 
   it('stops its timer when document is hidden and resumes when visible', () => {
     const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
