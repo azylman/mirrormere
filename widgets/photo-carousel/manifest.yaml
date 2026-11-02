@@ -26,27 +26,48 @@ supported_dimensions:
 
 config_schema:
   type: object
+  required:
+    - source
   properties:
-    share_url:
+    source:
       type: string
-    share_url_env:
+      enum:
+        - share_url
+        - ember_bridge
+    album_url:
       type: string
-    cycle_interval_seconds:
+      format: uri
+    album_url_env:
+      type: string
+  additionalProperties: false
+
+response_schema:
+  type: object
+  required:
+    - album_name
+    - total_photos
+    - photos
+  properties:
+    album_name:
+      type: string
+    album_url:
+      type: string
+    total_photos:
       type: integer
-      minimum: 5
-    preload_count:
-      type: integer
-      minimum: 1
-      maximum: 500
-    shuffle:
-      type: boolean
-    fit:
-      type: string
-      enum: ["contain", "cover"]
-    image_size:
+    photos:
       type: array
       items:
-        type: integer
-      minItems: 2
-      maxItems: 2
-  additionalProperties: false
+        type: object
+        required:
+          - id
+          - url
+          - aspect_ratio
+        properties:
+          id:
+            type: string
+          url:
+            type: string
+          timestamp:
+            type: string
+          aspect_ratio:
+            type: number

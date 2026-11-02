@@ -206,6 +206,10 @@ func (m *mockAll) ServeStyle(w http.ResponseWriter, _ *http.Request) { m.w(w, "s
 func (m *mockAll) PostWidgetPush(w http.ResponseWriter, _ *http.Request, id string) {
 	m.w(w, "push:"+id)
 }
+
+func (m *mockAll) PostWidgetPhotos(w http.ResponseWriter, _ *http.Request, id string) {
+	m.w(w, "photos:"+id)
+}
 func (m *mockAll) GetDisplay(w http.ResponseWriter, _ *http.Request)          { m.w(w, "display") }
 func (m *mockAll) GetStatic(w http.ResponseWriter, _ *http.Request, p string) { m.w(w, "static:"+p) }
 
@@ -276,6 +280,7 @@ func TestServer_HandlerDelegation(t *testing.T) {
 		{"display_main", "display", http.MethodGet, "/display", "display"},
 		{"display_static", "display", http.MethodGet, "/static/bundle.js", "static:bundle.js"},
 		{"push_webhook", "push", http.MethodPost, "/api/widgets/weather/push", "push:weather"},
+		{"photos_webhook", "push", http.MethodPost, "/api/widgets/family-photos/photos", "photos:family-photos"},
 		{"lists_complete", "lists", http.MethodPost, "/api/lists/groceries/items/i42/complete", "complete:groceries:i42"},
 		{"audio_get", "audio", http.MethodGet, "/api/audio", "audio"},
 		{"audio_volume", "audio", http.MethodPost, "/api/audio/volume", "volume"},

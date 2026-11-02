@@ -277,6 +277,7 @@ jobs:
           # so the providers fail fast and the screens still load from config (docs/perf.md).
           export FAMILY_CALENDAR_URL=http://localhost:9/fixture.ics
           export TODOIST_API_TOKEN=fixture-token
+          export GOOGLE_PHOTOS_ALBUM_URL=http://localhost:9/fixture-photos
           RUNNER_TRACKING_ID="" CONFIG_PATH=deploy/examples/config.yaml ./bin/server > server.log 2>&1 &
           for _ in $(seq 1 60); do
             if curl -fsS -o /dev/null 'http://localhost:8080/display?ui=react'; then break; fi

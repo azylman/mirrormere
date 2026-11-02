@@ -1,14 +1,14 @@
-<div class="widget-card widget-photo-carousel dither" data-widget-id="{{ .ID }}" data-widget-type="{{ .Type }}" data-fit="{{ if eq .Config.fit "cover" }}cover{{ else }}contain{{ end }}"{{ if and .Config.image_size (eq (len .Config.image_size) 2) }} data-image-width="{{ index .Config.image_size 0 }}" data-image-height="{{ index .Config.image_size 1 }}"{{ end }} style="grid-column: span {{ .Dimensions.Cols }}; grid-row: span {{ .Dimensions.Rows }};">
+<div class="widget-card widget-photo-carousel dither" data-widget-id="{{ .ID }}" data-widget-type="{{ .Type }}" data-fit="contain" style="grid-column: span {{ .Dimensions.Cols }}; grid-row: span {{ .Dimensions.Rows }};">
   {{ if .Data }}
     {{ if and .Data.Photos (gt (len .Data.Photos) 0) }}
       {{ $first := index .Data.Photos 0 }}
       <div class="photo-viewport dither">
         <div class="photo-backdrop-container" aria-hidden="true">
-          <img class="photo-backdrop-layer photo-backdrop-current" src="{{ if ne .Config.fit "cover" }}{{ $first.URL }}=w96-h54-c{{ end }}" alt="" />
+          <img class="photo-backdrop-layer photo-backdrop-current" src="{{ $first.URL }}=w96-h54-c" alt="" />
           <img class="photo-backdrop-layer photo-backdrop-next" src="" alt="" style="opacity: 0;" />
         </div>
         <div class="photo-foreground-container">
-          <img class="photo-layer photo-current dither" src="{{ $first.URL }}=w{{ if and .Config.image_size (eq (len .Config.image_size) 2) }}{{ index .Config.image_size 0 }}-h{{ index .Config.image_size 1 }}{{ else }}3840-h2160{{ end }}{{ if eq .Config.fit "cover" }}-c{{ end }}" alt="Photo" />
+          <img class="photo-layer photo-current dither" src="{{ $first.URL }}=w3840-h2160" alt="Photo" />
           <img class="photo-layer photo-next dither" src="" alt="Photo" style="opacity: 0;" />
         </div>
       </div>

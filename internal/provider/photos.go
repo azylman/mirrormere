@@ -21,12 +21,13 @@ import (
 )
 
 const (
-	defaultPhotoCycleIntervalSeconds = 60
-	minPhotoCycleIntervalSeconds     = 5
-	defaultPhotoPreloadCount         = 500
-	maxPhotoPreloadCount             = 500
-	maxPhotoAlbumBytes               = 5 * 1024 * 1024 // 5MB Slowloris defense ceiling
+	PhotoSourceShareURL      = "share_url"
+	PhotoSourceEmberBridge   = "ember_bridge"
+	defaultPhotoPreloadCount = 500
+	maxPhotoAlbumBytes       = 5 * 1024 * 1024 // 5MB Slowloris defense ceiling
 )
+
+var pwExactURLRe = regexp.MustCompile(`^https:\/\/lh[0-9]*\.googleusercontent\.com\/pw\/[a-zA-Z0-9_\-]+$`)
 
 // Standard error definitions for Google Photos ingestion.
 var (
@@ -37,10 +38,10 @@ var (
 
 // PhotoSnapshot represents the normalized photo carousel data emitted over SSE.
 type PhotoSnapshot struct {
-	AlbumName            string      `json:"album_name"`
-	TotalPhotos          int         `json:"total_photos"`
-	CycleIntervalSeconds int         `json:"cycle_interval_seconds"`
-	Photos               []PhotoItem `json:"photos"`
+	AlbumName   string      `json:"album_name"`
+	AlbumURL    string      `json:"album_url,omitempty"`
+	TotalPhotos int         `json:"total_photos"`
+	Photos      []PhotoItem `json:"photos"`
 }
 
 // PhotoItem represents a single photograph within a shared album.
@@ -54,12 +55,9 @@ type PhotoItem struct {
 
 // PhotosConfig holds parsed configuration for PhotosProvider.
 type PhotosConfig struct {
-	ShareURL             string
-	ShareURLEnv          string
-	CycleIntervalSeconds int
-	PreloadCount         int
-	Shuffle              bool
-	ImageSize            [2]int
+	Source      string
+	AlbumURL    string
+	AlbumURLEnv string
 }
 
 // PhotosProvider implements Provider for Google Photos unlisted shared album carousels.
@@ -86,23 +84,58 @@ func NewPhotosProvider() *PhotosProvider {
 	}
 }
 
-func resolvePhotoShareURL(parsed PhotosConfig, opts InitOptions) (string, error) {
-	if parsed.ShareURLEnv != "" {
-		if sec := opts.GetSecret(parsed.ShareURLEnv); sec != "" {
-			return strings.TrimSpace(sec), nil
-		}
-		if env := os.Getenv(parsed.ShareURLEnv); env != "" {
-			return strings.TrimSpace(env), nil
-		}
-		return "", fmt.Errorf("photo-carousel: environment variable %q specified in 'share_url_env' is not set or empty", parsed.ShareURLEnv)
+// Source returns the configured ingestion source mode.
+func (p *PhotosProvider) Source() string {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.cfg.Source
+}
+
+func resolveURLFromEnv(envKey string, opts InitOptions) (string, error) {
+	if sec := opts.GetSecret("album_url"); sec != "" {
+		return strings.TrimSpace(sec), nil
 	}
-	if parsed.ShareURL != "" {
-		if sec := opts.GetSecret("share_url"); sec != "" {
-			return strings.TrimSpace(sec), nil
-		}
-		return parsed.ShareURL, nil
+	if sec := opts.GetSecret(envKey); sec != "" {
+		return strings.TrimSpace(sec), nil
 	}
-	return "", fmt.Errorf("photo-carousel requires either 'share_url' or 'share_url_env'")
+	if env := os.Getenv(envKey); env != "" {
+		return strings.TrimSpace(env), nil
+	}
+	return "", fmt.Errorf("photo-carousel: environment variable %q specified in 'album_url_env' is not set or empty", envKey)
+}
+
+func resolvePhotoAlbumURL(parsed PhotosConfig, opts InitOptions) (string, error) {
+	if parsed.AlbumURL != "" && parsed.AlbumURLEnv != "" {
+		return "", fmt.Errorf("photo-carousel: 'album_url' and 'album_url_env' are mutually exclusive")
+	}
+	if parsed.AlbumURL == "" && parsed.AlbumURLEnv == "" {
+		return "", fmt.Errorf("photo-carousel requires either 'album_url' or 'album_url_env'")
+	}
+
+	var resolvedURL string
+	if parsed.AlbumURLEnv != "" {
+		res, err := resolveURLFromEnv(parsed.AlbumURLEnv, opts)
+		if err != nil {
+			return "", err
+		}
+		resolvedURL = res
+	} else {
+		resolvedURL = parsed.AlbumURL
+		if sec := opts.GetSecret("album_url"); sec != "" {
+			resolvedURL = strings.TrimSpace(sec)
+		}
+	}
+
+	if resolvedURL == "" {
+		return "", fmt.Errorf("photo-carousel: resolved album URL is empty")
+	}
+
+	parsedU, err := url.Parse(resolvedURL)
+	if err != nil || (parsedU.Scheme != "http" && parsedU.Scheme != "https") || parsedU.Host == "" {
+		return "", fmt.Errorf("photo-carousel: invalid album URL %q", redactURL(resolvedURL))
+	}
+
+	return resolvedURL, nil
 }
 
 // Init parses configuration, resolves 3-tier secrets, and validates parameters.
@@ -120,29 +153,40 @@ func (p *PhotosProvider) Init(_ context.Context, config map[string]any, opts Ini
 	}
 	p.cfg = parsed
 
-	resolvedURL, err := resolvePhotoShareURL(parsed, opts)
+	resolvedURL, err := resolvePhotoAlbumURL(parsed, opts)
 	if err != nil {
 		return err
 	}
 
-	if resolvedURL == "" {
-		return fmt.Errorf("photo-carousel: resolved share URL is empty")
-	}
-
-	parsedU, err := url.Parse(resolvedURL)
-	if err != nil || (parsedU.Scheme != "http" && parsedU.Scheme != "https") {
-		return fmt.Errorf("photo-carousel: invalid share URL %q", redactURL(resolvedURL))
-	}
-
 	p.resolvedURL = resolvedURL
+
+	if parsed.Source == PhotoSourceEmberBridge {
+		p.cachedSnapshot = &PhotoSnapshot{
+			AlbumName:   "Shared Album",
+			AlbumURL:    resolvedURL,
+			TotalPhotos: 0,
+			Photos:      []PhotoItem{},
+		}
+	}
+
 	return nil
 }
 
 // Fetch executes an album synchronization cycle with SWR caching.
 func (p *PhotosProvider) Fetch(ctx context.Context) (any, error) {
 	p.mu.RLock()
+	source := p.cfg.Source
+	if source == PhotoSourceEmberBridge {
+		defer p.mu.RUnlock()
+		if p.cachedSnapshot == nil {
+			return nil, fmt.Errorf("photo-carousel: provider not initialized")
+		}
+		cloned := *p.cachedSnapshot
+		cloned.Photos = slices.Clone(p.cachedSnapshot.Photos)
+		return &cloned, nil
+	}
+
 	targetURL := p.resolvedURL
-	cfg := p.cfg
 	cached := p.cachedSnapshot
 	client := p.client
 	logger := p.logger
@@ -152,7 +196,7 @@ func (p *PhotosProvider) Fetch(ctx context.Context) (any, error) {
 		return nil, fmt.Errorf("photo-carousel: provider not initialized with target URL")
 	}
 
-	snap, err := p.scrapeAlbum(ctx, client, targetURL, cfg, logger)
+	snap, err := p.scrapeAlbum(ctx, client, targetURL, logger)
 	if err != nil {
 		if cached != nil {
 			logger.Warn("photo-carousel upstream scrape failed; returning cached SWR snapshot",
@@ -217,7 +261,7 @@ func checkAlbumResponseStatus(resp *http.Response) error {
 }
 
 // scrapeAlbum fetches the shared album HTML, follows redirects, extracts image entries, and builds PhotoSnapshot.
-func (p *PhotosProvider) scrapeAlbum(ctx context.Context, client *http.Client, albumURL string, cfg PhotosConfig, logger *slog.Logger) (*PhotoSnapshot, error) {
+func (p *PhotosProvider) scrapeAlbum(ctx context.Context, client *http.Client, albumURL string, logger *slog.Logger) (*PhotoSnapshot, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, albumURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
@@ -253,13 +297,13 @@ func (p *PhotosProvider) scrapeAlbum(ctx context.Context, client *http.Client, a
 	photos := extractPhotosFromHTML(html, logger)
 
 	totalFound := len(photos)
-	photos = p.selectAlbumWindow(photos, cfg)
+	photos = p.selectAlbumWindow(photos)
 
 	return &PhotoSnapshot{
-		AlbumName:            albumName,
-		TotalPhotos:          totalFound,
-		CycleIntervalSeconds: cfg.CycleIntervalSeconds,
-		Photos:               photos,
+		AlbumName:   albumName,
+		AlbumURL:    albumURL,
+		TotalPhotos: totalFound,
+		Photos:      photos,
 	}, nil
 }
 
@@ -322,18 +366,17 @@ func (p *PhotosProvider) reconcilePhotoDeck(scraped []PhotoItem, r *rand.Rand) {
 	p.deck = newDeck
 }
 
-func (p *PhotosProvider) selectAlbumWindow(scraped []PhotoItem, cfg PhotosConfig) []PhotoItem {
+func (p *PhotosProvider) selectAlbumWindow(scraped []PhotoItem) []PhotoItem {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	return p.selectAlbumWindowLocked(scraped)
+}
 
-	if !cfg.Shuffle || len(scraped) <= 1 {
+func (p *PhotosProvider) selectAlbumWindowLocked(scraped []PhotoItem) []PhotoItem {
+	if len(scraped) <= 1 {
 		p.deck = nil
 		p.deckCursor = 0
-		limit := len(scraped)
-		if cfg.PreloadCount > 0 && limit > cfg.PreloadCount {
-			limit = cfg.PreloadCount
-		}
-		return slices.Clone(scraped[:limit])
+		return slices.Clone(scraped)
 	}
 
 	r := p.randSource
@@ -347,10 +390,7 @@ func (p *PhotosProvider) selectAlbumWindow(scraped []PhotoItem, cfg PhotosConfig
 		p.deckCursor = 0
 	}
 
-	limit := len(p.deck)
-	if cfg.PreloadCount > 0 {
-		limit = cfg.PreloadCount
-	}
+	limit := min(len(p.deck), defaultPhotoPreloadCount)
 
 	if limit >= len(p.deck) {
 		p.deckCursor = 0
@@ -385,6 +425,59 @@ func (p *PhotosProvider) selectAlbumWindow(scraped []PhotoItem, cfg PhotosConfig
 	window := slices.Clone(p.deck[:limit])
 	p.deckCursor = limit
 	return window
+}
+
+// IngestPushedPhotos accepts pushed photo URLs for ember_bridge instances, validates URLs, and updates cache.
+func (p *PhotosProvider) IngestPushedPhotos(rawURLs []string, albumName string) (*PhotoSnapshot, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.cfg.Source != PhotoSourceEmberBridge {
+		return nil, ErrPhotoPushNotSupported
+	}
+
+	if len(rawURLs) == 0 {
+		return nil, ErrInvalidPhotoPushPayload
+	}
+
+	seen := make(map[string]struct{}, len(rawURLs))
+	items := make([]PhotoItem, 0, len(rawURLs))
+	for idx, raw := range rawURLs {
+		cleanURL := cleanGooglePhotoURL(raw)
+		if !pwExactURLRe.MatchString(cleanURL) {
+			return nil, fmt.Errorf("%w: URL %q does not match expected Google Photos pattern", ErrInvalidPhotoPushPayload, cleanURL)
+		}
+		if _, exists := seen[cleanURL]; !exists {
+			seen[cleanURL] = struct{}{}
+			items = append(items, PhotoItem{
+				ID:          fmt.Sprintf("photo_%d", idx+1),
+				URL:         cleanURL,
+				AspectRatio: 1.33,
+			})
+		}
+	}
+
+	window := p.selectAlbumWindowLocked(items)
+
+	finalAlbumName := "Shared Album"
+	if p.cachedSnapshot != nil && p.cachedSnapshot.AlbumName != "" {
+		finalAlbumName = p.cachedSnapshot.AlbumName
+	}
+	if trimmed := strings.TrimSpace(albumName); trimmed != "" {
+		finalAlbumName = trimmed
+	}
+
+	snap := &PhotoSnapshot{
+		AlbumName:   finalAlbumName,
+		AlbumURL:    p.resolvedURL,
+		TotalPhotos: len(items),
+		Photos:      window,
+	}
+	p.cachedSnapshot = snap
+
+	cloned := *snap
+	cloned.Photos = slices.Clone(snap.Photos)
+	return &cloned, nil
 }
 
 // Regex patterns for metadata and photo extraction.
@@ -711,61 +804,37 @@ func toFloat(val any) (float64, bool) {
 	return 0, false
 }
 
-func positiveIntFromMap(cfg map[string]any, key string, def int) int {
-	if cfg == nil {
-		return def
-	}
-	switch v := cfg[key].(type) {
-	case int:
-		if v > 0 {
-			return v
-		}
-	case float64:
-		if v > 0 {
-			return int(v)
-		}
-	}
-	return def
-}
-
 // parsePhotosConfig parses and validates instance configuration.
 func parsePhotosConfig(cfg map[string]any, _ InitOptions) (PhotosConfig, error) {
-	res := PhotosConfig{
-		CycleIntervalSeconds: defaultPhotoCycleIntervalSeconds,
-		PreloadCount:         defaultPhotoPreloadCount,
-		Shuffle:              true,
-	}
-
 	if cfg == nil {
-		return res, nil
+		return PhotosConfig{}, fmt.Errorf("photo-carousel: configuration is required")
 	}
 
-	if v, ok := cfg["share_url"].(string); ok {
-		res.ShareURL = strings.TrimSpace(v)
+	sourceVal, ok := cfg["source"].(string)
+	if !ok {
+		return PhotosConfig{}, fmt.Errorf("photo-carousel: 'source' is required and must be either %q or %q", PhotoSourceShareURL, PhotoSourceEmberBridge)
 	}
-	if v, ok := cfg["share_url_env"].(string); ok {
-		res.ShareURLEnv = strings.TrimSpace(v)
-	}
-
-	// Mutual exclusivity check
-	if res.ShareURL != "" && res.ShareURLEnv != "" {
-		return res, fmt.Errorf("photo-carousel: 'share_url' and 'share_url_env' are mutually exclusive")
+	source := strings.TrimSpace(sourceVal)
+	if source != PhotoSourceShareURL && source != PhotoSourceEmberBridge {
+		return PhotosConfig{}, fmt.Errorf("photo-carousel: 'source' is required and must be either %q or %q", PhotoSourceShareURL, PhotoSourceEmberBridge)
 	}
 
-	res.CycleIntervalSeconds = max(positiveIntFromMap(cfg, "cycle_interval_seconds", defaultPhotoCycleIntervalSeconds), minPhotoCycleIntervalSeconds)
-
-	res.PreloadCount = min(positiveIntFromMap(cfg, "preload_count", defaultPhotoPreloadCount), maxPhotoPreloadCount)
-
-	if v, ok := cfg["shuffle"].(bool); ok {
-		res.Shuffle = v
+	res := PhotosConfig{
+		Source: source,
 	}
 
-	if arr, ok := cfg["image_size"].([]any); ok && len(arr) == 2 {
-		w, okW := toFloat(arr[0])
-		h, okH := toFloat(arr[1])
-		if okW && okH && w > 0 && h > 0 {
-			res.ImageSize = [2]int{int(w), int(h)}
-		}
+	if v, ok := cfg["album_url"].(string); ok {
+		res.AlbumURL = strings.TrimSpace(v)
+	}
+	if v, ok := cfg["album_url_env"].(string); ok {
+		res.AlbumURLEnv = strings.TrimSpace(v)
+	}
+
+	if res.AlbumURL != "" && res.AlbumURLEnv != "" {
+		return res, fmt.Errorf("photo-carousel: 'album_url' and 'album_url_env' are mutually exclusive")
+	}
+	if res.AlbumURL == "" && res.AlbumURLEnv == "" {
+		return res, fmt.Errorf("photo-carousel requires either 'album_url' or 'album_url_env'")
 	}
 
 	return res, nil

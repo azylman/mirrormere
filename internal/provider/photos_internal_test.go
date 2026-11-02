@@ -3,6 +3,8 @@ package provider
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"math/rand"
 	"slices"
 	"testing"
@@ -35,10 +37,30 @@ func TestPhotos_InternalHelpers(t *testing.T) {
 		}
 	})
 
-	t.Run("parsePhotosConfig nil cfg", func(t *testing.T) {
+	t.Run("parsePhotosConfig validation", func(t *testing.T) {
 		t.Parallel()
-		if cfg, err := parsePhotosConfig(nil, InitOptions{}); err != nil || cfg.CycleIntervalSeconds != defaultPhotoCycleIntervalSeconds {
-			t.Fatalf("unexpected nil cfg result: cfg=%+v, err=%v", cfg, err)
+		if _, err := parsePhotosConfig(nil, InitOptions{}); err == nil {
+			t.Fatal("expected error for nil cfg")
+		}
+		if _, err := parsePhotosConfig(map[string]any{}, InitOptions{}); err == nil {
+			t.Fatal("expected error for missing source")
+		}
+		if _, err := parsePhotosConfig(map[string]any{"source": "invalid"}, InitOptions{}); err == nil {
+			t.Fatal("expected error for invalid source")
+		}
+		if _, err := parsePhotosConfig(map[string]any{"source": "share_url"}, InitOptions{}); err == nil {
+			t.Fatal("expected error for missing album_url")
+		}
+		if _, err := parsePhotosConfig(map[string]any{"source": "share_url", "album_url": "https://photos.app.goo.gl/TEST", "album_url_env": "ENV_VAR"}, InitOptions{}); err == nil {
+			t.Fatal("expected error for both album_url and album_url_env")
+		}
+		cfg, err := parsePhotosConfig(map[string]any{"source": "share_url", "album_url": "https://photos.app.goo.gl/TEST"}, InitOptions{})
+		if err != nil || cfg.Source != "share_url" || cfg.AlbumURL != "https://photos.app.goo.gl/TEST" {
+			t.Fatalf("unexpected cfg result: cfg=%+v, err=%v", cfg, err)
+		}
+		cfgEnv, err := parsePhotosConfig(map[string]any{"source": "ember_bridge", "album_url_env": "ALBUM_ENV"}, InitOptions{})
+		if err != nil || cfgEnv.Source != "ember_bridge" || cfgEnv.AlbumURLEnv != "ALBUM_ENV" {
+			t.Fatalf("unexpected cfgEnv result: cfg=%+v, err=%v", cfgEnv, err)
 		}
 	})
 
@@ -160,6 +182,15 @@ func TestPhotos_InternalHelpers(t *testing.T) {
 
 	t.Run("selectAlbumWindow operations", func(t *testing.T) {
 		t.Parallel()
+		single := []PhotoItem{{ID: "1", URL: "u1"}}
+		pSingle := NewPhotosProvider()
+		pSingle.deck = slices.Clone(single)
+		pSingle.deckCursor = 1
+		winSingle := pSingle.selectAlbumWindow(single)
+		if len(winSingle) != 1 || pSingle.deck != nil || pSingle.deckCursor != 0 {
+			t.Errorf("expected single-item to reset deck, got deck=%v cursor=%d", pSingle.deck, pSingle.deckCursor)
+		}
+
 		scraped := []PhotoItem{
 			{ID: "1", URL: "u1"},
 			{ID: "2", URL: "u2"},
@@ -167,19 +198,10 @@ func TestPhotos_InternalHelpers(t *testing.T) {
 			{ID: "4", URL: "u4"},
 		}
 
-		p1 := NewPhotosProvider()
-		p1.deck = slices.Clone(scraped)
-		p1.deckCursor = 2
-		wNoShuffle := p1.selectAlbumWindow(scraped, PhotosConfig{Shuffle: false, PreloadCount: 2})
-		if len(wNoShuffle) != 2 || p1.deck != nil || p1.deckCursor != 0 {
-			t.Errorf("expected no-shuffle to reset deck, got deck=%v cursor=%d", p1.deck, p1.deckCursor)
-		}
-
 		pFull := NewPhotosProvider()
 		pFull.randSource = rand.New(rand.NewSource(99))
-		cfgFull := PhotosConfig{Shuffle: true, PreloadCount: 10}
-		w1 := pFull.selectAlbumWindow(scraped, cfgFull)
-		w2 := pFull.selectAlbumWindow(scraped, cfgFull)
+		w1 := pFull.selectAlbumWindow(scraped)
+		w2 := pFull.selectAlbumWindow(scraped)
 		if len(w1) != 4 || len(w2) != 4 {
 			t.Fatalf("expected 4 items in window, got %d, %d", len(w1), len(w2))
 		}
@@ -189,40 +211,31 @@ func TestPhotos_InternalHelpers(t *testing.T) {
 			}
 		}
 
-		pPart := NewPhotosProvider()
-		pPart.randSource = rand.New(rand.NewSource(100))
-		cfgPart := PhotosConfig{Shuffle: true, PreloadCount: 2}
-		win1 := pPart.selectAlbumWindow(scraped, cfgPart)
-		win2 := pPart.selectAlbumWindow(scraped, cfgPart)
-		if len(win1) != 2 || len(win2) != 2 {
-			t.Fatalf("expected 2 items per window, got %d, %d", len(win1), len(win2))
+		many := make([]PhotoItem, 600)
+		for i := range 600 {
+			many[i] = PhotoItem{ID: fmt.Sprintf("id-%d", i), URL: fmt.Sprintf("https://lh3.googleusercontent.com/pw/%d", i)}
 		}
-		seen := make(map[string]bool)
-		for _, it := range win1 {
-			seen[it.ID] = true
+		pCap := NewPhotosProvider()
+		pCap.randSource = rand.New(rand.NewSource(100))
+		wCap := pCap.selectAlbumWindow(many)
+		if len(wCap) != defaultPhotoPreloadCount {
+			t.Fatalf("expected %d items in capped window, got %d", defaultPhotoPreloadCount, len(wCap))
 		}
-		for _, it := range win2 {
-			if seen[it.ID] {
-				t.Errorf("expected disjoint windows, but %s was repeated", it.ID)
-			}
+		wWrap := pCap.selectAlbumWindow(many)
+		if len(wWrap) != defaultPhotoPreloadCount {
+			t.Fatalf("expected wrap-around window length %d, got %d", defaultPhotoPreloadCount, len(wWrap))
 		}
 
-		pWrap := NewPhotosProvider()
-		pWrap.randSource = rand.New(rand.NewSource(101))
-		cfgWrap := PhotosConfig{Shuffle: true, PreloadCount: 3}
-		wrap1 := pWrap.selectAlbumWindow(scraped, cfgWrap)
-		wrap2 := pWrap.selectAlbumWindow(scraped, cfgWrap)
-		if len(wrap1) != 3 || len(wrap2) != 3 {
-			t.Fatalf("expected 3 items per wrap window, got %d, %d", len(wrap1), len(wrap2))
+		many1000 := make([]PhotoItem, 1000)
+		for i := range 1000 {
+			many1000[i] = PhotoItem{ID: fmt.Sprintf("id-%d", i), URL: fmt.Sprintf("https://lh3.googleusercontent.com/pw/%d", i)}
 		}
-		for _, w := range [][]PhotoItem{wrap1, wrap2} {
-			u := make(map[string]bool)
-			for _, it := range w {
-				if u[it.ID] {
-					t.Errorf("found duplicate photo %s in wrap-around window", it.ID)
-				}
-				u[it.ID] = true
-			}
+		pExact := NewPhotosProvider()
+		pExact.randSource = rand.New(rand.NewSource(200))
+		_ = pExact.selectAlbumWindow(many1000)
+		wExact := pExact.selectAlbumWindow(many1000)
+		if len(wExact) != defaultPhotoPreloadCount {
+			t.Fatalf("expected exact window length %d, got %d", defaultPhotoPreloadCount, len(wExact))
 		}
 	})
 
@@ -243,11 +256,91 @@ func TestPhotos_InternalHelpers(t *testing.T) {
 		p.deck = []PhotoItem{{ID: "2", URL: "u2"}}
 		p.deckCursor = 1
 		p.cachedSnapshot = &PhotoSnapshot{}
-		if err := p.Init(context.Background(), map[string]any{"share_url": "https://example.com/album"}, InitOptions{}); err != nil {
+		if err := p.Init(context.Background(), map[string]any{"source": "share_url", "album_url": "https://example.com/album"}, InitOptions{}); err != nil {
 			t.Fatalf("Init failed: %v", err)
 		}
 		if p.deck != nil || p.deckCursor != 0 || p.cachedSnapshot != nil {
 			t.Errorf("Init did not reset deck: deck=%v, cursor=%d, cached=%v", p.deck, p.deckCursor, p.cachedSnapshot)
+		}
+	})
+
+	t.Run("IngestPushedPhotos", func(t *testing.T) {
+		t.Parallel()
+		pShare := NewPhotosProvider()
+		_ = pShare.Init(context.Background(), map[string]any{"source": "share_url", "album_url": "https://photos.app.goo.gl/share"}, InitOptions{})
+		if _, err := pShare.IngestPushedPhotos([]string{"https://lh3.googleusercontent.com/pw/VALID"}, "Test"); !errors.Is(err, ErrPhotoPushNotSupported) {
+			t.Fatalf("expected ErrPhotoPushNotSupported on share_url provider, got %v", err)
+		}
+
+		pEmber := NewPhotosProvider()
+		_ = pEmber.Init(context.Background(), map[string]any{"source": "ember_bridge", "album_url": "https://photos.app.goo.gl/ember"}, InitOptions{})
+
+		if _, err := pEmber.IngestPushedPhotos(nil, "Empty"); !errors.Is(err, ErrInvalidPhotoPushPayload) {
+			t.Fatalf("expected ErrInvalidPhotoPushPayload on empty photos, got %v", err)
+		}
+		if _, err := pEmber.IngestPushedPhotos([]string{"https://notgoogle.com/pic.jpg"}, "BadURL"); !errors.Is(err, ErrInvalidPhotoPushPayload) {
+			t.Fatalf("expected ErrInvalidPhotoPushPayload on bad url, got %v", err)
+		}
+
+		validURLs := []string{
+			"https://lh3.googleusercontent.com/pw/VALID1=w1024-h768",
+			"https://lh3.googleusercontent.com/pw/VALID1",
+			"https://lh4.googleusercontent.com/pw/VALID2",
+		}
+		snap, err := pEmber.IngestPushedPhotos(validURLs, "Custom Album")
+		if err != nil {
+			t.Fatalf("IngestPushedPhotos failed: %v", err)
+		}
+		if snap.AlbumName != "Custom Album" || snap.TotalPhotos != 2 || len(snap.Photos) != 2 {
+			t.Fatalf("unexpected snapshot: %+v", snap)
+		}
+		if snap.AlbumURL != "https://photos.app.goo.gl/ember" {
+			t.Fatalf("unexpected AlbumURL: %s", snap.AlbumURL)
+		}
+
+		// Empty album name preserves cached album name
+		snap2, err := pEmber.IngestPushedPhotos([]string{"https://lh3.googleusercontent.com/pw/VALID3"}, "  ")
+		if err != nil {
+			t.Fatalf("second push failed: %v", err)
+		}
+		if snap2.AlbumName != "Custom Album" || snap2.TotalPhotos != 1 {
+			t.Fatalf("expected preserved album name 'Custom Album', got %q", snap2.AlbumName)
+		}
+	})
+
+	t.Run("provider methods and url resolution", func(t *testing.T) {
+		t.Parallel()
+		p := NewPhotosProvider()
+		if p.Source() != "" {
+			t.Errorf("expected empty initial source, got %q", p.Source())
+		}
+		if err := p.Subscribe(context.Background(), nil); err != nil {
+			t.Errorf("expected nil from Subscribe, got %v", err)
+		}
+		if _, err := p.Fetch(context.Background()); err == nil {
+			t.Error("expected error from uninitialized Fetch")
+		}
+		pEmber := NewPhotosProvider()
+		pEmber.cfg = PhotosConfig{Source: PhotoSourceEmberBridge}
+		if _, err := pEmber.Fetch(context.Background()); err == nil {
+			t.Error("expected error from uninitialized ember_bridge Fetch")
+		}
+
+		if _, err := resolvePhotoAlbumURL(PhotosConfig{AlbumURL: "http://example.com", AlbumURLEnv: "SOME_ENV"}, InitOptions{}); err == nil {
+			t.Error("expected mutually exclusive error")
+		}
+		if _, err := resolvePhotoAlbumURL(PhotosConfig{}, InitOptions{}); err == nil {
+			t.Error("expected neither url set error")
+		}
+		if _, err := resolvePhotoAlbumURL(PhotosConfig{AlbumURLEnv: "UNSET_VAR_XYZ"}, InitOptions{}); err == nil {
+			t.Error("expected unset env error")
+		}
+		if _, err := resolvePhotoAlbumURL(PhotosConfig{AlbumURL: "not-a-valid-url"}, InitOptions{}); err == nil {
+			t.Error("expected invalid url error")
+		}
+		resolved, err := resolvePhotoAlbumURL(PhotosConfig{AlbumURLEnv: "SECRET_VAR"}, InitOptions{Secrets: map[string]string{"SECRET_VAR": "https://photos.app.goo.gl/secret"}})
+		if err != nil || resolved != "https://photos.app.goo.gl/secret" {
+			t.Errorf("unexpected secret resolution: %s, %v", resolved, err)
 		}
 	})
 }

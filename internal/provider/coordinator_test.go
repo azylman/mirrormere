@@ -645,3 +645,68 @@ func TestProviderCoordinator_PushWidgetData(t *testing.T) {
 	}
 	_ = coord.Stop()
 }
+
+func TestProviderCoordinator_PushWidgetPhotos(t *testing.T) {
+	t.Parallel()
+	b, s := &mockBroadcaster{}, newMockStateSink()
+	pkgs := map[string]*domain.Package{
+		"photo-carousel": mkPkg("photo-carousel", "photos", 0, nil),
+		"custom-sensor":  mkPkg("custom-sensor", "http", 0, nil),
+	}
+	widgets := []config.WidgetConfig{
+		{ID: "tile-ember", Type: "photo-carousel", Config: map[string]any{"source": "ember_bridge", "album_url": "https://photos.app.goo.gl/ember"}},
+		{ID: "tile-share", Type: "photo-carousel", Config: map[string]any{"source": "share_url", "album_url": "https://photos.app.goo.gl/share"}},
+		{ID: "tile-sensor", Type: "custom-sensor", Endpoint: "https://example.com/sensor"},
+	}
+	reg := provider.NewRegistry()
+	reg.Register("photos", func() provider.Provider { return provider.NewPhotosProvider() })
+	reg.Register("http", func() provider.Provider { return newControllableMockProvider() })
+	coord := newCoord(reg, b, s, mkSnap("", pkgs, widgets...))
+	defer coord.Stop()
+
+	ctx := context.Background()
+	validPhotos := []string{"https://lh3.googleusercontent.com/pw/AL9nZEW1", "https://lh3.googleusercontent.com/pw/AL9nZEW2"}
+
+	payload, err := coord.PushWidgetPhotos(ctx, "tile-ember", validPhotos, "Ember Vacation")
+	if err != nil || payload.WidgetID != "tile-ember" || payload.State != provider.StateHealthy {
+		t.Fatalf("unexpected PushWidgetPhotos: %v, %+v", err, payload)
+	}
+	snap, ok := payload.Data.(*provider.PhotoSnapshot)
+	if !ok || snap.AlbumName != "Ember Vacation" || snap.TotalPhotos != 2 || len(snap.Photos) != 2 {
+		t.Fatalf("unexpected payload data: %+v", payload.Data)
+	}
+	if cached, found := coord.Cache().Get("tile-ember"); !found || cached.State != provider.StateHealthy {
+		t.Fatalf("cached invalid: %v, %+v", found, cached)
+	}
+	if sinkData, sinkState, _, found := s.getState("tile-ember"); !found || sinkState != provider.StateHealthy || sinkData.(*provider.PhotoSnapshot).AlbumName != "Ember Vacation" {
+		t.Fatalf("stateSink invalid: %v, %s, %v", found, sinkState, sinkData)
+	}
+	if evt, found := b.waitForPublish(time.Second); !found || evt.Type != events.EventWidgetUpdate {
+		t.Fatalf("broadcaster invalid: found=%v, evt=%+v", found, evt)
+	}
+
+	coordStopped := provider.NewCoordinator(provider.CoordinatorConfig{}, mkSnap("", pkgs, widgets...))
+	_ = coordStopped.Stop()
+	coordNilSnap := provider.NewCoordinator(provider.CoordinatorConfig{}, nil)
+	defer coordNilSnap.Stop()
+
+	for _, tc := range []struct {
+		name, id, sub string
+		photos        []string
+		album         string
+		c             *provider.ProviderCoordinator
+		err           error
+	}{
+		{"not_found", "nonexistent-widget", "", validPhotos, "Album", coord, provider.ErrWidgetNotFound},
+		{"empty_id", "", "", validPhotos, "Album", coord, provider.ErrWidgetNotFound},
+		{"non_photo_widget", "tile-sensor", "", validPhotos, "Album", coord, provider.ErrPhotoPushNotSupported},
+		{"share_url_widget", "tile-share", "", validPhotos, "Album", coord, provider.ErrPhotoPushNotSupported},
+		{"invalid_photos", "tile-ember", "", []string{"https://notgoogle.com/pic.jpg"}, "Album", coord, provider.ErrInvalidPhotoPushPayload},
+		{"stopped_coord", "tile-ember", "coordinator is stopped", validPhotos, "Album", coordStopped, nil},
+		{"nil_snap", "tile-ember", "", validPhotos, "Album", coordNilSnap, provider.ErrWidgetNotFound},
+	} {
+		if _, err := tc.c.PushWidgetPhotos(ctx, tc.id, tc.photos, tc.album); (tc.err != nil && !errors.Is(err, tc.err)) || (tc.sub != "" && (err == nil || !strings.Contains(err.Error(), tc.sub))) {
+			t.Fatalf("unexpected error for %s: %v", tc.name, err)
+		}
+	}
+}

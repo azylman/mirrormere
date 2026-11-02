@@ -36,6 +36,7 @@ export default defineConfig({
           CONFIG_PATH: '../../deploy/examples/config.yaml',
           FAMILY_CALENDAR_URL: 'http://127.0.0.1:9/fixture.ics',
           TODOIST_API_TOKEN: 'fixture-token',
+          GOOGLE_PHOTOS_ALBUM_URL: 'http://127.0.0.1:9/fixture-photos',
         },
       },
 });
