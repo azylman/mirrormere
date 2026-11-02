@@ -26,8 +26,6 @@ supported_dimensions:
 
 config_schema:
   type: object
-  required:
-    - source
   properties:
     source:
       type: string
@@ -39,6 +37,28 @@ config_schema:
       format: uri
     album_url_env:
       type: string
+    share_url:
+      type: string
+    share_url_env:
+      type: string
+    cycle_interval_seconds:
+      type: integer
+      minimum: 1
+    preload_count:
+      type: integer
+      minimum: 1
+      maximum: 500
+    shuffle:
+      type: boolean
+    fit:
+      type: string
+      enum: ["contain", "cover"]
+    image_size:
+      type: array
+      items:
+        type: integer
+      minItems: 2
+      maxItems: 2
   additionalProperties: false
 
 response_schema:

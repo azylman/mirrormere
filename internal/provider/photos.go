@@ -95,6 +95,9 @@ func resolveURLFromEnv(envKey string, opts InitOptions) (string, error) {
 	if sec := opts.GetSecret("album_url"); sec != "" {
 		return strings.TrimSpace(sec), nil
 	}
+	if sec := opts.GetSecret("share_url"); sec != "" {
+		return strings.TrimSpace(sec), nil
+	}
 	if sec := opts.GetSecret(envKey); sec != "" {
 		return strings.TrimSpace(sec), nil
 	}
@@ -122,6 +125,8 @@ func resolvePhotoAlbumURL(parsed PhotosConfig, opts InitOptions) (string, error)
 	} else {
 		resolvedURL = parsed.AlbumURL
 		if sec := opts.GetSecret("album_url"); sec != "" {
+			resolvedURL = strings.TrimSpace(sec)
+		} else if sec := opts.GetSecret("share_url"); sec != "" {
 			resolvedURL = strings.TrimSpace(sec)
 		}
 	}
@@ -810,12 +815,17 @@ func parsePhotosConfig(cfg map[string]any, _ InitOptions) (PhotosConfig, error) 
 		return PhotosConfig{}, fmt.Errorf("photo-carousel: configuration is required")
 	}
 
-	sourceVal, ok := cfg["source"].(string)
-	if !ok {
-		return PhotosConfig{}, fmt.Errorf("photo-carousel: 'source' is required and must be either %q or %q", PhotoSourceShareURL, PhotoSourceEmberBridge)
+	var source string
+	if sourceVal, ok := cfg["source"].(string); ok {
+		source = strings.TrimSpace(sourceVal)
 	}
-	source := strings.TrimSpace(sourceVal)
-	if source != PhotoSourceShareURL && source != PhotoSourceEmberBridge {
+	if source == "" {
+		if cfg["share_url"] != nil || cfg["share_url_env"] != nil {
+			source = PhotoSourceShareURL
+		} else {
+			return PhotosConfig{}, fmt.Errorf("photo-carousel: 'source' is required and must be either %q or %q", PhotoSourceShareURL, PhotoSourceEmberBridge)
+		}
+	} else if source != PhotoSourceShareURL && source != PhotoSourceEmberBridge {
 		return PhotosConfig{}, fmt.Errorf("photo-carousel: 'source' is required and must be either %q or %q", PhotoSourceShareURL, PhotoSourceEmberBridge)
 	}
 
@@ -823,10 +833,15 @@ func parsePhotosConfig(cfg map[string]any, _ InitOptions) (PhotosConfig, error) 
 		Source: source,
 	}
 
-	if v, ok := cfg["album_url"].(string); ok {
+	if v, ok := cfg["album_url"].(string); ok && strings.TrimSpace(v) != "" {
+		res.AlbumURL = strings.TrimSpace(v)
+	} else if v, ok := cfg["share_url"].(string); ok {
 		res.AlbumURL = strings.TrimSpace(v)
 	}
-	if v, ok := cfg["album_url_env"].(string); ok {
+
+	if v, ok := cfg["album_url_env"].(string); ok && strings.TrimSpace(v) != "" {
+		res.AlbumURLEnv = strings.TrimSpace(v)
+	} else if v, ok := cfg["share_url_env"].(string); ok {
 		res.AlbumURLEnv = strings.TrimSpace(v)
 	}
 

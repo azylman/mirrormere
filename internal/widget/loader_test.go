@@ -184,6 +184,7 @@ func TestBuiltinPackagesAndAliases(t *testing.T) {
 		{"live-view", "live-view", "live-view", 3, 2, 0, true},
 		{"calendar-feed", "calendar-feed", "calendar-feed", 4, 2, 0, false},
 		{"calendar-grid", "calendar-grid", "calendar-feed", 6, 2, 0, false},
+		{"photo-carousel", "photo-carousel", "photo-carousel", 3, 2, 13, true},
 		{"web-embed", "web-embed", "spacer", 2, 2, 5, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -211,5 +212,33 @@ func TestLoader_LegacyTestFixture(t *testing.T) {
 	}
 	if !pkg.HasAssets() {
 		t.Error("legacy-test fixture should expose an assets directory")
+	}
+}
+
+func TestLoader_PhotoCarouselProductionConfigValidation(t *testing.T) {
+	t.Parallel()
+	loader := widget.NewLoader(filepath.Join("..", "..", "widgets"), t.TempDir())
+	yamlData := `
+timezone: America/Los_Angeles
+display:
+  widgets:
+    - id: photo-carousel
+      type: photo-carousel
+      dimensions: [3, 2]
+      refresh_interval_seconds: 60
+      config:
+        share_url: "https://photos.app.goo.gl/example-album"
+        cycle_interval_seconds: 30
+        shuffle: true
+    - id: pad
+      type: spacer
+      dimensions: [3, 2]
+`
+	snap, err := config.ValidatePipeline([]byte(yamlData), loader, nil)
+	if err != nil {
+		t.Fatalf("expected production photo-carousel configuration to validate: %v", err)
+	}
+	if snap == nil || len(snap.Config.Display.Widgets) != 2 {
+		t.Fatalf("unexpected snapshot: %+v", snap)
 	}
 }
