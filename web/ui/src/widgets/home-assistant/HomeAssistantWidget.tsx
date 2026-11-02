@@ -238,33 +238,41 @@ function renderTileCard(entityId: string, ctx: Ctx, card: LovelaceCard, key?: st
 }
 
 function renderButtonCard(card: LovelaceCard, entityId: string, ctx: Ctx, key?: string) {
+  const act = card.tap_action;
+  const tgt = act?.target as Record<string, unknown> | undefined;
+  const svc = act?.service_data as Record<string, unknown> | undefined;
+  const dat = act?.data as Record<string, unknown> | undefined;
+  const resolvedEntityId =
+    typeof tgt?.entity_id === 'string'
+      ? tgt.entity_id
+      : typeof svc?.entity_id === 'string'
+        ? svc.entity_id
+        : typeof dat?.entity_id === 'string'
+          ? dat.entity_id
+          : card.entity || entityId;
   const domain = getDomain(entityId);
   const entity = ctx.entities[entityId];
-  const inFlight = Boolean(ctx.inFlight[entityId]);
+  const inFlight = Boolean(ctx.inFlight[resolvedEntityId]);
   const name = getEntityName(entity, entityId, card.name || card.title);
   const state = entity?.state ?? 'idle';
   const icon = card.icon || getDomainIcon(domain, state);
 
   const handleTap = () => {
     if (inFlight) return;
-    if (card.tap_action) {
-      const act = card.tap_action;
+    if (act) {
       if (act.action === 'call-service' || act.action === 'call_service') {
         const full = String(act.service || '');
         const [dom, srv] = full.includes('.') ? full.split('.') : [domain, full];
-        const tgt = act.target as Record<string, unknown> | undefined;
-        const svc = act.service_data as Record<string, unknown> | undefined;
-        const ent = typeof tgt?.entity_id === 'string' ? tgt.entity_id : typeof svc?.entity_id === 'string' ? svc.entity_id : entityId;
-        void ctx.sendAction({ domain: dom || domain, service: srv, entity_id: ent, service_data: (act.service_data || act.data || {}) as Record<string, unknown> });
+        void ctx.sendAction({ domain: dom || domain, service: srv, entity_id: resolvedEntityId, service_data: (svc || dat || {}) as Record<string, unknown> });
         return;
       }
     }
     if (domain === 'scene' || domain === 'script') {
-      void ctx.sendAction({ domain, service: 'turn_on', entity_id: entityId });
+      void ctx.sendAction({ domain, service: 'turn_on', entity_id: resolvedEntityId });
     } else if (domain === 'lock') {
-      void ctx.sendAction({ domain: 'lock', service: state === 'locked' ? 'unlock' : 'lock', entity_id: entityId });
+      void ctx.sendAction({ domain: 'lock', service: state === 'locked' ? 'unlock' : 'lock', entity_id: resolvedEntityId });
     } else {
-      void ctx.sendAction({ domain, service: 'toggle', entity_id: entityId });
+      void ctx.sendAction({ domain, service: 'toggle', entity_id: resolvedEntityId });
     }
   };
 

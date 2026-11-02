@@ -1664,14 +1664,14 @@ describe('HomeAssistantWidget', () => {
 
   it('covers inFlight state rendering and disabled interactions', async () => {
     let resolveAction!: (v: unknown) => void;
-    const fetchMock = vi.fn().mockImplementation(() => new Promise((resolve) => {
-      resolveAction = resolve;
-    }));
+    const fetchMock = vi.fn().mockImplementation(() => new Promise((resolve) => { resolveAction = resolve; }));
     vi.stubGlobal('fetch', fetchMock);
 
     setHaWidget('ha-inflight-all', {
       cards: [
         { type: 'button', entity: 'switch.btn_flight' },
+        { type: 'button', name: 'Target Action Button', tap_action: { action: 'call-service', service: 'scene.turn_on', target: { entity_id: 'scene.target_flight' } } },
+        { type: 'button', name: 'Data Action Button', tap_action: { action: 'call_service', service: 'script.turn_on', data: { entity_id: 'script.data_flight' } } },
         { type: 'tile', entity: 'light.tile_flight' },
         { type: 'tile', entity: 'fan.fan_flight' },
         { type: 'tile', entity: 'lock.lock_flight' },
@@ -1689,24 +1689,15 @@ describe('HomeAssistantWidget', () => {
     });
 
     const { container } = render(<HomeAssistantWidget id="ha-inflight-all" type="home-assistant" />);
+    const [btn, targetBtn, dataBtn] = Array.from(container.querySelectorAll('.ha-card-button')) as HTMLButtonElement[];
 
-    // Click button to start in-flight request
-    const btn = container.querySelector('.ha-card-button') as HTMLButtonElement;
-    await act(async () => {
-      fireEvent.click(btn);
-    });
-
-    // While in-flight, verify disabled attribute and tap again to hit if (inFlight) return
-    expect(btn.disabled).toBe(true);
-    await act(async () => {
-      fireEvent.click(btn);
-    });
-
-    // Resolve in-flight request
-    await act(async () => {
-      resolveAction(new Response(JSON.stringify({ status: 'ok' })));
-    });
-    expect(btn.disabled).toBe(false);
+    for (const b of [btn, targetBtn, dataBtn]) {
+      await act(async () => { fireEvent.click(b); });
+      expect(b.disabled).toBe(true);
+      await act(async () => { fireEvent.click(b); });
+      await act(async () => { resolveAction(new Response(JSON.stringify({ status: 'ok' }))); });
+      expect(b.disabled).toBe(false);
+    }
   });
 
 
