@@ -115,3 +115,9 @@ response_schema:
             type: number
           album_name:
             type: string
+          location:
+            type: string
+          dominant_color:
+            type: string
+          location_checked:
+            type: boolean

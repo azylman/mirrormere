@@ -79,8 +79,78 @@ func TestPhotos_InternalHelpers(t *testing.T) {
 				t.Errorf("expected parseMediaItem(%v) ok=false", bad)
 			}
 		}
-		if item, ok := parseMediaItem([]any{"", []any{"https://lh3.googleusercontent.com/pw/TEST", 800, 600}}); !ok || item.ID == "" || item.AspectRatio != 1.33 {
+		if item, ok := parseMediaItem([]any{"", []any{"https://lh3.googleusercontent.com/pw/TEST", 800, 600, nil, nil, nil, nil, nil, nil, []any{3549993}}}); !ok || item.ID == "" || item.AspectRatio != 1.33 || item.DominantColor != "#362b29" {
 			t.Fatalf("unexpected valid item result: item=%+v, ok=%v", item, ok)
+		}
+		if got := extractDominantColor([]any{"u", 1, 1, nil, nil, nil, nil, nil, nil, []any{}}); got != "" {
+			t.Errorf("expected empty dominant color for empty slice, got %q", got)
+		}
+		if got := extractDominantColor([]any{"u", 1, 1, nil, nil, nil, nil, nil, nil, -1}); got != "" {
+			t.Errorf("expected empty dominant color for negative value, got %q", got)
+		}
+	})
+
+	t.Run("location enrichment and metadata carryover", func(t *testing.T) {
+		t.Parallel()
+		existing := []PhotoItem{
+			{ID: "AF1Qip_cached", URL: "https://lh3.googleusercontent.com/pw/CACHED", Location: "Oakland, CA", LocationChecked: true, DominantColor: "#112233"},
+		}
+		fresh := []PhotoItem{
+			{ID: "AF1Qip_cached", URL: "https://lh3.googleusercontent.com/pw/CACHED"},
+			{ID: "AF1Qip_new1", URL: "https://lh3.googleusercontent.com/pw/NEW1"},
+			{ID: "AF1Qip_noloc", URL: "https://lh3.googleusercontent.com/pw/NOLOC"},
+			{ID: "photo_positional", URL: "https://lh3.googleusercontent.com/pw/POS"},
+		}
+		carryCachedPhotoMetadata(fresh, existing)
+		if fresh[0].Location != "Oakland, CA" || !fresh[0].LocationChecked || fresh[0].DominantColor != "#112233" {
+			t.Fatalf("carryCachedPhotoMetadata failed: %+v", fresh[0])
+		}
+
+		srvLoc := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if strings.Contains(r.URL.RawQuery, "rpcids=fDcn4b") {
+				w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+				_, _ = w.Write([]byte(")]}'\n\n120\n[[[\"wrb.fr\",\"fDcn4b\",\"[[\\\"AF1Qip_new1\\\",null,null,null,null,null,null,null,null,null,null,null,null,[null,null,[[null,[[\\\"San Francisco, CA\\\",null,1]],\\\"ChIJ123\\\"]]]]]\",null,null,null,\"1\"],[\"wrb.fr\",\"fDcn4b\",\"[[\\\"AF1Qip_noloc\\\"]]\",null,null,null,\"2\"]]]\n"))
+				return
+			}
+			w.WriteHeader(http.StatusNotFound)
+		}))
+		defer srvLoc.Close()
+
+		enrichPhotoLocations(context.Background(), srvLoc.Client(), srvLoc.URL+"?key=auth123", "auth123", fresh, slog.Default())
+		if fresh[1].Location != "San Francisco, CA" || !fresh[1].LocationChecked {
+			t.Errorf("expected San Francisco, CA for fresh[1], got %+v", fresh[1])
+		}
+		if fresh[2].Location != "" || !fresh[2].LocationChecked {
+			t.Errorf("expected checked empty location for fresh[2], got %+v", fresh[2])
+		}
+		if fresh[3].LocationChecked {
+			t.Errorf("expected positional ID to be skipped, got %+v", fresh[3])
+		}
+
+		// Error fallback logs warning without mutating unchecked items
+		unchecked := []PhotoItem{{ID: "AF1Qip_err", URL: "https://lh3.googleusercontent.com/pw/ERR"}}
+		enrichPhotoLocations(context.Background(), srvLoc.Client(), "http://127.0.0.1:1", "auth123", unchecked, slog.Default())
+		if unchecked[0].LocationChecked {
+			t.Error("expected LocationChecked=false on network error")
+		}
+
+		// Malformed envelopes in parseSingleFDcn4bEnvelope and extractLocationLabel
+		if _, _, ok := parseSingleFDcn4bEnvelope([]any{"wrb.fr", "fDcn4b", ""}); ok {
+			t.Error("expected false for empty innerStr")
+		}
+		if _, _, ok := parseSingleFDcn4bEnvelope([]any{"wrb.fr", "fDcn4b", "invalid"}); ok {
+			t.Error("expected false for invalid JSON")
+		}
+		if _, _, ok := parseSingleFDcn4bEnvelope([]any{"wrb.fr", "fDcn4b", `["not-slice"]`}); ok {
+			t.Error("expected false for non-slice info")
+		}
+		if _, _, ok := parseSingleFDcn4bEnvelope([]any{"wrb.fr", "fDcn4b", `[[123]]`}); ok {
+			t.Error("expected false for non-string id")
+		}
+		locs, checked := parseFDcn4bResponse([]byte(`)]}'
+[[["wrb.fr","fDcn4b","[[\"AF1Qip_single\",null,null,null,null,null,null,null,null,null,null,null,null,[\"https://maps\",\"0x123\",\"ChIJabc\",\"Tokyo, Japan\"]]]",null,null,null,"1"]]]`))
+		if !checked["AF1Qip_single"] || locs["AF1Qip_single"] != "Tokyo, Japan" {
+			t.Errorf("unexpected single-array parse result: locs=%v checked=%v", locs, checked)
 		}
 	})
 

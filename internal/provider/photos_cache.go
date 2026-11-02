@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -21,6 +22,7 @@ const (
 	DefaultPhotosCacheDir         = "/data/photos"
 	DefaultPhotosPage1Interval    = time.Hour
 	DefaultPhotosFullSyncInterval = 24 * time.Hour
+	fDcn4bBatchSize               = 100
 )
 
 // PhotosOption configures PhotosProvider options.
@@ -183,25 +185,16 @@ func extractAlbumKeyAndToken(html string) (string, string) {
 	return "", ""
 }
 
-// fetchBatchexecutePage queries /_/PhotosUi/data/batchexecute?rpcids=snAcKc for the next page.
-func fetchBatchexecutePage(ctx context.Context, client *http.Client, albumURL, albumKey, token string) ([]PhotoItem, string, error) {
+func postBatchexecute(ctx context.Context, client *http.Client, albumURL, rpcID string, reqEnvelope any) ([]byte, error) {
 	baseURL := "https://photos.google.com"
 	if parsedU, err := url.Parse(albumURL); err == nil && parsedU.Host != "" {
 		baseURL = parsedU.Scheme + "://" + parsedU.Host
 	}
-	endpoint := baseURL + "/_/PhotosUi/data/batchexecute?rpcids=snAcKc"
+	endpoint := baseURL + "/_/PhotosUi/data/batchexecute?rpcids=" + rpcID
 
-	innerJSON, err := json.Marshal([]any{albumKey, token})
+	envelope, err := json.Marshal(reqEnvelope)
 	if err != nil {
-		return nil, "", err
-	}
-	envelope, err := json.Marshal([][][]any{
-		{
-			{"snAcKc", string(innerJSON), nil, "generic"},
-		},
-	})
-	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 
 	values := url.Values{}
@@ -209,7 +202,7 @@ func fetchBatchexecutePage(ctx context.Context, client *http.Client, albumURL, a
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(values.Encode()))
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36")
 	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
@@ -218,23 +211,35 @@ func fetchBatchexecutePage(ctx context.Context, client *http.Client, albumURL, a
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, "", fmt.Errorf("batchexecute returned HTTP %d", resp.StatusCode)
+		return nil, fmt.Errorf("batchexecute returned HTTP %d", resp.StatusCode)
 	}
 
 	limitReader := io.LimitReader(resp.Body, maxPhotoAlbumBytes+1)
 	bodyBytes, err := io.ReadAll(limitReader)
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	if len(bodyBytes) > maxPhotoAlbumBytes {
-		return nil, "", fmt.Errorf("batchexecute payload exceeded %d byte ceiling", maxPhotoAlbumBytes)
+		return nil, fmt.Errorf("batchexecute payload exceeded %d byte ceiling", maxPhotoAlbumBytes)
 	}
+	return bodyBytes, nil
+}
 
+// fetchBatchexecutePage queries /_/PhotosUi/data/batchexecute?rpcids=snAcKc for the next page.
+func fetchBatchexecutePage(ctx context.Context, client *http.Client, albumURL, albumKey, token string) ([]PhotoItem, string, error) {
+	innerJSON, err := json.Marshal([]any{albumKey, token})
+	if err != nil {
+		return nil, "", err
+	}
+	bodyBytes, err := postBatchexecute(ctx, client, albumURL, "snAcKc", [][][]any{{{"snAcKc", string(innerJSON), nil, "generic"}}})
+	if err != nil {
+		return nil, "", err
+	}
 	return parseBatchexecuteResponse(bodyBytes, token)
 }
 
@@ -255,25 +260,25 @@ func parseBatchexecuteResponse(bodyBytes []byte, currentToken string) ([]PhotoIt
 	return photos, "", nil
 }
 
-func findBatchExecuteEnvelopes(node any) [][]any {
+func findBatchExecuteEnvelopes(node any, rpcID string) [][]any {
 	v, ok := node.([]any)
 	if !ok {
 		return nil
 	}
 	if len(v) >= 3 {
-		if s, ok := v[1].(string); ok && s == "snAcKc" {
+		if s, ok := v[1].(string); ok && s == rpcID {
 			return [][]any{v}
 		}
 	}
 	var envelopes [][]any
 	for _, elem := range v {
-		envelopes = append(envelopes, findBatchExecuteEnvelopes(elem)...)
+		envelopes = append(envelopes, findBatchExecuteEnvelopes(elem, rpcID)...)
 	}
 	return envelopes
 }
 
 func extractBatchexecutePayload(node any, currentToken string) ([]PhotoItem, string) {
-	envelopes := findBatchExecuteEnvelopes(node)
+	envelopes := findBatchExecuteEnvelopes(node, "snAcKc")
 	var photos []PhotoItem
 	var nextToken string
 
@@ -371,4 +376,138 @@ func paginateSnAcKc(ctx context.Context, client *http.Client, albumURL, albumKey
 	}
 
 	return allPaged
+}
+
+func carryCachedPhotoMetadata(photos, existing []PhotoItem) {
+	byKey := make(map[string]PhotoItem, len(existing))
+	for _, ex := range existing {
+		byKey[photoDedupeKey(ex)] = ex
+	}
+	for i := range photos {
+		if prev, ok := byKey[photoDedupeKey(photos[i])]; ok {
+			if photos[i].Location == "" {
+				photos[i].Location = prev.Location
+			}
+			photos[i].LocationChecked = photos[i].LocationChecked || prev.LocationChecked
+			if photos[i].DominantColor == "" {
+				photos[i].DominantColor = prev.DominantColor
+			}
+		}
+	}
+}
+
+func enrichPhotoLocations(ctx context.Context, client *http.Client, albumURL, authKey string, photos []PhotoItem, logger *slog.Logger) {
+	if authKey == "" {
+		return
+	}
+	var pendingIdx []int
+	for i := range photos {
+		if !photos[i].LocationChecked && photos[i].Location == "" && photos[i].ID != "" && !strings.HasPrefix(photos[i].ID, "photo_") {
+			pendingIdx = append(pendingIdx, i)
+		}
+	}
+	for start := 0; start < len(pendingIdx); start += fDcn4bBatchSize {
+		batchIdx := pendingIdx[start:min(start+fDcn4bBatchSize, len(pendingIdx))]
+		ids := make([]string, len(batchIdx))
+		for i, idx := range batchIdx {
+			ids[i] = photos[idx].ID
+		}
+		locs, checked, err := fetchPhotoLocationsBatch(ctx, client, albumURL, authKey, ids)
+		if err != nil {
+			if logger != nil {
+				logger.Warn("photo-carousel: fDcn4b location enrichment failed", "error", err)
+			}
+			return
+		}
+		for _, idx := range batchIdx {
+			id := photos[idx].ID
+			if checked[id] {
+				photos[idx].LocationChecked = true
+				photos[idx].Location = locs[id]
+			}
+		}
+	}
+}
+
+func fetchPhotoLocationsBatch(ctx context.Context, client *http.Client, albumURL, authKey string, photoIDs []string) (map[string]string, map[string]bool, error) {
+	calls := make([][]any, 0, len(photoIDs))
+	for i, id := range photoIDs {
+		if innerJSON, err := json.Marshal([]any{id, 1, authKey}); err == nil {
+			calls = append(calls, []any{"fDcn4b", string(innerJSON), nil, strconv.Itoa(i + 1)})
+		}
+	}
+	bodyBytes, err := postBatchexecute(ctx, client, albumURL, "fDcn4b", [][][]any{calls})
+	if err != nil {
+		return nil, nil, err
+	}
+	locs, checked := parseFDcn4bResponse(bodyBytes)
+	return locs, checked, nil
+}
+
+func parseFDcn4bResponse(bodyBytes []byte) (map[string]string, map[string]bool) {
+	bodyStr := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(string(bodyBytes)), ")]}'"))
+	var envelopes [][]any
+	var root any
+	if err := json.Unmarshal([]byte(bodyStr), &root); err == nil {
+		envelopes = findBatchExecuteEnvelopes(root, "fDcn4b")
+	} else {
+		for line := range strings.SplitSeq(bodyStr, "\n") {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "[") && json.Unmarshal([]byte(line), &root) == nil {
+				envelopes = append(envelopes, findBatchExecuteEnvelopes(root, "fDcn4b")...)
+			}
+		}
+	}
+	locs := make(map[string]string, len(envelopes))
+	checked := make(map[string]bool, len(envelopes))
+	for _, elemArr := range envelopes {
+		if id, loc, ok := parseSingleFDcn4bEnvelope(elemArr); ok {
+			checked[id] = true
+			if loc != "" {
+				locs[id] = loc
+			}
+		}
+	}
+	return locs, checked
+}
+
+func parseSingleFDcn4bEnvelope(elemArr []any) (string, string, bool) {
+	innerStr, ok := elemArr[2].(string)
+	if !ok || innerStr == "" {
+		return "", "", false
+	}
+	var innerArr []any
+	if err := json.Unmarshal([]byte(innerStr), &innerArr); err != nil || len(innerArr) == 0 {
+		return "", "", false
+	}
+	info, ok := innerArr[0].([]any)
+	if !ok || len(info) == 0 {
+		return "", "", false
+	}
+	id, ok := info[0].(string)
+	if !ok || id == "" {
+		return "", "", false
+	}
+	var loc string
+	if len(info) > 13 {
+		loc = extractLocationLabel(info[13])
+	}
+	return id, loc, true
+}
+
+func extractLocationLabel(node any) string {
+	switch v := node.(type) {
+	case string:
+		s := strings.TrimSpace(v)
+		if s != "" && !strings.HasPrefix(s, "http") && !strings.HasPrefix(s, "ChIJ") && !strings.HasPrefix(s, "0x") {
+			return s
+		}
+	case []any:
+		for _, elem := range v {
+			if s := extractLocationLabel(elem); s != "" {
+				return s
+			}
+		}
+	}
+	return ""
 }

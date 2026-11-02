@@ -54,11 +54,14 @@ type PhotoSnapshot struct {
 // PhotoItem represents a single photograph within a shared album.
 // Contains clean CDN base URL without static sizing parameters.
 type PhotoItem struct {
-	ID          string  `json:"id"`
-	URL         string  `json:"url"` // Clean base URL e.g. https://lh3.googleusercontent.com/pw/...
-	Timestamp   string  `json:"timestamp,omitempty"`
-	AspectRatio float64 `json:"aspect_ratio"`
-	AlbumName   string  `json:"album_name,omitempty"`
+	ID              string  `json:"id"`
+	URL             string  `json:"url"` // Clean base URL e.g. https://lh3.googleusercontent.com/pw/...
+	Timestamp       string  `json:"timestamp,omitempty"`
+	AspectRatio     float64 `json:"aspect_ratio"`
+	AlbumName       string  `json:"album_name,omitempty"`
+	Location        string  `json:"location,omitempty"`
+	DominantColor   string  `json:"dominant_color,omitempty"`
+	LocationChecked bool    `json:"location_checked,omitempty"`
 }
 
 // PhotosConfig holds parsed configuration for PhotosProvider.
@@ -485,7 +488,7 @@ func (p *PhotosProvider) syncAlbum(ctx context.Context, a *albumState, full bool
 	existingPhotos := slices.Clone(a.photos)
 	p.mu.RUnlock()
 
-	page1Photos, scrapedTitle, initialToken, albumKey, err := p.scrapePage1(ctx, client, resolvedURL, logger)
+	page1Photos, scrapedTitle, initialToken, albumKey, authKey, err := p.scrapePage1(ctx, client, resolvedURL, logger)
 	if err != nil {
 		if alreadyHydrated {
 			logger.Warn("photo-carousel upstream scrape failed; returning cached SWR snapshot",
@@ -520,6 +523,8 @@ func (p *PhotosProvider) syncAlbum(ctx context.Context, a *albumState, full bool
 	} else {
 		newPhotos = syncAlbumDelta(existingPhotos, page1Photos, displayName)
 	}
+	carryCachedPhotoMetadata(newPhotos, existingPhotos)
+	enrichPhotoLocations(ctx, client, resolvedURL, authKey, newPhotos, logger)
 
 	var toCache *albumDiskCache
 
@@ -719,10 +724,10 @@ func checkAlbumResponseStatus(resp *http.Response) error {
 	return nil
 }
 
-func (p *PhotosProvider) scrapePage1(ctx context.Context, client *http.Client, albumURL string, logger *slog.Logger) ([]PhotoItem, string, string, string, error) {
+func (p *PhotosProvider) scrapePage1(ctx context.Context, client *http.Client, albumURL string, logger *slog.Logger) ([]PhotoItem, string, string, string, string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, albumURL, nil)
 	if err != nil {
-		return nil, "", "", "", fmt.Errorf("failed to create request: %w", err)
+		return nil, "", "", "", "", fmt.Errorf("failed to create request: %w", err)
 	}
 
 	// Browser User-Agent and Accept-Language per Girl Gang recommendations
@@ -732,22 +737,27 @@ func (p *PhotosProvider) scrapePage1(ctx context.Context, client *http.Client, a
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, "", "", "", fmt.Errorf("request to %s failed: %w", redactURL(albumURL), err)
+		return nil, "", "", "", "", fmt.Errorf("request to %s failed: %w", redactURL(albumURL), err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if err := checkAlbumResponseStatus(resp); err != nil {
-		return nil, "", "", "", err
+		return nil, "", "", "", "", err
 	}
 
 	// Slowloris defense: enforce 5MB ceiling
 	limitReader := io.LimitReader(resp.Body, maxPhotoAlbumBytes+1)
 	bodyBytes, err := io.ReadAll(limitReader)
 	if err != nil {
-		return nil, "", "", "", fmt.Errorf("failed to read response body: %w", err)
+		return nil, "", "", "", "", fmt.Errorf("failed to read response body: %w", err)
 	}
 	if len(bodyBytes) > maxPhotoAlbumBytes {
-		return nil, "", "", "", fmt.Errorf("google photos payload exceeded %d byte ceiling", maxPhotoAlbumBytes)
+		return nil, "", "", "", "", fmt.Errorf("google photos payload exceeded %d byte ceiling", maxPhotoAlbumBytes)
+	}
+
+	var authKey string
+	if resp.Request != nil && resp.Request.URL != nil {
+		authKey = strings.TrimSpace(resp.Request.URL.Query().Get("key"))
 	}
 
 	html := string(bodyBytes)
@@ -755,7 +765,7 @@ func (p *PhotosProvider) scrapePage1(ctx context.Context, client *http.Client, a
 	photos := extractPhotosFromHTML(html, logger)
 	albumKey, token := extractAlbumKeyAndToken(html)
 
-	return photos, albumName, token, albumKey, nil
+	return photos, albumName, token, albumKey, authKey, nil
 }
 
 func photoItemKey(item PhotoItem) string {
@@ -1171,11 +1181,30 @@ func tryParseMediaSlice(arr []any) (PhotoItem, bool) {
 	}
 
 	return PhotoItem{
-		ID:          id,
-		URL:         cleanURL,
-		Timestamp:   timestampStr,
-		AspectRatio: aspectRatio,
+		ID:            id,
+		URL:           cleanURL,
+		Timestamp:     timestampStr,
+		AspectRatio:   aspectRatio,
+		DominantColor: extractDominantColor(mediaInfo),
 	}, true
+}
+
+func extractDominantColor(mediaInfo []any) string {
+	if len(mediaInfo) <= 9 || mediaInfo[9] == nil {
+		return ""
+	}
+	raw := mediaInfo[9]
+	if colorSlice, ok := raw.([]any); ok {
+		if len(colorSlice) == 0 {
+			return ""
+		}
+		raw = colorSlice[0]
+	}
+	rgbFloat, ok := toFloat(raw)
+	if !ok || rgbFloat < 0 || rgbFloat > 0xFFFFFFFF {
+		return ""
+	}
+	return fmt.Sprintf("#%06x", int64(rgbFloat)&0xFFFFFF)
 }
 
 // parseMediaItem parses an individual media item array: [id, [url, width, height], timestamp, ...]
