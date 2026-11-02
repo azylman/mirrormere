@@ -1,4 +1,3 @@
-import { memo } from 'react';
 import { useWidget } from '../../store/hooks';
 import type { WidgetComponentProps } from '../registry';
 import { formatTime } from '../format';
@@ -7,7 +6,7 @@ import { formatTime } from '../format';
  * Native React widget component for chat-log voice history and conversation transcripts.
  * Ports widgets/chat-log/views/widget.html.
  */
-export const ChatLogWidget = memo(function ChatLogWidget({ id }: WidgetComponentProps) {
+export function ChatLogWidget({ id }: WidgetComponentProps) {
   const entry = useWidget(id);
   const config = entry?.meta?.config as Record<string, unknown> | undefined;
   const data = entry?.data as Record<string, unknown> | undefined;
@@ -106,4 +105,4 @@ export const ChatLogWidget = memo(function ChatLogWidget({ id }: WidgetComponent
       )}
     </div>
   );
-});
+}

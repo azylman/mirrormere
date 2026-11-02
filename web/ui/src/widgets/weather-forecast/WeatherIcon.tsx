@@ -1,5 +1,3 @@
-import { memo } from 'react';
-
 export interface WeatherIconProps {
   name?: string | null;
   size?: number;
@@ -9,7 +7,7 @@ export interface WeatherIconProps {
 /**
  * Returns declarative SVG child elements for a WMO weather condition token.
  */
-export const WeatherIconGlyph = memo(function WeatherIconGlyph({ name }: { name?: string | null }) {
+export function WeatherIconGlyph({ name }: { name?: string | null }) {
   const rawToken = typeof name === 'string' && name.trim() !== '' ? name.trim() : 'weather-cloudy';
   const token = /^[a-z0-9_-]+$/.test(rawToken) ? rawToken : rawToken.replace(/[^a-z0-9_-]/gi, '') || 'weather-cloudy';
 
@@ -199,12 +197,12 @@ export const WeatherIconGlyph = memo(function WeatherIconGlyph({ name }: { name?
         />
       );
   }
-});
+}
 
 /**
  * Declarative SVG icon for WMO condition tokens.
  */
-export const WeatherIcon = memo(function WeatherIcon({
+export function WeatherIcon({
   name,
   size = 20,
   className,
@@ -233,4 +231,4 @@ export const WeatherIcon = memo(function WeatherIcon({
       <WeatherIconGlyph name={safeToken} />
     </svg>
   );
-});
+}
