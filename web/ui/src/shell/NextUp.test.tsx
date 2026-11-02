@@ -1,3 +1,4 @@
+import { Profiler } from 'react';
 import { act, fireEvent, render } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useDisplayStore } from '../store';
@@ -958,5 +959,55 @@ describe('NextUp component', () => {
     fireEvent.click(scrollPill);
     expect(targetEl.scrollIntoView).toHaveBeenCalled();
     document.body.removeChild(targetEl);
+  });
+
+  it('does not re-render NextUp or mutate calendar event reference when an unrelated non-calendar widget updates', () => {
+    useDisplayStore.setState({
+      header: { timestamp: null, timezone: 'UTC', weather: null },
+      widgets: {
+        'cal-1': {
+          meta: { type: 'calendar-grid', origin: [0, 0], dimensions: [3, 2], config: {}, assets_base: '' },
+          state: 'ok',
+          timestamp: '2026-10-31T10:00:00Z',
+          data: [
+            {
+              date: '2026-10-31',
+              events: [{ title: 'Team Sync', start: '2026-10-31T11:00:00Z', end: '2026-10-31T12:00:00Z' }],
+            },
+          ],
+        },
+      },
+    });
+
+    const onRender = vi.fn();
+    const fixedNow = new Date('2026-10-31T10:00:00Z');
+
+    const { container } = render(
+      <Profiler id="NextUp" onRender={onRender}>
+        <NextUp now={fixedNow} timezone="UTC" />
+      </Profiler>
+    );
+
+    expect(container.querySelector('#next-event-title')?.textContent).toBe('Team Sync');
+    expect(onRender).toHaveBeenCalledTimes(1);
+
+    // Apply update to an unrelated widget (e.g. weather-1)
+    act(() => {
+      useDisplayStore.setState((s) => ({
+        widgets: {
+          ...s.widgets,
+          'weather-1': {
+            meta: { type: 'weather', origin: [0, 0], dimensions: [2, 2], config: {}, assets_base: '' },
+            state: 'ok',
+            timestamp: '2026-10-31T10:05:00Z',
+            data: { temp: 72 },
+          },
+        },
+      }));
+    });
+
+    // onRender must still have been called only once (no re-render for NextUp)
+    expect(onRender).toHaveBeenCalledTimes(1);
+    expect(container.querySelector('#next-event-title')?.textContent).toBe('Team Sync');
   });
 });

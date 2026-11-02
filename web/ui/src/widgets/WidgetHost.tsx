@@ -35,16 +35,28 @@ export function WidgetHost({ id, origin, dimensions }: WidgetHostProps) {
   // first time a type appears it becomes the baseline and does not count as a reload.
   const seen = useRef({ type, count: type === undefined ? 0 : hydratedReloadCount(id) });
 
+  const dimCols = dimensions[0];
+  const dimRows = dimensions[1];
+
   useEffect(() => {
-    if (needsHydrate(id)) {
+    const currentDims: [number, number] = [dimCols, dimRows];
+    if (needsHydrate(id, currentDims)) {
       // This fetch reads the latest reload count, so the reload effect must not repeat it.
       const reloadsNow = useDisplayStore.getState().widgetReloads;
       seen.current = { ...seen.current, count: reloadsNow[seen.current.type ?? ''] ?? 0 };
-      useDisplayStore.getState().hydrateWidget(id).catch((err: unknown) => {
-        console.warn(`[mirrormere] widget ${id} hydrate failed:`, err);
-      });
+      const currentEntry = useDisplayStore.getState().widgets[id];
+      const metaDims = currentEntry?.meta?.dimensions;
+      const dimChanged =
+        metaDims !== undefined &&
+        (metaDims[0] !== dimCols || metaDims[1] !== dimRows);
+      useDisplayStore
+        .getState()
+        .hydrateWidget(id, dimChanged ? { fresh: true } : undefined)
+        .catch((err: unknown) => {
+          console.warn(`[mirrormere] widget ${id} hydrate failed:`, err);
+        });
     }
-  }, [id]);
+  }, [id, dimCols, dimRows]);
 
   useEffect(() => {
     const count = reloads ?? 0;

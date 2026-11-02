@@ -3,6 +3,7 @@ package config
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
@@ -49,10 +50,11 @@ type (
 	}
 	// Snapshot encapsulates an immutable, synchronized state of runtime configuration, layout, and packages.
 	Snapshot struct {
-		Config   *Config
-		Layout   *layout.Layout
-		Packages map[string]*domain.Package
-		LoadedAt time.Time
+		Config      *Config
+		Layout      *layout.Layout
+		Packages    map[string]*domain.Package
+		LoadedAt    time.Time
+		HasOverride bool
 	}
 	// InstanceDiff details modifications to an existing widget instance.
 	InstanceDiff struct {
@@ -69,19 +71,22 @@ type (
 	}
 	// Manager coordinates live configuration reloads and enforces LKGC resilience.
 	Manager struct {
-		reloadMu        sync.Mutex
-		current         atomic.Pointer[Snapshot]
-		status          atomic.Pointer[Status]
-		loader          PackageLoader
-		getenv          func(string) string
-		logger          *slog.Logger
-		configReloadErr error
-		packageErrors   map[string]string
+		reloadMu              sync.Mutex
+		current               atomic.Pointer[Snapshot]
+		status                atomic.Pointer[Status]
+		loader                PackageLoader
+		getenv                func(string) string
+		logger                *slog.Logger
+		configReloadErr       error
+		packageErrors         map[string]string
+		baseYAML              []byte
+		overridePath          string
+		useConfigOverridePath bool
 	}
 )
 
 // NewManager creates and initializes an LKGC Manager with the initial configuration.
-func NewManager(initialYAML []byte, loader PackageLoader, getenv func(string) string, logger *slog.Logger) (*Manager, error) {
+func NewManager(initialYAML []byte, loader PackageLoader, getenv func(string) string, logger *slog.Logger, opts ...ManagerOption) (*Manager, error) {
 	if loader == nil {
 		return nil, fmt.Errorf("package loader cannot be nil")
 	}
@@ -95,10 +100,40 @@ func NewManager(initialYAML []byte, loader PackageLoader, getenv func(string) st
 	if err != nil {
 		return nil, fmt.Errorf("initial configuration validation failed: %w", err)
 	}
-	m := &Manager{loader: loader, getenv: getenv, logger: logger, packageErrors: make(map[string]string)}
+	m := &Manager{
+		baseYAML:      initialYAML,
+		loader:        loader,
+		getenv:        getenv,
+		logger:        logger,
+		packageErrors: make(map[string]string),
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	snapshot = m.applyDiskOverrideIfPresent(snapshot)
 	m.current.Store(snapshot)
 	m.status.Store(&Status{ConfigStatus: ConfigStatusOK, LastChecked: snapshot.LoadedAt, LastSuccess: snapshot.LoadedAt})
 	return m, nil
+}
+
+func (m *Manager) applyDiskOverrideIfPresent(snapshot *Snapshot) *Snapshot {
+	overridePath := m.resolveOverridePath(snapshot)
+	if overridePath == "" {
+		return snapshot
+	}
+	ov, err := LoadLayoutOverride(overridePath)
+	if err != nil {
+		if !errors.Is(err, ErrOverrideNotFound) {
+			m.logger.Warn("failed to load layout override file", "path", overridePath, "error", err)
+		}
+		return snapshot
+	}
+	overriddenSnap, err := applyOverrideToSnapshot(snapshot, ov, m.loader)
+	if err != nil {
+		m.logger.Warn("failed to apply layout override; retaining base configuration", "path", overridePath, "error", err)
+		return snapshot
+	}
+	return overriddenSnap
 }
 
 // Current returns the active running configuration snapshot (lock-free).
@@ -180,6 +215,8 @@ func (m *Manager) Reload(data []byte) (*Snapshot, *ConfigDiff, error) {
 		m.updateStatusLocked()
 		return nil, nil, err
 	}
+	m.baseYAML = data
+	candidate = m.applyDiskOverrideIfPresent(candidate)
 	var oldCfg *Config
 	if oldSnap := m.current.Load(); oldSnap != nil {
 		oldCfg = oldSnap.Config

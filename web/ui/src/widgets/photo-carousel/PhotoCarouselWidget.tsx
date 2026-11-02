@@ -5,6 +5,12 @@ import { useIsCurrentPane } from '../../carousel/PaneContext';
 import { useDocumentVisible } from '../../lifecycle/visibility';
 import { beginAnimation, endAnimation } from '../../perf/animating';
 import { useDisplayStore } from '../../store';
+import {
+  HudNextIcon,
+  HudPauseIcon,
+  HudPlayIcon,
+  HudPrevIcon,
+} from '../../video/HudIcons';
 
 declare global {
   interface Window {
@@ -451,23 +457,11 @@ function PhotoTransportControls({
           onPrev();
         }}
       >
-        <svg
-          width="16"
-          height="16"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden="true"
-        >
-          <polyline points="15 18 9 12 15 6" />
-        </svg>
+        <HudPrevIcon />
       </button>
       <button
         type="button"
-        className="photo-pause-pill"
+        className="photo-nav-btn photo-pause-pill"
         aria-label={isPaused ? 'Resume slideshow' : 'Pause slideshow'}
         aria-pressed={isPaused}
         data-paused={isPaused ? 'true' : 'false'}
@@ -476,36 +470,7 @@ function PhotoTransportControls({
           onTogglePause();
         }}
       >
-        {isPaused ? (
-          <>
-            <svg
-              width="12"
-              height="12"
-              viewBox="0 0 24 24"
-              fill="currentColor"
-              stroke="none"
-              aria-hidden="true"
-            >
-              <polygon points="5 3 19 12 5 21 5 3" />
-            </svg>
-            <span>Resume</span>
-          </>
-        ) : (
-          <>
-            <svg
-              width="12"
-              height="12"
-              viewBox="0 0 24 24"
-              fill="currentColor"
-              stroke="none"
-              aria-hidden="true"
-            >
-              <rect x="6" y="4" width="4" height="16" rx="1" />
-              <rect x="14" y="4" width="4" height="16" rx="1" />
-            </svg>
-            <span>Pause</span>
-          </>
-        )}
+        {isPaused ? <HudPlayIcon /> : <HudPauseIcon />}
       </button>
       <button
         type="button"
@@ -516,19 +481,7 @@ function PhotoTransportControls({
           onNext();
         }}
       >
-        <svg
-          width="16"
-          height="16"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden="true"
-        >
-          <polyline points="9 18 15 12 9 6" />
-        </svg>
+        <HudNextIcon />
       </button>
     </div>
   );

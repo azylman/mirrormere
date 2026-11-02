@@ -237,9 +237,16 @@ describe('PhotoCarouselWidget transport controls', () => {
     const playPauseBtn = container.querySelector('.photo-pause-pill') as HTMLButtonElement;
     const prevBtn = container.querySelector('.photo-nav-prev') as HTMLButtonElement;
     const nextBtn = container.querySelector('.photo-nav-next') as HTMLButtonElement;
+    expect(playPauseBtn.classList.contains('photo-nav-btn')).toBe(true);
+    expect(playPauseBtn.querySelectorAll('svg rect').length).toBe(2);
+    expect(playPauseBtn.textContent).toBe('');
+    expect(prevBtn.querySelector('svg polygon')).not.toBeNull();
+    expect(nextBtn.querySelector('svg polygon')).not.toBeNull();
 
     act(() => { fireEvent.click(playPauseBtn); });
     expect(playPauseBtn.getAttribute('aria-label')).toBe('Resume slideshow');
+    expect(playPauseBtn.querySelector('svg polygon')).not.toBeNull();
+    expect(playPauseBtn.textContent).toBe('');
 
     act(() => { fireEvent.click(nextBtn); });
     act(() => { fireEvent.click(prevBtn); });

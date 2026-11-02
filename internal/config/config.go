@@ -71,6 +71,9 @@ func checkLatLon(lat, lon float64, prefix string) error {
 	return nil
 }
 
+// DefaultLayoutOverridePath is the default on-disk layout override file path.
+const DefaultLayoutOverridePath = "/data/layout-override.yaml"
+
 // Config represents the root configuration schema of Mirrormere.
 type Config struct {
 	Host           string          `yaml:"host,omitempty"`
@@ -86,20 +89,32 @@ type Config struct {
 
 // DisplayConfig specifies visual presentation, rotation parameters, and active widget instances.
 type DisplayConfig struct {
-	UI         string              `yaml:"ui,omitempty"` // "react" (default) or "legacy"; ?ui= on /display overrides
-	HideCursor bool                `yaml:"hide_cursor,omitempty"`
-	RemoteURL  string              `yaml:"remote_url,omitempty"`
-	Rotation   RotationConfig      `yaml:"rotation"`
-	Header     HeaderConfig        `yaml:"header"`
-	Grid       GridConfig          `yaml:"grid"`
-	Widgets    []WidgetConfig      `yaml:"widgets"`
-	Theme      *ThemeConfig        `yaml:"theme,omitempty"`
-	Voice      *DisplayVoiceConfig `yaml:"voice,omitempty"`
+	UI                 string              `yaml:"ui,omitempty"` // "react" (default) or "legacy"; ?ui= on /display overrides
+	HideCursor         bool                `yaml:"hide_cursor,omitempty"`
+	RemoteURL          string              `yaml:"remote_url,omitempty"`
+	AllowLayoutEdit    *bool               `yaml:"allow_layout_edit,omitempty"`
+	LayoutOverridePath string              `yaml:"layout_override_path,omitempty"`
+	Rotation           RotationConfig      `yaml:"rotation"`
+	Header             HeaderConfig        `yaml:"header"`
+	Grid               GridConfig          `yaml:"grid"`
+	Widgets            []WidgetConfig      `yaml:"widgets"`
+	Theme              *ThemeConfig        `yaml:"theme,omitempty"`
+	Voice              *DisplayVoiceConfig `yaml:"voice,omitempty"`
 }
 
 // GetUI returns the display shell selected by config: "react" (default) or "legacy".
 func (dc DisplayConfig) GetUI() string {
 	return strings.ToLower(trimmedOr(dc.UI, "react"))
+}
+
+// IsLayoutEditAllowed returns true if live canvas layout editing is permitted (default true).
+func (dc DisplayConfig) IsLayoutEditAllowed() bool {
+	return derefOr(dc.AllowLayoutEdit, true)
+}
+
+// GetLayoutOverridePath returns the target layout override path (default /data/layout-override.yaml).
+func (dc DisplayConfig) GetLayoutOverridePath() string {
+	return trimmedOr(dc.LayoutOverridePath, DefaultLayoutOverridePath)
 }
 
 // DisplayVoiceConfig configures voice visuals on the display.
@@ -574,7 +589,7 @@ func validateDisplayKeys(displayNode *yaml.Node) error {
 			if err := validateVoiceKeys(displayNode.Content[i+1]); err != nil {
 				return err
 			}
-		case "rotation", "grid", "header", "widgets", "hide_cursor", "remote_url", "theme", "ui":
+		case "rotation", "grid", "header", "widgets", "hide_cursor", "remote_url", "theme", "ui", "allow_layout_edit", "layout_override_path":
 		default:
 			return fmt.Errorf("line %d: unknown key '%s' under display", keyNode.Line, key)
 		}

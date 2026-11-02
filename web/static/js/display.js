@@ -855,14 +855,14 @@
   }
 
   /**
-   * Resolve cursor suppression query overrides (?hide_cursor=true/false, ?cursor=none/visible).
+   * Resolve cursor suppression query overrides (?hide_cursor=true/false).
    */
   function resolveCursorSuppression() {
     if (typeof window !== 'undefined' && window.location && window.location.search && typeof document !== 'undefined' && document.body) {
       const urlParams = new URLSearchParams(window.location.search);
-      if (urlParams.get('hide_cursor') === 'true' || urlParams.get('cursor') === 'none') {
+      if (urlParams.get('hide_cursor') === 'true') {
         document.body.classList.add('mm-touch-display', 'mm-touch-kiosk');
-      } else if (urlParams.get('hide_cursor') === 'false' || urlParams.get('cursor') === 'visible') {
+      } else if (urlParams.get('hide_cursor') === 'false') {
         document.body.classList.remove('mm-touch-display', 'mm-touch-kiosk');
       }
     }

@@ -419,8 +419,8 @@ describe('format helpers', () => {
       const layout = computeHourlyGraphLayout(pts, 'test-widget');
       expect(layout).not.toBeNull();
       expect(layout?.totalWidth).toBe(560.0);
-      expect(layout?.svgHeight).toBe(300.0);
-      expect(layout?.baseY).toBe(240.0);
+      expect(layout?.svgHeight).toBe(270.0);
+      expect(layout?.baseY).toBe(238.0);
       expect(layout?.gradientId).toBe('mm-weather-grad-test-widget');
       expect(layout?.curvePath).toBe('');
       expect(layout?.areaPath).toBe('');
@@ -433,7 +433,7 @@ describe('format helpers', () => {
       expect(invalidTempLayout?.points[0].tempRound).toBe(0);
     });
 
-    it('computes layout for multiple points with cubic Bezier paths and 300px default height', () => {
+    it('computes layout for multiple points with cubic Bezier paths and 270px default height', () => {
       const pts = [
         { time: '2026-09-26T14:00', temp: 65.0, precip_prob: 10, icon: 'weather-cloudy' },
         { time: '2026-09-26T15:00', temp: 68.0, precip_prob: 20, icon: 'weather-cloudy' },
@@ -442,14 +442,14 @@ describe('format helpers', () => {
       const layout = computeHourlyGraphLayout(pts);
       expect(layout).not.toBeNull();
       expect(layout?.totalWidth).toBe(560.0);
-      expect(layout?.svgHeight).toBe(300.0);
-      expect(layout?.baseY).toBe(240.0);
+      expect(layout?.svgHeight).toBe(270.0);
+      expect(layout?.baseY).toBe(238.0);
       expect(layout?.gradientId).toBe('mm-weather-hourly-grad');
-      expect(layout?.curvePath).toContain('M 93.3 147.5');
+      expect(layout?.curvePath).toContain('M 18.0 144.0');
       // Verify cubic Bezier control points: C (x0+dx, y0), (x1-dx, y1), (x1, y1)
-      expect(layout?.curvePath).toContain('C 186.7 147.5, 186.7 90.0, 280.0 90.0');
-      expect(layout?.areaPath).toContain('M 93.3 240.0 L 93.3 147.5');
-      expect(layout?.gridLinesPath).toContain('M 93.3 153.5 L 93.3 240.0');
+      expect(layout?.curvePath).toContain('C 149.0 144.0, 149.0 76.0, 280.0 76.0');
+      expect(layout?.areaPath).toContain('M 18.0 238.0 L 18.0 144.0');
+      expect(layout?.gridLinesPath).toContain('M 18.0 150.0 L 18.0 238.0');
       expect(layout?.points).toHaveLength(3);
       expect(layout?.points[0].timeLabel).toBe('Now');
       expect(layout?.points[1].timeLabel).toBe('3 PM');
@@ -459,7 +459,7 @@ describe('format helpers', () => {
       expect(layout?.points[2].precipProb).toBe(0);
     });
 
-    it('computes layout for 24 hourly points capped to 8 points by default, and preserves 24 points when maxPoints is 24', () => {
+    it('computes layout for 24 hourly points capped to 10 points by default, and preserves 24 points when maxPoints is 24', () => {
       const pts = Array.from({ length: 24 }, (_, i) => ({
         time: `2026-09-26T${String(i).padStart(2, '0')}:00`,
         temp: 55 + (i % 10),
@@ -468,13 +468,13 @@ describe('format helpers', () => {
       const layout = computeHourlyGraphLayout(pts);
       expect(layout).not.toBeNull();
       expect(layout?.totalWidth).toBe(560.0);
-      expect(layout?.points).toHaveLength(8);
+      expect(layout?.points).toHaveLength(10);
       expect(layout?.points[0].timeLabel).toBe('Now');
-      expect(layout?.points[7].timeLabel).toBe('7 AM');
+      expect(layout?.points[9].timeLabel).toBe('9 AM');
 
       const customLayout = computeHourlyGraphLayout(pts, undefined, { maxPoints: 24 });
       expect(customLayout).not.toBeNull();
-      expect(customLayout?.totalWidth).toBe(1632.0);
+      expect(customLayout?.totalWidth).toBe(1344.0);
       expect(customLayout?.points).toHaveLength(24);
       expect(customLayout?.points[0].timeLabel).toBe('Now');
       expect(customLayout?.points[23].timeLabel).toBe('11 PM');
