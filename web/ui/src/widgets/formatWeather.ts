@@ -10,6 +10,32 @@ export function escapeHtml(str: string): string {
     .replace(/'/g, '&#39;');
 }
 
+function extractPrecipProb(item: unknown): number | null {
+  if (!item || typeof item !== 'object') return null;
+  const rec = item as Record<string, unknown>;
+  const val =
+    rec.precip_prob_max ??
+    rec.PrecipProbMax ??
+    rec.precip_prob ??
+    rec.PrecipProb ??
+    rec.PrecipitationProbability;
+  if (typeof val === 'number' && !isNaN(val)) {
+    return Math.max(0, Math.min(100, Math.round(val)));
+  }
+  return null;
+}
+
+function extractHourlyMaxProb(hourly: unknown[]): number {
+  let maxProb = 0;
+  for (const item of hourly.slice(0, 12)) {
+    const p = extractPrecipProb(item);
+    if (p !== null) {
+      maxProb = Math.max(maxProb, p);
+    }
+  }
+  return maxProb;
+}
+
 /**
  * Extracts today's maximum precipitation probability percentage (0-100)
  * from daily forecast, hourly forecast, current snapshot, or map data.
@@ -24,27 +50,14 @@ export function todayPrecipProb(data: unknown): number {
   // Daily array
   const daily = d.daily ?? d.Daily;
   if (Array.isArray(daily) && daily.length > 0) {
-    const first = daily[0];
-    if (first && typeof first === 'object') {
-      const f = first as Record<string, unknown>;
-      const p = f.precip_prob_max ?? f.PrecipProbMax ?? f.precip_prob ?? f.PrecipitationProbability;
-      if (typeof p === 'number' && !isNaN(p)) return Math.max(0, Math.min(100, Math.round(p)));
-    }
+    const p = extractPrecipProb(daily[0]);
+    if (p !== null) return p;
   }
 
   // Hourly array (max across first 12 hours)
   const hourly = d.hourly ?? d.Hourly;
   if (Array.isArray(hourly) && hourly.length > 0) {
-    let maxProb = 0;
-    for (const item of hourly.slice(0, 12)) {
-      if (item && typeof item === 'object') {
-        const h = item as Record<string, unknown>;
-        const p = h.precip_prob ?? h.PrecipProb ?? h.precip_prob_max ?? h.PrecipitationProbability;
-        if (typeof p === 'number' && !isNaN(p)) {
-          maxProb = Math.max(maxProb, Math.round(p));
-        }
-      }
-    }
+    const maxProb = extractHourlyMaxProb(hourly);
     if (maxProb > 0) {
       return Math.max(0, Math.min(100, maxProb));
     }
@@ -52,11 +65,8 @@ export function todayPrecipProb(data: unknown): number {
 
   // Current
   const current = d.current ?? d.Current;
-  if (current && typeof current === 'object') {
-    const c = current as Record<string, unknown>;
-    const p = c.precip_prob_max ?? c.PrecipProbMax ?? c.precip_prob ?? c.PrecipitationProbability;
-    if (typeof p === 'number' && !isNaN(p)) return Math.max(0, Math.min(100, Math.round(p)));
-  }
+  const currentProb = extractPrecipProb(current);
+  if (currentProb !== null) return currentProb;
 
   // Direct precip_prob_max
   const direct = d.precip_prob_max ?? d.PrecipProbMax;

@@ -203,7 +203,8 @@ describe('YtMusicWidget', () => {
 
     expect(npTitle?.textContent).toBe('Starboy');
     expect(npArtist?.textContent).toBe('The Weeknd');
-    expect(playBtn?.textContent).toBe('⏸'); // playing state
+    expect(playBtn?.getAttribute('aria-label')).toBe('Pause');
+    expect(playBtn?.querySelector('svg')).not.toBeNull();
     expect(volSlider?.value).toBe('50');
 
     // Verify playlists tab content
@@ -298,7 +299,8 @@ describe('YtMusicWidget', () => {
           JSON.parse(String(c[1].body)).action === 'play_pause'
       );
       expect(call).toBeDefined();
-      expect(container.querySelector('#btn-play')?.textContent).toBe('⏸');
+      expect(container.querySelector('#btn-play')?.getAttribute('aria-label')).toBe('Pause');
+      expect(container.querySelector('#btn-play')?.querySelector('svg')).not.toBeNull();
     });
 
     // Volume change
@@ -576,5 +578,69 @@ describe('YtMusicWidget', () => {
     fireEvent.click(container.querySelector('[data-tab="queue"]')!);
     fireEvent.click(container.querySelector('[data-tab="playlists"]')!);
     expect(container.querySelector('[data-tab="playlists"]')?.classList.contains('active')).toBe(true);
+  });
+
+  it('activates media tiles on Enter and Space keydown', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/music/state')) {
+        return new Response(JSON.stringify(mockInitialState), { status: 200 });
+      }
+      if (url.includes('/music/search')) {
+        return new Response(JSON.stringify(mockSearchResults), { status: 200 });
+      }
+      return new Response('{}', { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { container } = render(
+      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
+        <YtMusicWidget id="yt-kb" type="yt-music" />
+      </PaneContext.Provider>
+    );
+
+    await waitFor(() => {
+      expect(container.querySelectorAll('.media-tile').length).toBe(1);
+    });
+
+    const playlistTile = container.querySelector('.media-tile') as HTMLElement;
+    expect(playlistTile.getAttribute('role')).toBe('button');
+    expect(playlistTile.getAttribute('tabindex')).toBe('0');
+
+    // Trigger Enter
+    fireEvent.keyDown(playlistTile, { key: 'Enter' });
+    await waitFor(() => {
+      const call = fetchMock.mock.calls.find((c) => String(c[0]).includes('/music/play'));
+      expect(call).toBeDefined();
+    });
+
+    // Trigger Space
+    fireEvent.keyDown(playlistTile, { key: ' ' });
+
+    // Switch to queue
+    fireEvent.click(container.querySelector('[data-tab="queue"]')!);
+    await waitFor(() => {
+      expect(container.querySelectorAll('.media-tile').length).toBe(2);
+    });
+    const queueTile = container.querySelectorAll('.media-tile')[0] as HTMLElement;
+    expect(queueTile.getAttribute('role')).toBe('button');
+    fireEvent.keyDown(queueTile, { key: 'Enter' });
+    fireEvent.keyDown(queueTile, { key: ' ' });
+
+    // Perform search
+    const searchInput = container.querySelector('#search-input') as HTMLInputElement;
+    const searchForm = container.querySelector('#search-form') as HTMLFormElement;
+    fireEvent.change(searchInput, { target: { value: 'Save Your Tears' } });
+    fireEvent.submit(searchForm);
+    await waitFor(() => {
+      expect(container.querySelectorAll('.media-tile').length).toBe(1);
+    });
+    const searchTile = container.querySelectorAll('.media-tile')[0] as HTMLElement;
+    expect(searchTile.getAttribute('role')).toBe('button');
+    fireEvent.keyDown(searchTile, { key: 'Enter' });
+    fireEvent.keyDown(searchTile, { key: ' ' });
+
+    // Other key (no-op)
+    fireEvent.keyDown(searchTile, { key: 'Escape' });
   });
 });

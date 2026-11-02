@@ -182,6 +182,7 @@ export function WeatherForecastWidget({ id }: WidgetComponentProps) {
   const windUnit = String(units?.wind_speed ?? units?.WindSpeed ?? 'mph');
 
   const precipProb = todayPrecipProb(data);
+  const hourly = (data?.hourly ?? data?.Hourly) as unknown[] | undefined;
 
   const dateStr =
     (typeof config?.date === 'string' && config.date) ||
@@ -237,40 +238,18 @@ export function WeatherForecastWidget({ id }: WidgetComponentProps) {
         </div>
       )}
 
-      {showHeader && (
-        <div className="weather-header">
-          <div className="weather-header-left">
-            <div className="weather-icon-badge" title={conditionText}>
-              <WeatherIcon name={iconName} size={20} />
-            </div>
-            <div className="weather-header-titles">
-              {locationName ? (
-                <h2 className="weather-location-name">{locationName}</h2>
-              ) : (
-                <h2 className="weather-header-title">Weather</h2>
-              )}
-              <span className="weather-condition-text">{conditionText || 'Forecast'}</span>
-            </div>
-          </div>
-
-          {hasCurrent && (
-            <div className="weather-header-right">
-              <div
-                className="weather-temp-main weather-current-main bubbly-font"
-                title={conditionText}
-              >
-                {roundedTemp}
-                {tempUnit}
-              </div>
-              {hasDaily && (
-                <div className="weather-temp-range">
-                  H: {maxTemp}° • L: {minTemp}°
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      )}
+      {showHeader &&
+        renderCurrentHeader({
+          locationName,
+          hasCurrent,
+          conditionText,
+          iconName,
+          roundedTemp,
+          tempUnit,
+          hasDaily,
+          maxTemp,
+          minTemp,
+        })}
 
       {hasCurrent ? (
         <>

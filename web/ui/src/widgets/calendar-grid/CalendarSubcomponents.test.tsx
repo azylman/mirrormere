@@ -787,6 +787,11 @@ describe('CalendarMonthView & CalendarWeekView', () => {
       expect(spanEvents.length).toBe(2);
       fireEvent.click(spanEvents[0]);
       expect(onOpenModal).toHaveBeenCalled();
+      fireEvent.keyDown(spanEvents[0], { key: 'Enter' });
+      expect(onOpenModal).toHaveBeenCalledTimes(2);
+      fireEvent.keyDown(spanEvents[0], { key: ' ' });
+      expect(onOpenModal).toHaveBeenCalledTimes(3);
+      fireEvent.keyDown(spanEvents[0], { key: 'Tab' });
     });
 
     it('renders early and late edge events and handles onOpenModal', () => {
@@ -859,6 +864,8 @@ describe('CalendarMonthView & CalendarWeekView', () => {
       expect(earlyEv.textContent).toContain('06:00 Morning Yoga');
       fireEvent.click(earlyEv);
       expect(onOpenModal).toHaveBeenCalledWith(expect.objectContaining({ id: 'early-1' }), '2026-10-27');
+      fireEvent.keyDown(earlyEv, { key: 'Enter' });
+      fireEvent.keyDown(earlyEv, { key: ' ' });
 
       // Exercise compiler memo hit by changing currentDateISO while keeping daysToRender identical
       rerender(<CalendarWeekView {...weekProps} currentDateISO="2026-10-28" />);
@@ -877,6 +884,8 @@ describe('CalendarMonthView & CalendarWeekView', () => {
       expect(onSelectDay).toHaveBeenCalledTimes(2);
       fireEvent.click(lateEv);
       expect(onOpenModal).toHaveBeenCalledWith(expect.objectContaining({ id: 'late-1' }), '2026-10-27');
+      fireEvent.keyDown(lateEv, { key: 'Enter' });
+      fireEvent.keyDown(lateEv, { key: ' ' });
     });
 
     it('renders timeline_markers when present and falls back to hour_markers', () => {
@@ -1009,6 +1018,8 @@ describe('CalendarMonthView & CalendarWeekView', () => {
         expect.objectContaining({ id: 'col-allday-1' }),
         '2026-10-27'
       );
+      fireEvent.keyDown(items[0], { key: 'Enter' });
+      fireEvent.keyDown(items[0], { key: ' ' });
     });
 
     it('attaches ResizeObserver to day canvas elements and disconnects on unmount', () => {
