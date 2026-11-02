@@ -406,8 +406,8 @@ run_ui_checks() {
         echo "   [ui] Installing dependencies in web/ui..."
         (cd "$REPO_ROOT/web/ui" && npm ci --no-audit --no-fund)
     fi
-    echo "   [ui] Running React UI lint, deadcode, typecheck, tests and build..."
-    (cd "$REPO_ROOT/web/ui" && npm run lint && npm run deadcode && npm run typecheck && npm test && npm run build)
+    echo "   [ui] Running React UI lint, deadcode, typecheck, coverage tests and build..."
+    (cd "$REPO_ROOT/web/ui" && npm run lint && npm run deadcode && npm run typecheck && npm run test:coverage && npm run build)
 }
 
 if [ "$MODE" = "staged" ]; then

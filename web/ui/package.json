@@ -11,6 +11,7 @@
     "dev": "vite",
     "build": "vite build",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "lint": "eslint . --max-warnings=0",
     "deadcode": "knip --no-progress",
     "typecheck": "tsc --noEmit -p tsconfig.json"
@@ -30,6 +31,7 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.2",
+    "@vitest/coverage-v8": "^5.0.5",
     "babel-plugin-react-compiler": "^1.0.0",
     "eslint": "^10.13.0",
     "eslint-plugin-react-hooks": "^7.1.1",

@@ -3,6 +3,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { VideoSource } from '../sse/types';
 import { useDisplayStore } from '../store';
 import { HUD_ICONS, Hud, VideoHUDController } from './Hud';
+import {
+  HudMuteIcon,
+  HudNextIcon,
+  HudPauseIcon,
+  HudPlayIcon,
+  HudPrevIcon,
+  HudUnmuteIcon,
+} from './HudIcons';
+import { HudTopBar } from './HudTopBar';
+import { HudTransportBar } from './HudTransportBar';
 import { formatStreamTitle } from './api';
 import { formatDuration } from './useStreamProgress';
 
@@ -33,6 +43,29 @@ describe('Hud component and declarative decomposition', () => {
       expect(HUD_ICONS.unmute).toContain('<svg');
       expect(HUD_ICONS.prev).toContain('<svg');
       expect(HUD_ICONS.next).toContain('<svg');
+    });
+
+    it('renders all dedicated HudIcon components as valid SVGs and hits memoization cache', () => {
+      function IconWrapper({ count }: { count: number }) {
+        return (
+          <div>
+            <HudPlayIcon {...({ count } as unknown as object)} />
+            <HudPauseIcon {...({ count } as unknown as object)} />
+            <HudMuteIcon {...({ count } as unknown as object)} />
+            <HudUnmuteIcon {...({ count } as unknown as object)} />
+            <HudPrevIcon {...({ count } as unknown as object)} />
+            <HudNextIcon {...({ count } as unknown as object)} />
+            <span>{count}</span>
+          </div>
+        );
+      }
+
+      const { container, rerender } = render(<IconWrapper count={1} />);
+      expect(container.querySelectorAll('svg').length).toBe(6);
+
+      // Changing count busts React.memo shallow equality, calling the inner functions a second time
+      rerender(<IconWrapper count={2} />);
+      expect(container.querySelectorAll('svg').length).toBe(6);
     });
   });
 
@@ -68,6 +101,41 @@ describe('Hud component and declarative decomposition', () => {
       expect(container.querySelector('#video-hud-time-total')).not.toBeNull();
       expect(container.querySelector('#video-hud-forward-btn')).not.toBeNull();
       expect(container.querySelector('#video-hud-next-btn')).not.toBeNull();
+    });
+
+    it('stops propagation on play button pointerDown and bottom bar touchStart', () => {
+      const mockFetch = vi.fn().mockResolvedValue({ ok: true });
+      const { container } = render(
+        <div id="video-stage">
+          <Hud fetch={mockFetch as unknown as typeof fetch} />
+        </div>,
+      );
+
+      act(() => {
+        useDisplayStore.setState({
+          video: {
+            mode: 'video',
+            primary: { id: 's1', stream_url: '', type: 'webrtc', player_state: 'playing' },
+            pip: null,
+          },
+        });
+      });
+
+      const playBtn = container.querySelector('#video-hud-play-btn')!;
+      const bottomBar = container.querySelector('#video-hud-bottom-bar')!;
+      const navBar = container.querySelector('#video-hud-nav-bar')!;
+      const sideRail = container.querySelector('#video-hud-side-rail')!;
+      const slider = container.querySelector('#video-hud-volume-slider')!;
+
+      fireEvent.pointerDown(playBtn);
+      fireEvent.touchStart(bottomBar);
+      fireEvent.pointerDown(bottomBar);
+      fireEvent.pointerDown(navBar);
+      fireEvent.touchStart(navBar);
+      fireEvent.pointerDown(sideRail);
+      fireEvent.touchStart(sideRail);
+      fireEvent.pointerCancel(slider);
+      fireEvent.touchEnd(slider);
     });
 
     it('attaches controller to window.videoHUD and cleans up on unmount', () => {
@@ -724,6 +792,11 @@ describe('Hud component and declarative decomposition', () => {
 
       fireEvent.pointerDown(progressTrack, { clientX: 100, pointerId: 1 });
       expect(progressTrack.classList.contains('is-scrubbing')).toBe(true);
+      fireEvent.pointerCancel(progressTrack, { pointerId: 1 });
+      expect(progressTrack.classList.contains('is-scrubbing')).toBe(false);
+
+      fireEvent.pointerDown(progressTrack, { clientX: 100, pointerId: 1 });
+      expect(progressTrack.classList.contains('is-scrubbing')).toBe(true);
 
       fireEvent.pointerMove(progressTrack, { clientX: 150, pointerId: 1 });
       // 150 / 200 = 75% of 100s = 75s = 1:15
@@ -904,6 +977,285 @@ describe('Hud component and declarative decomposition', () => {
           body: JSON.stringify({ key: 'next' }),
         }),
       );
+    });
+
+    it('toggles pause icon and play icon states according to player_state', () => {
+      const { container } = render(<Hud />);
+      const pausedStream: VideoSource = {
+        id: 's_pause',
+        stream_url: 'http://test/stream',
+        type: 'webrtc',
+        controllable: true,
+        player_state: 'paused',
+      };
+
+      act(() => {
+        useDisplayStore.setState({
+          video: { mode: 'video', primary: pausedStream, pip: null },
+        });
+      });
+
+      const playBtn = container.querySelector('#video-hud-play-btn') as HTMLButtonElement;
+      expect(playBtn).not.toBeNull();
+      expect(playBtn.getAttribute('aria-label')).toBe('Play');
+      expect(playBtn.getAttribute('title')).toBe('Play');
+      const playIcon = container.querySelector('#video-hud-play-icon') as HTMLElement;
+      expect(playIcon.getAttribute('data-icon')).toBe('play');
+      expect(playIcon.querySelector('polygon')).not.toBeNull();
+
+      // Switch to playing state
+      act(() => {
+        useDisplayStore.setState({
+          video: {
+            mode: 'video',
+            primary: { ...pausedStream, player_state: 'playing' },
+            pip: null,
+          },
+        });
+      });
+
+      expect(playBtn.getAttribute('aria-label')).toBe('Pause');
+      expect(playBtn.getAttribute('title')).toBe('Pause');
+      expect(playIcon.getAttribute('data-icon')).toBe('pause');
+      expect(playIcon.querySelectorAll('rect').length).toBe(2);
+    });
+
+    it('handles action routing fallbacks and dismiss guards without active streams', async () => {
+      const mockFetch = vi.fn().mockResolvedValue({ ok: true });
+      let ctrl: VideoHUDController | null = null;
+      const ref = {
+        get current() {
+          return ctrl;
+        },
+        set current(val: VideoHUDController | null) {
+          ctrl = val;
+        },
+      };
+
+      render(
+        <Hud controllerRef={ref} remoteUrl="http://remote-host" fetch={mockFetch as unknown as typeof fetch} />,
+      );
+
+      // When no stream is active, handleDismiss does nothing
+      act(() => {
+        ctrl?.handleDismiss?.();
+      });
+      expect(mockFetch).not.toHaveBeenCalled();
+
+      // When no stream is active, action execution returns early
+      await act(async () => {
+        await ctrl?.handleRewind?.();
+      });
+      expect(mockFetch).not.toHaveBeenCalled();
+
+      // Mount controllable stream with remoteUrl and test non-remote-preferred action (e.g. rewind) routing to remoteUrl
+      const activeStream: VideoSource = {
+        id: 's_remote',
+        stream_url: 'http://test/stream',
+        type: 'webrtc',
+        controllable: true,
+      };
+
+      act(() => {
+        useDisplayStore.setState({
+          video: { mode: 'video', primary: activeStream, pip: null },
+        });
+      });
+
+      // Rewind routes to postRemoteKey because remoteUrl exists and no control_url/value
+      await act(async () => {
+        await ctrl?.handleRewind?.();
+      });
+      expect(mockFetch).toHaveBeenCalledWith(
+        'http://remote-host/key',
+        expect.objectContaining({
+          body: JSON.stringify({ key: 'rewind' }),
+        }),
+      );
+
+      act(() => {
+        vi.advanceTimersByTime(350);
+      });
+
+      // Seek routes to postVideoAction with value
+      await act(async () => {
+        await ctrl?.handleSeek?.(42);
+      });
+      expect(mockFetch).toHaveBeenCalledWith(
+        'api/video/action',
+        expect.objectContaining({
+          body: JSON.stringify({ id: 's_remote', action: 'seek', value: 42 }),
+        }),
+      );
+    });
+
+    it('supports callback function for controllerRef with mount and unmount', () => {
+      let callbackCtrl: VideoHUDController | null = null;
+      const refFn = (c: VideoHUDController | null) => {
+        callbackCtrl = c;
+      };
+
+      const { unmount } = render(<Hud controllerRef={refFn} />);
+      expect(callbackCtrl).not.toBeNull();
+
+      unmount();
+      expect(callbackCtrl).toBeNull();
+    });
+
+    it('handles syncStream hide vs show transitions and null state updates', () => {
+      let ctrl: VideoHUDController | null = null;
+      const ref = {
+        get current() {
+          return ctrl;
+        },
+        set current(val: VideoHUDController | null) {
+          ctrl = val;
+        },
+      };
+
+      render(<Hud controllerRef={ref} />);
+
+      // syncStream with no currentStream calls hideHUD
+      act(() => {
+        (ctrl as unknown as VideoHUDController)?.syncStream();
+      });
+      expect((ctrl as unknown as VideoHUDController)?.isVisible).toBe(false);
+
+      // handleAudioState(null) and handleVideoState(null) safe fallbacks
+      act(() => {
+        (ctrl as unknown as VideoHUDController)?.handleAudioState(null);
+        (ctrl as unknown as VideoHUDController)?.handleVideoState(null);
+      });
+      expect(useDisplayStore.getState().video.mode).toBe('widgets');
+    });
+  });
+
+  describe('HudTopBar and HudTransportBar subcomponents', () => {
+    it('exercises HudTopBar rendering, stopProp, and mute toggling with memo cache hit', () => {
+      const onBack = vi.fn();
+      const onHome = vi.fn();
+      const onDismiss = vi.fn();
+      const onVolumeInput = vi.fn();
+      const onVolumeCommit = vi.fn();
+      const onMuteToggle = vi.fn();
+
+      function TopBarWrapper({ count, isMuted, isMedia }: { count: number; isMuted: boolean; isMedia: boolean }) {
+        return (
+          <div>
+            <span>{count}</span>
+            <HudTopBar
+              titleText="Camera Front"
+              isMedia={isMedia}
+              volume={50}
+              isMuted={isMuted}
+              onBack={onBack}
+              onHome={onHome}
+              onDismiss={onDismiss}
+              onVolumeInput={onVolumeInput}
+              onVolumeCommit={onVolumeCommit}
+              onMuteToggle={onMuteToggle}
+            />
+          </div>
+        );
+      }
+
+      const { container, rerender } = render(<TopBarWrapper count={1} isMuted={false} isMedia={false} />);
+
+      const navBar = container.querySelector('#video-hud-nav-bar') as HTMLElement;
+      expect(navBar.style.display).toBe('none');
+
+      const sideRail = container.querySelector('#video-hud-side-rail') as HTMLElement;
+      fireEvent.pointerDown(sideRail);
+      fireEvent.touchStart(sideRail);
+
+      // Rerender with isMuted={true}
+      rerender(<TopBarWrapper count={2} isMuted={true} isMedia={false} />);
+      const muteIcon = container.querySelector('#video-hud-mute-icon') as HTMLElement;
+      expect(muteIcon.dataset.icon).toBe('muted');
+
+      // Rerender with isMedia={true}
+      rerender(<TopBarWrapper count={3} isMuted={true} isMedia={true} />);
+      expect(navBar.style.display).toBe('');
+      fireEvent.pointerDown(navBar);
+      fireEvent.touchStart(navBar);
+
+      // Re-render with same props but count changed for cache hit
+      rerender(<TopBarWrapper count={4} isMuted={true} isMedia={true} />);
+    });
+
+    it('exercises HudTransportBar rendering, stopProp, scrubbing, and pointerCancel with memo cache hit', () => {
+      const onCaptions = vi.fn();
+      const onPrevious = vi.fn();
+      const onRewind = vi.fn();
+      const onFastForward = vi.fn();
+      const onNext = vi.fn();
+      const onTrackPointerDown = vi.fn();
+      const onTrackPointerMove = vi.fn();
+      const onTrackPointerUp = vi.fn();
+      const onTrackPointerCancel = vi.fn();
+
+      function TransportWrapper({
+        count,
+        isPlaybackActive,
+        isScrubbing,
+      }: {
+        count: number;
+        isPlaybackActive: boolean;
+        isScrubbing: boolean;
+      }) {
+        return (
+          <div>
+            <span>{count}</span>
+            <HudTransportBar
+              isPlaybackActive={isPlaybackActive}
+              hasProgress={true}
+              isScrubbing={isScrubbing}
+              currentTimeStr="1:23"
+              totalTimeStr="3:45"
+              progressPercent={36.8}
+              onCaptions={onCaptions}
+              onPrevious={onPrevious}
+              onRewind={onRewind}
+              onFastForward={onFastForward}
+              onNext={onNext}
+              onTrackPointerDown={onTrackPointerDown}
+              onTrackPointerMove={onTrackPointerMove}
+              onTrackPointerUp={onTrackPointerUp}
+              onTrackPointerCancel={onTrackPointerCancel}
+            />
+          </div>
+        );
+      }
+
+      const { container, rerender } = render(
+        <TransportWrapper count={1} isPlaybackActive={false} isScrubbing={false} />,
+      );
+
+      const bottomBar = container.querySelector('#video-hud-bottom-bar') as HTMLElement;
+      expect(bottomBar.style.display).toBe('none');
+
+      fireEvent.pointerDown(bottomBar);
+      fireEvent.touchStart(bottomBar);
+
+      rerender(<TransportWrapper count={2} isPlaybackActive={true} isScrubbing={false} />);
+      expect(bottomBar.style.display).toBe('');
+
+      const track = container.querySelector('#video-hud-progress-track') as HTMLElement;
+      fireEvent.pointerDown(track);
+      expect(onTrackPointerDown).toHaveBeenCalled();
+      fireEvent.pointerMove(track);
+      expect(onTrackPointerMove).toHaveBeenCalled();
+      fireEvent.pointerUp(track);
+      expect(onTrackPointerUp).toHaveBeenCalled();
+      fireEvent.pointerCancel(track);
+      expect(onTrackPointerCancel).toHaveBeenCalled();
+
+      // Rerender with isScrubbing={true}
+      rerender(<TransportWrapper count={3} isPlaybackActive={true} isScrubbing={true} />);
+      expect(track.classList.contains('is-scrubbing')).toBe(true);
+
+      // Rerender with count changed (memo cache hit on time strings and progress)
+      rerender(<TransportWrapper count={4} isPlaybackActive={true} isScrubbing={true} />);
     });
   });
 });

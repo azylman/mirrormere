@@ -735,4 +735,166 @@ describe('TasksWidget', () => {
     expect(onRender1).toHaveBeenCalledTimes(2);
     expect(onRender2).toHaveBeenCalledTimes(1);
   });
+
+  it('renders individual tags (section only, assignee only, dueDate only) cleanly', () => {
+    useDisplayStore.setState({
+      widgets: {
+        'tasks-tags': {
+          meta: { type: 'tasks', origin: [0, 0], dimensions: [3, 2], config: {}, assets_base: '' },
+          state: 'healthy',
+          data: {
+            items: [
+              { id: 'tag-1', title: 'Only Section', done: false, section: 'Errands' },
+              { id: 'tag-2', title: 'Only Assignee', done: false, assignee: 'Sam' },
+              { id: 'tag-3', title: 'Only Due Date', done: false, due_date: 'Tomorrow' },
+            ],
+          },
+          timestamp: '2026-10-31T12:00:00Z',
+        },
+      },
+    });
+
+    const { container } = render(<TasksWidget id="tasks-tags" type="tasks" />);
+    const item1 = container.querySelector('[data-item-id="tag-1"]');
+    expect(item1?.querySelector('.task-tag-section')?.textContent).toBe('#Errands');
+    expect(item1?.querySelector('.task-tag-assignee')).toBeNull();
+    expect(item1?.querySelector('.task-tag-due')).toBeNull();
+
+    const item2 = container.querySelector('[data-item-id="tag-2"]');
+    expect(item2?.querySelector('.task-tag-section')).toBeNull();
+    expect(item2?.querySelector('.task-tag-assignee')?.textContent).toBe('@Sam');
+    expect(item2?.querySelector('.task-tag-due')).toBeNull();
+
+    const item3 = container.querySelector('[data-item-id="tag-3"]');
+    expect(item3?.querySelector('.task-tag-section')).toBeNull();
+    expect(item3?.querySelector('.task-tag-assignee')).toBeNull();
+    expect(item3?.querySelector('.task-tag-due')?.textContent).toBe('Tomorrow');
+  });
+
+  it('handles PascalCase Items, list.items, List.Items, and fallback item indices', () => {
+    // 1. data.Items (PascalCase) and items with ID, Title, Done
+    useDisplayStore.setState({
+      widgets: {
+        'tasks-pascal-items': {
+          meta: { type: 'tasks', origin: [0, 0], dimensions: [3, 2], config: { ListName: 'Chores' }, assets_base: '' },
+          state: 'healthy',
+          data: {
+            Items: [
+              { ID: 'p-1', Title: 'Pascal Item 1', Done: false },
+              { Title: 'No ID Item', Done: true }, // exercises item-${idx} and Title fallback
+            ],
+          },
+          timestamp: '2026-10-31T12:00:00Z',
+        },
+      },
+    });
+
+    const { container: c1 } = render(<TasksWidget id="tasks-pascal-items" type="tasks" />);
+    expect(c1.querySelector('.tasks-title')?.textContent).toBe('Chores');
+    expect(c1.querySelector('[data-item-id="p-1"]')?.textContent).toContain('Pascal Item 1');
+    expect(c1.querySelector('[data-item-id="item-1"]')?.textContent).toContain('No ID Item');
+
+    // 2. data.list.items
+    useDisplayStore.setState({
+      widgets: {
+        'tasks-nested-list': {
+          meta: { type: 'tasks', origin: [0, 0], dimensions: [3, 2], config: { name: 'Nested List' }, assets_base: '' },
+          state: 'healthy',
+          data: {
+            list: {
+              items: [{ id: 'n-1', title: 'Nested Item 1', done: false }],
+            },
+          },
+          timestamp: '2026-10-31T12:00:00Z',
+        },
+      },
+    });
+
+    const { container: c2 } = render(<TasksWidget id="tasks-nested-list" type="tasks" />);
+    expect(c2.querySelector('.tasks-title')?.textContent).toBe('Nested List');
+    expect(c2.querySelector('[data-item-id="n-1"]')?.textContent).toContain('Nested Item 1');
+
+    // 3. data.List.Items and data.List.Name
+    useDisplayStore.setState({
+      widgets: {
+        'tasks-pascal-nested': {
+          meta: { type: 'tasks', origin: [0, 0], dimensions: [3, 2], config: {}, assets_base: '' },
+          state: 'healthy',
+          data: {
+            List: {
+              Name: 'Pascal Nested',
+              Items: [{ ID: 'pn-1', Title: 'Pascal Nested Item', Done: false }],
+            },
+          },
+          timestamp: '2026-10-31T12:00:00Z',
+        },
+      },
+    });
+
+    const { container: c3 } = render(<TasksWidget id="tasks-pascal-nested" type="tasks" />);
+    expect(c3.querySelector('.tasks-title')?.textContent).toBe('Pascal Nested');
+    expect(c3.querySelector('[data-item-id="pn-1"]')?.textContent).toContain('Pascal Nested Item');
+
+    // 4. data.list.name
+    useDisplayStore.setState({
+      widgets: {
+        'tasks-data-title': {
+          meta: { type: 'tasks', origin: [0, 0], dimensions: [3, 2], config: {}, assets_base: '' },
+          state: 'healthy',
+          data: {
+            list: {
+              name: 'Data Title List',
+              items: [{ id: 'dt-1', title: 'Item DT', done: false }],
+            },
+          },
+          timestamp: '2026-10-31T12:00:00Z',
+        },
+      },
+    });
+
+    const { container: c4 } = render(<TasksWidget id="tasks-data-title" type="tasks" />);
+    expect(c4.querySelector('.tasks-title')?.textContent).toBe('Data Title List');
+  });
+
+  it('handles item without any title string and reconciles optimistic done when server marks item done', () => {
+    vi.useFakeTimers();
+    useDisplayStore.setState({
+      widgets: {
+        'tasks-empty-title': {
+          meta: { type: 'tasks', origin: [0, 0], dimensions: [3, 2], config: {}, assets_base: '' },
+          state: 'healthy',
+          data: {
+            items: [
+              { id: 'et-1', done: false },
+            ],
+          },
+          timestamp: '2026-10-31T12:00:00Z',
+        },
+      },
+    });
+
+    const { container } = render(<TasksWidget id="tasks-empty-title" type="tasks" />);
+    expect(container.querySelector('.task-title')?.textContent).toBe('');
+
+    const item = container.querySelector('[data-item-id="et-1"]')!;
+    fireEvent.click(item);
+
+    act(() => {
+      useDisplayStore.setState({
+        widgets: {
+          'tasks-empty-title': {
+            meta: { type: 'tasks', origin: [0, 0], dimensions: [3, 2], config: {}, assets_base: '' },
+            state: 'healthy',
+            data: {
+              items: [{ id: 'et-1', done: true }],
+            },
+            timestamp: '2026-10-31T12:01:00Z',
+          },
+        },
+      });
+    });
+
+    expect(container.querySelector('.task-item-done')).not.toBeNull();
+    vi.useRealTimers();
+  });
 });

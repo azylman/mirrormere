@@ -29,7 +29,7 @@ Options:
   --check               Exit with status 1 if any coverage threshold is violated (floor: ${COVERAGE_THRESHOLD}%)
   --summary             Output Markdown summary table (also written to \$GITHUB_STEP_SUMMARY if set)
   --gaps                Print top uncovered functions and statement deficit for below-target packages
-  --service <name>      Target a specific Go package or subtree by path or basename (e.g., web, internal/server, cast-watcher)
+  --service <name>      Target a specific Go package, service, or web/ui by path or basename (e.g., web, internal/server, web/ui)
   --package <name>      Alias for --service
   --profile-dir <dir>   Store intermediate coverage profiles in the specified directory
   --parallel <n>        Parallel package test limit (accepted for CLI compatibility)
@@ -154,6 +154,29 @@ if [ "$(id -u)" -eq 0 ] && command -v setpriv >/dev/null 2>&1 && id -u ubuntu >/
 fi
 
 ALL_PACKAGES=$(go list ./... 2>/dev/null || true)
+if [ "$TARGET_SERVICE" = "web/ui" ] || [ "$TARGET_SERVICE" = "ui" ]; then
+    echo "${CYAN}⚡ [Mirrormere Coverage] Running React frontend Vitest coverage (web/ui)...${NC}"
+    if [ ! -d "$REPO_ROOT/web/ui/node_modules" ]; then
+        echo "   [ui] Installing dependencies in web/ui..."
+        (cd "$REPO_ROOT/web/ui" && npm ci --no-audit --no-fund)
+    fi
+    if ! (cd "$REPO_ROOT/web/ui" && npm run test:coverage); then
+        record_violation "Frontend coverage in web/ui failed to meet threshold gates (95/90/95/95)"
+    fi
+    if [ -n "$VIOLATIONS" ]; then
+        echo "${RED}🚨 [Mirrormere Coverage] Violations detected:${NC}"
+        echo "$VIOLATIONS" | while IFS= read -r line; do
+            echo "   • $line"
+        done
+        if [ "$CHECK_MODE" -eq 1 ]; then
+            exit 1
+        fi
+    else
+        echo "${GREEN}✅ [Mirrormere Coverage] web/ui Vitest coverage passed!${NC}"
+    fi
+    exit 0
+fi
+
 if [ -n "$TARGET_SERVICE" ]; then
     clean_target="${TARGET_SERVICE#./}"
     if [ "$clean_target" = "." ]; then
@@ -302,6 +325,20 @@ if $GO_TEST_PREFIX env CGO_ENABLED="$cgo_val" go test ${race_flag:+"$race_flag"}
 else
     cat "$TEST_LOG" >&2 || true
     record_violation "Go package unit tests failed"
+fi
+
+if [ -z "$TARGET_SERVICE" ] && [ -d "$REPO_ROOT/web/ui" ] && command -v npm >/dev/null 2>&1; then
+    echo ""
+    echo "${CYAN}⚡ [Mirrormere Coverage] Running React frontend Vitest coverage (web/ui)...${NC}"
+    if [ ! -d "$REPO_ROOT/web/ui/node_modules" ]; then
+        echo "   [ui] Installing dependencies in web/ui..."
+        (cd "$REPO_ROOT/web/ui" && npm ci --no-audit --no-fund)
+    fi
+    if ! (cd "$REPO_ROOT/web/ui" && npm run test:coverage); then
+        record_violation "Frontend coverage in web/ui failed to meet threshold gates (95/90/95/95)"
+    else
+        echo "${GREEN}✅ [Mirrormere Coverage] web/ui Vitest coverage passed!${NC}"
+    fi
 fi
 
 GLOBAL_PCT="100.00"
