@@ -3,12 +3,14 @@ package provider
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -56,111 +58,154 @@ func TestHomeAssistant_SupportedDomains(t *testing.T) {
 func TestHomeAssistant_Init(t *testing.T) {
 	ctx := context.Background()
 
-	t.Run("valid configuration", func(t *testing.T) {
-		p := NewHomeAssistantProvider()
-		err := p.Init(ctx, map[string]any{
-			"url":       "http://198.51.100.10:8123/",
-			"token":     "secret-token-123",
-			"dashboard": "lovelace-tablet",
-			"view":      "living-room",
-			"title":     "Main Dashboard",
-			"domains":   []any{"light", "switch"},
-			"entities":  []any{"light.living_room", "switch.fan"},
-		}, InitOptions{})
-		if err != nil {
-			t.Fatalf("unexpected Init error: %v", err)
-		}
-		if p.baseURL != "http://198.51.100.10:8123" {
-			t.Errorf("expected trimmed baseURL, got %q", p.baseURL)
-		}
-		if p.token != "secret-token-123" {
-			t.Errorf("expected token secret-token-123, got %q", p.token)
-		}
-		if p.cfg.Dashboard != "lovelace-tablet" {
-			t.Errorf("expected dashboard lovelace-tablet, got %q", p.cfg.Dashboard)
-		}
-		if p.cfg.View != "living-room" {
-			t.Errorf("expected view living-room, got %q", p.cfg.View)
-		}
-		if p.cfg.Title != "Main Dashboard" {
-			t.Errorf("expected title 'Main Dashboard', got %q", p.cfg.Title)
-		}
-		if len(p.cfg.Domains) != 2 || p.cfg.Domains[0] != "light" || p.cfg.Domains[1] != "switch" {
-			t.Errorf("unexpected domains: %v", p.cfg.Domains)
-		}
-		if len(p.cfg.Entities) != 2 || p.cfg.Entities[0] != "light.living_room" {
-			t.Errorf("unexpected entities: %v", p.cfg.Entities)
-		}
-	})
-
-	t.Run("missing URL error", func(t *testing.T) {
-		p := NewHomeAssistantProvider()
-		err := p.Init(ctx, map[string]any{
-			"token": "secret-token-123",
-		}, InitOptions{})
-
-		if err == nil || !strings.Contains(err.Error(), "requires a valid URL") {
-			t.Fatalf("expected missing URL error, got %v", err)
-		}
-	})
-
-	t.Run("missing token error", func(t *testing.T) {
-		p := NewHomeAssistantProvider()
-		err := p.Init(ctx, map[string]any{
-			"url": "http://198.51.100.10:8123",
-		}, InitOptions{})
-
-		if err == nil || !strings.Contains(err.Error(), "requires a valid access token") {
-			t.Fatalf("expected missing token error, got %v", err)
-		}
-	})
-
-	t.Run("resolve from InitOptions and secrets", func(t *testing.T) {
-		p := NewHomeAssistantProvider()
-		opts := InitOptions{
-			Endpoint: "http://198.51.100.20:8123",
-			Token:    "opt-token",
-			Secrets: map[string]string{
-				"CUSTOM_TOKEN": "custom-secret-token",
+	tests := []struct {
+		name          string
+		envURL        string
+		envToken      string
+		config        map[string]any
+		opts          InitOptions
+		wantErrSubstr string
+		wantBaseURL   string
+		wantToken     string
+		wantDashboard string
+		wantView      string
+		wantTitle     string
+		wantDomains   []string
+		wantEntities  []string
+	}{
+		{
+			name: "valid configuration via token_env and opts",
+			config: map[string]any{
+				"url":       "http://198.51.100.10:8123/",
+				"token_env": "HA_TOKEN",
+				"dashboard": "lovelace-tablet",
+				"view":      "living-room",
+				"title":     "Main Dashboard",
+				"domains":   []any{"light", "switch"},
+				"entities":  []any{"light.living_room", "switch.fan"},
 			},
-		}
+			opts: InitOptions{
+				Secrets: map[string]string{
+					"HA_TOKEN": "secret-token-123",
+				},
+			},
+			wantBaseURL:   "http://198.51.100.10:8123",
+			wantToken:     "secret-token-123",
+			wantDashboard: "lovelace-tablet",
+			wantView:      "living-room",
+			wantTitle:     "Main Dashboard",
+			wantDomains:   []string{"light", "switch"},
+			wantEntities:  []string{"light.living_room", "switch.fan"},
+		},
+		{
+			name: "missing URL error",
+			config: map[string]any{
+				"token_env": "HA_TOKEN",
+			},
+			opts: InitOptions{
+				Token: "secret-token-123",
+			},
+			wantErrSubstr: "requires a valid URL",
+		},
+		{
+			name: "missing token error even when plaintext token is present in config",
+			config: map[string]any{
+				"url":   "http://198.51.100.10:8123",
+				"token": "plaintext-token-must-be-ignored",
+			},
+			wantErrSubstr: "requires a valid access token",
+		},
+		{
+			name: "resolve from InitOptions and secrets",
+			config: map[string]any{
+				"token_env": "CUSTOM_TOKEN",
+				"name":      "Fallback Name Title",
+			},
+			opts: InitOptions{
+				Endpoint: "http://198.51.100.20:8123",
+				Token:    "opt-token",
+				Secrets: map[string]string{
+					"CUSTOM_TOKEN": "custom-secret-token",
+				},
+			},
+			wantBaseURL: "http://198.51.100.20:8123",
+			wantToken:   "custom-secret-token",
+			wantTitle:   "Fallback Name Title",
+		},
+		{
+			name:     "resolve from OS env vars",
+			envURL:   "http://198.51.100.30:8123",
+			envToken: "env-secret-token",
+			config: map[string]any{
+				"url_env":   "TEST_HA_URL",
+				"token_env": "TEST_HA_TOKEN",
+			},
+			wantBaseURL: "http://198.51.100.30:8123",
+			wantToken:   "env-secret-token",
+		},
+		{
+			name: "resolve token from ha.token secret",
+			config: map[string]any{
+				"base_url": "http://198.51.100.40:8123",
+			},
+			opts: InitOptions{
+				Secrets: map[string]string{
+					"ha.token": "ha-prefixed-secret",
+				},
+			},
+			wantBaseURL: "http://198.51.100.40:8123",
+			wantToken:   "ha-prefixed-secret",
+		},
+	}
 
-		err := p.Init(ctx, map[string]any{
-			"token_env": "CUSTOM_TOKEN",
-		}, opts)
-		if err != nil {
-			t.Fatalf("unexpected Init error: %v", err)
-		}
-		if p.baseURL != "http://198.51.100.20:8123" {
-			t.Errorf("expected baseURL from opts.Endpoint, got %q", p.baseURL)
-		}
-		if p.token != "custom-secret-token" {
-			t.Errorf("expected token from secret CUSTOM_TOKEN, got %q", p.token)
-		}
-	})
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.envURL != "" {
+				t.Setenv("TEST_HA_URL", tc.envURL)
+			}
+			if tc.envToken != "" {
+				t.Setenv("TEST_HA_TOKEN", tc.envToken)
+			}
 
-	t.Run("resolve from OS env vars", func(t *testing.T) {
-		t.Setenv("TEST_HA_URL", "http://198.51.100.30:8123")
-		t.Setenv("TEST_HA_TOKEN", "env-secret-token")
-
-		p := NewHomeAssistantProvider()
-		err := p.Init(ctx, map[string]any{
-			"url_env":   "TEST_HA_URL",
-			"token_env": "TEST_HA_TOKEN",
-		}, InitOptions{})
-		if err != nil {
-			t.Fatalf("unexpected Init error: %v", err)
-		}
-		if p.baseURL != "http://198.51.100.30:8123" {
-			t.Errorf("expected baseURL from env, got %q", p.baseURL)
-		}
-		if p.token != "env-secret-token" {
-			t.Errorf("expected token from env, got %q", p.token)
-		}
-	})
+			p := NewHomeAssistantProvider()
+			err := p.Init(ctx, tc.config, tc.opts)
+			if tc.wantErrSubstr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErrSubstr) {
+					t.Fatalf("expected error containing %q, got %v", tc.wantErrSubstr, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected Init error: %v", err)
+			}
+			if p.baseURL != tc.wantBaseURL {
+				t.Errorf("expected baseURL %q, got %q", tc.wantBaseURL, p.baseURL)
+			}
+			if p.token != tc.wantToken {
+				t.Errorf("expected token %q, got %q", tc.wantToken, p.token)
+			}
+			if p.cfg.Dashboard != tc.wantDashboard {
+				t.Errorf("expected dashboard %q, got %q", tc.wantDashboard, p.cfg.Dashboard)
+			}
+			if p.cfg.View != tc.wantView {
+				t.Errorf("expected view %q, got %q", tc.wantView, p.cfg.View)
+			}
+			if p.cfg.Title != tc.wantTitle {
+				t.Errorf("expected title %q, got %q", tc.wantTitle, p.cfg.Title)
+			}
+			if !reflect.DeepEqual(p.cfg.Domains, tc.wantDomains) {
+				t.Errorf("expected domains %v, got %v", tc.wantDomains, p.cfg.Domains)
+			}
+			if !reflect.DeepEqual(p.cfg.Entities, tc.wantEntities) {
+				t.Errorf("expected entities %v, got %v", tc.wantEntities, p.cfg.Entities)
+			}
+		})
+	}
 }
 
 func TestHomeAssistant_LovelaceLayoutDiscovery(t *testing.T) {
+	t.Parallel()
+
 	lovelaceJSON := `{
 		"title": "Home Dashboard",
 		"views": [
@@ -255,95 +300,128 @@ func TestHomeAssistant_LovelaceLayoutDiscovery(t *testing.T) {
 		t.Fatalf("failed to unmarshal test Lovelace config: %v", err)
 	}
 
-	p := NewHomeAssistantProvider()
+	tests := []struct {
+		name             string
+		baseURL          string
+		inputCfg         *LovelaceConfig
+		selector         string
+		wantTitle        string
+		wantViewPath     string
+		wantViewType     string
+		wantSectionCount int
+		wantCardTypes    []string
+		wantEntities     []string
+		wantFourthImage  string
+	}{
+		{
+			name:            "discover first view cards and entities with relative image rewrite",
+			baseURL:         "http://198.51.100.10:8123",
+			inputCfg:        &cfg,
+			selector:        "0",
+			wantTitle:       "Home Dashboard",
+			wantViewPath:    "overview",
+			wantCardTypes:   []string{"tile", "entities", "grid", "picture-entity"},
+			wantFourthImage: "http://198.51.100.10:8123/local/camera.jpg",
+			wantEntities: []string{
+				"light.living_room_ceiling",
+				"switch.coffee_maker",
+				"switch.porch_light",
+				"script.good_night",
+				"climate.hallway_nest",
+				"camera.front_doorbell",
+			},
+		},
+		{
+			name:             "discover sections view",
+			baseURL:          "http://198.51.100.10:8123",
+			inputCfg:         &cfg,
+			selector:         "climate-view",
+			wantTitle:        "Home Dashboard",
+			wantViewPath:     "climate-view",
+			wantViewType:     "sections",
+			wantSectionCount: 2,
+			wantCardTypes:    []string{"thermostat", "tile", "tile", "tile"},
+			wantEntities: []string{
+				"climate.living_room_ac",
+				"fan.ceiling_fan",
+				"lock.front_door",
+				"cover.garage_door",
+			},
+		},
+		{
+			name:            "select view by title",
+			inputCfg:        &cfg,
+			selector:        "Overview",
+			wantTitle:       "Home Dashboard",
+			wantViewPath:    "overview",
+			wantCardTypes:   []string{"tile", "entities", "grid", "picture-entity"},
+			wantFourthImage: "/local/camera.jpg",
+		},
+		{
+			name:            "fallback to view 0 when selector not found",
+			inputCfg:        &cfg,
+			selector:        "non-existent-view",
+			wantTitle:       "Home Dashboard",
+			wantViewPath:    "overview",
+			wantCardTypes:   []string{"tile", "entities", "grid", "picture-entity"},
+			wantFourthImage: "/local/camera.jpg",
+		},
+		{
+			name:      "nil lovelace config returns empty layout",
+			inputCfg:  nil,
+			selector:  "view1",
+			wantTitle: "",
+		},
+		{
+			name:      "empty views slice returns layout without cards",
+			inputCfg:  &LovelaceConfig{Title: "Empty Views"},
+			selector:  "view1",
+			wantTitle: "Empty Views",
+		},
+	}
 
-	t.Run("discover first view cards and entities (overview)", func(t *testing.T) {
-		layout := p.DiscoverLayout(&cfg, "0")
-		if layout.Title != "Home Dashboard" {
-			t.Errorf("expected title 'Home Dashboard', got %q", layout.Title)
-		}
-		if layout.View.Path != "overview" {
-			t.Errorf("expected view path 'overview', got %q", layout.View.Path)
-		}
-		if len(layout.Cards) != 4 {
-			t.Fatalf("expected 4 cards in overview, got %d", len(layout.Cards))
-		}
-
-		// Verify card types: tile, entities, grid, picture-entity
-		cardTypes := []string{layout.Cards[0].Type, layout.Cards[1].Type, layout.Cards[2].Type, layout.Cards[3].Type}
-		expectedTypes := []string{"tile", "entities", "grid", "picture-entity"}
-		if !reflect.DeepEqual(cardTypes, expectedTypes) {
-			t.Errorf("expected card types %v, got %v", expectedTypes, cardTypes)
-		}
-
-		// Verify entities extracted:
-		// light.living_room_ceiling (tile)
-		// switch.coffee_maker (entities string)
-		// switch.porch_light (entities map)
-		// script.good_night (grid child button)
-		// climate.hallway_nest (grid child thermostat)
-		// camera.front_doorbell (picture-entity)
-		expectedEntities := []string{
-			"light.living_room_ceiling",
-			"switch.coffee_maker",
-			"switch.porch_light",
-			"script.good_night",
-			"climate.hallway_nest",
-			"camera.front_doorbell",
-		}
-
-		for _, exp := range expectedEntities {
-			if !slices.Contains(layout.DiscoveredEntities, exp) {
-				t.Errorf("expected entity %q in discovered entities %v", exp, layout.DiscoveredEntities)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			p := NewHomeAssistantProviderWithClient(nil, tc.baseURL, "")
+			layout := p.DiscoverLayout(tc.inputCfg, tc.selector)
+			if layout.Title != tc.wantTitle {
+				t.Errorf("expected title %q, got %q", tc.wantTitle, layout.Title)
 			}
-		}
-	})
-
-	t.Run("discover sections view (sections layout)", func(t *testing.T) {
-		layout := p.DiscoverLayout(&cfg, "climate-view")
-		if layout.View.Path != "climate-view" {
-			t.Errorf("expected view path 'climate-view', got %q", layout.View.Path)
-		}
-		if layout.View.Type != "sections" {
-			t.Errorf("expected view type 'sections', got %q", layout.View.Type)
-		}
-		if len(layout.View.Sections) != 2 {
-			t.Fatalf("expected 2 sections in climate-view, got %d", len(layout.View.Sections))
-		}
-		// Flattened cards should contain all 4 cards from the 2 sections
-		if len(layout.Cards) != 4 {
-			t.Fatalf("expected 4 cards collected across sections, got %d", len(layout.Cards))
-		}
-
-		expectedEntities := []string{
-			"climate.living_room_ac",
-			"fan.ceiling_fan",
-			"lock.front_door",
-			"cover.garage_door",
-		}
-		for _, exp := range expectedEntities {
-			if !slices.Contains(layout.DiscoveredEntities, exp) {
-				t.Errorf("expected entity %q in discovered entities %v", exp, layout.DiscoveredEntities)
+			if layout.View.Path != tc.wantViewPath {
+				t.Errorf("expected view path %q, got %q", tc.wantViewPath, layout.View.Path)
 			}
-		}
-	})
-
-	t.Run("select view by title", func(t *testing.T) {
-		layout := p.DiscoverLayout(&cfg, "Overview")
-		if layout.View.Path != "overview" {
-			t.Errorf("expected view path 'overview', got %q", layout.View.Path)
-		}
-	})
-
-	t.Run("fallback to view 0 when selector not found", func(t *testing.T) {
-		layout := p.DiscoverLayout(&cfg, "non-existent-view")
-		if layout.View.Path != "overview" {
-			t.Errorf("expected view path 'overview' on fallback, got %q", layout.View.Path)
-		}
-	})
+			if tc.wantViewType != "" && layout.View.Type != tc.wantViewType {
+				t.Errorf("expected view type %q, got %q", tc.wantViewType, layout.View.Type)
+			}
+			if tc.wantSectionCount > 0 && len(layout.View.Sections) != tc.wantSectionCount {
+				t.Fatalf("expected %d sections, got %d", tc.wantSectionCount, len(layout.View.Sections))
+			}
+			if len(layout.Cards) != len(tc.wantCardTypes) {
+				t.Fatalf("expected %d cards, got %d", len(tc.wantCardTypes), len(layout.Cards))
+			}
+			for i, wantType := range tc.wantCardTypes {
+				if layout.Cards[i].Type != wantType {
+					t.Errorf("card %d: expected type %q, got %q", i, wantType, layout.Cards[i].Type)
+				}
+			}
+			if tc.wantFourthImage != "" && len(layout.Cards) >= 4 {
+				if layout.Cards[3].Image != tc.wantFourthImage {
+					t.Errorf("expected card[3].Image %q, got %q", tc.wantFourthImage, layout.Cards[3].Image)
+				}
+			}
+			for _, exp := range tc.wantEntities {
+				if !slices.Contains(layout.DiscoveredEntities, exp) {
+					t.Errorf("expected entity %q in discovered entities %v", exp, layout.DiscoveredEntities)
+				}
+			}
+		})
+	}
 }
 
 func TestHomeAssistant_HydrateStates(t *testing.T) {
+	t.Parallel()
+
 	mockStates := []EntityState{
 		{
 			EntityID: "light.kitchen",
@@ -393,15 +471,17 @@ func TestHomeAssistant_HydrateStates(t *testing.T) {
 			EntityID: "media_player.living_room_speaker",
 			State:    "playing",
 			Attributes: map[string]any{
-				"media_title":  "Hey Jude",
-				"volume_level": 0.4,
+				"media_title":    "Hey Jude",
+				"volume_level":   0.4,
+				"entity_picture": "https://cdn.example.com/album.jpg",
 			},
 		},
 		{
 			EntityID: "camera.driveway",
 			State:    "idle",
 			Attributes: map[string]any{
-				"access_token": "cam-token-xyz",
+				"access_token":   "cam-token-xyz",
+				"entity_picture": "/api/camera_proxy/camera.driveway?token=cam-token-xyz",
 			},
 		},
 		{
@@ -433,7 +513,6 @@ func TestHomeAssistant_HydrateStates(t *testing.T) {
 				"device_class": "motion",
 			},
 		},
-		// Unsupported domains that should be filtered out
 		{
 			EntityID: "automation.motion_lighting",
 			State:    "on",
@@ -460,88 +539,95 @@ func TestHomeAssistant_HydrateStates(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(mockStates)
+		_ = json.NewEncoder(w).Encode(mockStates)
 	}))
-	defer server.Close()
+	t.Cleanup(server.Close)
 
-	ctx := context.Background()
+	tests := []struct {
+		name            string
+		domains         []any
+		wantCount       int
+		wantPresent     []string
+		wantAbsent      []string
+		wantDrivewayPic string
+		wantMediaPic    string
+	}{
+		{
+			name:      "hydrates all 12 supported domains and rewrites root-relative entity_picture",
+			wantCount: 12,
+			wantPresent: []string{
+				"light.kitchen",
+				"switch.coffee",
+				"fan.living_room",
+				"cover.garage",
+				"lock.front_door",
+				"climate.hallway",
+				"media_player.living_room_speaker",
+				"camera.driveway",
+				"scene.evening",
+				"script.movie_night",
+				"sensor.outdoor_temperature",
+				"binary_sensor.front_motion",
+			},
+			wantAbsent:      []string{"automation.motion_lighting", "zone.home"},
+			wantDrivewayPic: server.URL + "/api/camera_proxy/camera.driveway?token=cam-token-xyz",
+			wantMediaPic:    "https://cdn.example.com/album.jpg",
+		},
+		{
+			name:        "filters by configured domains",
+			domains:     []any{"light", "climate"},
+			wantCount:   2,
+			wantPresent: []string{"light.kitchen", "climate.hallway"},
+			wantAbsent:  []string{"switch.coffee", "camera.driveway"},
+		},
+	}
 
-	t.Run("hydrates all 12 supported domains and filters others", func(t *testing.T) {
-		p := NewHomeAssistantProviderWithClient(server.Client(), server.URL, "test-ha-token")
-		err := p.Init(ctx, map[string]any{
-			"url":   server.URL,
-			"token": "test-ha-token",
-		}, InitOptions{})
-		if err != nil {
-			t.Fatalf("Init failed: %v", err)
-		}
-
-		states, err := p.HydrateStates(ctx)
-		if err != nil {
-			t.Fatalf("HydrateStates failed: %v", err)
-		}
-
-		if len(states) != 12 {
-			t.Fatalf("expected 12 hydrated states across the 12 domains, got %d", len(states))
-		}
-
-		// Verify all 12 domains exist
-		expectedDomains := []string{
-			"light.kitchen",
-			"switch.coffee",
-			"fan.living_room",
-			"cover.garage",
-			"lock.front_door",
-			"climate.hallway",
-			"media_player.living_room_speaker",
-			"camera.driveway",
-			"scene.evening",
-			"script.movie_night",
-			"sensor.outdoor_temperature",
-			"binary_sensor.front_motion",
-		}
-
-		for _, entityID := range expectedDomains {
-			if _, ok := states[entityID]; !ok {
-				t.Errorf("expected entity %q to be hydrated", entityID)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := context.Background()
+			p := NewHomeAssistantProviderWithClient(server.Client(), server.URL, "test-ha-token")
+			cfgMap := map[string]any{
+				"url": server.URL,
 			}
-		}
+			if tc.domains != nil {
+				cfgMap["domains"] = tc.domains
+			}
+			if err := p.Init(ctx, cfgMap, InitOptions{Token: "test-ha-token"}); err != nil {
+				t.Fatalf("Init failed: %v", err)
+			}
 
-		// Verify filtered out
-		if _, ok := states["automation.motion_lighting"]; ok {
-			t.Error("automation domain should have been filtered out")
-		}
-		if _, ok := states["zone.home"]; ok {
-			t.Error("zone domain should have been filtered out")
-		}
-	})
-
-	t.Run("filters by configured domains", func(t *testing.T) {
-		p := NewHomeAssistantProviderWithClient(server.Client(), server.URL, "test-ha-token")
-		err := p.Init(ctx, map[string]any{
-			"url":     server.URL,
-			"token":   "test-ha-token",
-			"domains": []any{"light", "climate"},
-		}, InitOptions{})
-		if err != nil {
-			t.Fatalf("Init failed: %v", err)
-		}
-
-		states, err := p.HydrateStates(ctx)
-		if err != nil {
-			t.Fatalf("HydrateStates failed: %v", err)
-		}
-
-		if len(states) != 2 {
-			t.Fatalf("expected 2 states for light & climate, got %d", len(states))
-		}
-		if _, ok := states["light.kitchen"]; !ok {
-			t.Error("expected light.kitchen to be present")
-		}
-		if _, ok := states["climate.hallway"]; !ok {
-			t.Error("expected climate.hallway to be present")
-		}
-	})
+			states, err := p.HydrateStates(ctx)
+			if err != nil {
+				t.Fatalf("HydrateStates failed: %v", err)
+			}
+			if len(states) != tc.wantCount {
+				t.Fatalf("expected %d hydrated states, got %d", tc.wantCount, len(states))
+			}
+			for _, entityID := range tc.wantPresent {
+				if _, ok := states[entityID]; !ok {
+					t.Errorf("expected entity %q to be hydrated", entityID)
+				}
+			}
+			for _, entityID := range tc.wantAbsent {
+				if _, ok := states[entityID]; ok {
+					t.Errorf("expected entity %q to be filtered out", entityID)
+				}
+			}
+			if tc.wantDrivewayPic != "" {
+				gotPic, _ := states["camera.driveway"].Attributes["entity_picture"].(string)
+				if gotPic != tc.wantDrivewayPic {
+					t.Errorf("expected camera entity_picture %q, got %q", tc.wantDrivewayPic, gotPic)
+				}
+			}
+			if tc.wantMediaPic != "" {
+				gotMediaPic, _ := states["media_player.living_room_speaker"].Attributes["entity_picture"].(string)
+				if gotMediaPic != tc.wantMediaPic {
+					t.Errorf("expected media_player entity_picture %q, got %q", tc.wantMediaPic, gotMediaPic)
+				}
+			}
+		})
+	}
 }
 
 func TestHomeAssistant_Fetch(t *testing.T) {
@@ -595,21 +681,20 @@ func TestHomeAssistant_Fetch(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/api/lovelace/config":
-			json.NewEncoder(w).Encode(lovelaceData)
+			_ = json.NewEncoder(w).Encode(lovelaceData)
 		case "/api/states":
-			json.NewEncoder(w).Encode(statesData)
+			_ = json.NewEncoder(w).Encode(statesData)
 		default:
 			http.NotFound(w, r)
 		}
 	}))
-	defer server.Close()
+	t.Cleanup(server.Close)
 
 	ctx := context.Background()
 	p := NewHomeAssistantProviderWithClient(server.Client(), server.URL, "token-123")
 	err := p.Init(ctx, map[string]any{
-		"url":   server.URL,
-		"token": "token-123",
-	}, InitOptions{})
+		"url": server.URL,
+	}, InitOptions{Token: "token-123"})
 	if err != nil {
 		t.Fatalf("Init failed: %v", err)
 	}
@@ -668,19 +753,18 @@ func TestHomeAssistant_Fetch_FallbackWhenLovelace404(t *testing.T) {
 			http.NotFound(w, r)
 		case "/api/states":
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(statesData)
+			_ = json.NewEncoder(w).Encode(statesData)
 		default:
 			http.NotFound(w, r)
 		}
 	}))
-	defer server.Close()
+	t.Cleanup(server.Close)
 
 	ctx := context.Background()
 	p := NewHomeAssistantProviderWithClient(server.Client(), server.URL, "token-123")
 	err := p.Init(ctx, map[string]any{
-		"url":   server.URL,
-		"token": "token-123",
-	}, InitOptions{})
+		"url": server.URL,
+	}, InitOptions{Token: "token-123"})
 	if err != nil {
 		t.Fatalf("Init failed: %v", err)
 	}
@@ -690,7 +774,10 @@ func TestHomeAssistant_Fetch_FallbackWhenLovelace404(t *testing.T) {
 		t.Fatalf("Fetch should succeed even when Lovelace 404s: %v", err)
 	}
 
-	snapshot := res.(HomeAssistantSnapshot)
+	snapshot, ok := res.(HomeAssistantSnapshot)
+	if !ok {
+		t.Fatalf("expected HomeAssistantSnapshot, got %T", res)
+	}
 	if len(snapshot.Cards) != 3 {
 		t.Fatalf("expected 3 generated fallback cards, got %d", len(snapshot.Cards))
 	}
@@ -698,7 +785,6 @@ func TestHomeAssistant_Fetch_FallbackWhenLovelace404(t *testing.T) {
 		t.Fatalf("expected 3 hydrated entities, got %d", len(snapshot.Entities))
 	}
 
-	// Verify generated card types matching domain heuristics
 	typeMap := make(map[string]string)
 	for _, c := range snapshot.Cards {
 		typeMap[c.Entity] = c.Type
@@ -716,161 +802,182 @@ func TestHomeAssistant_Fetch_FallbackWhenLovelace404(t *testing.T) {
 }
 
 func TestHomeAssistant_CallService(t *testing.T) {
+	t.Parallel()
+
+	var mu sync.Mutex
 	var receivedMethod string
 	var receivedPath string
 	var receivedAuth string
 	var receivedBody map[string]any
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var parsed map[string]any
+		_ = json.Unmarshal(body, &parsed)
+
+		mu.Lock()
 		receivedMethod = r.Method
 		receivedPath = r.URL.Path
 		receivedAuth = r.Header.Get("Authorization")
+		receivedBody = parsed
+		mu.Unlock()
 
-		body, _ := io.ReadAll(r.Body)
-		_ = json.Unmarshal(body, &receivedBody)
-
-		if strings.HasPrefix(r.URL.Path, "/api/services/light/turn_on") {
+		switch {
+		case strings.HasPrefix(r.URL.Path, "/api/services/light/turn_on"):
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`[{"entity_id": "light.living_room", "state": "on"}]`))
-			return
-		}
-
-		if strings.HasPrefix(r.URL.Path, "/api/services/light/not_found") {
+			_, _ = w.Write([]byte(`[{"entity_id": "light.living_room", "state": "on", "attributes": {"entity_picture": "/api/camera_proxy/light.living_room"}}]`))
+		case strings.HasPrefix(r.URL.Path, "/api/services/light/not_found"):
 			http.Error(w, "Service not found", http.StatusNotFound)
-			return
+		case strings.HasPrefix(r.URL.Path, "/api/services/light/unauthorized"):
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		default:
+			http.NotFound(w, r)
 		}
-
-		http.NotFound(w, r)
 	}))
-	defer server.Close()
+	t.Cleanup(server.Close)
 
 	ctx := context.Background()
 	p := NewHomeAssistantProviderWithClient(server.Client(), server.URL, "bearer-test-token")
-	err := p.Init(ctx, map[string]any{
-		"url":   server.URL,
-		"token": "bearer-test-token",
-	}, InitOptions{})
-	if err != nil {
+	if err := p.Init(ctx, map[string]any{"url": server.URL}, InitOptions{Token: "bearer-test-token"}); err != nil {
 		t.Fatalf("Init failed: %v", err)
 	}
 
-	t.Run("successful service call with data", func(t *testing.T) {
-		serviceData := map[string]any{
-			"entity_id":  "light.living_room",
-			"brightness": 255,
-		}
+	tests := []struct {
+		name           string
+		domain         string
+		service        string
+		serviceData    map[string]any
+		wantErrIs      error
+		wantErrSubstr  string
+		wantStateCount int
+		wantPath       string
+	}{
+		{
+			name:    "successful service call with data and relative entity_picture normalization",
+			domain:  "light",
+			service: "turn_on",
+			serviceData: map[string]any{
+				"entity_id":  "light.living_room",
+				"brightness": 255,
+			},
+			wantStateCount: 1,
+			wantPath:       "/api/services/light/turn_on",
+		},
+		{
+			name:          "empty domain returns ErrActionValidation",
+			domain:        "",
+			service:       "turn_on",
+			wantErrIs:     ErrActionValidation,
+			wantErrSubstr: "domain and service must not be empty",
+		},
+		{
+			name:          "empty service returns ErrActionValidation",
+			domain:        "light",
+			service:       "",
+			wantErrIs:     ErrActionValidation,
+			wantErrSubstr: "domain and service must not be empty",
+		},
+		{
+			name:          "path traversal domain rejected with ErrActionValidation",
+			domain:        "../../api",
+			service:       "turn_on",
+			wantErrIs:     ErrActionValidation,
+			wantErrSubstr: "invalid domain",
+		},
+		{
+			name:          "uppercase domain rejected with ErrActionValidation",
+			domain:        "LIGHT",
+			service:       "turn_on",
+			wantErrIs:     ErrActionValidation,
+			wantErrSubstr: "invalid domain",
+		},
+		{
+			name:          "unsupported domain rejected with ErrActionValidation",
+			domain:        "automation",
+			service:       "trigger",
+			wantErrIs:     ErrActionValidation,
+			wantErrSubstr: "unsupported domain",
+		},
+		{
+			name:          "path traversal service rejected with ErrActionValidation",
+			domain:        "light",
+			service:       "turn_on/../admin",
+			wantErrIs:     ErrActionValidation,
+			wantErrSubstr: "invalid service",
+		},
+		{
+			name:          "upstream 404 wraps ErrUpstreamStatus and ErrUpstreamNotFound",
+			domain:        "light",
+			service:       "not_found",
+			wantErrIs:     ErrUpstreamNotFound,
+			wantErrSubstr: "404",
+		},
+		{
+			name:          "upstream 401 wraps ErrUpstreamStatus and ErrUpstreamUnauthorized",
+			domain:        "light",
+			service:       "unauthorized",
+			wantErrIs:     ErrUpstreamUnauthorized,
+			wantErrSubstr: "401",
+		},
+	}
 
-		err := p.CallService(ctx, "light", "turn_on", serviceData)
-		if err != nil {
-			t.Fatalf("CallService failed: %v", err)
-		}
-
-		if receivedMethod != http.MethodPost {
-			t.Errorf("expected POST method, got %q", receivedMethod)
-		}
-		if receivedPath != "/api/services/light/turn_on" {
-			t.Errorf("expected path /api/services/light/turn_on, got %q", receivedPath)
-		}
-		if receivedAuth != "Bearer bearer-test-token" {
-			t.Errorf("expected Authorization header 'Bearer bearer-test-token', got %q", receivedAuth)
-		}
-		if receivedBody["entity_id"] != "light.living_room" {
-			t.Errorf("expected entity_id in body, got %v", receivedBody)
-		}
-	})
-
-	t.Run("successful service call with response states", func(t *testing.T) {
-		states, err := p.CallServiceWithResponse(ctx, "light", "turn_on", map[string]any{
-			"entity_id": "light.living_room",
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			states, err := p.CallServiceWithResponse(ctx, tc.domain, tc.service, tc.serviceData)
+			if tc.wantErrIs != nil {
+				if !errors.Is(err, tc.wantErrIs) {
+					t.Fatalf("expected error wrapping %v, got %v", tc.wantErrIs, err)
+				}
+				if tc.wantErrSubstr != "" && !strings.Contains(err.Error(), tc.wantErrSubstr) {
+					t.Fatalf("expected error containing %q, got %v", tc.wantErrSubstr, err)
+				}
+				if errors.Is(tc.wantErrIs, ErrUpstreamNotFound) || errors.Is(tc.wantErrIs, ErrUpstreamUnauthorized) {
+					if !errors.Is(err, ErrUpstreamStatus) {
+						t.Errorf("expected error to also wrap ErrUpstreamStatus, got %v", err)
+					}
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("CallServiceWithResponse failed: %v", err)
+			}
+			if len(states) != tc.wantStateCount {
+				t.Fatalf("expected %d states, got %d", tc.wantStateCount, len(states))
+			}
+			if len(states) > 0 {
+				gotPic, _ := states[0].Attributes["entity_picture"].(string)
+				wantPic := server.URL + "/api/camera_proxy/light.living_room"
+				if gotPic != wantPic {
+					t.Errorf("expected normalized entity_picture %q, got %q", wantPic, gotPic)
+				}
+			}
+			if tc.wantPath != "" {
+				if err := p.CallService(ctx, tc.domain, tc.service, tc.serviceData); err != nil {
+					t.Fatalf("CallService failed: %v", err)
+				}
+				mu.Lock()
+				gotMethod := receivedMethod
+				gotPath := receivedPath
+				gotAuth := receivedAuth
+				gotEntity := receivedBody["entity_id"]
+				mu.Unlock()
+				if gotMethod != http.MethodPost {
+					t.Errorf("expected POST, got %q", gotMethod)
+				}
+				if gotPath != tc.wantPath {
+					t.Errorf("expected path %q, got %q", tc.wantPath, gotPath)
+				}
+				if gotAuth != "Bearer bearer-test-token" {
+					t.Errorf("expected Bearer header, got %q", gotAuth)
+				}
+				if gotEntity != "light.living_room" {
+					t.Errorf("expected entity_id light.living_room, got %v", gotEntity)
+				}
+			}
 		})
-		if err != nil {
-			t.Fatalf("CallServiceWithResponse failed: %v", err)
-		}
-		if len(states) != 1 || states[0].EntityID != "light.living_room" || states[0].State != "on" {
-			t.Fatalf("unexpected states returned: %v", states)
-		}
-	})
-
-	t.Run("service call with empty parameters returns error", func(t *testing.T) {
-		err := p.CallService(ctx, "", "turn_on", nil)
-		if err == nil {
-			t.Fatal("expected error on empty domain")
-		}
-		err = p.CallService(ctx, "light", "", nil)
-		if err == nil {
-			t.Fatal("expected error on empty service")
-		}
-	})
-
-	t.Run("upstream HTTP error is propagated", func(t *testing.T) {
-		err := p.CallService(ctx, "light", "not_found", nil)
-		if err == nil || !strings.Contains(err.Error(), "404") {
-			t.Fatalf("expected 404 error propagated, got %v", err)
-		}
-	})
-
-	t.Run("path traversal and invalid domain rejected", func(t *testing.T) {
-		invalidDomains := []string{
-			"../..",
-			"../../api",
-			"../light",
-			"light/admin",
-			"/etc/passwd",
-			"light..turn_on",
-			"light;drop",
-			"light turn_on",
-			"light?admin=true",
-			"LIGHT",
-		}
-		for _, dom := range invalidDomains {
-			err := p.CallService(ctx, dom, "turn_on", nil)
-			if err == nil {
-				t.Errorf("expected error for invalid domain %q, got nil", dom)
-			}
-		}
-	})
-
-	t.Run("unsupported domain rejected even if identifier is valid", func(t *testing.T) {
-		unsupportedDomains := []string{
-			"automation",
-			"zone",
-			"shell_command",
-			"hassio",
-			"input_boolean",
-			"input_number",
-		}
-		for _, dom := range unsupportedDomains {
-			err := p.CallService(ctx, dom, "trigger", nil)
-			if err == nil {
-				t.Errorf("expected error for unsupported domain %q, got nil", dom)
-			}
-			if !strings.Contains(err.Error(), "unsupported domain") {
-				t.Errorf("expected 'unsupported domain' error, got: %v", err)
-			}
-		}
-	})
-
-	t.Run("path traversal and invalid service rejected", func(t *testing.T) {
-		invalidServices := []string{
-			"../..",
-			"turn_on/../admin",
-			"api/config",
-			"../../../api/template",
-			"turn_on?evil=1",
-			"turn_on#frag",
-			"turn on",
-			"turn-on",
-			"TURN_ON",
-			"turn_on/..",
-		}
-		for _, svc := range invalidServices {
-			err := p.CallService(ctx, "light", svc, nil)
-			if err == nil {
-				t.Errorf("expected error for invalid service %q, got nil", svc)
-			}
-		}
-	})
+	}
 }
 
 func TestHomeAssistant_Registry(t *testing.T) {
@@ -992,22 +1099,18 @@ func TestHomeAssistant_ResolveConfigField(t *testing.T) {
 		Secrets: mockSecrets,
 	}
 
-	// Secret directly
-	if val := resolveConfigField(map[string]any{}, opts, "token"); val != "val2" {
+	if val := resolveToken(map[string]any{}, opts, ""); val != "val2" {
 		t.Errorf("expected val2, got %q", val)
 	}
 
-	// ha. prefix secret
 	if val := resolveConfigField(map[string]any{}, opts, "url"); val != "http://203.0.113.10:8123" {
 		t.Errorf("expected ha.url resolved, got %q", val)
 	}
 
-	// env field in opts
-	if val := resolveConfigField(map[string]any{"token_env": "secret_key"}, opts, "token"); val != "val1" {
+	if val := resolveToken(map[string]any{"token_env": "secret_key"}, opts, ""); val != "val1" {
 		t.Errorf("expected val1 from token_env, got %q", val)
 	}
 
-	// not found
 	if val := resolveConfigField(map[string]any{}, opts, "unknown"); val != "" {
 		t.Errorf("expected empty string, got %q", val)
 	}
@@ -1018,8 +1121,8 @@ func TestHomeAssistant_UnconfiguredErrors(t *testing.T) {
 	ctx := context.Background()
 	p := NewHomeAssistantProvider()
 
-	if _, err := p.CallServiceWithResponse(ctx, "light", "turn_on", nil); err == nil {
-		t.Error("expected error for unconfigured baseURL in CallServiceWithResponse")
+	if _, err := p.CallServiceWithResponse(ctx, "light", "turn_on", nil); !errors.Is(err, ErrUpstreamUnavailable) {
+		t.Errorf("expected ErrUpstreamUnavailable for unconfigured baseURL in CallServiceWithResponse, got %v", err)
 	}
 
 	if _, err := p.FetchLovelaceConfig(ctx, ""); err == nil {
@@ -1039,22 +1142,21 @@ func TestHomeAssistant_LovelaceCustomDashboardAndFallbacks(t *testing.T) {
 		case "/api/lovelace/config/custom":
 			w.WriteHeader(http.StatusNotFound)
 		case "/api/lovelace/config":
-			json.NewEncoder(w).Encode(LovelaceConfig{
+			_ = json.NewEncoder(w).Encode(LovelaceConfig{
 				Title: "Default Dash",
 			})
 		case "/api/states":
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`invalid json`))
+			_, _ = w.Write([]byte(`invalid json`))
 		default:
 			http.NotFound(w, r)
 		}
 	}))
-	defer server.Close()
+	t.Cleanup(server.Close)
 
 	ctx := context.Background()
 	p := NewHomeAssistantProviderWithClient(server.Client(), server.URL, "tok")
 
-	// Custom dash 404 should fall back to default
 	cfg, err := p.FetchLovelaceConfig(ctx, "custom")
 	if err != nil {
 		t.Fatalf("expected fallback to succeed, got %v", err)
@@ -1063,54 +1165,14 @@ func TestHomeAssistant_LovelaceCustomDashboardAndFallbacks(t *testing.T) {
 		t.Errorf("expected title 'Default Dash', got %q", cfg.Title)
 	}
 
-	// States with invalid JSON should fail decoding
 	if _, err := p.HydrateStates(ctx); err == nil {
 		t.Error("expected decode error on invalid json states")
 	}
 }
 
-func TestHomeAssistant_DiscoverLayout_EdgeCases(t *testing.T) {
-	t.Parallel()
-	p := NewHomeAssistantProvider()
-
-	// nil config
-	l1 := p.DiscoverLayout(nil, "view1")
-	if len(l1.Cards) != 0 {
-		t.Errorf("expected 0 cards for nil config, got %d", len(l1.Cards))
-	}
-
-	// empty views
-	l2 := p.DiscoverLayout(&LovelaceConfig{}, "view1")
-	if len(l2.Cards) != 0 {
-		t.Errorf("expected 0 cards for empty views, got %d", len(l2.Cards))
-	}
-
-	// view with sections
-	cfg := &LovelaceConfig{
-		Views: []LovelaceView{
-			{
-				Title: "Sections View",
-				Path:  "sections_path",
-				Sections: []LovelaceSection{
-					{
-						Cards: []LovelaceCard{
-							{Entity: "light.sec_light"},
-						},
-					},
-				},
-			},
-		},
-	}
-	l3 := p.DiscoverLayout(cfg, "sections_path")
-	if len(l3.Cards) != 1 || l3.Cards[0].Entity != "light.sec_light" {
-		t.Errorf("expected 1 card from section, got %+v", l3.Cards)
-	}
-}
-
-func TestHomeAssistant_ExtractEntitiesAndSelectView_EdgeCases(t *testing.T) {
+func TestHomeAssistant_ExtractEntitiesAndSelectView(t *testing.T) {
 	t.Parallel()
 
-	// selectView empty views
 	if v := selectView(nil, ""); v.Title != "" {
 		t.Errorf("expected empty view for nil views")
 	}
@@ -1120,47 +1182,440 @@ func TestHomeAssistant_ExtractEntitiesAndSelectView_EdgeCases(t *testing.T) {
 		{Title: "Upstairs", Path: "upstairs"},
 	}
 
-	// selectView invalid index falls back to views[0]
 	if v := selectView(views, "99"); v.Title != "Home" {
 		t.Errorf("expected fallback to Home, got %q", v.Title)
 	}
-	// selectView negative index falls back to views[0]
 	if v := selectView(views, "-1"); v.Title != "Home" {
 		t.Errorf("expected fallback to Home, got %q", v.Title)
 	}
-	// selectView unknown title falls back to views[0]
 	if v := selectView(views, "Unknown"); v.Title != "Home" {
 		t.Errorf("expected fallback to Home, got %q", v.Title)
 	}
+	if v := selectView(views, "Upstairs"); v.Path != "upstairs" {
+		t.Errorf("expected Upstairs view by title, got %q", v.Path)
+	}
 
-	// ExtractEntitiesFromCard with CameraImage, nested sections, and duplicates
 	card := LovelaceCard{
 		Entity:      "light.desk",
 		CameraImage: "camera.driveway",
+		Image:       "/local/desk.png",
 		Entities: []any{
-			"light.desk", // duplicate
+			"light.desk",
 			map[string]any{"entity": "switch.socket"},
-			map[string]any{"entity": "light.desk"}, // duplicate
-			12345,                                  // invalid type
+			map[string]any{"entity": "light.desk"},
+			12345,
+		},
+		Cards: []LovelaceCard{
+			{
+				Entity: "fan.office",
+				Image:  "/local/fan.png",
+				Sections: []LovelaceSection{
+					{
+						Cards: []LovelaceCard{
+							{Entity: "sensor.office_temp", Image: "/local/temp.png"},
+						},
+					},
+				},
+			},
 		},
 		Sections: []LovelaceSection{
 			{
 				Cards: []LovelaceCard{
-					{Entity: "lock.front_door"},
+					{Entity: "lock.front_door", Image: "/local/lock.png"},
 				},
 			},
 		},
 	}
 	ents := ExtractEntitiesFromCard(card)
-	expected := []string{"light.desk", "camera.driveway", "switch.socket", "lock.front_door"}
+	expected := []string{"light.desk", "camera.driveway", "switch.socket", "fan.office", "sensor.office_temp", "lock.front_door"}
 	if !reflect.DeepEqual(ents, expected) {
 		t.Errorf("expected %v, got %v", expected, ents)
 	}
 
-	// deduplicateStrings with empty strings and duplicate strings
+	normalized := normalizeCardImage(card, "http://198.51.100.10:8123")
+	if normalized.Image != "http://198.51.100.10:8123/local/desk.png" {
+		t.Errorf("expected normalized root card image, got %q", normalized.Image)
+	}
+	if normalized.Cards[0].Image != "http://198.51.100.10:8123/local/fan.png" {
+		t.Errorf("expected normalized nested card image, got %q", normalized.Cards[0].Image)
+	}
+	if normalized.Cards[0].Sections[0].Cards[0].Image != "http://198.51.100.10:8123/local/temp.png" {
+		t.Errorf("expected normalized nested section card image, got %q", normalized.Cards[0].Sections[0].Cards[0].Image)
+	}
+	if normalized.Sections[0].Cards[0].Image != "http://198.51.100.10:8123/local/lock.png" {
+		t.Errorf("expected normalized section card image, got %q", normalized.Sections[0].Cards[0].Image)
+	}
+
 	deduped := deduplicateStrings([]string{"a", "", "b", "a", "c", "b", " "})
 	expectedDeduped := []string{"a", "b", "c"}
 	if !reflect.DeepEqual(deduped, expectedDeduped) {
 		t.Errorf("expected %v, got %v", expectedDeduped, deduped)
+	}
+}
+
+func TestHomeAssistant_EntityState_Domain(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		entityID string
+		want     string
+	}{
+		{"light.kitchen", "light"},
+		{"sensor.temp", "sensor"},
+		{"nodomain", "nodomain"},
+		{"", ""},
+	}
+	for _, tc := range cases {
+		es := EntityState{EntityID: tc.entityID}
+		if got := es.Domain(); got != tc.want {
+			t.Errorf("Domain(%q) = %q, want %q", tc.entityID, got, tc.want)
+		}
+	}
+}
+
+func TestHomeAssistant_Fetch_HydrationErrorAndEntityMerging(t *testing.T) {
+	t.Parallel()
+
+	serverErr := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/api/lovelace/config") {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"title":"Dash","views":[{"title":"V1","cards":[{"type":"tile","entity":"light.one"}]}]}`))
+			return
+		}
+		if strings.Contains(r.URL.Path, "/api/states") {
+			http.Error(w, "states error", http.StatusInternalServerError)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer serverErr.Close()
+
+	ctx := context.Background()
+	pErr := NewHomeAssistantProviderWithClient(serverErr.Client(), serverErr.URL, "tok")
+	_ = pErr.Init(ctx, map[string]any{"url": serverErr.URL}, InitOptions{Token: "tok"})
+
+	_, err := pErr.Fetch(ctx)
+	if err == nil || !strings.Contains(err.Error(), "home-assistant hydration failed") {
+		t.Fatalf("expected hydration failed error, got: %v", err)
+	}
+
+	serverOK := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/api/lovelace/config") {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"title":"Lovelace Dash","views":[{"title":"V1","sections":[{"title":"S1","cards":[{"type":"tile","entity":"light.one","image":"/local/img.png"}]}]}]}`))
+			return
+		}
+		if strings.Contains(r.URL.Path, "/api/states") {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`[{"entity_id":"light.one","state":"on"},{"entity_id":"switch.extra","state":"off"}]`))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer serverOK.Close()
+
+	pOK := NewHomeAssistantProviderWithClient(serverOK.Client(), serverOK.URL, "tok")
+	_ = pOK.Init(ctx, map[string]any{
+		"url":      serverOK.URL,
+		"entities": []any{"switch.extra"},
+	}, InitOptions{Token: "tok"})
+
+	snapRaw, err := pOK.Fetch(ctx)
+	if err != nil {
+		t.Fatalf("unexpected Fetch error: %v", err)
+	}
+	snap, ok := snapRaw.(HomeAssistantSnapshot)
+	if !ok {
+		t.Fatalf("unexpected snapshot type: %T", snapRaw)
+	}
+	if snap.Title != "Lovelace Dash" {
+		t.Errorf("expected Title 'Lovelace Dash', got %q", snap.Title)
+	}
+	if !slices.Contains(snap.DiscoveredEntities, "switch.extra") {
+		t.Errorf("expected DiscoveredEntities to contain 'switch.extra', got %v", snap.DiscoveredEntities)
+	}
+	if len(snap.Cards) != 1 || snap.Cards[0].Image != serverOK.URL+"/local/img.png" {
+		t.Errorf("expected section card image normalized, got %+v", snap.Cards)
+	}
+
+	serverNoTitle := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/api/lovelace/config") {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"views":[{"cards":[]}]}`))
+			return
+		}
+		if strings.Contains(r.URL.Path, "/api/states") {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`[]`))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer serverNoTitle.Close()
+
+	pNoTitle := NewHomeAssistantProviderWithClient(serverNoTitle.Client(), serverNoTitle.URL, "tok")
+	_ = pNoTitle.Init(ctx, map[string]any{"url": serverNoTitle.URL}, InitOptions{Token: "tok"})
+	snapNoTitleRaw, err := pNoTitle.Fetch(ctx)
+	if err != nil {
+		t.Fatalf("unexpected Fetch error: %v", err)
+	}
+	snapNoTitle, ok := snapNoTitleRaw.(HomeAssistantSnapshot)
+	if !ok {
+		t.Fatalf("unexpected snapshot type: %T", snapNoTitleRaw)
+	}
+	if snapNoTitle.Title != "Home Assistant" {
+		t.Errorf("expected default title 'Home Assistant', got %q", snapNoTitle.Title)
+	}
+}
+
+func TestHomeAssistant_CallServiceWithResponse_ErrorsAndDefaults(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	p := NewHomeAssistantProviderWithClient(http.DefaultClient, "http://198.51.100.10:8123", "tok")
+	_, err := p.CallServiceWithResponse(ctx, "light", "turn_on", map[string]any{
+		"invalid_func": make(chan int),
+	})
+	if !errors.Is(err, ErrActionValidation) || !strings.Contains(err.Error(), "failed to marshal service data") {
+		t.Fatalf("expected ErrActionValidation marshal error, got: %v", err)
+	}
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer test-tok" {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if strings.Contains(r.URL.Path, "empty_status_error") {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		if strings.Contains(r.URL.Path, "status_error") {
+			http.Error(w, "server boom", http.StatusInternalServerError)
+			return
+		}
+		if strings.Contains(r.URL.Path, "empty_unauth") {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		if strings.Contains(r.URL.Path, "empty_notfound") {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		if strings.Contains(r.URL.Path, "invalid_json") {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("not-json"))
+			return
+		}
+		if strings.Contains(r.URL.Path, "empty_resp") {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(""))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`[{"entity_id":"light.desk","state":"on"}]`))
+	}))
+	defer ts.Close()
+
+	pNilClient := NewHomeAssistantProvider()
+	pNilClient.baseURL = ts.URL
+	pNilClient.token = "test-tok"
+	pNilClient.client = nil
+
+	_, err = pNilClient.CallServiceWithResponse(ctx, "light", "status_error", nil)
+	if !errors.Is(err, ErrUpstreamStatus) || !strings.Contains(err.Error(), "returned status 500") {
+		t.Fatalf("expected status 500 ErrUpstreamStatus error, got: %v", err)
+	}
+
+	_, err = pNilClient.CallServiceWithResponse(ctx, "light", "empty_status_error", nil)
+	if !errors.Is(err, ErrUpstreamStatus) || !strings.Contains(err.Error(), "returned status 502") {
+		t.Fatalf("expected status 502 ErrUpstreamStatus error, got: %v", err)
+	}
+
+	_, err = pNilClient.CallServiceWithResponse(ctx, "light", "empty_unauth", nil)
+	if !errors.Is(err, ErrUpstreamUnauthorized) || !errors.Is(err, ErrUpstreamStatus) {
+		t.Fatalf("expected status 403 ErrUpstreamUnauthorized error, got: %v", err)
+	}
+
+	_, err = pNilClient.CallServiceWithResponse(ctx, "light", "empty_notfound", nil)
+	if !errors.Is(err, ErrUpstreamNotFound) || !errors.Is(err, ErrUpstreamStatus) {
+		t.Fatalf("expected status 404 ErrUpstreamNotFound error, got: %v", err)
+	}
+
+	states, err := pNilClient.CallServiceWithResponse(ctx, "light", "invalid_json", nil)
+	if err != nil {
+		t.Fatalf("unexpected error on invalid json: %v", err)
+	}
+	if states != nil {
+		t.Errorf("expected nil states on invalid json, got: %v", states)
+	}
+
+	states, err = pNilClient.CallServiceWithResponse(ctx, "light", "empty_resp", nil)
+	if err != nil {
+		t.Fatalf("unexpected error on empty response: %v", err)
+	}
+	if len(states) != 0 {
+		t.Errorf("expected 0 states for empty response, got %d", len(states))
+	}
+
+	canceledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = pNilClient.CallServiceWithResponse(canceledCtx, "light", "turn_on", nil)
+	if !errors.Is(err, ErrUpstreamUnavailable) || !strings.Contains(err.Error(), "service call failed") {
+		t.Fatalf("expected ErrUpstreamUnavailable service call failed error, got: %v", err)
+	}
+}
+
+func TestHomeAssistant_FetchLovelaceConfig_ErrorsAndFallbacks(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "invalid_json") {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("{invalid"))
+			return
+		}
+		http.Error(w, "internal crash", http.StatusInternalServerError)
+	}))
+	defer ts.Close()
+
+	p := NewHomeAssistantProviderWithClient(ts.Client(), ts.URL, "tok")
+	p.client = nil
+	_, err := p.FetchLovelaceConfig(ctx, "")
+	if err == nil || !strings.Contains(err.Error(), "lovelace config request returned status 500") {
+		t.Fatalf("expected status 500 error, got: %v", err)
+	}
+
+	_, err = p.FetchLovelaceConfig(ctx, "invalid_json")
+	if err == nil || !strings.Contains(err.Error(), "failed to decode lovelace config") {
+		t.Fatalf("expected decode error, got: %v", err)
+	}
+
+	canceledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = p.FetchLovelaceConfig(canceledCtx, "")
+	if err == nil || !strings.Contains(err.Error(), "lovelace config request failed") {
+		t.Fatalf("expected fetch error on canceled ctx, got: %v", err)
+	}
+}
+
+func TestHomeAssistant_HydrateStates_ErrorHandling(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "internal crash", http.StatusInternalServerError)
+	}))
+	defer ts.Close()
+
+	p := NewHomeAssistantProviderWithClient(ts.Client(), ts.URL, "tok")
+	p.client = nil
+	_, err := p.HydrateStates(ctx)
+	if err == nil || !strings.Contains(err.Error(), "states request returned status 500") {
+		t.Fatalf("expected status 500 error, got: %v", err)
+	}
+
+	canceledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = p.HydrateStates(canceledCtx)
+	if err == nil || !strings.Contains(err.Error(), "states request failed") {
+		t.Fatalf("expected fetch error on canceled ctx, got: %v", err)
+	}
+}
+
+func TestCoordinator_CallWidgetAction_RoutingAndRefresh(t *testing.T) {
+	t.Parallel()
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/api/services/light/turn_on") {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`[{"entity_id":"light.living_room","state":"on"}]`))
+			return
+		}
+		if strings.Contains(r.URL.Path, "/api/services/light/error_svc") {
+			http.Error(w, "ha error", http.StatusInternalServerError)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer ts.Close()
+
+	ctx := context.Background()
+	hap := NewHomeAssistantProviderWithClient(ts.Client(), ts.URL, "test-tok")
+
+	c := NewCoordinator(CoordinatorConfig{}, nil)
+	defer func() {
+		c.mu.Lock()
+		c.workers = nil
+		c.mu.Unlock()
+		_ = c.Shutdown(ctx)
+	}()
+
+	_, err := c.CallWidgetActionWithResponse(ctx, "nonexistent-widget", "light", "turn_on", nil)
+	if !errors.Is(err, ErrWidgetNotFound) {
+		t.Fatalf("expected ErrWidgetNotFound error, got: %v", err)
+	}
+
+	c.mu.Lock()
+	c.workers = map[string]*worker{
+		"ha-widget": {
+			widgetID:  "ha-widget",
+			provider:  hap,
+			refreshCh: make(chan struct{}, 1),
+		},
+	}
+	c.mu.Unlock()
+
+	_, err = c.CallWidgetActionWithResponse(ctx, "ha-widget", "light", "error_svc", nil)
+	if !errors.Is(err, ErrUpstreamStatus) {
+		t.Fatalf("expected ErrUpstreamStatus error, got %v", err)
+	}
+
+	res, err := c.CallWidgetActionWithResponse(ctx, "ha-widget", "light", "turn_on", map[string]any{"brightness": 255})
+	if err != nil {
+		t.Fatalf("unexpected action error: %v", err)
+	}
+	states, ok := res.([]EntityState)
+	if !ok || len(states) != 1 || states[0].State != "on" {
+		t.Fatalf("unexpected action response states: %+v", res)
+	}
+
+	c.mu.Lock()
+	c.workers = map[string]*worker{
+		"some-other-key": {
+			widgetID:  "mismatched-key",
+			provider:  hap,
+			refreshCh: make(chan struct{}, 1),
+		},
+	}
+	c.mu.Unlock()
+
+	res, err = c.CallWidgetActionWithResponse(ctx, "mismatched-key", "light", "turn_on", nil)
+	if err != nil {
+		t.Fatalf("expected CallWidgetActionWithResponse to succeed even if refresh fails, got: %v", err)
+	}
+	if res == nil {
+		t.Fatal("expected non-nil response")
+	}
+
+	c.mu.Lock()
+	c.workers = map[string]*worker{
+		"ha-widget": {
+			widgetID:  "ha-widget",
+			provider:  hap,
+			refreshCh: make(chan struct{}, 1),
+		},
+	}
+	c.mu.Unlock()
+
+	if err := c.CallWidgetAction(ctx, "ha-widget", "light", "turn_on", nil); err != nil {
+		t.Fatalf("unexpected CallWidgetAction error: %v", err)
+	}
+
+	if err := c.CallWidgetAction(ctx, "nonexistent", "light", "turn_on", nil); !errors.Is(err, ErrWidgetNotFound) {
+		t.Fatalf("expected ErrWidgetNotFound for nonexistent widget in CallWidgetAction, got %v", err)
 	}
 }

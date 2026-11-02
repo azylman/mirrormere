@@ -24,6 +24,15 @@ const (
 	defaultHATimeout = 10 * time.Second
 )
 
+// Sentinel errors for Home Assistant widget actions and upstream calls.
+var (
+	ErrActionValidation     = errors.New("invalid widget action")
+	ErrUpstreamUnauthorized = errors.New("upstream unauthorized")
+	ErrUpstreamNotFound     = errors.New("upstream not found")
+	ErrUpstreamUnavailable  = errors.New("upstream unavailable")
+	ErrUpstreamStatus       = errors.New("upstream error status")
+)
+
 // SupportedDomains lists the 12 Home Assistant entity domains supported by the native widget.
 var SupportedDomains = []string{
 	"light",
@@ -41,6 +50,12 @@ var SupportedDomains = []string{
 }
 
 var haIdentifierRegex = regexp.MustCompile(`^[a-z0-9_]+$`)
+
+func init() {
+	registerBuiltin("home-assistant", func() Provider {
+		return NewHomeAssistantProvider()
+	})
+}
 
 // IsValidIdentifier checks whether a domain or service string conforms to ^[a-z0-9_]+$.
 func IsValidIdentifier(s string) bool {
@@ -240,16 +255,9 @@ func (p *HomeAssistantProvider) Init(ctx context.Context, config map[string]any,
 		return errors.New("home-assistant provider requires a valid URL (via 'url', 'base_url', 'url_env', or opts.Endpoint)")
 	}
 
-	token := resolveConfigField(config, opts, "token")
+	token := resolveToken(config, opts, p.token)
 	if token == "" {
-		token = strings.TrimSpace(opts.Token)
-	}
-	if token == "" {
-		token = p.token
-	}
-	token = strings.TrimSpace(token)
-	if token == "" {
-		return errors.New("home-assistant provider requires a valid access token (via 'token', 'token_env', or opts.Token)")
+		return errors.New("home-assistant provider requires a valid access token (via 'token_env' or opts.Token)")
 	}
 
 	p.baseURL = baseURL
@@ -385,16 +393,16 @@ func (p *HomeAssistantProvider) CallServiceWithResponse(ctx context.Context, dom
 	domain = strings.TrimSpace(domain)
 	service = strings.TrimSpace(service)
 	if domain == "" || service == "" {
-		return nil, errors.New("domain and service must not be empty")
+		return nil, fmt.Errorf("%w: domain and service must not be empty", ErrActionValidation)
 	}
 	if !IsValidIdentifier(domain) {
-		return nil, fmt.Errorf("invalid domain %q: must match ^[a-z0-9_]+$", domain)
+		return nil, fmt.Errorf("%w: invalid domain %q: must match ^[a-z0-9_]+$", ErrActionValidation, domain)
 	}
 	if !IsValidIdentifier(service) {
-		return nil, fmt.Errorf("invalid service %q: must match ^[a-z0-9_]+$", service)
+		return nil, fmt.Errorf("%w: invalid service %q: must match ^[a-z0-9_]+$", ErrActionValidation, service)
 	}
 	if !IsSupportedDomain(domain) {
-		return nil, fmt.Errorf("unsupported domain: %q", domain)
+		return nil, fmt.Errorf("%w: unsupported domain: %q", ErrActionValidation, domain)
 	}
 
 	p.mu.RLock()
@@ -404,19 +412,20 @@ func (p *HomeAssistantProvider) CallServiceWithResponse(ctx context.Context, dom
 	p.mu.RUnlock()
 
 	if baseURL == "" {
-		return nil, errors.New("home-assistant provider base URL not configured")
+		return nil, fmt.Errorf("%w: home-assistant provider base URL not configured", ErrUpstreamUnavailable)
 	}
 	if client == nil {
 		client = http.DefaultClient
 	}
 
-	reqURL := fmt.Sprintf("%s/api/services/%s/%s", strings.TrimRight(baseURL, "/"), url.PathEscape(domain), url.PathEscape(service))
+	cleanBase := strings.TrimRight(baseURL, "/")
+	reqURL := fmt.Sprintf("%s/api/services/%s/%s", cleanBase, url.PathEscape(domain), url.PathEscape(service))
 
 	var bodyReader io.Reader
 	if serviceData != nil {
 		bodyBytes, err := json.Marshal(serviceData)
 		if err != nil {
-			return nil, fmt.Errorf("failed to marshal service data: %w", err)
+			return nil, fmt.Errorf("%w: failed to marshal service data: %w", ErrActionValidation, err)
 		}
 		bodyReader = bytes.NewReader(bodyBytes)
 	} else {
@@ -425,7 +434,7 @@ func (p *HomeAssistantProvider) CallServiceWithResponse(ctx context.Context, dom
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, bodyReader)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create service request: %w", err)
+		return nil, fmt.Errorf("%w: failed to create service request: %w", ErrActionValidation, err)
 	}
 
 	req.Header.Set("Content-Type", "application/json")
@@ -435,16 +444,16 @@ func (p *HomeAssistantProvider) CallServiceWithResponse(ctx context.Context, dom
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("service call failed: %w", err)
+		return nil, fmt.Errorf("%w: service call failed: %w", ErrUpstreamUnavailable, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		respBody, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return nil, fmt.Errorf("service call returned status %d", resp.StatusCode)
+		respBody, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			return nil, formatUpstreamStatusError("service call", resp.StatusCode, "")
 		}
-		return nil, fmt.Errorf("service call returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+		return nil, formatUpstreamStatusError("service call", resp.StatusCode, string(respBody))
 	}
 
 	bodyBytes, err := io.ReadAll(resp.Body)
@@ -454,10 +463,34 @@ func (p *HomeAssistantProvider) CallServiceWithResponse(ctx context.Context, dom
 
 	var updatedStates []EntityState
 	if err := json.Unmarshal(bodyBytes, &updatedStates); err == nil {
+		for i := range updatedStates {
+			updatedStates[i] = normalizeEntityState(updatedStates[i], cleanBase)
+		}
 		return updatedStates, nil
 	}
 
 	return nil, nil
+}
+
+func formatUpstreamStatusError(prefix string, statusCode int, body string) error {
+	body = strings.TrimSpace(body)
+	switch statusCode {
+	case http.StatusUnauthorized, http.StatusForbidden:
+		if body != "" {
+			return fmt.Errorf("%w: %w: %s returned status %d: %s", ErrUpstreamStatus, ErrUpstreamUnauthorized, prefix, statusCode, body)
+		}
+		return fmt.Errorf("%w: %w: %s returned status %d", ErrUpstreamStatus, ErrUpstreamUnauthorized, prefix, statusCode)
+	case http.StatusNotFound:
+		if body != "" {
+			return fmt.Errorf("%w: %w: %s returned status %d: %s", ErrUpstreamStatus, ErrUpstreamNotFound, prefix, statusCode, body)
+		}
+		return fmt.Errorf("%w: %w: %s returned status %d", ErrUpstreamStatus, ErrUpstreamNotFound, prefix, statusCode)
+	default:
+		if body != "" {
+			return fmt.Errorf("%w: %s returned status %d: %s", ErrUpstreamStatus, prefix, statusCode, body)
+		}
+		return fmt.Errorf("%w: %s returned status %d", ErrUpstreamStatus, prefix, statusCode)
+	}
 }
 
 // FetchLovelaceConfig retrieves the Lovelace configuration for the given dashboard (or default).
@@ -504,8 +537,8 @@ func (p *HomeAssistantProvider) FetchLovelaceConfig(ctx context.Context, dashboa
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
+		body, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
 			return nil, fmt.Errorf("lovelace config request returned status %d", resp.StatusCode)
 		}
 		return nil, fmt.Errorf("lovelace config request returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
@@ -535,7 +568,8 @@ func (p *HomeAssistantProvider) HydrateStates(ctx context.Context) (map[string]E
 		client = http.DefaultClient
 	}
 
-	reqURL := strings.TrimRight(baseURL, "/") + "/api/states"
+	cleanBase := strings.TrimRight(baseURL, "/")
+	reqURL := cleanBase + "/api/states"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create states request: %w", err)
@@ -551,8 +585,8 @@ func (p *HomeAssistantProvider) HydrateStates(ctx context.Context) (map[string]E
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
+		body, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
 			return nil, fmt.Errorf("states request returned status %d", resp.StatusCode)
 		}
 		return nil, fmt.Errorf("states request returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
@@ -577,7 +611,7 @@ func (p *HomeAssistantProvider) HydrateStates(ctx context.Context) (map[string]E
 	for _, s := range rawStates {
 		dom := strings.ToLower(s.Domain())
 		if _, ok := domainSet[dom]; ok {
-			result[s.EntityID] = s
+			result[s.EntityID] = normalizeEntityState(s, cleanBase)
 		}
 	}
 
@@ -590,6 +624,10 @@ func (p *HomeAssistantProvider) DiscoverLayout(lovelaceConfig *LovelaceConfig, v
 		return &LovelaceLayout{}
 	}
 
+	p.mu.RLock()
+	cleanBase := strings.TrimRight(p.baseURL, "/")
+	p.mu.RUnlock()
+
 	layout := &LovelaceLayout{
 		Title: lovelaceConfig.Title,
 		Views: lovelaceConfig.Views,
@@ -600,6 +638,9 @@ func (p *HomeAssistantProvider) DiscoverLayout(lovelaceConfig *LovelaceConfig, v
 	}
 
 	selectedView := selectView(lovelaceConfig.Views, viewSelector)
+	if cleanBase != "" {
+		selectedView = normalizeViewImages(selectedView, cleanBase)
+	}
 	layout.View = selectedView
 
 	// Extract cards from view
@@ -620,6 +661,74 @@ func (p *HomeAssistantProvider) DiscoverLayout(lovelaceConfig *LovelaceConfig, v
 	// Discover all referenced entities
 	layout.DiscoveredEntities = ExtractEntitiesFromView(selectedView)
 	return layout
+}
+
+func normalizeEntityState(s EntityState, cleanBase string) EntityState {
+	if cleanBase != "" && s.Attributes != nil {
+		if pic, ok := s.Attributes["entity_picture"].(string); ok {
+			trimmed := strings.TrimSpace(pic)
+			if strings.HasPrefix(trimmed, "/") {
+				s.Attributes["entity_picture"] = cleanBase + trimmed
+			}
+		}
+	}
+	return s
+}
+
+func normalizeViewImages(v LovelaceView, cleanBase string) LovelaceView {
+	if len(v.Cards) > 0 {
+		cards := make([]LovelaceCard, len(v.Cards))
+		for i, c := range v.Cards {
+			cards[i] = normalizeCardImage(c, cleanBase)
+		}
+		v.Cards = cards
+	}
+	if len(v.Sections) > 0 {
+		sections := make([]LovelaceSection, len(v.Sections))
+		for i, sec := range v.Sections {
+			sections[i] = sec
+			if len(sec.Cards) > 0 {
+				sCards := make([]LovelaceCard, len(sec.Cards))
+				for j, c := range sec.Cards {
+					sCards[j] = normalizeCardImage(c, cleanBase)
+				}
+				sections[i].Cards = sCards
+			}
+		}
+		v.Sections = sections
+	}
+	return v
+}
+
+func normalizeCardImage(card LovelaceCard, cleanBase string) LovelaceCard {
+	if cleanBase != "" {
+		trimmed := strings.TrimSpace(card.Image)
+		if strings.HasPrefix(trimmed, "/") {
+			card.Image = cleanBase + trimmed
+		}
+	}
+	if len(card.Cards) > 0 {
+		cards := make([]LovelaceCard, len(card.Cards))
+		for i, c := range card.Cards {
+			cards[i] = normalizeCardImage(c, cleanBase)
+		}
+		card.Cards = cards
+	}
+	if len(card.Sections) > 0 {
+		sections := make([]LovelaceSection, len(card.Sections))
+		for i, sec := range card.Sections {
+			sections[i] = sec
+			if len(sec.Cards) > 0 {
+				sCards := make([]LovelaceCard, len(sec.Cards))
+				for j, c := range sec.Cards {
+					sCards[j] = normalizeCardImage(c, cleanBase)
+				}
+				sections[i].Cards = sCards
+			}
+		}
+		card.Sections = sections
+	}
+	return card
 }
 
 // ExtractEntitiesFromCard extracts all referenced entity IDs from a card (including nested cards and sections).
@@ -721,16 +830,7 @@ func (p *HomeAssistantProvider) generateFallbackCards(states map[string]EntitySt
 			if len(parts) > 0 {
 				dom = parts[0]
 			}
-			switch dom {
-			case "climate":
-				cards = append(cards, LovelaceCard{Type: "thermostat", Entity: entityID})
-			case "camera":
-				cards = append(cards, LovelaceCard{Type: "picture-entity", Entity: entityID})
-			case "scene", "script":
-				cards = append(cards, LovelaceCard{Type: "button", Entity: entityID})
-			default:
-				cards = append(cards, LovelaceCard{Type: "tile", Entity: entityID})
-			}
+			cards = append(cards, fallbackCardForDomain(dom, entityID))
 		}
 		return cards
 	}
@@ -744,19 +844,45 @@ func (p *HomeAssistantProvider) generateFallbackCards(states map[string]EntitySt
 
 	for _, entityID := range keys {
 		s := states[entityID]
-		switch s.Domain() {
-		case "climate":
-			cards = append(cards, LovelaceCard{Type: "thermostat", Entity: entityID})
-		case "camera":
-			cards = append(cards, LovelaceCard{Type: "picture-entity", Entity: entityID})
-		case "scene", "script":
-			cards = append(cards, LovelaceCard{Type: "button", Entity: entityID})
-		default:
-			cards = append(cards, LovelaceCard{Type: "tile", Entity: entityID})
-		}
+		cards = append(cards, fallbackCardForDomain(s.Domain(), entityID))
 	}
 
 	return cards
+}
+
+func fallbackCardForDomain(dom, entityID string) LovelaceCard {
+	switch dom {
+	case "climate":
+		return LovelaceCard{Type: "thermostat", Entity: entityID}
+	case "camera":
+		return LovelaceCard{Type: "picture-entity", Entity: entityID}
+	case "scene", "script":
+		return LovelaceCard{Type: "button", Entity: entityID}
+	default:
+		return LovelaceCard{Type: "tile", Entity: entityID}
+	}
+}
+
+func resolveToken(config map[string]any, opts InitOptions, fallback string) string {
+	envKey, _ := config["token_env"].(string)
+	if envKey = strings.TrimSpace(envKey); envKey != "" {
+		if val := strings.TrimSpace(opts.GetSecret(envKey)); val != "" {
+			return val
+		}
+		if val := strings.TrimSpace(os.Getenv(envKey)); val != "" {
+			return val
+		}
+	}
+	if val := strings.TrimSpace(opts.Token); val != "" {
+		return val
+	}
+	if val := strings.TrimSpace(opts.GetSecret("token")); val != "" {
+		return val
+	}
+	if val := strings.TrimSpace(opts.GetSecret("ha.token")); val != "" {
+		return val
+	}
+	return strings.TrimSpace(fallback)
 }
 
 func resolveConfigField(config map[string]any, opts InitOptions, fields ...string) string {

@@ -32,10 +32,9 @@ config_schema:
       type: string
     base_url:
       type: string
-    token:
-      type: string
     token_env:
       type: string
+      description: Environment variable name containing the Home Assistant long-lived access token.
     dashboard:
       type: string
     view:

@@ -253,14 +253,16 @@ func (c *ProviderCoordinator) CallWidgetActionWithResponse(ctx context.Context, 
 	c.mu.RUnlock()
 
 	if targetProvider == nil {
-		return nil, fmt.Errorf("widget provider not found: %s", widgetID)
+		return nil, fmt.Errorf("%w: widget provider not found: %s", ErrWidgetNotFound, widgetID)
 	}
 
 	res, err := targetProvider.CallServiceWithResponse(ctx, domain, service, serviceData)
 	if err != nil {
 		return nil, err
 	}
-	_ = c.RefreshWidget(targetWidgetID)
+	if refreshErr := c.RefreshWidget(targetWidgetID); refreshErr != nil {
+		c.logger.Warn("failed to refresh widget after action", "widget_id", targetWidgetID, "error", refreshErr)
+	}
 	return res, nil
 }
 
