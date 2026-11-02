@@ -527,7 +527,7 @@ describe('YtMusicWidget', () => {
           html: '',
           css: '',
           updatedAt: 1,
-          meta: { assets_base: '', origin: [0, 0], dimensions: [1, 1], config: { api_base: '/custom-api/' } },
+          meta: { type: 'yt-music', assets_base: '', origin: [0, 0], dimensions: [1, 1], config: { api_base: '/custom-api/' } },
         },
       },
     });
