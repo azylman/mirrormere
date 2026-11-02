@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useState, useCallback, useMemo } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useWidget } from '../../store/hooks';
 import type { WidgetComponentProps } from '../registry';
 import { useIsCurrentPane } from '../../carousel/PaneContext';
@@ -254,9 +254,9 @@ function useContainerSize() {
   const containerSizeRef = useRef<ContainerSize>({ width: 0, height: 0 });
   const [element, setElement] = useState<HTMLDivElement | null>(null);
 
-  const rootRef = useCallback((node: HTMLDivElement | null) => {
+  const rootRef = (node: HTMLDivElement | null) => {
     setElement(node);
-  }, []);
+  };
 
   useEffect(() => {
     if (!element || typeof ResizeObserver !== 'function') return;
@@ -505,7 +505,7 @@ function PhotoTransportControls({
   );
 }
 
-export const PhotoCarouselWidget = memo(function PhotoCarouselWidget({
+export function PhotoCarouselWidget({
   id,
 }: WidgetComponentProps) {
   const entry = useWidget(id);
@@ -517,7 +517,7 @@ export const PhotoCarouselWidget = memo(function PhotoCarouselWidget({
 
   const config = entry?.meta?.config as PhotoCarouselConfig | undefined;
   const rawData = entry?.data;
-  const data = useMemo(() => parsePhotoCarouselData(rawData), [rawData]);
+  const data = parsePhotoCarouselData(rawData);
   const hasLoaded = entry?.state !== 'loading' && Array.isArray(data.photos);
 
   const photos = Array.isArray(data.photos) ? data.photos : EMPTY_PHOTOS;
@@ -527,60 +527,28 @@ export const PhotoCarouselWidget = memo(function PhotoCarouselWidget({
     Number(data?.cycle_interval_seconds ?? config?.cycle_interval_seconds) || 60,
   );
 
-  const deck = getWidgetPhotoDeckState(id);
-
   const [isPaused, setIsPaused] = useState(false);
   const [controlsVisible, setControlsVisible] = useState(false);
   const isPausedRef = useRef(isPaused);
-  isPausedRef.current = isPaused;
   const controlsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pauseInactivityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const { rootRef, containerSize, containerSizeRef } = useContainerSize();
 
-  const [currentIndex, setCurrentIndex] = useState(() => resolveInitialPhotoIndex(photos, deck));
+  const [currentIndex, setCurrentIndex] = useState(() =>
+    resolveInitialPhotoIndex(photos, getWidgetPhotoDeckState(id)),
+  );
 
   const safeIndex = photos.length > 0 ? currentIndex % photos.length : 0;
   const currentIndexRef = useRef(safeIndex);
-  currentIndexRef.current = safeIndex;
 
   const probeIndexRef = useRef<number | null>(null);
   const [retryTick, setRetryTick] = useState(0);
 
-  useEffect(() => {
-    probeIndexRef.current = null;
-    if (photos.length === 0) return;
-    const targetIdx = resolveInitialPhotoIndex(photos, deck);
-    if (currentIndexRef.current !== targetIdx) {
-      setCurrentIndex(targetIdx);
-      currentIndexRef.current = targetIdx;
-    }
-  }, [photos, deck]);
-
   const photosRef = useRef(photos);
-  photosRef.current = photos;
-
   const fitRef = useRef(fit);
-  fitRef.current = fit;
-
   const imageSizeRef = useRef(config?.image_size);
-  imageSizeRef.current = config?.image_size;
-
   const isAnimatingRef = useRef(false);
-
-  const startAnimation = useCallback(() => {
-    if (!isAnimatingRef.current) {
-      isAnimatingRef.current = true;
-      beginAnimation();
-    }
-  }, []);
-
-  const stopAnimation = useCallback(() => {
-    if (isAnimatingRef.current) {
-      isAnimatingRef.current = false;
-      endAnimation();
-    }
-  }, []);
 
   // Crossfade transition state
   const [transitionState, setTransitionState] = useState<{
@@ -588,7 +556,6 @@ export const PhotoCarouselWidget = memo(function PhotoCarouselWidget({
     active: boolean;
   } | null>(null);
   const transitionStateRef = useRef<{ nextIndex: number; active: boolean } | null>(null);
-  transitionStateRef.current = transitionState;
 
   const cycleSeqRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -596,7 +563,40 @@ export const PhotoCarouselWidget = memo(function PhotoCarouselWidget({
   const cycleStartedAtRef = useRef<number | null>(null);
   const activeDelayMsRef = useRef<number>(cycleIntervalSeconds * 1000);
 
-  const clearPendingTransition = useCallback(() => {
+  useLayoutEffect(() => {
+    isPausedRef.current = isPaused;
+    currentIndexRef.current = safeIndex;
+    photosRef.current = photos;
+    fitRef.current = fit;
+    imageSizeRef.current = config?.image_size;
+    transitionStateRef.current = transitionState;
+  });
+
+  useEffect(() => {
+    probeIndexRef.current = null;
+    if (photos.length === 0) return;
+    const targetIdx = resolveInitialPhotoIndex(photos, getWidgetPhotoDeckState(id));
+    if (currentIndexRef.current !== targetIdx) {
+      setCurrentIndex(targetIdx);
+      currentIndexRef.current = targetIdx;
+    }
+  }, [photos, id]);
+
+  const startAnimation = () => {
+    if (!isAnimatingRef.current) {
+      isAnimatingRef.current = true;
+      beginAnimation();
+    }
+  };
+
+  const stopAnimation = () => {
+    if (isAnimatingRef.current) {
+      isAnimatingRef.current = false;
+      endAnimation();
+    }
+  };
+
+  const clearPendingTransition = () => {
     cycleSeqRef.current += 1;
     stopAnimation();
     if (transitionTimeoutRef.current) {
@@ -607,9 +607,9 @@ export const PhotoCarouselWidget = memo(function PhotoCarouselWidget({
       transitionStateRef.current = null;
       setTransitionState(null);
     }
-  }, [stopAnimation]);
+  };
 
-  const showControls = useCallback(() => {
+  const showControls = () => {
     setControlsVisible(true);
     if (controlsTimerRef.current) {
       clearTimeout(controlsTimerRef.current);
@@ -618,9 +618,9 @@ export const PhotoCarouselWidget = memo(function PhotoCarouselWidget({
       setControlsVisible(false);
       controlsTimerRef.current = null;
     }, PHOTO_CONTROLS_HIDE_MS);
-  }, []);
+  };
 
-  const resetPauseInactivityTimer = useCallback(() => {
+  const resetPauseInactivityTimer = () => {
     if (pauseInactivityTimerRef.current) {
       clearTimeout(pauseInactivityTimerRef.current);
       pauseInactivityTimerRef.current = null;
@@ -630,9 +630,9 @@ export const PhotoCarouselWidget = memo(function PhotoCarouselWidget({
       isPausedRef.current = false;
       pauseInactivityTimerRef.current = null;
     }, PHOTO_PAUSE_INACTIVITY_MS);
-  }, []);
+  };
 
-  const togglePause = useCallback(() => {
+  const togglePause = () => {
     if (!isPaused) {
       setIsPaused(true);
       isPausedRef.current = true;
@@ -646,9 +646,9 @@ export const PhotoCarouselWidget = memo(function PhotoCarouselWidget({
       }
       showControls();
     }
-  }, [isPaused, resetPauseInactivityTimer, showControls]);
+  };
 
-  const triggerAdvance = useCallback((direction: 'next' | 'prev' = 'next') => {
+  const triggerAdvance = (direction: 'next' | 'prev' = 'next') => {
     const currentPhotos = photosRef.current;
     if (currentPhotos.length <= 1) return;
 
@@ -656,6 +656,7 @@ export const PhotoCarouselWidget = memo(function PhotoCarouselWidget({
       ? transitionStateRef.current.nextIndex
       : (probeIndexRef.current ?? currentIndexRef.current);
 
+    const deck = getWidgetPhotoDeckState(id);
     const baseKey = getPhotoItemKey(currentPhotos[baseIndex], baseIndex);
     deck.currentKey = baseKey;
     if (direction === 'prev') {
@@ -736,68 +737,54 @@ export const PhotoCarouselWidget = memo(function PhotoCarouselWidget({
         transitionTimeoutRef.current = null;
       }, CROSSFADE_MS);
     });
-  }, [
-    clearPendingTransition,
-    startAnimation,
-    stopAnimation,
-    cycleIntervalSeconds,
-    deck,
-    containerSizeRef,
-  ]);
+  };
 
-  const stepPhoto = useCallback(
-    (direction: 'prev' | 'next') => {
-      showControls();
-      if (isPausedRef.current) {
-        resetPauseInactivityTimer();
-      }
-      deck.remainingMs = cycleIntervalSeconds * 1000;
-      triggerAdvance(direction);
-      if (timerRef.current) {
-        clearTimeout(timerRef.current);
-        timerRef.current = null;
-      }
-      if (isCurrentPane && isDocumentVisible && !isVideoMode && !isPausedRef.current) {
-        activeDelayMsRef.current = cycleIntervalSeconds * 1000;
-        cycleStartedAtRef.current = Date.now();
-        scheduleCycleTick(
-          timerRef,
-          activeDelayMsRef,
-          cycleStartedAtRef,
-          deck,
-          cycleIntervalSeconds,
-          triggerAdvance,
-          cycleIntervalSeconds * 1000,
-        );
-      }
-    },
-    [
-      showControls,
-      resetPauseInactivityTimer,
-      cycleIntervalSeconds,
-      triggerAdvance,
-      isCurrentPane,
-      isDocumentVisible,
-      isVideoMode,
-      deck,
-    ],
-  );
+  const stepPhoto = (direction: 'prev' | 'next') => {
+    showControls();
+    if (isPausedRef.current) {
+      resetPauseInactivityTimer();
+    }
+    const deck = getWidgetPhotoDeckState(id);
+    deck.remainingMs = cycleIntervalSeconds * 1000;
+    triggerAdvance(direction);
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+    if (isCurrentPane && isDocumentVisible && !isVideoMode && !isPausedRef.current) {
+      activeDelayMsRef.current = cycleIntervalSeconds * 1000;
+      cycleStartedAtRef.current = Date.now();
+      scheduleCycleTick(
+        timerRef,
+        activeDelayMsRef,
+        cycleStartedAtRef,
+        deck,
+        cycleIntervalSeconds,
+        triggerAdvance,
+        cycleIntervalSeconds * 1000,
+      );
+    }
+  };
 
   // Handle tap-to-advance and reset interval
-  const handleClick = useCallback(
-    (e: React.MouseEvent<HTMLDivElement>) => {
-      if (photos.length <= 1) return;
-      if (e.clientX > 0) {
-        const rect = e.currentTarget.getBoundingClientRect();
-        if (rect.width > 0 && e.clientX - rect.left < rect.width / 3) {
-          stepPhoto('prev');
-          return;
-        }
+  const handleClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (photos.length <= 1) return;
+    if (e.clientX > 0) {
+      const rect = e.currentTarget.getBoundingClientRect();
+      if (rect.width > 0 && e.clientX - rect.left < rect.width / 3) {
+        stepPhoto('prev');
+        return;
       }
-      stepPhoto('next');
-    },
-    [photos.length, stepPhoto],
-  );
+    }
+    stepPhoto('next');
+  };
+
+  const clearPendingTransitionRef = useRef(clearPendingTransition);
+  const triggerAdvanceRef = useRef(triggerAdvance);
+  useEffect(() => {
+    clearPendingTransitionRef.current = clearPendingTransition;
+    triggerAdvanceRef.current = triggerAdvance;
+  });
 
   // Interval timer subscription
   useEffect(() => {
@@ -809,6 +796,8 @@ export const PhotoCarouselWidget = memo(function PhotoCarouselWidget({
     const shouldRun =
       isCurrentPane && isDocumentVisible && !isVideoMode && !isPaused && photos.length > 1;
 
+    const deck = getWidgetPhotoDeckState(id);
+
     if (!shouldRun) {
       if (cycleStartedAtRef.current !== null) {
         const elapsed = Date.now() - cycleStartedAtRef.current;
@@ -818,7 +807,7 @@ export const PhotoCarouselWidget = memo(function PhotoCarouselWidget({
       const pausedOnly =
         isPaused && isCurrentPane && isDocumentVisible && !isVideoMode && photos.length > 1;
       if (!pausedOnly) {
-        clearPendingTransition();
+        clearPendingTransitionRef.current();
       }
       return;
     }
@@ -833,7 +822,7 @@ export const PhotoCarouselWidget = memo(function PhotoCarouselWidget({
       cycleStartedAtRef,
       deck,
       cycleIntervalSeconds,
-      triggerAdvance,
+      () => triggerAdvanceRef.current(),
       initialDelayMs,
     );
 
@@ -855,16 +844,14 @@ export const PhotoCarouselWidget = memo(function PhotoCarouselWidget({
     isPaused,
     photos.length,
     cycleIntervalSeconds,
-    triggerAdvance,
-    clearPendingTransition,
     retryTick,
-    deck,
+    id,
   ]);
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      clearPendingTransition();
+      clearPendingTransitionRef.current();
       if (controlsTimerRef.current) {
         clearTimeout(controlsTimerRef.current);
         controlsTimerRef.current = null;
@@ -874,7 +861,7 @@ export const PhotoCarouselWidget = memo(function PhotoCarouselWidget({
         pauseInactivityTimerRef.current = null;
       }
     };
-  }, [clearPendingTransition]);
+  }, []);
 
   const currentPhoto = photos[safeIndex];
   const currentRawUrl = currentPhoto?.url ?? currentPhoto?.URL;
@@ -932,4 +919,4 @@ export const PhotoCarouselWidget = memo(function PhotoCarouselWidget({
       )}
     </div>
   );
-});
+}
