@@ -191,11 +191,6 @@ func TestBuiltinPackagesAndAliases(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if tc.name == "plex-recent" {
-				if _, statErr := os.Stat(filepath.Join("..", "..", "widgets", "plex-recent", "manifest.yaml")); os.IsNotExist(statErr) {
-					t.Skip("widgets/plex-recent/manifest.yaml not present in worktree (pending chunk 1 landing)")
-				}
-			}
 			pkg, err := loader.LoadPackage(tc.name)
 			if err != nil || pkg.Type != tc.wantType || pkg.Manifest.Provider != tc.wantProv ||
 				pkg.Manifest.DefaultDimensions.Cols != tc.wantCols || pkg.Manifest.DefaultDimensions.Rows != tc.wantRows ||
