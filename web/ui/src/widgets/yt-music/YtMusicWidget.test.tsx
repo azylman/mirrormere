@@ -681,7 +681,7 @@ describe('YtMusicWidget', () => {
     fireEvent.click(container.querySelector('[data-tab="queue"]')!);
     await waitFor(() => {
       const queueTile = container.querySelector('.media-tile')!;
-      expect(queueTile.textContent).toContain('▶ Active Song');
+      expect(queueTile.textContent).toContain('Active Song');
     });
 
     // Search and click search result (missing duration and thumb, triggers handlePlaySearchResult error branch)

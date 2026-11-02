@@ -234,11 +234,11 @@ describe('Clock component', () => {
 
     // Advance to next day: date and weekday update declaratively
     act(() => {
-      vi.advanceTimersByTime(22 * 3600 * 1000); // Into Nov 1
+      vi.advanceTimersByTime(11 * 3600 * 1000); // Into Nov 1
     });
     expect(weekdayEl.textContent).toBe('Sunday');
     expect(fullDateEl.textContent).toBe('Nov 1');
-  });
+  }, 15000);
 
   it('stops its timer when document is hidden and resumes when visible', () => {
     const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');

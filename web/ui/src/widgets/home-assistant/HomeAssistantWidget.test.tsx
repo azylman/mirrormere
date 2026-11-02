@@ -4,13 +4,29 @@ import { useDisplayStore } from '../../store';
 import { WIDGET_COMPONENTS, widgetComponentFor } from '../registry';
 import {
   HomeAssistantWidget,
+  applyOptimisticUpdate,
   dispatchWidgetAction,
+  formatStateLabel,
+  getBinaryLabel,
   getDomain,
   getDomainIcon,
   getEntityName,
 } from './HomeAssistantWidget';
 
 const initialStore = useDisplayStore.getState();
+
+function setHaWidget(id: string, data: Record<string, unknown>, state = 'healthy') {
+  useDisplayStore.setState({
+    widgets: {
+      [id]: {
+        meta: { type: 'home-assistant', origin: [0, 0], dimensions: [4, 4], config: {}, assets_base: '' },
+        state,
+        data,
+        timestamp: '2026-11-02T08:00:00Z',
+      },
+    },
+  });
+}
 
 describe('HomeAssistantWidget', () => {
   beforeEach(() => {
@@ -53,16 +69,7 @@ describe('HomeAssistantWidget', () => {
   });
 
   it('renders loading state when data is unhydrated ({})', () => {
-    useDisplayStore.setState({
-      widgets: {
-        'ha-1': {
-          meta: { type: 'home-assistant', origin: [0, 0], dimensions: [4, 4], config: {}, assets_base: '' },
-          state: 'healthy',
-          data: {},
-          timestamp: '2026-11-02T08:00:00Z',
-        },
-      },
-    });
+    setHaWidget('ha-1', {});
 
     const { container } = render(<HomeAssistantWidget id="ha-1" type="home-assistant" />);
     const root = container.querySelector('.widget-home-assistant');
@@ -71,16 +78,7 @@ describe('HomeAssistantWidget', () => {
   });
 
   it('renders error state when entry state is error', () => {
-    useDisplayStore.setState({
-      widgets: {
-        'ha-err': {
-          meta: { type: 'home-assistant', origin: [0, 0], dimensions: [4, 4], config: {}, assets_base: '' },
-          state: 'error',
-          data: {},
-          timestamp: '2026-11-02T08:00:00Z',
-        },
-      },
-    });
+    setHaWidget('ha-err', {}, 'error');
 
     const { container } = render(<HomeAssistantWidget id="ha-err" type="home-assistant" />);
     const err = container.querySelector('.widget-ha-error');
@@ -89,12 +87,7 @@ describe('HomeAssistantWidget', () => {
   });
 
   it('renders Lovelace sections and nested cards layout', () => {
-    useDisplayStore.setState({
-      widgets: {
-        'ha-sections': {
-          meta: { type: 'home-assistant', origin: [0, 0], dimensions: [4, 4], config: {}, assets_base: '' },
-          state: 'healthy',
-          data: {
+    setHaWidget('ha-sections', {
             title: 'Downstairs Tablet',
             view: {
               title: 'Main Floor',
@@ -122,11 +115,7 @@ describe('HomeAssistantWidget', () => {
               'climate.living_room': { entity_id: 'climate.living_room', state: 'heat', attributes: { friendly_name: 'Thermostat', current_temperature: 68, temperature: 71 } },
               'lock.front_door': { entity_id: 'lock.front_door', state: 'locked', attributes: { friendly_name: 'Front Door' } },
             },
-          },
-          timestamp: '2026-11-02T08:00:00Z',
-        },
-      },
-    });
+          });
 
     const { container } = render(<HomeAssistantWidget id="ha-sections" type="home-assistant" />);
     expect(container.querySelector('.ha-title')?.textContent).toBe('Downstairs Tablet');
@@ -142,12 +131,7 @@ describe('HomeAssistantWidget', () => {
   });
 
   it('renders Lovelace entities card and grid card', () => {
-    useDisplayStore.setState({
-      widgets: {
-        'ha-cards': {
-          meta: { type: 'home-assistant', origin: [0, 0], dimensions: [4, 4], config: {}, assets_base: '' },
-          state: 'healthy',
-          data: {
+    setHaWidget('ha-cards', {
             title: 'Grid Dashboard',
             cards: [
               {
@@ -173,11 +157,7 @@ describe('HomeAssistantWidget', () => {
               'script.morning_routine': { entity_id: 'script.morning_routine', state: 'off', attributes: { friendly_name: 'Morning Script' } },
               'camera.driveway': { entity_id: 'camera.driveway', state: 'idle', attributes: { friendly_name: 'Driveway Camera', entity_picture: '/api/camera_proxy/camera.driveway' } },
             },
-          },
-          timestamp: '2026-11-02T08:00:00Z',
-        },
-      },
-    });
+          });
 
     const { container } = render(<HomeAssistantWidget id="ha-cards" type="home-assistant" />);
     expect(container.querySelector('.ha-card-entities')).not.toBeNull();
@@ -196,12 +176,7 @@ describe('HomeAssistantWidget', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    useDisplayStore.setState({
-      widgets: {
-        'ha-all-domains': {
-          meta: { type: 'home-assistant', origin: [0, 0], dimensions: [4, 4], config: {}, assets_base: '' },
-          state: 'healthy',
-          data: {
+    setHaWidget('ha-all-domains', {
             title: 'All Domains Test',
             cards: [
               {
@@ -237,11 +212,7 @@ describe('HomeAssistantWidget', () => {
               'sensor.kitchen_temperature': { entity_id: 'sensor.kitchen_temperature', state: '72.4', attributes: { friendly_name: 'Kitchen Temp', unit_of_measurement: '°F' } },
               'binary_sensor.front_motion': { entity_id: 'binary_sensor.front_motion', state: 'on', attributes: { friendly_name: 'Front Motion Sensor', device_class: 'motion' } },
             },
-          },
-          timestamp: '2026-11-02T08:00:00Z',
-        },
-      },
-    });
+          });
 
     const { container } = render(<HomeAssistantWidget id="ha-all-domains" type="home-assistant" />);
 
@@ -398,21 +369,12 @@ describe('HomeAssistantWidget', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    useDisplayStore.setState({
-      widgets: {
-        'ha-error-action': {
-          meta: { type: 'home-assistant', origin: [0, 0], dimensions: [4, 4], config: {}, assets_base: '' },
-          state: 'healthy',
-          data: {
+    setHaWidget('ha-error-action', {
             cards: [{ type: 'tile', entity: 'switch.patio_heater' }],
             entities: {
               'switch.patio_heater': { entity_id: 'switch.patio_heater', state: 'off', attributes: { friendly_name: 'Patio Heater' } },
             },
-          },
-          timestamp: '2026-11-02T08:00:00Z',
-        },
-      },
-    });
+          });
 
     const { container } = render(<HomeAssistantWidget id="ha-error-action" type="home-assistant" />);
     const toggleBtn = container.querySelector('[data-action="toggle"]') as HTMLButtonElement;
@@ -429,21 +391,12 @@ describe('HomeAssistantWidget', () => {
   });
 
   it('renders fallback entity list when no cards or view are configured', () => {
-    useDisplayStore.setState({
-      widgets: {
-        'ha-fallback': {
-          meta: { type: 'home-assistant', origin: [0, 0], dimensions: [4, 4], config: {}, assets_base: '' },
-          state: 'healthy',
-          data: {
+    setHaWidget('ha-fallback', {
             entities: {
               'light.study': { entity_id: 'light.study', state: 'on', attributes: { friendly_name: 'Study Light' } },
               'climate.bedroom': { entity_id: 'climate.bedroom', state: 'cool', attributes: { friendly_name: 'Bedroom AC', temperature: 69 } },
             },
-          },
-          timestamp: '2026-11-02T08:00:00Z',
-        },
-      },
-    });
+          });
 
     const { container } = render(<HomeAssistantWidget id="ha-fallback" type="home-assistant" />);
     expect(container.querySelector('[data-entity-id="light.study"]')).not.toBeNull();
@@ -458,12 +411,7 @@ describe('HomeAssistantWidget', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    useDisplayStore.setState({
-      widgets: {
-        'ha-tap-action': {
-          meta: { type: 'home-assistant', origin: [0, 0], dimensions: [4, 4], config: {}, assets_base: '' },
-          state: 'healthy',
-          data: {
+    setHaWidget('ha-tap-action', {
             cards: [
               {
                 type: 'button',
@@ -476,11 +424,7 @@ describe('HomeAssistantWidget', () => {
               },
             ],
             entities: {},
-          },
-          timestamp: '2026-11-02T08:00:00Z',
-        },
-      },
-    });
+          });
 
     const { container } = render(<HomeAssistantWidget id="ha-tap-action" type="home-assistant" />);
     const btn = container.querySelector('.ha-card-button') as HTMLButtonElement;
@@ -612,12 +556,7 @@ describe('HomeAssistantWidget', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    useDisplayStore.setState({
-      widgets: {
-        'ha-opt': {
-          meta: { type: 'home-assistant', origin: [0, 0], dimensions: [4, 4], config: {}, assets_base: '' },
-          state: 'healthy',
-          data: {
+    setHaWidget('ha-opt', {
             cards: [
               { type: 'tile', entity: 'light.desk' },
               { type: 'tile', entity: 'fan.living' },
@@ -634,11 +573,7 @@ describe('HomeAssistantWidget', () => {
               'climate.hall': { entity_id: 'climate.hall', state: 'cool', attributes: { friendly_name: 'Hall Climate', temperature: 72, current_temperature: 70 } },
               'media_player.tv': { entity_id: 'media_player.tv', state: 'playing', attributes: { friendly_name: 'Living TV' } },
             },
-          },
-          timestamp: '2026-11-02T08:00:00Z',
-        },
-      },
-    });
+          });
 
     const { container } = render(<HomeAssistantWidget id="ha-opt" type="home-assistant" />);
 
@@ -671,12 +606,7 @@ describe('HomeAssistantWidget', () => {
 
   it('covers cardsToRender fallback paths, view.cards, and header titles', () => {
     // 1. Snapshot with view.cards
-    useDisplayStore.setState({
-      widgets: {
-        'ha-view-cards': {
-          meta: { type: 'home-assistant', origin: [0, 0], dimensions: [4, 4], config: {}, assets_base: '' },
-          state: 'healthy',
-          data: {
+    setHaWidget('ha-view-cards', {
             view: {
               title: 'Floor View',
               cards: [{ type: 'tile', entity: 'switch.coffee' }],
@@ -685,11 +615,7 @@ describe('HomeAssistantWidget', () => {
               'switch.coffee': { entity_id: 'switch.coffee', state: 'on', attributes: { friendly_name: 'Coffee Maker' } },
             },
             last_updated: '2026-11-02T09:00:00Z',
-          },
-          timestamp: '2026-11-02T08:00:00Z',
-        },
-      },
-    });
+          });
 
     const { container, unmount } = render(<HomeAssistantWidget id="ha-view-cards" type="home-assistant" />);
     expect(container.querySelector('.ha-title')?.textContent).toBe('Floor View');
@@ -698,12 +624,7 @@ describe('HomeAssistantWidget', () => {
     unmount();
 
     // 2. Snapshot with default title ('Home Assistant') and entity domain fallback cards
-    useDisplayStore.setState({
-      widgets: {
-        'ha-fallback-domains': {
-          meta: { type: 'home-assistant', origin: [0, 0], dimensions: [4, 4], config: {}, assets_base: '' },
-          state: 'healthy',
-          data: {
+    setHaWidget('ha-fallback-domains', {
             entities: {
               'climate.heat': { entity_id: 'climate.heat', state: 'heat', attributes: {} },
               'camera.backyard': { entity_id: 'camera.backyard', state: 'idle', attributes: {} },
@@ -711,11 +632,7 @@ describe('HomeAssistantWidget', () => {
               'script.routine': { entity_id: 'script.routine', state: 'off', attributes: {} },
               'sensor.power': { entity_id: 'sensor.power', state: '150', attributes: {} },
             },
-          },
-          timestamp: '2026-11-02T08:00:00Z',
-        },
-      },
-    });
+          });
 
     const { container: fallbackContainer } = render(<HomeAssistantWidget id="ha-fallback-domains" type="home-assistant" />);
     expect(fallbackContainer.querySelector('.ha-title')?.textContent).toBe('Home Assistant');
@@ -726,12 +643,7 @@ describe('HomeAssistantWidget', () => {
   });
 
   it('covers CardRenderer grid custom columns, nested card wrapper, and unknown cards', () => {
-    useDisplayStore.setState({
-      widgets: {
-        'ha-custom-cards': {
-          meta: { type: 'home-assistant', origin: [0, 0], dimensions: [4, 4], config: {}, assets_base: '' },
-          state: 'healthy',
-          data: {
+    setHaWidget('ha-custom-cards', {
             cards: [
               {
                 type: 'grid',
@@ -752,11 +664,7 @@ describe('HomeAssistantWidget', () => {
               'switch.one': { entity_id: 'switch.one', state: 'off', attributes: {} },
               'switch.two': { entity_id: 'switch.two', state: 'on', attributes: {} },
             },
-          },
-          timestamp: '2026-11-02T08:00:00Z',
-        },
-      },
-    });
+          });
 
     const { container } = render(<HomeAssistantWidget id="ha-custom-cards" type="home-assistant" />);
     const grid = container.querySelector('.ha-card-grid') as HTMLElement;
@@ -773,12 +681,7 @@ describe('HomeAssistantWidget', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    useDisplayStore.setState({
-      widgets: {
-        'ha-button-tests': {
-          meta: { type: 'home-assistant', origin: [0, 0], dimensions: [4, 4], config: {}, assets_base: '' },
-          state: 'healthy',
-          data: {
+    setHaWidget('ha-button-tests', {
             cards: [
               { type: 'button', entity: 'scene.night_mode' },
               { type: 'button', entity: 'script.run_vac' },
@@ -805,11 +708,7 @@ describe('HomeAssistantWidget', () => {
               'input_boolean.guest_mode': { entity_id: 'input_boolean.guest_mode', state: 'off', attributes: {} },
               'light.custom_call': { entity_id: 'light.custom_call', state: 'on', attributes: {} },
             },
-          },
-          timestamp: '2026-11-02T08:00:00Z',
-        },
-      },
-    });
+          });
 
     const { container } = render(<HomeAssistantWidget id="ha-button-tests" type="home-assistant" />);
     const buttons = container.querySelectorAll('.ha-card-button');
@@ -900,12 +799,7 @@ describe('HomeAssistantWidget', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    useDisplayStore.setState({
-      widgets: {
-        'ha-tstat': {
-          meta: { type: 'home-assistant', origin: [0, 0], dimensions: [4, 4], config: {}, assets_base: '' },
-          state: 'healthy',
-          data: {
+    setHaWidget('ha-tstat', {
             cards: [
               {
                 type: 'thermostat',
@@ -921,11 +815,7 @@ describe('HomeAssistantWidget', () => {
                   hvac_modes: ['off', 'heat', 'cool'],
                 } },
             },
-          },
-          timestamp: '2026-11-02T08:00:00Z',
-        },
-      },
-    });
+          });
 
     const { container } = render(<HomeAssistantWidget id="ha-tstat" type="home-assistant" />);
     expect(container.querySelector('.ha-thermostat-title')?.textContent).toBe('Main Floor Thermostat');
@@ -977,12 +867,7 @@ describe('HomeAssistantWidget', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    useDisplayStore.setState({
-      widgets: {
-        'ha-pic': {
-          meta: { type: 'home-assistant', origin: [0, 0], dimensions: [4, 4], config: {}, assets_base: '' },
-          state: 'healthy',
-          data: {
+    setHaWidget('ha-pic', {
             cards: [
               {
                 type: 'picture-entity',
@@ -1001,11 +886,7 @@ describe('HomeAssistantWidget', () => {
               'switch.garden_fountain': { entity_id: 'switch.garden_fountain', state: 'off', attributes: {} },
               'camera.doorbell': { entity_id: 'camera.doorbell', state: 'idle', attributes: {} },
             },
-          },
-          timestamp: '2026-11-02T08:00:00Z',
-        },
-      },
-    });
+          });
 
     const { container } = render(<HomeAssistantWidget id="ha-pic" type="home-assistant" />);
     const picCards = container.querySelectorAll('.ha-card-picture');
@@ -1040,12 +921,7 @@ describe('HomeAssistantWidget', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    useDisplayStore.setState({
-      widgets: {
-        'ha-subcontrols': {
-          meta: { type: 'home-assistant', origin: [0, 0], dimensions: [4, 4], config: {}, assets_base: '' },
-          state: 'healthy',
-          data: {
+    setHaWidget('ha-subcontrols', {
             cards: [
               {
                 type: 'entities',
@@ -1077,11 +953,7 @@ describe('HomeAssistantWidget', () => {
               'binary_sensor.user_presence': { entity_id: 'binary_sensor.user_presence', state: 'on', attributes: { friendly_name: 'Presence', device_class: 'presence' } },
               'vacuum.roborock': { entity_id: 'vacuum.roborock', state: 'docked', attributes: { friendly_name: 'Vacuum' } },
             },
-          },
-          timestamp: '2026-11-02T08:00:00Z',
-        },
-      },
-    });
+          });
 
     const { container } = render(<HomeAssistantWidget id="ha-subcontrols" type="home-assistant" />);
 
@@ -1200,12 +1072,7 @@ describe('HomeAssistantWidget', () => {
   });
 
   it('covers formatStateLabel permutations across multiple domains and state configs', () => {
-    useDisplayStore.setState({
-      widgets: {
-        'ha-labels': {
-          meta: { type: 'home-assistant', origin: [0, 0], dimensions: [4, 4], config: {}, assets_base: '' },
-          state: 'healthy',
-          data: {
+    setHaWidget('ha-labels', {
             cards: [
               { type: 'tile', entity: 'light.on_no_brightness' },
               { type: 'tile', entity: 'climate.no_cur_temp' },
@@ -1220,11 +1087,7 @@ describe('HomeAssistantWidget', () => {
               'media_player.no_title': { entity_id: 'media_player.no_title', state: 'idle', attributes: {} },
               'sensor.no_unit': { entity_id: 'sensor.no_unit', state: 'online', attributes: {} },
             },
-          },
-          timestamp: '2026-11-02T08:00:00Z',
-        },
-      },
-    });
+          });
 
     const { container } = render(<HomeAssistantWidget id="ha-labels" type="home-assistant" />);
     expect(container.querySelector('[data-entity-id="light.on_no_brightness"] .ha-tile-state')?.textContent).toBe('On');
@@ -1247,12 +1110,7 @@ describe('HomeAssistantWidget', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    useDisplayStore.setState({
-      widgets: {
-        'ha-deep-branches': {
-          meta: { type: 'home-assistant', origin: [0, 0], dimensions: [4, 4], config: {}, assets_base: '' },
-          state: 'healthy',
-          data: {
+    setHaWidget('ha-deep-branches', {
             cards: [
               { type: 'tile', entity: 'fan.opt_fan' },
               { type: 'tile', entity: 'light.opt_light' },
@@ -1279,11 +1137,7 @@ describe('HomeAssistantWidget', () => {
               'media_player.opt_player': { entity_id: 'media_player.opt_player', state: 'paused', attributes: {} },
               'light.opt_btn': { entity_id: 'light.opt_btn', state: 'off', attributes: {} },
             },
-          },
-          timestamp: '2026-11-02T08:00:00Z',
-        },
-      },
-    });
+          });
 
     const { container } = render(<HomeAssistantWidget id="ha-deep-branches" type="home-assistant" />);
 
@@ -1336,4 +1190,541 @@ describe('HomeAssistantWidget', () => {
     });
     expect(container.querySelector('[data-entity-id="light.opt_light"]')?.getAttribute('data-state')).toBe('off');
   });
+
+  it('guards non-entity items in CardRenderer and handles getEntityName with empty id', () => {
+    expect(getEntityName(undefined, '')).toBe('');
+
+    setHaWidget('ha-dividers', {
+            title: 'Dividers and Edge Items',
+            cards: [
+              { type: 'divider' },
+              {
+                type: 'entities',
+                title: 'Entities with Dividers',
+                entities: [
+                  { type: 'divider' },
+                  { name: 'Row with no entity' },
+                  'light.kitchen',
+                ],
+              },
+            ],
+            entities: {
+              'light.kitchen': { entity_id: 'light.kitchen', state: 'on', attributes: { friendly_name: 'Kitchen Light' } },
+            },
+          });
+
+    const { container } = render(<HomeAssistantWidget id="ha-dividers" type="home-assistant" />);
+    const dividers = container.querySelectorAll('.ha-divider');
+    expect(dividers.length).toBeGreaterThanOrEqual(2);
+    expect(container.querySelector('[data-entity-id="light.kitchen"]')).not.toBeNull();
+  });
+
+  it('handles PictureEntityCard camera_image entity resolution and ts join with existing query params', async () => {
+    setHaWidget('ha-pic-edge', {
+            cards: [
+              {
+                type: 'picture-entity',
+                entity: 'camera.front_gate',
+                camera_image: 'camera.front_gate',
+              },
+            ],
+            entities: {
+              'camera.front_gate': {
+                entity_id: 'camera.front_gate',
+                state: 'idle',
+                attributes: {
+                  entity_picture: '/api/camera_proxy/camera.front_gate?token=abc123xyz',
+                  friendly_name: 'Front Gate Camera',
+                },
+              },
+            },
+          });
+
+    const { container } = render(<HomeAssistantWidget id="ha-pic-edge" type="home-assistant" />);
+    const picCard = container.querySelector('.ha-card-picture') as HTMLElement;
+    expect(picCard).not.toBeNull();
+
+    const imgBefore = picCard.querySelector('img') as HTMLImageElement;
+    expect(imgBefore.src).toContain('/api/camera_proxy/camera.front_gate?token=abc123xyz');
+    expect(imgBefore.src).not.toContain('&ts=');
+
+    // Tap to refresh camera and verify &ts= is used instead of ?ts=
+    await act(async () => {
+      fireEvent.click(picCard);
+    });
+
+    const imgAfter = picCard.querySelector('img') as HTMLImageElement;
+    expect(imgAfter.src).toContain('?token=abc123xyz&ts=');
+  });
+
+  it('covers remaining branches across cards, binary sensors, media player, and snapshot updates', async () => {
+    // 1. getDomain edge cases
+    expect(getDomain('LIGHT.BEDROOM')).toBe('light');
+
+    // 2. data snapshot change resets overrides
+    setHaWidget('ha-branches', {
+            cards: [{ type: 'tile', entity: 'switch.living' }],
+            entities: {
+              'switch.living': { entity_id: 'switch.living', state: 'off', attributes: {} },
+            },
+          });
+
+    const { container, rerender } = render(<HomeAssistantWidget id="ha-branches" type="home-assistant" />);
+    const swBtn = container.querySelector('[data-action="toggle"]') as HTMLButtonElement;
+    await act(async () => {
+      fireEvent.click(swBtn);
+    });
+
+    setHaWidget('ha-branches', {
+            cards: [{ type: 'tile', entity: 'switch.living' }],
+            entities: {
+              'switch.living': { entity_id: 'switch.living', state: 'on', attributes: {} },
+            },
+          });
+    rerender(<HomeAssistantWidget id="ha-branches" type="home-assistant" />);
+
+    // 3. Binary sensor device classes (door, occupancy, presence, other)
+    setHaWidget('ha-binary-classes', {
+            cards: [
+              {
+                type: 'entities',
+                entities: [
+                  'binary_sensor.door_open',
+                  'binary_sensor.door_closed',
+                  'binary_sensor.occ_active',
+                  'binary_sensor.occ_clear',
+                  'binary_sensor.pres_home',
+                  'binary_sensor.pres_away',
+                  'binary_sensor.other',
+                ],
+              },
+            ],
+            entities: {
+              'binary_sensor.door_open': { entity_id: 'binary_sensor.door_open', state: 'on', attributes: { device_class: 'door' } },
+              'binary_sensor.door_closed': { entity_id: 'binary_sensor.door_closed', state: 'off', attributes: { device_class: 'door' } },
+              'binary_sensor.occ_active': { entity_id: 'binary_sensor.occ_active', state: 'on', attributes: { device_class: 'occupancy' } },
+              'binary_sensor.occ_clear': { entity_id: 'binary_sensor.occ_clear', state: 'off', attributes: { device_class: 'occupancy' } },
+              'binary_sensor.pres_home': { entity_id: 'binary_sensor.pres_home', state: 'on', attributes: { device_class: 'presence' } },
+              'binary_sensor.pres_away': { entity_id: 'binary_sensor.pres_away', state: 'off', attributes: { device_class: 'presence' } },
+              'binary_sensor.other': { entity_id: 'binary_sensor.other', state: 'off', attributes: { device_class: 'smoke' } },
+            },
+          });
+
+    const { container: binContainer } = render(<HomeAssistantWidget id="ha-binary-classes" type="home-assistant" />);
+    expect(binContainer.querySelector('[data-entity-id="binary_sensor.door_open"]')?.textContent).toContain('Open');
+    expect(binContainer.querySelector('[data-entity-id="binary_sensor.door_closed"]')?.textContent).toContain('Closed');
+    expect(binContainer.querySelector('[data-entity-id="binary_sensor.occ_active"]')?.textContent).toContain('Occupied');
+    expect(binContainer.querySelector('[data-entity-id="binary_sensor.occ_clear"]')?.textContent).toContain('Clear');
+    expect(binContainer.querySelector('[data-entity-id="binary_sensor.pres_home"]')?.textContent).toContain('Home');
+    expect(binContainer.querySelector('[data-entity-id="binary_sensor.pres_away"]')?.textContent).toContain('Away');
+    expect(binContainer.querySelector('[data-entity-id="binary_sensor.other"]')?.textContent).toContain('Off');
+
+    // 4. Media player buttons: prev, next, vol-down, vol-up
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    setHaWidget('ha-media-btns', {
+            cards: [{ type: 'tile', entity: 'media_player.living' }],
+            entities: {
+              'media_player.living': { entity_id: 'media_player.living', state: 'playing', attributes: {} },
+            },
+          });
+
+    const { container: mediaContainer } = render(<HomeAssistantWidget id="ha-media-btns" type="home-assistant" />);
+    const prevBtn = mediaContainer.querySelector('[data-action="prev"]') as HTMLButtonElement;
+    const nextBtn = mediaContainer.querySelector('[data-action="next"]') as HTMLButtonElement;
+    const volDownBtn = mediaContainer.querySelector('[data-action="vol-down"]') as HTMLButtonElement;
+    const volUpBtn = mediaContainer.querySelector('[data-action="vol-up"]') as HTMLButtonElement;
+
+    await act(async () => {
+      fireEvent.click(prevBtn);
+      fireEvent.click(nextBtn);
+      fireEvent.click(volDownBtn);
+      fireEvent.click(volUpBtn);
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+
+    // 5. ButtonCard with lock domain when unlocked -> calls lock
+    setHaWidget('ha-lock-btn', {
+            cards: [{ type: 'button', entity: 'lock.garage_lock' }],
+            entities: {
+              'lock.garage_lock': { entity_id: 'lock.garage_lock', state: 'unlocked', attributes: {} },
+            },
+          });
+
+    const { container: lockContainer } = render(<HomeAssistantWidget id="ha-lock-btn" type="home-assistant" />);
+    const lockBtn = lockContainer.querySelector('.ha-card-button') as HTMLButtonElement;
+    await act(async () => {
+      fireEvent.click(lockBtn);
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/action'),
+      expect.objectContaining({
+        body: JSON.stringify({
+          domain: 'lock',
+          service: 'lock',
+          entity_id: 'lock.garage_lock',
+          service_data: { entity_id: 'lock.garage_lock' },
+        }),
+      }),
+    );
+
+    // 6. dispatchWidgetAction without entity_id
+    await dispatchWidgetAction('ha-global', { domain: 'homeassistant', service: 'restart' }, fetchMock);
+
+    // 7. dispatchWidgetAction with default fetch
+    await dispatchWidgetAction('ha-def-fetch', { domain: 'light', service: 'toggle' });
+
+    // 8. Test media_play and media_pause optimistic updates via button tap
+    setHaWidget('ha-opt-media-btns', {
+            cards: [
+              {
+                type: 'button',
+                entity: 'media_player.play_target',
+                tap_action: { action: 'call-service', service: 'media_player.media_play' },
+              },
+              {
+                type: 'button',
+                entity: 'media_player.pause_target',
+                tap_action: { action: 'call-service', service: 'media_player.media_pause' },
+              },
+            ],
+            entities: {
+              'media_player.play_target': { entity_id: 'media_player.play_target', state: 'paused', attributes: {} },
+              'media_player.pause_target': { entity_id: 'media_player.pause_target', state: 'playing', attributes: {} },
+            },
+          });
+
+    const { container: optMediaCont } = render(<HomeAssistantWidget id="ha-opt-media-btns" type="home-assistant" />);
+    const btns = optMediaCont.querySelectorAll('.ha-card-button');
+    await act(async () => {
+      fireEvent.click(btns[0]);
+      fireEvent.click(btns[1]);
+    });
+
+    // 9. Cover buttons: stop and close
+    setHaWidget('ha-cover-btns', {
+            cards: [{ type: 'tile', entity: 'cover.shades' }],
+            entities: {
+              'cover.shades': { entity_id: 'cover.shades', state: 'open', attributes: {} },
+            },
+          });
+
+    const { container: coverCont } = render(<HomeAssistantWidget id="ha-cover-btns" type="home-assistant" />);
+    const stopBtn = coverCont.querySelector('[data-action="stop"]') as HTMLButtonElement;
+    const closeBtn = coverCont.querySelector('[data-action="close"]') as HTMLButtonElement;
+    await act(async () => {
+      fireEvent.click(stopBtn);
+      fireEvent.click(closeBtn);
+    });
+
+    // 10. Light brightness and fan speed controls
+    setHaWidget('ha-bright-speed', {
+            cards: [
+              { type: 'tile', entity: 'light.desk_lamp' },
+              { type: 'tile', entity: 'fan.desk_fan' },
+            ],
+            entities: {
+              'light.desk_lamp': { entity_id: 'light.desk_lamp', state: 'on', attributes: { brightness: 100 } },
+              'fan.desk_fan': { entity_id: 'fan.desk_fan', state: 'on', attributes: { percentage: 50 } },
+            },
+          });
+
+    const { container: brightCont } = render(<HomeAssistantWidget id="ha-bright-speed" type="home-assistant" />);
+    const bright50Btn = brightCont.querySelector('.ha-quick-brightness .ha-btn-sub') as HTMLButtonElement;
+    const speedMedBtn = brightCont.querySelector('.ha-quick-speeds .ha-btn-sub') as HTMLButtonElement;
+    await act(async () => {
+      if (bright50Btn) fireEvent.click(bright50Btn);
+      if (speedMedBtn) fireEvent.click(speedMedBtn);
+    });
+
+    // 11. Unknown cards
+    setHaWidget('ha-unknowns', {
+            cards: [
+              { type: 'custom-foo', title: 'Foo Title' },
+              { type: 'custom-bar', name: 'Bar Name' },
+              { type: 'custom-baz' },
+            ],
+          });
+
+    const { container: unkCont } = render(<HomeAssistantWidget id="ha-unknowns" type="home-assistant" />);
+    const unks = unkCont.querySelectorAll('.ha-card-unknown');
+    expect(unks.length).toBe(3);
+    expect(unks[0].textContent).toBe('Foo Title');
+    expect(unks[1].textContent).toBe('Bar Name');
+    expect(unks[2].textContent).toBe('custom-baz');
+  });
+
+  it('covers applyOptimisticUpdate, formatStateLabel, and getBinaryLabel comprehensive unit paths', () => {
+    const base = { entity_id: 'light.desk', state: 'off', attributes: {} };
+    expect(applyOptimisticUpdate(base, 'light', 'turn_on')).toEqual({ ...base, state: 'on' });
+    expect(applyOptimisticUpdate(base, 'light', 'turn_on', { brightness: 128 })).toEqual({
+      ...base,
+      state: 'on',
+      attributes: { brightness: 128 },
+    });
+    expect(applyOptimisticUpdate(base, 'fan', 'turn_on', { percentage: 60 })).toEqual({
+      ...base,
+      state: 'on',
+      attributes: { percentage: 60 },
+    });
+    expect(applyOptimisticUpdate({ ...base, state: 'on' }, 'light', 'turn_off')).toEqual({ ...base, state: 'off' });
+    expect(applyOptimisticUpdate(base, 'switch', 'toggle')).toEqual({ ...base, state: 'on' });
+    expect(applyOptimisticUpdate({ ...base, state: 'on' }, 'switch', 'toggle')).toEqual({ ...base, state: 'off' });
+    expect(applyOptimisticUpdate(base, 'lock', 'lock')).toEqual({ ...base, state: 'locked' });
+    expect(applyOptimisticUpdate(base, 'lock', 'unlock')).toEqual({ ...base, state: 'unlocked' });
+    expect(applyOptimisticUpdate(base, 'cover', 'open_cover')).toEqual({ ...base, state: 'open' });
+    expect(applyOptimisticUpdate(base, 'cover', 'close_cover')).toEqual({ ...base, state: 'closed' });
+    expect(applyOptimisticUpdate(base, 'climate', 'set_temperature', { temperature: 72 })).toEqual({
+      ...base,
+      attributes: { temperature: 72 },
+    });
+    expect(applyOptimisticUpdate(base, 'climate', 'set_hvac_mode', { hvac_mode: 'heat' })).toEqual({
+      ...base,
+      state: 'heat',
+    });
+    expect(applyOptimisticUpdate(base, 'media_player', 'media_play')).toEqual({ ...base, state: 'playing' });
+    expect(applyOptimisticUpdate(base, 'media_player', 'media_pause')).toEqual({ ...base, state: 'paused' });
+    expect(applyOptimisticUpdate({ ...base, state: 'playing' }, 'media_player', 'media_play_pause')).toEqual({
+      ...base,
+      state: 'paused',
+    });
+    expect(applyOptimisticUpdate({ ...base, state: 'paused' }, 'media_player', 'media_play_pause')).toEqual({
+      ...base,
+      state: 'playing',
+    });
+    expect(applyOptimisticUpdate(base, 'sensor', 'update')).toEqual(base);
+
+    expect(formatStateLabel('light', 'on', { brightness: 255 })).toBe('On · 100%');
+    expect(formatStateLabel('light', 'on')).toBe('On');
+    expect(formatStateLabel('light', 'off')).toBe('Off');
+    expect(formatStateLabel('climate', 'heat', { current_temperature: 71 })).toBe('heat · 71°');
+    expect(formatStateLabel('climate', 'heat')).toBe('heat');
+    expect(formatStateLabel('media_player', 'playing', { media_title: 'Song', media_artist: 'Band' })).toBe('Song - Band');
+    expect(formatStateLabel('media_player', 'playing', { media_title: 'Solo' })).toBe('Solo');
+    expect(formatStateLabel('media_player', 'idle')).toBe('idle');
+    expect(formatStateLabel('sensor', '42', { unit_of_measurement: '%' })).toBe('42 %');
+    expect(formatStateLabel('sensor', '42')).toBe('42');
+    expect(formatStateLabel('lock', 'locked')).toBe('locked');
+
+    expect(getBinaryLabel(true, 'door')).toBe('Open');
+    expect(getBinaryLabel(false, 'door')).toBe('Closed');
+    expect(getBinaryLabel(true, 'window')).toBe('Open');
+    expect(getBinaryLabel(false, 'window')).toBe('Closed');
+    expect(getBinaryLabel(true, 'occupancy')).toBe('Occupied');
+    expect(getBinaryLabel(false, 'occupancy')).toBe('Clear');
+    expect(getBinaryLabel(true, 'presence')).toBe('Home');
+    expect(getBinaryLabel(false, 'presence')).toBe('Away');
+    expect(getBinaryLabel(true, 'motion')).toBe('Motion');
+    expect(getBinaryLabel(false, 'motion')).toBe('Clear');
+    expect(getBinaryLabel(true, 'unknown')).toBe('On');
+    expect(getBinaryLabel(false, 'unknown')).toBe('Off');
+    expect(getBinaryLabel(true)).toBe('On');
+    expect(getBinaryLabel(false)).toBe('Off');
+  });
+
+  it('covers sendAction without entity_id and CardRenderer / PictureEntityCard edge branches', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ status: 'ok' })));
+    vi.stubGlobal('fetch', fetchMock);
+
+    // 1. sendAction without entity_id (success + error)
+    setHaWidget('ha-no-ent', {
+      cards: [
+        {
+          type: 'button',
+          name: 'Restart Server',
+          tap_action: { action: 'call-service', service: 'homeassistant.restart' },
+        },
+      ],
+      entities: {},
+    });
+
+    const { container: noEntCont } = render(<HomeAssistantWidget id="ha-no-ent" type="home-assistant" />);
+    const restartBtn = noEntCont.querySelector('.ha-card-button') as HTMLButtonElement;
+    await act(async () => {
+      fireEvent.click(restartBtn);
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/widgets/ha-no-ent/action',
+      expect.objectContaining({ body: JSON.stringify({ domain: 'homeassistant', service: 'restart', service_data: {} }) }),
+    );
+
+    fetchMock.mockRejectedValueOnce(new Error('Server unavailable'));
+    await act(async () => {
+      fireEvent.click(restartBtn);
+    });
+    await waitFor(() => {
+      expect(noEntCont.querySelector('.ha-alert-banner')?.textContent).toContain('Server unavailable');
+    });
+
+    // 2. CardRenderer edge cases: empty section, grid without columns, entities without entities, nested wrapper without title, unknown card variations
+    setHaWidget('ha-renderer-edges', {
+      view: {
+        sections: [
+          { title: 'Empty Section' },
+          {
+            cards: [
+              { type: 'grid', cards: [{ type: 'tile', entity: 'switch.grid_def' }] },
+              { type: 'entities', title: 'Empty Entities' },
+              { type: 'entities', entities: ['', { entity: '' }] },
+              { type: 'vertical-stack', cards: [{ type: 'tile', entity: 'switch.v_def' }] },
+              { name: 'Just Name' },
+              { type: 'plain-type' },
+              {},
+            ],
+          },
+        ],
+      },
+      entities: {
+        'switch.grid_def': { entity_id: 'switch.grid_def', state: 'off', attributes: {} },
+        'switch.v_def': { entity_id: 'switch.v_def', state: 'off', attributes: {} },
+      },
+    });
+
+    const { container: rendCont } = render(<HomeAssistantWidget id="ha-renderer-edges" type="home-assistant" />);
+    expect(rendCont.querySelector('.ha-card-grid')).not.toBeNull();
+    expect(rendCont.querySelector('.ha-card-wrapper')).not.toBeNull();
+    expect(rendCont.querySelectorAll('.ha-divider').length).toBeGreaterThan(0);
+    const unknowns = rendCont.querySelectorAll('.ha-card-unknown');
+    expect(unknowns[0].textContent).toBe('Just Name');
+    expect(unknowns[1].textContent).toBe('plain-type');
+    expect(unknowns[2].textContent).toBe('Card');
+
+    // 3. PictureEntityCard tap branches and fallback image
+    setHaWidget('ha-pic-branches', {
+      cards: [
+        { type: 'picture-entity', entity: 'switch.cam_power', camera_image: 'camera.yard' },
+        { type: 'picture-entity', entity: 'light.yard_light' },
+        { type: 'picture-entity', entity: 'sensor.no_pic' },
+      ],
+      entities: {
+        'switch.cam_power': { entity_id: 'switch.cam_power', state: 'on', attributes: {} },
+        'camera.yard': { entity_id: 'camera.yard', state: 'idle', attributes: { entity_picture: '/yard.jpg' } },
+        'light.yard_light': { entity_id: 'light.yard_light', state: 'off', attributes: {} },
+        'sensor.no_pic': { entity_id: 'sensor.no_pic', state: '10', attributes: {} },
+      },
+    });
+
+    const { container: picBCont } = render(<HomeAssistantWidget id="ha-pic-branches" type="home-assistant" />);
+    const picCards = picBCont.querySelectorAll('.ha-card-picture');
+    expect(picCards.length).toBe(3);
+    await act(async () => {
+      fireEvent.click(picCards[0]);
+      fireEvent.click(picCards[1]);
+    });
+    expect(picCards[2].querySelector('.ha-picture-fallback')).not.toBeNull();
+
+    // 4. ButtonCard tap action variations
+    setHaWidget('ha-btn-branches', {
+      cards: [
+        { type: 'button', entity: 'lock.front' },
+        {
+          type: 'button',
+          entity: 'light.desk',
+          tap_action: { action: 'call_service', service: 'toggle', service_data: { entity_id: 'light.desk' } },
+        },
+        {
+          type: 'button',
+          entity: 'light.desk',
+          tap_action: { action: 'more-info' },
+        },
+      ],
+      entities: {
+        'lock.front': { entity_id: 'lock.front', state: 'unlocked', attributes: {} },
+        'light.desk': { entity_id: 'light.desk', state: 'off', attributes: {} },
+      },
+    });
+
+    const { container: btnBCont } = render(<HomeAssistantWidget id="ha-btn-branches" type="home-assistant" />);
+    const bCards = btnBCont.querySelectorAll('.ha-card-button');
+    await act(async () => {
+      fireEvent.click(bCards[0]);
+      fireEvent.click(bCards[1]);
+      fireEvent.click(bCards[2]);
+    });
+
+    // 5. ThermostatCard defaults without attributes
+    setHaWidget('ha-tstat-def', {
+      cards: [{ type: 'thermostat', entity: 'climate.bare' }],
+      entities: {
+        'climate.bare': { entity_id: 'climate.bare', state: 'off', attributes: {} },
+      },
+    });
+
+    const { container: tstatCont } = render(<HomeAssistantWidget id="ha-tstat-def" type="home-assistant" />);
+    expect(tstatCont.querySelector('.ha-target-num')?.textContent).toBe('70°');
+    const plusBtn = tstatCont.querySelector('.ha-target-temp-dial button:last-child') as HTMLButtonElement;
+    await act(async () => {
+      fireEvent.click(plusBtn);
+    });
+  });
+
+
+  it('covers inFlight state rendering and disabled interactions', async () => {
+    let resolveAction!: (v: unknown) => void;
+    const fetchMock = vi.fn().mockImplementation(() => new Promise((resolve) => {
+      resolveAction = resolve;
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    setHaWidget('ha-inflight-all', {
+      cards: [
+        { type: 'button', entity: 'switch.btn_flight' },
+        { type: 'tile', entity: 'light.tile_flight' },
+        { type: 'tile', entity: 'fan.fan_flight' },
+        { type: 'tile', entity: 'lock.lock_flight' },
+        { type: 'tile', entity: 'cover.cov_flight' },
+        { type: 'thermostat', entity: 'climate.clim_flight' },
+      ],
+      entities: {
+        'switch.btn_flight': { entity_id: 'switch.btn_flight', state: 'off', attributes: {} },
+        'light.tile_flight': { entity_id: 'light.tile_flight', state: 'on', attributes: { brightness: 120 } },
+        'fan.fan_flight': { entity_id: 'fan.fan_flight', state: 'on', attributes: { percentage: 50 } },
+        'lock.lock_flight': { entity_id: 'lock.lock_flight', state: 'locked', attributes: {} },
+        'cover.cov_flight': { entity_id: 'cover.cov_flight', state: 'open', attributes: {} },
+        'climate.clim_flight': { entity_id: 'climate.clim_flight', state: 'heat', attributes: { temperature: 70 } },
+      },
+    });
+
+    const { container } = render(<HomeAssistantWidget id="ha-inflight-all" type="home-assistant" />);
+
+    // Click button to start in-flight request
+    const btn = container.querySelector('.ha-card-button') as HTMLButtonElement;
+    await act(async () => {
+      fireEvent.click(btn);
+    });
+
+    // While in-flight, verify disabled attribute and tap again to hit if (inFlight) return
+    expect(btn.disabled).toBe(true);
+    await act(async () => {
+      fireEvent.click(btn);
+    });
+
+    // Resolve in-flight request
+    await act(async () => {
+      resolveAction(new Response(JSON.stringify({ status: 'ok' })));
+    });
+    expect(btn.disabled).toBe(false);
+  });
+
+
+  it('covers missing entity fallbacks across all card types and control rows', () => {
+    setHaWidget('ha-missing-all', {
+      cards: [
+        { type: 'entities', entities: ['light.missing_row'] },
+        { type: 'tile', entity: 'light.tile_name', name: 'Name' }, { type: 'tile', entity: 'light.tile_title', title: 'Title' }, { type: 'tile', entity: 'light.tile_none' },
+        { type: 'button', entity: 'light.btn_name', name: 'Btn', icon: '⭐' }, { type: 'button', entity: 'light.btn_title', title: 'Btn' }, { type: 'button', entity: 'light.btn_none' },
+        { type: 'thermostat', entity: 'climate.missing_clim' }, { type: 'picture-entity', entity: 'camera.missing_cam' },
+      ],
+      entities: {},
+    });
+
+    const { container } = render(<HomeAssistantWidget id="ha-missing-all" type="home-assistant" />);
+    expect(container.querySelector('.ha-entity-row')?.getAttribute('data-state')).toBe('unavailable');
+    expect(container.querySelectorAll('.ha-card-tile').length).toBe(3);
+    expect(container.querySelectorAll('.ha-card-button').length).toBe(3);
+    expect(container.querySelector('.ha-card-thermostat')).not.toBeNull();
+    expect(container.querySelector('.ha-card-picture')).not.toBeNull();
+  });
+
 });
