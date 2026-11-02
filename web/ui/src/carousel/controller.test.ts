@@ -409,14 +409,24 @@ describe('CarouselController', () => {
   it('advances on hearth-swipe window message event and ignores after dispose', () => {
     vi.useFakeTimers();
     const h = build(1);
-    window.dispatchEvent(new MessageEvent('message', { data: { type: 'hearth-swipe', direction: 'next' } }));
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        origin: window.location.origin,
+        data: { type: 'hearth-swipe', direction: 'next' },
+      }),
+    );
     expect(h.track.style.transform).toBe('translate3d(-1000px,0,0)');
     h.transitionEnd();
     expect(h.host.commit).toHaveBeenCalledWith(2);
     expect(h.host.select).toHaveBeenCalledWith(2);
 
     h.controller.rendered(2);
-    window.dispatchEvent(new MessageEvent('message', { data: { type: 'hearth-swipe', direction: 'prev' } }));
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        origin: window.location.origin,
+        data: { type: 'hearth-swipe', direction: 'prev' },
+      }),
+    );
     expect(h.track.style.transform).toBe('translate3d(1000px,0,0)');
     h.transitionEnd();
     expect(h.host.commit).toHaveBeenCalledWith(1);
@@ -424,8 +434,87 @@ describe('CarouselController', () => {
 
     h.controller.rendered(1);
     h.controller.dispose();
-    window.dispatchEvent(new MessageEvent('message', { data: { type: 'hearth-swipe', direction: 'next' } }));
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        origin: window.location.origin,
+        data: { type: 'hearth-swipe', direction: 'next' },
+      }),
+    );
     expect(h.host.commit).toHaveBeenCalledTimes(2);
+  });
+
+  it('rejects cross-origin, null-origin, and malformed hearth-swipe messages', () => {
+    vi.useFakeTimers();
+    const h = build(1);
+
+    // Cross-origin message
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        origin: 'https://evil.example.com',
+        data: { type: 'hearth-swipe', direction: 'next' },
+      }),
+    );
+    expect(h.host.commit).not.toHaveBeenCalled();
+    expect(h.host.select).not.toHaveBeenCalled();
+    expect(h.track.style.transform).toBe('');
+
+    // Null origin
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        origin: 'null',
+        data: { type: 'hearth-swipe', direction: 'next' },
+      }),
+    );
+    expect(h.host.commit).not.toHaveBeenCalled();
+    expect(h.host.select).not.toHaveBeenCalled();
+
+    // Empty string origin
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        origin: '',
+        data: { type: 'hearth-swipe', direction: 'next' },
+      }),
+    );
+    expect(h.host.commit).not.toHaveBeenCalled();
+    expect(h.host.select).not.toHaveBeenCalled();
+
+    // Malformed data: non-object
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        origin: window.location.origin,
+        data: 'hearth-swipe',
+      }),
+    );
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        origin: window.location.origin,
+        data: null,
+      }),
+    );
+    expect(h.host.commit).not.toHaveBeenCalled();
+    expect(h.host.select).not.toHaveBeenCalled();
+
+    // Malformed data: invalid or missing direction
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        origin: window.location.origin,
+        data: { type: 'hearth-swipe', direction: 'up' },
+      }),
+    );
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        origin: window.location.origin,
+        data: { type: 'hearth-swipe' },
+      }),
+    );
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        origin: window.location.origin,
+        data: { type: 'other-event', direction: 'next' },
+      }),
+    );
+    expect(h.host.commit).not.toHaveBeenCalled();
+    expect(h.host.select).not.toHaveBeenCalled();
   });
 
   it('keeps the animation count balanced when disposed mid-settle', () => {

@@ -525,6 +525,7 @@ describe('Carousel', () => {
       act(() => {
         window.dispatchEvent(
           new MessageEvent('message', {
+            origin: window.location.origin,
             data: { type: 'hearth-swipe', direction: 'next' },
           }),
         );
@@ -545,6 +546,7 @@ describe('Carousel', () => {
       act(() => {
         window.dispatchEvent(
           new MessageEvent('message', {
+            origin: window.location.origin,
             data: { type: 'hearth-swipe', direction: 'prev' },
           }),
         );
@@ -601,6 +603,7 @@ describe('Carousel', () => {
       act(() => {
         window.dispatchEvent(
           new MessageEvent('message', {
+            origin: window.location.origin,
             data: { type: 'hearth-swipe', direction: 'next' },
           }),
         );
@@ -910,6 +913,7 @@ describe('Carousel', () => {
       act(() => {
         window.dispatchEvent(
           new MessageEvent('message', {
+            origin: window.location.origin,
             data: { type: 'hearth-swipe', direction: 'next' },
           }),
         );
@@ -945,6 +949,7 @@ describe('Carousel', () => {
         act(() => {
           window.dispatchEvent(
             new MessageEvent('message', {
+              origin: window.location.origin,
               data: { type: 'hearth-swipe', direction: 'next' },
             }),
           );

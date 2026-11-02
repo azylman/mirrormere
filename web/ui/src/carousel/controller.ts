@@ -264,6 +264,9 @@ export class CarouselController {
   };
 
   private readonly onMessage = (event: MessageEvent): void => {
+    if (!window.location?.origin || window.location.origin === 'null' || event.origin !== window.location.origin) {
+      return;
+    }
     if (
       event.data &&
       typeof event.data === 'object' &&
