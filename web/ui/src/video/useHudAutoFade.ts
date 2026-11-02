@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 export interface UseHudAutoFadeOptions {
   stageElement?: HTMLElement | null;
@@ -29,7 +29,6 @@ export function useHudAutoFade({
 }: UseHudAutoFadeOptions): UseHudAutoFadeReturn {
   const [isVisible, setIsVisible] = useState(false);
   const isVisibleRef = useRef(false);
-  isVisibleRef.current = isVisible;
 
   const autoFadeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const singleTapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -39,24 +38,19 @@ export function useHudAutoFade({
   const lastPointerUpTimeRef = useRef<number>(0);
 
   const isPlaybackActiveRef = useRef(isPlaybackActive);
-  isPlaybackActiveRef.current = isPlaybackActive;
-
   const onPlayPauseToggleRef = useRef(onPlayPauseToggle);
-  onPlayPauseToggleRef.current = onPlayPauseToggle;
-
   const isSwappedRef = useRef(isSwapped);
-  isSwappedRef.current = isSwapped;
 
-  const hideHUD = useCallback(() => {
+  const hideHUD = () => {
     isVisibleRef.current = false;
     setIsVisible(false);
     if (autoFadeTimerRef.current) {
       clearTimeout(autoFadeTimerRef.current);
       autoFadeTimerRef.current = null;
     }
-  }, []);
+  };
 
-  const resetAutoFade = useCallback(() => {
+  const resetAutoFade = () => {
     if (!isVisibleRef.current) return;
     if (autoFadeTimerRef.current) {
       clearTimeout(autoFadeTimerRef.current);
@@ -64,9 +58,9 @@ export function useHudAutoFade({
     autoFadeTimerRef.current = setTimeout(() => {
       hideHUD();
     }, autoFadeTimeout);
-  }, [autoFadeTimeout, hideHUD]);
+  };
 
-  const showHUD = useCallback(() => {
+  const showHUD = () => {
     isVisibleRef.current = true;
     setIsVisible(true);
     if (autoFadeTimerRef.current) {
@@ -75,15 +69,15 @@ export function useHudAutoFade({
     autoFadeTimerRef.current = setTimeout(() => {
       hideHUD();
     }, autoFadeTimeout);
-  }, [autoFadeTimeout, hideHUD]);
+  };
 
-  const toggleHUD = useCallback(() => {
+  const toggleHUD = () => {
     if (isVisibleRef.current) {
       hideHUD();
     } else {
       showHUD();
     }
-  }, [hideHUD, showHUD]);
+  };
 
   // Teardown timers on unmount
   useEffect(() => {
@@ -98,6 +92,22 @@ export function useHudAutoFade({
       }
     };
   }, []);
+
+  // Synchronize dynamic options to refs before stage gesture bindings
+  const showHUDRef = useRef(showHUD);
+  const hideHUDRef = useRef(hideHUD);
+
+  useEffect(() => {
+    isVisibleRef.current = isVisible;
+    isPlaybackActiveRef.current = isPlaybackActive;
+    onPlayPauseToggleRef.current = onPlayPauseToggle;
+    isSwappedRef.current = isSwapped;
+  }, [isVisible, isPlaybackActive, onPlayPauseToggle, isSwapped]);
+
+  useEffect(() => {
+    showHUDRef.current = showHUD;
+    hideHUDRef.current = hideHUD;
+  });
 
   // Stage gesture bindings
   useEffect(() => {
@@ -205,7 +215,7 @@ export function useHudAutoFade({
 
         if (isPlaybackActiveRef.current) {
           onPlayPauseToggleRef.current();
-          showHUD();
+          showHUDRef.current();
         }
         return;
       }
@@ -215,19 +225,19 @@ export function useHudAutoFade({
       lastTapCoordsRef.current = coords;
 
       if (!isVisibleRef.current) {
-        showHUD();
+        showHUDRef.current();
       } else if (isPlaybackActiveRef.current) {
         if (singleTapTimerRef.current) {
           clearTimeout(singleTapTimerRef.current);
         }
         singleTapTimerRef.current = setTimeout(() => {
           singleTapTimerRef.current = null;
-          hideHUD();
+          hideHUDRef.current();
         }, 250);
       } else {
         lastTapTimeRef.current = 0;
         lastTapCoordsRef.current = null;
-        hideHUD();
+        hideHUDRef.current();
       }
     };
 
@@ -240,7 +250,7 @@ export function useHudAutoFade({
       stageElement.removeEventListener('pointerup', onStageToggle);
       stageElement.removeEventListener('click', onStageToggle);
     };
-  }, [hideHUD, showHUD, stageElement]);
+  }, [stageElement]);
 
   return {
     isVisible,

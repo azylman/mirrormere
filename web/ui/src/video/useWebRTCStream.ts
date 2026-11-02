@@ -72,16 +72,16 @@ export function useWebRTCStream({
   const streamType = stream?.type;
 
   const onFallbackRef = useRef(onFallback);
-  onFallbackRef.current = onFallback;
-
   const onConnectedRef = useRef(onConnected);
-  onConnectedRef.current = onConnected;
-
   const fetchRef = useRef(fetchFn);
-  fetchRef.current = fetchFn;
-
   const pcClassRef = useRef(RTCPeerConnectionClass);
-  pcClassRef.current = RTCPeerConnectionClass;
+
+  useEffect(() => {
+    onFallbackRef.current = onFallback;
+    onConnectedRef.current = onConnected;
+    fetchRef.current = fetchFn;
+    pcClassRef.current = RTCPeerConnectionClass;
+  }, [onFallback, onConnected, fetchFn, RTCPeerConnectionClass]);
 
   useEffect(() => {
     if (!enabled || !streamUrl) {

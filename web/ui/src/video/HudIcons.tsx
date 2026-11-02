@@ -1,5 +1,3 @@
-import { memo } from 'react';
-
 /**
  * Standard HUD icons used across VideoHUD transport and audio controls.
  */
@@ -12,24 +10,24 @@ export const HUD_ICONS = {
   next: '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><polygon points="5 4 15.5 12 5 20"></polygon><rect x="16.5" y="4" width="2.5" height="16" rx="1"></rect></svg>',
 } as const;
 
-export const HudPlayIcon = memo(function HudPlayIcon() {
+export function HudPlayIcon() {
   return (
     <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true">
       <polygon points="6 4 20 12 6 20 6 4" />
     </svg>
   );
-});
+}
 
-export const HudPauseIcon = memo(function HudPauseIcon() {
+export function HudPauseIcon() {
   return (
     <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true">
       <rect x="6" y="4" width="4" height="16" rx="1" />
       <rect x="14" y="4" width="4" height="16" rx="1" />
     </svg>
   );
-});
+}
 
-export const HudMuteIcon = memo(function HudMuteIcon() {
+export function HudMuteIcon() {
   return (
     <svg
       viewBox="0 0 24 24"
@@ -47,9 +45,9 @@ export const HudMuteIcon = memo(function HudMuteIcon() {
       <line x1="17" y1="9" x2="23" y2="15" />
     </svg>
   );
-});
+}
 
-export const HudUnmuteIcon = memo(function HudUnmuteIcon() {
+export function HudUnmuteIcon() {
   return (
     <svg
       viewBox="0 0 24 24"
@@ -66,22 +64,22 @@ export const HudUnmuteIcon = memo(function HudUnmuteIcon() {
       <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07" />
     </svg>
   );
-});
+}
 
-export const HudPrevIcon = memo(function HudPrevIcon() {
+export function HudPrevIcon() {
   return (
     <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true">
       <rect x="5" y="4" width="2.5" height="16" rx="1" />
       <polygon points="19 4 8.5 12 19 20" />
     </svg>
   );
-});
+}
 
-export const HudNextIcon = memo(function HudNextIcon() {
+export function HudNextIcon() {
   return (
     <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true">
       <polygon points="5 4 15.5 12 5 20" />
       <rect x="16.5" y="4" width="2.5" height="16" rx="1" />
     </svg>
   );
-});
+}

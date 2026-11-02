@@ -1,4 +1,3 @@
-import { memo } from 'react';
 import { HudNextIcon, HudPrevIcon } from './HudIcons';
 
 export interface HudTransportBarProps {
@@ -22,7 +21,7 @@ export interface HudTransportBarProps {
 /**
  * Renders the bottom transport controls, seek buttons, and progress scrub bar.
  */
-export const HudTransportBar = memo(function HudTransportBar({
+export function HudTransportBar({
   isPlaybackActive,
   hasProgress,
   isScrubbing,
@@ -134,4 +133,4 @@ export const HudTransportBar = memo(function HudTransportBar({
       </button>
     </div>
   );
-});
+}
