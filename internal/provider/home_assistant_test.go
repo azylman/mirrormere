@@ -6,18 +6,15 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
 
 func TestHomeAssistant_ProviderInterface(t *testing.T) {
 	t.Parallel()
-	var p Provider = NewHomeAssistantProvider()
-	if p == nil {
-		t.Fatal("expected non-nil Provider instance")
-	}
+	var _ Provider = NewHomeAssistantProvider()
 }
 
 func TestHomeAssistant_SupportedDomains(t *testing.T) {
@@ -57,8 +54,6 @@ func TestHomeAssistant_SupportedDomains(t *testing.T) {
 }
 
 func TestHomeAssistant_Init(t *testing.T) {
-	t.Parallel()
-
 	ctx := context.Background()
 
 	t.Run("valid configuration", func(t *testing.T) {
@@ -72,7 +67,6 @@ func TestHomeAssistant_Init(t *testing.T) {
 			"domains":   []any{"light", "switch"},
 			"entities":  []any{"light.living_room", "switch.fan"},
 		}, InitOptions{})
-
 		if err != nil {
 			t.Fatalf("unexpected Init error: %v", err)
 		}
@@ -134,7 +128,6 @@ func TestHomeAssistant_Init(t *testing.T) {
 		err := p.Init(ctx, map[string]any{
 			"token_env": "CUSTOM_TOKEN",
 		}, opts)
-
 		if err != nil {
 			t.Fatalf("unexpected Init error: %v", err)
 		}
@@ -147,17 +140,14 @@ func TestHomeAssistant_Init(t *testing.T) {
 	})
 
 	t.Run("resolve from OS env vars", func(t *testing.T) {
-		os.Setenv("TEST_HA_URL", "http://198.51.100.30:8123")
-		os.Setenv("TEST_HA_TOKEN", "env-secret-token")
-		defer os.Unsetenv("TEST_HA_URL")
-		defer os.Unsetenv("TEST_HA_TOKEN")
+		t.Setenv("TEST_HA_URL", "http://198.51.100.30:8123")
+		t.Setenv("TEST_HA_TOKEN", "env-secret-token")
 
 		p := NewHomeAssistantProvider()
 		err := p.Init(ctx, map[string]any{
 			"url_env":   "TEST_HA_URL",
 			"token_env": "TEST_HA_TOKEN",
 		}, InitOptions{})
-
 		if err != nil {
 			t.Fatalf("unexpected Init error: %v", err)
 		}
@@ -171,8 +161,6 @@ func TestHomeAssistant_Init(t *testing.T) {
 }
 
 func TestHomeAssistant_LovelaceLayoutDiscovery(t *testing.T) {
-	t.Parallel()
-
 	lovelaceJSON := `{
 		"title": "Home Dashboard",
 		"views": [
@@ -305,14 +293,7 @@ func TestHomeAssistant_LovelaceLayoutDiscovery(t *testing.T) {
 		}
 
 		for _, exp := range expectedEntities {
-			found := false
-			for _, act := range layout.DiscoveredEntities {
-				if act == exp {
-					found = true
-					break
-				}
-			}
-			if !found {
+			if !slices.Contains(layout.DiscoveredEntities, exp) {
 				t.Errorf("expected entity %q in discovered entities %v", exp, layout.DiscoveredEntities)
 			}
 		}
@@ -341,14 +322,7 @@ func TestHomeAssistant_LovelaceLayoutDiscovery(t *testing.T) {
 			"cover.garage_door",
 		}
 		for _, exp := range expectedEntities {
-			found := false
-			for _, act := range layout.DiscoveredEntities {
-				if act == exp {
-					found = true
-					break
-				}
-			}
-			if !found {
+			if !slices.Contains(layout.DiscoveredEntities, exp) {
 				t.Errorf("expected entity %q in discovered entities %v", exp, layout.DiscoveredEntities)
 			}
 		}
@@ -370,8 +344,6 @@ func TestHomeAssistant_LovelaceLayoutDiscovery(t *testing.T) {
 }
 
 func TestHomeAssistant_HydrateStates(t *testing.T) {
-	t.Parallel()
-
 	mockStates := []EntityState{
 		{
 			EntityID: "light.kitchen",
@@ -744,8 +716,6 @@ func TestHomeAssistant_Fetch_FallbackWhenLovelace404(t *testing.T) {
 }
 
 func TestHomeAssistant_CallService(t *testing.T) {
-	t.Parallel()
-
 	var receivedMethod string
 	var receivedPath string
 	var receivedAuth string
@@ -853,5 +823,250 @@ func TestHomeAssistant_SubscribeAndShutdown(t *testing.T) {
 
 	if err := p.Shutdown(ctx); err != nil {
 		t.Errorf("expected nil from Shutdown, got %v", err)
+	}
+}
+
+func TestLovelace_UnmarshalJSON_Errors(t *testing.T) {
+	t.Parallel()
+	var v LovelaceView
+	if err := v.UnmarshalJSON([]byte("invalid json")); err == nil {
+		t.Error("expected error unmarshaling invalid json for LovelaceView")
+	}
+	var s LovelaceSection
+	if err := s.UnmarshalJSON([]byte("invalid json")); err == nil {
+		t.Error("expected error unmarshaling invalid json for LovelaceSection")
+	}
+	var c LovelaceCard
+	if err := c.UnmarshalJSON([]byte("invalid json")); err == nil {
+		t.Error("expected error unmarshaling invalid json for LovelaceCard")
+	}
+}
+
+func TestHomeAssistant_ToStringSlice(t *testing.T) {
+	t.Parallel()
+	if res := toStringSlice(nil); res != nil {
+		t.Errorf("expected nil for nil input, got %v", res)
+	}
+	if res := toStringSlice([]string{"a", "b"}); len(res) != 2 {
+		t.Errorf("expected 2 elements for []string, got %v", res)
+	}
+	if res := toStringSlice([]any{"a", 123, "b", ""}); len(res) != 2 || res[0] != "a" || res[1] != "b" {
+		t.Errorf("unexpected result for []any: %v", res)
+	}
+	if res := toStringSlice("foo, bar, , baz"); len(res) != 3 || res[0] != "foo" || res[1] != "bar" || res[2] != "baz" {
+		t.Errorf("unexpected result for csv string: %v", res)
+	}
+	if res := toStringSlice(12345); res != nil {
+		t.Errorf("expected nil for non-string/slice, got %v", res)
+	}
+}
+
+func TestHomeAssistant_GenerateFallbackCards(t *testing.T) {
+	t.Parallel()
+	p := NewHomeAssistantProvider()
+
+	explicit := []string{"  ", "climate.living_room", "camera.front_door", "scene.night_mode", "script.notify", "switch.fan"}
+	cards := p.generateFallbackCards(nil, explicit)
+	if len(cards) != 5 {
+		t.Fatalf("expected 5 cards, got %d", len(cards))
+	}
+	if cards[0].Type != "thermostat" || cards[1].Type != "picture-entity" || cards[2].Type != "button" || cards[3].Type != "button" || cards[4].Type != "tile" {
+		t.Errorf("unexpected card types: %+v", cards)
+	}
+
+	states := map[string]EntityState{
+		"climate.living_room": {EntityID: "climate.living_room"},
+		"camera.doorbell":     {EntityID: "camera.doorbell"},
+		"scene.bedtime":       {EntityID: "scene.bedtime"},
+		"script.cleanup":      {EntityID: "script.cleanup"},
+		"light.desk":          {EntityID: "light.desk"},
+	}
+	cards2 := p.generateFallbackCards(states, nil)
+	if len(cards2) != 5 {
+		t.Fatalf("expected 5 cards from states, got %d", len(cards2))
+	}
+}
+
+func TestHomeAssistant_ResolveConfigField(t *testing.T) {
+	t.Parallel()
+	mockSecrets := map[string]string{
+		"secret_key": "val1",
+		"ha.url":     "http://203.0.113.10:8123",
+		"token":      "val2",
+	}
+	opts := InitOptions{
+		Secrets: mockSecrets,
+	}
+
+	// Secret directly
+	if val := resolveConfigField(map[string]any{}, opts, "token"); val != "val2" {
+		t.Errorf("expected val2, got %q", val)
+	}
+
+	// ha. prefix secret
+	if val := resolveConfigField(map[string]any{}, opts, "url"); val != "http://203.0.113.10:8123" {
+		t.Errorf("expected ha.url resolved, got %q", val)
+	}
+
+	// env field in opts
+	if val := resolveConfigField(map[string]any{"token_env": "secret_key"}, opts, "token"); val != "val1" {
+		t.Errorf("expected val1 from token_env, got %q", val)
+	}
+
+	// not found
+	if val := resolveConfigField(map[string]any{}, opts, "unknown"); val != "" {
+		t.Errorf("expected empty string, got %q", val)
+	}
+}
+
+func TestHomeAssistant_UnconfiguredErrors(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	p := NewHomeAssistantProvider()
+
+	if _, err := p.CallServiceWithResponse(ctx, "light", "turn_on", nil); err == nil {
+		t.Error("expected error for unconfigured baseURL in CallServiceWithResponse")
+	}
+
+	if _, err := p.FetchLovelaceConfig(ctx, ""); err == nil {
+		t.Error("expected error for unconfigured baseURL in FetchLovelaceConfig")
+	}
+
+	if _, err := p.HydrateStates(ctx); err == nil {
+		t.Error("expected error for unconfigured baseURL in HydrateStates")
+	}
+}
+
+func TestHomeAssistant_LovelaceCustomDashboardAndFallbacks(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/lovelace/config/custom":
+			w.WriteHeader(http.StatusNotFound)
+		case "/api/lovelace/config":
+			json.NewEncoder(w).Encode(LovelaceConfig{
+				Title: "Default Dash",
+			})
+		case "/api/states":
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`invalid json`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	ctx := context.Background()
+	p := NewHomeAssistantProviderWithClient(server.Client(), server.URL, "tok")
+
+	// Custom dash 404 should fall back to default
+	cfg, err := p.FetchLovelaceConfig(ctx, "custom")
+	if err != nil {
+		t.Fatalf("expected fallback to succeed, got %v", err)
+	}
+	if cfg.Title != "Default Dash" {
+		t.Errorf("expected title 'Default Dash', got %q", cfg.Title)
+	}
+
+	// States with invalid JSON should fail decoding
+	if _, err := p.HydrateStates(ctx); err == nil {
+		t.Error("expected decode error on invalid json states")
+	}
+}
+
+func TestHomeAssistant_DiscoverLayout_EdgeCases(t *testing.T) {
+	t.Parallel()
+	p := NewHomeAssistantProvider()
+
+	// nil config
+	l1 := p.DiscoverLayout(nil, "view1")
+	if len(l1.Cards) != 0 {
+		t.Errorf("expected 0 cards for nil config, got %d", len(l1.Cards))
+	}
+
+	// empty views
+	l2 := p.DiscoverLayout(&LovelaceConfig{}, "view1")
+	if len(l2.Cards) != 0 {
+		t.Errorf("expected 0 cards for empty views, got %d", len(l2.Cards))
+	}
+
+	// view with sections
+	cfg := &LovelaceConfig{
+		Views: []LovelaceView{
+			{
+				Title: "Sections View",
+				Path:  "sections_path",
+				Sections: []LovelaceSection{
+					{
+						Cards: []LovelaceCard{
+							{Entity: "light.sec_light"},
+						},
+					},
+				},
+			},
+		},
+	}
+	l3 := p.DiscoverLayout(cfg, "sections_path")
+	if len(l3.Cards) != 1 || l3.Cards[0].Entity != "light.sec_light" {
+		t.Errorf("expected 1 card from section, got %+v", l3.Cards)
+	}
+}
+
+func TestHomeAssistant_ExtractEntitiesAndSelectView_EdgeCases(t *testing.T) {
+	t.Parallel()
+
+	// selectView empty views
+	if v := selectView(nil, ""); v.Title != "" {
+		t.Errorf("expected empty view for nil views")
+	}
+
+	views := []LovelaceView{
+		{Title: "Home", Path: "home"},
+		{Title: "Upstairs", Path: "upstairs"},
+	}
+
+	// selectView invalid index falls back to views[0]
+	if v := selectView(views, "99"); v.Title != "Home" {
+		t.Errorf("expected fallback to Home, got %q", v.Title)
+	}
+	// selectView negative index falls back to views[0]
+	if v := selectView(views, "-1"); v.Title != "Home" {
+		t.Errorf("expected fallback to Home, got %q", v.Title)
+	}
+	// selectView unknown title falls back to views[0]
+	if v := selectView(views, "Unknown"); v.Title != "Home" {
+		t.Errorf("expected fallback to Home, got %q", v.Title)
+	}
+
+	// ExtractEntitiesFromCard with CameraImage, nested sections, and duplicates
+	card := LovelaceCard{
+		Entity:      "light.desk",
+		CameraImage: "camera.driveway",
+		Entities: []any{
+			"light.desk", // duplicate
+			map[string]any{"entity": "switch.socket"},
+			map[string]any{"entity": "light.desk"}, // duplicate
+			12345,                                  // invalid type
+		},
+		Sections: []LovelaceSection{
+			{
+				Cards: []LovelaceCard{
+					{Entity: "lock.front_door"},
+				},
+			},
+		},
+	}
+	ents := ExtractEntitiesFromCard(card)
+	expected := []string{"light.desk", "camera.driveway", "switch.socket", "lock.front_door"}
+	if !reflect.DeepEqual(ents, expected) {
+		t.Errorf("expected %v, got %v", expected, ents)
+	}
+
+	// deduplicateStrings with empty strings and duplicate strings
+	deduped := deduplicateStrings([]string{"a", "", "b", "a", "c", "b", " "})
+	expectedDeduped := []string{"a", "b", "c"}
+	if !reflect.DeepEqual(deduped, expectedDeduped) {
+		t.Errorf("expected %v, got %v", expectedDeduped, deduped)
 	}
 }

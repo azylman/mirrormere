@@ -299,6 +299,7 @@ func TestHandler_GetWidgetJSON_MatchesHydration(t *testing.T) {
 		"calendar-feed":    sampleCalendarData(),
 		"calendar-grid":    sampleCalendarData(),
 		"chat-log":         chatSample,
+		"home-assistant":   map[string]any{},
 		"live-view":        map[string]any{"status": "ready"},
 		"photo-carousel":   samplePhotoData(),
 		"plex-recent":      map[string]any{},

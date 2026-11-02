@@ -150,6 +150,7 @@ func TestWidgetAction_InvalidJSON(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			req := httptest.NewRequest(http.MethodPost, "/api/widgets/ha-1/action", strings.NewReader(tc.body))
 			req.Header.Set("Content-Type", "application/json")
 			rec := httptest.NewRecorder()
@@ -180,6 +181,7 @@ func TestWidgetAction_MissingDomainOrService(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			req := httptest.NewRequest(http.MethodPost, "/api/widgets/ha-1/action", strings.NewReader(tc.body))
 			req.Header.Set("Content-Type", "application/json")
 			rec := httptest.NewRecorder()
@@ -358,7 +360,7 @@ func TestWidgetAction_CallerWithResponse(t *testing.T) {
 		{"entity_id": "light.kitchen", "state": "on", "brightness": 255},
 	}
 	caller := &mockWidgetActionResponseCaller{
-		mockWidgetActionCaller: mockWidgetActionCaller{dataToReturn: respData},
+		dataToReturn: respData,
 	}
 	handler := server.NewDefaultWidgetActionHandler(server.WithWidgetActionCaller(caller))
 	srv := server.New(server.Config{WidgetActionHandler: handler})
@@ -398,6 +400,7 @@ func TestWidgetAction_CallerErrors(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			caller := &mockWidgetActionCaller{errToReturn: tc.err}
 			handler := server.NewDefaultWidgetActionHandler(server.WithWidgetActionCaller(caller))
 			srv := server.New(server.Config{WidgetActionHandler: handler})
@@ -521,6 +524,7 @@ func TestHAAction_DirectProxy_UpstreamErrors(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			haServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(tc.upstreamStatus)
 				_, _ = w.Write([]byte(tc.upstreamBody))

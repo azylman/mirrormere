@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"strings"
 )
@@ -120,7 +121,7 @@ func (h *DefaultWidgetActionHandler) handleWidgetAction(w http.ResponseWriter, r
 		return
 	}
 
-	domain, service, serviceData, err := parseWidgetActionRequest(w, r)
+	domain, service, serviceData, err := h.parseRequest(w, r)
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, err.Error())
 		return
@@ -131,7 +132,7 @@ func (h *DefaultWidgetActionHandler) handleWidgetAction(w http.ResponseWriter, r
 		if respCaller, ok := h.caller.(WidgetActionResponseCaller); ok {
 			data, err := respCaller.CallWidgetActionWithResponse(r.Context(), widgetID, domain, service, serviceData)
 			if err != nil {
-				code, msg := mapActionError(err)
+				code, msg := h.mapActionError(err)
 				writeAPIError(w, code, msg)
 				return
 			}
@@ -144,7 +145,7 @@ func (h *DefaultWidgetActionHandler) handleWidgetAction(w http.ResponseWriter, r
 		}
 
 		if err := h.caller.CallWidgetAction(r.Context(), widgetID, domain, service, serviceData); err != nil {
-			code, msg := mapActionError(err)
+			code, msg := h.mapActionError(err)
 			writeAPIError(w, code, msg)
 			return
 		}
@@ -200,7 +201,11 @@ func (h *DefaultWidgetActionHandler) proxyDirectHA(w http.ResponseWriter, r *htt
 	}
 	defer resp.Body.Close()
 
-	respBody, _ := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		writeAPIError(w, http.StatusBadGateway, "failed to read response body: "+err.Error())
+		return
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		code := resp.StatusCode
 		switch code {
@@ -220,7 +225,9 @@ func (h *DefaultWidgetActionHandler) proxyDirectHA(w http.ResponseWriter, r *htt
 
 	var data any
 	if len(respBody) > 0 {
-		_ = json.Unmarshal(respBody, &data)
+		if err := json.Unmarshal(respBody, &data); err != nil {
+			data = string(respBody)
+		}
 	}
 
 	writeJSON(w, http.StatusOK, WidgetActionResponse{
@@ -230,7 +237,7 @@ func (h *DefaultWidgetActionHandler) proxyDirectHA(w http.ResponseWriter, r *htt
 	})
 }
 
-func parseWidgetActionRequest(w http.ResponseWriter, r *http.Request) (string, string, map[string]any, error) {
+func (h *DefaultWidgetActionHandler) parseRequest(w http.ResponseWriter, r *http.Request) (string, string, map[string]any, error) {
 	if r.Body == nil {
 		return "", "", nil, errors.New("request body is required")
 	}
@@ -241,40 +248,44 @@ func parseWidgetActionRequest(w http.ResponseWriter, r *http.Request) (string, s
 		return "", "", nil, errors.New("invalid request payload")
 	}
 
-	domain := strings.TrimSpace(req.Domain)
-	service := strings.TrimSpace(req.Service)
-	if service == "" && req.Action != "" {
-		if req.Action != "call_service" && req.Action != "call-service" {
-			service = strings.TrimSpace(req.Action)
-		}
+	domain, service, err := splitDomainService(req.Domain, req.Service, req.Action)
+	if err != nil {
+		return "", "", nil, err
 	}
 
-	if parts := strings.SplitN(service, ".", 2); len(parts) == 2 && parts[0] != "" && parts[1] != "" {
-		if domain == "" {
-			domain = strings.TrimSpace(parts[0])
+	return domain, service, extractServiceData(req), nil
+}
+
+func splitDomainService(domain, service, action string) (string, string, error) {
+	domain = strings.TrimSpace(domain)
+	service = strings.TrimSpace(service)
+	if service == "" && action != "" && action != "call_service" && action != "call-service" {
+		service = strings.TrimSpace(action)
+	}
+
+	for _, sep := range []string{".", "/"} {
+		if parts := strings.SplitN(service, sep, 2); len(parts) == 2 && parts[0] != "" && parts[1] != "" {
+			if domain == "" {
+				domain = strings.TrimSpace(parts[0])
+			}
+			service = strings.TrimSpace(parts[1])
+			break
 		}
-		service = strings.TrimSpace(parts[1])
-	} else if parts := strings.SplitN(service, "/", 2); len(parts) == 2 && parts[0] != "" && parts[1] != "" {
-		if domain == "" {
-			domain = strings.TrimSpace(parts[0])
-		}
-		service = strings.TrimSpace(parts[1])
 	}
 
 	if domain == "" || service == "" {
-		return "", "", nil, errors.New("domain and service are required")
+		return "", "", errors.New("domain and service are required")
 	}
+	return domain, service, nil
+}
 
+func extractServiceData(req WidgetActionRequest) map[string]any {
 	serviceData := make(map[string]any)
 	if req.ServiceData != nil {
-		for k, v := range req.ServiceData {
-			serviceData[k] = v
-		}
+		maps.Copy(serviceData, req.ServiceData)
 	}
 	if req.Data != nil {
-		for k, v := range req.Data {
-			serviceData[k] = v
-		}
+		maps.Copy(serviceData, req.Data)
 	}
 	if req.Target != nil {
 		for k, v := range req.Target {
@@ -289,11 +300,10 @@ func parseWidgetActionRequest(w http.ResponseWriter, r *http.Request) (string, s
 			serviceData["entity_id"] = req.EntityID
 		}
 	}
-
-	return domain, service, serviceData, nil
+	return serviceData
 }
 
-func mapActionError(err error) (int, string) {
+func (h *DefaultWidgetActionHandler) mapActionError(err error) (int, string) {
 	if err == nil {
 		return http.StatusOK, ""
 	}

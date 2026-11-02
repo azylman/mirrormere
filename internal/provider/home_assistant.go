@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -41,12 +42,7 @@ var SupportedDomains = []string{
 // IsSupportedDomain checks if the given domain string is one of the 12 supported domains.
 func IsSupportedDomain(domain string) bool {
 	domain = strings.ToLower(strings.TrimSpace(domain))
-	for _, d := range SupportedDomains {
-		if d == domain {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(SupportedDomains, domain)
 }
 
 // GetSupportedDomains returns a copy of the supported domains slice.
@@ -434,7 +430,10 @@ func (p *HomeAssistantProvider) CallServiceWithResponse(ctx context.Context, dom
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, fmt.Errorf("service call returned status %d", resp.StatusCode)
+		}
 		return nil, fmt.Errorf("service call returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
 	}
 
@@ -495,7 +494,10 @@ func (p *HomeAssistantProvider) FetchLovelaceConfig(ctx context.Context, dashboa
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(resp.Body)
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, fmt.Errorf("lovelace config request returned status %d", resp.StatusCode)
+		}
 		return nil, fmt.Errorf("lovelace config request returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
@@ -539,7 +541,10 @@ func (p *HomeAssistantProvider) HydrateStates(ctx context.Context) (map[string]E
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(resp.Body)
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, fmt.Errorf("states request returned status %d", resp.StatusCode)
+		}
 		return nil, fmt.Errorf("states request returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
@@ -603,12 +608,7 @@ func (p *HomeAssistantProvider) DiscoverLayout(lovelaceConfig *LovelaceConfig, v
 	layout.Cards = cards
 
 	// Discover all referenced entities
-	var entities []string
-	for _, card := range cards {
-		entities = append(entities, ExtractEntitiesFromCard(card)...)
-	}
-
-	layout.DiscoveredEntities = deduplicateStrings(entities)
+	layout.DiscoveredEntities = ExtractEntitiesFromView(selectedView)
 	return layout
 }
 
