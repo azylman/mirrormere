@@ -44,6 +44,22 @@ describe('theme pure helpers', () => {
 
     setStoredThemeOverride(null, storage);
     expect(getStoredThemeOverride(storage)).toBeNull();
+
+    // Exception handling resilience (SecurityError/QuotaExceededError)
+    const throwingStorage = {
+      getItem: () => {
+        throw new Error('SecurityError');
+      },
+      setItem: () => {
+        throw new Error('QuotaExceededError');
+      },
+      removeItem: () => {
+        throw new Error('SecurityError');
+      },
+    };
+    expect(getStoredThemeOverride(throwingStorage)).toBeNull();
+    expect(() => setStoredThemeOverride('day', throwingStorage)).not.toThrow();
+    expect(() => setStoredThemeOverride(null, throwingStorage)).not.toThrow();
   });
 
   it('resolveEffectiveTheme prioritizes override over serverTheme', () => {
@@ -66,6 +82,16 @@ describe('theme pure helpers', () => {
     // Step 2: active 'day', override 'day' -> tap resets override to null (Auto Solar)
     const step3 = nextThemeOnTap('day', 'day', 'day');
     expect(step3).toEqual({ activeTheme: 'day', nextOverride: null });
+
+    // Server theme is 'night'
+    const nightStep1 = nextThemeOnTap('night', 'night', null);
+    expect(nightStep1).toEqual({ activeTheme: 'day', nextOverride: 'day' });
+
+    const nightStep2 = nextThemeOnTap('day', 'night', 'day');
+    expect(nightStep2).toEqual({ activeTheme: 'night', nextOverride: 'night' });
+
+    const nightStep3 = nextThemeOnTap('night', 'night', 'night');
+    expect(nightStep3).toEqual({ activeTheme: 'night', nextOverride: null });
   });
 
   it('computeThemeButtonAttrs creates proper aria-label and title', () => {
@@ -76,7 +102,10 @@ describe('theme pure helpers', () => {
 
     const manualAttrs = computeThemeButtonAttrs('night', 'day', 'night');
     expect(manualAttrs.mode).toBe('manual');
-    expect(manualAttrs.title).toContain('Manual Override');
+    expect(manualAttrs.title).toContain('Manual Override — Tap for Light Mode, Long-press for Auto Solar');
+
+    const sameManualAttrs = computeThemeButtonAttrs('day', 'day', 'day');
+    expect(sameManualAttrs.title).toContain('Manual Override — Tap or Long-press for Auto Solar');
   });
 });
 
@@ -113,6 +142,14 @@ describe('applyThemeToDOM', () => {
     expect(document.body.dataset.theme).toBe('day');
     expect(appEl.dataset.theme).toBe('day');
     expect(meta.getAttribute('content')).toBe('#f8f5ee');
+
+    // Creates meta theme-color tag if none exists
+    meta.remove();
+    applyThemeToDOM('night', document);
+    const createdMeta = document.querySelector('meta[name="theme-color"]');
+    expect(createdMeta).not.toBeNull();
+    expect(createdMeta?.getAttribute('content')).toBe('#3b364c');
+    createdMeta?.remove();
   });
 });
 
@@ -243,6 +280,26 @@ describe('ThemeToggle component', () => {
     });
 
     // Still manual, because long-press was cancelled
+    expect(btn.dataset.mode).toBe('manual');
+  });
+
+  it('cancels long-press when pointer cancels before 500ms', () => {
+    const { container } = render(<ThemeToggle />);
+    const btn = container.querySelector('#theme-toggle-btn') as HTMLButtonElement;
+
+    fireEvent.click(btn);
+    expect(btn.dataset.mode).toBe('manual');
+
+    fireEvent.pointerDown(btn);
+    act(() => {
+      vi.advanceTimersByTime(200);
+    });
+    fireEvent.pointerCancel(btn);
+
+    act(() => {
+      vi.advanceTimersByTime(400);
+    });
+
     expect(btn.dataset.mode).toBe('manual');
   });
 });

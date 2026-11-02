@@ -746,4 +746,164 @@ describe('Hud component and declarative decomposition', () => {
       expect(timeCurrent.textContent).toBe('1:16');
     });
   });
+
+  describe('VideoHUDController and transport buttons coverage', () => {
+    it('supports object controllerRef and updates ref.current', () => {
+      const ref = { current: null as VideoHUDController | null };
+      const { unmount } = render(
+        <div id="video-stage">
+          <Hud controllerRef={ref} />
+        </div>,
+      );
+
+      expect(ref.current).toBeInstanceOf(VideoHUDController);
+      unmount();
+      expect(ref.current).toBeNull();
+    });
+
+    it('exercises VideoHUDController getters, setters, and state methods', () => {
+      const ctrl = new VideoHUDController();
+      expect(ctrl.titleEl).toBeNull();
+
+      // Create title in DOM
+      const title = document.createElement('div');
+      title.id = 'video-hud-title';
+      document.body.appendChild(title);
+      expect(ctrl.titleEl).toBe(title);
+
+      const primaryStream: VideoSource = { id: 'p1', stream_url: '', type: 'webrtc' };
+      const pipStream: VideoSource = { id: 'pip1', stream_url: '', type: 'webrtc' };
+
+      // With videoManager swapped vs unswapped
+      ctrl.videoManager = { isSwapped: false, serverPrimary: primaryStream, serverPip: pipStream };
+      expect(ctrl.activeStream).toBe(primaryStream);
+
+      ctrl.videoManager.isSwapped = true;
+      expect(ctrl.activeStream).toBe(pipStream);
+
+      // Without videoManager
+      ctrl.videoManager = null;
+      ctrl.activeStream = primaryStream;
+      expect(ctrl.activeStream).toBe(primaryStream);
+
+      ctrl.activeStream = null;
+      ctrl.lastVideoState = { mode: 'video', primary: primaryStream, pip: pipStream };
+      expect(ctrl.activeStream).toBe(primaryStream);
+
+      ctrl.lastVideoState = { mode: 'video', primary: null, pip: pipStream };
+      expect(ctrl.activeStream).toBe(pipStream);
+
+      // Standalone VideoHUDController default methods
+      ctrl.handleVideoState();
+      ctrl.handleAudioState();
+      ctrl.destroy?.();
+      ctrl.syncStream();
+
+      document.body.removeChild(title);
+    });
+
+    it('triggers syncStream, handleVideoState, handleAudioState, center play button, captions, previous, and next actions', async () => {
+      const mockFetch = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
+      let ctrl: VideoHUDController | null = null;
+
+      const primaryStream: VideoSource = {
+        id: 's_main',
+        stream_url: 'http://test/stream',
+        type: 'webrtc',
+        player_state: 'playing',
+        controllable: true,
+        control_url: 'http://test/control',
+      };
+
+      const { container } = render(
+        <div id="video-stage">
+          <Hud
+            fetch={mockFetch as unknown as typeof fetch}
+            remoteUrl="http://remote-host"
+            controllerRef={(c) => {
+              ctrl = c;
+            }}
+          />
+        </div>,
+      );
+
+      // handleVideoState and handleAudioState on mounted controller
+      act(() => {
+        ctrl?.handleVideoState({ mode: 'video', primary: primaryStream, pip: null });
+        ctrl?.handleAudioState({ volume: 88, muted: false });
+      });
+      expect(useDisplayStore.getState().video.primary?.id).toBe('s_main');
+      expect(useDisplayStore.getState().audio.volume).toBe(88);
+
+      // Show HUD and test syncStream
+      act(() => {
+        ctrl?.syncStream();
+      });
+
+      // Center play button click
+      const playBtn = container.querySelector('#video-hud-play-btn') as HTMLButtonElement;
+      expect(playBtn).not.toBeNull();
+      act(() => {
+        fireEvent.click(playBtn);
+      });
+      expect(mockFetch).toHaveBeenCalledWith(
+        'api/video/action',
+        expect.objectContaining({
+          body: JSON.stringify({ id: 's_main', action: 'toggle_playback' }),
+        }),
+      );
+
+      // Advance debounce timer (300ms)
+      act(() => {
+        vi.advanceTimersByTime(350);
+      });
+
+      // Captions button click
+      const ccBtn = container.querySelector('#video-hud-cc-btn') as HTMLButtonElement;
+      expect(ccBtn).not.toBeNull();
+      act(() => {
+        fireEvent.click(ccBtn);
+      });
+      expect(mockFetch).toHaveBeenCalledWith(
+        'http://remote-host/key',
+        expect.objectContaining({
+          body: JSON.stringify({ key: 'cc' }),
+        }),
+      );
+
+      act(() => {
+        vi.advanceTimersByTime(350);
+      });
+
+      // Previous button click
+      const prevBtn = container.querySelector('#video-hud-prev-btn') as HTMLButtonElement;
+      expect(prevBtn).not.toBeNull();
+      act(() => {
+        fireEvent.click(prevBtn);
+      });
+      expect(mockFetch).toHaveBeenCalledWith(
+        'http://remote-host/key',
+        expect.objectContaining({
+          body: JSON.stringify({ key: 'prev' }),
+        }),
+      );
+
+      act(() => {
+        vi.advanceTimersByTime(350);
+      });
+
+      // Next button click
+      const nextBtn = container.querySelector('#video-hud-next-btn') as HTMLButtonElement;
+      expect(nextBtn).not.toBeNull();
+      act(() => {
+        fireEvent.click(nextBtn);
+      });
+      expect(mockFetch).toHaveBeenCalledWith(
+        'http://remote-host/key',
+        expect.objectContaining({
+          body: JSON.stringify({ key: 'next' }),
+        }),
+      );
+    });
+  });
 });
