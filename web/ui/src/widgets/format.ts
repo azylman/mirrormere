@@ -803,7 +803,7 @@ export function computeHourlyGraphLayout(
     return null;
   }
 
-  const maxPoints = options?.maxPoints && options.maxPoints > 0 ? options.maxPoints : 8;
+  const maxPoints = options?.maxPoints && options.maxPoints > 0 ? options.maxPoints : 10;
   const pts = rawPts.slice(0, maxPoints);
   const n = pts.length;
   const gradientId =
@@ -811,12 +811,12 @@ export function computeHourlyGraphLayout(
       ? `mm-weather-grad-${escapeHtml(widgetId.trim())}`
       : 'mm-weather-hourly-grad';
 
-  const baseColWidth = 68.0;
+  const baseColWidth = 56.0;
   const minGraphWidth = 560.0;
-  const svgHeight = options?.svgHeight ?? 300.0;
-  const curveTop = options?.curveTop ?? 90.0;
-  const curveBottom = options?.curveBottom ?? 205.0;
-  const baseY = options?.baseY ?? (svgHeight === 108.0 ? 90.0 : 240.0);
+  const svgHeight = options?.svgHeight ?? 270.0;
+  const curveTop = options?.curveTop ?? 76.0;
+  const curveBottom = options?.curveBottom ?? 212.0;
+  const baseY = options?.baseY ?? (svgHeight === 108.0 ? 90.0 : 238.0);
 
   const isTall = svgHeight >= 200.0;
 
@@ -842,9 +842,12 @@ export function computeHourlyGraphLayout(
     span = 4.0;
   }
 
+  const edgeInset = isTall ? 18.0 : 12.0;
+  const step = n > 1 ? (totalWidth - 2.0 * edgeInset) / (n - 1) : 0.0;
+
   const coords: { x: number; y: number }[] = [];
   for (let i = 0; i < n; i++) {
-    const x = i * colWidth + colWidth / 2.0;
+    const x = n > 1 ? edgeInset + i * step : totalWidth / 2.0;
     const ratio = (pts[i].temp - minTemp) / span;
     const y = curveBottom - ratio * (curveBottom - curveTop);
     coords.push({ x, y });
@@ -872,9 +875,9 @@ export function computeHourlyGraphLayout(
     const coord = coords[i];
     const lineTopOffset = isTall ? 6.0 : 4.0;
     const lineY1 = coord.y + lineTopOffset;
-    const precipY = isTall ? 20 : 12;
+    const precipY = 12;
 
-    const iconY = isTall ? 32 : 14;
+    const iconY = isTall ? 18 : 14;
     const iconScale = isTall ? 1.2 : 0.8;
     const iconOffsetX = isTall ? 14.4 : 9.6;
     const iconTranslateX = coord.x - iconOffsetX;
@@ -894,7 +897,7 @@ export function computeHourlyGraphLayout(
       const formatted = formatTime('3 PM', pt.timeStr);
       timeLabel = formatted !== '' ? formatted : pt.timeStr;
     }
-    const timeY = isTall ? 275 : 102;
+    const timeY = isTall ? 262 : 102;
     const timeFontSize = isTall ? 13 : 11;
 
     points.push({

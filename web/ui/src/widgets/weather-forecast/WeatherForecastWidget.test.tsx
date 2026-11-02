@@ -391,10 +391,10 @@ describe('WeatherHourlyGraph component', () => {
     expect(svg.style.minWidth).toBe('');
     expect(svg.style.width).toBe('100%');
     expect(svg.style.maxWidth).toBe('100%');
-    expect(svg.getAttribute('viewBox')).toBe('0 0 480.0 300.0');
+    expect(svg.getAttribute('viewBox')).toBe('0 0 480.0 270.0');
 
     const labels = Array.from(svg.querySelectorAll('text'));
-    const lastHourLabel = labels.find((el) => el.textContent === '7 AM');
+    const lastHourLabel = labels.find((el) => el.textContent === '9 AM');
     expect(lastHourLabel).toBeDefined();
     const lastX = Number(lastHourLabel?.getAttribute('x'));
     expect(lastX).toBeGreaterThan(0);
