@@ -785,7 +785,30 @@ func parseHexColor(hex string) (r, g, b int, ok bool) {
 	return int(rv), int(gv), int(bv), true
 }
 
-func newHoursBand(hStart, mStart, hEnd, mEnd int) HoursBand {
+func formatTimeLabel(h, m int, timeFormat string) string {
+	if strings.EqualFold(timeFormat, "12h") {
+		hMod := (h%24 + 24) % 24
+		period := "am"
+		if hMod >= 12 {
+			period = "pm"
+		}
+		h12 := hMod % 12
+		if h12 == 0 {
+			h12 = 12
+		}
+		if m == 0 {
+			return fmt.Sprintf("%d%s", h12, period)
+		}
+		return fmt.Sprintf("%d:%02d%s", h12, m, period)
+	}
+	return fmt.Sprintf("%02d:%02d", h, m)
+}
+
+func newHoursBand(hStart, mStart, hEnd, mEnd int, timeFormat ...string) HoursBand {
+	tf := "24h"
+	if len(timeFormat) > 0 && timeFormat[0] != "" {
+		tf = timeFormat[0]
+	}
 	return HoursBand{
 		StartHour:       hStart,
 		StartMinute:     mStart,
@@ -793,8 +816,8 @@ func newHoursBand(hStart, mStart, hEnd, mEnd int) HoursBand {
 		EndMinute:       mEnd,
 		StartStr:        fmt.Sprintf("%02d:%02d", hStart, mStart),
 		EndStr:          fmt.Sprintf("%02d:%02d", hEnd, mEnd),
-		Markers:         generateHourMarkers(hStart, mStart, hEnd, mEnd),
-		TimelineMarkers: generateTimelineMarkers(hStart, mStart, hEnd, mEnd),
+		Markers:         generateHourMarkers(hStart, mStart, hEnd, mEnd, tf),
+		TimelineMarkers: generateTimelineMarkers(hStart, mStart, hEnd, mEnd, tf),
 	}
 }
 
@@ -829,11 +852,15 @@ func parseExplicitHoursBand(cfg map[string]any) (HoursBand, bool) {
 		return HoursBand{}, false
 	}
 
-	return newHoursBand(hStart, mStart, hEnd, mEnd), true
+	return newHoursBand(hStart, mStart, hEnd, mEnd, stringOr(cfg, "time_format", "24h")), true
 }
 
-func defaultHoursBand() HoursBand {
-	return newHoursBand(7, 0, 21, 0)
+func defaultHoursBand(timeFormat ...string) HoursBand {
+	tf := "24h"
+	if len(timeFormat) > 0 && timeFormat[0] != "" {
+		tf = timeFormat[0]
+	}
+	return newHoursBand(7, 0, 21, 0, tf)
 }
 
 // resolveFamilyHoursBand resolves the timeline hours band for the week view.
@@ -846,11 +873,13 @@ func resolveFamilyHoursBand(cfg map[string]any, events []provider.CalendarEvent,
 		return band
 	}
 
+	timeFormat := stringOr(cfg, "time_format", "24h")
+
 	if loc == nil {
 		loc = time.UTC
 	}
 
-	defaultBand := defaultHoursBand()
+	defaultBand := defaultHoursBand(timeFormat)
 	endH := defaultBand.EndHour
 	endM := defaultBand.EndMinute
 	endTotal := endH*60 + endM
@@ -887,10 +916,14 @@ func resolveFamilyHoursBand(cfg map[string]any, events []provider.CalendarEvent,
 		}
 	}
 
-	return newHoursBand(startH, startM, endH, endM)
+	return newHoursBand(startH, startM, endH, endM, timeFormat)
 }
 
-func generateTimelineMarkers(hStart, mStart, hEnd, mEnd int) []TimelineMarker {
+func generateTimelineMarkers(hStart, mStart, hEnd, mEnd int, timeFormat ...string) []TimelineMarker {
+	tf := "24h"
+	if len(timeFormat) > 0 && timeFormat[0] != "" {
+		tf = timeFormat[0]
+	}
 	startTotal := hStart*60 + mStart
 	endTotal := hEnd*60 + mEnd
 	duration := float64(endTotal - startTotal)
@@ -900,7 +933,7 @@ func generateTimelineMarkers(hStart, mStart, hEnd, mEnd int) []TimelineMarker {
 
 	markers := make([]TimelineMarker, 0, (hEnd-hStart)+2)
 	markers = append(markers, TimelineMarker{
-		Label:   fmt.Sprintf("%02d:%02d", hStart, mStart),
+		Label:   formatTimeLabel(hStart, mStart, tf),
 		TopPct:  0.0,
 		IsStart: true,
 	})
@@ -909,7 +942,7 @@ func generateTimelineMarkers(hStart, mStart, hEnd, mEnd int) []TimelineMarker {
 	for h := firstHour; h < hEnd; h++ {
 		pct := float64(h*60-startTotal) / duration * 100.0
 		markers = append(markers, TimelineMarker{
-			Label:  fmt.Sprintf("%02d:00", h),
+			Label:  formatTimeLabel(h, 0, tf),
 			TopPct: roundToTwoDecimals(pct),
 		})
 	}
@@ -917,13 +950,13 @@ func generateTimelineMarkers(hStart, mStart, hEnd, mEnd int) []TimelineMarker {
 	if mEnd > 0 && hEnd*60 > startTotal {
 		pct := float64(hEnd*60-startTotal) / duration * 100.0
 		markers = append(markers, TimelineMarker{
-			Label:  fmt.Sprintf("%02d:00", hEnd),
+			Label:  formatTimeLabel(hEnd, 0, tf),
 			TopPct: roundToTwoDecimals(pct),
 		})
 	}
 
 	markers = append(markers, TimelineMarker{
-		Label:  fmt.Sprintf("%02d:%02d", hEnd, mEnd),
+		Label:  formatTimeLabel(hEnd, mEnd, tf),
 		TopPct: 100.0,
 		IsEnd:  true,
 	})
@@ -931,20 +964,24 @@ func generateTimelineMarkers(hStart, mStart, hEnd, mEnd int) []TimelineMarker {
 	return markers
 }
 
-func generateHourMarkers(hStart, mStart, hEnd, mEnd int) []string {
+func generateHourMarkers(hStart, mStart, hEnd, mEnd int, timeFormat ...string) []string {
+	tf := "24h"
+	if len(timeFormat) > 0 && timeFormat[0] != "" {
+		tf = timeFormat[0]
+	}
 	var markers []string
 	firstHour := hStart
 	if mStart > 0 {
-		markers = append(markers, fmt.Sprintf("%02d:%02d", hStart, mStart))
+		markers = append(markers, formatTimeLabel(hStart, mStart, tf))
 		firstHour = hStart + 1
 	}
 	for h := firstHour; h <= hEnd; h++ {
 		if h == hEnd && mEnd > 0 {
-			markers = append(markers, fmt.Sprintf("%02d:00", h))
-			markers = append(markers, fmt.Sprintf("%02d:%02d", hEnd, mEnd))
+			markers = append(markers, formatTimeLabel(h, 0, tf))
+			markers = append(markers, formatTimeLabel(hEnd, mEnd, tf))
 			break
 		}
-		markers = append(markers, fmt.Sprintf("%02d:00", h))
+		markers = append(markers, formatTimeLabel(h, 0, tf))
 	}
 	return markers
 }

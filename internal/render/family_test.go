@@ -120,6 +120,8 @@ type buildFamilyViewExpectations struct {
 	dayEventPos      map[string]FamilyDayEvent
 	earlyEventsCount map[int]int
 	lateEventsCount  map[int]int
+	hourMarkers      []string
+	timelineMarkers  []TimelineMarker
 }
 
 func TestBuildFamilyView(t *testing.T) {
@@ -276,6 +278,35 @@ func TestBuildFamilyView(t *testing.T) {
 		{name: "date override 2026-09-29 current week", cfg: withFamilyCfg(map[string]any{"date": "2026-09-29"}), exp: buildFamilyViewExpectations{rangeStart: "2026-09-27", rangeEnd: "2026-10-03", today: "2026-09-27", dayIsToday: map[int]bool{0: true, 1: false, 2: false}}},
 		{name: "date override week starts monday", cfg: withFamilyCfg(map[string]any{"week_starts": "monday", "date": "2026-10-15"}), exp: buildFamilyViewExpectations{rangeStart: "2026-10-12", rangeEnd: "2026-10-18"}},
 		{name: "date override days 3", dims: domain.NewDimension(3, 2), cfg: withFamilyCfg(map[string]any{"days": 3, "date": "2026-10-15"}), exp: buildFamilyViewExpectations{daysCount: 3, rangeStart: "2026-10-15", rangeEnd: "2026-10-17"}},
+		{
+			name: "time_format 12h produces 12-hour hour markers and timeline markers",
+			cfg:  withFamilyCfg(map[string]any{"time_format": "12h"}),
+			exp: buildFamilyViewExpectations{
+				daysCount: 7,
+				hourMarkers: []string{
+					"7am", "8am", "9am", "10am", "11am", "12pm",
+					"1pm", "2pm", "3pm", "4pm", "5pm", "6pm",
+					"7pm", "8pm", "9pm",
+				},
+				timelineMarkers: []TimelineMarker{
+					{Label: "7am", TopPct: 0, IsStart: true},
+					{Label: "8am", TopPct: 7.14},
+					{Label: "9am", TopPct: 14.29},
+					{Label: "10am", TopPct: 21.43},
+					{Label: "11am", TopPct: 28.57},
+					{Label: "12pm", TopPct: 35.71},
+					{Label: "1pm", TopPct: 42.86},
+					{Label: "2pm", TopPct: 50},
+					{Label: "3pm", TopPct: 57.14},
+					{Label: "4pm", TopPct: 64.29},
+					{Label: "5pm", TopPct: 71.43},
+					{Label: "6pm", TopPct: 78.57},
+					{Label: "7pm", TopPct: 85.71},
+					{Label: "8pm", TopPct: 92.86},
+					{Label: "9pm", TopPct: 100, IsEnd: true},
+				},
+			},
+		},
 	}
 
 	for _, tc := range tests {
@@ -457,8 +488,106 @@ func TestBuildFamilyView(t *testing.T) {
 					t.Errorf("Days[%d].LateEvents = %d, want %d", dayIdx, len(view.Days[dayIdx].LateEvents), wantCount)
 				}
 			}
+			if len(exp.hourMarkers) > 0 {
+				if len(view.HourMarkers) != len(exp.hourMarkers) {
+					t.Fatalf("len(HourMarkers) = %d, want %d: %v", len(view.HourMarkers), len(exp.hourMarkers), view.HourMarkers)
+				}
+				for i, wantMarker := range exp.hourMarkers {
+					if view.HourMarkers[i] != wantMarker {
+						t.Errorf("HourMarkers[%d] = %q, want %q", i, view.HourMarkers[i], wantMarker)
+					}
+				}
+			}
+			if len(exp.timelineMarkers) > 0 {
+				if len(view.TimelineMarkers) != len(exp.timelineMarkers) {
+					t.Fatalf("len(TimelineMarkers) = %d, want %d", len(view.TimelineMarkers), len(exp.timelineMarkers))
+				}
+				for i, wantMarker := range exp.timelineMarkers {
+					if view.TimelineMarkers[i].Label != wantMarker.Label {
+						t.Errorf("TimelineMarkers[%d].Label = %q, want %q", i, view.TimelineMarkers[i].Label, wantMarker.Label)
+					}
+					if view.TimelineMarkers[i].TopPct != wantMarker.TopPct {
+						t.Errorf("TimelineMarkers[%d].TopPct = %v, want %v", i, view.TimelineMarkers[i].TopPct, wantMarker.TopPct)
+					}
+					if view.TimelineMarkers[i].IsStart != wantMarker.IsStart {
+						t.Errorf("TimelineMarkers[%d].IsStart = %v, want %v", i, view.TimelineMarkers[i].IsStart, wantMarker.IsStart)
+					}
+					if view.TimelineMarkers[i].IsEnd != wantMarker.IsEnd {
+						t.Errorf("TimelineMarkers[%d].IsEnd = %v, want %v", i, view.TimelineMarkers[i].IsEnd, wantMarker.IsEnd)
+					}
+				}
+			}
 		})
 	}
+}
+
+func TestBuildFamilyView_TimeFormat12h(t *testing.T) {
+	t.Parallel()
+
+	t.Run("default hours window formats as 12h compact markers", func(t *testing.T) {
+		t.Parallel()
+		cfg := withFamilyCfg(map[string]any{
+			"time_format": "12h",
+		})
+		view, err := BuildFamilyView(nil, cfg, domain.NewDimension(6, 2), testNow)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		wantHourMarkers := []string{
+			"7am", "8am", "9am", "10am", "11am", "12pm",
+			"1pm", "2pm", "3pm", "4pm", "5pm", "6pm",
+			"7pm", "8pm", "9pm",
+		}
+
+		if len(view.HourMarkers) != len(wantHourMarkers) {
+			t.Fatalf("len(HourMarkers) = %d, want %d: %v", len(view.HourMarkers), len(wantHourMarkers), view.HourMarkers)
+		}
+		for i, m := range wantHourMarkers {
+			if view.HourMarkers[i] != m {
+				t.Errorf("HourMarkers[%d] = %q, want %q", i, view.HourMarkers[i], m)
+			}
+		}
+
+		if len(view.TimelineMarkers) != len(wantHourMarkers) {
+			t.Fatalf("len(TimelineMarkers) = %d, want %d", len(view.TimelineMarkers), len(wantHourMarkers))
+		}
+		for i, m := range wantHourMarkers {
+			if view.TimelineMarkers[i].Label != m {
+				t.Errorf("TimelineMarkers[%d].Label = %q, want %q", i, view.TimelineMarkers[i].Label, m)
+			}
+		}
+	})
+
+	t.Run("explicit fractional hours window formats as 12h compact markers", func(t *testing.T) {
+		t.Parallel()
+		cfg := withFamilyCfg(map[string]any{
+			"time_format": "12h",
+			"hours":       []any{"08:30", "12:00"},
+		})
+		view, err := BuildFamilyView(nil, cfg, domain.NewDimension(6, 2), testNow)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		wantMarkers := []string{"8:30am", "9am", "10am", "11am", "12pm"}
+		if len(view.HourMarkers) != len(wantMarkers) {
+			t.Fatalf("len(HourMarkers) = %d, want %d: %v", len(view.HourMarkers), len(wantMarkers), view.HourMarkers)
+		}
+		for i, m := range wantMarkers {
+			if view.HourMarkers[i] != m {
+				t.Errorf("HourMarkers[%d] = %q, want %q", i, view.HourMarkers[i], m)
+			}
+		}
+		if len(view.TimelineMarkers) != len(wantMarkers) {
+			t.Fatalf("len(TimelineMarkers) = %d, want %d", len(view.TimelineMarkers), len(wantMarkers))
+		}
+		for i, m := range wantMarkers {
+			if view.TimelineMarkers[i].Label != m {
+				t.Errorf("TimelineMarkers[%d].Label = %q, want %q", i, view.TimelineMarkers[i].Label, m)
+			}
+		}
+	})
 }
 
 func TestFamilyUnitHelpers(t *testing.T) {
@@ -500,6 +629,30 @@ func TestFamilyUnitHelpers(t *testing.T) {
 	if truncateString("short", 10) != "short" || truncateString(strings.Repeat("a", 300), 280) != strings.Repeat("a", 279)+"…" || truncateString(strings.Repeat("🎉", 10), 5) != strings.Repeat("🎉", 4)+"…" || truncateString("abc", 1) != "a" {
 		t.Errorf("truncateString branches failed")
 	}
+	if got := formatTimeLabel(0, 0, "12h"); got != "12am" {
+		t.Errorf("formatTimeLabel(0, 0, 12h) = %q, want 12am", got)
+	}
+	if got := formatTimeLabel(7, 0, "12h"); got != "7am" {
+		t.Errorf("formatTimeLabel(7, 0, 12h) = %q, want 7am", got)
+	}
+	if got := formatTimeLabel(7, 30, "12h"); got != "7:30am" {
+		t.Errorf("formatTimeLabel(7, 30, 12h) = %q, want 7:30am", got)
+	}
+	if got := formatTimeLabel(12, 0, "12h"); got != "12pm" {
+		t.Errorf("formatTimeLabel(12, 0, 12h) = %q, want 12pm", got)
+	}
+	if got := formatTimeLabel(13, 0, "12h"); got != "1pm" {
+		t.Errorf("formatTimeLabel(13, 0, 12h) = %q, want 1pm", got)
+	}
+	if got := formatTimeLabel(21, 0, "12h"); got != "9pm" {
+		t.Errorf("formatTimeLabel(21, 0, 12h) = %q, want 9pm", got)
+	}
+	if got := formatTimeLabel(24, 0, "12h"); got != "12am" {
+		t.Errorf("formatTimeLabel(24, 0, 12h) = %q, want 12am", got)
+	}
+	if got := formatTimeLabel(7, 0, "24h"); got != "07:00" {
+		t.Errorf("formatTimeLabel(7, 0, 24h) = %q, want 07:00", got)
+	}
 }
 
 func TestParseHoursBand(t *testing.T) {
@@ -533,6 +686,8 @@ func TestParseHoursBand(t *testing.T) {
 		{name: "equal hours", cfg: map[string]any{"hours": []any{"10:00", "10:00"}}, wantStart: "07:00", wantEnd: "21:00"},
 		{name: "non string types", cfg: map[string]any{"hours": []any{123, 456}}, wantStart: "07:00", wantEnd: "21:00"},
 		{name: "fractional markers", cfg: map[string]any{"hours": []any{"07:30", "10:15"}}, wantStart: "07:30", wantEnd: "10:15", wantMarkers: []string{"07:30", "08:00", "09:00", "10:00", "10:15"}},
+		{name: "12h time_format explicit hours", cfg: map[string]any{"hours": []any{"07:00", "21:00"}, "time_format": "12h"}, wantStart: "07:00", wantEnd: "21:00", wantStartH: 7, wantEndH: 21, wantMarkers: []string{"7am", "8am", "9am", "10am", "11am", "12pm", "1pm", "2pm", "3pm", "4pm", "5pm", "6pm", "7pm", "8pm", "9pm"}},
+		{name: "12h time_format fractional markers", cfg: map[string]any{"hours": []any{"07:30", "10:15"}, "time_format": "12h"}, wantStart: "07:30", wantEnd: "10:15", wantMarkers: []string{"7:30am", "8am", "9am", "10am", "10:15am"}},
 	}
 
 	for _, tc := range tests {
@@ -610,6 +765,7 @@ func TestGenerateTimelineMarkers(t *testing.T) {
 		name              string
 		hStart, mStart    int
 		hEnd, mEnd        int
+		timeFormat        string
 		wantNil           bool
 		wantLen           int
 		wantFirst         TimelineMarker
@@ -621,12 +777,14 @@ func TestGenerateTimelineMarkers(t *testing.T) {
 		{name: "half-hour start 09:30 to 21:00", hStart: 9, mStart: 30, hEnd: 21, wantLen: 13, wantFirst: TimelineMarker{Label: "09:30", TopPct: 0, IsStart: true}, wantSecond: TimelineMarker{Label: "10:00", TopPct: 4.35}, wantLast: TimelineMarker{Label: "21:00", TopPct: 100, IsEnd: true}},
 		{name: "non-zero end minute 08:30 to 19:45", hStart: 8, mStart: 30, hEnd: 19, mEnd: 45, wantFirst: TimelineMarker{Label: "08:30", TopPct: 0, IsStart: true}, wantLast: TimelineMarker{Label: "19:45", TopPct: 100, IsEnd: true}, wantSecondLastLbl: "19:00"},
 		{name: "invalid duration returns nil", hStart: 21, hEnd: 7, wantNil: true},
+		{name: "12h standard 07:00 to 21:00", hStart: 7, hEnd: 21, timeFormat: "12h", wantLen: 15, wantFirst: TimelineMarker{Label: "7am", TopPct: 0, IsStart: true}, wantSecond: TimelineMarker{Label: "8am", TopPct: 7.14}, wantLast: TimelineMarker{Label: "9pm", TopPct: 100, IsEnd: true}},
+		{name: "12h half-hour start 09:30 to 21:00", hStart: 9, mStart: 30, hEnd: 21, timeFormat: "12h", wantLen: 13, wantFirst: TimelineMarker{Label: "9:30am", TopPct: 0, IsStart: true}, wantSecond: TimelineMarker{Label: "10am", TopPct: 4.35}, wantLast: TimelineMarker{Label: "9pm", TopPct: 100, IsEnd: true}},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			markers := generateTimelineMarkers(tc.hStart, tc.mStart, tc.hEnd, tc.mEnd)
+			markers := generateTimelineMarkers(tc.hStart, tc.mStart, tc.hEnd, tc.mEnd, tc.timeFormat)
 			if tc.wantNil {
 				if markers != nil {
 					t.Fatalf("expected nil, got %+v", markers)
