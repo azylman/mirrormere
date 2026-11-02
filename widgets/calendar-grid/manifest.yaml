@@ -38,6 +38,11 @@ config_schema:
       enum:
         - sunday
         - monday
+    time_format:
+      type: string
+      enum:
+        - "24h"
+        - "12h"
     hours:
       type: array
       items:
