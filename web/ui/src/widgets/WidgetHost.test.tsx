@@ -321,3 +321,32 @@ describe('WidgetHost hydrate rejection', () => {
   });
 });
 
+describe('WidgetHost dimension change', () => {
+  beforeEach(() => {
+    useDisplayStore.setState(initial, true);
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('re-hydrates with fresh fetch when dimensions prop changes', async () => {
+    const fetchMock = stubApi();
+    const { rerender } = render(<WidgetHost id="a-0" origin={[0, 0]} dimensions={[1, 1]} />);
+    await settle();
+    expect(hydrations(fetchMock, 'a-0')).toBe(1);
+
+    // Update store meta dimensions to [1, 1] so it matches current
+    const currentEntry = useDisplayStore.getState().widgets['a-0'];
+    expect(currentEntry?.meta?.dimensions).toEqual([1, 1]);
+
+    // Rerender with changed dimensions [2, 1]
+    rerender(<WidgetHost id="a-0" origin={[0, 0]} dimensions={[2, 1]} />);
+    await settle();
+    expect(hydrations(fetchMock, 'a-0')).toBe(2);
+  });
+});
+
+

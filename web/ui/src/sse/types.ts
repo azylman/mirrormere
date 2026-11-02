@@ -118,6 +118,36 @@ interface ThemeUpdatePayload {
   theme: string;
 }
 
+export interface LayoutEditorWidget {
+  widget_id: string;
+  type: string;
+  screen: number;
+  origin: [number, number];
+  dimensions: [number, number];
+  pinned: boolean;
+  supported_dimensions: [number, number][];
+}
+
+export interface LayoutEditorResponse {
+  allow_layout_edit: boolean;
+  has_override: boolean;
+  grid: [number, number];
+  total_screens: number;
+  widgets: LayoutEditorWidget[];
+}
+
+export interface LayoutEditorWidgetPlacement {
+  widget_id: string;
+  screen: number;
+  origin: [number, number];
+  dimensions: [number, number];
+  pinned?: boolean;
+}
+
+export interface LayoutEditorUpdateRequest {
+  widgets: LayoutEditorWidgetPlacement[];
+}
+
 /** Synthetic event emitted by the client on open and on error; not sent by the server. */
 export interface ConnectionPayload {
   status: 'connected' | 'disconnected';

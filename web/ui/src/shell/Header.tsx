@@ -4,6 +4,7 @@ import { VoiceIcon } from '../voice/VoiceIcon';
 import { useVoiceHudState } from '../voice/useVoiceHudState';
 import { Clock, resolveActiveTimezone } from './Clock';
 import { HeaderVideoButton } from './HeaderVideoButton';
+import { HeaderLayoutButton } from './HeaderLayoutButton';
 import { NextUp } from './NextUp';
 import { StatusDot } from './StatusDot';
 import { WeatherPill } from './WeatherPill';
@@ -99,6 +100,7 @@ export function Header({ timezone: propTimezone }: HeaderProps = {}) {
       <Clock timezone={propTimezone} />
       <NextUp timezone={propTimezone} />
       <div className="header-right-cluster">
+        <HeaderLayoutButton />
         <HeaderVideoButton />
         <WeatherPill />
         <ThemeToggle />

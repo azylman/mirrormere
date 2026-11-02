@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BufferedEvent } from '../sse/batch';
 import type { WidgetDetailResponse } from '../sse/types';
-import { reduceEvents, useDisplayStore } from './index';
+import { needsHydrate, reduceEvents, useDisplayStore } from './index';
 
 const initial = useDisplayStore.getState();
 
@@ -409,6 +409,51 @@ describe('display store', () => {
       expect(useDisplayStore.getState().visibility.visible).toBe(false);
       expect(listener).toHaveBeenCalledTimes(1);
       unsubscribe();
+    });
+  });
+
+  describe('layoutEditorOpen and setLayoutEditorOpen', () => {
+    it('defaults layoutEditorOpen to false', () => {
+      expect(useDisplayStore.getState().layoutEditorOpen).toBe(false);
+    });
+
+    it('pauses carousel when layoutEditorOpen is set to true and resumes when set to false', () => {
+      expect(useDisplayStore.getState().carousel.paused).toBe(false);
+      useDisplayStore.getState().setLayoutEditorOpen(true);
+      expect(useDisplayStore.getState().layoutEditorOpen).toBe(true);
+      expect(useDisplayStore.getState().carousel.paused).toBe(true);
+
+      // No-op if setting true again
+      useDisplayStore.getState().setLayoutEditorOpen(true);
+      expect(useDisplayStore.getState().layoutEditorOpen).toBe(true);
+
+      useDisplayStore.getState().setLayoutEditorOpen(false);
+      expect(useDisplayStore.getState().layoutEditorOpen).toBe(false);
+      expect(useDisplayStore.getState().carousel.paused).toBe(false);
+    });
+  });
+
+  describe('needsHydrate with dimensions', () => {
+    it('returns true when widget has no meta', () => {
+      expect(needsHydrate('unknown-id')).toBe(true);
+      expect(needsHydrate('unknown-id', [2, 1])).toBe(true);
+    });
+
+    it('returns true when meta dimensions differ from requested dimensions', () => {
+      useDisplayStore.setState({
+        widgets: {
+          w1: {
+            meta: { type: 'calendar-grid', config: {}, assets_base: '', origin: [0, 0], dimensions: [2, 1] },
+            state: 'healthy',
+            data: {},
+            timestamp: 't0',
+          },
+        },
+      });
+      expect(needsHydrate('w1', [2, 1])).toBe(false);
+      expect(needsHydrate('w1', [3, 2])).toBe(true);
+      expect(needsHydrate('w1', [2, 2])).toBe(true);
+      expect(needsHydrate('w1')).toBe(false);
     });
   });
 });

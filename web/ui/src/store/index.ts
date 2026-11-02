@@ -29,6 +29,8 @@ interface DisplayActions {
   resume: () => void;
   /** Mark `index` as the current screen without a server round trip. No-op when it already is. */
   setCurrentScreen: (index: number) => void;
+  /** Open or close the live canvas layout editor overlay, pausing carousel rotation while open. */
+  setLayoutEditorOpen: (open: boolean) => void;
 }
 
 export type DisplayStore = DisplayData & DisplayActions;
@@ -55,6 +57,7 @@ const initialData: DisplayData = {
   layoutVersion: 0,
   widgetReloads: {},
   carousel: { paused: false, pendingRotate: null },
+  layoutEditorOpen: false,
 };
 
 /**
@@ -105,13 +108,20 @@ export function hydratedReloadCount(id: string): number {
 }
 
 /**
- * True when a widget needs a detail fetch on mount: it has no meta, or a widget.reload
- * for its type arrived after its meta was fetched (for example while it was unmounted).
+ * True when a widget needs a detail fetch on mount: it has no meta, its dimensions differ
+ * from placement dimensions, or a widget.reload for its type arrived after its meta was fetched.
  */
-export function needsHydrate(id: string): boolean {
+export function needsHydrate(id: string, dimensions?: [number, number]): boolean {
   const state = useDisplayStore.getState();
   const entry = state.widgets[id];
   if (!entry?.meta) return true;
+  if (
+    dimensions !== undefined &&
+    entry.meta.dimensions !== undefined &&
+    (entry.meta.dimensions[0] !== dimensions[0] || entry.meta.dimensions[1] !== dimensions[1])
+  ) {
+    return true;
+  }
   return (state.widgetReloads[entry.meta.type] ?? 0) > (hydratedAtReload.get(id) ?? 0);
 }
 
@@ -320,5 +330,15 @@ export const useDisplayStore = create<DisplayStore>()((set, get) => ({
   setCurrentScreen(index) {
     if (get().screen.currentScreen === index) return;
     set((s) => ({ screen: { ...s.screen, currentScreen: index } }));
+  },
+
+  setLayoutEditorOpen(open) {
+    if (get().layoutEditorOpen === open) return;
+    set({ layoutEditorOpen: open });
+    if (open) {
+      get().pause();
+    } else {
+      get().resume();
+    }
   },
 }));

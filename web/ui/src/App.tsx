@@ -1,4 +1,5 @@
 import { Carousel } from './carousel/Carousel';
+import { LayoutEditor } from './editor/LayoutEditor';
 import { Header } from './shell/Header';
 import { VideoStage } from './video/VideoStage';
 import { VoiceHud } from './voice/VoiceHud';
@@ -10,6 +11,7 @@ export function App() {
       <Carousel />
       <VideoStage />
       <VoiceHud />
+      <LayoutEditor />
     </div>
   );
 }

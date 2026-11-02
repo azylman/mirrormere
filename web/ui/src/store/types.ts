@@ -82,4 +82,6 @@ export interface DisplayData {
   /** Count of widget.reload events per widget type. A mounted widget re-hydrates when its type's count changes. */
   widgetReloads: Record<string, number>;
   carousel: CarouselSlice;
+  /** Whether the full-screen live canvas layout editor is open. */
+  layoutEditorOpen: boolean;
 }
