@@ -19,7 +19,7 @@ func TestHomeAssistant_ProviderInterface(t *testing.T) {
 
 func TestHomeAssistant_SupportedDomains(t *testing.T) {
 	t.Parallel()
-	domains := GetSupportedDomains()
+	domains := SupportedDomains
 	expected := []string{
 		"light",
 		"switch",
@@ -809,6 +809,100 @@ func TestHomeAssistant_CallService(t *testing.T) {
 			t.Fatalf("expected 404 error propagated, got %v", err)
 		}
 	})
+
+	t.Run("path traversal and invalid domain rejected", func(t *testing.T) {
+		invalidDomains := []string{
+			"../..",
+			"../../api",
+			"../light",
+			"light/admin",
+			"/etc/passwd",
+			"light..turn_on",
+			"light;drop",
+			"light turn_on",
+			"light?admin=true",
+			"LIGHT",
+		}
+		for _, dom := range invalidDomains {
+			err := p.CallService(ctx, dom, "turn_on", nil)
+			if err == nil {
+				t.Errorf("expected error for invalid domain %q, got nil", dom)
+			}
+		}
+	})
+
+	t.Run("unsupported domain rejected even if identifier is valid", func(t *testing.T) {
+		unsupportedDomains := []string{
+			"automation",
+			"zone",
+			"shell_command",
+			"hassio",
+			"input_boolean",
+			"input_number",
+		}
+		for _, dom := range unsupportedDomains {
+			err := p.CallService(ctx, dom, "trigger", nil)
+			if err == nil {
+				t.Errorf("expected error for unsupported domain %q, got nil", dom)
+			}
+			if !strings.Contains(err.Error(), "unsupported domain") {
+				t.Errorf("expected 'unsupported domain' error, got: %v", err)
+			}
+		}
+	})
+
+	t.Run("path traversal and invalid service rejected", func(t *testing.T) {
+		invalidServices := []string{
+			"../..",
+			"turn_on/../admin",
+			"api/config",
+			"../../../api/template",
+			"turn_on?evil=1",
+			"turn_on#frag",
+			"turn on",
+			"turn-on",
+			"TURN_ON",
+			"turn_on/..",
+		}
+		for _, svc := range invalidServices {
+			err := p.CallService(ctx, "light", svc, nil)
+			if err == nil {
+				t.Errorf("expected error for invalid service %q, got nil", svc)
+			}
+		}
+	})
+}
+
+func TestHomeAssistant_Registry(t *testing.T) {
+	t.Parallel()
+	reg := NewRegistry()
+	p, err := reg.Create("home-assistant")
+	if err != nil {
+		t.Fatalf("expected home-assistant to be registered in NewRegistry(): %v", err)
+	}
+	if p == nil {
+		t.Fatal("expected non-nil provider instance")
+	}
+	if _, ok := p.(*HomeAssistantProvider); !ok {
+		t.Fatalf("expected *HomeAssistantProvider, got %T", p)
+	}
+}
+
+func TestHomeAssistant_IsValidIdentifier(t *testing.T) {
+	t.Parallel()
+	valid := []string{"light", "switch", "turn_on", "toggle", "binary_sensor", "media_player", "v1_service"}
+	for _, s := range valid {
+		if !IsValidIdentifier(s) {
+			t.Errorf("expected IsValidIdentifier(%q) to be true", s)
+		}
+	}
+
+	invalid := []string{"", "Light", "light-switch", "light.turn_on", "light/turn_on", "../..", "light\n", "turn_on "}
+	for _, s := range invalid {
+		if IsValidIdentifier(s) {
+			t.Errorf("expected IsValidIdentifier(%q) to be false", s)
+		}
+	}
 }
 
 func TestHomeAssistant_SubscribeAndShutdown(t *testing.T) {

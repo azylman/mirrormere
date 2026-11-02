@@ -98,6 +98,9 @@ func NewRegistry() *DefaultRegistry {
 	r.Register("tasks", func() Provider {
 		return NewTasksProvider()
 	})
+	r.Register("home-assistant", func() Provider {
+		return NewHomeAssistantProvider()
+	})
 	return r
 }
 

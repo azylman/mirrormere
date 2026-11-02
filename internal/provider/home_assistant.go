@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"slices"
 	"sort"
 	"strconv"
@@ -39,17 +40,17 @@ var SupportedDomains = []string{
 	"binary_sensor",
 }
 
+var haIdentifierRegex = regexp.MustCompile(`^[a-z0-9_]+$`)
+
+// IsValidIdentifier checks whether a domain or service string conforms to ^[a-z0-9_]+$.
+func IsValidIdentifier(s string) bool {
+	return haIdentifierRegex.MatchString(s)
+}
+
 // IsSupportedDomain checks if the given domain string is one of the 12 supported domains.
 func IsSupportedDomain(domain string) bool {
 	domain = strings.ToLower(strings.TrimSpace(domain))
 	return slices.Contains(SupportedDomains, domain)
-}
-
-// GetSupportedDomains returns a copy of the supported domains slice.
-func GetSupportedDomains() []string {
-	res := make([]string, len(SupportedDomains))
-	copy(res, SupportedDomains)
-	return res
 }
 
 // EntityState represents an entity state returned from Home Assistant /api/states.
@@ -386,6 +387,15 @@ func (p *HomeAssistantProvider) CallServiceWithResponse(ctx context.Context, dom
 	if domain == "" || service == "" {
 		return nil, errors.New("domain and service must not be empty")
 	}
+	if !IsValidIdentifier(domain) {
+		return nil, fmt.Errorf("invalid domain %q: must match ^[a-z0-9_]+$", domain)
+	}
+	if !IsValidIdentifier(service) {
+		return nil, fmt.Errorf("invalid service %q: must match ^[a-z0-9_]+$", service)
+	}
+	if !IsSupportedDomain(domain) {
+		return nil, fmt.Errorf("unsupported domain: %q", domain)
+	}
 
 	p.mu.RLock()
 	baseURL := p.baseURL
@@ -400,7 +410,7 @@ func (p *HomeAssistantProvider) CallServiceWithResponse(ctx context.Context, dom
 		client = http.DefaultClient
 	}
 
-	reqURL := fmt.Sprintf("%s/api/services/%s/%s", strings.TrimRight(baseURL, "/"), domain, service)
+	reqURL := fmt.Sprintf("%s/api/services/%s/%s", strings.TrimRight(baseURL, "/"), url.PathEscape(domain), url.PathEscape(service))
 
 	var bodyReader io.Reader
 	if serviceData != nil {
