@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useIsCurrentPane } from '../../carousel/PaneContext';
 import { useDocumentVisible } from '../../lifecycle/visibility';
 import { useDisplayStore } from '../../store';
@@ -73,7 +73,7 @@ export interface CalendarWeekViewProps {
   onSelectDay?: (date: string) => void;
 }
 
-export const CalendarWeekView = memo(function CalendarWeekView({
+export function CalendarWeekView({
   activeView,
   weekVM,
   daysToRender,
@@ -104,14 +104,14 @@ export const CalendarWeekView = memo(function CalendarWeekView({
   const nowPct = computeNowIndicatorPct(weekVM, now, tz || undefined);
 
   const canvasRefs = useRef<Map<string, HTMLElement>>(new Map());
-  const registerDayCanvas = useCallback((date: string, el: HTMLElement | null) => {
+  const registerDayCanvas = (date: string, el: HTMLElement | null) => {
     if (el) {
       canvasRefs.current.set(date, el);
       batchFitDayColumnEvents(el);
     } else {
       canvasRefs.current.delete(date);
     }
-  }, []);
+  };
 
   useEffect(() => {
     if (typeof ResizeObserver === 'undefined') return;
@@ -453,4 +453,4 @@ export const CalendarWeekView = memo(function CalendarWeekView({
       )}
     </div>
   );
-});
+}

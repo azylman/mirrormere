@@ -1,4 +1,4 @@
-import { memo, useEffect } from 'react';
+import { useEffect } from 'react';
 import { stripMealiePrefix } from './dateUtils';
 import type { FamilyEvent } from './types';
 
@@ -8,7 +8,7 @@ export interface CalendarEventModalProps {
   onClose: () => void;
 }
 
-export const CalendarEventModal = memo(function CalendarEventModal({
+export function CalendarEventModal({
   event,
   dateLabel,
   onClose,
@@ -196,4 +196,4 @@ export const CalendarEventModal = memo(function CalendarEventModal({
       </div>
     </div>
   );
-});
+}

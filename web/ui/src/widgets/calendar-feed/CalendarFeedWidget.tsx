@@ -1,7 +1,4 @@
 import {
-  memo,
-  useCallback,
-  useMemo,
   useState,
   type CSSProperties,
 } from 'react';
@@ -24,7 +21,7 @@ import type { FamilyEvent } from '../calendar-grid/types';
  * Native React widget component for upcoming calendar feed agendas.
  * Ports widgets/calendar-feed/views/widget.html.
  */
-export const CalendarFeedWidget = memo(function CalendarFeedWidget({
+export function CalendarFeedWidget({
   id,
 }: WidgetComponentProps) {
   const entry = useWidget(id);
@@ -44,10 +41,7 @@ export const CalendarFeedWidget = memo(function CalendarFeedWidget({
       ? config.title.trim()
       : '';
 
-  const activeCalendars = useMemo(
-    () => calendarFeedActiveCalendars(config),
-    [config]
-  );
+  const activeCalendars = calendarFeedActiveCalendars(config);
   const isHydrated =
     Array.isArray(data) ||
     (Boolean(data) &&
@@ -56,7 +50,7 @@ export const CalendarFeedWidget = memo(function CalendarFeedWidget({
         Array.isArray((data as Record<string, unknown>).Events)));
 
   const entryTimestamp = entry?.timestamp;
-  const groups = useMemo(() => {
+  const groups = (() => {
     if (!isHydrated) return [];
     let refTime: Date | undefined;
     if (entryTimestamp) {
@@ -66,66 +60,63 @@ export const CalendarFeedWidget = memo(function CalendarFeedWidget({
       }
     }
     return calendarFeedDayGroups(data, refTime, tz);
-  }, [isHydrated, data, entryTimestamp, tz]);
+  })();
 
   const [activeModalEvent, setActiveModalEvent] = useState<FamilyEvent | null>(
     null
   );
   const [activeModalDateLabel, setActiveModalDateLabel] = useState<string>('');
 
-  const handleInactivityReset = useCallback(() => {
+  const handleInactivityReset = () => {
     setActiveModalEvent(null);
     setActiveModalDateLabel('');
-  }, []);
+  };
 
   const { handleUserActivity } = useInactivityReset({
     isInteractive: Boolean(activeModalEvent),
     onReset: handleInactivityReset,
   });
 
-  const closeModal = useCallback(() => {
+  const closeModal = () => {
     setActiveModalEvent(null);
     setActiveModalDateLabel('');
     handleUserActivity();
-  }, [handleUserActivity]);
+  };
 
-  const handleActivateEvent = useCallback(
-    (
-      ev: CalendarFeedEvent,
-      evId: string,
-      isAllDay: boolean,
-      groupDate: string
-    ) => {
-      const calName = ev.calendar_name || ev.calendarName;
-      const familyEvent: FamilyEvent = {
-        id: evId,
-        title: ev.title,
-        all_day: isAllDay,
-        location: ev.location ? String(ev.location) : undefined,
-        description:
-          typeof ev.description === 'string' ? ev.description : undefined,
-        color: ev.color ? String(ev.color) : undefined,
-        owners: calName ? [String(calName)] : undefined,
-        start: !isAllDay
-          ? formatTime('3:04 PM', ev.start, tz) || ev.start
+  const handleActivateEvent = (
+    ev: CalendarFeedEvent,
+    evId: string,
+    isAllDay: boolean,
+    groupDate: string
+  ) => {
+    const calName = ev.calendar_name || ev.calendarName;
+    const familyEvent: FamilyEvent = {
+      id: evId,
+      title: ev.title,
+      all_day: isAllDay,
+      location: ev.location ? String(ev.location) : undefined,
+      description:
+        typeof ev.description === 'string' ? ev.description : undefined,
+      color: ev.color ? String(ev.color) : undefined,
+      owners: calName ? [String(calName)] : undefined,
+      start: !isAllDay
+        ? formatTime('3:04 PM', ev.start, tz) || ev.start
+        : undefined,
+      end:
+        !isAllDay && ev.end
+          ? formatTime('3:04 PM', ev.end, tz) || ev.end
           : undefined,
-        end:
-          !isAllDay && ev.end
-            ? formatTime('3:04 PM', ev.end, tz) || ev.end
-            : undefined,
-      };
+    };
 
-      const startDate = groupDate || formatDate('2006-01-02', ev.start, tz);
-      const endDate = ev.end
-        ? formatDate('2006-01-02', ev.end, tz)
-        : undefined;
+    const startDate = groupDate || formatDate('2006-01-02', ev.start, tz);
+    const endDate = ev.end
+      ? formatDate('2006-01-02', ev.end, tz)
+      : undefined;
 
-      setActiveModalEvent(familyEvent);
-      setActiveModalDateLabel(formatModalDateRange(startDate, endDate));
-      handleUserActivity();
-    },
-    [tz, handleUserActivity]
-  );
+    setActiveModalEvent(familyEvent);
+    setActiveModalDateLabel(formatModalDateRange(startDate, endDate));
+    handleUserActivity();
+  };
 
   return (
     <div className="widget-calendar widget-calendar-feed">
@@ -345,4 +336,4 @@ export const CalendarFeedWidget = memo(function CalendarFeedWidget({
       />
     </div>
   );
-});
+}

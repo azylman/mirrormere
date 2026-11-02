@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { addDays, addMonths, parseISODate, formatISODate as toISODate } from './dateUtils';
 import type { CalendarGridViewModel, FamilyViewModel, ViewMode } from './types';
 
@@ -43,7 +43,7 @@ export function useCalendarRangeData({
   const currentDate = pagedDate ?? baseDate;
   const currentWeekStart = pagedWeekStart ?? baseWeekStart;
 
-  const pageOffset = useMemo(() => {
+  const pageOffset = (() => {
     if (activeView === 'day') {
       return Math.round((currentDate.getTime() - baseDate.getTime()) / 86400000);
     }
@@ -54,7 +54,7 @@ export function useCalendarRangeData({
     if (diffMs === 0) return 0;
     const step = Math.round(diffMs / (weekStep * 86400000));
     return step === 0 ? (diffMs > 0 ? 1 : -1) : step;
-  }, [activeView, currentDate, baseDate, currentWeekStart, baseWeekStart, weekStep]);
+  })();
 
   const isAtBaseDate = pageOffset === 0;
 
@@ -63,14 +63,14 @@ export function useCalendarRangeData({
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const syncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const showSyncIndicator = useCallback((msg: string) => {
+  const showSyncIndicator = (msg: string) => {
     if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
     setSyncMessage(msg);
     syncTimerRef.current = setTimeout(() => {
       setSyncMessage(null);
       syncTimerRef.current = null;
     }, 2500);
-  }, []);
+  };
 
   const prevTimestampRef = useRef<string | undefined>(entryTimestamp);
   useEffect(() => {
@@ -89,7 +89,7 @@ export function useCalendarRangeData({
     }
   }, [entryViewModel, isAtBaseDate]);
 
-  const resolveCachedRange = useCallback(() => {
+  const resolveCachedRange = () => {
     const vm = currentViewModel as Record<string, unknown> | undefined;
     let start = cachedRangeStartConfig || (vm?.cached_range_start as string) || dataCachedRangeStart;
     let end = cachedRangeEndConfig || (vm?.cached_range_end as string) || dataCachedRangeEnd;
@@ -97,83 +97,80 @@ export function useCalendarRangeData({
     if (!start) start = toISODate(addDays(baseDate, -90));
     if (!end) end = toISODate(addDays(baseDate, 180));
     return { start, end };
-  }, [currentViewModel, cachedRangeStartConfig, cachedRangeEndConfig, dataCachedRangeStart, dataCachedRangeEnd, baseDate]);
+  };
 
-  const abortInFlight = useCallback(() => {
+  const abortInFlight = () => {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
     }
-  }, []);
+  };
 
-  const loadDateView = useCallback(
-    async (
-      targetDate: Date,
-      targetView: ViewMode,
-      rollbackFn: () => void,
-      syncWeekStart?: boolean
-    ) => {
-      abortInFlight();
+  const loadDateView = async (
+    targetDate: Date,
+    targetView: ViewMode,
+    rollbackFn: () => void,
+    syncWeekStart?: boolean
+  ) => {
+    abortInFlight();
 
-      const dateStr = toISODate(targetDate);
-      const viewStr = targetView;
-      const cacheKey = `${dateStr}:${viewStr}`;
+    const dateStr = toISODate(targetDate);
+    const viewStr = targetView;
+    const cacheKey = `${dateStr}:${viewStr}`;
 
-      const cache = lruCacheRef.current;
-      if (cache.has(cacheKey)) {
-        const cachedVM = cache.get(cacheKey)!;
-        cache.delete(cacheKey);
-        cache.set(cacheKey, cachedVM);
-        setCurrentViewModel(cachedVM as Record<string, unknown>);
-        if (syncWeekStart && cachedVM.week?.range_start) {
-          const parsedWeekStart = parseISODate(cachedVM.week.range_start);
-          setPagedWeekStart(parsedWeekStart);
-          if (targetView === 'week') setPagedDate(parsedWeekStart);
-        }
-        return;
+    const cache = lruCacheRef.current;
+    if (cache.has(cacheKey)) {
+      const cachedVM = cache.get(cacheKey)!;
+      cache.delete(cacheKey);
+      cache.set(cacheKey, cachedVM);
+      setCurrentViewModel(cachedVM as Record<string, unknown>);
+      if (syncWeekStart && cachedVM.week?.range_start) {
+        const parsedWeekStart = parseISODate(cachedVM.week.range_start);
+        setPagedWeekStart(parsedWeekStart);
+        if (targetView === 'week') setPagedDate(parsedWeekStart);
+      }
+      return;
+    }
+
+    const ac = new AbortController();
+    abortControllerRef.current = ac;
+
+    try {
+      let url = `api/widgets/${encodeURIComponent(id)}?date=${encodeURIComponent(dateStr)}&view=${encodeURIComponent(viewStr)}`;
+      if (typeof window !== 'undefined' && window.location?.search) {
+        const node = new URLSearchParams(window.location.search).get('node');
+        if (node) url += `&node=${encodeURIComponent(node)}`;
       }
 
-      const ac = new AbortController();
-      abortControllerRef.current = ac;
+      const res = await fetch(url, { signal: ac.signal });
+      if (ac.signal.aborted) return;
+      if (!res.ok) throw new Error(`Fetch failed with status ${res.status}`);
 
-      try {
-        let url = `api/widgets/${encodeURIComponent(id)}?date=${encodeURIComponent(dateStr)}&view=${encodeURIComponent(viewStr)}`;
-        if (typeof window !== 'undefined' && window.location?.search) {
-          const node = new URLSearchParams(window.location.search).get('node');
-          if (node) url += `&node=${encodeURIComponent(node)}`;
-        }
+      const body = await res.json();
+      if (ac.signal.aborted) return;
+      const vm = (body.view_model ?? body) as CalendarGridViewModel;
 
-        const res = await fetch(url, { signal: ac.signal });
-        if (ac.signal.aborted) return;
-        if (!res.ok) throw new Error(`Fetch failed with status ${res.status}`);
-
-        const body = await res.json();
-        if (ac.signal.aborted) return;
-        const vm = (body.view_model ?? body) as CalendarGridViewModel;
-
-        if (cache.size >= 20) {
-          const oldestKey = cache.keys().next().value;
-          if (oldestKey !== undefined) cache.delete(oldestKey);
-        }
-        cache.set(cacheKey, vm);
-        setCurrentViewModel(vm as Record<string, unknown>);
-        if (syncWeekStart && vm.week?.range_start) {
-          const parsedWeekStart = parseISODate(vm.week.range_start);
-          setPagedWeekStart(parsedWeekStart);
-          if (targetView === 'week') setPagedDate(parsedWeekStart);
-        }
-      } catch (err: unknown) {
-        if (ac.signal.aborted || (err instanceof Error && err.name === 'AbortError')) return;
-        showSyncIndicator('Sync failed');
-        rollbackFn();
-      } finally {
-        if (abortControllerRef.current === ac) abortControllerRef.current = null;
+      if (cache.size >= 20) {
+        const oldestKey = cache.keys().next().value;
+        if (oldestKey !== undefined) cache.delete(oldestKey);
       }
-    },
-    [id, showSyncIndicator, abortInFlight]
-  );
+      cache.set(cacheKey, vm);
+      setCurrentViewModel(vm as Record<string, unknown>);
+      if (syncWeekStart && vm.week?.range_start) {
+        const parsedWeekStart = parseISODate(vm.week.range_start);
+        setPagedWeekStart(parsedWeekStart);
+        if (targetView === 'week') setPagedDate(parsedWeekStart);
+      }
+    } catch (err: unknown) {
+      if (ac.signal.aborted || (err instanceof Error && err.name === 'AbortError')) return;
+      showSyncIndicator('Sync failed');
+      rollbackFn();
+    } finally {
+      if (abortControllerRef.current === ac) abortControllerRef.current = null;
+    }
+  };
 
-  const stepDate = useCallback((direction: 1 | -1) => {
+  const stepDate = (direction: 1 | -1) => {
     onActivity?.();
     const cached = resolveCachedRange();
     const prevPagedDate = pagedDate;
@@ -237,16 +234,12 @@ export function useCalendarRangeData({
       setPagedDate(targetMonth);
       loadDateView(targetMonth, 'month', rollbackFn);
     }
-  }, [
-    activeView, currentDate, currentWeekStart, pagedDate, pagedWeekStart,
-    baseDate, baseWeekStart, weekStep, entryViewModel, resolveCachedRange,
-    loadDateView, abortInFlight, showSyncIndicator, onActivity,
-  ]);
+  };
 
-  const pageNext = useCallback(() => stepDate(1), [stepDate]);
-  const pagePrev = useCallback(() => stepDate(-1), [stepDate]);
+  const pageNext = () => stepDate(1);
+  const pagePrev = () => stepDate(-1);
 
-  const resetDate = useCallback(() => {
+  const resetDate = () => {
     setPagedDate(null);
     setPagedWeekStart(null);
     setSyncMessage(null);
@@ -257,74 +250,67 @@ export function useCalendarRangeData({
       loadDateView(baseDate, activeView, () => {});
     }
     onActivity?.();
-  }, [baseDate, activeView, entryViewModel, loadDateView, abortInFlight, onActivity]);
+  };
 
-  const handleViewSwitch = useCallback(
-    (targetView: ViewMode) => {
-      if (targetView === activeView) return;
-      const prevActiveView = activeView;
-      setActiveView(targetView);
-      onActivity?.();
+  const handleViewSwitch = (targetView: ViewMode) => {
+    if (targetView === activeView) return;
+    const prevActiveView = activeView;
+    setActiveView(targetView);
+    onActivity?.();
 
-      const currentISO = toISODate(currentDate);
-      const baseDateISO = toISODate(baseDate);
-      const baseWeekStartISO = toISODate(baseWeekStart);
-      const baseWeekEndISO = toISODate(addDays(baseWeekStart, weekStep - 1));
+    const currentISO = toISODate(currentDate);
+    const baseDateISO = toISODate(baseDate);
+    const baseWeekStartISO = toISODate(baseWeekStart);
+    const baseWeekEndISO = toISODate(addDays(baseWeekStart, weekStep - 1));
 
-      const isTargetAtBase =
-        targetView === 'day'
-          ? currentISO === baseDateISO
-          : targetView === 'week'
-          ? currentISO >= baseWeekStartISO && currentISO <= baseWeekEndISO
-          : currentDate.getFullYear() === baseDate.getFullYear() &&
-            currentDate.getMonth() === baseDate.getMonth();
+    const isTargetAtBase =
+      targetView === 'day'
+        ? currentISO === baseDateISO
+        : targetView === 'week'
+        ? currentISO >= baseWeekStartISO && currentISO <= baseWeekEndISO
+        : currentDate.getFullYear() === baseDate.getFullYear() &&
+          currentDate.getMonth() === baseDate.getMonth();
 
-      if (isTargetAtBase) {
-        const baseVM = (entryViewModel ?? (isAtBaseDate ? currentViewModel : undefined)) as
-          | Record<string, unknown>
-          | undefined;
-        const hasMonth = Boolean(baseVM?.month);
-        const hasWeek = Boolean(baseVM?.week);
-        if (
-          (targetView === 'month' && hasMonth) ||
-          ((targetView === 'week' || targetView === 'day') && hasWeek)
-        ) {
-          abortInFlight();
-          setPagedDate(null);
-          setPagedWeekStart(null);
-          if (baseVM) setCurrentViewModel(baseVM);
-          return;
-        }
-      }
-
-      const prevPagedDate = pagedDate;
-      const prevPagedWeekStart = pagedWeekStart;
-      const fetchAnchorDate = isTargetAtBase ? baseDate : currentDate;
-      if (isTargetAtBase) {
+    if (isTargetAtBase) {
+      const baseVM = (entryViewModel ?? (isAtBaseDate ? currentViewModel : undefined)) as
+        | Record<string, unknown>
+        | undefined;
+      const hasMonth = Boolean(baseVM?.month);
+      const hasWeek = Boolean(baseVM?.week);
+      if (
+        (targetView === 'month' && hasMonth) ||
+        ((targetView === 'week' || targetView === 'day') && hasWeek)
+      ) {
+        abortInFlight();
         setPagedDate(null);
         setPagedWeekStart(null);
-      } else if (targetView === 'week') {
-        setPagedWeekStart(currentDate);
+        if (baseVM) setCurrentViewModel(baseVM);
+        return;
       }
-      loadDateView(
-        fetchAnchorDate,
-        targetView,
-        () => {
-          setActiveView(prevActiveView);
-          setPagedDate(prevPagedDate);
-          setPagedWeekStart(prevPagedWeekStart);
-        },
-        !isTargetAtBase
-      );
-    },
-    [
-      activeView, setActiveView, currentDate, baseDate, baseWeekStart, weekStep, isAtBaseDate,
-      pagedDate, pagedWeekStart, currentViewModel, entryViewModel,
-      loadDateView, abortInFlight, onActivity,
-    ]
-  );
+    }
 
-  const resetToBaseline = useCallback((defaultView: ViewMode) => {
+    const prevPagedDate = pagedDate;
+    const prevPagedWeekStart = pagedWeekStart;
+    const fetchAnchorDate = isTargetAtBase ? baseDate : currentDate;
+    if (isTargetAtBase) {
+      setPagedDate(null);
+      setPagedWeekStart(null);
+    } else if (targetView === 'week') {
+      setPagedWeekStart(currentDate);
+    }
+    loadDateView(
+      fetchAnchorDate,
+      targetView,
+      () => {
+        setActiveView(prevActiveView);
+        setPagedDate(prevPagedDate);
+        setPagedWeekStart(prevPagedWeekStart);
+      },
+      !isTargetAtBase
+    );
+  };
+
+  const resetToBaseline = (defaultView: ViewMode) => {
     setActiveView(defaultView);
     setPagedDate(null);
     setPagedWeekStart(null);
@@ -335,78 +321,64 @@ export function useCalendarRangeData({
     } else {
       loadDateView(baseDate, defaultView, () => {});
     }
-  }, [baseDate, entryViewModel, loadDateView, abortInFlight, setActiveView]);
+  };
 
-  const selectDayView = useCallback(
-    (isoDate: string) => {
-      if (!isoDate || !/^\d{4}-\d{2}-\d{2}/.test(isoDate)) return;
-      const prevActiveView = activeView;
-      const prevPagedDate = pagedDate;
-      const prevPagedWeekStart = pagedWeekStart;
+  const selectDayView = (isoDate: string) => {
+    if (!isoDate || !/^\d{4}-\d{2}-\d{2}/.test(isoDate)) return;
+    const prevActiveView = activeView;
+    const prevPagedDate = pagedDate;
+    const prevPagedWeekStart = pagedWeekStart;
 
-      const targetDate = parseISODate(isoDate);
-      onActivity?.();
-      setActiveView('day');
-      setPagedDate(targetDate);
+    const targetDate = parseISODate(isoDate);
+    onActivity?.();
+    setActiveView('day');
+    setPagedDate(targetDate);
 
-      // Abort any in-flight paging fetch and synchronize pagedWeekStart so subsequent
-      // view switching and week paging step from the active week rather than a stale paged offset.
-      const currentWeekVM = currentViewModel?.week as FamilyViewModel | undefined;
-      const currentWeekDays = currentWeekVM?.days;
-      if (currentWeekDays?.some((d) => d.date === isoDate)) {
-        abortInFlight();
-        if (currentWeekVM?.range_start) {
-          if (toISODate(baseWeekStart) === currentWeekVM.range_start) {
-            setPagedWeekStart(null);
-          } else {
-            setPagedWeekStart(parseISODate(currentWeekVM.range_start));
-          }
+    // Abort any in-flight paging fetch and synchronize pagedWeekStart so subsequent
+    // view switching and week paging step from the active week rather than a stale paged offset.
+    const currentWeekVM = currentViewModel?.week as FamilyViewModel | undefined;
+    const currentWeekDays = currentWeekVM?.days;
+    if (currentWeekDays?.some((d) => d.date === isoDate)) {
+      abortInFlight();
+      if (currentWeekVM?.range_start) {
+        if (toISODate(baseWeekStart) === currentWeekVM.range_start) {
+          setPagedWeekStart(null);
+        } else {
+          setPagedWeekStart(parseISODate(currentWeekVM.range_start));
         }
-        return;
       }
+      return;
+    }
 
-      const entryWeekVM = entryViewModel?.week as FamilyViewModel | undefined;
-      const entryWeekDays = entryWeekVM?.days;
-      if (entryWeekDays?.some((d) => d.date === isoDate)) {
-        abortInFlight();
-        if (entryViewModel) {
-          setCurrentViewModel(entryViewModel);
-        }
-        setPagedWeekStart(null);
-        return;
+    const entryWeekVM = entryViewModel?.week as FamilyViewModel | undefined;
+    const entryWeekDays = entryWeekVM?.days;
+    if (entryWeekDays?.some((d) => d.date === isoDate)) {
+      abortInFlight();
+      if (entryViewModel) {
+        setCurrentViewModel(entryViewModel);
       }
+      setPagedWeekStart(null);
+      return;
+    }
 
-      loadDateView(
-        targetDate,
-        'day',
-        () => {
-          setActiveView(prevActiveView);
-          setPagedDate(prevPagedDate);
-          setPagedWeekStart(prevPagedWeekStart);
-        },
-        true
-      );
-    },
-    [
-      activeView,
-      pagedDate,
-      pagedWeekStart,
-      baseWeekStart,
-      onActivity,
-      setActiveView,
-      currentViewModel,
-      entryViewModel,
-      abortInFlight,
-      loadDateView,
-    ]
-  );
+    loadDateView(
+      targetDate,
+      'day',
+      () => {
+        setActiveView(prevActiveView);
+        setPagedDate(prevPagedDate);
+        setPagedWeekStart(prevPagedWeekStart);
+      },
+      true
+    );
+  };
 
   useEffect(() => {
     return () => {
       if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
       abortInFlight();
     };
-  }, [abortInFlight]);
+  }, []);
 
   return {
     currentViewModel,
