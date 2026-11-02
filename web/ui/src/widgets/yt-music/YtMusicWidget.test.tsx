@@ -495,4 +495,28 @@ describe('YtMusicWidget', () => {
 
     vi.useRealTimers();
   });
+
+  it('marks horizontal controls with data-prevent-screen-swipe so carousel drags ignore them', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/music/state')) {
+        return new Response(JSON.stringify(SAMPLE_STATE), { status: 200 });
+      }
+      if (url.includes('/music/playlists')) {
+        return new Response(JSON.stringify(SAMPLE_PLAYLISTS), { status: 200 });
+      }
+      return new Response('{}', { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { container } = render(<YtMusicWidget id="yt-swipe" config={{}} />);
+    await waitFor(() => {
+      expect(container.querySelector('#vol-slider')).not.toBeNull();
+    });
+
+    expect(container.querySelector('.vol-wrap')?.hasAttribute('data-prevent-screen-swipe')).toBe(true);
+    expect(container.querySelector('#vol-slider')?.hasAttribute('data-prevent-screen-swipe')).toBe(true);
+    expect(container.querySelector('.speaker-bar')?.hasAttribute('data-prevent-screen-swipe')).toBe(true);
+    expect(container.querySelector('.search-input')?.hasAttribute('data-prevent-screen-swipe')).toBe(true);
+  });
 });

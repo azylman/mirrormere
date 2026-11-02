@@ -234,7 +234,7 @@ export const YtMusicWidget = memo(function YtMusicWidget({ id }: WidgetComponent
   return (
     <div className="widget-yt-music">
       {/* 1. Speaker Selector Bar */}
-      <div className="speaker-bar" id="speaker-bar" style={{ touchAction: 'pan-x' }}>
+      <div className="speaker-bar" data-prevent-screen-swipe="" id="speaker-bar" style={{ touchAction: 'pan-x' }}>
         {(stateData.speakers || []).map((s) => {
           const isAct = s.entity_id === stateData.active_speaker;
           return (
@@ -305,14 +305,14 @@ export const YtMusicWidget = memo(function YtMusicWidget({ id }: WidgetComponent
             ⏹
           </button>
         </div>
-        <div className="vol-wrap">
+        <div className="vol-wrap" data-prevent-screen-swipe="">
           <span style={{ fontSize: '0.75rem' }} aria-hidden="true">
             🔊
           </span>
           <input
             type="range"
             className="vol-slider"
-            id="vol-slider"
+            id="vol-slider" data-prevent-screen-swipe=""
             min={0}
             max={100}
             value={volumeValue}
@@ -343,7 +343,7 @@ export const YtMusicWidget = memo(function YtMusicWidget({ id }: WidgetComponent
         <form className="search-form" id="search-form" onSubmit={handleSearchSubmit}>
           <input
             type="text"
-            className="search-input"
+            className="search-input" data-prevent-screen-swipe=""
             id="search-input"
             placeholder="Search YouTube Music songs or artists..."
             autoComplete="off"

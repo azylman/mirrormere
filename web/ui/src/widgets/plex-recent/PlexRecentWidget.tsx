@@ -220,7 +220,7 @@ export const PlexRecentWidget = memo(function PlexRecentWidget({ id }: WidgetCom
   return (
     <div className="widget-plex-recent">
       <div className="toolbar">
-        <div className="tabs">
+        <div className="tabs" data-prevent-screen-swipe="">
           {CATEGORIES.map((cat) => (
             <button
               key={cat.key}
@@ -332,7 +332,7 @@ export const PlexRecentWidget = memo(function PlexRecentWidget({ id }: WidgetCom
           <input
             ref={seerrInputRef}
             type="text"
-            className="seerr-input"
+            className="seerr-input" data-prevent-screen-swipe=""
             id="seerr-input"
             value={seerrQuery}
             onChange={(e) => setSeerrQuery(e.target.value)}
