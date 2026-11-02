@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useDisplayStore } from '../store';
-import { CarouselController, neighbourOf, type CarouselHost } from './controller';
+import { CarouselController, INACTIVITY_HOLD_MS, neighbourOf, type CarouselHost } from './controller';
 import { SETTLE_FALLBACK_MS, SETTLE_MS } from './track';
 
 const initial = useDisplayStore.getState();
@@ -121,6 +121,7 @@ describe('CarouselController', () => {
     harness?.controller.dispose();
     harness?.viewport.remove();
     harness = null;
+    document.getElementById('mirrormere-app')?.remove();
     vi.useRealTimers();
     vi.unstubAllGlobals();
   });
@@ -717,6 +718,174 @@ describe('CarouselController', () => {
       expect(busy(h)).toBe(true);
       h.controller.rendered(0);
       expect(busy(h)).toBe(false);
+    });
+  });
+
+  describe('inactivity hold and pinning', () => {
+    it('manages pinned and held getters and resets hold after INACTIVITY_HOLD_MS', () => {
+      vi.useFakeTimers();
+      const h = build(1);
+
+      expect(h.controller.pinned).toBe(false);
+      expect(h.controller.held).toBe(false);
+
+      h.controller.setPinned(true);
+      expect(h.controller.pinned).toBe(true);
+      expect(h.controller.held).toBe(true);
+
+      h.controller.setPinned(false);
+      expect(h.controller.pinned).toBe(false);
+      expect(h.controller.held).toBe(false);
+
+      h.controller.recordActivity();
+      expect(h.controller.pinned).toBe(false);
+      expect(h.controller.held).toBe(true);
+
+      vi.advanceTimersByTime(INACTIVITY_HOLD_MS);
+      expect(h.controller.held).toBe(false);
+    });
+
+    it('queues server rotation during viewport wheel hold and drains on expiry', () => {
+      vi.useFakeTimers();
+      const h = build(1);
+
+      h.viewport.dispatchEvent(new WheelEvent('wheel', { bubbles: true }));
+      expect(h.controller.held).toBe(true);
+
+      useDisplayStore.setState({ screen: { ...useDisplayStore.getState().screen, currentScreen: 2 } });
+      expect(h.controller.current).toBe(1);
+      expect(h.host.commit).not.toHaveBeenCalledWith(2);
+
+      vi.advanceTimersByTime(INACTIVITY_HOLD_MS);
+      expect(h.controller.held).toBe(false);
+      expect(h.track.style.transform).toBe('translate3d(-1000px,0,0)');
+      h.transitionEnd();
+      expect(h.host.commit).toHaveBeenCalledWith(2);
+    });
+
+    it('activates hold on excluded target pointerdown even without #mirrormere-app', () => {
+      vi.useFakeTimers();
+      const h = build(1);
+
+      const excluded = document.createElement('div');
+      excluded.setAttribute('data-prevent-screen-swipe', 'true');
+      h.viewport.appendChild(excluded);
+
+      h.down(200, 200, excluded);
+      expect(h.controller.held).toBe(true);
+
+      useDisplayStore.setState({ screen: { ...useDisplayStore.getState().screen, currentScreen: 0 } });
+      expect(h.controller.current).toBe(1);
+      expect(h.host.commit).not.toHaveBeenCalledWith(0);
+
+      vi.advanceTimersByTime(INACTIVITY_HOLD_MS);
+      expect(h.controller.held).toBe(false);
+      expect(h.track.style.transform).toBe('translate3d(1000px,0,0)');
+      h.transitionEnd();
+      expect(h.host.commit).toHaveBeenCalledWith(0);
+    });
+
+    it('tracks activity on #mirrormere-app and extends the hold timer on subsequent events', () => {
+      vi.useFakeTimers();
+      const app = document.createElement('div');
+      app.id = 'mirrormere-app';
+      document.body.appendChild(app);
+
+      const h = build(1);
+      app.appendChild(h.viewport);
+
+      // Re-attach with #mirrormere-app present in DOM
+      h.controller.dispose();
+      h.controller.attach();
+
+      app.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+      expect(h.controller.held).toBe(true);
+
+      vi.advanceTimersByTime(INACTIVITY_HOLD_MS - 5000);
+      expect(h.controller.held).toBe(true);
+
+      app.dispatchEvent(new WheelEvent('wheel', { bubbles: true }));
+      vi.advanceTimersByTime(10000);
+      // Still held because wheel refreshed the 60s timer
+      expect(h.controller.held).toBe(true);
+
+      vi.advanceTimersByTime(INACTIVITY_HOLD_MS - 10000);
+      expect(h.controller.held).toBe(false);
+    });
+
+    it('ignores pointerdown originating inside .screen-indicator-pin', () => {
+      vi.useFakeTimers();
+      const app = document.createElement('div');
+      app.id = 'mirrormere-app';
+      document.body.appendChild(app);
+
+      const h = build(1);
+      app.appendChild(h.viewport);
+
+      h.controller.dispose();
+      h.controller.attach();
+
+      const pinButton = document.createElement('button');
+      pinButton.className = 'screen-indicator-pin';
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      svg.appendChild(path);
+      pinButton.appendChild(svg);
+      app.appendChild(pinButton);
+
+      path.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+      expect(h.controller.held).toBe(false);
+    });
+
+    it('holds server rotation while pinned and drains immediately when unpinned', () => {
+      vi.useFakeTimers();
+      const h = build(1);
+
+      h.controller.setPinned(true);
+      useDisplayStore.setState({ screen: { ...useDisplayStore.getState().screen, currentScreen: 2 } });
+      expect(h.host.commit).not.toHaveBeenCalledWith(2);
+
+      vi.advanceTimersByTime(INACTIVITY_HOLD_MS * 3);
+      expect(h.host.commit).not.toHaveBeenCalledWith(2);
+
+      h.controller.setPinned(false);
+      expect(h.track.style.transform).toBe('translate3d(-1000px,0,0)');
+      h.transitionEnd();
+      expect(h.host.commit).toHaveBeenCalledWith(2);
+    });
+
+    it('clears queued server rotation when user explicitly navigates with goTo', () => {
+      vi.useFakeTimers();
+      const h = build(1);
+
+      h.controller.recordActivity();
+      useDisplayStore.setState({ screen: { ...useDisplayStore.getState().screen, currentScreen: 2 } });
+      expect(h.host.commit).not.toHaveBeenCalledWith(2);
+
+      h.controller.goTo(0);
+      h.transitionEnd();
+      vi.advanceTimersByTime(SETTLE_FALLBACK_MS);
+      h.controller.rendered(0);
+      expect(h.controller.current).toBe(0);
+
+      vi.advanceTimersByTime(INACTIVITY_HOLD_MS);
+      expect(h.controller.current).toBe(0);
+      expect(h.host.commit).not.toHaveBeenCalledWith(2);
+    });
+
+    it('cleans up hold timer on reset and dispose', () => {
+      vi.useFakeTimers();
+      const h = build(1);
+
+      h.controller.recordActivity();
+      expect(h.controller.held).toBe(true);
+      h.controller.reset(0);
+      expect(h.controller.held).toBe(false);
+
+      h.controller.recordActivity();
+      expect(h.controller.held).toBe(true);
+      h.controller.dispose();
+      expect(h.controller.held).toBe(false);
     });
   });
 });

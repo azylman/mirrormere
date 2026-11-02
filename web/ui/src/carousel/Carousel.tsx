@@ -87,6 +87,7 @@ export function Carousel({ hidden }: CarouselProps = {}) {
   );
   const isHidden = hidden ?? videoMode;
   const [shown, setShown] = useState(() => useDisplayStore.getState().screen.currentScreen);
+  const [pinned, setPinned] = useState(false);
   // The screen React rendered. The controller starts from this, not from the store: a hydration
   // batch can move the store between this render and the effect that builds the controller.
   const shownRef = useRef(shown);
@@ -161,10 +162,16 @@ export function Carousel({ hidden }: CarouselProps = {}) {
         total={total}
         active={shown}
         hidden={paused || isHidden}
+        pinned={pinned}
         onSelect={(index) => controllerRef.current?.goTo(index)}
         onSwipe={(direction) => {
           const controller = controllerRef.current;
           if (controller) controller.goTo(neighbourOf(controller.current, total, direction));
+        }}
+        onTogglePin={() => {
+          const next = !pinned;
+          setPinned(next);
+          controllerRef.current?.setPinned(next);
         }}
       />
     </>
