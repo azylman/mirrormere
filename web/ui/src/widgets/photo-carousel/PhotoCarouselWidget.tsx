@@ -5,6 +5,7 @@ import { useIsCurrentPane } from '../../carousel/PaneContext';
 import { useDocumentVisible } from '../../lifecycle/visibility';
 import { beginAnimation, endAnimation } from '../../perf/animating';
 import { useDisplayStore } from '../../store';
+import { HudNextIcon, HudPrevIcon } from '../../video/HudIcons';
 
 declare global {
   interface Window {
@@ -451,19 +452,7 @@ function PhotoTransportControls({
           onPrev();
         }}
       >
-        <svg
-          width="16"
-          height="16"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden="true"
-        >
-          <polyline points="15 18 9 12 15 6" />
-        </svg>
+        <HudPrevIcon />
       </button>
       <button
         type="button"
@@ -516,19 +505,7 @@ function PhotoTransportControls({
           onNext();
         }}
       >
-        <svg
-          width="16"
-          height="16"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden="true"
-        >
-          <polyline points="9 18 15 12 9 6" />
-        </svg>
+        <HudNextIcon />
       </button>
     </div>
   );

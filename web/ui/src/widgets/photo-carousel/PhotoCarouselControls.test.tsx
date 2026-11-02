@@ -237,6 +237,8 @@ describe('PhotoCarouselWidget transport controls', () => {
     const playPauseBtn = container.querySelector('.photo-pause-pill') as HTMLButtonElement;
     const prevBtn = container.querySelector('.photo-nav-prev') as HTMLButtonElement;
     const nextBtn = container.querySelector('.photo-nav-next') as HTMLButtonElement;
+    expect(prevBtn.querySelector('svg polygon')).not.toBeNull();
+    expect(nextBtn.querySelector('svg polygon')).not.toBeNull();
 
     act(() => { fireEvent.click(playPauseBtn); });
     expect(playPauseBtn.getAttribute('aria-label')).toBe('Resume slideshow');
