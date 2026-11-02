@@ -98,6 +98,7 @@ type PhotosProvider struct {
 	client            *http.Client
 	logger            *slog.Logger
 	randSource        *rand.Rand
+	location          *time.Location
 	defaultCacheDir   string
 	page1Interval     time.Duration
 	fullSyncInterval  time.Duration
@@ -120,6 +121,7 @@ func NewPhotosProvider(opts ...PhotosOption) *PhotosProvider {
 		},
 		logger:     slog.Default().With("provider", "photo-carousel"),
 		randSource: rand.New(rand.NewSource(time.Now().UnixNano())),
+		location:   time.UTC,
 	}
 	for _, opt := range opts {
 		opt(p)
@@ -292,6 +294,12 @@ func (p *PhotosProvider) Init(_ context.Context, config map[string]any, opts Ini
 	p.deckCursor = 0
 	p.albums = nil
 	p.wasWarmBoot = false
+	p.location = time.UTC
+	if tzStr := strings.TrimSpace(opts.Timezone); tzStr != "" {
+		if loc, err := time.LoadLocation(tzStr); err == nil {
+			p.location = loc
+		}
+	}
 
 	parsed, err := parsePhotosConfig(config, opts)
 	if err != nil {
@@ -782,55 +790,133 @@ func photoItemKey(item PhotoItem) string {
 	return item.ID
 }
 
+func photoDayKey(item PhotoItem, loc *time.Location) string {
+	if ts := strings.TrimSpace(item.Timestamp); ts != "" {
+		if t, err := time.Parse(time.RFC3339, ts); err == nil {
+			if loc != nil {
+				t = t.In(loc)
+			} else {
+				t = t.UTC()
+			}
+			return t.Format("2006-01-02")
+		}
+	}
+	return "undated:" + photoItemKey(item)
+}
+
+func photoSlotKey(item PhotoItem, loc *time.Location) string {
+	return photoDayKey(item, loc) + "\x00" + strings.TrimSpace(item.AlbumName)
+}
+
+type dayAlbumBuckets struct {
+	dayOrder     []string
+	albumOrder   []string
+	byDayAlbum   map[string]map[string][]PhotoItem
+	scrapedByKey map[string]PhotoItem
+}
+
+func groupPhotosByDayAndAlbum(scraped []PhotoItem, loc *time.Location) dayAlbumBuckets {
+	res := dayAlbumBuckets{
+		byDayAlbum:   make(map[string]map[string][]PhotoItem),
+		scrapedByKey: make(map[string]PhotoItem, len(scraped)),
+	}
+	seenAlbums := make(map[string]struct{})
+	for _, item := range scraped {
+		res.scrapedByKey[photoItemKey(item)] = item
+		dKey := photoDayKey(item, loc)
+		aKey := strings.TrimSpace(item.AlbumName)
+		if _, ok := seenAlbums[aKey]; !ok {
+			seenAlbums[aKey] = struct{}{}
+			res.albumOrder = append(res.albumOrder, aKey)
+		}
+		albumsForDay, ok := res.byDayAlbum[dKey]
+		if !ok {
+			albumsForDay = make(map[string][]PhotoItem)
+			res.byDayAlbum[dKey] = albumsForDay
+			res.dayOrder = append(res.dayOrder, dKey)
+		}
+		albumsForDay[aKey] = append(albumsForDay[aKey], item)
+	}
+	return res
+}
+
+func (p *PhotosProvider) extractExistingDeckState(buckets dayAlbumBuckets) ([]string, map[string]PhotoItem) {
+	seenDays := make(map[string]struct{}, len(p.deck))
+	var existingDays []string
+	chosenBySlot := make(map[string]PhotoItem, len(p.deck))
+
+	for _, item := range p.deck {
+		updated, ok := buckets.scrapedByKey[photoItemKey(item)]
+		if !ok {
+			continue
+		}
+		dKey := photoDayKey(updated, p.location)
+		aKey := strings.TrimSpace(updated.AlbumName)
+		slotKey := dKey + "\x00" + aKey
+		if _, exists := chosenBySlot[slotKey]; !exists {
+			chosenBySlot[slotKey] = updated
+		}
+		if _, exists := seenDays[dKey]; !exists {
+			seenDays[dKey] = struct{}{}
+			existingDays = append(existingDays, dKey)
+		}
+	}
+	return existingDays, chosenBySlot
+}
+
 func (p *PhotosProvider) reconcilePhotoDeck(scraped []PhotoItem, r *rand.Rand) {
 	if r == nil {
 		r = rand.New(rand.NewSource(time.Now().UnixNano()))
 	}
 
-	scrapedByKey := make(map[string]PhotoItem, len(scraped))
-	for _, item := range scraped {
-		scrapedByKey[photoItemKey(item)] = item
+	buckets := groupPhotosByDayAndAlbum(scraped, p.location)
+	existingDays, chosenBySlot := p.extractExistingDeckState(buckets)
+
+	existingDaySet := make(map[string]struct{}, len(existingDays))
+	for _, dKey := range existingDays {
+		existingDaySet[dKey] = struct{}{}
 	}
 
-	newDeck := make([]PhotoItem, 0, len(scraped))
-	deckKeys := make(map[string]struct{}, len(p.deck))
-	newCursor := p.deckCursor
+	var newDays []string
+	for _, dKey := range buckets.dayOrder {
+		if _, ok := existingDaySet[dKey]; !ok {
+			newDays = append(newDays, dKey)
+		}
+	}
+	if len(newDays) > 1 {
+		r.Shuffle(len(newDays), func(i, j int) {
+			newDays[i], newDays[j] = newDays[j], newDays[i]
+		})
+	}
 
-	for i, item := range p.deck {
-		key := photoItemKey(item)
-		if updated, ok := scrapedByKey[key]; ok {
-			newDeck = append(newDeck, updated)
-			deckKeys[key] = struct{}{}
-		} else if i < p.deckCursor {
+	allDays := slices.Concat(existingDays, newDays)
+	capHint := len(allDays) * max(1, len(buckets.albumOrder))
+	newDeck := make([]PhotoItem, 0, capHint)
+	newDeckKeys := make(map[string]struct{}, capHint)
+
+	for _, dKey := range allDays {
+		albumsForDay := buckets.byDayAlbum[dKey]
+		for _, aKey := range buckets.albumOrder {
+			candidates := albumsForDay[aKey]
+			if len(candidates) == 0 {
+				continue
+			}
+			chosen, ok := chosenBySlot[dKey+"\x00"+aKey]
+			if !ok {
+				chosen = candidates[r.Intn(len(candidates))]
+			}
+			newDeck = append(newDeck, chosen)
+			newDeckKeys[photoItemKey(chosen)] = struct{}{}
+		}
+	}
+
+	newCursor := p.deckCursor
+	for i := range min(p.deckCursor, len(p.deck)) {
+		if _, ok := newDeckKeys[photoItemKey(p.deck[i])]; !ok {
 			newCursor--
 		}
 	}
-	if newCursor < 0 {
-		newCursor = 0
-	}
-	if newCursor > len(newDeck) {
-		newCursor = len(newDeck)
-	}
-	p.deckCursor = newCursor
-
-	var newItems []PhotoItem
-	for _, item := range scraped {
-		key := photoItemKey(item)
-		if _, exists := deckKeys[key]; !exists {
-			newItems = append(newItems, item)
-			deckKeys[key] = struct{}{}
-		}
-	}
-
-	if len(newItems) > 0 {
-		if len(newItems) > 1 {
-			r.Shuffle(len(newItems), func(i, j int) {
-				newItems[i], newItems[j] = newItems[j], newItems[i]
-			})
-		}
-		newDeck = append(newDeck, newItems...)
-	}
-
+	p.deckCursor = max(0, min(newCursor, len(newDeck)))
 	p.deck = newDeck
 }
 
@@ -867,9 +953,8 @@ func (p *PhotosProvider) selectAlbumWindowLocked(scraped []PhotoItem) []PhotoIte
 
 	if p.deckCursor+limit == len(p.deck) {
 		tail := slices.Clone(p.deck[p.deckCursor:])
-		r.Shuffle(len(p.deck), func(i, j int) {
-			p.deck[i], p.deck[j] = p.deck[j], p.deck[i]
-		})
+		p.deck = nil
+		p.reconcilePhotoDeck(scraped, r)
 		if len(p.deck) > 1 && photoItemKey(p.deck[0]) == photoItemKey(tail[len(tail)-1]) {
 			p.deck[0], p.deck[len(p.deck)-1] = p.deck[len(p.deck)-1], p.deck[0]
 		}
@@ -879,10 +964,18 @@ func (p *PhotosProvider) selectAlbumWindowLocked(scraped []PhotoItem) []PhotoIte
 
 	// Wrap-around: p.deckCursor+limit > len(p.deck)
 	tail := slices.Clone(p.deck[p.deckCursor:])
-	prefix := slices.Clone(p.deck[:p.deckCursor])
-	r.Shuffle(len(prefix), func(i, j int) {
-		prefix[i], prefix[j] = prefix[j], prefix[i]
-	})
+	tailSlots := make(map[string]struct{}, len(tail))
+	for _, it := range tail {
+		tailSlots[photoSlotKey(it, p.location)] = struct{}{}
+	}
+	p.deck = nil
+	p.reconcilePhotoDeck(scraped, r)
+	prefix := make([]PhotoItem, 0, len(p.deck))
+	for _, it := range p.deck {
+		if _, inTail := tailSlots[photoSlotKey(it, p.location)]; !inTail {
+			prefix = append(prefix, it)
+		}
+	}
 	p.deck = slices.Concat(tail, prefix)
 	window := slices.Clone(p.deck[:limit])
 	p.deckCursor = limit

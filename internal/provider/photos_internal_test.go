@@ -269,6 +269,39 @@ func TestPhotos_InternalHelpers(t *testing.T) {
 		if p.deckCursor != 1 {
 			t.Errorf("expected cursor to stay 1, got %d", p.deckCursor)
 		}
+
+		// Per-day burst de-biasing and multi-album per-day pairing
+		laLoc, err := time.LoadLocation("America/Los_Angeles")
+		if err != nil {
+			t.Fatalf("LoadLocation failed: %v", err)
+		}
+		pDay := NewPhotosProvider()
+		pDay.location = laLoc
+		dated := []PhotoItem{
+			// 2026-08-01 in America/Los_Angeles (evening PDT = early UTC next day)
+			{ID: "a1", URL: "https://lh3.googleusercontent.com/pw/A1", Timestamp: "2026-08-01T18:00:00Z", AlbumName: "Album A"},
+			{ID: "a2", URL: "https://lh3.googleusercontent.com/pw/A2", Timestamp: "2026-08-02T02:00:00Z", AlbumName: "Album A"},
+			{ID: "b1", URL: "https://lh3.googleusercontent.com/pw/B1", Timestamp: "2026-08-01T20:00:00Z", AlbumName: "Album B"},
+			// 2026-08-02 in America/Los_Angeles
+			{ID: "a3", URL: "https://lh3.googleusercontent.com/pw/A3", Timestamp: "2026-08-02T19:00:00Z", AlbumName: "Album A"},
+		}
+		pDay.reconcilePhotoDeck(dated, nil)
+		if len(pDay.deck) != 3 {
+			t.Fatalf("expected 3 items in per-day deck (2 for 2026-08-01 across 2 albums, 1 for 2026-08-02), got %d: %+v", len(pDay.deck), pDay.deck)
+		}
+		// Reconcile again with same items preserves chosen items
+		firstDeck := slices.Clone(pDay.deck)
+		pDay.reconcilePhotoDeck(dated, r)
+		for i := range firstDeck {
+			if pDay.deck[i].ID != firstDeck[i].ID {
+				t.Errorf("expected stable per-day deck at %d: got %s, want %s", i, pDay.deck[i].ID, firstDeck[i].ID)
+			}
+		}
+		// Fallback to UTC when pDay.location is nil
+		pDay.location = nil
+		if got := photoDayKey(PhotoItem{ID: "utc1", URL: "u", Timestamp: "2026-08-02T02:00:00Z"}, nil); got != "2026-08-02" {
+			t.Errorf("expected UTC date 2026-08-02 when loc is nil, got %q", got)
+		}
 	})
 
 	t.Run("selectAlbumWindow operations", func(t *testing.T) {
