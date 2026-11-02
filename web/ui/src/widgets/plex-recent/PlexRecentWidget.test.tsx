@@ -455,7 +455,7 @@ describe('PlexRecentWidget', () => {
           html: '',
           css: '',
           updatedAt: 1,
-          meta: { config: { api_base: '/custom-plex/' } },
+          meta: { assets_base: '', origin: 'builtin', dimensions: [], config: { api_base: '/custom-plex/' } },
         },
       },
     });
