@@ -59,7 +59,7 @@ export function ScreenIndicator({ total, active, hidden, onSelect, onSwipe }: Sc
         <button
           key={i}
           type="button"
-          className={i === active ? 'screen-indicator-dot active' : 'screen-indicator-dot'}
+          className={i === active ? 'screen-indicator-dot screen-dot active' : 'screen-indicator-dot screen-dot'}
           aria-label={`Screen ${i + 1} of ${total}`}
           aria-current={i === active ? 'step' : 'false'}
           data-screen-index={i}

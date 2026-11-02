@@ -42,6 +42,12 @@ export function scheduleIdleStep(step: () => void): () => void {
   };
 }
 
+declare global {
+  interface Window {
+    __einkReady?: boolean;
+  }
+}
+
 interface Subscriber {
   index: number;
   getOffset: () => -1 | 0 | 1 | null;
@@ -174,6 +180,9 @@ export function Screen({ index, offset, placements, ready }: ScreenProps) {
     if (isCurrent && ready) {
       el.dataset.widgetCount = String(placements.length);
       el.dataset.screenHydrated = 'true';
+      if (typeof window !== 'undefined') {
+        window.__einkReady = true;
+      }
     } else {
       delete el.dataset.widgetCount;
       delete el.dataset.screenHydrated;

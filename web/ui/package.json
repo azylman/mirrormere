@@ -12,6 +12,7 @@
     "build": "vite build",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
+    "test:e2e": "playwright test",
     "lint": "eslint . --max-warnings=0",
     "deadcode": "knip --no-progress",
     "typecheck": "tsc --noEmit -p tsconfig.json"
@@ -24,6 +25,7 @@
   "devDependencies": {
     "@babel/core": "^7.29.7",
     "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.64.1",
     "@rolldown/plugin-babel": "^0.2.4",
     "@testing-library/dom": "^10.4.2",
     "@testing-library/react": "^16.3.3",
