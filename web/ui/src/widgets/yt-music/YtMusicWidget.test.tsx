@@ -577,4 +577,184 @@ describe('YtMusicWidget', () => {
     fireEvent.click(container.querySelector('[data-tab="playlists"]')!);
     expect(container.querySelector('[data-tab="playlists"]')?.classList.contains('active')).toBe(true);
   });
+
+  it('covers fallback props, apiBase config, missing metadata, and playback errors', async () => {
+    useDisplayStore.setState({
+      widgets: {
+        'yt-edge': {
+          state: 'ready',
+          data: null,
+          timestamp: '2026-01-01T00:00:00Z',
+          meta: {
+            type: 'yt-music',
+            assets_base: '',
+            origin: [0, 0],
+            dimensions: [1, 1],
+            config: { apiBase: '  /fallback-base///  ' },
+          },
+        },
+      },
+    });
+
+    const mockEdgeState: MusicState = {
+      active_speaker: 'media_player.edge',
+      speakers: [{ entity_id: 'media_player.edge', name: 'Edge Speaker' }],
+      now_playing: {
+        title: 'Only Title',
+        // artist is missing -> should display 'Ready'
+        volume: undefined, // defaults to 35
+        queue_index: 0,
+        state: 'paused',
+      },
+      playlists: [
+        {
+          playlist_id: 'pl-nothumb',
+          title: 'No Thumb Playlist',
+          // thumb missing -> DEFAULT_ART
+          // count missing -> 0
+        },
+      ],
+      queue: [
+        {
+          title: 'Active Song',
+          artist: 'Queued Artist',
+          // thumb missing -> DEFAULT_ART
+        },
+      ],
+    };
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/music/state')) {
+        return new Response(JSON.stringify(mockEdgeState), { status: 200 });
+      }
+      if (url.includes('/music/search')) {
+        return new Response(
+          JSON.stringify({
+            items: [
+              {
+                // video_id missing -> uses idx
+                title: 'Result No Duration',
+                artist: 'Various',
+                // thumb missing -> DEFAULT_ART
+                // duration missing
+              },
+            ],
+          }),
+          { status: 200 },
+        );
+      }
+      if (url.includes('/music/play') || url.includes('/music/control')) {
+        throw new Error('playback network failure');
+      }
+      return new Response('{}', { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { container } = render(
+      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
+        <YtMusicWidget id="yt-edge" type="yt-music" />
+      </PaneContext.Provider>,
+    );
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith('/fallback-base/music/state');
+    });
+
+    // Check artist displays 'Ready' and volume defaults to 35
+    expect(container.querySelector('#np-artist')?.textContent).toBe('Ready');
+    const slider = container.querySelector('#vol-slider') as HTMLInputElement;
+    expect(slider?.value).toBe('35');
+
+    // Playlist with no thumb uses DEFAULT_ART and 0 tracks
+    const plTile = container.querySelector('.media-tile')!;
+    const plImg = plTile.querySelector('img') as HTMLImageElement;
+    expect(plImg.src).toContain('brands.home-assistant.io');
+    expect(plTile.textContent).toContain('0 tracks');
+
+    // Clicking playlist triggers handlePlayPlaylist error branch
+    fireEvent.click(plTile);
+
+    // Switch to queue tab and verify active queue index has '▶ ' marker
+    fireEvent.click(container.querySelector('[data-tab="queue"]')!);
+    await waitFor(() => {
+      const queueTile = container.querySelector('.media-tile')!;
+      expect(queueTile.textContent).toContain('▶ Active Song');
+    });
+
+    // Search and click search result (missing duration and thumb, triggers handlePlaySearchResult error branch)
+    fireEvent.change(container.querySelector('#search-input')!, { target: { value: 'query' } });
+    fireEvent.submit(container.querySelector('#search-form')!);
+    await waitFor(() => {
+      const searchTile = container.querySelector('.media-tile')!;
+      expect(searchTile.textContent).toContain('Result No Duration');
+    });
+    const searchTile = container.querySelector('.media-tile')!;
+    fireEvent.click(searchTile);
+
+    // Select speaker error branch
+    const speakerPill = container.querySelector('.spk-pill')!;
+    fireEvent.click(speakerPill);
+  });
+
+  it('handles state failure, empty state collections, and non-array search results', async () => {
+    useDisplayStore.setState({
+      widgets: {
+        'yt-sparse': {
+          state: 'ready',
+          data: null,
+          timestamp: '2026-01-01T00:00:00Z',
+          meta: {
+            type: 'yt-music',
+            assets_base: '',
+            origin: [0, 0],
+            dimensions: [1, 1],
+            config: {},
+          },
+        },
+      },
+    });
+
+    let stateCallCount = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/music/state')) {
+        stateCallCount++;
+        if (stateCallCount === 1) {
+          // First call: non-ok response
+          return new Response('Server Error', { status: 500 });
+        }
+        // Second call: state with undefined collections
+        return new Response(JSON.stringify({}), { status: 200 });
+      }
+      if (url.includes('/music/search')) {
+        // Return non-array items
+        return new Response(JSON.stringify({ items: null }), { status: 200 });
+      }
+      return new Response('{}', { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { container } = render(
+      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
+        <YtMusicWidget id="yt-sparse" type="yt-music" />
+      </PaneContext.Provider>,
+    );
+
+    // Initial state failed (500)
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalled();
+    });
+
+    // Trigger search with null items
+    await act(async () => {
+      fireEvent.change(container.querySelector('#search-input')!, { target: { value: 'nulltest' } });
+      fireEvent.submit(container.querySelector('#search-form')!);
+    });
+
+    // Switch to queue tab with empty queue
+    fireEvent.click(container.querySelector('[data-tab="queue"]')!);
+    // Switch to playlists tab with empty playlists
+    fireEvent.click(container.querySelector('[data-tab="playlists"]')!);
+  });
 });
