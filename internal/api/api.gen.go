@@ -373,6 +373,12 @@ type WidgetDetailResponse struct {
 	WidgetId  string                  `json:"widget_id"`
 }
 
+// WidgetPhotosRequest defines model for WidgetPhotosRequest.
+type WidgetPhotosRequest struct {
+	AlbumName *string  `json:"album_name,omitempty"`
+	Photos    []string `json:"photos"`
+}
+
 // WidgetPlacement defines model for WidgetPlacement.
 type WidgetPlacement struct {
 	// Dimensions [cols, rows] grid span
@@ -456,6 +462,9 @@ type PostVoiceInteractMultipartRequestBody PostVoiceInteractMultipartBody
 
 // PostVoiceStateJSONRequestBody defines body for PostVoiceState for application/json ContentType.
 type PostVoiceStateJSONRequestBody = VoiceStateRequest
+
+// PostWidgetPhotosJSONRequestBody defines body for PostWidgetPhotos for application/json ContentType.
+type PostWidgetPhotosJSONRequestBody = WidgetPhotosRequest
 
 // PostWidgetPushJSONRequestBody defines body for PostWidgetPush for application/json ContentType.
 type PostWidgetPushJSONRequestBody PostWidgetPushJSONBody

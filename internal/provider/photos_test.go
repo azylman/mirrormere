@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"maps"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -33,22 +32,20 @@ func TestPhotosProvider_FetchExtraction(t *testing.T) {
 	tests := []struct {
 		name             string
 		html             string
-		cfg              map[string]any
 		wantAlbum        string
 		wantTotal        int
 		wantPhotos       int
-		wantCycle        int
 		wantFirstID      string
 		wantFirstURL     string
 		wantFirstAspect  float64
 		wantSecondAspect float64
 		wantThirdAspect  float64
 	}{
-		{"af_callback", mockPhotosAFHTML, map[string]any{"cycle_interval_seconds": 30, "preload_count": 10, "shuffle": false}, "Family Vacation 2026", 3, 3, 30, "photo_1", "https://lh3.googleusercontent.com/pw/AL9nZEW1", 1.5, 1.78, 1.0},
-		{"func_wrapper", mockPhotosFuncHTML, nil, "Summer Roadtrip", 1, 1, 0, "img_a", "", 0, 0, 0},
-		{"fallback_regex", mockPhotosFallbackHTML, nil, "Art Showcase", 2, 2, 0, "", "", 0, 0, 0},
-		{"shuffle_preload", tenPhotos.String(), map[string]any{"preload_count": 4, "shuffle": true, "cycle_interval_seconds": 120, "image_size": []any{800, 600}}, "Shared Album", 10, 4, 120, "", "", 0, 0, 0},
-		{"empty_album", "<html><body><div>Empty Album</div></body></html>", nil, "Shared Album", 0, 0, 0, "", "", 0, 0, 0},
+		{"af_callback", mockPhotosAFHTML, "Family Vacation 2026", 3, 3, "photo_1", "https://lh3.googleusercontent.com/pw/AL9nZEW1", 1.5, 1.78, 1.0},
+		{"func_wrapper", mockPhotosFuncHTML, "Summer Roadtrip", 1, 1, "img_a", "", 0, 0, 0},
+		{"fallback_regex", mockPhotosFallbackHTML, "Art Showcase", 2, 2, "", "", 0, 0, 0},
+		{"ten_photos", tenPhotos.String(), "Shared Album", 10, 10, "", "", 0, 0, 0},
+		{"empty_album", "<html><body><div>Empty Album</div></body></html>", "Shared Album", 0, 0, "", "", 0, 0, 0},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -59,8 +56,7 @@ func TestPhotosProvider_FetchExtraction(t *testing.T) {
 			}))
 			defer ts.Close()
 
-			cfg := map[string]any{"share_url": ts.URL}
-			maps.Copy(cfg, tc.cfg)
+			cfg := map[string]any{"source": "share_url", "album_url": ts.URL}
 			p := provider.NewPhotosProvider()
 			if err := p.Init(context.Background(), cfg, provider.InitOptions{}); err != nil {
 				t.Fatalf("Init failed: %v", err)
@@ -73,26 +69,39 @@ func TestPhotosProvider_FetchExtraction(t *testing.T) {
 			if snap.AlbumName != tc.wantAlbum || snap.TotalPhotos != tc.wantTotal || len(snap.Photos) != tc.wantPhotos {
 				t.Fatalf("got album=%q total=%d photos=%d; want %q, %d, %d", snap.AlbumName, snap.TotalPhotos, len(snap.Photos), tc.wantAlbum, tc.wantTotal, tc.wantPhotos)
 			}
-			if tc.wantCycle != 0 && snap.CycleIntervalSeconds != tc.wantCycle {
-				t.Errorf("cycle interval = %d, want %d", snap.CycleIntervalSeconds, tc.wantCycle)
+			if snap.AlbumURL != ts.URL {
+				t.Errorf("album URL = %q, want %q", snap.AlbumURL, ts.URL)
 			}
-			if tc.wantFirstID != "" && snap.Photos[0].ID != tc.wantFirstID {
-				t.Errorf("first ID = %q, want %q", snap.Photos[0].ID, tc.wantFirstID)
+			photoMap := make(map[string]provider.PhotoItem, len(snap.Photos))
+			for _, item := range snap.Photos {
+				photoMap[item.ID] = item
 			}
-			if tc.wantFirstURL != "" && snap.Photos[0].URL != tc.wantFirstURL {
-				t.Errorf("first URL = %q, want %q", snap.Photos[0].URL, tc.wantFirstURL)
+			if tc.wantFirstID != "" {
+				item, ok := photoMap[tc.wantFirstID]
+				if !ok {
+					t.Fatalf("item %q not found in photos", tc.wantFirstID)
+				}
+				if tc.wantFirstURL != "" && item.URL != tc.wantFirstURL {
+					t.Errorf("item URL = %q, want %q", item.URL, tc.wantFirstURL)
+				}
+				if tc.wantFirstAspect != 0 && item.AspectRatio != tc.wantFirstAspect {
+					t.Errorf("item aspect = %v, want %v", item.AspectRatio, tc.wantFirstAspect)
+				}
+				if tc.name == "af_callback" && item.Timestamp == "" {
+					t.Error("expected non-empty RFC3339 timestamp")
+				}
 			}
-			if tc.wantFirstAspect != 0 && snap.Photos[0].AspectRatio != tc.wantFirstAspect {
-				t.Errorf("first aspect = %v, want %v", snap.Photos[0].AspectRatio, tc.wantFirstAspect)
+			if tc.wantSecondAspect != 0 {
+				item, ok := photoMap["photo_2"]
+				if !ok || item.AspectRatio != tc.wantSecondAspect {
+					t.Errorf("photo_2 aspect = %v, want %v", item.AspectRatio, tc.wantSecondAspect)
+				}
 			}
-			if tc.wantSecondAspect != 0 && snap.Photos[1].AspectRatio != tc.wantSecondAspect {
-				t.Errorf("second aspect = %v, want %v", snap.Photos[1].AspectRatio, tc.wantSecondAspect)
-			}
-			if tc.wantThirdAspect != 0 && snap.Photos[2].AspectRatio != tc.wantThirdAspect {
-				t.Errorf("third aspect = %v, want %v", snap.Photos[2].AspectRatio, tc.wantThirdAspect)
-			}
-			if tc.name == "af_callback" && snap.Photos[0].Timestamp == "" {
-				t.Error("expected non-empty RFC3339 timestamp")
+			if tc.wantThirdAspect != 0 {
+				item, ok := photoMap["photo_3"]
+				if !ok || item.AspectRatio != tc.wantThirdAspect {
+					t.Errorf("photo_3 aspect = %v, want %v", item.AspectRatio, tc.wantThirdAspect)
+				}
 			}
 		})
 	}
@@ -125,7 +134,7 @@ func TestPhotosProvider_ErrorsAndSWR(t *testing.T) {
 				w.WriteHeader(tc.status)
 			}))
 			p := provider.NewPhotosProvider()
-			_ = p.Init(context.Background(), map[string]any{"share_url": ts.URL}, provider.InitOptions{})
+			_ = p.Init(context.Background(), map[string]any{"source": "share_url", "album_url": ts.URL}, provider.InitOptions{})
 			_, err := p.Fetch(context.Background())
 			ts.Close()
 			if err == nil || !strings.Contains(err.Error(), tc.err.Error()) {
@@ -145,7 +154,7 @@ func TestPhotosProvider_ErrorsAndSWR(t *testing.T) {
 		}))
 		defer ts.Close()
 		p := provider.NewPhotosProvider()
-		_ = p.Init(context.Background(), map[string]any{"share_url": ts.URL}, provider.InitOptions{})
+		_ = p.Init(context.Background(), map[string]any{"source": "share_url", "album_url": ts.URL}, provider.InitOptions{})
 		_, err := p.Fetch(context.Background())
 		if err == nil || !strings.Contains(err.Error(), "google photos payload exceeded") {
 			t.Fatalf("expected payload exceeded error, got: %v", err)
@@ -166,7 +175,7 @@ func TestPhotosProvider_ErrorsAndSWR(t *testing.T) {
 		}))
 		defer ts.Close()
 		p := provider.NewPhotosProvider()
-		_ = p.Init(context.Background(), map[string]any{"share_url": ts.URL}, provider.InitOptions{})
+		_ = p.Init(context.Background(), map[string]any{"source": "share_url", "album_url": ts.URL}, provider.InitOptions{})
 		res1, err := p.Fetch(context.Background())
 		if err != nil {
 			t.Fatalf("first fetch failed: %v", err)
@@ -189,13 +198,17 @@ func TestPhotosProvider_InitAndLifecycle(t *testing.T) {
 		opts                 provider.InitOptions
 		wantErrSub           string
 	}{
-		{"mutex", "", "", map[string]any{"share_url": "https://p.app/1", "share_url_env": "E"}, provider.InitOptions{}, "mutually exclusive"},
-		{"neither", "", "", map[string]any{}, provider.InitOptions{}, "requires either 'share_url' or 'share_url_env'"},
-		{"unset_env", "", "", map[string]any{"share_url_env": "MISSING"}, provider.InitOptions{}, "is not set or empty"},
-		{"opts_secret", "", "", map[string]any{"share_url_env": "S"}, provider.InitOptions{Secrets: map[string]string{"S": "https://p.app/s"}}, ""},
-		{"env_var", "TEST_ALBUM_ENV", "https://p.app/env", map[string]any{"share_url_env": "TEST_ALBUM_ENV"}, provider.InitOptions{}, ""},
-		{"opts_override", "", "", map[string]any{"share_url": "https://p.app/raw"}, provider.InitOptions{Secrets: map[string]string{"share_url": "https://p.app/over"}}, ""},
-		{"bad_scheme", "", "", map[string]any{"share_url": "ftp://photos.google.com/album"}, provider.InitOptions{}, "invalid share URL"},
+		{"missing_source", "", "", map[string]any{"album_url": "https://p.app/1"}, provider.InitOptions{}, "'source' is required"},
+		{"invalid_source", "", "", map[string]any{"source": "bad_source", "album_url": "https://p.app/1"}, provider.InitOptions{}, "must be either"},
+		{"mutex", "", "", map[string]any{"source": "share_url", "album_url": "https://p.app/1", "album_url_env": "E"}, provider.InitOptions{}, "mutually exclusive"},
+		{"neither", "", "", map[string]any{"source": "share_url"}, provider.InitOptions{}, "requires either 'album_url' or 'album_url_env'"},
+		{"unset_env", "", "", map[string]any{"source": "share_url", "album_url_env": "MISSING"}, provider.InitOptions{}, "is not set or empty"},
+		{"opts_secret", "", "", map[string]any{"source": "share_url", "album_url_env": "S"}, provider.InitOptions{Secrets: map[string]string{"S": "https://p.app/s"}}, ""},
+		{"env_var", "TEST_ALBUM_ENV", "https://p.app/env", map[string]any{"source": "share_url", "album_url_env": "TEST_ALBUM_ENV"}, provider.InitOptions{}, ""},
+		{"opts_override", "", "", map[string]any{"source": "share_url", "album_url": "https://p.app/raw"}, provider.InitOptions{Secrets: map[string]string{"album_url": "https://p.app/over"}}, ""},
+		{"bad_scheme", "", "", map[string]any{"source": "share_url", "album_url": "ftp://photos.google.com/album"}, provider.InitOptions{}, "invalid album URL"},
+		{"bad_host", "", "", map[string]any{"source": "share_url", "album_url": "http:///no-host"}, provider.InitOptions{}, "invalid album URL"},
+		{"ember_bridge_valid", "", "", map[string]any{"source": "ember_bridge", "album_url": "https://photos.app.goo.gl/ember"}, provider.InitOptions{}, ""},
 	} {
 		if tc.envKey != "" {
 			t.Setenv(tc.envKey, tc.envVal)
@@ -211,9 +224,20 @@ func TestPhotosProvider_InitAndLifecycle(t *testing.T) {
 		}
 	}
 
-	p := provider.NewPhotosProvider()
-	if err := p.Init(context.Background(), map[string]any{"share_url": "https://p.app/1", "cycle_interval_seconds": float64(2), "preload_count": float64(1000)}, provider.InitOptions{}); err != nil {
-		t.Fatalf("Init with float options failed: %v", err)
+	pEmber := provider.NewPhotosProvider()
+	if err := pEmber.Init(context.Background(), map[string]any{"source": "ember_bridge", "album_url": "https://photos.app.goo.gl/ember"}, provider.InitOptions{}); err != nil {
+		t.Fatalf("Init ember_bridge failed: %v", err)
+	}
+	if pEmber.Source() != provider.PhotoSourceEmberBridge {
+		t.Errorf("got Source=%q, want %q", pEmber.Source(), provider.PhotoSourceEmberBridge)
+	}
+	resEmber, err := pEmber.Fetch(context.Background())
+	if err != nil {
+		t.Fatalf("Fetch on ember_bridge failed: %v", err)
+	}
+	snapEmber := resEmber.(*provider.PhotoSnapshot)
+	if snapEmber.AlbumName != "Shared Album" || snapEmber.AlbumURL != "https://photos.app.goo.gl/ember" || snapEmber.TotalPhotos != 0 || len(snapEmber.Photos) != 0 {
+		t.Fatalf("unexpected ember snapshot: %+v", snapEmber)
 	}
 
 	pUninit := provider.NewPhotosProvider()
@@ -225,7 +249,7 @@ func TestPhotosProvider_InitAndLifecycle(t *testing.T) {
 	}))
 	defer tsMal.Close()
 	pMal := provider.NewPhotosProvider()
-	_ = pMal.Init(context.Background(), map[string]any{"share_url": tsMal.URL}, provider.InitOptions{})
+	_ = pMal.Init(context.Background(), map[string]any{"source": "share_url", "album_url": tsMal.URL}, provider.InitOptions{})
 	if res, err := pMal.Fetch(context.Background()); err != nil || len(res.(*provider.PhotoSnapshot).Photos) != 0 {
 		t.Fatalf("expected empty photos on malformed JSON, got %v, err=%v", res, err)
 	}
@@ -248,22 +272,17 @@ func TestPhotosProvider_DeckWindowAndReconcile(t *testing.T) {
 
 	tests := []struct {
 		name                string
-		preloadCount        int
-		shuffle             bool
 		pollBatches         [][]string
 		callInitMid         bool
 		callShutdownMid     bool
 		wantCounts          []int
 		wantStable          bool
-		wantDisjoint        bool
 		wantAppended        bool
 		wantRemovedExcluded string
 		wantNoDupes         bool
 	}{
 		{
-			name:         "stable_deck_order_across_polls_when_album_fits_preload",
-			preloadCount: 10,
-			shuffle:      true,
+			name: "stable_deck_order_across_polls_when_album_fits_preload",
 			pollBatches: [][]string{
 				{"p1", "p2", "p3", "p4", "p5"},
 				{"p1", "p2", "p3", "p4", "p5"},
@@ -273,9 +292,7 @@ func TestPhotosProvider_DeckWindowAndReconcile(t *testing.T) {
 			wantNoDupes: true,
 		},
 		{
-			name:         "reconcile_appends_new_photos_without_reshuffling_existing",
-			preloadCount: 10,
-			shuffle:      true,
+			name: "reconcile_appends_new_photos_without_reshuffling_existing",
 			pollBatches: [][]string{
 				{"p1", "p2", "p3"},
 				{"p1", "p2", "p3", "p4"},
@@ -285,9 +302,7 @@ func TestPhotosProvider_DeckWindowAndReconcile(t *testing.T) {
 			wantNoDupes:  true,
 		},
 		{
-			name:         "reconcile_removes_old_photos_cleanly",
-			preloadCount: 10,
-			shuffle:      true,
+			name: "reconcile_removes_old_photos_cleanly",
 			pollBatches: [][]string{
 				{"p1", "p2", "p3", "p4"},
 				{"p1", "p3", "p4"},
@@ -297,63 +312,24 @@ func TestPhotosProvider_DeckWindowAndReconcile(t *testing.T) {
 			wantNoDupes:         true,
 		},
 		{
-			name:         "disjoint_windows_when_preload_count_less_than_scraped",
-			preloadCount: 2,
-			shuffle:      true,
-			pollBatches: [][]string{
-				{"p1", "p2", "p3", "p4"},
-				{"p1", "p2", "p3", "p4"},
-			},
-			wantCounts:   []int{2, 2},
-			wantDisjoint: true,
-			wantNoDupes:  true,
-		},
-		{
-			name:         "wraparound_window_with_zero_duplicate_items",
-			preloadCount: 3,
-			shuffle:      true,
-			pollBatches: [][]string{
-				{"p1", "p2", "p3", "p4"},
-				{"p1", "p2", "p3", "p4"},
-			},
-			wantCounts:  []int{3, 3},
-			wantNoDupes: true,
-		},
-		{
-			name:         "init_resets_deck_state",
-			preloadCount: 2,
-			shuffle:      true,
+			name: "init_resets_deck_state",
 			pollBatches: [][]string{
 				{"p1", "p2", "p3", "p4"},
 				{"p1", "p2", "p3", "p4"},
 			},
 			callInitMid: true,
-			wantCounts:  []int{2, 2},
+			wantCounts:  []int{4, 4},
 			wantNoDupes: true,
 		},
 		{
-			name:         "shutdown_resets_deck_state",
-			preloadCount: 2,
-			shuffle:      true,
+			name: "shutdown_resets_deck_state",
 			pollBatches: [][]string{
 				{"p1", "p2", "p3", "p4"},
 				{"p1", "p2", "p3", "p4"},
 			},
 			callShutdownMid: true,
-			wantCounts:      []int{2, 2},
+			wantCounts:      []int{4, 4},
 			wantNoDupes:     true,
-		},
-		{
-			name:         "unshuffled_sequential_clamped_window",
-			preloadCount: 2,
-			shuffle:      false,
-			pollBatches: [][]string{
-				{"p1", "p2", "p3", "p4"},
-				{"p1", "p2", "p3", "p4"},
-			},
-			wantCounts:  []int{2, 2},
-			wantStable:  true,
-			wantNoDupes: true,
 		},
 	}
 
@@ -379,9 +355,8 @@ func TestPhotosProvider_DeckWindowAndReconcile(t *testing.T) {
 			defer ts.Close()
 
 			cfg := map[string]any{
-				"share_url":     ts.URL,
-				"preload_count": tc.preloadCount,
-				"shuffle":       tc.shuffle,
+				"source":    "share_url",
+				"album_url": ts.URL,
 			}
 			p := provider.NewPhotosProvider()
 			if err := p.Init(context.Background(), cfg, provider.InitOptions{}); err != nil {
@@ -436,18 +411,6 @@ func TestPhotosProvider_DeckWindowAndReconcile(t *testing.T) {
 						if s1[i].URL != s2[i].URL {
 							t.Errorf("stable check photo[%d] = %q, want %q", i, s2[i].URL, s1[i].URL)
 						}
-					}
-				}
-			}
-
-			if tc.wantDisjoint && len(snapshots) >= 2 {
-				s1Set := make(map[string]bool)
-				for _, ph := range snapshots[0].Photos {
-					s1Set[ph.URL] = true
-				}
-				for _, ph := range snapshots[1].Photos {
-					if s1Set[ph.URL] {
-						t.Errorf("expected disjoint snapshots, but photo %q was in both", ph.URL)
 					}
 				}
 			}

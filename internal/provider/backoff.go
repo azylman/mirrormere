@@ -54,10 +54,10 @@ func IsNetworkOrServerError(err error) bool {
 	}
 
 	// 2. Net errors (timeouts, DNS lookup failures, socket operation errors)
-	if _, ok := errors.AsType[net.Error](err); ok {
+	if netErr, ok := errors.AsType[net.Error](err); ok && netErr != nil {
 		return true
 	}
-	if _, ok := errors.AsType[*net.OpError](err); ok {
+	if opErr, ok := errors.AsType[*net.OpError](err); ok && opErr != nil {
 		return true
 	}
 

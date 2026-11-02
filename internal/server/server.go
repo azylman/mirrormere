@@ -52,6 +52,7 @@ type RenderHandler interface {
 // PushHandler handles realtime widget push webhooks matching OpenAPI specifications.
 type PushHandler interface {
 	PostWidgetPush(w http.ResponseWriter, r *http.Request, widgetID string)
+	PostWidgetPhotos(w http.ResponseWriter, r *http.Request, widgetID string)
 }
 
 // DisplayHandler handles display UI and static web runtime asset endpoints.
@@ -236,6 +237,9 @@ func (s *Server) setupRoutes() {
 	}))
 	s.mux.HandleFunc("/api/widgets/{widget_id}/push", dispatchHandler(s, func() PushHandler { return s.pushHandler }, isNil, func(h PushHandler, w http.ResponseWriter, r *http.Request) {
 		h.PostWidgetPush(w, r, r.PathValue("widget_id"))
+	}))
+	s.mux.HandleFunc("/api/widgets/{widget_id}/photos", dispatchHandler(s, func() PushHandler { return s.pushHandler }, isNil, func(h PushHandler, w http.ResponseWriter, r *http.Request) {
+		h.PostWidgetPhotos(w, r, r.PathValue("widget_id"))
 	}))
 	s.mux.HandleFunc("/widget-types/{type}/assets/{path...}", dispatchHandler(s, func() RenderHandler { return s.renderHandler }, isNil, func(h RenderHandler, w http.ResponseWriter, r *http.Request) {
 		h.GetWidgetAsset(w, r, r.PathValue("type"), r.PathValue("path"))

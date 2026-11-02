@@ -55,8 +55,9 @@ func TestLoad_ExampleConfig(t *testing.T) {
 	}
 
 	mockEnv := map[string]string{
-		"FAMILY_CALENDAR_URL": "https://calendar.google.com/calendar/ical/example%40gmail.com/private-token/basic.ics",
-		"TODOIST_API_TOKEN":   "todoist-test-token",
+		"FAMILY_CALENDAR_URL":     "https://calendar.google.com/calendar/ical/example%40gmail.com/private-token/basic.ics",
+		"TODOIST_API_TOKEN":       "todoist-test-token",
+		"GOOGLE_PHOTOS_ALBUM_URL": "https://photos.app.goo.gl/example-album",
 	}
 	cfg, err := config.LoadWithEnv(examplePath, mockGetenv(mockEnv))
 	if err != nil {
@@ -87,6 +88,12 @@ func TestLoad_ExampleConfig(t *testing.T) {
 		t.Errorf("expected secret key 'url' NOT to exist in Config map, got %v", firstCal["url"])
 	}
 	assertEq(t, "secret url", cal.Secrets["calendars[0].url"], mockEnv["FAMILY_CALENDAR_URL"])
+
+	photos := cfg.Display.Widgets[3]
+	if photos.ID != "family-photos" || photos.Type != "photo-carousel" {
+		t.Errorf("unexpected photos widget: %+v", photos)
+	}
+	assertEq(t, "secret album_url", photos.Secrets["album_url"], mockEnv["GOOGLE_PHOTOS_ALBUM_URL"])
 }
 
 func TestParseWithEnv_ValidationErrors(t *testing.T) {
