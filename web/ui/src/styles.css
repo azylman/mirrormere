@@ -699,5 +699,24 @@ body[data-grid="2x6"] .grid-pane {
   }
 }
 
+.task-item.pending-undo,
+.task-item.pending-undo[data-completing="true"] {
+  pointer-events: auto;
+  cursor: pointer;
+  opacity: 0.82;
+}
+
+.task-undo-badge {
+  margin-left: auto;
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 9999px;
+  background: rgba(139, 92, 246, 0.18);
+  color: var(--mm-lavender, #8b60ed);
+  border: 1px solid var(--mm-lavender, #8b60ed);
+  flex-shrink: 0;
+}
+
 
 

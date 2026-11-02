@@ -1,7 +1,9 @@
-import { memo, useCallback, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { useWidget } from '../../store/hooks';
 import type { WidgetComponentProps } from '../registry';
 import { tasksStats } from '../format';
+
+export const TASK_UNDO_GRACE_MS = 3500;
 
 export interface TaskItemRecord {
   id?: string | number;
@@ -28,6 +30,7 @@ export interface EffectiveTaskItem extends TaskItemRecord {
   itemId: string;
   done: boolean;
   isCompleting: boolean;
+  isPendingUndo?: boolean;
 }
 
 /**
@@ -76,7 +79,18 @@ export const TasksWidget = memo(function TasksWidget({ id }: WidgetComponentProp
 
   const [inFlight, setInFlight] = useState<Record<string, boolean>>({});
   const [optimisticDone, setOptimisticDone] = useState<Record<string, boolean>>({});
+  const [pendingUndo, setPendingUndo] = useState<Record<string, boolean>>({});
+  const pendingTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const [prevSnapshot, setPrevSnapshot] = useState({ data, timestamp: entry?.timestamp });
+
+  useEffect(() => {
+    return () => {
+      for (const timer of Object.values(pendingTimersRef.current)) {
+        clearTimeout(timer);
+      }
+      pendingTimersRef.current = {};
+    };
+  }, []);
 
   if (entry?.timestamp !== prevSnapshot.timestamp || data !== prevSnapshot.data) {
     setPrevSnapshot({ data, timestamp: entry?.timestamp });
@@ -86,7 +100,7 @@ export const TasksWidget = memo(function TasksWidget({ id }: WidgetComponentProp
       for (const itemId of Object.keys(optimisticDone)) {
         const item = rawItems.find((it) => String(it.id ?? it.ID ?? '') === itemId);
         const serverDone = item ? Boolean(item.done ?? item.Done) : false;
-        if (serverDone || !inFlight[itemId]) {
+        if (serverDone || (!inFlight[itemId] && !pendingUndo[itemId])) {
           delete next[itemId];
           changed = true;
         }
@@ -99,15 +113,16 @@ export const TasksWidget = memo(function TasksWidget({ id }: WidgetComponentProp
 
   const effectiveItems: EffectiveTaskItem[] = rawItems.map((item, idx) => {
     const itemId = String(item.id ?? item.ID ?? `item-${idx}`);
-    const isOptimistic = Boolean(optimisticDone[itemId]);
+    const isPendingUndo = Boolean(pendingUndo[itemId]);
     const serverDone = Boolean(item.done ?? item.Done);
-    const isDone = isOptimistic || serverDone;
-    const isCompleting = Boolean(inFlight[itemId]);
+    const isDone = Boolean(optimisticDone[itemId]) || isPendingUndo || serverDone;
+    const isCompleting = Boolean(inFlight[itemId]) || isPendingUndo;
     return {
       ...item,
       itemId,
       done: isDone,
       isCompleting,
+      isPendingUndo,
     };
   });
 
@@ -115,29 +130,12 @@ export const TasksWidget = memo(function TasksWidget({ id }: WidgetComponentProp
 
   const handleItemClick = useCallback(
     async (itemId: string, listId: string, currentDone: boolean) => {
-      if (currentDone || inFlight[itemId]) return;
-
-      setInFlight((prev) => ({ ...prev, [itemId]: true }));
-      setOptimisticDone((prev) => ({ ...prev, [itemId]: true }));
-
-      try {
-        const resp = await fetch(
-          `api/lists/${encodeURIComponent(listId)}/items/${encodeURIComponent(itemId)}/complete`,
-          {
-            method: 'POST',
-            headers: { Accept: 'application/json' },
-          },
-        );
-        if (!resp.ok) {
-          throw new Error(`HTTP ${resp.status}`);
+      if (pendingTimersRef.current[itemId] !== undefined || pendingUndo[itemId]) {
+        if (pendingTimersRef.current[itemId] !== undefined) {
+          clearTimeout(pendingTimersRef.current[itemId]);
+          delete pendingTimersRef.current[itemId];
         }
-        setInFlight((prev) => {
-          const next = { ...prev };
-          delete next[itemId];
-          return next;
-        });
-      } catch {
-        setInFlight((prev) => {
+        setPendingUndo((prev) => {
           const next = { ...prev };
           delete next[itemId];
           return next;
@@ -147,9 +145,54 @@ export const TasksWidget = memo(function TasksWidget({ id }: WidgetComponentProp
           delete next[itemId];
           return next;
         });
+        return;
       }
+
+      if (currentDone || optimisticDone[itemId] || inFlight[itemId]) return;
+
+      setPendingUndo((prev) => ({ ...prev, [itemId]: true }));
+      setOptimisticDone((prev) => ({ ...prev, [itemId]: true }));
+
+      pendingTimersRef.current[itemId] = setTimeout(async () => {
+        delete pendingTimersRef.current[itemId];
+        setPendingUndo((prev) => {
+          const next = { ...prev };
+          delete next[itemId];
+          return next;
+        });
+        setInFlight((prev) => ({ ...prev, [itemId]: true }));
+
+        try {
+          const resp = await fetch(
+            `api/lists/${encodeURIComponent(listId)}/items/${encodeURIComponent(itemId)}/complete`,
+            {
+              method: 'POST',
+              headers: { Accept: 'application/json' },
+            },
+          );
+          if (!resp.ok) {
+            throw new Error(`HTTP ${resp.status}`);
+          }
+          setInFlight((prev) => {
+            const next = { ...prev };
+            delete next[itemId];
+            return next;
+          });
+        } catch {
+          setInFlight((prev) => {
+            const next = { ...prev };
+            delete next[itemId];
+            return next;
+          });
+          setOptimisticDone((prev) => {
+            const next = { ...prev };
+            delete next[itemId];
+            return next;
+          });
+        }
+      }, TASK_UNDO_GRACE_MS);
     },
-    [inFlight],
+    [inFlight, optimisticDone, pendingUndo],
   );
 
   return (
@@ -258,6 +301,7 @@ export const TasksWidget = memo(function TasksWidget({ id }: WidgetComponentProp
                   );
                   const isDone = item.done;
                   const isCompleting = item.isCompleting;
+                  const isPendingUndo = Boolean(item.isPendingUndo);
                   const title = String(item.title ?? item.Title ?? '');
                   const section = item.section ?? item.Section;
                   const assignee = item.assignee ?? item.Assignee;
@@ -267,11 +311,12 @@ export const TasksWidget = memo(function TasksWidget({ id }: WidgetComponentProp
                   return (
                     <div
                       key={itemId}
-                      className={`task-item ${isDone ? 'task-item-done' : 'task-item-active'}${isCompleting ? ' completing' : ''}`}
+                      className={`task-item ${isDone ? 'task-item-done' : 'task-item-active'}${isCompleting ? ' completing' : ''}${isPendingUndo ? ' pending-undo' : ''}`}
                       data-item-id={itemId}
                       data-task-id={itemId}
                       data-list-id={listId}
                       data-completing={isCompleting ? 'true' : undefined}
+                      data-pending-undo={isPendingUndo ? 'true' : undefined}
                       onClick={() => handleItemClick(itemId, listId, isDone)}
                     >
                       <div className="task-check-glyph">
@@ -310,6 +355,11 @@ export const TasksWidget = memo(function TasksWidget({ id }: WidgetComponentProp
                           </div>
                         )}
                       </div>
+                      {isPendingUndo && (
+                        <span className="task-undo-badge" aria-label="Tap to undo">
+                          Undo
+                        </span>
+                      )}
                     </div>
                   );
                 })}

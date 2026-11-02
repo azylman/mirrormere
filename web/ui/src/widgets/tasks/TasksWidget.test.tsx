@@ -2,12 +2,13 @@ import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import { Profiler } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useDisplayStore } from '../../store';
-import { TasksWidget } from './TasksWidget';
+import { TASK_UNDO_GRACE_MS, TasksWidget } from './TasksWidget';
 
 const initialStore = useDisplayStore.getState();
 
 describe('TasksWidget', () => {
   beforeEach(() => {
+    vi.useFakeTimers();
     useDisplayStore.setState(initialStore, true);
     vi.restoreAllMocks();
   });
@@ -15,6 +16,7 @@ describe('TasksWidget', () => {
   afterEach(() => {
     cleanup();
     vi.unstubAllGlobals();
+    vi.useRealTimers();
   });
 
   it('renders loading state when data is unhydrated ({}) and omits header when unnamed', () => {
@@ -241,6 +243,17 @@ describe('TasksWidget', () => {
     // Click active item: immediately optimistic
     fireEvent.click(item1);
 
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(item1.dataset.completing).toBe('true');
+    expect(item1.dataset.pendingUndo).toBe('true');
+    expect(item1.className).toContain('task-item-done');
+    expect(item1.className).toContain('pending-undo');
+    expect(summary?.textContent).toContain('All done');
+
+    act(() => {
+      vi.advanceTimersByTime(TASK_UNDO_GRACE_MS);
+    });
+
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock).toHaveBeenCalledWith('api/lists/list-99/items/t-1/complete', {
       method: 'POST',
@@ -248,6 +261,7 @@ describe('TasksWidget', () => {
     });
 
     expect(item1.dataset.completing).toBe('true');
+    expect(item1.dataset.pendingUndo).toBeUndefined();
     expect(item1.className).toContain('task-item-done');
     expect(summary?.textContent).toContain('All done');
 
@@ -297,6 +311,9 @@ describe('TasksWidget', () => {
 
     // Trigger completion
     fireEvent.click(item);
+    act(() => {
+      vi.advanceTimersByTime(TASK_UNDO_GRACE_MS);
+    });
     expect(item.dataset.completing).toBe('true');
     expect(item.className).toContain('task-item-done');
 
@@ -362,6 +379,9 @@ describe('TasksWidget', () => {
 
     // Complete the task
     fireEvent.click(item);
+    act(() => {
+      vi.advanceTimersByTime(TASK_UNDO_GRACE_MS);
+    });
     expect(item.className).toContain('task-item-done');
     expect(item.dataset.completing).toBe('true');
 
@@ -445,6 +465,9 @@ describe('TasksWidget', () => {
     expect(summary?.textContent).toContain('1 left');
 
     fireEvent.click(item);
+    act(() => {
+      vi.advanceTimersByTime(TASK_UNDO_GRACE_MS);
+    });
     expect(item.dataset.completing).toBe('true');
     expect(item.className).toContain('task-item-done');
     expect(summary?.textContent).toContain('All done');
@@ -485,12 +508,154 @@ describe('TasksWidget', () => {
     const { container } = render(<TasksWidget id="tasks-500" type="tasks" />);
     const item = container.querySelector('[data-item-id="item-500"]') as HTMLElement;
 
+    fireEvent.click(item);
     await act(async () => {
-      fireEvent.click(item);
+      vi.advanceTimersByTime(TASK_UNDO_GRACE_MS);
     });
 
     expect(item.dataset.completing).toBeUndefined();
     expect(item.className).toContain('task-item-active');
+  });
+
+  it('enters pending-undo state with undo badge on first tap and delays fetch until grace window elapses', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    useDisplayStore.setState({
+      widgets: {
+        'tasks-undo-1': {
+          meta: { type: 'tasks', origin: [0, 0], dimensions: [3, 2], config: {}, assets_base: '' },
+          state: 'healthy',
+          data: { items: [{ id: 'task-1', title: 'Buy groceries', done: false }] },
+          timestamp: '2026-10-31T12:00:00Z',
+        },
+      },
+    });
+
+    const { container } = render(<TasksWidget id="tasks-undo-1" type="tasks" />);
+    const item = container.querySelector('[data-item-id="task-1"]') as HTMLElement;
+    const summary = container.querySelector('.tasks-summary');
+
+    expect(summary?.textContent).toContain('1 left');
+    expect(item.className).toContain('task-item-active');
+    expect(item.querySelector('.task-undo-badge')).toBeNull();
+
+    // First tap: enters pending-undo state immediately
+    fireEvent.click(item);
+
+    expect(item.className).toContain('task-item-done');
+    expect(item.className).toContain('pending-undo');
+    expect(item.dataset.completing).toBe('true');
+    expect(item.dataset.pendingUndo).toBe('true');
+    expect(item.querySelector('.task-undo-badge')).not.toBeNull();
+    expect(item.querySelector('.task-undo-badge')?.textContent).toBe('Undo');
+    expect(summary?.textContent).toContain('All done');
+
+    // fetch must not be called yet before grace window elapses
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    // Advance halfway through grace window: still no fetch
+    act(() => {
+      vi.advanceTimersByTime(TASK_UNDO_GRACE_MS / 2);
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    // Advance remainder of grace window: fetch is dispatched
+    await act(async () => {
+      vi.advanceTimersByTime(TASK_UNDO_GRACE_MS / 2);
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith('api/lists/tasks-undo-1/items/task-1/complete', {
+      method: 'POST',
+      headers: { Accept: 'application/json' },
+    });
+    expect(item.dataset.pendingUndo).toBeUndefined();
+    expect(item.querySelector('.task-undo-badge')).toBeNull();
+  });
+
+  it('cancels completion and restores active state when tapped a second time during grace window', () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    useDisplayStore.setState({
+      widgets: {
+        'tasks-undo-cancel': {
+          meta: { type: 'tasks', origin: [0, 0], dimensions: [3, 2], config: {}, assets_base: '' },
+          state: 'healthy',
+          data: { items: [{ id: 'task-cancel', title: 'Call dentist', done: false }] },
+          timestamp: '2026-10-31T12:00:00Z',
+        },
+      },
+    });
+
+    const { container } = render(<TasksWidget id="tasks-undo-cancel" type="tasks" />);
+    const item = container.querySelector('[data-item-id="task-cancel"]') as HTMLElement;
+    const summary = container.querySelector('.tasks-summary');
+
+    expect(summary?.textContent).toContain('1 left');
+
+    // First tap: optimistic done with pending-undo badge
+    fireEvent.click(item);
+    expect(item.dataset.pendingUndo).toBe('true');
+    expect(summary?.textContent).toContain('All done');
+
+    // Advance partially into grace window
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+
+    // Second tap: undo completion
+    fireEvent.click(item);
+
+    expect(item.className).toContain('task-item-active');
+    expect(item.className).not.toContain('task-item-done');
+    expect(item.className).not.toContain('pending-undo');
+    expect(item.dataset.completing).toBeUndefined();
+    expect(item.dataset.pendingUndo).toBeUndefined();
+    expect(item.querySelector('.task-undo-badge')).toBeNull();
+    expect(summary?.textContent).toContain('1 left');
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    // Advance well past initial grace window: fetch must never be called
+    act(() => {
+      vi.advanceTimersByTime(TASK_UNDO_GRACE_MS * 2);
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('clears grace timer on unmount and prevents fetch from dispatching', () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    useDisplayStore.setState({
+      widgets: {
+        'tasks-unmount': {
+          meta: { type: 'tasks', origin: [0, 0], dimensions: [3, 2], config: {}, assets_base: '' },
+          state: 'healthy',
+          data: { items: [{ id: 'task-unmount', title: 'Unmount test', done: false }] },
+          timestamp: '2026-10-31T12:00:00Z',
+        },
+      },
+    });
+
+    const { container, unmount } = render(<TasksWidget id="tasks-unmount" type="tasks" />);
+    const item = container.querySelector('[data-item-id="task-unmount"]') as HTMLElement;
+
+    // First tap starts grace timer
+    fireEvent.click(item);
+    expect(item.dataset.pendingUndo).toBe('true');
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    // Unmount while timer is pending
+    unmount();
+
+    // Advance time past grace window
+    act(() => {
+      vi.advanceTimersByTime(TASK_UNDO_GRACE_MS * 2);
+    });
+
+    // fetch must not be dispatched
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('renders error banner when widget state is error', () => {
