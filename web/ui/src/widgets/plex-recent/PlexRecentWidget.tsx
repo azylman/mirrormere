@@ -277,7 +277,7 @@ export const PlexRecentWidget = memo(function PlexRecentWidget({ id }: WidgetCom
       </div>
 
       {/* Detail Popover + Play on Living Room TV */}
-      <div className={`overlay-modal ${selectedItem ? 'open' : ''}`} id="detail-modal">
+      <div className={`overlay-modal ${selectedItem ? 'open' : ''}`} data-prevent-screen-swipe="" id="detail-modal">
         {selectedItem && (
           <div className="detail-content">
             <img
@@ -327,7 +327,7 @@ export const PlexRecentWidget = memo(function PlexRecentWidget({ id }: WidgetCom
       </div>
 
       {/* Seerr Request Modal */}
-      <div className={`overlay-modal ${isSeerrOpen ? 'open' : ''}`} id="seerr-modal">
+      <div className={`overlay-modal ${isSeerrOpen ? 'open' : ''}`} data-prevent-screen-swipe="" id="seerr-modal">
         <form className="seerr-bar" id="seerr-form" onSubmit={handleSeerrSearch}>
           <input
             ref={seerrInputRef}

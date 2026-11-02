@@ -434,16 +434,17 @@ describe('PlexRecentWidget', () => {
   });
 
   it('marks horizontal tabs, modal overlay, and search input with data-prevent-screen-swipe', async () => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify(SAMPLE_RECENT), { status: 200 }));
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ items: mockRecentItems }), { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
 
-    const { container } = render(<PlexRecentWidget id="plex-swipe" config={{}} />);
+    const { container } = render(<PlexRecentWidget id="plex-swipe" type="plex-recent" />);
     await waitFor(() => {
       expect(container.querySelector('.tabs')).not.toBeNull();
     });
 
     expect(container.querySelector('.tabs')?.hasAttribute('data-prevent-screen-swipe')).toBe(true);
-    expect(container.querySelector('.overlay-modal')?.hasAttribute('data-prevent-screen-swipe')).toBe(true);
+    expect(container.querySelector('#detail-modal')?.hasAttribute('data-prevent-screen-swipe')).toBe(true);
+    expect(container.querySelector('#seerr-modal')?.hasAttribute('data-prevent-screen-swipe')).toBe(true);
     expect(container.querySelector('.seerr-input')?.hasAttribute('data-prevent-screen-swipe')).toBe(true);
   });
 });

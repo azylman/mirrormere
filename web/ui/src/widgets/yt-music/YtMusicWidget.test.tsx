@@ -500,16 +500,16 @@ describe('YtMusicWidget', () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes('/music/state')) {
-        return new Response(JSON.stringify(SAMPLE_STATE), { status: 200 });
+        return new Response(JSON.stringify(mockInitialState), { status: 200 });
       }
       if (url.includes('/music/playlists')) {
-        return new Response(JSON.stringify(SAMPLE_PLAYLISTS), { status: 200 });
+        return new Response(JSON.stringify({ playlists: [] }), { status: 200 });
       }
       return new Response('{}', { status: 200 });
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const { container } = render(<YtMusicWidget id="yt-swipe" config={{}} />);
+    const { container } = render(<YtMusicWidget id="yt-swipe" type="yt-music" />);
     await waitFor(() => {
       expect(container.querySelector('#vol-slider')).not.toBeNull();
     });
