@@ -639,6 +639,7 @@ describe('format helpers', () => {
       expect(todayPrecipProb({ daily: [{ precip_prob: 42 }] })).toBe(42);
       expect(todayPrecipProb({ daily: [{ PrecipitationProbability: 55 }] })).toBe(55);
       expect(todayPrecipProb({ hourly: [{ PrecipitationProbability: 65 }] })).toBe(65);
+      expect(todayPrecipProb({ Hourly: [{ PrecipProb: 50 }] })).toBe(50);
       expect(todayPrecipProb({ current: { PrecipitationProbability: 75 } })).toBe(75);
     });
   });

@@ -20,6 +20,7 @@ import {
 import type {
   FamilyDay,
   FamilyEvent,
+  FamilyMember,
   FamilyMonthDay,
   FamilyMonthViewModel,
   FamilyViewModel,
@@ -30,6 +31,155 @@ import { useInactivityReset } from './useInactivityReset';
 
 export type { CalendarGridViewModel } from './types';
 export { batchFitDayColumnEvents } from './CalendarWeekView';
+
+function resolveDefaultView(
+  config?: Record<string, unknown>,
+  entryViewModel?: Record<string, unknown>,
+): ViewMode {
+  const rawDefault = (
+    typeof config?.default_view === 'string'
+      ? config.default_view
+      : typeof entryViewModel?.active_view === 'string'
+      ? entryViewModel.active_view
+      : 'week'
+  ).toLowerCase();
+  return rawDefault === 'month' ? 'month' : rawDefault === 'day' ? 'day' : 'week';
+}
+
+function resolveCalendarBaselines(
+  entryViewModel?: Record<string, unknown>,
+  data?: Record<string, unknown>,
+  config?: Record<string, unknown>,
+) {
+  const vmToday = entryViewModel?.week as Record<string, unknown> | undefined;
+  const vmMonth = entryViewModel?.month as Record<string, unknown> | undefined;
+  const todayStr =
+    typeof vmToday?.today === 'string'
+      ? vmToday.today
+      : typeof vmMonth?.today === 'string'
+      ? vmMonth.today
+      : typeof data?.today === 'string'
+      ? data.today
+      : toISODate(new Date());
+
+  const baseDate = parseISODate(todayStr);
+
+  const vmWeek = entryViewModel?.week as Record<string, unknown> | undefined;
+  const baseWeekStart =
+    typeof vmWeek?.range_start === 'string' ? parseISODate(vmWeek.range_start) : baseDate;
+
+  const baseDays = (
+    entryViewModel?.week as FamilyViewModel | undefined
+  )?.days;
+  const cfgDays = Number(config?.days);
+  const weekStep =
+    Array.isArray(baseDays) && baseDays.length > 0
+      ? baseDays.length
+      : Number.isFinite(cfgDays) && cfgDays > 0
+      ? Math.round(cfgDays)
+      : 7;
+
+  return { baseDate, baseWeekStart, weekStep };
+}
+
+function computeMemberCssVars(
+  weekVM?: FamilyViewModel,
+  monthVM?: FamilyMonthViewModel,
+): CSSProperties {
+  const vars: Record<string, string> = {};
+  const sharedColor = weekVM?.shared_color || monthVM?.shared_color || '#3D405B';
+  vars['--mm-cf-shared'] = sharedColor;
+  const members = weekVM?.members || monthVM?.members || [];
+  members.forEach((m, i) => {
+    if (m.color) vars[`--mm-member-${i}`] = m.color;
+    if (m.text_color) vars[`--mm-member-${i}-text`] = m.text_color;
+  });
+  return vars as CSSProperties;
+}
+
+function resolveRangeLabels(
+  weekVM: FamilyViewModel | undefined,
+  monthVM: FamilyMonthViewModel | undefined,
+  currentWeekStart: Date | null,
+  currentDate: Date,
+) {
+  let rangeLabelWeek = weekVM?.range_label || '';
+  if (!rangeLabelWeek && currentWeekStart) {
+    const daysLen = weekVM?.days?.length || 7;
+    rangeLabelWeek = formatWeekLabel(currentWeekStart, addDays(currentWeekStart, daysLen - 1));
+  }
+
+  let rangeLabelMonth = monthVM?.month_label || '';
+  if (!rangeLabelMonth && currentDate) {
+    rangeLabelMonth = formatMonthLabel(currentDate);
+  }
+
+  const rangeLabelDay = formatDayLabel(currentDate);
+  return { rangeLabelWeek, rangeLabelMonth, rangeLabelDay };
+}
+
+function filterDaysByMember(
+  rawDays: FamilyDay[],
+  selectedMember: string | null,
+  membersList: FamilyMember[],
+): FamilyDay[] {
+  if (!selectedMember) return rawDays;
+  return rawDays.map((day) => ({
+    ...day,
+    events: day.events?.filter((ev) => matchesMemberFilter(ev, selectedMember, membersList)),
+    early_events: day.early_events?.filter((ev) =>
+      matchesMemberFilter(ev, selectedMember, membersList),
+    ),
+    late_events: day.late_events?.filter((ev) =>
+      matchesMemberFilter(ev, selectedMember, membersList),
+    ),
+    all_day: day.all_day?.filter((ev) => matchesMemberFilter(ev, selectedMember, membersList)),
+    timed: day.timed?.filter((ev) => matchesMemberFilter(ev, selectedMember, membersList)),
+  }));
+}
+
+function filterMonthByMember(
+  monthVM: FamilyMonthViewModel | undefined,
+  selectedMember: string | null,
+  membersList: FamilyMember[],
+): FamilyMonthViewModel | undefined {
+  if (!monthVM || !selectedMember) return monthVM;
+  const filterDay = (day: FamilyMonthDay): FamilyMonthDay => {
+    const filteredEvents = day.events
+      ? day.events.filter((ev) => matchesMemberFilter(ev, selectedMember, membersList))
+      : [];
+    const filteredDots = day.dots
+      ? day.dots.filter((dot) => dot.name === selectedMember)
+      : undefined;
+    return {
+      ...day,
+      dots: filteredDots,
+      events: filteredEvents,
+      events_count: filteredEvents.length,
+      event_title: filteredEvents[0]?.title,
+    };
+  };
+
+  return {
+    ...monthVM,
+    days: monthVM.days ? monthVM.days.map(filterDay) : undefined,
+    weeks: monthVM.weeks
+      ? monthVM.weeks.map((w) => ({
+          ...w,
+          days: w.days.map(filterDay),
+        }))
+      : undefined,
+  };
+}
+
+function resolveModalDateLabel(ev: FamilyEvent, dateStr?: string, endDateStr?: string): string {
+  const resolvedStart =
+    dateStr ||
+    (ev.start && /^\d{4}-\d{2}-\d{2}/.test(ev.start) ? ev.start.slice(0, 10) : undefined);
+  const resolvedEnd =
+    endDateStr || (ev.end && /^\d{4}-\d{2}-\d{2}/.test(ev.end) ? ev.end.slice(0, 10) : undefined);
+  return formatModalDateRange(resolvedStart, resolvedEnd);
+}
 
 /**
  * Native React calendar grid and family planner widget.
@@ -42,46 +192,16 @@ export function CalendarGridWidget({
   const config = entry?.meta?.config as Record<string, unknown> | undefined;
   const data = entry?.data as Record<string, unknown> | undefined;
   const isError = entry?.state === 'error';
+  const entryVM = entry?.viewModel as Record<string, unknown> | undefined;
 
-  const rawDefault = (
-    typeof config?.default_view === 'string'
-      ? config.default_view
-      : typeof entry?.viewModel?.active_view === 'string'
-      ? entry.viewModel.active_view
-      : 'week'
-  ).toLowerCase();
-  const defaultView: ViewMode =
-    rawDefault === 'month' ? 'month' : rawDefault === 'day' ? 'day' : 'week';
+  const defaultView = resolveDefaultView(config, entryVM);
 
   const [activeView, setActiveView] = useState<ViewMode>(defaultView);
   const [selectedMember, setSelectedMember] = useState<string | null>(null);
   const [activeModalEvent, setActiveModalEvent] = useState<FamilyEvent | null>(null);
   const [activeModalDateLabel, setActiveModalDateLabel] = useState<string>('');
 
-  const vmToday = (entry?.viewModel as Record<string, unknown> | undefined)?.week as Record<string, unknown> | undefined;
-  const vmMonth = (entry?.viewModel as Record<string, unknown> | undefined)?.month as Record<string, unknown> | undefined;
-  const todayStr =
-    typeof vmToday?.today === 'string'
-      ? vmToday.today
-      : typeof vmMonth?.today === 'string'
-      ? vmMonth.today
-      : typeof data?.today === 'string'
-      ? data.today
-      : toISODate(new Date());
-
-  const baseDate = parseISODate(todayStr);
-
-  const vmWeek = (entry?.viewModel as Record<string, unknown> | undefined)?.week as Record<string, unknown> | undefined;
-  const baseWeekStart = typeof vmWeek?.range_start === 'string' ? parseISODate(vmWeek.range_start) : baseDate;
-
-  const baseDays = ((entry?.viewModel as Record<string, unknown> | undefined)?.week as FamilyViewModel | undefined)?.days;
-  const cfgDays = Number(config?.days);
-  const weekStep =
-    Array.isArray(baseDays) && baseDays.length > 0
-      ? baseDays.length
-      : Number.isFinite(cfgDays) && cfgDays > 0
-      ? Math.round(cfgDays)
-      : 7;
+  const { baseDate, baseWeekStart, weekStep } = resolveCalendarBaselines(entryVM, data, config);
 
   // Ref for user activity hook so range data callbacks can notify inactivity timer
   const activityCallbackRef = useRef<() => void>(() => {});
@@ -142,12 +262,8 @@ export function CalendarGridWidget({
   };
 
   const openModal = (ev: FamilyEvent, dateStr?: string, endDateStr?: string) => {
-    const resolvedStart =
-      dateStr || (ev.start && /^\d{4}-\d{2}-\d{2}/.test(ev.start) ? ev.start.slice(0, 10) : undefined);
-    const resolvedEnd =
-      endDateStr || (ev.end && /^\d{4}-\d{2}-\d{2}/.test(ev.end) ? ev.end.slice(0, 10) : undefined);
     setActiveModalEvent(ev);
-    setActiveModalDateLabel(formatModalDateRange(resolvedStart, resolvedEnd));
+    setActiveModalDateLabel(resolveModalDateLabel(ev, dateStr, endDateStr));
     handleUserActivity();
   };
 
@@ -159,91 +275,36 @@ export function CalendarGridWidget({
 
   const weekVM = currentViewModel?.week as FamilyViewModel | undefined;
   const monthVM = currentViewModel?.month as FamilyMonthViewModel | undefined;
+  const members = weekVM?.members || monthVM?.members || [];
 
-  const memberCssVars: CSSProperties = (() => {
-    const vars: Record<string, string> = {};
-    const sharedColor = weekVM?.shared_color || monthVM?.shared_color || '#3D405B';
-    vars['--mm-cf-shared'] = sharedColor;
-    const members = weekVM?.members || monthVM?.members || [];
-    members.forEach((m, i) => {
-      if (m.color) vars[`--mm-member-${i}`] = m.color;
-      if (m.text_color) vars[`--mm-member-${i}-text`] = m.text_color;
-    });
-    return vars as CSSProperties;
-  })();
-
-  let rangeLabelWeek = weekVM?.range_label || '';
-  if (!rangeLabelWeek && currentWeekStart) {
-    const daysLen = weekVM?.days?.length || 7;
-    rangeLabelWeek = formatWeekLabel(currentWeekStart, addDays(currentWeekStart, daysLen - 1));
-  }
-
-  let rangeLabelMonth = monthVM?.month_label || '';
-  if (!rangeLabelMonth && currentDate) {
-    rangeLabelMonth = formatMonthLabel(currentDate);
-  }
-
-  const rangeLabelDay = formatDayLabel(currentDate);
+  const memberCssVars = computeMemberCssVars(weekVM, monthVM);
+  const { rangeLabelWeek, rangeLabelMonth, rangeLabelDay } = resolveRangeLabels(
+    weekVM,
+    monthVM,
+    currentWeekStart,
+    currentDate,
+  );
   const currentDateISO = toISODate(currentDate);
 
   const rawDaysToRender: FamilyDay[] = sliceWeekWindow(weekVM?.days, activeView, currentDateISO);
+  const daysToRender = filterDaysByMember(rawDaysToRender, selectedMember, members);
 
-  const daysToRender: FamilyDay[] = (() => {
-    if (!selectedMember) return rawDaysToRender;
-    const membersList = weekVM?.members || monthVM?.members || [];
-    return rawDaysToRender.map((day) => ({
-      ...day,
-      events: day.events?.filter((ev) => matchesMemberFilter(ev, selectedMember, membersList)),
-      early_events: day.early_events?.filter((ev) => matchesMemberFilter(ev, selectedMember, membersList)),
-      late_events: day.late_events?.filter((ev) => matchesMemberFilter(ev, selectedMember, membersList)),
-      all_day: day.all_day?.filter((ev) => matchesMemberFilter(ev, selectedMember, membersList)),
-      timed: day.timed?.filter((ev) => matchesMemberFilter(ev, selectedMember, membersList)),
-    }));
-  })();
+  const rawVisibleAllDayEvents = computeDayLayout(
+    weekVM?.all_day_events,
+    weekVM?.days,
+    activeView,
+    currentDateISO,
+  );
+  const visibleAllDayEvents = selectedMember
+    ? rawVisibleAllDayEvents.filter((ev) => matchesMemberFilter(ev, selectedMember, members))
+    : rawVisibleAllDayEvents;
 
-  const rawVisibleAllDayEvents = computeDayLayout(weekVM?.all_day_events, weekVM?.days, activeView, currentDateISO);
-
-  const visibleAllDayEvents = (() => {
-    if (!selectedMember) return rawVisibleAllDayEvents;
-    const membersList = weekVM?.members || monthVM?.members || [];
-    return rawVisibleAllDayEvents.filter((ev) => matchesMemberFilter(ev, selectedMember, membersList));
-  })();
-
-  const filteredMonthVM = (() => {
-    if (!monthVM) return undefined;
-    if (!selectedMember) return monthVM;
-    const membersList = weekVM?.members || monthVM?.members || [];
-    const filterDay = (day: FamilyMonthDay): FamilyMonthDay => {
-      const filteredEvents = day.events
-        ? day.events.filter((ev) => matchesMemberFilter(ev, selectedMember, membersList))
-        : [];
-      const filteredDots = day.dots
-        ? day.dots.filter((dot) => dot.name === selectedMember)
-        : undefined;
-      return {
-        ...day,
-        dots: filteredDots,
-        events: filteredEvents,
-        events_count: filteredEvents.length,
-        event_title: filteredEvents[0]?.title,
-      };
-    };
-
-    return {
-      ...monthVM,
-      days: monthVM.days ? monthVM.days.map(filterDay) : undefined,
-      weeks: monthVM.weeks
-        ? monthVM.weeks.map((w) => ({
-            ...w,
-            days: w.days.map(filterDay),
-          }))
-        : undefined,
-    };
-  })();
+  const filteredMonthVM = filterMonthByMember(monthVM, selectedMember, members);
 
   const customTitle =
-    typeof config?.title === 'string' && config.title.trim() !== '' ? config.title.trim() : 'Calendar';
-  const members = weekVM?.members || monthVM?.members || [];
+    typeof config?.title === 'string' && config.title.trim() !== ''
+      ? config.title.trim()
+      : 'Calendar';
 
   return (
     <div

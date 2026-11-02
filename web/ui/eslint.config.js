@@ -36,17 +36,10 @@ export default tseslint.config(
     },
   },
   {
-    // Grandfathered legacy widgets and formatters that exceed complexity / depth bounds.
-    files: [
-      'src/widgets/**',
-      'src/shell/NextUp.tsx',
-      'src/store/index.ts',
-      'src/video/Hud.tsx',
-      'src/video/api.ts',
-    ],
+    files: ['src/**/*.{ts,tsx}'],
+    ignores: ['src/**/*.test.{ts,tsx}', 'src/test/**'],
     rules: {
-      'complexity': 'off',
-      'max-depth': 'off',
+      'max-lines': ['error', { max: 500, skipBlankLines: false, skipComments: false }],
     },
   },
   {
