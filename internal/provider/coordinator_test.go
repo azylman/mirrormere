@@ -664,6 +664,9 @@ func TestProviderCoordinator_PushWidgetPhotos(t *testing.T) {
 	coord := newCoord(reg, b, s, mkSnap("", pkgs, widgets...))
 	defer coord.Stop()
 
+	waitForState(t, coord.Cache(), "tile-ember", provider.StateHealthy)
+	_, _ = b.waitForPublish(time.Second)
+
 	ctx := context.Background()
 	validPhotos := []string{"https://lh3.googleusercontent.com/pw/AL9nZEW1", "https://lh3.googleusercontent.com/pw/AL9nZEW2"}
 

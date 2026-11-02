@@ -27,6 +27,28 @@ supported_dimensions:
 config_schema:
   type: object
   properties:
+    cache_dir:
+      type: string
+    albums:
+      type: array
+      minItems: 1
+      items:
+        type: object
+        required:
+          - name
+        properties:
+          name:
+            type: string
+          source:
+            type: string
+            enum:
+              - share_url
+              - ember_bridge
+          url:
+            type: string
+          url_env:
+            type: string
+        additionalProperties: false
     source:
       type: string
       enum:
@@ -91,3 +113,5 @@ response_schema:
             type: string
           aspect_ratio:
             type: number
+          album_name:
+            type: string
