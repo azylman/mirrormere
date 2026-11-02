@@ -1,0 +1,55 @@
+name: home-assistant
+version: "1.0.0"
+description: Native Home Assistant Lovelace dashboard viewer and touch-friendly entity control panel.
+provider: home-assistant
+
+capabilities:
+  - ambient-static
+  - touch-interactive
+
+default_dimensions: [4, 2]
+
+supported_dimensions:
+  - [2, 1]
+  - [3, 1]
+  - [4, 1]
+  - [6, 1]
+  - [2, 2]
+  - [3, 2]
+  - [4, 2]
+  - [6, 2]
+  - [1, 2]
+  - [2, 3]
+  - [1, 4]
+  - [2, 4]
+
+config_schema:
+  type: object
+  properties:
+    url:
+      type: string
+    url_env:
+      type: string
+    base_url:
+      type: string
+    token:
+      type: string
+    token_env:
+      type: string
+    dashboard:
+      type: string
+    view:
+      type:
+        - string
+        - integer
+    title:
+      type: string
+    domains:
+      type: array
+      items:
+        type: string
+    entities:
+      type: array
+      items:
+        type: string
+  additionalProperties: false
