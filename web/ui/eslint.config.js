@@ -6,14 +6,15 @@ import tseslint from 'typescript-eslint';
 export default tseslint.config(
   { ignores: ['../static/ui/**', 'node_modules/**'] },
   {
-    extends: [js.configs.recommended, ...tseslint.configs.recommended],
+    extends: [
+      js.configs.recommended,
+      ...tseslint.configs.recommended,
+      reactHooks.configs.flat.recommended,
+    ],
     files: ['**/*.{ts,tsx}'],
     languageOptions: {
       ecmaVersion: 2022,
       globals: globals.browser,
-    },
-    plugins: {
-      'react-hooks': reactHooks,
     },
     rules: {
       'react-hooks/rules-of-hooks': 'error',
@@ -35,17 +36,10 @@ export default tseslint.config(
     },
   },
   {
-    // Grandfathered legacy widgets and formatters that exceed complexity / depth bounds.
-    files: [
-      'src/widgets/**',
-      'src/shell/NextUp.tsx',
-      'src/store/index.ts',
-      'src/video/Hud.tsx',
-      'src/video/api.ts',
-    ],
+    files: ['src/**/*.{ts,tsx}'],
+    ignores: ['src/**/*.test.{ts,tsx}', 'src/test/**'],
     rules: {
-      'complexity': 'off',
-      'max-depth': 'off',
+      'max-lines': ['error', { max: 500, skipBlankLines: false, skipComments: false }],
     },
   },
   {

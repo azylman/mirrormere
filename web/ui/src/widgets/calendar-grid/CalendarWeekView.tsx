@@ -62,6 +62,13 @@ export function batchFitDayColumnEvents(columnEl: HTMLElement): void {
   }
 }
 
+function handleEventKeyDown(e: React.KeyboardEvent, action: () => void) {
+  if (e.key === 'Enter' || e.key === ' ') {
+    e.preventDefault();
+    action();
+  }
+}
+
 export interface CalendarWeekViewProps {
   activeView: ViewMode;
   weekVM?: FamilyViewModel;
@@ -89,17 +96,24 @@ export function CalendarWeekView({
   const [now, setNow] = useState(() => new Date());
 
   const hasToday = daysToRender.some((d) => d.is_today);
+  const isTimerActive = activeView !== 'month' && isDocVisible && isPaneActive && hasToday;
+  const [prevTimerActive, setPrevTimerActive] = useState(isTimerActive);
+  if (isTimerActive !== prevTimerActive) {
+    setPrevTimerActive(isTimerActive);
+    if (isTimerActive) {
+      setNow(new Date());
+    }
+  }
 
   useEffect(() => {
-    if (activeView === 'month' || !isDocVisible || !isPaneActive || !hasToday) {
+    if (!isTimerActive) {
       return;
     }
-    setNow(new Date());
     const timer = setInterval(() => {
       setNow(new Date());
     }, 60_000);
     return () => clearInterval(timer);
-  }, [activeView, isDocVisible, isPaneActive, hasToday]);
+  }, [isTimerActive]);
 
   const nowPct = computeNowIndicatorPct(weekVM, now, tz || undefined);
 
@@ -154,6 +168,9 @@ export function CalendarWeekView({
                   <div
                     key={ev.id}
                     className={`cf-event cf-allday cf-event-clickable${ev.pattern ? ` cf-pattern-${ev.pattern}` : ''}`}
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`${ev.title} (All Day)`}
                     data-event-id={ev.id}
                     data-event-title={ev.title}
                     data-event-allday="true"
@@ -161,6 +178,7 @@ export function CalendarWeekView({
                     data-event-description={ev.description}
                     data-mealie-decorated={isMealie ? 'true' : undefined}
                     onClick={() => onOpenModal(ev, spanStartDay, spanEndDay)}
+                    onKeyDown={(e) => handleEventKeyDown(e, () => onOpenModal(ev, spanStartDay, spanEndDay))}
                     style={{
                       gridColumn: activeView === 'day' ? '1 / span 1' : `${ev.start_col} / span ${ev.col_span}`,
                       fontSize: '0.68rem', fontWeight: 700, borderRadius: '6px', padding: '3px 6px',
@@ -203,6 +221,7 @@ export function CalendarWeekView({
                           data-event-location={ev.location} data-event-description={ev.description}
                           data-mealie-decorated={isMealie ? 'true' : undefined}
                           onClick={() => onOpenModal(ev, day.date)}
+                          onKeyDown={(e) => handleEventKeyDown(e, () => onOpenModal(ev, day.date))}
                           style={{
                             fontSize: '0.65rem', fontWeight: 700, borderRadius: '4px', padding: '2px 4px',
                             color: ev.text_color, backgroundColor: ev.color, cursor: 'pointer', touchAction: 'manipulation',
@@ -248,6 +267,7 @@ export function CalendarWeekView({
                         data-event-id={ev.id} data-event-title={ev.title} data-event-start={ev.start}
                         data-event-end={ev.end} data-event-location={ev.location} data-event-description={ev.description}
                         onClick={() => onOpenModal(ev, day.date)}
+                        onKeyDown={(e) => handleEventKeyDown(e, () => onOpenModal(ev, day.date))}
                         style={{
                           fontSize: '0.60rem', fontWeight: 700, padding: '2px 4px', borderRadius: '4px',
                           backgroundColor: ev.color, color: ev.text_color, overflow: 'hidden', textOverflow: 'ellipsis',
@@ -380,6 +400,7 @@ export function CalendarWeekView({
                           data-event-id={ev.id} data-event-title={ev.title} data-event-start={ev.start}
                           data-event-end={ev.end} data-event-location={ev.location} data-event-description={ev.description}
                           onClick={() => onOpenModal(ev, day.date)}
+                          onKeyDown={(e) => handleEventKeyDown(e, () => onOpenModal(ev, day.date))}
                           style={{
                             position: 'absolute', top: `${ev.top_pct}%`, height: `${ev.height_pct}%`,
                             left: `calc(${ev.left_pct}% + 1px)`, width: `calc(${ev.width_pct}% - 2px)`,
@@ -431,6 +452,7 @@ export function CalendarWeekView({
                         data-event-id={ev.id} data-event-title={ev.title} data-event-start={ev.start}
                         data-event-end={ev.end} data-event-location={ev.location} data-event-description={ev.description}
                         onClick={() => onOpenModal(ev, day.date)}
+                        onKeyDown={(e) => handleEventKeyDown(e, () => onOpenModal(ev, day.date))}
                         style={{
                           fontSize: '0.60rem', fontWeight: 700, padding: '2px 4px', borderRadius: '4px',
                           backgroundColor: ev.color, color: ev.text_color, overflow: 'hidden',

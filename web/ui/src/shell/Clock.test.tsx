@@ -1,7 +1,7 @@
 import { act, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useDisplayStore } from '../store';
-import { Clock, createClockFormatters, isValidTimezone, resolveActiveTimezone } from './Clock';
+import { Clock, computeClockParts, createClockFormatters, isValidTimezone, resolveActiveTimezone } from './Clock';
 
 describe('isValidTimezone', () => {
   it('identifies valid IANA timezones', () => {
@@ -67,6 +67,17 @@ describe('resolveActiveTimezone', () => {
         timezone: 'invalid-tz-2',
       }),
     ).toBeUndefined();
+  });
+});
+
+describe('computeClockParts', () => {
+  it('computes clock parts correctly for a given date and timezone', () => {
+    const date = new Date('2026-10-31T14:05:00Z');
+    const parts = computeClockParts(date, 'UTC', 'en-US');
+    expect(parts.time).toBe('2:05');
+    expect(parts.ampm).toBe('PM');
+    expect(parts.weekday).toBe('Saturday');
+    expect(parts.fullDate).toBe('Oct 31');
   });
 });
 
@@ -188,43 +199,45 @@ describe('Clock component', () => {
     expect(fullDateEl.textContent).toBe('31 Oct');
   });
 
-  it('writes textContent on spans only when respective parts change', () => {
+  it('updates declarative DOM text on minute and day transitions while remaining stable', () => {
     const { container } = render(<Clock locale="en-US" />);
     const clockEl = container.querySelector('#header-clock') as HTMLDivElement;
-    const textNode = clockEl.firstChild;
-    expect(textNode).not.toBeNull();
+    expect(clockEl.firstChild?.textContent).toBe('2:05');
 
     const ampmEl = clockEl.querySelector('.header-clock-ampm') as HTMLSpanElement;
+    expect(ampmEl.textContent).toBe('PM');
+    expect(ampmEl.style.display).toBe('');
+
     const weekdayEl = container.querySelector('.header-date-weekday') as HTMLSpanElement;
+    expect(weekdayEl.textContent).toBe('Saturday');
+
     const fullDateEl = container.querySelector('.header-date-full') as HTMLSpanElement;
+    expect(fullDateEl.textContent).toBe('Oct 31');
 
-    const timeSpy = vi.spyOn(textNode!, 'textContent', 'set');
-    const ampmSpy = vi.spyOn(ampmEl, 'textContent', 'set');
-    const weekdaySpy = vi.spyOn(weekdayEl, 'textContent', 'set');
-    const fullDateSpy = vi.spyOn(fullDateEl, 'textContent', 'set');
-
-    // Advance 10 seconds: same minute, hour, date -> no textContent writes
+    // Advance 10 seconds: same minute, hour, date -> text remains identical
     act(() => {
       vi.advanceTimersByTime(10000);
     });
-    expect(timeSpy).not.toHaveBeenCalled();
-    expect(ampmSpy).not.toHaveBeenCalled();
-    expect(weekdaySpy).not.toHaveBeenCalled();
-    expect(fullDateSpy).not.toHaveBeenCalled();
+    expect(clockEl.firstChild?.textContent).toBe('2:05');
+    expect(ampmEl.textContent).toBe('PM');
+    expect(weekdayEl.textContent).toBe('Saturday');
+    expect(fullDateEl.textContent).toBe('Oct 31');
 
-    // Advance past minute boundary: time string changes -> exactly one textContent write on time
+    // Advance past minute boundary: time updates declaratively to 2:06
     act(() => {
       vi.advanceTimersByTime(51000);
     });
-    expect(timeSpy).toHaveBeenCalledTimes(1);
-    expect(ampmSpy).not.toHaveBeenCalled();
-    expect(weekdaySpy).not.toHaveBeenCalled();
-    expect(fullDateSpy).not.toHaveBeenCalled();
+    expect(clockEl.firstChild?.textContent).toBe('2:06');
+    expect(ampmEl.textContent).toBe('PM');
+    expect(weekdayEl.textContent).toBe('Saturday');
+    expect(fullDateEl.textContent).toBe('Oct 31');
 
-    timeSpy.mockRestore();
-    ampmSpy.mockRestore();
-    weekdaySpy.mockRestore();
-    fullDateSpy.mockRestore();
+    // Advance to next day: date and weekday update declaratively
+    act(() => {
+      vi.advanceTimersByTime(22 * 3600 * 1000); // Into Nov 1
+    });
+    expect(weekdayEl.textContent).toBe('Sunday');
+    expect(fullDateEl.textContent).toBe('Nov 1');
   });
 
   it('stops its timer when document is hidden and resumes when visible', () => {

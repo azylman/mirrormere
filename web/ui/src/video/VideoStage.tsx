@@ -166,7 +166,7 @@ export class VideoPlayerManager {
  * VideoStage React component rendering #video-stage, slots, and HUD.
  */
 export function VideoStage(): React.JSX.Element {
-  const stageRef = useRef<HTMLDivElement>(null);
+  const [stageNode, setStageNode] = useState<HTMLDivElement | null>(null);
   const hudControllerRef = useRef<VideoHUDController | null>(null);
 
   const audioController = useAudioController();
@@ -179,18 +179,12 @@ export function VideoStage(): React.JSX.Element {
   const pipStream = videoState?.pip || null;
 
   const [isSwapped, setIsSwapped] = useState(false);
+  const effectiveSwapped = Boolean(pipStream) && isSwapped;
 
-  // Sync HUD stream state whenever isSwapped or videoState changes
+  // Sync HUD stream state whenever effectiveSwapped or videoState changes
   useEffect(() => {
     hudControllerRef.current?.syncStream?.();
-  }, [isSwapped, videoState]);
-
-  // Reset swapped state if PiP stream is dismissed or absent
-  useEffect(() => {
-    if (!pipStream && isSwapped) {
-      setIsSwapped(false);
-    }
-  }, [pipStream, isSwapped]);
+  }, [effectiveSwapped, videoState]);
 
   // Carousel coordination on video presentation mode entry/exit
   const prevActiveRef = useRef(false);
@@ -244,20 +238,20 @@ export function VideoStage(): React.JSX.Element {
   }, []);
 
   const handlePrimarySlotClick = () => {
-    if (isSwapped && primaryStream && pipStream) {
+    if (effectiveSwapped && primaryStream && pipStream) {
       setIsSwapped(false);
     }
   };
 
   const handlePipSlotClick = () => {
-    if (!isSwapped && primaryStream && pipStream) {
+    if (!effectiveSwapped && primaryStream && pipStream) {
       setIsSwapped(true);
     }
   };
 
   // Per-slot failure isolation
   const handlePrimarySlotFailure = () => {
-    if (isSwapped && pipStream) {
+    if (effectiveSwapped && pipStream) {
       // Primary was in corner dock; dismiss dock and leave pip full-screen
       useDisplayStore.setState((s) => ({
         video: { ...s.video, primary: null },
@@ -282,7 +276,7 @@ export function VideoStage(): React.JSX.Element {
       return;
     }
 
-    if (isSwapped) {
+    if (effectiveSwapped) {
       // Swapped PiP was full-screen; unswap and promote primary back to full-screen
       setIsSwapped(false);
       useDisplayStore.setState((s) => ({
@@ -311,7 +305,7 @@ export function VideoStage(): React.JSX.Element {
         return mode;
       },
       get isSwapped() {
-        return isSwapped;
+        return effectiveSwapped;
       },
       swapStreams: () => {
         if (primaryStream && pipStream) {
@@ -354,7 +348,7 @@ export function VideoStage(): React.JSX.Element {
         delete window.videoManager;
       }
     };
-  }, [mode, isSwapped, primaryStream, pipStream]);
+  }, [mode, effectiveSwapped, primaryStream, pipStream]);
 
   const handleHudController = (hud: VideoHUDController | null) => {
     hudControllerRef.current = hud;
@@ -370,9 +364,9 @@ export function VideoStage(): React.JSX.Element {
   return (
     <div
       id="video-stage"
-      ref={stageRef}
+      ref={setStageNode}
       className={`video-stage${isActive ? ' active' : ''}`}
-      data-swapped={isSwapped ? 'true' : undefined}
+      data-swapped={effectiveSwapped ? 'true' : undefined}
       style={{ display: isActive ? 'flex' : 'none' }}
     >
       <VideoSlot
@@ -380,21 +374,21 @@ export function VideoStage(): React.JSX.Element {
         className="video-primary-slot"
         stream={primaryStream}
         isPipSlot={false}
-        isPresentationPrimary={!isSwapped}
-        isSwapped={isSwapped}
+        isPresentationPrimary={!effectiveSwapped}
+        isSwapped={effectiveSwapped}
         remoteUrl={resolvedRemoteUrl}
         audioController={audioController}
         onSlotClick={handlePrimarySlotClick}
         onSlotFailure={handlePrimarySlotFailure}
-        style={isSwapped && !primaryStream ? { display: 'none' } : undefined}
+        style={effectiveSwapped && !primaryStream ? { display: 'none' } : undefined}
       />
       <VideoSlot
         id="video-pip-slot"
         className="video-pip-slot"
         stream={pipStream}
         isPipSlot={true}
-        isPresentationPrimary={isSwapped}
-        isSwapped={isSwapped}
+        isPresentationPrimary={effectiveSwapped}
+        isSwapped={effectiveSwapped}
         remoteUrl={resolvedRemoteUrl}
         audioController={audioController}
         onSlotClick={handlePipSlotClick}
@@ -404,13 +398,13 @@ export function VideoStage(): React.JSX.Element {
       <Hud
         controllerRef={handleHudController}
         videoManager={{
-          isSwapped,
+          isSwapped: effectiveSwapped,
           serverPrimary: primaryStream,
           serverPip: pipStream,
           remoteUrl: resolvedRemoteUrl,
         }}
         remoteUrl={resolvedRemoteUrl}
-        stageElement={stageRef.current}
+        stageElement={stageNode}
       />
     </div>
   );

@@ -29,99 +29,120 @@ export function parseLiveViewConfig(raw: unknown, fallbackId = ''): LiveViewConf
     try {
       let parsed = JSON.parse(raw);
       if (typeof parsed === 'string') {
-        try {
-          parsed = JSON.parse(parsed);
-        } catch {
-          // ignore nested parse failure
-        }
+        try { parsed = JSON.parse(parsed); } catch { /* ignore */ }
       }
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
         obj = parsed as Record<string, unknown>;
       }
-    } catch {
-      // ignore JSON parse failure
-    }
+    } catch { /* ignore */ }
   }
 
   const streamUrl = typeof obj.stream_url === 'string' ? obj.stream_url : '';
   const rawType = typeof obj.stream_type === 'string' ? obj.stream_type.toLowerCase() : '';
-  const streamType: 'webrtc' | 'mjpeg' | 'hls' =
-    rawType === 'mjpeg' || rawType === 'hls' ? rawType : 'webrtc';
-  const fit: 'contain' | 'cover' = obj.fit === 'cover' ? 'cover' : 'contain';
+  const streamType = rawType === 'mjpeg' || rawType === 'hls' ? rawType : 'webrtc';
+  const fit = obj.fit === 'cover' ? 'cover' : 'contain';
   const title = typeof obj.title === 'string' && obj.title.trim() !== '' ? obj.title : 'Live View';
   const posterUrl = typeof obj.poster_url === 'string' ? obj.poster_url : '';
   const expandOnClick = obj.expand_on_click !== false;
-  const streamId =
-    typeof obj.stream_id === 'string' && obj.stream_id.trim() !== ''
-      ? obj.stream_id
-      : fallbackId;
-  const priority: 'persistent' | 'temporary' =
-    obj.priority === 'temporary' ? 'temporary' : 'persistent';
+  const streamId = typeof obj.stream_id === 'string' && obj.stream_id.trim() !== '' ? obj.stream_id : fallbackId;
+  const priority = obj.priority === 'temporary' ? 'temporary' : 'persistent';
   const controllable = Boolean(obj.controllable);
   const controlUrl = typeof obj.control_url === 'string' ? obj.control_url : '';
-  const expandStreamUrl =
-    typeof obj.expand_stream_url === 'string' && obj.expand_stream_url.trim() !== ''
-      ? obj.expand_stream_url
-      : streamUrl;
-  const expandStreamType =
-    typeof obj.expand_stream_type === 'string' && obj.expand_stream_type.trim() !== ''
-      ? obj.expand_stream_type
-      : streamType || 'webrtc';
-
-  let timeoutSeconds: number | undefined;
-  if (
-    obj.timeout_seconds !== undefined &&
-    obj.timeout_seconds !== null &&
-    !isNaN(Number(obj.timeout_seconds))
-  ) {
-    const num = Number(obj.timeout_seconds);
-    if (num > 0) {
-      timeoutSeconds = num;
-    }
-  }
+  const expandStreamUrl = typeof obj.expand_stream_url === 'string' && obj.expand_stream_url.trim() !== '' ? obj.expand_stream_url : streamUrl;
+  const expandStreamType = typeof obj.expand_stream_type === 'string' && obj.expand_stream_type.trim() !== '' ? obj.expand_stream_type : (streamType || 'webrtc');
+  const timeoutNum = Number(obj.timeout_seconds);
+  const timeoutSeconds = obj.timeout_seconds !== undefined && obj.timeout_seconds !== null && !isNaN(timeoutNum) && timeoutNum > 0 ? timeoutNum : undefined;
 
   return {
-    stream_url: streamUrl,
-    stream_type: streamType,
-    fit,
-    title,
-    poster_url: posterUrl,
-    expand_on_click: expandOnClick,
-    stream_id: streamId,
-    priority,
-    timeout_seconds: timeoutSeconds,
-    controllable,
-    control_url: controlUrl,
-    expand_stream_url: expandStreamUrl,
-    expand_stream_type: expandStreamType,
+    stream_url: streamUrl, stream_type: streamType, fit, title, poster_url: posterUrl,
+    expand_on_click: expandOnClick, stream_id: streamId, priority, timeout_seconds: timeoutSeconds,
+    controllable, control_url: controlUrl, expand_stream_url: expandStreamUrl, expand_stream_type: expandStreamType,
   };
+}
+
+function waitForIceGathering(pc: RTCPeerConnection, signal: AbortSignal): Promise<void> {
+  if (pc.iceGatheringState === 'complete') return Promise.resolve();
+  return new Promise<void>((resolve) => {
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const cleanup = () => {
+      if (settled) return;
+      settled = true;
+      if (timer) { clearTimeout(timer); timer = null; }
+      if (typeof pc.removeEventListener === 'function') pc.removeEventListener('icegatheringstatechange', onIceChange);
+      signal.removeEventListener('abort', cleanup);
+      resolve();
+    };
+    const onIceChange = () => {
+      if (pc.iceGatheringState === 'complete') cleanup();
+    };
+    timer = setTimeout(cleanup, 500);
+    if (typeof pc.addEventListener === 'function') pc.addEventListener('icegatheringstatechange', onIceChange);
+    signal.addEventListener('abort', cleanup);
+  });
+}
+
+function attachTrackToVideo(video: HTMLVideoElement, event: RTCTrackEvent): void {
+  if (event.streams && event.streams[0]) {
+    video.srcObject = event.streams[0];
+  } else if (event.track) {
+    const MediaStreamCtor = typeof MediaStream !== 'undefined'
+      ? MediaStream
+      : (window as unknown as { MediaStream?: typeof MediaStream }).MediaStream;
+    if (MediaStreamCtor) {
+      try {
+        video.srcObject = new MediaStreamCtor([event.track]);
+      } catch {
+        const ms = new MediaStreamCtor();
+        if (typeof ms.addTrack === 'function') ms.addTrack(event.track);
+        video.srcObject = ms;
+      }
+    }
+  }
+  video.play?.()?.catch?.(() => {});
+}
+
+async function exchangeWhepSDP(streamUrl: string, sdpOffer: string, signal: AbortSignal): Promise<string> {
+  const res = await fetch(streamUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/sdp' },
+    body: sdpOffer,
+    signal,
+  });
+  if (!res.ok) throw new Error(`SDP exchange failed with HTTP ${res.status}`);
+  const resText = await res.text();
+  try {
+    const json = JSON.parse(resText);
+    if (json && typeof json.sdp === 'string') return json.sdp;
+  } catch { /* use raw text */ }
+  return resText;
+}
+
+function getPointerCoords(e: React.PointerEvent | React.TouchEvent | React.MouseEvent): { x: number; y: number } | null {
+  const touchEvt = e as unknown as React.TouchEvent;
+  if (touchEvt.changedTouches && touchEvt.changedTouches.length > 0) {
+    return { x: touchEvt.changedTouches[0].clientX, y: touchEvt.changedTouches[0].clientY };
+  }
+  const mouseEvt = e as unknown as React.MouseEvent;
+  if (typeof mouseEvt.clientX === 'number' && !isNaN(mouseEvt.clientX) && typeof mouseEvt.clientY === 'number' && !isNaN(mouseEvt.clientY)) {
+    return { x: mouseEvt.clientX, y: mouseEvt.clientY };
+  }
+  return null;
 }
 
 export function LiveViewWidget({ id }: WidgetComponentProps) {
   const entry = useWidget(id);
   const isCurrentPane = useIsCurrentPane();
   const isDocumentVisible = useDocumentVisible();
-  const videoMode = useDisplayStore(
-    (s) => s.video.mode || (s.video.primary ? 'video' : 'widgets'),
-  );
+  const videoMode = useDisplayStore((s) => s.video.mode || (s.video.primary ? 'video' : 'widgets'));
 
   const rawConfig = entry?.meta?.config ?? entry?.data;
   const config = parseLiveViewConfig(rawConfig, id);
 
   const {
-    stream_url: streamUrl,
-    stream_type: streamType,
-    fit,
-    title,
-    poster_url: posterUrl,
-    expand_on_click: expandOnClick,
-    stream_id: streamId,
-    priority,
-    timeout_seconds: timeoutSeconds,
-    controllable,
-    control_url: controlUrl,
-    expand_stream_url: expandStreamUrl,
-    expand_stream_type: expandStreamType,
+    stream_url: streamUrl, stream_type: streamType, fit, title, poster_url: posterUrl,
+    expand_on_click: expandOnClick, stream_id: streamId, priority, timeout_seconds: timeoutSeconds,
+    controllable, control_url: controlUrl, expand_stream_url: expandStreamUrl, expand_stream_type: expandStreamType,
   } = config;
 
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -129,7 +150,7 @@ export function LiveViewWidget({ id }: WidgetComponentProps) {
   const imgRef = useRef<HTMLImageElement | null>(null);
 
   const [isLoading, setIsLoading] = useState(false);
-  const [isIntersecting, setIsIntersecting] = useState(true);
+  const [isIntersecting, setIsIntersecting] = useState(() => true);
 
   const epochRef = useRef(0);
   const pcRef = useRef<RTCPeerConnection | null>(null);
@@ -140,45 +161,39 @@ export function LiveViewWidget({ id }: WidgetComponentProps) {
   const lastDragTimeRef = useRef(0);
   const lastTriggerTimeRef = useRef(0);
 
-  // Clear loading state when video takes over fullscreen display,
-  // and resume intersecting state when returning to widgets mode.
-  const prevVideoModeRef = useRef(videoMode);
-  useEffect(() => {
+  const [prevVideoMode, setPrevVideoMode] = useState(videoMode);
+  if (videoMode !== prevVideoMode) {
+    setPrevVideoMode(videoMode);
     if (videoMode === 'video') {
-      setIsLoading(false);
-      if (safetyTimerRef.current) {
-        clearTimeout(safetyTimerRef.current);
-        safetyTimerRef.current = null;
-      }
-    } else if (prevVideoModeRef.current === 'video') {
+      if (isLoading) setIsLoading(false);
+    } else if (prevVideoMode === 'video') {
       setIsIntersecting(true);
     }
-    prevVideoModeRef.current = videoMode;
+  }
+
+  useEffect(() => {
+    if (videoMode === 'video' && safetyTimerRef.current) {
+      clearTimeout(safetyTimerRef.current);
+      safetyTimerRef.current = null;
+    }
   }, [videoMode]);
 
-  // Observe root element visibility in viewport
   useEffect(() => {
     const el = rootRef.current;
     if (!el || typeof IntersectionObserver !== 'function') {
       setIsIntersecting(true);
       return;
     }
-
     const observer = new IntersectionObserver(
       (entries) => {
         for (const entry of entries) {
-          if (entry.target === el) {
-            setIsIntersecting(Boolean(entry.isIntersecting));
-          }
+          if (entry.target === el) setIsIntersecting(Boolean(entry.isIntersecting));
         }
       },
       { threshold: 0.1 },
     );
-
     observer.observe(el);
-    return () => {
-      observer.disconnect();
-    };
+    return () => observer.disconnect();
   }, []);
 
   const stopDecoders = () => {
@@ -188,62 +203,35 @@ export function LiveViewWidget({ id }: WidgetComponentProps) {
       abortControllerRef.current = null;
     }
     if (pcRef.current) {
-      try {
-        pcRef.current.close();
-      } catch {
-        // ignore close error
-      }
+      try { pcRef.current.close(); } catch { /* ignore */ }
       pcRef.current = null;
     }
     if (videoRef.current) {
       videoRef.current.srcObject = null;
-      try {
-        videoRef.current.removeAttribute('src');
-      } catch {
-        // ignore attribute error
-      }
-      try {
-        videoRef.current.pause?.();
-      } catch {
-        // ignore pause error
-      }
+      try { videoRef.current.removeAttribute('src'); } catch { /* ignore */ }
+      try { videoRef.current.pause?.(); } catch { /* ignore */ }
     }
     if (imgRef.current) {
       imgRef.current.src = '';
-      try {
-        imgRef.current.removeAttribute('src');
-      } catch {
-        // ignore attribute error
-      }
+      try { imgRef.current.removeAttribute('src'); } catch { /* ignore */ }
     }
   };
 
-  const shouldPlay =
-    isCurrentPane &&
-    isDocumentVisible &&
-    isIntersecting &&
-    videoMode !== 'video' &&
-    Boolean(streamUrl);
+  const shouldPlay = isCurrentPane && isDocumentVisible && isIntersecting && videoMode !== 'video' && Boolean(streamUrl);
 
   useEffect(() => {
     if (!shouldPlay) {
       stopDecoders();
       return;
     }
-
     const epoch = ++epochRef.current;
     const ac = new AbortController();
     abortControllerRef.current = ac;
 
     if (streamType === 'mjpeg') {
-      if (imgRef.current) {
-        imgRef.current.src = streamUrl;
-      }
-      return () => {
-        stopDecoders();
-      };
+      if (imgRef.current) imgRef.current.src = streamUrl;
+      return () => stopDecoders();
     }
-
     if (streamType === 'hls') {
       if (videoRef.current) {
         videoRef.current.muted = true;
@@ -251,176 +239,56 @@ export function LiveViewWidget({ id }: WidgetComponentProps) {
         videoRef.current.src = streamUrl;
         videoRef.current.play?.()?.catch?.(() => {});
       }
-      return () => {
-        stopDecoders();
-      };
+      return () => stopDecoders();
     }
 
-    // Default WebRTC playback
     const startWebRTC = async () => {
-      const PeerConnection =
-        typeof RTCPeerConnection !== 'undefined'
-          ? RTCPeerConnection
-          : (window as unknown as { RTCPeerConnection?: typeof RTCPeerConnection }).RTCPeerConnection;
+      const PeerConnection = typeof RTCPeerConnection !== 'undefined'
+        ? RTCPeerConnection
+        : (window as unknown as { RTCPeerConnection?: typeof RTCPeerConnection }).RTCPeerConnection;
       if (!PeerConnection) return;
-
       if (videoRef.current) {
         videoRef.current.muted = true;
         videoRef.current.volume = 0;
       }
-
       try {
         const pc = new PeerConnection();
         pcRef.current = pc;
-
-        if (typeof pc.addTransceiver === 'function') {
-          pc.addTransceiver('video', { direction: 'recvonly' });
-        }
+        if (typeof pc.addTransceiver === 'function') pc.addTransceiver('video', { direction: 'recvonly' });
 
         pc.ontrack = (event) => {
-          if (epochRef.current !== epoch) return;
-          const video = videoRef.current;
-          if (!video) return;
-
-          if (event.streams && event.streams[0]) {
-            video.srcObject = event.streams[0];
-          } else if (event.track) {
-            const MediaStreamCtor =
-              typeof MediaStream !== 'undefined'
-                ? MediaStream
-                : (window as unknown as { MediaStream?: typeof MediaStream }).MediaStream;
-            if (MediaStreamCtor) {
-              try {
-                video.srcObject = new MediaStreamCtor([event.track]);
-              } catch {
-                const ms = new MediaStreamCtor();
-                if (typeof ms.addTrack === 'function') {
-                  ms.addTrack(event.track);
-                }
-                video.srcObject = ms;
-              }
-            }
-          }
-          video.play?.()?.catch?.(() => {});
+          if (epochRef.current !== epoch || !videoRef.current) return;
+          attachTrackToVideo(videoRef.current, event);
         };
 
         const offer = await pc.createOffer();
         if (epochRef.current !== epoch || ac.signal.aborted) {
-          try {
-            pc.close();
-          } catch {
-            // ignore
-          }
+          try { pc.close(); } catch { /* ignore */ }
           return;
         }
-
         await pc.setLocalDescription(offer);
         if (epochRef.current !== epoch || ac.signal.aborted) {
-          try {
-            pc.close();
-          } catch {
-            // ignore
-          }
+          try { pc.close(); } catch { /* ignore */ }
           return;
         }
 
-        if (pc.iceGatheringState !== 'complete') {
-          await new Promise<void>((resolve) => {
-            let settled = false;
-            let timer: ReturnType<typeof setTimeout> | null = null;
-
-            const cleanup = () => {
-              if (settled) return;
-              settled = true;
-              if (timer) {
-                clearTimeout(timer);
-                timer = null;
-              }
-              if (typeof pc.removeEventListener === 'function') {
-                pc.removeEventListener('icegatheringstatechange', onIceChange);
-              }
-              ac.signal.removeEventListener('abort', onAbort);
-              resolve();
-            };
-
-            const onIceChange = () => {
-              if (pc.iceGatheringState === 'complete') {
-                cleanup();
-              }
-            };
-
-            const onAbort = () => {
-              cleanup();
-            };
-
-            timer = setTimeout(cleanup, 500);
-            if (typeof pc.addEventListener === 'function') {
-              pc.addEventListener('icegatheringstatechange', onIceChange);
-            }
-            ac.signal.addEventListener('abort', onAbort);
-          });
-        }
-
+        await waitForIceGathering(pc, ac.signal);
         if (epochRef.current !== epoch || ac.signal.aborted) {
-          try {
-            pc.close();
-          } catch {
-            // ignore
-          }
+          try { pc.close(); } catch { /* ignore */ }
           return;
         }
 
-        const sdpOffer = pc.localDescription?.sdp ?? '';
-        const res = await fetch(streamUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/sdp' },
-          body: sdpOffer,
-          signal: ac.signal,
-        });
-
+        const answerSdp = await exchangeWhepSDP(streamUrl, pc.localDescription?.sdp ?? '', ac.signal);
         if (epochRef.current !== epoch || ac.signal.aborted) {
-          try {
-            pc.close();
-          } catch {
-            // ignore
-          }
+          try { pc.close(); } catch { /* ignore */ }
           return;
-        }
-
-        if (!res.ok) {
-          throw new Error(`SDP exchange failed with HTTP ${res.status}`);
-        }
-
-        const resText = await res.text();
-        if (epochRef.current !== epoch || ac.signal.aborted) {
-          try {
-            pc.close();
-          } catch {
-            // ignore
-          }
-          return;
-        }
-
-        let answerSdp = resText;
-        try {
-          const jsonResp = JSON.parse(resText);
-          if (jsonResp && typeof jsonResp.sdp === 'string') {
-            answerSdp = jsonResp.sdp;
-          }
-        } catch {
-          // ignore JSON parse fallback
         }
 
         await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
         if (epochRef.current !== epoch || ac.signal.aborted) {
-          try {
-            pc.close();
-          } catch {
-            // ignore
-          }
+          try { pc.close(); } catch { /* ignore */ }
           return;
         }
-
         videoRef.current?.play?.()?.catch?.(() => {});
       } catch (err) {
         if (epochRef.current === epoch && !ac.signal.aborted) {
@@ -430,24 +298,17 @@ export function LiveViewWidget({ id }: WidgetComponentProps) {
     };
 
     void startWebRTC();
-
-    return () => {
-      stopDecoders();
-    };
+    return () => stopDecoders();
   }, [shouldPlay, streamUrl, streamType, id]);
 
   const triggerExpand = async () => {
     if (!expandOnClick || isLoading || !streamUrl) return;
-
     const now = Date.now();
     if (now - lastTriggerTimeRef.current < 350) return;
     lastTriggerTimeRef.current = now;
 
     setIsLoading(true);
-
-    if (safetyTimerRef.current) {
-      clearTimeout(safetyTimerRef.current);
-    }
+    if (safetyTimerRef.current) clearTimeout(safetyTimerRef.current);
     safetyTimerRef.current = setTimeout(() => {
       setIsLoading(false);
       safetyTimerRef.current = null;
@@ -460,11 +321,8 @@ export function LiveViewWidget({ id }: WidgetComponentProps) {
       priority: priority || 'persistent',
       controllable: Boolean(controllable),
       control_url: controlUrl || '',
+      ...(timeoutSeconds !== undefined && Number(timeoutSeconds) > 0 ? { timeout_seconds: Number(timeoutSeconds) } : {}),
     };
-
-    if (timeoutSeconds !== undefined && Number(timeoutSeconds) > 0) {
-      payload.timeout_seconds = Number(timeoutSeconds);
-    }
 
     if (controllable && controlUrl) {
       fetch(controlUrl, {
@@ -482,9 +340,7 @@ export function LiveViewWidget({ id }: WidgetComponentProps) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
-      if (!res.ok) {
-        throw new Error(`Trigger failed with HTTP ${res.status}`);
-      }
+      if (!res.ok) throw new Error(`Trigger failed with HTTP ${res.status}`);
     } catch (err) {
       console.warn(`[MirrormereLiveView] Trigger failed for ${streamId}:`, err);
       setIsLoading(false);
@@ -495,50 +351,21 @@ export function LiveViewWidget({ id }: WidgetComponentProps) {
     }
   };
 
-  const getCoords = (
-    e: React.PointerEvent | React.TouchEvent | React.MouseEvent,
-  ): { x: number; y: number } | null => {
-    const touchEvt = e as unknown as React.TouchEvent;
-    if (touchEvt.changedTouches && touchEvt.changedTouches.length > 0) {
-      return {
-        x: touchEvt.changedTouches[0].clientX,
-        y: touchEvt.changedTouches[0].clientY,
-      };
-    }
-    const mouseEvt = e as unknown as React.MouseEvent;
-    if (
-      typeof mouseEvt.clientX === 'number' &&
-      !isNaN(mouseEvt.clientX) &&
-      typeof mouseEvt.clientY === 'number' &&
-      !isNaN(mouseEvt.clientY)
-    ) {
-      return { x: mouseEvt.clientX, y: mouseEvt.clientY };
-    }
-    return null;
-  };
-
   const handlePointerDown = (e: React.PointerEvent) => {
-    pointerDownCoordsRef.current = getCoords(e);
+    pointerDownCoordsRef.current = getPointerCoords(e);
   };
-
   const handlePointerUp = (e: React.PointerEvent) => {
     const start = pointerDownCoordsRef.current;
     pointerDownCoordsRef.current = null;
-    const coords = getCoords(e);
-    if (start && coords) {
-      const dist = Math.hypot(coords.x - start.x, coords.y - start.y);
-      if (dist >= 15) {
-        lastDragTimeRef.current = Date.now();
-        return;
-      }
+    const coords = getPointerCoords(e);
+    if (start && coords && Math.hypot(coords.x - start.x, coords.y - start.y) >= 15) {
+      lastDragTimeRef.current = Date.now();
+      return;
     }
     void triggerExpand();
   };
-
   const handleClick = () => {
-    if (Date.now() - lastDragTimeRef.current < 400) {
-      return;
-    }
+    if (Date.now() - lastDragTimeRef.current < 400) return;
     void triggerExpand();
   };
 

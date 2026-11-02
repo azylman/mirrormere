@@ -1,4 +1,4 @@
-import { HudMuteIcon, HudUnmuteIcon } from './HudIcons';
+import { HudBackIcon, HudHomeIcon, HudMuteIcon, HudUnmuteIcon } from './HudIcons';
 
 export interface HudTopBarProps {
   titleText: string;
@@ -43,22 +43,24 @@ export function HudTopBar({
         onTouchStart={stopProp}
       >
         <button
+          type="button"
           id="video-hud-back-btn"
           className="video-hud-btn video-hud-nav-btn"
           aria-label="Back"
           title="Back"
           onClick={onBack}
         >
-          ‹
+          <HudBackIcon />
         </button>
         <button
+          type="button"
           id="video-hud-home-btn"
           className="video-hud-btn video-hud-nav-btn"
           aria-label="Home"
           title="Home"
           onClick={onHome}
         >
-          ⌂
+          <HudHomeIcon />
         </button>
       </div>
 
@@ -74,6 +76,7 @@ export function HudTopBar({
         onTouchStart={stopProp}
       >
         <button
+          type="button"
           id="video-hud-dismiss-btn"
           className="video-hud-btn video-hud-dismiss"
           aria-label="Dismiss Video"
@@ -99,6 +102,7 @@ export function HudTopBar({
           />
         </div>
         <button
+          type="button"
           id="video-hud-mute-btn"
           className={`video-hud-btn video-hud-mute${isMuted ? ' muted' : ''}`}
           aria-label={isMuted ? 'Unmute' : 'Mute'}

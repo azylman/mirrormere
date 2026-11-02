@@ -260,6 +260,79 @@ describe('WeatherForecastWidget', () => {
     expect(banner).not.toBeNull();
     expect(banner?.textContent).toContain('Widget Error');
   });
+
+  it('renders fallback header, default units, and missing daily/humidity/wind fields gracefully', () => {
+    useDisplayStore.setState({
+      widgets: {
+        'weather-fallbacks': {
+          meta: {
+            type: 'weather-forecast',
+            origin: [0, 0],
+            dimensions: [3, 2],
+            config: {},
+            assets_base: '',
+          },
+          state: 'healthy',
+          data: {
+            current: {
+              temp: -5.2,
+            },
+          },
+          timestamp: '2026-10-31T12:00:00Z',
+        },
+      },
+    });
+
+    const { container } = render(
+      <WeatherForecastWidget id="weather-fallbacks" type="weather-forecast" />,
+    );
+    const root = container.querySelector('.widget-weather');
+    expect(root?.querySelector('.weather-header-title')?.textContent).toBe('Weather');
+    expect(root?.querySelector('.weather-condition-text')?.textContent).toBe('Forecast');
+    expect(root?.querySelector('.weather-temp-main')?.textContent).toBe('-5°');
+    expect(root?.querySelector('.weather-temp-range')).toBeNull();
+    expect(root?.querySelector('.weather-meta-humidity')?.textContent).toContain('--%');
+    expect(root?.querySelector('.weather-meta-wind')?.textContent).toContain('0 mph');
+  });
+
+  it('renders config.name and alternate Temp/MaxTemp/MinTemp/Wind fields', () => {
+    useDisplayStore.setState({
+      widgets: {
+        'weather-alt-keys': {
+          meta: {
+            type: 'weather-forecast',
+            origin: [0, 0],
+            dimensions: [3, 2],
+            config: { name: 'Home Base' },
+            assets_base: '',
+          },
+          state: 'healthy',
+          data: {
+            Current: {
+              Temp: '72.6',
+              Wind: 5,
+            },
+            Daily: [
+              {
+                MaxTemp: 80,
+                MinTemp: 60,
+              },
+            ],
+          },
+          timestamp: '2026-10-31T12:00:00Z',
+        },
+      },
+    });
+
+    const { container } = render(
+      <WeatherForecastWidget id="weather-alt-keys" type="weather-forecast" />,
+    );
+    const root = container.querySelector('.widget-weather');
+    expect(root?.querySelector('.weather-location-name')?.textContent).toBe('Home Base');
+    expect(root?.querySelector('.weather-temp-main')?.textContent).toBe('73°');
+    expect(root?.querySelector('.weather-temp-range')?.textContent).toBe('H: 80° • L: 60°');
+    expect(root?.querySelector('.weather-meta-wind')?.textContent).toContain('5 mph');
+  });
 });
 
 describe('WeatherIcon component', () => {

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useState } from 'react';
 import type { AudioSlice } from '../store/types';
 import { useDisplayStore } from '../store';
 
@@ -196,16 +196,13 @@ export class AudioController {
 export function useAudioController(): AudioController {
   const audio = useDisplayStore((s) => s.audio);
   const voiceState = useDisplayStore((s) => s.voice.state);
-  const controllerRef = useRef<AudioController | null>(null);
-
-  if (!controllerRef.current) {
-    controllerRef.current = new AudioController({
-      initialVolume: audio?.volume ?? 75,
-      initialMuted: audio?.muted ?? false,
-    });
-  }
-
-  const controller = controllerRef.current;
+  const [controller] = useState(
+    () =>
+      new AudioController({
+        initialVolume: audio?.volume ?? 75,
+        initialMuted: audio?.muted ?? false,
+      }),
+  );
 
   useEffect(() => {
     if (typeof window !== 'undefined') {

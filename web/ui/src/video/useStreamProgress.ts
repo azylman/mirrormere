@@ -81,7 +81,7 @@ export function useStreamProgress({
 
   const isScrubbingRef = useRef<boolean>(false);
   const basePositionRef = useRef<number>(basePosition);
-  const basePositionTimeRef = useRef<number>(basePositionTime ?? Date.now());
+  const basePositionTimeRef = useRef<number | null>(basePositionTime ?? null);
   const currentSeekTimeRef = useRef<number>(0);
   const trackElementRef = useRef<HTMLDivElement | null>(null);
 
@@ -107,7 +107,8 @@ export function useStreamProgress({
     }
 
     const interval = setInterval(() => {
-      const elapsed = Math.max(0, (Date.now() - basePositionTimeRef.current) / 1000);
+      const baseTime = basePositionTimeRef.current ?? Date.now();
+      const elapsed = Math.max(0, (Date.now() - baseTime) / 1000);
       setCurrentPos(Math.min(duration, basePositionRef.current + elapsed));
     }, 1000);
 

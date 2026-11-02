@@ -203,7 +203,8 @@ describe('YtMusicWidget', () => {
 
     expect(npTitle?.textContent).toBe('Starboy');
     expect(npArtist?.textContent).toBe('The Weeknd');
-    expect(playBtn?.textContent).toBe('⏸'); // playing state
+    expect(playBtn?.getAttribute('aria-label')).toBe('Pause');
+    expect(playBtn?.querySelector('svg')).not.toBeNull();
     expect(volSlider?.value).toBe('50');
 
     // Verify playlists tab content
@@ -298,7 +299,8 @@ describe('YtMusicWidget', () => {
           JSON.parse(String(c[1].body)).action === 'play_pause'
       );
       expect(call).toBeDefined();
-      expect(container.querySelector('#btn-play')?.textContent).toBe('⏸');
+      expect(container.querySelector('#btn-play')?.getAttribute('aria-label')).toBe('Pause');
+      expect(container.querySelector('#btn-play')?.querySelector('svg')).not.toBeNull();
     });
 
     // Volume change

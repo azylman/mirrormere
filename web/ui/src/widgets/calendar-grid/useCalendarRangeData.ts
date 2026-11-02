@@ -33,8 +33,8 @@ export function useCalendarRangeData({
   dataCachedRangeEnd,
   onActivity,
 }: UseCalendarRangeDataProps) {
-  const [currentViewModel, setCurrentViewModel] = useState<Record<string, unknown> | undefined>(
-    entryViewModel
+  const [fetchedViewModel, setFetchedViewModel] = useState<Record<string, unknown> | undefined>(
+    undefined,
   );
 
   const [pagedDate, setPagedDate] = useState<Date | null>(null);
@@ -58,6 +58,19 @@ export function useCalendarRangeData({
 
   const isAtBaseDate = pageOffset === 0;
 
+  const [prevTimestamp, setPrevTimestamp] = useState(entryTimestamp);
+  if (entryTimestamp !== prevTimestamp) {
+    setPrevTimestamp(entryTimestamp);
+    if (isAtBaseDate) {
+      setFetchedViewModel(undefined);
+    }
+  }
+
+  const currentViewModel = fetchedViewModel ?? entryViewModel;
+  const setCurrentViewModel = (vm: Record<string, unknown> | undefined) => {
+    setFetchedViewModel(vm === entryViewModel ? undefined : vm);
+  };
+
   const lruCacheRef = useRef<Map<string, CalendarGridViewModel>>(new Map());
   const abortControllerRef = useRef<AbortController | null>(null);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
@@ -72,22 +85,9 @@ export function useCalendarRangeData({
     }, 2500);
   };
 
-  const prevTimestampRef = useRef<string | undefined>(entryTimestamp);
   useEffect(() => {
-    if (prevTimestampRef.current !== entryTimestamp) {
-      prevTimestampRef.current = entryTimestamp;
-      lruCacheRef.current.clear();
-      if (isAtBaseDate) {
-        setCurrentViewModel(entryViewModel);
-      }
-    }
-  }, [entryTimestamp, entryViewModel, isAtBaseDate]);
-
-  useEffect(() => {
-    if (isAtBaseDate && entryViewModel) {
-      setCurrentViewModel(entryViewModel);
-    }
-  }, [entryViewModel, isAtBaseDate]);
+    lruCacheRef.current.clear();
+  }, [entryTimestamp]);
 
   const resolveCachedRange = () => {
     const vm = currentViewModel as Record<string, unknown> | undefined;
