@@ -1,4 +1,4 @@
-import { useCallback, useSyncExternalStore } from 'react';
+import { useSyncExternalStore } from 'react';
 import { AudioController } from '../audio/useAudio';
 import type { VoiceState } from '../sse/types';
 import { useDisplayStore } from '../store';
@@ -239,14 +239,14 @@ export function useVoiceHudState(): VoiceHudSnapshot {
 
   const localState = useSyncExternalStore(subscribeLocal, getLocalSnapshot, getLocalSnapshot);
 
-  const dismissToast = useCallback(() => {
+  const dismissToast = () => {
     currentLocal = { ...currentLocal, turnDismissed: true };
     for (const listener of [...localListeners]) listener();
-  }, []);
+  };
 
-  const reset = useCallback(() => {
+  const reset = () => {
     resetHUD();
-  }, []);
+  };
 
   const isReset = localState.resetForVoice !== null && localState.resetForVoice === voice;
   const rawActiveState = (voice?.state ?? 'idle') as VoiceState;

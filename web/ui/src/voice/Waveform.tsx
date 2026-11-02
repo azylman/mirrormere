@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import { beginAnimation, endAnimation } from '../perf/animating';
 import { useDisplayStore } from '../store';
 
@@ -337,7 +337,7 @@ interface WaveformRendererProps {
   gain: number;
 }
 
-const WaveformRenderer = memo(function WaveformRenderer({ levelsUrl, gain }: WaveformRendererProps) {
+function WaveformRenderer({ levelsUrl, gain }: WaveformRendererProps) {
   const svgRef = useRef<SVGSVGElement | null>(null);
   const polylineRef = useRef<SVGPolylineElement | null>(null);
   const mouthRef = useRef<WaveformMouth | null>(null);
@@ -347,7 +347,11 @@ const WaveformRenderer = memo(function WaveformRenderer({ levelsUrl, gain }: Wav
 
   const activeVoiceState = isSpeaking && isVisible ? 'speaking' : 'idle';
   const activeVoiceStateRef = useRef(activeVoiceState);
-  activeVoiceStateRef.current = activeVoiceState;
+
+  useEffect(() => {
+    activeVoiceStateRef.current = activeVoiceState;
+    mouthRef.current?.setVoiceState(activeVoiceState);
+  }, [activeVoiceState]);
 
   useEffect(() => {
     if (!svgRef.current || !polylineRef.current) return;
@@ -377,18 +381,14 @@ const WaveformRenderer = memo(function WaveformRenderer({ levelsUrl, gain }: Wav
     };
   }, [levelsUrl, gain]);
 
-  useEffect(() => {
-    mouthRef.current?.setVoiceState(activeVoiceState);
-  }, [activeVoiceState]);
-
   return (
     <svg ref={svgRef} className="mm-voice-waveform" viewBox="0 0 100 100" aria-hidden="true">
       <polyline ref={polylineRef} className="mm-voice-waveform__line" />
     </svg>
   );
-});
+}
 
-export const Waveform = memo(function Waveform(props: WaveformProps) {
+export function Waveform(props: WaveformProps) {
   const levelsUrl =
     props.levelsUrl ??
     (typeof document !== 'undefined' ? document.body?.dataset?.voiceWaveformUrl ?? '' : '');
@@ -403,7 +403,7 @@ export const Waveform = memo(function Waveform(props: WaveformProps) {
   }
 
   return <WaveformRenderer levelsUrl={levelsUrl} gain={gain} />;
-});
+}
 
 // Window bindings
 if (typeof window !== 'undefined') {

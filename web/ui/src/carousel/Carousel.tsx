@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useDisplayStore } from '../store';
 import type { WidgetPlacement } from '../sse/types';
 import { CarouselController, neighbourOf, type CarouselHost } from './controller';
@@ -132,11 +132,8 @@ export function Carousel({ hidden }: CarouselProps = {}) {
     controllerRef.current?.rendered(shown);
   }, [shown]);
 
-  const placementsByIndex = useMemo(() => {
-    const map = new Map<number, readonly WidgetPlacement[]>();
-    for (const screen of layout) map.set(screen.index, screen.widgets);
-    return map;
-  }, [layout]);
+  const placementsByIndex = new Map<number, readonly WidgetPlacement[]>();
+  for (const screen of layout) placementsByIndex.set(screen.index, screen.widgets);
 
   const panes = panesFor(shown, total);
   const ready = layout.length > 0;

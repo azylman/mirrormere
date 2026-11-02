@@ -1,4 +1,4 @@
-import { createElement, useCallback, useEffect, useRef, useState } from 'react';
+import { createElement, useEffect, useRef, useState } from 'react';
 import type { MouseEvent as ReactMouseEvent } from 'react';
 import { useDisplayStore } from '../store/index';
 
@@ -134,18 +134,18 @@ function useTheme(): UseThemeResult {
     applyThemeToDOM(activeTheme);
   }, [activeTheme]);
 
-  const toggle = useCallback(() => {
+  const toggle = () => {
     setOverride((prevOverride) => {
       const result = nextThemeOnTap(activeTheme, serverTheme, prevOverride);
       setStoredThemeOverride(result.nextOverride);
       return result.nextOverride;
     });
-  }, [activeTheme, serverTheme]);
+  };
 
-  const resetToAuto = useCallback(() => {
+  const resetToAuto = () => {
     setStoredThemeOverride(null);
     setOverride(null);
-  }, []);
+  };
 
   const buttonAttrs = computeThemeButtonAttrs(activeTheme, serverTheme, override);
 
@@ -166,20 +166,23 @@ export function ThemeToggle() {
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longPressTriggeredRef = useRef(false);
 
-  const clearLongPress = useCallback(() => {
+  const clearLongPress = () => {
     if (longPressTimerRef.current !== null) {
       clearTimeout(longPressTimerRef.current);
       longPressTimerRef.current = null;
     }
-  }, []);
+  };
 
   useEffect(() => {
     return () => {
-      clearLongPress();
+      if (longPressTimerRef.current !== null) {
+        clearTimeout(longPressTimerRef.current);
+        longPressTimerRef.current = null;
+      }
     };
-  }, [clearLongPress]);
+  }, []);
 
-  const handlePointerDown = useCallback(() => {
+  const handlePointerDown = () => {
     longPressTriggeredRef.current = false;
     clearLongPress();
     longPressTimerRef.current = setTimeout(() => {
@@ -187,31 +190,28 @@ export function ThemeToggle() {
       longPressTriggeredRef.current = true;
       resetToAuto();
     }, 500);
-  }, [clearLongPress, resetToAuto]);
+  };
 
-  const handlePointerUp = useCallback(() => {
+  const handlePointerUp = () => {
     clearLongPress();
-  }, [clearLongPress]);
+  };
 
-  const handlePointerCancel = useCallback(() => {
+  const handlePointerCancel = () => {
     clearLongPress();
-  }, [clearLongPress]);
+  };
 
-  const handlePointerLeave = useCallback(() => {
+  const handlePointerLeave = () => {
     clearLongPress();
-  }, [clearLongPress]);
+  };
 
-  const handleClick = useCallback(
-    (e: ReactMouseEvent) => {
-      e.stopPropagation();
-      if (longPressTriggeredRef.current) {
-        longPressTriggeredRef.current = false;
-        return;
-      }
-      toggle();
-    },
-    [toggle]
-  );
+  const handleClick = (e: ReactMouseEvent) => {
+    e.stopPropagation();
+    if (longPressTriggeredRef.current) {
+      longPressTriggeredRef.current = false;
+      return;
+    }
+    toggle();
+  };
 
   return createElement(
     'div',
