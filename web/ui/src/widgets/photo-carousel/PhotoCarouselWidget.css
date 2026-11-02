@@ -175,9 +175,9 @@ body[data-theme="night"] .photo-pause-pill[data-paused="true"]:hover,
   font-size: 0.72rem;
   font-weight: 500;
   letter-spacing: 0.01em;
-  line-height: 1.25;
+  line-height: 1.3;
   text-align: right;
-  white-space: nowrap;
+  white-space: pre;
   overflow: hidden;
   text-overflow: ellipsis;
   pointer-events: none;
