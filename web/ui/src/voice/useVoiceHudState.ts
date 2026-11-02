@@ -1,4 +1,4 @@
-import { useSyncExternalStore } from 'react';
+import { useLayoutEffect, useSyncExternalStore } from 'react';
 import { AudioController } from '../audio/useAudio';
 import type { VoiceState } from '../sse/types';
 import { useDisplayStore } from '../store';
@@ -205,39 +205,50 @@ const subscribeLocal = (l: () => void) => {
 };
 const getLocalSnapshot = (): VoiceLocalState => currentLocal;
 
+function computeNextLocal(prevLocal: VoiceLocalState, voice: VoiceSlice): VoiceLocalState {
+  if (voice === prevLocal.prevVoice) {
+    return prevLocal;
+  }
+  const rawState = voice?.state ?? 'idle';
+  const normalizedStatus =
+    voice?.status && voice.status.trim().length > 0 ? voice.status : null;
+  let nextDismissed = prevLocal.turnDismissed;
+  let nextStatus = prevLocal.statusText;
+
+  if (rawState === 'idle' || rawState === 'error') {
+    nextDismissed = false;
+    nextStatus = null;
+  } else if (rawState === 'listening') {
+    nextDismissed = false;
+    nextStatus = normalizedStatus;
+  } else if (rawState === 'thinking' || rawState === 'transcribing') {
+    if (normalizedStatus !== null) {
+      nextStatus = normalizedStatus;
+    }
+  } else {
+    nextStatus = normalizedStatus;
+  }
+
+  return {
+    turnDismissed: nextDismissed,
+    statusText: nextStatus,
+    prevVoice: voice,
+    resetForVoice: null,
+  };
+}
+
 export function useVoiceHudState(): VoiceHudSnapshot {
   const voice = useDisplayStore((s) => s.voice);
 
-  if (voice !== currentLocal.prevVoice) {
-    const rawState = voice?.state ?? 'idle';
-    const normalizedStatus =
-      voice?.status && voice.status.trim().length > 0 ? voice.status : null;
-    let nextDismissed = currentLocal.turnDismissed;
-    let nextStatus = currentLocal.statusText;
-
-    if (rawState === 'idle' || rawState === 'error') {
-      nextDismissed = false;
-      nextStatus = null;
-    } else if (rawState === 'listening') {
-      nextDismissed = false;
-      nextStatus = normalizedStatus;
-    } else if (rawState === 'thinking' || rawState === 'transcribing') {
-      if (normalizedStatus !== null) {
-        nextStatus = normalizedStatus;
-      }
-    } else {
-      nextStatus = normalizedStatus;
+  useLayoutEffect(() => {
+    if (voice !== currentLocal.prevVoice) {
+      currentLocal = computeNextLocal(currentLocal, voice);
+      for (const listener of [...localListeners]) listener();
     }
-
-    currentLocal = {
-      turnDismissed: nextDismissed,
-      statusText: nextStatus,
-      prevVoice: voice,
-      resetForVoice: null,
-    };
-  }
+  }, [voice]);
 
   const localState = useSyncExternalStore(subscribeLocal, getLocalSnapshot, getLocalSnapshot);
+  const effectiveLocal = voice !== localState.prevVoice ? computeNextLocal(localState, voice) : localState;
 
   const dismissToast = () => {
     currentLocal = { ...currentLocal, turnDismissed: true };
@@ -248,11 +259,11 @@ export function useVoiceHudState(): VoiceHudSnapshot {
     resetHUD();
   };
 
-  const isReset = localState.resetForVoice !== null && localState.resetForVoice === voice;
+  const isReset = effectiveLocal.resetForVoice !== null && effectiveLocal.resetForVoice === voice;
   const rawActiveState = (voice?.state ?? 'idle') as VoiceState;
   const activeState: VoiceState = isReset ? 'idle' : rawActiveState;
-  const effectiveStatus = isReset ? null : localState.statusText;
-  const effectiveDismissed = localState.turnDismissed;
+  const effectiveStatus = isReset ? null : effectiveLocal.statusText;
+  const effectiveDismissed = effectiveLocal.turnDismissed;
   const transcript = voice?.transcript ?? null;
   const reply = voice?.reply ?? null;
   const ttsEngine = voice?.tts_engine ?? null;

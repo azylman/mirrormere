@@ -41,11 +41,17 @@ export function HeaderVideoButton(props: HeaderVideoButtonProps = {}) {
     setIsLoading(false);
   };
 
-  // Clear loading when video switches to active video playback
+  const mode = video?.mode || (video?.primary ? 'video' : 'widgets');
+  if (mode === 'video' && isLoading) {
+    setIsLoading(false);
+  }
+
+  // Clear safety timer when video switches to active video playback
   useEffect(() => {
-    const mode = video?.mode || (video?.primary ? 'video' : 'widgets');
-    if (mode === 'video') {
-      clearLoading();
+    const activeMode = video?.mode || (video?.primary ? 'video' : 'widgets');
+    if (activeMode === 'video' && safetyTimerRef.current !== null) {
+      clearTimeout(safetyTimerRef.current);
+      safetyTimerRef.current = null;
     }
   }, [video]);
 

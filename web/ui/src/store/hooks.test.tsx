@@ -1,4 +1,5 @@
 import { act, render } from '@testing-library/react';
+import { useLayoutEffect } from 'react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { useDisplayStore } from './index';
 import { useWidget } from './hooks';
@@ -9,7 +10,9 @@ const renders: Record<string, number> = {};
 
 function WidgetProbe({ id }: { id: string }) {
   const widget = useWidget(id);
-  renders[id] = (renders[id] ?? 0) + 1;
+  useLayoutEffect(() => {
+    renders[id] = (renders[id] ?? 0) + 1;
+  });
   return <span data-testid={id}>{widget.state || 'empty'}</span>;
 }
 
@@ -65,7 +68,9 @@ describe('useWidget subscriptions', () => {
     function Both() {
       const a = useWidget('a');
       const b = useWidget('b');
-      renders.both = (renders.both ?? 0) + 1;
+      useLayoutEffect(() => {
+        renders.both = (renders.both ?? 0) + 1;
+      });
       return <span>{`${a.state}${b.state}`}</span>;
     }
     render(<Both />);

@@ -89,17 +89,24 @@ export function CalendarWeekView({
   const [now, setNow] = useState(() => new Date());
 
   const hasToday = daysToRender.some((d) => d.is_today);
+  const isTimerActive = activeView !== 'month' && isDocVisible && isPaneActive && hasToday;
+  const [prevTimerActive, setPrevTimerActive] = useState(isTimerActive);
+  if (isTimerActive !== prevTimerActive) {
+    setPrevTimerActive(isTimerActive);
+    if (isTimerActive) {
+      setNow(new Date());
+    }
+  }
 
   useEffect(() => {
-    if (activeView === 'month' || !isDocVisible || !isPaneActive || !hasToday) {
+    if (!isTimerActive) {
       return;
     }
-    setNow(new Date());
     const timer = setInterval(() => {
       setNow(new Date());
     }, 60_000);
     return () => clearInterval(timer);
-  }, [activeView, isDocVisible, isPaneActive, hasToday]);
+  }, [isTimerActive]);
 
   const nowPct = computeNowIndicatorPct(weekVM, now, tz || undefined);
 

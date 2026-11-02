@@ -627,23 +627,6 @@ export function PhotoCarouselWidget({
   const cycleStartedAtRef = useRef<number | null>(null);
   const activeDelayMsRef = useRef<number>(cycleIntervalSeconds * 1000);
 
-  useLayoutEffect(() => {
-    isPausedRef.current = isPaused;
-    currentIndexRef.current = safeIndex;
-    photosRef.current = photos;
-    transitionStateRef.current = transitionState;
-  });
-
-  useEffect(() => {
-    probeIndexRef.current = null;
-    if (photos.length === 0) return;
-    const targetIdx = resolveInitialPhotoIndex(photos, getWidgetPhotoDeckState(id));
-    if (currentIndexRef.current !== targetIdx) {
-      setCurrentIndex(targetIdx);
-      currentIndexRef.current = targetIdx;
-    }
-  }, [photos, id]);
-
   const startAnimation = () => {
     if (!isAnimatingRef.current) {
       isAnimatingRef.current = true;
@@ -838,6 +821,23 @@ export function PhotoCarouselWidget({
     }
     stepPhoto('next');
   };
+
+  useLayoutEffect(() => {
+    isPausedRef.current = isPaused;
+    currentIndexRef.current = safeIndex;
+    photosRef.current = photos;
+    transitionStateRef.current = transitionState;
+  });
+
+  useEffect(() => {
+    probeIndexRef.current = null;
+    if (photos.length === 0) return;
+    const targetIdx = resolveInitialPhotoIndex(photos, getWidgetPhotoDeckState(id));
+    if (currentIndexRef.current !== targetIdx) {
+      setCurrentIndex(targetIdx);
+      currentIndexRef.current = targetIdx;
+    }
+  }, [photos, id]);
 
   const clearPendingTransitionRef = useRef(clearPendingTransition);
   const triggerAdvanceRef = useRef(triggerAdvance);

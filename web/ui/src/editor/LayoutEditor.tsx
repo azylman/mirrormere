@@ -19,7 +19,14 @@ export interface LayoutEditorProps {
 
 export function LayoutEditor({ fetchImpl }: LayoutEditorProps = {}) {
   const isOpen = useLayoutEditorOpen();
-  const [loading, setLoading] = useState(false);
+  if (!isOpen) {
+    return null;
+  }
+  return <LayoutEditorModal fetchImpl={fetchImpl} />;
+}
+
+function LayoutEditorModal({ fetchImpl }: LayoutEditorProps = {}) {
+  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [grid, setGrid] = useState<[number, number]>([6, 2]);
@@ -43,10 +50,7 @@ export function LayoutEditor({ fetchImpl }: LayoutEditorProps = {}) {
   } | null>(null);
 
   useEffect(() => {
-    if (!isOpen) return;
     let active = true;
-    setLoading(true);
-    setError(null);
     fetchLayoutEditor(fetchImpl)
       .then((data) => {
         if (!active) return;
@@ -64,11 +68,7 @@ export function LayoutEditor({ fetchImpl }: LayoutEditorProps = {}) {
     return () => {
       active = false;
     };
-  }, [isOpen, fetchImpl]);
-
-  if (!isOpen) {
-    return null;
-  }
+  }, [fetchImpl]);
 
   const [gridCols, gridRows] = grid;
   const totalCells = gridCols * gridRows;

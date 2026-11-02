@@ -129,7 +129,7 @@ export function LiveViewWidget({ id }: WidgetComponentProps) {
   const imgRef = useRef<HTMLImageElement | null>(null);
 
   const [isLoading, setIsLoading] = useState(false);
-  const [isIntersecting, setIsIntersecting] = useState(true);
+  const [isIntersecting, setIsIntersecting] = useState(() => true);
 
   const epochRef = useRef(0);
   const pcRef = useRef<RTCPeerConnection | null>(null);
@@ -142,18 +142,23 @@ export function LiveViewWidget({ id }: WidgetComponentProps) {
 
   // Clear loading state when video takes over fullscreen display,
   // and resume intersecting state when returning to widgets mode.
-  const prevVideoModeRef = useRef(videoMode);
-  useEffect(() => {
+  const [prevVideoMode, setPrevVideoMode] = useState(videoMode);
+  if (videoMode !== prevVideoMode) {
+    setPrevVideoMode(videoMode);
     if (videoMode === 'video') {
-      setIsLoading(false);
-      if (safetyTimerRef.current) {
-        clearTimeout(safetyTimerRef.current);
-        safetyTimerRef.current = null;
+      if (isLoading) {
+        setIsLoading(false);
       }
-    } else if (prevVideoModeRef.current === 'video') {
+    } else if (prevVideoMode === 'video') {
       setIsIntersecting(true);
     }
-    prevVideoModeRef.current = videoMode;
+  }
+
+  useEffect(() => {
+    if (videoMode === 'video' && safetyTimerRef.current) {
+      clearTimeout(safetyTimerRef.current);
+      safetyTimerRef.current = null;
+    }
   }, [videoMode]);
 
   // Observe root element visibility in viewport
