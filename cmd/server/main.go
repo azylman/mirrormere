@@ -436,7 +436,11 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 	}
 	configPath = effectiveConfigPath
 
-	configManager, err := config.NewManager(initialYAML, loader, os.Getenv, logger)
+	var mgrOpts []config.ManagerOption
+	if configPath != "" {
+		mgrOpts = append(mgrOpts, config.WithUseConfigOverridePath(), config.WithOverridePath(""))
+	}
+	configManager, err := config.NewManager(initialYAML, loader, os.Getenv, logger, mgrOpts...)
 	if err != nil {
 		return fmt.Errorf("failed to initialize configuration manager: %w", err)
 	}
@@ -505,17 +509,18 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 		portVal = -1
 	}
 	cfg := server.Config{
-		Host:           initialHost,
-		Port:           portVal,
-		EventsHandler:  events.Handler(hub),
-		ScreenHandler:  rotation.NewHandler(rotationCoord),
-		RenderHandler:  renderHandler,
-		PushHandler:    provider.NewPushHandler(providerCoord, logger),
-		DisplayHandler: buildDisplayHandler(stateProvider, currentTheme),
-		ListsHandler:   listsHandler,
-		AudioHandler:   server.NewDefaultAudioHandler(audio.NewCoordinator(hub, stateProvider)),
-		VideoHandler:   server.NewDefaultVideoHandler(videoCoord),
-		VoiceHandler:   server.NewDefaultVoiceHandler(voiceCoord, voiceHub, server.WithVoiceMetrics(voice.DefaultMetrics())),
+		Host:                initialHost,
+		Port:                portVal,
+		EventsHandler:       events.Handler(hub),
+		ScreenHandler:       rotation.NewHandler(rotationCoord),
+		RenderHandler:       renderHandler,
+		PushHandler:         provider.NewPushHandler(providerCoord, logger),
+		DisplayHandler:      buildDisplayHandler(stateProvider, currentTheme),
+		ListsHandler:        listsHandler,
+		AudioHandler:        server.NewDefaultAudioHandler(audio.NewCoordinator(hub, stateProvider)),
+		VideoHandler:        server.NewDefaultVideoHandler(videoCoord),
+		VoiceHandler:        server.NewDefaultVoiceHandler(voiceCoord, voiceHub, server.WithVoiceMetrics(voice.DefaultMetrics())),
+		LayoutEditorHandler: server.NewDefaultLayoutEditorHandler(configManager, hub, loader, logger),
 	}
 	cfg.ApplyDefaults()
 

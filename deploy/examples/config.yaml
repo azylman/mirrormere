@@ -20,6 +20,10 @@ display:
   # The ?ui=react or ?ui=legacy query parameter overrides this per request.
   ui: "react"
 
+  # Live canvas layout editing and atomic disk override file path (optional)
+  allow_layout_edit: true
+  layout_override_path: "/data/layout-override.yaml"
+
   # Visual theme mode: "auto" (switches at local sunrise/sunset), "day", or "night" (Sailor HG Fairyfloss)
   theme:
     mode: "auto"

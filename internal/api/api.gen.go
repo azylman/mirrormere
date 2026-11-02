@@ -151,6 +151,72 @@ type HealthResponse struct {
 	Status string `json:"status"`
 }
 
+// LayoutEditorResponse defines model for LayoutEditorResponse.
+type LayoutEditorResponse struct {
+	// AllowLayoutEdit Whether live layout editing is permitted by configuration
+	AllowLayoutEdit bool `json:"allow_layout_edit"`
+
+	// Grid Grid dimensions [cols, rows]
+	Grid []int `json:"grid"`
+
+	// HasOverride Whether an active layout override file is applied
+	HasOverride bool `json:"has_override"`
+
+	// TotalScreens Total number of solved screens
+	TotalScreens int `json:"total_screens"`
+
+	// Widgets Non-spacer placed widgets across all screens
+	Widgets []LayoutEditorWidget `json:"widgets"`
+}
+
+// LayoutEditorUpdateRequest defines model for LayoutEditorUpdateRequest.
+type LayoutEditorUpdateRequest struct {
+	// Widgets Target widget placements across screens
+	Widgets []LayoutEditorWidgetPlacement `json:"widgets"`
+}
+
+// LayoutEditorWidget defines model for LayoutEditorWidget.
+type LayoutEditorWidget struct {
+	// Dimensions Grid dimensions [cols, rows]
+	Dimensions []int `json:"dimensions"`
+
+	// Origin Cell coordinate origin [col, row]
+	Origin []int `json:"origin"`
+
+	// Pinned Whether the widget is pinned across all screens
+	Pinned bool `json:"pinned"`
+
+	// Screen Screen index on which the widget is placed
+	Screen int `json:"screen"`
+
+	// SupportedDimensions List of supported [cols, rows] dimensions declared by the widget package
+	SupportedDimensions [][]int `json:"supported_dimensions"`
+
+	// Type Widget type identifier
+	Type string `json:"type"`
+
+	// WidgetId Unique widget identifier
+	WidgetId string `json:"widget_id"`
+}
+
+// LayoutEditorWidgetPlacement defines model for LayoutEditorWidgetPlacement.
+type LayoutEditorWidgetPlacement struct {
+	// Dimensions Target grid dimensions [cols, rows]
+	Dimensions []int `json:"dimensions"`
+
+	// Origin Target cell coordinate [col, row]
+	Origin []int `json:"origin"`
+
+	// Pinned Whether the widget is pinned across all screens
+	Pinned *bool `json:"pinned,omitempty"`
+
+	// Screen Target screen index
+	Screen int `json:"screen"`
+
+	// WidgetId Unique widget identifier
+	WidgetId string `json:"widget_id"`
+}
+
 // PerfBatchRequest defines model for PerfBatchRequest.
 type PerfBatchRequest struct {
 	Samples []PerfSample `json:"samples"`
@@ -432,6 +498,9 @@ type PostAudioMuteJSONRequestBody = AudioMuteRequest
 
 // PostAudioVolumeJSONRequestBody defines body for PostAudioVolume for application/json ContentType.
 type PostAudioVolumeJSONRequestBody = AudioVolumeRequest
+
+// PutLayoutEditorJSONRequestBody defines body for PutLayoutEditor for application/json ContentType.
+type PutLayoutEditorJSONRequestBody = LayoutEditorUpdateRequest
 
 // PostPerfJSONRequestBody defines body for PostPerf for application/json ContentType.
 type PostPerfJSONRequestBody = PerfBatchRequest

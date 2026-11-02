@@ -234,6 +234,18 @@ func (m *mockAll) PostVoiceHeartbeat(w http.ResponseWriter, _ *http.Request) {
 	m.w(w, "voice_heartbeat")
 }
 
+func (m *mockAll) GetLayoutEditor(w http.ResponseWriter, _ *http.Request) {
+	m.w(w, "layout_editor_get")
+}
+
+func (m *mockAll) PutLayoutEditor(w http.ResponseWriter, _ *http.Request) {
+	m.w(w, "layout_editor_put")
+}
+
+func (m *mockAll) DeleteLayoutEditor(w http.ResponseWriter, _ *http.Request) {
+	m.w(w, "layout_editor_delete")
+}
+
 func testHandlerFamily(fam string, m1 *mockAll) *server.Server {
 	var c server.Config
 	switch fam {
@@ -255,6 +267,8 @@ func testHandlerFamily(fam string, m1 *mockAll) *server.Server {
 		c.VideoHandler = m1
 	case "voice":
 		c.VoiceHandler = m1
+	case "layout_editor":
+		c.LayoutEditorHandler = m1
 	}
 	return server.New(c)
 }
@@ -266,33 +280,39 @@ func TestServer_HandlerDelegation(t *testing.T) {
 		family   string
 		method   string
 		path     string
+		wantCode int
 		wantBody string
 	}{
-		{"events", "events", http.MethodGet, "/api/events", "events"},
-		{"screen_select", "screen", http.MethodPost, "/api/screen/select", "screen_select"},
-		{"screen_advance", "screen", http.MethodPost, "/api/screen/advance", "screen_advance"},
-		{"screen_pause", "screen", http.MethodPost, "/api/screen/pause", "screen_pause"},
-		{"screens_get", "screen", http.MethodGet, "/api/screens", "screens"},
-		{"render_widget", "render", http.MethodGet, "/api/widgets/sensor-1/render", "render:sensor-1"},
-		{"widget_json", "render", http.MethodGet, "/api/widgets/sensor-1", "widget:sensor-1"},
-		{"render_asset", "render", http.MethodGet, "/widget-types/clock/assets/icon.png", "asset:clock:icon.png"},
-		{"render_style", "render", http.MethodGet, "/style.css", "style"},
-		{"display_main", "display", http.MethodGet, "/display", "display"},
-		{"display_static", "display", http.MethodGet, "/static/bundle.js", "static:bundle.js"},
-		{"push_webhook", "push", http.MethodPost, "/api/widgets/weather/push", "push:weather"},
-		{"photos_webhook", "push", http.MethodPost, "/api/widgets/family-photos/photos", "photos:family-photos"},
-		{"lists_complete", "lists", http.MethodPost, "/api/lists/groceries/items/i42/complete", "complete:groceries:i42"},
-		{"audio_get", "audio", http.MethodGet, "/api/audio", "audio"},
-		{"audio_volume", "audio", http.MethodPost, "/api/audio/volume", "volume"},
-		{"audio_mute", "audio", http.MethodPost, "/api/audio/mute", "mute"},
-		{"video_trigger", "video", http.MethodPost, "/api/video/trigger", "v_trigger"},
-		{"video_dismiss", "video", http.MethodPost, "/api/video/dismiss", "v_dismiss"},
-		{"video_action", "video", http.MethodPost, "/api/video/action", "v_action"},
-		{"video_state_get", "video", http.MethodGet, "/api/video/state", "v_get_state"},
-		{"video_state_post", "video", http.MethodPost, "/api/video/state", "v_post_state"},
-		{"voice_state", "voice", http.MethodPost, "/api/voice/state", "voice_state"},
-		{"voice_interact", "voice", http.MethodPost, "/api/voice/interact", "voice_interact"},
-		{"voice_heartbeat", "voice", http.MethodPost, "/api/voice/heartbeat", "voice_heartbeat"},
+		{name: "events", family: "events", method: http.MethodGet, path: "/api/events", wantBody: "events"},
+		{name: "screen_select", family: "screen", method: http.MethodPost, path: "/api/screen/select", wantBody: "screen_select"},
+		{name: "screen_advance", family: "screen", method: http.MethodPost, path: "/api/screen/advance", wantBody: "screen_advance"},
+		{name: "screen_pause", family: "screen", method: http.MethodPost, path: "/api/screen/pause", wantBody: "screen_pause"},
+		{name: "screens_get", family: "screen", method: http.MethodGet, path: "/api/screens", wantBody: "screens"},
+		{name: "render_widget", family: "render", method: http.MethodGet, path: "/api/widgets/sensor-1/render", wantBody: "render:sensor-1"},
+		{name: "widget_json", family: "render", method: http.MethodGet, path: "/api/widgets/sensor-1", wantBody: "widget:sensor-1"},
+		{name: "render_asset", family: "render", method: http.MethodGet, path: "/widget-types/clock/assets/icon.png", wantBody: "asset:clock:icon.png"},
+		{name: "render_style", family: "render", method: http.MethodGet, path: "/style.css", wantBody: "style"},
+		{name: "display_main", family: "display", method: http.MethodGet, path: "/display", wantBody: "display"},
+		{name: "display_static", family: "display", method: http.MethodGet, path: "/static/bundle.js", wantBody: "static:bundle.js"},
+		{name: "push_webhook", family: "push", method: http.MethodPost, path: "/api/widgets/weather/push", wantBody: "push:weather"},
+		{name: "photos_webhook", family: "push", method: http.MethodPost, path: "/api/widgets/family-photos/photos", wantBody: "photos:family-photos"},
+		{name: "lists_complete", family: "lists", method: http.MethodPost, path: "/api/lists/groceries/items/i42/complete", wantBody: "complete:groceries:i42"},
+		{name: "audio_get", family: "audio", method: http.MethodGet, path: "/api/audio", wantBody: "audio"},
+		{name: "audio_volume", family: "audio", method: http.MethodPost, path: "/api/audio/volume", wantBody: "volume"},
+		{name: "audio_mute", family: "audio", method: http.MethodPost, path: "/api/audio/mute", wantBody: "mute"},
+		{name: "video_trigger", family: "video", method: http.MethodPost, path: "/api/video/trigger", wantBody: "v_trigger"},
+		{name: "video_dismiss", family: "video", method: http.MethodPost, path: "/api/video/dismiss", wantBody: "v_dismiss"},
+		{name: "video_action", family: "video", method: http.MethodPost, path: "/api/video/action", wantBody: "v_action"},
+		{name: "video_state_get", family: "video", method: http.MethodGet, path: "/api/video/state", wantBody: "v_get_state"},
+		{name: "video_state_post", family: "video", method: http.MethodPost, path: "/api/video/state", wantBody: "v_post_state"},
+		{name: "voice_state", family: "voice", method: http.MethodPost, path: "/api/voice/state", wantBody: "voice_state"},
+		{name: "voice_interact", family: "voice", method: http.MethodPost, path: "/api/voice/interact", wantBody: "voice_interact"},
+		{name: "voice_heartbeat", family: "voice", method: http.MethodPost, path: "/api/voice/heartbeat", wantBody: "voice_heartbeat"},
+		{name: "layout_editor_get", family: "layout_editor", method: http.MethodGet, path: "/api/layout/editor", wantBody: "layout_editor_get"},
+		{name: "layout_editor_put", family: "layout_editor", method: http.MethodPut, path: "/api/layout/editor", wantBody: "layout_editor_put"},
+		{name: "layout_editor_delete", family: "layout_editor", method: http.MethodDelete, path: "/api/layout/editor", wantBody: "layout_editor_delete"},
+		{name: "layout_editor_options", family: "layout_editor", method: http.MethodOptions, path: "/api/layout/editor", wantCode: http.StatusNoContent},
+		{name: "layout_editor_post_405", family: "layout_editor", method: http.MethodPost, path: "/api/layout/editor", wantCode: http.StatusMethodNotAllowed, wantBody: "method not allowed"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -304,8 +324,12 @@ func TestServer_HandlerDelegation(t *testing.T) {
 
 			srvCfg := testHandlerFamily(tc.family, &mockAll{status: http.StatusOK})
 			rec200 := doServerReq(srvCfg, tc.method, tc.path)
-			if rec200.Code != http.StatusOK || !strings.Contains(rec200.Body.String(), tc.wantBody) {
-				t.Fatalf("configured handler code=%d body=%q, want 200 with %q", rec200.Code, rec200.Body.String(), tc.wantBody)
+			wantCode := tc.wantCode
+			if wantCode == 0 {
+				wantCode = http.StatusOK
+			}
+			if rec200.Code != wantCode || !strings.Contains(rec200.Body.String(), tc.wantBody) {
+				t.Fatalf("configured handler code=%d body=%q, want %d with %q", rec200.Code, rec200.Body.String(), wantCode, tc.wantBody)
 			}
 		})
 	}

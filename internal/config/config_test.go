@@ -479,6 +479,13 @@ func TestConfig_Accessors(t *testing.T) {
 	weatherFallbackCfg := &config.Config{Display: config.DisplayConfig{Header: config.HeaderConfig{Weather: &config.HeaderWeatherConfig{Location: "San Jose", Latitude: 37.33, Longitude: -121.88}}}}
 	fbLoc := weatherFallbackCfg.GetLocationConfig()
 	assertEq(t, "fb loc", fbLoc != nil && fbLoc.Name == "San Jose" && *fbLoc.Latitude == 37.33, true)
+
+	var zeroDisplay config.DisplayConfig
+	assertEq(t, "layout edit default", zeroDisplay.IsLayoutEditAllowed(), true)
+	assertEq(t, "override path default", zeroDisplay.GetLayoutOverridePath(), config.DefaultLayoutOverridePath)
+	disabledDisplay := config.DisplayConfig{AllowLayoutEdit: new(false), LayoutOverridePath: "/tmp/custom.yaml"}
+	assertEq(t, "layout edit disabled", disabledDisplay.IsLayoutEditAllowed(), false)
+	assertEq(t, "override path custom", disabledDisplay.GetLayoutOverridePath(), "/tmp/custom.yaml")
 }
 
 func TestDisplayUI(t *testing.T) {
