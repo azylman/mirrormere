@@ -10,14 +10,14 @@ import {
   EMPTY_PHOTOS, DEFAULT_CYCLE_SECONDS, PHOTO_CONTROLS_HIDE_MS, PHOTO_PAUSE_INACTIVITY_MS,
   parsePhotoCarouselData, getBackdropPhotoURL, getSizedPhotoURL, useContainerSize,
   registerEmberSyncListener, usePhotoSlideshowTransition, resolvePhotoCarouselSourceAndUrl,
-  formatPhotoMetadataLabel, resolvePhotoOverlayTheme,
+  formatPhotoMetadataLabel, resolvePhotoOverlayTheme, hasMultiplePhotoAlbums,
   type EmberSyncListener, type PhotoCarouselConfig, type PhotoItem,
 } from './photoCarouselHelpers';
 
 export {
   parsePhotoCarouselData, getBackdropPhotoURL, getSizedPhotoURL, photoDeckStateById,
   getPhotoItemKey, selectNextPhotoIndex, selectPrevPhotoIndex,
-  formatPhotoOverlayDate, formatPhotoMetadataLabel, resolvePhotoOverlayTheme,
+  formatPhotoOverlayDate, formatPhotoMetadataLabel, resolvePhotoOverlayTheme, hasMultiplePhotoAlbums,
   PHOTO_CONTROLS_HIDE_MS, PHOTO_PAUSE_INACTIVITY_MS,
 } from './photoCarouselHelpers';
 
@@ -177,16 +177,13 @@ function PhotoForeground({
   );
 }
 
-function PhotoMetadataOverlay({ photo }: { photo?: PhotoItem }) {
-  const meta = formatPhotoMetadataLabel(photo);
+function PhotoMetadataOverlay({ photo, showAlbumName }: { photo?: PhotoItem; showAlbumName: boolean }) {
+  const meta = formatPhotoMetadataLabel(photo, showAlbumName);
   if (!meta) return null;
   const theme = resolvePhotoOverlayTheme(photo?.dominant_color);
-  const label = meta.location && meta.date ? `${meta.location} · ${meta.date}` : meta.location || meta.date;
   return (
-    <div className="photo-metadata-overlay" data-overlay-theme={theme} aria-label={label}>
-      {meta.location && <span className="photo-metadata-location">{meta.location}</span>}
-      {meta.location && meta.date && <span className="photo-metadata-sep" aria-hidden="true">·</span>}
-      {meta.date && <span className="photo-metadata-date">{meta.date}</span>}
+    <div className="photo-metadata-overlay" data-overlay-theme={theme} aria-label={meta.text}>
+      {meta.text}
     </div>
   );
 }
@@ -418,6 +415,7 @@ export function PhotoCarouselWidget({ id }: WidgetComponentProps) {
   const nextRawUrl = nextPhoto?.url ?? nextPhoto?.URL;
   const nextFgUrl = nextRawUrl ? getSizedPhotoURL(nextRawUrl, containerSize) : '';
   const nextBackdropUrl = nextRawUrl ? getBackdropPhotoURL(nextRawUrl) : '';
+  const showAlbumName = (Array.isArray(config?.albums) && config.albums.length > 1) || hasMultiplePhotoAlbums(photos);
 
   return (
     <div
@@ -447,7 +445,7 @@ export function PhotoCarouselWidget({ id }: WidgetComponentProps) {
             nextUrl={nextFgUrl}
             isTransitioning={isTransitioning}
           />
-          <PhotoMetadataOverlay photo={activePhoto} />
+          <PhotoMetadataOverlay photo={activePhoto} showAlbumName={showAlbumName} />
           {photos.length > 1 && (
             <PhotoTransportControls
               visible={controlsVisible || isPaused}

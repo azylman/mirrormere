@@ -162,6 +162,9 @@ func TestPhotos_InternalHelpers(t *testing.T) {
 		if !checked["AF1Qip_single"] || locs["AF1Qip_single"] != "Tokyo, Japan" {
 			t.Errorf("unexpected single-array parse result: locs=%v checked=%v", locs, checked)
 		}
+		if got := resolveBatchexecuteBaseURL("https://photos.app.goo.gl/abc123"); got != "https://photos.google.com" {
+			t.Errorf("expected https://photos.google.com for shortlink, got %q", got)
+		}
 	})
 
 	t.Run("findMediaItems and extractBalancedArray", func(t *testing.T) {

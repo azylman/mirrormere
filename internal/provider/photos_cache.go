@@ -185,12 +185,15 @@ func extractAlbumKeyAndToken(html string) (string, string) {
 	return "", ""
 }
 
-func postBatchexecute(ctx context.Context, client *http.Client, albumURL, rpcID string, reqEnvelope any) ([]byte, error) {
-	baseURL := "https://photos.google.com"
-	if parsedU, err := url.Parse(albumURL); err == nil && parsedU.Host != "" {
-		baseURL = parsedU.Scheme + "://" + parsedU.Host
+func resolveBatchexecuteBaseURL(albumURL string) string {
+	if parsedU, err := url.Parse(albumURL); err == nil && parsedU.Host != "" && !strings.EqualFold(parsedU.Host, "photos.app.goo.gl") {
+		return parsedU.Scheme + "://" + parsedU.Host
 	}
-	endpoint := baseURL + "/_/PhotosUi/data/batchexecute?rpcids=" + rpcID
+	return "https://photos.google.com"
+}
+
+func postBatchexecute(ctx context.Context, client *http.Client, albumURL, rpcID string, reqEnvelope any) ([]byte, error) {
+	endpoint := resolveBatchexecuteBaseURL(albumURL) + "/_/PhotosUi/data/batchexecute?rpcids=" + rpcID
 
 	envelope, err := json.Marshal(reqEnvelope)
 	if err != nil {
