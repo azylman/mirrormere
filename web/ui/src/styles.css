@@ -801,5 +801,30 @@ body[data-grid="2x6"] .grid-pane {
   box-shadow: 0 0 10px rgba(168, 85, 247, 0.3);
 }
 
+.photo-connect-btn {
+  margin-top: 8px;
+  background: var(--mm-accent-purple, #a855f7);
+  color: #fff;
+  border: none;
+  border-radius: 9999px;
+  padding: 8px 18px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(168, 85, 247, 0.4);
+  touch-action: manipulation;
+  user-select: none;
+  transition: transform 0.15s ease, filter 0.15s ease;
+}
+
+.photo-connect-btn:hover {
+  filter: brightness(1.1);
+}
+
+.photo-connect-btn:active {
+  transform: scale(0.96);
+}
+
+
 
 
