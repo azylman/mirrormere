@@ -2,6 +2,17 @@
  * Mirrormere Display Carousel & Layout Engine
  * Manages 6x2 CSS grid canvas rendering, DOM pre-warming, hot-swapping, and touch swipe navigation.
  */
+// Swipe feel (touch kiosks). The canvas follows the finger, then commits on
+// distance or a flick and slides the next screen in when screen.rotate lands.
+const SWIPE_LOCK_PX = 12;              // movement before a drag is classed horizontal or vertical
+const SWIPE_COMMIT_PX = 60;            // distance that commits a swipe
+const SWIPE_FLICK_PX_PER_MS = 0.4;     // or a flick faster than this
+const SWIPE_FOLLOW_RATIO = 0.6;        // canvas moves 60% of the finger, so it reads as resistance
+const SWIPE_OUT_FRACTION = 0.25;       // committed: current screen slides a quarter width out
+const SWIPE_ANIM_MS = 180;
+const SWIPE_ROTATE_TIMEOUT_MS = 1500;  // no screen.rotate by then: slide back
+const CANVAS_OPACITY_TRANSITION = 'opacity 0.3s cubic-bezier(0.25, 1, 0.5, 1)'; // matches .grid-canvas in hud.css
+
 class MirrormereCarousel {
   static instances = new Set();
 
@@ -32,6 +43,8 @@ class MirrormereCarousel {
     this.isNavigating = false;
     this.navLockTimeout = null;
     this._isDragging = false;
+    this._swipe = null;          // live drag: { dx, locked } while the finger moves the canvas
+    this._swipeOut = null;       // committed swipe waiting for screen.rotate: { dir, timer }
     this.pendingRotateData = null;
     this.screenLayouts = new Map();
     this.widgetNodeCache = new Map();
@@ -132,6 +145,8 @@ class MirrormereCarousel {
    */
   pause() {
     this.isPaused = true;
+    if (this._swipe && this._swipe.locked) this.setCanvasOffset(0, true);
+    this._swipe = null;
     if (this.indicator) {
       if (this.indicator.classList && typeof this.indicator.classList.add === 'function') {
         this.indicator.classList.add('paused');
@@ -356,6 +371,7 @@ class MirrormereCarousel {
     const widgetsToShow = this.getWidgetsForScreen(this.currentScreen);
     await this.ensureWidgetsMounted(widgetsToShow);
     this.applyCachedScreen(this.currentScreen, widgetsToShow);
+    this.finishSwipeIn();
 
     if (!this._prewarmedAll) {
       this._prewarmedAll = true;
@@ -657,19 +673,53 @@ class MirrormereCarousel {
         this.touchStartX = e.touches[0].clientX;
         this.touchStartY = e.touches[0].clientY;
         this.touchStartTime = Date.now();
+        this._swipe = { dx: 0, locked: false };
       }
     }, { passive: true });
 
+    // Follow the finger: the canvas moves with a horizontal drag so the swipe
+    // responds the moment it starts, not only after release.
+    target.addEventListener('touchmove', (e) => {
+      if (this.isPaused || this.touchIgnored || !this._swipe || this._swipeOut) return;
+      if (!e.touches || e.touches.length !== 1) return;
+      const dx = e.touches[0].clientX - this.touchStartX;
+      const dy = e.touches[0].clientY - this.touchStartY;
+      if (!this._swipe.locked) {
+        if (Math.abs(dx) < SWIPE_LOCK_PX && Math.abs(dy) < SWIPE_LOCK_PX) return;
+        if (Math.abs(dx) <= Math.abs(dy) * 1.5) { this._swipe = null; return; }
+        this._swipe.locked = true;
+      }
+      this._swipe.dx = dx;
+      this.setCanvasOffset(dx * SWIPE_FOLLOW_RATIO, false);
+    }, { passive: true });
+
+    target.addEventListener('touchcancel', () => {
+      if (this._swipe && this._swipe.locked) this.setCanvasOffset(0, true);
+      this._swipe = null;
+    }, { passive: true });
+
     target.addEventListener('touchend', (e) => {
-      if (this.isPaused) return;
+      const drag = this._swipe;
+      this._swipe = null;
+      // Every early return puts a dragged canvas back, so it never sticks off-centre.
+      const snapBack = () => {
+        if (drag && drag.locked) this.setCanvasOffset(0, true);
+      };
+      if (this.isPaused) {
+        snapBack();
+        return;
+      }
       if (this.touchIgnored) {
         this.touchIgnored = false;
+        snapBack();
         return;
       }
       if (e.target && e.target.closest && e.target.closest('.widget-calendar-grid, .widget-calendar-family, [data-prevent-screen-swipe]')) {
+        snapBack();
         return;
       }
       if (!e.changedTouches || e.changedTouches.length !== 1) {
+        snapBack();
         return;
       }
 
@@ -679,17 +729,80 @@ class MirrormereCarousel {
       const deltaY = touchEndY - this.touchStartY;
       const duration = Date.now() - this.touchStartTime;
 
-      // Minimum swipe threshold: 60px horizontal, mostly horizontal direction, under 800ms
-      if (duration < 800 && Math.abs(deltaX) > 60 && Math.abs(deltaX) > Math.abs(deltaY) * 1.5) {
-        if (deltaX < 0) {
-          // Swipe Left -> Advance to next screen
-          this.advanceScreen('next');
-        } else {
-          // Swipe Right -> Return to previous screen
-          this.advanceScreen('prev');
+      // Commit on distance (60px, mostly horizontal) or a quick flick. A slow
+      // drag counts too: the old 800ms cap ignored deliberate swipes.
+      const horizontal = Math.abs(deltaX) > Math.abs(deltaY) * 1.5;
+      const velocity = duration > 0 ? Math.abs(deltaX) / duration : 0;
+      const commit = horizontal && (Math.abs(deltaX) > SWIPE_COMMIT_PX
+        || (Math.abs(deltaX) > SWIPE_LOCK_PX && velocity > SWIPE_FLICK_PX_PER_MS));
+      if (commit) {
+        const dir = deltaX < 0 ? 'next' : 'prev';
+        // Slide out only when a rotate will follow; advanceScreen itself
+        // ignores single-screen layouts and a held nav lock.
+        if (this.totalScreens > 1 && !this.isNavigating) {
+          this.beginSwipeOut(dir);
+        } else if (drag && drag.locked) {
+          this.setCanvasOffset(0, true);
         }
+        this.advanceScreen(dir);
+      } else if (drag && drag.locked) {
+        this.setCanvasOffset(0, true);
       }
     }, { passive: true });
+  }
+
+  /**
+   * Move the canvas horizontally. animate=false tracks the finger frame by
+   * frame; animate=true eases to the target. transform only, so it stays on
+   * the compositor.
+   */
+  setCanvasOffset(px, animate) {
+    const st = this.canvas && this.canvas.style;
+    if (!st) return;
+    // Keep hud.css's opacity fade (.grid-canvas.transitioning) alongside ours.
+    st.transition = animate
+      ? `transform ${SWIPE_ANIM_MS}ms ease-out, ${CANVAS_OPACITY_TRANSITION}`
+      : CANVAS_OPACITY_TRANSITION;
+    st.transform = px ? `translateX(${Math.round(px)}px)` : '';
+  }
+
+  canvasWidth() {
+    return (this.canvas && this.canvas.clientWidth) || (typeof window !== 'undefined' && window.innerWidth) || 1000;
+  }
+
+  /**
+   * A committed swipe: slide the current screen out toward the swipe and wait
+   * for screen.rotate. If the server never answers, slide back.
+   */
+  beginSwipeOut(dir) {
+    const sign = dir === 'next' ? -1 : 1;
+    this.setCanvasOffset(sign * this.canvasWidth() * SWIPE_OUT_FRACTION, true);
+    if (this._swipeOut && this._swipeOut.timer) clearTimeout(this._swipeOut.timer);
+    const timer = setTimeout(() => {
+      this._swipeOut = null;
+      this.setCanvasOffset(0, true);
+    }, SWIPE_ROTATE_TIMEOUT_MS);
+    if (timer && typeof timer.unref === 'function') timer.unref();
+    this._swipeOut = { dir, timer };
+  }
+
+  /**
+   * Called once the new screen is in the DOM: bring it in from the side the
+   * finger was moving away from.
+   */
+  finishSwipeIn() {
+    const out = this._swipeOut;
+    if (!out) return;
+    if (out.timer) clearTimeout(out.timer);
+    this._swipeOut = null;
+    const sign = out.dir === 'next' ? 1 : -1;
+    this.setCanvasOffset(sign * this.canvasWidth() * SWIPE_OUT_FRACTION, false);
+    const settle = () => this.setCanvasOffset(0, true);
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => requestAnimationFrame(settle));
+    } else {
+      settle();
+    }
   }
 
   /**
