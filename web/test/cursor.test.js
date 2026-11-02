@@ -91,18 +91,6 @@ describe('Touch Display Cursor Suppression', () => {
       assert.ok(global.document.body.classList.contains('mm-touch-display'), '?hide_cursor=true must add mm-touch-display');
       assert.ok(global.document.body.classList.contains('mm-touch-kiosk'), '?hide_cursor=true must add mm-touch-kiosk');
 
-      // ?cursor=visible removes mm-touch-display and mm-touch-kiosk
-      global.window.location.search = '?cursor=visible';
-      display.resolveCursorSuppression();
-      assert.ok(!global.document.body.classList.contains('mm-touch-display'), '?cursor=visible must remove mm-touch-display');
-      assert.ok(!global.document.body.classList.contains('mm-touch-kiosk'), '?cursor=visible must remove mm-touch-kiosk');
-
-      // ?cursor=none adds mm-touch-display
-      global.window.location.search = '?cursor=none';
-      display.resolveCursorSuppression();
-      assert.ok(global.document.body.classList.contains('mm-touch-display'), '?cursor=none must add mm-touch-display');
-      assert.ok(global.document.body.classList.contains('mm-touch-kiosk'), '?cursor=none must add mm-touch-kiosk');
-
       // ?hide_cursor=false removes mm-touch-display
       global.window.location.search = '?hide_cursor=false';
       display.resolveCursorSuppression();

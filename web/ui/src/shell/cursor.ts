@@ -1,6 +1,6 @@
 /**
- * Cursor suppression query overrides (?hide_cursor=true/false, ?cursor=none/visible).
- * Ported from web/static/js/display.js lines 860-871.
+ * Cursor suppression query overrides (?hide_cursor=true/false).
+ * Ported from web/static/js/display.js.
  */
 export function applyCursorSuppression(search?: string, body?: HTMLElement | null): void {
   const targetBody = body !== undefined ? body : (typeof document !== 'undefined' ? document.body : null);
@@ -11,11 +11,10 @@ export function applyCursorSuppression(search?: string, body?: HTMLElement | nul
 
   const urlParams = new URLSearchParams(searchStr);
   const hideCursor = urlParams.get('hide_cursor');
-  const cursor = urlParams.get('cursor');
 
-  if (hideCursor === 'true' || cursor === 'none') {
+  if (hideCursor === 'true') {
     targetBody.classList.add('mm-touch-display', 'mm-touch-kiosk');
-  } else if (hideCursor === 'false' || cursor === 'visible') {
+  } else if (hideCursor === 'false') {
     targetBody.classList.remove('mm-touch-display', 'mm-touch-kiosk');
   }
 }

@@ -18,12 +18,6 @@ describe('applyCursorSuppression', () => {
     expect(body.classList.contains('mm-touch-kiosk')).toBe(true);
   });
 
-  it('adds touch display and kiosk classes when cursor=none', () => {
-    applyCursorSuppression('?cursor=none', body);
-    expect(body.classList.contains('mm-touch-display')).toBe(true);
-    expect(body.classList.contains('mm-touch-kiosk')).toBe(true);
-  });
-
   it('removes touch classes when hide_cursor=false', () => {
     body.classList.add('mm-touch-display', 'mm-touch-kiosk');
     applyCursorSuppression('?hide_cursor=false', body);
@@ -31,15 +25,12 @@ describe('applyCursorSuppression', () => {
     expect(body.classList.contains('mm-touch-kiosk')).toBe(false);
   });
 
-  it('removes touch classes when cursor=visible', () => {
-    body.classList.add('mm-touch-display', 'mm-touch-kiosk');
-    applyCursorSuppression('?cursor=visible', body);
-    expect(body.classList.contains('mm-touch-display')).toBe(false);
-    expect(body.classList.contains('mm-touch-kiosk')).toBe(false);
-  });
-
   it('leaves body unchanged on unrelated query parameters', () => {
     applyCursorSuppression('?foo=bar', body);
+    expect(body.className).toBe('');
+    applyCursorSuppression('?cursor=none', body);
+    expect(body.className).toBe('');
+    applyCursorSuppression('?cursor=visible', body);
     expect(body.className).toBe('');
   });
 });
