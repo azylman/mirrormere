@@ -632,6 +632,7 @@ func TestWidgetAction_DomainAndServiceValidation(t *testing.T) {
 	srv := server.New(server.Config{WidgetActionHandler: handler})
 
 	t.Run("invalid domain format rejected", func(t *testing.T) {
+		t.Parallel()
 		invalidDomains := []string{
 			"../..",
 			"../../api",
@@ -661,6 +662,7 @@ func TestWidgetAction_DomainAndServiceValidation(t *testing.T) {
 	})
 
 	t.Run("unsupported domain rejected even if identifier is valid", func(t *testing.T) {
+		t.Parallel()
 		unsupportedDomains := []string{
 			"automation",
 			"zone",
@@ -686,6 +688,7 @@ func TestWidgetAction_DomainAndServiceValidation(t *testing.T) {
 	})
 
 	t.Run("invalid service format rejected", func(t *testing.T) {
+		t.Parallel()
 		invalidServices := []string{
 			"../..",
 			"turn_on/../admin",
