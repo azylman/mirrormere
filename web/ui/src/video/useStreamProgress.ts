@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { VideoSource } from '../sse/types';
 import { useDisplayStore } from '../store';
 
@@ -116,114 +116,99 @@ export function useStreamProgress({
     };
   }, [documentVisible, duration, isScrubbing, isVisible, playerState]);
 
-  const updateScrub = useCallback(
-    (clientX: number, target: HTMLElement): number => {
-      if (duration <= 0) return 0;
-      const rect =
-        typeof target.getBoundingClientRect === 'function'
-          ? target.getBoundingClientRect()
-          : { left: 0, width: 100 };
-      const width = rect.width > 0 ? rect.width : 1;
-      const pct = Math.max(0, Math.min(1, (clientX - rect.left) / width));
-      const targetTime = pct * duration;
-      currentSeekTimeRef.current = targetTime;
-      setScrubPosition(targetTime);
-      return targetTime;
-    },
-    [duration],
-  );
+  const updateScrub = (clientX: number, target: HTMLElement): number => {
+    if (duration <= 0) return 0;
+    const rect =
+      typeof target.getBoundingClientRect === 'function'
+        ? target.getBoundingClientRect()
+        : { left: 0, width: 100 };
+    const width = rect.width > 0 ? rect.width : 1;
+    const pct = Math.max(0, Math.min(1, (clientX - rect.left) / width));
+    const targetTime = pct * duration;
+    currentSeekTimeRef.current = targetTime;
+    setScrubPosition(targetTime);
+    return targetTime;
+  };
 
-  const onTrackPointerDown = useCallback(
-    (e: React.PointerEvent<HTMLDivElement>) => {
-      if (e && typeof e.stopPropagation === 'function') {
-        e.stopPropagation();
+  const onTrackPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e && typeof e.stopPropagation === 'function') {
+      e.stopPropagation();
+    }
+    onUserActivity?.();
+
+    if (duration <= 0) return;
+    if (!stream || (stream.duration !== undefined && stream.duration <= 0)) return;
+
+    const trackEl = e.currentTarget;
+    trackElementRef.current = trackEl;
+    if (typeof trackEl.setPointerCapture === 'function' && e.pointerId !== undefined) {
+      try {
+        trackEl.setPointerCapture(e.pointerId);
+      } catch {
+        // ignore
       }
-      onUserActivity?.();
+    }
 
-      if (duration <= 0) return;
-      if (!stream || (stream.duration !== undefined && stream.duration <= 0)) return;
+    isScrubbingRef.current = true;
+    setIsScrubbing(true);
+    updateScrub(e.clientX, trackEl);
+  };
 
-      const trackEl = e.currentTarget;
-      trackElementRef.current = trackEl;
-      if (typeof trackEl.setPointerCapture === 'function' && e.pointerId !== undefined) {
-        try {
-          trackEl.setPointerCapture(e.pointerId);
-        } catch {
-          // ignore
-        }
+  const onTrackPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!isScrubbing) return;
+    if (e && typeof e.stopPropagation === 'function') {
+      e.stopPropagation();
+    }
+    onUserActivity?.();
+    updateScrub(e.clientX, e.currentTarget);
+  };
+
+  const onTrackPointerEnd = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!isScrubbing) return;
+    if (e && typeof e.stopPropagation === 'function') {
+      e.stopPropagation();
+    }
+    onUserActivity?.();
+
+    const trackEl = trackElementRef.current || e.currentTarget;
+    if (trackEl && typeof trackEl.releasePointerCapture === 'function' && e.pointerId !== undefined) {
+      try {
+        trackEl.releasePointerCapture(e.pointerId);
+      } catch {
+        // ignore
       }
+    }
 
-      isScrubbingRef.current = true;
-      setIsScrubbing(true);
-      updateScrub(e.clientX, trackEl);
-    },
-    [duration, onUserActivity, stream, updateScrub],
-  );
+    isScrubbingRef.current = false;
+    setIsScrubbing(false);
+    const targetTime = currentSeekTimeRef.current;
+    basePositionRef.current = targetTime;
+    basePositionTimeRef.current = Date.now();
+    onSeek(targetTime);
+    setCurrentPos(targetTime);
+    setScrubPosition(null);
+  };
 
-  const onTrackPointerMove = useCallback(
-    (e: React.PointerEvent<HTMLDivElement>) => {
-      if (!isScrubbing) return;
-      if (e && typeof e.stopPropagation === 'function') {
-        e.stopPropagation();
+  const onTrackPointerCancel = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!isScrubbing) return;
+    if (e && typeof e.stopPropagation === 'function') {
+      e.stopPropagation();
+    }
+    onUserActivity?.();
+
+    const trackEl = trackElementRef.current || e.currentTarget;
+    if (trackEl && typeof trackEl.releasePointerCapture === 'function' && e.pointerId !== undefined) {
+      try {
+        trackEl.releasePointerCapture(e.pointerId);
+      } catch {
+        // ignore
       }
-      onUserActivity?.();
-      updateScrub(e.clientX, e.currentTarget);
-    },
-    [isScrubbing, onUserActivity, updateScrub],
-  );
+    }
 
-  const onTrackPointerEnd = useCallback(
-    (e: React.PointerEvent<HTMLDivElement>) => {
-      if (!isScrubbing) return;
-      if (e && typeof e.stopPropagation === 'function') {
-        e.stopPropagation();
-      }
-      onUserActivity?.();
-
-      const trackEl = trackElementRef.current || e.currentTarget;
-      if (trackEl && typeof trackEl.releasePointerCapture === 'function' && e.pointerId !== undefined) {
-        try {
-          trackEl.releasePointerCapture(e.pointerId);
-        } catch {
-          // ignore
-        }
-      }
-
-      isScrubbingRef.current = false;
-      setIsScrubbing(false);
-      const targetTime = currentSeekTimeRef.current;
-      basePositionRef.current = targetTime;
-      basePositionTimeRef.current = Date.now();
-      onSeek(targetTime);
-      setCurrentPos(targetTime);
-      setScrubPosition(null);
-    },
-    [isScrubbing, onSeek, onUserActivity],
-  );
-
-  const onTrackPointerCancel = useCallback(
-    (e: React.PointerEvent<HTMLDivElement>) => {
-      if (!isScrubbing) return;
-      if (e && typeof e.stopPropagation === 'function') {
-        e.stopPropagation();
-      }
-      onUserActivity?.();
-
-      const trackEl = trackElementRef.current || e.currentTarget;
-      if (trackEl && typeof trackEl.releasePointerCapture === 'function' && e.pointerId !== undefined) {
-        try {
-          trackEl.releasePointerCapture(e.pointerId);
-        } catch {
-          // ignore
-        }
-      }
-
-      isScrubbingRef.current = false;
-      setIsScrubbing(false);
-      setScrubPosition(null);
-    },
-    [isScrubbing, onUserActivity],
-  );
+    isScrubbingRef.current = false;
+    setIsScrubbing(false);
+    setScrubPosition(null);
+  };
 
   const displayPosition = isScrubbing && scrubPosition !== null ? scrubPosition : currentPos;
   const progressPercent = duration > 0 ? Math.min(100, Math.max(0, (displayPosition / duration) * 100)) : 0;

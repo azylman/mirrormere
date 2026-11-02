@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { AudioSlice } from '../store/types';
 import { postAudioMute, postAudioVolume } from './api';
 
@@ -59,92 +59,85 @@ export function useVolumeSlider({
     };
   }, []);
 
-  const handleSliderInput = useCallback(
-    (e: React.FormEvent<HTMLInputElement> | React.ChangeEvent<HTMLInputElement> | { target: { value: string } }) => {
-      onUserActivity?.();
-      isDraggingRef.current = true;
+  const handleSliderInput = (
+    e: React.FormEvent<HTMLInputElement> | React.ChangeEvent<HTMLInputElement> | { target: { value: string } },
+  ) => {
+    onUserActivity?.();
+    isDraggingRef.current = true;
 
-      const targetVal = 'value' in e.target ? String(e.target.value) : '';
-      const val = parseInt(targetVal, 10);
-      if (Number.isNaN(val)) return;
+    const targetVal = 'value' in e.target ? String(e.target.value) : '';
+    const val = parseInt(targetVal, 10);
+    if (Number.isNaN(val)) return;
 
-      setLocalVolume(val);
-      pendingVolumeRef.current = val;
+    setLocalVolume(val);
+    pendingVolumeRef.current = val;
 
-      if (!throttleTimerRef.current) {
-        void postAudioVolume({ volume: val }, customFetch);
-        lastNetworkVolumeRef.current = val;
+    if (!throttleTimerRef.current) {
+      void postAudioVolume({ volume: val }, customFetch);
+      lastNetworkVolumeRef.current = val;
 
-        throttleTimerRef.current = setTimeout(() => {
-          throttleTimerRef.current = null;
-          if (pendingVolumeRef.current !== null && pendingVolumeRef.current !== lastNetworkVolumeRef.current) {
-            void postAudioVolume({ volume: pendingVolumeRef.current }, customFetch);
-            lastNetworkVolumeRef.current = pendingVolumeRef.current;
-            pendingVolumeRef.current = null;
-          }
-        }, throttleInterval);
-      }
-    },
-    [customFetch, onUserActivity, throttleInterval],
-  );
-
-  const handleSliderCommit = useCallback(
-    (e?: React.SyntheticEvent | Event) => {
-      if (e && typeof (e as Event).stopPropagation === 'function') {
-        (e as Event).stopPropagation();
-      }
-      onUserActivity?.();
-      isDraggingRef.current = false;
-
-      if (throttleTimerRef.current) {
-        clearTimeout(throttleTimerRef.current);
+      throttleTimerRef.current = setTimeout(() => {
         throttleTimerRef.current = null;
-      }
-
-      let val = pendingVolumeRef.current;
-      const target = (e && 'target' in e ? e.target : null) as HTMLInputElement | null;
-      const currentTarget = (e && 'currentTarget' in e ? e.currentTarget : null) as HTMLInputElement | null;
-      const elVal = target?.value ?? currentTarget?.value;
-      if (elVal !== undefined && elVal !== '') {
-        const parsed = parseInt(String(elVal), 10);
-        if (!Number.isNaN(parsed)) {
-          val = parsed;
+        if (pendingVolumeRef.current !== null && pendingVolumeRef.current !== lastNetworkVolumeRef.current) {
+          void postAudioVolume({ volume: pendingVolumeRef.current }, customFetch);
+          lastNetworkVolumeRef.current = pendingVolumeRef.current;
+          pendingVolumeRef.current = null;
         }
+      }, throttleInterval);
+    }
+  };
+
+  const handleSliderCommit = (e?: React.SyntheticEvent | Event) => {
+    if (e && typeof (e as Event).stopPropagation === 'function') {
+      (e as Event).stopPropagation();
+    }
+    onUserActivity?.();
+    isDraggingRef.current = false;
+
+    if (throttleTimerRef.current) {
+      clearTimeout(throttleTimerRef.current);
+      throttleTimerRef.current = null;
+    }
+
+    let val = pendingVolumeRef.current;
+    const target = (e && 'target' in e ? e.target : null) as HTMLInputElement | null;
+    const currentTarget = (e && 'currentTarget' in e ? e.currentTarget : null) as HTMLInputElement | null;
+    const elVal = target?.value ?? currentTarget?.value;
+    if (elVal !== undefined && elVal !== '') {
+      const parsed = parseInt(String(elVal), 10);
+      if (!Number.isNaN(parsed)) {
+        val = parsed;
       }
+    }
 
-      const finalVal = val ?? localVolume;
-      if (!Number.isNaN(finalVal) && finalVal !== lastNetworkVolumeRef.current) {
-        void postAudioVolume({ volume: finalVal }, customFetch);
-        lastNetworkVolumeRef.current = finalVal;
-      }
+    const finalVal = val ?? localVolume;
+    if (!Number.isNaN(finalVal) && finalVal !== lastNetworkVolumeRef.current) {
+      void postAudioVolume({ volume: finalVal }, customFetch);
+      lastNetworkVolumeRef.current = finalVal;
+    }
 
-      pendingVolumeRef.current = null;
-      commitCooldownUntilRef.current = Date.now() + commitCooldown;
-    },
-    [commitCooldown, customFetch, localVolume, onUserActivity],
-  );
+    pendingVolumeRef.current = null;
+    commitCooldownUntilRef.current = Date.now() + commitCooldown;
+  };
 
-  const handleMuteToggle = useCallback(
-    (e?: React.SyntheticEvent | Event) => {
-      if (e && typeof (e as Event).stopPropagation === 'function') {
-        (e as Event).stopPropagation();
-      }
-      onUserActivity?.();
+  const handleMuteToggle = (e?: React.SyntheticEvent | Event) => {
+    if (e && typeof (e as Event).stopPropagation === 'function') {
+      (e as Event).stopPropagation();
+    }
+    onUserActivity?.();
 
-      if (isMutePendingRef.current) {
-        return;
-      }
+    if (isMutePendingRef.current) {
+      return;
+    }
 
-      isMutePendingRef.current = true;
-      setTimeout(() => {
-        isMutePendingRef.current = false;
-      }, 300);
+    isMutePendingRef.current = true;
+    setTimeout(() => {
+      isMutePendingRef.current = false;
+    }, 300);
 
-      const targetMuted = !storeMuted;
-      void postAudioMute({ muted: targetMuted }, customFetch);
-    },
-    [customFetch, onUserActivity, storeMuted],
-  );
+    const targetMuted = !storeMuted;
+    void postAudioMute({ muted: targetMuted }, customFetch);
+  };
 
   return {
     volume: localVolume,

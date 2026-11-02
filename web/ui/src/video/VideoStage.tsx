@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { VideoSource, VideoStatePayload } from '../sse/types';
 import { useAudioController } from '../audio/useAudio';
 import { useDisplayStore } from '../store';
@@ -243,26 +243,20 @@ export function VideoStage(): React.JSX.Element {
     };
   }, []);
 
-  const handleSwap = useCallback(() => {
-    if (primaryStream && pipStream) {
-      setIsSwapped((s) => !s);
-    }
-  }, [primaryStream, pipStream]);
-
-  const handlePrimarySlotClick = useCallback(() => {
+  const handlePrimarySlotClick = () => {
     if (isSwapped && primaryStream && pipStream) {
       setIsSwapped(false);
     }
-  }, [isSwapped, primaryStream, pipStream]);
+  };
 
-  const handlePipSlotClick = useCallback(() => {
+  const handlePipSlotClick = () => {
     if (!isSwapped && primaryStream && pipStream) {
       setIsSwapped(true);
     }
-  }, [isSwapped, primaryStream, pipStream]);
+  };
 
   // Per-slot failure isolation
-  const handlePrimarySlotFailure = useCallback(() => {
+  const handlePrimarySlotFailure = () => {
     if (isSwapped && pipStream) {
       // Primary was in corner dock; dismiss dock and leave pip full-screen
       useDisplayStore.setState((s) => ({
@@ -275,9 +269,9 @@ export function VideoStage(): React.JSX.Element {
       });
       flushCompositorPaint();
     }
-  }, [isSwapped, pipStream]);
+  };
 
-  const handlePipSlotFailure = useCallback(() => {
+  const handlePipSlotFailure = () => {
     if (!primaryStream) {
       // Primary stream was already lost; PiP was sole active stream, exit to widgets mode
       setIsSwapped(false);
@@ -300,7 +294,7 @@ export function VideoStage(): React.JSX.Element {
         video: { ...s.video, pip: null },
       }));
     }
-  }, [isSwapped, primaryStream]);
+  };
 
   const resolvedRemoteUrl =
     (typeof document !== 'undefined' && document.body?.dataset?.remoteUrl) ||
@@ -309,15 +303,21 @@ export function VideoStage(): React.JSX.Element {
     '';
 
   // Compatibility bridge for window.videoManager
-  const managerBridge = useMemo(
-    () => ({
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const managerBridge = {
       get currentMode() {
         return mode;
       },
       get isSwapped() {
         return isSwapped;
       },
-      swapStreams: handleSwap,
+      swapStreams: () => {
+        if (primaryStream && pipStream) {
+          setIsSwapped((s) => !s);
+        }
+      },
       exitVideoMode: () => {
         useDisplayStore.setState({ video: { mode: 'widgets', primary: null, pip: null } });
         flushCompositorPaint();
@@ -346,25 +346,17 @@ export function VideoStage(): React.JSX.Element {
         hudControllerRef.current = hud;
       },
       syncAudioFocus: () => {},
-    }),
-    [mode, isSwapped, handleSwap, primaryStream, pipStream],
-  );
+    };
 
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      window.videoManager = managerBridge as unknown as VideoPlayerManager;
-    }
+    window.videoManager = managerBridge as unknown as VideoPlayerManager;
     return () => {
-      if (
-        typeof window !== 'undefined' &&
-        window.videoManager === (managerBridge as unknown as VideoPlayerManager)
-      ) {
+      if (window.videoManager === (managerBridge as unknown as VideoPlayerManager)) {
         delete window.videoManager;
       }
     };
-  }, [managerBridge]);
+  }, [mode, isSwapped, primaryStream, pipStream]);
 
-  const handleHudController = useCallback((hud: VideoHUDController | null) => {
+  const handleHudController = (hud: VideoHUDController | null) => {
     hudControllerRef.current = hud;
     if (typeof window !== 'undefined') {
       if (hud) {
@@ -373,7 +365,7 @@ export function VideoStage(): React.JSX.Element {
         delete window.videoHUD;
       }
     }
-  }, []);
+  };
 
   return (
     <div

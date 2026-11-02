@@ -1,4 +1,3 @@
-import { memo } from 'react';
 import { HudMuteIcon, HudUnmuteIcon } from './HudIcons';
 
 export interface HudTopBarProps {
@@ -17,7 +16,7 @@ export interface HudTopBarProps {
 /**
  * Renders the top navigation capsule, stream title, and top-right side rail controls.
  */
-export const HudTopBar = memo(function HudTopBar({
+export function HudTopBar({
   titleText,
   isMedia,
   volume,
@@ -117,4 +116,4 @@ export const HudTopBar = memo(function HudTopBar({
       </div>
     </div>
   );
-});
+}
