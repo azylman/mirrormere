@@ -239,6 +239,7 @@ jobs:
           npm run typecheck
           npm run test:coverage
           npm run build
+          npx playwright test
 
   perf:
     name: Display performance budget (React)
