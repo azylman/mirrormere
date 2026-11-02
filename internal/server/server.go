@@ -89,6 +89,13 @@ type VoiceHandler interface {
 	PostVoiceHeartbeat(w http.ResponseWriter, r *http.Request)
 }
 
+// LayoutEditorHandler handles live canvas layout editor override operations.
+type LayoutEditorHandler interface {
+	GetLayoutEditor(w http.ResponseWriter, r *http.Request)
+	PutLayoutEditor(w http.ResponseWriter, r *http.Request)
+	DeleteLayoutEditor(w http.ResponseWriter, r *http.Request)
+}
+
 // Config encapsulates configuration for the HTTP server.
 type Config struct {
 	Host                                                      string
@@ -103,6 +110,7 @@ type Config struct {
 	AudioHandler                                              AudioHandler
 	VideoHandler                                              VideoHandler
 	VoiceHandler                                              VoiceHandler
+	LayoutEditorHandler                                       LayoutEditorHandler
 }
 
 // ApplyDefaults sets fallback values for any unspecified configuration fields.
@@ -145,22 +153,23 @@ type RootResponse struct {
 
 // Server wraps http.Server with lifecycle signaling and healthcheck routing.
 type Server struct {
-	cfg            Config
-	mux            *http.ServeMux
-	httpServer     *http.Server
-	ready          chan struct{}
-	readyOnce      sync.Once
-	mu             sync.RWMutex
-	addr           string
-	eventsHandler  http.Handler
-	screenHandler  ScreenHandler
-	renderHandler  RenderHandler
-	pushHandler    PushHandler
-	displayHandler DisplayHandler
-	listsHandler   ListsHandler
-	audioHandler   AudioHandler
-	videoHandler   VideoHandler
-	voiceHandler   VoiceHandler
+	cfg                 Config
+	mux                 *http.ServeMux
+	httpServer          *http.Server
+	ready               chan struct{}
+	readyOnce           sync.Once
+	mu                  sync.RWMutex
+	addr                string
+	eventsHandler       http.Handler
+	screenHandler       ScreenHandler
+	renderHandler       RenderHandler
+	pushHandler         PushHandler
+	displayHandler      DisplayHandler
+	listsHandler        ListsHandler
+	audioHandler        AudioHandler
+	videoHandler        VideoHandler
+	voiceHandler        VoiceHandler
+	layoutEditorHandler LayoutEditorHandler
 }
 
 // New constructs a configured Server instance.
@@ -172,6 +181,7 @@ func New(cfg Config) *Server {
 		renderHandler: cfg.RenderHandler, pushHandler: cfg.PushHandler,
 		displayHandler: cfg.DisplayHandler, listsHandler: cfg.ListsHandler,
 		audioHandler: cfg.AudioHandler, videoHandler: cfg.VideoHandler, voiceHandler: cfg.VoiceHandler,
+		layoutEditorHandler: cfg.LayoutEditorHandler,
 	}
 	s.setupRoutes()
 	s.httpServer = &http.Server{
@@ -228,6 +238,24 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/api/voice/state", dispatchHandler(s, func() VoiceHandler { return s.voiceHandler }, isNil, func(h VoiceHandler, w http.ResponseWriter, r *http.Request) { h.PostVoiceState(w, r) }))
 	s.mux.HandleFunc("/api/voice/interact", dispatchHandler(s, func() VoiceHandler { return s.voiceHandler }, isNil, func(h VoiceHandler, w http.ResponseWriter, r *http.Request) { h.PostVoiceInteract(w, r) }))
 	s.mux.HandleFunc("/api/voice/heartbeat", dispatchHandler(s, func() VoiceHandler { return s.voiceHandler }, isNil, func(h VoiceHandler, w http.ResponseWriter, r *http.Request) { h.PostVoiceHeartbeat(w, r) }))
+	s.mux.HandleFunc("/api/layout/editor", dispatchHandler(s, func() LayoutEditorHandler { return s.layoutEditorHandler }, isNil, func(h LayoutEditorHandler, w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet, http.MethodHead:
+			h.GetLayoutEditor(w, r)
+		case http.MethodPut:
+			h.PutLayoutEditor(w, r)
+		case http.MethodDelete:
+			h.DeleteLayoutEditor(w, r)
+		case http.MethodOptions:
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, PUT, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Accept")
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			w.Header().Set("Allow", "GET, HEAD, PUT, DELETE, OPTIONS")
+			writeAPIError(w, http.StatusMethodNotAllowed, "method not allowed")
+		}
+	}))
 	s.mux.HandleFunc("/api/screens", dispatchHandler(s, func() ScreenHandler { return s.screenHandler }, isNil, func(h ScreenHandler, w http.ResponseWriter, r *http.Request) { h.GetScreens(w, r) }))
 	s.mux.HandleFunc("/api/widgets/{widget_id}", dispatchHandler(s, func() RenderHandler { return s.renderHandler }, isNil, func(h RenderHandler, w http.ResponseWriter, r *http.Request) {
 		h.GetWidgetJSON(w, r, r.PathValue("widget_id"))

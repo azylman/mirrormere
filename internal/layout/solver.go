@@ -3,6 +3,7 @@ package layout
 import (
 	"fmt"
 	"math/bits"
+	"slices"
 	"sort"
 	"strings"
 
@@ -27,6 +28,16 @@ const (
 type WidgetInput struct {
 	ID         string           `json:"id"`
 	Type       string           `json:"type,omitempty"`
+	Dimensions domain.Dimension `json:"dimensions"`
+	Pinned     bool             `json:"pinned,omitempty"`
+}
+
+// ExplicitPlacement represents a user-positioned widget on a specific screen and coordinate origin.
+type ExplicitPlacement struct {
+	ID         string           `json:"id"`
+	Type       string           `json:"type,omitempty"`
+	Screen     int              `json:"screen"`
+	Origin     [2]int           `json:"origin"`
 	Dimensions domain.Dimension `json:"dimensions"`
 	Pinned     bool             `json:"pinned,omitempty"`
 }
@@ -67,7 +78,8 @@ func ComputeWidgetBitmask(cols, rows, originCol, originRow int) uint16 {
 	return rowMask | (rowMask << GridColumns)
 }
 
-func computeWidgetBitmaskForGrid(cols, rows, originCol, originRow, gridCols int) uint16 {
+// ComputeWidgetBitmaskForGrid computes the bitmask for a widget of size (cols, rows) at (originCol, originRow) on a grid of width gridCols.
+func ComputeWidgetBitmaskForGrid(cols, rows, originCol, originRow, gridCols int) uint16 {
 	if gridCols == GridColumns && rows <= 2 {
 		return ComputeWidgetBitmask(cols, rows, originCol, originRow)
 	}
@@ -79,7 +91,8 @@ func computeWidgetBitmaskForGrid(cols, rows, originCol, originRow, gridCols int)
 	return mask
 }
 
-func normalizeGrid(gridCols, gridRows int) (int, int) {
+// NormalizeGrid validates and normalizes grid dimensions to either 6x2 or 2x6.
+func NormalizeGrid(gridCols, gridRows int) (int, int) {
 	if gridCols == 2 && gridRows == 6 {
 		return 2, 6
 	}
@@ -410,7 +423,7 @@ func (s *gridSolver) placePinned(pIdx int) bool {
 	maxCol, maxRow := s.gridCols-w, s.gridRows-h
 	for r := 0; r <= maxRow; r++ {
 		for c := 0; c <= maxCol; c++ {
-			mask := computeWidgetBitmaskForGrid(w, h, c, r, s.gridCols)
+			mask := ComputeWidgetBitmaskForGrid(w, h, c, r, s.gridCols)
 			if (s.screenMasks[0] & mask) != 0 {
 				continue
 			}
@@ -431,7 +444,7 @@ func (s *gridSolver) tryPlaceShapeGroup(sg *shapeGroup, targetScreen int, sMask 
 	if sg.count == 0 || c+sg.dims.Cols > s.gridCols || r+sg.dims.Rows > s.gridRows {
 		return false
 	}
-	mask := computeWidgetBitmaskForGrid(sg.dims.Cols, sg.dims.Rows, c, r, s.gridCols)
+	mask := ComputeWidgetBitmaskForGrid(sg.dims.Cols, sg.dims.Rows, c, r, s.gridCols)
 	if (sMask & mask) != 0 {
 		return false
 	}
@@ -493,7 +506,7 @@ func (s *gridSolver) placeUnpinnedExactCover() bool {
 
 // SolveGridWithBudget executes the solver for a 6x2 or 2x6 grid with an explicit search node ceiling.
 func SolveGridWithBudget(widgets []WidgetInput, gridCols, gridRows, maxSearchNodes int) (*Layout, error) {
-	gridCols, gridRows = normalizeGrid(gridCols, gridRows)
+	gridCols, gridRows = NormalizeGrid(gridCols, gridRows)
 	if maxSearchNodes <= 0 {
 		maxSearchNodes = defaultMaxSearchNodes
 	}
@@ -543,4 +556,171 @@ func fillMaskAllScreens(screenMasks []uint16, k int, mask uint16, set bool) {
 			screenMasks[s] &= ^mask
 		}
 	}
+}
+
+// SolveExplicit places widgets at explicit coordinates and greedily fills remaining cells with auto-spacers.
+func SolveExplicit(placements []ExplicitPlacement, gridCols, gridRows int) (*Layout, []PlacedWidget, error) {
+	gridCols, gridRows = NormalizeGrid(gridCols, gridRows)
+	unpinnedScreens, err := validateExplicitPlacements(placements, gridCols, gridRows)
+	if err != nil {
+		return nil, nil, err
+	}
+	k, screenMap := compactScreenIndices(unpinnedScreens)
+	screenMasks, screenWidgets, err := placeExplicitWidgets(placements, k, screenMap, gridCols)
+	if err != nil {
+		return nil, nil, err
+	}
+	var allSpacers []PlacedWidget
+	screens := make([]Screen, k)
+	for s := range k {
+		spacers, sMask := fillRemainingWithSpacers(s, screenMasks[s], gridCols, gridRows)
+		screenMasks[s] = sMask
+		allSpacers = append(allSpacers, spacers...)
+		screenWidgets[s] = append(screenWidgets[s], spacers...)
+		sortPlacedWidgets(screenWidgets[s])
+		screens[s] = Screen{
+			Index:   s,
+			Bitmask: screenMasks[s],
+			Widgets: screenWidgets[s],
+		}
+	}
+	return &Layout{TotalScreens: k, Screens: screens}, allSpacers, nil
+}
+
+func validateExplicitPlacements(placements []ExplicitPlacement, gridCols, gridRows int) ([]int, error) {
+	seenIDs := make(map[string]int, len(placements))
+	var unpinnedScreens []int
+	for i, p := range placements {
+		trimmedID := strings.TrimSpace(p.ID)
+		if trimmedID == "" {
+			return nil, fmt.Errorf("widget at index %d has empty id", i)
+		}
+		if prevIdx, exists := seenIDs[trimmedID]; exists {
+			return nil, fmt.Errorf("duplicate widget id '%s' found (indices %d and %d)", trimmedID, prevIdx, i)
+		}
+		seenIDs[trimmedID] = i
+		if !p.Dimensions.IsValidForGrid(gridCols, gridRows) {
+			return nil, fmt.Errorf("widget '%s' has invalid dimensions [%d, %d]: cols must be 1..%d, rows must be 1..%d", p.ID, p.Dimensions.Cols, p.Dimensions.Rows, gridCols, gridRows)
+		}
+		col, row := p.Origin[0], p.Origin[1]
+		cols, rows := p.Dimensions.Cols, p.Dimensions.Rows
+		if col < 0 || col+cols > gridCols || row < 0 || row+rows > gridRows {
+			return nil, fmt.Errorf("widget '%s' out of bounds at origin [%d, %d] with dimensions [%d, %d] for %dx%d grid", p.ID, col, row, cols, rows, gridCols, gridRows)
+		}
+		if p.Screen < 0 || p.Screen >= 16 {
+			return nil, fmt.Errorf("widget '%s' has invalid screen %d: must be 0..15", p.ID, p.Screen)
+		}
+		if !p.Pinned {
+			unpinnedScreens = append(unpinnedScreens, p.Screen)
+		}
+	}
+	return unpinnedScreens, nil
+}
+
+func compactScreenIndices(unpinnedScreens []int) (int, map[int]int) {
+	slices.Sort(unpinnedScreens)
+	unpinnedScreens = slices.Compact(unpinnedScreens)
+	count := len(unpinnedScreens)
+	k := max(1, count)
+	screenMap := make(map[int]int, count)
+	for newIdx, oldIdx := range unpinnedScreens {
+		screenMap[oldIdx] = newIdx
+	}
+	return k, screenMap
+}
+
+func placeExplicitWidgets(placements []ExplicitPlacement, k int, screenMap map[int]int, gridCols int) ([]uint16, [][]PlacedWidget, error) {
+	screenMasks := make([]uint16, k)
+	screenWidgets := make([][]PlacedWidget, k)
+	for _, p := range placements {
+		if !p.Pinned {
+			continue
+		}
+		mask := ComputeWidgetBitmaskForGrid(p.Dimensions.Cols, p.Dimensions.Rows, p.Origin[0], p.Origin[1], gridCols)
+		for s := range k {
+			if (screenMasks[s] & mask) != 0 {
+				return nil, nil, fmt.Errorf("widget overlap on screen %d at [%d, %d]", s, p.Origin[0], p.Origin[1])
+			}
+		}
+		fillMaskAllScreens(screenMasks, k, mask, true)
+		pw := PlacedWidget{
+			WidgetID:   p.ID,
+			Type:       p.Type,
+			Origin:     p.Origin,
+			Dimensions: p.Dimensions,
+			Pinned:     true,
+		}
+		for s := range k {
+			screenWidgets[s] = append(screenWidgets[s], pw)
+		}
+	}
+	for _, p := range placements {
+		if p.Pinned {
+			continue
+		}
+		targetScreen := screenMap[p.Screen]
+		mask := ComputeWidgetBitmaskForGrid(p.Dimensions.Cols, p.Dimensions.Rows, p.Origin[0], p.Origin[1], gridCols)
+		if (screenMasks[targetScreen] & mask) != 0 {
+			return nil, nil, fmt.Errorf("widget overlap on screen %d at [%d, %d]", targetScreen, p.Origin[0], p.Origin[1])
+		}
+		screenMasks[targetScreen] |= mask
+		screenWidgets[targetScreen] = append(screenWidgets[targetScreen], PlacedWidget{
+			WidgetID:   p.ID,
+			Type:       p.Type,
+			Origin:     p.Origin,
+			Dimensions: p.Dimensions,
+			Pinned:     false,
+		})
+	}
+	return screenMasks, screenWidgets, nil
+}
+
+func isFree(sMask uint16, c, r, w, h, gridCols int) bool {
+	mask := ComputeWidgetBitmaskForGrid(w, h, c, r, gridCols)
+	return (sMask & mask) == 0
+}
+
+func isBetterSpacer(w, h int, current domain.Dimension) bool {
+	area := w * h
+	curArea := current.Area()
+	return area > curArea || (area == curArea && h > current.Rows)
+}
+
+func largestSpacerAt(sMask uint16, c, r, gridCols, gridRows int) domain.Dimension {
+	var best domain.Dimension
+	for h := gridRows - r; h >= 1; h-- {
+		for w := gridCols - c; w >= 1; w-- {
+			if isFree(sMask, c, r, w, h, gridCols) && isBetterSpacer(w, h, best) {
+				best = domain.Dimension{Cols: w, Rows: h}
+			}
+		}
+	}
+	return best
+}
+
+func fillRemainingWithSpacers(s int, sMask uint16, gridCols, gridRows int) ([]PlacedWidget, uint16) {
+	var spacers []PlacedWidget
+	for sMask != FullGridMask {
+		emptyCell := bits.TrailingZeros16(^sMask)
+		c, r := emptyCell%gridCols, emptyCell/gridCols
+		dim := largestSpacerAt(sMask, c, r, gridCols, gridRows)
+		mask := ComputeWidgetBitmaskForGrid(dim.Cols, dim.Rows, c, r, gridCols)
+		sMask |= mask
+		spacers = append(spacers, PlacedWidget{
+			WidgetID:   fmt.Sprintf("auto-spacer-%d-%d-%d", s, c, r),
+			Type:       "spacer",
+			Origin:     [2]int{c, r},
+			Dimensions: dim,
+		})
+	}
+	return spacers, sMask
+}
+
+func sortPlacedWidgets(widgets []PlacedWidget) {
+	sort.Slice(widgets, func(i, j int) bool {
+		if widgets[i].Row() != widgets[j].Row() {
+			return widgets[i].Row() < widgets[j].Row()
+		}
+		return widgets[i].Col() < widgets[j].Col()
+	})
 }

@@ -319,3 +319,201 @@ func TestSolveGridWithBudget_PreservesConfigScreenAndWidgetOrder(t *testing.T) {
 		t.Fatalf("Screen 2 widgets = %+v, want [smart-home-dashboard]", res.Screens[2].Widgets)
 	}
 }
+
+func mkExp(id, typ string, screen, col, row, cols, rows int, pinned bool) layout.ExplicitPlacement {
+	return layout.ExplicitPlacement{
+		ID:         id,
+		Type:       typ,
+		Screen:     screen,
+		Origin:     [2]int{col, row},
+		Dimensions: domain.NewDimension(cols, rows),
+		Pinned:     pinned,
+	}
+}
+
+func TestSolveExplicit(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		placements  []layout.ExplicitPlacement
+		gridCols    int
+		gridRows    int
+		wantScreens int
+		wantSpacers int
+		wantErr     string
+	}{
+		{
+			name:        "empty placements fills single screen with spacer",
+			placements:  nil,
+			gridCols:    6,
+			gridRows:    2,
+			wantScreens: 1,
+			wantSpacers: 1,
+		},
+		{
+			name: "exact full 6x2 tiling without spacers",
+			placements: []layout.ExplicitPlacement{
+				mkExp("w1", "test", 0, 0, 0, 4, 2, false),
+				mkExp("w2", "test", 0, 4, 0, 2, 2, false),
+			},
+			gridCols:    6,
+			gridRows:    2,
+			wantScreens: 1,
+			wantSpacers: 0,
+		},
+		{
+			name: "single widget greedy auto-spacers",
+			placements: []layout.ExplicitPlacement{
+				mkExp("cal", "calendar", 0, 0, 0, 2, 1, false),
+			},
+			gridCols:    6,
+			gridRows:    2,
+			wantScreens: 1,
+			wantSpacers: 2,
+		},
+		{
+			name: "screen compaction unpinned screens 2 and 5 to 0 and 1",
+			placements: []layout.ExplicitPlacement{
+				mkExp("w1", "test", 2, 0, 0, 6, 2, false),
+				mkExp("w2", "test", 5, 0, 0, 6, 2, false),
+			},
+			gridCols:    6,
+			gridRows:    2,
+			wantScreens: 2,
+			wantSpacers: 0,
+		},
+		{
+			name: "pinned widget replicated across multi screens",
+			placements: []layout.ExplicitPlacement{
+				mkExp("pinned-banner", "banner", 0, 0, 0, 6, 1, true),
+				mkExp("unpinned-1", "test", 0, 0, 1, 6, 1, false),
+				mkExp("unpinned-2", "test", 1, 0, 1, 6, 1, false),
+			},
+			gridCols:    6,
+			gridRows:    2,
+			wantScreens: 2,
+			wantSpacers: 0,
+		},
+		{
+			name: "portrait 2x6 grid explicit placement",
+			placements: []layout.ExplicitPlacement{
+				mkExp("port-hero", "hero", 0, 0, 0, 2, 6, false),
+			},
+			gridCols:    2,
+			gridRows:    6,
+			wantScreens: 1,
+			wantSpacers: 0,
+		},
+		{
+			name: "empty id error",
+			placements: []layout.ExplicitPlacement{
+				mkExp("", "test", 0, 0, 0, 2, 1, false),
+			},
+			gridCols: 6,
+			gridRows: 2,
+			wantErr:  "has empty id",
+		},
+		{
+			name: "duplicate id error",
+			placements: []layout.ExplicitPlacement{
+				mkExp("dup", "test", 0, 0, 0, 2, 1, false),
+				mkExp("dup", "test", 0, 2, 0, 2, 1, false),
+			},
+			gridCols: 6,
+			gridRows: 2,
+			wantErr:  "duplicate widget id",
+		},
+		{
+			name: "invalid dimensions error",
+			placements: []layout.ExplicitPlacement{
+				mkExp("w", "test", 0, 0, 0, 7, 1, false),
+			},
+			gridCols: 6,
+			gridRows: 2,
+			wantErr:  "invalid dimensions",
+		},
+		{
+			name: "out of bounds origin error",
+			placements: []layout.ExplicitPlacement{
+				mkExp("w", "test", 0, 5, 1, 2, 2, false),
+			},
+			gridCols: 6,
+			gridRows: 2,
+			wantErr:  "out of bounds",
+		},
+		{
+			name: "invalid screen negative error",
+			placements: []layout.ExplicitPlacement{
+				mkExp("w", "test", -1, 0, 0, 2, 1, false),
+			},
+			gridCols: 6,
+			gridRows: 2,
+			wantErr:  "invalid screen",
+		},
+		{
+			name: "invalid screen over 15 error",
+			placements: []layout.ExplicitPlacement{
+				mkExp("w", "test", 16, 0, 0, 2, 1, false),
+			},
+			gridCols: 6,
+			gridRows: 2,
+			wantErr:  "invalid screen",
+		},
+		{
+			name: "overlap error unpinned with unpinned",
+			placements: []layout.ExplicitPlacement{
+				mkExp("w1", "test", 0, 0, 0, 4, 2, false),
+				mkExp("w2", "test", 0, 2, 0, 4, 2, false),
+			},
+			gridCols: 6,
+			gridRows: 2,
+			wantErr:  "widget overlap",
+		},
+		{
+			name: "overlap error pinned with unpinned",
+			placements: []layout.ExplicitPlacement{
+				mkExp("pinned", "test", 0, 0, 0, 2, 2, true),
+				mkExp("unpinned", "test", 0, 1, 0, 2, 2, false),
+			},
+			gridCols: 6,
+			gridRows: 2,
+			wantErr:  "widget overlap",
+		},
+		{
+			name: "overlap error pinned with pinned",
+			placements: []layout.ExplicitPlacement{
+				mkExp("pinned-1", "test", 0, 0, 0, 3, 2, true),
+				mkExp("pinned-2", "test", 0, 2, 0, 3, 2, true),
+			},
+			gridCols: 6,
+			gridRows: 2,
+			wantErr:  "widget overlap",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			layoutRes, spacers, err := layout.SolveExplicit(tc.placements, tc.gridCols, tc.gridRows)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("SolveExplicit() err = %v, want substring %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("SolveExplicit() unexpected error: %v", err)
+			}
+			if layoutRes.TotalScreens != tc.wantScreens {
+				t.Errorf("TotalScreens = %d, want %d", layoutRes.TotalScreens, tc.wantScreens)
+			}
+			if len(spacers) != tc.wantSpacers {
+				t.Errorf("len(spacers) = %d, want %d", len(spacers), tc.wantSpacers)
+			}
+			for s, scr := range layoutRes.Screens {
+				if scr.Bitmask != layout.FullGridMask {
+					t.Errorf("screen %d Bitmask = 0x%04X, want FullGridMask (0x%04X)", s, scr.Bitmask, layout.FullGridMask)
+				}
+			}
+		})
+	}
+}

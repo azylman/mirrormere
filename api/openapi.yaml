@@ -231,6 +231,64 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+  /api/layout/editor:
+    get:
+      summary: Get live layout editor state
+      description: Returns the layout editor state including editable status, grid dimensions, screen count, and non-spacer placed widgets with supported resizing dimensions.
+      operationId: getLayoutEditor
+      responses:
+        '200':
+          description: Layout editor state retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LayoutEditorResponse'
+    put:
+      summary: Update live layout editor override
+      description: Atomically saves a layout override configuration, recomputes the solved layout, and broadcasts configuration reload.
+      operationId: putLayoutEditor
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LayoutEditorUpdateRequest'
+      responses:
+        '200':
+          description: Layout editor override applied successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LayoutEditorResponse'
+        '400':
+          description: Invalid placement or layout overlap
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Layout editing is disabled by configuration
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      summary: Reset layout editor override
+      description: Removes the atomic layout override file, reverts to base configuration layout, and broadcasts configuration reload.
+      operationId: deleteLayoutEditor
+      responses:
+        '200':
+          description: Layout editor override reset successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LayoutEditorResponse'
+        '403':
+          description: Layout editing is disabled by configuration
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /api/screens:
     get:
       summary: List screen layout
@@ -1191,3 +1249,136 @@ components:
           enum: [legacy, react]
           description: Display UI that produced the sample.
           example: legacy
+    LayoutEditorResponse:
+      type: object
+      required:
+        - allow_layout_edit
+        - has_override
+        - grid
+        - total_screens
+        - widgets
+      properties:
+        allow_layout_edit:
+          type: boolean
+          description: Whether live layout editing is permitted by configuration
+          example: true
+        has_override:
+          type: boolean
+          description: Whether an active layout override file is applied
+          example: false
+        grid:
+          type: array
+          items:
+            type: integer
+          minItems: 2
+          maxItems: 2
+          description: Grid dimensions [cols, rows]
+          example: [6, 2]
+        total_screens:
+          type: integer
+          description: Total number of solved screens
+          example: 1
+        widgets:
+          type: array
+          items:
+            $ref: '#/components/schemas/LayoutEditorWidget'
+          description: Non-spacer placed widgets across all screens
+    LayoutEditorWidget:
+      type: object
+      required:
+        - widget_id
+        - type
+        - screen
+        - origin
+        - dimensions
+        - pinned
+        - supported_dimensions
+      properties:
+        widget_id:
+          type: string
+          description: Unique widget identifier
+          example: calendar-hero
+        type:
+          type: string
+          description: Widget type identifier
+          example: calendar-feed
+        screen:
+          type: integer
+          description: Screen index on which the widget is placed
+          example: 0
+        origin:
+          type: array
+          items:
+            type: integer
+          minItems: 2
+          maxItems: 2
+          description: Cell coordinate origin [col, row]
+          example: [0, 0]
+        dimensions:
+          type: array
+          items:
+            type: integer
+          minItems: 2
+          maxItems: 2
+          description: Grid dimensions [cols, rows]
+          example: [4, 2]
+        pinned:
+          type: boolean
+          description: Whether the widget is pinned across all screens
+          example: false
+        supported_dimensions:
+          type: array
+          items:
+            type: array
+            items:
+              type: integer
+            minItems: 2
+            maxItems: 2
+          description: List of supported [cols, rows] dimensions declared by the widget package
+          example: [[4, 2], [6, 2]]
+    LayoutEditorUpdateRequest:
+      type: object
+      required:
+        - widgets
+      properties:
+        widgets:
+          type: array
+          items:
+            $ref: '#/components/schemas/LayoutEditorWidgetPlacement'
+          description: Target widget placements across screens
+    LayoutEditorWidgetPlacement:
+      type: object
+      required:
+        - widget_id
+        - screen
+        - origin
+        - dimensions
+      properties:
+        widget_id:
+          type: string
+          description: Unique widget identifier
+          example: calendar-hero
+        screen:
+          type: integer
+          description: Target screen index
+          example: 0
+        origin:
+          type: array
+          items:
+            type: integer
+          minItems: 2
+          maxItems: 2
+          description: Target cell coordinate [col, row]
+          example: [0, 0]
+        dimensions:
+          type: array
+          items:
+            type: integer
+          minItems: 2
+          maxItems: 2
+          description: Target grid dimensions [cols, rows]
+          example: [4, 2]
+        pinned:
+          type: boolean
+          description: Whether the widget is pinned across all screens
+          example: false

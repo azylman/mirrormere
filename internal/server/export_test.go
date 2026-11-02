@@ -2,6 +2,10 @@ package server
 
 import (
 	"net/http"
+
+	"github.com/azylman/mirrormere/internal/api"
+	"github.com/azylman/mirrormere/internal/config"
+	"github.com/azylman/mirrormere/internal/domain"
 )
 
 // Routes returns the configured http.Handler for in-memory testing.
@@ -28,4 +32,14 @@ func SetWriteCountersDirForTest(fn func(string) error) func() {
 		writeCountersDirFn = prev
 		writeCountersDirMu.Unlock()
 	}
+}
+
+// ResolveSupportedDimensionsForTest exports resolveSupportedDimensions for testing.
+func (h *DefaultLayoutEditorHandler) ResolveSupportedDimensionsForTest(wType string, dim domain.Dimension, pkgs map[string]*domain.Package) [][]int {
+	return h.resolveSupportedDimensions(wType, dim, pkgs)
+}
+
+// BuildResponseForTest exports buildResponse for testing.
+func (h *DefaultLayoutEditorHandler) BuildResponseForTest(snap *config.Snapshot) api.LayoutEditorResponse {
+	return h.buildResponse(snap)
 }

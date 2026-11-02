@@ -1,7 +1,10 @@
 package config_test
 
 import (
+	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -443,5 +446,386 @@ func TestValidatePipeline_Portrait2x6Grid(t *testing.T) {
 	}
 	if snap.Config.Display.Grid.Columns != 2 || snap.Config.Display.Grid.Rows != 6 || snap.Layout.TotalScreens != 1 {
 		t.Fatalf("unexpected 2x6 snapshot: %+v", snap)
+	}
+}
+
+func TestLoadLayoutOverride(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		emptyPath   bool
+		corruptFile bool
+		seedOV      *config.LayoutOverrideFile
+		wantErr     error
+		wantAnyErr  bool
+		wantVer     int
+	}{
+		{name: "missing_file", wantErr: config.ErrOverrideNotFound},
+		{name: "empty_path", emptyPath: true, wantErr: config.ErrOverrideNotFound},
+		{name: "corrupt_yaml", corruptFile: true, wantAnyErr: true},
+		{name: "valid_roundtrip_defaults_version", seedOV: &config.LayoutOverrideFile{Version: 0, Widgets: []config.WidgetOverride{{ID: "w1", Screen: 0, Origin: [2]int{0, 0}, Dimensions: []int{4, 2}}}}, wantVer: 1},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			path := filepath.Join(dir, "override.yaml")
+			if tc.emptyPath {
+				path = ""
+			}
+			if tc.corruptFile {
+				_ = os.WriteFile(path, []byte("invalid: [yaml"), 0o644)
+			}
+			if tc.seedOV != nil {
+				if err := config.SaveLayoutOverrideAtomic(path, tc.seedOV); err != nil {
+					t.Fatalf("seed failed: %v", err)
+				}
+			}
+
+			loaded, err := config.LoadLayoutOverride(path)
+			if tc.wantErr != nil {
+				if !errors.Is(err, tc.wantErr) {
+					t.Fatalf("err = %v, want %v", err, tc.wantErr)
+				}
+				return
+			}
+			if tc.wantAnyErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if loaded == nil || loaded.Version != tc.wantVer || len(loaded.Widgets) != 1 || loaded.Widgets[0].ID != "w1" {
+				t.Fatalf("unexpected loaded override: %+v", loaded)
+			}
+		})
+	}
+}
+
+func TestSaveLayoutOverrideAtomic(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		emptyPath bool
+		dirAsPath bool
+		ov        *config.LayoutOverrideFile
+		wantErr   bool
+	}{
+		{name: "empty_path", emptyPath: true, ov: &config.LayoutOverrideFile{}, wantErr: true},
+		{name: "nil_override", ov: nil, wantErr: true},
+		{name: "dir_as_path", dirAsPath: true, ov: &config.LayoutOverrideFile{}, wantErr: true},
+		{name: "valid_save", ov: &config.LayoutOverrideFile{Version: 1, Widgets: []config.WidgetOverride{{ID: "w1", Screen: 0, Origin: [2]int{0, 0}, Dimensions: []int{4, 2}}}}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			path := filepath.Join(dir, "override.yaml")
+			if tc.emptyPath {
+				path = ""
+			} else if tc.dirAsPath {
+				path = dir
+			}
+
+			err := config.SaveLayoutOverrideAtomic(path, tc.ov)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("err = %v, wantErr = %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestRemoveLayoutOverride(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		emptyPath bool
+		seedFirst bool
+	}{
+		{name: "empty_path", emptyPath: true},
+		{name: "existing_file", seedFirst: true},
+		{name: "nonexistent_file"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			path := filepath.Join(dir, "override.yaml")
+			if tc.emptyPath {
+				path = ""
+			}
+			if tc.seedFirst {
+				if err := config.SaveLayoutOverrideAtomic(path, &config.LayoutOverrideFile{Version: 1}); err != nil {
+					t.Fatalf("seed failed: %v", err)
+				}
+			}
+			if err := config.RemoveLayoutOverride(path); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if path != "" {
+				if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+					t.Fatalf("expected file removed, statErr = %v", statErr)
+				}
+			}
+		})
+	}
+}
+
+func TestLayoutOverride_ManagerLifecycle(t *testing.T) {
+	t.Parallel()
+	fullOV := &config.LayoutOverrideFile{
+		Version: 1,
+		Widgets: []config.WidgetOverride{
+			{ID: "cal-hero", Screen: 0, Origin: [2]int{0, 0}, Dimensions: []int{4, 2}},
+			{ID: "weather-1", Screen: 0, Origin: [2]int{4, 0}, Dimensions: []int{2, 1}},
+			{ID: "tasks-1", Screen: 0, Origin: [2]int{4, 1}, Dimensions: []int{2, 1}},
+		},
+	}
+	disabledYAML := "timezone: America/New_York\ndisplay:\n  allow_layout_edit: false\n  widgets:\n    - id: cal-hero\n      type: calendar-feed\n      dimensions: [4, 2]\n      config: {calendars: [{name: Family}]}\n    - id: weather-1\n      type: weather-forecast\n      dimensions: [2, 1]\n    - id: tasks-1\n      type: tasks\n      dimensions: [2, 1]\n      config: {list_id: chores, source: gtasks, gtasks: {tasklist_id: list-1}}\n"
+	gridYAML := "timezone: America/New_York\ndisplay:\n  widgets:\n    - id: family-cal\n      type: calendar-grid\n      dimensions: [6, 2]\n      config: {calendars: [{name: Alex, url: \"https://example.org/alex.ics\"}], members: [{name: Alex, calendars: [Alex]}]}\n"
+	userSpacerYAML := "timezone: America/New_York\ndisplay:\n  widgets:\n    - id: cal-hero\n      type: calendar-feed\n      dimensions: [4, 2]\n      config: {calendars: [{name: Family}]}\n    - id: user-spacer\n      type: spacer\n      dimensions: [2, 2]\n"
+	pinnedBaseYAML := "timezone: America/New_York\ndisplay:\n  widgets:\n    - id: cal-hero\n      type: calendar-feed\n      dimensions: [4, 2]\n      pinned: true\n      config: {calendars: [{name: Family}]}\n    - id: weather-1\n      type: weather-forecast\n      dimensions: [2, 1]\n    - id: tasks-1\n      type: tasks\n      dimensions: [2, 1]\n      config: {list_id: chores, source: gtasks, gtasks: {tasklist_id: list-1}}\n"
+
+	tests := []struct {
+		name            string
+		baseYAML        string
+		useConfigPath   bool
+		omitPath        bool
+		seedCorrupt     bool
+		seedOverlap     bool
+		ov              *config.LayoutOverrideFile
+		doReload        bool
+		doReset         bool
+		wantApplyErrSub string
+		wantResetErr    error
+		wantHasOverride bool
+		wantAutoSpacer  bool
+		forbidWidgetID  string
+		wantMinScreens  int
+	}{
+		{
+			name:            "apply_and_reload_retains_override",
+			baseYAML:        validBaseYAML,
+			ov:              fullOV,
+			doReload:        true,
+			wantHasOverride: true,
+		},
+		{
+			name:            "apply_then_reset_clears_override",
+			baseYAML:        validBaseYAML,
+			ov:              fullOV,
+			doReset:         true,
+			wantHasOverride: false,
+		},
+		{
+			name:            "disabled_layout_edit_rejects_apply_and_reset",
+			baseYAML:        disabledYAML,
+			ov:              fullOV,
+			doReset:         true,
+			wantApplyErrSub: "disabled",
+			wantResetErr:    config.ErrLayoutEditDisabled,
+		},
+		{
+			name:            "partial_override_places_remaining_widgets",
+			baseYAML:        validBaseYAML,
+			ov:              &config.LayoutOverrideFile{Version: 1, Widgets: []config.WidgetOverride{{ID: "cal-hero", Screen: 0, Origin: [2]int{0, 0}, Dimensions: []int{4, 2}}}},
+			wantHasOverride: true,
+			wantMinScreens:  1,
+		},
+		{
+			name:            "pinned_override_spilling_unplaced_widgets_across_screens",
+			baseYAML:        validBaseYAML,
+			ov:              &config.LayoutOverrideFile{Version: 1, Widgets: []config.WidgetOverride{{ID: "cal-hero", Screen: 0, Origin: [2]int{0, 0}, Dimensions: []int{4, 2}, Pinned: true}, {ID: "weather-1", Screen: 0, Origin: [2]int{4, 0}, Dimensions: []int{2, 2}}}},
+			wantHasOverride: true,
+			wantMinScreens:  2,
+		},
+		{
+			name:            "unplaced_pinned_widget_fits_across_screens",
+			baseYAML:        pinnedBaseYAML,
+			ov:              &config.LayoutOverrideFile{Version: 1, Widgets: []config.WidgetOverride{{ID: "weather-1", Screen: 0, Origin: [2]int{4, 0}, Dimensions: []int{2, 1}}}},
+			wantHasOverride: true,
+			wantMinScreens:  1,
+		},
+		{
+			name:            "use_config_override_path_option",
+			baseYAML:        validBaseYAML,
+			useConfigPath:   true,
+			ov:              fullOV,
+			wantHasOverride: true,
+		},
+		{
+			name:            "error_when_no_override_path_configured",
+			baseYAML:        validBaseYAML,
+			omitPath:        true,
+			ov:              fullOV,
+			wantApplyErrSub: "path not configured",
+		},
+		{
+			name:            "error_when_nil_override",
+			baseYAML:        validBaseYAML,
+			ov:              nil,
+			wantApplyErrSub: "cannot be nil",
+		},
+		{
+			name:            "error_on_invalid_dimensions",
+			baseYAML:        validBaseYAML,
+			ov:              &config.LayoutOverrideFile{Version: 1, Widgets: []config.WidgetOverride{{ID: "cal-hero", Screen: 0, Origin: [2]int{0, 0}, Dimensions: []int{99, 99}}}},
+			wantApplyErrSub: "violates",
+		},
+		{
+			name:            "error_on_transposed_grid_dimensions",
+			baseYAML:        validBaseYAML,
+			ov:              &config.LayoutOverrideFile{Version: 1, Widgets: []config.WidgetOverride{{ID: "cal-hero", Screen: 0, Origin: [2]int{0, 0}, Dimensions: []int{2, 6}}}},
+			wantApplyErrSub: "invalid dimensions",
+		},
+		{
+			name:            "error_on_negative_screen_index",
+			baseYAML:        validBaseYAML,
+			ov:              &config.LayoutOverrideFile{Version: 1, Widgets: []config.WidgetOverride{{ID: "cal-hero", Screen: -1, Origin: [2]int{0, 0}, Dimensions: []int{4, 2}}}},
+			wantApplyErrSub: "out of bounds",
+		},
+		{
+			name:            "error_on_negative_origin_coordinate",
+			baseYAML:        validBaseYAML,
+			ov:              &config.LayoutOverrideFile{Version: 1, Widgets: []config.WidgetOverride{{ID: "cal-hero", Screen: 0, Origin: [2]int{-1, 0}, Dimensions: []int{4, 2}}}},
+			wantApplyErrSub: "exceeds",
+		},
+		{
+			name:            "error_on_overlapping_widgets",
+			baseYAML:        validBaseYAML,
+			ov:              &config.LayoutOverrideFile{Version: 1, Widgets: []config.WidgetOverride{{ID: "cal-hero", Screen: 0, Origin: [2]int{0, 0}, Dimensions: []int{4, 2}}, {ID: "weather-1", Screen: 0, Origin: [2]int{0, 0}, Dimensions: []int{2, 1}}}},
+			wantApplyErrSub: "overlap",
+		},
+		{
+			name:            "corrupt_override_on_disk_retains_lkgc",
+			baseYAML:        validBaseYAML,
+			seedCorrupt:     true,
+			doReload:        true,
+			wantHasOverride: false,
+		},
+		{
+			name:            "overlap_override_on_disk_retains_lkgc",
+			baseYAML:        validBaseYAML,
+			seedOverlap:     true,
+			doReload:        true,
+			wantHasOverride: false,
+		},
+		{
+			name:            "multi_screen_generates_auto_spacers_in_snapshot",
+			baseYAML:        validBaseYAML,
+			ov:              &config.LayoutOverrideFile{Version: 1, Widgets: []config.WidgetOverride{{ID: "cal-hero", Screen: 0, Origin: [2]int{0, 0}, Dimensions: []int{4, 2}}, {ID: "weather-1", Screen: 0, Origin: [2]int{4, 0}, Dimensions: []int{2, 1}}, {ID: "tasks-1", Screen: 1, Origin: [2]int{0, 0}, Dimensions: []int{2, 1}}}},
+			wantHasOverride: true,
+			wantAutoSpacer:  true,
+		},
+		{
+			name:            "unsupported_package_manifest_dimensions_rejected",
+			baseYAML:        gridYAML,
+			ov:              &config.LayoutOverrideFile{Version: 1, Widgets: []config.WidgetOverride{{ID: "family-cal", Screen: 0, Origin: [2]int{0, 0}, Dimensions: []int{2, 1}}}},
+			wantApplyErrSub: "not supported",
+		},
+		{
+			name:            "user_spacer_omitted_from_open_slot_placement",
+			baseYAML:        userSpacerYAML,
+			ov:              &config.LayoutOverrideFile{Version: 1, Widgets: []config.WidgetOverride{{ID: "cal-hero", Screen: 0, Origin: [2]int{0, 0}, Dimensions: []int{4, 2}}}},
+			wantHasOverride: true,
+			forbidWidgetID:  "user-spacer",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			path := filepath.Join(dir, "layout-override.yaml")
+			loader := &mockPackageLoader{packages: createStandardPackages()}
+
+			yamlText := tc.baseYAML
+			var opts []config.ManagerOption
+			if tc.useConfigPath {
+				yamlText = fmt.Sprintf("timezone: America/New_York\ndisplay:\n  layout_override_path: %q\n  widgets:\n    - id: cal-hero\n      type: calendar-feed\n      dimensions: [4, 2]\n      config: {calendars: [{name: Family}]}\n    - id: weather-1\n      type: weather-forecast\n      dimensions: [2, 1]\n    - id: tasks-1\n      type: tasks\n      dimensions: [2, 1]\n      config: {list_id: chores, source: gtasks, gtasks: {tasklist_id: list-1}}\n", path)
+				opts = append(opts, config.WithUseConfigOverridePath())
+			} else if !tc.omitPath {
+				opts = append(opts, config.WithOverridePath(path))
+			}
+
+			if tc.seedCorrupt {
+				_ = os.WriteFile(path, []byte("invalid: [yaml"), 0o644)
+			}
+			if tc.seedOverlap {
+				_ = config.SaveLayoutOverrideAtomic(path, &config.LayoutOverrideFile{
+					Version: 1,
+					Widgets: []config.WidgetOverride{
+						{ID: "cal-hero", Screen: 0, Origin: [2]int{0, 0}, Dimensions: []int{4, 2}},
+						{ID: "weather-1", Screen: 0, Origin: [2]int{0, 0}, Dimensions: []int{2, 1}},
+					},
+				})
+			}
+
+			m, err := config.NewManager([]byte(yamlText), loader, nil, nil, opts...)
+			if err != nil {
+				t.Fatalf("NewManager failed: %v", err)
+			}
+
+			if tc.ov != nil || tc.wantApplyErrSub != "" {
+				_, _, applyErr := m.ApplyLayoutOverride(tc.ov)
+				if tc.wantApplyErrSub != "" {
+					if applyErr == nil || !strings.Contains(applyErr.Error(), tc.wantApplyErrSub) {
+						t.Fatalf("ApplyLayoutOverride err = %v, want substring %q", applyErr, tc.wantApplyErrSub)
+					}
+					if tc.doReset {
+						if _, _, resetErr := m.ResetLayoutOverride(); !errors.Is(resetErr, tc.wantResetErr) {
+							t.Fatalf("ResetLayoutOverride err = %v, want %v", resetErr, tc.wantResetErr)
+						}
+					}
+					return
+				}
+				if applyErr != nil {
+					t.Fatalf("ApplyLayoutOverride failed: %v", applyErr)
+				}
+			}
+
+			if tc.doReload {
+				if _, _, err := m.Reload([]byte(yamlText)); err != nil {
+					t.Fatalf("Reload failed: %v", err)
+				}
+			}
+			if tc.doReset {
+				if _, _, err := m.ResetLayoutOverride(); err != nil {
+					t.Fatalf("ResetLayoutOverride failed: %v", err)
+				}
+			}
+
+			snap := m.CurrentSnapshot()
+			if snap.HasOverride != tc.wantHasOverride {
+				t.Fatalf("HasOverride = %v, want %v", snap.HasOverride, tc.wantHasOverride)
+			}
+			if tc.wantMinScreens > 0 && len(snap.Layout.Screens) < tc.wantMinScreens {
+				t.Fatalf("screens = %d, want >= %d", len(snap.Layout.Screens), tc.wantMinScreens)
+			}
+			if tc.wantAutoSpacer {
+				var found bool
+				for _, w := range snap.Config.Display.Widgets {
+					if strings.HasPrefix(w.ID, "auto-spacer-") && w.Type == "spacer" {
+						found = true
+					}
+				}
+				if !found || snap.Packages["spacer"] == nil {
+					t.Fatalf("expected auto-spacer widget and spacer package, got widgets=%+v", snap.Config.Display.Widgets)
+				}
+			}
+			if tc.forbidWidgetID != "" {
+				for _, pw := range snap.Layout.Screens[0].Widgets {
+					if pw.WidgetID == tc.forbidWidgetID {
+						t.Fatalf("expected widget %s omitted, found in screen", tc.forbidWidgetID)
+					}
+				}
+			}
+		})
 	}
 }
