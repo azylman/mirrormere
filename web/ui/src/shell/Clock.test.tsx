@@ -1,7 +1,7 @@
 import { act, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useDisplayStore } from '../store';
-import { Clock, createClockFormatters, isValidTimezone } from './Clock';
+import { Clock, createClockFormatters, isValidTimezone, resolveActiveTimezone } from './Clock';
 
 describe('isValidTimezone', () => {
   it('identifies valid IANA timezones', () => {
@@ -19,6 +19,57 @@ describe('isValidTimezone', () => {
   });
 });
 
+describe('resolveActiveTimezone', () => {
+  afterEach(() => {
+    delete document.body.dataset.timezone;
+  });
+
+  it('resolves timezone across candidate hierarchy and fallbacks', () => {
+    // 1. Explicit propTimezone takes precedence
+    expect(
+      resolveActiveTimezone('America/Chicago', {
+        timestamp: '2026-11-01T00:00:00Z',
+        timezone: 'Europe/Paris',
+      }),
+    ).toBe('America/Chicago');
+
+    // 2. SSE timestamp present prefers header.timezone
+    expect(
+      resolveActiveTimezone(undefined, {
+        timestamp: '2026-11-01T00:00:00Z',
+        timezone: 'Europe/Paris',
+      }),
+    ).toBe('Europe/Paris');
+
+    // 3. Pre-SSE (null timestamp) prefers body dataset timezone
+    document.body.dataset.timezone = 'America/Denver';
+    expect(
+      resolveActiveTimezone(undefined, {
+        timestamp: null,
+        timezone: 'UTC',
+      }),
+    ).toBe('America/Denver');
+
+    // 4. Pre-SSE without body dataset falls back to header.timezone
+    delete document.body.dataset.timezone;
+    expect(
+      resolveActiveTimezone(undefined, {
+        timestamp: null,
+        timezone: 'UTC',
+      }),
+    ).toBe('UTC');
+
+    // 5. All candidates invalid or absent returns undefined
+    expect(resolveActiveTimezone(undefined, null)).toBeUndefined();
+    expect(
+      resolveActiveTimezone('invalid-tz-1', {
+        timestamp: '2026-11-01',
+        timezone: 'invalid-tz-2',
+      }),
+    ).toBeUndefined();
+  });
+});
+
 describe('createClockFormatters', () => {
   it('creates formatters once per timezone and locale, and memoizes them', () => {
     const tz = 'America/New_York';
@@ -32,6 +83,12 @@ describe('createClockFormatters', () => {
     const defaultFirst = createClockFormatters(undefined);
     const defaultSecond = createClockFormatters(undefined);
     expect(defaultFirst).toBe(defaultSecond);
+  });
+
+  it('falls back cleanly to default formatter when given an invalid timezone', () => {
+    const invalid = createClockFormatters('Mars/Olympus_Mons');
+    const defaultFmt = createClockFormatters(undefined);
+    expect(invalid).toBe(defaultFmt);
   });
 
   it('formats time and date with expected parts', () => {

@@ -80,6 +80,33 @@ describe('EventStreamClient', () => {
       expect(client.getConnectionURL()).toBe('api/events?lastEventId=evt_7');
     });
 
+    it('preserves hash fragments with query and path URLs', () => {
+      const withHash = new EventStreamClient('api/events#section1', { lastEventId: 'evt_99' });
+      expect(withHash.getConnectionURL()).toBe('api/events?lastEventId=evt_99#section1');
+
+      const withQueryAndHash = new EventStreamClient('api/events?filter=all#summary', {
+        lastEventId: 'evt_99',
+      });
+      expect(withQueryAndHash.getConnectionURL()).toBe(
+        'api/events?filter=all&lastEventId=evt_99#summary',
+      );
+    });
+
+    it('allows mutating lastEventId via setLastEventId with whitespace normalization', () => {
+      const client = makeClient();
+      client.setLastEventId('evt_123');
+      expect(client.getLastEventId()).toBe('evt_123');
+
+      client.setLastEventId('  evt_trimmed  ');
+      expect(client.getLastEventId()).toBe('evt_trimmed');
+
+      client.setLastEventId('   ');
+      expect(client.getLastEventId()).toBeNull();
+
+      client.setLastEventId(null);
+      expect(client.getLastEventId()).toBeNull();
+    });
+
     it('omits the parameter when no event id is known', () => {
       const client = makeClient();
       client.connect();
@@ -165,6 +192,59 @@ describe('EventStreamClient', () => {
 
       FakeEventSource.instances[0].message('voice.state', { state: 'listening' });
       expect(spy).toHaveBeenCalledWith({ state: 'listening' });
+    });
+
+    it('falls back to raw non-JSON text payloads in parsePayload', () => {
+      const client = makeClient();
+      const spy = vi.fn();
+      client.on('system.reload', spy);
+      client.connect();
+
+      const source = FakeEventSource.instances[0];
+      const listenersMap = (source as unknown as { listeners: Map<string, Array<(ev: MessageEvent) => void>> }).listeners;
+      const registered = listenersMap.get('system.reload') ?? [];
+      for (const listener of registered) {
+        listener({ data: 'not-valid-json-string', lastEventId: '' } as MessageEvent);
+      }
+
+      expect(spy).toHaveBeenCalledWith('not-valid-json-string');
+    });
+  });
+
+  describe('defaultFactory and error handling on connect', () => {
+    it('uses defaultFactory which throws when EventSource is not in environment', () => {
+      const originalEventSource = globalThis.EventSource;
+      // @ts-expect-error test undefined environment
+      delete globalThis.EventSource;
+
+      const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const client = new EventStreamClient('api/events', { jitterMs: 0 });
+
+      client.connect();
+      expect(consoleSpy).toHaveBeenCalledWith(
+        '[EventStreamClient] Failed to initialize EventSource:',
+        expect.any(Error),
+      );
+
+      // Reconnect was scheduled
+      vi.advanceTimersByTime(1000);
+      expect(consoleSpy).toHaveBeenCalledTimes(2);
+
+      client.disconnect();
+      globalThis.EventSource = originalEventSource;
+    });
+
+    it('uses defaultFactory when globalThis.EventSource is present', () => {
+      const originalEventSource = globalThis.EventSource;
+      class FakeGlobalEventSource extends FakeEventSource {}
+      globalThis.EventSource = FakeGlobalEventSource as unknown as typeof EventSource;
+
+      const client = new EventStreamClient('api/events');
+      client.connect();
+      expect(FakeEventSource.instances).toHaveLength(1);
+
+      client.disconnect();
+      globalThis.EventSource = originalEventSource;
     });
   });
 });

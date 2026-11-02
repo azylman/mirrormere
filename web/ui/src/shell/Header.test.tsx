@@ -1,4 +1,4 @@
-import { act, cleanup, render } from '@testing-library/react';
+import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useDisplayStore } from '../store';
 import { Header } from './Header';
@@ -182,5 +182,68 @@ describe('Header component', () => {
     // Clock and weather elements remain intact
     expect(container.querySelector('#header-clock')).not.toBeNull();
     expect(container.querySelector('#header-weather')).not.toBeNull();
+  });
+
+  it('calls window.MirrormereVoice.resetHUD when dismiss button is clicked', () => {
+    const resetSpy = vi.fn();
+    (window as unknown as { MirrormereVoice?: { resetHUD: () => void } }).MirrormereVoice = {
+      resetHUD: resetSpy,
+    };
+
+    useDisplayStore.setState({
+      voice: {
+        state: 'listening',
+        transcript: null,
+        reply: null,
+        tts_engine: null,
+        status: null,
+      },
+    });
+
+    const { container } = render(<Header />);
+    const dismissBtn = container.querySelector('#header-voice-dismiss-btn') as HTMLButtonElement;
+    expect(dismissBtn).not.toBeNull();
+
+    act(() => {
+      fireEvent.click(dismissBtn);
+    });
+
+    expect(resetSpy).toHaveBeenCalledOnce();
+    delete (window as unknown as { MirrormereVoice?: unknown }).MirrormereVoice;
+  });
+
+  it('falls back to store resetHUD when window.MirrormereVoice is absent', () => {
+    delete (window as unknown as { MirrormereVoice?: unknown }).MirrormereVoice;
+    const duckSpy = vi.fn();
+    (window as unknown as { audioManager?: { setDucked: (ducked: boolean) => void } }).audioManager = {
+      setDucked: duckSpy,
+    };
+
+    useDisplayStore.setState({
+      voice: {
+        state: 'speaking',
+        transcript: 'Hello',
+        reply: 'World',
+        tts_engine: 'kokoro',
+        status: null,
+      },
+    });
+
+    const { container } = render(<Header />);
+    const headerVoice = container.querySelector('#header-voice')!;
+    expect(headerVoice.classList.contains('visible')).toBe(true);
+
+    const dismissBtn = container.querySelector('#header-voice-dismiss-btn') as HTMLButtonElement;
+    expect(dismissBtn).not.toBeNull();
+
+    act(() => {
+      fireEvent.click(dismissBtn);
+    });
+
+    // resetHUD marks local resetForVoice so headerVoice becomes inactive
+    expect(headerVoice.classList.contains('visible')).toBe(false);
+    expect(duckSpy).toHaveBeenCalledWith(false);
+
+    delete (window as unknown as { audioManager?: unknown }).audioManager;
   });
 });

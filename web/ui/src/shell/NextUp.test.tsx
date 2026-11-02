@@ -497,4 +497,29 @@ describe('NextUp component', () => {
     expect(container.querySelector('#next-event-time')?.textContent).toContain('11:00');
     delete document.body.dataset.timezone;
   });
+
+  it('smoothly scrolls to calendar target when onPillClick is omitted', () => {
+    const gridTarget = document.createElement('div');
+    gridTarget.className = 'widget-calendar-grid';
+    const scrollSpy = vi.fn();
+    gridTarget.scrollIntoView = scrollSpy;
+    document.body.appendChild(gridTarget);
+
+    const now = new Date('2026-10-31T10:00:00Z');
+    const events: RawCalendarEvent[] = [
+      {
+        id: 'next-scroll',
+        title: 'Calendar Review',
+        start: '2026-10-31T11:00:00Z',
+      },
+    ];
+
+    const { container } = render(<NextUp now={now} timezone="UTC" events={events} />);
+    const pill = container.querySelector('#next-event-pill') as HTMLDivElement;
+
+    fireEvent.click(pill);
+    expect(scrollSpy).toHaveBeenCalledWith({ behavior: 'smooth', block: 'nearest' });
+
+    document.body.removeChild(gridTarget);
+  });
 });
