@@ -125,6 +125,85 @@ export function needsHydrate(id: string, dimensions?: [number, number]): boolean
   return (state.widgetReloads[entry.meta.type] ?? 0) > (hydratedAtReload.get(id) ?? 0);
 }
 
+interface ReducerContext {
+  state: DisplayData;
+  patch: Partial<DisplayData>;
+  replace: <K extends keyof DisplayData>(key: K, value: DisplayData[K]) => void;
+  refetch: Set<string>;
+  widgets: Record<string, WidgetEntry> | null;
+  carousel: CarouselSlice;
+  reloads: Record<string, number> | null;
+  layoutBumps: number;
+}
+
+function applyWidgetEvent(
+  ctx: ReducerContext,
+  data: Extract<BufferedEvent, { type: 'widget.update' }>['data']
+): void {
+  const { widget_id: id, state: health, timestamp, data: widgetData } = data;
+  const current = (ctx.widgets ?? ctx.state.widgets)[id];
+  if (!current || current.state !== health || !deepEqual(current.data, widgetData)) {
+    ctx.widgets ??= { ...ctx.state.widgets };
+    // Keep the previous data reference when only the state changed.
+    const keepData = current !== undefined && deepEqual(current.data, widgetData);
+    ctx.widgets[id] = { ...current, state: health, data: keepData ? current.data : widgetData, timestamp };
+  }
+  const type = (ctx.widgets ?? ctx.state.widgets)[id]?.meta?.type;
+  if (type !== undefined && REFETCH_ON_UPDATE.has(type)) {
+    ctx.refetch.add(id);
+  }
+}
+
+function applyScreenRotateEvent(
+  ctx: ReducerContext,
+  data: Extract<BufferedEvent, { type: 'screen.rotate' }>['data']
+): void {
+  if (rotateChangesLayout(ctx.state.layout, data)) ctx.layoutBumps++;
+  // While paused the latest rotate is kept aside and applied by resume().
+  if (ctx.carousel.paused) {
+    ctx.carousel = { ...ctx.carousel, pendingRotate: data };
+    return;
+  }
+  ctx.replace('screen', screenFromRotate(data));
+}
+
+function applySystemStatusEvent(
+  ctx: ReducerContext,
+  data: Extract<BufferedEvent, { type: 'system.status' }>['data']
+): void {
+  const { online, time, config_status, config_error, providers, boot_id } = data;
+  // A config change or a new server boot can change the layout; the carousel refetches it.
+  if (
+    config_status !== ctx.state.system.configStatus ||
+    config_error !== ctx.state.system.configError ||
+    (boot_id !== undefined && ctx.state.system.bootId !== null && boot_id !== ctx.state.system.bootId)
+  ) {
+    ctx.layoutBumps++;
+  }
+  ctx.replace('system', {
+    ...ctx.state.system,
+    online,
+    serverTime: time,
+    configStatus: config_status,
+    configError: config_error,
+    providers: providers ?? {},
+    bootId: boot_id ?? ctx.state.system.bootId,
+  });
+}
+
+function applyWidgetReloadEvent(
+  ctx: ReducerContext,
+  data: Extract<BufferedEvent, { type: 'widget.reload' }>['data']
+): void {
+  // Mounted widgets re-hydrate from their WidgetHost, which defers while the carousel is paused.
+  ctx.layoutBumps++;
+  const type = data.type;
+  if (type) {
+    ctx.reloads ??= { ...ctx.state.widgetReloads };
+    ctx.reloads[type] = (ctx.reloads[type] ?? 0) + 1;
+  }
+}
+
 /**
  * Pure reducer for a batch of events. Returns the patch to apply and the widget
  * ids that need a refetch. Unchanged slices and widgets are left out of the
@@ -136,100 +215,76 @@ export function reduceEvents(
 ): { patch: Partial<DisplayData>; refetch: string[] } {
   const patch: Partial<DisplayData> = {};
   const refetch = new Set<string>();
-  let widgets: Record<string, WidgetEntry> | null = null;
-  let carousel: CarouselSlice = state.carousel;
-  let layoutBumps = 0;
-  let reloads: Record<string, number> | null = null;
 
   const replace = <K extends keyof DisplayData>(key: K, value: DisplayData[K]): void => {
-    if (!deepEqual(state[key], value)) patch[key] = value;
+    if (deepEqual(state[key], value)) {
+      delete patch[key];
+    } else {
+      patch[key] = value;
+    }
+  };
+
+  const ctx: ReducerContext = {
+    state,
+    patch,
+    replace,
+    refetch,
+    widgets: null,
+    carousel: state.carousel,
+    reloads: null,
+    layoutBumps: 0,
   };
 
   for (const event of events) {
     switch (event.type) {
-      case 'widget.update': {
-        const { widget_id: id, state: health, timestamp, data } = event.data;
-        const current = (widgets ?? state.widgets)[id];
-        if (!current || current.state !== health || !deepEqual(current.data, data)) {
-          widgets ??= { ...state.widgets };
-          // Keep the previous data reference when only the state changed.
-          const keepData = current !== undefined && deepEqual(current.data, data);
-          widgets[id] = { ...current, state: health, data: keepData ? current.data : data, timestamp };
-        }
-        const type = (widgets ?? state.widgets)[id]?.meta?.type;
-        if (type !== undefined && REFETCH_ON_UPDATE.has(type)) refetch.add(id);
+      case 'widget.update':
+        applyWidgetEvent(ctx, event.data);
         break;
-      }
-      case 'screen.rotate': {
-        if (rotateChangesLayout(state.layout, event.data)) layoutBumps++;
-        // While paused the latest rotate is kept aside and applied by resume().
-        if (carousel.paused) {
-          carousel = { ...carousel, pendingRotate: event.data };
-          break;
-        }
-        replace('screen', screenFromRotate(event.data));
+      case 'screen.rotate':
+        applyScreenRotateEvent(ctx, event.data);
         break;
-      }
       case 'header.update':
-        replace('header', {
+        ctx.replace('header', {
           timestamp: event.data.timestamp,
           timezone: event.data.timezone,
           weather: event.data.weather ?? null,
         });
         break;
       case 'theme.update':
-        replace('theme', { theme: event.data.theme });
+        ctx.replace('theme', { theme: event.data.theme });
         break;
       case 'video.state':
-        replace('video', event.data);
+        ctx.replace('video', event.data);
         break;
       case 'audio.state':
-        replace('audio', event.data);
+        ctx.replace('audio', event.data);
         break;
       case 'voice.state':
-        patch.voice = { ...event.data };
-        break;
-      case 'system.status': {
-        const { online, time, config_status, config_error, providers, boot_id } = event.data;
-        // A config change or a new server boot can change the layout; the carousel refetches it.
-        if (
-          config_status !== state.system.configStatus ||
-          config_error !== state.system.configError ||
-          (boot_id !== undefined && state.system.bootId !== null && boot_id !== state.system.bootId)
-        ) {
-          layoutBumps++;
-        }
-        replace('system', {
-          ...state.system,
-          online,
-          serverTime: time,
-          configStatus: config_status,
-          configError: config_error,
-          providers: providers ?? {},
-          bootId: boot_id ?? state.system.bootId,
-        });
-        break;
-      }
-      case 'widget.reload': {
-        // Mounted widgets re-hydrate from their WidgetHost, which defers while the carousel is paused.
-        layoutBumps++;
-        const type = event.data.type;
-        if (type) {
-          reloads ??= { ...state.widgetReloads };
-          reloads[type] = (reloads[type] ?? 0) + 1;
+        if (event.data.state === 'idle') {
+          ctx.replace('voice', { ...event.data });
+        } else {
+          // Active turns produce a fresh object reference so VoiceHud's safety watchdog
+          // re-arms on repeated thinking status events (#874) and resetHUD()'s resetForVoice
+          // lock clears when a new active turn begins.
+          patch.voice = { ...event.data };
         }
         break;
-      }
+      case 'system.status':
+        applySystemStatusEvent(ctx, event.data);
+        break;
+      case 'widget.reload':
+        applyWidgetReloadEvent(ctx, event.data);
+        break;
       default:
         // style.reload and system.reload are handled by the runtime, not the store.
         break;
     }
   }
 
-  if (widgets !== null) patch.widgets = widgets;
-  if (carousel !== state.carousel) patch.carousel = carousel;
-  if (reloads !== null) patch.widgetReloads = reloads;
-  if (layoutBumps > 0) patch.layoutVersion = state.layoutVersion + layoutBumps;
+  if (ctx.widgets !== null) patch.widgets = ctx.widgets;
+  if (ctx.carousel !== state.carousel) patch.carousel = ctx.carousel;
+  if (ctx.reloads !== null) patch.widgetReloads = ctx.reloads;
+  if (ctx.layoutBumps > 0) patch.layoutVersion = state.layoutVersion + ctx.layoutBumps;
   return { patch, refetch: [...refetch] };
 }
 
