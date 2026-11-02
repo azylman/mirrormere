@@ -396,6 +396,15 @@ func carryCachedPhotoMetadata(photos, existing []PhotoItem) {
 	}
 }
 
+func hasUncheckedPhotoLocations(photos []PhotoItem) bool {
+	for _, it := range photos {
+		if !it.LocationChecked && it.ID != "" && !strings.HasPrefix(it.ID, "photo_") {
+			return true
+		}
+	}
+	return false
+}
+
 func enrichPhotoLocations(ctx context.Context, client *http.Client, albumURL, authKey string, photos []PhotoItem, logger *slog.Logger) {
 	if authKey == "" {
 		return
@@ -419,9 +428,10 @@ func enrichPhotoLocations(ctx context.Context, client *http.Client, albumURL, au
 			}
 			return
 		}
+		batchValid := len(checked) > 0
 		for _, idx := range batchIdx {
 			id := photos[idx].ID
-			if checked[id] {
+			if checked[id] || batchValid {
 				photos[idx].LocationChecked = true
 				photos[idx].Location = locs[id]
 			}

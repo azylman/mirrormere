@@ -586,7 +586,7 @@ func (p *PhotosProvider) hasShareURLAlbumsLocked() bool {
 func (p *PhotosProvider) checkWarmBootStaleLocked(now time.Time) (isStale, needsFull bool) {
 	for _, a := range p.albums {
 		if a.cfg.Source == PhotoSourceShareURL {
-			if a.lastFullSync.IsZero() || now.Sub(a.lastFullSync) >= p.fullSyncInterval {
+			if a.lastFullSync.IsZero() || now.Sub(a.lastFullSync) >= p.fullSyncInterval || hasUncheckedPhotoLocations(a.photos) {
 				return true, true
 			}
 			if a.lastPage1Sync.IsZero() || now.Sub(a.lastPage1Sync) >= p.page1Interval {
