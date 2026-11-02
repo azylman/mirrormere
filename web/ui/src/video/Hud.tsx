@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { VideoSource, VideoStatePayload } from '../sse/types';
 import type { AudioSlice } from '../store/types';
 import { useDisplayStore } from '../store';
@@ -26,6 +26,8 @@ interface VideoHUDManagerRef {
   serverPip?: VideoSource | null;
   remoteUrl?: string;
 }
+
+type VideoManagerLike = VideoHUDManagerRef;
 
 export interface VideoHUDControllerOptions {
   videoManager?: VideoHUDManagerRef | null;
@@ -150,24 +152,23 @@ export function Hud({
 }: HudProps = {}) {
   const overlayRef = useRef<HTMLDivElement>(null);
   const [syncTick, setSyncTick] = useState(0);
+  void syncTick;
 
   // Maintain stable compatibility controller instance
   const controllerInstanceRef = useRef<VideoHUDController>(new VideoHUDController());
 
+  const [syncedVideoManager, setSyncedVideoManager] = useState<VideoManagerLike | null | undefined>(videoManager);
+
   const videoState = useDisplayStore((s) => s.video);
   const audioState = useDisplayStore((s) => s.audio);
 
-  const effectiveVideoManager = controllerInstanceRef.current.videoManager || videoManager;
+  const effectiveVideoManager = videoManager ?? syncedVideoManager;
   const isSwapped = Boolean(effectiveVideoManager?.isSwapped);
 
-  const activeStream = useMemo(() => {
-    void syncTick;
-    const vm = controllerInstanceRef.current.videoManager || videoManager;
-    if (vm && vm.isSwapped) {
-      return vm.serverPip || videoState?.pip || null;
-    }
-    return vm?.serverPrimary || videoState?.primary || null;
-  }, [syncTick, videoManager, videoState?.pip, videoState?.primary]);
+  const activeStream =
+    effectiveVideoManager && effectiveVideoManager.isSwapped
+      ? (effectiveVideoManager.serverPip || videoState?.pip || null)
+      : (effectiveVideoManager?.serverPrimary || videoState?.primary || null);
 
   const resolvedRemoteUrl =
     remoteUrl ||
@@ -188,60 +189,57 @@ export function Hud({
   const resetAutoFadeRef = useRef<() => void>(() => {});
   const isActionPendingRef = useRef(false);
 
-  const executeAction = useCallback(
-    async (actionName: string, remoteKeyName?: string, value?: unknown): Promise<void> => {
-      resetAutoFadeRef.current();
-      if (isActionPendingRef.current && actionName !== 'seek') {
-        return;
-      }
-      if (!activeStream || !activeStream.id) {
-        return;
-      }
+  const executeAction = async (actionName: string, remoteKeyName?: string, value?: unknown): Promise<void> => {
+    resetAutoFadeRef.current();
+    if (isActionPendingRef.current && actionName !== 'seek') {
+      return;
+    }
+    if (!activeStream || !activeStream.id) {
+      return;
+    }
 
-      isActionPendingRef.current = true;
-      let timer: ReturnType<typeof setTimeout> | null = setTimeout(() => {
-        timer = null;
+    isActionPendingRef.current = true;
+    let timer: ReturnType<typeof setTimeout> | null = setTimeout(() => {
+      timer = null;
+      isActionPendingRef.current = false;
+    }, 300);
+
+    const payload = {
+      id: activeStream.id,
+      action: actionName,
+      ...(value !== undefined ? { value } : {}),
+    };
+
+    const isRemoteKeyPreferred = ['back', 'home', 'captions', 'previous', 'next'].includes(actionName);
+
+    try {
+      if (isRemoteKeyPreferred && resolvedRemoteUrl) {
+        await postRemoteKey(resolvedRemoteUrl, remoteKeyName || actionName, customFetch);
+      } else if (value !== undefined || actionName === 'seek' || (activeStream.controllable && activeStream.control_url)) {
+        await postVideoAction(payload, customFetch);
+      } else if (resolvedRemoteUrl) {
+        await postRemoteKey(resolvedRemoteUrl, remoteKeyName || actionName, customFetch);
+      } else if (activeStream.controllable) {
+        await postVideoAction(payload, customFetch);
+      }
+    } finally {
+      if (!timer) {
         isActionPendingRef.current = false;
-      }, 300);
-
-      const payload = {
-        id: activeStream.id,
-        action: actionName,
-        ...(value !== undefined ? { value } : {}),
-      };
-
-      const isRemoteKeyPreferred = ['back', 'home', 'captions', 'previous', 'next'].includes(actionName);
-
-      try {
-        if (isRemoteKeyPreferred && resolvedRemoteUrl) {
-          await postRemoteKey(resolvedRemoteUrl, remoteKeyName || actionName, customFetch);
-        } else if (value !== undefined || actionName === 'seek' || (activeStream.controllable && activeStream.control_url)) {
-          await postVideoAction(payload, customFetch);
-        } else if (resolvedRemoteUrl) {
-          await postRemoteKey(resolvedRemoteUrl, remoteKeyName || actionName, customFetch);
-        } else if (activeStream.controllable) {
-          await postVideoAction(payload, customFetch);
-        }
-      } finally {
-        if (!timer) {
-          isActionPendingRef.current = false;
-        }
       }
-    },
-    [activeStream, customFetch, resolvedRemoteUrl],
-  );
+    }
+  };
 
-  const handlePlayPauseToggle = useCallback(() => executeAction('toggle_playback', 'play_pause'), [executeAction]);
-  const handleRewind = useCallback(() => executeAction('rewind', 'rewind'), [executeAction]);
-  const handleFastForward = useCallback(() => executeAction('fast_forward', 'fast_forward'), [executeAction]);
-  const handleBack = useCallback(() => executeAction('back', 'back'), [executeAction]);
-  const handleHome = useCallback(() => executeAction('home', 'home'), [executeAction]);
-  const handleCaptions = useCallback(() => executeAction('captions', 'cc'), [executeAction]);
-  const handlePrevious = useCallback(() => executeAction('previous', 'prev'), [executeAction]);
-  const handleNext = useCallback(() => executeAction('next', 'next'), [executeAction]);
-  const handleSeek = useCallback((pos: number) => executeAction('seek', 'seek', pos), [executeAction]);
+  const handlePlayPauseToggle = () => executeAction('toggle_playback', 'play_pause');
+  const handleRewind = () => executeAction('rewind', 'rewind');
+  const handleFastForward = () => executeAction('fast_forward', 'fast_forward');
+  const handleBack = () => executeAction('back', 'back');
+  const handleHome = () => executeAction('home', 'home');
+  const handleCaptions = () => executeAction('captions', 'cc');
+  const handlePrevious = () => executeAction('previous', 'prev');
+  const handleNext = () => executeAction('next', 'next');
+  const handleSeek = (pos: number) => executeAction('seek', 'seek', pos);
 
-  const handleDismiss = useCallback((): void => {
+  const handleDismiss = (): void => {
     resetAutoFadeRef.current();
     if (isActionPendingRef.current) return;
 
@@ -263,7 +261,7 @@ export function Hud({
       const targetId = primaryId || pipId || activeStream?.id;
       void postVideoDismiss({ id: targetId }, customFetch);
     }
-  }, [activeStream, customFetch, effectiveVideoManager?.serverPip?.id, effectiveVideoManager?.serverPrimary?.id, videoState?.pip?.id, videoState?.primary?.id]);
+  };
 
   const [stageEl, setStageEl] = useState<HTMLElement | null>(stageElement || null);
 
@@ -283,7 +281,6 @@ export function Hud({
   const resolvedStage =
     stageElement ||
     stageEl ||
-    (overlayRef.current ? overlayRef.current.closest<HTMLElement>('#video-stage') : null) ||
     (typeof document !== 'undefined' ? document.getElementById('video-stage') : null);
 
   const { isVisible, showHUD, hideHUD, resetAutoFade } = useHudAutoFade({
@@ -293,8 +290,6 @@ export function Hud({
     onPlayPauseToggle: handlePlayPauseToggle,
     isSwapped,
   });
-
-  resetAutoFadeRef.current = resetAutoFade;
 
   const {
     volume,
@@ -343,52 +338,65 @@ export function Hud({
     }
   }, [activeStream, hideHUD, showHUD]);
 
-  Object.assign(controllerInstanceRef.current, {
-    showHUD,
-    hideHUD,
-    activeStream,
-    lastVideoState: videoState,
-    isVisible,
-    currentMuted: isMuted,
-    destroy: hideHUD,
-    formatStreamTitle,
-    formatTime: formatDuration,
-    handlePlayPauseToggle,
-    handleRewind,
-    handleFastForward,
-    handleBack,
-    handleHome,
-    handleCaptions,
-    handlePrevious,
-    handleNext,
-    handleSeek,
-    handleDismiss,
-    handleMuteToggle,
-    isScrubbing,
+  useLayoutEffect(() => {
+    resetAutoFadeRef.current = resetAutoFade;
+
+    const ctrl = controllerInstanceRef.current;
+    if (videoManager !== undefined) {
+      ctrl.videoManager = videoManager;
+    }
+
+    Object.assign(ctrl, {
+      showHUD,
+      hideHUD,
+      activeStream,
+      lastVideoState: videoState,
+      isVisible,
+      currentMuted: isMuted,
+      destroy: hideHUD,
+      formatStreamTitle,
+      formatTime: formatDuration,
+      handlePlayPauseToggle,
+      handleRewind,
+      handleFastForward,
+      handleBack,
+      handleHome,
+      handleCaptions,
+      handlePrevious,
+      handleNext,
+      handleSeek,
+      handleDismiss,
+      handleMuteToggle,
+      isScrubbing,
+    });
+
+    ctrl.syncStream = () => {
+      const vm = ctrl.videoManager ?? videoManager ?? null;
+      setSyncedVideoManager(vm);
+      const currentStream =
+        vm && vm.isSwapped
+          ? (vm.serverPip || videoState?.pip || null)
+          : (vm?.serverPrimary || videoState?.primary || null);
+      if (!currentStream) {
+        hideHUD();
+      } else if (!hadStreamRef.current) {
+        showHUD();
+      }
+      setSyncTick((t) => t + 1);
+    };
+
+    ctrl.handleVideoState = (data) => {
+      if (data !== undefined) {
+        useDisplayStore.setState({ video: data ?? { mode: 'widgets', primary: null, pip: null } });
+      }
+    };
+
+    ctrl.handleAudioState = (data) => {
+      if (data) {
+        useDisplayStore.setState((s) => ({ audio: { ...s.audio, ...data } }));
+      }
+    };
   });
-  controllerInstanceRef.current.syncStream = () => {
-    const vm = controllerInstanceRef.current.videoManager || videoManager;
-    const currentStream = vm && vm.isSwapped ? (vm.serverPip || videoState?.pip || null) : (vm?.serverPrimary || videoState?.primary || null);
-    if (!currentStream) {
-      hideHUD();
-    } else if (!hadStreamRef.current) {
-      showHUD();
-    }
-    setSyncTick((t) => t + 1);
-  };
-  controllerInstanceRef.current.handleVideoState = (data) => {
-    if (data !== undefined) {
-      useDisplayStore.setState({ video: data ?? { mode: 'widgets', primary: null, pip: null } });
-    }
-  };
-  controllerInstanceRef.current.handleAudioState = (data) => {
-    if (data) {
-      useDisplayStore.setState((s) => ({ audio: { ...s.audio, ...data } }));
-    }
-  };
-  if (videoManager !== undefined) {
-    controllerInstanceRef.current.videoManager = videoManager;
-  }
 
   useEffect(() => {
     const ctrl = controllerInstanceRef.current;

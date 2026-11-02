@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { VideoSource } from '../sse/types';
 import { useTouchForwarding } from './useTouchForwarding';
 import { useWebRTCStream } from './useWebRTCStream';
@@ -65,18 +65,17 @@ export function VideoSlot({
   const streamType = stream?.type;
 
   const isPresentationPrimaryRef = useRef(isPresentationPrimary);
-  isPresentationPrimaryRef.current = isPresentationPrimary;
 
   const fadeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const clearFadeTimer = useCallback(() => {
+  const clearFadeTimer = () => {
     if (fadeTimerRef.current) {
       clearTimeout(fadeTimerRef.current);
       fadeTimerRef.current = null;
     }
-  }, []);
+  };
 
-  const dismissSpinner = useCallback(() => {
+  const dismissSpinner = () => {
     clearFadeTimer();
     setIsLoaded(true);
     setIsFadingOut(true);
@@ -84,14 +83,24 @@ export function VideoSlot({
       setShowSpinner(false);
       fadeTimerRef.current = null;
     }, 400);
-  }, [clearFadeTimer]);
+  };
+
+  const dismissSpinnerRef = useRef(dismissSpinner);
+  useEffect(() => {
+    dismissSpinnerRef.current = dismissSpinner;
+  });
+
+  // Synchronize primary presentation role to ref before stream sync
+  useEffect(() => {
+    isPresentationPrimaryRef.current = isPresentationPrimary;
+  }, [isPresentationPrimary]);
 
   // Clean up fade timer on unmount
   useEffect(() => {
     return () => {
       clearFadeTimer();
     };
-  }, [clearFadeTimer]);
+  }, []);
 
   // Sync protocol and reset spinner strictly when stream identity changes
   useEffect(() => {
@@ -101,16 +110,16 @@ export function VideoSlot({
     setIsLoaded(false);
     setIsFadingOut(false);
     setShowSpinner(isPresentationPrimaryRef.current && !isPipSlot && hasStream);
-  }, [streamId, streamUrl, streamType, hasStream, isPipSlot, clearFadeTimer]);
+  }, [streamId, streamUrl, streamType, hasStream, isPipSlot]);
 
   // 12s spinner safety timeout (#777)
   useEffect(() => {
     if (!showSpinner || isLoaded) return;
     const safetyTimer = setTimeout(() => {
-      dismissSpinner();
+      dismissSpinnerRef.current();
     }, 12000);
     return () => clearTimeout(safetyTimer);
-  }, [showSpinner, isLoaded, dismissSpinner]);
+  }, [showSpinner, isLoaded]);
 
   // Audio focus registration on active full-screen video only
   useEffect(() => {
@@ -133,28 +142,28 @@ export function VideoSlot({
     };
   }, [isPresentationPrimary, audioController, protocol, stream?.id]);
 
-  const handleWebRTCFallback = useCallback(() => {
+  const handleWebRTCFallback = () => {
     if (allowProtocolFallback) {
       console.warn(`[MirrormereVideo] WebRTC failed for stream ${stream?.id}. Falling back to HLS.`);
       setProtocol('hls');
     } else {
       onSlotFailure?.();
     }
-  }, [allowProtocolFallback, onSlotFailure, stream?.id]);
+  };
 
-  const handleHlsFallback = useCallback(() => {
+  const handleHlsFallback = () => {
     if (allowProtocolFallback) {
       console.warn(`[MirrormereVideo] HLS failed for stream ${stream?.id}. Falling back to MJPEG.`);
       setProtocol('mjpeg');
     } else {
       onSlotFailure?.();
     }
-  }, [allowProtocolFallback, onSlotFailure, stream?.id]);
+  };
 
-  const handleTerminalFailure = useCallback(() => {
+  const handleTerminalFailure = () => {
     console.warn(`[MirrormereVideo] Stream ${stream?.id} failed terminal protocol.`);
     onSlotFailure?.();
-  }, [onSlotFailure, stream?.id]);
+  };
 
   useWebRTCStream({
     videoRef,
