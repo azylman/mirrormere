@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useState } from 'react';
 import { useDocumentVisible } from '../lifecycle/visibility';
 import { useHeader } from '../store/hooks';
 
@@ -83,6 +83,11 @@ export function createClockFormatters(tz?: string, locale?: string): ClockFormat
   return formatters;
 }
 
+export function computeClockParts(date: Date, tz?: string, locale?: string): ClockParts {
+  const formatters = createClockFormatters(tz, locale);
+  return formatters.formatParts(date);
+}
+
 export function resolveActiveTimezone(
   propTimezone?: string,
   header?: { timestamp?: string | null; timezone?: string } | null
@@ -105,20 +110,10 @@ export function Clock({ timezone: propTimezone, locale: propLocale }: ClockProps
   const header = useHeader();
   const visible = useDocumentVisible();
 
-  const clockRef = useRef<HTMLDivElement | null>(null);
-  const ampmRef = useRef<HTMLSpanElement | null>(null);
-  const dateRef = useRef<HTMLDivElement | null>(null);
-  const weekdayRef = useRef<HTMLSpanElement | null>(null);
-  const fullDateRef = useRef<HTMLSpanElement | null>(null);
-
-  const lastTimeRef = useRef<string | null>(null);
-  const lastAmpmRef = useRef<string | null>(null);
-  const lastWeekdayRef = useRef<string | null>(null);
-  const lastFullDateRef = useRef<string | null>(null);
-
   const activeTz = resolveActiveTimezone(propTimezone, header);
-
-  const formatters = createClockFormatters(activeTz, propLocale);
+  const [parts, setParts] = useState<ClockParts>(() =>
+    computeClockParts(new Date(), activeTz, propLocale),
+  );
 
   // Sync data-timezone attribute across DOM anchors
   useEffect(() => {
@@ -130,19 +125,11 @@ export function Clock({ timezone: propTimezone, locale: propLocale }: ClockProps
       if (appEl?.dataset) {
         appEl.dataset.timezone = activeTz;
       }
-      if (clockRef.current?.dataset) {
-        clockRef.current.dataset.timezone = activeTz;
-      }
     }
   }, [activeTz]);
 
   // Second-aligned clock tick, paused when hidden
   useEffect(() => {
-    lastTimeRef.current = null;
-    lastAmpmRef.current = null;
-    lastWeekdayRef.current = null;
-    lastFullDateRef.current = null;
-
     if (!visible) return;
 
     let timerId: ReturnType<typeof setTimeout> | null = null;
@@ -151,29 +138,19 @@ export function Clock({ timezone: propTimezone, locale: propLocale }: ClockProps
     const tick = () => {
       if (cancelled) return;
       const now = new Date();
-      const parts = formatters.formatParts(now);
+      const nextParts = computeClockParts(now, activeTz, propLocale);
 
-      if (clockRef.current && parts.time !== lastTimeRef.current) {
-        lastTimeRef.current = parts.time;
-        const target = clockRef.current.firstChild ?? clockRef.current;
-        target.textContent = parts.time;
-      }
-
-      if (ampmRef.current && parts.ampm !== lastAmpmRef.current) {
-        lastAmpmRef.current = parts.ampm;
-        ampmRef.current.textContent = parts.ampm;
-        ampmRef.current.style.display = parts.ampm ? '' : 'none';
-      }
-
-      if (weekdayRef.current && parts.weekday !== lastWeekdayRef.current) {
-        lastWeekdayRef.current = parts.weekday;
-        weekdayRef.current.textContent = parts.weekday;
-      }
-
-      if (fullDateRef.current && parts.fullDate !== lastFullDateRef.current) {
-        lastFullDateRef.current = parts.fullDate;
-        fullDateRef.current.textContent = parts.fullDate;
-      }
+      setParts((prev) => {
+        if (
+          prev.time === nextParts.time &&
+          prev.ampm === nextParts.ampm &&
+          prev.weekday === nextParts.weekday &&
+          prev.fullDate === nextParts.fullDate
+        ) {
+          return prev;
+        }
+        return nextParts;
+      });
 
       const nowMs = Date.now();
       const delay = 1000 - (nowMs % 1000);
@@ -188,18 +165,20 @@ export function Clock({ timezone: propTimezone, locale: propLocale }: ClockProps
         clearTimeout(timerId);
       }
     };
-  }, [visible, formatters]);
+  }, [visible, activeTz, propLocale]);
 
   return (
     <div className="header-time-block">
-      <div className="header-clock" id="header-clock" data-timezone={activeTz} ref={clockRef}>
-        --:--
-        <span className="header-clock-ampm" ref={ampmRef} />
+      <div className="header-clock" id="header-clock" data-timezone={activeTz}>
+        {parts.time}
+        <span className="header-clock-ampm" style={{ display: parts.ampm ? '' : 'none' }}>
+          {parts.ampm}
+        </span>
       </div>
       <div className="header-date-stack" id="header-date-stack">
-        <div className="header-date" id="header-date" ref={dateRef}>
-          <span className="header-date-weekday" ref={weekdayRef} />
-          <span className="header-date-full" ref={fullDateRef} />
+        <div className="header-date" id="header-date">
+          <span className="header-date-weekday">{parts.weekday}</span>
+          <span className="header-date-full">{parts.fullDate}</span>
         </div>
       </div>
     </div>
