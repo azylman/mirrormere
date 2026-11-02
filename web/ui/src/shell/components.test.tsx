@@ -68,6 +68,70 @@ describe('WeatherPill component', () => {
     expect(svg).not.toBeNull();
     expect(svg?.querySelector('path')).not.toBeNull();
   });
+
+  it('covers weather descriptions and icon resolution variants', () => {
+    // Custom description property takes precedence
+    useDisplayStore.setState({
+      header: {
+        timestamp: '2026-10-31T12:00:00Z',
+        timezone: 'America/Los_Angeles',
+        weather: {
+          temperature: 60,
+          description: 'Custom Breezy Fog',
+          icon: 'weather-fog',
+          condition: 'Foggy',
+        } as unknown as { temperature: number; description: string; icon: string; condition: string },
+      },
+    });
+    const { container, rerender } = render(<WeatherPill />);
+    expect(container.querySelector('#weather-desc')?.textContent).toBe('Custom Breezy Fog');
+    expect(container.querySelector('.mm-icon-weather-fog')).not.toBeNull();
+
+    // Weather condition mapped directly from WEATHER_DESC_MAP
+    useDisplayStore.setState({
+      header: {
+        timestamp: '2026-10-31T12:00:00Z',
+        timezone: 'America/Los_Angeles',
+        weather: {
+          temperature: 40,
+          condition: 'weather-snowy-rainy',
+        },
+      },
+    });
+    rerender(<WeatherPill />);
+    expect(container.querySelector('#weather-desc')?.textContent).toBe('Rain & Snow');
+    expect(container.querySelector('.mm-icon-weather-snowy-rainy')).not.toBeNull();
+
+    // Unknown icon token with "night" substring falls back to weather-clear-night
+    useDisplayStore.setState({
+      header: {
+        timestamp: '2026-10-31T12:00:00Z',
+        timezone: 'America/Los_Angeles',
+        weather: {
+          temperature: 50,
+          icon: 'stormy-night-unknown',
+          condition: 'Wild Storm At Night',
+        },
+      },
+    });
+    rerender(<WeatherPill />);
+    expect(container.querySelector('.mm-icon-weather-clear-night')).not.toBeNull();
+
+    // Unknown icon token without night falls back to weather-partly-cloudy and Clear Sky description
+    useDisplayStore.setState({
+      header: {
+        timestamp: '2026-10-31T12:00:00Z',
+        timezone: 'America/Los_Angeles',
+        weather: {
+          temperature: 70,
+          icon: 'unknown-alien-weather',
+        },
+      },
+    });
+    rerender(<WeatherPill />);
+    expect(container.querySelector('.mm-icon-weather-partly-cloudy')).not.toBeNull();
+    expect(container.querySelector('#weather-desc')?.textContent).toBe('Clear Sky');
+  });
 });
 
 describe('StatusDot component', () => {
@@ -234,5 +298,88 @@ describe('HeaderVideoButton component', () => {
     });
 
     expect(btn.classList.contains('error')).toBe(false);
+  });
+
+  it('debounces multiple clicks within 350ms and cancels when drag distance exceeds 15px', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200 });
+
+    const { container } = render(<HeaderVideoButton fetchFn={fetchMock as unknown as typeof fetch} />);
+    const btn = container.querySelector('#header-video-btn') as HTMLButtonElement;
+
+    // First click triggers fetch
+    await act(async () => {
+      fireEvent.click(btn);
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2); // wake + trigger
+
+    // Immediate second click within 350ms ignored
+    await act(async () => {
+      fireEvent.click(btn);
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    // Advance 400ms past debounce window and clear loading
+    act(() => {
+      vi.advanceTimersByTime(4000); // clears loading via safety timer
+    });
+    expect(btn.classList.contains('loading')).toBe(false);
+
+    // Drag gesture with movement >= 15px is canceled
+    fireEvent.pointerDown(btn, { clientX: 10, clientY: 10 });
+    await act(async () => {
+      fireEvent.pointerUp(btn, { clientX: 30, clientY: 10 });
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2); // no new fetch calls
+  });
+
+  it('handles non-ok HTTP response by setting error state and clearing loading', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: false, status: 500 });
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const { container } = render(<HeaderVideoButton fetchFn={fetchMock as unknown as typeof fetch} />);
+    const btn = container.querySelector('#header-video-btn') as HTMLButtonElement;
+
+    await act(async () => {
+      fireEvent.click(btn);
+    });
+
+    expect(btn.classList.contains('error')).toBe(true);
+    expect(btn.classList.contains('loading')).toBe(false);
+    expect(warnSpy).toHaveBeenCalledWith(
+      '[MirrormereDisplay] Header video trigger failed:',
+      expect.any(Error),
+    );
+
+    act(() => {
+      vi.advanceTimersByTime(1500);
+    });
+    expect(btn.classList.contains('error')).toBe(false);
+  });
+
+  it('shows HUD instead of triggering fetch when video is already active', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200 });
+    const showHUDSpy = vi.fn();
+
+    (window as unknown as {
+      videoManager?: { currentMode: string };
+      videoHUD?: { showHUD: () => void };
+    }).videoManager = { currentMode: 'video' };
+    (window as unknown as {
+      videoManager?: { currentMode: string };
+      videoHUD?: { showHUD: () => void };
+    }).videoHUD = { showHUD: showHUDSpy };
+
+    const { container } = render(<HeaderVideoButton fetchFn={fetchMock as unknown as typeof fetch} />);
+    const btn = container.querySelector('#header-video-btn') as HTMLButtonElement;
+
+    await act(async () => {
+      fireEvent.click(btn);
+    });
+
+    expect(showHUDSpy).toHaveBeenCalledOnce();
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    delete (window as unknown as { videoManager?: unknown }).videoManager;
+    delete (window as unknown as { videoHUD?: unknown }).videoHUD;
   });
 });
