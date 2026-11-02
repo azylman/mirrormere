@@ -98,3 +98,38 @@ mirrormere/
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+---
+
+## Custom Weather Character Packs
+
+The `weather-forecast` widget supports optional, user-supplied illustration packs that rotate daily and adapt to live weather conditions and temperature ranges. Character packs are **not** bundled in the public repository; users bring their own artwork via a local directory or Docker volume mount.
+
+### 1. Enable in `config.yaml`
+
+Set `character_pack` on your `weather-forecast` widget configuration to the name of your asset directory:
+
+```yaml
+- id: weather
+  type: weather-forecast
+  config:
+    location_name: "Home"
+    latitude: 37.7749
+    longitude: -122.4194
+    units: imperial
+    character_pack: "my_custom_pack"
+```
+
+### 2. Provide Scene Artwork
+
+Place your images in `web/ui/public/assets/weather-packs/<character_pack>/` when building from source, or mount the folder directly into the container at `/app/web/static/ui/assets/weather-packs/<character_pack>:ro`.
+
+Each pack uses 7 weather/temperature scene prefixes with 5 daily rotation variants (`_v1.jpg` through `_v5.jpg`, 1:1 square aspect ratio recommended):
+
+- `morning_rain_v1.jpg` – `morning_rain_v5.jpg`: Morning rain, showers, drizzle, or thunderstorms
+- `rainy_boots_v1.jpg` – `rainy_boots_v5.jpg`: Afternoon/evening rain, showers, drizzle, or thunderstorms
+- `cold_puffer_v1.jpg` – `cold_puffer_v5.jpg`: Cold temperatures (`< 50°F`)
+- `morning_mild_v1.jpg` – `morning_mild_v5.jpg`: Mild daytime temperatures (`50°F – 64°F`)
+- `cool_evening_v1.jpg` – `cool_evening_v5.jpg`: Cool evening/overnight (`50°F – 64°F`, `5:00 PM – 5:00 AM`)
+- `warm_pants_v1.jpg` – `warm_pants_v5.jpg`: Warm temperatures (`65°F – 77°F`)
+- `hot_dress_v1.jpg` – `hot_dress_v5.jpg`: Hot temperatures (`>= 78°F`)
