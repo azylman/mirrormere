@@ -1,6 +1,7 @@
 import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { useDisplayStore } from './store';
 import { App } from './App';
 
 const onChildRender = vi.fn();
@@ -70,5 +71,39 @@ describe('App', () => {
 
     expect(getByTestId('inc-btn').textContent).toBe('1');
     expect(onChildRender).toHaveBeenCalledTimes(1);
+  });
+
+  it('renders layout editor overlay when layoutEditorOpen is true', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              allow_layout_edit: true,
+              has_override: false,
+              grid: [6, 2],
+              total_screens: 1,
+              widgets: [],
+              current_screen: 0,
+              interval_seconds: 30,
+              screens: [{ index: 0, widgets: [] }],
+            }),
+            { status: 200 }
+          )
+      )
+    );
+
+    const { container } = render(<App />);
+    expect(container.querySelector('#layout-editor-overlay')).toBeNull();
+
+    act(() => {
+      useDisplayStore.getState().setLayoutEditorOpen(true);
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector('#layout-editor-overlay')).not.toBeNull();
   });
 });

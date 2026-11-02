@@ -29,3 +29,8 @@ export function useVideo(): VideoSlice {
 export function useSystem(): SystemSlice {
   return useDisplayStore(useShallow((s) => s.system));
 }
+
+export function useLayoutEditorOpen(): boolean {
+  return useDisplayStore((s) => s.layoutEditorOpen);
+}
+

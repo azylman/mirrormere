@@ -33,6 +33,16 @@ describe('Header component', () => {
       },
       widgets: {},
     });
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation(async (url: string) => {
+        if (url === 'api/layout/editor') {
+          return new Response(JSON.stringify({ allow_layout_edit: false }), { status: 200 });
+        }
+        return new Response(JSON.stringify({}), { status: 200 });
+      }),
+    );
   });
 
   afterEach(() => {
@@ -245,5 +255,55 @@ describe('Header component', () => {
     expect(duckSpy).toHaveBeenCalledWith(false);
 
     delete (window as unknown as { audioManager?: unknown }).audioManager;
+  });
+
+  it('renders header layout button when allow_layout_edit is true and toggles layoutEditorOpen', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ allow_layout_edit: true }), { status: 200 }),
+      ),
+    );
+
+    const { container } = render(<Header />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const layoutBtn = container.querySelector('#header-layout-btn') as HTMLButtonElement;
+    expect(layoutBtn).not.toBeNull();
+
+    expect(useDisplayStore.getState().layoutEditorOpen).toBe(false);
+    act(() => {
+      fireEvent.click(layoutBtn);
+    });
+    expect(useDisplayStore.getState().layoutEditorOpen).toBe(true);
+  });
+
+  it('hides header layout button when allow_layout_edit is false', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ allow_layout_edit: false }), { status: 200 }),
+      ),
+    );
+
+    const { container } = render(<Header />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector('#header-layout-btn')).toBeNull();
+  });
+
+  it('hides header layout button when fetch layout editor rejects', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('Network error')));
+
+    const { container } = render(<Header />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector('#header-layout-btn')).toBeNull();
   });
 });

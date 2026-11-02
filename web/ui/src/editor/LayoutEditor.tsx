@@ -1,0 +1,404 @@
+import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
+import type { LayoutEditorWidget, LayoutEditorWidgetPlacement } from '../sse/types';
+import { useDisplayStore } from '../store';
+import { useLayoutEditorOpen } from '../store/hooks';
+import { fetchLayoutEditor, resetLayoutEditor, saveLayoutEditor } from './api';
+import {
+  compactScreens,
+  getOccupiedCellCount,
+  getTotalScreens,
+  moveOrSwapWidget,
+  moveWidgetToScreen,
+  resizeWidget,
+  togglePinWidget,
+} from './editorMath';
+
+export interface LayoutEditorProps {
+  fetchImpl?: typeof fetch;
+}
+
+export function LayoutEditor({ fetchImpl }: LayoutEditorProps = {}) {
+  const isOpen = useLayoutEditorOpen();
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [grid, setGrid] = useState<[number, number]>([6, 2]);
+  const [widgets, setWidgets] = useState<LayoutEditorWidget[]>([]);
+  const [activeScreen, setActiveScreen] = useState(0);
+  const [, setHasOverride] = useState(false);
+
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [dragGhost, setDragGhost] = useState<{
+    origin: [number, number];
+    dimensions: [number, number];
+  } | null>(null);
+  const [dragHoverScreen, setDragHoverScreen] = useState<number | null>(null);
+
+  const gridRef = useRef<HTMLDivElement>(null);
+  const dragStartRef = useRef<{
+    pointerId: number;
+    widgetId: string;
+    origin: [number, number];
+    dimensions: [number, number];
+  } | null>(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    let active = true;
+    setLoading(true);
+    setError(null);
+    fetchLayoutEditor(fetchImpl)
+      .then((data) => {
+        if (!active) return;
+        setGrid(data.grid && data.grid.length === 2 ? [data.grid[0], data.grid[1]] : [6, 2]);
+        setWidgets(data.widgets || []);
+        setHasOverride(Boolean(data.has_override));
+        setActiveScreen(0);
+        setLoading(false);
+      })
+      .catch((err: unknown) => {
+        if (!active) return;
+        setError(err instanceof Error ? err.message : String(err));
+        setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [isOpen, fetchImpl]);
+
+  if (!isOpen) {
+    return null;
+  }
+
+  const [gridCols, gridRows] = grid;
+  const totalCells = gridCols * gridRows;
+  const occupied = getOccupiedCellCount(widgets, activeScreen, gridCols, gridRows);
+  const totalScreens = getTotalScreens(widgets);
+  const visibleWidgets = widgets.filter((w) => w.pinned || w.screen === activeScreen);
+
+  const handleReset = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await resetLayoutEditor(fetchImpl);
+      setWidgets(res.widgets || []);
+      setHasOverride(Boolean(res.has_override));
+      setActiveScreen(0);
+      await useDisplayStore.getState().loadScreens();
+      useDisplayStore.getState().setLayoutEditorOpen(false);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      const compacted = compactScreens(widgets);
+      const placements: LayoutEditorWidgetPlacement[] = compacted.map((w) => ({
+        widget_id: w.widget_id,
+        screen: w.screen,
+        origin: w.origin,
+        dimensions: w.dimensions,
+        pinned: w.pinned ? true : undefined,
+      }));
+      const res = await saveLayoutEditor(placements, fetchImpl);
+      setWidgets(res.widgets || []);
+      setHasOverride(Boolean(res.has_override));
+      await useDisplayStore.getState().loadScreens();
+      useDisplayStore.getState().setLayoutEditorOpen(false);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleTogglePin = (widgetId: string) => {
+    const nextWidgets = togglePinWidget(widgets, widgetId, gridCols, gridRows, activeScreen);
+    setWidgets(nextWidgets);
+    const maxScreen = Math.max(0, getTotalScreens(nextWidgets) - 1);
+    if (activeScreen > maxScreen) {
+      setActiveScreen(maxScreen);
+    }
+  };
+
+  const handleResize = (widgetId: string, newDimensions: [number, number]) => {
+    setWidgets((prev) => resizeWidget(prev, widgetId, newDimensions, gridCols, gridRows));
+  };
+
+  const handlePointerDown = (e: ReactPointerEvent<HTMLDivElement>, widget: LayoutEditorWidget) => {
+    if (e.button !== 0 && e.pointerType === 'mouse') return;
+    if ((e.target as HTMLElement).closest('button')) return;
+    const currentTarget = e.currentTarget;
+    if (currentTarget.setPointerCapture) {
+      try {
+        currentTarget.setPointerCapture(e.pointerId);
+      } catch {
+        // Ignored in non-supporting jsdom
+      }
+    }
+    dragStartRef.current = {
+      pointerId: e.pointerId,
+      widgetId: widget.widget_id,
+      origin: widget.origin,
+      dimensions: widget.dimensions,
+    };
+    setDraggingId(widget.widget_id);
+    setDragGhost({ origin: widget.origin, dimensions: widget.dimensions });
+  };
+
+  const handlePointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (!dragStartRef.current || dragStartRef.current.pointerId !== e.pointerId) return;
+
+    if (typeof document !== 'undefined' && typeof document.elementFromPoint === 'function') {
+      const dockPill = document
+        .elementFromPoint(e.clientX, e.clientY)
+        ?.closest('.layout-editor-screen-pill');
+      if (dockPill) {
+        const targetScreenIdx = Number(dockPill.getAttribute('data-screen-index'));
+        setDragHoverScreen(Number.isNaN(targetScreenIdx) ? null : targetScreenIdx);
+      } else {
+        setDragHoverScreen(null);
+      }
+    }
+
+    if (gridRef.current) {
+      const rect = gridRef.current.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) {
+        const col = Math.floor(((e.clientX - rect.left) / rect.width) * gridCols);
+        const row = Math.floor(((e.clientY - rect.top) / rect.height) * gridRows);
+        const [wCols, wRows] = dragStartRef.current.dimensions;
+        const clampedCol = Math.max(0, Math.min(col, gridCols - wCols));
+        const clampedRow = Math.max(0, Math.min(row, gridRows - wRows));
+        setDragGhost({ origin: [clampedCol, clampedRow], dimensions: [wCols, wRows] });
+      }
+    }
+  };
+
+  const handlePointerEnd = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (!dragStartRef.current || dragStartRef.current.pointerId !== e.pointerId) return;
+    const { widgetId } = dragStartRef.current;
+    if (e.currentTarget.releasePointerCapture) {
+      try {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      } catch {
+        // Ignored in non-supporting jsdom
+      }
+    }
+
+    let droppedOnDock = false;
+    if (typeof document !== 'undefined' && typeof document.elementFromPoint === 'function') {
+      const dockPill = document
+        .elementFromPoint(e.clientX, e.clientY)
+        ?.closest('.layout-editor-screen-pill');
+      if (dockPill) {
+        const targetScreenIdx = Number(dockPill.getAttribute('data-screen-index'));
+        if (!Number.isNaN(targetScreenIdx)) {
+          droppedOnDock = true;
+          const nextWidgets = moveWidgetToScreen(
+            widgets,
+            widgetId,
+            targetScreenIdx,
+            gridCols,
+            gridRows,
+          );
+          const prevWidget = widgets.find((w) => w.widget_id === widgetId);
+          const nextWidget = nextWidgets.find((w) => w.widget_id === widgetId);
+          if (nextWidget && nextWidget !== prevWidget) {
+            setWidgets(nextWidgets);
+            setActiveScreen(nextWidget.screen);
+          }
+        }
+      }
+    }
+
+    if (!droppedOnDock && dragGhost) {
+      setWidgets((prev) =>
+        moveOrSwapWidget(prev, widgetId, activeScreen, dragGhost.origin, gridCols, gridRows),
+      );
+    }
+
+    dragStartRef.current = null;
+    setDraggingId(null);
+    setDragGhost(null);
+    setDragHoverScreen(null);
+  };
+
+  const gridStyle: CSSProperties = {
+    display: 'grid',
+    gridTemplateColumns: `repeat(${gridCols}, 1fr)`,
+    gridTemplateRows: `repeat(${gridRows}, 1fr)`,
+  };
+
+  const slotKeys = Array.from({ length: totalCells }, (_, i) => {
+    const col = i % gridCols;
+    const row = Math.floor(i / gridCols);
+    return { col, row };
+  });
+
+  return (
+    <div
+      className="layout-editor-overlay"
+      id="layout-editor-overlay"
+      data-prevent-screen-swipe="true"
+    >
+      <header className="layout-editor-toolbar">
+        <div className="layout-editor-status" data-testid="layout-editor-status">
+          {occupied}/{totalCells} cells • Auto-spacer padded
+        </div>
+        {error && <div className="layout-editor-error">{error}</div>}
+        <div className="layout-editor-actions">
+          <button
+            className="layout-editor-btn layout-editor-btn-reset"
+            type="button"
+            onClick={() => void handleReset()}
+            disabled={saving || loading}
+          >
+            Reset to Default
+          </button>
+          <button
+            className="layout-editor-btn layout-editor-btn-cancel"
+            type="button"
+            onClick={() => useDisplayStore.getState().setLayoutEditorOpen(false)}
+            disabled={saving}
+          >
+            Cancel
+          </button>
+          <button
+            className="layout-editor-btn layout-editor-btn-save"
+            type="button"
+            onClick={() => void handleSave()}
+            disabled={saving || loading}
+          >
+            {saving ? 'Saving...' : 'Save Layout'}
+          </button>
+        </div>
+      </header>
+
+      <main className="layout-editor-canvas">
+        {loading ? (
+          <div className="layout-editor-loading">Loading layout...</div>
+        ) : (
+          <div
+            ref={gridRef}
+            className="layout-editor-grid"
+            data-testid="layout-editor-grid"
+            style={gridStyle}
+          >
+            {slotKeys.map(({ col, row }) => (
+              <div
+                key={`slot-${col}-${row}`}
+                className="layout-editor-cell"
+                data-col={col}
+                data-row={row}
+                style={{
+                  gridColumn: col + 1,
+                  gridRow: row + 1,
+                }}
+              />
+            ))}
+
+            {dragGhost && draggingId && (
+              <div
+                className="layout-editor-ghost"
+                data-testid="layout-editor-ghost"
+                style={{
+                  gridColumn: `${dragGhost.origin[0] + 1} / span ${dragGhost.dimensions[0]}`,
+                  gridRow: `${dragGhost.origin[1] + 1} / span ${dragGhost.dimensions[1]}`,
+                }}
+              />
+            )}
+
+            {visibleWidgets.map((w) => {
+              const isDragging = draggingId === w.widget_id;
+              return (
+                <div
+                  key={w.widget_id}
+                  className={`layout-editor-card ${w.pinned ? 'pinned' : ''} ${isDragging ? 'dragging' : ''}`}
+                  data-widget-id={w.widget_id}
+                  data-widget-type={w.type}
+                  style={{
+                    gridColumn: `${w.origin[0] + 1} / span ${w.dimensions[0]}`,
+                    gridRow: `${w.origin[1] + 1} / span ${w.dimensions[1]}`,
+                    touchAction: 'none',
+                  }}
+                  onPointerDown={(e) => handlePointerDown(e, w)}
+                  onPointerMove={handlePointerMove}
+                  onPointerUp={handlePointerEnd}
+                  onPointerCancel={handlePointerEnd}
+                >
+                  <div className="layout-editor-card-header">
+                    <span className="layout-editor-card-title">{w.widget_id}</span>
+                    <span className="layout-editor-card-type">{w.type}</span>
+                    <button
+                      className={`layout-editor-pin-btn ${w.pinned ? 'active' : ''}`}
+                      type="button"
+                      aria-label={w.pinned ? 'Unpin Widget' : 'Pin Widget'}
+                      title={w.pinned ? 'Unpin Widget' : 'Pin Widget'}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleTogglePin(w.widget_id);
+                      }}
+                    >
+                      {w.pinned ? 'Pinned 📌' : 'Pin 📍'}
+                    </button>
+                  </div>
+                  <div className="layout-editor-card-body">
+                    <span className="layout-editor-card-dim">
+                      {w.dimensions[0]}×{w.dimensions[1]}
+                    </span>
+                  </div>
+                  <div className="layout-editor-card-footer">
+                    {w.supported_dimensions.map(([cols, rows]) => {
+                      const isActive = w.dimensions[0] === cols && w.dimensions[1] === rows;
+                      return (
+                        <button
+                          key={`${cols}x${rows}`}
+                          className={`size-chip ${isActive ? 'active' : ''}`}
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleResize(w.widget_id, [cols, rows]);
+                          }}
+                        >
+                          {cols}×{rows}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </main>
+
+      <footer className="layout-editor-dock">
+        {Array.from({ length: totalScreens }, (_, s) => (
+          <button
+            key={`dock-screen-${s}`}
+            className={`layout-editor-screen-pill ${activeScreen === s ? 'active' : ''} ${dragHoverScreen === s ? 'dock-drop-hover' : ''}`}
+            type="button"
+            data-screen-index={s}
+            onClick={() => setActiveScreen(s)}
+          >
+            Screen {s + 1}
+          </button>
+        ))}
+        <button
+          key="dock-screen-new"
+          className={`layout-editor-screen-pill new-screen-pill ${dragHoverScreen === totalScreens ? 'dock-drop-hover' : ''}`}
+          type="button"
+          data-screen-index={totalScreens}
+          onClick={() => setActiveScreen(totalScreens)}
+        >
+          + New Screen
+        </button>
+      </footer>
+    </div>
+  );
+}
