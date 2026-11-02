@@ -43,8 +43,6 @@ export function LegacyWidget({ id }: WidgetComponentProps) {
   // reload count is part of the fetch key. Like WidgetHost, a reload waits while paused.
   const reloads = useDisplayStore((s) => (type === '' ? 0 : (s.widgetReloads[type] ?? 0)));
   const paused = useDisplayStore((s) => s.carousel.paused);
-  if (!paused) state.current.reloadsSeen = reloads;
-  const fetchKey = `${timestamp}\u0000${state.current.reloadsSeen}`;
 
   useEffect(() => {
     const s = state.current;
@@ -58,6 +56,10 @@ export function LegacyWidget({ id }: WidgetComponentProps) {
 
   useEffect(() => {
     const s = state.current;
+    if (!paused) {
+      s.reloadsSeen = reloads;
+    }
+    const fetchKey = `${timestamp}\u0000${s.reloadsSeen}`;
     if (s.fetchedKey !== null && (!current || s.fetchedKey === fetchKey)) return;
     s.fetchedKey = fetchKey;
     s.controller?.abort();
@@ -91,7 +93,7 @@ export function LegacyWidget({ id }: WidgetComponentProps) {
         // Keep the last good card on a failed update; show the unavailable card on the first render.
         if (!hadContent) commit(unavailableCard(id), []);
       });
-  }, [id, type, assetsBase, fetchKey, current]);
+  }, [id, type, assetsBase, current, paused, reloads, timestamp]);
 
   return <div ref={host} className="widget-legacy" />;
 }

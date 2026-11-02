@@ -80,10 +80,13 @@ export function ChatLogWidget({ id }: WidgetComponentProps) {
               const formattedTs = ts ? (formatTime('15:04', ts) || ts) : null;
 
               const text = String(m.text ?? m.Text ?? '');
+              const itemKey = String(
+                m.id ?? m.ID ?? `${ts || i}:${role}:${authorDisplay}:${text.slice(0, 32)}`,
+              );
 
               return (
                 <div
-                  key={i}
+                  key={itemKey}
                   className={`chat-log-message chat-log-${role === 'human' ? 'human' : 'agent'}`}
                 >
                   <div className="chat-log-meta">

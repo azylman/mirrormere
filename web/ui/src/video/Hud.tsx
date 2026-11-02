@@ -140,6 +140,21 @@ export interface HudProps {
  * Hud React component rendering the declarative #video-hud-overlay, navigation,
  * volume rail, central play/pause transport, and scrubbable progress bar.
  */
+function assignControllerRef(
+  target:
+    | React.MutableRefObject<VideoHUDController | null>
+    | React.RefCallback<VideoHUDController | null>
+    | undefined,
+  value: VideoHUDController | null,
+): void {
+  if (!target) return;
+  if (typeof target === 'function') {
+    target(value);
+  } else {
+    target.current = value;
+  }
+}
+
 export function Hud({
   controllerRef,
   videoManager,
@@ -263,28 +278,26 @@ export function Hud({
     }
   };
 
-  const [stageEl, setStageEl] = useState<HTMLElement | null>(stageElement || null);
+  const [fallbackStageEl, setFallbackStageEl] = useState<HTMLElement | null>(null);
 
   useEffect(() => {
-    if (stageElement) {
-      setStageEl(stageElement);
-    } else {
+    if (!stageElement) {
       const found =
         overlayRef.current?.closest<HTMLElement>('#video-stage') ||
         (typeof document !== 'undefined' ? document.getElementById('video-stage') : null);
       if (found) {
-        setStageEl(found);
+        setFallbackStageEl(found);
       }
     }
   }, [stageElement]);
 
-  const resolvedStage =
-    stageElement ||
-    stageEl ||
+  const effectiveStageEl =
+    stageElement ??
+    fallbackStageEl ??
     (typeof document !== 'undefined' ? document.getElementById('video-stage') : null);
 
   const { isVisible, showHUD, hideHUD, resetAutoFade } = useHudAutoFade({
-    stageElement: resolvedStage,
+    stageElement: effectiveStageEl,
     autoFadeTimeout,
     isPlaybackActive,
     onPlayPauseToggle: handlePlayPauseToggle,
@@ -403,21 +416,13 @@ export function Hud({
     if (typeof window !== 'undefined') {
       window.videoHUD = ctrl;
     }
-    if (typeof controllerRef === 'function') {
-      controllerRef(ctrl);
-    } else if (controllerRef) {
-      controllerRef.current = ctrl;
-    }
+    assignControllerRef(controllerRef, ctrl);
 
     return () => {
       if (typeof window !== 'undefined' && window.videoHUD === ctrl) {
         delete window.videoHUD;
       }
-      if (typeof controllerRef === 'function') {
-        controllerRef(null);
-      } else if (controllerRef) {
-        controllerRef.current = null;
-      }
+      assignControllerRef(controllerRef, null);
     };
   }, [controllerRef]);
 

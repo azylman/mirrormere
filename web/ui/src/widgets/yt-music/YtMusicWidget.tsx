@@ -379,23 +379,29 @@ export const YtMusicWidget = memo(function YtMusicWidget({ id }: WidgetComponent
           ))}
 
         {activeTab === 'queue' &&
-          (stateData.queue || []).map((t, idx) => (
-            <div
-              key={idx}
-              className="media-tile"
-              data-qidx={idx}
-              onClick={() => handlePlayQueueIndex(idx)}
-            >
-              <img className="tile-img" src={t.thumb || DEFAULT_ART} loading="lazy" alt="" />
-              <div className="tile-meta">
-                <div className="tile-title">
-                  {idx === np.queue_index ? '▶ ' : ''}
-                  {t.title}
+          (stateData.queue || []).map((t, idx) => {
+            const queueKey =
+              (t as { id?: string; video_id?: string }).id ??
+              (t as { id?: string; video_id?: string }).video_id ??
+              `${t.title}:${t.artist}:${idx}`;
+            return (
+              <div
+                key={queueKey}
+                className="media-tile"
+                data-qidx={idx}
+                onClick={() => handlePlayQueueIndex(idx)}
+              >
+                <img className="tile-img" src={t.thumb || DEFAULT_ART} loading="lazy" alt="" />
+                <div className="tile-meta">
+                  <div className="tile-title">
+                    {idx === np.queue_index ? '▶ ' : ''}
+                    {t.title}
+                  </div>
+                  <div className="tile-sub">{t.artist}</div>
                 </div>
-                <div className="tile-sub">{t.artist}</div>
               </div>
-            </div>
-          ))}
+            );
+          })}
 
         {activeTab === 'search' &&
           (searching ? (

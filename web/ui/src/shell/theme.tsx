@@ -1,4 +1,4 @@
-import { createElement, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { MouseEvent as ReactMouseEvent } from 'react';
 import { useDisplayStore } from '../store/index';
 
@@ -213,65 +213,59 @@ export function ThemeToggle() {
     toggle();
   };
 
-  return createElement(
-    'div',
-    { className: 'header-theme-toggle', id: 'header-theme-toggle' },
-    createElement(
-      'button',
-      {
-        id: 'theme-toggle-btn',
-        className: 'theme-toggle-btn',
-        type: 'button',
-        'data-theme': activeTheme,
-        'data-mode': buttonAttrs.mode,
-        'aria-label': buttonAttrs.ariaLabel,
-        title: buttonAttrs.title,
-        onPointerDown: handlePointerDown,
-        onPointerUp: handlePointerUp,
-        onPointerCancel: handlePointerCancel,
-        onPointerLeave: handlePointerLeave,
-        onClick: handleClick,
-      },
-      createElement(
-        'svg',
-        {
-          className: 'theme-icon theme-icon-sun',
-          width: 22,
-          height: 22,
-          viewBox: '0 0 24 24',
-          fill: 'none',
-          stroke: 'currentColor',
-          strokeWidth: 2,
-          strokeLinecap: 'round',
-          strokeLinejoin: 'round',
-          'aria-hidden': 'true',
-        },
-        createElement('circle', { cx: 12, cy: 12, r: 4.5 }),
-        createElement('line', { x1: 12, y1: 2, x2: 12, y2: 4 }),
-        createElement('line', { x1: 12, y1: 20, x2: 12, y2: 22 }),
-        createElement('line', { x1: 4.93, y1: 4.93, x2: 6.34, y2: 6.34 }),
-        createElement('line', { x1: 17.66, y1: 17.66, x2: 19.07, y2: 19.07 }),
-        createElement('line', { x1: 2, y1: 12, x2: 4, y2: 12 }),
-        createElement('line', { x1: 20, y1: 12, x2: 22, y2: 12 }),
-        createElement('line', { x1: 4.93, y1: 19.07, x2: 6.34, y2: 17.66 }),
-        createElement('line', { x1: 17.66, y1: 6.34, x2: 19.07, y2: 4.93 })
-      ),
-      createElement(
-        'svg',
-        {
-          className: 'theme-icon theme-icon-moon',
-          width: 22,
-          height: 22,
-          viewBox: '0 0 24 24',
-          fill: 'none',
-          stroke: 'currentColor',
-          strokeWidth: 2,
-          strokeLinecap: 'round',
-          strokeLinejoin: 'round',
-          'aria-hidden': 'true',
-        },
-        createElement('path', { d: 'M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z' })
-      )
-    )
+  return (
+    <div className="header-theme-toggle" id="header-theme-toggle">
+      <button
+        id="theme-toggle-btn"
+        className="theme-toggle-btn"
+        type="button"
+        data-theme={activeTheme}
+        data-mode={buttonAttrs.mode}
+        aria-label={buttonAttrs.ariaLabel}
+        title={buttonAttrs.title}
+        onPointerDown={handlePointerDown}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerCancel}
+        onPointerLeave={handlePointerLeave}
+        onClick={handleClick}
+      >
+        <svg
+          className="theme-icon theme-icon-sun"
+          width={22}
+          height={22}
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={2}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          <circle cx={12} cy={12} r={4.5} />
+          <line x1={12} y1={2} x2={12} y2={4} />
+          <line x1={12} y1={20} x2={12} y2={22} />
+          <line x1={4.93} y1={4.93} x2={6.34} y2={6.34} />
+          <line x1={17.66} y1={17.66} x2={19.07} y2={19.07} />
+          <line x1={2} y1={12} x2={4} y2={12} />
+          <line x1={20} y1={12} x2={22} y2={12} />
+          <line x1={4.93} y1={19.07} x2={6.34} y2={17.66} />
+          <line x1={17.66} y1={6.34} x2={19.07} y2={4.93} />
+        </svg>
+        <svg
+          className="theme-icon theme-icon-moon"
+          width={22}
+          height={22}
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={2}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+        </svg>
+      </button>
+    </div>
   );
 }

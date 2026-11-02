@@ -57,14 +57,12 @@ export function VideoSlot({
 
   const [isLoaded, setIsLoaded] = useState(false);
   const [isFadingOut, setIsFadingOut] = useState(false);
-  const [showSpinner, setShowSpinner] = useState(false);
+  const [showSpinner, setShowSpinner] = useState(() =>
+    Boolean(isPresentationPrimary && !isPipSlot && stream),
+  );
 
   const hasStream = Boolean(stream);
-  const streamId = stream?.id;
-  const streamUrl = stream?.stream_url;
   const streamType = stream?.type;
-
-  const isPresentationPrimaryRef = useRef(isPresentationPrimary);
 
   const fadeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -90,11 +88,6 @@ export function VideoSlot({
     dismissSpinnerRef.current = dismissSpinner;
   });
 
-  // Synchronize primary presentation role to ref before stream sync
-  useEffect(() => {
-    isPresentationPrimaryRef.current = isPresentationPrimary;
-  }, [isPresentationPrimary]);
-
   // Clean up fade timer on unmount
   useEffect(() => {
     return () => {
@@ -102,15 +95,24 @@ export function VideoSlot({
     };
   }, []);
 
-  // Sync protocol and reset spinner strictly when stream identity changes
-  useEffect(() => {
-    clearFadeTimer();
+  const [prevStreamKey, setPrevStreamKey] = useState<string | null>(
+    stream ? `${stream.id}:${stream.stream_url}:${stream.type}` : null,
+  );
+  const streamKey = stream ? `${stream.id}:${stream.stream_url}:${stream.type}` : null;
+
+  if (streamKey !== prevStreamKey) {
+    setPrevStreamKey(streamKey);
     const t = (streamType || 'webrtc').toLowerCase();
     setProtocol(t === 'mjpeg' || t === 'hls' ? t : 'webrtc');
     setIsLoaded(false);
     setIsFadingOut(false);
-    setShowSpinner(isPresentationPrimaryRef.current && !isPipSlot && hasStream);
-  }, [streamId, streamUrl, streamType, hasStream, isPipSlot]);
+    setShowSpinner(isPresentationPrimary && !isPipSlot && hasStream);
+  }
+
+  // Clear fade timer when stream identity changes
+  useEffect(() => {
+    clearFadeTimer();
+  }, [streamKey]);
 
   // 12s spinner safety timeout (#777)
   useEffect(() => {
