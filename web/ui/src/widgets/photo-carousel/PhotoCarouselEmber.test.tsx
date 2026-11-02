@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { cleanup, render, fireEvent, act } from '@testing-library/react';
 import { PhotoCarouselWidget } from './PhotoCarouselWidget';
+import type { PhotoAlbumConfig } from './photoCarouselHelpers';
 import { useDisplayStore } from '../../store';
 import type { WidgetMeta } from '../../store/types';
 import { PaneContext } from '../../carousel/PaneContext';
@@ -258,5 +259,99 @@ describe('PhotoCarouselWidget ember_bridge sync and empty states', () => {
     unmount2();
     // Deleted because all listeners unmounted
     expect(window.onEmberPhotosSynced).toBeUndefined();
+  });
+
+  describe('multi-album source resolution', () => {
+    it('resolves ember_bridge source and album url when configured via albums array with literal url', () => {
+      const syncMock = vi.fn();
+      window.EmberBridge = {
+        syncGooglePhotosAlbum: syncMock,
+      };
+
+      const albums: PhotoAlbumConfig[] = [
+        { name: 'Ember Album', source: 'ember_bridge', url: 'https://photos.app.goo.gl/literal-ember' },
+      ];
+
+      useDisplayStore.setState({
+        widgets: {
+          [widgetId]: {
+            meta: makeWidgetMeta({
+              albums,
+            }),
+            data: { photos: [] },
+            state: 'ready',
+            timestamp: '2026-10-31T12:00:00Z',
+          },
+        },
+      });
+
+      render(
+        <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
+          <PhotoCarouselWidget id={widgetId} type="photo-carousel" />
+        </PaneContext.Provider>,
+      );
+
+      expect(syncMock).toHaveBeenCalledWith('https://photos.app.goo.gl/literal-ember');
+    });
+
+    it('resolves ember_bridge and falls back to data.album_url when url_env was used and url is empty in config', () => {
+      const syncMock = vi.fn();
+      window.EmberBridge = {
+        syncGooglePhotosAlbum: syncMock,
+      };
+
+      useDisplayStore.setState({
+        widgets: {
+          [widgetId]: {
+            meta: makeWidgetMeta({
+              albums: [
+                { name: 'Env Album', source: 'ember_bridge' },
+              ],
+            }),
+            data: {
+              photos: [],
+              album_url: 'https://photos.app.goo.gl/from-backend-data',
+            },
+            state: 'ready',
+            timestamp: '2026-10-31T12:00:00Z',
+          },
+        },
+      });
+
+      render(
+        <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
+          <PhotoCarouselWidget id={widgetId} type="photo-carousel" />
+        </PaneContext.Provider>,
+      );
+
+      expect(syncMock).toHaveBeenCalledWith('https://photos.app.goo.gl/from-backend-data');
+    });
+
+    it('resolves share_url source and renders empty title accordingly when albums array has share_url', () => {
+      useDisplayStore.setState({
+        widgets: {
+          [widgetId]: {
+            meta: makeWidgetMeta({
+              albums: [
+                { name: 'Shared 1', source: 'share_url', url: 'https://photos.app.goo.gl/shared1' },
+              ],
+            }),
+            data: { photos: [] },
+            state: 'ready',
+            timestamp: '2026-10-31T12:00:00Z',
+          },
+        },
+      });
+
+      const { container } = render(
+        <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
+          <PhotoCarouselWidget id={widgetId} type="photo-carousel" />
+        </PaneContext.Provider>,
+      );
+
+      const empty = container.querySelector('.photo-empty');
+      expect(empty?.querySelector('.empty-title')?.textContent).toBe('No photos in shared album');
+      expect(container.querySelector('.photo-connect-btn')).toBeNull();
+    });
   });
 });

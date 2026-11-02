@@ -21,6 +21,7 @@ import {
   useContainerSize,
   registerEmberSyncListener,
   usePhotoSlideshowTransition,
+  resolvePhotoCarouselSourceAndUrl,
   type EmberSyncListener,
   type PhotoCarouselConfig,
 } from './photoCarouselHelpers';
@@ -316,9 +317,7 @@ export function PhotoCarouselWidget({ id }: WidgetComponentProps) {
   const data = parsePhotoCarouselData(rawData);
   const hasLoaded = entry?.state !== 'loading' && Array.isArray(data.photos);
 
-  const source: 'share_url' | 'ember_bridge' =
-    config?.source === 'ember_bridge' ? 'ember_bridge' : 'share_url';
-  const albumUrl = (config?.album_url || data?.album_url || '').trim();
+  const { source, albumUrl } = resolvePhotoCarouselSourceAndUrl(config, data);
 
   const [needsAuth, setNeedsAuth] = useState(false);
   const [syncError, setSyncError] = useState(false);

@@ -93,7 +93,7 @@ func TestLoad_ExampleConfig(t *testing.T) {
 	if photos.ID != "family-photos" || photos.Type != "photo-carousel" {
 		t.Errorf("unexpected photos widget: %+v", photos)
 	}
-	assertEq(t, "secret album_url", photos.Secrets["album_url"], mockEnv["GOOGLE_PHOTOS_ALBUM_URL"])
+	assertEq(t, "secret album_url", photos.Secrets["albums[0].url"], mockEnv["GOOGLE_PHOTOS_ALBUM_URL"])
 }
 
 func TestParseWithEnv_ValidationErrors(t *testing.T) {
