@@ -99,17 +99,21 @@ func TestPhotos_InternalHelpers(t *testing.T) {
 			{ID: "AF1Qip_cached", URL: "https://lh3.googleusercontent.com/pw/CACHED"},
 			{ID: "AF1Qip_new1", URL: "https://lh3.googleusercontent.com/pw/NEW1"},
 			{ID: "AF1Qip_noloc", URL: "https://lh3.googleusercontent.com/pw/NOLOC"},
+			{ID: "AF1Qip_omitted", URL: "https://lh3.googleusercontent.com/pw/OMITTED"},
 			{ID: "photo_positional", URL: "https://lh3.googleusercontent.com/pw/POS"},
 		}
 		carryCachedPhotoMetadata(fresh, existing)
 		if fresh[0].Location != "Oakland, CA" || !fresh[0].LocationChecked || fresh[0].DominantColor != "#112233" {
 			t.Fatalf("carryCachedPhotoMetadata failed: %+v", fresh[0])
 		}
+		if !hasUncheckedPhotoLocations(fresh) {
+			t.Error("expected hasUncheckedPhotoLocations=true before enrichment")
+		}
 
 		srvLoc := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if strings.Contains(r.URL.RawQuery, "rpcids=fDcn4b") {
 				w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-				_, _ = w.Write([]byte(")]}'\n\n120\n[[[\"wrb.fr\",\"fDcn4b\",\"[[\\\"AF1Qip_new1\\\",null,null,null,null,null,null,null,null,null,null,null,null,[null,null,[[null,[[\\\"San Francisco, CA\\\",null,1]],\\\"ChIJ123\\\"]]]]]\",null,null,null,\"1\"],[\"wrb.fr\",\"fDcn4b\",\"[[\\\"AF1Qip_noloc\\\"]]\",null,null,null,\"2\"]]]\n"))
+				_, _ = w.Write([]byte(")]}'\n\n120\n[[[\"wrb.fr\",\"fDcn4b\",\"[[\\\"AF1Qip_new1\\\",null,null,null,null,null,null,null,null,null,null,null,null,[null,null,[[null,[[\\\"San Francisco, CA\\\",null,1]],\\\"ChIJ123\\\"]]]]]\",null,null,null,\"1\"],[\"wrb.fr\",\"fDcn4b\",\"[[\\\"AF1Qip_noloc\\\"]]\",null,null,null,\"2\"],[\"wrb.fr\",\"fDcn4b\",\"[null]\",null,null,null,\"3\"]]]\n"))
 				return
 			}
 			w.WriteHeader(http.StatusNotFound)
@@ -123,8 +127,14 @@ func TestPhotos_InternalHelpers(t *testing.T) {
 		if fresh[2].Location != "" || !fresh[2].LocationChecked {
 			t.Errorf("expected checked empty location for fresh[2], got %+v", fresh[2])
 		}
-		if fresh[3].LocationChecked {
-			t.Errorf("expected positional ID to be skipped, got %+v", fresh[3])
+		if fresh[3].Location != "" || !fresh[3].LocationChecked {
+			t.Errorf("expected omitted item in valid batch to be marked checked, got %+v", fresh[3])
+		}
+		if fresh[4].LocationChecked {
+			t.Errorf("expected positional ID to be skipped, got %+v", fresh[4])
+		}
+		if hasUncheckedPhotoLocations(fresh) {
+			t.Error("expected hasUncheckedPhotoLocations=false after enrichment")
 		}
 
 		// Error fallback logs warning without mutating unchecked items
@@ -734,18 +744,24 @@ func TestPhotos_InternalHelpers(t *testing.T) {
 			t.Errorf("expected untouched URL, got %s", c)
 		}
 
-		// checkWarmBootStaleLocked page1 stale only
+		// checkWarmBootStaleLocked page1 stale only vs unchecked location backfill
 		pStale := NewPhotosProvider()
 		pStale.albums = []*albumState{
 			{
 				cfg:           AlbumSource{Source: PhotoSourceShareURL},
 				lastFullSync:  time.Now(),
 				lastPage1Sync: time.Now().Add(-2 * time.Hour),
+				photos:        []PhotoItem{{ID: "AF1Qip_ok", LocationChecked: true}},
 			},
 		}
 		isStale, needsFull := pStale.checkWarmBootStaleLocked(time.Now())
 		if !isStale || needsFull {
 			t.Errorf("expected isStale=true, needsFull=false, got %v, %v", isStale, needsFull)
+		}
+		pStale.albums[0].lastPage1Sync = time.Now()
+		pStale.albums[0].photos = []PhotoItem{{ID: "AF1Qip_unchecked", LocationChecked: false}}
+		if isStale, needsFull = pStale.checkWarmBootStaleLocked(time.Now()); !isStale || !needsFull {
+			t.Errorf("expected isStale=true, needsFull=true for unchecked photo backfill, got %v, %v", isStale, needsFull)
 		}
 		if !pStale.checkPeriodicFullLocked(time.Now().Add(25 * time.Hour)) {
 			t.Error("expected checkPeriodicFullLocked=true")
