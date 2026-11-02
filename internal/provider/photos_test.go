@@ -209,6 +209,10 @@ func TestPhotosProvider_InitAndLifecycle(t *testing.T) {
 		{"bad_scheme", "", "", map[string]any{"source": "share_url", "album_url": "ftp://photos.google.com/album"}, provider.InitOptions{}, "invalid album URL"},
 		{"bad_host", "", "", map[string]any{"source": "share_url", "album_url": "http:///no-host"}, provider.InitOptions{}, "invalid album URL"},
 		{"ember_bridge_valid", "", "", map[string]any{"source": "ember_bridge", "album_url": "https://photos.app.goo.gl/ember"}, provider.InitOptions{}, ""},
+		{"legacy_share_url", "", "", map[string]any{"share_url": "https://p.app/leg"}, provider.InitOptions{}, ""},
+		{"legacy_share_url_env", "LEGACY_ENV", "https://p.app/leg_env", map[string]any{"share_url_env": "LEGACY_ENV"}, provider.InitOptions{}, ""},
+		{"legacy_share_url_opts", "", "", map[string]any{"share_url_env": "LEG_S"}, provider.InitOptions{Secrets: map[string]string{"share_url": "https://p.app/sec"}}, ""},
+		{"legacy_production_config", "", "", map[string]any{"share_url": "https://photos.app.goo.gl/example-album", "cycle_interval_seconds": 30, "shuffle": true}, provider.InitOptions{}, ""},
 	} {
 		if tc.envKey != "" {
 			t.Setenv(tc.envKey, tc.envVal)
