@@ -897,4 +897,46 @@ describe('TasksWidget', () => {
     expect(container.querySelector('.task-item-done')).not.toBeNull();
     vi.useRealTimers();
   });
+
+  it('clears optimistic state when item is removed from server list during update', () => {
+    vi.useFakeTimers();
+    useDisplayStore.setState({
+      widgets: {
+        'tasks-rem': {
+          meta: { type: 'tasks', origin: [0, 0], dimensions: [3, 2], config: {}, assets_base: '' },
+          state: 'healthy',
+          data: {
+            items: [{ id: 'rem-1', done: false }],
+          },
+          timestamp: '2026-10-31T12:00:00Z',
+        },
+      },
+    });
+
+    const { container } = render(<TasksWidget id="tasks-rem" type="tasks" />);
+    const item = container.querySelector('[data-item-id="rem-1"]')!;
+    fireEvent.click(item);
+
+    act(() => {
+      vi.advanceTimersByTime(TASK_UNDO_GRACE_MS + 10);
+    });
+
+    act(() => {
+      useDisplayStore.setState({
+        widgets: {
+          'tasks-rem': {
+            meta: { type: 'tasks', origin: [0, 0], dimensions: [3, 2], config: {}, assets_base: '' },
+            state: 'healthy',
+            data: {
+              items: [],
+            },
+            timestamp: '2026-10-31T12:02:00Z',
+          },
+        },
+      });
+    });
+
+    expect(container.querySelector('[data-item-id="rem-1"]')).toBeNull();
+    vi.useRealTimers();
+  });
 });

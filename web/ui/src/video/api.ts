@@ -31,6 +31,40 @@ function getFetch(customFetch?: typeof fetch): typeof fetch | null {
   return null;
 }
 
+function normalizePart(val: unknown, prefix: string): string {
+  if (val === undefined || val === null) return '';
+  const s = String(val).trim();
+  if (!s) return '';
+  return s.toUpperCase().startsWith(prefix) ? s.toUpperCase() : `${prefix}${s}`;
+}
+
+function resolveAnnotation(stream: VideoSource, record: Record<string, unknown>): string {
+  const explicit = String(record.annotation || '').trim();
+  if (explicit) return explicit;
+
+  const rawSeason = stream.season !== undefined && stream.season !== null ? stream.season : record.season_number;
+  const rawEp = stream.episode !== undefined && stream.episode !== null ? stream.episode : record.episode_number;
+
+  const s = normalizePart(rawSeason, 'S');
+  const ep = normalizePart(rawEp, 'E');
+  return `${s}${ep}`;
+}
+
+function buildTitleString(
+  series: string,
+  annotation: string,
+  title: string,
+  fallback: string,
+): string {
+  if (series && annotation && title) return `${series} ${annotation}: ${title}`;
+  if (series && title) return `${series}: ${title}`;
+  if (series && annotation) return `${series} ${annotation}`;
+  if (annotation && title) return `${annotation}: ${title}`;
+  if (title) return title;
+  if (series) return series;
+  return fallback;
+}
+
 /**
  * Format stream presentation title: "<Series Name> <season + episode annotation>: <episode name>"
  * with graceful fallbacks.
@@ -43,56 +77,10 @@ export function formatStreamTitle(stream?: VideoSource | null): string {
     stream.series || streamRecord.series_title || streamRecord.show_title || '',
   ).trim();
   const title = String(stream.title || streamRecord.episode_name || '').trim();
-  let annotation = String(streamRecord.annotation || '').trim();
+  const annotation = resolveAnnotation(stream, streamRecord);
+  const fallback = stream.id ? `Stream: ${stream.id}` : 'Live Video';
 
-  if (!annotation) {
-    const rawSeason =
-      stream.season !== undefined && stream.season !== null
-        ? stream.season
-        : streamRecord.season_number;
-    const s =
-      rawSeason !== undefined && rawSeason !== null && String(rawSeason).trim() !== ''
-        ? String(rawSeason).trim()
-        : '';
-    const rawEp =
-      stream.episode !== undefined && stream.episode !== null
-        ? stream.episode
-        : streamRecord.episode_number;
-    const ep =
-      rawEp !== undefined && rawEp !== null && String(rawEp).trim() !== ''
-        ? String(rawEp).trim()
-        : '';
-
-    if (s && ep) {
-      const sNorm = s.toUpperCase().startsWith('S') ? s.toUpperCase() : `S${s}`;
-      const epNorm = ep.toUpperCase().startsWith('E') ? ep.toUpperCase() : `E${ep}`;
-      annotation = `${sNorm}${epNorm}`;
-    } else if (s) {
-      annotation = s.toUpperCase().startsWith('S') ? s.toUpperCase() : `S${s}`;
-    } else if (ep) {
-      annotation = ep.toUpperCase().startsWith('E') ? ep.toUpperCase() : `E${ep}`;
-    }
-  }
-
-  if (series && annotation && title) {
-    return `${series} ${annotation}: ${title}`;
-  }
-  if (series && title) {
-    return `${series}: ${title}`;
-  }
-  if (series && annotation) {
-    return `${series} ${annotation}`;
-  }
-  if (annotation && title) {
-    return `${annotation}: ${title}`;
-  }
-  if (title) {
-    return title;
-  }
-  if (series) {
-    return series;
-  }
-  return stream.id ? `Stream: ${stream.id}` : 'Live Video';
+  return buildTitleString(series, annotation, title, fallback);
 }
 
 /**
