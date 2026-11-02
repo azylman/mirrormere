@@ -214,7 +214,8 @@ describe('HomeAssistantWidget', () => {
             },
           });
 
-    const { container } = render(<HomeAssistantWidget id="ha-all-domains" type="home-assistant" />);
+    const { container, rerender } = render(<HomeAssistantWidget id="ha-all-domains" type="home-assistant" />);
+    rerender(<HomeAssistantWidget id="ha-all-domains" type="home-assistant" />);
 
     // 1. Light: tap toggle
     const lightRow = container.querySelector('[data-entity-id="light.living_room"]');
@@ -1154,6 +1155,7 @@ describe('HomeAssistantWidget', () => {
     });
 
     // While inFlight is true, clicking again triggers if (inFlight) return
+    btn.removeAttribute('disabled');
     await act(async () => {
       fireEvent.click(btn);
     });

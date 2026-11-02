@@ -260,9 +260,7 @@ func (c *ProviderCoordinator) CallWidgetActionWithResponse(ctx context.Context, 
 	if err != nil {
 		return nil, err
 	}
-	if refreshErr := c.RefreshWidget(targetWidgetID); refreshErr != nil {
-		c.logger.Warn("failed to refresh widget after action", "widget_id", targetWidgetID, "error", refreshErr)
-	}
+	_ = c.RefreshWidget(targetWidgetID)
 	return res, nil
 }
 

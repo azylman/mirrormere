@@ -1,90 +1,32 @@
 import { memo, useCallback, useMemo, useState } from 'react';
 import { useWidget } from '../../store/hooks';
 import type { WidgetComponentProps } from '../registry';
+import {
+  applyOptimisticUpdate,
+  dispatchWidgetAction,
+  formatStateLabel,
+  getBinaryLabel,
+  getDomain,
+  getDomainIcon,
+  getEntityName,
+} from './homeAssistantTypes';
+import type {
+  ActionPayload,
+  Ctx,
+  EntityState,
+  HomeAssistantSnapshot,
+  LovelaceCard,
+} from './homeAssistantTypes';
 
-export interface EntityState {
-  entity_id: string; state: string; attributes: Record<string, unknown>;
-  last_changed?: string; last_updated?: string;
-}
-
-interface LovelaceCard {
-  type: string; title?: string; entity?: string;
-  entities?: (string | { entity?: string; type?: string; name?: string; icon?: string; [k: string]: unknown })[];
-  cards?: LovelaceCard[]; name?: string; icon?: string; image?: string; camera_image?: string;
-  tap_action?: Record<string, unknown>; columns?: number; [k: string]: unknown;
-}
-
-interface HomeAssistantSnapshot {
-  title?: string; view?: { title?: string; sections?: { title?: string; cards?: LovelaceCard[] }[]; cards?: LovelaceCard[] };
-  cards?: LovelaceCard[]; entities?: Record<string, EntityState>; last_updated?: string;
-}
-
-export interface ActionPayload {
-  domain: string; service: string; entity_id?: string; service_data?: Record<string, unknown>;
-}
-
-export function getDomain(entityId: string): string {
-  if (!entityId) return '';
-  return entityId.split('.')[0].toLowerCase();
-}
-
-export function getEntityName(entity: EntityState | undefined, entityId: string, customName?: string): string {
-  if (!entityId) return '';
-  if (customName && customName.trim() !== '') return customName;
-  if (entity?.attributes?.friendly_name && typeof entity.attributes.friendly_name === 'string') {
-    return entity.attributes.friendly_name;
-  }
-  const parts = entityId.split('.');
-  return parts.length > 1 ? parts[1].replace(/_/g, ' ') : entityId;
-}
-
-const DOMAIN_ICONS: Record<string, string | ((s?: string) => string)> = {
-  light: (s) => (s === 'on' ? '💡' : '○'), switch: (s) => (s === 'on' ? '🔌' : '○'),
-  fan: (s) => (s === 'on' ? '🌀' : '🪭'), cover: (s) => (s === 'open' ? '🪟' : '🚪'),
-  lock: (s) => (s === 'locked' ? '🔒' : '🔓'), climate: '🌡️',
-  media_player: (s) => (s === 'playing' ? '🔊' : '🎵'), camera: '📹',
-  scene: '🎬', script: '⚡', sensor: '📊', binary_sensor: (s) => (s === 'on' ? '🔔' : '🔕'),
+export {
+  applyOptimisticUpdate,
+  dispatchWidgetAction,
+  formatStateLabel,
+  getBinaryLabel,
+  getDomain,
+  getDomainIcon,
+  getEntityName,
 };
-
-export function getDomainIcon(domain: string, state?: string): string {
-  const icon = DOMAIN_ICONS[domain];
-  return typeof icon === 'function' ? icon(state) : (icon ?? '⚙️');
-}
-
-export async function dispatchWidgetAction(widgetId: string, payload: ActionPayload, fetchImpl = fetch): Promise<unknown> {
-  const url = `/api/widgets/${encodeURIComponent(widgetId)}/action`;
-  const body: Record<string, unknown> = { domain: payload.domain, service: payload.service };
-  if (payload.entity_id) body.entity_id = payload.entity_id;
-  if (payload.service_data) {
-    body.service_data = { ...(payload.entity_id ? { entity_id: payload.entity_id } : {}), ...payload.service_data };
-  } else if (payload.entity_id) {
-    body.service_data = { entity_id: payload.entity_id };
-  }
-  const res = await fetchImpl(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-  if (!res.ok) throw new Error(`Widget action failed (HTTP ${res.status}): ${await res.text().catch(() => '')}`);
-  return await res.json().catch(() => ({}));
-}
-
-export function applyOptimisticUpdate(curr: EntityState, domain: string, service: string, data?: Record<string, unknown>): EntityState {
-  let state = curr.state;
-  const attrs = { ...curr.attributes };
-  if (domain === 'light' || domain === 'switch' || domain === 'fan') {
-    if (service === 'toggle') state = curr.state === 'on' ? 'off' : 'on';
-    else if (service === 'turn_on') {
-      state = 'on';
-      if (data?.brightness !== undefined) attrs.brightness = data.brightness;
-      if (data?.percentage !== undefined) attrs.percentage = data.percentage;
-    } else if (service === 'turn_off') state = 'off';
-  } else if (domain === 'lock') state = service === 'lock' ? 'locked' : 'unlocked';
-  else if (domain === 'cover') state = service === 'open_cover' ? 'open' : 'closed';
-  else if (domain === 'climate') {
-    if (data?.temperature !== undefined) attrs.temperature = data.temperature;
-    if (data?.hvac_mode !== undefined) state = String(data.hvac_mode);
-  } else if (domain === 'media_player') {
-    state = service === 'media_play' ? 'playing' : service === 'media_pause' ? 'paused' : curr.state === 'playing' ? 'paused' : 'playing';
-  }
-  return { ...curr, state, attributes: attrs };
-}
 
 export const HomeAssistantWidget = memo(function HomeAssistantWidget({ id }: WidgetComponentProps) {
   const entry = useWidget(id);
@@ -105,7 +47,9 @@ export const HomeAssistantWidget = memo(function HomeAssistantWidget({ id }: Wid
 
   const sendAction = useCallback(async (payload: ActionPayload) => {
     const entId = payload.entity_id;
-    if (entId) setInFlight((prev) => ({ ...prev, [entId]: true }));
+    if (entId) {
+      setInFlight((prev) => ({ ...prev, [entId]: true }));
+    }
     setActionError(null);
     if (entId && entities[entId]) {
       setOverrides((prev) => ({ ...prev, [entId]: applyOptimisticUpdate(entities[entId], payload.domain, payload.service, payload.service_data) }));
@@ -138,7 +82,6 @@ export const HomeAssistantWidget = memo(function HomeAssistantWidget({ id }: Wid
 
   const title = data?.title || data?.view?.title || 'Home Assistant';
   const cardsToRender = useMemo(() => {
-    if (data?.view?.sections?.length) return null;
     if (data?.cards?.length) return data.cards;
     if (data?.view?.cards?.length) return data.view.cards;
     if (entities && Object.keys(entities).length > 0) {
@@ -149,7 +92,7 @@ export const HomeAssistantWidget = memo(function HomeAssistantWidget({ id }: Wid
       });
     }
     return [];
-  }, [data?.view?.sections, data?.cards, data?.view?.cards, entities]);
+  }, [data?.cards, data?.view?.cards, entities]);
 
   if (isError) {
     return (
@@ -195,14 +138,14 @@ export const HomeAssistantWidget = memo(function HomeAssistantWidget({ id }: Wid
               <section key={`sec-${sIdx}`} className="ha-section" data-section-index={sIdx}>
                 {section.title && <h3 className="ha-section-title">{section.title}</h3>}
                 <div className="ha-cards-grid">
-                  {(section.cards || []).map((card, cIdx) => <CardRenderer key={`card-${sIdx}-${cIdx}`} card={card} ctx={ctx} />)}
+                  {section.cards?.map((card, cIdx) => renderCard(card, ctx, `card-${sIdx}-${cIdx}`))}
                 </div>
               </section>
             ))}
           </div>
         ) : (
           <div className="ha-cards-grid">
-            {(cardsToRender || []).map((card, cIdx) => <CardRenderer key={`card-${cIdx}`} card={card} ctx={ctx} />)}
+            {cardsToRender.map((card, cIdx) => renderCard(card, ctx, `card-${cIdx}`))}
           </div>
         )}
       </main>
@@ -210,35 +153,32 @@ export const HomeAssistantWidget = memo(function HomeAssistantWidget({ id }: Wid
   );
 });
 
-interface Ctx {
-  entities: Record<string, EntityState>; inFlight: Record<string, boolean>;
-  sendAction: (payload: ActionPayload) => Promise<void>; refreshCamera: (entityId: string) => void;
-  cameraTimestamps: Record<string, number>;
-}
-
-function CardRenderer({ card, ctx }: { card: LovelaceCard; ctx: Ctx }) {
+function renderCard(card: LovelaceCard, ctx: Ctx, key?: string) {
   const cardType = (card.type || '').toLowerCase();
-  if (cardType === 'divider') return <div className="ha-card ha-card-divider ha-divider" />;
+  if (cardType === 'divider') {
+    return <div key={key} className="ha-card ha-card-divider ha-divider" />;
+  }
 
   if (cardType === 'grid' && card.cards) {
     return (
-      <div className="ha-card ha-card-grid" style={{ gridTemplateColumns: `repeat(${card.columns || 2}, minmax(0, 1fr))` }}>
-        {card.cards.map((sub, idx) => <CardRenderer key={`sub-${idx}`} card={sub} ctx={ctx} />)}
+      <div key={key} className="ha-card ha-card-grid" style={{ gridTemplateColumns: `repeat(${card.columns || 2}, minmax(0, 1fr))` }}>
+        {card.cards.map((sub, idx) => renderCard(sub, ctx, `sub-${idx}`))}
       </div>
     );
   }
 
   if (cardType === 'entities') {
     return (
-      <div className="ha-card ha-card-entities">
+      <div key={key} className="ha-card ha-card-entities">
         {card.title && <h4 className="ha-card-title">{card.title}</h4>}
         <div className="ha-entity-list">
-          {(card.entities || []).map((item, idx) => {
-            if (typeof item === 'object' && item !== null && (item.type === 'divider' || !item.entity)) return <div key={`div-${idx}`} className="ha-divider" />;
-            const entId = typeof item === 'string' ? item : item.entity;
-            if (!entId) return <div key={`div-${idx}`} className="ha-divider" />;
-            const customName = typeof item === 'object' && item !== null ? item.name : undefined;
-            return <EntityControlRow key={`ent-${idx}-${entId}`} entityId={entId} entity={ctx.entities[entId]} customName={customName} inFlight={Boolean(ctx.inFlight[entId])} sendAction={ctx.sendAction} refreshCamera={ctx.refreshCamera} />;
+          {card.entities?.map((item, idx) => {
+            const isObj = typeof item === 'object' && item !== null;
+            const entId = typeof item === 'string' ? item : (item?.entity ?? '');
+            if (!entId || (isObj && item.type === 'divider')) {
+              return <div key={`div-${idx}`} className="ha-divider" />;
+            }
+            return renderEntityControlRow(entId, ctx, isObj ? item.name : undefined, `ent-${idx}-${entId}`);
           })}
         </div>
       </div>
@@ -246,89 +186,106 @@ function CardRenderer({ card, ctx }: { card: LovelaceCard; ctx: Ctx }) {
   }
 
   const entId = card.entity || '';
-  if (cardType === 'thermostat') return <ThermostatCard entityId={entId} entity={ctx.entities[entId]} title={card.title} inFlight={Boolean(ctx.inFlight[entId])} sendAction={ctx.sendAction} />;
-  if (cardType === 'picture-entity') {
-    const ts = ctx.cameraTimestamps[entId] || (card.camera_image ? ctx.cameraTimestamps[card.camera_image] : undefined);
-    return <PictureEntityCard card={card} entityId={entId} entity={ctx.entities[entId]} entities={ctx.entities} refreshCamera={ctx.refreshCamera} cameraTimestamp={ts} sendAction={ctx.sendAction} />;
+  if (cardType === 'thermostat') {
+    return renderThermostatCard(entId, ctx, card.title, key);
   }
-  if (cardType === 'button') return <ButtonCard card={card} entityId={entId} entity={ctx.entities[entId]} inFlight={Boolean(ctx.inFlight[entId])} sendAction={ctx.sendAction} />;
-  if (entId) return <TileCard entityId={entId} entity={ctx.entities[entId]} card={card} inFlight={Boolean(ctx.inFlight[entId])} sendAction={ctx.sendAction} refreshCamera={ctx.refreshCamera} />;
+  if (cardType === 'picture-entity') {
+    return renderPictureEntityCard(card, entId, ctx, key);
+  }
+  if (cardType === 'button') {
+    return renderButtonCard(card, entId, ctx, key);
+  }
+  if (entId) {
+    return renderTileCard(entId, ctx, card, key);
+  }
 
   if (card.cards?.length) {
     return (
-      <div className="ha-card ha-card-wrapper">
+      <div key={key} className="ha-card ha-card-wrapper">
         {card.title && <h4 className="ha-card-title">{card.title}</h4>}
-        {card.cards.map((c, i) => <CardRenderer key={`nested-${i}`} card={c} ctx={ctx} />)}
+        {card.cards.map((c, i) => renderCard(c, ctx, `nested-${i}`))}
       </div>
     );
   }
-  return <div className="ha-card ha-card-unknown">{card.title || card.name || cardType || 'Card'}</div>;
+  return <div key={key} className="ha-card ha-card-unknown">{card.title || card.name || cardType || 'Card'}</div>;
 }
 
-function EntityControlRow({ entityId, entity, customName, inFlight, sendAction, refreshCamera }: {
-  entityId: string; entity?: EntityState; customName?: string; inFlight: boolean; sendAction: (p: ActionPayload) => Promise<void>; refreshCamera: (id: string) => void;
-}) {
-  const domain = getDomain(entityId), name = getEntityName(entity, entityId, customName), state = entity?.state ?? 'unavailable';
+function renderEntityControlRow(entityId: string, ctx: Ctx, customName?: string, key?: string) {
+  const domain = getDomain(entityId);
+  const entity = ctx.entities[entityId];
+  const name = getEntityName(entity, entityId, customName);
+  const state = entity?.state ?? 'unavailable';
   return (
-    <div className={`ha-entity-row ha-domain-${domain} ${state === 'on' ? 'is-active' : ''}`} data-entity-id={entityId} data-domain={domain} data-state={state}>
+    <div key={key} className={`ha-entity-row ha-domain-${domain} ${state === 'on' ? 'is-active' : ''}`} data-entity-id={entityId} data-domain={domain} data-state={state}>
       <div className="ha-row-left"><span className="ha-row-icon">{getDomainIcon(domain, state)}</span><div className="ha-row-meta"><div className="ha-row-name">{name}</div><div className="ha-row-state-label">{formatStateLabel(domain, state, entity?.attributes)}</div></div></div>
-      <div className="ha-row-actions" data-prevent-screen-swipe=""><DomainTouchControls domain={domain} entityId={entityId} entity={entity} inFlight={inFlight} sendAction={sendAction} refreshCamera={refreshCamera} /></div>
+      <div className="ha-row-actions" data-prevent-screen-swipe="">{renderDomainTouchControls(domain, entityId, ctx, entity)}</div>
     </div>
   );
 }
 
-function TileCard({ entityId, entity, card, inFlight, sendAction, refreshCamera }: {
-  entityId: string; entity?: EntityState; card: LovelaceCard; inFlight: boolean; sendAction: (p: ActionPayload) => Promise<void>; refreshCamera: (id: string) => void;
-}) {
-  const domain = getDomain(entityId), name = getEntityName(entity, entityId, card.name || card.title), state = entity?.state ?? 'unavailable';
+function renderTileCard(entityId: string, ctx: Ctx, card: LovelaceCard, key?: string) {
+  const domain = getDomain(entityId);
+  const entity = ctx.entities[entityId];
+  const name = getEntityName(entity, entityId, card.name || card.title);
+  const state = entity?.state ?? 'unavailable';
   return (
-    <div className={`ha-card ha-card-tile ha-domain-${domain} ${state === 'on' ? 'is-active' : ''}`} data-entity-id={entityId} data-domain={domain} data-state={state}>
+    <div key={key} className={`ha-card ha-card-tile ha-domain-${domain} ${state === 'on' ? 'is-active' : ''}`} data-entity-id={entityId} data-domain={domain} data-state={state}>
       <div className="ha-tile-header"><span className="ha-tile-icon">{card.icon || getDomainIcon(domain, state)}</span><div className="ha-tile-meta"><div className="ha-tile-name">{name}</div><div className="ha-tile-state">{formatStateLabel(domain, state, entity?.attributes)}</div></div></div>
-      <div className="ha-tile-controls" data-prevent-screen-swipe=""><DomainTouchControls domain={domain} entityId={entityId} entity={entity} inFlight={inFlight} sendAction={sendAction} refreshCamera={refreshCamera} /></div>
+      <div className="ha-tile-controls" data-prevent-screen-swipe="">{renderDomainTouchControls(domain, entityId, ctx, entity)}</div>
     </div>
   );
 }
 
-function ButtonCard({ card, entityId, entity, inFlight, sendAction }: {
-  card: LovelaceCard; entityId: string; entity?: EntityState; inFlight: boolean; sendAction: (p: ActionPayload) => Promise<void>;
-}) {
-  const domain = getDomain(entityId), name = getEntityName(entity, entityId, card.name || card.title);
-  const state = entity?.state ?? 'idle', icon = card.icon || getDomainIcon(domain, state);
+function renderButtonCard(card: LovelaceCard, entityId: string, ctx: Ctx, key?: string) {
+  const domain = getDomain(entityId);
+  const entity = ctx.entities[entityId];
+  const inFlight = Boolean(ctx.inFlight[entityId]);
+  const name = getEntityName(entity, entityId, card.name || card.title);
+  const state = entity?.state ?? 'idle';
+  const icon = card.icon || getDomainIcon(domain, state);
+
   const handleTap = () => {
     if (inFlight) return;
     if (card.tap_action) {
       const act = card.tap_action;
       if (act.action === 'call-service' || act.action === 'call_service') {
-        const full = String(act.service || ''), [dom, srv] = full.includes('.') ? full.split('.') : [domain, full];
-        const tgt = act.target as Record<string, unknown> | undefined, svc = act.service_data as Record<string, unknown> | undefined;
+        const full = String(act.service || '');
+        const [dom, srv] = full.includes('.') ? full.split('.') : [domain, full];
+        const tgt = act.target as Record<string, unknown> | undefined;
+        const svc = act.service_data as Record<string, unknown> | undefined;
         const ent = typeof tgt?.entity_id === 'string' ? tgt.entity_id : typeof svc?.entity_id === 'string' ? svc.entity_id : entityId;
-        void sendAction({ domain: dom || domain, service: srv, entity_id: ent, service_data: (act.service_data || act.data || {}) as Record<string, unknown> });
+        void ctx.sendAction({ domain: dom || domain, service: srv, entity_id: ent, service_data: (act.service_data || act.data || {}) as Record<string, unknown> });
         return;
       }
     }
-    if (domain === 'scene' || domain === 'script') void sendAction({ domain, service: 'turn_on', entity_id: entityId });
-    else if (domain === 'lock') void sendAction({ domain: 'lock', service: state === 'locked' ? 'unlock' : 'lock', entity_id: entityId });
-    else void sendAction({ domain, service: 'toggle', entity_id: entityId });
+    if (domain === 'scene' || domain === 'script') {
+      void ctx.sendAction({ domain, service: 'turn_on', entity_id: entityId });
+    } else if (domain === 'lock') {
+      void ctx.sendAction({ domain: 'lock', service: state === 'locked' ? 'unlock' : 'lock', entity_id: entityId });
+    } else {
+      void ctx.sendAction({ domain, service: 'toggle', entity_id: entityId });
+    }
   };
+
   return (
-    <button type="button" className={`ha-card ha-card-button ha-btn-touch ha-domain-${domain} ${state === 'on' ? 'is-active' : ''}`} data-entity-id={entityId} data-domain={domain} data-state={state} data-prevent-screen-swipe="" disabled={inFlight} onClick={handleTap}>
+    <button key={key} type="button" className={`ha-card ha-card-button ha-btn-touch ha-domain-${domain} ${state === 'on' ? 'is-active' : ''}`} data-entity-id={entityId} data-domain={domain} data-state={state} data-prevent-screen-swipe="" disabled={inFlight} onClick={handleTap}>
       <span className="ha-btn-card-icon">{icon}</span><span className="ha-btn-card-name">{name}</span><span className="ha-btn-card-state">{state}</span>
     </button>
   );
 }
 
-function ThermostatCard({ entityId, entity, title, inFlight, sendAction }: {
-  entityId: string; entity?: EntityState; title?: string; inFlight: boolean; sendAction: (p: ActionPayload) => Promise<void>;
-}) {
+function renderThermostatCard(entityId: string, ctx: Ctx, title?: string, key?: string) {
+  const entity = ctx.entities[entityId];
+  const inFlight = Boolean(ctx.inFlight[entityId]);
   const name = title || getEntityName(entity, entityId);
   const state = entity?.state ?? 'off';
   const cur = entity?.attributes?.current_temperature as number | undefined;
   const target = (entity?.attributes?.temperature as number | undefined) ?? 70;
   const modes = (entity?.attributes?.hvac_modes as string[] | undefined) || ['off', 'heat', 'cool', 'auto'];
-  const act = (srv: string, data: Record<string, unknown>) => sendAction({ domain: 'climate', service: srv, entity_id: entityId, service_data: data });
+  const act = (srv: string, data: Record<string, unknown>) => ctx.sendAction({ domain: 'climate', service: srv, entity_id: entityId, service_data: data });
 
   return (
-    <div className={`ha-card ha-card-thermostat is-${state}`} data-entity-id={entityId} data-domain="climate" data-state={state}>
+    <div key={key} className={`ha-card ha-card-thermostat is-${state}`} data-entity-id={entityId} data-domain="climate" data-state={state}>
       <div className="ha-thermostat-header"><span className="ha-thermostat-icon">🌡️</span><div className="ha-thermostat-title">{name}</div><div className="ha-thermostat-state-badge">{state.toUpperCase()}</div></div>
       <div className="ha-thermostat-body">
         {cur !== undefined && <div className="ha-current-temp" title="Current Temperature">Current: <span className="ha-temp-val">{cur}°</span></div>}
@@ -345,24 +302,27 @@ function ThermostatCard({ entityId, entity, title, inFlight, sendAction }: {
   );
 }
 
-function PictureEntityCard({ card, entityId, entity, entities, refreshCamera, cameraTimestamp, sendAction }: {
-  card: LovelaceCard; entityId: string; entity?: EntityState; entities: Record<string, EntityState>;
-  refreshCamera: (id: string) => void; cameraTimestamp?: number; sendAction: (p: ActionPayload) => Promise<void>;
-}) {
+function renderPictureEntityCard(card: LovelaceCard, entityId: string, ctx: Ctx, key?: string) {
+  const entity = ctx.entities[entityId];
   const name = getEntityName(entity, entityId, (card.title || card.name) as string | undefined);
   const state = entity?.state ?? 'idle';
-  const camPic = card.camera_image ? (entities[card.camera_image]?.attributes?.entity_picture as string | undefined) : undefined;
+  const camPic = card.camera_image ? (ctx.entities[card.camera_image]?.attributes?.entity_picture as string | undefined) : undefined;
   const pic = (entity?.attributes?.entity_picture as string | undefined) || camPic || (card.image as string | undefined) || (card.camera_image as string | undefined);
+  const cameraTimestamp = ctx.cameraTimestamps[entityId] || (card.camera_image ? ctx.cameraTimestamps[card.camera_image] : undefined);
   const imageSrc = pic ? (cameraTimestamp ? `${pic}${pic.includes('?') ? '&' : '?'}ts=${cameraTimestamp}` : pic) : '';
 
   const handleTap = () => {
-    if (entityId.startsWith('camera.')) refreshCamera(entityId);
-    else if (card.camera_image) refreshCamera(card.camera_image);
-    else void sendAction({ domain: getDomain(entityId), service: 'toggle', entity_id: entityId });
+    if (entityId.startsWith('camera.')) {
+      ctx.refreshCamera(entityId);
+    } else if (card.camera_image) {
+      ctx.refreshCamera(card.camera_image);
+    } else {
+      void ctx.sendAction({ domain: getDomain(entityId), service: 'toggle', entity_id: entityId });
+    }
   };
 
   return (
-    <div className="ha-card ha-card-picture" data-entity-id={entityId} data-domain={getDomain(entityId)} data-state={state} onClick={handleTap}>
+    <div key={key} className="ha-card ha-card-picture" data-entity-id={entityId} data-domain={getDomain(entityId)} data-state={state} onClick={handleTap}>
       <div className="ha-picture-container">
         {imageSrc ? <img src={imageSrc} alt={name} className="ha-picture-img" loading="lazy" /> : <div className="ha-picture-fallback"><span>📹 {name}</span></div>}
         <div className="ha-picture-footer"><span className="ha-picture-name">{name}</span><span className="ha-picture-state">{state}</span></div>
@@ -425,63 +385,37 @@ function renderMedia(entityId: string, isPlaying: boolean, inFlight: boolean, se
   );
 }
 
-const BINARY_LABELS: Record<string, [string, string]> = {
-  door: ['Open', 'Closed'], window: ['Open', 'Closed'],
-  occupancy: ['Occupied', 'Clear'], presence: ['Home', 'Away'], motion: ['Motion', 'Clear'],
-};
-
-export function getBinaryLabel(isOn: boolean, dc?: string): string {
-  const pair = dc ? BINARY_LABELS[dc] : undefined;
-  return pair ? (isOn ? pair[0] : pair[1]) : (isOn ? 'On' : 'Off');
-}
-
-function DomainTouchControls({ domain, entityId, entity, inFlight, sendAction, refreshCamera }: {
-  domain: string; entityId: string; entity?: EntityState; inFlight: boolean;
-  sendAction: (p: ActionPayload) => Promise<void>; refreshCamera: (id: string) => void;
-}) {
+function renderDomainTouchControls(domain: string, entityId: string, ctx: Ctx, entity?: EntityState) {
+  const inFlight = Boolean(ctx.inFlight[entityId]);
   const state = entity?.state ?? 'off';
   const attrs = entity?.attributes || {};
   const isOn = state === 'on';
-  const toggle = (dom = domain, srv = 'toggle') => sendAction({ domain: dom, service: srv, entity_id: entityId });
 
   switch (domain) {
-    case 'light': return renderLight(entityId, isOn, attrs, inFlight, sendAction);
-    case 'switch': return <button type="button" className={`ha-btn ha-btn-toggle ${isOn ? 'is-on' : ''}`} disabled={inFlight} onClick={() => toggle()} data-action="toggle">{isOn ? 'Turn Off' : 'Turn On'}</button>;
-    case 'fan': return renderFan(entityId, isOn, attrs, inFlight, sendAction);
-    case 'cover': return renderCover(entityId, inFlight, sendAction);
+    case 'light': return renderLight(entityId, isOn, attrs, inFlight, ctx.sendAction);
+    case 'switch': return <button type="button" className={`ha-btn ha-btn-toggle ${isOn ? 'is-on' : ''}`} disabled={inFlight} onClick={() => ctx.sendAction({ domain: 'switch', service: 'toggle', entity_id: entityId })} data-action="toggle">{isOn ? 'Turn Off' : 'Turn On'}</button>;
+    case 'fan': return renderFan(entityId, isOn, attrs, inFlight, ctx.sendAction);
+    case 'cover': return renderCover(entityId, inFlight, ctx.sendAction);
     case 'lock': {
       const isLocked = state === 'locked';
-      return <button type="button" className={`ha-btn ${isLocked ? 'ha-btn-locked' : 'ha-btn-unlocked'}`} disabled={inFlight} onClick={() => sendAction({ domain: 'lock', service: isLocked ? 'unlock' : 'lock', entity_id: entityId })} data-action="toggle-lock">{isLocked ? 'Unlock' : 'Lock'}</button>;
+      return <button type="button" className={`ha-btn ${isLocked ? 'ha-btn-locked' : 'ha-btn-unlocked'}`} disabled={inFlight} onClick={() => ctx.sendAction({ domain: 'lock', service: isLocked ? 'unlock' : 'lock', entity_id: entityId })} data-action="toggle-lock">{isLocked ? 'Unlock' : 'Lock'}</button>;
     }
     case 'climate': {
       const targetTemp = (attrs.temperature as number | undefined) ?? 70;
       return (
         <div className="ha-btn-group">
-          <button type="button" className="ha-btn ha-btn-temp" disabled={inFlight} onClick={() => sendAction({ domain: 'climate', service: 'set_temperature', entity_id: entityId, service_data: { temperature: targetTemp - 1 } })} data-action="temp-down">-</button>
+          <button type="button" className="ha-btn ha-btn-temp" disabled={inFlight} onClick={() => ctx.sendAction({ domain: 'climate', service: 'set_temperature', entity_id: entityId, service_data: { temperature: targetTemp - 1 } })} data-action="temp-down">-</button>
           <span className="ha-temp-inline">{targetTemp}°</span>
-          <button type="button" className="ha-btn ha-btn-temp" disabled={inFlight} onClick={() => sendAction({ domain: 'climate', service: 'set_temperature', entity_id: entityId, service_data: { temperature: targetTemp + 1 } })} data-action="temp-up">+</button>
+          <button type="button" className="ha-btn ha-btn-temp" disabled={inFlight} onClick={() => ctx.sendAction({ domain: 'climate', service: 'set_temperature', entity_id: entityId, service_data: { temperature: targetTemp + 1 } })} data-action="temp-up">+</button>
         </div>
       );
     }
-    case 'media_player': return renderMedia(entityId, state === 'playing', inFlight, sendAction);
-    case 'camera': return <button type="button" className="ha-btn ha-btn-camera" disabled={inFlight} onClick={() => refreshCamera(entityId)} data-action="refresh">Refresh</button>;
-    case 'scene':
-    case 'script': return <button type="button" className="ha-btn ha-btn-primary" disabled={inFlight} onClick={() => toggle(domain, 'turn_on')} data-action={domain === 'scene' ? 'activate' : 'run'}>{domain === 'scene' ? 'Activate' : 'Run'}</button>;
+    case 'media_player': return renderMedia(entityId, state === 'playing', inFlight, ctx.sendAction);
+    case 'camera': return <button type="button" className="ha-btn ha-btn-camera" disabled={inFlight} onClick={() => ctx.refreshCamera(entityId)} data-action="refresh">Refresh</button>;
+    case 'scene': return <button type="button" className="ha-btn ha-btn-primary" disabled={inFlight} onClick={() => ctx.sendAction({ domain: 'scene', service: 'turn_on', entity_id: entityId })} data-action="activate">Activate</button>;
+    case 'script': return <button type="button" className="ha-btn ha-btn-primary" disabled={inFlight} onClick={() => ctx.sendAction({ domain: 'script', service: 'turn_on', entity_id: entityId })} data-action="run">Run</button>;
     case 'sensor': return <div className="ha-sensor-pill" data-state={state}><span className="ha-sensor-val">{state}</span>{Boolean(attrs.unit_of_measurement) && <span className="ha-sensor-unit">{String(attrs.unit_of_measurement)}</span>}</div>;
     case 'binary_sensor': return <div className={`ha-binary-pill ${isOn ? 'is-active' : 'is-clear'}`} data-state={state}><span className="ha-pill-dot" /><span className="ha-pill-text">{getBinaryLabel(isOn, attrs.device_class as string | undefined)}</span></div>;
     default: return <div className="ha-generic-state">{state}</div>;
   }
-}
-
-export function formatStateLabel(domain: string, state: string, attrs?: Record<string, unknown>): string {
-  if (domain === 'light') {
-    const b = state === 'on' && typeof attrs?.brightness === 'number' ? Math.round((attrs.brightness / 255) * 100) : null;
-    return b !== null ? `On · ${b}%` : state === 'on' ? 'On' : 'Off';
-  }
-  if (domain === 'climate' && attrs?.current_temperature !== undefined) return `${state} · ${attrs.current_temperature}°`;
-  if (domain === 'media_player' && attrs?.media_title) {
-    return attrs.media_artist ? `${attrs.media_title} - ${attrs.media_artist}` : String(attrs.media_title);
-  }
-  if (domain === 'sensor') return `${state} ${attrs?.unit_of_measurement || ''}`.trim();
-  return state;
 }
