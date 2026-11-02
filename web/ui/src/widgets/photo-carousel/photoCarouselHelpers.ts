@@ -50,13 +50,6 @@ export function formatPhotoMetadataLabel(
   return text ? { date, location, album, text } : null;
 }
 
-export function resolvePhotoOverlayTheme(dominantColor?: string): 'light' | 'dark' {
-  const m = /^#?([0-9a-fA-F]{6})$/.exec((dominantColor || '').trim());
-  if (!m) return 'dark';
-  const hex = parseInt(m[1], 16);
-  return (0.299 * ((hex >> 16) & 0xff) + 0.587 * ((hex >> 8) & 0xff) + 0.114 * (hex & 0xff)) / 255 >= 0.58 ? 'light' : 'dark';
-}
-
 export function parsePhotoCarouselData(raw: unknown): PhotoCarouselData {
   if (!raw) return {};
   if (typeof raw === 'object' && !Array.isArray(raw)) return raw as PhotoCarouselData;
