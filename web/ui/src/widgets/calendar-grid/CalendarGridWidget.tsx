@@ -1,3 +1,4 @@
+import './CalendarGridWidget.css';
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { useWidget } from '../../store/hooks';
 import type { WidgetComponentProps } from '../registry';

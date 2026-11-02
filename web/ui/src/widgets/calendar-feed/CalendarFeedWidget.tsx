@@ -1,3 +1,4 @@
+import './CalendarFeedWidget.css';
 import {
   useState,
   type CSSProperties,

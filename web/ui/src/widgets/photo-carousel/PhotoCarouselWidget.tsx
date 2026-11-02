@@ -1,3 +1,4 @@
+import './PhotoCarouselWidget.css';
 import { useEffect, useRef, useState } from 'react';
 import { useWidget } from '../../store/hooks';
 import type { WidgetComponentProps } from '../registry';
