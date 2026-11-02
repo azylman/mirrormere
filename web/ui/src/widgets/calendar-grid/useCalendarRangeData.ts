@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { addDays, addMonths, parseISODate, toISODate } from './dateUtils';
+import { addDays, addMonths, parseISODate, formatISODate as toISODate } from './dateUtils';
 import type { CalendarGridViewModel, FamilyViewModel, ViewMode } from './types';
 
 export interface UseCalendarRangeDataProps {

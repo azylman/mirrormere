@@ -395,15 +395,19 @@ run_python_tests() {
     fi
 }
 
-# 9. React UI (web/ui): lint, typecheck, tests, build.
-# Runs only when web/ui changed and web/ui/node_modules exists (npm ci done).
+# 9. React UI (web/ui): lint, deadcode, typecheck, tests, build.
+# Runs when web/ui changed; runs npm ci if node_modules is missing.
 run_ui_checks() {
     if ! has_cmd npm; then
         echo "🚨 [Mirrormere Verify] Error: npm not found in PATH; web/ui checks cannot run." >&2
         exit 1
     fi
-    echo "   [ui] Running React UI lint, typecheck, tests and build..."
-    (cd "$REPO_ROOT/web/ui" && npm run lint && npm run typecheck && npm test && npm run build)
+    if [ ! -d "$REPO_ROOT/web/ui/node_modules" ]; then
+        echo "   [ui] Installing dependencies in web/ui..."
+        (cd "$REPO_ROOT/web/ui" && npm ci --no-audit --no-fund)
+    fi
+    echo "   [ui] Running React UI lint, deadcode, typecheck, tests and build..."
+    (cd "$REPO_ROOT/web/ui" && npm run lint && npm run deadcode && npm run typecheck && npm test && npm run build)
 }
 
 if [ "$MODE" = "staged" ]; then
@@ -450,7 +454,7 @@ if [ "$MODE" = "staged" ]; then
         TZ=UTC node --test web/test/*.test.js
     fi
 
-    if echo "$STAGED_FILES" | grep -q -E '^web/ui/' && [ -d "$REPO_ROOT/web/ui/node_modules" ]; then
+    if echo "$STAGED_FILES" | grep -q -E '^web/ui/'; then
         run_ui_checks
     fi
 
@@ -570,7 +574,7 @@ if git rev-parse --verify -q origin/main >/dev/null 2>&1; then
         ui_changed=1
     fi
 fi
-if [ -n "$ui_changed" ] && [ -d "$REPO_ROOT/web/ui/node_modules" ]; then
+if [ -n "$ui_changed" ]; then
     run_ui_checks
 fi
 

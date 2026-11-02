@@ -17,7 +17,11 @@ export default tseslint.config(
     },
     rules: {
       'react-hooks/rules-of-hooks': 'error',
-      'react-hooks/exhaustive-deps': 'warn',
+      'react-hooks/exhaustive-deps': 'error',
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
+      ],
       'max-lines': ['error', { max: 1500, skipBlankLines: true, skipComments: true }],
     },
   },
@@ -26,6 +30,22 @@ export default tseslint.config(
     ignores: ['src/**/*.test.{ts,tsx}'],
     rules: {
       'max-lines-per-function': ['error', { max: 450, skipBlankLines: true, skipComments: true }],
+      'complexity': ['error', { max: 35 }],
+      'max-depth': ['error', { max: 5 }],
+    },
+  },
+  {
+    // Grandfathered legacy widgets and formatters that exceed complexity / depth bounds.
+    files: [
+      'src/widgets/**',
+      'src/shell/NextUp.tsx',
+      'src/store/index.ts',
+      'src/video/Hud.tsx',
+      'src/video/api.ts',
+    ],
+    rules: {
+      'complexity': 'off',
+      'max-depth': 'off',
     },
   },
   {

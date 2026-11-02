@@ -7,14 +7,14 @@ import type { SystemReloadPayload, SystemStatusPayload } from '../sse/types';
  */
 
 export const DEPLOY_RELOAD_COOLDOWN_MS = 30_000;
-export const SYSTEM_RELOAD_DEBOUNCE_MS = 1_000;
-export const MAINTENANCE_HOUR = 4;
+const SYSTEM_RELOAD_DEBOUNCE_MS = 1_000;
+const MAINTENANCE_HOUR = 4;
 export const MAINTENANCE_CHECK_INTERVAL_MS = 15_000;
 
 export const STORAGE_KEY_DEPLOY_RELOAD = 'mm_last_reload_timestamp';
 export const STORAGE_KEY_DAILY_RELOAD = 'mm_last_daily_reload_date';
 
-export interface StorageLike {
+interface StorageLike {
   getItem(key: string): string | null;
   setItem(key: string, value: string): void;
 }

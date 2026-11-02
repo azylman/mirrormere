@@ -1,7 +1,7 @@
 import { useHeader } from '../store/hooks';
 import { WeatherIcon } from '../widgets/weather-forecast/WeatherIcon';
 
-export const WEATHER_DESC_MAP: Record<string, string> = {
+const WEATHER_DESC_MAP: Record<string, string> = {
   'weather-sunny': 'Sunny & Mild',
   'weather-clear-night': 'Clear',
   'weather-partly-cloudy': 'Partly Cloudy',

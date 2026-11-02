@@ -29,8 +29,12 @@ export function useHlsStream({
   stream,
   enabled = true,
 }: UseHlsStreamOptions): void {
+  const streamId = stream?.id;
+  const streamUrl = stream?.stream_url;
+  const streamType = stream?.type;
+
   useEffect(() => {
-    if (!enabled || !stream?.stream_url) {
+    if (!enabled || !streamUrl) {
       return;
     }
 
@@ -43,7 +47,7 @@ export function useHlsStream({
     ) {
       console.warn('[MirrormereVideo] HLS playback not natively supported');
     }
-    video.src = stream.stream_url;
+    video.src = streamUrl;
     safePlay(video);
 
     return () => {
@@ -65,5 +69,5 @@ export function useHlsStream({
         }
       }
     };
-  }, [stream?.id, stream?.stream_url, stream?.type, enabled]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [enabled, streamId, streamUrl, streamType, videoRef]);
 }

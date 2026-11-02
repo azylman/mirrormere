@@ -20,7 +20,7 @@ import { useVolumeSlider } from './useVolumeSlider';
 
 export { HUD_ICONS } from './HudIcons';
 
-export interface VideoHUDManagerRef {
+interface VideoHUDManagerRef {
   isSwapped?: boolean;
   serverPrimary?: VideoSource | null;
   serverPip?: VideoSource | null;
@@ -41,7 +41,7 @@ export interface VideoHUDControllerOptions {
 /**
  * Handle exposing imperative compatibility bridge methods for VideoStage and HeaderVideoButton.
  */
-export interface VideoHUDHandle {
+interface VideoHUDHandle {
   showHUD: () => void;
   hideHUD: () => void;
   syncStream: () => void;

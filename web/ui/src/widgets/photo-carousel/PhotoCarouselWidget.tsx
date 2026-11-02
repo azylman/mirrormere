@@ -19,7 +19,7 @@ export interface PhotoCarouselData {
   cycle_interval_seconds?: number;
 }
 
-export interface PhotoCarouselConfig {
+interface PhotoCarouselConfig {
   fit?: 'contain' | 'cover';
   image_size?: [number, number];
   cycle_interval_seconds?: number;
@@ -736,7 +736,14 @@ export const PhotoCarouselWidget = memo(function PhotoCarouselWidget({
         transitionTimeoutRef.current = null;
       }, CROSSFADE_MS);
     });
-  }, [clearPendingTransition, startAnimation, stopAnimation, cycleIntervalSeconds, deck]);
+  }, [
+    clearPendingTransition,
+    startAnimation,
+    stopAnimation,
+    cycleIntervalSeconds,
+    deck,
+    containerSizeRef,
+  ]);
 
   const stepPhoto = useCallback(
     (direction: 'prev' | 'next') => {

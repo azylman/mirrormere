@@ -29,7 +29,7 @@ export interface FamilySpanEvent extends FamilyEvent {
   col_span: number;
 }
 
-export interface FamilyDayEvent extends FamilyEvent {
+interface FamilyDayEvent extends FamilyEvent {
   top_pct: number;
   height_pct: number;
   left_pct: number;
@@ -41,7 +41,7 @@ export interface FamilyDayEvent extends FamilyEvent {
   is_linked?: boolean;
 }
 
-export interface TimelineMarker {
+interface TimelineMarker {
   label: string;
   top_pct: number;
   is_start?: boolean;
@@ -79,7 +79,7 @@ export interface FamilyViewModel {
   cached_range_end?: string;
 }
 
-export interface FamilyMonthDot {
+interface FamilyMonthDot {
   name: string;
   initial: string;
   color: string;

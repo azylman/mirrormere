@@ -18,7 +18,7 @@ export function isValidTimezone(tz: string | null | undefined): boolean {
   }
 }
 
-export interface ClockParts {
+interface ClockParts {
   time: string;
   ampm: string;
   weekday: string;
