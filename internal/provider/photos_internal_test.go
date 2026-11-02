@@ -716,9 +716,20 @@ func TestPhotos_InternalHelpers(t *testing.T) {
 		if k != "" || tok != "" {
 			t.Errorf("expected empty, got %s, %s", k, tok)
 		}
+		k, tok = extractAlbumKeyAndToken(`AF_initDataCallback({key: 'ds:1', data: [null, [], "tok_next", ["AF1Qip_album_meta_key", "Vacation"]]});`)
+		if k != "AF1Qip_album_meta_key" || tok != "tok_next" {
+			t.Errorf("expected AF1Qip_album_meta_key and tok_next, got %q, %q", k, tok)
+		}
+
+		// parseBatchexecuteResponse multi-line chunk framing
+		multiLineSnAcKc := []byte(")]}'\n\n120\n[[[\"wrb.fr\",\"snAcKc\",\"[null,[[\\\"p_ml\\\",[\\\"https://lh3.googleusercontent.com/pw/ML1\\\",1000,800],1755268100000]],\\\"tok_ml2\\\"]\",null,null,null,\"generic\"]]]\n")
+		mlPhotos, mlNext, err := parseBatchexecuteResponse(multiLineSnAcKc, "tok_ml1")
+		if err != nil || len(mlPhotos) != 1 || mlNext != "tok_ml2" {
+			t.Errorf("unexpected multi-line snAcKc parse: photos=%v, next=%q, err=%v", mlPhotos, mlNext, err)
+		}
 
 		// fetchBatchexecutePage network and status branches
-		_, _, err = fetchBatchexecutePage(context.Background(), http.DefaultClient, "http://127.0.0.1:1/photos", "key", "token")
+		_, _, err = fetchBatchexecutePage(context.Background(), http.DefaultClient, "http://127.0.0.1:1/photos", "key", "token", "auth")
 		if err == nil {
 			t.Error("expected dial error from fetchBatchexecutePage")
 		}
@@ -726,7 +737,7 @@ func TestPhotos_InternalHelpers(t *testing.T) {
 			http.Error(w, "server error", http.StatusInternalServerError)
 		}))
 		defer srv500.Close()
-		_, _, err = fetchBatchexecutePage(context.Background(), srv500.Client(), srv500.URL, "key", "token")
+		_, _, err = fetchBatchexecutePage(context.Background(), srv500.Client(), srv500.URL, "key", "token", "auth")
 		if err == nil {
 			t.Error("expected error for HTTP 500 from batchexecute")
 		}
@@ -747,13 +758,14 @@ func TestPhotos_InternalHelpers(t *testing.T) {
 			t.Errorf("expected untouched URL, got %s", c)
 		}
 
-		// checkWarmBootStaleLocked page1 stale only vs unchecked location backfill
+		// checkWarmBootStaleLocked page1 stale only vs unpaginated / unchecked location backfill
 		pStale := NewPhotosProvider()
 		pStale.albums = []*albumState{
 			{
 				cfg:           AlbumSource{Source: PhotoSourceShareURL},
 				lastFullSync:  time.Now(),
 				lastPage1Sync: time.Now().Add(-2 * time.Hour),
+				paginated:     true,
 				photos:        []PhotoItem{{ID: "AF1Qip_ok", LocationChecked: true}},
 			},
 		}
@@ -762,12 +774,26 @@ func TestPhotos_InternalHelpers(t *testing.T) {
 			t.Errorf("expected isStale=true, needsFull=false, got %v, %v", isStale, needsFull)
 		}
 		pStale.albums[0].lastPage1Sync = time.Now()
+		pStale.albums[0].paginated = false
+		if isStale, needsFull = pStale.checkWarmBootStaleLocked(time.Now()); !isStale || !needsFull {
+			t.Errorf("expected isStale=true, needsFull=true for unpaginated cache backfill, got %v, %v", isStale, needsFull)
+		}
+		pStale.albums[0].paginated = true
 		pStale.albums[0].photos = []PhotoItem{{ID: "AF1Qip_unchecked", LocationChecked: false}}
 		if isStale, needsFull = pStale.checkWarmBootStaleLocked(time.Now()); !isStale || !needsFull {
 			t.Errorf("expected isStale=true, needsFull=true for unchecked photo backfill, got %v, %v", isStale, needsFull)
 		}
+		pStale.albums[0].lastFullSync = time.Now()
+		pStale.albums[0].paginated = false
+		if !pStale.checkPeriodicFullLocked(time.Now()) {
+			t.Error("expected checkPeriodicFullLocked=true for unpaginated album")
+		}
+		pStale.albums[0].paginated = true
+		if pStale.checkPeriodicFullLocked(time.Now()) {
+			t.Error("expected checkPeriodicFullLocked=false when fresh and paginated")
+		}
 		if !pStale.checkPeriodicFullLocked(time.Now().Add(25 * time.Hour)) {
-			t.Error("expected checkPeriodicFullLocked=true")
+			t.Error("expected checkPeriodicFullLocked=true after fullSyncInterval")
 		}
 
 		pEmberNilSnap := NewPhotosProvider()
@@ -828,7 +854,7 @@ func TestPhotos_InternalHelpers(t *testing.T) {
 			}
 		}))
 		defer srvCeiling.Close()
-		_, _, err = fetchBatchexecutePage(context.Background(), srvCeiling.Client(), srvCeiling.URL, "key", "token")
+		_, _, err = fetchBatchexecutePage(context.Background(), srvCeiling.Client(), srvCeiling.URL, "key", "token", "auth")
 		if err == nil || !strings.Contains(err.Error(), "exceeded") {
 			t.Fatalf("expected payload ceiling error from fetchBatchexecutePage, got %v", err)
 		}
