@@ -3,6 +3,14 @@ import { useIsCurrentPane } from '../../carousel/PaneContext';
 import { useDocumentVisible } from '../../lifecycle/visibility';
 import { useWidget } from '../../store/hooks';
 import type { WidgetComponentProps } from '../registry';
+import {
+  YtMusicNextIcon,
+  YtMusicPauseIcon,
+  YtMusicPlayIcon,
+  YtMusicPrevIcon,
+  YtMusicSpeakerIcon,
+  YtMusicStopIcon,
+} from './YtMusicIcons';
 
 interface Speaker {
   entity_id: string;
@@ -243,9 +251,11 @@ export const YtMusicWidget = memo(function YtMusicWidget({ id }: WidgetComponent
               type="button"
               className={`spk-pill ${isAct ? 'active' : ''}`}
               data-spk={s.entity_id}
+              aria-label={s.name}
               onClick={() => handleSelectSpeaker(s.entity_id)}
             >
-              🔊 {s.name}
+              <YtMusicSpeakerIcon />
+              {s.name}
             </button>
           );
         })}
@@ -273,46 +283,51 @@ export const YtMusicWidget = memo(function YtMusicWidget({ id }: WidgetComponent
             className="ctrl-btn"
             id="btn-prev"
             title="Previous"
+            aria-label="Previous"
             onClick={() => sendControl('prev')}
           >
-            ⏮
+            <YtMusicPrevIcon />
           </button>
           <button
             type="button"
             className="ctrl-btn play-main"
             id="btn-play"
-            title="Play / Pause"
+            title={isPlaying ? 'Pause' : 'Play'}
+            aria-label={isPlaying ? 'Pause' : 'Play'}
             onClick={() => sendControl('play_pause')}
           >
-            {isPlaying ? '⏸' : '▶'}
+            {isPlaying ? <YtMusicPauseIcon /> : <YtMusicPlayIcon />}
           </button>
           <button
             type="button"
             className="ctrl-btn"
             id="btn-next"
             title="Next"
+            aria-label="Next"
             onClick={() => sendControl('next')}
           >
-            ⏭
+            <YtMusicNextIcon />
           </button>
           <button
             type="button"
             className="ctrl-btn"
             id="btn-stop"
             title="Stop"
+            aria-label="Stop"
             onClick={() => sendControl('stop')}
           >
-            ⏹
+            <YtMusicStopIcon />
           </button>
         </div>
         <div className="vol-wrap" data-prevent-screen-swipe="">
-          <span style={{ fontSize: '0.75rem' }} aria-hidden="true">
-            🔊
+          <span style={{ fontSize: '0.75rem', display: 'inline-flex', alignItems: 'center' }} aria-hidden="true">
+            <YtMusicSpeakerIcon />
           </span>
           <input
             type="range"
             className="vol-slider"
             id="vol-slider" data-prevent-screen-swipe=""
+            aria-label="Volume"
             min={0}
             max={100}
             value={volumeValue}
@@ -328,6 +343,7 @@ export const YtMusicWidget = memo(function YtMusicWidget({ id }: WidgetComponent
           type="button"
           className={`mode-btn ${activeTab === 'playlists' ? 'active' : ''}`}
           data-tab="playlists"
+          aria-label="Playlists"
           onClick={() => setActiveTab('playlists')}
         >
           Playlists
@@ -336,6 +352,7 @@ export const YtMusicWidget = memo(function YtMusicWidget({ id }: WidgetComponent
           type="button"
           className={`mode-btn ${activeTab === 'queue' ? 'active' : ''}`}
           data-tab="queue"
+          aria-label="Queue"
           onClick={() => setActiveTab('queue')}
         >
           Queue
@@ -345,6 +362,7 @@ export const YtMusicWidget = memo(function YtMusicWidget({ id }: WidgetComponent
             type="text"
             className="search-input" data-prevent-screen-swipe=""
             id="search-input"
+            aria-label="Search YouTube Music"
             placeholder="Search YouTube Music songs or artists..."
             autoComplete="off"
             value={searchQuery}
@@ -353,6 +371,7 @@ export const YtMusicWidget = memo(function YtMusicWidget({ id }: WidgetComponent
           <button
             type="submit"
             className={`mode-btn ${activeTab === 'search' ? 'active' : ''}`}
+            aria-label="Search"
           >
             Search
           </button>
@@ -366,9 +385,18 @@ export const YtMusicWidget = memo(function YtMusicWidget({ id }: WidgetComponent
             <div
               key={p.playlist_id}
               className="media-tile"
+              role="button"
+              tabIndex={0}
+              aria-label={`Play playlist ${p.title}`}
               data-pl={p.playlist_id}
               data-title={p.title}
               onClick={() => handlePlayPlaylist(p)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  handlePlayPlaylist(p);
+                }
+              }}
             >
               <img className="tile-img" src={p.thumb || DEFAULT_ART} loading="lazy" alt="" />
               <div className="tile-meta">
@@ -388,13 +416,26 @@ export const YtMusicWidget = memo(function YtMusicWidget({ id }: WidgetComponent
               <div
                 key={queueKey}
                 className="media-tile"
+                role="button"
+                tabIndex={0}
+                aria-label={`Play ${t.title} by ${t.artist}`}
                 data-qidx={idx}
                 onClick={() => handlePlayQueueIndex(idx)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    handlePlayQueueIndex(idx);
+                  }
+                }}
               >
                 <img className="tile-img" src={t.thumb || DEFAULT_ART} loading="lazy" alt="" />
                 <div className="tile-meta">
                   <div className="tile-title">
-                    {idx === np.queue_index ? '▶ ' : ''}
+                    {idx === np.queue_index ? (
+                      <span aria-hidden="true" style={{ display: 'inline-flex', verticalAlign: 'middle', marginRight: '4px' }}>
+                        <YtMusicPlayIcon />
+                      </span>
+                    ) : null}
                     {t.title}
                   </div>
                   <div className="tile-sub">{t.artist}</div>
@@ -411,8 +452,17 @@ export const YtMusicWidget = memo(function YtMusicWidget({ id }: WidgetComponent
               <div
                 key={t.video_id || idx}
                 className="media-tile"
+                role="button"
+                tabIndex={0}
+                aria-label={`Play ${t.title} by ${t.artist}`}
                 data-sidx={idx}
                 onClick={() => handlePlaySearchResult(t)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    handlePlaySearchResult(t);
+                  }
+                }}
               >
                 <img className="tile-img" src={t.thumb || DEFAULT_ART} loading="lazy" alt="" />
                 <div className="tile-meta">

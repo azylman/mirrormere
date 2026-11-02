@@ -1168,7 +1168,7 @@ body.theme-day .widget-yt-music .search-input,
   color: var(--text-color, #e2e8f0);
   cursor: pointer;
   touch-action: manipulation;
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: background-color 0.2s cubic-bezier(0.4, 0, 0.2, 1), border-color 0.2s cubic-bezier(0.4, 0, 0.2, 1), color 0.2s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.2s cubic-bezier(0.4, 0, 0.2, 1), transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .header-layout-btn:hover {

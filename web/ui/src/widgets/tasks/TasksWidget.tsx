@@ -173,12 +173,21 @@ function TaskRow({ item, defaultListId, onItemClick }: TaskRowProps) {
     <div
       key={itemId}
       className={`task-item ${isDone ? 'task-item-done' : 'task-item-active'}${isCompleting ? ' completing' : ''}${isPendingUndo ? ' pending-undo' : ''}`}
+      role="button"
+      tabIndex={0}
+      aria-label={`${title}${isPendingUndo ? ', Tap to undo' : isDone ? ', Completed' : ''}`}
       data-item-id={itemId}
       data-task-id={itemId}
       data-list-id={listId}
       data-completing={isCompleting ? 'true' : undefined}
       data-pending-undo={isPendingUndo ? 'true' : undefined}
       onClick={() => onItemClick(itemId, listId, isDone)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onItemClick(itemId, listId, isDone);
+        }
+      }}
     >
       <div className="task-check-glyph">
         {isDone ? (

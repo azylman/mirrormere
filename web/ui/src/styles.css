@@ -1,6 +1,34 @@
 @import './styles/widgets.css';
 @import './styles/overlays.css';
 
+:root,
+:root[data-theme="day"] {
+  color-scheme: light;
+}
+
+:root[data-theme="night"],
+body[data-theme="night"] {
+  color-scheme: dark;
+}
+
+#header-clock,
+.next-event-countdown,
+.hud-time,
+.progress-times,
+.countdown-days,
+.cal-event-time {
+  font-variant-numeric: tabular-nums;
+}
+
+.cf-modal-description,
+.plex-poster-grid,
+.detail-summary,
+.media-grid,
+.tasks-list,
+.chat-log-list {
+  overscroll-behavior: contain;
+}
+
 /* Scaffold only. The React shell still uses hud.css from style.css (see display_react.html). */
 #mirrormere-app {
   position: fixed;
@@ -51,7 +79,7 @@
   touch-action: manipulation;
   color: var(--mm-text-dim, #8b819f);
   opacity: 0.6;
-  transition: all 0.25s cubic-bezier(0.25, 1, 0.5, 1);
+  transition: opacity 0.25s cubic-bezier(0.25, 1, 0.5, 1), color 0.25s cubic-bezier(0.25, 1, 0.5, 1), filter 0.25s cubic-bezier(0.25, 1, 0.5, 1);
   -webkit-tap-highlight-color: transparent;
 }
 
