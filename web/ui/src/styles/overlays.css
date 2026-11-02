@@ -300,20 +300,20 @@
 }
 
 /* ==========================================================================
-   Live Canvas Layout Editor (Purple Cyberpunk / Goth HUD)
+   Live Canvas Layout Editor (Mirrormere Theme-Aware HUD)
    ========================================================================== */
 
 .layout-editor-overlay {
   position: fixed;
   inset: 0;
   z-index: 1000;
-  background: rgba(13, 10, 24, 0.94);
+  background: var(--mm-bg-canvas);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
   display: flex;
   flex-direction: column;
-  color: #f1f5f9;
-  font-family: inherit;
+  color: var(--mm-text-body);
+  font-family: var(--mm-font-family);
   user-select: none;
   animation: layoutEditorFadeIn 0.2s ease-out;
 }
@@ -334,31 +334,31 @@
   justify-content: space-between;
   align-items: center;
   padding: 12px 24px;
-  background: rgba(26, 16, 48, 0.85);
-  border-bottom: 1px solid rgba(168, 85, 247, 0.3);
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+  background: var(--mm-bg-surface);
+  border-bottom: 1.5px solid var(--mm-card-border);
+  box-shadow: var(--mm-card-shadow);
   flex-shrink: 0;
 }
 
 .layout-editor-status {
-  font-size: 0.9rem;
-  font-weight: 700;
-  letter-spacing: 0.03em;
-  color: #c084fc;
-  text-shadow: 0 0 8px rgba(192, 132, 252, 0.4);
+  font-family: var(--mm-font-display);
+  font-size: 0.95rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  color: var(--mm-text-title);
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
 .layout-editor-error {
-  color: #fb7185;
-  background: rgba(225, 29, 72, 0.2);
-  border: 1px solid rgba(244, 63, 94, 0.4);
+  color: var(--mm-rose);
+  background: var(--mm-rose-light);
+  border: 1.5px solid var(--mm-rose);
   padding: 4px 12px;
-  border-radius: 6px;
+  border-radius: 999px;
   font-size: 0.8rem;
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .layout-editor-actions {
@@ -368,49 +368,48 @@
 
 .layout-editor-btn {
   padding: 8px 18px;
-  border-radius: 8px;
-  font-family: inherit;
+  border-radius: 999px;
+  font-family: var(--mm-font-display);
   font-size: 0.85rem;
-  font-weight: 700;
+  font-weight: 800;
   cursor: pointer;
   touch-action: manipulation;
-  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease, filter 0.15s ease;
-  border: 1px solid transparent;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease, transform 0.15s ease;
+  border: 1.5px solid var(--mm-card-border);
+  box-shadow: var(--mm-card-shadow);
 }
 
 .layout-editor-btn-cancel {
-  background: rgba(255, 255, 255, 0.08);
-  border-color: rgba(255, 255, 255, 0.15);
-  color: #cbd5e1;
+  background: var(--mm-bg-card);
+  border-color: var(--mm-card-border);
+  color: var(--mm-text-body);
 }
 
 .layout-editor-btn-cancel:hover {
-  background: rgba(255, 255, 255, 0.15);
-  color: #fff;
+  border-color: var(--mm-lavender);
+  color: var(--mm-text-title);
 }
 
 .layout-editor-btn-reset {
-  background: rgba(225, 29, 72, 0.15);
-  border-color: rgba(244, 63, 94, 0.4);
-  color: #fda4af;
+  background: var(--mm-rose-light);
+  border-color: var(--mm-rose);
+  color: var(--mm-text-title);
 }
 
 .layout-editor-btn-reset:hover {
-  background: rgba(225, 29, 72, 0.3);
-  color: #fff;
-  box-shadow: 0 0 12px rgba(244, 63, 94, 0.4);
+  background: var(--mm-rose);
+  color: #ffffff;
 }
 
 .layout-editor-btn-save {
-  background: #9333ea;
-  border-color: #c084fc;
+  background: var(--mm-lavender);
+  border-color: var(--mm-lavender);
   color: #ffffff;
-  box-shadow: 0 0 14px rgba(168, 85, 247, 0.5);
 }
 
 .layout-editor-btn-save:hover {
-  background: #a855f7;
-  box-shadow: 0 0 20px rgba(168, 85, 247, 0.7);
+  filter: brightness(1.06);
+  transform: translateY(-1px);
 }
 
 .layout-editor-btn:disabled {
@@ -422,78 +421,76 @@
 .layout-editor-canvas {
   flex: 1;
   display: flex;
-  align-items: center;
+  align-items: stretch;
   justify-content: center;
-  padding: 24px;
+  padding: var(--mm-grid-gap, 14px);
   overflow: hidden;
   position: relative;
 }
 
 .layout-editor-loading {
+  margin: auto;
+  font-family: var(--mm-font-display);
   font-size: 1.1rem;
-  font-weight: 700;
-  color: #c084fc;
-  text-shadow: 0 0 12px rgba(192, 132, 252, 0.6);
+  font-weight: 800;
+  color: var(--mm-text-title);
 }
 
 .layout-editor-grid {
   position: relative;
   width: 100%;
-  max-width: 1200px;
   height: 100%;
-  max-height: 600px;
-  gap: 12px;
-  padding: 12px;
-  background: rgba(20, 14, 38, 0.85);
-  border: 1px solid rgba(168, 85, 247, 0.3);
-  border-radius: 12px;
-  box-shadow: inset 0 0 30px rgba(0, 0, 0, 0.6), 0 0 20px rgba(147, 51, 234, 0.15);
+  gap: var(--mm-grid-gap, 14px);
+  padding: var(--mm-grid-gap, 14px);
+  background: var(--mm-bg-surface);
+  border: 1.5px solid var(--mm-card-border);
+  border-radius: var(--mm-border-radius-lg, 24px);
+  box-shadow: var(--mm-card-shadow);
 }
 
 .layout-editor-cell {
-  background: rgba(147, 51, 234, 0.04);
-  border: 1px dashed rgba(168, 85, 247, 0.25);
-  border-radius: 8px;
+  background: var(--mm-bg-canvas);
+  border: 1.5px dashed var(--mm-card-border);
+  border-radius: 18px;
   pointer-events: none;
 }
 
 .layout-editor-ghost {
-  border: 2px dashed #00f0ff;
-  background: rgba(0, 240, 255, 0.15);
-  box-shadow: 0 0 16px rgba(0, 240, 255, 0.45);
-  border-radius: 10px;
+  border: 2px dashed var(--mm-lavender);
+  background: var(--mm-lavender-light);
+  border-radius: var(--mm-border-radius-lg, 24px);
   z-index: 5;
   pointer-events: none;
+  opacity: 0.75;
   transition: top 0.08s ease-out, left 0.08s ease-out, width 0.08s ease-out, height 0.08s ease-out;
 }
 
 .layout-editor-card {
   position: relative;
-  border-radius: 10px;
-  background: rgba(36, 22, 64, 0.95);
-  border: 1px solid rgba(168, 85, 247, 0.45);
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  border-radius: var(--mm-border-radius-lg, 24px);
+  background: var(--mm-bg-card);
+  border: 1.5px solid var(--mm-card-border);
+  box-shadow: var(--mm-card-shadow);
+  padding: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
   cursor: grab;
   touch-action: none;
   z-index: 10;
-  transition: box-shadow 0.15s ease, border-color 0.15s ease;
+  transition: box-shadow 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
 }
 
 .layout-editor-card:hover {
-  border-color: #c084fc;
-  box-shadow: 0 6px 20px rgba(168, 85, 247, 0.35);
+  border-color: var(--mm-lavender);
 }
 
 .layout-editor-card.pinned {
-  border-color: #fbbf24;
-  box-shadow: 0 4px 16px rgba(251, 191, 36, 0.25);
+  border-color: var(--mm-honey);
 }
 
 .layout-editor-card.dragging {
-  opacity: 0.45;
+  opacity: 0.55;
   cursor: grabbing;
 }
 
@@ -501,15 +498,16 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 12px;
-  background: rgba(0, 0, 0, 0.25);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  padding: 12px 16px;
+  background: var(--mm-bg-surface);
+  border-bottom: 1.5px solid var(--mm-divider);
 }
 
 .layout-editor-card-title {
-  font-size: 0.8rem;
+  font-family: var(--mm-font-display);
+  font-size: 0.9rem;
   font-weight: 800;
-  color: #f8fafc;
+  color: var(--mm-text-title);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -517,30 +515,39 @@
 }
 
 .layout-editor-card-type {
-  font-size: 0.65rem;
-  font-weight: 600;
-  color: #a855f7;
+  font-size: 0.68rem;
+  font-weight: 800;
+  color: var(--mm-text-dim);
+  background: var(--mm-lavender-light);
+  padding: 2px 8px;
+  border-radius: 999px;
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
 
 .layout-editor-pin-btn {
-  border: none;
-  background: rgba(255, 255, 255, 0.08);
-  color: #e2e8f0;
-  padding: 3px 8px;
+  border: 1.5px solid var(--mm-card-border);
+  background: var(--mm-bg-card);
+  color: var(--mm-text-body);
+  padding: 4px 10px;
   border-radius: 999px;
-  font-size: 0.65rem;
-  font-weight: 700;
+  font-family: var(--mm-font-display);
+  font-size: 0.7rem;
+  font-weight: 800;
   cursor: pointer;
   touch-action: manipulation;
   transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 }
 
+.layout-editor-pin-btn:hover {
+  border-color: var(--mm-lavender);
+  color: var(--mm-text-title);
+}
+
 .layout-editor-pin-btn.active {
-  background: rgba(251, 191, 36, 0.2);
-  color: #fcd34d;
-  border: 1px solid rgba(251, 191, 36, 0.5);
+  background: var(--mm-honey-light);
+  color: var(--mm-text-title);
+  border-color: var(--mm-honey);
 }
 
 .layout-editor-card-body {
@@ -548,32 +555,34 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 8px;
+  padding: 12px;
 }
 
 .layout-editor-card-dim {
-  font-size: 1.1rem;
+  font-family: var(--mm-font-display);
+  font-size: 1.35rem;
   font-weight: 800;
-  color: #cbd5e1;
-  letter-spacing: 0.05em;
+  color: var(--mm-text-title);
+  letter-spacing: 0.04em;
 }
 
 .layout-editor-card-footer {
   display: flex;
   gap: 6px;
   flex-wrap: wrap;
-  padding: 8px 10px;
-  background: rgba(0, 0, 0, 0.2);
-  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  padding: 10px 14px;
+  background: var(--mm-bg-surface);
+  border-top: 1.5px solid var(--mm-divider);
 }
 
 .size-chip {
-  border: 1px solid rgba(168, 85, 247, 0.35);
-  background: rgba(45, 25, 80, 0.7);
-  color: #d8b4fe;
-  font-size: 0.7rem;
-  font-weight: 700;
-  padding: 3px 8px;
+  border: 1.5px solid var(--mm-card-border);
+  background: var(--mm-bg-card);
+  color: var(--mm-text-body);
+  font-family: var(--mm-font-display);
+  font-size: 0.72rem;
+  font-weight: 800;
+  padding: 4px 10px;
   border-radius: 999px;
   cursor: pointer;
   touch-action: manipulation;
@@ -581,16 +590,15 @@
 }
 
 .size-chip:hover {
-  background: rgba(147, 51, 234, 0.4);
-  border-color: #c084fc;
-  color: #fff;
+  background: var(--mm-lavender-light);
+  border-color: var(--mm-lavender);
+  color: var(--mm-text-title);
 }
 
 .size-chip.active {
-  background: #9333ea;
+  background: var(--mm-lavender);
   color: #ffffff;
-  border-color: #e9d5ff;
-  box-shadow: 0 0 10px rgba(168, 85, 247, 0.6);
+  border-color: var(--mm-lavender);
 }
 
 .layout-editor-dock {
@@ -598,57 +606,57 @@
   justify-content: center;
   align-items: center;
   gap: 10px;
-  padding: 14px 24px;
-  background: rgba(26, 16, 48, 0.9);
-  border-top: 1px solid rgba(168, 85, 247, 0.3);
-  box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.3);
+  padding: 12px 24px;
+  background: var(--mm-bg-surface);
+  border-top: 1.5px solid var(--mm-card-border);
+  box-shadow: var(--mm-card-shadow);
   flex-shrink: 0;
 }
 
 .layout-editor-screen-pill {
   padding: 8px 20px;
   border-radius: 9999px;
-  border: 1px solid rgba(168, 85, 247, 0.35);
-  background: rgba(40, 24, 72, 0.7);
-  color: #e9d5ff;
+  border: 1.5px solid var(--mm-card-border);
+  background: var(--mm-bg-card);
+  color: var(--mm-text-body);
+  font-family: var(--mm-font-display);
   font-size: 0.85rem;
-  font-weight: 700;
+  font-weight: 800;
   cursor: pointer;
   touch-action: manipulation;
+  box-shadow: var(--mm-card-shadow);
   transition: background-color 0.2s cubic-bezier(0.4, 0, 0.2, 1), border-color 0.2s cubic-bezier(0.4, 0, 0.2, 1), color 0.2s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.2s cubic-bezier(0.4, 0, 0.2, 1), transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .layout-editor-screen-pill:hover {
-  border-color: #c084fc;
-  background: rgba(147, 51, 234, 0.35);
-  color: #fff;
+  border-color: var(--mm-lavender);
+  background: var(--mm-lavender-light);
+  color: var(--mm-text-title);
 }
 
 .layout-editor-screen-pill.active {
-  background: #9333ea;
-  border-color: #e9d5ff;
+  background: var(--mm-lavender);
+  border-color: var(--mm-lavender);
   color: #ffffff;
-  box-shadow: 0 0 14px rgba(168, 85, 247, 0.6);
 }
 
 .layout-editor-screen-pill.dock-drop-hover {
-  border-color: #00f0ff;
-  background: rgba(0, 240, 255, 0.25);
-  box-shadow: 0 0 18px rgba(0, 240, 255, 0.7);
-  color: #ffffff;
+  border-color: var(--mm-mint);
+  background: var(--mm-mint-light);
+  color: var(--mm-text-title);
   transform: scale(1.05);
 }
 
 .layout-editor-screen-pill.new-screen-pill {
   border-style: dashed;
-  background: rgba(255, 255, 255, 0.05);
-  border-color: rgba(255, 255, 255, 0.25);
-  color: #cbd5e1;
+  background: var(--mm-bg-canvas);
+  border-color: var(--mm-card-border);
+  color: var(--mm-text-dim);
 }
 
 .layout-editor-screen-pill.new-screen-pill:hover {
-  border-color: #c084fc;
-  color: #fff;
+  border-color: var(--mm-lavender);
+  color: var(--mm-text-title);
 }
 
 
