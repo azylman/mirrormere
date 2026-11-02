@@ -180,17 +180,8 @@ body[data-theme="night"] .photo-pause-pill[data-paused="true"]:hover,
   white-space: pre;
   overflow: hidden;
   text-overflow: ellipsis;
+  color: rgba(255, 255, 255, 0.88);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.82), 0 0 10px rgba(0, 0, 0, 0.48);
   pointer-events: none;
   user-select: none;
-  transition: color 0.45s ease, text-shadow 0.45s ease;
-}
-
-.photo-metadata-overlay[data-overlay-theme="dark"] {
-  color: rgba(255, 255, 255, 0.82);
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.72), 0 0 8px rgba(0, 0, 0, 0.38);
-}
-
-.photo-metadata-overlay[data-overlay-theme="light"] {
-  color: rgba(24, 20, 34, 0.78);
-  text-shadow: 0 1px 3px rgba(255, 255, 255, 0.8), 0 0 8px rgba(255, 255, 255, 0.45);
 }

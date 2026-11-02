@@ -7,7 +7,6 @@ import {
   photoDeckStateById,
   formatPhotoOverlayDate,
   formatPhotoMetadataLabel,
-  resolvePhotoOverlayTheme,
   hasMultiplePhotoAlbums,
 } from './PhotoCarouselWidget';
 import { useDisplayStore } from '../../store';
@@ -309,12 +308,6 @@ describe('PhotoCarouselWidget transport controls', () => {
     expect(hasMultiplePhotoAlbums([{ album_name: 'Family' }, { album_name: 'Family' }])).toBe(false);
     expect(hasMultiplePhotoAlbums([{ album_name: 'Family' }, { album_name: 'Vacation' }])).toBe(true);
 
-    expect(resolvePhotoOverlayTheme(undefined)).toBe('dark');
-    expect(resolvePhotoOverlayTheme('invalid')).toBe('dark');
-    expect(resolvePhotoOverlayTheme('#362b29')).toBe('dark');
-    expect(resolvePhotoOverlayTheme('#e8e8e5')).toBe('light');
-    expect(resolvePhotoOverlayTheme('f5f5f0')).toBe('light');
-
     // 1. Single album configured -> omits album name ("Oct 30, 2026\nEmeryville")
     photoDeckStateById.clear();
     setWidgetPhotos([
@@ -336,7 +329,6 @@ describe('PhotoCarouselWidget transport controls', () => {
 
     const overlay1 = container.querySelector('.photo-metadata-overlay') as HTMLDivElement;
     expect(overlay1).not.toBeNull();
-    expect(overlay1.getAttribute('data-overlay-theme')).toBe('dark');
     expect(overlay1.getAttribute('aria-label')).toBe('Oct 30, 2026\nEmeryville');
     expect(overlay1.textContent).toBe('Oct 30, 2026\nEmeryville');
 
@@ -366,7 +358,6 @@ describe('PhotoCarouselWidget transport controls', () => {
 
     const overlay2 = container.querySelector('.photo-metadata-overlay') as HTMLDivElement;
     expect(overlay2).not.toBeNull();
-    expect(overlay2.getAttribute('data-overlay-theme')).toBe('light');
     expect(overlay2.getAttribute('aria-label')).toBe('Oct 30, 2026\nEmeryville • AZAZAZAZ');
     expect(overlay2.textContent).toBe('Oct 30, 2026\nEmeryville • AZAZAZAZ');
 

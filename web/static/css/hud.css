@@ -3059,7 +3059,7 @@ button, .touch-target {
   width: calc(100% + 60px);
   height: calc(100% + 60px);
   object-fit: cover;
-  filter: blur(32px) saturate(1.2) brightness(0.88);
+  filter: blur(32px) saturate(1.2) brightness(0.82);
   transform: scale(1.08);
   opacity: 1;
   transition: opacity 0.85s ease-in-out;

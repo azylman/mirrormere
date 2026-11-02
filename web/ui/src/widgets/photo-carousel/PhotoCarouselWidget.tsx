@@ -10,14 +10,14 @@ import {
   EMPTY_PHOTOS, DEFAULT_CYCLE_SECONDS, PHOTO_CONTROLS_HIDE_MS, PHOTO_PAUSE_INACTIVITY_MS,
   parsePhotoCarouselData, getBackdropPhotoURL, getSizedPhotoURL, useContainerSize,
   registerEmberSyncListener, usePhotoSlideshowTransition, resolvePhotoCarouselSourceAndUrl,
-  formatPhotoMetadataLabel, resolvePhotoOverlayTheme, hasMultiplePhotoAlbums,
+  formatPhotoMetadataLabel, hasMultiplePhotoAlbums,
   type EmberSyncListener, type PhotoCarouselConfig, type PhotoItem,
 } from './photoCarouselHelpers';
 
 export {
   parsePhotoCarouselData, getBackdropPhotoURL, getSizedPhotoURL, photoDeckStateById,
   getPhotoItemKey, selectNextPhotoIndex, selectPrevPhotoIndex,
-  formatPhotoOverlayDate, formatPhotoMetadataLabel, resolvePhotoOverlayTheme, hasMultiplePhotoAlbums,
+  formatPhotoOverlayDate, formatPhotoMetadataLabel, hasMultiplePhotoAlbums,
   PHOTO_CONTROLS_HIDE_MS, PHOTO_PAUSE_INACTIVITY_MS,
 } from './photoCarouselHelpers';
 
@@ -180,9 +180,8 @@ function PhotoForeground({
 function PhotoMetadataOverlay({ photo, showAlbumName }: { photo?: PhotoItem; showAlbumName: boolean }) {
   const meta = formatPhotoMetadataLabel(photo, showAlbumName);
   if (!meta) return null;
-  const theme = resolvePhotoOverlayTheme(photo?.dominant_color);
   return (
-    <div className="photo-metadata-overlay" data-overlay-theme={theme} aria-label={meta.text}>
+    <div className="photo-metadata-overlay" aria-label={meta.text}>
       {meta.text}
     </div>
   );
