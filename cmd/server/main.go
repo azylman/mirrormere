@@ -460,6 +460,14 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 	}
 	chatStore := chatlog.NewStore(chatlog.WithTTL(chatLogCfg.GetTTL()), chatlog.WithMaxPerKey(chatLogCfg.GetMaxMessagesPerNode()))
 	reg := provider.NewRegistry()
+	if configPath != "" {
+		reg.Register("photo-carousel", func() provider.Provider {
+			return provider.NewPhotosProvider(
+				provider.WithPhotosCacheDir(provider.DefaultPhotosCacheDir),
+				provider.WithPhotosSyncIntervals(provider.DefaultPhotosPage1Interval, provider.DefaultPhotosFullSyncInterval),
+			)
+		})
+	}
 	videoCoord := video.NewCoordinator(hub, video.WithSink(stateProvider))
 	defer videoCoord.Close()
 
