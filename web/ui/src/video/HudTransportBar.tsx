@@ -1,4 +1,4 @@
-import { HudNextIcon, HudPrevIcon } from './HudIcons';
+import { HudFastForwardIcon, HudNextIcon, HudPrevIcon, HudRewindIcon } from './HudIcons';
 
 export interface HudTransportBarProps {
   isPlaybackActive: boolean;
@@ -54,6 +54,7 @@ export function HudTransportBar({
       onTouchStart={stopProp}
     >
       <button
+        type="button"
         id="video-hud-cc-btn"
         className="video-hud-btn video-hud-cc video-hud-media-btn"
         aria-label="Closed Captions"
@@ -64,6 +65,7 @@ export function HudTransportBar({
       </button>
 
       <button
+        type="button"
         id="video-hud-prev-btn"
         className="video-hud-btn video-hud-prev video-hud-media-btn"
         aria-label="Previous Episode"
@@ -74,13 +76,14 @@ export function HudTransportBar({
       </button>
 
       <button
+        type="button"
         id="video-hud-rewind-btn"
         className="video-hud-btn video-hud-skip video-hud-media-btn"
         aria-label="Rewind 10 Seconds"
         title="Rewind 10 Seconds"
         onClick={onRewind}
       >
-        ↺ 10s
+        <HudRewindIcon /> 10s
       </button>
 
       <div
@@ -113,16 +116,18 @@ export function HudTransportBar({
       </div>
 
       <button
+        type="button"
         id="video-hud-forward-btn"
         className="video-hud-btn video-hud-skip video-hud-media-btn"
         aria-label="Fast Forward 10 Seconds"
         title="Fast Forward 10 Seconds"
         onClick={onFastForward}
       >
-        ↻ 10s
+        <HudFastForwardIcon /> 10s
       </button>
 
       <button
+        type="button"
         id="video-hud-next-btn"
         className="video-hud-btn video-hud-next video-hud-media-btn"
         aria-label="Next Episode"

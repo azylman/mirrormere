@@ -939,4 +939,37 @@ describe('TasksWidget', () => {
     expect(container.querySelector('[data-item-id="rem-1"]')).toBeNull();
     vi.useRealTimers();
   });
+
+  it('handles keyboard navigation on task items with Enter and Space', () => {
+    vi.useFakeTimers();
+    useDisplayStore.setState({
+      widgets: {
+        'tasks-kb': {
+          meta: { type: 'tasks', origin: [0, 0], dimensions: [3, 2], config: {}, assets_base: '' },
+          state: 'healthy',
+          data: {
+            items: [{ id: 'kb-1', title: 'Keyboard task', done: false }],
+          },
+          timestamp: '2026-10-31T12:00:00Z',
+        },
+      },
+    });
+
+    const { container } = render(<TasksWidget id="tasks-kb" type="tasks" />);
+    const item = container.querySelector('[data-item-id="kb-1"]') as HTMLElement;
+    expect(item.getAttribute('role')).toBe('button');
+    expect(item.getAttribute('tabindex')).toBe('0');
+
+    // Trigger Enter
+    fireEvent.keyDown(item, { key: 'Enter' });
+    expect(item.getAttribute('data-pending-undo')).toBe('true');
+
+    // Trigger Space to cancel/undo
+    fireEvent.keyDown(item, { key: ' ' });
+    expect(item.getAttribute('data-pending-undo')).toBeNull();
+
+    // Trigger other key (no-op)
+    fireEvent.keyDown(item, { key: 'Escape' });
+    vi.useRealTimers();
+  });
 });

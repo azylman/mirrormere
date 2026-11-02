@@ -542,4 +542,30 @@ describe('PlexRecentWidget', () => {
 
     fireEvent.click(container.querySelector('#close-seerr-btn')!);
   });
+
+  it('activates item card on Enter and Space keydown', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ items: mockRecentItems }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { container } = render(<PlexRecentWidget id="plex-kb" type="plex-recent" />);
+    await waitFor(() => {
+      expect(container.querySelectorAll('.item-card').length).toBeGreaterThan(0);
+    });
+
+    const card = container.querySelector('.item-card') as HTMLElement;
+    expect(card.getAttribute('role')).toBe('button');
+    expect(card.getAttribute('tabindex')).toBe('0');
+
+    // Trigger Space
+    fireEvent.keyDown(card, { key: ' ' });
+    expect(container.querySelector('#detail-modal')?.classList.contains('open')).toBe(true);
+    fireEvent.click(container.querySelector('#close-detail-btn')!);
+
+    // Trigger Enter
+    fireEvent.keyDown(card, { key: 'Enter' });
+    expect(container.querySelector('#detail-modal')?.classList.contains('open')).toBe(true);
+
+    // Other key (no-op)
+    fireEvent.keyDown(card, { key: 'Escape' });
+  });
 });

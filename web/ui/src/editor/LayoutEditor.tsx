@@ -1,4 +1,11 @@
-import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
+import {
+  useEffect,
+  useRef,
+  useState,
+  ViewTransition,
+  type CSSProperties,
+  type PointerEvent as ReactPointerEvent,
+} from 'react';
 import type { LayoutEditorWidget, LayoutEditorWidgetPlacement } from '../sse/types';
 import { useDisplayStore } from '../store';
 import { useLayoutEditorOpen } from '../store/hooks';
@@ -17,12 +24,50 @@ export interface LayoutEditorProps {
   fetchImpl?: typeof fetch;
 }
 
+function PinFilledIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="12"
+      height="12"
+      fill="currentColor"
+      aria-hidden="true"
+      style={{ verticalAlign: 'middle', marginLeft: '4px' }}
+    >
+      <path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z" />
+    </svg>
+  );
+}
+
+function PinOutlineIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="12"
+      height="12"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      style={{ verticalAlign: 'middle', marginLeft: '4px' }}
+    >
+      <path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z" />
+    </svg>
+  );
+}
+
 export function LayoutEditor({ fetchImpl }: LayoutEditorProps = {}) {
   const isOpen = useLayoutEditorOpen();
   if (!isOpen) {
     return null;
   }
-  return <LayoutEditorModal fetchImpl={fetchImpl} />;
+  return (
+    <ViewTransition default="none">
+      <LayoutEditorModal fetchImpl={fetchImpl} />
+    </ViewTransition>
+  );
 }
 
 function LayoutEditorModal({ fetchImpl }: LayoutEditorProps = {}) {
@@ -255,6 +300,7 @@ function LayoutEditorModal({ fetchImpl }: LayoutEditorProps = {}) {
           <button
             className="layout-editor-btn layout-editor-btn-reset"
             type="button"
+            aria-label="Reset to Default"
             onClick={() => void handleReset()}
             disabled={saving || loading}
           >
@@ -263,6 +309,7 @@ function LayoutEditorModal({ fetchImpl }: LayoutEditorProps = {}) {
           <button
             className="layout-editor-btn layout-editor-btn-cancel"
             type="button"
+            aria-label="Cancel"
             onClick={() => useDisplayStore.getState().setLayoutEditorOpen(false)}
             disabled={saving}
           >
@@ -271,6 +318,7 @@ function LayoutEditorModal({ fetchImpl }: LayoutEditorProps = {}) {
           <button
             className="layout-editor-btn layout-editor-btn-save"
             type="button"
+            aria-label="Save Layout"
             onClick={() => void handleSave()}
             disabled={saving || loading}
           >
@@ -344,7 +392,15 @@ function LayoutEditorModal({ fetchImpl }: LayoutEditorProps = {}) {
                         handleTogglePin(w.widget_id);
                       }}
                     >
-                      {w.pinned ? 'Pinned 📌' : 'Pin 📍'}
+                      {w.pinned ? (
+                        <>
+                          Pinned <PinFilledIcon />
+                        </>
+                      ) : (
+                        <>
+                          Pin <PinOutlineIcon />
+                        </>
+                      )}
                     </button>
                   </div>
                   <div className="layout-editor-card-body">
@@ -360,6 +416,7 @@ function LayoutEditorModal({ fetchImpl }: LayoutEditorProps = {}) {
                           key={`${cols}x${rows}`}
                           className={`size-chip ${isActive ? 'active' : ''}`}
                           type="button"
+                          aria-label={`Resize to ${cols} by ${rows}`}
                           onClick={(e) => {
                             e.stopPropagation();
                             handleResize(w.widget_id, [cols, rows]);
@@ -384,6 +441,7 @@ function LayoutEditorModal({ fetchImpl }: LayoutEditorProps = {}) {
             className={`layout-editor-screen-pill ${activeScreen === s ? 'active' : ''} ${dragHoverScreen === s ? 'dock-drop-hover' : ''}`}
             type="button"
             data-screen-index={s}
+            aria-label={`Screen ${s + 1}`}
             onClick={() => setActiveScreen(s)}
           >
             Screen {s + 1}
@@ -394,6 +452,7 @@ function LayoutEditorModal({ fetchImpl }: LayoutEditorProps = {}) {
           className={`layout-editor-screen-pill new-screen-pill ${dragHoverScreen === totalScreens ? 'dock-drop-hover' : ''}`}
           type="button"
           data-screen-index={totalScreens}
+          aria-label="Add New Screen"
           onClick={() => setActiveScreen(totalScreens)}
         >
           + New Screen
