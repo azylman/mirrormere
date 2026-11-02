@@ -192,21 +192,6 @@ def _is_internal_caller(client_ip):
     return False
 
 
-def _is_valid_album_url(url):
-    if not url or not isinstance(url, str):
-        return False
-    try:
-        parsed = urllib.parse.urlparse(url.strip())
-        if parsed.scheme.lower() != "https":
-            return False
-        hostname = (parsed.hostname or "").lower()
-        if hostname in ("photos.app.goo.gl", "photos.google.com"):
-            return True
-    except Exception:
-        pass
-    return False
-
-
 def _get_lock(key):
     with FETCH_LOCKS_GUARD:
         if key not in FETCH_LOCKS:
@@ -1413,88 +1398,6 @@ def build_feed(feed_name):
     return (header + body + footer).encode("utf-8")
 
 
-PHOTOS_CACHE_FILE = "/app/data/photos_cache.json" if os.path.exists("/app/data") else "photos_cache.json"
-PHOTOS_CACHE_LOCK = threading.Lock()
-_PHOTO_URL_RE = re.compile(r"https://lh3\.googleusercontent\.com/pw/[a-zA-Z0-9_-]+")
-
-
-def _load_photos_cache_unlocked():
-    default_url = str(_cfg("GOOGLE_PHOTOS_ALBUM_URL", ""))
-    default_auth_url = str(_cfg("GOOGLE_PHOTOS_AUTH_URL", default_url))
-    default_title = str(_cfg("GOOGLE_PHOTOS_ALBUM_TITLE", "Shared Photos"))
-    try:
-        if os.path.exists(PHOTOS_CACHE_FILE):
-            with open(PHOTOS_CACHE_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                if isinstance(data, dict):
-                    data.setdefault("album_title", default_title)
-                    data.setdefault("album_url", default_url)
-                    data.setdefault("album_auth_url", default_auth_url)
-                    data.setdefault("photos", [])
-                    return data
-    except Exception:
-        pass
-    return {
-        "album_title": default_title,
-        "album_url": default_url,
-        "album_auth_url": default_auth_url,
-        "photos": [],
-        "updated_at": None,
-        "source": None,
-    }
-
-
-def _load_photos_cache():
-    with PHOTOS_CACHE_LOCK:
-        return _load_photos_cache_unlocked()
-
-
-def _save_photos_cache(photos_list, source="ember-android", album_title="Shared Photos"):
-    cleaned = []
-    seen = set()
-    for raw in photos_list or []:
-        if not isinstance(raw, str):
-            continue
-        m = _PHOTO_URL_RE.search(raw)
-        base = m.group(0) if m else (raw.split("=")[0] if raw.startswith("https://lh3.googleusercontent.com/") else "")
-        if base and base not in seen:
-            seen.add(base)
-            cleaned.append(base)
-    with PHOTOS_CACHE_LOCK:
-        state = _load_photos_cache_unlocked()
-        if cleaned:
-            state["photos"] = cleaned
-            state["updated_at"] = int(time.time())
-            state["source"] = source
-            state["album_title"] = album_title
-            try:
-                with open(PHOTOS_CACHE_FILE, "w", encoding="utf-8") as f:
-                    json.dump(state, f, indent=2)
-            except Exception:
-                pass
-        return state
-
-
-def _try_direct_scrape_album(url):
-    if not url or not _is_valid_album_url(url):
-        return None
-    try:
-        req = urllib.request.Request(
-            url,
-            headers={
-                "User-Agent": "Mozilla/5.0 (Linux; Android 14; Kiosk) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-            },
-        )
-        with urllib.request.urlopen(req, timeout=8) as resp:
-            html = resp.read().decode("utf-8", errors="ignore")
-        matches = _PHOTO_URL_RE.findall(html)
-        if matches:
-            return _save_photos_cache(matches, source="direct-share-link")
-    except Exception:
-        pass
-    return None
-
-
 def _derive_screens_from_config():
     cfg = _load_config()
     for k in ("screens", "screen_layouts"):
@@ -1628,23 +1531,6 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self.send_response(404)
             self.end_headers()
-            return
-
-        if path == "/hearth-api/photos/state":
-            state = _load_photos_cache()
-            if not state.get("photos"):
-                album_url = state.get("album_url", "")
-                if album_url and _is_valid_album_url(album_url):
-                    scraped = _try_direct_scrape_album(album_url)
-                    if scraped:
-                        state = scraped
-            payload = json.dumps(state).encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.send_header("Cache-Control", "no-store")
-            self.send_header("Content-Length", str(len(payload)))
-            self.end_headers()
-            self.wfile.write(payload)
             return
 
         if path == "/hearth-api/plex/recent":
@@ -1787,8 +1673,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json_error(400, f"Invalid Content-Length: {e}")
             return
 
-        max_len = 262144 if path == "/hearth-api/photos/sync" else 8192
-        if length > max_len:
+        if length > 8192:
             self._send_json_error(413, "Payload too large")
             return
 
@@ -1800,47 +1685,6 @@ class Handler(BaseHTTPRequestHandler):
                 raise TypeError("Request body must be a JSON object")
         except (ValueError, TypeError, json.JSONDecodeError) as e:
             self._send_json_error(400, f"Malformed JSON: {e}")
-            return
-
-        if path == "/hearth-api/photos/sync":
-            album_url = body.get("album_url")
-            if album_url:
-                if not _is_valid_album_url(str(album_url)):
-                    self._send_json_error(400, "Invalid album_url; must be https://photos.app.goo.gl or https://photos.google.com")
-                    return
-            try:
-                photos_list = body.get("photos") or []
-                if not isinstance(photos_list, list):
-                    raise TypeError("photos must be a list")
-                source_label = str(body.get("source") or "ember-android")
-                album_title = str(body.get("album_title") or _cfg("GOOGLE_PHOTOS_ALBUM_TITLE", "Shared Photos"))
-                state = _save_photos_cache(
-                    photos_list,
-                    source=source_label,
-                    album_title=album_title,
-                )
-                if album_url:
-                    with PHOTOS_CACHE_LOCK:
-                        state["album_url"] = str(album_url)
-                        try:
-                            with open(PHOTOS_CACHE_FILE, "w", encoding="utf-8") as f:
-                                json.dump(state, f, indent=2)
-                        except Exception:
-                            pass
-            except (ValueError, TypeError) as e:
-                self._send_json_error(400, f"Invalid sync parameters: {e}")
-                return
-
-            payload = json.dumps({
-                "ok": True,
-                "count": len(state.get("photos", [])),
-                "photos": state.get("photos", []),
-            }).encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.send_header("Content-Length", str(len(payload)))
-            self.end_headers()
-            self.wfile.write(payload)
             return
 
         if path == "/hearth-api/plex/play":
