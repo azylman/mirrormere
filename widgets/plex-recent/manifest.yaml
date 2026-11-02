@@ -1,0 +1,24 @@
+name: plex-recent
+version: "1.0.0"
+description: Native Plex recent additions, upcoming releases, and Seerr media requests widget.
+provider: spacer
+
+capabilities:
+  - ambient-static
+  - touch-interactive
+
+default_dimensions: [3, 2]
+
+supported_dimensions:
+  - [2, 2]
+  - [3, 2]
+  - [4, 2]
+  - [6, 2]
+
+config_schema:
+  type: object
+  properties:
+    api_base:
+      type: string
+    title:
+      type: string
