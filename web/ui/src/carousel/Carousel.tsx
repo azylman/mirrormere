@@ -166,7 +166,7 @@ export function Carousel({ hidden }: CarouselProps = {}) {
         onSelect={(index) => controllerRef.current?.goTo(index)}
         onSwipe={(direction) => {
           const controller = controllerRef.current;
-          if (controller) controller.goTo(neighbourOf(controller.current, total, direction));
+          if (controller) controller.goTo(neighbourOf(controller.current, total, direction), direction);
         }}
         onTogglePin={() => {
           const next = !pinned;

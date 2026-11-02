@@ -1032,5 +1032,50 @@ describe('Carousel', () => {
       expect(stylesSource).toMatch(/\.screen-indicator-pin::before\s*\{[^}]*bottom:\s*-8px\s*;/);
       expect(stylesSource).toMatch(/\.screen-indicator-pin\.active\s*\{[^}]*color:\s*var\(--mm-lavender/);
     });
+
+    it('settles two-screen ScreenIndicator prev pill swipe with translate3d(1000px,0,0)', async () => {
+      vi.useFakeTimers();
+      const clientWidth = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1000);
+      try {
+        const twoScreens: ScreensResponse = {
+          current_screen: 0,
+          interval_seconds: 30,
+          screens: [layout[0], layout[1]],
+        };
+        stubApi(twoScreens);
+        useDisplayStore.setState({ screen: { ...initial.screen, currentScreen: 0, totalScreens: 2 } });
+        render(<Carousel />);
+        await act(async () => {});
+
+        const indicator = document.querySelector<HTMLElement>('#screen-indicator');
+        expect(indicator).not.toBeNull();
+
+        // Swipe pill from x=440 to x=500 (60px right drag => 'prev' swipe)
+        act(() => {
+          const down = new Event('pointerdown', { bubbles: true, cancelable: true });
+          Object.assign(down, { clientX: 440, clientY: 100, pointerId: 1, isPrimary: true });
+          indicator?.dispatchEvent(down);
+
+          const up = new Event('pointerup', { bubbles: true, cancelable: true });
+          Object.assign(up, { clientX: 500, clientY: 100, pointerId: 1, isPrimary: true });
+          indicator?.dispatchEvent(up);
+        });
+
+        const track = document.querySelector<HTMLElement>('.carousel-track');
+        expect(track?.style.transform).toBe('translate3d(1000px,0,0)');
+
+        act(() => {
+          const event = new Event('transitionend');
+          Object.assign(event, { propertyName: 'transform' });
+          track?.dispatchEvent(event);
+        });
+        await act(async () => {
+          vi.advanceTimersByTime(SETTLE_FALLBACK_MS);
+        });
+        expect(useDisplayStore.getState().screen.currentScreen).toBe(1);
+      } finally {
+        clientWidth.mockRestore();
+      }
+    });
   });
 });

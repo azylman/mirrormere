@@ -888,4 +888,48 @@ describe('CarouselController', () => {
       expect(h.controller.held).toBe(false);
     });
   });
+
+  describe('two-screen (total === 2) settle direction', () => {
+    beforeEach(() => {
+      useDisplayStore.setState(initial, true);
+      useDisplayStore.setState({ screen: { ...initial.screen, currentScreen: 0, totalScreens: 2 } });
+    });
+
+    it('settles a prev swipe (right drag) with translate3d(1000px,0,0)', () => {
+      vi.useFakeTimers();
+      const h = build(0);
+      swipe(h, 200, 500);
+      h.flushFrames();
+
+      expect(h.track.style.transform).toBe('translate3d(1000px,0,0)');
+      h.transitionEnd();
+      expect(h.host.commit).toHaveBeenCalledWith(1);
+      expect(h.host.select).toHaveBeenCalledWith(1);
+    });
+
+    it('settles goTo(target, "prev") with translate3d(1000px,0,0)', () => {
+      vi.useFakeTimers();
+      const h = build(0);
+      h.controller.goTo(1, 'prev');
+      expect(h.track.style.transform).toBe('translate3d(1000px,0,0)');
+      h.transitionEnd();
+      expect(h.host.commit).toHaveBeenCalledWith(1);
+      expect(h.host.select).toHaveBeenCalledWith(1);
+    });
+
+    it('settles hearth-swipe { direction: "prev" } with translate3d(1000px,0,0)', () => {
+      vi.useFakeTimers();
+      const h = build(0);
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          origin: window.location.origin,
+          data: { type: 'hearth-swipe', direction: 'prev' },
+        }),
+      );
+      expect(h.track.style.transform).toBe('translate3d(1000px,0,0)');
+      h.transitionEnd();
+      expect(h.host.commit).toHaveBeenCalledWith(1);
+      expect(h.host.select).toHaveBeenCalledWith(1);
+    });
+  });
 });

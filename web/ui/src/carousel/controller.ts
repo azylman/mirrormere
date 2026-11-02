@@ -166,9 +166,9 @@ export class CarouselController {
   }
 
   /** User picked a screen with a dot or the pill swipe. */
-  goTo(index: number): void {
+  goTo(index: number, direction?: Direction): void {
     if (!this.canSwipe() || index === this.shown || this.isBusy()) return;
-    this.go(index, true);
+    this.go(index, true, direction);
   }
 
   /**
@@ -236,11 +236,11 @@ export class CarouselController {
   }
 
   /** Slides to an adjacent screen; jumps to a non-adjacent one. */
-  private go(index: number, select: boolean): void {
+  private go(index: number, select: boolean, explicitDirection?: Direction): void {
     if (select) {
       this.queued = null;
     }
-    const direction = this.directionTo(index);
+    const direction = explicitDirection ?? this.directionTo(index);
     if (direction === null) {
       this.commit(index, select);
       return;
@@ -334,7 +334,7 @@ export class CarouselController {
       event.data.type === 'hearth-swipe' &&
       (event.data.direction === 'next' || event.data.direction === 'prev')
     ) {
-      this.goTo(neighbourOf(this.shown, this.total(), event.data.direction));
+      this.goTo(neighbourOf(this.shown, this.total(), event.data.direction), event.data.direction);
     }
   };
 
@@ -352,11 +352,11 @@ export class CarouselController {
     }
     const direction = releaseDirection(release, this.gestureWidth);
     const target = direction === null ? null : neighbourOf(this.shown, this.total(), direction);
-    if (target === null) {
+    if (target === null || direction === null) {
       this.animator.settle('rest', () => this.afterRest());
       return;
     }
-    this.go(target, true);
+    this.go(target, true, direction);
   }
 
   private afterRest(): void {
