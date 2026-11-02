@@ -5,38 +5,20 @@ import type { WidgetComponentProps } from '../registry';
 import { useIsCurrentPane } from '../../carousel/PaneContext';
 import { useDocumentVisible } from '../../lifecycle/visibility';
 import { useDisplayStore } from '../../store';
+import { HudNextIcon, HudPauseIcon, HudPlayIcon, HudPrevIcon } from '../../video/HudIcons';
 import {
-  HudNextIcon,
-  HudPauseIcon,
-  HudPlayIcon,
-  HudPrevIcon,
-} from '../../video/HudIcons';
-import {
-  EMPTY_PHOTOS,
-  DEFAULT_CYCLE_SECONDS,
-  PHOTO_CONTROLS_HIDE_MS,
-  PHOTO_PAUSE_INACTIVITY_MS,
-  parsePhotoCarouselData,
-  getBackdropPhotoURL,
-  getSizedPhotoURL,
-  useContainerSize,
-  registerEmberSyncListener,
-  usePhotoSlideshowTransition,
-  resolvePhotoCarouselSourceAndUrl,
-  type EmberSyncListener,
-  type PhotoCarouselConfig,
+  EMPTY_PHOTOS, DEFAULT_CYCLE_SECONDS, PHOTO_CONTROLS_HIDE_MS, PHOTO_PAUSE_INACTIVITY_MS,
+  parsePhotoCarouselData, getBackdropPhotoURL, getSizedPhotoURL, useContainerSize,
+  registerEmberSyncListener, usePhotoSlideshowTransition, resolvePhotoCarouselSourceAndUrl,
+  formatPhotoMetadataLabel, resolvePhotoOverlayTheme,
+  type EmberSyncListener, type PhotoCarouselConfig, type PhotoItem,
 } from './photoCarouselHelpers';
 
 export {
-  parsePhotoCarouselData,
-  getBackdropPhotoURL,
-  getSizedPhotoURL,
-  photoDeckStateById,
-  getPhotoItemKey,
-  selectNextPhotoIndex,
-  selectPrevPhotoIndex,
-  PHOTO_CONTROLS_HIDE_MS,
-  PHOTO_PAUSE_INACTIVITY_MS,
+  parsePhotoCarouselData, getBackdropPhotoURL, getSizedPhotoURL, photoDeckStateById,
+  getPhotoItemKey, selectNextPhotoIndex, selectPrevPhotoIndex,
+  formatPhotoOverlayDate, formatPhotoMetadataLabel, resolvePhotoOverlayTheme,
+  PHOTO_CONTROLS_HIDE_MS, PHOTO_PAUSE_INACTIVITY_MS,
 } from './photoCarouselHelpers';
 
 declare global {
@@ -191,6 +173,20 @@ function PhotoForeground({
           transition: isTransitioning ? 'opacity 0.85s ease-in-out' : 'none',
         }}
       />
+    </div>
+  );
+}
+
+function PhotoMetadataOverlay({ photo }: { photo?: PhotoItem }) {
+  const meta = formatPhotoMetadataLabel(photo);
+  if (!meta) return null;
+  const theme = resolvePhotoOverlayTheme(photo?.dominant_color);
+  const label = meta.location && meta.date ? `${meta.location} · ${meta.date}` : meta.location || meta.date;
+  return (
+    <div className="photo-metadata-overlay" data-overlay-theme={theme} aria-label={label}>
+      {meta.location && <span className="photo-metadata-location">{meta.location}</span>}
+      {meta.location && meta.date && <span className="photo-metadata-sep" aria-hidden="true">·</span>}
+      {meta.date && <span className="photo-metadata-date">{meta.date}</span>}
     </div>
   );
 }
@@ -418,6 +414,7 @@ export function PhotoCarouselWidget({ id }: WidgetComponentProps) {
 
   const isTransitioning = Boolean(transitionState?.active);
   const nextPhoto = transitionState ? photos[transitionState.nextIndex] : undefined;
+  const activePhoto = isTransitioning && nextPhoto ? nextPhoto : currentPhoto;
   const nextRawUrl = nextPhoto?.url ?? nextPhoto?.URL;
   const nextFgUrl = nextRawUrl ? getSizedPhotoURL(nextRawUrl, containerSize) : '';
   const nextBackdropUrl = nextRawUrl ? getBackdropPhotoURL(nextRawUrl) : '';
@@ -450,6 +447,7 @@ export function PhotoCarouselWidget({ id }: WidgetComponentProps) {
             nextUrl={nextFgUrl}
             isTransitioning={isTransitioning}
           />
+          <PhotoMetadataOverlay photo={activePhoto} />
           {photos.length > 1 && (
             <PhotoTransportControls
               visible={controlsVisible || isPaused}

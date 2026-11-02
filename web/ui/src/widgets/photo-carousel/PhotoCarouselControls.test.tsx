@@ -5,6 +5,9 @@ import {
   PHOTO_CONTROLS_HIDE_MS,
   PHOTO_PAUSE_INACTIVITY_MS,
   photoDeckStateById,
+  formatPhotoOverlayDate,
+  formatPhotoMetadataLabel,
+  resolvePhotoOverlayTheme,
 } from './PhotoCarouselWidget';
 import { useDisplayStore } from '../../store';
 import type { WidgetMeta } from '../../store/types';
@@ -21,7 +24,7 @@ function makeWidgetMeta(config: Record<string, unknown> = {}): WidgetMeta {
 }
 
 function setWidgetPhotos(
-  photos: Array<{ id?: string; url?: string; URL?: string }>,
+  photos: Array<{ id?: string; url?: string; URL?: string; timestamp?: string; location?: string; dominant_color?: string }>,
   cycleSeconds?: number,
   config: Record<string, unknown> = {},
 ) {
@@ -266,5 +269,104 @@ describe('PhotoCarouselWidget transport controls', () => {
         video: { mode: 'widgets', primary: null, pip: null },
       });
     });
+  });
+
+  it('formats metadata labels, resolves adaptive overlay theme, and renders Nest Hub photo overlay across transitions', () => {
+    expect(formatPhotoOverlayDate('')).toBe('');
+    expect(formatPhotoOverlayDate('   ')).toBe('');
+    expect(formatPhotoOverlayDate('not-a-date')).toBe('');
+    expect(formatPhotoOverlayDate('2026-08-15T14:30:00Z')).toBe('Aug 15, 2026');
+
+    expect(formatPhotoMetadataLabel(undefined)).toBeNull();
+    expect(formatPhotoMetadataLabel({ id: '1', url: 'https://example.com/1.jpg' })).toBeNull();
+    expect(formatPhotoMetadataLabel({ location: '  Oakland, CA  ', timestamp: '2026-08-15T14:30:00Z' })).toEqual({
+      location: 'Oakland, CA',
+      date: 'Aug 15, 2026',
+    });
+    expect(formatPhotoMetadataLabel({ location: 'Tokyo, Japan' })).toEqual({
+      location: 'Tokyo, Japan',
+      date: '',
+    });
+
+    expect(resolvePhotoOverlayTheme(undefined)).toBe('dark');
+    expect(resolvePhotoOverlayTheme('invalid')).toBe('dark');
+    expect(resolvePhotoOverlayTheme('#362b29')).toBe('dark');
+    expect(resolvePhotoOverlayTheme('#e8e8e5')).toBe('light');
+    expect(resolvePhotoOverlayTheme('f5f5f0')).toBe('light');
+
+    // Render photo with dark dominant color + location + timestamp
+    photoDeckStateById.clear();
+    setWidgetPhotos([
+      {
+        id: '1',
+        url: 'https://example.com/dark.jpg',
+        timestamp: '2026-08-15T14:30:00Z',
+        location: 'Oakland, CA',
+        dominant_color: '#221c28',
+      },
+      {
+        id: '2',
+        url: 'https://example.com/light.jpg',
+        timestamp: '2026-09-01T08:00:00Z',
+        dominant_color: '#f2f0eb',
+      },
+      {
+        id: '3',
+        url: 'https://example.com/plain.jpg',
+      },
+    ], 10);
+
+    const { container } = render(
+      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
+        <PhotoCarouselWidget id={widgetId} type="photo-carousel" />
+      </PaneContext.Provider>,
+    );
+
+    const overlay1 = container.querySelector('.photo-metadata-overlay') as HTMLDivElement;
+    expect(overlay1).not.toBeNull();
+    expect(overlay1.getAttribute('data-overlay-theme')).toBe('dark');
+    expect(overlay1.getAttribute('aria-label')).toBe('Oakland, CA · Aug 15, 2026');
+    expect(overlay1.querySelector('.photo-metadata-location')?.textContent).toBe('Oakland, CA');
+    expect(overlay1.querySelector('.photo-metadata-sep')?.textContent).toBe('·');
+    expect(overlay1.querySelector('.photo-metadata-date')?.textContent).toBe('Aug 15, 2026');
+
+    // Render photo with light dominant color and date only
+    act(() => {
+      photoDeckStateById.clear();
+      setWidgetPhotos([
+        {
+          id: '2',
+          url: 'https://example.com/light.jpg',
+          timestamp: '2026-09-01T08:00:00Z',
+          dominant_color: '#f2f0eb',
+        },
+      ], 10);
+    });
+
+    const overlay2 = container.querySelector('.photo-metadata-overlay') as HTMLDivElement;
+    expect(overlay2).not.toBeNull();
+    expect(overlay2.getAttribute('data-overlay-theme')).toBe('light');
+    expect(overlay2.getAttribute('aria-label')).toBe('Sep 1, 2026');
+    expect(overlay2.querySelector('.photo-metadata-location')).toBeNull();
+    expect(overlay2.querySelector('.photo-metadata-sep')).toBeNull();
+    expect(overlay2.querySelector('.photo-metadata-date')?.textContent).toBe('Sep 1, 2026');
+
+    // Render photo with location only
+    act(() => {
+      photoDeckStateById.clear();
+      setWidgetPhotos([
+        { id: 'loc-only', url: 'https://example.com/loc.jpg', location: 'Kyoto, Japan' },
+      ], 10);
+    });
+    expect(container.querySelector('.photo-metadata-overlay')?.getAttribute('aria-label')).toBe('Kyoto, Japan');
+
+    // Render photo with no location or timestamp -> no overlay
+    act(() => {
+      photoDeckStateById.clear();
+      setWidgetPhotos([
+        { id: '3', url: 'https://example.com/plain.jpg' },
+      ], 10);
+    });
+    expect(container.querySelector('.photo-metadata-overlay')).toBeNull();
   });
 });
