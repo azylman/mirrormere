@@ -45,8 +45,8 @@ export function formatPhotoMetadataLabel(
   const date = formatPhotoOverlayDate(photo?.timestamp);
   const location = (photo?.location || '').trim();
   const album = showAlbumName ? (photo?.album_name || '').trim() : '';
-  const dateAndLocation = date && location ? `${date}, ${location}` : date || location;
-  const text = dateAndLocation && album ? `${dateAndLocation} • ${album}` : dateAndLocation || album;
+  const secondary = location && album ? `${location} • ${album}` : location || album;
+  const text = date && secondary ? `${date}\n${secondary}` : date || secondary;
   return text ? { date, location, album, text } : null;
 }
 

@@ -284,13 +284,13 @@ describe('PhotoCarouselWidget transport controls', () => {
       date: 'Oct 30, 2026',
       location: 'Emeryville',
       album: '',
-      text: 'Oct 30, 2026, Emeryville',
+      text: 'Oct 30, 2026\nEmeryville',
     });
     expect(formatPhotoMetadataLabel({ location: 'Emeryville', timestamp: '2026-10-30T14:30:00Z', album_name: 'AZAZAZAZ' }, true)).toEqual({
       date: 'Oct 30, 2026',
       location: 'Emeryville',
       album: 'AZAZAZAZ',
-      text: 'Oct 30, 2026, Emeryville • AZAZAZAZ',
+      text: 'Oct 30, 2026\nEmeryville • AZAZAZAZ',
     });
     expect(formatPhotoMetadataLabel({ location: 'Tokyo, Japan' })).toEqual({
       date: '',
@@ -315,7 +315,7 @@ describe('PhotoCarouselWidget transport controls', () => {
     expect(resolvePhotoOverlayTheme('#e8e8e5')).toBe('light');
     expect(resolvePhotoOverlayTheme('f5f5f0')).toBe('light');
 
-    // 1. Single album configured -> omits album name ("Oct 30, 2026, Emeryville")
+    // 1. Single album configured -> omits album name ("Oct 30, 2026\nEmeryville")
     photoDeckStateById.clear();
     setWidgetPhotos([
       {
@@ -337,10 +337,10 @@ describe('PhotoCarouselWidget transport controls', () => {
     const overlay1 = container.querySelector('.photo-metadata-overlay') as HTMLDivElement;
     expect(overlay1).not.toBeNull();
     expect(overlay1.getAttribute('data-overlay-theme')).toBe('dark');
-    expect(overlay1.getAttribute('aria-label')).toBe('Oct 30, 2026, Emeryville');
-    expect(overlay1.textContent).toBe('Oct 30, 2026, Emeryville');
+    expect(overlay1.getAttribute('aria-label')).toBe('Oct 30, 2026\nEmeryville');
+    expect(overlay1.textContent).toBe('Oct 30, 2026\nEmeryville');
 
-    // 2. Multiple albums configured in config.albums -> includes album name ("Oct 30, 2026, Emeryville • AZAZAZAZ")
+    // 2. Multiple albums configured in config.albums -> includes album name ("Oct 30, 2026\nEmeryville • AZAZAZAZ")
     act(() => {
       photoDeckStateById.clear();
       setWidgetPhotos(
@@ -367,8 +367,8 @@ describe('PhotoCarouselWidget transport controls', () => {
     const overlay2 = container.querySelector('.photo-metadata-overlay') as HTMLDivElement;
     expect(overlay2).not.toBeNull();
     expect(overlay2.getAttribute('data-overlay-theme')).toBe('light');
-    expect(overlay2.getAttribute('aria-label')).toBe('Oct 30, 2026, Emeryville • AZAZAZAZ');
-    expect(overlay2.textContent).toBe('Oct 30, 2026, Emeryville • AZAZAZAZ');
+    expect(overlay2.getAttribute('aria-label')).toBe('Oct 30, 2026\nEmeryville • AZAZAZAZ');
+    expect(overlay2.textContent).toBe('Oct 30, 2026\nEmeryville • AZAZAZAZ');
 
     // 3. Render photo with location only
     act(() => {
