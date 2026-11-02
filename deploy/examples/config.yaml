@@ -110,8 +110,10 @@ display:
       pinned: false
       refresh_interval_seconds: 3600
       config:
-        source: "share_url"
-        album_url_env: "GOOGLE_PHOTOS_ALBUM_URL"
+        albums:
+          - name: "Family Album"
+            source: "share_url"
+            url_env: "GOOGLE_PHOTOS_ALBUM_URL"
 
     # Conversation transcript (type chat-log; no endpoint, no database). The
     # voice hub records each turn per voice node; open the display with
