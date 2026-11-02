@@ -27,7 +27,7 @@ export interface SeerrResultItem {
   status?: string;
 }
 
-export type ReqStatus = 'requesting' | 'requested' | 'error';
+type ReqStatus = 'requesting' | 'requested' | 'error';
 
 const CATEGORIES: { key: string; label: string }[] = [
   { key: 'all', label: 'All Recent' },

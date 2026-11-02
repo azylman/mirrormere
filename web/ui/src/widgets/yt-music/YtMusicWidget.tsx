@@ -4,12 +4,12 @@ import { useDocumentVisible } from '../../lifecycle/visibility';
 import { useWidget } from '../../store/hooks';
 import type { WidgetComponentProps } from '../registry';
 
-export interface Speaker {
+interface Speaker {
   entity_id: string;
   name: string;
 }
 
-export interface NowPlaying {
+interface NowPlaying {
   title?: string;
   artist?: string;
   thumb?: string;
@@ -18,20 +18,20 @@ export interface NowPlaying {
   queue_index?: number;
 }
 
-export interface Playlist {
+interface Playlist {
   playlist_id: string;
   title: string;
   thumb?: string;
   count?: number;
 }
 
-export interface QueueItem {
+interface QueueItem {
   title: string;
   artist: string;
   thumb?: string;
 }
 
-export interface SearchResultItem {
+interface SearchResultItem {
   video_id: string;
   title: string;
   artist: string;
@@ -47,7 +47,7 @@ export interface MusicState {
   queue?: QueueItem[];
 }
 
-export type YtMusicTab = 'playlists' | 'queue' | 'search';
+type YtMusicTab = 'playlists' | 'queue' | 'search';
 
 const DEFAULT_STATE: MusicState = {
   active_speaker: 'media_player.home_group',
