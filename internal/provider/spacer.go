@@ -4,6 +4,12 @@ import (
 	"context"
 )
 
+func init() {
+	registerBuiltin("spacer", func() Provider {
+		return NewSpacerProvider()
+	})
+}
+
 // SpacerProvider provides the data lifecycle implementation for native spacer tiles.
 // Conforms to  Spacer Tiles (zero overhead, empty domain payload).
 type SpacerProvider struct{}

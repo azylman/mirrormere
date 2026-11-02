@@ -101,16 +101,16 @@ type Config struct {
 	Host                                                      string
 	Port                                                      int
 	ReadTimeout, ReadHeaderTimeout, WriteTimeout, IdleTimeout time.Duration
-	EventsHandler                                             http.Handler
-	ScreenHandler                                             ScreenHandler
-	RenderHandler                                             RenderHandler
-	PushHandler                                               PushHandler
-	DisplayHandler                                            DisplayHandler
-	ListsHandler                                              ListsHandler
 	AudioHandler                                              AudioHandler
+	DisplayHandler                                            DisplayHandler
+	EventsHandler                                             http.Handler
+	LayoutEditorHandler                                       LayoutEditorHandler
+	ListsHandler                                              ListsHandler
+	PushHandler                                               PushHandler
+	RenderHandler                                             RenderHandler
+	ScreenHandler                                             ScreenHandler
 	VideoHandler                                              VideoHandler
 	VoiceHandler                                              VoiceHandler
-	LayoutEditorHandler                                       LayoutEditorHandler
 }
 
 // ApplyDefaults sets fallback values for any unspecified configuration fields.
@@ -160,16 +160,16 @@ type Server struct {
 	readyOnce           sync.Once
 	mu                  sync.RWMutex
 	addr                string
-	eventsHandler       http.Handler
-	screenHandler       ScreenHandler
-	renderHandler       RenderHandler
-	pushHandler         PushHandler
-	displayHandler      DisplayHandler
-	listsHandler        ListsHandler
 	audioHandler        AudioHandler
+	displayHandler      DisplayHandler
+	eventsHandler       http.Handler
+	layoutEditorHandler LayoutEditorHandler
+	listsHandler        ListsHandler
+	pushHandler         PushHandler
+	renderHandler       RenderHandler
+	screenHandler       ScreenHandler
 	videoHandler        VideoHandler
 	voiceHandler        VoiceHandler
-	layoutEditorHandler LayoutEditorHandler
 }
 
 // New constructs a configured Server instance.
@@ -177,11 +177,16 @@ func New(cfg Config) *Server {
 	cfg.ApplyDefaults()
 	s := &Server{
 		cfg: cfg, mux: http.NewServeMux(), ready: make(chan struct{}),
-		eventsHandler: cfg.EventsHandler, screenHandler: cfg.ScreenHandler,
-		renderHandler: cfg.RenderHandler, pushHandler: cfg.PushHandler,
-		displayHandler: cfg.DisplayHandler, listsHandler: cfg.ListsHandler,
-		audioHandler: cfg.AudioHandler, videoHandler: cfg.VideoHandler, voiceHandler: cfg.VoiceHandler,
+		audioHandler:        cfg.AudioHandler,
+		displayHandler:      cfg.DisplayHandler,
+		eventsHandler:       cfg.EventsHandler,
 		layoutEditorHandler: cfg.LayoutEditorHandler,
+		listsHandler:        cfg.ListsHandler,
+		pushHandler:         cfg.PushHandler,
+		renderHandler:       cfg.RenderHandler,
+		screenHandler:       cfg.ScreenHandler,
+		videoHandler:        cfg.VideoHandler,
+		voiceHandler:        cfg.VoiceHandler,
 	}
 	s.setupRoutes()
 	s.httpServer = &http.Server{
@@ -210,34 +215,11 @@ func dispatchHandler[H any](s *Server, get func() H, isNil func(H) bool, fn func
 }
 
 func (s *Server) setupRoutes() {
-	s.mux.HandleFunc("/healthz", s.handleHealth)
-	s.mux.HandleFunc("/health", s.handleHealth)
-	s.mux.HandleFunc("/debug/coverage/flush", s.handleCoverageFlush)
-	s.mux.Handle("/metrics", promhttp.Handler())
-	s.mux.HandleFunc("/api/perf", handlePerf(defaultPerfHistogramsOnce()))
-	s.mux.HandleFunc("/api/events", dispatchHandler(s, func() http.Handler { return s.eventsHandler }, isNil, func(h http.Handler, w http.ResponseWriter, r *http.Request) { h.ServeHTTP(w, r) }))
-	s.mux.HandleFunc("/api/screen/select", dispatchHandler(s, func() ScreenHandler { return s.screenHandler }, isNil, func(h ScreenHandler, w http.ResponseWriter, r *http.Request) { h.PostScreenSelect(w, r) }))
-	s.mux.HandleFunc("/api/screen/advance", dispatchHandler(s, func() ScreenHandler { return s.screenHandler }, isNil, func(h ScreenHandler, w http.ResponseWriter, r *http.Request) { h.PostScreenAdvance(w, r) }))
-	s.mux.HandleFunc("/api/screen/pause", dispatchHandler(s, func() ScreenHandler { return s.screenHandler }, isNil, func(h ScreenHandler, w http.ResponseWriter, r *http.Request) { h.PostScreenPause(w, r) }))
-	s.mux.HandleFunc("/api/lists/{list_id}/items/{item_id}/complete", dispatchHandler(s, func() ListsHandler { return s.listsHandler }, isNil, func(h ListsHandler, w http.ResponseWriter, r *http.Request) {
-		h.CompleteListItem(w, r, r.PathValue("list_id"), r.PathValue("item_id"))
-	}))
+	s.mux.HandleFunc("/", s.handleRoot)
 	s.mux.HandleFunc("/api/audio", dispatchHandler(s, func() AudioHandler { return s.audioHandler }, isNil, func(h AudioHandler, w http.ResponseWriter, r *http.Request) { h.GetAudio(w, r) }))
-	s.mux.HandleFunc("/api/audio/volume", dispatchHandler(s, func() AudioHandler { return s.audioHandler }, isNil, func(h AudioHandler, w http.ResponseWriter, r *http.Request) { h.PostAudioVolume(w, r) }))
 	s.mux.HandleFunc("/api/audio/mute", dispatchHandler(s, func() AudioHandler { return s.audioHandler }, isNil, func(h AudioHandler, w http.ResponseWriter, r *http.Request) { h.PostAudioMute(w, r) }))
-	s.mux.HandleFunc("/api/video/trigger", dispatchHandler(s, func() VideoHandler { return s.videoHandler }, isNil, func(h VideoHandler, w http.ResponseWriter, r *http.Request) { h.PostVideoTrigger(w, r) }))
-	s.mux.HandleFunc("/api/video/dismiss", dispatchHandler(s, func() VideoHandler { return s.videoHandler }, isNil, func(h VideoHandler, w http.ResponseWriter, r *http.Request) { h.PostVideoDismiss(w, r) }))
-	s.mux.HandleFunc("/api/video/action", dispatchHandler(s, func() VideoHandler { return s.videoHandler }, isNil, func(h VideoHandler, w http.ResponseWriter, r *http.Request) { h.PostVideoAction(w, r) }))
-	s.mux.HandleFunc("/api/video/state", dispatchHandler(s, func() VideoHandler { return s.videoHandler }, isNil, func(h VideoHandler, w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet || r.Method == http.MethodHead {
-			h.GetVideoState(w, r)
-		} else {
-			h.PostVideoState(w, r)
-		}
-	}))
-	s.mux.HandleFunc("/api/voice/state", dispatchHandler(s, func() VoiceHandler { return s.voiceHandler }, isNil, func(h VoiceHandler, w http.ResponseWriter, r *http.Request) { h.PostVoiceState(w, r) }))
-	s.mux.HandleFunc("/api/voice/interact", dispatchHandler(s, func() VoiceHandler { return s.voiceHandler }, isNil, func(h VoiceHandler, w http.ResponseWriter, r *http.Request) { h.PostVoiceInteract(w, r) }))
-	s.mux.HandleFunc("/api/voice/heartbeat", dispatchHandler(s, func() VoiceHandler { return s.voiceHandler }, isNil, func(h VoiceHandler, w http.ResponseWriter, r *http.Request) { h.PostVoiceHeartbeat(w, r) }))
+	s.mux.HandleFunc("/api/audio/volume", dispatchHandler(s, func() AudioHandler { return s.audioHandler }, isNil, func(h AudioHandler, w http.ResponseWriter, r *http.Request) { h.PostAudioVolume(w, r) }))
+	s.mux.HandleFunc("/api/events", dispatchHandler(s, func() http.Handler { return s.eventsHandler }, isNil, func(h http.Handler, w http.ResponseWriter, r *http.Request) { h.ServeHTTP(w, r) }))
 	s.mux.HandleFunc("/api/layout/editor", dispatchHandler(s, func() LayoutEditorHandler { return s.layoutEditorHandler }, isNil, func(h LayoutEditorHandler, w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet, http.MethodHead:
@@ -256,26 +238,49 @@ func (s *Server) setupRoutes() {
 			writeAPIError(w, http.StatusMethodNotAllowed, "method not allowed")
 		}
 	}))
+	s.mux.HandleFunc("/api/lists/{list_id}/items/{item_id}/complete", dispatchHandler(s, func() ListsHandler { return s.listsHandler }, isNil, func(h ListsHandler, w http.ResponseWriter, r *http.Request) {
+		h.CompleteListItem(w, r, r.PathValue("list_id"), r.PathValue("item_id"))
+	}))
+	s.mux.HandleFunc("/api/perf", handlePerf(defaultPerfHistogramsOnce()))
+	s.mux.HandleFunc("/api/screen/advance", dispatchHandler(s, func() ScreenHandler { return s.screenHandler }, isNil, func(h ScreenHandler, w http.ResponseWriter, r *http.Request) { h.PostScreenAdvance(w, r) }))
+	s.mux.HandleFunc("/api/screen/pause", dispatchHandler(s, func() ScreenHandler { return s.screenHandler }, isNil, func(h ScreenHandler, w http.ResponseWriter, r *http.Request) { h.PostScreenPause(w, r) }))
+	s.mux.HandleFunc("/api/screen/select", dispatchHandler(s, func() ScreenHandler { return s.screenHandler }, isNil, func(h ScreenHandler, w http.ResponseWriter, r *http.Request) { h.PostScreenSelect(w, r) }))
 	s.mux.HandleFunc("/api/screens", dispatchHandler(s, func() ScreenHandler { return s.screenHandler }, isNil, func(h ScreenHandler, w http.ResponseWriter, r *http.Request) { h.GetScreens(w, r) }))
+	s.mux.HandleFunc("/api/video/action", dispatchHandler(s, func() VideoHandler { return s.videoHandler }, isNil, func(h VideoHandler, w http.ResponseWriter, r *http.Request) { h.PostVideoAction(w, r) }))
+	s.mux.HandleFunc("/api/video/dismiss", dispatchHandler(s, func() VideoHandler { return s.videoHandler }, isNil, func(h VideoHandler, w http.ResponseWriter, r *http.Request) { h.PostVideoDismiss(w, r) }))
+	s.mux.HandleFunc("/api/video/state", dispatchHandler(s, func() VideoHandler { return s.videoHandler }, isNil, func(h VideoHandler, w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet || r.Method == http.MethodHead {
+			h.GetVideoState(w, r)
+		} else {
+			h.PostVideoState(w, r)
+		}
+	}))
+	s.mux.HandleFunc("/api/video/trigger", dispatchHandler(s, func() VideoHandler { return s.videoHandler }, isNil, func(h VideoHandler, w http.ResponseWriter, r *http.Request) { h.PostVideoTrigger(w, r) }))
+	s.mux.HandleFunc("/api/voice/heartbeat", dispatchHandler(s, func() VoiceHandler { return s.voiceHandler }, isNil, func(h VoiceHandler, w http.ResponseWriter, r *http.Request) { h.PostVoiceHeartbeat(w, r) }))
+	s.mux.HandleFunc("/api/voice/interact", dispatchHandler(s, func() VoiceHandler { return s.voiceHandler }, isNil, func(h VoiceHandler, w http.ResponseWriter, r *http.Request) { h.PostVoiceInteract(w, r) }))
+	s.mux.HandleFunc("/api/voice/state", dispatchHandler(s, func() VoiceHandler { return s.voiceHandler }, isNil, func(h VoiceHandler, w http.ResponseWriter, r *http.Request) { h.PostVoiceState(w, r) }))
 	s.mux.HandleFunc("/api/widgets/{widget_id}", dispatchHandler(s, func() RenderHandler { return s.renderHandler }, isNil, func(h RenderHandler, w http.ResponseWriter, r *http.Request) {
 		h.GetWidgetJSON(w, r, r.PathValue("widget_id"))
-	}))
-	s.mux.HandleFunc("/api/widgets/{widget_id}/render", dispatchHandler(s, func() RenderHandler { return s.renderHandler }, isNil, func(h RenderHandler, w http.ResponseWriter, r *http.Request) {
-		h.GetWidgetRender(w, r, r.PathValue("widget_id"))
-	}))
-	s.mux.HandleFunc("/api/widgets/{widget_id}/push", dispatchHandler(s, func() PushHandler { return s.pushHandler }, isNil, func(h PushHandler, w http.ResponseWriter, r *http.Request) {
-		h.PostWidgetPush(w, r, r.PathValue("widget_id"))
 	}))
 	s.mux.HandleFunc("/api/widgets/{widget_id}/photos", dispatchHandler(s, func() PushHandler { return s.pushHandler }, isNil, func(h PushHandler, w http.ResponseWriter, r *http.Request) {
 		h.PostWidgetPhotos(w, r, r.PathValue("widget_id"))
 	}))
+	s.mux.HandleFunc("/api/widgets/{widget_id}/push", dispatchHandler(s, func() PushHandler { return s.pushHandler }, isNil, func(h PushHandler, w http.ResponseWriter, r *http.Request) {
+		h.PostWidgetPush(w, r, r.PathValue("widget_id"))
+	}))
+	s.mux.HandleFunc("/api/widgets/{widget_id}/render", dispatchHandler(s, func() RenderHandler { return s.renderHandler }, isNil, func(h RenderHandler, w http.ResponseWriter, r *http.Request) {
+		h.GetWidgetRender(w, r, r.PathValue("widget_id"))
+	}))
+	s.mux.HandleFunc("/debug/coverage/flush", s.handleCoverageFlush)
+	s.mux.HandleFunc("/display", dispatchHandler(s, func() DisplayHandler { return s.displayHandler }, isNil, func(h DisplayHandler, w http.ResponseWriter, r *http.Request) { h.GetDisplay(w, r) }))
+	s.mux.HandleFunc("/health", s.handleHealth)
+	s.mux.HandleFunc("/healthz", s.handleHealth)
+	s.mux.Handle("/metrics", promhttp.Handler())
+	s.mux.HandleFunc("/static/{path...}", dispatchHandler(s, func() DisplayHandler { return s.displayHandler }, isNil, func(h DisplayHandler, w http.ResponseWriter, r *http.Request) { h.GetStatic(w, r, r.PathValue("path")) }))
+	s.mux.HandleFunc("/style.css", dispatchHandler(s, func() RenderHandler { return s.renderHandler }, isNil, func(h RenderHandler, w http.ResponseWriter, r *http.Request) { h.ServeStyle(w, r) }))
 	s.mux.HandleFunc("/widget-types/{type}/assets/{path...}", dispatchHandler(s, func() RenderHandler { return s.renderHandler }, isNil, func(h RenderHandler, w http.ResponseWriter, r *http.Request) {
 		h.GetWidgetAsset(w, r, r.PathValue("type"), r.PathValue("path"))
 	}))
-	s.mux.HandleFunc("/style.css", dispatchHandler(s, func() RenderHandler { return s.renderHandler }, isNil, func(h RenderHandler, w http.ResponseWriter, r *http.Request) { h.ServeStyle(w, r) }))
-	s.mux.HandleFunc("/display", dispatchHandler(s, func() DisplayHandler { return s.displayHandler }, isNil, func(h DisplayHandler, w http.ResponseWriter, r *http.Request) { h.GetDisplay(w, r) }))
-	s.mux.HandleFunc("/static/{path...}", dispatchHandler(s, func() DisplayHandler { return s.displayHandler }, isNil, func(h DisplayHandler, w http.ResponseWriter, r *http.Request) { h.GetStatic(w, r, r.PathValue("path")) }))
-	s.mux.HandleFunc("/", s.handleRoot)
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {

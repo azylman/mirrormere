@@ -99,6 +99,12 @@ type PhotosProvider struct {
 	fullSyncInterval  time.Duration
 }
 
+func init() {
+	registerBuiltin("photo-carousel", func() Provider {
+		return NewPhotosProvider()
+	})
+}
+
 // NewPhotosProvider constructs an uninitialized PhotosProvider.
 func NewPhotosProvider(opts ...PhotosOption) *PhotosProvider {
 	p := &PhotosProvider{

@@ -314,6 +314,8 @@ jobs:
     needs: changes
     if: github.event_name != 'push' || inputs.force_all == true
     runs-on: [self-hosted, ci]
+    permissions:
+      contents: write
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v7
@@ -321,6 +323,20 @@ jobs:
       - name: Run Repo-Wide Hygiene Guards
         run: |
           sh scripts/verify.sh --guards-only
+
+      - name: Auto-sort Server Routes and Handlers
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        run: |
+          go run ./scripts/code-health -fix -root . -baseline .code-health-baseline.json
+          if ! git diff --quiet; then
+            git fetch origin "${GITHUB_HEAD_REF}"
+            git checkout -B "${GITHUB_HEAD_REF}" "origin/${GITHUB_HEAD_REF}"
+            go run ./scripts/code-health -fix -root . -baseline .code-health-baseline.json
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git commit -am "chore: auto-sort server routes and handlers [skip ci]"
+            git push origin "HEAD:refs/heads/${GITHUB_HEAD_REF}"
+          fi
 
       - name: Run Static Analysis, Codegen Drift & Linting
         if: needs.changes.outputs.go_core == 'true' || needs.changes.outputs.ci_scripts == 'true' || inputs.force_all == true
