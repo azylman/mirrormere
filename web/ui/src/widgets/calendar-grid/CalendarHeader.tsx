@@ -1,4 +1,3 @@
-import { memo } from 'react';
 import type { FamilyMember, ViewMode } from './types';
 
 export interface CalendarHeaderProps {
@@ -18,7 +17,7 @@ export interface CalendarHeaderProps {
   onViewSwitch: (view: ViewMode) => void;
 }
 
-export const CalendarHeader = memo(function CalendarHeader({
+export function CalendarHeader({
   customTitle,
   activeView,
   pageOffset,
@@ -283,4 +282,4 @@ export const CalendarHeader = memo(function CalendarHeader({
       </div>
     </div>
   );
-});
+}
