@@ -10,6 +10,7 @@ import { PhotoCarouselWidget } from './photo-carousel/PhotoCarouselWidget';
 import { LiveViewWidget } from './live-view/LiveViewWidget';
 import { PlexRecentWidget } from './plex-recent/PlexRecentWidget';
 import { YtMusicWidget } from './yt-music/YtMusicWidget';
+import { HomeAssistantWidget } from './home-assistant/HomeAssistantWidget';
 
 /** Props every widget component receives from WidgetHost. */
 export interface WidgetComponentProps {
@@ -32,6 +33,7 @@ export const WIDGET_COMPONENTS: Readonly<Record<string, ComponentType<WidgetComp
   'live-view': LiveViewWidget,
   'plex-recent': PlexRecentWidget,
   'yt-music': YtMusicWidget,
+  'home-assistant': HomeAssistantWidget,
 };
 
 /**
