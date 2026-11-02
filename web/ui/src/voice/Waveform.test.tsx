@@ -13,6 +13,7 @@ import {
   MOUTH_X0,
   Waveform,
   WaveformMouth,
+  type WaveformMouthOptions,
   clamp,
   defaultClock,
   defaultEventSourceFactory,
@@ -184,6 +185,41 @@ describe('Waveform and WaveformMouth', () => {
       expect(typeof defaultClock()).toBe('number');
       expect(typeof defaultEventSourceFactory()).toBe('function');
       expect(typeof defaultReducedMotion()).toBe('boolean');
+    });
+
+    it('returns false when window.matchMedia throws in defaultReducedMotion', () => {
+      const origMatchMedia = window.matchMedia;
+      Object.defineProperty(window, 'matchMedia', {
+        value: () => {
+          throw new Error('matchMedia blocked');
+        },
+        configurable: true,
+        writable: true,
+      });
+      expect(defaultReducedMotion()).toBe(false);
+      if (origMatchMedia) {
+        Object.defineProperty(window, 'matchMedia', {
+          value: origMatchMedia,
+          configurable: true,
+          writable: true,
+        });
+      } else {
+        delete (window as unknown as { matchMedia?: unknown }).matchMedia;
+      }
+    });
+
+    it('drawFrame eases toward flat line when not speaking or levels are stale', () => {
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      const polyline = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+      const mouth = new WaveformMouth({
+        levelsUrl: '',
+        svgElement: svg,
+        polylineElement: polyline,
+      });
+      mouth.setVoiceState('idle');
+      mouth.drawFrame(16);
+      expect(polyline.getAttribute('points')).toContain('50.00');
+      mouth.destroy();
     });
   });
 
@@ -571,6 +607,83 @@ describe('Waveform and WaveformMouth', () => {
       expect(window.MirrormereWaveform?.smoothValues).toBe(smoothValues);
       expect(window.MirrormereWaveform?.framePoints).toBe(framePoints);
       expect(window.MirrormereWaveform?.easeToward).toBe(easeToward);
+    });
+
+    it('stops loop when document becomes hidden during animation frame', () => {
+      render(<Waveform levelsUrl="http://127.0.0.1:8765/levels" />);
+      const mouth = window.voiceWaveform!;
+      mouth.setVoiceState('speaking');
+      mouth.onLevelFrame({ data: JSON.stringify(new Array(33).fill(0.5)) });
+      expect(mouth.looping).toBe(true);
+
+      Object.defineProperty(document, 'hidden', { value: true, configurable: true });
+      triggerRaf(2000);
+      expect(mouth.looping).toBe(false);
+      Object.defineProperty(document, 'hidden', { value: false, configurable: true });
+    });
+
+    it('stops loop when voiceState becomes idle during active loop', () => {
+      render(<Waveform levelsUrl="http://127.0.0.1:8765/levels" />);
+      const mouth = window.voiceWaveform!;
+      mouth.setVoiceState('speaking');
+      mouth.onLevelFrame({ data: JSON.stringify(new Array(33).fill(0.5)) });
+      expect(mouth.looping).toBe(true);
+
+      mouth.setVoiceState('idle');
+      triggerRaf(2000);
+      expect(mouth.looping).toBe(false);
+    });
+
+    it('handles eventSourceFactory throwing an error or invalid source', () => {
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      const polyline = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+      const throwingFactory = () => { throw new Error('SSE blocked'); };
+      const mouth = new WaveformMouth({
+        levelsUrl: 'http://test',
+        svgElement: svg,
+        polylineElement: polyline,
+        eventSourceFactory: throwingFactory,
+      });
+      expect(mouth.levelSource).toBeNull();
+    });
+
+    it('ignores invalid level frames', () => {
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      const polyline = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+      const mouth = new WaveformMouth({
+        levelsUrl: 'http://test',
+        svgElement: svg,
+        polylineElement: polyline,
+      });
+      expect(() => {
+        mouth.onLevelFrame(undefined);
+        mouth.onLevelFrame({ data: 123 as unknown as string });
+        mouth.onLevelFrame({ data: 'not-json' });
+        mouth.onLevelFrame({ data: JSON.stringify([1, 2]) });
+      }).not.toThrow();
+    });
+
+    it('handles sseClient voice.state with null or primitive payload', () => {
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      const polyline = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+      let handler: ((data: unknown) => void) | null = null;
+      const sseClient = {
+        on: (ev: string, cb: (data: unknown) => void) => {
+          if (ev === 'voice.state') handler = cb;
+        },
+      };
+      const mouth = new WaveformMouth({
+        levelsUrl: 'http://test',
+        svgElement: svg,
+        polylineElement: polyline,
+        sseClient: sseClient as unknown as WaveformMouthOptions['sseClient'],
+      });
+      expect(() => {
+        handler?.(null);
+        handler?.('invalid-string');
+        handler?.({ state: 'speaking' });
+      }).not.toThrow();
+      expect(mouth.voiceState).toBe('speaking');
     });
   });
 });

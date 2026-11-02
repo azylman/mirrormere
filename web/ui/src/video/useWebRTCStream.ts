@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import type { VideoSource } from '../sse/types';
 
-function tryUnref(timer: unknown): void {
+export function tryUnref(timer: unknown): void {
   if (!timer) return;
   const unrefable = timer as { unref?: () => void };
   if (typeof unrefable.unref === 'function') {
@@ -9,7 +9,7 @@ function tryUnref(timer: unknown): void {
   }
 }
 
-function applyZeroLatencyPlayoutDelay(receiver?: RTCRtpReceiver | null): void {
+export function applyZeroLatencyPlayoutDelay(receiver?: RTCRtpReceiver | null): void {
   if (!receiver) return;
   try {
     if ('playoutDelayHint' in receiver) {
@@ -20,7 +20,7 @@ function applyZeroLatencyPlayoutDelay(receiver?: RTCRtpReceiver | null): void {
   }
 }
 
-function safePlay(video: HTMLVideoElement | null): void {
+export function safePlay(video: HTMLVideoElement | null): void {
   if (!video || typeof video.play !== 'function') return;
   try {
     const p = video.play();

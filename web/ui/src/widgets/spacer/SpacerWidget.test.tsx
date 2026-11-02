@@ -16,7 +16,7 @@ describe('SpacerWidget', () => {
   });
 
   it('renders .widget-spacer with data-widget-type and aria-hidden without data-widget-id', () => {
-    const { container } = render(<SpacerWidget id="s1" type="spacer" />);
+    const { container, rerender } = render(<SpacerWidget id="s1" type="spacer" />);
     const el = container.firstElementChild as HTMLElement;
 
     expect(el).not.toBeNull();
@@ -24,6 +24,9 @@ describe('SpacerWidget', () => {
     expect(el.getAttribute('data-widget-type')).toBe('spacer');
     expect(el.getAttribute('aria-hidden')).toBe('true');
     expect(el.getAttribute('data-widget-id')).toBeNull();
+
+    rerender(<SpacerWidget id="s2" type="spacer" />);
+    expect(container.firstElementChild?.getAttribute('data-widget-type')).toBe('spacer');
   });
 
   it('integrates with WidgetHost across [1, 1] dimensions without duplicate data-widget-id', () => {

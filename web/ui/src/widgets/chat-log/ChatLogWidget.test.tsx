@@ -244,4 +244,80 @@ describe('ChatLogWidget', () => {
     const authorEl = container.querySelector('.chat-log-author');
     expect(authorEl?.textContent).toBe('<evil>');
   });
+
+  it('handles non-object messages, missing authors/roles, and PascalCase fields', () => {
+    useDisplayStore.setState({
+      widgets: {
+        'chat-edge': {
+          state: 'healthy',
+          data: {
+            UpdatedAt: '2026-10-31T14:30:00Z',
+            Messages: [
+              null,
+              'invalid-primitive',
+              { Text: 'No author or role', time: '' },
+              { role: 'human', author: '   ', text: 'Whitespace author' },
+            ],
+          },
+          timestamp: '2026-10-31T14:30:00Z',
+        },
+      },
+    });
+
+    const { container } = render(<ChatLogWidget id="chat-edge" type="chat-log" />);
+    const messages = container.querySelectorAll('.chat-log-message');
+    expect(messages.length).toBe(2);
+
+    // First valid message: role defaults to agent, no ts
+    expect(messages[0].classList.contains('chat-log-agent')).toBe(true);
+    expect(messages[0].querySelector('.chat-log-author')?.textContent).toBe('agent');
+    expect(messages[0].querySelector('.chat-log-ts')).toBeNull();
+
+    // Second valid message: author is whitespace so falls back to human
+    expect(messages[1].classList.contains('chat-log-human')).toBe(true);
+    expect(messages[1].querySelector('.chat-log-author')?.textContent).toBe('human');
+  });
+
+  it('handles config.Title, data.updatedAt with raw fallback, and non-date message timestamps', () => {
+    useDisplayStore.setState({
+      widgets: {
+        'chat-title-fallback': {
+          meta: {
+            type: 'chat-log',
+            origin: [0, 0],
+            dimensions: [3, 2],
+            config: { Title: 'Kitchen Channel' },
+            assets_base: '',
+          },
+          state: 'healthy',
+          data: {
+            updatedAt: 'raw-updated-string',
+            messages: [
+              {
+                role: 'system',
+                Timestamp: 'raw-timestamp-string',
+                text: 'System alert message',
+              },
+              {
+                role: 'assistant',
+                timestamp: '2026-10-31T15:00:00Z',
+                text: 'Assistant response',
+              },
+            ],
+          },
+          timestamp: '2026-10-31T15:00:00Z',
+        },
+      },
+    });
+
+    const { container } = render(<ChatLogWidget id="chat-title-fallback" type="chat-log" />);
+    expect(container.querySelector('.chat-log-session')?.textContent).toBe('Kitchen Channel');
+    expect(container.querySelector('.chat-log-updated')?.textContent).toBe('raw-updated-string');
+
+    const messages = container.querySelectorAll('.chat-log-message');
+    expect(messages.length).toBe(2);
+    expect(messages[0].querySelector('.chat-log-ts')?.textContent).toContain('raw-timestamp-string');
+    expect(messages[0].querySelector('.chat-log-author')?.textContent).toBe('agent');
+    expect(messages[1].querySelector('.chat-log-ts')?.textContent).toContain('15:00');
+  });
 });

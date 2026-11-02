@@ -38,7 +38,7 @@ describe('VoiceHud and declarative voice system', () => {
   });
 
   describe('constants & icons', () => {
-    it('exports duck states and VoiceIcon renders correct SVG icons', () => {
+    it('exports duck states and VoiceIcon renders correct SVG icons and hits memo cache', () => {
       expect(DUCK_STATES.has('listening')).toBe(true);
       expect(DUCK_STATES.has('transcribing')).toBe(true);
       expect(DUCK_STATES.has('thinking')).toBe(true);
@@ -46,17 +46,28 @@ describe('VoiceHud and declarative voice system', () => {
       expect(DUCK_STATES.has('speaking')).toBe(true);
       expect(DUCK_STATES.has('idle')).toBe(false);
 
-      const { container: micContainer } = render(<VoiceIcon kind="mic" />);
-      expect(micContainer.querySelector('svg.mm-voice-icon-svg')).not.toBeNull();
-      expect(micContainer.innerHTML).toContain('M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z');
+      function VoiceIconWrapper({ count, kind }: { count: number; kind: import('./VoiceIcon').VoiceIconKind }) {
+        return (
+          <div>
+            <VoiceIcon kind={kind} />
+            <span>{count}</span>
+          </div>
+        );
+      }
+      const { container, rerender } = render(<VoiceIconWrapper count={1} kind="mic" />);
+      expect(container.querySelector('svg.mm-voice-icon-svg')).not.toBeNull();
+      expect(container.innerHTML).toContain('M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z');
 
-      const { container: thinkContainer } = render(<VoiceIcon kind="think" />);
-      expect(thinkContainer.querySelector('svg.mm-voice-icon-svg')).not.toBeNull();
-      expect(thinkContainer.innerHTML).toContain('M7.9 20A9 9 0 1 0 4 16.1L2 22Z');
+      // Exercise memo cache hit on parent rerender with same kind
+      rerender(<VoiceIconWrapper count={2} kind="mic" />);
+      expect(container.querySelector('svg.mm-voice-icon-svg')).not.toBeNull();
 
-      const { container: sparkleContainer } = render(<VoiceIcon kind="sparkle" />);
-      expect(sparkleContainer.querySelector('svg.mm-voice-icon-svg')).not.toBeNull();
-      expect(sparkleContainer.innerHTML).toContain('m12 3-1.912 5.813');
+      // Direct renders of think and sparkle
+      const thinkRes = render(<VoiceIcon kind="think" />);
+      expect(thinkRes.container.innerHTML).toContain('M7.9 20A9 9 0 1 0 4 16.1L2 22Z');
+
+      const sparkleRes = render(<VoiceIcon kind="sparkle" />);
+      expect(sparkleRes.container.innerHTML).toContain('m12 3-1.912 5.813');
     });
   });
 
@@ -69,6 +80,8 @@ describe('VoiceHud and declarative voice system', () => {
       expect(window.MirrormereVoice).toBeDefined();
       expect(typeof window.MirrormereVoice?.resetHUD).toBe('function');
       expect(window.voiceHUD?.currentState).toBe('idle');
+      expect(window.voiceHUD?.currentStatus).toBeNull();
+      expect(window.voiceHUD?.turnDismissed).toBe(false);
 
       const headerVoice = document.getElementById('header-voice');
       const toast = document.getElementById('voice-toast');
@@ -556,6 +569,7 @@ describe('VoiceHud and declarative voice system', () => {
         });
         expect(headerVoice.classList.contains('visible')).toBe(true);
         expect(window.voiceHUD?.currentState).toBe('thinking');
+        expect(window.voiceHUD?.currentStatus).toBe('⚡ Running diagnostics...');
         expect(window.audioManager?.isDucked).toBe(true);
       }
 

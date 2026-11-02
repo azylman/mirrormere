@@ -158,6 +158,13 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v7
 
+      - name: Set up Node.js (pinned by web/ui/.nvmrc)
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: web/ui/.nvmrc
+          cache: npm
+          cache-dependency-path: web/ui/package-lock.json
+
       - name: Run Go Unit Tests & Coverage Gate
         if: needs.changes.outputs.go_core == 'true' || needs.changes.outputs.ci_scripts == 'true' || inputs.force_all == true
         run: |
@@ -222,7 +229,7 @@ jobs:
           cache: npm
           cache-dependency-path: web/ui/package-lock.json
 
-      - name: Install, lint, typecheck, test, and build
+      - name: Install, lint, typecheck, test with coverage, and build
         if: needs.changes.outputs.ui == 'true' || inputs.force_all == true
         run: |
           set -euo pipefail
@@ -230,7 +237,7 @@ jobs:
           npm run lint
           npm run deadcode
           npm run typecheck
-          npm test
+          npm run test:coverage
           npm run build
 
   perf:

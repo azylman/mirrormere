@@ -267,3 +267,57 @@ describe('WidgetHost remount', () => {
     expect(hydrations(fetchMock, 'a-0')).toBe(1);
   });
 });
+
+describe('WidgetHost hydrate rejection', () => {
+  beforeEach(() => {
+    useDisplayStore.setState(initial, true);
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  const cell = () => <WidgetHost id="a-0" origin={[0, 0]} dimensions={[1, 1]} />;
+
+  it('catches and logs warning on initial hydrate rejection', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation(() => Promise.reject(new Error('Network offline'))),
+    );
+
+    render(cell());
+    await settle();
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('[mirrormere] widget a-0 hydrate failed:'),
+      expect.any(Error),
+    );
+  });
+
+  it('catches and logs warning on reload hydrate rejection', async () => {
+    const fetchMock = stubApi();
+    render(cell());
+    await settle();
+    expect(hydrations(fetchMock, 'a-0')).toBe(1);
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url === 'api/widgets/a-0') {
+        throw new Error('Reload fetch failed');
+      }
+      return new Response(JSON.stringify({}), { status: 200 });
+    });
+
+    reload('clock');
+    await settle();
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('[mirrormere] widget a-0 reload hydrate failed:'),
+      expect.any(Error),
+    );
+  });
+});
+
