@@ -22,7 +22,7 @@ const (
 	DefaultPhotosCacheDir         = "/data/photos"
 	DefaultPhotosPage1Interval    = time.Hour
 	DefaultPhotosFullSyncInterval = 24 * time.Hour
-	fDcn4bBatchSize               = 100
+	fDcn4bBatchSize               = 300
 )
 
 // PhotosOption configures PhotosProvider options.
@@ -64,6 +64,7 @@ type albumDiskCache struct {
 	ResolvedURL   string      `json:"resolved_url"`
 	LastPage1Sync time.Time   `json:"last_page1_sync"`
 	LastFullSync  time.Time   `json:"last_full_sync"`
+	Paginated     bool        `json:"paginated,omitempty"`
 	Photos        []PhotoItem `json:"photos"`
 }
 
@@ -144,6 +145,28 @@ func photoDedupeKey(item PhotoItem) string {
 	return item.ID
 }
 
+func extractAlbumKeyAndTokenFromArray(arr []any) (string, string) {
+	var albumKey, token string
+	if len(arr) >= 1 {
+		if s, ok := arr[0].(string); ok {
+			albumKey = s
+		}
+	}
+	if albumKey == "" && len(arr) >= 4 {
+		if meta, ok := arr[3].([]any); ok && len(meta) >= 1 {
+			if s, ok := meta[0].(string); ok {
+				albumKey = s
+			}
+		}
+	}
+	if len(arr) >= 3 {
+		if s, ok := arr[2].(string); ok && s != "" {
+			token = s
+		}
+	}
+	return albumKey, token
+}
+
 // extractAlbumKeyAndToken extracts the albumKey and continuation token from HTML if present.
 func extractAlbumKeyAndToken(html string) (string, string) {
 	indices := afCallbackPrefixRe.FindAllStringIndex(html, -1)
@@ -167,18 +190,7 @@ func extractAlbumKeyAndToken(html string) (string, string) {
 		if err := json.Unmarshal([]byte(arrayJSON), &arr); err != nil {
 			continue
 		}
-		var albumKey, token string
-		if len(arr) >= 1 {
-			if s, ok := arr[0].(string); ok {
-				albumKey = s
-			}
-		}
-		if len(arr) >= 3 {
-			if s, ok := arr[2].(string); ok && s != "" {
-				token = s
-			}
-		}
-		if albumKey != "" || token != "" {
+		if albumKey, token := extractAlbumKeyAndTokenFromArray(arr); albumKey != "" || token != "" {
 			return albumKey, token
 		}
 	}
@@ -234,8 +246,8 @@ func postBatchexecute(ctx context.Context, client *http.Client, albumURL, rpcID 
 }
 
 // fetchBatchexecutePage queries /_/PhotosUi/data/batchexecute?rpcids=snAcKc for the next page.
-func fetchBatchexecutePage(ctx context.Context, client *http.Client, albumURL, albumKey, token string) ([]PhotoItem, string, error) {
-	innerJSON, err := json.Marshal([]any{albumKey, token})
+func fetchBatchexecutePage(ctx context.Context, client *http.Client, albumURL, albumKey, token, authKey string) ([]PhotoItem, string, error) {
+	innerJSON, err := json.Marshal([]any{albumKey, token, nil, authKey})
 	if err != nil {
 		return nil, "", err
 	}
@@ -247,20 +259,27 @@ func fetchBatchexecutePage(ctx context.Context, client *http.Client, albumURL, a
 }
 
 func parseBatchexecuteResponse(bodyBytes []byte, currentToken string) ([]PhotoItem, string, error) {
-	bodyStr := strings.TrimSpace(string(bodyBytes))
-	bodyStr = strings.TrimPrefix(bodyStr, ")]}'")
-	bodyStr = strings.TrimSpace(bodyStr)
+	bodyStr := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(string(bodyBytes)), ")]}'"))
 
 	var root any
 	if err := json.Unmarshal([]byte(bodyStr), &root); err == nil {
-		photos, nextToken := extractBatchexecutePayload(root, currentToken)
-		if len(photos) > 0 {
+		if photos, nextToken := extractBatchexecutePayload(root, currentToken); len(photos) > 0 {
+			return photos, nextToken, nil
+		}
+		return extractFromFallbackRegex(bodyStr), "", nil
+	}
+
+	for line := range strings.SplitSeq(bodyStr, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "[") || json.Unmarshal([]byte(line), &root) != nil {
+			continue
+		}
+		if photos, nextToken := extractBatchexecutePayload(root, currentToken); len(photos) > 0 {
 			return photos, nextToken, nil
 		}
 	}
 
-	photos := extractFromFallbackRegex(bodyStr)
-	return photos, "", nil
+	return extractFromFallbackRegex(bodyStr), "", nil
 }
 
 func findBatchExecuteEnvelopes(node any, rpcID string) [][]any {
@@ -339,9 +358,9 @@ func extractContinuationTokenFromInner(inner any, currentToken string) string {
 	return ""
 }
 
-func paginateSnAcKc(ctx context.Context, client *http.Client, albumURL, albumKey, initialToken string, logger *slog.Logger) []PhotoItem {
+func paginateSnAcKc(ctx context.Context, client *http.Client, albumURL, albumKey, initialToken, authKey string, logger *slog.Logger) ([]PhotoItem, bool) {
 	if initialToken == "" {
-		return nil
+		return nil, true
 	}
 	var allPaged []PhotoItem
 	seenTokens := make(map[string]struct{})
@@ -351,16 +370,16 @@ func paginateSnAcKc(ctx context.Context, client *http.Client, albumURL, albumKey
 	for page := range 50 {
 		select {
 		case <-ctx.Done():
-			return allPaged
+			return allPaged, false
 		default:
 		}
 
-		photos, nextToken, err := fetchBatchexecutePage(ctx, client, albumURL, albumKey, token)
+		photos, nextToken, err := fetchBatchexecutePage(ctx, client, albumURL, albumKey, token, authKey)
 		if err != nil {
 			if logger != nil {
 				logger.Warn("photo-carousel: snAcKc pagination error; retaining earlier pages", "error", err, "page", page)
 			}
-			break
+			return allPaged, false
 		}
 		if len(photos) == 0 {
 			break
@@ -378,7 +397,7 @@ func paginateSnAcKc(ctx context.Context, client *http.Client, albumURL, albumKey
 		token = nextToken
 	}
 
-	return allPaged
+	return allPaged, true
 }
 
 func carryCachedPhotoMetadata(photos, existing []PhotoItem) {

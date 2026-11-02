@@ -80,6 +80,7 @@ type albumState struct {
 	photos        []PhotoItem
 	lastPage1Sync time.Time
 	lastFullSync  time.Time
+	paginated     bool
 	hydrated      bool
 }
 
@@ -324,6 +325,7 @@ func (p *PhotosProvider) Init(_ context.Context, config map[string]any, opts Ini
 				state.scrapedTitle = diskCache.ScrapedTitle
 				state.lastPage1Sync = diskCache.LastPage1Sync
 				state.lastFullSync = diskCache.LastFullSync
+				state.paginated = diskCache.Paginated
 				state.photos = diskCache.Photos
 				state.hydrated = true
 			} else {
@@ -435,8 +437,8 @@ func (p *PhotosProvider) Sync(ctx context.Context, full bool) error {
 	return nil
 }
 
-func (p *PhotosProvider) syncAlbumFull(ctx context.Context, albumURL, albumKey, initialToken, displayName string, page1Photos []PhotoItem, client *http.Client, logger *slog.Logger) []PhotoItem {
-	paged := paginateSnAcKc(ctx, client, albumURL, albumKey, initialToken, logger)
+func (p *PhotosProvider) syncAlbumFull(ctx context.Context, albumURL, albumKey, initialToken, authKey, displayName string, page1Photos []PhotoItem, client *http.Client, logger *slog.Logger) ([]PhotoItem, bool) {
+	paged, complete := paginateSnAcKc(ctx, client, albumURL, albumKey, initialToken, authKey, logger)
 	allPhotos := make([]PhotoItem, 0, len(page1Photos)+len(paged))
 	for _, it := range page1Photos {
 		it.AlbumName = displayName
@@ -446,7 +448,7 @@ func (p *PhotosProvider) syncAlbumFull(ctx context.Context, albumURL, albumKey, 
 		it.AlbumName = displayName
 		allPhotos = append(allPhotos, it)
 	}
-	return deduplicatePhotoSlice(allPhotos)
+	return deduplicatePhotoSlice(allPhotos), complete
 }
 
 func syncAlbumDelta(existing []PhotoItem, page1Photos []PhotoItem, displayName string) []PhotoItem {
@@ -515,11 +517,12 @@ func (p *PhotosProvider) syncAlbum(ctx context.Context, a *albumState, full bool
 	}
 
 	var newPhotos []PhotoItem
+	var paginatedOK bool
 	now := time.Now()
 	isFullSync := full || !alreadyHydrated || lastFullZero
 
 	if isFullSync {
-		newPhotos = p.syncAlbumFull(ctx, resolvedURL, albumKey, initialToken, displayName, page1Photos, client, logger)
+		newPhotos, paginatedOK = p.syncAlbumFull(ctx, resolvedURL, albumKey, initialToken, authKey, displayName, page1Photos, client, logger)
 	} else {
 		newPhotos = syncAlbumDelta(existingPhotos, page1Photos, displayName)
 	}
@@ -535,7 +538,10 @@ func (p *PhotosProvider) syncAlbum(ctx context.Context, a *albumState, full bool
 	a.photos = newPhotos
 	a.lastPage1Sync = now
 	if isFullSync {
-		a.lastFullSync = now
+		if paginatedOK {
+			a.lastFullSync = now
+		}
+		a.paginated = paginatedOK
 	}
 	a.hydrated = true
 
@@ -546,6 +552,7 @@ func (p *PhotosProvider) syncAlbum(ctx context.Context, a *albumState, full bool
 			ResolvedURL:   a.cfg.ResolvedURL,
 			LastPage1Sync: a.lastPage1Sync,
 			LastFullSync:  a.lastFullSync,
+			Paginated:     a.paginated,
 			Photos:        a.photos,
 		}
 	}
@@ -586,7 +593,7 @@ func (p *PhotosProvider) hasShareURLAlbumsLocked() bool {
 func (p *PhotosProvider) checkWarmBootStaleLocked(now time.Time) (isStale, needsFull bool) {
 	for _, a := range p.albums {
 		if a.cfg.Source == PhotoSourceShareURL {
-			if a.lastFullSync.IsZero() || now.Sub(a.lastFullSync) >= p.fullSyncInterval || hasUncheckedPhotoLocations(a.photos) {
+			if a.lastFullSync.IsZero() || now.Sub(a.lastFullSync) >= p.fullSyncInterval || !a.paginated || hasUncheckedPhotoLocations(a.photos) {
 				return true, true
 			}
 			if a.lastPage1Sync.IsZero() || now.Sub(a.lastPage1Sync) >= p.page1Interval {
@@ -600,7 +607,7 @@ func (p *PhotosProvider) checkWarmBootStaleLocked(now time.Time) (isStale, needs
 func (p *PhotosProvider) checkPeriodicFullLocked(now time.Time) bool {
 	for _, a := range p.albums {
 		if a.cfg.Source == PhotoSourceShareURL {
-			if a.lastFullSync.IsZero() || now.Sub(a.lastFullSync) >= p.fullSyncInterval {
+			if a.lastFullSync.IsZero() || now.Sub(a.lastFullSync) >= p.fullSyncInterval || !a.paginated {
 				return true
 			}
 		}
