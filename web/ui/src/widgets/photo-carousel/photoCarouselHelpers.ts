@@ -3,35 +3,15 @@ import { beginAnimation, endAnimation } from '../../perf/animating';
 import { useDisplayStore } from '../../store';
 
 export interface PhotoItem {
-  id?: string;
-  url?: string;
-  URL?: string;
-  width?: number;
-  height?: number;
-  timestamp?: string;
-  location?: string;
-  dominant_color?: string;
+  id?: string; url?: string; URL?: string; width?: number; height?: number;
+  timestamp?: string; location?: string; album_name?: string; dominant_color?: string;
 }
 
-export interface PhotoCarouselData {
-  photos?: PhotoItem[];
-  album_url?: string;
-  cycle_interval_seconds?: number;
-}
-
-export interface PhotoAlbumConfig {
-  name?: string;
-  source?: 'share_url' | 'ember_bridge';
-  url?: string;
-}
-
+export interface PhotoCarouselData { photos?: PhotoItem[]; album_url?: string; cycle_interval_seconds?: number; }
+export interface PhotoAlbumConfig { name?: string; source?: 'share_url' | 'ember_bridge'; url?: string; }
 export interface PhotoCarouselConfig {
-  source?: 'share_url' | 'ember_bridge';
-  album_url?: string;
-  album_url_env?: string;
-  albums?: PhotoAlbumConfig[];
+  source?: 'share_url' | 'ember_bridge'; album_url?: string; album_url_env?: string; albums?: PhotoAlbumConfig[];
 }
-
 export interface ContainerSize { width: number; height: number; }
 
 const CROSSFADE_MS = 850;
@@ -47,20 +27,34 @@ export function formatPhotoOverlayDate(timestamp?: string): string {
   return Number.isNaN(d.getTime()) ? '' : OVERLAY_DATE_FMT.format(d);
 }
 
-export function formatPhotoMetadataLabel(photo?: PhotoItem): { location: string; date: string } | null {
-  const location = (photo?.location || '').trim();
+export function hasMultiplePhotoAlbums(photos: readonly PhotoItem[]): boolean {
+  let firstAlbum = '';
+  for (const p of photos) {
+    const name = (p.album_name || '').trim();
+    if (!name) continue;
+    if (!firstAlbum) firstAlbum = name;
+    else if (name !== firstAlbum) return true;
+  }
+  return false;
+}
+
+export function formatPhotoMetadataLabel(
+  photo?: PhotoItem,
+  showAlbumName = false,
+): { date: string; location: string; album: string; text: string } | null {
   const date = formatPhotoOverlayDate(photo?.timestamp);
-  return location || date ? { location, date } : null;
+  const location = (photo?.location || '').trim();
+  const album = showAlbumName ? (photo?.album_name || '').trim() : '';
+  const dateAndLocation = date && location ? `${date}, ${location}` : date || location;
+  const text = dateAndLocation && album ? `${dateAndLocation} • ${album}` : dateAndLocation || album;
+  return text ? { date, location, album, text } : null;
 }
 
 export function resolvePhotoOverlayTheme(dominantColor?: string): 'light' | 'dark' {
   const m = /^#?([0-9a-fA-F]{6})$/.exec((dominantColor || '').trim());
   if (!m) return 'dark';
   const hex = parseInt(m[1], 16);
-  const r = (hex >> 16) & 0xff;
-  const g = (hex >> 8) & 0xff;
-  const b = hex & 0xff;
-  return (0.299 * r + 0.587 * g + 0.114 * b) / 255 >= 0.58 ? 'light' : 'dark';
+  return (0.299 * ((hex >> 16) & 0xff) + 0.587 * ((hex >> 8) & 0xff) + 0.114 * (hex & 0xff)) / 255 >= 0.58 ? 'light' : 'dark';
 }
 
 export function parsePhotoCarouselData(raw: unknown): PhotoCarouselData {

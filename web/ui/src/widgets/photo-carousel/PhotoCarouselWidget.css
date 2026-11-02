@@ -168,56 +168,29 @@ body[data-theme="night"] .photo-pause-pill[data-paused="true"]:hover,
 
 .photo-metadata-overlay {
   position: absolute;
-  bottom: 18px;
-  left: 18px;
+  bottom: 12px;
+  right: 16px;
   z-index: 3;
-  max-width: calc(100% - 36px);
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 12px;
-  border-radius: 9999px;
-  font-size: 0.78rem;
-  font-weight: 600;
-  letter-spacing: 0.015em;
+  max-width: calc(100% - 32px);
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.01em;
   line-height: 1.25;
+  text-align: right;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   pointer-events: none;
   user-select: none;
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  transition: background-color 0.45s ease, color 0.45s ease, border-color 0.45s ease, box-shadow 0.45s ease;
+  transition: color 0.45s ease, text-shadow 0.45s ease;
 }
 
 .photo-metadata-overlay[data-overlay-theme="dark"] {
-  background: rgba(15, 12, 24, 0.48);
-  color: rgba(255, 255, 255, 0.94);
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.28);
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
+  color: rgba(255, 255, 255, 0.82);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.72), 0 0 8px rgba(0, 0, 0, 0.38);
 }
 
 .photo-metadata-overlay[data-overlay-theme="light"] {
-  background: rgba(255, 255, 255, 0.74);
-  color: rgba(26, 22, 38, 0.92);
-  border: 1px solid rgba(26, 22, 38, 0.12);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
-  text-shadow: 0 1px 2px rgba(255, 255, 255, 0.45);
-}
-
-.photo-metadata-location {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.photo-metadata-sep {
-  opacity: 0.72;
-  flex-shrink: 0;
-}
-
-.photo-metadata-date {
-  opacity: 0.88;
-  flex-shrink: 0;
+  color: rgba(24, 20, 34, 0.78);
+  text-shadow: 0 1px 3px rgba(255, 255, 255, 0.8), 0 0 8px rgba(255, 255, 255, 0.45);
 }
