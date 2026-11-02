@@ -155,8 +155,145 @@ function verifyNoCollisions(
   return true;
 }
 
+function candidateOriginsForWidget(
+  w: LayoutEditorWidget,
+  gridCols: number,
+  gridRows: number,
+  preferCurrent: boolean,
+): [number, number][] {
+  const [cols, rows] = w.dimensions;
+  const candidates: [number, number][] = preferCurrent ? [w.origin] : [];
+  for (let r = 0; r <= gridRows - rows; r++) {
+    for (let c = 0; c <= gridCols - cols; c++) {
+      if (!preferCurrent || c !== w.origin[0] || r !== w.origin[1]) candidates.push([c, r]);
+    }
+  }
+  return candidates;
+}
+
+function packWidgetsIntoScreen(
+  toPack: readonly LayoutEditorWidget[],
+  idx: number,
+  occupiedMask: number,
+  gridCols: number,
+  gridRows: number,
+  preferCurrent: boolean,
+  placed: Map<string, [number, number]>,
+): boolean {
+  if (idx >= toPack.length) return true;
+  const w = toPack[idx];
+  for (const origin of candidateOriginsForWidget(w, gridCols, gridRows, preferCurrent)) {
+    const mask = computeWidgetBitmask(origin, w.dimensions, gridCols);
+    if ((occupiedMask & mask) !== 0) continue;
+    placed.set(w.widget_id, origin);
+    if (packWidgetsIntoScreen(toPack, idx + 1, occupiedMask | mask, gridCols, gridRows, preferCurrent, placed)) {
+      return true;
+    }
+    placed.delete(w.widget_id);
+  }
+  return false;
+}
+
+function applyPlacedMap(
+  widgets: readonly LayoutEditorWidget[],
+  sourceId: string,
+  targetScreenActual: number,
+  targetOrigin: [number, number],
+  placed: Map<string, [number, number]>,
+  gridCols: number,
+): LayoutEditorWidget[] | null {
+  const candidate = widgets.map((w) => {
+    if (w.widget_id === sourceId) return { ...w, screen: targetScreenActual, origin: targetOrigin };
+    const nextOrigin = placed.get(w.widget_id);
+    return nextOrigin ? { ...w, origin: nextOrigin } : w;
+  });
+  return verifyNoCollisions(candidate, gridCols) ? candidate : null;
+}
+
+function tryReflowScreen(
+  widgets: readonly LayoutEditorWidget[],
+  source: LayoutEditorWidget,
+  targetScreen: number,
+  targetOrigin: [number, number],
+  overlapping: readonly LayoutEditorWidget[],
+  gridCols: number,
+  gridRows: number,
+): LayoutEditorWidget[] | null {
+  if (!source.pinned && source.screen !== targetScreen) return null;
+  if (overlapping.some((w) => w.pinned)) return null;
+
+  const targetScreenActual = source.pinned ? 0 : targetScreen;
+  const sourceMask = computeWidgetBitmask(targetOrigin, source.dimensions, gridCols);
+  const pinnedMask = widgets
+    .filter((w) => w.pinned && w.widget_id !== source.widget_id)
+    .reduce((acc, w) => acc | computeWidgetBitmask(w.origin, w.dimensions, gridCols), 0);
+  if ((sourceMask & pinnedMask) !== 0) return null;
+
+  // Pass 1: Keep non-overlapping widgets fixed and pack only the overlapping widgets into vacated slots
+  const overlappingIds = new Set(overlapping.map((w) => w.widget_id));
+  const fixedMask = widgets
+    .filter((w) => w.widget_id !== source.widget_id && !overlappingIds.has(w.widget_id) && (w.pinned || w.screen === targetScreen))
+    .reduce((acc, w) => acc | computeWidgetBitmask(w.origin, w.dimensions, gridCols), sourceMask);
+  const sortedOverlapping = [...overlapping].sort((a, b) => a.origin[1] - b.origin[1] || a.origin[0] - b.origin[0]);
+  const placedPass1 = new Map<string, [number, number]>();
+  if (packWidgetsIntoScreen(sortedOverlapping, 0, fixedMask, gridCols, gridRows, false, placedPass1)) {
+    const res = applyPlacedMap(widgets, source.widget_id, targetScreenActual, targetOrigin, placedPass1, gridCols);
+    if (res) return res;
+  }
+
+  // Pass 2: Repack all unpinned widgets on targetScreen around source at targetOrigin
+  const allOtherUnpinned = widgets
+    .filter((w) => !w.pinned && w.screen === targetScreen && w.widget_id !== source.widget_id)
+    .sort((a, b) => b.dimensions[0] * b.dimensions[1] - a.dimensions[0] * a.dimensions[1] || a.origin[1] - b.origin[1] || a.origin[0] - b.origin[0]);
+  const placedPass2 = new Map<string, [number, number]>();
+  if (packWidgetsIntoScreen(allOtherUnpinned, 0, sourceMask | pinnedMask, gridCols, gridRows, true, placedPass2)) {
+    return applyPlacedMap(widgets, source.widget_id, targetScreenActual, targetOrigin, placedPass2, gridCols);
+  }
+  return null;
+}
+
+function tryPlaceAtOrigin(
+  widgets: readonly LayoutEditorWidget[],
+  source: LayoutEditorWidget,
+  targetScreen: number,
+  targetOrigin: [number, number],
+  gridCols: number,
+  gridRows: number,
+): LayoutEditorWidget[] | null {
+  const targetScreenActual = source.pinned ? 0 : targetScreen;
+  if (canPlaceWidget(widgets, { ...source, screen: targetScreenActual, origin: targetOrigin }, gridCols, gridRows)) {
+    return widgets.map((w) => (w.widget_id === source.widget_id ? { ...w, screen: targetScreenActual, origin: targetOrigin } : w));
+  }
+
+  const targetMask = computeWidgetBitmask(targetOrigin, source.dimensions, gridCols);
+  const overlapping = widgets.filter(
+    (w) =>
+      w.widget_id !== source.widget_id &&
+      (w.pinned || w.screen === targetScreen) &&
+      (computeWidgetBitmask(w.origin, w.dimensions, gridCols) & targetMask) !== 0,
+  );
+
+  if (overlapping.length === 1 && (source.pinned || source.screen === targetScreen)) {
+    const other = overlapping[0];
+    const fitsAtSource =
+      source.origin[0] >= 0 &&
+      source.origin[1] >= 0 &&
+      source.origin[0] + other.dimensions[0] <= gridCols &&
+      source.origin[1] + other.dimensions[1] <= gridRows;
+    if (fitsAtSource) {
+      const placed = new Map<string, [number, number]>([[other.widget_id, source.origin]]);
+      const swapped = applyPlacedMap(widgets, source.widget_id, targetScreenActual, targetOrigin, placed, gridCols);
+      if (swapped) {
+        return swapped.map((w) => (w.widget_id === other.widget_id ? { ...w, screen: other.pinned ? 0 : targetScreen } : w));
+      }
+    }
+  }
+
+  return tryReflowScreen(widgets, source, targetScreen, targetOrigin, overlapping, gridCols, gridRows);
+}
+
 /**
- * Moves a widget to a target origin on targetScreen, or swaps with the single overlapping widget if possible.
+ * Moves a widget to a target origin on targetScreen, swapping or reflowing overlapping widgets if possible.
  */
 export function moveOrSwapWidget(
   widgets: readonly LayoutEditorWidget[],
@@ -168,82 +305,65 @@ export function moveOrSwapWidget(
 ): LayoutEditorWidget[] {
   const source = widgets.find((w) => w.widget_id === widgetId);
   if (!source) return [...widgets];
-
-  if (
-    (source.pinned || source.screen === targetScreen) &&
-    source.origin[0] === targetOrigin[0] &&
-    source.origin[1] === targetOrigin[1]
-  ) {
+  if ((source.pinned || source.screen === targetScreen) && source.origin[0] === targetOrigin[0] && source.origin[1] === targetOrigin[1]) {
     return [...widgets];
   }
 
   const [tCol, tRow] = targetOrigin;
-  if (
-    tCol < 0 ||
-    tRow < 0 ||
-    tCol + source.dimensions[0] > gridCols ||
-    tRow + source.dimensions[1] > gridRows
-  ) {
+  if (tCol < 0 || tRow < 0 || tCol + source.dimensions[0] > gridCols || tRow + source.dimensions[1] > gridRows) {
     return [...widgets];
   }
 
-  // Try direct non-overlapping move (pinned widgets retain screen: 0)
-  const targetScreenActual = source.pinned ? 0 : targetScreen;
-  if (
-    canPlaceWidget(
-      widgets,
-      { ...source, screen: targetScreenActual, origin: targetOrigin },
-      gridCols,
-      gridRows,
-    )
-  ) {
-    return widgets.map((w) =>
-      w.widget_id === widgetId ? { ...w, screen: targetScreenActual, origin: targetOrigin } : w,
+  const direct = tryPlaceAtOrigin(widgets, source, targetScreen, targetOrigin, gridCols, gridRows);
+  if (direct) return direct;
+  if (source.pinned || source.screen !== targetScreen) return [...widgets];
+
+  // Snap to nearest valid reflow origin along the drag axis when an intermediate cell splits free space
+  const [sCol, sRow] = source.origin;
+  const dCol = tCol - sCol;
+  const dRow = tRow - sRow;
+  const snapCandidates: [number, number][] = [];
+  for (let r = 0; r <= gridRows - source.dimensions[1]; r++) {
+    for (let c = 0; c <= gridCols - source.dimensions[0]; c++) {
+      if ((c === sCol && r === sRow) || (c === tCol && r === tRow)) continue;
+      if (dCol === 0 ? c !== tCol : dCol > 0 ? c <= sCol : c >= sCol) continue;
+      if (dRow === 0 ? r !== tRow : dRow > 0 ? r <= sRow : r >= sRow) continue;
+      snapCandidates.push([c, r]);
+    }
+  }
+  snapCandidates.sort((a, b) => Math.abs(a[0] - tCol) + Math.abs(a[1] - tRow) - (Math.abs(b[0] - tCol) + Math.abs(b[1] - tRow)));
+  for (const cand of snapCandidates) {
+    const candMask = computeWidgetBitmask(cand, source.dimensions, gridCols);
+    const candOverlapping = widgets.filter(
+      (w) =>
+        w.widget_id !== source.widget_id &&
+        (w.pinned || w.screen === targetScreen) &&
+        (computeWidgetBitmask(w.origin, w.dimensions, gridCols) & candMask) !== 0,
     );
+    if (candOverlapping.length === 0) continue;
+    const snapped = tryReflowScreen(widgets, source, targetScreen, cand, candOverlapping, gridCols, gridRows);
+    if (snapped) return snapped;
   }
 
-  // Check if swapping with single overlapping widget is viable
-  const targetMask = computeWidgetBitmask(targetOrigin, source.dimensions, gridCols);
-  const overlapping = widgets.filter(
-    (w) =>
-      w.widget_id !== widgetId &&
-      (w.pinned || w.screen === targetScreen) &&
-      (computeWidgetBitmask(w.origin, w.dimensions, gridCols) & targetMask) !== 0,
-  );
+  return [...widgets];
+}
 
-  if (overlapping.length !== 1) {
-    return [...widgets];
-  }
-
-  const other = overlapping[0];
-  if (!source.pinned && source.screen !== targetScreen) {
-    return [...widgets];
-  }
-
-  if (
-    source.origin[0] < 0 ||
-    source.origin[1] < 0 ||
-    source.origin[0] + other.dimensions[0] > gridCols ||
-    source.origin[1] + other.dimensions[1] > gridRows
-  ) {
-    return [...widgets];
-  }
-
-  const candidate = widgets.map((w) => {
-    if (w.widget_id === widgetId) {
-      return { ...w, screen: source.pinned ? 0 : targetScreen, origin: targetOrigin };
-    }
-    if (w.widget_id === other.widget_id) {
-      return { ...w, screen: other.pinned ? 0 : targetScreen, origin: source.origin };
-    }
-    return w;
-  });
-
-  if (!verifyNoCollisions(candidate, gridCols)) {
-    return [...widgets];
-  }
-
-  return candidate;
+/**
+ * Resolves the effective preview drop origin for a dragged widget, snapping to valid swap/reflow origins.
+ */
+export function resolvePreviewOrigin(
+  widgets: readonly LayoutEditorWidget[],
+  widgetId: string,
+  targetScreen: number,
+  rawOrigin: [number, number],
+  gridCols: number,
+  gridRows: number,
+): [number, number] {
+  const source = widgets.find((w) => w.widget_id === widgetId);
+  if (!source) return rawOrigin;
+  const resolved = moveOrSwapWidget(widgets, widgetId, targetScreen, rawOrigin, gridCols, gridRows);
+  const moved = resolved.find((w) => w.widget_id === widgetId);
+  return moved && (moved.origin[0] !== source.origin[0] || moved.origin[1] !== source.origin[1]) ? moved.origin : rawOrigin;
 }
 
 /**
@@ -261,37 +381,21 @@ export function moveWidgetToScreen(
   if (widget.screen === targetScreen && !widget.pinned) return [...widgets];
 
   let placed: LayoutEditorWidget | null = null;
-  if (
-    canPlaceWidget(
-      widgets,
-      { ...widget, screen: targetScreen, origin: widget.origin, pinned: false },
-      gridCols,
-      gridRows,
-    )
-  ) {
+  if (canPlaceWidget(widgets, { ...widget, screen: targetScreen, origin: widget.origin, pinned: false }, gridCols, gridRows)) {
     placed = { ...widget, screen: targetScreen, origin: widget.origin, pinned: false };
   } else {
-    for (let r = 0; r <= gridRows - widget.dimensions[1]; r++) {
+    for (let r = 0; r <= gridRows - widget.dimensions[1] && !placed; r++) {
       for (let c = 0; c <= gridCols - widget.dimensions[0]; c++) {
-        if (
-          canPlaceWidget(
-            widgets,
-            { ...widget, screen: targetScreen, origin: [c, r], pinned: false },
-            gridCols,
-            gridRows,
-          )
-        ) {
+        if (canPlaceWidget(widgets, { ...widget, screen: targetScreen, origin: [c, r], pinned: false }, gridCols, gridRows)) {
           placed = { ...widget, screen: targetScreen, origin: [c, r], pinned: false };
           break;
         }
       }
-      if (placed) break;
     }
   }
 
   if (!placed) return [...widgets];
-  const updated = widgets.map((w) => (w.widget_id === widgetId ? placed! : w));
-  return compactScreens(updated);
+  return compactScreens(widgets.map((w) => (w.widget_id === widgetId ? placed : w)));
 }
 
 /**
@@ -307,54 +411,29 @@ export function resizeWidget(
   const widget = widgets.find((w) => w.widget_id === widgetId);
   if (!widget) return [...widgets];
   const [newCols, newRows] = newDimensions;
-  if (widget.dimensions[0] === newCols && widget.dimensions[1] === newRows) {
-    return [...widgets];
-  }
-  if (newCols < 1 || newRows < 1 || newCols > gridCols || newRows > gridRows) {
-    return [...widgets];
+  if (widget.dimensions[0] === newCols && widget.dimensions[1] === newRows) return [...widgets];
+  if (newCols < 1 || newRows < 1 || newCols > gridCols || newRows > gridRows) return [...widgets];
+
+  if (canPlaceWidget(widgets, { ...widget, dimensions: newDimensions }, gridCols, gridRows)) {
+    return widgets.map((w) => (w.widget_id === widgetId ? { ...w, dimensions: newDimensions } : w));
   }
 
-  // 1. Try current origin
-  if (canPlaceWidget(widgets, { ...widget, dimensions: newDimensions }, gridCols, gridRows)) {
+  const clampedCol = Math.min(widget.origin[0], gridCols - newCols);
+  const clampedRow = Math.min(widget.origin[1], gridRows - newRows);
+  if (
+    clampedCol >= 0 &&
+    clampedRow >= 0 &&
+    canPlaceWidget(widgets, { ...widget, origin: [clampedCol, clampedRow], dimensions: newDimensions }, gridCols, gridRows)
+  ) {
     return widgets.map((w) =>
-      w.widget_id === widgetId ? { ...w, dimensions: newDimensions } : w,
+      w.widget_id === widgetId ? { ...w, origin: [clampedCol, clampedRow], dimensions: newDimensions } : w,
     );
   }
 
-  // 2. Try clamped origin
-  const clampedCol = Math.min(widget.origin[0], gridCols - newCols);
-  const clampedRow = Math.min(widget.origin[1], gridRows - newRows);
-  if (clampedCol >= 0 && clampedRow >= 0) {
-    if (
-      canPlaceWidget(
-        widgets,
-        { ...widget, origin: [clampedCol, clampedRow], dimensions: newDimensions },
-        gridCols,
-        gridRows,
-      )
-    ) {
-      return widgets.map((w) =>
-        w.widget_id === widgetId
-          ? { ...w, origin: [clampedCol, clampedRow], dimensions: newDimensions }
-          : w,
-      );
-    }
-  }
-
-  // 3. Scan for first open slot on widget's screen
   for (let r = 0; r <= gridRows - newRows; r++) {
     for (let c = 0; c <= gridCols - newCols; c++) {
-      if (
-        canPlaceWidget(
-          widgets,
-          { ...widget, origin: [c, r], dimensions: newDimensions },
-          gridCols,
-          gridRows,
-        )
-      ) {
-        return widgets.map((w) =>
-          w.widget_id === widgetId ? { ...w, origin: [c, r], dimensions: newDimensions } : w,
-        );
+      if (canPlaceWidget(widgets, { ...widget, origin: [c, r], dimensions: newDimensions }, gridCols, gridRows)) {
+        return widgets.map((w) => (w.widget_id === widgetId ? { ...w, origin: [c, r], dimensions: newDimensions } : w));
       }
     }
   }
