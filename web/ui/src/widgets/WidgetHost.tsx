@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, type CSSProperties } from 'react';
+import { useEffect, useRef, type CSSProperties } from 'react';
 import { hydratedReloadCount, needsHydrate, useDisplayStore } from '../store';
 import { useWidget } from '../store/hooks';
 import { LEGACY_WIDGET_FALLBACK, widgetComponentFor } from './registry';
@@ -26,7 +26,7 @@ function cellStyle(origin: [number, number], dimensions: [number, number]): CSSP
  * after a reload). Re-fetches when a widget.reload names its
  * type; a reload that arrives while the carousel is paused waits for resume.
  */
-export const WidgetHost = memo(function WidgetHost({ id, origin, dimensions }: WidgetHostProps) {
+export function WidgetHost({ id, origin, dimensions }: WidgetHostProps) {
   const entry = useWidget(id);
   const type = entry.meta?.type;
   const reloads = useDisplayStore((s) => (type === undefined ? undefined : s.widgetReloads[type]));
@@ -66,4 +66,4 @@ export const WidgetHost = memo(function WidgetHost({ id, origin, dimensions }: W
       {Component ? <Component id={id} type={type ?? ''} /> : <div className="widget-card-placeholder">{type ?? ''}</div>}
     </div>
   );
-});
+}

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { useDocumentVisible } from '../lifecycle/visibility';
 import { useDisplayStore } from '../store';
@@ -529,7 +529,7 @@ export function selectCalendarEvents(
  */
 export function useCalendarEvents(): RawCalendarEvent[] {
   const widgets = useDisplayStore((s) => s.widgets);
-  return useMemo(() => selectCalendarEvents(widgets), [widgets]);
+  return selectCalendarEvents(widgets);
 }
 
 export interface NextUpProps {
@@ -582,12 +582,9 @@ export function NextUp(props: NextUpProps = {}) {
   const events = propEvents ?? storeEvents;
   const effectiveNow = propNow ?? currentInstant;
 
-  const resolved = useMemo(
-    () => resolveNextUpEvent(events, effectiveNow, activeTz),
-    [events, effectiveNow, activeTz]
-  );
+  const resolved = resolveNextUpEvent(events, effectiveNow, activeTz);
 
-  const handlePillClick = useCallback(() => {
+  const handlePillClick = () => {
     if (onPillClick) {
       onPillClick();
       return;
@@ -600,17 +597,14 @@ export function NextUp(props: NextUpProps = {}) {
         target.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
       }
     }
-  }, [onPillClick]);
+  };
 
-  const handleKeyDown = useCallback(
-    (e: ReactKeyboardEvent<HTMLDivElement>) => {
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        handlePillClick();
-      }
-    },
-    [handlePillClick]
-  );
+  const handleKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      handlePillClick();
+    }
+  };
 
   const pillClass = resolved?.isNow
     ? 'pill-badge next-event-pill status-now'

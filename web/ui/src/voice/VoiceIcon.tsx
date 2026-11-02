@@ -1,12 +1,10 @@
-import { memo } from 'react';
-
 export type VoiceIconKind = 'mic' | 'think' | 'sparkle';
 
 export interface VoiceIconProps {
   kind: VoiceIconKind;
 }
 
-export const VoiceIcon = memo(function VoiceIcon({ kind }: VoiceIconProps) {
+export function VoiceIcon({ kind }: VoiceIconProps) {
   switch (kind) {
     case 'mic':
       return (
@@ -59,4 +57,4 @@ export const VoiceIcon = memo(function VoiceIcon({ kind }: VoiceIconProps) {
         </svg>
       );
   }
-});
+}

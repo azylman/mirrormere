@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import { useDocumentVisible } from '../lifecycle/visibility';
 import { useHeader } from '../store/hooks';
 
@@ -118,10 +118,7 @@ export function Clock({ timezone: propTimezone, locale: propLocale }: ClockProps
 
   const activeTz = resolveActiveTimezone(propTimezone, header);
 
-  const formatters = useMemo(
-    () => createClockFormatters(activeTz, propLocale),
-    [activeTz, propLocale]
-  );
+  const formatters = createClockFormatters(activeTz, propLocale);
 
   // Sync data-timezone attribute across DOM anchors
   useEffect(() => {

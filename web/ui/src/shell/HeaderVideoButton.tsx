@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from 'react';
 import { useVideo } from '../store/hooks';
 
@@ -33,13 +33,13 @@ export function HeaderVideoButton(props: HeaderVideoButtonProps = {}) {
   const controllable = props.controllable ?? true;
   const fetchFn = props.fetchFn ?? (typeof fetch === 'function' ? fetch : undefined);
 
-  const clearLoading = useCallback(() => {
+  const clearLoading = () => {
     if (safetyTimerRef.current !== null) {
       clearTimeout(safetyTimerRef.current);
       safetyTimerRef.current = null;
     }
     setIsLoading(false);
-  }, []);
+  };
 
   // Clear loading when video switches to active video playback
   useEffect(() => {
@@ -47,7 +47,7 @@ export function HeaderVideoButton(props: HeaderVideoButtonProps = {}) {
     if (mode === 'video') {
       clearLoading();
     }
-  }, [video, clearLoading]);
+  }, [video]);
 
   // Cleanup timers on unmount
   useEffect(() => {

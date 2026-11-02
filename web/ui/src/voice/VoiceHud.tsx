@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useRef } from 'react';
+import { useEffect, useLayoutEffect, useRef } from 'react';
 import { AudioController } from '../audio/useAudio';
 import type { VoiceState } from '../sse/types';
 import { Waveform } from './Waveform';
@@ -10,7 +10,7 @@ export { DUCK_STATES } from './useVoiceHudState';
  * VoiceHud renders the voice toast dock and Waveform mouth visualizer declaratively,
  * sharing state with HeaderVoice via useVoiceHudState().
  */
-export const VoiceHud = memo(function VoiceHud() {
+export function VoiceHud() {
   const hud = useVoiceHudState();
   const { voiceToast } = hud;
   const { visible, badgeText, bodyText } = voiceToast;
@@ -25,25 +25,26 @@ export const VoiceHud = memo(function VoiceHud() {
     turnDismissed: hud.turnDismissed,
   });
 
-  // Keep stateRef updated synchronously on render
-  stateRef.current.activeState = hud.activeState;
-  stateRef.current.statusText = hud.statusText;
-  stateRef.current.turnDismissed = hud.turnDismissed;
-
   const hudRef = useRef(hud);
-  hudRef.current = hud;
 
-  const handleDismissToast = useCallback(() => {
+  useLayoutEffect(() => {
+    stateRef.current.activeState = hud.activeState;
+    stateRef.current.statusText = hud.statusText;
+    stateRef.current.turnDismissed = hud.turnDismissed;
+    hudRef.current = hud;
+  });
+
+  const handleDismissToast = () => {
     stateRef.current.turnDismissed = true;
     hudRef.current.dismissToast();
-  }, []);
+  };
 
-  const handleReset = useCallback(() => {
+  const handleReset = () => {
     stateRef.current.activeState = 'idle';
     stateRef.current.statusText = null;
     stateRef.current.turnDismissed = false;
     hudRef.current.reset();
-  }, []);
+  };
 
   // Window bindings & audio manager fallback
   useEffect(() => {
@@ -86,7 +87,7 @@ export const VoiceHud = memo(function VoiceHud() {
         fallbackController?.destroy();
       }
     };
-  }, [handleReset]);
+  }, []);
 
   // Audio ducking & safety watchdog timer
   useEffect(() => {
@@ -111,7 +112,7 @@ export const VoiceHud = memo(function VoiceHud() {
         clearTimeout(timer);
       }
     };
-  }, [hud.voice, hud.activeState, hud.statusText, handleReset]);
+  }, [hud.voice, hud.activeState, hud.statusText]);
 
   return (
     <>
@@ -138,7 +139,7 @@ export const VoiceHud = memo(function VoiceHud() {
       <Waveform />
     </>
   );
-});
+}
 
 declare global {
   interface Window {

@@ -1,4 +1,4 @@
-import { memo, useEffect } from 'react';
+import { useEffect } from 'react';
 import { useHeader } from '../store/hooks';
 import { VoiceIcon } from '../voice/VoiceIcon';
 import { useVoiceHudState } from '../voice/useVoiceHudState';
@@ -14,7 +14,7 @@ export interface HeaderProps {
   timezone?: string;
 }
 
-export const HeaderVoice = memo(function HeaderVoice() {
+export function HeaderVoice() {
   const { headerVoice, resetHUD } = useVoiceHudState();
   const {
     isActive,
@@ -72,7 +72,7 @@ export const HeaderVoice = memo(function HeaderVoice() {
       />
     </div>
   );
-});
+}
 
 export function Header({ timezone: propTimezone }: HeaderProps = {}) {
   const header = useHeader();
