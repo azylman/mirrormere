@@ -1,4 +1,3 @@
-import { memo } from 'react';
 import { useWidget } from '../../store/hooks';
 import type { WidgetComponentProps } from '../registry';
 import { todayPrecipProb } from '../format';
@@ -9,9 +8,7 @@ import { WeatherHourlyGraph } from './WeatherHourlyGraph';
  * Native React widget component for weather forecasts.
  * Ports widgets/weather-forecast/views/widget.html.
  */
-export const WeatherForecastWidget = memo(function WeatherForecastWidget({
-  id,
-}: WidgetComponentProps) {
+export function WeatherForecastWidget({ id }: WidgetComponentProps) {
   const entry = useWidget(id);
   const config = entry?.meta?.config as Record<string, unknown> | undefined;
   const data = entry?.data as Record<string, unknown> | undefined;
@@ -232,4 +229,4 @@ export const WeatherForecastWidget = memo(function WeatherForecastWidget({
       )}
     </div>
   );
-});
+}

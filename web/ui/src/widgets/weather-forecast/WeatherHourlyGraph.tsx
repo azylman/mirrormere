@@ -1,4 +1,4 @@
-import { Fragment, memo, useMemo } from 'react';
+import { Fragment } from 'react';
 import { computeHourlyGraphLayout, type WeatherHourlyGraphOptions } from '../format';
 import { WeatherIconGlyph } from './WeatherIcon';
 
@@ -12,15 +12,12 @@ export interface WeatherHourlyGraphProps {
  * Declarative SVG continuous line graph showing hourly temperature trends,
  * condition icons, precipitation chances, and time throughout the day.
  */
-export const WeatherHourlyGraph = memo(function WeatherHourlyGraph({
+export function WeatherHourlyGraph({
   hourly,
   widgetId,
   options,
 }: WeatherHourlyGraphProps) {
-  const layout = useMemo(
-    () => computeHourlyGraphLayout(hourly, widgetId, options),
-    [hourly, widgetId, options],
-  );
+  const layout = computeHourlyGraphLayout(hourly, widgetId, options);
   if (!layout) {
     return null;
   }
@@ -123,4 +120,4 @@ export const WeatherHourlyGraph = memo(function WeatherHourlyGraph({
       ))}
     </svg>
   );
-});
+}

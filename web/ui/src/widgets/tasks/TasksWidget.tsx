@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useWidget } from '../../store/hooks';
 import type { WidgetComponentProps } from '../registry';
 import { tasksStats } from '../format';
@@ -37,7 +37,7 @@ interface EffectiveTaskItem extends TaskItemRecord {
  * Native React widget component for task checklists.
  * Ports widgets/tasks/views/widget.html.
  */
-export const TasksWidget = memo(function TasksWidget({ id }: WidgetComponentProps) {
+export function TasksWidget({ id }: WidgetComponentProps) {
   const entry = useWidget(id);
   const config = entry?.meta?.config as Record<string, unknown> | undefined;
   const data = entry?.data as Record<string, unknown> | undefined;
@@ -128,14 +128,57 @@ export const TasksWidget = memo(function TasksWidget({ id }: WidgetComponentProp
 
   const stats = tasksStats(effectiveItems);
 
-  const handleItemClick = useCallback(
-    async (itemId: string, listId: string, currentDone: boolean) => {
-      if (pendingTimersRef.current[itemId] !== undefined || pendingUndo[itemId]) {
-        if (pendingTimersRef.current[itemId] !== undefined) {
-          clearTimeout(pendingTimersRef.current[itemId]);
-          delete pendingTimersRef.current[itemId];
+  const handleItemClick = async (itemId: string, listId: string, currentDone: boolean) => {
+    if (pendingTimersRef.current[itemId] !== undefined || pendingUndo[itemId]) {
+      if (pendingTimersRef.current[itemId] !== undefined) {
+        clearTimeout(pendingTimersRef.current[itemId]);
+        delete pendingTimersRef.current[itemId];
+      }
+      setPendingUndo((prev) => {
+        const next = { ...prev };
+        delete next[itemId];
+        return next;
+      });
+      setOptimisticDone((prev) => {
+        const next = { ...prev };
+        delete next[itemId];
+        return next;
+      });
+      return;
+    }
+
+    if (currentDone || optimisticDone[itemId] || inFlight[itemId]) return;
+
+    setPendingUndo((prev) => ({ ...prev, [itemId]: true }));
+    setOptimisticDone((prev) => ({ ...prev, [itemId]: true }));
+
+    pendingTimersRef.current[itemId] = setTimeout(async () => {
+      delete pendingTimersRef.current[itemId];
+      setPendingUndo((prev) => {
+        const next = { ...prev };
+        delete next[itemId];
+        return next;
+      });
+      setInFlight((prev) => ({ ...prev, [itemId]: true }));
+
+      try {
+        const resp = await fetch(
+          `api/lists/${encodeURIComponent(listId)}/items/${encodeURIComponent(itemId)}/complete`,
+          {
+            method: 'POST',
+            headers: { Accept: 'application/json' },
+          },
+        );
+        if (!resp.ok) {
+          throw new Error(`HTTP ${resp.status}`);
         }
-        setPendingUndo((prev) => {
+        setInFlight((prev) => {
+          const next = { ...prev };
+          delete next[itemId];
+          return next;
+        });
+      } catch {
+        setInFlight((prev) => {
           const next = { ...prev };
           delete next[itemId];
           return next;
@@ -145,55 +188,9 @@ export const TasksWidget = memo(function TasksWidget({ id }: WidgetComponentProp
           delete next[itemId];
           return next;
         });
-        return;
       }
-
-      if (currentDone || optimisticDone[itemId] || inFlight[itemId]) return;
-
-      setPendingUndo((prev) => ({ ...prev, [itemId]: true }));
-      setOptimisticDone((prev) => ({ ...prev, [itemId]: true }));
-
-      pendingTimersRef.current[itemId] = setTimeout(async () => {
-        delete pendingTimersRef.current[itemId];
-        setPendingUndo((prev) => {
-          const next = { ...prev };
-          delete next[itemId];
-          return next;
-        });
-        setInFlight((prev) => ({ ...prev, [itemId]: true }));
-
-        try {
-          const resp = await fetch(
-            `api/lists/${encodeURIComponent(listId)}/items/${encodeURIComponent(itemId)}/complete`,
-            {
-              method: 'POST',
-              headers: { Accept: 'application/json' },
-            },
-          );
-          if (!resp.ok) {
-            throw new Error(`HTTP ${resp.status}`);
-          }
-          setInFlight((prev) => {
-            const next = { ...prev };
-            delete next[itemId];
-            return next;
-          });
-        } catch {
-          setInFlight((prev) => {
-            const next = { ...prev };
-            delete next[itemId];
-            return next;
-          });
-          setOptimisticDone((prev) => {
-            const next = { ...prev };
-            delete next[itemId];
-            return next;
-          });
-        }
-      }, TASK_UNDO_GRACE_MS);
-    },
-    [inFlight, optimisticDone, pendingUndo],
-  );
+    }, TASK_UNDO_GRACE_MS);
+  };
 
   return (
     <div className="widget-tasks">
@@ -370,4 +367,4 @@ export const TasksWidget = memo(function TasksWidget({ id }: WidgetComponentProp
       )}
     </div>
   );
-});
+}

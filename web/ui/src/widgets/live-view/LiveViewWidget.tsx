@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useState, useCallback, useMemo } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { WidgetComponentProps } from '../registry';
 import { useWidget } from '../../store/hooks';
 import { useDisplayStore } from '../../store';
@@ -97,7 +97,7 @@ export function parseLiveViewConfig(raw: unknown, fallbackId = ''): LiveViewConf
   };
 }
 
-export const LiveViewWidget = memo(function LiveViewWidget({ id }: WidgetComponentProps) {
+export function LiveViewWidget({ id }: WidgetComponentProps) {
   const entry = useWidget(id);
   const isCurrentPane = useIsCurrentPane();
   const isDocumentVisible = useDocumentVisible();
@@ -106,7 +106,7 @@ export const LiveViewWidget = memo(function LiveViewWidget({ id }: WidgetCompone
   );
 
   const rawConfig = entry?.meta?.config ?? entry?.data;
-  const config = useMemo(() => parseLiveViewConfig(rawConfig, id), [rawConfig, id]);
+  const config = parseLiveViewConfig(rawConfig, id);
 
   const {
     stream_url: streamUrl,
@@ -181,7 +181,7 @@ export const LiveViewWidget = memo(function LiveViewWidget({ id }: WidgetCompone
     };
   }, []);
 
-  const stopDecoders = useCallback(() => {
+  const stopDecoders = () => {
     epochRef.current += 1;
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
@@ -216,7 +216,7 @@ export const LiveViewWidget = memo(function LiveViewWidget({ id }: WidgetCompone
         // ignore attribute error
       }
     }
-  }, []);
+  };
 
   const shouldPlay =
     isCurrentPane &&
@@ -434,9 +434,9 @@ export const LiveViewWidget = memo(function LiveViewWidget({ id }: WidgetCompone
     return () => {
       stopDecoders();
     };
-  }, [shouldPlay, streamUrl, streamType, id, stopDecoders]);
+  }, [shouldPlay, streamUrl, streamType, id]);
 
-  const triggerExpand = useCallback(async () => {
+  const triggerExpand = async () => {
     if (!expandOnClick || isLoading || !streamUrl) return;
 
     const now = Date.now();
@@ -493,19 +493,7 @@ export const LiveViewWidget = memo(function LiveViewWidget({ id }: WidgetCompone
         safetyTimerRef.current = null;
       }
     }
-  }, [
-    expandOnClick,
-    isLoading,
-    streamUrl,
-    streamId,
-    expandStreamUrl,
-    expandStreamType,
-    streamType,
-    priority,
-    controllable,
-    controlUrl,
-    timeoutSeconds,
-  ]);
+  };
 
   const getCoords = (
     e: React.PointerEvent | React.TouchEvent | React.MouseEvent,
@@ -529,33 +517,30 @@ export const LiveViewWidget = memo(function LiveViewWidget({ id }: WidgetCompone
     return null;
   };
 
-  const handlePointerDown = useCallback((e: React.PointerEvent) => {
+  const handlePointerDown = (e: React.PointerEvent) => {
     pointerDownCoordsRef.current = getCoords(e);
-  }, []);
+  };
 
-  const handlePointerUp = useCallback(
-    (e: React.PointerEvent) => {
-      const start = pointerDownCoordsRef.current;
-      pointerDownCoordsRef.current = null;
-      const coords = getCoords(e);
-      if (start && coords) {
-        const dist = Math.hypot(coords.x - start.x, coords.y - start.y);
-        if (dist >= 15) {
-          lastDragTimeRef.current = Date.now();
-          return;
-        }
+  const handlePointerUp = (e: React.PointerEvent) => {
+    const start = pointerDownCoordsRef.current;
+    pointerDownCoordsRef.current = null;
+    const coords = getCoords(e);
+    if (start && coords) {
+      const dist = Math.hypot(coords.x - start.x, coords.y - start.y);
+      if (dist >= 15) {
+        lastDragTimeRef.current = Date.now();
+        return;
       }
-      void triggerExpand();
-    },
-    [triggerExpand],
-  );
+    }
+    void triggerExpand();
+  };
 
-  const handleClick = useCallback(() => {
+  const handleClick = () => {
     if (Date.now() - lastDragTimeRef.current < 400) {
       return;
     }
     void triggerExpand();
-  }, [triggerExpand]);
+  };
 
   useEffect(() => {
     return () => {
@@ -602,4 +587,4 @@ export const LiveViewWidget = memo(function LiveViewWidget({ id }: WidgetCompone
       </div>
     </div>
   );
-});
+}
