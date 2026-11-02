@@ -3,35 +3,59 @@ import { beginAnimation, endAnimation } from '../../perf/animating';
 import { useDisplayStore } from '../../store';
 
 export interface PhotoItem {
-  id?: string;
-  url?: string;
-  URL?: string;
-  width?: number;
-  height?: number;
+  id?: string; url?: string; URL?: string; width?: number; height?: number;
+  timestamp?: string; location?: string; album_name?: string; dominant_color?: string;
 }
 
-export interface PhotoCarouselData {
-  photos?: PhotoItem[];
-  album_url?: string;
-  cycle_interval_seconds?: number;
-}
-
+export interface PhotoCarouselData { photos?: PhotoItem[]; album_url?: string; cycle_interval_seconds?: number; }
+export interface PhotoAlbumConfig { name?: string; source?: 'share_url' | 'ember_bridge'; url?: string; }
 export interface PhotoCarouselConfig {
-  source?: 'share_url' | 'ember_bridge';
-  album_url?: string;
-  album_url_env?: string;
+  source?: 'share_url' | 'ember_bridge'; album_url?: string; album_url_env?: string; albums?: PhotoAlbumConfig[];
 }
-
-export interface ContainerSize {
-  width: number;
-  height: number;
-}
+export interface ContainerSize { width: number; height: number; }
 
 const CROSSFADE_MS = 850;
 export const EMPTY_PHOTOS: PhotoItem[] = [];
 export const DEFAULT_CYCLE_SECONDS = 30;
 export const PHOTO_CONTROLS_HIDE_MS = 3000;
 export const PHOTO_PAUSE_INACTIVITY_MS = 60000;
+const OVERLAY_DATE_FMT = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+
+export function formatPhotoOverlayDate(timestamp?: string): string {
+  if (!timestamp || !timestamp.trim()) return '';
+  const d = new Date(timestamp.trim());
+  return Number.isNaN(d.getTime()) ? '' : OVERLAY_DATE_FMT.format(d);
+}
+
+export function hasMultiplePhotoAlbums(photos: readonly PhotoItem[]): boolean {
+  let firstAlbum = '';
+  for (const p of photos) {
+    const name = (p.album_name || '').trim();
+    if (!name) continue;
+    if (!firstAlbum) firstAlbum = name;
+    else if (name !== firstAlbum) return true;
+  }
+  return false;
+}
+
+export function formatPhotoMetadataLabel(
+  photo?: PhotoItem,
+  showAlbumName = false,
+): { date: string; location: string; album: string; text: string } | null {
+  const date = formatPhotoOverlayDate(photo?.timestamp);
+  const location = (photo?.location || '').trim();
+  const album = showAlbumName ? (photo?.album_name || '').trim() : '';
+  const dateAndLocation = date && location ? `${date}, ${location}` : date || location;
+  const text = dateAndLocation && album ? `${dateAndLocation} • ${album}` : dateAndLocation || album;
+  return text ? { date, location, album, text } : null;
+}
+
+export function resolvePhotoOverlayTheme(dominantColor?: string): 'light' | 'dark' {
+  const m = /^#?([0-9a-fA-F]{6})$/.exec((dominantColor || '').trim());
+  if (!m) return 'dark';
+  const hex = parseInt(m[1], 16);
+  return (0.299 * ((hex >> 16) & 0xff) + 0.587 * ((hex >> 8) & 0xff) + 0.114 * (hex & 0xff)) / 255 >= 0.58 ? 'light' : 'dark';
+}
 
 export function parsePhotoCarouselData(raw: unknown): PhotoCarouselData {
   if (!raw) return {};
@@ -48,6 +72,30 @@ export function parsePhotoCarouselData(raw: unknown): PhotoCarouselData {
     }
   }
   return {};
+}
+
+export function resolvePhotoCarouselSourceAndUrl(
+  config?: PhotoCarouselConfig,
+  data?: PhotoCarouselData,
+): { source: 'share_url' | 'ember_bridge'; albumUrl: string } {
+  if (Array.isArray(config?.albums) && config.albums.length > 0) {
+    const emberEntry = config.albums.find((a) => a.source === 'ember_bridge');
+    if (emberEntry) {
+      return {
+        source: 'ember_bridge',
+        albumUrl: (emberEntry.url || config?.album_url || data?.album_url || '').trim(),
+      };
+    }
+    return {
+      source: 'share_url',
+      albumUrl: (config.albums[0]?.url || config?.album_url || data?.album_url || '').trim(),
+    };
+  }
+
+  return {
+    source: config?.source === 'ember_bridge' ? 'ember_bridge' : 'share_url',
+    albumUrl: (config?.album_url || data?.album_url || '').trim(),
+  };
 }
 
 export function getBackdropPhotoURL(rawUrl?: string): string {
@@ -234,63 +282,35 @@ export function registerEmberSyncListener(listener: EmberSyncListener): () => vo
 }
 
 export interface UsePhotoSlideshowTransitionOptions {
-  id: string;
-  photos: readonly PhotoItem[];
-  cycleIntervalSeconds: number;
-  isCurrentPane: boolean;
-  isDocumentVisible: boolean;
-  isVideoMode: boolean;
-  isPaused: boolean;
-  containerSizeRef: React.MutableRefObject<ContainerSize>;
+  id: string; photos: readonly PhotoItem[]; cycleIntervalSeconds: number;
+  isCurrentPane: boolean; isDocumentVisible: boolean; isVideoMode: boolean;
+  isPaused: boolean; containerSizeRef: React.MutableRefObject<ContainerSize>;
 }
 
 export function usePhotoSlideshowTransition({
-  id,
-  photos,
-  cycleIntervalSeconds,
-  isCurrentPane,
-  isDocumentVisible,
-  isVideoMode,
-  isPaused,
-  containerSizeRef,
+  id, photos, cycleIntervalSeconds, isCurrentPane, isDocumentVisible, isVideoMode, isPaused, containerSizeRef,
 }: UsePhotoSlideshowTransitionOptions) {
-  const [currentIndex, setCurrentIndex] = useState(() =>
-    resolveInitialPhotoIndex(photos, getWidgetPhotoDeckState(id)),
-  );
+  const [currentIndex, setCurrentIndex] = useState(() => resolveInitialPhotoIndex(photos, getWidgetPhotoDeckState(id)));
   const safeIndex = photos.length > 0 ? currentIndex % photos.length : 0;
   const currentIndexRef = useRef(safeIndex);
   const probeIndexRef = useRef<number | null>(null);
   const [retryTick, setRetryTick] = useState(0);
-
   const photosRef = useRef(photos);
   const isAnimatingRef = useRef(false);
   const [transitionState, setTransitionState] = useState<{ nextIndex: number; active: boolean } | null>(null);
   const transitionStateRef = useRef<{ nextIndex: number; active: boolean } | null>(null);
-
   const cycleSeqRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const transitionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cycleStartedAtRef = useRef<number | null>(null);
   const activeDelayMsRef = useRef<number>(cycleIntervalSeconds * 1000);
-
-  const startAnimation = () => {
-    if (!isAnimatingRef.current) { isAnimatingRef.current = true; beginAnimation(); }
-  };
-  const stopAnimation = () => {
-    if (isAnimatingRef.current) { isAnimatingRef.current = false; endAnimation(); }
-  };
-
+  const startAnimation = () => { if (!isAnimatingRef.current) { isAnimatingRef.current = true; beginAnimation(); } };
+  const stopAnimation = () => { if (isAnimatingRef.current) { isAnimatingRef.current = false; endAnimation(); } };
   const clearPendingTransition = () => {
     cycleSeqRef.current += 1;
     stopAnimation();
-    if (transitionTimeoutRef.current) {
-      clearTimeout(transitionTimeoutRef.current);
-      transitionTimeoutRef.current = null;
-    }
-    if (transitionStateRef.current !== null) {
-      transitionStateRef.current = null;
-      setTransitionState(null);
-    }
+    if (transitionTimeoutRef.current) { clearTimeout(transitionTimeoutRef.current); transitionTimeoutRef.current = null; }
+    if (transitionStateRef.current !== null) { transitionStateRef.current = null; setTransitionState(null); }
   };
 
   const triggerAdvance = (direction: 'next' | 'prev' = 'next') => {

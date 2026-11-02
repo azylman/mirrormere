@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"sync"
 )
 
@@ -78,29 +79,25 @@ type DefaultRegistry struct {
 	factories map[string]Factory
 }
 
+var (
+	builtinFactoriesMu sync.RWMutex
+	builtinFactories   = map[string]Factory{}
+)
+
+func registerBuiltin(providerType string, factory Factory) {
+	builtinFactoriesMu.Lock()
+	defer builtinFactoriesMu.Unlock()
+	builtinFactories[providerType] = factory
+}
+
 // NewRegistry constructs a Registry pre-populated with built-in providers (e.g. spacer).
 func NewRegistry() *DefaultRegistry {
 	r := &DefaultRegistry{
 		factories: make(map[string]Factory),
 	}
-	r.Register("spacer", func() Provider {
-		return NewSpacerProvider()
-	})
-	r.Register("live-view", func() Provider {
-		return NewLiveViewProvider()
-	})
-	r.Register("http", NewHTTPProvider)
-	r.Register("weather-forecast", NewWeatherProvider)
-	r.Register("calendar-feed", NewCalendarProvider)
-	r.Register("photo-carousel", func() Provider {
-		return NewPhotosProvider()
-	})
-	r.Register("tasks", func() Provider {
-		return NewTasksProvider()
-	})
-	r.Register("home-assistant", func() Provider {
-		return NewHomeAssistantProvider()
-	})
+	builtinFactoriesMu.RLock()
+	defer builtinFactoriesMu.RUnlock()
+	maps.Copy(r.factories, builtinFactories)
 	return r
 }
 

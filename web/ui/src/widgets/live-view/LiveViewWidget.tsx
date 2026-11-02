@@ -1,3 +1,4 @@
+import './LiveViewWidget.css';
 import { useEffect, useRef, useState } from 'react';
 import type { WidgetComponentProps } from '../registry';
 import { useWidget } from '../../store/hooks';

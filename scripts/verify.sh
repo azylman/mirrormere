@@ -192,6 +192,26 @@ run_code_health() {
     echo "   [code-health] Checking ratcheted complexity and length limits..."
     if has_cmd go; then
         ensure_code_health
+        if [ "$MODE" = "staged" ] && [ -z "${GITHUB_ACTIONS:-}" ] && has_cmd git; then
+            staged_go=$(git diff --cached --name-only --diff-filter=ACM 2>/dev/null | grep '\.go$' || true)
+            if [ -n "$staged_go" ]; then
+                staged_clean=""
+                for f in $staged_go; do
+                    if [ -f "$f" ] && git diff --quiet -- "$f" 2>/dev/null; then
+                        staged_clean="${staged_clean:+$staged_clean }$f"
+                    fi
+                done
+                if [ -n "$staged_clean" ]; then
+                    # shellcheck disable=SC2086
+                    "$CODE_HEALTH_BIN" -fix -root "$REPO_ROOT" -baseline "$REPO_ROOT/.code-health-baseline.json" $staged_clean >/dev/null 2>&1 || true
+                    for f in $staged_clean; do
+                        if [ -f "$f" ] && ! git diff --quiet -- "$f" 2>/dev/null; then
+                            git add "$f"
+                        fi
+                    done
+                fi
+            fi
+        fi
         "$CODE_HEALTH_BIN" -root "$REPO_ROOT" -baseline "$REPO_ROOT/.code-health-baseline.json"
     else
         echo "🚨 [Mirrormere Verify] Error: go not found in PATH." >&2
@@ -397,7 +417,20 @@ run_python_tests() {
 
 # 9. React UI (web/ui): lint, deadcode, typecheck, tests, build.
 # Runs when web/ui changed; runs npm ci if node_modules is missing.
+run_frontend_checks() {
+    echo "   [frontend] Verifying per-widget CSS co-location..."
+    if [ -f "$REPO_ROOT/web/ui/src/styles/widgets.css" ]; then
+        echo "🚨 [Mirrormere Verify] Error: web/ui/src/styles/widgets.css must not exist (monolithic widget styles are prohibited; co-locate CSS with each widget component)." >&2
+        exit 1
+    fi
+    if [ -d "$REPO_ROOT/web/ui/src/styles" ] && grep -rn -F '[data-widget-type=' "$REPO_ROOT/web/ui/src/styles" >/dev/null 2>&1; then
+        echo "🚨 [Mirrormere Verify] Error: Monolithic widget selectors ([data-widget-type=) found under web/ui/src/styles/. Co-locate per-widget styles with each widget component." >&2
+        exit 1
+    fi
+}
+
 run_ui_checks() {
+    run_frontend_checks
     if ! has_cmd npm; then
         echo "🚨 [Mirrormere Verify] Error: npm not found in PATH; web/ui checks cannot run." >&2
         exit 1
@@ -506,6 +539,7 @@ if [ "$MODE" = "guards" ]; then
     check_utf8_bom
     check_no_imperative_ddl
     check_dependabot_coverage
+    run_frontend_checks
     echo "✨ [Mirrormere Verify] All repo-wide hygiene guards passed!"
     exit 0
 fi

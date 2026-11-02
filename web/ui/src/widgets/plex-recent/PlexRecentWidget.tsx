@@ -1,3 +1,4 @@
+import './PlexRecentWidget.css';
 import { memo, useEffect, useMemo, useRef, useState, ViewTransition } from 'react';
 import { useIsCurrentPane } from '../../carousel/PaneContext';
 import { useDocumentVisible } from '../../lifecycle/visibility';

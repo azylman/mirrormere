@@ -17,6 +17,7 @@ import {
   moveOrSwapWidget,
   moveWidgetToScreen,
   resizeWidget,
+  resolvePreviewOrigin,
   togglePinWidget,
 } from './editorMath';
 
@@ -92,6 +93,7 @@ function LayoutEditorModal({ fetchImpl }: LayoutEditorProps = {}) {
     widgetId: string;
     origin: [number, number];
     dimensions: [number, number];
+    grabOffset: [number, number];
   } | null>(null);
 
   useEffect(() => {
@@ -186,11 +188,24 @@ function LayoutEditorModal({ fetchImpl }: LayoutEditorProps = {}) {
         // Ignored in non-supporting jsdom
       }
     }
+    let grabOffset: [number, number] = [0, 0];
+    if (gridRef.current) {
+      const rect = gridRef.current.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) {
+        const pointerCol = Math.floor(((e.clientX - rect.left) / rect.width) * gridCols);
+        const pointerRow = Math.floor(((e.clientY - rect.top) / rect.height) * gridRows);
+        grabOffset = [
+          Math.max(0, Math.min(pointerCol - widget.origin[0], widget.dimensions[0] - 1)),
+          Math.max(0, Math.min(pointerRow - widget.origin[1], widget.dimensions[1] - 1)),
+        ];
+      }
+    }
     dragStartRef.current = {
       pointerId: e.pointerId,
       widgetId: widget.widget_id,
       origin: widget.origin,
       dimensions: widget.dimensions,
+      grabOffset,
     };
     setDraggingId(widget.widget_id);
     setDragGhost({ origin: widget.origin, dimensions: widget.dimensions });
@@ -214,12 +229,21 @@ function LayoutEditorModal({ fetchImpl }: LayoutEditorProps = {}) {
     if (gridRef.current) {
       const rect = gridRef.current.getBoundingClientRect();
       if (rect.width > 0 && rect.height > 0) {
-        const col = Math.floor(((e.clientX - rect.left) / rect.width) * gridCols);
-        const row = Math.floor(((e.clientY - rect.top) / rect.height) * gridRows);
+        const pointerCol = Math.floor(((e.clientX - rect.left) / rect.width) * gridCols);
+        const pointerRow = Math.floor(((e.clientY - rect.top) / rect.height) * gridRows);
         const [wCols, wRows] = dragStartRef.current.dimensions;
-        const clampedCol = Math.max(0, Math.min(col, gridCols - wCols));
-        const clampedRow = Math.max(0, Math.min(row, gridRows - wRows));
-        setDragGhost({ origin: [clampedCol, clampedRow], dimensions: [wCols, wRows] });
+        const [offsetCol, offsetRow] = dragStartRef.current.grabOffset;
+        const clampedCol = Math.max(0, Math.min(pointerCol - offsetCol, gridCols - wCols));
+        const clampedRow = Math.max(0, Math.min(pointerRow - offsetRow, gridRows - wRows));
+        const snappedOrigin = resolvePreviewOrigin(
+          widgets,
+          dragStartRef.current.widgetId,
+          activeScreen,
+          [clampedCol, clampedRow],
+          gridCols,
+          gridRows,
+        );
+        setDragGhost({ origin: snappedOrigin, dimensions: [wCols, wRows] });
       }
     }
   };
@@ -291,7 +315,7 @@ function LayoutEditorModal({ fetchImpl }: LayoutEditorProps = {}) {
       id="layout-editor-overlay"
       data-prevent-screen-swipe="true"
     >
-      <header className="layout-editor-toolbar">
+      <header className="header-zone layout-editor-toolbar">
         <div className="layout-editor-status" data-testid="layout-editor-status">
           {occupied}/{totalCells} cells • Auto-spacer padded
         </div>
@@ -366,7 +390,7 @@ function LayoutEditorModal({ fetchImpl }: LayoutEditorProps = {}) {
               return (
                 <div
                   key={w.widget_id}
-                  className={`layout-editor-card ${w.pinned ? 'pinned' : ''} ${isDragging ? 'dragging' : ''}`}
+                  className={`widget-card layout-editor-card ${w.pinned ? 'pinned' : ''} ${isDragging ? 'dragging' : ''}`}
                   data-widget-id={w.widget_id}
                   data-widget-type={w.type}
                   style={{

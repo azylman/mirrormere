@@ -1,3 +1,4 @@
+import './HomeAssistantWidget.css';
 import { memo, useCallback, useMemo, useState } from 'react';
 import { useWidget } from '../../store/hooks';
 import type { WidgetComponentProps } from '../registry';

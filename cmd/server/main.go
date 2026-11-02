@@ -460,6 +460,14 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 	}
 	chatStore := chatlog.NewStore(chatlog.WithTTL(chatLogCfg.GetTTL()), chatlog.WithMaxPerKey(chatLogCfg.GetMaxMessagesPerNode()))
 	reg := provider.NewRegistry()
+	if configPath != "" {
+		reg.Register("photo-carousel", func() provider.Provider {
+			return provider.NewPhotosProvider(
+				provider.WithPhotosCacheDir(provider.DefaultPhotosCacheDir),
+				provider.WithPhotosSyncIntervals(provider.DefaultPhotosPage1Interval, provider.DefaultPhotosFullSyncInterval),
+			)
+		})
+	}
 	videoCoord := video.NewCoordinator(hub, video.WithSink(stateProvider))
 	defer videoCoord.Close()
 
@@ -522,16 +530,16 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 	cfg := server.Config{
 		Host:                initialHost,
 		Port:                portVal,
-		EventsHandler:       events.Handler(hub),
-		ScreenHandler:       rotation.NewHandler(rotationCoord),
-		RenderHandler:       renderHandler,
-		PushHandler:         provider.NewPushHandler(providerCoord, logger),
-		DisplayHandler:      buildDisplayHandler(stateProvider, currentTheme),
-		ListsHandler:        listsHandler,
 		AudioHandler:        server.NewDefaultAudioHandler(audio.NewCoordinator(hub, stateProvider)),
+		DisplayHandler:      buildDisplayHandler(stateProvider, currentTheme),
+		EventsHandler:       events.Handler(hub),
+		LayoutEditorHandler: server.NewDefaultLayoutEditorHandler(configManager, hub, loader, logger),
+		ListsHandler:        listsHandler,
+		PushHandler:         provider.NewPushHandler(providerCoord, logger),
+		RenderHandler:       renderHandler,
+		ScreenHandler:       rotation.NewHandler(rotationCoord),
 		VideoHandler:        server.NewDefaultVideoHandler(videoCoord),
 		VoiceHandler:        server.NewDefaultVoiceHandler(voiceCoord, voiceHub, server.WithVoiceMetrics(voice.DefaultMetrics())),
-		LayoutEditorHandler: server.NewDefaultLayoutEditorHandler(configManager, hub, loader, logger),
 		WidgetActionHandler: haActionHandler,
 	}
 	cfg.ApplyDefaults()

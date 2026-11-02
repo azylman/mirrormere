@@ -5,6 +5,10 @@ import {
   PHOTO_CONTROLS_HIDE_MS,
   PHOTO_PAUSE_INACTIVITY_MS,
   photoDeckStateById,
+  formatPhotoOverlayDate,
+  formatPhotoMetadataLabel,
+  resolvePhotoOverlayTheme,
+  hasMultiplePhotoAlbums,
 } from './PhotoCarouselWidget';
 import { useDisplayStore } from '../../store';
 import type { WidgetMeta } from '../../store/types';
@@ -21,7 +25,7 @@ function makeWidgetMeta(config: Record<string, unknown> = {}): WidgetMeta {
 }
 
 function setWidgetPhotos(
-  photos: Array<{ id?: string; url?: string; URL?: string }>,
+  photos: Array<{ id?: string; url?: string; URL?: string; timestamp?: string; location?: string; album_name?: string; dominant_color?: string }>,
   cycleSeconds?: number,
   config: Record<string, unknown> = {},
 ) {
@@ -266,5 +270,122 @@ describe('PhotoCarouselWidget transport controls', () => {
         video: { mode: 'widgets', primary: null, pip: null },
       });
     });
+  });
+
+  it('formats metadata labels, resolves adaptive overlay theme, and renders Nest Hub photo overlay across single and multi-album configs', () => {
+    expect(formatPhotoOverlayDate('')).toBe('');
+    expect(formatPhotoOverlayDate('   ')).toBe('');
+    expect(formatPhotoOverlayDate('not-a-date')).toBe('');
+    expect(formatPhotoOverlayDate('2026-10-30T14:30:00Z')).toBe('Oct 30, 2026');
+
+    expect(formatPhotoMetadataLabel(undefined)).toBeNull();
+    expect(formatPhotoMetadataLabel({ id: '1', url: 'https://example.com/1.jpg' })).toBeNull();
+    expect(formatPhotoMetadataLabel({ location: '  Emeryville  ', timestamp: '2026-10-30T14:30:00Z', album_name: 'AZAZAZAZ' }, false)).toEqual({
+      date: 'Oct 30, 2026',
+      location: 'Emeryville',
+      album: '',
+      text: 'Oct 30, 2026, Emeryville',
+    });
+    expect(formatPhotoMetadataLabel({ location: 'Emeryville', timestamp: '2026-10-30T14:30:00Z', album_name: 'AZAZAZAZ' }, true)).toEqual({
+      date: 'Oct 30, 2026',
+      location: 'Emeryville',
+      album: 'AZAZAZAZ',
+      text: 'Oct 30, 2026, Emeryville • AZAZAZAZ',
+    });
+    expect(formatPhotoMetadataLabel({ location: 'Tokyo, Japan' })).toEqual({
+      date: '',
+      location: 'Tokyo, Japan',
+      album: '',
+      text: 'Tokyo, Japan',
+    });
+    expect(formatPhotoMetadataLabel({ album_name: 'Family Album' }, true)).toEqual({
+      date: '',
+      location: '',
+      album: 'Family Album',
+      text: 'Family Album',
+    });
+
+    expect(hasMultiplePhotoAlbums([])).toBe(false);
+    expect(hasMultiplePhotoAlbums([{ album_name: 'Family' }, { album_name: 'Family' }])).toBe(false);
+    expect(hasMultiplePhotoAlbums([{ album_name: 'Family' }, { album_name: 'Vacation' }])).toBe(true);
+
+    expect(resolvePhotoOverlayTheme(undefined)).toBe('dark');
+    expect(resolvePhotoOverlayTheme('invalid')).toBe('dark');
+    expect(resolvePhotoOverlayTheme('#362b29')).toBe('dark');
+    expect(resolvePhotoOverlayTheme('#e8e8e5')).toBe('light');
+    expect(resolvePhotoOverlayTheme('f5f5f0')).toBe('light');
+
+    // 1. Single album configured -> omits album name ("Oct 30, 2026, Emeryville")
+    photoDeckStateById.clear();
+    setWidgetPhotos([
+      {
+        id: '1',
+        url: 'https://example.com/dark.jpg',
+        timestamp: '2026-10-30T14:30:00Z',
+        location: 'Emeryville',
+        album_name: 'Family Album',
+        dominant_color: '#221c28',
+      },
+    ], 10);
+
+    const { container } = render(
+      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
+        <PhotoCarouselWidget id={widgetId} type="photo-carousel" />
+      </PaneContext.Provider>,
+    );
+
+    const overlay1 = container.querySelector('.photo-metadata-overlay') as HTMLDivElement;
+    expect(overlay1).not.toBeNull();
+    expect(overlay1.getAttribute('data-overlay-theme')).toBe('dark');
+    expect(overlay1.getAttribute('aria-label')).toBe('Oct 30, 2026, Emeryville');
+    expect(overlay1.textContent).toBe('Oct 30, 2026, Emeryville');
+
+    // 2. Multiple albums configured in config.albums -> includes album name ("Oct 30, 2026, Emeryville • AZAZAZAZ")
+    act(() => {
+      photoDeckStateById.clear();
+      setWidgetPhotos(
+        [
+          {
+            id: '2',
+            url: 'https://example.com/light.jpg',
+            timestamp: '2026-10-30T14:30:00Z',
+            location: 'Emeryville',
+            album_name: 'AZAZAZAZ',
+            dominant_color: '#f2f0eb',
+          },
+        ],
+        10,
+        {
+          albums: [
+            { name: 'AZAZAZAZ', source: 'share_url', url: 'https://photos.app.goo.gl/a1' },
+            { name: 'Trip 2026', source: 'share_url', url: 'https://photos.app.goo.gl/a2' },
+          ],
+        },
+      );
+    });
+
+    const overlay2 = container.querySelector('.photo-metadata-overlay') as HTMLDivElement;
+    expect(overlay2).not.toBeNull();
+    expect(overlay2.getAttribute('data-overlay-theme')).toBe('light');
+    expect(overlay2.getAttribute('aria-label')).toBe('Oct 30, 2026, Emeryville • AZAZAZAZ');
+    expect(overlay2.textContent).toBe('Oct 30, 2026, Emeryville • AZAZAZAZ');
+
+    // 3. Render photo with location only
+    act(() => {
+      photoDeckStateById.clear();
+      setWidgetPhotos([
+        { id: 'loc-only', url: 'https://example.com/loc.jpg', location: 'Kyoto, Japan' },
+      ], 10);
+    });
+    expect(container.querySelector('.photo-metadata-overlay')?.getAttribute('aria-label')).toBe('Kyoto, Japan');
+
+    // 4. Render photo with no location or timestamp -> no overlay
+    act(() => {
+      photoDeckStateById.clear();
+      setWidgetPhotos([
+        { id: '3', url: 'https://example.com/plain.jpg' },
+      ], 10);
+    });
+    expect(container.querySelector('.photo-metadata-overlay')).toBeNull();
   });
 });

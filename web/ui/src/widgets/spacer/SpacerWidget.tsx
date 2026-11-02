@@ -1,3 +1,4 @@
+import './SpacerWidget.css';
 import type { WidgetComponentProps } from '../registry';
 
 /**
