@@ -1,4 +1,4 @@
-import { fireEvent, render } from '@testing-library/react';
+import { act, fireEvent, render } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useDisplayStore } from '../store';
 import {
@@ -521,5 +521,442 @@ describe('NextUp component', () => {
     expect(scrollSpy).toHaveBeenCalledWith({ behavior: 'smooth', block: 'nearest' });
 
     document.body.removeChild(gridTarget);
+  });
+
+  it('exercises periodic interval timer in NextUp component when propNow is omitted', () => {
+    vi.useFakeTimers();
+    try {
+      const events: RawCalendarEvent[] = [
+        {
+          id: 'timer-ev',
+          title: 'Timer Event',
+          start: new Date(Date.now() + 60000).toISOString(),
+        },
+      ];
+
+      const { unmount } = render(<NextUp timezone="UTC" events={events} />);
+      // Fast-forward 15s to trigger scheduleNext timer callback
+      act(() => {
+        vi.advanceTimersByTime(16000);
+      });
+      unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('sorts multiple events within ongoingTimed, upcomingTimed, allDayToday, and upcomingAllDay buckets', () => {
+    const baseNow = new Date('2026-10-31T10:00:00Z');
+    const events: RawCalendarEvent[] = [
+      // 2 ongoing timed events
+      { id: 'on-2', title: 'Later Ongoing', start: '2026-10-31T09:00:00Z', end: '2026-10-31T12:00:00Z' },
+      { id: 'on-1', title: 'Earlier Ongoing', start: '2026-10-31T09:30:00Z', end: '2026-10-31T11:00:00Z' },
+    ];
+    // Ongoing sorted by end date ascending -> on-1 ends earlier (11:00)
+    const res1 = resolveNextUpEvent(events, baseNow, 'UTC');
+    expect(res1?.title).toBe('Earlier Ongoing');
+
+    // 2 upcoming timed events today
+    const events2: RawCalendarEvent[] = [
+      { id: 'up-2', title: 'Later Upcoming', start: '2026-10-31T15:00:00Z', end: '2026-10-31T16:00:00Z' },
+      { id: 'up-1', title: 'Earlier Upcoming', start: '2026-10-31T12:00:00Z', end: '2026-10-31T13:00:00Z' },
+    ];
+    const res2 = resolveNextUpEvent(events2, baseNow, 'UTC');
+    expect(res2?.title).toBe('Earlier Upcoming');
+
+    // 2 all day events today
+    const events3: RawCalendarEvent[] = [
+      { id: 'ad-2', title: 'All Day 2', start: '2026-10-31', allDay: true },
+      { id: 'ad-1', title: 'All Day 1', start: '2026-10-31', allDay: true },
+    ];
+    const res3 = resolveNextUpEvent(events3, baseNow, 'UTC');
+    expect(res3?.label).toBe('TODAY');
+
+    // 2 upcoming all day events future
+    const events4: RawCalendarEvent[] = [
+      { id: 'fad-2', title: 'Future All Day 2', start: '2026-11-03', allDay: true },
+      { id: 'fad-1', title: 'Future All Day 1', start: '2026-11-02', allDay: true },
+    ];
+    const res4 = resolveNextUpEvent(events4, baseNow, 'UTC');
+    expect(res4?.title).toBe('Future All Day 1');
+  });
+
+  it('covers parseEventDates edge cases: date/dayDate fallbacks, standalone times, Date instances, UTC offset', () => {
+    const baseNow = new Date('2026-10-31T12:00:00Z');
+
+    expect(parseEventDates(null as unknown as RawCalendarEvent, baseNow)).toBeNull();
+
+    // All-day with date instead of start
+    const p1 = parseEventDates({ title: 'Ad Date', date: '2026-10-31', allDay: true } as unknown as RawCalendarEvent, baseNow, 'UTC');
+    expect(p1).not.toBeNull();
+    expect(p1?.startDate.toISOString()).toContain('2026-10-31');
+
+    // All-day with dayDate
+    const p2 = parseEventDates({ title: 'Ad DayDate', dayDate: '2026-10-31', allDay: true } as unknown as RawCalendarEvent, baseNow, 'UTC');
+    expect(p2).not.toBeNull();
+
+    // All-day with Date instances
+    const p3 = parseEventDates(
+      { title: 'Ad Date Obj', start: new Date('2026-10-31T00:00:00Z'), allDay: true },
+      baseNow,
+      'UTC'
+    );
+    expect(p3).not.toBeNull();
+
+    // All-day with invalid end string fallback
+    const p4 = parseEventDates(
+      { title: 'Ad Invalid End', start: '2026-10-31', end: 'bad-end', allDay: true },
+      baseNow,
+      'UTC'
+    );
+    expect(p4).not.toBeNull();
+    expect(p4?.endDate.toISOString()).toContain('2026-10-31T23:59:59.999');
+
+    // Standalone times HH:mm with date
+    const p5 = parseEventDates(
+      { title: 'Timed Standalone', start: '09:30', end: '10:45', date: '2026-10-31' },
+      baseNow,
+      'UTC'
+    );
+    expect(p5?.startDate.toISOString()).toContain('09:30');
+    expect(p5?.endDate.toISOString()).toContain('10:45');
+
+    // Standalone time without date (falls back to referenceNow day)
+    const p6 = parseEventDates({ title: 'Timed No Date', start: '14:15' }, baseNow, 'UTC');
+    expect(p6?.startDate.toISOString()).toContain('14:15');
+
+    // Date instances for timed event
+    const p7 = parseEventDates(
+      {
+        title: 'Timed Date Objs',
+        start: new Date('2026-10-31T09:00:00Z'),
+        end: new Date('2026-10-31T10:00:00Z'),
+      },
+      baseNow,
+      'UTC'
+    );
+    expect(p7?.startDate.toISOString()).toBe('2026-10-31T09:00:00.000Z');
+  });
+
+  it('selectCalendarEvents extracts from data arrays and viewModel week/month/days/events', () => {
+    const widgets = {
+      'grid-w': {
+        meta: { type: 'calendar-grid', origin: [0, 0], dimensions: [3, 2], config: {}, assets_base: '' },
+        state: 'healthy',
+        timestamp: '2026-10-31T12:00:00Z',
+        data: [
+          {
+            date: '2026-10-31',
+            events: [{ title: 'Grid Day Ev', start: '10:00' }],
+            early_events: [{ title: 'Early Ev', start: '06:00' }],
+            late_events: [{ title: 'Late Ev', start: '22:00' }],
+            timed: [{ title: 'Timed Ev', start: '14:00' }],
+            all_day: [{ title: 'All Day Ev' }],
+          },
+        ],
+        viewModel: {
+          week: {
+            days: [{ date: '2026-10-31' }],
+            all_day_events: [
+              { title: 'Week All Day', start_col: 1 },
+              { title: 'Week All Day 2', start: '2026-10-31' },
+            ],
+          },
+          month: {
+            days: [
+              {
+                date: '2026-11-01',
+                events: [{ title: 'Month Day Ev', start: '2026-11-01T10:00:00Z' }],
+              },
+            ],
+          },
+          days: [
+            {
+              date: '2026-11-02',
+              events: [{ title: 'Direct VM Day Ev', start: '2026-11-02T10:00:00Z' }],
+            },
+          ],
+          events: [{ title: 'Direct VM Event', start: '2026-11-03T10:00:00Z' }],
+        },
+      },
+    };
+
+    // @ts-expect-error test widgets input
+    const extracted = selectCalendarEvents(widgets);
+    expect(extracted.length).toBeGreaterThanOrEqual(8);
+    const titles = extracted.map((e) => e.title);
+    expect(titles).toContain('Grid Day Ev');
+    expect(titles).toContain('Early Ev');
+    expect(titles).toContain('Late Ev');
+    expect(titles).toContain('Timed Ev');
+    expect(titles).toContain('All Day Ev');
+    expect(titles).toContain('Week All Day');
+    expect(titles).toContain('Month Day Ev');
+    expect(titles).toContain('Direct VM Day Ev');
+    expect(titles).toContain('Direct VM Event');
+  });
+
+  it('handles pill click scrollIntoView and keyboard navigation (Enter/Space)', () => {
+    const scrollSpy = vi.fn();
+    const calEl = document.createElement('div');
+    calEl.className = 'widget-calendar-grid';
+    calEl.scrollIntoView = scrollSpy;
+    document.body.appendChild(calEl);
+
+    const baseNow = new Date('2026-10-31T10:00:00Z');
+    const { container } = render(
+      <NextUp
+        now={baseNow}
+        timezone="UTC"
+        events={[{ id: 'e1', title: 'Future Event', start: '2026-10-31T14:00:00Z' }]}
+      />
+    );
+
+    const pill = container.querySelector('#next-event-pill')!;
+    expect(pill).not.toBeNull();
+
+    // Click without onPillClick triggers scrollIntoView
+    fireEvent.click(pill);
+    expect(scrollSpy).toHaveBeenCalled();
+
+    // Enter and Space keydown
+    fireEvent.keyDown(pill, { key: 'Enter' });
+    expect(scrollSpy).toHaveBeenCalledTimes(2);
+
+    fireEvent.keyDown(pill, { key: ' ' });
+    expect(scrollSpy).toHaveBeenCalledTimes(3);
+
+    document.body.removeChild(calEl);
+  });
+
+  it('covers timezone offsets, custom onPillClick, missing calendar el, and all_day_events edge branches', () => {
+    const baseNow = new Date('2026-10-31T10:00:00Z');
+
+    // UTC timezone parses correctly with 'Z'
+    const pUtc = parseEventDates({ title: 'UTC Ev', start: '2026-10-31' }, baseNow, 'UTC');
+    expect(pUtc).not.toBeNull();
+
+    // Invalid timezone fallback
+    const pInvalidTz = parseEventDates({ title: 'Invalid Tz Ev', start: '2026-10-31' }, baseNow, 'Invalid/Zone');
+    expect(pInvalidTz).not.toBeNull();
+
+    // raw.all_day snake_case
+    const pAllDaySnake = parseEventDates({ title: 'Snake AllDay', start: '2026-10-31', all_day: true }, baseNow, 'UTC');
+    expect(pAllDaySnake?.isAllDay).toBe(true);
+
+    // Custom onPillClick
+    const onPillClick = vi.fn();
+    const { container: c1 } = render(
+      <NextUp
+        now={baseNow}
+        timezone="UTC"
+        events={[{ id: 'e1', title: 'Future Event', start: '2026-10-31T14:00:00Z' }]}
+        onPillClick={onPillClick}
+      />
+    );
+    const pill1 = c1.querySelector('#next-event-pill')!;
+    fireEvent.click(pill1);
+    expect(onPillClick).toHaveBeenCalledOnce();
+
+    // Missing calendar el without onPillClick
+    const { container: c2 } = render(
+      <NextUp
+        now={baseNow}
+        timezone="UTC"
+        events={[{ id: 'e2', title: 'No Cal El', start: '2026-10-31T14:00:00Z' }]}
+      />
+    );
+    const pill2 = c2.querySelector('#next-event-pill')!;
+    expect(() => fireEvent.click(pill2)).not.toThrow();
+
+    // vm.week.all_day_events with camelCase startCol, null items, out-of-bounds startCol
+    const weirdWidgets = {
+      w: {
+        state: 'ok',
+        timestamp: '2026-10-31T12:00:00Z',
+        viewModel: {
+          week: {
+            days: null,
+            all_day_events: [
+              null,
+              { title: 'Camel StartCol', startCol: 1 },
+              { title: 'OutOfBounds Col', start_col: 99 },
+            ],
+          },
+        },
+      },
+    };
+    // @ts-expect-error test inputs
+    const extracted = selectCalendarEvents(weirdWidgets);
+    expect(extracted.map((e) => e.title)).toContain('Camel StartCol');
+    expect(extracted.map((e) => e.title)).toContain('OutOfBounds Col');
+
+    // Month days and raw non-object events
+    const monthWidgets = {
+      w2: {
+        state: 'ok',
+        timestamp: '2026-10-31T12:00:00Z',
+        viewModel: {
+          month: {
+            days: [
+              null,
+              {
+                date: '2026-10-31',
+                events: [
+                  null,
+                  { title: 'Month Ev', start: '2026-10-31T15:00:00Z' },
+                ],
+              },
+            ],
+          },
+        },
+      },
+    };
+    // @ts-expect-error test inputs
+    const monthExtracted = selectCalendarEvents(monthWidgets);
+    expect(monthExtracted.map((e) => e.title)).toContain('Month Ev');
+
+    // Parse event with Date instances, missing title, upcoming all-day
+    const pDateInstances = parseEventDates(
+      {
+        title: '',
+        start: new Date('2026-10-31T12:00:00Z'),
+        end: new Date('2026-10-31T13:00:00Z'),
+        allDay: true,
+      },
+      baseNow,
+      'UTC',
+    );
+    expect(pDateInstances?.title).toBe('Event');
+    expect(pDateInstances?.isAllDay).toBe(true);
+
+    // Upcoming all-day event
+    const upcomingAllDayEv = parseEventDates(
+      {
+        title: 'Upcoming All Day',
+        start: '2026-11-01',
+        all_day: true,
+      },
+      baseNow,
+      'UTC',
+    );
+    expect(upcomingAllDayEv?.isAllDay).toBe(true);
+
+    // Default prop render (<NextUp /> without arguments)
+    const { container: defContainer, unmount: unmountDef } = render(<NextUp />);
+    expect(defContainer.querySelector('#header-next-event')).not.toBeNull();
+    // Unmount clears active ticker timer
+    unmountDef();
+
+    // Invalid / missing timezone in resolveNextUpEvent and NextUp component
+    const invalidTzResolved = resolveNextUpEvent(
+      [{ id: 'inv-tz', title: 'Invalid TZ Ev', start: '2026-10-31T12:00:00Z' }],
+      baseNow,
+      'Invalid/NonExistent_Timezone',
+    );
+    expect(invalidTzResolved).not.toBeNull();
+
+    const { container: invTzContainer } = render(
+      <NextUp
+        now={baseNow}
+        timezone="Invalid/Timezone"
+        events={[{ id: 'inv-tz-c', title: 'Invalid TZ Component', start: '2026-10-31T12:00:00Z' }]}
+      />
+    );
+    expect(invTzContainer.querySelector('#next-event-pill')).not.toBeNull();
+
+    // Date instances in parseEventDates: timed start+end Date, timed start-only Date, all-day start-only Date
+    const timedDates = parseEventDates(
+      {
+        title: 'Timed Dates',
+        start: new Date('2026-10-31T14:00:00Z'),
+        end: new Date('2026-10-31T15:00:00Z'),
+      },
+      baseNow,
+      'UTC',
+    );
+    expect(timedDates?.isAllDay).toBe(false);
+
+    const timedDateStartOnly = parseEventDates(
+      {
+        title: 'Timed Start Only',
+        start: new Date('2026-10-31T14:00:00Z'),
+      },
+      baseNow,
+      'UTC',
+    );
+    expect(timedDateStartOnly?.isAllDay).toBe(false);
+
+    const allDayDateStartOnly = parseEventDates(
+      {
+        title: 'All Day Start Only',
+        start: new Date('2026-10-31T00:00:00Z'),
+        allDay: true,
+      },
+      baseNow,
+      'UTC',
+    );
+    expect(allDayDateStartOnly?.isAllDay).toBe(true);
+
+    // Event with dayDate fallback
+    const dayDateEv = parseEventDates(
+      {
+        title: 'Day Date Event',
+        start: '10:00',
+        end: '11:00',
+        dayDate: '2026-10-31',
+      },
+      baseNow,
+      'UTC',
+    );
+    expect(dayDateEv?.startDate.toISOString()).toContain('2026-10-31T10:00:00');
+
+    // Upcoming all-day event priority in resolveNextUpEvent
+    const upcomingAllDayResolved = resolveNextUpEvent(
+      [{ id: 'future-ad', title: 'Future All Day', start: '2026-11-05', allDay: true }],
+      baseNow,
+      'UTC',
+    );
+    expect(upcomingAllDayResolved?.event.title).toBe('Future All Day');
+
+    // selectCalendarEvents with null widget entry, day.date, and item without title
+    const nullEntryWidgets = {
+      wNull: null,
+      wDayDate: {
+        state: 'ok',
+        data: {
+          days: [
+            {
+              date: '2026-10-31',
+              events: [
+                { title: 'DayDate Ev', start: '11:00' },
+                { id: 'no-title', start: '12:00' },
+              ],
+            },
+          ],
+        },
+      },
+    };
+    // @ts-expect-error test inputs
+    const extractedDayDate = selectCalendarEvents(nullEntryWidgets);
+    expect(extractedDayDate.map((e) => e.title)).toContain('DayDate Ev');
+
+    // Click handler scrolls target element into view when present
+    const targetEl = document.createElement('div');
+    targetEl.className = 'widget-calendar-feed';
+    targetEl.scrollIntoView = vi.fn();
+    document.body.appendChild(targetEl);
+
+    const { container: clickC } = render(
+      <NextUp
+        now={baseNow}
+        timezone="UTC"
+        events={[{ id: 'scroll-test', title: 'Scroll Event', start: '2026-10-31T12:00:00Z' }]}
+      />
+    );
+    const scrollPill = clickC.querySelector('#next-event-pill')!;
+    fireEvent.click(scrollPill);
+    expect(targetEl.scrollIntoView).toHaveBeenCalled();
+    document.body.removeChild(targetEl);
   });
 });

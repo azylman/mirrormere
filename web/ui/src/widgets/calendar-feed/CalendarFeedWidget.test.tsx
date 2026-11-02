@@ -434,6 +434,43 @@ describe('CalendarFeedWidget', () => {
     expect(container.querySelector('.cf-modal-overlay')).not.toBeNull();
     fireEvent.keyDown(window, { key: 'Escape' });
     expect(container.querySelector('.cf-modal-overlay')).toBeNull();
+
+    // 7. Open via Spacebar key and ignore non-activation keys
+    fireEvent.keyDown(allDayEvent, { key: 'Spacebar' });
+    expect(container.querySelector('.cf-modal-overlay')).not.toBeNull();
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(container.querySelector('.cf-modal-overlay')).toBeNull();
+
+    fireEvent.keyDown(allDayEvent, { key: 'ArrowDown' });
+    expect(container.querySelector('.cf-modal-overlay')).toBeNull();
+  });
+
+  it('handles event without end timestamp in modal correctly', () => {
+    useDisplayStore.setState({
+      widgets: {
+        'cal-no-end': {
+          meta: { type: 'calendar-feed', origin: [0, 0], dimensions: [3, 2], config: {}, assets_base: '' },
+          state: 'healthy',
+          data: {
+            events: [
+              {
+                id: 'ev-no-end',
+                title: 'Quick Call',
+                start: '2026-10-31T10:00:00Z',
+                all_day: false,
+              },
+            ],
+          },
+          timestamp: '2026-10-31T08:00:00Z',
+        },
+      },
+    });
+
+    const { container } = render(<CalendarFeedWidget id="cal-no-end" type="calendar-feed" />);
+    const noEndEvent = container.querySelector('[data-event-id="ev-no-end"]')!;
+    fireEvent.click(noEndEvent);
+    expect(container.querySelector('.cf-modal-overlay')).not.toBeNull();
+    expect(container.querySelector('.cf-modal-title')?.textContent).toBe('Quick Call');
   });
 
   it('auto-closes event modal and resumes store after 60s inactivity timer', () => {
@@ -494,5 +531,58 @@ describe('CalendarFeedWidget', () => {
     });
     expect(container.querySelector('.cf-modal-overlay')).toBeNull();
     expect(resumeSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('covers keyboard navigation (Space, Spacebar), fallback event ID, camelCase fields, and tomorrow/future groups', () => {
+    useDisplayStore.setState({
+      header: { timestamp: '2026-10-31T08:00:00Z', timezone: 'UTC', weather: null },
+      widgets: {
+        'cal-coverage': {
+          meta: { type: 'calendar-feed', origin: [0, 0], dimensions: [3, 2], config: {}, assets_base: '' },
+          state: 'healthy',
+          data: {
+            events: [
+              {
+                title: 'Tomorrow Standup',
+                start: '2026-11-01T09:00:00Z',
+                allDay: true,
+                calendarName: 'Team Work',
+              },
+              {
+                id: 'ev-future',
+                title: 'Future Workshop',
+                start: '2026-11-05T14:00:00Z',
+                all_day: false,
+                calendar_name: 'Personal',
+              },
+            ],
+          },
+          timestamp: '2026-10-31T08:00:00Z',
+        },
+      },
+    });
+
+    const { container } = render(<CalendarFeedWidget id="cal-coverage" type="calendar-feed" />);
+
+    expect(container.querySelector('.day-pill-tomorrow')?.textContent).toContain('TOMORROW');
+    expect(container.querySelector('.day-pill-future')?.textContent).toContain('Thursday');
+
+    const items = container.querySelectorAll('.calendar-event-item');
+    expect(items.length).toBe(2);
+
+    fireEvent.keyDown(items[0], { key: ' ' });
+    expect(container.querySelector('.cf-modal-overlay')).not.toBeNull();
+    expect(container.querySelector('.cf-modal-title')?.textContent).toBe('Tomorrow Standup');
+
+    const closeBtn = container.querySelector('.cf-modal-close')!;
+    fireEvent.click(closeBtn);
+    expect(container.querySelector('.cf-modal-overlay')).toBeNull();
+
+    fireEvent.keyDown(items[1], { key: 'Spacebar' });
+    expect(container.querySelector('.cf-modal-overlay')).not.toBeNull();
+    expect(container.querySelector('.cf-modal-title')?.textContent).toBe('Future Workshop');
+
+    fireEvent.keyDown(items[1], { key: 'Tab' });
+    expect(container.querySelector('.cf-modal-overlay')).not.toBeNull();
   });
 });

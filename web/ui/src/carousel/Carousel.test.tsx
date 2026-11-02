@@ -967,4 +967,115 @@ describe('Carousel', () => {
       }
     });
   });
+
+  describe('ScreenIndicator pin toggle and rotation hold', () => {
+    it('renders pin button and toggles pinned state on click, deferring server rotation until unpinned', async () => {
+      fakeIdleClock();
+      stubApi();
+      render(<Carousel />);
+      await act(async () => {});
+
+      const pinBtn = document.querySelector<HTMLButtonElement>('.screen-indicator-pin');
+      expect(pinBtn).not.toBeNull();
+      expect(pinBtn?.getAttribute('aria-label')).toBe('Pin current screen');
+      expect(pinBtn?.getAttribute('aria-pressed')).toBe('false');
+      expect(pinBtn?.getAttribute('data-pinned')).toBe('false');
+      expect(pinBtn?.classList.contains('active')).toBe(false);
+
+      // Pin the carousel
+      act(() => {
+        pinBtn?.click();
+      });
+
+      expect(pinBtn?.getAttribute('aria-label')).toBe('Unpin screen rotation');
+      expect(pinBtn?.getAttribute('aria-pressed')).toBe('true');
+      expect(pinBtn?.getAttribute('data-pinned')).toBe('true');
+      expect(pinBtn?.classList.contains('active')).toBe(true);
+
+      // Server rotates to screen 2 while pinned
+      act(() => {
+        useDisplayStore.setState({ screen: { ...useDisplayStore.getState().screen, currentScreen: 2 } });
+      });
+
+      // Still on screen 1 after advance
+      await act(async () => {
+        vi.advanceTimersByTime(120_000);
+      });
+      const activeDot1 = document.querySelector<HTMLButtonElement>('.screen-indicator-dot.active');
+      expect(Number(activeDot1?.dataset.screenIndex)).toBe(1);
+
+      // Unpin the carousel
+      act(() => {
+        pinBtn?.click();
+      });
+
+      expect(pinBtn?.getAttribute('aria-label')).toBe('Pin current screen');
+      expect(pinBtn?.getAttribute('aria-pressed')).toBe('false');
+      expect(pinBtn?.getAttribute('data-pinned')).toBe('false');
+      expect(pinBtn?.classList.contains('active')).toBe(false);
+
+      // Settle fallback timer advances to queued screen 2
+      await act(async () => {
+        vi.advanceTimersByTime(SETTLE_FALLBACK_MS);
+      });
+      const activeDot2 = document.querySelector<HTMLButtonElement>('.screen-indicator-dot.active');
+      expect(Number(activeDot2?.dataset.screenIndex)).toBe(2);
+    });
+
+    it('enforces 800x480 zero-overflow bounds and touch target CSS for .screen-indicator-pin', () => {
+      expect(stylesSource).toMatch(/\.screen-indicator-pin\s*\{[^}]*min-width:\s*36px\s*;/);
+      expect(stylesSource).toMatch(/\.screen-indicator-pin\s*\{[^}]*min-height:\s*0\s*;/);
+      expect(stylesSource).toMatch(/\.screen-indicator-pin\s*\{[^}]*height:\s*100%\s*;/);
+      expect(stylesSource).toMatch(/\.screen-indicator-pin\s*\{[^}]*padding:\s*0\s*;/);
+      expect(stylesSource).toMatch(/\.screen-indicator-pin\s*\{[^}]*margin:\s*0\s*;/);
+      expect(stylesSource).toMatch(/\.screen-indicator-pin::before\s*\{[^}]*top:\s*-8px\s*;/);
+      expect(stylesSource).toMatch(/\.screen-indicator-pin::before\s*\{[^}]*bottom:\s*-8px\s*;/);
+      expect(stylesSource).toMatch(/\.screen-indicator-pin\.active\s*\{[^}]*color:\s*var\(--mm-lavender/);
+    });
+
+    it('settles two-screen ScreenIndicator prev pill swipe with translate3d(1000px,0,0)', async () => {
+      vi.useFakeTimers();
+      const clientWidth = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1000);
+      try {
+        const twoScreens: ScreensResponse = {
+          current_screen: 0,
+          interval_seconds: 30,
+          screens: [layout[0], layout[1]],
+        };
+        stubApi(twoScreens);
+        useDisplayStore.setState({ screen: { ...initial.screen, currentScreen: 0, totalScreens: 2 } });
+        render(<Carousel />);
+        await act(async () => {});
+
+        const indicator = document.querySelector<HTMLElement>('#screen-indicator');
+        expect(indicator).not.toBeNull();
+
+        // Swipe pill from x=440 to x=500 (60px right drag => 'prev' swipe)
+        act(() => {
+          const down = new Event('pointerdown', { bubbles: true, cancelable: true });
+          Object.assign(down, { clientX: 440, clientY: 100, pointerId: 1, isPrimary: true });
+          indicator?.dispatchEvent(down);
+
+          const up = new Event('pointerup', { bubbles: true, cancelable: true });
+          Object.assign(up, { clientX: 500, clientY: 100, pointerId: 1, isPrimary: true });
+          indicator?.dispatchEvent(up);
+        });
+
+        const track = document.querySelector<HTMLElement>('.carousel-track');
+        expect(track?.style.transform).toBe('translate3d(1000px,0,0)');
+
+        act(() => {
+          const event = new Event('transitionend');
+          Object.assign(event, { propertyName: 'transform' });
+          track?.dispatchEvent(event);
+        });
+        await act(async () => {
+          vi.advanceTimersByTime(SETTLE_FALLBACK_MS);
+        });
+        expect(useDisplayStore.getState().screen.currentScreen).toBe(1);
+      } finally {
+        clientWidth.mockRestore();
+      }
+    });
+  });
 });

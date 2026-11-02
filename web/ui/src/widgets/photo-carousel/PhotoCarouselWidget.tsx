@@ -6,6 +6,16 @@ import { useDocumentVisible } from '../../lifecycle/visibility';
 import { beginAnimation, endAnimation } from '../../perf/animating';
 import { useDisplayStore } from '../../store';
 
+declare global {
+  interface Window {
+    EmberBridge?: {
+      syncGooglePhotosAlbum?: (albumUrl: string) => void;
+      connectGooglePhotos?: (albumUrl: string) => void;
+    };
+    onEmberPhotosSynced?: (payload: unknown) => void;
+  }
+}
+
 export interface PhotoItem {
   id?: string;
   url?: string;
@@ -16,13 +26,14 @@ export interface PhotoItem {
 
 export interface PhotoCarouselData {
   photos?: PhotoItem[];
+  album_url?: string;
   cycle_interval_seconds?: number;
 }
 
 interface PhotoCarouselConfig {
-  fit?: 'contain' | 'cover';
-  image_size?: [number, number];
-  cycle_interval_seconds?: number;
+  source?: 'share_url' | 'ember_bridge';
+  album_url?: string;
+  album_url_env?: string;
 }
 
 export interface ContainerSize {
@@ -32,6 +43,7 @@ export interface ContainerSize {
 
 const CROSSFADE_MS = 850;
 const EMPTY_PHOTOS: PhotoItem[] = [];
+const DEFAULT_CYCLE_SECONDS = 30;
 
 export const PHOTO_CONTROLS_HIDE_MS = 3000;
 export const PHOTO_PAUSE_INACTIVITY_MS = 60000;
@@ -61,29 +73,16 @@ export function parsePhotoCarouselData(raw: unknown): PhotoCarouselData {
   return {};
 }
 
-export function getBackdropPhotoURL(rawUrl?: string, fit: 'contain' | 'cover' = 'contain'): string {
-  if (!rawUrl || fit === 'cover') return '';
+export function getBackdropPhotoURL(rawUrl?: string): string {
+  if (!rawUrl) return '';
   return `${rawUrl}=w96-h54-c`;
 }
 
 export function getSizedPhotoURL(
   rawUrl?: string,
-  fit: 'contain' | 'cover' = 'contain',
-  imageSize?: [number, number],
   containerSize?: ContainerSize,
 ): string {
   if (!rawUrl) return '';
-
-  if (
-    Array.isArray(imageSize) &&
-    imageSize.length >= 2 &&
-    Number(imageSize[0]) > 0 &&
-    Number(imageSize[1]) > 0
-  ) {
-    const w = Math.round(Number(imageSize[0]));
-    const h = Math.round(Number(imageSize[1]));
-    return `${rawUrl}=w${w}-h${h}${fit === 'cover' ? '-c' : ''}`;
-  }
 
   const dpr = (typeof window !== 'undefined' && window.devicePixelRatio) || 1;
   const screenWidth = Math.round(
@@ -101,12 +100,6 @@ export function getSizedPhotoURL(
 
   const rectW = Math.round((containerSize?.width || 0) * dpr);
   const rectH = Math.round((containerSize?.height || 0) * dpr);
-
-  if (fit === 'cover') {
-    const targetWidth = rectW > 0 ? rectW : screenWidth;
-    const targetHeight = rectH > 0 ? rectH : screenHeight;
-    return `${rawUrl}=w${targetWidth}-h${targetHeight}-c`;
-  }
 
   const targetWidth = rectW > 0 ? Math.max(rectW, screenWidth) : screenWidth;
   const targetHeight = rectH > 0 ? Math.max(rectH, screenHeight) : screenHeight;
@@ -300,7 +293,31 @@ function PhotoCarouselLoading() {
   );
 }
 
-function PhotoCarouselEmpty() {
+interface PhotoCarouselEmptyProps {
+  source: 'share_url' | 'ember_bridge';
+  needsAuth: boolean;
+  syncError: boolean;
+  albumUrl: string;
+}
+
+function PhotoCarouselEmpty({ source, needsAuth, syncError, albumUrl }: PhotoCarouselEmptyProps) {
+  let emptyTitle = 'No photos in shared album';
+  if (source === 'ember_bridge') {
+    if (needsAuth) {
+      emptyTitle = 'Google Photos sign-in required';
+    } else if (syncError) {
+      emptyTitle = 'Photo sync failed';
+    } else {
+      emptyTitle = 'No photos available';
+    }
+  }
+
+  const canConnect =
+    source === 'ember_bridge' &&
+    albumUrl.trim() !== '' &&
+    typeof window !== 'undefined' &&
+    typeof window.EmberBridge?.connectGooglePhotos === 'function';
+
   return (
     <div className="photo-empty">
       <span className="empty-icon">
@@ -320,7 +337,19 @@ function PhotoCarouselEmpty() {
           <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
         </svg>
       </span>
-      <span className="empty-title">No photos in shared album</span>
+      <span className="empty-title">{emptyTitle}</span>
+      {canConnect && (
+        <button
+          type="button"
+          className="photo-connect-btn"
+          onClick={(e) => {
+            e.stopPropagation();
+            window.EmberBridge?.connectGooglePhotos?.(albumUrl);
+          }}
+        >
+          Connect Google Photos
+        </button>
+      )}
     </div>
   );
 }
@@ -505,6 +534,33 @@ function PhotoTransportControls({
   );
 }
 
+// Module-level listener registry for window.onEmberPhotosSynced
+type EmberSyncListener = (payload: unknown) => void;
+const emberSyncListeners = new Set<EmberSyncListener>();
+
+function handleGlobalEmberPhotosSynced(payload: unknown) {
+  for (const listener of Array.from(emberSyncListeners)) {
+    try {
+      listener(payload);
+    } catch {
+      // safe no-op on listener error
+    }
+  }
+}
+
+function registerEmberSyncListener(listener: EmberSyncListener): () => void {
+  emberSyncListeners.add(listener);
+  if (typeof window !== 'undefined') {
+    window.onEmberPhotosSynced = handleGlobalEmberPhotosSynced;
+  }
+  return () => {
+    emberSyncListeners.delete(listener);
+    if (emberSyncListeners.size === 0 && typeof window !== 'undefined') {
+      delete window.onEmberPhotosSynced;
+    }
+  };
+}
+
 export function PhotoCarouselWidget({
   id,
 }: WidgetComponentProps) {
@@ -520,11 +576,68 @@ export function PhotoCarouselWidget({
   const data = parsePhotoCarouselData(rawData);
   const hasLoaded = entry?.state !== 'loading' && Array.isArray(data.photos);
 
+  const source: 'share_url' | 'ember_bridge' =
+    config?.source === 'ember_bridge' ? 'ember_bridge' : 'share_url';
+  const albumUrl = (config?.album_url || data?.album_url || '').trim();
+
+  const [needsAuth, setNeedsAuth] = useState(false);
+  const [syncError, setSyncError] = useState(false);
+
+  // Sync listener and interval for ember_bridge
+  useEffect(() => {
+    if (
+      source !== 'ember_bridge' ||
+      !albumUrl ||
+      typeof window === 'undefined' ||
+      typeof window.EmberBridge?.syncGooglePhotosAlbum !== 'function'
+    ) {
+      return;
+    }
+
+    const listener: EmberSyncListener = (rawPayload) => {
+      let payload = rawPayload as Record<string, unknown> | null;
+      if (typeof rawPayload === 'string') {
+        try {
+          payload = JSON.parse(rawPayload);
+        } catch {
+          return;
+        }
+      }
+      if (!payload || typeof payload !== 'object') return;
+
+      if (payload.needs_auth === true) {
+        setNeedsAuth(true);
+        setSyncError(false);
+      } else if (payload.ok === false) {
+        setSyncError(true);
+        setNeedsAuth(false);
+      } else if (Array.isArray(payload.photos) && payload.photos.length > 0) {
+        setNeedsAuth(false);
+        setSyncError(false);
+        fetch('api/widgets/' + encodeURIComponent(id) + '/photos', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ photos: payload.photos }),
+        }).catch(() => {});
+      }
+    };
+
+    const unbind = registerEmberSyncListener(listener);
+    window.EmberBridge.syncGooglePhotosAlbum(albumUrl);
+    const intervalTimer = setInterval(() => {
+      window.EmberBridge?.syncGooglePhotosAlbum?.(albumUrl);
+    }, 300_000);
+
+    return () => {
+      unbind();
+      clearInterval(intervalTimer);
+    };
+  }, [source, albumUrl, id]);
+
   const photos = Array.isArray(data.photos) ? data.photos : EMPTY_PHOTOS;
-  const fit: 'contain' | 'cover' = config?.fit === 'cover' ? 'cover' : 'contain';
   const cycleIntervalSeconds = Math.max(
     5,
-    Number(data?.cycle_interval_seconds ?? config?.cycle_interval_seconds) || 60,
+    Number(data?.cycle_interval_seconds) || DEFAULT_CYCLE_SECONDS,
   );
 
   const [isPaused, setIsPaused] = useState(false);
@@ -546,8 +659,6 @@ export function PhotoCarouselWidget({
   const [retryTick, setRetryTick] = useState(0);
 
   const photosRef = useRef(photos);
-  const fitRef = useRef(fit);
-  const imageSizeRef = useRef(config?.image_size);
   const isAnimatingRef = useRef(false);
 
   // Crossfade transition state
@@ -567,8 +678,6 @@ export function PhotoCarouselWidget({
     isPausedRef.current = isPaused;
     currentIndexRef.current = safeIndex;
     photosRef.current = photos;
-    fitRef.current = fit;
-    imageSizeRef.current = config?.image_size;
     transitionStateRef.current = transitionState;
   });
 
@@ -696,8 +805,6 @@ export function PhotoCarouselWidget({
 
     const nextFgUrl = getSizedPhotoURL(
       nextRawUrl,
-      fitRef.current,
-      imageSizeRef.current,
       containerSizeRef.current,
     );
 
@@ -867,40 +974,41 @@ export function PhotoCarouselWidget({
   const currentRawUrl = currentPhoto?.url ?? currentPhoto?.URL;
   const currentFgUrl = getSizedPhotoURL(
     currentRawUrl,
-    fit,
-    config?.image_size,
     containerSize,
   );
-  const currentBackdropUrl = getBackdropPhotoURL(currentRawUrl, fit);
+  const currentBackdropUrl = getBackdropPhotoURL(currentRawUrl);
 
   const isTransitioning = Boolean(transitionState?.active);
   const nextPhoto = transitionState ? photos[transitionState.nextIndex] : undefined;
   const nextRawUrl = nextPhoto?.url ?? nextPhoto?.URL;
   const nextFgUrl = nextRawUrl
-    ? getSizedPhotoURL(nextRawUrl, fit, config?.image_size, containerSize)
+    ? getSizedPhotoURL(nextRawUrl, containerSize)
     : '';
-  const nextBackdropUrl = nextRawUrl ? getBackdropPhotoURL(nextRawUrl, fit) : '';
+  const nextBackdropUrl = nextRawUrl ? getBackdropPhotoURL(nextRawUrl) : '';
 
   return (
     <div
       ref={rootRef}
       className="widget-photo-carousel dither"
-      data-fit={fit}
+      data-fit="contain"
       onClick={hasLoaded && photos.length > 0 ? handleClick : undefined}
     >
       {!hasLoaded ? (
         <PhotoCarouselLoading />
       ) : photos.length === 0 ? (
-        <PhotoCarouselEmpty />
+        <PhotoCarouselEmpty
+          source={source}
+          needsAuth={needsAuth}
+          syncError={syncError}
+          albumUrl={albumUrl}
+        />
       ) : (
         <div className="photo-viewport dither">
-          {fit !== 'cover' && (
-            <PhotoBackdrop
-              currentUrl={currentBackdropUrl}
-              nextUrl={nextBackdropUrl}
-              isTransitioning={isTransitioning}
-            />
-          )}
+          <PhotoBackdrop
+            currentUrl={currentBackdropUrl}
+            nextUrl={nextBackdropUrl}
+            isTransitioning={isTransitioning}
+          />
           <PhotoForeground
             currentUrl={currentFgUrl}
             nextUrl={nextFgUrl}

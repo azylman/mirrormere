@@ -1,8 +1,10 @@
-import { cleanup, render } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { useState } from 'react';
+import { cleanup, fireEvent, render } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import * as formatModule from '../format';
 import { useDisplayStore } from '../../store';
 import { WeatherForecastWidget } from './WeatherForecastWidget';
-import { WeatherIcon } from './WeatherIcon';
+import { WeatherIcon, WeatherIconGlyph } from './WeatherIcon';
 import { WeatherHourlyGraph } from './WeatherHourlyGraph';
 
 const initialStore = useDisplayStore.getState();
@@ -307,13 +309,32 @@ describe('WeatherIcon component', () => {
     const { container: nullContainer } = render(<WeatherIcon name={null} />);
     expect(nullContainer.querySelector('svg')?.classList.contains('mm-icon-weather-cloudy')).toBe(true);
 
+    const { container: emptyContainer } = render(<WeatherIcon name="" />);
+    expect(emptyContainer.querySelector('svg')?.classList.contains('mm-icon-weather-cloudy')).toBe(true);
+
+    const { container: spacesContainer } = render(<WeatherIcon name="   " size={NaN} />);
+    expect(spacesContainer.querySelector('svg')?.classList.contains('mm-icon-weather-cloudy')).toBe(true);
+    expect(spacesContainer.querySelector('svg')?.getAttribute('width')).toBe('20');
+
+    const { container: negContainer } = render(<WeatherIcon name="weather-sunny" size={-5} />);
+    expect(negContainer.querySelector('svg')?.getAttribute('width')).toBe('20');
+
+    const { container: zeroContainer } = render(<WeatherIcon name="weather-sunny" size={0} />);
+    expect(zeroContainer.querySelector('svg')?.getAttribute('width')).toBe('20');
+
     const { container: unknownContainer } = render(<WeatherIcon name="unsupported <script>" />);
     expect(unknownContainer.querySelector('svg')?.classList.contains('mm-icon-unsupportedscript')).toBe(true);
+
+    const { container: pureSpecialContainer } = render(<WeatherIcon name="###$$$@@@" />);
+    expect(pureSpecialContainer.querySelector('svg')?.classList.contains('mm-icon-weather-cloudy')).toBe(true);
   });
 
-  it('applies custom className', () => {
-    const { container } = render(<WeatherIcon name="weather-sunny" className="custom-test-class" />);
+  it('applies custom className and exercises memo cache on prop update', () => {
+    const { container, rerender } = render(<WeatherIcon name="weather-sunny" className="custom-test-class" />);
     expect(container.querySelector('svg')?.classList.contains('custom-test-class')).toBe(true);
+
+    rerender(<WeatherIcon name="weather-sunny" className="updated-test-class" />);
+    expect(container.querySelector('svg')?.classList.contains('updated-test-class')).toBe(true);
   });
 });
 
@@ -335,12 +356,15 @@ describe('WeatherHourlyGraph component', () => {
       { time: '2026-10-31T12:00:00Z', temp: 68, precip_prob: 0, icon: 'weather-sunny' },
       { time: '2026-10-31T13:00:00Z', temp: 70, precip_prob: 25, icon: 'weather-rainy' },
     ];
-    const { container } = render(<WeatherHourlyGraph hourly={hourly} widgetId="test-w" />);
+    const { container, rerender } = render(<WeatherHourlyGraph hourly={hourly} widgetId="test-w" />);
     const svg = container.querySelector('svg.weather-hourly-graph');
     expect(svg).not.toBeNull();
     expect(svg?.querySelector('linearGradient#mm-weather-grad-test-w')).not.toBeNull();
     expect(svg?.querySelector('path[d^="M"]')).not.toBeNull();
     expect(container.textContent).toContain('Now');
+    // Exercise memoization cache hit on rerender with changed widgetId but identical hourly reference
+    rerender(<WeatherHourlyGraph hourly={hourly} widgetId="test-w2" />);
+    expect(container.querySelector('svg.weather-hourly-graph')).not.toBeNull();
     expect(container.textContent).toContain('☂ 25%');
     expect(container.textContent).toContain('68°');
     expect(container.textContent).toContain('70°');
@@ -375,5 +399,188 @@ describe('WeatherHourlyGraph component', () => {
     const lastX = Number(lastHourLabel?.getAttribute('x'));
     expect(lastX).toBeGreaterThan(0);
     expect(lastX).toBeLessThan(cardWidth);
+  });
+
+  it('exercises React compiler memo hit/miss cycles on WeatherHourlyGraph via parent state toggle', () => {
+    function GraphParent({ hourly }: { hourly: unknown }) {
+      const [count, setCount] = useState(0);
+      return (
+        <div>
+          <button data-testid="rerender-btn" onClick={() => setCount((c) => c + 1)}>
+            Increment {count}
+          </button>
+          <WeatherHourlyGraph hourly={hourly} widgetId="memo-graph" />
+        </div>
+      );
+    }
+
+    const hourly = [
+      { time: '2026-10-31T12:00:00Z', temp: 65, precip_prob: 10, icon: 'weather-sunny' },
+      { time: '2026-10-31T13:00:00Z', temp: 68, precip_prob: 0, icon: 'weather-partly-cloudy' },
+    ];
+
+    const { getByTestId, container } = render(<GraphParent hourly={hourly} />);
+    expect(container.querySelector('svg.weather-hourly-graph')).not.toBeNull();
+
+    // Trigger parent rerender with identical hourly reference to hit memo cache branch
+    fireEvent.click(getByTestId('rerender-btn'));
+    expect(getByTestId('rerender-btn').textContent).toContain('Increment 1');
+    expect(container.querySelector('svg.weather-hourly-graph')).not.toBeNull();
+  });
+
+  it('renders WeatherHourlyGraph when gridLinesPath, areaPath, curvePath are empty or present with precipitation', () => {
+    // 1. All paths present with non-zero precipitation
+    const spy1 = vi.spyOn(formatModule, 'computeHourlyGraphLayout').mockReturnValueOnce({
+      totalWidth: 500,
+      svgHeight: 200,
+      baseY: 180,
+      isTall: false,
+      gradientId: 'grad-full',
+      areaPath: 'M 0 180 L 100 100 L 200 180 Z',
+      curvePath: 'M 0 100 L 100 100',
+      gridLinesPath: 'M 50 0 L 50 180',
+      points: [
+        {
+          x: 50,
+          y: 50,
+          lineY1: 54,
+          precipProb: 40,
+          precipY: 12,
+          icon: 'weather-rainy',
+          iconTranslateX: 40,
+          iconY: 14,
+          iconScale: 0.8,
+          tempRound: 65,
+          tempY: 44,
+          tempFontSize: 12,
+          circleR: 3.5,
+          timeLabel: 'Now',
+          timeWeight: '800',
+          timeColor: '#000',
+          timeY: 102,
+          timeFontSize: 11,
+        },
+      ],
+    });
+    const { container: cFull } = render(<WeatherHourlyGraph hourly={[{ temp: 65 }]} />);
+    expect(cFull.querySelector('svg.weather-hourly-graph')).not.toBeNull();
+    expect(cFull.textContent).toContain('☂ 40%');
+    expect(cFull.querySelectorAll('path').length).toBeGreaterThanOrEqual(3);
+    spy1.mockRestore();
+
+    // 2. All paths empty / falsy and precipProb = 0
+    const spy2 = vi.spyOn(formatModule, 'computeHourlyGraphLayout').mockReturnValueOnce({
+      totalWidth: 500,
+      svgHeight: 200,
+      baseY: 180,
+      isTall: false,
+      gradientId: 'grad-empty',
+      areaPath: '',
+      curvePath: '',
+      gridLinesPath: '',
+      points: [
+        {
+          x: 50,
+          y: 50,
+          lineY1: 54,
+          precipProb: 0,
+          precipY: 12,
+          icon: 'weather-sunny',
+          iconTranslateX: 40,
+          iconY: 14,
+          iconScale: 0.8,
+          tempRound: 65,
+          tempY: 44,
+          tempFontSize: 12,
+          circleR: 3.5,
+          timeLabel: 'Now',
+          timeWeight: '800',
+          timeColor: '#000',
+          timeY: 102,
+          timeFontSize: 11,
+        },
+      ],
+    });
+    const { container: cEmpty } = render(<WeatherHourlyGraph hourly={[{ temp: 65 }]} />);
+    expect(cEmpty.querySelector('svg.weather-hourly-graph')).not.toBeNull();
+    expect(cEmpty.textContent).not.toContain('☂');
+    // Only the icon inside point glyph has a path; areaPath, curvePath, gridLinesPath are absent
+    expect(cEmpty.querySelectorAll('path').length).toBe(1);
+    spy2.mockRestore();
+  });
+
+  it('renders WeatherIcon size bounds, custom class, and glyph variations', () => {
+    // Clamping > 64 to 64
+    const { container: c1 } = render(<WeatherIcon name="weather-sunny" size={100} className="large-icon" />);
+    const svg1 = c1.querySelector('svg');
+    expect(svg1?.getAttribute('width')).toBe('64');
+    expect(svg1?.getAttribute('height')).toBe('64');
+    expect(svg1?.classList.contains('large-icon')).toBe(true);
+
+    // Clamping < 12 to 12
+    const { container: c2 } = render(<WeatherIcon name="weather-cloudy" size={5} />);
+    const svg2 = c2.querySelector('svg');
+    expect(svg2?.getAttribute('width')).toBe('12');
+    expect(svg2?.getAttribute('height')).toBe('12');
+
+    // Invalid / NaN / negative size defaults to 20
+    const { container: cDef1 } = render(<WeatherIcon name="weather-sunny" size={-10} />);
+    expect(cDef1.querySelector('svg')?.getAttribute('width')).toBe('20');
+    const { container: cDef2 } = render(<WeatherIcon name="weather-sunny" size={NaN} />);
+    expect(cDef2.querySelector('svg')?.getAttribute('width')).toBe('20');
+
+    // All WeatherIconGlyph branches
+    const glyphs = [
+      'weather-sunny',
+      'weather-clear-night',
+      'weather-partly-cloudy',
+      'weather-night-partly-cloudy',
+      'weather-cloudy',
+      'weather-fog',
+      'weather-rainy',
+      'weather-pouring',
+      'weather-snowy',
+      'weather-snowy-rainy',
+      'weather-lightning',
+      'weather-lightning-rainy',
+    ];
+    for (const glyph of glyphs) {
+      const { container } = render(<WeatherIcon name={glyph} />);
+      expect(container.querySelector('svg')).not.toBeNull();
+    }
+
+    // Name normalization: empty, whitespace, null, undefined, special chars sanitization
+    const { container: cEmpty } = render(<WeatherIcon name="" />);
+    expect(cEmpty.querySelector('svg')?.classList.contains('mm-icon-weather-cloudy')).toBe(true);
+
+    const { container: cSpaces } = render(<WeatherIcon name="   " />);
+    expect(cSpaces.querySelector('svg')?.classList.contains('mm-icon-weather-cloudy')).toBe(true);
+
+    const { container: cNull } = render(<WeatherIcon name={null} />);
+    expect(cNull.querySelector('svg')?.classList.contains('mm-icon-weather-cloudy')).toBe(true);
+
+    const { container: cSpecial } = render(<WeatherIcon name="weather$$sunny!!" />);
+    expect(cSpecial.querySelector('svg')?.classList.contains('mm-icon-weathersunny')).toBe(true);
+
+    const { container: cAllSpecial } = render(<WeatherIcon name="$$$###@@@" />);
+    expect(cAllSpecial.querySelector('svg')?.classList.contains('mm-icon-weather-cloudy')).toBe(true);
+
+    // WeatherIconGlyph standalone direct render inside SVG with special characters
+    const { container: cGlyphSpecial } = render(<svg><WeatherIconGlyph name="weather#fog" /></svg>);
+    expect(cGlyphSpecial.querySelector('path')).not.toBeNull();
+
+    // WeatherIconGlyph default branch for unrecognized tokens
+    const { container: cGlyphDefault } = render(<svg><WeatherIconGlyph name="weather-tornado" /></svg>);
+    expect(cGlyphDefault.querySelector('path')).not.toBeNull();
+
+    // WeatherIconGlyph with null / whitespace / non-matching characters
+    const { container: cGlyphNull } = render(<svg><WeatherIconGlyph name={null} /></svg>);
+    expect(cGlyphNull.querySelector('path')).not.toBeNull();
+
+    const { container: cGlyphEmpty } = render(<svg><WeatherIconGlyph name="   " /></svg>);
+    expect(cGlyphEmpty.querySelector('path')).not.toBeNull();
+
+    const { container: cGlyphSymbols } = render(<svg><WeatherIconGlyph name="$$$" /></svg>);
+    expect(cGlyphSymbols.querySelector('path')).not.toBeNull();
   });
 });

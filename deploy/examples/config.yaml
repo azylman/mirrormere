@@ -100,16 +100,14 @@ display:
           token_env: "TODOIST_API_TOKEN"
 
     # Screen 2 Tiles (12 cells total: 3x2 + 3x2 = 12)
-    - id: living-room-photos
+    - id: family-photos
       type: photo-carousel
       dimensions: [3, 2]
       pinned: false
       refresh_interval_seconds: 3600
       config:
-        share_url: "https://photos.app.goo.gl/AbCdEf123456789"
-        cycle_interval_seconds: 60
-        preload_count: 50
-        shuffle: true
+        source: "share_url"
+        album_url_env: "GOOGLE_PHOTOS_ALBUM_URL"
 
     # Conversation transcript (type chat-log; no endpoint, no database). The
     # voice hub records each turn per voice node; open the display with

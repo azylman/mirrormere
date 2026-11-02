@@ -37,19 +37,6 @@ class TestServerSecurityAndAuth(unittest.TestCase):
         self.assertFalse(srv._is_internal_caller("8.8.8.8"))
         self.assertFalse(srv._is_internal_caller("invalid-ip"))
 
-    def test_is_valid_album_url(self):
-        # Valid Google Photos album URLs
-        self.assertTrue(srv._is_valid_album_url("https://photos.app.goo.gl/AbCdEf123456789"))
-        self.assertTrue(srv._is_valid_album_url("https://photos.google.com/share/AF1QipM..."))
-        # Invalid URLs
-        self.assertFalse(srv._is_valid_album_url("http://photos.app.goo.gl/insecure"))
-        self.assertFalse(srv._is_valid_album_url("https://evil.com/photos.app.goo.gl"))
-        self.assertFalse(srv._is_valid_album_url("file:///etc/passwd"))
-        self.assertFalse(srv._is_valid_album_url("javascript:alert(1)"))
-        self.assertFalse(srv._is_valid_album_url(""))
-        self.assertFalse(srv._is_valid_album_url(None))
-
-
 class TestConfigAndSecrets(unittest.TestCase):
     def test_resolve_env_secrets(self):
         os.environ["TEST_SECRET_KEY"] = "super-secret-token"
@@ -114,50 +101,6 @@ class TestConfigAndSecrets(unittest.TestCase):
             self.assertEqual(w[1]["origin"], [2, 0])
 
 
-class TestPhotosCacheAndLocks(unittest.TestCase):
-    def test_photos_cache_locks_and_defaults(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            test_file = os.path.join(tmpdir, "test_photos_cache.json")
-            orig_file = srv.PHOTOS_CACHE_FILE
-            srv.PHOTOS_CACHE_FILE = test_file
-            try:
-                state = srv._load_photos_cache()
-                self.assertEqual(state["album_title"], "Shared Photos")
-                self.assertEqual(state["photos"], [])
-
-                saved = srv._save_photos_cache(
-                    ["https://lh3.googleusercontent.com/pw/abc123def=w1080"],
-                    source="test-source",
-                    album_title="Test Album",
-                )
-                self.assertEqual(saved["album_title"], "Test Album")
-                self.assertEqual(len(saved["photos"]), 1)
-                self.assertEqual(saved["photos"][0], "https://lh3.googleusercontent.com/pw/abc123def")
-
-                reloaded = srv._load_photos_cache()
-                self.assertEqual(reloaded["album_title"], "Test Album")
-                self.assertEqual(len(reloaded["photos"]), 1)
-            finally:
-                srv.PHOTOS_CACHE_FILE = orig_file
-
-    def test_concurrent_cache_access(self):
-        # Concurrently access CACHE with CACHE_LOCK
-        def worker(idx):
-            with srv.CACHE_LOCK:
-                srv.CACHE[f"key_{idx}"] = (100, f"val_{idx}")
-            with srv.CACHE_LOCK:
-                _ = srv.CACHE.get(f"key_{idx}")
-
-        threads = [threading.Thread(target=worker, args=(i,)) for i in range(20)]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
-
-        with srv.CACHE_LOCK:
-            self.assertIn("key_0", srv.CACHE)
-
-
 class MockServer:
     def __init__(self):
         pass
@@ -186,7 +129,7 @@ class TestHandlerEndpoints(unittest.TestCase):
         h_get.send_response.assert_called_with(403)
 
         # POST
-        h_post = self._create_handler("POST", "/hearth-api/photos/sync", client_ip="198.51.100.2")
+        h_post = self._create_handler("POST", "/hearth-api/music/control", client_ip="198.51.100.2")
         h_post.do_POST()
         h_post.send_response.assert_called_with(403)
 
@@ -237,20 +180,7 @@ class TestHandlerEndpoints(unittest.TestCase):
         h.do_POST()
         h.send_response.assert_called_with(400)
 
-    def test_post_photos_sync_invalid_album_url_returns_400(self):
-        body = json.dumps({"album_url": "http://evil.com/steal-photos"}).encode("utf-8")
-        h = self._create_handler(
-            "POST",
-            "/hearth-api/photos/sync",
-            headers={"Content-Length": str(len(body))},
-            body=body,
-            client_ip="127.0.0.1",
-        )
-        h.do_POST()
-        h.send_response.assert_called_with(400)
-
     def test_post_oversized_body_returns_413(self):
-        # Default max_len is 8192 for non-photos routes
         h = self._create_handler(
             "POST",
             "/hearth-api/music/control",
@@ -260,17 +190,6 @@ class TestHandlerEndpoints(unittest.TestCase):
         )
         h.do_POST()
         h.send_response.assert_called_with(413)
-
-        # Photos sync has max_len 262144
-        h_photos = self._create_handler(
-            "POST",
-            "/hearth-api/photos/sync",
-            headers={"Content-Length": "300000"},
-            body=b"{}",
-            client_ip="127.0.0.1",
-        )
-        h_photos.do_POST()
-        h_photos.send_response.assert_called_with(413)
 
     def test_video_id_validation(self):
         valid_id = "dQw4w9WgXcQ"

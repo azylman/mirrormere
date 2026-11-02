@@ -68,6 +68,8 @@ var (
 	ErrListWidgetPushForbidden    = errors.New("cannot push state to list-backed widget; task lists are read-only and ingested from configured upstream providers")
 	ErrNonHTTPWidgetPushForbidden = errors.New("cannot push state to non-HTTP widget; push webhook is strictly limited to widgets using the http provider")
 	ErrSchemaValidation           = errors.New("response_schema validation failed")
+	ErrPhotoPushNotSupported      = errors.New("photo push not supported: widget is not configured for ember_bridge source")
+	ErrInvalidPhotoPushPayload    = errors.New("invalid photo push payload")
 )
 
 // DefaultRegistry implements a thread-safe Registry.

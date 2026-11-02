@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PaneContext } from '../carousel/PaneContext';
 import { useDisplayStore, type WidgetEntry } from '../store';
 import { LegacyWidget } from './LegacyWidget';
-import { hoistTypeStylesheets, legacyRenderURL, prepareFragment } from './legacyFragment';
+import { hoistTypeStylesheets, legacyRenderURL, mountHooks, prepareFragment, unmountAll } from './legacyFragment';
 
 const ID = 'legacy-1';
 
@@ -212,6 +212,30 @@ describe('LegacyWidget', () => {
     expect(document.head.querySelectorAll(`link[href="${assets}a.css"]`)).toHaveLength(1);
     expect(container.querySelector(`link[href="${assets}a.css"]`)).toBeNull();
   });
+
+  it('renders unavailableCard when first fetch fails, and keeps previous content when subsequent fetch fails', async () => {
+    respond = async () => new Response('Server Error', { status: 500 });
+    setWidget('t1');
+    const { container } = render(element(true));
+    await waitForText(container, 'unavailable');
+
+    // Subsequent successful fetch
+    respond = async () => new Response(fragment('good-content'), { status: 200 });
+    setWidget('t2');
+    await waitForText(container, 'good-content');
+
+    // Subsequent failed fetch: keeps previous good card
+    respond = async () => new Response('Server Error 500', { status: 500 });
+    setWidget('t3');
+    await act(async () => {});
+    expect(container.querySelector('.widget-card')?.textContent).toContain('good-content');
+  });
+
+  it('handles widget with empty type string', async () => {
+    setWidget('t1', ID, '');
+    const { container } = render(element(true));
+    await waitForText(container, 'initial');
+  });
 });
 
 describe('legacy fragment helpers', () => {
@@ -284,5 +308,81 @@ describe('legacy fragment helpers', () => {
     hoistTypeStylesheets('widget-types/helper-type/assets/', card);
     expect(card.querySelector('link')).not.toBeNull();
     expect(document.head.querySelector('link[href="other/x.css"]')).toBeNull();
+  });
+
+  it('covers prepareFragment empty fallback and onload without mount match', () => {
+    const { card, hooks } = prepareFragment('');
+    expect(card.tagName).toBe('DIV');
+    expect(hooks).toHaveLength(0);
+
+    const { hooks: ignoredHooks } = prepareFragment(
+      '<div class="widget-card"><img onload="console.log(1)"></div>',
+    );
+    expect(ignoredHooks).toHaveLength(0);
+  });
+
+  it('covers hoistTypeStylesheets with empty assetsBase and link without href', () => {
+    const card = document.createElement('div');
+    const link = document.createElement('link');
+    link.rel = 'stylesheet';
+    card.appendChild(link);
+
+    // Empty assetsBase returns early
+    hoistTypeStylesheets('', card);
+    expect(card.contains(link)).toBe(true);
+
+    // Link without href continues loop
+    hoistTypeStylesheets('assets/', card);
+    expect(card.contains(link)).toBe(true);
+  });
+
+  it('covers unmountAll and mountHooks without mount or controller', () => {
+    // unmountAll with controller without unmount
+    unmountAll([{ controller: {}, key: 'k1' }]);
+
+    // mountHooks when controller does not exist in window/globalThis
+    const div = document.createElement('div');
+    div.className = 'test-target';
+    const img = document.createElement('img');
+    div.appendChild(img);
+    document.body.appendChild(div);
+
+    const mounts = mountHooks(
+      [{ img, targets: [{ name: 'NonExistentController', selector: '.test-target' }] }],
+      'w-1',
+    );
+    expect(mounts).toHaveLength(0);
+
+    // mountHooks when target element is not found
+    const orphanImg = document.createElement('img');
+    const mounts2 = mountHooks(
+      [{ img: orphanImg, targets: [{ name: 'MirrormereX', selector: '.missing' }] }],
+      'w-1',
+    );
+    expect(mounts2).toHaveLength(0);
+
+    document.body.removeChild(div);
+  });
+
+  it('covers empty type, empty assetsBase, and abort in-flight fetch on unmount', async () => {
+    act(() => {
+      useDisplayStore.setState({
+        widgets: {
+          'legacy-empty-meta': {
+            state: 'healthy',
+            data: {},
+            timestamp: 't-empty',
+          },
+        },
+      });
+    });
+
+    const { unmount } = render(
+      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
+        <LegacyWidget id="legacy-empty-meta" type="" />
+      </PaneContext.Provider>
+    );
+
+    unmount();
   });
 });

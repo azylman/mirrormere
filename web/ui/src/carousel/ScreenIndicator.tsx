@@ -9,15 +9,25 @@ export interface ScreenIndicatorProps {
   active: number;
   /** Hidden while the carousel is paused, as the legacy indicator was. */
   hidden: boolean;
+  pinned?: boolean;
   onSelect: (index: number) => void;
   onSwipe: (direction: 'next' | 'prev') => void;
+  onTogglePin?: () => void;
 }
 
 /**
  * Dots plus a pill swipe. Keyed by dot index, so a change of the active screen only
  * toggles classes; the DOM is rebuilt only when the count changes.
  */
-export function ScreenIndicator({ total, active, hidden, onSelect, onSwipe }: ScreenIndicatorProps) {
+export function ScreenIndicator({
+  total,
+  active,
+  hidden,
+  pinned = false,
+  onSelect,
+  onSwipe,
+  onTogglePin,
+}: ScreenIndicatorProps) {
   const start = useRef<{ x: number; y: number } | null>(null);
   const visible = total > 1 && !hidden;
 
@@ -59,13 +69,55 @@ export function ScreenIndicator({ total, active, hidden, onSelect, onSwipe }: Sc
         <button
           key={i}
           type="button"
-          className={i === active ? 'screen-indicator-dot active' : 'screen-indicator-dot'}
+          className={i === active ? 'screen-indicator-dot screen-dot active' : 'screen-indicator-dot screen-dot'}
           aria-label={`Screen ${i + 1} of ${total}`}
           aria-current={i === active ? 'step' : 'false'}
           data-screen-index={i}
           onClick={() => onSelect(i)}
         />
       ))}
+      {visible && onTogglePin ? (
+        <button
+          type="button"
+          className={pinned ? 'screen-indicator-pin active' : 'screen-indicator-pin'}
+          aria-label={pinned ? 'Unpin screen rotation' : 'Pin current screen'}
+          aria-pressed={pinned}
+          data-pinned={pinned ? 'true' : 'false'}
+          onClick={onTogglePin}
+        >
+          {pinned ? (
+            <svg
+              viewBox="0 0 24 24"
+              width="12"
+              height="12"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+              <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+            </svg>
+          ) : (
+            <svg
+              viewBox="0 0 24 24"
+              width="12"
+              height="12"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+              <path d="M7 11V7a5 5 0 0 1 9.9-1" />
+            </svg>
+          )}
+        </button>
+      ) : null}
     </div>
   );
 }

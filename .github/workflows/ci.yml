@@ -158,6 +158,13 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v7
 
+      - name: Set up Node.js (pinned by web/ui/.nvmrc)
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: web/ui/.nvmrc
+          cache: npm
+          cache-dependency-path: web/ui/package-lock.json
+
       - name: Run Go Unit Tests & Coverage Gate
         if: needs.changes.outputs.go_core == 'true' || needs.changes.outputs.ci_scripts == 'true' || inputs.force_all == true
         run: |
@@ -222,7 +229,7 @@ jobs:
           cache: npm
           cache-dependency-path: web/ui/package-lock.json
 
-      - name: Install, lint, typecheck, test, and build
+      - name: Install, lint, typecheck, test with coverage, and build
         if: needs.changes.outputs.ui == 'true' || inputs.force_all == true
         run: |
           set -euo pipefail
@@ -230,8 +237,9 @@ jobs:
           npm run lint
           npm run deadcode
           npm run typecheck
-          npm test
+          npm run test:coverage
           npm run build
+          npx playwright test
 
   perf:
     name: Display performance budget (React)
@@ -269,6 +277,7 @@ jobs:
           # so the providers fail fast and the screens still load from config (docs/perf.md).
           export FAMILY_CALENDAR_URL=http://localhost:9/fixture.ics
           export TODOIST_API_TOKEN=fixture-token
+          export GOOGLE_PHOTOS_ALBUM_URL=http://localhost:9/fixture-photos
           RUNNER_TRACKING_ID="" CONFIG_PATH=deploy/examples/config.yaml ./bin/server > server.log 2>&1 &
           for _ in $(seq 1 60); do
             if curl -fsS -o /dev/null 'http://localhost:8080/display?ui=react'; then break; fi
@@ -449,15 +458,6 @@ jobs:
         if: github.actor == 'dependabot[bot]'
         uses: dependabot/fetch-metadata@v3
 
-      - name: Enable Auto-Merge for Dependabot PRs
-        if: github.actor == 'dependabot[bot]'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_URL: ${{ github.event.pull_request.html_url }}
-        run: |
-          export GH_TOKEN="${GITHUB_PAT:-${GH_TOKEN}}"
-          gh pr merge --auto --squash "$PR_URL"
-
       - name: Run Independent RoboRev Review Gate
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -530,6 +530,15 @@ jobs:
           fi
           echo "::error::RoboRev reported actionable findings (>= medium severity)."
           exit 1
+
+      - name: Enable Auto-Merge on Review Pass
+        if: success() && github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          export GH_TOKEN="${GITHUB_PAT:-${GH_TOKEN}}"
+          gh pr merge --auto --squash "$PR_URL" || true
 
   build-gate:
     name: CI Gate

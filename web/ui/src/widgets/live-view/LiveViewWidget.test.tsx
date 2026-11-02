@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { cleanup, render, fireEvent, act } from '@testing-library/react';
+import { cleanup, render, fireEvent, createEvent, act } from '@testing-library/react';
 import { LiveViewWidget, parseLiveViewConfig } from './LiveViewWidget';
 import { useDisplayStore } from '../../store';
 import type { WidgetMeta } from '../../store/types';
@@ -124,8 +124,9 @@ describe('LiveViewWidget component', () => {
       pressure: number;
       pointerType: string;
       isPrimary: boolean;
+      changedTouches?: Array<{ clientX: number; clientY: number }>;
 
-      constructor(type: string, params: PointerEventInit = {}) {
+      constructor(type: string, params: PointerEventInit & { changedTouches?: Array<{ clientX: number; clientY: number }> } = {}) {
         super(type, params);
         this.pointerId = params.pointerId ?? 0;
         this.width = params.width ?? 1;
@@ -133,6 +134,7 @@ describe('LiveViewWidget component', () => {
         this.pressure = params.pressure ?? 0;
         this.pointerType = params.pointerType ?? '';
         this.isPrimary = params.isPrimary ?? false;
+        if (params.changedTouches) this.changedTouches = params.changedTouches;
       }
     };
   }
@@ -167,6 +169,14 @@ describe('LiveViewWidget component', () => {
     removeEventListener(evt: string, fn: () => void) {
       if (!this.listeners[evt]) return;
       this.listeners[evt] = this.listeners[evt].filter((l) => l !== fn);
+    }
+    dispatchEvent(event: { type: string } | string) {
+      const type = typeof event === 'string' ? event : event.type;
+      const fns = this.listeners[type];
+      if (fns) {
+        for (const fn of [...fns]) fn();
+      }
+      return true;
     }
   }
 
@@ -809,5 +819,944 @@ describe('LiveViewWidget component', () => {
     });
 
     expect(root.classList.contains('loading')).toBe(false);
+  });
+
+  it('waits for ICE gathering completion before sending offer', async () => {
+    let peerInstance: MockRTCPeerConnection | null = null;
+    // @ts-expect-error mock RTCPeerConnection
+    window.RTCPeerConnection = function () {
+      const pc = new MockRTCPeerConnection();
+      pc.iceGatheringState = 'gathering';
+      peerInstance = pc;
+      lastPeerConnection = pc;
+      return pc;
+    };
+
+    useDisplayStore.setState({
+      widgets: {
+        [widgetId]: {
+          meta: makeWidgetMeta({
+            stream_url: 'https://cam.example.com/webrtc',
+            stream_type: 'webrtc',
+          }),
+          data: {},
+          state: 'ready',
+          timestamp: '2026-10-31T12:00:00Z',
+        },
+      },
+    });
+
+    render(
+      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
+        <LiveViewWidget id={widgetId} type="live-view" />
+      </PaneContext.Provider>,
+    );
+
+    await vi.waitFor(() => {
+      expect(peerInstance).not.toBeNull();
+    });
+
+    // Offer not sent yet because ICE gathering is still in progress
+    expect(globalThis.fetch).not.toHaveBeenCalledWith(
+      'https://cam.example.com/webrtc',
+      expect.anything(),
+    );
+
+    // Complete ICE gathering
+    act(() => {
+      peerInstance!.iceGatheringState = 'complete';
+      peerInstance!.dispatchEvent('icegatheringstatechange');
+    });
+
+    await vi.waitFor(() => {
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        'https://cam.example.com/webrtc',
+        expect.anything(),
+      );
+    });
+  });
+
+  it('proceeds after 500ms ICE gathering timeout if complete event does not fire', async () => {
+    let peerInstance: MockRTCPeerConnection | null = null;
+    // @ts-expect-error mock RTCPeerConnection
+    window.RTCPeerConnection = function () {
+      const pc = new MockRTCPeerConnection();
+      pc.iceGatheringState = 'gathering';
+      peerInstance = pc;
+      lastPeerConnection = pc;
+      return pc;
+    };
+
+    useDisplayStore.setState({
+      widgets: {
+        [widgetId]: {
+          meta: makeWidgetMeta({
+            stream_url: 'https://cam.example.com/webrtc',
+            stream_type: 'webrtc',
+          }),
+          data: {},
+          state: 'ready',
+          timestamp: '2026-10-31T12:00:00Z',
+        },
+      },
+    });
+
+    render(
+      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
+        <LiveViewWidget id={widgetId} type="live-view" />
+      </PaneContext.Provider>,
+    );
+
+    await vi.waitFor(() => {
+      expect(peerInstance).not.toBeNull();
+    });
+
+    expect(globalThis.fetch).not.toHaveBeenCalledWith(
+      'https://cam.example.com/webrtc',
+      expect.anything(),
+    );
+
+    // Advance 500ms timer
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+
+    await vi.waitFor(() => {
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        'https://cam.example.com/webrtc',
+        expect.anything(),
+      );
+    });
+  });
+
+  it('aborts ICE gathering wait when component is unmounted', async () => {
+    let peerInstance: MockRTCPeerConnection | null = null;
+    // @ts-expect-error mock RTCPeerConnection
+    window.RTCPeerConnection = function () {
+      const pc = new MockRTCPeerConnection();
+      pc.iceGatheringState = 'gathering';
+      peerInstance = pc;
+      lastPeerConnection = pc;
+      return pc;
+    };
+
+    useDisplayStore.setState({
+      widgets: {
+        [widgetId]: {
+          meta: makeWidgetMeta({
+            stream_url: 'https://cam.example.com/webrtc',
+            stream_type: 'webrtc',
+          }),
+          data: {},
+          state: 'ready',
+          timestamp: '2026-10-31T12:00:00Z',
+        },
+      },
+    });
+
+    const { unmount } = render(
+      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
+        <LiveViewWidget id={widgetId} type="live-view" />
+      </PaneContext.Provider>,
+    );
+
+    await vi.waitFor(() => {
+      expect(peerInstance).not.toBeNull();
+    });
+
+    unmount();
+    expect(peerInstance!.closed).toBe(true);
+  });
+
+  it('constructs MediaStream with track when streams array is empty, and falls back to addTrack if constructor throws', async () => {
+    const originalMediaStream = window.MediaStream;
+    let ctorThrows = false;
+    class MockStream {
+      tracks: unknown[] = [];
+      constructor(tracks?: unknown[]) {
+        if (ctorThrows && tracks && tracks.length > 0) {
+          throw new Error('Constructor array not supported');
+        }
+        if (tracks) this.tracks = [...tracks];
+      }
+      addTrack(track: unknown) {
+        this.tracks.push(track);
+      }
+    }
+    // @ts-expect-error mock MediaStream
+    window.MediaStream = MockStream;
+
+    try {
+      useDisplayStore.setState({
+        widgets: {
+          [widgetId]: {
+            meta: makeWidgetMeta({
+              stream_url: 'https://cam.example.com/webrtc',
+              stream_type: 'webrtc',
+            }),
+            data: {},
+            state: 'ready',
+            timestamp: '2026-10-31T12:00:00Z',
+          },
+        },
+      });
+
+      const { container } = render(
+        <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
+          <LiveViewWidget id={widgetId} type="live-view" />
+        </PaneContext.Provider>,
+      );
+
+      await vi.waitFor(() => {
+        expect(lastPeerConnection).not.toBeNull();
+      });
+
+      const video = container.querySelector('video.live-view-media') as HTMLVideoElement;
+      const fakeTrack = { id: 'track-1', kind: 'video' } as MediaStreamTrack;
+
+      // 1. Normal constructor with array
+      act(() => {
+        lastPeerConnection?.ontrack?.({ track: fakeTrack });
+      });
+
+      expect(video.srcObject).toBeInstanceOf(MockStream);
+      expect((video.srcObject as unknown as MockStream).tracks).toContain(fakeTrack);
+
+      // 2. Constructor throws -> fallback to addTrack
+      ctorThrows = true;
+      const fakeTrack2 = { id: 'track-2', kind: 'video' } as MediaStreamTrack;
+      act(() => {
+        lastPeerConnection?.ontrack?.({ track: fakeTrack2 });
+      });
+
+      expect(video.srcObject).toBeInstanceOf(MockStream);
+      expect((video.srcObject as unknown as MockStream).tracks).toContain(fakeTrack2);
+    } finally {
+      window.MediaStream = originalMediaStream;
+    }
+  });
+
+  it('extracts tap coordinates from touch changedTouches and rejects touch drag gestures', () => {
+    Object.defineProperty(Object.prototype, 'changedTouches', {
+      get() {
+        return this.nativeEvent?.changedTouches;
+      },
+      configurable: true,
+    });
+
+    try {
+      useDisplayStore.setState({
+        widgets: {
+          [widgetId]: {
+            meta: makeWidgetMeta({
+              stream_url: 'https://cam.example.com/stream',
+            }),
+            data: {},
+            state: 'ready',
+            timestamp: '2026-10-31T12:00:00Z',
+          },
+        },
+      });
+
+      const { container } = render(
+        <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
+          <LiveViewWidget id={widgetId} type="live-view" />
+        </PaneContext.Provider>,
+      );
+
+      const root = container.querySelector('.widget-live-view')!;
+
+      // 1. Touch tap without drag: start (100, 100), end (102, 101) -> triggers expand
+      act(() => {
+        const downEvt = createEvent.pointerDown(root);
+        Object.defineProperty(downEvt, 'changedTouches', {
+          value: [{ clientX: 100, clientY: 100 }],
+        });
+        fireEvent(root, downEvt);
+
+        const upEvt = createEvent.pointerUp(root);
+        Object.defineProperty(upEvt, 'changedTouches', {
+          value: [{ clientX: 102, clientY: 101 }],
+        });
+        fireEvent(root, upEvt);
+
+        fireEvent.click(root);
+      });
+
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        'api/video/trigger',
+        expect.anything(),
+      );
+      expect(root.classList.contains('loading')).toBe(true);
+
+      // Reset fetch and loading
+      act(() => {
+        vi.advanceTimersByTime(2000);
+      });
+      vi.mocked(globalThis.fetch).mockClear();
+
+      // 2. Touch drag: start (10, 10), end (50, 50) -> distance >= 15, suppressed
+      act(() => {
+        const downEvt = createEvent.pointerDown(root);
+        Object.defineProperty(downEvt, 'changedTouches', {
+          value: [{ clientX: 10, clientY: 10 }],
+        });
+        fireEvent(root, downEvt);
+
+        const upEvt = createEvent.pointerUp(root);
+        Object.defineProperty(upEvt, 'changedTouches', {
+          value: [{ clientX: 50, clientY: 50 }],
+        });
+        fireEvent(root, upEvt);
+
+        fireEvent.click(root);
+      });
+
+      expect(globalThis.fetch).not.toHaveBeenCalledWith(
+        'api/video/trigger',
+        expect.anything(),
+      );
+    } finally {
+      // @ts-expect-error clean up prototype getter
+      delete Object.prototype.changedTouches;
+    }
+  });
+
+  it('catches and logs warning when wake action fetch fails', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+      if (url === 'https://cam.example.com/wake') {
+        return Promise.reject(new Error('Wake offline'));
+      }
+      return Promise.resolve(new Response('{}', { status: 200 }));
+    });
+
+    useDisplayStore.setState({
+      widgets: {
+        [widgetId]: {
+          meta: makeWidgetMeta({
+            stream_url: 'https://cam.example.com/stream',
+            controllable: true,
+            control_url: 'https://cam.example.com/wake',
+          }),
+          data: {},
+          state: 'ready',
+          timestamp: '2026-10-31T12:00:00Z',
+        },
+      },
+    });
+
+    const { container } = render(
+      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
+        <LiveViewWidget id={widgetId} type="live-view" />
+      </PaneContext.Provider>,
+    );
+
+    const root = container.querySelector('.widget-live-view')!;
+    await act(async () => {
+      fireEvent.click(root);
+    });
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      '[MirrormereLiveView] Wake action failed:',
+      expect.any(Error),
+    );
+    warnSpy.mockRestore();
+  });
+
+  it('suppresses expand when pointer drag distance is >= 15px', () => {
+    useDisplayStore.setState({
+      widgets: {
+        [widgetId]: {
+          meta: makeWidgetMeta({
+            stream_url: 'https://cam.example.com/stream',
+          }),
+          data: {},
+          state: 'ready',
+          timestamp: '2026-10-31T12:00:00Z',
+        },
+      },
+    });
+
+    const { container } = render(
+      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
+        <LiveViewWidget id={widgetId} type="live-view" />
+      </PaneContext.Provider>,
+    );
+
+    const root = container.querySelector('.widget-live-view')!;
+    vi.mocked(globalThis.fetch).mockClear();
+
+    fireEvent.pointerDown(root, { clientX: 100, clientY: 100 });
+    fireEvent.pointerUp(root, { clientX: 120, clientY: 100 }); // dist = 20 >= 15
+    fireEvent.click(root);
+
+    expect(globalThis.fetch).not.toHaveBeenCalledWith(
+      'api/video/trigger',
+      expect.anything(),
+    );
+  });
+
+  it('handles events with invalid coordinates gracefully', () => {
+    useDisplayStore.setState({
+      widgets: {
+        [widgetId]: {
+          meta: makeWidgetMeta({
+            stream_url: 'https://cam.example.com/stream',
+          }),
+          data: {},
+          state: 'ready',
+          timestamp: '2026-10-31T12:00:00Z',
+        },
+      },
+    });
+
+    const { container } = render(
+      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
+        <LiveViewWidget id={widgetId} type="live-view" />
+      </PaneContext.Provider>,
+    );
+
+    const root = container.querySelector('.widget-live-view')!;
+    const downEvt = createEvent.pointerDown(root);
+    Object.defineProperty(downEvt, 'clientX', { value: NaN });
+    Object.defineProperty(downEvt, 'clientY', { value: NaN });
+    fireEvent(root, downEvt);
+
+    const upEvt = createEvent.pointerUp(root);
+    Object.defineProperty(upEvt, 'clientX', { value: NaN });
+    Object.defineProperty(upEvt, 'clientY', { value: NaN });
+    fireEvent(root, upEvt);
+  });
+
+  it('handles WebRTC SDP exchange HTTP failure gracefully', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+      if (url === 'https://cam.example.com/webrtc-err') {
+        return Promise.resolve(new Response('Server Error', { status: 500 }));
+      }
+      return Promise.resolve(new Response('{}', { status: 200 }));
+    });
+
+    useDisplayStore.setState({
+      widgets: {
+        [widgetId]: {
+          meta: makeWidgetMeta({
+            stream_url: 'https://cam.example.com/webrtc-err',
+            stream_type: 'webrtc',
+          }),
+          data: {},
+          state: 'ready',
+          timestamp: '2026-10-31T12:00:00Z',
+        },
+      },
+    });
+
+    render(
+      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
+        <LiveViewWidget id={widgetId} type="live-view" />
+      </PaneContext.Provider>,
+    );
+
+    await vi.waitFor(() => {
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('WebRTC negotiation error'),
+        expect.any(Error),
+      );
+    });
+    warnSpy.mockRestore();
+  });
+
+  it('closes RTCPeerConnection if unmounted while SDP exchange is in flight', async () => {
+    let resolveSdp!: (res: Response) => void;
+    const sdpPromise = new Promise<Response>((resolve) => {
+      resolveSdp = resolve;
+    });
+
+    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+      if (url === 'https://cam.example.com/webrtc-hang') {
+        return sdpPromise;
+      }
+      return Promise.resolve(new Response('{}', { status: 200 }));
+    });
+
+    useDisplayStore.setState({
+      widgets: {
+        [widgetId]: {
+          meta: makeWidgetMeta({
+            stream_url: 'https://cam.example.com/webrtc-hang',
+            stream_type: 'webrtc',
+          }),
+          data: {},
+          state: 'ready',
+          timestamp: '2026-10-31T12:00:00Z',
+        },
+      },
+    });
+
+    const { unmount } = render(
+      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
+        <LiveViewWidget id={widgetId} type="live-view" />
+      </PaneContext.Provider>,
+    );
+
+    await vi.waitFor(() => {
+      expect(lastPeerConnection).not.toBeNull();
+    });
+
+    unmount();
+    resolveSdp(new Response('v=0\r\n', { status: 200 }));
+    expect(lastPeerConnection?.closed).toBe(true);
+  });
+
+  it('closes RTCPeerConnection if unmounted while setRemoteDescription is in flight', async () => {
+    let resolveRemote!: () => void;
+    const remotePromise = new Promise<void>((resolve) => {
+      resolveRemote = resolve;
+    });
+
+    useDisplayStore.setState({
+      widgets: {
+        [widgetId]: {
+          meta: makeWidgetMeta({
+            stream_url: 'https://cam.example.com/webrtc',
+            stream_type: 'webrtc',
+          }),
+          data: {},
+          state: 'ready',
+          timestamp: '2026-10-31T12:00:00Z',
+        },
+      },
+    });
+
+    const { unmount } = render(
+      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
+        <LiveViewWidget id={widgetId} type="live-view" />
+      </PaneContext.Provider>,
+    );
+
+    await vi.waitFor(() => {
+      expect(lastPeerConnection).not.toBeNull();
+    });
+    const pc = lastPeerConnection!;
+    pc.setRemoteDescription = () => remotePromise;
+
+    // Trigger state change so fetch resolves
+    act(() => {
+      pc.iceGatheringState = 'complete';
+      pc.dispatchEvent('icegatheringstatechange');
+    });
+
+    await vi.waitFor(() => {
+      expect(globalThis.fetch).toHaveBeenCalledWith('https://cam.example.com/webrtc', expect.anything());
+    });
+
+    unmount();
+    resolveRemote();
+    expect(pc.closed).toBe(true);
+  });
+
+  it('handles trigger API returning HTTP 500 error and clears safety timer on error', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+      if (url === 'api/video/trigger') {
+        return Promise.resolve(new Response('Internal Server Error', { status: 500 }));
+      }
+      return Promise.resolve(new Response('{}', { status: 200 }));
+    });
+
+    useDisplayStore.setState({
+      widgets: {
+        [widgetId]: {
+          meta: makeWidgetMeta({
+            stream_url: 'https://cam.example.com/stream',
+          }),
+          data: {},
+          state: 'ready',
+          timestamp: '2026-10-31T12:00:00Z',
+        },
+      },
+    });
+
+    const { container } = render(
+      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
+        <LiveViewWidget id={widgetId} type="live-view" />
+      </PaneContext.Provider>,
+    );
+
+    const root = container.querySelector('.widget-live-view')!;
+    await act(async () => {
+      fireEvent.click(root);
+    });
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('Trigger failed for'),
+      expect.any(Error),
+    );
+    expect(root.classList.contains('loading')).toBe(false);
+    warnSpy.mockRestore();
+  });
+
+  it('clears safetyTimerRef on unmount when loading is active', () => {
+    useDisplayStore.setState({
+      widgets: {
+        [widgetId]: {
+          meta: makeWidgetMeta({
+            stream_url: 'https://cam.example.com/stream',
+          }),
+          data: {},
+          state: 'ready',
+          timestamp: '2026-10-31T12:00:00Z',
+        },
+      },
+    });
+
+    const { container, unmount } = render(
+      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
+        <LiveViewWidget id={widgetId} type="live-view" />
+      </PaneContext.Provider>,
+    );
+
+    const root = container.querySelector('.widget-live-view')!;
+    act(() => {
+      fireEvent.click(root);
+    });
+    expect(root.classList.contains('loading')).toBe(true);
+
+    unmount();
+    // Verify advancing timers causes no exceptions after unmount
+    act(() => {
+      vi.advanceTimersByTime(2500);
+    });
+  });
+
+  it('resets existing safetyTimer on subsequent click after debounce window', () => {
+    useDisplayStore.setState({
+      widgets: {
+        [widgetId]: {
+          meta: makeWidgetMeta({
+            stream_url: 'https://cam.example.com/stream',
+          }),
+          data: {},
+          state: 'ready',
+          timestamp: '2026-10-31T12:00:00Z',
+        },
+      },
+    });
+
+    const { container } = render(
+      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
+        <LiveViewWidget id={widgetId} type="live-view" />
+      </PaneContext.Provider>,
+    );
+
+    const root = container.querySelector('.widget-live-view')!;
+    // First click arms safety timer
+    act(() => {
+      fireEvent.click(root);
+    });
+    expect(root.classList.contains('loading')).toBe(true);
+
+    // Advance 400ms past 350ms debounce threshold, while 2000ms safety timer is still active
+    act(() => {
+      vi.advanceTimersByTime(400);
+    });
+
+    // Second click clears prior safety timer and re-arms
+    act(() => {
+      fireEvent.click(root);
+    });
+    expect(root.classList.contains('loading')).toBe(true);
+  });
+
+  it('closes pc and returns early if unmounted during SDP answer text resolution', async () => {
+    let resolveText: (v: string) => void = () => {};
+    const textPromise = new Promise<string>((resolve) => {
+      resolveText = resolve;
+    });
+
+    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+      if (url === 'https://cam.example.com/webrtc') {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          text: () => textPromise,
+        });
+      }
+      return Promise.resolve(new Response('{}', { status: 200 }));
+    });
+
+    useDisplayStore.setState({
+      widgets: {
+        [widgetId]: {
+          meta: makeWidgetMeta({
+            stream_url: 'https://cam.example.com/webrtc',
+            stream_type: 'webrtc',
+          }),
+          data: {},
+          state: 'ready',
+          timestamp: '2026-10-31T12:00:00Z',
+        },
+      },
+    });
+
+    const { unmount } = render(
+      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
+        <LiveViewWidget id={widgetId} type="live-view" />
+      </PaneContext.Provider>,
+    );
+
+    await vi.waitFor(() => {
+      expect(lastPeerConnection).not.toBeNull();
+    });
+    const pc = lastPeerConnection!;
+
+    act(() => {
+      pc.iceGatheringState = 'complete';
+      pc.dispatchEvent('icegatheringstatechange');
+    });
+
+    await vi.waitFor(() => {
+      expect(globalThis.fetch).toHaveBeenCalledWith('https://cam.example.com/webrtc', expect.anything());
+    });
+
+    unmount();
+    resolveText('v=0\r\nanswer');
+    expect(pc.closed).toBe(true);
+  });
+
+  it('renders and decodes MJPEG stream into image element', () => {
+    useDisplayStore.setState({
+      widgets: {
+        [widgetId]: {
+          meta: makeWidgetMeta({
+            stream_url: 'https://cam.example.com/stream.mjpeg',
+            stream_type: 'mjpeg',
+          }),
+          data: {},
+          state: 'ready',
+          timestamp: '2026-10-31T12:00:00Z',
+        },
+      },
+    });
+
+    const { container } = render(
+      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
+        <LiveViewWidget id={widgetId} type="live-view" />
+      </PaneContext.Provider>,
+    );
+
+    const img = container.querySelector('img.live-view-mjpeg') as HTMLImageElement;
+    expect(img).not.toBeNull();
+    expect(img.style.display).toBe('');
+    expect(img.src).toBe('https://cam.example.com/stream.mjpeg');
+
+    const video = container.querySelector('video.live-view-media') as HTMLVideoElement;
+    expect(video.style.display).toBe('none');
+  });
+
+  it('renders and plays HLS stream in video element', () => {
+    useDisplayStore.setState({
+      widgets: {
+        [widgetId]: {
+          meta: makeWidgetMeta({
+            stream_url: 'https://cam.example.com/stream.m3u8',
+            stream_type: 'hls',
+          }),
+          data: {},
+          state: 'ready',
+          timestamp: '2026-10-31T12:00:00Z',
+        },
+      },
+    });
+
+    const { container } = render(
+      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
+        <LiveViewWidget id={widgetId} type="live-view" />
+      </PaneContext.Provider>,
+    );
+
+    const video = container.querySelector('video.live-view-media') as HTMLVideoElement;
+    expect(video).not.toBeNull();
+    expect(video.src).toBe('https://cam.example.com/stream.m3u8');
+    expect(video.muted).toBe(true);
+  });
+
+  it('returns early when RTCPeerConnection is unavailable in the environment', () => {
+    const origPC = window.RTCPeerConnection;
+    // @ts-expect-error test undefined RTCPeerConnection
+    delete window.RTCPeerConnection;
+
+    try {
+      useDisplayStore.setState({
+        widgets: {
+          [widgetId]: {
+            meta: makeWidgetMeta({
+              stream_url: 'https://cam.example.com/webrtc',
+              stream_type: 'webrtc',
+            }),
+            data: {},
+            state: 'ready',
+            timestamp: '2026-10-31T12:00:00Z',
+          },
+        },
+      });
+
+      const { container } = render(
+        <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
+          <LiveViewWidget id={widgetId} type="live-view" />
+        </PaneContext.Provider>,
+      );
+
+      expect(container.querySelector('.widget-live-view')).not.toBeNull();
+    } finally {
+      window.RTCPeerConnection = origPC;
+    }
+  });
+
+  it('stops playback when fullscreen video mode is active', () => {
+    useDisplayStore.setState({
+      video: {
+        mode: 'video',
+        primary: null,
+        pip: null,
+      },
+      widgets: {
+        [widgetId]: {
+          meta: makeWidgetMeta({
+            stream_url: 'https://cam.example.com/webrtc',
+            stream_type: 'webrtc',
+          }),
+          data: {},
+          state: 'ready',
+          timestamp: '2026-10-31T12:00:00Z',
+        },
+      },
+    });
+
+    const { container } = render(
+      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
+        <LiveViewWidget id={widgetId} type="live-view" />
+      </PaneContext.Provider>,
+    );
+
+    // Peer connection should not be initialized when videoMode === 'video'
+    expect(container.querySelector('.widget-live-view')).not.toBeNull();
+  });
+
+  it('sends complete payload with timeout_seconds, expand URLs, and temporary priority in triggerExpand', async () => {
+    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+      if (url === 'https://cam.example.com/wake') {
+        return Promise.resolve(new Response('{}', { status: 200 }));
+      }
+      if (url === 'api/video/trigger') {
+        return Promise.resolve(new Response('{}', { status: 200 }));
+      }
+      return Promise.resolve(new Response('{}', { status: 200 }));
+    });
+
+    useDisplayStore.setState({
+      widgets: {
+        [widgetId]: {
+          meta: makeWidgetMeta({
+            stream_url: 'https://cam.example.com/stream',
+            stream_id: 'cam-custom',
+            priority: 'temporary',
+            timeout_seconds: 45,
+            controllable: true,
+            control_url: 'https://cam.example.com/wake',
+            expand_stream_url: 'https://cam.example.com/expand-stream',
+            expand_stream_type: 'hls',
+          }),
+          data: {},
+          state: 'ready',
+          timestamp: '2026-10-31T12:00:00Z',
+        },
+      },
+    });
+
+    const { container } = render(
+      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
+        <LiveViewWidget id={widgetId} type="live-view" />
+      </PaneContext.Provider>,
+    );
+
+    const root = container.querySelector('.widget-live-view')!;
+    await act(async () => {
+      fireEvent.click(root);
+    });
+
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      'https://cam.example.com/wake',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ id: 'cam-custom', action: 'wake' }),
+      }),
+    );
+
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      'api/video/trigger',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          id: 'cam-custom',
+          stream_url: 'https://cam.example.com/expand-stream',
+          type: 'hls',
+          priority: 'temporary',
+          controllable: true,
+          control_url: 'https://cam.example.com/wake',
+          timeout_seconds: 45,
+        }),
+      }),
+    );
+  });
+
+  it('clears existing safetyTimer when triggerExpand is clicked after throttle interval', () => {
+    vi.useFakeTimers();
+    globalThis.fetch = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
+
+    useDisplayStore.setState({
+      widgets: {
+        [widgetId]: {
+          meta: makeWidgetMeta({
+            stream_url: 'https://cam.example.com/stream',
+            expand_on_click: true,
+          }),
+          data: {},
+          state: 'ready',
+          timestamp: '2026-10-31T12:00:00Z',
+        },
+      },
+    });
+
+    const { container } = render(
+      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
+        <LiveViewWidget id={widgetId} type="live-view" />
+      </PaneContext.Provider>,
+    );
+
+    const root = container.querySelector('.widget-live-view')!;
+
+    // First click: arm safety timer
+    act(() => {
+      fireEvent.click(root);
+    });
+
+    // Advance 400ms (> 350ms throttle, < 2000ms timer)
+    act(() => {
+      vi.advanceTimersByTime(400);
+    });
+
+    // Second click: clears existing safety timer
+    act(() => {
+      fireEvent.click(root);
+    });
+
+    // Advance remaining 2000ms: expires second timer
+    act(() => {
+      vi.advanceTimersByTime(2000);
+    });
+
+    vi.useRealTimers();
   });
 });

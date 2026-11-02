@@ -958,5 +958,203 @@ describe('VideoStage Declarative Suite', () => {
 
       expect(hud.activeStream).toBeNull();
     });
+
+    it('exercises VideoPlayerManager class methods and managerBridge getters/actions', () => {
+      render(<VideoStage />);
+      const mgr = window.videoManager!;
+      expect(mgr).toBeDefined();
+
+      // managerBridge properties & methods
+      expect(mgr.currentMode).toBe('widgets');
+      expect(mgr.isSwapped).toBe(false);
+      expect(mgr.serverPrimary).toBeNull();
+      expect(mgr.serverPip).toBeNull();
+      expect(mgr.hud).toBeDefined();
+
+      mgr.setHUD(null);
+      mgr.syncAudioFocus();
+
+      act(() => {
+        mgr.handleVideoState({
+          mode: 'video',
+          primary: { id: 'p', stream_url: 'http://p', type: 'mjpeg' },
+          pip: { id: 'pip', stream_url: 'http://pip', type: 'mjpeg' },
+        });
+      });
+      expect(useDisplayStore.getState().video.primary?.id).toBe('p');
+      expect(window.videoManager?.serverPrimary?.id).toBe('p');
+      expect(window.videoManager?.serverPip?.id).toBe('pip');
+
+      act(() => {
+        mgr.handleVideoState(undefined);
+      });
+      expect(useDisplayStore.getState().video.primary?.id).toBe('p');
+
+      act(() => {
+        mgr.handleVideoState(null);
+      });
+      expect(useDisplayStore.getState().video.mode).toBe('widgets');
+
+      act(() => {
+        window.videoManager?.exitVideoMode();
+      });
+      expect(useDisplayStore.getState().video.mode).toBe('widgets');
+
+      act(() => {
+        window.videoManager?.destroy();
+      });
+
+      // Direct VideoPlayerManager class instance
+      delete window.videoManager;
+      const vpm = new VideoPlayerManager();
+      expect(vpm.serverPrimary).toBeNull();
+      expect(vpm.serverPip).toBeNull();
+      vpm.setHUD(null);
+      vpm.syncAudioFocus();
+      vpm.swapStreams();
+      expect(vpm.isSwapped).toBe(true);
+
+      vpm.handleVideoState({
+        mode: 'video',
+        primary: { id: 'p2', stream_url: 'http://p2', type: 'mjpeg' },
+        pip: null,
+      });
+      expect(vpm.currentMode).toBe('video');
+
+      vpm.exitVideoMode();
+      expect(vpm.currentMode).toBe('widgets');
+      vpm.destroy();
+
+      // Delegation test when window.videoManager is another instance
+      const externalManager = {
+        isSwapped: false,
+        swapStreams: vi.fn(function (this: { isSwapped: boolean }) {
+          this.isSwapped = true;
+        }),
+      };
+      window.videoManager = externalManager as unknown as VideoPlayerManager;
+      const delegatingVpm = new VideoPlayerManager();
+      delegatingVpm.swapStreams();
+      expect(externalManager.swapStreams).toHaveBeenCalled();
+      expect(delegatingVpm.isSwapped).toBe(true);
+      delete window.videoManager;
+    });
+
+    it('handles per-slot failure cascades for primary and PiP streams', () => {
+      // 1. PiP slot fails while swapped: unswaps and sets pip to null
+      useDisplayStore.setState({
+        video: {
+          mode: 'video',
+          primary: { id: 'p', stream_url: 'http://p', type: 'mjpeg' },
+          pip: { id: 'pip', stream_url: 'http://pip-err', type: 'mjpeg' },
+        },
+      });
+
+      const { container } = render(<VideoStage />);
+      const pipImg = container.querySelector('#video-pip-slot img') as HTMLImageElement;
+      expect(pipImg).not.toBeNull();
+
+      // Swap streams first
+      act(() => {
+        window.videoManager?.swapStreams();
+      });
+      expect(window.videoManager?.isSwapped).toBe(true);
+
+      // Trigger pip image error
+      fireEvent.error(pipImg);
+      expect(useDisplayStore.getState().video.pip).toBeNull();
+      expect(useDisplayStore.getState().video.primary?.id).toBe('p');
+      expect(window.videoManager?.isSwapped).toBe(false);
+
+      // 2. PiP slot fails as sole stream: exits to widgets mode
+      act(() => {
+        useDisplayStore.setState({
+          video: {
+            mode: 'video',
+            primary: null,
+            pip: { id: 'pip-only', stream_url: 'http://pip-only', type: 'mjpeg' },
+          },
+        });
+      });
+      const pipOnlyImg = container.querySelector('#video-pip-slot img') as HTMLImageElement;
+      expect(pipOnlyImg).not.toBeNull();
+      fireEvent.error(pipOnlyImg);
+      expect(useDisplayStore.getState().video.mode).toBe('widgets');
+
+      // 3. Primary slot fails while swapped (with active pip): primary cleared, pip retained
+      act(() => {
+        useDisplayStore.setState({
+          video: {
+            mode: 'video',
+            primary: { id: 'p-swapped', stream_url: 'http://p-swapped', type: 'mjpeg' },
+            pip: { id: 'pip-active', stream_url: 'http://pip-active', type: 'mjpeg' },
+          },
+        });
+      });
+      act(() => {
+        window.videoManager?.swapStreams();
+      });
+      const primaryImg = container.querySelector('#video-primary-slot img') as HTMLImageElement;
+      expect(primaryImg).not.toBeNull();
+      fireEvent.error(primaryImg);
+      expect(useDisplayStore.getState().video.primary).toBeNull();
+      expect(useDisplayStore.getState().video.pip?.id).toBe('pip-active');
+
+      // 4. PiP slot fails while NOT swapped (normal corner dock failure)
+      act(() => {
+        useDisplayStore.setState({
+          video: {
+            mode: 'video',
+            primary: { id: 'p-normal', stream_url: 'http://p-normal', type: 'mjpeg' },
+            pip: { id: 'pip-dock', stream_url: 'http://pip-dock', type: 'mjpeg' },
+          },
+        });
+      });
+      const pipDockImg = container.querySelector('#video-pip-slot img') as HTMLImageElement;
+      expect(pipDockImg).not.toBeNull();
+      fireEvent.error(pipDockImg);
+      expect(useDisplayStore.getState().video.pip).toBeNull();
+      expect(useDisplayStore.getState().video.primary?.id).toBe('p-normal');
+    });
+
+    it('covers flushCompositorPaint fallback when requestAnimationFrame is undefined', () => {
+      const origRAF = window.requestAnimationFrame;
+      // @ts-expect-error test fallback branch
+      delete window.requestAnimationFrame;
+      flushCompositorPaint();
+      act(() => {
+        vi.advanceTimersByTime(32);
+      });
+      window.requestAnimationFrame = origRAF;
+    });
+
+    it('handles VideoPlayerManager edge branches: undefined data, inferred mode, and swapped destroy', () => {
+      const vpm = new VideoPlayerManager();
+
+      // 1. undefined data
+      vpm.handleVideoState(undefined as unknown as import('../sse/types').VideoStatePayload);
+
+      // 2. data without mode but with primary and pip -> infers mode = 'video'
+      vpm.handleVideoState({
+        primary: { id: 'prim', stream_url: 'http://prim', type: 'mjpeg' },
+        pip: { id: 'pip2', stream_url: 'http://pip2', type: 'mjpeg' },
+      } as unknown as import('../sse/types').VideoStatePayload);
+      expect(vpm.currentMode).toBe('video');
+
+      // 3. swapStreams when primary and pip both exist
+      vpm.swapStreams();
+      expect(vpm.isSwapped).toBe(true);
+
+      // 4. destroy when isSwapped is true -> resets swap state
+      vpm.destroy();
+      expect(vpm.isSwapped).toBe(false);
+    });
+
+    it('resolves remoteUrl fallback from window.MIRRORMERE_REMOTE_URL', () => {
+      (window as unknown as { MIRRORMERE_REMOTE_URL?: string }).MIRRORMERE_REMOTE_URL = 'http://window-remote';
+      const { unmount } = render(<VideoStage />);
+      unmount();
+      delete (window as unknown as { MIRRORMERE_REMOTE_URL?: string }).MIRRORMERE_REMOTE_URL;
+    });
   });
 });

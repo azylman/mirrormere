@@ -131,6 +131,69 @@ describe('WeatherPill component', () => {
     rerender(<WeatherPill />);
     expect(container.querySelector('.mm-icon-weather-partly-cloudy')).not.toBeNull();
     expect(container.querySelector('#weather-desc')?.textContent).toBe('Clear Sky');
+
+    // Weather condition mapped via WEATHER_DESC_MAP when icon is unknown
+    useDisplayStore.setState({
+      header: {
+        timestamp: '2026-10-31T12:00:00Z',
+        timezone: 'America/Los_Angeles',
+        weather: {
+          temperature: 68,
+          units: 'C',
+          icon: 'custom-unmapped',
+          condition: 'weather-rainy',
+        },
+      },
+    });
+    rerender(<WeatherPill />);
+    expect(container.querySelector('#weather-desc')?.textContent).toBe('Light Rain');
+    expect(container.querySelector('#weather-temp')?.textContent).toBe('68°C');
+
+    // Weather condition is custom string different from conditionToken
+    useDisplayStore.setState({
+      header: {
+        timestamp: '2026-10-31T12:00:00Z',
+        timezone: 'America/Los_Angeles',
+        weather: {
+          temperature: 62,
+          icon: 'weather-cloudy',
+          condition: 'Dense Overcast Pea Soup',
+        },
+      },
+    });
+    rerender(<WeatherPill />);
+    expect(container.querySelector('#weather-desc')?.textContent).toBe('Overcast');
+
+    // Condition token without mapping, but condition text contains "night" and equals conditionToken
+    useDisplayStore.setState({
+      header: {
+        timestamp: '2026-10-31T12:00:00Z',
+        timezone: 'America/Los_Angeles',
+        weather: {
+          temperature: 48,
+          condition: 'night-chill-unmapped',
+        },
+      },
+    });
+    rerender(<WeatherPill />);
+    expect(container.querySelector('#weather-desc')?.textContent).toBe('Clear');
+
+    // Empty condition and icon
+    useDisplayStore.setState({
+      header: {
+        timestamp: '2026-10-31T12:00:00Z',
+        timezone: 'America/Los_Angeles',
+        weather: {
+          temperature: 65,
+        },
+      },
+    });
+    rerender(<WeatherPill />);
+    expect(container.querySelector('#weather-condition')?.getAttribute('title')).toBeNull();
+
+    // Rerender with unchanged state to hit React compiler memoization cache
+    rerender(<WeatherPill />);
+    expect(container.querySelector('#weather-temp')?.textContent).toBe('65°');
   });
 });
 
@@ -381,5 +444,91 @@ describe('HeaderVideoButton component', () => {
 
     delete (window as unknown as { videoManager?: unknown }).videoManager;
     delete (window as unknown as { videoHUD?: unknown }).videoHUD;
+  });
+
+  it('exercises props fallback, wake rejection, and small drag triggering', async () => {
+    delete document.body.dataset.headerVideo;
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url === 'https://custom.local/wake') {
+        return Promise.reject(new Error('Wake offline'));
+      }
+      return Promise.resolve({ ok: true, status: 200 });
+    });
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    // Direct props override dataset
+    const { container, unmount } = render(
+      <HeaderVideoButton
+        enabled={true}
+        streamId="prop-stream"
+        streamUrl="https://stream.local/prop"
+        controlUrl="https://custom.local/wake"
+        type="hls"
+        priority="transient"
+        controllable={false}
+        fetchFn={fetchMock as unknown as typeof fetch}
+      />,
+    );
+    const btn = container.querySelector('#header-video-btn') as HTMLButtonElement;
+    expect(btn.getAttribute('data-stream-id')).toBe('prop-stream');
+    expect(btn.getAttribute('data-type')).toBe('hls');
+
+    // Pointer gesture with small distance < 15px triggers video
+    fireEvent.pointerDown(btn, { clientX: 10, clientY: 10 });
+    await act(async () => {
+      fireEvent.pointerUp(btn, { clientX: 14, clientY: 12 });
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith('https://custom.local/wake', expect.any(Object));
+    expect(fetchMock).toHaveBeenCalledWith('api/video/trigger', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: 'prop-stream',
+        stream_url: 'https://stream.local/prop',
+        type: 'hls',
+        priority: 'transient',
+        controllable: false,
+        control_url: 'https://custom.local/wake',
+      }),
+    });
+    expect(warnSpy).toHaveBeenCalledWith(
+      '[MirrormereDisplay] Header video wake failed:',
+      expect.any(Error),
+    );
+
+    // Unmount clears safety timer
+    unmount();
+  });
+
+  it('handles trigger without controlUrl and respects explicit enabled=false', async () => {
+    delete document.body.dataset.controlUrl;
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200 });
+
+    const { container } = render(
+      <HeaderVideoButton
+        enabled={false}
+        fetchFn={fetchMock as unknown as typeof fetch}
+      />,
+    );
+    expect(container.firstChild).toBeNull();
+
+    const { container: enabledContainer } = render(
+      <HeaderVideoButton
+        enabled={true}
+        controlUrl=""
+        fetchFn={fetchMock as unknown as typeof fetch}
+      />,
+    );
+    const btn = enabledContainer.querySelector('#header-video-btn') as HTMLButtonElement;
+    expect(btn).not.toBeNull();
+
+    await act(async () => {
+      fireEvent.click(btn);
+    });
+
+    // Only api/video/trigger called since controlUrl is empty
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith('api/video/trigger', expect.any(Object));
   });
 });

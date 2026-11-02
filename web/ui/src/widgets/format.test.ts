@@ -131,6 +131,32 @@ describe('format helpers', () => {
       expect(formatTime('3 PM', eventUTC, 'America/Los_Angeles')).toBe('8 PM');
     });
 
+    it('supports "3:04 PM" layout', () => {
+      expect(formatTime('3:04 PM', '2026-09-26T14:30:00Z')).toBe('2:30 PM');
+      expect(formatTime('3:04 PM', '2026-09-26T00:05:00Z')).toBe('12:05 AM');
+      expect(formatTime('3:04 PM', '2026-09-26T12:00:00Z')).toBe('12:00 PM');
+    });
+
+    it('supports Date and numeric timestamp inputs with valid and invalid timezones', () => {
+      const date = new Date('2026-10-12T03:30:00Z');
+      const timestamp = date.getTime();
+
+      // Date input with valid and invalid timezone
+      expect(formatTime('3:04 PM', date, 'America/Los_Angeles')).toBe('8:30 PM');
+      expect(formatTime('15:04', date, 'Invalid/Timezone')).toMatch(/^\d{2}:\d{2}$/);
+      expect(formatTime('15:04', new Date(NaN))).toBe('');
+
+      // Numeric timestamp input with valid and invalid timezone
+      expect(formatTime('3:04 PM', timestamp, 'America/Los_Angeles')).toBe('8:30 PM');
+      expect(formatTime('15:04', timestamp, 'Invalid/Timezone')).toMatch(/^\d{2}:\d{2}$/);
+      expect(formatTime('15:04', NaN)).toBe('');
+
+      // String full date with timezone via Date constructor
+      expect(formatTime('3:04 PM', '2026-10-12 15:30:00', 'America/Los_Angeles')).toBe('3:30 PM');
+      // Object input
+      expect(formatTime('15:04', { foo: 'bar' })).toBe('');
+    });
+
     it('returns empty string for invalid input or date-only string', () => {
       expect(formatTime('3 PM', null)).toBe('');
       expect(formatTime('3 PM', undefined)).toBe('');
@@ -150,10 +176,31 @@ describe('format helpers', () => {
       expect(formatDate('2026-09-25T14:30:00Z')).toBe('2026-09-25');
     });
 
-    it('supports "Jan 2", "Jan 02, 2006", and "Monday • Jan 2" layouts', () => {
+    it('supports "Jan 2", "Jan 02, 2006", "Monday • Jan 2", and "2006" layouts', () => {
       expect(formatDate('Jan 2', target)).toBe('Sep 25');
       expect(formatDate('Jan 02, 2006', target)).toBe('Sep 25, 2026');
       expect(formatDate('Monday • Jan 2', target)).toBe('Friday • Sep 25');
+      expect(formatDate('2006', target)).toBe('2026');
+    });
+
+    it('supports Date and numeric timestamp inputs with valid and invalid timezones', () => {
+      const date = new Date('2026-10-12T03:30:00Z');
+      const timestamp = date.getTime();
+
+      // Date input
+      expect(formatDate('2006-01-02', date, 'America/Los_Angeles')).toBe('2026-10-11');
+      expect(formatDate('2006-01-02', date, 'Invalid/Timezone')).toBe('2026-10-12');
+      expect(formatDate('2006-01-02', new Date(NaN))).toBe('Invalid Date');
+
+      // Numeric timestamp input
+      expect(formatDate('2006-01-02', timestamp, 'America/Los_Angeles')).toBe('2026-10-11');
+      expect(formatDate('2006-01-02', timestamp, 'Invalid/Timezone')).toBe('2026-10-12');
+      expect(formatDate('2006-01-02', NaN)).toBe('NaN');
+
+      // String without timezone fallback (local date)
+      expect(formatDate('2006-01-02', '2026-10-12T15:30:00')).toBe('2026-10-12');
+      // Unknown object type
+      expect(formatDate('2006-01-02', { foo: 'bar' })).toBe('[object Object]');
     });
 
     it('supports empty or "default" layout', () => {
@@ -269,7 +316,9 @@ describe('format helpers', () => {
           { id: '4', title: 'Currently Ongoing', start: '2026-10-10T15:00:00Z', end: '2026-10-10T16:00:00Z' },
           { id: '5', title: 'Later Today', start: '2026-10-10T18:00:00Z', end: '2026-10-10T19:00:00Z' },
           { id: '6', title: 'Today All-Day', start: '2026-10-10', end: '2026-10-10', all_day: true },
-          { id: '7', title: 'Tomorrow All-Day', start: '2026-10-11', end: '2026-10-11', all_day: true },
+          { id: '7', title: 'Ongoing No End', start: '2026-10-10T15:00:00Z' },
+          { id: '8', title: 'Past No End', start: '2026-10-10T13:00:00Z' },
+          { id: '9', title: 'Tomorrow All-Day', start: '2026-10-11', end: '2026-10-11', all_day: true },
         ],
       };
 
@@ -281,6 +330,7 @@ describe('format helpers', () => {
         'Currently Ongoing',
         'Later Today',
         'Today All-Day',
+        'Ongoing No End',
       ]);
 
       expect(groups[1].date).toBe('2026-10-11');
@@ -378,6 +428,9 @@ describe('format helpers', () => {
       expect(layout?.points[0].tempRound).toBe(72);
       expect(layout?.points[0].timeLabel).toBe('Now');
       expect(layout?.points[0].icon).toBe('weather-sunny');
+
+      const invalidTempLayout = computeHourlyGraphLayout([{ time: '2026-09-26T14:00', temp: NaN }]);
+      expect(invalidTempLayout?.points[0].tempRound).toBe(0);
     });
 
     it('computes layout for multiple points with cubic Bezier paths and 300px default height', () => {
@@ -445,6 +498,148 @@ describe('format helpers', () => {
       expect(layout?.points[0].tempFontSize).toBe(12);
       expect(layout?.points[0].circleR).toBe(3.5);
       expect(layout?.points[0].timeY).toBe(102);
+    });
+  });
+
+  describe('format helpers additional branch coverage', () => {
+    it('covers relDate edge cases', () => {
+      const refTime = new Date('2026-10-27T12:00:00Z');
+      expect(relDate(refTime, null)).toBe('');
+      expect(relDate(refTime, undefined)).toBe('');
+      expect(relDate(refTime, '')).toBe('');
+      expect(relDate(null as unknown as Date, '2026-10-27')).toBe('2026-10-27');
+      expect(relDate(new Date(NaN), '2026-10-27')).toBe('2026-10-27');
+      expect(relDate(refTime, 'invalid-date')).toBe('invalid-date');
+
+      // Yesterday and multiple days ago
+      expect(relDate(refTime, '2026-10-26T12:00:00Z', 'UTC')).toBe('Yesterday');
+      expect(relDate(refTime, '2026-10-23T12:00:00Z', 'UTC')).toBe('4 days ago');
+    });
+
+    it('covers formatTime edge cases: offsets, invalid dates, out-of-range hours', () => {
+      // Timezone offset without valid TZ
+      expect(formatTime('15:04', '2026-10-27T15:30:00+02:00')).toBe('15:30');
+      // Timezone offset with valid TZ
+      expect(formatTime('15:04', '2026-10-27T15:30:00+02:00', 'UTC')).toBe('13:30');
+      // Invalid Date string with Z
+      expect(formatTime('15:04', '99999-99-99T99:99:99Z')).toBe('');
+      // Non-ISO string with valid timezone
+      expect(formatTime('15:04', 'October 27, 2026 15:30:00 GMT', 'America/New_York')).toBe('11:30');
+      // Standalone hour out of range
+      expect(formatTime('15:04', '25:70')).toBe('');
+    });
+
+    it('covers formatDate edge cases: unknown layouts, non-string/non-date types', () => {
+      expect(formatDate('unknown-layout', '2026-10-27')).toBe('2026-10-27');
+      expect(formatDate('2006-01-02', 1761566400000, 'UTC')).toBe('2025-10-27');
+      expect(formatDate('2006-01-02', new Date(NaN))).toBe('Invalid Date');
+      expect(formatTime('3:04 PM', new Date(NaN))).toBe('');
+
+      // Test formatTime and formatDate cache clear branches (>2000 entries)
+      for (let i = 0; i < 2005; i++) {
+        formatTime('15:04', `2026-10-27T10:${String(i % 60).padStart(2, '0')}:${String((i * 7) % 60).padStart(2, '0')}.${String(i).padStart(3, '0')}Z`);
+        formatDate('2006-01-02', `2026-${String((i % 12) + 1).padStart(2, '0')}-${String((i % 28) + 1).padStart(2, '0')}T${String(i % 24).padStart(2, '0')}:00:00.${String(i).padStart(3, '0')}Z`);
+      }
+    });
+
+    it('covers calendarFeedDayGroups and calendarFeedActiveCalendars edge cases', () => {
+      // Direct array input
+      const arrResult = calendarFeedDayGroups(
+        [
+          { title: 'Array Event', start: '2026-10-27T10:00:00Z', end: '2026-10-27T11:00:00Z' },
+          null,
+        ],
+        new Date('2026-10-27T08:00:00Z'),
+        'UTC',
+      );
+      expect(arrResult).toHaveLength(1);
+      expect(arrResult[0].events[0].title).toBe('Array Event');
+
+      // PascalCase fields
+      const pascalResult = calendarFeedDayGroups(
+        {
+          events: [
+            {
+              Title: 'Pascal Title',
+              ID: 'pascal-id-1',
+              Location: 'Meeting Room A',
+              Description: 'Sync demo',
+              CalendarName: 'Work',
+              Color: '#3b82f6',
+              Start: '2026-10-27T14:00:00Z',
+              End: '2026-10-27T15:00:00Z',
+            },
+          ],
+        },
+        new Date('2026-10-27T08:00:00Z'),
+        'UTC',
+      );
+      expect(pascalResult[0].events[0].title).toBe('Pascal Title');
+      expect(pascalResult[0].events[0].id).toBe('pascal-id-1');
+      expect(pascalResult[0].events[0].location).toBe('Meeting Room A');
+      expect(pascalResult[0].events[0].description).toBe('Sync demo');
+      expect(pascalResult[0].events[0].calendarName).toBe('Work');
+      expect(pascalResult[0].events[0].color).toBe('#3b82f6');
+
+      // Active calendars with nullish fields and non-object items
+      const calendars = calendarFeedActiveCalendars([
+        null,
+        { name: null, color: null, enabled: true },
+        { name: 'Alice', color: '#ff0000', enabled: true },
+        { name: 'Bob', enabled: true },
+      ]);
+      expect(calendars).toHaveLength(3);
+      expect(calendars[0].name).toBe('');
+      expect(calendars[0].color).toBeUndefined();
+      expect(calendars[1].name).toBe('Alice');
+      expect(calendars[2].color).toBeUndefined();
+
+      // computeHourlyGraphLayout custom baseY option
+      const pts = [{ time: '2026-09-26T14:00', temp: 70, icon: 'weather-sunny' }];
+      const layout = computeHourlyGraphLayout(pts, undefined, { baseY: 150 });
+      expect(layout?.baseY).toBe(150);
+      expect(formatDate('2006-01-02', true as unknown as string)).toBe('true');
+    });
+
+    it('covers calendarFeedDayGroups edge cases: past events, missing fields', () => {
+      const refTime = new Date('2026-10-27T12:00:00Z');
+      expect(calendarFeedDayGroups(null, refTime)).toEqual([]);
+      expect(calendarFeedDayGroups({ events: null }, refTime)).toEqual([]);
+      expect(calendarFeedDayGroups({ events: [{ title: '', start: '' }] }, refTime)).toEqual([]);
+
+      // Past all-day and timed events filtered out
+      const pastData = {
+        events: [
+          { title: 'Past All Day', start: '2026-10-20', all_day: true },
+          { title: 'Past Timed', start: '2026-10-20T10:00:00Z', end: '2026-10-20T11:00:00Z' },
+          { title: 'Past No End', start: '2026-10-20T10:00:00Z' },
+          {
+            ID: 'multi-1',
+            Title: 'Today Event 1',
+            Start: '2026-10-27T14:00:00Z',
+            Location: 'Main Room',
+            Description: 'Notes',
+            CalendarName: 'Shared',
+            Color: '#fff',
+          },
+          {
+            ID: 'multi-2',
+            Title: 'Today Event 2',
+            Start: '2026-10-27T16:00:00Z',
+          },
+        ],
+      };
+      const groups = calendarFeedDayGroups(pastData, refTime, 'UTC');
+      expect(groups).toHaveLength(1);
+      expect(groups[0].events).toHaveLength(2);
+      expect(groups[0].events[0].location).toBe('Main Room');
+    });
+
+    it('covers todayPrecipProb variations: daily, hourly, and current', () => {
+      expect(todayPrecipProb({ daily: [{ precip_prob: 42 }] })).toBe(42);
+      expect(todayPrecipProb({ daily: [{ PrecipitationProbability: 55 }] })).toBe(55);
+      expect(todayPrecipProb({ hourly: [{ PrecipitationProbability: 65 }] })).toBe(65);
+      expect(todayPrecipProb({ current: { PrecipitationProbability: 75 } })).toBe(75);
     });
   });
 });

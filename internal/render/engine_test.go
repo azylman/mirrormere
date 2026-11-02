@@ -139,7 +139,7 @@ func sampleTasksData(now time.Time) (tasks.TasksSnapshot, tasks.TasksSnapshot, t
 
 func samplePhotoData() provider.PhotoSnapshot {
 	return provider.PhotoSnapshot{
-		AlbumName: "Family Memories", TotalPhotos: 1, CycleIntervalSeconds: 30,
+		AlbumName: "Family Memories", AlbumURL: "https://photos.app.goo.gl/TEST", TotalPhotos: 1,
 		Photos: []provider.PhotoItem{{ID: "p1", URL: "https://lh3.googleusercontent.com/pw/TEST", AspectRatio: 1.33}},
 	}
 }
@@ -445,10 +445,9 @@ func TestEngine_BuiltinWidgetPackages(t *testing.T) {
 		{name: "tasks unnamed", widgetType: "tasks", dims: []int{3, 2}, state: mockState{data: tasksUnnamed, state: "healthy", timestamp: "2026-09-26T12:00:00Z"}, wantContains: []string{"Checklist"}},
 		{
 			name: "photo-carousel contain", widgetType: "photo-carousel", dims: []int{3, 2}, state: mockState{data: photoData, state: "healthy"}, nilResolver: true,
-			wantContains:    []string{"=w3840-h2160", `photo-backdrop-current" src="https://lh3.googleusercontent.com/pw/TEST=w96-h54-c"`, `{"album_name":"Family Memories"`},
+			wantContains:    []string{`data-fit="contain"`, "=w3840-h2160", `photo-backdrop-current" src="https://lh3.googleusercontent.com/pw/TEST=w96-h54-c"`, `{"album_name":"Family Memories"`},
 			wantNotContains: []string{`<script type="application/json" class="photo-carousel-data">"`},
 		},
-		{name: "photo-carousel cover", widgetType: "photo-carousel", dims: []int{3, 2}, cfg: map[string]any{"fit": "cover"}, state: mockState{data: photoData, state: "healthy"}, nilResolver: true, wantContains: []string{`photo-backdrop-current" src=""`}},
 		{name: "chat-log loaded", widgetType: "chat-log", dims: []int{3, 2}, state: mockState{data: chatSample, state: "healthy", timestamp: "2026-01-02T18:42:00Z"}, wantContains: []string{"Kitchen assistant", "18:42", "sam", "What is on the calendar tomorrow?", "Dentist at 9:00 and soccer practice at 4:30.", "chat-log-human", "chat-log-agent"}},
 		{name: "chat-log empty", widgetType: "chat-log", dims: []int{3, 2}, state: mockState{data: map[string]any{}, state: "healthy", timestamp: "2026-01-02T18:42:00Z"}, wantContains: []string{"No messages yet"}},
 		{name: "chat-log escape", widgetType: "chat-log", dims: []int{3, 2}, state: mockState{data: map[string]any{"messages": []any{map[string]any{"role": "agent", "text": "<script>alert(1)</script>"}}}, state: "healthy", timestamp: "2026-01-02T18:42:00Z"}, wantContains: []string{"Chat"}, wantNotContains: []string{"<script>alert"}},

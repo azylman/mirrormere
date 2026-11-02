@@ -32,6 +32,52 @@
   touch-action: none;
 }
 
+.screen-indicator-pin {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 36px;
+  min-height: 0;
+  height: 100%;
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  touch-action: manipulation;
+  color: var(--mm-text-dim, #8b819f);
+  opacity: 0.6;
+  transition: all 0.25s cubic-bezier(0.25, 1, 0.5, 1);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.screen-indicator-pin::before {
+  content: '';
+  position: absolute;
+  top: -8px;
+  bottom: -8px;
+  left: 0;
+  right: 0;
+}
+
+.screen-indicator-pin:hover {
+  opacity: 0.85;
+}
+
+.screen-indicator-pin.active {
+  color: var(--mm-lavender, #8b60ed);
+  opacity: 1;
+  filter: drop-shadow(0 0 6px var(--mm-accent-purple-glow, rgba(139, 96, 237, 0.45)));
+}
+
+:root[data-theme="night"] .screen-indicator-pin.active,
+body[data-theme="night"] .screen-indicator-pin.active,
+#mirrormere-app[data-theme="night"] .screen-indicator-pin.active {
+  color: var(--mm-lavender, #c5a3ff);
+  filter: drop-shadow(0 0 8px rgba(197, 163, 255, 0.55));
+}
+
 /* Same grid as the legacy .grid-canvas (hud.css). Every pane has this geometry. */
 .grid-pane {
   position: absolute;
@@ -1447,6 +1493,31 @@ body.theme-day .widget-yt-music .search-input,
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+.photo-connect-btn {
+  margin-top: 8px;
+  background: var(--mm-accent-purple, #a855f7);
+  color: #fff;
+  border: none;
+  border-radius: 9999px;
+  padding: 8px 18px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(168, 85, 247, 0.4);
+  touch-action: manipulation;
+  user-select: none;
+  transition: transform 0.15s ease, filter 0.15s ease;
+}
+
+.photo-connect-btn:hover {
+  filter: brightness(1.1);
+}
+
+.photo-connect-btn:active {
+  transform: scale(0.96);
+}
+
 
 
 

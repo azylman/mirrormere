@@ -124,10 +124,14 @@ describe('CalendarGridWidget', () => {
 
   it('renders week view by default with days, header, members legend, and events', () => {
     setGridState({ config: { title: 'Family Grid' } });
-    const { container } = render(<CalendarGridWidget id="cal-grid" type="calendar-grid" />);
+    const { container, rerender } = render(<CalendarGridWidget id="cal-grid" type="calendar-grid" />);
 
     expect(container.querySelector('.cf-title')?.textContent).toBe('Family Grid');
     expect(container.querySelector('.cf-range-label.cf-label-week')?.textContent).toBe('Oct 25 – 31, 2026');
+
+    // Re-render with changed type to bust React.memo and trigger memoization cache hit
+    rerender(<CalendarGridWidget id="cal-grid" type="calendar-grid-custom" />);
+    expect(container.querySelector('.cf-title')?.textContent).toBe('Family Grid');
 
     const chips = container.querySelectorAll('.cf-member-chip');
     expect(chips.length).toBe(2);
@@ -1237,6 +1241,162 @@ describe('CalendarGridWidget', () => {
 
       // Verify page-offset is 0 (at baseline, not offset from the paged month)
       expect(container.querySelector('.widget-calendar-grid')?.getAttribute('data-page-offset')).toBe('0');
+    });
+
+    it('renders error banner when widget state is error and opens event modal from month view', () => {
+      setGridState({ state: 'error' });
+      const { container } = render(<CalendarGridWidget id="cal-grid" type="calendar-grid" />);
+      expect(container.querySelector('.widget-error-banner')).not.toBeNull();
+
+      // Switch to month view
+      const monthBtn = container.querySelector('.cf-view-btn[data-view="month"]')!;
+      fireEvent.click(monthBtn);
+
+      // Click month day in month view to open modal (exercises line 304)
+      const dayCell = container.querySelector('.cf-month-day[data-date="2026-10-27"]') as HTMLElement;
+      expect(dayCell).not.toBeNull();
+      fireEvent.click(dayCell);
+
+      expect(container.querySelector('.cf-modal-overlay')).not.toBeNull();
+      expect(container.querySelector('.cf-modal-card')).not.toBeNull();
+    });
+
+    it('filters early_events, late_events, all_day, timed, and month weeks when selectedMember is active', () => {
+      const vmWithAllDayAndWeeks = {
+        ...mockViewModel,
+        week: {
+          ...mockViewModel.week!,
+          days: [
+            ...mockViewModel.week!.days!.slice(0, 2),
+            {
+              ...mockViewModel.week!.days![2],
+              all_day: [{ id: 'ev-ad-1', title: 'Sam All Day', all_day: true, owners: ['Sam'] }],
+              timed: [{ id: 'ev-tm-1', title: 'Sam Timed', all_day: false, owners: ['Sam'] }],
+            },
+            ...mockViewModel.week!.days!.slice(3),
+          ],
+        },
+        month: {
+          ...mockViewModel.month!,
+          weeks: [
+            {
+              week_num: 44,
+              days: mockViewModel.month!.days,
+            },
+          ],
+        },
+      } as unknown as CalendarGridViewModel;
+
+      setGridState({ viewModel: vmWithAllDayAndWeeks });
+      const { container } = render(<CalendarGridWidget id="cal-grid" type="calendar-grid" />);
+
+      // Filter by Alex (so Sam's items get filtered out)
+      const alexChip = container.querySelector('.cf-member-chip[data-member="Alex"]') as HTMLElement;
+      expect(alexChip).not.toBeNull();
+      fireEvent.click(alexChip);
+
+      // Verify Sam's items are filtered
+      expect(container.textContent).not.toContain('Project Demo');
+
+      // Switch to month view and verify weeks and days are filtered
+      const monthBtn = container.querySelector('.cf-view-btn[data-view="month"]')!;
+      fireEvent.click(monthBtn);
+
+      expect(container.querySelector('.widget-calendar-grid')?.getAttribute('data-active-view')).toBe('month');
+    });
+
+    it('covers member text_color vars, default shared_color, range label formatters, and customTitle fallbacks', () => {
+      const strippedVM = {
+        week: {
+          days: mockViewModel.week!.days!,
+          members: [
+            { name: 'Alex', color: '#111', text_color: '#fff' },
+            { name: 'Sam' },
+          ],
+        },
+        month: {
+          days: [
+            {
+              date: '2026-10-25',
+              day_of_month: 25,
+              weekday_abbr: 'Sun',
+              is_current_month: true,
+              is_today: false,
+              is_weekend: true,
+            },
+            {
+              date: '2026-10-26',
+              day_of_month: 26,
+              weekday_abbr: 'Mon',
+              is_current_month: true,
+              is_today: true,
+              is_weekend: false,
+              dots: [{ name: 'Alex', color: '#111' }],
+              events: [{ id: 'm1', title: 'Alex Event', all_day: true, owners: ['Alex'] }],
+            },
+          ],
+        },
+      } as unknown as CalendarGridViewModel;
+
+      setGridState({
+        viewModel: strippedVM,
+        config: { title: '   ' },
+      });
+
+      const { container } = render(<CalendarGridWidget id="cal-grid" type="calendar-grid" />);
+      const grid = container.querySelector('.widget-calendar-grid') as HTMLElement;
+      expect(grid.style.getPropertyValue('--mm-cf-shared')).toBe('#3D405B');
+      expect(grid.style.getPropertyValue('--mm-member-0')).toBe('#111');
+      expect(grid.style.getPropertyValue('--mm-member-0-text')).toBe('#fff');
+      expect(container.textContent).toContain('Calendar');
+
+      // Member filter with dots and events in month view
+      const alexChip = container.querySelector('.cf-member-chip[data-member="Alex"]') as HTMLElement;
+      fireEvent.click(alexChip);
+
+      const monthBtn = container.querySelector('.cf-view-btn[data-view="month"]')!;
+      fireEvent.click(monthBtn);
+      expect(container.textContent).toContain('Alex Event');
+    });
+
+    it('covers default_view month, missing range_label fallbacks, and ISO date modal parsing', () => {
+      // 1. default_view month
+      setGridState({
+        config: { default_view: 'month' },
+        viewModel: {
+          ...mockViewModel,
+          month: {
+            ...mockViewModel.month,
+            month_label: '',
+          },
+          week: {
+            ...mockViewModel.week,
+            range_label: '',
+          },
+        } as unknown as CalendarGridViewModel,
+      });
+
+      const { container } = render(<CalendarGridWidget id="cal-grid" type="calendar-grid" />);
+      expect(container.querySelector('.cf-view-btn[data-view="month"]')?.classList.contains('active')).toBe(true);
+      expect(container.querySelector('.cf-range-label.cf-label-month')?.textContent).toContain('October');
+
+      // Switch to week view to verify week range_label fallback and click event
+      const weekBtn = container.querySelector('.cf-view-btn[data-view="week"]')!;
+      fireEvent.click(weekBtn);
+      expect(container.querySelector('.cf-range-label.cf-label-week')?.textContent).toContain('Oct 25');
+
+      const evEl = container.querySelector('[data-event-id="ev-timed-1"]')!;
+      fireEvent.click(evEl);
+      expect(container.querySelector('.cf-modal-card')).not.toBeNull();
+
+      // 2. data.today and config.days with missing viewModel
+      setGridState({
+        viewModel: null,
+        data: { today: '2026-10-29' },
+        config: { days: 5 },
+      });
+      const { container: dataC } = render(<CalendarGridWidget id="cal-grid" type="calendar-grid" />);
+      expect(dataC.querySelector('.widget-calendar-grid')).not.toBeNull();
     });
   });
 });

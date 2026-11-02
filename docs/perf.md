@@ -83,6 +83,7 @@ connections, so those providers fail fast and the screens still load from config
 (cd web/ui && npm ci && npm run build)
 go build -o bin/server ./cmd/server
 FAMILY_CALENDAR_URL=http://localhost:9/fixture.ics TODOIST_API_TOKEN=fixture-token \
+  GOOGLE_PHOTOS_ALBUM_URL=http://localhost:9/fixture-photos \
   CONFIG_PATH=deploy/examples/config.yaml ./bin/server
 ```
 

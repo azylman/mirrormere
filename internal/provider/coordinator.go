@@ -496,6 +496,20 @@ func (c *ProviderCoordinator) runWorker(ctx context.Context, w *worker) {
 
 	// 1. Initial immediate fetch
 	err := c.fetchAndRecord(ctx, w)
+
+	if pp, ok := w.provider.(*PhotosProvider); ok && pp.Source() == PhotoSourceEmberBridge {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-w.refreshCh:
+				if fetchErr := c.fetchAndRecord(ctx, w); fetchErr != nil {
+					c.logger.Debug("ember_bridge manual refresh fetch failed", "widget_id", w.widgetID, "error", fetchErr)
+				}
+			}
+		}
+	}
+
 	delay := c.backoff.ComputeRetryDelay(err, c.cache.GetConsecutiveFailures(w.widgetID), w.interval)
 
 	timer := time.NewTimer(delay)
@@ -696,9 +710,6 @@ func (c *ProviderCoordinator) buildInitOptions(w *config.WidgetConfig, pkg *doma
 // PushWidgetData ingests an immediate domain data payload for a configured widget instance,
 // validates against response_schema, records into SWR cache and state sink, and broadcasts widget.update.
 func (c *ProviderCoordinator) PushWidgetData(ctx context.Context, widgetID string, data map[string]any) (WidgetPayload, error) {
-	if c.stopped {
-		return WidgetPayload{}, errors.New("coordinator is stopped")
-	}
 	if strings.TrimSpace(widgetID) == "" {
 		return WidgetPayload{}, fmt.Errorf("%w: empty widget ID", ErrWidgetNotFound)
 	}
@@ -715,6 +726,10 @@ func (c *ProviderCoordinator) PushWidgetData(ctx context.Context, widgetID strin
 func (c *ProviderCoordinator) recordPushLocked(widgetID string, data map[string]any) (WidgetPayload, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
+
+	if c.stopped {
+		return WidgetPayload{}, errors.New("coordinator is stopped")
+	}
 
 	if c.snapshot == nil || c.snapshot.Config == nil {
 		return WidgetPayload{}, fmt.Errorf("%w: %q", ErrWidgetNotFound, widgetID)
@@ -744,21 +759,9 @@ func (c *ProviderCoordinator) recordPushLocked(widgetID string, data map[string]
 		pkg = c.snapshot.Packages[targetWidget.Type]
 	}
 
-	if pkg != nil && len(pkg.Manifest.ResponseSchema) > 0 {
-		sch, err := c.getCompiledResponseSchema(targetWidget.Type, pkg.Manifest.ResponseSchema)
-		if err != nil {
-			return WidgetPayload{}, fmt.Errorf("%w: %w", ErrSchemaValidation, err)
-		}
-		valJSON, err := json.Marshal(data)
-		if err != nil {
-			return WidgetPayload{}, fmt.Errorf("%w: %w", ErrSchemaValidation, err)
-		}
-		valDoc, err := jsonschema.UnmarshalJSON(bytes.NewReader(valJSON))
-		if err != nil {
-			return WidgetPayload{}, fmt.Errorf("%w: %w", ErrSchemaValidation, err)
-		}
-		if err := sch.Validate(valDoc); err != nil {
-			return WidgetPayload{}, fmt.Errorf("%w: %w", ErrSchemaValidation, err)
+	if pkg != nil {
+		if err := c.validateResponseSchema(targetWidget.Type, pkg.Manifest.ResponseSchema, data); err != nil {
+			return WidgetPayload{}, err
 		}
 	}
 
@@ -776,6 +779,88 @@ func (c *ProviderCoordinator) recordPushLocked(widgetID string, data map[string]
 	p, _ := c.cache.RecordPush(widgetID, data, now)
 	c.syncStateSink(p)
 	return p, nil
+}
+
+// PushWidgetPhotos ingests a batch of photo URLs for a photo-carousel widget instance,
+// invokes the PhotosProvider IngestPushedPhotos lifecycle, updates SWR cache, and broadcasts widget.update.
+func (c *ProviderCoordinator) PushWidgetPhotos(ctx context.Context, widgetID string, photos []string, albumName string) (WidgetPayload, error) {
+	if strings.TrimSpace(widgetID) == "" {
+		return WidgetPayload{}, fmt.Errorf("%w: empty widget ID", ErrWidgetNotFound)
+	}
+
+	p, err := c.recordPhotoPushLocked(widgetID, photos, albumName)
+	if err != nil {
+		return WidgetPayload{}, err
+	}
+
+	c.broadcastUpdate(p)
+	return p, nil
+}
+
+func (c *ProviderCoordinator) recordPhotoPushLocked(widgetID string, photos []string, albumName string) (WidgetPayload, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	if c.stopped {
+		return WidgetPayload{}, errors.New("coordinator is stopped")
+	}
+
+	if c.snapshot == nil || c.snapshot.Config == nil {
+		return WidgetPayload{}, fmt.Errorf("%w: %q", ErrWidgetNotFound, widgetID)
+	}
+
+	var targetWidget *config.WidgetConfig
+	for i := range c.snapshot.Config.Display.Widgets {
+		if c.snapshot.Config.Display.Widgets[i].ID == widgetID {
+			targetWidget = &c.snapshot.Config.Display.Widgets[i]
+			break
+		}
+	}
+	if targetWidget == nil {
+		return WidgetPayload{}, fmt.Errorf("%w: %q", ErrWidgetNotFound, widgetID)
+	}
+
+	w, ok := c.workers[widgetID]
+	if !ok {
+		return WidgetPayload{}, fmt.Errorf("%w: %q", ErrWidgetNotFound, widgetID)
+	}
+
+	pp, ok := w.provider.(*PhotosProvider)
+	if !ok {
+		return WidgetPayload{}, fmt.Errorf("%w: widget %q does not use photo provider", ErrPhotoPushNotSupported, widgetID)
+	}
+
+	snap, err := pp.IngestPushedPhotos(photos, albumName)
+	if err != nil {
+		return WidgetPayload{}, err
+	}
+
+	now := c.nowFunc()
+	p, _ := c.cache.RecordPush(widgetID, snap, now)
+	c.syncStateSink(p)
+	return p, nil
+}
+
+func (c *ProviderCoordinator) validateResponseSchema(widgetType string, schemaMap map[string]any, data map[string]any) error {
+	if len(schemaMap) == 0 {
+		return nil
+	}
+	sch, err := c.getCompiledResponseSchema(widgetType, schemaMap)
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrSchemaValidation, err)
+	}
+	valJSON, err := json.Marshal(data)
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrSchemaValidation, err)
+	}
+	valDoc, err := jsonschema.UnmarshalJSON(bytes.NewReader(valJSON))
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrSchemaValidation, err)
+	}
+	if err := sch.Validate(valDoc); err != nil {
+		return fmt.Errorf("%w: %w", ErrSchemaValidation, err)
+	}
+	return nil
 }
 
 func (c *ProviderCoordinator) getCompiledResponseSchema(widgetType string, schemaMap map[string]any) (*jsonschema.Schema, error) {

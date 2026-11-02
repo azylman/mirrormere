@@ -155,6 +155,50 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+  /api/widgets/{widget_id}/photos:
+    post:
+      summary: Push realtime photos payload
+      description: Ingests an authenticated or synced photo batch for a photo-carousel widget, updates SWR cache, and broadcasts widget.update over SSE.
+      operationId: postWidgetPhotos
+      parameters:
+        - name: widget_id
+          in: path
+          required: true
+          description: Unique identifier of the target widget instance
+          schema:
+            type: string
+      requestBody:
+        required: true
+        description: Photos push payload containing image URLs and optional album name
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WidgetPhotosRequest'
+      responses:
+        '200':
+          description: Photos push payload accepted and broadcast emitted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WidgetPushResponse'
+        '400':
+          description: Invalid JSON syntax or failed payload validation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Widget not found in active configuration
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Target widget does not support photo push ingestion
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /widget-types/{type}/assets/{path}:
     get:
       summary: Serve static widget package asset
@@ -721,6 +765,17 @@ components:
           type: string
           format: date-time
           example: 2026-09-24T22:20:00Z
+    WidgetPhotosRequest:
+      type: object
+      required:
+        - photos
+      properties:
+        photos:
+          type: array
+          items:
+            type: string
+        album_name:
+          type: string
     WidgetPlacement:
       type: object
       required:
