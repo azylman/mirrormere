@@ -2715,7 +2715,7 @@ button, .touch-target {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 10px;
+  margin-bottom: 6px;
   flex-shrink: 0;
 }
 
@@ -2800,7 +2800,7 @@ button, .touch-target {
   width: 100%;
   justify-content: center;
   align-items: stretch;
-  margin: 4px 0;
+  margin: 0;
   overflow: hidden;
 }
 
@@ -2827,7 +2827,7 @@ button, .touch-target {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding-top: 12px;
+  padding-top: 10px;
   border-top: 1px solid var(--mm-divider);
   margin-top: auto;
   flex-shrink: 0;
