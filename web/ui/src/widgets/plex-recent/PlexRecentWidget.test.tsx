@@ -452,9 +452,9 @@ describe('PlexRecentWidget', () => {
     useDisplayStore.setState({
       widgets: {
         'plex-cov': {
-          html: '',
-          css: '',
-          updatedAt: 1,
+          state: 'ready',
+          data: null,
+          timestamp: '2026-01-01T00:00:00Z',
           meta: { type: 'plex-recent', assets_base: '', origin: [0, 0], dimensions: [1, 1], config: { api_base: '/custom-plex/' } },
         },
       },
