@@ -1,4 +1,4 @@
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { WidgetPlacement } from '../sse/types';
 import { WidgetHost } from '../widgets/WidgetHost';
 import { PaneContext, type PaneContextValue } from './PaneContext';
@@ -114,24 +114,18 @@ function runCoordinator(): void {
  * One screen as a CSS grid. Only the current pane carries `id="grid-canvas"` and the
  * e-ink hydration attributes. Neighbours and parked panes are siblings outside it.
  */
-export const Screen = memo(function Screen({ index, offset, placements, ready }: ScreenProps) {
+export function Screen({ index, offset, placements, ready }: ScreenProps) {
   const isCurrent = offset === 0;
   const ref = useRef<HTMLDivElement>(null);
-  const value = useMemo<PaneContextValue>(() => ({ isCurrentPane: isCurrent, paneIndex: index }), [isCurrent, index]);
+  const value: PaneContextValue = { isCurrentPane: isCurrent, paneIndex: index };
 
   const [hydratedCount, setHydratedCount] = useState<number>(() => (isCurrent ? placements.length : 0));
   const hydratedRef = useRef(hydratedCount);
-  hydratedRef.current = hydratedCount;
-
   const offsetRef = useRef(offset);
-  offsetRef.current = offset;
   const readyRef = useRef(ready);
-  readyRef.current = ready;
   const placementsRef = useRef(placements);
-  placementsRef.current = placements;
 
   if (isCurrent && hydratedCount < placements.length) {
-    hydratedRef.current = placements.length;
     setHydratedCount(placements.length);
   }
 
@@ -165,8 +159,12 @@ export const Screen = memo(function Screen({ index, offset, placements, ready }:
   }, [index]);
 
   useEffect(() => {
+    hydratedRef.current = hydratedCount;
+    offsetRef.current = offset;
+    readyRef.current = ready;
+    placementsRef.current = placements;
     runCoordinator();
-  }, [offset, ready, placements.length, hydratedCount]);
+  }, [offset, ready, placements, hydratedCount]);
 
   // Layout effects run after the cell children have mounted, so the stamp means every
   // widget of the current pane is in the DOM.
@@ -209,4 +207,4 @@ export const Screen = memo(function Screen({ index, offset, placements, ready }:
       </div>
     </PaneContext.Provider>
   );
-});
+}
