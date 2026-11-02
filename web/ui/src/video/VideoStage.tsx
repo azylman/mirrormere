@@ -15,14 +15,6 @@ import type { AudioManagerLike } from './VideoSlot';
 
 export { getNormalizedVideoCoordinates } from './coordinates';
 export type { CoordinateEvent, NormalizedCoordinates } from './coordinates';
-export { VideoSlot } from './VideoSlot';
-export type { AudioManagerLike, VideoSlotProps } from './VideoSlot';
-export { useTouchForwarding } from './useTouchForwarding';
-export type { TouchForwardingHandlers, UseTouchForwardingOptions } from './useTouchForwarding';
-export { useWebRTCStream } from './useWebRTCStream';
-export type { UseWebRTCStreamOptions } from './useWebRTCStream';
-export { useHlsStream } from './useHlsStream';
-export type { UseHlsStreamOptions } from './useHlsStream';
 
 /**
  * Explicitly forces a layout reflow and multi-frame damage commit on the compositor.

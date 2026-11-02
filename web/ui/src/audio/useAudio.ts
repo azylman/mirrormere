@@ -187,11 +187,7 @@ export class AudioController {
   }
 }
 
-/**
- * Alias for AudioController matching legacy AudioManager naming.
- */
-export const AudioManager = AudioController;
-export type AudioManager = AudioController;
+
 
 /**
  * React hook subscribing to display store audio and voice slices,
@@ -235,10 +231,7 @@ export function useAudioController(): AudioController {
   return controller;
 }
 
-/**
- * Alias for useAudioController.
- */
-export const useAudio = useAudioController;
+
 
 declare global {
   interface Window {

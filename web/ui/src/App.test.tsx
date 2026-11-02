@@ -1,6 +1,32 @@
-import { act, cleanup, render } from '@testing-library/react';
+import { act, cleanup, fireEvent, render } from '@testing-library/react';
+import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { App } from './App';
+
+const onChildRender = vi.fn();
+
+function PlainChild({ items, onClick }: { items: string[]; onClick: () => void }) {
+  onChildRender(items);
+  return (
+    <button type="button" onClick={onClick}>
+      {items.join(',')}
+    </button>
+  );
+}
+
+function ParentWithUnrelatedState() {
+  const [counter, setCounter] = useState(0);
+  const items = ['a', 'b'];
+
+  return (
+    <div>
+      <button type="button" data-testid="inc-btn" onClick={() => setCounter((c) => c + 1)}>
+        {counter}
+      </button>
+      <PlainChild items={items} onClick={() => {}} />
+    </div>
+  );
+}
 
 describe('App', () => {
   afterEach(() => {
@@ -31,5 +57,18 @@ describe('App', () => {
     expect(shell?.querySelector('header.header-zone')).not.toBeNull();
     expect(shell?.querySelectorAll('#grid-canvas')).toHaveLength(1);
     expect(shell?.querySelector('.carousel-track')).not.toBeNull();
+  });
+
+  it('preserves child render stability under React Compiler when parent updates unrelated state', () => {
+    onChildRender.mockClear();
+    const { getByTestId } = render(<ParentWithUnrelatedState />);
+    expect(onChildRender).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      fireEvent.click(getByTestId('inc-btn'));
+    });
+
+    expect(getByTestId('inc-btn').textContent).toBe('1');
+    expect(onChildRender).toHaveBeenCalledTimes(1);
   });
 });

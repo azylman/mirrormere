@@ -722,7 +722,7 @@ export interface WeatherHourlyGraphOptions {
   maxPoints?: number;
 }
 
-export interface HourlyPointLayout {
+interface HourlyPointLayout {
   x: number;
   y: number;
   lineY1: number;

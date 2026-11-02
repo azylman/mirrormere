@@ -7,21 +7,11 @@ import { REFETCH_ON_UPDATE, fetchScreenLayouts, fetchWidgetDetail, toWidgetEntry
 import type { CarouselSlice, DisplayData, ScreenSlice, WidgetEntry } from './types';
 
 export type {
-  AudioSlice,
-  CarouselSlice,
   DisplayData,
-  HeaderSlice,
-  ScreenSlice,
-  SystemSlice,
-  ThemeSlice,
-  VideoSlice,
-  VisibilitySlice,
-  VoiceSlice,
   WidgetEntry,
-  WidgetMeta,
 } from './types';
 
-export interface DisplayActions {
+interface DisplayActions {
   /** Apply a batch of server events in one store update. Refetches widgets in REFETCH_ON_UPDATE. */
   applyEvents: (events: BufferedEvent[]) => void;
   /**

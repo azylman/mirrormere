@@ -9,10 +9,10 @@ import type {
   ViewMode,
 } from './types';
 
-export const SHORT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-export const SHORT_WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-export const FULL_WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-export const FULL_MONTHS = [
+const SHORT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const SHORT_WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const FULL_WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const FULL_MONTHS = [
   'January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December',
 ];
@@ -31,8 +31,6 @@ export function formatISODate(d: Date): string {
   const day = String(d.getDate()).padStart(2, '0');
   return `${y}-${m}-${day}`;
 }
-
-export const toISODate = formatISODate;
 
 export function addDays(d: Date, n: number): Date {
   const res = new Date(d.getTime());
@@ -77,8 +75,6 @@ export function formatRangeLabel(start: Date, end: Date): string {
   return `${SHORT_MONTHS[start.getMonth()]} ${start.getDate()}, ${start.getFullYear()} – ${SHORT_MONTHS[end.getMonth()]} ${end.getDate()}, ${end.getFullYear()}`;
 }
 
-export const formatWeekLabel = formatRangeLabel;
-
 export function formatMonthLabel(d: Date): string {
   return `${FULL_MONTHS[d.getMonth()]} ${d.getFullYear()}`;
 }
@@ -90,14 +86,10 @@ export function formatModalDateRange(startDate?: string, endDate?: string): stri
   return startFmt || endFmt;
 }
 
-export const formatModalDateLabel = formatModalDateRange;
-
-export function stripLeadingMealieEmoji(title?: string): string {
+export function stripMealiePrefix(title?: string): string {
   if (!title) return '';
   return title.replace(/^(?:\u{1F37D}\uFE0F?\s*)+/u, '');
 }
-
-export const stripMealiePrefix = stripLeadingMealieEmoji;
 
 export function matchesMemberFilter(
   ev: FamilyEvent,

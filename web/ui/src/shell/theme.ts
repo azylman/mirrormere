@@ -114,7 +114,7 @@ export function applyThemeToDOM(activeTheme: ThemeMode, doc?: Document): void {
   }
 }
 
-export interface UseThemeResult {
+interface UseThemeResult {
   activeTheme: ThemeMode;
   serverTheme: ThemeMode;
   override: ThemeMode | null;
@@ -123,7 +123,7 @@ export interface UseThemeResult {
   buttonAttrs: { mode: 'manual' | 'auto'; ariaLabel: string; title: string };
 }
 
-export function useTheme(): UseThemeResult {
+function useTheme(): UseThemeResult {
   const serverThemeRaw = useDisplayStore((s) => s.theme.theme);
   const serverTheme = normalizeTheme(serverThemeRaw);
   const [override, setOverride] = useState<ThemeMode | null>(() => getStoredThemeOverride());
@@ -159,7 +159,7 @@ export function useTheme(): UseThemeResult {
   };
 }
 
-export const useThemeController = useTheme;
+
 
 export function ThemeToggle() {
   const { activeTheme, buttonAttrs, toggle, resetToAuto } = useTheme();

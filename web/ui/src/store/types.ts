@@ -42,7 +42,7 @@ export interface HeaderSlice {
   weather: HeaderWeather | null;
 }
 
-export interface ThemeSlice {
+interface ThemeSlice {
   theme: string;
 }
 
@@ -60,7 +60,7 @@ export interface SystemSlice {
   bootId: string | null;
 }
 
-export interface VisibilitySlice {
+interface VisibilitySlice {
   /** False while the document is hidden or the page is being unloaded. */
   visible: boolean;
 }

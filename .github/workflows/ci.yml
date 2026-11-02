@@ -228,6 +228,7 @@ jobs:
           set -euo pipefail
           npm ci
           npm run lint
+          npm run deadcode
           npm run typecheck
           npm test
           npm run build

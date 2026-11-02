@@ -53,7 +53,7 @@ export function resetHUD(): void {
   }
 }
 
-export const IDLE_HEADER_VOICE: Readonly<HeaderVoiceViewProps> = Object.freeze({
+const IDLE_HEADER_VOICE: Readonly<HeaderVoiceViewProps> = Object.freeze({
   isActive: false,
   stateClass: '',
   iconKind: 'mic' as VoiceIconKind,
@@ -65,7 +65,7 @@ export const IDLE_HEADER_VOICE: Readonly<HeaderVoiceViewProps> = Object.freeze({
   showProgress: false,
 });
 
-export const IDLE_VOICE_TOAST: Readonly<VoiceToastViewProps> = Object.freeze({
+const IDLE_VOICE_TOAST: Readonly<VoiceToastViewProps> = Object.freeze({
   visible: false,
   stateClass: '',
   badgeText: null,

@@ -16,7 +16,7 @@ import {
   parseTimeMinutes,
   sliceWeekWindow,
   startOfWeek,
-  stripLeadingMealieEmoji,
+  stripMealiePrefix,
 } from './dateUtils';
 import type { FamilyDay, FamilyMonthDay, FamilySpanEvent, FamilyViewModel } from './types';
 
@@ -78,11 +78,11 @@ describe('dateUtils', () => {
   });
 
   it('strips leading Mealie emojis', () => {
-    expect(stripLeadingMealieEmoji('🍽️ Carnitas Tacos')).toBe('Carnitas Tacos');
-    expect(stripLeadingMealieEmoji('🍽️🍽️ Double')).toBe('Double');
-    expect(stripLeadingMealieEmoji('Regular Title')).toBe('Regular Title');
-    expect(stripLeadingMealieEmoji('')).toBe('');
-    expect(stripLeadingMealieEmoji(undefined)).toBe('');
+    expect(stripMealiePrefix('🍽️ Carnitas Tacos')).toBe('Carnitas Tacos');
+    expect(stripMealiePrefix('🍽️🍽️ Double')).toBe('Double');
+    expect(stripMealiePrefix('Regular Title')).toBe('Regular Title');
+    expect(stripMealiePrefix('')).toBe('');
+    expect(stripMealiePrefix(undefined)).toBe('');
   });
 
   it('slices week window for day and week views', () => {

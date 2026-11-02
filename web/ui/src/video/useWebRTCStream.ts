@@ -67,6 +67,10 @@ export function useWebRTCStream({
   onFallback,
   onConnected,
 }: UseWebRTCStreamOptions): void {
+  const streamId = stream?.id;
+  const streamUrl = stream?.stream_url;
+  const streamType = stream?.type;
+
   const onFallbackRef = useRef(onFallback);
   onFallbackRef.current = onFallback;
 
@@ -80,11 +84,10 @@ export function useWebRTCStream({
   pcClassRef.current = RTCPeerConnectionClass;
 
   useEffect(() => {
-    if (!enabled || !stream?.stream_url) {
+    if (!enabled || !streamUrl) {
       return;
     }
 
-    const streamUrl = stream.stream_url;
     let cancelled = false;
     let pc: RTCPeerConnection | null = null;
     let mountedVideoEl: HTMLVideoElement | null = videoRef.current;
@@ -130,7 +133,7 @@ export function useWebRTCStream({
 
       if (reconnectAttempts >= maxReconnectAttempts) {
         console.warn(
-          `[MirrormereVideo] WebRTC stream ${stream.id} reconnect attempts exhausted (${maxReconnectAttempts}). Falling back.`,
+          `[MirrormereVideo] WebRTC stream ${streamId ?? 'unknown'} reconnect attempts exhausted (${maxReconnectAttempts}). Falling back.`,
         );
         onFallbackRef.current?.();
         return;
@@ -422,5 +425,16 @@ export function useWebRTCStream({
       pc = null;
       flushHardwareBuffer();
     };
-  }, [stream?.id, stream?.stream_url, stream?.type, enabled]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [
+    enabled,
+    streamId,
+    streamUrl,
+    streamType,
+    videoRef,
+    negotiationTimeout,
+    disconnectTimeout,
+    maxReconnectAttempts,
+    reconnectBaseDelay,
+    reconnectBackoffFactor,
+  ]);
 }
