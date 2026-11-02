@@ -3,7 +3,7 @@
 // the JSON schemas in api/schemas/*.json. Keep the field names identical to the
 // wire format; the store maps them to camelCase where it needs to.
 
-export interface WidgetUpdatePayload {
+interface WidgetUpdatePayload {
   widget_id: string;
   timestamp: string;
   state: string;
@@ -11,11 +11,11 @@ export interface WidgetUpdatePayload {
   data: unknown;
 }
 
-export interface WidgetReloadPayload {
+interface WidgetReloadPayload {
   type: string;
 }
 
-export interface StyleReloadPayload {
+interface StyleReloadPayload {
   file: string;
   timestamp: string;
 }
@@ -58,14 +58,14 @@ export interface HeaderWeather {
   location?: string;
 }
 
-export interface HeaderUpdatePayload {
+interface HeaderUpdatePayload {
   timestamp: string;
   timezone: string;
   weather?: HeaderWeather;
 }
 
-export type VideoStreamType = 'webrtc' | 'hls' | 'mjpeg';
-export type VideoPlayerState = 'playing' | 'paused' | 'buffering' | 'idle';
+type VideoStreamType = 'webrtc' | 'hls' | 'mjpeg';
+type VideoPlayerState = 'playing' | 'paused' | 'buffering' | 'idle';
 
 export interface VideoSource {
   id: string;
@@ -114,7 +114,7 @@ export interface VoiceStatePayload {
   status: string | null;
 }
 
-export interface ThemeUpdatePayload {
+interface ThemeUpdatePayload {
   theme: string;
 }
 

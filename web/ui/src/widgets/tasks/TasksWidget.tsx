@@ -5,7 +5,7 @@ import { tasksStats } from '../format';
 
 export const TASK_UNDO_GRACE_MS = 3500;
 
-export interface TaskItemRecord {
+interface TaskItemRecord {
   id?: string | number;
   ID?: string | number;
   list_id?: string | number;
@@ -26,7 +26,7 @@ export interface TaskItemRecord {
   [key: string]: unknown;
 }
 
-export interface EffectiveTaskItem extends TaskItemRecord {
+interface EffectiveTaskItem extends TaskItemRecord {
   itemId: string;
   done: boolean;
   isCompleting: boolean;

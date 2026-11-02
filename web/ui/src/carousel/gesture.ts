@@ -4,16 +4,16 @@
  */
 
 /** Swipes that start inside these elements belong to the widget, not the carousel. */
-export const SWIPE_EXCLUDE_SELECTOR = '[data-prevent-screen-swipe]';
+const SWIPE_EXCLUDE_SELECTOR = '[data-prevent-screen-swipe]';
 
 /** Movement before a gesture is classed as horizontal or vertical. */
 export const INTENT_PX = 10;
 /** A release farther than this fraction of the width commits. */
 export const COMMIT_DISTANCE_RATIO = 0.25;
 /** A release faster than this (px/ms, same sign as the drag) commits. */
-export const COMMIT_VELOCITY_PX_PER_MS = 0.4;
+const COMMIT_VELOCITY_PX_PER_MS = 0.4;
 /** Velocity is measured over the last this many milliseconds of samples. */
-export const VELOCITY_WINDOW_MS = 100;
+const VELOCITY_WINDOW_MS = 100;
 
 const MAX_SAMPLES = 32;
 

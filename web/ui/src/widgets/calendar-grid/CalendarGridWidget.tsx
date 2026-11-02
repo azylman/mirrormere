@@ -11,11 +11,11 @@ import {
   formatDayLabel,
   formatModalDateRange,
   formatMonthLabel,
-  formatWeekLabel,
+  formatRangeLabel as formatWeekLabel,
   matchesMemberFilter,
   parseISODate,
   sliceWeekWindow,
-  toISODate,
+  formatISODate as toISODate,
 } from './dateUtils';
 import type {
   FamilyDay,
@@ -28,8 +28,7 @@ import type {
 import { useCalendarRangeData } from './useCalendarRangeData';
 import { useInactivityReset } from './useInactivityReset';
 
-export * from './types';
-export * from './dateUtils';
+export type { CalendarGridViewModel } from './types';
 export { batchFitDayColumnEvents } from './CalendarWeekView';
 
 /**

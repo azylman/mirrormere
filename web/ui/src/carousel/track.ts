@@ -2,7 +2,7 @@ import { beginAnimation, endAnimation } from '../perf/animating';
 
 /** Settle animation: 250 ms, transform only (see the carousel spec). */
 export const SETTLE_MS = 250;
-export const SETTLE_EASING = 'cubic-bezier(.2,.8,.2,1)';
+const SETTLE_EASING = 'cubic-bezier(.2,.8,.2,1)';
 /**
  * Backstop only. The settle ends on transitionend, which fires after the transition
  * actually runs. A timer shorter than the transition's start latency ends the settle

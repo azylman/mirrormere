@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
-import { usePaneActive } from '../../carousel/PaneContext';
+import { useIsCurrentPane } from '../../carousel/PaneContext';
 import { useDocumentVisible } from '../../lifecycle/visibility';
 import { useDisplayStore } from '../../store';
 import { computeNowIndicatorPct, stripMealiePrefix } from './dateUtils';
@@ -85,7 +85,7 @@ export const CalendarWeekView = memo(function CalendarWeekView({
 }: CalendarWeekViewProps) {
   const tz = useDisplayStore((s) => s.header.timezone);
   const isDocVisible = useDocumentVisible();
-  const isPaneActive = usePaneActive();
+  const isPaneActive = useIsCurrentPane();
   const [now, setNow] = useState(() => new Date());
 
   const hasToday = daysToRender.some((d) => d.is_today);

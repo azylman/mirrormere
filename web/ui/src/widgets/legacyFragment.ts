@@ -4,7 +4,7 @@
  */
 
 /** A controller the legacy widget scripts register on window, e.g. window.MirrormereLiveView. */
-export interface LegacyController {
+interface LegacyController {
   mount?: (element: HTMLElement) => unknown;
   unmount?: (widgetId: string) => unknown;
 }

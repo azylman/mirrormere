@@ -8,9 +8,9 @@ export const MOUTH_STEP = 1.875;
 export const LEVEL_GAIN = 2.2;
 export const LEVEL_SPAN = 22;
 export const LEVEL_STALE_MS = 400;
-export const EASE_TAU_MS = 20;
-export const EASE_MAX_DT_MS = 100;
-export const DECAY_TAU_MS = 120;
+const EASE_TAU_MS = 20;
+const EASE_MAX_DT_MS = 100;
+const DECAY_TAU_MS = 120;
 export const DRAW_MIN_MS = 25;
 
 export function clamp(v: number, lo: number, hi: number): number {

@@ -3,12 +3,10 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { useDisplayStore } from '../store';
 import {
   AudioController,
-  AudioManager,
   DUCK_MULTIPLIER,
   DUCK_VOICE_STATES,
   MAX_GAIN,
   computeEffectiveVolume,
-  useAudio,
   useAudioController,
 } from './useAudio';
 
@@ -99,11 +97,7 @@ describe('useAudio & AudioController', () => {
       expect(ctrl.ducked).toBe(true);
     });
 
-    it('exports AudioManager alias matching AudioController', () => {
-      expect(AudioManager).toBe(AudioController);
-      const mgr = new AudioManager({ initialVolume: 80 });
-      expect(mgr.volume).toBe(80);
-    });
+
 
     it('registers media elements and applies volume immediately', () => {
       const ctrl = new AudioController({ initialVolume: 75 });
@@ -199,9 +193,7 @@ describe('useAudio & AudioController', () => {
       expect(window.audioManager).toBeUndefined();
     });
 
-    it('useAudio is an alias for useAudioController', () => {
-      expect(useAudio).toBe(useAudioController);
-    });
+
 
     it('reacts to store audio updates', () => {
       const { result } = renderHook(() => useAudioController());

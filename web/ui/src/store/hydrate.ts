@@ -8,7 +8,7 @@ import type { WidgetEntry } from './types';
  */
 export const REFETCH_ON_UPDATE: ReadonlySet<string> = new Set(['calendar-grid']);
 
-export function widgetDetailURL(id: string): string {
+function widgetDetailURL(id: string): string {
   // Relative, like the legacy api/events URL: resolves under the page's /api prefix.
   return `api/widgets/${encodeURIComponent(id)}`;
 }
@@ -41,7 +41,7 @@ export function toWidgetEntry(body: WidgetDetailResponse): WidgetEntry {
 }
 
 /** Relative, like widgetDetailURL: resolves under the page's /api prefix. */
-export const SCREENS_URL = 'api/screens';
+const SCREENS_URL = 'api/screens';
 
 export async function fetchScreenLayouts(fetchImpl: typeof fetch = fetch): Promise<ScreensResponse> {
   const res = await fetchImpl(SCREENS_URL, { headers: { Accept: 'application/json' } });

@@ -10,7 +10,7 @@ export interface WidgetHostProps {
 }
 
 /** Grid cell style from a placement, as the legacy carousel sets it (1-indexed grid lines). */
-export function cellStyle(origin: [number, number], dimensions: [number, number]): CSSProperties {
+function cellStyle(origin: [number, number], dimensions: [number, number]): CSSProperties {
   const colSpan = dimensions[0] || 1;
   const rowSpan = dimensions[1] || 1;
   return {
