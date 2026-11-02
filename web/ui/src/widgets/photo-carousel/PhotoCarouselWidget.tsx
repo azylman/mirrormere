@@ -8,15 +8,16 @@ import { useDisplayStore } from '../../store';
 import { HudNextIcon, HudPauseIcon, HudPlayIcon, HudPrevIcon } from '../../video/HudIcons';
 import {
   EMPTY_PHOTOS, DEFAULT_CYCLE_SECONDS, PHOTO_CONTROLS_HIDE_MS, PHOTO_PAUSE_INACTIVITY_MS,
+  photoDeckStateById, getPhotoItemKey, selectPreloadPhotoIndices,
   parsePhotoCarouselData, getBackdropPhotoURL, getSizedPhotoURL, useContainerSize,
   registerEmberSyncListener, usePhotoSlideshowTransition, resolvePhotoCarouselSourceAndUrl,
   formatPhotoMetadataLabel, hasMultiplePhotoAlbums,
-  type EmberSyncListener, type PhotoCarouselConfig, type PhotoItem,
+  type ContainerSize, type EmberSyncListener, type PhotoCarouselConfig, type PhotoItem,
 } from './photoCarouselHelpers';
 
 export {
   parsePhotoCarouselData, getBackdropPhotoURL, getSizedPhotoURL, photoDeckStateById,
-  getPhotoItemKey, selectNextPhotoIndex, selectPrevPhotoIndex,
+  getPhotoItemKey, selectNextPhotoIndex, selectPrevPhotoIndex, selectPreloadPhotoIndices,
   formatPhotoOverlayDate, formatPhotoMetadataLabel, hasMultiplePhotoAlbums,
   PHOTO_CONTROLS_HIDE_MS, PHOTO_PAUSE_INACTIVITY_MS,
 } from './photoCarouselHelpers';
@@ -183,6 +184,27 @@ function PhotoMetadataOverlay({ photo, showAlbumName }: { photo?: PhotoItem; sho
   return (
     <div className="photo-metadata-overlay" aria-label={meta.text}>
       {meta.text}
+    </div>
+  );
+}
+
+function PhotoPreloadPool({ photos, baseIndex, widgetId, containerSize }: {
+  photos: readonly PhotoItem[]; baseIndex: number; widgetId: string; containerSize: ContainerSize;
+}) {
+  const indices = selectPreloadPhotoIndices(photos, baseIndex, photoDeckStateById.get(widgetId)?.seenKeys);
+  if (indices.length === 0) return null;
+  return (
+    <div className="photo-preload-pool" aria-hidden="true">
+      {indices.map((idx) => {
+        const p = photos[idx];
+        const rawUrl = p?.url ?? p?.URL;
+        return (
+          <span key={getPhotoItemKey(p, idx)}>
+            <img src={getBackdropPhotoURL(rawUrl)} decoding="async" loading="eager" alt="" />
+            <img src={getSizedPhotoURL(rawUrl, containerSize)} decoding="async" loading="eager" alt="" />
+          </span>
+        );
+      })}
     </div>
   );
 }
@@ -410,6 +432,7 @@ export function PhotoCarouselWidget({ id }: WidgetComponentProps) {
 
   const isTransitioning = Boolean(transitionState?.active);
   const nextPhoto = transitionState ? photos[transitionState.nextIndex] : undefined;
+  const activeIndex = isTransitioning && transitionState ? transitionState.nextIndex : safeIndex;
   const activePhoto = isTransitioning && nextPhoto ? nextPhoto : currentPhoto;
   const nextRawUrl = nextPhoto?.url ?? nextPhoto?.URL;
   const nextFgUrl = nextRawUrl ? getSizedPhotoURL(nextRawUrl, containerSize) : '';
@@ -443,6 +466,12 @@ export function PhotoCarouselWidget({ id }: WidgetComponentProps) {
             currentUrl={currentFgUrl}
             nextUrl={nextFgUrl}
             isTransitioning={isTransitioning}
+          />
+          <PhotoPreloadPool
+            photos={photos}
+            baseIndex={activeIndex}
+            widgetId={id}
+            containerSize={containerSize}
           />
           <PhotoMetadataOverlay photo={activePhoto} showAlbumName={showAlbumName} />
           {photos.length > 1 && (

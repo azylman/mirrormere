@@ -185,3 +185,14 @@ body[data-theme="night"] .photo-pause-pill[data-paused="true"]:hover,
   pointer-events: none;
   user-select: none;
 }
+
+.photo-preload-pool,
+.photo-preload-pool img {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: -1;
+}
