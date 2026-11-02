@@ -1,0 +1,314 @@
+package server
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"strings"
+)
+
+// ErrWidgetActionNotConfigured indicates that neither a caller nor direct proxy URL is configured.
+var ErrWidgetActionNotConfigured = errors.New("widget action caller not configured")
+
+// WidgetActionCaller abstracts widget action execution across upstream providers.
+type WidgetActionCaller interface {
+	CallWidgetAction(ctx context.Context, widgetID, domain, service string, serviceData map[string]any) error
+}
+
+// WidgetActionResponseCaller executes an action and returns updated entity states or results.
+type WidgetActionResponseCaller interface {
+	CallWidgetActionWithResponse(ctx context.Context, widgetID, domain, service string, serviceData map[string]any) (any, error)
+}
+
+// DefaultWidgetActionHandler serves POST /api/widgets/{widget_id}/action.
+type DefaultWidgetActionHandler struct {
+	caller  WidgetActionCaller
+	baseURL string
+	token   string
+	client  *http.Client
+	logger  *slog.Logger
+}
+
+var _ WidgetActionHandler = (*DefaultWidgetActionHandler)(nil)
+
+// WidgetActionOption configures a DefaultWidgetActionHandler.
+type WidgetActionOption func(*DefaultWidgetActionHandler)
+
+// WithWidgetActionCaller injects an external WidgetActionCaller.
+func WithWidgetActionCaller(c WidgetActionCaller) WidgetActionOption {
+	return func(h *DefaultWidgetActionHandler) { h.caller = c }
+}
+
+// WithHAActionClient configures direct Home Assistant proxying with an HTTP client, base URL, and bearer token.
+func WithHAActionClient(client *http.Client, baseURL, token string) WidgetActionOption {
+	return func(h *DefaultWidgetActionHandler) {
+		h.client = client
+		h.baseURL = strings.TrimRight(baseURL, "/")
+		h.token = token
+	}
+}
+
+// WithWidgetActionLogger injects a logger for action dispatch events.
+func WithWidgetActionLogger(logger *slog.Logger) WidgetActionOption {
+	return func(h *DefaultWidgetActionHandler) { h.logger = logger }
+}
+
+// NewDefaultWidgetActionHandler constructs a DefaultWidgetActionHandler.
+func NewDefaultWidgetActionHandler(opts ...WidgetActionOption) *DefaultWidgetActionHandler {
+	h := &DefaultWidgetActionHandler{
+		client: http.DefaultClient,
+	}
+	for _, opt := range opts {
+		opt(h)
+	}
+	return h
+}
+
+// NewWidgetActionHandler constructs a DefaultWidgetActionHandler backed by the provided caller.
+func NewWidgetActionHandler(caller WidgetActionCaller) *DefaultWidgetActionHandler {
+	return NewDefaultWidgetActionHandler(WithWidgetActionCaller(caller))
+}
+
+// WidgetActionRequest represents the incoming JSON body for a widget action.
+type WidgetActionRequest struct {
+	Domain      string         `json:"domain,omitempty"`
+	Service     string         `json:"service,omitempty"`
+	Action      string         `json:"action,omitempty"`
+	EntityID    string         `json:"entity_id,omitempty"`
+	ServiceData map[string]any `json:"service_data,omitempty"`
+	Data        map[string]any `json:"data,omitempty"`
+	Target      map[string]any `json:"target,omitempty"`
+}
+
+// WidgetActionResponse represents the JSON response for a successful widget action.
+type WidgetActionResponse struct {
+	Status   string `json:"status"`
+	WidgetID string `json:"widget_id"`
+	Data     any    `json:"data,omitempty"`
+}
+
+// handleWidgetAction handles POST /api/widgets/{widget_id}/action on Server.
+func (s *Server) handleWidgetAction(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	h := s.widgetActionHandler
+	s.mu.RUnlock()
+	if h == nil {
+		http.NotFound(w, r)
+		return
+	}
+	h.PostWidgetAction(w, r, r.PathValue("widget_id"))
+}
+
+// PostWidgetAction implements the WidgetActionHandler interface.
+func (h *DefaultWidgetActionHandler) PostWidgetAction(w http.ResponseWriter, r *http.Request, widgetID string) {
+	h.handleWidgetAction(w, r, widgetID)
+}
+
+// handleWidgetAction processes a POST /api/widgets/{widget_id}/action request.
+func (h *DefaultWidgetActionHandler) handleWidgetAction(w http.ResponseWriter, r *http.Request, widgetID string) {
+	if !requireCORSAndMethod(w, r, "POST, OPTIONS", http.MethodPost) {
+		return
+	}
+	widgetID = strings.TrimSpace(widgetID)
+	if widgetID == "" || strings.Contains(widgetID, "..") || strings.Contains(widgetID, "/") {
+		writeAPIError(w, http.StatusBadRequest, "invalid widget_id")
+		return
+	}
+
+	domain, service, serviceData, err := parseWidgetActionRequest(w, r)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	// 1. Injected WidgetActionCaller
+	if h.caller != nil {
+		if respCaller, ok := h.caller.(WidgetActionResponseCaller); ok {
+			data, err := respCaller.CallWidgetActionWithResponse(r.Context(), widgetID, domain, service, serviceData)
+			if err != nil {
+				code, msg := mapActionError(err)
+				writeAPIError(w, code, msg)
+				return
+			}
+			writeJSON(w, http.StatusOK, WidgetActionResponse{
+				Status:   "ok",
+				WidgetID: widgetID,
+				Data:     data,
+			})
+			return
+		}
+
+		if err := h.caller.CallWidgetAction(r.Context(), widgetID, domain, service, serviceData); err != nil {
+			code, msg := mapActionError(err)
+			writeAPIError(w, code, msg)
+			return
+		}
+		writeJSON(w, http.StatusOK, WidgetActionResponse{
+			Status:   "ok",
+			WidgetID: widgetID,
+		})
+		return
+	}
+
+	// 2. Direct Home Assistant proxy
+	if h.baseURL != "" {
+		h.proxyDirectHA(w, r, widgetID, domain, service, serviceData)
+		return
+	}
+
+	writeAPIError(w, http.StatusInternalServerError, ErrWidgetActionNotConfigured.Error())
+}
+
+func (h *DefaultWidgetActionHandler) proxyDirectHA(w http.ResponseWriter, r *http.Request, widgetID, domain, service string, serviceData map[string]any) {
+	reqURL := fmt.Sprintf("%s/api/services/%s/%s", strings.TrimRight(h.baseURL, "/"), domain, service)
+	var bodyReader io.Reader
+	if serviceData != nil {
+		bodyBytes, err := json.Marshal(serviceData)
+		if err != nil {
+			writeAPIError(w, http.StatusBadRequest, "failed to marshal service data: "+err.Error())
+			return
+		}
+		bodyReader = bytes.NewReader(bodyBytes)
+	} else {
+		bodyReader = bytes.NewReader([]byte("{}"))
+	}
+
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, reqURL, bodyReader)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "failed to create upstream request: "+err.Error())
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if h.token != "" {
+		req.Header.Set("Authorization", "Bearer "+h.token)
+	}
+
+	client := h.client
+	if client == nil {
+		client = http.DefaultClient
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		writeAPIError(w, http.StatusBadGateway, "upstream service call failed: "+err.Error())
+		return
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		code := resp.StatusCode
+		switch code {
+		case http.StatusUnauthorized:
+			writeAPIError(w, http.StatusUnauthorized, "upstream unauthorized")
+		case http.StatusNotFound:
+			writeAPIError(w, http.StatusNotFound, "upstream service or entity not found")
+		default:
+			if code >= 400 && code < 500 {
+				writeAPIError(w, code, strings.TrimSpace(string(respBody)))
+			} else {
+				writeAPIError(w, http.StatusBadGateway, fmt.Sprintf("upstream returned status %d: %s", code, strings.TrimSpace(string(respBody))))
+			}
+		}
+		return
+	}
+
+	var data any
+	if len(respBody) > 0 {
+		_ = json.Unmarshal(respBody, &data)
+	}
+
+	writeJSON(w, http.StatusOK, WidgetActionResponse{
+		Status:   "ok",
+		WidgetID: widgetID,
+		Data:     data,
+	})
+}
+
+func parseWidgetActionRequest(w http.ResponseWriter, r *http.Request) (string, string, map[string]any, error) {
+	if r.Body == nil {
+		return "", "", nil, errors.New("request body is required")
+	}
+	defer r.Body.Close()
+
+	var req WidgetActionRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+		return "", "", nil, errors.New("invalid request payload")
+	}
+
+	domain := strings.TrimSpace(req.Domain)
+	service := strings.TrimSpace(req.Service)
+	if service == "" && req.Action != "" {
+		if req.Action != "call_service" && req.Action != "call-service" {
+			service = strings.TrimSpace(req.Action)
+		}
+	}
+
+	if parts := strings.SplitN(service, ".", 2); len(parts) == 2 && parts[0] != "" && parts[1] != "" {
+		if domain == "" {
+			domain = strings.TrimSpace(parts[0])
+		}
+		service = strings.TrimSpace(parts[1])
+	} else if parts := strings.SplitN(service, "/", 2); len(parts) == 2 && parts[0] != "" && parts[1] != "" {
+		if domain == "" {
+			domain = strings.TrimSpace(parts[0])
+		}
+		service = strings.TrimSpace(parts[1])
+	}
+
+	if domain == "" || service == "" {
+		return "", "", nil, errors.New("domain and service are required")
+	}
+
+	serviceData := make(map[string]any)
+	if req.ServiceData != nil {
+		for k, v := range req.ServiceData {
+			serviceData[k] = v
+		}
+	}
+	if req.Data != nil {
+		for k, v := range req.Data {
+			serviceData[k] = v
+		}
+	}
+	if req.Target != nil {
+		for k, v := range req.Target {
+			if _, exists := serviceData[k]; !exists {
+				serviceData[k] = v
+			}
+		}
+		serviceData["target"] = req.Target
+	}
+	if req.EntityID != "" {
+		if _, exists := serviceData["entity_id"]; !exists {
+			serviceData["entity_id"] = req.EntityID
+		}
+	}
+
+	return domain, service, serviceData, nil
+}
+
+func mapActionError(err error) (int, string) {
+	if err == nil {
+		return http.StatusOK, ""
+	}
+	msg := err.Error()
+	low := strings.ToLower(msg)
+	switch {
+	case strings.Contains(low, "not found"):
+		return http.StatusNotFound, msg
+	case strings.Contains(low, "unauthorized") || strings.Contains(low, "forbidden"):
+		return http.StatusUnauthorized, msg
+	case strings.Contains(low, "invalid") || strings.Contains(low, "malformed") || strings.Contains(low, "required"):
+		return http.StatusBadRequest, msg
+	case strings.Contains(low, "unreachable") || strings.Contains(low, "connection refused") || strings.Contains(low, "bad gateway"):
+		return http.StatusBadGateway, msg
+	default:
+		return http.StatusInternalServerError, msg
+	}
+}
