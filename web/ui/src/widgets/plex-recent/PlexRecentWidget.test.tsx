@@ -507,7 +507,7 @@ describe('PlexRecentWidget', () => {
     expect(container.querySelector('#detail-summary')?.textContent).toBe('No summary available.');
     fireEvent.click(container.querySelector('#tv-play-btn')!);
     await waitFor(() => {
-      expect(container.querySelector('#tv-play-btn')?.textContent).toContain('Failed');
+      expect(container.querySelector('#tv-play-btn')?.textContent).toContain('Launch Error');
     });
     fireEvent.click(container.querySelector('#close-detail-btn')!);
 
