@@ -730,6 +730,179 @@ describe('WeatherForecastWidget', () => {
     expect(container.querySelector('.weather-school-day-slot-morning')?.textContent).toContain('48°');
     expect(container.querySelector('.weather-school-day-slot-afternoon')?.textContent).toContain('78°');
   });
+
+  it('renders safely when widget id is not found in store', () => {
+    const { container } = render(
+      <WeatherForecastWidget id="non-existent-widget" type="weather-forecast" />,
+    );
+    expect(container.querySelector('.weather-loading')?.textContent).toContain(
+      'Loading weather forecast...',
+    );
+    expect(container.querySelector('.weather-header')).toBeNull();
+  });
+
+  it('renders error banner alongside current weather data when state is error', () => {
+    useDisplayStore.setState({
+      widgets: {
+        'weather-err-with-data': {
+          meta: {
+            type: 'weather-forecast',
+            origin: [0, 0],
+            dimensions: [3, 2],
+            config: { name: 'Faulty Station' },
+            assets_base: '',
+          },
+          state: 'error',
+          data: {
+            current: {
+              temperature: 65,
+              condition_text: 'Degraded',
+            },
+          },
+          timestamp: '2026-10-31T12:00:00Z',
+        },
+      },
+    });
+
+    const { container } = render(
+      <WeatherForecastWidget id="weather-err-with-data" type="weather-forecast" />,
+    );
+    expect(container.querySelector('.widget-error-banner')).not.toBeNull();
+    expect(container.querySelector('.weather-location-name')?.textContent).toBe('Faulty Station');
+    expect(container.querySelector('.weather-temp-main')?.textContent).toContain('65°');
+  });
+
+  it('extracts wind from wind and Wind properties and handles hourly with no temp or precip', () => {
+    useDisplayStore.setState({
+      widgets: {
+        'weather-wind-alt': {
+          meta: {
+            type: 'weather-forecast',
+            origin: [0, 0],
+            dimensions: [3, 2],
+            config: { mode: 'school-day' },
+            assets_base: '',
+          },
+          state: 'healthy',
+          data: {
+            current: {
+              temperature: 70,
+              wind: 14,
+            },
+            hourly: [
+              { time: '2026-10-31T08:00:00Z' },
+              { time: '2026-10-31T14:00:00Z' },
+              { time: '2026-10-31T18:00:00Z' },
+            ],
+          },
+          timestamp: '2026-10',
+        },
+      },
+    });
+
+    const { container, rerender } = render(
+      <WeatherForecastWidget id="weather-wind-alt" type="weather-forecast" />,
+    );
+    expect(container.querySelector('.weather-meta-wind')?.textContent).toContain('14 mph');
+
+    // Also test PascalCase Wind and empty slots
+    useDisplayStore.setState({
+      widgets: {
+        'weather-wind-alt': {
+          meta: {
+            type: 'weather-forecast',
+            origin: [0, 0],
+            dimensions: [3, 2],
+            config: { mode: 'school-day' },
+            assets_base: '',
+          },
+          state: 'healthy',
+          data: {
+            current: {
+              temperature: 70,
+              Wind: 18,
+            },
+            slots: {
+              morning: {},
+              afternoon: {},
+              evening: {},
+            },
+          },
+          timestamp: '',
+        },
+      },
+    });
+
+    rerender(<WeatherForecastWidget id="weather-wind-alt" type="weather-forecast" />);
+    expect(container.querySelector('.weather-meta-wind')?.textContent).toContain('18 mph');
+    expect(container.querySelector('.weather-school-day-slot-morning')?.textContent).toContain('0°');
+  });
+
+  it('covers PascalCase Hourly properties for all daypart slots', () => {
+    useDisplayStore.setState({
+      widgets: {
+        'weather-pascal-hourly': {
+          meta: {
+            type: 'weather-forecast',
+            origin: [0, 0],
+            dimensions: [2, 3],
+            config: { mode: 'school-day' },
+            assets_base: '',
+          },
+          state: 'healthy',
+          data: {
+            Current: { Temperature: 60 },
+            Hourly: [
+              { Time: '2026-10-31T08:00:00Z', Temp: 52, PrecipProb: 5, Icon: 'weather-sunny' },
+              { Time: '2026-10-31T14:00:00Z', Temp: 74, PrecipProb: 15, Icon: 'weather-partly-cloudy' },
+              { Time: '2026-10-31T18:00:00Z', Temp: 58, PrecipProb: 10, Icon: 'weather-clear-night' },
+            ],
+          },
+          timestamp: '2026-10-31T12:00:00Z',
+        },
+      },
+    });
+
+    const { container } = render(
+      <WeatherForecastWidget id="weather-pascal-hourly" type="weather-forecast" />,
+    );
+    expect(container.querySelector('.weather-school-day-slot-morning')?.textContent).toContain('52°');
+    expect(container.querySelector('.weather-school-day-slot-afternoon')?.textContent).toContain('74°');
+    expect(container.querySelector('.weather-school-day-slot-evening')?.textContent).toContain('58°');
+  });
+
+  it('covers fallbackSlotWeather without daily and without current', () => {
+    useDisplayStore.setState({
+      widgets: {
+        'weather-fallback-nodaily': {
+          meta: {
+            type: 'weather-forecast',
+            origin: [0, 0],
+            dimensions: [2, 3],
+            config: {
+              mode: 'school-day',
+            },
+            assets_base: '',
+          },
+          state: 'healthy',
+          data: {
+            temperature: 62,
+            daily: [],
+          },
+          timestamp: 'short',
+        },
+      },
+    });
+
+    const { container } = render(
+      <WeatherForecastWidget id="weather-fallback-nodaily" type="weather-forecast" />,
+    );
+    const slots = container.querySelectorAll('.weather-school-day-slot');
+    expect(slots.length).toBe(3);
+    expect(container.querySelector('.weather-school-day-slot-morning')?.textContent).toContain('62°');
+    expect(container.querySelector('.weather-school-day-slot-afternoon')?.textContent).toContain('62°');
+    expect(container.querySelector('.weather-school-day-slot-evening')?.textContent).toContain('62°');
+  });
 });
 
 describe('schoolDayPack utilities', () => {
@@ -1292,5 +1465,144 @@ describe('WeatherHourlyGraph component', () => {
       </svg>,
     );
     expect(cGlyphSymbols.querySelector('path')).not.toBeNull();
+  });
+
+  it('exercises React compiler memoization on WeatherIcon and WeatherIconGlyph across all tokens', () => {
+    const allTokens = [
+      'weather-sunny',
+      'weather-clear-night',
+      'weather-partly-cloudy',
+      'weather-night-partly-cloudy',
+      'weather-cloudy',
+      'weather-fog',
+      'weather-rainy',
+      'weather-pouring',
+      'weather-snowy',
+      'weather-snowy-rainy',
+      'weather-lightning',
+      'weather-lightning-rainy',
+      'unknown-token',
+      '',
+    ];
+
+    for (const token of allTokens) {
+      const { rerender: rerenderGlyph, unmount: unmountGlyph } = render(
+        <svg>
+          <WeatherIconGlyph name={token} />
+        </svg>,
+      );
+      rerenderGlyph(
+        <svg>
+          <WeatherIconGlyph name={token} />
+        </svg>,
+      );
+      unmountGlyph();
+
+      const { rerender: rerenderIcon, unmount: unmountIcon } = render(
+        <WeatherIcon name={token} size={24} className="test-icon" />,
+      );
+      rerenderIcon(<WeatherIcon name={token} size={24} className="test-icon" />);
+      unmountIcon();
+    }
+  });
+
+  it('renders widget error banner when widget state is error', () => {
+    useDisplayStore.setState({
+      widgets: {
+        'weather-error-widget': {
+          meta: {
+            type: 'weather-forecast',
+            origin: [0, 0],
+            dimensions: [3, 2],
+            config: {},
+            assets_base: '',
+          },
+          state: 'error',
+          data: {
+            current: {
+              temperature: 65,
+            },
+          },
+          timestamp: '2026-10-31T12:00:00Z',
+        },
+      },
+    });
+
+    const { container } = render(
+      <WeatherForecastWidget id="weather-error-widget" type="weather-forecast" />,
+    );
+    expect(container.querySelector('.widget-error-banner')).not.toBeNull();
+    expect(container.querySelector('.widget-error-banner')?.textContent).toContain('Widget Error');
+  });
+
+  it('handles hourly slot resolution when time strings are missing and exercises hourly index fallback', () => {
+    useDisplayStore.setState({
+      widgets: {
+        'weather-hourly-no-time': {
+          meta: {
+            type: 'weather-forecast',
+            origin: [0, 0],
+            dimensions: [3, 2],
+            config: { mode: 'school-day' },
+            assets_base: '',
+          },
+          state: 'healthy',
+          data: {
+            current: {
+              Temperature: 64,
+            },
+            hourly: [
+              { Temp: 58, PrecipProb: 10 },
+              { Temp: 68, PrecipProb: 20 },
+              { Temp: 62, PrecipProb: 30 },
+            ],
+          },
+          timestamp: '2026-10-31T12:00:00Z',
+        },
+      },
+    });
+
+    const { container } = render(
+      <WeatherForecastWidget id="weather-hourly-no-time" type="weather-forecast" />,
+    );
+    const strip = container.querySelector('.weather-school-day-strip');
+    expect(strip).not.toBeNull();
+    const morningSlot = strip?.querySelector('.weather-school-day-slot-morning');
+    expect(morningSlot?.textContent).toContain('58°');
+    const afternoonSlot = strip?.querySelector('.weather-school-day-slot-afternoon');
+    expect(afternoonSlot?.textContent).toContain('68°');
+    const eveningSlot = strip?.querySelector('.weather-school-day-slot-evening');
+    expect(eveningSlot?.textContent).toContain('62°');
+  });
+
+  it('handles school-day mode with fallback slot weather using PascalCase Temperature without daily or hourly', () => {
+    useDisplayStore.setState({
+      widgets: {
+        'weather-fallback-pascal': {
+          meta: {
+            type: 'weather-forecast',
+            origin: [0, 0],
+            dimensions: [3, 2],
+            config: { mode: 'school-day' },
+            assets_base: '',
+          },
+          state: 'healthy',
+          data: {
+            current: {
+              Temperature: 55,
+              ConditionText: 'Cloudy',
+            },
+          },
+          timestamp: '2026-10-31T12:00:00Z',
+        },
+      },
+    });
+
+    const { container } = render(
+      <WeatherForecastWidget id="weather-fallback-pascal" type="weather-forecast" />,
+    );
+    const strip = container.querySelector('.weather-school-day-strip');
+    expect(strip).not.toBeNull();
+    expect(strip?.textContent).toContain('55°');
   });
 });
