@@ -2,6 +2,8 @@ import { useDisplayStore } from '../store';
 import { isExcludedTarget, releaseDirection, SwipeGesture, type Direction, type PointerSample, type SwipeRelease } from './gesture';
 import { TrackAnimator } from './track';
 
+export const INACTIVITY_HOLD_MS = 60_000;
+
 export interface CarouselHost {
   /** Shows `index` as the current screen (React state). */
   commit(index: number): void;
@@ -48,6 +50,9 @@ export class CarouselController {
   /** Last index the host rendered (starts at the initial screen). */
   private lastRendered: number;
   private detachStore: (() => void) | null = null;
+  private pinnedState = false;
+  private holdTimer: ReturnType<typeof setTimeout> | null = null;
+  private activityRoot: HTMLElement | null = null;
 
   constructor(private readonly options: CarouselControllerOptions) {
     this.shown = options.initial;
@@ -61,13 +66,55 @@ export class CarouselController {
     return this.shown;
   }
 
+  get pinned(): boolean {
+    return this.pinnedState;
+  }
+
+  get held(): boolean {
+    return this.pinnedState || this.holdTimer !== null;
+  }
+
+  setPinned(pinned: boolean): void {
+    this.clearHoldTimer();
+    this.pinnedState = pinned;
+    if (!pinned) {
+      this.drainQueue();
+    }
+  }
+
+  recordActivity(): void {
+    this.clearHoldTimer();
+    this.holdTimer = setTimeout(() => {
+      this.holdTimer = null;
+      this.drainQueue();
+    }, INACTIVITY_HOLD_MS);
+  }
+
+  private clearHoldTimer(): void {
+    if (this.holdTimer !== null) {
+      clearTimeout(this.holdTimer);
+      this.holdTimer = null;
+    }
+  }
+
+  private readonly onActivity = (event: Event): void => {
+    if (event.target instanceof Element && event.target.closest('.screen-indicator-pin')) return;
+    this.recordActivity();
+  };
+
   attach(): void {
     const { viewport } = this.options;
     viewport.addEventListener('pointerdown', this.onPointerDown);
     viewport.addEventListener('pointermove', this.onPointerMove);
     viewport.addEventListener('pointerup', this.onPointerUp);
     viewport.addEventListener('pointercancel', this.onPointerCancel);
+    viewport.addEventListener('wheel', this.onActivity, { passive: true });
     window.addEventListener('message', this.onMessage);
+    this.activityRoot = viewport.closest<HTMLElement>('#mirrormere-app') ?? document.getElementById('mirrormere-app');
+    if (this.activityRoot) {
+      this.activityRoot.addEventListener('pointerdown', this.onActivity);
+      this.activityRoot.addEventListener('wheel', this.onActivity, { passive: true });
+    }
     this.detachStore = useDisplayStore.subscribe((state, prev) => {
       if (state.screen.totalScreens !== prev.screen.totalScreens) {
         this.layoutChanged(state.screen.totalScreens);
@@ -81,12 +128,19 @@ export class CarouselController {
   }
 
   dispose(): void {
+    this.clearHoldTimer();
     const { viewport } = this.options;
     viewport.removeEventListener('pointerdown', this.onPointerDown);
     viewport.removeEventListener('pointermove', this.onPointerMove);
     viewport.removeEventListener('pointerup', this.onPointerUp);
     viewport.removeEventListener('pointercancel', this.onPointerCancel);
+    viewport.removeEventListener('wheel', this.onActivity);
     window.removeEventListener('message', this.onMessage);
+    if (this.activityRoot) {
+      this.activityRoot.removeEventListener('pointerdown', this.onActivity);
+      this.activityRoot.removeEventListener('wheel', this.onActivity);
+      this.activityRoot = null;
+    }
     this.releaseWindowListeners();
     this.detachStore?.();
     this.detachStore = null;
@@ -104,7 +158,7 @@ export class CarouselController {
       this.queued = null;
       return;
     }
-    if (this.isBusy()) {
+    if (this.isBusy() || this.held) {
       this.queued = index;
       return;
     }
@@ -138,6 +192,7 @@ export class CarouselController {
    * Drops any queued rotate: the layout it was for no longer exists.
    */
   reset(index: number): void {
+    this.clearHoldTimer();
     this.pointerId = null;
     this.gesture.cancel();
     // Cancels any settle without running its callback, and any pending frame.
@@ -182,6 +237,9 @@ export class CarouselController {
 
   /** Slides to an adjacent screen; jumps to a non-adjacent one. */
   private go(index: number, select: boolean): void {
+    if (select) {
+      this.queued = null;
+    }
     const direction = this.directionTo(index);
     if (direction === null) {
       this.commit(index, select);
@@ -203,7 +261,7 @@ export class CarouselController {
   }
 
   private drainQueue(): void {
-    if (this.queued === null || this.isBusy()) return;
+    if (this.queued === null || this.isBusy() || this.held) return;
     const next = this.queued;
     this.queued = null;
     this.requestShow(next);
@@ -215,6 +273,9 @@ export class CarouselController {
 
   private readonly onPointerDown = (event: PointerEvent): void => {
     if (event.isPrimary === false || this.pointerId !== null) return;
+    if (isExcludedTarget(event.target)) {
+      this.recordActivity();
+    }
     const allowed = this.canSwipe() && !this.isBusy() && !isExcludedTarget(event.target);
     if (!this.gesture.begin(this.sample(event), allowed)) return;
     this.pointerId = event.pointerId ?? 0;
