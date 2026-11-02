@@ -1,4 +1,3 @@
-import { memo } from 'react';
 import { stripMealiePrefix } from './dateUtils';
 import type { FamilyEvent, FamilyMember, FamilyMonthViewModel, ViewMode } from './types';
 
@@ -10,7 +9,7 @@ export interface CalendarMonthViewProps {
   onSelectDay?: (date: string) => void;
 }
 
-export const CalendarMonthView = memo(function CalendarMonthView({
+export function CalendarMonthView({
   activeView,
   monthVM,
   members,
@@ -285,4 +284,4 @@ export const CalendarMonthView = memo(function CalendarMonthView({
       )}
     </div>
   );
-});
+}

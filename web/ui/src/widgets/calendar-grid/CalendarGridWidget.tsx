@@ -1,4 +1,4 @@
-import { memo, useCallback, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { useWidget } from '../../store/hooks';
 import type { WidgetComponentProps } from '../registry';
 import { CalendarEventModal } from './CalendarEventModal';
@@ -35,7 +35,7 @@ export { batchFitDayColumnEvents } from './CalendarWeekView';
  * Native React calendar grid and family planner widget.
  * Ports widgets/calendar-grid/views/widget.html and web/static/js/calendar_family.js.
  */
-export const CalendarGridWidget = memo(function CalendarGridWidget({
+export function CalendarGridWidget({
   id,
 }: WidgetComponentProps) {
   const entry = useWidget(id);
@@ -58,28 +58,30 @@ export const CalendarGridWidget = memo(function CalendarGridWidget({
   const [activeModalEvent, setActiveModalEvent] = useState<FamilyEvent | null>(null);
   const [activeModalDateLabel, setActiveModalDateLabel] = useState<string>('');
 
-  const todayStr = useMemo(() => {
-    const vmToday = (entry?.viewModel as Record<string, unknown> | undefined)?.week as Record<string, unknown> | undefined;
-    if (typeof vmToday?.today === 'string') return vmToday.today;
-    const vmMonth = (entry?.viewModel as Record<string, unknown> | undefined)?.month as Record<string, unknown> | undefined;
-    if (typeof vmMonth?.today === 'string') return vmMonth.today;
-    if (typeof data?.today === 'string') return data.today;
-    return toISODate(new Date());
-  }, [entry?.viewModel, data]);
+  const vmToday = (entry?.viewModel as Record<string, unknown> | undefined)?.week as Record<string, unknown> | undefined;
+  const vmMonth = (entry?.viewModel as Record<string, unknown> | undefined)?.month as Record<string, unknown> | undefined;
+  const todayStr =
+    typeof vmToday?.today === 'string'
+      ? vmToday.today
+      : typeof vmMonth?.today === 'string'
+      ? vmMonth.today
+      : typeof data?.today === 'string'
+      ? data.today
+      : toISODate(new Date());
 
-  const baseDate = useMemo(() => parseISODate(todayStr), [todayStr]);
+  const baseDate = parseISODate(todayStr);
 
-  const baseWeekStart = useMemo(() => {
-    const vmWeek = (entry?.viewModel as Record<string, unknown> | undefined)?.week as Record<string, unknown> | undefined;
-    return typeof vmWeek?.range_start === 'string' ? parseISODate(vmWeek.range_start) : baseDate;
-  }, [entry?.viewModel, baseDate]);
+  const vmWeek = (entry?.viewModel as Record<string, unknown> | undefined)?.week as Record<string, unknown> | undefined;
+  const baseWeekStart = typeof vmWeek?.range_start === 'string' ? parseISODate(vmWeek.range_start) : baseDate;
 
-  const weekStep = useMemo(() => {
-    const baseDays = ((entry?.viewModel as Record<string, unknown> | undefined)?.week as FamilyViewModel | undefined)?.days;
-    if (Array.isArray(baseDays) && baseDays.length > 0) return baseDays.length;
-    const cfgDays = Number(config?.days);
-    return Number.isFinite(cfgDays) && cfgDays > 0 ? Math.round(cfgDays) : 7;
-  }, [entry?.viewModel, config?.days]);
+  const baseDays = ((entry?.viewModel as Record<string, unknown> | undefined)?.week as FamilyViewModel | undefined)?.days;
+  const cfgDays = Number(config?.days);
+  const weekStep =
+    Array.isArray(baseDays) && baseDays.length > 0
+      ? baseDays.length
+      : Number.isFinite(cfgDays) && cfgDays > 0
+      ? Math.round(cfgDays)
+      : 7;
 
   // Ref for user activity hook so range data callbacks can notify inactivity timer
   const activityCallbackRef = useRef<() => void>(() => {});
@@ -112,12 +114,12 @@ export const CalendarGridWidget = memo(function CalendarGridWidget({
     onActivity: () => activityCallbackRef.current(),
   });
 
-  const handleInactivityReset = useCallback(() => {
+  const handleInactivityReset = () => {
     setActiveModalEvent(null);
     setActiveModalDateLabel('');
     setSelectedMember(null);
     resetToBaseline(defaultView);
-  }, [defaultView, resetToBaseline]);
+  };
 
   const isInteractive =
     Boolean(activeModalEvent) ||
@@ -129,39 +131,36 @@ export const CalendarGridWidget = memo(function CalendarGridWidget({
     isInteractive,
     onReset: handleInactivityReset,
   });
-  activityCallbackRef.current = handleUserActivity;
 
-  const handleSelectMember = useCallback(
-    (name: string) => {
-      setSelectedMember((prev) => (prev === name ? null : name));
-      handleUserActivity();
-    },
-    [handleUserActivity]
-  );
+  useEffect(() => {
+    activityCallbackRef.current = handleUserActivity;
+  }, [handleUserActivity]);
 
-  const openModal = useCallback(
-    (ev: FamilyEvent, dateStr?: string, endDateStr?: string) => {
-      const resolvedStart =
-        dateStr || (ev.start && /^\d{4}-\d{2}-\d{2}/.test(ev.start) ? ev.start.slice(0, 10) : undefined);
-      const resolvedEnd =
-        endDateStr || (ev.end && /^\d{4}-\d{2}-\d{2}/.test(ev.end) ? ev.end.slice(0, 10) : undefined);
-      setActiveModalEvent(ev);
-      setActiveModalDateLabel(formatModalDateRange(resolvedStart, resolvedEnd));
-      handleUserActivity();
-    },
-    [handleUserActivity]
-  );
+  const handleSelectMember = (name: string) => {
+    setSelectedMember((prev) => (prev === name ? null : name));
+    handleUserActivity();
+  };
 
-  const closeModal = useCallback(() => {
+  const openModal = (ev: FamilyEvent, dateStr?: string, endDateStr?: string) => {
+    const resolvedStart =
+      dateStr || (ev.start && /^\d{4}-\d{2}-\d{2}/.test(ev.start) ? ev.start.slice(0, 10) : undefined);
+    const resolvedEnd =
+      endDateStr || (ev.end && /^\d{4}-\d{2}-\d{2}/.test(ev.end) ? ev.end.slice(0, 10) : undefined);
+    setActiveModalEvent(ev);
+    setActiveModalDateLabel(formatModalDateRange(resolvedStart, resolvedEnd));
+    handleUserActivity();
+  };
+
+  const closeModal = () => {
     setActiveModalEvent(null);
     setActiveModalDateLabel('');
     handleUserActivity();
-  }, [handleUserActivity]);
+  };
 
   const weekVM = currentViewModel?.week as FamilyViewModel | undefined;
   const monthVM = currentViewModel?.month as FamilyMonthViewModel | undefined;
 
-  const memberCssVars = useMemo(() => {
+  const memberCssVars: CSSProperties = (() => {
     const vars: Record<string, string> = {};
     const sharedColor = weekVM?.shared_color || monthVM?.shared_color || '#3D405B';
     vars['--mm-cf-shared'] = sharedColor;
@@ -171,7 +170,7 @@ export const CalendarGridWidget = memo(function CalendarGridWidget({
       if (m.text_color) vars[`--mm-member-${i}-text`] = m.text_color;
     });
     return vars as CSSProperties;
-  }, [weekVM, monthVM]);
+  })();
 
   let rangeLabelWeek = weekVM?.range_label || '';
   if (!rangeLabelWeek && currentWeekStart) {
@@ -187,11 +186,9 @@ export const CalendarGridWidget = memo(function CalendarGridWidget({
   const rangeLabelDay = formatDayLabel(currentDate);
   const currentDateISO = toISODate(currentDate);
 
-  const rawDaysToRender: FamilyDay[] = useMemo(() => {
-    return sliceWeekWindow(weekVM?.days, activeView, currentDateISO);
-  }, [weekVM?.days, activeView, currentDateISO]);
+  const rawDaysToRender: FamilyDay[] = sliceWeekWindow(weekVM?.days, activeView, currentDateISO);
 
-  const daysToRender: FamilyDay[] = useMemo(() => {
+  const daysToRender: FamilyDay[] = (() => {
     if (!selectedMember) return rawDaysToRender;
     const membersList = weekVM?.members || monthVM?.members || [];
     return rawDaysToRender.map((day) => ({
@@ -202,19 +199,17 @@ export const CalendarGridWidget = memo(function CalendarGridWidget({
       all_day: day.all_day?.filter((ev) => matchesMemberFilter(ev, selectedMember, membersList)),
       timed: day.timed?.filter((ev) => matchesMemberFilter(ev, selectedMember, membersList)),
     }));
-  }, [rawDaysToRender, selectedMember, weekVM?.members, monthVM?.members]);
+  })();
 
-  const rawVisibleAllDayEvents = useMemo(() => {
-    return computeDayLayout(weekVM?.all_day_events, weekVM?.days, activeView, currentDateISO);
-  }, [weekVM?.all_day_events, weekVM?.days, activeView, currentDateISO]);
+  const rawVisibleAllDayEvents = computeDayLayout(weekVM?.all_day_events, weekVM?.days, activeView, currentDateISO);
 
-  const visibleAllDayEvents = useMemo(() => {
+  const visibleAllDayEvents = (() => {
     if (!selectedMember) return rawVisibleAllDayEvents;
     const membersList = weekVM?.members || monthVM?.members || [];
     return rawVisibleAllDayEvents.filter((ev) => matchesMemberFilter(ev, selectedMember, membersList));
-  }, [rawVisibleAllDayEvents, selectedMember, weekVM?.members, monthVM?.members]);
+  })();
 
-  const filteredMonthVM = useMemo(() => {
+  const filteredMonthVM = (() => {
     if (!monthVM) return undefined;
     if (!selectedMember) return monthVM;
     const membersList = weekVM?.members || monthVM?.members || [];
@@ -244,7 +239,7 @@ export const CalendarGridWidget = memo(function CalendarGridWidget({
           }))
         : undefined,
     };
-  }, [monthVM, selectedMember, weekVM?.members]);
+  })();
 
   const customTitle =
     typeof config?.title === 'string' && config.title.trim() !== '' ? config.title.trim() : 'Calendar';
@@ -312,4 +307,4 @@ export const CalendarGridWidget = memo(function CalendarGridWidget({
       />
     </div>
   );
-});
+}

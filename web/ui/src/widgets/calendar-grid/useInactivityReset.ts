@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import { useDisplayStore } from '../../store';
 
 export interface UseInactivityResetProps {
@@ -13,16 +13,19 @@ export function useInactivityReset({
   const hasPausedStoreRef = useRef(false);
   const inactivityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onResetRef = useRef(onReset);
-  onResetRef.current = onReset;
 
-  const clearInactivityTimer = useCallback(() => {
+  useEffect(() => {
+    onResetRef.current = onReset;
+  }, [onReset]);
+
+  const clearInactivityTimer = () => {
     if (inactivityTimerRef.current) {
       clearTimeout(inactivityTimerRef.current);
       inactivityTimerRef.current = null;
     }
-  }, []);
+  };
 
-  const resetInactivityTimer = useCallback(() => {
+  const resetInactivityTimer = () => {
     clearInactivityTimer();
     inactivityTimerRef.current = setTimeout(() => {
       onResetRef.current();
@@ -31,13 +34,20 @@ export function useInactivityReset({
         hasPausedStoreRef.current = false;
       }
     }, 60000);
-  }, [clearInactivityTimer]);
+  };
 
-  const handleUserActivity = useCallback(() => {
+  const handleUserActivity = () => {
     if (hasPausedStoreRef.current || inactivityTimerRef.current !== null) {
       resetInactivityTimer();
     }
-  }, [resetInactivityTimer]);
+  };
+
+  const clearInactivityTimerRef = useRef(clearInactivityTimer);
+  const resetInactivityTimerRef = useRef(resetInactivityTimer);
+  useEffect(() => {
+    clearInactivityTimerRef.current = clearInactivityTimer;
+    resetInactivityTimerRef.current = resetInactivityTimer;
+  });
 
   useEffect(() => {
     if (isInteractive) {
@@ -45,25 +55,25 @@ export function useInactivityReset({
         useDisplayStore.getState().pause();
         hasPausedStoreRef.current = true;
       }
-      resetInactivityTimer();
+      resetInactivityTimerRef.current();
     } else {
-      clearInactivityTimer();
+      clearInactivityTimerRef.current();
       if (hasPausedStoreRef.current) {
         useDisplayStore.getState().resume();
         hasPausedStoreRef.current = false;
       }
     }
-  }, [isInteractive, resetInactivityTimer, clearInactivityTimer]);
+  }, [isInteractive]);
 
   useEffect(() => {
     return () => {
-      clearInactivityTimer();
+      clearInactivityTimerRef.current();
       if (hasPausedStoreRef.current) {
         useDisplayStore.getState().resume();
         hasPausedStoreRef.current = false;
       }
     };
-  }, [clearInactivityTimer]);
+  }, []);
 
   return {
     handleUserActivity,
