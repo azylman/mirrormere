@@ -199,6 +199,62 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+  /api/widgets/{widget_id}/action:
+    post:
+      summary: Dispatch interactive widget service action
+      description: Executes a domain service call (e.g. Home Assistant light.turn_on, switch.toggle) for an interactive widget instance without exposing upstream credentials to the client.
+      operationId: postWidgetAction
+      parameters:
+        - name: widget_id
+          in: path
+          required: true
+          description: Unique identifier of the target widget instance
+          schema:
+            type: string
+      requestBody:
+        required: true
+        description: Service call payload specifying domain, service/action, and optional entity/service data
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WidgetActionRequest'
+      responses:
+        '200':
+          description: Widget action executed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WidgetActionResponse'
+        '400':
+          description: Invalid widget_id, malformed JSON body, or invalid/unsupported domain or service
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Upstream provider unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Widget or upstream entity/service not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Widget action handler not configured or internal error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '502':
+          description: Upstream provider unreachable or returned bad gateway status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /widget-types/{type}/assets/{path}:
     get:
       summary: Serve static widget package asset
@@ -834,6 +890,62 @@ components:
             type: string
         album_name:
           type: string
+    WidgetActionRequest:
+      type: object
+      properties:
+        domain:
+          type: string
+          x-go-type-skip-optional-pointer: true
+          description: Target service domain (e.g. light, switch, climate)
+          example: light
+        service:
+          type: string
+          x-go-type-skip-optional-pointer: true
+          description: Service name or domain.service / domain/service shorthand (e.g. turn_on, light.toggle)
+          example: turn_on
+        action:
+          type: string
+          x-go-type-skip-optional-pointer: true
+          description: Optional Lovelace action alias or domain.service string
+          example: light.turn_on
+        entity_id:
+          type: string
+          x-go-name: EntityID
+          x-go-type-skip-optional-pointer: true
+          description: Optional top-level target entity ID
+          example: light.kitchen
+        service_data:
+          type: object
+          additionalProperties: true
+          x-go-type-skip-optional-pointer: true
+          description: Optional service call parameters
+        data:
+          type: object
+          additionalProperties: true
+          x-go-type-skip-optional-pointer: true
+          description: Optional Lovelace service data object merged with service_data
+        target:
+          type: object
+          additionalProperties: true
+          x-go-type-skip-optional-pointer: true
+          description: Optional Lovelace target object (e.g. entity_id, area_id)
+    WidgetActionResponse:
+      type: object
+      required:
+        - status
+        - widget_id
+      properties:
+        status:
+          type: string
+          example: ok
+        widget_id:
+          type: string
+          x-go-name: WidgetID
+          example: living-room-ha
+        data:
+          x-go-type: any
+          x-go-type-skip-optional-pointer: true
+          description: Optional upstream service response data
     WidgetPlacement:
       type: object
       required:

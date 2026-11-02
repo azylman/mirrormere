@@ -864,7 +864,10 @@ func fallbackCardForDomain(dom, entityID string) LovelaceCard {
 }
 
 func resolveToken(config map[string]any, opts InitOptions, fallback string) string {
-	envKey, _ := config["token_env"].(string)
+	var envKey string
+	if v, ok := config["token_env"].(string); ok {
+		envKey = v
+	}
 	if envKey = strings.TrimSpace(envKey); envKey != "" {
 		if val := strings.TrimSpace(opts.GetSecret(envKey)); val != "" {
 			return val

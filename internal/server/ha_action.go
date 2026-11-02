@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/azylman/mirrormere/internal/api"
 	"github.com/azylman/mirrormere/internal/provider"
 )
 
@@ -73,28 +74,11 @@ func NewDefaultWidgetActionHandler(opts ...WidgetActionOption) *DefaultWidgetAct
 	return h
 }
 
-// NewWidgetActionHandler constructs a DefaultWidgetActionHandler backed by the provided caller.
-func NewWidgetActionHandler(caller WidgetActionCaller) *DefaultWidgetActionHandler {
-	return NewDefaultWidgetActionHandler(WithWidgetActionCaller(caller))
-}
-
 // WidgetActionRequest represents the incoming JSON body for a widget action.
-type WidgetActionRequest struct {
-	Domain      string         `json:"domain,omitempty"`
-	Service     string         `json:"service,omitempty"`
-	Action      string         `json:"action,omitempty"`
-	EntityID    string         `json:"entity_id,omitempty"`
-	ServiceData map[string]any `json:"service_data,omitempty"`
-	Data        map[string]any `json:"data,omitempty"`
-	Target      map[string]any `json:"target,omitempty"`
-}
+type WidgetActionRequest = api.WidgetActionRequest
 
 // WidgetActionResponse represents the JSON response for a successful widget action.
-type WidgetActionResponse struct {
-	Status   string `json:"status"`
-	WidgetID string `json:"widget_id"`
-	Data     any    `json:"data,omitempty"`
-}
+type WidgetActionResponse = api.WidgetActionResponse
 
 // handleWidgetAction handles POST /api/widgets/{widget_id}/action on Server.
 func (s *Server) handleWidgetAction(w http.ResponseWriter, r *http.Request) {
@@ -324,6 +308,16 @@ func (h *DefaultWidgetActionHandler) mapActionError(err error) (int, string) {
 		return http.StatusOK, ""
 	}
 	msg := err.Error()
+	switch {
+	case errors.Is(err, provider.ErrWidgetNotFound), errors.Is(err, provider.ErrUpstreamNotFound):
+		return http.StatusNotFound, msg
+	case errors.Is(err, provider.ErrUpstreamUnauthorized):
+		return http.StatusUnauthorized, msg
+	case errors.Is(err, provider.ErrActionValidation):
+		return http.StatusBadRequest, msg
+	case errors.Is(err, provider.ErrUpstreamUnavailable), errors.Is(err, provider.ErrUpstreamStatus):
+		return http.StatusBadGateway, msg
+	}
 	low := strings.ToLower(msg)
 	switch {
 	case strings.Contains(low, "not found"):

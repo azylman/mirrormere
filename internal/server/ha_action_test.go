@@ -14,6 +14,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/azylman/mirrormere/internal/provider"
 	"github.com/azylman/mirrormere/internal/server"
 )
 
@@ -249,7 +250,7 @@ func TestWidgetAction_CallerSuccess(t *testing.T) {
 func TestWidgetAction_DotServiceFormat(t *testing.T) {
 	t.Parallel()
 	caller := &mockWidgetActionCaller{}
-	handler := server.NewWidgetActionHandler(caller)
+	handler := server.NewDefaultWidgetActionHandler(server.WithWidgetActionCaller(caller))
 	srv := server.New(server.Config{WidgetActionHandler: handler})
 
 	payload := `{
@@ -392,6 +393,12 @@ func TestWidgetAction_CallerErrors(t *testing.T) {
 		err        error
 		wantStatus int
 	}{
+		{"sentinel_widget_not_found", fmt.Errorf("%w: widget-99", provider.ErrWidgetNotFound), http.StatusNotFound},
+		{"sentinel_upstream_not_found", fmt.Errorf("%w: light.missing", provider.ErrUpstreamNotFound), http.StatusNotFound},
+		{"sentinel_unauthorized", fmt.Errorf("%w: bad token", provider.ErrUpstreamUnauthorized), http.StatusUnauthorized},
+		{"sentinel_validation", fmt.Errorf("%w: bad domain", provider.ErrActionValidation), http.StatusBadRequest},
+		{"sentinel_unavailable", fmt.Errorf("%w: dial tcp", provider.ErrUpstreamUnavailable), http.StatusBadGateway},
+		{"sentinel_upstream_status", fmt.Errorf("%w: 500", provider.ErrUpstreamStatus), http.StatusBadGateway},
 		{"not_found", errors.New("widget not found: widget-99"), http.StatusNotFound},
 		{"unauthorized", errors.New("upstream service unauthorized"), http.StatusUnauthorized},
 		{"invalid_entity", errors.New("invalid entity_id specified"), http.StatusBadRequest},
@@ -575,7 +582,7 @@ func TestHAAction_DirectProxy_ConnectionFailure(t *testing.T) {
 func TestHAAction_ConfigFieldActionHandler(t *testing.T) {
 	t.Parallel()
 	caller := &mockWidgetActionCaller{}
-	handler := server.NewWidgetActionHandler(caller)
+	handler := server.NewDefaultWidgetActionHandler(server.WithWidgetActionCaller(caller))
 
 	// Test with ActionHandler field instead of WidgetActionHandler
 	srv := server.New(server.Config{ActionHandler: handler})
@@ -631,88 +638,91 @@ func TestWidgetAction_DomainAndServiceValidation(t *testing.T) {
 	handler := server.NewDefaultWidgetActionHandler(server.WithWidgetActionCaller(caller))
 	srv := server.New(server.Config{WidgetActionHandler: handler})
 
-	t.Run("invalid domain format rejected", func(t *testing.T) {
-		invalidDomains := []string{
-			"../..",
-			"../../api",
-			"../light",
-			"light/admin",
-			"/etc/passwd",
-			"light..turn_on",
-			"light;drop",
-			"light turn_on",
-			"light?admin=true",
-			"LIGHT",
-		}
-		for _, dom := range invalidDomains {
-			payload := fmt.Sprintf(`{"domain":%q,"service":"turn_on"}`, dom)
-			req := httptest.NewRequest(http.MethodPost, "/api/widgets/w-test/action", strings.NewReader(payload))
-			req.Header.Set("Content-Type", "application/json")
-			rec := httptest.NewRecorder()
-			srv.Routes().ServeHTTP(rec, req)
+	tests := []struct {
+		name     string
+		domain   string
+		service  string
+		wantSub  string
+		inputs   []string
+		isDomain bool
+	}{
+		{
+			name:     "invalid domain format rejected",
+			service:  "turn_on",
+			wantSub:  "invalid domain",
+			isDomain: true,
+			inputs: []string{
+				"../..",
+				"../../api",
+				"../light",
+				"light/admin",
+				"/etc/passwd",
+				"light..turn_on",
+				"light;drop",
+				"light turn_on",
+				"light?admin=true",
+				"LIGHT",
+			},
+		},
+		{
+			name:     "unsupported domain rejected even if identifier is valid",
+			service:  "turn_on",
+			wantSub:  "unsupported domain",
+			isDomain: true,
+			inputs: []string{
+				"automation",
+				"zone",
+				"shell_command",
+				"hassio",
+				"input_boolean",
+				"input_number",
+			},
+		},
+		{
+			name:     "invalid service format rejected",
+			domain:   "light",
+			wantSub:  "invalid service",
+			isDomain: false,
+			inputs: []string{
+				"../..",
+				"turn_on/../admin",
+				"api/config",
+				"../../../api/template",
+				"turn_on?evil=1",
+				"turn_on#frag",
+				"turn on",
+				"turn-on",
+				"TURN_ON",
+				"turn_on/..",
+			},
+		},
+	}
 
-			if rec.Code != http.StatusBadRequest {
-				t.Errorf("domain %q: expected 400 Bad Request, got %d: %s", dom, rec.Code, rec.Body.String())
-			}
-			if !strings.Contains(rec.Body.String(), "invalid domain") {
-				t.Errorf("domain %q: expected error mentioning invalid domain, got: %s", dom, rec.Body.String())
-			}
-		}
-	})
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			for _, val := range tc.inputs {
+				dom, svc := tc.domain, tc.service
+				if tc.isDomain {
+					dom = val
+				} else {
+					svc = val
+				}
+				payload := fmt.Sprintf(`{"domain":%q,"service":%q}`, dom, svc)
+				req := httptest.NewRequest(http.MethodPost, "/api/widgets/w-test/action", strings.NewReader(payload))
+				req.Header.Set("Content-Type", "application/json")
+				rec := httptest.NewRecorder()
+				srv.Routes().ServeHTTP(rec, req)
 
-	t.Run("unsupported domain rejected even if identifier is valid", func(t *testing.T) {
-		unsupportedDomains := []string{
-			"automation",
-			"zone",
-			"shell_command",
-			"hassio",
-			"input_boolean",
-			"input_number",
-		}
-		for _, dom := range unsupportedDomains {
-			payload := fmt.Sprintf(`{"domain":%q,"service":"turn_on"}`, dom)
-			req := httptest.NewRequest(http.MethodPost, "/api/widgets/w-test/action", strings.NewReader(payload))
-			req.Header.Set("Content-Type", "application/json")
-			rec := httptest.NewRecorder()
-			srv.Routes().ServeHTTP(rec, req)
-
-			if rec.Code != http.StatusBadRequest {
-				t.Errorf("domain %q: expected 400 Bad Request, got %d: %s", dom, rec.Code, rec.Body.String())
+				if rec.Code != http.StatusBadRequest {
+					t.Errorf("input %q: expected 400 Bad Request, got %d: %s", val, rec.Code, rec.Body.String())
+				}
+				if !strings.Contains(rec.Body.String(), tc.wantSub) {
+					t.Errorf("input %q: expected error mentioning %q, got: %s", val, tc.wantSub, rec.Body.String())
+				}
 			}
-			if !strings.Contains(rec.Body.String(), "unsupported domain") {
-				t.Errorf("domain %q: expected error mentioning unsupported domain, got: %s", dom, rec.Body.String())
-			}
-		}
-	})
-
-	t.Run("invalid service format rejected", func(t *testing.T) {
-		invalidServices := []string{
-			"../..",
-			"turn_on/../admin",
-			"api/config",
-			"../../../api/template",
-			"turn_on?evil=1",
-			"turn_on#frag",
-			"turn on",
-			"turn-on",
-			"TURN_ON",
-			"turn_on/..",
-		}
-		for _, svc := range invalidServices {
-			payload := fmt.Sprintf(`{"domain":"light","service":%q}`, svc)
-			req := httptest.NewRequest(http.MethodPost, "/api/widgets/w-test/action", strings.NewReader(payload))
-			req.Header.Set("Content-Type", "application/json")
-			rec := httptest.NewRecorder()
-			srv.Routes().ServeHTTP(rec, req)
-
-			if rec.Code != http.StatusBadRequest {
-				t.Errorf("service %q: expected 400 Bad Request, got %d: %s", svc, rec.Code, rec.Body.String())
-			}
-			if !strings.Contains(rec.Body.String(), "invalid service") {
-				t.Errorf("service %q: expected error mentioning invalid service, got: %s", svc, rec.Body.String())
-			}
-		}
-	})
+		})
+	}
 }
 
 func TestWidgetAction_DirectProxyPathEscape(t *testing.T) {

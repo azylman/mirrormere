@@ -417,6 +417,38 @@ type VoiceStateResponse struct {
 	Status string `json:"status"`
 }
 
+// WidgetActionRequest defines model for WidgetActionRequest.
+type WidgetActionRequest struct {
+	// Action Optional Lovelace action alias or domain.service string
+	Action string `json:"action,omitempty"`
+
+	// Data Optional Lovelace service data object merged with service_data
+	Data map[string]interface{} `json:"data,omitempty"`
+
+	// Domain Target service domain (e.g. light, switch, climate)
+	Domain string `json:"domain,omitempty"`
+
+	// EntityID Optional top-level target entity ID
+	EntityID string `json:"entity_id,omitempty"`
+
+	// Service Service name or domain.service / domain/service shorthand (e.g. turn_on, light.toggle)
+	Service string `json:"service,omitempty"`
+
+	// ServiceData Optional service call parameters
+	ServiceData map[string]interface{} `json:"service_data,omitempty"`
+
+	// Target Optional Lovelace target object (e.g. entity_id, area_id)
+	Target map[string]interface{} `json:"target,omitempty"`
+}
+
+// WidgetActionResponse defines model for WidgetActionResponse.
+type WidgetActionResponse struct {
+	// Data Optional upstream service response data
+	Data     any    `json:"data,omitempty"`
+	Status   string `json:"status"`
+	WidgetID string `json:"widget_id"`
+}
+
 // WidgetDetailResponse defines model for WidgetDetailResponse.
 type WidgetDetailResponse struct {
 	// AssetsBase Base path for the widget package assets
@@ -531,6 +563,9 @@ type PostVoiceInteractMultipartRequestBody PostVoiceInteractMultipartBody
 
 // PostVoiceStateJSONRequestBody defines body for PostVoiceState for application/json ContentType.
 type PostVoiceStateJSONRequestBody = VoiceStateRequest
+
+// PostWidgetActionJSONRequestBody defines body for PostWidgetAction for application/json ContentType.
+type PostWidgetActionJSONRequestBody = WidgetActionRequest
 
 // PostWidgetPhotosJSONRequestBody defines body for PostWidgetPhotos for application/json ContentType.
 type PostWidgetPhotosJSONRequestBody = WidgetPhotosRequest
