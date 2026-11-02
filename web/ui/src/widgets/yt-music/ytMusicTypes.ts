@@ -1,3 +1,5 @@
+import { useEffect, useState } from 'react';
+
 export interface Speaker {
   entity_id: string;
   name: string;
@@ -27,6 +29,7 @@ export interface NowPlaying {
   state?: string;
   volume?: number;
   queue_index?: number;
+  video_id?: string;
 }
 
 export interface Playlist {
@@ -121,26 +124,168 @@ export const DEFAULT_STATE: MusicState = {
   suggestions: DEFAULT_SUGGESTIONS,
 };
 
+declare global {
+  interface Window {
+    onEmberAccountsUpdated?: (payload?: unknown) => void;
+  }
+}
+
+/**
+ * Safely retrieves Google / Android accounts from EmberBridge if available.
+ */
+function getEmberAccounts(): unknown[] {
+  try {
+    if (typeof window !== 'undefined') {
+      const bridge = (window as unknown as { EmberBridge?: { getGoogleAccounts?: () => unknown } }).EmberBridge;
+      if (typeof bridge?.getGoogleAccounts === 'function') {
+        const res = bridge.getGoogleAccounts();
+        if (typeof res === 'string') {
+          const parsed = JSON.parse(res) as unknown;
+          return Array.isArray(parsed) ? parsed : [];
+        }
+        if (Array.isArray(res)) {
+          return res;
+        }
+      }
+    }
+  } catch {
+    // preserve empty accounts on bridge error
+  }
+  return [];
+}
+
+/**
+ * React hook that manages Android OS / Google accounts from EmberBridge and listens
+ * for updates via window.onEmberAccountsUpdated.
+ */
+export function useEmberAccounts(): unknown[] {
+  'use no memo';
+  const [emberAccounts, setEmberAccounts] = useState<unknown[]>([]);
+
+  useEffect(() => {
+    const readAccounts = (payload?: unknown) => {
+      if (Array.isArray(payload)) {
+        setEmberAccounts(payload);
+        return;
+      }
+      if (typeof payload === 'string') {
+        try {
+          const parsed = JSON.parse(payload) as unknown;
+          if (Array.isArray(parsed)) {
+            setEmberAccounts(parsed);
+            return;
+          }
+        } catch {
+          // ignore parse error
+        }
+      }
+      setEmberAccounts(getEmberAccounts());
+    };
+
+    readAccounts();
+
+    const prevListener = window.onEmberAccountsUpdated;
+    window.onEmberAccountsUpdated = (payload?: unknown) => {
+      readAccounts(payload);
+      if (typeof prevListener === 'function') {
+        prevListener(payload);
+      }
+    };
+
+    return () => {
+      window.onEmberAccountsUpdated = prevListener;
+    };
+  }, []);
+
+  return emberAccounts;
+}
+
+/**
+ * React hook that polls the music state at interval when active.
+ */
+export function useMusicStatePolling(
+  apiBase: string,
+  isActive: boolean,
+  activeAccountId: string | undefined,
+): [MusicState, React.Dispatch<React.SetStateAction<MusicState>>] {
+  'use no memo';
+  const [stateData, setStateData] = useState<MusicState>(DEFAULT_STATE);
+
+  useEffect(() => {
+    if (!isActive) return;
+    let cancelled = false;
+
+    const refreshState = async () => {
+      try {
+        const param = activeAccountId ? `?account_id=${encodeURIComponent(activeAccountId)}` : '';
+        const r = await fetch(`${apiBase}/music/state${param}`);
+        if (!r.ok) return;
+        const data = (await r.json()) as MusicState;
+        if (!cancelled && data && typeof data === 'object') {
+          setStateData((prev) => (JSON.stringify(prev) === JSON.stringify(data) ? prev : data));
+        }
+      } catch {
+        // preserve current state on network error
+      }
+    };
+
+    void refreshState();
+
+    const intervalId = window.setInterval(() => {
+      void refreshState();
+    }, 8000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [isActive, apiBase, activeAccountId]);
+
+  return [stateData, setStateData];
+}
+
+/**
+ * Helper to post music control/playback commands to API and parse returned state.
+ */
+export async function postMusicApi(
+  url: string,
+  body: Record<string, unknown>,
+): Promise<MusicState | undefined> {
+  try {
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const res = (await r.json().catch(() => ({}))) as { state?: MusicState };
+    return res?.state;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Resolves available YouTube profiles/accounts.
  * Prioritizes stateData.accounts, then config.accounts, then falls back to default profiles.
+ * Optionally appends normalized extra accounts (e.g. from Android OS EmberBridge).
  */
 export function resolveAccounts(
   stateData?: MusicState | null,
   config?: Record<string, unknown> | null,
+  extraAccounts?: unknown[] | null,
 ): AccountProfile[] {
+  let base: AccountProfile[];
   if (Array.isArray(stateData?.accounts) && stateData.accounts.length > 0) {
-    return stateData.accounts;
-  }
-  if (Array.isArray(config?.accounts) && config.accounts.length > 0) {
-    return (config.accounts as unknown[]).map((acc, idx) => {
+    base = [...stateData.accounts];
+  } else if (Array.isArray(config?.accounts) && config.accounts.length > 0) {
+    base = (config.accounts as unknown[]).map((acc, idx) => {
       if (typeof acc === 'object' && acc !== null) {
         const a = acc as Record<string, unknown>;
         return {
           id: String(a.id ?? `acc_${idx}`),
           name: String(a.name ?? a.id ?? `Account ${idx + 1}`),
           handle: a.handle ? String(a.handle) : undefined,
-          type: a.type === 'brand' ? 'brand' : 'email',
+          type: (a.type === 'brand' ? 'brand' : 'email') as 'email' | 'brand',
         };
       }
       return {
@@ -149,8 +294,42 @@ export function resolveAccounts(
         type: 'email' as const,
       };
     });
+  } else {
+    base = [...DEFAULT_ACCOUNTS];
   }
-  return DEFAULT_ACCOUNTS;
+
+  if (Array.isArray(extraAccounts) && extraAccounts.length > 0) {
+    for (let i = 0; i < extraAccounts.length; i++) {
+      const item = extraAccounts[i];
+      let profile: AccountProfile;
+      if (typeof item === 'string') {
+        const trimmed = item.trim();
+        if (!trimmed) continue;
+        profile = {
+          id: trimmed,
+          name: trimmed,
+          handle: trimmed.includes('@') ? trimmed : undefined,
+          type: 'email',
+        };
+      } else if (typeof item === 'object' && item !== null) {
+        const a = item as Record<string, unknown>;
+        const id = String(a.id ?? a.email ?? `extra_${i}`);
+        profile = {
+          id,
+          name: String(a.name ?? a.email ?? id),
+          handle: a.handle ? String(a.handle) : (a.email ? String(a.email) : undefined),
+          type: (a.type === 'brand' ? 'brand' : 'email') as 'email' | 'brand',
+        };
+      } else {
+        continue;
+      }
+      if (!base.some((a) => a.id === profile.id)) {
+        base.push(profile);
+      }
+    }
+  }
+
+  return base;
 }
 
 /**
