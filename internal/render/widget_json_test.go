@@ -301,10 +301,12 @@ func TestHandler_GetWidgetJSON_MatchesHydration(t *testing.T) {
 		"chat-log":         chatSample,
 		"live-view":        map[string]any{"status": "ready"},
 		"photo-carousel":   samplePhotoData(),
+		"plex-recent":      map[string]any{},
 		"spacer":           map[string]any{},
 		"tasks":            tasksLoaded,
 		"weather-forecast": sampleWeatherData(),
 		"web-embed":        map[string]any{},
+		"yt-music":         map[string]any{},
 	}
 
 	var names []string
