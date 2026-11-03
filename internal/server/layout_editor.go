@@ -112,25 +112,21 @@ func (h *DefaultLayoutEditorHandler) PutLayoutEditor(w http.ResponseWriter, r *h
 func parseWidgetPlacements(widgets []api.LayoutEditorWidgetPlacement) ([]config.WidgetOverride, error) {
 	overrides := make([]config.WidgetOverride, 0, len(widgets))
 	for _, pw := range widgets {
-		if pw.WidgetId == "" {
+		if pw.WidgetID == "" {
 			return nil, fmt.Errorf("widget_id cannot be empty")
 		}
 		if len(pw.Origin) != 2 {
-			return nil, fmt.Errorf("widget %q: origin must be [col, row]", pw.WidgetId)
+			return nil, fmt.Errorf("widget %q: origin must be [col, row]", pw.WidgetID)
 		}
 		if len(pw.Dimensions) != 2 {
-			return nil, fmt.Errorf("widget %q: dimensions must be [cols, rows]", pw.WidgetId)
-		}
-		pinned := false
-		if pw.Pinned != nil {
-			pinned = *pw.Pinned
+			return nil, fmt.Errorf("widget %q: dimensions must be [cols, rows]", pw.WidgetID)
 		}
 		overrides = append(overrides, config.WidgetOverride{
-			ID:         pw.WidgetId,
+			ID:         pw.WidgetID,
 			Screen:     pw.Screen,
 			Origin:     [2]int{pw.Origin[0], pw.Origin[1]},
 			Dimensions: []int{pw.Dimensions[0], pw.Dimensions[1]},
-			Pinned:     pinned,
+			Pinned:     pw.Pinned,
 		})
 	}
 	return overrides, nil
@@ -207,7 +203,7 @@ func (h *DefaultLayoutEditorHandler) collectScreenWidgets(screen layout.Screen, 
 		}
 		seen[pw.WidgetID] = true
 		*out = append(*out, api.LayoutEditorWidget{
-			WidgetId:            pw.WidgetID,
+			WidgetID:            pw.WidgetID,
 			Type:                pw.Type,
 			Screen:              screen.Index,
 			Origin:              []int{pw.Origin[0], pw.Origin[1]},

@@ -20,7 +20,7 @@ type VideoCoordinator interface {
 	ForwardAction(ctx context.Context, id, action string, value any) error
 }
 
-// DefaultVideoHandler serves OpenAPI /api/video/* endpoints.
+// DefaultVideoHandler serves /api/video/* endpoints.
 type DefaultVideoHandler struct {
 	coord VideoCoordinator
 }
@@ -51,61 +51,38 @@ func (h *DefaultVideoHandler) GetVideoState(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, toAPIVideoStateResponse(h.coord.GetState()))
 }
 
-func setIf[T any](dst *T, src *T) {
-	if src != nil {
-		*dst = *src
-	}
-}
-
-func setStr[T ~string](dst *string, src *T) {
-	if src != nil && *src != "" {
-		*dst = string(*src)
-	}
-}
-
-func applyStreamMetadata(s *video.VideoStream, title, series, season, episode *string, pos, dur *float32, updatedAt *int64) {
-	setIf(&s.Title, title)
-	setIf(&s.Series, series)
-	setIf(&s.Season, season)
-	setIf(&s.Episode, episode)
-	if pos != nil {
-		s.Position = float64(*pos)
-	}
-	if dur != nil {
-		s.Duration = float64(*dur)
-	}
-	setIf(&s.PositionUpdatedAt, updatedAt)
-}
-
 // PostVideoTrigger handles POST /api/video/trigger.
 func (h *DefaultVideoHandler) PostVideoTrigger(w http.ResponseWriter, r *http.Request) {
 	if !requireCORSAndMethod(w, r, "POST, OPTIONS", http.MethodPost) || !h.ready(w) {
 		return
 	}
-	var req api.VideoTriggerRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	stream := video.VideoStream{
+		Type:        video.TypeWebRTC,
+		Priority:    video.PriorityPersistent,
+		PlayerState: video.PlayerStatePlaying,
+	}
+	if err := json.NewDecoder(r.Body).Decode(&stream); err != nil {
 		writeAPIError(w, http.StatusBadRequest, "invalid video trigger request: malformed JSON")
 		return
 	}
-	reqID := strings.TrimSpace(req.Id)
-	if reqID == "" || strings.TrimSpace(req.StreamUrl) == "" || reqID == "all" || reqID == "*" {
+	reqID := strings.TrimSpace(stream.ID)
+	if reqID == "" || strings.TrimSpace(stream.StreamURL) == "" || reqID == "all" || reqID == "*" {
 		msg := "invalid video trigger request: id and stream_url are required"
 		if reqID == "all" || reqID == "*" {
-			msg = "invalid video trigger request: \x27all\x27 and \x27*\x27 are reserved sentinels"
+			msg = "invalid video trigger request: 'all' and '*' are reserved sentinels"
 		}
 		writeAPIError(w, http.StatusBadRequest, msg)
 		return
 	}
-	stream := video.VideoStream{
-		ID: req.Id, StreamURL: req.StreamUrl, Type: video.TypeWebRTC, Priority: video.PriorityPersistent, PlayerState: video.PlayerStatePlaying,
+	if stream.Type == "" {
+		stream.Type = video.TypeWebRTC
 	}
-	setStr(&stream.Type, req.Type)
-	setStr(&stream.Priority, req.Priority)
-	setIf(&stream.TimeoutSeconds, req.TimeoutSeconds)
-	setIf(&stream.Controllable, req.Controllable)
-	setIf(&stream.ControlURL, req.ControlUrl)
-	setStr(&stream.PlayerState, req.PlayerState)
-	applyStreamMetadata(&stream, req.Title, req.Series, req.Season, req.Episode, req.Position, req.Duration, req.PositionUpdatedAt)
+	if stream.Priority == "" {
+		stream.Priority = video.PriorityPersistent
+	}
+	if stream.PlayerState == "" {
+		stream.PlayerState = video.PlayerStatePlaying
+	}
 
 	newState, err := h.coord.Trigger(stream)
 	if err != nil {
@@ -121,23 +98,23 @@ func (h *DefaultVideoHandler) PostVideoDismiss(w http.ResponseWriter, r *http.Re
 	if !h.decodeRequiredVideoPost(w, r, &req,
 		"invalid video dismiss request: malformed JSON",
 		"invalid video dismiss request: id is required",
-		func() bool { return strings.TrimSpace(req.Id) == "" }) {
+		func() bool { return strings.TrimSpace(req.ID) == "" }) {
 		return
 	}
-	newState, err := h.coord.Dismiss(req.Id)
+	newState, err := h.coord.Dismiss(req.ID)
 	writeStreamMutationResult(w, err, toAPIVideoStateResponse(newState))
 }
 
 // PostVideoAction handles POST /api/video/action.
 func (h *DefaultVideoHandler) PostVideoAction(w http.ResponseWriter, r *http.Request) {
-	var req api.VideoActionRequest
+	var req video.ActionRequest
 	if !h.decodeRequiredVideoPost(w, r, &req,
 		"invalid video action request: malformed JSON",
 		"invalid video action request: id and action are required",
-		func() bool { return strings.TrimSpace(req.Id) == "" || string(req.Action) == "" }) {
+		func() bool { return strings.TrimSpace(req.ID) == "" || req.Action == "" }) {
 		return
 	}
-	err := h.coord.ForwardAction(r.Context(), req.Id, string(req.Action), req.Value)
+	err := h.coord.ForwardAction(r.Context(), req.ID, req.Action, req.Value)
 	if err != nil {
 		switch {
 		case errors.Is(err, video.ErrStreamNotFound):
@@ -156,19 +133,16 @@ func (h *DefaultVideoHandler) PostVideoAction(w http.ResponseWriter, r *http.Req
 
 // PostVideoState handles POST /api/video/state.
 func (h *DefaultVideoHandler) PostVideoState(w http.ResponseWriter, r *http.Request) {
-	var req api.VideoPlayerStateRequest
-	if !h.decodeRequiredVideoPost(w, r, &req,
+	var update video.VideoStream
+	if !h.decodeRequiredVideoPost(w, r, &update,
 		"invalid video player state request: malformed JSON",
 		"invalid video player state request: id and player_state are required",
-		func() bool { return strings.TrimSpace(req.Id) == "" || string(req.PlayerState) == "" }) {
+		func() bool { return strings.TrimSpace(update.ID) == "" || update.PlayerState == "" }) {
 		return
 	}
-	update := video.VideoStream{ID: req.Id, PlayerState: string(req.PlayerState)}
-	applyStreamMetadata(&update, req.Title, req.Series, req.Season, req.Episode, req.Position, req.Duration, req.PositionUpdatedAt)
-
-	_, err := h.coord.UpdatePlayerState(req.Id, update)
+	_, err := h.coord.UpdatePlayerState(update.ID, update)
 	writeStreamMutationResult(w, err, api.VideoPlayerStateResponse{
-		Status: "ok", Id: req.Id, PlayerState: api.VideoPlayerStateResponsePlayerState(req.PlayerState),
+		Status: "ok", ID: update.ID, PlayerState: update.PlayerState,
 	})
 }
 
@@ -199,41 +173,15 @@ func writeStreamMutationResult(w http.ResponseWriter, err error, resp any) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-func ptrWhen[T any](v T, cond bool) *T {
-	if !cond {
-		return nil
-	}
-	return &v
-}
-
-func toAPIVideoStream(s *video.VideoStream) *api.VideoStream {
-	if s == nil {
-		return nil
-	}
-	return &api.VideoStream{
-		Id:                s.ID,
-		StreamUrl:         s.StreamURL,
-		Type:              api.VideoStreamType(s.Type),
-		Priority:          ptrWhen(api.VideoStreamPriority(s.Priority), s.Priority != ""),
-		TimeoutSeconds:    ptrWhen(s.TimeoutSeconds, s.TimeoutSeconds > 0),
-		Controllable:      ptrWhen(true, s.Controllable),
-		ControlUrl:        ptrWhen(s.ControlURL, s.ControlURL != ""),
-		PlayerState:       ptrWhen(api.VideoStreamPlayerState(s.PlayerState), s.PlayerState != ""),
-		Muted:             &s.Muted,
-		Title:             ptrWhen(s.Title, s.Title != ""),
-		Series:            ptrWhen(s.Series, s.Series != ""),
-		Season:            ptrWhen(s.Season, s.Season != ""),
-		Episode:           ptrWhen(s.Episode, s.Episode != ""),
-		Position:          ptrWhen(float32(s.Position), s.Position > 0 || s.PositionUpdatedAt > 0),
-		Duration:          ptrWhen(float32(s.Duration), s.Duration > 0),
-		PositionUpdatedAt: ptrWhen(s.PositionUpdatedAt, s.PositionUpdatedAt > 0),
-	}
-}
-
 func toAPIVideoStateResponse(state video.VideoState) api.VideoStateResponse {
-	mode := api.Widgets
+	mode := video.ModeWidgets
 	if state.Mode == video.ModeVideo {
-		mode = api.Video
+		mode = video.ModeVideo
 	}
-	return api.VideoStateResponse{Status: "ok", Mode: mode, Primary: toAPIVideoStream(state.Primary), Pip: toAPIVideoStream(state.Pip)}
+	return api.VideoStateResponse{
+		Status:  "ok",
+		Mode:    mode,
+		Primary: state.Primary,
+		Pip:     state.Pip,
+	}
 }

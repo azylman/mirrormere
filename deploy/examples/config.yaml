@@ -1,5 +1,5 @@
 # Mirrormere Reference Configuration Template
-# Authoritative Documentation: README.md, docs/decisions.md, api/openapi.yaml
+# Authoritative Documentation: README.md, docs/decisions.md
 
 # Server host and port bindings (restart required to apply changes)
 host: "0.0.0.0"
