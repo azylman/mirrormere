@@ -179,11 +179,75 @@ export function selectDailyVariantIndex(
   return (hash % count) + 1;
 }
 
+const HOLIDAY_SUPPORTED_STATES: Record<string, ReadonlySet<ClothingConditionState>> = {
+  new_years: new Set(['cold_puffer', 'cool_evening', 'morning_mild', 'morning_rain', 'rainy_boots']),
+  valentines: new Set(['cold_puffer', 'cool_evening', 'morning_mild', 'morning_rain', 'rainy_boots', 'warm_pants']),
+  easter: new Set(['cold_puffer', 'cool_evening', 'hot_dress', 'morning_mild', 'morning_rain', 'rainy_boots', 'warm_pants']),
+  memorial_day: new Set(['cool_evening', 'hot_dress', 'morning_mild', 'rainy_boots', 'warm_pants']),
+  july_4th: new Set(['cool_evening', 'hot_dress', 'morning_mild', 'warm_pants']),
+  labor_day: new Set(['cool_evening', 'hot_dress', 'morning_mild', 'warm_pants']),
+  halloween: new Set(['cold_puffer', 'cool_evening', 'morning_mild', 'morning_rain', 'rainy_boots', 'warm_pants']),
+  thanksgiving: new Set(['cold_puffer', 'cool_evening', 'morning_mild', 'morning_rain', 'rainy_boots', 'warm_pants']),
+  christmas: new Set(['cold_puffer', 'cool_evening', 'morning_mild', 'morning_rain', 'rainy_boots']),
+};
+
+function computeEasterMonthDay(year: number): [number, number] {
+  const a = year % 19;
+  const b = Math.floor(year / 100);
+  const c = year % 100;
+  const d = Math.floor(b / 4);
+  const e = b % 4;
+  const f = Math.floor((b + 8) / 25);
+  const g = Math.floor((b - f + 1) / 3);
+  const h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4);
+  const k = c % 4;
+  const l = (32 + 2 * e + 2 * i - h - k) % 7;
+  const m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const month = Math.floor((h + l - 7 * m + 114) / 31);
+  const day = ((h + l - 7 * m + 114) % 31) + 1;
+  return [month, day];
+}
+
+function resolveUSHolidayKey(dateStr?: string): string | undefined {
+  if (!dateStr) return undefined;
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr);
+  if (!match) return undefined;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (month === 1 && day === 1) return 'new_years';
+  if (month === 2 && day === 14) return 'valentines';
+  if (month === 7 && day === 4) return 'july_4th';
+  if (month === 10 && day === 31) return 'halloween';
+  if (month === 12 && (day === 24 || day === 25)) return 'christmas';
+  const [eMonth, eDay] = computeEasterMonthDay(year);
+  if (month === eMonth && day === eDay) return 'easter';
+  const dow = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
+  if (month === 5 && dow === 1 && day >= 25) return 'memorial_day';
+  if (month === 9 && dow === 1 && day <= 7) return 'labor_day';
+  if (month === 11 && dow === 4 && day >= 22 && day <= 28) return 'thanksgiving';
+  return undefined;
+}
+
 export function resolveCharacterPackSpriteUrl(
   packName: string,
   state: ClothingConditionState,
   variantIndex: number,
+  dateStrOrAssetsBase?: string,
+  enableHolidays?: boolean,
   assetsBase = '/static/ui/assets/weather-packs',
 ): string {
-  return `${assetsBase}/${packName}/${state}_v${variantIndex}.jpg`;
+  const isLegacyBase =
+    typeof dateStrOrAssetsBase === 'string' &&
+    (dateStrOrAssetsBase.startsWith('/') || dateStrOrAssetsBase.startsWith('http'));
+  const base = isLegacyBase ? dateStrOrAssetsBase : assetsBase;
+  const dateStr = isLegacyBase ? undefined : dateStrOrAssetsBase;
+  if (enableHolidays) {
+    const holidayKey = resolveUSHolidayKey(dateStr);
+    if (holidayKey && HOLIDAY_SUPPORTED_STATES[holidayKey]?.has(state)) {
+      return `${base}/${packName}/holiday_${holidayKey}_${state}.jpg`;
+    }
+  }
+  return `${base}/${packName}/${state}_v${variantIndex}.jpg`;
 }
