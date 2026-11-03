@@ -202,5 +202,43 @@ describe('schoolDayPack utilities', () => {
       expect(url).toBe('/custom/assets/packs/custom_pack/morning_rain_v1.jpg');
     });
   });
+
+  it('resolves holiday sprite when enableHolidays is true and state is supported', () => {
+    expect(
+      resolveCharacterPackSpriteUrl('ghibli', 'cold_puffer', 2, '2026-10-31', true),
+    ).toBe('/static/ui/assets/weather-packs/ghibli/holiday_halloween_cold_puffer.jpg');
+    expect(
+      resolveCharacterPackSpriteUrl('ghibli', 'cold_puffer', 2, '2026-12-25', true),
+    ).toBe('/static/ui/assets/weather-packs/ghibli/holiday_christmas_cold_puffer.jpg');
+    expect(
+      resolveCharacterPackSpriteUrl('ghibli', 'cold_puffer', 2, '2026-01-01', true),
+    ).toBe('/static/ui/assets/weather-packs/ghibli/holiday_new_years_cold_puffer.jpg');
+    expect(
+      resolveCharacterPackSpriteUrl('ghibli', 'warm_pants', 2, '2026-02-14', true),
+    ).toBe('/static/ui/assets/weather-packs/ghibli/holiday_valentines_warm_pants.jpg');
+    expect(
+      resolveCharacterPackSpriteUrl('ghibli', 'hot_dress', 2, '2026-07-04', true),
+    ).toBe('/static/ui/assets/weather-packs/ghibli/holiday_july_4th_hot_dress.jpg');
+    expect(
+      resolveCharacterPackSpriteUrl('ghibli', 'warm_pants', 2, '2026-04-05', true),
+    ).toBe('/static/ui/assets/weather-packs/ghibli/holiday_easter_warm_pants.jpg');
+    expect(
+      resolveCharacterPackSpriteUrl('ghibli', 'warm_pants', 2, '2026-05-25', true),
+    ).toBe('/static/ui/assets/weather-packs/ghibli/holiday_memorial_day_warm_pants.jpg');
+    expect(
+      resolveCharacterPackSpriteUrl('ghibli', 'warm_pants', 2, '2026-09-07', true),
+    ).toBe('/static/ui/assets/weather-packs/ghibli/holiday_labor_day_warm_pants.jpg');
+    expect(
+      resolveCharacterPackSpriteUrl('ghibli', 'cold_puffer', 2, '2026-11-26', true),
+    ).toBe('/static/ui/assets/weather-packs/ghibli/holiday_thanksgiving_cold_puffer.jpg');
+    // Unsupported state on holiday falls back to regular daily variant
+    expect(
+      resolveCharacterPackSpriteUrl('ghibli', 'hot_dress', 3, '2026-12-25', true),
+    ).toBe('/static/ui/assets/weather-packs/ghibli/hot_dress_v3.jpg');
+    // Non-holiday date falls back to regular daily variant
+    expect(
+      resolveCharacterPackSpriteUrl('ghibli', 'cold_puffer', 1, '2026-10-15', true),
+    ).toBe('/static/ui/assets/weather-packs/ghibli/cold_puffer_v1.jpg');
+  });
 });
 
