@@ -193,3 +193,21 @@ type WidgetDetailResponse struct {
 	AssetsBase string         `json:"assets_base"`
 	ViewModel  map[string]any `json:"view_model,omitempty"`
 }
+
+// WidgetActionRequest represents the incoming JSON body for POST /api/widgets/{widget_id}/action.
+type WidgetActionRequest struct {
+	Action      string         `json:"action,omitempty"`
+	Data        map[string]any `json:"data,omitempty"`
+	Domain      string         `json:"domain,omitempty"`
+	EntityID    string         `json:"entity_id,omitempty"`
+	Service     string         `json:"service,omitempty"`
+	ServiceData map[string]any `json:"service_data,omitempty"`
+	Target      map[string]any `json:"target,omitempty"`
+}
+
+// WidgetActionResponse represents the JSON response for a successful widget action.
+type WidgetActionResponse struct {
+	Data     any    `json:"data,omitempty"`
+	Status   string `json:"status"`
+	WidgetID string `json:"widget_id"`
+}

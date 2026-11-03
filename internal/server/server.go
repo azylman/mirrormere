@@ -89,6 +89,11 @@ type VoiceHandler interface {
 	PostVoiceHeartbeat(w http.ResponseWriter, r *http.Request)
 }
 
+// WidgetActionHandler handles widget action execution endpoints matching Mirrormere specifications.
+type WidgetActionHandler interface {
+	PostWidgetAction(w http.ResponseWriter, r *http.Request, widgetID string)
+}
+
 // LayoutEditorHandler handles live canvas layout editor override operations.
 type LayoutEditorHandler interface {
 	GetLayoutEditor(w http.ResponseWriter, r *http.Request)
@@ -101,6 +106,7 @@ type Config struct {
 	Host                                                      string
 	Port                                                      int
 	ReadTimeout, ReadHeaderTimeout, WriteTimeout, IdleTimeout time.Duration
+	ActionHandler                                             WidgetActionHandler
 	AudioHandler                                              AudioHandler
 	DisplayHandler                                            DisplayHandler
 	EventsHandler                                             http.Handler
@@ -111,6 +117,7 @@ type Config struct {
 	ScreenHandler                                             ScreenHandler
 	VideoHandler                                              VideoHandler
 	VoiceHandler                                              VoiceHandler
+	WidgetActionHandler                                       WidgetActionHandler
 }
 
 // ApplyDefaults sets fallback values for any unspecified configuration fields.
@@ -170,11 +177,16 @@ type Server struct {
 	screenHandler       ScreenHandler
 	videoHandler        VideoHandler
 	voiceHandler        VoiceHandler
+	widgetActionHandler WidgetActionHandler
 }
 
 // New constructs a configured Server instance.
 func New(cfg Config) *Server {
 	cfg.ApplyDefaults()
+	actionHandler := cfg.WidgetActionHandler
+	if actionHandler == nil {
+		actionHandler = cfg.ActionHandler
+	}
 	s := &Server{
 		cfg: cfg, mux: http.NewServeMux(), ready: make(chan struct{}),
 		audioHandler:        cfg.AudioHandler,
@@ -187,6 +199,7 @@ func New(cfg Config) *Server {
 		screenHandler:       cfg.ScreenHandler,
 		videoHandler:        cfg.VideoHandler,
 		voiceHandler:        cfg.VoiceHandler,
+		widgetActionHandler: actionHandler,
 	}
 	s.setupRoutes()
 	s.httpServer = &http.Server{
@@ -262,6 +275,7 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/api/widgets/{widget_id}", dispatchHandler(s, func() RenderHandler { return s.renderHandler }, isNil, func(h RenderHandler, w http.ResponseWriter, r *http.Request) {
 		h.GetWidgetJSON(w, r, r.PathValue("widget_id"))
 	}))
+	s.mux.HandleFunc("/api/widgets/{widget_id}/action", s.handleWidgetAction)
 	s.mux.HandleFunc("/api/widgets/{widget_id}/photos", dispatchHandler(s, func() PushHandler { return s.pushHandler }, isNil, func(h PushHandler, w http.ResponseWriter, r *http.Request) {
 		h.PostWidgetPhotos(w, r, r.PathValue("widget_id"))
 	}))

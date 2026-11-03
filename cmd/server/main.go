@@ -416,6 +416,19 @@ func resolveServerHostPort(snapshot *config.Snapshot) (string, int) {
 	return initialHost, initialPort
 }
 
+func newProviderRegistry(configPath string) provider.Registry {
+	reg := provider.NewRegistry()
+	if configPath != "" {
+		reg.Register("photo-carousel", func() provider.Provider {
+			return provider.NewPhotosProvider(
+				provider.WithPhotosCacheDir(provider.DefaultPhotosCacheDir),
+				provider.WithPhotosSyncIntervals(provider.DefaultPhotosPage1Interval, provider.DefaultPhotosFullSyncInterval),
+			)
+		})
+	}
+	return reg
+}
+
 // RunWithReady executes the server and signals readyChan when the listener is active.
 func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, readyChan chan<- struct{}, opts ...Option) error {
 	var rcfg runConfig
@@ -459,15 +472,7 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 		chatLogCfg, voiceHubCfg = snapshot.Config.ChatLog, snapshot.Config.VoiceHub
 	}
 	chatStore := chatlog.NewStore(chatlog.WithTTL(chatLogCfg.GetTTL()), chatlog.WithMaxPerKey(chatLogCfg.GetMaxMessagesPerNode()))
-	reg := provider.NewRegistry()
-	if configPath != "" {
-		reg.Register("photo-carousel", func() provider.Provider {
-			return provider.NewPhotosProvider(
-				provider.WithPhotosCacheDir(provider.DefaultPhotosCacheDir),
-				provider.WithPhotosSyncIntervals(provider.DefaultPhotosPage1Interval, provider.DefaultPhotosFullSyncInterval),
-			)
-		})
-	}
+	reg := newProviderRegistry(configPath)
 	videoCoord := video.NewCoordinator(hub, video.WithSink(stateProvider))
 	defer videoCoord.Close()
 
@@ -516,6 +521,12 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 	if portVal == 0 {
 		portVal = -1
 	}
+	haActionHandler := server.NewDefaultWidgetActionHandler(
+		server.WithHAActionClient(http.DefaultClient, "", ""),
+		server.WithWidgetActionCaller(providerCoord),
+		server.WithWidgetActionLogger(logger),
+	)
+
 	cfg := server.Config{
 		Host:                initialHost,
 		Port:                portVal,
@@ -529,6 +540,7 @@ func RunWithReady(ctx context.Context, args []string, stdout, stderr io.Writer, 
 		ScreenHandler:       rotation.NewHandler(rotationCoord),
 		VideoHandler:        server.NewDefaultVideoHandler(videoCoord),
 		VoiceHandler:        server.NewDefaultVoiceHandler(voiceCoord, voiceHub, server.WithVoiceMetrics(voice.DefaultMetrics())),
+		WidgetActionHandler: haActionHandler,
 	}
 	cfg.ApplyDefaults()
 

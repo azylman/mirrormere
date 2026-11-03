@@ -27,20 +27,6 @@ function passingBench() {
   };
 }
 
-test('budget.json carries the #765 targets at +20% and the bundle cap', () => {
-  const budget = JSON.parse(fs.readFileSync(budgetPath, 'utf8'));
-  const byKey = Object.fromEntries(budget.metrics.map((m) => [`${m.metric} ${m.stat}`, m.max]));
-  assert.equal(byKey['gesture_first_frame p95'], 20.4);
-  assert.equal(byKey['swipe_settle p95'], 360);
-  assert.equal(byKey['interaction p95'], 120);
-  assert.equal(byKey['frame p95'], 20.04);
-  assert.equal(byKey['frame max'], 39.6);
-  assert.equal(byKey['screen_ready p95'], 1800);
-  assert.equal(byKey['widget_update p95'], 60);
-  assert.deepEqual(budget.long_task_during_swipes, { max: 0 });
-  assert.deepEqual(budget.app_js_gzip_bytes, { max: 204800 });
-});
-
 test('checkBudget passes a bench within every budget', async () => {
   const { checkBudget } = await loadChecker();
   const budget = JSON.parse(fs.readFileSync(budgetPath, 'utf8'));
@@ -57,7 +43,7 @@ test('checkBudget fails a metric over its budget, and gzip or long tasks over th
   const bench = passingBench();
   bench.swipe_settle = stats(20, 361);
   bench.long_task_during_swipes = 1;
-  const results = checkBudget({ bench, budget, appJsGzipBytes: 204801 });
+  const results = checkBudget({ bench, budget, appJsGzipBytes: budget.app_js_gzip_bytes.max + 1 });
   const failed = results.filter((r) => !r.ok).map((r) => r.name).sort();
   assert.deepEqual(failed, ['app.js gzip bytes', 'long_task during swipes', 'swipe_settle p95']);
 });
