@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -374,7 +375,7 @@ func TestLKGC_DiffConfigs(t *testing.T) {
 		{"video enabled flipped", mkShellCfg("", false, "", mkVideoCfg(&trueVal, "", "")), mkShellCfg("", false, "", mkVideoCfg(&falseVal, "", "")), true},
 		{"video stream URL changed", mkShellCfg("", false, "", mkVideoCfg(&trueVal, "", "http://localhost:1984/old")), mkShellCfg("", false, "", mkVideoCfg(&trueVal, "", "http://localhost:1984/new")), true},
 		{"hide cursor changed", mkShellCfg("", false, "", nil), mkShellCfg("", true, "", nil), true},
-		{"grid orientation changed", &config.Config{Display: config.DisplayConfig{Grid: config.GridConfig{Columns: 6, Rows: 2}}}, &config.Config{Display: config.DisplayConfig{Grid: config.GridConfig{Columns: 2, Rows: 6}}}, true},
+		{"grid orientation changed", &config.Config{Display: config.DisplayConfig{Grid: config.GridConfig{Columns: 6, Rows: 2}}}, &config.Config{Display: config.DisplayConfig{Grid: config.GridConfig{Columns: 3, Rows: 6}}}, true},
 		{"remote URL changed", mkShellCfg("", false, "", nil), mkShellCfg("", false, "http://192.168.1.50:8080", nil), true},
 		{"voice waveform added", mkShellCfg("", false, "", nil), withVoice(mkShellCfg("", false, "", nil), &config.DisplayVoiceConfig{Waveform: &config.VoiceWaveformConfig{Enabled: &trueVal}}), true},
 		{"voice waveform URL changed", withVoice(mkShellCfg("", false, "", nil), &config.DisplayVoiceConfig{Waveform: &config.VoiceWaveformConfig{Enabled: &trueVal, LevelsURL: "http://127.0.0.1:8765/levels"}}), withVoice(mkShellCfg("", false, "", nil), &config.DisplayVoiceConfig{Waveform: &config.VoiceWaveformConfig{Enabled: &trueVal, LevelsURL: "http://127.0.0.1:9000/levels"}}), true},
@@ -436,16 +437,114 @@ func withVoice(c *config.Config, v *config.DisplayVoiceConfig) *config.Config {
 	return c
 }
 
-func TestValidatePipeline_Portrait2x6Grid(t *testing.T) {
+func TestValidatePipeline_Portrait3x6Grid(t *testing.T) {
 	t.Parallel()
 	loader := &mockPackageLoader{packages: createStandardPackages()}
-	portraitYAML := "timezone: America/New_York\ndisplay:\n  grid:\n    columns: 2\n    rows: 6\n  widgets:\n    - id: cal-1\n      type: calendar-feed\n      config: {calendars: [{name: Family}]}\n    - id: weather-1\n      type: weather-forecast\n    - id: tasks-1\n      type: tasks\n      config: {list_id: chores, source: gtasks, gtasks: {tasklist_id: list-1}}\n"
+	portraitYAML := "timezone: America/New_York\ndisplay:\n  grid:\n    columns: 3\n    rows: 6\n  widgets:\n    - id: cal-1\n      type: calendar-feed\n      config: {calendars: [{name: Family}]}\n    - id: weather-1\n      type: weather-forecast\n    - id: tasks-1\n      type: tasks\n      config: {list_id: chores, source: gtasks, gtasks: {tasklist_id: list-1}}\n"
 	snap, err := config.ValidatePipeline([]byte(portraitYAML), loader, nil)
 	if err != nil {
-		t.Fatalf("expected 2x6 portrait pipeline to succeed with auto-transposed default dimensions, got: %v", err)
+		t.Fatalf("expected 3x6 portrait pipeline to succeed with auto-transposed default dimensions, got: %v", err)
 	}
-	if snap.Config.Display.Grid.Columns != 2 || snap.Config.Display.Grid.Rows != 6 || snap.Layout.TotalScreens != 1 {
-		t.Fatalf("unexpected 2x6 snapshot: %+v", snap)
+	if snap.Config.Display.Grid.Columns != 3 || snap.Config.Display.Grid.Rows != 6 || snap.Layout.TotalScreens != 1 {
+		t.Fatalf("unexpected 3x6 snapshot: %+v", snap)
+	}
+}
+
+func TestResolveWidgetDefaultDimensions_Portrait3x6(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name      string
+		defDim    domain.Dimension
+		supported []domain.Dimension
+		wantDim   []int
+		extraYAML string
+	}{
+		{
+			name:      "6x2 maps to 3x6",
+			defDim:    domain.NewDimension(6, 2),
+			supported: []domain.Dimension{domain.NewDimension(3, 6), domain.NewDimension(6, 2)},
+			wantDim:   []int{3, 6},
+		},
+		{
+			name:      "4x2 maps to 3x4",
+			defDim:    domain.NewDimension(4, 2),
+			supported: []domain.Dimension{domain.NewDimension(3, 4), domain.NewDimension(4, 2)},
+			wantDim:   []int{3, 4},
+			extraYAML: "    - id: pad-1\n      type: pad-pkg\n      dimensions: [3, 2]\n",
+		},
+		{
+			name:      "3x2 maps to 3x3",
+			defDim:    domain.NewDimension(3, 2),
+			supported: []domain.Dimension{domain.NewDimension(3, 3), domain.NewDimension(3, 2)},
+			wantDim:   []int{3, 3},
+			extraYAML: "    - id: pad-1\n      type: pad-pkg\n      dimensions: [3, 3]\n",
+		},
+		{
+			name:      "2x2 maps to 3x2",
+			defDim:    domain.NewDimension(2, 2),
+			supported: []domain.Dimension{domain.NewDimension(3, 2), domain.NewDimension(2, 2)},
+			wantDim:   []int{3, 2},
+			extraYAML: "    - id: pad-1\n      type: pad-pkg\n      dimensions: [3, 4]\n",
+		},
+		{
+			name:      "2x1 maps to 3x1",
+			defDim:    domain.NewDimension(2, 1),
+			supported: []domain.Dimension{domain.NewDimension(3, 1), domain.NewDimension(2, 1)},
+			wantDim:   []int{3, 1},
+			extraYAML: "    - id: pad-1\n      type: pad-pkg\n      dimensions: [3, 5]\n",
+		},
+		{
+			name:      "mapped 3x4 not supported falls back to flipped 2x4",
+			defDim:    domain.NewDimension(4, 2),
+			supported: []domain.Dimension{domain.NewDimension(4, 2), domain.NewDimension(2, 4)},
+			wantDim:   []int{2, 4},
+			extraYAML: "    - id: pad-1\n      type: pad-pkg\n      dimensions: [1, 4]\n    - id: pad-2\n      type: pad-pkg\n      dimensions: [3, 2]\n",
+		},
+		{
+			name:      "empty supported allows mapped 3x4",
+			defDim:    domain.NewDimension(4, 2),
+			supported: nil,
+			wantDim:   []int{3, 4},
+			extraYAML: "    - id: pad-1\n      type: pad-pkg\n      dimensions: [3, 2]\n",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			pkg := &domain.Package{
+				Type: "test-pkg",
+				Manifest: domain.WidgetManifest{
+					Name:                "test-pkg",
+					Version:             "1.0.0",
+					Provider:            "test-provider",
+					DefaultDimensions:   tc.defDim,
+					SupportedDimensions: tc.supported,
+				},
+			}
+			padPkg := &domain.Package{
+				Type: "pad-pkg",
+				Manifest: domain.WidgetManifest{
+					Name:              "pad-pkg",
+					Version:           "1.0.0",
+					Provider:          "test-provider",
+					DefaultDimensions: domain.NewDimension(1, 1),
+				},
+			}
+			loader := &mockPackageLoader{packages: map[string]*domain.Package{
+				"test-pkg": pkg,
+				"pad-pkg":  padPkg,
+			}}
+			yamlData := "timezone: UTC\ndisplay:\n  grid:\n    columns: 3\n    rows: 6\n  widgets:\n    - id: test-w\n      type: test-pkg\n" + tc.extraYAML
+			snap, err := config.ValidatePipeline([]byte(yamlData), loader, nil)
+			if err != nil {
+				t.Fatalf("unexpected ValidatePipeline error: %v", err)
+			}
+			w := snap.Config.Display.Widgets[0]
+			if !slices.Equal(w.Dimensions, tc.wantDim) {
+				t.Fatalf("got dimensions %v, want %v", w.Dimensions, tc.wantDim)
+			}
+		})
 	}
 }
 

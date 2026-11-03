@@ -179,15 +179,15 @@ func TestBuiltinPackagesAndAliases(t *testing.T) {
 		wantCols, wantRows, suppDims int
 		hasConf                      bool
 	}{
-		{"spacer", "spacer", "spacer", 1, 1, 20, false},
+		{"spacer", "spacer", "spacer", 1, 1, 24, false},
 		{"weather-forecast", "weather-forecast", "weather-forecast", 2, 1, 0, false},
 		{"live-view", "live-view", "live-view", 3, 2, 0, true},
 		{"calendar-feed", "calendar-feed", "calendar-feed", 4, 2, 0, false},
 		{"calendar-grid", "calendar-grid", "calendar-feed", 6, 2, 0, false},
-		{"photo-carousel", "photo-carousel", "photo-carousel", 3, 2, 13, true},
-		{"web-embed", "web-embed", "spacer", 2, 2, 5, true},
-		{"plex-recent", "plex-recent", "spacer", 3, 2, 5, true},
-		{"yt-music", "yt-music", "spacer", 3, 2, 5, true},
+		{"photo-carousel", "photo-carousel", "photo-carousel", 3, 2, 16, true},
+		{"web-embed", "web-embed", "spacer", 2, 2, 13, true},
+		{"plex-recent", "plex-recent", "spacer", 3, 2, 10, true},
+		{"yt-music", "yt-music", "spacer", 3, 2, 10, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()

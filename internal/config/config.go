@@ -276,15 +276,15 @@ func (hw *HeaderWeatherConfig) GetRefreshIntervalSeconds() int {
 	return derefOr(hw.RefreshIntervalSeconds, 900)
 }
 
-// GridConfig defines the discrete tile geometry (6x2 landscape or 2x6 portrait).
+// GridConfig defines the discrete tile geometry (6x2 landscape or 3x6 portrait).
 type GridConfig struct {
 	Columns int `yaml:"columns,omitempty"`
 	Rows    int `yaml:"rows,omitempty"`
 }
 
 func validateGridAndWidgetDimensions(grid GridConfig, widgetID string, dims []int) error {
-	if (grid.Columns != 6 || grid.Rows != 2) && (grid.Columns != 2 || grid.Rows != 6) {
-		return fmt.Errorf("grid dimensions must be 6x2 or 2x6 (got %dx%d)", grid.Columns, grid.Rows)
+	if (grid.Columns != 6 || grid.Rows != 2) && (grid.Columns != 3 || grid.Rows != 6) {
+		return fmt.Errorf("grid dimensions must be 6x2 or 3x6 (got %dx%d)", grid.Columns, grid.Rows)
 	}
 	if len(dims) == 0 {
 		return nil

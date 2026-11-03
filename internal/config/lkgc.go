@@ -266,8 +266,8 @@ func ValidatePipeline(data []byte, loader PackageLoader, getenv func(string) str
 }
 
 func solveForConfigGrid(inputs []layout.WidgetInput, grid GridConfig) (*layout.Layout, error) {
-	if grid.Columns == 2 && grid.Rows == 6 {
-		return layout.SolveGridWithBudget(inputs, 2, 6, 0)
+	if grid.Columns == 3 && grid.Rows == 6 {
+		return layout.SolveGridWithBudget(inputs, 3, 6, 0)
 	}
 	return layout.Solve(inputs)
 }
@@ -299,6 +299,14 @@ func parseYAMLStage(data []byte) (*Config, error) {
 	return &cfg, nil
 }
 
+var portraitDefaultDimMap = map[domain.Dimension]domain.Dimension{
+	{Cols: 6, Rows: 2}: {Cols: 3, Rows: 6},
+	{Cols: 4, Rows: 2}: {Cols: 3, Rows: 4},
+	{Cols: 3, Rows: 2}: {Cols: 3, Rows: 3},
+	{Cols: 2, Rows: 2}: {Cols: 3, Rows: 2},
+	{Cols: 2, Rows: 1}: {Cols: 3, Rows: 1},
+}
+
 func resolveWidgetDefaultDimensions(w *WidgetConfig, pkg *domain.Package, grid GridConfig) error {
 	if len(w.Dimensions) > 0 {
 		return nil
@@ -306,6 +314,11 @@ func resolveWidgetDefaultDimensions(w *WidgetConfig, pkg *domain.Package, grid G
 	defDim := pkg.Manifest.DefaultDimensions
 	if !defDim.IsValid() {
 		return fmt.Errorf("[Mirrormere Config Error] widget '%s' omits 'dimensions' and package manifest '%s' has no valid default_dimensions", w.ID, w.Type)
+	}
+	if grid.Columns == 3 && grid.Rows == 6 {
+		if mapped, ok := portraitDefaultDimMap[defDim]; ok && (len(pkg.Manifest.SupportedDimensions) == 0 || slices.Contains(pkg.Manifest.SupportedDimensions, mapped)) {
+			defDim = mapped
+		}
 	}
 	if !defDim.IsValidForGrid(grid.Columns, grid.Rows) {
 		flipped := domain.NewDimension(defDim.Rows, defDim.Cols)

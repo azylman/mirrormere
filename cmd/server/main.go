@@ -163,8 +163,8 @@ func buildDisplayHandler(stateProvider render.StateSnapshotProvider, currentThem
 	return display.NewHandler(
 		display.WithThemeProvider(currentTheme),
 		display.WithGridProvider(func() string {
-			if c := cfg(); c != nil && c.Display.Grid.Columns == 2 && c.Display.Grid.Rows == 6 {
-				return "2x6"
+			if c := cfg(); c != nil && c.Display.Grid.Columns == 3 && c.Display.Grid.Rows == 6 {
+				return "3x6"
 			}
 			return "6x2"
 		}),
