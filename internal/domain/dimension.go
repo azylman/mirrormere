@@ -7,7 +7,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Dimension represents the grid footprint of a widget [cols, rows] on the 6x2 or 2x6 grid.
+// Dimension represents the grid footprint of a widget [cols, rows] on the 6x2 or 3x6 grid.
 type Dimension struct {
 	Cols int `yaml:"cols"`
 	Rows int `yaml:"rows"`
@@ -25,7 +25,7 @@ func DimensionFromSlice(s []int) (Dimension, error) {
 	}
 	d := Dimension{Cols: s[0], Rows: s[1]}
 	if !d.IsValid() {
-		return Dimension{}, fmt.Errorf("dimension [%d, %d] violates 6x2 / 2x6 grid bounds (cols 1..6, rows 1..2 or cols 1..2, rows 1..6)", d.Cols, d.Rows)
+		return Dimension{}, fmt.Errorf("dimension [%d, %d] violates 6x2 / 3x6 grid bounds (cols 1..6, rows 1..2 or cols 1..3, rows 1..6)", d.Cols, d.Rows)
 	}
 	return d, nil
 }
@@ -35,9 +35,9 @@ func (d Dimension) Area() int {
 	return d.Cols * d.Rows
 }
 
-// IsValid checks if the dimension adheres to either the 6x2 landscape or 2x6 portrait grid bounds.
+// IsValid checks if the dimension adheres to either the 6x2 landscape or 3x6 portrait grid bounds.
 func (d Dimension) IsValid() bool {
-	return d.IsValidForGrid(6, 2) || d.IsValidForGrid(2, 6)
+	return d.IsValidForGrid(6, 2) || d.IsValidForGrid(3, 6)
 }
 
 // IsValidForGrid checks if the dimension fits within a gridCols x gridRows grid.
