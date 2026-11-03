@@ -1,0 +1,13 @@
+.widget-weather {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.weather-hourly-graph text {
+  user-select: none;
+  pointer-events: none;
+}

@@ -1,3 +1,4 @@
+import './ChatLogWidget.css';
 import { useWidget } from '../../store/hooks';
 import type { WidgetComponentProps } from '../registry';
 import { formatTime } from '../format';

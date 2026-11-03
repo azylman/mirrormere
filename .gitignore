@@ -26,7 +26,7 @@ Thumbs.db
 *.crt
 
 # Build & Dependency Outputs
-node_modules/
+node_modules
 dist/
 build/
 bin/
@@ -68,3 +68,7 @@ test-results/
 playwright-report/
 PR_DESCRIPTION.md
 .superpowers/
+
+# Ignore custom user weather character packs (keep README.md)
+web/ui/public/assets/weather-packs/*/
+!web/ui/public/assets/weather-packs/README.md

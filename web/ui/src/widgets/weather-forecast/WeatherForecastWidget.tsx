@@ -1,8 +1,32 @@
+import './WeatherForecastWidget.css';
+import {
+  DEFAULT_SCHOOL_DAY_THRESHOLDS,
+  type DaypartSlot,
+  type SchoolDayThresholds,
+  resolveCharacterPackSpriteUrl,
+  resolveClothingConditionState,
+  selectDailyVariantIndex,
+} from './schoolDayPack';
 import { useWidget } from '../../store/hooks';
 import type { WidgetComponentProps } from '../registry';
 import { todayPrecipProb } from '../format';
 import { WeatherIcon } from './WeatherIcon';
 import { WeatherHourlyGraph } from './WeatherHourlyGraph';
+
+interface SlotWeatherInfo {
+  temp: number;
+  precipProb: number;
+  icon: string;
+}
+
+interface SchoolDaySlotItem {
+  slot: DaypartSlot;
+  temp: number;
+  state: string;
+  spriteUrl: string;
+}
+
+const DAYPART_SLOTS: DaypartSlot[] = ['morning', 'afternoon', 'evening'];
 
 function resolveLocationName(
   config?: Record<string, unknown>,
@@ -10,11 +34,20 @@ function resolveLocationName(
 ): string {
   const candidates = [config?.name, config?.location_name, data?.location, data?.Location];
   for (const c of candidates) {
-    if (typeof c === 'string' && c.trim() !== '') {
-      return c.trim();
-    }
+    if (typeof c === 'string' && c.trim() !== '') return c.trim();
   }
   return '';
+}
+
+function extractCurrentCandidate(
+  data?: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+  const candidate =
+    data?.current ?? data?.Current ?? (data?.temperature !== undefined ? data : undefined);
+  if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) {
+    return candidate as Record<string, unknown>;
+  }
+  return undefined;
 }
 
 function extractTemperature(current?: Record<string, unknown>): {
@@ -58,14 +91,162 @@ function extractWindAndHumidity(current?: Record<string, unknown>): {
 } {
   const rawHumidity = current?.humidity ?? current?.Humidity;
   const humidity = rawHumidity !== undefined ? `${rawHumidity}%` : '--%';
-
   const rawWind = current?.wind_speed ?? current?.WindSpeed ?? current?.wind ?? current?.Wind;
   const windSpeed =
     Math.sign(Number(rawWind) || 0) * Math.round(Math.abs(Number(rawWind) || 0)) || 0;
   const units = (current?.units ?? current?.Units) as Record<string, unknown> | undefined;
   const windUnit = String(units?.wind_speed ?? units?.WindSpeed ?? 'mph');
-
   return { humidity, windSpeed, windUnit };
+}
+
+function extractSchoolDayConfig(config?: Record<string, unknown>): {
+  characterPack: string;
+  variantsPerState: number;
+  thresholds: SchoolDayThresholds;
+} {
+  const rawPack = typeof config?.character_pack === 'string' ? config.character_pack.trim() : '';
+  const characterPack =
+    rawPack && rawPack.toLowerCase() !== 'none'
+      ? rawPack.replace(/[^a-zA-Z0-9_-]/g, '')
+      : 'ghibli_school_day';
+  const variantsPerState =
+    typeof config?.variants_per_state === 'number' && config.variants_per_state >= 1
+      ? Math.floor(config.variants_per_state)
+      : 5;
+
+  const numOr = (val: unknown, fallback: number) => (typeof val === 'number' ? val : fallback);
+  const thresholds: SchoolDayThresholds = {
+    rainThresholdPct: numOr(config?.rain_threshold_pct, DEFAULT_SCHOOL_DAY_THRESHOLDS.rainThresholdPct),
+    coldMaxF: numOr(config?.cold_max_f, DEFAULT_SCHOOL_DAY_THRESHOLDS.coldMaxF),
+    coolMaxF: numOr(config?.cool_max_f, DEFAULT_SCHOOL_DAY_THRESHOLDS.coolMaxF),
+    warmMaxF: numOr(config?.warm_max_f, DEFAULT_SCHOOL_DAY_THRESHOLDS.warmMaxF),
+  };
+  return { characterPack, variantsPerState, thresholds };
+}
+
+function resolveDateStr(config?: Record<string, unknown>, timestamp?: string): string {
+  if (typeof config?.date === 'string' && config.date) return config.date;
+  if (typeof timestamp === 'string' && timestamp.length >= 10) return timestamp.slice(0, 10);
+  return '2026-10-31';
+}
+
+function findExplicitSlot(
+  slot: DaypartSlot,
+  data?: Record<string, unknown>,
+): SlotWeatherInfo | undefined {
+  const slots = data?.slots as Record<string, Record<string, unknown>> | undefined;
+  const slotObj = slots?.[slot] ?? (data?.[slot] as Record<string, unknown> | undefined);
+  if (!slotObj) return undefined;
+  return {
+    temp: Math.round(Number(slotObj.temp ?? slotObj.temperature ?? 0)),
+    precipProb: Math.round(Number(slotObj.precip_prob ?? slotObj.precip ?? 0)),
+    icon: String(slotObj.icon ?? 'weather-sunny'),
+  };
+}
+
+function findBestHourlySlot(slot: DaypartSlot, hourly: unknown[]): SlotWeatherInfo {
+  const targetHour = slot === 'morning' ? 8 : slot === 'afternoon' ? 14 : 18;
+  let bestItem: Record<string, unknown> | undefined;
+  let bestDiff = Infinity;
+
+  for (const item of hourly) {
+    if (!item || typeof item !== 'object') continue;
+    const h = item as Record<string, unknown>;
+    const match = String(h.time ?? h.Time ?? '').match(/(?:T|\s|^)(\d{1,2}):/);
+    if (match) {
+      const diff = Math.abs(parseInt(match[1], 10) - targetHour);
+      if (diff < bestDiff) {
+        bestDiff = diff;
+        bestItem = h;
+      }
+    }
+  }
+
+  if (!bestItem) {
+    const idx =
+      slot === 'morning'
+        ? 0
+        : slot === 'afternoon'
+          ? Math.floor(hourly.length / 2)
+          : hourly.length - 1;
+    bestItem = (hourly[idx] ?? {}) as Record<string, unknown>;
+  }
+
+  return {
+    temp: Math.round(Number(bestItem.temp ?? bestItem.Temp ?? 0)),
+    precipProb: Math.round(Number(bestItem.precip_prob ?? bestItem.PrecipProb ?? 0)),
+    icon: String(bestItem.icon ?? bestItem.Icon ?? 'weather-partly-cloudy'),
+  };
+}
+
+function fallbackSlotWeather(
+  slot: DaypartSlot,
+  data?: Record<string, unknown>,
+  current?: Record<string, unknown>,
+  daily?: unknown[],
+): SlotWeatherInfo {
+  const curTemp = Number(current?.temperature ?? current?.Temperature ?? 0) || 0;
+  const today =
+    Array.isArray(daily) && daily.length > 0 && typeof daily[0] === 'object'
+      ? (daily[0] as Record<string, unknown>)
+      : undefined;
+  const rawMax = today?.temp_max ?? today?.TempMax;
+  const rawMin = today?.temp_min ?? today?.TempMin;
+  const hasDaily = rawMax !== undefined && rawMin !== undefined;
+  const maxTemp = hasDaily ? Number(rawMax) : curTemp;
+  const minTemp = hasDaily ? Number(rawMin) : curTemp;
+
+  let temp = curTemp;
+  if (hasDaily) {
+    temp = slot === 'morning' ? minTemp : slot === 'afternoon' ? maxTemp : (minTemp + maxTemp) / 2;
+  }
+
+  return {
+    temp: Math.round(temp),
+    precipProb: todayPrecipProb(data),
+    icon: String(current?.icon ?? current?.Icon ?? 'weather-partly-cloudy'),
+  };
+}
+
+function resolveSlotWeather(
+  slot: DaypartSlot,
+  data?: Record<string, unknown>,
+  current?: Record<string, unknown>,
+  daily?: unknown[],
+  hourly?: unknown[],
+): SlotWeatherInfo {
+  const explicit = findExplicitSlot(slot, data);
+  if (explicit) return explicit;
+  if (Array.isArray(hourly) && hourly.length > 0) {
+    return findBestHourlySlot(slot, hourly);
+  }
+  return fallbackSlotWeather(slot, data, current, daily);
+}
+
+function buildSchoolDaySlots(
+  data: Record<string, unknown> | undefined,
+  current: Record<string, unknown> | undefined,
+  daily: unknown[] | undefined,
+  hourly: unknown[] | undefined,
+  config: Record<string, unknown> | undefined,
+  timestamp?: string,
+): SchoolDaySlotItem[] {
+  const { characterPack, variantsPerState, thresholds } = extractSchoolDayConfig(config);
+  const dateStr = resolveDateStr(config, timestamp);
+
+  return DAYPART_SLOTS.map((slot) => {
+    const info = resolveSlotWeather(slot, data, current, daily, hourly);
+    const state = resolveClothingConditionState(
+      info.temp,
+      info.precipProb,
+      info.icon,
+      slot,
+      thresholds,
+    );
+    const variantIndex = selectDailyVariantIndex(dateStr, slot, variantsPerState);
+    const spriteUrl = resolveCharacterPackSpriteUrl(characterPack, state, variantIndex);
+    return { slot, temp: info.temp, state, spriteUrl };
+  });
 }
 
 interface WeatherCurrentHeaderProps {
@@ -80,17 +261,8 @@ interface WeatherCurrentHeaderProps {
   minTemp: number;
 }
 
-function renderCurrentHeader({
-  locationName,
-  hasCurrent,
-  conditionText,
-  iconName,
-  roundedTemp,
-  tempUnit,
-  hasDaily,
-  maxTemp,
-  minTemp,
-}: WeatherCurrentHeaderProps) {
+function renderCurrentHeader(props: WeatherCurrentHeaderProps) {
+  const { locationName, hasCurrent, conditionText, iconName, roundedTemp, tempUnit, hasDaily, maxTemp, minTemp } = props;
   return (
     <div className="weather-header">
       <div className="weather-header-left">
@@ -109,20 +281,33 @@ function renderCurrentHeader({
 
       {hasCurrent && (
         <div className="weather-header-right">
-          <div
-            className="weather-temp-main weather-current-main bubbly-font"
-            title={conditionText}
-          >
-            {roundedTemp}
-            {tempUnit}
+          <div className="weather-temp-main weather-current-main bubbly-font" title={conditionText}>
+            {roundedTemp}{tempUnit}
           </div>
           {hasDaily && (
-            <div className="weather-temp-range">
-              H: {maxTemp}° • L: {minTemp}°
-            </div>
+            <div className="weather-temp-range">H: {maxTemp}° • L: {minTemp}°</div>
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+function renderSchoolDayStrip(slots: SchoolDaySlotItem[]) {
+  return (
+    <div className="weather-school-day-strip">
+      {slots.map((item) => (
+        <div
+          key={item.slot}
+          className={`weather-school-day-slot weather-school-day-slot-${item.slot}`}
+          data-slot={item.slot}
+        >
+          <span className="weather-school-day-name weather-school-day-slot-name">{item.slot}</span>
+          <span className="weather-school-day-temp">{item.temp}°</span>
+          <span className="weather-school-day-state weather-school-day-condition">{item.state}</span>
+          <img className="weather-school-day-sprite" src={item.spriteUrl} alt={item.state} />
+        </div>
+      ))}
     </div>
   );
 }
@@ -143,25 +328,11 @@ function renderHourlySection({ hourly, widgetId }: WeatherHourlySectionProps) {
       ) : (
         <div className="weather-empty">
           <span className="empty-icon">
-            <svg
-              width="24"
-              height="24"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <circle cx="12" cy="12" r="4" />
-              <path d="M12 2v2" />
-              <path d="M12 20v2" />
-              <path d="m4.93 4.93 1.41 1.41" />
-              <path d="m17.66 17.66 1.41 1.41" />
-              <path d="M2 12h2" />
-              <path d="M20 12h2" />
-              <path d="m6.34 17.66-1.41 1.41" />
-              <path d="m19.07 4.93-1.41 1.41" />
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="4" /><path d="M12 2v2" /><path d="M12 20v2" />
+              <path d="m4.93 4.93 1.41 1.41" /><path d="m17.66 17.66 1.41 1.41" />
+              <path d="M2 12h2" /><path d="M20 12h2" />
+              <path d="m6.34 17.66-1.41 1.41" /><path d="m19.07 4.93-1.41 1.41" />
             </svg>
           </span>
           <span className="empty-title">No hourly forecast available</span>
@@ -178,77 +349,24 @@ interface WeatherMicroStatsProps {
   precipProb: number;
 }
 
-function renderMicroStats({
-  humidity,
-  windSpeed,
-  windUnit,
-  precipProb,
-}: WeatherMicroStatsProps) {
+function renderMicroStats({ humidity, windSpeed, windUnit, precipProb }: WeatherMicroStatsProps) {
   return (
     <div className="weather-micro-stats">
-      <span
-        className="weather-meta-stat weather-meta-humidity"
-        title={`Humidity: ${humidity}`}
-      >
-        <svg
-          className="weather-meta-icon"
-          width="14"
-          height="14"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2.2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden="true"
-        >
+      <span className="weather-meta-stat weather-meta-humidity" title={`Humidity: ${humidity}`}>
+        <svg className="weather-meta-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
           <path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z" />
         </svg>
         <span>{humidity}</span>
       </span>
-      <span
-        className="weather-meta-stat weather-meta-wind"
-        title={`Wind: ${windSpeed} ${windUnit}`}
-      >
-        <svg
-          className="weather-meta-icon"
-          width="14"
-          height="14"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2.2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden="true"
-        >
-          <path d="M17.7 7.7a2.5 2.5 0 1 1 1.8 4.3H2" />
-          <path d="M9.6 4.6A2 2 0 1 1 11 8H2" />
-          <path d="M12.6 19.4A2 2 0 1 0 14 16H2" />
+      <span className="weather-meta-stat weather-meta-wind" title={`Wind: ${windSpeed} ${windUnit}`}>
+        <svg className="weather-meta-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M17.7 7.7a2.5 2.5 0 1 1 1.8 4.3H2" /><path d="M9.6 4.6A2 2 0 1 1 11 8H2" /><path d="M12.6 19.4A2 2 0 1 0 14 16H2" />
         </svg>
-        <span>
-          {windSpeed} {windUnit}
-        </span>
+        <span>{windSpeed} {windUnit}</span>
       </span>
-      <span
-        className="weather-meta-stat weather-meta-precip"
-        title={`Precipitation: ${precipProb}%`}
-      >
-        <svg
-          className="weather-meta-icon"
-          width="14"
-          height="14"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2.2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden="true"
-        >
-          <path d="M22 12a10.06 10.06 0 0 0-20 0Z" />
-          <path d="M12 12v8a2 2 0 0 0 4 0" />
-          <path d="M12 2v1" />
+      <span className="weather-meta-stat weather-meta-precip" title={`Precipitation: ${precipProb}%`}>
+        <svg className="weather-meta-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M22 12a10.06 10.06 0 0 0-20 0Z" /><path d="M12 12v8a2 2 0 0 0 4 0" /><path d="M12 2v1" />
         </svg>
         <span>{precipProb}%</span>
       </span>
@@ -266,27 +384,26 @@ export function WeatherForecastWidget({ id }: WidgetComponentProps) {
   const data = entry?.data as Record<string, unknown> | undefined;
   const isError = entry?.state === 'error';
 
-  const currentCandidate = data?.current ?? data?.Current;
-  const hasCurrent = Boolean(
-    currentCandidate && typeof currentCandidate === 'object' && !Array.isArray(currentCandidate),
-  );
-  const current = hasCurrent ? (currentCandidate as Record<string, unknown>) : undefined;
+  const current = extractCurrentCandidate(data);
+  const hasCurrent = Boolean(current);
 
   const locationName = resolveLocationName(config, data);
   const showHeader = Boolean(locationName || hasCurrent);
 
-  const conditionText = hasCurrent
-    ? String(current?.condition_text ?? current?.ConditionText ?? '')
-    : '';
-  const iconName = hasCurrent
-    ? String(current?.icon ?? current?.Icon ?? '')
-    : 'weather-partly-cloudy';
+  const conditionText = hasCurrent ? String(current?.condition_text ?? current?.ConditionText ?? '') : '';
+  const iconName = hasCurrent ? String(current?.icon ?? current?.Icon ?? '') : 'weather-partly-cloudy';
 
   const { roundedTemp, tempUnit } = extractTemperature(current);
   const { hasDaily, maxTemp, minTemp } = extractDailyRange(data);
   const { humidity, windSpeed, windUnit } = extractWindAndHumidity(current);
   const precipProb = todayPrecipProb(data);
   const hourly = (data?.hourly ?? data?.Hourly) as unknown[] | undefined;
+  const daily = (data?.daily ?? data?.Daily) as unknown[] | undefined;
+
+  const isSchoolDay = config?.mode === 'school-day';
+  const schoolDaySlots = isSchoolDay
+    ? buildSchoolDaySlots(data, current, daily, hourly, config, entry?.timestamp)
+    : [];
 
   return (
     <div className="widget-weather">
@@ -312,6 +429,7 @@ export function WeatherForecastWidget({ id }: WidgetComponentProps) {
 
       {hasCurrent ? (
         <>
+          {isSchoolDay && renderSchoolDayStrip(schoolDaySlots)}
           {renderHourlySection({ hourly, widgetId: id })}
           {renderMicroStats({
             humidity,

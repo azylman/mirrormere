@@ -1147,7 +1147,7 @@ describe('YtMusicWidget', () => {
     });
   });
 
-  it('activates media tiles and mini-player meta on Enter and Space keydown', async () => {
+  it('activates media tiles on Enter and Space keydown', async () => {
     const { container } = render(
       <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
         <YtMusicWidget id="yt-1" type="yt-music" />
@@ -1160,6 +1160,7 @@ describe('YtMusicWidget', () => {
 
     const playlistTile = container.querySelector('.media-tile') as HTMLElement;
     expect(playlistTile.getAttribute('role')).toBe('button');
+    expect(playlistTile.getAttribute('tabindex')).toBe('0');
 
     // Trigger Enter
     fireEvent.keyDown(playlistTile, { key: 'Enter' });
@@ -1189,11 +1190,49 @@ describe('YtMusicWidget', () => {
     // Escape does not trigger action
     fireEvent.keyDown(sugTile, { key: 'Escape' });
 
-    // Return to library and test mini-player meta keydown
+    // Switch to queue
     await waitFor(() => {
       expect(container.querySelector('#btn-browse-library')).not.toBeNull();
     });
     fireEvent.click(container.querySelector('#btn-browse-library')!);
+
+    fireEvent.click(container.querySelector('[data-tab="queue"]')!);
+    await waitFor(() => {
+      expect(container.querySelectorAll('.media-tile').length).toBe(2);
+    });
+    const queueTile = container.querySelectorAll('.media-tile')[0] as HTMLElement;
+    expect(queueTile.getAttribute('role')).toBe('button');
+    expect(queueTile.getAttribute('tabindex')).toBe('0');
+    fireEvent.keyDown(queueTile, { key: 'Enter' });
+    fireEvent.keyDown(queueTile, { key: ' ' });
+
+    // Perform search
+    if (container.querySelector('#btn-browse-library')) {
+      fireEvent.click(container.querySelector('#btn-browse-library')!);
+    }
+
+    await waitFor(() => {
+      expect(container.querySelector('#search-input')).not.toBeNull();
+    });
+
+    const searchInput = container.querySelector('#search-input') as HTMLInputElement;
+    const searchForm = container.querySelector('#search-form') as HTMLFormElement;
+    fireEvent.change(searchInput, { target: { value: 'Save Your Tears' } });
+    fireEvent.submit(searchForm);
+    await waitFor(() => {
+      expect(container.querySelectorAll('.media-tile').length).toBe(1);
+    });
+    const searchTile = container.querySelectorAll('.media-tile')[0] as HTMLElement;
+    expect(searchTile.getAttribute('role')).toBe('button');
+    expect(searchTile.getAttribute('tabindex')).toBe('0');
+    fireEvent.keyDown(searchTile, { key: 'Enter' });
+    fireEvent.keyDown(searchTile, { key: ' ' });
+    fireEvent.keyDown(searchTile, { key: 'Escape' });
+
+    // Return to library and test mini-player meta keydown
+    if (container.querySelector('#btn-browse-library')) {
+      fireEvent.click(container.querySelector('#btn-browse-library')!);
+    }
 
     await waitFor(() => {
       expect(container.querySelector('.np-meta')).not.toBeNull();

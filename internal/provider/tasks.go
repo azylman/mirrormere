@@ -31,6 +31,12 @@ type TasksProvider struct {
 	adapter adapters.Adapter
 }
 
+func init() {
+	registerBuiltin("tasks", func() Provider {
+		return NewTasksProvider()
+	})
+}
+
 // NewTasksProvider constructs a new TasksProvider.
 func NewTasksProvider() *TasksProvider {
 	return &TasksProvider{}

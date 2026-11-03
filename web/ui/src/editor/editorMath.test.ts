@@ -10,6 +10,7 @@ import {
   moveOrSwapWidget,
   moveWidgetToScreen,
   resizeWidget,
+  resolvePreviewOrigin,
   togglePinWidget,
 } from './editorMath';
 
@@ -243,15 +244,66 @@ describe('editorMath', () => {
       expect(res).toEqual(widgets);
     });
 
-    it('rejects swap if overlapping with more than one widget', () => {
+    it('swaps and reflows when overlapping with multiple widgets', () => {
       const widgets = [
         makeWidget({ widget_id: 'big', screen: 0, origin: [0, 0], dimensions: [4, 1] }),
         makeWidget({ widget_id: 's1', screen: 0, origin: [0, 1], dimensions: [2, 1] }),
         makeWidget({ widget_id: 's2', screen: 0, origin: [2, 1], dimensions: [2, 1] }),
       ];
-      // Drag big onto [0, 1] overlaps both s1 and s2
+      // Drag big onto [0, 1] overlaps both s1 and s2 -> reflows s1 and s2 into row 0
       const res = moveOrSwapWidget(widgets, 'big', 0, [0, 1], 6, 2);
-      expect(res).toEqual(widgets);
+      expect(res.find((w) => w.widget_id === 'big')?.origin).toEqual([0, 1]);
+      expect(res.find((w) => w.widget_id === 's1')?.origin).toEqual([0, 0]);
+      expect(res.find((w) => w.widget_id === 's2')?.origin).toEqual([2, 0]);
+    });
+
+    it('swaps 4x2 family-calendar on left with two 2x1 widgets on right (including intermediate col 1)', () => {
+      const widgets = [
+        makeWidget({ widget_id: 'family-calendar', screen: 0, origin: [0, 0], dimensions: [4, 2] }),
+        makeWidget({ widget_id: 'home-weather', screen: 0, origin: [4, 0], dimensions: [2, 1] }),
+        makeWidget({ widget_id: 'family-tasks', screen: 0, origin: [4, 1], dimensions: [2, 1] }),
+      ];
+
+      // Drop directly on [2, 0]
+      const resDirect = moveOrSwapWidget(widgets, 'family-calendar', 0, [2, 0], 6, 2);
+      expect(resDirect.find((w) => w.widget_id === 'family-calendar')?.origin).toEqual([2, 0]);
+      expect(resDirect.find((w) => w.widget_id === 'home-weather')?.origin).toEqual([0, 0]);
+      expect(resDirect.find((w) => w.widget_id === 'family-tasks')?.origin).toEqual([0, 1]);
+
+      // Drop on intermediate column [1, 0] snaps to [2, 0]
+      const resSnap = moveOrSwapWidget(widgets, 'family-calendar', 0, [1, 0], 6, 2);
+      expect(resSnap.find((w) => w.widget_id === 'family-calendar')?.origin).toEqual([2, 0]);
+      expect(resSnap.find((w) => w.widget_id === 'home-weather')?.origin).toEqual([0, 0]);
+      expect(resSnap.find((w) => w.widget_id === 'family-tasks')?.origin).toEqual([0, 1]);
+
+      // Dragging back from [2, 0] to [0, 0] or [1, 0] restores original positions
+      const resBack = moveOrSwapWidget(resDirect, 'family-calendar', 0, [1, 0], 6, 2);
+      expect(resBack.find((w) => w.widget_id === 'family-calendar')?.origin).toEqual([0, 0]);
+      expect(resBack.find((w) => w.widget_id === 'home-weather')?.origin).toEqual([4, 0]);
+      expect(resBack.find((w) => w.widget_id === 'family-tasks')?.origin).toEqual([4, 1]);
+    });
+
+    it('reflows screen when dragging a 2x1 widget onto a 4x2 widget', () => {
+      const widgets = [
+        makeWidget({ widget_id: 'family-calendar', screen: 0, origin: [0, 0], dimensions: [4, 2] }),
+        makeWidget({ widget_id: 'home-weather', screen: 0, origin: [4, 0], dimensions: [2, 1] }),
+        makeWidget({ widget_id: 'family-tasks', screen: 0, origin: [4, 1], dimensions: [2, 1] }),
+      ];
+
+      const res = moveOrSwapWidget(widgets, 'home-weather', 0, [0, 0], 6, 2);
+      expect(res.find((w) => w.widget_id === 'home-weather')?.origin).toEqual([0, 0]);
+      expect(res.find((w) => w.widget_id === 'family-tasks')?.origin).toEqual([0, 1]);
+      expect(res.find((w) => w.widget_id === 'family-calendar')?.origin).toEqual([2, 0]);
+    });
+
+    it('resolves preview origin to snapped landing slot', () => {
+      const widgets = [
+        makeWidget({ widget_id: 'family-calendar', screen: 0, origin: [0, 0], dimensions: [4, 2] }),
+        makeWidget({ widget_id: 'home-weather', screen: 0, origin: [4, 0], dimensions: [2, 1] }),
+        makeWidget({ widget_id: 'family-tasks', screen: 0, origin: [4, 1], dimensions: [2, 1] }),
+      ];
+      expect(resolvePreviewOrigin(widgets, 'family-calendar', 0, [1, 0], 6, 2)).toEqual([2, 0]);
+      expect(resolvePreviewOrigin(widgets, 'unknown', 0, [1, 0], 6, 2)).toEqual([1, 0]);
     });
 
     it('rejects swap between pinned and unpinned across different screens', () => {
@@ -263,22 +315,22 @@ describe('editorMath', () => {
       expect(res).toEqual(widgets);
     });
 
-    it('rejects swap if other widget would be out of bounds at source origin', () => {
+    it('rejects swap if pinned widget would be out of bounds at source origin', () => {
       const widgets = [
         makeWidget({ widget_id: 'w1', screen: 0, origin: [5, 0], dimensions: [1, 1] }),
-        makeWidget({ widget_id: 'w2', screen: 0, origin: [0, 0], dimensions: [2, 1] }),
+        makeWidget({ widget_id: 'pin', pinned: true, screen: 0, origin: [0, 0], dimensions: [2, 1] }),
       ];
-      // w2 has width 2, at origin [5, 0] 5+2=7 > 6
+      // pin has width 2, at origin [5, 0] 5+2=7 > 6 and pinned widgets are not reflowed
       const res = moveOrSwapWidget(widgets, 'w1', 0, [0, 0], 6, 2);
       expect(res).toEqual(widgets);
     });
 
-    it('rejects swap if swapped positions still collide with each other', () => {
+    it('rejects swap if swapped positions still collide with a pinned widget', () => {
       const widgets = [
         makeWidget({ widget_id: 'w1', screen: 0, origin: [0, 0], dimensions: [1, 1] }),
-        makeWidget({ widget_id: 'w2', screen: 0, origin: [1, 0], dimensions: [2, 1] }),
+        makeWidget({ widget_id: 'pin', pinned: true, screen: 0, origin: [1, 0], dimensions: [2, 1] }),
       ];
-      // Moving w1 to [1, 0] overlaps w2. Putting w2 at [0, 0] means w2 occupies [0..1, 0] and w1 occupies [1, 0].
+      // Moving w1 to [1, 0] overlaps pin. Putting pin at [0, 0] means pin occupies [0..1, 0] and w1 occupies [1, 0].
       const res = moveOrSwapWidget(widgets, 'w1', 0, [1, 0], 6, 2);
       expect(res).toEqual(widgets);
     });

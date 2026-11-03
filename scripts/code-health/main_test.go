@@ -169,16 +169,17 @@ func TestRun(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name         string
-		files        map[string]string
-		baselineJSON string
-		readOnlyBase bool
-		customArgs   []string
-		targetArgs   []string
-		relTargets   []string
-		wantCode     int
-		wantOut      string
-		wantErr      string
+		name             string
+		files            map[string]string
+		baselineJSON     string
+		readOnlyBase     bool
+		customArgs       []string
+		targetArgs       []string
+		relTargets       []string
+		wantCode         int
+		wantOut          string
+		wantErr          string
+		wantFileContains map[string]string
 	}{
 		{
 			name: "healthy repository passes with missing baseline file",
@@ -431,6 +432,128 @@ type SmallB struct {
 			wantCode:   1,
 			wantErr:    "ratchet violation(s) detected",
 		},
+		{
+			name: "unsorted routes detected in check mode",
+			files: map[string]string{
+				"pkg/server.go": `package pkg
+
+import "net/http"
+
+type S struct {
+	mux *http.ServeMux
+}
+
+func (s *S) setupRoutes() {
+	s.mux.HandleFunc("/z", nil)
+	s.mux.HandleFunc("/a", nil)
+}
+`,
+			},
+			wantCode: 1,
+			wantErr:  "contiguous route statement run is unsorted",
+		},
+		{
+			name: "unsorted routes and handler fields auto-sorted with -fix",
+			files: map[string]string{
+				"pkg/server.go": `package pkg
+
+import "net/http"
+
+type Config struct {
+	VoiceHandler http.Handler
+	AudioHandler http.Handler
+}
+
+type S struct {
+	mux *http.ServeMux
+}
+
+func (s *S) setupRoutes() {
+	s.mux.HandleFunc("/z", nil)
+	s.mux.HandleFunc("/a", nil)
+}
+`,
+			},
+			customArgs: []string{"-fix"},
+			wantCode:   0,
+			wantOut:    "Checked 1 Go file(s)",
+			wantFileContains: map[string]string{
+				"pkg/server.go": "AudioHandler http.Handler\n\tVoiceHandler http.Handler",
+			},
+		},
+		{
+			name: "unsorted composite literal handlers auto-sorted with -fix",
+			files: map[string]string{
+				"pkg/server.go": `package pkg
+
+import "net/http"
+
+type Config struct {
+	AudioHandler http.Handler
+	VoiceHandler http.Handler
+}
+
+func initServer() {
+	_ = Config{
+		VoiceHandler: nil,
+		AudioHandler: nil,
+	}
+}
+`,
+			},
+			customArgs: []string{"-fix"},
+			wantCode:   0,
+			wantOut:    "Checked 1 Go file(s)",
+			wantFileContains: map[string]string{
+				"pkg/server.go": "AudioHandler: nil,\n\t\tVoiceHandler: nil,",
+			},
+		},
+		{
+			name: "ordering checks ignore non-matching ast constructs",
+			files: map[string]string{
+				"pkg/server.go": `package pkg
+
+import "net/http"
+
+type Mixed struct {
+	int
+	Name string
+	AudioHandler http.Handler
+}
+
+type S struct {
+	mux *http.ServeMux
+}
+
+func noop() {}
+
+func (s *S) setupRoutes() {
+	var x int
+	_ = x
+	noop()
+	s.mux.HandleFunc("/a", nil)
+	s.mux.Handle("/b", nil)
+}
+
+func init() {
+	_ = []any{123, "text"}
+	_ = map[string]string{"foo": "bar"}
+}
+`,
+				"pkg/server_test.go": `package pkg
+
+import "testing"
+
+type TestHelper struct {
+	allowedClosure func()
+}
+
+func TestOk(t *testing.T) {}
+`,
+			},
+			wantCode: 0,
+			wantOut:  "Checked 1 Go file(s)",
+		},
 	}
 
 	for _, tc := range tests {
@@ -478,6 +601,15 @@ type SmallB struct {
 			}
 			if tc.wantErr != "" && !strings.Contains(stderr.String(), tc.wantErr) {
 				t.Errorf("stderr %q does not contain %q", stderr.String(), tc.wantErr)
+			}
+			for relPath, wantSnippet := range tc.wantFileContains {
+				data, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(relPath)))
+				if err != nil {
+					t.Fatalf("read file %s: %v", relPath, err)
+				}
+				if !strings.Contains(string(data), wantSnippet) {
+					t.Errorf("file %s does not contain %q; got:\n%s", relPath, wantSnippet, string(data))
+				}
 			}
 		})
 	}

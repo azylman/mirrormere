@@ -1,40 +1,25 @@
+import './PhotoCarouselWidget.css';
 import { useEffect, useRef, useState } from 'react';
 import { useWidget } from '../../store/hooks';
 import type { WidgetComponentProps } from '../registry';
 import { useIsCurrentPane } from '../../carousel/PaneContext';
 import { useDocumentVisible } from '../../lifecycle/visibility';
 import { useDisplayStore } from '../../store';
+import { HudNextIcon, HudPauseIcon, HudPlayIcon, HudPrevIcon } from '../../video/HudIcons';
 import {
-  HudNextIcon,
-  HudPauseIcon,
-  HudPlayIcon,
-  HudPrevIcon,
-} from '../../video/HudIcons';
-import {
-  EMPTY_PHOTOS,
-  DEFAULT_CYCLE_SECONDS,
-  PHOTO_CONTROLS_HIDE_MS,
-  PHOTO_PAUSE_INACTIVITY_MS,
-  parsePhotoCarouselData,
-  getBackdropPhotoURL,
-  getSizedPhotoURL,
-  useContainerSize,
-  registerEmberSyncListener,
-  usePhotoSlideshowTransition,
-  type EmberSyncListener,
-  type PhotoCarouselConfig,
+  EMPTY_PHOTOS, DEFAULT_CYCLE_SECONDS, PHOTO_CONTROLS_HIDE_MS, PHOTO_PAUSE_INACTIVITY_MS,
+  photoDeckStateById, getPhotoItemKey, selectPreloadPhotoIndices,
+  parsePhotoCarouselData, getBackdropPhotoURL, getSizedPhotoURL, useContainerSize,
+  registerEmberSyncListener, usePhotoSlideshowTransition, resolvePhotoCarouselSourceAndUrl,
+  formatPhotoMetadataLabel, hasMultiplePhotoAlbums,
+  type ContainerSize, type EmberSyncListener, type PhotoCarouselConfig, type PhotoItem,
 } from './photoCarouselHelpers';
 
 export {
-  parsePhotoCarouselData,
-  getBackdropPhotoURL,
-  getSizedPhotoURL,
-  photoDeckStateById,
-  getPhotoItemKey,
-  selectNextPhotoIndex,
-  selectPrevPhotoIndex,
-  PHOTO_CONTROLS_HIDE_MS,
-  PHOTO_PAUSE_INACTIVITY_MS,
+  parsePhotoCarouselData, getBackdropPhotoURL, getSizedPhotoURL, photoDeckStateById,
+  getPhotoItemKey, selectNextPhotoIndex, selectPrevPhotoIndex, selectPreloadPhotoIndices,
+  formatPhotoOverlayDate, formatPhotoMetadataLabel, hasMultiplePhotoAlbums,
+  PHOTO_CONTROLS_HIDE_MS, PHOTO_PAUSE_INACTIVITY_MS,
 } from './photoCarouselHelpers';
 
 declare global {
@@ -193,6 +178,37 @@ function PhotoForeground({
   );
 }
 
+function PhotoMetadataOverlay({ photo, showAlbumName }: { photo?: PhotoItem; showAlbumName: boolean }) {
+  const meta = formatPhotoMetadataLabel(photo, showAlbumName);
+  if (!meta) return null;
+  return (
+    <div className="photo-metadata-overlay" aria-label={meta.text}>
+      {meta.text}
+    </div>
+  );
+}
+
+function PhotoPreloadPool({ photos, baseIndex, widgetId, containerSize }: {
+  photos: readonly PhotoItem[]; baseIndex: number; widgetId: string; containerSize: ContainerSize;
+}) {
+  const indices = selectPreloadPhotoIndices(photos, baseIndex, photoDeckStateById.get(widgetId)?.seenKeys);
+  if (indices.length === 0) return null;
+  return (
+    <div className="photo-preload-pool" aria-hidden="true">
+      {indices.map((idx) => {
+        const p = photos[idx];
+        const rawUrl = p?.url ?? p?.URL;
+        return (
+          <span key={getPhotoItemKey(p, idx)}>
+            <img src={getBackdropPhotoURL(rawUrl)} decoding="async" loading="eager" alt="" />
+            <img src={getSizedPhotoURL(rawUrl, containerSize)} decoding="async" loading="eager" alt="" />
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
 interface PhotoTransportControlsProps {
   visible: boolean;
   isPaused: boolean;
@@ -316,9 +332,7 @@ export function PhotoCarouselWidget({ id }: WidgetComponentProps) {
   const data = parsePhotoCarouselData(rawData);
   const hasLoaded = entry?.state !== 'loading' && Array.isArray(data.photos);
 
-  const source: 'share_url' | 'ember_bridge' =
-    config?.source === 'ember_bridge' ? 'ember_bridge' : 'share_url';
-  const albumUrl = (config?.album_url || data?.album_url || '').trim();
+  const { source, albumUrl } = resolvePhotoCarouselSourceAndUrl(config, data);
 
   const [needsAuth, setNeedsAuth] = useState(false);
   const [syncError, setSyncError] = useState(false);
@@ -418,9 +432,12 @@ export function PhotoCarouselWidget({ id }: WidgetComponentProps) {
 
   const isTransitioning = Boolean(transitionState?.active);
   const nextPhoto = transitionState ? photos[transitionState.nextIndex] : undefined;
+  const activeIndex = isTransitioning && transitionState ? transitionState.nextIndex : safeIndex;
+  const activePhoto = isTransitioning && nextPhoto ? nextPhoto : currentPhoto;
   const nextRawUrl = nextPhoto?.url ?? nextPhoto?.URL;
   const nextFgUrl = nextRawUrl ? getSizedPhotoURL(nextRawUrl, containerSize) : '';
   const nextBackdropUrl = nextRawUrl ? getBackdropPhotoURL(nextRawUrl) : '';
+  const showAlbumName = (Array.isArray(config?.albums) && config.albums.length > 1) || hasMultiplePhotoAlbums(photos);
 
   return (
     <div
@@ -450,6 +467,13 @@ export function PhotoCarouselWidget({ id }: WidgetComponentProps) {
             nextUrl={nextFgUrl}
             isTransitioning={isTransitioning}
           />
+          <PhotoPreloadPool
+            photos={photos}
+            baseIndex={activeIndex}
+            widgetId={id}
+            containerSize={containerSize}
+          />
+          <PhotoMetadataOverlay photo={activePhoto} showAlbumName={showAlbumName} />
           {photos.length > 1 && (
             <PhotoTransportControls
               visible={controlsVisible || isPaused}

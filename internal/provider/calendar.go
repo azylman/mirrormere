@@ -86,6 +86,10 @@ type CalendarProvider struct {
 	caldavClient *CalDAVClient
 }
 
+func init() {
+	registerBuiltin("calendar-feed", NewCalendarProvider)
+}
+
 // NewCalendarProvider constructs a standard CalendarProvider.
 func NewCalendarProvider() Provider {
 	return NewCalendarProviderWithClient(nil, nil)

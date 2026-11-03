@@ -1,3 +1,4 @@
+import './YtMusicWidget.css';
 import { memo, useState, type ChangeEvent, type FormEvent } from 'react';
 import { useIsCurrentPane } from '../../carousel/PaneContext';
 import { useDocumentVisible } from '../../lifecycle/visibility';

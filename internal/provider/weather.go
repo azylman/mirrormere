@@ -176,6 +176,10 @@ type WeatherProvider struct {
 	logger    *slog.Logger
 }
 
+func init() {
+	registerBuiltin("weather-forecast", NewWeatherProvider)
+}
+
 // NewWeatherProvider constructs a standard WeatherProvider instance.
 func NewWeatherProvider() Provider {
 	return NewWeatherProviderWithClient(nil, "")

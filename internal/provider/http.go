@@ -53,6 +53,10 @@ type HTTPProvider struct {
 	schema       *jsonschema.Schema
 }
 
+func init() {
+	registerBuiltin("http", NewHTTPProvider)
+}
+
 // NewHTTPProvider constructs a new HTTPProvider with standard Slowloris defense client.
 func NewHTTPProvider() Provider {
 	return NewHTTPProviderWithClient(&http.Client{

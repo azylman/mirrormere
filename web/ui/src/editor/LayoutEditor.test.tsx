@@ -129,8 +129,9 @@ describe('LayoutEditor component', () => {
     // 12 background drop slots
     expect(container.querySelectorAll('.layout-editor-cell')).toHaveLength(12);
 
-    // Cards visible on Screen 0: clock-1, weather-1, pinned-1
-    expect(container.querySelectorAll('.layout-editor-card')).toHaveLength(3);
+    // Toolbar reuses .header-zone and cards reuse .widget-card
+    expect(container.querySelector('.layout-editor-toolbar.header-zone')).not.toBeNull();
+    expect(container.querySelectorAll('.layout-editor-card.widget-card')).toHaveLength(3);
 
     // Status shows occupied cell count: clock-1 (2) + weather-1 (2) + pinned-1 (2) = 6/12 cells
     const status = container.querySelector('.layout-editor-status');
@@ -407,6 +408,75 @@ describe('LayoutEditor component', () => {
 
     // clock-1 moved to row 1
     expect(clockCard.style.gridRow).toBe('2 / span 1');
+  });
+
+  it('supports dragging 4x2 family-calendar grabbed near its center to the right side and swapping with two 2x1 widgets', async () => {
+    const fetchMock = stubEditorFetch({
+      widgets: [
+        {
+          widget_id: 'family-calendar',
+          type: 'calendar-monthly',
+          screen: 0,
+          origin: [0, 0],
+          dimensions: [4, 2],
+          pinned: false,
+          supported_dimensions: [[4, 2]],
+        },
+        {
+          widget_id: 'home-weather',
+          type: 'weather-forecast',
+          screen: 0,
+          origin: [4, 0],
+          dimensions: [2, 1],
+          pinned: false,
+          supported_dimensions: [[2, 1]],
+        },
+        {
+          widget_id: 'family-tasks',
+          type: 'tasks',
+          screen: 0,
+          origin: [4, 1],
+          dimensions: [2, 1],
+          pinned: false,
+          supported_dimensions: [[2, 1]],
+        },
+      ],
+    });
+    useDisplayStore.setState({ layoutEditorOpen: true });
+
+    const { container } = render(<LayoutEditor fetchImpl={fetchMock} />);
+    await settle();
+
+    const grid = container.querySelector('.layout-editor-grid') as HTMLElement;
+    vi.spyOn(grid, 'getBoundingClientRect').mockReturnValue({
+      left: 0,
+      top: 0,
+      width: 600,
+      height: 200,
+      right: 600,
+      bottom: 200,
+      x: 0,
+      y: 0,
+      toJSON: () => {},
+    });
+
+    const calendarCard = container.querySelector('[data-widget-id="family-calendar"]') as HTMLElement;
+    calendarCard.setPointerCapture = vi.fn();
+    calendarCard.releasePointerCapture = vi.fn();
+
+    // Grab family-calendar at col 2 (clientX: 250) and drag right by 200px (clientX: 450)
+    fireEvent.pointerDown(calendarCard, { pointerId: 1, clientX: 250, clientY: 50, button: 0 });
+    fireEvent.pointerMove(calendarCard, { pointerId: 1, clientX: 450, clientY: 50 });
+    fireEvent.pointerUp(calendarCard, { pointerId: 1, clientX: 450, clientY: 50 });
+
+    const weatherCard = container.querySelector('[data-widget-id="home-weather"]') as HTMLElement;
+    const tasksCard = container.querySelector('[data-widget-id="family-tasks"]') as HTMLElement;
+
+    expect(calendarCard.style.gridColumn).toBe('3 / span 4');
+    expect(weatherCard.style.gridColumn).toBe('1 / span 2');
+    expect(weatherCard.style.gridRow).toBe('1 / span 1');
+    expect(tasksCard.style.gridColumn).toBe('1 / span 2');
+    expect(tasksCard.style.gridRow).toBe('2 / span 1');
   });
 
   it('supports dragging widget and dropping onto screen dock pill', async () => {
