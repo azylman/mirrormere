@@ -30,7 +30,7 @@ type VoiceHub interface {
 	Interact(ctx context.Context, audio io.Reader, nodeID, sessionID string, sink voice.SSEEventSink, timings voice.EdgeTimings) error
 }
 
-// DefaultVoiceHandler serves OpenAPI /api/voice/state, /api/voice/interact, and /api/voice/heartbeat endpoints.
+// DefaultVoiceHandler serves /api/voice/state, /api/voice/interact, and /api/voice/heartbeat endpoints.
 type DefaultVoiceHandler struct {
 	coord   VoiceCoordinator
 	hub     VoiceHub
@@ -54,14 +54,6 @@ func NewDefaultVoiceHandler(coord VoiceCoordinator, hub VoiceHub, opts ...Defaul
 	return h
 }
 
-// VoiceHeartbeatRequest represents the payload from edge device heartbeats.
-type VoiceHeartbeatRequest struct {
-	NodeID          string   `json:"node_id"`
-	AmbientRMSDBFS  *float64 `json:"ambient_rms_dbfs,omitempty"`
-	FalseWakes      *int     `json:"false_wakes,omitempty"`
-	LastPlaybackSec *float64 `json:"last_playback_sec,omitempty"`
-}
-
 // PostVoiceState handles POST /api/voice/state.
 func (h *DefaultVoiceHandler) PostVoiceState(w http.ResponseWriter, r *http.Request) {
 	if !requireCORSAndMethod(w, r, "POST, OPTIONS", http.MethodPost) {
@@ -75,11 +67,11 @@ func (h *DefaultVoiceHandler) PostVoiceState(w http.ResponseWriter, r *http.Requ
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeAPIError(w, http.StatusBadRequest, "invalid voice state request payload: "+err.Error())
 		return
-	} else if !voice.IsValidState(string(req.State)) {
+	} else if !voice.IsValidState(req.State) {
 		writeAPIError(w, http.StatusBadRequest, voice.ErrInvalidState.Error())
 		return
 	}
-	if _, err := h.coord.SetState(string(req.State), req.Transcript, req.Reply, req.TtsEngine); err != nil {
+	if _, err := h.coord.SetState(req.State, req.Transcript, req.Reply, req.TTSEngine); err != nil {
 		writeAPIError(w, http.StatusBadRequest, err.Error())
 	} else {
 		writeJSON(w, http.StatusOK, api.VoiceStateResponse{Status: "ok"})
@@ -92,7 +84,7 @@ func (h *DefaultVoiceHandler) PostVoiceHeartbeat(w http.ResponseWriter, r *http.
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
-	var req VoiceHeartbeatRequest
+	var req api.VoiceHeartbeatRequest
 	var id string
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeAPIError(w, http.StatusBadRequest, "invalid heartbeat payload: "+err.Error())
@@ -113,7 +105,7 @@ func (h *DefaultVoiceHandler) PostVoiceHeartbeat(w http.ResponseWriter, r *http.
 			m.RecordPlaybackDuration(id, *req.LastPlaybackSec)
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	writeJSON(w, http.StatusOK, api.ActionResponse{Status: "ok"})
 }
 
 func parseTimingSec(r *http.Request, field string) float64 {

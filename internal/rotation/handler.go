@@ -21,7 +21,7 @@ type ScreenController interface {
 	ScreenLayout() ScreenLayoutSnapshot
 }
 
-// Handler serves HTTP endpoints for screen navigation matching OpenAPI specification.
+// Handler serves HTTP endpoints for screen navigation.
 type Handler struct {
 	controller ScreenController
 }
@@ -78,8 +78,8 @@ func (h *Handler) PostScreenAdvance(w http.ResponseWriter, r *http.Request) {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
 			writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 			return
-		} else if req.Direction != nil && *req.Direction != "" {
-			direction = string(*req.Direction)
+		} else if req.Direction != "" {
+			direction = req.Direction
 		}
 	}
 	data, err := h.controller.AdvanceScreen(direction)
@@ -94,10 +94,7 @@ func (h *Handler) PostScreenPause(w http.ResponseWriter, r *http.Request) {
 	if !h.checkPostAndController(w, r) {
 		return
 	}
-	var req struct {
-		Paused          *bool `json:"paused"`
-		DurationSeconds *int  `json:"duration_seconds"`
-	}
+	var req api.ScreenPauseRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Paused == nil {
 		writeError(w, http.StatusBadRequest, "invalid payload: paused must be a boolean")
 		return
@@ -155,7 +152,7 @@ func (h *Handler) GetScreens(w http.ResponseWriter, r *http.Request) {
 		widgets := make([]api.WidgetPlacement, 0, len(screen.Widgets))
 		for _, pw := range screen.Widgets {
 			widgets = append(widgets, api.WidgetPlacement{
-				WidgetId:   pw.WidgetID,
+				WidgetID:   pw.WidgetID,
 				Type:       pw.Type,
 				Origin:     []int{pw.Origin[0], pw.Origin[1]},
 				Dimensions: []int{pw.Dimensions.Cols, pw.Dimensions.Rows},

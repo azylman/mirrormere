@@ -86,7 +86,7 @@ func handlePerf(hists map[string]*prometheus.HistogramVec) http.HandlerFunc {
 			return
 		}
 		for _, sample := range req.Samples {
-			hists[sample.Metric].WithLabelValues(string(sample.Ui)).Observe(sample.ValueMs)
+			hists[sample.Metric].WithLabelValues(sample.UI).Observe(sample.ValueMs)
 		}
 		w.WriteHeader(http.StatusNoContent)
 	}
@@ -101,7 +101,7 @@ func validatePerfBatch(req api.PerfBatchRequest, hists map[string]*prometheus.Hi
 		if _, ok := hists[sample.Metric]; !ok {
 			return fmt.Errorf("samples[%d]: unknown metric %q", i, sample.Metric)
 		}
-		if sample.Ui != api.Legacy && sample.Ui != api.React {
+		if sample.UI != api.UILegacy && sample.UI != api.UIReact {
 			return fmt.Errorf("samples[%d]: ui must be \"legacy\" or \"react\"", i)
 		}
 		if math.IsNaN(sample.ValueMs) || math.IsInf(sample.ValueMs, 0) || sample.ValueMs < 0 {

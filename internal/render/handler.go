@@ -157,7 +157,7 @@ func (h *Handler) GetWidgetJSON(w http.ResponseWriter, r *http.Request, widgetID
 	}
 
 	resp := api.WidgetDetailResponse{
-		WidgetId:   ctx.ID,
+		WidgetID:   ctx.ID,
 		Type:       ctx.Type,
 		Origin:     []int{ctx.Origin[0], ctx.Origin[1]},
 		Dimensions: []int{ctx.Dimensions.Cols, ctx.Dimensions.Rows},
@@ -174,7 +174,7 @@ func (h *Handler) GetWidgetJSON(w http.ResponseWriter, r *http.Request, widgetID
 			writeJSONError(w, http.StatusInternalServerError, "failed to build calendar view model: "+err.Error())
 			return
 		}
-		resp.ViewModel = &viewModel
+		resp.ViewModel = viewModel
 	}
 
 	body, err := json.Marshal(resp)
