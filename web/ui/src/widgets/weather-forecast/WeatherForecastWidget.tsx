@@ -3,8 +3,11 @@ import {
   DEFAULT_SCHOOL_DAY_THRESHOLDS,
   type DaypartSlot,
   type SchoolDayThresholds,
+  formatSlotForecastSummary,
   resolveCharacterPackSpriteUrl,
   resolveClothingConditionState,
+  resolveClothingOutfitLabel,
+  resolveSchoolDayTargetDate,
   selectDailyVariantIndex,
 } from './schoolDayPack';
 import { useWidget } from '../../store/hooks';
@@ -21,8 +24,12 @@ interface SlotWeatherInfo {
 
 interface SchoolDaySlotItem {
   slot: DaypartSlot;
+  displayLabel: string;
+  isTomorrow: boolean;
   temp: number;
   state: string;
+  outfitLabel: string;
+  forecastSummary: string;
   spriteUrl: string;
 }
 
@@ -124,12 +131,6 @@ function extractSchoolDayConfig(config?: Record<string, unknown>): {
   return { characterPack, variantsPerState, thresholds };
 }
 
-function resolveDateStr(config?: Record<string, unknown>, timestamp?: string): string {
-  if (typeof config?.date === 'string' && config.date) return config.date;
-  if (typeof timestamp === 'string' && timestamp.length >= 10) return timestamp.slice(0, 10);
-  return '2026-10-31';
-}
-
 function findExplicitSlot(
   slot: DaypartSlot,
   data?: Record<string, unknown>,
@@ -144,12 +145,28 @@ function findExplicitSlot(
   };
 }
 
-function findBestHourlySlot(slot: DaypartSlot, hourly: unknown[]): SlotWeatherInfo {
+function filterHourlyByDate(hourly: unknown[], targetDateStr?: string): unknown[] {
+  if (!targetDateStr) return hourly;
+  const matching = hourly.filter((item) => {
+    if (!item || typeof item !== 'object') return false;
+    const h = item as Record<string, unknown>;
+    const rawTime = String(h.time ?? h.Time ?? '');
+    return rawTime.startsWith(targetDateStr);
+  });
+  return matching.length > 0 ? matching : hourly;
+}
+
+function findBestHourlySlot(
+  slot: DaypartSlot,
+  hourly: unknown[],
+  targetDateStr?: string,
+): SlotWeatherInfo {
+  const pool = filterHourlyByDate(hourly, targetDateStr);
   const targetHour = slot === 'morning' ? 8 : slot === 'afternoon' ? 14 : 18;
   let bestItem: Record<string, unknown> | undefined;
   let bestDiff = Infinity;
 
-  for (const item of hourly) {
+  for (const item of pool) {
     if (!item || typeof item !== 'object') continue;
     const h = item as Record<string, unknown>;
     const match = String(h.time ?? h.Time ?? '').match(/(?:T|\s|^)(\d{1,2}):/);
@@ -167,9 +184,9 @@ function findBestHourlySlot(slot: DaypartSlot, hourly: unknown[]): SlotWeatherIn
       slot === 'morning'
         ? 0
         : slot === 'afternoon'
-          ? Math.floor(hourly.length / 2)
-          : hourly.length - 1;
-    bestItem = (hourly[idx] ?? {}) as Record<string, unknown>;
+          ? Math.floor(pool.length / 2)
+          : pool.length - 1;
+    bestItem = (pool[idx] ?? {}) as Record<string, unknown>;
   }
 
   return {
@@ -179,19 +196,29 @@ function findBestHourlySlot(slot: DaypartSlot, hourly: unknown[]): SlotWeatherIn
   };
 }
 
+function selectDailyEntry(
+  daily?: unknown[],
+  isTomorrow?: boolean,
+): Record<string, unknown> | undefined {
+  if (!Array.isArray(daily) || daily.length === 0) return undefined;
+  const targetIdx = isTomorrow && daily.length > 1 ? 1 : 0;
+  const candidate = daily[targetIdx];
+  return candidate && typeof candidate === 'object'
+    ? (candidate as Record<string, unknown>)
+    : undefined;
+}
+
 function fallbackSlotWeather(
   slot: DaypartSlot,
   data?: Record<string, unknown>,
   current?: Record<string, unknown>,
   daily?: unknown[],
+  isTomorrow?: boolean,
 ): SlotWeatherInfo {
   const curTemp = Number(current?.temperature ?? current?.Temperature ?? 0) || 0;
-  const today =
-    Array.isArray(daily) && daily.length > 0 && typeof daily[0] === 'object'
-      ? (daily[0] as Record<string, unknown>)
-      : undefined;
-  const rawMax = today?.temp_max ?? today?.TempMax;
-  const rawMin = today?.temp_min ?? today?.TempMin;
+  const dayEntry = selectDailyEntry(daily, isTomorrow);
+  const rawMax = dayEntry?.temp_max ?? dayEntry?.TempMax;
+  const rawMin = dayEntry?.temp_min ?? dayEntry?.TempMin;
   const hasDaily = rawMax !== undefined && rawMin !== undefined;
   const maxTemp = hasDaily ? Number(rawMax) : curTemp;
   const minTemp = hasDaily ? Number(rawMin) : curTemp;
@@ -214,13 +241,15 @@ function resolveSlotWeather(
   current?: Record<string, unknown>,
   daily?: unknown[],
   hourly?: unknown[],
+  targetDateStr?: string,
+  isTomorrow?: boolean,
 ): SlotWeatherInfo {
   const explicit = findExplicitSlot(slot, data);
   if (explicit) return explicit;
   if (Array.isArray(hourly) && hourly.length > 0) {
-    return findBestHourlySlot(slot, hourly);
+    return findBestHourlySlot(slot, hourly, isTomorrow ? targetDateStr : undefined);
   }
-  return fallbackSlotWeather(slot, data, current, daily);
+  return fallbackSlotWeather(slot, data, current, daily, isTomorrow);
 }
 
 function buildSchoolDaySlots(
@@ -232,10 +261,10 @@ function buildSchoolDaySlots(
   timestamp?: string,
 ): SchoolDaySlotItem[] {
   const { characterPack, variantsPerState, thresholds } = extractSchoolDayConfig(config);
-  const dateStr = resolveDateStr(config, timestamp);
+  const { dateStr, isTomorrow } = resolveSchoolDayTargetDate(config, timestamp);
 
   return DAYPART_SLOTS.map((slot) => {
-    const info = resolveSlotWeather(slot, data, current, daily, hourly);
+    const info = resolveSlotWeather(slot, data, current, daily, hourly, dateStr, isTomorrow);
     const state = resolveClothingConditionState(
       info.temp,
       info.precipProb,
@@ -245,7 +274,19 @@ function buildSchoolDaySlots(
     );
     const variantIndex = selectDailyVariantIndex(dateStr, slot, variantsPerState);
     const spriteUrl = resolveCharacterPackSpriteUrl(characterPack, state, variantIndex);
-    return { slot, temp: info.temp, state, spriteUrl };
+    const outfitLabel = resolveClothingOutfitLabel(state);
+    const forecastSummary = formatSlotForecastSummary(info.icon, info.precipProb);
+    const displayLabel = isTomorrow ? `tomorrow ${slot}` : slot;
+    return {
+      slot,
+      displayLabel,
+      isTomorrow,
+      temp: info.temp,
+      state,
+      outfitLabel,
+      forecastSummary,
+      spriteUrl,
+    };
   });
 }
 
@@ -294,17 +335,28 @@ function renderCurrentHeader(props: WeatherCurrentHeaderProps) {
 }
 
 function renderSchoolDayStrip(slots: SchoolDaySlotItem[]) {
+  const isTomorrow = slots.length > 0 && slots[0].isTomorrow;
   return (
-    <div className="weather-school-day-strip">
+    <div
+      className="weather-school-day-strip"
+      data-day={isTomorrow ? 'tomorrow' : 'today'}
+    >
       {slots.map((item) => (
         <div
           key={item.slot}
           className={`weather-school-day-slot weather-school-day-slot-${item.slot}`}
           data-slot={item.slot}
+          data-day={item.isTomorrow ? 'tomorrow' : 'today'}
         >
-          <span className="weather-school-day-name weather-school-day-slot-name">{item.slot}</span>
+          <span className="weather-school-day-name weather-school-day-slot-name">
+            {item.displayLabel}
+          </span>
           <span className="weather-school-day-temp">{item.temp}°</span>
           <span className="weather-school-day-state weather-school-day-condition">{item.state}</span>
+          <div className="weather-school-day-copy">
+            <span className="weather-school-day-outfit">{item.outfitLabel}</span>
+            <span className="weather-school-day-forecast">{item.forecastSummary}</span>
+          </div>
           <img className="weather-school-day-sprite" src={item.spriteUrl} alt={item.state} />
         </div>
       ))}

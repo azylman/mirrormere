@@ -7,11 +7,11 @@ import { WeatherForecastWidget } from './WeatherForecastWidget';
 import { WeatherIcon, WeatherIconGlyph } from './WeatherIcon';
 import { WeatherHourlyGraph } from './WeatherHourlyGraph';
 import {
-  DEFAULT_SCHOOL_DAY_THRESHOLDS,
-  type SchoolDayThresholds,
-  resolveCharacterPackSpriteUrl,
-  resolveClothingConditionState,
-  selectDailyVariantIndex,
+  addOneCalendarDay,
+  formatSlotForecastSummary,
+  resolveClothingOutfitLabel,
+  resolveIconConditionLabel,
+  resolveSchoolDayTargetDate,
 } from './schoolDayPack';
 
 const initialStore = useDisplayStore.getState();
@@ -905,203 +905,6 @@ describe('WeatherForecastWidget', () => {
   });
 });
 
-describe('schoolDayPack utilities', () => {
-  describe('resolveClothingConditionState', () => {
-    it('returns morning_rain or rainy_boots when precipProbPct >= rainThresholdPct', () => {
-      // morning slot
-      expect(resolveClothingConditionState(60, 35, 'weather-partly-cloudy', 'morning')).toBe(
-        'morning_rain',
-      );
-      expect(resolveClothingConditionState(70, 80, 'weather-sunny', 'morning')).toBe(
-        'morning_rain',
-      );
-
-      // afternoon slot
-      expect(resolveClothingConditionState(60, 35, 'weather-partly-cloudy', 'afternoon')).toBe(
-        'rainy_boots',
-      );
-      expect(resolveClothingConditionState(80, 50, 'weather-sunny', 'afternoon')).toBe(
-        'rainy_boots',
-      );
-
-      // evening slot
-      expect(resolveClothingConditionState(55, 40, 'weather-partly-cloudy', 'evening')).toBe(
-        'rainy_boots',
-      );
-    });
-
-    it('returns rain states when iconToken contains rain, pouring, or lightning even with low precipProbPct', () => {
-      expect(resolveClothingConditionState(65, 0, 'weather-rainy', 'morning')).toBe('morning_rain');
-      expect(resolveClothingConditionState(65, 10, 'weather-pouring', 'morning')).toBe(
-        'morning_rain',
-      );
-      expect(resolveClothingConditionState(65, 5, 'weather-lightning', 'morning')).toBe(
-        'morning_rain',
-      );
-      expect(resolveClothingConditionState(65, 0, 'weather-lightning-rainy', 'morning')).toBe(
-        'morning_rain',
-      );
-
-      expect(resolveClothingConditionState(65, 0, 'weather-rainy', 'afternoon')).toBe(
-        'rainy_boots',
-      );
-      expect(resolveClothingConditionState(65, 0, 'weather-pouring', 'evening')).toBe('rainy_boots');
-      expect(resolveClothingConditionState(65, 0, 'weather-lightning', 'afternoon')).toBe(
-        'rainy_boots',
-      );
-    });
-
-    it('returns cold_puffer when tempF <= coldMaxF for all slots', () => {
-      expect(resolveClothingConditionState(49, 10, 'weather-sunny', 'morning')).toBe('cold_puffer');
-      expect(resolveClothingConditionState(32, 0, 'weather-cloudy', 'afternoon')).toBe(
-        'cold_puffer',
-      );
-      expect(resolveClothingConditionState(45, 20, 'weather-partly-cloudy', 'evening')).toBe(
-        'cold_puffer',
-      );
-    });
-
-    it('returns morning_mild for morning slot when tempF > coldMaxF and dry', () => {
-      expect(resolveClothingConditionState(50, 0, 'weather-sunny', 'morning')).toBe('morning_mild');
-      expect(resolveClothingConditionState(64, 10, 'weather-sunny', 'morning')).toBe(
-        'morning_mild',
-      );
-      expect(resolveClothingConditionState(75, 20, 'weather-sunny', 'morning')).toBe(
-        'morning_mild',
-      );
-      expect(resolveClothingConditionState(90, 0, 'weather-sunny', 'morning')).toBe('morning_mild');
-    });
-
-    it('returns cool_evening for afternoon/evening when coldMaxF < tempF <= coolMaxF', () => {
-      expect(resolveClothingConditionState(50, 0, 'weather-sunny', 'afternoon')).toBe(
-        'cool_evening',
-      );
-      expect(resolveClothingConditionState(64, 15, 'weather-sunny', 'afternoon')).toBe(
-        'cool_evening',
-      );
-      expect(resolveClothingConditionState(58, 0, 'weather-partly-cloudy', 'evening')).toBe(
-        'cool_evening',
-      );
-    });
-
-    it('returns warm_pants for afternoon/evening when coolMaxF < tempF <= warmMaxF', () => {
-      expect(resolveClothingConditionState(65, 0, 'weather-sunny', 'afternoon')).toBe('warm_pants');
-      expect(resolveClothingConditionState(77, 20, 'weather-sunny', 'afternoon')).toBe(
-        'warm_pants',
-      );
-      expect(resolveClothingConditionState(70, 0, 'weather-partly-cloudy', 'evening')).toBe(
-        'warm_pants',
-      );
-    });
-
-    it('returns hot_dress for afternoon/evening when tempF > warmMaxF', () => {
-      expect(resolveClothingConditionState(78, 0, 'weather-sunny', 'afternoon')).toBe('hot_dress');
-      expect(resolveClothingConditionState(95, 10, 'weather-sunny', 'afternoon')).toBe('hot_dress');
-      expect(resolveClothingConditionState(82, 0, 'weather-clear-night', 'evening')).toBe(
-        'hot_dress',
-      );
-    });
-
-    it('respects custom SchoolDayThresholds', () => {
-      const custom: SchoolDayThresholds = {
-        rainThresholdPct: 20,
-        coldMaxF: 40,
-        coolMaxF: 55,
-        warmMaxF: 70,
-      };
-
-      // Rain trigger at lower threshold
-      expect(resolveClothingConditionState(60, 22, 'weather-cloudy', 'morning', custom)).toBe(
-        'morning_rain',
-      );
-
-      // Cold puffer at custom 40F
-      expect(resolveClothingConditionState(40, 10, 'weather-sunny', 'afternoon', custom)).toBe(
-        'cold_puffer',
-      );
-
-      // Cool evening at 41-55F
-      expect(resolveClothingConditionState(52, 0, 'weather-sunny', 'afternoon', custom)).toBe(
-        'cool_evening',
-      );
-
-      // Warm pants at 56-70F
-      expect(resolveClothingConditionState(68, 0, 'weather-sunny', 'afternoon', custom)).toBe(
-        'warm_pants',
-      );
-
-      // Hot dress at > 70F
-      expect(resolveClothingConditionState(72, 0, 'weather-sunny', 'afternoon', custom)).toBe(
-        'hot_dress',
-      );
-    });
-
-    it('uses DEFAULT_SCHOOL_DAY_THRESHOLDS when thresholds parameter is omitted', () => {
-      expect(DEFAULT_SCHOOL_DAY_THRESHOLDS.rainThresholdPct).toBe(35);
-      expect(DEFAULT_SCHOOL_DAY_THRESHOLDS.coldMaxF).toBe(49);
-      expect(DEFAULT_SCHOOL_DAY_THRESHOLDS.coolMaxF).toBe(64);
-      expect(DEFAULT_SCHOOL_DAY_THRESHOLDS.warmMaxF).toBe(77);
-
-      expect(resolveClothingConditionState(49, 0, 'weather-sunny', 'morning')).toBe('cold_puffer');
-      expect(resolveClothingConditionState(50, 0, 'weather-sunny', 'morning')).toBe('morning_mild');
-      expect(resolveClothingConditionState(64, 0, 'weather-sunny', 'afternoon')).toBe(
-        'cool_evening',
-      );
-      expect(resolveClothingConditionState(77, 0, 'weather-sunny', 'afternoon')).toBe('warm_pants');
-      expect(resolveClothingConditionState(78, 0, 'weather-sunny', 'afternoon')).toBe('hot_dress');
-    });
-  });
-
-  describe('selectDailyVariantIndex', () => {
-    it('returns deterministic variant indices within [1, variantsCount]', () => {
-      const v1 = selectDailyVariantIndex('2026-10-31', 'morning', 5);
-      const v2 = selectDailyVariantIndex('2026-10-31', 'morning', 5);
-      expect(v1).toBe(v2);
-      expect(v1).toBeGreaterThanOrEqual(1);
-      expect(v1).toBeLessThanOrEqual(5);
-
-      const vAfternoon = selectDailyVariantIndex('2026-10-31', 'afternoon', 5);
-      expect(vAfternoon).toBeGreaterThanOrEqual(1);
-      expect(vAfternoon).toBeLessThanOrEqual(5);
-
-      const vEvening = selectDailyVariantIndex('2026-10-31', 'evening', 5);
-      expect(vEvening).toBeGreaterThanOrEqual(1);
-      expect(vEvening).toBeLessThanOrEqual(5);
-    });
-
-    it('respects custom variantsCount and handles non-positive counts safely', () => {
-      for (let i = 0; i < 10; i++) {
-        const v = selectDailyVariantIndex(`2026-11-0${i}`, 'morning', 3);
-        expect(v).toBeGreaterThanOrEqual(1);
-        expect(v).toBeLessThanOrEqual(3);
-      }
-
-      // Edge case: variantsCount <= 0 clamps to count 1
-      const clamped = selectDailyVariantIndex('2026-10-31', 'morning', 0);
-      expect(clamped).toBe(1);
-      const clampedNeg = selectDailyVariantIndex('2026-10-31', 'morning', -5);
-      expect(clampedNeg).toBe(1);
-    });
-  });
-
-  describe('resolveCharacterPackSpriteUrl', () => {
-    it('formats sprite URL with default assetsBase', () => {
-      const url = resolveCharacterPackSpriteUrl('ghibli_school_day', 'cold_puffer', 3);
-      expect(url).toBe('/static/ui/assets/weather-packs/ghibli_school_day/cold_puffer_v3.jpg');
-    });
-
-    it('formats sprite URL with custom assetsBase', () => {
-      const url = resolveCharacterPackSpriteUrl(
-        'custom_pack',
-        'morning_rain',
-        1,
-        '/custom/assets/packs',
-      );
-      expect(url).toBe('/custom/assets/packs/custom_pack/morning_rain_v1.jpg');
-    });
-  });
-});
-
 describe('WeatherIcon component', () => {
   afterEach(() => {
     cleanup();
@@ -1604,5 +1407,157 @@ describe('WeatherHourlyGraph component', () => {
     const strip = container.querySelector('.weather-school-day-strip');
     expect(strip).not.toBeNull();
     expect(strip?.textContent).toContain('55°');
+  });
+
+  it('rolls over school-day strip to tomorrow at night (>= 19:00) using tomorrow hourly and daily data', () => {
+    useDisplayStore.setState({
+      widgets: {
+        'weather-school-tomorrow': {
+          meta: {
+            type: 'weather-forecast',
+            origin: [0, 0],
+            dimensions: [2, 1],
+            config: {
+              mode: 'school-day',
+            },
+            assets_base: '',
+          },
+          state: 'healthy',
+          data: {
+            current: {
+              temperature: 56,
+              condition_text: 'Clear',
+              icon: 'weather-clear-night',
+            },
+            hourly: [
+              { time: '2026-10-31T20:00:00Z', temp: 55, precip_prob: 5, icon: 'weather-clear-night' },
+              { time: '2026-11-01T08:00:00Z', temp: 46, precip_prob: 40, icon: 'weather-rainy' },
+              { time: '2026-11-01T14:00:00Z', temp: 68, precip_prob: 15, icon: 'weather-partly-cloudy' },
+              { time: '2026-11-01T18:00:00Z', temp: 58, precip_prob: 0, icon: 'weather-sunny' },
+            ],
+          },
+          timestamp: '2026-10-31T20:15:00Z',
+        },
+      },
+    });
+
+    const { container } = render(
+      <WeatherForecastWidget id="weather-school-tomorrow" type="weather-forecast" />,
+    );
+
+    const strip = container.querySelector('.weather-school-day-strip');
+    expect(strip?.getAttribute('data-day')).toBe('tomorrow');
+
+    const morningSlot = container.querySelector('.weather-school-day-slot-morning');
+    expect(morningSlot?.getAttribute('data-day')).toBe('tomorrow');
+    expect(morningSlot?.querySelector('.weather-school-day-name')?.textContent).toBe('tomorrow morning');
+    expect(morningSlot?.querySelector('.weather-school-day-temp')?.textContent).toBe('46°');
+    expect(morningSlot?.querySelector('.weather-school-day-outfit')?.textContent).toBe('Raincoat & Umbrella');
+    expect(morningSlot?.querySelector('.weather-school-day-forecast')?.textContent).toBe('Rain Showers · 40% rain');
+
+    const afternoonSlot = container.querySelector('.weather-school-day-slot-afternoon');
+    expect(afternoonSlot?.querySelector('.weather-school-day-name')?.textContent).toBe('tomorrow afternoon');
+    expect(afternoonSlot?.querySelector('.weather-school-day-temp')?.textContent).toBe('68°');
+    expect(afternoonSlot?.querySelector('.weather-school-day-outfit')?.textContent).toBe('T-Shirt & Long Pants');
+    expect(afternoonSlot?.querySelector('.weather-school-day-forecast')?.textContent).toBe('Partly Cloudy · 15% rain');
+
+    const eveningSlot = container.querySelector('.weather-school-day-slot-evening');
+    expect(eveningSlot?.querySelector('.weather-school-day-name')?.textContent).toBe('tomorrow evening');
+    expect(eveningSlot?.querySelector('.weather-school-day-temp')?.textContent).toBe('58°');
+    expect(eveningSlot?.querySelector('.weather-school-day-outfit')?.textContent).toBe('Hoodie or Fleece');
+    expect(eveningSlot?.querySelector('.weather-school-day-forecast')?.textContent).toBe('Sunny · 0% rain');
+  });
+
+  it('uses daily[1] fallback when rolling over to tomorrow at night without hourly data', () => {
+    useDisplayStore.setState({
+      widgets: {
+        'weather-school-tomorrow-daily': {
+          meta: {
+            type: 'weather-forecast',
+            origin: [0, 0],
+            dimensions: [2, 1],
+            config: {
+              mode: 'school-day',
+            },
+            assets_base: '',
+          },
+          state: 'healthy',
+          data: {
+            current: {
+              temperature: 54,
+              icon: 'weather-clear-night',
+            },
+            daily: [
+              { temp_max: 65, temp_min: 50, date: '2026-10-31' },
+              { temp_max: 80, temp_min: 44, date: '2026-11-01' },
+            ],
+          },
+          timestamp: '2026-10-31T19:00:00Z',
+        },
+      },
+    });
+
+    const { container } = render(
+      <WeatherForecastWidget id="weather-school-tomorrow-daily" type="weather-forecast" />,
+    );
+
+    const morningSlot = container.querySelector('.weather-school-day-slot-morning');
+    expect(morningSlot?.querySelector('.weather-school-day-temp')?.textContent).toBe('44°');
+    expect(morningSlot?.querySelector('.weather-school-day-outfit')?.textContent).toBe('Warm Puffer Coat');
+
+    const afternoonSlot = container.querySelector('.weather-school-day-slot-afternoon');
+    expect(afternoonSlot?.querySelector('.weather-school-day-temp')?.textContent).toBe('80°');
+    expect(afternoonSlot?.querySelector('.weather-school-day-outfit')?.textContent).toBe('Shorts or Sun Dress');
+  });
+
+  it('evaluates schoolDayPack outfit labels, icon conditions, and date rollover helpers', () => {
+    expect(resolveClothingOutfitLabel('morning_rain')).toBe('Raincoat & Umbrella');
+    expect(resolveClothingOutfitLabel('rainy_boots')).toBe('Raincoat & Boots');
+    expect(resolveClothingOutfitLabel('cold_puffer')).toBe('Warm Puffer Coat');
+    expect(resolveClothingOutfitLabel('morning_mild')).toBe('Light Jacket & Pants');
+    expect(resolveClothingOutfitLabel('cool_evening')).toBe('Hoodie or Fleece');
+    expect(resolveClothingOutfitLabel('warm_pants')).toBe('T-Shirt & Long Pants');
+    expect(resolveClothingOutfitLabel('hot_dress')).toBe('Shorts or Sun Dress');
+
+    expect(resolveIconConditionLabel('weather-pouring')).toBe('Heavy Rain');
+    expect(resolveIconConditionLabel('weather-lightning-rainy')).toBe('Thunderstorms');
+    expect(resolveIconConditionLabel('weather-snowy')).toBe('Snow');
+    expect(resolveIconConditionLabel('weather-rainy')).toBe('Rain Showers');
+    expect(resolveIconConditionLabel('weather-fog')).toBe('Foggy');
+    expect(resolveIconConditionLabel('weather-partly-cloudy')).toBe('Partly Cloudy');
+    expect(resolveIconConditionLabel('weather-cloudy')).toBe('Cloudy');
+    expect(resolveIconConditionLabel('weather-clear-night')).toBe('Clear');
+    expect(resolveIconConditionLabel('weather-sunny')).toBe('Sunny');
+
+    expect(formatSlotForecastSummary('weather-partly-cloudy', 25)).toBe('Partly Cloudy · 25% rain');
+    expect(formatSlotForecastSummary('weather-sunny', NaN)).toBe('Sunny · 0% rain');
+
+    expect(addOneCalendarDay('2026-10-31')).toBe('2026-11-01');
+    expect(addOneCalendarDay('invalid-date')).toBe('invalid-date');
+
+    expect(resolveSchoolDayTargetDate({ date: '2026-12-25' }, '2026-10-31T22:00:00Z')).toEqual({
+      dateStr: '2026-12-25',
+      isTomorrow: false,
+    });
+    expect(resolveSchoolDayTargetDate({}, '2026-10-31T19:05:00Z')).toEqual({
+      dateStr: '2026-11-01',
+      isTomorrow: true,
+    });
+    expect(
+      resolveSchoolDayTargetDate({ timezone: 'America/Los_Angeles' }, '2026-11-03T04:15:00Z'),
+    ).toEqual({
+      dateStr: '2026-11-03',
+      isTomorrow: true,
+    });
+    expect(
+      resolveSchoolDayTargetDate({ timezone: 'Invalid/Timezone' }, '2026-10-31T19:05:00Z'),
+    ).toEqual({
+      dateStr: '2026-11-01',
+      isTomorrow: true,
+    });
+    expect(resolveSchoolDayTargetDate({}, '2026-10-31')).toEqual({
+      dateStr: '2026-10-31',
+      isTomorrow: false,
+    });
   });
 });
