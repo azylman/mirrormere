@@ -12,7 +12,7 @@ export const DEFAULT_SCHOOL_DAY_THRESHOLDS: SchoolDayThresholds = {
   warmMaxF: 77,
 };
 
-export const DEFAULT_SCHOOL_DAY_ROLLOVER_HOUR = 19;
+const DEFAULT_SCHOOL_DAY_ROLLOVER_HOUR = 19;
 
 export type DaypartSlot = 'morning' | 'afternoon' | 'evening';
 
@@ -79,7 +79,7 @@ export function addOneCalendarDay(dateStr: string): string {
   return `${y}-${m}-${d}`;
 }
 
-export function resolveLocalDateAndHour(
+function resolveLocalDateAndHour(
   timestamp: string,
   timezone?: string,
 ): { baseDate: string; hour: number } {
