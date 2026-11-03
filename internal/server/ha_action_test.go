@@ -351,6 +351,9 @@ func TestWidgetAction_ActionFieldFormat(t *testing.T) {
 	if c.serviceData["entity_id"] != "climate.living_room" {
 		t.Errorf("expected entity_id climate.living_room, got %v", c.serviceData["entity_id"])
 	}
+	if _, hasTarget := c.serviceData["target"]; hasTarget {
+		t.Errorf("expected target map to be flattened without top-level 'target' key, got %v", c.serviceData["target"])
+	}
 	if temp, ok := c.serviceData["temperature"].(float64); !ok || int(temp) != 71 {
 		t.Errorf("expected temperature 71, got %v", c.serviceData["temperature"])
 	}

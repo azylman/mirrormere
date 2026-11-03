@@ -259,13 +259,14 @@ function renderButtonCard(card: LovelaceCard, entityId: string, ctx: Ctx, key?: 
 
   const handleTap = () => {
     if (inFlight) return;
-    if (act) {
+    if (act?.action) {
       if (act.action === 'call-service' || act.action === 'call_service') {
         const full = String(act.service || '');
         const [dom, srv] = full.includes('.') ? full.split('.') : [domain, full];
         void ctx.sendAction({ domain: dom || domain, service: srv, entity_id: resolvedEntityId, service_data: (svc || dat || {}) as Record<string, unknown> });
         return;
       }
+      if (act.action !== 'toggle') return;
     }
     if (domain === 'scene' || domain === 'script') {
       void ctx.sendAction({ domain, service: 'turn_on', entity_id: resolvedEntityId });

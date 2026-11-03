@@ -1,4 +1,3 @@
-import { applyOptimisticUpdate } from "./homeAssistantTypes";
 import { act, cleanup, fireEvent, render, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useDisplayStore } from '../../store';
@@ -1575,9 +1574,7 @@ describe('HomeAssistantWidget', () => {
               { type: 'entities', title: 'Empty Entities' },
               { type: 'entities', entities: ['', { entity: '' }] },
               { type: 'vertical-stack', cards: [{ type: 'tile', entity: 'switch.v_def' }] },
-              { name: 'Just Name' },
-              { type: 'plain-type' },
-              {},
+              { name: 'Just Name' }, { type: 'plain-type' }, {},
             ],
           },
         ],
@@ -1625,16 +1622,9 @@ describe('HomeAssistantWidget', () => {
     setHaWidget('ha-btn-branches', {
       cards: [
         { type: 'button', entity: 'lock.front' },
-        {
-          type: 'button',
-          entity: 'light.desk',
-          tap_action: { action: 'call_service', service: 'toggle', service_data: { entity_id: 'light.desk' } },
-        },
-        {
-          type: 'button',
-          entity: 'light.desk',
-          tap_action: { action: 'more-info' },
-        },
+        { type: 'button', entity: 'light.desk', tap_action: { action: 'call_service', service: 'toggle', service_data: { entity_id: 'light.desk' } } },
+        { type: 'button', entity: 'light.desk', tap_action: { action: 'more-info' } },
+        { type: 'button', entity: 'light.desk', tap_action: { action: 'toggle' } },
       ],
       entities: {
         'lock.front': { entity_id: 'lock.front', state: 'unlocked', attributes: {} },
@@ -1644,28 +1634,26 @@ describe('HomeAssistantWidget', () => {
 
     const { container: btnBCont } = render(<HomeAssistantWidget id="ha-btn-branches" type="home-assistant" />);
     const bCards = btnBCont.querySelectorAll('.ha-card-button');
+    const callsBeforeButtons = fetchMock.mock.calls.length;
     await act(async () => {
       fireEvent.click(bCards[0]);
       fireEvent.click(bCards[1]);
       fireEvent.click(bCards[2]);
+      fireEvent.click(bCards[3]);
     });
+    expect(fetchMock.mock.calls.length - callsBeforeButtons).toBe(3);
 
     // 5. ThermostatCard defaults without attributes
     setHaWidget('ha-tstat-def', {
       cards: [{ type: 'thermostat', entity: 'climate.bare' }],
-      entities: {
-        'climate.bare': { entity_id: 'climate.bare', state: 'off', attributes: {} },
-      },
+      entities: { 'climate.bare': { entity_id: 'climate.bare', state: 'off', attributes: {} } },
     });
 
     const { container: tstatCont } = render(<HomeAssistantWidget id="ha-tstat-def" type="home-assistant" />);
     expect(tstatCont.querySelector('.ha-target-num')?.textContent).toBe('70°');
     const plusBtn = tstatCont.querySelector('.ha-target-temp-dial button:last-child') as HTMLButtonElement;
-    await act(async () => {
-      fireEvent.click(plusBtn);
-    });
+    await act(async () => { fireEvent.click(plusBtn); });
   });
-
 
   it('covers inFlight state rendering and disabled interactions', async () => {
     let resolveAction!: (v: unknown) => void;
@@ -1705,7 +1693,6 @@ describe('HomeAssistantWidget', () => {
     }
   });
 
-
   it('covers missing entity fallbacks across all card types and control rows', () => {
     setHaWidget('ha-missing-all', {
       cards: [
@@ -1724,22 +1711,13 @@ describe('HomeAssistantWidget', () => {
     expect(container.querySelector('.ha-card-thermostat')).not.toBeNull();
     expect(container.querySelector('.ha-card-picture')).not.toBeNull();
 
-    // Direct unit checks for applyOptimisticUpdate fan/cover/media_player branches
-    expect(
-      applyOptimisticUpdate({ entity_id: 'fan.f', state: 'off', attributes: {} }, 'fan', 'set_percentage', { percentage: 66 }),
-    ).toEqual({ entity_id: 'fan.f', state: 'on', attributes: { percentage: 66 } });
-    expect(
-      applyOptimisticUpdate({ entity_id: 'fan.f', state: 'on', attributes: {} }, 'fan', 'set_percentage', { percentage: 0 }),
-    ).toEqual({ entity_id: 'fan.f', state: 'off', attributes: { percentage: 0 } });
-    expect(
-      applyOptimisticUpdate({ entity_id: 'cover.c', state: 'open', attributes: {} }, 'cover', 'stop_cover'),
-    ).toEqual({ entity_id: 'cover.c', state: 'open', attributes: {} });
-    expect(
-      applyOptimisticUpdate({ entity_id: 'cover.c', state: 'open', attributes: {} }, 'cover', 'close_cover'),
-    ).toEqual({ entity_id: 'cover.c', state: 'closed', attributes: {} });
-    expect(
-      applyOptimisticUpdate({ entity_id: 'media_player.m', state: 'playing', attributes: {} }, 'media_player', 'volume_up'),
-    ).toEqual({ entity_id: 'media_player.m', state: 'playing', attributes: {} });
+    const fBase = { entity_id: 'fan.f', state: 'off', attributes: {} };
+    expect(applyOptimisticUpdate(fBase, 'fan', 'set_percentage', { percentage: 66 })).toEqual({ ...fBase, state: 'on', attributes: { percentage: 66 } });
+    expect(applyOptimisticUpdate({ ...fBase, state: 'on' }, 'fan', 'set_percentage', { percentage: 0 })).toEqual({ ...fBase, state: 'off', attributes: { percentage: 0 } });
+    const cOpen = { entity_id: 'cover.c', state: 'open', attributes: {} };
+    expect(applyOptimisticUpdate(cOpen, 'cover', 'stop_cover')).toEqual(cOpen);
+    expect(applyOptimisticUpdate(cOpen, 'cover', 'close_cover')).toEqual({ ...cOpen, state: 'closed' });
+    const mPlay = { entity_id: 'media_player.m', state: 'playing', attributes: {} };
+    expect(applyOptimisticUpdate(mPlay, 'media_player', 'volume_up')).toEqual(mPlay);
   });
-
 });

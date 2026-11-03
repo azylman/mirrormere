@@ -287,7 +287,6 @@ func extractServiceData(req WidgetActionRequest) map[string]any {
 				serviceData[k] = v
 			}
 		}
-		serviceData["target"] = req.Target
 	}
 	if req.EntityID != "" {
 		if _, exists := serviceData["entity_id"]; !exists {

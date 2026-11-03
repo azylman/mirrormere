@@ -241,9 +241,15 @@ func (c *ProviderCoordinator) CallWidgetActionWithResponse(ctx context.Context, 
 	c.mu.RLock()
 	var targetProvider *HomeAssistantProvider
 	var targetWidgetID string
-	for _, w := range c.workers {
+	if w, ok := c.workers[widgetID]; ok {
 		if hap, ok := w.provider.(*HomeAssistantProvider); ok {
-			if w.widgetID == widgetID {
+			targetProvider = hap
+			targetWidgetID = w.widgetID
+		}
+	}
+	if targetProvider == nil {
+		for _, w := range c.workers {
+			if hap, ok := w.provider.(*HomeAssistantProvider); ok && w.widgetID == widgetID {
 				targetProvider = hap
 				targetWidgetID = w.widgetID
 				break
