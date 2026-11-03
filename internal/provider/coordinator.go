@@ -230,6 +230,48 @@ func (c *ProviderCoordinator) CompleteListItem(ctx context.Context, listID, item
 	return c.RefreshWidget(targetWidgetID)
 }
 
+// CallWidgetAction executes a service call on the matching widget provider worker.
+func (c *ProviderCoordinator) CallWidgetAction(ctx context.Context, widgetID, domain, service string, serviceData map[string]any) error {
+	_, err := c.CallWidgetActionWithResponse(ctx, widgetID, domain, service, serviceData)
+	return err
+}
+
+// CallWidgetActionWithResponse executes a service call and returns the response from the provider worker.
+func (c *ProviderCoordinator) CallWidgetActionWithResponse(ctx context.Context, widgetID, domain, service string, serviceData map[string]any) (any, error) {
+	c.mu.RLock()
+	var targetProvider *HomeAssistantProvider
+	var targetWidgetID string
+	if w, ok := c.workers[widgetID]; ok {
+		if hap, ok := w.provider.(*HomeAssistantProvider); ok {
+			targetProvider = hap
+			targetWidgetID = w.widgetID
+		}
+	}
+	if targetProvider == nil {
+		for _, w := range c.workers {
+			if hap, ok := w.provider.(*HomeAssistantProvider); ok && w.widgetID == widgetID {
+				targetProvider = hap
+				targetWidgetID = w.widgetID
+				break
+			}
+		}
+	}
+	c.mu.RUnlock()
+
+	if targetProvider == nil {
+		return nil, fmt.Errorf("%w: widget provider not found: %s", ErrWidgetNotFound, widgetID)
+	}
+
+	res, err := targetProvider.CallServiceWithResponse(ctx, domain, service, serviceData)
+	if err != nil {
+		return nil, err
+	}
+	if refreshErr := c.RefreshWidget(targetWidgetID); refreshErr != nil {
+		c.logger.Warn("failed to refresh widget after action", "widget_id", targetWidgetID, "error", refreshErr)
+	}
+	return res, nil
+}
+
 // PushUpdate records an unsolicited domain data update (e.g. from inbound webhook)
 // into the SWR cache and broadcasts widget.update immediately.
 func (c *ProviderCoordinator) PushUpdate(widgetID string, data any) (WidgetPayload, error) {
