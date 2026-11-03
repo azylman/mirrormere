@@ -529,7 +529,7 @@ func TestDefaultLayoutEditorHandler_BuildResponseNilLayout(t *testing.T) {
 		wantGrid [2]int
 	}{
 		{name: "empty_grid_defaults_to_6x2", cols: 0, rows: 0, wantGrid: [2]int{6, 2}},
-		{name: "explicit_portrait_grid_2x6", cols: 2, rows: 6, wantGrid: [2]int{2, 6}},
+		{name: "explicit_portrait_grid_3x6", cols: 3, rows: 6, wantGrid: [2]int{3, 6}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

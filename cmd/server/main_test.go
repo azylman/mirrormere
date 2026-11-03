@@ -247,9 +247,9 @@ func TestHouseholdHelpers(t *testing.T) {
 	if h.Grid() != "6x2" {
 		t.Fatalf("expected default grid 6x2, got %s", h.Grid())
 	}
-	hPortrait := buildDisplayHandler(&fakeSnapProvider{snap: &config.Snapshot{Config: &config.Config{Display: config.DisplayConfig{Grid: config.GridConfig{Columns: 2, Rows: 6}}}}}, func() string { return "day" })
-	if hPortrait.Grid() != "2x6" {
-		t.Fatalf("expected portrait grid 2x6, got %s", hPortrait.Grid())
+	hPortrait := buildDisplayHandler(&fakeSnapProvider{snap: &config.Snapshot{Config: &config.Config{Display: config.DisplayConfig{Grid: config.GridConfig{Columns: 3, Rows: 6}}}}}, func() string { return "day" })
+	if hPortrait.Grid() != "3x6" {
+		t.Fatalf("expected portrait grid 3x6, got %s", hPortrait.Grid())
 	}
 }
 

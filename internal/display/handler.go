@@ -153,7 +153,7 @@ func (h *Handler) useReact(r *http.Request) bool {
 
 func (h *Handler) Grid() string {
 	if h.gridProvider != nil {
-		if g := h.gridProvider(); g == "2x6" || g == "6x2" {
+		if g := h.gridProvider(); g == "3x6" || g == "6x2" {
 			return g
 		}
 	}

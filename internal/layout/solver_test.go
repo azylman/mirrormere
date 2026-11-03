@@ -15,6 +15,10 @@ func mkW(id string, c, r int, pinned bool) layout.WidgetInput {
 	return layout.WidgetInput{ID: id, Dimensions: domain.NewDimension(c, r), Pinned: pinned}
 }
 
+func fullGridMask(gridCols, gridRows int) uint32 {
+	return (uint32(1) << (gridCols * gridRows)) - 1
+}
+
 func repeatW(prefix string, c, r, n int) []layout.WidgetInput {
 	res := make([]layout.WidgetInput, n)
 	for i := range n {
@@ -274,6 +278,61 @@ func TestSolveGridWithBudget_Portrait2x6(t *testing.T) {
 	}
 }
 
+func TestSolveGridWithBudget_Portrait3x6(t *testing.T) {
+	t.Parallel()
+	// 1. Asymmetric side-by-side widget split: [2, 6] photo-carousel beside [1, 6] tasks (18 cells total)
+	widgets := []layout.WidgetInput{
+		mkW("photo-carousel", 2, 6, false),
+		mkW("tasks", 1, 6, false),
+	}
+	res, err := layout.SolveGridWithBudget(widgets, 3, 6, 0)
+	if err != nil {
+		t.Fatalf("SolveGridWithBudget(3, 6) failed: %v", err)
+	}
+	wantMask := fullGridMask(3, 6)
+	if res.TotalScreens != 1 || res.Screens[0].Bitmask != wantMask {
+		t.Fatalf("unexpected 3x6 layout result: TotalScreens=%d, bitmask=%018b (want %018b)", res.TotalScreens, res.Screens[0].Bitmask, wantMask)
+	}
+	if len(res.Screens[0].Widgets) != 2 {
+		t.Fatalf("expected 2 placed widgets on 3x6 screen, got %d", len(res.Screens[0].Widgets))
+	}
+
+	// 2. Pinned widget + unpinned widgets tiling 18 cells across multiple screens
+	multiWidgets := []layout.WidgetInput{
+		mkW("pinned-header", 3, 2, true), // 6 cells pinned
+		mkW("content-1", 3, 4, false),    // 12 cells
+		mkW("content-2a", 2, 4, false),   // 8 cells
+		mkW("content-2b", 1, 4, false),   // 4 cells
+	}
+	multiRes, err := layout.SolveGridWithBudget(multiWidgets, 3, 6, 0)
+	if err != nil {
+		t.Fatalf("SolveGridWithBudget(3, 6) multi-screen failed: %v", err)
+	}
+	if multiRes.TotalScreens != 2 {
+		t.Fatalf("TotalScreens = %d, want 2", multiRes.TotalScreens)
+	}
+	for i, scr := range multiRes.Screens {
+		if scr.Bitmask != wantMask {
+			t.Errorf("screen %d bitmask %018b, want %018b", i, scr.Bitmask, wantMask)
+		}
+	}
+
+	// 3. Deficit error on 3x6
+	if _, err := layout.SolveGridWithBudget(nil, 3, 6, 0); err == nil || !strings.Contains(err.Error(), "A 3x6 grid requires screen areas in multiples of 18") || !strings.Contains(err.Error(), "Deficit: 18 cells needed") {
+		t.Fatalf("expected 3x6 deficit error for empty widgets, got %v", err)
+	}
+
+	// 4. Dimension validation on 3x6 (cols 1..3, rows 1..6)
+	if _, err := layout.SolveGridWithBudget([]layout.WidgetInput{mkW("wide", 4, 2, false)}, 3, 6, 0); err == nil || !strings.Contains(err.Error(), "cols must be 1..3, rows must be 1..6") {
+		t.Fatalf("expected 3x6 dimension error, got %v", err)
+	}
+
+	// 5. Geometric tiling failure on 3x6
+	if _, err := layout.SolveGridWithBudget([]layout.WidgetInput{mkW("tall-1", 2, 5, false), mkW("wide-1", 3, 2, false), mkW("unit", 1, 2, false)}, 3, 6, 0); err == nil || !strings.Contains(err.Error(), "cannot geometrically tile the 3x6 grid") {
+		t.Fatalf("expected 3x6 geometric tiling error, got %v", err)
+	}
+}
+
 func TestSolveGridWithBudget_PreservesConfigScreenAndWidgetOrder(t *testing.T) {
 	t.Parallel()
 	widgets := []layout.WidgetInput{
@@ -405,6 +464,27 @@ func TestSolveExplicit(t *testing.T) {
 			wantSpacers: 0,
 		},
 		{
+			name: "portrait 3x6 grid explicit placement with auto-spacers",
+			placements: []layout.ExplicitPlacement{
+				mkExp("port-hero", "hero", 0, 0, 0, 2, 6, false),
+			},
+			gridCols:    3,
+			gridRows:    6,
+			wantScreens: 1,
+			wantSpacers: 1,
+		},
+		{
+			name: "portrait 3x6 grid explicit asymmetric split without spacers",
+			placements: []layout.ExplicitPlacement{
+				mkExp("photos", "photo-carousel", 0, 0, 0, 2, 6, false),
+				mkExp("tasks", "task-list", 0, 2, 0, 1, 6, false),
+			},
+			gridCols:    3,
+			gridRows:    6,
+			wantScreens: 1,
+			wantSpacers: 0,
+		},
+		{
 			name: "empty id error",
 			placements: []layout.ExplicitPlacement{
 				mkExp("", "test", 0, 0, 0, 2, 1, false),
@@ -510,8 +590,9 @@ func TestSolveExplicit(t *testing.T) {
 				t.Errorf("len(spacers) = %d, want %d", len(spacers), tc.wantSpacers)
 			}
 			for s, scr := range layoutRes.Screens {
-				if scr.Bitmask != layout.FullGridMask {
-					t.Errorf("screen %d Bitmask = 0x%04X, want FullGridMask (0x%04X)", s, scr.Bitmask, layout.FullGridMask)
+				wantMask := fullGridMask(tc.gridCols, tc.gridRows)
+				if scr.Bitmask != wantMask {
+					t.Errorf("screen %d Bitmask = 0x%05X, want fullGridMask(%d, %d) (0x%05X)", s, scr.Bitmask, tc.gridCols, tc.gridRows, wantMask)
 				}
 			}
 		})
