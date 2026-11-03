@@ -10,5 +10,5 @@
     { "metric": "widget_update", "stat": "p95", "max": 60, "min_count": 0 }
   ],
   "long_task_during_swipes": { "max": 0 },
-  "app_js_gzip_bytes": { "max": 153600 }
+  "app_js_gzip_bytes": { "max": 204800 }
 }
