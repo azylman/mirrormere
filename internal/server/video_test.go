@@ -93,7 +93,7 @@ func TestDefaultVideoHandler_GetVideoState(t *testing.T) {
 			}
 			if tc.wantCode == http.StatusOK && tc.method == http.MethodGet {
 				var resp api.VideoStateResponse
-				if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil || resp.Primary == nil || resp.Primary.Id != "cast" {
+				if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil || resp.Primary == nil || resp.Primary.ID != "cast" {
 					t.Fatalf("unexpected resp: %v, %+v", err, resp)
 				}
 			}

@@ -137,7 +137,7 @@ in-memory samples of the current page.
 
 ## Endpoint contract
 
-`POST /api/perf` (see `api/openapi.yaml`, `PerfBatchRequest`):
+`POST /api/perf` (see `internal/api/types.go`, `PerfBatchRequest`):
 
 - Body: `{"samples":[{"metric":"swipe_settle","value_ms":42.5,"ui":"legacy"}]}`
 - 1 to 200 samples per request. Bodies are capped at 64 KiB.

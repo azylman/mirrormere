@@ -17,7 +17,7 @@ type ItemCompleter interface {
 	CompleteListItem(ctx context.Context, listID, itemID string) error
 }
 
-// DefaultListsHandler serves OpenAPI POST /api/lists/{list_id}/items/{item_id}/complete.
+// DefaultListsHandler serves POST /api/lists/{list_id}/items/{item_id}/complete.
 type DefaultListsHandler struct {
 	completer ItemCompleter
 }
