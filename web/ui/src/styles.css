@@ -121,8 +121,8 @@ body[data-theme="night"] .screen-indicator-pin.active,
   gap: var(--mm-grid-gap);
 }
 
-body[data-grid="2x6"] .grid-pane {
-  grid-template-columns: repeat(2, 1fr);
+body[data-grid="3x6"] .grid-pane {
+  grid-template-columns: repeat(3, 1fr);
   grid-template-rows: repeat(6, 1fr);
 }
 

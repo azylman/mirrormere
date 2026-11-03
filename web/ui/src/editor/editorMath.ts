@@ -1,7 +1,7 @@
 import type { LayoutEditorWidget } from '../sse/types';
 
 /**
- * Computes the 12-bit integer cell bitmask for a rectangular placement on a gridCols-wide grid.
+ * Computes the integer cell bitmask for a rectangular placement on a gridCols-wide grid.
  */
 export function computeWidgetBitmask(
   origin: [number, number],

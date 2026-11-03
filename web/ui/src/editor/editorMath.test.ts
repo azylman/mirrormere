@@ -40,9 +40,23 @@ describe('editorMath', () => {
       expect(computeWidgetBitmask([4, 1], [2, 1], 6)).toBe((0b11 << 4) << 6);
     });
 
-    it('computes 2x2 mask on 2x6 portrait grid', () => {
-      // 2 cols, row 0 and row 1 = bits 0, 1, 2, 3 -> 0b1111 = 15
-      expect(computeWidgetBitmask([0, 0], [2, 2], 2)).toBe(15);
+    it('computes 2x2 mask on 3x6 portrait grid', () => {
+      // 3 cols, row 0 (bits 0, 1) and row 1 (bits 3, 4) -> 0b11011 = 27
+      expect(computeWidgetBitmask([0, 0], [2, 2], 3)).toBe(27);
+    });
+
+    it('computes [2, R] and [1, R] side-by-side bitmasks on 3x6 portrait grid', () => {
+      // [2, 3] at [0, 0]: rows 0..2 cols 0, 1 -> bits (0,1), (3,4), (6,7) -> 3 | 24 | 192 = 219
+      const leftMask = computeWidgetBitmask([0, 0], [2, 3], 3);
+      expect(leftMask).toBe(219);
+
+      // [1, 3] at [2, 0]: rows 0..2 col 2 -> bits 2, 5, 8 -> 4 | 32 | 256 = 292
+      const rightMask = computeWidgetBitmask([2, 0], [1, 3], 3);
+      expect(rightMask).toBe(292);
+
+      // Non-overlapping side-by-side split filling rows 0..2 across all 3 columns (bits 0..8 = 511)
+      expect(leftMask & rightMask).toBe(0);
+      expect(leftMask | rightMask).toBe(0b111111111);
     });
   });
 
@@ -128,6 +142,42 @@ describe('editorMath', () => {
       expect(canPlaceWidget(multi, { widget_id: 'pin', screen: 0, origin: [2, 0], dimensions: [2, 1], pinned: true }, 6, 2)).toBe(false);
       // Origin [4, 0] is clear on both screens
       expect(canPlaceWidget(multi, { widget_id: 'pin', screen: 0, origin: [4, 0], dimensions: [2, 1], pinned: true }, 6, 2)).toBe(true);
+    });
+
+    it('supports [2, R] and [1, R] side-by-side placement on 3x6 portrait grid', () => {
+      const portraitWidgets: LayoutEditorWidget[] = [
+        makeWidget({ widget_id: 'photo', screen: 0, origin: [0, 0], dimensions: [2, 3] }),
+      ];
+
+      // Placing [1, 3] beside [2, 3] in column 2 fits
+      expect(
+        canPlaceWidget(
+          portraitWidgets,
+          { widget_id: 'tasks', screen: 0, origin: [2, 0], dimensions: [1, 3] },
+          3,
+          6,
+        ),
+      ).toBe(true);
+
+      // Placing [1, 3] overlapping column 1 fails
+      expect(
+        canPlaceWidget(
+          portraitWidgets,
+          { widget_id: 'tasks', screen: 0, origin: [1, 0], dimensions: [1, 3] },
+          3,
+          6,
+        ),
+      ).toBe(false);
+
+      // Placing [2, 3] at col 2 overflows 3 cols
+      expect(
+        canPlaceWidget(
+          portraitWidgets,
+          { widget_id: 'other', screen: 0, origin: [2, 0], dimensions: [2, 3] },
+          3,
+          6,
+        ),
+      ).toBe(false);
     });
   });
 
@@ -294,6 +344,24 @@ describe('editorMath', () => {
       expect(res.find((w) => w.widget_id === 'home-weather')?.origin).toEqual([0, 0]);
       expect(res.find((w) => w.widget_id === 'family-tasks')?.origin).toEqual([0, 1]);
       expect(res.find((w) => w.widget_id === 'family-calendar')?.origin).toEqual([2, 0]);
+    });
+
+    it('reflows [2, R] photo-carousel beside [1, R] tasks on 3x6 portrait grid', () => {
+      // Photo [2, 3] on left (cols 0, 1), tasks [1, 3] on right (col 2)
+      const widgets = [
+        makeWidget({ widget_id: 'photo', screen: 0, origin: [0, 0], dimensions: [2, 3] }),
+        makeWidget({ widget_id: 'tasks', screen: 0, origin: [2, 0], dimensions: [1, 3] }),
+      ];
+
+      // Dragging photo [2, 3] to [1, 0] swaps tasks into vacated column 0
+      const resMovePhoto = moveOrSwapWidget(widgets, 'photo', 0, [1, 0], 3, 6);
+      expect(resMovePhoto.find((w) => w.widget_id === 'photo')?.origin).toEqual([1, 0]);
+      expect(resMovePhoto.find((w) => w.widget_id === 'tasks')?.origin).toEqual([0, 0]);
+
+      // Dragging tasks [1, 3] from [2, 0] to [0, 0] reflows photo [2, 3] into columns 1..2
+      const resMoveTasks = moveOrSwapWidget(widgets, 'tasks', 0, [0, 0], 3, 6);
+      expect(resMoveTasks.find((w) => w.widget_id === 'tasks')?.origin).toEqual([0, 0]);
+      expect(resMoveTasks.find((w) => w.widget_id === 'photo')?.origin).toEqual([1, 0]);
     });
 
     it('resolves preview origin to snapped landing slot', () => {
