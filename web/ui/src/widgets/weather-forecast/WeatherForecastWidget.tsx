@@ -273,7 +273,8 @@ function buildSchoolDaySlots(
       thresholds,
     );
     const variantIndex = selectDailyVariantIndex(dateStr, slot, variantsPerState);
-    const spriteUrl = resolveCharacterPackSpriteUrl(characterPack, state, variantIndex);
+    const enableHolidays = Boolean(config?.holidays);
+    const spriteUrl = resolveCharacterPackSpriteUrl(characterPack, state, variantIndex, dateStr, enableHolidays);
     const outfitLabel = resolveClothingOutfitLabel(state);
     const forecastSummary = formatSlotForecastSummary(info.icon, info.precipProb);
     const displayLabel = isTomorrow ? `tomorrow ${slot}` : slot;
