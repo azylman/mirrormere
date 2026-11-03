@@ -90,6 +90,38 @@ func TestPhotos_InternalHelpers(t *testing.T) {
 		}
 	})
 
+	t.Run("video item detection and filtering", func(t *testing.T) {
+		t.Parallel()
+		photoElem := []any{"p1", []any{"https://lh3.googleusercontent.com/pw/P1", 800, 600}, 1755268200000}
+		videoElem := []any{"v1", []any{"https://lh3.googleusercontent.com/pw/V1", 1920, 1080}, 1755268200000, []any{"video/mp4", 30000}}
+
+		// Structural check returns true for both photos and videos
+		if !isPhotoItemArray(photoElem) {
+			t.Error("expected isPhotoItemArray=true for photo")
+		}
+		if !isPhotoItemArray(videoElem) {
+			t.Error("expected isPhotoItemArray=true for video (structural check)")
+		}
+
+		// isMediaItemList accurately identifies list when videos outnumber photos
+		list := []any{photoElem, videoElem, videoElem, videoElem}
+		if !isMediaItemList(list) {
+			t.Error("expected isMediaItemList=true for majority-video list")
+		}
+
+		// parseMediaItem parses photos and filters out videos
+		if _, ok := parseMediaItem(photoElem); !ok {
+			t.Error("expected parseMediaItem=true for photo")
+		}
+		if _, ok := parseMediaItem(videoElem); ok {
+			t.Error("expected parseMediaItem=false for video item with video/mp4")
+		}
+		videoWithExt := []any{"v2", []any{"https://lh3.googleusercontent.com/pw/V2", 1920, 1080}, 1755268200000, "clip.mp4"}
+		if _, ok := parseMediaItem(videoWithExt); ok {
+			t.Error("expected parseMediaItem=false for video item with .mp4")
+		}
+	})
+
 	t.Run("location enrichment and metadata carryover", func(t *testing.T) {
 		t.Parallel()
 		existing := []PhotoItem{
@@ -759,6 +791,13 @@ func TestPhotos_InternalHelpers(t *testing.T) {
 		mlPhotos, mlNext, err := parseBatchexecuteResponse(multiLineSnAcKc, "tok_ml1")
 		if err != nil || len(mlPhotos) != 1 || mlNext != "tok_ml2" {
 			t.Errorf("unexpected multi-line snAcKc parse: photos=%v, next=%q, err=%v", mlPhotos, mlNext, err)
+		}
+
+		// parseBatchexecuteResponse with only videos should return 0 photos and next token without falling back to regex
+		videoOnlySnAcKc := []byte(")]}'\n\n120\n[[[\"wrb.fr\",\"snAcKc\",\"[null,[[\\\"v_ml\\\",[\\\"https://lh3.googleusercontent.com/pw/VID1\\\",1000,800],1755268100000,[\\\"video/mp4\\\",30000]]],\\\"tok_next_page\\\"]\",null,null,null,\"generic\"]]]\n")
+		vPhotos, vNext, err := parseBatchexecuteResponse(videoOnlySnAcKc, "tok_ml1")
+		if err != nil || len(vPhotos) != 0 || vNext != "tok_next_page" {
+			t.Errorf("expected 0 photos and next token from video-only snAcKc, got photos=%v, next=%q, err=%v", vPhotos, vNext, err)
 		}
 
 		// fetchBatchexecutePage network and status branches

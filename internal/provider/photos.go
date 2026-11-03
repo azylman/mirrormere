@@ -1072,8 +1072,8 @@ func extractAlbumTitle(html string) string {
 // extractPhotosFromHTML implements the multi-strategy photo extraction pipeline.
 func extractPhotosFromHTML(html string, logger *slog.Logger) []PhotoItem {
 	// Strategy 1: AF_initDataCallback array extraction
-	photos := extractFromAFInitData(html)
-	if len(photos) > 0 {
+	photos, found := extractFromAFInitData(html)
+	if found {
 		return photos
 	}
 
@@ -1090,27 +1090,32 @@ func extractPhotosFromHTML(html string, logger *slog.Logger) []PhotoItem {
 }
 
 // extractFromCallback parses a single callback chunk for photo media items.
-func extractFromCallback(chunk string, seenURLs map[string]struct{}) []PhotoItem {
+// It returns extracted photos and reports whether a structured media list was found.
+func extractFromCallback(chunk string, seenURLs map[string]struct{}) ([]PhotoItem, bool) {
 	dataIdx := strings.Index(chunk, "data:")
 	if dataIdx == -1 {
 		dataIdx = strings.Index(chunk, "data :")
 	}
 	if dataIdx == -1 {
-		return nil
+		return nil, false
 	}
 
 	arrayJSON, ok := extractBalancedArray(chunk[dataIdx:])
 	if !ok {
-		return nil
+		return nil, false
 	}
 
 	payloads := collectCallbackPayloads([][]string{{"", arrayJSON}})
 	if len(payloads) == 0 {
-		return nil
+		return nil, false
 	}
 
 	// In Google Photos shared albums, items typically reside at data[1] or nested within data[0]
 	items := findMediaItems(payloads[0])
+	if items == nil {
+		return nil, false
+	}
+
 	var results []PhotoItem
 	for _, item := range items {
 		photo, ok := parseMediaItem(item)
@@ -1121,27 +1126,33 @@ func extractFromCallback(chunk string, seenURLs map[string]struct{}) []PhotoItem
 			}
 		}
 	}
-	return results
+	return results, true
 }
 
 // extractFromAFInitData searches for AF_initDataCallback blocks and extracts [id, [url, w, h], timestamp] items.
-func extractFromAFInitData(html string) []PhotoItem {
+// It returns extracted photos and reports whether any structured media item list was found.
+func extractFromAFInitData(html string) ([]PhotoItem, bool) {
 	callbackIndices := afCallbackPrefixRe.FindAllStringIndex(html, -1)
 	if len(callbackIndices) == 0 {
-		return nil
+		return nil, false
 	}
 
 	seenURLs := make(map[string]struct{})
 	var results []PhotoItem
+	foundAny := false
 
 	for _, idxRange := range callbackIndices {
 		start := idxRange[0]
 		end := min(start+500*1024, len(html))
 		chunk := html[start:end]
-		results = append(results, extractFromCallback(chunk, seenURLs)...)
+		photos, found := extractFromCallback(chunk, seenURLs)
+		if found {
+			foundAny = true
+			results = append(results, photos...)
+		}
 	}
 
-	return results
+	return results, foundAny
 }
 
 // extractBalancedArray scans for the first '[' and tracks nested brackets until depth returns to 0.
@@ -1191,6 +1202,27 @@ func extractBalancedArray(s string) (string, bool) {
 	return "", false
 }
 
+func hasVideoMarker(val any) bool {
+	switch v := val.(type) {
+	case string:
+		l := strings.ToLower(v)
+		return strings.Contains(l, "video/") || strings.Contains(l, ".mp4") || l == "video"
+	case []any:
+		return slices.ContainsFunc(v, hasVideoMarker)
+	case map[string]any:
+		for _, child := range v {
+			if hasVideoMarker(child) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// isPhotoItemArray performs a structural check on an array element to determine whether
+// it matches the [id, [url, ...], ...] media item shape. It intentionally avoids filtering
+// by media type so that isMediaItemList can reliably identify media collections even when
+// videos outnumber photos. Video filtering is handled when parsing items in parseMediaItem.
 func isPhotoItemArray(elem any) bool {
 	elemArr, ok := elem.([]any)
 	if !ok || len(elemArr) < 2 {
@@ -1310,7 +1342,7 @@ func extractDominantColor(mediaInfo []any) string {
 // parseMediaItem parses an individual media item array: [id, [url, width, height], timestamp, ...]
 func parseMediaItem(elem any) (PhotoItem, bool) {
 	arr, ok := elem.([]any)
-	if !ok || len(arr) < 2 {
+	if !ok || len(arr) < 2 || hasVideoMarker(arr) {
 		return PhotoItem{}, false
 	}
 	return tryParseMediaSlice(arr)

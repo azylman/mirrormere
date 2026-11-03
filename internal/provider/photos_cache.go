@@ -263,7 +263,7 @@ func parseBatchexecuteResponse(bodyBytes []byte, currentToken string) ([]PhotoIt
 
 	var root any
 	if err := json.Unmarshal([]byte(bodyStr), &root); err == nil {
-		if photos, nextToken := extractBatchexecutePayload(root, currentToken); len(photos) > 0 {
+		if photos, nextToken, found := extractBatchexecutePayload(root, currentToken); found {
 			return photos, nextToken, nil
 		}
 		return extractFromFallbackRegex(bodyStr), "", nil
@@ -274,7 +274,7 @@ func parseBatchexecuteResponse(bodyBytes []byte, currentToken string) ([]PhotoIt
 		if !strings.HasPrefix(line, "[") || json.Unmarshal([]byte(line), &root) != nil {
 			continue
 		}
-		if photos, nextToken := extractBatchexecutePayload(root, currentToken); len(photos) > 0 {
+		if photos, nextToken, found := extractBatchexecutePayload(root, currentToken); found {
 			return photos, nextToken, nil
 		}
 	}
@@ -299,34 +299,46 @@ func findBatchExecuteEnvelopes(node any, rpcID string) [][]any {
 	return envelopes
 }
 
-func extractBatchexecutePayload(node any, currentToken string) ([]PhotoItem, string) {
+func extractBatchexecutePayload(node any, currentToken string) ([]PhotoItem, string, bool) {
 	envelopes := findBatchExecuteEnvelopes(node, "snAcKc")
 	var photos []PhotoItem
 	var nextToken string
+	found := false
 
 	for _, elemArr := range envelopes {
-		if innerStr, ok := elemArr[2].(string); ok && innerStr != "" {
-			var inner any
-			if err := json.Unmarshal([]byte(innerStr), &inner); err == nil {
-				photos = append(photos, extractPhotosFromInner(inner)...)
-				if tok := extractContinuationTokenFromInner(inner, currentToken); tok != "" {
-					nextToken = tok
-				}
-			}
+		innerStr, ok := elemArr[2].(string)
+		if !ok || innerStr == "" {
+			continue
+		}
+		var inner any
+		if err := json.Unmarshal([]byte(innerStr), &inner); err != nil {
+			continue
+		}
+		found = true
+		if innerPhotos, innerFound := extractPhotosFromInner(inner); innerFound {
+			photos = append(photos, innerPhotos...)
+		}
+		if tok := extractContinuationTokenFromInner(inner, currentToken); tok != "" {
+			nextToken = tok
 		}
 	}
 
-	if len(photos) == 0 {
-		photos = extractPhotosFromInner(node)
-		nextToken = extractContinuationTokenFromInner(node, currentToken)
+	if !found {
+		innerPhotos, innerFound := extractPhotosFromInner(node)
+		tok := extractContinuationTokenFromInner(node, currentToken)
+		if innerFound || tok != "" {
+			found = true
+			photos = innerPhotos
+			nextToken = tok
+		}
 	}
-	return photos, nextToken
+	return photos, nextToken, found
 }
 
-func extractPhotosFromInner(inner any) []PhotoItem {
+func extractPhotosFromInner(inner any) ([]PhotoItem, bool) {
 	items := findMediaItems(inner)
-	if len(items) == 0 {
-		return nil
+	if items == nil {
+		return nil, false
 	}
 	seen := make(map[string]struct{})
 	var results []PhotoItem
@@ -339,7 +351,7 @@ func extractPhotosFromInner(inner any) []PhotoItem {
 			}
 		}
 	}
-	return results
+	return results, true
 }
 
 func extractContinuationTokenFromInner(inner any, currentToken string) string {
@@ -381,10 +393,9 @@ func paginateSnAcKc(ctx context.Context, client *http.Client, albumURL, albumKey
 			}
 			return allPaged, false
 		}
-		if len(photos) == 0 {
-			break
+		if len(photos) > 0 {
+			allPaged = append(allPaged, photos...)
 		}
-		allPaged = append(allPaged, photos...)
 
 		nextToken = strings.TrimSpace(nextToken)
 		if nextToken == "" || nextToken == token {
