@@ -804,11 +804,14 @@ func TestHomeAssistant_Fetch_FallbackWhenLovelace404(t *testing.T) {
 func TestHomeAssistant_CallService(t *testing.T) {
 	t.Parallel()
 
+	type capturedReq struct {
+		method string
+		path   string
+		auth   string
+		body   map[string]any
+	}
 	var mu sync.Mutex
-	var receivedMethod string
-	var receivedPath string
-	var receivedAuth string
-	var receivedBody map[string]any
+	recorded := make(map[string]capturedReq)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
@@ -816,10 +819,12 @@ func TestHomeAssistant_CallService(t *testing.T) {
 		_ = json.Unmarshal(body, &parsed)
 
 		mu.Lock()
-		receivedMethod = r.Method
-		receivedPath = r.URL.Path
-		receivedAuth = r.Header.Get("Authorization")
-		receivedBody = parsed
+		recorded[r.URL.Path] = capturedReq{
+			method: r.Method,
+			path:   r.URL.Path,
+			auth:   r.Header.Get("Authorization"),
+			body:   parsed,
+		}
 		mu.Unlock()
 
 		switch {
@@ -958,22 +963,19 @@ func TestHomeAssistant_CallService(t *testing.T) {
 					t.Fatalf("CallService failed: %v", err)
 				}
 				mu.Lock()
-				gotMethod := receivedMethod
-				gotPath := receivedPath
-				gotAuth := receivedAuth
-				gotEntity := receivedBody["entity_id"]
+				capReq := recorded[tc.wantPath]
 				mu.Unlock()
-				if gotMethod != http.MethodPost {
-					t.Errorf("expected POST, got %q", gotMethod)
+				if capReq.method != http.MethodPost {
+					t.Errorf("expected POST, got %q", capReq.method)
 				}
-				if gotPath != tc.wantPath {
-					t.Errorf("expected path %q, got %q", tc.wantPath, gotPath)
+				if capReq.path != tc.wantPath {
+					t.Errorf("expected path %q, got %q", tc.wantPath, capReq.path)
 				}
-				if gotAuth != "Bearer bearer-test-token" {
-					t.Errorf("expected Bearer header, got %q", gotAuth)
+				if capReq.auth != "Bearer bearer-test-token" {
+					t.Errorf("expected Bearer header, got %q", capReq.auth)
 				}
-				if gotEntity != "light.living_room" {
-					t.Errorf("expected entity_id light.living_room, got %v", gotEntity)
+				if capReq.body["entity_id"] != "light.living_room" {
+					t.Errorf("expected entity_id light.living_room, got %v", capReq.body["entity_id"])
 				}
 			}
 		})

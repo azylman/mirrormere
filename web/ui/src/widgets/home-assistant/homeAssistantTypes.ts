@@ -141,11 +141,18 @@ export function applyOptimisticUpdate(
       }
     } else if (service === 'turn_off') {
       state = 'off';
+    } else if (service === 'set_percentage' && data?.percentage !== undefined) {
+      attrs.percentage = data.percentage;
+      state = Number(data.percentage) > 0 ? 'on' : 'off';
     }
   } else if (domain === 'lock') {
     state = service === 'lock' ? 'locked' : 'unlocked';
   } else if (domain === 'cover') {
-    state = service === 'open_cover' ? 'open' : 'closed';
+    if (service === 'open_cover') {
+      state = 'open';
+    } else if (service === 'close_cover') {
+      state = 'closed';
+    }
   } else if (domain === 'climate') {
     if (data?.temperature !== undefined) {
       attrs.temperature = data.temperature;
@@ -158,7 +165,7 @@ export function applyOptimisticUpdate(
       state = 'playing';
     } else if (service === 'media_pause') {
       state = 'paused';
-    } else {
+    } else if (service === 'media_play_pause') {
       state = curr.state === 'playing' ? 'paused' : 'playing';
     }
   }

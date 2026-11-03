@@ -1,3 +1,4 @@
+import { applyOptimisticUpdate } from "./homeAssistantTypes";
 import { act, cleanup, fireEvent, render, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useDisplayStore } from '../../store';
@@ -1722,6 +1723,23 @@ describe('HomeAssistantWidget', () => {
     expect(container.querySelectorAll('.ha-card-button').length).toBe(3);
     expect(container.querySelector('.ha-card-thermostat')).not.toBeNull();
     expect(container.querySelector('.ha-card-picture')).not.toBeNull();
+
+    // Direct unit checks for applyOptimisticUpdate fan/cover/media_player branches
+    expect(
+      applyOptimisticUpdate({ entity_id: 'fan.f', state: 'off', attributes: {} }, 'fan', 'set_percentage', { percentage: 66 }),
+    ).toEqual({ entity_id: 'fan.f', state: 'on', attributes: { percentage: 66 } });
+    expect(
+      applyOptimisticUpdate({ entity_id: 'fan.f', state: 'on', attributes: {} }, 'fan', 'set_percentage', { percentage: 0 }),
+    ).toEqual({ entity_id: 'fan.f', state: 'off', attributes: { percentage: 0 } });
+    expect(
+      applyOptimisticUpdate({ entity_id: 'cover.c', state: 'open', attributes: {} }, 'cover', 'stop_cover'),
+    ).toEqual({ entity_id: 'cover.c', state: 'open', attributes: {} });
+    expect(
+      applyOptimisticUpdate({ entity_id: 'cover.c', state: 'open', attributes: {} }, 'cover', 'close_cover'),
+    ).toEqual({ entity_id: 'cover.c', state: 'closed', attributes: {} });
+    expect(
+      applyOptimisticUpdate({ entity_id: 'media_player.m', state: 'playing', attributes: {} }, 'media_player', 'volume_up'),
+    ).toEqual({ entity_id: 'media_player.m', state: 'playing', attributes: {} });
   });
 
 });
