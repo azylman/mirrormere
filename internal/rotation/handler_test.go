@@ -230,7 +230,7 @@ func TestHandler_GetScreensResponseShape(t *testing.T) {
 	if resp.CurrentScreen != 1 || resp.IntervalSeconds != 60 || len(resp.Screens) != 1 || resp.Screens[0].Index != 0 {
 		t.Fatalf("unexpected response: %+v", resp)
 	}
-	if w := resp.Screens[0].Widgets[0]; w.WidgetId != "clock" || w.Type != "clock" || w.Origin[0] != 0 || w.Dimensions[0] != 2 || w.Dimensions[1] != 1 {
+	if w := resp.Screens[0].Widgets[0]; w.WidgetID != "clock" || w.Type != "clock" || w.Origin[0] != 0 || w.Dimensions[0] != 2 || w.Dimensions[1] != 1 {
 		t.Errorf("unexpected widget placement: %+v", w)
 	}
 }

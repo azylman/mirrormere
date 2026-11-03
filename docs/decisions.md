@@ -1,7 +1,7 @@
 # Architectural Decisions & Channel Consensus
 
 This document records key architectural decisions and engineering invariants established for Mirrormere.
-Normative API schemas and event payloads are governed by `api/openapi.yaml` and `api/schemas/*.json`.
+Normative API and SSE event payload schemas live in `internal/api/types.go` and `api/schemas/*.json`.
 
 ## 1. Hardware Profiles & Deployment Topology
 - **Profile A (Interactive Touch Display)**: Intel N100 Mini PC, 15.6" 1080p capacitive touchscreen, Wayland `cage` compositor running Google Chrome (amd64, with Chromium fallback) in `--kiosk` fullscreen mode, UVC HDMI capture card (Elgato Cam Link 4K primary, MS2130/MS2109 fallbacks), hardware-accelerated WebRTC via `go2rtc`. Displays standardize on official Google Chrome deb packages instead of Ubuntu snap Chromium to prevent AppArmor/sandbox hangs and loop mount leaks.
@@ -25,5 +25,5 @@ Normative API schemas and event payloads are governed by `api/openapi.yaml` and 
 - **Volume Ceiling**: Strict software volume caps to protect domestic audio environments.
 
 ## 5. API & Wire Contracts
-- **REST & OpenAPI**: `api/openapi.yaml` is the canonical contract for all REST endpoints with automated zero-drift verification in CI.
+- **REST Wire Types**: HTTP request/response wire payloads live directly in `internal/api/types.go` alongside domain models (`internal/video/model.go`).
 - **Event Contracts**: SSE event shapes and payload schemas are formally defined in `api/schemas/*.json`.

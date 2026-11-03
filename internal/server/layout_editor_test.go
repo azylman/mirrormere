@@ -462,15 +462,15 @@ func TestDefaultLayoutEditorHandler_ResponseDetails(t *testing.T) {
 			if len(resp.Widgets) != tc.wantWidgetsLen {
 				t.Fatalf("widgets len = %d, want %d", len(resp.Widgets), tc.wantWidgetsLen)
 			}
-			if resp.Widgets[0].WidgetId != tc.wantFirstID {
-				t.Errorf("first widget = %s, want %s", resp.Widgets[0].WidgetId, tc.wantFirstID)
+			if resp.Widgets[0].WidgetID != tc.wantFirstID {
+				t.Errorf("first widget = %s, want %s", resp.Widgets[0].WidgetID, tc.wantFirstID)
 			}
 			if tc.wantFirstSupLen > 0 && len(resp.Widgets[0].SupportedDimensions) != tc.wantFirstSupLen {
 				t.Errorf("supported dims len = %d, want %d", len(resp.Widgets[0].SupportedDimensions), tc.wantFirstSupLen)
 			}
 			for _, w := range resp.Widgets {
-				if w.Type == "spacer" || strings.HasPrefix(w.WidgetId, "auto-spacer-") {
-					t.Errorf("expected no spacer in widgets response, found: %s", w.WidgetId)
+				if w.Type == "spacer" || strings.HasPrefix(w.WidgetID, "auto-spacer-") {
+					t.Errorf("expected no spacer in widgets response, found: %s", w.WidgetID)
 				}
 			}
 		})

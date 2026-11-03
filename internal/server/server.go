@@ -33,7 +33,7 @@ const (
 	Version = "0.1.0"
 )
 
-// ScreenHandler handles screen navigation and pause endpoints matching OpenAPI specifications.
+// ScreenHandler handles screen navigation and pause endpoints.
 type ScreenHandler interface {
 	PostScreenAdvance(w http.ResponseWriter, r *http.Request)
 	PostScreenPause(w http.ResponseWriter, r *http.Request)
@@ -49,7 +49,7 @@ type RenderHandler interface {
 	ServeStyle(w http.ResponseWriter, r *http.Request)
 }
 
-// PushHandler handles realtime widget push webhooks matching OpenAPI specifications.
+// PushHandler handles realtime widget push webhooks.
 type PushHandler interface {
 	PostWidgetPush(w http.ResponseWriter, r *http.Request, widgetID string)
 	PostWidgetPhotos(w http.ResponseWriter, r *http.Request, widgetID string)
@@ -61,12 +61,12 @@ type DisplayHandler interface {
 	GetStatic(w http.ResponseWriter, r *http.Request, path string)
 }
 
-// ListsHandler handles task completion endpoints matching OpenAPI specifications.
+// ListsHandler handles task completion endpoints.
 type ListsHandler interface {
 	CompleteListItem(w http.ResponseWriter, r *http.Request, listID, itemID string)
 }
 
-// AudioHandler handles master audio volume and mute endpoints matching OpenAPI specifications.
+// AudioHandler handles master audio volume and mute endpoints.
 type AudioHandler interface {
 	GetAudio(w http.ResponseWriter, r *http.Request)
 	PostAudioVolume(w http.ResponseWriter, r *http.Request)
@@ -82,7 +82,7 @@ type VideoHandler interface {
 	GetVideoState(w http.ResponseWriter, r *http.Request)
 }
 
-// VoiceHandler handles voice pipeline state relay endpoints matching OpenAPI specifications.
+// VoiceHandler handles voice pipeline state relay endpoints.
 type VoiceHandler interface {
 	PostVoiceState(w http.ResponseWriter, r *http.Request)
 	PostVoiceInteract(w http.ResponseWriter, r *http.Request)

@@ -384,6 +384,23 @@ func TestWidgetAction_CallerWithResponse(t *testing.T) {
 	if resp.Data == nil {
 		t.Fatal("expected non-nil response data")
 	}
+
+	// Verify error path on WidgetActionResponseCaller and redundant domain prefix on service
+	errCaller := &mockWidgetActionResponseCaller{
+		mockWidgetActionCaller: mockWidgetActionCaller{
+			errToReturn: provider.ErrWidgetNotFound,
+		},
+	}
+	errSrv := server.New(server.Config{
+		WidgetActionHandler: server.NewDefaultWidgetActionHandler(server.WithWidgetActionCaller(errCaller)),
+	})
+	errReq := httptest.NewRequest(http.MethodPost, "/api/widgets/ha-lights/action", strings.NewReader(`{"domain":"light","service":"light.turn_on"}`))
+	errReq.Header.Set("Content-Type", "application/json")
+	errRec := httptest.NewRecorder()
+	errSrv.Routes().ServeHTTP(errRec, errReq)
+	if errRec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 Not Found from response caller error, got %d", errRec.Code)
+	}
 }
 
 func TestWidgetAction_CallerErrors(t *testing.T) {

@@ -132,7 +132,7 @@ func TestHandler_GetWidgetJSON_Fields(t *testing.T) {
 		t.Errorf("Content-Type = %q", ct)
 	}
 	resp := decodeWidgetJSON(t, rec.Body.Bytes())
-	if resp.WidgetId != "w1" || resp.Type != "weather-forecast" || resp.State != "degraded" || resp.Timestamp != "2026-09-26T12:00:00Z" || !resp.Online {
+	if resp.WidgetID != "w1" || resp.Type != "weather-forecast" || resp.State != "degraded" || resp.Timestamp != "2026-09-26T12:00:00Z" || !resp.Online {
 		t.Errorf("unexpected identity/state fields: %+v", resp)
 	}
 	if resp.AssetsBase != "widget-types/weather-forecast/assets/" {
@@ -210,7 +210,7 @@ func TestHandler_GetWidgetJSON_CalendarViewModel(t *testing.T) {
 		if vm == nil {
 			t.Fatalf("%s: missing view_model", path)
 		}
-		return *vm
+		return vm
 	}
 
 	base := fetch(t, "/api/widgets/cal-1")

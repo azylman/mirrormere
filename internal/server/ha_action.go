@@ -154,19 +154,13 @@ func (h *DefaultWidgetActionHandler) handleWidgetAction(w http.ResponseWriter, r
 
 func (h *DefaultWidgetActionHandler) proxyDirectHA(w http.ResponseWriter, r *http.Request, widgetID, domain, service string, serviceData map[string]any) {
 	reqURL := fmt.Sprintf("%s/api/services/%s/%s", strings.TrimRight(h.baseURL, "/"), url.PathEscape(domain), url.PathEscape(service))
-	var bodyReader io.Reader
-	if serviceData != nil {
-		bodyBytes, err := json.Marshal(serviceData)
-		if err != nil {
-			writeAPIError(w, http.StatusBadRequest, "failed to marshal service data: "+err.Error())
-			return
-		}
-		bodyReader = bytes.NewReader(bodyBytes)
-	} else {
-		bodyReader = bytes.NewReader([]byte("{}"))
+	bodyBytes, err := json.Marshal(serviceData)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "failed to marshal service data: "+err.Error())
+		return
 	}
 
-	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, reqURL, bodyReader)
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, reqURL, bytes.NewReader(bodyBytes))
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, "failed to create upstream request: "+err.Error())
 		return

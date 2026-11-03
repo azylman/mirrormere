@@ -55,7 +55,7 @@ In alignment with Mirrormere's decoupled deployment topology, each independent i
 
 ```text
 mirrormere/
-├── api/                    # OpenAPI 3.1 contract and formal JSON Schemas for SSE payloads
+├── api/                    # Formal JSON Schemas for SSE payloads (api/schemas/)
 ├── cmd/
 │   └── server/             # mirrormere-core entrypoint binary (main.go)
 ├── internal/               # Private Go core application packages (api, config, layout, providers, storage)

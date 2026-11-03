@@ -1,12 +1,13 @@
 package server
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/azylman/mirrormere/internal/api"
@@ -19,7 +20,7 @@ type AudioCoordinator interface {
 	SetMute(muted *bool) (int, bool, error)
 }
 
-// DefaultAudioHandler serves OpenAPI /api/audio, /api/audio/volume, and /api/audio/mute endpoints.
+// DefaultAudioHandler serves /api/audio, /api/audio/volume, and /api/audio/mute endpoints.
 type DefaultAudioHandler struct {
 	coord AudioCoordinator
 }
@@ -56,13 +57,12 @@ func (h *DefaultAudioHandler) PostAudioVolume(w http.ResponseWriter, r *http.Req
 		writeAPIError(w, http.StatusInternalServerError, "audio coordinator not configured")
 		return
 	}
-	var raw map[string]json.RawMessage
-	var floatVol float64
-	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil || json.Unmarshal(raw["volume"], &floatVol) != nil || floatVol != float64(int(floatVol)) || floatVol < 0 || floatVol > 100 {
+	var req api.AudioVolumeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Volume == nil || *req.Volume < 0 || *req.Volume > 100 {
 		writeAPIError(w, http.StatusBadRequest, "invalid volume: must be an integer between 0 and 100")
 		return
 	}
-	newVol, newMuted, err := h.coord.SetVolume(int(floatVol))
+	newVol, newMuted, err := h.coord.SetVolume(*req.Volume)
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, err.Error())
 		return
@@ -79,22 +79,19 @@ func (h *DefaultAudioHandler) PostAudioMute(w http.ResponseWriter, r *http.Reque
 		writeAPIError(w, http.StatusInternalServerError, "audio coordinator not configured")
 		return
 	}
-	var raw map[string]json.RawMessage
-	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil && r.ContentLength != 0 && err.Error() != "EOF" {
+	var req api.AudioMuteRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
 		writeAPIError(w, http.StatusBadRequest, "invalid payload: muted must be a boolean")
 		return
 	}
 	var targetMuted *bool
-	if raw != nil {
-		if rawMuted, exists := raw["muted"]; exists {
-			trimmed := strings.TrimSpace(string(rawMuted))
-			if trimmed != "true" && trimmed != "false" {
-				writeAPIError(w, http.StatusBadRequest, "invalid payload: muted must be a boolean")
-				return
-			}
-			b := (trimmed == "true")
-			targetMuted = &b
+	if len(req.Muted) > 0 {
+		var b bool
+		if bytes.Equal(bytes.TrimSpace(req.Muted), []byte("null")) || json.Unmarshal(req.Muted, &b) != nil {
+			writeAPIError(w, http.StatusBadRequest, "invalid payload: muted must be a boolean")
+			return
 		}
+		targetMuted = &b
 	}
 	newVol, newMuted, err := h.coord.SetMute(targetMuted)
 	if err != nil {

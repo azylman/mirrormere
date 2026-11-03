@@ -155,7 +155,7 @@ export interface ConnectionPayload {
   error?: unknown;
 }
 
-/** Response of GET api/widgets/{widget_id} (openapi WidgetDetailResponse). */
+/** Response of GET api/widgets/{widget_id} (internal/api WidgetDetailResponse). */
 export interface WidgetDetailResponse {
   widget_id: string;
   type: string;
@@ -192,7 +192,7 @@ export type StreamEventName = keyof StreamEventMap;
 /** Server-sent events (everything except the synthetic connection event). */
 export type ServerEventName = Exclude<StreamEventName, 'connection'>;
 
-/** One widget cell of a screen as listed by GET api/screens (openapi WidgetPlacement). */
+/** One widget cell of a screen as listed by GET api/screens (internal/api WidgetPlacement). */
 export interface WidgetPlacement {
   widget_id: string;
   type: string;
@@ -200,13 +200,13 @@ export interface WidgetPlacement {
   dimensions: [number, number];
 }
 
-/** One screen of the rotation layout (openapi ScreenLayout). */
+/** One screen of the rotation layout (internal/api ScreenLayout). */
 export interface ScreenLayout {
   index: number;
   widgets: WidgetPlacement[];
 }
 
-/** Response of GET api/screens (openapi ScreensResponse). */
+/** Response of GET api/screens (internal/api ScreensResponse). */
 export interface ScreensResponse {
   current_screen: number;
   interval_seconds: number;
