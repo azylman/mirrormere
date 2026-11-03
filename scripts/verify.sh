@@ -221,7 +221,8 @@ run_code_health() {
 
 # 3. GolangCI-Lint
 run_golangci_lint() {
-    echo "   [golangci-lint] Running strict linters..."
+    targets="${*:-./...}"
+    echo "   [golangci-lint] Running strict linters on $targets..."
     lint_bin=""
     if has_cmd golangci-lint; then
         lint_bin="golangci-lint"
@@ -232,7 +233,8 @@ run_golangci_lint() {
     fi
 
     if [ -n "$lint_bin" ]; then
-        "$lint_bin" run --allow-parallel-runners ./...
+        # shellcheck disable=SC2086
+        "$lint_bin" run --allow-parallel-runners $targets
     else
         echo "🚨 [Mirrormere Verify] Error: golangci-lint not found in PATH." >&2
         exit 1
@@ -411,9 +413,25 @@ if [ "$MODE" = "staged" ]; then
         run_code_health
     fi
 
-    if echo "$STAGED_FILES" | grep -q -E '\.go$|^go\.(mod|sum)$|^\.golangci\.yml$|^scripts/verify\.sh$'; then
-        run_golangci_lint
-        run_deadcode
+    if echo "$STAGED_FILES" | grep -q -E '^go\.(mod|sum)$|^\.golangci\.yml$|^scripts/verify\.sh$'; then
+        run_golangci_lint ./...
+    elif echo "$STAGED_FILES" | grep -q '\.go$'; then
+        pkgs=$(echo "$STAGED_FILES" | grep '\.go$' | while read -r f; do dirname "$f"; done | sort -u)
+        staged_pkg_targets=""
+        for p in $pkgs; do
+            if [ -d "$p" ]; then
+                if [ "$p" = "." ]; then
+                    target="./."
+                else
+                    target="./$p"
+                fi
+                staged_pkg_targets="${staged_pkg_targets:+$staged_pkg_targets }$target"
+            fi
+        done
+        if [ -n "$staged_pkg_targets" ]; then
+            # shellcheck disable=SC2086
+            run_golangci_lint $staged_pkg_targets
+        fi
     fi
 
     if echo "$STAGED_FILES" | grep -q -E '^go\.(mod|sum)$'; then
