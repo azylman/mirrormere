@@ -430,6 +430,9 @@ describe('HomeAssistantWidget', () => {
     const { container } = render(<HomeAssistantWidget id="ha-tap-action" type="home-assistant" />);
     const btn = container.querySelector('.ha-card-button') as HTMLButtonElement;
     expect(btn).not.toBeNull();
+    expect(btn.getAttribute('data-entity-id')).toBe('scene.goodnight');
+    expect(btn.getAttribute('data-domain')).toBe('scene');
+    expect(btn.querySelector('.ha-btn-card-name')?.textContent).toBe('Bedtime');
     await act(async () => {
       fireEvent.click(btn);
     });
@@ -477,6 +480,7 @@ describe('HomeAssistantWidget', () => {
 
     expect(getEntityName(undefined, 'nodots')).toBe('nodots');
     expect(getEntityName(undefined, 'switch.bedside_table_lamp')).toBe('bedside table lamp');
+    expect(getEntityName(undefined, '', 'Button Custom')).toBe('Button Custom');
     expect(getEntityName(undefined, 'light.bulb', '   ')).toBe('bulb');
     expect(getEntityName(undefined, 'light.bulb', 'Explicit Custom')).toBe('Explicit Custom');
     expect(

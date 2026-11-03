@@ -250,10 +250,10 @@ function renderButtonCard(card: LovelaceCard, entityId: string, ctx: Ctx, key?: 
         : typeof dat?.entity_id === 'string'
           ? dat.entity_id
           : card.entity || entityId;
-  const domain = getDomain(entityId);
-  const entity = ctx.entities[entityId];
+  const domain = getDomain(resolvedEntityId);
+  const entity = ctx.entities[resolvedEntityId];
   const inFlight = Boolean(ctx.inFlight[resolvedEntityId]);
-  const name = getEntityName(entity, entityId, card.name || card.title);
+  const name = getEntityName(entity, resolvedEntityId, card.name || card.title);
   const state = entity?.state ?? 'idle';
   const icon = card.icon || getDomainIcon(domain, state);
 
@@ -277,7 +277,7 @@ function renderButtonCard(card: LovelaceCard, entityId: string, ctx: Ctx, key?: 
   };
 
   return (
-    <button key={key} type="button" className={`ha-card ha-card-button ha-btn-touch ha-domain-${domain} ${state === 'on' ? 'is-active' : ''}`} data-entity-id={entityId} data-domain={domain} data-state={state} data-prevent-screen-swipe="" disabled={inFlight} onClick={handleTap}>
+    <button key={key} type="button" className={`ha-card ha-card-button ha-btn-touch ha-domain-${domain} ${state === 'on' ? 'is-active' : ''}`} data-entity-id={resolvedEntityId} data-domain={domain} data-state={state} data-prevent-screen-swipe="" disabled={inFlight} onClick={handleTap}>
       <span className="ha-btn-card-icon">{icon}</span><span className="ha-btn-card-name">{name}</span><span className="ha-btn-card-state">{state}</span>
     </button>
   );

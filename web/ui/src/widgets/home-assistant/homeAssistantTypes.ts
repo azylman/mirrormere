@@ -56,11 +56,11 @@ export function getDomain(entityId: string): string {
 }
 
 export function getEntityName(entity: EntityState | undefined, entityId: string, customName?: string): string {
-  if (!entityId) {
-    return '';
-  }
   if (customName && customName.trim() !== '') {
     return customName;
+  }
+  if (!entityId) {
+    return '';
   }
   if (entity?.attributes?.friendly_name && typeof entity.attributes.friendly_name === 'string') {
     return entity.attributes.friendly_name;
