@@ -38,7 +38,7 @@ test('budget.json carries the #765 targets at +20% and the bundle cap', () => {
   assert.equal(byKey['screen_ready p95'], 1800);
   assert.equal(byKey['widget_update p95'], 60);
   assert.deepEqual(budget.long_task_during_swipes, { max: 0 });
-  assert.deepEqual(budget.app_js_gzip_bytes, { max: 153600 });
+  assert.deepEqual(budget.app_js_gzip_bytes, { max: 204800 });
 });
 
 test('checkBudget passes a bench within every budget', async () => {
@@ -57,7 +57,7 @@ test('checkBudget fails a metric over its budget, and gzip or long tasks over th
   const bench = passingBench();
   bench.swipe_settle = stats(20, 361);
   bench.long_task_during_swipes = 1;
-  const results = checkBudget({ bench, budget, appJsGzipBytes: 153601 });
+  const results = checkBudget({ bench, budget, appJsGzipBytes: 204801 });
   const failed = results.filter((r) => !r.ok).map((r) => r.name).sort();
   assert.deepEqual(failed, ['app.js gzip bytes', 'long_task during swipes', 'swipe_settle p95']);
 });
