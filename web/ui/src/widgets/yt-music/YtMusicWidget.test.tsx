@@ -1637,5 +1637,15 @@ describe('ytMusicTypes helpers coverage', () => {
       );
       expect(container.querySelectorAll('svg').length).toBe(6);
     });
+
+    it('renders mini-player metadata with accessible aria-label', () => {
+      const { container } = render(
+        <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
+          <YtMusicWidget id="yt-1" type="yt-music" />
+        </PaneContext.Provider>
+      );
+      const meta = container.querySelector('.np-meta');
+      expect(meta?.getAttribute('aria-label')).toBe('Open now playing');
+    });
   });
 });

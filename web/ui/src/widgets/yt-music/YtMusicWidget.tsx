@@ -76,7 +76,7 @@ function YtMusicHeader({ accounts, activeAccountId, isLocalSpeaker, onSelectAcco
   return (
     <div className="ytm-header">
       <div className="ytm-account-wrap">
-        <select id="account-picker" className="ytm-account-select account-pill" aria-label="Select Account" value={activeAccountId ?? accounts[0].id} onChange={(e) => onSelectAccount(e.target.value)}>
+        <select id="account-picker" className="ytm-account-select account-pill" aria-label="Select Account" value={activeAccountId ?? accounts[0]?.id ?? ''} onChange={(e) => onSelectAccount(e.target.value)}>
           {accounts.map((acc) => (
             <option key={acc.id} value={acc.id}>{acc.name}{acc.handle ? ` (${acc.handle})` : ''}</option>
           ))}
@@ -124,7 +124,7 @@ function YtMusicMiniPlayer({
   return (
     <div className="player-deck">
       <img className="art-thumb" id="np-art" src={np.thumb || DEFAULT_ART} alt={np.title || 'Now Playing'} />
-      <div className="np-meta" role="button" tabIndex={0} onClick={onOpenNowPlaying} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpenNowPlaying(); } }}>
+      <div className="np-meta" role="button" tabIndex={0} aria-label="Open now playing" onClick={onOpenNowPlaying} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpenNowPlaying(); } }}>
         <div className="np-title" id="np-title">{startingPlayback ? 'Starting playback...' : np.title || 'YouTube Music'}</div>
         <div className="np-artist" id="np-artist">{np.artist || (np.title ? 'Ready' : 'Pick a playlist or search a song')}</div>
       </div>
@@ -226,7 +226,7 @@ export const YtMusicWidget = memo(function YtMusicWidget({ id }: WidgetComponent
   const activeAccountId = selectedAccountId ?? stateData.active_account;
   const speakers = resolveSpeakersWithLocal(stateData);
   const accounts = resolveAccounts(stateData, config, emberAccounts);
-  const currentActiveSpeaker = stateData.active_speaker ?? speakers[0].entity_id;
+  const currentActiveSpeaker = stateData.active_speaker ?? speakers[0]?.entity_id ?? 'this_device';
   const isLocalSpeaker = currentActiveSpeaker === 'this_device' || currentActiveSpeaker === 'local';
 
   const postControl = async (action: string, extra: Record<string, unknown> = {}) => {
