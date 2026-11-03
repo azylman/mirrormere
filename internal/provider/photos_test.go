@@ -19,7 +19,8 @@ import (
 )
 
 const (
-	mockPhotosAFHTML       = `<!DOCTYPE html><html><head><meta property="og:title" content="Family Vacation 2026 - Google Photos"><title>Family Vacation 2026 - Google Photos</title></head><body><script>AF_initDataCallback({key:'ds:1',hash:'2',data:["k",[["photo_1",["https://lh3.googleusercontent.com/pw/AL9nZEW1=w1024-h768",1200,800],1755268200000],["photo_2",["https://lh3.googleusercontent.com/pw/AL9nZEW2",1920,1080],1755268300000],["photo_3",["https://lh3.googleusercontent.com/pw/AL9nZEW3=s0",1000,1000],1755268400000]]],sideChannel:{}});</script></body></html>`
+	mockPhotosAFHTML       = `<!DOCTYPE html><html><head><meta property="og:title" content="Family Vacation 2026 - Google Photos"><title>Family Vacation 2026 - Google Photos</title></head><body><script>AF_initDataCallback({key:'ds:1',hash:'2',data:["k",[["photo_1",["https://lh3.googleusercontent.com/pw/AL9nZEW1=w1024-h768",1200,800],1755268200000],["photo_2",["https://lh3.googleusercontent.com/pw/AL9nZEW2",1920,1080],1755354600000],["photo_3",["https://lh3.googleusercontent.com/pw/AL9nZEW3=s0",1000,1000],1755441000000]]],sideChannel:{}});</script></body></html>`
+	mockPhotosSameDayHTML  = `<!DOCTYPE html><html><head><meta property="og:title" content="Family Vacation 2026 - Google Photos"></head><body><script>AF_initDataCallback({key:'ds:1',hash:'2',data:["k",[["photo_1",["https://lh3.googleusercontent.com/pw/AL9nZEW1=w1024-h768",1200,800],1755268200000],["photo_2",["https://lh3.googleusercontent.com/pw/AL9nZEW2",1920,1080],1755268300000],["photo_3",["https://lh3.googleusercontent.com/pw/AL9nZEW3=s0",1000,1000],1755268400000]]],sideChannel:{}});</script></body></html>`
 	mockPhotosFuncHTML     = `<!DOCTYPE html><html><head><title>Summer Roadtrip - Google Photos</title></head><body><script>AF_initDataCallback({key:'ds:1',hash:'2',data:function(){return ["key",[["img_a",["https://lh3.googleusercontent.com/pw/ROADA",800,600],1755268200000]]]},sideChannel:{}});</script></body></html>`
 	mockPhotosFallbackHTML = `<!DOCTYPE html><html><head><meta property="og:title" content="Art Showcase"></head><body><div><img src="https://lh3.googleusercontent.com/pw/ART_ITEM_1=w500-h300"/><img src="https://lh4.googleusercontent.com/pw/ART_ITEM_2"/><img src="https://lh3.googleusercontent.com/pw/ART_ITEM_1=w100"/><img src="https://lh3.googleusercontent.com/a/AVATAR_IGNORED"/></div></body></html>`
 )
@@ -46,6 +47,7 @@ func TestPhotosProvider_FetchExtraction(t *testing.T) {
 		wantThirdAspect  float64
 	}{
 		{"af_callback", mockPhotosAFHTML, "Family Vacation 2026", 3, 3, "photo_1", "https://lh3.googleusercontent.com/pw/AL9nZEW1", 1.5, 1.78, 1.0},
+		{"same_day_burst", mockPhotosSameDayHTML, "Family Vacation 2026", 3, 1, "", "", 0, 0, 0},
 		{"func_wrapper", mockPhotosFuncHTML, "Summer Roadtrip", 1, 1, "img_a", "", 0, 0, 0},
 		{"fallback_regex", mockPhotosFallbackHTML, "Art Showcase", 2, 2, "", "", 0, 0, 0},
 		{"ten_photos", tenPhotos.String(), "Shared Album", 10, 10, "", "", 0, 0, 0},
@@ -513,6 +515,58 @@ func TestPhotosProvider_MultiAlbumAndCache(t *testing.T) {
 			if ph.AlbumName != "Vacation 2026" {
 				t.Errorf("photo AlbumName = %q, want %q", ph.AlbumName, "Vacation 2026")
 			}
+		}
+	})
+
+	t.Run("per_day_multi_album_pairing", func(t *testing.T) {
+		t.Parallel()
+		// Day 1 (1755268200000 = 2025-08-15T14:30:00Z): Album A has 3 photos, Album B has 2 photos -> 2 photos dealt (1 from A, 1 from B)
+		// Day 2 (1755354600000 = 2025-08-16T14:30:00Z): Album A has 2 photos, Album B has 0 photos -> 1 photo dealt (from A)
+		tsAlbumA := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = w.Write([]byte(`<!DOCTYPE html><html><body><script>AF_initDataCallback({key:'ds:1',data:["k",[["a_d1_1",["https://lh3.googleusercontent.com/pw/A_D1_1",800,600],1755268200000],["a_d1_2",["https://lh3.googleusercontent.com/pw/A_D1_2",800,600],1755268260000],["a_d1_3",["https://lh3.googleusercontent.com/pw/A_D1_3",800,600],1755268320000],["a_d2_1",["https://lh3.googleusercontent.com/pw/A_D2_1",800,600],1755354600000],["a_d2_2",["https://lh3.googleusercontent.com/pw/A_D2_2",800,600],1755354660000]]]});</script></body></html>`))
+		}))
+		defer tsAlbumA.Close()
+
+		tsAlbumB := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = w.Write([]byte(`<!DOCTYPE html><html><body><script>AF_initDataCallback({key:'ds:1',data:["k",[["b_d1_1",["https://lh3.googleusercontent.com/pw/B_D1_1",800,600],1755268200000],["b_d1_2",["https://lh3.googleusercontent.com/pw/B_D1_2",800,600],1755268260000]]]});</script></body></html>`))
+		}))
+		defer tsAlbumB.Close()
+
+		p := provider.NewPhotosProvider()
+		cfg := map[string]any{
+			"albums": []any{
+				map[string]any{"name": "Album A", "source": "share_url", "url": tsAlbumA.URL},
+				map[string]any{"name": "Album B", "source": "share_url", "url": tsAlbumB.URL},
+			},
+		}
+		if err := p.Init(context.Background(), cfg, provider.InitOptions{Timezone: "UTC"}); err != nil {
+			t.Fatalf("Init failed: %v", err)
+		}
+		res, err := p.Fetch(context.Background())
+		if err != nil {
+			t.Fatalf("Fetch failed: %v", err)
+		}
+		snap := res.(*provider.PhotoSnapshot)
+		if snap.TotalPhotos != 7 {
+			t.Fatalf("TotalPhotos = %d, want 7", snap.TotalPhotos)
+		}
+		if len(snap.Photos) != 3 {
+			t.Fatalf("dealt Photos len = %d, want 3 (2 for Day 1 across Album A & B, 1 for Day 2 from Album A)", len(snap.Photos))
+		}
+		// Verify that the two Day 1 photos are adjacent and ordered Album A then Album B
+		day1Indices := []int{}
+		for idx, ph := range snap.Photos {
+			if strings.HasPrefix(ph.Timestamp, "2025-08-15") {
+				day1Indices = append(day1Indices, idx)
+			}
+		}
+		if len(day1Indices) != 2 || day1Indices[1]-day1Indices[0] != 1 {
+			t.Fatalf("expected 2 adjacent Day 1 photos, got indices %v in %+v", day1Indices, snap.Photos)
+		}
+		if snap.Photos[day1Indices[0]].AlbumName != "Album A" || snap.Photos[day1Indices[1]].AlbumName != "Album B" {
+			t.Errorf("expected Day 1 pair [Album A, Album B], got [%s, %s]", snap.Photos[day1Indices[0]].AlbumName, snap.Photos[day1Indices[1]].AlbumName)
 		}
 	})
 

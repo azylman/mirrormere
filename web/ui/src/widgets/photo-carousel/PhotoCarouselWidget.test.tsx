@@ -8,6 +8,7 @@ import {
   getPhotoItemKey,
   selectNextPhotoIndex,
   selectPrevPhotoIndex,
+  selectPreloadPhotoIndices,
   photoDeckStateById,
 } from './PhotoCarouselWidget';
 import { useDisplayStore } from '../../store';
@@ -91,8 +92,10 @@ describe('PhotoCarouselWidget helpers', () => {
       window.devicePixelRatio = 2;
       try {
         const url = getSizedPhotoURL('https://example.com/pic.jpg', { width: 400, height: 300 });
-        expect(url).toBe('https://example.com/pic.jpg=w2048-h1536');
+        expect(url).toBe('https://example.com/pic.jpg=w800-h600');
         expect(url).not.toContain('-c');
+        const fallbackUrl = getSizedPhotoURL('https://example.com/pic.jpg', { width: 0, height: 0 });
+        expect(fallbackUrl).toBe('https://example.com/pic.jpg=w2048-h1536');
       } finally {
         window.devicePixelRatio = originalDpr;
       }
@@ -187,6 +190,24 @@ describe('PhotoCarouselWidget helpers', () => {
     it('handles negative or out-of-range base indices gracefully', () => {
       expect(selectPrevPhotoIndex(photos, -1)).toBe(1);
       expect(selectPrevPhotoIndex(photos, 5)).toBe(1);
+    });
+  });
+
+  describe('selectPreloadPhotoIndices', () => {
+    const photos = Array.from({ length: 12 }, (_, i) => ({
+      id: String(i + 1),
+      url: i === 2 ? '' : `https://example.com/${i + 1}.jpg`,
+    }));
+
+    it('returns empty array when photos has 0 or 1 item or count <= 0', () => {
+      expect(selectPreloadPhotoIndices([], 0)).toEqual([]);
+      expect(selectPreloadPhotoIndices([{ id: '1', url: 'https://example.com/1.jpg' }], 0)).toEqual([]);
+      expect(selectPreloadPhotoIndices(photos, 0, undefined, 0)).toEqual([]);
+    });
+
+    it('selects upcoming unseen photos skipping empty URLs and includes previous photo', () => {
+      const indices = selectPreloadPhotoIndices(photos, 0, new Set(), 4);
+      expect(indices).toEqual([1, 3, 4, 5, 11]);
     });
   });
 });

@@ -3059,8 +3059,9 @@ button, .touch-target {
   width: calc(100% + 60px);
   height: calc(100% + 60px);
   object-fit: cover;
-  filter: blur(32px) saturate(1.2) brightness(0.88);
-  transform: scale(1.08);
+  filter: blur(32px) saturate(1.2) brightness(0.82);
+  transform: scale(1.08) translateZ(0);
+  backface-visibility: hidden;
   opacity: 1;
   transition: opacity 0.85s ease-in-out;
   will-change: opacity;
@@ -3090,6 +3091,8 @@ button, .touch-target {
   object-fit: contain;
   border-radius: 16px;
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.28);
+  transform: translateZ(0);
+  backface-visibility: hidden;
   transition: opacity 0.85s ease-in-out;
   will-change: opacity;
 }

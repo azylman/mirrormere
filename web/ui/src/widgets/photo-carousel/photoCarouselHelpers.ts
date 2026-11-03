@@ -38,23 +38,13 @@ export function hasMultiplePhotoAlbums(photos: readonly PhotoItem[]): boolean {
   return false;
 }
 
-export function formatPhotoMetadataLabel(
-  photo?: PhotoItem,
-  showAlbumName = false,
-): { date: string; location: string; album: string; text: string } | null {
+export function formatPhotoMetadataLabel(photo?: PhotoItem, showAlbumName = false): { date: string; location: string; album: string; text: string } | null {
   const date = formatPhotoOverlayDate(photo?.timestamp);
   const location = (photo?.location || '').trim();
   const album = showAlbumName ? (photo?.album_name || '').trim() : '';
-  const dateAndLocation = date && location ? `${date}, ${location}` : date || location;
-  const text = dateAndLocation && album ? `${dateAndLocation} • ${album}` : dateAndLocation || album;
+  const secondary = location && album ? `${location} • ${album}` : location || album;
+  const text = date && secondary ? `${date}\n${secondary}` : date || secondary;
   return text ? { date, location, album, text } : null;
-}
-
-export function resolvePhotoOverlayTheme(dominantColor?: string): 'light' | 'dark' {
-  const m = /^#?([0-9a-fA-F]{6})$/.exec((dominantColor || '').trim());
-  if (!m) return 'dark';
-  const hex = parseInt(m[1], 16);
-  return (0.299 * ((hex >> 16) & 0xff) + 0.587 * ((hex >> 8) & 0xff) + 0.114 * (hex & 0xff)) / 255 >= 0.58 ? 'light' : 'dark';
 }
 
 export function parsePhotoCarouselData(raw: unknown): PhotoCarouselData {
@@ -67,35 +57,18 @@ export function parsePhotoCarouselData(raw: unknown): PhotoCarouselData {
         try { parsed = JSON.parse(parsed); } catch { /* ignore */ }
       }
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed as PhotoCarouselData;
-    } catch {
-      return {};
-    }
+    } catch { return {}; }
   }
   return {};
 }
 
-export function resolvePhotoCarouselSourceAndUrl(
-  config?: PhotoCarouselConfig,
-  data?: PhotoCarouselData,
-): { source: 'share_url' | 'ember_bridge'; albumUrl: string } {
+export function resolvePhotoCarouselSourceAndUrl(config?: PhotoCarouselConfig, data?: PhotoCarouselData): { source: 'share_url' | 'ember_bridge'; albumUrl: string } {
   if (Array.isArray(config?.albums) && config.albums.length > 0) {
     const emberEntry = config.albums.find((a) => a.source === 'ember_bridge');
-    if (emberEntry) {
-      return {
-        source: 'ember_bridge',
-        albumUrl: (emberEntry.url || config?.album_url || data?.album_url || '').trim(),
-      };
-    }
-    return {
-      source: 'share_url',
-      albumUrl: (config.albums[0]?.url || config?.album_url || data?.album_url || '').trim(),
-    };
+    if (emberEntry) return { source: 'ember_bridge', albumUrl: (emberEntry.url || config?.album_url || data?.album_url || '').trim() };
+    return { source: 'share_url', albumUrl: (config.albums[0]?.url || config?.album_url || data?.album_url || '').trim() };
   }
-
-  return {
-    source: config?.source === 'ember_bridge' ? 'ember_bridge' : 'share_url',
-    albumUrl: (config?.album_url || data?.album_url || '').trim(),
-  };
+  return { source: config?.source === 'ember_bridge' ? 'ember_bridge' : 'share_url', albumUrl: (config?.album_url || data?.album_url || '').trim() };
 }
 
 export function getBackdropPhotoURL(rawUrl?: string): string {
@@ -104,22 +77,15 @@ export function getBackdropPhotoURL(rawUrl?: string): string {
 
 export function getSizedPhotoURL(rawUrl?: string, containerSize?: ContainerSize): string {
   if (!rawUrl) return '';
-  const dpr = (typeof window !== 'undefined' && window.devicePixelRatio) || 1;
+  const dpr = Math.min(2, (typeof window !== 'undefined' && window.devicePixelRatio) || 1);
   const screenWidth = Math.round((((typeof window !== 'undefined' && (window.screen?.width || window.innerWidth)) || 1920) * dpr));
   const screenHeight = Math.round((((typeof window !== 'undefined' && (window.screen?.height || window.innerHeight)) || 1080) * dpr));
   const rectW = Math.round((containerSize?.width || 0) * dpr);
   const rectH = Math.round((containerSize?.height || 0) * dpr);
-  const targetWidth = rectW > 0 ? Math.max(rectW, screenWidth) : screenWidth;
-  const targetHeight = rectH > 0 ? Math.max(rectH, screenHeight) : screenHeight;
-  return `${rawUrl}=w${targetWidth}-h${targetHeight}`;
+  return `${rawUrl}=w${rectW > 0 ? rectW : screenWidth}-h${rectH > 0 ? rectH : screenHeight}`;
 }
 
-export interface WidgetPhotoDeckState {
-  currentKey: string | null;
-  seenKeys: Set<string>;
-  remainingMs: number | null;
-}
-
+export interface WidgetPhotoDeckState { currentKey: string | null; seenKeys: Set<string>; remainingMs: number | null; }
 export const photoDeckStateById = new Map<string, WidgetPhotoDeckState>();
 
 useDisplayStore.subscribe((state) => {
@@ -144,11 +110,7 @@ export function getPhotoItemKey(item?: PhotoItem, fallbackIndex?: number): strin
   return fallbackIndex !== undefined ? String(fallbackIndex) : '';
 }
 
-export function selectNextPhotoIndex(
-  photos: readonly PhotoItem[],
-  baseIndex: number,
-  seenKeys: Set<string>,
-): number {
+export function selectNextPhotoIndex(photos: readonly PhotoItem[], baseIndex: number, seenKeys: Set<string>): number {
   if (photos.length <= 1) return 0;
   const safeBase = ((baseIndex % photos.length) + photos.length) % photos.length;
   for (let i = 1; i < photos.length; i++) {
@@ -163,6 +125,27 @@ export function selectNextPhotoIndex(
 export function selectPrevPhotoIndex(photos: readonly PhotoItem[], baseIndex: number): number {
   if (photos.length <= 1) return 0;
   return (((baseIndex % photos.length) + photos.length) % photos.length - 1 + photos.length) % photos.length;
+}
+
+export function selectPreloadPhotoIndices(photos: readonly PhotoItem[], baseIndex: number, seenKeys?: ReadonlySet<string>, count = 8): number[] {
+  if (photos.length <= 1 || count <= 0) return [];
+  const simSeen = new Set<string>(seenKeys);
+  const safeBase = ((baseIndex % photos.length) + photos.length) % photos.length;
+  simSeen.add(getPhotoItemKey(photos[safeBase], safeBase));
+  const result: number[] = [];
+  let cursor = safeBase;
+  const maxItems = Math.min(count, photos.length - 1);
+  for (let step = 0; step < photos.length && result.length < maxItems; step++) {
+    const nextIdx = selectNextPhotoIndex(photos, cursor, simSeen);
+    const rawUrl = photos[nextIdx]?.url ?? photos[nextIdx]?.URL;
+    simSeen.add(getPhotoItemKey(photos[nextIdx], nextIdx));
+    cursor = nextIdx;
+    if (nextIdx !== safeBase && rawUrl && !result.includes(nextIdx)) result.push(nextIdx);
+  }
+  const prevIdx = selectPrevPhotoIndex(photos, safeBase);
+  const prevUrl = photos[prevIdx]?.url ?? photos[prevIdx]?.URL;
+  if (prevIdx !== safeBase && prevUrl && !result.includes(prevIdx)) result.push(prevIdx);
+  return result;
 }
 
 function scheduleCycleTick(
