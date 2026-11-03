@@ -386,11 +386,8 @@ func TestWidgetAction_CallerWithResponse(t *testing.T) {
 	}
 
 	// Verify error path on WidgetActionResponseCaller and redundant domain prefix on service
-	errCaller := &mockWidgetActionResponseCaller{
-		mockWidgetActionCaller: mockWidgetActionCaller{
-			errToReturn: provider.ErrWidgetNotFound,
-		},
-	}
+	errCaller := &mockWidgetActionResponseCaller{}
+	errCaller.errToReturn = provider.ErrWidgetNotFound
 	errSrv := server.New(server.Config{
 		WidgetActionHandler: server.NewDefaultWidgetActionHandler(server.WithWidgetActionCaller(errCaller)),
 	})
