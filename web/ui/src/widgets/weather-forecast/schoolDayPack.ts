@@ -12,6 +12,8 @@ export const DEFAULT_SCHOOL_DAY_THRESHOLDS: SchoolDayThresholds = {
   warmMaxF: 77,
 };
 
+export const DEFAULT_SCHOOL_DAY_ROLLOVER_HOUR = 19;
+
 export type DaypartSlot = 'morning' | 'afternoon' | 'evening';
 
 export type ClothingConditionState =
@@ -22,6 +24,117 @@ export type ClothingConditionState =
   | 'cool_evening'
   | 'warm_pants'
   | 'hot_dress';
+
+const OUTFIT_LABELS: Record<ClothingConditionState, string> = {
+  morning_rain: 'Raincoat & Umbrella',
+  rainy_boots: 'Raincoat & Boots',
+  cold_puffer: 'Warm Puffer Coat',
+  morning_mild: 'Light Jacket & Pants',
+  cool_evening: 'Hoodie or Fleece',
+  warm_pants: 'T-Shirt & Long Pants',
+  hot_dress: 'Shorts or Sun Dress',
+};
+
+export function resolveClothingOutfitLabel(state: ClothingConditionState): string {
+  return OUTFIT_LABELS[state];
+}
+
+const CONDITION_KEYWORDS: ReadonlyArray< readonly [string, string] > = [
+  ['pouring', 'Heavy Rain'],
+  ['lightning', 'Thunderstorms'],
+  ['snow', 'Snow'],
+  ['rain', 'Rain Showers'],
+  ['fog', 'Foggy'],
+  ['partly-cloudy', 'Partly Cloudy'],
+  ['cloudy', 'Cloudy'],
+  ['clear-night', 'Clear'],
+];
+
+export function resolveIconConditionLabel(iconToken: string): string {
+  const normalized = iconToken.toLowerCase();
+  for (const [needle, label] of CONDITION_KEYWORDS) {
+    if (normalized.includes(needle)) {
+      return label;
+    }
+  }
+  return 'Sunny';
+}
+
+export function formatSlotForecastSummary(iconToken: string, precipProbPct: number): string {
+  const condition = resolveIconConditionLabel(iconToken);
+  const clampedPrecip = Math.max(0, Math.min(100, Math.round(Number(precipProbPct) || 0)));
+  return `${condition} · ${clampedPrecip}% rain`;
+}
+
+export function addOneCalendarDay(dateStr: string): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr);
+  if (!match) return dateStr;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const utc = new Date(Date.UTC(year, month - 1, day + 1));
+  const y = utc.getUTCFullYear();
+  const m = String(utc.getUTCMonth() + 1).padStart(2, '0');
+  const d = String(utc.getUTCDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+export function resolveLocalDateAndHour(
+  timestamp: string,
+  timezone?: string,
+): { baseDate: string; hour: number } {
+  const tz =
+    timezone ||
+    (typeof document !== 'undefined' ? document.body?.dataset?.timezone : undefined);
+  if (tz && timestamp.endsWith('Z')) {
+    try {
+      const d = new Date(timestamp);
+      if (!isNaN(d.getTime())) {
+        const parts = new Intl.DateTimeFormat('en-CA', {
+          timeZone: tz,
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+          hour: '2-digit',
+          hour12: false,
+        }).formatToParts(d);
+        const y = parts.find((p) => p.type === 'year')?.value;
+        const m = parts.find((p) => p.type === 'month')?.value;
+        const day = parts.find((p) => p.type === 'day')?.value;
+        const h = parts.find((p) => p.type === 'hour')?.value;
+        if (y && m && day && h !== undefined) {
+          const parsedHour = parseInt(h, 10) % 24;
+          return { baseDate: `${y}-${m}-${day}`, hour: parsedHour };
+        }
+      }
+    } catch {
+      // Fall back to ISO string slicing below
+    }
+  }
+  const baseDate = timestamp.slice(0, 10);
+  const hourMatch = /T(\d{2}):/.exec(timestamp);
+  const hour = hourMatch ? parseInt(hourMatch[1], 10) : 0;
+  return { baseDate, hour };
+}
+
+export function resolveSchoolDayTargetDate(
+  config?: Record<string, unknown>,
+  timestamp?: string,
+  rolloverHour = DEFAULT_SCHOOL_DAY_ROLLOVER_HOUR,
+): { dateStr: string; isTomorrow: boolean } {
+  if (typeof config?.date === 'string' && config.date) {
+    return { dateStr: config.date, isTomorrow: false };
+  }
+  if (typeof timestamp === 'string' && timestamp.length >= 10) {
+    const configTz = typeof config?.timezone === 'string' ? config.timezone : undefined;
+    const { baseDate, hour } = resolveLocalDateAndHour(timestamp, configTz);
+    if (hour >= rolloverHour) {
+      return { dateStr: addOneCalendarDay(baseDate), isTomorrow: true };
+    }
+    return { dateStr: baseDate, isTomorrow: false };
+  }
+  return { dateStr: '2026-10-31', isTomorrow: false };
+}
 
 export function resolveClothingConditionState(
   tempF: number,
