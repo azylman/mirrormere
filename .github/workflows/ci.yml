@@ -209,6 +209,11 @@ jobs:
             (cd client/ember && ./gradlew testDebugUnitTest)
           fi
 
+      - name: Emit Agent Pre-Flight Remediation Guidance
+        if: failure()
+        run: |
+          echo "::error::🚨 [Mirrormere CI] Verification failed. Before pushing a fix, stage all changes and run 'git add -A && sh scripts/verify.sh --staged' locally so all touched Go, web/ui, Node, and Python checks run in one pass."
+
   ui:
     name: React UI (web/ui)
     needs: changes
@@ -240,6 +245,11 @@ jobs:
           npm run test:coverage
           npm run build
           npx playwright test
+
+      - name: Emit Agent Pre-Flight Remediation Guidance
+        if: failure()
+        run: |
+          echo "::error::🚨 [Mirrormere CI] React UI verification failed. Before pushing a fix, stage all changes and run 'git add -A && sh scripts/verify.sh --staged' locally so all touched Go, web/ui, Node, and Python checks run in one pass."
 
   perf:
     name: Display performance budget (React)
@@ -308,6 +318,11 @@ jobs:
       - name: Stop the server
         if: always() && (needs.changes.outputs.perf == 'true' || inputs.force_all == true)
         run: pkill -x server || true
+
+      - name: Emit Agent Pre-Flight Remediation Guidance
+        if: failure()
+        run: |
+          echo "::error::🚨 [Mirrormere CI] Performance budget check failed. Before pushing a fix, stage all changes and run 'git add -A && sh scripts/verify.sh --staged' locally so all touched Go, web/ui, Node, and Python checks run in one pass."
 
   lint:
     name: Lint Microservices & Frontend
@@ -467,6 +482,11 @@ jobs:
           if [ "$RC_HEALTH" -ne 0 ] || [ "$RC_LINT" -ne 0 ]; then
             exit 1
           fi
+
+      - name: Emit Agent Pre-Flight Remediation Guidance
+        if: failure()
+        run: |
+          echo "::error::🚨 [Mirrormere CI] Lint & static analysis failed. Before pushing a fix, stage all changes and run 'git add -A && sh scripts/verify.sh --staged' locally so all touched Go, web/ui, Node, and Python checks run in one pass."
 
   docker:
     name: Build & Publish Container Image (${{ matrix.service }})
