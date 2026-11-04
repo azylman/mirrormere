@@ -65,6 +65,7 @@ export interface FamilyDay {
   is_today: boolean;
   is_weekend: boolean;
   all_day?: FamilyEvent[];
+  meals?: FamilyEvent[];
   timed?: FamilyEvent[];
   overflow?: number;
   events?: FamilyDayEvent[];

@@ -135,6 +135,7 @@ function filterDaysByMember(
       matchesMemberFilter(ev, selectedMember, membersList),
     ),
     all_day: day.all_day?.filter((ev) => matchesMemberFilter(ev, selectedMember, membersList)),
+    meals: day.meals?.filter((ev) => matchesMemberFilter(ev, selectedMember, membersList)),
     timed: day.timed?.filter((ev) => matchesMemberFilter(ev, selectedMember, membersList)),
   }));
 }
