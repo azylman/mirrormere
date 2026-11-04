@@ -71,25 +71,31 @@
 
     decorateMealieEvents() {
       if (!this.element || typeof this.element.querySelectorAll !== 'function') return;
-      const pills = this.element.querySelectorAll('.cf-allday[data-event-location^="/hearth-api/mealie/image/"]');
+      const pills = this.element.querySelectorAll(
+        '.cf-mealie-bar, .cf-allday[data-event-location^="/hearth-api/mealie/image/"]'
+      );
       pills.forEach(pill => {
         if (pill.dataset.mealieDecorated === 'true') return;
-        const imgUrl = pill.dataset.eventLocation;
-        const rawTitle = (pill.dataset.eventTitle || pill.textContent || '').replace(/^🍽️\s*/, '');
+        const imgUrl = (pill.dataset && pill.dataset.eventLocation) || '';
+        const rawTitle = ((pill.dataset && pill.dataset.eventTitle) || pill.textContent || '').replace(/^🍽️\s*/, '');
+        const isBottomBar = pill.classList && typeof pill.classList.contains === 'function' && pill.classList.contains('cf-mealie-bar');
         pill.dataset.mealieDecorated = 'true';
         pill.style.display = 'flex';
         pill.style.alignItems = 'center';
-        pill.style.gap = '6px';
-        pill.style.padding = '3px 6px';
+        pill.style.gap = isBottomBar ? '7px' : '6px';
+        pill.style.padding = isBottomBar ? '4px 6px' : '3px 6px';
         pill.textContent = '';
-        const imgEl = document.createElement('img');
-        imgEl.src = imgUrl;
-        imgEl.alt = '';
-        imgEl.style.cssText = 'width:26px;height:26px;border-radius:5px;object-fit:cover;flex-shrink:0;box-shadow:0 1px 3px rgba(0,0,0,0.3);';
+        if (imgUrl && imgUrl.startsWith('/hearth-api/mealie/image/')) {
+          const imgEl = document.createElement('img');
+          imgEl.src = imgUrl;
+          imgEl.alt = '';
+          const thumbSize = isBottomBar ? '34px' : '26px';
+          imgEl.style.cssText = `width:${thumbSize};height:${thumbSize};border-radius:6px;object-fit:cover;flex-shrink:0;box-shadow:0 1px 3px rgba(0,0,0,0.3);`;
+          pill.appendChild(imgEl);
+        }
         const spanEl = document.createElement('span');
         spanEl.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:800;';
         spanEl.textContent = `🍽️ ${rawTitle}`;
-        pill.appendChild(imgEl);
         pill.appendChild(spanEl);
       });
     }
@@ -154,6 +160,7 @@
       if (Array.isArray(this.data.days)) {
         for (const day of this.data.days) {
           if (Array.isArray(day.all_day)) for (const ev of day.all_day) addEv(ev);
+          if (Array.isArray(day.meals)) for (const ev of day.meals) addEv(ev);
           if (Array.isArray(day.timed)) for (const ev of day.timed) addEv(ev);
           if (Array.isArray(day.events)) for (const ev of day.events) addEv(ev);
           if (Array.isArray(day.early_events)) for (const ev of day.early_events) addEv(ev);
