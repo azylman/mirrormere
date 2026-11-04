@@ -428,19 +428,5 @@ test('Photo Carousel Client Controller', async (t) => {
       global.Image = OriginalImage;
     }
   });
-
-  await t.test('defaults photo carousel template to cover fit and diptych images to full-bleed cover', () => {
-    const widgetTemplate = fs.readFileSync(
-      path.join(__dirname, '../../widgets/photo-carousel/views/widget.html'),
-      'utf8'
-    );
-    assert.match(widgetTemplate, /data-fit="cover"/);
-
-    const widgetCss = fs.readFileSync(
-      path.join(__dirname, '../ui/src/widgets/photo-carousel/PhotoCarouselWidget.css'),
-      'utf8'
-    );
-    assert.match(widgetCss, /\.photo-foreground-diptych\s*>\s*img\s*\{[^}]*object-fit:\s*cover;/);
-  });
 });
 

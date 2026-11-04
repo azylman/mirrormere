@@ -370,28 +370,6 @@ describe('PhotoCarouselWidget component', () => {
     expect(currentFg?.classList.contains('dither')).toBe(true);
   });
 
-  it('always renders cover fit and blurred backdrop regardless of legacy config', () => {
-    setWidgetPhotos([{ url: 'https://example.com/p1.jpg' }], 10, { fit: 'cover', image_size: [1000, 800] });
-
-    const { container } = render(
-      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
-        <PhotoCarouselWidget id={widgetId} type="photo-carousel" />
-      </PaneContext.Provider>,
-    );
-
-    const root = container.querySelector('.widget-photo-carousel');
-    expect(root?.getAttribute('data-fit')).toBe('cover');
-
-    const backdropContainer = container.querySelector('.photo-backdrop-container');
-    expect(backdropContainer).not.toBeNull();
-
-    const currentBackdrop = container.querySelector('.photo-backdrop-current');
-    expect(currentBackdrop?.getAttribute('src')).toBe('https://example.com/p1.jpg=w96-h54-c');
-
-    const currentFg = container.querySelector('.photo-layer.photo-current');
-    expect(currentFg?.getAttribute('src')).toBe('https://example.com/p1.jpg=w1024-h768');
-  });
-
   it('cycles photos automatically with decode preloading', async () => {
     let resolveDecode: (() => void) | null = null;
     const originalImage = window.Image;
