@@ -212,7 +212,7 @@ function preloadAndDecode(src: string): Promise<boolean> {
   });
 }
 
-function resolveInitialPhotoIndex(photos: readonly PhotoItem[], deck: WidgetPhotoDeckState): number {
+function resolveInitialPhotoIndex(photos: readonly PhotoItem[], deck: WidgetPhotoDeckState, wide = true): number {
   if (photos.length === 0) return 0;
   if (deck.currentKey) {
     const idx = photos.findIndex((p, i) => getPhotoItemKey(p, i) === deck.currentKey);
@@ -223,7 +223,7 @@ function resolveInitialPhotoIndex(photos: readonly PhotoItem[], deck: WidgetPhot
   const key = getPhotoItemKey(photos[unseenIdx], unseenIdx);
   deck.currentKey = key;
   deck.seenKeys.add(key);
-  const compIdx = selectCompanionPortraitIndex(photos, unseenIdx, deck.seenKeys);
+  const compIdx = wide ? selectCompanionPortraitIndex(photos, unseenIdx, deck.seenKeys) : null;
   const compKey = compIdx !== null ? getPhotoItemKey(photos[compIdx], compIdx) : null;
   deck.companionKey = compKey;
   if (compKey) deck.seenKeys.add(compKey);
@@ -280,14 +280,15 @@ export interface UsePhotoSlideshowTransitionOptions {
   id: string; photos: readonly PhotoItem[]; cycleIntervalSeconds: number;
   isCurrentPane: boolean; isDocumentVisible: boolean; isVideoMode: boolean;
   isPaused: boolean; containerSizeRef: React.MutableRefObject<ContainerSize>;
+  wide?: boolean;
 }
 
 export interface SlideTransitionState { nextIndex: number; companionIndex: number | null; active: boolean; }
 
 function resolveSavedCompanionIndex(
-  photos: readonly PhotoItem[], primaryIndex: number, companionKey: string | null | undefined, seenKeys: ReadonlySet<string>,
+  photos: readonly PhotoItem[], primaryIndex: number, companionKey: string | null | undefined, seenKeys: ReadonlySet<string>, wide = true,
 ): number | null {
-  if (photos.length <= 1 || !isPortraitPhoto(photos[primaryIndex])) return null;
+  if (!wide || photos.length <= 1 || !isPortraitPhoto(photos[primaryIndex])) return null;
   if (companionKey) {
     const idx = photos.findIndex((p, i) => getPhotoItemKey(p, i) === companionKey);
     if (idx !== -1 && idx !== primaryIndex && isPortraitPhoto(photos[idx])) return idx;
@@ -296,18 +297,19 @@ function resolveSavedCompanionIndex(
 }
 
 export function usePhotoSlideshowTransition({
-  id, photos, cycleIntervalSeconds, isCurrentPane, isDocumentVisible, isVideoMode, isPaused, containerSizeRef,
+  id, photos, cycleIntervalSeconds, isCurrentPane, isDocumentVisible, isVideoMode, isPaused, containerSizeRef, wide: initialWide = true,
 }: UsePhotoSlideshowTransitionOptions) {
-  const [currentIndex, setCurrentIndex] = useState(() => resolveInitialPhotoIndex(photos, getWidgetPhotoDeckState(id)));
+  const [currentIndex, setCurrentIndex] = useState(() => resolveInitialPhotoIndex(photos, getWidgetPhotoDeckState(id), initialWide));
   const safeIndex = photos.length > 0 ? currentIndex % photos.length : 0;
-  const [currentCompanionIndex, setCurrentCompanionIndex] = useState<number | null>(() => {
+  const [rawCompanionIndex, setCurrentCompanionIndex] = useState<number | null>(() => {
     const deck = getWidgetPhotoDeckState(id);
-    const compIdx = resolveSavedCompanionIndex(photos, safeIndex, deck.companionKey, deck.seenKeys);
+    const compIdx = resolveSavedCompanionIndex(photos, safeIndex, deck.companionKey, deck.seenKeys, initialWide);
     const compKey = compIdx !== null ? getPhotoItemKey(photos[compIdx], compIdx) : null;
     deck.companionKey = compKey;
     if (compKey) deck.seenKeys.add(compKey);
     return compIdx;
   });
+  const currentCompanionIndex = initialWide ? rawCompanionIndex : null;
   const currentIndexRef = useRef(safeIndex);
   const currentCompanionIndexRef = useRef(currentCompanionIndex);
   const probeIndexRef = useRef<number | null>(null);
@@ -354,14 +356,11 @@ export function usePhotoSlideshowTransition({
     }
 
     if (transitionStateRef.current?.active) {
-      setCurrentIndex(baseIndex);
-      currentIndexRef.current = baseIndex;
-      setCurrentCompanionIndex(baseSecIdx);
-      currentCompanionIndexRef.current = baseSecIdx;
+      setCurrentIndex(baseIndex); currentIndexRef.current = baseIndex;
+      setCurrentCompanionIndex(baseSecIdx); currentCompanionIndexRef.current = baseSecIdx;
       stopAnimation();
       if (transitionTimeoutRef.current) { clearTimeout(transitionTimeoutRef.current); transitionTimeoutRef.current = null; }
-      transitionStateRef.current = null;
-      setTransitionState(null);
+      transitionStateRef.current = null; setTransitionState(null);
     }
 
     const nextIndex = direction === 'prev' ? selectPrevPhotoIndex(currentPhotos, baseIndex) : selectNextPhotoIndex(currentPhotos, baseIndex, deck.seenKeys);
@@ -370,11 +369,8 @@ export function usePhotoSlideshowTransition({
     const nextKey = getPhotoItemKey(nextPhoto, nextIndex);
 
     if (!nextRawUrl) {
-      deck.seenKeys.add(nextKey);
-      probeIndexRef.current = nextIndex;
-      deck.remainingMs = cycleIntervalSeconds * 1000;
-      clearPendingTransition();
-      setRetryTick((t) => t + 1);
+      deck.seenKeys.add(nextKey); probeIndexRef.current = nextIndex;
+      deck.remainingMs = cycleIntervalSeconds * 1000; clearPendingTransition(); setRetryTick((t) => t + 1);
       return;
     }
 
@@ -382,50 +378,41 @@ export function usePhotoSlideshowTransition({
     const nextSecPhoto = nextSecIdx !== null ? currentPhotos[nextSecIdx] : undefined;
     const nextSecRawUrl = nextSecPhoto?.url ?? nextSecPhoto?.URL;
     const nextSecKey = nextSecIdx !== null ? getPhotoItemKey(nextSecPhoto, nextSecIdx) : null;
-
     const nextFgUrl = getSizedPhotoURL(nextRawUrl, containerSizeRef.current);
     const nextSecFgUrl = nextSecRawUrl ? getSizedPhotoURL(nextSecRawUrl, containerSizeRef.current) : '';
     const seq = ++cycleSeqRef.current;
     if (transitionTimeoutRef.current) { clearTimeout(transitionTimeoutRef.current); transitionTimeoutRef.current = null; }
 
-    const decodePromise = nextSecFgUrl
-      ? Promise.all([preloadAndDecode(nextFgUrl), preloadAndDecode(nextSecFgUrl)]).then(([ok1, ok2]) => ok1 && ok2)
-      : preloadAndDecode(nextFgUrl);
-
-    decodePromise.then((ok) => {
+    const handleDecodeResult = (ok1: boolean, ok2: boolean) => {
       if (cycleSeqRef.current !== seq) return;
-      if (!ok) {
-        deck.seenKeys.add(nextKey);
-        if (nextSecKey) deck.seenKeys.add(nextSecKey);
-        probeIndexRef.current = nextIndex;
-        deck.remainingMs = cycleIntervalSeconds * 1000;
-        clearPendingTransition();
-        setRetryTick((t) => t + 1);
+      if (!ok1) {
+        deck.seenKeys.add(nextKey); probeIndexRef.current = nextIndex;
+        deck.remainingMs = cycleIntervalSeconds * 1000; clearPendingTransition(); setRetryTick((t) => t + 1);
         return;
       }
-
-      probeIndexRef.current = null;
-      startAnimation();
-      const nextState: SlideTransitionState = { nextIndex, companionIndex: nextSecIdx, active: true };
-      transitionStateRef.current = nextState;
-      setTransitionState(nextState);
+      if (!ok2 && nextSecKey) deck.seenKeys.add(nextSecKey);
+      const nextCompanionIndex = ok2 ? nextSecIdx : null;
+      const finalSecKey = ok2 ? nextSecKey : null;
+      probeIndexRef.current = null; startAnimation();
+      const nextState: SlideTransitionState = { nextIndex, companionIndex: nextCompanionIndex, active: true };
+      transitionStateRef.current = nextState; setTransitionState(nextState);
 
       transitionTimeoutRef.current = setTimeout(() => {
         if (cycleSeqRef.current !== seq) return;
-        deck.currentKey = nextKey;
-        deck.companionKey = nextSecKey;
+        deck.currentKey = nextKey; deck.companionKey = finalSecKey;
         deck.seenKeys.add(nextKey);
-        if (nextSecKey) deck.seenKeys.add(nextSecKey);
-        setCurrentIndex(nextIndex);
-        currentIndexRef.current = nextIndex;
-        setCurrentCompanionIndex(nextSecIdx);
-        currentCompanionIndexRef.current = nextSecIdx;
-        stopAnimation();
-        transitionStateRef.current = null;
-        setTransitionState(null);
-        transitionTimeoutRef.current = null;
+        if (finalSecKey) deck.seenKeys.add(finalSecKey);
+        setCurrentIndex(nextIndex); currentIndexRef.current = nextIndex;
+        setCurrentCompanionIndex(nextCompanionIndex); currentCompanionIndexRef.current = nextCompanionIndex;
+        stopAnimation(); transitionStateRef.current = null; setTransitionState(null); transitionTimeoutRef.current = null;
       }, CROSSFADE_MS);
-    });
+    };
+
+    if (nextSecFgUrl) {
+      Promise.all([preloadAndDecode(nextFgUrl), preloadAndDecode(nextSecFgUrl)]).then(([ok1, ok2]) => handleDecodeResult(ok1, ok2));
+    } else {
+      preloadAndDecode(nextFgUrl).then((ok1) => handleDecodeResult(ok1, true));
+    }
   };
 
   const stepPhoto = (direction: 'prev' | 'next') => {
@@ -441,8 +428,15 @@ export function usePhotoSlideshowTransition({
   };
 
   useLayoutEffect(() => {
+    const size = containerSizeRef.current;
+    if (size.width > 0 && size.height > 0 && size.width / size.height < 1.15) {
+      const deck = getWidgetPhotoDeckState(id);
+      if (deck.companionKey) { deck.seenKeys.delete(deck.companionKey); deck.companionKey = null; }
+      currentCompanionIndexRef.current = null;
+    } else {
+      currentCompanionIndexRef.current = currentCompanionIndex;
+    }
     currentIndexRef.current = safeIndex;
-    currentCompanionIndexRef.current = currentCompanionIndex;
     photosRef.current = photos;
     transitionStateRef.current = transitionState;
   });
@@ -451,14 +445,15 @@ export function usePhotoSlideshowTransition({
     probeIndexRef.current = null;
     if (photos.length === 0) return;
     const deck = getWidgetPhotoDeckState(id);
-    const targetIdx = resolveInitialPhotoIndex(photos, deck);
-    const compIdx = resolveSavedCompanionIndex(photos, targetIdx, deck.companionKey, deck.seenKeys);
+    const wide = isWideContainer(containerSizeRef.current);
+    const targetIdx = resolveInitialPhotoIndex(photos, deck, wide);
+    const compIdx = resolveSavedCompanionIndex(photos, targetIdx, deck.companionKey, deck.seenKeys, wide);
     const compKey = compIdx !== null ? getPhotoItemKey(photos[compIdx], compIdx) : null;
     deck.companionKey = compKey;
     if (compKey) deck.seenKeys.add(compKey);
     if (currentIndexRef.current !== targetIdx) { setCurrentIndex(targetIdx); currentIndexRef.current = targetIdx; }
     if (currentCompanionIndexRef.current !== compIdx) { setCurrentCompanionIndex(compIdx); currentCompanionIndexRef.current = compIdx; }
-  }, [photos, id]);
+  }, [photos, id, containerSizeRef]);
 
   const clearPendingTransitionRef = useRef(clearPendingTransition);
   const triggerAdvanceRef = useRef(triggerAdvance);
