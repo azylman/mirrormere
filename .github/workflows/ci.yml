@@ -322,7 +322,72 @@ jobs:
 
       - name: Run Repo-Wide Hygiene Guards
         run: |
-          sh scripts/verify.sh --guards-only
+          set -eu
+          # 1. UTF-8 BOM Hygiene
+          BOM_HEX=$(printf '\357\273\277')
+          BOM_FILES=$(git grep -I -l "^$BOM_HEX" 2>/dev/null || true)
+          if [ -n "$BOM_FILES" ]; then
+            echo "🚨 [Mirrormere Verify] Error: Invalid UTF-8 BOM detected in tracked files:" >&2
+            echo "$BOM_FILES" | sed 's/^/   • /' >&2
+            exit 1
+          fi
+
+          # 2. No Imperative DDL in Application Code
+          DDL_FILES=$(find . -maxdepth 4 -type f \( -name "*.go" -o -name "*.py" -o -name "*.ts" \) \
+            ! -name "*_test.go" ! -name "*.test.ts" ! -name "test_*.py" \
+            ! -path "*/vendor/*" ! -path "*/node_modules/*" ! -path "*/.git/*" ! -path "*/scripts/*" 2>/dev/null || true)
+          if [ -n "$DDL_FILES" ]; then
+            VIOLATIONS=$(echo "$DDL_FILES" | while read -r f; do
+              [ -f "$f" ] || continue
+              grep -H -n -i -E '\b(CREATE|ALTER|DROP)[[:space:]]+TABLE\b' "$f" 2>/dev/null | grep -v -E '^[^:]+:[0-9]+:[[:space:]]*(//|#|\*)' || true
+            done)
+            if [ -n "$VIOLATIONS" ]; then
+              echo "🚨 [Mirrormere Verify] Imperative DDL (CREATE/ALTER/DROP TABLE) detected in application code:" >&2
+              echo "$VIOLATIONS" | sed 's/^/   • /' >&2
+              exit 1
+            fi
+          fi
+
+          # 3. Dependabot Configuration & Security Group Coverage
+          DEP_FILE=".github/dependabot.yml"
+          if [ ! -f "$DEP_FILE" ]; then
+            echo "🚨 [Mirrormere Verify] Error: Missing .github/dependabot.yml configuration file!" >&2
+            exit 1
+          fi
+          MISSING_MANIFESTS=""
+          DISCOVERED_DIRS=$(find . -maxdepth 3 -type f \( -name "go.mod" -o -name "Cargo.toml" -o -name "pyproject.toml" -o -name "package.json" -o -name "requirements.txt" \) \
+            ! -path "*/vendor/*" ! -path "*/node_modules/*" ! -path "*/testdata/*" ! -path "*/.*" 2>/dev/null | \
+            sed 's|^\./||' | while read -r mf; do dirname "$mf"; done | sort -u)
+          for dir in $DISCOVERED_DIRS; do
+            if [ "$dir" = "." ]; then target_dir="/"; else target_dir="/$dir"; fi
+            if ! grep -q -F "\"${target_dir}\"" "$DEP_FILE" && ! grep -q -F "'${target_dir}'" "$DEP_FILE" && ! grep -q -E "^[[:space:]]*(-[[:space:]]*)?\"?${target_dir}\"?[[:space:]]*$" "$DEP_FILE"; then
+              case " $MISSING_MANIFESTS " in
+                *" $target_dir "*) ;;
+                *) MISSING_MANIFESTS="${MISSING_MANIFESTS} $target_dir" ;;
+              esac
+            fi
+          done
+          if [ -n "$MISSING_MANIFESTS" ]; then
+            echo "🚨 [Mirrormere Verify] Error: Discovered package directories missing from .github/dependabot.yml:$MISSING_MANIFESTS" >&2
+            exit 1
+          fi
+          ECO_COUNT=$(grep -c "package-ecosystem:" "$DEP_FILE" || true)
+          VER_COUNT=$(grep -c "applies-to:[[:space:]]*version-updates" "$DEP_FILE" || true)
+          SEC_COUNT=$(grep -c "applies-to:[[:space:]]*security-updates" "$DEP_FILE" || true)
+          if [ "$ECO_COUNT" -le 0 ] || [ "$ECO_COUNT" -ne "$VER_COUNT" ] || [ "$ECO_COUNT" -ne "$SEC_COUNT" ]; then
+            echo "🚨 [Mirrormere Verify] Error: Dependabot grouping mismatch in .github/dependabot.yml!" >&2
+            exit 1
+          fi
+
+          # 4. Frontend Per-Widget CSS Co-Location
+          if [ -f "web/ui/src/styles/widgets.css" ]; then
+            echo "🚨 [Mirrormere Verify] Error: web/ui/src/styles/widgets.css must not exist." >&2
+            exit 1
+          fi
+          if [ -d "web/ui/src/styles" ] && grep -rn -F '[data-widget-type=' "web/ui/src/styles" >/dev/null 2>&1; then
+            echo "🚨 [Mirrormere Verify] Error: Monolithic widget selectors ([data-widget-type=) found under web/ui/src/styles/." >&2
+            exit 1
+          fi
 
       - name: Auto-sort Server Routes and Handlers
         if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
@@ -341,7 +406,67 @@ jobs:
       - name: Run Static Analysis, Codegen Drift & Linting
         if: needs.changes.outputs.go_core == 'true' || needs.changes.outputs.ci_scripts == 'true' || inputs.force_all == true
         run: |
-          sh scripts/verify.sh --lint-only
+          set -eu
+          UNFORMATTED=$(gofmt -l . 2>/dev/null | grep -v -E '(^|/)vendor/' || true)
+          if [ -n "$UNFORMATTED" ]; then
+            echo "🚨 [Mirrormere Verify] Error: Unformatted Go files detected (run gofmt -w or golangci-lint fmt):" >&2
+            echo "$UNFORMATTED" | sed 's/^/   • /' >&2
+            exit 1
+          fi
+
+          GOPATH_DIR="$(go env GOPATH 2>/dev/null || true)"
+          BIN_DIR="${GOPATH_DIR:-$HOME/go}/bin"
+          export PATH="$BIN_DIR:$PATH"
+          mkdir -p "$BIN_DIR"
+          CODE_HEALTH_BIN="$BIN_DIR/mirrormere-code-health"
+          SRC_SUM=$(cksum scripts/code-health/*.go 2>/dev/null || true)
+          if [ ! -x "$CODE_HEALTH_BIN" ] || [ -z "$SRC_SUM" ] || [ "$(cat "${CODE_HEALTH_BIN}.cksum" 2>/dev/null || true)" != "$SRC_SUM" ]; then
+            (cd scripts/code-health && go build -o "$CODE_HEALTH_BIN" .)
+            printf '%s\n' "$SRC_SUM" > "${CODE_HEALTH_BIN}.cksum"
+          fi
+          if ! command -v deadcode >/dev/null 2>&1; then
+            go install golang.org/x/tools/cmd/deadcode@v0.52.0
+          fi
+
+          MAIN_PKGS=$(go list -f '{{if eq .Name "main"}}{{.ImportPath}}{{end}}' ./...)
+          LOG_HEALTH=$(mktemp)
+          LOG_LINT=$(mktemp)
+          LOG_DEAD_PROD=$(mktemp)
+          LOG_DEAD_TEST=$(mktemp)
+
+          "$CODE_HEALTH_BIN" -root . -baseline .code-health-baseline.json > "$LOG_HEALTH" 2>&1 &
+          P_HEALTH=$!
+          golangci-lint run --allow-parallel-runners ./... > "$LOG_LINT" 2>&1 &
+          P_LINT=$!
+          # shellcheck disable=SC2086
+          deadcode $MAIN_PKGS > "$LOG_DEAD_PROD" 2>&1 &
+          P_DEAD_PROD=$!
+          deadcode -test ./... > "$LOG_DEAD_TEST" 2>&1 &
+          P_DEAD_TEST=$!
+
+          RC_HEALTH=0; wait "$P_HEALTH" || RC_HEALTH=$?
+          RC_LINT=0; wait "$P_LINT" || RC_LINT=$?
+          RC_DEAD_PROD=0; wait "$P_DEAD_PROD" || RC_DEAD_PROD=$?
+          RC_DEAD_TEST=0; wait "$P_DEAD_TEST" || RC_DEAD_TEST=$?
+
+          cat "$LOG_HEALTH" "$LOG_LINT"
+          DEAD_PROD=$(cat "$LOG_DEAD_PROD" 2>/dev/null || true)
+          DEAD_TEST=$(cat "$LOG_DEAD_TEST" 2>/dev/null || true)
+          rm -f "$LOG_HEALTH" "$LOG_LINT" "$LOG_DEAD_PROD" "$LOG_DEAD_TEST"
+
+          if [ "$RC_DEAD_PROD" -ne 0 ] || [ -n "$DEAD_PROD" ]; then
+            echo "🚨 [Mirrormere Verify] Unreachable production code or compiled-in test hooks detected:" >&2
+            echo "$DEAD_PROD" | sed 's/^/   • /' >&2
+            exit 1
+          fi
+          if [ "$RC_DEAD_TEST" -ne 0 ] || [ -n "$DEAD_TEST" ]; then
+            echo "🚨 [Mirrormere Verify] Dead code detected:" >&2
+            echo "$DEAD_TEST" | sed 's/^/   • /' >&2
+            exit 1
+          fi
+          if [ "$RC_HEALTH" -ne 0 ] || [ "$RC_LINT" -ne 0 ]; then
+            exit 1
+          fi
 
   docker:
     name: Build & Publish Container Image (${{ matrix.service }})
