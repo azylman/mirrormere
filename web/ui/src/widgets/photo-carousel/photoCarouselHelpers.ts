@@ -335,24 +335,30 @@ export function usePhotoSlideshowTransition({
   const triggerAdvance = (direction: 'next' | 'prev' = 'next') => {
     const currentPhotos = photosRef.current;
     if (currentPhotos.length <= 1) return;
-    const baseIndex = transitionStateRef.current?.active
-      ? transitionStateRef.current.nextIndex
+    const isTransitionActive = Boolean(transitionStateRef.current?.active);
+    const isProbing = !isTransitionActive && probeIndexRef.current !== null;
+    const baseIndex = isTransitionActive
+      ? transitionStateRef.current!.nextIndex
       : (probeIndexRef.current ?? currentIndexRef.current);
 
     const deck = getWidgetPhotoDeckState(id);
     const wide = isWideContainer(containerSizeRef.current);
     const baseKey = getPhotoItemKey(currentPhotos[baseIndex], baseIndex);
-    const activeCompanionIdx = transitionStateRef.current?.active ? transitionStateRef.current.companionIndex : currentCompanionIndexRef.current;
-    const baseSecIdx = wide ? (activeCompanionIdx ?? selectCompanionPortraitIndex(currentPhotos, baseIndex, deck.seenKeys)) : null;
+    const activeCompanionIdx = isTransitionActive
+      ? transitionStateRef.current!.companionIndex
+      : (isProbing ? null : currentCompanionIndexRef.current);
+    const baseSecIdx = wide ? activeCompanionIdx : null;
     const baseSecKey = baseSecIdx !== null ? getPhotoItemKey(currentPhotos[baseSecIdx], baseSecIdx) : null;
-    deck.currentKey = baseKey;
-    deck.companionKey = baseSecKey;
-    if (direction === 'prev') {
-      deck.seenKeys.delete(baseKey);
-      if (baseSecKey) deck.seenKeys.delete(baseSecKey);
-    } else {
-      deck.seenKeys.add(baseKey);
-      if (baseSecKey) deck.seenKeys.add(baseSecKey);
+    if (!isProbing) {
+      deck.currentKey = baseKey;
+      deck.companionKey = baseSecKey;
+      if (direction === 'prev') {
+        deck.seenKeys.delete(baseKey);
+        if (baseSecKey) deck.seenKeys.delete(baseSecKey);
+      } else {
+        deck.seenKeys.add(baseKey);
+        if (baseSecKey) deck.seenKeys.add(baseSecKey);
+      }
     }
 
     if (transitionStateRef.current?.active) {
