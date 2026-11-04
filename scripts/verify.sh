@@ -23,12 +23,6 @@ for arg in "$@"; do
         --staged)
             MODE="staged"
             ;;
-        --lint-only)
-            MODE="lint"
-            ;;
-        --guards-only)
-            MODE="guards"
-            ;;
         --full)
             MODE="full"
             ;;
@@ -480,63 +474,12 @@ if [ "$MODE" = "staged" ]; then
     exit 0
 fi
 
-if [ "$MODE" = "guards" ]; then
-    check_utf8_bom
-    check_no_imperative_ddl
-    check_dependabot_coverage
-    run_frontend_checks
-    echo "✨ [Mirrormere Verify] All repo-wide hygiene guards passed!"
-    exit 0
-fi
-
-if [ "$MODE" = "lint" ]; then
-    check_utf8_bom
-    check_gofmt
-    check_no_imperative_ddl
-    check_dependabot_coverage
-    ensure_code_health
-    ensure_deadcode
-
-    log_health=$(mktemp)
-    log_lint=$(mktemp)
-    log_deadcode=$(mktemp)
-
-    (run_code_health) > "$log_health" 2>&1 &
-    p_health=$!
-
-    (run_golangci_lint) > "$log_lint" 2>&1 &
-    p_lint=$!
-
-    (run_deadcode) > "$log_deadcode" 2>&1 &
-    p_deadcode=$!
-
-    rc_health=0
-    wait "$p_health" || rc_health=$?
-
-    rc_lint=0
-    wait "$p_lint" || rc_lint=$?
-
-    rc_deadcode=0
-    wait "$p_deadcode" || rc_deadcode=$?
-
-    cat "$log_health"
-    cat "$log_lint"
-    cat "$log_deadcode"
-    rm -f "$log_health" "$log_lint" "$log_deadcode"
-
-    if [ "$rc_health" -ne 0 ] || [ "$rc_lint" -ne 0 ] || [ "$rc_deadcode" -ne 0 ]; then
-        exit 1
-    fi
-
-    echo "✨ [Mirrormere Verify] All lint and static analysis checks passed!"
-    exit 0
-fi
-
 # Full verification: Run entire CI-equivalent verification suite
 check_utf8_bom
 check_gofmt
 check_no_imperative_ddl
 check_dependabot_coverage
+run_frontend_checks
 run_code_health
 run_golangci_lint
 run_deadcode
