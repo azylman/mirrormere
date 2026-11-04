@@ -1643,19 +1643,11 @@ describe('PhotoCarouselWidget component', () => {
 
     class MockImage {
       src = '';
-      decode() {
-        return new Promise<void>((res) => {
-          decodeResolvers.push(res);
-   });
-      }
+      decode() { return new Promise<void>((res) => { decodeResolvers.push(res); }); }
     }
     class MockResizeObserver {
-      constructor(cb: (entries: Array<{ contentRect: { width: number; height: number } }>) => void) {
-        resizeCallback = cb;
-      }
-      observe = vi.fn();
-      disconnect = vi.fn();
-      unobserve = vi.fn();
+      constructor(cb: (entries: Array<{ contentRect: { width: number; height: number } }>) => void) { resizeCallback = cb; }
+      observe = vi.fn(); disconnect = vi.fn(); unobserve = vi.fn();
     }
     // @ts-expect-error mock window.Image
     window.Image = MockImage;
@@ -1664,32 +1656,11 @@ describe('PhotoCarouselWidget component', () => {
 
     try {
       photoDeckStateById.clear();
-      setWidgetPhotos(
-        [
-          {
-            id: 'p1',
-            url: 'https://example.com/portrait1.jpg',
-            aspect_ratio: 0.75,
-            timestamp: '2026-10-10T12:00:00Z',
-            location: 'Chicago',
-          },
-          {
-            id: 'l1',
-            url: 'https://example.com/landscape1.jpg',
-            aspect_ratio: 1.33,
-            timestamp: '2026-10-11T12:00:00Z',
-            location: 'Denver',
-          },
-          {
-            id: 'p2',
-            url: 'https://example.com/portrait2.jpg',
-            aspect_ratio: 0.75,
-            timestamp: '2026-10-12T12:00:00Z',
-            location: 'Seattle',
-          },
-        ],
-        10,
-      );
+      setWidgetPhotos([
+        { id: 'p1', url: 'https://example.com/portrait1.jpg', aspect_ratio: 0.75, timestamp: '2026-10-10T12:00:00Z', location: 'Chicago' },
+        { id: 'l1', url: 'https://example.com/landscape1.jpg', aspect_ratio: 1.33, timestamp: '2026-10-11T12:00:00Z', location: 'Denver' },
+        { id: 'p2', url: 'https://example.com/portrait2.jpg', aspect_ratio: 0.75, timestamp: '2026-10-12T12:00:00Z', location: 'Seattle' },
+      ], 10);
 
       const { container } = render(
         <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
@@ -1697,10 +1668,7 @@ describe('PhotoCarouselWidget component', () => {
         </PaneContext.Provider>,
       );
 
-      // Wide container (1400x900 -> ratio 1.55 >= 1.15)
-      act(() => {
-        resizeCallback?.([{ contentRect: { width: 1400, height: 900 } }]);
- });
+      act(() => { resizeCallback?.([{ contentRect: { width: 1400, height: 900 } }]); });
 
       const diptych = container.querySelector('.photo-layer.photo-current.photo-foreground-diptych');
       expect(diptych).not.toBeNull();
@@ -1708,32 +1676,19 @@ describe('PhotoCarouselWidget component', () => {
       expect(diptychImgs.length).toBe(2);
       expect(diptychImgs[0].getAttribute('src')).toBe('https://example.com/portrait1.jpg=w1400-h900');
       expect(diptychImgs[1].getAttribute('src')).toBe('https://example.com/portrait2.jpg=w1400-h900');
+      expect(container.querySelector('.photo-metadata-overlay')?.textContent).toBe('Oct 10, 2026 • Oct 12, 2026\nChicago • Seattle');
 
-      // Metadata overlay combines both dates and locations
-      const overlay = container.querySelector('.photo-metadata-overlay');
-      expect(overlay?.textContent).toBe('Oct 10, 2026 • Oct 12, 2026\nChicago • Seattle');
-
-      // Advance cycle: both portrait1 and portrait2 are marked seen, so next photo is landscape1 (single)
-      act(() => { vi.advanceTimersByTime(10000);
- });
+      act(() => { vi.advanceTimersByTime(10000); });
       expect(decodeResolvers.length).toBeGreaterThanOrEqual(1);
-      act(() => {
-        while (decodeResolvers.length > 0) {
-          decodeResolvers.shift()?.();
-        }
- });
+      act(() => { while (decodeResolvers.length > 0) decodeResolvers.shift()?.(); });
 
       await vi.waitFor(() => {
-        const nextSingle = container.querySelector('img.photo-layer.photo-next');
-        expect(nextSingle?.getAttribute('src')).toBe('https://example.com/landscape1.jpg=w1400-h900');
- });
+        expect(container.querySelector('img.photo-layer.photo-next')?.getAttribute('src')).toBe('https://example.com/landscape1.jpg=w1400-h900');
+      });
 
-      act(() => { vi.advanceTimersByTime(850);
- });
-
+      act(() => { vi.advanceTimersByTime(850); });
       expect(container.querySelector('.photo-foreground-diptych')).toBeNull();
-      const singleCurrent = container.querySelector('img.photo-layer.photo-current');
-      expect(singleCurrent?.getAttribute('src')).toBe('https://example.com/landscape1.jpg=w1400-h900');
+      expect(container.querySelector('img.photo-layer.photo-current')?.getAttribute('src')).toBe('https://example.com/landscape1.jpg=w1400-h900');
       expect(container.querySelector('.photo-metadata-overlay')?.textContent).toBe('Oct 11, 2026\nDenver');
 
       const deck = photoDeckStateById.get(widgetId);
@@ -1746,44 +1701,34 @@ describe('PhotoCarouselWidget component', () => {
     }
   });
 
-  it('renders single portrait photo when container is narrow (< 1.15 aspect ratio) and deduplicates same-day metadata when paired', () => {
+  it('keeps outgoing and committed companion portrait images stable across transitions in albums with 5+ portraits', async () => {
+    const decodeResolvers: Array<() => void> = [];
+    const originalImage = window.Image;
     let resizeCallback: ((entries: Array<{ contentRect: { width: number; height: number } }>) => void) | null = null;
     const originalResizeObserver = window.ResizeObserver;
 
-    class MockResizeObserver {
-      constructor(cb: (entries: Array<{ contentRect: { width: number; height: number } }>) => void) {
-        resizeCallback = cb;
-      }
-      observe = vi.fn();
-      disconnect = vi.fn();
-      unobserve = vi.fn();
+    class MockImage {
+      src = '';
+      decode() { return new Promise<void>((res) => { decodeResolvers.push(res); }); }
     }
+    class MockResizeObserver {
+      constructor(cb: (entries: Array<{ contentRect: { width: number; height: number } }>) => void) { resizeCallback = cb; }
+      observe = vi.fn(); disconnect = vi.fn(); unobserve = vi.fn();
+    }
+    // @ts-expect-error mock window.Image
+    window.Image = MockImage;
     // @ts-expect-error mock window.ResizeObserver
     window.ResizeObserver = MockResizeObserver;
 
     try {
       photoDeckStateById.clear();
-      setWidgetPhotos(
-        [
-          {
-            id: 'p1',
-            url: 'https://example.com/portrait1.jpg',
-            width: 800,
-            height: 1200,
-            timestamp: '2026-10-10T09:00:00Z',
-            location: 'Chicago',
-          },
-          {
-            id: 'p2',
-            url: 'https://example.com/portrait2.jpg',
-            width: 900,
-            height: 1200,
-            timestamp: '2026-10-10T18:30:00Z',
-            location: 'Chicago',
-          },
-        ],
-        10,
-      );
+      setWidgetPhotos([
+        { id: 'p1', url: 'https://example.com/p1.jpg', aspect_ratio: 0.75 },
+        { id: 'p2', url: 'https://example.com/p2.jpg', aspect_ratio: 0.75 },
+        { id: 'p3', url: 'https://example.com/p3.jpg', aspect_ratio: 0.75 },
+        { id: 'p4', url: 'https://example.com/p4.jpg', aspect_ratio: 0.75 },
+        { id: 'p5', url: 'https://example.com/p5.jpg', aspect_ratio: 0.75 },
+      ], 10);
 
       const { container } = render(
         <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
@@ -1791,18 +1736,68 @@ describe('PhotoCarouselWidget component', () => {
         </PaneContext.Provider>,
       );
 
-      // Default 0x0 fallback is wide -> paired with single deduplicated same-day date
+      act(() => { resizeCallback?.([{ contentRect: { width: 1400, height: 900 } }]); });
+
+      let curImgs = container.querySelectorAll('.photo-layer.photo-current img.photo-diptych-item');
+      expect(curImgs.length).toBe(2);
+      expect(curImgs[0].getAttribute('src')).toBe('https://example.com/p1.jpg=w1400-h900');
+      expect(curImgs[1].getAttribute('src')).toBe('https://example.com/p2.jpg=w1400-h900');
+
+      act(() => { vi.advanceTimersByTime(10000); });
+      act(() => { while (decodeResolvers.length > 0) decodeResolvers.shift()?.(); });
+
+      await vi.waitFor(() => {
+        const nextImgs = container.querySelectorAll('.photo-layer.photo-next img.photo-diptych-item');
+        expect(nextImgs.length).toBe(2);
+        expect(nextImgs[0].getAttribute('src')).toBe('https://example.com/p3.jpg=w1400-h900');
+        expect(nextImgs[1].getAttribute('src')).toBe('https://example.com/p4.jpg=w1400-h900');
+      });
+
+      curImgs = container.querySelectorAll('.photo-layer.photo-current img.photo-diptych-item');
+      expect(curImgs[0].getAttribute('src')).toBe('https://example.com/p1.jpg=w1400-h900');
+      expect(curImgs[1].getAttribute('src')).toBe('https://example.com/p2.jpg=w1400-h900');
+
+      act(() => { vi.advanceTimersByTime(850); });
+
+      curImgs = container.querySelectorAll('.photo-layer.photo-current img.photo-diptych-item');
+      expect(curImgs[0].getAttribute('src')).toBe('https://example.com/p3.jpg=w1400-h900');
+      expect(curImgs[1].getAttribute('src')).toBe('https://example.com/p4.jpg=w1400-h900');
+    } finally {
+      window.Image = originalImage;
+      window.ResizeObserver = originalResizeObserver;
+    }
+  });
+
+  it('renders single portrait photo when container is narrow (< 1.15 aspect ratio) and deduplicates same-day metadata when paired', () => {
+    let resizeCallback: ((entries: Array<{ contentRect: { width: number; height: number } }>) => void) | null = null;
+    const originalResizeObserver = window.ResizeObserver;
+
+    class MockResizeObserver {
+      constructor(cb: (entries: Array<{ contentRect: { width: number; height: number } }>) => void) { resizeCallback = cb; }
+      observe = vi.fn(); disconnect = vi.fn(); unobserve = vi.fn();
+    }
+    // @ts-expect-error mock window.ResizeObserver
+    window.ResizeObserver = MockResizeObserver;
+
+    try {
+      photoDeckStateById.clear();
+      setWidgetPhotos([
+        { id: 'p1', url: 'https://example.com/portrait1.jpg', width: 800, height: 1200, timestamp: '2026-10-10T09:00:00Z', location: 'Chicago' },
+        { id: 'p2', url: 'https://example.com/portrait2.jpg', width: 900, height: 1200, timestamp: '2026-10-10T18:30:00Z', location: 'Chicago' },
+      ], 10);
+
+      const { container } = render(
+        <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
+          <PhotoCarouselWidget id={widgetId} type="photo-carousel" />
+        </PaneContext.Provider>,
+      );
+
       expect(container.querySelector('.photo-foreground-diptych')).not.toBeNull();
       expect(container.querySelector('.photo-metadata-overlay')?.textContent).toBe('Oct 10, 2026\nChicago');
 
-      // Resize to narrow container (600x800 -> ratio 0.75 < 1.15) -> single portrait rendering
-      act(() => {
-        resizeCallback?.([{ contentRect: { width: 600, height: 800 } }]);
- });
+      act(() => { resizeCallback?.([{ contentRect: { width: 600, height: 800 } }]); });
       expect(container.querySelector('.photo-foreground-diptych')).toBeNull();
-      expect(container.querySelector('img.photo-layer.photo-current')?.getAttribute('src')).toBe(
-        'https://example.com/portrait1.jpg=w600-h800',
-      );
+      expect(container.querySelector('img.photo-layer.photo-current')?.getAttribute('src')).toBe('https://example.com/portrait1.jpg=w600-h800');
     } finally {
       window.ResizeObserver = originalResizeObserver;
     }

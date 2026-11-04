@@ -38,18 +38,12 @@ export function hasMultiplePhotoAlbums(photos: readonly PhotoItem[]): boolean {
   return false;
 }
 
-function joinDistinctLabels(a: string, b: string): string {
-  return a && b && a !== b ? `${a} • ${b}` : a || b;
-}
+function joinDistinctLabels(a: string, b: string): string { return a && b && a !== b ? `${a} • ${b}` : a || b; }
 
-export function formatPhotoMetadataLabel(
-  photo?: PhotoItem, showAlbumName = false, secondaryPhoto?: PhotoItem,
-): { date: string; location: string; album: string; text: string } | null {
+export function formatPhotoMetadataLabel(photo?: PhotoItem, showAlbumName = false, secondaryPhoto?: PhotoItem) {
   const date = joinDistinctLabels(formatPhotoOverlayDate(photo?.timestamp), formatPhotoOverlayDate(secondaryPhoto?.timestamp));
   const location = joinDistinctLabels((photo?.location || '').trim(), (secondaryPhoto?.location || '').trim());
-  const album = showAlbumName
-    ? joinDistinctLabels((photo?.album_name || '').trim(), (secondaryPhoto?.album_name || '').trim())
-    : '';
+  const album = showAlbumName ? joinDistinctLabels((photo?.album_name || '').trim(), (secondaryPhoto?.album_name || '').trim()) : '';
   const secondary = location && album ? `${location} • ${album}` : location || album;
   const text = date && secondary ? `${date}\n${secondary}` : date || secondary;
   return text ? { date, location, album, text } : null;
@@ -103,7 +97,7 @@ export function getSizedPhotoURL(rawUrl?: string, containerSize?: ContainerSize)
   return `${rawUrl}=w${rectW > 0 ? rectW : screenWidth}-h${rectH > 0 ? rectH : screenHeight}`;
 }
 
-export interface WidgetPhotoDeckState { currentKey: string | null; seenKeys: Set<string>; remainingMs: number | null; }
+export interface WidgetPhotoDeckState { currentKey: string | null; companionKey: string | null; seenKeys: Set<string>; remainingMs: number | null; }
 export const photoDeckStateById = new Map<string, WidgetPhotoDeckState>();
 
 useDisplayStore.subscribe((state) => {
@@ -115,7 +109,7 @@ useDisplayStore.subscribe((state) => {
 function getWidgetPhotoDeckState(id: string): WidgetPhotoDeckState {
   let deck = photoDeckStateById.get(id);
   if (!deck) {
-    deck = { currentKey: null, seenKeys: new Set<string>(), remainingMs: null };
+    deck = { currentKey: null, companionKey: null, seenKeys: new Set<string>(), remainingMs: null };
     photoDeckStateById.set(id, deck);
   }
   return deck;
@@ -229,6 +223,10 @@ function resolveInitialPhotoIndex(photos: readonly PhotoItem[], deck: WidgetPhot
   const key = getPhotoItemKey(photos[unseenIdx], unseenIdx);
   deck.currentKey = key;
   deck.seenKeys.add(key);
+  const compIdx = selectCompanionPortraitIndex(photos, unseenIdx, deck.seenKeys);
+  const compKey = compIdx !== null ? getPhotoItemKey(photos[compIdx], compIdx) : null;
+  deck.companionKey = compKey;
+  if (compKey) deck.seenKeys.add(compKey);
   return unseenIdx;
 }
 
@@ -284,18 +282,40 @@ export interface UsePhotoSlideshowTransitionOptions {
   isPaused: boolean; containerSizeRef: React.MutableRefObject<ContainerSize>;
 }
 
+export interface SlideTransitionState { nextIndex: number; companionIndex: number | null; active: boolean; }
+
+function resolveSavedCompanionIndex(
+  photos: readonly PhotoItem[], primaryIndex: number, companionKey: string | null | undefined, seenKeys: ReadonlySet<string>,
+): number | null {
+  if (photos.length <= 1 || !isPortraitPhoto(photos[primaryIndex])) return null;
+  if (companionKey) {
+    const idx = photos.findIndex((p, i) => getPhotoItemKey(p, i) === companionKey);
+    if (idx !== -1 && idx !== primaryIndex && isPortraitPhoto(photos[idx])) return idx;
+  }
+  return selectCompanionPortraitIndex(photos, primaryIndex, seenKeys);
+}
+
 export function usePhotoSlideshowTransition({
   id, photos, cycleIntervalSeconds, isCurrentPane, isDocumentVisible, isVideoMode, isPaused, containerSizeRef,
 }: UsePhotoSlideshowTransitionOptions) {
   const [currentIndex, setCurrentIndex] = useState(() => resolveInitialPhotoIndex(photos, getWidgetPhotoDeckState(id)));
   const safeIndex = photos.length > 0 ? currentIndex % photos.length : 0;
+  const [currentCompanionIndex, setCurrentCompanionIndex] = useState<number | null>(() => {
+    const deck = getWidgetPhotoDeckState(id);
+    const compIdx = resolveSavedCompanionIndex(photos, safeIndex, deck.companionKey, deck.seenKeys);
+    const compKey = compIdx !== null ? getPhotoItemKey(photos[compIdx], compIdx) : null;
+    deck.companionKey = compKey;
+    if (compKey) deck.seenKeys.add(compKey);
+    return compIdx;
+  });
   const currentIndexRef = useRef(safeIndex);
+  const currentCompanionIndexRef = useRef(currentCompanionIndex);
   const probeIndexRef = useRef<number | null>(null);
   const [retryTick, setRetryTick] = useState(0);
   const photosRef = useRef(photos);
   const isAnimatingRef = useRef(false);
-  const [transitionState, setTransitionState] = useState<{ nextIndex: number; active: boolean } | null>(null);
-  const transitionStateRef = useRef<{ nextIndex: number; active: boolean } | null>(null);
+  const [transitionState, setTransitionState] = useState<SlideTransitionState | null>(null);
+  const transitionStateRef = useRef<SlideTransitionState | null>(null);
   const cycleSeqRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const transitionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -320,9 +340,11 @@ export function usePhotoSlideshowTransition({
     const deck = getWidgetPhotoDeckState(id);
     const wide = isWideContainer(containerSizeRef.current);
     const baseKey = getPhotoItemKey(currentPhotos[baseIndex], baseIndex);
-    const baseSecIdx = wide ? selectCompanionPortraitIndex(currentPhotos, baseIndex, deck.seenKeys) : null;
+    const activeCompanionIdx = transitionStateRef.current?.active ? transitionStateRef.current.companionIndex : currentCompanionIndexRef.current;
+    const baseSecIdx = wide ? (activeCompanionIdx ?? selectCompanionPortraitIndex(currentPhotos, baseIndex, deck.seenKeys)) : null;
     const baseSecKey = baseSecIdx !== null ? getPhotoItemKey(currentPhotos[baseSecIdx], baseSecIdx) : null;
     deck.currentKey = baseKey;
+    deck.companionKey = baseSecKey;
     if (direction === 'prev') {
       deck.seenKeys.delete(baseKey);
       if (baseSecKey) deck.seenKeys.delete(baseSecKey);
@@ -334,15 +356,15 @@ export function usePhotoSlideshowTransition({
     if (transitionStateRef.current?.active) {
       setCurrentIndex(baseIndex);
       currentIndexRef.current = baseIndex;
+      setCurrentCompanionIndex(baseSecIdx);
+      currentCompanionIndexRef.current = baseSecIdx;
       stopAnimation();
       if (transitionTimeoutRef.current) { clearTimeout(transitionTimeoutRef.current); transitionTimeoutRef.current = null; }
       transitionStateRef.current = null;
       setTransitionState(null);
     }
 
-    const nextIndex = direction === 'prev'
-      ? selectPrevPhotoIndex(currentPhotos, baseIndex)
-      : selectNextPhotoIndex(currentPhotos, baseIndex, deck.seenKeys);
+    const nextIndex = direction === 'prev' ? selectPrevPhotoIndex(currentPhotos, baseIndex) : selectNextPhotoIndex(currentPhotos, baseIndex, deck.seenKeys);
     const nextPhoto = currentPhotos[nextIndex];
     const nextRawUrl = nextPhoto?.url ?? nextPhoto?.URL;
     const nextKey = getPhotoItemKey(nextPhoto, nextIndex);
@@ -384,17 +406,20 @@ export function usePhotoSlideshowTransition({
 
       probeIndexRef.current = null;
       startAnimation();
-      const nextState = { nextIndex, active: true };
+      const nextState: SlideTransitionState = { nextIndex, companionIndex: nextSecIdx, active: true };
       transitionStateRef.current = nextState;
       setTransitionState(nextState);
 
       transitionTimeoutRef.current = setTimeout(() => {
         if (cycleSeqRef.current !== seq) return;
         deck.currentKey = nextKey;
+        deck.companionKey = nextSecKey;
         deck.seenKeys.add(nextKey);
         if (nextSecKey) deck.seenKeys.add(nextSecKey);
         setCurrentIndex(nextIndex);
         currentIndexRef.current = nextIndex;
+        setCurrentCompanionIndex(nextSecIdx);
+        currentCompanionIndexRef.current = nextSecIdx;
         stopAnimation();
         transitionStateRef.current = null;
         setTransitionState(null);
@@ -417,6 +442,7 @@ export function usePhotoSlideshowTransition({
 
   useLayoutEffect(() => {
     currentIndexRef.current = safeIndex;
+    currentCompanionIndexRef.current = currentCompanionIndex;
     photosRef.current = photos;
     transitionStateRef.current = transitionState;
   });
@@ -424,19 +450,19 @@ export function usePhotoSlideshowTransition({
   useEffect(() => {
     probeIndexRef.current = null;
     if (photos.length === 0) return;
-    const targetIdx = resolveInitialPhotoIndex(photos, getWidgetPhotoDeckState(id));
-    if (currentIndexRef.current !== targetIdx) {
-      setCurrentIndex(targetIdx);
-      currentIndexRef.current = targetIdx;
-    }
+    const deck = getWidgetPhotoDeckState(id);
+    const targetIdx = resolveInitialPhotoIndex(photos, deck);
+    const compIdx = resolveSavedCompanionIndex(photos, targetIdx, deck.companionKey, deck.seenKeys);
+    const compKey = compIdx !== null ? getPhotoItemKey(photos[compIdx], compIdx) : null;
+    deck.companionKey = compKey;
+    if (compKey) deck.seenKeys.add(compKey);
+    if (currentIndexRef.current !== targetIdx) { setCurrentIndex(targetIdx); currentIndexRef.current = targetIdx; }
+    if (currentCompanionIndexRef.current !== compIdx) { setCurrentCompanionIndex(compIdx); currentCompanionIndexRef.current = compIdx; }
   }, [photos, id]);
 
   const clearPendingTransitionRef = useRef(clearPendingTransition);
   const triggerAdvanceRef = useRef(triggerAdvance);
-  useEffect(() => {
-    clearPendingTransitionRef.current = clearPendingTransition;
-    triggerAdvanceRef.current = triggerAdvance;
-  });
+  useEffect(() => { clearPendingTransitionRef.current = clearPendingTransition; triggerAdvanceRef.current = triggerAdvance; });
 
   useEffect(() => {
     if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
@@ -469,5 +495,5 @@ export function usePhotoSlideshowTransition({
 
   useEffect(() => () => { clearPendingTransitionRef.current(); }, []);
 
-  return { safeIndex, transitionState, stepPhoto };
+  return { safeIndex, currentCompanionIndex, transitionState, stepPhoto };
 }

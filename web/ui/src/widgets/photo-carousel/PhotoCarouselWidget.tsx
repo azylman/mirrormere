@@ -12,8 +12,8 @@ import {
   parsePhotoCarouselData, getBackdropPhotoURL, getSizedPhotoURL, useContainerSize,
   registerEmberSyncListener, usePhotoSlideshowTransition, resolvePhotoCarouselSourceAndUrl,
   formatPhotoMetadataLabel, hasMultiplePhotoAlbums,
-  isWideContainer, selectCompanionPortraitIndex,
-  type ContainerSize, type EmberSyncListener, type PhotoCarouselConfig, type PhotoItem,
+  isWideContainer,
+  type ContainerSize, type EmberSyncListener, type PhotoCarouselConfig, type PhotoItem, type SlideTransitionState,
 } from './photoCarouselHelpers';
 
 export {
@@ -369,18 +369,18 @@ function useEmberAlbumSync(id: string, source: 'share_url' | 'ember_bridge', alb
 function resolveSlideLayerState(
   photos: readonly PhotoItem[],
   safeIndex: number,
-  transitionState: { nextIndex: number; active: boolean } | null,
+  currentCompanionIndex: number | null,
+  transitionState: SlideTransitionState | null,
   containerSize: ContainerSize,
-  seenKeys?: ReadonlySet<string>,
 ) {
   const wide = isWideContainer(containerSize);
-  const resolveSlide = (idx: number | null) => {
+  const resolveSlide = (idx: number | null, fixedCompanionIdx: number | null) => {
     if (idx === null) return { photo: undefined, fgUrl: '', backdropUrl: '', companionIdx: null, companionPhoto: undefined, companionFgUrl: '' };
     const photo = photos[idx];
     const rawUrl = photo?.url ?? photo?.URL;
     const fgUrl = rawUrl ? getSizedPhotoURL(rawUrl, containerSize) : '';
     const backdropUrl = rawUrl ? getBackdropPhotoURL(rawUrl) : '';
-    const companionIdx = wide ? selectCompanionPortraitIndex(photos, idx, seenKeys) : null;
+    const companionIdx = wide ? fixedCompanionIdx : null;
     const companionPhoto = companionIdx !== null ? photos[companionIdx] : undefined;
     const companionRawUrl = companionPhoto?.url ?? companionPhoto?.URL;
     const companionFgUrl = companionRawUrl ? getSizedPhotoURL(companionRawUrl, containerSize) : '';
@@ -388,8 +388,11 @@ function resolveSlideLayerState(
   };
 
   const isTransitioning = Boolean(transitionState?.active);
-  const current = resolveSlide(safeIndex);
-  const next = resolveSlide(isTransitioning && transitionState ? transitionState.nextIndex : null);
+  const current = resolveSlide(safeIndex, currentCompanionIndex);
+  const next = resolveSlide(
+    isTransitioning && transitionState ? transitionState.nextIndex : null,
+    isTransitioning && transitionState ? transitionState.companionIndex : null,
+  );
   const active = isTransitioning && next.photo ? next : current;
   const activeIndex = isTransitioning && transitionState ? transitionState.nextIndex : safeIndex;
 
@@ -417,7 +420,7 @@ export function PhotoCarouselWidget({ id }: WidgetComponentProps) {
   const { controlsVisible, showControls, resetPauseInactivityTimer, togglePause } = usePhotoControls(isPaused, setIsPaused);
   const { rootRef, containerSize, containerSizeRef } = useContainerSize();
 
-  const { safeIndex, transitionState, stepPhoto } = usePhotoSlideshowTransition({
+  const { safeIndex, currentCompanionIndex, transitionState, stepPhoto } = usePhotoSlideshowTransition({
     id, photos, cycleIntervalSeconds, isCurrentPane, isDocumentVisible, isVideoMode, isPaused, containerSizeRef,
   });
 
@@ -439,9 +442,8 @@ export function PhotoCarouselWidget({ id }: WidgetComponentProps) {
     handleStep('next');
   };
 
-  const seenKeys = photoDeckStateById.get(id)?.seenKeys;
   const { isTransitioning, current, next, active, activeIndex } = resolveSlideLayerState(
-    photos, safeIndex, transitionState, containerSize, seenKeys,
+    photos, safeIndex, currentCompanionIndex, transitionState, containerSize,
   );
   const showAlbumName = (Array.isArray(config?.albums) && config.albums.length > 1) || hasMultiplePhotoAlbums(photos);
 
