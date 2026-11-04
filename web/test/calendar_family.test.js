@@ -1721,4 +1721,59 @@ test('Calendar Family Client Controller', async (t) => {
     global.window.MirrormereCalendarFamily.unmount('fit-events-cal');
   });
 
+  await t.test('decorateMealieEvents renders larger 34px thumbnail in bottom bar .cf-mealie-bar and indexes day.meals for modal', () => {
+    const el = createMockElement({
+      widgetId: 'mealie-bar-cal',
+      defaultView: 'week',
+      data: {
+        config: { default_view: 'week' },
+        days: [
+          {
+            date: '2026-10-10',
+            all_day: [],
+            meals: [
+              {
+                id: 'mealie-1',
+                title: '🍽️ Creamy Tuscan Chicken',
+                all_day: true,
+                location: '/hearth-api/mealie/image/tuscan-chicken',
+                description: 'Ingredients:\n- Chicken breast\n- Sun-dried tomatoes',
+                color: '#10b981',
+                pattern: 'solid',
+              },
+            ],
+            timed: [],
+            events: [],
+          },
+        ],
+      },
+    });
+
+    const mealPill = createMockDOMNode('div', { className: 'cf-event cf-mealie-bar cf-event-clickable' });
+    mealPill.dataset.eventId = 'mealie-1';
+    mealPill.dataset.eventTitle = '🍽️ Creamy Tuscan Chicken';
+    mealPill.dataset.eventLocation = '/hearth-api/mealie/image/tuscan-chicken';
+    mealPill.dataset.eventDescription = 'Ingredients:\n- Chicken breast\n- Sun-dried tomatoes';
+    mealPill.textContent = '🍽️ Creamy Tuscan Chicken';
+    el._panels.week.appendChild(mealPill);
+
+    const inst = global.window.MirrormereCalendarFamily.mount(el);
+
+    assert.equal(mealPill.dataset.mealieDecorated, 'true');
+    const imgEl = mealPill.querySelector('img');
+    assert.ok(imgEl, 'bottom bar Mealie pill should have an img element');
+    assert.equal(imgEl.src, '/hearth-api/mealie/image/tuscan-chicken');
+    assert.ok(imgEl.style.cssText.includes('width:34px;height:34px'), 'bottom bar Mealie thumbnail should be 34px');
+
+    const indexed = inst.eventIndex.get('mealie-1');
+    assert.ok(indexed, 'day.meals entry should be indexed in eventIndex');
+    assert.equal(indexed.title, '🍽️ Creamy Tuscan Chicken');
+
+    mealPill.click();
+    assert.ok(inst.activeModal, 'clicking bottom bar Mealie pill should open modal');
+    inst.closeModal();
+
+    global.window.MirrormereCalendarFamily.unmount('mealie-bar-cal');
+  });
+
 });
