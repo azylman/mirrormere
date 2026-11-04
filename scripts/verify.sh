@@ -54,7 +54,16 @@ has_cmd() {
 check_utf8_bom() {
     if has_cmd git; then
         BOM_HEX=$(printf '\357\273\277')
-        BOM_FILES=$(git grep -I -l "^$BOM_HEX" 2>/dev/null || true)
+        if [ "$MODE" = "staged" ]; then
+            existing_staged=$(echo "$STAGED_FILES" | while read -r sf; do
+                [ -f "$sf" ] && echo "$sf"
+            done)
+            [ -z "$existing_staged" ] && return 0
+            # shellcheck disable=SC2086
+            BOM_FILES=$(git grep -I -l "^$BOM_HEX" -- $existing_staged 2>/dev/null || true)
+        else
+            BOM_FILES=$(git grep -I -l "^$BOM_HEX" 2>/dev/null || true)
+        fi
         if [ -n "$BOM_FILES" ]; then
             echo "🚨 [Mirrormere Verify] Error: Invalid UTF-8 BOM detected in tracked files:" >&2
             echo "$BOM_FILES" | sed 's/^/   • /' >&2
@@ -200,11 +209,16 @@ run_code_health() {
     echo "   [code-health] Checking ratcheted complexity and length limits..."
     if has_cmd go; then
         ensure_code_health
-        if [ "$MODE" = "staged" ] && [ -z "${GITHUB_ACTIONS:-}" ] && has_cmd git; then
-            staged_go=$(git diff --cached --name-only --diff-filter=ACM 2>/dev/null | grep '\.go$' || true)
-            if [ -n "$staged_go" ]; then
+        if [ "$MODE" = "staged" ] && ! echo "$STAGED_FILES" | grep -q -E '^(\.code-health-baseline\.json|scripts/code-health/|scripts/verify\.sh$)'; then
+            staged_go_files=$(echo "$STAGED_FILES" | grep '\.go$' | while read -r gf; do
+                [ -f "$gf" ] && echo "$gf"
+            done)
+            if [ -z "$staged_go_files" ]; then
+                return 0
+            fi
+            if [ -z "${GITHUB_ACTIONS:-}" ] && has_cmd git; then
                 staged_clean=""
-                for f in $staged_go; do
+                for f in $staged_go_files; do
                     if [ -f "$f" ] && git diff --quiet -- "$f" 2>/dev/null; then
                         staged_clean="${staged_clean:+$staged_clean }$f"
                     fi
@@ -219,8 +233,19 @@ run_code_health() {
                     done
                 fi
             fi
+            # Scope code health checks to all Go files in modified package directories
+            # to ensure package-level AST function/struct clone detection compares against sibling files.
+            code_health_targets=$(for gf in $staged_go_files; do
+                d=$(dirname "$gf")
+                if [ -d "$d" ]; then
+                    find "$d" -maxdepth 1 -name '*.go' -type f
+                fi
+            done | sort -u)
+            # shellcheck disable=SC2086
+            "$CODE_HEALTH_BIN" -root "$REPO_ROOT" -baseline "$REPO_ROOT/.code-health-baseline.json" $code_health_targets
+        else
+            "$CODE_HEALTH_BIN" -root "$REPO_ROOT" -baseline "$REPO_ROOT/.code-health-baseline.json"
         fi
-        "$CODE_HEALTH_BIN" -root "$REPO_ROOT" -baseline "$REPO_ROOT/.code-health-baseline.json"
     else
         echo "🚨 [Mirrormere Verify] Error: go not found in PATH." >&2
         exit 1
@@ -240,7 +265,18 @@ run_golangci_lint() {
     fi
 
     if [ -n "$lint_bin" ]; then
-        "$lint_bin" run --allow-parallel-runners ./...
+        if [ "$MODE" = "staged" ] && ! echo "$STAGED_FILES" | grep -q -E '^(go\.(mod|sum)|\.golangci\.yml|scripts/verify\.sh)$'; then
+            lint_pkgs=$(echo "$STAGED_FILES" | grep '\.go$' | while read -r f; do
+                d=$(dirname "$f")
+                [ -d "$d" ] && echo "./$d"
+            done | sort -u)
+            if [ -n "$lint_pkgs" ]; then
+                # shellcheck disable=SC2086
+                "$lint_bin" run --allow-parallel-runners $lint_pkgs
+            fi
+        else
+            "$lint_bin" run --allow-parallel-runners ./...
+        fi
     else
         echo "🚨 [Mirrormere Verify] Error: golangci-lint not found in PATH." >&2
         exit 1
@@ -397,7 +433,18 @@ run_ui_checks() {
         (cd "$REPO_ROOT/web/ui" && npm ci --no-audit --no-fund)
     fi
     echo "   [ui] Running React UI lint, deadcode, typecheck, coverage tests and build..."
-    (cd "$REPO_ROOT/web/ui" && npm run lint && npm run deadcode && npm run typecheck && npm run test:coverage && npm run build)
+    if [ "$MODE" = "staged" ] && ! echo "$STAGED_FILES" | grep -q -E '^(web/ui/(eslint\.config\.js|package(-lock)?\.json)|scripts/verify\.sh)$'; then
+        staged_ui_lint=$(echo "$STAGED_FILES" | grep -E '^web/ui/.*\.(ts|tsx|js|mjs|cjs)$' | sed 's|^web/ui/||' | while read -r uf; do
+            [ -f "$REPO_ROOT/web/ui/$uf" ] && echo "$uf"
+        done)
+        if [ -n "$staged_ui_lint" ]; then
+            # shellcheck disable=SC2086
+            (cd "$REPO_ROOT/web/ui" && npx --no-install eslint --max-warnings=0 $staged_ui_lint)
+        fi
+    else
+        (cd "$REPO_ROOT/web/ui" && npm run lint)
+    fi
+    (cd "$REPO_ROOT/web/ui" && npm run deadcode && npm run typecheck && npm run test:coverage && npm run build)
 }
 
 if [ "$MODE" = "staged" ]; then
@@ -409,11 +456,16 @@ if [ "$MODE" = "staged" ]; then
     if [ -n "$STAGED_FILES" ]; then
         STAGED_FROM_INDEX=1
     elif has_cmd git; then
-        STAGED_FILES=$(git diff --name-only 2>/dev/null || true)
+        STAGED_FILES=$({ git diff --name-only 2>/dev/null; git ls-files --others --exclude-standard 2>/dev/null; } | grep -v -E '^(PR_DESCRIPTION\.md|\.pr_description\.md)$' | sort -u || true)
         if [ -z "$STAGED_FILES" ] && git rev-parse --verify -q origin/main >/dev/null 2>&1; then
-            base=$(git merge-base HEAD origin/main 2>/dev/null || true)
-            if [ -n "$base" ]; then
-                STAGED_FILES=$(git diff --name-only "$base" HEAD 2>/dev/null | grep -v -E '^(PR_DESCRIPTION\.md|\.pr_description\.md)$' || true)
+            if [ "$(git rev-parse HEAD 2>/dev/null || true)" != "$(git rev-parse origin/main 2>/dev/null || true)" ]; then
+                STAGED_FILES=$(git show --pretty="" --name-only HEAD 2>/dev/null | grep -v -E '^(PR_DESCRIPTION\.md|\.pr_description\.md)$' || true)
+                if [ -z "$STAGED_FILES" ]; then
+                    base=$(git merge-base HEAD origin/main 2>/dev/null || true)
+                    if [ -n "$base" ]; then
+                        STAGED_FILES=$(git diff --name-only "$base" HEAD 2>/dev/null | grep -v -E '^(PR_DESCRIPTION\.md|\.pr_description\.md)$' || true)
+                    fi
+                fi
             fi
         fi
     fi
@@ -425,10 +477,14 @@ if [ "$MODE" = "staged" ]; then
     check_utf8_bom
     check_gofmt
     check_no_imperative_ddl
-    check_dependabot_coverage
-    run_frontend_checks
+    if echo "$STAGED_FILES" | grep -q -E '^(\.github/dependabot\.yml|scripts/verify\.sh)$|(^|/)(go\.mod|Cargo\.toml|pyproject\.toml|package\.json|requirements\.txt)$'; then
+        check_dependabot_coverage
+    fi
+    if echo "$STAGED_FILES" | grep -q -E '^scripts/verify\.sh$'; then
+        run_frontend_checks
+    fi
 
-    if echo "$STAGED_FILES" | grep -q -E '\.go$|\.code-health-baseline\.json$'; then
+    if echo "$STAGED_FILES" | grep -q -E '\.go$|\.code-health-baseline\.json$|^scripts/verify\.sh$'; then
         run_code_health
     fi
 
@@ -448,12 +504,12 @@ if [ "$MODE" = "staged" ]; then
         done
     fi
 
-    if echo "$STAGED_FILES" | grep -q -E '^(web/|widgets/)' && has_cmd node; then
+    if echo "$STAGED_FILES" | grep -v -E '^web/ui/' | grep -q -E '^(web/|widgets/)' && has_cmd node; then
         echo "   [node test] Running web client test suite..."
         TZ=UTC node --test web/test/*.test.js
     fi
 
-    if echo "$STAGED_FILES" | grep -q -E '^(web/|widgets/)' && has_cmd go; then
+    if echo "$STAGED_FILES" | grep -v -E '^web/ui/' | grep -q -E '^(web/|widgets/)' && has_cmd go; then
         if ! echo "$STAGED_FILES" | grep -q -E '^go\.(mod|sum)$'; then
             needed_pkgs=""
             for p in web internal/render internal/server internal/widget; do

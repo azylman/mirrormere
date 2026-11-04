@@ -70,6 +70,7 @@ jobs:
               - 'sidecars/hass-proxy/**'
             web:
               - 'web/**'
+              - '!web/ui/**'
               - 'widgets/**'
             ui:
               - 'web/ui/**'
