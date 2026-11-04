@@ -1721,4 +1721,10 @@ test('Calendar Family Client Controller', async (t) => {
     global.window.MirrormereCalendarFamily.unmount('fit-events-cal');
   });
 
+  await t.test('calendar-grid widget.html includes collapsed-gap break line pill badge and day header clipping fix', () => {
+    const widgetHtml = fs.readFileSync(path.join(__dirname, '../../widgets/calendar-grid/views/widget.html'), 'utf8');
+    assert.ok(widgetHtml.includes('.cf-collapsed-gap::before'), 'widget.html should include .cf-collapsed-gap::before break line rule');
+    assert.ok(widgetHtml.includes('min-height: 44px'), 'widget.html should include min-height: 44px on .cf-day-header');
+  });
+
 });

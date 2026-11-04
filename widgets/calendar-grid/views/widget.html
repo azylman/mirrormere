@@ -119,7 +119,7 @@
         {{ range $view.Days }}
         <div class="cf-day{{ if .IsToday }} cf-today{{ end }}{{ if .IsWeekend }} cf-weekend{{ end }}" data-date="{{ .Date }}" style="display: flex; flex-direction: column; min-width: 0; min-height: 0; border-radius: 14px; padding: 6px; background: {{ if .IsToday }}var(--mm-cal-today-bg, var(--mm-lavender-light, #f3effe)){{ else if .IsWeekend }}var(--mm-cal-weekend-bg, rgba(90, 60, 30, 0.02)){{ else }}var(--mm-cal-day-bg, rgba(90, 60, 30, 0.03)){{ end }}; border: {{ if .IsToday }}1px solid var(--mm-cal-today-border, var(--mm-lavender, #8b60ed)){{ else }}1px solid var(--mm-card-border, rgba(90, 60, 30, 0.08)){{ end }}; overflow: hidden; position: relative;">
           
-          <div class="cf-day-header" style="height: 44px; box-sizing: border-box; text-align: center; padding-bottom: 6px; border-bottom: 1px solid {{ if .IsToday }}var(--mm-cal-today-header-border, rgba(139, 96, 237, 0.25)){{ else }}var(--mm-divider, rgba(90, 60, 30, 0.07)){{ end }}; flex-shrink: 0; background: transparent;">
+          <div class="cf-day-header" style="min-height: 44px; height: auto; position: relative; z-index: 2; box-sizing: border-box; text-align: center; padding-bottom: 6px; border-bottom: 1px solid {{ if .IsToday }}var(--mm-cal-today-header-border, rgba(139, 96, 237, 0.25)){{ else }}var(--mm-divider, rgba(90, 60, 30, 0.07)){{ end }}; flex-shrink: 0; background: transparent;">
             <div class="cf-day-weekday" style="font-size: 0.68rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em; color: {{ if .IsToday }}var(--mm-cal-today-text, var(--mm-lavender, #8b60ed)){{ else }}var(--mm-text-dim, #8b819f){{ end }};">
               {{ if .IsToday }}Today{{ else }}{{ .WeekdayAbb }}{{ end }}
             </div>
@@ -128,7 +128,7 @@
             </div>
           </div>
 
-          <div class="cf-day-canvas" style="flex: 1; position: relative; min-height: 0; margin-top: 4px;">
+          <div class="cf-day-canvas" style="flex: 1; position: relative; min-height: 0; margin-top: 6px;">
             {{ range $view.CollapsedGaps }}
             <div class="cf-collapsed-gap" aria-hidden="true" data-gap-start="{{ .StartStr }}" data-gap-end="{{ .EndStr }}" style="position: absolute; left: 0; right: 0; top: {{ .TopPct }}%; height: {{ .HeightPct }}%;">
               <span class="cf-collapsed-gap-label">{{ .Label }}</span>
@@ -241,6 +241,15 @@
   .cf-day.cf-today .cf-day-header {
     background: transparent !important;
     border-radius: 0 !important;
+  }
+  .cf-day-header {
+    min-height: 44px;
+    height: auto !important;
+    position: relative;
+    z-index: 2;
+  }
+  .cf-day-canvas {
+    margin-top: 6px;
   }
   .cf-nav-btn {
     background: transparent;
@@ -401,6 +410,7 @@
     display: none !important;
   }
   .cf-collapsed-gap {
+    position: relative;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -419,12 +429,27 @@
     overflow: hidden;
     z-index: 1;
   }
+  .cf-collapsed-gap::before {
+    content: '';
+    position: absolute;
+    left: 4px;
+    right: 4px;
+    top: 50%;
+    border-top: 1.5px dashed var(--mm-divider-strong, rgba(90, 60, 30, 0.35));
+    pointer-events: none;
+  }
   .cf-collapsed-gap-label {
+    position: relative;
+    z-index: 1;
+    padding: 1px 7px;
+    border-radius: 999px;
+    background: var(--mm-card-bg, #faf6f0);
+    border: 1px solid var(--mm-divider-strong, rgba(90, 60, 30, 0.25));
     font-family: var(--mm-font-mono, monospace);
-    font-size: 0.52rem;
+    font-size: 0.56rem;
     font-weight: 700;
     color: var(--mm-text-dim, #8b819f);
-    opacity: 0.72;
+    opacity: 0.92;
     line-height: 1;
     white-space: nowrap;
     letter-spacing: 0.02em;
