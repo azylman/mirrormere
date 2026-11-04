@@ -288,13 +288,13 @@ func claimFamilyEventMembers(ev provider.CalendarEvent, fe *FamilyEvent, members
 	}
 }
 
-func refineSummaryMatchedOwners(ev provider.CalendarEvent, members []FamilyMember, ownerSet map[string]bool) map[string]bool {
-	if len(ownerSet) <= 1 {
+func refineSummaryMatchedOwners(title string, members []FamilyMember, ownerSet map[string]bool) map[string]bool {
+	if len(ownerSet) <= 1 || title == "Busy" {
 		return ownerSet
 	}
 	summaryMatched := make(map[string]bool)
 	for _, m := range members {
-		if ownerSet[m.Name] && summaryMentionsMember(ev.Title, m.Name) {
+		if ownerSet[m.Name] && summaryMentionsMember(title, m.Name) {
 			summaryMatched[m.Name] = true
 		}
 	}
@@ -346,7 +346,7 @@ func mergeFamilyEvents(
 	}
 
 	for _, id := range mergedOrder {
-		owners := refineSummaryMatchedOwners(mergedRawEvents[id], members, mergedOwnerSet[id])
+		owners := refineSummaryMatchedOwners(merged[id].Title, members, mergedOwnerSet[id])
 		assignFamilyEventOwners(merged[id], owners, members, sharedColor)
 	}
 
@@ -411,8 +411,6 @@ func BuildFamilyView(data any, cfg map[string]any, dims domain.Dimension, now ti
 	maxVisible := maxVisibleTimedRows(dims)
 	timeFormat := stringOr(cfg, "time_format", "24h")
 
-	hours := resolveFamilyHoursBand(cfg, snapshot.Events, dayIndex, now.Location())
-
 	mergedData := mergeFamilyEvents(
 		snapshot.Events,
 		members,
@@ -424,6 +422,9 @@ func BuildFamilyView(data any, cfg map[string]any, dims domain.Dimension, now ti
 	)
 
 	mealieDates := collectMealieDates(mergedData)
+	timelineEvents := filterTimelineEventsForHoursBand(mergedData, mealieDates)
+	hours := resolveFamilyHoursBand(cfg, timelineEvents, dayIndex, now.Location())
+
 	distributeMergedEventsToDays(days, mergedData, dayIndex, mealieDates)
 
 	allDayEvents := buildFamilyAllDaySpans(mergedData, dayIndex, numDays)
@@ -506,6 +507,31 @@ func collectMealieDates(mergedData mergedFamilyEvents) map[string]bool {
 	return mealieDates
 }
 
+func filterTimelineEventsForHoursBand(mergedData mergedFamilyEvents, mealieDates map[string]bool) []provider.CalendarEvent {
+	filtered := make([]provider.CalendarEvent, 0, len(mergedData.order))
+	for _, id := range mergedData.order {
+		fe := mergedData.events[id]
+		rawEv := mergedData.rawEvents[id]
+		if isMealieFamilyEvent(fe, rawEv) {
+			continue
+		}
+		if isDuplicateDinnerEvent(fe) {
+			allFiltered := true
+			for _, d := range mergedData.dates[id] {
+				if !mealieDates[d] {
+					allFiltered = false
+					break
+				}
+			}
+			if allFiltered {
+				continue
+			}
+		}
+		filtered = append(filtered, rawEv)
+	}
+	return filtered
+}
+
 func buildFamilyAllDaySpans(mergedData mergedFamilyEvents, dayIndex map[string]int, numDays int) []FamilySpanEvent {
 	var allDayEvents []FamilySpanEvent
 	for _, id := range mergedData.order {
@@ -575,7 +601,8 @@ func populateFamilyDayColumns(days []FamilyDay, rangeStart time.Time, maxVisible
 
 		for _, id := range mergedData.order {
 			fe := mergedData.events[id]
-			if fe.AllDay {
+			rawEv := mergedData.rawEvents[id]
+			if fe.AllDay || isMealieFamilyEvent(fe, rawEv) {
 				continue
 			}
 			if mealieDates[dStr] && isDuplicateDinnerEvent(fe) {
@@ -586,7 +613,7 @@ func populateFamilyDayColumns(days []FamilyDay, rangeStart time.Time, maxVisible
 				continue
 			}
 
-			if dayEv, ok := buildFamilyDayEvent(*fe, mergedData.rawEvents[id], d, hours); ok {
+			if dayEv, ok := buildFamilyDayEvent(*fe, rawEv, d, hours); ok {
 				appendDayEvent(&days[i].Events, &days[i].EarlyEvents, &days[i].LateEvents, dayEv)
 			}
 		}

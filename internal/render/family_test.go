@@ -6,6 +6,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -1407,13 +1408,14 @@ func TestMealieBottomBarDuplicateDinnerAndMemberSummaryMatching(t *testing.T) {
 		"week_starts":  "sunday",
 		"date":         "2026-09-27",
 		"members": []any{
-			map[string]any{"name": "Ryan", "color": "#2563EB", "pattern": "solid", "calendars": []any{"Family"}},
-			map[string]any{"name": "Rosie", "color": "#EC4899", "pattern": "dots", "calendars": []any{"rosie-cal"}},
+			map[string]any{"name": "Alex", "color": "#2563EB", "pattern": "solid", "calendars": []any{"Family", "PrivateShared"}},
+			map[string]any{"name": "Kid", "color": "#EC4899", "pattern": "dots", "calendars": []any{"kid-cal", "PrivateShared"}},
 		},
 		"calendars": []any{
 			map[string]any{"name": "Family"},
-			map[string]any{"name": "rosie-cal"},
+			map[string]any{"name": "kid-cal"},
 			map[string]any{"name": "Mealie"},
+			map[string]any{"name": "PrivateShared", "private": true},
 		},
 	}
 
@@ -1429,6 +1431,14 @@ func TestMealieBottomBarDuplicateDinnerAndMemberSummaryMatching(t *testing.T) {
 			AllDay:       true,
 		},
 		{
+			ID:           "mealie_timed_2026-09-27",
+			CalendarName: "Mealie",
+			Title:        "🍽️ Timed Mealie Prep",
+			Start:        "2026-09-27T17:00:00Z",
+			End:          "2026-09-27T17:30:00Z",
+			AllDay:       false,
+		},
+		{
 			ID:           "dup_dinner_1",
 			CalendarName: "Family",
 			Title:        "Dinner: Honey Garlic Salmon",
@@ -1437,28 +1447,28 @@ func TestMealieBottomBarDuplicateDinnerAndMemberSummaryMatching(t *testing.T) {
 			AllDay:       false,
 		},
 		{
-			ID:           "non_dup_dinner",
+			ID:           "kid_dropoff",
 			CalendarName: "Family",
-			Title:        "Dinner: Tacos (No Mealie Today)",
-			Start:        "2026-09-28T18:00:00Z",
-			End:          "2026-09-28T19:00:00Z",
-			AllDay:       false,
-		},
-		{
-			ID:           "rosie_dropoff",
-			CalendarName: "Family",
-			Title:        "Rosie dropoff",
+			Title:        "Kid dropoff",
 			Start:        "2026-09-27T08:30:00Z",
 			End:          "2026-09-27T09:00:00Z",
 			AllDay:       false,
 		},
 		{
-			ID:           "rosie_bday",
+			ID:           "kid_bday",
 			CalendarName: "Family",
-			Title:        "Rosie's birthday",
+			Title:        "Kid's birthday",
 			Start:        "2026-09-29",
 			End:          "2026-09-29",
 			AllDay:       true,
+		},
+		{
+			ID:           "priv_shared_ev",
+			CalendarName: "PrivateShared",
+			Title:        "Kid secret appointment",
+			Start:        "2026-09-27T09:00:00Z",
+			End:          "2026-09-27T09:30:00Z",
+			AllDay:       false,
 		},
 	}
 
@@ -1467,9 +1477,16 @@ func TestMealieBottomBarDuplicateDinnerAndMemberSummaryMatching(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
+	if view.HoursEnd != "21:00" {
+		t.Errorf("expected HoursEnd to remain 21:00, got %q", view.HoursEnd)
+	}
+	if len(view.CollapsedGaps) != 0 {
+		t.Errorf("expected filtered duplicate dinner at 18:00 on Mealie day to not create phantom collapsed midday gap, got %+v", view.CollapsedGaps)
+	}
+
 	day0 := view.Days[0]
-	if len(day0.Meals) != 1 || day0.Meals[0].ID != "mealie_2026-09-27" {
-		t.Fatalf("expected Mealie event in day0.Meals, got %+v", day0.Meals)
+	if len(day0.Meals) != 2 || day0.Meals[0].ID != "mealie_2026-09-27" {
+		t.Fatalf("expected Mealie events in day0.Meals, got %+v", day0.Meals)
 	}
 	if len(day0.AllDay) != 0 {
 		t.Errorf("expected Mealie event excluded from day0.AllDay, got %+v", day0.AllDay)
@@ -1480,32 +1497,49 @@ func TestMealieBottomBarDuplicateDinnerAndMemberSummaryMatching(t *testing.T) {
 		}
 	}
 	for _, te := range day0.Timed {
-		if te.ID == "dup_dinner_1" {
-			t.Errorf("expected duplicate timed Dinner event filtered on Mealie day")
+		if te.ID == "dup_dinner_1" || te.ID == "mealie_timed_2026-09-27" {
+			t.Errorf("expected duplicate dinner and timed Mealie event filtered on Mealie day, got %+v", te)
 		}
 	}
 	for _, de := range day0.Events {
-		if de.ID == "dup_dinner_1" {
-			t.Errorf("expected duplicate timed Dinner event filtered from day canvas Events")
+		if de.ID == "dup_dinner_1" || de.ID == "mealie_timed_2026-09-27" {
+			t.Errorf("expected duplicate dinner and timed Mealie event filtered from day canvas Events, got %+v", de)
 		}
 	}
 
-	day1 := view.Days[1]
+	dropoffEv, _ := findViewEvent(view, "kid_dropoff")
+	if dropoffEv == nil || len(dropoffEv.Owners) != 1 || dropoffEv.Owners[0] != "Kid" || dropoffEv.Color != "#EC4899" {
+		t.Errorf("expected 'Kid dropoff' on shared Family calendar to match Kid, got %+v", dropoffEv)
+	}
+
+	bdayEv, _ := findViewEvent(view, "kid_bday")
+	if bdayEv == nil || len(bdayEv.Owners) != 1 || bdayEv.Owners[0] != "Kid" || bdayEv.Color != "#EC4899" {
+		t.Errorf("expected 'Kid's birthday' on shared Family calendar to match Kid, got %+v", bdayEv)
+	}
+
+	privEv, _ := findViewEvent(view, "priv_shared_ev")
+	if privEv == nil || privEv.Title != "Busy" || len(privEv.Owners) != 2 {
+		t.Errorf("expected private shared calendar event to be redacted and retain both owners without narrowing by raw title, got %+v", privEv)
+	}
+
+	withNonDupDinner := append(slices.Clone(events), provider.CalendarEvent{
+		ID:           "non_dup_dinner",
+		CalendarName: "Family",
+		Title:        "Dinner: Tacos (No Mealie Today)",
+		Start:        "2026-09-28T18:00:00Z",
+		End:          "2026-09-28T19:00:00Z",
+		AllDay:       false,
+	})
+	viewWithNonDup, err := BuildFamilyView(snap(withNonDupDinner...), cfg, domain.NewDimension(6, 2), testNow)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	day1 := viewWithNonDup.Days[1]
 	if len(day1.Timed) != 1 || day1.Timed[0].ID != "non_dup_dinner" {
 		t.Errorf("expected timed Dinner event kept when no Mealie event on that day, got %+v", day1.Timed)
 	}
 
-	dropoffEv, _ := findViewEvent(view, "rosie_dropoff")
-	if dropoffEv == nil || len(dropoffEv.Owners) != 1 || dropoffEv.Owners[0] != "Rosie" || dropoffEv.Color != "#EC4899" {
-		t.Errorf("expected 'Rosie dropoff' on shared Family calendar to match Rosie, got %+v", dropoffEv)
-	}
-
-	bdayEv, _ := findViewEvent(view, "rosie_bday")
-	if bdayEv == nil || len(bdayEv.Owners) != 1 || bdayEv.Owners[0] != "Rosie" || bdayEv.Color != "#EC4899" {
-		t.Errorf("expected 'Rosie's birthday' on shared Family calendar to match Rosie, got %+v", bdayEv)
-	}
-
-	monthView, err := BuildFamilyMonthView(snap(events...), cfg, domain.NewDimension(6, 2), testNow)
+	monthView, err := BuildFamilyMonthView(snap(withNonDupDinner...), cfg, domain.NewDimension(6, 2), testNow)
 	if err != nil {
 		t.Fatalf("unexpected error in BuildFamilyMonthView: %v", err)
 	}
@@ -1523,7 +1557,7 @@ func TestMealieBottomBarDuplicateDinnerAndMemberSummaryMatching(t *testing.T) {
 		ID:         "test-mealie-grid",
 		Type:       "calendar-grid",
 		Dimensions: domain.NewDimension(6, 2),
-		Data:       snap(events...),
+		Data:       snap(withNonDupDinner...),
 		Config:     cfg,
 	})
 	if !strings.Contains(html, "cf-day-meal-bar") || !strings.Contains(html, "cf-mealie-bar") {
@@ -1542,19 +1576,19 @@ func TestMealieBottomBarDuplicateDinnerAndMemberSummaryMatching(t *testing.T) {
 	if !isMealieFamilyEvent(&FamilyEvent{ID: "ev1"}, provider.CalendarEvent{CalendarName: "Mealie"}) {
 		t.Errorf("expected Mealie calendar name to match Mealie event")
 	}
-	if summaryMentionsMember("Rosie dropoff", "") {
+	if summaryMentionsMember("Kid dropoff", "") {
 		t.Errorf("expected empty member name to return false")
 	}
-	if !summaryMentionsMember("Rosie", "Rosie") {
+	if !summaryMentionsMember("Kid", "Kid") {
 		t.Errorf("expected exact summary match to return true")
 	}
-	if !summaryMentionsMember("Dinner at Rosie's", "Rosie") {
+	if !summaryMentionsMember("Dinner at Kid's", "Kid") {
 		t.Errorf("expected end-of-string possessive match to return true")
 	}
-	if summaryMentionsMember("Rosiebell recital", "Rosie") {
+	if summaryMentionsMember("Kidbell recital", "Kid") {
 		t.Errorf("expected partial word prefix without boundary to return false")
 	}
-	if !summaryMentionsMember("Rosiebell and Rosie recital", "Rosie") {
+	if !summaryMentionsMember("Kidbell and Kid recital", "Kid") {
 		t.Errorf("expected second occurrence after non-boundary prefix to return true")
 	}
 }
