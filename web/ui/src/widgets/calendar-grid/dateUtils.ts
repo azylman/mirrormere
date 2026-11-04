@@ -1,4 +1,5 @@
 import type {
+  CollapsedHoursGap,
   FamilyDay,
   FamilyEvent,
   FamilyMember,
@@ -119,6 +120,8 @@ export function sliceWeekWindow(
   return days;
 }
 
+const COLLAPSED_GAP_HOUR_EQUIVALENT = 0.65;
+
 export function computeDayLayout(
   allDayEvents: FamilySpanEvent[] | undefined,
   days: FamilyDay[] | undefined,
@@ -143,6 +146,96 @@ export function buildMonthViewFromDays(days: FamilyMonthDay[]): FamilyMonthWeek[
     });
   }
   return weeks;
+}
+
+/**
+ * Formats a time string ('09:00', '18:30', '6pm', '6:00 PM') into 12-hour or 24-hour display format.
+ */
+export function formatEventTime(label?: string, timeFormat?: string): string {
+  if (!label || typeof label !== 'string') return '';
+  const trimmed = label.trim();
+  if (!trimmed) return '';
+  const mins = parseTimeMinutes(trimmed);
+  if (mins === null) return trimmed;
+
+  const h24 = Math.floor(mins / 60) % 24;
+  const m = mins % 60;
+
+  if (timeFormat && timeFormat.toLowerCase() === '12h') {
+    const period = h24 >= 12 ? 'pm' : 'am';
+    const h12 = h24 % 12 === 0 ? 12 : h24 % 12;
+    if (m === 0) {
+      return `${h12}${period}`;
+    }
+    return `${h12}:${String(m).padStart(2, '0')}${period}`;
+  }
+
+  // If already in 12h format (e.g. '6pm' or '6:30pm'), preserve it when timeFormat is omitted
+  if (!timeFormat && /[ap]m$/i.test(trimmed)) {
+    return trimmed;
+  }
+
+  return `${String(h24).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
+/**
+ * Maps a minute offset [startMin, endMin] onto canvas percentage [0, 100],
+ * compressing any collapsed interior hour gaps to COLLAPSED_GAP_HOUR_EQUIVALENT hours.
+ */
+export function mapTimeMinutesToPct(
+  targetMin: number,
+  startMin: number,
+  endMin: number,
+  collapsedGaps?: CollapsedHoursGap[]
+): number {
+  if (endMin <= startMin) return 0;
+  if (targetMin <= startMin) return 0;
+  if (targetMin >= endMin) return 100;
+
+  if (!collapsedGaps || collapsedGaps.length === 0) {
+    return ((targetMin - startMin) / (endMin - startMin)) * 100;
+  }
+
+  // If gaps already carry precomputed top_pct and height_pct, interpolate piecewise-linearly
+  // or compute using the canonical 0.65 hour-equivalent weighting.
+  const compressedGapMins = COLLAPSED_GAP_HOUR_EQUIVALENT * 60;
+  let totalEff = 0;
+  let effAtTarget = 0;
+  let cur = startMin;
+
+  const sortedGaps = [...collapsedGaps].sort((a, b) => a.start_hour - b.start_hour);
+  for (const g of sortedGaps) {
+    const gStart = Math.max(g.start_hour * 60, cur);
+    const gEnd = Math.min(g.end_hour * 60, endMin);
+    if (gEnd <= gStart) continue;
+
+    if (gStart > cur) {
+      const seg = gStart - cur;
+      if (targetMin > cur) {
+        effAtTarget += Math.min(targetMin, gStart) - cur;
+      }
+      totalEff += seg;
+    }
+
+    const gapActual = gEnd - gStart;
+    if (targetMin > gStart) {
+      const inGap = Math.min(targetMin, gEnd) - gStart;
+      effAtTarget += (inGap / gapActual) * compressedGapMins;
+    }
+    totalEff += compressedGapMins;
+    cur = gEnd;
+  }
+
+  if (endMin > cur) {
+    const seg = endMin - cur;
+    if (targetMin > cur) {
+      effAtTarget += Math.min(targetMin, endMin) - cur;
+    }
+    totalEff += seg;
+  }
+
+  if (totalEff <= 0) return 0;
+  return (effAtTarget / totalEff) * 100;
 }
 
 /**
@@ -236,5 +329,10 @@ export function computeNowIndicatorPct(
     return null;
   }
 
-  return ((nowMin - startMin) / (endMin - startMin)) * 100;
+  const gaps =
+    weekVM?.collapsed_gaps && weekVM.collapsed_gaps.length > 0
+      ? weekVM.collapsed_gaps
+      : undefined;
+
+  return mapTimeMinutesToPct(nowMin, startMin, endMin, gaps);
 }

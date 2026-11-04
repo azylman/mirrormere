@@ -653,6 +653,49 @@ func TestFamilyUnitHelpers(t *testing.T) {
 	if got := formatTimeLabel(7, 0, "24h"); got != "07:00" {
 		t.Errorf("formatTimeLabel(7, 0, 24h) = %q, want 07:00", got)
 	}
+	if eventMinutesForSort("9am") != 540 || eventMinutesForSort("12pm") != 720 || eventMinutesForSort("12am") != 0 || eventMinutesForSort("2:30pm") != 870 || eventMinutesForSort("invalid") != 0 {
+		t.Errorf("eventMinutesForSort branches failed")
+	}
+	if mapMinutesToCanvasPct(400, HoursBand{StartHour: 8, EndHour: 18}) != 0 ||
+		mapMinutesToCanvasPct(1200, HoursBand{StartHour: 8, EndHour: 18}) != 100 ||
+		mapMinutesToCanvasPct(600, HoursBand{StartHour: 8, EndHour: 18}) != 20 {
+		t.Errorf("mapMinutesToCanvasPct bounds failed")
+	}
+	gapBand := HoursBand{StartHour: 8, EndHour: 18, EndMinute: 30, CollapsedGaps: []CollapsedHoursGap{{StartHour: 10, EndHour: 14}}}
+	linearPct := ((720.0 - 480.0) / (1110.0 - 480.0)) * 100.0
+	if pct := roundToTwoDecimals(mapMinutesToCanvasPct(720, gapBand)); pct != 32.52 || pct == roundToTwoDecimals(linearPct) {
+		t.Errorf("mapMinutesToCanvasPct(720, gapBand) = %v, want 32.52 (linear=%v)", pct, roundToTwoDecimals(linearPct))
+	}
+	mks := generateTimelineMarkersWithGaps(gapBand, "12h")
+	mkLabels := make(map[string]bool, len(mks))
+	for _, m := range mks {
+		mkLabels[m.Label] = true
+	}
+	for _, omitted := range []string{"11am", "12pm", "1pm"} {
+		if mkLabels[omitted] {
+			t.Errorf("expected interior gap marker %q to be omitted, got markers %+v", omitted, mks)
+		}
+	}
+	for _, retained := range []string{"10am", "2pm", "6pm", "6:30pm"} {
+		if !mkLabels[retained] {
+			t.Errorf("expected boundary marker %q to be retained, got markers %+v", retained, mks)
+		}
+	}
+	dayIdx := map[string]int{"2026-09-28": 1}
+	resBand := applyCollapsedMiddayGaps(HoursBand{StartHour: 7, StartMinute: 30, EndHour: 21}, []provider.CalendarEvent{
+		{ID: "e1", Start: "2026-09-28T08:00:00Z", End: "2026-09-28T08:00:00Z"},
+		{ID: "e2", Start: "2026-09-28T17:00:00Z", End: "2026-09-28T18:00:00Z"},
+	}, dayIdx, nil, "12h")
+	if len(resBand.CollapsedGaps) != 1 || resBand.CollapsedGaps[0].StartHour != 9 || resBand.CollapsedGaps[0].EndHour != 17 || resBand.CollapsedGaps[0].Label != "9am – 5pm" || resBand.CollapsedGaps[0].TopPct <= 0 || resBand.CollapsedGaps[0].HeightPct <= 0 {
+		t.Errorf("unexpected collapsed midday gaps: %+v", resBand.CollapsedGaps)
+	}
+	partialBand := applyCollapsedMiddayGaps(HoursBand{StartHour: 7, StartMinute: 30, EndHour: 18, EndMinute: 30}, []provider.CalendarEvent{
+		{ID: "e_early_half", Start: "2026-09-28T07:30:00Z", End: "2026-09-28T08:00:00Z"},
+		{ID: "e_late_half", Start: "2026-09-28T18:00:00Z", End: "2026-09-28T18:30:00Z"},
+	}, dayIdx, time.UTC, "12h")
+	if len(partialBand.CollapsedGaps) != 1 || partialBand.CollapsedGaps[0].StartHour != 8 || partialBand.CollapsedGaps[0].EndHour != 18 || partialBand.CollapsedGaps[0].Label != "8am – 6pm" {
+		t.Errorf("expected partial-hour boundary events to anchor full-hour gap 8–18, got %+v", partialBand.CollapsedGaps)
+	}
 }
 
 func TestParseHoursBand(t *testing.T) {
@@ -1177,7 +1220,8 @@ func TestCalendarWidgetTemplates(t *testing.T) {
 				`data-view="month" role="tab" aria-selected="false">Month</button>`,
 				"calendar-family-data", "MirrormereCalendarFamily.mount",
 				"cf-week-allday-grid", "grid-column: 2 / span 3", "Camping Trip", `data-event-id="e_multi"`,
-				"cf-week-body", "cf-timeline-axis", "cf-timeline-markers", "cf-hour-marker", "cf-day-canvas", "Soccer Practice", "top: 64.29%",
+				"cf-week-body", "cf-timeline-axis", "cf-timeline-markers", "cf-hour-marker", "cf-day-canvas", "Soccer Practice",
+				"cf-collapsed-gap", "cf-collapsed-gap-label", `data-gap-start="10:00"`, `data-gap-end="16:00"`, "pointer-events: none",
 				"height: 44px",
 			},
 			wantNotContains: []string{"var(--mm-coral, #ff6f59)", `data-view="day"`, "border: 2px solid var(--mm-cal-today-border"},

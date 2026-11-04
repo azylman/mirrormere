@@ -129,6 +129,11 @@
           </div>
 
           <div class="cf-day-canvas" style="flex: 1; position: relative; min-height: 0; margin-top: 4px;">
+            {{ range $view.CollapsedGaps }}
+            <div class="cf-collapsed-gap" aria-hidden="true" data-gap-start="{{ .StartStr }}" data-gap-end="{{ .EndStr }}" style="position: absolute; left: 0; right: 0; top: {{ .TopPct }}%; height: {{ .HeightPct }}%;">
+              <span class="cf-collapsed-gap-label">{{ .Label }}</span>
+            </div>
+            {{ end }}
             {{ range .Events }}
             <div class="cf-day-event cf-event-clickable{{ if .Pattern }} cf-pattern-{{ .Pattern }}{{ end }}" role="button" tabindex="0" title="{{ .Start }}–{{ .End }}: {{ .Title }}{{ if .Location }} ({{ .Location }}){{ end }}" aria-label="{{ .Title }}, {{ .Start }} to {{ .End }}{{ if .Location }}, {{ .Location }}{{ end }}" data-event-id="{{ .ID }}" data-event-title="{{ .Title }}" data-event-start="{{ .Start }}" data-event-end="{{ .End }}" data-event-location="{{ .Location }}" data-event-description="{{ .Description }}" style="position: absolute; top: {{ .TopPct }}%; height: {{ .HeightPct }}%; left: calc({{ .LeftPct }}% + 1px); width: calc({{ .WidthPct }}% - 2px); min-height: 20px; padding: 2px 4px; border-radius: 6px; background: {{ .Color }}; color: {{ .TextColor }}; overflow: hidden; display: flex; flex-direction: column; box-sizing: border-box; border: 1px solid rgba(0, 0, 0, 0.12); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12); cursor: pointer; touch-action: manipulation;">
               <div class="cf-event-header" style="display: flex; align-items: center; justify-content: space-between; gap: 2px; font-size: 0.60rem; font-weight: 800; line-height: 1.1; flex-shrink: 0;">
@@ -394,6 +399,36 @@
   .cf-day-event.cf-event-compact .cf-event-time,
   .cf-day-event.cf-event-compact .cf-event-location {
     display: none !important;
+  }
+  .cf-collapsed-gap {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-top: 1px dashed var(--mm-divider, rgba(90, 60, 30, 0.14));
+    border-bottom: 1px dashed var(--mm-divider, rgba(90, 60, 30, 0.14));
+    background: repeating-linear-gradient(
+      -45deg,
+      rgba(90, 60, 30, 0.035),
+      rgba(90, 60, 30, 0.035) 3px,
+      transparent 3px,
+      transparent 6px
+    );
+    pointer-events: none;
+    user-select: none;
+    box-sizing: border-box;
+    overflow: hidden;
+    z-index: 1;
+  }
+  .cf-collapsed-gap-label {
+    font-family: var(--mm-font-mono, monospace);
+    font-size: 0.52rem;
+    font-weight: 700;
+    color: var(--mm-text-dim, #8b819f);
+    opacity: 0.72;
+    line-height: 1;
+    white-space: nowrap;
+    letter-spacing: 0.02em;
+    pointer-events: none;
   }
   .cf-modal-overlay {
     position: absolute;

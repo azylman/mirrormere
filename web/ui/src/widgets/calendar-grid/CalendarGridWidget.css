@@ -212,3 +212,35 @@
 .cf-day-event.cf-event-compact .cf-event-location {
   display: none !important;
 }
+
+.cf-collapsed-gap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-top: 1px dashed var(--mm-divider, rgba(90, 60, 30, 0.14));
+  border-bottom: 1px dashed var(--mm-divider, rgba(90, 60, 30, 0.14));
+  background: repeating-linear-gradient(
+    -45deg,
+    rgba(90, 60, 30, 0.035),
+    rgba(90, 60, 30, 0.035) 3px,
+    transparent 3px,
+    transparent 6px
+  );
+  pointer-events: none;
+  user-select: none;
+  box-sizing: border-box;
+  overflow: hidden;
+  z-index: 1;
+}
+
+.cf-collapsed-gap-label {
+  font-family: var(--mm-font-mono, monospace);
+  font-size: 0.52rem;
+  font-weight: 700;
+  color: var(--mm-text-dim, #8b819f);
+  opacity: 0.72;
+  line-height: 1;
+  white-space: nowrap;
+  letter-spacing: 0.02em;
+  pointer-events: none;
+}
