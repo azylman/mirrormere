@@ -444,8 +444,8 @@ func TestEngine_BuiltinWidgetPackages(t *testing.T) {
 		{name: "tasks loading", widgetType: "tasks", dims: []int{3, 2}, state: mockState{data: nil, state: "healthy"}, wantContains: []string{"Loading checklist..."}},
 		{name: "tasks unnamed", widgetType: "tasks", dims: []int{3, 2}, state: mockState{data: tasksUnnamed, state: "healthy", timestamp: "2026-09-26T12:00:00Z"}, wantContains: []string{"Checklist"}},
 		{
-			name: "photo-carousel contain", widgetType: "photo-carousel", dims: []int{3, 2}, state: mockState{data: photoData, state: "healthy"}, nilResolver: true,
-			wantContains:    []string{`data-fit="contain"`, "=w3840-h2160", `photo-backdrop-current" src="https://lh3.googleusercontent.com/pw/TEST=w96-h54-c"`, `{"album_name":"Family Memories"`},
+			name: "photo-carousel cover", widgetType: "photo-carousel", dims: []int{3, 2}, state: mockState{data: photoData, state: "healthy"}, nilResolver: true,
+			wantContains:    []string{`data-fit="cover"`, "=w3840-h2160", `photo-backdrop-current" src="https://lh3.googleusercontent.com/pw/TEST=w96-h54-c"`, `{"album_name":"Family Memories"`},
 			wantNotContains: []string{`<script type="application/json" class="photo-carousel-data">"`},
 		},
 		{name: "chat-log loaded", widgetType: "chat-log", dims: []int{3, 2}, state: mockState{data: chatSample, state: "healthy", timestamp: "2026-01-02T18:42:00Z"}, wantContains: []string{"Kitchen assistant", "18:42", "sam", "What is on the calendar tomorrow?", "Dentist at 9:00 and soccer practice at 4:30.", "chat-log-human", "chat-log-agent"}},
