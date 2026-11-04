@@ -11,13 +11,15 @@ See `README.md` for the product overview.
 - Build: `make build` (writes `bin/server`). Run: `make run`.
 - Tests: `make test` (`go test -v ./...`). For a quick loop use a package, e.g.
   `go test ./internal/voice/... ./internal/config/...`.
-- Pre-flight: `scripts/verify.sh --staged` (or `--full`, which `make verify` and CI run).
-  It checks, in order: UTF-8 BOM hygiene, `go vet ./...`, `golangci-lint`,
-  dual-pass `deadcode` (`deadcode <main-entrypoints>` without `-test` plus `deadcode -test ./...`), the Go coverage floor (95%, `scripts/check-coverage.sh`),
-  then the Node tests (`web/test`, `sidecars/eink-renderer/test`) and Python unittest suites
-  (`client/eink-node`, `client/ear`, `client/remote`). It needs `golangci-lint`,
-  and installs `deadcode` via `go install` when missing.
-- CI (`.github/workflows/ci.yml`) runs `sh scripts/verify.sh --full` on pull requests to `main`.
+- Pre-flight (canonical agent & developer gate): always stage all modified and newly created files first, then run from the repository root:
+  `git add -A && sh scripts/verify.sh --staged`
+  Staging (`git add -A`) is required so untracked files (such as newly extracted components or packages) are included in path-scoped checks. (`make verify` runs `sh scripts/verify.sh --full` across the entire repo; unrecognized flags fall back to `--staged`.)
+  `scripts/verify.sh` runs:
+  1. **Hygiene & structure guards**: UTF-8 BOM check, `gofmt`, no imperative DDL, `.github/dependabot.yml` manifest/group coverage, and `web/ui/` per-widget CSS co-location.
+  2. **Go static analysis & coverage** (when `.go` or Go config files are staged): ratcheted `code-health` limits (`max-lines` and cyclomatic complexity against `.code-health-baseline.json`), `golangci-lint`, dual-pass `deadcode` (`deadcode <main-entrypoints>` without `-test` plus `deadcode -test ./...`, auto-installed via `go install` when missing), and the 95.0% Go coverage floor (`scripts/check-coverage.sh`). Also runs template/manifest Go tests (`./web`, `./internal/render`, `./internal/server`, `./internal/widget`) when `web/` or `widgets/` files are staged.
+  3. **React UI (`web/ui/`)** (when `web/ui/` files are staged): automatically runs `npm ci` (if `node_modules` is missing) followed by `npm run lint`, `npm run deadcode`, `npm run typecheck`, `npm run test:coverage` (Vitest + coverage thresholds), and `npm run build` inside a `(cd web/ui && ...)` subshell.
+  4. **Node & Python suites** (scoped to touched paths): Node tests (`web/test`, `sidecars/eink-renderer/test`) and Python suites (`sidecars/voice-fingerprinter`, `client/eink-node`, `client/ear`, `client/remote`, `client/ember`, `deploy/ical-bridge`).
+- CI (`.github/workflows/ci.yml`) runs parallel path-scoped jobs (`changes`, `verify`, `lint`, `ui`, `perf`, `verify-gate`) on pull requests to `main`, with failure remediation logs directing agents to run `git add -A && sh scripts/verify.sh --staged` from the repository root.
 
 ## Where things live
 
@@ -37,8 +39,13 @@ See `README.md` for the product overview.
 ## web/ui/ (React display shell)
 
 `web/ui/` is the Vite + React 19 + TypeScript (strict) source for the React display shell, served at
-`/display?ui=react` (or `display.ui: react` in config). Run `npm ci` there (Node version in `web/ui/.nvmrc`),
-then `npm run dev`, `npm run lint`, `npm run typecheck`, `npm test` (Vitest) and `npm run build`.
+`/display?ui=react` (or `display.ui: react` in config). Running `git add -A && sh scripts/verify.sh --staged`
+from the repository root automatically executes the full `web/ui/` verification pipeline (`npm ci` when
+`node_modules` is missing, per-widget CSS co-location check, `npm run lint`, `npm run deadcode`,
+`npm run typecheck`, `npm run test:coverage`, and `npm run build`) inside a subshell whenever `web/ui/` files
+are staged—do not `cd web/ui` without a subshell or chain redundant `npm run lint` commands outside
+`verify.sh`. For interactive local development, use `(cd web/ui && npm run dev)` or `(cd web/ui && npm test)`
+(Node version in `web/ui/.nvmrc`).
 The build writes to `web/static/ui/` (`app.js`, `app.css`, fixed names, no hashes), which is git-ignored
 and compiled automatically inside the multi-stage `Dockerfile` (`ui-builder` stage). Do not commit or
 hand-edit `web/static/ui/`.
