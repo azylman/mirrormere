@@ -158,7 +158,7 @@ func RemoveLayoutOverride(path string) error {
 	return nil
 }
 
-func findSlotOnScreen(sMask uint16, dim domain.Dimension, gridCols, gridRows int) ([2]int, bool) {
+func findSlotOnScreen(sMask uint32, dim domain.Dimension, gridCols, gridRows int) ([2]int, bool) {
 	for r := 0; r <= gridRows-dim.Rows; r++ {
 		for c := 0; c <= gridCols-dim.Cols; c++ {
 			mask := layout.ComputeWidgetBitmaskForGrid(dim.Cols, dim.Rows, c, r, gridCols)
@@ -170,7 +170,7 @@ func findSlotOnScreen(sMask uint16, dim domain.Dimension, gridCols, gridRows int
 	return [2]int{}, false
 }
 
-func findFirstOpenSlot(screenMasks []uint16, pinnedMask uint16, pinned bool, dim domain.Dimension, gridCols, gridRows int) (int, [2]int, bool) {
+func findFirstOpenSlot(screenMasks []uint32, pinnedMask uint32, pinned bool, dim domain.Dimension, gridCols, gridRows int) (int, [2]int, bool) {
 	if pinned {
 		combined := pinnedMask
 		for _, sMask := range screenMasks {
@@ -192,7 +192,7 @@ func findFirstOpenSlot(screenMasks []uint16, pinnedMask uint16, pinned bool, dim
 	return 0, [2]int{}, false
 }
 
-func trackScreenMask(masks []uint16, screen int, origin [2]int, dim domain.Dimension, gridCols int, pinned bool, pinnedMask *uint16) []uint16 {
+func trackScreenMask(masks []uint32, screen int, origin [2]int, dim domain.Dimension, gridCols int, pinned bool, pinnedMask *uint32) []uint32 {
 	for len(masks) <= screen {
 		masks = append(masks, *pinnedMask)
 	}
@@ -241,8 +241,8 @@ func validateOverrideDimension(w *WidgetConfig, pkgs map[string]*domain.Package,
 func buildPlacementsFromOverrides(widgets []WidgetConfig, ovMap map[string]WidgetOverride, pkgs map[string]*domain.Package, loader PackageLoader, gridCols, gridRows int) ([]layout.ExplicitPlacement, []WidgetConfig, error) {
 	placements := make([]layout.ExplicitPlacement, 0, len(widgets))
 	updatedWidgets := make([]WidgetConfig, 0, len(widgets))
-	screenMasks := make([]uint16, 1)
-	var pinnedMask uint16
+	screenMasks := make([]uint32, 1)
+	var pinnedMask uint32
 
 	for _, w := range widgets {
 		ov, ok := ovMap[w.ID]

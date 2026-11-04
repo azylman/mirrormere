@@ -98,7 +98,7 @@ func TestGetDisplay_TemplateDataAndProviders(t *testing.T) {
 		{"static_header_video", "static_video", "/display", "cam1", `data-id="cam1"`, ""},
 		{"dynamic_header_video", "dyn_video", "/display", "live-cam", "", ""},
 		{"dynamic_theme", "dyn_theme", "/display", "night", `data-theme="night"`, ""},
-		{"dynamic_grid_2x6", "dyn_grid", "/display", "2x6", `data-grid="2x6"`, ""},
+		{"dynamic_grid_3x6", "dyn_grid", "/display", "3x6", `data-grid="3x6"`, ""},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -181,7 +181,7 @@ func TestGetDisplay_TemplateDataAndProviders(t *testing.T) {
 					t.Fatalf("theme getter: got %s, want %s", h.Theme(), tc.wantGetter)
 				}
 			case "dyn_grid":
-				h = display.NewHandler(legacyOpt, display.WithTemplateContent(tmpl), display.WithGridProvider(func() string { return "2x6" }))
+				h = display.NewHandler(legacyOpt, display.WithTemplateContent(tmpl), display.WithGridProvider(func() string { return "3x6" }))
 				if h.Grid() != tc.wantGetter {
 					t.Fatalf("grid getter: got %s, want %s", h.Grid(), tc.wantGetter)
 				}

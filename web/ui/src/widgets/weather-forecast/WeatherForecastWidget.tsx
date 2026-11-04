@@ -15,13 +15,11 @@ import type { WidgetComponentProps } from '../registry';
 import { todayPrecipProb } from '../format';
 import { WeatherIcon } from './WeatherIcon';
 import { WeatherHourlyGraph } from './WeatherHourlyGraph';
-
 interface SlotWeatherInfo {
   temp: number;
   precipProb: number;
   icon: string;
 }
-
 interface SchoolDaySlotItem {
   slot: DaypartSlot;
   displayLabel: string;
@@ -32,7 +30,6 @@ interface SchoolDaySlotItem {
   forecastSummary: string;
   spriteUrl: string;
 }
-
 const DAYPART_SLOTS: DaypartSlot[] = ['morning', 'afternoon', 'evening'];
 
 function resolveLocationName(
@@ -45,7 +42,6 @@ function resolveLocationName(
   }
   return '';
 }
-
 function extractCurrentCandidate(
   data?: Record<string, unknown>,
 ): Record<string, unknown> | undefined {
@@ -56,7 +52,6 @@ function extractCurrentCandidate(
   }
   return undefined;
 }
-
 function extractTemperature(current?: Record<string, unknown>): {
   roundedTemp: number;
   tempUnit: string;
@@ -273,7 +268,8 @@ function buildSchoolDaySlots(
       thresholds,
     );
     const variantIndex = selectDailyVariantIndex(dateStr, slot, variantsPerState);
-    const spriteUrl = resolveCharacterPackSpriteUrl(characterPack, state, variantIndex);
+    const enableHolidays = Boolean(config?.holidays);
+    const spriteUrl = resolveCharacterPackSpriteUrl(characterPack, state, variantIndex, dateStr, enableHolidays);
     const outfitLabel = resolveClothingOutfitLabel(state);
     const forecastSummary = formatSlotForecastSummary(info.icon, info.precipProb);
     const displayLabel = isTomorrow ? `tomorrow ${slot}` : slot;
