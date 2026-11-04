@@ -18,6 +18,8 @@ for p in /usr/bin /mingw64/bin /cmd; do
 done
 
 MODE="full"
+STAGED_FILES=""
+STAGED_FROM_INDEX=0
 for arg in "$@"; do
     case "$arg" in
         --staged)
@@ -25,6 +27,10 @@ for arg in "$@"; do
             ;;
         --full)
             MODE="full"
+            ;;
+        *)
+            echo "⚠️ [Mirrormere Verify] Unrecognized flag '$arg'; falling back to --staged verification." >&2
+            MODE="staged"
             ;;
     esac
 done
@@ -59,21 +65,29 @@ check_utf8_bom() {
 
 check_gofmt() {
     if has_cmd gofmt; then
-        if [ "$MODE" = "staged" ] && has_cmd git; then
-            staged_go=$(git diff --cached --name-only --diff-filter=ACM 2>/dev/null | grep '\.go$' || true)
+        if [ "$MODE" = "staged" ]; then
+            staged_go=$(echo "$STAGED_FILES" | grep '\.go$' || true)
             if [ -z "$staged_go" ]; then
                 return 0
             fi
+            existing_go=$(echo "$staged_go" | while read -r gf; do
+                [ -f "$gf" ] && echo "$gf"
+            done)
+            if [ -z "$existing_go" ]; then
+                return 0
+            fi
             # shellcheck disable=SC2086
-            unformatted=$(gofmt -l $staged_go 2>/dev/null | grep -v -E '(^|/)vendor/' || true)
+            unformatted=$(gofmt -l $existing_go 2>/dev/null | grep -v -E '(^|/)vendor/' || true)
             if [ -n "$unformatted" ] && [ -z "${GITHUB_ACTIONS:-}" ]; then
                 echo "   [gofmt] Auto-formatting staged Go files..."
                 # shellcheck disable=SC2086
                 gofmt -w $unformatted
+                if [ "${STAGED_FROM_INDEX:-0}" -eq 1 ] && has_cmd git; then
+                    # shellcheck disable=SC2086
+                    git add $unformatted
+                fi
                 # shellcheck disable=SC2086
-                git add $unformatted
-                # shellcheck disable=SC2086
-                unformatted=$(gofmt -l $staged_go 2>/dev/null | grep -v -E '(^|/)vendor/' || true)
+                unformatted=$(gofmt -l $existing_go 2>/dev/null | grep -v -E '(^|/)vendor/' || true)
             fi
         else
             echo "   [gofmt] Checking code formatting..."
@@ -90,7 +104,7 @@ check_gofmt() {
 check_no_imperative_ddl() {
     files=""
     if [ "$MODE" = "staged" ]; then
-        files=$(git diff --cached --name-only 2>/dev/null | grep -E '\.(go|py|ts)$' | grep -v -E '(_test\.go|\.test\.ts|test_.*\.py|/testdata/)' | grep -v -E '^(scripts|vendor|node_modules)/' || true)
+        files=$(echo "$STAGED_FILES" | grep -E '\.(go|py|ts)$' | grep -v -E '(_test\.go|\.test\.ts|test_.*\.py|/testdata/)' | grep -v -E '^(scripts|vendor|node_modules)/' || true)
     else
         files=$(find . -maxdepth 4 -type f \( -name "*.go" -o -name "*.py" -o -name "*.ts" \) \
             ! -name "*_test.go" ! -name "*.test.ts" ! -name "test_*.py" \
@@ -390,7 +404,19 @@ if [ "$MODE" = "staged" ]; then
     if has_cmd git; then
         git rm --cached -q PR_DESCRIPTION.md .pr_description.md 2>/dev/null || true
     fi
+    STAGED_FROM_INDEX=0
     STAGED_FILES=$(git diff --cached --name-only 2>/dev/null || true)
+    if [ -n "$STAGED_FILES" ]; then
+        STAGED_FROM_INDEX=1
+    elif has_cmd git; then
+        STAGED_FILES=$(git diff --name-only 2>/dev/null || true)
+        if [ -z "$STAGED_FILES" ] && git rev-parse --verify -q origin/main >/dev/null 2>&1; then
+            base=$(git merge-base HEAD origin/main 2>/dev/null || true)
+            if [ -n "$base" ]; then
+                STAGED_FILES=$(git diff --name-only "$base" HEAD 2>/dev/null | grep -v -E '^(PR_DESCRIPTION\.md|\.pr_description\.md)$' || true)
+            fi
+        fi
+    fi
     if [ -z "$STAGED_FILES" ]; then
         echo "✅ [Mirrormere Verify] No staged files to verify."
         exit 0
@@ -400,6 +426,7 @@ if [ "$MODE" = "staged" ]; then
     check_gofmt
     check_no_imperative_ddl
     check_dependabot_coverage
+    run_frontend_checks
 
     if echo "$STAGED_FILES" | grep -q -E '\.go$|\.code-health-baseline\.json$'; then
         run_code_health
@@ -421,9 +448,25 @@ if [ "$MODE" = "staged" ]; then
         done
     fi
 
-    if echo "$STAGED_FILES" | grep -q -E '^web/' && has_cmd node; then
+    if echo "$STAGED_FILES" | grep -q -E '^(web/|widgets/)' && has_cmd node; then
         echo "   [node test] Running web client test suite..."
         TZ=UTC node --test web/test/*.test.js
+    fi
+
+    if echo "$STAGED_FILES" | grep -q -E '^(web/|widgets/)' && has_cmd go; then
+        if ! echo "$STAGED_FILES" | grep -q -E '^go\.(mod|sum)$'; then
+            needed_pkgs=""
+            for p in web internal/render internal/server internal/widget; do
+                if ! echo "${pkgs:-}" | grep -q -x "$p"; then
+                    needed_pkgs="${needed_pkgs:+$needed_pkgs }./$p"
+                fi
+            done
+            if [ -n "$needed_pkgs" ]; then
+                echo "   [go test] Validating HTML templates and widget manifests..."
+                # shellcheck disable=SC2086
+                go test $needed_pkgs
+            fi
+        fi
     fi
 
     if echo "$STAGED_FILES" | grep -q -E '^web/ui/'; then
@@ -433,6 +476,13 @@ if [ "$MODE" = "staged" ]; then
     if echo "$STAGED_FILES" | grep -q -E '^sidecars/eink-renderer/' && has_cmd node; then
         echo "   [node test] Running eink-renderer sidecar test suite..."
         TZ=UTC node --test sidecars/eink-renderer/test/*.test.js
+    fi
+
+    if echo "$STAGED_FILES" | grep -q -E '^sidecars/voice-fingerprinter/' && has_cmd python3; then
+        if python3 -c "import pytest" >/dev/null 2>&1 && [ -d "sidecars/voice-fingerprinter/test" ]; then
+            echo "   [python test] Running voice-fingerprinter sidecar test suite..."
+            (cd sidecars/voice-fingerprinter && python3 -m pytest test/ -q)
+        fi
     fi
 
     if echo "$STAGED_FILES" | grep -q -E '^client/eink-node/' && has_cmd python3; then
