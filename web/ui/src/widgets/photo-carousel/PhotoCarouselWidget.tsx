@@ -451,7 +451,7 @@ export function PhotoCarouselWidget({ id }: WidgetComponentProps) {
     <div
       ref={rootRef}
       className="widget-photo-carousel dither"
-      data-fit="contain"
+      data-fit="cover"
       onClick={hasLoaded && photos.length > 0 ? handleClick : undefined}
     >
       {!hasLoaded ? (

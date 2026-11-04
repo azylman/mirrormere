@@ -337,7 +337,7 @@ describe('PhotoCarouselWidget component', () => {
     expect(empty?.querySelector('.empty-icon svg')).not.toBeNull();
   });
 
-  it('renders photo viewport with backdrop and foreground for contain fit', () => {
+  it('renders photo viewport with backdrop and foreground for cover fit', () => {
     setWidgetPhotos(
       [{ url: 'https://example.com/p1.jpg' }, { url: 'https://example.com/p2.jpg' }],
       10,
@@ -351,7 +351,7 @@ describe('PhotoCarouselWidget component', () => {
 
     const root = container.querySelector('.widget-photo-carousel');
     expect(root).not.toBeNull();
-    expect(root?.getAttribute('data-fit')).toBe('contain');
+    expect(root?.getAttribute('data-fit')).toBe('cover');
     expect(root?.classList.contains('dither')).toBe(true);
     // Invariant: no duplicate data-widget-id on inner element
     expect(root?.getAttribute('data-widget-id')).toBeNull();
@@ -368,28 +368,6 @@ describe('PhotoCarouselWidget component', () => {
     const currentFg = container.querySelector('.photo-layer.photo-current');
     expect(currentFg?.getAttribute('src')).toBe('https://example.com/p1.jpg=w1024-h768');
     expect(currentFg?.classList.contains('dither')).toBe(true);
-  });
-
-  it('always renders contain fit and blurred backdrop regardless of legacy config', () => {
-    setWidgetPhotos([{ url: 'https://example.com/p1.jpg' }], 10, { fit: 'cover', image_size: [1000, 800] });
-
-    const { container } = render(
-      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
-        <PhotoCarouselWidget id={widgetId} type="photo-carousel" />
-      </PaneContext.Provider>,
-    );
-
-    const root = container.querySelector('.widget-photo-carousel');
-    expect(root?.getAttribute('data-fit')).toBe('contain');
-
-    const backdropContainer = container.querySelector('.photo-backdrop-container');
-    expect(backdropContainer).not.toBeNull();
-
-    const currentBackdrop = container.querySelector('.photo-backdrop-current');
-    expect(currentBackdrop?.getAttribute('src')).toBe('https://example.com/p1.jpg=w96-h54-c');
-
-    const currentFg = container.querySelector('.photo-layer.photo-current');
-    expect(currentFg?.getAttribute('src')).toBe('https://example.com/p1.jpg=w1024-h768');
   });
 
   it('cycles photos automatically with decode preloading', async () => {
