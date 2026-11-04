@@ -121,19 +121,13 @@ export function sliceWeekWindow(
 }
 
 const COLLAPSED_GAP_HOUR_EQUIVALENT = 0.65;
-const MIN_COLLAPSED_GAP_HOURS = 3;
 
 export function computeDayLayout(
   allDayEvents: FamilySpanEvent[] | undefined,
   days: FamilyDay[] | undefined,
   activeView: ViewMode,
-  currentDateISO: string,
-  collapsedGaps?: CollapsedHoursGap[]
+  currentDateISO: string
 ): FamilySpanEvent[] {
-  if (days && collapsedGaps && collapsedGaps.length > 0) {
-    // Preserve collapsed gap metadata on the layout pass when supplied.
-    void collapsedGaps;
-  }
   if (!allDayEvents || allDayEvents.length === 0) return [];
   if (activeView !== 'day') return allDayEvents;
   const dayIdx = (days || []).findIndex((d) => d.date === currentDateISO);
@@ -242,109 +236,6 @@ export function mapTimeMinutesToPct(
 
   if (totalEff <= 0) return 0;
   return (effAtTarget / totalEff) * 100;
-}
-
-function collectOccupiedHours(
-  days: FamilyDay[],
-  scanStartHour: number,
-  scanEndHour: number
-): Set<number> {
-  const occupied = new Set<number>();
-  for (const day of days) {
-    const evList = day.events && day.events.length > 0 ? day.events : day.timed || [];
-    for (const ev of evList) {
-      if (ev.all_day) continue;
-      const sMin = parseTimeMinutes(ev.start);
-      if (sMin === null) continue;
-      let eMin = parseTimeMinutes(ev.end);
-      if (eMin === null || eMin <= sMin) eMin = sMin + 30;
-      for (let h = scanStartHour; h < scanEndHour; h++) {
-        if (sMin < (h + 1) * 60 && eMin > h * 60) {
-          occupied.add(h);
-        }
-      }
-    }
-  }
-  return occupied;
-}
-
-function findOccupiedBounds(
-  occupied: Set<number>,
-  scanStartHour: number,
-  scanEndHour: number
-): [number, number] {
-  let minOcc = -1;
-  let maxOcc = -1;
-  for (let h = scanStartHour; h < scanEndHour; h++) {
-    if (occupied.has(h)) {
-      if (minOcc === -1 || h < minOcc) minOcc = h;
-      if (maxOcc === -1 || h > maxOcc) maxOcc = h;
-    }
-  }
-  return [minOcc, maxOcc];
-}
-
-/**
- * Computes collapsed midday gaps (3+ consecutive empty interior hours between the first and last
- * active event hours across the given days) when not already provided by the backend.
- */
-export function resolveCollapsedMiddayGaps(
-  days: FamilyDay[] | undefined,
-  startMin: number,
-  endMin: number,
-  timeFormat?: string
-): CollapsedHoursGap[] {
-  if (!days || days.length === 0) return [];
-  const scanStartHour = Math.floor(startMin / 60);
-  const scanEndHour = Math.min(24, Math.ceil(endMin / 60));
-  const firstFullHour = Math.ceil(startMin / 60);
-  const lastFullHour = Math.floor(endMin / 60);
-  if (lastFullHour - firstFullHour < MIN_COLLAPSED_GAP_HOURS) return [];
-
-  const occupied = collectOccupiedHours(days, scanStartHour, scanEndHour);
-  const [minOcc, maxOcc] = findOccupiedBounds(occupied, scanStartHour, scanEndHour);
-
-  if (minOcc === -1 || maxOcc <= minOcc + MIN_COLLAPSED_GAP_HOURS) return [];
-
-  const gapStartBound = Math.max(minOcc + 1, firstFullHour);
-  const gapEndBound = Math.min(maxOcc, lastFullHour);
-  if (gapEndBound - gapStartBound < MIN_COLLAPSED_GAP_HOURS) return [];
-
-  const gaps: CollapsedHoursGap[] = [];
-  let runStart = -1;
-  for (let h = gapStartBound; h <= gapEndBound; h++) {
-    if (!occupied.has(h) && h < gapEndBound) {
-      if (runStart === -1) runStart = h;
-    } else if (runStart !== -1) {
-      if (h - runStart >= MIN_COLLAPSED_GAP_HOURS) {
-        const startStr = `${String(runStart).padStart(2, '0')}:00`;
-        const endStr = `${String(h).padStart(2, '0')}:00`;
-        const startLbl = formatEventTime(startStr, timeFormat);
-        const endLbl = formatEventTime(endStr, timeFormat);
-        gaps.push({
-          start_hour: runStart,
-          end_hour: h,
-          start_str: startStr,
-          end_str: endStr,
-          label: `${startLbl} – ${endLbl}`,
-          top_pct: 0,
-          height_pct: 0,
-        });
-      }
-      runStart = -1;
-    }
-  }
-
-  if (gaps.length === 0) return [];
-
-  for (const g of gaps) {
-    const top = mapTimeMinutesToPct(g.start_hour * 60, startMin, endMin, gaps);
-    const bot = mapTimeMinutesToPct(g.end_hour * 60, startMin, endMin, gaps);
-    g.top_pct = Math.round(top * 100) / 100;
-    g.height_pct = Math.round((bot - top) * 100) / 100;
-  }
-
-  return gaps;
 }
 
 /**

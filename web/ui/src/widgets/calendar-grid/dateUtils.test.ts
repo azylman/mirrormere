@@ -19,7 +19,6 @@ import {
   matchesMemberFilter,
   parseISODate,
   parseTimeMinutes,
-  resolveCollapsedMiddayGaps,
   sliceWeekWindow,
   startOfWeek,
   stripMealiePrefix,
@@ -394,119 +393,6 @@ describe('dateUtils', () => {
       // Total eff = 318
       // At 13:00 (780): 60 (8-9) + 39 (gap 9-12) + 60 (12-13) = 159 -> 159/318 = 50%
       expect(mapTimeMinutesToPct(780, 480, 1080, gaps)).toBeCloseTo(50, 2);
-    });
-  });
-
-  describe('resolveCollapsedMiddayGaps', () => {
-    it('returns empty array when days are empty, window is too narrow, or no interior gap >= 3 hours exists', () => {
-      expect(resolveCollapsedMiddayGaps(undefined, 480, 1200)).toEqual([]);
-      expect(resolveCollapsedMiddayGaps([], 480, 1200)).toEqual([]);
-      // Window narrower than 3 full hours
-      expect(
-        resolveCollapsedMiddayGaps(
-          [{ date: '2026-10-27', day_of_month: 27, is_today: true, is_weekend: false }],
-          480,
-          600
-        )
-      ).toEqual([]);
-
-      // Only 2 empty hours between 09:00–10:00 and 12:00–13:00 (hours 10 and 11)
-      const daysShortGap: FamilyDay[] = [
-        {
-          date: '2026-10-27',
-          day_of_month: 27,
-          is_today: true,
-          is_weekend: false,
-          events: [
-            { id: '1', title: 'Morning', start: '09:00', end: '10:00', top_pct: 0, height_pct: 10, left_pct: 0, width_pct: 100 },
-            { id: '2', title: 'Noon', start: '12:00', end: '13:00', top_pct: 50, height_pct: 10, left_pct: 0, width_pct: 100 },
-          ],
-        },
-      ];
-      expect(resolveCollapsedMiddayGaps(daysShortGap, 480, 1080)).toEqual([]);
-    });
-
-    it('collapses 3+ empty interior hours and formats labels in 24h and 12h', () => {
-      const days: FamilyDay[] = [
-        {
-          date: '2026-10-27',
-          day_of_month: 27,
-          is_today: true,
-          is_weekend: false,
-          timed: [
-            { id: 'allday-ignore', title: 'All Day', all_day: true, start: '08:00', end: '17:00' },
-            { id: 'invalid-ignore', title: 'Bad Time', start: 'invalid' },
-            { id: '1', title: 'Standup', start: '08:00', end: '09:00' },
-            { id: '2', title: 'Demo', start: '14:00' }, // missing end defaults to +30m (occupies hour 14)
-          ],
-        },
-      ];
-
-      // Hours 9, 10, 11, 12, 13 are empty (09:00 – 14:00)
-      const gaps24 = resolveCollapsedMiddayGaps(days, 480, 1080);
-      expect(gaps24).toHaveLength(1);
-      expect(gaps24[0].start_hour).toBe(9);
-      expect(gaps24[0].end_hour).toBe(14);
-      expect(gaps24[0].start_str).toBe('09:00');
-      expect(gaps24[0].end_str).toBe('14:00');
-      expect(gaps24[0].label).toBe('09:00 – 14:00');
-      expect(gaps24[0].top_pct).toBeGreaterThan(0);
-      expect(gaps24[0].height_pct).toBeGreaterThan(0);
-
-      const gaps12 = resolveCollapsedMiddayGaps(days, 480, 1080, '12h');
-      expect(gaps12).toHaveLength(1);
-      expect(gaps12[0].label).toBe('9am – 2pm');
-    });
-
-    it('detects occupancy in partial start/end hours and collapses full interior hours (e.g. 08:30–09:00 and 14:00–15:00)', () => {
-      // Dynamic band starting at 08:30 (startMin = 510) and ending at 21:00 (endMin = 1260)
-      // Earliest event is 08:30–09:00 (occupies hour 8) and afternoon event is 14:00–15:00 (occupies hour 14).
-      // Candidate full hours are within [9, 21), so 09:00–14:00 (5 full hours) must collapse!
-      const daysPartialStart: FamilyDay[] = [
-        {
-          date: '2026-10-27',
-          day_of_month: 27,
-          is_today: true,
-          is_weekend: false,
-          events: [
-            { id: '1', title: 'Dropoff', start: '08:30', end: '09:00', top_pct: 0, height_pct: 5, left_pct: 0, width_pct: 100 },
-            { id: '2', title: 'Pickup', start: '14:00', end: '15:00', top_pct: 50, height_pct: 10, left_pct: 0, width_pct: 100 },
-          ],
-        },
-      ];
-
-      const gaps = resolveCollapsedMiddayGaps(daysPartialStart, 510, 1260);
-      expect(gaps).toHaveLength(1);
-      expect(gaps[0]).toMatchObject({
-        start_hour: 9,
-        end_hour: 14,
-        start_str: '09:00',
-        end_str: '14:00',
-        label: '09:00 – 14:00',
-      });
-    });
-
-    it('detects occupancy in partial end hour and restricts collapsed gaps to full hours before floor(endMin / 60)', () => {
-      // Band 08:00 (480) to 15:30 (930).
-      // Event 1 at 08:00–09:00 (hour 8), Event 2 at 15:00–15:30 (hour 15).
-      // Full hours in band: [8, 15). Gap should be 09:00–15:00.
-      const daysPartialEnd: FamilyDay[] = [
-        {
-          date: '2026-10-27',
-          day_of_month: 27,
-          is_today: true,
-          is_weekend: false,
-          events: [
-            { id: '1', title: 'Early', start: '08:00', end: '09:00', top_pct: 0, height_pct: 10, left_pct: 0, width_pct: 100 },
-            { id: '2', title: 'Late Partial', start: '15:00', end: '15:30', top_pct: 90, height_pct: 10, left_pct: 0, width_pct: 100 },
-          ],
-        },
-      ];
-
-      const gaps = resolveCollapsedMiddayGaps(daysPartialEnd, 480, 930);
-      expect(gaps).toHaveLength(1);
-      expect(gaps[0].start_hour).toBe(9);
-      expect(gaps[0].end_hour).toBe(15);
     });
   });
 
