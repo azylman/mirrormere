@@ -26,6 +26,7 @@ concurrency:
 permissions:
   contents: read
   packages: write
+  checks: read
 
 jobs:
   changes:
@@ -215,6 +216,33 @@ jobs:
         run: |
           echo "::error::🚨 [Mirrormere CI] Verification failed. Before pushing a fix, stage all changes and run 'git add -A && sh scripts/verify.sh --staged' locally so all touched Go, web/ui, Node, and Python checks run in one pass."
 
+      - name: Hold Failure Until RoboRev Completes
+        if: failure() && github.event_name == 'pull_request' && github.actor != 'dependabot[bot]'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          export GH_TOKEN="${GITHUB_PAT:-${GH_TOKEN}}"
+          export GITHUB_TOKEN="${GITHUB_PAT:-${GITHUB_TOKEN}}"
+          if [ -z "${HEAD_SHA:-}" ]; then
+            exit 0
+          fi
+          echo "Holding job failure status until roborev completes for commit ${HEAD_SHA:0:7}..."
+          for i in $(seq 1 120); do
+            STATUS=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${HEAD_SHA}/check-runs?per_page=100" --jq '[.check_runs[] | select(.name == "roborev")] | last | .status // "missing"' 2>/dev/null || echo "error")
+            if [ "$STATUS" = "completed" ]; then
+              echo "roborev completed; releasing held failure status."
+              exit 0
+            fi
+            if [ "$STATUS" = "missing" ] && [ "$i" -ge 6 ]; then
+              echo "roborev check-run not present after 30s; releasing held failure status."
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "Timed out waiting for roborev after 600s; releasing held failure status."
+
   ui:
     name: React UI (web/ui)
     needs: changes
@@ -251,6 +279,33 @@ jobs:
         if: failure()
         run: |
           echo "::error::🚨 [Mirrormere CI] React UI verification failed. Before pushing a fix, stage all changes and run 'git add -A && sh scripts/verify.sh --staged' locally so all touched Go, web/ui, Node, and Python checks run in one pass."
+
+      - name: Hold Failure Until RoboRev Completes
+        if: failure() && github.event_name == 'pull_request' && github.actor != 'dependabot[bot]'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          export GH_TOKEN="${GITHUB_PAT:-${GH_TOKEN}}"
+          export GITHUB_TOKEN="${GITHUB_PAT:-${GITHUB_TOKEN}}"
+          if [ -z "${HEAD_SHA:-}" ]; then
+            exit 0
+          fi
+          echo "Holding job failure status until roborev completes for commit ${HEAD_SHA:0:7}..."
+          for i in $(seq 1 120); do
+            STATUS=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${HEAD_SHA}/check-runs?per_page=100" --jq '[.check_runs[] | select(.name == "roborev")] | last | .status // "missing"' 2>/dev/null || echo "error")
+            if [ "$STATUS" = "completed" ]; then
+              echo "roborev completed; releasing held failure status."
+              exit 0
+            fi
+            if [ "$STATUS" = "missing" ] && [ "$i" -ge 6 ]; then
+              echo "roborev check-run not present after 30s; releasing held failure status."
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "Timed out waiting for roborev after 600s; releasing held failure status."
 
   perf:
     name: Display performance budget (React)
@@ -325,6 +380,33 @@ jobs:
         run: |
           echo "::error::🚨 [Mirrormere CI] Performance budget check failed. Before pushing a fix, stage all changes and run 'git add -A && sh scripts/verify.sh --staged' locally so all touched Go, web/ui, Node, and Python checks run in one pass."
 
+      - name: Hold Failure Until RoboRev Completes
+        if: failure() && github.event_name == 'pull_request' && github.actor != 'dependabot[bot]'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          export GH_TOKEN="${GITHUB_PAT:-${GH_TOKEN}}"
+          export GITHUB_TOKEN="${GITHUB_PAT:-${GITHUB_TOKEN}}"
+          if [ -z "${HEAD_SHA:-}" ]; then
+            exit 0
+          fi
+          echo "Holding job failure status until roborev completes for commit ${HEAD_SHA:0:7}..."
+          for i in $(seq 1 120); do
+            STATUS=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${HEAD_SHA}/check-runs?per_page=100" --jq '[.check_runs[] | select(.name == "roborev")] | last | .status // "missing"' 2>/dev/null || echo "error")
+            if [ "$STATUS" = "completed" ]; then
+              echo "roborev completed; releasing held failure status."
+              exit 0
+            fi
+            if [ "$STATUS" = "missing" ] && [ "$i" -ge 6 ]; then
+              echo "roborev check-run not present after 30s; releasing held failure status."
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "Timed out waiting for roborev after 600s; releasing held failure status."
+
   lint:
     name: Lint Microservices & Frontend
     needs: changes
@@ -332,6 +414,7 @@ jobs:
     runs-on: [self-hosted, ci]
     permissions:
       contents: write
+      checks: read
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v7
@@ -488,6 +571,33 @@ jobs:
         if: failure()
         run: |
           echo "::error::🚨 [Mirrormere CI] Lint & static analysis failed. Before pushing a fix, stage all changes and run 'git add -A && sh scripts/verify.sh --staged' locally so all touched Go, web/ui, Node, and Python checks run in one pass."
+
+      - name: Hold Failure Until RoboRev Completes
+        if: failure() && github.event_name == 'pull_request' && github.actor != 'dependabot[bot]'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          export GH_TOKEN="${GITHUB_PAT:-${GH_TOKEN}}"
+          export GITHUB_TOKEN="${GITHUB_PAT:-${GITHUB_TOKEN}}"
+          if [ -z "${HEAD_SHA:-}" ]; then
+            exit 0
+          fi
+          echo "Holding job failure status until roborev completes for commit ${HEAD_SHA:0:7}..."
+          for i in $(seq 1 120); do
+            STATUS=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${HEAD_SHA}/check-runs?per_page=100" --jq '[.check_runs[] | select(.name == "roborev")] | last | .status // "missing"' 2>/dev/null || echo "error")
+            if [ "$STATUS" = "completed" ]; then
+              echo "roborev completed; releasing held failure status."
+              exit 0
+            fi
+            if [ "$STATUS" = "missing" ] && [ "$i" -ge 6 ]; then
+              echo "roborev check-run not present after 30s; releasing held failure status."
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "Timed out waiting for roborev after 600s; releasing held failure status."
 
   docker:
     name: Build & Publish Container Image (${{ matrix.service }})
