@@ -158,24 +158,36 @@ func applyCollapsedMiddayGaps(band HoursBand, events []provider.CalendarEvent, d
 		loc = time.UTC
 	}
 
-	firstActiveHour := band.StartHour
-	if band.StartMinute > 0 {
-		firstActiveHour++
+	scanStartHour := band.StartHour
+	scanEndHour := band.EndHour
+	if band.EndMinute > 0 && scanEndHour < 24 {
+		scanEndHour++
 	}
-	lastActiveHour := band.EndHour
-	if lastActiveHour-firstActiveHour < minCollapsedGapHours+2 {
+	firstFullHour := band.StartHour
+	if band.StartMinute > 0 {
+		firstFullHour++
+	}
+	lastFullHour := band.EndHour
+	if lastFullHour-firstFullHour < minCollapsedGapHours {
 		return band
 	}
 
-	occupied := collectOccupiedWeekHours(events, dayIndex, loc, firstActiveHour, lastActiveHour)
-	minOccupied, maxOccupied := occupiedHourBounds(occupied, firstActiveHour, lastActiveHour)
+	occupied := collectOccupiedWeekHours(events, dayIndex, loc, scanStartHour, scanEndHour)
+	minOccupied, maxOccupied := occupiedHourBounds(occupied, scanStartHour, scanEndHour)
 
-	// Only collapse interior spans strictly between the first and last active event hours.
+	// Only collapse interior spans strictly between the first and last active event hours,
+	// restricted to full hours within [firstFullHour, lastFullHour).
 	if minOccupied == -1 || maxOccupied <= minOccupied+minCollapsedGapHours {
 		return band
 	}
 
-	gaps := buildCollapsedHourGaps(occupied, minOccupied, maxOccupied, timeFormat)
+	gapStartBound := max(minOccupied+1, firstFullHour)
+	gapEndBound := min(maxOccupied, lastFullHour)
+	if gapEndBound-gapStartBound < minCollapsedGapHours {
+		return band
+	}
+
+	gaps := buildCollapsedHourGaps(occupied, gapStartBound-1, gapEndBound, timeFormat)
 	if len(gaps) == 0 {
 		return band
 	}

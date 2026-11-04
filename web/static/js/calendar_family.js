@@ -515,7 +515,10 @@
         }
       }
 
-      // 3. Check event element click/tap
+      // 3. Check event element click/tap (ignore decorative collapsed gap markers)
+      if (e.target && e.target.closest && e.target.closest('.cf-collapsed-gap, .cf-collapsed-gap-label')) {
+        return;
+      }
       const eventEl = e.target && e.target.closest && e.target.closest('.cf-event-clickable, .cf-event, .cf-day-event, .cf-edge-event, .cf-month-event-title, .cf-has-events, [data-event-id]');
       if (eventEl && this.element.contains(eventEl)) {
         const evData = this.resolveEventData(eventEl);
