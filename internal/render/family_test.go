@@ -1399,3 +1399,162 @@ func TestCalendarWidgetTemplates(t *testing.T) {
 		})
 	}
 }
+
+func TestMealieBottomBarDuplicateDinnerAndMemberSummaryMatching(t *testing.T) {
+	t.Parallel()
+	cfg := map[string]any{
+		"shared_color": "#3D405B",
+		"week_starts":  "sunday",
+		"date":         "2026-09-27",
+		"members": []any{
+			map[string]any{"name": "Ryan", "color": "#2563EB", "pattern": "solid", "calendars": []any{"Family"}},
+			map[string]any{"name": "Rosie", "color": "#EC4899", "pattern": "dots", "calendars": []any{"rosie-cal"}},
+		},
+		"calendars": []any{
+			map[string]any{"name": "Family"},
+			map[string]any{"name": "rosie-cal"},
+			map[string]any{"name": "Mealie"},
+		},
+	}
+
+	events := []provider.CalendarEvent{
+		{
+			ID:           "mealie_2026-09-27",
+			CalendarName: "Mealie",
+			Title:        "🍽️ Honey Garlic Salmon",
+			Location:     "/hearth-api/mealie/image/recipe-123",
+			Description:  "Ingredients:\n- Salmon\n- Honey",
+			Start:        "2026-09-27",
+			End:          "2026-09-27",
+			AllDay:       true,
+		},
+		{
+			ID:           "dup_dinner_1",
+			CalendarName: "Family",
+			Title:        "Dinner: Honey Garlic Salmon",
+			Start:        "2026-09-27T18:00:00Z",
+			End:          "2026-09-27T19:00:00Z",
+			AllDay:       false,
+		},
+		{
+			ID:           "non_dup_dinner",
+			CalendarName: "Family",
+			Title:        "Dinner: Tacos (No Mealie Today)",
+			Start:        "2026-09-28T18:00:00Z",
+			End:          "2026-09-28T19:00:00Z",
+			AllDay:       false,
+		},
+		{
+			ID:           "rosie_dropoff",
+			CalendarName: "Family",
+			Title:        "Rosie dropoff",
+			Start:        "2026-09-27T08:30:00Z",
+			End:          "2026-09-27T09:00:00Z",
+			AllDay:       false,
+		},
+		{
+			ID:           "rosie_bday",
+			CalendarName: "Family",
+			Title:        "Rosie's birthday",
+			Start:        "2026-09-29",
+			End:          "2026-09-29",
+			AllDay:       true,
+		},
+	}
+
+	view, err := BuildFamilyView(snap(events...), cfg, domain.NewDimension(6, 2), testNow)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	day0 := view.Days[0]
+	if len(day0.Meals) != 1 || day0.Meals[0].ID != "mealie_2026-09-27" {
+		t.Fatalf("expected Mealie event in day0.Meals, got %+v", day0.Meals)
+	}
+	if len(day0.AllDay) != 0 {
+		t.Errorf("expected Mealie event excluded from day0.AllDay, got %+v", day0.AllDay)
+	}
+	for _, spanEv := range view.AllDayEvents {
+		if spanEv.ID == "mealie_2026-09-27" {
+			t.Errorf("expected Mealie event excluded from top AllDayEvents spans")
+		}
+	}
+	for _, te := range day0.Timed {
+		if te.ID == "dup_dinner_1" {
+			t.Errorf("expected duplicate timed Dinner event filtered on Mealie day")
+		}
+	}
+	for _, de := range day0.Events {
+		if de.ID == "dup_dinner_1" {
+			t.Errorf("expected duplicate timed Dinner event filtered from day canvas Events")
+		}
+	}
+
+	day1 := view.Days[1]
+	if len(day1.Timed) != 1 || day1.Timed[0].ID != "non_dup_dinner" {
+		t.Errorf("expected timed Dinner event kept when no Mealie event on that day, got %+v", day1.Timed)
+	}
+
+	dropoffEv, _ := findViewEvent(view, "rosie_dropoff")
+	if dropoffEv == nil || len(dropoffEv.Owners) != 1 || dropoffEv.Owners[0] != "Rosie" || dropoffEv.Color != "#EC4899" {
+		t.Errorf("expected 'Rosie dropoff' on shared Family calendar to match Rosie, got %+v", dropoffEv)
+	}
+
+	bdayEv, _ := findViewEvent(view, "rosie_bday")
+	if bdayEv == nil || len(bdayEv.Owners) != 1 || bdayEv.Owners[0] != "Rosie" || bdayEv.Color != "#EC4899" {
+		t.Errorf("expected 'Rosie's birthday' on shared Family calendar to match Rosie, got %+v", bdayEv)
+	}
+
+	monthView, err := BuildFamilyMonthView(snap(events...), cfg, domain.NewDimension(6, 2), testNow)
+	if err != nil {
+		t.Fatalf("unexpected error in BuildFamilyMonthView: %v", err)
+	}
+	for _, md := range monthView.Days {
+		if md.Date == "2026-09-27" {
+			for _, ev := range md.Events {
+				if ev.ID == "dup_dinner_1" {
+					t.Errorf("expected duplicate dinner filtered from month view on 2026-09-27")
+				}
+			}
+		}
+	}
+
+	html := renderWidgetTemplate(t, "calendar-grid", Context{
+		ID:         "test-mealie-grid",
+		Type:       "calendar-grid",
+		Dimensions: domain.NewDimension(6, 2),
+		Data:       snap(events...),
+		Config:     cfg,
+	})
+	if !strings.Contains(html, "cf-day-meal-bar") || !strings.Contains(html, "cf-mealie-bar") {
+		t.Errorf("expected widget HTML to render cf-day-meal-bar and cf-mealie-bar")
+	}
+
+	if isMealieFamilyEvent(nil, provider.CalendarEvent{}) {
+		t.Errorf("expected nil event to not be Mealie event")
+	}
+	if !isMealieFamilyEvent(&FamilyEvent{Title: "🍽️ Pasta"}, provider.CalendarEvent{}) {
+		t.Errorf("expected plate emoji prefix to match Mealie event")
+	}
+	if !isMealieFamilyEvent(&FamilyEvent{ID: "mealie_2026-10-01"}, provider.CalendarEvent{}) {
+		t.Errorf("expected mealie_ ID prefix to match Mealie event")
+	}
+	if !isMealieFamilyEvent(&FamilyEvent{ID: "ev1"}, provider.CalendarEvent{CalendarName: "Mealie"}) {
+		t.Errorf("expected Mealie calendar name to match Mealie event")
+	}
+	if summaryMentionsMember("Rosie dropoff", "") {
+		t.Errorf("expected empty member name to return false")
+	}
+	if !summaryMentionsMember("Rosie", "Rosie") {
+		t.Errorf("expected exact summary match to return true")
+	}
+	if !summaryMentionsMember("Dinner at Rosie's", "Rosie") {
+		t.Errorf("expected end-of-string possessive match to return true")
+	}
+	if summaryMentionsMember("Rosiebell recital", "Rosie") {
+		t.Errorf("expected partial word prefix without boundary to return false")
+	}
+	if !summaryMentionsMember("Rosiebell and Rosie recital", "Rosie") {
+		t.Errorf("expected second occurrence after non-boundary prefix to return true")
+	}
+}

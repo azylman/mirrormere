@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/azylman/mirrormere/internal/domain"
 	"github.com/azylman/mirrormere/internal/provider"
@@ -49,6 +50,7 @@ type FamilyDay struct {
 	IsToday     bool             `json:"is_today"`
 	IsWeekend   bool             `json:"is_weekend"`
 	AllDay      []FamilyEvent    `json:"all_day"`
+	Meals       []FamilyEvent    `json:"meals,omitempty"`
 	Timed       []FamilyEvent    `json:"timed"`
 	Overflow    int              `json:"overflow"`
 	Events      []FamilyDayEvent `json:"events"`
@@ -178,6 +180,74 @@ func newFamilyEvent(ev provider.CalendarEvent, loc *time.Location, timeFormat ..
 	return fe
 }
 
+func isMealieFamilyEvent(fe *FamilyEvent, rawEv provider.CalendarEvent) bool {
+	if fe == nil {
+		return false
+	}
+	if strings.HasPrefix(strings.TrimSpace(fe.Location), "/hearth-api/mealie/image/") {
+		return true
+	}
+	if strings.HasPrefix(strings.TrimSpace(fe.Title), "🍽️") {
+		return true
+	}
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(fe.ID)), "mealie_") {
+		return true
+	}
+	return strings.EqualFold(strings.TrimSpace(rawEv.CalendarName), "mealie")
+}
+
+func isDuplicateDinnerEvent(fe *FamilyEvent) bool {
+	if fe == nil || fe.AllDay {
+		return false
+	}
+	lower := strings.ToLower(strings.TrimSpace(fe.Title))
+	return strings.HasPrefix(lower, "dinner:") || strings.HasPrefix(lower, "dinner -")
+}
+
+func isAlphaNumRune(r rune) bool {
+	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')
+}
+
+func isRightBoundaryOrPossessive(rest string) bool {
+	if rest == "" {
+		return true
+	}
+	for _, suffix := range []string{"'s", "’s"} {
+		if after, ok := strings.CutPrefix(rest, suffix); ok {
+			if after == "" {
+				return true
+			}
+			r, _ := utf8.DecodeRuneInString(after)
+			return !isAlphaNumRune(r)
+		}
+	}
+	r, _ := utf8.DecodeRuneInString(rest)
+	return !isAlphaNumRune(r)
+}
+
+func summaryMentionsMember(summary, memberName string) bool {
+	name := strings.ToLower(strings.TrimSpace(memberName))
+	if name == "" {
+		return false
+	}
+	text := strings.ToLower(summary)
+	for searchFrom := 0; searchFrom < len(text); {
+		idx := strings.Index(text[searchFrom:], name)
+		if idx < 0 {
+			return false
+		}
+		start := searchFrom + idx
+		end := start + len(name)
+		prevRune, _ := utf8.DecodeLastRuneInString(text[:start])
+		leftOK := start == 0 || !isAlphaNumRune(prevRune)
+		if leftOK && isRightBoundaryOrPossessive(text[end:]) {
+			return true
+		}
+		searchFrom = start + 1
+	}
+	return false
+}
+
 func assignFamilyEventOwners(fe *FamilyEvent, claimed map[string]bool, members []FamilyMember, sharedColor string) {
 	for _, m := range members {
 		if claimed[m.Name] {
@@ -196,6 +266,42 @@ func assignFamilyEventOwners(fe *FamilyEvent, claimed map[string]bool, members [
 		fe.Pattern = fe.Patterns[0]
 	}
 	fe.TextColor = contrastTextColor(fe.Color)
+}
+
+func claimFamilyEventMembers(ev provider.CalendarEvent, fe *FamilyEvent, members []FamilyMember, calendars map[string]familyCalendarSource, ownerSet map[string]bool) {
+	if src, ok := calendars[ev.CalendarName]; ok && src.private {
+		fe.Title = "Busy"
+		fe.Location = ""
+		fe.Description = "Busy"
+	} else {
+		for _, m := range members {
+			if summaryMentionsMember(ev.Title, m.Name) {
+				ownerSet[m.Name] = true
+			}
+		}
+	}
+
+	for _, m := range members {
+		if calendarClaimedBy(m, ev.CalendarName) {
+			ownerSet[m.Name] = true
+		}
+	}
+}
+
+func refineSummaryMatchedOwners(ev provider.CalendarEvent, members []FamilyMember, ownerSet map[string]bool) map[string]bool {
+	if len(ownerSet) <= 1 {
+		return ownerSet
+	}
+	summaryMatched := make(map[string]bool)
+	for _, m := range members {
+		if ownerSet[m.Name] && summaryMentionsMember(ev.Title, m.Name) {
+			summaryMatched[m.Name] = true
+		}
+	}
+	if len(summaryMatched) > 0 {
+		return summaryMatched
+	}
+	return ownerSet
 }
 
 func mergeFamilyEvents(
@@ -236,21 +342,12 @@ func mergeFamilyEvents(
 			mergedRawEvents[ev.ID] = ev
 		}
 
-		if src, ok := calendars[ev.CalendarName]; ok && src.private {
-			fe.Title = "Busy"
-			fe.Location = ""
-			fe.Description = "Busy"
-		}
-
-		for _, m := range members {
-			if calendarClaimedBy(m, ev.CalendarName) {
-				mergedOwnerSet[ev.ID][m.Name] = true
-			}
-		}
+		claimFamilyEventMembers(ev, fe, members, calendars, mergedOwnerSet[ev.ID])
 	}
 
 	for _, id := range mergedOrder {
-		assignFamilyEventOwners(merged[id], mergedOwnerSet[id], members, sharedColor)
+		owners := refineSummaryMatchedOwners(mergedRawEvents[id], members, mergedOwnerSet[id])
+		assignFamilyEventOwners(merged[id], owners, members, sharedColor)
 	}
 
 	return mergedFamilyEvents{
@@ -326,20 +423,11 @@ func BuildFamilyView(data any, cfg map[string]any, dims domain.Dimension, now ti
 		timeFormat,
 	)
 
-	for _, id := range mergedData.order {
-		fe := mergedData.events[id]
-		for _, d := range mergedData.dates[id] {
-			idx := dayIndex[d]
-			if fe.AllDay {
-				days[idx].AllDay = append(days[idx].AllDay, *fe)
-			} else {
-				days[idx].Timed = append(days[idx].Timed, *fe)
-			}
-		}
-	}
+	mealieDates := collectMealieDates(mergedData)
+	distributeMergedEventsToDays(days, mergedData, dayIndex, mealieDates)
 
 	allDayEvents := buildFamilyAllDaySpans(mergedData, dayIndex, numDays)
-	populateFamilyDayColumns(days, rangeStart, maxVisible, hours, mergedData)
+	populateFamilyDayColumns(days, rangeStart, maxVisible, hours, mergedData, mealieDates)
 
 	return &FamilyViewModel{
 		RangeStart:      rangeStart.Format("2006-01-02"),
@@ -357,6 +445,31 @@ func BuildFamilyView(data any, cfg map[string]any, dims domain.Dimension, now ti
 		AllDayEvents:    allDayEvents,
 		SharedColor:     sharedColor,
 	}, nil
+}
+
+func categorizeDayEvent(day *FamilyDay, fe *FamilyEvent, isMeal, hasMealie bool) {
+	if isMeal {
+		day.Meals = append(day.Meals, *fe)
+		return
+	}
+	if fe.AllDay {
+		day.AllDay = append(day.AllDay, *fe)
+		return
+	}
+	if hasMealie && isDuplicateDinnerEvent(fe) {
+		return
+	}
+	day.Timed = append(day.Timed, *fe)
+}
+
+func distributeMergedEventsToDays(days []FamilyDay, mergedData mergedFamilyEvents, dayIndex map[string]int, mealieDates map[string]bool) {
+	for _, id := range mergedData.order {
+		fe := mergedData.events[id]
+		isMeal := isMealieFamilyEvent(fe, mergedData.rawEvents[id])
+		for _, d := range mergedData.dates[id] {
+			categorizeDayEvent(&days[dayIndex[d]], fe, isMeal, mealieDates[d])
+		}
+	}
 }
 
 func eventMinutesForSort(label string) int {
@@ -380,11 +493,24 @@ func eventMinutesForSort(label string) int {
 	return 0
 }
 
+func collectMealieDates(mergedData mergedFamilyEvents) map[string]bool {
+	mealieDates := make(map[string]bool)
+	for _, id := range mergedData.order {
+		fe := mergedData.events[id]
+		if isMealieFamilyEvent(fe, mergedData.rawEvents[id]) {
+			for _, d := range mergedData.dates[id] {
+				mealieDates[d] = true
+			}
+		}
+	}
+	return mealieDates
+}
+
 func buildFamilyAllDaySpans(mergedData mergedFamilyEvents, dayIndex map[string]int, numDays int) []FamilySpanEvent {
 	var allDayEvents []FamilySpanEvent
 	for _, id := range mergedData.order {
 		fe := mergedData.events[id]
-		if !fe.AllDay {
+		if !fe.AllDay || isMealieFamilyEvent(fe, mergedData.rawEvents[id]) {
 			continue
 		}
 		dates := mergedData.dates[id]
@@ -426,7 +552,7 @@ func buildFamilyAllDaySpans(mergedData mergedFamilyEvents, dayIndex map[string]i
 	return allDayEvents
 }
 
-func populateFamilyDayColumns(days []FamilyDay, rangeStart time.Time, maxVisible int, hours HoursBand, mergedData mergedFamilyEvents) {
+func populateFamilyDayColumns(days []FamilyDay, rangeStart time.Time, maxVisible int, hours HoursBand, mergedData mergedFamilyEvents, mealieDates map[string]bool) {
 	for i := range days {
 		sort.SliceStable(days[i].Timed, func(a, b int) bool {
 			ma := eventMinutesForSort(days[i].Timed[a].Start)
@@ -450,6 +576,9 @@ func populateFamilyDayColumns(days []FamilyDay, rangeStart time.Time, maxVisible
 		for _, id := range mergedData.order {
 			fe := mergedData.events[id]
 			if fe.AllDay {
+				continue
+			}
+			if mealieDates[dStr] && isDuplicateDinnerEvent(fe) {
 				continue
 			}
 			hasDay := slices.Contains(mergedData.dates[id], dStr)
@@ -1156,6 +1285,37 @@ func buildMonthDayDots(memberSet map[string]bool, hasUnclaimed bool, members []F
 	return dots
 }
 
+func sortMonthDayEvents(evs []FamilyEvent) {
+	sort.SliceStable(evs, func(a, b int) bool {
+		if evs[a].AllDay != evs[b].AllDay {
+			return evs[a].AllDay && !evs[b].AllDay
+		}
+		ma := eventMinutesForSort(evs[a].Start)
+		mb := eventMinutesForSort(evs[b].Start)
+		if ma != mb {
+			return ma < mb
+		}
+		if evs[a].Start != evs[b].Start {
+			return evs[a].Start < evs[b].Start
+		}
+		return evs[a].Title < evs[b].Title
+	})
+}
+
+func recordMonthDayEvent(idx int, fe *FamilyEvent, dayEventsMap map[int][]FamilyEvent, dayMembersMap map[int]map[string]bool, dayUnclaimedMap map[int]bool) {
+	dayEventsMap[idx] = append(dayEventsMap[idx], *fe)
+	if dayMembersMap[idx] == nil {
+		dayMembersMap[idx] = make(map[string]bool)
+	}
+	if len(fe.Owners) == 0 {
+		dayUnclaimedMap[idx] = true
+		return
+	}
+	for _, owner := range fe.Owners {
+		dayMembersMap[idx][owner] = true
+	}
+}
+
 func populateFamilyMonthDays(
 	days []FamilyMonthDay,
 	mergedData mergedFamilyEvents,
@@ -1168,42 +1328,22 @@ func populateFamilyMonthDays(
 	dayEventsMap := make(map[int][]FamilyEvent, monthGridDays)
 	dayMembersMap := make(map[int]map[string]bool, monthGridDays)
 	dayUnclaimedMap := make(map[int]bool, monthGridDays)
+	mealieDates := collectMealieDates(mergedData)
 
 	for _, id := range mergedData.order {
 		fe := mergedData.events[id]
 		for _, dStr := range mergedData.dates[id] {
-			idx := dayIndex[dStr]
-			dayEventsMap[idx] = append(dayEventsMap[idx], *fe)
-			if dayMembersMap[idx] == nil {
-				dayMembersMap[idx] = make(map[string]bool)
+			if mealieDates[dStr] && isDuplicateDinnerEvent(fe) {
+				continue
 			}
-			if len(fe.Owners) == 0 {
-				dayUnclaimedMap[idx] = true
-			} else {
-				for _, owner := range fe.Owners {
-					dayMembersMap[idx][owner] = true
-				}
-			}
+			recordMonthDayEvent(dayIndex[dStr], fe, dayEventsMap, dayMembersMap, dayUnclaimedMap)
 		}
 	}
 
 	showTitles := showMonthViewTitles(dims)
 	for idx := range days {
 		evs := dayEventsMap[idx]
-		sort.SliceStable(evs, func(a, b int) bool {
-			if evs[a].AllDay != evs[b].AllDay {
-				return evs[a].AllDay && !evs[b].AllDay
-			}
-			ma := eventMinutesForSort(evs[a].Start)
-			mb := eventMinutesForSort(evs[b].Start)
-			if ma != mb {
-				return ma < mb
-			}
-			if evs[a].Start != evs[b].Start {
-				return evs[a].Start < evs[b].Start
-			}
-			return evs[a].Title < evs[b].Title
-		})
+		sortMonthDayEvents(evs)
 
 		days[idx].EventsCount = len(evs)
 		days[idx].Events = evs

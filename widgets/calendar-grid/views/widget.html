@@ -150,6 +150,14 @@
             {{ end }}
           </div>
 
+          {{ if .Meals }}
+          <div class="cf-day-meal-bar" style="display: flex; flex-direction: column; gap: 4px; margin-top: 6px; padding-top: 5px; border-top: 1px dashed var(--mm-divider, rgba(90, 60, 30, 0.12)); flex-shrink: 0;">
+            {{ range .Meals }}
+            <div class="cf-event cf-mealie-bar cf-event-clickable{{ if .Pattern }} cf-pattern-{{ .Pattern }}{{ end }}" role="button" tabindex="0" title="{{ .Title }}" aria-label="{{ .Title }}" data-event-id="{{ .ID }}" data-event-title="{{ .Title }}" data-event-allday="true" data-event-location="{{ .Location }}" data-event-description="{{ .Description }}" style="display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-radius: 8px; font-size: 0.68rem; font-weight: 800; color: {{ .TextColor }}; background: {{ .Color }}; cursor: pointer; touch-action: manipulation; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ .Title }}</div>
+            {{ end }}
+          </div>
+          {{ end }}
+
         </div>
         {{ end }}
       </div>
