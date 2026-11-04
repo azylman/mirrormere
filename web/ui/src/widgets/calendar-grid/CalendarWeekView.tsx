@@ -258,7 +258,7 @@ export function CalendarWeekView({
                     <div
                       className="cf-day-canvas"
                       ref={(el) => registerDayCanvas(day.date, el)}
-                      style={{ flex: 1, position: 'relative', minHeight: 0, marginTop: '4px' }}
+                      style={{ flex: 1, position: 'relative', minHeight: 0, marginTop: '6px' }}
                     >
                       {collapsedGaps.map((gap, gapIdx) => (
                         <div

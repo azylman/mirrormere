@@ -19,6 +19,17 @@
   border-radius: 0 !important;
 }
 
+.cf-day-header {
+  min-height: 44px;
+  height: auto !important;
+  position: relative;
+  z-index: 2;
+}
+
+.cf-day-canvas {
+  margin-top: 6px;
+}
+
 .cf-nav-btn {
   background: transparent;
   border: none;
@@ -214,6 +225,7 @@
 }
 
 .cf-collapsed-gap {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -233,12 +245,28 @@
   z-index: 1;
 }
 
+.cf-collapsed-gap::before {
+  content: '';
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  top: 50%;
+  border-top: 1.5px dashed var(--mm-divider-strong, rgba(90, 60, 30, 0.35));
+  pointer-events: none;
+}
+
 .cf-collapsed-gap-label {
+  position: relative;
+  z-index: 1;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--mm-card-bg, #faf6f0);
+  border: 1px solid var(--mm-divider-strong, rgba(90, 60, 30, 0.25));
   font-family: var(--mm-font-mono, monospace);
-  font-size: 0.52rem;
+  font-size: 0.56rem;
   font-weight: 700;
   color: var(--mm-text-dim, #8b819f);
-  opacity: 0.72;
+  opacity: 0.92;
   line-height: 1;
   white-space: nowrap;
   letter-spacing: 0.02em;
