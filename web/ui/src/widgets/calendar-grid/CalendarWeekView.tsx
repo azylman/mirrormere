@@ -5,6 +5,7 @@ import { useDisplayStore } from '../../store';
 import {
   CalendarAllDayBand,
   CalendarDayEventCard,
+  CalendarDayMealBar,
   CalendarEdgeEventsBand,
   CalendarTimelineAxis,
 } from './CalendarWeekBands';
@@ -295,6 +296,7 @@ export function CalendarWeekView({
                         />
                       ))}
                     </div>
+                    <CalendarDayMealBar meals={day.meals} dayDate={day.date} onOpenModal={onOpenModal} />
                   </div>
                 );
               })}

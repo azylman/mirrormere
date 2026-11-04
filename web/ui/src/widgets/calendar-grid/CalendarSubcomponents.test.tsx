@@ -1,6 +1,7 @@
 import { act, cleanup, fireEvent, render, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useDisplayStore } from '../../store';
+import { CalendarGridWidget, type CalendarGridViewModel } from './CalendarGridWidget';
 import { CalendarEventModal } from './CalendarEventModal';
 import { CalendarHeader } from './CalendarHeader';
 import { CalendarMonthView } from './CalendarMonthView';
@@ -385,67 +386,26 @@ describe('CalendarHeader', () => {
   });
 
   it('renders day view header with rangeLabelDay and handles empty members and undefined onSelectMember', () => {
-    const props = {
-      customTitle: 'Family Calendar',
-      activeView: 'day' as const,
-      pageOffset: 0,
-      rangeLabelWeek: 'Oct 25 – 31, 2026',
-      rangeLabelMonth: 'October 2026',
-      rangeLabelDay: 'Tuesday, Oct 27',
-      syncMessage: null,
-      members: [],
-      onPrev: vi.fn(),
-      onNext: vi.fn(),
-      onResetDate: vi.fn(),
-      onViewSwitch: vi.fn(),
-    };
+    const props = { customTitle: 'Family Calendar', activeView: 'day' as const, pageOffset: 0, rangeLabelWeek: 'Oct 25 – 31, 2026', rangeLabelMonth: 'October 2026', rangeLabelDay: 'Tuesday, Oct 27', syncMessage: null, members: [], onPrev: vi.fn(), onNext: vi.fn(), onResetDate: vi.fn(), onViewSwitch: vi.fn() };
     const { container, rerender } = render(<CalendarHeader {...props} />);
-
     const dayLabel = container.querySelector('.cf-label-day') as HTMLElement;
     expect(dayLabel.style.display).toBe('');
     expect(dayLabel.textContent).toBe('Tuesday, Oct 27');
-
-    const weekLabel = container.querySelector('.cf-label-week') as HTMLElement;
-    expect(weekLabel.style.display).toBe('none');
-
-    const monthLabel = container.querySelector('.cf-label-month') as HTMLElement;
-    expect(monthLabel.style.display).toBe('none');
-
+    expect((container.querySelector('.cf-label-week') as HTMLElement).style.display).toBe('none');
+    expect((container.querySelector('.cf-label-month') as HTMLElement).style.display).toBe('none');
     expect(container.querySelector('.cf-legend')).toBeNull();
-
-    // Exercise compiler memo hit
     rerender(<CalendarHeader {...props} />);
     expect(container.querySelector('.cf-label-day')?.textContent).toBe('Tuesday, Oct 27');
   });
 
   it('renders month view header with rangeLabelMonth visible', () => {
-    const props = {
-      customTitle: 'Family Calendar',
-      activeView: 'month' as const,
-      pageOffset: 0,
-      rangeLabelWeek: 'Oct 25 – 31, 2026',
-      rangeLabelMonth: 'October 2026',
-      rangeLabelDay: 'Tuesday, Oct 27',
-      syncMessage: null,
-      members: [],
-      onPrev: vi.fn(),
-      onNext: vi.fn(),
-      onResetDate: vi.fn(),
-      onViewSwitch: vi.fn(),
-    };
+    const props = { customTitle: 'Family Calendar', activeView: 'month' as const, pageOffset: 0, rangeLabelWeek: 'Oct 25 – 31, 2026', rangeLabelMonth: 'October 2026', rangeLabelDay: 'Tuesday, Oct 27', syncMessage: null, members: [], onPrev: vi.fn(), onNext: vi.fn(), onResetDate: vi.fn(), onViewSwitch: vi.fn() };
     const { container, rerender } = render(<CalendarHeader {...props} />);
-
     const monthLabel = container.querySelector('.cf-label-month') as HTMLElement;
     expect(monthLabel.style.display).toBe('');
     expect(monthLabel.textContent).toBe('October 2026');
-
-    const weekLabel = container.querySelector('.cf-label-week') as HTMLElement;
-    expect(weekLabel.style.display).toBe('none');
-
-    const dayLabel = container.querySelector('.cf-label-day') as HTMLElement;
-    expect(dayLabel.style.display).toBe('none');
-
-    // Exercise compiler memo hit
+    expect((container.querySelector('.cf-label-week') as HTMLElement).style.display).toBe('none');
+    expect((container.querySelector('.cf-label-day') as HTMLElement).style.display).toBe('none');
     rerender(<CalendarHeader {...props} />);
     expect(container.querySelector('.cf-label-month')?.textContent).toBe('October 2026');
   });
@@ -1022,6 +982,64 @@ describe('CalendarMonthView & CalendarWeekView', () => {
       fireEvent.keyDown(items[0], { key: ' ' });
     });
 
+    it('renders .cf-day-meal-bar and .cf-mealie-bar with 34px thumbnail, pattern, click/keyboard modal triggers, and filters meals by member', () => {
+      const onOpenModal = vi.fn();
+      const daysToRender: FamilyDay[] = [
+        {
+          date: '2026-10-27', day_of_month: 27, is_today: true, is_weekend: false,
+          meals: [
+            { id: 'meal-1', title: '🍽️ Creamy Tuscan Chicken', location: '/hearth-api/mealie/image/tuscan.jpg', description: 'Recipe notes', color: '#10b981', text_color: '#ffffff', pattern: 'dots', owners: ['Alex'] },
+            { id: 'meal-2', title: 'Tacos Night', color: '#8b60ed', text_color: '#ffffff', owners: ['Sam'] },
+          ],
+        },
+      ];
+      const { container } = render(
+        <CalendarWeekView activeView="week" daysToRender={daysToRender} visibleAllDayEvents={[]} members={members} currentDateISO="2026-10-27" onOpenModal={onOpenModal} />
+      );
+      const mealBar = container.querySelector('.cf-day-meal-bar')!;
+      expect(mealBar).not.toBeNull();
+      const mealPills = mealBar.querySelectorAll('.cf-event.cf-mealie-bar.cf-event-clickable');
+      expect(mealPills.length).toBe(2);
+
+      const firstPill = mealPills[0] as HTMLElement;
+      expect(firstPill.classList.contains('cf-pattern-dots')).toBe(true);
+      expect(firstPill.getAttribute('data-event-id')).toBe('meal-1');
+      expect(firstPill.getAttribute('data-event-allday')).toBe('true');
+      expect(firstPill.getAttribute('data-event-location')).toBe('/hearth-api/mealie/image/tuscan.jpg');
+      expect(firstPill.getAttribute('data-event-description')).toBe('Recipe notes');
+      expect(firstPill.textContent).toBe('🍽️ Creamy Tuscan Chicken');
+
+      const thumb = firstPill.querySelector('img') as HTMLImageElement;
+      expect(thumb.getAttribute('src')).toBe('/hearth-api/mealie/image/tuscan.jpg');
+      expect(thumb.style.width).toBe('34px');
+      expect(thumb.style.height).toBe('34px');
+      expect((mealPills[1] as HTMLElement).querySelector('img')).toBeNull();
+      expect(mealPills[1].textContent).toBe('🍽️ Tacos Night');
+
+      fireEvent.click(firstPill);
+      expect(onOpenModal).toHaveBeenCalledWith(expect.objectContaining({ id: 'meal-1' }), '2026-10-27');
+      fireEvent.keyDown(firstPill, { key: 'Enter' });
+      expect(onOpenModal).toHaveBeenCalledTimes(2);
+      fireEvent.keyDown(firstPill, { key: ' ' });
+      expect(onOpenModal).toHaveBeenCalledTimes(3);
+
+      useDisplayStore.setState({
+        widgets: {
+          'cal-meal-filter': {
+            meta: { type: 'calendar-grid', origin: [0, 0], dimensions: [6, 2], config: {}, assets_base: '' },
+            state: 'healthy', data: {}, timestamp: '2026-10-27T10:00:00Z',
+            viewModel: { active_view: 'week', week: { range_start: '2026-10-27', range_end: '2026-10-27', range_label: 'Oct 27, 2026', today: '2026-10-27', members, days: daysToRender } } satisfies CalendarGridViewModel as unknown as Record<string, unknown>,
+          },
+        },
+      });
+      const { container: gridContainer } = render(<CalendarGridWidget id="cal-meal-filter" type="calendar-grid" />);
+      expect(gridContainer.querySelectorAll('.cf-mealie-bar').length).toBe(2);
+      fireEvent.click(gridContainer.querySelector('.cf-member-chip[data-member="Alex"]')!);
+      const filteredMeals = gridContainer.querySelectorAll('.cf-mealie-bar');
+      expect(filteredMeals.length).toBe(1);
+      expect(filteredMeals[0].getAttribute('data-event-id')).toBe('meal-1');
+    });
+
     it('attaches ResizeObserver to day canvas elements and disconnects on unmount', () => {
       const observe = vi.fn();
       const disconnect = vi.fn();
@@ -1088,9 +1106,8 @@ describe('useCalendarRangeData & useInactivityReset', () => {
       vi.stubGlobal('fetch', fetchMock);
 
       // Set window.location.search
-      const origLocation = window.location;
-      delete (window as unknown as { location: unknown }).location;
-      (window as unknown as { location: unknown }).location = { ...origLocation, search: '?node=kiosk-1' };
+      const origHref = window.location.href;
+      window.history.replaceState({}, '', '?node=kiosk-1');
 
       let activeView: ViewMode = 'week';
       const setActiveView: React.Dispatch<React.SetStateAction<ViewMode>> = (action) => {
@@ -1130,7 +1147,7 @@ describe('useCalendarRangeData & useInactivityReset', () => {
       });
       expect(fetchMock.mock.calls.length).toBe(callCountBefore);
 
-      (window as unknown as { location: unknown }).location = origLocation;
+      window.history.replaceState({}, '', origHref);
     });
 
     it('rolls back state and displays "Sync failed" on fetch error', async () => {

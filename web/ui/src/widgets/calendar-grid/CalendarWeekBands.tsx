@@ -325,3 +325,58 @@ export function CalendarDayEventCard({
     </div>
   );
 }
+
+interface CalendarDayMealBarProps {
+  meals?: FamilyEvent[];
+  dayDate: string;
+  onOpenModal: (ev: FamilyEvent, startDate?: string, endDate?: string) => void;
+}
+
+export function CalendarDayMealBar({ meals, dayDate, onOpenModal }: CalendarDayMealBarProps) {
+  if (!meals || meals.length === 0) return null;
+
+  return (
+    <div
+      className="cf-day-meal-bar"
+      style={{
+        display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '6px', paddingTop: '5px',
+        borderTop: '1px dashed var(--mm-divider, rgba(90, 60, 30, 0.12))', flexShrink: 0,
+      }}
+    >
+      {meals.map((ev) => {
+        const isMealieImg = ev.location?.startsWith('/hearth-api/mealie/image/');
+        return (
+          <div
+            key={ev.id}
+            className={`cf-event cf-mealie-bar cf-event-clickable${ev.pattern ? ` cf-pattern-${ev.pattern}` : ''}`}
+            role="button" tabIndex={0} title={ev.title} aria-label={ev.title}
+            data-event-id={ev.id} data-event-title={ev.title} data-event-allday="true"
+            data-event-location={ev.location} data-event-description={ev.description}
+            data-mealie-decorated="true"
+            onClick={() => onOpenModal(ev, dayDate)}
+            onKeyDown={(e) => handleBandEventKeyDown(e, () => onOpenModal(ev, dayDate))}
+            style={{
+              display: 'flex', alignItems: 'center', gap: '7px', padding: '4px 6px', borderRadius: '8px',
+              fontSize: '0.68rem', fontWeight: 800, color: ev.text_color, backgroundColor: ev.color,
+              cursor: 'pointer', touchAction: 'manipulation', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+            }}
+          >
+            {isMealieImg && (
+              <img
+                src={ev.location}
+                alt=""
+                style={{
+                  width: '34px', height: '34px', borderRadius: '6px', objectFit: 'cover',
+                  flexShrink: 0, boxShadow: '0 1px 3px rgba(0,0,0,0.3)',
+                }}
+              />
+            )}
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 800 }}>
+              🍽️ {stripMealiePrefix(ev.title)}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
