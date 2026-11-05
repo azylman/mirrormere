@@ -29,6 +29,7 @@ type FamilyEvent struct {
 	ID          string   `json:"id"`
 	Title       string   `json:"title"`
 	Location    string   `json:"location"`
+	ImageURL    string   `json:"image_url,omitempty"`
 	Description string   `json:"description"`
 	Start       string   `json:"start"`
 	End         string   `json:"end"`
@@ -160,11 +161,22 @@ func newFamilyEvent(ev provider.CalendarEvent, loc *time.Location, timeFormat ..
 	if len(timeFormat) > 0 && timeFormat[0] != "" {
 		tf = timeFormat[0]
 	}
+	imgURL := resolveMealieImageURL(ev.ImageURL, ev.Location)
+	locStr := ev.Location
+	if locStr == "" && imgURL != "" {
+		locStr = imgURL
+	}
+	isMeal := isMealieEventCandidate(ev.ID, ev.Title, locStr, imgURL, ev.CalendarName)
+	descLimit := 280
+	if isMeal {
+		descLimit = 4000
+	}
 	fe := &FamilyEvent{
 		ID:          ev.ID,
 		Title:       ev.Title,
-		Location:    ev.Location,
-		Description: truncateString(ev.Description, 280),
+		Location:    locStr,
+		ImageURL:    imgURL,
+		Description: truncateString(ev.Description, descLimit),
 		AllDay:      ev.AllDay,
 	}
 	if !ev.AllDay {
@@ -180,20 +192,44 @@ func newFamilyEvent(ev provider.CalendarEvent, loc *time.Location, timeFormat ..
 	return fe
 }
 
+func isMealieImageURL(raw string) bool {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return false
+	}
+	return strings.HasPrefix(s, "/hearth-api/mealie/image/") ||
+		strings.Contains(s, "/api/media/recipes/") ||
+		strings.HasPrefix(s, "data:image/")
+}
+
+func resolveMealieImageURL(imageURL, location string) string {
+	if isMealieImageURL(imageURL) {
+		return strings.TrimSpace(imageURL)
+	}
+	if isMealieImageURL(location) {
+		return strings.TrimSpace(location)
+	}
+	return ""
+}
+
+func isMealieEventCandidate(id, title, location, imageURL, calendarName string) bool {
+	if isMealieImageURL(imageURL) || isMealieImageURL(location) {
+		return true
+	}
+	if strings.HasPrefix(strings.TrimSpace(title), "🍽️") {
+		return true
+	}
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(id)), "mealie_") {
+		return true
+	}
+	return strings.EqualFold(strings.TrimSpace(calendarName), "mealie")
+}
+
 func isMealieFamilyEvent(fe *FamilyEvent, rawEv provider.CalendarEvent) bool {
 	if fe == nil {
 		return false
 	}
-	if strings.HasPrefix(strings.TrimSpace(fe.Location), "/hearth-api/mealie/image/") {
-		return true
-	}
-	if strings.HasPrefix(strings.TrimSpace(fe.Title), "🍽️") {
-		return true
-	}
-	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(fe.ID)), "mealie_") {
-		return true
-	}
-	return strings.EqualFold(strings.TrimSpace(rawEv.CalendarName), "mealie")
+	return isMealieEventCandidate(fe.ID, fe.Title, fe.Location, fe.ImageURL, rawEv.CalendarName)
 }
 
 func isDuplicateDinnerEvent(fe *FamilyEvent) bool {
@@ -272,6 +308,7 @@ func claimFamilyEventMembers(ev provider.CalendarEvent, fe *FamilyEvent, members
 	if src, ok := calendars[ev.CalendarName]; ok && src.private {
 		fe.Title = "Busy"
 		fe.Location = ""
+		fe.ImageURL = ""
 		fe.Description = "Busy"
 	} else {
 		for _, m := range members {

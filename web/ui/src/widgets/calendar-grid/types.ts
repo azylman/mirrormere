@@ -11,6 +11,7 @@ export interface FamilyEvent {
   id: string;
   title: string;
   location?: string;
+  image_url?: string;
   description?: string;
   start?: string;
   end?: string;

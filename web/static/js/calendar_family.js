@@ -72,25 +72,73 @@
     decorateMealieEvents() {
       if (!this.element || typeof this.element.querySelectorAll !== 'function') return;
       const pills = this.element.querySelectorAll(
-        '.cf-mealie-bar, .cf-allday[data-event-location^="/hearth-api/mealie/image/"]'
+        '.cf-mealie-bar, .cf-mealie-card, .cf-allday[data-event-location^="/hearth-api/mealie/image/"], .cf-allday[data-event-image-url]'
       );
+      const isMealieImgUrl = (u) => Boolean(u && (
+        u.startsWith('/hearth-api/mealie/image/') ||
+        u.includes('/api/media/recipes/') ||
+        u.startsWith('data:image/')
+      ));
       pills.forEach(pill => {
         if (pill.dataset.mealieDecorated === 'true') return;
-        const imgUrl = (pill.dataset && pill.dataset.eventLocation) || '';
-        const rawTitle = ((pill.dataset && pill.dataset.eventTitle) || pill.textContent || '').replace(/^🍽️\s*/, '');
-        const isBottomBar = pill.classList && typeof pill.classList.contains === 'function' && pill.classList.contains('cf-mealie-bar');
+        const imgUrl = (pill.dataset && (pill.dataset.eventImageUrl || pill.dataset.eventLocation)) || '';
+        const rawTitle = ((pill.dataset && pill.dataset.eventTitle) || pill.textContent || '').replace(/^🍽️\s*/, '').trim();
+        const isBottomBar = pill.classList && typeof pill.classList.contains === 'function' && (
+          pill.classList.contains('cf-mealie-bar') || pill.classList.contains('cf-mealie-card')
+        );
         pill.dataset.mealieDecorated = 'true';
+        pill.textContent = '';
+
+        if (isBottomBar) {
+          pill.style.position = 'relative';
+          pill.style.minHeight = '128px';
+          pill.style.height = '128px';
+          pill.style.borderRadius = '12px';
+          pill.style.overflow = 'hidden';
+          pill.style.display = 'flex';
+          pill.style.flexDirection = 'column';
+          pill.style.justifyContent = 'space-between';
+          pill.style.padding = '0';
+          pill.style.background = '#d97757';
+          pill.style.backgroundColor = '#d97757';
+          pill.style.color = '#ffffff';
+
+          if (isMealieImgUrl(imgUrl)) {
+            const imgEl = document.createElement('img');
+            imgEl.src = imgUrl;
+            imgEl.alt = '';
+            imgEl.className = 'cf-mealie-photo';
+            imgEl.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block;z-index:0;';
+            pill.appendChild(imgEl);
+          }
+
+          const badgeEl = document.createElement('span');
+          badgeEl.className = 'cf-mealie-pill';
+          badgeEl.style.cssText = 'position:absolute;top:6px;left:6px;z-index:2;padding:2px 7px;border-radius:9999px;font-size:0.56rem;font-weight:800;letter-spacing:0.02em;color:#ffffff;background:rgba(16,12,10,0.52);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);line-height:1.2;pointer-events:none;';
+          badgeEl.textContent = '🍽️ Dinner';
+          pill.appendChild(badgeEl);
+
+          const scrimEl = document.createElement('div');
+          scrimEl.className = 'cf-mealie-scrim';
+          scrimEl.style.cssText = 'position:absolute;left:0;right:0;bottom:0;z-index:1;padding:20px 8px 7px;background:linear-gradient(to top, rgba(16,12,10,0.90) 0%, rgba(16,12,10,0.62) 55%, rgba(16,12,10,0.0) 100%);display:flex;align-items:flex-end;pointer-events:none;';
+          const spanEl = document.createElement('span');
+          spanEl.className = 'cf-mealie-title';
+          spanEl.style.cssText = 'font-size:0.70rem;font-weight:800;line-height:1.2;color:#ffffff;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word;text-shadow:0 1px 2px rgba(0,0,0,0.6);';
+          spanEl.textContent = rawTitle;
+          scrimEl.appendChild(spanEl);
+          pill.appendChild(scrimEl);
+          return;
+        }
+
         pill.style.display = 'flex';
         pill.style.alignItems = 'center';
-        pill.style.gap = isBottomBar ? '7px' : '6px';
-        pill.style.padding = isBottomBar ? '4px 6px' : '3px 6px';
-        pill.textContent = '';
-        if (imgUrl && imgUrl.startsWith('/hearth-api/mealie/image/')) {
+        pill.style.gap = '6px';
+        pill.style.padding = '3px 6px';
+        if (isMealieImgUrl(imgUrl)) {
           const imgEl = document.createElement('img');
           imgEl.src = imgUrl;
           imgEl.alt = '';
-          const thumbSize = isBottomBar ? '34px' : '26px';
-          imgEl.style.cssText = `width:${thumbSize};height:${thumbSize};border-radius:6px;object-fit:cover;flex-shrink:0;box-shadow:0 1px 3px rgba(0,0,0,0.3);`;
+          imgEl.style.cssText = 'width:26px;height:26px;border-radius:6px;object-fit:cover;flex-shrink:0;box-shadow:0 1px 3px rgba(0,0,0,0.3);';
           pill.appendChild(imgEl);
         }
         const spanEl = document.createElement('span');
@@ -571,6 +619,7 @@
         const end = eventEl.dataset.eventEnd || eventEl.dataset.end || '';
         const allDay = eventEl.dataset.eventAllday === 'true' || eventEl.dataset.allDay === 'true' || (eventEl.classList && eventEl.classList.contains('cf-allday')) || false;
         const location = eventEl.dataset.eventLocation || eventEl.dataset.location || (eventEl.querySelector && eventEl.querySelector('.cf-event-location')?.textContent) || '';
+        const imageUrl = eventEl.dataset.eventImageUrl || eventEl.dataset.imageUrl || '';
         const description = eventEl.dataset.eventDescription || eventEl.dataset.description || '';
         const color = eventEl.dataset.color || (eventEl.style && eventEl.style.backgroundColor) || 'var(--mm-accent-purple)';
         const pattern = eventEl.dataset.pattern || 'solid';
@@ -582,6 +631,7 @@
           end,
           all_day: allDay,
           location,
+          image_url: imageUrl,
           description,
           color,
           pattern,
@@ -654,21 +704,22 @@
       }
 
       // 5. Location or Mealie Recipe Hero Image
-      if (ev.location && ev.location.trim()) {
-        const loc = ev.location.trim();
-        if (loc.startsWith('/hearth-api/mealie/image/')) {
+      const heroOrLoc = (ev.image_url && ev.image_url.trim()) || (ev.location && ev.location.trim()) || '';
+      const isMealieHero = Boolean(heroOrLoc && (heroOrLoc.startsWith('/hearth-api/mealie/image/') || heroOrLoc.includes('/api/media/recipes/') || heroOrLoc.startsWith('data:image/')));
+      if (heroOrLoc) {
+        if (isMealieHero) {
           const imgWrap = document.createElement('div');
           imgWrap.style.cssText = 'width:100%;height:190px;border-radius:12px;overflow:hidden;margin:8px 0 10px;background:rgba(15,23,42,0.4);';
           const imgEl = document.createElement('img');
-          imgEl.src = loc;
+          imgEl.src = heroOrLoc;
           imgEl.alt = ev.title || 'Meal Photo';
           imgEl.style.cssText = 'width:100%;height:100%;object-fit:cover;display:block;';
           imgWrap.appendChild(imgEl);
           card.appendChild(imgWrap);
-        } else {
+        } else if (ev.location && ev.location.trim()) {
           const locEl = document.createElement('div');
           locEl.className = 'cf-modal-location';
-          locEl.textContent = `📍 ${loc}`;
+          locEl.textContent = `📍 ${ev.location.trim()}`;
           card.appendChild(locEl);
         }
       }
@@ -713,7 +764,7 @@
       // 7. Event Description (full scrollable recipe for Mealie, 280 chars for normal events)
       if (ev.description && ev.description.trim()) {
         let desc = ev.description.trim().replace(/\\n/g, '\n').replace(/\\,/g, ',').replace(/\\;/g, ';');
-        const isMealie = (ev.location && ev.location.startsWith('/hearth-api/mealie/image/')) || (ev.title && ev.title.includes('🍽️'));
+        const isMealie = isMealieHero || (ev.title && ev.title.includes('🍽️'));
         if (!isMealie && desc.length > 280) {
           desc = desc.slice(0, 277) + '...';
         }

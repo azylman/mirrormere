@@ -1721,7 +1721,7 @@ test('Calendar Family Client Controller', async (t) => {
     global.window.MirrormereCalendarFamily.unmount('fit-events-cal');
   });
 
-  await t.test('decorateMealieEvents renders larger 34px thumbnail in bottom bar .cf-mealie-bar and indexes day.meals for modal', () => {
+  await t.test('decorateMealieEvents renders 128px full-bleed photo card in bottom bar .cf-mealie-bar and indexes day.meals for modal', () => {
     const el = createMockElement({
       widgetId: 'mealie-bar-cal',
       defaultView: 'week',
@@ -1737,6 +1737,7 @@ test('Calendar Family Client Controller', async (t) => {
                 title: '🍽️ Creamy Tuscan Chicken',
                 all_day: true,
                 location: '/hearth-api/mealie/image/tuscan-chicken',
+                image_url: '/hearth-api/mealie/image/tuscan-chicken',
                 description: 'Ingredients:\n- Chicken breast\n- Sun-dried tomatoes',
                 color: '#10b981',
                 pattern: 'solid',
@@ -1749,28 +1750,49 @@ test('Calendar Family Client Controller', async (t) => {
       },
     });
 
-    const mealPill = createMockDOMNode('div', { className: 'cf-event cf-mealie-bar cf-event-clickable' });
+    const mealRow = createMockDOMNode('div', { className: 'cf-week-meal-row' });
+    const mealPill = createMockDOMNode('div', { className: 'cf-event cf-mealie-bar cf-mealie-card cf-event-clickable' });
     mealPill.dataset.eventId = 'mealie-1';
     mealPill.dataset.eventTitle = '🍽️ Creamy Tuscan Chicken';
     mealPill.dataset.eventLocation = '/hearth-api/mealie/image/tuscan-chicken';
     mealPill.dataset.eventDescription = 'Ingredients:\n- Chicken breast\n- Sun-dried tomatoes';
     mealPill.textContent = '🍽️ Creamy Tuscan Chicken';
-    el._panels.week.appendChild(mealPill);
+    mealRow.appendChild(mealPill);
+    el._panels.week.appendChild(mealRow);
 
     const inst = global.window.MirrormereCalendarFamily.mount(el);
 
     assert.equal(mealPill.dataset.mealieDecorated, 'true');
-    const imgEl = mealPill.querySelector('img');
-    assert.ok(imgEl, 'bottom bar Mealie pill should have an img element');
+    assert.equal(mealPill.style.minHeight, '128px');
+    assert.equal(mealPill.style.height, '128px');
+    assert.equal(mealPill.style.borderRadius, '12px');
+    assert.equal(mealPill.style.backgroundColor, '#d97757');
+
+    const imgEl = mealPill.querySelector('img.cf-mealie-photo');
+    assert.ok(imgEl, 'bottom bar Mealie card should have a full-bleed img element');
     assert.equal(imgEl.src, '/hearth-api/mealie/image/tuscan-chicken');
-    assert.ok(imgEl.style.cssText.includes('width:34px;height:34px'), 'bottom bar Mealie thumbnail should be 34px');
+    assert.ok(imgEl.style.cssText.includes('position:absolute;inset:0'), 'Mealie dish photo should be full-bleed absolute cover');
+    assert.ok(imgEl.style.cssText.includes('object-fit:cover'), 'Mealie dish photo should use object-fit:cover');
+
+    const badgeEl = mealPill.querySelector('.cf-mealie-pill');
+    assert.ok(badgeEl, 'Mealie card should have top-left frosted Dinner pill');
+    assert.equal(badgeEl.textContent, '🍽️ Dinner');
+
+    const scrimEl = mealPill.querySelector('.cf-mealie-scrim');
+    assert.ok(scrimEl, 'Mealie card should have bottom dark gradient scrim');
+    assert.ok(scrimEl.style.cssText.includes('linear-gradient(to top, rgba(16,12,10,0.90) 0%, rgba(16,12,10,0.62) 55%, rgba(16,12,10,0.0) 100%)'));
+
+    const titleEl = mealPill.querySelector('.cf-mealie-title');
+    assert.ok(titleEl, 'Mealie card should have wrapped recipe title');
+    assert.equal(titleEl.textContent, 'Creamy Tuscan Chicken');
+    assert.ok(titleEl.style.cssText.includes('-webkit-line-clamp:3'));
 
     const indexed = inst.eventIndex.get('mealie-1');
     assert.ok(indexed, 'day.meals entry should be indexed in eventIndex');
     assert.equal(indexed.title, '🍽️ Creamy Tuscan Chicken');
 
     mealPill.click();
-    assert.ok(inst.activeModal, 'clicking bottom bar Mealie pill should open modal');
+    assert.ok(inst.activeModal, 'clicking bottom bar Mealie card should open modal');
     inst.closeModal();
 
     global.window.MirrormereCalendarFamily.unmount('mealie-bar-cal');

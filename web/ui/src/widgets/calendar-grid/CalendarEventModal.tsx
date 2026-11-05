@@ -1,4 +1,5 @@
 import { useEffect, ViewTransition } from 'react';
+import { isMealieImageSource, resolveMealieEventImage } from './CalendarWeekBands';
 import { stripMealiePrefix } from './dateUtils';
 import type { FamilyEvent } from './types';
 
@@ -89,46 +90,53 @@ export function CalendarEventModal({
           ) : null}
 
           {/* Location or Mealie Hero Image */}
-          {event.location && event.location.trim() ? (
-            event.location.startsWith('/hearth-api/mealie/image/') ? (
-              <div
-                style={{
-                  width: '100%',
-                  height: '190px',
-                  borderRadius: '12px',
-                  overflow: 'hidden',
-                  margin: '8px 0 10px',
-                  background: 'rgba(15,23,42,0.4)',
-                }}
-              >
-                <img
-                  src={event.location}
-                  alt={modalTitle}
-                  style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
-                />
-              </div>
-            ) : (
-              <div className="cf-modal-location">
-                <svg
-                  className="cf-modal-icon"
-                  width="14"
-                  height="14"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2.2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                  style={{ flexShrink: 0 }}
+          {(() => {
+            const heroImg = resolveMealieEventImage(event);
+            if (heroImg) {
+              return (
+                <div
+                  style={{
+                    width: '100%',
+                    height: '190px',
+                    borderRadius: '12px',
+                    overflow: 'hidden',
+                    margin: '8px 0 10px',
+                    background: 'rgba(15,23,42,0.4)',
+                  }}
                 >
-                  <path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z" />
-                  <circle cx="12" cy="10" r="3" />
-                </svg>
-                <span>{event.location}</span>
-              </div>
-            )
-          ) : null}
+                  <img
+                    src={heroImg}
+                    alt={modalTitle}
+                    style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                  />
+                </div>
+              );
+            }
+            if (event.location && event.location.trim() && !isMealieImageSource(event.location)) {
+              return (
+                <div className="cf-modal-location">
+                  <svg
+                    className="cf-modal-icon"
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                    style={{ flexShrink: 0 }}
+                  >
+                    <path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z" />
+                    <circle cx="12" cy="10" r="3" />
+                  </svg>
+                  <span>{event.location}</span>
+                </div>
+              );
+            }
+            return null;
+          })()}
 
           {/* Owners Chips */}
           {((event.owners && event.owners.length > 0) ||
@@ -157,7 +165,7 @@ export function CalendarEventModal({
           {/* Description */}
           {event.description && event.description.trim() ? (() => {
             const isMealie =
-              event.location?.startsWith('/hearth-api/mealie/image/') ||
+              Boolean(resolveMealieEventImage(event)) ||
               event.title?.includes('\u{1F37D}');
             let desc = stripMealiePrefix(
               event.description

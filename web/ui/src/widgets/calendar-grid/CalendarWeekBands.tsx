@@ -73,7 +73,8 @@ export function CalendarAllDayBand({
         }}
       >
         {visibleAllDayEvents.map((ev) => {
-          const isMealie = ev.location?.startsWith('/hearth-api/mealie/image/');
+          const mealieImg = resolveMealieEventImage(ev);
+          const isMealie = Boolean(mealieImg);
           const spanStartDay = weekVM?.days?.[ev.start_col - 1]?.date || ev.start || daysToRender[0]?.date || currentDateISO;
           const spanEndDay = ev.col_span > 1
             ? weekVM?.days?.[Math.min((weekVM?.days?.length ?? 1) - 1, ev.start_col + ev.col_span - 2)]?.date || ev.end
@@ -96,7 +97,7 @@ export function CalendarAllDayBand({
                 display: isMealie ? 'flex' : undefined, alignItems: isMealie ? 'center' : undefined, gap: isMealie ? '6px' : undefined,
               }}
             >
-              {isMealie ? <MealiePillContent location={ev.location} title={ev.title} /> : stripMealiePrefix(ev.title)}
+              {isMealie ? <MealiePillContent location={mealieImg} title={ev.title} /> : stripMealiePrefix(ev.title)}
             </div>
           );
         })}
@@ -117,7 +118,8 @@ export function CalendarAllDayBand({
         {daysToRender.map((day) => (
           <div key={day.date} className="cf-day-allday-col" style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
             {day.all_day?.map((ev) => {
-              const isMealie = ev.location?.startsWith('/hearth-api/mealie/image/');
+              const mealieImg = resolveMealieEventImage(ev);
+              const isMealie = Boolean(mealieImg);
               return (
                 <div
                   key={ev.id} className="cf-edge-band cf-allday-band-local"
@@ -142,7 +144,7 @@ export function CalendarAllDayBand({
                       display: isMealie ? 'flex' : undefined, alignItems: isMealie ? 'center' : undefined, gap: isMealie ? '6px' : undefined,
                     }}
                   >
-                    {isMealie ? <MealiePillContent location={ev.location} title={ev.title} /> : stripMealiePrefix(ev.title)}
+                    {isMealie ? <MealiePillContent location={mealieImg} title={ev.title} /> : stripMealiePrefix(ev.title)}
                   </div>
                 </div>
               );
@@ -326,57 +328,140 @@ export function CalendarDayEventCard({
   );
 }
 
+export function isMealieImageSource(src?: string): boolean {
+  if (!src) return false;
+  const s = src.trim();
+  return (
+    s.startsWith('/hearth-api/mealie/image/') ||
+    s.includes('/api/media/recipes/') ||
+    s.startsWith('data:image/')
+  );
+}
+
+export function resolveMealieEventImage(ev: FamilyEvent): string | undefined {
+  const imgUrl = ev.image_url?.trim();
+  if (isMealieImageSource(imgUrl)) return imgUrl;
+  const loc = ev.location?.trim();
+  if (isMealieImageSource(loc)) return loc;
+  return undefined;
+}
+
 interface CalendarDayMealBarProps {
   meals?: FamilyEvent[];
   dayDate: string;
   onOpenModal: (ev: FamilyEvent, startDate?: string, endDate?: string) => void;
 }
 
-export function CalendarDayMealBar({ meals, dayDate, onOpenModal }: CalendarDayMealBarProps) {
+function CalendarDayMealBar({ meals, dayDate, onOpenModal }: CalendarDayMealBarProps) {
   if (!meals || meals.length === 0) return null;
 
   return (
     <div
-      className="cf-day-meal-bar"
+      className="cf-day-meal-bar cf-day-meal-col"
+      data-date={dayDate}
       style={{
-        display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '6px', paddingTop: '5px',
-        borderTop: '1px dashed var(--mm-divider, rgba(90, 60, 30, 0.12))', flexShrink: 0,
+        display: 'flex', flexDirection: 'column', gap: '4px', minWidth: 0, flexShrink: 0,
       }}
     >
       {meals.map((ev) => {
-        const isMealieImg = ev.location?.startsWith('/hearth-api/mealie/image/');
+        const imgSrc = resolveMealieEventImage(ev);
+        const cleanTitle = stripMealiePrefix(ev.title);
         return (
           <div
             key={ev.id}
-            className={`cf-event cf-mealie-bar cf-event-clickable${ev.pattern ? ` cf-pattern-${ev.pattern}` : ''}`}
+            className={`cf-event cf-mealie-bar cf-mealie-card cf-event-clickable${ev.pattern ? ` cf-pattern-${ev.pattern}` : ''}`}
             role="button" tabIndex={0} title={ev.title} aria-label={ev.title}
             data-event-id={ev.id} data-event-title={ev.title} data-event-allday="true"
-            data-event-location={ev.location} data-event-description={ev.description}
+            data-event-location={ev.location}
+            data-event-image-url={imgSrc}
+            data-event-description={ev.description}
             data-mealie-decorated="true"
             onClick={() => onOpenModal(ev, dayDate)}
             onKeyDown={(e) => handleBandEventKeyDown(e, () => onOpenModal(ev, dayDate))}
             style={{
-              display: 'flex', alignItems: 'center', gap: '7px', padding: '4px 6px', borderRadius: '8px',
-              fontSize: '0.68rem', fontWeight: 800, color: ev.text_color, backgroundColor: ev.color,
-              cursor: 'pointer', touchAction: 'manipulation', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              position: 'relative', minHeight: '128px', height: '128px', borderRadius: '12px',
+              overflow: 'hidden', display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
+              backgroundColor: '#d97757', color: '#ffffff', cursor: 'pointer', touchAction: 'manipulation',
+              boxShadow: '0 2px 6px rgba(0, 0, 0, 0.14)',
             }}
           >
-            {isMealieImg && (
+            {imgSrc && (
               <img
-                src={ev.location}
+                src={imgSrc}
                 alt=""
+                className="cf-mealie-photo"
                 style={{
-                  width: '34px', height: '34px', borderRadius: '6px', objectFit: 'cover',
-                  flexShrink: 0, boxShadow: '0 1px 3px rgba(0,0,0,0.3)',
+                  position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover',
+                  display: 'block', zIndex: 0,
                 }}
               />
             )}
-            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 800 }}>
-              🍽️ {stripMealiePrefix(ev.title)}
+            <span
+              className="cf-mealie-pill"
+              style={{
+                position: 'absolute', top: '6px', left: '6px', zIndex: 2, padding: '2px 7px',
+                borderRadius: '9999px', fontSize: '0.56rem', fontWeight: 800, letterSpacing: '0.02em',
+                color: '#ffffff', background: 'rgba(16,12,10,0.52)', backdropFilter: 'blur(6px)',
+                WebkitBackdropFilter: 'blur(6px)', lineHeight: 1.2, pointerEvents: 'none',
+              }}
+            >
+              🍽️ Dinner
             </span>
+            <div
+              className="cf-mealie-scrim"
+              style={{
+                position: 'absolute', left: 0, right: 0, bottom: 0, zIndex: 1, padding: '20px 8px 7px',
+                background: 'linear-gradient(to top, rgba(16,12,10,0.90) 0%, rgba(16,12,10,0.62) 55%, rgba(16,12,10,0.0) 100%)',
+                display: 'flex', alignItems: 'flex-end', pointerEvents: 'none',
+              }}
+            >
+              <span
+                className="cf-mealie-title"
+                style={{
+                  fontSize: '0.70rem', fontWeight: 800, lineHeight: 1.2, color: '#ffffff',
+                  display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical',
+                  overflow: 'hidden', wordBreak: 'break-word', textShadow: '0 1px 2px rgba(0,0,0,0.6)',
+                }}
+              >
+                {cleanTitle}
+              </span>
+            </div>
           </div>
         );
       })}
+    </div>
+  );
+}
+
+interface CalendarWeekMealRowProps {
+  daysToRender: FamilyDay[];
+  marginLeft?: string;
+  onOpenModal: (ev: FamilyEvent, startDate?: string, endDate?: string) => void;
+}
+
+export function CalendarWeekMealRow({ daysToRender, marginLeft, onOpenModal }: CalendarWeekMealRowProps) {
+  const hasMeals = daysToRender.some((d) => d.meals && d.meals.length > 0);
+  if (!hasMeals) return null;
+
+  return (
+    <div
+      className="cf-week-meal-row"
+      style={{
+        marginLeft, display: 'grid', gridTemplateColumns: `repeat(${daysToRender.length}, 1fr)`,
+        gap: '6px', paddingTop: '6px', marginTop: '6px',
+        borderTop: '1px dashed var(--mm-divider, rgba(90, 60, 30, 0.12))', flexShrink: 0,
+      }}
+    >
+      {daysToRender.map((day) => (
+        <div
+          key={day.date}
+          className="cf-week-meal-cell"
+          data-date={day.date}
+          style={{ display: 'flex', flexDirection: 'column', gap: '4px', minWidth: 0 }}
+        >
+          <CalendarDayMealBar meals={day.meals} dayDate={day.date} onOpenModal={onOpenModal} />
+        </div>
+      ))}
     </div>
   );
 }

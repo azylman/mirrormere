@@ -5,9 +5,9 @@ import { useDisplayStore } from '../../store';
 import {
   CalendarAllDayBand,
   CalendarDayEventCard,
-  CalendarDayMealBar,
   CalendarEdgeEventsBand,
   CalendarTimelineAxis,
+  CalendarWeekMealRow,
 } from './CalendarWeekBands';
 import { computeNowIndicatorPct } from './dateUtils';
 import type {
@@ -296,7 +296,6 @@ export function CalendarWeekView({
                         />
                       ))}
                     </div>
-                    <CalendarDayMealBar meals={day.meals} dayDate={day.date} onOpenModal={onOpenModal} />
                   </div>
                 );
               })}
@@ -306,6 +305,11 @@ export function CalendarWeekView({
           <CalendarEdgeEventsBand
             edge="late" daysToRender={daysToRender} inferredTimeFormat={inferredTimeFormat}
             marginLeft={marginLeft} onOpenModal={onOpenModal}
+          />
+          <CalendarWeekMealRow
+            daysToRender={daysToRender}
+            marginLeft={marginLeft}
+            onOpenModal={onOpenModal}
           />
         </>
       ) : (
