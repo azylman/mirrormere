@@ -110,6 +110,47 @@ func TestCalendarProvider_Fetch_ParsingAndRecurrence(t *testing.T) {
 		}
 	})
 
+	t.Run("recipe image extraction for single and recurring events", func(t *testing.T) {
+		t.Parallel()
+		ics := icsDoc(
+			"BEGIN:VEVENT\nUID:img-prop\nDTSTART;VALUE=DATE:20260925\nDTEND;VALUE=DATE:20260926\nSUMMARY:Mealie Image Prop\nIMAGE:/hearth-api/mealie/image/recipe-1\nEND:VEVENT",
+			"BEGIN:VEVENT\nUID:attach-prop\nDTSTART;VALUE=DATE:20260925\nDTEND;VALUE=DATE:20260926\nSUMMARY:Mealie Attach Prop\nATTACH:https://mealie.local/api/media/recipes/abc/images/min-original.webp\nEND:VEVENT",
+			"BEGIN:VEVENT\nUID:xmealie-prop\nDTSTART;VALUE=DATE:20260925\nDTEND;VALUE=DATE:20260926\nSUMMARY:Mealie X-Prop\nX-MEALIE-IMAGE:data:image/webp;base64,AAAA\nEND:VEVENT",
+			"BEGIN:VEVENT\nUID:url-prop\nDTSTART;VALUE=DATE:20260925\nDTEND;VALUE=DATE:20260926\nSUMMARY:Mealie URL Prop\nURL:/api/media/recipes/def/images/original.webp\nEND:VEVENT",
+			"BEGIN:VEVENT\nUID:loc-prop\nDTSTART;VALUE=DATE:20260925\nDTEND;VALUE=DATE:20260926\nSUMMARY:Mealie Location Fallback\nURL:https://example.com/not-an-image\nLOCATION:/hearth-api/mealie/image/recipe-loc\nEND:VEVENT",
+			"BEGIN:VEVENT\nUID:recur-img\nDTSTART;VALUE=DATE:20260926\nDTEND;VALUE=DATE:20260927\nRRULE:FREQ=DAILY;COUNT=2\nSUMMARY:Recurring Taco Night\nX-MEALIE-IMAGE:/hearth-api/mealie/image/tacos\nEND:VEVENT",
+		)
+		ref := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+		snap, err := fetchTestCalendar(t, ics, ref, nil)
+		if err != nil || len(snap.Events) != 7 {
+			t.Fatalf("fetch failed: err=%v len=%d events=%+v", err, len(snap.Events), snap.Events)
+		}
+		wantImages := map[string]string{
+			"Mealie Image Prop":        "/hearth-api/mealie/image/recipe-1",
+			"Mealie Attach Prop":       "https://mealie.local/api/media/recipes/abc/images/min-original.webp",
+			"Mealie X-Prop":            "data:image/webp;base64,AAAA",
+			"Mealie URL Prop":          "/api/media/recipes/def/images/original.webp",
+			"Mealie Location Fallback": "/hearth-api/mealie/image/recipe-loc",
+			"Recurring Taco Night":     "/hearth-api/mealie/image/tacos",
+		}
+		recurringCount := 0
+		for _, ev := range snap.Events {
+			wantURL, ok := wantImages[ev.Title]
+			if !ok {
+				t.Fatalf("unexpected event title %q", ev.Title)
+			}
+			if ev.ImageURL != wantURL {
+				t.Errorf("event %q ImageURL = %q, want %q", ev.Title, ev.ImageURL, wantURL)
+			}
+			if ev.Title == "Recurring Taco Night" {
+				recurringCount++
+			}
+		}
+		if recurringCount != 2 {
+			t.Errorf("expected 2 recurring events with ImageURL, got %d", recurringCount)
+		}
+	})
+
 	t.Run("recurrence exdates and overrides", func(t *testing.T) {
 		t.Parallel()
 		ics := icsDoc(

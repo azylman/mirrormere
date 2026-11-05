@@ -705,8 +705,8 @@
 
       // 5. Location or Mealie Recipe Hero Image
       const heroOrLoc = (ev.image_url && ev.image_url.trim()) || (ev.location && ev.location.trim()) || '';
+      const isMealieHero = Boolean(heroOrLoc && (heroOrLoc.startsWith('/hearth-api/mealie/image/') || heroOrLoc.includes('/api/media/recipes/') || heroOrLoc.startsWith('data:image/')));
       if (heroOrLoc) {
-        const isMealieHero = heroOrLoc.startsWith('/hearth-api/mealie/image/') || heroOrLoc.includes('/api/media/recipes/') || heroOrLoc.startsWith('data:image/');
         if (isMealieHero) {
           const imgWrap = document.createElement('div');
           imgWrap.style.cssText = 'width:100%;height:190px;border-radius:12px;overflow:hidden;margin:8px 0 10px;background:rgba(15,23,42,0.4);';
@@ -764,7 +764,7 @@
       // 7. Event Description (full scrollable recipe for Mealie, 280 chars for normal events)
       if (ev.description && ev.description.trim()) {
         let desc = ev.description.trim().replace(/\\n/g, '\n').replace(/\\,/g, ',').replace(/\\;/g, ';');
-        const isMealie = (ev.location && ev.location.startsWith('/hearth-api/mealie/image/')) || (ev.title && ev.title.includes('🍽️'));
+        const isMealie = isMealieHero || (ev.title && ev.title.includes('🍽️'));
         if (!isMealie && desc.length > 280) {
           desc = desc.slice(0, 277) + '...';
         }

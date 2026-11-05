@@ -79,19 +79,47 @@ describe('CalendarEventModal', () => {
     expect(onClose).toHaveBeenCalledTimes(2);
   });
 
-  it('renders Mealie hero image when location starts with /hearth-api/mealie/image/', () => {
+  it('renders Mealie hero image when location or image_url has a supported Mealie image source', () => {
     const mealieEvent: FamilyEvent = {
       id: 'mealie-1',
       title: '🍽️ Pasta Carbonara',
       location: '/hearth-api/mealie/image/carbonara.jpg',
     };
-    const { container } = render(
+    const { container, rerender } = render(
       <CalendarEventModal event={mealieEvent} dateLabel="Oct 27" onClose={vi.fn()} />
     );
 
-    const img = container.querySelector('img');
+    let img = container.querySelector('img');
     expect(img).not.toBeNull();
     expect(img?.getAttribute('src')).toBe('/hearth-api/mealie/image/carbonara.jpg');
+    expect(container.querySelector('.cf-modal-location')).toBeNull();
+
+    // Also supports image_url with /api/media/recipes/... while suppressing non-image location when hero image renders
+    const mediaEvent: FamilyEvent = {
+      id: 'mealie-2',
+      title: 'Salmon Bowl',
+      location: 'Kitchen',
+      image_url: '/api/media/recipes/salmon/images/min-original.webp',
+      description: 'B'.repeat(320),
+    };
+    rerender(<CalendarEventModal event={mediaEvent} dateLabel="Oct 27" onClose={vi.fn()} />);
+    img = container.querySelector('img');
+    expect(img).not.toBeNull();
+    expect(img?.getAttribute('src')).toBe('/api/media/recipes/salmon/images/min-original.webp');
+    expect(container.querySelector('.cf-modal-location')).toBeNull();
+    // Description is treated as Mealie recipe (not truncated to 280 chars) even without plate emoji in title
+    const descEl = container.querySelector('.cf-modal-description');
+    expect(descEl?.textContent?.length).toBe(320);
+
+    // Also supports data:image/... in location without rendering location pin
+    const dataImgEvent: FamilyEvent = {
+      id: 'mealie-3',
+      title: 'Tacos',
+      location: 'data:image/webp;base64,UklGRg==',
+    };
+    rerender(<CalendarEventModal event={dataImgEvent} dateLabel="Oct 27" onClose={vi.fn()} />);
+    img = container.querySelector('img');
+    expect(img?.getAttribute('src')).toBe('data:image/webp;base64,UklGRg==');
     expect(container.querySelector('.cf-modal-location')).toBeNull();
   });
 
@@ -707,7 +735,7 @@ describe('CalendarMonthView & CalendarWeekView', () => {
         title: '🍽️ Tacos Dinner',
         start_col: 1,
         col_span: 1,
-        location: '/hearth-api/mealie/image/tacos.jpg',
+        image_url: '/api/media/recipes/tacos/images/min-original.webp',
         color: '#ff6f59',
         text_color: '#ffffff',
         pattern: 'stripes',
@@ -737,7 +765,7 @@ describe('CalendarMonthView & CalendarWeekView', () => {
         />
       );
 
-      const mealieImg = container.querySelector('img[src="/hearth-api/mealie/image/tacos.jpg"]');
+      const mealieImg = container.querySelector('img[src="/api/media/recipes/tacos/images/min-original.webp"]');
       expect(mealieImg).not.toBeNull();
       expect(container.querySelector('.cf-mealie-icon')).not.toBeNull();
       expect(container.querySelector('.cf-pattern-stripes')).not.toBeNull();

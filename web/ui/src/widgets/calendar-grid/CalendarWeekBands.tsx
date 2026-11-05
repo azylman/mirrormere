@@ -73,7 +73,8 @@ export function CalendarAllDayBand({
         }}
       >
         {visibleAllDayEvents.map((ev) => {
-          const isMealie = ev.location?.startsWith('/hearth-api/mealie/image/');
+          const mealieImg = resolveMealieEventImage(ev);
+          const isMealie = Boolean(mealieImg);
           const spanStartDay = weekVM?.days?.[ev.start_col - 1]?.date || ev.start || daysToRender[0]?.date || currentDateISO;
           const spanEndDay = ev.col_span > 1
             ? weekVM?.days?.[Math.min((weekVM?.days?.length ?? 1) - 1, ev.start_col + ev.col_span - 2)]?.date || ev.end
@@ -96,7 +97,7 @@ export function CalendarAllDayBand({
                 display: isMealie ? 'flex' : undefined, alignItems: isMealie ? 'center' : undefined, gap: isMealie ? '6px' : undefined,
               }}
             >
-              {isMealie ? <MealiePillContent location={ev.location} title={ev.title} /> : stripMealiePrefix(ev.title)}
+              {isMealie ? <MealiePillContent location={mealieImg} title={ev.title} /> : stripMealiePrefix(ev.title)}
             </div>
           );
         })}
@@ -117,7 +118,8 @@ export function CalendarAllDayBand({
         {daysToRender.map((day) => (
           <div key={day.date} className="cf-day-allday-col" style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
             {day.all_day?.map((ev) => {
-              const isMealie = ev.location?.startsWith('/hearth-api/mealie/image/');
+              const mealieImg = resolveMealieEventImage(ev);
+              const isMealie = Boolean(mealieImg);
               return (
                 <div
                   key={ev.id} className="cf-edge-band cf-allday-band-local"
@@ -142,7 +144,7 @@ export function CalendarAllDayBand({
                       display: isMealie ? 'flex' : undefined, alignItems: isMealie ? 'center' : undefined, gap: isMealie ? '6px' : undefined,
                     }}
                   >
-                    {isMealie ? <MealiePillContent location={ev.location} title={ev.title} /> : stripMealiePrefix(ev.title)}
+                    {isMealie ? <MealiePillContent location={mealieImg} title={ev.title} /> : stripMealiePrefix(ev.title)}
                   </div>
                 </div>
               );
@@ -326,19 +328,21 @@ export function CalendarDayEventCard({
   );
 }
 
-function isMealieImageSource(src?: string): boolean {
+export function isMealieImageSource(src?: string): boolean {
   if (!src) return false;
+  const s = src.trim();
   return (
-    src.startsWith('/hearth-api/mealie/image/') ||
-    src.includes('/api/media/recipes/') ||
-    src.startsWith('data:image/')
+    s.startsWith('/hearth-api/mealie/image/') ||
+    s.includes('/api/media/recipes/') ||
+    s.startsWith('data:image/')
   );
 }
 
-function resolveMealieEventImage(ev: FamilyEvent): string | undefined {
-  const rec = ev as FamilyEvent & { image_url?: string };
-  if (isMealieImageSource(rec.image_url)) return rec.image_url;
-  if (isMealieImageSource(ev.location)) return ev.location;
+export function resolveMealieEventImage(ev: FamilyEvent): string | undefined {
+  const imgUrl = ev.image_url?.trim();
+  if (isMealieImageSource(imgUrl)) return imgUrl;
+  const loc = ev.location?.trim();
+  if (isMealieImageSource(loc)) return loc;
   return undefined;
 }
 
