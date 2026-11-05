@@ -1425,6 +1425,7 @@ func TestMealieBottomBarDuplicateDinnerAndMemberSummaryMatching(t *testing.T) {
 			CalendarName: "Mealie",
 			Title:        "🍽️ Honey Garlic Salmon",
 			Location:     "/hearth-api/mealie/image/recipe-123",
+			ImageURL:     "/api/media/recipes/recipe-123/images/min-original.webp",
 			Description:  "Ingredients:\n- Salmon\n- Honey",
 			Start:        "2026-09-27",
 			End:          "2026-09-27",
@@ -1487,6 +1488,9 @@ func TestMealieBottomBarDuplicateDinnerAndMemberSummaryMatching(t *testing.T) {
 	day0 := view.Days[0]
 	if len(day0.Meals) != 2 || day0.Meals[0].ID != "mealie_2026-09-27" {
 		t.Fatalf("expected Mealie events in day0.Meals, got %+v", day0.Meals)
+	}
+	if day0.Meals[0].ImageURL != "/api/media/recipes/recipe-123/images/min-original.webp" {
+		t.Errorf("expected day0.Meals[0].ImageURL preserved, got %q", day0.Meals[0].ImageURL)
 	}
 	if len(day0.AllDay) != 0 {
 		t.Errorf("expected Mealie event excluded from day0.AllDay, got %+v", day0.AllDay)
@@ -1560,8 +1564,8 @@ func TestMealieBottomBarDuplicateDinnerAndMemberSummaryMatching(t *testing.T) {
 		Data:       snap(withNonDupDinner...),
 		Config:     cfg,
 	})
-	if !strings.Contains(html, "cf-day-meal-bar") || !strings.Contains(html, "cf-mealie-bar") {
-		t.Errorf("expected widget HTML to render cf-day-meal-bar and cf-mealie-bar")
+	if !strings.Contains(html, "cf-week-meal-row") || !strings.Contains(html, "cf-day-meal-bar") || !strings.Contains(html, "cf-mealie-bar") {
+		t.Errorf("expected widget HTML to render cf-week-meal-row, cf-day-meal-bar, and cf-mealie-bar")
 	}
 
 	if isMealieFamilyEvent(nil, provider.CalendarEvent{}) {
@@ -1569,6 +1573,15 @@ func TestMealieBottomBarDuplicateDinnerAndMemberSummaryMatching(t *testing.T) {
 	}
 	if !isMealieFamilyEvent(&FamilyEvent{Title: "🍽️ Pasta"}, provider.CalendarEvent{}) {
 		t.Errorf("expected plate emoji prefix to match Mealie event")
+	}
+	if !isMealieFamilyEvent(&FamilyEvent{ImageURL: "/api/media/recipes/abc/images/min-original.webp"}, provider.CalendarEvent{}) {
+		t.Errorf("expected /api/media/recipes/ ImageURL to match Mealie event")
+	}
+	if !isMealieFamilyEvent(&FamilyEvent{Location: "data:image/webp;base64,AAAA"}, provider.CalendarEvent{}) {
+		t.Errorf("expected data:image/ Location to match Mealie event")
+	}
+	if feImg := newFamilyEvent(provider.CalendarEvent{ID: "m1", Title: "🍽️ Dish", ImageURL: "/api/media/recipes/abc/images/min-original.webp", AllDay: true}, time.UTC); feImg.Location != "/api/media/recipes/abc/images/min-original.webp" || feImg.ImageURL != "/api/media/recipes/abc/images/min-original.webp" {
+		t.Errorf("expected newFamilyEvent to backfill empty Location from ImageURL, got %+v", feImg)
 	}
 	if !isMealieFamilyEvent(&FamilyEvent{ID: "mealie_2026-10-01"}, provider.CalendarEvent{}) {
 		t.Errorf("expected mealie_ ID prefix to match Mealie event")

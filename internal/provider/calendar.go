@@ -34,6 +34,7 @@ type CalendarEvent struct {
 	AllDay       bool   `json:"all_day"`
 	Location     string `json:"location"`
 	Description  string `json:"description"`
+	ImageURL     string `json:"image_url,omitempty"`
 }
 
 // CalendarSnapshot represents the normalized calendar provider payload.
@@ -600,7 +601,33 @@ func parseSingleEvent(e *ical.VEvent, source CalendarSource, uid, title, locatio
 		AllDay:       isAllDay,
 		Location:     location,
 		Description:  description,
+		ImageURL:     extractEventImageURL(e, location),
 	}, true
+}
+
+func extractEventImageURL(e *ical.VEvent, location string) string {
+	for _, token := range []string{"IMAGE", "ATTACH", "X-MEALIE-IMAGE", "URL"} {
+		if p := e.GetProperty(ical.ComponentProperty(token)); p != nil {
+			val := strings.TrimSpace(p.Value)
+			if isRecipeImageURL(val) {
+				return val
+			}
+		}
+	}
+	if isRecipeImageURL(location) {
+		return strings.TrimSpace(location)
+	}
+	return ""
+}
+
+func isRecipeImageURL(raw string) bool {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return false
+	}
+	return strings.HasPrefix(s, "/hearth-api/mealie/image/") ||
+		strings.Contains(s, "/api/media/recipes/") ||
+		strings.HasPrefix(s, "data:image/")
 }
 
 func expandRecurringEvent(rruleProp *ical.IANAProperty, base CalendarEvent, start time.Time, duration time.Duration, winStart, winEnd time.Time, excluded map[string]bool) []CalendarEvent {
@@ -681,6 +708,7 @@ func expandRecurrence(e *ical.VEvent, source CalendarSource, uid, title, locatio
 		AllDay:       isAllDay,
 		Location:     location,
 		Description:  description,
+		ImageURL:     extractEventImageURL(e, location),
 	}
 
 	return expandRecurringEvent(rruleProp, base, startTime, duration, windowStart, windowEnd, excluded)

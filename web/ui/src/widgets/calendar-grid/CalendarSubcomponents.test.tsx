@@ -982,13 +982,13 @@ describe('CalendarMonthView & CalendarWeekView', () => {
       fireEvent.keyDown(items[0], { key: ' ' });
     });
 
-    it('renders .cf-day-meal-bar and .cf-mealie-bar with 34px thumbnail, pattern, click/keyboard modal triggers, and filters meals by member', () => {
+    it('renders .cf-week-meal-row, .cf-day-meal-bar, and 128px full-bleed .cf-mealie-bar photo card with Dinner pill, gradient scrim, click/keyboard modal triggers, and filters meals by member', () => {
       const onOpenModal = vi.fn();
       const daysToRender: FamilyDay[] = [
         {
           date: '2026-10-27', day_of_month: 27, is_today: true, is_weekend: false,
           meals: [
-            { id: 'meal-1', title: '🍽️ Creamy Tuscan Chicken', location: '/hearth-api/mealie/image/tuscan.jpg', description: 'Recipe notes', color: '#10b981', text_color: '#ffffff', pattern: 'dots', owners: ['Alex'] },
+            { id: 'meal-1', title: '🍽️ Creamy Tuscan Chicken', location: 'Kitchen', image_url: '/hearth-api/mealie/image/tuscan.jpg', description: 'Recipe notes', color: '#10b981', text_color: '#ffffff', pattern: 'dots', owners: ['Alex'] } as FamilyEvent,
             { id: 'meal-2', title: 'Tacos Night', color: '#8b60ed', text_color: '#ffffff', owners: ['Sam'] },
           ],
         },
@@ -996,25 +996,38 @@ describe('CalendarMonthView & CalendarWeekView', () => {
       const { container } = render(
         <CalendarWeekView activeView="week" daysToRender={daysToRender} visibleAllDayEvents={[]} members={members} currentDateISO="2026-10-27" onOpenModal={onOpenModal} />
       );
-      const mealBar = container.querySelector('.cf-day-meal-bar')!;
+      const dayCol = container.querySelector('.cf-day')!;
+      expect(dayCol.querySelector('.cf-day-meal-bar')).toBeNull();
+
+      const mealRow = container.querySelector('.cf-week-meal-row')!;
+      expect(mealRow).not.toBeNull();
+      const mealBar = mealRow.querySelector('.cf-day-meal-bar')!;
       expect(mealBar).not.toBeNull();
       const mealPills = mealBar.querySelectorAll('.cf-event.cf-mealie-bar.cf-event-clickable');
       expect(mealPills.length).toBe(2);
 
       const firstPill = mealPills[0] as HTMLElement;
       expect(firstPill.classList.contains('cf-pattern-dots')).toBe(true);
+      expect(firstPill.classList.contains('cf-mealie-card')).toBe(true);
+      expect(firstPill.style.minHeight).toBe('128px');
+      expect(firstPill.style.height).toBe('128px');
+      expect(firstPill.style.borderRadius).toBe('12px');
+      expect(firstPill.style.backgroundColor).toBe('rgb(217, 119, 87)');
       expect(firstPill.getAttribute('data-event-id')).toBe('meal-1');
       expect(firstPill.getAttribute('data-event-allday')).toBe('true');
-      expect(firstPill.getAttribute('data-event-location')).toBe('/hearth-api/mealie/image/tuscan.jpg');
+      expect(firstPill.getAttribute('data-event-location')).toBe('Kitchen');
+      expect(firstPill.getAttribute('data-event-image-url')).toBe('/hearth-api/mealie/image/tuscan.jpg');
       expect(firstPill.getAttribute('data-event-description')).toBe('Recipe notes');
-      expect(firstPill.textContent).toBe('🍽️ Creamy Tuscan Chicken');
+      expect(firstPill.querySelector('.cf-mealie-pill')?.textContent).toBe('🍽️ Dinner');
+      expect(firstPill.querySelector('.cf-mealie-title')?.textContent).toBe('Creamy Tuscan Chicken');
 
-      const thumb = firstPill.querySelector('img') as HTMLImageElement;
+      const thumb = firstPill.querySelector('img.cf-mealie-photo') as HTMLImageElement;
       expect(thumb.getAttribute('src')).toBe('/hearth-api/mealie/image/tuscan.jpg');
-      expect(thumb.style.width).toBe('34px');
-      expect(thumb.style.height).toBe('34px');
+      expect(thumb.style.position).toBe('absolute');
+      expect(thumb.style.objectFit).toBe('cover');
       expect((mealPills[1] as HTMLElement).querySelector('img')).toBeNull();
-      expect(mealPills[1].textContent).toBe('🍽️ Tacos Night');
+      expect((mealPills[1] as HTMLElement).style.backgroundColor).toBe('rgb(217, 119, 87)');
+      expect(mealPills[1].querySelector('.cf-mealie-title')?.textContent).toBe('Tacos Night');
 
       fireEvent.click(firstPill);
       expect(onOpenModal).toHaveBeenCalledWith(expect.objectContaining({ id: 'meal-1' }), '2026-10-27');
