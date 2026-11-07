@@ -8,6 +8,7 @@ import {
   CalendarEdgeEventsBand,
   CalendarTimelineAxis,
   CalendarWeekMealRow,
+  detectDaySpecialStatus,
 } from './CalendarWeekBands';
 import { computeNowIndicatorPct } from './dateUtils';
 import type {
@@ -112,6 +113,8 @@ export interface CalendarWeekViewProps {
   currentDateISO: string;
   onOpenModal: (ev: FamilyEvent, startDate?: string, endDate?: string) => void;
   onSelectDay?: (date: string) => void;
+  celebrateSpecialDays?: boolean;
+  eventFlair?: boolean;
 }
 
 export function CalendarWeekView({
@@ -123,6 +126,8 @@ export function CalendarWeekView({
   currentDateISO,
   onOpenModal,
   onSelectDay,
+  celebrateSpecialDays = true,
+  eventFlair = true,
 }: CalendarWeekViewProps) {
   const tz = useDisplayStore((s) => s.header.timezone);
   const isDocVisible = useDocumentVisible();
@@ -187,7 +192,7 @@ export function CalendarWeekView({
           <CalendarAllDayBand
             activeView={activeView} weekVM={weekVM} daysToRender={daysToRender}
             visibleAllDayEvents={visibleAllDayEvents} currentDateISO={currentDateISO}
-            marginLeft={marginLeft} onOpenModal={onOpenModal}
+            marginLeft={marginLeft} onOpenModal={onOpenModal} eventFlair={eventFlair}
           />
           <CalendarEdgeEventsBand
             edge="early" daysToRender={daysToRender} inferredTimeFormat={inferredTimeFormat}
@@ -200,6 +205,23 @@ export function CalendarWeekView({
               style={{ display: 'grid', gridTemplateColumns: `repeat(${daysToRender.length}, 1fr)`, gap: '6px', flex: 1, minHeight: 0 }}
             >
               {daysToRender.map((day) => {
+                const dayAllEvents: FamilyEvent[] = [
+                  ...(day.all_day || []),
+                  ...(day.events || []),
+                  ...(day.early_events || []),
+                  ...(day.late_events || []),
+                  ...(day.meals || []),
+                  ...(visibleAllDayEvents?.filter((s) => {
+                    if (s.start && s.end && day.date) {
+                      const sStart = s.start.slice(0, 10);
+                      const sEnd = s.end.slice(0, 10);
+                      return day.date >= sStart && day.date <= sEnd;
+                    }
+                    return false;
+                  }) || []),
+                ];
+                const specialStatus = celebrateSpecialDays !== false ? detectDaySpecialStatus(dayAllEvents, members) : null;
+                const specialClass = specialStatus === 'birthday' ? ' cf-special-birthday' : specialStatus === 'holiday' ? ' cf-special-holiday' : '';
                 const dayBg = day.is_today ? 'var(--mm-cal-today-bg, var(--mm-lavender-light, #f3effe))'
                   : day.is_weekend ? 'var(--mm-cal-weekend-bg, rgba(90, 60, 30, 0.02))'
                   : 'var(--mm-cal-day-bg, rgba(90, 60, 30, 0.03))';
@@ -209,8 +231,9 @@ export function CalendarWeekView({
                 return (
                   <div
                     key={day.date}
-                    className={`cf-day${day.is_today ? ' cf-today' : ''}${day.is_weekend ? ' cf-weekend' : ''}`}
+                    className={`cf-day${day.is_today ? ' cf-today' : ''}${day.is_weekend ? ' cf-weekend' : ''}${specialClass}`}
                     data-date={day.date}
+                    data-special-day={specialStatus || undefined}
                     style={{
                       display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 0,
                       borderRadius: '14px', padding: '6px', background: dayBg, border: dayBorder,
@@ -229,7 +252,7 @@ export function CalendarWeekView({
                         }
                       }}
                       style={{
-                        height: '44px', boxSizing: 'border-box', textAlign: 'center', paddingBottom: '6px',
+                        minHeight: '44px', height: 'auto', boxSizing: 'border-box', textAlign: 'center', paddingBottom: '6px',
                         borderBottom: day.is_today
                           ? '1px solid var(--mm-cal-today-header-border, rgba(139, 96, 237, 0.25))'
                           : '1px solid var(--mm-divider, rgba(90, 60, 30, 0.07))',
@@ -254,6 +277,12 @@ export function CalendarWeekView({
                       >
                         {day.day_of_month}
                       </div>
+                      {specialStatus === 'birthday' && (
+                        <div className="cf-special-pill cf-pill-birthday">🎂 Family Bday</div>
+                      )}
+                      {specialStatus === 'holiday' && (
+                        <div className="cf-special-pill cf-pill-holiday">✨ Holiday</div>
+                      )}
                     </div>
 
                     <div
@@ -293,6 +322,7 @@ export function CalendarWeekView({
                         <CalendarDayEventCard
                           key={ev.id} ev={ev} dayDate={day.date}
                           inferredTimeFormat={inferredTimeFormat} onOpenModal={onOpenModal}
+                          eventFlair={eventFlair}
                         />
                       ))}
                     </div>

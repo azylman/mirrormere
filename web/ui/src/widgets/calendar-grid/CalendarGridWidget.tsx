@@ -197,6 +197,8 @@ export function CalendarGridWidget({
   const entryVM = entry?.viewModel as Record<string, unknown> | undefined;
 
   const defaultView = resolveDefaultView(config, entryVM);
+  const celebrateSpecialDays = config?.celebrate_special_days !== false;
+  const eventFlair = config?.event_flair !== false;
 
   const [activeView, setActiveView] = useState<ViewMode>(defaultView);
   const [selectedMember, setSelectedMember] = useState<string | null>(null);
@@ -317,6 +319,8 @@ export function CalendarGridWidget({
       data-active-view={activeView}
       data-current-date={currentDateISO}
       data-page-offset={String(pageOffset)}
+      data-celebrate-special-days={String(celebrateSpecialDays)}
+      data-event-flair={String(eventFlair)}
       style={memberCssVars}
       onPointerDown={handleUserActivity}
     >
@@ -353,6 +357,8 @@ export function CalendarGridWidget({
         currentDateISO={currentDateISO}
         onOpenModal={openModal}
         onSelectDay={selectDayView}
+        celebrateSpecialDays={celebrateSpecialDays}
+        eventFlair={eventFlair}
       />
 
       <CalendarMonthView
@@ -361,12 +367,14 @@ export function CalendarGridWidget({
         members={members}
         onOpenModal={(ev, date) => openModal(ev, date)}
         onSelectDay={selectDayView}
+        celebrateSpecialDays={celebrateSpecialDays}
       />
 
       <CalendarEventModal
         event={activeModalEvent}
         dateLabel={activeModalDateLabel}
         onClose={closeModal}
+        eventFlair={eventFlair}
       />
     </div>
   );

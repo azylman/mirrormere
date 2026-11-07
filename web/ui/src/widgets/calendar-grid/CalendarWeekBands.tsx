@@ -1,13 +1,6 @@
+import type { ReactElement } from 'react';
 import { formatEventTime, stripMealiePrefix } from './dateUtils';
-import type {
-  FamilyDay,
-  FamilyDayEvent,
-  FamilyEvent,
-  FamilySpanEvent,
-  FamilyViewModel,
-  TimelineMarker,
-  ViewMode,
-} from './types';
+import type { FamilyDay, FamilyDayEvent, FamilyEvent, FamilyMember, FamilySpanEvent, FamilyViewModel, TimelineMarker, ViewMode } from './types';
 
 function handleBandEventKeyDown(e: React.KeyboardEvent, action: () => void) {
   if (e.key === 'Enter' || e.key === ' ') {
@@ -16,34 +9,137 @@ function handleBandEventKeyDown(e: React.KeyboardEvent, action: () => void) {
   }
 }
 
+export type EventFlair = 'birthday' | 'party' | 'dentist' | 'movie' | 'flight' | 'sports' | 'holiday';
+
+function escapeRegExp(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+const HOLIDAY_RE =
+  /\b(veterans day|thanksgiving|christmas|new year|memorial day|labor day|independence day|4th of july|easter|halloween|valentine|mother's day|father's day|mlk|presidents day|juneteenth|holiday)\b/i;
+
+export function detectEventFlair(title?: string): EventFlair | null {
+  if (!title || typeof title !== 'string') return null;
+  const t = title.trim();
+  if (!t) return null;
+  if (/\b(birthday|bday|b-day)\b/i.test(t)) return 'birthday';
+  if (/\b(party|celebration)\b/i.test(t)) return 'party';
+  if (/\b(dentist|orthodontist|dental|doctor|pediatric)\b/i.test(t)) return 'dentist';
+  if (/\b(movie|cinema|film)\b/i.test(t)) return 'movie';
+  if (/\b(flight|airline|airport|fly)\b/i.test(t)) return 'flight';
+  if (/\b(soccer|practice|game|basketball|baseball)\b/i.test(t)) return 'sports';
+  if (HOLIDAY_RE.test(t)) return 'holiday';
+  return null;
+}
+
+function isWorkExcluded(ev: FamilyEvent): boolean {
+  const title = ev.title || '';
+  return Boolean(
+    /\(work\)|\bcoworker\b|\bwork\b/i.test(title) ||
+      ev.owners?.some((o) => /\(work\)|\bcoworker\b|\bwork\b/i.test(o)) ||
+      (ev.description && /\bcoworker\b/i.test(ev.description)),
+  );
+}
+
+function matchesFamilyMember(ev: FamilyEvent, safeMembers: FamilyMember[]): boolean {
+  const title = ev.title || '';
+  const evMember = (ev as unknown as { member?: string }).member?.toLowerCase();
+  for (const m of safeMembers) {
+    const name = m?.name?.trim();
+    if (!name) continue;
+    const lower = name.toLowerCase();
+    if (new RegExp(`\\b${escapeRegExp(name)}('s)?\\b`, 'i').test(title)) return true;
+    if (ev.owners?.some((o) => o.toLowerCase() === lower || o.toLowerCase().includes(lower))) return true;
+    if (m.initial && ev.initials?.includes(m.initial)) return true;
+    if (evMember && evMember === lower) return true;
+  }
+  return false;
+}
+
+export function detectDaySpecialStatus(dayEvents?: FamilyEvent[], members?: FamilyMember[]): 'birthday' | 'holiday' | null {
+  if (!dayEvents || dayEvents.length === 0) return null;
+  const safeMembers = members || [];
+  for (const ev of dayEvents) {
+    if (ev?.title && /\b(birthday|bday|b-day)\b/i.test(ev.title) && !isWorkExcluded(ev) && matchesFamilyMember(ev, safeMembers)) {
+      return 'birthday';
+    }
+  }
+  for (const ev of dayEvents) {
+    if (!ev) continue;
+    if (HOLIDAY_RE.test(ev.title || '')) return 'holiday';
+    const cal = (ev as unknown as { calendar?: string; calendar_name?: string }).calendar ||
+      (ev as unknown as { calendar?: string; calendar_name?: string }).calendar_name || '';
+    if (cal && /holiday/i.test(cal)) return 'holiday';
+  }
+  return null;
+}
+
+export function renderEventFlairWatermark(flair: EventFlair): ReactElement | null {
+  let inner: ReactElement | null = null;
+  switch (flair) {
+    case 'birthday':
+    case 'party':
+      inner = (
+        <>
+          <path d="M9 14c-2.76 0-5-2.69-5-6a5 5 0 0 1 10 0c0 3.31-2.24 6-5 6Z" fill="currentColor" fillOpacity="0.25" />
+          <path d="m8 14-1 2h2l-1-2" />
+          <path d="M8 16c-.5 2-2 3-1 5" />
+          <path d="M15 12c2.21 0 4-2.24 4-5a4 4 0 0 0-8 0" strokeDasharray="2 2" />
+        </>
+      );
+      break;
+    case 'dentist':
+      inner = <path d="M7 3C4.5 3 3 5 3 7.5c0 3 1.5 6 2 9.5.5 3 2 4.5 3.5 4.5 1 0 1.5-1 2-3 .5-2 1.5-2 2-2s1.5 0 2 2c.5 2 1 3 2 3 1.5 0 3-1.5 3.5-4.5.5-3.5 2-6.5 2-9.5C22 5 20.5 3 18 3c-2 0-3.5 1.5-5.5 1.5S9 3 7 3Z" fill="currentColor" fillOpacity="0.25" />;
+      break;
+    case 'movie':
+      inner = (
+        <>
+          <path d="M7 10h10l-1.5 11h-7L7 10Z" fill="currentColor" fillOpacity="0.25" />
+          <path d="M10 10v11M14 10v11" />
+          <path d="M6 10c-.8-1.5.5-3.5 2-3.5 1 0 1.5.5 2 1 .5-.5 1-1 2-1s1.5.5 2 1c.5-.5 1-1 2-1 1.5 0 2.8 2 2 3.5" />
+        </>
+      );
+      break;
+    case 'flight':
+      inner = <path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 20.5 3c-1-1-3-.5-4.5 1L12.5 7.5 4.3 5.7c-.7-.1-1.3.3-1.4 1-.1.5.2 1 .6 1.3l6 4.5-3 3-2.5-.5c-.4-.1-.8.1-1 .4-.3.4-.2.9.2 1.2l2.5 1.8 1.8 2.5c.3.4.8.5 1.2.2.3-.2.5-.6.4-1l-.5-2.5 3-3 4.5 6c.3.4.8.7 1.3.6.7-.1 1.1-.7 1-1.4l-1.7-8.2Z" fill="currentColor" fillOpacity="0.25" />;
+      break;
+    case 'sports':
+      inner = (
+        <>
+          <circle cx="12" cy="12" r="9" fill="currentColor" fillOpacity="0.25" />
+          <path d="m12 7 3.5 2.5v4L12 16l-3.5-2.5v-4L12 7Z" />
+          <path d="M12 7V3M15.5 9.5l3.5-2M15.5 13.5l3.5 2M12 16v4M8.5 13.5l-3.5 2M8.5 9.5l-3.5-2" />
+        </>
+      );
+      break;
+    case 'holiday':
+      inner = <path d="m12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5L12 3Z" fill="currentColor" fillOpacity="0.25" />;
+      break;
+    default:
+      return null;
+  }
+  return (
+    <span className="cf-event-flair-watermark" aria-hidden="true">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{inner}</svg>
+    </span>
+  );
+}
+
 function MealiePillContent({ location, title }: { location?: string; title?: string }) {
   return (
     <>
-      <img
-        src={location}
-        alt=""
-        style={{
-          width: '26px', height: '26px', borderRadius: '5px', objectFit: 'cover',
-          flexShrink: 0, boxShadow: '0 1px 3px rgba(0,0,0,0.3)',
-        }}
-      />
-      <svg
-        className="cf-mealie-icon" width="12" height="12" viewBox="0 0 24 24"
-        fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"
-        aria-hidden="true" style={{ flexShrink: 0 }}
-      >
+      <img src={location} alt="" style={{ width: '26px', height: '26px', borderRadius: '5px', objectFit: 'cover', flexShrink: 0, boxShadow: '0 1px 3px rgba(0,0,0,0.3)' }} />
+      <svg className="cf-mealie-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flexShrink: 0 }}>
         <path d="M3 2v7c0 1.1.9 2 2 2h4a2 2 0 0 0 2-2V2" />
         <path d="M7 2v20" />
         <path d="M21 15V2v0a5 5 0 0 0-5 5v6c0 1.1.9 2 2 2h3Zm0 0v7" />
       </svg>
-      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 800 }}>
-        {stripMealiePrefix(title)}
-      </span>
+      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 800 }}>{stripMealiePrefix(title)}</span>
     </>
   );
 }
 
-interface CalendarAllDayBandProps {
+export interface CalendarAllDayBandProps {
   activeView: ViewMode;
   weekVM?: FamilyViewModel;
   daysToRender: FamilyDay[];
@@ -51,18 +147,13 @@ interface CalendarAllDayBandProps {
   currentDateISO: string;
   marginLeft?: string;
   onOpenModal: (ev: FamilyEvent, startDate?: string, endDate?: string) => void;
+  eventFlair?: boolean;
 }
 
 export function CalendarAllDayBand({
-  activeView,
-  weekVM,
-  daysToRender,
-  visibleAllDayEvents,
-  currentDateISO,
-  marginLeft,
-  onOpenModal,
+  activeView, weekVM, daysToRender, visibleAllDayEvents, currentDateISO, marginLeft, onOpenModal, eventFlair = true,
 }: CalendarAllDayBandProps) {
-  if (visibleAllDayEvents.length > 0) {
+  if (visibleAllDayEvents && visibleAllDayEvents.length > 0) {
     return (
       <div
         className="cf-allday-band cf-week-allday-grid"
@@ -75,6 +166,7 @@ export function CalendarAllDayBand({
         {visibleAllDayEvents.map((ev) => {
           const mealieImg = resolveMealieEventImage(ev);
           const isMealie = Boolean(mealieImg);
+          const flair = eventFlair !== false && !isMealie ? detectEventFlair(ev.title) : null;
           const spanStartDay = weekVM?.days?.[ev.start_col - 1]?.date || ev.start || daysToRender[0]?.date || currentDateISO;
           const spanEndDay = ev.col_span > 1
             ? weekVM?.days?.[Math.min((weekVM?.days?.length ?? 1) - 1, ev.start_col + ev.col_span - 2)]?.date || ev.end
@@ -82,11 +174,11 @@ export function CalendarAllDayBand({
           return (
             <div
               key={ev.id}
-              className={`cf-event cf-allday cf-event-clickable${ev.pattern ? ` cf-pattern-${ev.pattern}` : ''}`}
+              className={`cf-event cf-allday cf-event-clickable${flair ? ` cf-flair-${flair}` : ''}${ev.pattern ? ` cf-pattern-${ev.pattern}` : ''}`}
               role="button" tabIndex={0} aria-label={`${ev.title} (All Day)`}
               data-event-id={ev.id} data-event-title={ev.title} data-event-allday="true"
               data-event-location={ev.location} data-event-description={ev.description}
-              data-mealie-decorated={isMealie ? 'true' : undefined}
+              data-mealie-decorated={isMealie ? 'true' : undefined} data-flair={flair || undefined}
               onClick={() => onOpenModal(ev, spanStartDay, spanEndDay)}
               onKeyDown={(e) => handleBandEventKeyDown(e, () => onOpenModal(ev, spanStartDay, spanEndDay))}
               style={{
@@ -95,9 +187,11 @@ export function CalendarAllDayBand({
                 overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                 color: ev.text_color, backgroundColor: ev.color, cursor: 'pointer', touchAction: 'manipulation',
                 display: isMealie ? 'flex' : undefined, alignItems: isMealie ? 'center' : undefined, gap: isMealie ? '6px' : undefined,
+                position: 'relative',
               }}
             >
               {isMealie ? <MealiePillContent location={mealieImg} title={ev.title} /> : stripMealiePrefix(ev.title)}
+              {flair && renderEventFlairWatermark(flair)}
             </div>
           );
         })}
@@ -120,6 +214,7 @@ export function CalendarAllDayBand({
             {day.all_day?.map((ev) => {
               const mealieImg = resolveMealieEventImage(ev);
               const isMealie = Boolean(mealieImg);
+              const flair = eventFlair !== false && !isMealie ? detectEventFlair(ev.title) : null;
               return (
                 <div
                   key={ev.id} className="cf-edge-band cf-allday-band-local"
@@ -130,11 +225,11 @@ export function CalendarAllDayBand({
                   }}
                 >
                   <div
-                    className={`cf-event cf-allday cf-event-clickable${ev.pattern ? ` cf-pattern-${ev.pattern}` : ''}`}
+                    className={`cf-event cf-allday cf-event-clickable${flair ? ` cf-flair-${flair}` : ''}${ev.pattern ? ` cf-pattern-${ev.pattern}` : ''}`}
                     role="button" tabIndex={0} title={ev.title} aria-label={`${ev.title} (All Day)`}
                     data-event-id={ev.id} data-event-title={ev.title} data-event-allday="true"
                     data-event-location={ev.location} data-event-description={ev.description}
-                    data-mealie-decorated={isMealie ? 'true' : undefined}
+                    data-mealie-decorated={isMealie ? 'true' : undefined} data-flair={flair || undefined}
                     onClick={() => onOpenModal(ev, day.date)}
                     onKeyDown={(e) => handleBandEventKeyDown(e, () => onOpenModal(ev, day.date))}
                     style={{
@@ -142,9 +237,11 @@ export function CalendarAllDayBand({
                       color: ev.text_color, backgroundColor: ev.color, cursor: 'pointer', touchAction: 'manipulation',
                       overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                       display: isMealie ? 'flex' : undefined, alignItems: isMealie ? 'center' : undefined, gap: isMealie ? '6px' : undefined,
+                      position: 'relative',
                     }}
                   >
                     {isMealie ? <MealiePillContent location={mealieImg} title={ev.title} /> : stripMealiePrefix(ev.title)}
+                    {flair && renderEventFlairWatermark(flair)}
                   </div>
                 </div>
               );
@@ -166,13 +263,7 @@ interface CalendarEdgeEventsBandProps {
   onOpenModal: (ev: FamilyEvent, startDate?: string, endDate?: string) => void;
 }
 
-export function CalendarEdgeEventsBand({
-  edge,
-  daysToRender,
-  inferredTimeFormat,
-  marginLeft,
-  onOpenModal,
-}: CalendarEdgeEventsBandProps) {
+export function CalendarEdgeEventsBand({ edge, daysToRender, inferredTimeFormat, marginLeft, onOpenModal }: CalendarEdgeEventsBandProps) {
   const isEarly = edge === 'early';
   const hasEvents = daysToRender.some((d) => {
     const list = isEarly ? d.early_events : d.late_events;
@@ -248,8 +339,7 @@ export function CalendarTimelineAxis({ weekVM }: { weekVM?: FamilyViewModel }) {
         className="cf-timeline-markers"
         style={{
           flex: 1, position: 'relative', minHeight: 0, marginBottom: '6px',
-          fontFamily: 'var(--mm-font-mono, monospace)', fontSize: '0.60rem', fontWeight: 700,
-          color: 'var(--mm-text-dim, #8b819f)',
+          fontFamily: 'var(--mm-font-mono, monospace)', fontSize: '0.60rem', fontWeight: 700, color: 'var(--mm-text-dim, #8b819f)',
         }}
       >
         {weekVM?.timeline_markers && weekVM.timeline_markers.length > 0 ? (
@@ -277,29 +367,27 @@ export function CalendarTimelineAxis({ weekVM }: { weekVM?: FamilyViewModel }) {
   );
 }
 
-interface CalendarDayEventCardProps {
+export interface CalendarDayEventCardProps {
   ev: FamilyDayEvent;
   dayDate: string;
   inferredTimeFormat?: string;
   onOpenModal: (ev: FamilyEvent, startDate?: string, endDate?: string) => void;
+  eventFlair?: boolean;
 }
 
-export function CalendarDayEventCard({
-  ev,
-  dayDate,
-  inferredTimeFormat,
-  onOpenModal,
-}: CalendarDayEventCardProps) {
+export function CalendarDayEventCard({ ev, dayDate, inferredTimeFormat, onOpenModal, eventFlair = true }: CalendarDayEventCardProps) {
   const startDisplay = formatEventTime(ev.start, inferredTimeFormat) || ev.start;
   const endDisplay = formatEventTime(ev.end, inferredTimeFormat) || ev.end;
+  const flair = eventFlair !== false ? detectEventFlair(ev.title) : null;
   return (
     <div
-      className={`cf-day-event cf-event-clickable${ev.pattern ? ` cf-pattern-${ev.pattern}` : ''}`}
+      className={`cf-day-event cf-event-clickable${flair ? ` cf-flair-${flair}` : ''}${ev.pattern ? ` cf-pattern-${ev.pattern}` : ''}`}
       role="button" tabIndex={0}
       title={`${startDisplay}–${endDisplay}: ${ev.title}${ev.location ? ` (${ev.location})` : ''}`}
       aria-label={`${ev.title}, ${startDisplay} to ${endDisplay}${ev.location ? `, ${ev.location}` : ''}`}
       data-event-id={ev.id} data-event-title={ev.title} data-event-start={ev.start}
       data-event-end={ev.end} data-event-location={ev.location} data-event-description={ev.description}
+      data-flair={flair || undefined}
       onClick={() => onOpenModal(ev, dayDate)}
       onKeyDown={(e) => handleBandEventKeyDown(e, () => onOpenModal(ev, dayDate))}
       style={{
@@ -324,6 +412,7 @@ export function CalendarDayEventCard({
           {ev.location}
         </div>
       )}
+      {flair && renderEventFlairWatermark(flair)}
     </div>
   );
 }
@@ -331,11 +420,7 @@ export function CalendarDayEventCard({
 export function isMealieImageSource(src?: string): boolean {
   if (!src) return false;
   const s = src.trim();
-  return (
-    s.startsWith('/hearth-api/mealie/image/') ||
-    s.includes('/api/media/recipes/') ||
-    s.startsWith('data:image/')
-  );
+  return s.startsWith('/hearth-api/mealie/image/') || s.includes('/api/media/recipes/') || s.startsWith('data:image/');
 }
 
 export function resolveMealieEventImage(ev: FamilyEvent): string | undefined {
@@ -354,15 +439,8 @@ interface CalendarDayMealBarProps {
 
 function CalendarDayMealBar({ meals, dayDate, onOpenModal }: CalendarDayMealBarProps) {
   if (!meals || meals.length === 0) return null;
-
   return (
-    <div
-      className="cf-day-meal-bar cf-day-meal-col"
-      data-date={dayDate}
-      style={{
-        display: 'flex', flexDirection: 'column', gap: '4px', minWidth: 0, flexShrink: 0,
-      }}
-    >
+    <div className="cf-day-meal-bar cf-day-meal-col" data-date={dayDate} style={{ display: 'flex', flexDirection: 'column', gap: '4px', minWidth: 0, flexShrink: 0 }}>
       {meals.map((ev) => {
         const imgSrc = resolveMealieEventImage(ev);
         const cleanTitle = stripMealiePrefix(ev.title);
@@ -372,10 +450,8 @@ function CalendarDayMealBar({ meals, dayDate, onOpenModal }: CalendarDayMealBarP
             className={`cf-event cf-mealie-bar cf-mealie-card cf-event-clickable${ev.pattern ? ` cf-pattern-${ev.pattern}` : ''}`}
             role="button" tabIndex={0} title={ev.title} aria-label={ev.title}
             data-event-id={ev.id} data-event-title={ev.title} data-event-allday="true"
-            data-event-location={ev.location}
-            data-event-image-url={imgSrc}
-            data-event-description={ev.description}
-            data-mealie-decorated="true"
+            data-event-location={ev.location} data-event-image-url={imgSrc}
+            data-event-description={ev.description} data-mealie-decorated="true"
             onClick={() => onOpenModal(ev, dayDate)}
             onKeyDown={(e) => handleBandEventKeyDown(e, () => onOpenModal(ev, dayDate))}
             style={{
@@ -385,17 +461,7 @@ function CalendarDayMealBar({ meals, dayDate, onOpenModal }: CalendarDayMealBarP
               boxShadow: '0 2px 6px rgba(0, 0, 0, 0.14)',
             }}
           >
-            {imgSrc && (
-              <img
-                src={imgSrc}
-                alt=""
-                className="cf-mealie-photo"
-                style={{
-                  position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover',
-                  display: 'block', zIndex: 0,
-                }}
-              />
-            )}
+            {imgSrc && <img src={imgSrc} alt="" className="cf-mealie-photo" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', display: 'block', zIndex: 0 }} />}
             <span
               className="cf-mealie-pill"
               style={{
@@ -442,7 +508,6 @@ interface CalendarWeekMealRowProps {
 export function CalendarWeekMealRow({ daysToRender, marginLeft, onOpenModal }: CalendarWeekMealRowProps) {
   const hasMeals = daysToRender.some((d) => d.meals && d.meals.length > 0);
   if (!hasMeals) return null;
-
   return (
     <div
       className="cf-week-meal-row"
@@ -453,12 +518,7 @@ export function CalendarWeekMealRow({ daysToRender, marginLeft, onOpenModal }: C
       }}
     >
       {daysToRender.map((day) => (
-        <div
-          key={day.date}
-          className="cf-week-meal-cell"
-          data-date={day.date}
-          style={{ display: 'flex', flexDirection: 'column', gap: '4px', minWidth: 0 }}
-        >
+        <div key={day.date} className="cf-week-meal-cell" data-date={day.date} style={{ display: 'flex', flexDirection: 'column', gap: '4px', minWidth: 0 }}>
           <CalendarDayMealBar meals={day.meals} dayDate={day.date} onOpenModal={onOpenModal} />
         </div>
       ))}
