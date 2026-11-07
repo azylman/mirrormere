@@ -118,6 +118,8 @@ response_schema:
             type: number
           album_name:
             type: string
+          media_type:
+            type: string
           location:
             type: string
           dominant_color:

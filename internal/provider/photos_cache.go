@@ -425,6 +425,9 @@ func carryCachedPhotoMetadata(photos, existing []PhotoItem) {
 			if photos[i].DominantColor == "" {
 				photos[i].DominantColor = prev.DominantColor
 			}
+			if photos[i].MediaType == "" && prev.MediaType != "" {
+				photos[i].MediaType = prev.MediaType
+			}
 		}
 	}
 }

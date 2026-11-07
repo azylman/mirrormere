@@ -22,8 +22,6 @@ const (
 	mockPhotosAFHTML            = `<!DOCTYPE html><html><head><meta property="og:title" content="Family Vacation 2026 - Google Photos"><title>Family Vacation 2026 - Google Photos</title></head><body><script>AF_initDataCallback({key:'ds:1',hash:'2',data:["k",[["photo_1",["https://lh3.googleusercontent.com/pw/AL9nZEW1=w1024-h768",1200,800],1755268200000],["photo_2",["https://lh3.googleusercontent.com/pw/AL9nZEW2",1920,1080],1755354600000],["photo_3",["https://lh3.googleusercontent.com/pw/AL9nZEW3=s0",1000,1000],1755441000000]]],sideChannel:{}});</script></body></html>`
 	mockPhotosWithVideoHTML     = `<!DOCTYPE html><html><head><meta property="og:title" content="Family Vacation 2026 - Google Photos"><title>Family Vacation 2026 - Google Photos</title></head><body><script>AF_initDataCallback({key:'ds:1',hash:'2',data:["k",[["photo_1",["https://lh3.googleusercontent.com/pw/AL9nZEW1=w1024-h768",1200,800],1755268200000],["video_1",["https://lh3.googleusercontent.com/pw/AL9nZEVideo",1920,1080],1755354600000,["video/mp4",30000]],["photo_2",["https://lh3.googleusercontent.com/pw/AL9nZEW2",1920,1080],1755441000000]]],sideChannel:{}});</script></body></html>`
 	mockPhotosProtobufVideoHTML = `<!DOCTYPE html><html><head><meta property="og:title" content="Family Vacation 2026 - Google Photos"><title>Family Vacation 2026 - Google Photos</title></head><body><script>AF_initDataCallback({key:'ds:1',hash:'2',data:["k",[["photo_1",["https://lh3.googleusercontent.com/pw/AL9nZEW1=w1024-h768",1200,800],1755268200000,null,null,null,null,null,null,{"146008172":[0,1500]}],["video_proto",["https://lh3.googleusercontent.com/pw/AL9nZEProtoVideo",1920,1080],1755354600000,null,null,null,null,null,null,{"76647426":[14200,null,1920,1080]}],["photo_2",["https://lh3.googleusercontent.com/pw/AL9nZEW2",1920,1080],1755441000000,null,null,null,null,null,null,{"76647426":null}]]],sideChannel:{}});</script></body></html>`
-	mockPhotosMajorityVideoHTML = `<!DOCTYPE html><html><head><meta property="og:title" content="Family Vacation 2026 - Google Photos"><title>Family Vacation 2026 - Google Photos</title></head><body><script>AF_initDataCallback({key:'ds:1',hash:'2',data:["k",[["photo_1",["https://lh3.googleusercontent.com/pw/AL9nZEW1=w1024-h768",1200,800],1755268200000],["video_1",["https://lh3.googleusercontent.com/pw/AL9nZEVideo1",1920,1080],1755354600000,["video/mp4",30000]],["video_2",["https://lh3.googleusercontent.com/pw/AL9nZEVideo2",1920,1080],1755354700000,["video/mp4",30000]],["video_3",["https://lh3.googleusercontent.com/pw/AL9nZEVideo3",1920,1080],1755354800000,["video/mp4",30000]]]],sideChannel:{}});</script></body></html>`
-	mockPhotosAllVideoHTML      = `<!DOCTYPE html><html><head><meta property="og:title" content="Video Only Album - Google Photos"><title>Video Only Album - Google Photos</title></head><body><script>AF_initDataCallback({key:'ds:1',hash:'2',data:["k",[["video_1",["https://lh3.googleusercontent.com/pw/AL9nZEVideo1",1920,1080],1755354600000,["video/mp4",30000]],["video_2",["https://lh3.googleusercontent.com/pw/AL9nZEVideo2",1920,1080],1755354700000,["video/mp4",30000]]]],sideChannel:{}});</script></body></html>`
 	mockPhotosSameDayHTML       = `<!DOCTYPE html><html><head><meta property="og:title" content="Family Vacation 2026 - Google Photos"></head><body><script>AF_initDataCallback({key:'ds:1',hash:'2',data:["k",[["photo_1",["https://lh3.googleusercontent.com/pw/AL9nZEW1=w1024-h768",1200,800],1755268200000],["photo_2",["https://lh3.googleusercontent.com/pw/AL9nZEW2",1920,1080],1755268300000],["photo_3",["https://lh3.googleusercontent.com/pw/AL9nZEW3=s0",1000,1000],1755268400000]]],sideChannel:{}});</script></body></html>`
 	mockPhotosFuncHTML          = `<!DOCTYPE html><html><head><title>Summer Roadtrip - Google Photos</title></head><body><script>AF_initDataCallback({key:'ds:1',hash:'2',data:function(){return ["key",[["img_a",["https://lh3.googleusercontent.com/pw/ROADA",800,600],1755268200000]]]},sideChannel:{}});</script></body></html>`
 	mockPhotosFallbackHTML      = `<!DOCTYPE html><html><head><meta property="og:title" content="Art Showcase"></head><body><div><img src="https://lh3.googleusercontent.com/pw/ART_ITEM_1=w500-h300"/><img src="https://lh4.googleusercontent.com/pw/ART_ITEM_2"/><img src="https://lh3.googleusercontent.com/pw/ART_ITEM_1=w100"/><img src="https://lh3.googleusercontent.com/a/AVATAR_IGNORED"/></div></body></html>`
@@ -51,10 +49,8 @@ func TestPhotosProvider_FetchExtraction(t *testing.T) {
 		wantThirdAspect  float64
 	}{
 		{"af_callback", mockPhotosAFHTML, "Family Vacation 2026", 3, 3, "photo_1", "https://lh3.googleusercontent.com/pw/AL9nZEW1", 1.5, 1.78, 1.0},
-		{"filters_video", mockPhotosWithVideoHTML, "Family Vacation 2026", 2, 2, "photo_1", "https://lh3.googleusercontent.com/pw/AL9nZEW1", 1.5, 1.78, 0},
-		{"filters_protobuf_video_descriptor", mockPhotosProtobufVideoHTML, "Family Vacation 2026", 2, 2, "photo_1", "https://lh3.googleusercontent.com/pw/AL9nZEW1", 1.5, 1.78, 0},
-		{"majority_video", mockPhotosMajorityVideoHTML, "Family Vacation 2026", 1, 1, "photo_1", "https://lh3.googleusercontent.com/pw/AL9nZEW1", 1.5, 0, 0},
-		{"all_video_no_regex_leak", mockPhotosAllVideoHTML, "Video Only Album", 0, 0, "", "", 0, 0, 0},
+		{"filters_video", mockPhotosWithVideoHTML, "Family Vacation 2026", 3, 3, "photo_1", "https://lh3.googleusercontent.com/pw/AL9nZEW1", 1.5, 1.78, 0},
+		{"filters_protobuf_video_descriptor", mockPhotosProtobufVideoHTML, "Family Vacation 2026", 3, 3, "photo_1", "https://lh3.googleusercontent.com/pw/AL9nZEW1", 1.5, 1.78, 0},
 		{"same_day_burst", mockPhotosSameDayHTML, "Family Vacation 2026", 3, 1, "", "", 0, 0, 0},
 		{"func_wrapper", mockPhotosFuncHTML, "Summer Roadtrip", 1, 1, "img_a", "", 0, 0, 0},
 		{"fallback_regex", mockPhotosFallbackHTML, "Art Showcase", 2, 2, "", "", 0, 0, 0},
@@ -115,6 +111,16 @@ func TestPhotosProvider_FetchExtraction(t *testing.T) {
 				item, ok := photoMap["photo_3"]
 				if !ok || item.AspectRatio != tc.wantThirdAspect {
 					t.Errorf("photo_3 aspect = %v, want %v", item.AspectRatio, tc.wantThirdAspect)
+				}
+			}
+			if tc.name == "filters_video" {
+				if item, ok := photoMap["video_1"]; !ok || item.MediaType != "video" {
+					t.Errorf("expected video_1 with MediaType='video', got item=%+v, ok=%v", item, ok)
+				}
+			}
+			if tc.name == "filters_protobuf_video_descriptor" {
+				if item, ok := photoMap["video_proto"]; !ok || item.MediaType != "video" {
+					t.Errorf("expected video_proto with MediaType='video', got item=%+v, ok=%v", item, ok)
 				}
 			}
 		})
@@ -822,46 +828,6 @@ func TestPhotosProvider_MultiAlbumAndCache(t *testing.T) {
 		snap := res.(*provider.PhotoSnapshot)
 		if snap.TotalPhotos != 2 {
 			t.Errorf("TotalPhotos = %d, want 2", snap.TotalPhotos)
-		}
-	})
-
-	t.Run("snAcKc_pagination_skips_all_video_pages", func(t *testing.T) {
-		t.Parallel()
-		var calls atomic.Int32
-		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if strings.Contains(r.URL.Path, "batchexecute") {
-				call := calls.Add(1)
-				w.Header().Set("Content-Type", "application/json")
-				if call == 1 {
-					// Page 2: all videos, continuation token to Page 3
-					_, _ = w.Write([]byte(`)]}'
-[[["wrb.fr","snAcKc","[[[\"v1\",[\"https://lh3.googleusercontent.com/pw/VID1\",1920,1080],1755268200000,[\"video/mp4\",30000]],[\"v2\",[\"https://lh3.googleusercontent.com/pw/VID2\",1920,1080],1755268210000,[\"video/mp4\",30000]]],\"token_page3\"]",null,null,null,"generic"]]]`))
-					return
-				}
-				// Page 3: photo, empty token
-				_, _ = w.Write([]byte(`)]}'
-[[["wrb.fr","snAcKc","[[[\"p3\",[\"https://lh3.googleusercontent.com/pw/PAGE3\",1200,900],1755268300000]],\"\"]",null,null,null,"generic"]]]`))
-				return
-			}
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			_, _ = w.Write([]byte(`<!DOCTYPE html><html><body><script>AF_initDataCallback({key:'ds:1',data:["k",[["p1",["https://lh3.googleusercontent.com/pw/PAGE1",1000,800],1755268100000]],"token_page2"]});</script></body></html>`))
-		}))
-		defer ts.Close()
-
-		p := provider.NewPhotosProvider()
-		_ = p.Init(context.Background(), map[string]any{"source": "share_url", "album_url": ts.URL}, provider.InitOptions{})
-		res, err := p.Fetch(context.Background())
-		if err != nil {
-			t.Fatalf("Fetch failed: %v", err)
-		}
-		snap := res.(*provider.PhotoSnapshot)
-		if snap.TotalPhotos != 2 {
-			t.Errorf("TotalPhotos = %d, want 2 (p1 + p3, skipping all-video page 2)", snap.TotalPhotos)
-		}
-		for _, ph := range snap.Photos {
-			if strings.Contains(ph.URL, "VID") {
-				t.Errorf("leaked video url into snapshot: %s", ph.URL)
-			}
 		}
 	})
 }
