@@ -109,23 +109,26 @@ func TestPhotos_InternalHelpers(t *testing.T) {
 			t.Error("expected isMediaItemList=true for majority-video list")
 		}
 
-		// parseMediaItem parses photos and filters out videos
-		if _, ok := parseMediaItem(photoElem); !ok {
-			t.Error("expected parseMediaItem=true for photo")
+		// parseMediaItem parses photos and videos with appropriate media_type
+		photoItem, ok := parseMediaItem(photoElem)
+		if !ok || photoItem.MediaType != "" {
+			t.Errorf("expected parseMediaItem=true and empty MediaType for photo, got ok=%v, item=%+v", ok, photoItem)
 		}
-		if _, ok := parseMediaItem(videoElem); ok {
-			t.Error("expected parseMediaItem=false for video item with video/mp4")
+		videoItem, ok := parseMediaItem(videoElem)
+		if !ok || videoItem.MediaType != "video" {
+			t.Errorf("expected parseMediaItem=true and MediaType='video' for video item with video/mp4, got ok=%v, item=%+v", ok, videoItem)
 		}
 		videoWithExt := []any{"v2", []any{"https://lh3.googleusercontent.com/pw/V2", 1920, 1080}, 1755268200000, "clip.mp4"}
-		if _, ok := parseMediaItem(videoWithExt); ok {
-			t.Error("expected parseMediaItem=false for video item with .mp4")
+		videoExtItem, ok := parseMediaItem(videoWithExt)
+		if !ok || videoExtItem.MediaType != "video" {
+			t.Errorf("expected parseMediaItem=true and MediaType='video' for video item with .mp4, got ok=%v, item=%+v", ok, videoExtItem)
 		}
 	})
 
 	t.Run("location enrichment and metadata carryover", func(t *testing.T) {
 		t.Parallel()
 		existing := []PhotoItem{
-			{ID: "AF1Qip_cached", URL: "https://lh3.googleusercontent.com/pw/CACHED", Location: "Oakland, CA", LocationChecked: true, DominantColor: "#112233"},
+			{ID: "AF1Qip_cached", URL: "https://lh3.googleusercontent.com/pw/CACHED", Location: "Oakland, CA", LocationChecked: true, DominantColor: "#112233", MediaType: "video"},
 		}
 		fresh := []PhotoItem{
 			{ID: "AF1Qip_cached", URL: "https://lh3.googleusercontent.com/pw/CACHED"},
@@ -135,7 +138,7 @@ func TestPhotos_InternalHelpers(t *testing.T) {
 			{ID: "photo_positional", URL: "https://lh3.googleusercontent.com/pw/POS"},
 		}
 		carryCachedPhotoMetadata(fresh, existing)
-		if fresh[0].Location != "Oakland, CA" || !fresh[0].LocationChecked || fresh[0].DominantColor != "#112233" {
+		if fresh[0].Location != "Oakland, CA" || !fresh[0].LocationChecked || fresh[0].DominantColor != "#112233" || fresh[0].MediaType != "video" {
 			t.Fatalf("carryCachedPhotoMetadata failed: %+v", fresh[0])
 		}
 		if !hasUncheckedPhotoLocations(fresh) {
@@ -791,13 +794,6 @@ func TestPhotos_InternalHelpers(t *testing.T) {
 		mlPhotos, mlNext, err := parseBatchexecuteResponse(multiLineSnAcKc, "tok_ml1")
 		if err != nil || len(mlPhotos) != 1 || mlNext != "tok_ml2" {
 			t.Errorf("unexpected multi-line snAcKc parse: photos=%v, next=%q, err=%v", mlPhotos, mlNext, err)
-		}
-
-		// parseBatchexecuteResponse with only videos should return 0 photos and next token without falling back to regex
-		videoOnlySnAcKc := []byte(")]}'\n\n120\n[[[\"wrb.fr\",\"snAcKc\",\"[null,[[\\\"v_ml\\\",[\\\"https://lh3.googleusercontent.com/pw/VID1\\\",1000,800],1755268100000,[\\\"video/mp4\\\",30000]]],\\\"tok_next_page\\\"]\",null,null,null,\"generic\"]]]\n")
-		vPhotos, vNext, err := parseBatchexecuteResponse(videoOnlySnAcKc, "tok_ml1")
-		if err != nil || len(vPhotos) != 0 || vNext != "tok_next_page" {
-			t.Errorf("expected 0 photos and next token from video-only snAcKc, got photos=%v, next=%q, err=%v", vPhotos, vNext, err)
 		}
 
 		// fetchBatchexecutePage network and status branches
