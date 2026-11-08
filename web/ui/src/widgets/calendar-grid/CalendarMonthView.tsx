@@ -168,7 +168,7 @@ export function CalendarMonthView({
                     {day.day_of_month}
                   </span>
                   {specialStatus === 'birthday' && (
-                    <span className="cf-special-pill cf-pill-birthday">🎂 Family Bday</span>
+                    <span className="cf-special-pill cf-pill-birthday">{(day as Record<string, unknown>).special_label ? `🎂 ${(day as Record<string, unknown>).special_label}` : '🎂 Rosie\x27s Bday'}</span>
                   )}
                   {specialStatus === 'holiday' && (
                     <span className="cf-special-pill cf-pill-holiday">✨ Holiday</span>

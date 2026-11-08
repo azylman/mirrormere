@@ -372,7 +372,7 @@
           if (header && typeof document !== 'undefined' && document.createElement) {
             const pill = document.createElement('span');
             pill.className = 'cf-special-pill cf-pill-birthday';
-            pill.textContent = '🎂 Family Bday';
+            pill.textContent = (day && day.special_label) ? ('🎂 ' + day.special_label) : '🎂 Rosie\x27s Bday';
             header.appendChild(pill);
           }
         } else if (status === 'holiday') {

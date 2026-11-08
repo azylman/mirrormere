@@ -278,7 +278,7 @@ export function CalendarWeekView({
                         {day.day_of_month}
                       </div>
                       {specialStatus === 'birthday' && (
-                        <div className="cf-special-pill cf-pill-birthday">🎂 Family Bday</div>
+                        <div className="cf-special-pill cf-pill-birthday">{(day as Record<string, unknown>).special_label ? `🎂 ${(day as Record<string, unknown>).special_label}` : '🎂 Rosie\x27s Bday'}</div>
                       )}
                       {specialStatus === 'holiday' && (
                         <div className="cf-special-pill cf-pill-holiday">✨ Holiday</div>
