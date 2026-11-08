@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_SCHOOL_DAY_THRESHOLDS,
   type SchoolDayThresholds,
+  resolveBirthdayOverride,
+  resolveBirthdayPackSpriteUrl,
   resolveCharacterPackSpriteUrl,
   resolveClothingConditionState,
   selectDailyVariantIndex,
@@ -183,6 +185,61 @@ describe('schoolDayPack utilities', () => {
       expect(clamped).toBe(1);
       const clampedNeg = selectDailyVariantIndex('2026-10-31', 'morning', -5);
       expect(clampedNeg).toBe(1);
+    });
+
+    it('assigns distinct round-robin variant indices across morning, afternoon, and evening when variantsCount >= 3', () => {
+      const dates = ['2026-11-07', '2026-11-08', '2026-12-25', '2026-01-01'];
+      for (const dateStr of dates) {
+        const morning = selectDailyVariantIndex(dateStr, 'morning', 5);
+        const afternoon = selectDailyVariantIndex(dateStr, 'afternoon', 5);
+        const evening = selectDailyVariantIndex(dateStr, 'evening', 5);
+        expect(new Set([morning, afternoon, evening]).size).toBe(3);
+      }
+    });
+  });
+
+  describe('resolveBirthdayOverride and resolveBirthdayPackSpriteUrl', () => {
+    it('resolves birthday override from array and object configurations using generic fixtures', () => {
+      const arrayConfig = [
+        { name: 'ChildOne', date: '11-07' },
+        { key: 'child_two', name: 'ChildTwo', date: '05-14', banner_label: 'Party Time!' },
+      ];
+      const match1 = resolveBirthdayOverride('2026-11-07', arrayConfig);
+      expect(match1).toEqual({
+        key: 'childone',
+        name: 'ChildOne',
+        bannerLabel: '🎂 Happy Birthday ChildOne!',
+        outfitLabel: '🎂 Birthday Celebration!',
+      });
+
+      const match2 = resolveBirthdayOverride('2026-05-14', arrayConfig);
+      expect(match2).toEqual({
+        key: 'child_two',
+        name: 'ChildTwo',
+        bannerLabel: 'Party Time!',
+        outfitLabel: '🎂 Birthday Celebration!',
+      });
+
+      expect(resolveBirthdayOverride('2026-11-08', arrayConfig)).toBeUndefined();
+
+      const mapConfig = {
+        ChildOne: '11-07',
+      };
+      expect(resolveBirthdayOverride('2026-11-07', mapConfig)).toEqual({
+        key: 'childone',
+        name: 'ChildOne',
+        bannerLabel: '🎂 Happy Birthday ChildOne!',
+        outfitLabel: '🎂 Birthday Celebration!',
+      });
+    });
+
+    it('formats birthday pack sprite URLs cleanly', () => {
+      expect(resolveBirthdayPackSpriteUrl('ghibli_school_day', 'childone', 'morning')).toBe(
+        '/static/ui/assets/weather-packs/ghibli_school_day/birthday_childone_morning.jpg',
+      );
+      expect(
+        resolveBirthdayPackSpriteUrl('custom_pack', 'childone', 'evening', '/custom/base'),
+      ).toBe('/custom/base/custom_pack/birthday_childone_evening.jpg');
     });
   });
 
