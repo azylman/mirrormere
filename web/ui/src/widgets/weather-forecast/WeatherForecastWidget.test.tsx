@@ -1463,4 +1463,69 @@ describe('WeatherHourlyGraph component', () => {
       nonBirthdayMorning?.querySelector('img.weather-school-day-sprite')?.getAttribute('src'),
     ).toMatch(/^\/static\/ui\/assets\/weather-packs\/ghibli_school_day\/morning_mild_v\d+\.jpg$/);
   });
+
+  it('applies custom shadow_opacity config as --weather-scrim-opacity on .weather-school-day-strip', () => {
+    useDisplayStore.setState({
+      widgets: {
+        'weather-school-shadow': {
+          meta: {
+            type: 'weather-forecast',
+            origin: [0, 0],
+            dimensions: [2, 1],
+            config: {
+              mode: 'school-day',
+              shadow_opacity: 0.9,
+            },
+            assets_base: '',
+          },
+          state: 'healthy',
+          data: {
+            current: {
+              temperature: 68,
+              icon: 'weather-sunny',
+            },
+          },
+          timestamp: '2026-10-31T12:00:00Z',
+        },
+      },
+    });
+
+    const { container, rerender } = render(
+      <WeatherForecastWidget id="weather-school-shadow" type="weather-forecast" />,
+    );
+
+    const strip = container.querySelector('.weather-school-day-strip') as HTMLElement | null;
+    expect(strip).not.toBeNull();
+    expect(strip?.style.getPropertyValue('--weather-scrim-opacity')).toBe('0.9');
+
+    // Out-of-range shadow_opacity (> 1) should be ignored
+    useDisplayStore.setState({
+      widgets: {
+        'weather-school-shadow': {
+          meta: {
+            type: 'weather-forecast',
+            origin: [0, 0],
+            dimensions: [2, 1],
+            config: {
+              mode: 'school-day',
+              shadow_opacity: 1.5,
+            },
+            assets_base: '',
+          },
+          state: 'healthy',
+          data: {
+            current: {
+              temperature: 68,
+              icon: 'weather-sunny',
+            },
+          },
+          timestamp: '2026-10-31T12:00:00Z',
+        },
+      },
+    });
+
+    rerender(<WeatherForecastWidget id="weather-school-shadow" type="weather-forecast" />);
+    const stripInvalid = container.querySelector('.weather-school-day-strip') as HTMLElement | null;
+    expect(stripInvalid?.style.getPropertyValue('--weather-scrim-opacity')).toBe('');
+  });
 });

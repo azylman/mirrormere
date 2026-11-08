@@ -1,3 +1,4 @@
+import type { CSSProperties } from 'react';
 import './WeatherForecastWidget.css';
 import {
   DEFAULT_SCHOOL_DAY_THRESHOLDS, type DaypartSlot, type SchoolDayThresholds,
@@ -239,10 +240,18 @@ function renderCurrentHeader(props: WeatherCurrentHeaderProps) {
   );
 }
 
-function renderSchoolDayStrip(slots: SchoolDaySlotItem[]) {
+function renderSchoolDayStrip(slots: SchoolDaySlotItem[], shadowOpacity?: number) {
   const isTomorrow = slots.length > 0 && slots[0].isTomorrow;
+  const stripStyle =
+    shadowOpacity !== undefined
+      ? ({ '--weather-scrim-opacity': String(shadowOpacity) } as CSSProperties)
+      : undefined;
   return (
-    <div className="weather-school-day-strip" data-day={isTomorrow ? 'tomorrow' : 'today'}>
+    <div
+      className="weather-school-day-strip"
+      data-day={isTomorrow ? 'tomorrow' : 'today'}
+      style={stripStyle}
+    >
       {slots.map((item) => (
         <div
           key={item.slot}
@@ -347,6 +356,9 @@ export function WeatherForecastWidget({ id }: WidgetComponentProps) {
   const daily = (data?.daily ?? data?.Daily) as unknown[] | undefined;
 
   const isSchoolDay = config?.mode === 'school-day';
+  const rawShadow = config?.shadow_opacity;
+  const shadowOpacity =
+    typeof rawShadow === 'number' && rawShadow >= 0 && rawShadow <= 1 ? rawShadow : undefined;
   const schoolDaySlots = isSchoolDay
     ? buildSchoolDaySlots(data, current, daily, hourly, config, entry?.timestamp)
     : [];
@@ -366,7 +378,7 @@ export function WeatherForecastWidget({ id }: WidgetComponentProps) {
 
       {hasCurrent ? (
         <>
-          {isSchoolDay && renderSchoolDayStrip(schoolDaySlots)}
+          {isSchoolDay && renderSchoolDayStrip(schoolDaySlots, shadowOpacity)}
           {renderHourlySection({ hourly, widgetId: id })}
           {renderMicroStats({ humidity, windSpeed, windUnit, precipProb })}
         </>
