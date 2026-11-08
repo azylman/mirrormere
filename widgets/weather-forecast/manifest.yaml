@@ -77,4 +77,8 @@ config_schema:
         - array
         - object
         - boolean
+    shadow_opacity:
+      type: number
+      minimum: 0
+      maximum: 1
   additionalProperties: false

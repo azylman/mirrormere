@@ -13,6 +13,7 @@
 }
 
 .weather-school-day-strip {
+  --weather-scrim-opacity: 0.82;
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 12px;
@@ -41,10 +42,10 @@
   z-index: 1;
   background: linear-gradient(
     90deg,
-    rgba(10, 15, 28, 0.60) 0%,
-    rgba(10, 15, 28, 0.36) 22%,
-    rgba(10, 15, 28, 0.12) 32%,
-    rgba(10, 15, 28, 0.0) 40%
+    rgba(10, 15, 28, var(--weather-scrim-opacity, 0.82)) 0%,
+    rgba(10, 15, 28, calc(var(--weather-scrim-opacity, 0.82) * 0.707)) 24%,
+    rgba(10, 15, 28, calc(var(--weather-scrim-opacity, 0.82) * 0.305)) 36%,
+    rgba(10, 15, 28, 0.0) 48%
   );
   pointer-events: none;
 }
