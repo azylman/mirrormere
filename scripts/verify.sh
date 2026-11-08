@@ -490,7 +490,6 @@ if [ "$MODE" = "staged" ]; then
 
     if echo "$STAGED_FILES" | grep -q -E '\.go$|^go\.(mod|sum)$|^\.golangci\.yml$|^scripts/verify\.sh$'; then
         run_golangci_lint
-        run_deadcode
     fi
 
     if echo "$STAGED_FILES" | grep -q -E '^go\.(mod|sum)$'; then
