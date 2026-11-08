@@ -15,8 +15,7 @@ function escapeRegExp(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-const HOLIDAY_RE =
-  /\b(veterans day|thanksgiving|christmas|new year|memorial day|labor day|independence day|4th of july|easter|halloween|valentine|mother's day|father's day|mlk|presidents day|juneteenth|holiday)\b/i;
+const HOLIDAY_RE = /\b(veterans day|thanksgiving|christmas|new year|memorial day|labor day|independence day|4th of july|easter|halloween|valentine|mother's day|father's day|mlk|presidents day|juneteenth|holiday)\b/i;
 
 export function detectEventFlair(title?: string): EventFlair | null {
   if (!title || typeof title !== 'string') return null;
@@ -75,7 +74,7 @@ export function detectDaySpecialStatus(dayEvents?: FamilyEvent[], members?: Fami
 }
 
 export function renderEventFlairWatermark(flair: EventFlair): ReactElement | null {
-  let inner: ReactElement | null = null;
+  let inner: ReactElement;
   switch (flair) {
     case 'birthday':
     case 'party':
@@ -159,8 +158,7 @@ export function CalendarAllDayBand({
         className="cf-allday-band cf-week-allday-grid"
         style={{
           marginLeft, display: 'grid', gridTemplateColumns: `repeat(${daysToRender.length}, 1fr)`,
-          gridAutoFlow: 'dense', gap: '6px', paddingBottom: '6px', marginBottom: '6px',
-          borderBottom: '1px dashed var(--mm-divider, rgba(90, 60, 30, 0.1))',
+          gridAutoFlow: 'dense', gap: '6px', paddingBottom: '6px', marginBottom: '6px', borderBottom: '1px dashed var(--mm-divider, rgba(90, 60, 30, 0.1))',
         }}
       >
         {visibleAllDayEvents.map((ev) => {
@@ -168,9 +166,7 @@ export function CalendarAllDayBand({
           const isMealie = Boolean(mealieImg);
           const flair = eventFlair !== false && !isMealie ? detectEventFlair(ev.title) : null;
           const spanStartDay = weekVM?.days?.[ev.start_col - 1]?.date || ev.start || daysToRender[0]?.date || currentDateISO;
-          const spanEndDay = ev.col_span > 1
-            ? weekVM?.days?.[Math.min((weekVM?.days?.length ?? 1) - 1, ev.start_col + ev.col_span - 2)]?.date || ev.end
-            : ev.end;
+          const spanEndDay = ev.col_span > 1 ? weekVM?.days?.[Math.min((weekVM?.days?.length ?? 1) - 1, ev.start_col + ev.col_span - 2)]?.date || ev.end : ev.end;
           return (
             <div
               key={ev.id}
@@ -183,11 +179,9 @@ export function CalendarAllDayBand({
               onKeyDown={(e) => handleBandEventKeyDown(e, () => onOpenModal(ev, spanStartDay, spanEndDay))}
               style={{
                 gridColumn: activeView === 'day' ? '1 / span 1' : `${ev.start_col} / span ${ev.col_span}`,
-                fontSize: '0.68rem', fontWeight: 700, borderRadius: '6px', padding: '3px 6px',
-                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                fontSize: '0.68rem', fontWeight: 700, borderRadius: '6px', padding: '3px 6px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                 color: ev.text_color, backgroundColor: ev.color, cursor: 'pointer', touchAction: 'manipulation',
-                display: isMealie ? 'flex' : undefined, alignItems: isMealie ? 'center' : undefined, gap: isMealie ? '6px' : undefined,
-                position: 'relative',
+                display: isMealie ? 'flex' : undefined, alignItems: isMealie ? 'center' : undefined, gap: isMealie ? '6px' : undefined, position: 'relative',
               }}
             >
               {isMealie ? <MealiePillContent location={mealieImg} title={ev.title} /> : stripMealiePrefix(ev.title)}
@@ -205,8 +199,7 @@ export function CalendarAllDayBand({
         className="cf-allday-band cf-week-allday-grid"
         style={{
           marginLeft, display: 'grid', gridTemplateColumns: `repeat(${daysToRender.length}, 1fr)`,
-          gap: '6px', paddingBottom: '6px', marginBottom: '6px',
-          borderBottom: '1px dashed var(--mm-divider, rgba(90, 60, 30, 0.1))',
+          gap: '6px', paddingBottom: '6px', marginBottom: '6px', borderBottom: '1px dashed var(--mm-divider, rgba(90, 60, 30, 0.1))',
         }}
       >
         {daysToRender.map((day) => (
@@ -219,9 +212,8 @@ export function CalendarAllDayBand({
                 <div
                   key={ev.id} className="cf-edge-band cf-allday-band-local"
                   style={{
-                    display: 'flex', flexDirection: 'column', gap: '2px', padding: '2px 4px',
-                    background: 'rgba(90, 60, 30, 0.05)', borderRadius: '6px',
-                    border: '1px dashed var(--mm-divider, rgba(90, 60, 30, 0.12))', flexShrink: 0,
+                    display: 'flex', flexDirection: 'column', gap: '2px', padding: '2px 4px', background: 'rgba(90, 60, 30, 0.05)',
+                    borderRadius: '6px', border: '1px dashed var(--mm-divider, rgba(90, 60, 30, 0.12))', flexShrink: 0,
                   }}
                 >
                   <div
@@ -233,11 +225,9 @@ export function CalendarAllDayBand({
                     onClick={() => onOpenModal(ev, day.date)}
                     onKeyDown={(e) => handleBandEventKeyDown(e, () => onOpenModal(ev, day.date))}
                     style={{
-                      fontSize: '0.65rem', fontWeight: 700, borderRadius: '4px', padding: '2px 4px',
-                      color: ev.text_color, backgroundColor: ev.color, cursor: 'pointer', touchAction: 'manipulation',
-                      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                      display: isMealie ? 'flex' : undefined, alignItems: isMealie ? 'center' : undefined, gap: isMealie ? '6px' : undefined,
-                      position: 'relative',
+                      fontSize: '0.65rem', fontWeight: 700, borderRadius: '4px', padding: '2px 4px', color: ev.text_color, backgroundColor: ev.color,
+                      cursor: 'pointer', touchAction: 'manipulation', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                      display: isMealie ? 'flex' : undefined, alignItems: isMealie ? 'center' : undefined, gap: isMealie ? '6px' : undefined, position: 'relative',
                     }}
                   >
                     {isMealie ? <MealiePillContent location={mealieImg} title={ev.title} /> : stripMealiePrefix(ev.title)}
@@ -283,10 +273,8 @@ export function CalendarEdgeEventsBand({ edge, daysToRender, inferredTimeFormat,
       className={`cf-edge-band ${gridClass}`}
       style={{
         marginLeft, display: 'grid', gridTemplateColumns: `repeat(${daysToRender.length}, 1fr)`, gap: '6px',
-        paddingBottom: isEarly ? '4px' : undefined, marginBottom: isEarly ? '4px' : undefined,
-        borderBottom: isEarly ? '1px dashed var(--mm-divider, rgba(90, 60, 30, 0.1))' : undefined,
-        paddingTop: !isEarly ? '4px' : undefined, marginTop: !isEarly ? '4px' : undefined,
-        borderTop: !isEarly ? '1px dashed var(--mm-divider, rgba(90, 60, 30, 0.1))' : undefined,
+        paddingBottom: isEarly ? '4px' : undefined, marginBottom: isEarly ? '4px' : undefined, borderBottom: isEarly ? '1px dashed var(--mm-divider, rgba(90, 60, 30, 0.1))' : undefined,
+        paddingTop: !isEarly ? '4px' : undefined, marginTop: !isEarly ? '4px' : undefined, borderTop: !isEarly ? '1px dashed var(--mm-divider, rgba(90, 60, 30, 0.1))' : undefined,
       }}
     >
       {daysToRender.map((day) => {
@@ -299,9 +287,8 @@ export function CalendarEdgeEventsBand({ edge, daysToRender, inferredTimeFormat,
                 <div
                   key={ev.id} className={`cf-edge-band ${bandClass}`}
                   style={{
-                    display: 'flex', flexDirection: 'column', gap: '2px', padding: '2px 4px',
-                    background: 'rgba(90, 60, 30, 0.05)', borderRadius: '6px',
-                    border: '1px dashed var(--mm-divider, rgba(90, 60, 30, 0.12))', flexShrink: 0,
+                    display: 'flex', flexDirection: 'column', gap: '2px', padding: '2px 4px', background: 'rgba(90, 60, 30, 0.05)',
+                    borderRadius: '6px', border: '1px dashed var(--mm-divider, rgba(90, 60, 30, 0.12))', flexShrink: 0,
                   }}
                 >
                   <div
@@ -314,13 +301,10 @@ export function CalendarEdgeEventsBand({ edge, daysToRender, inferredTimeFormat,
                     onClick={() => onOpenModal(ev, day.date)}
                     onKeyDown={(e) => handleBandEventKeyDown(e, () => onOpenModal(ev, day.date))}
                     style={{
-                      fontSize: '0.60rem', fontWeight: 700, padding: '2px 4px', borderRadius: '4px',
-                      backgroundColor: ev.color, color: ev.text_color, overflow: 'hidden',
-                      textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'pointer', touchAction: 'manipulation',
+                      fontSize: '0.60rem', fontWeight: 700, padding: '2px 4px', borderRadius: '4px', backgroundColor: ev.color, color: ev.text_color,
+                      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'pointer', touchAction: 'manipulation',
                     }}
-                  >
-                    {glyph} {startDisplay} {ev.title}
-                  </div>
+                  >{glyph} {startDisplay} {ev.title}</div>
                 </div>
               );
             })}
@@ -351,9 +335,7 @@ export function CalendarTimelineAxis({ weekVM }: { weekVM?: FamilyViewModel }) {
                 transform: marker.is_start ? 'translateY(0)' : marker.is_end ? 'translateY(-100%)' : 'translateY(-50%)',
                 lineHeight: 1, whiteSpace: 'nowrap', pointerEvents: 'none',
               }}
-            >
-              {marker.label}
-            </span>
+            >{marker.label}</span>
           ))
         ) : (
           <div style={{ height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', textAlign: 'right', paddingRight: '6px' }}>
@@ -386,32 +368,23 @@ export function CalendarDayEventCard({ ev, dayDate, inferredTimeFormat, onOpenMo
       title={`${startDisplay}–${endDisplay}: ${ev.title}${ev.location ? ` (${ev.location})` : ''}`}
       aria-label={`${ev.title}, ${startDisplay} to ${endDisplay}${ev.location ? `, ${ev.location}` : ''}`}
       data-event-id={ev.id} data-event-title={ev.title} data-event-start={ev.start}
-      data-event-end={ev.end} data-event-location={ev.location} data-event-description={ev.description}
-      data-flair={flair || undefined}
+      data-event-end={ev.end} data-event-location={ev.location} data-event-description={ev.description} data-flair={flair || undefined}
       onClick={() => onOpenModal(ev, dayDate)}
       onKeyDown={(e) => handleBandEventKeyDown(e, () => onOpenModal(ev, dayDate))}
       style={{
         position: 'absolute', top: `${ev.top_pct}%`, height: `${ev.height_pct}%`,
         left: `calc(${ev.left_pct}% + 1px)`, width: `calc(${ev.width_pct}% - 2px)`,
-        minHeight: '20px', padding: '2px 4px', borderRadius: '6px',
-        backgroundColor: ev.color, color: ev.text_color, overflow: 'hidden',
-        display: 'flex', flexDirection: 'column', boxSizing: 'border-box',
-        border: '1px solid rgba(0, 0, 0, 0.12)', boxShadow: '0 1px 3px rgba(0, 0, 0, 0.12)',
-        cursor: 'pointer', touchAction: 'manipulation',
+        minHeight: '20px', padding: '2px 4px', borderRadius: '6px', backgroundColor: ev.color, color: ev.text_color,
+        overflow: 'hidden', display: 'flex', flexDirection: 'column', boxSizing: 'border-box',
+        border: '1px solid rgba(0, 0, 0, 0.12)', boxShadow: '0 1px 3px rgba(0, 0, 0, 0.12)', cursor: 'pointer', touchAction: 'manipulation',
       }}
     >
       <div className="cf-event-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '2px', fontSize: '0.60rem', fontWeight: 800, lineHeight: 1.1, flexShrink: 0 }}>
         <span className="cf-event-time" style={{ fontFamily: 'var(--mm-font-mono, monospace)' }}>{startDisplay}</span>
         {ev.initials && ev.initials.length > 0 && <span className="cf-event-initials" style={{ opacity: 0.85 }}>{ev.initials.join('')}</span>}
       </div>
-      <div className="cf-event-title" style={{ fontSize: '0.65rem', fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', lineHeight: 1.2, flexShrink: 0 }}>
-        {ev.title}
-      </div>
-      {ev.location && (
-        <div className="cf-event-location" style={{ fontSize: '0.55rem', opacity: 0.85, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {ev.location}
-        </div>
-      )}
+      <div className="cf-event-title" style={{ fontSize: '0.65rem', fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', lineHeight: 1.2, flexShrink: 0 }}>{ev.title}</div>
+      {ev.location && <div className="cf-event-location" style={{ fontSize: '0.55rem', opacity: 0.85, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ev.location}</div>}
       {flair && renderEventFlairWatermark(flair)}
     </div>
   );
@@ -457,40 +430,31 @@ function CalendarDayMealBar({ meals, dayDate, onOpenModal }: CalendarDayMealBarP
             style={{
               position: 'relative', minHeight: '128px', height: '128px', borderRadius: '12px',
               overflow: 'hidden', display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
-              backgroundColor: '#d97757', color: '#ffffff', cursor: 'pointer', touchAction: 'manipulation',
-              boxShadow: '0 2px 6px rgba(0, 0, 0, 0.14)',
+              backgroundColor: '#d97757', color: '#ffffff', cursor: 'pointer', touchAction: 'manipulation', boxShadow: '0 2px 6px rgba(0, 0, 0, 0.14)',
             }}
           >
             {imgSrc && <img src={imgSrc} alt="" className="cf-mealie-photo" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', display: 'block', zIndex: 0 }} />}
             <span
               className="cf-mealie-pill"
               style={{
-                position: 'absolute', top: '6px', left: '6px', zIndex: 2, padding: '2px 7px',
-                borderRadius: '9999px', fontSize: '0.56rem', fontWeight: 800, letterSpacing: '0.02em',
-                color: '#ffffff', background: 'rgba(16,12,10,0.52)', backdropFilter: 'blur(6px)',
-                WebkitBackdropFilter: 'blur(6px)', lineHeight: 1.2, pointerEvents: 'none',
+                position: 'absolute', top: '6px', left: '6px', zIndex: 2, padding: '2px 7px', borderRadius: '9999px', fontSize: '0.56rem', fontWeight: 800,
+                letterSpacing: '0.02em', color: '#ffffff', background: 'rgba(16,12,10,0.52)', backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)', lineHeight: 1.2, pointerEvents: 'none',
               }}
-            >
-              🍽️ Dinner
-            </span>
+            >🍽️ Dinner</span>
             <div
               className="cf-mealie-scrim"
               style={{
                 position: 'absolute', left: 0, right: 0, bottom: 0, zIndex: 1, padding: '20px 8px 7px',
-                background: 'linear-gradient(to top, rgba(16,12,10,0.90) 0%, rgba(16,12,10,0.62) 55%, rgba(16,12,10,0.0) 100%)',
-                display: 'flex', alignItems: 'flex-end', pointerEvents: 'none',
+                background: 'linear-gradient(to top, rgba(16,12,10,0.90) 0%, rgba(16,12,10,0.62) 55%, rgba(16,12,10,0.0) 100%)', display: 'flex', alignItems: 'flex-end', pointerEvents: 'none',
               }}
             >
               <span
                 className="cf-mealie-title"
                 style={{
-                  fontSize: '0.70rem', fontWeight: 800, lineHeight: 1.2, color: '#ffffff',
-                  display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical',
-                  overflow: 'hidden', wordBreak: 'break-word', textShadow: '0 1px 2px rgba(0,0,0,0.6)',
+                  fontSize: '0.70rem', fontWeight: 800, lineHeight: 1.2, color: '#ffffff', display: '-webkit-box',
+                  WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden', wordBreak: 'break-word', textShadow: '0 1px 2px rgba(0,0,0,0.6)',
                 }}
-              >
-                {cleanTitle}
-              </span>
+              >{cleanTitle}</span>
             </div>
           </div>
         );
@@ -513,8 +477,7 @@ export function CalendarWeekMealRow({ daysToRender, marginLeft, onOpenModal }: C
       className="cf-week-meal-row"
       style={{
         marginLeft, display: 'grid', gridTemplateColumns: `repeat(${daysToRender.length}, 1fr)`,
-        gap: '6px', paddingTop: '6px', marginTop: '6px',
-        borderTop: '1px dashed var(--mm-divider, rgba(90, 60, 30, 0.12))', flexShrink: 0,
+        gap: '6px', paddingTop: '6px', marginTop: '6px', borderTop: '1px dashed var(--mm-divider, rgba(90, 60, 30, 0.12))', flexShrink: 0,
       }}
     >
       {daysToRender.map((day) => (
