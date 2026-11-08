@@ -179,7 +179,7 @@ export function selectDailyVariantIndex(
   return ((hash + slotOffset) % count) + 1;
 }
 
-export interface BirthdayConfigEntry {
+interface BirthdayConfigEntry {
   key?: string;
   id?: string;
   name?: string;
@@ -242,7 +242,7 @@ function formatBirthdayMatch(
 }
 
 function matchBirthdayEntryObject(
-  entry: Record<string, unknown>,
+  entry: BirthdayConfigEntry & Record<string, unknown>,
   targetMonthDay: string,
   fallbackKey?: string,
 ): BirthdayMatch | undefined {
