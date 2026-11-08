@@ -12,7 +12,7 @@ import {
   parsePhotoCarouselData, getBackdropPhotoURL, getSizedPhotoURL, useContainerSize,
   registerEmberSyncListener, usePhotoSlideshowTransition, resolvePhotoCarouselSourceAndUrl,
   formatPhotoMetadataLabel, hasMultiplePhotoAlbums,
-  isWideContainer,
+  isWideContainer, isVideoPhoto, getVideoStreamURL,
   type ContainerSize, type EmberSyncListener, type PhotoCarouselConfig, type PhotoItem, type SlideTransitionState,
 } from './photoCarouselHelpers';
 
@@ -21,6 +21,7 @@ export {
   getPhotoItemKey, selectNextPhotoIndex, selectPrevPhotoIndex, selectPreloadPhotoIndices,
   formatPhotoOverlayDate, formatPhotoMetadataLabel, hasMultiplePhotoAlbums,
   isPortraitPhoto, isWideContainer, selectCompanionPortraitIndex,
+  isVideoPhoto, getVideoStreamURL, VIDEO_STREAM_SUFFIXES,
   PHOTO_CONTROLS_HIDE_MS, PHOTO_PAUSE_INACTIVITY_MS,
 } from './photoCarouselHelpers';
 
@@ -35,17 +36,7 @@ declare global {
 }
 
 function PhotoCarouselLoading() {
-  return (
-    <div
-      className="photo-loading"
-      style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        height: '100%', color: 'var(--mm-text-dim, #8b819f)', fontSize: '0.95rem', fontWeight: 700,
-      }}
-    >
-      <span>Loading photos...</span>
-    </div>
-  );
+  return <div className="photo-loading" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--mm-text-dim, #8b819f)', fontSize: '0.95rem', fontWeight: 700 }}><span>Loading photos...</span></div>;
 }
 
 interface PhotoCarouselEmptyProps {
@@ -98,102 +89,77 @@ function PhotoCarouselEmpty({ source, needsAuth, syncError, albumUrl }: PhotoCar
   );
 }
 
-function PhotoBackdrop({
-  currentUrl, nextUrl, isTransitioning,
-}: {
-  currentUrl: string; nextUrl: string; isTransitioning: boolean;
-}) {
+function PhotoBackdrop({ currentUrl, nextUrl, isTransitioning }: { currentUrl: string; nextUrl: string; isTransitioning: boolean }) {
   return (
     <div className="photo-backdrop-container" aria-hidden="true">
-      <img
-        className="photo-backdrop-layer photo-backdrop-current"
-        src={currentUrl}
-        alt=""
-        style={{
-          opacity: isTransitioning ? 0 : 1,
-          transition: isTransitioning ? 'opacity 0.85s ease-in-out' : 'none',
-        }}
-      />
-      <img
-        className="photo-backdrop-layer photo-backdrop-next"
-        src={isTransitioning ? nextUrl : undefined}
-        alt=""
-        style={{
-          opacity: isTransitioning ? 1 : 0,
-          transition: isTransitioning ? 'opacity 0.85s ease-in-out' : 'none',
-        }}
-      />
+      <img className="photo-backdrop-layer photo-backdrop-current" src={currentUrl} alt="" style={{ opacity: isTransitioning ? 0 : 1, transition: isTransitioning ? 'opacity 0.85s ease-in-out' : 'none' }} />
+      <img className="photo-backdrop-layer photo-backdrop-next" src={isTransitioning ? nextUrl : undefined} alt="" style={{ opacity: isTransitioning ? 1 : 0, transition: isTransitioning ? 'opacity 0.85s ease-in-out' : 'none' }} />
     </div>
   );
 }
 
 function PhotoForeground({
-  currentUrl, currentSecondaryUrl, nextUrl, nextSecondaryUrl, isTransitioning,
+  currentUrl, currentSecondaryUrl, currentRawUrl, currentSecondaryRawUrl, currentIsVideo, currentSecondaryIsVideo,
+  nextUrl, nextSecondaryUrl, isTransitioning, playingSlot, streamSuffixIndex,
+  onPlaySlot, onStopVideo, onVideoEnded, onVideoError,
 }: {
-  currentUrl: string; currentSecondaryUrl?: string; nextUrl: string; nextSecondaryUrl?: string; isTransitioning: boolean;
+  currentUrl: string; currentSecondaryUrl?: string; currentRawUrl?: string; currentSecondaryRawUrl?: string;
+  currentIsVideo?: boolean; currentSecondaryIsVideo?: boolean; nextUrl: string; nextSecondaryUrl?: string;
+  isTransitioning: boolean; playingSlot: 'primary' | 'secondary' | null; streamSuffixIndex: number;
+  onPlaySlot: (slot: 'primary' | 'secondary') => void; onStopVideo: () => void; onVideoEnded: () => void; onVideoError: () => void;
 }) {
   return (
     <div className="photo-foreground-container">
       {currentSecondaryUrl ? (
-        <div
-          className="photo-layer photo-current photo-foreground-diptych dither"
-          style={{
-            opacity: isTransitioning ? 0 : 1,
-            transition: isTransitioning ? 'opacity 0.85s ease-in-out' : 'none',
-          }}
-        >
-          <img className="photo-diptych-item photo-current dither" src={currentUrl} alt="Photo" />
-          <img className="photo-diptych-item photo-current-secondary dither" src={currentSecondaryUrl} alt="Photo" />
+        <div className="photo-layer photo-current photo-foreground-diptych dither" style={{ opacity: isTransitioning ? 0 : 1, transition: isTransitioning ? 'opacity 0.85s ease-in-out' : 'none' }}>
+          <div className="photo-diptych-slot">
+            {playingSlot === 'primary' ? (
+              <video className="photo-diptych-item photo-video-player dither" src={getVideoStreamURL(currentRawUrl, streamSuffixIndex)} poster={currentUrl} autoPlay playsInline onClick={(e) => { e.stopPropagation(); onStopVideo(); }} onEnded={onVideoEnded} onError={onVideoError} />
+            ) : (
+              <img className="photo-diptych-item photo-current dither" src={currentUrl} alt="Photo" />
+            )}
+            {!isTransitioning && currentIsVideo && playingSlot !== 'primary' && (
+              <button type="button" className="photo-video-play-btn" aria-label="Play video" onClick={(e) => { e.stopPropagation(); onPlaySlot('primary'); }}><HudPlayIcon /></button>
+            )}
+          </div>
+          <div className="photo-diptych-slot">
+            {playingSlot === 'secondary' ? (
+              <video className="photo-diptych-item photo-video-player dither" src={getVideoStreamURL(currentSecondaryRawUrl, streamSuffixIndex)} poster={currentSecondaryUrl} autoPlay playsInline onClick={(e) => { e.stopPropagation(); onStopVideo(); }} onEnded={onVideoEnded} onError={onVideoError} />
+            ) : (
+              <img className="photo-diptych-item photo-current-secondary dither" src={currentSecondaryUrl} alt="Photo" />
+            )}
+            {!isTransitioning && currentSecondaryIsVideo && playingSlot !== 'secondary' && (
+              <button type="button" className="photo-video-play-btn" aria-label="Play video" onClick={(e) => { e.stopPropagation(); onPlaySlot('secondary'); }}><HudPlayIcon /></button>
+            )}
+          </div>
         </div>
       ) : (
-        <img
-          className="photo-layer photo-current dither"
-          src={currentUrl}
-          alt="Photo"
-          style={{
-            opacity: isTransitioning ? 0 : 1,
-            transition: isTransitioning ? 'opacity 0.85s ease-in-out' : 'none',
-          }}
-        />
+        <>
+          {playingSlot === 'primary' ? (
+            <video className="photo-layer photo-current photo-video-player dither" src={getVideoStreamURL(currentRawUrl, streamSuffixIndex)} poster={currentUrl} autoPlay playsInline onClick={(e) => { e.stopPropagation(); onStopVideo(); }} onEnded={onVideoEnded} onError={onVideoError} />
+          ) : (
+            <img className="photo-layer photo-current dither" src={currentUrl} alt="Photo" style={{ opacity: isTransitioning ? 0 : 1, transition: isTransitioning ? 'opacity 0.85s ease-in-out' : 'none' }} />
+          )}
+          {!isTransitioning && currentIsVideo && playingSlot !== 'primary' && (
+            <button type="button" className="photo-video-play-btn" aria-label="Play video" onClick={(e) => { e.stopPropagation(); onPlaySlot('primary'); }}><HudPlayIcon /></button>
+          )}
+        </>
       )}
       {nextSecondaryUrl ? (
-        <div
-          className="photo-layer photo-next photo-foreground-diptych dither"
-          style={{
-            opacity: isTransitioning ? 1 : 0,
-            transition: isTransitioning ? 'opacity 0.85s ease-in-out' : 'none',
-          }}
-        >
+        <div className="photo-layer photo-next photo-foreground-diptych dither" style={{ opacity: isTransitioning ? 1 : 0, transition: isTransitioning ? 'opacity 0.85s ease-in-out' : 'none' }}>
           <img className="photo-diptych-item photo-next dither" src={isTransitioning ? nextUrl : undefined} alt="Photo" />
           <img className="photo-diptych-item photo-next-secondary dither" src={isTransitioning ? nextSecondaryUrl : undefined} alt="Photo" />
         </div>
       ) : (
-        <img
-          className="photo-layer photo-next dither"
-          src={isTransitioning ? nextUrl : undefined}
-          alt="Photo"
-          style={{
-            opacity: isTransitioning ? 1 : 0,
-            transition: isTransitioning ? 'opacity 0.85s ease-in-out' : 'none',
-          }}
-        />
+        <img className="photo-layer photo-next dither" src={isTransitioning ? nextUrl : undefined} alt="Photo" style={{ opacity: isTransitioning ? 1 : 0, transition: isTransitioning ? 'opacity 0.85s ease-in-out' : 'none' }} />
       )}
     </div>
   );
 }
 
-function PhotoMetadataOverlay({
-  photo, secondaryPhoto, showAlbumName,
-}: {
-  photo?: PhotoItem; secondaryPhoto?: PhotoItem; showAlbumName: boolean;
-}) {
+function PhotoMetadataOverlay({ photo, secondaryPhoto, showAlbumName }: { photo?: PhotoItem; secondaryPhoto?: PhotoItem; showAlbumName: boolean }) {
   const meta = formatPhotoMetadataLabel(photo, showAlbumName, secondaryPhoto);
-  if (!meta) return null;
-  return (
-    <div className="photo-metadata-overlay" aria-label={meta.text}>
-      {meta.text}
-    </div>
-  );
+  return meta ? <div className="photo-metadata-overlay" aria-label={meta.text}>{meta.text}</div> : null;
 }
 
 function PhotoPreloadPool({ photos, baseIndex, companionIndex, widgetId, containerSize }: {
@@ -212,7 +178,7 @@ function PhotoPreloadPool({ photos, baseIndex, companionIndex, widgetId, contain
         return (
           <span key={getPhotoItemKey(p, idx)}>
             <img src={getBackdropPhotoURL(rawUrl)} decoding="async" loading="eager" alt="" />
-            <img src={getSizedPhotoURL(rawUrl, containerSize)} decoding="async" loading="eager" alt="" />
+            <img src={getSizedPhotoURL(rawUrl, containerSize, isVideoPhoto(p))} decoding="async" loading="eager" alt="" />
           </span>
         );
       })}
@@ -367,35 +333,29 @@ function useEmberAlbumSync(id: string, source: 'share_url' | 'ember_bridge', alb
 }
 
 function resolveSlideLayerState(
-  photos: readonly PhotoItem[],
-  safeIndex: number,
-  currentCompanionIndex: number | null,
-  transitionState: SlideTransitionState | null,
-  containerSize: ContainerSize,
+  photos: readonly PhotoItem[], safeIndex: number, currentCompanionIndex: number | null,
+  transitionState: SlideTransitionState | null, containerSize: ContainerSize,
 ) {
   const wide = isWideContainer(containerSize);
   const resolveSlide = (idx: number | null, fixedCompanionIdx: number | null) => {
-    if (idx === null) return { photo: undefined, fgUrl: '', backdropUrl: '', companionIdx: null, companionPhoto: undefined, companionFgUrl: '' };
+    if (idx === null) return { photo: undefined, fgUrl: "", backdropUrl: "", rawUrl: undefined, isVideo: false, companionIdx: null, companionPhoto: undefined, companionFgUrl: "", companionRawUrl: undefined, companionIsVideo: false };
     const photo = photos[idx];
+    const isVideo = isVideoPhoto(photo);
     const rawUrl = photo?.url ?? photo?.URL;
-    const fgUrl = rawUrl ? getSizedPhotoURL(rawUrl, containerSize) : '';
-    const backdropUrl = rawUrl ? getBackdropPhotoURL(rawUrl) : '';
+    const fgUrl = rawUrl ? getSizedPhotoURL(rawUrl, containerSize, isVideo) : "";
+    const backdropUrl = rawUrl ? getBackdropPhotoURL(rawUrl) : "";
     const companionIdx = wide ? fixedCompanionIdx : null;
     const companionPhoto = companionIdx !== null ? photos[companionIdx] : undefined;
+    const companionIsVideo = isVideoPhoto(companionPhoto);
     const companionRawUrl = companionPhoto?.url ?? companionPhoto?.URL;
-    const companionFgUrl = companionRawUrl ? getSizedPhotoURL(companionRawUrl, containerSize) : '';
-    return { photo, fgUrl, backdropUrl, companionIdx, companionPhoto, companionFgUrl };
+    const companionFgUrl = companionRawUrl ? getSizedPhotoURL(companionRawUrl, containerSize, companionIsVideo) : "";
+    return { photo, fgUrl, backdropUrl, rawUrl, isVideo, companionIdx, companionPhoto, companionFgUrl, companionRawUrl, companionIsVideo };
   };
-
   const isTransitioning = Boolean(transitionState?.active);
   const current = resolveSlide(safeIndex, currentCompanionIndex);
-  const next = resolveSlide(
-    isTransitioning && transitionState ? transitionState.nextIndex : null,
-    isTransitioning && transitionState ? transitionState.companionIndex : null,
-  );
+  const next = resolveSlide(isTransitioning && transitionState ? transitionState.nextIndex : null, isTransitioning && transitionState ? transitionState.companionIndex : null);
   const active = isTransitioning && next.photo ? next : current;
   const activeIndex = isTransitioning && transitionState ? transitionState.nextIndex : safeIndex;
-
   return { isTransitioning, current, next, active, activeIndex };
 }
 
@@ -417,17 +377,44 @@ export function PhotoCarouselWidget({ id }: WidgetComponentProps) {
   const cycleIntervalSeconds = Math.max(5, Number(data?.cycle_interval_seconds) || DEFAULT_CYCLE_SECONDS);
 
   const [isPaused, setIsPaused] = useState(false);
+  const [playingSlot, setPlayingSlot] = useState<'primary' | 'secondary' | null>(null);
+  const [playingSlideKey, setPlayingSlideKey] = useState<string | null>(null);
+  const [streamSuffixIndex, setStreamSuffixIndex] = useState(0);
   const { controlsVisible, showControls, resetPauseInactivityTimer, togglePause } = usePhotoControls(isPaused, setIsPaused);
   const { rootRef, containerSize, containerSizeRef } = useContainerSize();
-
   const { safeIndex, currentCompanionIndex, transitionState, stepPhoto } = usePhotoSlideshowTransition({
-    id, photos, cycleIntervalSeconds, isCurrentPane, isDocumentVisible, isVideoMode, isPaused, containerSizeRef,
+    id, photos, cycleIntervalSeconds, isCurrentPane, isDocumentVisible, isVideoMode, isPaused: isPaused || playingSlot !== null, containerSizeRef,
   });
-
+  const resetDeckTimer = () => { const deck = photoDeckStateById.get(id); if (deck) deck.remainingMs = cycleIntervalSeconds * 1000; };
+  const { isTransitioning, current, next, active, activeIndex } = resolveSlideLayerState(
+    photos, safeIndex, currentCompanionIndex, transitionState, containerSize,
+  );
+  const slideKey = `${safeIndex}:${current.rawUrl ?? ''}:${current.companionIdx ?? ''}:${current.companionRawUrl ?? ''}`;
+  const shouldClearSlot =
+    playingSlot !== null &&
+    (playingSlideKey !== slideKey ||
+      !isCurrentPane ||
+      !isDocumentVisible ||
+      isVideoMode ||
+      (playingSlot === 'primary' && !current.isVideo) ||
+      (playingSlot === 'secondary' && !current.companionIsVideo));
+  if (shouldClearSlot) {
+    setPlayingSlot(null);
+    setPlayingSlideKey(null);
+    setStreamSuffixIndex(0);
+    resetDeckTimer();
+  }
+  const onPlaySlot = (slot: 'primary' | 'secondary') => {
+    resetDeckTimer();
+    setStreamSuffixIndex(0);
+    setPlayingSlideKey(slideKey);
+    setPlayingSlot(slot);
+  };
+  const onStopVideo = () => { resetDeckTimer(); setPlayingSlot(null); setPlayingSlideKey(null); setStreamSuffixIndex(0); };
+  const onVideoEnded = () => { resetDeckTimer(); setPlayingSlot(null); setPlayingSlideKey(null); setStreamSuffixIndex(0); };
+  const onVideoError = () => { if (streamSuffixIndex < 2) setStreamSuffixIndex((idx) => idx + 1); else onStopVideo(); };
   const handleStep = (direction: 'prev' | 'next') => {
-    showControls();
-    if (isPaused) resetPauseInactivityTimer();
-    stepPhoto(direction);
+    setPlayingSlot(null); setPlayingSlideKey(null); setStreamSuffixIndex(0); showControls(); if (isPaused) resetPauseInactivityTimer(); stepPhoto(direction);
   };
 
   const handleClick = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -442,9 +429,6 @@ export function PhotoCarouselWidget({ id }: WidgetComponentProps) {
     handleStep('next');
   };
 
-  const { isTransitioning, current, next, active, activeIndex } = resolveSlideLayerState(
-    photos, safeIndex, currentCompanionIndex, transitionState, containerSize,
-  );
   const showAlbumName = (Array.isArray(config?.albums) && config.albums.length > 1) || hasMultiplePhotoAlbums(photos);
 
   return (
@@ -464,9 +448,19 @@ export function PhotoCarouselWidget({ id }: WidgetComponentProps) {
           <PhotoForeground
             currentUrl={current.fgUrl}
             currentSecondaryUrl={current.companionFgUrl || undefined}
+            currentRawUrl={current.rawUrl}
+            currentSecondaryRawUrl={current.companionRawUrl}
+            currentIsVideo={current.isVideo}
+            currentSecondaryIsVideo={current.companionIsVideo}
             nextUrl={next.fgUrl}
             nextSecondaryUrl={next.companionFgUrl || undefined}
             isTransitioning={isTransitioning}
+            playingSlot={playingSlot}
+            streamSuffixIndex={streamSuffixIndex}
+            onPlaySlot={onPlaySlot}
+            onStopVideo={onStopVideo}
+            onVideoEnded={onVideoEnded}
+            onVideoError={onVideoError}
           />
           <PhotoPreloadPool
             photos={photos}

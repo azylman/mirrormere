@@ -172,11 +172,169 @@ export function selectDailyVariantIndex(
 ): number {
   const count = Math.max(1, variantsCount);
   let hash = 0;
-  const seed = `${dateStr}:${slot}`;
-  for (let i = 0; i < seed.length; i++) {
-    hash = (hash * 31 + seed.charCodeAt(i)) >>> 0;
+  for (let i = 0; i < dateStr.length; i++) {
+    hash = (hash * 31 + dateStr.charCodeAt(i)) >>> 0;
   }
-  return (hash % count) + 1;
+  const slotOffset = slot === 'morning' ? 0 : slot === 'afternoon' ? 1 : 2;
+  return ((hash + slotOffset) % count) + 1;
+}
+
+interface BirthdayConfigEntry {
+  key?: string;
+  id?: string;
+  name?: string;
+  date?: string;
+  month_day?: string;
+  month?: number;
+  day?: number;
+  label?: string;
+  banner_label?: string;
+  outfit_label?: string;
+}
+
+export interface BirthdayMatch {
+  key: string;
+  name: string;
+  bannerLabel: string;
+  outfitLabel: string;
+}
+
+function normalizeMonthDay(raw: unknown): string | undefined {
+  if (typeof raw !== 'string') return undefined;
+  const trimmed = raw.trim();
+  const fullMatch = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(trimmed);
+  if (fullMatch) {
+    return `${fullMatch[2].padStart(2, '0')}-${fullMatch[3].padStart(2, '0')}`;
+  }
+  const mdMatch = /^(\d{1,2})[-/](\d{1,2})$/.exec(trimmed);
+  if (mdMatch) {
+    return `${mdMatch[1].padStart(2, '0')}-${mdMatch[2].padStart(2, '0')}`;
+  }
+  return undefined;
+}
+
+function sanitizeBirthdayKey(raw: string): string {
+  return raw
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
+function formatBirthdayMatch(
+  keyRaw: string,
+  nameRaw: string,
+  bannerRaw?: string,
+  outfitRaw?: string,
+): BirthdayMatch | undefined {
+  const key = sanitizeBirthdayKey(keyRaw);
+  if (!key) return undefined;
+  const name = nameRaw.trim() || key.charAt(0).toUpperCase() + key.slice(1);
+  const bannerLabel =
+    typeof bannerRaw === 'string' && bannerRaw.trim()
+      ? bannerRaw.trim()
+      : `🎂 Happy Birthday ${name}!`;
+  const outfitLabel =
+    typeof outfitRaw === 'string' && outfitRaw.trim()
+      ? outfitRaw.trim()
+      : `🎂 Birthday Celebration!`;
+  return { key, name, bannerLabel, outfitLabel };
+}
+
+function matchBirthdayEntryObject(
+  entry: BirthdayConfigEntry & Record<string, unknown>,
+  targetMonthDay: string,
+  fallbackKey?: string,
+): BirthdayMatch | undefined {
+  let entryMonthDay = normalizeMonthDay(entry.date ?? entry.month_day);
+  if (
+    !entryMonthDay &&
+    typeof entry.month === 'number' &&
+    typeof entry.day === 'number'
+  ) {
+    entryMonthDay = `${String(entry.month).padStart(2, '0')}-${String(entry.day).padStart(2, '0')}`;
+  }
+  if (!entryMonthDay && fallbackKey) {
+    entryMonthDay = normalizeMonthDay(fallbackKey);
+  }
+  if (entryMonthDay !== targetMonthDay) return undefined;
+
+  const rawName =
+    typeof entry.name === 'string'
+      ? entry.name
+      : typeof entry.key === 'string'
+        ? entry.key
+        : typeof entry.id === 'string'
+          ? entry.id
+          : fallbackKey && !normalizeMonthDay(fallbackKey)
+            ? fallbackKey
+            : '';
+  const rawKey =
+    typeof entry.key === 'string'
+      ? entry.key
+      : typeof entry.id === 'string'
+        ? entry.id
+        : rawName;
+  const bannerRaw =
+    typeof entry.banner_label === 'string'
+      ? entry.banner_label
+      : typeof entry.label === 'string'
+        ? entry.label
+        : undefined;
+  const outfitRaw = typeof entry.outfit_label === 'string' ? entry.outfit_label : undefined;
+  return formatBirthdayMatch(rawKey, rawName, bannerRaw, outfitRaw);
+}
+
+export function resolveBirthdayOverride(
+  dateStr?: string,
+  birthdaysConfig?: unknown,
+): BirthdayMatch | undefined {
+  if (!dateStr || !birthdaysConfig || typeof birthdaysConfig === 'boolean') {
+    return undefined;
+  }
+  const targetMonthDay = normalizeMonthDay(dateStr);
+  if (!targetMonthDay) return undefined;
+
+  if (Array.isArray(birthdaysConfig)) {
+    for (const item of birthdaysConfig) {
+      if (item && typeof item === 'object' && !Array.isArray(item)) {
+        const match = matchBirthdayEntryObject(item as Record<string, unknown>, targetMonthDay);
+        if (match) return match;
+      }
+    }
+    return undefined;
+  }
+
+  if (typeof birthdaysConfig === 'object') {
+    const map = birthdaysConfig as Record<string, unknown>;
+    for (const [k, v] of Object.entries(map)) {
+      if (typeof v === 'string') {
+        const kAsDate = normalizeMonthDay(k);
+        const vAsDate = normalizeMonthDay(v);
+        if (vAsDate === targetMonthDay) {
+          const match = formatBirthdayMatch(k, k);
+          if (match) return match;
+        } else if (kAsDate === targetMonthDay) {
+          const match = formatBirthdayMatch(v, v);
+          if (match) return match;
+        }
+      } else if (v && typeof v === 'object' && !Array.isArray(v)) {
+        const match = matchBirthdayEntryObject(v as Record<string, unknown>, targetMonthDay, k);
+        if (match) return match;
+      }
+    }
+  }
+
+  return undefined;
+}
+
+export function resolveBirthdayPackSpriteUrl(
+  packName: string,
+  birthdayKey: string,
+  slot: DaypartSlot,
+  assetsBase = '/static/ui/assets/weather-packs',
+): string {
+  return `${assetsBase}/${packName}/birthday_${birthdayKey}_${slot}.jpg`;
 }
 
 const HOLIDAY_SUPPORTED_STATES: Record<string, ReadonlySet<ClothingConditionState>> = {

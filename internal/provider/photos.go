@@ -59,6 +59,7 @@ type PhotoItem struct {
 	Timestamp       string  `json:"timestamp,omitempty"`
 	AspectRatio     float64 `json:"aspect_ratio"`
 	AlbumName       string  `json:"album_name,omitempty"`
+	MediaType       string  `json:"media_type,omitempty"`
 	Location        string  `json:"location,omitempty"`
 	DominantColor   string  `json:"dominant_color,omitempty"`
 	LocationChecked bool    `json:"location_checked,omitempty"`
@@ -1342,10 +1343,17 @@ func extractDominantColor(mediaInfo []any) string {
 // parseMediaItem parses an individual media item array: [id, [url, width, height], timestamp, ...]
 func parseMediaItem(elem any) (PhotoItem, bool) {
 	arr, ok := elem.([]any)
-	if !ok || len(arr) < 2 || hasVideoMarker(arr) {
+	if !ok || len(arr) < 2 {
 		return PhotoItem{}, false
 	}
-	return tryParseMediaSlice(arr)
+	item, ok := tryParseMediaSlice(arr)
+	if !ok {
+		return PhotoItem{}, false
+	}
+	if hasVideoMarker(arr) {
+		item.MediaType = "video"
+	}
+	return item, true
 }
 
 func collectCallbackPayloads(matches [][]string) [][]any {
