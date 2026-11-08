@@ -28,6 +28,108 @@
     return null;
   }
 
+  function normalizeCustomMonthDay(raw) {
+    if (typeof raw !== 'string') return null;
+    const trimmed = raw.trim();
+    const fullMatch = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(trimmed);
+    if (fullMatch) {
+      return `${fullMatch[2].padStart(2, '0')}-${fullMatch[3].padStart(2, '0')}`;
+    }
+    const mdMatch = /^(\d{1,2})[-/](\d{1,2})$/.exec(trimmed);
+    if (mdMatch) {
+      return `${mdMatch[1].padStart(2, '0')}-${mdMatch[2].padStart(2, '0')}`;
+    }
+    return null;
+  }
+
+  function formatCustomSpecialDayBadge(nameRaw, labelRaw) {
+    if (typeof labelRaw === 'string' && labelRaw.trim()) {
+      const cleanLabel = labelRaw.trim().replace(/^🎂\s*/, '');
+      return `🎂 ${cleanLabel}`;
+    }
+    if (typeof nameRaw === 'string' && nameRaw.trim()) {
+      const cleanName = nameRaw.trim();
+      if (/bday|birthday/i.test(cleanName)) {
+        return `🎂 ${cleanName.replace(/^🎂\s*/, '')}`;
+      }
+      return `🎂 ${cleanName}'s Bday`;
+    }
+    return null;
+  }
+
+  function matchCustomEntryObject(entry, targetMonthDay, fallbackKey) {
+    let entryMonthDay = normalizeCustomMonthDay(entry.date != null ? entry.date : entry.month_day);
+    if (!entryMonthDay && typeof entry.month === 'number' && typeof entry.day === 'number') {
+      entryMonthDay = `${String(entry.month).padStart(2, '0')}-${String(entry.day).padStart(2, '0')}`;
+    }
+    if (!entryMonthDay && fallbackKey) {
+      entryMonthDay = normalizeCustomMonthDay(fallbackKey);
+    }
+    if (entryMonthDay !== targetMonthDay) return null;
+
+    const rawName =
+      typeof entry.name === 'string'
+        ? entry.name
+        : typeof entry.key === 'string'
+          ? entry.key
+          : typeof entry.id === 'string'
+            ? entry.id
+            : fallbackKey && !normalizeCustomMonthDay(fallbackKey)
+              ? fallbackKey
+              : '';
+    const rawLabel =
+      typeof entry.label === 'string'
+        ? entry.label
+        : typeof entry.banner_label === 'string'
+          ? entry.banner_label
+          : undefined;
+    return formatCustomSpecialDayBadge(rawName, rawLabel);
+  }
+
+  function resolveSingleSpecialSource(dateStr, source) {
+    if (!source || typeof source === 'boolean') return null;
+    const targetMonthDay = normalizeCustomMonthDay(dateStr);
+    if (!targetMonthDay) return null;
+
+    if (Array.isArray(source)) {
+      for (const item of source) {
+        if (item && typeof item === 'object' && !Array.isArray(item)) {
+          const match = matchCustomEntryObject(item, targetMonthDay);
+          if (match) return match;
+        }
+      }
+      return null;
+    }
+
+    if (typeof source === 'object') {
+      for (const [k, v] of Object.entries(source)) {
+        if (typeof v === 'string') {
+          const kAsDate = normalizeCustomMonthDay(k);
+          const vAsDate = normalizeCustomMonthDay(v);
+          if (vAsDate === targetMonthDay) {
+            const match = formatCustomSpecialDayBadge(k);
+            if (match) return match;
+          } else if (kAsDate === targetMonthDay) {
+            const match = formatCustomSpecialDayBadge(v);
+            if (match) return match;
+          }
+        } else if (v && typeof v === 'object' && !Array.isArray(v)) {
+          const match = matchCustomEntryObject(v, targetMonthDay, k);
+          if (match) return match;
+        }
+      }
+    }
+    return null;
+  }
+
+  function resolveConfiguredSpecialDayLabel(dateStr, birthdays, specialDays) {
+    if (!dateStr) return null;
+    return (
+      resolveSingleSpecialSource(dateStr, birthdays) ||
+      resolveSingleSpecialSource(dateStr, specialDays)
+    );
+  }
+
   function detectDaySpecialStatus(dayEvents, members) {
     if (!Array.isArray(dayEvents) || dayEvents.length === 0) return null;
     const safeMembers = Array.isArray(members) ? members : [];
@@ -360,7 +462,15 @@
           });
         }
 
-        const status = detectDaySpecialStatus(dayEvents, members);
+        const configuredBdayLabel = date
+          ? resolveConfiguredSpecialDayLabel(
+              date,
+              this.config && this.config.birthdays,
+              this.config && this.config.special_days,
+            )
+          : null;
+        const eventStatus = detectDaySpecialStatus(dayEvents, members);
+        const status = configuredBdayLabel ? 'birthday' : eventStatus;
         if (dayEl.classList) {
           dayEl.classList.remove('cf-special-birthday', 'cf-special-holiday');
         }
@@ -377,7 +487,9 @@
           if (header && typeof document !== 'undefined' && document.createElement) {
             const pill = document.createElement('span');
             pill.className = 'cf-special-pill cf-pill-birthday';
-            pill.textContent = (matchedDay && matchedDay.special_label) ? ('🎂 ' + matchedDay.special_label) : (status.label || '🎂 Family Bday');
+            pill.textContent = (matchedDay && matchedDay.special_label)
+              ? ('🎂 ' + matchedDay.special_label)
+              : (configuredBdayLabel || '🎂 Family Bday');
             header.appendChild(pill);
           }
         } else if (status === 'holiday') {
@@ -456,10 +568,11 @@
     }
 
     parseConfig() {
-      if (this.data && this.data.config) {
-        return this.data.config;
+      const baseCfg = (this.data && typeof this.data.config === 'object' && this.data.config) ? this.data.config : {};
+      if (this.options && typeof this.options === 'object') {
+        return Object.assign({}, baseCfg, this.options);
       }
-      return {};
+      return baseCfg;
     }
 
     buildEventIndex() {

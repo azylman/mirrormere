@@ -1662,6 +1662,92 @@ describe('useCalendarRangeData & useInactivityReset', () => {
         expect(container.querySelector('.cf-special-holiday')).toBeNull();
         expect(container.querySelector('.cf-special-pill')).toBeNull();
       });
+
+      it('resolves custom birthday and special_days names and labels on configured dates in week and month views', () => {
+        const birthdaysCfg = [
+          { name: 'Maya', date: '10-25' },
+          { name: 'Sam', month: 10, day: 28, label: "Sam's Golden Bday" },
+        ];
+        const specialDaysCfg = {
+          Alex: '2026-10-29',
+          '10-30': 'Grandpa',
+          '10-31': { name: 'Family', label: 'Founders Day' },
+        };
+
+        const daysToRender: FamilyDay[] = [
+          { date: '2026-10-25', weekday_abbr: 'Sun', day_of_month: 25, is_today: false, is_weekend: true, events: [] },
+          { date: '2026-10-28', weekday_abbr: 'Wed', day_of_month: 28, is_today: false, is_weekend: false, events: [] },
+          { date: '2026-10-29', weekday_abbr: 'Thu', day_of_month: 29, is_today: false, is_weekend: false, events: [] },
+          { date: '2026-10-30', weekday_abbr: 'Fri', day_of_month: 30, is_today: false, is_weekend: false, events: [] },
+          { date: '2026-10-31', weekday_abbr: 'Sat', day_of_month: 31, is_today: false, is_weekend: true, events: [] },
+        ];
+
+        const { container: weekContainer } = render(
+          <CalendarWeekView
+            activeView="week"
+            daysToRender={daysToRender}
+            visibleAllDayEvents={[]}
+            members={members}
+            currentDateISO="2026-10-25"
+            onOpenModal={vi.fn()}
+            celebrateSpecialDays={true}
+            birthdays={birthdaysCfg}
+            specialDays={specialDaysCfg}
+          />
+        );
+
+        expect(
+          weekContainer.querySelector('.cf-day[data-date="2026-10-25"] .cf-pill-birthday')?.textContent
+        ).toBe("🎂 Maya's Bday");
+        expect(
+          weekContainer.querySelector('.cf-day[data-date="2026-10-28"] .cf-pill-birthday')?.textContent
+        ).toBe("🎂 Sam's Golden Bday");
+        expect(
+          weekContainer.querySelector('.cf-day[data-date="2026-10-29"] .cf-pill-birthday')?.textContent
+        ).toBe("🎂 Alex's Bday");
+        expect(
+          weekContainer.querySelector('.cf-day[data-date="2026-10-30"] .cf-pill-birthday')?.textContent
+        ).toBe("🎂 Grandpa's Bday");
+        expect(
+          weekContainer.querySelector('.cf-day[data-date="2026-10-31"] .cf-pill-birthday')?.textContent
+        ).toBe('🎂 Founders Day');
+
+        const monthVM: FamilyMonthViewModel = {
+          month_label: 'October 2026',
+          month_name: 'October',
+          year: 2026,
+          month: 10,
+          range_start: '2026-10-01',
+          range_end: '2026-10-31',
+          today: '2026-10-25',
+          shared_color: '#3D405B',
+          weekday_headers: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
+          members,
+          days: [
+            { date: '2026-10-25', day_of_month: 25, is_current_month: true, is_today: true, is_weekend: true },
+            { date: '2026-10-28', day_of_month: 28, is_current_month: true, is_today: false, is_weekend: false },
+          ],
+        };
+
+        const { container: monthContainer } = render(
+          <CalendarMonthView
+            activeView="month"
+            monthVM={monthVM}
+            members={members}
+            onOpenModal={vi.fn()}
+            celebrateSpecialDays={true}
+            birthdays={{ Maya: { date: '10-25' } }}
+            specialDays={{ Sam: { date: '10-28', label: "Sam's Day" } }}
+          />
+        );
+
+        expect(
+          monthContainer.querySelector('.cf-month-day[data-date="2026-10-25"] .cf-pill-birthday')?.textContent
+        ).toBe("🎂 Maya's Bday");
+        expect(
+          monthContainer.querySelector('.cf-month-day[data-date="2026-10-28"] .cf-pill-birthday')?.textContent
+        ).toBe("🎂 Sam's Day");
+      });
     });
   });
 });

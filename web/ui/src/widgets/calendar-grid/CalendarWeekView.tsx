@@ -10,7 +10,7 @@ import {
   CalendarWeekMealRow,
   detectDaySpecialStatus,
 } from './CalendarWeekBands';
-import { computeNowIndicatorPct } from './dateUtils';
+import { computeNowIndicatorPct, resolveConfiguredSpecialDayLabel } from './dateUtils';
 import type {
   CollapsedHoursGap,
   FamilyDay,
@@ -115,6 +115,8 @@ export interface CalendarWeekViewProps {
   onSelectDay?: (date: string) => void;
   celebrateSpecialDays?: boolean;
   eventFlair?: boolean;
+  birthdays?: unknown;
+  specialDays?: unknown;
 }
 
 export function CalendarWeekView({
@@ -128,6 +130,8 @@ export function CalendarWeekView({
   onSelectDay,
   celebrateSpecialDays = true,
   eventFlair = true,
+  birthdays,
+  specialDays,
 }: CalendarWeekViewProps) {
   const tz = useDisplayStore((s) => s.header.timezone);
   const isDocVisible = useDocumentVisible();
@@ -220,7 +224,18 @@ export function CalendarWeekView({
                     return false;
                   }) || []),
                 ];
-                const specialStatus = celebrateSpecialDays !== false ? detectDaySpecialStatus(dayAllEvents, members) : null;
+                const configuredBdayLabel =
+                  celebrateSpecialDays !== false
+                    ? resolveConfiguredSpecialDayLabel(day.date, birthdays, specialDays)
+                    : null;
+                const eventSpecialStatus =
+                  celebrateSpecialDays !== false
+                    ? detectDaySpecialStatus(dayAllEvents, members)
+                    : null;
+                const specialStatus = configuredBdayLabel ? 'birthday' : eventSpecialStatus;
+                const bdayPillText = day.special_label
+                  ? `🎂 ${day.special_label}`
+                  : configuredBdayLabel || '🎂 Family Bday';
                 const specialClass = specialStatus === 'birthday' ? ' cf-special-birthday' : specialStatus === 'holiday' ? ' cf-special-holiday' : '';
                 const dayBg = day.is_today ? 'var(--mm-cal-today-bg, var(--mm-lavender-light, #f3effe))'
                   : day.is_weekend ? 'var(--mm-cal-weekend-bg, rgba(90, 60, 30, 0.02))'
@@ -278,7 +293,7 @@ export function CalendarWeekView({
                         {day.day_of_month}
                       </div>
                       {specialStatus === 'birthday' && (
-                        <div className="cf-special-pill cf-pill-birthday">{day.special_label ? `🎂 ${day.special_label}` : '🎂 Family Bday'}</div>
+                        <div className="cf-special-pill cf-pill-birthday">{bdayPillText}</div>
                       )}
                       {specialStatus === 'holiday' && (
                         <div className="cf-special-pill cf-pill-holiday">✨ Holiday</div>

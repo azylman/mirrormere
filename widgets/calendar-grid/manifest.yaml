@@ -55,6 +55,17 @@ config_schema:
     celebrate_special_days:
       type: boolean
       description: Highlight family birthdays and holidays on day columns
+    birthdays:
+      type:
+        - array
+        - object
+        - boolean
+      description: Custom birthday names and dates (MM-DD or YYYY-MM-DD)
+    special_days:
+      type:
+        - array
+        - object
+      description: Custom special-day names and dates (MM-DD or YYYY-MM-DD)
     event_flair:
       type: boolean
       description: Render keyword-based SVG watermarks on event cards and illustrated banners in the event modal
