@@ -66,5 +66,6 @@ hand-edit `web/static/ui/`.
   (STT may also be Wyoming TCP); the URLs come from the `voice_hub` section of the config.
 - Go tests are expected to stay above the 95% coverage floor; new code needs tests.
 - `Dockerfile` uses a multi-stage build: `ui-builder` compiles `web/ui/` into `/app/web/static/ui/`,
-  `builder` compiles `/app/server`, and the runtime stage packages `/app/server` plus `/app/web/`.
-  Never `COPY` `widgets/` into the image; `widgets/` are volume-mounted at runtime (`/app/widgets:ro`).
+  `builder` compiles `/app/server`, and the runtime stage packages `/app/server` plus `/app/web/`
+  and `/app/widgets/`. Built-in widgets are baked directly into the image (`/app/widgets/`), while
+  custom overrides (`/config`) remain volume-mounted.

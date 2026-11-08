@@ -95,6 +95,7 @@ jobs:
               - 'web/ui/**'
               - 'web/templates/**'
               - 'web/static/**'
+              - 'widgets/**'
             mirrormere-cast-watcher:
               - '.dockerignore'
               - 'go.mod'

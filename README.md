@@ -83,8 +83,8 @@ mirrormere/
 2. **Launch `mirrormere-core` (Docker Compose or Standalone Image)**:
    ```bash
    docker compose -f deploy/compose.yml up -d mirrormere-core
-   # Or standalone (widgets/ and /config are volume-mounted so widget templates and configuration stay mutable without rebuilding the image):
-   # docker run -d --name mirrormere-core -p 8080:8080 -v ./deploy/config:/config:ro -v ./deploy/data:/data -v ./widgets:/app/widgets:ro ghcr.io/azylman/mirrormere:latest
+   # Or standalone (widgets are baked into the image, /config is volume-mounted):
+   # docker run -d --name mirrormere-core -p 8080:8080 -v ./deploy/config:/config:ro -v ./deploy/data:/data ghcr.io/azylman/mirrormere:latest
    ```
 3. **Open the Display & Hot-Reload**:
    - Open `http://localhost:8080/display` (add `?hide_cursor=true` on touch kiosks or `?node=<node_id>` for per-node `chat-log` views).
