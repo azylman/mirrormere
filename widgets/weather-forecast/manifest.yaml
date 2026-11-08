@@ -70,4 +70,11 @@ config_schema:
       type: number
     warm_max_f:
       type: number
+    holidays:
+      type: boolean
+    birthdays:
+      type:
+        - array
+        - object
+        - boolean
   additionalProperties: false
