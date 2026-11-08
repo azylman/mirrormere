@@ -65,6 +65,7 @@ export interface FamilyDay {
   day_of_month: number;
   is_today: boolean;
   is_weekend: boolean;
+  special_label?: string;
   all_day?: FamilyEvent[];
   meals?: FamilyEvent[];
   timed?: FamilyEvent[];
@@ -110,6 +111,7 @@ export interface FamilyMonthDay {
   is_current_month: boolean;
   is_today: boolean;
   is_weekend: boolean;
+  special_label?: string;
   dots?: FamilyMonthDot[];
   event_title?: string;
   events_count?: number;

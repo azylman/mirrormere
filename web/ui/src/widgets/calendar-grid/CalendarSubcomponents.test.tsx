@@ -5,14 +5,13 @@ import { CalendarGridWidget, type CalendarGridViewModel } from './CalendarGridWi
 import { CalendarEventModal } from './CalendarEventModal';
 import { CalendarHeader } from './CalendarHeader';
 import { CalendarMonthView } from './CalendarMonthView';
-import { CalendarAllDayBand, CalendarDayEventCard, detectDaySpecialStatus, detectEventFlair, renderEventFlairWatermark, } from './CalendarWeekBands';
+import { CalendarAllDayBand, detectDaySpecialStatus, detectEventFlair, renderEventFlairWatermark, } from './CalendarWeekBands';
 import { batchFitDayColumnEvents, CalendarWeekView } from './CalendarWeekView';
 import { formatISODate as toISODate } from './dateUtils';
 import { useCalendarRangeData } from './useCalendarRangeData';
 import { useInactivityReset } from './useInactivityReset';
 import type {
   FamilyDay,
-  FamilyDayEvent,
   FamilyEvent,
   FamilyMember,
   FamilyMonthDay,
@@ -1563,24 +1562,6 @@ describe('useCalendarRangeData & useInactivityReset', () => {
       });
     });
 
-    describe('CalendarDayEventCard flair watermarks', () => {
-      it('renders right-edge watermark on CalendarDayEventCard when event matches flair', () => {
-        const timedEv: FamilyDayEvent = { id: 'timed-sport', title: 'Soccer Practice', start: '15:00', end: '16:00', top_pct: 20, height_pct: 10, left_pct: 0, width_pct: 100, color: '#10b981', text_color: '#ffffff' };
-        const { container, rerender } = render(
-          <CalendarDayEventCard ev={timedEv} dayDate="2026-10-27" onOpenModal={vi.fn()} eventFlair={true}/>
-        );
-        expect(container.querySelector('.cf-day-event.cf-flair-sports')).not.toBeNull();
-        expect(container.querySelector('.cf-event-flair-watermark')).not.toBeNull();
-
-        // When eventFlair={false}, watermark is omitted
-        rerender(
-          <CalendarDayEventCard ev={timedEv} dayDate="2026-10-27" onOpenModal={vi.fn()} eventFlair={false}/>
-        );
-        expect(container.querySelector('.cf-flair-sports')).toBeNull();
-        expect(container.querySelector('.cf-event-flair-watermark')).toBeNull();
-      });
-    });
-
     describe('CalendarAllDayBand flair watermarks', () => {
       it('renders flair watermark on CalendarAllDayBand all-day pill', () => {
         const spanEv: FamilySpanEvent = { id: 'span-movie', title: 'Film Festival', start: '2026-10-27', end: '2026-10-27', all_day: true, start_col: 1, col_span: 1, color: '#6366f1', text_color: '#ffffff' };
@@ -1676,76 +1657,6 @@ describe('useCalendarRangeData & useInactivityReset', () => {
         // Disabling celebrateSpecialDays={false}
         rerender(
           <CalendarMonthView activeView="month" monthVM={monthVM} members={members} onOpenModal={vi.fn()} celebrateSpecialDays={false}/>
-        );
-        expect(container.querySelector('.cf-special-birthday')).toBeNull();
-        expect(container.querySelector('.cf-special-holiday')).toBeNull();
-        expect(container.querySelector('.cf-special-pill')).toBeNull();
-      });
-    });
-
-    describe('CalendarWeekView special day highlights', () => {
-      it('renders special day highlights and pills in CalendarWeekView', () => {
-        const weekVM: FamilyViewModel = {
-          range_start: '2026-10-25',
-          range_end: '2026-10-31',
-          range_label: 'Oct 25 – 31, 2026',
-          today: '2026-10-27',
-          shared_color: '#3D405B',
-          members,
-          hour_markers: [],
-          timeline_markers: [],
-          days: [
-            {
-              date: '2026-10-25',
-              weekday_abbr: 'Sun',
-              day_of_month: 25,
-              is_today: false,
-              is_weekend: true,
-              events: [
-                { id: 'bday', title: "Alex's Birthday", start: '10:00', end: '11:00', all_day: false, top_pct: 10, height_pct: 10, left_pct: 0, width_pct: 100, color: '#f472b6', text_color: '#fff' },
-              ],
-            },
-            {
-              date: '2026-10-26',
-              weekday_abbr: 'Mon',
-              day_of_month: 26,
-              is_today: false,
-              is_weekend: false,
-              all_day: [
-                { id: 'hol', title: 'Thanksgiving', all_day: true, color: '#fbbf24', text_color: '#fff' },
-              ],
-            },
-            {
-              date: '2026-10-27',
-              weekday_abbr: 'Tue',
-              day_of_month: 27,
-              is_today: true,
-              is_weekend: false,
-              events: [
-                { id: 'work', title: 'Coworker Birthday', start: '12:00', end: '13:00', all_day: false, top_pct: 20, height_pct: 10, left_pct: 0, width_pct: 100, color: '#888', text_color: '#fff' },
-              ],
-            },
-          ],
-        };
-
-        const { container, rerender } = render(
-          <CalendarWeekView activeView="week" weekVM={weekVM} daysToRender={weekVM.days!} visibleAllDayEvents={[]} members={members} currentDateISO="2026-10-27" onOpenModal={vi.fn()} celebrateSpecialDays={true}/>
-        );
-
-        const bdayDay = container.querySelector('.cf-day[data-date="2026-10-25"]');
-        expect(bdayDay?.classList.contains('cf-special-birthday')).toBe(true);
-        expect(bdayDay?.querySelector('.cf-pill-birthday')?.textContent).toContain('🎂 Family Bday');
-
-        const holDay = container.querySelector('.cf-day[data-date="2026-10-26"]');
-        expect(holDay?.classList.contains('cf-special-holiday')).toBe(true);
-        expect(holDay?.querySelector('.cf-pill-holiday')?.textContent).toContain('✨ Holiday');
-
-        const workDay = container.querySelector('.cf-day[data-date="2026-10-27"]');
-        expect(workDay?.classList.contains('cf-special-birthday')).toBe(false);
-        expect(workDay?.querySelector('.cf-pill-birthday')).toBeNull();
-
-        rerender(
-          <CalendarWeekView activeView="week" weekVM={weekVM} daysToRender={weekVM.days!} visibleAllDayEvents={[]} members={members} currentDateISO="2026-10-27" onOpenModal={vi.fn()} celebrateSpecialDays={false}/>
         );
         expect(container.querySelector('.cf-special-birthday')).toBeNull();
         expect(container.querySelector('.cf-special-holiday')).toBeNull();

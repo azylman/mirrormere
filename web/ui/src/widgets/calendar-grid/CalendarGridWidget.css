@@ -331,6 +331,10 @@
   user-select: none;
 }
 
+.cf-allday {
+  position: relative;
+}
+
 .cf-allday .cf-event-flair-watermark {
   right: 4px;
   bottom: 50%;

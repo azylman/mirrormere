@@ -318,14 +318,18 @@
         return;
       }
 
-      const members = Array.isArray(this.data.members) ? this.data.members : [];
+      const members = Array.isArray(this.data.members)
+        ? this.data.members
+        : (Array.isArray(this.config && this.config.members) ? this.config.members : []);
       dayEls.forEach(dayEl => {
         const date = dayEl.dataset ? dayEl.dataset.date : null;
         let dayEvents = [];
+        let matchedDay = null;
 
         if (date && Array.isArray(this.data.days)) {
           const dayObj = this.data.days.find(d => d.date === date);
           if (dayObj) {
+            matchedDay = dayObj;
             dayEvents.push(
               ...(dayObj.all_day || []),
               ...(dayObj.events || []),
@@ -338,6 +342,7 @@
         if (date && Array.isArray(this.data.month_days)) {
           const mDayObj = this.data.month_days.find(d => d.date === date);
           if (mDayObj) {
+            if (!matchedDay) matchedDay = mDayObj;
             if (Array.isArray(mDayObj.events) && mDayObj.events.length > 0) {
               dayEvents.push(...mDayObj.events);
             } else if (mDayObj.event_title) {
@@ -372,7 +377,7 @@
           if (header && typeof document !== 'undefined' && document.createElement) {
             const pill = document.createElement('span');
             pill.className = 'cf-special-pill cf-pill-birthday';
-            pill.textContent = (day && day.special_label) ? ('🎂 ' + day.special_label) : '🎂 Rosie\x27s Bday';
+            pill.textContent = (matchedDay && matchedDay.special_label) ? ('🎂 ' + matchedDay.special_label) : (status.label || '🎂 Family Bday');
             header.appendChild(pill);
           }
         } else if (status === 'holiday') {
