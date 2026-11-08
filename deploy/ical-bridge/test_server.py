@@ -241,6 +241,490 @@ class TestHandlerEndpoints(unittest.TestCase):
         data = json.loads(output)
         self.assertIn("screens", data)
 
+    def test_is_local_speaker(self):
+        self.assertTrue(srv._is_local_speaker(""))
+        self.assertTrue(srv._is_local_speaker(None))
+        self.assertTrue(srv._is_local_speaker("this_device"))
+        self.assertTrue(srv._is_local_speaker("THIS_DEVICE"))
+        self.assertTrue(srv._is_local_speaker("local"))
+        self.assertTrue(srv._is_local_speaker(" Local "))
+        self.assertFalse(srv._is_local_speaker("media_player.living_room"))
+        self.assertFalse(srv._is_local_speaker("media_player.kitchen"))
+
+    def test_get_music_dashboard_state_local_speaker(self):
+        with patch.dict(srv.MUSIC_STATE, {
+            "active_speaker": "this_device",
+            "local_state": "playing",
+            "local_volume": 42,
+            "playing_video_id": "vid12345678",
+            "queue": [{"video_id": "vid12345678", "title": "Track 1", "artist": "Artist 1", "thumb": ""}],
+            "queue_index": 0,
+            "playlist_title": "Test Playlist",
+            "shuffle": False,
+        }):
+            with patch.object(srv, "_ha_request") as mock_ha:
+                st = srv.get_music_dashboard_state()
+                mock_ha.assert_not_called()
+                self.assertEqual(st["active_speaker"], "this_device")
+                np = st["now_playing"]
+                self.assertEqual(np["video_id"], "vid12345678")
+                self.assertEqual(np["state"], "playing")
+                self.assertEqual(np["volume"], 42)
+                self.assertEqual(np["title"], "Track 1")
+
+    def test_get_music_dashboard_state_defaults_to_this_device_when_no_speakers(self):
+        with patch.dict(srv.MUSIC_STATE, {
+            "active_speaker": "",
+            "local_state": "stopped",
+            "local_volume": 35,
+            "playing_video_id": "",
+            "queue": [],
+            "queue_index": 0,
+            "playlist_title": "",
+            "shuffle": True,
+        }):
+            with patch.object(srv, "_get_speakers", return_value=[]):
+                st = srv.get_music_dashboard_state()
+                self.assertEqual(st["active_speaker"], "this_device")
+                self.assertEqual(st["now_playing"]["state"], "stopped")
+                self.assertEqual(st["now_playing"]["volume"], 35)
+                self.assertEqual(st["now_playing"]["video_id"], "")
+
+    def test_start_music_playback_local_speaker(self):
+        with patch.dict(srv.MUSIC_STATE, {
+            "active_speaker": "this_device",
+            "local_state": "stopped",
+            "local_volume": 35,
+            "playing_video_id": "",
+            "queue": [],
+            "queue_index": 0,
+            "playlist_title": "",
+            "shuffle": True,
+        }):
+            with patch.object(srv, "_cast_track_to_speaker") as mock_cast:
+                body = {
+                    "speaker": "this_device",
+                    "video_id": "dQw4w9WgXcQ",
+                    "title": "Never Gonna Give You Up",
+                    "artist": "Rick Astley",
+                }
+                ok, st = srv.start_music_playback(body)
+                mock_cast.assert_not_called()
+                self.assertTrue(ok)
+                self.assertEqual(srv.MUSIC_STATE["local_state"], "playing")
+                self.assertEqual(srv.MUSIC_STATE["playing_video_id"], "dQw4w9WgXcQ")
+                self.assertEqual(st["now_playing"]["video_id"], "dQw4w9WgXcQ")
+                self.assertEqual(st["now_playing"]["state"], "playing")
+
+    def test_start_music_playback_search_fallback(self):
+        with patch.dict(srv.MUSIC_STATE, {
+            "active_speaker": "this_device",
+            "local_state": "stopped",
+            "local_volume": 35,
+            "playing_video_id": "",
+            "queue": [],
+            "queue_index": 0,
+            "playlist_title": "",
+            "shuffle": True,
+        }):
+            mock_results = [{
+                "video_id": "search_vid11",
+                "title": "Searched Track",
+                "artist": "Searched Artist",
+                "thumb": "https://img.youtube.com/thumb.jpg",
+            }]
+            with patch.object(srv, "search_yt_music", return_value=mock_results) as mock_search:
+                with patch.object(srv, "_cast_track_to_speaker") as mock_cast:
+                    body = {
+                        "speaker": "this_device",
+                        "title": "Searched Track",
+                        "artist": "Searched Artist",
+                    }
+                    ok, st = srv.start_music_playback(body)
+                    mock_search.assert_called_with("Searched Track Searched Artist")
+                    mock_cast.assert_not_called()
+                    self.assertTrue(ok)
+                    self.assertEqual(srv.MUSIC_STATE["playing_video_id"], "search_vid11")
+                    self.assertEqual(st["now_playing"]["video_id"], "search_vid11")
+                    self.assertEqual(st["now_playing"]["state"], "playing")
+
+    def test_control_music_playback_local_speaker(self):
+        track1 = {"video_id": "vid11111111", "title": "Track 1", "artist": "A1"}
+        track2 = {"video_id": "vid22222222", "title": "Track 2", "artist": "A2"}
+        with patch.dict(srv.MUSIC_STATE, {
+            "active_speaker": "this_device",
+            "local_state": "playing",
+            "local_volume": 35,
+            "playing_video_id": "vid11111111",
+            "queue": [track1, track2],
+            "queue_index": 0,
+            "playlist_title": "Playlist",
+            "shuffle": False,
+        }):
+            with patch.object(srv, "_ha_request") as mock_ha:
+                # 1. play_pause toggles to paused
+                ok, st = srv.control_music_playback({"action": "play_pause"})
+                self.assertTrue(ok)
+                mock_ha.assert_not_called()
+                self.assertEqual(srv.MUSIC_STATE["local_state"], "paused")
+                self.assertEqual(st["now_playing"]["state"], "paused")
+
+                # 2. play_pause toggles back to playing
+                ok, st = srv.control_music_playback({"action": "play_pause"})
+                self.assertTrue(ok)
+                self.assertEqual(srv.MUSIC_STATE["local_state"], "playing")
+
+                # 3. next advances queue_index and sets playing_video_id
+                ok, st = srv.control_music_playback({"action": "next"})
+                self.assertTrue(ok)
+                self.assertEqual(srv.MUSIC_STATE["queue_index"], 1)
+                self.assertEqual(srv.MUSIC_STATE["playing_video_id"], "vid22222222")
+                self.assertEqual(st["now_playing"]["video_id"], "vid22222222")
+
+                # 4. prev moves back
+                ok, st = srv.control_music_playback({"action": "prev"})
+                self.assertTrue(ok)
+                self.assertEqual(srv.MUSIC_STATE["queue_index"], 0)
+                self.assertEqual(srv.MUSIC_STATE["playing_video_id"], "vid11111111")
+
+                # 5. play_index
+                ok, st = srv.control_music_playback({"action": "play_index", "index": 1})
+                self.assertTrue(ok)
+                self.assertEqual(srv.MUSIC_STATE["queue_index"], 1)
+                self.assertEqual(srv.MUSIC_STATE["playing_video_id"], "vid22222222")
+
+                # 6. volume clamps
+                ok, st = srv.control_music_playback({"action": "volume", "value": 150})
+                self.assertTrue(ok)
+                self.assertEqual(srv.MUSIC_STATE["local_volume"], 100)
+                self.assertEqual(st["now_playing"]["volume"], 100)
+
+                ok, st = srv.control_music_playback({"action": "volume", "value": -10})
+                self.assertTrue(ok)
+                self.assertEqual(srv.MUSIC_STATE["local_volume"], 0)
+
+                # 7. stop
+                ok, st = srv.control_music_playback({"action": "stop"})
+                self.assertTrue(ok)
+                self.assertEqual(srv.MUSIC_STATE["local_state"], "stopped")
+                self.assertEqual(srv.MUSIC_STATE["playing_video_id"], "")
+
+    def test_fetch_yt_playlist_tracks_fallback_to_ytmusicapi(self):
+        mock_watch = {
+            "tracks": [
+                {
+                    "videoId": "vid_watch_1",
+                    "title": "Watch Title",
+                    "artists": [{"name": "Watch Artist"}],
+                    "thumbnail": [{"url": "https://img.youtube.com/watch.jpg"}],
+                }
+            ]
+        }
+        mock_ytm = MagicMock()
+        mock_ytm.get_watch_playlist.return_value = mock_watch
+
+        with patch.object(srv, "get_yt_oauth_token", return_value=None):
+            with patch.dict("sys.modules", {"ytmusicapi": MagicMock(YTMusic=MagicMock(return_value=mock_ytm))}):
+                tracks = srv.fetch_yt_playlist_tracks("PL1234567890abcdef")
+                self.assertEqual(len(tracks), 1)
+                self.assertEqual(tracks[0]["video_id"], "vid_watch_1")
+                self.assertEqual(tracks[0]["title"], "Watch Title")
+                self.assertEqual(tracks[0]["artist"], "Watch Artist")
+                self.assertEqual(tracks[0]["thumb"], "https://img.youtube.com/watch.jpg")
+
+    def test_resolve_yt_audio_stream_with_headers_and_cache(self):
+        # Invalid video_id
+        url, ctype, hdrs = srv.resolve_yt_audio_stream_with_headers("invalid")
+        self.assertIsNone(url)
+        self.assertIsNone(ctype)
+        self.assertEqual(hdrs, {})
+
+        valid_vid = "dQw4w9WgXcQ"
+        cached_entry = (
+            srv.time.time(),
+            "https://googlevideo.com/videoplayback?id=123",
+            "audio/mp4",
+            {"User-Agent": "Custom-UA", "Accept-Encoding": "identity"},
+        )
+        with patch.dict(srv.STREAM_URL_CACHE, {valid_vid: cached_entry}, clear=True):
+            u, c, h = srv.resolve_yt_audio_stream_with_headers(valid_vid)
+            self.assertEqual(u, cached_entry[1])
+            self.assertEqual(c, "audio/mp4")
+            self.assertEqual(h["User-Agent"], "Custom-UA")
+
+            # 2-tuple backwards compatibility
+            u2, c2 = srv.resolve_yt_audio_stream(valid_vid)
+            self.assertEqual(u2, cached_entry[1])
+            self.assertEqual(c2, "audio/mp4")
+
+    def test_stream_proxy_forwards_range_and_mirrors_headers(self):
+        valid_vid = "dQw4w9WgXcQ"
+        upstream_url = "https://googlevideo.com/videoplayback?id=123"
+        cached_entry = (
+            srv.time.time(),
+            upstream_url,
+            "audio/mp4",
+            {"User-Agent": "Custom-Upstream-UA"},
+        )
+
+        mock_upstream = MagicMock()
+        mock_upstream.getcode.return_value = 206
+        mock_upstream.headers = {
+            "Content-Length": "1024",
+            "Accept-Ranges": "bytes",
+            "Content-Range": "bytes 0-1023/5000000",
+        }
+        mock_upstream.read.side_effect = [b"stream_chunk_data", b""]
+        mock_upstream.__enter__.return_value = mock_upstream
+        mock_upstream.__exit__.return_value = False
+
+        with patch.dict(srv.STREAM_URL_CACHE, {valid_vid: cached_entry}, clear=True):
+            with patch("urllib.request.urlopen", return_value=mock_upstream) as mock_urlopen:
+                h = self._create_handler(
+                    "GET",
+                    f"/hearth-api/music/stream/{valid_vid}.m4a",
+                    headers={"Range": "bytes=0-1023"},
+                    client_ip="127.0.0.1",
+                )
+                h.do_GET()
+
+                # Verify urllib.request.Request headers
+                req_arg = mock_urlopen.call_args[0][0]
+                self.assertEqual(req_arg.headers.get("Range"), "bytes=0-1023")
+                self.assertEqual(req_arg.headers.get("User-agent"), "Custom-Upstream-UA")
+
+                # Verify handler response headers
+                h.send_response.assert_called_with(206)
+                h.send_header.assert_any_call("Content-Type", "audio/mp4")
+                h.send_header.assert_any_call("Accept-Ranges", "bytes")
+                h.send_header.assert_any_call("Content-Range", "bytes 0-1023/5000000")
+                self.assertEqual(h.wfile.getvalue(), b"stream_chunk_data")
+
+    def test_stream_proxy_do_head(self):
+        valid_vid = "dQw4w9WgXcQ"
+        upstream_url = "https://googlevideo.com/videoplayback?id=123"
+        cached_entry = (
+            srv.time.time(),
+            upstream_url,
+            "audio/mp4",
+            {"User-Agent": "Custom-Upstream-UA"},
+        )
+
+        mock_upstream = MagicMock()
+        mock_upstream.getcode.return_value = 200
+        mock_upstream.headers = {
+            "Content-Length": "5000000",
+            "Accept-Ranges": "bytes",
+        }
+        mock_upstream.read.return_value = b"should_not_be_written"
+        mock_upstream.__enter__.return_value = mock_upstream
+        mock_upstream.__exit__.return_value = False
+
+        with patch.dict(srv.STREAM_URL_CACHE, {valid_vid: cached_entry}, clear=True):
+            with patch("urllib.request.urlopen", return_value=mock_upstream):
+                h = self._create_handler(
+                    "HEAD",
+                    f"/hearth-api/music/stream/{valid_vid}.m4a",
+                    client_ip="127.0.0.1",
+                )
+                h.do_HEAD()
+
+                h.send_response.assert_called_with(200)
+                h.send_header.assert_any_call("Content-Type", "audio/mp4")
+                h.send_header.assert_any_call("Content-Length", "5000000")
+                h.send_header.assert_any_call("Accept-Ranges", "bytes")
+                # Body must be empty for HEAD
+                self.assertEqual(h.wfile.getvalue(), b"")
+
+    def test_do_head_general_endpoints(self):
+        # /healthz HEAD
+        h_health = self._create_handler("HEAD", "/healthz")
+        h_health.do_HEAD()
+        h_health.send_response.assert_called_with(200)
+        self.assertEqual(h_health.wfile.getvalue(), b"")
+
+        # /hearth-api/screens/layout HEAD
+        h_layout = self._create_handler("HEAD", "/hearth-api/screens/layout")
+        h_layout.do_HEAD()
+        h_layout.send_response.assert_called_with(200)
+        h_layout.send_header.assert_any_call("Content-Type", "application/json; charset=utf-8")
+        self.assertEqual(h_layout.wfile.getvalue(), b"")
+
+        # /hearth-api/music/state HEAD
+        h_state = self._create_handler("HEAD", "/hearth-api/music/state")
+        h_state.do_HEAD()
+        h_state.send_response.assert_called_with(200)
+        h_state.send_header.assert_any_call("Content-Type", "application/json; charset=utf-8")
+        self.assertEqual(h_state.wfile.getvalue(), b"")
+
+        # Stream 400 invalid id HEAD
+        h_bad_stream = self._create_handler("HEAD", "/hearth-api/music/stream/invalid_id.m4a")
+        h_bad_stream.do_HEAD()
+        h_bad_stream.send_response.assert_called_with(400)
+        self.assertEqual(h_bad_stream.wfile.getvalue(), b"")
+
+    def test_stream_proxy_upstream_http_error(self):
+        valid_vid = "dQw4w9WgXcQ"
+        upstream_url = "https://googlevideo.com/videoplayback?id=123"
+        cached_entry = (
+            srv.time.time(),
+            upstream_url,
+            "audio/mp4",
+            {"User-Agent": "Custom-Upstream-UA"},
+        )
+
+        import urllib.error
+        from http.client import HTTPMessage
+        mock_msg = HTTPMessage()
+        mock_msg["Content-Type"] = "text/plain"
+        mock_msg["Content-Range"] = "bytes */5000"
+        err = urllib.error.HTTPError(upstream_url, 416, "Range Not Satisfiable", mock_msg, io.BytesIO(b"range error"))
+
+        with patch.dict(srv.STREAM_URL_CACHE, {valid_vid: cached_entry}, clear=True):
+            with patch("urllib.request.urlopen", side_effect=err):
+                h = self._create_handler(
+                    "GET",
+                    f"/hearth-api/music/stream/{valid_vid}.m4a",
+                    headers={"Range": "bytes=9999999-"},
+                    client_ip="127.0.0.1",
+                )
+                h.do_GET()
+                h.send_response.assert_called_with(416)
+                h.send_header.assert_any_call("Content-Range", "bytes */5000")
+                self.assertEqual(h.wfile.getvalue(), b"range error")
+
+    def test_fetch_yt_playlist_tracks_google_api_success(self):
+        api_response = {
+            "items": [
+                {
+                    "snippet": {
+                        "title": "API Track 1",
+                        "videoOwnerChannelTitle": "Artist 1 - Topic",
+                        "thumbnails": {"high": {"url": "https://img.youtube.com/high.jpg"}},
+                    },
+                    "contentDetails": {"videoId": "api_vid_1"},
+                }
+            ]
+        }
+        mock_r = MagicMock()
+        mock_r.read.return_value = json.dumps(api_response).encode("utf-8")
+        mock_r.__enter__.return_value = mock_r
+        mock_r.__exit__.return_value = False
+
+        with patch.object(srv, "get_yt_oauth_token", return_value="mock_token"):
+            with patch("urllib.request.urlopen", return_value=mock_r):
+                tracks = srv.fetch_yt_playlist_tracks("PL12345678")
+                self.assertEqual(len(tracks), 1)
+                self.assertEqual(tracks[0]["video_id"], "api_vid_1")
+                self.assertEqual(tracks[0]["title"], "API Track 1")
+                self.assertEqual(tracks[0]["artist"], "Artist 1")
+                self.assertEqual(tracks[0]["thumb"], "https://img.youtube.com/high.jpg")
+
+    def test_fetch_yt_playlist_tracks_get_playlist_fallback(self):
+        mock_ytm = MagicMock()
+        mock_ytm.get_watch_playlist.return_value = {"tracks": []}
+        mock_ytm.get_playlist.return_value = {
+            "tracks": [
+                {
+                    "videoId": "pl_vid_2",
+                    "title": "Playlist Track 2",
+                    "artists": [{"name": "Artist 2"}],
+                    "thumbnails": [{"url": "https://img.youtube.com/pl2.jpg"}],
+                }
+            ]
+        }
+        with patch.object(srv, "get_yt_oauth_token", return_value=None):
+            with patch.dict("sys.modules", {"ytmusicapi": MagicMock(YTMusic=MagicMock(return_value=mock_ytm))}):
+                tracks = srv.fetch_yt_playlist_tracks("PLfallback")
+                self.assertEqual(len(tracks), 1)
+                self.assertEqual(tracks[0]["video_id"], "pl_vid_2")
+                self.assertEqual(tracks[0]["title"], "Playlist Track 2")
+                self.assertEqual(tracks[0]["artist"], "Artist 2")
+
+    def test_start_music_playback_no_tracks(self):
+        with patch.object(srv, "fetch_yt_playlist_tracks", return_value=[]):
+            with patch.object(srv, "search_yt_music", return_value=[]):
+                ok, res = srv.start_music_playback({"playlist_id": "empty_pl"})
+                self.assertFalse(ok)
+                self.assertEqual(res, {"error": "No playable tracks found"})
+
+    def test_start_music_playback_ha_speaker(self):
+        with patch.dict(srv.MUSIC_STATE, {
+            "active_speaker": "media_player.kitchen",
+            "local_state": "stopped",
+            "local_volume": 35,
+            "playing_video_id": "",
+            "queue": [],
+            "queue_index": 0,
+            "playlist_title": "",
+            "shuffle": False,
+        }):
+            with patch.object(srv, "_cast_track_to_speaker", return_value=True) as mock_cast:
+                with patch.object(srv, "_ha_request", return_value={"state": "playing", "attributes": {"volume_level": 0.5}}):
+                    body = {
+                        "speaker": "media_player.kitchen",
+                        "video_id": "dQw4w9WgXcQ",
+                        "title": "Never Gonna Give You Up",
+                    }
+                    ok, st = srv.start_music_playback(body)
+                    self.assertTrue(ok)
+                    mock_cast.assert_called_once()
+                    self.assertEqual(st["active_speaker"], "media_player.kitchen")
+
+    def test_control_music_playback_ha_speaker(self):
+        track1 = {"video_id": "vid11111111", "title": "Track 1", "artist": "A1"}
+        track2 = {"video_id": "vid22222222", "title": "Track 2", "artist": "A2"}
+        with patch.dict(srv.MUSIC_STATE, {
+            "active_speaker": "media_player.kitchen",
+            "local_state": "stopped",
+            "local_volume": 35,
+            "playing_video_id": "vid11111111",
+            "queue": [track1, track2],
+            "queue_index": 0,
+            "playlist_title": "Playlist",
+            "shuffle": False,
+        }):
+            with patch.object(srv, "_ha_request", return_value={"state": "playing", "attributes": {"volume_level": 0.4}}) as mock_ha:
+                with patch.object(srv, "_cast_track_to_speaker", return_value=True) as mock_cast:
+                    # play_pause
+                    ok, st = srv.control_music_playback({"action": "play_pause"})
+                    self.assertTrue(ok)
+                    mock_ha.assert_any_call("POST", "/api/services/media_player/media_play_pause", {"entity_id": "media_player.kitchen"})
+
+                    # volume
+                    ok, st = srv.control_music_playback({"action": "volume", "value": 40})
+                    self.assertTrue(ok)
+                    mock_ha.assert_any_call("POST", "/api/services/media_player/volume_set", {"entity_id": "media_player.kitchen", "volume_level": 0.4})
+
+                    # next
+                    ok, st = srv.control_music_playback({"action": "next"})
+                    self.assertTrue(ok)
+                    mock_cast.assert_called_with("media_player.kitchen", track2)
+
+                    # stop
+                    ok, st = srv.control_music_playback({"action": "stop"})
+                    self.assertTrue(ok)
+                    mock_ha.assert_any_call("POST", "/api/services/media_player/media_stop", {"entity_id": "media_player.kitchen"})
+
+    def test_resolve_yt_audio_stream_extract_info(self):
+        valid_vid = "dQw4w9WgXcQ"
+        mock_info = {
+            "url": "https://googlevideo.com/audio_stream",
+            "ext": "m4a",
+            "http_headers": {"User-Agent": "YtDlpUA/1.0"},
+        }
+        mock_ydl = MagicMock()
+        mock_ydl.extract_info.return_value = mock_info
+        mock_ydl.__enter__.return_value = mock_ydl
+        mock_ydl.__exit__.return_value = False
+
+        with patch.dict(srv.STREAM_URL_CACHE, {}, clear=True):
+            with patch.dict("sys.modules", {"yt_dlp": MagicMock(YoutubeDL=MagicMock(return_value=mock_ydl))}):
+                url, ctype, hdrs = srv.resolve_yt_audio_stream_with_headers(valid_vid)
+                self.assertEqual(url, "https://googlevideo.com/audio_stream")
+                self.assertEqual(ctype, "audio/mp4")
+                self.assertEqual(hdrs["User-Agent"], "YtDlpUA/1.0")
+
 
 if __name__ == "__main__":
     unittest.main()

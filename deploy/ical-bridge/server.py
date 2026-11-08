@@ -660,8 +660,14 @@ MUSIC_STATE = {
     "shuffle": True,
     "last_cast_ts": 0,
     "playing_video_id": "",
+    "local_state": "stopped",
+    "local_volume": 35,
 }
 MUSIC_STOP_EVENT = threading.Event()
+
+
+def _is_local_speaker(speaker):
+    return not speaker or str(speaker).strip().lower() in ("this_device", "local")
 
 
 def _get_speakers():
@@ -780,38 +786,75 @@ def fetch_yt_playlists():
 
 
 def fetch_yt_playlist_tracks(playlist_id):
-    tok = get_yt_oauth_token()
-    if not tok or not playlist_id:
+    if not playlist_id:
         return []
-    url = (
-        f"https://www.googleapis.com/youtube/v3/playlistItems?"
-        f"part=snippet,contentDetails&playlistId={urllib.parse.quote(playlist_id)}&maxResults=50"
-    )
-    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {tok}", "Accept": "application/json"})
+    tok = get_yt_oauth_token()
     tracks = []
-    try:
-        with urllib.request.urlopen(req, timeout=10) as r:
-            data = json.loads(r.read().decode())
-        for item in data.get("items", []):
-            snip = item.get("snippet") or {}
-            vid = (item.get("contentDetails") or {}).get("videoId") or (snip.get("resourceId") or {}).get("videoId")
-            if not vid:
-                continue
-            thumbs = snip.get("thumbnails") or {}
-            thumb = (
-                (thumbs.get("high") or {}).get("url")
-                or (thumbs.get("medium") or {}).get("url")
-                or (thumbs.get("default") or {}).get("url")
-                or f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg"
-            )
-            tracks.append({
-                "video_id": vid,
-                "title": snip.get("title", "Track"),
-                "artist": snip.get("videoOwnerChannelTitle", "").replace(" - Topic", ""),
-                "thumb": thumb,
-            })
-    except Exception as e:
-        print(f"[HEARTH-Bridge] Error fetching playlist tracks: {e}", flush=True)
+    if tok:
+        url = (
+            f"https://www.googleapis.com/youtube/v3/playlistItems?"
+            f"part=snippet,contentDetails&playlistId={urllib.parse.quote(playlist_id)}&maxResults=50"
+        )
+        req = urllib.request.Request(url, headers={"Authorization": f"Bearer {tok}", "Accept": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=10) as r:
+                data = json.loads(r.read().decode())
+            for item in data.get("items", []):
+                snip = item.get("snippet") or {}
+                vid = (item.get("contentDetails") or {}).get("videoId") or (snip.get("resourceId") or {}).get("videoId")
+                if not vid:
+                    continue
+                thumbs = snip.get("thumbnails") or {}
+                thumb = (
+                    (thumbs.get("high") or {}).get("url")
+                    or (thumbs.get("medium") or {}).get("url")
+                    or (thumbs.get("default") or {}).get("url")
+                    or f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg"
+                )
+                tracks.append({
+                    "video_id": vid,
+                    "title": snip.get("title", "Track"),
+                    "artist": snip.get("videoOwnerChannelTitle", "").replace(" - Topic", ""),
+                    "thumb": thumb,
+                })
+        except Exception as e:
+            print(f"[HEARTH-Bridge] Error fetching playlist tracks: {e}", flush=True)
+
+    if not tracks:
+        try:
+            import ytmusicapi
+            ytm = ytmusicapi.YTMusic()
+            raw_tracks = []
+            try:
+                watch = ytm.get_watch_playlist(playlistId=playlist_id, limit=25)
+                raw_tracks = watch.get("tracks") or []
+            except Exception as e:
+                print(f"[HEARTH-Bridge] ytmusicapi get_watch_playlist error: {e}", flush=True)
+            if not raw_tracks:
+                try:
+                    pl = ytm.get_playlist(playlist_id, limit=25)
+                    raw_tracks = pl.get("tracks") or []
+                except Exception as e:
+                    print(f"[HEARTH-Bridge] ytmusicapi get_playlist error: {e}", flush=True)
+            for t in raw_tracks:
+                vid = t.get("videoId")
+                if not vid:
+                    continue
+                artists = t.get("artists")
+                if isinstance(artists, list):
+                    arts = ", ".join(a.get("name", "") for a in artists if isinstance(a, dict) and a.get("name"))
+                else:
+                    arts = str(t.get("artist") or "")
+                thumbs = t.get("thumbnails") or t.get("thumbnail") or []
+                thumb = thumbs[-1].get("url", "") if isinstance(thumbs, list) and thumbs and isinstance(thumbs[-1], dict) else f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg"
+                tracks.append({
+                    "video_id": vid,
+                    "title": t.get("title") or "Track",
+                    "artist": arts or "Unknown Artist",
+                    "thumb": thumb,
+                })
+        except Exception as e:
+            print(f"[HEARTH-Bridge] ytmusicapi fallback error: {e}", flush=True)
     return tracks
 
 
@@ -844,14 +887,15 @@ def search_yt_music(query):
         return []
 
 
-def resolve_yt_audio_stream(video_id):
+def resolve_yt_audio_stream_with_headers(video_id):
     if not video_id or not isinstance(video_id, str) or not YT_VIDEO_ID_RE.match(video_id):
-        return None, None
+        return None, None, {}
     now = time.time()
     with STREAM_URL_LOCK:
         cached = STREAM_URL_CACHE.get(video_id)
         if cached and now - cached[0] < 1800:
-            return cached[1], cached[2]
+            cached_headers = cached[3] if len(cached) > 3 else {}
+            return cached[1], cached[2], cached_headers
     try:
         import yt_dlp
         ydl_opts = {
@@ -866,13 +910,19 @@ def resolve_yt_audio_stream(video_id):
             url = info.get("url")
             ext = info.get("ext") or "mp4"
             ctype = "audio/mp4" if ext == "m4a" else ("audio/webm" if ext == "webm" else "audio/mpeg")
+            headers = dict(info.get("http_headers") or {})
             if url:
                 with STREAM_URL_LOCK:
-                    STREAM_URL_CACHE[video_id] = (now, url, ctype)
-                return url, ctype
+                    STREAM_URL_CACHE[video_id] = (now, url, ctype, headers)
+                return url, ctype, headers
     except Exception as e:
         print(f"[HEARTH-Bridge] Stream resolution error for {video_id}: {e}", flush=True)
-    return None, None
+    return None, None, {}
+
+
+def resolve_yt_audio_stream(video_id):
+    url, ctype, _ = resolve_yt_audio_stream_with_headers(video_id)
+    return url, ctype
 
 
 def _cast_track_to_speaker(speaker, track):
@@ -909,23 +959,32 @@ def get_music_dashboard_state():
     speakers = _get_speakers()
     with MUSIC_STATE_LOCK:
         active_spk = MUSIC_STATE["active_speaker"]
-        if not active_spk and speakers:
-            active_spk = speakers[0].get("entity_id", "")
+        if not active_spk:
+            active_spk = speakers[0].get("entity_id", "") if speakers else "this_device"
             MUSIC_STATE["active_speaker"] = active_spk
         queue = list(MUSIC_STATE["queue"])
         q_idx = MUSIC_STATE["queue_index"]
         pl_title = MUSIC_STATE["playlist_title"]
         shuffle = MUSIC_STATE["shuffle"]
+        local_st = MUSIC_STATE.get("local_state", "stopped")
+        local_vol = int(MUSIC_STATE.get("local_volume", 35))
+        playing_vid = MUSIC_STATE.get("playing_video_id", "")
 
     spk_st = {}
-    if active_spk and HA_ENTITY_ID_RE.match(active_spk):
-        spk_st = _ha_request("GET", f"/api/states/{active_spk}", timeout=5) or {}
-    attrs = spk_st.get("attributes") or {}
-    state_str = spk_st.get("state", "off")
-    vol_pct = int(round(float(attrs.get("volume_level", 0.35)) * 100))
+    if _is_local_speaker(active_spk):
+        state_str = local_st
+        vol_pct = local_vol
+        attrs = {}
+    else:
+        if active_spk and HA_ENTITY_ID_RE.match(active_spk):
+            spk_st = _ha_request("GET", f"/api/states/{active_spk}", timeout=5) or {}
+        attrs = spk_st.get("attributes") or {}
+        state_str = spk_st.get("state", "off")
+        vol_pct = int(round(float(attrs.get("volume_level", 0.35)) * 100))
 
     cur_track = queue[q_idx] if 0 <= q_idx < len(queue) else {}
     now_playing = {
+        "video_id": cur_track.get("video_id") or playing_vid,
         "state": state_str,
         "title": attrs.get("media_title") or cur_track.get("title") or "Ready to Play",
         "artist": attrs.get("media_artist") or cur_track.get("artist") or "Select a playlist or search YouTube Music",
@@ -958,8 +1017,9 @@ def start_music_playback(body):
         if speaker:
             MUSIC_STATE["active_speaker"] = speaker
         active_spk = MUSIC_STATE["active_speaker"]
-        if not active_spk and _get_speakers():
-            active_spk = _get_speakers()[0].get("entity_id", "")
+        if not active_spk:
+            spks = _get_speakers()
+            active_spk = spks[0].get("entity_id", "") if spks else "this_device"
             MUSIC_STATE["active_speaker"] = active_spk
         MUSIC_STATE["shuffle"] = shuffle
 
@@ -985,8 +1045,8 @@ def start_music_playback(body):
                 if not wvid or wvid == video_id:
                     continue
                 warts = ", ".join(a.get("name", "") for a in (wt.get("artists") or []) if a.get("name"))
-                wthumbs = wt.get("thumbnail") or []
-                wthumb = wthumbs[-1].get("url", "") if wthumbs else f"https://i.ytimg.com/vi/{wvid}/hqdefault.jpg"
+                wthumbs = wt.get("thumbnail") or wt.get("thumbnails") or []
+                wthumb = wthumbs[-1].get("url", "") if isinstance(wthumbs, list) and wthumbs and isinstance(wthumbs[-1], dict) else f"https://i.ytimg.com/vi/{wvid}/hqdefault.jpg"
                 tracks.append({
                     "video_id": wvid,
                     "title": wt.get("title") or "Track",
@@ -997,12 +1057,53 @@ def start_music_playback(body):
             print(f"[HEARTH-Bridge] watch playlist warning: {e}", flush=True)
 
     if not tracks:
+        search_query = f"{body.get('title', '')} {body.get('artist', '')}".strip() or playlist_title
+        if search_query:
+            results = search_yt_music(search_query)
+            if results:
+                first_item = results[0]
+                first_vid = first_item.get("video_id")
+                tracks = [{
+                    "video_id": first_vid,
+                    "title": first_item.get("title") or "Track",
+                    "artist": first_item.get("artist") or "YouTube Music",
+                    "thumb": first_item.get("thumb") or f"https://i.ytimg.com/vi/{first_vid}/hqdefault.jpg",
+                }]
+                if first_vid:
+                    try:
+                        import ytmusicapi
+                        ytm = ytmusicapi.YTMusic()
+                        watch = ytm.get_watch_playlist(videoId=first_vid, limit=20)
+                        for wt in (watch.get("tracks") or []):
+                            wvid = wt.get("videoId")
+                            if not wvid or wvid == first_vid:
+                                continue
+                            warts = ", ".join(a.get("name", "") for a in (wt.get("artists") or []) if a.get("name"))
+                            wthumbs = wt.get("thumbnail") or wt.get("thumbnails") or []
+                            wthumb = wthumbs[-1].get("url", "") if isinstance(wthumbs, list) and wthumbs and isinstance(wthumbs[-1], dict) else f"https://i.ytimg.com/vi/{wvid}/hqdefault.jpg"
+                            tracks.append({
+                                "video_id": wvid,
+                                "title": wt.get("title") or "Track",
+                                "artist": warts or "YouTube Music",
+                                "thumb": wthumb,
+                            })
+                    except Exception as e:
+                        print(f"[HEARTH-Bridge] search watch playlist warning: {e}", flush=True)
+
+    if not tracks:
         return False, {"error": "No playable tracks found"}
 
     with MUSIC_STATE_LOCK:
         MUSIC_STATE["queue"] = tracks
         MUSIC_STATE["queue_index"] = 0
         MUSIC_STATE["playlist_title"] = playlist_title or (tracks[0].get("title") + " Radio")
+
+    if _is_local_speaker(active_spk):
+        with MUSIC_STATE_LOCK:
+            MUSIC_STATE["playing_video_id"] = tracks[0].get("video_id", "")
+            MUSIC_STATE["local_state"] = "playing"
+            MUSIC_STATE["last_cast_ts"] = time.time()
+        return True, get_music_dashboard_state()
 
     ok = _cast_track_to_speaker(active_spk, tracks[0])
     return ok, get_music_dashboard_state()
@@ -1017,6 +1118,47 @@ def control_music_playback(body):
         active_spk = MUSIC_STATE["active_speaker"]
         queue = list(MUSIC_STATE["queue"])
         q_idx = MUSIC_STATE["queue_index"]
+
+    if _is_local_speaker(active_spk):
+        with MUSIC_STATE_LOCK:
+            if action == "select_speaker":
+                pass
+            elif action == "play_pause":
+                cur_state = MUSIC_STATE.get("local_state", "stopped")
+                new_state = "paused" if cur_state == "playing" else "playing"
+                MUSIC_STATE["local_state"] = new_state
+                if not MUSIC_STATE.get("playing_video_id") and queue and 0 <= q_idx < len(queue):
+                    MUSIC_STATE["playing_video_id"] = queue[q_idx].get("video_id", "")
+            elif action == "stop":
+                MUSIC_STATE["local_state"] = "stopped"
+                MUSIC_STATE["playing_video_id"] = ""
+            elif action == "volume":
+                try:
+                    val = float(body.get("value", 35))
+                except (ValueError, TypeError):
+                    val = 35.0
+                vol = int(max(0, min(100, round(val))))
+                MUSIC_STATE["local_volume"] = vol
+            elif action == "next" and queue:
+                next_idx = (q_idx + 1) % len(queue)
+                MUSIC_STATE["queue_index"] = next_idx
+                MUSIC_STATE["playing_video_id"] = queue[next_idx].get("video_id", "")
+                MUSIC_STATE["local_state"] = "playing"
+            elif action == "prev" and queue:
+                prev_idx = (q_idx - 1) % len(queue)
+                MUSIC_STATE["queue_index"] = prev_idx
+                MUSIC_STATE["playing_video_id"] = queue[prev_idx].get("video_id", "")
+                MUSIC_STATE["local_state"] = "playing"
+            elif action == "play_index" and queue:
+                try:
+                    idx = int(body.get("index", 0))
+                except (ValueError, TypeError):
+                    idx = 0
+                if 0 <= idx < len(queue):
+                    MUSIC_STATE["queue_index"] = idx
+                    MUSIC_STATE["playing_video_id"] = queue[idx].get("video_id", "")
+                    MUSIC_STATE["local_state"] = "playing"
+        return True, get_music_dashboard_state()
 
     if action == "select_speaker":
         return True, get_music_dashboard_state()
@@ -1480,9 +1622,16 @@ class Handler(BaseHTTPRequestHandler):
         payload = json.dumps({"error": message}).encode("utf-8")
         self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
-        self.wfile.write(payload)
+        if getattr(self, "command", "GET") != "HEAD":
+            self.wfile.write(payload)
+
+    def do_HEAD(self):
+        self._handle_get_or_head(is_head=True)
 
     def do_GET(self):
+        self._handle_get_or_head(is_head=False)
+
+    def _handle_get_or_head(self, is_head=False):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
         qs = urllib.parse.parse_qs(parsed.query)
@@ -1490,7 +1639,8 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/healthz":
             self.send_response(200)
             self.end_headers()
-            self.wfile.write(b"ok")
+            if not is_head:
+                self.wfile.write(b"ok")
             return
 
         if path.startswith("/ical/") and path.endswith(".ics"):
@@ -1504,10 +1654,11 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "text/calendar; charset=utf-8")
             self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
-            try:
-                self.wfile.write(payload)
-            except (BrokenPipeError, ConnectionResetError):
-                pass
+            if not is_head:
+                try:
+                    self.wfile.write(payload)
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
             return
 
         if path.startswith("/hearth-api/"):
@@ -1524,10 +1675,11 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_header("Cache-Control", "public, max-age=86400")
                 self.send_header("Content-Length", str(len(data)))
                 self.end_headers()
-                try:
-                    self.wfile.write(data)
-                except (BrokenPipeError, ConnectionResetError):
-                    pass
+                if not is_head:
+                    try:
+                        self.wfile.write(data)
+                    except (BrokenPipeError, ConnectionResetError):
+                        pass
                 return
             self.send_response(404)
             self.end_headers()
@@ -1541,10 +1693,11 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Cache-Control", "no-store")
             self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
-            try:
-                self.wfile.write(payload)
-            except (BrokenPipeError, ConnectionResetError):
-                pass
+            if not is_head:
+                try:
+                    self.wfile.write(payload)
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
             return
 
         if path == "/hearth-api/plex/upcoming":
@@ -1555,10 +1708,11 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Cache-Control", "no-store")
             self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
-            try:
-                self.wfile.write(payload)
-            except (BrokenPipeError, ConnectionResetError):
-                pass
+            if not is_head:
+                try:
+                    self.wfile.write(payload)
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
             return
 
         if path == "/hearth-api/screens/layout":
@@ -1568,7 +1722,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
-            self.wfile.write(payload)
+            if not is_head:
+                self.wfile.write(payload)
             return
 
         if path == "/hearth-api/music/state":
@@ -1578,7 +1733,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Cache-Control", "no-store")
             self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
-            self.wfile.write(payload)
+            if not is_head:
+                self.wfile.write(payload)
             return
 
         if path == "/hearth-api/music/search":
@@ -1589,7 +1745,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Cache-Control", "no-store")
             self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
-            self.wfile.write(payload)
+            if not is_head:
+                self.wfile.write(payload)
             return
 
         if path.startswith("/hearth-api/music/stream/"):
@@ -1597,26 +1754,55 @@ class Handler(BaseHTTPRequestHandler):
             if not vid or not YT_VIDEO_ID_RE.match(vid):
                 self._send_json_error(400, "Invalid video_id")
                 return
-            stream_url, ctype = resolve_yt_audio_stream(vid)
+            stream_url, ctype, upstream_headers = resolve_yt_audio_stream_with_headers(vid)
             if not stream_url:
                 self.send_response(404)
                 self.end_headers()
                 return
-            headers = {"User-Agent": "Mozilla/5.0"}
+
+            req_headers = {"User-Agent": "Mozilla/5.0"}
+            if upstream_headers:
+                req_headers.update(upstream_headers)
+            if not req_headers.get("User-Agent"):
+                req_headers["User-Agent"] = "Mozilla/5.0"
+
+            range_hdr = self.headers.get("Range") if self.headers else None
+            if range_hdr:
+                req_headers["Range"] = range_hdr
+
             try:
-                req = urllib.request.Request(stream_url, headers=headers)
+                req = urllib.request.Request(stream_url, headers=req_headers)
                 with urllib.request.urlopen(req, timeout=15) as upstream:
                     self.send_response(upstream.getcode() or 200)
                     self.send_header("Content-Type", ctype or "audio/mp4")
                     cl = upstream.headers.get("Content-Length")
                     if cl:
                         self.send_header("Content-Length", cl)
+                    accept_ranges = upstream.headers.get("Accept-Ranges")
+                    if accept_ranges:
+                        self.send_header("Accept-Ranges", accept_ranges)
+                    content_range = upstream.headers.get("Content-Range")
+                    if content_range:
+                        self.send_header("Content-Range", content_range)
                     self.end_headers()
-                    while True:
-                        chunk = upstream.read(65536)
-                        if not chunk:
-                            break
-                        self.wfile.write(chunk)
+                    if not is_head:
+                        while True:
+                            chunk = upstream.read(65536)
+                            if not chunk:
+                                break
+                            self.wfile.write(chunk)
+            except urllib.error.HTTPError as e:
+                self.send_response(e.code)
+                for h in ("Content-Type", "Content-Range", "Accept-Ranges", "Content-Length"):
+                    val = e.headers.get(h)
+                    if val:
+                        self.send_header(h, val)
+                self.end_headers()
+                if not is_head:
+                    try:
+                        self.wfile.write(e.read())
+                    except Exception:
+                        pass
             except Exception as e:
                 print(f"[HEARTH-Bridge] Stream proxy error: {e}", flush=True)
             return
@@ -1630,10 +1816,11 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_header("Cache-Control", "public, max-age=604800")
                 self.send_header("Content-Length", str(len(data)))
                 self.end_headers()
-                try:
-                    self.wfile.write(data)
-                except (BrokenPipeError, ConnectionResetError):
-                    pass
+                if not is_head:
+                    try:
+                        self.wfile.write(data)
+                    except (BrokenPipeError, ConnectionResetError):
+                        pass
                 return
             self.send_response(404)
             self.end_headers()
@@ -1648,7 +1835,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Cache-Control", "no-store")
             self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
-            self.wfile.write(payload)
+            if not is_head:
+                self.wfile.write(payload)
             return
 
         self.send_response(404)
