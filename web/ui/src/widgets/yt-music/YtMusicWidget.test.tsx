@@ -120,6 +120,11 @@ const mockSearchResults = {
   ],
 };
 
+beforeEach(() => {
+  vi.spyOn(HTMLMediaElement.prototype, 'play').mockImplementation(async () => {});
+  vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
+});
+
 describe('YtMusicWidget', () => {
   let fetchMock: ReturnType<typeof vi.fn>;
 
@@ -279,6 +284,8 @@ describe('YtMusicWidget', () => {
     });
 
     vi.stubGlobal('fetch', fetchMock);
+    vi.spyOn(HTMLMediaElement.prototype, 'play').mockImplementation(async () => {});
+    vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
   });
 
   afterEach(() => {
@@ -1361,6 +1368,93 @@ describe('YtMusicWidget', () => {
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith('/hearth-api/music/search?q=minimal');
+    });
+  });
+
+  it('drives persistent HTML5 audio stream, volume, and playback for local speaker', async () => {
+    let currentState: MusicState = { ...mockPlayingState, active_speaker: 'this_device' };
+    fetchMock.mockImplementation(async (url: string | URL | Request, init?: RequestInit) => {
+      const u = String(url);
+      if (u.includes('/music/state')) return new Response(JSON.stringify(currentState), { status: 200 });
+      if (u.includes('/music/control')) {
+        const b = JSON.parse(String(init?.body ?? '{}'));
+        if (b.action === 'play_pause') currentState = { ...currentState, now_playing: { ...currentState.now_playing, state: 'paused' } };
+        if (b.action === 'select_speaker') currentState = { ...currentState, active_speaker: b.speaker };
+        return new Response(JSON.stringify({ state: currentState }), { status: 200 });
+      }
+      return new Response('{}', { status: 200 });
+    });
+
+    const { container } = render(
+      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
+        <YtMusicWidget id="yt-1" type="yt-music" />
+      </PaneContext.Provider>
+    );
+
+    const audio = await waitFor(() => {
+      const el = container.querySelector('#ytm-local-audio') as HTMLAudioElement;
+      expect(el?.src).toContain('/hearth-api/music/stream/v_starboy.m4a');
+      expect(el?.getAttribute('data-video-id')).toBe('v_starboy');
+      expect(el?.volume).toBe(0.5);
+      expect(HTMLMediaElement.prototype.play).toHaveBeenCalled();
+      return el;
+    });
+
+    // Audio element persists when browsing library
+    fireEvent.click(container.querySelector('#btn-browse-library')!);
+    await waitFor(() => expect(container.querySelector('.ytm-discovery')).not.toBeNull());
+    expect(container.querySelector('#ytm-local-audio')).toBe(audio);
+
+    // Audio ended triggers next
+    fireEvent.ended(audio);
+    await waitFor(() => {
+      const call = fetchMock.mock.calls.find((c) => String(c[0]).includes('/music/control') && JSON.parse(String(c[1]?.body)).action === 'next');
+      expect(call).toBeDefined();
+    });
+
+    // Pause keeps src
+    fireEvent.click(container.querySelector('#btn-play')!);
+    await waitFor(() => {
+      expect(HTMLMediaElement.prototype.pause).toHaveBeenCalled();
+      expect(audio.getAttribute('src')).toBeTruthy();
+    });
+
+    // Remote speaker clears src
+    fireEvent.click(container.querySelectorAll('.spk-pill')[1]);
+    await waitFor(() => {
+      expect(audio.getAttribute('src')).toBeNull();
+      expect(audio.getAttribute('data-video-id')).toBeNull();
+    });
+  });
+
+  it('coalesces empty active_speaker to local speaker and clears src on stop', async () => {
+    fetchMock.mockImplementation(async (url: string | URL | Request, init?: RequestInit) => {
+      const u = String(url);
+      if (u.includes('/music/state')) return new Response(JSON.stringify({ ...mockPlayingState, active_speaker: '' }), { status: 200 });
+      if (u.includes('/music/control') && JSON.parse(String(init?.body ?? '{}')).action === 'stop') {
+        return new Response(JSON.stringify({ state: { ...mockPlayingState, active_speaker: 'this_device', now_playing: { ...mockPlayingState.now_playing, state: 'stopped' } } }), { status: 200 });
+      }
+      return new Response('{}', { status: 200 });
+    });
+
+    const { container } = render(
+      <PaneContext.Provider value={{ isCurrentPane: true, paneIndex: 0 }}>
+        <YtMusicWidget id="yt-1" type="yt-music" />
+      </PaneContext.Provider>
+    );
+
+    const audio = await waitFor(() => {
+      const el = container.querySelector('#ytm-local-audio') as HTMLAudioElement;
+      expect(el?.src).toContain('/hearth-api/music/stream/v_starboy.m4a');
+      expect(el?.getAttribute('data-video-id')).toBe('v_starboy');
+      return el;
+    });
+
+    fireEvent.click(container.querySelector('#btn-stop')!);
+    await waitFor(() => {
+      expect(HTMLMediaElement.prototype.pause).toHaveBeenCalled();
+      expect(audio.getAttribute('src')).toBeNull();
+      expect(audio.getAttribute('data-video-id')).toBeNull();
     });
   });
 });

@@ -1,5 +1,5 @@
 import './YtMusicWidget.css';
-import { memo, useState, type ChangeEvent, type FormEvent } from 'react';
+import { memo, useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
 import { useIsCurrentPane } from '../../carousel/PaneContext';
 import { useDocumentVisible } from '../../lifecycle/visibility';
 import { useWidget } from '../../store/hooks';
@@ -219,6 +219,7 @@ export const YtMusicWidget = memo(function YtMusicWidget({ id }: WidgetComponent
   const [searching, setSearching] = useState(false);
   const [startingPlayback, setStartingPlayback] = useState(false);
   const [userBrowsing, setUserBrowsing] = useState(false);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
 
   const emberAccounts = useEmberAccounts();
   const [stateData, setStateData] = useMusicStatePolling(apiBase, isActive, selectedAccountId);
@@ -226,7 +227,7 @@ export const YtMusicWidget = memo(function YtMusicWidget({ id }: WidgetComponent
   const activeAccountId = selectedAccountId ?? stateData.active_account;
   const speakers = resolveSpeakersWithLocal(stateData);
   const accounts = resolveAccounts(stateData, config, emberAccounts);
-  const currentActiveSpeaker = stateData.active_speaker ?? speakers[0]?.entity_id ?? 'this_device';
+  const currentActiveSpeaker = stateData.active_speaker && stateData.active_speaker.trim() !== '' ? stateData.active_speaker : (speakers[0]?.entity_id ?? 'this_device');
   const isLocalSpeaker = currentActiveSpeaker === 'this_device' || currentActiveSpeaker === 'local';
 
   const postControl = async (action: string, extra: Record<string, unknown> = {}) => {
@@ -350,10 +351,46 @@ export const YtMusicWidget = memo(function YtMusicWidget({ id }: WidgetComponent
   const np = stateData.now_playing || {};
   const isPlaying = np.state === 'playing';
   const showNowPlaying = !userBrowsing && (isPlaying || startingPlayback);
+  const activeVideoId =
+    np.video_id ||
+    (typeof np.queue_index === 'number' ? stateData.queue?.[np.queue_index]?.video_id : undefined) ||
+    stateData.queue?.[0]?.video_id;
 
-  if (showNowPlaying) {
-    return (
-      <div className="widget-yt-music">
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    audio.volume = Math.max(0, Math.min(1, (typeof np.volume === 'number' ? np.volume : 35) / 100));
+
+    if (isLocalSpeaker && isPlaying && activeVideoId) {
+      const streamUrl = `${apiBase}/music/stream/${encodeURIComponent(activeVideoId)}.m4a`;
+      if (audio.getAttribute('data-video-id') !== activeVideoId) {
+        audio.setAttribute('data-video-id', activeVideoId);
+        audio.src = streamUrl;
+      }
+      const playPromise = audio.play();
+      if (playPromise && typeof playPromise.catch === 'function') {
+        playPromise.catch(() => {});
+      }
+    } else {
+      audio.pause();
+      if (!isLocalSpeaker || np.state === 'stopped') {
+        audio.removeAttribute('src');
+        audio.removeAttribute('data-video-id');
+      }
+    }
+  }, [isLocalSpeaker, isPlaying, np.state, np.volume, activeVideoId, apiBase]);
+
+  return (
+    <div className="widget-yt-music">
+      <audio
+        ref={audioRef}
+        id="ytm-local-audio"
+        preload="none"
+        onEnded={() => void postControl('next')}
+        style={{ display: 'none' }}
+      />
+      {showNowPlaying ? (
         <YtMusicNowPlaying
           nowPlaying={stateData.now_playing}
           queue={stateData.queue}
@@ -368,87 +405,85 @@ export const YtMusicWidget = memo(function YtMusicWidget({ id }: WidgetComponent
           onPlayQueueIndex={(idx) => { setUserBrowsing(false); void postControl('play_index', { index: idx }); }}
           onBrowseLibrary={() => setUserBrowsing(true)}
         />
-      </div>
-    );
-  }
-
-  return (
-    <div className="widget-yt-music">
-      <YtMusicHeader
-        accounts={accounts}
-        activeAccountId={activeAccountId}
-        isLocalSpeaker={isLocalSpeaker}
-        onSelectAccount={(accId) => void handleSelectAccount(accId)}
-        onToggleSpeaker={handleToggleSpeaker}
-      />
-      <YtMusicSpeakerBar
-        speakers={speakers}
-        activeSpeaker={currentActiveSpeaker}
-        onSelectSpeaker={(spkId) => void handleSelectSpeaker(spkId)}
-      />
-      <YtMusicMiniPlayer
-        np={np}
-        startingPlayback={startingPlayback}
-        onPrev={() => void postControl('prev')}
-        onPlayPause={() => void handlePlayPause()}
-        onNext={() => void postControl('next')}
-        onStop={() => void handleStop()}
-        onVolumeChange={handleVolumeChange}
-        onOpenNowPlaying={() => { if (np.title) setUserBrowsing(false); }}
-      />
-      <div className="sub-toolbar">
-        <button
-          type="button"
-          className={`mode-btn ${activeTab === 'playlists' || activeTab === 'discovery' ? 'active' : ''}`}
-          data-tab="playlists"
-          aria-label="Playlists"
-          onClick={() => setActiveTab('playlists')}
-        >
-          Playlists
-        </button>
-        <button
-          type="button"
-          className={`mode-btn ${activeTab === 'queue' ? 'active' : ''}`}
-          data-tab="queue"
-          aria-label="Queue"
-          onClick={() => setActiveTab('queue')}
-        >
-          Queue
-        </button>
-        <form className="search-form" id="search-form" onSubmit={(e) => void handleSearchSubmit(e)}>
-          <input
-            type="text"
-            className="search-input"
-            data-prevent-screen-swipe=""
-            id="search-input"
-            aria-label="Search YouTube Music"
-            placeholder="Search YouTube Music songs or artists..."
-            autoComplete="off"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-          />
-          <button type="submit" className={`mode-btn ${activeTab === 'search' ? 'active' : ''}`} aria-label="Search">
-            Search
-          </button>
-        </form>
-      </div>
-      {activeTab === 'playlists' || activeTab === 'discovery' ? (
-        <YtMusicDiscovery
-          playlists={stateData.playlists || []}
-          suggestions={resolveSuggestions(stateData)}
-          onPlayPlaylist={(p) => void postPlay({ playlist_id: p.playlist_id, playlist_title: p.title, shuffle: true })}
-          onPlaySuggestion={(s) => void handlePlaySuggestion(s)}
-        />
       ) : (
-        <YtMusicMediaGrid
-          activeTab={activeTab}
-          searching={searching}
-          queue={stateData.queue || []}
-          queueIndex={np.queue_index}
-          searchResults={searchResults}
-          onPlayIndex={(idx) => { setUserBrowsing(false); void postControl('play_index', { index: idx }); }}
-          onPlayResult={(item) => void postPlay({ video_id: item.video_id, title: item.title, artist: item.artist, thumb: item.thumb })}
-        />
+        <>
+          <YtMusicHeader
+            accounts={accounts}
+            activeAccountId={activeAccountId}
+            isLocalSpeaker={isLocalSpeaker}
+            onSelectAccount={(accId) => void handleSelectAccount(accId)}
+            onToggleSpeaker={handleToggleSpeaker}
+          />
+          <YtMusicSpeakerBar
+            speakers={speakers}
+            activeSpeaker={currentActiveSpeaker}
+            onSelectSpeaker={(spkId) => void handleSelectSpeaker(spkId)}
+          />
+          <YtMusicMiniPlayer
+            np={np}
+            startingPlayback={startingPlayback}
+            onPrev={() => void postControl('prev')}
+            onPlayPause={() => void handlePlayPause()}
+            onNext={() => void postControl('next')}
+            onStop={() => void handleStop()}
+            onVolumeChange={handleVolumeChange}
+            onOpenNowPlaying={() => { if (np.title) setUserBrowsing(false); }}
+          />
+          <div className="sub-toolbar">
+            <button
+              type="button"
+              className={`mode-btn ${activeTab === 'playlists' || activeTab === 'discovery' ? 'active' : ''}`}
+              data-tab="playlists"
+              aria-label="Playlists"
+              onClick={() => setActiveTab('playlists')}
+            >
+              Playlists
+            </button>
+            <button
+              type="button"
+              className={`mode-btn ${activeTab === 'queue' ? 'active' : ''}`}
+              data-tab="queue"
+              aria-label="Queue"
+              onClick={() => setActiveTab('queue')}
+            >
+              Queue
+            </button>
+            <form className="search-form" id="search-form" onSubmit={(e) => void handleSearchSubmit(e)}>
+              <input
+                type="text"
+                className="search-input"
+                data-prevent-screen-swipe=""
+                id="search-input"
+                aria-label="Search YouTube Music"
+                placeholder="Search YouTube Music songs or artists..."
+                autoComplete="off"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+              <button type="submit" className={`mode-btn ${activeTab === 'search' ? 'active' : ''}`} aria-label="Search">
+                Search
+              </button>
+            </form>
+          </div>
+          {activeTab === 'playlists' || activeTab === 'discovery' ? (
+            <YtMusicDiscovery
+              playlists={stateData.playlists || []}
+              suggestions={resolveSuggestions(stateData)}
+              onPlayPlaylist={(p) => void postPlay({ playlist_id: p.playlist_id, playlist_title: p.title, shuffle: true })}
+              onPlaySuggestion={(s) => void handlePlaySuggestion(s)}
+            />
+          ) : (
+            <YtMusicMediaGrid
+              activeTab={activeTab}
+              searching={searching}
+              queue={stateData.queue || []}
+              queueIndex={np.queue_index}
+              searchResults={searchResults}
+              onPlayIndex={(idx) => { setUserBrowsing(false); void postControl('play_index', { index: idx }); }}
+              onPlayResult={(item) => void postPlay({ video_id: item.video_id, title: item.title, artist: item.artist, thumb: item.thumb })}
+            />
+          )}
+        </>
       )}
     </div>
   );
