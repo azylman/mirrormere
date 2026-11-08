@@ -415,10 +415,9 @@ function matchCustomEntryObject(
   return formatCustomSpecialDayBadge(rawName, rawLabel);
 }
 
-function resolveSingleSpecialSource(dateStr: string, source: unknown): string | null {
-  if (!source || typeof source === 'boolean') return null;
-  const targetMonthDay = normalizeCustomMonthDay(dateStr);
-  if (!targetMonthDay) return null;
+const specialSourceCache = new WeakMap<object, Map<string, string | null>>();
+
+function computeSpecialFromSource(targetMonthDay: string, source: object): string | null {
 
   if (Array.isArray(source)) {
     for (const item of source) {
@@ -456,12 +455,28 @@ function resolveSingleSpecialSource(dateStr: string, source: unknown): string | 
  * Resolves a custom birthday or special-day badge text ('🎂 Maya\'s Bday' or '🎂 Custom Label')
  * for a given date ('YYYY-MM-DD' or 'MM-DD') from widget config (`birthdays` or `special_days`).
  */
+function resolveSingleSpecialSource(dateStr: string, source: unknown): string | null {
+  if (!source || typeof source !== 'object') return null;
+  const targetMonthDay = normalizeCustomMonthDay(dateStr);
+  if (!targetMonthDay) return null;
+  let byDate = specialSourceCache.get(source);
+  if (!byDate) {
+    byDate = new Map();
+    specialSourceCache.set(source, byDate);
+  } else if (byDate.has(targetMonthDay)) {
+    return byDate.get(targetMonthDay) ?? null;
+  }
+  const matched = computeSpecialFromSource(targetMonthDay, source);
+  byDate.set(targetMonthDay, matched);
+  return matched;
+}
+
 export function resolveConfiguredSpecialDayLabel(
   dateStr?: string,
   birthdays?: unknown,
   specialDays?: unknown,
 ): string | null {
-  if (!dateStr) return null;
+  if (!dateStr || (!birthdays && !specialDays)) return null;
   return (
     resolveSingleSpecialSource(dateStr, birthdays) ||
     resolveSingleSpecialSource(dateStr, specialDays)
