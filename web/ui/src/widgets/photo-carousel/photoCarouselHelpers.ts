@@ -5,15 +5,20 @@ import { useDisplayStore } from '../../store';
 export interface PhotoItem {
   id?: string; url?: string; URL?: string; width?: number; height?: number; aspect_ratio?: number;
   timestamp?: string; location?: string; album_name?: string; dominant_color?: string;
+  media_type?: 'photo' | 'video' | string;
 }
-
+export function isVideoPhoto(photo?: PhotoItem): boolean { return photo?.media_type === 'video'; }
+export const VIDEO_STREAM_SUFFIXES = ['=m22', '=m18', '=dv'] as const;
+export function getVideoStreamURL(rawUrl?: string, suffixIndex = 0): string {
+  if (!rawUrl) return '';
+  return `${rawUrl}${VIDEO_STREAM_SUFFIXES[Math.min(Math.max(0, suffixIndex), VIDEO_STREAM_SUFFIXES.length - 1)]}`;
+}
 export interface PhotoCarouselData { photos?: PhotoItem[]; album_url?: string; cycle_interval_seconds?: number; }
 export interface PhotoAlbumConfig { name?: string; source?: 'share_url' | 'ember_bridge'; url?: string; }
 export interface PhotoCarouselConfig {
   source?: 'share_url' | 'ember_bridge'; album_url?: string; album_url_env?: string; albums?: PhotoAlbumConfig[];
 }
 export interface ContainerSize { width: number; height: number; }
-
 const CROSSFADE_MS = 850;
 export const EMPTY_PHOTOS: PhotoItem[] = [];
 export const DEFAULT_CYCLE_SECONDS = 30;
@@ -39,7 +44,6 @@ export function hasMultiplePhotoAlbums(photos: readonly PhotoItem[]): boolean {
 }
 
 function joinDistinctLabels(a: string, b: string): string { return a && b && a !== b ? `${a} • ${b}` : a || b; }
-
 export function formatPhotoMetadataLabel(photo?: PhotoItem, showAlbumName = false, secondaryPhoto?: PhotoItem) {
   const date = joinDistinctLabels(formatPhotoOverlayDate(photo?.timestamp), formatPhotoOverlayDate(secondaryPhoto?.timestamp));
   const location = joinDistinctLabels((photo?.location || '').trim(), (secondaryPhoto?.location || '').trim());
@@ -54,11 +58,9 @@ export function isPortraitPhoto(photo?: PhotoItem): boolean {
   if (typeof photo.aspect_ratio === 'number' && photo.aspect_ratio > 0) return photo.aspect_ratio < 0.95;
   return Boolean(photo.width && photo.height && photo.width < photo.height);
 }
-
 export function isWideContainer(size: ContainerSize): boolean {
   return (size.width > 0 && size.height > 0 && size.width / size.height >= 1.15) || (size.width === 0 && size.height === 0);
 }
-
 export function parsePhotoCarouselData(raw: unknown): PhotoCarouselData {
   if (!raw) return {};
   if (typeof raw === 'object' && !Array.isArray(raw)) return raw as PhotoCarouselData;
@@ -73,7 +75,6 @@ export function parsePhotoCarouselData(raw: unknown): PhotoCarouselData {
   }
   return {};
 }
-
 export function resolvePhotoCarouselSourceAndUrl(config?: PhotoCarouselConfig, data?: PhotoCarouselData): { source: 'share_url' | 'ember_bridge'; albumUrl: string } {
   if (Array.isArray(config?.albums) && config.albums.length > 0) {
     const emberEntry = config.albums.find((a) => a.source === 'ember_bridge');
@@ -83,18 +84,16 @@ export function resolvePhotoCarouselSourceAndUrl(config?: PhotoCarouselConfig, d
   return { source: config?.source === 'ember_bridge' ? 'ember_bridge' : 'share_url', albumUrl: (config?.album_url || data?.album_url || '').trim() };
 }
 
-export function getBackdropPhotoURL(rawUrl?: string): string {
-  return rawUrl ? `${rawUrl}=w96-h54-c` : '';
-}
+export function getBackdropPhotoURL(rawUrl?: string): string { return rawUrl ? `${rawUrl}=w96-h54-c` : ''; }
 
-export function getSizedPhotoURL(rawUrl?: string, containerSize?: ContainerSize): string {
+export function getSizedPhotoURL(rawUrl?: string, containerSize?: ContainerSize, isVideo = false): string {
   if (!rawUrl) return '';
   const dpr = Math.min(2, (typeof window !== 'undefined' && window.devicePixelRatio) || 1);
   const screenWidth = Math.round((((typeof window !== 'undefined' && (window.screen?.width || window.innerWidth)) || 1920) * dpr));
   const screenHeight = Math.round((((typeof window !== 'undefined' && (window.screen?.height || window.innerHeight)) || 1080) * dpr));
   const rectW = Math.round((containerSize?.width || 0) * dpr);
   const rectH = Math.round((containerSize?.height || 0) * dpr);
-  return `${rawUrl}=w${rectW > 0 ? rectW : screenWidth}-h${rectH > 0 ? rectH : screenHeight}`;
+  return `${rawUrl}=w${rectW > 0 ? rectW : screenWidth}-h${rectH > 0 ? rectH : screenHeight}${isVideo ? '-no' : ''}`;
 }
 
 export interface WidgetPhotoDeckState { currentKey: string | null; companionKey: string | null; seenKeys: Set<string>; remainingMs: number | null; }
@@ -384,8 +383,8 @@ export function usePhotoSlideshowTransition({
     const nextSecPhoto = nextSecIdx !== null ? currentPhotos[nextSecIdx] : undefined;
     const nextSecRawUrl = nextSecPhoto?.url ?? nextSecPhoto?.URL;
     const nextSecKey = nextSecIdx !== null ? getPhotoItemKey(nextSecPhoto, nextSecIdx) : null;
-    const nextFgUrl = getSizedPhotoURL(nextRawUrl, containerSizeRef.current);
-    const nextSecFgUrl = nextSecRawUrl ? getSizedPhotoURL(nextSecRawUrl, containerSizeRef.current) : '';
+    const nextFgUrl = getSizedPhotoURL(nextRawUrl, containerSizeRef.current, isVideoPhoto(nextPhoto));
+    const nextSecFgUrl = nextSecRawUrl ? getSizedPhotoURL(nextSecRawUrl, containerSizeRef.current, isVideoPhoto(nextSecPhoto)) : '';
     const seq = ++cycleSeqRef.current;
     if (transitionTimeoutRef.current) { clearTimeout(transitionTimeoutRef.current); transitionTimeoutRef.current = null; }
 

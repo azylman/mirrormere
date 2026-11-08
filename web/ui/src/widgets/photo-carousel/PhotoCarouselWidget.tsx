@@ -12,7 +12,7 @@ import {
   parsePhotoCarouselData, getBackdropPhotoURL, getSizedPhotoURL, useContainerSize,
   registerEmberSyncListener, usePhotoSlideshowTransition, resolvePhotoCarouselSourceAndUrl,
   formatPhotoMetadataLabel, hasMultiplePhotoAlbums,
-  isWideContainer,
+  isWideContainer, isVideoPhoto, VIDEO_STREAM_SUFFIXES,
   type ContainerSize, type EmberSyncListener, type PhotoCarouselConfig, type PhotoItem, type SlideTransitionState,
 } from './photoCarouselHelpers';
 
@@ -21,6 +21,7 @@ export {
   getPhotoItemKey, selectNextPhotoIndex, selectPrevPhotoIndex, selectPreloadPhotoIndices,
   formatPhotoOverlayDate, formatPhotoMetadataLabel, hasMultiplePhotoAlbums,
   isPortraitPhoto, isWideContainer, selectCompanionPortraitIndex,
+  isVideoPhoto, getVideoStreamURL,
   PHOTO_CONTROLS_HIDE_MS, PHOTO_PAUSE_INACTIVITY_MS,
 } from './photoCarouselHelpers';
 
@@ -34,6 +35,8 @@ declare global {
   }
 }
 
+import { PhotoCarouselEmpty } from './PhotoCarouselEmpty';
+
 function PhotoCarouselLoading() {
   return (
     <div
@@ -44,56 +47,6 @@ function PhotoCarouselLoading() {
       }}
     >
       <span>Loading photos...</span>
-    </div>
-  );
-}
-
-interface PhotoCarouselEmptyProps {
-  source: 'share_url' | 'ember_bridge';
-  needsAuth: boolean;
-  syncError: boolean;
-  albumUrl: string;
-}
-
-function PhotoCarouselEmpty({ source, needsAuth, syncError, albumUrl }: PhotoCarouselEmptyProps) {
-  let emptyTitle = 'No photos in shared album';
-  if (source === 'ember_bridge') {
-    if (needsAuth) emptyTitle = 'Google Photos sign-in required';
-    else if (syncError) emptyTitle = 'Photo sync failed';
-    else emptyTitle = 'No photos available';
-  }
-
-  const canConnect =
-    source === 'ember_bridge' &&
-    albumUrl.trim() !== '' &&
-    typeof window !== 'undefined' &&
-    typeof window.EmberBridge?.connectGooglePhotos === 'function';
-
-  return (
-    <div className="photo-empty">
-      <span className="empty-icon">
-        <svg
-          width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-          strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
-        >
-          <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
-          <circle cx="9" cy="9" r="2" />
-          <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
-        </svg>
-      </span>
-      <span className="empty-title">{emptyTitle}</span>
-      {canConnect && (
-        <button
-          type="button"
-          className="photo-connect-btn"
-          onClick={(e) => {
-            e.stopPropagation();
-            window.EmberBridge?.connectGooglePhotos?.(albumUrl);
-          }}
-        >
-          Connect Google Photos
-        </button>
-      )}
     </div>
   );
 }
@@ -127,60 +80,7 @@ function PhotoBackdrop({
   );
 }
 
-function PhotoForeground({
-  currentUrl, currentSecondaryUrl, nextUrl, nextSecondaryUrl, isTransitioning,
-}: {
-  currentUrl: string; currentSecondaryUrl?: string; nextUrl: string; nextSecondaryUrl?: string; isTransitioning: boolean;
-}) {
-  return (
-    <div className="photo-foreground-container">
-      {currentSecondaryUrl ? (
-        <div
-          className="photo-layer photo-current photo-foreground-diptych dither"
-          style={{
-            opacity: isTransitioning ? 0 : 1,
-            transition: isTransitioning ? 'opacity 0.85s ease-in-out' : 'none',
-          }}
-        >
-          <img className="photo-diptych-item photo-current dither" src={currentUrl} alt="Photo" />
-          <img className="photo-diptych-item photo-current-secondary dither" src={currentSecondaryUrl} alt="Photo" />
-        </div>
-      ) : (
-        <img
-          className="photo-layer photo-current dither"
-          src={currentUrl}
-          alt="Photo"
-          style={{
-            opacity: isTransitioning ? 0 : 1,
-            transition: isTransitioning ? 'opacity 0.85s ease-in-out' : 'none',
-          }}
-        />
-      )}
-      {nextSecondaryUrl ? (
-        <div
-          className="photo-layer photo-next photo-foreground-diptych dither"
-          style={{
-            opacity: isTransitioning ? 1 : 0,
-            transition: isTransitioning ? 'opacity 0.85s ease-in-out' : 'none',
-          }}
-        >
-          <img className="photo-diptych-item photo-next dither" src={isTransitioning ? nextUrl : undefined} alt="Photo" />
-          <img className="photo-diptych-item photo-next-secondary dither" src={isTransitioning ? nextSecondaryUrl : undefined} alt="Photo" />
-        </div>
-      ) : (
-        <img
-          className="photo-layer photo-next dither"
-          src={isTransitioning ? nextUrl : undefined}
-          alt="Photo"
-          style={{
-            opacity: isTransitioning ? 1 : 0,
-            transition: isTransitioning ? 'opacity 0.85s ease-in-out' : 'none',
-          }}
-        />
-      )}
-    </div>
-  );
-}
+import { PhotoForeground } from './PhotoForeground';
 
 function PhotoMetadataOverlay({
   photo, secondaryPhoto, showAlbumName,
@@ -212,7 +112,7 @@ function PhotoPreloadPool({ photos, baseIndex, companionIndex, widgetId, contain
         return (
           <span key={getPhotoItemKey(p, idx)}>
             <img src={getBackdropPhotoURL(rawUrl)} decoding="async" loading="eager" alt="" />
-            <img src={getSizedPhotoURL(rawUrl, containerSize)} decoding="async" loading="eager" alt="" />
+            <img src={getSizedPhotoURL(rawUrl, containerSize, isVideoPhoto(p))} decoding="async" loading="eager" alt="" />
           </span>
         );
       })}
@@ -375,16 +275,23 @@ function resolveSlideLayerState(
 ) {
   const wide = isWideContainer(containerSize);
   const resolveSlide = (idx: number | null, fixedCompanionIdx: number | null) => {
-    if (idx === null) return { photo: undefined, fgUrl: '', backdropUrl: '', companionIdx: null, companionPhoto: undefined, companionFgUrl: '' };
+    if (idx === null) {
+      return {
+        photo: undefined, rawUrl: undefined, fgUrl: '', backdropUrl: '', isVideo: false,
+        companionIdx: null, companionPhoto: undefined, companionRawUrl: undefined, companionFgUrl: '', companionIsVideo: false,
+      };
+    }
     const photo = photos[idx];
     const rawUrl = photo?.url ?? photo?.URL;
-    const fgUrl = rawUrl ? getSizedPhotoURL(rawUrl, containerSize) : '';
+    const isVideo = isVideoPhoto(photo);
+    const fgUrl = rawUrl ? getSizedPhotoURL(rawUrl, containerSize, isVideo) : '';
     const backdropUrl = rawUrl ? getBackdropPhotoURL(rawUrl) : '';
     const companionIdx = wide ? fixedCompanionIdx : null;
     const companionPhoto = companionIdx !== null ? photos[companionIdx] : undefined;
     const companionRawUrl = companionPhoto?.url ?? companionPhoto?.URL;
-    const companionFgUrl = companionRawUrl ? getSizedPhotoURL(companionRawUrl, containerSize) : '';
-    return { photo, fgUrl, backdropUrl, companionIdx, companionPhoto, companionFgUrl };
+    const companionIsVideo = isVideoPhoto(companionPhoto);
+    const companionFgUrl = companionRawUrl ? getSizedPhotoURL(companionRawUrl, containerSize, companionIsVideo) : '';
+    return { photo, rawUrl, fgUrl, backdropUrl, isVideo, companionIdx, companionPhoto, companionRawUrl, companionFgUrl, companionIsVideo };
   };
 
   const isTransitioning = Boolean(transitionState?.active);
@@ -417,14 +324,62 @@ export function PhotoCarouselWidget({ id }: WidgetComponentProps) {
   const cycleIntervalSeconds = Math.max(5, Number(data?.cycle_interval_seconds) || DEFAULT_CYCLE_SECONDS);
 
   const [isPaused, setIsPaused] = useState(false);
+  const [playingState, setPlayingState] = useState<{
+    slot: 'primary' | 'secondary' | null;
+    streamSuffixIndex: number;
+    slideKey: string;
+  }>({
+    slot: null,
+    streamSuffixIndex: 0,
+    slideKey: '',
+  });
+
   const { controlsVisible, showControls, resetPauseInactivityTimer, togglePause } = usePhotoControls(isPaused, setIsPaused);
   const { rootRef, containerSize, containerSizeRef } = useContainerSize();
 
   const { safeIndex, currentCompanionIndex, transitionState, stepPhoto } = usePhotoSlideshowTransition({
-    id, photos, cycleIntervalSeconds, isCurrentPane, isDocumentVisible, isVideoMode, isPaused, containerSizeRef,
+    id, photos, cycleIntervalSeconds, isCurrentPane, isDocumentVisible, isVideoMode,
+    isPaused: isPaused || (playingState.slot !== null && isCurrentPane && isDocumentVisible && !isVideoMode),
+    containerSizeRef,
   });
 
+  const isPaneActive = isCurrentPane && isDocumentVisible && !isVideoMode;
+  const currentSlideKey = `${safeIndex}:${currentCompanionIndex}`;
+  const isPlayingThisSlide = isPaneActive && playingState.slideKey === currentSlideKey;
+  const isVideoRenderable = isPlayingThisSlide && (
+    playingState.slot === 'primary' || (playingState.slot === 'secondary' && currentCompanionIndex !== null)
+  );
+  const playingSlot = isVideoRenderable ? playingState.slot : null;
+  const streamSuffixIndex = isPlayingThisSlide ? playingState.streamSuffixIndex : 0;
+
+  const onPlaySlot = (slot: 'primary' | 'secondary') => {
+    const deck = photoDeckStateById.get(id);
+    if (deck) deck.remainingMs = cycleIntervalSeconds * 1000;
+    setPlayingState({ slot, streamSuffixIndex: 0, slideKey: currentSlideKey });
+  };
+
+  const onStopVideo = () => {
+    const deck = photoDeckStateById.get(id);
+    if (deck) deck.remainingMs = cycleIntervalSeconds * 1000;
+    setPlayingState({ slot: null, streamSuffixIndex: 0, slideKey: '' });
+  };
+
+  const onVideoEnded = () => {
+    const deck = photoDeckStateById.get(id);
+    if (deck) deck.remainingMs = cycleIntervalSeconds * 1000;
+    setPlayingState({ slot: null, streamSuffixIndex: 0, slideKey: '' });
+  };
+
+  const onVideoError = () => {
+    if (streamSuffixIndex + 1 < VIDEO_STREAM_SUFFIXES.length) {
+      setPlayingState((prev) => ({ ...prev, streamSuffixIndex: prev.streamSuffixIndex + 1 }));
+    } else {
+      onStopVideo();
+    }
+  };
+
   const handleStep = (direction: 'prev' | 'next') => {
+    setPlayingState({ slot: null, streamSuffixIndex: 0, slideKey: '' });
     showControls();
     if (isPaused) resetPauseInactivityTimer();
     stepPhoto(direction);
@@ -467,6 +422,16 @@ export function PhotoCarouselWidget({ id }: WidgetComponentProps) {
             nextUrl={next.fgUrl}
             nextSecondaryUrl={next.companionFgUrl || undefined}
             isTransitioning={isTransitioning}
+            currentRawUrl={current.rawUrl}
+            currentIsVideo={current.isVideo}
+            currentCompanionRawUrl={current.companionRawUrl}
+            currentCompanionIsVideo={current.companionIsVideo}
+            playingSlot={playingSlot}
+            streamSuffixIndex={streamSuffixIndex}
+            onPlaySlot={onPlaySlot}
+            onStopVideo={onStopVideo}
+            onVideoEnded={onVideoEnded}
+            onVideoError={onVideoError}
           />
           <PhotoPreloadPool
             photos={photos}
