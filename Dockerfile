@@ -44,11 +44,13 @@ RUN --mount=type=cache,target=/etc/apk/cache,sharing=locked \
 
 WORKDIR /app
 
-# Copy compiled executable, web templates/static assets, and built React UI bundle (widgets/ are volume-mounted at runtime)
+# Copy compiled executable, web templates, static assets, compiled UI bundle, and widgets.
+# Built-in widgets are baked into /app/widgets to eliminate runtime /share volume mounts.
 COPY --from=builder --link --chown=10001:10001 /app/server /app/server
 COPY --link --chown=10001:10001 web/templates/ /app/web/templates/
 COPY --link --chown=10001:10001 web/static/ /app/web/static/
 COPY --from=ui-builder --link --chown=10001:10001 /src/web/static/ui/ /app/web/static/ui/
+COPY --link --chown=10001:10001 widgets/ /app/widgets/
 
 # Switch to unprivileged non-root user
 USER 10001:10001
