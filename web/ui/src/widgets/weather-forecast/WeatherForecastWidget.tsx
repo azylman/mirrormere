@@ -4,6 +4,8 @@ import {
   type DaypartSlot,
   type SchoolDayThresholds,
   formatSlotForecastSummary,
+  resolveBirthdayOverride,
+  resolveBirthdayPackSpriteUrl,
   resolveCharacterPackSpriteUrl,
   resolveClothingConditionState,
   resolveClothingOutfitLabel,
@@ -29,6 +31,7 @@ interface SchoolDaySlotItem {
   outfitLabel: string;
   forecastSummary: string;
   spriteUrl: string;
+  birthdayBanner?: string;
 }
 const DAYPART_SLOTS: DaypartSlot[] = ['morning', 'afternoon', 'evening'];
 
@@ -257,6 +260,7 @@ function buildSchoolDaySlots(
 ): SchoolDaySlotItem[] {
   const { characterPack, variantsPerState, thresholds } = extractSchoolDayConfig(config);
   const { dateStr, isTomorrow } = resolveSchoolDayTargetDate(config, timestamp);
+  const birthday = resolveBirthdayOverride(dateStr, config?.birthdays);
 
   return DAYPART_SLOTS.map((slot) => {
     const info = resolveSlotWeather(slot, data, current, daily, hourly, dateStr, isTomorrow);
@@ -269,8 +273,13 @@ function buildSchoolDaySlots(
     );
     const variantIndex = selectDailyVariantIndex(dateStr, slot, variantsPerState);
     const enableHolidays = Boolean(config?.holidays);
-    const spriteUrl = resolveCharacterPackSpriteUrl(characterPack, state, variantIndex, dateStr, enableHolidays);
-    const outfitLabel = resolveClothingOutfitLabel(state);
+    const spriteUrl = birthday
+      ? resolveBirthdayPackSpriteUrl(characterPack, birthday.key, slot)
+      : resolveCharacterPackSpriteUrl(characterPack, state, variantIndex, dateStr, enableHolidays);
+    const baseOutfitLabel = resolveClothingOutfitLabel(state);
+    const outfitLabel = birthday
+      ? `${birthday.outfitLabel} · ${baseOutfitLabel}`
+      : baseOutfitLabel;
     const forecastSummary = formatSlotForecastSummary(info.icon, info.precipProb);
     const displayLabel = isTomorrow ? `tomorrow ${slot}` : slot;
     return {
@@ -282,6 +291,7 @@ function buildSchoolDaySlots(
       outfitLabel,
       forecastSummary,
       spriteUrl,
+      birthdayBanner: birthday?.bannerLabel,
     };
   });
 }
@@ -343,10 +353,14 @@ function renderSchoolDayStrip(slots: SchoolDaySlotItem[]) {
           className={`weather-school-day-slot weather-school-day-slot-${item.slot}`}
           data-slot={item.slot}
           data-day={item.isTomorrow ? 'tomorrow' : 'today'}
+          data-birthday={item.birthdayBanner ? 'true' : undefined}
         >
           <span className="weather-school-day-name weather-school-day-slot-name">
             {item.displayLabel}
           </span>
+          {item.birthdayBanner && (
+            <span className="weather-school-day-birthday-badge">{item.birthdayBanner}</span>
+          )}
           <span className="weather-school-day-temp">{item.temp}°</span>
           <span className="weather-school-day-state weather-school-day-condition">{item.state}</span>
           <div className="weather-school-day-copy">

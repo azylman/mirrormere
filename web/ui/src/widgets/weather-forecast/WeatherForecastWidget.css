@@ -114,3 +114,23 @@
   border-radius: 0;
   z-index: 0;
 }
+
+.weather-school-day-slot[data-birthday="true"] {
+  box-shadow: inset 0 0 0 2px rgba(251, 191, 36, 0.72);
+}
+
+.weather-school-day-birthday-badge {
+  position: relative;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  margin-top: 2px;
+  border-radius: 999px;
+  background: rgba(251, 191, 36, 0.92);
+  color: #1e293b;
+  font-size: 0.74rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
+}

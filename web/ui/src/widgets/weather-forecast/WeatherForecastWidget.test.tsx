@@ -1560,4 +1560,108 @@ describe('WeatherHourlyGraph component', () => {
       isTomorrow: false,
     });
   });
+
+  it('renders configurable birthday override badge, outfit prefix, and birthday sprite URLs when birthdays match', () => {
+    useDisplayStore.setState({
+      widgets: {
+        'weather-school-birthday': {
+          meta: {
+            type: 'weather-forecast',
+            origin: [0, 0],
+            dimensions: [2, 1],
+            config: {
+              mode: 'school-day',
+              character_pack: 'ghibli_school_day',
+              date: '2026-11-07',
+              birthdays: [{ name: 'ChildOne', date: '11-07' }],
+            },
+            assets_base: '',
+          },
+          state: 'healthy',
+          data: {
+            current: {
+              temperature: 65,
+              icon: 'weather-sunny',
+            },
+            slots: {
+              morning: { temp: 52, precip_prob: 0, icon: 'weather-sunny' },
+              afternoon: { temp: 72, precip_prob: 0, icon: 'weather-sunny' },
+              evening: { temp: 60, precip_prob: 0, icon: 'weather-clear-night' },
+            },
+          },
+          timestamp: '2026-11-07T09:00:00Z',
+        },
+      },
+    });
+
+    const { container, rerender } = render(
+      <WeatherForecastWidget id="weather-school-birthday" type="weather-forecast" />,
+    );
+
+    const morningSlot = container.querySelector('.weather-school-day-slot-morning');
+    expect(morningSlot?.getAttribute('data-birthday')).toBe('true');
+    expect(morningSlot?.querySelector('.weather-school-day-birthday-badge')?.textContent).toBe(
+      '🎂 Happy Birthday ChildOne!',
+    );
+    expect(morningSlot?.querySelector('.weather-school-day-outfit')?.textContent).toBe(
+      '🎂 Birthday Celebration! · Light Jacket & Pants',
+    );
+    expect(morningSlot?.querySelector('img.weather-school-day-sprite')?.getAttribute('src')).toBe(
+      '/static/ui/assets/weather-packs/ghibli_school_day/birthday_childone_morning.jpg',
+    );
+
+    const afternoonSlot = container.querySelector('.weather-school-day-slot-afternoon');
+    expect(afternoonSlot?.querySelector('img.weather-school-day-sprite')?.getAttribute('src')).toBe(
+      '/static/ui/assets/weather-packs/ghibli_school_day/birthday_childone_afternoon.jpg',
+    );
+
+    const eveningSlot = container.querySelector('.weather-school-day-slot-evening');
+    expect(eveningSlot?.querySelector('img.weather-school-day-sprite')?.getAttribute('src')).toBe(
+      '/static/ui/assets/weather-packs/ghibli_school_day/birthday_childone_evening.jpg',
+    );
+
+    // Non-matching date should not render birthday override
+    useDisplayStore.setState({
+      widgets: {
+        'weather-school-birthday': {
+          meta: {
+            type: 'weather-forecast',
+            origin: [0, 0],
+            dimensions: [2, 1],
+            config: {
+              mode: 'school-day',
+              character_pack: 'ghibli_school_day',
+              date: '2026-11-08',
+              birthdays: [{ name: 'ChildOne', date: '11-07' }],
+            },
+            assets_base: '',
+          },
+          state: 'healthy',
+          data: {
+            current: {
+              temperature: 65,
+              icon: 'weather-sunny',
+            },
+            slots: {
+              morning: { temp: 52, precip_prob: 0, icon: 'weather-sunny' },
+              afternoon: { temp: 72, precip_prob: 0, icon: 'weather-sunny' },
+              evening: { temp: 60, precip_prob: 0, icon: 'weather-clear-night' },
+            },
+          },
+          timestamp: '2026-11-08T09:00:00Z',
+        },
+      },
+    });
+
+    rerender(<WeatherForecastWidget id="weather-school-birthday" type="weather-forecast" />);
+    const nonBirthdayMorning = container.querySelector('.weather-school-day-slot-morning');
+    expect(nonBirthdayMorning?.getAttribute('data-birthday')).toBeNull();
+    expect(nonBirthdayMorning?.querySelector('.weather-school-day-birthday-badge')).toBeNull();
+    expect(nonBirthdayMorning?.querySelector('.weather-school-day-outfit')?.textContent).toBe(
+      'Light Jacket & Pants',
+    );
+    expect(
+      nonBirthdayMorning?.querySelector('img.weather-school-day-sprite')?.getAttribute('src'),
+    ).toMatch(/^\/static\/ui\/assets\/weather-packs\/ghibli_school_day\/morning_mild_v\d+\.jpg$/);
+  });
 });
