@@ -1,5 +1,5 @@
 import { detectDaySpecialStatus } from './CalendarWeekBands';
-import { stripMealiePrefix } from './dateUtils';
+import { resolveConfiguredSpecialDayLabel, stripMealiePrefix } from './dateUtils';
 import type { FamilyEvent, FamilyMember, FamilyMonthViewModel, ViewMode } from './types';
 
 export interface CalendarMonthViewProps {
@@ -9,6 +9,39 @@ export interface CalendarMonthViewProps {
   onOpenModal: (ev: FamilyEvent, date: string) => void;
   onSelectDay?: (date: string) => void;
   celebrateSpecialDays?: boolean;
+  birthdays?: unknown;
+  specialDays?: unknown;
+}
+
+function resolveMonthDaySpecial(
+  day: { date: string; events?: FamilyEvent[]; event_title?: string; special_label?: string },
+  members: FamilyMember[],
+  celebrateSpecialDays: boolean,
+  birthdays?: unknown,
+  specialDays?: unknown,
+) {
+  if (!celebrateSpecialDays) {
+    return { specialStatus: null, specialClass: '', bdayPillText: '' };
+  }
+  const dayEvents: FamilyEvent[] =
+    day.events && day.events.length > 0
+      ? day.events
+      : day.event_title
+      ? [{ id: day.date, title: day.event_title }]
+      : [];
+  const configuredBdayLabel = resolveConfiguredSpecialDayLabel(day.date, birthdays, specialDays);
+  const eventSpecialStatus = detectDaySpecialStatus(dayEvents, members);
+  const specialStatus = configuredBdayLabel ? 'birthday' : eventSpecialStatus;
+  const bdayPillText = day.special_label
+    ? `🎂 ${day.special_label}`
+    : configuredBdayLabel || '🎂 Family Bday';
+  const specialClass =
+    specialStatus === 'birthday'
+      ? ' cf-special-birthday'
+      : specialStatus === 'holiday'
+      ? ' cf-special-holiday'
+      : '';
+  return { specialStatus, specialClass, bdayPillText };
 }
 
 export function CalendarMonthView({
@@ -18,6 +51,8 @@ export function CalendarMonthView({
   onOpenModal,
   onSelectDay,
   celebrateSpecialDays = true,
+  birthdays,
+  specialDays,
 }: CalendarMonthViewProps) {
   return (
     <div
@@ -65,20 +100,13 @@ export function CalendarMonthView({
             }}
           >
             {monthVM.days.map((day) => {
-              const dayEvents: FamilyEvent[] =
-                day.events && day.events.length > 0
-                  ? day.events
-                  : day.event_title
-                  ? [{ id: day.date, title: day.event_title }]
-                  : [];
-              const specialStatus =
-                celebrateSpecialDays !== false ? detectDaySpecialStatus(dayEvents, members) : null;
-              const specialClass =
-                specialStatus === 'birthday'
-                  ? ' cf-special-birthday'
-                  : specialStatus === 'holiday'
-                  ? ' cf-special-holiday'
-                  : '';
+              const { specialStatus, specialClass, bdayPillText } = resolveMonthDaySpecial(
+                day,
+                members,
+                celebrateSpecialDays !== false,
+                birthdays,
+                specialDays,
+              );
               return (
               <div
                 key={day.date}
@@ -168,7 +196,7 @@ export function CalendarMonthView({
                     {day.day_of_month}
                   </span>
                   {specialStatus === 'birthday' && (
-                    <span className="cf-special-pill cf-pill-birthday">{day.special_label ? `🎂 ${day.special_label}` : '🎂 Family Bday'}</span>
+                    <span className="cf-special-pill cf-pill-birthday">{bdayPillText}</span>
                   )}
                   {specialStatus === 'holiday' && (
                     <span className="cf-special-pill cf-pill-holiday">✨ Holiday</span>

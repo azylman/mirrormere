@@ -336,3 +336,150 @@ export function computeNowIndicatorPct(
 
   return mapTimeMinutesToPct(nowMin, startMin, endMin, gaps);
 }
+
+interface CustomBirthdayEntry {
+  name?: string;
+  key?: string;
+  id?: string;
+  date?: string;
+  month_day?: string;
+  month?: number;
+  day?: number;
+  label?: string;
+  banner_label?: string;
+}
+
+function normalizeCustomMonthDay(raw: unknown): string | undefined {
+  if (typeof raw !== 'string') return undefined;
+  const trimmed = raw.trim();
+  const fullMatch = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(trimmed);
+  if (fullMatch) {
+    return `${fullMatch[2].padStart(2, '0')}-${fullMatch[3].padStart(2, '0')}`;
+  }
+  const mdMatch = /^(\d{1,2})[-/](\d{1,2})$/.exec(trimmed);
+  if (mdMatch) {
+    return `${mdMatch[1].padStart(2, '0')}-${mdMatch[2].padStart(2, '0')}`;
+  }
+  return undefined;
+}
+
+function formatCustomSpecialDayBadge(nameRaw?: string, labelRaw?: string): string | null {
+  if (typeof labelRaw === 'string' && labelRaw.trim()) {
+    const cleanLabel = labelRaw.trim().replace(/^🎂\s*/, '');
+    return `🎂 ${cleanLabel}`;
+  }
+  if (typeof nameRaw === 'string' && nameRaw.trim()) {
+    const cleanName = nameRaw.trim();
+    if (/bday|birthday/i.test(cleanName)) {
+      return `🎂 ${cleanName.replace(/^🎂\s*/, '')}`;
+    }
+    return `🎂 ${cleanName}'s Bday`;
+  }
+  return null;
+}
+
+function matchCustomEntryObject(
+  entry: CustomBirthdayEntry & Record<string, unknown>,
+  targetMonthDay: string,
+  fallbackKey?: string,
+): string | null {
+  let entryMonthDay = normalizeCustomMonthDay(entry.date ?? entry.month_day);
+  if (
+    !entryMonthDay &&
+    typeof entry.month === 'number' &&
+    typeof entry.day === 'number'
+  ) {
+    entryMonthDay = `${String(entry.month).padStart(2, '0')}-${String(entry.day).padStart(2, '0')}`;
+  }
+  if (!entryMonthDay && fallbackKey) {
+    entryMonthDay = normalizeCustomMonthDay(fallbackKey);
+  }
+  if (entryMonthDay !== targetMonthDay) return null;
+
+  const rawName =
+    typeof entry.name === 'string'
+      ? entry.name
+      : typeof entry.key === 'string'
+        ? entry.key
+        : typeof entry.id === 'string'
+          ? entry.id
+          : fallbackKey && !normalizeCustomMonthDay(fallbackKey)
+            ? fallbackKey
+            : '';
+  const rawLabel =
+    typeof entry.label === 'string'
+      ? entry.label
+      : typeof entry.banner_label === 'string'
+        ? entry.banner_label
+        : undefined;
+  return formatCustomSpecialDayBadge(rawName, rawLabel);
+}
+
+const specialSourceCache = new WeakMap<object, Map<string, string | null>>();
+
+function computeSpecialFromSource(targetMonthDay: string, source: object): string | null {
+
+  if (Array.isArray(source)) {
+    for (const item of source) {
+      if (item && typeof item === 'object' && !Array.isArray(item)) {
+        const match = matchCustomEntryObject(item as Record<string, unknown>, targetMonthDay);
+        if (match) return match;
+      }
+    }
+    return null;
+  }
+
+  if (typeof source === 'object') {
+    const map = source as Record<string, unknown>;
+    for (const [k, v] of Object.entries(map)) {
+      if (typeof v === 'string') {
+        const kAsDate = normalizeCustomMonthDay(k);
+        const vAsDate = normalizeCustomMonthDay(v);
+        if (vAsDate === targetMonthDay) {
+          const match = formatCustomSpecialDayBadge(k);
+          if (match) return match;
+        } else if (kAsDate === targetMonthDay) {
+          const match = formatCustomSpecialDayBadge(v);
+          if (match) return match;
+        }
+      } else if (v && typeof v === 'object' && !Array.isArray(v)) {
+        const match = matchCustomEntryObject(v as Record<string, unknown>, targetMonthDay, k);
+        if (match) return match;
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Resolves a custom birthday or special-day badge text ('🎂 Maya\'s Bday' or '🎂 Custom Label')
+ * for a given date ('YYYY-MM-DD' or 'MM-DD') from widget config (`birthdays` or `special_days`).
+ */
+function resolveSingleSpecialSource(dateStr: string, source: unknown): string | null {
+  if (!source || typeof source !== 'object') return null;
+  const targetMonthDay = normalizeCustomMonthDay(dateStr);
+  if (!targetMonthDay) return null;
+  let byDate = specialSourceCache.get(source);
+  if (!byDate) {
+    byDate = new Map();
+    specialSourceCache.set(source, byDate);
+  } else if (byDate.has(targetMonthDay)) {
+    return byDate.get(targetMonthDay) ?? null;
+  }
+  const matched = computeSpecialFromSource(targetMonthDay, source);
+  byDate.set(targetMonthDay, matched);
+  return matched;
+}
+
+export function resolveConfiguredSpecialDayLabel(
+  dateStr?: string,
+  birthdays?: unknown,
+  specialDays?: unknown,
+): string | null {
+  if (!dateStr || (!birthdays && !specialDays)) return null;
+  return (
+    resolveSingleSpecialSource(dateStr, birthdays) ||
+    resolveSingleSpecialSource(dateStr, specialDays)
+  );
+}
+

@@ -1926,6 +1926,54 @@ test('Calendar Family Client Controller', async (t) => {
     global.window.MirrormereCalendarFamily.unmount('special-disabled-test');
   });
 
+  await t.test('applySpecialDayHighlights resolves custom birthdays and special_days names and labels by date', () => {
+    const data = {
+      members: [{ name: 'Alex' }, { name: 'Maya' }, { name: 'Sam' }],
+      days: [
+        { date: '2026-11-07', all_day: [], events: [] },
+        { date: '2026-11-08', all_day: [], events: [] },
+        { date: '2026-11-09', all_day: [], events: [] },
+      ],
+    };
+
+    const el = createMockElement({ widgetId: 'custom-bday-test', data });
+    const day1 = createMockDOMNode('div', { className: 'cf-day' });
+    day1.dataset.date = '2026-11-07';
+    day1.appendChild(createMockDOMNode('div', { className: 'cf-day-header' }));
+    el._panels.week.appendChild(day1);
+
+    const day2 = createMockDOMNode('div', { className: 'cf-day' });
+    day2.dataset.date = '2026-11-08';
+    day2.appendChild(createMockDOMNode('div', { className: 'cf-day-header' }));
+    el._panels.week.appendChild(day2);
+
+    const day3 = createMockDOMNode('div', { className: 'cf-day' });
+    day3.dataset.date = '2026-11-09';
+    day3.appendChild(createMockDOMNode('div', { className: 'cf-day-header' }));
+    el._panels.week.appendChild(day3);
+
+    global.window.MirrormereCalendarFamily.mount(el, {
+      birthdays: [
+        { name: 'Maya', date: '11-07' },
+        { name: 'Sam', month: 11, day: 8, label: "Sam's Special Bday" },
+      ],
+      special_days: {
+        Alex: '2026-11-09',
+      },
+    });
+
+    assert.ok(day1.classList.contains('cf-special-birthday'));
+    assert.equal(day1.querySelector('.cf-special-pill').textContent, "🎂 Maya's Bday");
+
+    assert.ok(day2.classList.contains('cf-special-birthday'));
+    assert.equal(day2.querySelector('.cf-special-pill').textContent, "🎂 Sam's Special Bday");
+
+    assert.ok(day3.classList.contains('cf-special-birthday'));
+    assert.equal(day3.querySelector('.cf-special-pill').textContent, "🎂 Alex's Bday");
+
+    global.window.MirrormereCalendarFamily.unmount('custom-bday-test');
+  });
+
   await t.test('applyEventFlairs adds flair class and watermark SVG, respecting event_flair: false', () => {
     const el = createMockElement({ widgetId: 'flair-test' });
     const timedCard = createMockDOMNode('div', { className: 'cf-day-event' });
